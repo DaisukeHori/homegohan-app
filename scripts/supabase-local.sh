@@ -39,6 +39,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 WORK="$ROOT/.supabase-local"
 BASELINE_DIR="$ROOT/supabase/baseline"
 CLI_VERSION="2.62.10"
+PROJECT_ID="homegohan-local"
 if [ -z "${SUPABASE_CLI:-}" ]; then
   # 同じ版の supabase が入っていればそれを使い、無ければ CI と同じく npx で実行する
   # (CLI は実行ディレクトリの supabase/.temp/cli-latest を書き換えるため、リポジトリ外で版を確認する)
@@ -94,7 +95,7 @@ prepare() {
   # config.toml: リポジトリのものに project_id とローカル専用の設定を足す
   {
     echo '# scripts/supabase-local.sh が生成 (編集しない)'
-    echo 'project_id = "homegohan-local"'
+    echo "project_id = \"$PROJECT_ID\""
     echo
     cat "$ROOT/supabase/config.toml"
     echo
@@ -125,13 +126,13 @@ prepare() {
   # Edge Functions はリポジトリのものを参照する
   ln -sfn "$ROOT/supabase/functions" "$WORK/supabase/functions"
 
-  # 1) ベースライン: 本番スキーマ → 関数の EXECUTE 権限 → storage 設定 → マスタデータ。
+  # 1) ベースライン: 本番スキーマ → 関数の EXECUTE 権限 → テーブルの権限 → storage 設定 → マスタデータ。
   #    pg_dump 由来の SET (search_path='' 等) が後続 migration のセッションに残らないよう最後に RESET ALL
   local baseline_file="$WORK/supabase/migrations/${version}_prod_baseline.sql"
   {
     echo "-- supabase/baseline から scripts/supabase-local.sh が生成したベースライン (本番 snapshot)"
     echo "-- 本番台帳の最大 version $version までを含む。このファイルを編集しないこと。"
-    for part in prod_schema.sql prod_function_acl.sql prod_storage.sql prod_reference_data.sql; do
+    for part in prod_schema.sql prod_function_acl.sql prod_table_acl.sql prod_storage.sql prod_reference_data.sql; do
       if [ -f "$BASELINE_DIR/$part" ]; then
         echo
         echo "-- ===== $part ====="
@@ -194,26 +195,46 @@ cmd_start() {
 cmd_reset() {
   ensure_docker
   prepare
-  # db reset は最後にコンテナを再起動し、Kong 経由で Storage API (バケット一覧) を呼ぶ。
-  # Storage の起動が間に合わないと Kong が 502 等を返し、DB への適用は終わっているのに
-  # 非ゼロで終了する。このときに限り 1 回だけやり直す (migration の失敗などは再実行しない)。
+  db_reset_with_retry
+}
+
+db_reset_with_retry() {
+  # db reset は DB に適用したあと Storage などのコンテナを再起動し、Kong 経由で Storage API
+  # (バケット一覧) を呼ぶ。再起動したコンテナは IP アドレスが変わることがあるが、Kong は起動時に
+  # 解決した古い IP に接続し続けるため 502 (古い IP が空いていれば接続のタイムアウト) になり、
+  # 待っても直らない (db reset をやり直しても同じ)。DB への適用は終わっているので、このときに限り
+  # Kong を再起動して Storage API の応答を待つ (migration の失敗などは対象外)。
   # CLI のエラーは stderr に出るため、stderr だけを画面に流しつつファイルにも残して判定する。
-  local err status attempt
+  local err status=0
   err="$(mktemp)"
-  for attempt in 1 2; do
-    status=0
-    { cli db reset 2>&1 1>&3 | tee "$err" >&2; } 3>&1 || status=$?
-    if [ "$status" -eq 0 ]; then
-      break
+  { cli db reset 2>&1 1>&3 | tee "$err" >&2; } 3>&1 || status=$?
+  if [ "$status" -ne 0 ] && grep -qE 'Error status 50[234]|request: Get "[^"]*/storage/v1/bucket"' "$err"; then
+    log "Kong が再起動前の Storage の IP に接続して失敗したため、Kong を再起動して待ちます"
+    if restart_kong_and_wait; then
+      status=0
     fi
-    if [ "$attempt" -eq 2 ] || ! grep -qE 'Error status 50[234]' "$err"; then
-      break
-    fi
-    log "Storage の再起動待ちで db reset が失敗したため、もう一度実行します"
-    sleep 5
-  done
+  fi
   rm -f "$err"
   return "$status"
+}
+
+restart_kong_and_wait() {
+  local env_out api key code=""
+  docker restart "supabase_kong_$PROJECT_ID" >/dev/null
+  env_out="$(cli status -o env 2>/dev/null)" || return 1
+  api="$(printf '%s\n' "$env_out" | sed -n 's/^API_URL="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p')"
+  key="$(printf '%s\n' "$env_out" | sed -n 's/^SERVICE_ROLE_KEY="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p')"
+  for _ in $(seq 1 60); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' -H "apikey: $key" -H "Authorization: Bearer $key" \
+      "$api/storage/v1/bucket" || true)"
+    if [ "$code" = "200" ]; then
+      log "Storage API が応答しました"
+      return 0
+    fi
+    sleep 2
+  done
+  log "Kong を再起動しても Storage API が応答しません (最後の HTTP ステータス: $code)"
+  return 1
 }
 
 cmd_stop() {
@@ -286,7 +307,7 @@ cmd_verify() {
     fi
     cli start "${args[@]}"
   else
-    cli db reset
+    db_reset_with_retry
   fi
   local db_url out
   db_url="$(cli status -o env 2>/dev/null | sed -n 's/^DB_URL="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p')"

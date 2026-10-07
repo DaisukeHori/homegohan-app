@@ -42,6 +42,7 @@ public,family_groups,r,t,f,"{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,a
 public,family_invites,r,t,f,"{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}"
 public,family_meal_logs,r,t,f,"{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}"
 public,family_members,r,t,f,"{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}"
+public,family_promotion_requests,r,t,f,"{postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres}"
 public,feature_flags,r,t,f,"{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}"
 public,feature_packages,r,t,f,"{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}"
 public,gdpr_deletion_requests,r,t,f,"{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}"

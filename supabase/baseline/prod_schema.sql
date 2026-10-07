@@ -122,6 +122,126 @@ CREATE TABLE IF NOT EXISTS "public"."family_members" (
 ALTER TABLE "public"."family_members" OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."accept_child_promotion"("p_token" "text", "p_share_meals" boolean DEFAULT true, "p_share_health" boolean DEFAULT false, "p_share_menu" boolean DEFAULT true) RETURNS "public"."family_members"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  v_request family_promotion_requests;
+  v_member family_members;
+  v_caller_email TEXT;
+  v_constraint TEXT;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'NOT_AUTHENTICATED' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- LOCK-ORDER: family_members -> family_promotion_requests
+  -- (1) 非ロック読み: member_id 解決 + 終端 status の早期確定。
+  --     終端 status (accepted/rejected/revoked/expired) は不変条件のため
+  --     非ロック読みでも確定判定してよい。'pending' だけが遷移しうるので (3) で再検証する。
+  --     member_id / token は全 RPC を通じて UPDATE されない不変列 → (2) でそのまま使える。
+  SELECT * INTO v_request FROM family_promotion_requests WHERE token = p_token;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'PROMOTION_REQUEST_NOT_FOUND' USING ERRCODE = 'P0001';
+  END IF;
+  IF v_request.status = 'expired' THEN
+    RAISE EXCEPTION 'PROMOTION_REQUEST_EXPIRED' USING ERRCODE = 'P0001';
+  ELSIF v_request.status <> 'pending' THEN
+    RAISE EXCEPTION 'PROMOTION_REQUEST_ALREADY_USED' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- (2) member 行を先にロック (canonical 順の先頭。request_child_promotion と同順)
+  SELECT * INTO v_member FROM family_members WHERE id = v_request.member_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'PROMOTION_MEMBER_UNAVAILABLE' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- (3) request 行をロックし、(1) の 'pending' 判定を再検証
+  --     ((1)→(3) の間に revoke/再送で遷移した可能性がある。member ロック保持中は
+  --      canonical 順に従う他 RPC はもうこの行に触れないため、(3) 以降は安定)
+  SELECT * INTO v_request FROM family_promotion_requests WHERE token = p_token FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'PROMOTION_REQUEST_NOT_FOUND' USING ERRCODE = 'P0001';
+  END IF;
+  IF v_request.status <> 'pending' THEN
+    IF v_request.status = 'expired' THEN
+      RAISE EXCEPTION 'PROMOTION_REQUEST_EXPIRED' USING ERRCODE = 'P0001';
+    ELSE
+      RAISE EXCEPTION 'PROMOTION_REQUEST_ALREADY_USED' USING ERRCODE = 'P0001';
+    END IF;
+  END IF;
+  -- 期限切れ。status を 'expired' に UPDATE しても直後の RAISE で巻き戻るため書かない
+  -- (status は 'pending' のまま。期限切れは常に expires_at で判定する)。
+  IF v_request.expires_at < NOW() THEN
+    RAISE EXCEPTION 'PROMOTION_REQUEST_EXPIRED' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 対象者本人であることを「自分のメール」で検証 (呼び出し者自身 = 列挙オラクルにならない)
+  SELECT email INTO v_caller_email FROM auth.users WHERE id = auth.uid();
+  IF v_caller_email IS NULL OR lower(v_caller_email) <> lower(v_request.email) THEN
+    RAISE EXCEPTION 'PROMOTION_EMAIL_MISMATCH' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- member の状態検証 ((2) でロック済みの行が権威)
+  IF v_member.status <> 'active' THEN
+    RAISE EXCEPTION 'PROMOTION_MEMBER_UNAVAILABLE' USING ERRCODE = 'P0001';
+  END IF;
+  IF v_member.user_id IS NOT NULL THEN
+    RAISE EXCEPTION 'ALREADY_PROMOTED' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 呼び出し者が既にどこかの family に所属していないこと (クリーンパスの事前チェック)
+  IF EXISTS (SELECT 1 FROM family_members WHERE user_id = auth.uid() AND status = 'active') THEN
+    RAISE EXCEPTION 'ALREADY_IN_FAMILY' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- G3 (v2): 同一本人の 2 token 並行 accept は uniq_family_members_user の 23505 を
+  -- ALREADY_IN_FAMILY(409) へ正規化。他の unique violation は再 RAISE。
+  BEGIN
+    UPDATE family_members
+      SET user_id = auth.uid(), child_profile = NULL, role = 'adult',
+          share_meals = p_share_meals, share_health = p_share_health, share_menu = p_share_menu
+      WHERE id = v_member.id
+      RETURNING * INTO v_member;
+  EXCEPTION
+    WHEN unique_violation THEN
+      GET STACKED DIAGNOSTICS v_constraint = CONSTRAINT_NAME;
+      IF v_constraint = 'uniq_family_members_user' THEN
+        RAISE EXCEPTION 'ALREADY_IN_FAMILY' USING ERRCODE = 'P0001';
+      END IF;
+      RAISE;
+  END;
+
+  -- 所属家族を本人のプロフィールに入れる。メールのリンクから新規登録して初期設定 (オンボーディング) より前に
+  -- 承認した人は、まだプロフィール行が無い (auth.users → user_profiles を作るトリガーは無く、行は初期設定の
+  -- 保存で作られる)。UPDATE だけだと 0 行で終わり、後から初期設定で作られる行の family_id は NULL のままになり、
+  -- 家族の画面で「家族なし」扱いになる。行が無ければ、アプリの既定値 (/api/profile・/api/onboarding/progress と同じ
+  -- nickname 'Guest'・age_group / gender 'unspecified') で作る。初期設定の日時は入れないため初期設定の流れは変わらない。
+  -- (2026-10-07 オーナー判断。設計 v2/v3 からの追加)
+  INSERT INTO user_profiles (id, nickname, age_group, gender, family_id)
+  VALUES (auth.uid(), 'Guest', 'unspecified', 'unspecified', v_member.family_id)
+  ON CONFLICT (id) DO UPDATE SET family_id = EXCLUDED.family_id;
+
+  UPDATE family_promotion_requests
+    SET status = 'accepted', resolved_at = NOW(), resolved_by = auth.uid()
+    WHERE id = v_request.id;
+
+  INSERT INTO membership_audit (scope, scope_id, action, actor_id, target_user_id, metadata)
+  VALUES ('family', v_member.family_id, 'child_promoted', auth.uid(), auth.uid(),
+          jsonb_build_object('member_id', v_member.id, 'request_id', v_request.id,
+                             'requested_by', v_request.requested_by));
+
+  RETURN v_member;
+EXCEPTION
+  WHEN deadlock_detected THEN
+    RAISE EXCEPTION 'CONFLICT_RETRY' USING ERRCODE = 'P0001';
+END $$;
+
+
+ALTER FUNCTION "public"."accept_child_promotion"("p_token" "text", "p_share_meals" boolean, "p_share_health" boolean, "p_share_menu" boolean) OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."accept_family_invite"("p_token" "text", "p_share_meals" boolean DEFAULT true, "p_share_health" boolean DEFAULT false, "p_share_menu" boolean DEFAULT true) RETURNS "public"."family_members"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public'
@@ -222,31 +342,54 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'TRANSFER_PROPOSAL_NOT_FOUND' USING ERRCODE = 'P0001';
   END IF;
+
   IF v_proposal.expires_at < NOW() THEN
-    UPDATE ownership_transfer_proposals SET status = 'expired', resolved_at = NOW() WHERE id = p_proposal_id;
+    UPDATE ownership_transfer_proposals
+      SET status = 'expired', resolved_at = NOW()
+      WHERE id = p_proposal_id AND status = 'pending';
     RAISE EXCEPTION 'TRANSFER_PROPOSAL_EXPIRED' USING ERRCODE = 'P0001';
   END IF;
 
   v_family_id := v_proposal.scope_id;
   v_old_rep_id := v_proposal.from_user_id;
 
-  -- proposal を accepted に更新 (UNIQUE 制約で二重受諾防止)
+  -- ★(A) #1237 Fix: 承諾者が今も対象家族の active adult / representative であることを再検証。
+  -- leave_family / remove_family_member は family_members.status を 'left' / 'removed' に、
+  -- user_profiles.family_id を NULL に同一トランザクションで設定するため、
+  -- status = 'active' 行の存在確認で「今も対象家族に所属」を判定できる。
+  -- role IN ('representative','adult') は operator_force_representative_transfer
+  -- (20260511000125) と対称の防御多層化。propose 側で child は既に
+  -- CANNOT_TRANSFER_TO_CHILD で遮断されるため happy path には無影響。
+  IF NOT EXISTS (
+    SELECT 1 FROM family_members
+      WHERE family_id = v_family_id
+        AND user_id = auth.uid()
+        AND status = 'active'
+        AND role IN ('representative', 'adult')
+  ) THEN
+    RAISE EXCEPTION 'TRANSFER_ACCEPTOR_NOT_IN_FAMILY' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- ★(B) TOCTOU close
   UPDATE ownership_transfer_proposals
     SET status = 'accepted', resolved_at = NOW()
-    WHERE id = p_proposal_id;
+    WHERE id = p_proposal_id AND status = 'pending'
+    RETURNING * INTO v_proposal;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'TRANSFER_NOT_PENDING' USING ERRCODE = 'P0001';
+  END IF;
 
-  -- role swap
-  UPDATE family_members SET role = 'adult' WHERE family_id = v_family_id AND user_id = v_old_rep_id AND status = 'active';
-  UPDATE family_members SET role = 'representative' WHERE family_id = v_family_id AND user_id = auth.uid() AND status = 'active';
+  -- role swap (現行 20260711120000 と完全同一)
+  UPDATE family_members SET role = 'adult'
+    WHERE family_id = v_family_id AND user_id = v_old_rep_id AND status = 'active';
+  UPDATE family_members SET role = 'representative'
+    WHERE family_id = v_family_id AND user_id = auth.uid() AND status = 'active';
   UPDATE family_groups SET representative_id = auth.uid() WHERE id = v_family_id;
 
   INSERT INTO membership_audit (scope, scope_id, action, actor_id, target_user_id, metadata)
   VALUES ('family', v_family_id, 'representative_transferred', auth.uid(), v_old_rep_id,
           jsonb_build_object('proposal_id', p_proposal_id));
 
-  -- ★ #1100 Fix: 複合型を返す関数でのスカラサブクエリ `RETURN (SELECT * FROM ...)` は
-  -- 複数列のため `subquery must return only one column` で必ず失敗する。
-  -- %ROWTYPE 変数への SELECT INTO 経由で単一 composite 値として返す。
   SELECT * INTO v_result FROM family_groups WHERE id = v_family_id;
   RETURN v_result;
 END $$;
@@ -388,6 +531,7 @@ CREATE TABLE IF NOT EXISTS "public"."user_profiles" (
     "org_role" "public"."org_role_enum",
     "family_id" "uuid",
     "unban_at" timestamp with time zone,
+    "department_id" "uuid",
     CONSTRAINT "user_profiles_org_consistency" CHECK (((("organization_id" IS NULL) AND ("org_role" IS NULL)) OR (("organization_id" IS NOT NULL) AND ("org_role" IS NOT NULL))))
 );
 
@@ -519,6 +663,10 @@ COMMENT ON COLUMN "public"."user_profiles"."plan_key_cached" IS 'personal_subscr
 
 
 COMMENT ON COLUMN "public"."user_profiles"."unban_at" IS '一時 BAN の解除予定日時。NULL = 無期限凍結 or 凍結なし。frozen_at が NOT NULL かつ unban_at が過去の場合はアクセス判定時 (requireUser/requireRole/middleware) に 自動解除扱いとする (#1030)。';
+
+
+
+COMMENT ON COLUMN "public"."user_profiles"."department_id" IS '所属組織の部署 (departments.id)。本人は変更できない (guard_user_profiles_privileged)。脱退・除名で NULL に戻る。#1235';
 
 
 
@@ -654,26 +802,44 @@ DECLARE
   v_old_owner_id UUID;
   v_result organizations%ROWTYPE;
 BEGIN
-  -- ★ P0 Fix F9: ownership_transfer_proposals テーブル経由で参照 (二重実行防止)
+  -- pending かつ宛先が呼び出し元である proposal を取得 (既存挙動不変)
   SELECT * INTO v_proposal FROM ownership_transfer_proposals
     WHERE id = p_proposal_id AND status = 'pending' AND to_user_id = auth.uid();
   IF NOT FOUND THEN
     RAISE EXCEPTION 'TRANSFER_PROPOSAL_NOT_FOUND' USING ERRCODE = 'P0001';
   END IF;
+
   IF v_proposal.expires_at < NOW() THEN
-    UPDATE ownership_transfer_proposals SET status = 'expired', resolved_at = NOW() WHERE id = p_proposal_id;
+    UPDATE ownership_transfer_proposals
+      SET status = 'expired', resolved_at = NOW()
+      WHERE id = p_proposal_id AND status = 'pending';
     RAISE EXCEPTION 'TRANSFER_PROPOSAL_EXPIRED' USING ERRCODE = 'P0001';
   END IF;
 
   v_org_id := v_proposal.scope_id;
   v_old_owner_id := v_proposal.from_user_id;
 
-  -- proposal を accepted に更新 (UNIQUE 制約で二重受諾防止)
+  -- ★(A) #1236 Fix: 承諾者が今も対象組織のメンバであることを再検証。
+  -- leave_org / remove_org_member / release_user_membership は organization_id を NULL に、
+  -- 他組織 accept_org_invite は別 org 値に、いずれもアトミックに設定するため、
+  -- organization_id = v_org_id の一致確認だけで「今も対象組織に所属」を判定できる。
+  IF NOT EXISTS (
+    SELECT 1 FROM user_profiles
+      WHERE id = auth.uid() AND organization_id = v_org_id
+  ) THEN
+    RAISE EXCEPTION 'TRANSFER_ACCEPTOR_NOT_IN_ORG' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- ★(B) #1236 Fix: status = 'pending' 条件つき UPDATE で二重受諾 / 競合 (TOCTOU) を閉じる。
   UPDATE ownership_transfer_proposals
     SET status = 'accepted', resolved_at = NOW()
-    WHERE id = p_proposal_id;
+    WHERE id = p_proposal_id AND status = 'pending'
+    RETURNING * INTO v_proposal;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'TRANSFER_NOT_PENDING' USING ERRCODE = 'P0001';
+  END IF;
 
-  -- role swap
+  -- role swap (順序・意味は現行 20260711120000 と完全同一)
   UPDATE user_profiles SET org_role = 'admin' WHERE id = v_old_owner_id;
   UPDATE user_profiles SET org_role = 'owner' WHERE id = auth.uid();
   UPDATE organizations SET owner_id = auth.uid() WHERE id = v_org_id;
@@ -682,9 +848,6 @@ BEGIN
   VALUES ('organization', v_org_id, 'owner_transferred', auth.uid(), v_old_owner_id,
           jsonb_build_object('proposal_id', p_proposal_id));
 
-  -- ★ #1100 Fix: 複合型を返す関数でのスカラサブクエリ `RETURN (SELECT * FROM ...)` は
-  -- 複数列のため `subquery must return only one column` で必ず失敗する。
-  -- %ROWTYPE 変数への SELECT INTO 経由で単一 composite 値として返す。
   SELECT * INTO v_result FROM organizations WHERE id = v_org_id;
   RETURN v_result;
 END $$;
@@ -1097,7 +1260,8 @@ BEGIN
     RAISE EXCEPTION 'MEMBER_LIMIT_EXCEEDED' USING ERRCODE = 'P0001';
   END IF;
 
-  v_token := encode(gen_random_bytes(32), 'hex');
+  -- token 生成: gen_random_uuid() x2 → 64 文字 hex (pgcrypto 不要)
+  v_token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
 
   -- 既存 pending を revoke
   UPDATE family_invites
@@ -1165,6 +1329,7 @@ DECLARE
   v_seat_limit INT;
   v_used_seats INT;
 BEGIN
+  -- 呼び出し元が同 org の admin/owner か検証
   SELECT organization_id, org_role INTO v_caller_org_id, v_caller_role
     FROM user_profiles WHERE id = auth.uid();
 
@@ -1172,6 +1337,7 @@ BEGIN
     RAISE EXCEPTION 'NOT_ORG_ADMIN' USING ERRCODE = 'P0001';
   END IF;
 
+  -- seat 上限チェック (org_license_pools)
   SELECT total_licenses, used_licenses INTO v_seat_limit, v_used_seats
     FROM org_license_pools WHERE organization_id = p_organization_id;
 
@@ -1179,8 +1345,10 @@ BEGIN
     RAISE EXCEPTION 'SEAT_LIMIT_EXCEEDED' USING ERRCODE = 'P0001';
   END IF;
 
-  v_token := encode(gen_random_bytes(32), 'hex');
+  -- token 生成: gen_random_uuid() x2 → 64 文字 hex (pgcrypto 不要)
+  v_token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
 
+  -- 既存 pending を invalidate (revoke)
   UPDATE organization_invites
     SET status = 'revoked', revoked_at = NOW(), revoked_by = auth.uid()
     WHERE organization_id = p_organization_id
@@ -1547,6 +1715,51 @@ END $$;
 ALTER FUNCTION "public"."get_invite_details"("p_token" "text") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."get_promotion_details"("p_token" "text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  v_request family_promotion_requests;
+  v_family_name TEXT;
+  v_member_name TEXT;
+  v_requested_by_name TEXT;
+  v_email_matches BOOLEAN;
+BEGIN
+  SELECT * INTO v_request FROM family_promotion_requests WHERE token = p_token;
+  IF NOT FOUND THEN
+    RETURN NULL; -- 見つからない場合 NULL (get_invite_details と同じ)
+  END IF;
+
+  SELECT name INTO v_family_name FROM family_groups WHERE id = v_request.family_id;
+  SELECT display_name INTO v_member_name FROM family_members WHERE id = v_request.member_id;
+  SELECT COALESCE(up.nickname, au.email) INTO v_requested_by_name
+    FROM auth.users au
+    LEFT JOIN user_profiles up ON up.id = au.id
+    WHERE au.id = v_request.requested_by;
+
+  v_email_matches := FALSE;
+  IF auth.uid() IS NOT NULL THEN
+    SELECT lower(au.email) = lower(v_request.email)
+      INTO v_email_matches
+      FROM auth.users au WHERE au.id = auth.uid();
+  END IF;
+
+  RETURN jsonb_build_object(
+    'family_name', v_family_name,
+    'member_display_name', v_member_name,
+    'requested_by_name', v_requested_by_name,
+    'email', v_request.email,
+    'status', v_request.status,
+    'expires_at', v_request.expires_at,
+    'current_user_email_matches', v_email_matches
+  );
+END $$;
+
+
+ALTER FUNCTION "public"."get_promotion_details"("p_token" "text") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."guard_family_groups_privileged"() RETURNS "trigger"
     LANGUAGE "plpgsql"
     AS $$
@@ -1625,7 +1838,8 @@ BEGIN
        OR NEW.frozen_at        IS DISTINCT FROM OLD.frozen_at
        OR NEW.frozen_by        IS DISTINCT FROM OLD.frozen_by
        OR NEW.frozen_reason    IS DISTINCT FROM OLD.frozen_reason
-       OR NEW.unban_at         IS DISTINCT FROM OLD.unban_at THEN
+       OR NEW.unban_at         IS DISTINCT FROM OLD.unban_at
+       OR NEW.department_id    IS DISTINCT FROM OLD.department_id THEN
       RAISE EXCEPTION 'CANNOT_MODIFY_PRIVILEGED_COLUMN' USING ERRCODE = '42501';
     END IF;
   END IF;
@@ -1634,6 +1848,37 @@ END $$;
 
 
 ALTER FUNCTION "public"."guard_user_profiles_privileged"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."guard_user_profiles_privileged_on_insert"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  IF current_user IN ('authenticated', 'anon') THEN
+    IF (NEW.roles IS NOT NULL AND NEW.roles IS DISTINCT FROM ARRAY['user']::text[])
+       OR NEW.org_role         IS NOT NULL
+       OR NEW.organization_id  IS NOT NULL
+       OR NEW.family_id        IS NOT NULL
+       OR NEW.is_active_in_org IS DISTINCT FROM false
+       OR NEW.joined_org_at    IS NOT NULL
+       OR NEW.frozen_at        IS NOT NULL
+       OR NEW.frozen_by        IS NOT NULL
+       OR NEW.frozen_reason    IS NOT NULL
+       OR NEW.unban_at         IS NOT NULL
+       OR NEW.department_id    IS NOT NULL THEN
+      RAISE EXCEPTION 'CANNOT_MODIFY_PRIVILEGED_COLUMN' USING ERRCODE = '42501';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+
+
+ALTER FUNCTION "public"."guard_user_profiles_privileged_on_insert"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."guard_user_profiles_privileged_on_insert"() IS 'user_profiles の特権列 (guard_user_profiles_privileged と同じ列) を、authenticated / anon が自分の行を作るときに既定値以外にさせない。';
+
 
 
 CREATE OR REPLACE FUNCTION "public"."increment_recipe_like_count"("p_recipe_id" "text" DEFAULT NULL::"text", "p_recipe_uuid" "uuid" DEFAULT NULL::"uuid") RETURNS integer
@@ -1716,6 +1961,47 @@ $$;
 
 
 ALTER FUNCTION "public"."invoke_catalog_import"("p_function_name" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."is_active_family_adult"("p_family_id" "uuid") RETURNS boolean
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.family_members fm
+    WHERE fm.family_id = p_family_id
+      AND fm.user_id = auth.uid()
+      AND fm.role IN ('representative', 'adult')
+      AND fm.status = 'active'
+  );
+$$;
+
+
+ALTER FUNCTION "public"."is_active_family_adult"("p_family_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."is_active_family_adult"("p_family_id" "uuid") IS 'RLS 用: ログイン中のユーザーが、その家族の active な代表者・大人か。family_members のポリシーの自己参照による無限再帰を避けるため SECURITY DEFINER (#1257)。';
+
+
+
+CREATE OR REPLACE FUNCTION "public"."is_active_family_member"("p_family_id" "uuid") RETURNS boolean
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.family_members fm
+    WHERE fm.family_id = p_family_id
+      AND fm.user_id = auth.uid()
+      AND fm.status = 'active'
+  );
+$$;
+
+
+ALTER FUNCTION "public"."is_active_family_member"("p_family_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."is_active_family_member"("p_family_id" "uuid") IS 'RLS 用: ログイン中のユーザーが、その家族の active なメンバーか。family_members のポリシーの自己参照による無限再帰を避けるため SECURITY DEFINER (#1257)。';
+
 
 
 CREATE OR REPLACE FUNCTION "public"."is_inactive_user"("p_user_id" "uuid") RETURNS boolean
@@ -1801,7 +2087,9 @@ BEGIN
 
   UPDATE user_profiles
     SET organization_id = NULL, org_role = NULL,
-        is_active_in_org = FALSE, joined_org_at = NULL
+        is_active_in_org = FALSE, joined_org_at = NULL,
+        roles = array_remove(roles, 'org_admin'),  -- #1235: 所属と一緒に外す
+        department_id = NULL  -- #1235: 部署の所属も外す
     WHERE id = auth.uid()
     RETURNING * INTO v_user;
 
@@ -1982,7 +2270,9 @@ BEGIN
     SET organization_id = NULL,
         org_role = NULL,
         is_active_in_org = FALSE,
-        joined_org_at = NULL
+        joined_org_at = NULL,
+        roles = array_remove(roles, 'org_admin'),  -- #1235: 所属と一緒に外す
+        department_id = NULL  -- #1235: 部署の所属も外す
     WHERE organization_id = p_organization_id;
 
   -- Round 3 C-4: org_license_pools の used_licenses をリセット
@@ -2240,85 +2530,12 @@ CREATE OR REPLACE FUNCTION "public"."promote_child_to_user"("p_member_id" "uuid"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public'
     AS $$
-DECLARE
-  v_caller_role family_role_enum;
-  v_member family_members;
-  v_user_id UUID;
 BEGIN
-  -- 1) 認可を先に（元関数の順序を維持）
-  SELECT * INTO v_member FROM family_members WHERE id = p_member_id;
-  SELECT role INTO v_caller_role FROM family_members
-    WHERE family_id = v_member.family_id AND user_id = auth.uid() AND status = 'active';
-  IF v_caller_role IS NULL OR v_caller_role NOT IN ('representative','adult') THEN
-    RAISE EXCEPTION 'NOT_FAMILY_ADULT' USING ERRCODE = 'P0001';
-  END IF;
-  IF v_member.user_id IS NOT NULL THEN
-    RAISE EXCEPTION 'ALREADY_PROMOTED' USING ERRCODE = 'P0001';
-  END IF;
-
-  -- 2) 認可後に email → 既存 auth ユーザーを解決
-  -- #1062: SSO ユーザー/削除済みユーザーは対象外とし、email 重複時の非決定的な
-  -- マッチ (LIMIT 1 がどの行を返すか不定) を避ける。
-  SELECT id INTO v_user_id FROM auth.users
-    WHERE lower(email) = lower(p_email)
-      AND is_sso_user = false
-      AND deleted_at IS NULL
-    LIMIT 1;
-  IF v_user_id IS NULL THEN
-    RAISE EXCEPTION 'USER_NOT_FOUND' USING ERRCODE = 'P0001';
-  END IF;
-
-  IF EXISTS (SELECT 1 FROM family_members WHERE user_id = v_user_id AND status = 'active') THEN
-    RAISE EXCEPTION 'ALREADY_IN_FAMILY' USING ERRCODE = 'P0001';
-  END IF;
-
-  UPDATE family_members SET user_id = v_user_id, child_profile = NULL, role = 'adult' WHERE id = p_member_id
-    RETURNING * INTO v_member;
-  UPDATE user_profiles SET family_id = v_member.family_id WHERE id = v_user_id;
-
-  INSERT INTO membership_audit (scope, scope_id, action, actor_id, target_user_id, metadata)
-  VALUES ('family', v_member.family_id, 'child_promoted', auth.uid(), v_user_id,
-          jsonb_build_object('member_id', p_member_id, 'email', lower(p_email)));
-
-  RETURN v_member;
+  RAISE EXCEPTION 'PROMOTION_DIRECT_DISABLED' USING ERRCODE = 'P0001';
 END $$;
 
 
 ALTER FUNCTION "public"."promote_child_to_user"("p_member_id" "uuid", "p_email" "text") OWNER TO "postgres";
-
-
-CREATE OR REPLACE FUNCTION "public"."promote_child_to_user"("p_member_id" "uuid", "p_user_id" "uuid") RETURNS "public"."family_members"
-    LANGUAGE "plpgsql" SECURITY DEFINER
-    SET "search_path" TO 'public'
-    AS $$
-DECLARE v_caller_role family_role_enum; v_member family_members;
-BEGIN
-  SELECT * INTO v_member FROM family_members WHERE id = p_member_id;
-  SELECT role INTO v_caller_role FROM family_members
-    WHERE family_id = v_member.family_id AND user_id = auth.uid() AND status = 'active';
-  IF v_caller_role IS NULL OR v_caller_role NOT IN ('representative','adult') THEN
-    RAISE EXCEPTION 'NOT_FAMILY_ADULT' USING ERRCODE = 'P0001';
-  END IF;
-  IF v_member.user_id IS NOT NULL THEN
-    RAISE EXCEPTION 'ALREADY_PROMOTED' USING ERRCODE = 'P0001';
-  END IF;
-  IF EXISTS (SELECT 1 FROM family_members WHERE user_id = p_user_id AND status = 'active') THEN
-    RAISE EXCEPTION 'ALREADY_IN_FAMILY' USING ERRCODE = 'P0001';
-  END IF;
-
-  UPDATE family_members SET user_id = p_user_id, child_profile = NULL, role = 'adult' WHERE id = p_member_id
-    RETURNING * INTO v_member;
-  UPDATE user_profiles SET family_id = v_member.family_id WHERE id = p_user_id;
-
-  INSERT INTO membership_audit (scope, scope_id, action, actor_id, target_user_id, metadata)
-  VALUES ('family', v_member.family_id, 'child_promoted', auth.uid(), p_user_id,
-          jsonb_build_object('member_id', p_member_id));
-
-  RETURN v_member;
-END $$;
-
-
-ALTER FUNCTION "public"."promote_child_to_user"("p_member_id" "uuid", "p_user_id" "uuid") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."propose_family_representative_transfer"("p_family_id" "uuid", "p_to_user_id" "uuid") RETURNS "uuid"
@@ -2398,6 +2615,91 @@ END $$;
 
 
 ALTER FUNCTION "public"."propose_org_owner_transfer"("p_organization_id" "uuid", "p_to_user_id" "uuid") OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."family_promotion_requests" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "family_id" "uuid" NOT NULL,
+    "member_id" "uuid" NOT NULL,
+    "email" "text" NOT NULL,
+    "token" "text" NOT NULL,
+    "status" "text" DEFAULT 'pending'::"text" NOT NULL,
+    "requested_by" "uuid" NOT NULL,
+    "expires_at" timestamp with time zone DEFAULT ("now"() + '14 days'::interval) NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "resolved_at" timestamp with time zone,
+    "resolved_by" "uuid",
+    CONSTRAINT "family_promotion_requests_status_check" CHECK (("status" = ANY (ARRAY['pending'::"text", 'accepted'::"text", 'rejected'::"text", 'revoked'::"text", 'expired'::"text"])))
+);
+
+
+ALTER TABLE "public"."family_promotion_requests" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."family_promotion_requests" IS '#1232: 子供メンバー枠への本人同意 (昇格リクエスト)。書き込みは request/accept/reject/revoke_child_promotion RPC のみ。token 列は authenticated から読めない (列単位 GRANT)。';
+
+
+
+CREATE OR REPLACE FUNCTION "public"."reject_child_promotion"("p_token" "text") RETURNS "public"."family_promotion_requests"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  v_request family_promotion_requests;
+  v_caller_email TEXT;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'NOT_AUTHENTICATED' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- LOCK-ORDER: family_members -> family_promotion_requests
+  -- (1) 非ロック読み
+  SELECT * INTO v_request FROM family_promotion_requests WHERE token = p_token;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'PROMOTION_REQUEST_NOT_FOUND' USING ERRCODE = 'P0001';
+  END IF;
+  IF v_request.status <> 'pending' THEN
+    RAISE EXCEPTION 'PROMOTION_REQUEST_ALREADY_USED' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- (2) member 行ロック (行が消えていれば request も CASCADE 済み = NOT_FOUND 扱い)
+  PERFORM 1 FROM family_members WHERE id = v_request.member_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'PROMOTION_REQUEST_NOT_FOUND' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- (3) request 行ロック + 再検証
+  SELECT * INTO v_request FROM family_promotion_requests WHERE token = p_token FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'PROMOTION_REQUEST_NOT_FOUND' USING ERRCODE = 'P0001';
+  END IF;
+  IF v_request.status <> 'pending' THEN
+    RAISE EXCEPTION 'PROMOTION_REQUEST_ALREADY_USED' USING ERRCODE = 'P0001';
+  END IF;
+  -- 期限切れ (pending のまま日付超過) でも拒否は許可 (v2 踏襲: 本人の意思表示を優先)
+
+  SELECT email INTO v_caller_email FROM auth.users WHERE id = auth.uid();
+  IF v_caller_email IS NULL OR lower(v_caller_email) <> lower(v_request.email) THEN
+    RAISE EXCEPTION 'PROMOTION_EMAIL_MISMATCH' USING ERRCODE = 'P0001';
+  END IF;
+
+  UPDATE family_promotion_requests
+    SET status = 'rejected', resolved_at = NOW(), resolved_by = auth.uid()
+    WHERE id = v_request.id
+    RETURNING * INTO v_request;
+
+  INSERT INTO membership_audit (scope, scope_id, action, actor_id, target_user_id, metadata)
+  VALUES ('family', v_request.family_id, 'child_promotion_rejected', auth.uid(), auth.uid(),
+          jsonb_build_object('member_id', v_request.member_id, 'request_id', v_request.id));
+
+  RETURN v_request;
+EXCEPTION
+  WHEN deadlock_detected THEN
+    RAISE EXCEPTION 'CONFLICT_RETRY' USING ERRCODE = 'P0001';
+END $$;
+
+
+ALTER FUNCTION "public"."reject_child_promotion"("p_token" "text") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."reject_family_invite"("p_token" "text") RETURNS "public"."family_invites"
@@ -2496,7 +2798,9 @@ BEGIN
     -- 0行 UPDATE となり、以降の decrement/監査ログもスキップされる。
     UPDATE user_profiles
       SET organization_id = NULL, org_role = NULL,
-          is_active_in_org = FALSE, joined_org_at = NULL
+          is_active_in_org = FALSE, joined_org_at = NULL,
+          roles = array_remove(roles, 'org_admin'),  -- #1235: 所属と一緒に外す
+          department_id = NULL  -- #1235: 部署の所属も外す
       WHERE id = p_user_id AND organization_id = v_org_id;
 
     IF FOUND THEN
@@ -2584,7 +2888,9 @@ BEGIN
 
   UPDATE user_profiles
     SET organization_id = NULL, org_role = NULL,
-        is_active_in_org = FALSE, joined_org_at = NULL
+        is_active_in_org = FALSE, joined_org_at = NULL,
+        roles = array_remove(roles, 'org_admin'),  -- #1235: 所属と一緒に外す
+        department_id = NULL  -- #1235: 部署の所属も外す
     WHERE id = p_user_id
     RETURNING * INTO v_target;
 
@@ -2600,6 +2906,93 @@ END $$;
 
 
 ALTER FUNCTION "public"."remove_org_member"("p_organization_id" "uuid", "p_user_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."request_child_promotion"("p_member_id" "uuid", "p_email" "text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  v_caller_role family_role_enum;
+  v_member family_members;
+  v_request family_promotion_requests;
+  v_token TEXT;
+  v_family_name TEXT;
+  v_requester_name TEXT;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'NOT_AUTHENTICATED' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- LOCK-ORDER: family_members -> family_promotion_requests
+  -- 認可を先に (email 解決より前 = 列挙オラクルを作らない)。member 不在時も
+  -- v_member.family_id = NULL → ロール NULL → NOT_FAMILY_ADULT (存在有無を漏らさない)。
+  -- この FOR UPDATE が canonical 順の先頭ロック。同一 member への並行
+  -- request/revoke/accept/reject はこの行で完全直列化される。
+  SELECT * INTO v_member FROM family_members WHERE id = p_member_id FOR UPDATE;
+  SELECT role INTO v_caller_role FROM family_members
+    WHERE family_id = v_member.family_id AND user_id = auth.uid() AND status = 'active';
+  IF v_caller_role IS NULL OR v_caller_role NOT IN ('representative','adult') THEN
+    RAISE EXCEPTION 'NOT_FAMILY_ADULT' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 対象は active な子供プレースホルダーであること
+  -- (user_id IS NULL ⟺ role='child' は family_members_child_profile_consistency CHECK が保証)
+  IF v_member.user_id IS NOT NULL THEN
+    RAISE EXCEPTION 'ALREADY_PROMOTED' USING ERRCODE = 'P0001';
+  END IF;
+  IF v_member.status <> 'active' THEN
+    RAISE EXCEPTION 'PROMOTION_MEMBER_UNAVAILABLE' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 既存 pending の失効 (request 行ロックは member 行ロック取得済みの今なら安全)
+  UPDATE family_promotion_requests
+    SET status = 'revoked', resolved_at = NOW(), resolved_by = auth.uid()
+    WHERE member_id = p_member_id AND status = 'pending';
+
+  -- G4: gen_random_bytes は使用禁止 (pgcrypto/search_path 地雷 = 20260511000134 の教訓)
+  v_token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+
+  INSERT INTO family_promotion_requests
+    (family_id, member_id, email, token, status, requested_by, expires_at)
+  VALUES
+    (v_member.family_id, p_member_id, lower(p_email), v_token, 'pending', auth.uid(),
+     NOW() + INTERVAL '14 days')
+  RETURNING * INTO v_request;
+
+  INSERT INTO membership_audit (scope, scope_id, action, actor_id, target_user_id, metadata)
+  VALUES ('family', v_member.family_id, 'child_promotion_requested', auth.uid(), NULL,
+          jsonb_build_object('member_id', p_member_id, 'request_id', v_request.id,
+                             'email', lower(p_email)));
+
+  -- メール文面用の表示名 (auth.users 参照は SECURITY DEFINER 関数本体内のみ = 確立パターン)
+  SELECT name INTO v_family_name FROM family_groups WHERE id = v_member.family_id;
+  SELECT COALESCE(up.nickname, au.email) INTO v_requester_name
+    FROM auth.users au
+    LEFT JOIN user_profiles up ON up.id = au.id
+    WHERE au.id = auth.uid();
+
+  RETURN jsonb_build_object(
+    'id',                  v_request.id,
+    'family_id',           v_request.family_id,
+    'member_id',           v_request.member_id,
+    'member_display_name', v_member.display_name,
+    'family_name',         v_family_name,
+    'email',               v_request.email,
+    'token',               v_request.token,
+    'status',              v_request.status,
+    'expires_at',          v_request.expires_at,
+    'requester_name',      v_requester_name
+  );
+EXCEPTION
+  WHEN deadlock_detected THEN
+    -- #1232 v3 (G10): 他機能とのロック交差等で 40P01 になっても 500/UNKNOWN を漏らさず
+    -- 再試行可能な競合 (409) として返す。副作用はサブトランザクションごと巻き戻り済み。
+    RAISE EXCEPTION 'CONFLICT_RETRY' USING ERRCODE = 'P0001';
+END $$;
+
+
+ALTER FUNCTION "public"."request_child_promotion"("p_member_id" "uuid", "p_email" "text") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."reset_e2e_test_users"() RETURNS "void"
@@ -2644,6 +3037,52 @@ $_$;
 
 
 ALTER FUNCTION "public"."reset_e2e_test_users"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."revoke_child_promotion"("p_member_id" "uuid") RETURNS "public"."family_promotion_requests"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  v_caller_role family_role_enum;
+  v_member family_members;
+  v_request family_promotion_requests;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'NOT_AUTHENTICATED' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- LOCK-ORDER: family_members -> family_promotion_requests
+  SELECT * INTO v_member FROM family_members WHERE id = p_member_id FOR UPDATE;
+  SELECT role INTO v_caller_role FROM family_members
+    WHERE family_id = v_member.family_id AND user_id = auth.uid() AND status = 'active';
+  IF v_caller_role IS NULL OR v_caller_role NOT IN ('representative','adult') THEN
+    RAISE EXCEPTION 'NOT_FAMILY_ADULT' USING ERRCODE = 'P0001';
+  END IF;
+
+  SELECT * INTO v_request FROM family_promotion_requests
+    WHERE member_id = p_member_id AND status = 'pending' FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'PROMOTION_REQUEST_NOT_FOUND' USING ERRCODE = 'P0001';
+  END IF;
+
+  UPDATE family_promotion_requests
+    SET status = 'revoked', resolved_at = NOW(), resolved_by = auth.uid()
+    WHERE id = v_request.id
+    RETURNING * INTO v_request;
+
+  INSERT INTO membership_audit (scope, scope_id, action, actor_id, target_user_id, metadata)
+  VALUES ('family', v_request.family_id, 'child_promotion_revoked', auth.uid(), NULL,
+          jsonb_build_object('member_id', p_member_id, 'request_id', v_request.id));
+
+  RETURN v_request;
+EXCEPTION
+  WHEN deadlock_detected THEN
+    RAISE EXCEPTION 'CONFLICT_RETRY' USING ERRCODE = 'P0001';
+END $$;
+
+
+ALTER FUNCTION "public"."revoke_child_promotion"("p_member_id" "uuid") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."revoke_family_invite"("p_invite_id" "uuid") RETURNS "public"."family_invites"
@@ -5027,7 +5466,7 @@ CREATE TABLE IF NOT EXISTS "public"."membership_audit" (
     "target_user_id" "uuid",
     "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    CONSTRAINT "membership_audit_action_check" CHECK (("action" = ANY (ARRAY['group_created'::"text", 'group_dissolved'::"text", 'invite_created'::"text", 'invite_accepted'::"text", 'invite_rejected'::"text", 'invite_revoked'::"text", 'invite_expired'::"text", 'member_added'::"text", 'member_removed'::"text", 'member_left'::"text", 'child_added'::"text", 'child_promoted'::"text", 'role_changed'::"text", 'owner_transfer_proposed'::"text", 'owner_transferred'::"text", 'owner_transfer_declined'::"text", 'representative_transfer_proposed'::"text", 'representative_transferred'::"text", 'representative_transfer_declined'::"text", 'operator_force_owner_transfer'::"text", 'operator_force_representative_transfer'::"text", 'operator_force_dissolve'::"text", 'paste_executed'::"text"]))),
+    CONSTRAINT "membership_audit_action_check" CHECK (("action" = ANY (ARRAY['group_created'::"text", 'group_dissolved'::"text", 'invite_created'::"text", 'invite_accepted'::"text", 'invite_rejected'::"text", 'invite_revoked'::"text", 'invite_expired'::"text", 'member_added'::"text", 'member_removed'::"text", 'member_left'::"text", 'child_added'::"text", 'child_promoted'::"text", 'role_changed'::"text", 'owner_transfer_proposed'::"text", 'owner_transferred'::"text", 'owner_transfer_declined'::"text", 'representative_transfer_proposed'::"text", 'representative_transferred'::"text", 'representative_transfer_declined'::"text", 'operator_force_owner_transfer'::"text", 'operator_force_representative_transfer'::"text", 'operator_force_dissolve'::"text", 'paste_executed'::"text", 'child_promotion_requested'::"text", 'child_promotion_rejected'::"text", 'child_promotion_revoked'::"text"]))),
     CONSTRAINT "membership_audit_scope_check" CHECK (("scope" = ANY (ARRAY['organization'::"text", 'family'::"text"])))
 );
 
@@ -6030,7 +6469,7 @@ CREATE TABLE IF NOT EXISTS "public"."support_ticket_messages" (
 ALTER TABLE "public"."support_ticket_messages" OWNER TO "postgres";
 
 
-COMMENT ON TABLE "public"."support_ticket_messages" IS 'サポートチケットメッセージ。is_internal=true は support ロールのみ閲覧。';
+COMMENT ON TABLE "public"."support_ticket_messages" IS 'サポートチケットメッセージ。閲覧: チケット所有者は自分のチケットの is_internal=false のみ、support/admin/super_admin は全件。作成: sender_id=auth.uid() 必須、所有者は自チケットへ is_internal=false のみ、staff は任意チケットへ is_internal 指定可。UPDATE/DELETE はポリシー無し (暗黙DENY)。Issue #1233 で所有権検証を追加。';
 
 
 
@@ -6609,6 +7048,16 @@ ALTER TABLE ONLY "public"."legacy_family_members"
 
 ALTER TABLE ONLY "public"."family_members"
     ADD CONSTRAINT "family_members_pkey1" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."family_promotion_requests"
+    ADD CONSTRAINT "family_promotion_requests_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."family_promotion_requests"
+    ADD CONSTRAINT "family_promotion_requests_token_key" UNIQUE ("token");
 
 
 
@@ -7402,6 +7851,14 @@ CREATE INDEX "idx_family_members_user_id" ON "public"."legacy_family_members" US
 
 
 
+CREATE INDEX "idx_family_promotion_requests_family" ON "public"."family_promotion_requests" USING "btree" ("family_id");
+
+
+
+CREATE INDEX "idx_family_promotion_requests_member" ON "public"."family_promotion_requests" USING "btree" ("member_id");
+
+
+
 CREATE INDEX "idx_health_challenges_active" ON "public"."health_challenges" USING "btree" ("user_id") WHERE ("status" = 'active'::"text");
 
 
@@ -7874,6 +8331,10 @@ CREATE INDEX "idx_user_metrics_metric_period" ON "public"."user_metrics" USING "
 
 
 
+CREATE INDEX "idx_user_profiles_department" ON "public"."user_profiles" USING "btree" ("department_id") WHERE ("department_id" IS NOT NULL);
+
+
+
 CREATE INDEX "idx_user_profiles_family" ON "public"."user_profiles" USING "btree" ("family_id") WHERE ("family_id" IS NOT NULL);
 
 
@@ -7986,6 +8447,10 @@ CREATE UNIQUE INDEX "uniq_family_members_user" ON "public"."family_members" USIN
 
 
 
+CREATE UNIQUE INDEX "uniq_family_promotion_pending_member" ON "public"."family_promotion_requests" USING "btree" ("member_id") WHERE ("status" = 'pending'::"text");
+
+
+
 CREATE UNIQUE INDEX "uniq_family_representative" ON "public"."family_members" USING "btree" ("family_id") WHERE (("role" = 'representative'::"public"."family_role_enum") AND ("status" = 'active'::"text"));
 
 
@@ -8043,6 +8508,10 @@ CREATE OR REPLACE TRIGGER "trg_guard_organizations_privileged" BEFORE UPDATE ON 
 
 
 CREATE OR REPLACE TRIGGER "trg_guard_user_profiles_privileged" BEFORE UPDATE ON "public"."user_profiles" FOR EACH ROW EXECUTE FUNCTION "public"."guard_user_profiles_privileged"();
+
+
+
+CREATE OR REPLACE TRIGGER "trg_guard_user_profiles_privileged_on_insert" BEFORE INSERT ON "public"."user_profiles" FOR EACH ROW EXECUTE FUNCTION "public"."guard_user_profiles_privileged_on_insert"();
 
 
 
@@ -8446,6 +8915,26 @@ ALTER TABLE ONLY "public"."legacy_family_members"
 
 ALTER TABLE ONLY "public"."family_members"
     ADD CONSTRAINT "family_members_user_id_fkey1" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."family_promotion_requests"
+    ADD CONSTRAINT "family_promotion_requests_family_id_fkey" FOREIGN KEY ("family_id") REFERENCES "public"."family_groups"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."family_promotion_requests"
+    ADD CONSTRAINT "family_promotion_requests_member_id_fkey" FOREIGN KEY ("member_id") REFERENCES "public"."family_members"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."family_promotion_requests"
+    ADD CONSTRAINT "family_promotion_requests_requested_by_fkey" FOREIGN KEY ("requested_by") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."family_promotion_requests"
+    ADD CONSTRAINT "family_promotion_requests_resolved_by_fkey" FOREIGN KEY ("resolved_by") REFERENCES "auth"."users"("id") ON DELETE SET NULL;
 
 
 
@@ -8940,6 +9429,11 @@ ALTER TABLE ONLY "public"."user_performance_checkins"
 
 
 ALTER TABLE ONLY "public"."user_profiles"
+    ADD CONSTRAINT "user_profiles_department_id_fkey" FOREIGN KEY ("department_id") REFERENCES "public"."departments"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."user_profiles"
     ADD CONSTRAINT "user_profiles_family_id_fkey" FOREIGN KEY ("family_id") REFERENCES "public"."family_groups"("id") ON DELETE SET NULL;
 
 
@@ -9000,8 +9494,8 @@ ALTER TABLE ONLY "public"."weekly_menus"
 
 
 CREATE POLICY "Admins can create audit logs" ON "public"."admin_audit_logs" FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
-   FROM "public"."user_profiles"
-  WHERE (("user_profiles"."id" = "auth"."uid"()) AND ("user_profiles"."roles" && ARRAY['admin'::"text", 'super_admin'::"text", 'support'::"text", 'org_admin'::"text"])))));
+   FROM "public"."user_profiles" "up"
+  WHERE (("up"."id" = "auth"."uid"()) AND ("up"."roles" && ARRAY['admin'::"text", 'super_admin'::"text", 'support'::"text"])))));
 
 
 
@@ -9077,10 +9571,6 @@ CREATE POLICY "Allow service role access" ON "public"."ingredient_match_cache" T
 
 
 
-CREATE POLICY "Allow service role insert" ON "public"."app_logs" FOR INSERT WITH CHECK (true);
-
-
-
 CREATE POLICY "Anyone can create inquiries" ON "public"."inquiries" FOR INSERT TO "authenticated", "anon" WITH CHECK (true);
 
 
@@ -9112,32 +9602,32 @@ CREATE POLICY "Anyone can view public collections" ON "public"."recipe_collectio
 
 
 CREATE POLICY "Org admins can manage challenges" ON "public"."organization_challenges" USING ((EXISTS ( SELECT 1
-   FROM "public"."user_profiles"
-  WHERE (("user_profiles"."id" = "auth"."uid"()) AND ("user_profiles"."organization_id" = "organization_challenges"."organization_id") AND ("user_profiles"."roles" && ARRAY['org_admin'::"text", 'admin'::"text", 'super_admin'::"text"])))));
+   FROM "public"."user_profiles" "up"
+  WHERE (("up"."id" = "auth"."uid"()) AND ("up"."organization_id" = "organization_challenges"."organization_id") AND (("up"."org_role" = ANY (ARRAY['owner'::"public"."org_role_enum", 'admin'::"public"."org_role_enum"])) OR ("up"."roles" && ARRAY['admin'::"text", 'super_admin'::"text"]))))));
 
 
 
 CREATE POLICY "Org admins can manage departments" ON "public"."departments" USING ((EXISTS ( SELECT 1
-   FROM "public"."user_profiles"
-  WHERE (("user_profiles"."id" = "auth"."uid"()) AND ("user_profiles"."organization_id" = "departments"."organization_id") AND ("user_profiles"."roles" && ARRAY['org_admin'::"text", 'admin'::"text", 'super_admin'::"text"])))));
+   FROM "public"."user_profiles" "up"
+  WHERE (("up"."id" = "auth"."uid"()) AND ("up"."organization_id" = "departments"."organization_id") AND (("up"."org_role" = ANY (ARRAY['owner'::"public"."org_role_enum", 'admin'::"public"."org_role_enum"])) OR ("up"."roles" && ARRAY['admin'::"text", 'super_admin'::"text"]))))));
 
 
 
 CREATE POLICY "Org admins can manage invites" ON "public"."organization_invites" USING ((EXISTS ( SELECT 1
-   FROM "public"."user_profiles"
-  WHERE (("user_profiles"."id" = "auth"."uid"()) AND ("user_profiles"."organization_id" = "organization_invites"."organization_id") AND ("user_profiles"."roles" && ARRAY['org_admin'::"text", 'admin'::"text", 'super_admin'::"text"])))));
+   FROM "public"."user_profiles" "up"
+  WHERE (("up"."id" = "auth"."uid"()) AND ("up"."organization_id" = "organization_invites"."organization_id") AND (("up"."org_role" = ANY (ARRAY['owner'::"public"."org_role_enum", 'admin'::"public"."org_role_enum"])) OR ("up"."roles" && ARRAY['admin'::"text", 'super_admin'::"text"]))))));
 
 
 
 CREATE POLICY "Org admins can manage reports" ON "public"."organization_reports" USING ((EXISTS ( SELECT 1
-   FROM "public"."user_profiles"
-  WHERE (("user_profiles"."id" = "auth"."uid"()) AND ("user_profiles"."organization_id" = "organization_reports"."organization_id") AND ("user_profiles"."roles" && ARRAY['org_admin'::"text", 'admin'::"text", 'super_admin'::"text"])))));
+   FROM "public"."user_profiles" "up"
+  WHERE (("up"."id" = "auth"."uid"()) AND ("up"."organization_id" = "organization_reports"."organization_id") AND (("up"."org_role" = ANY (ARRAY['owner'::"public"."org_role_enum", 'admin'::"public"."org_role_enum"])) OR ("up"."roles" && ARRAY['admin'::"text", 'super_admin'::"text"]))))));
 
 
 
 CREATE POLICY "Org admins can view own stats" ON "public"."org_daily_stats" FOR SELECT USING ((EXISTS ( SELECT 1
-   FROM "public"."user_profiles"
-  WHERE (("user_profiles"."id" = "auth"."uid"()) AND ("user_profiles"."organization_id" = "org_daily_stats"."organization_id") AND ("user_profiles"."roles" && ARRAY['org_admin'::"text", 'admin'::"text", 'super_admin'::"text"])))));
+   FROM "public"."user_profiles" "up"
+  WHERE (("up"."id" = "auth"."uid"()) AND ("up"."organization_id" = "org_daily_stats"."organization_id") AND (("up"."org_role" = ANY (ARRAY['owner'::"public"."org_role_enum", 'admin'::"public"."org_role_enum"])) OR ("up"."roles" && ARRAY['admin'::"text", 'super_admin'::"text"]))))));
 
 
 
@@ -9186,10 +9676,6 @@ CREATE POLICY "Service role can do everything on meal_nutrition_debug_logs" ON "
 
 
 
-CREATE POLICY "Service role can update shopping list requests" ON "public"."shopping_list_requests" FOR UPDATE USING (true);
-
-
-
 CREATE POLICY "Super admin can view" ON "public"."embedding_jobs" FOR SELECT USING ((EXISTS ( SELECT 1
    FROM "public"."user_profiles"
   WHERE (("user_profiles"."id" = "auth"."uid"()) AND ('super_admin'::"text" = ANY ("user_profiles"."roles"))))));
@@ -9199,14 +9685,6 @@ CREATE POLICY "Super admin can view" ON "public"."embedding_jobs" FOR SELECT USI
 CREATE POLICY "Super admins can update system settings" ON "public"."system_settings" USING ((EXISTS ( SELECT 1
    FROM "public"."user_profiles"
   WHERE (("user_profiles"."id" = "auth"."uid"()) AND ('super_admin'::"text" = ANY ("user_profiles"."roles"))))));
-
-
-
-CREATE POLICY "System can insert ai logs" ON "public"."ai_content_logs" FOR INSERT TO "authenticated" WITH CHECK (true);
-
-
-
-CREATE POLICY "System can insert stats" ON "public"."system_daily_stats" FOR INSERT TO "authenticated" WITH CHECK (true);
 
 
 
@@ -9246,11 +9724,11 @@ CREATE POLICY "Users can delete own comments" ON "public"."recipe_comments" FOR 
 
 
 
-CREATE POLICY "Users can delete own health goals" ON "public"."health_goals" FOR DELETE USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can delete own health goals" ON "public"."health_goals" FOR DELETE TO "authenticated" USING (("auth"."uid"() = "user_id"));
 
 
 
-CREATE POLICY "Users can delete own health records" ON "public"."health_records" FOR DELETE USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can delete own health records" ON "public"."health_records" FOR DELETE TO "authenticated" USING (("auth"."uid"() = "user_id"));
 
 
 
@@ -9278,15 +9756,15 @@ CREATE POLICY "Users can insert own health challenges" ON "public"."health_chall
 
 
 
-CREATE POLICY "Users can insert own health goals" ON "public"."health_goals" FOR INSERT WITH CHECK (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can insert own health goals" ON "public"."health_goals" FOR INSERT TO "authenticated" WITH CHECK (("auth"."uid"() = "user_id"));
 
 
 
-CREATE POLICY "Users can insert own health records" ON "public"."health_records" FOR INSERT WITH CHECK (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can insert own health records" ON "public"."health_records" FOR INSERT TO "authenticated" WITH CHECK (("auth"."uid"() = "user_id"));
 
 
 
-CREATE POLICY "Users can insert own health streaks" ON "public"."health_streaks" FOR INSERT WITH CHECK (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can insert own health streaks" ON "public"."health_streaks" FOR INSERT TO "authenticated" WITH CHECK (("auth"."uid"() = "user_id"));
 
 
 
@@ -9310,7 +9788,10 @@ CREATE POLICY "Users can insert own recipe likes" ON "public"."recipe_likes" FOR
 
 
 
-CREATE POLICY "Users can join challenges" ON "public"."organization_challenge_participants" FOR INSERT TO "authenticated" WITH CHECK (("user_id" = "auth"."uid"()));
+CREATE POLICY "Users can join challenges" ON "public"."organization_challenge_participants" FOR INSERT TO "authenticated" WITH CHECK ((("user_id" = ( SELECT "auth"."uid"() AS "uid")) AND (EXISTS ( SELECT 1
+   FROM ("public"."organization_challenges" "oc"
+     JOIN "public"."user_profiles" "up" ON (("up"."organization_id" = "oc"."organization_id")))
+  WHERE (("oc"."id" = "organization_challenge_participants"."challenge_id") AND ("up"."id" = ( SELECT "auth"."uid"() AS "uid"))))) AND (COALESCE("current_value", (0)::numeric) = (0)::numeric) AND ("rank" IS NULL)));
 
 
 
@@ -9410,7 +9891,7 @@ CREATE POLICY "Users can manage own recipe requests" ON "public"."recipe_request
 
 
 
-CREATE POLICY "Users can manage own recipes" ON "public"."recipes" USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can manage own recipes" ON "public"."recipes" USING (("auth"."uid"() = "user_id")) WITH CHECK (("auth"."uid"() = "user_id"));
 
 
 
@@ -9468,7 +9949,7 @@ CREATE POLICY "Users can update own health challenges" ON "public"."health_chall
 
 
 
-CREATE POLICY "Users can update own health goals" ON "public"."health_goals" FOR UPDATE USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can update own health goals" ON "public"."health_goals" FOR UPDATE TO "authenticated" USING (("auth"."uid"() = "user_id")) WITH CHECK (("auth"."uid"() = "user_id"));
 
 
 
@@ -9476,11 +9957,11 @@ CREATE POLICY "Users can update own health insights" ON "public"."health_insight
 
 
 
-CREATE POLICY "Users can update own health records" ON "public"."health_records" FOR UPDATE USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can update own health records" ON "public"."health_records" FOR UPDATE TO "authenticated" USING (("auth"."uid"() = "user_id")) WITH CHECK (("auth"."uid"() = "user_id"));
 
 
 
-CREATE POLICY "Users can update own health streaks" ON "public"."health_streaks" FOR UPDATE USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can update own health streaks" ON "public"."health_streaks" FOR UPDATE TO "authenticated" USING (("auth"."uid"() = "user_id")) WITH CHECK (("auth"."uid"() = "user_id"));
 
 
 
@@ -9493,10 +9974,6 @@ CREATE POLICY "Users can update own notification preferences" ON "public"."notif
 
 
 CREATE POLICY "Users can update own nutrition targets" ON "public"."nutrition_targets" FOR UPDATE TO "authenticated" USING (("user_id" = "auth"."uid"()));
-
-
-
-CREATE POLICY "Users can update own participation" ON "public"."organization_challenge_participants" FOR UPDATE TO "authenticated" USING (("user_id" = "auth"."uid"()));
 
 
 
@@ -9534,7 +10011,7 @@ CREATE POLICY "Users can view own health challenges" ON "public"."health_challen
 
 
 
-CREATE POLICY "Users can view own health goals" ON "public"."health_goals" FOR SELECT USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can view own health goals" ON "public"."health_goals" FOR SELECT TO "authenticated" USING (("auth"."uid"() = "user_id"));
 
 
 
@@ -9542,11 +10019,11 @@ CREATE POLICY "Users can view own health insights" ON "public"."health_insights"
 
 
 
-CREATE POLICY "Users can view own health records" ON "public"."health_records" FOR SELECT USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can view own health records" ON "public"."health_records" FOR SELECT TO "authenticated" USING (("auth"."uid"() = "user_id"));
 
 
 
-CREATE POLICY "Users can view own health streaks" ON "public"."health_streaks" FOR SELECT USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can view own health streaks" ON "public"."health_streaks" FOR SELECT TO "authenticated" USING (("auth"."uid"() = "user_id"));
 
 
 
@@ -9860,36 +10337,26 @@ CREATE POLICY "family_groups_delete_representative" ON "public"."family_groups" 
 
 
 
-CREATE POLICY "family_groups_select_member" ON "public"."family_groups" FOR SELECT USING ((EXISTS ( SELECT 1
-   FROM "public"."family_members" "fm"
-  WHERE (("fm"."family_id" = "family_groups"."id") AND ("fm"."user_id" = "auth"."uid"()) AND ("fm"."status" = 'active'::"text")))));
+CREATE POLICY "family_groups_select_member" ON "public"."family_groups" FOR SELECT TO "authenticated" USING ("public"."is_active_family_member"("id"));
 
 
 
-CREATE POLICY "family_groups_update_adult" ON "public"."family_groups" FOR UPDATE USING ((EXISTS ( SELECT 1
-   FROM "public"."family_members" "fm"
-  WHERE (("fm"."family_id" = "family_groups"."id") AND ("fm"."user_id" = "auth"."uid"()) AND ("fm"."role" = ANY (ARRAY['representative'::"public"."family_role_enum", 'adult'::"public"."family_role_enum"])) AND ("fm"."status" = 'active'::"text")))));
+CREATE POLICY "family_groups_update_adult" ON "public"."family_groups" FOR UPDATE TO "authenticated" USING ("public"."is_active_family_adult"("id"));
 
 
 
 ALTER TABLE "public"."family_invites" ENABLE ROW LEVEL SECURITY;
 
 
-CREATE POLICY "family_invites_insert_adult" ON "public"."family_invites" FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
-   FROM "public"."family_members" "fm"
-  WHERE (("fm"."family_id" = "family_invites"."family_id") AND ("fm"."user_id" = "auth"."uid"()) AND ("fm"."role" = ANY (ARRAY['representative'::"public"."family_role_enum", 'adult'::"public"."family_role_enum"])) AND ("fm"."status" = 'active'::"text")))));
+CREATE POLICY "family_invites_insert_adult" ON "public"."family_invites" FOR INSERT TO "authenticated" WITH CHECK ("public"."is_active_family_adult"("family_id"));
 
 
 
-CREATE POLICY "family_invites_select_adult" ON "public"."family_invites" FOR SELECT USING ((EXISTS ( SELECT 1
-   FROM "public"."family_members" "fm"
-  WHERE (("fm"."family_id" = "family_invites"."family_id") AND ("fm"."user_id" = "auth"."uid"()) AND ("fm"."role" = ANY (ARRAY['representative'::"public"."family_role_enum", 'adult'::"public"."family_role_enum"])) AND ("fm"."status" = 'active'::"text")))));
+CREATE POLICY "family_invites_select_adult" ON "public"."family_invites" FOR SELECT TO "authenticated" USING ("public"."is_active_family_adult"("family_id"));
 
 
 
-CREATE POLICY "family_invites_update_adult" ON "public"."family_invites" FOR UPDATE USING ((EXISTS ( SELECT 1
-   FROM "public"."family_members" "fm"
-  WHERE (("fm"."family_id" = "family_invites"."family_id") AND ("fm"."user_id" = "auth"."uid"()) AND ("fm"."role" = ANY (ARRAY['representative'::"public"."family_role_enum", 'adult'::"public"."family_role_enum"])) AND ("fm"."status" = 'active'::"text")))));
+CREATE POLICY "family_invites_update_adult" ON "public"."family_invites" FOR UPDATE TO "authenticated" USING ("public"."is_active_family_adult"("family_id"));
 
 
 
@@ -9899,15 +10366,18 @@ ALTER TABLE "public"."family_meal_logs" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "public"."family_members" ENABLE ROW LEVEL SECURITY;
 
 
-CREATE POLICY "family_members_select_self_or_family" ON "public"."family_members" FOR SELECT USING ((("user_id" = "auth"."uid"()) OR (EXISTS ( SELECT 1
-   FROM "public"."family_members" "fm"
-  WHERE (("fm"."family_id" = "family_members"."family_id") AND ("fm"."user_id" = "auth"."uid"()) AND ("fm"."status" = 'active'::"text"))))));
+CREATE POLICY "family_members_select_self_or_family" ON "public"."family_members" FOR SELECT TO "authenticated" USING ((("user_id" = "auth"."uid"()) OR "public"."is_active_family_member"("family_id")));
 
 
 
-CREATE POLICY "family_members_update_self_or_adult" ON "public"."family_members" FOR UPDATE USING ((("user_id" = "auth"."uid"()) OR (EXISTS ( SELECT 1
-   FROM "public"."family_members" "fm"
-  WHERE (("fm"."family_id" = "family_members"."family_id") AND ("fm"."user_id" = "auth"."uid"()) AND ("fm"."role" = ANY (ARRAY['representative'::"public"."family_role_enum", 'adult'::"public"."family_role_enum"])) AND ("fm"."status" = 'active'::"text"))))));
+CREATE POLICY "family_members_update_self_or_adult" ON "public"."family_members" FOR UPDATE TO "authenticated" USING ((("user_id" = "auth"."uid"()) OR "public"."is_active_family_adult"("family_id")));
+
+
+
+ALTER TABLE "public"."family_promotion_requests" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "family_promotion_requests_select_family" ON "public"."family_promotion_requests" FOR SELECT TO "authenticated" USING ("public"."is_active_family_adult"("family_id"));
 
 
 
@@ -10109,7 +10579,7 @@ CREATE POLICY "membership_audit_select_self" ON "public"."membership_audit" FOR 
 ALTER TABLE "public"."metric_definitions" ENABLE ROW LEVEL SECURITY;
 
 
-CREATE POLICY "metric_definitions_select" ON "public"."metric_definitions" FOR SELECT USING (true);
+CREATE POLICY "metric_definitions_select" ON "public"."metric_definitions" FOR SELECT TO "authenticated" USING (true);
 
 
 
@@ -10350,14 +10820,14 @@ CREATE POLICY "sales_leads_access" ON "public"."sales_leads" USING ((EXISTS ( SE
 ALTER TABLE "public"."segment_definitions" ENABLE ROW LEVEL SECURITY;
 
 
-CREATE POLICY "segment_definitions_select" ON "public"."segment_definitions" FOR SELECT USING (true);
+CREATE POLICY "segment_definitions_select" ON "public"."segment_definitions" FOR SELECT TO "authenticated" USING (true);
 
 
 
 ALTER TABLE "public"."segment_stats" ENABLE ROW LEVEL SECURITY;
 
 
-CREATE POLICY "segment_stats_select" ON "public"."segment_stats" FOR SELECT USING (true);
+CREATE POLICY "segment_stats_select" ON "public"."segment_stats" FOR SELECT TO "authenticated" USING (true);
 
 
 
@@ -10468,13 +10938,25 @@ CREATE POLICY "terms_self_read" ON "public"."terms_acceptances" FOR SELECT USING
 
 
 
-CREATE POLICY "ticket_messages_insert" ON "public"."support_ticket_messages" FOR INSERT WITH CHECK (("sender_id" = "auth"."uid"()));
+CREATE POLICY "ticket_messages_insert" ON "public"."support_ticket_messages" FOR INSERT WITH CHECK ((("sender_id" = "auth"."uid"()) AND (((NOT "is_internal") AND (EXISTS ( SELECT 1
+   FROM "public"."support_tickets" "t"
+  WHERE (("t"."id" = "support_ticket_messages"."ticket_id") AND ("t"."user_id" = "auth"."uid"()))))) OR (EXISTS ( SELECT 1
+   FROM "public"."user_profiles"
+  WHERE (("user_profiles"."id" = "auth"."uid"()) AND (ARRAY['support'::"text", 'admin'::"text", 'super_admin'::"text"] && "user_profiles"."roles")))))));
 
 
 
-CREATE POLICY "ticket_messages_select" ON "public"."support_ticket_messages" FOR SELECT USING (((NOT "is_internal") OR (EXISTS ( SELECT 1
+CREATE POLICY "ticket_messages_select" ON "public"."support_ticket_messages" FOR SELECT USING ((((NOT "is_internal") AND (EXISTS ( SELECT 1
+   FROM "public"."support_tickets" "t"
+  WHERE (("t"."id" = "support_ticket_messages"."ticket_id") AND ("t"."user_id" = "auth"."uid"()))))) OR (EXISTS ( SELECT 1
    FROM "public"."user_profiles"
   WHERE (("user_profiles"."id" = "auth"."uid"()) AND (ARRAY['support'::"text", 'admin'::"text", 'super_admin'::"text"] && "user_profiles"."roles"))))));
+
+
+
+CREATE POLICY "tickets_insert_staff" ON "public"."support_tickets" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."user_profiles"
+  WHERE (("user_profiles"."id" = "auth"."uid"()) AND (ARRAY['support'::"text", 'admin'::"text", 'super_admin'::"text"] && "user_profiles"."roles")))));
 
 
 
@@ -11187,6 +11669,11 @@ GRANT ALL ON TABLE "public"."family_members" TO "service_role";
 
 
 
+REVOKE ALL ON FUNCTION "public"."accept_child_promotion"("p_token" "text", "p_share_meals" boolean, "p_share_health" boolean, "p_share_menu" boolean) FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."accept_child_promotion"("p_token" "text", "p_share_meals" boolean, "p_share_health" boolean, "p_share_menu" boolean) TO "authenticated";
+
+
+
 REVOKE ALL ON FUNCTION "public"."accept_family_invite"("p_token" "text", "p_share_meals" boolean, "p_share_health" boolean, "p_share_menu" boolean) FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."accept_family_invite"("p_token" "text", "p_share_meals" boolean, "p_share_health" boolean, "p_share_menu" boolean) TO "authenticated";
 GRANT ALL ON FUNCTION "public"."accept_family_invite"("p_token" "text", "p_share_meals" boolean, "p_share_health" boolean, "p_share_menu" boolean) TO "service_role";
@@ -11351,6 +11838,12 @@ GRANT ALL ON FUNCTION "public"."get_invite_details"("p_token" "text") TO "servic
 
 
 
+REVOKE ALL ON FUNCTION "public"."get_promotion_details"("p_token" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."get_promotion_details"("p_token" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."get_promotion_details"("p_token" "text") TO "authenticated";
+
+
+
 GRANT ALL ON FUNCTION "public"."guard_family_groups_privileged"() TO "anon";
 GRANT ALL ON FUNCTION "public"."guard_family_groups_privileged"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."guard_family_groups_privileged"() TO "service_role";
@@ -11375,6 +11868,12 @@ GRANT ALL ON FUNCTION "public"."guard_user_profiles_privileged"() TO "service_ro
 
 
 
+GRANT ALL ON FUNCTION "public"."guard_user_profiles_privileged_on_insert"() TO "anon";
+GRANT ALL ON FUNCTION "public"."guard_user_profiles_privileged_on_insert"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."guard_user_profiles_privileged_on_insert"() TO "service_role";
+
+
+
 REVOKE ALL ON FUNCTION "public"."increment_recipe_like_count"("p_recipe_id" "text", "p_recipe_uuid" "uuid") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."increment_recipe_like_count"("p_recipe_id" "text", "p_recipe_uuid" "uuid") TO "service_role";
 
@@ -11391,8 +11890,19 @@ GRANT ALL ON FUNCTION "public"."invoke_catalog_import"("p_function_name" "text")
 
 
 
+REVOKE ALL ON FUNCTION "public"."is_active_family_adult"("p_family_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."is_active_family_adult"("p_family_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."is_active_family_adult"("p_family_id" "uuid") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."is_active_family_member"("p_family_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."is_active_family_member"("p_family_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."is_active_family_member"("p_family_id" "uuid") TO "service_role";
+
+
+
 REVOKE ALL ON FUNCTION "public"."is_inactive_user"("p_user_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "public"."is_inactive_user"("p_user_id" "uuid") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."is_inactive_user"("p_user_id" "uuid") TO "service_role";
 
 
@@ -11480,14 +11990,6 @@ GRANT ALL ON FUNCTION "public"."preview_org_invite"("p_token" "text") TO "servic
 
 REVOKE ALL ON FUNCTION "public"."promote_child_to_user"("p_member_id" "uuid", "p_email" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."promote_child_to_user"("p_member_id" "uuid", "p_email" "text") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."promote_child_to_user"("p_member_id" "uuid", "p_email" "text") TO "service_role";
-
-
-
-REVOKE ALL ON FUNCTION "public"."promote_child_to_user"("p_member_id" "uuid", "p_user_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "public"."promote_child_to_user"("p_member_id" "uuid", "p_user_id" "uuid") TO "anon";
-GRANT ALL ON FUNCTION "public"."promote_child_to_user"("p_member_id" "uuid", "p_user_id" "uuid") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."promote_child_to_user"("p_member_id" "uuid", "p_user_id" "uuid") TO "service_role";
 
 
 
@@ -11500,6 +12002,55 @@ GRANT ALL ON FUNCTION "public"."propose_family_representative_transfer"("p_famil
 REVOKE ALL ON FUNCTION "public"."propose_org_owner_transfer"("p_organization_id" "uuid", "p_to_user_id" "uuid") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."propose_org_owner_transfer"("p_organization_id" "uuid", "p_to_user_id" "uuid") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."propose_org_owner_transfer"("p_organization_id" "uuid", "p_to_user_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."family_promotion_requests" TO "service_role";
+
+
+
+GRANT SELECT("id") ON TABLE "public"."family_promotion_requests" TO "authenticated";
+
+
+
+GRANT SELECT("family_id") ON TABLE "public"."family_promotion_requests" TO "authenticated";
+
+
+
+GRANT SELECT("member_id") ON TABLE "public"."family_promotion_requests" TO "authenticated";
+
+
+
+GRANT SELECT("email") ON TABLE "public"."family_promotion_requests" TO "authenticated";
+
+
+
+GRANT SELECT("status") ON TABLE "public"."family_promotion_requests" TO "authenticated";
+
+
+
+GRANT SELECT("requested_by") ON TABLE "public"."family_promotion_requests" TO "authenticated";
+
+
+
+GRANT SELECT("expires_at") ON TABLE "public"."family_promotion_requests" TO "authenticated";
+
+
+
+GRANT SELECT("created_at") ON TABLE "public"."family_promotion_requests" TO "authenticated";
+
+
+
+GRANT SELECT("resolved_at") ON TABLE "public"."family_promotion_requests" TO "authenticated";
+
+
+
+GRANT SELECT("resolved_by") ON TABLE "public"."family_promotion_requests" TO "authenticated";
+
+
+
+REVOKE ALL ON FUNCTION "public"."reject_child_promotion"("p_token" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."reject_child_promotion"("p_token" "text") TO "authenticated";
 
 
 
@@ -11532,8 +12083,18 @@ GRANT ALL ON FUNCTION "public"."remove_org_member"("p_organization_id" "uuid", "
 
 
 
+REVOKE ALL ON FUNCTION "public"."request_child_promotion"("p_member_id" "uuid", "p_email" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."request_child_promotion"("p_member_id" "uuid", "p_email" "text") TO "authenticated";
+
+
+
 REVOKE ALL ON FUNCTION "public"."reset_e2e_test_users"() FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."reset_e2e_test_users"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."revoke_child_promotion"("p_member_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."revoke_child_promotion"("p_member_id" "uuid") TO "authenticated";
 
 
 

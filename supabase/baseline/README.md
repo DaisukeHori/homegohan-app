@@ -24,6 +24,7 @@ bash scripts/supabase-local.sh stop
 |---|---|
 | `prod_schema.sql` | 本番スキーマ（`supabase db dump --linked` の出力。Supabase 管理スキーマを除く） |
 | `prod_function_acl.sql` | public の関数の EXECUTE 権限を本番と一致させる SQL（下記「忠実度」参照） |
+| `prod_table_acl.sql` | public のテーブル / ビューの権限（列単位の GRANT を含む）を本番と一致させる SQL（同上） |
 | `prod_storage.sql` | storage バケット設定と `storage.objects` のポリシー（dump の対象外のためカタログから再構成） |
 | `prod_reference_data.sql` | マスタテーブルのデータ（`subscription_plans` / `feature_packages` / `badges` / `sport_presets`） |
 | `prod_ledger.txt` | 取得時点の本番 migration 台帳 |
@@ -67,6 +68,10 @@ bash scripts/supabase-local.sh stop
 **関数の権限について:** `pg_dump` の権限出力は「組み込みの既定権限（所有者 + PUBLIC）」からの差分しか出さない。
 Supabase は関数の作成時に anon / authenticated / service_role へ EXECUTE を自動付与するため、dump をそのまま流すと本番で REVOKE 済みの anon 等の権限が復活する（2026-10-06 時点で 41 関数）。
 権限の回帰テストを本番どおりに判定できるよう、`prod_function_acl.sql` で関数ごとに権限を付け直している。
+
+**テーブルの権限について:** 関数と同じ理由で、本番で anon / authenticated のテーブル権限を外したテーブルも、dump をそのまま流すと権限が復活する。
+2026-10-07 取得分では `family_promotion_requests`（#1232。token 列を列単位 GRANT で隠している）がこれに当たり、`verify` が不一致を検出した。
+`prod_table_acl.sql` でテーブルごとに API ロールの権限を本番の `relacl` どおりに付け直し、最後に本番の列単位 GRANT を付け直している（テーブル単位の REVOKE は列単位の権限も外すため）。
 
 ## 秘密情報の扱い
 

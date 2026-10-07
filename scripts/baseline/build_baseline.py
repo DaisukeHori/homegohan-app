@@ -163,6 +163,69 @@ def build_function_acl_sql(snapshot: pathlib.Path) -> str:
     return "\n".join(lines) + "\n"
 
 
+# aclitem の権限文字 → GRANT のキーワード (テーブル / ビュー)
+TABLE_PRIVILEGES = {
+    "r": "SELECT",
+    "a": "INSERT",
+    "w": "UPDATE",
+    "d": "DELETE",
+    "D": "TRUNCATE",
+    "x": "REFERENCES",
+    "t": "TRIGGER",
+    "m": "MAINTAIN",
+}
+COLUMN_GRANT = re.compile(
+    r'^GRANT (?P<privs>[A-Z ,]+)\((?P<cols>"[^"]+"(?:,\s*"[^"]+")*)\) ON TABLE "public"\."(?P<table>[^"]+)" TO "(?P<role>[^"]+)";$',
+    re.M,
+)
+
+
+def build_table_acl_sql(snapshot: pathlib.Path) -> str:
+    """public スキーマのテーブル / ビューの権限を本番 (pg_class.relacl) と完全に一致させる SQL を作る。
+
+    関数と同じ理由で、pg_dump の権限出力だけでは Supabase の ALTER DEFAULT PRIVILEGES により
+    作成時に anon / authenticated / service_role へ自動付与された権限が残る
+    (例: #1232 の family_promotion_requests は本番で anon / authenticated のテーブル権限を外しているが、
+    ローカルでは復活してしまい、列単位 GRANT で隠している token 列まで読めてしまう)。
+    テーブルごとに API ロールの権限を一度外して本番の ACL にあるものだけを付け直し、
+    最後に本番の列単位 GRANT (pg_dump の出力) を付け直す
+    (テーブル単位の REVOKE は列単位の権限も一緒に外すため)。
+    """
+    lines = [
+        "-- public スキーマのテーブル / ビューの権限を本番 (pg_class.relacl) と一致させる",
+        "-- pg_dump の権限出力だけでは Supabase の既定権限 (anon 等への自動付与) が残るため。",
+        "",
+    ]
+    with open(snapshot / "catalog_tables.csv", encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            if row["schema"] != "public":
+                continue
+            relation = f"public.{quote_ident(row['name'])}"
+            lines.append(f"REVOKE ALL ON TABLE {relation} FROM PUBLIC, {', '.join(API_ROLES)};")
+            for grantee, privs in parse_acl(row["acl"] or ""):
+                if grantee not in ("",) + API_ROLES:
+                    continue  # 所有者 (postgres 等) と Supabase 内部ロールは触らない
+                plain = [TABLE_PRIVILEGES[p] for i, p in enumerate(privs)
+                         if p in TABLE_PRIVILEGES and not privs[i + 1:i + 2] == "*"]
+                with_option = [TABLE_PRIVILEGES[p] for i, p in enumerate(privs)
+                               if p in TABLE_PRIVILEGES and privs[i + 1:i + 2] == "*"]
+                target = "PUBLIC" if grantee == "" else quote_ident(grantee)
+                if plain:
+                    lines.append(f"GRANT {', '.join(plain)} ON TABLE {relation} TO {target};")
+                if with_option:
+                    lines.append(f"GRANT {', '.join(with_option)} ON TABLE {relation} TO {target} WITH GRANT OPTION;")
+    column_grants = [
+        m.group(0)
+        for m in COLUMN_GRANT.finditer((snapshot / "prod_schema.sql").read_text(encoding="utf-8"))
+        if m.group("role") in API_ROLES
+    ]
+    if column_grants:
+        lines.append("")
+        lines.append("-- 本番の列単位 GRANT (上のテーブル単位の REVOKE で外れたものを付け直す)")
+        lines.extend(column_grants)
+    return "\n".join(lines) + "\n"
+
+
 PSQL_META = re.compile(r"^\\(?:un)?restrict \S+$")
 
 
@@ -196,6 +259,7 @@ def main(argv: list[str]) -> int:
 
     shutil.copyfile(snapshot / "prod_schema.sql", out / "prod_schema.sql")
     (out / "prod_function_acl.sql").write_text(build_function_acl_sql(snapshot), encoding="utf-8")
+    (out / "prod_table_acl.sql").write_text(build_table_acl_sql(snapshot), encoding="utf-8")
     (out / "prod_storage.sql").write_text(build_storage_sql(snapshot), encoding="utf-8")
     (out / "prod_reference_data.sql").write_text(
         clean_pg_dump((snapshot / "prod_reference_data.sql").read_text(encoding="utf-8")),
@@ -233,6 +297,7 @@ def main(argv: list[str]) -> int:
             for name in (
                 "prod_schema.sql",
                 "prod_function_acl.sql",
+                "prod_table_acl.sql",
                 "prod_storage.sql",
                 "prod_reference_data.sql",
                 "prod_ledger.txt",
