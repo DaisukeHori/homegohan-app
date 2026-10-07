@@ -8,6 +8,7 @@ import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
 import { renderFamilyPromoteEmail } from '@/lib/emails/membership/family-promote';
+import { checkInviteEmailLimits, inviteThrottleResponse } from '@/lib/membership/invite-throttle';
 import {
   FamilyMemberIdParamsSchema,
   RequestChildPromotionBodySchema,
@@ -70,6 +71,21 @@ export async function POST(
       },
       { status: 400 },
     );
+  }
+
+  // #1163 同意依頼メールの送信回数を制限する。最初の副作用 (RPC) の前に判定する。
+  // この時点では URL の member_id が自分の家族の枠かどうかを確認できていない (RPC が確かめる) ので、
+  // member_id も、そこから引く family_id も鍵にしない。鍵は認証で確定した user.id だけ
+  // (宛先の上限も user.id の範囲で数える)。
+  // 判定できない (Redis 障害など) ときは例外がそのまま伝播し、RPC もメールも実行されない (fail-closed)。
+  const throttle = await checkInviteEmailLimits({
+    flow: 'child-promotion',
+    userId: user.id,
+    scopeId: user.id,
+    recipientEmail: parsed.data.email,
+  });
+  if (throttle) {
+    return inviteThrottleResponse(throttle);
   }
 
   const { data, error } = await supabase.rpc('request_child_promotion', {
