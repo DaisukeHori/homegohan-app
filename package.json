@@ -28,7 +28,7 @@
     "types:supabase": "npx supabase gen types typescript --linked > src/types/database.types.ts"
   },
   "engines": {
-    "node": "20.x"
+    "node": "22.x"
   },
   "dependencies": {
     "@google/genai": "^1.44.0",
