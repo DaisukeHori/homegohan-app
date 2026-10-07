@@ -37,6 +37,7 @@ import {
   isOwnOrigin,
   openExternalUrl,
   requestBridgeCode,
+  sanitizeInitialPath,
   sanitizeWebPath,
   withAppMode,
 } from '../../src/lib/webViewBridge';
@@ -104,6 +105,69 @@ describe('getWebOrigin()', () => {
     jest.spyOn(console, 'warn').mockImplementation(() => {});
     process.env.EXPO_PUBLIC_WEB_URL = value;
     expect(getWebOrigin()).toBe(DEFAULT_WEB_ORIGIN);
+  });
+
+  /**
+   * requestBridgeCode はこのオリジンへ refresh_token を POST する。
+   * 本番ビルド (__DEV__ === false) で EXPO_PUBLIC_WEB_URL を http:// に誤設定しても、平文で送らない。
+   * (iOS の ATS / Android の cleartext 制限が止める可能性は高いが、それに頼らない)
+   */
+  describe('http: の扱い', () => {
+    const devGlobal = global as unknown as { __DEV__?: boolean };
+    const originalDev = devGlobal.__DEV__;
+
+    beforeEach(() => {
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      devGlobal.__DEV__ = originalDev;
+    });
+
+    function originFor(url: string, dev: boolean): string {
+      devGlobal.__DEV__ = dev;
+      process.env.EXPO_PUBLIC_WEB_URL = url;
+      return getWebOrigin();
+    }
+
+    it.each([
+      ['http://localhost:3000', 'http://localhost:3000'],
+      ['http://127.0.0.1:3000', 'http://127.0.0.1:3000'],
+      ['http://[::1]:3000', 'http://[::1]:3000'],
+      ['http://10.0.2.2:3000', 'http://10.0.2.2:3000'], // Android エミュレータからホスト PC
+      ['http://10.0.3.2:3000', 'http://10.0.3.2:3000'], // Genymotion
+      ['http://LOCALHOST:3000', 'http://localhost:3000'],
+    ])('本番ビルドでも、端末内ループバック / エミュレータの別名なら許可する: %s', (url, expected) => {
+      expect(originFor(url, false)).toBe(expected);
+    });
+
+    it.each([
+      ['本番ホスト', 'http://homegohan-app.vercel.app'],
+      ['任意のホスト', 'http://example.com'],
+      ['LAN の IP', 'http://192.168.1.10:3000'],
+      ['localhost で始まる別ホスト', 'http://localhost.evil.example'],
+      ['エミュレータの別名に似た IP', 'http://10.0.2.20'],
+      ['0.0.0.0', 'http://0.0.0.0:3000'],
+    ])('本番ビルドでは、それ以外のホストの http は既定の https オリジンへ倒す: %s', (_label, url) => {
+      expect(originFor(url, false)).toBe(DEFAULT_WEB_ORIGIN);
+    });
+
+    it.each(['http://192.168.1.10:3000', 'http://dev.homegohan.test:3000', 'http://localhost:3000'])(
+      '開発ビルド (__DEV__ === true) なら、実機向けの LAN 上の開発サーバーなど任意の http を許可する: %s',
+      (url) => {
+        expect(originFor(url, true)).toBe(url);
+      },
+    );
+
+    it('https は本番ビルドでも常に許可する', () => {
+      expect(originFor('https://homegohan.app', false)).toBe('https://homegohan.app');
+    });
+
+    it('http の誤設定は isOwnOrigin にも反映される (既定の https オリジンだけが自オリジン)', () => {
+      originFor('http://homegohan-app.vercel.app', false);
+      expect(isOwnOrigin('https://homegohan-app.vercel.app/home')).toBe(true);
+      expect(isOwnOrigin('http://homegohan-app.vercel.app/home')).toBe(false);
+    });
   });
 });
 
@@ -361,6 +425,172 @@ describe('sanitizeWebPath()', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// sanitizeInitialPath
+//   deep link (homegohan://home?initialPath=…) からも指定できる initialPath を、タブの prefix 配下に限定する。
+//   sanitizeWebPath だけでは /auth/native-bridge?code=<攻撃者の code> を通してしまい、
+//   被害者の WebView を攻撃者のアカウントでログインさせられる (login CSRF)。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('sanitizeInitialPath()', () => {
+  const FALLBACK = '/menus/weekly';
+  // WebViewScreen の TAB_ROUTES と同じ (各タブの prefix)
+  const PREFIXES = ['/menus', '/meals', '/comparison', '/profile', '/home'];
+  const sanitize = (raw: unknown) => sanitizeInitialPath(raw, FALLBACK, PREFIXES);
+
+  it.each([
+    '/menus',
+    '/menus/',
+    '/menus/weekly',
+    '/menus/weekly?date=2026-10-07&modal=shopping', // tab-navigate が渡す fullPath (pathname + search)
+    '/menus?x=1',
+    '/menus#top',
+    '/meals/new',
+    '/meals/abc?mode=app',
+    '/comparison',
+    '/profile',
+    '/profile/settings?tab=a',
+    '/home',
+    '/home?mode=app',
+    '/menus/weekly/%E3%81%82', // 日本語の percent-encoding
+    '/menus/a.b', // . を含むだけのセグメントはドットセグメントではない
+    '/menus/.hidden',
+    '/menus/a..b',
+    '/menus/...',
+    '/menus/weekly?next=/auth/native-bridge', // パス部分が配下なら、クエリ内の値は見ない (サーバーが解釈するのはパス)
+  ])('タブの prefix 配下のパスはそのまま返す: %s', (path) => {
+    expect(sanitize(path)).toBe(path);
+  });
+
+  it.each([
+    ['認証ブリッジ (login CSRF: 攻撃者の code でログインさせる)', '/auth/native-bridge?code=ATTACKERCODEattackercode0123456789ABCDEFG&next=%2Fhome'],
+    ['旧方式の認証ブリッジ (攻撃者のトークン)', '/auth/native-bridge?access_token=a&refresh_token=b&next=%2Fhome'],
+    ['ログイン画面', '/login'],
+    ['ルート', '/'],
+    ['タブ外のページ', '/settings'],
+    ['API', '/api/auth/session-sync'],
+    ['prefix の前方一致だけ (/homepage)', '/homepage'],
+    ['prefix の前方一致だけ (/menus-evil/x)', '/menus-evil/x'],
+    ['prefix がクエリに含まれるだけ', '/auth/native-bridge?next=/home'],
+    ['prefix がハッシュに含まれるだけ', '/login#/home'],
+    ['大文字小文字違い (Next.js のルートは大文字小文字を区別する)', '/Menus/weekly'],
+    ['prefix の一部を percent-encoding した迂回', '/%6Denus/weekly'],
+    ['ドットセグメントで prefix の外へ', '/menus/../auth/native-bridge?code=x'],
+    ['連続したドットセグメント', '/menus/weekly/../../auth/native-bridge'],
+    ['ドットセグメントが prefix 内に収まる形でも拒否する', '/menus/./weekly'],
+    ['末尾のドットセグメント', '/menus/..'],
+    ['エンコードされたドットセグメント (%2e%2e)', '/menus/%2e%2e/auth/native-bridge'],
+    ['エンコードされたドットセグメント (大文字)', '/menus/%2E%2E/auth/native-bridge'],
+    ['エンコードされたドットセグメント (混在)', '/menus/.%2E/auth/native-bridge'],
+    ['二重エンコードされたドットセグメント', '/menus/%252e%252e/auth/native-bridge'],
+    ['エンコードされた / で prefix を迂回', '/menus%2F..%2Fauth/native-bridge'],
+    ['エンコードされた / とドットセグメント', '/menus/..%2Fauth/native-bridge'],
+    ['エンコードされた \\ とドットセグメント', '/menus/..%5Cauth/native-bridge'],
+  ])('タブの配下に収まらない / 外へ抜けるパスは fallback: %s', (_label, path) => {
+    expect(sanitize(path)).toBe(FALLBACK);
+  });
+
+  it.each([
+    ['プロトコル相対', '//evil.example'],
+    ['authority 注入', '@evil.example'],
+    ['絶対 URL', 'https://evil.example/'],
+    ['バックスラッシュ', '/\\evil.example'],
+    ['javascript:', 'javascript:alert(1)'],
+    ['エンコードされた //', '/%2Fevil.example'],
+    ['空文字', ''],
+    ['文字列でない', 42],
+    ['undefined', undefined],
+  ])('sanitizeWebPath が拒否する値 (%s) は fallback のまま', (_label, raw) => {
+    expect(sanitize(raw)).toBe(FALLBACK);
+  });
+
+  it('配列 (expo-router の同名クエリ重複) は先頭要素だけを検証して使う', () => {
+    expect(sanitize(['/home?x=1', '/auth/native-bridge'])).toBe('/home?x=1');
+    expect(sanitize(['/auth/native-bridge', '/home'])).toBe(FALLBACK);
+    expect(sanitize([])).toBe(FALLBACK);
+  });
+
+  it('fallback と同じ値が渡されたら、その fallback を返す', () => {
+    expect(sanitize(FALLBACK)).toBe(FALLBACK);
+  });
+
+  it('許可する prefix が空なら何も通さない', () => {
+    expect(sanitizeInitialPath('/home', FALLBACK, [])).toBe(FALLBACK);
+  });
+
+  /**
+   * 手書きのケースに頼らず、ドットセグメント・エンコード・区切り文字の組み合わせを総当たりして
+   * 「受理した文字列は、どう解釈されても prefix 配下から出ない」ことを標準の WHATWG URL で確かめる。
+   *  (a) 生の文字列を、オリジンに対して URL として解決した結果 (WebView / サーバーが実際に見るパス)
+   *  (b) percent-decode を最大 3 回かけた文字列を同様に解決した結果 (デコードしてから解決する実装があっても出られない)
+   */
+  describe('総当たり検証 (Node 標準の URL を基準)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const NodeURL: typeof URL = require('url').URL;
+    const BASE = 'https://homegohan-app.vercel.app';
+    // 構造を壊す記号 (区切り・ドット・クエリ/ハッシュの開始とそのエンコード) と、
+    // エンコードや制御文字で紛れ込ませる記号の 2 系統で、それぞれ長さ 4 まで調べる
+    const STRUCTURAL = ['/', '..', '.', '%2e', '%2f', '%5c', '\\', '?', '#', '%23', '%3f', 'a', '%09'];
+    const DISGUISED = ['/', '..', '.', '%2E', '%252e', '%252f', '%0a', '%0d', '@', '%40', 'a'];
+
+    const underPrefix = (pathname: string) =>
+      PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+
+    function pathnamesOf(candidate: string): string[] {
+      const pathnames: string[] = [];
+      const resolve = (input: string) => {
+        try {
+          pathnames.push(new NodeURL(input, BASE).pathname);
+        } catch {
+          pathnames.push('<invalid>');
+        }
+      };
+      resolve(candidate);
+      let current = candidate;
+      for (let i = 0; i < 3; i++) {
+        let decoded: string;
+        try {
+          decoded = decodeURIComponent(current);
+        } catch {
+          break;
+        }
+        if (decoded === current) break;
+        current = decoded;
+        resolve(current);
+      }
+      return pathnames;
+    }
+
+    function* combinations(tokens: string[], maxLength: number): Generator<string> {
+      let layer: string[] = [''];
+      for (let length = 1; length <= maxLength; length++) {
+        const next: string[] = [];
+        for (const prefix of layer) for (const token of tokens) next.push(prefix + token);
+        layer = next;
+        yield* layer;
+      }
+    }
+
+    it('受理した文字列は、どの解釈でも pathname が prefix 配下に収まる (長さ 4 までの全組み合わせ)', () => {
+      const violations: string[] = [];
+      let accepted = 0;
+      for (const root of ['/menus', '/menus/', '/menus/weekly/', '/home']) {
+        for (const tokens of [STRUCTURAL, DISGUISED]) {
+          for (const tail of combinations(tokens, 4)) {
+            const candidate = `${root}${tail}`;
+            if (sanitize(candidate) !== candidate) continue;
+            accepted++;
+            if (!pathnamesOf(candidate).every(underPrefix)) violations.push(JSON.stringify(candidate));
+          }
+        }
+      }
+
+      expect(violations).toEqual([]);
+      // 検査が空振りしていないこと (安全な文字列が実際に受理されている)
+      expect(accepted).toBeGreaterThan(1000);
+    }, 120000);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // withAppMode
 // ─────────────────────────────────────────────────────────────────────────────
 describe('withAppMode()', () => {
@@ -600,6 +830,59 @@ describe('buildOriginGuardScript() / buildNavigateScript()', () => {
     expect(((sandbox.window as any).location.assign as jest.Mock).mock.calls[0][0]).toBe(nasty);
     expect(sandbox.__pwned).toBeUndefined();
   });
+
+  describe('guard オプション (タブ再タップのリセットなど、自オリジン以外でも動かす必要がある場合)', () => {
+    const url = `${ORIGIN}/home?mode=app`;
+    // 読み込み失敗で残った about:blank (opaque origin) / 外部ページ / http に落ちた同ホスト / origin が取れない異常系
+    const NON_OWN_ORIGINS = ['null', 'https://evil.example', 'http://homegohan-app.vercel.app', ''];
+
+    it.each(NON_OWN_ORIGINS)('guard: false なら、自オリジン以外 (%p) の上でも replace を呼ぶ', (origin) => {
+      const location = runNavigateScript(buildNavigateScript(url, 'replace', { guard: false }), origin);
+      expect(location.replace).toHaveBeenCalledTimes(1);
+      expect(location.replace).toHaveBeenCalledWith(url);
+      expect(location.assign).not.toHaveBeenCalled();
+    });
+
+    it('guard: false でも自オリジン上では従来どおり動く (assign / replace)', () => {
+      const assigned = runNavigateScript(buildNavigateScript(url, 'assign', { guard: false }), ORIGIN);
+      expect(assigned.assign).toHaveBeenCalledWith(url);
+      const replaced = runNavigateScript(buildNavigateScript(url, 'replace', { guard: false }), ORIGIN);
+      expect(replaced.replace).toHaveBeenCalledWith(url);
+    });
+
+    it('guard: false でも URL は JSON.stringify でリテラル化され、コードとして実行されない', () => {
+      const nasty = `${ORIGIN}/x?q='+(globalThis.__pwned2=1)+'"\`</script>`;
+      const sandbox: Record<string, unknown> = { window: { location: { origin: 'null', replace: jest.fn() } } };
+      vm.runInNewContext(buildNavigateScript(nasty, 'replace', { guard: false }), sandbox);
+      expect(((sandbox.window as any).location.replace as jest.Mock).mock.calls[0][0]).toBe(nasty);
+      expect(sandbox.__pwned2).toBeUndefined();
+    });
+
+    // 既定は安全側。ガードを外せるのは明示的な `false` だけ (呼び忘れ・想定外の値でガードが消えない)
+    it.each([
+      ['オプション省略', undefined],
+      ['空のオプション', {}],
+      ['guard: true', { guard: true }],
+      ['guard: undefined', { guard: undefined }],
+      ['guard が false 以外の値 (0)', { guard: 0 as unknown as boolean }],
+      ['guard が false 以外の値 ("false")', { guard: 'false' as unknown as boolean }],
+      ['guard が false 以外の値 (null)', { guard: null as unknown as boolean }],
+    ])('%s ではガード付きのまま (外部ページ・about:blank では何もしない)', (_label, options) => {
+      const script = buildNavigateScript(url, 'replace', options);
+      for (const origin of ['null', 'https://evil.example']) {
+        const location = runNavigateScript(script, origin);
+        expect(location.replace).not.toHaveBeenCalled();
+        expect(location.assign).not.toHaveBeenCalled();
+      }
+      expect(runNavigateScript(script, ORIGIN).replace).toHaveBeenCalledWith(url);
+    });
+
+    it('guard: false のスクリプトは自オリジンの URL 以外の情報を持たない (トークン・code を含まない)', () => {
+      const script = buildNavigateScript(url, 'replace', { guard: false });
+      expect(script).toContain(JSON.stringify(url));
+      expect(script).not.toMatch(/token|code=|native-bridge|Authorization|Bearer/i);
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -709,6 +992,119 @@ describe('getSessionForBridge()', () => {
   it('getSession が例外でも投げずに null', async () => {
     expect(await getSessionForBridge(makeAuth({ getSessionThrows: true }), NOW_MS)).toBeNull();
   });
+
+  /**
+   * 複数のタブがほぼ同時にマウントすると、どのタブも getSession で「残りが少ない」と判断して refreshSession を呼ぶ。
+   * 別々に更新すると refresh_token が続けて 2 回ローテーションされ、先に bridge した WebView が持つ分が使用済みになる。
+   */
+  describe('同時に呼ばれた場合 (複数のタブがほぼ同時にマウントしたとき)', () => {
+    const expiring = { ...fresh, expires_at: nowSec + 30 };
+    const renewed = { access_token: 'AT-new', refresh_token: 'RT-new', expires_at: nowSec + 3600 };
+    // await のたびに次のマイクロタスクへ進めるだけでは足りないので、タイマーを 1 周させて全員が refreshSession に到達するのを待つ
+    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    type RefreshResult = { data: { session: Record<string, unknown> | null } };
+
+    /** refreshSession の完了を手動で制御できる auth */
+    function makeDeferredAuth(session: Record<string, unknown> = expiring) {
+      let resolveRefresh: (value: RefreshResult) => void = () => {};
+      let rejectRefresh: (reason: unknown) => void = () => {};
+      const refreshSession = jest.fn(
+        () =>
+          new Promise<RefreshResult>((resolve, reject) => {
+            resolveRefresh = resolve;
+            rejectRefresh = reject;
+          }),
+      );
+      const auth = { getSession: jest.fn(async () => ({ data: { session } })), refreshSession };
+      return {
+        auth,
+        refreshSession,
+        finish: (value: Record<string, unknown> | null) => resolveRefresh({ data: { session: value } }),
+        fail: (reason: unknown) => rejectRefresh(reason),
+      };
+    }
+
+    it('refreshSession は 1 回だけ呼ばれ、どちらも同じ更新後のトークンを受け取る', async () => {
+      const { auth, refreshSession, finish } = makeDeferredAuth();
+
+      const first = getSessionForBridge(auth, NOW_MS);
+      const second = getSessionForBridge(auth, NOW_MS);
+      await settle();
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+
+      finish(renewed);
+      const expected = { access_token: 'AT-new', refresh_token: 'RT-new' };
+      expect(await first).toEqual(expected);
+      expect(await second).toEqual(expected);
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('3 つ以上でも 1 回だけ', async () => {
+      const { auth, refreshSession, finish } = makeDeferredAuth();
+
+      const all = [1, 2, 3, 4, 5].map(() => getSessionForBridge(auth, NOW_MS));
+      await settle();
+      finish(renewed);
+
+      const results = await Promise.all(all);
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+      expect(results.every((r) => r?.access_token === 'AT-new' && r.refresh_token === 'RT-new')).toBe(true);
+    });
+
+    it('更新が終わった後の呼び出しは、(残りが少ないままなら) 改めて refreshSession する。結果を使い回し続けない', async () => {
+      const { auth, refreshSession, finish } = makeDeferredAuth();
+
+      const first = getSessionForBridge(auth, NOW_MS);
+      await settle();
+      finish(renewed);
+      await first;
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+
+      const second = getSessionForBridge(auth, NOW_MS);
+      await settle();
+      expect(refreshSession).toHaveBeenCalledTimes(2);
+      finish({ access_token: 'AT-newer', refresh_token: 'RT-newer', expires_at: nowSec + 3600 });
+      expect(await second).toEqual({ access_token: 'AT-newer', refresh_token: 'RT-newer' });
+    });
+
+    it('更新が例外で終わっても、待っていた全員が例外なく (まだ有効な access_token で) 続行でき、その後は再試行できる', async () => {
+      const { auth, refreshSession, fail, finish } = makeDeferredAuth();
+
+      const first = getSessionForBridge(auth, NOW_MS);
+      const second = getSessionForBridge(auth, NOW_MS);
+      await settle();
+      fail(new Error('network'));
+
+      const fallback = { access_token: 'AT-fresh', refresh_token: 'RT-fresh' };
+      expect(await first).toEqual(fallback);
+      expect(await second).toEqual(fallback);
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+
+      // 失敗した更新を握り続けない: 次の呼び出しは新しく更新を試みる
+      const third = getSessionForBridge(auth, NOW_MS);
+      await settle();
+      expect(refreshSession).toHaveBeenCalledTimes(2);
+      finish(renewed);
+      expect(await third).toEqual({ access_token: 'AT-new', refresh_token: 'RT-new' });
+    });
+
+    it('別の auth クライアントとは更新を共有しない', async () => {
+      const a = makeDeferredAuth();
+      const b = makeDeferredAuth();
+
+      const fromA = getSessionForBridge(a.auth, NOW_MS);
+      const fromB = getSessionForBridge(b.auth, NOW_MS);
+      await settle();
+      expect(a.refreshSession).toHaveBeenCalledTimes(1);
+      expect(b.refreshSession).toHaveBeenCalledTimes(1);
+
+      a.finish({ access_token: 'AT-a', refresh_token: 'RT-a', expires_at: nowSec + 3600 });
+      b.finish({ access_token: 'AT-b', refresh_token: 'RT-b', expires_at: nowSec + 3600 });
+      expect(await fromA).toEqual({ access_token: 'AT-a', refresh_token: 'RT-a' });
+      expect(await fromB).toEqual({ access_token: 'AT-b', refresh_token: 'RT-b' });
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -770,6 +1166,25 @@ describe('requestBridgeCode()', () => {
     await requestBridgeCode(SESSION);
 
     expect(fetchMock.mock.calls[0][0]).toBe('https://homegohan.app/api/auth/native-bridge/code');
+  });
+
+  it('本番ビルドで EXPO_PUBLIC_WEB_URL が http:// に誤設定されても、refresh_token を平文では送らない (既定の https オリジンへ送る)', async () => {
+    const devGlobal = global as unknown as { __DEV__?: boolean };
+    const originalDev = devGlobal.__DEV__;
+    devGlobal.__DEV__ = false;
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      process.env.EXPO_PUBLIC_WEB_URL = 'http://web.example.com';
+      const fetchMock = jest.fn().mockResolvedValue(jsonResponse({ code: CODE, expires_in: 60 }));
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      await requestBridgeCode(SESSION);
+
+      expect(fetchMock.mock.calls[0][0]).toBe(`${DEFAULT_WEB_ORIGIN}/api/auth/native-bridge/code`);
+      expect(fetchMock.mock.calls[0][0]).toMatch(/^https:/);
+    } finally {
+      devGlobal.__DEV__ = originalDev;
+    }
   });
 
   it('プラットフォームとアプリのバージョンをヘッダで送る (サーバー側のバージョン分布把握用)', async () => {

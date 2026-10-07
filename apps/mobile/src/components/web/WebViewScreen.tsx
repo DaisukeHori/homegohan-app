@@ -19,7 +19,7 @@ import {
   isOwnOrigin,
   openExternalUrl,
   requestBridgeCode,
-  sanitizeWebPath,
+  sanitizeInitialPath,
   withAppMode,
 } from '../../lib/webViewBridge';
 
@@ -123,9 +123,14 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
 
   // Fix 2: tab-navigate で fullPath (クエリ付き) を受け取った場合に初期 URL を上書き
   // initialPath は deep link (homegohan://home?initialPath=…) からも指定できるため、
-  // 単一の "/" で始まる同一オリジンのパスだけを受け付ける (//evil.example 等は path に戻す)
+  // 単一の "/" で始まる同一オリジンのパスで、かつどれかのタブの prefix 配下のものだけを受け付ける
+  // (//evil.example や /auth/native-bridge?code=… 等は path に戻す。tab-navigate の fullPath は必ずタブの prefix に一致する)
   const params = useLocalSearchParams<{ initialPath?: string }>();
-  const effectivePath = sanitizeWebPath(params.initialPath, path);
+  const effectivePath = sanitizeInitialPath(
+    params.initialPath,
+    path,
+    TAB_ROUTES.map((t) => t.pathPrefix),
+  );
 
   // タブ再タップ時に WebView を初期 URL にリセットする
   // tabPress は同じタブを再タップした際にも発火するため useFocusEffect より確実
@@ -136,8 +141,14 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
         const targetUrl = buildWebUrl(withAppMode(path));
         // window.location.replace で履歴を残さず初期 URL に置換してフレッシュな state に戻す
         // (写真撮影デッドロック対策: step state や input キャッシュをリセット)
-        // URL は JSON.stringify でリテラル化し、自アプリのオリジン上でのみ実行する (#1036)
-        webViewRef.current?.injectJavaScript(buildNavigateScript(targetUrl, 'replace'));
+        // URL は JSON.stringify でリテラル化する (#1036)。
+        // オリジンガードは付けない (guard: false)。このリセットは、WebView が自オリジンを表示していないときの復帰手段でもある:
+        //   - 起動時にオフラインで直接 URL の読み込みに失敗すると、iOS は about:blank (origin は "null") のままエラー表示になる。
+        //     エラー表示に再試行手段は無く、init も再実行されないので、戻れるのはこの再タップだけ
+        //   - Android の shouldOverrideUrlLoading が待ち時間切れで許可に倒れ、外部ページが WebView に載った場合も同じ
+        // このスクリプトが持つのは公開されている自オリジンの URL だけ (トークン・code は無い) なので、
+        // 外部ページ上で実行されても漏れるものが無い。
+        webViewRef.current?.injectJavaScript(buildNavigateScript(targetUrl, 'replace', { guard: false }));
       }
     });
     return unsubscribe;

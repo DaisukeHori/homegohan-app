@@ -327,6 +327,54 @@ describe('initialPath の検証', () => {
     expect(new URL(uriOf()).host).toBe('homegohan-app.vercel.app');
   });
 
+  // deep link (homegohan://home?initialPath=…) は他のアプリや Web ページからも起動できる。
+  // initialPath が /auth/native-bridge?code=<攻撃者の code> を指せると、bridge が先に正規の code でセッションを張った後、
+  // next として攻撃者の code を引き換え、被害者の WebView を攻撃者のアカウントでログインさせられる (login CSRF)。
+  // そのため initialPath はどれかのタブの prefix 配下に限る (tab-navigate の fullPath は必ずタブの prefix に一致する)。
+  const ATTACKER_CODE = 'ATTACKERCODEattackercode0123456789ABCDEFG';
+  const OUTSIDE_TAB_PATHS: Array<[string, string]> = [
+    ['認証ブリッジ (攻撃者の code)', `/auth/native-bridge?code=${ATTACKER_CODE}&next=%2Fhome`],
+    ['旧方式の認証ブリッジ (攻撃者のトークン)', '/auth/native-bridge?access_token=attacker-at&refresh_token=attacker-rt'],
+    ['タブ外のページ', '/login'],
+    ['ドットセグメントでタブの外へ', `/home/../auth/native-bridge?code=${ATTACKER_CODE}`],
+    ['エンコードされたドットセグメントでタブの外へ', `/home/%2e%2e/auth/native-bridge?code=${ATTACKER_CODE}`],
+  ];
+
+  it.each(OUTSIDE_TAB_PATHS)(
+    'タブの配下でない値 (%s) は tab の既定パスへ戻る: bridge の next',
+    async (_label, initialPath) => {
+      mockSearchParams = { initialPath };
+      await renderScreen('/home');
+
+      const parsed = new URL(uriOf());
+      expect(parsed.searchParams.get('code')).toBe(CODE); // 正規の code だけ
+      expect(parsed.searchParams.get('next')).toBe('/home?mode=app');
+      expect(uriOf()).not.toContain('ATTACKER');
+      expect(uriOf()).not.toContain('attacker');
+    },
+  );
+
+  it.each(OUTSIDE_TAB_PATHS)(
+    'タブの配下でない値 (%s) は tab の既定パスへ戻る: セッション無しの直接 URL',
+    async (_label, initialPath) => {
+      mockGetSession.mockResolvedValue({ data: { session: null } });
+      mockSearchParams = { initialPath };
+      await renderScreen('/home');
+
+      expect(uriOf()).toBe(`${WEB_BASE_URL}/home?mode=app`);
+    },
+  );
+
+  it.each([
+    ['同じタブの配下 (tab-navigate が渡す fullPath)', '/menus/weekly?date=2026-10-07', '/menus/weekly', '/menus/weekly?date=2026-10-07&mode=app'],
+    ['別のタブの配下 (どれかのタブの prefix 配下なら通す)', '/profile/settings?tab=a', '/home', '/profile/settings?tab=a&mode=app'],
+  ])('%s のパスは、そのまま使う', async (_label, initialPath, screenPath, expectedNext) => {
+    mockSearchParams = { initialPath };
+    await renderScreen(screenPath);
+
+    expect(new URL(uriOf()).searchParams.get('next')).toBe(expectedNext);
+  });
+
   it('配列で渡された場合は先頭要素だけを検証して使う', async () => {
     mockSearchParams = { initialPath: ['//evil.example', '/menus'] };
     await renderScreen('/home');
@@ -624,6 +672,16 @@ describe('タブ intercept スクリプト (injectedJavaScript) のオリジン�
   });
 });
 
+/**
+ * タブ再タップのリセットは「WebView が自オリジンのページを表示していないとき」の復帰手段でもあるため、
+ * 注入スクリプトにオリジンガードを付けない。ガードを付けると次の 2 経路で、アプリを終了するまで戻れなくなる。
+ *   (a) 起動時にオフライン (または init 中に通信が途切れた) で直接 URL の読み込みに失敗すると、
+ *       iOS の WKWebView は最初の about:blank (location.origin は "null") のまま既定のエラー表示になる。
+ *       エラー表示には再試行ボタンも pull-to-refresh も無く、init は effectivePath が変わらない限り再実行されない。
+ *   (b) Android の shouldOverrideUrlLoading が 250ms の待ち時間切れで許可に倒れ、外部ページが WebView に載る。
+ * このスクリプトが持つのは公開されている自オリジンの URL だけで、トークンも code も無い。
+ * 外部ページ上で実行しても漏れるものが無いので、ガードによる安全上の利点も無い。
+ */
 describe('タブ再タップ (tabPress) のリセットスクリプト', () => {
   function getTabPressListener(): () => void {
     const call = mockNavigation.addListener.mock.calls.find(([event]) => event === 'tabPress');
@@ -631,8 +689,8 @@ describe('タブ再タップ (tabPress) のリセットスクリプト', () => {
     return call![1];
   }
 
-  it('自オリジン上でのみ、JSON リテラル化した初期 URL へ location.replace する', async () => {
-    await renderScreen('/profile');
+  /** 再タップして、WebView に注入されたリセットスクリプトを取り出す */
+  function tapActiveTab(): string {
     const injectJavaScript = jest.fn();
     mockWebViewProps.ref.current = { injectJavaScript };
     mockNavigation.isFocused.mockReturnValue(true);
@@ -640,16 +698,55 @@ describe('タブ再タップ (tabPress) のリセットスクリプト', () => {
     getTabPressListener()();
 
     expect(injectJavaScript).toHaveBeenCalledTimes(1);
-    const script: string = injectJavaScript.mock.calls[0][0];
+    return injectJavaScript.mock.calls[0][0];
+  }
+
+  /** スクリプトを、location.origin が origin のページ (を模した sandbox) で実行する */
+  function runOnPage(script: string, origin: string) {
+    const location = { origin, assign: jest.fn(), replace: jest.fn() };
+    vm.runInNewContext(script, { window: { location } });
+    return location;
+  }
+
+  it.each([
+    ['自オリジンのページ', WEB_BASE_URL],
+    ['読み込みに失敗して残った about:blank (opaque origin)', 'null'],
+    ['待ち時間切れで許可され WebView に載った外部ページ', 'https://evil.example'],
+  ])('%s の上でも、JSON リテラル化した初期 URL へ location.replace する', async (_label, origin) => {
+    await renderScreen('/profile');
+
+    const script = tapActiveTab();
     expect(script).toContain(JSON.stringify(`${WEB_BASE_URL}/profile?mode=app`));
 
-    const own = { origin: WEB_BASE_URL, assign: jest.fn(), replace: jest.fn() };
-    vm.runInNewContext(script, { window: { location: own } });
-    expect(own.replace).toHaveBeenCalledWith(`${WEB_BASE_URL}/profile?mode=app`);
+    const location = runOnPage(script, origin);
+    expect(location.replace).toHaveBeenCalledTimes(1);
+    expect(location.replace).toHaveBeenCalledWith(`${WEB_BASE_URL}/profile?mode=app`);
+    expect(location.assign).not.toHaveBeenCalled();
+  });
 
-    const foreign = { origin: 'https://evil.example', assign: jest.fn(), replace: jest.fn() };
-    vm.runInNewContext(script, { window: { location: foreign } });
-    expect(foreign.replace).not.toHaveBeenCalled();
+  it('起動時にオフライン (code 発行に失敗) で about:blank のまま固まっても、再タップで直接 URL へ復帰できる', async () => {
+    mockFetch.mockRejectedValue(new TypeError('Network request failed'));
+    await renderScreen('/menus/weekly');
+    // トークンを含まない直接 URL に倒れている (この読み込みが失敗した状態を about:blank で表す)
+    expect(uriOf()).toBe(`${WEB_BASE_URL}/menus/weekly?mode=app`);
+
+    const location = runOnPage(tapActiveTab(), 'null');
+
+    expect(location.replace).toHaveBeenCalledWith(`${WEB_BASE_URL}/menus/weekly?mode=app`);
+  });
+
+  it('リセット先は tab の初期 URL のまま (initialPath や bridge の code を引き継がない)', async () => {
+    mockSearchParams = { initialPath: '/menus/weekly?a=1' };
+    await renderScreen('/menus/weekly');
+    // init が bridge URL (code 付き) を開いていても、リセットスクリプトには code を持ち込まない
+    expect(uriOf()).toContain('/auth/native-bridge?code=');
+
+    const script = tapActiveTab();
+
+    expect(script).toContain(JSON.stringify(`${WEB_BASE_URL}/menus/weekly?mode=app`));
+    for (const secret of [ACCESS, REFRESH, CODE, 'native-bridge', 'code=', 'initialPath', 'a=1']) {
+      expect(script).not.toContain(secret);
+    }
   });
 
   it('フォーカスされていないタブの再タップでは何もしない', async () => {

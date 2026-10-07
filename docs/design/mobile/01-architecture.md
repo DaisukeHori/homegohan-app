@@ -58,9 +58,9 @@ Mobile はそれを `WebViewScreen` コンポーネント経由で表示する�
 3. **タブ間ナビゲーション intercept**: `buildTabInterceptScript` を inject し、別タブへの `<a>` クリックを `postMessage` で捕捉して Expo Router に委譲。自アプリのオリジン上でのみ実行する
 4. **SPA pushState hook**: `history.pushState` を override し programmatic ナビゲーションも interceptor に流す
 5. **ダウンロード処理**: Web 側 `postMessage({ type: 'download' })` を受け取り `expo-sharing` で共有
-6. **タブ再タップ時リセット**: `navigation.addListener('tabPress')` でアクティブ WebView を初期 URL へ `window.location.replace` (自アプリのオリジン上でのみ実行)
+6. **タブ再タップ時リセット**: `navigation.addListener('tabPress')` でアクティブ WebView を初期 URL へ `window.location.replace`。**オリジンガードは付けない**: 起動時のオフラインで直接 URL の読み込みに失敗して `about:blank` のまま固まった場合や、Android のナビゲーションガードが待ち時間切れで許可して外部ページが載った場合は、WebView が自アプリのオリジンを表示していない。そのとき戻れる手段がこの再タップしか無い (エラー表示に再試行手段は無く、bridge の初期化も再実行されない) ため。スクリプトが持つのは公開されている自オリジンの URL だけでトークン・code は含まないので、外部ページ上で実行されても漏れるものは無い
 7. **WebView を自アプリのオリジンに固定**: `onShouldStartLoadWithRequest` / `onOpenWindow` で他オリジンへの遷移を遮断し、OS の既定ブラウザで開く (#1158)。`onMessage` は送信元が自アプリのオリジンのときだけ処理する。オリジンは `EXPO_PUBLIC_WEB_URL` の 1 つだけ (Cookie はホスト単位のため)
-8. **`initialPath` の検証**: deep link (`homegohan://home?initialPath=...`) からも指定できるため、単一の `/` で始まる同一オリジンのパスだけを受け付ける (`//evil.example` 等は各タブの既定パスへ戻す)
+8. **`initialPath` の検証**: deep link (`homegohan://home?initialPath=...`) からも指定できるため、単一の `/` で始まる同一オリジンのパスで、かつどれかのタブの prefix (`/menus` `/meals` `/comparison` `/profile` `/home`) 配下のものだけを受け付ける。`//evil.example` や、攻撃者の code で被害者を攻撃者のアカウントにログインさせる `/auth/native-bridge?code=...` (login CSRF)、`/menus/../auth/...` のようにドットセグメントで prefix の外へ抜けるものは、各タブの既定パスへ戻す。tab-navigate が渡す `fullPath` は必ずどれかのタブの prefix に一致するので、正規の経路は塞がない
 
 #### postMessage プロトコル (Web → Native)
 
@@ -258,7 +258,7 @@ production   → App Store submission + Android .aab
 |------|-----------|------|
 | `EXPO_FCM_SERVER_KEY` | preview / production | Android FCM サーバーキー (新規) |
 | `EXPO_PUBLIC_EAS_PROJECT_ID` | preview / production | Expo Push Token 取得 (既存) |
-| `EXPO_PUBLIC_WEB_URL` | 全プロファイル | WebView ベース URL (既存) |
+| `EXPO_PUBLIC_WEB_URL` | 全プロファイル | WebView ベース URL (既存)。`http://` は開発ビルド (`__DEV__`) か localhost / 10.0.2.2 等の開発用ホストだけ。本番ビルドで `http://` を設定しても、refresh_token を平文で送らないよう既定の https オリジンに戻る |
 | `EXPO_PUBLIC_SUPABASE_URL` | 全プロファイル | Supabase URL (既存) |
 
 **EAS Secret 登録コマンド** (iOS APNs キーは登録済み):

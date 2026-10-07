@@ -18,9 +18,7 @@ import { render, waitFor } from '@testing-library/react-native';
 
 // ── 環境変数 ──────────────────────────────────────────────────────────────────
 const WEB_BASE_URL = 'https://homegohan-app.vercel.app';
-const SUPABASE_URL = 'https://abcdef1234.supabase.co';
 process.env.EXPO_PUBLIC_WEB_URL = WEB_BASE_URL;
-process.env.EXPO_PUBLIC_SUPABASE_URL = SUPABASE_URL;
 
 // ── expo-router モック ────────────────────────────────────────────────────────
 jest.mock('expo-router', () => ({

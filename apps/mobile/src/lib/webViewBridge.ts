@@ -75,6 +75,33 @@ function asciiLowerCase(value: string): string {
 let warnedInvalidWebUrl = false;
 
 /**
+ * 本番ビルド (`__DEV__` が false) でも http: を許す開発用ホスト。
+ * 端末自身のループバックと、Android エミュレータ (標準 / Genymotion) からホスト PC を指す別名で、
+ * どれも端末の外へは出ない。
+ */
+const DEV_HTTP_HOSTNAMES: readonly string[] = ['localhost', '127.0.0.1', '[::1]', '10.0.2.2', '10.0.3.2'];
+
+function isDevBuild(): boolean {
+  return typeof __DEV__ !== 'undefined' && __DEV__ === true;
+}
+
+/**
+ * EXPO_PUBLIC_WEB_URL の値をオリジンとして採用してよいか。
+ *
+ * requestBridgeCode はこのオリジンへ refresh_token を POST する。
+ * 本番ビルドで EXPO_PUBLIC_WEB_URL を http:// に誤設定しても、平文で送らないようにする
+ * (iOS の ATS / Android の cleartext 制限が止める可能性は高いが、それに頼らない)。
+ *   - https: は常に可
+ *   - http: は開発ビルド (`__DEV__`: 実機向けの LAN 上の開発サーバーなど) か、DEV_HTTP_HOSTNAMES のホストに限る
+ */
+function isAcceptableWebOrigin(parsed: URL): boolean {
+  if (parsed.hostname === '' || parsed.username !== '' || parsed.password !== '') return false;
+  if (parsed.protocol === 'https:') return true;
+  if (parsed.protocol !== 'http:') return false;
+  return isDevBuild() || DEV_HTTP_HOSTNAMES.includes(asciiLowerCase(parsed.hostname));
+}
+
+/**
  * WebView に読み込ませる Web のオリジン (`https://host[:port]`、末尾スラッシュ・パス・認証情報なし)。
  * 環境変数は呼び出しのたびに読む (テストで差し替えられるようにするため)。
  * `process.env.EXPO_PUBLIC_*` は Metro がビルド時にインライン展開するので、関数内での参照でも問題ない。
@@ -83,18 +110,14 @@ export function getWebOrigin(): string {
   const configured = process.env.EXPO_PUBLIC_WEB_URL;
   if (configured) {
     const parsed = parseUrl(configured);
-    if (
-      parsed &&
-      (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
-      parsed.hostname !== '' &&
-      parsed.username === '' &&
-      parsed.password === ''
-    ) {
+    if (parsed && isAcceptableWebOrigin(parsed)) {
       return `${parsed.protocol}//${asciiLowerCase(parsed.host)}`;
     }
     if (!warnedInvalidWebUrl) {
       warnedInvalidWebUrl = true;
-      console.warn('[webViewBridge] EXPO_PUBLIC_WEB_URL is invalid. Falling back to the default web origin.');
+      console.warn(
+        '[webViewBridge] EXPO_PUBLIC_WEB_URL is invalid (https is required outside development). Falling back to the default web origin.',
+      );
     }
   }
   return DEFAULT_WEB_ORIGIN;
@@ -185,6 +208,64 @@ export function sanitizeWebPath(raw: unknown, fallback: string): string {
   return value;
 }
 
+/** パスの `?` / `#` より前の部分 */
+function pathnameOf(path: string): string {
+  const end = path.search(/[?#]/);
+  return end === -1 ? path : path.slice(0, end);
+}
+
+/**
+ * `.` / `..` のセグメントを含むか。`\` も区切りとして扱い、percent-encoding (`%2e%2e` や多重エンコード) はデコードしながら調べる。
+ * WHATWG URL のパーサはこれらのセグメントを解決するため、`/menus/../auth/native-bridge` のように
+ * prefix 配下に見えて、実際には別のパスへ抜ける形になる。
+ *
+ * 実際の遷移は生の文字列を解決するが、デコードしてから解決する経路があっても抜けられないよう、
+ * デコードした各段階で「URL として解決したときのパス」(`?` / `#` 以降は除き、タブ・改行は無視される) を調べる。
+ */
+function hasDotSegment(pathname: string): boolean {
+  let current = pathname;
+  for (let i = 0; ; i++) {
+    const resolvedPath = stripControlChars(pathnameOf(current));
+    if (resolvedPath.split(/[\\/]/).some((segment) => segment === '.' || segment === '..')) return true;
+    if (i >= MAX_DECODE_ITERATIONS) return false;
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(current);
+    } catch {
+      return false; // 不正なエンコードはこれ以上デコードできない。ここまでの検査で打ち切る
+    }
+    if (decoded === current) return false;
+    current = decoded;
+  }
+}
+
+/**
+ * path のパス部分が、prefixes のどれかの配下 (完全一致、または `prefix/` で始まる) か。
+ * タブ intercept スクリプトの matchTab と同じ判定で、前方一致だけの紛らわしいもの (`/homepage` は `/home` の配下ではない) は除く。
+ * デコードしない生のパスで調べ、`.` / `..` を含むもの (prefix の外へ抜け得る) は配下とみなさない。
+ */
+function isUnderPathPrefixes(path: string, prefixes: readonly string[]): boolean {
+  const pathname = pathnameOf(path);
+  if (hasDotSegment(pathname)) return false;
+  return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+/**
+ * initialPath (deep link の `homegohan://home?initialPath=…`、tab-navigate の fullPath) 用の検証。
+ * sanitizeWebPath に加えて、パス部分が allowedPrefixes (各タブの prefix) の配下であることを要求する。
+ * 満たさなければ fallback を返す (fallback は呼び出し側が信頼できる値を渡すこと)。
+ *
+ * これは多層防御。deep link は他のアプリや Web ページからも起動でき、initialPath は WebView が最初に開くパスになる。
+ * sanitizeWebPath だけでは `/auth/native-bridge?code=<攻撃者の code>` を通してしまい、
+ * 被害者の WebView を攻撃者のアカウントでログインさせられる (login CSRF。入力した食事・健康データが攻撃者側に入る)。
+ * tab-navigate が渡す fullPath は必ずどれかのタブの prefix に一致するので、正規の経路は塞がない。
+ */
+export function sanitizeInitialPath(raw: unknown, fallback: string, allowedPrefixes: readonly string[]): string {
+  const safe = sanitizeWebPath(raw, fallback);
+  if (safe === fallback) return fallback;
+  return isUnderPathPrefixes(safe, allowedPrefixes) ? safe : fallback;
+}
+
 /**
  * path に `mode=app` を付与する (既にあれば付けない)。ハッシュがあれば `?` / `&` はハッシュより前に入れる。
  * Web 側は mode=app と is_native_app Cookie でアプリ内表示 (ボトムナビ非表示など) に切り替える。
@@ -215,7 +296,14 @@ export function buildBridgeUrl(code: string, nextPath: string): string {
 
 export interface NavigationRequestLike {
   url?: unknown;
-  /** Android は送ってこない場合がある。false が明示されたときだけサブフレームとみなす */
+  /**
+   * false が明示されたときだけサブフレームとみなす。
+   * iOS は実際のフレームを報告する。Android (react-native-webview の shouldOverrideUrlLoading) は
+   * request.isForMainFrame() を渡さず、isTopFrame を載せない (デバッグ時の代替経路では常に true を載せる)。
+   * そのため Android では、他オリジンの iframe 内での遷移もトップフレーム扱いになり、既定ブラウザが開いてしまう。
+   * 現状の Web には他オリジンの iframe が無い (src を grep して確認済み) ので実害は無いが、
+   * 動画などの埋め込みを足すときは Android 実機で確認すること (判定は decideNavigation を参照)。
+   */
   isTopFrame?: boolean;
 }
 
@@ -278,11 +366,35 @@ export function buildOriginGuardScript(): string {
   return `if (window.location.origin !== ${JSON.stringify(getWebOrigin())}) return;`;
 }
 
-/** 現在の WebView を url へ遷移させるスクリプト (オリジンガード付き)。tabPress のリセットと onOpenWindow で使う */
-export function buildNavigateScript(url: string, method: 'assign' | 'replace' = 'assign'): string {
+export interface NavigateScriptOptions {
+  /**
+   * true (既定) なら、自アプリのオリジン上でのみ遷移する。`false` を明示したときだけ、どのページの上でも遷移する。
+   *
+   * `false` にしてよいのは、次の 2 つを両方満たすときだけ。
+   *   1. スクリプトが持つのが公開されている自オリジンの URL だけで、トークンも code も含まない
+   *      (外部ページ上で実行されても漏れるものが無い)
+   *   2. 「WebView が自オリジンのページを表示していないとき」の復帰手段として使う
+   *      (タブ再タップのリセット。ガードを付けると、起動時のオフラインで about:blank のまま固まった場合や、
+   *       Android のナビゲーションガードが時間切れで許可して外部ページが載った場合に、アプリを終了するまで戻れなくなる)
+   */
+  guard?: boolean;
+}
+
+/**
+ * 現在の WebView を url へ遷移させるスクリプト。URL は JSON.stringify でリテラル化する。
+ * 既定では自オリジン上でのみ実行する (オリジンガード付き)。onOpenWindow はこの既定のまま使う。
+ * tabPress のリセットだけは `{ guard: false }` で呼ぶ (NavigateScriptOptions.guard を参照)。
+ */
+export function buildNavigateScript(
+  url: string,
+  method: 'assign' | 'replace' = 'assign',
+  options: NavigateScriptOptions = {},
+): string {
+  // 明示的な false だけがガードを外す (undefined / true / 想定外の値は、安全側のガード付きにする)
+  const guardStatement = options.guard === false ? '' : buildOriginGuardScript();
   return `
 (function() {
-  ${buildOriginGuardScript()}
+  ${guardStatement}
   window.location.${method}(${JSON.stringify(url)});
 })();
 true;
@@ -313,10 +425,38 @@ function toBridgeSession(session: SessionLike | null | undefined): BridgeSession
   return { access_token: session.access_token, refresh_token: session.refresh_token };
 }
 
+/** 実行中の refreshSession。auth クライアントごとに 1 つだけ共有する (終われば消える) */
+const inflightRefreshes = new WeakMap<BridgeAuthClient, Promise<SessionLike | null>>();
+
+/**
+ * refreshSession を、同じ auth クライアントで実行中のものがあればそれに相乗りして 1 回だけ行う。例外は投げず、失敗なら null。
+ *
+ * 複数のタブがほぼ同時にマウントすると、どのタブも getSession で「残りが少ない」と判断して refreshSession を呼ぶ。
+ * それぞれが別々に更新すると refresh_token が続けて 2 回ローテーションされ、先に bridge した WebView が持つ
+ * refresh_token が使用済みになってしまう。
+ */
+function refreshSessionOnce(auth: BridgeAuthClient): Promise<SessionLike | null> {
+  const inflight = inflightRefreshes.get(auth);
+  if (inflight) return inflight;
+
+  const refreshing = (async (): Promise<SessionLike | null> => {
+    try {
+      const { data } = await auth.refreshSession();
+      return data?.session ?? null;
+    } catch {
+      return null; // 呼び出し側が、まだ有効な access_token ならそのまま使う
+    }
+  })().finally(() => {
+    inflightRefreshes.delete(auth);
+  });
+  inflightRefreshes.set(auth, refreshing);
+  return refreshing;
+}
+
 /**
  * bridge に使うセッションを返す。例外は投げず、取れなければ null。
  *
- * access_token の残りが BRIDGE_MIN_TOKEN_TTL_SEC 未満なら先に refreshSession する。
+ * access_token の残りが BRIDGE_MIN_TOKEN_TTL_SEC 未満なら先に refreshSession する (同時に呼ばれても更新は 1 回)。
  * Web 側の setSession は期限切れの access_token を見ると refresh_token を使って更新 (=ローテーション) してしまい、
  * ネイティブ側が持つ refresh_token が失効して強制ログアウトになり得るため。
  */
@@ -336,13 +476,9 @@ export async function getSessionForBridge(
         : Number.POSITIVE_INFINITY;
     if (remainingSec >= BRIDGE_MIN_TOKEN_TTL_SEC) return currentTokens;
 
-    try {
-      const { data: refreshed } = await auth.refreshSession();
-      const refreshedTokens = toBridgeSession(refreshed?.session);
-      if (refreshedTokens) return refreshedTokens;
-    } catch {
-      // 更新に失敗しても、まだ有効な access_token ならそのまま使う (サーバー側が最終判断する)
-    }
+    const refreshedTokens = toBridgeSession(await refreshSessionOnce(auth));
+    if (refreshedTokens) return refreshedTokens;
+    // 更新に失敗しても、まだ有効な access_token ならそのまま使う (サーバー側が最終判断する)
     return remainingSec > 0 ? currentTokens : null;
   } catch {
     return null;
