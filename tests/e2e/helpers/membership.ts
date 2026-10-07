@@ -10,6 +10,7 @@ import type { Page } from '@playwright/test';
 import { createClient } from '@supabase/supabase-js';
 import * as path from 'path';
 import { config as dotenvConfig } from 'dotenv';
+import { generateTestPassword } from './credentials';
 
 // worktree 環境でも .env.local を読み込む (2段フォールバック)
 dotenvConfig({ path: path.resolve(__dirname, '../../../.env.local') });
@@ -22,7 +23,8 @@ const ws = require('ws') as typeof WebSocket;
 // 定数
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const TEST_PASSWORD = 'TestE2E2026!secure';
+// 実行ごとにランダムな値 (リポジトリに固定のパスワードを置かない)
+export const TEST_PASSWORD = generateTestPassword();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Supabase admin クライアント (service_role)

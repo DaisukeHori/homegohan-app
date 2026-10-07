@@ -14,6 +14,7 @@ import { test as base, type Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
+import { generateTestPassword } from "../helpers/credentials";
 
 // Node.js 20 は native WebSocket を持たないため ws パッケージを明示的に指定。
 // Supabase Realtime クライアントが WebSocket を必要とするが admin API のみ使うため
@@ -29,7 +30,8 @@ dotenvConfig({ path: path.resolve(__dirname, "../../../../.env.local") });
 // 定数
 // ─────────────────────────────────────────────────────────────────────────────
 
-const FRESH_USER_PASSWORD = "TestE2E2026!secure";
+// 実行ごとにランダムな値 (リポジトリに固定のパスワードを置かない)
+const FRESH_USER_PASSWORD = generateTestPassword();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Supabase admin クライアント (service_role)

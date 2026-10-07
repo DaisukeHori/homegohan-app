@@ -29,6 +29,7 @@ import { createClient } from "@supabase/supabase-js";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
 import { test, expect } from "./fixtures/fresh-user";
+import { generateTestPassword } from "./helpers/credentials";
 // Node.js 20 は native WebSocket を持たないため ws パッケージを明示的に指定
 // (Supabase Realtime クライアントが WebSocket を必要とするが、admin API のみ使うため
 //  実際の接続は行われない。transport を渡すことで初期化エラーを回避する)
@@ -106,7 +107,7 @@ test.describe("Bug 4 リグレッション: signup → 確認メール URL ス�
   // ────────────────────────────────────────────────────────
   test("web signup の確認メール URL は https:// スキームであること (Bug 4 regression)", async () => {
     const uniqueEmail = `e2e-signup-web-${Date.now()}@homegohan.test`;
-    const password = "TestE2E2026!secure";
+    const password = generateTestPassword();
     const adminClient = getAdminClient();
     const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 
@@ -167,7 +168,7 @@ test.describe("Bug 4 リグレッション: signup → 確認メール URL ス�
   // ────────────────────────────────────────────────────────
   test("mobile 向け signup の確認メール URL は homegohan:// スキームを保持すること (Bug 4 mobile variant)", async () => {
     const uniqueEmail = `e2e-signup-mobile-${Date.now()}@homegohan.test`;
-    const password = "TestE2E2026!secure";
+    const password = generateTestPassword();
     const adminClient = getAdminClient();
     const mobileRedirectTo = "homegohan://auth/verify";
 
@@ -262,7 +263,7 @@ test.describe("Bug 4 リグレッション: signup → 確認メール URL ス�
     test.setTimeout(60_000);
 
     const uniqueEmail = `e2e-signup-ui-${Date.now()}@homegohan.test`;
-    const password = "TestE2E2026!secure";
+    const password = generateTestPassword();
     const adminClient = getAdminClient();
 
     try {

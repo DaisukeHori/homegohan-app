@@ -357,15 +357,25 @@ async function globalSetup(config: FullConfig): Promise<void> {
     const storageStatePath = `tests/e2e/.auth/user-${padded}.json`;
     const refreshTokenPath = `tests/e2e/.auth/refresh-${padded}.json`;
 
-    // パスワード優先順位: 個別環境変数 > 共通環境変数 > fallback
+    // パスワード優先順位: 個別環境変数 > 共通環境変数。既定値は無い (リポジトリに置かない)
     const perUserPassword = process.env[`E2E_USER_${padded}_PASSWORD`];
     const commonPassword = process.env.E2E_USER_PASSWORD;
-    const userPassword = perUserPassword ?? commonPassword ?? "TestE2E2026!secure";
+    const userPassword = perUserPassword || commonPassword;
+    if (!userPassword) {
+      // E2E_REQUIRE_LOGIN=1 (CI) では全テストを走らせずに止める。既定 (未設定) では警告だけ出して続行する
+      // (storageState は作らない。各テストは getUserCredentials() で同じエラーになる)
+      const message =
+        `[global-setup] ${userEmail} のパスワードが未設定です。` +
+        `E2E_USER_${padded}_PASSWORD または E2E_USER_PASSWORD を設定してください (既定値はありません)。`;
+      if (process.env.E2E_REQUIRE_LOGIN === "1") {
+        throw new Error(`${message} (E2E_REQUIRE_LOGIN=1)`);
+      }
+      console.warn(`${message} storageState なしで続行します。`);
+      continue;
+    }
     const passwordSource = perUserPassword
       ? `個別 (E2E_USER_${padded}_PASSWORD)`
-      : commonPassword
-        ? "共通 (E2E_USER_PASSWORD)"
-        : "fallback";
+      : "共通 (E2E_USER_PASSWORD)";
     console.log(`[global-setup] user-${padded}: password 由来 = ${passwordSource}`);
 
     const loggedIn = await setupUserSession(

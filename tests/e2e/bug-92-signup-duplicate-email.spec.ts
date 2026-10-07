@@ -7,12 +7,14 @@
  *   2. /auth/verify 画面に「すでにアカウントをお持ちの場合はログインへ」リンクを追加
  */
 import { test, expect } from "@playwright/test";
+import { generateTestPassword } from "./helpers/credentials";
 
 // 重複チェック用の既存ユーザー認証情報 (E2E_USER 廃止対応)
 const EXISTING_EMAIL =
   process.env.E2E_USER_EMAIL ?? "e2e-user-01@homegohan.test";
-const EXISTING_PASSWORD =
-  process.env.E2E_USER_PASSWORD ?? "TestE2E2026!secure";
+// signup フォームに入力するだけでログインはしない。重複メールなら弾かれるので、実際のパスワードである必要はない。
+// 要件 (8 文字以上・英数字混在) を満たす、実行ごとのランダムな値を使う。
+const EXISTING_PASSWORD = generateTestPassword();
 
 // ────────────────────────────────────────────────────────
 // シナリオ A: 重複メールアドレスで signup → エラー表示

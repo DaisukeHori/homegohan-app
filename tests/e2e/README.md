@@ -34,6 +34,29 @@ test("...", async ({ authedPage }) => {
 - `E2E_USER_EMAIL` (default: `claude-debug-1777477826@homegohan.local`)
 - `E2E_USER_PASSWORD` (default: `ClaudeDebug2026!`)
 
+### パスワードの扱い
+
+リポジトリには、`e2e-user-XX@homegohan.test` のパスワードの既定値を置かない。
+既存アカウント (`e2e-user-01〜10`) のパスワードは、環境変数からだけ取る。
+
+- `E2E_USER_XX_PASSWORD` (個別。`XX` は `01`〜`10`)。あれば共通より優先
+- `E2E_USER_PASSWORD` (共通)
+
+どちらも無いと、`global-setup` と `getUserCredentials()` / `login()` は、分かりやすいエラーで止まる
+(`E2E_REQUIRE_LOGIN=1` の `global-setup` は、全テストを走らせずに止める)。
+
+ローカルでは `scripts/create-e2e-accounts.ts` が、`E2E_USER_PASSWORD` が無ければランダムなパスワードを作り、
+ローカル DB のユーザーを作成・更新したうえで `.env.local` の `E2E_USER_XX_PASSWORD` に書く
+(行が既にあれば値を書き換える。パスワードは標準出力に出さない)。
+
+```bash
+# ローカル (ランダムなパスワードを .env.local に書く)
+npx --yes tsx@4 scripts/create-e2e-accounts.ts
+```
+
+テストの中で新しく作るユーザー (`fresh-user`、招待で作るユーザー、signup のテスト) は、
+`tests/e2e/helpers/credentials.ts` の `generateTestPassword()` で、実行ごとにランダムなパスワードを作る。
+
 ## CI
 
 | ワークフロー | 対象 | テストユーザー |
@@ -41,7 +64,8 @@ test("...", async ({ authedPage }) => {
 | `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 を実行 | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
 | `.github/workflows/e2e.yml` | 本番 URL。ローカル dev server は起動しない | 本番の `e2e-user-01〜04@homegohan.test`。Secrets `E2E_USER_EMAIL` (= `e2e-user-01@homegohan.test`) / `E2E_USER_PASSWORD` が必要 (未設定ならジョブを最初に止める) |
 
-本番のテストユーザーは、本番の service role を `.env.local` に置いて次のように作れる (パスワードは Secrets と同じ値):
+本番のテストユーザーのパスワードはランダムな値で、Secrets `E2E_USER_PASSWORD` にだけ置く (リポジトリにも `.env.local` の共有にも書かない)。
+本番のテストユーザーを作り直すときは、本番の service role を `.env.local` に置いて次のように作れる (パスワードは Secrets と同じ値):
 
 ```bash
 E2E_USER_PASSWORD='<Secrets と同じパスワード>' npx --yes tsx@4 scripts/create-e2e-accounts.ts
