@@ -159,11 +159,21 @@ server → rpc('propose_org_owner_transfer', { p_organization_id, p_to_user_id }
 
 POST /api/org/owner-transfer/{proposal_id}/accept
 server → rpc('accept_org_owner_transfer', { p_proposal_id })
+       → 整合性: 承諾時点で Bob が今もこの組織のメンバーでなければ TRANSFER_ACCEPTOR_NOT_IN_ORG (403)
        → Alice.org_role = 'admin', Bob.org_role = 'owner'
        → organizations.owner_id = bob_id
        → 監査ログ owner_transferred
        → 200 { data: { organization } }
 ```
+
+**承諾時の不変条件 (#1236):** 提案 (`ownership_transfer_proposals`) は最長 7 日間 pending のまま残り、その間に宛先が脱退・別組織へ移籍することがある。承諾 RPC は承諾時点で `user_profiles.organization_id = 提案の組織` を再検証し、満たさなければ何も変更せずに `TRANSFER_ACCEPTOR_NOT_IN_ORG` (403) を返す。accepted への更新は `status = 'pending'` 条件付きで行い、競合時は `TRANSFER_NOT_PENDING` (409) とする (二重承諾の防止)。
+
+| エラーコード | HTTP | 意味 |
+|---|---|---|
+| `TRANSFER_PROPOSAL_NOT_FOUND` | 404 | pending かつ自分宛ての提案が無い (承諾済み・他人宛て・存在しない) |
+| `TRANSFER_PROPOSAL_EXPIRED` | 410 | 期限切れ |
+| [NEW] `TRANSFER_ACCEPTOR_NOT_IN_ORG` | 403 | 承諾時点で組織のメンバーでない |
+| `TRANSFER_NOT_PENDING` | 409 | 同時に承諾が競合し、既に処理済み |
 
 ---
 
@@ -248,6 +258,8 @@ server → rpc('promote_child_to_user', { p_member_id, p_user_id })
 ## 10. family 代表者譲渡 (2 step)
 
 org owner 譲渡と同パターン。`propose_family_representative_transfer` / `accept_family_representative_transfer`。代表は他の adult にしか譲渡できない (child は不可)。
+
+**承諾時の不変条件 (#1237):** 承諾 RPC は承諾時点で、承諾者がその家族の `status = 'active'` かつ `role IN ('representative', 'adult')` のメンバーであることを再検証し、満たさなければ何も変更せずに [NEW] `TRANSFER_ACCEPTOR_NOT_IN_FAMILY` (403) を返す (脱退・除名済みのユーザーが古い提案で代表者になり、家族グループを DELETE CASCADE できてしまうのを防ぐ)。二重承諾の防止とその他のエラーコードは §5 と同じ。
 
 ---
 
