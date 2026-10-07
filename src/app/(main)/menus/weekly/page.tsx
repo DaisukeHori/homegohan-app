@@ -4212,7 +4212,7 @@ export default function WeeklyMenuPage() {
     const dishName = validDishes.map(d => d.name).join('、');
 
     try {
-      await fetch(`/api/meal-plans/meals/${manualEditMeal.id}`, {
+      const patchRes = await fetch(`/api/meal-plans/meals/${manualEditMeal.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4225,6 +4225,12 @@ export default function WeeklyMenuPage() {
           sourceType: selectedCatalogProduct ? 'catalog_product' : 'manual',
         })
       });
+      // #1205: API が入力を拒否した（合計 kcal が範囲外など）ときは、保存できたように閉じずにメッセージを出す
+      if (!patchRes.ok) {
+        const payload = await patchRes.json().catch(() => null);
+        alert(typeof payload?.error === 'string' ? payload.error : '更新に失敗しました');
+        return;
+      }
 
       const targetDate = formatLocalDate(weekStart);
       const endDate = addDaysStr(targetDate, 6);
