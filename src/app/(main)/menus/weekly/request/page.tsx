@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
+import { userScopedStoragePath } from "@/lib/storage-paths";
 import { BackButton } from "@/components/ui/shared/BackButton";
 import { THEME_LABELS_REQUEST, todayLocal } from "@homegohan/shared";
 
@@ -45,9 +46,11 @@ export default function MenuRequestWizard() {
 
     setAnalyzing(true);
     try {
-      // Upload to Supabase Storage
+      // Upload to Supabase Storage (本人のフォルダ <user_id>/ の下に保存する)
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
       const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}.${fileExt}`;
+      const fileName = userScopedStoragePath(user.id, 'fridge', `${Date.now()}.${fileExt}`);
       const { data, error } = await supabase.storage
         .from('fridge-images')
         .upload(fileName, file);

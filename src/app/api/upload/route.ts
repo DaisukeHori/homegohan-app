@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { userScopedStoragePath } from "@/lib/storage-paths";
 
 
 // 許可する MIME タイプと対応する magic bytes
@@ -75,7 +76,12 @@ export async function POST(request: Request) {
       'application/pdf': 'pdf',
     };
     const ext = extMap[detectedMime] ?? 'bin';
-    const fileName = `${folder}/${user.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`;
+    // 本人のフォルダ <user_id>/<folder>/ の下に保存する (storage.objects の RLS が本人のフォルダだけを許可する)
+    const fileName = userScopedStoragePath(
+      user.id,
+      folder,
+      `${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`,
+    );
 
     // Supabase Storageにアップロード
     const { error: uploadError } = await supabase.storage
