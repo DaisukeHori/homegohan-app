@@ -170,7 +170,7 @@ export default function FamilyChildNewPage() {
             <p className="text-sm text-blue-700">
               ※ 子供本人のアカウントは作成しません。
               親が代わりに食事記録を管理します。
-              後でアカウントを発行することもできます。
+              後でご本人のアカウントとつなぐこともできます (ご本人の承認が必要です)。
             </p>
           </div>
 

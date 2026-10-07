@@ -314,8 +314,10 @@ export default function FamilyMemberDetailPage({
               >
                 <span className="text-2xl">🎓</span>
                 <div>
-                  <div className="font-medium text-gray-800">アカウントを発行する</div>
-                  <div className="text-xs text-gray-400">子供が自分でアカウントを使えるようになります</div>
+                  <div className="font-medium text-gray-800">本人のアカウントとつなぐ</div>
+                  <div className="text-xs text-gray-400">
+                    ご本人にメールで参加の確認を送り、承認されると自分のアカウントで使えるようになります
+                  </div>
                 </div>
               </button>
             )}
