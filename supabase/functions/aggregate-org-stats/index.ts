@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from '../_shared/cors.ts';
 import { requireServiceRole } from '../_shared/auth.ts';
 import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
+import { todayJst } from '../_shared/jst-date.ts';
 
 const supabaseAdmin = createClient(
   Deno.env.get('SUPABASE_URL') ?? '',
@@ -28,8 +29,9 @@ Deno.serve(async (req) => {
   try {
     const { date, organizationId } = await req.json().catch(() => ({}));
     
-    // 対象日付（指定なければ今日）
-    const targetDateStr = date || new Date().toISOString().split('T')[0];
+    // 対象日付（指定なければ JST の今日）
+    // UTC の暦日だと JST 00:00〜08:59 に前日となり、meal_plan_days.day_date (JST の暦日) とズレる (#1210)
+    const targetDateStr = date || todayJst();
 
     logger.info(`Aggregating stats for date: ${targetDateStr}`);
 
