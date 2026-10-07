@@ -1,12 +1,6 @@
--- #257: view_count 非アトミック更新 race 修正
--- SELECT + UPDATE の 2 ステップを単一 RPC に集約して race condition を排除する
-
-CREATE OR REPLACE FUNCTION increment_recipe_view_count(recipe_id UUID)
-RETURNS void
-LANGUAGE sql
-SECURITY DEFINER
-AS $$
-  UPDATE recipes
-  SET view_count = COALESCE(view_count, 0) + 1
-  WHERE id = recipe_id;
-$$;
+-- migration: 20260430180000_increment_recipe_view_count_rpc.sql
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;

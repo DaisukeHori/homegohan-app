@@ -128,23 +128,53 @@ describe("ingredient search utils", () => {
 });
 
 describe("migration contract", () => {
-  it("standardizes vector columns and RPCs to 1024", () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      "supabase/migrations/20260308120000_standardize_dataset_embeddings_to_1536.sql",
-    );
-    const migration = fs.readFileSync(migrationPath, "utf8");
+  // #1116 で台帳の最大 version 以下の migration は本番スキーマのベースラインに統合したため、
+  // 20260308120000_standardize_dataset_embeddings_to_1536.sql の中身ではなく、
+  // 本番スキーマ (supabase/baseline/prod_schema.sql) の最終状態を確かめる。
+  // 関数の引数は pg_dump で次元 (typmod) が落ちるため、次元は列の型で確かめる。
+  const prodSchema = fs.readFileSync(path.join(process.cwd(), "supabase/baseline/prod_schema.sql"), "utf8");
 
-    expect(migration).toContain("ALTER COLUMN name_embedding TYPE vector(1024)");
-    expect(migration).toContain("ALTER COLUMN content_embedding TYPE vector(1024)");
-    expect(migration).toContain("search_dataset_ingredients_by_embedding(\n  query_embedding vector(1024)");
-    expect(migration).toContain("search_ingredients_full_by_embedding(\n  query_embedding vector(1024)");
-    expect(migration).toContain("search_menu_examples(\n  query_embedding vector(1024)");
-    expect(migration).toContain("search_recipes_hybrid(\n  query_text text,\n  query_embedding vector(1024) DEFAULT NULL");
-    expect(migration).not.toContain("CREATE OR REPLACE FUNCTION search_dataset_ingredients_by_embedding(\n  query_embedding vector(384)");
-    expect(migration).not.toContain("CREATE OR REPLACE FUNCTION search_ingredients_full_by_embedding(\n  query_embedding vector(384)");
-    expect(migration).not.toContain("CREATE OR REPLACE FUNCTION search_menu_examples(\n  query_embedding vector(384)");
-    expect(migration).not.toContain("CREATE OR REPLACE FUNCTION search_recipes_hybrid(\n  query_text text,\n  query_embedding vector(384)");
+  function tableDefinition(table: string): string {
+    const start = prodSchema.indexOf(`CREATE TABLE IF NOT EXISTS "public"."${table}" (`);
+    expect(start).toBeGreaterThanOrEqual(0);
+    return prodSchema.slice(start, prodSchema.indexOf(");", start));
+  }
+
+  it("standardizes vector columns to 1024", () => {
+    expect(tableDefinition("dataset_ingredients")).toContain('"name_embedding" "extensions"."vector"(1024)');
+    expect(tableDefinition("dataset_menu_sets")).toContain('"content_embedding" "extensions"."vector"(1024)');
+    expect(tableDefinition("dataset_recipes")).toContain('"name_embedding" "extensions"."vector"(1024)');
+    expect(tableDefinition("derived_recipes")).toContain('"name_embedding" "extensions"."vector"(1024)');
+    expect(prodSchema).not.toMatch(/"vector"\(384\)|vector\(384\)/);
+  });
+
+  it("keeps the search RPC signatures used by the callers", () => {
+    expect(prodSchema).toContain(
+      'CREATE OR REPLACE FUNCTION "public"."search_dataset_ingredients_by_embedding"("query_embedding" "extensions"."vector", "match_count" integer DEFAULT 10)',
+    );
+    expect(prodSchema).toContain(
+      'CREATE OR REPLACE FUNCTION "public"."search_ingredients_full_by_embedding"("query_embedding" "extensions"."vector", "match_count" integer DEFAULT 5)',
+    );
+    expect(prodSchema).toContain(
+      'CREATE OR REPLACE FUNCTION "public"."search_menu_examples"("query_embedding" "extensions"."vector", "match_count" integer DEFAULT 10, "filter_meal_type_hint" "text" DEFAULT NULL::"text", "filter_max_sodium" numeric DEFAULT NULL::numeric, "filter_theme_tags" "text"[] DEFAULT NULL::"text"[])',
+    );
+    expect(prodSchema).toContain(
+      'CREATE OR REPLACE FUNCTION "public"."search_recipes_hybrid"("query_text" "text", "query_embedding" "extensions"."vector" DEFAULT NULL::"extensions"."vector"',
+    );
+  });
+
+  it("puts the production baseline into the oldest migration file (#1116)", () => {
+    const baselineMigration = fs.readFileSync(
+      path.join(process.cwd(), "supabase/migrations/20251126124224_create_meal_planner_tables.sql"),
+      "utf8",
+    );
+    expect(baselineMigration).toContain("-- ===== supabase/baseline/prod_schema.sql =====");
+    expect(baselineMigration).toContain(prodSchema);
+    // 流し直しで表記が変わるものの作り直しは、ベースラインの後 (RESET ALL の前) に入れる
+    const fixups = fs.readFileSync(path.join(process.cwd(), "supabase/baseline/replay_fixups.sql"), "utf8");
+    const fixupsAt = baselineMigration.indexOf(fixups);
+    expect(fixupsAt).toBeGreaterThan(baselineMigration.indexOf(prodSchema));
+    expect(baselineMigration.indexOf("RESET ALL;", fixupsAt)).toBeGreaterThan(fixupsAt);
   });
 });
 

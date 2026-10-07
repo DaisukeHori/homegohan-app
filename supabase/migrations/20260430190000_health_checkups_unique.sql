@@ -1,6 +1,6 @@
--- #264: health_checkups に (user_id, checkup_date) の UNIQUE 制約を追加
--- 同一ユーザーの同一日の重複登録を DB レベルで防ぐ
-
-ALTER TABLE health_checkups
-  ADD CONSTRAINT health_checkups_user_date_unique
-  UNIQUE (user_id, checkup_date);
+-- migration: 20260430190000_health_checkups_unique.sql
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;

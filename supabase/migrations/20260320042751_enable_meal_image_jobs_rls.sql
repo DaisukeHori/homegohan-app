@@ -1,20 +1,6 @@
-alter table public.meal_image_jobs enable row level security;
-
-create policy "meal_image_jobs_select_own"
-  on public.meal_image_jobs
-  for select
-  to authenticated
-  using (auth.uid() = user_id);
-
-create policy "meal_image_jobs_insert_own"
-  on public.meal_image_jobs
-  for insert
-  to authenticated
-  with check (auth.uid() = user_id);
-
-create policy "meal_image_jobs_update_own"
-  on public.meal_image_jobs
-  for update
-  to authenticated
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);;
+-- migration: 20260320042751_enable_meal_image_jobs_rls.sql
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;

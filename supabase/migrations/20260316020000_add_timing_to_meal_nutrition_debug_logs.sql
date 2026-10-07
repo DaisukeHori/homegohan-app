@@ -1,9 +1,6 @@
-ALTER TABLE meal_nutrition_debug_logs
-  ADD COLUMN IF NOT EXISTS dish_timing_ms JSONB NOT NULL DEFAULT '{}'::jsonb,
-  ADD COLUMN IF NOT EXISTS slot_timing_ms JSONB NOT NULL DEFAULT '{}'::jsonb;
-
-COMMENT ON COLUMN meal_nutrition_debug_logs.dish_timing_ms IS
-  '1皿単位の計測時間。食材マッチ、参照検証、料理JSON組み立てなどの詳細ms';
-
-COMMENT ON COLUMN meal_nutrition_debug_logs.slot_timing_ms IS
-  '1食単位の計測時間。daily_meal upsert、planned_meal write、debug log insert などの詳細ms';
+-- migration: 20260316020000_add_timing_to_meal_nutrition_debug_logs.sql
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;

@@ -1,20 +1,6 @@
--- Drop leftover _ccnew shadow index from a failed REINDEX CONCURRENTLY
---
--- BACKGROUND
---   On 2026-04-29 the dataset_menu_sets HNSW index showed a sibling index
---   `idx_dataset_menu_sets_embedding_hnsw_ccnew` with relpages=0, size=304MB,
---   is_valid=false, is_ready=false, is_live=true. This is the residue of a
---   REINDEX CONCURRENTLY that never finished cleaning up.
---
--- WHY IT MATTERS
---   PostgreSQL marks invalid indexes as "live" until they are dropped, which
---   confuses some tooling and consumes disk. While the planner correctly
---   skips is_valid=false indexes, it is still bad hygiene to leave 304 MB
---   of dead index pages behind.
---
--- IDEMPOTENT
---   Uses IF EXISTS so re-running is a no-op.
-
-SET search_path TO public, extensions;
-
-DROP INDEX IF EXISTS public.idx_dataset_menu_sets_embedding_hnsw_ccnew;
+-- migration: 20260429000002_drop_failed_concurrent_reindex_shadow.sql
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;

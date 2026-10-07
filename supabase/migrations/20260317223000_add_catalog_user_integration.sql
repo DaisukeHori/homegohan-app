@@ -1,10 +1,6 @@
-create extension if not exists pg_trgm with schema extensions;
-
-alter table public.planned_meals
-  add column if not exists catalog_product_id uuid references public.catalog_products(id) on delete set null;
-
-create index if not exists idx_planned_meals_catalog_product_id
-  on public.planned_meals (catalog_product_id);
-
-create index if not exists idx_catalog_products_name_norm_trgm
-  on public.catalog_products using gin (name_norm extensions.gin_trgm_ops);
+-- migration: 20260317223000_add_catalog_user_integration.sql
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;
