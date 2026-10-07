@@ -1,0 +1,23 @@
+-- migration: 20261006192942_drop_legacy_promote_child_overload.sql
+-- Issue #1232 (部分修正): 本番にだけ残る旧オーバーロード promote_child_to_user(uuid, uuid) を削除する
+--
+-- 背景:
+--   promote_child_to_user は 20260511000135_fix_promote_child_to_user_email.sql で
+--   (p_member_id uuid, p_email text) 版に置き換えられ、旧 (p_member_id uuid, p_user_id uuid) 版は
+--   同 migration の DROP FUNCTION IF EXISTS で削除済みのはずだった。
+--   しかし 2026-10-06 の本番スナップショット (docs/operations/rls-drift-20261006.md の P-1) では
+--   本番の台帳に 20260511000135 が記録されているにもかかわらず、旧版が SECURITY DEFINER のまま
+--   残っており、EXECUTE が anon / authenticated / service_role に付与されている
+--   (migration 外で再作成されたのか、台帳だけが修復されて DROP が実行されなかったのかは不明)。
+--
+-- 旧版の危険性:
+--   - 生の user_id を受け取り、本人の同意なしに任意の既存ユーザーを家族へ編入できる (#1232)
+--   - #1062 の SSO / 削除済みユーザー除外が無い
+--   - anon にも実行権限がある
+--   アプリ (src/app/api/family/members/[member_id]/promote/route.ts) は (p_member_id, p_email) 版
+--   だけを呼び、旧版はどこからも使われていないため、削除しても挙動は変わらない。
+--
+-- 範囲: #1232 の本体 (本人同意フロー) は含まない。(uuid, text) 版の同意なし編入は残る。
+-- 冪等: DROP FUNCTION IF EXISTS。ロールバックは不要 (旧版の再作成は脆弱性の再導入になるため行わない)。
+
+DROP FUNCTION IF EXISTS public.promote_child_to_user(uuid, uuid);
