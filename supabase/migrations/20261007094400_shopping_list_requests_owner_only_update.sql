@@ -1,0 +1,30 @@
+-- migration: 20261007094400_shopping_list_requests_owner_only_update.sql
+-- #1234: shopping_list_requests の "Service role can update shopping list requests" (UPDATE、roles=public、USING (true)) を削除する
+--
+-- 背景 (本番の現状: supabase/baseline/catalog/catalog_policies.csv):
+--   shopping_list_requests の UPDATE には次の 2 本が効いていた。
+--     "Users can manage own shopping list requests"     ALL     USING (auth.uid() = user_id)          (20260109000000_date_based_model_migration.sql)
+--     "Service role can update shopping list requests"  UPDATE  USING (true)、WITH CHECK 無し        (20260511000137_backfill_oob_remaining.sql)
+--   後者は名前に反して TO service_role が無く (roles=public)、permissive ポリシーの OR で UPDATE の条件を true にしてしまう。
+--   service_role は RLS の対象外なので、service_role のためにこのポリシーは要らない。
+--
+--   2026-10-07 にローカル (本番スキーマのベースライン) で確かめたところ、PostgREST 経由では他人の行は書き換えられなかった。
+--   WHERE 句で列を読む UPDATE には SELECT ポリシー (本人の行だけ) も適用され、更新前の行も更新後の行も本人のものに限られるため。
+--   WHERE 句の無い UPDATE は、PostgREST の接続 (authenticator ロール) に読み込まれる safeupdate が拒否する。
+--   それでも条件を true にするポリシーが残っていると、SELECT ポリシーの変更や新しい経路でそのまま穴になるため削除する。
+--   (他人のジョブ行を書き換えられた実際の経路は Edge Function regenerate-shopping-list-v2 で、#1240 として同じ PR で直す)
+--
+-- 変更: "Service role can update shopping list requests" を削除する。
+--   残る "Users can manage own shopping list requests" の USING (auth.uid() = user_id) が、本人の行の更新の条件と WITH CHECK を兼ねる。
+--
+-- 既存の正当な利用経路への影響: なし。
+--   - Edge Function regenerate-shopping-list-v2: service_role で更新する (RLS の対象外)
+--   - src/app/api/shopping-list/regenerate/route.ts: ユーザーのセッションで INSERT するだけ ("Users can create own shopping list requests")
+--   - src/app/api/shopping-list/regenerate/status/route.ts、Web の週間献立画面、モバイルの買い物リスト画面:
+--     本人の行の SELECT と Realtime の購読だけ
+--
+-- 冪等: DROP POLICY IF EXISTS。
+-- 確認: tests/integration/rls/shopping-list-requests-owner-update.test.ts
+-- ロールバック: supabase/rollbacks/20261007094400_shopping_list_requests_owner_only_update.down.sql
+
+DROP POLICY IF EXISTS "Service role can update shopping list requests" ON public.shopping_list_requests;

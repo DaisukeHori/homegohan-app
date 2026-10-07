@@ -14,6 +14,7 @@ import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usag
 import { createLogger } from "../_shared/db-logger.ts";
 import { requireAuth } from "../_shared/auth.ts";
 import { aggregateIngredientOccurrences, InputIngredient } from "../_shared/shopping-list-aggregation.ts";
+import { verifyRequestOwnership } from "../_shared/request-ownership.ts";
 
 // ============================================
 // CORS
@@ -63,17 +64,21 @@ interface Progress {
 // ============================================
 // 進捗更新ヘルパー
 // ============================================
+// service role（RLS の対象外）で更新するため、ハンドラでの所有権検証（#1240）に加えて、
+// 更新条件にも user_id を入れる（多層防御）。
 
 async function updateProgress(
   supabase: SupabaseClient,
   requestId: string,
+  userId: string,
   progress: Progress
 ): Promise<void> {
   console.log(`[progress] ${progress.phase}: ${progress.percentage}% - ${progress.message}`);
   const { error } = await supabase
     .from("shopping_list_requests")
     .update({ progress, updated_at: new Date().toISOString() })
-    .eq("id", requestId);
+    .eq("id", requestId)
+    .eq("user_id", userId);
   if (error) {
     console.error(`[progress] Failed to update progress:`, error);
   }
@@ -82,6 +87,7 @@ async function updateProgress(
 async function markCompleted(
   supabase: SupabaseClient,
   requestId: string,
+  userId: string,
   shoppingListId: string,
   stats: { inputCount: number; outputCount: number; mergedCount: number; totalServings?: number }
 ): Promise<void> {
@@ -96,7 +102,8 @@ async function markCompleted(
       result: { stats },
       updated_at: new Date().toISOString(),
     })
-    .eq("id", requestId);
+    .eq("id", requestId)
+    .eq("user_id", userId);
   if (error) {
     console.error(`[markCompleted] Failed to mark completed:`, error);
   } else {
@@ -107,6 +114,7 @@ async function markCompleted(
 async function markFailed(
   supabase: SupabaseClient,
   requestId: string,
+  userId: string,
   error: string
 ): Promise<void> {
   console.log(`[markFailed] Starting - requestId: ${requestId}, error: ${error}`);
@@ -118,7 +126,8 @@ async function markFailed(
       result: { error },
       updated_at: new Date().toISOString(),
     })
-    .eq("id", requestId);
+    .eq("id", requestId)
+    .eq("user_id", userId);
   if (dbError) {
     console.error(`[markFailed] Failed to mark failed:`, dbError);
   } else {
@@ -390,7 +399,7 @@ async function processRegeneration(
       supabaseClient: supabase,
     }, async () => {
       // Phase 1: 材料抽出
-      await updateProgress(supabase, requestId, {
+      await updateProgress(supabase, requestId, userId, {
         phase: "extracting",
         message: `献立から材料を抽出中...（${startDate}〜${endDate}）`,
         percentage: 10,
@@ -503,7 +512,7 @@ async function processRegeneration(
 
     if (rawIngredients.length === 0) {
       // 材料がない場合は空のリストで完了
-      await markCompleted(supabase, requestId, shoppingListId, {
+      await markCompleted(supabase, requestId, userId, shoppingListId, {
         inputCount: 0,
         outputCount: 0,
         mergedCount: 0,
@@ -513,7 +522,7 @@ async function processRegeneration(
     }
 
     // Phase 2: AI正規化
-    await updateProgress(supabase, requestId, {
+    await updateProgress(supabase, requestId, userId, {
       phase: "normalizing",
       message: "AIが材料を整理中...",
       percentage: 30,
@@ -524,7 +533,7 @@ async function processRegeneration(
     const rawItems = await callOpenAI(prompt);
 
     // Phase 3: バリデーション
-    await updateProgress(supabase, requestId, {
+    await updateProgress(supabase, requestId, userId, {
       phase: "validating",
       message: "整合性チェック中...",
       percentage: 60,
@@ -533,7 +542,7 @@ async function processRegeneration(
     const validatedItems = validateItems(rawItems, inputNames);
 
     // Phase 4: カテゴリ分類・保存準備
-    await updateProgress(supabase, requestId, {
+    await updateProgress(supabase, requestId, userId, {
       phase: "categorizing",
       message: "カテゴリ分類中...",
       percentage: 70,
@@ -552,7 +561,7 @@ async function processRegeneration(
     }));
 
     // Phase 5: 保存
-    await updateProgress(supabase, requestId, {
+    await updateProgress(supabase, requestId, userId, {
       phase: "saving",
       message: "保存中...",
       percentage: 85,
@@ -575,7 +584,7 @@ async function processRegeneration(
       };
 
       console.log(`[processRegeneration] About to call markCompleted...`);
-      await markCompleted(supabase, requestId, shoppingListId, stats);
+      await markCompleted(supabase, requestId, userId, shoppingListId, stats);
       console.log(`[processRegeneration] markCompleted finished, exiting withOpenAIUsageContext`);
     }); // withOpenAIUsageContext end
     console.log(`[processRegeneration] withOpenAIUsageContext completed successfully`);
@@ -589,6 +598,7 @@ async function processRegeneration(
     await markFailed(
       supabase,
       requestId,
+      userId,
       error instanceof Error ? error.message : "Unknown error"
     );
   }
@@ -659,6 +669,40 @@ Deno.serve(async (req: Request) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // requestId の所有権検証（#1240 IDOR対策）: 以降の書き込みは service role（RLS の対象外）で行うため、
+    // 他人の shopping_list_requests 行の id を渡されると、その行の status / progress / shopping_list_id を
+    // 書き換えてしまう。書き込みを始める前に、行が userId のものかを確かめる。
+    // 他人の行と存在しない行は同じ 404 にする（他人の requestId が実在するかを漏らさない。generate-menu-v4 と同じ）。
+    // src/app/api/shopping-list/regenerate/route.ts は、自分の user_id で行を作ってから呼ぶので、この確認を通る。
+    const ownership = await verifyRequestOwnership(supabase, "shopping_list_requests", requestId, userId);
+    if (!ownership.ok) {
+      if (ownership.reason === "lookup_failed") {
+        createLogger("regenerate-shopping-list-v2").withUser(userId).error(
+          "shopping_list_requests の所有権確認に失敗しました",
+          new Error(ownership.message),
+          { requestId },
+        );
+        return new Response(
+          JSON.stringify({ error: "Internal Server Error" }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+      createLogger("regenerate-shopping-list-v2").withUser(userId).warn(
+        "本人のものではない requestId での呼び出しを拒否しました",
+        { requestId: String(requestId), reason: ownership.reason },
+      );
+      return new Response(
+        JSON.stringify({ error: "Not Found" }),
+        {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
 
     // 非同期で処理開始（即座にレスポンス返す。レスポンス後も処理が打ち切られないようwaitUntilに委ねる）
     const backgroundTask = processRegeneration(supabase, requestId, userId, startDate, endDate, servingsConfig || null);
