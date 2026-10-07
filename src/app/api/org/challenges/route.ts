@@ -117,6 +117,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Required fields missing' }, { status: 400 });
     }
 
+    // #1235: 部署は自組織のものだけ指定できる (他組織の部署 id を付けたチャレンジを作らせない)
+    if (departmentId) {
+      const { data: department, error: departmentError } = await supabase
+        .from('departments')
+        .select('id')
+        .eq('id', departmentId)
+        .eq('organization_id', profile.organization_id)
+        .maybeSingle();
+      // 22P02: departmentId が uuid の形式でない
+      if (departmentError && departmentError.code !== '22P02') throw departmentError;
+      if (!department) {
+        return NextResponse.json({ error: 'Invalid departmentId' }, { status: 400 });
+      }
+    }
+
     const { data, error } = await supabase
       .from('organization_challenges')
       .insert({
