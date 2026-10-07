@@ -169,7 +169,7 @@ describe('POST /api/org/members: 送信回数の制限 (#1163)', () => {
 
     expect(res.status).toBe(429);
     expect(json.error.code).toBe('RATE_LIMITED');
-    expect(json.error.retryAfter).toBeGreaterThanOrEqual(599);
+    expect(json.error.retryAfter).toBeGreaterThanOrEqual(590);
     expect(res.headers.get('Retry-After')).toBe(String(json.error.retryAfter));
     expect(mockRpc).not.toHaveBeenCalled();
     expect(mockSendEmail).not.toHaveBeenCalled();

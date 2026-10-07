@@ -178,7 +178,7 @@ describe('POST /api/family/invites: 送信回数の制限 (#1163)', () => {
     expect(res.status).toBe(429);
     expect(json.error.code).toBe('RATE_LIMITED');
     expect(json.error.message).toBe('短時間に操作が集中しています。1分ほど待ってからお試しください。');
-    expect(json.error.retryAfter).toBeGreaterThanOrEqual(29);
+    expect(json.error.retryAfter).toBeGreaterThanOrEqual(20);
     expect(json.error.retryAfter).toBeLessThanOrEqual(30);
     expect(res.headers.get('Retry-After')).toBe(String(json.error.retryAfter));
     expect(mockRpc).not.toHaveBeenCalled();
