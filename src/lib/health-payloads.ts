@@ -1,3 +1,10 @@
+import {
+  ACCEPTED_GOAL_TYPES,
+  FALLBACK_GOAL_RANGES,
+  findGoalTypeDef,
+  type GoalTypeDef,
+} from '@/lib/health-goal-types';
+
 type ValidationResult<T extends object> = {
   data: Partial<T>;
   errors: string[];
@@ -66,6 +73,15 @@ export interface HealthGoalUpdatePayload {
   target_value: number | null;
   current_value: number | null;
   target_unit: string | null;
+  target_date: string | null;
+  note: string | null;
+}
+
+/** 新しい健康目標 (health_goals の INSERT) に使える項目。user_id / status などは呼び出し側が決める */
+export interface HealthGoalCreatePayload {
+  goal_type: string;
+  target_value: number;
+  target_unit: string;
   target_date: string | null;
   note: string | null;
 }
@@ -411,14 +427,39 @@ export function sanitizeHealthRecordPayload(
   });
 }
 
-export function sanitizeHealthGoalUpdate(input: unknown): ValidationResult<HealthGoalUpdatePayload> {
+/**
+ * #1229: 目標値 (target_value) / 現在値 (current_value) の範囲チェック用の設定を goal_type の定義から作る。
+ * 種類が分からない (def が undefined) ときは、符号と桁あふれだけを見る汎用の範囲を使う。
+ * DB には health_goals_target_value_positive (target_value > 0) と
+ * health_goals_current_value_nonnegative (current_value IS NULL OR >= 0) があり、ここの下限はそれより厳しいか同じ。
+ */
+function goalValueOpts(def: GoalTypeDef | undefined, kind: 'target' | 'current') {
+  const range = (def ?? FALLBACK_GOAL_RANGES)[kind];
+  const noun = kind === 'target' ? '目標値' : '現在値';
+  return { min: range.min, max: range.max, label: def ? `${def.label}の${noun} (${def.unit})` : noun };
+}
+
+/**
+ * 既存の健康目標の更新 (PUT /api/health/goals/[id]、AI 相談の update_health_goal) に使える項目だけを取り出して検証する。
+ *
+ * goalType には更新対象の行の goal_type を渡す (goal_type 自体は更新できない)。
+ * 種類ごとの範囲 (例: 体重 20〜300kg) で target_value / current_value を検証する。
+ * goalType が未指定、または受け付けない種類 (種類を決める前に作られた既存データ) のときは、
+ * 0 以下の目標値・負の現在値・桁あふれだけを止める。
+ */
+export function sanitizeHealthGoalUpdate(
+  input: unknown,
+  opts: { goalType?: string } = {},
+): ValidationResult<HealthGoalUpdatePayload> {
+  const def = opts.goalType ? findGoalTypeDef(opts.goalType) : undefined;
+
   return parseKnownFields(input, (body, errors) => {
     const data: Record<string, unknown> = {};
 
-    const targetValue = parseNullableNumber(body, 'target_value', errors);
+    const targetValue = parseNullableNumber(body, 'target_value', errors, goalValueOpts(def, 'target'));
     if (targetValue !== undefined) data.target_value = targetValue;
 
-    const currentValue = parseNullableNumber(body, 'current_value', errors);
+    const currentValue = parseNullableNumber(body, 'current_value', errors, goalValueOpts(def, 'current'));
     if (currentValue !== undefined) data.current_value = currentValue;
 
     const targetUnit = parseNullableString(body, 'target_unit', errors);
@@ -432,6 +473,54 @@ export function sanitizeHealthGoalUpdate(input: unknown): ValidationResult<Healt
 
     return data;
   });
+}
+
+/**
+ * 新しい健康目標 (POST /api/health/goals、AI 相談の set_health_goal) に使える項目を取り出して検証する (#1229)。
+ *
+ * - goal_type: 前後の空白を除き、受け付ける種類 (src/lib/health-goal-types.ts) だけ通す
+ * - target_value: その種類の範囲に収まる数値 (0 以下や範囲外は拒否)
+ * - target_unit: 必須。opts.defaultUnit が true のときは、省略すると種類に合う単位を入れる (AI 相談は省略しうる)
+ * - target_date / note: 任意
+ * 受け付けない項目 (user_id / status / current_value など) は無視する。
+ *
+ * 検証に通ると data に値が入り、通らないと data は null で errors に理由が入る。
+ */
+export function sanitizeHealthGoalCreate(
+  input: unknown,
+  opts: { defaultUnit?: boolean } = {},
+): { data: HealthGoalCreatePayload | null; errors: string[] } {
+  const result = parseKnownFields<HealthGoalCreatePayload>(input, (body, errors) => {
+    const goalType = typeof body.goal_type === 'string' ? body.goal_type.trim() : '';
+    const def = goalType ? findGoalTypeDef(goalType) : undefined;
+    if (goalType && !def) {
+      errors.push(`goal_type は ${ACCEPTED_GOAL_TYPES.join(', ')} のいずれかを指定してください`);
+    }
+
+    const targetValue = parseNullableNumber(body, 'target_value', errors, goalValueOpts(def, 'target'));
+    const targetUnit =
+      parseNullableString(body, 'target_unit', errors) ?? (opts.defaultUnit ? def?.unit : undefined);
+    const targetDate = parseNullableString(body, 'target_date', errors, { date: true });
+    const note = parseNullableString(body, 'note', errors);
+
+    // 形式や範囲の誤りが無いときだけ、必須項目の不足を報告する (従来の POST と同じ順序・同じ文言)
+    if (errors.length === 0 && (!def || targetValue == null || !targetUnit)) {
+      errors.push('goal_type, target_value, and target_unit are required');
+    }
+    if (errors.length > 0 || !def || targetValue == null || !targetUnit) return {};
+
+    return {
+      goal_type: def.type,
+      target_value: targetValue,
+      target_unit: targetUnit,
+      target_date: targetDate ?? null,
+      note: note ?? null,
+    };
+  });
+
+  return result.errors.length > 0
+    ? { data: null, errors: result.errors }
+    : { data: result.data as HealthGoalCreatePayload, errors: [] };
 }
 
 export function sanitizeHealthCheckupPayload(input: unknown): ValidationResult<HealthCheckupPayload> {

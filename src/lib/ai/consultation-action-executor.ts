@@ -9,6 +9,7 @@
 import type { TargetSlot } from '@/types/domain';
 import {
   RECORD_DATE_PATTERN,
+  sanitizeHealthGoalCreate,
   sanitizeHealthGoalUpdate,
   sanitizeHealthRecordPayload,
   stripUndefined,
@@ -1134,15 +1135,30 @@ export async function runConsultationAction(
     // health_goalsカラム: note (descriptionではない)
     case 'set_health_goal': {
       const { goalType, targetValue, targetUnit, targetDate, note, description } = action.action_params;
-      const { data: newGoal, error: insertError } = await supabase
-        .from('health_goals')
-        .insert({
-          user_id: user.id,
+
+      // #1229: AI が生成した値をそのまま INSERT すると、未知の goal_type や 0 以下・範囲外の目標値が
+      // 保存できてしまう (POST /api/health/goals の検証をバイパスしていた)。API と同じ検証を通す。
+      // targetUnit はプロンプト上 optional なので、省略されたら goal_type に合う単位を入れる。
+      const { data: safeGoal, errors: goalErrors } = sanitizeHealthGoalCreate(
+        {
           goal_type: goalType,
           target_value: targetValue,
           target_unit: targetUnit,
           target_date: targetDate,
           note: note || description, // 後方互換性のためdescriptionもサポート
+        },
+        { defaultUnit: true },
+      );
+      if (!safeGoal) {
+        result = { error: goalErrors.join(', ') };
+        break;
+      }
+
+      const { data: newGoal, error: insertError } = await supabase
+        .from('health_goals')
+        .insert({
+          ...safeGoal,
+          user_id: user.id,
           status: 'active',
         })
         .select('id')
@@ -1162,7 +1178,7 @@ export async function runConsultationAction(
       // セキュリティチェック
       const { data: goal } = await supabase
         .from('health_goals')
-        .select('user_id')
+        .select('user_id, goal_type')
         .eq('id', goalId)
         .single();
 
@@ -1171,13 +1187,19 @@ export async function runConsultationAction(
         break;
       }
 
-      const { data: safeUpdates, errors } = sanitizeHealthGoalUpdate(updates);
+      // #1229: 目標値の範囲は goal_type ごとに違うため、対象の行の goal_type を渡して検証する
+      const { data: safeUpdates, errors } = sanitizeHealthGoalUpdate(updates, { goalType: goal.goal_type });
       if (errors.length > 0) {
         result = { error: errors.join(', ') };
         break;
       }
       if (Object.keys(safeUpdates).length === 0) {
         result = { error: '更新可能な目標項目がありません' };
+        break;
+      }
+      // target_value / target_unit は NOT NULL の列。null を送ると DB エラーになるので、先に弾く
+      if (safeUpdates.target_value === null || safeUpdates.target_unit === null) {
+        result = { error: 'target_value と target_unit は空にできません' };
         break;
       }
 
