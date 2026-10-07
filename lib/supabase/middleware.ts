@@ -163,6 +163,7 @@ export async function updateSession(request: NextRequest) {
     '/company',
     '/news',
     '/invite',  // 招待トークンページ (認証不要で内容確認できる必要がある)
+    '/family/promotions',  // #1232 家族参加の本人同意ページ (メールリンク着地。/invite と同趣旨)
   ]
   const isPublicPath = publicPaths.some(
     (path) =>

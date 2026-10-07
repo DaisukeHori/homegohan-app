@@ -4,6 +4,7 @@
  * 本番には旧版が SECURITY DEFINER のまま残り (docs/operations/rls-drift-20261006.md の P-1)、
  * 生の user_id を渡すだけで本人の同意なしに任意の既存ユーザーを家族へ編入でき、anon にも実行権限があった。
  * アプリが使うのは (p_member_id, p_email) 版だけのため、旧版は削除する。
+ * その (p_member_id, p_email) 版も、#1232 の本体 (本人同意フロー) で常に拒否する墓標に置き換えた。
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。
  *   npx vitest run --config vitest.integration.config.ts tests/integration/security/family-promote-legacy-overload.test.ts
@@ -111,13 +112,15 @@ describe('#1232 旧オーバーロード promote_child_to_user(uuid, uuid)', () 
     expect(error!.code).toBe('PGRST202');
   });
 
-  it('アプリが使う (p_member_id, p_email) 版は残っている', async () => {
+  it('(p_member_id, p_email) 版は #1232 で墓標になり、関数は解決できるが常に PROMOTION_DIRECT_DISABLED で拒否する', async () => {
     const { error } = await asUser(attacker.jwt).rpc('promote_child_to_user', {
       p_member_id: childMemberId,
       p_email: `no-such-user-${TS}@homegohan.test`,
     });
-    // 関数本体まで到達し、存在しないメールとして拒否される (= 関数は解決できている)
+    // 関数本体まで到達する (= 関数は解決できている) が、編入はせずに拒否する。
+    // 正規の経路は request_child_promotion → accept_child_promotion
+    // (tests/integration/security/family-child-promotion-consent.test.ts)
     expect(error).not.toBeNull();
-    expect(error!.message).toContain('USER_NOT_FOUND');
+    expect(error!.message).toContain('PROMOTION_DIRECT_DISABLED');
   });
 });
