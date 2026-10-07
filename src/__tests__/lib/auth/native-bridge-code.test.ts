@@ -252,9 +252,10 @@ describe('getJwtExpiresAt', () => {
 });
 
 describe('定数', () => {
-  it('コードの有効期間は 60 秒で、アクセストークンに要求する残り時間はそれ以上', () => {
+  it('コードの有効期間は 60 秒で、アクセストークンに要求する残り時間は「有効期間 + auth-js の余裕 90 秒」', () => {
     expect(NATIVE_BRIDGE_CODE_TTL_SECONDS).toBe(60);
-    expect(MIN_ACCESS_TOKEN_REMAINING_SECONDS).toBeGreaterThanOrEqual(NATIVE_BRIDGE_CODE_TTL_SECONDS);
+    // auth-js は有効期限まで 90 秒未満でトークンを更新する (EXPIRY_MARGIN_MS)。コードを使う時点でもそれ以上残す
+    expect(MIN_ACCESS_TOKEN_REMAINING_SECONDS).toBe(NATIVE_BRIDGE_CODE_TTL_SECONDS + 90);
   });
 });
 

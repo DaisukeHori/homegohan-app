@@ -26,12 +26,20 @@ import { getSupabaseAdmin } from '@/lib/supabase/server'
 export const NATIVE_BRIDGE_CODE_TTL_SECONDS = 60
 
 /**
- * コード発行時に、アクセストークンの有効期限までに最低限残っていてほしい秒数。
- * setSession は access_token の期限が切れていると refresh_token でトークンを更新 (ローテーション) する。
- * コードの有効期間中にアクセストークンが切れると、ネイティブが持つ refresh_token が使用済みになり、
- * 次の更新で再利用検知によりセッションごと失効し得る。そのため、コードの有効期間以上の余裕を要求する。
+ * auth-js がセッションを「期限切れ間近」とみなして更新を始める余裕 (秒)。
+ * @supabase/auth-js 2.105 の EXPIRY_MARGIN_MS (= 3 × 30 秒)。getSession() / getUser() の内部
+ * (__loadSession) は、有効期限までの残りがこれ未満だと refresh_token でトークンを更新 (ローテーション) する。
  */
-export const MIN_ACCESS_TOKEN_REMAINING_SECONDS = NATIVE_BRIDGE_CODE_TTL_SECONDS
+const AUTH_JS_EXPIRY_MARGIN_SECONDS = 90
+
+/**
+ * コード発行時に、アクセストークンの有効期限までに最低限残っていてほしい秒数。
+ * Web 側でセッションを作ったあとにトークンが更新 (ローテーション) されると、ネイティブが持つ refresh_token が
+ * 使用済みになり、次の更新で再利用検知によりセッションごと失効し得る。コードは発行から最長
+ * NATIVE_BRIDGE_CODE_TTL_SECONDS 後に使われるので、その時点でも auth-js の余裕 (90 秒) が残るよう、
+ * 「コードの有効期間 + 90 秒」を要求する。ネイティブ側は残りがこれ未満なら先に refreshSession() してから発行を頼む。
+ */
+export const MIN_ACCESS_TOKEN_REMAINING_SECONDS = NATIVE_BRIDGE_CODE_TTL_SECONDS + AUTH_JS_EXPIRY_MARGIN_SECONDS
 
 /** refresh_token の最大長 (Supabase のリフレッシュトークンは短い不透明な文字列) */
 export const MAX_REFRESH_TOKEN_LENGTH = 1024
@@ -170,9 +178,9 @@ export async function consumeNativeBridgeCode(code: string): Promise<ConsumedNat
 /**
  * 旧方式の受け付けを終える日時。この時刻以降は 426 を返し、セッションを作らない。
  *
- * 【仮置き】オーナーの確認待ち (旧方式をいつまで残すか。#1036 を参照)。新方式のアプリが配布されてから十分な期間を取り、
- * app_logs の 'legacy token-in-query bridge used' が 0 件になったことを見て決める。
- * 早く閉じたいときはコードの変更ではなく環境変数 NATIVE_BRIDGE_LEGACY_GET=off を使う。
+ * オーナー判断 (2026-10-07、#1036): 2026-12-31 に止める。それまでは旧ビルドのアプリも動く。
+ * 期限より早く閉じたいときは、コードの変更ではなく環境変数 NATIVE_BRIDGE_LEGACY_GET=off を使う
+ * (Vercel の環境変数の変更は再デプロイ後に効く)。止める前に app_logs の 'legacy token-in-query bridge used' の件数を見る。
  */
 export const LEGACY_SUNSET_AT = '2026-12-31T00:00:00+09:00'
 

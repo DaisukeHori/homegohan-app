@@ -502,8 +502,8 @@ describe('#1036 /auth/native-bridge の next は同一オリジンの相対パ�
     expect(location.search).toBe('?mode=app');
   });
 
-  it.each(evilNexts)('S-14: 旧方式でも next=%s は外へ出ない (修正前はオープンリダイレクト)', async (_label, evil) => {
-    if (!legacyStillAllowed) return; // 期限後は 426 (S-16)
+  // 旧方式の受け付け期限 (LEGACY_SUNSET_AT) 以降は 426 になるため (S-16)、スキップしたことがレポートに出るようにする
+  it.skipIf(!legacyStillAllowed).each(evilNexts)('S-14: 旧方式でも next=%s は外へ出ない (修正前はオープンリダイレクト)', async (_label, evil) => {
     const res = await bridge({ access_token: userB.accessToken, refresh_token: userB.refreshToken, next: evil });
     expect(res.status).toBe(307);
     const location = locationOf(res);

@@ -5,7 +5,8 @@
  *   1. 認証: Authorization: Bearer 必須 (無い / 形式違い / Cookie だけ / 不正な JWT は 401)。
  *      JWT は引数つき getUser(jwt) で検証する (Cookie のセッションを見ない)
  *   2. 入力: body が JSON でない / refresh_token が無い・空・文字列でない・長すぎる は 400
- *   3. アクセストークンの残り有効期間が 60 秒未満は 401 (AUTH_TOKEN_EXPIRING)。リフレッシュトークンのローテーションを避ける
+ *   3. アクセストークンの残り有効期間が 150 秒 (コードの有効期間 60 秒 + auth-js の余裕 90 秒) 未満は
+ *      401 (AUTH_TOKEN_EXPIRING)。Web 側でのリフレッシュトークンのローテーションを避ける
  *   4. 凍結中のアカウントは 403 (一時 BAN の期限切れは通す)。確認できないときは 503
  *   5. 発行: 43 文字の base64url コード + expires_in 60 + no-store。RPC には sha256(コード) を渡し、コード本体は渡さない
  *   6. RPC の失敗は 503。ログには body・コード・トークンを出さない
@@ -279,14 +280,22 @@ describe('アクセストークンの有効期限が近い・読めない場合�
     expect(mockRpc).not.toHaveBeenCalled();
   });
 
-  it('境界: 残り 59 秒は拒否・残り 60 秒ちょうどは通す', async () => {
-    const tooShort = await POST(postRequest({ authorization: `Bearer ${makeJwt(NOW_SEC + 59)}` }));
+  it('境界: 残り 149 秒は拒否・残り 150 秒ちょうど (コードの有効期間 60 秒 + auth-js の余裕 90 秒) は通す', async () => {
+    const tooShort = await POST(postRequest({ authorization: `Bearer ${makeJwt(NOW_SEC + 149)}` }));
     expect(tooShort.status).toBe(401);
     expect(mockRpc).not.toHaveBeenCalled();
 
-    const enough = await POST(postRequest({ authorization: `Bearer ${makeJwt(NOW_SEC + 60)}` }));
+    const enough = await POST(postRequest({ authorization: `Bearer ${makeJwt(NOW_SEC + 150)}` }));
     expect(enough.status).toBe(200);
     expect(mockRpc).toHaveBeenCalledTimes(1);
+  });
+
+  it('残り 120 秒 (コードを使う時点で auth-js が更新を始める範囲): 401 AUTH_TOKEN_EXPIRING', async () => {
+    const res = await POST(postRequest({ authorization: `Bearer ${makeJwt(NOW_SEC + 120)}` }));
+    const json = await res.json();
+    expect(res.status).toBe(401);
+    expect(json.error.code).toBe('AUTH_TOKEN_EXPIRING');
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 
   it('すでに期限切れ: 401 AUTH_TOKEN_EXPIRING', async () => {
