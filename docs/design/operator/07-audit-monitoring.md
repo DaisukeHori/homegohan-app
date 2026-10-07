@@ -429,12 +429,25 @@ URL: `https://status.homegohan.app`
 | コンポーネント | 監視 URL / 方法 | 更新頻度 |
 |-------------|--------------|--------|
 | Web App | `https://homegohan.app/api/health` | 1 分 |
-| API (Auth) | `https://homegohan.app/api/auth/status` | 1 分 |
+| Web App (画面) | `https://homegohan.app/login` | 1 分 |
+| API (アプリ経由の DB 疎通) | `https://homegohan.app/api/health?deep=1` | 1 分 |
 | Database (Supabase) | Supabase Uptime API | 1 分 |
 | AI Chat (xAI) | `https://api.x.ai/v1/models` (HEAD) | 5 分 |
 | AI Images (Gemini) | Google API Health | 5 分 |
 | Email (Resend) | Resend Status API | 5 分 |
 | Payments (Stripe) | Stripe Status API | 1 分 |
+
+**`/api/health` について (#1181、実装: `src/app/api/health/route.ts`)**:
+
+- 認証不要・個人情報なし・`Cache-Control: no-store`。HEAD にも同じステータスで応答する
+  (UptimeRobot などは既定で HEAD)。判定は HTTP ステータスだけで足りる (200 = 正常)。
+- `/api/health` は認証ミドルウェアを通さず、アプリが応答できるかだけを見る (DB には触れない)。
+  画面側の不具合 (ミドルウェアや描画の故障) は拾えないため、`/login` も別に監視する。
+- `/api/health?deep=1` は加えて DB (Supabase) に anon キーで 1 行読みに行き、届かない・2 秒を超えると 503 を返す。
+  Supabase 側の障害だけでなく、アプリから DB に届かない状態 (鍵・権限・設定の不備) も拾える。
+- 旧設計の `/api/auth/status` は実装せず廃止した。認証系の疎通は `?deep=1` と、
+  `npm run test:smoke` の「未認証 API が 401」(500 ではない) の確認で代替する。
+- 独自ドメインが確定するまでは、`https://homegohan.app` を実 URL の `https://homegohan-app.vercel.app` に読み替える。
 
 ### 9.2 インシデント記録フロー
 
