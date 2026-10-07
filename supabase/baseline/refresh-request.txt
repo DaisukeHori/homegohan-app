@@ -1,0 +1,5 @@
+# このファイルを変更した PR で .github/workflows/prod-schema-snapshot.yml が走り、
+# 本番スキーマの読み取り専用 snapshot が artifact (1 日保持) に保存される。
+# ベースラインを取り直したいときは、下の行を更新して PR を出す。
+requested_at: 2026-10-06
+reason: 初回ベースライン作成 (#1116 / #1243、critical 修正 #1231 のセキュリティ回帰テスト基盤)

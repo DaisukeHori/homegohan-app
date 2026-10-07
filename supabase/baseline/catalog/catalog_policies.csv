@@ -1,0 +1,448 @@
+schemaname,tablename,policyname,permissive,roles,cmd,qual,with_check
+cron,job,cron_job_policy,PERMISSIVE,public,ALL,(username = CURRENT_USER),
+cron,job_run_details,cron_job_run_details_policy,PERMISSIVE,public,ALL,(username = CURRENT_USER),
+public,admin_audit_logs,Admins can create audit logs,PERMISSIVE,public,INSERT,,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text, 'support'::text, 'org_admin'::text]))))"
+public,admin_audit_logs,Admins can view audit logs,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text]))))",
+public,admin_audit_logs,audit_logs_insert_admins,PERMISSIVE,public,INSERT,,"((actor_id = auth.uid()) AND (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text, 'support'::text, 'sales'::text, 'finance'::text, 'content_moderator'::text] && user_profiles.roles)))))"
+public,admin_audit_logs,audit_logs_no_delete,PERMISSIVE,public,DELETE,false,
+public,admin_audit_logs,audit_logs_no_update,PERMISSIVE,public,UPDATE,false,
+public,admin_audit_logs,audit_logs_select_super_admin,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))",
+public,admin_user_notes,Admins can manage user notes,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text, 'support'::text]))))",
+public,ai_action_logs,Users can manage actions in own sessions,PERMISSIVE,authenticated,ALL,"(EXISTS ( SELECT 1
+   FROM ai_consultation_sessions
+  WHERE ((ai_consultation_sessions.id = ai_action_logs.session_id) AND (ai_consultation_sessions.user_id = auth.uid()))))","(EXISTS ( SELECT 1
+   FROM ai_consultation_sessions
+  WHERE ((ai_consultation_sessions.id = ai_action_logs.session_id) AND (ai_consultation_sessions.user_id = auth.uid()))))"
+public,ai_consultation_messages,Users can manage messages in own sessions,PERMISSIVE,authenticated,ALL,"(EXISTS ( SELECT 1
+   FROM ai_consultation_sessions
+  WHERE ((ai_consultation_sessions.id = ai_consultation_messages.session_id) AND (ai_consultation_sessions.user_id = auth.uid()))))","(EXISTS ( SELECT 1
+   FROM ai_consultation_sessions
+  WHERE ((ai_consultation_sessions.id = ai_consultation_messages.session_id) AND (ai_consultation_sessions.user_id = auth.uid()))))"
+public,ai_consultation_sessions,Users can manage own sessions,PERMISSIVE,authenticated,ALL,(user_id = auth.uid()),(user_id = auth.uid())
+public,ai_content_logs,System can insert ai logs,PERMISSIVE,authenticated,INSERT,,true
+public,ai_content_logs,Users and admins can view ai logs,PERMISSIVE,public,SELECT,"((user_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text])))))",
+public,announcement_reads,Users can manage own announcement reads,PERMISSIVE,authenticated,ALL,(user_id = auth.uid()),(user_id = auth.uid())
+public,announcements,Admins can manage announcements,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text]))))",
+public,announcements,Public announcements are viewable by everyone,PERMISSIVE,public,SELECT,(is_public = true),
+public,app_logs,Allow service role insert,PERMISSIVE,public,INSERT,,true
+public,app_logs,Service role can do everything,PERMISSIVE,public,ALL,(auth.role() = 'service_role'::text),(auth.role() = 'service_role'::text)
+public,app_logs,Users can read own logs,PERMISSIVE,public,SELECT,((auth.uid() = user_id) OR (user_id IS NULL)),
+public,app_logs,Users can view own logs,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,badges,Anyone can view badges,PERMISSIVE,public,SELECT,true,
+public,blood_test_longitudinal_reviews,Users can insert own blood test longitudinal reviews,PERMISSIVE,authenticated,INSERT,,(auth.uid() = user_id)
+public,blood_test_longitudinal_reviews,Users can update own blood test longitudinal reviews,PERMISSIVE,authenticated,UPDATE,(auth.uid() = user_id),(auth.uid() = user_id)
+public,blood_test_longitudinal_reviews,Users can view own blood test longitudinal reviews,PERMISSIVE,authenticated,SELECT,(auth.uid() = user_id),
+public,blood_test_results,Users can delete own blood test results,PERMISSIVE,public,DELETE,(auth.uid() = user_id),
+public,blood_test_results,Users can insert own blood test results,PERMISSIVE,public,INSERT,,(auth.uid() = user_id)
+public,blood_test_results,Users can update own blood test results,PERMISSIVE,public,UPDATE,(auth.uid() = user_id),
+public,blood_test_results,Users can view own blood test results,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,buddies,Users can view own buddies,PERMISSIVE,public,SELECT,((auth.uid() = user_id_1) OR (auth.uid() = user_id_2)),
+public,buddy_actions,Users can manage own actions,PERMISSIVE,public,ALL,(auth.uid() = from_user_id),
+public,catalog_import_runs,catalog_import_runs_service_role_all,PERMISSIVE,public,ALL,(auth.role() = 'service_role'::text),(auth.role() = 'service_role'::text)
+public,catalog_product_snapshots,catalog_product_snapshots_service_role_all,PERMISSIVE,public,ALL,(auth.role() = 'service_role'::text),(auth.role() = 'service_role'::text)
+public,catalog_products,catalog_products_select_all,PERMISSIVE,"anon,authenticated",SELECT,true,
+public,catalog_raw_documents,catalog_raw_documents_service_role_all,PERMISSIVE,public,ALL,(auth.role() = 'service_role'::text),(auth.role() = 'service_role'::text)
+public,catalog_source_categories,catalog_source_categories_select_all,PERMISSIVE,"anon,authenticated",SELECT,true,
+public,catalog_sources,catalog_sources_select_all,PERMISSIVE,"anon,authenticated",SELECT,true,
+public,cookie_consents,cookie_consents_self,PERMISSIVE,public,ALL,((auth.uid() = user_id) OR (user_id IS NULL)),
+public,coupon_redemptions,coupon_redemptions_select,PERMISSIVE,public,SELECT,"((user_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['finance'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles)))))",
+public,coupons,coupons_mutate_sales_or_above,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['sales'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles))))",
+public,coupons,coupons_select_sales_or_above,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['sales'::text, 'finance'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles))))",
+public,csat_feedbacks,csat_access,PERMISSIVE,public,ALL,"((user_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['support'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles)))))",
+public,daily_active_users,dau_select_admin,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text, 'finance'::text] && user_profiles.roles))))",
+public,daily_activity_logs,Users can manage own activity,PERMISSIVE,public,ALL,(auth.uid() = user_id),
+public,dataset_import_runs,service_role can manage dataset_import_runs,PERMISSIVE,public,ALL,(auth.role() = 'service_role'::text),
+public,dataset_ingredients,Allow anon users to read dataset_ingredients,PERMISSIVE,anon,SELECT,true,
+public,dataset_ingredients,Allow authenticated users to read dataset_ingredients,PERMISSIVE,authenticated,SELECT,true,
+public,dataset_recipes,dataset_recipes_select_all,PERMISSIVE,"anon,authenticated",SELECT,true,
+public,departments,Org admins can manage departments,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.organization_id = departments.organization_id) AND (user_profiles.roles && ARRAY['org_admin'::text, 'admin'::text, 'super_admin'::text]))))",
+public,departments,Org members can view departments,PERMISSIVE,authenticated,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.organization_id = departments.organization_id))))",
+public,derived_recipes,service_role can write derived_recipes,PERMISSIVE,public,INSERT,,(auth.role() = 'service_role'::text)
+public,derived_recipes,user can read own derived_recipes,PERMISSIVE,public,SELECT,(auth.uid() = created_by_user_id),
+public,email_blacklist,email_blacklist_admin,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles))))",
+public,email_delivery_logs,email_logs_admin,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['support'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles))))",
+public,embedding_jobs,Service role can do everything,PERMISSIVE,public,ALL,(auth.role() = 'service_role'::text),(auth.role() = 'service_role'::text)
+public,embedding_jobs,Super admin can view,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))",
+public,experiment_assignments,experiment_assignments_delete_super_admin,PERMISSIVE,public,DELETE,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))",
+public,experiment_assignments,experiment_assignments_select_super_admin,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))",
+public,experiments,experiments_select_super_admin,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))",
+public,external_data_consents,ext_consent_no_delete,PERMISSIVE,public,DELETE,false,
+public,external_data_consents,ext_consent_self_insert,PERMISSIVE,public,INSERT,,(auth.uid() = user_id)
+public,external_data_consents,ext_consent_self_read,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,failed_invite_lookups,failed_invites_no_access,PERMISSIVE,public,ALL,false,
+public,family_groups,family_groups_delete_representative,PERMISSIVE,public,DELETE,(representative_id = auth.uid()),
+public,family_groups,family_groups_select_member,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM family_members fm
+  WHERE ((fm.family_id = family_groups.id) AND (fm.user_id = auth.uid()) AND (fm.status = 'active'::text))))",
+public,family_groups,family_groups_update_adult,PERMISSIVE,public,UPDATE,"(EXISTS ( SELECT 1
+   FROM family_members fm
+  WHERE ((fm.family_id = family_groups.id) AND (fm.user_id = auth.uid()) AND (fm.role = ANY (ARRAY['representative'::family_role_enum, 'adult'::family_role_enum])) AND (fm.status = 'active'::text))))",
+public,family_invites,family_invites_insert_adult,PERMISSIVE,public,INSERT,,"(EXISTS ( SELECT 1
+   FROM family_members fm
+  WHERE ((fm.family_id = family_invites.family_id) AND (fm.user_id = auth.uid()) AND (fm.role = ANY (ARRAY['representative'::family_role_enum, 'adult'::family_role_enum])) AND (fm.status = 'active'::text))))"
+public,family_invites,family_invites_select_adult,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM family_members fm
+  WHERE ((fm.family_id = family_invites.family_id) AND (fm.user_id = auth.uid()) AND (fm.role = ANY (ARRAY['representative'::family_role_enum, 'adult'::family_role_enum])) AND (fm.status = 'active'::text))))",
+public,family_invites,family_invites_update_adult,PERMISSIVE,public,UPDATE,"(EXISTS ( SELECT 1
+   FROM family_members fm
+  WHERE ((fm.family_id = family_invites.family_id) AND (fm.user_id = auth.uid()) AND (fm.role = ANY (ARRAY['representative'::family_role_enum, 'adult'::family_role_enum])) AND (fm.status = 'active'::text))))",
+public,family_meal_logs,Users can manage logs for own family members,PERMISSIVE,authenticated,ALL,"(EXISTS ( SELECT 1
+   FROM (legacy_family_members fm
+     JOIN legacy_family_groups fg ON ((fm.family_group_id = fg.id)))
+  WHERE ((fm.id = family_meal_logs.family_member_id) AND (fg.owner_id = auth.uid()))))","(EXISTS ( SELECT 1
+   FROM (legacy_family_members fm
+     JOIN legacy_family_groups fg ON ((fm.family_group_id = fg.id)))
+  WHERE ((fm.id = family_meal_logs.family_member_id) AND (fg.owner_id = auth.uid()))))"
+public,family_members,family_members_select_self_or_family,PERMISSIVE,public,SELECT,"((user_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM family_members fm
+  WHERE ((fm.family_id = family_members.family_id) AND (fm.user_id = auth.uid()) AND (fm.status = 'active'::text)))))",
+public,family_members,family_members_update_self_or_adult,PERMISSIVE,public,UPDATE,"((user_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM family_members fm
+  WHERE ((fm.family_id = family_members.family_id) AND (fm.user_id = auth.uid()) AND (fm.role = ANY (ARRAY['representative'::family_role_enum, 'adult'::family_role_enum])) AND (fm.status = 'active'::text)))))",
+public,feature_flags,feature_flags_super_admin_all,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))","(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))"
+public,feature_packages,feature_packages_mutate_super_admin,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))",
+public,feature_packages,feature_packages_select_authenticated,PERMISSIVE,authenticated,SELECT,((status)::text = 'active'::text),
+public,gdpr_deletion_requests,gdpr_insert_self,PERMISSIVE,public,INSERT,,(user_id = auth.uid())
+public,gdpr_deletion_requests,gdpr_select,PERMISSIVE,public,SELECT,"((user_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles)))))",
+public,gdpr_deletion_requests,gdpr_update,PERMISSIVE,public,UPDATE,"(((user_id = auth.uid()) AND (executed_at IS NULL)) OR (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles))))))",
+public,health_challenges,Users can insert own health challenges,PERMISSIVE,public,INSERT,,(auth.uid() = user_id)
+public,health_challenges,Users can update own health challenges,PERMISSIVE,public,UPDATE,(auth.uid() = user_id),
+public,health_challenges,Users can view own health challenges,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,health_checkup_longitudinal_reviews,Users can insert own longitudinal reviews,PERMISSIVE,authenticated,INSERT,,(auth.uid() = user_id)
+public,health_checkup_longitudinal_reviews,Users can update own longitudinal reviews,PERMISSIVE,authenticated,UPDATE,(auth.uid() = user_id),(auth.uid() = user_id)
+public,health_checkup_longitudinal_reviews,Users can view own longitudinal reviews,PERMISSIVE,authenticated,SELECT,(auth.uid() = user_id),
+public,health_checkups,Users can delete own checkups,PERMISSIVE,authenticated,DELETE,(auth.uid() = user_id),
+public,health_checkups,Users can insert own checkups,PERMISSIVE,authenticated,INSERT,,(auth.uid() = user_id)
+public,health_checkups,Users can update own checkups,PERMISSIVE,authenticated,UPDATE,(auth.uid() = user_id),(auth.uid() = user_id)
+public,health_checkups,Users can view own checkups,PERMISSIVE,authenticated,SELECT,(auth.uid() = user_id),
+public,health_goals,Users can delete own health goals,PERMISSIVE,public,DELETE,(auth.uid() = user_id),
+public,health_goals,Users can insert own health goals,PERMISSIVE,public,INSERT,,(auth.uid() = user_id)
+public,health_goals,Users can update own health goals,PERMISSIVE,public,UPDATE,(auth.uid() = user_id),
+public,health_goals,Users can view own health goals,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,health_insights,Users can update own health insights,PERMISSIVE,public,UPDATE,(auth.uid() = user_id),
+public,health_insights,Users can view own health insights,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,health_records,Users can delete own health records,PERMISSIVE,public,DELETE,(auth.uid() = user_id),
+public,health_records,Users can insert own health records,PERMISSIVE,public,INSERT,,(auth.uid() = user_id)
+public,health_records,Users can update own health records,PERMISSIVE,public,UPDATE,(auth.uid() = user_id),
+public,health_records,Users can view own health records,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,health_streaks,Users can delete own health streaks,PERMISSIVE,authenticated,DELETE,(auth.uid() = user_id),
+public,health_streaks,Users can insert own health streaks,PERMISSIVE,public,INSERT,,(auth.uid() = user_id)
+public,health_streaks,Users can update own health streaks,PERMISSIVE,public,UPDATE,(auth.uid() = user_id),
+public,health_streaks,Users can view own health streaks,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,help_articles,help_articles_manage,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text, 'support'::text] && user_profiles.roles))))",
+public,help_articles,help_articles_public,PERMISSIVE,public,SELECT,((status)::text = 'published'::text),
+public,infra_alerts,infra_alerts_access,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles))))",
+public,infra_metrics,infra_select_super_admin,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))",
+public,ingredient_match_cache,Allow service role access,PERMISSIVE,service_role,ALL,true,true
+public,inquiries,Admins can update inquiries,PERMISSIVE,public,UPDATE,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text, 'support'::text]))))",
+public,inquiries,Admins can view all inquiries,PERMISSIVE,public,SELECT,"((user_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text, 'support'::text])))))",
+public,inquiries,Anyone can create inquiries,PERMISSIVE,"anon,authenticated",INSERT,,true
+public,inquiries,Users can view own inquiries,PERMISSIVE,authenticated,SELECT,(user_id = auth.uid()),
+public,iroca_experiment_plan,Allow all on iroca_experiment_plan,PERMISSIVE,public,ALL,true,true
+public,iroca_measurements,Allow all on iroca_measurements,PERMISSIVE,public,ALL,true,true
+public,iroca_sample_summary,Allow all on iroca_sample_summary,PERMISSIVE,public,ALL,true,true
+public,legacy_family_groups,Users can manage own family groups,PERMISSIVE,authenticated,ALL,(owner_id = auth.uid()),(owner_id = auth.uid())
+public,legacy_family_members,Users can manage members in own family groups,PERMISSIVE,authenticated,ALL,"(EXISTS ( SELECT 1
+   FROM legacy_family_groups
+  WHERE ((legacy_family_groups.id = legacy_family_members.family_group_id) AND (legacy_family_groups.owner_id = auth.uid()))))","(EXISTS ( SELECT 1
+   FROM legacy_family_groups
+  WHERE ((legacy_family_groups.id = legacy_family_members.family_group_id) AND (legacy_family_groups.owner_id = auth.uid()))))"
+public,llm_usage_logs,Service role can do everything,PERMISSIVE,service_role,ALL,true,true
+public,llm_usage_logs,Users can select own llm usage logs,PERMISSIVE,authenticated,SELECT,(auth.uid() = user_id),
+public,llm_usage_logs,llm_usage_logs_select_own,PERMISSIVE,public,SELECT,(user_id = auth.uid()),
+public,llm_usage_logs,llm_usage_logs_select_super_admin,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))",
+public,meal_ai_feedbacks,Users can view own feedbacks,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM meals
+  WHERE ((meals.id = meal_ai_feedbacks.meal_id) AND (meals.user_id = auth.uid()))))",
+public,meal_image_jobs,meal_image_jobs_insert_own,PERMISSIVE,authenticated,INSERT,,(auth.uid() = user_id)
+public,meal_image_jobs,meal_image_jobs_select_own,PERMISSIVE,authenticated,SELECT,(auth.uid() = user_id),
+public,meal_image_jobs,meal_image_jobs_update_own,PERMISSIVE,authenticated,UPDATE,(auth.uid() = user_id),(auth.uid() = user_id)
+public,meal_image_jobs,service_role can manage meal_image_jobs,PERMISSIVE,public,ALL,(auth.role() = 'service_role'::text),
+public,meal_image_jobs,user can delete own meal_image_jobs,PERMISSIVE,public,DELETE,(auth.uid() = user_id),
+public,meal_nutrition_debug_logs,Service role can do everything on meal_nutrition_debug_logs,PERMISSIVE,public,ALL,(auth.role() = 'service_role'::text),(auth.role() = 'service_role'::text)
+public,meal_nutrition_debug_logs,Users can view own meal_nutrition_debug_logs,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,meal_nutrition_estimates,Users can view own nutrition estimates,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM meals
+  WHERE ((meals.id = meal_nutrition_estimates.meal_id) AND (meals.user_id = auth.uid()))))",
+public,meals,meals_delete_owner,PERMISSIVE,public,DELETE,(user_id = auth.uid()),
+public,meals,meals_insert_owner,PERMISSIVE,public,INSERT,,(user_id = auth.uid())
+public,meals,meals_select_owner_or_family,PERMISSIVE,public,SELECT,can_view_user_meals(user_id),
+public,meals,meals_update_owner,PERMISSIVE,public,UPDATE,(user_id = auth.uid()),
+public,membership_audit,membership_audit_select_admin,PERMISSIVE,public,SELECT,"((scope = 'organization'::text) AND (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.organization_id = membership_audit.scope_id) AND (user_profiles.org_role = ANY (ARRAY['owner'::org_role_enum, 'admin'::org_role_enum]))))))",
+public,membership_audit,membership_audit_select_operator,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))",
+public,membership_audit,membership_audit_select_self,PERMISSIVE,public,SELECT,((actor_id = auth.uid()) OR (target_user_id = auth.uid())),
+public,metric_definitions,metric_definitions_select,PERMISSIVE,public,SELECT,true,
+public,moderation_flags,moderation_flags_admin_all,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles))))","(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles))))"
+public,notification_preferences,Users can insert own notification preferences,PERMISSIVE,public,INSERT,,(auth.uid() = user_id)
+public,notification_preferences,Users can update own notification preferences,PERMISSIVE,public,UPDATE,(auth.uid() = user_id),
+public,notification_preferences,Users can view own notification preferences,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,notification_preferences,own row,PERMISSIVE,public,ALL,(auth.uid() = user_id),(auth.uid() = user_id)
+public,nps_surveys,nps_insert_self,PERMISSIVE,public,INSERT,,(user_id = auth.uid())
+public,nps_surveys,nps_select_admin,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text, 'support'::text] && user_profiles.roles))))",
+public,nutrition_feedback_cache,Users can manage own nutrition feedback cache,PERMISSIVE,public,ALL,(auth.uid() = user_id),(auth.uid() = user_id)
+public,nutrition_feedback_cache,Users can select own nutrition feedback cache,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,nutrition_targets,Users can insert own nutrition targets,PERMISSIVE,authenticated,INSERT,,(user_id = auth.uid())
+public,nutrition_targets,Users can update own nutrition targets,PERMISSIVE,authenticated,UPDATE,(user_id = auth.uid()),
+public,nutrition_targets,Users can view own nutrition targets,PERMISSIVE,authenticated,SELECT,(user_id = auth.uid()),
+public,org_daily_stats,Org admins can view own stats,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.organization_id = org_daily_stats.organization_id) AND (user_profiles.roles && ARRAY['org_admin'::text, 'admin'::text, 'super_admin'::text]))))",
+public,org_license_pools,org_license_pools_select_member,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles up
+  WHERE ((up.id = auth.uid()) AND (up.organization_id = org_license_pools.organization_id))))",
+public,org_license_pools,org_license_pools_update_admin,PERMISSIVE,public,UPDATE,"(EXISTS ( SELECT 1
+   FROM user_profiles up
+  WHERE ((up.id = auth.uid()) AND (up.organization_id = org_license_pools.organization_id) AND (up.org_role = ANY (ARRAY['owner'::org_role_enum, 'admin'::org_role_enum])))))",
+public,organization_challenge_participants,Org members can view participants,PERMISSIVE,authenticated,SELECT,"(EXISTS ( SELECT 1
+   FROM (organization_challenges oc
+     JOIN user_profiles up ON ((up.organization_id = oc.organization_id)))
+  WHERE ((oc.id = organization_challenge_participants.challenge_id) AND (up.id = auth.uid()))))",
+public,organization_challenge_participants,Users can join challenges,PERMISSIVE,authenticated,INSERT,,(user_id = auth.uid())
+public,organization_challenge_participants,Users can update own participation,PERMISSIVE,authenticated,UPDATE,(user_id = auth.uid()),
+public,organization_challenges,Org admins can manage challenges,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.organization_id = organization_challenges.organization_id) AND (user_profiles.roles && ARRAY['org_admin'::text, 'admin'::text, 'super_admin'::text]))))",
+public,organization_challenges,Org members can view challenges,PERMISSIVE,authenticated,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.organization_id = organization_challenges.organization_id))))",
+public,organization_invites,Org admins can manage invites,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.organization_id = organization_invites.organization_id) AND (user_profiles.roles && ARRAY['org_admin'::text, 'admin'::text, 'super_admin'::text]))))",
+public,organization_invites,org_invites_insert_admin,PERMISSIVE,public,INSERT,,"(EXISTS ( SELECT 1
+   FROM user_profiles up
+  WHERE ((up.id = auth.uid()) AND (up.organization_id = organization_invites.organization_id) AND (up.org_role = ANY (ARRAY['owner'::org_role_enum, 'admin'::org_role_enum])))))"
+public,organization_invites,org_invites_select_admin,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles up
+  WHERE ((up.id = auth.uid()) AND (up.organization_id = organization_invites.organization_id) AND (up.org_role = ANY (ARRAY['owner'::org_role_enum, 'admin'::org_role_enum])))))",
+public,organization_invites,org_invites_update_admin,PERMISSIVE,public,UPDATE,"(EXISTS ( SELECT 1
+   FROM user_profiles up
+  WHERE ((up.id = auth.uid()) AND (up.organization_id = organization_invites.organization_id) AND (up.org_role = ANY (ARRAY['owner'::org_role_enum, 'admin'::org_role_enum])))))",
+public,organization_reports,Org admins can manage reports,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.organization_id = organization_reports.organization_id) AND (user_profiles.roles && ARRAY['org_admin'::text, 'admin'::text, 'super_admin'::text]))))",
+public,organization_reports,Org members can view reports,PERMISSIVE,authenticated,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.organization_id = organization_reports.organization_id))))",
+public,organizations,organizations_delete_owner,PERMISSIVE,public,DELETE,(owner_id = auth.uid()),
+public,organizations,organizations_delete_super_admin,PERMISSIVE,public,DELETE,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))",
+public,organizations,organizations_select_member,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles up
+  WHERE ((up.id = auth.uid()) AND (up.organization_id = organizations.id))))",
+public,organizations,organizations_update_admin,PERMISSIVE,public,UPDATE,"(EXISTS ( SELECT 1
+   FROM user_profiles up
+  WHERE ((up.id = auth.uid()) AND (up.organization_id = organizations.id) AND (up.org_role = ANY (ARRAY['owner'::org_role_enum, 'admin'::org_role_enum])))))","((EXISTS ( SELECT 1
+   FROM user_profiles up
+  WHERE ((up.id = auth.uid()) AND (up.organization_id = organizations.id) AND (up.org_role = ANY (ARRAY['owner'::org_role_enum, 'admin'::org_role_enum]))))) AND organizations_owner_id_unchanged(id, owner_id))"
+public,ownership_transfer_proposals,ownership_transfer_select,PERMISSIVE,public,SELECT,((from_user_id = auth.uid()) OR (to_user_id = auth.uid())),
+public,pantry_items,Users can manage own pantry items,PERMISSIVE,public,ALL,(auth.uid() = user_id),
+public,password_history,password_history_no_direct_access,PERMISSIVE,public,ALL,false,
+public,performance_plans,Users can manage own performance plans,PERMISSIVE,public,ALL,(auth.uid() = user_id),
+public,personal_subscriptions,personal_subscriptions_insert,PERMISSIVE,public,INSERT,,"((user_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles)))))"
+public,personal_subscriptions,personal_subscriptions_no_delete,PERMISSIVE,public,DELETE,false,
+public,personal_subscriptions,personal_subscriptions_select,PERMISSIVE,public,SELECT,"((user_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text, 'finance'::text, 'support'::text] && user_profiles.roles)))))",
+public,personal_subscriptions,personal_subscriptions_update,PERMISSIVE,public,UPDATE,"((user_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles)))))",
+public,plan_price_history,plan_price_history_no_delete,PERMISSIVE,public,DELETE,false,
+public,plan_price_history,plan_price_history_no_update,PERMISSIVE,public,UPDATE,false,
+public,plan_price_history,plan_price_history_select,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text, 'finance'::text] && user_profiles.roles))))",
+public,planned_meals,Users can manage own planned meals,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_daily_meals
+  WHERE ((user_daily_meals.id = planned_meals.daily_meal_id) AND (user_daily_meals.user_id = auth.uid()))))",
+public,recipe_collection_items,Anyone can view public collection items,PERMISSIVE,authenticated,SELECT,"(EXISTS ( SELECT 1
+   FROM recipe_collections
+  WHERE ((recipe_collections.id = recipe_collection_items.collection_id) AND ((recipe_collections.is_public = true) OR (recipe_collections.user_id = auth.uid())))))",
+public,recipe_collection_items,Users can manage own collection items,PERMISSIVE,authenticated,ALL,"(EXISTS ( SELECT 1
+   FROM recipe_collections
+  WHERE ((recipe_collections.id = recipe_collection_items.collection_id) AND (recipe_collections.user_id = auth.uid()))))","(EXISTS ( SELECT 1
+   FROM recipe_collections
+  WHERE ((recipe_collections.id = recipe_collection_items.collection_id) AND (recipe_collections.user_id = auth.uid()))))"
+public,recipe_collections,Anyone can view public collections,PERMISSIVE,authenticated,SELECT,((is_public = true) OR (user_id = auth.uid())),
+public,recipe_collections,Users can manage own collections,PERMISSIVE,authenticated,ALL,(user_id = auth.uid()),(user_id = auth.uid())
+public,recipe_comments,Anyone can view comments,PERMISSIVE,authenticated,SELECT,true,
+public,recipe_comments,Users can create comments,PERMISSIVE,authenticated,INSERT,,(user_id = auth.uid())
+public,recipe_comments,Users can delete own comments,PERMISSIVE,authenticated,DELETE,(user_id = auth.uid()),
+public,recipe_comments,Users can update own comments,PERMISSIVE,authenticated,UPDATE,(user_id = auth.uid()),
+public,recipe_flags,Admins can update recipe flags,PERMISSIVE,public,UPDATE,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text]))))",
+public,recipe_flags,Anyone can create recipe flags,PERMISSIVE,authenticated,INSERT,,(reporter_id = auth.uid())
+public,recipe_flags,Users and admins can view recipe flags,PERMISSIVE,public,SELECT,"((reporter_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text])))))",
+public,recipe_likes,Anyone can view likes,PERMISSIVE,authenticated,SELECT,true,
+public,recipe_likes,Users can delete own recipe likes,PERMISSIVE,public,DELETE,(auth.uid() = user_id),
+public,recipe_likes,Users can insert own recipe likes,PERMISSIVE,public,INSERT,,(auth.uid() = user_id)
+public,recipe_likes,Users can manage own likes,PERMISSIVE,authenticated,ALL,(user_id = auth.uid()),(user_id = auth.uid())
+public,recipe_likes,Users can view own recipe likes,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,recipe_requests,Users can manage own recipe requests,PERMISSIVE,public,ALL,(auth.uid() = user_id),
+public,recipes,Users can manage own recipes,PERMISSIVE,public,ALL,(auth.uid() = user_id),
+public,recipes,Users can view public recipes,PERMISSIVE,public,SELECT,((user_id IS NULL) OR (is_public = true) OR (auth.uid() = user_id)),
+public,referral_rewards,referral_rewards_select,PERMISSIVE,public,SELECT,"((referrer_id = auth.uid()) OR (referred_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles)))))",
+public,revenue_snapshots,revenue_snapshots_select,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['finance'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles))))",
+public,sales_lead_activities,sales_activities_access,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['sales'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles))))",
+public,sales_leads,sales_leads_access,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['sales'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles))))",
+public,segment_definitions,segment_definitions_select,PERMISSIVE,public,SELECT,true,
+public,segment_stats,segment_stats_select,PERMISSIVE,public,SELECT,true,
+public,shopping_list_items,Users can manage own shopping list,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM shopping_lists
+  WHERE ((shopping_lists.id = shopping_list_items.shopping_list_id) AND (shopping_lists.user_id = auth.uid()))))",
+public,shopping_list_requests,Service role can update shopping list requests,PERMISSIVE,public,UPDATE,true,
+public,shopping_list_requests,Users can create own shopping list requests,PERMISSIVE,public,INSERT,,(auth.uid() = user_id)
+public,shopping_list_requests,Users can manage own shopping list requests,PERMISSIVE,public,ALL,(auth.uid() = user_id),
+public,shopping_list_requests,Users can view own shopping list requests,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,shopping_lists,Users can manage own shopping lists,PERMISSIVE,public,ALL,(auth.uid() = user_id),
+public,sport_presets,sport_presets_mutate_super_admin,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))","(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))"
+public,sport_presets,sport_presets_select_all,PERMISSIVE,public,SELECT,true,
+public,stripe_webhook_events,stripe_webhook_no_access_rls,PERMISSIVE,public,ALL,false,
+public,subscription_plans,subscription_plans_mutate_super_admin,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))","(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))"
+public,subscription_plans,subscription_plans_select_public,PERMISSIVE,public,SELECT,"(((status)::text = ANY ((ARRAY['public'::character varying, 'private'::character varying])::text[])) OR (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles)))))",
+public,support_ticket_messages,ticket_messages_insert,PERMISSIVE,public,INSERT,,(sender_id = auth.uid())
+public,support_ticket_messages,ticket_messages_select,PERMISSIVE,public,SELECT,"((NOT is_internal) OR (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['support'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles)))))",
+public,support_tickets,tickets_insert_user,PERMISSIVE,public,INSERT,,(user_id = auth.uid())
+public,support_tickets,tickets_select,PERMISSIVE,public,SELECT,"((user_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['support'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles)))))",
+public,support_tickets,tickets_update_support,PERMISSIVE,public,UPDATE,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['support'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles))))",
+public,system_daily_stats,Admins can view system stats,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text]))))",
+public,system_daily_stats,System can insert stats,PERMISSIVE,authenticated,INSERT,,true
+public,system_settings,Admins can view system settings,PERMISSIVE,public,SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text]))))",
+public,system_settings,Super admins can update system settings,PERMISSIVE,public,ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))",
+public,terms_acceptances,terms_no_delete,PERMISSIVE,public,DELETE,false,
+public,terms_acceptances,terms_no_update,PERMISSIVE,public,UPDATE,false,
+public,terms_acceptances,terms_self_insert,PERMISSIVE,public,INSERT,,(auth.uid() = user_id)
+public,terms_acceptances,terms_self_read,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,user_badges,Users can view own badges,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,user_daily_meals,Users can manage own daily meals,PERMISSIVE,public,ALL,(auth.uid() = user_id),
+public,user_metrics,user_metrics_select,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,user_performance_checkins,Users can manage own performance checkins,PERMISSIVE,public,ALL,(auth.uid() = user_id),
+public,user_profiles,Users can insert own profile,PERMISSIVE,public,INSERT,,(auth.uid() = id)
+public,user_profiles,Users can update own profile,PERMISSIVE,public,UPDATE,(auth.uid() = id),
+public,user_profiles,Users can view own profile,PERMISSIVE,public,SELECT,(auth.uid() = id),
+public,user_push_tokens,delete_own_push_tokens,PERMISSIVE,public,DELETE,(auth.uid() = user_id),
+public,user_push_tokens,insert_own_push_tokens,PERMISSIVE,public,INSERT,,(auth.uid() = user_id)
+public,user_push_tokens,select_own_push_tokens,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,user_push_tokens,service_role can read,PERMISSIVE,public,SELECT,(auth.role() = 'service_role'::text),
+public,user_push_tokens,user can manage own,PERMISSIVE,public,ALL,(auth.uid() = user_id),(auth.uid() = user_id)
+public,user_segment_rankings,user_segment_rankings_select,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,user_sessions_metadata,sessions_revoke_self,PERMISSIVE,public,UPDATE,(user_id = auth.uid()),
+public,user_sessions_metadata,sessions_self,PERMISSIVE,public,SELECT,(user_id = auth.uid()),
+public,weekly_menu_requests,Users can create their own requests,PERMISSIVE,public,INSERT,,(auth.uid() = user_id)
+public,weekly_menu_requests,Users can manage own weekly menu requests,PERMISSIVE,public,ALL,(auth.uid() = user_id),
+public,weekly_menu_requests,Users can view their own requests,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+public,weekly_menus,Users can view their own menus,PERMISSIVE,public,SELECT,(auth.uid() = user_id),
+storage,objects,Allow authenticated uploads,PERMISSIVE,authenticated,INSERT,,(bucket_id = 'meal_photos'::text)
+storage,objects,Allow authenticated users to upload 17k8aio_0,PERMISSIVE,authenticated,INSERT,,((bucket_id = 'fridge-images'::text) AND (auth.role() = 'authenticated'::text))
+storage,objects,Allow public to read 17k8aio_0,PERMISSIVE,"anon,authenticated",SELECT,((bucket_id = 'fridge-images'::text) AND (auth.role() = 'authenticated'::text)),
+storage,objects,Allow public viewing,PERMISSIVE,public,SELECT,(bucket_id = 'meal_photos'::text),
+storage,objects,Users can delete own checkup images,PERMISSIVE,authenticated,DELETE,((bucket_id = 'health-checkups'::text) AND ((storage.foldername(name))[1] = (auth.uid())::text)),
+storage,objects,Users can upload own checkup images,PERMISSIVE,authenticated,INSERT,,((bucket_id = 'health-checkups'::text) AND ((storage.foldername(name))[1] = (auth.uid())::text))
+storage,objects,Users can view own checkup images,PERMISSIVE,authenticated,SELECT,((bucket_id = 'health-checkups'::text) AND ((storage.foldername(name))[1] = (auth.uid())::text)),

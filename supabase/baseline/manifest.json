@@ -1,0 +1,24 @@
+{
+  "captured_at": "2026-10-06T18:43:16Z",
+  "source": "production (read-only snapshot by .github/workflows/prod-schema-snapshot.yml)",
+  "snapshot_git_sha": "14ca75b1b5b7c7343c511c379623db8ee1f6eba7",
+  "supabase_cli": "2.62.10",
+  "postgres_version": "17.6.1.052",
+  "ledger_max_version": "20260711130000",
+  "ledger_count": 121,
+  "ledger_local_only": [],
+  "ledger_remote_only": [],
+  "reference_tables": [
+    "public.subscription_plans",
+    "public.feature_packages",
+    "public.badges",
+    "public.sport_presets"
+  ],
+  "files": {
+    "prod_schema.sql": "f282a3535341495811db021bbd0764acdd561a3ca3f3f082d359546bdd21d4a6",
+    "prod_function_acl.sql": "b6a051b80dda4555cba90b2c0d0fc18ad5ba03895e6afe12e630921afe453a47",
+    "prod_storage.sql": "1519b272011f905e931c6f9b68832723548bcc07c82385153d8a915f48194f2c",
+    "prod_reference_data.sql": "0cc2bf14a2f8407d8d39ca0a98171b12a21ff55543a1f154919733c33a41a660",
+    "prod_ledger.txt": "cdf050dc53dca9f296633b52f1f953e1a41fc964694f6f13d9b6b107e0ebb55c"
+  }
+}

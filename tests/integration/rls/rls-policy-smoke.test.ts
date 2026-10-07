@@ -88,7 +88,10 @@ async function createRlsTestUser(params: {
   const userId = authData.user.id;
 
   // Step 2: サインインして JWT を取得
-  const signInResult = await srAdmin.auth.signInWithPassword({
+  // service_role クライアントでサインインすると、そのクライアントの以後の要求が
+  // ユーザーの JWT で送られてしまう (supabase-js がセッションを保持する) ため、
+  // サインインは使い捨ての anon クライアントで行う。
+  const signInResult = await anonClient().auth.signInWithPassword({
     email: params.email,
     password,
   });
@@ -113,13 +116,17 @@ async function createRlsTestUser(params: {
     throw new Error(`Failed to insert profile for ${params.email}: ${insertError.message}`);
   }
 
-  // Step 4: ユーザー自身の JWT で roles と organization_id を UPDATE
-  // (policy: "Users can update own profile" = USING (auth.uid() = id))
+  // Step 4: roles と組織所属を service_role で UPDATE
+  // roles / org_role / organization_id は特権列ガード (20260511000136) により
+  // 本人の JWT では変更できない (42501) ため、テストの前提作りは service_role で行う。
+  // organization_id と org_role は両方 NULL か両方非 NULL (user_profiles_org_consistency)。
   const updatePayload: Record<string, unknown> = { roles: params.roles };
   if (params.organizationId) {
     updatePayload.organization_id = params.organizationId;
+    updatePayload.org_role = 'admin';
+    updatePayload.is_active_in_org = true;
   }
-  const { error: updateError } = await userClient
+  const { error: updateError } = await srAdmin
     .from('user_profiles')
     .update(updatePayload)
     .eq('id', userId);
@@ -281,13 +288,14 @@ describe('authenticated(admin): admin ロールの RLS 確認', () => {
     expect(Array.isArray(data)).toBe(true);
   });
 
-  it('organizations SELECT 可 (admin は全件)', async () => {
+  it('organizations SELECT → 0 行 (グローバル admin でも非所属組織は見えない)', async () => {
+    // 20260511000103_membership_org_rls.sql で organizations_select_admin (グローバル admin の
+    // 全件閲覧) は廃止され、SELECT は所属メンバーのみ (organizations_select_member)。
+    // 運営の組織管理画面は service_role 経由 (#1028) のため、RLS ではグローバル admin にも見せない。
     const client = authedClient(adminUser.jwt);
     const { data, error } = await client.from('organizations').select('id').eq('id', testOrgId);
     expect(error).toBeNull();
-    // admin は作成したテスト org が見える
-    expect(Array.isArray(data)).toBe(true);
-    expect((data ?? []).length).toBe(1);
+    expect(data).toEqual([]);
   });
 
   it('experiment_assignments SELECT → 0 行 (super_admin のみ許可、admin は不可)', async () => {
