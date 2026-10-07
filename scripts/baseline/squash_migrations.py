@@ -37,6 +37,8 @@ BASELINE_PARTS = (
     "prod_storage.sql",
     "prod_reference_data.sql",
 )
+# 空の DB に流したときに本番と表記まで一致させるための作り直し (統合した migration の末尾にだけ入れる)
+REPLAY_FIXUPS = "replay_fixups.sql"
 VERSION_RE = re.compile(r"^(\d{14})_.+\.sql$")
 
 
@@ -69,7 +71,8 @@ def main(argv: list[str]) -> int:
     header = f"""-- migration: {baseline_file.name}
 -- #1116: 本番スキーマのベースライン (migration の統合)
 --
--- このファイルには、本番スキーマ一式 (supabase/baseline/ の {', '.join(BASELINE_PARTS)}) を入れている。
+-- このファイルには、本番スキーマ一式 (supabase/baseline/ の {', '.join(BASELINE_PARTS)}) を入れ、
+-- 最後に {REPLAY_FIXUPS} (流し直しで表記が変わるものを本番と同じ形で作り直す) を入れている。
 --   取得: {manifest['captured_at']} (prod-schema-snapshot.yml による読み取り専用のスナップショット)
 --   本番の migration 台帳の最大 version: {ledger_max} ({manifest['ledger_count']} 本)
 -- 台帳の最大 version 以下の migration ({len(targets)} 本) はここに統合し、ほかのファイルはプレースホルダにした。
@@ -81,7 +84,7 @@ def main(argv: list[str]) -> int:
 -- このファイルは scripts/baseline/squash_migrations.py が生成した。手で編集しないこと。
 """
     parts = [header]
-    for part in BASELINE_PARTS:
+    for part in (*BASELINE_PARTS, REPLAY_FIXUPS):
         parts.append(f"\n-- ===== supabase/baseline/{part} =====\n")
         parts.append((baseline_dir / part).read_text(encoding="utf-8"))
     # pg_dump 由来の SET (search_path='' 等) が後続の migration に残らないようにする

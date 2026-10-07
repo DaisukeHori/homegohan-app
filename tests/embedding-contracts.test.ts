@@ -170,6 +170,11 @@ describe("migration contract", () => {
     );
     expect(baselineMigration).toContain("-- ===== supabase/baseline/prod_schema.sql =====");
     expect(baselineMigration).toContain(prodSchema);
+    // 流し直しで表記が変わるものの作り直しは、ベースラインの後 (RESET ALL の前) に入れる
+    const fixups = fs.readFileSync(path.join(process.cwd(), "supabase/baseline/replay_fixups.sql"), "utf8");
+    const fixupsAt = baselineMigration.indexOf(fixups);
+    expect(fixupsAt).toBeGreaterThan(baselineMigration.indexOf(prodSchema));
+    expect(baselineMigration.indexOf("RESET ALL;", fixupsAt)).toBeGreaterThan(fixupsAt);
   });
 });
 

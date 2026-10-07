@@ -32,6 +32,7 @@ bash scripts/supabase-local.sh stop
 | `prod_table_acl.sql` | public のテーブル / ビューの権限（列単位の GRANT を含む）を本番と一致させる SQL（同上） |
 | `prod_storage.sql` | storage バケット設定と `storage.objects` のポリシー（dump の対象外のためカタログから再構成） |
 | `prod_reference_data.sql` | マスタテーブルのデータ（`subscription_plans` / `feature_packages` / `badges` / `sport_presets`） |
+| `replay_fixups.sql` | #1116 で統合した migration の末尾にだけ入れる作り直し。dump を流し直すと表記が変わるもの（varchar の `IN (...)` の CHECK 制約・ポリシーのロールの並び等）を本番と同じ形で作り直し、`db diff` を空にする。ローカルの組み立てには使わない |
 | `prod_ledger.txt` | 取得時点の本番 migration 台帳 |
 | `catalog/*.csv` | 取得時点の本番カタログ（ポリシー・関数の権限・RLS 有効状態・バケット等）。`verify` と #1243 のドリフト調査に使う |
 | `manifest.json` | 取得日時、台帳の最大 version（＝ベースラインに含まれる最後の migration）、各ファイルの sha256 |
