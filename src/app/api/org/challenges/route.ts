@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { isOrgAdmin } from '@/lib/auth/org-admin';
 
 // チャレンジ一覧取得
 export async function GET(request: Request) {
@@ -9,11 +10,11 @@ export async function GET(request: Request) {
 
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('organization_id, roles')
+    .select('organization_id, org_role')
     .eq('id', user.id)
     .single();
 
-  if (!profile?.roles?.includes('org_admin') || !profile?.organization_id) {
+  if (!isOrgAdmin(profile)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -90,11 +91,11 @@ export async function POST(request: Request) {
 
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('organization_id, roles')
+    .select('organization_id, org_role')
     .eq('id', user.id)
     .single();
 
-  if (!profile?.roles?.includes('org_admin') || !profile?.organization_id) {
+  if (!isOrgAdmin(profile)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -159,11 +160,11 @@ export async function PUT(request: Request) {
 
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('organization_id, roles')
+    .select('organization_id, org_role')
     .eq('id', user.id)
     .single();
 
-  if (!profile?.roles?.includes('org_admin') || !profile?.organization_id) {
+  if (!isOrgAdmin(profile)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

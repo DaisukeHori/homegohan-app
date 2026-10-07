@@ -1,10 +1,11 @@
 /**
  * GET /api/org/stats — 組織ダッシュボード統計 API
- * org_admin ロール必須
+ * 所属組織の org_role が owner / admin のユーザーのみ (#1235)
  */
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { isOrgAdmin } from '@/lib/auth/org-admin';
 
 export async function GET() {
   try {
@@ -15,11 +16,11 @@ export async function GET() {
     }
     const { data: profile } = await supabase
       .from('user_profiles')
-      .select('organization_id, roles')
+      .select('organization_id, org_role')
       .eq('id', user.id)
       .single();
-    if (!profile?.roles?.includes('org_admin') || !profile?.organization_id) {
-      throw new ForbiddenError('PERM_DENIED', 'org_admin role required');
+    if (!isOrgAdmin(profile)) {
+      throw new ForbiddenError('PERM_DENIED', 'owner/admin role required');
     }
 
     const orgId = profile.organization_id;

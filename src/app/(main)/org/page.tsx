@@ -2,7 +2,7 @@
 
 /**
  * #132 組織向け UI — 最小実装
- * org_admin ロールを持つユーザーのみアクセス可能。
+ * 所属組織の org_role が owner / admin のユーザーのみアクセス可能 (#1235)。
  * /api/org/departments から部署一覧を取得して表示する。
  * 編集機能は次回 issue で実装予定。
  */
@@ -10,6 +10,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { isOrgAdmin } from "@/lib/auth/org-admin";
 
 interface Department {
   id: string;
@@ -39,14 +40,14 @@ export default function OrgPage() {
         return;
       }
 
-      // org_admin ロール確認
+      // 組織の管理者 (org_role が owner / admin) か確認
       const { data: profile } = await supabase
         .from('user_profiles')
-        .select('roles, organization_id')
+        .select('org_role, organization_id')
         .eq('id', user.id)
         .single();
 
-      if (!profile?.roles?.includes('org_admin') || !profile?.organization_id) {
+      if (!isOrgAdmin(profile)) {
         setForbidden(true);
         setLoading(false);
         return;
@@ -85,7 +86,7 @@ export default function OrgPage() {
         <div className="text-4xl">🔒</div>
         <h1 className="text-xl font-bold text-gray-700">アクセス権がありません</h1>
         <p className="text-gray-500 text-sm text-center">
-          このページは組織管理者 (org_admin) のみ閲覧できます。
+          このページは組織のオーナー・管理者のみ閲覧できます。
         </p>
         <button
           onClick={() => router.back()}
@@ -102,7 +103,7 @@ export default function OrgPage() {
       {/* ヘッダー */}
       <div className="bg-white p-6 pb-4 border-b border-gray-100 sticky top-0 z-20">
         <h1 className="text-2xl font-bold text-gray-900">組織管理</h1>
-        <p className="text-xs text-gray-400 mt-1">org_admin 専用ページ</p>
+        <p className="text-xs text-gray-400 mt-1">組織のオーナー・管理者専用ページ</p>
       </div>
 
       <div className="p-6 space-y-6">

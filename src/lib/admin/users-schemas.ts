@@ -67,6 +67,8 @@ export type UserPatchBody = z.infer<typeof UserPatchBodySchema>;
 
 // ─── ロール変更 ────────────────────────────────────────────────────────────────
 
+// #1235: 'org_admin' は付与できない。組織の管理者は所属組織の org_role (招待で owner / admin) で決まり、
+// どの組織のものかを区別しない roles の 'org_admin' は組織の管理者判定に使わない。
 export const ALLOWED_ROLES = [
   'user',
   'support',
@@ -76,7 +78,6 @@ export const ALLOWED_ROLES = [
   'org_member',
   'org_viewer',
   'org_manager',
-  'org_admin',
   'org_industrial_doctor',
   'admin',
   'super_admin',

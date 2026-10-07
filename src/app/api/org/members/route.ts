@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { isOrgAdmin } from '@/lib/auth/org-admin';
 
 // admin 機能用には supabase-js のクライアントを直接使う（service_role キーが必要）
 function getSupabaseAdmin() {
@@ -27,11 +28,11 @@ export async function GET(_request: Request) {
 
     const { data: adminProfile } = await supabase
       .from('user_profiles')
-      .select('organization_id, roles')
+      .select('organization_id, org_role')
       .eq('id', user.id)
       .single();
 
-    if (!adminProfile?.roles?.includes('org_admin') || !adminProfile?.organization_id) {
+    if (!isOrgAdmin(adminProfile)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -50,7 +51,7 @@ export async function GET(_request: Request) {
   }
 }
 
-// メンバー作成 (org_admin のみ)
+// メンバー作成 (所属組織の owner / admin のみ)
 export async function POST(request: Request) {
   const supabase = await createServerClient();
 
@@ -63,11 +64,11 @@ export async function POST(request: Request) {
 
     const { data: adminProfile } = await supabase
       .from('user_profiles')
-      .select('organization_id, roles')
+      .select('organization_id, org_role')
       .eq('id', actor.id)
       .single();
 
-    if (!adminProfile?.roles?.includes('org_admin') || !adminProfile?.organization_id) {
+    if (!isOrgAdmin(adminProfile)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
