@@ -26,6 +26,7 @@
 #   SUPABASE_LOCAL_EXCLUDE           supabase start -x に渡すサービス
 #                                    (既定: studio,imgproxy,logflare,vector,edge-runtime)
 #   SUPABASE_LOCAL_REALTIME_VERSION  Realtime イメージの版を固定する (既定: IPv6 が無効な環境のみ v2.83.1)
+#   SUPABASE_LOCAL_RETRY_WAIT_UNIT   start を一過性のエラーでやり直すときの待ち時間の単位秒 (既定: 30。n 回目は n 倍)
 #
 # IPv6 について: Claude Code Cloud の VM はカーネルで IPv6 が無効 (ipv6.disable=1)。
 # CLI 2.62.10 既定の Realtime v2.65.3 は IPv6 での待ち受けがハードコードされており起動に失敗する。
@@ -166,7 +167,28 @@ cmd_start() {
   if [ -n "$SUPABASE_LOCAL_EXCLUDE" ]; then
     args+=(-x "$SUPABASE_LOCAL_EXCLUDE")
   fi
-  cli start "${args[@]}"
+  # 次の一過性の失敗に限り、間隔を空けて最大 3 回まで起動をやり直す (それ以外のエラーは再実行しない)。
+  #   - イメージの取得に失敗する ("failed to pull docker image")。public.ecr.aws は未認証の pull が
+  #     1 秒あたり 1 回までのため、CI で複数のジョブが同時に取得するとレート制限 ("toomanyrequests")
+  #     や接続のタイムアウトになる
+  #   - Docker デーモンの再起動直後で、自動再起動中のコンテナがまだ準備できていない ("is not ready")
+  # CLI のエラーは stderr に出るため、stderr だけを画面に流しつつファイルにも残して判定する。
+  local err status attempt
+  err="$(mktemp)"
+  for attempt in 1 2 3; do
+    status=0
+    { cli start "${args[@]}" 2>&1 1>&3 | tee "$err" >&2; } 3>&1 || status=$?
+    if [ "$status" -eq 0 ]; then
+      break
+    fi
+    if [ "$attempt" -eq 3 ] || ! grep -qE 'failed to pull docker image|toomanyrequests|is not ready' "$err"; then
+      break
+    fi
+    log "一過性のエラーで supabase start が失敗したため、$((attempt * ${SUPABASE_LOCAL_RETRY_WAIT_UNIT:-30})) 秒待ってやり直します"
+    sleep $((attempt * ${SUPABASE_LOCAL_RETRY_WAIT_UNIT:-30}))
+  done
+  rm -f "$err"
+  return "$status"
 }
 
 cmd_reset() {
