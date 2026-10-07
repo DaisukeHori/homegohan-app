@@ -53,12 +53,14 @@ Mobile はそれを `WebViewScreen` コンポーネント経由で表示する�
 
 `src/components/web/WebViewScreen.tsx` が担う処理:
 
-1. **セッションブリッジ URL 生成**: ネイティブ SecureStore からトークンを読み、`/auth/native-bridge?access_token=...&next=PATH` へリダイレクト
-2. **localStorage 注入**: `injectedJavaScriptBeforeContentLoaded` で `sb-{ref}-auth-token` を localStorage にセット (クライアント Supabase JS SDK 用)
-3. **タブ間ナビゲーション intercept**: `buildTabInterceptScript` を inject し、別タブへの `<a>` クリックを `postMessage` で捕捉して Expo Router に委譲
+1. **セッションブリッジ URL 生成**: ネイティブが `POST /api/auth/native-bridge/code` (Bearer 認証・body は `refresh_token`) でワンタイム code (単一使用・60 秒有効) を受け取り、`/auth/native-bridge?code=...&next=PATH` を WebView で開く。URL にトークンは載せない (#1036)。実装は `src/lib/webViewBridge.ts`
+2. **WebView へのセッション注入はしない**: Web 側のセッションは native-bridge が Cookie に張る (Web のクライアントは Cookie を読む)。localStorage への注入は廃止した (#1036)
+3. **タブ間ナビゲーション intercept**: `buildTabInterceptScript` を inject し、別タブへの `<a>` クリックを `postMessage` で捕捉して Expo Router に委譲。自アプリのオリジン上でのみ実行する
 4. **SPA pushState hook**: `history.pushState` を override し programmatic ナビゲーションも interceptor に流す
 5. **ダウンロード処理**: Web 側 `postMessage({ type: 'download' })` を受け取り `expo-sharing` で共有
-6. **タブ再タップ時リセット**: `navigation.addListener('tabPress')` でアクティブ WebView を初期 URL へ `window.location.replace`
+6. **タブ再タップ時リセット**: `navigation.addListener('tabPress')` でアクティブ WebView を初期 URL へ `window.location.replace` (自アプリのオリジン上でのみ実行)
+7. **WebView を自アプリのオリジンに固定**: `onShouldStartLoadWithRequest` / `onOpenWindow` で他オリジンへの遷移を遮断し、OS の既定ブラウザで開く (#1158)。`onMessage` は送信元が自アプリのオリジンのときだけ処理する。オリジンは `EXPO_PUBLIC_WEB_URL` の 1 つだけ (Cookie はホスト単位のため)
+8. **`initialPath` の検証**: deep link (`homegohan://home?initialPath=...`) からも指定できるため、単一の `/` で始まる同一オリジンのパスだけを受け付ける (`//evil.example` 等は各タブの既定パスへ戻す)
 
 #### postMessage プロトコル (Web → Native)
 
@@ -91,11 +93,12 @@ WebView ハイブリッドにおける最大の課題は「ネイティブ側セ
 1. ユーザーがネイティブ認証画面でメール/パスワードを入力
 2. Supabase Auth → access_token + refresh_token 取得
 3. ネイティブ側: expo-secure-store に保存 (AuthProvider)
-4. WebViewScreen: SecureStore からトークンを読み出し
-5. WebViewScreen: /auth/native-bridge?access_token=X&refresh_token=Y&next=/home を WebView に表示
-6. native-bridge (Next.js Route): Supabase setSession → Cookie にセット → next へリダイレクト
-7. WebViewScreen: injectedJavaScriptBeforeContentLoaded で localStorage にも sb-{ref}-auth-token をセット
-8. これ以降 WebView 内 Supabase JS SDK は有効セッション状態
+4. WebViewScreen: ネイティブのセッションを取得 (access_token の残りが 120 秒未満なら先に refreshSession)
+5. WebViewScreen: POST {WEB}/api/auth/native-bridge/code (Authorization: Bearer <access_token>, body: { refresh_token }) → { code, expires_in: 60 }
+6. WebViewScreen: /auth/native-bridge?code=C&next=/home?mode=app を WebView に表示 (URL に載るのは code のみ)
+7. native-bridge (Next.js Route): code を 1 回だけ消費 → Supabase setSession → Cookie にセット → next へリダイレクト
+8. これ以降 WebView は Cookie のセッションで認証済み (localStorage へは何も注入しない)
+9. code 発行に失敗した場合 (ネットワーク・非 2xx 等) は、トークンを含まない直接 URL を表示する。旧方式 (トークン付き URL) には決してフォールバックしない
 ```
 
 #### ログアウト時フロー
@@ -104,7 +107,7 @@ WebView ハイブリッドにおける最大の課題は「ネイティブ側セ
 1. settings.tsx の handleLogout 呼び出し
 2. clearUserScopedAsyncStorage(userId) でユーザースコープ AsyncStorage 全削除
 3. supabase.auth.signOut() → ネイティブ SecureStore のトークン削除
-4. WebView 内 localStorage も次回ロード時に bridge 未通過のため空になる
+4. WebView の Cookie セッションは、次回ロード時の bridge (setSession) で上書きされる
 5. router.replace('/') → index.tsx がログイン画面へリダイレクト
 ```
 
@@ -149,11 +152,12 @@ sequenceDiagram
   App->>Auth: supabase.auth.getSession()
   Auth-->>App: session (access_token, refresh_token)
   App->>WV: <WebViewScreen path="/home" />
-  WV->>WV: bridgeUrl = /auth/native-bridge?access_token=...
+  WV->>Web: POST /api/auth/native-bridge/code (Bearer access_token, body: refresh_token)
+  Web-->>WV: { code, expires_in: 60 }
+  WV->>WV: bridgeUrl = /auth/native-bridge?code=...&next=...
   WV->>Web: WebView.source = { uri: bridgeUrl }
-  Web->>Web: setSession() → Cookie セット
-  Web-->>WV: 302 → /home?mode=app
-  WV->>WV: injectJavaScript(localStorage セット)
+  Web->>Web: code を消費 → setSession() → Cookie セット
+  Web-->>WV: 307 → /home?mode=app
   Web-->>WV: ホーム画面 HTML
 ```
 
@@ -330,6 +334,8 @@ useEffect(() => {
 |---------|------|
 | WebView 読み込み失敗 | `renderLoading` スピナー + タイムアウト後リトライボタン |
 | セッション取得失敗 | `uri = WEB_BASE_URL + path?mode=app` (未ログイン状態で表示) |
+| bridge code 発行失敗 (ネットワーク・タイムアウト 8 秒・非 2xx) | 同上。トークンを含まない直接 URL を表示し、旧方式のトークン付き URL にはフォールバックしない |
+| 他オリジンへの遷移 (レシピ等の外部リンク) | WebView では開かず OS の既定ブラウザで開く。WebView は元のページのまま |
 | バージョンチェック API エラー | スキップして起動継続 (オフライン対応) |
 | native-bridge リダイレクトエラー | Web 側で 500 → WebView がエラーページ → ネイティブで再ロード |
 
