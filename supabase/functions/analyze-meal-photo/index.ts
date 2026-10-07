@@ -86,7 +86,8 @@ Deno.serve(async (req) => {
         const bytes = new Uint8Array(binaryString.length)
         for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i)
 
-        const fileName = `meals/${user.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`
+        // 本人のフォルダ <user_id>/meals/ の下に保存する (storage.objects の RLS が本人のフォルダだけを許可する)
+        const fileName = `${user.id}/meals/${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`
         const { error: uploadError } = await supabase.storage
           .from('fridge-images')
           .upload(fileName, bytes, { contentType: first.mimeType || 'image/jpeg', upsert: false })
@@ -182,7 +183,8 @@ async function analyzeMealPhotoBackgroundTask({
       bytes[i] = binaryString.charCodeAt(i)
     }
     
-    const fileName = `meals/${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`
+    // 本人のフォルダ <user_id>/meals/ の下に保存する (storage.objects の RLS が本人のフォルダだけを許可する)
+    const fileName = `${userId}/meals/${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`
     
     const { error: uploadError } = await supabase.storage
       .from('fridge-images')
