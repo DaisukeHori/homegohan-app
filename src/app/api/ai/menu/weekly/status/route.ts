@@ -2,6 +2,9 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
 
+// #1203: stale 判定時の復元（スナップショットの書き戻し）が打ち切られないよう、実行時間の上限を明示する。
+export const maxDuration = 60; // Vercel Pro: 60s OK
+
 // リクエストのステータスを確認
 export async function GET(request: Request) {
   const supabase = await createClient();
