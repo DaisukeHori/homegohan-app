@@ -172,7 +172,26 @@ cmd_start() {
 cmd_reset() {
   ensure_docker
   prepare
-  cli db reset
+  # db reset は最後にコンテナを再起動し、Kong 経由で Storage API (バケット一覧) を呼ぶ。
+  # Storage の起動が間に合わないと Kong が 502 等を返し、DB への適用は終わっているのに
+  # 非ゼロで終了する。このときに限り 1 回だけやり直す (migration の失敗などは再実行しない)。
+  # CLI のエラーは stderr に出るため、stderr だけを画面に流しつつファイルにも残して判定する。
+  local err status attempt
+  err="$(mktemp)"
+  for attempt in 1 2; do
+    status=0
+    { cli db reset 2>&1 1>&3 | tee "$err" >&2; } 3>&1 || status=$?
+    if [ "$status" -eq 0 ]; then
+      break
+    fi
+    if [ "$attempt" -eq 2 ] || ! grep -qE 'Error status 50[234]' "$err"; then
+      break
+    fi
+    log "Storage の再起動待ちで db reset が失敗したため、もう一度実行します"
+    sleep 5
+  done
+  rm -f "$err"
+  return "$status"
 }
 
 cmd_stop() {
