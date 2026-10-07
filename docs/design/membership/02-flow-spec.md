@@ -237,20 +237,31 @@ server → rpc('add_family_child', { p_family_id, p_display_name, p_child_profil
 
 ---
 
-## 9. family 子供 → 実 user promote
+## 9. family 子供 → 実 user promote (本人同意フロー、#1232)
+
+旧設計 (代表者・大人が `promote_child_to_user` で即時に紐付ける) は、本人の同意なしに既存ユーザーを
+家族へ編入できたため廃止した (#1232)。`promote_child_to_user` は両方の引数の版とも常に
+`PROMOTION_DIRECT_DISABLED` を返す (もしくは削除済み)。
 
 ```
-[adult] /family/members/{id} → [アカウントを発行する]
-       (子供本人の email or 親が代理 email 指定)
-       (子供本人がスマホで signup → 親に通知 → 親が「同一人物」確認)
+[rep/adult] /family/members/{id}/promote → 子供本人のメールアドレスを入力
+POST /api/family/members/{id}/promote  body: { email }
+server → rpc('request_child_promotion', { p_member_id, p_email })
+       → family_promotion_requests に pending 行 (token 64 桁 hex、14 日有効)
+       → 同意依頼メール (リンク: /family/promotions/{token})。token は HTTP 応答に含めない
+       → family_members / user_profiles は変えない
+       (DELETE 同 URL → rpc('revoke_child_promotion') で取消。再送は旧 pending を自動で取消)
 
-POST /api/family/members/{id}/promote
-       body: { user_id }
-server → rpc('promote_child_to_user', { p_member_id, p_user_id })
-       → family_members.user_id = X, child_profile = NULL
-       → user_profiles.family_id 設定
-       → 過去 meals/health の "child_profile_id" 参照を user_id に書き換え (script)
-       → 監査ログ
+[本人] /family/promotions/{token} (未ログイン・初期設定前でも開ける)
+       → rpc('get_promotion_details', { p_token }) で内容を表示
+       → 宛先メールアドレスのアカウントでログインして承認 / 拒否
+POST /api/family/promotions/{token}/accept  body: { share_meals, share_health, share_menu }
+server → rpc('accept_child_promotion', ...)
+       → 本人の auth.uid() のメールが宛先と一致するときだけ
+         family_members.user_id = 本人, role = 'adult', child_profile = NULL, share_* = 本人の選択
+       → user_profiles.family_id 設定 (プロフィール行が無ければ既定値で作る)
+       → 監査ログ (child_promoted)
+POST /api/family/promotions/{token}/reject → rpc('reject_child_promotion')
 ```
 
 ---
@@ -349,7 +360,12 @@ server → caller の family_members 行を UPDATE
 | reject_family_invite | token | family_invites | anon/authenticated | POST /api/family/invites/{token}/reject |
 | revoke_family_invite | invite_id | family_invites | authenticated | POST /api/family/invites/{id}/revoke |
 | add_family_child | family_id, display_name, child_profile | family_members | authenticated | POST /api/family/members/child |
-| promote_child_to_user | member_id, user_id | family_members | authenticated | POST /api/family/members/{id}/promote |
+| request_child_promotion (#1232) | member_id, email | JSONB (token はメール用。HTTP 応答には含めない) | authenticated | POST /api/family/members/{id}/promote |
+| revoke_child_promotion (#1232) | member_id | family_promotion_requests | authenticated | DELETE /api/family/members/{id}/promote |
+| accept_child_promotion (#1232) | token, share_meals, share_health, share_menu | family_members | authenticated | POST /api/family/promotions/{token}/accept |
+| reject_child_promotion (#1232) | token | family_promotion_requests | authenticated | POST /api/family/promotions/{token}/reject |
+| get_promotion_details (#1232) | token | JSONB | anon/authenticated | (承認ページ /family/promotions/{token} から直接) |
+| promote_child_to_user (廃止、#1232) | member_id, email | family_members | authenticated | (常に PROMOTION_DIRECT_DISABLED) |
 | remove_family_member | family_id, user_id | family_members | authenticated | POST /api/family/members/{user_id}/remove |
 | leave_family | (none) | family_members | authenticated | POST /api/family/leave |
 | propose_family_representative_transfer | family_id, to_user_id | UUID | authenticated | POST /api/family/representative-transfer/propose |

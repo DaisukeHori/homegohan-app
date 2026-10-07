@@ -27,6 +27,14 @@ function isInvitePath(pathname: string): boolean {
   return pathname === "/invite" || pathname.startsWith("/invite/");
 }
 
+// #1232: /invite と同趣旨 (#1057 round-2 の教訓の適用)。家族参加の本人同意ページ
+// (メールリンク着地) は、認証済みだがオンボーディング未完了のユーザーが踏んでも
+// /onboarding/welcome (or /resume) へ差し戻さず素通りさせる。
+// サインアップ → オンボーディング前に承認ページへ戻る導線を守る。
+function isFamilyPromotionPath(pathname: string): boolean {
+  return pathname === "/family/promotions" || pathname.startsWith("/family/promotions/");
+}
+
 export function resolveOnboardingRedirect(input: OnboardingRedirectInput): string | null {
   const pathname = input.pathname;
   const roles = input.roles ?? [];
@@ -55,7 +63,7 @@ export function resolveOnboardingRedirect(input: OnboardingRedirectInput): strin
     return target;
   }
 
-  if (isInvitePath(pathname)) {
+  if (isInvitePath(pathname) || isFamilyPromotionPath(pathname)) {
     return null;
   }
 

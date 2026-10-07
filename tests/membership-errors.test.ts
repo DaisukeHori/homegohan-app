@@ -93,4 +93,70 @@ describe("mapPgErrorToHttp", () => {
     expect(r.status).toBe(403);
     expect(r.code).not.toBe(MembershipErrorCode.NOT_IN_FAMILY);
   });
+
+  // #1232: 子供メンバー昇格の本人同意フロー
+  it("#1232: 40P01 (deadlock_detected) は CONFLICT_RETRY/409 に正規化される", () => {
+    const r = mapPgErrorToHttp("deadlock detected", "40P01");
+    expect(r.code).toBe(MembershipErrorCode.CONFLICT_RETRY);
+    expect(r.status).toBe(409);
+  });
+
+  it("#1232: pgCode が無いとき 'deadlock detected' というメッセージだけでは UNKNOWN/500 のまま", () => {
+    // メッセージは語彙 (コード語) と一致しないため、SQLSTATE を渡さなければ拾えない
+    const r = mapPgErrorToHttp("deadlock detected");
+    expect(r.code).toBe("UNKNOWN");
+    expect(r.status).toBe(500);
+  });
+
+  it("#1232: RPC が RAISE する 'CONFLICT_RETRY' (SQLSTATE P0001) もメッセージ照合で CONFLICT_RETRY/409 になる", () => {
+    const r = mapPgErrorToHttp("ERROR: CONFLICT_RETRY", "P0001");
+    expect(r.code).toBe(MembershipErrorCode.CONFLICT_RETRY);
+    expect(r.status).toBe(409);
+  });
+
+  it("#1232: 40P01 はメッセージ照合より先に判定され、メッセージに他のコード語があっても CONFLICT_RETRY になる", () => {
+    const r = mapPgErrorToHttp("ERROR: NOT_FAMILY_ADULT", "40P01");
+    expect(r.code).toBe(MembershipErrorCode.CONFLICT_RETRY);
+    expect(r.status).toBe(409);
+  });
+
+  it.each([
+    ["PROMOTION_REQUEST_NOT_FOUND", 404],
+    ["PROMOTION_REQUEST_EXPIRED", 410],
+    ["PROMOTION_REQUEST_ALREADY_USED", 409],
+    ["PROMOTION_EMAIL_MISMATCH", 403],
+    ["PROMOTION_MEMBER_UNAVAILABLE", 409],
+    ["PROMOTION_DIRECT_DISABLED", 403],
+  ])("#1232: %s が %i で検出される", (code, status) => {
+    expect(mapPgErrorToHttp(`ERROR: ${code}`)).toEqual({ code, status });
+  });
+
+  it("#1232: PROMOTION_EMAIL_MISMATCH は 403 に解決し、EMAIL_MISMATCH / INVITE_EMAIL_MISMATCH に化けない", () => {
+    const r = mapPgErrorToHttp("ERROR: PROMOTION_EMAIL_MISMATCH");
+    expect(r.code).toBe(MembershipErrorCode.PROMOTION_EMAIL_MISMATCH);
+    expect(r.code).not.toBe(MembershipErrorCode.EMAIL_MISMATCH);
+    expect(r.code).not.toBe(MembershipErrorCode.INVITE_EMAIL_MISMATCH);
+    expect(r.status).toBe(403);
+    // 逆方向: 既存の EMAIL_MISMATCH が PROMOTION_EMAIL_MISMATCH に化けない
+    expect(mapPgErrorToHttp("ERROR: EMAIL_MISMATCH").code).toBe(MembershipErrorCode.EMAIL_MISMATCH);
+  });
+
+  it("#1232: 40P01 以外の pgCode は既存のメッセージ照合の結果を変えない", () => {
+    expect(mapPgErrorToHttp("ERROR: USER_NOT_IN_ORG", "P0001")).toEqual({
+      code: MembershipErrorCode.USER_NOT_IN_ORG,
+      status: 404,
+    });
+    expect(mapPgErrorToHttp("ERROR: NOT_IN_ORG", "42501")).toEqual({
+      code: MembershipErrorCode.NOT_IN_ORG,
+      status: 403,
+    });
+    expect(mapPgErrorToHttp("ERROR: ALREADY_IN_FAMILY", "23505")).toEqual({
+      code: MembershipErrorCode.ALREADY_IN_FAMILY,
+      status: 409,
+    });
+    expect(mapPgErrorToHttp("totally unrelated database error", "XX000")).toEqual({
+      code: "UNKNOWN",
+      status: 500,
+    });
+  });
 });

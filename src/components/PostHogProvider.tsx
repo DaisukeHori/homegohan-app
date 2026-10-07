@@ -12,6 +12,7 @@ import {
   getAnalyticsConsent,
   ANALYTICS_CONSENT_KEY,
   ANALYTICS_CONSENT_EVENT,
+  redactTokenPath,
 } from "@/lib/posthog";
 import { setAnalyticsAdapter, fireAnalytics } from "@homegohan/handson-tour-shared";
 
@@ -63,7 +64,7 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
             // Web Vitals 計測 (handson-tour 専用 analytics schema)
             // web-vitals v4+ では onFID は削除され onINP (Interaction to Next Paint) に置き換わった
             import('web-vitals').then(({ onLCP, onCLS, onINP }) => {
-              const page = typeof window !== 'undefined' ? window.location.pathname : '/';
+              const page = typeof window !== 'undefined' ? redactTokenPath(window.location.pathname) : '/';
               const common = {
                 user_id: userId,
                 timestamp: new Date().toISOString(),

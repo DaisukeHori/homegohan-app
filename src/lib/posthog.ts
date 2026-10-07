@@ -15,6 +15,15 @@ const FORBIDDEN_KEYS = [
 ] as const;
 
 /**
+ * 分析に送るページのパスから、URL に含まれるトークンを伏せる。
+ * #1232: 家族参加の承認ページ (/family/promotions/{token}) の token は、メールで本人にだけ届く同意の証跡で、
+ * 外部 (PostHog) には送らない。
+ */
+export function redactTokenPath(pathname: string): string {
+  return pathname.replace(/^\/family\/promotions\/[^/]+/, '/family/promotions/[token]');
+}
+
+/**
  * localStorage キー: Cookie 同意 (計測) の opt-in 状態
  * 本来は cookie_consents テーブルから取得するが、
  * v1 では localStorage で代替 (cross/08 §13)
