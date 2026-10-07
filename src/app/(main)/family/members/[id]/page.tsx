@@ -2,8 +2,8 @@
 
 // src/app/(main)/family/members/[id]/page.tsx
 // (設計書 03-ui-spec.md §3.2, 02-flow-spec.md §13)
-import { useState, useEffect, use } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
 interface FamilyMember {
@@ -18,12 +18,10 @@ interface FamilyMember {
   joined_at: string;
 }
 
-export default function FamilyMemberDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id: memberId } = use(params);
+export default function FamilyMemberDetailPage() {
+  // Next.js 14 のクライアントページでは params は Promise ではなく、use(params) は例外になる (#1275)。
+  // useParams は 14 / 15 のどちらでも使える。
+  const { id: memberId } = useParams<{ id: string }>();
   const router = useRouter();
   const supabase = createClient();
 
