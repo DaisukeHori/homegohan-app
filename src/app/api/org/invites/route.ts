@@ -1,10 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
-import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
-import { sendEmail } from '@/lib/emails/send';
-import { renderOrgInviteExistingEmail } from '@/lib/emails/membership/org-invite-existing';
-import { renderOrgInviteNewEmail } from '@/lib/emails/membership/org-invite-new';
-import type { InviteEmailVars } from '@/lib/emails/membership/templates';
+import { createOrgInviteWithEmail, type OrgInviteRole } from '@/lib/membership/org-invite';
 
 // 招待一覧取得
 export async function GET(request: Request) {
@@ -101,87 +97,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: { code: 'INVALID_BODY', message: 'role は admin または member のみ' } }, { status: 400 });
   }
 
-  // create_org_invite RPC 呼び出し (既存 pending は RPC 内で revoke)
-  const { data: invite, error: rpcError } = await supabase.rpc('create_org_invite', {
-    p_organization_id: profile.organization_id,
-    p_email: email.toLowerCase(),
-    p_role: role as 'admin' | 'member',
-    p_custom_message: custom_message,
+  // 招待を作り、招待メールを送る (POST /api/org/members と共通)
+  const result = await createOrgInviteWithEmail({
+    supabase,
+    inviter: { email: user.email, nickname: profile.nickname },
+    organizationId: profile.organization_id,
+    email,
+    role: role as OrgInviteRole,
+    customMessage: custom_message,
   });
-
-  if (rpcError) {
-    const { code, status } = mapPgErrorToHttp(rpcError.message);
-    return NextResponse.json({ error: { code, message: rpcError.message } }, { status });
+  if (!result.ok) {
+    return NextResponse.json({ error: { code: result.code, message: result.message } }, { status: result.status });
   }
 
-  if (!invite) {
-    return NextResponse.json({ error: { code: 'RPC_FAILED', message: '招待の作成に失敗しました' } }, { status: 500 });
-  }
-
-  const inviteRow = invite as {
-    id: string;
-    token: string;
-    email: string;
-    invited_role: string;
-    status: string;
-    expires_at: string;
-    custom_message: string | null;
-    organization_id: string | null;
-  };
-
-  const baseUrl = process.env.NEXT_PUBLIC_INVITE_BASE_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
-  const inviteUrl = `${baseUrl}/invite/${inviteRow.token}`;
-
-  // 組織名を取得
-  const { data: orgData } = await supabase
-    .from('organizations')
-    .select('name')
-    .eq('id', profile.organization_id)
-    .single();
-
-  // 既存ユーザー判定: auth.admin.listUsers は service_role 専用のため
-  // get_invite_details の is_existing_user フィールドを使用
-  const { data: inviteDetails } = await supabase.rpc('get_invite_details', {
-    p_token: inviteRow.token,
-  });
-
-  const isExistingUser = (inviteDetails as Record<string, unknown> | null)?.is_existing_user === true;
-
-  const expiresDate = inviteRow.expires_at.substring(0, 10); // 'YYYY-MM-DD'
-  const inviterName = profile.nickname ?? user.email?.split('@')[0] ?? '招待者';
-  const scopeName = orgData?.name ?? '組織';
-
-  const emailVars: InviteEmailVars = {
-    display_name: null,
-    email_address: email.toLowerCase(),
-    inviter_name: inviterName,
-    scope_name: scopeName,
-    invite_url: inviteUrl,
-    expires_at: expiresDate,
-    custom_message: custom_message ?? null,
-  };
-
-  // Resend 送信 (失敗時は warn のみ — 招待 row は残す)
-  try {
-    const envelope = isExistingUser
-      ? renderOrgInviteExistingEmail(emailVars)
-      : renderOrgInviteNewEmail(emailVars);
-    await sendEmail(envelope);
-  } catch (emailErr) {
-    console.warn('[api/org/invites] メール送信失敗 (招待は有効):', emailErr);
-  }
-
-  return NextResponse.json({
-    ok: true,
-    invite: {
-      id: inviteRow.id,
-      email: inviteRow.email,
-      role: inviteRow.invited_role,
-      status: inviteRow.status,
-      expires_at: inviteRow.expires_at,
-      invite_url: inviteUrl,
-    },
-  });
+  return NextResponse.json({ ok: true, invite: result.invite });
 }
 
 // 招待削除
