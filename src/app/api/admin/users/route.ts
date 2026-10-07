@@ -8,13 +8,19 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { UsersSearchSchema } from '@/lib/admin/users-schemas';
+import { canViewUserEmail, fetchUserEmails, findUserIdsByEmail } from '@/lib/admin/user-emails';
+import { buildUserSearchFilter } from '@/lib/admin/users-search';
 import { isAccountFrozen } from '@/lib/auth/frozen';
 
 export const dynamic = 'force-dynamic';
 
+/** ログの発生元 (src/lib/admin/user-emails.ts がメール取得の失敗を記録するときに使う) */
+const LOG_SOURCE = 'GET /api/admin/users';
+
 export async function GET(request: Request) {
+  let actor;
   try {
-    await requireRole(['admin', 'super_admin', 'support']);
+    actor = await requireRole(['admin', 'super_admin', 'support']);
   } catch (err) {
     if (err instanceof AuthError) {
       return NextResponse.json(
@@ -45,6 +51,10 @@ export async function GET(request: Request) {
   // ポリシーしか無いため、admin/support 向け一覧取得には service_role が必須 (#1028)。
   const supabase = getSupabaseAdmin();
 
+  // メールアドレスを見てよいのは admin / super_admin だけ (#1145)。support は一覧を見られるが、
+  // メールは引かず、メールでの検索も効かせない (検索でメールの存在を推測させない)。
+  const canSeeEmail = canViewUserEmail(actor.roles);
+
   // ユーザープロファイルを検索
   let query = supabase
     .from('user_profiles')
@@ -66,10 +76,16 @@ export async function GET(request: Request) {
     );
 
   // 全文検索 (email/name/id)
-  if (params.q) {
-    query = query.or(
-      `nickname.ilike.%${params.q}%,id.eq.${params.q.match(/^[0-9a-f-]{36}$/) ? params.q : '00000000-0000-0000-0000-000000000000'}`,
-    );
+  // 検索語は buildUserSearchFilter が引用符・LIKE のワイルドカードをエスケープして or=(...) にする
+  // (以前は文字列連結で、"," ")" で構文エラーになり、"%" "_" がワイルドカードとして働いた)。
+  // メールの部分一致は admin / super_admin だけ。見つかった user_id を id.in.(...) で足す。
+  const searchTerm = params.q?.trim();
+  if (searchTerm) {
+    const emailMatchedIds = canSeeEmail ? await findUserIdsByEmail(supabase, searchTerm, LOG_SOURCE) : [];
+    const searchFilter = buildUserSearchFilter(searchTerm, emailMatchedIds);
+    if (searchFilter) {
+      query = query.or(searchFilter);
+    }
   }
 
   // ロールフィルタ
@@ -131,9 +147,22 @@ export async function GET(request: Request) {
     );
   }
 
-  const users = (data ?? []).map((u) => ({
+  const rows = data ?? [];
+
+  // メールアドレス (#1145): 一覧に出た id のぶんだけを、service_role 専用の RPC で auth.users から引く。
+  // auth.admin.listUsers() は先頭 50 件しか引けないため使わない (#1204)。
+  // 引けなかった (メールを持たない / 取得に失敗した) 行は null。support には引かない。
+  const emails = canSeeEmail
+    ? await fetchUserEmails(
+        supabase,
+        rows.map((u) => u.id),
+        LOG_SOURCE,
+      )
+    : new Map<string, string>();
+
+  const users = rows.map((u) => ({
     id: u.id,
-    email: null, // email は auth.users から取得が必要 (#1028 のスコープ外。別 Issue で対応)
+    email: emails.get(u.id) ?? null,
     nickname: u.nickname,
     plan_key: u.plan_key_cached ?? 'free',
     roles: u.roles ?? ['user'],
@@ -152,12 +181,16 @@ export async function GET(request: Request) {
     organization_id: u.organization_id,
   }));
 
-  return NextResponse.json({
-    data: users,
-    meta: {
-      total: count ?? 0,
-      page: params.page,
-      per_page: params.per_page,
+  return NextResponse.json(
+    {
+      data: users,
+      meta: {
+        total: count ?? 0,
+        page: params.page,
+        per_page: params.per_page,
+      },
     },
-  });
+    // メールアドレスを含むため、共有キャッシュに残さない
+    { headers: { 'Cache-Control': 'no-store' } },
+  );
 }

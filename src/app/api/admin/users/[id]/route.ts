@@ -9,9 +9,13 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { UserPatchBodySchema } from '@/lib/admin/users-schemas';
+import { canViewUserEmail, fetchUserEmails } from '@/lib/admin/user-emails';
 import { isAccountFrozen } from '@/lib/auth/frozen';
 
 export const dynamic = 'force-dynamic';
+
+/** ログの発生元 (src/lib/admin/user-emails.ts がメール取得の失敗を記録するときに使う) */
+const LOG_SOURCE = 'GET /api/admin/users/[id]';
 
 type Params = { params: { id: string } };
 
@@ -56,6 +60,13 @@ export async function GET(_request: Request, { params }: Params) {
       { status: 404 },
     );
   }
+
+  // メールアドレス (#1145): 見てよいのは admin / super_admin だけ。support には引かず null。
+  // この 1 件のぶんだけを service_role 専用の RPC で auth.users から引く。
+  // 引けなかった (メールを持たない / 取得に失敗した) ときも null。
+  const email = canViewUserEmail(actor.roles)
+    ? ((await fetchUserEmails(supabaseAdmin, [profile.id], LOG_SOURCE)).get(profile.id) ?? null)
+    : null;
 
   // サポートチケット数 (テーブルが存在する場合)
   let supportTicketCount = 0;
@@ -112,10 +123,10 @@ export async function GET(_request: Request, { params }: Params) {
 
   void auditLogs; // 現在は ban_history として返す
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     data: {
       id: profile.id,
-      email: null,
+      email,
       nickname: profile.nickname,
       roles: profile.roles ?? ['user'],
       plan_key: profile.plan_key_cached ?? 'free',
@@ -144,6 +155,9 @@ export async function GET(_request: Request, { params }: Params) {
       registered_at: profile.created_at,
     },
   });
+  // メールアドレスを含むため、共有キャッシュに残さない
+  response.headers.set('Cache-Control', 'no-store');
+  return response;
 }
 
 export async function PATCH(request: Request, { params }: Params) {
