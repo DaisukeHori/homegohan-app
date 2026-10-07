@@ -337,3 +337,61 @@ describe('updateSession — 招待リンクへの認証済みユーザーの遷�
     expect(res.headers.get('location')).toBe('http://localhost/onboarding/welcome');
   });
 });
+
+// #1232: 家族参加の本人同意ページ (/family/promotions/[token]) はメールリンクの着地点。
+// 未認証でもログイン画面へ弾かず (publicPaths)、認証済み・オンボーディング未完了でも
+// 強制オンボーディングで弾かない (resolveOnboardingRedirect) ことを、実際の updateSession 経路で検証する。
+describe('updateSession — 家族参加の本人同意ページへの遷移 (#1232)', () => {
+  const promotionPath = `/family/promotions/${'a'.repeat(64)}`;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+  });
+
+  it('未認証ユーザーが /family/promotions/[token] を開いても /login へリダイレクトされない (メールリンクの着地点)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+    const res = await updateSession(pageRequest(promotionPath));
+
+    expect(res.status).not.toBe(307);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('未認証ユーザーが /family/dashboard のような他の家族ページを開くと従来どおり /login?next=... へリダイレクトされる(回帰確認)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+    const res = await updateSession(pageRequest('/family/dashboard'));
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe('http://localhost/login?next=%2Ffamily%2Fdashboard');
+  });
+
+  it('未認証ユーザーが /family/promotionsx のような似たパスを開くと /login へリダイレクトされる(前方一致の取りこぼし防止)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+    const res = await updateSession(pageRequest('/family/promotionsx'));
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe('http://localhost/login?next=%2Ffamily%2Fpromotionsx');
+  });
+
+  it('オンボーディング未着手(not_started)の認証済みユーザーが /family/promotions/[token] に遷移しても /onboarding/welcome へ強制リダイレクトされない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        roles: [],
+        onboarding_started_at: null,
+        onboarding_completed_at: null,
+        frozen_at: null,
+        unban_at: null,
+      },
+      error: null,
+    });
+
+    const res = await updateSession(pageRequest(promotionPath));
+
+    expect(res.status).not.toBe(307);
+    expect(res.headers.get('location')).toBeNull();
+  });
+});

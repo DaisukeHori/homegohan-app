@@ -126,4 +126,84 @@ describe("resolveOnboardingRedirect", () => {
       }),
     ).toBeNull();
   });
+
+  // #1232: 家族参加の本人同意ページ (/family/promotions/[token]) はメールリンクの着地点。
+  // /invite と同趣旨で、認証済み・オンボーディング未完了のユーザーが踏んでも
+  // 強制オンボーディングリダイレクトで承認ページから弾かれないことを保証する
+  it("#1232: allows not_started users to reach /family/promotions/[token] without forcing onboarding", () => {
+    expect(
+      resolveOnboardingRedirect({
+        pathname: `/family/promotions/${"a".repeat(64)}`,
+        roles: [],
+        onboardingStartedAt: null,
+        onboardingCompletedAt: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("#1232: allows in-progress users to reach /family/promotions/[token] without forcing resume", () => {
+    expect(
+      resolveOnboardingRedirect({
+        pathname: `/family/promotions/${"a".repeat(64)}`,
+        roles: [],
+        onboardingStartedAt: "2026-03-01T00:00:00Z",
+        onboardingCompletedAt: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("#1232: allows not_started users to reach bare /family/promotions without forcing onboarding", () => {
+    expect(
+      resolveOnboardingRedirect({
+        pathname: "/family/promotions",
+        roles: [],
+        onboardingStartedAt: null,
+        onboardingCompletedAt: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("#1232: allows in-progress users to reach bare /family/promotions without forcing resume", () => {
+    expect(
+      resolveOnboardingRedirect({
+        pathname: "/family/promotions",
+        roles: [],
+        onboardingStartedAt: "2026-03-01T00:00:00Z",
+        onboardingCompletedAt: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("#1232: does not exempt look-alike paths such as /family/promotionsx (still redirected to welcome)", () => {
+    expect(
+      resolveOnboardingRedirect({
+        pathname: "/family/promotionsx",
+        roles: [],
+        onboardingStartedAt: null,
+        onboardingCompletedAt: null,
+      }),
+    ).toBe("/onboarding/welcome");
+  });
+
+  it("#1232: does not exempt other /family pages such as /family/dashboard (still redirected to welcome)", () => {
+    expect(
+      resolveOnboardingRedirect({
+        pathname: "/family/dashboard",
+        roles: [],
+        onboardingStartedAt: null,
+        onboardingCompletedAt: null,
+      }),
+    ).toBe("/onboarding/welcome");
+  });
+
+  it("#1232: still redirects in-progress users away from other /family pages to resume", () => {
+    expect(
+      resolveOnboardingRedirect({
+        pathname: "/family/dashboard",
+        roles: [],
+        onboardingStartedAt: "2026-03-01T00:00:00Z",
+        onboardingCompletedAt: null,
+      }),
+    ).toBe("/onboarding/resume");
+  });
 });

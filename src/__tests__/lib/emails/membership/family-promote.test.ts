@@ -1,0 +1,91 @@
+import { describe, it, expect, vi } from 'vitest';
+
+// Resend モック (send.ts が resend を import するため)
+vi.mock('resend', () => {
+  class MockResend {
+    emails = { send: vi.fn().mockResolvedValue({ data: { id: 'mock-id' }, error: null }) };
+  }
+  return { Resend: MockResend };
+});
+
+import { renderFamilyPromoteEmail } from '@/lib/emails/membership/family-promote';
+import type { FamilyPromoteEmailVars } from '@/lib/emails/membership/family-promote';
+import { EmailEnvelopeSchema } from '@/lib/emails/send';
+
+const acceptUrl = `https://homegohan.app/family/promotions/${'a'.repeat(64)}`;
+
+const baseVars: FamilyPromoteEmailVars = {
+  email_address: 'taro@example.com',
+  family_name: '山田家',
+  member_display_name: 'たろう',
+  requester_name: '山田花子',
+  accept_url: acceptUrl,
+  expires_at: '2026-10-21T02:00:00.000Z',
+};
+
+describe('renderFamilyPromoteEmail', () => {
+  it('EmailEnvelopeSchema で valid な envelope を返す', () => {
+    const envelope = renderFamilyPromoteEmail(baseVars);
+    const result = EmailEnvelopeSchema.safeParse(envelope);
+    expect(result.success).toBe(true);
+  });
+
+  it('to が email_address (対象者本人) と一致する', () => {
+    const envelope = renderFamilyPromoteEmail(baseVars);
+    expect(envelope.to).toBe('taro@example.com');
+  });
+
+  it('件名が「家族グループへの参加確認のお願い」である', () => {
+    const envelope = renderFamilyPromoteEmail(baseVars);
+    expect(envelope.subject).toBe('【ほめゴハン】家族グループへの参加確認のお願い');
+  });
+
+  it('from が ほめゴハン noreply である', () => {
+    const envelope = renderFamilyPromoteEmail(baseVars);
+    expect(envelope.from).toBe('ほめゴハン <noreply@homegohan.app>');
+  });
+
+  it('テキスト本文に email_address 様 が含まれる', () => {
+    const envelope = renderFamilyPromoteEmail(baseVars);
+    expect(envelope.text).toContain('taro@example.com 様');
+  });
+
+  it('テキスト本文に accept_url (token 入りの承認ページ URL) が含まれる', () => {
+    const envelope = renderFamilyPromoteEmail(baseVars);
+    expect(envelope.text).toContain(acceptUrl);
+  });
+
+  it('accept_url が本文中で単独の行になっている (メーラーの自動リンクが効く)', () => {
+    const envelope = renderFamilyPromoteEmail(baseVars);
+    expect(envelope.text.split('\n')).toContain(acceptUrl);
+  });
+
+  it('テキスト本文に requester_name (依頼者) が含まれる', () => {
+    const envelope = renderFamilyPromoteEmail(baseVars);
+    expect(envelope.text).toContain('山田花子');
+  });
+
+  it('テキスト本文に family_name (家族グループ名) が含まれる', () => {
+    const envelope = renderFamilyPromoteEmail(baseVars);
+    expect(envelope.text).toContain('山田家');
+  });
+
+  it('テキスト本文に member_display_name (紐付け先のメンバー名) が含まれる', () => {
+    const envelope = renderFamilyPromoteEmail(baseVars);
+    expect(envelope.text).toContain('たろう');
+  });
+
+  it('テキスト本文に有効期限が toLocaleDateString("ja-JP") 形式の日付で含まれる', () => {
+    const envelope = renderFamilyPromoteEmail(baseVars);
+    const expiresDate = new Date(baseVars.expires_at).toLocaleDateString('ja-JP');
+    expect(envelope.text).toContain(`${expiresDate} まで有効です`);
+    // ISO 文字列のまま本文に出さない
+    expect(envelope.text).not.toContain(baseVars.expires_at);
+  });
+
+  it('旧「アカウント発行通知」の文面 (アカウントが発行されました) を含まない', () => {
+    const envelope = renderFamilyPromoteEmail(baseVars);
+    expect(envelope.subject).not.toContain('アカウントが発行されました');
+    expect(envelope.text).not.toContain('アカウントが発行されました');
+  });
+});
