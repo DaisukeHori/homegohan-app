@@ -6420,6 +6420,7 @@ export type Database = {
           created_at: string | null
           cuisine_preferences: Json | null
           daily_water_ml: number | null
+          department_id: string | null
           department: string | null
           desk_hours_per_day: number | null
           diet_flags: Json | null
@@ -6554,6 +6555,7 @@ export type Database = {
           created_at?: string | null
           cuisine_preferences?: Json | null
           daily_water_ml?: number | null
+          department_id?: string | null
           department?: string | null
           desk_hours_per_day?: number | null
           diet_flags?: Json | null
@@ -6688,6 +6690,7 @@ export type Database = {
           created_at?: string | null
           cuisine_preferences?: Json | null
           daily_water_ml?: number | null
+          department_id?: string | null
           department?: string | null
           desk_hours_per_day?: number | null
           diet_flags?: Json | null
@@ -6799,6 +6802,13 @@ export type Database = {
           work_style?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "user_profiles_department_id_fkey"
+            columns: ["department_id"]
+            isOneToOne: false
+            referencedRelation: "departments"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "user_profiles_family_id_fkey"
             columns: ["family_id"]

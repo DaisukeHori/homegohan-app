@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { GoogleGenAI, createUserContent } from '@google/genai';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { userScopedStoragePath } from '@/lib/storage-paths';
 
 interface ReferenceImageInput {
   base64: string;
@@ -124,7 +125,8 @@ export async function POST(request: Request) {
 
     const buffer = Buffer.from(imageBase64, 'base64');
     const bucketName = 'fridge-images';
-    const fileName = `generated/${user.id}/${Date.now()}.png`;
+    // 本人のフォルダ <user_id>/generated/ の下に保存する (storage.objects の RLS が本人のフォルダだけを許可する)
+    const fileName = userScopedStoragePath(user.id, 'generated', `${Date.now()}.png`);
 
     const { error: uploadError } = await supabase.storage
       .from(bucketName)

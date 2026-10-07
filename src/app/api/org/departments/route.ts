@@ -1,11 +1,31 @@
 /**
  * GET/POST/PUT/DELETE /api/org/departments — 部署管理 API
  * 所属組織の org_role が owner / admin のユーザーのみ (#1235)
+ *
+ * #1235 第2段 (設計 v2 §3.3.1):
+ *  - 参照テーブルを実在する departments に修正 (organization_departments は存在しない)
+ *  - レスポンスを画面の Department の形にそろえる
+ *    (id / name / parentId / managerId / displayOrder / memberCount / createdAt)
+ *  - memberCount は user_profiles.department_id の人数を service_role で集計する
+ *    (user_profiles の SELECT は本人の行だけのため。組織の管理者に人数だけを返す)
+ *  - チャレンジ・招待・子部署から参照されている部署の削除 (23503) は 409、対象が無ければ 404
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { isOrgAdmin } from '@/lib/auth/org-admin';
+
+const MAX_NAME_LENGTH = 100;
+const DEPARTMENT_COLUMNS = 'id, name, parent_id, manager_id, display_order, created_at';
+
+interface DepartmentRow {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  manager_id: string | null;
+  display_order: number | null;
+  created_at: string | null;
+}
 
 async function requireOrgAdmin() {
   const supabase = await createClient();
@@ -35,19 +55,63 @@ function handleError(err: unknown) {
   return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
 }
 
+function toDto(row: DepartmentRow, memberCount: number) {
+  return {
+    id: row.id,
+    name: row.name,
+    parentId: row.parent_id,
+    managerId: row.manager_id,
+    displayOrder: row.display_order ?? 0,
+    memberCount,
+    createdAt: row.created_at,
+  };
+}
+
+function validateName(name: unknown): string | null {
+  if (typeof name !== 'string') return null;
+  const trimmed = name.trim();
+  if (trimmed === '' || trimmed.length > MAX_NAME_LENGTH) return null;
+  return trimmed;
+}
+
+function invalidNameResponse() {
+  return NextResponse.json(
+    { error: { code: 'VALIDATION_ERROR', message: `name は必須です (${MAX_NAME_LENGTH} 文字以内)` } },
+    { status: 400 },
+  );
+}
+
+/** 組織内の department_id → 所属人数 (service_role で集計。呼び出し前に requireOrgAdmin を通すこと) */
+async function fetchMemberCounts(organizationId: string): Promise<Map<string, number>> {
+  const { data, error } = await getSupabaseAdmin()
+    .from('user_profiles')
+    .select('department_id')
+    .eq('organization_id', organizationId)
+    .not('department_id', 'is', null);
+  if (error) throw new Error(error.message);
+  const counts = new Map<string, number>();
+  for (const row of (data ?? []) as Array<{ department_id: string }>) {
+    counts.set(row.department_id, (counts.get(row.department_id) ?? 0) + 1);
+  }
+  return counts;
+}
+
 export async function GET() {
   try {
     const { profile } = await requireOrgAdmin();
     const supabase = await createClient();
     const { data, error } = await supabase
-      .from('organization_departments')
-      .select('id, name, created_at')
+      .from('departments')
+      .select(DEPARTMENT_COLUMNS)
       .eq('organization_id', profile.organization_id)
-      .order('created_at', { ascending: false });
+      .order('display_order', { ascending: true })
+      .order('created_at', { ascending: true });
     if (error) {
       return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
     }
-    return NextResponse.json({ departments: data ?? [] });
+    const counts = await fetchMemberCounts(profile.organization_id);
+    const departments = ((data ?? []) as DepartmentRow[]).map((row) => toDto(row, counts.get(row.id) ?? 0));
+    return NextResponse.json({ departments });
   } catch (err) {
     return handleError(err);
   }
@@ -57,20 +121,19 @@ export async function POST(request: NextRequest) {
   try {
     const { profile } = await requireOrgAdmin();
     const body = await request.json();
-    const { name } = body ?? {};
-    if (!name || typeof name !== 'string' || name.trim() === '') {
-      return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'name は必須です' } }, { status: 400 });
-    }
+    const name = validateName(body?.name);
+    if (!name) return invalidNameResponse();
+
     const supabase = await createClient();
     const { data, error } = await supabase
-      .from('organization_departments')
-      .insert({ name: name.trim(), organization_id: profile.organization_id })
-      .select('id, name, created_at')
+      .from('departments')
+      .insert({ name, organization_id: profile.organization_id })
+      .select(DEPARTMENT_COLUMNS)
       .single();
     if (error) {
       return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
     }
-    return NextResponse.json({ department: data }, { status: 201 });
+    return NextResponse.json({ department: toDto(data as DepartmentRow, 0) }, { status: 201 });
   } catch (err) {
     return handleError(err);
   }
@@ -80,25 +143,29 @@ export async function PUT(request: NextRequest) {
   try {
     const { profile } = await requireOrgAdmin();
     const body = await request.json();
-    const { id, name } = body ?? {};
-    if (!id) {
+    const id = body?.id;
+    if (!id || typeof id !== 'string') {
       return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'id は必須です' } }, { status: 400 });
     }
-    if (!name || typeof name !== 'string' || name.trim() === '') {
-      return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'name は必須です' } }, { status: 400 });
-    }
+    const name = validateName(body?.name);
+    if (!name) return invalidNameResponse();
+
     const supabase = await createClient();
     const { data, error } = await supabase
-      .from('organization_departments')
-      .update({ name: name.trim() })
+      .from('departments')
+      .update({ name })
       .eq('id', id)
       .eq('organization_id', profile.organization_id)
-      .select('id, name, created_at')
-      .single();
+      .select(DEPARTMENT_COLUMNS)
+      .maybeSingle();
     if (error) {
       return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
     }
-    return NextResponse.json({ department: data });
+    if (!data) {
+      return NextResponse.json({ error: { code: 'NOT_FOUND', message: '部署が見つかりません' } }, { status: 404 });
+    }
+    const counts = await fetchMemberCounts(profile.organization_id);
+    return NextResponse.json({ department: toDto(data as DepartmentRow, counts.get(id) ?? 0) });
   } catch (err) {
     return handleError(err);
   }
@@ -113,13 +180,31 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'id は必須です' } }, { status: 400 });
     }
     const supabase = await createClient();
-    const { error } = await supabase
-      .from('organization_departments')
+    const { data, error } = await supabase
+      .from('departments')
       .delete()
       .eq('id', id)
-      .eq('organization_id', profile.organization_id);
+      .eq('organization_id', profile.organization_id)
+      .select('id');
     if (error) {
+      // 23503: チャレンジ (organization_challenges.department_id)・招待 (organization_invites.department_id)・
+      //        子部署 (departments.parent_id) から参照されている。所属メンバー (user_profiles.department_id) は
+      //        ON DELETE SET NULL のため削除を止めない
+      if (error.code === '23503') {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'DEPARTMENT_IN_USE',
+              message: 'チャレンジ・招待・子部署から参照されているため削除できません',
+            },
+          },
+          { status: 409 },
+        );
+      }
       return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
+    }
+    if (!data || data.length === 0) {
+      return NextResponse.json({ error: { code: 'NOT_FOUND', message: '部署が見つかりません' } }, { status: 404 });
     }
     return NextResponse.json({ success: true });
   } catch (err) {
