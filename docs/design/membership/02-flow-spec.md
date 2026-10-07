@@ -57,7 +57,7 @@ server (Next.js page)
 POST /api/org/invites/{token}/accept
 
 server  → SUPABASE.rpc('accept_org_invite', { token })
-        → user_profiles 更新, organization_invites.status = 'accepted'
+        → user_profiles 更新 (プロフィール行が無ければ既定値で作る。#1273), organization_invites.status = 'accepted'
         → membership_audit に invite_accepted 記録
         → 200 { data: { organization_id, org_role } }
         → /org/dashboard へ redirect
@@ -217,7 +217,7 @@ server → rpc('create_family_group', { p_name, p_plan_key })
 POST /api/family/invites/{token}/accept
        body: { share_meals: true, share_health: false, share_menu: true }
 server → rpc('accept_family_invite', { p_token, p_share_meals, p_share_health, p_share_menu })
-       → user_profiles.family_id = X, family_members INSERT (role='adult', share_*)
+       → user_profiles.family_id = X (プロフィール行が無ければ既定値で作る。#1273), family_members INSERT (role='adult', share_*)
        → 監査ログ
 ```
 
