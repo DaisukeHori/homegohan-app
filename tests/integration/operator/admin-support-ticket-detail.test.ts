@@ -304,6 +304,10 @@ describe('POST /api/admin/support/tickets/[id]/messages', () => {
     const data = (res.body as { data: Record<string, unknown> }).data;
     expect(data).toHaveProperty('id');
     expect(data).toHaveProperty('ticket_id', testTicketId);
+    // #1183: 顧客向けの返信は、顧客へのメール通知の結果を email に載せる。
+    // メールが送れなくても (RESEND_API_KEY が無い環境では skipped) メッセージは保存済みなので 201 のまま
+    const email = (res.body as { email?: { status?: string } }).email;
+    expect(['sent', 'skipped', 'failed']).toContain(email?.status);
   });
 
   it('201 for admin role - creates internal note', async () => {
@@ -317,6 +321,8 @@ describe('POST /api/admin/support/tickets/[id]/messages', () => {
       },
     );
     expect(res.status).toBe(201);
+    // #1183: 内部メモは顧客に見せないので、メールにしない (email を返さない)
+    expect(res.body).not.toHaveProperty('email');
   });
 
   it('403 for general user', async () => {
