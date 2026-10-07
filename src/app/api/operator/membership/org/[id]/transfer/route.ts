@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { sendEmail } from '@/lib/emails/send';
 import { renderForceTransferEmail } from '@/lib/emails/membership/operator-force-transfer';
 import { z } from 'zod';
@@ -32,8 +33,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  const logger = createLogger('POST /api/operator/membership/org/[id]/transfer', generateRequestId());
   try {
-    await requireSuperAdmin();
+    const { userId: operatorId } = await requireSuperAdmin();
     const { id: orgId } = params;
 
     const body = await req.json().catch(() => null);
@@ -45,6 +47,26 @@ export async function POST(
       );
     }
     const { to_user_id, reason } = parsed.data;
+
+    // 通知メール用に、RPC 実行"前"の旧オーナーと組織名を控えておく (#1209)。
+    // operator_force_owner_transfer は organizations.owner_id を新オーナーへ書き換えた後の行を返すため、
+    // その戻り値 (org.owner_id) や RPC 後の読み直しでは「旧オーナー」が新オーナー自身になってしまう。
+    // その結果、本当の旧オーナーに旧オーナー向けの通知が届かず、新オーナー宛の「旧オーナー」欄も
+    // 新オーナー自身のアドレスになる。
+    // 通知は best-effort (設計 §8) なので、ここで失敗しても譲渡は止めず、後段で通知だけを省く。
+    let preOrg: { name: string | null; owner_id: string | null } | null = null;
+    let preOrgError: unknown = null;
+    try {
+      const { data, error } = await getServiceRoleClient()
+        .from('organizations')
+        .select('name, owner_id')
+        .eq('id', orgId)
+        .maybeSingle();
+      preOrg = data;
+      preOrgError = error;
+    } catch (err) {
+      preOrgError = err;
+    }
 
     const supabase = createClient();
 
@@ -65,6 +87,17 @@ export async function POST(
     }
 
     // 通知メール (failed silent)
+    if (!preOrg) {
+      // 旧オーナーが分からないまま送ると、旧オーナーに一般メンバー向けの本文が届いてしまう。
+      // 誤った宛先・本文で送るより、送らずにログへ残す (譲渡自体は完了している)。
+      logger.withUser(operatorId).error(
+        '譲渡前の組織情報を取得できなかったため、通知メールを送信しませんでした',
+        preOrgError ?? new Error('organizations の行が見つかりません'),
+        { organization_id: orgId, to_user_id },
+      );
+      return NextResponse.json({ data: org });
+    }
+
     try {
       const admin = getServiceRoleClient();
 
@@ -88,8 +121,10 @@ export async function POST(
       }
 
       // 旧 owner / 新 owner のメール取得
-      const oldOwnerId = (org as { owner_id?: string } | null)?.owner_id;
-      const orgName = (org as { name?: string } | null)?.name ?? '';
+      // 旧 owner・組織名は RPC 実行前に控えた値を使う (RPC の戻り値の owner_id は新 owner)。
+      // owner_id は NULL を許す列なので、旧 owner が居ない組織では null (= old_owner 役の宛先なし)
+      const oldOwnerId = preOrg.owner_id;
+      const orgName = preOrg.name ?? '';
       const newOwnerEmail = emailMap[to_user_id] ?? '';
       const oldOwnerEmail = oldOwnerId ? (emailMap[oldOwnerId] ?? '') : '';
 
@@ -114,9 +149,21 @@ export async function POST(
         return sendEmail(envelope);
       });
 
-      await Promise.allSettled(emailTasks);
+      const results = await Promise.allSettled(emailTasks);
+      const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (failures.length > 0) {
+        // 個別の送信失敗も握りつぶさず記録する (ログに宛先のメールアドレスは残さない)
+        logger.withUser(operatorId).error('通知メールの一部を送信できませんでした', failures[0].reason, {
+          organization_id: orgId,
+          to_user_id,
+          failed_count: failures.length,
+        });
+      }
     } catch (emailErr) {
-      console.error('[operator/org/transfer] 通知メール送信失敗 (graceful):', emailErr);
+      logger.withUser(operatorId).error('通知メール送信処理に失敗しました (譲渡は完了済み)', emailErr, {
+        organization_id: orgId,
+        to_user_id,
+      });
     }
 
     return NextResponse.json({ data: org });
