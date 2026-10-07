@@ -4,8 +4,8 @@
 // #1232: 旧・即時「アカウント発行」UI を、本人同意フロー (参加リクエスト送信) UI へ全面書換。
 // - 送信成功時の文言を非同期フローに合わせて修正 (「発行しました」→「リクエストを送信しました」)
 // - 既存 pending リクエストの表示 / 取消 (DELETE) / 再送 (フォーム再表示) を追加
-import { useState, useEffect, useCallback, use } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
 interface FamilyMember {
@@ -22,12 +22,10 @@ interface PendingPromotionRequest {
   expires_at: string;
 }
 
-export default function PromoteMemberPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id: memberId } = use(params);
+export default function PromoteMemberPage() {
+  // Next.js 14 のクライアントページでは params は Promise ではなく、use(params) は例外になる。
+  // useParams は 14 / 15 のどちらでも使える。
+  const { id: memberId } = useParams<{ id: string }>();
   const router = useRouter();
   const supabase = createClient();
 
@@ -274,8 +272,8 @@ export default function PromoteMemberPage({
           <>
             <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 mb-6">
               <p className="text-sm text-blue-700">
-                ご本人が承認すると、これまでの食事記録は
-                {member?.display_name ?? '子供'} さんのアカウントに引き継がれます。
+                ご本人が承認すると、{member?.display_name ?? '子供'} さんの枠がご本人のアカウントとつながり、
+                大人のメンバーとして家族グループに参加します。
                 承認されるまでメンバーの状態は変わりません。
                 {pendingRequest && showForm
                   ? ' 再送すると、承認待ちの現在のリクエストは自動的に取り消されます。'

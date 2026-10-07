@@ -7,6 +7,14 @@ export const RequestChildPromotionBodySchema = z.object({
   email: z.string().email(),
 });
 
+// URL の member_id は RPC (uuid 引数) に渡す前に形式を確かめる。
+// 不正な値をそのまま渡すと uuid へのキャストで失敗し (22P02)、500 として扱われるため。
+export const FamilyMemberIdParamsSchema = z.object({
+  member_id: z
+    .string()
+    .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, 'invalid member id'),
+});
+
 export const FamilyPromotionTokenParamsSchema = z.object({
   token: z.string().regex(/^[a-f0-9]{64}$/, 'invalid token format'),
 });

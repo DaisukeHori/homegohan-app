@@ -17,7 +17,8 @@ export interface FamilyPromoteEmailVars {
  * subject: 「【ほめゴハン】家族グループへの参加確認のお願い」
  */
 export function renderFamilyPromoteEmail(vars: FamilyPromoteEmailVars): EmailEnvelope {
-  const expiresDate = new Date(vars.expires_at).toLocaleDateString('ja-JP');
+  // サーバー (UTC) のタイムゾーンで日付にすると日本時間と 1 日ずれることがあるため、日本時間で表す
+  const expiresDate = new Date(vars.expires_at).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' });
 
   return {
     to: vars.email_address,

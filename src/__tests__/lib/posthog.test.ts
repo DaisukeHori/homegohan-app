@@ -24,6 +24,7 @@ const {
   getAnalyticsConsent,
   ANALYTICS_CONSENT_KEY,
   ANALYTICS_CONSENT_EVENT,
+  redactTokenPath,
 } = await import('@/lib/posthog');
 
 beforeEach(() => {
@@ -102,5 +103,19 @@ describe('optInPostHog / optOutPostHog (#1044 F6-15: 同一タブ通知)', () =>
     expect(handler).toHaveBeenCalledTimes(1);
 
     window.removeEventListener(ANALYTICS_CONSENT_EVENT, handler);
+  });
+});
+
+describe('redactTokenPath (#1232: 承認ページのトークンを分析に送らない)', () => {
+  it('/family/promotions/{token} のトークンを伏せる', () => {
+    const token = 'a'.repeat(64);
+    expect(redactTokenPath(`/family/promotions/${token}`)).toBe('/family/promotions/[token]');
+    expect(redactTokenPath(`/family/promotions/${token}`)).not.toContain(token);
+  });
+
+  it('トークンを含まないパスはそのまま返す', () => {
+    expect(redactTokenPath('/family/dashboard')).toBe('/family/dashboard');
+    expect(redactTokenPath('/family/promotions')).toBe('/family/promotions');
+    expect(redactTokenPath('/home')).toBe('/home');
   });
 });

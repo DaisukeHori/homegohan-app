@@ -8,7 +8,17 @@ import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
 import { renderFamilyPromoteEmail } from '@/lib/emails/membership/family-promote';
-import { RequestChildPromotionBodySchema } from '@/schemas/membership/family-promote-action';
+import {
+  FamilyMemberIdParamsSchema,
+  RequestChildPromotionBodySchema,
+} from '@/schemas/membership/family-promote-action';
+
+function invalidMemberIdResponse() {
+  return NextResponse.json(
+    { error: { code: 'VALIDATION_ERROR', message: 'メンバー ID が不正です' } },
+    { status: 400 },
+  );
+}
 
 interface PromotionRequestResult {
   id: string;
@@ -37,6 +47,9 @@ export async function POST(
       { error: { code: MembershipErrorCode.NOT_AUTHENTICATED, message: '認証が必要です' } },
       { status: 401 },
     );
+  }
+  if (!FamilyMemberIdParamsSchema.safeParse({ member_id }).success) {
+    return invalidMemberIdResponse();
   }
 
   let body: unknown;
@@ -128,6 +141,9 @@ export async function DELETE(
       { error: { code: MembershipErrorCode.NOT_AUTHENTICATED, message: '認証が必要です' } },
       { status: 401 },
     );
+  }
+  if (!FamilyMemberIdParamsSchema.safeParse({ member_id }).success) {
+    return invalidMemberIdResponse();
   }
 
   const { data, error } = await supabase.rpc('revoke_child_promotion', { p_member_id: member_id });

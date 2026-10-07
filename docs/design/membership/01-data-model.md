@@ -930,6 +930,9 @@ REVOKE EXECUTE ON FUNCTION public.add_family_child FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.add_family_child TO authenticated;
 
 -- 子供を実 user に promote
+-- ※ #1232 で廃止 (本人の同意なしに既存ユーザーを編入できたため)。現在は本人同意フロー
+--   request_child_promotion → accept_child_promotion (supabase/migrations/20261007112100_child_promotion_consent_rpcs.sql)。
+--   以下は当初設計の記録として残す。
 CREATE OR REPLACE FUNCTION public.promote_child_to_user(p_member_id UUID, p_user_id UUID)
 RETURNS family_members
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$

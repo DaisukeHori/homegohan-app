@@ -137,6 +137,18 @@ describe('POST /api/family/members/[member_id]/promote', () => {
     expect(mockRpc).not.toHaveBeenCalled();
   });
 
+  it.each(['not-a-uuid', 'c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a3', "c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33' OR '1'='1"])(
+    'member_id が UUID 形式でない (%s): 400 VALIDATION_ERROR を返し RPC を呼ばない',
+    async (badId) => {
+      const res = await POST(postRequest({ email: childEmail }), makeParams(badId));
+      const json = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(json.error.code).toBe('VALIDATION_ERROR');
+      expect(mockRpc).not.toHaveBeenCalled();
+    },
+  );
+
   it('email が未指定: 400 VALIDATION_ERROR を返し RPC を呼ばない', async () => {
     const res = await POST(postRequest({}), makeParams(memberId));
     const json = await res.json();
@@ -398,6 +410,15 @@ describe('DELETE /api/family/members/[member_id]/promote', () => {
 
     expect(res.status).toBe(401);
     expect(json.error.code).toBe('NOT_AUTHENTICATED');
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('member_id が UUID 形式でない: 400 VALIDATION_ERROR を返し RPC を呼ばない', async () => {
+    const res = await DELETE(deleteRequest(), makeParams('not-a-uuid'));
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error.code).toBe('VALIDATION_ERROR');
     expect(mockRpc).not.toHaveBeenCalled();
   });
 

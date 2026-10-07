@@ -75,12 +75,19 @@ describe('renderFamilyPromoteEmail', () => {
     expect(envelope.text).toContain('たろう');
   });
 
-  it('テキスト本文に有効期限が toLocaleDateString("ja-JP") 形式の日付で含まれる', () => {
+  it('テキスト本文に有効期限が日本時間の toLocaleDateString("ja-JP") 形式の日付で含まれる', () => {
     const envelope = renderFamilyPromoteEmail(baseVars);
-    const expiresDate = new Date(baseVars.expires_at).toLocaleDateString('ja-JP');
+    const expiresDate = new Date(baseVars.expires_at).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' });
     expect(envelope.text).toContain(`${expiresDate} まで有効です`);
     // ISO 文字列のまま本文に出さない
     expect(envelope.text).not.toContain(baseVars.expires_at);
+  });
+
+  it('有効期限の日付はサーバーのタイムゾーンによらず日本時間で決まる (UTC 16:00 は翌日)', () => {
+    // 2026-10-21T16:00Z は日本時間 2026-10-22 01:00
+    const envelope = renderFamilyPromoteEmail({ ...baseVars, expires_at: '2026-10-21T16:00:00.000Z' });
+    expect(envelope.text).toContain('2026/10/22 まで有効です');
+    expect(envelope.text).not.toContain('2026/10/21 まで有効です');
   });
 
   it('旧「アカウント発行通知」の文面 (アカウントが発行されました) を含まない', () => {

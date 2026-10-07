@@ -8,8 +8,8 @@
 // 共有設定チェックボックスは FamilyInviteAcceptModal と同じ 3 種 + デフォルト値。
 // (main) ルートグループの外に置く: 未ログイン・オンボーディング未完了でも到達できる必要がある
 // (lib/supabase/middleware.ts の publicPaths と lib/onboarding-routing.ts で除外済み)。
-import { useState, useEffect, useId, use } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useId } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import FocusTrap from 'focus-trap-react';
 import { createClient } from '@/lib/supabase/client';
 import { clearUserScopedLocalStorage, broadcastSignOut } from '@/lib/user-storage';
@@ -88,12 +88,10 @@ function RejectConfirmDialog({
   );
 }
 
-export default function FamilyPromotionConsentPage({
-  params,
-}: {
-  params: Promise<{ token: string }>;
-}) {
-  const { token } = use(params);
+export default function FamilyPromotionConsentPage() {
+  // Next.js 14 のクライアントページでは params は Promise ではなく、use(params) は例外になる。
+  // useParams は 14 / 15 のどちらでも使える。
+  const { token } = useParams<{ token: string }>();
   const router = useRouter();
   const supabase = createClient();
 
@@ -399,9 +397,12 @@ export default function FamilyPromotionConsentPage({
         </div>
         <div className="px-6 py-5 space-y-5">
           <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
+            {/* #1232: 子供メンバーの枠には食事記録が無く、引き継がれるものは無い。承認で起きること
+                (大人のメンバーとして参加し、共有をオンにした記録は過去の分も家族が見られる) を正確に伝える */}
             <p className="text-xs text-blue-700">
-              承認すると、このメンバー枠のこれまでの食事記録があなたのアカウントに
-              引き継がれ、家族グループに参加します。承認するまで何も変更されません。
+              承認すると、あなたのアカウントがメンバー「{details.member_display_name ?? '子供メンバー'}」として
+              (大人のメンバーとして) 家族グループに参加します。下で共有をオンにした情報は、
+              これまでの記録も含めて家族のメンバーが見られるようになります。承認するまで何も変更されません。
             </p>
           </div>
 
