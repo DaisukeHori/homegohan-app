@@ -1,22 +1,7 @@
-import { createClient } from '@supabase/supabase-js';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { isOrgAdmin } from '@/lib/auth/org-admin';
-
-// admin 機能用には supabase-js のクライアントを直接使う（service_role キーが必要）
-function getSupabaseAdmin() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceKey) {
-    throw new Error('Supabase admin env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)');
-  }
-  return createClient(url, serviceKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
-}
+import { createOrgInviteWithEmail } from '@/lib/membership/org-invite';
 
 // メンバー一覧取得
 export async function GET(_request: Request) {
@@ -51,66 +36,58 @@ export async function GET(_request: Request) {
   }
 }
 
-// メンバー作成 (所属組織の owner / admin のみ)
+// メンバーの追加 = 組織への招待 (所属組織の owner / admin のみ) (#1235)
+//
+// 以前はここで、管理者が指定したメールアドレスとパスワードで「メール確認済み」のアカウントを作っていた。
+// メールの持ち主の確認無しに使えるアカウントを作れると、アカウント事前乗っ取り (pre-hijacking) の原因になるうえ、
+// 本当の持ち主がそのアドレスで登録できなくなる。2026-10-07 のオーナー判断で招待メール方式に変更し、
+// Web の「メンバーを招待」(POST /api/org/invites) と同じ組織招待 (役割は member) を送る。
+// アカウントは作らない。リクエストの password は受け取っても使わない (古いモバイルアプリが送ってくるため無視する)。
 export async function POST(request: Request) {
   const supabase = await createServerClient();
 
-  try {
-    const supabaseAdmin = getSupabaseAdmin();
-
-    // 1. リクエスト実行者の権限チェック
-    const { data: { user: actor } } = await supabase.auth.getUser();
-    if (!actor) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-    const { data: adminProfile } = await supabase
-      .from('user_profiles')
-      .select('organization_id, org_role')
-      .eq('id', actor.id)
-      .single();
-
-    if (!isOrgAdmin(adminProfile)) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
-    // 2. 作成パラメータ取得
-    const body = await request.json();
-    const { email, password, nickname } = body;
-
-    if (!email || !password || !nickname) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-    }
-
-    // 3. ユーザー作成 (Admin API)
-    const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { nickname },
-    });
-
-    if (createError) throw createError;
-    if (!newUser.user) throw new Error('Failed to create user');
-
-    // 4. プロフィール作成 & 組織紐付け
-    const { error: profileError } = await supabaseAdmin
-      .from('user_profiles')
-      .upsert({
-        id: newUser.user.id,
-        nickname,
-        organization_id: adminProfile.organization_id,
-        roles: ['user'],
-        updated_at: new Date().toISOString(),
-      });
-
-    if (profileError) {
-      console.error('Profile update error', profileError);
-      return NextResponse.json({ error: 'User created but profile update failed' }, { status: 500 });
-    }
-
-    return NextResponse.json({ success: true, user: newUser.user });
-
-  } catch (error: any) {
-    console.error('Create member error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  const { data: { user: actor } } = await supabase.auth.getUser();
+  if (!actor) {
+    return NextResponse.json({ error: { code: 'NOT_AUTHENTICATED', message: '認証が必要です' } }, { status: 401 });
   }
+
+  const { data: adminProfile } = await supabase
+    .from('user_profiles')
+    .select('organization_id, org_role, nickname')
+    .eq('id', actor.id)
+    .single();
+
+  if (!isOrgAdmin(adminProfile)) {
+    return NextResponse.json(
+      { error: { code: 'INSUFFICIENT_PERMISSION', message: 'owner/admin のみ招待可能です' } },
+      { status: 403 },
+    );
+  }
+
+  let body: { email?: unknown; nickname?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: { code: 'INVALID_BODY', message: 'リクエストボディが不正です' } }, { status: 400 });
+  }
+
+  const email = typeof body.email === 'string' ? body.email.trim() : '';
+  if (!email) {
+    return NextResponse.json({ error: { code: 'INVALID_BODY', message: 'email は必須です' } }, { status: 400 });
+  }
+  const nickname = typeof body.nickname === 'string' && body.nickname.trim() !== '' ? body.nickname.trim() : null;
+
+  const result = await createOrgInviteWithEmail({
+    supabase,
+    inviter: { email: actor.email, nickname: adminProfile.nickname },
+    organizationId: adminProfile.organization_id,
+    email,
+    role: 'member',
+    displayName: nickname,
+  });
+  if (!result.ok) {
+    return NextResponse.json({ error: { code: result.code, message: result.message } }, { status: result.status });
+  }
+
+  return NextResponse.json({ ok: true, invite: result.invite }, { status: 201 });
 }
