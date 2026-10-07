@@ -7,6 +7,8 @@
 --   - accept_child_promotion の期限切れ分岐にあった「status を 'expired' に UPDATE してから RAISE」は、
 --     直後の RAISE でトランザクションごと巻き戻り、永続化されない (accept_family_invite の同じ書き方も同様)。
 --     挙動は変わらないため UPDATE は置かず、期限切れは常に expires_at で判定する (status は 'pending' のまま)。
+--   - accept_child_promotion は、承認した本人のプロフィール行が無ければ作ってから family_id を入れる
+--     (新規登録して初期設定より前に承認した人の family_id が NULL のまま残るのを防ぐ。2026-10-07 オーナー判断)。
 --
 -- ══ ロック順規約 (#1232 v3 / G10) ══════════════════════════════════
 -- LOCK-ORDER CANONICAL: family_members -> family_promotion_requests
@@ -223,7 +225,15 @@ BEGIN
       RAISE;
   END;
 
-  UPDATE user_profiles SET family_id = v_member.family_id WHERE id = auth.uid();
+  -- 所属家族を本人のプロフィールに入れる。メールのリンクから新規登録して初期設定 (オンボーディング) より前に
+  -- 承認した人は、まだプロフィール行が無い (auth.users → user_profiles を作るトリガーは無く、行は初期設定の
+  -- 保存で作られる)。UPDATE だけだと 0 行で終わり、後から初期設定で作られる行の family_id は NULL のままになり、
+  -- 家族の画面で「家族なし」扱いになる。行が無ければ、アプリの既定値 (/api/profile・/api/onboarding/progress と同じ
+  -- nickname 'Guest'・age_group / gender 'unspecified') で作る。初期設定の日時は入れないため初期設定の流れは変わらない。
+  -- (2026-10-07 オーナー判断。設計 v2/v3 からの追加)
+  INSERT INTO user_profiles (id, nickname, age_group, gender, family_id)
+  VALUES (auth.uid(), 'Guest', 'unspecified', 'unspecified', v_member.family_id)
+  ON CONFLICT (id) DO UPDATE SET family_id = EXCLUDED.family_id;
 
   UPDATE family_promotion_requests
     SET status = 'accepted', resolved_at = NOW(), resolved_by = auth.uid()

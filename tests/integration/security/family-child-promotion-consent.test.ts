@@ -85,15 +85,18 @@ const createdUserIds: string[] = [];
 const createdFamilyIds: string[] = [];
 const TOKEN_RE = /^[a-f0-9]{64}$/;
 
-async function createUser(label: string): Promise<TestUser> {
+async function createUser(label: string, options: { withProfile?: boolean } = {}): Promise<TestUser> {
   const email = `sec-promotion-${label}-${TS}@homegohan.test`;
   const { data, error } = await srAdmin.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
   createdUserIds.push(data.user.id);
-  const { error: profileError } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: data.user.id, nickname: `promo-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' });
-  if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
+  // withProfile: false は「新規登録しただけで初期設定 (オンボーディング) 前」の人 (プロフィール行が無い)
+  if (options.withProfile !== false) {
+    const { error: profileError } = await srAdmin
+      .from('user_profiles')
+      .upsert({ id: data.user.id, nickname: `promo-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+    if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
+  }
   // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)
   const signIn = await anon().auth.signInWithPassword({ email, password: PASSWORD });
   if (signIn.error || !signIn.data.session) throw new Error(`signIn ${label}: ${signIn.error?.message}`);
@@ -201,10 +204,14 @@ async function auditActions(familyId: string, action: string) {
 }
 
 // 家族 A: 攻撃・本人同意・列挙オラクル / 家族 B: 二重所属・再送 / 家族 C: 期限切れ・取消・RLS / 家族 D: API
+// 家族 E: プロフィール行が無い新規ユーザーの承認
 let famA: TestFamily;
 let famB: TestFamily;
 let famC: TestFamily;
 let famD: TestFamily;
+let famE: TestFamily;
+let newcomer: TestUser;
+let childE1 = '';
 let victim: TestUser;
 let victim2: TestUser;
 let victim3: TestUser;
@@ -229,6 +236,8 @@ beforeAll(async () => {
   famB = await createFamily('b');
   famC = await createFamily('c');
   famD = await createFamily('d');
+  famE = await createFamily('e');
+  newcomer = await createUser('newcomer', { withProfile: false });
   victim = await createUser('victim');
   victim2 = await createUser('victim2');
   victim3 = await createUser('victim3');
@@ -249,6 +258,7 @@ beforeAll(async () => {
   childD1 = await addChild(famD, 'D1');
   childD2 = await addChild(famD, 'D2');
   childD3 = await addChild(famD, 'D3');
+  childE1 = await addChild(famE, 'E1');
 }, 120_000);
 
 afterAll(async () => {
@@ -641,6 +651,43 @@ describe('#1232 RLS・列単位 GRANT・承認ページ用 RPC', () => {
     const missing = await anon().rpc('get_promotion_details', { p_token: 'e'.repeat(64) });
     expect(missing.error).toBeNull();
     expect(missing.data).toBeNull();
+  });
+});
+
+describe('#1232 プロフィール行が無い新規ユーザーの承認 (2026-10-07 オーナー判断)', () => {
+  it('初期設定前 (プロフィール行なし) に承認しても所属家族が入り、初期設定の保存のあとも残る', async () => {
+    const { data: before } = await srAdmin.from('user_profiles').select('id').eq('id', newcomer.id).maybeSingle();
+    expect(before).toBeNull();
+
+    await asUser(famE.rep.jwt).rpc('request_child_promotion', { p_member_id: childE1, p_email: newcomer.email });
+    const token = await pendingToken(childE1);
+    const { error } = await asUser(newcomer.jwt).rpc('accept_child_promotion', { p_token: token });
+    expect(error).toBeNull();
+    expect((await getMember(childE1)).user_id).toBe(newcomer.id);
+
+    // 承認でプロフィール行ができ、所属家族が入る。初期設定は未開始のまま (オンボーディングの導線は変わらない)
+    const { data: created } = await srAdmin
+      .from('user_profiles')
+      .select('family_id, nickname, age_group, gender, onboarding_started_at, onboarding_completed_at')
+      .eq('id', newcomer.id)
+      .single();
+    expect(created).toEqual({
+      family_id: famE.familyId,
+      nickname: 'Guest',
+      age_group: 'unspecified',
+      gender: 'unspecified',
+      onboarding_started_at: null,
+      onboarding_completed_at: null,
+    });
+
+    // 初期設定の保存 (/api/onboarding/progress と同じく本人のセッションで upsert。family_id は送らない)
+    const saved = await asUser(newcomer.jwt)
+      .from('user_profiles')
+      .upsert({ id: newcomer.id, nickname: 'はなこ', age_group: '10s', gender: 'female' })
+      .select('family_id, nickname')
+      .single();
+    expect(saved.error).toBeNull();
+    expect(saved.data).toEqual({ family_id: famE.familyId, nickname: 'はなこ' });
   });
 });
 
