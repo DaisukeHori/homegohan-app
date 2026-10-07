@@ -247,6 +247,14 @@ async function applyCoupon(
 }
 ```
 
+> **実装メモ (#1224)**: 上の疑似コードは処理の流れの説明。実装では 1〜5 を TS から順に呼ぶのではなく、
+> DB 関数 `public.apply_coupon` (migration `20261007160700`) の 1 トランザクションで行う。
+> `coupons` の行を `SELECT ... FOR UPDATE` でロックして同じクーポンの適用を直列化し (per_user_limit / 組織上限 / max_uses の
+> check-then-act 競合を防ぐ)、対象の契約行 (`personal_subscriptions` / `organizations`) もロックして、同じ契約への別クーポンの
+> 同時適用も直列化する。途中で失敗すれば uses_count の加算も旧 redemption の終了も全部ロールバックされる。
+> `src/lib/plan/coupon.ts` の `applyCoupon()` は RPC の呼び出しと、業務エラー (`OP_COUPON_*` など) の `CouponApplyError` への変換だけを持つ。
+> RPC は service_role のみ実行できる (呼び出し元の route は `requireRole(['super_admin'])` の後に service-role クライアントで呼ぶ)。
+
 **試用期間中のクーポン**: 試用中は適用不可。本契約開始時に自動適用。
 
 **遡及適用 (super_admin 承認時のみ)**:

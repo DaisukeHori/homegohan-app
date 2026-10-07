@@ -111,3 +111,74 @@ describe('POST /api/super-admin/coupons/[id]/apply (#1041 round-2 E)', () => {
     expect(json.error.code).toBe('OP_COUPON_LIMIT_REACHED');
   });
 });
+
+/**
+ * #1224: applyCoupon の実体を DB 関数 apply_coupon に移したが、route が返すエラーコードと
+ * HTTP ステータスは変えない (従来の API の互換)。
+ */
+describe('POST /api/super-admin/coupons/[id]/apply (#1224 エラーコードと HTTP ステータスは従来どおり)', () => {
+  it.each([
+    ['OP_COUPON_NOT_FOUND', 404],
+    ['OP_SUBSCRIPTION_NOT_FOUND', 404],
+    ['OP_COUPON_INVALID', 422],
+    ['OP_COUPON_NOT_YET_VALID', 422],
+    ['OP_COUPON_EXPIRED', 422],
+    ['OP_COUPON_NOT_APPLICABLE', 422],
+    ['OP_PLAN_NOT_FOUND', 422],
+    ['OP_COUPON_LIMIT_REACHED', 422],
+  ])('%s は %i', async (code, status) => {
+    mockApplyCoupon.mockRejectedValue(new FakeCouponApplyError(code, `message of ${code}`));
+
+    const res = await POST(postRequest({}), { params: { id: 'coupon-1' } });
+
+    expect(res.status).toBe(status);
+    const json = (await res.json()) as { error: { code: string; message: string } };
+    expect(json.error).toEqual({ code, message: `message of ${code}` });
+  });
+
+  it('CouponApplyError 以外 (外部キー違反など DB のエラー) は 500 OP_INTERNAL_ERROR。監査ログは書かない', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockApplyCoupon.mockRejectedValue({ code: '23503', message: 'violates foreign key constraint' });
+
+    const res = await POST(postRequest({}), { params: { id: 'coupon-1' } });
+
+    expect(res.status).toBe(500);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('OP_INTERNAL_ERROR');
+    expect(adminClientMarker.from).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it('400: subscription_id が UUID でなければ applyCoupon を呼ばない', async () => {
+    const res = await POST(postRequest({ subscription_id: 'not-a-uuid' }), { params: { id: 'coupon-1' } });
+
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('OP_INVALID_INPUT');
+    expect(mockApplyCoupon).not.toHaveBeenCalled();
+  });
+
+  it('成功時は redemption_id / discount_amount_jpy / duration_months を返し、監査ログ (apply_coupon) を書く', async () => {
+    mockApplyCoupon.mockResolvedValue({ redemptionId: 'redemption-9', discountAmountJpy: 450, durationMonths: 6 });
+    const insert = vi.fn(() => Promise.resolve({ data: null, error: null }));
+    adminClientMarker.from.mockReturnValueOnce({ insert });
+
+    const res = await POST(postRequest({ reason: '遡及適用' }), { params: { id: 'coupon-1' } });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      data: { redemption_id: 'redemption-9', discount_amount_jpy: 450, duration_months: 6 },
+    });
+    expect(adminClientMarker.from).toHaveBeenCalledWith('admin_audit_logs');
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor_id: 'sa-1',
+        target_id: 'coupon-1',
+        target_type: 'coupon',
+        action_type: 'apply_coupon',
+        severity: 'warn',
+        details: expect.objectContaining({ redemption_id: 'redemption-9', discount_amount_jpy: 450 }),
+      }),
+    );
+  });
+});
