@@ -369,6 +369,10 @@ jobs:
             cat /tmp/db_diff.sql
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          # Step Summary は API から読めないため、ジョブのログにも出す
+          echo "::group::db diff ($(wc -l < /tmp/db_diff.sql) 行)"
+          cat /tmp/db_diff.sql
+          echo "::endgroup::"
           if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "::warning::migration 適用後も本番と migration に差があります。Step Summary を確認してください"
           fi
