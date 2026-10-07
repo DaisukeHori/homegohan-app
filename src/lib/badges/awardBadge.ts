@@ -22,9 +22,13 @@ export async function awardBadge(
   badgeCode: string,
 ): Promise<AwardBadgeResult> {
   // 1. バッジマスター取得
+  // badges テーブルの列は icon (icon_url という列は無い)。存在しない列を select すると
+  // PostgREST が 42703 を返し、下の badgeError 分岐に入って「バッジが無い」扱いになるため、
+  // バッジの付与が常にスキップされていた。戻り値のキー名 icon_url は API レスポンスの互換のため
+  // 維持し、値は icon 列から詰める (complete_handson_tour RPC と同じ扱い)。
   const { data: badge, error: badgeError } = await supabase
     .from('badges')
-    .select('id, name, icon_url')
+    .select('id, name, icon')
     .eq('code', badgeCode)
     .single();
 
@@ -47,7 +51,7 @@ export async function awardBadge(
       badge_id: badge.id,
       obtained_at: existing.obtained_at,
       name: badge.name,
-      icon_url: badge.icon_url ?? null,
+      icon_url: badge.icon ?? null,
     };
   }
 
@@ -67,7 +71,7 @@ export async function awardBadge(
         badge_id: badge.id,
         obtained_at: null,
         name: badge.name,
-        icon_url: badge.icon_url ?? null,
+        icon_url: badge.icon ?? null,
       };
     }
     throw insertError;
@@ -78,6 +82,6 @@ export async function awardBadge(
     badge_id: badge.id,
     obtained_at: now,
     name: badge.name,
-    icon_url: badge.icon_url ?? null,
+    icon_url: badge.icon ?? null,
   };
 }
