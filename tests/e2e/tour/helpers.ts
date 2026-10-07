@@ -130,7 +130,7 @@ async function injectSession(page: Page, email: string, password: string): Promi
     const session = await resp.json() as Record<string, unknown>;
     if (!session.access_token) return false;
 
-    const supabaseRef = SUPABASE_URL.replace("https://", "").split(".")[0];
+    const supabaseRef = new URL(SUPABASE_URL).hostname.split(".")[0];
     const cookieName = `sb-${supabaseRef}-auth-token`;
     const baseURL = (page.context() as unknown as { _options?: { baseURL?: string } })._options?.baseURL ?? "http://localhost:3000";
     const domain = new URL(baseURL).hostname;

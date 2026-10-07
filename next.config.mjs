@@ -7,6 +7,20 @@ const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
 const isDev = process.env.NODE_ENV === 'development';
 // #1044 (F6-09): PostHog の api_host は src/lib/posthog.ts のデフォルトと合わせる
 const posthogHost = process.env.NEXT_PUBLIC_POSTHOG_HOST ?? 'https://us.i.posthog.com';
+// ローカルの Supabase (scripts/supabase-local.sh の http://127.0.0.1:54321 など) にブラウザから接続できるよう、
+// NEXT_PUBLIC_SUPABASE_URL が *.supabase.co 以外のときだけ、その origin (と Realtime 用の ws / wss) を CSP に加える。
+// 本番 (*.supabase.co) の CSP は変わらない。
+const supabaseLocalOrigins = (() => {
+  try {
+    const url = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? '');
+    if (url.hostname.endsWith('.supabase.co')) return null;
+    return { http: url.origin, ws: `${url.protocol === 'https:' ? 'wss:' : 'ws:'}//${url.host}` };
+  } catch {
+    return null;
+  }
+})();
+const supabaseImgSrc = supabaseLocalOrigins ? ` ${supabaseLocalOrigins.http}` : '';
+const supabaseConnectSrc = supabaseLocalOrigins ? ` ${supabaseLocalOrigins.http} ${supabaseLocalOrigins.ws}` : '';
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -55,10 +69,10 @@ const nextConfig = {
               "default-src 'self'",
               `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''} *.vercel-scripts.com`,
               "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data: blob: *.supabase.co images.unsplash.com",
+              `img-src 'self' data: blob: *.supabase.co images.unsplash.com${supabaseImgSrc}`,
               // #1044 (F6-09): PostHog の capture/identify 送信先を許可 (未設定だと全ブロックされていた)
               // #1044 round-2: session replay 等で使う PostHog アセットホストも予防的に許可
-              `connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co ${posthogHost} https://us-assets.i.posthog.com`,
+              `connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co ${posthogHost} https://us-assets.i.posthog.com${supabaseConnectSrc}`,
               "frame-ancestors 'none'",
               "font-src 'self'",
               "object-src 'none'",
