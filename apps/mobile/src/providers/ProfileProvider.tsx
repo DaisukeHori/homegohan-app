@@ -10,6 +10,8 @@ export type MobileUserProfile = {
   nickname?: string | null;
   roles: string[];
   organizationId?: string | null;
+  /** 所属組織でのロール (owner / admin / member)。組織の管理者判定は src/lib/org-admin.ts の isOrgAdmin を使う */
+  orgRole?: string | null;
   onboardingStartedAt?: string | null;
   onboardingCompletedAt?: string | null;
   onboardingProgress?: {
@@ -46,7 +48,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(true);
     const { data, error } = await supabase
       .from("user_profiles")
-      .select("id,nickname,roles,organization_id,onboarding_started_at,onboarding_completed_at,onboarding_progress,week_start_day")
+      .select("id,nickname,roles,organization_id,org_role,onboarding_started_at,onboarding_completed_at,onboarding_progress,week_start_day")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -58,6 +60,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         nickname: null,
         roles: [],
         organizationId: null,
+        orgRole: null,
         onboardingStartedAt: null,
         onboardingCompletedAt: "skip", // エラー時はオンボーディングにリダイレクトしない
         onboardingProgress: null,
@@ -74,6 +77,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         nickname: null,
         roles: [],
         organizationId: null,
+        orgRole: null,
         onboardingStartedAt: null,
         onboardingCompletedAt: null,
         onboardingProgress: null,
@@ -92,6 +96,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       nickname: (data as any).nickname ?? null,
       roles: Array.isArray((data as any).roles) ? (data as any).roles : [],
       organizationId: (data as any).organization_id ?? null,
+      orgRole: (data as any).org_role ?? null,
       onboardingStartedAt: (data as any).onboarding_started_at ?? null,
       onboardingCompletedAt: (data as any).onboarding_completed_at ?? null,
       onboardingProgress: (data as any).onboarding_progress ?? null,
