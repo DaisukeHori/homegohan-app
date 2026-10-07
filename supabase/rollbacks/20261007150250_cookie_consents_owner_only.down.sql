@@ -1,4 +1,4 @@
--- rollback: 20261007150100_cookie_consents_owner_only.sql
+-- rollback: 20261007150250_cookie_consents_owner_only.sql
 -- ⚠️ 戻すと脆弱性が復活する (anon の公開鍵だけで、user_id が NULL の行の ip_address / user_agent を読み書きでき、
 --    anon でもログインユーザーでも user_id が NULL の行を INSERT できる)。緊急時の切り戻し専用。
 --

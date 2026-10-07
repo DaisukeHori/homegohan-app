@@ -1,4 +1,4 @@
--- migration: 20261007150100_cookie_consents_owner_only.sql
+-- migration: 20261007150250_cookie_consents_owner_only.sql
 -- cookie_consents (Cookie 同意記録) の RLS を「本人の行だけ」に絞る (#1171 の調査中に見つかった。専用の issue は無い)
 --
 -- 背景:
@@ -37,7 +37,7 @@
 --
 -- 冪等: 各ポリシーを DROP POLICY IF EXISTS してから CREATE POLICY する。2 回続けて適用してもエラーにならない。
 -- 確認: tests/integration/rls/cookie-consents-scope.test.ts (24 件)。修正前は 12 件が失敗し、この migration の後は全件成功する。
--- ロールバック: supabase/rollbacks/20261007150100_cookie_consents_owner_only.down.sql
+-- ロールバック: supabase/rollbacks/20261007150250_cookie_consents_owner_only.down.sql
 
 DROP POLICY IF EXISTS "cookie_consents_self" ON "public"."cookie_consents";
 

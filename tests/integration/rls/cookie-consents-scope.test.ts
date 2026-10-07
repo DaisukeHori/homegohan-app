@@ -10,7 +10,7 @@
  * テーブルには anon / authenticated に GRANT ALL があるため、防いでいるのは RLS だけ。
  *
  * このテーブルをアプリは読み書きしていない (v1 の Cookie 同意は localStorage。src/lib/posthog.ts)。
- * そのため修正は「本人の行だけ」に絞る (20261007150100_cookie_consents_owner_only.sql)。
+ * そのため修正は「本人の行だけ」に絞る (20261007150250_cookie_consents_owner_only.sql)。
  * user_id が NULL の行は service role (RLS の対象外) だけが扱う。将来、未ログインの同意をサーバーに残すときは、
  * サーバー側のルートから service role で書く。
  *
