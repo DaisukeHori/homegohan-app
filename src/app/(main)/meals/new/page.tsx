@@ -1070,7 +1070,10 @@ export default function MealCaptureModal() {
         router.push(`/menus/weekly?${params.toString()}`);
       } else {
         const err = await res.json();
-        alert(`保存に失敗しました: ${err.error || '不明なエラー'}`);
+        // sandbox の利用条件エラーなどは { error: { code, message } } 形式、それ以外は { error: '文字列' } 形式で返る。
+        // オブジェクトをそのまま埋め込むと '[object Object]' と表示されてしまうため、message を取り出す (#1109)。
+        const errorMessage = typeof err.error === 'string' ? err.error : err.error?.message;
+        alert(`保存に失敗しました: ${errorMessage || '不明なエラー'}`);
       }
     } catch (error) {
       console.error('Save error:', error);

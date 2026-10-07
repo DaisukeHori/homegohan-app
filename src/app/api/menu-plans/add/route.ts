@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { awardBadge } from '@/lib/badges/awardBadge';
+import { checkSandboxEligibility } from '@/lib/handson-tour/sandbox-eligibility';
 import type { Database, Json } from '@/types/database.types';
-
-const ADMIN_ROLES = ['admin', 'super_admin', 'org_admin', 'org_industrial_doctor'] as const;
 
 type WeeklyMenuRequestInsert = Database['public']['Tables']['weekly_menu_requests']['Insert'];
 type WeeklyMenuInsert = Database['public']['Tables']['weekly_menus']['Insert'];
@@ -27,55 +26,12 @@ export async function POST(request: Request) {
     const isSandbox = body.sandbox === true;
 
     if (isSandbox) {
-      // #1025 round-2: user_profiles の PK は id (auth.users(id) 参照) であり
-      // user_id 列は存在しない。.eq('user_id', ...) だと PostgREST が 42703 を返すが、
-      // error を握りつぶして data のみ見ると profile が常に undefined になり
-      // 以下の 2 ゲート (already_finished / admin_role) が無条件で素通りする
-      // fail-open バグだった。fail-closed (判定不能なら拒否) に修正する。
-      const { data: profile, error: profileError } = await supabase
-        .from('user_profiles')
-        .select('handson_tour_completed_at, handson_tour_skipped_at, roles')
-        .eq('id', user.id)
-        .single();
-
-      if (profileError || !profile) {
-        console.error('user_profiles fetch error (sandbox eligibility):', profileError);
-        return NextResponse.json(
-          { error: { code: 'profile_not_found', message: 'プロファイルが見つかりません' } },
-          { status: 404 },
-        );
-      }
-
-      if (profile.handson_tour_completed_at || profile.handson_tour_skipped_at) {
-        return NextResponse.json(
-          { error: { code: 'sandbox_not_eligible', message: 'サンドボックスの利用条件を満たしていません', reason: 'already_finished' } },
-          { status: 409 },
-        );
-      }
-
-      const hasAdminRole = Array.isArray(profile.roles) &&
-        profile.roles.some((r: string) => (ADMIN_ROLES as readonly string[]).includes(r));
-      if (hasAdminRole) {
-        return NextResponse.json(
-          { error: { code: 'sandbox_not_eligible', message: 'サンドボックスの利用条件を満たしていません', reason: 'admin_role' } },
-          { status: 403 },
-        );
-      }
-
-      const { data: hasActivity, error: activityError } = await supabase
-        .rpc('user_has_non_sandbox_activity');
-      if (activityError) {
-        // 判定不能は拒否側に倒す(fail-closed、#1025 round-3)
-        return NextResponse.json(
-          { error: { code: 'sandbox_not_eligible', message: 'サンドボックスの利用条件を満たしていません', reason: 'existing_user' } },
-          { status: 409 },
-        );
-      }
-      if (hasActivity) {
-        return NextResponse.json(
-          { error: { code: 'sandbox_not_eligible', message: 'サンドボックスの利用条件を満たしていません', reason: 'existing_user' } },
-          { status: 409 },
-        );
+      // #1025 round-2/3: user_profiles は PK の id で引き、判定不能なときは拒否する (fail-closed)。
+      // この判定は add-from-photo と共通のヘルパーに集約した (#1109。コピーが分かれていたせいで
+      // add-from-photo だけ直っていなかった)。
+      const eligibility = await checkSandboxEligibility(supabase, user.id);
+      if (!eligibility.eligible) {
+        return NextResponse.json({ error: eligibility.error }, { status: eligibility.status });
       }
     }
 
