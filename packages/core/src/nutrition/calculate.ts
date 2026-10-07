@@ -164,6 +164,7 @@ export function calculateNutritionTargets(
     age,
     gender,
     weight,
+    tdee: energyCalc.tdee_kcal,
     calories: energyCalc.final_kcal,
     protein: macrosCalc.values.protein,
     fat: macrosCalc.values.fat,
@@ -987,6 +988,8 @@ interface GuardrailInput {
   age: number;
   gender: Gender;
   weight: number;
+  /** TDEE（kcal/日）。calculateEnergy で算出済みの値（目標による増減・妊娠授乳の加算を含まない） */
+  tdee: number;
   calories: number;
   protein: number;
   fat: number;
@@ -1011,9 +1014,12 @@ interface GuardrailOutput {
  * 3. fat_floor: 脂質下限（ホルモン・細胞膜維持）
  * 4. calorie_minimum: カロリー下限
  * 5. sport_specific: スポーツ特有調整
+ *
+ * @internal ガードレール単体の挙動をテストするために export している。
+ * パッケージの公開 API（nutrition/index.ts）には含めない。
  */
-function applyPerformanceGuardrails(input: GuardrailInput): GuardrailOutput {
-  const { age, gender, weight, performanceProfile } = input;
+export function applyPerformanceGuardrails(input: GuardrailInput): GuardrailOutput {
+  const { age, gender, weight, tdee, performanceProfile } = input;
   let { calories, protein, fat, carbs } = input;
   const guardrails: GuardrailResult[] = [];
 
@@ -1052,15 +1058,16 @@ function applyPerformanceGuardrails(input: GuardrailInput): GuardrailOutput {
   // 2. 減量安全性（Cut Safety）
   // ================================================
   if (performanceProfile?.cut?.enabled && performanceProfile?.sport?.phase === 'cut') {
-    // 急速減量の場合、体重の1%/週を超えない
+    // 急速減量の場合でも、減量ペースは週1kgまで
     const strategy = performanceProfile.cut.strategy;
 
     if (strategy === 'rapid') {
       // 急速減量: 最大週1kg減（7700kcal/週 = 1100kcal/日の赤字）
       const maxDeficit = 1100;
-      // BMR * 1.2 を基準として赤字を計算（仮定）
-      const estimatedTDEE = calories + maxDeficit; // 逆算
-      const minCutCalories = Math.max(gender === 'male' ? 1500 : 1200, estimatedTDEE - maxDeficit);
+      // 下限は実際の TDEE から求める。calories から TDEE を逆算（calories + maxDeficit）すると
+      // 直後の (TDEE - maxDeficit) で打ち消し合って calories 自身になり、
+      // `calories < minCutCalories` が常に偽となってガードが発火しなくなる (#1208)
+      const minCutCalories = Math.max(gender === 'male' ? 1500 : 1200, tdee - maxDeficit);
 
       if (calories < minCutCalories) {
         guardrails.push({
