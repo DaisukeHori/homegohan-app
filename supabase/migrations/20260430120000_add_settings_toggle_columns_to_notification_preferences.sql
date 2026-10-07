@@ -1,34 +1,6 @@
--- Issue #69: 通知/自動解析/データシェア toggle を永続化するためのカラム追加
--- notification_preferences テーブルが存在しない場合は CREATE、存在する場合は ALTER で追加
-
-CREATE TABLE IF NOT EXISTS notification_preferences (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now(),
-  UNIQUE (user_id)
-);
-
-ALTER TABLE notification_preferences ENABLE ROW LEVEL SECURITY;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE tablename = 'notification_preferences' AND policyname = 'own row'
-  ) THEN
-    CREATE POLICY "own row" ON notification_preferences
-      FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
-  END IF;
-END
-$$;
-
--- 設定 toggle 用カラムを追加（既に存在する場合は何もしない）
-ALTER TABLE notification_preferences
-  ADD COLUMN IF NOT EXISTS notifications_enabled boolean NOT NULL DEFAULT true;
-
-ALTER TABLE notification_preferences
-  ADD COLUMN IF NOT EXISTS auto_analyze_enabled boolean NOT NULL DEFAULT true;
-
-ALTER TABLE notification_preferences
-  ADD COLUMN IF NOT EXISTS data_share_enabled boolean NOT NULL DEFAULT false;
+-- migration: 20260430120000_add_settings_toggle_columns_to_notification_preferences.sql
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;

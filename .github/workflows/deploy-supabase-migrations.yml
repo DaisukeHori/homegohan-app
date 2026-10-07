@@ -309,46 +309,66 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
+      # #1116: supabase/migrations は空の DB から流し直せる (台帳の最大 version 以下は
+      # 20251126124224_create_meal_planner_tables.sql の本番スキーマのベースラインに統合済み)。
+      # `db diff --linked` は空のシャドウ DB に全 migration を流してから本番と比べる。
+      # - シャドウ DB への適用や差分の計算が失敗した (= migration が空の DB から流せない) ときはジョブを失敗させる。
+      # - 差分そのものは失敗にしない。main への push (適用後) で差分が出たら本番と migration のずれ
+      #   (out-of-band の変更など) の疑いとして警告し、PR では「この PR の migration が本番に入っていない分」
+      #   として Step Summary に載せる。
+      # - 以前は PR に gh pr comment で書き込んでいたが、GITHUB_TOKEN に権限が無く毎回失敗していた
+      #   (Resource not accessible by integration)。PR へのコメントはやめ、Step Summary に書く。
       - name: Verify db diff (post-apply)
         id: db_diff
         run: |
-          DIFF=$(npx --yes supabase@2.62.10 db diff --linked --schema public 2>&1 || true)
-          echo "diff_output<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$DIFF" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
-          if [ -n "$DIFF" ]; then
+          set +e
+          npx --yes supabase@2.62.10 db diff --linked --schema public > /tmp/db_diff.sql 2> /tmp/db_diff.log
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "## supabase db diff が失敗しました"
+              echo ""
+              echo "空のシャドウ DB に migration を流せなかったか、差分の計算に失敗しました (#1116)。"
+              echo ""
+              echo '```'
+              tail -n 60 /tmp/db_diff.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::supabase db diff が失敗しました (#1116)。ログと Step Summary を確認してください"
+            tail -n 60 /tmp/db_diff.log
+            exit 1
+          fi
+          if [ -s /tmp/db_diff.sql ]; then
             echo "has_diff=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_diff=false" >> "$GITHUB_OUTPUT"
+            echo "db diff: 差分なし (migration と本番が一致)"
           fi
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
-      - name: Report db diff to PR comment (PR CI)
-        if: steps.db_diff.outputs.has_diff == 'true' && github.event_name == 'pull_request'
+      - name: Report db diff to Step Summary
+        if: steps.db_diff.outputs.has_diff == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          DIFF_OUTPUT: ${{ steps.db_diff.outputs.diff_output }}
-        run: |
-          printf '## Warning: supabase db diff が空でありません (post-apply)\n\nmigration 適用後に以下の残留差分があります:\n\n```sql\n%s\n```\n\n意図しない差分がある場合は migration ファイルを見直してください。' \
-            "$DIFF_OUTPUT" > /tmp/db_diff_comment.txt
-          gh pr comment "$PR_NUMBER" --body-file /tmp/db_diff_comment.txt
-
-      - name: Report db diff to Step Summary (main push)
-        if: steps.db_diff.outputs.has_diff == 'true' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
-        env:
-          DIFF_OUTPUT: ${{ steps.db_diff.outputs.diff_output }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           {
-            echo "## Warning: supabase db diff が空でありません (post-apply)"
+            if [ "$EVENT_NAME" = "pull_request" ]; then
+              echo "## db diff (この PR の migration のうち、まだ本番に無い分)"
+              echo ""
+              echo "PR の migration は本番に未適用のため、その分が差分として出ます。PR が追加する変更だけであることを確認してください。"
+            else
+              echo "## Warning: supabase db diff が空でありません (post-apply)"
+              echo ""
+              echo "migration 適用後も本番と migration に差があります。本番での直接変更 (out-of-band) などの可能性があります。"
+            fi
             echo ""
-            echo "migration 適用後に以下の残留差分があります:"
-            echo ""
-            echo "\`\`\`sql"
-            printf '%s\n' "$DIFF_OUTPUT"
-            echo "\`\`\`"
-            echo ""
-            echo "意図しない差分がある場合は migration ファイルを見直してください。"
+            echo '```sql'
+            cat /tmp/db_diff.sql
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "::warning::migration 適用後も本番と migration に差があります。Step Summary を確認してください"
+          fi

@@ -1,7 +1,10 @@
 # supabase/baseline — ローカル / CI 専用の本番スキーマ・ベースライン
 
-`supabase/migrations/` は空の DB から頭から流しても再現できない（`user_profiles` や `organizations` などの基盤テーブルを作る migration が無く、10 本目の `20260102000002` で止まる。#1116）。
-そこでローカルと CI では、本番スキーマのスナップショットを出発点にして、まだ本番に入っていない migration だけを上に積む。
+ローカルと CI では、本番スキーマのスナップショットを出発点にして、まだ本番に入っていない migration だけを上に積む。
+
+かつて `supabase/migrations/` は空の DB から頭から流しても再現できなかった（`user_profiles` や `organizations` などの基盤テーブルを作る migration が無く、10 本目の `20260102000002` で止まる。#1116）。
+#1116 で、台帳の最大 version（`20261007112200`）以下の migration を、最も古いファイル `20251126124224_create_meal_planner_tables.sql` にこのディレクトリの本番スキーマ一式として統合した（`scripts/baseline/squash_migrations.py`。ほかはプレースホルダ）。
+いまは空の DB にリポジトリの migration を流しても、取得時点の本番と同じスキーマになる（ローカルで `verify_baseline.py` と比較し、エラー 0 件を確認済み）。CI の `supabase db diff --linked` もこれで動く。
 
 - **本番には一切適用しない。** 本番の migration 台帳（`supabase_migrations.schema_migrations`）とも無関係。
 - ローカル / CI の組み立ては `scripts/supabase-local.sh` が行う（作業ディレクトリ `.supabase-local/`、git 管理外）。
@@ -16,7 +19,9 @@ bash scripts/supabase-local.sh reset            # migration を追加・変更�
 bash scripts/supabase-local.sh stop
 ```
 
-`supabase db reset` を直接リポジトリの `supabase/` に対して実行しても、#1116 のため途中で止まる。必ず `scripts/supabase-local.sh reset` を使う。
+ローカル専用の設定（project_id・認証のレート制限の緩和）と Kong の再起動対策は `scripts/supabase-local.sh` が入れるため、リポジトリの `supabase/` に対して `supabase db reset` を直接実行せず、`scripts/supabase-local.sh reset` を使う。
+
+**ベースラインを取り直しても、統合（squash）はやり直さない。** 統合は 1 回限りで、以後の migration は通常どおり新しいファイルとして積む。取り直したベースラインは `verify` とドリフト調査に使う。
 
 ## ファイル
 

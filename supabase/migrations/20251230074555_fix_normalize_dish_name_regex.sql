@@ -1,26 +1,6 @@
--- ============================================================
--- fix_normalize_dish_name_regex (remote: 20251230074555)
--- ============================================================
-
-create or replace function normalize_dish_name(name text)
-returns text
-language plpgsql
-immutable
-as $$
-begin
-  return lower(
-    regexp_replace(
-      regexp_replace(
-        regexp_replace(
-          regexp_replace(coalesce(name, ''), '[\\s　]+', '', 'g'),        -- 空白除去（半角/全角）
-          '（[^）]*）', '', 'g'                                          -- 全角括弧ごと除去
-        ),
-        '\\([^)]*\\)', '', 'g'                                          -- 半角括弧ごと除去
-      ),
-      '[・･]', '', 'g'                                                  -- 中点除去
-    )
-  );
-end;
-$$;
-
-
+-- migration: 20251230074555_fix_normalize_dish_name_regex.sql
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;
