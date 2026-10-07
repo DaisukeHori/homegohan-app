@@ -662,6 +662,10 @@ CREATE TABLE sales_lead_activities (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- リード単位の活動履歴 (WHERE lead_id = ? ORDER BY created_at DESC) と ON DELETE CASCADE 用。
+-- 初版には無く、#1216 で追加 (supabase/migrations/20261007160200_sales_lead_activities_lead_index.sql)
+CREATE INDEX idx_sales_lead_activities_lead_created ON sales_lead_activities(lead_id, created_at DESC);
+
 ALTER TABLE sales_leads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sales_lead_activities ENABLE ROW LEVEL SECURITY;
 
