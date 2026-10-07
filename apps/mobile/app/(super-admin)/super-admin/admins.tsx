@@ -16,7 +16,8 @@ type AdminRow = {
   recentActionCount: number;
 };
 
-const ROLE_OPTIONS = ["admin", "support", "org_admin", "super_admin"] as const;
+// #1235: 'org_admin' は付与しない。組織の管理者は所属組織の org_role (招待で owner / admin) で決まる
+const ROLE_OPTIONS = ["admin", "support", "super_admin"] as const;
 
 export default function SuperAdminAdminsPage() {
   const [items, setItems] = useState<AdminRow[]>([]);
