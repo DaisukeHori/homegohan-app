@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomBytes } from 'node:crypto';
 import * as dotenv from 'dotenv';
 
 dotenv.config({ path: path.resolve(__dirname, '..', '.env.local') });
@@ -14,9 +15,12 @@ if (!SUPABASE_URL || !SERVICE_ROLE) {
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { autoRefreshToken: false, persistSession: false } });
 
 // 共通テストパスワード。E2E_USER_PASSWORD があればそれを使う
-// (CI の e2e ローカルジョブは実行ごとにランダムな値を渡す。値はログに出さない)
+// (CI の e2e ローカルジョブは実行ごとにランダムな値を渡す。値はログに出さない)。
+// 無ければ node:crypto でランダムに作り、ユーザーの作成・更新に使ったうえで .env.local に書く。
+// リポジトリには既定のパスワードを置かない (値は標準出力にも出さない)。
 const PASSWORD_FROM_ENV = process.env.E2E_USER_PASSWORD;
-const PASSWORD = PASSWORD_FROM_ENV ?? 'TestE2E2026!secure';
+// アプリのパスワード要件 (8 文字以上・英数字混在) を満たすよう、末尾に Aa1! を付ける
+const PASSWORD = PASSWORD_FROM_ENV || `${randomBytes(18).toString('base64url')}Aa1!`;
 const accounts = Array.from({ length: 10 }, (_, i) => ({
   num: String(i + 1).padStart(2, '0'),
   email: `e2e-user-${String(i + 1).padStart(2, '0')}@homegohan.test`,
@@ -76,17 +80,41 @@ const accounts = Array.from({ length: 10 }, (_, i) => ({
     console.error(`Failed: ${failed}`);
     process.exitCode = 1;
   }
-  // E2E_USER_PASSWORD を渡された場合は、呼び出し側がパスワードを持っているので .env.local に書かない
-  if (PASSWORD_FROM_ENV) return;
-  // .env.local 追記
   const envPath = path.resolve(__dirname, '..', '.env.local');
-  let env = fs.readFileSync(envPath, 'utf8');
-  for (const a of accounts) {
-    const keyEmail = `E2E_USER_${a.num}_EMAIL`;
-    const keyPwd = `E2E_USER_${a.num}_PASSWORD`;
-    if (!env.includes(keyEmail)) env += `\n${keyEmail}=${a.email}`;
-    if (!env.includes(keyPwd)) env += `\n${keyPwd}=${PASSWORD}`;
+  const existingEnv = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+  // E2E_USER_PASSWORD を渡された場合は、呼び出し側がパスワードを持っているので .env.local に書かない
+  if (PASSWORD_FROM_ENV) {
+    // .env.local に今回と違う E2E_USER_XX_PASSWORD があると、テストはそちらを優先してログインに失敗する。気づけるよう警告する (値は出さない)
+    for (const a of accounts) {
+      const key = `E2E_USER_${a.num}_PASSWORD`;
+      const current = readEnvValue(existingEnv, key);
+      if (current !== undefined && current !== PASSWORD) {
+        console.warn(`WARN: .env.local の ${key} が今回のパスワードと異なります (テストは個別の値を優先します)`);
+      }
+    }
+    return;
   }
-  fs.writeFileSync(envPath, env);
+  // .env.local に書く。行が既にあれば値を書き換える (ランダムなので、前回の値と食い違うため)。無ければ追記する
+  let env = existingEnv;
+  for (const a of accounts) {
+    env = upsertEnvLine(env, `E2E_USER_${a.num}_EMAIL`, a.email);
+    env = upsertEnvLine(env, `E2E_USER_${a.num}_PASSWORD`, PASSWORD);
+  }
+  fs.writeFileSync(envPath, env, { mode: 0o600 });
   console.log('.env.local updated');
 })();
+
+/** .env 形式の文字列から KEY の値を返す (無ければ undefined)。前後の引用符は外す */
+function readEnvValue(env: string, key: string): string | undefined {
+  const m = env.match(new RegExp(`^${key}=(.*)$`, 'm'));
+  if (!m) return undefined;
+  return m[1].trim().replace(/^(['"])(.*)\1$/, '$2');
+}
+
+/** .env 形式の文字列で KEY=value の行を書き換える。行が無ければ末尾に追記する */
+function upsertEnvLine(env: string, key: string, value: string): string {
+  const re = new RegExp(`^${key}=.*$`, 'm');
+  if (re.test(env)) return env.replace(re, () => `${key}=${value}`);
+  const sep = env === '' || env.endsWith('\n') ? '' : '\n';
+  return `${env}${sep}${key}=${value}\n`;
+}

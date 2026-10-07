@@ -2,6 +2,7 @@ import { test as base, expect, type Page, type BrowserContext } from "@playwrigh
 import * as fs from "fs";
 import { config as dotenvConfig } from "dotenv";
 import * as path from "path";
+import { requireExistingUserPassword } from "../helpers/credentials";
 import {
   refreshSupabaseSession,
   getStorageStatePath,
@@ -56,10 +57,8 @@ export function getUserCredentials(workerIndex: number): { email: string; passwo
 
   const idx = (workerIndex % 4) + 1;
   const padded = String(idx).padStart(2, "0");
-  const password =
-    process.env[`E2E_USER_${padded}_PASSWORD`] ??
-    process.env.E2E_USER_PASSWORD ??
-    "TestE2E2026!secure";
+  // 既定値は持たない。未設定なら分かりやすいエラーで止める
+  const password = requireExistingUserPassword(padded);
   const email = getWorkerUserEmail(workerIndex);
   return { email, password };
 }
@@ -594,7 +593,7 @@ export const E2E_USER = {
     return process.env.E2E_USER_EMAIL ?? "e2e-user-01@homegohan.test";
   },
   get password() {
-    return process.env.E2E_USER_PASSWORD ?? "TestE2E2026!secure";
+    return requireExistingUserPassword();
   },
 };
 

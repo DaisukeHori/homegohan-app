@@ -7,6 +7,7 @@
  */
 
 import type { Page } from "@playwright/test";
+import { requireExistingUserPassword } from "./credentials";
 
 const LOGIN_TIMEOUT_MS = 90_000;
 const HYDRATION_TIMEOUT_MS = 15_000;
@@ -45,10 +46,8 @@ export async function login(
 ): Promise<void> {
   const _email =
     email ?? process.env.E2E_USER_EMAIL ?? "e2e-user@homegohan.test";
-  const _password =
-    password ??
-    process.env.E2E_USER_PASSWORD ??
-    "E2eUser2026!Test#Secure";
+  // 既定値は持たない。未設定なら分かりやすいエラーで止める
+  const _password = password ?? requireExistingUserPassword();
 
   await page.goto("/login");
   // networkidle でネットワーク落ち着きを待つ
