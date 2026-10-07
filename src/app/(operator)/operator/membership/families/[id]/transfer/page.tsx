@@ -6,8 +6,8 @@
  * 05-operator-emergency-ui.md §5.3 準拠
  */
 
-import { useState, useEffect, useCallback, use } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import ForceActionConfirmModal from '@/components/operator/membership/ForceActionConfirmModal';
 
@@ -30,8 +30,10 @@ function formatLastLogin(v: string | null): string {
   }
 }
 
-export default function FamilyTransferPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: familyId } = use(params);
+export default function FamilyTransferPage() {
+  // Next.js 14 のクライアントページでは params は Promise ではなく、use(params) は例外になる (#1275)。
+  // useParams は 14 / 15 のどちらでも使える。
+  const { id: familyId } = useParams<{ id: string }>();
   const router = useRouter();
 
   const [candidates, setCandidates] = useState<Candidate[]>([]);

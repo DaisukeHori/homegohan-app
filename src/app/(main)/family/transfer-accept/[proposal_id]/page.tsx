@@ -2,8 +2,8 @@
 
 // src/app/(main)/family/transfer-accept/[proposal_id]/page.tsx
 // (設計書 03-ui-spec.md §10.2, 02-flow-spec.md §10)
-import { useState, useEffect, use } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
 interface TransferProposal {
@@ -17,12 +17,10 @@ interface TransferProposal {
   expires_at: string;
 }
 
-export default function FamilyTransferAcceptPage({
-  params,
-}: {
-  params: Promise<{ proposal_id: string }>;
-}) {
-  const { proposal_id } = use(params);
+export default function FamilyTransferAcceptPage() {
+  // Next.js 14 のクライアントページでは params は Promise ではなく、use(params) は例外になる (#1275)。
+  // useParams は 14 / 15 のどちらでも使える。
+  const { proposal_id } = useParams<{ proposal_id: string }>();
   const router = useRouter();
   const supabase = createClient();
 
