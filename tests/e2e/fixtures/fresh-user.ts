@@ -166,7 +166,7 @@ export async function injectSession(
     throw new Error("[fresh-user fixture] access_token が含まれていません");
   }
 
-  const supabaseRef = supabaseUrl.replace("https://", "").split(".")[0];
+  const supabaseRef = new URL(supabaseUrl).hostname.split(".")[0];
   const cookieName = `sb-${supabaseRef}-auth-token`;
 
   // baseURL は playwright.config.ts の use.baseURL から取得

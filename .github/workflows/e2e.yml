@@ -34,6 +34,16 @@ jobs:
     # MVP スイート (01-05 spec) は 15 分。フルスイートは 30 分を上限とする。
     timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.full_suite == 'true') && 30 || 15 }}
     steps:
+      # テストユーザーの認証情報が無いと、全テストがログイン待ちのタイムアウトまで進んでしまう。最初に止める
+      - name: Check E2E credentials
+        env:
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+        run: |
+          if [ -z "$E2E_USER_EMAIL" ] || [ -z "$E2E_USER_PASSWORD" ]; then
+            echo "::error::Secrets E2E_USER_EMAIL / E2E_USER_PASSWORD が未設定です。本番のテストユーザーを作成して登録してください (tests/e2e/README.md)。"
+            exit 1
+          fi
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -51,6 +61,11 @@ jobs:
           PLAYWRIGHT_BASE_URL: ${{ github.event.inputs.base_url || 'https://homegohan-app.vercel.app' }}
           E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          # global-setup でログインできなければ、全テストを走らせずに止める
+          E2E_REQUIRE_LOGIN: "1"
+          # 失敗時のページスナップショット (error-context) は入力欄の値を平文で含み、パスワードが
+          # artifact に残るため取らない (Playwright 1.59 で確認。トレースも同じ理由で --trace off)
+          PLAYWRIGHT_NO_COPY_PROMPT: "1"
         # PR では MVP スイート (tests/e2e/01-*.spec.ts 〜 05-*.spec.ts) を実行する。
         # GitHub Actions の Egress IP から Supabase Auth へのログインが
         # rate limit / 遅延で失敗し job timeout する問題を回避するため、
@@ -58,13 +73,15 @@ jobs:
         # 指定して手動実行する。
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.full_suite }}" = "true" ]; then
-            npx playwright test --max-failures=10
+            npx playwright test --max-failures=10 --trace off
           else
-            npm run test:e2e:mvp
+            npm run test:e2e:mvp -- --trace off
           fi
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
-          path: tests/e2e/.report/
+          # HTML レポート (tests/e2e/.report/) は手順名に fill の入力値 (パスワード) を平文で含むため上げない。
+          # 失敗時のスクリーンショット・動画・エラー内容 (tests/e2e/.output/) だけを上げる
+          name: playwright-results
+          path: tests/e2e/.output/
           retention-days: 14

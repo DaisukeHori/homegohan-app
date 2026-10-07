@@ -55,6 +55,18 @@ async function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * E2E_REQUIRE_LOGIN=1 (CI) のとき、ログインできなかったら全テストを走らせずに止める。
+ * 既定 (未設定) では従来どおり警告だけ出して続行し、各テストが個別ログインにフォールバックする。
+ */
+function assertLoggedIn(email: string, loggedIn: boolean): void {
+  if (process.env.E2E_REQUIRE_LOGIN !== "1" || loggedIn) return;
+  throw new Error(
+    `[global-setup] ${email} でログインできませんでした (E2E_REQUIRE_LOGIN=1)。` +
+      "テストユーザーと E2E_USER_EMAIL / E2E_USER_PASSWORD を確認してください。",
+  );
+}
+
+/**
  * JSON ファイルを atomic write (tmp + rename) で保存する。
  * 並列 worker が同じファイルを同時更新しても中途半端なファイルが残らない。
  */
@@ -140,8 +152,8 @@ export async function refreshSupabaseSession(
 }
 
 /**
- * 1ユーザー分の storageState を生成して保存する。
- * MAX_RETRIES 回失敗しても警告のみで続行する。
+ * 1ユーザー分の storageState を生成して保存する。成功したら true を返す。
+ * MAX_RETRIES 回失敗しても警告のみで続行する (false を返す)。
  */
 async function setupUserSession(
   baseURL: string,
@@ -151,7 +163,7 @@ async function setupUserSession(
   supabaseAnonKey: string,
   storageStatePath: string,
   refreshTokenPath: string,
-): Promise<void> {
+): Promise<boolean> {
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -170,7 +182,7 @@ async function setupUserSession(
         const session = await fetchSupabaseSession(supabaseUrl, supabaseAnonKey, email, password);
 
         if (session) {
-          const supabaseRef = supabaseUrl.replace("https://", "").split(".")[0];
+          const supabaseRef = new URL(supabaseUrl).hostname.split(".")[0];
           const cookieName = `sb-${supabaseRef}-auth-token`;
           const domain = new URL(baseURL).hostname;
           const cookieValue = encodeURIComponent(JSON.stringify(session));
@@ -277,7 +289,7 @@ async function setupUserSession(
       console.log(`[global-setup] storageState saved to ${storageStatePath} (${email}, attempt ${attempt})`);
       await context.close();
       await browser.close();
-      return;
+      return true;
     } catch (err) {
       lastError = err;
       console.warn(`[global-setup] ログイン試行 ${attempt}/${MAX_RETRIES} 失敗 (${email}): ${err}`);
@@ -293,6 +305,7 @@ async function setupUserSession(
   }
 
   console.warn(`[global-setup] ${MAX_RETRIES} 回試行後もログイン失敗 (${email})。storageState なしで続行: ${lastError}`);
+  return false;
 }
 
 async function globalSetup(config: FullConfig): Promise<void> {
@@ -321,7 +334,7 @@ async function globalSetup(config: FullConfig): Promise<void> {
     // backward compat: 単一ユーザーモード
     const password = process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!";
     console.log(`[global-setup] 単一ユーザーモード (E2E_USER_EMAIL=${envEmail})`);
-    await setupUserSession(
+    const loggedIn = await setupUserSession(
       baseURL,
       envEmail!,
       password,
@@ -330,6 +343,7 @@ async function globalSetup(config: FullConfig): Promise<void> {
       "tests/e2e/.auth/user.json",
       "tests/e2e/.auth/refresh.json",
     );
+    assertLoggedIn(envEmail!, loggedIn);
     return;
   }
 
@@ -354,7 +368,7 @@ async function globalSetup(config: FullConfig): Promise<void> {
         : "fallback";
     console.log(`[global-setup] user-${padded}: password 由来 = ${passwordSource}`);
 
-    await setupUserSession(
+    const loggedIn = await setupUserSession(
       baseURL,
       userEmail,
       userPassword,
@@ -363,6 +377,7 @@ async function globalSetup(config: FullConfig): Promise<void> {
       storageStatePath,
       refreshTokenPath,
     );
+    assertLoggedIn(userEmail, loggedIn);
 
     // 最後のユーザー以外は 1 秒待機して rate limit を回避
     if (i < MULTI_USER_COUNT - 1) {

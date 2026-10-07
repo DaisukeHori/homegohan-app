@@ -1,0 +1,107 @@
+name: e2e-local
+
+# PR のコードを、ローカルの Supabase (本番スキーマのベースライン + 新しい migration) と
+# 本番ビルド (next build && next start) で動かし、Playwright の MVP スイートを実行する。
+# 本番 URL に対して動かす e2e.yml と違い、PR の変更そのものを確かめる。
+#
+# - テストユーザー (e2e-user-01〜10@homegohan.test) は実行ごとにローカルの DB に作る。
+#   パスワードは実行ごとにランダムに作り、ログには出さない (マスクする)。
+# - AI を使う 02-meal-photo / 03-ai-advisor は、AI の API キーを持たないため対象外。
+# - Playwright のトレースと失敗時のページスナップショットは、入力したパスワードを平文で含むため取らない
+#   (--trace off / PLAYWRIGHT_NO_COPY_PROMPT=1)。HTML レポートも同じ理由で artifact に上げない。
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "lib/**"
+      - "packages/**"
+      - "tests/e2e/**"
+      - "playwright.config.ts"
+      - "next.config.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - "supabase/migrations/**"
+      - "supabase/baseline/**"
+      - "scripts/supabase-local.sh"
+      - "scripts/create-e2e-accounts.ts"
+      - ".github/workflows/e2e-local.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-local-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npx playwright install --with-deps chromium
+
+      - name: Start local Supabase (baseline + new migrations)
+        run: bash scripts/supabase-local.sh start
+
+      - name: Write .env.local for the local stack
+        run: bash scripts/supabase-local.sh env .env.local
+
+      - name: Create e2e test users (random password for this run)
+        run: |
+          PASSWORD="$(openssl rand -hex 16)Aa1!"
+          echo "::add-mask::$PASSWORD"
+          echo "E2E_USER_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+          E2E_USER_PASSWORD="$PASSWORD" npx --yes tsx@4 scripts/create-e2e-accounts.ts
+
+      # 開発サーバー (next dev) はページを初回アクセス時にコンパイルし、HMR の再コンパイルも走るため、
+      # ブラウザのテストではタイムアウトや不安定な失敗が出る。本番ビルドで動かす。
+      - name: Build and start the app
+        run: |
+          npm run build
+          nohup npm run start > /tmp/next-start.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -s -o /dev/null http://localhost:3000/login; then break; fi
+            sleep 2
+          done
+          curl -s -o /dev/null -w 'GET /login -> %{http_code}\n' http://localhost:3000/login
+
+      - name: Run Playwright tests (MVP, AI を使わないもの)
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+          E2E_USER_EMAIL: e2e-user-01@homegohan.test
+          E2E_REQUIRE_LOGIN: "1"
+          PLAYWRIGHT_NO_COPY_PROMPT: "1"
+        run: >
+          npx playwright test --trace off
+          tests/e2e/01-login.spec.ts
+          tests/e2e/04-menu-page.spec.ts
+          tests/e2e/05-shopping-list.spec.ts
+
+      - name: Show logs on failure
+        if: failure()
+        run: |
+          echo "::group::next start log"; tail -n 300 /tmp/next-start.log || true; echo "::endgroup::"
+          echo "::group::containers"; docker ps -a || true; echo "::endgroup::"
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # HTML レポート (tests/e2e/.report/) は手順名に fill の入力値 (パスワード) を平文で含むため上げない。
+          # 失敗時のスクリーンショット・動画・エラー内容 (tests/e2e/.output/) だけを上げる
+          name: playwright-results-local
+          path: tests/e2e/.output/
+          retention-days: 14
+
+      - name: Stop local Supabase
+        if: always()
+        run: bash scripts/supabase-local.sh stop || true

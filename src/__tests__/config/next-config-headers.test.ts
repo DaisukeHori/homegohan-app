@@ -51,6 +51,31 @@ describe('next.config.mjs headers (#1044)', () => {
     expect(csp).toContain("font-src 'self'");
   });
 
+  it('本番の Supabase (*.supabase.co) では CSP に個別の origin を加えない', async () => {
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://flmeolcfutuwwbjmzyoz.supabase.co');
+    const config = await loadNextConfig();
+    const { csp } = await getSecurityHeaders(config);
+
+    expect(csp).toContain(
+      "img-src 'self' data: blob: *.supabase.co images.unsplash.com;",
+    );
+    expect(csp).toContain(
+      "connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co https://us.i.posthog.com https://us-assets.i.posthog.com;",
+    );
+  });
+
+  it('ローカルの Supabase (http://127.0.0.1:54321) は connect-src (http / ws) と img-src に加える', async () => {
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'http://127.0.0.1:54321');
+    const config = await loadNextConfig();
+    const { csp } = await getSecurityHeaders(config);
+
+    const connectSrc = csp.split('; ').find((d) => d.startsWith('connect-src')) ?? '';
+    const imgSrc = csp.split('; ').find((d) => d.startsWith('img-src')) ?? '';
+    expect(connectSrc).toContain('http://127.0.0.1:54321');
+    expect(connectSrc).toContain('ws://127.0.0.1:54321');
+    expect(imgSrc).toContain('http://127.0.0.1:54321');
+  });
+
   it('F6-08: 長期キャッシュ設定は静的アセット (sample-meal.webp) のみを対象にする', async () => {
     const config = await loadNextConfig();
     const { headerGroups } = await getSecurityHeaders(config);

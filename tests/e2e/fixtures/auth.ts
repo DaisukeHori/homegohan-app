@@ -219,7 +219,7 @@ async function refreshSessionViaCookie(
       });
     }
 
-    const supabaseRef = supabaseUrl.replace("https://", "").split(".")[0];
+    const supabaseRef = new URL(supabaseUrl).hostname.split(".")[0];
     const cookieName = `sb-${supabaseRef}-auth-token`;
     const domain = baseURL ? new URL(baseURL).hostname : "localhost";
     const isSecure = baseURL.startsWith("https");
@@ -328,7 +328,7 @@ async function injectSessionViaCookie(
       if (!session.access_token) return false;
 
       // @supabase/ssr の Cookie 名は sb-{project-ref}-auth-token
-      const supabaseRef = supabaseUrl.replace("https://", "").split(".")[0];
+      const supabaseRef = new URL(supabaseUrl).hostname.split(".")[0];
       const cookieName = `sb-${supabaseRef}-auth-token`;
       const domain = baseURL ? new URL(baseURL).hostname : "localhost";
       const isSecure = baseURL.startsWith("https");

@@ -36,8 +36,21 @@ test("...", async ({ authedPage }) => {
 
 ## CI
 
-`.github/workflows/e2e.yml` が `pull_request` と `workflow_dispatch` で動く。
-本番 URL に対して走るため、ローカル dev server は起動しない。
+| ワークフロー | 対象 | テストユーザー |
+|---|---|---|
+| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 を実行 | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
+| `.github/workflows/e2e.yml` | 本番 URL。ローカル dev server は起動しない | 本番の `e2e-user-01〜04@homegohan.test`。Secrets `E2E_USER_EMAIL` (= `e2e-user-01@homegohan.test`) / `E2E_USER_PASSWORD` が必要 (未設定ならジョブを最初に止める) |
+
+本番のテストユーザーは、本番の service role を `.env.local` に置いて次のように作れる (パスワードは Secrets と同じ値):
+
+```bash
+E2E_USER_PASSWORD='<Secrets と同じパスワード>' npx --yes tsx@4 scripts/create-e2e-accounts.ts
+```
+
+CI では `E2E_REQUIRE_LOGIN=1` で、global-setup がログインできなければ全テストを走らせずに止める。
+また、Playwright のトレースと失敗時のページスナップショット (`error-context`) は入力したパスワードを平文で含むため、
+CI では取らない (`--trace off` / `PLAYWRIGHT_NO_COPY_PROMPT=1`)。HTML レポートも手順名に入力値を含むため、
+artifact には上げず、`tests/e2e/.output/` (失敗時のスクリーンショット・動画・エラー内容) だけを上げる。
 
 ## NPM スクリプト
 

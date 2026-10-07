@@ -13,7 +13,10 @@ if (!SUPABASE_URL || !SERVICE_ROLE) {
 }
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { autoRefreshToken: false, persistSession: false } });
 
-const PASSWORD = 'TestE2E2026!secure'; // 共通テストパスワード
+// 共通テストパスワード。E2E_USER_PASSWORD があればそれを使う
+// (CI の e2e ローカルジョブは実行ごとにランダムな値を渡す。値はログに出さない)
+const PASSWORD_FROM_ENV = process.env.E2E_USER_PASSWORD;
+const PASSWORD = PASSWORD_FROM_ENV ?? 'TestE2E2026!secure';
 const accounts = Array.from({ length: 10 }, (_, i) => ({
   num: String(i + 1).padStart(2, '0'),
   email: `e2e-user-${String(i + 1).padStart(2, '0')}@homegohan.test`,
@@ -21,6 +24,7 @@ const accounts = Array.from({ length: 10 }, (_, i) => ({
 
 (async () => {
   const created: { email: string; id: string }[] = [];
+  let failed = 0;
   for (const a of accounts) {
     // 既存確認
     const { data: list } = await admin.auth.admin.listUsers({ perPage: 1000 });
@@ -32,8 +36,12 @@ const accounts = Array.from({ length: 10 }, (_, i) => ({
         password: PASSWORD,
         email_confirm: true,
       });
-      if (error) { console.error('create', a.email, error.message); continue; }
+      if (error) { console.error('create', a.email, error.message); failed++; continue; }
       id = data.user!.id;
+    } else {
+      // 既存ユーザーもパスワードをそろえる (前回と違うパスワードで実行してもログインできるように)
+      const { error } = await admin.auth.admin.updateUserById(existing.id, { password: PASSWORD, email_confirm: true });
+      if (error) { console.error('update', a.email, error.message); failed++; continue; }
     }
     // user_profiles upsert (PK は id = auth.uid)
     const { error: pErr } = await admin.from('user_profiles').upsert({
@@ -49,7 +57,7 @@ const accounts = Array.from({ length: 10 }, (_, i) => ({
       height: 170,
       weight: 65,
     }, { onConflict: 'id' });
-    if (pErr) console.warn('user_profiles', a.email, pErr.message);
+    if (pErr) { console.error('user_profiles', a.email, pErr.message); failed++; continue; }
     // nutrition_targets upsert
     const { error: tErr } = await admin.from('nutrition_targets').upsert({
       user_id: id,
@@ -59,11 +67,17 @@ const accounts = Array.from({ length: 10 }, (_, i) => ({
       carbs_g: 250,
       auto_calculate: true,
     }, { onConflict: 'user_id' });
-    if (tErr) console.warn('nutrition_targets', a.email, tErr.message);
+    if (tErr) { console.error('nutrition_targets', a.email, tErr.message); failed++; continue; }
     created.push({ email: a.email, id: id! });
     console.log('OK', a.email);
   }
   console.log('Created/verified', created.length);
+  if (failed > 0) {
+    console.error(`Failed: ${failed}`);
+    process.exitCode = 1;
+  }
+  // E2E_USER_PASSWORD を渡された場合は、呼び出し側がパスワードを持っているので .env.local に書かない
+  if (PASSWORD_FROM_ENV) return;
   // .env.local 追記
   const envPath = path.resolve(__dirname, '..', '.env.local');
   let env = fs.readFileSync(envPath, 'utf8');
