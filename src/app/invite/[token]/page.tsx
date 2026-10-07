@@ -4,8 +4,8 @@
 // (設計書 03-ui-spec.md §2 — 5 パターン分岐)
 // org/family 共通版: scope ('family'|'organization') による分岐
 
-import { useState, useEffect, use } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { FamilyInviteAcceptModal } from '@/components/membership/FamilyInviteAcceptModal';
 import { InviteLayout } from '@/components/membership/InviteLayout';
@@ -21,12 +21,10 @@ interface InviteDetails {
   is_existing_user?: boolean;
 }
 
-type PageProps = {
-  params: Promise<{ token: string }>;
-};
-
-export default function InvitePage({ params }: PageProps) {
-  const { token } = use(params);
+export default function InvitePage() {
+  // Next.js 14 のクライアントページでは params は Promise ではなく、use(params) は例外になる (#1275)。
+  // useParams は 14 / 15 のどちらでも使える。
+  const { token } = useParams<{ token: string }>();
   const router = useRouter();
   const supabase = createClient();
 
