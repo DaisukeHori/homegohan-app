@@ -10,10 +10,11 @@ import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { updateTicketSchema } from '@/lib/admin/support-schemas';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 type RouteContext = { params: { id: string } };
 
-export async function GET(_request: NextRequest, { params }: RouteContext) {
+export async function GET(request: NextRequest, { params }: RouteContext) {
   try {
     const currentUser = await requireRole(['support', 'admin', 'super_admin']);
     const supabase = await createClient();
@@ -64,7 +65,25 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
 
     const { data: messages } = await messagesQuery;
 
-    return NextResponse.json({ data: { ...ticket, messages: messages ?? [] } });
+    const data = { ...ticket, messages: messages ?? [] };
+
+    // #1200: チケット (件名・本文など、ユーザーが書いた内容) を返す前に、誰が誰の
+    // チケットを閲覧したかを監査ログへ残す。対象は「情報を見られた本人 (ticket.user_id)」
+    // にそろえ、開示請求のときに target_id だけで全ての閲覧を引けるようにする。
+    // 記録に失敗しても閲覧は止めない (失敗は db-logger に error で残る)。
+    // details には返した項目名だけを入れ、件名や本文は入れない。
+    await recordAdminAudit({
+      supabase,
+      actorId: currentUser.id,
+      actionType: 'admin.support.ticket.view',
+      targetId: ticket.user_id,
+      targetType: 'user',
+      details: { ticket_id: ticket.id, viewed_fields: Object.keys(data) },
+      request,
+      routeName: 'api/admin/support/tickets/[id] GET',
+    });
+
+    return NextResponse.json({ data });
   } catch (err) {
     if (err instanceof AuthError) {
       return NextResponse.json(
