@@ -17,7 +17,7 @@ import {
 import { updateHealthStreak } from '@/lib/health-streaks';
 import { todayLocal } from '@/lib/date-utils';
 import { invokeGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
-import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
+import { isFeatureEnabled } from '@/lib/feature-flags';
 import type { MealImageJobSeed } from '@/lib/meal-image';
 import {
   buildDishImagePayload,
@@ -232,9 +232,8 @@ export async function runConsultationAction(
   let result: any = null;
   let success = false;
 
-  // V5フラグ判定
-  const featureFlags = await loadFeatureFlags(supabase);
-  const useV5 = Boolean(featureFlags.menu_generation_v5_wrapped);
+  // V5フラグ判定 (#1148: feature_flags。運営画面で切り替える)
+  const useV5 = await isFeatureEnabled('menu_generation_v5_wrapped', user.id);
   const engineLabel = useV5 ? 'generate-menu-v5' : 'generate-menu-v4';
 
   // アクションタイプに応じて実行

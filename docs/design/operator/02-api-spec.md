@@ -324,9 +324,29 @@ BAN 解除
 > この章は以前 `/api/super-admin/feature-flags` (更新は PUT) と書かれていたが、そのパスの route は存在しない。
 > Web の運営画面 (`src/app/super-admin/flags`)・結合テスト・E2E・モバイルの機能フラグ画面は、すべて `/flags` を使う (#1137)。
 > エラー本文は他の運営 API と同じ `{ "error": { "code": "...", "message": "..." } }`。
+>
+> 機能フラグの置き場は `feature_flags` テーブルの 1 つに一本化した (#1148)。以前、献立生成のエンジン切り替えだけは
+> `system_settings` の `feature_flags` 行を読んでいた (一般ユーザーには RLS で読めず、いつも既定値だった)。今は
+> アプリのどこでも `src/lib/feature-flags.ts` の `isFeatureEnabled(key, userId)` で判定する。
+>
+> アプリが読んでいるフラグ (`FEATURE_FLAG_DEFAULTS`)。行が無い・読み出しに失敗したときは「止めない側」の既定値で動く:
+>
+> | key | 用途 | 既定値 (行が無い・読めない) |
+> |-----|------|------------------------------|
+> | `menu_generation_v5_wrapped` | 献立生成 (週間・1 日・1 食・AI 相談のアクション) のエンジン。ON で v5、OFF で v4 | ON |
+> | `menu_generation_v5_direct` | 汎用の献立生成 API (`/api/ai/menu/v4/generate`) のエンジン | ON |
+> | `ai_chat_enabled` | AI 相談の緊急停止スイッチ。OFF のとき AI を呼ぶ API (`/api/ai/consultation/**` の POST) が 503 + やさしい文面。通常は ON のまま | ON |
+> | `maintenance_mode` | ON のとき、ミドルウェアが admin / super_admin 以外にメンテナンス中の画面 (API は 503 `MAINTENANCE_MODE`) を出す | OFF |
+>
+> フラグの値はサーバーのメモリに最大 30 秒覚えるため、PATCH で切り替えてから全員に反映されるまで最大 30 秒かかる
+> (下の PATCH の「即座に」は、この遅れを除いた意味)。ミドルウェア (Edge) と API route (Node) は別々にメモリを持つ。
 
 ### GET /api/super-admin/flags
 フラグ一覧
+
+`active_user_count` は、そのフラグが今 ON になっているユーザーの数。アプリの判定 (`evaluateFlag`) を全ユーザーの
+`user_profiles` に対して実行して数える (OFF は 0、全員が対象で条件の無いフラグはユーザー総数)。
+ユーザーが 20,000 人を超えるときと、集計に失敗したときは `null` (一覧そのものは返す)。
 
 **レスポンス**:
 ```json
@@ -363,7 +383,7 @@ BAN 解除
 **レスポンス**: `{ "data": { "key": "...", "description": "...", "enabled": true, "rollout_strategy": {}, "constraints": {}, "updated_at": "..." } }`
 (存在しないキーは 404 `OP_FEATURE_FLAG_NOT_FOUND`)
 
-**副作用**: 即座に全ユーザーへ反映、監査ログ記録
+**副作用**: 全ユーザーへ反映 (サーバーのメモリの更新で最大 30 秒)、監査ログ記録
 
 ---
 
@@ -372,6 +392,31 @@ BAN 解除
 
 ### DELETE /api/super-admin/flags/{key}
 フラグ削除 (利用中の場合は `OP_FEATURE_FLAG_IN_USE` で 409)
+
+### GET /api/feature-flags
+クライアント (Web・モバイル) 向けのフラグ。認証は不要 (未ログインでも答える。メンテナンス中かどうかは、ログイン前の画面でも要る)。
+
+返すのは、クライアントが使うフラグだけの許可リスト (`CLIENT_FEATURE_FLAG_KEYS`: `ai_chat_enabled` / `maintenance_mode`)。
+運営が作った別のフラグの名前は返さない。値は、ログイン中のユーザーにとっての ON/OFF (段階公開があれば、そのユーザーでの判定)。
+運営 (admin / super_admin) には、メンテナンス中でも `maintenance_mode: false` を返す (運営はメンテナンス中も使えるため)。
+メンテナンス中でも、この API は止まらない。`Cache-Control: private, no-store`。
+
+**レスポンス**: `{ "data": { "flags": { "ai_chat_enabled": true, "maintenance_mode": false } } }`
+
+### メンテナンスモード (`maintenance_mode` が ON のとき)
+ミドルウェア (`lib/supabase/middleware.ts`) が、admin / super_admin 以外に次を返す。
+- ページ: 503 の HTML (「ただいまメンテナンス中です」。`Retry-After: 300`。ログイン画面へは回さない)
+- API: 503 `{ "error": { "code": "MAINTENANCE_MODE", "message": "..." } }` (`Retry-After: 300`)
+
+止めないもの: 運営ロール、`/login`・`/auth/*` (運営がログインし直せるように)、`/terms`・`/privacy`、
+`/api/health` (死活監視)、`/api/auth/*`、`/api/cron/*`、`/api/feature-flags`、静的ファイル。
+フラグを読めない・行が無いときは止めない (OFF 扱い)。
+
+### AI 相談の緊急停止 (`ai_chat_enabled` が OFF のとき)
+`POST /api/ai/consultation/sessions`・`/sessions/{id}/messages`・`/sessions/{id}/summarize`・`/sessions/{id}/close`・
+`/actions/{id}/execute` が 503 `{ "error": "<やさしい文面>", "code": "AI_CHAT_DISABLED", "retryAfter": 60 }` を返す。
+過去の相談の閲覧 (GET)・提案の却下 (DELETE)・重要マークは止めない。通常は ON のままにする非常ボタンで、
+AI への送信を止める機能ではない。
 
 ---
 

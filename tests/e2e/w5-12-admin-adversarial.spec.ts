@@ -901,27 +901,29 @@ test("[super-admin][adversarial] H-34b: Feature flags PATCH → super_admin で�
 }) => {
   const { page } = superAdminUser;
   await page.goto(`${BASE_URL}/super-admin`);
-  // 現在のフラグ一覧を取得
-  const getResult = await apiFetch(page, "/api/super-admin/flags");
-  expect(getResult.status).toBe(200);
-  const currentFlags: Array<{ key: string }> = (getResult.body as any)?.data ?? [];
-  // フラグが1件以上あれば最初のキーで PATCH (no-op: enabled=true)
-  if (currentFlags.length > 0) {
-    const firstKey = currentFlags[0].key;
-    const patchResult = await apiFetch(
-      page,
-      `/api/super-admin/flags/${firstKey}`,
-      {
-        method: "PATCH",
-        body: { enabled: true },
-      },
-    );
+  // #1148: 一覧の先頭のフラグを PATCH すると、本番のフラグ (maintenance_mode = サイト全体のメンテナンス、
+  // ai_chat_enabled = AI 相談の緊急停止など) を ON/OFF してしまう。このテスト専用のフラグを service_role で作り、
+  // それだけを PATCH して、終わったら消す
+  const flagKey = `e2e_h34b_${Date.now().toString(36)}`;
+  await serviceRoleRest("feature_flags", {
+    method: "POST",
+    body: { key: flagKey, description: "e2e H-34b (自動削除)", enabled: false },
+  });
+  try {
+    const patchResult = await apiFetch(page, `/api/super-admin/flags/${flagKey}`, {
+      method: "PATCH",
+      body: { enabled: true },
+    });
     // super_admin で PATCH → 200
     expect(patchResult.status).toBe(200);
+    // 再取得して、更新が反映されていることを確認
+    const getResult = await apiFetch(page, "/api/super-admin/flags");
+    expect(getResult.status).toBe(200);
+    const flags: Array<{ key: string; enabled: boolean }> = (getResult.body as any)?.data ?? [];
+    expect(flags.find((flag) => flag.key === flagKey)?.enabled).toBe(true);
+  } finally {
+    await serviceRoleRest(`feature_flags?key=eq.${flagKey}`, { method: "DELETE" });
   }
-  // 再取得して正常であることを確認
-  const getResult2 = await apiFetch(page, "/api/super-admin/flags");
-  expect(getResult2.status).toBe(200);
 });
 
 test("[super-admin][adversarial] H-34c: Feature flags POST invalid body → 400", async ({
@@ -976,19 +978,21 @@ test("[super-admin][adversarial] I-37: Feature flag 連打切替 → DB 整合",
 }) => {
   const { page } = superAdminUser;
   await page.goto(`${BASE_URL}/super-admin`);
-  const getResult = await apiFetch(page, "/api/super-admin/flags");
-  expect(getResult.status).toBe(200);
-  const flags: Array<{ key: string; enabled: boolean }> = (getResult.body as any)?.data ?? [];
-  // フラグが存在する場合のみ連打
-  if (flags.length > 0) {
-    const firstKey = flags[0].key;
-    let currentEnabled = flags[0].enabled ?? true;
+  // #1148: 一覧の先頭のフラグを 10 回切り替えると、本番のフラグ (maintenance_mode・ai_chat_enabled など) が
+  // 一瞬 ON/OFF になり、その瞬間に読まれた値をサーバーが最大 30 秒覚えてしまう。このテスト専用のフラグだけを切り替える
+  const flagKey = `e2e_i37_${Date.now().toString(36)}`;
+  await serviceRoleRest("feature_flags", {
+    method: "POST",
+    body: { key: flagKey, description: "e2e I-37 (自動削除)", enabled: false },
+  });
+  try {
+    let currentEnabled = false;
     // 10 回連打
     for (let i = 0; i < 10; i++) {
       currentEnabled = !currentEnabled;
       const r = await apiFetch(
         page,
-        `/api/super-admin/flags/${firstKey}`,
+        `/api/super-admin/flags/${flagKey}`,
         {
           method: "PATCH",
           body: { enabled: currentEnabled },
@@ -996,11 +1000,15 @@ test("[super-admin][adversarial] I-37: Feature flag 連打切替 → DB 整合",
       );
       expect(r.status).toBe(200);
     }
+    // 最終状態を確認 (偶数回切り替えたので、最初の OFF に戻っている)
+    const finalResult = await apiFetch(page, "/api/super-admin/flags");
+    expect(finalResult.status).toBe(200);
+    const flags: Array<{ key: string; enabled: boolean }> = (finalResult.body as any)?.data ?? [];
+    expect(Array.isArray(flags)).toBe(true);
+    expect(flags.find((flag) => flag.key === flagKey)?.enabled).toBe(false);
+  } finally {
+    await serviceRoleRest(`feature_flags?key=eq.${flagKey}`, { method: "DELETE" });
   }
-  // 最終状態を確認
-  const finalResult = await apiFetch(page, "/api/super-admin/flags");
-  expect(finalResult.status).toBe(200);
-  expect(Array.isArray((finalResult.body as any)?.data)).toBe(true);
 });
 
 test("[super-admin][adversarial] I-38: Settings に巨大 JSON 投入 → 500 にならない", async ({

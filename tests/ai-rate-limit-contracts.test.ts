@@ -239,8 +239,9 @@ vi.mock('@/lib/meal-image-jobs', () => ({
 
 // consultation/actions/execute の case 'generate_day_menu' 等では使うが、
 // このテストでは update_meal 経路のみを検証するため固定値でモックする
-vi.mock('@/lib/menu-generation-feature-flags', () => ({
-  loadFeatureFlags: vi.fn().mockResolvedValue({ menu_generation_v5_wrapped: false }),
+// (#1148: 機能フラグは feature_flags の isFeatureEnabled。AI 相談の緊急停止スイッチ ai_chat_enabled は ON として答える)
+vi.mock('@/lib/feature-flags', () => ({
+  isFeatureEnabled: vi.fn(async (key: string) => key === 'ai_chat_enabled'),
 }));
 
 // select チェーン（.select().eq().gte().lte().order().limit()...）を汎用的にモックするヘルパー。

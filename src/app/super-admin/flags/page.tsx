@@ -9,7 +9,8 @@ interface FeatureFlag {
   enabled: boolean;
   rollout_strategy: { type: string; value?: number } | null;
   constraints: Record<string, unknown> | null;
-  active_user_count: number;
+  /** 今 ON になっているユーザー数 (#1148)。ユーザーが多すぎる・集計に失敗したときは null */
+  active_user_count: number | null;
   updated_at: string;
 }
 

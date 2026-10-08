@@ -81,8 +81,10 @@ vi.mock('@/lib/rate-limit', () => ({
   rateLimitExceededResponse: vi.fn(),
 }));
 
-vi.mock('@/lib/menu-generation-feature-flags', () => ({
-  loadFeatureFlags: vi.fn(async () => ({ menu_generation_v5_wrapped: false })),
+// #1148: エンジンの切り替えは feature_flags (isFeatureEnabled)。既定は v4 (OFF) で、v5 を確かめるテストだけ ON にする
+const mockIsFeatureEnabled = vi.fn(async (_key: string, _userId?: string) => false);
+vi.mock('@/lib/feature-flags', () => ({
+  isFeatureEnabled: (key: string, userId?: string) => mockIsFeatureEnabled(key, userId),
 }));
 
 vi.mock('@/lib/meal-image-jobs', () => ({
@@ -110,8 +112,13 @@ vi.mock('@/lib/generate-menu-v4-retry', () => ({
   markWeeklyMenuRequestFailed: mockMarkWeeklyMenuRequestFailed,
 }));
 
+const mockCallGenerateMenuV5WithRetry = vi.fn(async (..._args: any[]) => ({
+  ok: true as const,
+  attempts: 1,
+  response: new Response(),
+}));
 vi.mock('@/lib/generate-menu-v5-retry', () => ({
-  callGenerateMenuV5WithRetry: vi.fn(async () => ({ ok: true, attempts: 1, response: new Response() })),
+  callGenerateMenuV5WithRetry: mockCallGenerateMenuV5WithRetry,
 }));
 
 const waitUntilPromises: Promise<unknown>[] = [];
@@ -157,6 +164,7 @@ const existingLunch = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockIsFeatureEnabled.mockImplementation(async () => false);
   waitUntilPromises.length = 0;
   userDailyMealsQueue.length = 0;
   plannedMealsSelectQueue.length = 0;
@@ -214,6 +222,32 @@ describe('POST /api/ai/menu/weekly/request', () => {
     const failedArgs = mockMarkWeeklyMenuRequestFailed.mock.calls[0][0];
     expect(failedArgs.requestId).toBe('request-1');
     expect(failedArgs.errorMessage).toContain('rollback: restored=2, skipped=0, failed=0');
+  });
+
+  it('#1148: menu_generation_v5_wrapped が OFF なら v4、ON なら v5 の Edge Function を呼び、mode にも反映する', async () => {
+    // OFF (feature_flags の menu_generation_v5_wrapped = false): v4
+    const offRes = await POST(makeRequest({ startDate }));
+    expect(offRes.status).toBe(200);
+    await flushBackground();
+    expect(mockIsFeatureEnabled).toHaveBeenCalledWith('menu_generation_v5_wrapped', 'user-1');
+    expect(mockCallGenerateMenuV4WithRetry).toHaveBeenCalledTimes(1);
+    expect(mockCallGenerateMenuV5WithRetry).not.toHaveBeenCalled();
+
+    // ON: v5。apikey ヘッダーも付く
+    vi.clearAllMocks();
+    waitUntilPromises.length = 0;
+    userDailyMealsQueue.length = 0;
+    plannedMealsSelectQueue.length = 0;
+    for (let i = 0; i < 7; i++) userDailyMealsQueue.push({ data: null, error: null });
+    mockWeeklyInsertSingle.mockResolvedValue({ data: { id: 'request-2' }, error: null });
+    mockIsFeatureEnabled.mockImplementation(async (key: string) => key === 'menu_generation_v5_wrapped');
+
+    const onRes = await POST(makeRequest({ startDate }));
+    expect(onRes.status).toBe(200);
+    await flushBackground();
+    expect(mockCallGenerateMenuV5WithRetry).toHaveBeenCalledTimes(1);
+    expect(mockCallGenerateMenuV4WithRetry).not.toHaveBeenCalled();
+    expect(mockCallGenerateMenuV5WithRetry.mock.calls[0][0].extraHeaders).toBeDefined();
   });
 
   it('Edge Function 成功時はロールバックを実行しない', async () => {
