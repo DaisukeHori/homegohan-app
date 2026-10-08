@@ -5,8 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/auth/PasswordInput";
+import { TurnstileWidget, useTurnstile } from "@/components/auth/TurnstileWidget";
 import { createClient } from "@/lib/supabase/client";
 import { getSafeRedirectPath } from "@/lib/auth/safe-redirect";
+import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "@/lib/auth/turnstile";
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle } from "lucide-react";
@@ -37,6 +39,8 @@ function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
+  // #1165: bot 対策 (Cloudflare Turnstile)。サイトキーが未設定なら無効で、今までどおりに動く
+  const captcha = useTurnstile();
 
   // #1057 (UX1-01): invite/[token]/page.tsx が付与する `redirect` も `next` と同様に扱う
   const rawRedirectParam = searchParams.get('next') ?? searchParams.get('redirect');
@@ -99,12 +103,22 @@ function LoginContent() {
       return;
     }
 
+    // #1165: トークンは 1 回しか使えない。取り出した時点で、ウィジェットが次のトークンを取り直す。
+    // Turnstile が有効なのにトークンが無いとき (Enter キーなどでボタンを通らずに送られた場合) は送らない
+    const captchaToken = captcha.takeToken();
+    if (captcha.enabled && !captchaToken) {
+      setError('ボットではないことの確認が終わるまで、少しお待ちください。');
+      return;
+    }
+
     setIsLoading(true);
 
     try {
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
+        // Turnstile が無効のときは options を付けない (今までのリクエストと同じ)
+        ...(captchaToken ? { options: { captchaToken } } : {}),
       });
 
       if (error) {
@@ -133,6 +147,9 @@ function LoginContent() {
           }
         } else if (isEmailNotConfirmed) {
           setError('メールアドレスが確認されていません。確認メールをご確認ください。');
+        } else if (isCaptchaFailure(error)) {
+          // #1165: パスワードの間違いではないので、クールダウンは付けない (ウィジェットは取り直し済み)
+          setError(CAPTCHA_FAILED_MESSAGE);
         } else {
           setError('ログインに失敗しました。入力内容をご確認ください。');
         }
@@ -280,9 +297,10 @@ function LoginContent() {
               className="py-6 rounded-xl border-gray-200 focus:ring-2 focus:ring-[#FF8A65]/20 focus:border-[#FF8A65] transition-all"
             />
           </div>
+          <TurnstileWidget {...captcha.widgetProps} action="login" />
           <Button
             type="submit"
-            disabled={isLoading}
+            disabled={isLoading || !captcha.ready}
             className="w-full py-6 rounded-full bg-[#333] hover:bg-black text-white font-bold shadow-lg hover:shadow-xl transition-all duration-300"
           >
             {isLoading ? 'ログイン中...' : 'ログイン'}

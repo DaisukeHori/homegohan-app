@@ -70,7 +70,11 @@ const nextConfig = {
             // dev モードでは Next.js webpack HMR が unsafe-eval を必要とするため条件付きで追加
             value: [
               "default-src 'self'",
-              `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''} *.vercel-scripts.com`,
+              // #1165: Cloudflare Turnstile (ログイン・新規登録・パスワード再設定の bot 対策)。許可するのは
+              // api.js を読む script-src と、ウィジェットを iframe で出す frame-src だけ。
+              // frame-src を書くと default-src 'self' へのフォールバックが無くなるので、今までの動き (自分のページの iframe) を保つため 'self' も書く
+              `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''} *.vercel-scripts.com https://challenges.cloudflare.com`,
+              "frame-src 'self' https://challenges.cloudflare.com",
               "style-src 'self' 'unsafe-inline'",
               `img-src 'self' data: blob: *.supabase.co images.unsplash.com${supabaseImgSrc}`,
               // #1044 (F6-09): PostHog の capture/identify 送信先を許可 (未設定だと全ブロックされていた)

@@ -5,8 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/auth/PasswordInput";
+import { TurnstileWidget, useTurnstile } from "@/components/auth/TurnstileWidget";
 import { createClient } from "@/lib/supabase/client";
 import { getSafeRedirectPath } from "@/lib/auth/safe-redirect";
+import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "@/lib/auth/turnstile";
 import { validatePassword, PASSWORD_HINT_TEXT } from "@/lib/auth/validate-password";
 import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -18,6 +20,8 @@ function SignupContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
+  // #1165: bot 対策 (Cloudflare Turnstile)。サイトキーが未設定なら無効で、今までどおりに動く
+  const captcha = useTurnstile();
 
   // #1057 (UX1-01): 招待経由サインアップ (invite/[token]/page.tsx が
   // `/signup?redirect=/invite/xxx&email=...` で遷移させてくる) のコンテキストを保持する。
@@ -65,6 +69,15 @@ function SignupContent() {
     }
     setPasswordError(null);
 
+    // #1165: トークンは 1 回しか使えない。取り出した時点で、ウィジェットが次のトークンを取り直す
+    // (入力の検証で弾いた場合は取り出さないよう、検証の後で呼ぶ)。
+    // Turnstile が有効なのにトークンが無いとき (Enter キーなどでボタンを通らずに送られた場合) は送らない
+    const captchaToken = captcha.takeToken();
+    if (captcha.enabled && !captchaToken) {
+      setFormError('ボットではないことの確認が終わるまで、少しお待ちください。');
+      return;
+    }
+
     setIsLoading(true);
 
     try {
@@ -73,6 +86,8 @@ function SignupContent() {
         password,
         options: {
           emailRedirectTo: buildCallbackUrl(),
+          // Turnstile が無効のときは captchaToken を付けない (今までのリクエストと同じ)
+          ...(captchaToken ? { captchaToken } : {}),
         },
       });
 
@@ -92,6 +107,9 @@ function SignupContent() {
           setFormError('このメールアドレスは既に登録されています。ログインへ進んでください。');
         } else if (isWeakPassword) {
           setFormError('パスワードは8文字以上で入力してください');
+        } else if (isCaptchaFailure(error)) {
+          // #1165: 英語の生のエラー文は出さない (ウィジェットは取り直し済み)
+          setFormError(CAPTCHA_FAILED_MESSAGE);
         } else {
           setFormError(`登録に失敗しました: ${error.message}`);
         }
@@ -235,6 +253,7 @@ function SignupContent() {
               </p>
             )}
           </div>
+          <TurnstileWidget {...captcha.widgetProps} action="signup" />
           {formError && (
             <p role="alert" className="text-sm text-red-600 font-medium bg-red-50 border border-red-100 rounded-xl px-3 py-2">
               {formError}
@@ -242,7 +261,7 @@ function SignupContent() {
           )}
           <Button 
             type="submit"
-            disabled={isLoading}
+            disabled={isLoading || !captcha.ready}
             className="w-full py-6 rounded-full bg-[#FF8A65] hover:bg-[#FF7043] text-white font-bold shadow-lg hover:shadow-xl hover:shadow-[#FF8A65]/30 transition-all duration-300"
           >
             {isLoading ? '登録処理中...' : '登録して始める'}

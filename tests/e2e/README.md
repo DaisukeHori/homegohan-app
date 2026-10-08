@@ -93,7 +93,7 @@ HAR にはログイン要求のパスワードやアクセストークンが平�
 
 | ワークフロー | 対象 | テストユーザー |
 |---|---|---|
-| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 と、未ログインで読める公開ページの `public-policy-pages.spec.ts` (利用規約・プライバシーポリシー #1174) を実行 | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
+| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 と、未ログインで読める公開ページの `public-policy-pages.spec.ts` (利用規約・プライバシーポリシー #1174)、Cloudflare Turnstile の `auth-turnstile.spec.ts` (#1165) を実行。アプリは Cloudflare 公式のテスト用サイトキー付きでビルドする | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
 | `.github/workflows/e2e.yml` | 本番 URL。ローカル dev server は起動しない | 本番の `e2e-user-01〜04@homegohan.test`。Secrets `E2E_USER_EMAIL` (= `e2e-user-01@homegohan.test`) / `E2E_USER_PASSWORD` が必要 (未設定ならジョブを最初に止める) |
 
 本番のテストユーザーのパスワードはランダムな値で、Secrets `E2E_USER_PASSWORD` にだけ置く (リポジトリにも `.env.local` の共有にも書かない)。
@@ -107,6 +107,32 @@ CI では `E2E_REQUIRE_LOGIN=1` で、global-setup がログインできなけ�
 また、Playwright のトレースと失敗時のページスナップショット (`error-context`) は入力したパスワードを平文で含むため、
 CI では取らない (`--trace off` / `PLAYWRIGHT_NO_COPY_PROMPT=1`)。HTML レポートも手順名に入力値を含むため、
 artifact には上げず、`tests/e2e/.output/` (失敗時のスクリーンショット・動画・エラー内容) だけを上げる。
+
+## Turnstile (ログイン・新規登録・パスワード再設定の bot 対策、#1165)
+
+`auth-turnstile.spec.ts` は、Web の 3 画面に出す Cloudflare Turnstile が、本物のブラウザ・本物の CSP (`next.config.mjs`) ・
+本物の Cloudflare の `api.js` と、Cloudflare 公式のテスト用サイトキーで動くことを確かめる
+(単体テストは `window.turnstile` の偽物を使うので、CSP が止めていないかは、ここでしか確かめられない)。
+Supabase の Auth API はブラウザの通信を差し替えるので、Supabase にも実在のユーザーにも繋がない。
+
+- **前提**: アプリが `NEXT_PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA` (常に成功するテスト用サイトキー) 付きでビルド / 起動されていること。
+  `NEXT_PUBLIC_*` はビルド時に埋め込まれるので、起動済みのサーバー (本番など) には後から効かない。
+- 実行するコマンドの環境変数 `NEXT_PUBLIC_TURNSTILE_SITE_KEY` にこのテスト用サイトキーが付いていない (かつ `E2E_REQUIRE_TURNSTILE=1` でもない) ときは、
+  この spec は全部スキップされる。本番のように、本物のサイトキーで動くアプリへ向けて走らせてしまわないため
+  (本物のサイトキーは、自動化したブラウザに操作を求めることがある)。
+- サイトキー無しでビルドされたアプリ (Turnstile は無効) でも、全部スキップされる。ただし `E2E_REQUIRE_TURNSTILE=1` のとき (CI) は、スキップせずに失敗にする。
+- ローカルで動かす:
+
+  ```bash
+  # 起動済みの dev サーバーは再利用されるので、キー無しで起動していたら止めてから
+  NEXT_PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA npx playwright test tests/e2e/auth-turnstile.spec.ts
+  ```
+
+- CI: `e2e-local.yml` が、このテスト用サイトキーを付けてビルドし、`E2E_REQUIRE_TURNSTILE=1` でこの spec を回す。
+  同じビルドで `01-login.spec.ts` も動くので、実際のウィジェットがトークンを出すのを待ってからログインする。
+  ローカルの Supabase は CAPTCHA を有効にしない (有効にすると、トークン無しで認証する結合テストが全部止まる)。
+- テスト用のサイトキーと秘密キー、Supabase で CAPTCHA を有効にする時期は `docs/operations/auth-protection.md`。
+  **本番の Supabase の CAPTCHA を有効にすると、本番を対象にした `global-setup.ts` などのログイン (REST) は失敗する**ので、同時に直すこと。
 
 ## NPM スクリプト
 

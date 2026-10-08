@@ -181,6 +181,18 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 4. 再デプロイする（環境変数は再デプロイで反映される）
 5. 反映の確認: Vercel の関数ログに `[rate-limit] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN が未設定です` という警告が出ていなければ、Upstash が使われている
 
+### 任意の環境変数: ログイン・登録・パスワード再設定の bot 対策（Cloudflare Turnstile、#1165）
+
+- `NEXT_PUBLIC_TURNSTILE_SITE_KEY` - Cloudflare Turnstile のサイトキー（Web。Vercel の環境変数）
+- `EXPO_PUBLIC_TURNSTILE_SITE_KEY` - 同じサイトキー（モバイル。EAS の環境変数）
+
+どちらもサイトキーは公開してよい値です。**秘密キーは Supabase のダッシュボードにだけ入れ、このアプリの環境変数には置きません。**
+
+- **未設定なら Turnstile は出ず、今までどおりに動きます**（ローカル開発・テストは未設定でよい）。
+- 設定すると、ログイン・新規登録・パスワード再設定の画面にウィジェットが出て、確認が終わるまで送信ボタンが押せなくなります。
+- ビルド時に埋め込まれるので、変えたら再デプロイ（モバイルは新しいビルド）が要ります。
+- Web に入れただけでは、Supabase の Auth API を直接呼ぶ攻撃は止まりません。Supabase 側で CAPTCHA を有効にする時期と手順、現在の設定値の記録は [docs/operations/auth-protection.md](docs/operations/auth-protection.md) を参照してください（有効にするのは、モバイルの新しいビルドを配って古いビルドが使われなくなってから）。
+
 ### 任意の環境変数: Edge Function の CORS（`ALLOWED_ORIGINS`）
 
 これは Vercel の環境変数ではなく、**Supabase の Edge Function の Secret** です（Supabase Dashboard → Edge Functions → Secrets、または `supabase secrets set ALLOWED_ORIGINS=...`）。
