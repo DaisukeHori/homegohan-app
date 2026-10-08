@@ -1,31 +1,20 @@
 /**
  * GET /api/org/stats — 組織ダッシュボード統計 API
- * 所属組織の org_role が owner / admin のユーザーのみ (#1235)
+ * 所属組織の org_role が owner / admin のユーザーのみ (#1235)。判定は共通の requireOrgAdmin() (#1161)
  */
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { isOrgAdmin } from '@/lib/auth/org-admin';
+import { requireOrgAdmin } from '@/lib/auth/helpers';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
 
 export async function GET() {
   try {
-    const supabase = await createClient();
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
-      throw new AuthError('AUTH_UNAUTHENTICATED');
-    }
-    const { data: profile } = await supabase
-      .from('user_profiles')
-      .select('organization_id, org_role')
-      .eq('id', user.id)
-      .single();
-    if (!isOrgAdmin(profile)) {
-      throw new ForbiddenError('PERM_DENIED', 'owner/admin role required');
-    }
-
+    const { profile } = await requireOrgAdmin();
     const orgId = profile.organization_id;
 
     // メンバー数
+    const supabase = await createClient();
     const { count: memberCount } = await supabase
       .from('user_profiles')
       .select('id', { count: 'exact', head: true })
@@ -44,7 +33,11 @@ export async function GET() {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    // 500 の本文は汎用メッセージだけ (#1172)。詳細は db-logger にだけ残す
+    createLogger('GET /api/org/stats', generateRequestId()).error('組織統計の取得に失敗しました', err);
+    return NextResponse.json(
+      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
+      { status: 500 },
+    );
   }
 }

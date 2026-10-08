@@ -148,7 +148,7 @@ export function PhotoEditModal({
                 style={{ background: colors.bg, border: `2px dashed ${colors.border}` }}
               >
                 <Plus size={24} color={colors.textMuted} />
-                <span style={{ fontSize: 10, color: colors.textMuted }}>追加</span>
+                <span style={{ fontSize: 11, color: colors.textMuted }}>追加</span>
               </button>
             </div>
           </div>

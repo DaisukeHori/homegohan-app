@@ -172,7 +172,7 @@ Deno.serve(async (req) => {
     !!bearerToken &&
     (bearerToken === Deno.env.get("SERVICE_ROLE_JWT") || bearerToken === Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
   if (!isServiceRoleKey) {
-    const authError = requireServiceRole(req);
+    const authError = await requireServiceRole(req);
     if (authError) return authError;
   }
 

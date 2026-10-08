@@ -16,6 +16,24 @@ npx playwright test --ui
 PLAYWRIGHT_BASE_URL=https://homegohan-app.vercel.app npx playwright test
 ```
 
+### dev サーバー (next dev) に対して動かすときの注意
+
+dev サーバーは、プロジェクトの中のファイルが変わると再コンパイルし、その間はページの読み込みが止まる
+(プロジェクトの外にファイルを書いても起きない。#854 で確認)。
+Playwright は、成果物 (動画・スクリーンショットなど) を `tests/e2e/.output/` に、
+ログイン情報の更新を `tests/e2e/.auth/` に書く。どちらもプロジェクトの中なので、書き込みが続くと再コンパイルが重なり、
+テストが「要素が見えない」と待ち切れずに失敗することがある。
+次のどちらかで動かすと安定する。
+
+```bash
+# 成果物の出力先をプロジェクトの外にする (.auth への書き込みによる再コンパイルは残る)
+npx playwright test --output=/tmp/playwright-output tests/e2e/w5-1-onboarding-adversarial.spec.ts
+
+# 本番ビルドに対して動かす (CI の e2e-local.yml と同じ。再コンパイル自体が起きない)
+npm run build && npm run start   # 別ターミナル
+PLAYWRIGHT_BASE_URL=http://localhost:3000 npx playwright test
+```
+
 ## 認証
 
 ログインを伴うテストは `tests/e2e/fixtures/auth.ts` の `authedPage` フィクスチャを使う:

@@ -13,6 +13,7 @@ import {
 } from '../../../../../lib/meal-image-jobs';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { createLogger } from '@/lib/db-logger';
+import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
 
 export async function PATCH(
   request: Request,
@@ -36,6 +37,14 @@ export async function PATCH(
       catalogProductId,
       sourceType,
     } = json;
+
+    // #1205: 栄養素の型・範囲を、DB に触れる前に確認する（不正なら 400）
+    const validation = validatePlannedMealInput({
+      nutrients: { calories_kcal: caloriesKcal },
+    });
+    if (!validation.ok) {
+      return NextResponse.json(plannedMealValidationErrorBody(validation), { status: 400 });
+    }
 
     const { data: existingMeal, error: existingMealError } = await supabase
       .from('planned_meals')
@@ -67,7 +76,8 @@ export async function PATCH(
     if (mode !== undefined) updateData.mode = mode;
     if (dishes !== undefined) updateData.dishes = dishes;
     if (isSimple !== undefined) updateData.is_simple = isSimple;
-    if (caloriesKcal !== undefined) updateData.calories_kcal = caloriesKcal;
+    // 検証済みの値（整数に丸め済み。null は値なし）
+    if (caloriesKcal !== undefined) updateData.calories_kcal = validation.nutrients.calories_kcal;
     if (description !== undefined) updateData.description = description;
     const manualImageUrl = typeof imageUrl === 'string' ? imageUrl : undefined;
 

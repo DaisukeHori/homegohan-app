@@ -67,7 +67,7 @@ const DAY_SEC = 24 * 60 * 60;
 // - generation: 献立生成系（menu v4/v5 generate, day/meal generate・regenerate,
 //   weekly/request, consultation のアクション実行・チャット送信・要約生成 等）
 // - analysis: 画像解析・軽量AI呼び出し系（analyze-fridge/meal-photo/health-checkup/
-//   weight-scale, classify-photo, hint, nutrition analysis/feedback 等）
+//   weight-scale, classify-photo, nutrition analysis/feedback 等）
 // - image: 画像生成（最も高コスト）。分あたりに加えて日次クォータも課す
 //
 // 【招待メール系 (#1163)】 key の渡し方は src/lib/membership/invite-throttle.ts を参照

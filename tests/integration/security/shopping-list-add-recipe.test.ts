@@ -10,10 +10,13 @@
  *      送っていなかったため、アクティブなリストが無いユーザーは競合に関係なく常に 500 だった。
  *      モックでは列の不一致を検出できないので、このテストで本物の PostgREST に対して確かめる。
  *
+ * #1312 以降、リストの get-or-create は DB 関数 get_or_create_active_shopping_list に任せる
+ * (再生成の「アーカイブ → INSERT」と同じユーザーごとのロックで直列化する)。
+ * 関数のロック・権限・再生成との競合は tests/integration/security/shopping-list-active-lock.test.ts で確認する。
+ *
  * 構成:
- *   - D: 共通ヘルパー getOrCreateActiveShoppingList を、本物の PostgREST + 部分ユニーク索引に対して実行する。
- *        fetch をラップして「全員の SELECT が終わるまで最初の INSERT を送らない」ようにし、
- *        TOCTOU を決定的に再現する (全員が「リスト無し」と判定 → 全員 INSERT → 1 人だけ成功、他は 409 = 23505)。
+ *   - D: 共通ヘルパー getOrCreateActiveShoppingList を、本物の PostgREST + DB 関数 + 部分ユニーク索引に対して実行する。
+ *        同時に何本呼んでも、全員が同じリストを得て、アクティブなリストは 1 つだけ。
  *   - A / B / C: API ルートを Bearer JWT で HTTP 経由で叩く (Next dev server が必要)。
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
@@ -38,13 +41,12 @@ if (!url || !anonKey || !serviceKey) {
   );
 }
 
-function client(key: string, accessToken?: string, fetchImpl?: typeof fetch): SupabaseClient {
+function client(key: string, accessToken?: string): SupabaseClient {
   return createClient(url, key, {
     auth: { autoRefreshToken: false, persistSession: false },
     realtime: { transport: ws as unknown as typeof WebSocket },
     global: {
       ...(accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : {}),
-      ...(fetchImpl ? { fetch: fetchImpl } : {}),
     },
   });
 }
@@ -108,64 +110,22 @@ afterAll(async () => {
   }
 });
 
-/**
- * 全員の shopping_lists への SELECT が終わるまで、最初の INSERT (POST) を送らせない fetch を作る。
- * これで「全員が『アクティブなリストは無い』と判定してから INSERT する」状況を決定的に作れる。
- */
-function createRaceFetch(parties: number) {
-  let selects = 0;
-  let open!: () => void;
-  const selectsDone = new Promise<void>((resolve) => {
-    open = resolve;
-  });
-  const stats = { inserts: 0, conflicts: 0 };
-
-  const raceFetch: typeof fetch = async (input, init) => {
-    const target = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    const method = (init?.method ?? 'GET').toUpperCase();
-    const isListsTable = target.includes('/rest/v1/shopping_lists');
-
-    if (isListsTable && method === 'POST') await selectsDone;
-    try {
-      const res = await fetch(input, init);
-      if (isListsTable && method === 'POST') {
-        stats.inserts += 1;
-        // PostgREST は unique_violation (23505) を 409 Conflict で返す
-        if (res.status === 409) stats.conflicts += 1;
-      }
-      return res;
-    } finally {
-      if (isListsTable && method === 'GET') {
-        selects += 1;
-        if (selects >= parties) open();
-      }
-    }
-  };
-  return { raceFetch, stats };
-}
-
-describe('D: getOrCreateActiveShoppingList を本物の PostgREST と部分ユニーク索引に対して実行する (#1214)', () => {
+describe('D: getOrCreateActiveShoppingList を本物の PostgREST と DB 関数と部分ユニーク索引に対して実行する (#1214 / #1312)', () => {
   let user: TestUser;
 
   beforeAll(async () => {
     user = await createUser('helper');
   });
 
-  it('D-1: 全員が「リスト無し」と判定して同時に INSERT しても (1 人だけ成功し、他は 23505)、全員が同じリストを得る', async () => {
+  it('D-1: 初回ユーザーに対して 4 本が同時に呼んでも、全員が同じリストを得て、リストは 1 つだけ (23505 を漏らさない)', async () => {
     const parties = 4;
-    const { raceFetch, stats } = createRaceFetch(parties);
 
     const results = await Promise.all(
-      Array.from({ length: parties }, () =>
-        getOrCreateActiveShoppingList(client(anonKey, user.jwt, raceFetch), user.id),
-      ),
+      Array.from({ length: parties }, () => getOrCreateActiveShoppingList(client(anonKey, user.jwt), user.id)),
     );
 
     // 全員が成功し、同じリストを指す
     expect(new Set(results.map((r) => r.id)).size).toBe(1);
-    // INSERT は全員が送り、1 人だけ成功、残りは本物の 23505 (HTTP 409) で負けて再取得した
-    expect(stats.inserts).toBe(parties);
-    expect(stats.conflicts).toBe(parties - 1);
 
     const lists = await listsOf(user.id);
     expect(lists).toHaveLength(1);
@@ -173,15 +133,23 @@ describe('D: getOrCreateActiveShoppingList を本物の PostgREST と部分ユ�
     expect(daysBetween(lists[0].start_date, lists[0].end_date)).toBe(6);
   });
 
-  it('D-2: すでにアクティブなリストがあれば、同じものを返し INSERT しない', async () => {
-    const { raceFetch, stats } = createRaceFetch(0);
+  it('D-2: すでにアクティブなリストがあれば、同じものを返し、新しいリストは作らない', async () => {
     const before = await listsOf(user.id);
 
-    const result = await getOrCreateActiveShoppingList(client(anonKey, user.jwt, raceFetch), user.id);
+    const result = await getOrCreateActiveShoppingList(client(anonKey, user.jwt), user.id);
 
     expect(result.id).toBe(before[0].id);
-    expect(stats.inserts).toBe(0);
     expect(await listsOf(user.id)).toHaveLength(1);
+  });
+
+  it('D-3: 本人以外の user_id は DB 関数が 42501 (FORBIDDEN) で拒否し、他人のリストを作らない・返さない', async () => {
+    const other = await createUser('helper-other');
+
+    await expect(getOrCreateActiveShoppingList(client(anonKey, user.jwt), other.id)).rejects.toMatchObject({
+      code: '42501',
+      message: 'FORBIDDEN',
+    });
+    expect(await listsOf(other.id)).toHaveLength(0);
   });
 });
 
