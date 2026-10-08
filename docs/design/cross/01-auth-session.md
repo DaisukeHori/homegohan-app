@@ -2,7 +2,7 @@
 
 ## 1. 目的・スコープ
 
-全ドメイン共通の認証フロー・セッション管理・2FA/MFA・SSO・パスワードポリシー・子供同意・impersonation を定義する。  
+全ドメイン共通の認証フロー・セッション管理・2FA/MFA・SSO・パスワードポリシー・子供同意を定義する (impersonation は提供しない: §11)。  
 各ドメイン (family / org / operator / mobile) は本ドキュメントを参照し、独自定義を禁止する。
 
 **対象外**: Stripe Webhook 署名検証 (cross/04-api-conventions.md)、RLS ポリシー (cross/02-rls-patterns.md)
@@ -303,21 +303,26 @@ export const passwordResetByIP = new Ratelimit({
 
 ---
 
-## 11. impersonation (なりすまし支援)
+## 11. impersonation (なりすまし支援) — 提供しない (#1124)
 
-**`super_admin` のみ実行可能**。
+**提供しない** (オーナー判断 2026-10-08)。以前の設計 (`super_admin` が一時セッショントークンを発行して他ユーザーとしてログインする) は採用しない。
 
-```typescript
-// POST /api/super-admin/impersonate/{userId}
-// → 一時セッショントークン発行 (max 1 時間)
-// → admin_audit_logs に impersonated_by = actor_id を記録
-```
+理由: 実装されていたのはトークンの発行だけだった。トークンは `admin_audit_logs.details` に平文で書かれるだけで、受け取って使う側
+(セッションの切り替え・画面上部の赤バナー・なりすまし中の操作の記録) がどこにも無かった。使えない機能が使えるように見えていたため、
+API・ヘルパー・エラー型・管理画面の表示をすべて削除した。
 
-UI 要件:
-- 画面上部に **常時赤バナー** 表示:  
-  「⚠ [運営者名] として [ユーザー名] さんとしてログイン中。すべての操作が記録されます」
-- 全操作が `admin_audit_logs.impersonated_by` 付きで記録
-- ユーザーは `/account/privacy` で impersonate 拒否可能 (デフォルト: 許可)
+削除したもの:
+- `POST /api/admin/users/{id}/impersonate` (旧設計の `POST /api/super-admin/impersonate/{userId}` も作らない)
+- `src/lib/auth/helpers.ts` の `impersonate()` / `endImpersonation()` / `isImpersonating()`、`ImpersonationError`、`ImpersonationResult`
+- `/admin/users/{id}` の「impersonate」表示 (押せない状態で出ていた)
+
+方針:
+- サポート対応は、本人として操作せず、読み取り専用のユーザー画面 (`/admin/users/{id}`、サポートコンソールの `/support/users`) で行う。
+- 赤バナー・`/account/privacy` での「なりすまし拒否」設定は作らない。
+- `admin_audit_logs.impersonated_by` 列は、過去に書かれた行の履歴として残す (列を消す migration は作らない。新しく書く処理は無い)。
+  過去に `action_type = 'impersonate'` で書かれた行も、監査ログ (UPDATE / DELETE 不可) なので消さない。
+- 復活させる場合は、トークンを検証する側 (セッションの分け方・Cookie の prefix・有効期限・赤バナー・対象ユーザーの拒否設定・
+  全操作への `impersonated_by` 記録) を含めて、設計からやり直す。
 
 ---
 
@@ -583,5 +588,5 @@ sequenceDiagram
 | WebAuthn (Phase 2) の Supabase 対応状況確認 | TODO | Phase 2 着手前 |
 | SCIM 2.0 エンドポイント詳細設計 | TODO | org/08-sso-saml.md で定義 |
 | LINE Login の Supabase OAuth 設定手順 | TODO | Phase 2 |
-| impersonation のセッション分離方式 (Cookie prefix 等) | TODO | operator 実装前に確定 |
+| impersonation のセッション分離方式 (Cookie prefix 等) | 不要 (#1124: impersonation は提供しない。§11) | - |
 | 管理者向け 90 日パスワードローテーション強制の実装方法 | TODO | Phase 1 リリース前 |

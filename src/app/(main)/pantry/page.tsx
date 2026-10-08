@@ -8,6 +8,7 @@ import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
 import { ArrowLeft, Camera, Plus, Trash2, RefreshCw, Package, AlertCircle, X, Pencil } from "lucide-react";
 import { PantryItemForm, emptyPantryItemFormValues, type PantryItemFormValues } from "@/components/pantry/PantryItemForm";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
+import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
 
 const colors = {
   bg: "#FAF9F7",
@@ -18,9 +19,8 @@ const colors = {
   accent: "#E07A5F",
   accentLight: "#FDF0ED",
   border: "#EEEEEE",
-  success: "#4CAF50",
-  successLight: "#E8F5E9",
-  error: "#F44336",
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
 };
 
 interface PantryItem {
@@ -315,10 +315,10 @@ export default function PantryPage() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             className="mx-4 mb-4 p-3 rounded-xl flex items-center gap-2"
-            style={{ backgroundColor: "#FFEBEE" }}
+            style={{ backgroundColor: colors.errorLight }}
           >
             <AlertCircle size={18} style={{ color: colors.error }} />
-            <p className="text-sm" style={{ color: colors.error }}>{error}</p>
+            <p className="text-sm" style={{ color: colors.dangerText }}>{error}</p>
           </motion.div>
         )}
       </AnimatePresence>
@@ -458,7 +458,7 @@ export default function PantryPage() {
                       <span
                         data-testid="expiry-soon-badge"
                         className="text-xs px-2 py-0.5 rounded-full"
-                        style={{ backgroundColor: "#FFEBEE", color: colors.error }}
+                        style={{ backgroundColor: colors.errorLight, color: colors.dangerText }}
                       >
                         期限間近
                       </span>
@@ -474,7 +474,7 @@ export default function PantryPage() {
                     {item.expirationDate && (
                       <span
                         className="text-xs"
-                        style={{ color: isExpiringSoon(item.expirationDate) ? colors.error : colors.textMuted }}
+                        style={{ color: isExpiringSoon(item.expirationDate) ? colors.dangerText : colors.textMuted }}
                       >
                         ・{item.expirationDate}まで
                       </span>

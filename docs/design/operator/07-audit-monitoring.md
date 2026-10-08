@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS admin_audit_logs (
   ip_address              INET,
   user_agent              TEXT,
   session_id              VARCHAR(255),
-  impersonated_by         UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  impersonated_by         UUID REFERENCES auth.users(id) ON DELETE SET NULL,  -- 履歴用 (#1124: impersonate は提供しない。新しく書く処理は無い)
   created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -108,12 +108,20 @@ CREATE POLICY "audit_logs_no_delete" ON admin_audit_logs
 COMMENT ON TABLE admin_audit_logs IS
   '監査ログ。RLS で UPDATE/DELETE 完全禁止。SELECT は super_admin のみ。7年保管 (個人情報保護法/SOC2)';
 COMMENT ON COLUMN admin_audit_logs.impersonated_by IS
-  'super_admin が別ユーザーとして操作している場合、super_admin の user_id を記録';
+  '履歴用 (#1124: impersonate は提供しない)。過去に super_admin が別ユーザーとして操作した行にだけ、super_admin の user_id が入っている';
 COMMENT ON POLICY "audit_logs_insert_admins" ON admin_audit_logs IS
   'actor_id = auth.uid() を WITH CHECK で強制することで、他人のログを偽装できない';
 ```
 
+**注 (#1124)**: なりすまし (impersonate) は提供しない。`impersonated_by` 列は、過去に書かれた行 (`action_type = 'impersonate'` の行) の履歴として残し、
+新しく書き込む処理は無い。監査ログは UPDATE / DELETE 不可なので、過去の行 (`details.impersonation_token` を含む) もそのまま残る。
+このトークンは、どこでも受け付けない値なので使い道が無い (検証する側が無かった)。
+
 ## 4. 監査対象操作の網羅リスト (§15.8)
+
+**注 (#1124)**: なりすまし (impersonate) は提供しないため、`admin.user.impersonate` / `admin.user.impersonate_end` / `super_admin.impersonate` は一覧から外した。
+以前の実装は `action_type = 'impersonate'` で記録していた (この一覧の名前とは違う)。終了用の `'impersonate_end'` を書く関数もあったが、呼び出す箇所は無かった。
+過去に `'impersonate'` で書かれた行は、監査ログなので残る。
 
 ### 4.1 admin 系操作
 
@@ -121,8 +129,6 @@ COMMENT ON POLICY "audit_logs_insert_admins" ON admin_audit_logs IS
 admin.user.ban                      - ユーザー BAN
 admin.user.unban                    - BAN 解除
 admin.user.role_change              - ロール変更
-admin.user.impersonate              - なりすまし開始
-admin.user.impersonate_end          - なりすまし終了
 admin.user.note_add                 - 管理ノート追加
 admin.organization.create           - 組織作成
 admin.organization.suspend          - 組織停止
@@ -205,7 +211,6 @@ super_admin.cron.run_now            - cron 手動実行
 super_admin.cron.pause              - cron 一時停止
 super_admin.organization.transfer_admin - org_admin 緊急転送
 super_admin.gdpr_delete.execute     - GDPR 削除実行
-super_admin.impersonate             - なりすまし (admin も含む)
 super_admin.llm_quota.override      - LLM クォータ手動変更
 super_admin.setting.change          - システム設定変更
 ```
@@ -255,7 +260,6 @@ interface AuditLogParams {
   details?: Record<string, unknown>;
   severity?: 'info' | 'warn' | 'critical';
   ipAddress?: string;
-  impersonatedBy?: string;
 }
 
 export async function insertAuditLog(params: AuditLogParams): Promise<void> {
@@ -286,7 +290,6 @@ export async function insertAuditLog(params: AuditLogParams): Promise<void> {
     details: params.details ?? {},
     severity: params.severity ?? 'info',
     ip_address: params.ipAddress ?? null,
-    impersonated_by: params.impersonatedBy ?? null,
   });
   // エラーは握り潰さず、呼び出し元にスローする (監査ログ失敗は操作を中断させる)
 }

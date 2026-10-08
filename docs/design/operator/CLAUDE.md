@@ -19,7 +19,7 @@
 ## ドメインの役割
 
 運営側のすべての管理機能:
-- **super_admin**: プラン定義 / 機能パッケージ / 価格変更 / DB 管理 / impersonate
+- **super_admin**: プラン定義 / 機能パッケージ / 価格変更 / DB 管理 (impersonate は提供しない: #1124)
 - **admin**: ユーザー / 組織 / 課金 / モデレーション
 - **support**: サポートチケット対応
 - **sales**: 法人見込み客 / クーポン管理
@@ -78,7 +78,7 @@ Stripe → POST /api/webhooks/stripe
 ### 3. 監査ログの不可逆性
 - `admin_audit_logs` は 7 年保管、`UPDATE / DELETE 不可` (RLS + WITH CHECK)
 - 全 admin 系操作 (要件 03 §15.8 の網羅リスト) を必ず記録
-- impersonate は `impersonated_by` 列で識別
+- なりすまし (impersonate) は提供しない (#1124)。`impersonated_by` 列は、過去に書かれた行の履歴として残す (新しく書く処理は無い)
 
 ### 4. 監査ログ閲覧権限の最小化
 - SELECT は super_admin のみ (admin が自分の操作を消せない設計)
@@ -97,7 +97,7 @@ Stripe → POST /api/webhooks/stripe
 
 | 依存先 | 用途 |
 |-------|------|
-| `cross/01-auth-session.md` | super_admin / admin 認可 / impersonate |
+| `cross/01-auth-session.md` | super_admin / admin 認可 (impersonate は提供しない: §11) |
 | `cross/02-rls-patterns.md` | admin_audit_logs の immutable RLS |
 | `cross/06-perf-cache.md` | キャッシュ戦略 (subscription_plans を 5 分キャッシュ) |
 | `family/01-data-model.md` | `family_groups.plan_key` の参照元 |

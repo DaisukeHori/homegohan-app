@@ -3,16 +3,18 @@
  *
  * 修正前: nps_surveys と csat_feedbacks の該当行を全部読み込み (件数の上限なし)、JavaScript で数えていた。
  * 修正後: 件数・合計・分布は DB の関数 (get_nps_summary / get_csat_summary) が数え、直近の一覧 (recent_comments /
- *   recent_feedbacks) は新しい順に 10 件だけ取る。レスポンスの形と数字は変わらない。認可 (admin / super_admin / finance、
- *   一般ユーザーは 403、未認証は 401) も変えない。
+ *   recent_feedbacks) は新しい順に 10 件だけ取る。レスポンスの形と数字は変わらない。
+ *
+ * #1311: 認可は admin / super_admin だけ。財務ロール (finance) は外した (これまでは通したが、RLS が finance を許しておらず、
+ *   NPS 0 件・CSAT は本人の分だけの、誤った集計が返っていた)。一般ユーザーは 403、未認証は 401 のまま。
  *
  * 確認すること (実 DB に種をまいて route を呼ぶ):
  *   - 集計の数字が、修正前の式 (tests/helpers/legacy-nps-summary.ts) で数えた結果と一致する (期間・プランで絞った場合を含む)
  *   - 一覧は新しい順の 10 件だけ (12 件まいても 10 件)。プランで絞ると NPS の一覧と集計だけが絞られ、CSAT は変わらない
  *   - レスポンスの形 (キー) が画面 (src/app/admin/finance/nps/page.tsx) の期待どおり
- *   - 行の無い期間は全部 0 / 空の一覧。finance は 200 で同じ形 (見える行は RLS 次第。ここでは形だけ見る。#1311)
+ *   - 行の無い期間は全部 0 / 空の一覧
  *   - 1000 行 (API の 1 回の応答の最大行数) を超える 1,100 件でも、切り詰めずに正確に数える (修正前は 1000 件で止まった)
- *   - 未認証 401 / 一般ユーザー 403
+ *   - finance だけの人は 403 でデータが返らない / admin と finance の両方を持つ人は 200 / 未認証 401 / 一般ユーザー 403
  *
  * 関数そのものの SQL・権限・RLS は tests/integration/rls/csat-nps-summary-rpc.test.ts、
  * route の組み立て (モック) は tests/admin-finance-nps-route.test.ts で検証する。
@@ -48,6 +50,7 @@ const MARK_ANY = 'sec-1217-nps-route-'; // 前回の実行が途中で落ちて�
 let adminUser: TestUser;
 let superAdminUser: TestUser;
 let financeUser: TestUser;
+let adminFinanceUser: TestUser; // admin と finance の両方を持つ
 let generalUser: TestUser; // 一般ユーザー。回答者としても使う
 const createdNpsIds: string[] = [];
 const createdCsatIds: string[] = [];
@@ -139,10 +142,11 @@ beforeAll(async () => {
   await supabaseAdmin.from('nps_surveys').delete().like('comment', `${MARK_ANY}%`);
   await supabaseAdmin.from('csat_feedbacks').delete().like('comment', `${MARK_ANY}%`);
 
-  [adminUser, superAdminUser, financeUser, generalUser] = await Promise.all([
+  [adminUser, superAdminUser, financeUser, adminFinanceUser, generalUser] = await Promise.all([
     createTestUserWithRoles({ email: email('admin'), roles: ['admin'] }),
     createTestUserWithRoles({ email: email('superadmin'), roles: ['super_admin'] }),
     createTestUserWithRoles({ email: email('finance'), roles: ['finance'] }),
+    createTestUserWithRoles({ email: email('adminfinance'), roles: ['admin', 'finance'] }),
     createTestUserWithRoles({ email: email('general'), roles: ['user'] }),
   ]);
 
@@ -190,7 +194,9 @@ afterAll(async () => {
   await supabaseAdmin.from('nps_surveys').delete().like('comment', `${MARK}%`);
   await supabaseAdmin.from('csat_feedbacks').delete().like('comment', `${MARK}%`);
   await Promise.all(
-    [adminUser, superAdminUser, financeUser, generalUser].filter(Boolean).map((u) => cleanupTestUser(u.userId)),
+    [adminUser, superAdminUser, financeUser, adminFinanceUser, generalUser]
+      .filter(Boolean)
+      .map((u) => cleanupTestUser(u.userId)),
   );
 }, 90_000);
 
@@ -360,35 +366,12 @@ describe('#1217 GET /api/admin/finance/nps: レスポンスの形 (画面が使�
       'ticket_id',
     ]);
   });
-
-  it('S-2: finance は 200 で同じ形 (見える行は RLS 次第なので、数字は見ない。#1311)', async () => {
-    const res = await apiCall<Body>('GET', periodQuery(PERIOD), financeUser.jwt);
-    expect(res.status).toBe(200);
-    expect(Object.keys(res.body.data.nps).sort()).toEqual([
-      'avg_score',
-      'detractors',
-      'nps_score',
-      'passives',
-      'promoters',
-      'recent_comments',
-      'response_rate',
-      'total_responses',
-    ]);
-    expect(Object.keys(res.body.data.csat).sort()).toEqual([
-      'avg_score',
-      'recent_feedbacks',
-      'score_distribution',
-      'total_responses',
-    ]);
-    expect(Array.isArray(res.body.data.nps.recent_comments)).toBe(true);
-    expect(Array.isArray(res.body.data.csat.recent_feedbacks)).toBe(true);
-  });
 });
 
 // ================================================================
 // 認可
 // ================================================================
-describe('#1217 GET /api/admin/finance/nps: 認可は変えていない', () => {
+describe('#1217 / #1311 GET /api/admin/finance/nps: 認可は admin / super_admin だけ', () => {
   it('A-1: 一般ユーザーは 403', async () => {
     const res = await apiCall('GET', periodQuery(PERIOD), generalUser.jwt);
     expect(res.status).toBe(403);
@@ -397,6 +380,21 @@ describe('#1217 GET /api/admin/finance/nps: 認可は変えていない', () => 
   it('A-2: 未認証は 401', async () => {
     const res = await apiCallNoAuth('GET', periodQuery(PERIOD));
     expect(res.status).toBe(401);
+  });
+
+  it('A-3: 財務ロール (finance) だけの人は 403。NPS / CSAT のデータは返らない (#1311)', async () => {
+    const res = await apiCall('GET', periodQuery(PERIOD), financeUser.jwt);
+    expect(res.status, `応答本文: ${JSON.stringify(res.body)}`).toBe(403);
+    expect((res.body as { error?: { code?: string } }).error?.code).toBe('OP_PERMISSION_DENIED');
+    expect(JSON.stringify(res.body)).not.toContain('recent_comments');
+    expect(JSON.stringify(res.body)).not.toContain(MARK);
+  });
+
+  it('A-4: admin と finance の両方を持つ人は 200 (finance を外しても admin の権限は残る)', async () => {
+    const admin = await apiCall<Body>('GET', periodQuery(PERIOD), adminUser.jwt);
+    const both = await apiCall<Body>('GET', periodQuery(PERIOD), adminFinanceUser.jwt);
+    expect(both.status).toBe(200);
+    expect(summaries(both.body)).toEqual(summaries(admin.body));
   });
 });
 
