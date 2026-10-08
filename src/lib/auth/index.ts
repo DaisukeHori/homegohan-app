@@ -6,12 +6,14 @@ export {
   requireUser,
   requireRole,
   requireOrgRole,
+  requireOrgAdmin,
   impersonate,
   endImpersonation,
   isImpersonating,
   type RoleName,
   type OrgRoleName,
   type UserProfile,
+  type OrgAdminContext,
 } from './helpers';
 
 export { AuthError, ForbiddenError, PermError, ImpersonationError } from './errors';

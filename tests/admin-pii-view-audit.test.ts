@@ -345,28 +345,23 @@ describe('GET /api/support/users/[id] -> admin.user.view_support', () => {
     updated_at: '2026-10-01T00:00:00Z',
   };
 
+  // #1161: 認可は共通の requireRole (mockRequireRole)。対象ユーザー・食事・AI 相談・問い合わせ・ノートは、
+  // 認可の後に service_role (serviceRoleClient) で読む。監査ログの INSERT だけが、本人のセッションの client
+  // (userScopedClient。RLS: actor_id = auth.uid()) を通る
   function setup(opts: {
-    actor?: { id: string } | null;
-    actorRoles?: string[] | null;
+    actor?: typeof supportActor;
     target?: QueryResult;
     auditInsert?: QueryResult;
   } = {}) {
-    const actor = opts.actor === undefined ? { id: SUPPORT_ID } : opts.actor;
-    userScopedClient = makeClient(
-      {
-        // 1 回目は閲覧者のロール確認、2 回目が閲覧対象
-        user_profiles: [
-          { data: opts.actorRoles === null ? null : { roles: opts.actorRoles ?? ['support'] }, error: null },
-          opts.target ?? { data: targetUser, error: null },
-        ],
-        planned_meals: [{ data: null, error: null, count: 5 }],
-        ai_consultation_sessions: [{ data: null, error: null, count: 3 }],
-        inquiries: [{ data: [{ id: 'inq-1', inquiry_type: 'support', subject: SECRET_SUBJECT, status: 'pending', created_at: '2026-10-01T00:00:00Z' }], error: null }],
-        admin_user_notes: [{ data: [{ id: NOTE_ID, note: SECRET_NOTE, created_at: '2026-10-01T00:00:00Z', admin_id: ADMIN_ID }], error: null }],
-        admin_audit_logs: [opts.auditInsert ?? INSERT_OK],
-      },
-      actor,
-    );
+    mockRequireRole.mockResolvedValue(opts.actor ?? supportActor);
+    serviceRoleClient = makeClient({
+      user_profiles: [opts.target ?? { data: targetUser, error: null }],
+      planned_meals: [{ data: null, error: null, count: 5 }],
+      ai_consultation_sessions: [{ data: null, error: null, count: 3 }],
+      inquiries: [{ data: [{ id: 'inq-1', inquiry_type: 'support', subject: SECRET_SUBJECT, status: 'pending', created_at: '2026-10-01T00:00:00Z' }], error: null }],
+      admin_user_notes: [{ data: [{ id: NOTE_ID, note: SECRET_NOTE, created_at: '2026-10-01T00:00:00Z', admin_id: ADMIN_ID }], error: null }],
+    });
+    userScopedClient = makeClient({ admin_audit_logs: [opts.auditInsert ?? INSERT_OK] });
   }
 
   const call = (headers: Record<string, string> = {}) =>
@@ -410,7 +405,7 @@ describe('GET /api/support/users/[id] -> admin.user.view_support', () => {
   });
 
   it('admin ロールでも記録する', async () => {
-    setup({ actor: { id: ADMIN_ID }, actorRoles: ['admin'] });
+    setup({ actor: adminActor });
 
     const res = await call();
 
@@ -453,7 +448,8 @@ describe('GET /api/support/users/[id] -> admin.user.view_support', () => {
   });
 
   it('401: 未認証のときは何も記録しない', async () => {
-    setup({ actor: null });
+    setup();
+    mockRequireRole.mockRejectedValue(new AuthError('AUTH_UNAUTHENTICATED'));
 
     const res = await call();
 
@@ -462,7 +458,8 @@ describe('GET /api/support/users/[id] -> admin.user.view_support', () => {
   });
 
   it('403: 運営ロールが無いときは何も記録しない', async () => {
-    setup({ actorRoles: ['user'] });
+    setup();
+    mockRequireRole.mockRejectedValue(new ForbiddenError('PERM_DENIED'));
 
     const res = await call();
 
@@ -476,23 +473,22 @@ describe('GET /api/support/users/[id] -> admin.user.view_support', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('GET /api/support/users/[id]/notes -> admin.user.view_notes', () => {
+  // #1161: admin_user_notes.admin_id の外部キーは auth.users 宛で user_profiles を埋め込めないため、
+  // ノートを書いた人のニックネームは user_profiles を別に引く (どちらも認可の後に service_role で読む)
   const noteRow = {
     id: NOTE_ID,
     note: SECRET_NOTE,
     created_at: '2026-10-01T00:00:00Z',
     admin_id: ADMIN_ID,
-    user_profiles: { nickname: '担当者' },
   };
 
-  function setup(opts: { notes?: unknown[]; auditInsert?: QueryResult; actorRoles?: string[] } = {}) {
-    userScopedClient = makeClient(
-      {
-        user_profiles: [{ data: { roles: opts.actorRoles ?? ['support'] }, error: null }],
-        admin_user_notes: [{ data: opts.notes ?? [noteRow], error: null }],
-        admin_audit_logs: [opts.auditInsert ?? INSERT_OK],
-      },
-      { id: SUPPORT_ID },
-    );
+  function setup(opts: { notes?: unknown[]; auditInsert?: QueryResult } = {}) {
+    mockRequireRole.mockResolvedValue(supportActor);
+    serviceRoleClient = makeClient({
+      admin_user_notes: [{ data: opts.notes ?? [noteRow], error: null }],
+      user_profiles: [{ data: [{ id: ADMIN_ID, nickname: '担当者' }], error: null }],
+    });
+    userScopedClient = makeClient({ admin_audit_logs: [opts.auditInsert ?? INSERT_OK] });
   }
 
   const call = (headers: Record<string, string> = {}) =>
@@ -550,7 +546,8 @@ describe('GET /api/support/users/[id]/notes -> admin.user.view_notes', () => {
   });
 
   it('403: 運営ロールが無いときは何も記録しない', async () => {
-    setup({ actorRoles: ['user'] });
+    setup();
+    mockRequireRole.mockRejectedValue(new ForbiddenError('PERM_DENIED'));
 
     const res = await call();
 
@@ -560,19 +557,15 @@ describe('GET /api/support/users/[id]/notes -> admin.user.view_notes', () => {
 });
 
 describe('POST /api/support/users/[id]/notes -> admin.user.note_add', () => {
+  // #1161: 対象ユーザーの存在確認は認可の後に service_role で行う (user_profiles は RLS で本人の行しか見えない)。
+  // ノートの追加と監査ログの INSERT は、本人のセッションの client (RLS: 運営ロール / actor_id = auth.uid())
   function setup(auditInsert: QueryResult = INSERT_OK) {
-    userScopedClient = makeClient(
-      {
-        // 1 回目は閲覧者のロール確認、2 回目が対象ユーザーの存在確認
-        user_profiles: [
-          { data: { roles: ['support'] }, error: null },
-          { data: { id: TARGET_ID }, error: null },
-        ],
-        admin_user_notes: [{ data: { id: NOTE_ID, note: SECRET_NOTE, created_at: '2026-10-01T00:00:00Z' }, error: null }],
-        admin_audit_logs: [auditInsert],
-      },
-      { id: SUPPORT_ID },
-    );
+    mockRequireRole.mockResolvedValue(supportActor);
+    serviceRoleClient = makeClient({ user_profiles: [{ data: { id: TARGET_ID }, error: null }] });
+    userScopedClient = makeClient({
+      admin_user_notes: [{ data: { id: NOTE_ID, note: SECRET_NOTE, created_at: '2026-10-01T00:00:00Z' }, error: null }],
+      admin_audit_logs: [auditInsert],
+    });
   }
 
   const call = (body: unknown = { note: SECRET_NOTE }, headers: Record<string, string> = {}) =>
