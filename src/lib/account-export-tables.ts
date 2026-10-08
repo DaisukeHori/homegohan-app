@@ -155,7 +155,7 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
     columns: '*,badge:badges(code,name,description)',
     orderBy: ['user_id', 'badge_id'],
   },
-  // 同じ組織の参加者全員が RLS で読めるため、必ず user_id で絞る
+  // 参加行の SELECT は #1132 から本人の行だけ (以前は同じ組織の全員が読めた)。RLS に頼らず、必ず user_id でも絞る
   { table: 'organization_challenge_participants', scope: self('user_id') },
 
   // ── 家族 ────────────────────────────────────────────────────────

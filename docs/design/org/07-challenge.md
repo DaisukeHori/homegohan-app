@@ -405,3 +405,32 @@ sequenceDiagram
 - `steps` タイプ: HealthKit/Google Fit 連携は Phase 2 (02 §22.11)。Phase 1 では steps チャレンジを作成可能にするが進捗計測は N/A 表示
 - Pro でのリアルタイム進捗: Supabase Realtime で `org_challenge_participants` を Subscribe → 進捗が即時反映される実装は Phase 2
 - カスタム型の手動評価: 管理者 UI でのフラグ立て操作の画面設計が未定
+
+## 15. 実装メモ (#1132, 2026-10-08): 現状の実装は §3〜§9 の設計と異なる
+
+§3〜§9 は clean-build を前提にした設計 (新規テーブル `org_challenge_participants`、`auto_join`、`achieved` など) で、
+実際の実装は本番に既にあるテーブル (`organization_challenges` / `organization_challenge_participants`) の上に最小限で作った。
+実装の正は次のとおり (migration `supabase/migrations/*_org_challenge_progress.sql`。作成時の version は 20261008150500)。
+
+オーナー判断 (2026-10-08): **参加は任意**。食事ログの **3 指標**で始める。順位は **参加者どうしにだけ**見せ、管理者には**集計だけ**を見せる。
+歩数・体重は、健康データの同意の仕組みができてから足す。
+
+| 項目 | 実装 |
+|------|------|
+| 種類 | `breakfast_rate` / `veg_score` / `cooking_rate` の 3 つだけ。`steps` / `weight_loss` / `custom` は作成も開始も参加もできない (API は 400 / 409 `CHALLENGE_TYPE_DISABLED`) |
+| 列 | `organization_challenges` (`start_date` / `end_date` は date、`status` は draft / active / completed / cancelled)、`organization_challenge_participants` (`current_value` / `rank` / `joined_at`)。列は増やしていない |
+| 参加 | 任意 (`auto_join` は無い)。`POST /api/org/challenges/[id]/join` は本人の権限で INSERT し、#1238 のポリシー (本人・自分の組織・進捗 0・順位なし) が DB 側でも確かめる。`DELETE` は本人の行だけ消す。部署を限定したチャレンジは、その部署のメンバーだけ |
+| 計算 | `update_org_challenge_progress(p_now)` (SECURITY DEFINER・service_role のみ)。pg_cron のジョブ `update-org-challenge-progress` が毎日 18:10 UTC (03:10 JST) に呼ぶ。毎回、期間全体を計算し直す |
+| 期間 | JST の暦日。開始日から `min(終了日, 前日)` まで (今日は含めない)。参加した日より前の記録も、期間内なら数える |
+| 食事として数える記録 | `planned_meals.is_completed = true` で `mode` が `skip` でないもの。ハンズオンのお試しの記録 (`user_daily_meals.is_sandbox`) は数えない |
+| 朝食の割合 | 朝食を食べた日の数 ÷ 期間の日数 × 100 (1 日に何件あっても 1 日) |
+| 野菜スコア | `veg_score` が入っている食事の平均 (小数第 1 位)。`veg_score` は書き込み元によって尺度が違う (写真の解析 0〜100・AI の推定 1〜5) ため、換算せずそのまま平均する |
+| 自炊の割合 | `mode` が `cook` / `quick` (未設定は `cook`) の食事 ÷ 食事 × 100。`ai_creative` は数えない (バッジ・ホーム画面の自炊率と同じ) |
+| 順位 | `rank()`。丸めた値で決め、同じ値は同じ順位 (1, 1, 3, ...)。今も組織のメンバーである参加者だけ |
+| 終了 | 終了日 (JST) を過ぎた `active` のチャレンジは、計算のあとで `completed` にする |
+| 参加者に見せるもの | `GET /api/org/challenges/[id]`: 自分の記録・順位と、順位表 (上位 20 人と本人の行。**参加者本人にだけ**)。他人の ID は返さない。表示名は環境変数 `ORG_CHALLENGE_SHOW_NAMES` が有効なときだけ (未設定は「あなた」「参加者」) |
+| 管理者に見せるもの | `GET /api/org/challenges`: 参加者数と平均だけ。**参加者が 5 人に満たない間は参加者数を、集計が済んだ参加者が 5 人に満たない間は平均を返さない** (DB の関数 `get_org_challenge_aggregates` が決める。メンバー向けの API も同じ関数) |
+| RLS | `organization_challenge_participants` の SELECT は本人の行だけ (以前は同じ組織の全員)。DELETE は本人の行だけ。UPDATE のポリシーは無い (進み具合を書くのは DB の関数だけ) |
+| 画面 | メンバー: `/challenges` (一覧)・`/challenges/[id]` (詳細・参加・やめる・順位表)。ホーム画面に入り口 (アプリの WebView からも開ける)。管理者: `/org/challenges` (集計) |
+
+未決: 参加者どうしに表示名を見せてよいか (社内の方針の確認待ち。決まるまで出さない)。

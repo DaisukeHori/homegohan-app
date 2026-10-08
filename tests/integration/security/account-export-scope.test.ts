@@ -395,12 +395,14 @@ describe('前提: RLS だけでは他人の行が読めてしまう表がある'
     expect((comments.data ?? []).map((r) => r.content)).toContain(`COMMENT-B-${RUN}`);
   });
 
-  it('A の JWT で、同じ家族の B のメンバー行と、同じ組織の B のチャレンジ参加行が読める', async () => {
+  it('A の JWT で、同じ家族の B のメンバー行が読める。チャレンジの参加行は、同じ組織でも本人の行しか読めない (#1132)', async () => {
     const members = await asUser(A.jwt).from('family_members').select('user_id');
     expect((members.data ?? []).map((r) => r.user_id)).toContain(B.id);
 
+    // #1132 で、参加行の SELECT を本人の行だけに絞った (以前は同じ組織の全員の行が読めた)。
+    // エクスポートが user_id で絞っているのは、RLS に頼らずに本人の行だけを出すため (変えない)
     const participants = await asUser(A.jwt).from('organization_challenge_participants').select('user_id');
-    expect((participants.data ?? []).map((r) => r.user_id)).toContain(B.id);
+    expect((participants.data ?? []).map((r) => r.user_id)).toEqual([A.id]);
   });
 
   it('運営 (support) の JWT で、A・B の問い合わせ・チケット・契約が読める', async () => {

@@ -1,11 +1,27 @@
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { readJsonBody } from '@/lib/http-params';
+import { isUuid, readJsonBody } from '@/lib/http-params';
+import { fetchChallengeAggregates } from '@/lib/org-challenge-api';
+import {
+  ORG_CHALLENGE_MIN_PARTICIPANTS,
+  ORG_CHALLENGE_TYPE_META,
+  isIsoDate,
+  isOrgChallengeStatus,
+  isOrgChallengeType,
+} from '@/lib/org-challenges';
 
 // 権限: 所属組織の org_role が owner / admin (#1235)。判定は共通の requireOrgAdmin() (#1161)
+//
+// #1132: 管理者に見せるのは集計 (参加者数と平均) だけ。参加者個人の進み具合・順位は返さない (オーナー判断 2026-10-08)。
+//   - 集計は DB の関数 get_org_challenge_aggregates で数える。参加者の行は本人にしか読めない (RLS) ため、認可のあとに service_role で呼ぶ
+//   - 最小人数 (DB の関数が決める。5 人) に満たない間は、値を返さない。少人数だと、誰が参加しているか・誰の値かを推測されやすいため
+//       参加者が最小人数に満たない: participantCount = null
+//       集計が済んだ参加者が最小人数に満たない: aggregate.averageValue = null (aggregate.visible = false)
+//   - 作成できるのは、食事の記録から計算できる種類 (breakfast_rate / veg_score / cooking_rate) だけ。
+//     歩数・体重・カスタムは、健康データの同意の仕組みができるまで作成も開始もできない
 
 /**
  * 認可エラー (401 / 403) はそのまま返し、それ以外は 500 の汎用メッセージにする。
@@ -58,32 +74,40 @@ export async function GET(request: Request) {
     const { data: challenges, error } = await query;
     if (error) throw error;
 
-    // 参加者数を取得
-    const challengesWithParticipants = await Promise.all(
-      (challenges || []).map(async (c: any) => {
-        const { count } = await supabase
-          .from('organization_challenge_participants')
-          .select('*', { count: 'exact', head: true })
-          .eq('challenge_id', c.id);
+    // 参加者数と平均。参加者の行は本人にしか読めない (RLS) ので、認可のあとに service_role で DB の関数を呼ぶ。
+    // 返るのは人数と平均だけ (個人の値は返らない)。対象は、確認済みのプロフィールの所属組織だけ。
+    // 最小人数に満たないときの人数・平均は、DB の関数が null にして返す
+    const aggregates = await fetchChallengeAggregates(getSupabaseAdmin(), profile.organization_id);
 
-        return {
-          id: c.id,
-          title: c.title,
-          description: c.description,
-          challengeType: c.challenge_type,
-          targetValue: c.target_value,
-          targetUnit: c.target_unit,
-          startDate: c.start_date,
-          endDate: c.end_date,
-          rewardDescription: c.reward_description,
-          status: c.status,
-          departmentId: c.department_id,
-          departmentName: c.departments?.name || null,
-          participantCount: count || 0,
-          createdAt: c.created_at,
-        };
-      })
-    );
+    const challengesWithParticipants = (challenges || []).map((c: any) => {
+      const aggregate = aggregates.get(c.id);
+      // 平均を出せるのは、食事の記録から計算できる種類だけ
+      const averageValue = isOrgChallengeType(c.challenge_type) ? (aggregate?.averageValue ?? null) : null;
+      return {
+        id: c.id,
+        title: c.title,
+        description: c.description,
+        challengeType: c.challenge_type,
+        targetValue: c.target_value,
+        targetUnit: c.target_unit,
+        startDate: c.start_date,
+        endDate: c.end_date,
+        rewardDescription: c.reward_description,
+        status: c.status,
+        departmentId: c.department_id,
+        departmentName: c.departments?.name || null,
+        // 参加者が最小人数に満たないときは null (「最小人数未満」と表示する)
+        participantCount: aggregate?.participantCount ?? null,
+        aggregate: {
+          // 人数と平均を出すのに必要な、参加者の最小人数
+          minParticipants: aggregate?.minParticipants ?? ORG_CHALLENGE_MIN_PARTICIPANTS,
+          // false のとき averageValue は null (少人数の平均から、個人が分かってしまわないようにする)
+          visible: averageValue !== null,
+          averageValue,
+        },
+        createdAt: c.created_at,
+      };
+    });
 
     return NextResponse.json({ challenges: challengesWithParticipants });
 
@@ -116,6 +140,29 @@ export async function POST(request: Request) {
 
     if (!title || !challengeType || !startDate || !endDate) {
       return NextResponse.json({ error: 'Required fields missing' }, { status: 400 });
+    }
+
+    // #1132: 作成できるのは、食事の記録から計算できる種類だけ (歩数・体重・カスタムは、同意の仕組みができるまで止める)
+    if (!isOrgChallengeType(challengeType)) {
+      return NextResponse.json(
+        { error: 'この種類のチャレンジは、まだ作成できません', code: 'CHALLENGE_TYPE_DISABLED' },
+        { status: 400 },
+      );
+    }
+    if (typeof title !== 'string' || !isIsoDate(startDate) || !isIsoDate(endDate) || startDate > endDate) {
+      return NextResponse.json(
+        { error: '開始日と終了日は YYYY-MM-DD の形式で、開始日が終了日以前になるよう指定してください', code: 'INVALID_PERIOD' },
+        { status: 400 },
+      );
+    }
+    if (targetValue !== undefined && targetValue !== null) {
+      const meta = ORG_CHALLENGE_TYPE_META[challengeType];
+      if (typeof targetValue !== 'number' || !Number.isFinite(targetValue) || targetValue < meta.targetMin || targetValue > meta.targetMax) {
+        return NextResponse.json(
+          { error: `目標値は ${meta.targetMin} 以上 ${meta.targetMax} 以下で指定してください`, code: 'INVALID_TARGET' },
+          { status: 400 },
+        );
+      }
     }
 
     // #1235: 部署は自組織のものだけ指定できる (他組織の部署 id を付けたチャレンジを作らせない)
@@ -182,6 +229,30 @@ export async function PUT(request: Request) {
 
     if (!id) {
       return NextResponse.json({ error: 'Challenge ID is required' }, { status: 400 });
+    }
+    // uuid でない文字列は、DB に渡すと 22P02 で 500 になる
+    if (!isUuid(id)) {
+      return NextResponse.json({ error: 'Invalid challenge ID' }, { status: 400 });
+    }
+    if (updates.status !== undefined && !isOrgChallengeStatus(updates.status)) {
+      return NextResponse.json({ error: 'Invalid status', code: 'INVALID_STATUS' }, { status: 400 });
+    }
+
+    // #1132: 開始 (active) にできるのは、食事の記録から計算できる種類だけ。歩数・体重・カスタムは、同意の仕組みができるまで止める
+    if (updates.status === 'active') {
+      const { data: current, error: currentError } = await supabase
+        .from('organization_challenges')
+        .select('challenge_type')
+        .eq('id', id)
+        .eq('organization_id', profile.organization_id)
+        .maybeSingle();
+      if (currentError) throw currentError;
+      if (current && !isOrgChallengeType((current as { challenge_type: string }).challenge_type)) {
+        return NextResponse.json(
+          { error: 'この種類のチャレンジは、まだ開始できません', code: 'CHALLENGE_TYPE_DISABLED' },
+          { status: 400 },
+        );
+      }
     }
 
     const updateData: any = {};

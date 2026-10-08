@@ -208,7 +208,7 @@ export const useHomeData = () => {
     if (authUser) {
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
-        .select('nickname')
+        .select('nickname, organization_id')
         .eq('id', authUser.id)
         .maybeSingle();
 
@@ -225,6 +225,8 @@ export const useHomeData = () => {
           email: null,
           userMetadata: authUser.user_metadata ?? null,
         }),
+        // 所属している組織 (無ければ null)。組織チャレンジの入り口 (#1132) を、組織に所属している人にだけ出すために使う
+        organizationId: profile?.organization_id ?? null,
       });
 
       // 2. Activity Log
