@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
-import { sanitizeMetadata } from '@/lib/db-logger';
+import { sanitizeLogEntry } from '@/lib/db-logger';
 
 // #1044 (F6-20): level は enum に限定、message は上限文字数を設ける
 const ALLOWED_LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 認証チェック: 未認証リクエストは拒否 (fail-closed)
-    // #1044 round-2: sanitizeMetadata (metadata 全体の JSON.stringify を伴う) より前に
+    // #1044 round-2: sanitizeLogEntry (metadata 全体の JSON.stringify を伴う) より前に
     // 認証チェックを行い、未認証者が巨大な metadata を送って CPU を消費させる DoS を軽減する。
     const supabase = await createClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -40,9 +40,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const userId = user.id;
-
-    // 秘密情報マスキング + サイズ切り詰め (F6-20)
-    const sanitizedMetadata = sanitizeMetadata(metadata ?? undefined);
 
     // service_roleでログを保存
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -54,13 +51,17 @@ export async function POST(request: NextRequest) {
 
     const supabaseAdmin = createSupabaseClient(supabaseUrl, supabaseServiceKey);
 
-    const { error } = await supabaseAdmin.from('app_logs').insert({
-      level,
-      source: 'client',
-      message,
-      metadata: sanitizedMetadata,
-      user_id: userId,
-    });
+    // 秘密情報マスキング + サイズ切り詰め (F6-20)。message もクライアントが自由に書ける文字列なので、
+    // metadata と同じく保存前にマスクする (#1171)
+    const { error } = await supabaseAdmin.from('app_logs').insert(
+      sanitizeLogEntry({
+        level,
+        source: 'client',
+        message,
+        metadata: metadata ?? undefined,
+        user_id: userId,
+      }),
+    );
 
     if (error) {
       console.error('Failed to save client log:', error);

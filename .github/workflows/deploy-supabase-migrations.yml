@@ -321,10 +321,22 @@ jobs:
       - name: Verify db diff (post-apply)
         id: db_diff
         run: |
-          set +e
-          npx --yes supabase@2.62.10 db diff --linked --schema public > /tmp/db_diff.sql 2> /tmp/db_diff.log
-          status=$?
-          set -e
+          # db diff はシャドウ DB と差分計算のために Docker イメージ (public.ecr.aws) を取得する。
+          # 複数の PR の CI が同時に走ると、取得がレート制限 (toomanyrequests) やタイムアウトで一時的に失敗する。
+          # その場合だけ、間隔を空けて最大 3 回まで実行し直す。migration が流せないなどの本物の失敗はやり直さない。
+          PULL_ERROR_RE='toomanyrequests|failed to pull docker image|Client\.Timeout exceeded|context deadline exceeded|TLS handshake timeout'
+          for attempt in 1 2 3; do
+            set +e
+            npx --yes supabase@2.62.10 db diff --linked --schema public > /tmp/db_diff.sql 2> /tmp/db_diff.log
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ] || ! grep -qE "$PULL_ERROR_RE" /tmp/db_diff.log || [ "$attempt" -eq 3 ]; then
+              break
+            fi
+            echo "::warning::db diff: Docker イメージの取得に失敗しました (レート制限/タイムアウト)。$((attempt * 60)) 秒後に再試行します (${attempt}/3)"
+            tail -n 5 /tmp/db_diff.log
+            sleep $((attempt * 60))
+          done
           if [ "$status" -ne 0 ]; then
             {
               echo "## supabase db diff が失敗しました"
