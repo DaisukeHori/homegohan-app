@@ -42,8 +42,9 @@ export function PreparingNotice({
   children?: ReactNode;
 }) {
   const classes = TONE_CLASSES[tone];
+  // role="note": 変わらない案内。role="status" は更新を読み上げる live region (polite) になるため使わない
   return (
-    <div role="status" className={`rounded-xl border p-6 ${classes.box} ${className}`.trim()}>
+    <div role="note" className={`rounded-xl border p-6 ${classes.box} ${className}`.trim()}>
       <p className={`text-base font-semibold ${classes.title}`}>{title}</p>
       {children ? <div className={`mt-2 space-y-2 text-sm leading-relaxed ${classes.body}`}>{children}</div> : null}
     </div>

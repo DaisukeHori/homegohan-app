@@ -30,28 +30,30 @@ function render(element: React.ReactElement) {
 }
 
 describe('PreparingNotice', () => {
-  it('見出しと補足を出す。status の役割を持つ', () => {
+  it('見出しと補足を出す。変わらない案内なので note の役割を持つ (読み上げの対象になる status / live region にはしない)', () => {
     const notice = render(
       <PreparingNotice title="準備中（未対応）">
         <p>補足の文</p>
       </PreparingNotice>,
     );
 
-    const box = notice.querySelector('[role="status"]');
+    const box = notice.querySelector('[role="note"]');
     expect(box).not.toBeNull();
     expect(box?.querySelector('p')?.textContent).toBe('準備中（未対応）');
     expect(box?.textContent).toContain('補足の文');
+    // role="status" は暗黙の aria-live="polite"。静的な案内には付けない
+    expect(notice.querySelector('[role="status"], [aria-live]')).toBeNull();
   });
 
   it('補足が無いときは、補足の枠を作らない', () => {
     const notice = render(<PreparingNotice title="準備中（未対応）" />);
 
     expect(notice.querySelectorAll('p')).toHaveLength(1);
-    expect(notice.querySelector('[role="status"] > div')).toBeNull();
+    expect(notice.querySelector('[role="note"] > div')).toBeNull();
   });
 
   it('dark は、背景を塗りつぶした (不透明な) 色にする。透ける背景 (bg-xxx/20 など) にしない', () => {
-    const box = render(<PreparingNotice title="準備中（未対応）" tone="dark" />).querySelector('[role="status"]');
+    const box = render(<PreparingNotice title="準備中（未対応）" tone="dark" />).querySelector('[role="note"]');
 
     const classes = (box?.className ?? '').split(/\s+/);
     const backgrounds = classes.filter((c) => c.startsWith('bg-'));
@@ -63,9 +65,9 @@ describe('PreparingNotice', () => {
   });
 
   it('tone を省くと dark。light は明るい琥珀色の背景', () => {
-    const byDefault = render(<PreparingNotice title="x" />).querySelector('[role="status"]');
-    const dark = render(<PreparingNotice title="x" tone="dark" />).querySelector('[role="status"]');
-    const light = render(<PreparingNotice title="x" tone="light" />).querySelector('[role="status"]');
+    const byDefault = render(<PreparingNotice title="x" />).querySelector('[role="note"]');
+    const dark = render(<PreparingNotice title="x" tone="dark" />).querySelector('[role="note"]');
+    const light = render(<PreparingNotice title="x" tone="light" />).querySelector('[role="note"]');
 
     expect(byDefault?.className).toBe(dark?.className);
     expect(light?.className).toContain('bg-amber-50');
@@ -73,7 +75,7 @@ describe('PreparingNotice', () => {
   });
 
   it('className を足せる', () => {
-    const box = render(<PreparingNotice title="x" className="mb-6" />).querySelector('[role="status"]');
+    const box = render(<PreparingNotice title="x" className="mb-6" />).querySelector('[role="note"]');
 
     expect(box?.className).toContain('mb-6');
   });
@@ -88,7 +90,7 @@ describe('BillingNotStartedNotice', () => {
     );
 
     expect(BILLING_NOT_STARTED_MESSAGE).toBe('課金は未開始のため準備中');
-    expect(notice.querySelector('[role="status"] p')?.textContent).toBe('課金は未開始のため準備中');
+    expect(notice.querySelector('[role="note"] p')?.textContent).toBe('課金は未開始のため準備中');
     expect(notice.textContent).toContain('補足の文');
   });
 });
@@ -98,7 +100,7 @@ describe('MonitoringNotConnectedNotice', () => {
     const notice = render(<MonitoringNotConnectedNotice />);
 
     expect(MONITORING_NOT_CONNECTED_MESSAGE).toBe('未接続: 監視データの収集は設定されていません');
-    expect(notice.querySelector('[role="status"] p')?.textContent).toBe(MONITORING_NOT_CONNECTED_MESSAGE);
+    expect(notice.querySelector('[role="note"] p')?.textContent).toBe(MONITORING_NOT_CONNECTED_MESSAGE);
     expect(notice.textContent).toContain('空であることは「問題が無い」という意味ではありません');
   });
 

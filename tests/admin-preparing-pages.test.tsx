@@ -150,8 +150,20 @@ describe('/admin/finance (売上ダッシュボード)', () => {
     mau: 4321,
   };
 
+  /** admin / super_admin が書き出せる種別。nps があるので、クイックリンクに NPS / CSAT が出る (#1311) */
+  const ADMIN_EXPORT_TYPES = ['revenue', 'invoices', 'subscriptions', 'nps'];
+
   beforeEach(() => {
-    fetchMock.mockImplementation(async () => jsonResponse({ data: dashboard }));
+    // 画面は URL の違う 2 つの API を呼ぶので、URL ごとに応答を分ける。
+    // 全部に同じ応答を返すと、クイックリンクが書き出せる種別 (available_types) を読めず、NPS / CSAT のリンクが出ない。
+    //   - /api/admin/finance/dashboard: 売上ダッシュボードの値
+    //   - /api/admin/finance/exports: 呼んだ本人が書き出せる種別 (FinanceQuickLinks が NPS / CSAT の出し分けに使う)
+    fetchMock.mockImplementation(async (input: unknown) => {
+      const url = String(input);
+      if (url === '/api/admin/finance/dashboard') return jsonResponse({ data: dashboard });
+      if (url === '/api/admin/finance/exports') return jsonResponse({ data: { available_types: ADMIN_EXPORT_TYPES } });
+      return jsonResponse({ error: { code: 'NOT_FOUND', message: 'not found' } }, 404);
+    });
   });
 
   /** ラベルの文字を持つ要素を含むカード (ラベルの 2 つ上の要素) の文字 */
@@ -189,12 +201,27 @@ describe('/admin/finance (売上ダッシュボード)', () => {
     expect(mauLabel?.nextElementSibling?.textContent).toBe('4,321');
   });
 
-  it('Stripe ダッシュボードへのリンクとクイックリンクは残る', async () => {
+  it('Stripe ダッシュボードへのリンクとクイックリンクは残る (NPS / CSAT は admin / super_admin に出る)', async () => {
     await render(<FinanceDashboardPage />);
 
     expect(container.querySelector('a[href="https://dashboard.stripe.com"]')).not.toBeNull();
     expect(container.querySelector('a[href="/admin/finance/revenue"]')).not.toBeNull();
+    // NPS / CSAT は、書き出せる種別に nps がある人 (admin / super_admin) にだけ出る。出し分けそのものは
+    // tests/admin-finance-quick-links.test.tsx が確かめる。ここでは、準備中にした画面でもリンクが残ることを確かめる
     expect(container.querySelector('a[href="/admin/finance/nps"]')).not.toBeNull();
+  });
+
+  it('書き出せる種別に nps が無い人 (財務ロール) には、NPS / CSAT のリンクを出さない。ほかのリンクは残る', async () => {
+    fetchMock.mockImplementation(async (input: unknown) =>
+      String(input) === '/api/admin/finance/dashboard'
+        ? jsonResponse({ data: dashboard })
+        : jsonResponse({ data: { available_types: ['revenue', 'invoices', 'subscriptions'] } }),
+    );
+
+    await render(<FinanceDashboardPage />);
+
+    expect(container.querySelector('a[href="/admin/finance/revenue"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/admin/finance/nps"]')).toBeNull();
   });
 });
 
