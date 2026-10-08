@@ -43,7 +43,7 @@ const MAIL_TRIGGERING_RPCS = [
  */
 const EXEMPT_EMAIL_SENDERS: Record<string, string> = {
   'src/app/api/contact/route.ts':
-    '宛先は環境変数 ADMIN_NOTIFICATION_EMAIL の固定アドレスだけで、利用者は宛先を指定できない。IP 単位の専用リミッタ (10 回/分) がある',
+    '宛先は環境変数 ADMIN_NOTIFICATION_EMAIL の固定アドレスだけで、利用者は宛先を指定できない。IP 単位の制限 (共通ヘルパー src/lib/rate-limit.ts の contact カテゴリ、10 回/分) がある',
   'src/app/api/family/representative-transfer/[id]/accept/route.ts':
     '提案された本人だけが 1 回だけ実行できる (2 回目は TRANSFER_PROPOSAL_NOT_FOUND)。宛先は旧・新の代表者に固定で、利用者は宛先を指定できない',
   'src/app/api/org/owner-transfer/[id]/accept/route.ts':
@@ -56,6 +56,10 @@ const EXEMPT_EMAIL_SENDERS: Record<string, string> = {
     '運営の super_admin 専用 (requireSuperAdmin)。宛先は対象組織の既存メンバーで、利用者は宛先を指定できない',
   'src/app/api/operator/membership/org/[id]/dissolve/route.ts':
     '運営の super_admin 専用 (requireSuperAdmin)。宛先は対象組織の既存メンバーで、利用者は宛先を指定できない',
+  'src/lib/admin/send-ticket-reply-email.ts':
+    '運営 (support / admin / super_admin) 専用の POST /api/admin/support/tickets/[id]/messages が、requireRole を通した後の顧客向け返信 (内部メモはメールにしない) でだけ呼ぶ。' +
+    '宛先はチケットの顧客本人のアドレス (ticket.user_id を auth.admin.getUserById で引く) に固定で、呼び出し側は宛先を指定できない。' +
+    '運営による代理起票 (#1248) は admin_audit_logs に残る。送信回数の上限は設けていない (必要になったら、除外をやめて invite-throttle 相当の判定を通す)',
   // #1160 除名・脱退の通知。送る入口は 4 つの route (family/org の除名・脱退) だが、送信はこの共通ヘルパーだけが行う
   'src/lib/membership/exit-notification.ts':
     '家族グループ / 組織の除名・脱退 (remove_family_member / leave_family / remove_org_member / leave_org) の RPC が成功した直後に、' +

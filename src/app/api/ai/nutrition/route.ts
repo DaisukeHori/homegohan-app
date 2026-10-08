@@ -4,6 +4,13 @@ import { NextResponse } from 'next/server';
 import { buildPhotoDishList } from '../../../../lib/meal-image';
 import { cancelPendingMealImageJobs } from '../../../../lib/meal-image-jobs';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import {
+  PLANNED_MEAL_NUTRIENT_FIELDS,
+  plannedMealValidationErrorBody,
+  sanitizeAiNutrient,
+  validatePlannedMealInput,
+  type PlannedMealNutrientValues,
+} from '@/lib/planned-meal-validation';
 
 /**
  * 献立の栄養情報を更新
@@ -49,13 +56,24 @@ export async function POST(request: Request) {
 
     // 3. 栄養データが直接提供された場合はそれを使用
     if (nutritionData) {
-      const { error: updateError } = await supabase
-        .from('planned_meals')
-        .update({
+      // #1205: クライアントから直接渡された栄養素は型・範囲を確認する（不正なら 400）
+      const validation = validatePlannedMealInput({
+        nutrients: {
           calories_kcal: nutritionData.calories_kcal,
           protein_g: nutritionData.protein_g,
           fat_g: nutritionData.fat_g,
           carbs_g: nutritionData.carbs_g,
+        },
+      });
+      if (!validation.ok) {
+        return NextResponse.json(plannedMealValidationErrorBody(validation), { status: 400 });
+      }
+
+      const { error: updateError } = await supabase
+        .from('planned_meals')
+        .update({
+          // 検証済みの値（送られていない項目は含まれず、既存の値を残す）
+          ...validation.nutrients,
           veg_score: nutritionData.veg_score,
           quality_tags: nutritionData.quality_tags,
           updated_at: new Date().toISOString(),
@@ -131,11 +149,16 @@ export async function POST(request: Request) {
           reason: 'nutrition photo overwrite',
         });
 
+        // #1205: AI の推定値は桁を間違えることがあるため、範囲内に整えてから保存する
+        // （数値でない・負 → null、上限超え → 上限、小数 → 四捨五入。応答に含まれない項目は書かない）
+        const aiNutrients: PlannedMealNutrientValues = {};
+        for (const field of PLANNED_MEAL_NUTRIENT_FIELDS) {
+          const value = sanitizeAiNutrient(field, result[field]);
+          if (value !== undefined) aiNutrients[field] = value;
+        }
+
         const updatePayload: Record<string, unknown> = {
-          calories_kcal: result.calories_kcal,
-          protein_g: result.protein_g,
-          fat_g: result.fat_g,
-          carbs_g: result.carbs_g,
+          ...aiNutrients,
           veg_score: result.veg_score,
           quality_tags: result.quality_tags,
           dishes: photoDishes.length > 0 ? photoDishes : existing.dishes ?? null,

@@ -4,7 +4,11 @@ import { NextResponse } from 'next/server';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
 import { renderOrgTransferProposedEmail } from '@/lib/emails/membership/org-transfer-proposed';
-import { checkTransferProposeLimit, inviteThrottleResponse } from '@/lib/membership/invite-throttle';
+import {
+  checkTransferProposeLimit,
+  inviteThrottleFailureFromRpcError,
+  inviteThrottleResponse,
+} from '@/lib/membership/invite-throttle';
 import { z } from 'zod';
 
 const BodySchema = z.object({
@@ -65,6 +69,12 @@ export async function POST(request: Request) {
   });
 
   if (rpcError) {
+    // #1163 DB の 24 時間上限 (enforce_membership_daily_cap。家族の代表者譲渡と組織のオーナー譲渡の合計) に
+    // 達したときは、アプリ層の上限と同じ 429 にする。DB が返す生の文字列 'RATE_LIMITED' は見せない。
+    const dbThrottle = inviteThrottleFailureFromRpcError(rpcError, { flow: 'transfer-propose', userId: user.id });
+    if (dbThrottle) {
+      return inviteThrottleResponse(dbThrottle);
+    }
     const { code, status } = mapPgErrorToHttp(rpcError.message);
     return NextResponse.json({ error: { code, message: rpcError.message } }, { status });
   }

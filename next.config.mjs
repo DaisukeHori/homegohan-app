@@ -5,7 +5,10 @@ import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
 const isDev = process.env.NODE_ENV === 'development';
-// #1044 (F6-09): PostHog の api_host は src/lib/posthog.ts のデフォルトと合わせる
+// #1044 (F6-09): CSP の connect-src に許可する PostHog のホストは、アプリが実際に送信するホストと合わせる。
+// #1197: 送信側の既定は packages/shared の POSTHOG_DEFAULT_HOST (src/lib/posthog.ts とモバイルが import する)。
+// この .mjs は TypeScript を import できないので、同じ値のリテラルを残している。
+// src/__tests__/config/posthog-default-host.test.ts が一致を検査するので、ホストを変えるときは両方を直す。
 const posthogHost = process.env.NEXT_PUBLIC_POSTHOG_HOST ?? 'https://us.i.posthog.com';
 // ローカルの Supabase (scripts/supabase-local.sh の http://127.0.0.1:54321 など) にブラウザから接続できるよう、
 // NEXT_PUBLIC_SUPABASE_URL が *.supabase.co 以外のときだけ、その origin (と Realtime 用の ws / wss) を CSP に加える。

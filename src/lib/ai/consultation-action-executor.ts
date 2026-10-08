@@ -27,16 +27,19 @@ import {
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { createLogger } from '@/lib/db-logger';
+import { PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
 import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
 
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
 
-// #1048 F2-23: planned_meals.meal_type / meals.meal_type には
-// CHECK (meal_type IN ('breakfast','lunch','dinner','snack')) が存在し、
-// 'midnight_snack' を挿入すると DB 制約違反で 500 になる
-// (supabase/migrations/20260430160000_db_audit_fixes.sql #221)。
-// AI 生成アクション経由でこの不整合値が渡らないようホワイトリストで防御する。
+// #1048 F2-23: AI 生成アクションが扱う meal_type は朝・昼・夕・おやつの 4 値に限る
+// (システムプロンプトも夜食 'midnight_snack' は提示しない)。AI の出力は信頼できないため、
+// 実行時にもホワイトリストで防御する。
+// 当初は「planned_meals.meal_type には 4 値の CHECK (#221) があり、'midnight_snack' で 500 になる」
+// という理由だったが、その CHECK は本番に存在しなかった (#1205)。#1205 で足した
+// DB のトリガー (trg_planned_meals_validate_values) は 'midnight_snack' を含む 5 値で、ここの制限は DB の制約ではなく
+// AI 経路の仕様として残している。
 const AI_ALLOWED_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
 
 // ==================== mass assignment 対策: サニタイザ ====================
@@ -111,12 +114,8 @@ function sanitizeMealUpdate(input: unknown): { data: PlainRecord; errors: string
     }
   }
 
-  const numericFieldRanges: Record<string, { min: number; max: number }> = {
-    calories_kcal: { min: 0, max: 5000 },
-    protein_g: { min: 0, max: 500 },
-    fat_g: { min: 0, max: 300 },
-    carbs_g: { min: 0, max: 800 },
-  };
+  // 範囲は HTTP 経由の食事登録・更新 (src/lib/planned-meal-validation.ts) と共有する (#1205)。
+  const numericFieldRanges: Record<string, { min: number; max: number }> = PLANNED_MEAL_NUTRIENT_LIMITS;
   for (const [key, range] of Object.entries(numericFieldRanges)) {
     if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
     const value = input[key];
@@ -437,8 +436,8 @@ export async function runConsultationAction(
         break;
       }
 
-      // #1048 F2-23: DB CHECK 制約と矛盾する mealType(例: 'midnight_snack')を
-      // 拒否する。プロンプトからは既に除去済みだが、AI 出力は信頼できないため
+      // #1048 F2-23: AI 経路で扱わない mealType(例: 'midnight_snack')を拒否する。
+      // プロンプトからは既に除去済みだが、AI 出力は信頼できないため
       // 実行時にも二重で防御する。
       if (!AI_ALLOWED_MEAL_TYPES.includes(mealType)) {
         result = { error: `mealType は ${AI_ALLOWED_MEAL_TYPES.join('/')} のいずれかである必要があります` };

@@ -864,11 +864,7 @@ test("[super-admin][adversarial] H-32: LLM 利用量 API → super_admin のみ 
   expect(result.status).toBe(403);
 });
 
-// 既知の不具合のため test.fixme (本番コード側の修正待ち)。
-// GET /api/super-admin/llm/usage は llm_usage_logs に無い列 (cost_usd / prompt_tokens / completion_tokens) を
-// select するため、super_admin でも常に 500 (PostgREST 42703: column llm_usage_logs.cost_usd does not exist) になる。
-// 実在する列は estimated_cost_usd / input_tokens / output_tokens。route を直したら test.fixme を test に戻す。
-test.fixme("[super-admin][adversarial] H-32b: LLM 利用量 period パラメータ → super_admin で各 period 200", async ({
+test("[super-admin][adversarial] H-32b: LLM 利用量 period パラメータ → super_admin で各 period 200", async ({
   superAdminUser,
 }) => {
   const { page } = superAdminUser;
