@@ -81,6 +81,13 @@ const context = (id: string) => ({ params: { id } });
 
 const gdprRows = () => db.tables.gdpr_deletion_requests;
 
+/**
+ * logger に渡された Error を取り出す。
+ * postgrest-js の error は Error ではない素のオブジェクトで、そのまま渡すと db-logger が
+ * app_logs.error_message に String(error) = '[object Object]' を書く。そのため message を持つ Error に包んで渡す。
+ */
+const loggedError = (mock: ReturnType<typeof vi.fn>, call = 0) => mock.mock.calls[call][1];
+
 beforeEach(() => {
   vi.clearAllMocks();
   requireRole.mockResolvedValue({ id: ADMIN_ID, roles: ['super_admin'] });
@@ -181,10 +188,13 @@ describe('GET /api/super-admin/exports/[id]', () => {
     expect(res.status).toBe(500);
     expect(json.error.code).toBe('INTERNAL_ERROR');
     expect(JSON.stringify(json)).not.toContain('connection to server was lost');
-    expect(logUserError).toHaveBeenCalledWith('エクスポートの取得に失敗', error, {
+    expect(logUserError).toHaveBeenCalledWith('エクスポートの取得に失敗', expect.any(Error), {
       exportId: REQUEST_ID,
       pg_code: 'XX000',
     });
+    // app_logs.error_message が '[object Object]' にならず、DB の message が読める
+    expect(loggedError(logUserError)).toBeInstanceOf(Error);
+    expect(loggedError(logUserError)).toHaveProperty('message', 'connection to server was lost');
   });
 
   it('未認証は 401、権限が無ければ 403。DB には触れない', async () => {
@@ -319,10 +329,12 @@ describe('DELETE /api/super-admin/exports/[id]', () => {
     const res = await DELETE(request('DELETE'), context(REQUEST_ID));
 
     expect(res.status).toBe(500);
-    expect(logUserError).toHaveBeenCalledWith('キャンセル対象のエクスポートの取得に失敗', error, {
+    expect(logUserError).toHaveBeenCalledWith('キャンセル対象のエクスポートの取得に失敗', expect.any(Error), {
       exportId: REQUEST_ID,
       pg_code: 'XX000',
     });
+    expect(loggedError(logUserError)).toBeInstanceOf(Error);
+    expect(loggedError(logUserError)).toHaveProperty('message', 'connection to server was lost');
     expect(db.calls.some((c) => c.op === 'update')).toBe(false);
   });
 
@@ -333,10 +345,12 @@ describe('DELETE /api/super-admin/exports/[id]', () => {
     const res = await DELETE(request('DELETE'), context(REQUEST_ID));
 
     expect(res.status).toBe(500);
-    expect(logUserError).toHaveBeenCalledWith('エクスポートのキャンセルに失敗', error, {
+    expect(logUserError).toHaveBeenCalledWith('エクスポートのキャンセルに失敗', expect.any(Error), {
       exportId: REQUEST_ID,
       pg_code: 'XX000',
     });
+    expect(loggedError(logUserError)).toBeInstanceOf(Error);
+    expect(loggedError(logUserError)).toHaveProperty('message', 'could not serialize access');
     expect(gdprRows()[0].cancelled_at).toBeNull();
     expect(db.tables.admin_audit_logs).toHaveLength(0);
   });

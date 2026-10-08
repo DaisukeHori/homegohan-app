@@ -21,7 +21,12 @@ type LlmUsageRow = Pick<
   'model' | 'function_name' | 'estimated_cost_usd' | 'total_tokens' | 'user_id' | 'created_at'
 >;
 
-/** 集計に使う行数の上限 */
+/**
+ * 集計に使う行数の上限。
+ * 上限を超える期間の合計は実際より小さくなる。さらに PostgREST の max_rows (Supabase の既定は 1,000) でも
+ * 黙って打ち切られるので、実際に集計される行数は 1 回の応答で返せる行数までに収まる。
+ * 正確に出すには、データベース側で集計する関数 (RPC) が要る。
+ */
 const MAX_ROWS = 5000;
 
 export async function GET(request: NextRequest) {
@@ -67,10 +72,14 @@ export async function GET(request: NextRequest) {
     // プロバイダー別の画面 (/super-admin/llm/[provider]) が渡す。llm_usage_logs.provider には openai / xai が入る
     if (provider) query = query.eq('provider', provider);
 
-    const { data: logs, error } = await query.limit(MAX_ROWS);
+    // 並べ替えが無いと、上限や max_rows で打ち切られるときにどの行が落ちるかが決まらず、直近の行も落ちうる。
+    // 新しい行から取れば、打ち切られても落ちるのは古い行だけになる (created_at DESC の索引がある)
+    const { data: logs, error } = await query.order('created_at', { ascending: false }).limit(MAX_ROWS);
 
     if (error) {
-      logger.withUser(user.id).error('LLM 使用量ログの取得に失敗', error, {
+      // postgrest-js の error は Error ではない素のオブジェクトで、そのまま渡すと app_logs.error_message が
+      // '[object Object]' になる。recordAdminAudit と同じく message を持つ Error に包んで渡す
+      logger.withUser(user.id).error('LLM 使用量ログの取得に失敗', new Error(error.message), {
         pg_code: error.code,
         period,
         from: fromDate,

@@ -239,6 +239,25 @@ describe('GET /api/super-admin/llm/usage: 集計', () => {
     expect(data.anomalies).toEqual([]);
   });
 
+  it('行数が上限 (5,000 行) を超えるときは、新しい行から集計する (落ちるのは古い行)', async () => {
+    // 古い順に 5,001 行。並べ替えが無いと、先頭から 5,000 行を取るので、いちばん新しい行が落ちる
+    const start = Date.parse('2026-10-05T00:00:00.000Z');
+    const rows = Array.from({ length: 5001 }, (_, i) =>
+      usage({
+        created_at: new Date(start + i * 1000).toISOString(),
+        function_name: i === 0 ? 'oldest' : i === 5000 ? 'newest' : 'middle',
+      }),
+    );
+    setup(rows);
+
+    const { data } = await (await GET(request('?period=7d'))).json();
+
+    expect(data.total_requests).toBe(5000);
+    const functions = data.by_function.map((f: { function: string }) => f.function);
+    expect(functions).toContain('newest');
+    expect(functions).not.toContain('oldest');
+  });
+
   it('行が無い期間は 0 件で返す', async () => {
     setup([]);
 
@@ -325,7 +344,7 @@ describe('GET /api/super-admin/llm/usage: 入力・認可・エラー', () => {
     expect(JSON.stringify(json)).not.toContain('cost_usd');
     expect(logUserError).toHaveBeenCalledWith(
       'LLM 使用量ログの取得に失敗',
-      error,
+      expect.any(Error),
       expect.objectContaining({
         pg_code: '42703',
         period: '7d',
@@ -334,6 +353,11 @@ describe('GET /api/super-admin/llm/usage: 入力・認可・エラー', () => {
         model: 'gpt-5-mini',
       }),
     );
+    // postgrest-js の error は Error ではない素のオブジェクトで、そのまま渡すと db-logger が
+    // app_logs.error_message に '[object Object]' を書く。message を持つ Error に包んで渡し、原因が読めるようにする
+    const logged = logUserError.mock.calls[0][1];
+    expect(logged).toBeInstanceOf(Error);
+    expect(logged).toHaveProperty('message', 'column llm_usage_logs.cost_usd does not exist');
   });
 
   it('未認証は 401、権限が無ければ 403。DB には触れない', async () => {

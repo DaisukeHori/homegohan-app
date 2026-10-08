@@ -38,6 +38,15 @@ function internalErrorResponse(message: string) {
   return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
 }
 
+/**
+ * postgrest-js が返す error は Error ではない素のオブジェクトで、そのまま logger に渡すと
+ * app_logs.error_message が '[object Object]' になり、原因が app_logs から読めない。
+ * recordAdminAudit と同じく、message を持つ Error に包んで渡す (code は呼び出し側が metadata の pg_code に入れる)
+ */
+function dbError(error: { message: string }) {
+  return new Error(error.message);
+}
+
 /** requireRole の認証・認可エラーは 401 / 403 に、それ以外は記録して 500 にする (DB の生のエラー文は返さない) */
 function errorResponse(err: unknown, logger: ReturnType<typeof createLogger>) {
   if (err instanceof AuthError) {
@@ -68,7 +77,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
 
     // DB のエラーを「見つからない」にしない (存在しない列を読んだ失敗が 404 に見えていた)
     if (error) {
-      logger.withUser(user.id).error('エクスポートの取得に失敗', error, { exportId: params.id, pg_code: error.code });
+      logger.withUser(user.id).error('エクスポートの取得に失敗', dbError(error), { exportId: params.id, pg_code: error.code });
       return internalErrorResponse('エクスポートの取得に失敗しました');
     }
     if (!data) return notFoundResponse();
@@ -107,7 +116,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
       .maybeSingle();
 
     if (readError) {
-      logger.withUser(user.id).error('キャンセル対象のエクスポートの取得に失敗', readError, {
+      logger.withUser(user.id).error('キャンセル対象のエクスポートの取得に失敗', dbError(readError), {
         exportId: params.id,
         pg_code: readError.code,
       });
@@ -141,7 +150,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
       .select('id');
 
     if (updateError) {
-      logger.withUser(user.id).error('エクスポートのキャンセルに失敗', updateError, {
+      logger.withUser(user.id).error('エクスポートのキャンセルに失敗', dbError(updateError), {
         exportId: params.id,
         pg_code: updateError.code,
       });

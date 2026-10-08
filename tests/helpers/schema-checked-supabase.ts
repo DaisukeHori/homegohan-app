@@ -21,7 +21,7 @@
  * seed が「スキーマに無い列」の例外になるので気づける。
  */
 import { randomUUID } from 'node:crypto';
-import { vi } from 'vitest';
+import { vi, type Mock } from 'vitest';
 import { parseSelectItem, splitTopLevel } from './select-columns';
 import { loadSchemaModel, type SchemaTable } from './schema-snapshot';
 
@@ -39,12 +39,30 @@ export function pgError(code: string, message: string, details: string | null = 
 type Row = Record<string, unknown>;
 type Operation = 'select' | 'insert' | 'update';
 type FilterKind = 'eq' | 'is' | 'gte' | 'lte';
-type Result = { data: unknown; error: PgError | null };
+export type Result = { data: unknown; error: PgError | null };
 
 interface Filter {
   kind: FilterKind;
   column: string;
   value: unknown;
+}
+
+/**
+ * フェイクが実装している PostgREST のクエリビルダーの部分。await すると { data, error } になる。
+ * supabase.from(table) の戻り値の型として使う (型が無いと、テストが from(...) を呼ぶところで tsc が通らない)。
+ */
+export interface FakeQuery extends PromiseLike<Result> {
+  select(columns?: string): FakeQuery;
+  insert(payload: Record<string, unknown>): FakeQuery;
+  update(payload: Record<string, unknown>): FakeQuery;
+  eq(column: string, value: unknown): FakeQuery;
+  is(column: string, value: unknown): FakeQuery;
+  gte(column: string, value: unknown): FakeQuery;
+  lte(column: string, value: unknown): FakeQuery;
+  order(column: string, options?: { ascending?: boolean }): FakeQuery;
+  limit(count: number): FakeQuery;
+  single(): FakeQuery;
+  maybeSingle(): FakeQuery;
 }
 
 export interface RecordedCall {
@@ -95,7 +113,7 @@ function matches(row: Row, filter: Filter): boolean {
 
 export interface SchemaCheckedDb {
   /** supabase クライアントの代わりに渡す */
-  supabase: { from: ReturnType<typeof vi.fn> };
+  supabase: { from: Mock<(table: string) => FakeQuery> };
   /** テーブルの現在の中身 (テストが直接読み書きしてよい) */
   tables: Record<string, Row[]>;
   /** 実行された select / insert / update の記録 (実行順) */
@@ -156,7 +174,7 @@ export function createSchemaCheckedDb(seed: Record<string, Row[]>): SchemaChecke
     return { names };
   }
 
-  class Query implements PromiseLike<Result> {
+  class Query implements FakeQuery {
     private op: Operation = 'select';
     private columns: string | null = null;
     private payload: Row | null = null;
