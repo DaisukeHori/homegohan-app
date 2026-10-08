@@ -11,6 +11,7 @@ import { clearUserScopedLocalStorage } from "@/lib/user-storage";
 import { isOrgAdmin } from "@/lib/auth/org-admin";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { NativeAppTabRouter } from "@/components/native-app/NativeAppTabRouter";
+import { LegalConsentBanner } from "@/components/legal/LegalConsentBanner";
 
 // ロール別の管理メニュー
 const ADMIN_MENU_ITEMS: Record<string, { href: string; label: string; icon: string; color: string }> = {
@@ -89,9 +90,12 @@ function BottomNav({ pathname, initialIsNativeApp }: { pathname: string; initial
 export default function MainLayout({
   children,
   initialIsNativeApp = false,
+  legalConsentPending = false,
 }: {
   children: React.ReactNode
   initialIsNativeApp?: boolean
+  /** #1174: 規約への同意が済んでいない (強制はしていない) とき、画面の上に「同意のお願い」を出す */
+  legalConsentPending?: boolean
 }) {
   const pathname = usePathname();
   const [userRoles, setUserRoles] = useState<string[]>([]);
@@ -253,6 +257,7 @@ export default function MainLayout({
 
       {/* メインコンテンツ */}
       <main className="flex-1 lg:ml-64 relative min-h-screen">
+        {legalConsentPending && <LegalConsentBanner />}
         {children}
         {/* AIチャットバブル - モーダルのオーバーレイでカバーされるようにmain内に配置 */}
         <AIChatBubble />

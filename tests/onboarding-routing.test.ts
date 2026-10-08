@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { isPolicyPath, resolveOnboardingRedirect } from "../lib/onboarding-routing";
+import {
+  LEGAL_CONSENT_PATH,
+  isLegalConsentPath,
+  isPolicyPath,
+  resolveOnboardingRedirect,
+} from "../lib/onboarding-routing";
 
 describe("resolveOnboardingRedirect", () => {
 
@@ -282,6 +287,77 @@ describe("resolveOnboardingRedirect", () => {
           onboardingCompletedAt: null,
         }),
       ).toBe("/onboarding/welcome");
+    },
+  );
+});
+
+// #1174: 規約の同意画面 (/legal-consent)。同意ゲート (LEGAL_CONSENT_ENFORCE=on) が、未同意の人をここへ回す。
+// ここで初期設定の差し戻しが効くと、初期設定が済んでいない人 (= 新規登録した人) は、
+// 「保護ページ -> /legal-consent (ゲート) -> /onboarding/welcome (差し戻し) -> /legal-consent (ゲート) -> ...」と
+// 無限にリダイレクトして、同意画面に着けない。初期設定の状態に関わらず素通りさせる。
+describe("resolveOnboardingRedirect: 同意画面 /legal-consent (#1174)", () => {
+  it.each([
+    ["/legal-consent", null],
+    ["/legal-consent", "2026-03-01T00:00:00Z"],
+    ["/legal-consent/", null],
+  ])("does not redirect %s for onboarding-incomplete users (startedAt=%s)", (pathname, startedAt) => {
+    expect(
+      resolveOnboardingRedirect({
+        pathname,
+        roles: [],
+        onboardingStartedAt: startedAt,
+        onboardingCompletedAt: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("leaves /legal-consent alone for completed users and admins too (no behavior change)", () => {
+    expect(
+      resolveOnboardingRedirect({
+        pathname: "/legal-consent",
+        roles: [],
+        onboardingStartedAt: "2026-03-01T00:00:00Z",
+        onboardingCompletedAt: "2026-03-01T01:00:00Z",
+      }),
+    ).toBeNull();
+    expect(
+      resolveOnboardingRedirect({
+        pathname: "/legal-consent",
+        roles: ["admin"],
+        onboardingStartedAt: null,
+        onboardingCompletedAt: null,
+      }),
+    ).toBeNull();
+  });
+
+  it.each(["/legal-consentx", "/legal-consent-x", "/legal"])(
+    "does not exempt look-alike path %s (still redirected to welcome)",
+    (pathname) => {
+      expect(
+        resolveOnboardingRedirect({
+          pathname,
+          roles: [],
+          onboardingStartedAt: null,
+          onboardingCompletedAt: null,
+        }),
+      ).toBe("/onboarding/welcome");
+    },
+  );
+});
+
+describe("isLegalConsentPath", () => {
+  it("LEGAL_CONSENT_PATH is /legal-consent", () => {
+    expect(LEGAL_CONSENT_PATH).toBe("/legal-consent");
+  });
+
+  it.each(["/legal-consent", "/legal-consent/", "/legal-consent/anything"])("#1174: %s is the consent page", (pathname) => {
+    expect(isLegalConsentPath(pathname)).toBe(true);
+  });
+
+  it.each(["/", "/legal", "/legal-consentx", "/legal-consent-x", "/settings/legal-consent", "/terms", "/home"])(
+    "#1174: %s is not the consent page",
+    (pathname) => {
+      expect(isLegalConsentPath(pathname)).toBe(false);
     },
   );
 });

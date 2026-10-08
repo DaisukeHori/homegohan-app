@@ -11,10 +11,17 @@ import { validatePassword, PASSWORD_HINT_TEXT } from "@/lib/auth/validate-passwo
 import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
+const LEGAL_AGREEMENT_REQUIRED_MESSAGE = '登録するには、利用規約とプライバシーポリシーへの同意が必要です。';
+
 function SignupContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  // #1174: 利用規約・プライバシーポリシーへの明示的な同意 (チェックするまで、どの登録方法のボタンも押せない)。
+  // 「続行することで同意したものとみなされる」というみなし同意をやめた。同意の記録 (版・日時) は、サインイン後の最初の
+  // リクエストで同意ゲート (lib/supabase/middleware.ts) が同意画面 /legal-consent へ回して取る。
+  // Google 登録・メール確認を経る登録・アプリ (WebView) から始めた登録のどれでも、同じゲートを通るため。
+  const [agreedToLegal, setAgreedToLegal] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
@@ -29,6 +36,10 @@ function SignupContent() {
     `${window.location.origin}/auth/callback${safeRedirect ? `?next=${encodeURIComponent(safeRedirect)}` : ''}`;
 
   const handleGoogleSignup = async () => {
+    if (!agreedToLegal) {
+      setFormError(LEGAL_AGREEMENT_REQUIRED_MESSAGE);
+      return;
+    }
     try {
       setIsLoading(true);
       setFormError(null);
@@ -51,6 +62,10 @@ function SignupContent() {
   const handleEmailSignup = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setFormError(null);
+    if (!agreedToLegal) {
+      setFormError(LEGAL_AGREEMENT_REQUIRED_MESSAGE);
+      return;
+    }
     const formData = new FormData(e.currentTarget);
     // #288: 大文字メールを正規化して既存アカウントとの混同を防ぐ
     const email = (formData.get('email') as string).trim().toLowerCase();
@@ -150,10 +165,39 @@ function SignupContent() {
       </div>
 
       <div className="space-y-4">
-        <Button 
-          variant="outline" 
+        {/* #1174: 明示的な同意。チェックするまで、Google 登録・メール登録のどちらも押せない */}
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+          <label htmlFor="agree-legal" className="flex cursor-pointer items-start gap-3 text-sm text-gray-700">
+            <input
+              id="agree-legal"
+              name="agree_legal"
+              type="checkbox"
+              checked={agreedToLegal}
+              onChange={(e) => {
+                setAgreedToLegal(e.target.checked);
+                if (e.target.checked) setFormError((current) => (current === LEGAL_AGREEMENT_REQUIRED_MESSAGE ? null : current));
+              }}
+              aria-describedby={agreedToLegal ? undefined : 'agree-legal-hint'}
+              className="mt-0.5 h-5 w-5 shrink-0 accent-[#FF8A65]"
+            />
+            <span>
+              <Link href="/terms" className="font-bold text-orange-700 underline underline-offset-2">利用規約</Link>
+              および
+              <Link href="/privacy" className="font-bold text-orange-700 underline underline-offset-2">プライバシーポリシー</Link>
+              を確認し、同意します
+            </span>
+          </label>
+          {!agreedToLegal && (
+            <p id="agree-legal-hint" className="mt-2 pl-8 text-xs text-gray-500">
+              登録するには、チェックして同意してください。
+            </p>
+          )}
+        </div>
+
+        <Button
+          variant="outline"
           onClick={handleGoogleSignup}
-          disabled={isLoading}
+          disabled={isLoading || !agreedToLegal}
           className="w-full py-6 rounded-xl border-gray-200 hover:bg-gray-50 hover:border-gray-300 transition-all font-bold text-gray-700 flex items-center gap-3 relative overflow-hidden group"
         >
            <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -240,9 +284,9 @@ function SignupContent() {
               {formError}
             </p>
           )}
-          <Button 
+          <Button
             type="submit"
-            disabled={isLoading}
+            disabled={isLoading || !agreedToLegal}
             className="w-full py-6 rounded-full bg-[#FF8A65] hover:bg-[#FF7043] text-white font-bold shadow-lg hover:shadow-xl hover:shadow-[#FF8A65]/30 transition-all duration-300"
           >
             {isLoading ? '登録処理中...' : '登録して始める'}
@@ -257,10 +301,6 @@ function SignupContent() {
           >
             ログイン
           </Link>
-        </p>
-
-        <p className="text-xs text-center text-gray-400 mt-8">
-          続行することで、<Link href="/terms" className="underline">利用規約</Link>および<Link href="/privacy" className="underline">プライバシーポリシー</Link>に同意したものとみなされます。
         </p>
       </div>
     </div>
