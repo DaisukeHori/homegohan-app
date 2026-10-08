@@ -7,6 +7,7 @@ name: e2e-local
 # - テストユーザー (e2e-user-01〜10@homegohan.test) は実行ごとにローカルの DB に作る。
 #   パスワードは実行ごとにランダムに作り、ログには出さない (マスクする)。
 # - AI を使う 02-meal-photo / 03-ai-advisor は、AI の API キーを持たないため対象外。
+#   ai-consent-first-use (外国の AI 事業者への提供の同意画面、#1154) は、AI の API をブラウザの通信の差し替えで置き換えるので対象に入れる。
 # - Playwright のトレースと失敗時のページスナップショットは、入力したパスワードを平文で含むため取らない
 #   (--trace off / PLAYWRIGHT_NO_COPY_PROMPT=1)。HTML レポートも同じ理由で artifact に上げない。
 
@@ -95,6 +96,7 @@ jobs:
           tests/e2e/04-menu-page.spec.ts
           tests/e2e/05-shopping-list.spec.ts
           tests/e2e/public-policy-pages.spec.ts
+          tests/e2e/ai-consent-first-use.spec.ts
 
       - name: Show logs on failure
         if: failure()

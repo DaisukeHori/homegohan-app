@@ -93,7 +93,7 @@ HAR にはログイン要求のパスワードやアクセストークンが平�
 
 | ワークフロー | 対象 | テストユーザー |
 |---|---|---|
-| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 と、未ログインで読める公開ページの `public-policy-pages.spec.ts` (利用規約・プライバシーポリシー #1174) を実行 | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
+| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 と、未ログインで読める公開ページの `public-policy-pages.spec.ts` (利用規約・プライバシーポリシー #1174)、AI の API を差し替えて同意画面を確かめる `ai-consent-first-use.spec.ts` (#1154) を実行 | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
 | `.github/workflows/e2e.yml` | 本番 URL。ローカル dev server は起動しない | 本番の `e2e-user-01〜04@homegohan.test`。Secrets `E2E_USER_EMAIL` (= `e2e-user-01@homegohan.test`) / `E2E_USER_PASSWORD` が必要 (未設定ならジョブを最初に止める) |
 
 本番のテストユーザーのパスワードはランダムな値で、Secrets `E2E_USER_PASSWORD` にだけ置く (リポジトリにも `.env.local` の共有にも書かない)。
@@ -107,6 +107,18 @@ CI では `E2E_REQUIRE_LOGIN=1` で、global-setup がログインできなけ�
 また、Playwright のトレースと失敗時のページスナップショット (`error-context`) は入力したパスワードを平文で含むため、
 CI では取らない (`--trace off` / `PLAYWRIGHT_NO_COPY_PROMPT=1`)。HTML レポートも手順名に入力値を含むため、
 artifact には上げず、`tests/e2e/.output/` (失敗時のスクリーンショット・動画・エラー内容) だけを上げる。
+
+## AI の同意画面 (外国の AI 事業者への提供の同意、#1154)
+
+同意していない利用者が AI を初めて使うと、同意画面 (`data-testid="ai-consent-modal"`) が出て、「同意する」「あとで」のどちらかが押されるまで
+その操作が止まる (同意の有無で AI の呼び出しを止めてはいない。選べば必ず進む)。AI を使う spec が、この画面で止まらないよう、次のようにしている。
+
+- `fixtures/auth.ts` の `authedPage` (と `login()` / `newAuthedContext()`) は、同意画面を**「あとで」にした状態**でページを開く
+  (`helpers/ai-consent.ts` の `snoozeAiConsent`。localStorage に期限を入れるだけで、サーバーには何も書かない)。
+- 同意画面そのものを試す spec (`ai-consent-first-use.spec.ts`) は、`fixtures/fresh-user.ts` の `regularUser` (毎回新しく作るユーザー) を使う。
+  `authedPage` を使うなら `test.use({ aiConsentSnoozed: false })` にする。
+- `fixtures/fresh-user.ts` の fixture と、`@playwright/test` の `page` を自分でログインさせる spec は、「あとで」にならない。
+  そこで AI を使う操作をするなら、`snoozeAiConsent(page.context())` を呼ぶか、出た画面の「あとで」(`data-testid="ai-consent-later"`) を押す。
 
 ## NPM スクリプト
 

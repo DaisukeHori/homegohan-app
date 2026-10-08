@@ -6,6 +6,8 @@
  * settings from leaking to the next user on a shared device.
  */
 
+import { AI_CONSENT_LATER_STORAGE_KEY } from './ai/consent-config';
+
 /**
  * localStorage keys that belong to a specific auth session.
  * These must be cleared when the user signs out.
@@ -21,6 +23,8 @@ const USER_SCOPED_KEYS: readonly string[] = [
   'shoppingListRegenerating',
   // Profile reminder dismissal
   'profile_reminder_dismissed',
+  // 外国の AI 事業者への提供の同意画面で「あとで」を選んだ期限 (T15 / #1154)
+  AI_CONSENT_LATER_STORAGE_KEY,
 ];
 
 /**

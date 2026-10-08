@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { resolveClassifyPhotoType } from "@/lib/ai/image-recognition";
 import { logToServer } from "@/lib/db-logger";
 import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
+import { useAiConsent } from "@/hooks/useAiConsent";
 import { formatLocalDate } from "@homegohan/shared";
 import type { CatalogDishMatch, CatalogProductSummary } from "@/types/catalog";
 import { motion, AnimatePresence } from "framer-motion";
@@ -285,6 +286,9 @@ export default function MealCaptureModal() {
   // ハンズオンの固定画像 (SAMPLE_MEAL_IMAGE.webPath) は blob: ではないので対象外。
   useRevokeBlobUrls(photoPreviews);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。写真を AI に送る前に、初回だけ出す。
+  // 「あとで」を選んでも解析は進める (同意の有無で止めない)
+  const { ensureAiConsent, consentModal } = useAiConsent();
 
   // 冷蔵庫解析結果
   const [fridgeIngredients, setFridgeIngredients] = useState<FridgeIngredient[]>([]);
@@ -869,6 +873,8 @@ export default function MealCaptureModal() {
     targetMode: Exclude<ClassifyResult, 'unknown'>,
     classification?: ClassificationResponse,
   ) => {
+    // 手動で種類を選び直した場合など、analyzeByMode を通らない経路でも確認する (同意済み・確認済みなら待たない)
+    await ensureAiConsent();
     switch (targetMode) {
       case 'fridge':
         await analyzeFridge();
@@ -888,6 +894,9 @@ export default function MealCaptureModal() {
 
   const analyzeByMode = async () => {
     if (photoFiles.length === 0) return;
+
+    // 初回だけ同意画面を出す。オートモードの種類判別 (classify-photo) も写真を送るので、その前に確認する
+    await ensureAiConsent();
 
     let targetMode: ClassifyResult = photoMode as ClassifyResult;
     let classification: ClassificationResponse | undefined;
@@ -2530,6 +2539,9 @@ export default function MealCaptureModal() {
             }}
           />
         )}
+
+        {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。初回だけ出る */}
+        {consentModal}
     </div>
   );
 }

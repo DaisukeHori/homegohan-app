@@ -54,6 +54,7 @@ import { StatsModal } from "./_components/modals/StatsModal";
 import { ServingsModal } from "./_components/modals/ServingsModal";
 import { AddMealSlotModal } from "./_components/modals/AddMealSlotModal";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
+import { useAiConsent } from "@/hooks/useAiConsent";
 import { AiMealModal } from "./_components/modals/AiMealModal";
 import { RegenerateMealModal } from "./_components/modals/RegenerateMealModal";
 import { ImageGenerateModal } from "./_components/modals/ImageGenerateModal";
@@ -643,6 +644,11 @@ const convertV4ProgressToUIFormat = (progress: {
 export default function WeeklyMenuPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。写真の解析・献立の生成・再生成・改善など、
+  // 利用者が AI にデータを送る操作の直前に、初回だけ出す。「あとで」を選んでも操作は進める (同意の有無で止めない)。
+  // V4GenerateModal (V4 生成) は、コンポーネントの中で同じ確認をする
+  const { ensureAiConsent, consentModal } = useAiConsent();
 
   // ハンズオンツアー sandbox モード: ?tour=1 クエリで V4GenerateModal を sandbox モードで開く
   const tourMode = searchParams.get('tour') === '1';
@@ -2904,6 +2910,7 @@ export default function WeeklyMenuPage() {
   const handleFridgePhotoSelected = async (file: File) => {
     setIsAnalyzingFridgePhoto(true);
     try {
+      await ensureAiConsent();
       const arrayBuffer = await file.arrayBuffer();
       const base64 = btoa(
         new Uint8Array(arrayBuffer).reduce((acc, byte) => acc + String.fromCharCode(byte), "")
@@ -3509,6 +3516,7 @@ export default function WeeklyMenuPage() {
 
   // Generate weekly menu with AI
   const handleGenerateWeekly = async () => {
+    await ensureAiConsent();
     const weekStartDate = formatLocalDate(weekStart);
     setIsGenerating(true);
     setActiveModal(null); // モーダルを閉じて一覧画面に戻る
@@ -3566,6 +3574,8 @@ export default function WeeklyMenuPage() {
   const handleGenerateSingleMeal = async () => {
     const { addMealKey, addMealDayIndex, selectedConditions, aiChatInput } = useFormDraftStore.getState();
     if (!addMealKey) return;
+
+    await ensureAiConsent();
 
     const dayDate = weekDates[addMealDayIndex]?.dateStr;
 
@@ -3732,6 +3742,8 @@ export default function WeeklyMenuPage() {
   // Regenerate meal with AI
   const handleRegenerateMeal = async () => {
     if (!regeneratingMeal || !currentPlan) return;
+
+    await ensureAiConsent();
     
     setIsRegenerating(true);
     setRegeneratingMealId(regeneratingMeal.id);
@@ -4207,6 +4219,7 @@ export default function WeeklyMenuPage() {
     setIsAnalyzingPhoto(true);
 
     try {
+      await ensureAiConsent();
       // 複数枚の写真をBase64に変換して送信
       const imageDataArray = await Promise.all(photoFiles.map(async (file) => {
         return new Promise<{ base64: string; mimeType: string }>((resolve) => {
@@ -4345,6 +4358,9 @@ export default function WeeklyMenuPage() {
     setIsGeneratingMealImage(true);
 
     try {
+      // 説明文と参考画像を Google の画像生成に送る前に、初回だけ同意画面を出す (「あとで」でも生成は進める)
+      await ensureAiConsent();
+
       const referenceImages = await Promise.all(
         imageReferenceFiles.map(async (file) => new Promise<{ base64: string; mimeType: string }>((resolve) => {
           const reader = new FileReader();
@@ -4445,6 +4461,8 @@ export default function WeeklyMenuPage() {
       alert('改善する食事を選択してください');
       return;
     }
+
+    await ensureAiConsent();
 
     setIsImprovingMeal(true);
 
@@ -6500,6 +6518,9 @@ export default function WeeklyMenuPage() {
         }}
         onImprove={handleImprove}
       />
+
+      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。初回だけ出る */}
+      {consentModal}
     </div>
   );
 }

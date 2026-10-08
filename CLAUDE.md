@@ -94,6 +94,10 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 
 `src/lib/build-nutrition-input.ts` に集約。栄養計算に必要な入力オブジェクトを組み立てる際は、このモジュールを経由する。直接構築しない。
 
+### 外国の AI 事業者への提供の同意画面
+
+利用者が AI にデータ (写真・健康診断の数値・相談文など) を送る操作を始める画面は、`useAiConsent()` (`src/hooks/useAiConsent.tsx`) を呼び、操作の先頭で `await ensureAiConsent()`、戻り値の `consentModal` を JSX に描画する (#1154)。同意していない利用者には、初回だけ同意画面 (`src/components/consent/AiDataConsentModal.tsx`) が出る。**同意の有無で AI の呼び出しを止めない**: 「あとで」でも、同意の状況が取れなくても、操作は進む (`ensureAiConsent()` は reject せず、戻り値で処理を分けない。強制は別タスク T18)。同意の記録・撤回は `POST /api/ai/consent` / `POST /api/ai/consent/revoke` だけが service role で書く (クライアントから `external_data_consents` には書けない)。提供先・文面・版・「あとで」の期限は `src/lib/ai/consent-config.ts` に集約する。文面を変えたら必ず `AI_CONSENT_VERSION` も変える (古い版に同意した人にもう一度確認する)。`tests/ai-consent-entry-points.test.ts` が、入口の呼び忘れ・描画し忘れと、確認の無い `fetch('/api/ai/...')` を検査する。e2e の `authedPage` は同意画面を「あとで」にした状態で始まる (`tests/e2e/helpers/ai-consent.ts`)。
+
 ### localStorage クリーンアップ
 
 `src/lib/user-storage.ts` の `clearUserScopedLocalStorage()` を使う。  

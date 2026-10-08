@@ -221,6 +221,26 @@ CREATE POLICY "ext_consent_no_delete"
   ON external_data_consents FOR DELETE USING (false);
 ```
 
+> **実装メモ (2026-10、T15 / #1154 / #1133 / #1169。マイグレーション `20261008150000_ai_consent_policy_version.sql`)**
+>
+> 上の DDL は設計時のもの。実装では次のとおり変えた。
+>
+> - **列を足した**: `policy_version text` (同意したときの文面の版。`src/lib/ai/consent-config.ts` の `AI_CONSENT_VERSION`)。
+>   文面を改めたら版を上げる。古い版 (または版を記録する前) に同意した人には、もう一度同意を確認する。
+> - **書き込みはサーバーだけ**: 同意・撤回は `POST /api/ai/consent` / `POST /api/ai/consent/revoke` が service role で書く。
+>   IP アドレスは `x-forwarded-for` の先頭の値、User-Agent はリクエストのヘッダーから取る (クライアントの申告は使わない)。
+>   クライアントからの INSERT は閉じた (`ext_consent_self_insert` を削除し、`authenticated` には SELECT だけを残した)。
+>   読めるのは自分の行だけ (`ext_consent_self_read`)。撤回は `revoked_at` を入れる。行は消さない。
+> - **「同意しない」は行にしない**: 有効な行は (user_id, provider) ごとに 1 件の部分ユニーク索引があり、拒否の行があると後の同意が作れなくなる。
+>   画面の「あとで」は、ブラウザの localStorage に 24 時間の期限を持つだけで、サーバーには何も記録しない。
+> - **事業者は 3 社**: `xai` / `google` / `openai`。`anthropic` は現在 AI の呼び出しに使っていないので同意の対象にしていない。
+>   Perplexity (栄養推定の Edge Function が料理名・食材・量だけを送る) は、弁護士の判断が出るまで対象にしていない
+>   (加えるなら `provider` の CHECK の変更が先に要る)。
+> - **強制は未実装 (T18)**: §4.2 の「同意しない場合は AI 機能を使えない」は、まだ入れていない。いまは同意画面で「同意する」「あとで」の
+>   どちらを選んでも、利用者が始めた AI の操作は進む。同意の有無で AI の呼び出しを止める処理は別タスクで入れる。
+> - 同意画面の文面は、弁護士の確認が済むまで**仮**。画面は `src/components/consent/AiDataConsentModal.tsx`、
+>   確認と撤回のページは `/settings/ai-consent`。
+
 ---
 
 ## 5. 漏洩 72 時間報告義務

@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { todayLocal } from "@/lib/date-utils";
 import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
+import { useAiConsent } from "@/hooks/useAiConsent";
 import {
   Camera, Upload, X, ChevronDown, ChevronUp, Loader2,
   CheckCircle2, AlertTriangle, Sparkles, ArrowLeft, Activity,
@@ -119,6 +120,10 @@ export default function NewHealthCheckupPage() {
   // #1055 UX3-11: upload/confirm から離脱する際、入力済みデータがあれば確認する
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。健診結果の画像の読み取り (OCR) と、保存時の AI コメントの作成の前に、
+  // 初回だけ出す。「あとで」を選んでも読み取り・保存は進める (同意の有無で止めない)
+  const { ensureAiConsent, consentModal } = useAiConsent();
+
   const supabase = createClient();
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -152,6 +157,8 @@ export default function NewHealthCheckupPage() {
     setError(null);
 
     try {
+      await ensureAiConsent();
+
       // 1. ファイルをBase64に変換 (画像・PDF 共通)
       const base64 = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -268,6 +275,9 @@ export default function NewHealthCheckupPage() {
     setError(null);
 
     try {
+      // 保存すると、数値を AI に送って個別レビューを作る。画像を使わず手入力した人も、ここで初回の確認を受ける
+      await ensureAiConsent();
+
       // フォームデータを数値に変換
       const numericFields = [
         'height', 'weight', 'bmi', 'waist_circumference',
@@ -839,6 +849,9 @@ export default function NewHealthCheckupPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。初回だけ出る */}
+      {consentModal}
     </div>
   );
 }

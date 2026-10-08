@@ -3,6 +3,7 @@ import * as fs from "fs";
 import { config as dotenvConfig } from "dotenv";
 import * as path from "path";
 import { requireExistingUserPassword } from "../helpers/credentials";
+import { snoozeAiConsent } from "../helpers/ai-consent";
 import {
   refreshSupabaseSession,
   getStorageStatePath,
@@ -513,7 +514,15 @@ async function doLogin(page: Page, baseURL: string, workerIndex: number): Promis
  * worker ごとの mutex (in-memory Promise キャッシュ) 付きのログイン関数。
  * 同一 worker 内で複数テストが同時に呼んでも 1 回しか signin しない。
  */
-export async function login(page: Page, baseURL = "", workerIndex = 0): Promise<void> {
+export async function login(
+  page: Page,
+  baseURL = "",
+  workerIndex = 0,
+  options: { aiConsentSnoozed?: boolean } = {},
+): Promise<void> {
+  // 外国の AI 事業者への提供の同意画面 (T15) で AI の操作が止まらないよう、既定では「あとで」にした状態で始める
+  if (options.aiConsentSnoozed !== false) await snoozeAiConsent(page.context());
+
   const existing = workerLoginPromises.get(workerIndex);
   if (existing) {
     // 既に進行中のログイン Promise を待つ
@@ -545,17 +554,28 @@ export async function newAuthedContext(
 ): Promise<BrowserContext> {
   const storageStatePath = resolveStorageStatePath(workerIndex);
   const storagePath = fs.existsSync(storageStatePath) ? storageStatePath : undefined;
-  return browser.newContext({
+  const context = await browser.newContext({
     storageState: storagePath,
     ...extraOptions,
   });
+  // 外国の AI 事業者への提供の同意画面 (T15) で AI の操作が止まらないよう、「あとで」にした状態で始める
+  await snoozeAiConsent(context);
+  return context;
 }
 
 type AuthFixtures = {
   authedPage: Page;
+  /**
+   * 外国の AI 事業者への提供の同意画面 (T15 / #1154) を「あとで」にした状態でページを開く (既定 true)。
+   * 同意画面は、同意していない利用者が AI を初めて使うときに出て、選ぶまで操作が止まる。
+   * 同意画面そのものを試す spec だけ test.use({ aiConsentSnoozed: false }) にする。
+   */
+  aiConsentSnoozed: boolean;
 };
 
 export const test = base.extend<AuthFixtures>({
+  aiConsentSnoozed: [true, { option: true }],
+
   /**
    * B: worker 別 fresh login fixture。
    *
@@ -566,9 +586,10 @@ export const test = base.extend<AuthFixtures>({
    * Speed cost: 1 worker あたり +~3s (Supabase REST 往復) だが、
    * auth 失敗による retry > timeout > リトライ連鎖より大幅に速い。
    */
-  authedPage: async ({ page, baseURL }, use) => {
+  authedPage: async ({ page, baseURL, aiConsentSnoozed }, use) => {
     const workerIndex = test.info().workerIndex;
     const resolvedBase = baseURL ?? "";
+    if (aiConsentSnoozed) await snoozeAiConsent(page.context());
     const { email, password } = getUserCredentials(workerIndex);
 
     // password grant で毎回 fresh なセッションを取得 (refresh_token race を回避)
@@ -576,7 +597,7 @@ export const test = base.extend<AuthFixtures>({
     if (!cookieLoginOk) {
       // フォールバック: storageState ベースの login (既存フロー)
       console.warn(`[auth fixture] worker${workerIndex}: fresh login 失敗、storageState フォールバックを使用`);
-      await login(page, resolvedBase, workerIndex);
+      await login(page, resolvedBase, workerIndex, { aiConsentSnoozed });
     }
 
     await use(page);

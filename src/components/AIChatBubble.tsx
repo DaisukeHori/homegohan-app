@@ -12,6 +12,7 @@ import {
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { notifyMenuGenerated } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
+import { useAiConsent } from "@/hooks/useAiConsent";
 import { todayLocal, parseLocalDate, formatLocalDate } from "@/lib/date-utils";
 // AI 応答を HTML にして dangerouslySetInnerHTML へ渡すときは、必ずこの関数を通す (#1169)
 import { parseMarkdown } from "@/lib/markdown-lite";
@@ -102,6 +103,10 @@ export default function AIChatBubble() {
   const isNativeApp = useNativeAppMode();
   const [isMounted, setIsMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。初回の送信の直前だけ出す。
+  // 「あとで」を選んでも送信は進める (同意の有無で止めない)。
+  // この部品は全ページに常駐するので、同意の状況は相談の画面を開くまで取りにいかない (毎ページの読み込みで API を呼ばない)
+  const { ensureAiConsent, consentModal } = useAiConsent({ prefetch: isOpen });
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -419,6 +424,9 @@ export default function AIChatBubble() {
       },
     ]);
 
+    // 初回だけ同意画面を出す。選択を待つ時間をタイムアウトに含めないよう、タイマーを始める前に待つ
+    await ensureAiConsent();
+
     // クライアント側タイムアウト（28秒）: サーバーが応答しない場合にユーザーへ通知
     const clientAbortController = new AbortController();
     const clientTimeoutId = setTimeout(() => clientAbortController.abort(), 28000);
@@ -580,6 +588,9 @@ export default function AIChatBubble() {
   const executeAction = async (actionId: string, messageId: string) => {
     setExecutingActionId(messageId);
     try {
+      // 提案の実行は、サーバーで献立の生成などの AI の処理を始めることがある。初回だけ同意画面を出す (「あとで」でも実行は進める)
+      await ensureAiConsent();
+
       // まずアクションログを取得
       const res = await fetch(`/api/ai/consultation/actions/${messageId}/execute`, {
         method: 'POST',
@@ -710,6 +721,9 @@ export default function AIChatBubble() {
     if (isGeneratingDayMenu) return;
 
     setShowDayMenuModal(false);
+
+    // 初回だけ同意画面を出す (「あとで」でも生成は進める)
+    await ensureAiConsent();
 
     // 日付をフォーマット
     const dateObj = new Date(selectedDate);
@@ -1015,6 +1029,8 @@ export default function AIChatBubble() {
                               { id: tempUserMsgId, role: 'user', content: prompt, createdAt: new Date().toISOString() },
                               { id: tempAiMsgId, role: 'assistant', content: '', createdAt: new Date().toISOString(), isStreaming: true },
                             ]);
+                            // 初回だけ同意画面を出す (「あとで」でも送信は進める)
+                            await ensureAiConsent();
                             const clientAbortController = new AbortController();
                             const clientTimeoutId = setTimeout(() => clientAbortController.abort(), 28000);
                             try {
@@ -1406,6 +1422,9 @@ export default function AIChatBubble() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。初回だけ出る */}
+      {consentModal}
 
       {/* マークダウン用スタイル */}
       <style jsx global>{`

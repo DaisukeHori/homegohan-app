@@ -11,6 +11,7 @@ import { createClient } from "@/lib/supabase/client";
 import { userScopedStoragePath } from "@/lib/storage-paths";
 import { BackButton } from "@/components/ui/shared/BackButton";
 import { THEME_LABELS_REQUEST, todayLocal } from "@homegohan/shared";
+import { useAiConsent } from "@/hooks/useAiConsent";
 
 // ステップ定義
 const STEPS = [
@@ -27,6 +28,9 @@ export default function MenuRequestWizard() {
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。冷蔵庫の写真の解析と献立の生成依頼の前に、初回だけ出す。
+  // 「あとで」を選んでも進める (同意の有無で止めない)
+  const { ensureAiConsent, consentModal } = useAiConsent();
   
   const [formData, setFormData] = useState({
     imageUrl: '',
@@ -62,6 +66,9 @@ export default function MenuRequestWizard() {
         .getPublicUrl(fileName);
 
       setFormData(p => ({ ...p, imageUrl: publicUrl }));
+
+      // 写真を AI に送る前に、初回だけ同意画面を出す
+      await ensureAiConsent();
 
       // Call AI analysis API
       const res = await fetch('/api/ai/analyze-fridge', {
@@ -103,6 +110,7 @@ export default function MenuRequestWizard() {
   const handleSubmit = async () => {
     setLoading(true);
     try {
+      await ensureAiConsent();
       const res = await fetch('/api/ai/menu/weekly/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -454,6 +462,9 @@ export default function MenuRequestWizard() {
 
         </AnimatePresence>
       </div>
+
+      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。初回だけ出る */}
+      {consentModal}
     </div>
   );
 }

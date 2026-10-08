@@ -9,6 +9,7 @@ import { ArrowLeft, Camera, Plus, Trash2, RefreshCw, Package, AlertCircle, X, Pe
 import { PantryItemForm, emptyPantryItemFormValues, type PantryItemFormValues } from "@/components/pantry/PantryItemForm";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
+import { useAiConsent } from "@/hooks/useAiConsent";
 
 const colors = {
   bg: "#FAF9F7",
@@ -47,6 +48,9 @@ interface AnalysisResult {
 export default function PantryPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。冷蔵庫の写真を AI に送る前に、初回だけ出す。
+  // 「あとで」を選んでも解析は進める (同意の有無で止めない)
+  const { ensureAiConsent, consentModal } = useAiConsent();
   const [items, setItems] = useState<PantryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
@@ -95,6 +99,8 @@ export default function PantryPage() {
     setAnalyzing(true);
 
     try {
+      await ensureAiConsent();
+
       // Base64に変換してAPIへ送信
       const arrayBuffer = await file.arrayBuffer();
       const base64 = btoa(
@@ -558,6 +564,9 @@ export default function PantryPage() {
           }}
         />
       )}
+
+      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。初回だけ出る */}
+      {consentModal}
     </div>
   );
 }
