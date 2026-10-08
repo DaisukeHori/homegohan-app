@@ -4,35 +4,23 @@
  * operator/02-api-spec.md §17 / operator/04-plan-management.md §3.3 準拠
  * 権限: super_admin のみ
  *
- * #1212 修正: 従来は applies_to をパースしてレスポンスにエコーバックするだけで集計に
- * 使っておらず、new_only (新規契約のみ。既存契約は不変) を選んでも「全既存契約者 x 価格差」を
- * MRR 影響として返していた (super_admin が収益への影響を見誤る)。
- * 適用範囲ごとに既存契約への影響を切り分ける:
- *   - new_only    : 既存契約は現行価格のまま。personal_subscriptions を集計せず 0 件 / 0 円
- *   - on_renewal  : 既存契約は次回更新時から新価格 (effective_timing = 'next_renewal')
- *   - immediately : 既存契約へ即時に新価格 (effective_timing = 'immediate')
+ * #1102 (オーナー判断 2026-10-08): 価格変更は新規契約だけに適用する。既存の契約者の請求額は変わらない。
+ * そのため、この API が返す「既存契約への影響」は常にゼロ (新規契約のみ)。personal_subscriptions は集計しない。
+ *   - applies_to は new_only だけ (省略時も new_only)。on_renewal / immediately は 400 (OP_INVALID_QUERY)
+ *   - affected_subscription_count / affected_mrr_change_jpy は常に 0、affected_user_sample は空、effective_timing は 'none'
+ * 返す形は従来のまま変えていない (画面の型と互換)。新しい価格が新規契約にだけ適用されることを確認するための API。
  *
- * 注意: on_renewal / immediately を実際に既存サブスクリプションへ反映する処理は未実装
- * (stripe-price-sync は applies_to を受け取るだけ。#1102)。この API が返すのは「反映された場合」の
- * 概算であり、personal_subscriptions に interval 列が無いため年額契約も月額差で計算する。
+ * 経緯: #1212 で、applies_to ごとに既存契約への影響 (on_renewal / immediately は対象契約数 x 価格差の MRR 変化) を切り分けていたが、
+ * 既存サブスクリプションへ新価格を反映する処理は実装されていなかった (選んでも請求額は変わらない)。#1102 でその選択肢ごと外した。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
-import { PriceImpactQuerySchema, type PriceImpactQueryInput } from '@/lib/super-admin/plans-schemas';
+import { PriceImpactQuerySchema } from '@/lib/super-admin/plans-schemas';
 
 type RouteContext = { params: { id: string } };
-
-type AppliesTo = NonNullable<PriceImpactQueryInput['applies_to']>;
-
-/** 既存契約へ新価格が反映されるタイミング (new_only は既存契約に反映されない) */
-const EFFECTIVE_TIMING: Record<AppliesTo, 'none' | 'next_renewal' | 'immediate'> = {
-  new_only: 'none',
-  on_renewal: 'next_renewal',
-  immediately: 'immediate',
-};
 
 export async function GET(request: NextRequest, { params }: RouteContext) {
   try {
@@ -46,16 +34,18 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     });
 
     if (!queryResult.success) {
+      // issues 配列の生 JSON ではなく、最初の issue の message だけを返す (price-change と同じ。details には全 issues を含める)
+      const firstIssueMessage = queryResult.error.issues[0]?.message ?? 'クエリが不正です';
       return NextResponse.json(
-        { error: { code: 'OP_INVALID_QUERY', message: queryResult.error.message } },
+        { error: { code: 'OP_INVALID_QUERY', message: firstIssueMessage, details: queryResult.error.issues } },
         { status: 400 }
       );
     }
 
-    // プランを取得
+    // プランを取得 (存在確認と、現行の月額を返すため)
     const { data: plan, error: planErr } = await supabase
       .from('subscription_plans')
-      .select('id, plan_key, monthly_price_jpy, plan_type')
+      .select('id, monthly_price_jpy')
       .eq('id', params.id)
       .single();
 
@@ -66,51 +56,19 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       );
     }
 
-    // applies_to 省略時は new_only (UI の既定値・従来のエコーバック値と同じ)
-    const appliesTo: AppliesTo = queryResult.data.applies_to ?? 'new_only';
-
     const currentMonthlyPrice = plan.monthly_price_jpy ?? 0;
     const newMonthlyPrice = queryResult.data.new_monthly_price_jpy ?? currentMonthlyPrice;
 
-    // new_only は既存契約に一切影響しない (operator/04-plan-management.md §3.3 の表) ため、
-    // personal_subscriptions を集計せず 0 件 / 0 円のまま返す (#1212)
-    let affectedSubscriptionCount = 0;
-    let affectedUserSample: Array<{ user_id: string }> = [];
-
-    if (appliesTo !== 'new_only') {
-      // 影響する personal_subscriptions を集計 (operator/04-plan-management.md §3.3 SQL 準拠)。
-      // count は limit に関わらず条件に合う全件数、data は先頭 5 件のサンプル。
-      const { data: impactData, count, error: impactErr } = await supabase
-        .from('personal_subscriptions')
-        .select('id, user_id', { count: 'exact' })
-        .eq('plan_key', plan.plan_key)
-        .in('status', ['active', 'trialing', 'paused'])
-        .not('stripe_subscription_id', 'is', null)
-        .limit(5);
-
-      if (impactErr) {
-        console.error('[super-admin/plans/[id]/price-impact GET]', impactErr);
-        return NextResponse.json(
-          { error: { code: 'OP_DB_ERROR', message: impactErr.message } },
-          { status: 500 }
-        );
-      }
-
-      affectedSubscriptionCount = count ?? 0;
-      affectedUserSample = (impactData ?? []).map((s) => ({ user_id: s.user_id }));
-    }
-
-    const affectedMrrChange = (newMonthlyPrice - currentMonthlyPrice) * affectedSubscriptionCount;
-
+    // 新規契約のみ: 既存契約は現行価格のまま。影響する契約も、MRR の変化も無い (#1102)
     return NextResponse.json({
       data: {
-        affected_subscription_count: affectedSubscriptionCount,
-        affected_mrr_change_jpy: affectedMrrChange,
+        affected_subscription_count: 0,
+        affected_mrr_change_jpy: 0,
         current_monthly_price_jpy: currentMonthlyPrice,
         new_monthly_price_jpy: newMonthlyPrice,
-        applies_to: appliesTo,
-        effective_timing: EFFECTIVE_TIMING[appliesTo],
-        affected_user_sample: affectedUserSample,
+        applies_to: 'new_only',
+        effective_timing: 'none',
+        affected_user_sample: [],
       },
     });
   } catch (err) {
