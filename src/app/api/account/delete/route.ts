@@ -1,18 +1,16 @@
-import { createClient } from '@/lib/supabase/server';
-import { createClient as createAdminClient } from '@supabase/supabase-js';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { accountDeletionFailure, accountDeletionHttp, deleteAccount } from '@/lib/account-deletion';
 import { NextResponse } from 'next/server';
 
-function getSupabaseAdmin() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceKey) {
-    throw new Error('Supabase admin env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)');
-  }
-  return createAdminClient(url, serviceKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
+// Storage のファイル削除に時間がかかることがある (src/lib/account-deletion-storage.ts の上限 45 秒より長くしておく)
+export const maxDuration = 60;
 
+/**
+ * POST /api/account/delete
+ * ログイン中の本人のアカウントを削除する (即時削除。取り消せない)。
+ * 本体は src/lib/account-deletion.ts (#1175)。ここは入口の確認 (401 / 400) と、結果の HTTP への変換だけを行う。
+ */
 export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -23,85 +21,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'confirm is required' }, { status: 400 });
   }
 
-  const userId = user.id;
+  const requestId = generateRequestId();
 
+  let admin: ReturnType<typeof getSupabaseAdmin>;
   try {
-    const supabaseAdmin = getSupabaseAdmin();
-
-    // P0 Critical Fix F12: 削除前に owner/representative チェック
-    // organizations の owner であれば削除不可 (譲渡または解散が必要)
-    const { data: ownedOrgs } = await supabaseAdmin
-      .from('organizations')
-      .select('id, name')
-      .eq('owner_id', userId)
-      .limit(1);
-    if (ownedOrgs && ownedOrgs.length > 0) {
-      return NextResponse.json(
-        {
-          error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER',
-          message: '組織のオーナーです。先にオーナーを譲渡するか組織を解散してください。',
-          organization: ownedOrgs[0],
-        },
-        { status: 409 },
-      );
-    }
-
-    // family_groups の representative であれば削除不可 (譲渡または解散が必要)
-    const { data: representedFamilies } = await supabaseAdmin
-      .from('family_groups')
-      .select('id, name')
-      .eq('representative_id', userId)
-      .limit(1);
-    if (representedFamilies && representedFamilies.length > 0) {
-      return NextResponse.json(
-        {
-          error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE',
-          message: '家族グループの代表者です。先に代表者を譲渡するか家族グループを解散してください。',
-          family_group: representedFamilies[0],
-        },
-        { status: 409 },
-      );
-    }
-
-    // CASCADEされない/NO ACTION な参照を先に解消
-    await supabaseAdmin.from('ai_content_logs').delete().eq('user_id', userId);
-
-    // ★ Critical 4: family_invites.invited_by を NULL 化 (ON DELETE SET NULL 相当の事前処理)
-    await supabaseAdmin.from('family_invites').update({ invited_by: null }).eq('invited_by', userId);
-
-    // 管理系の参照（通常ユーザーは対象外だが、消せない状態を防ぐためnull化）
-    await supabaseAdmin.from('admin_audit_logs').update({ admin_id: null }).eq('admin_id', userId);
-    await supabaseAdmin.from('admin_user_notes').update({ admin_id: null }).eq('admin_id', userId);
-    await supabaseAdmin.from('announcements').update({ created_by: null }).eq('created_by', userId);
-    await supabaseAdmin.from('moderation_flags').update({ resolved_by: null }).eq('resolved_by', userId);
-    await supabaseAdmin.from('recipe_flags').update({ reporter_id: null }).eq('reporter_id', userId);
-    await supabaseAdmin.from('recipe_flags').update({ reviewed_by: null }).eq('reviewed_by', userId);
-    await supabaseAdmin.from('organization_challenges').update({ created_by: null }).eq('created_by', userId);
-    // Round 3 W-NEW-2: created_by → invited_by に統一 (organization_invites の正式カラム名)
-    await supabaseAdmin.from('organization_invites').update({ invited_by: null }).eq('invited_by', userId);
-    await supabaseAdmin.from('system_settings').update({ updated_by: null }).eq('updated_by', userId);
-    await supabaseAdmin.from('departments').update({ manager_id: null }).eq('manager_id', userId);
-
-    // #1039 F3-09: org メンバーなら削除前にライセンス席を解放 (used_licenses リーク防止)
-    // leave_org/remove_org_member を経由しない削除フローのため専用 RPC で解放する。
-    const { error: releaseError } = await supabaseAdmin.rpc('release_user_membership', {
-      p_user_id: userId,
-    });
-    if (releaseError) {
-      // ライセンス解放の失敗でアカウント削除自体は止めない (ベストエフォート、要手動リコンサイル)
-      console.error('[account/delete] release_user_membership failed', releaseError);
-    }
-
-    // Authユーザー削除（public側はFKでCASCADE/SET NULLされる）
-    const { error: delError } = await supabaseAdmin.auth.admin.deleteUser(userId);
-    if (delError) throw delError;
-
-    return NextResponse.json({ success: true });
-  } catch (error: any) {
-    console.error('[account/delete] error', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    // 本人をログインセッションで確認したあとにだけ service_role の client を作る
+    admin = getSupabaseAdmin();
+  } catch (error) {
+    createLogger('POST /api/account/delete', requestId)
+      .withUser(user.id)
+      .error('account deletion failed: service role client is not configured', error, { step: 'init', request_id: requestId });
+    const { status, body: failureBody } = accountDeletionHttp(accountDeletionFailure(requestId, 'init'));
+    return NextResponse.json(failureBody, { status });
   }
+
+  const result = await deleteAccount({ userId: user.id, admin, requestId });
+  const { status, body: responseBody } = accountDeletionHttp(result);
+  return NextResponse.json(responseBody, { status });
 }
-
-
-

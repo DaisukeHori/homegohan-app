@@ -363,12 +363,14 @@ Step 5: org_admin に手順案内
   → 削除をブロックする条件 (409。先に譲渡または解散してもらう):
      - 組織の owner         → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
      - 家族グループの代表者  → ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE
-  → FK で消えない参照を解消 (ai_content_logs の削除、invited_by / created_by 等の NULL 化)
-  → ライセンス席を解放 (RPC release_user_membership)
+  → 生のメールアドレスを残す記録を伏せ、本人の非公開レシピを消す (RPC prepare_account_deletion。メール配信ログ・問い合わせ・招待)
+  → ライセンス席を解放 (RPC release_user_membership。失敗しても続ける)
+  → Storage のファイルを削除 (meal_photos / fridge-images / health-checkups の <user_id>/ 以下など)
   → auth.users を削除 (auth.admin.deleteUser)
      - 旧設計の「email を deleted+...@example.com に書き換える匿名化」はしない。行ごと削除する
-     - public 側は FK の ON DELETE CASCADE / SET NULL で削除・匿名化される
+     - public 側は FK の ON DELETE CASCADE / SET NULL で削除・匿名化される (本人だけの記録は削除、サポート・会計の記録は行を残して紐づけを外す)
   → 200 { success: true }。クライアントはサインアウトする
+  → 途中で失敗したら 500 ACCOUNT_DELETE_FAILED (request_id つき)。アカウントは残り、もう一度実行できる
 
 削除後:
   - 取り消し・復旧はできない (画面にも明記している)
@@ -377,8 +379,7 @@ Step 5: org_admin に手順案内
 
 まだ無いもの (追加予定):
   - 削除前の確認メールと削除完了メール (#1152、作業計画 T20)
-  - Storage の写真・Stripe の顧客/サブスクリプション・送信ログの生メールアドレスの後始末と、
-    途中で失敗したときの耐性 (#1175、作業計画 T11)
+  - Stripe の顧客/サブスクリプションの後始末 (影響範囲の調査は cross/08-legal-compliance.md §19)
 ```
 
 ### 9.2 運営が関わる場合 (サポート経由の依頼)
@@ -699,15 +700,17 @@ sequenceDiagram
   alt owner または代表者
     API-->>App: 409 ACCOUNT_DELETE_BLOCKED_ORG_OWNER / _FAMILY_REPRESENTATIVE
   else 削除できる
-    API->>DB: FK で消えない参照を解消 (ai_content_logs の削除、invited_by 等の NULL 化)
+    API->>DB: RPC prepare_account_deletion (生のメールアドレスを残す記録を伏せる・非公開レシピを消す)
     API->>DB: RPC release_user_membership (ライセンス席の解放)
+    API->>DB: Storage のファイルを削除
     API->>DB: auth.admin.deleteUser (public 側は FK の CASCADE / SET NULL)
     API-->>App: 200 { success: true }
     App->>App: サインアウトして、ログイン前の画面へ戻る
   end
+  Note over API,DB: 途中で失敗したら 500 ACCOUNT_DELETE_FAILED (アカウントは残り、再実行できる)
 
   Note over API,DB: 30 日の待機と月次バッチはない (2026-10-08 オーナー判断)
-  Note over API,DB: 削除前の確認メール・削除完了メール (T20) と、Storage / Stripe の後始末 (T11) は今後追加
+  Note over API,DB: 削除前の確認メール・削除完了メール (T20) と、Stripe の後始末は今後追加
 ```
 
 ## 14. エラーハンドリング
@@ -715,7 +718,7 @@ sequenceDiagram
 | シナリオ | 対処 |
 |---------|------|
 | PITR 復元失敗 | Supabase サポートに即時連絡、Cold Backup 復元に切替 |
-| 退会 API が途中で失敗 (FK 違反など) | 500 を返し、`auth.users` は消えない。手前の後始末 (削除・NULL 化) は何度流しても結果が変わらない。FK 違反が原因なら再実行しても同じ理由で失敗するため、運営が原因のテーブルを特定して対処する (恒久対策は #1175、作業計画 T11) |
+| 退会 API が途中で失敗 | 500 ACCOUNT_DELETE_FAILED (応答の `request_id`) を返し、`auth.users` は消えない。手前の後始末 (メールアドレスを伏せる・Storage の削除) は何度流しても結果が変わらないので、再実行できる。原因は `app_logs` の `request_id` で探す (`function_name = 'lib/account-deletion'`、metadata の `step` が失敗した段階)。`auth.users` を指す NO ACTION の外部キーは無く (#1175)、外部キー違反では失敗しない |
 | bulk-revoke 途中失敗 | `org_license_assignments` の revoked_at で冪等化 → 再実行可能 |
 | reconcile 不一致 > 100 件 | Slack #incident に escalate + 手動調査 |
 
