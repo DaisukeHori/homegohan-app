@@ -765,7 +765,16 @@ test('BAN action creates audit_log entry visible to super_admin', async ({
 - Better Stack: 新規追加 (`@logtail/node`)
 - Status Page: Better Stack の Status Page 機能を利用
 
-## 15. プロダクト Analytics イベント (PostHog)
+## 15. プロダクト Analytics イベント (PostHog) 【不採用】
+
+> **【不採用】オーナー判断 (2026-10-08, #1166)**: PostHog による利用状況の計測は採用しない。
+> 本節 (§15.1〜§15.10) は 2026-05-08 時点の旧設計で、**実装の根拠にしない**。経緯の記録として残している。
+>
+> - コードからは、PostHog の SDK (`posthog-js` / `posthog-react-native`)、初期化コード、`PostHogProvider`、CSP の送信先許可、環境変数 (`NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST` / `EXPO_PUBLIC_POSTHOG_KEY`) の読み取りと設定例を取り除いた。再び import すると `tests/posthog-not-adopted-contract.test.ts` が落ちる。Vercel・EAS に入っている値の削除と、PostHog 側のキーの失効はオーナー作業 (`docs/operations/posthog-dashboard.md` の「後始末」)。
+> - `packages/handson-tour-shared/src/analytics.ts` の `fireAnalytics` は残してあるが、送り先 (adapter) を誰も注入していないので何も送らない。イベント名・プロパティの定義 (§15.3〜§15.4) は、将来計測を足すときの出発点として残す。
+> - §15.6 の KPI 集計と §15.8 のダッシュボード公開は PostHog 前提のため実施しない。運用手順 `docs/operations/posthog-dashboard.md` も同じく不採用。
+> - `cookie_consents` テーブルは残す (migration は変えない)。同意バナーの扱い (cross/08 §12〜§13) は、この判断とは別に決める。
+> - 利用状況の数字が必要になったときは、先に「何を・どこへ・どの同意で」送るかを決め直してから設計する。PostHog を戻す場合は、オーナーの判断を取り直す。
 
 ### 15.1 配信基盤の確定 (2026-05-08)
 

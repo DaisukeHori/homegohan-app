@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Sans_JP, Noto_Serif_JP } from "next/font/google";
-import { PostHogProvider } from "@/components/PostHogProvider";
 import "./globals.css";
 
 const notoSans = Noto_Sans_JP({ 
@@ -135,9 +134,7 @@ export default function RootLayout({
         <a href="#main-content" className="skip-link">
           メインコンテンツへスキップ
         </a>
-        <PostHogProvider>
-          <div id="main-content">{children}</div>
-        </PostHogProvider>
+        <div id="main-content">{children}</div>
       </body>
     </html>
   );

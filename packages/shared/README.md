@@ -8,7 +8,7 @@ DOM、React Native、Supabase など、実行環境に依存するコードは�
 | カテゴリ | 内容 | 例 |
 |--------|------|-----|
 | 型 | ドメイン定数型 / DB 型 | `DishRole`, `MealType`, `Tables<"users">` |
-| 定数 | 表示ラベル・フェーズ定義、Web / モバイルで共通にする既定値 | `MEAL_LABELS`, `PROGRESS_PHASES`, `NUTRIENT_DEFINITIONS`, `POSTHOG_DEFAULT_HOST` |
+| 定数 | 表示ラベル・フェーズ定義 | `MEAL_LABELS`, `PROGRESS_PHASES`, `NUTRIENT_DEFINITIONS` |
 | util | 純粋関数（副作用なし） | `formatLocalDate`, `todayLocal`, `getDishConfig` |
 | 栄養プランナー | PFC 計算・目標予測 | `deriveMacroTargets`, `estimateGoalProjection` |
 | Supabase 型 | テーブル / 列の TS 型 | `Database`, `Tables<T>`, `TablesInsert<T>` |
@@ -42,7 +42,6 @@ type NewMeal = TablesInsert<"planned_meals">;
 | `nutrition-constants.ts` | `NUTRIENT_DEFINITIONS`, `getNutrientDefinition`, `calculateDriPercentage` |
 | `theme-labels.ts` | `THEME_LABELS_REQUEST`, `AI_CONDITIONS` |
 | `progress-phases.ts` | `PROGRESS_PHASES`, `ULTIMATE_PROGRESS_PHASES`, `SHOPPING_LIST_PHASES` |
-| `posthog-defaults.ts` | `POSTHOG_DEFAULT_HOST` (PostHog の既定の送信先。Web の `src/lib/posthog.ts` とモバイルが import する。素の Node ESM の `next.config.mjs` と `.env.example` には同じ値のリテラルが残り、`src/__tests__/config/posthog-default-host.test.ts` が一致を検査する) |
 | `database.types.ts` | `Database`, `Tables`, `TablesInsert`, `TablesUpdate`, `Enums`, `CompositeTypes`, `DatabaseConstants` |
 
 ## Supabase 型の再生成

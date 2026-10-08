@@ -6,7 +6,6 @@ export * from './mode-config';
 export * from './progress-phases';
 export * from './date-utils';
 export * from './nutrition-planner';
-export * from './posthog-defaults';
 export type {
   Json,
   Database,
