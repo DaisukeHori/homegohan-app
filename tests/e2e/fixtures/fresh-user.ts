@@ -349,6 +349,17 @@ type FreshUserFixtures = {
   tourPendingUser: Page;
 
   /**
+   * 通常ユーザー (roles=['user'] + onboarding 完了)。管理系 API が「権限不足 = 403」を返すことの確認用。
+   * - createFreshUser + user_profiles に roles=['user'] / onboarding 完了 を UPSERT
+   * - session inject 済み
+   * - afterAll で admin.deleteUser (cascade で user_profiles も削除)
+   *
+   * onboardingPendingUser は user_profiles の行が無く、requireRole が AUTH_PROFILE_NOT_FOUND (401) で
+   * 弾くため、403 を確かめるテストには使えない (#847)。
+   */
+  regularUser: Page;
+
+  /**
    * admin ロールを持つ fresh user。
    * - createFreshUser + user_profiles に roles=['admin'] / onboarding 完了 を UPSERT
    * - session inject 済み
@@ -506,6 +517,39 @@ export const test = base.extend<FreshUserFixtures>({
       }
 
       // session inject
+      await injectSession(page, user.email, user.password);
+      await use(page);
+    } finally {
+      // admin.deleteUser で cascade 削除 (user_profiles も消える)
+      await cleanupFreshUser(supabaseAdmin, user.id);
+    }
+  },
+
+  /**
+   * regularUser: 通常ユーザー (roles=['user'] + onboarding 完了)。
+   *
+   * 1. admin.createUser (email_confirm: true) で即時ユーザー作成
+   * 2. user_profiles に roles=['user'] / onboarding 完了 を UPSERT
+   *    (service_role REST API 経由 — RLS をバイパス)
+   * 3. session inject
+   * 4. afterAll: admin.deleteUser (cascade で user_profiles も削除)
+   *
+   * 管理系 API (requireRole(['admin', ...])) はロール不足を ForbiddenError (403) で返す。
+   * user_profiles が無いユーザー (onboardingPendingUser) は AuthError (401) になるため、
+   * 「認証済みだが権限が無い」状態を作るにはこの fixture を使う。
+   */
+  regularUser: async ({ page }, use) => {
+    const supabaseAdmin = getAdminClient();
+    const user = await createFreshUser(supabaseAdmin, {
+      emailPrefix: "e2e-fresh-regular",
+    });
+
+    try {
+      await upsertUserProfile(user.id, {
+        nickname: "E2E Regular User",
+        roles: ["user"],
+      });
+
       await injectSession(page, user.email, user.password);
       await use(page);
     } finally {

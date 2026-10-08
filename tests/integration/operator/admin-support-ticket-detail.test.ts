@@ -141,6 +141,16 @@ afterAll(async () => {
     await supabaseAdmin.from('support_ticket_messages').delete().in('ticket_id', createdTicketIds);
     await supabaseAdmin.from('support_tickets').delete().in('id', createdTicketIds);
   }
+
+  // #1183: RESEND_API_KEY がある環境で流すと、顧客向け返信の送信ログが顧客 (= チケットの user_id のテストユーザー) の
+  // user_id で email_delivery_logs に残る。user_id の FK (NO ACTION) が下の deleteUser を失敗させるため、先に消す
+  const userIds = [supportUser, adminUser, superAdminUser, generalUser, salesUser, ownerUser]
+    .filter((u): u is TestUser => Boolean(u))
+    .map((u) => u.userId);
+  if (userIds.length > 0) {
+    await supabaseAdmin.from('email_delivery_logs').delete().in('user_id', userIds);
+  }
+
   await pool.cleanup();
 }, 60000);
 
@@ -620,6 +630,10 @@ describe('POST /api/admin/support/tickets/[id]/messages', () => {
       body: `Integration test reply ${TS}`,
       attachments: [],
     });
+    // #1183: 顧客向けの返信は、顧客へのメール通知の結果を email に載せる。
+    // メールが送れなくても (RESEND_API_KEY が無い環境では skipped) メッセージは保存済みなので 201 のまま
+    const email = (res.body as { email?: { status?: string } }).email;
+    expect(['sent', 'skipped', 'failed']).toContain(email?.status);
 
     // お客さま向けの最初の返信: first_response_at が入り、open -> in_progress に進む
     const ticket = await readTicket(ticketId);
@@ -640,6 +654,8 @@ describe('POST /api/admin/support/tickets/[id]/messages', () => {
       sender_id: adminUser.userId,
       is_internal: true,
     });
+    // #1183: 内部メモは顧客に見せないので、メールにしない (email を返さない)
+    expect(res.body).not.toHaveProperty('email');
 
     const ticket = await readTicket(ticketId);
     expect(ticket.first_response_at).toBeNull();

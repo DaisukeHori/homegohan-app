@@ -100,13 +100,14 @@ import {
   validateGeneratedMeals,
   type DiversityViolation,
 } from "./diversity-validator.ts";
+import {
+  ACTIVE_REQUEST_STATUSES,
+  buildActiveRequestUpdate,
+  wasRequestUpdated,
+} from "./request-finalize.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
 
 console.log("Generate Menu V5 Function loaded (template-anchored generation)");
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
 
 const DEFAULT_V5_INVOCATION_SOFT_BUDGET_MS = Number(Deno.env.get("V5_INVOCATION_SOFT_BUDGET_MS") ?? 18000);
 const STEP1_WAVE_RESERVE_MS = 9000;
@@ -328,6 +329,62 @@ async function updateProgress(
   } catch (error) {
     console.error("Failed to update progress:", error);
   }
+}
+
+/**
+ * 生存信号 (ハートビート): updated_at だけを現在時刻にする (#1202)。
+ * claim_menu_request は GREATEST(worker_acquired_at, updated_at) から 5 分たった行を「止まった」と見なして取り直す。
+ * 進捗を書かないまま長く続く処理 (LLM を連続で呼ぶ穴埋めなど) の途中で呼び、動いている最中の行が取り直されないようにする。
+ * ベストエフォート: 失敗しても処理は止めない。終わった行 (completed / failed) の updated_at は触らない。
+ */
+async function touchRequestHeartbeat(supabase: any, requestId: string): Promise<void> {
+  try {
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({ updated_at: new Date().toISOString() })
+        .eq("id", requestId)
+        .in("status", [...ACTIVE_REQUEST_STATUSES]),
+      `weekly_menu_requests.heartbeat:${requestId}`,
+      null,
+      5000,
+      0,
+    );
+  } catch (error) {
+    console.warn("Failed to write heartbeat:", error);
+  }
+}
+
+/**
+ * 最終 status (completed / failed) の書き込み。まだ終わっていない行 (queued / processing) にだけ当てる (#1202)。
+ *
+ * ワーカーが止まったと見なされた行は、別の cron が取り直して続きから再開する。止まったと見なされた側が
+ * 実は遅れて動いていると、同じ request に 2 本が最後まで走る。後から終わった側が、先に確定した
+ * status / progress / generated_data を上書きしないよう、終わった行には書かない (#122 の失敗側と同じ考え方)。
+ * 書けたら true、すでに終わっていて見送ったら false。
+ */
+async function finalizeMenuRequest(
+  supabase: any,
+  userId: string,
+  requestId: string,
+  update: Record<string, unknown>,
+  label: string,
+): Promise<boolean> {
+  const rows = await runSupabaseQuery<Array<{ id: string }>>(
+    () => buildActiveRequestUpdate(supabase, requestId, update),
+    label,
+    [],
+    10000,
+    1,
+  );
+  const applied = wasRequestUpdated(rows);
+  if (!applied) {
+    createLogger("generate-menu-v5", requestId).withUser(userId).warn(
+      "最終書き込みを見送りました（この request はすでに別の経路で終了しています）",
+      { requestId, label, attemptedStatus: update.status ?? null },
+    );
+  }
+  return applied;
 }
 
 async function triggerNextV5Step(
@@ -662,28 +719,26 @@ async function executeStep3_Save(
     successMessage: `全${totalSlots}件の献立が完成しました！`,
   });
 
-  await runSupabaseQuery(
-    () => supabase
-      .from("weekly_menu_requests")
-      .update({
-        status: finalSummary.status,
-        generated_data: updatedGeneratedData,
-        current_step: 3,
-        progress: {
-          currentStep: 3,
-          totalSteps,
-          message: finalSummary.message,
-          completedSlots: totalSlots,
-          totalSlots,
-        },
-        error_message: finalSummary.errorMessage,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", requestId),
+  // #1202: 最終書き込みは、まだ終わっていない行 (queued / processing) にだけ当てる
+  await finalizeMenuRequest(
+    supabase,
+    userId,
+    requestId,
+    {
+      status: finalSummary.status,
+      generated_data: updatedGeneratedData,
+      current_step: 3,
+      progress: {
+        currentStep: 3,
+        totalSteps,
+        message: finalSummary.message,
+        completedSlots: totalSlots,
+        totalSlots,
+      },
+      error_message: finalSummary.errorMessage,
+      updated_at: new Date().toISOString(),
+    },
     `weekly_menu_requests.v5_step3_final:${requestId}`,
-    null,
-    10000,
-    1,
   );
 }
 
@@ -2378,6 +2433,9 @@ async function executeStep2_Review(
       } catch (e: any) {
         console.error(`❌ ${missingSlot.date}/${missingSlot.mealType}: recovery failed: ${e?.message ?? e}`);
       }
+      // #1202: この穴埋めは、時間予算の確認も進捗の書き込みも無いまま LLM を連続で呼ぶ。
+      // 5 分書き込みが無いと止まったと見なされて取り直されるので、1 スロットごとに生存信号を書く
+      await touchRequestHeartbeat(supabase, requestId);
     }
     // generatedMeals を DB に保存
     await runSupabaseQuery(
@@ -3359,32 +3417,37 @@ async function executeStep6_FinalSave(
     successSuffix: praiseComment ? ` ${praiseComment}` : "",
   });
 
-  await runSupabaseQuery(
-    () => supabase
-      .from("weekly_menu_requests")
-      .update({
-        status: finalSummary.status,
-        generated_data: updatedGeneratedData,
-        current_step: 6,
-        progress: {
-          currentStep: 6,
-          totalSteps: 6,
-          message: finalSummary.message,
-          completedSlots: totalSlots,
-          totalSlots,
-        },
-        error_message: finalSummary.errorMessage,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", requestId),
+  // #1202: 最終書き込みは、まだ終わっていない行 (queued / processing) にだけ当てる
+  const finalized = await finalizeMenuRequest(
+    supabase,
+    userId,
+    requestId,
+    {
+      status: finalSummary.status,
+      generated_data: updatedGeneratedData,
+      current_step: 6,
+      progress: {
+        currentStep: 6,
+        totalSteps: 6,
+        message: finalSummary.message,
+        completedSlots: totalSlots,
+        totalSlots,
+      },
+      error_message: finalSummary.errorMessage,
+      updated_at: new Date().toISOString(),
+    },
     `weekly_menu_requests.v5_step6_final:${requestId}`,
-    null, 10000, 1,
   );
 
-  console.log(`✅ V5 Ultimate Mode completed: ${savedCount}/${totalSlots} meals saved`);
+  if (finalized) {
+    console.log(`✅ V5 Ultimate Mode completed: ${savedCount}/${totalSlots} meals saved`);
+  }
 }
 
 Deno.serve(async (req: Request) => {
+  // 許可したオリジンにだけ CORS ヘッダーを付ける (#1167)
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }

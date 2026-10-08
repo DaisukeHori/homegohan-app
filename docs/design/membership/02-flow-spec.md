@@ -163,6 +163,7 @@ server → rpc('accept_org_owner_transfer', { p_proposal_id })
        → Alice.org_role = 'admin', Bob.org_role = 'owner'
        → organizations.owner_id = bob_id
        → 監査ログ owner_transferred
+       → Resend で Alice (旧オーナー) と Bob (新オーナー) に完了メール (失敗しても 200。構造化ログに残す。04 §5.2)
        → 200 { data: { organization } }
 ```
 
@@ -268,7 +269,7 @@ POST /api/family/promotions/{token}/reject → rpc('reject_child_promotion')
 
 ## 10. family 代表者譲渡 (2 step)
 
-org owner 譲渡と同パターン。`propose_family_representative_transfer` / `accept_family_representative_transfer`。代表は他の adult にしか譲渡できない (child は不可)。
+org owner 譲渡と同パターン。`propose_family_representative_transfer` / `accept_family_representative_transfer`。代表は他の adult にしか譲渡できない (child は不可)。提案時に宛先へ提案メール、承諾後に旧代表者と新代表者へ完了メールを送る (§5 と同じ。宛先のメールアドレスは `auth.users` から引く。04 §5)。
 
 **承諾時の不変条件 (#1237):** 承諾 RPC は承諾時点で、承諾者がその家族の `status = 'active'` かつ `role IN ('representative', 'adult')` のメンバーであることを再検証し、満たさなければ何も変更せずに [NEW] `TRANSFER_ACCEPTOR_NOT_IN_FAMILY` (403) を返す (脱退・除名済みのユーザーが古い提案で代表者になり、家族グループを DELETE CASCADE できてしまうのを防ぐ)。二重承諾の防止とその他のエラーコードは §5 と同じ。
 

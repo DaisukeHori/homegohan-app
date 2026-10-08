@@ -5,6 +5,7 @@ import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
 import { Card, EmptyState, LoadingState } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
+import { getApiErrorMessage } from "../../../src/lib/api-error";
 import { colors, spacing, radius } from "../../../src/theme";
 
 type AdminRow = {
@@ -31,8 +32,8 @@ export default function SuperAdminAdminsPage() {
       const api = getApi();
       const res = await api.get<{ admins: AdminRow[] }>("/api/super-admin/admins");
       setItems(res.admins ?? []);
-    } catch (e: any) {
-      setError(e?.message ?? "取得に失敗しました。");
+    } catch (e) {
+      setError(getApiErrorMessage(e, "取得に失敗しました。"));
     } finally {
       setIsLoading(false);
     }
@@ -42,16 +43,36 @@ export default function SuperAdminAdminsPage() {
     load();
   }, []);
 
+  // #1137: ロールの変更は PUT /api/admin/users/{id}/role (super_admin 専用。自分自身の変更はサーバーが拒否する)。
+  // 以前呼んでいた PUT /api/super-admin/admins/{id} はサーバーに無く、常に失敗していた。
   async function toggleRole(userId: string, currentRoles: string[], role: string) {
     const next = currentRoles.includes(role) ? currentRoles.filter((r) => r !== role) : [...currentRoles, role];
     const roles = Array.from(new Set([...next, "user"]));
     try {
       const api = getApi();
-      await api.put(`/api/super-admin/admins/${userId}`, { roles });
+      await api.put(`/api/admin/users/${userId}/role`, { roles });
       await load();
-    } catch (e: any) {
-      Alert.alert("更新失敗", e?.message ?? "更新に失敗しました。");
+    } catch (e) {
+      Alert.alert("更新失敗", getApiErrorMessage(e, "更新に失敗しました。"));
     }
+  }
+
+  // ロールの付与・剥奪は権限の変更なので、押し間違いで実行されないよう確認を挟む
+  function confirmToggleRole(admin: AdminRow, role: string) {
+    const currentRoles = admin.roles ?? [];
+    const granting = !currentRoles.includes(role);
+    Alert.alert(
+      granting ? "ロールを付与" : "ロールを剥奪",
+      `${admin.nickname ?? admin.id} に ${role} ロールを${granting ? "付与" : "剥奪"}します。よろしいですか？`,
+      [
+        { text: "キャンセル", style: "cancel" },
+        {
+          text: granting ? "付与する" : "剥奪する",
+          style: granting ? "default" : "destructive",
+          onPress: () => toggleRole(admin.id, currentRoles, role),
+        },
+      ],
+    );
   }
 
   return (
@@ -80,7 +101,7 @@ export default function SuperAdminAdminsPage() {
       ) : (
         <View style={{ gap: spacing.sm }}>
           {items.map((a) => (
-            <Card key={a.id}>
+            <Card key={a.id} testID={`admin-row-${a.id}`}>
               <View style={{ gap: spacing.sm }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
                   <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: colors.purpleLight, alignItems: "center", justifyContent: "center" }}>
@@ -109,7 +130,8 @@ export default function SuperAdminAdminsPage() {
                     return (
                       <Pressable
                         key={r}
-                        onPress={() => toggleRole(a.id, a.roles ?? [], r)}
+                        testID={`admin-role-${a.id}-${r}`}
+                        onPress={() => confirmToggleRole(a, r)}
                         style={{
                           paddingVertical: spacing.sm,
                           paddingHorizontal: spacing.md,

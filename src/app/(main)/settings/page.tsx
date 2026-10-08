@@ -144,10 +144,57 @@ export default function SettingsPage() {
     }
   };
 
-  // TODO: /api/account/export は旧スキーマ依存のため削除済。新実装は設計フェーズ後。
+  // 取得したレスポンスをファイルとして保存する (JSON / CSV エクスポート共通)
+  const saveResponseAsFile = async (res: Response, filename: string, mimeType: string) => {
+    if (isNativeApp) {
+      // Fix 3: iOS WebView では Blob URL が使えないので RN へ転送
+      const text = await res.text();
+      postMessageDownload(filename, text, mimeType);
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  // #1131: 個人データ一式を JSON でダウンロードする (モバイルアプリと同じ GET /api/account/export)
   const [exporting, setExporting] = useState(false);
   const handleExportData = async () => {
-    alert('データエクスポート機能は現在準備中です。');
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const res = await fetch('/api/account/export', { method: 'GET' });
+      if (!res.ok) {
+        if (res.status === 401) {
+          router.push('/login');
+          return;
+        }
+        if (res.status === 429) {
+          // 連打防止の上限 (10 分あたり 5 回)。いつ再開できるかをサーバーの Retry-After から伝える
+          const retryAfterSec = Number(res.headers.get('Retry-After'));
+          const wait =
+            Number.isFinite(retryAfterSec) && retryAfterSec > 0
+              ? `${Math.ceil(retryAfterSec / 60)}分ほど`
+              : 'しばらく';
+          alert(`短い時間にエクスポートを繰り返したため、一時的に実行できません。${wait}待ってからもう一度お試しください。`);
+          return;
+        }
+        throw new Error(`Data export failed: ${res.status}`);
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      await saveResponseAsFile(res, `homegohan-export-${today}.json`, 'application/json');
+    } catch (err) {
+      console.error(err);
+      alert('データのエクスポートに失敗しました。時間をおいて再度お試しください。');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const [exportingCsv, setExportingCsv] = useState(false);
@@ -164,22 +211,7 @@ export default function SettingsPage() {
         throw new Error(`CSV export failed: ${res.status}`);
       }
       const today = new Date().toISOString().slice(0, 10);
-      const filename = `homegohan-meals-${today}.csv`;
-      if (isNativeApp) {
-        // Fix 3: iOS WebView では Blob URL が使えないので RN へ転送
-        const text = await res.text();
-        postMessageDownload(filename, text, 'text/csv');
-      } else {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      }
+      await saveResponseAsFile(res, `homegohan-meals-${today}.csv`, 'text/csv');
     } catch (err) {
       console.error(err);
       alert('CSVエクスポートに失敗しました。時間をおいて再度お試しください。');

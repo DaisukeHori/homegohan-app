@@ -77,6 +77,23 @@ describe('GET /api/admin/users', () => {
     expect(res.body).toHaveProperty('data');
   });
 
+  // #1145: メールアドレスは admin / super_admin にだけ返す (詳細は tests/integration/security/admin-users-email.test.ts)
+  it('admin: メールアドレスで検索でき、email が返る (#1145)', async () => {
+    const res = await apiCall('GET', `/api/admin/users?q=${encodeURIComponent(targetUser.email)}`, adminUser.jwt);
+    expect(res.status).toBe(200);
+    const items = (res.body as { data: Array<{ id: string; email: string | null }> }).data;
+    const item = items.find((u) => u.id === targetUser.userId);
+    expect(item?.email).toBe(targetUser.email);
+  });
+
+  it('support: メールアドレスで検索しても見つからず、email は返らない (#1145)', async () => {
+    const res = await apiCall('GET', `/api/admin/users?q=${encodeURIComponent(targetUser.email)}`, supportUser.jwt);
+    expect(res.status).toBe(200);
+    const items = (res.body as { data: Array<{ id: string; email: string | null }> }).data;
+    expect(items.find((u) => u.id === targetUser.userId)).toBeUndefined();
+    expect(items.every((u) => u.email === null)).toBe(true);
+  });
+
   it('403 for general user', async () => {
     const res = await apiCall('GET', '/api/admin/users', generalUser.jwt);
     expect(res.status).toBe(403);
@@ -94,16 +111,21 @@ describe('GET /api/admin/users/[id]', () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('data');
     expect((res.body as { data: { id: string } }).data.id).toBe(targetUser.userId);
+    // #1145: admin には auth.users のメールアドレスが返る
+    expect((res.body as { data: { email: string | null } }).data.email).toBe(targetUser.email);
   });
 
   it('200 for super_admin', async () => {
     const res = await apiCall('GET', `/api/admin/users/${targetUser.userId}`, superAdminUser.jwt);
     expect(res.status).toBe(200);
+    expect((res.body as { data: { email: string | null } }).data.email).toBe(targetUser.email);
   });
 
-  it('200 for support', async () => {
+  it('200 for support (メールアドレスは返らない)', async () => {
     const res = await apiCall('GET', `/api/admin/users/${targetUser.userId}`, supportUser.jwt);
     expect(res.status).toBe(200);
+    // #1145: support には email を返さない
+    expect((res.body as { data: { email: string | null } }).data.email).toBeNull();
   });
 
   it('403 for general user', async () => {
