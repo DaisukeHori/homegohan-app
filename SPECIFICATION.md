@@ -444,8 +444,8 @@ SELECT * FROM app_logs WHERE created_at >= CURRENT_DATE ORDER BY created_at DESC
 | `/settings` | 設定 | アプリ設定 |
 | `/about` | アプリについて | 機能紹介 |
 | `/contact` | お問い合わせ | 問い合わせフォーム |
-| `/terms` | 利用規約 | 利用規約 |
-| `/privacy` | プライバシー | プライバシーポリシー |
+| `/terms` | 利用規約 | 利用規約（未ログインでも閲覧可） |
+| `/privacy` | プライバシー | プライバシーポリシー（未ログインでも閲覧可） |
 
 #### 健康記録 (`/health`)
 | パス | 画面名 | 説明 |
@@ -2592,6 +2592,7 @@ Webにある **全機能**（メイン機能/組織/管理者/サポート/ス�
 - **公開ページ（未ログインでも閲覧可）**
   - `/`（LP）
   - `/about`, `/company`, `/contact`, `/faq`, `/guide`, `/legal`, `/news`, `/pricing`
+  - `/terms`, `/privacy`（利用規約・プライバシーポリシー。サインアップ画面・LP フッターの同意リンクとストア審査 URL の着地点なので、未ログインでも読める。#1174）
 - **認証**
   - `/login`, `/signup`
   - `/auth/forgot-password`, `/auth/reset-password`, `/auth/verify`
@@ -2606,7 +2607,6 @@ Webにある **全機能**（メイン機能/組織/管理者/サポート/ス�
     - `/health/graphs`, `/health/insights`, `/health/goals`, `/health/challenges`, `/health/settings`
   - `/badges`, `/comparison`
   - `/profile`, `/settings`
-  - `/terms`, `/privacy`
 - **組織（org）**
   - `/org/dashboard`, `/org/challenges`, `/org/departments`, `/org/invites`, `/org/members`, `/org/settings`
 - **管理者（admin）**
