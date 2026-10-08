@@ -1,12 +1,7 @@
 import "@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "@supabase/supabase-js";
 import { generateGeminiJson } from "../_shared/gemini-json.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+import { getCorsHeaders } from "../_shared/cors.ts";
 
 interface AnalysisResult {
   type: 'weight_scale' | 'blood_pressure' | 'thermometer' | 'unknown';
@@ -84,6 +79,9 @@ function normalizeAnalysisResult(raw: unknown): AnalysisResult {
 }
 
 Deno.serve(async (req) => {
+  // 許可したオリジンにだけ CORS ヘッダーを付ける (#1167)
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }

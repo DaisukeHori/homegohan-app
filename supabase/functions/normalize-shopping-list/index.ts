@@ -10,7 +10,7 @@
 
 import "@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "@supabase/supabase-js";
-import { corsHeaders } from "../_shared/cors.ts";
+import { getCorsHeaders, withCors } from "../_shared/cors.ts";
 import { createLogger, generateRequestId } from "../_shared/db-logger.ts";
 import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from "../_shared/fast-llm.ts";
 import { fetchWithRetry } from "../_shared/network-retry.ts";
@@ -19,16 +19,6 @@ import { requireAuth } from "../_shared/auth.ts";
 
 // 過大入力によるLLMコスト濫用/DoS防止のための上限
 const MAX_INGREDIENTS = 500;
-
-// 認証ヘルパー（_shared/auth.ts）が返す Response には CORS ヘッダーが付与されていないため、
-// ブラウザからの呼び出し（functions.invoke）でも CORS エラーにならないようここで付け直す。
-function withCors(res: Response): Response {
-  const headers = new Headers(res.headers);
-  for (const [key, value] of Object.entries(corsHeaders)) {
-    headers.set(key, value);
-  }
-  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
-}
 
 // ============================================
 // 型定義
@@ -284,14 +274,19 @@ function toHiragana(str: string): string {
 // ============================================
 
 Deno.serve(async (req: Request) => {
+  // 許可したオリジンにだけ CORS ヘッダーを付ける (#1167)
+  const corsHeaders = getCorsHeaders(req);
+
   // CORS対応
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   // 認証必須
+  // 認証ヘルパー（_shared/auth.ts）が返す Response には CORS ヘッダーが付与されていないため、
+  // ブラウザからの呼び出し（functions.invoke）でも CORS エラーにならないよう withCors で付け直す。
   const authResult = await requireAuth(req);
-  if (authResult instanceof Response) return withCors(authResult);
+  if (authResult instanceof Response) return withCors(authResult, req);
 
   const requestId = generateRequestId();
   const executionId = generateExecutionId();

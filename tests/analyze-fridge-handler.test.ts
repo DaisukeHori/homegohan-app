@@ -51,19 +51,27 @@ beforeEach(() => {
   for (const fn of Object.values(mocks.logger)) fn.mockReset();
 });
 
-function call(body: unknown, rawBody?: string): Promise<Response> {
+// 自社の Web アプリ (モバイルの WebView が開くのも同じオリジン)。CORS を許可するオリジンの 1 つ (#1167)
+const WEB_ORIGIN = "https://homegohan-app.vercel.app";
+
+function call(body: unknown, rawBody?: string, origin: string | null = WEB_ORIGIN): Promise<Response> {
   return handler(
     new Request("http://localhost/functions/v1/analyze-fridge", {
       method: "POST",
-      headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+      headers: {
+        Authorization: "Bearer test-token",
+        "Content-Type": "application/json",
+        ...(origin === null ? {} : { Origin: origin }),
+      },
       body: rawBody ?? JSON.stringify(body),
     }),
   );
 }
 
-// ブラウザからエラーの内容を読めるよう、400 / 500 にも CORS ヘッダーと JSON の Content-Type を付ける
+// ブラウザからエラーの内容を読めるよう、400 / 500 にも CORS ヘッダーと JSON の Content-Type を付ける。
+// ただし CORS ヘッダーは許可したオリジンにだけ付ける (全オリジン許可の '*' は返さない)
 function expectCorsJson(res: Response) {
-  expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  expect(res.headers.get("Access-Control-Allow-Origin")).toBe(WEB_ORIGIN);
   expect(res.headers.get("Content-Type")).toBe("application/json");
 }
 
@@ -172,5 +180,79 @@ describe("analyze-fridge の入口 (#1227)", () => {
     });
     const logged = JSON.stringify([...mocks.logger.warn.mock.calls, ...mocks.logger.info.mock.calls]);
     expect(logged).not.toContain("SECRET-TOKEN");
+  });
+});
+
+// #1167: 以前は全オリジン許可 ('*') を返していた。許可したオリジン (自社の Web アプリ) にだけ返す。
+describe("analyze-fridge の CORS (#1167)", () => {
+  const OTHER_SITE = "https://evil.example.com";
+
+  it("AH-9: 許可したオリジンには、そのオリジンを返す。成功 (200) の応答にも付く", async () => {
+    const res = await call({ imageUrl: SUPABASE_URL });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe(WEB_ORIGIN);
+    expect(res.headers.get("Access-Control-Allow-Headers")).toContain("authorization");
+    expect(res.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("AH-10: 許可していないオリジンには Access-Control-Allow-* を返さない。関数の結果そのものは変わらない", async () => {
+    const res = await call({ imageUrl: SUPABASE_URL }, undefined, OTHER_SITE);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ingredients: ["卵", "牛乳"], expiringSoon: ["牛乳"] });
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    expect(res.headers.get("Access-Control-Allow-Headers")).toBeNull();
+    expect(res.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("AH-11: Origin が無い呼び出し (Next.js の API ルートなどサーバーから) でも、従来どおり動く。'*' は返さない", async () => {
+    const res = await call({ imageUrl: SUPABASE_URL }, undefined, null);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ingredients: ["卵", "牛乳"], expiringSoon: ["牛乳"] });
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+
+  it("AH-12: 入力不正の 400 でも、許可していないオリジンには CORS ヘッダーを付けない", async () => {
+    const res = await call({ imageUrl: 12345 }, undefined, OTHER_SITE);
+    expect(res.status).toBe(400);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    expect(res.headers.get("Content-Type")).toBe("application/json");
+  });
+
+  it("AH-13: ブラウザの事前確認 (OPTIONS) は、許可したオリジンにだけ CORS ヘッダーを返す", async () => {
+    const preflight = (origin: string) =>
+      handler(
+        new Request("http://localhost/functions/v1/analyze-fridge", {
+          method: "OPTIONS",
+          headers: { Origin: origin, "Access-Control-Request-Method": "POST" },
+        }),
+      );
+
+    const allowed = await preflight(WEB_ORIGIN);
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers.get("Access-Control-Allow-Origin")).toBe(WEB_ORIGIN);
+    expect(allowed.headers.get("Access-Control-Allow-Headers")).toContain("authorization");
+
+    const denied = await preflight(OTHER_SITE);
+    expect(denied.status).toBe(200);
+    expect(denied.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    expect(denied.headers.get("Access-Control-Allow-Headers")).toBeNull();
+
+    // 事前確認は認証を必要とせず、Vision API も呼ばない
+    expect(mocks.requireAuth).not.toHaveBeenCalled();
+    expect(mocks.createCompletion).not.toHaveBeenCalled();
+  });
+
+  it("AH-14: 認証失敗 (401) の応答も、ブラウザが中身を読めるよう許可したオリジンには CORS ヘッダーを付ける", async () => {
+    mocks.requireAuth.mockResolvedValue(
+      new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 }),
+    );
+
+    const allowed = await call({ imageUrl: SUPABASE_URL });
+    expect(allowed.status).toBe(401);
+    expect(allowed.headers.get("Access-Control-Allow-Origin")).toBe(WEB_ORIGIN);
+
+    const denied = await call({ imageUrl: SUPABASE_URL }, undefined, OTHER_SITE);
+    expect(denied.status).toBe(401);
+    expect(denied.headers.get("Access-Control-Allow-Origin")).toBeNull();
   });
 });
