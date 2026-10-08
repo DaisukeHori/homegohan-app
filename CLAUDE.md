@@ -100,6 +100,19 @@ npx vitest run --config vitest.integration.config.ts tests/integration/rls   # R
 
 ---
 
+## 家族 (family_*) を変える関数のロック順 (DB)
+
+家族のメンバー・所属・代表者を変える関数 (`accept_family_invite` / `add_family_child` / `leave_family` / `remove_family_member` / `operator_force_dissolve_family` / `operator_force_representative_transfer` / `accept_family_representative_transfer` / `accept_child_promotion`) は、**最初に `family_groups` の行をロックし**、そのあとで子の行 (`family_invites` / `ownership_transfer_proposals` / `family_members` / `family_promotion_requests` / `user_profiles`) を触る (#1310)。代表者による家族の削除 (`DELETE FROM family_groups` + CASCADE) は、DELETE 文が最初に家族の行を取るので、もともとこの順になっている。
+
+順番がそろっていないと、運営の強制解散・家族の削除と同時に走ったときに、解散済みの家族に active のメンバーが残る / デッドロック (40P01) する。
+
+- 家族に関わる関数を `CREATE OR REPLACE` するときは、既存のロックを外さない。別の migration が同じ関数を書き換えているときは、最新の定義の上に積む (古い本文で上書きするとロックが消える)。
+- 新しく足す家族の行のロックは `FOR NO KEY UPDATE` にする (`add_family_child` だけは #1213 のまま `FOR UPDATE`)。`FOR UPDATE` だと、子の行を先に持つ関数が最後に取る外部キーの確認 (`FOR KEY SHARE`) が待たされ、逆向きに待ち合ってデッドロックする。
+- 子の行を先に取って、あとで家族の行を外部キーの確認で取る関数 (`create_family_invite` の再招待 / `request_child_promotion`) は、まだ家族の行を先に取らない。代表者の DELETE と同時に走ると、まれにどちらかがデッドロックで失敗する (既知。やり直せば通る)。
+- 回帰テスト: `tests/integration/security/family-lock-order-race.test.ts`
+
+---
+
 ## Claude Code Cloud (claude.ai/code) 動作要件
 
 ### 起動時 setup
