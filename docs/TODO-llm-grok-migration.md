@@ -72,8 +72,6 @@ Last updated: 2026-03-17
 
 ### Not an actual LLM call
 
-- `src/app/api/ai/feedback/route.ts`
-  - display/mock metadata only
 - `supabase/functions/_shared/llm-usage.ts`
   - legacy cost table keeps historical `mini/nano` entries for old log rows
 
