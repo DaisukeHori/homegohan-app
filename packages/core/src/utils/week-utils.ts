@@ -49,6 +49,13 @@ export function getWeekRange(date: Date, weekStartDay: WeekStartDay = 'monday'):
 
 /**
  * 日付をローカル形式の文字列（YYYY-MM-DD）に変換
+ *
+ * 端末のタイムゾーンの年・月・日をそのまま文字列にする。parseLocalDate / new Date(y, m, d) で作った
+ * 「カレンダー上の日付」の Date 用。
+ * 「今日」を決めるのには使わない: `formatLocalDate(new Date())` は端末のタイムゾーンの今日になり、
+ * Web・サーバー (Asia/Tokyo) とずれる。今日は @homegohan/shared の todayLocal() / startOfTodayLocal() を使う (#1049 F7-21)。
+ * (@homegohan/shared にも同名の formatLocalDate があるが、あちらは「ある瞬間」を Asia/Tokyo の日付にする別の関数。)
+ *
  * @param date 日付
  * @returns YYYY-MM-DD形式の文字列
  */

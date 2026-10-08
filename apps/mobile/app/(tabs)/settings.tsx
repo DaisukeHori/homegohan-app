@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { todayLocal } from "@homegohan/shared";
 import * as FileSystem from "expo-file-system";
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
@@ -169,7 +170,8 @@ export default function SettingsTab() {
         throw new Error(`HTTP ${res.status}`);
       }
       const text = await res.text();
-      const today = new Date().toISOString().slice(0, 10);
+      // ファイル名の日付は Asia/Tokyo の今日 (toISOString() は UTC の日付で、JST の 0〜9 時は前日になる) (#1049 F7-21)
+      const today = todayLocal();
       const filename = `homegohan-export-${today}.json`;
       const fileUri = (FileSystem.documentDirectory ?? "") + filename;
       await FileSystem.writeAsStringAsync(fileUri, text, {
@@ -211,7 +213,8 @@ export default function SettingsTab() {
         throw new Error(`HTTP ${res.status}`);
       }
       const text = await res.text();
-      const today = new Date().toISOString().slice(0, 10);
+      // ファイル名の日付は Asia/Tokyo の今日 (toISOString() は UTC の日付で、JST の 0〜9 時は前日になる) (#1049 F7-21)
+      const today = todayLocal();
       const filename = `homegohan-meals-${today}.csv`;
       const fileUri = (FileSystem.documentDirectory ?? "") + filename;
       await FileSystem.writeAsStringAsync(fileUri, text, {

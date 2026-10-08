@@ -1,3 +1,4 @@
+import { daysBetweenDateStrings, todayLocal } from '@homegohan/shared';
 import { Trash2 } from 'lucide-react-native';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -17,12 +18,12 @@ export type PantryItemData = {
 
 export type ExpiryStatus = 'expired' | 'expiringSoon' | 'normal';
 
+/**
+ * 今日 (Asia/Tokyo) から期限日 (YYYY-MM-DD) までの日数。期限切れは負、当日は 0。
+ * new Date('YYYY-MM-DD') は UTC の 0 時として解釈され、端末のタイムゾーンによって 1 日ずれるので、文字列のまま数える (#1049 F7-21)
+ */
 export function daysFromToday(expiryDate: string): number {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const exp = new Date(expiryDate);
-  exp.setHours(0, 0, 0, 0);
-  return Math.round((exp.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  return daysBetweenDateStrings(todayLocal(), expiryDate.slice(0, 10));
 }
 
 export function getExpiryStatus(expiryDate: string | null): ExpiryStatus {

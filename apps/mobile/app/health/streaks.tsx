@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { addDaysToDateString, todayLocal } from "@homegohan/shared";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -38,10 +39,6 @@ function streakTypeLabel(type: string): string {
   return STREAK_TYPE_LABELS[type] ?? type;
 }
 
-function toYmd(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
 export default function HealthStreaksPage() {
   const [data, setData] = useState<StreakResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -68,13 +65,10 @@ export default function HealthStreaksPage() {
   const weekly = useMemo(() => {
     const recorded = new Set(data?.weeklyRecords ?? []);
     const days: { date: string; recorded: boolean }[] = [];
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    start.setDate(start.getDate() - 6);
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(start);
-      d.setDate(start.getDate() + i);
-      const ymd = toYmd(d);
+    // 今日 (Asia/Tokyo) までの直近 7 日。古い順で、最後が今日 (#1049 F7-21)
+    const today = todayLocal();
+    for (let i = 6; i >= 0; i--) {
+      const ymd = addDaysToDateString(today, -i);
       days.push({ date: ymd, recorded: recorded.has(ymd) });
     }
     return days;

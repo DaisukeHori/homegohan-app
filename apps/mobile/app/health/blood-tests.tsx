@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { parseLocalDate, todayLocal } from "@homegohan/shared";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
@@ -103,9 +104,9 @@ type Screen = "list" | "form" | "review";
 
 // ─── Helpers ──────────────────────────────────────────
 
+// 「今日」は Asia/Tokyo (Web・サーバーと同じ) (#1049 F7-21)
 function todayStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return todayLocal();
 }
 
 function toNum(v: string): number | undefined {
@@ -122,8 +123,10 @@ function toInt(v: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+// 日付だけの値 (YYYY-MM-DD) は端末の暦の日付として読む。new Date(dateStr) は UTC の 0 時として解釈され、
+// 端末のタイムゾーンによっては 1 日前の表示になる (#1049 F7-21)
 function formatDate(dateStr: string): string {
-  const d = new Date(dateStr);
+  const d = parseLocalDate(dateStr.slice(0, 10));
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");

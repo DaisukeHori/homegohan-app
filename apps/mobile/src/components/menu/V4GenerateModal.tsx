@@ -30,6 +30,7 @@ import {
   type MealDay,
 } from "../../../../../lib/slot-builder";
 import { MOCK_MENU_RESPONSE } from "@homegohan/handson-tour-shared";
+import { addDaysToDateString, daysBetweenDateStrings, todayLocal } from "@homegohan/shared";
 import { getApi } from "../../lib/api";
 import { colors, radius, shadows, spacing } from "../../theme";
 
@@ -125,21 +126,10 @@ function toMealDays(days: DayRow[]): MealDay[] {
 // ============================================================
 // Date helpers
 // ============================================================
+// 日付の基準: 「今日」は Asia/Tokyo (Web・サーバーと同じ)。日付の加減算・日数の差は YYYY-MM-DD の文字列のまま行う。
+// new Date(dateStr) は UTC の 0 時として解釈され、toISOString() は UTC の日付を返すので、端末のタイムゾーンによって 1 日ずれる (#1049 F7-21)
 function getTodayStr(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
-
-function addDays(dateStr: string, days: number): string {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().split("T")[0];
-}
-
-function daysBetween(startStr: string, endStr: string): number {
-  const start = new Date(startStr);
-  const end = new Date(endStr);
-  return Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+  return todayLocal();
 }
 
 function formatDateJp(dateStr: string): string {
@@ -397,8 +387,8 @@ function V4GenerateModalNormal({
         const saved = await AsyncStorage.getItem(STORAGE_KEY_RANGE_DAYS);
         if (saved) {
           const { startDays, endDays } = JSON.parse(saved);
-          const newStart = addDays(todayStr, startDays);
-          const newEnd = addDays(todayStr, endDays);
+          const newStart = addDaysToDateString(todayStr, startDays);
+          const newEnd = addDaysToDateString(todayStr, endDays);
           setRangeStart(newStart);
           setRangeEnd(newEnd);
           return;
@@ -407,15 +397,15 @@ function V4GenerateModalNormal({
         // パースエラーはデフォルトにフォールバック
       }
       setRangeStart(todayStr);
-      setRangeEnd(weekEndDate >= todayStr ? weekEndDate : addDays(todayStr, 6));
+      setRangeEnd(weekEndDate >= todayStr ? weekEndDate : addDaysToDateString(todayStr, 6));
     })();
   }, [visible, todayStr, weekEndDate]);
 
   // range 変更時に AsyncStorage に保存
   useEffect(() => {
     if (!rangeStart || !rangeEnd) return;
-    const startDays = daysBetween(todayStr, rangeStart);
-    const endDays = daysBetween(todayStr, rangeEnd);
+    const startDays = daysBetweenDateStrings(todayStr, rangeStart);
+    const endDays = daysBetweenDateStrings(todayStr, rangeEnd);
     AsyncStorage.setItem(
       STORAGE_KEY_RANGE_DAYS,
       JSON.stringify({ startDays, endDays })

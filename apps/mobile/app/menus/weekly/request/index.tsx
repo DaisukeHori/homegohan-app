@@ -11,15 +11,9 @@ import { uploadFridgePhoto } from "../../../../src/lib/storage";
 import { colors, radius, spacing } from "../../../../src/theme";
 import { useProfile } from "../../../../src/providers/ProfileProvider";
 import type { WeekStartDay } from "../../../../src/providers/ProfileProvider";
-import { THEME_LABELS_REQUEST } from "@homegohan/shared";
+import { formatLocalDate } from "@homegohan/core";
+import { THEME_LABELS_REQUEST, startOfTodayLocal } from "@homegohan/shared";
 
-
-const formatLocalDate = (date: Date): string => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
 
 function getWeekStart(date: Date, weekStartDay: WeekStartDay = 'monday'): Date {
   const d = new Date(date);
@@ -36,7 +30,8 @@ function getWeekStart(date: Date, weekStartDay: WeekStartDay = 'monday'): Date {
 export default function WeeklyRequestPage() {
   const { profile } = useProfile();
   const weekStartDay = profile?.weekStartDay ?? 'monday';
-  const [startDate, setStartDate] = useState(() => formatLocalDate(getWeekStart(new Date(), weekStartDay)));
+  // 「今日」は Asia/Tokyo (Web・サーバーと同じ)。new Date() を起点にしない (#1049 F7-21)
+  const [startDate, setStartDate] = useState(() => formatLocalDate(getWeekStart(startOfTodayLocal(), weekStartDay)));
   const [familySize, setFamilySize] = useState("1");
   const [cheatDay, setCheatDay] = useState("");
   const [note, setNote] = useState("");
@@ -48,7 +43,7 @@ export default function WeeklyRequestPage() {
   const [fridgeSuggestions, setFridgeSuggestions] = useState<string[]>([]);
 
   useEffect(() => {
-    setStartDate(formatLocalDate(getWeekStart(new Date(), weekStartDay)));
+    setStartDate(formatLocalDate(getWeekStart(startOfTodayLocal(), weekStartDay)));
   }, [weekStartDay]);
 
   const [isUploading, setIsUploading] = useState(false);

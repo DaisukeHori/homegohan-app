@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { parseLocalDate } from "@homegohan/shared";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -58,8 +59,10 @@ interface LongitudinalReview {
 }
 
 // ─── Helpers ──────────────────────────────────────────
+// 日付だけの値 (YYYY-MM-DD) は端末の暦の日付として読む。new Date(dateStr) は UTC の 0 時として解釈され、
+// 端末のタイムゾーンによっては 1 日前の表示になる (#1049 F7-21)
 function formatDate(dateStr: string): string {
-  const d = new Date(dateStr);
+  const d = parseLocalDate(dateStr.slice(0, 10));
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");

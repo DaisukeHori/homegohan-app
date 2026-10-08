@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { getApi } from "../lib/api";
-import { formatLocalDate } from "@homegohan/core";
+import { addDaysToDateString, parseLocalDate, todayLocal } from "@homegohan/shared";
 
 interface DailySummary {
   totalCalories: number;
@@ -62,7 +62,8 @@ interface BestMeal {
 
 const DOW = ["日", "月", "火", "水", "木", "金", "土"];
 // todayStr is computed fresh on each fetchAll call, not cached at module level
-function getTodayStr() { return formatLocalDate(new Date()); }
+// 「今日」は Web・サーバーと同じ Asia/Tokyo の日付。端末のタイムゾーンの日付 (new Date() をそのまま整形) にしない (#1049 F7-21)
+function getTodayStr() { return todayLocal(); }
 
 export const useHomeData = (userId: string | undefined) => {
   const [loading, setLoading] = useState(true);
@@ -152,14 +153,13 @@ export const useHomeData = (userId: string | undefined) => {
 
   async function fetchCookingStreak(uid: string) {
     try {
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const thirtyDaysAgo = addDaysToDateString(getTodayStr(), -30);
 
       const { data: daysData } = await supabase
         .from("user_daily_meals")
         .select(`day_date, planned_meals(mode, is_completed)`)
         .eq("user_id", uid)
-        .gte("day_date", formatLocalDate(thirtyDaysAgo))
+        .gte("day_date", thirtyDaysAgo)
         .lte("day_date", getTodayStr())
         .order("day_date", { ascending: false });
 
@@ -185,15 +185,15 @@ export const useHomeData = (userId: string | undefined) => {
 
   async function fetchWeeklyStats(uid: string) {
     try {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+      const today = getTodayStr();
+      const sevenDaysAgo = addDaysToDateString(today, -6);
 
       const { data: daysData } = await supabase
         .from("user_daily_meals")
         .select(`day_date, planned_meals(mode, is_completed, calories_kcal)`)
         .eq("user_id", uid)
-        .gte("day_date", formatLocalDate(sevenDaysAgo))
-        .lte("day_date", getTodayStr())
+        .gte("day_date", sevenDaysAgo)
+        .lte("day_date", today)
         .order("day_date");
 
       if (daysData) {
@@ -202,9 +202,8 @@ export const useHomeData = (userId: string | undefined) => {
         let totalMeals = 0;
 
         for (let i = 6; i >= 0; i--) {
-          const d = new Date();
-          d.setDate(d.getDate() - i);
-          const dateStr = formatLocalDate(d);
+          const dateStr = addDaysToDateString(today, -i);
+          const d = parseLocalDate(dateStr); // 曜日を読むための Date
           const dayData = daysData.find((dd: any) => dd.day_date === dateStr);
           const meals = (dayData as any)?.planned_meals || [];
           const completedMeals = meals.filter((m: any) => m.is_completed);
@@ -232,14 +231,14 @@ export const useHomeData = (userId: string | undefined) => {
 
   async function fetchMonthlyStats(uid: string) {
     try {
-      const firstOfMonth = new Date();
-      firstOfMonth.setDate(1);
+      // 今月 (Asia/Tokyo) の 1 日。getTodayStr() は YYYY-MM-DD なので、先頭の YYYY-MM に -01 を付ける
+      const firstOfMonth = `${getTodayStr().slice(0, 7)}-01`;
 
       const { data: daysData } = await supabase
         .from("user_daily_meals")
         .select(`day_date, planned_meals(mode, is_completed)`)
         .eq("user_id", uid)
-        .gte("day_date", formatLocalDate(firstOfMonth))
+        .gte("day_date", firstOfMonth)
         .lte("day_date", getTodayStr());
 
       if (daysData) {
@@ -292,14 +291,13 @@ export const useHomeData = (userId: string | undefined) => {
 
   async function fetchExpiringItems(uid: string) {
     try {
-      const threeDaysLater = new Date();
-      threeDaysLater.setDate(threeDaysLater.getDate() + 3);
+      const threeDaysLater = addDaysToDateString(getTodayStr(), 3);
 
       const { data } = await supabase
         .from("pantry_items")
         .select("*")
         .eq("user_id", uid)
-        .lte("expiration_date", formatLocalDate(threeDaysLater))
+        .lte("expiration_date", threeDaysLater)
         .gte("expiration_date", getTodayStr())
         .order("expiration_date");
 
@@ -377,8 +375,7 @@ export const useHomeData = (userId: string | undefined) => {
 
   async function fetchBestMealThisWeek(uid: string) {
     try {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+      const sevenDaysAgo = addDaysToDateString(getTodayStr(), -6);
 
       const { data } = await supabase
         .from("planned_meals")
@@ -393,7 +390,7 @@ export const useHomeData = (userId: string | undefined) => {
           )
         `)
         .eq("user_daily_meals.user_id", uid)
-        .gte("user_daily_meals.day_date", formatLocalDate(sevenDaysAgo))
+        .gte("user_daily_meals.day_date", sevenDaysAgo)
         .eq("is_completed", true)
         .not("image_url", "is", null)
         .order("veg_score", { ascending: false, nullsFirst: false })

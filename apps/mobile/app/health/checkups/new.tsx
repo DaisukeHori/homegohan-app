@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { todayLocal } from "@homegohan/shared";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useState } from "react";
@@ -53,9 +54,9 @@ type Step = "form" | "review";
 
 const CHECKUP_TYPES = ["定期健診", "人間ドック", "特定健診", "その他"];
 
+// 「今日」は Asia/Tokyo (Web・サーバーと同じ) (#1049 F7-21)
 function todayStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return todayLocal();
 }
 
 function toNum(v: string): number | undefined {

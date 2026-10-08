@@ -38,7 +38,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 
-import { NUTRIENT_DEFINITIONS, type NutrientDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType } from "@homegohan/shared";
+import { formatLocalDate } from "@homegohan/core";
+import { NUTRIENT_DEFINITIONS, type NutrientDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, startOfTodayLocal, todayLocal } from "@homegohan/shared";
 import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../src/components/ui";
 import { AddMealModal } from "../../../src/components/menu/AddMealModal";
 import { AddMealSlotModal } from "../../../src/components/menu/AddMealSlotModal";
@@ -499,12 +500,8 @@ function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys, wee
   );
 }
 
-const formatLocalDate = (date: Date): string => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
+// 日付の基準: 「今日」は Asia/Tokyo (startOfTodayLocal / todayLocal)。カレンダー上の Date を YYYY-MM-DD にするのは
+// @homegohan/core の formatLocalDate。new Date() を起点にしない (端末のタイムゾーンの今日になる) (#1049 F7-21)
 
 // Get day-of-week labels ordered by weekStartDay
 const getDayLabels = (weekStartDay: WeekStartDay = 'monday'): string[] => {
@@ -595,7 +592,7 @@ const MODE_CONFIG = Object.fromEntries(
 export default function WeeklyMenuPage() {
   const { profile } = useProfile();
   const weekStartDay = profile?.weekStartDay ?? 'monday';
-  const [weekStart, setWeekStart] = useState<Date>(() => getWeekStart(new Date(), weekStartDay));
+  const [weekStart, setWeekStart] = useState<Date>(() => getWeekStart(startOfTodayLocal(), weekStartDay));
   const weekStartStr = useMemo(() => formatLocalDate(weekStart), [weekStart]);
   const weekEndStr = useMemo(() => {
     const end = new Date(weekStart);
@@ -605,7 +602,7 @@ export default function WeeklyMenuPage() {
 
   const [plan, setPlan] = useState<MealPlanRow | null>(null);
   const [days, setDays] = useState<DayRow[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string>(() => formatLocalDate(new Date()));
+  const [selectedDate, setSelectedDate] = useState<string>(() => todayLocal());
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [regeneratingMealId, setRegeneratingMealId] = useState<string | null>(null);
@@ -657,7 +654,7 @@ export default function WeeklyMenuPage() {
   const [radarChartNutrients, setRadarChartNutrients] = useState<(keyof DayNutritionTotals)[]>(DEFAULT_RADAR_KEYS);
 
   // Calendar state
-  const [displayMonth, setDisplayMonth] = useState<Date>(() => new Date());
+  const [displayMonth, setDisplayMonth] = useState<Date>(() => startOfTodayLocal());
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [isCalendarExpanded, setIsCalendarExpanded] = useState(false);
   const [calendarMealDates, setCalendarMealDates] = useState<Set<string>>(new Set());
@@ -718,7 +715,7 @@ export default function WeeklyMenuPage() {
   }, []);
 
   useEffect(() => {
-    setWeekStart(getWeekStart(new Date(), weekStartDay));
+    setWeekStart(getWeekStart(startOfTodayLocal(), weekStartDay));
   }, [weekStartDay]);
 
   // Sync displayMonth to weekStart
@@ -896,8 +893,7 @@ export default function WeeklyMenuPage() {
   );
 
   const emptySlotCount = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = startOfTodayLocal();
     let count = 0;
     for (const day of virtualDays) {
       const dayDate = new Date(day.day_date + "T00:00:00");
@@ -1207,7 +1203,7 @@ export default function WeeklyMenuPage() {
   // Calendar memos
   const calendarDays = useMemo(() => getCalendarDays(displayMonth, weekStartDay), [displayMonth, weekStartDay]);
   const dayLabels = useMemo(() => getDayLabels(weekStartDay), [weekStartDay]);
-  const todayStr = useMemo(() => formatLocalDate(new Date()), []);
+  const todayStr = useMemo(() => todayLocal(), []);
   const mealExistenceMap = useMemo(() => {
     const map = new Map<string, boolean>();
     days.forEach(d => {

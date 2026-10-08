@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { addDaysToDateString, parseLocalDate, todayLocal } from "@homegohan/shared";
 import { Link } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
@@ -7,13 +8,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button, Card, LoadingState, ProgressBar } from "../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
-
-function formatLocalDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
 
 // ─── Types ───────────────────────────────────────────
 interface HealthRecord {
@@ -67,11 +61,13 @@ function moodStyle(score: number | undefined) {
 function getWeekDays() {
   const days: { date: string; day: string; dayNum: number; isToday: boolean }[] = [];
   const DAYS = ["日", "月", "火", "水", "木", "金", "土"];
+  // 「今日」は Asia/Tokyo (Web・サーバーと同じ)。日付の加減算は文字列のまま行う (#1049 F7-21)
+  const today = todayLocal();
   for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
+    const date = addDaysToDateString(today, -i);
+    const d = parseLocalDate(date); // 曜日・日を読むための Date
     days.push({
-      date: formatLocalDate(d),
+      date,
       day: DAYS[d.getDay()],
       dayNum: d.getDate(),
       isToday: i === 0,
@@ -119,7 +115,7 @@ export default function HealthDashboardTab() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const today = useMemo(() => formatLocalDate(new Date()), []);
+  const today = useMemo(() => todayLocal(), []);
   const weekDays = useMemo(() => getWeekDays(), []);
 
   const fetchData = useCallback(async () => {

@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { addDaysToDateString, todayLocal } from "@homegohan/shared";
 import * as ImagePicker from "expo-image-picker";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
@@ -10,6 +11,7 @@ import { EmptyState } from "../../src/components/ui/EmptyState";
 import { Input } from "../../src/components/ui/Input";
 import { LoadingState } from "../../src/components/ui/LoadingState";
 import { PageHeader } from "../../src/components/ui/PageHeader";
+import { daysFromToday } from "../../src/components/menu/PantryItem";
 import { SectionHeader } from "../../src/components/ui/SectionHeader";
 
 import { getApi } from "../../src/lib/api";
@@ -85,16 +87,18 @@ type FridgeIngredient = {
   daysRemaining: number;
 };
 
+// 期限日 (YYYY-MM-DD) と今日 (Asia/Tokyo) の日数差で判定する。
+// 以前は new Date('YYYY-MM-DD') (UTC の 0 時) と Date.now() の差で見ていたため、
+// JST では期限当日の 9 時を過ぎると「期限切れ」になっていた (#1049 F7-21)
 function isExpiringSoon(dateStr: string | null): boolean {
   if (!dateStr) return false;
-  const diff = (new Date(dateStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+  const diff = daysFromToday(dateStr);
   return diff >= 0 && diff <= 3;
 }
 
 function isExpired(dateStr: string | null): boolean {
   if (!dateStr) return false;
-  const diff = (new Date(dateStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
-  return diff < 0;
+  return daysFromToday(dateStr) < 0;
 }
 
 export default function PantryPage() {
@@ -206,16 +210,8 @@ export default function PantryPage() {
     return "other";
   }
 
-  const todayStr = useMemo(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  }, []);
-
-  function addDaysToDate(dateStr: string, days: number): string {
-    const d = new Date(dateStr);
-    d.setDate(d.getDate() + days);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  }
+  // 「今日」は Asia/Tokyo (Web・サーバーと同じ)。日付の加減算は文字列のまま行う (#1049 F7-21)
+  const todayStr = useMemo(() => todayLocal(), []);
 
   async function analyzeFridge() {
     // ユーザーに入力元を選択させる
@@ -292,7 +288,7 @@ export default function PantryPage() {
   }
 
   function toIngredientInput(i: FridgeIngredient) {
-    const exp = typeof i.daysRemaining === "number" && i.daysRemaining > 0 ? addDaysToDate(todayStr, i.daysRemaining) : undefined;
+    const exp = typeof i.daysRemaining === "number" && i.daysRemaining > 0 ? addDaysToDateString(todayStr, i.daysRemaining) : undefined;
     return {
       name: i.name,
       amount: i.quantity || undefined,

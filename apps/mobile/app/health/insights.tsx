@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { parseLocalDate } from "@homegohan/shared";
 import { Link } from "expo-router";
 import { useEffect, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -98,9 +99,11 @@ export default function HealthInsightsPage() {
     }
   }
 
+  // analysis_date は日付だけの値 (YYYY-MM-DD)。new Date(dateStr) は UTC の 0 時として解釈され、
+  // 端末のタイムゾーンによっては表示が 1 日前になるので、端末の暦の日付として読む (#1049 F7-21)
   function formatDate(dateStr?: string) {
     if (!dateStr) return "";
-    return new Date(dateStr).toLocaleDateString("ja-JP", { month: "long", day: "numeric" });
+    return parseLocalDate(dateStr.slice(0, 10)).toLocaleDateString("ja-JP", { month: "long", day: "numeric" });
   }
 
   return (

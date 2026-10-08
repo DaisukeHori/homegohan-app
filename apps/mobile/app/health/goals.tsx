@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { parseLocalDate } from "@homegohan/shared";
 import { Link } from "expo-router";
 import { useEffect, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -217,7 +218,7 @@ export default function HealthGoalsPage() {
                     <View style={styles.dateRow}>
                       <Ionicons name="calendar-outline" size={13} color={colors.textMuted} />
                       <Text style={styles.dateText}>
-                        期限: {new Date(g.target_date).toLocaleDateString("ja-JP")}
+                        期限: {parseLocalDate(g.target_date.slice(0, 10)).toLocaleDateString("ja-JP")}
                       </Text>
                     </View>
                   )}

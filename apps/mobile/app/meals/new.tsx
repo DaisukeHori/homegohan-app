@@ -11,6 +11,8 @@ import { colors, spacing, radius } from "../../src/theme";
 import { supabase } from "../../src/lib/supabase";
 import { getApi } from "../../src/lib/api";
 import { MOCK_PHOTO_RESPONSE } from "@homegohan/handson-tour-shared";
+import { formatLocalDate } from "@homegohan/core";
+import { startOfTodayLocal, todayLocal } from "@homegohan/shared";
 import { registerTourTarget, unregisterTourTarget } from "../../src/handson-tour/useTourOverlayLogic";
 
 // Inlined from lib/meal-image to avoid importing server-side code
@@ -141,12 +143,8 @@ const MEAL_CONFIG: Record<MealType, { icon: keyof typeof Ionicons.glyphMap; labe
   midnight_snack: { icon: "cloudy-night", label: "夜食",   color: colors.blue, bg: colors.blueLight },
 };
 
-const formatLocalDate = (date: Date): string => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
+// 日付の基準: 「今日」は Asia/Tokyo (startOfTodayLocal / todayLocal)。カレンダー上の Date を YYYY-MM-DD にするのは
+// @homegohan/core の formatLocalDate。new Date() を起点にしない (端末のタイムゾーンの今日になる) (#1049 F7-21)
 
 const getWeekStart = (date: Date): Date => {
   const d = new Date(date);
@@ -278,11 +276,11 @@ export default function MealNewPage() {
   const [isSavingManual, setIsSavingManual] = useState(false);
 
   // Date selection
-  const [selectedDate, setSelectedDate] = useState(formatLocalDate(new Date()));
+  const [selectedDate, setSelectedDate] = useState(todayLocal());
   const [selectedMealType, setSelectedMealType] = useState<MealType>(getAutoMealType());
-  const [weekStart, setWeekStart] = useState(getWeekStart(new Date()));
+  const [weekStart, setWeekStart] = useState(getWeekStart(startOfTodayLocal()));
   const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart]);
-  const todayStr = formatLocalDate(new Date());
+  const todayStr = todayLocal();
 
   // ─── Photo helpers ─────────────────────────────────
 
@@ -490,7 +488,7 @@ export default function MealNewPage() {
     try {
       const api = getApi();
       await api.post("/api/health/checkups", {
-        checkup_date: healthData.checkupDate || (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })(),
+        checkup_date: healthData.checkupDate || todayLocal(),
         facility_name: healthData.facilityName, height: healthData.height, weight: healthData.weight, bmi: healthData.bmi,
         blood_pressure_systolic: healthData.bloodPressureSystolic, blood_pressure_diastolic: healthData.bloodPressureDiastolic,
         hemoglobin: healthData.hemoglobin, hba1c: healthData.hba1c, fasting_glucose: healthData.fastingGlucose,

@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { addDaysToDateString, todayLocal } from "@homegohan/shared";
 import { Link } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
@@ -241,9 +242,9 @@ export default function HealthGraphsPage() {
       const days =
         period === "week" ? 7 : period === "month" ? 30 : period === "3months" ? 90 : 365;
 
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - days);
-      const startStr = startDate.toISOString().slice(0, 10);
+      // 日付は Asia/Tokyo の暦日 (health_records.record_date と同じ基準)。
+      // new Date().toISOString().slice(0, 10) は UTC の日付なので、JST の 0〜9 時は前日になり、今日の記録がグラフに載らない (#1049 F7-21)
+      const startStr = addDaysToDateString(todayLocal(), -days);
 
       const [recordsRes, checkupsRes, goalsRes] = await Promise.all([
         api.get<{ records: HealthRecord[] }>(
@@ -296,12 +297,11 @@ export default function HealthGraphsPage() {
     const days =
       period === "week" ? 7 : period === "month" ? 30 : period === "3months" ? 90 : 365;
     const result: { date: string; value: number | null; fromCheckup?: boolean }[] = [];
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days + 1);
+    // 今日 (Asia/Tokyo) までの直近 days 日分。古い順で、最後が今日
+    const today = todayLocal();
 
-    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-      const dateStr = d.toISOString().slice(0, 10);
+    for (let i = days - 1; i >= 0; i--) {
+      const dateStr = addDaysToDateString(today, -i);
       const rec = records.find((r) => r.record_date === dateStr);
       let value: number | null = null;
       if (rec) {
@@ -459,7 +459,7 @@ export default function HealthGraphsPage() {
                 <View>
                   <Text style={styles.metricLabel}>{currentMetric.label}の推移</Text>
                   <View style={styles.valueRow}>
-                    <Text style={[styles.latestValue, { color: currentMetric.color }]}>
+                    <Text testID="health-graphs-latest-value" style={[styles.latestValue, { color: currentMetric.color }]}>
                       {latestValue !== null ? latestValue.toFixed(1) : "-"}
                     </Text>
                     <Text style={styles.unitText}>{currentMetric.unit}</Text>

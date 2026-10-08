@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { todayLocal } from "@homegohan/shared";
 import { useState } from "react";
 import {
   ActivityIndicator,
@@ -28,9 +29,9 @@ interface Props {
 // ============================================================
 
 export const AIDayMenuModal: React.FC<Props> = ({ visible, onClose }) => {
-  // 今日の日付をデフォルト
-  const today = new Date().toISOString().slice(0, 10);
-  const [selectedDate, setSelectedDate] = useState(today);
+  // 今日の日付をデフォルト。Asia/Tokyo の暦日にする
+  // (new Date().toISOString().slice(0, 10) は UTC の日付なので、JST の 0〜9 時は前日になる) (#1049 F7-21)
+  const [selectedDate, setSelectedDate] = useState(() => todayLocal());
   const [dateError, setDateError] = useState<string | null>(null);
 
   const { generate, isGenerating } = useV4MenuGeneration({

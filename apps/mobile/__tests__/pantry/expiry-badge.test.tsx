@@ -42,13 +42,39 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 import React from 'react';
+import { addDaysToDateString, todayLocal } from '@homegohan/shared';
 import PantryPage from '../../app/pantry/index';
 
-/** 今日から offset 日後の YYYY-MM-DD 文字列を返す */
+/**
+ * 今日から offset 日後の YYYY-MM-DD 文字列を返す。
+ * 「今日」は Asia/Tokyo (アプリと同じ基準)。new Date().toISOString().slice(0, 10) は UTC の日付で、
+ * UTC の 15:00〜24:00 (JST の翌日 0:00〜9:00) はアプリの「今日」と 1 日ずれる (#1049 F7-21)
+ */
 function dateFromNow(offsetDays: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  return d.toISOString().slice(0, 10);
+  return addDaysToDateString(todayLocal(), offsetDays);
+}
+
+/** Date だけを固定する (setTimeout などは本物のまま) */
+function freezeDate(iso: string) {
+  jest.useFakeTimers({
+    now: new Date(iso),
+    doNotFake: [
+      'setTimeout',
+      'clearTimeout',
+      'setInterval',
+      'clearInterval',
+      'setImmediate',
+      'clearImmediate',
+      'nextTick',
+      'queueMicrotask',
+      'hrtime',
+      'performance',
+      'requestAnimationFrame',
+      'cancelAnimationFrame',
+      'requestIdleCallback',
+      'cancelIdleCallback',
+    ],
+  });
 }
 
 beforeEach(() => {
@@ -170,6 +196,92 @@ describe('PantryPage — 期限バッジ', () => {
       expect(screen.getByText(/豆腐/)).toBeTruthy();
     });
 
+    expect(screen.getByText('期限間近')).toBeTruthy();
+  });
+});
+
+describe('PantryPage — 期限当日の扱い (Asia/Tokyo の暦日で判定する, #1049 F7-21)', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  function pantryWith(expirationDate: string) {
+    mockGet.mockResolvedValueOnce({
+      items: [
+        {
+          id: 'item-1',
+          name: 'さけ',
+          amount: '2切れ',
+          category: 'fish',
+          expirationDate,
+          addedAt: '2026-10-01',
+        },
+      ],
+    });
+  }
+
+  it('期限が今日の食材は、JST の昼 (期限日の UTC 0 時を過ぎた後) でも「期限切れ」ではなく「期限間近」', async () => {
+    // 2026-10-08 12:00 JST。new Date('2026-10-08') は UTC の 0 時 = 09:00 JST なので、Date.now() との差で見ると期限切れになる
+    freezeDate('2026-10-08T03:00:00Z');
+    pantryWith('2026-10-08');
+
+    render(<PantryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/さけ/)).toBeTruthy();
+    });
+    expect(screen.queryByText('期限切れ')).toBeNull();
+    expect(screen.getByText('期限間近')).toBeTruthy();
+  });
+
+  it('期限が今日の食材は、JST の深夜 23:59 でも「期限間近」', async () => {
+    freezeDate('2026-10-08T14:59:00Z');
+    pantryWith('2026-10-08');
+
+    render(<PantryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/さけ/)).toBeTruthy();
+    });
+    expect(screen.queryByText('期限切れ')).toBeNull();
+    expect(screen.getByText('期限間近')).toBeTruthy();
+  });
+
+  it('期限が昨日の食材は、JST の朝 (UTC ではまだ前日) でも「期限切れ」', async () => {
+    freezeDate('2026-10-07T23:30:00Z'); // 2026-10-08 08:30 JST
+    pantryWith('2026-10-07');
+
+    render(<PantryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/さけ/)).toBeTruthy();
+    });
+    expect(screen.getByText('期限切れ')).toBeTruthy();
+    expect(screen.queryByText('期限間近')).toBeNull();
+  });
+
+  it('期限が 4 日後の食材には、バッジが付かない (間近の範囲は今日から 3 日後まで)', async () => {
+    freezeDate('2026-10-07T23:30:00Z'); // 2026-10-08 08:30 JST
+    pantryWith('2026-10-12');
+
+    render(<PantryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/さけ/)).toBeTruthy();
+    });
+    expect(screen.queryByText('期限切れ')).toBeNull();
+    expect(screen.queryByText('期限間近')).toBeNull();
+  });
+
+  it('期限が 3 日後の食材は「期限間近」', async () => {
+    freezeDate('2026-10-07T23:30:00Z'); // 2026-10-08 08:30 JST
+    pantryWith('2026-10-11');
+
+    render(<PantryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/さけ/)).toBeTruthy();
+    });
     expect(screen.getByText('期限間近')).toBeTruthy();
   });
 });

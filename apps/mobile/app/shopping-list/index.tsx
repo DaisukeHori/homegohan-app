@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { addDaysToDateString, todayLocal } from "@homegohan/shared";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
@@ -42,13 +43,6 @@ type ShoppingRange = {
   todayMeals: MealType[];
   daysCount: number;
 };
-
-function formatLocalDate(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
 
 export default function ShoppingListPage() {
   const [shoppingListId, setShoppingListId] = useState<string | null>(null);
@@ -285,8 +279,8 @@ export default function ShoppingListPage() {
   }
 
   function calculateDateRange() {
-    const today = new Date();
-    const todayStr = formatLocalDate(today);
+    // 「今日」は Asia/Tokyo (Web・サーバーと同じ)。日付の加減算は文字列のまま行う (#1049 F7-21)
+    const todayStr = todayLocal();
 
     switch (shoppingRange.type) {
       case 'today':
@@ -296,39 +290,32 @@ export default function ShoppingListPage() {
           mealTypes: shoppingRange.todayMeals,
         };
       case 'tomorrow': {
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrow = addDaysToDateString(todayStr, 1);
         return {
-          startDate: formatLocalDate(tomorrow),
-          endDate: formatLocalDate(tomorrow),
+          startDate: tomorrow,
+          endDate: tomorrow,
           mealTypes: ['breakfast', 'lunch', 'dinner'] as MealType[],
         };
       }
       case 'dayAfterTomorrow': {
-        const dayAfter = new Date(today);
-        dayAfter.setDate(dayAfter.getDate() + 2);
+        const dayAfter = addDaysToDateString(todayStr, 2);
         return {
-          startDate: formatLocalDate(dayAfter),
-          endDate: formatLocalDate(dayAfter),
+          startDate: dayAfter,
+          endDate: dayAfter,
           mealTypes: ['breakfast', 'lunch', 'dinner'] as MealType[],
         };
       }
-      case 'week': {
-        const weekEnd = new Date(today);
-        weekEnd.setDate(weekEnd.getDate() + 6);
+      case 'week':
         return {
           startDate: todayStr,
-          endDate: formatLocalDate(weekEnd),
+          endDate: addDaysToDateString(todayStr, 6),
           mealTypes: ['breakfast', 'lunch', 'dinner'] as MealType[],
         };
-      }
       case 'days': {
         const count = Math.max(1, Math.min(14, shoppingRange.daysCount));
-        const endDay = new Date(today);
-        endDay.setDate(endDay.getDate() + count - 1);
         return {
           startDate: todayStr,
-          endDate: formatLocalDate(endDay),
+          endDate: addDaysToDateString(todayStr, count - 1),
           mealTypes: ['breakfast', 'lunch', 'dinner'] as MealType[],
         };
       }
