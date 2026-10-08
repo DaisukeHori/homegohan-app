@@ -37,7 +37,8 @@ export type RateLimitCategory =
   | 'org-invite-scope'
   | 'child-promotion'
   | 'invite-target'
-  | 'transfer-propose';
+  | 'transfer-propose'
+  | 'export';
 
 /** 1 つの制限ルール。name は Upstash の prefix / in-memory の名前空間に使う (既存キーを変えないこと) */
 interface RateRule {
@@ -67,6 +68,10 @@ const DAY_SEC = 24 * 60 * 60;
 // - child-promotion: 子供メンバーの昇格(参加リクエスト)メール (key = 依頼者の user.id)
 // - invite-target: 同じ宛先への連続送信 (key = `${flow}:${scopeId}:${宛先メールのハッシュ}`)
 // - transfer-propose: 代表者・オーナー譲渡の提案メール (key = 提案者の user.id)
+//
+// 【その他】
+// - export: 個人データエクスポート（#1131。AI は使わないが全テーブルを走査する重い読み取り）。
+//   正当な再実行（失敗後のやり直し等）は妨げず、連打による DB 負荷だけ防ぐ。10 分あたり 5 回
 const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   generation: [{ name: 'generation', max: 5, windowSec: MINUTE_SEC }],
   analysis: [{ name: 'analysis', max: 10, windowSec: MINUTE_SEC }],
@@ -95,6 +100,7 @@ const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
     { name: 'transfer-propose', max: 3, windowSec: MINUTE_SEC },
     { name: 'transfer-propose-daily', max: 10, windowSec: DAY_SEC },
   ],
+  export: [{ name: 'export', max: 5, windowSec: 10 * MINUTE_SEC }],
 };
 
 export interface RateLimitResult {
