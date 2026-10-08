@@ -23,46 +23,55 @@ export async function GET(request: Request) {
     // 期間を計算
     const { periodStart, periodEnd } = calculatePeriod(periodType);
 
-    // 1. ユーザーのランキングを取得
-    const { data: rankings, error: rankingsError } = await supabase
-      .from('user_segment_rankings')
-      .select(`
-        *,
-        segment_definitions(id, code, name, axes, level),
-        metric_definitions(id, code, name, description, category, unit, higher_is_better)
-      `)
-      .eq('user_id', user.id)
-      .eq('period_type', periodType)
-      .eq('period_start', periodStart);
+    // 1〜4. 互いに独立した 4 クエリを並列に取得する (#1225)
+    //   絞り込み条件は冒頭で確定済みの user.id / periodType / periodStart だけで、クエリ同士に依存は無い。
+    //   1 つずつ await すると DB 往復 4 回分の待ち時間がそのままレスポンス時間に乗るため、Promise.all で同時に発行する。
+    //   (supabase-js のクエリは await されて初めて発行される。Promise.all に渡すことで 4 つ同時に走る)
+    const [rankingsResult, segmentStatsResult, userMetricsResult, userBadgesResult] = await Promise.all([
+      // 1. ユーザーのランキングを取得
+      supabase
+        .from('user_segment_rankings')
+        .select(`
+          *,
+          segment_definitions(id, code, name, axes, level),
+          metric_definitions(id, code, name, description, category, unit, higher_is_better)
+        `)
+        .eq('user_id', user.id)
+        .eq('period_type', periodType)
+        .eq('period_start', periodStart),
+      // 2. セグメント統計を取得
+      supabase
+        .from('segment_stats')
+        .select('*')
+        .eq('period_type', periodType)
+        .eq('period_start', periodStart),
+      // 3. ユーザーのメトリクスを取得
+      supabase
+        .from('user_metrics')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('period_type', periodType)
+        .eq('period_start', periodStart),
+      // 4. ユーザーのバッジを取得（セグメント比較系）
+      supabase
+        .from('user_badges')
+        .select(`
+          *,
+          badges(code, name, icon, condition_json)
+        `)
+        .eq('user_id', user.id)
+        .not('context_json', 'is', null),
+    ]);
+
+    // エラー処理は従来どおり: rankings の error だけログに出し、他の 3 つは error を見ずに空扱いにする
+    const { data: rankings, error: rankingsError } = rankingsResult;
+    const { data: segmentStats } = segmentStatsResult;
+    const { data: userMetrics } = userMetricsResult;
+    const { data: userBadges } = userBadgesResult;
 
     if (rankingsError) {
       console.error('Rankings error:', rankingsError);
     }
-
-    // 2. セグメント統計を取得
-    const { data: segmentStats } = await supabase
-      .from('segment_stats')
-      .select('*')
-      .eq('period_type', periodType)
-      .eq('period_start', periodStart);
-
-    // 3. ユーザーのメトリクスを取得
-    const { data: userMetrics } = await supabase
-      .from('user_metrics')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('period_type', periodType)
-      .eq('period_start', periodStart);
-
-    // 4. ユーザーのバッジを取得（セグメント比較系）
-    const { data: userBadges } = await supabase
-      .from('user_badges')
-      .select(`
-        *,
-        badges(code, name, icon, condition_json)
-      `)
-      .eq('user_id', user.id)
-      .not('context_json', 'is', null);
 
     // 5. ランキングをメトリクスごとにグループ化
     const rankingsByMetric = new Map<string, MetricRankingSummary>();
