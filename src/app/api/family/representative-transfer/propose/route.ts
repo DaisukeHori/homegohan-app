@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server';
 import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
 import { renderFamilyTransferProposedEmail } from '@/lib/emails/membership/family-transfer-proposed';
+import { checkTransferProposeLimit, inviteThrottleResponse } from '@/lib/membership/invite-throttle';
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -15,6 +16,13 @@ export async function POST(request: Request) {
       { error: { code: MembershipErrorCode.NOT_AUTHENTICATED, message: '認証が必要です' } },
       { status: 401 },
     );
+  }
+
+  // #1163 譲渡提案メールの送信回数を制限する (提案者の user.id 単位)。
+  // 判定できない (Redis 障害など) ときは例外がそのまま伝播し、RPC もメールも実行されない (fail-closed)。
+  const throttle = await checkTransferProposeLimit(user.id);
+  if (throttle) {
+    return inviteThrottleResponse(throttle);
   }
 
   let body: unknown;

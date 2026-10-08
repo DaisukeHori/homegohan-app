@@ -7,6 +7,7 @@ import { MembershipErrorCode } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
 import { renderFamilyInviteExistingEmail } from '@/lib/emails/membership/family-invite-existing';
 import { renderFamilyInviteNewEmail } from '@/lib/emails/membership/family-invite-new';
+import { checkInviteEmailLimits, inviteThrottleResponse } from '@/lib/membership/invite-throttle';
 import { buildFamilyInviteUrl } from '@/lib/membership/urls';
 
 // 招待一覧取得
@@ -100,6 +101,20 @@ export async function POST(request: Request) {
       { error: { code: MembershipErrorCode.NOT_FAMILY_ADULT, message: 'この家族グループのメンバーではありません' } },
       { status: 403 },
     );
+  }
+
+  // #1163 招待メールの送信回数を制限する。所属を確かめた後 (family_id が自分の家族と確認できた状態) で、
+  // 最初の副作用 (RPC) の前に判定する。所属確認の前に、リクエストの family_id を鍵にしてはならない
+  // (他の家族の ID を指定してその枠を使い切らせる攻撃になるため)。
+  // 判定できない (Redis 障害など) ときは例外がそのまま伝播し、RPC もメールも実行されない (fail-closed)。
+  const throttle = await checkInviteEmailLimits({
+    flow: 'family-invite',
+    userId: user.id,
+    scopeId: inviterProfile.family_id,
+    recipientEmail: email,
+  });
+  if (throttle) {
+    return inviteThrottleResponse(throttle);
   }
 
   // 家族グループ情報取得 (グループ名)
