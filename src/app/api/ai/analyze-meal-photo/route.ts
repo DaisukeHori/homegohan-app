@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { findCatalogCandidatesForDishes } from '../../../../lib/catalog-products';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiQuotaCountedHeaders, aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
 
 interface ImageInput {
   base64: string;
@@ -42,6 +43,10 @@ export async function POST(request: Request) {
   const rateLimitResult = await checkRateLimit(user.id, 'analysis');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
+  // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
+  const quota = await consumeAiQuota(user.id, 'photo_analysis');
+  if (!quota.allowed) return aiQuotaExceededResponse(quota);
+
   try {
     const startedAt = Date.now();
     const body = await request.json();
@@ -79,6 +84,9 @@ export async function POST(request: Request) {
         userId: user.id,
         invokedAt: mealId ? invokedAt : undefined,
       },
+      // #1177 Edge Function はユーザーの JWT で呼ばれたときに回数を数える。この API ルートが数え済みなので、
+      // 二重に数えないよう、署名つきの印を付ける
+      headers: await aiQuotaCountedHeaders(user.id),
     });
 
     const timeoutPromise = new Promise<never>((_, reject) =>

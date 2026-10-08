@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
 
 /**
  * 買い物リスト再生成API（日付ベースモデル）
@@ -16,6 +17,10 @@ export async function POST(request: Request) {
   // #1022 regenerate-shopping-list-v2 Edge Function が内部で OpenAI を呼ぶため generation カテゴリで制限する
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+  // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
+  const quota = await consumeAiQuota(user.id, 'shopping_list');
+  if (!quota.allowed) return aiQuotaExceededResponse(quota);
 
   try {
     const { startDate, endDate, servingsConfig } = await request.json();

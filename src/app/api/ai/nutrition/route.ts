@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { buildPhotoDishList } from '../../../../lib/meal-image';
 import { cancelPendingMealImageJobs } from '../../../../lib/meal-image-jobs';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
 import {
   PLANNED_MEAL_NUTRIENT_FIELDS,
   plannedMealValidationErrorBody,
@@ -89,6 +90,11 @@ export async function POST(request: Request) {
 
     // 4. 画像URLが提供された場合はAI解析を実行
     if (imageUrl) {
+      // nutritionData を直接渡す経路 (上) は AI を呼ばないので、数えるのは AI で解析するここだけ
+      // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
+      const quota = await consumeAiQuota(user.id, 'photo_analysis');
+      if (!quota.allowed) return aiQuotaExceededResponse(quota);
+
       const prompt = `
         この食事の写真を栄養士の視点で分析し、以下のJSON形式で出力してください。
         数値は概算で構いません。

@@ -13,6 +13,7 @@ import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from 
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
 import { requireAuth } from "../_shared/auth.ts";
+import { aiQuotaExceededResponse, consumeEdgeAiQuota } from "../_shared/quota.ts";
 import { getCorsHeaders, withCors } from "../_shared/cors.ts";
 import { aggregateIngredientOccurrences, InputIngredient } from "../_shared/shopping-list-aggregation.ts";
 import { verifyRequestOwnership } from "../_shared/request-ownership.ts";
@@ -627,6 +628,11 @@ Deno.serve(async (req: Request) => {
         );
       }
       userId = authResult.userId;
+
+      // #1177 AI 利用回数の記録。service role (Next.js の POST /api/shopping-list/regenerate) は Next.js が数え済みなので、
+      // ユーザー自身の JWT で直接呼ばれた場合だけ数える (失敗しても止めない)
+      const quota = await consumeEdgeAiQuota(req, userId, "shopping_list");
+      if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
     }
 
     if (!requestId || !startDate || !endDate) {

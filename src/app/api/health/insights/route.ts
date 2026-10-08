@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { generateGeminiJson } from '@/lib/ai/gemini-json';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
 import { clampIntParam } from '@/lib/http-params';
 import { fetchRecentMealDays, formatMealDaysForPrompt } from '@/lib/health-insight-meals';
 
@@ -109,6 +110,10 @@ export async function POST(request: NextRequest) {
   // #1022 LLM でインサイトを生成するため generation カテゴリで制限する
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+  // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
+  const quota = await consumeAiQuota(user.id, 'health_review');
+  if (!quota.allowed) return aiQuotaExceededResponse(quota);
 
   // ユーザーの最近の health_records, health_checkups, 食事 (user_daily_meals → planned_meals) を集約
   // 食事は planned_meals を直接引かない: planned_meals には user_id / planned_date 列が無い (#1040 F2-02 / #1306)

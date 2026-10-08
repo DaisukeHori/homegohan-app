@@ -27,6 +27,7 @@ import {
 } from '@/lib/meal-image-jobs';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { aiQuotaCountedHeaders, consumeAiQuota } from '@/lib/plan/entitlements';
 import { createLogger } from '@/lib/db-logger';
 import { PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
 import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
@@ -296,7 +297,7 @@ export async function runConsultationAction(
         .single();
 
       const invokeResult = await invokeGenerateMenuV4WithRetry({
-        invoke: () => supabase.functions.invoke(engineLabel, {
+        invoke: async () => supabase.functions.invoke(engineLabel, {
           body: {
             userId: user.id,
             requestId: requestData.id,
@@ -309,6 +310,9 @@ export async function runConsultationAction(
             familySize: profile?.family_size || 1,
             ultimateMode: ultimateMode ?? false,
           },
+          // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに回数を数える。
+          // このアクションは呼び出し元の API ルートが数え済みなので、二重に数えないよう、署名つきの印を付ける
+          headers: await aiQuotaCountedHeaders(user.id),
         }),
       });
 
@@ -388,7 +392,7 @@ export async function runConsultationAction(
         .single();
 
       const invokeResult = await invokeGenerateMenuV4WithRetry({
-        invoke: () => supabase.functions.invoke(engineLabel, {
+        invoke: async () => supabase.functions.invoke(engineLabel, {
           body: {
             userId: user.id,
             requestId: requestData.id,
@@ -401,6 +405,9 @@ export async function runConsultationAction(
             familySize: profile?.family_size || 1,
             ultimateMode: ultimateMode ?? false,
           },
+          // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに回数を数える。
+          // このアクションは呼び出し元の API ルートが数え済みなので、二重に数えないよう、署名つきの印を付ける
+          headers: await aiQuotaCountedHeaders(user.id),
         }),
       });
 
@@ -491,7 +498,7 @@ export async function runConsultationAction(
 
       // 3. Edge Functionを呼び出し
       const invokeResult = await invokeGenerateMenuV4WithRetry({
-        invoke: () => supabase.functions.invoke(engineLabel, {
+        invoke: async () => supabase.functions.invoke(engineLabel, {
           body: {
             userId: user.id,
             requestId: requestData.id,
@@ -511,6 +518,9 @@ export async function runConsultationAction(
             familySize,
             ultimateMode: ultimateMode ?? false,
           },
+          // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに回数を数える。
+          // このアクションは呼び出し元の API ルートが数え済みなので、二重に数えないよう、署名つきの印を付ける
+          headers: await aiQuotaCountedHeaders(user.id),
         }),
       });
 
@@ -634,6 +644,10 @@ export async function runConsultationAction(
         try {
           const rl = await checkRateLimit(user.id, 'image');
           imageAllowed = rl.success;
+          if (imageAllowed) {
+            // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない)。上限を超えたときは画像生成だけを見送る
+            imageAllowed = (await consumeAiQuota(user.id, 'image_generation')).allowed;
+          }
         } catch (rlError) {
           createLogger('api/ai/consultation/actions/execute').warn(
             'Image rate-limit check failed; skipping image generation',

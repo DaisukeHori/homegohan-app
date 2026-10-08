@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
 
 function stripMarkdownCodeBlock(text: string): string {
   let cleaned = text.trim();
@@ -62,6 +63,10 @@ export async function POST(
 
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+  // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
+  const quota = await consumeAiQuota(user.id, 'consultation');
+  if (!quota.allowed) return aiQuotaExceededResponse(quota);
 
   try {
     // セッション所有者確認

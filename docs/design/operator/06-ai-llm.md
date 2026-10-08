@@ -237,6 +237,23 @@ function getQuotaConfig(planKey: string, status: SubscriptionStatus): QuotaConfi
 }
 ```
 
+### 5.2.1 実装の現状 (#1177 / T26): 回数を数える仕組みだけ。上限はまだ入れていない
+
+5.2 の Redis による擬似コードは、実装していない。実際は **DB だけ** で数えており、**全プランの上限が NULL (無制限)** のまま、利用回数の計測だけを行っている (2026-10-08 のオーナー判断)。5.1 の表の数値 (50/日など) は、実際の上限 (T40) を決めるまで使わない。
+
+| もの | 内容 |
+|------|------|
+| `public.get_effective_plan(user_id)` | いま効いているプランの plan_key。`personal_subscriptions` (status が trialing / active / grace / past_due) -> 家族 (`family_groups.plan_key`。active なメンバー・active な家族) -> 組織 (`organizations.plan`。active) -> `free` の順で最初に見つかったもの |
+| `public.ai_plan_limits(plan_key PK, daily_limit, monthly_limit)` | プランごとの上限。**NULL は無制限**。行が無いプランも無制限。上限は「その日 / その月 (JST) の全機能の合計」 |
+| `public.ai_usage_counters(user_id, usage_date, feature, count)` | ユーザー × 日 (JST) × 機能 の利用回数。PK は先頭 3 列 |
+| `public.consume_ai_quota(user_id, feature)` | 1 回使うごとに呼ぶ。原子的に +1 し、`{allowed, remaining, plan_key}` を返す (拒否時は `limit_kind` / `limit` / `reset_at` も返し、数えない)。service_role だけが実行できる |
+| `src/lib/plan/entitlements.ts` | `consumeAiQuota` (AI を使う全 API ルートが、`checkRateLimit` のあとに 1 回呼ぶ)、`aiQuotaExceededResponse` (429 `AI_DAILY_LIMIT` / `AI_MONTHLY_LIMIT`)、`aiQuotaCountedHeaders`、`getEffectivePlan` |
+| `supabase/functions/_shared/quota.ts` | Edge Function 用。ユーザーの JWT で直接呼ばれたときだけ数える (Next.js が数え済みの呼び出し・service role の呼び出しでは数えない) |
+
+- **失敗しても止めない**: `consume_ai_quota` が失敗したら、記録して許可する (海外の AI へ送る処理は止めない、というオーナー方針)。
+- **数え方**: ユーザーの 1 回の操作 = 1。究極モード (ultimateMode) も 1。複数回と数えるか、キャッシュ・画像 1 枚ごとの扱いは、T40 で上限を決めるときにオーナーと決める。
+- **ここに無い (別の作業)**: 実際の上限値 (T40)、有料プランの付与 (T48)、Edge Function の分あたりのレート制限 (#1153。この仕組みを再利用できる)、古い `ai_usage_counters` 行の削除、組織の `subscription_status` (試用・期限切れ) の反映。
+
 ### 5.3 異常検知
 
 ```typescript

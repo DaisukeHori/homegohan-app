@@ -217,6 +217,8 @@ export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
   app_logs: 'アプリの動作ログ (内部のエラー記録)',
   ai_content_logs: 'AI 生成の内部ログ (費用・モデレーション用の列を含む)',
   llm_usage_logs: 'LLM 利用量の内部台帳 (コスト等)',
+  ai_usage_counters:
+    'AI 利用回数の内部台帳 (プランの利用制限の計測用。本人が読める RLS ポリシーが無く、service_role だけが読み書きする)',
   email_delivery_logs: 'メール配信の運用ログ',
   meal_nutrition_debug_logs: '栄養計算のデバッグログ',
   meal_image_jobs: '画像生成ジョブのキュー (処理状態・リース情報などの内部データ)',

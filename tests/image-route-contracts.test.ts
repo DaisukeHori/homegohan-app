@@ -35,6 +35,16 @@ vi.mock('next/headers', () => ({
   cookies: vi.fn(() => undefined),
 }));
 
+// #1177: AI 利用回数の記録 (DB を呼ぶ境目)。consumeAiQuota 自体の挙動は src/__tests__/lib/plan/entitlements.test.ts
+const mockConsumeAiQuota = vi.fn();
+const mockAiQuotaCountedHeaders = vi.fn();
+vi.mock('@/lib/plan/entitlements', () => ({
+  consumeAiQuota: (...args: unknown[]) => mockConsumeAiQuota(...args),
+  aiQuotaExceededResponse: vi.fn(),
+  aiQuotaCountedHeaders: (...args: unknown[]) => mockAiQuotaCountedHeaders(...args),
+}));
+const COUNTED_HEADERS = { 'x-hg-ai-quota-counted': 'test-marker' };
+
 vi.mock('@google/genai', () => ({
   GoogleGenAI: class {
     models = {
@@ -51,6 +61,10 @@ describe('image route contracts', () => {
     selectChainData = [];
     selectChainError = null;
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockConsumeAiQuota.mockReset();
+    mockConsumeAiQuota.mockResolvedValue({ allowed: true, remaining: null });
+    mockAiQuotaCountedHeaders.mockReset();
+    mockAiQuotaCountedHeaders.mockResolvedValue(COUNTED_HEADERS);
     mockInvoke.mockReset();
     mockUpload.mockResolvedValue({ error: null });
     mockGetPublicUrl.mockReturnValue({ data: { publicUrl: 'https://example.com/generated.png' } });
@@ -125,6 +139,13 @@ describe('image route contracts', () => {
     }));
 
     expect(response.status).toBe(200);
+    // #1177 この API ルートが 1 回と数え、Edge Function が二重に数えないよう、数え済みの印を付けて呼ぶ
+    expect(mockConsumeAiQuota).toHaveBeenCalledTimes(1);
+    expect(mockConsumeAiQuota).toHaveBeenCalledWith('user-1', 'photo_analysis');
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'analyze-health-photo',
+      expect.objectContaining({ headers: COUNTED_HEADERS }),
+    );
     await expect(response.json()).resolves.toEqual({
       weight: 65.2,
       bodyFat: 18.4,
@@ -159,7 +180,13 @@ describe('image route contracts', () => {
         mealType: 'dinner',
         userId: 'user-1',
       },
+      // #1177 Edge Function が二重に数えないよう、数え済みの印を付けて呼ぶ
+      headers: COUNTED_HEADERS,
     });
+    expect(mockAiQuotaCountedHeaders).toHaveBeenCalledWith('user-1');
+    // #1177 この API ルートが、認証で確定したユーザーの AI 利用を 1 回と数える
+    expect(mockConsumeAiQuota).toHaveBeenCalledTimes(1);
+    expect(mockConsumeAiQuota).toHaveBeenCalledWith('user-1', 'photo_analysis');
     await expect(response.json()).resolves.toEqual({
       dishes: [{ name: 'カレー', role: 'main', cal: 620 }],
       totalCalories: 620,
@@ -209,6 +236,7 @@ describe('image route contracts', () => {
         prefetchedGeminiResult,
         userId: 'user-1',
       },
+      headers: COUNTED_HEADERS,
     });
     await expect(response.json()).resolves.toEqual({
       dishes: [{ name: '親子丼', role: 'main', cal: 640 }],
@@ -745,6 +773,7 @@ describe('image route contracts', () => {
         mealId: 'meal-123',
         invokedAt: expect.any(String),
       }),
+      headers: COUNTED_HEADERS,
     });
 
     // invokedAt が正しい時刻範囲内であることを確認

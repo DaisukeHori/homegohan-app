@@ -77,6 +77,14 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 
 `src/lib/rate-limit.ts` に集約する (#1197)。新しい制限は `RateLimitCategory` にカテゴリを足し、`checkRateLimit(key, category)` で判定する。route ごとに Upstash / in-memory の制限を自前で作らない (`tests/rate-limit-single-implementation.test.ts` が `@upstash/ratelimit` を使うファイルを検査する)。key は認証で確定した ID を使い、ログイン前の公開 API (お問い合わせ) だけクライアント IP を使う。
 
+### AI の利用回数の記録
+
+`src/lib/plan/entitlements.ts` に集約する (#1177)。AI を使う API ルートは、認証と `checkRateLimit` の直後に、ユーザーの 1 回の操作につき 1 回 `consumeAiQuota(user.id, feature)` を呼び、`!quota.allowed` なら `aiQuotaExceededResponse(quota)` (429。`AI_DAILY_LIMIT` / `AI_MONTHLY_LIMIT`。レート制限の `RATE_LIMITED` とは別) を返す。AI を実際に呼ばない経路 (キャッシュを返すだけなど) では呼ばない。いまは全プランの上限が NULL (無制限) なので止まらず、回数を数えるだけ。DB の関数が失敗しても記録して許可する (止めない。海外の AI へ送る処理は止めない、というオーナー方針)。プランは `get_effective_plan` (個人の契約 -> 家族 -> 組織 -> `free`)、上限は `ai_plan_limits`、回数は `ai_usage_counters` (JST の日付)。
+
+- Edge Function は、ユーザーの JWT を確かめた経路で `consumeEdgeAiQuota` (`supabase/functions/_shared/quota.ts`) を呼ぶ。service role / cron の経路では呼ばない (Next.js が数え済み)。
+- Next.js が Edge Function を**ユーザーの JWT で**呼ぶとき (`supabase.functions.invoke`) は、`headers: await aiQuotaCountedHeaders(user.id)` を付ける (署名つきの印。付けないと Edge 側でも数えて二重になる)。
+- `tests/ai-quota-contract.test.ts` が、AI を呼ぶ route / Edge Function の数え忘れ・結果を捨てる呼び出し・印の付け忘れを検査する。新しい AI の route を足してこのテストが落ちたら、`consumeAiQuota` を呼んで一覧 (`AI_QUOTA_ROUTES`) に足す。
+
 ### PostHog の既定ホスト
 
 `packages/shared` の `POSTHOG_DEFAULT_HOST` に集約する (#1197)。Web・モバイルのコードはこれを import し、ホストの文字列を直接書かない。素の Node ESM の `next.config.mjs` と `.env.example` だけは同じ値のリテラルが残るので、ホストを変えるときは 3 か所を合わせる (`src/__tests__/config/posthog-default-host.test.ts` が検査する)。

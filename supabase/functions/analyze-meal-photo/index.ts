@@ -10,6 +10,7 @@ import { buildPhotoDishList } from '../_shared/meal-image.ts'
 import { cancelPendingMealImageJobs } from '../_shared/meal-image-jobs.ts'
 import { createLogger } from '../_shared/db-logger.ts'
 import { getCorsHeaders } from '../_shared/cors.ts'
+import { aiQuotaExceededResponse, consumeEdgeAiQuota } from '../_shared/quota.ts'
 
 console.log("Analyze Meal Photo Function v2 loaded")
 
@@ -43,6 +44,11 @@ Deno.serve(async (req) => {
         status: 401,
       })
     }
+
+    // #1177 AI 利用回数の記録。Next.js (POST /api/ai/analyze-meal-photo) は数え済みの印を付けて呼ぶので、
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (失敗しても止めない)
+    const quota = await consumeEdgeAiQuota(req, user.id, 'photo_analysis')
+    if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders)
 
     const body = await req.json()
     const { images, imageBase64, mimeType, mealId, mealType, prefetchedGeminiResult } = body as {

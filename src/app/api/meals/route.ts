@@ -7,6 +7,7 @@ import {
   triggerMealImageJobProcessing,
 } from '../../../lib/meal-image-jobs';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { consumeAiQuota } from '@/lib/plan/entitlements';
 import { createLogger } from '@/lib/db-logger';
 import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
 
@@ -192,6 +193,10 @@ export async function POST(request: Request) {
       try {
         const rl = await checkRateLimit(user.id, 'image');
         imageAllowed = rl.success;
+        if (imageAllowed) {
+          // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない)。上限を超えたときは画像生成だけを見送る
+          imageAllowed = (await consumeAiQuota(user.id, 'image_generation')).allowed;
+        }
       } catch (rlError) {
         createLogger('api/meals').warn('Image rate-limit check failed; skipping image generation', {
           userId: user.id,

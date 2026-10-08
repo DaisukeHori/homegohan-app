@@ -2,6 +2,7 @@ import "@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "@supabase/supabase-js";
 import { generateGeminiJson } from "../_shared/gemini-json.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
+import { aiQuotaExceededResponse, consumeEdgeAiQuota } from "../_shared/quota.ts";
 
 interface AnalysisResult {
   type: 'weight_scale' | 'blood_pressure' | 'thermometer' | 'unknown';
@@ -108,6 +109,11 @@ Deno.serve(async (req) => {
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    // #1177 AI 利用回数の記録。Next.js (POST /api/ai/analyze-weight-scale) は数え済みの印を付けて呼ぶので、
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (失敗しても止めない)
+    const quota = await consumeEdgeAiQuota(req, user.id, "photo_analysis");
+    if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
 
     const formData = await req.formData();
     const imageFile = formData.get("image") as File | null;

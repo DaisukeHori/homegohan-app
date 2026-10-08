@@ -3,6 +3,7 @@ import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
 
 /**
  * 栄養分析API
@@ -31,6 +32,10 @@ export async function GET(request: Request) {
   if (includeAdvice || includeSuggestion) {
     const rateLimitResult = await checkRateLimit(user.id, 'analysis');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+    // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
+    const quota = await consumeAiQuota(user.id, 'nutrition_advice');
+    if (!quota.allowed) return aiQuotaExceededResponse(quota);
   }
 
   try {
@@ -332,6 +337,10 @@ export async function POST(request: Request) {
 
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+  // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
+  const quota = await consumeAiQuota(user.id, 'menu_generation');
+  if (!quota.allowed) return aiQuotaExceededResponse(quota);
 
   try {
     const body = await request.json();

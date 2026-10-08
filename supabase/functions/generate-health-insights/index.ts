@@ -4,6 +4,7 @@ import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from 
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
+import { aiQuotaExceededResponse, consumeEdgeAiQuota } from "../_shared/quota.ts";
 
 interface HealthRecord {
   record_date: string;
@@ -63,6 +64,10 @@ Deno.serve(async (req) => {
       );
     }
     _userId = user.id;
+
+    // #1177 AI 利用回数の記録。Next.js を経由せず JWT で直接呼ばれた場合だけ数える (失敗しても止めない)
+    const quota = await consumeEdgeAiQuota(req, user.id, "health_review");
+    if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
 
     const body = await req.json();
     const periodType = body.period_type || 'weekly'; // 'daily', 'weekly', 'monthly'

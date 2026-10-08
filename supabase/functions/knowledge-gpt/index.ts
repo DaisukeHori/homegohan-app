@@ -6,6 +6,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { getCorsHeaders } from '../_shared/cors.ts'
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
+import { aiQuotaExceededResponse, consumeEdgeAiQuota } from "../_shared/quota.ts";
 import OpenAI from "openai";
 import { createFastLLMClient, getFastLLMModel } from "../_shared/fast-llm.ts";
 import {
@@ -413,6 +414,11 @@ Deno.serve(async (req) => {
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
+
+      // #1177 AI 利用回数の記録。service role (Next.js の AI 相談 API) は Next.js が数え済みなので、
+      // ユーザー自身の JWT で直接呼ばれた場合だけ数える (失敗しても止めない)
+      const quota = await consumeEdgeAiQuota(req, user.id, "consultation");
+      if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
     }
 
     const body: ChatCompletionRequest = await req.json().catch(() => ({ messages: [] }));

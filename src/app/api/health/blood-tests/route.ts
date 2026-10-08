@@ -4,6 +4,7 @@ import { internalError } from '@/lib/api/errors';
 import { sanitizeBloodTestPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
 import { clampIntParam } from '@/lib/http-params';
 
 // 血液検査結果一覧の取得（+ 経年レビュー）
@@ -55,6 +56,10 @@ export async function POST(request: NextRequest) {
   // #1022 個別レビュー + 経年レビューで LLM を2回叩くため generation カテゴリで制限する
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+  // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
+  const quota = await consumeAiQuota(user.id, 'health_review');
+  if (!quota.allowed) return aiQuotaExceededResponse(quota);
 
   const body = await request.json().catch(() => null);
   const { data: resultData, errors } = sanitizeBloodTestPayload(body);

@@ -16,6 +16,7 @@ import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from 
 import { fetchWithRetry } from "../_shared/network-retry.ts";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { requireAuth } from "../_shared/auth.ts";
+import { aiQuotaExceededResponse, consumeEdgeAiQuota } from "../_shared/quota.ts";
 
 // 過大入力によるLLMコスト濫用/DoS防止のための上限
 const MAX_INGREDIENTS = 500;
@@ -287,6 +288,10 @@ Deno.serve(async (req: Request) => {
   // ブラウザからの呼び出し（functions.invoke）でも CORS エラーにならないよう withCors で付け直す。
   const authResult = await requireAuth(req);
   if (authResult instanceof Response) return withCors(authResult, req);
+
+  // #1177 AI 利用回数の記録。Next.js を経由せず JWT で直接呼ばれた場合だけ数える (失敗しても止めない)
+  const quota = await consumeEdgeAiQuota(req, authResult.userId, "shopping_list");
+  if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
 
   const requestId = generateRequestId();
   const executionId = generateExecutionId();

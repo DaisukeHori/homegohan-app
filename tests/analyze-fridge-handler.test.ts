@@ -10,6 +10,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 const mocks = vi.hoisted(() => ({
   requireAuth: vi.fn(),
+  consumeEdgeAiQuota: vi.fn(),
   createCompletion: vi.fn(),
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -18,6 +19,12 @@ vi.mock("../supabase/functions/_shared/auth.ts", () => ({ requireAuth: mocks.req
 vi.mock("../supabase/functions/_shared/db-logger.ts", () => ({
   createLogger: () => ({ withUser: () => mocks.logger }),
   generateRequestId: () => "req_test",
+}));
+// #1177: AI 利用回数の記録。DB を呼ぶ consumeEdgeAiQuota だけを差し替え、429 の応答を作る関数は本物を使う
+// (consumeEdgeAiQuota 自体の挙動は tests/ai-quota-edge.test.ts)
+vi.mock("../supabase/functions/_shared/quota.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../supabase/functions/_shared/quota.ts")>()),
+  consumeEdgeAiQuota: mocks.consumeEdgeAiQuota,
 }));
 vi.mock("../supabase/functions/_shared/fast-llm.ts", () => ({
   createFastLLMClient: () => ({ chat: { completions: { create: mocks.createCompletion } } }),
@@ -44,6 +51,8 @@ afterAll(() => {
 beforeEach(() => {
   mocks.requireAuth.mockReset();
   mocks.requireAuth.mockResolvedValue({ userId: "user-1" });
+  mocks.consumeEdgeAiQuota.mockReset();
+  mocks.consumeEdgeAiQuota.mockResolvedValue({ allowed: true, remaining: null });
   mocks.createCompletion.mockReset();
   mocks.createCompletion.mockResolvedValue({
     choices: [{ message: { content: JSON.stringify({ ingredients: ["卵", "牛乳"], expiringSoon: ["牛乳"] }) } }],
@@ -254,5 +263,50 @@ describe("analyze-fridge の CORS (#1167)", () => {
     const denied = await call({ imageUrl: SUPABASE_URL }, undefined, OTHER_SITE);
     expect(denied.status).toBe(401);
     expect(denied.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+});
+
+// #1177: AI 利用回数の記録。ユーザーの JWT で直接呼ばれたときに数える (Next.js が数え済みの呼び出しは、印があれば数えない)
+describe("analyze-fridge の AI 利用回数の記録 (#1177)", () => {
+  it("AH-15: JWT の認証に成功したら、受け取った req とユーザー ID で数える。Vision API を呼ぶ前に数える", async () => {
+    const res = await call({ imageUrl: SUPABASE_URL });
+
+    expect(res.status).toBe(200);
+    expect(mocks.consumeEdgeAiQuota).toHaveBeenCalledTimes(1);
+    const [req, userId, feature] = mocks.consumeEdgeAiQuota.mock.calls[0];
+    expect(req).toBeInstanceOf(Request);
+    expect(userId).toBe("user-1");
+    expect(feature).toBe("photo_analysis");
+    expect(mocks.consumeEdgeAiQuota.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.createCompletion.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("AH-16: 認証に失敗したら数えない", async () => {
+    mocks.requireAuth.mockResolvedValue(new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 }));
+
+    const res = await call({ imageUrl: SUPABASE_URL });
+
+    expect(res.status).toBe(401);
+    expect(mocks.consumeEdgeAiQuota).not.toHaveBeenCalled();
+  });
+
+  it("AH-17: 上限を超えていたら (いまは通らない)、Vision API を呼ばずに 429。許可したオリジンには CORS ヘッダーも付く", async () => {
+    mocks.consumeEdgeAiQuota.mockResolvedValue({
+      allowed: false,
+      remaining: 0,
+      limitKind: "daily",
+      limit: 5,
+      resetAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+
+    const res = await call({ imageUrl: SUPABASE_URL });
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe(WEB_ORIGIN);
+    expect(res.headers.get("Content-Type")).toBe("application/json");
+    expect(Number(res.headers.get("Retry-After"))).toBeGreaterThan(0);
+    expect(await res.json()).toMatchObject({ code: "AI_DAILY_LIMIT", limit: 5 });
+    expect(mocks.createCompletion).not.toHaveBeenCalled();
   });
 });

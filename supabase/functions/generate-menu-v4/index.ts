@@ -12,6 +12,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
+import { aiQuotaExceededResponse, consumeEdgeAiQuota } from "../_shared/quota.ts";
 import {
   buildSearchQueryBase,
   buildUserContextForPrompt,
@@ -2794,6 +2795,12 @@ Deno.serve(async (req: Request) => {
           { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
+
+      // #1177 AI 利用回数の記録。この経路 (ユーザー自身の JWT) は、Next.js を経由せず直接呼ばれた場合だけ。
+      // Next.js の API ルートは service role で呼ぶ (上の isServiceRoleCaller) ので、ここでは数えない
+      // (数えるのは API ルート側。失敗しても止めない)
+      const quota = await consumeEdgeAiQuota(req, userData.user.id, "menu_generation");
+      if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
     }
 
     // 現在のステップを取得

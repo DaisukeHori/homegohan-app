@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { GoogleGenAI, createUserContent } from '@google/genai';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
 import { userScopedStoragePath } from '@/lib/storage-paths';
 
 interface ReferenceImageInput {
@@ -58,6 +59,10 @@ export async function POST(request: Request) {
 
     const rateLimitResult = await checkRateLimit(user.id, 'image');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+    // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
+    const quota = await consumeAiQuota(user.id, 'image_generation');
+    if (!quota.allowed) return aiQuotaExceededResponse(quota);
 
     const apiKey = process.env.GOOGLE_AI_STUDIO_API_KEY || process.env.GOOGLE_GEN_AI_API_KEY;
     if (!apiKey) {

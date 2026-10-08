@@ -10,6 +10,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { getCorsHeaders } from "../_shared/cors.ts";
 import { requireAuth } from "../_shared/auth.ts";
+import { aiQuotaExceededResponse, consumeEdgeAiQuota } from "../_shared/quota.ts";
 import { createLogger, generateRequestId } from "../_shared/db-logger.ts";
 import { createFastLLMClient, getFastLLMModel } from "../_shared/fast-llm.ts";
 
@@ -42,6 +43,10 @@ Deno.serve(async (req) => {
     });
   }
   const { userId } = authResult;
+
+  // #1177 AI 利用回数の記録。Next.js を経由せず JWT で直接呼ばれた場合だけ数える (失敗しても止めない)
+  const quota = await consumeEdgeAiQuota(req, userId, "nutrition_advice");
+  if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
 
   const requestId = generateRequestId();
   const logger = createLogger("generate-hint", requestId).withUser(userId);

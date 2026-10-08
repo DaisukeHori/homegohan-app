@@ -14,6 +14,7 @@ import type {
 import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
 import { todayLocal } from '@/lib/date-utils';
 
 const VALID_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
@@ -108,6 +109,10 @@ export async function POST(request: Request) {
 
     const rateLimitResult = await checkRateLimit(user.id, 'generation');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+    // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
+    const quota = await consumeAiQuota(user.id, 'menu_generation');
+    if (!quota.allowed) return aiQuotaExceededResponse(quota);
 
     const targetSlots = body?.resolveExistingMeals
       ? await resolveExistingTargetSlots({

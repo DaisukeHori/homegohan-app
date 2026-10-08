@@ -27,6 +27,8 @@ const mockGetUser = vi.fn();
 const mockFrom = vi.fn();
 const mockCheckRateLimit = vi.fn();
 const mockRateLimitExceededResponse = vi.fn();
+const mockConsumeAiQuota = vi.fn();
+const mockAiQuotaExceededResponse = vi.fn();
 const mockGenerateGeminiJson = vi.fn();
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -39,6 +41,12 @@ vi.mock('@/lib/supabase/server', () => ({
 vi.mock('@/lib/rate-limit', () => ({
   checkRateLimit: (...args: unknown[]) => mockCheckRateLimit(...args),
   rateLimitExceededResponse: (...args: unknown[]) => mockRateLimitExceededResponse(...args),
+}));
+
+// #1177: AI 利用回数の記録 (DB を呼ぶ境目)。consumeAiQuota 自体の挙動は src/__tests__/lib/plan/entitlements.test.ts
+vi.mock('@/lib/plan/entitlements', () => ({
+  consumeAiQuota: (...args: unknown[]) => mockConsumeAiQuota(...args),
+  aiQuotaExceededResponse: (...args: unknown[]) => mockAiQuotaExceededResponse(...args),
 }));
 
 vi.mock('@/lib/ai/gemini-json', () => ({
@@ -189,6 +197,7 @@ beforeEach(() => {
   installSupabaseMock();
   mockGetUser.mockResolvedValue({ data: { user }, error: null });
   mockCheckRateLimit.mockResolvedValue({ success: true });
+  mockConsumeAiQuota.mockResolvedValue({ allowed: true, remaining: null });
   // JST の 2026-10-08 05:30。UTC ではまだ 10-07 なので、「今日」が JST 基準であることも確かめられる
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-10-07T20:30:00Z'));
@@ -218,6 +227,34 @@ describe('POST /api/health/insights', () => {
     const res = await POST(postRequest());
 
     expect(res.status).toBe(429);
+    expect(mockFrom).not.toHaveBeenCalled();
+    expect(mockGenerateGeminiJson).not.toHaveBeenCalled();
+    // レート制限で止まった要求は、AI の利用回数に数えない
+    expect(mockConsumeAiQuota).not.toHaveBeenCalled();
+  });
+
+  it('#1177: レート制限を通ったら、認証で確定したユーザー ID で AI の利用回数を数える (health_review)', async () => {
+    setupHappyPath();
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(200);
+    expect(mockConsumeAiQuota).toHaveBeenCalledTimes(1);
+    expect(mockConsumeAiQuota).toHaveBeenCalledWith(user.id, 'health_review');
+    // 回数制限のあとに数え、AI を呼ぶ前に数える
+    expect(mockCheckRateLimit.mock.invocationCallOrder[0]).toBeLessThan(mockConsumeAiQuota.mock.invocationCallOrder[0]);
+    expect(mockConsumeAiQuota.mock.invocationCallOrder[0]).toBeLessThan(mockGenerateGeminiJson.mock.invocationCallOrder[0]);
+  });
+
+  it('#1177: 利用回数の上限を超えていたら (いまは通らない)、DB にも LLM にも触れずにその応答 (429) を返す', async () => {
+    const denied = { allowed: false, remaining: 0, limitKind: 'daily' as const, limit: 3 };
+    mockConsumeAiQuota.mockResolvedValue(denied);
+    mockAiQuotaExceededResponse.mockReturnValue(new Response('{}', { status: 429 }));
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(429);
+    expect(mockAiQuotaExceededResponse).toHaveBeenCalledWith(denied);
     expect(mockFrom).not.toHaveBeenCalled();
     expect(mockGenerateGeminiJson).not.toHaveBeenCalled();
   });

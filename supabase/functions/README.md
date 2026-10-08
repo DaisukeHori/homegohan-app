@@ -168,6 +168,8 @@ supabase/functions/
 │   ├── auth.ts             # 認証ヘルパー（requireAuth: ユーザーの JWT、requireServiceRole: cron 用の共有シークレットか service role key。await 必須）
 │   ├── cron-secret.ts      # cron 用シークレットの照合（Next.js の src/lib/cron-auth.ts と共用。import なし・Deno/Node 固有 API なし。入れ替え中は CRON_SECRET_PREVIOUS も受け付ける。手順は ENV_SETUP.md）
 │   ├── cors.ts             # CORS設定（許可したオリジンにだけ CORS ヘッダーを返す。下の「CORS」を参照）
+│   ├── ai-quota-core.ts    # AI 利用回数の記録の共通部分（機能名の一覧・DB の戻り値の読み取り・429 の本文・Next.js が付ける「数え済みの印」の署名と検証。Next.js の src/lib/plan/entitlements.ts と共用。import なし・Deno/Node 固有 API なし）
+│   ├── quota.ts            # AI 利用回数の記録（ユーザーの JWT で直接呼ばれたときに数える。下の「AI 利用回数の記録」を参照）
 │   ├── db-logger.ts        # ログ記録
 │   ├── log-sanitizer.ts    # ログ保存前の秘密情報マスキング・切り詰め（Next.js の src/lib/db-logger.ts と共用。import なし・Deno/Node 固有 API なし）
 │   ├── bulk-query.ts       # 集計バッチ向けの PostgREST の読み書き（失敗を例外にする・1 回の応答の上限 1000 行を超えて全件を取る・.in() の ids の分割）
@@ -238,6 +240,17 @@ CORS はブラウザだけが強制する仕組みです。Next.js の API ル�
 - ブラウザから Edge Function を直接呼ばないでください。権限の確認が要る処理は、Next.js の API ルートで確認してから、サーバーから Edge Function を呼びます（例: 管理者用のコンビニカタログ取り込みは `POST /api/admin/catalog/import` を経由します）。
 - モバイルアプリの WebView が読み込むのは Web アプリ自身（`EXPO_PUBLIC_WEB_URL`）のページなので、そこから呼ぶときの `Origin` も Web アプリのオリジンです。ネイティブ側の `fetch` は `Origin` を付けません。
 - 新しい関数を足すときは、`tests/edge-function-cors.test.ts` が、`Access-Control-Allow-Origin: *`（ワイルドカード）を書き込んでいないか、CORS ヘッダーを `_shared/cors.ts` 以外に直書きしていないか、バッチ専用の関数に CORS を付けていないかを検査します。`requireServiceRole` を使う関数を足したら同じテストの `BATCH_ONLY_SOURCES` に、`_shared/cors.ts` を使う関数を足したら `USER_FACING_SOURCES` に、一覧として足してください。
+
+### AI 利用回数の記録
+
+AI を使う処理は、プランの上限と比べるために、利用回数を数えます (#1177)。**いまは全プランが無制限で、数えるだけ**です（上限の値は別の作業）。数える先は DB の `consume_ai_quota`（`ai_usage_counters`。日付は JST）で、service role だけが実行できます。
+
+- **ユーザーの JWT を確かめる関数**（`requireAuth` / `auth.getUser`）は、確かめたのと同じブロックの中で `consumeEdgeAiQuota(req, userId, feature)`（`_shared/quota.ts`）を呼びます。Next.js の API ルートを経由せず、ユーザーの JWT で直接呼ばれた場合に、回数がすり抜けないようにするためです（#1153）。
+- **service role / cron で呼ばれる経路では呼びません。** Next.js の API ルートが数え済みです（献立生成・AI 相談・買い物リスト・料理画像）。献立生成のキュー（`weekly_menu_requests`）は、積む時点（`POST /api/ai/menu/v5/generate`）で数えます。
+- **Next.js がユーザーの JWT で呼ぶ関数**（写真解析の `analyze-meal-photo` / `analyze-health-photo`、AI 相談のアクション実行が呼ぶ `generate-menu-v4` / `v5`）は、Next.js が `x-hg-ai-quota-counted` ヘッダー（service role key で署名した印。5 分以内・同じユーザーのときだけ有効）を付けて呼びます。印が合えば、Edge 側では数えません。印を検証できなければ数える側に倒します（二重に数えるだけで、AI の利用は止まりません）。
+- **失敗しても止めません。** DB の関数が失敗しても（エラー・応答が 3 秒を超える・この migration が未適用）、`app_logs` に記録して許可します。海外の AI へ送る処理を止めない、というオーナーの方針（2026-10-08）です。
+- 上限を超えたときの 429 は `{ code: 'AI_DAILY_LIMIT' | 'AI_MONTHLY_LIMIT' }`（`aiQuotaExceededResponse`）。レート制限の 429（`RATE_LIMITED`）とは別です。
+- `tests/ai-quota-contract.test.ts` が、ユーザーの JWT を確かめる関数に数え忘れが無いこと（新しい関数を足したときも）を検査します。
 
 ### ローカルでのテスト
 
