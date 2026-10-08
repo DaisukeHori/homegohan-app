@@ -242,6 +242,8 @@ Vision API の応答が非決定的なため、bug-64 spec は `skip` 指定で�
 
 Bug-27 対応で「究極モードを Premium プラン準備中としてロック」したが、実際の Stripe Checkout / サブスクリプション確認ロジックは未実装。
 
+> **2026-10-08 追記 (#1142)**: 究極モードは、プランによる制限をかけずに全員へ開放した (オーナー判断)。ここに書いた「ロック」は外れ、究極モードのための課金ゲート (Premium プラン) も作らない。`bug-27-ultimate-mode-locked.spec.ts` は「開放されていること」を確かめる内容に書き換えてある (ファイル名は経緯が追えるよう据え置き)。
+
 ### 7-6. Observability の logger を残りのマイナー Edge Function には配線していない
 
 Bug-38 対応で主要 5 Edge Function + 3 API ルートに db-logger を配線したが、マイナーな Edge Function は未配線。

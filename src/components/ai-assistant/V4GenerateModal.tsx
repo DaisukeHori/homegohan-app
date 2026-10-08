@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState, useCallback, useMemo, useEffect } from "react";
+import React, { useState, useCallback, useMemo, useEffect, useId } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Sparkles, Calendar, Target, RefreshCw,
   Refrigerator, Zap, UtensilsCrossed, Heart,
-  ChevronRight, Loader2, Wand2, AlertTriangle, Crown, CalendarDays
+  ChevronRight, Loader2, Wand2, AlertTriangle, CalendarDays
 } from "lucide-react";
 import type { TargetSlot, MenuGenerationConstraints } from "@/types/domain";
 import {
@@ -455,8 +455,12 @@ function V4GenerateModalNormal({
   // Free text note
   const [note, setNote] = useState("");
 
-  // Ultimate Mode: AIが献立を自動で見直し、栄養バランスを改善
+  // Ultimate Mode (究極モード): AIが献立を自動で見直し、栄養バランスを改善する (#1142)。
+  // プランによる制限は無く、全員が使える。通常は 3 ステップのところ 6 ステップかかり時間も長くなるため、
+  // 既定は OFF。モーダルを開くたびに OFF に戻し (下の isOpen の useEffect)、使うかどうかを毎回選んでもらう。
   const [ultimateMode, setUltimateMode] = useState(false);
+  // スイッチの説明文を aria-describedby で結びつけるための id
+  const ultimateDescriptionId = useId();
 
   // ローカルの送信中状態（即座にフィードバックを与えるため）
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -466,12 +470,13 @@ function V4GenerateModalNormal({
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
   const [pendingOverwriteSlots, setPendingOverwriteSlots] = useState<TargetSlot[] | null>(null);
 
-  // モーダルが開くたびに isSubmitting / 上書き確認状態をリセット
+  // モーダルが開くたびに isSubmitting / 上書き確認状態 / 究極モードをリセット
   useEffect(() => {
     if (isOpen) {
       setIsSubmitting(false);
       setShowOverwriteConfirm(false);
       setPendingOverwriteSlots(null);
+      setUltimateMode(false);
     }
   }, [isOpen]);
 
@@ -673,6 +678,7 @@ function V4GenerateModalNormal({
           exit={{ scale: 0.95, opacity: 0 }}
           className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-hidden shadow-xl"
           onClick={(e) => e.stopPropagation()}
+          data-testid="v4-generate-modal-normal"
         >
           {/* Header */}
           <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: colors.border }}>
@@ -811,44 +817,46 @@ function V4GenerateModalNormal({
                   </div>
                 </div>
 
-                {/* Ultimate Mode Toggle — locked until Premium plan is available */}
-                <div className="mb-6 p-4 rounded-xl" style={{ backgroundColor: colors.bg, opacity: 0.7 }}>
-                  <div className="flex items-center justify-between">
+                {/* 究極モード: AIが献立を見直して栄養バランスを改善する。全員に開放している (#1142) */}
+                <div
+                  className="mb-6 p-4 rounded-xl transition-colors"
+                  style={{ backgroundColor: ultimateMode ? colors.accentLight : colors.bg }}
+                >
+                  <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
                       <div
-                        className="w-10 h-10 rounded-full flex items-center justify-center"
-                        style={{ backgroundColor: colors.border }}
+                        className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition-colors"
+                        style={{ backgroundColor: ultimateMode ? colors.accent : colors.border }}
                       >
-                        <Wand2 size={18} style={{ color: colors.textMuted }} />
+                        <Wand2 size={18} style={{ color: ultimateMode ? 'white' : colors.textLight }} />
                       </div>
                       <div>
-                        <div className="flex items-center gap-2">
-                          <p className="font-bold" style={{ color: colors.text }}>究極モード</p>
-                          <span
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold"
-                            style={{ backgroundColor: '#FEF3C7', color: '#D97706' }}
-                          >
-                            <Crown size={10} />
-                            Premium
-                          </span>
-                          <span className="text-xs" style={{ color: colors.textMuted }}>準備中</span>
+                        <p className="font-bold" style={{ color: colors.text }}>究極モード</p>
+                        <div id={ultimateDescriptionId}>
+                          <p className="text-xs" style={{ color: colors.textLight }}>
+                            AIが献立を自動で見直し、より栄養バランスの良い献立に改善
+                          </p>
+                          <p className="text-xs" style={{ color: colors.textLight }}>
+                            通常より生成に時間がかかります
+                          </p>
                         </div>
-                        <p className="text-xs" style={{ color: colors.textLight }}>
-                          AIが献立を自動で見直し、より栄養バランスの良い献立に改善
-                        </p>
                       </div>
                     </div>
-                    {/* Toggle — disabled until Premium plan launches */}
+                    {/* スイッチ。押すたびに ON / OFF が切り替わり、「献立を生成」で onGenerate に渡る */}
                     <button
-                      disabled
+                      type="button"
+                      role="switch"
+                      aria-checked={ultimateMode}
+                      aria-label="究極モード"
+                      aria-describedby={ultimateDescriptionId}
                       data-testid="ultimate-mode-toggle"
-                      onClick={() => alert('究極モードは Premium プラン準備中です。今しばらくお待ちください。')}
-                      className="relative w-14 h-8 rounded-full flex-shrink-0 transition-colors duration-200 cursor-not-allowed"
-                      style={{ backgroundColor: '#E5E7EB' }}
+                      onClick={() => setUltimateMode((prev) => !prev)}
+                      className="relative w-14 h-8 rounded-full flex-shrink-0 transition-colors duration-200"
+                      style={{ backgroundColor: ultimateMode ? colors.accent : '#D1D5DB' }}
                     >
                       <span
                         className="absolute top-1 w-6 h-6 rounded-full bg-white shadow-md transition-all duration-200"
-                        style={{ left: '4px' }}
+                        style={{ left: ultimateMode ? '28px' : '4px' }}
                       />
                     </button>
                   </div>

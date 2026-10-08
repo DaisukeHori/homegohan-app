@@ -614,12 +614,14 @@ export default function WeeklyMenuPage() {
   const [pendingProgress, setPendingProgress] = useState<PendingProgress | null>(null);
   const [pendingIsUltimate, setPendingIsUltimate] = useState(false);
   const [showV4Modal, setShowV4Modal] = useState(false);
+  // 今回の生成を究極モードで頼んだか (onGenerationStart で進捗カードの種類を決めるのに使う)
+  const requestedUltimateRef = useRef(false);
 
   const { isGenerating: isV4Generating, generate: v4Generate } = useV4MenuGeneration({
     onGenerationStart: (reqId) => {
       setPendingRequestId(reqId);
       setPendingStatus("processing");
-      setPendingIsUltimate(false);
+      setPendingIsUltimate(requestedUltimateRef.current);
     },
     onGenerationComplete: async () => {
       await loadData();
@@ -640,11 +642,12 @@ export default function WeeklyMenuPage() {
 
   const handleV4Generate = useCallback(async (params: V4GenerateParams) => {
     setShowV4Modal(false);
+    requestedUltimateRef.current = params.ultimateMode;
     await v4Generate({
       targetSlots: params.targetSlots,
       constraints: params.constraints,
       note: params.note,
-      ultimateMode: false,
+      ultimateMode: params.ultimateMode,
       resolveExistingMeals: params.resolveExistingMeals,
     });
   }, [v4Generate]);
