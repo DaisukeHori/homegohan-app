@@ -7,8 +7,8 @@
  *
  * #1229: API (POST/PUT /api/health/goals) と AI 相談の set_health_goal / update_health_goal が
  * 目標値を検証するときの「使える種類」と「種類ごとの範囲」もここから引く。
- * DB (health_goals) の CHECK 制約は goal_type を列挙にせず形式だけを見る
- * (種類を足すたびに migration を要さないため。supabase/migrations/20261007160600_health_goals_value_constraints.sql)。
+ * DB (health_goals) の検査トリガーは goal_type を列挙にせず形式だけを見る
+ * (種類を足すたびに migration を要さないため。supabase/migrations/20261008110100_health_goals_value_trigger.sql)。
  * そのため、使える種類と種類ごとの範囲はアプリ層のこのファイルで決める。
  */
 export interface GoalValueRange {
@@ -20,9 +20,9 @@ export interface GoalTypeDef {
   type: string;
   label: string;
   unit: string;
-  /** target_value として受け付ける範囲。min は常に 0 より大きい (DB の CHECK: target_value > 0) */
+  /** target_value として受け付ける範囲。min は常に 0 より大きい (DB の検査: target_value > 0) */
   target: GoalValueRange;
-  /** current_value として受け付ける範囲。0 は有効な計測値 (例: 今日の歩数 0 歩。DB の CHECK: current_value >= 0) */
+  /** current_value として受け付ける範囲。0 は有効な計測値 (例: 今日の歩数 0 歩。DB の検査: current_value >= 0) */
   current: GoalValueRange;
   /** 別名のとき、正式な goal_type (例: step_count → steps)。Web の作成画面と AI には正式名だけを出す */
   aliasOf?: string;

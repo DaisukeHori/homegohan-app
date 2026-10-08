@@ -7,7 +7,7 @@
  *   - PUT は target_value / current_value の符号も範囲も見なかった
  * 修正後: goal_type は受け付ける種類 (weight / body_fat / steps / step_count / sleep_hours) だけ、
  *   値はその種類の範囲だけを通す。現行モバイルが送る step_count / sleep_hours は引き続き作れる。
- * DB 側の CHECK 制約は tests/integration/rls/health-goals-constraints.test.ts で確かめる。
+ * DB 側の検査 (トリガー) は tests/integration/rls/health-goals-constraints.test.ts で確かめる。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 

@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
   }
 
   // #1229: goal_type は受け付ける種類 (weight / body_fat / steps / step_count / sleep_hours) だけ、
-  // target_value はその種類の範囲だけを通す。DB の CHECK 制約 (target_value > 0 など) に当たる前に 400 で返す。
+  // target_value はその種類の範囲だけを通す。DB の検査トリガー (target_value > 0 など) に当たる前に 400 で返す。
   const { data: goalData, errors } = sanitizeHealthGoalCreate({
     goal_type: body.goal_type,
     target_value: body.target_value,
@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
   }
 
   // #1229: プロフィールの値が未入力・範囲外 (異常値) のときは開始値にしない。
-  // そのまま start_value / current_value に入れると、DB の CHECK 制約 (current_value >= 0) や
+  // そのまま start_value / current_value に入れると、DB の検査トリガー (current_value >= 0) や
   // 桁あふれ (numeric(10,2)) に当たって目標を作れなくなるため。
   const startRange = findGoalTypeDef(goalType)?.current;
   const startValue: number | null =

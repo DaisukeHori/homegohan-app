@@ -430,8 +430,9 @@ export function sanitizeHealthRecordPayload(
 /**
  * #1229: 目標値 (target_value) / 現在値 (current_value) の範囲チェック用の設定を goal_type の定義から作る。
  * 種類が分からない (def が undefined) ときは、符号と桁あふれだけを見る汎用の範囲を使う。
- * DB には health_goals_target_value_positive (target_value > 0) と
- * health_goals_current_value_nonnegative (current_value IS NULL OR >= 0) があり、ここの下限はそれより厳しいか同じ。
+ * DB には検査トリガー trg_health_goals_validate_values があり、書き込む値について target_value > 0 と
+ * current_value IS NULL OR >= 0 を見る (supabase/migrations/20261008110100_health_goals_value_trigger.sql)。
+ * ここの下限はそれより厳しいか同じ。
  */
 function goalValueOpts(def: GoalTypeDef | undefined, kind: 'target' | 'current') {
   const range = (def ?? FALLBACK_GOAL_RANGES)[kind];

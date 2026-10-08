@@ -86,8 +86,8 @@ describe('accepted goal types (#1229)', () => {
     expect(getGoalTypeDef('step_count').unit).toBe('歩');
   });
 
-  // DB の health_goals_goal_type_format (supabase/migrations/20261007160600_health_goals_value_constraints.sql) と同じ式。
-  // アプリが受け付ける種類が DB の CHECK 制約に弾かれないことを保証する。
+  // DB の検査トリガー trg_health_goals_validate_values (supabase/migrations/20261008110100_health_goals_value_trigger.sql) の
+  // goal_type の式と同じ。アプリが受け付ける種類が DB の検査に弾かれないことを保証する。
   it('every accepted goal type satisfies the DB format check', () => {
     const dbFormat = /^[a-z][a-z0-9_-]{0,63}$/;
     for (const type of ACCEPTED_GOAL_TYPES) {
@@ -105,8 +105,8 @@ describe('goal value ranges (#1229)', () => {
     expect(findGoalTypeDef('sleep_hours')).toMatchObject({ target: { min: 1, max: 24 }, current: { min: 0, max: 24 } });
   });
 
-  // DB の health_goals_target_value_positive (target_value > 0) / health_goals_current_value_nonnegative
-  // (current_value >= 0) と、numeric(10,2) の桁あふれに、アプリが受け付ける範囲が収まっていること。
+  // DB の検査トリガーの target_value > 0 / current_value >= 0 と、numeric(10,2) の桁あふれに、
+  // アプリが受け付ける範囲が収まっていること。
   it('every range stays inside what the DB accepts', () => {
     for (const def of ACCEPTED_GOAL_TYPE_DEFS) {
       expect(def.target.min, `${def.type} target.min`).toBeGreaterThan(0);

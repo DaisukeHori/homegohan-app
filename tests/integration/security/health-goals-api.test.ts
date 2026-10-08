@@ -1,15 +1,17 @@
 /**
  * 健康目標 API (POST /api/health/goals、PUT /api/health/goals/[id]) の入力検証 (#1229) の結合テスト
  *
- * 実際の Next ルートと、CHECK 制約を持つローカルの DB (20261007160600_health_goals_value_constraints.sql) をつないで確かめる。
- * ルート単体の検証は tests/health-goals-route.test.ts、DB の制約単体は tests/integration/rls/health-goals-constraints.test.ts。
+ * 実際の Next ルートと、検査トリガーを持つローカルの DB (20261008110100_health_goals_value_trigger.sql) をつないで確かめる。
+ * ルート単体の検証は tests/health-goals-route.test.ts、DB の検査単体は tests/integration/rls/health-goals-constraints.test.ts。
  *
  * 修正前: POST は goal_type も target_value も検証せず、体重の目標 -50 や goal_type "x y" が保存できた
  *   (体重なら user_profiles.target_weight にもコピーされた)。PUT も目標値の符号・範囲を見なかった。
  * 修正後:
  *   - goal_type は weight / body_fat / steps / step_count / sleep_hours だけ。目標値・現在値はその種類の範囲だけ (外れたら 400)
  *   - 現行のモバイルアプリが送る step_count / sleep_hours と、Web が送る steps / weight / body_fat は今までどおり作れる
- *   - プロフィールの体重が異常値でも (開始値にしないだけで) 体重の目標は作れる。DB の CHECK に当たって 500 にならない
+ *   - プロフィールの体重が異常値でも (開始値にしないだけで) 体重の目標は作れる。DB の検査に当たって 500 にならない
+ *   - 本番に既にあるかもしれない「新しい検査に違反した行」も、書き換えない列なら今までどおり更新できる
+ *     (DB の検査は CHECK 制約ではなく、書き込む値だけを見るトリガーなので、画面の更新が止まらない)
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh) と Next の開発サーバー。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -42,6 +44,18 @@ function client(key: string): SupabaseClient {
 }
 
 const srAdmin = client(serviceKey);
+
+/** ローカルスタックの postgres-meta で SQL を実行する。複数の文は 1 つのトランザクションで実行され、最後の文の行が返る */
+async function pgQuery<T = Record<string, unknown>>(query: string): Promise<T[]> {
+  const res = await fetch(`${url}/pg/query`, {
+    method: 'POST',
+    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(`pg/query ${res.status}: ${JSON.stringify(body)}`);
+  return body as T[];
+}
 
 interface TestUser {
   id: string;
@@ -191,7 +205,7 @@ describe('POST /api/health/goals: 受け付ける目標 (Web とモバイルが�
     }
   });
 
-  it('P-5: プロフィールの体重が異常値 (負) でも体重の目標は作れる (開始値にしないだけ。DB の CHECK に当たって 500 にならない)', async () => {
+  it('P-5: プロフィールの体重が異常値 (負) でも体重の目標は作れる (開始値にしないだけ。DB の検査に当たって 500 にならない)', async () => {
     const res = await apiCall<GoalResponse>('POST', '/api/health/goals', oddProfile.jwt, {
       goal_type: 'weight',
       target_value: 55,
@@ -332,7 +346,7 @@ describe('PUT /api/health/goals/[id]: 更新も目標の種類ごとの範囲で
   });
 });
 
-describe('保存された目標はどれも DB の制約を満たす', () => {
+describe('保存された目標はどれも DB の検査を満たす', () => {
   it('D-1: テストで作った目標すべてで target_value > 0、current_value は NULL か 0 以上、goal_type は形式どおり', async () => {
     const all = (await Promise.all(createdUserIds.map(goalsOf))).flat();
     expect(all.length).toBeGreaterThan(0);
@@ -341,5 +355,68 @@ describe('保存された目標はどれも DB の制約を満たす', () => {
       if (g.current_value !== null) expect(Number(g.current_value), `${g.goal_type} current`).toBeGreaterThanOrEqual(0);
       expect(g.goal_type).toMatch(/^[a-z][a-z0-9_-]{0,63}$/);
     }
+  });
+});
+
+// 本番に既にあるかもしれない「新しい検査に違反した行」。DB の検査が CHECK 制約だと、この行は
+// どの列を更新しても 23514 で失敗し、PUT が 500 になる (画面の更新が止まる)。検査トリガーは書き込む値だけを見る。
+// このブロックは D-1 より後に置く (D-1 は、このテストで作った行がすべて検査を満たすことを確かめるため)。
+describe('PUT /api/health/goals/[id]: 違反している既存の行 (本番に既にあるかもしれない行)', () => {
+  const LEGACY_NOTE = `sec-legacy-${TS}`;
+  let legacyUser: TestUser;
+  let legacyId: string;
+
+  const readLegacy = async () => (await goalsOf(legacyUser.id)).find((g) => g.id === legacyId)!;
+
+  beforeAll(async () => {
+    legacyUser = await createUser('legacy', { weight: 70 });
+    // 検査トリガーを同じトランザクションの中だけ止めて、違反した行 (体重の目標 -50・現在値 -3) を入れる。
+    // トランザクションの途中は他の接続から見えず、COMMIT の前に有効へ戻す
+    const rows = await pgQuery<{ id: string }>(`
+      ALTER TABLE public.health_goals DISABLE TRIGGER trg_health_goals_validate_values;
+      INSERT INTO public.health_goals (user_id, goal_type, target_value, target_unit, current_value, note)
+      VALUES ('${legacyUser.id}', 'weight', -50, 'kg', -3, '${LEGACY_NOTE}');
+      ALTER TABLE public.health_goals ENABLE TRIGGER trg_health_goals_validate_values;
+      SELECT id FROM public.health_goals WHERE note = '${LEGACY_NOTE}';
+    `);
+    expect(rows).toHaveLength(1);
+    legacyId = rows[0].id;
+  }, 60_000);
+
+  it('LG-0: 準備: 目標値 -50・現在値 -3 の体重の目標が入っている', async () => {
+    const row = await readLegacy();
+    expect(num(row.target_value)).toBe(-50);
+    expect(num(row.current_value)).toBe(-3);
+  });
+
+  it('LG-1: 目標日・単位・メモだけの更新は 200 で、違反している値は変わらない', async () => {
+    for (const body of [{ target_date: '2027-03-31' }, { target_unit: 'kg' }, { note: `${LEGACY_NOTE}-edited` }]) {
+      const res = await apiCall<GoalResponse>('PUT', `/api/health/goals/${legacyId}`, legacyUser.jwt, body);
+      expect(res.status, JSON.stringify(body)).toBe(200);
+    }
+    const row = await readLegacy();
+    expect(num(row.target_value)).toBe(-50);
+    expect(num(row.current_value)).toBe(-3);
+  });
+
+  it('LG-2: 現在値を範囲内の値に更新できる (目標値は違反したままでも、書き換えない列は検査されない)', async () => {
+    const res = await apiCall<GoalResponse>('PUT', `/api/health/goals/${legacyId}`, legacyUser.jwt, { current_value: 65 });
+    expect(res.status).toBe(200);
+    const row = await readLegacy();
+    expect(num(row.current_value)).toBe(65);
+    expect(num(row.target_value)).toBe(-50);
+  });
+
+  it('LG-3: 違反した値への変更は、API が先に 400 で返し、行は変わらない', async () => {
+    const before = await readLegacy();
+    const res = await apiCall<GoalResponse>('PUT', `/api/health/goals/${legacyId}`, legacyUser.jwt, { target_value: -60 });
+    expect(res.status).toBe(400);
+    expect(await readLegacy()).toEqual(before);
+  });
+
+  it('LG-4: 目標値を範囲内の値に直せる', async () => {
+    const res = await apiCall<GoalResponse>('PUT', `/api/health/goals/${legacyId}`, legacyUser.jwt, { target_value: 60 });
+    expect(res.status).toBe(200);
+    expect(num((await readLegacy()).target_value)).toBe(60);
   });
 });
