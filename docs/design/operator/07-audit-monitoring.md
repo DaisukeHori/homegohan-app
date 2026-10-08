@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS admin_audit_logs (
   ip_address              INET,
   user_agent              TEXT,
   session_id              VARCHAR(255),
-  impersonated_by         UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  impersonated_by         UUID REFERENCES auth.users(id) ON DELETE SET NULL,  -- 履歴用 (#1124: impersonate は提供しない。新しく書く処理は無い)
   created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -96,12 +96,20 @@ CREATE POLICY "audit_logs_no_delete" ON admin_audit_logs
 COMMENT ON TABLE admin_audit_logs IS
   '監査ログ。RLS で UPDATE/DELETE 完全禁止。SELECT は super_admin のみ。7年保管 (個人情報保護法/SOC2)';
 COMMENT ON COLUMN admin_audit_logs.impersonated_by IS
-  'super_admin が別ユーザーとして操作している場合、super_admin の user_id を記録';
+  '履歴用 (#1124: impersonate は提供しない)。過去に super_admin が別ユーザーとして操作した行にだけ、super_admin の user_id が入っている';
 COMMENT ON POLICY "audit_logs_insert_admins" ON admin_audit_logs IS
   'actor_id = auth.uid() を WITH CHECK で強制することで、他人のログを偽装できない';
 ```
 
+**注 (#1124)**: なりすまし (impersonate) は提供しない。`impersonated_by` 列は、過去に書かれた行 (`action_type = 'impersonate'` の行) の履歴として残し、
+新しく書き込む処理は無い。監査ログは UPDATE / DELETE 不可なので、過去の行 (`details.impersonation_token` を含む) もそのまま残る。
+このトークンは、どこでも受け付けない値なので使い道が無い (検証する側が無かった)。
+
 ## 4. 監査対象操作の網羅リスト (§15.8)
+
+**注 (#1124)**: なりすまし (impersonate) は提供しないため、`admin.user.impersonate` / `admin.user.impersonate_end` / `super_admin.impersonate` は一覧から外した。
+以前の実装は `action_type = 'impersonate'` で記録していた (この一覧の名前とは違う)。終了用の `'impersonate_end'` を書く関数もあったが、呼び出す箇所は無かった。
+過去に `'impersonate'` で書かれた行は、監査ログなので残る。
 
 ### 4.1 admin 系操作
 
@@ -109,8 +117,6 @@ COMMENT ON POLICY "audit_logs_insert_admins" ON admin_audit_logs IS
 admin.user.ban                      - ユーザー BAN
 admin.user.unban                    - BAN 解除
 admin.user.role_change              - ロール変更
-admin.user.impersonate              - なりすまし開始
-admin.user.impersonate_end          - なりすまし終了
 admin.user.note_add                 - 管理ノート追加
 admin.organization.create           - 組織作成
 admin.organization.suspend          - 組織停止
@@ -193,7 +199,6 @@ super_admin.cron.run_now            - cron 手動実行
 super_admin.cron.pause              - cron 一時停止
 super_admin.organization.transfer_admin - org_admin 緊急転送
 super_admin.gdpr_delete.execute     - GDPR 削除実行
-super_admin.impersonate             - なりすまし (admin も含む)
 super_admin.llm_quota.override      - LLM クォータ手動変更
 super_admin.setting.change          - システム設定変更
 ```
@@ -243,7 +248,6 @@ interface AuditLogParams {
   details?: Record<string, unknown>;
   severity?: 'info' | 'warn' | 'critical';
   ipAddress?: string;
-  impersonatedBy?: string;
 }
 
 export async function insertAuditLog(params: AuditLogParams): Promise<void> {
@@ -274,7 +278,6 @@ export async function insertAuditLog(params: AuditLogParams): Promise<void> {
     details: params.details ?? {},
     severity: params.severity ?? 'info',
     ip_address: params.ipAddress ?? null,
-    impersonated_by: params.impersonatedBy ?? null,
   });
   // エラーは握り潰さず、呼び出し元にスローする (監査ログ失敗は操作を中断させる)
 }
@@ -461,6 +464,21 @@ logger.warn('plan.price_change', {
 | `stripe.webhook` の processing_time > 5s | Slack #stripe-alerts |
 | pg_cron ジョブ失敗 | Slack #cron-alerts |
 | API p95 > 1000ms (3 分間継続) | Slack #performance |
+
+### 8.4 暫定: アプリログ画面 (実装済み: #1157)
+
+Better Stack を導入するまでの間、`app_logs` (db-logger が書く構造化ログ) を super_admin が画面で読める。
+
+| 項目 | 内容 |
+|-----|------|
+| 画面 | `/super-admin/logs` (左メニュー「運用 > アプリログ」)。読み取り専用 |
+| API | `GET /api/super-admin/logs`。権限は super_admin のみ (admin も不可)。`app_logs` の RLS は本人の行だけ読める (#1171) ため、`requireRole` を通したあとで service role の client を使う |
+| 絞り込み | `level` / `source` / `function_name` / `user_id` / `request_id` (いずれも完全一致) と `from` / `to` (ISO 8601、両端を含む) |
+| ページ送り | 新しい順 (`created_at`、同時刻は `id`)。`limit` は既定 50・最大 200。応答の `meta.next_cursor` を次回の `cursor` に渡す (OFFSET は使わない) |
+| 表示 | 文面は保存されたまま表示する。秘密情報のマスクは書き込み時 (`supabase/functions/_shared/log-sanitizer.ts`: #1171 / #1287) |
+| 索引 | `created_at` / `level` / `function_name` / `source` / `user_id`。`request_id` には索引が無く、単独で探すと全行を順に調べる |
+
+しきい値を超えたときの通知 (メールなど) と Sentry 連携は含まない。
 
 ## 9. Status Page (status.homegohan.app)
 
@@ -823,6 +841,21 @@ family/09 が新規追加するイベント。
 | `web_vitals_lcp` / `web_vitals_cls` / `web_vitals_fid` | performance | Web Vitals 計測(Web のみ) | `value` / `value_ms`, `page` |
 
 数えるとハンズオン固有 8 + Web Vitals 3 = 11 イベント、family/09 設計書では「10 イベント種類」と表記される(Web Vitals 3 種を「performance」で 1 グループ扱い)。本表では明示的に 11 行を canonical 化。
+
+#### 15.3.1 アプリ共通のイベント (ハンズオン以外)
+
+| event_name | カテゴリ | 発火タイミング | 主要プロパティ |
+|---|---|---|---|
+| `app_error_boundary` | error | モバイルの ErrorBoundary が、画面の描画中の例外を受けた (#1207) | `boundary`, `platform`, `error_name?`, `error_fingerprint?` |
+
+`app_error_boundary` は、§15.7 に従い **例外の文面 (`message`) もスタックも送らない**。PostHog は外部の計測サービスで、イベントがユーザー ID に紐づくうえ、§15.7 の PII フィルタはキー名しか見ず値の中身は除かないため。送るのは次の項目だけ。
+
+- `boundary`: どの境界か (例: `root` / `tabs` / `org`)。画面遷移のパスではない
+- `platform`: OS
+- `error_name`: 例外の種類。`/^[A-Za-z0-9_$.]{1,64}$/` に合う識別子 (`TypeError` など) のときだけ付く
+- `error_fingerprint`: 種類と文面から作る指紋 (32 bit FNV-1a の 16 進 8 桁)。元に戻せず、同じ例外を数えるためだけに使う
+
+PostHog で件数を見つけたら、同じ指紋を `app_logs` の `metadata.fingerprint` で引くと、生の文面 (300 文字に切り詰め済み) とスタックが見つかる。これらは `POST /api/log` の metadata にだけ残り、サーバー側 (`sanitizeLogEntry`) で秘密情報をマスクして保存される (ログイン前の画面の例外は、`/api/log` が 401 で断るので残らない)。実装は `apps/mobile/src/lib/error-report.ts`。
 
 ### 15.4 共通プロパティ (全イベント)
 

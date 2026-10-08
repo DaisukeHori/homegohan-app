@@ -287,7 +287,7 @@ state は localStorage に永続化 (`familyViewState_${familyId}`)。`useFamily
 🟩👨 山田太郎  おにぎり (鮭)   430kcal  6:30  │
 🟨👦 山田一郎  おにぎり (鮭)   430kcal  6:30  │ 同じ食事 (4人)
 🟪👧 山田次郎  おにぎり (鮭)   430kcal  6:30  ┘
-                          🔗 4人で共有  [全員に反映 ▼]
+                          🔗 4人で共有
 
 🟥👩 山田花子  コーヒー         5kcal  7:00
 🟨👦 山田一郎  バナナ          90kcal  7:15
@@ -297,7 +297,10 @@ state は localStorage に永続化 (`familyViewState_${familyId}`)。`useFamily
 ```
 
 ### 5.2 component
-**file (新規)**: `src/components/membership/MealRow.tsx`
+**file (新規、#1135 で削除済み)**: `src/components/membership/MealRow.tsx`
+
+※ #1135 で削除済み。`MealRow` / `PasteGroupedMealRows` は献立画面のどこにも組み込まれず、使われていなかったため。
+以下は当初設計の記録として残す。「全員に反映」ボタンは提供しない (§6.3)。
 
 ```tsx
 export function MealRow({ meal, ownerMember, isPasteGrouped }: { meal: Meal; ownerMember: FamilyMember; isPasteGrouped: boolean }) {
@@ -306,7 +309,7 @@ export function MealRow({ meal, ownerMember, isPasteGrouped }: { meal: Meal; own
 }
 
 export function PasteGroupedMealRows({ meals, members, group_id }: { meals: Meal[]; members: FamilyMember[]; group_id: string }) {
-  // 縦並び罫線 + フッタ「🔗 N人で共有」+ [全員に反映] ボタン
+  // 縦並び罫線 + フッタ「🔗 N人で共有」
 }
 ```
 
@@ -320,8 +323,12 @@ export function PasteGroupedMealRows({ meals, members, group_id }: { meals: Meal
 
 ## 6. ペースト UI
 
+※ #1135 で、§6.1 の `MealActionSheet` と §6.2 の `PasteTargetModal` を削除した。どちらも献立画面に組み込まれず、使われていなかったため。
+ペースト API (`POST /api/meals/paste`) と RPC `paste_meal_to_family` は残してあるが、今のところこれを呼び出す画面はない。
+ペースト機能そのものを今後どうするかは別に判断する。§6.1・§6.2 の画面案は当初設計の記録として残す。
+
 ### 6.1 既存 meal の操作 sheet
-**file (新規)**: `src/components/membership/MealActionSheet.tsx`
+**file (新規、#1135 で削除済み)**: `src/components/membership/MealActionSheet.tsx`
 
 長押しまたは meal 行 kebab menu から開く action sheet:
 ```
@@ -336,7 +343,7 @@ export function PasteGroupedMealRows({ meals, members, group_id }: { meals: Meal
 ```
 
 ### 6.2 ペースト先選択モーダル
-**file (新規)**: `src/components/membership/PasteTargetModal.tsx`
+**file (新規、#1135 で削除済み)**: `src/components/membership/PasteTargetModal.tsx`
 
 ```
 ┌────────────────────────────────────┐
@@ -352,13 +359,14 @@ export function PasteGroupedMealRows({ meals, members, group_id }: { meals: Meal
 
 成功後、献立画面の同スロットに新しい行が即時追加され、🔗 アイコン付きで paste_group が表示される。
 
-### 6.3 「全員に反映」 (paste_group 内 bulk edit)
-paste_group_id を持つ複数 meal を bulk update する API:
-```
-PATCH /api/meals/paste-group/{paste_group_id}
-       body: { name?, calories?, ... }
-```
-全 row を一括更新。ただし「他人の meal を編集する」ので, server で「caller が paste 元の owner であること」を要検証。
+### 6.3 「全員に反映」 (paste_group 内 bulk edit) — 提供しない
+paste_group 内の食事を 1 回の操作でまとめて書き換える機能 (「全員に反映」ボタンと
+`PATCH /api/meals/paste-group/{paste_group_id}`) は提供しない (#1135、2026-10-08 のオーナー判断)。
+
+- API は、常に 501 (`NOT_IMPLEMENTED`) を返すだけの未実装スタブで、呼び出す画面もなかったため、ルートごと削除した。
+- `meals.paste_group_id` と `idx_meals_paste_group` は、ペースト元と複製をひとまとめに識別するために残す (DB は変更しない)。
+
+将来この機能を作り直す場合の注意: 「他人の meal を編集する」API になるので、server で「caller が paste 元の owner であること」を必ず検証する。
 
 ---
 
@@ -499,7 +507,7 @@ PATCH /api/meals/paste-group/{paste_group_id}
 | file | 修正内容 |
 |---|---|
 | `src/app/(main)/menus/weekly/page.tsx` | view switcher 配置, mix 表示対応 |
-| `src/app/(main)/menus/weekly/_components/DayCard.tsx` | MealRow / PasteGroupedMealRows 採用 |
+| `src/app/(main)/menus/weekly/_components/DayCard.tsx` | ~~MealRow / PasteGroupedMealRows 採用~~ (取り下げ。部品を #1135 で削除したため) |
 | `src/app/(org)/org/invites/page.tsx` | revoke / 履歴表示 / 受領状況追加 |
 | `src/app/(main)/settings/page.tsx` | 「メンバシップ設定」リンク追加 |
 | `src/middleware.ts` | `/invite/[token]` を public route に追加 (signup 前でもアクセス可) |

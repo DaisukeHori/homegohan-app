@@ -53,6 +53,16 @@ CI では GitHub Secrets に登録する。
 
 利用者が指定したアドレスへメールを送る処理 (招待・参加リクエスト・譲渡提案など) は、必ず `src/lib/membership/invite-throttle.ts` の送信回数制限を通す (#1163。`tests/email-send-throttle-contract.test.ts` が検査する)。
 
+### メール送信の結果と失敗の記録
+
+メールは `src/lib/emails/send.ts` の `sendEmail(envelope)` で送る。戻り値は `{ ok, id, attempts, error }` で、配信の失敗では例外を投げない (#1193)。
+
+- 失敗 (再試行を使い切った・400/403 など) と `RESEND_API_KEY` 未設定は、`sendEmail` が `createLogger('email')` で app_logs に残す。残すのは文面の名前 (`template`)・マスクした宛先・Resend のエラーコード・送った回数だけ。呼び出し側が戻り値を見なくても、失敗は記録される。
+- 429 / 5xx / 通信エラーだけ、500ms・1s・2s の指数バックオフで最大 3 回再試行する (合計で最大 4 回)。同じ Idempotency-Key を付けるので二重送信にならない。再試行は呼び出し側の「試行回数」には数えない。
+- 失敗したときに追加の処理 (送信記録の保存・画面への表示・文脈つきのログ) をする呼び出し側だけが、結果を見る。判定は `src/lib/emails/send-result.ts` の `isEmailFailure` / `emailFailureReasons` を使う。`RESEND_API_KEY` が無くて送らなかった結果は `ok: false` かつ `skipped: true` で、失敗には数えない。
+- 新しい文面 (`render*Email`) は、返す封筒に `template` (snake_case の名前) を必ず入れる (`src/__tests__/lib/emails/template-names.test.ts` が検査する)。
+- 呼び出し側のテストで `@/lib/emails/send` をモックしても、`send-result.ts` は別ファイルなので実物のまま使える。
+
 ### ロール認可
 
 API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口で呼ぶ。`getUser()` → `user_profiles` の取得 → ロール判定を route に手書きしない (#1161。`tests/role-check-source-scan.test.ts` が検査する)。
@@ -78,6 +88,13 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 
 `src/lib/user-storage.ts` の `clearUserScopedLocalStorage()` を使う。  
 サインアウト処理では **Supabase signOut を呼ぶ前に** このヘルパーを実行する。
+
+### エラー境界 (画面の描画中の例外を受ける)
+
+画面の描画中に起きた例外を受ける境界が無いと、Web ではルート全体を置き換える `global-error.tsx` まで、モバイルではアプリ全体のクラッシュまで届く (#1207)。新しい route group / layout を足すときは、境界も足す。
+
+- **Web**: layout (`layout.tsx`) を持つ区画には、同じ階層に `error.tsx` を置く。中身は共通部品 `src/components/error/RouteError.tsx` を返すだけにする (手書きしない)。`RouteError` は「再試行」(`router.refresh()` + `reset()`)・戻るリンク・記録 (`src/lib/report-boundary-error.ts`) をそろえる。`reset()` だけではサーバーコンポーネントの例外から復帰できないため、`router.refresh()` を一緒に呼ぶ。例外の文面・スタックは画面に出さず、出すのは `digest` だけ。記録に URL / パスを入れない (`/invite/{token}` など URL に秘密が入るページがあるため)。`tests/route-error-boundaries.test.tsx` が配置と表示を検査する。
+- **モバイル**: `apps/mobile/app` の `_layout.tsx` は、すべて `export function ErrorBoundary` を持ち、`src/components/ErrorFallback.tsx` を返す。expo-router は、この export がある layout の中の例外だけを受ける (無いと誰にも受けられない)。Provider の外 (ルートの境界) でも描画されるので、`ErrorFallback` は hooks や Provider に頼らない。`apps/mobile/__tests__/app/error-boundaries.test.tsx` が全 layout を検査する。記録は `apps/mobile/src/lib/error-report.ts`。PostHog (外部の計測サービス。イベントがユーザー ID に紐づく) には、例外の文面・スタックを送らない。`captureEvent` の PII フィルタはキー名しか見ず、値の中身は除かないため。送るのは境界・OS・例外の種類 (識別子の形のときだけ)・指紋 (元に戻せないハッシュ) だけにする (`docs/design/operator/07-audit-monitoring.md` §15.7)。生の文面は、サーバー側でマスクされる `POST /api/log` の metadata にだけ残す。`apps/mobile/__tests__/lib/error-report.test.ts` が、PostHog に送る内容を固定している。
 
 ---
 

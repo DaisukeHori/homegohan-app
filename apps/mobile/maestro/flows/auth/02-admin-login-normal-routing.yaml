@@ -1,0 +1,40 @@
+appId: com.homegohan.app
+env:
+  E2E_ADMIN_EMAIL: ${E2E_ADMIN_EMAIL}
+  E2E_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD}
+---
+# 02: admin ロールで login → 他のユーザーと同じ振り分けでホームに着く
+# (#1122: アプリの管理者画面 (Admin Console) は廃止した。運営作業は Web に一本化)
+# 前提: E2E_ADMIN_EMAIL は、オンボーディング完了済みの admin ロールのユーザー
+# 前提: 前のフロー後にホーム画面にいる可能性があるため、まずログアウト
+- launchApp
+# 前の状態をリセット (ホームにいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
+# ホーム画面にいる場合はログアウトして welcome に戻る
+- runFlow:
+    when:
+      visible:
+        id: "home-screen"
+    file: "../_shared/logout.yaml"
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-login-button"
+- assertVisible:
+    id: "login-screen"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_ADMIN_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_ADMIN_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 30000
+# 廃止した管理者画面には行かない
+- assertNotVisible:
+    text: "Admin Console"

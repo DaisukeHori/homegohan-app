@@ -30,11 +30,3 @@ export interface UserProfile {
   roles: RoleName[];
   organization_id?: string | null;
 }
-
-/**
- * impersonate の戻り値型
- */
-export interface ImpersonationResult {
-  impersonation_token: string;
-  expires_at: string;
-}
