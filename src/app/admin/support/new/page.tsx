@@ -123,9 +123,14 @@ export default function NewTicketPage() {
                 onChange={(e) => setFormData((f) => ({ ...f, subject: e.target.value }))}
                 maxLength={200}
                 placeholder="チケットの件名"
+                aria-describedby="subject-hint"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
               />
+              {/* 顧客向けの返信メール (#1183) は、チケットの件名を件名と本文に載せる。内部向けの文言を書かないよう案内する */}
+              <p id="subject-hint" className="mt-1 text-xs text-gray-500">
+                この件名は、お客様への返信メールの件名と本文に載ります。お客様に見られても問題のない表現にしてください。
+              </p>
             </div>
 
             {/* カテゴリ + 優先度 */}

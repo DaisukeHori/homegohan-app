@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import RefundRecordDialog from "@/components/operator/finance/RefundRecordDialog";
 
 interface InvoiceDetail {
   id: string;
@@ -12,6 +13,7 @@ interface InvoiceDetail {
   user_id: string | null;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
+  stripe_invoice_id: string | null;
   amount_paid: number | null;
   amount_due: number | null;
   currency: string | null;
@@ -57,6 +59,7 @@ export default function InvoiceDetailPage() {
   const [invoice, setInvoice] = useState<InvoiceDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refundOpen, setRefundOpen] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -90,6 +93,24 @@ export default function InvoiceDetailPage() {
       </div>
     );
   }
+
+  // 返金の記録 (#1185): 誰の・どの請求書の・いくらの返金かが分かるときだけ記録できる
+  const refundTarget =
+    invoice.user_id && invoice.stripe_invoice_id && invoice.currency && invoice.amount_paid != null && invoice.amount_paid > 0
+      ? {
+          userId: invoice.user_id,
+          stripeInvoiceId: invoice.stripe_invoice_id,
+          currency: invoice.currency,
+          amountPaid: invoice.amount_paid,
+        }
+      : null;
+  const refundBlockedReason = refundTarget
+    ? null
+    : !invoice.user_id
+      ? "この請求書のユーザーを特定できないため、返金を記録できません。"
+      : !invoice.stripe_invoice_id
+        ? "Stripe の請求書 ID が無いため、返金を記録できません。"
+        : "支払済みの金額が無いため、返金できません。";
 
   return (
     <div className="p-8">
@@ -219,6 +240,24 @@ export default function InvoiceDetailPage() {
             )}
           </div>
 
+          {/* 返金 (#1185): 返金そのものは Stripe ダッシュボードで行い、その前に監査ログへ記録する */}
+          <div className="mt-4 pt-4 border-t border-slate-100">
+            <div className="text-xs text-slate-500 mb-2">
+              返金は Stripe ダッシュボードで行います。先に理由を監査ログへ記録します。
+            </div>
+            <button
+              type="button"
+              onClick={() => setRefundOpen(true)}
+              disabled={refundTarget === null}
+              className="w-full px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              返金を記録して Stripe で開く
+            </button>
+            {refundBlockedReason && (
+              <p className="mt-2 text-xs text-slate-500">{refundBlockedReason}</p>
+            )}
+          </div>
+
           {invoice.user_id && (
             <div className="mt-4 pt-4 border-t border-slate-100">
               <div className="text-xs text-slate-500 mb-1">ユーザー ID</div>
@@ -233,6 +272,18 @@ export default function InvoiceDetailPage() {
         <div className="text-xs text-slate-400 mb-1">Stripe Event ID</div>
         <div className="font-mono text-sm text-slate-700">{invoice.stripe_event_id}</div>
       </div>
+
+      {refundTarget && (
+        <RefundRecordDialog
+          isOpen={refundOpen}
+          onClose={() => setRefundOpen(false)}
+          userId={refundTarget.userId}
+          stripeInvoiceId={refundTarget.stripeInvoiceId}
+          amountPaid={refundTarget.amountPaid}
+          currency={refundTarget.currency}
+          invoiceNumber={invoice.invoice_number}
+        />
+      )}
     </div>
   );
 }

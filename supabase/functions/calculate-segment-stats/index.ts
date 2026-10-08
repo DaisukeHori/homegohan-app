@@ -1,5 +1,4 @@
 import { createClient } from "@supabase/supabase-js";
-import { corsHeaders } from '../_shared/cors.ts';
 import { requireServiceRole } from '../_shared/auth.ts';
 import { chunkArray, embeddedOne, fetchAllRows, throwIfError } from '../_shared/bulk-query.ts';
 import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
@@ -31,17 +30,15 @@ function toNumber(value: unknown): number | null {
 // メイン処理
 // =====================================================
 
+// バッチ専用 (ブラウザからは呼ばれない) なので CORS は付けない (#1167)。
+// ブラウザの事前確認 (OPTIONS) は下の認証で 401 になり、CORS ヘッダーが無いためブラウザ側で止まる。
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
-  }
-
   // バッチ専用: CRON_SECRET 認証
   const authErr = requireServiceRole(req);
   if (authErr) {
     return new Response(authErr.body, {
       status: authErr.status,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
     });
   }
 
@@ -96,14 +93,14 @@ Deno.serve(async (req) => {
       periodStart,
       periodEnd
     }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       status: 200,
     });
 
   } catch (error: any) {
     logger.error('Segment stats calculation error', error);
     return new Response(JSON.stringify({ error: error.message }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       status: 500,
     });
   }

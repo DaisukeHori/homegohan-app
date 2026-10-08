@@ -1,5 +1,4 @@
 import { createClient } from "@supabase/supabase-js";
-import { corsHeaders } from '../_shared/cors.ts';
 import { requireServiceRole } from '../_shared/auth.ts';
 import { chunkArray, embeddedOne, fetchAllRows, throwIfError } from '../_shared/bulk-query.ts';
 import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
@@ -32,17 +31,15 @@ interface PlannedMealRow {
   user_daily_meals: DailyMealRef | DailyMealRef[] | null;
 }
 
+// バッチ専用 (ブラウザからは呼ばれない) なので CORS は付けない (#1167)。
+// ブラウザの事前確認 (OPTIONS) は下の認証で 401 になり、CORS ヘッダーが無いためブラウザ側で止まる。
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
-  }
-
   // バッチ専用: CRON_SECRET 認証
   const authErr = requireServiceRole(req);
   if (authErr) {
     return new Response(authErr.body, {
       status: authErr.status,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
     });
   }
 
@@ -88,14 +85,14 @@ Deno.serve(async (req) => {
     }
 
     return new Response(JSON.stringify({ success: failed.length === 0, processed: results, failed }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       status: failed.length === 0 ? 200 : 500,
     });
 
   } catch (error: any) {
     logger.error('Aggregation error', error);
     return new Response(JSON.stringify({ error: error.message }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       status: 500,
     });
   }
