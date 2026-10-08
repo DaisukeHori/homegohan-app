@@ -11,7 +11,8 @@ import { useEffect } from "react";
 import { LogBox } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
-import { registerAndSaveExpoPushToken } from "../src/lib/pushNotifications";
+import { NotificationRouter } from "../src/components/NotificationRouter";
+import { registerAndSaveExpoPushToken, setupNotificationHandler } from "../src/lib/pushNotifications";
 import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
 import { PostHogProvider } from "../src/providers/PostHogProvider";
 import { ProfileProvider } from "../src/providers/ProfileProvider";
@@ -21,6 +22,9 @@ import { ProfileProvider } from "../src/providers/ProfileProvider";
 LogBox.ignoreAllLogs();
 
 SplashScreen.preventAutoHideAsync();
+
+// アプリを開いている間に届いた通知を表示する設定 (起動時に 1 回。#1049 F7-11)
+setupNotificationHandler();
 
 const PUSH_TOKEN_REGISTERED_KEY = "push_token_registered_v1";
 
@@ -68,6 +72,7 @@ export default function RootLayout() {
         <AuthProvider>
           <ProfileProvider>
             <PushTokenRegistrar />
+            <NotificationRouter />
             <Stack screenOptions={{ headerShown: false }}>
               <Stack.Screen name="index" />
               <Stack.Screen name="(public)" />

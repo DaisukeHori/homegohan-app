@@ -106,6 +106,23 @@ type PushPayload = {
 }
 ```
 
+#### 3.3.1 アプリ側の受け取り (実装済み: #1049 F7-11)
+
+- フォアグラウンドで届いた通知は、バナー・通知音を出し、`badge` があればアイコンのバッジも合わせる
+  (`src/lib/pushNotifications.ts` の `setupNotificationHandler()`。`app/_layout.tsx` の起動時に 1 回呼ぶ)。
+- 通知本体をタップすると、`data.deep_link` の行き先へ遷移する (`src/components/NotificationRouter.tsx`)。
+  アプリが終了していてタップで起動した場合も同じ。ログイン済みで初期設定が終わっているときだけ遷移する。
+- 行き先の決め方は `src/lib/notificationRoute.ts`。**送信側 (notify-push) は次の形に合わせること**。
+  外れるものは、アプリを開くだけで遷移しない。
+  - `homegohan://<パス>` か、先頭が `/` のアプリ内パス。`https://` など他のスキームは使えない。
+  - パスの区間は英数字・`_`・`-` だけ (最大 4 区間)。クエリは `[A-Za-z0-9_\-.=&,:+]` だけ。`#` は使えない。
+  - 行き先は WebView のタブ配下 (`/home` `/menus/...` `/meals/...` `/comparison` `/profile/...`。Web のパスをそのまま、
+    そのタブの WebView で開く) か、`NOTIFICATION_SCREEN_ROUTES` に載せたネイティブ画面 (`/family` `/ai/<id>` `/recipes/<id>`
+    `/health/...` `/pantry` `/shopping-list` `/badges`)。設定・アカウント削除・管理系の画面へは遷移しない。
+  - 画面が無い下位のパス (例: `homegohan://family/meal-requests`) は、実在する一番近い上位の画面 (`/family`) を開く。
+  - 新しい行き先が必要になったら、先に画面を作り、`NOTIFICATION_SCREEN_ROUTES` に足す
+    (`__tests__/lib/notification-route.test.ts` が `app/` 配下の実在を確かめる)。
+
 ### 3.4 通知種別と categoryIdentifier
 
 | 通知種別 | `categoryIdentifier` | タイトル例 | 本文例 |

@@ -5,6 +5,42 @@ import { Platform } from "react-native";
 
 import { supabase } from "./supabase";
 
+/**
+ * アプリアイコンのバッジ数を更新する (0 でバッジを消す)。
+ * 失敗してもアプリの動作には影響しないので、例外は投げない。
+ */
+export async function setNotificationBadge(count: number): Promise<void> {
+  try {
+    await Notifications.setBadgeCountAsync(count);
+  } catch {
+    // バッジ更新の失敗は無視する
+  }
+}
+
+/**
+ * アプリを開いている間 (フォアグラウンド) に届いた通知の扱いを設定する。アプリ起動時に 1 回だけ呼ぶ。
+ *
+ * これを設定しないと、フォアグラウンドで届いた通知は OS のバナーも出ず、気付けなかった (#1049 F7-11)。
+ * バナー・通知センターへの表示・通知音を出し、ペイロードに badge (サーバーが数えた未読数) があれば
+ * アイコンのバッジも合わせる (docs/design/mobile/03-push-notification.md §3.5)。
+ */
+export function setupNotificationHandler(): void {
+  Notifications.setNotificationHandler({
+    handleNotification: async (notification) => {
+      const badge = notification.request.content.badge;
+      if (typeof badge === "number") {
+        await setNotificationBadge(badge);
+      }
+      return {
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+      };
+    },
+  });
+}
+
 export async function registerAndSaveExpoPushToken(): Promise<string | null> {
   if (!Device.isDevice) {
     // Expo Goでも動くが、物理端末推奨
