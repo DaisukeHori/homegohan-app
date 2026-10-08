@@ -45,7 +45,9 @@ const EXEMPT_EMAIL_SENDERS: Record<string, string> = {
   'src/app/api/contact/route.ts':
     '宛先は環境変数 ADMIN_NOTIFICATION_EMAIL の固定アドレスだけで、利用者は宛先を指定できない。IP 単位の専用リミッタ (10 回/分) がある',
   'src/app/api/family/representative-transfer/[id]/accept/route.ts':
-    '提案された本人だけが 1 回だけ実行できる (2 回目は TRANSFER_NOT_PENDING)。宛先は旧・新の代表者に固定で、利用者は宛先を指定できない',
+    '提案された本人だけが 1 回だけ実行できる (2 回目は TRANSFER_PROPOSAL_NOT_FOUND)。宛先は旧・新の代表者に固定で、利用者は宛先を指定できない',
+  'src/app/api/org/owner-transfer/[id]/accept/route.ts':
+    '提案された本人だけが 1 回だけ実行できる (2 回目は TRANSFER_PROPOSAL_NOT_FOUND)。宛先は旧・新のオーナーに固定で、利用者は宛先を指定できない',
   'src/app/api/operator/membership/family/[id]/transfer/route.ts':
     '運営の super_admin 専用 (requireSuperAdmin)。宛先は対象グループの既存メンバーで、利用者は宛先を指定できない',
   'src/app/api/operator/membership/family/[id]/dissolve/route.ts':

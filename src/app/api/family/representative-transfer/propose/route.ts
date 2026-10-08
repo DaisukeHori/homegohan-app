@@ -2,7 +2,9 @@
 // (設計書 02-flow-spec.md §10)
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
+import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail } from '@/lib/emails/send';
 import { renderFamilyTransferProposedEmail } from '@/lib/emails/membership/family-transfer-proposed';
 import {
@@ -12,6 +14,7 @@ import {
 } from '@/lib/membership/invite-throttle';
 
 export async function POST(request: Request) {
+  const logger = createLogger('POST /api/family/representative-transfer/propose', generateRequestId());
   const supabase = await createClient();
 
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -68,34 +71,36 @@ export async function POST(request: Request) {
     );
   }
 
-  // 対象者にメール送信
+  // 対象者にメール送信 (best-effort)。提案はすでに作成済みなので、失敗しても 201 を返し、ログに残す。
+  // ログには宛先のメールアドレスを残さない。
   try {
-    const { data: toUserProfile } = await supabase
-      .from('user_profiles')
-      .select('email')
-      .eq('id', parsed.to_user_id)
-      .single();
+    // 宛先のメールアドレスは auth.users にしか無い (user_profiles に email 列は無く、他人の行も RLS で読めない)。
+    // 提案先の 1 人だけを service_role の Auth Admin API で引く (#1110)
+    const toEmails = await resolveAuthEmails([parsed.to_user_id], { logger: logger.withUser(user.id) });
+    const toEmail = toEmails.get(parsed.to_user_id);
 
-    const { data: fromUserProfile } = await supabase
-      .from('user_profiles')
-      .select('nickname, email')
-      .eq('id', user.id)
-      .single();
+    if (toEmail) {
+      // 提案者本人の行と、提案者が所属する家族の名前 (どちらも本人のセッションで読める)
+      const { data: fromUserProfile } = await supabase
+        .from('user_profiles')
+        .select('nickname')
+        .eq('id', user.id)
+        .single();
 
-    const { data: familyGroup } = await supabase
-      .from('family_groups')
-      .select('name')
-      .eq('id', parsed.family_id)
-      .single();
+      const { data: familyGroup } = await supabase
+        .from('family_groups')
+        .select('name')
+        .eq('id', parsed.family_id)
+        .single();
 
-    if (toUserProfile?.email) {
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://homegohan.app';
       const proposalId = typeof data === 'string' ? data : (data as { proposal_id?: string })?.proposal_id ?? '';
       const acceptUrl = `${baseUrl}/family/transfer-accept/${proposalId}`;
 
       const envelope = renderFamilyTransferProposedEmail({
-        to_email: toUserProfile.email,
-        from_name: fromUserProfile?.nickname ?? fromUserProfile?.email ?? '代表者',
+        to_email: toEmail,
+        // 提案者のメールアドレスは受け取る側に見せない (ニックネームだけを載せる)
+        from_name: fromUserProfile?.nickname || '代表者',
         family_name: familyGroup?.name ?? '家族グループ',
         accept_url: acceptUrl,
         reason: parsed.reason,
@@ -103,7 +108,10 @@ export async function POST(request: Request) {
       await sendEmail(envelope);
     }
   } catch (emailErr) {
-    console.error('[api/family/representative-transfer/propose] email send failed:', emailErr);
+    logger.withUser(user.id).error('譲渡提案メールの送信に失敗しました (提案は作成済み)', emailErr, {
+      family_id: parsed.family_id,
+      to_user_id: parsed.to_user_id,
+    });
   }
 
   return NextResponse.json({ data: { proposal: data } }, { status: 201 });

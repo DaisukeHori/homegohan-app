@@ -193,6 +193,14 @@ https://homegohan.app
 ### 5.2 譲渡完了通知 (旧 owner/representative 向け)
 完了後に旧名義人に通知。テンプレート省略 (上記と同パターン)。
 
+宛先は旧名義人と新名義人の 2 人で、それぞれの立場の本文を送る
+(`renderOrgTransferCompletedEmail` / `renderFamilyTransferCompletedEmail`、#1110)。
+承諾した本人 (新名義人) のアドレスは認証済みセッションの値を使い、旧名義人 (提案者) のアドレスは
+`auth.users` から `resolveAuthEmails` (`src/lib/membership/resolve-auth-emails.ts`) で引く。
+旧名義人は承諾 RPC の戻り値には含まれない (戻り値は更新後の行で、`owner_id` / `representative_id` は新名義人) ため、
+承諾する前に `ownership_transfer_proposals.from_user_id` を読んで控える。
+送信に失敗しても承諾の結果は変えず (200)、構造化ログに残す。
+
 ---
 
 ## 6. 除名/脱退通知
