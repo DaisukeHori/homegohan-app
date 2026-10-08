@@ -64,6 +64,17 @@ CI では GitHub Secrets に登録する。
 
 ---
 
+## Web アプリは Next 14 + React 18 (React 19 専用 API は使わない)
+
+- Web アプリ (`src/`) は **Next.js 14 + React 18** で動く。React 19 / Next 15 ではない (モバイルの `apps/mobile` だけが Expo 53 + React 19)。`docs/design/` には Next 15 / React 19 前提の記述が残っているが、実装の現状はこの節が正。
+- **React 19 専用の API は `src/` で使わない**: `use` / `useActionState` / `useOptimistic` (`react`)、`useFormStatus` (`react-dom`)。ESLint の `no-restricted-imports` が `src/**` で止める (#1199)。`import * as React from 'react'` も同じルールに掛かるので、名前付き import (`import { useState } from 'react'`) を使う。
+- Next 14 のページでは `params` は Promise ではなく普通のオブジェクト。`use(params)` は実行時に例外になる (#1275)。クライアントページでは `useParams()` を使う。
+- 型も実行時の版にそろえてある。ルート `package.json` の `@types/react` / `@types/react-dom` は **18 系**。モバイルは自前の `@types/react ~19.0.10` を `apps/mobile/node_modules` に入れ子で持ち、`apps/mobile/tsconfig.json` の `paths` で `react` の型をそれに固定している (外すとモバイルの型エラーが増える)。ルートの型だけを 19 系に上げない。`tests/react-types-version-contract.test.ts` と `tests/eslint-react19-guard.test.ts` が検査する。
+- React 19 / Next 15 への移行は別タスク。やるときは `react` と `@types/react` を一緒に上げ、`eslint.config.mjs` のルール、`apps/mobile/tsconfig.json` の固定、この節も更新する。
+- ルートで依存を更新する `npm install` は、`react-native` の peer (`react@^19`) とルートの `react@18` が衝突して ERESOLVE になることがある (モバイルが React 19 を入れ子で持つ構成のため)。その場合は `npm install --package-lock-only --legacy-peer-deps` で `package-lock.json` だけ更新し、続けて `npm install --package-lock-only` を 1 回実行して形をそろえる。差分が意図した変更だけであることと `npm ci --dry-run` が通ることを確認する。
+
+---
+
 ## 無視対象
 
 `homegohan-app/` ディレクトリ (旧ツリーの残骸) は無視する。編集・参照しない。

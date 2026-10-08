@@ -3,6 +3,10 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
+      // ルートの @types/react は Web (Next 14 + React 18) 用の 18 系。ルートに巻き上げられた react-native などの型も
+      // このアプリの @types/react (19 系) で解決させ、モバイルの型検査が二重の React 型で壊れないよう固定する (#1199)。
+      // 末尾が .d.ts の別名は Expo の Metro には無視される (実行時の react の解決は metro.config.js のまま)。
+      "react": ["./node_modules/@types/react/index.d.ts"],
       "@homegohan/handson-tour-shared": ["../../packages/handson-tour-shared/src/index.ts"],
       "@homegohan/handson-tour-shared/*": ["../../packages/handson-tour-shared/src/*"],
       "@homegohan/shared": ["../../packages/shared/src/index.ts"],
