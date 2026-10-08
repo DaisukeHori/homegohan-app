@@ -721,43 +721,80 @@ $$);
 
 ---
 
-## 16. GDPR 削除フロー
+## 16. 退会・GDPR 削除フロー (即時削除)
 
-### 16.1 gdpr_deletion_requests テーブル
+> **オーナー判断 (2026-10-08, #1130)**: 退会 (アカウント削除) は **即時削除が正式仕様**。
+> 旧版の「30 日の cooling period (クーリングオフ) を置き、期間が過ぎたら pg_cron が削除する」方式は採用しない。
+> 現行実装の `POST /api/account/delete` (`auth.admin.deleteUser` による即時削除) が正式仕様どおりの動きで、30 日待機のための仕組みは作らない。
+> 要件定義 03 §15.7 / §18.13 にある「30 日 cooling period」は、この判断で置き換える。
 
-DDL は **operator/01-data-model.md §3.21** を参照 (canonical)。
-canonical 列名:
-- `requested_at` / `cooling_until` (NOT GENERATED、INSERT 時に NOW() + 30 days をセット)
-- `executed_at` / `executed_by` / `cancelled_at` / `certificate_url` / `notes`
-- `status` 列は持たず、`cancelled_at IS NOT NULL` / `executed_at IS NOT NULL` で状態判定
+### 16.1 方針
 
-operator/09-runbook.md §15.7 の手順は cooling_until を参照 (整合済)。
+| 項目 | 正式仕様 |
+|------|---------|
+| 削除のタイミング | 本人が確認を済ませた時点で **即時**。待機期間 (cooling period) は設けない |
+| 取り消し・復旧 | できない。確認画面にも「この操作は取り消せません」と明記する |
+| ログイン制限・警告バナー | 設けない (待機期間がないため) |
+| 遅延削除バッチ | 作らない。旧設計の pg_cron `execute_gdpr_deletions` と `/api/cron/gdpr-delete` は設計から外す |
+| 削除要求の記録 (`gdpr_deletion_requests`) | 退会フローでは使わない (§16.4) |
+| 削除前の確認メール・削除完了メール | 追加する (#1152、作業計画 T20)。現行実装はまだ送らない。確認の方式 (通知のみか、メール内リンクでの最終確認か) は T20 で決める。どちらの方式でも 30 日の待機は設けない |
+| 削除処理の堅牢化 | 追加する (#1175、作業計画 T11)。範囲は §16.3 |
+
+背景 (#1130): 旧設計の遅延削除バッチは実装されないままで、削除要求を記録しても実行されずに残りうる設計だった。実際の退会は最初から即時削除として動いている。
+
+※ 本節の T11 / T20 は作業計画 (2026-10-08) の番号。§19 の「T番号」(適格請求書発行事業者番号) とは別物。
 
 ### 16.2 削除フロー
 
 ```
-1. ユーザー: /account/delete でパスワード再認証
-2. INSERT gdpr_deletion_requests (status='cooling')
-3. 30 日間の cooling period:
-   - ログイン制限 (警告バナー表示)
-   - 30 日以内ならキャンセル可能
-4. 家族グループ owner の場合:
-   - 引き継ぎ強制 (owner 移譲 / 解散 / 個人移行 から選択)
-5. 30 日経過後 pg_cron が削除実行:
-   - auth.users 削除 (CASCADE で関連データ削除)
-   - Supabase Storage から写真削除
-   - Stripe customer 削除
-   - 法的保管義務のあるデータ (産業医記録等) は匿名化
-6. 完了メール送信
+1. ユーザー: 設定画面の「アカウントを削除する」を押す (Web / モバイル)
+   - Web: 確認モーダルに「削除します」と入力する
+   - モバイル: 確認アラートで「削除」を選ぶ
+2. クライアント: POST /api/account/delete { confirm: true }
+   - 認証済みセッションが必須 (未認証は 401、confirm がなければ 400)
+   - (今後追加) 削除前に確認メールを送る (#1152、T20)
+3. 削除をブロックする条件 (409):
+   - 組織の owner → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
+     (先に owner を譲渡するか、組織を解散する)
+   - 家族グループの代表者 → ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE
+     (先に代表者を譲渡するか、家族グループを解散する)
+4. 削除前の後始末 (service_role):
+   - FK で消えない参照の解消: ai_content_logs の削除、invited_by / created_by 等の NULL 化
+   - ライセンス席の解放: RPC release_user_membership (失敗しても削除は続ける)
+5. auth.users を削除 (auth.admin.deleteUser)
+   - public 側のデータは FK の ON DELETE CASCADE / SET NULL で削除・匿名化される
+6. 200 { success: true }
+   - クライアントはサインアウトして、ログイン前の画面へ戻る
+   - (今後追加) 削除完了メールを送る (#1152、T20)
 ```
 
-```sql
--- pg_cron: 日次実行 (GDPR 削除実行)
-SELECT cron.schedule('execute_gdpr_deletions', '0 4 * * *', $$
-  -- cooling_until を過ぎた pending/cooling 状態のリクエストを処理
-  -- 削除処理は Edge Function に委譲 (Supabase Storage + auth.users の削除)
-$$);
-```
+手順 4 と 5 は 1 つのトランザクションではなく、別々の呼び出し。途中で失敗したときの扱いは §16.3 のとおり堅牢化 (T11) で直す。
+
+モバイルの削除画面 (`apps/mobile/app/settings/account.tsx`) へアプリ内から到達できない問題は #1037 で追う。アカウント削除の導線はアプリ内に必須なので、iOS 審査前の必須項目になる (MOBILE_TODO.md 参照)。
+
+### 16.3 削除の範囲と現行実装
+
+| 対象 | 正式仕様 | 現行実装 (2026-10-08) |
+|------|---------|----------------------|
+| アカウント (`auth.users`) と、FK でぶら下がる個人データ (食事・献立・健康記録・家族メンバー情報など) | 物理削除 (匿名化ではなく削除) | 実装済み (`auth.admin.deleteUser` と FK の CASCADE / SET NULL) |
+| FK で消えない参照 (`invited_by` / `created_by` など) | NULL 化してから削除 | 一部のみ。`account/delete/route.ts` に列挙したテーブルだけで、`support_tickets` など `ON DELETE` 句のないテーブルは未対応 (#1175) |
+| Storage の写真 (食事・冷蔵庫など) | 削除 | 行っていない (T11) |
+| Stripe の顧客・サブスクリプション | 解約して顧客を削除 | 行っていない (T11。影響範囲の調査は §19) |
+| 法的保管義務のあるデータ (産業医記録 §11、監査ログ) | 削除せず、匿名化して保持 | 監査ログ (`admin_audit_logs`) は FK の `ON DELETE SET NULL` で操作者 ID が外れて残る。ほかの法定保管データは未確認で、棚卸しは T11 |
+| 送信ログ中の生メールアドレス (`email_delivery_logs.email`) | 削除または匿名化 | 行っていない (#1175、T11) |
+| 途中で失敗したとき | 半端な状態を残さず、やり直せる | 後始末と削除は別々の呼び出し。FK 違反で `deleteUser` が失敗すると 500 になる (#1175、T11) |
+
+### 16.4 `gdpr_deletion_requests` テーブルの扱い
+
+DDL は **operator/01-data-model.md §3.21** を参照 (テーブル定義としては canonical)。ただし退会フローでは使わない。
+
+- `cooling_until` (INSERT 時に `NOW() + 30 days`) と `cancelled_at` は、待機期間を前提にした列。正式仕様では使わない。
+- 退会時にこのテーブルへ行を作らない。削除の実行記録を何で残すかは §19 の未解決事項。
+- テーブルを廃止するか、別の用途にするかは未決 (§19)。現状は super-admin の exports API (`/api/super-admin/exports`) がエクスポート依頼の記録先として流用している。
+
+### 16.5 運営による代理削除
+
+運営 (super_admin) が本人に代わって削除する画面・API は未実装。サポートから依頼を受けたときの扱いは operator/09-runbook.md §9.2 を参照。
 
 ---
 
@@ -780,7 +817,7 @@ $$);
 | 既存 `/account/billing` (未実装) | 新規 | 特商法対応のチェックボックス含む Checkout フロー実装 |
 | `terms_acceptances` (未作成) | 新規 | migration で作成 |
 | Cookie バナー (未実装) | 新規 | `/app/layout.tsx` に `<CookieConsentBanner>` 追加 |
-| 退会フロー (既存 `/account/delete` は壊れている) | 再作成 | GDPR フロー準拠で再実装 |
+| 退会フロー (`POST /api/account/delete`) | 維持 | 即時削除が正式仕様 (§16、2026-10-08 オーナー判断 #1130)。確認メール・完了メール (#1152、T20) と堅牢化 (#1175、T11) を追加する |
 
 ---
 
@@ -791,6 +828,8 @@ $$);
 | 運営側適格請求書発行事業者番号 (T番号) の取得状況確認 | TODO | 法人向け機能リリース前 |
 | 弁護士レビュー: 特商法表示内容・利用規約 §X の医療免責文言 | TODO | Phase 1 リリース前 |
 | GPG 鍵を使った署名者の体制 (誰が鍵を管理するか) | TODO | バックアップ実装前 |
-| GDPR 削除時の Stripe customer 削除の影響範囲調査 | TODO | operator/05-stripe-integration.md で確認 |
+| 退会 (即時削除) 時の Stripe 顧客・サブスクリプションの扱いの調査 | TODO | operator/05-stripe-integration.md で確認 (作業計画 T11) |
+| 削除の実行記録 (誰がいつ消したか) を何で残すか。旧設計は `gdpr_deletion_requests` (永久保管) と `admin_audit_logs` (severity='critical') に残していた | TODO | 作業計画 T11 と合わせて決定 |
+| `gdpr_deletion_requests` テーブルの廃止・用途変更 (退会フローでは使わない。§16.4) | TODO | 作業計画 T11 と合わせて決定 |
 | CloudSign API 連携の詳細設計 (法人電子締結) | TODO | operator/05-stripe-integration.md で定義 |
 | 旧バージョン利用規約の `docs/legal/archive/` 保管場所設定 | TODO | 初版リリース前 |
