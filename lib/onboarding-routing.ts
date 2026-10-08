@@ -35,6 +35,15 @@ function isFamilyPromotionPath(pathname: string): boolean {
   return pathname === "/family/promotions" || pathname.startsWith("/family/promotions/");
 }
 
+// S-7b (#1036 のレビュー): /auth/* (OAuth コールバック・ネイティブ認証ブリッジ・パスワード再設定など) は、
+// セッションを確立・切り替える途中の画面。WebView にオンボーディング未完了の別アカウントのセッションが
+// 残っている状態でネイティブ認証ブリッジ (/auth/native-bridge?code=...) を開いたときに差し戻すと、
+// ワンタイムコードが引き換えられず、WebView が古いアカウントのまま残る。オンボーディング状態に関わらず素通りさせる
+// (これらは未認証でも開ける画面なので、素通りさせても見せる範囲は広がらない)。
+export function isAuthFlowPath(pathname: string): boolean {
+  return pathname === "/auth" || pathname.startsWith("/auth/");
+}
+
 export function resolveOnboardingRedirect(input: OnboardingRedirectInput): string | null {
   const pathname = input.pathname;
   const roles = input.roles ?? [];
@@ -63,7 +72,7 @@ export function resolveOnboardingRedirect(input: OnboardingRedirectInput): strin
     return target;
   }
 
-  if (isInvitePath(pathname) || isFamilyPromotionPath(pathname)) {
+  if (isInvitePath(pathname) || isFamilyPromotionPath(pathname) || isAuthFlowPath(pathname)) {
     return null;
   }
 
