@@ -118,7 +118,10 @@ describe('ログアウトの画面は、signOut の前にネイティブへ知�
     expect(violations).toEqual([]);
   });
 
-  it('走査が空振りしていない: 既知のログアウトの箇所 (設定 2・マイページ 2・組織・凍結・パスワード再設定・家族の昇格) を見つけている', () => {
+  it('走査が空振りしていない: 既知のログアウトの箇所 (設定 2・マイページ 2・組織・凍結・パスワード再設定・家族の昇格 = 8 か所、6 ファイル) を見つけている', () => {
+    // 構文木の解析が静かに失敗しても「違反なし」で通ってしまわないようにするための下限。
+    // 画面のファイルを分けたり名前を変えたりしても (呼び出しが残っていれば) 数は変わらない。
+    // ログアウトの画面を意図して減らしたときは、この数を直す (broadcastSignOut() を書き忘れて通知が黙って消える事故にも気づける)
     let broadcastCalls = 0;
     const filesWithBroadcast: string[] = [];
     for (const [file, source] of sourceByFile) {
@@ -130,16 +133,7 @@ describe('ログアウトの画面は、signOut の前にネイティブへ知�
       }
     }
     expect(broadcastCalls).toBeGreaterThanOrEqual(8);
-    expect(filesWithBroadcast).toEqual(
-      expect.arrayContaining([
-        path.join('src', 'app', '(main)', 'settings', 'page.tsx'),
-        path.join('src', 'app', '(main)', 'profile', 'page.tsx'),
-        path.join('src', 'app', '(org)', 'layout.tsx'),
-        path.join('src', 'app', 'frozen', 'page.tsx'),
-        path.join('src', 'app', '(auth)', 'auth', 'reset-password', 'page.tsx'),
-        path.join('src', 'app', 'family', 'promotions', '[token]', 'page.tsx'),
-      ]),
-    );
+    expect(filesWithBroadcast.length).toBeGreaterThanOrEqual(6);
   });
 });
 
