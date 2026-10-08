@@ -9,10 +9,9 @@
 // 差し替えて本物のハンドラを取り出し、省略時の対象日を実際に呼んで確かめる。
 //
 // 注意: このテストは偽の supabase-js を使い、確かめるのは対象日の求め方だけ。
-// 現状の planned_meals の取得クエリは、削除済みの meal_plan_days / meal_plans をまだ参照しており、
-// 本番では PGRST200 になる (別 Issue で直す)。このテストが通っても、本番で集計できることは保証しない。
-// クエリを user_daily_meals 経由に直したときに壊れないよう、突き合わせ先の列名は固定せず
-// 「*.day_date に対象日を指定したか」だけを見る (expectDayDateFilter)。
+// クエリが実際のスキーマで通ることと集計の中身は、次のテストが担当する (#1306)。
+//   - tests/aggregate-org-stats-planned-meals.test.ts (単体: 発行するクエリ・計算・失敗時の振る舞い)
+//   - tests/integration/rls/stats-edge-functions-user-daily-meals.test.ts (実 DB)
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -118,15 +117,14 @@ function findCall(table: string, method: string): Call | undefined {
 
 /**
  * planned_meals を「対象日の食事」に絞る eq(列, 値) を検証する。
- * どのテーブル経由の列か (meal_plan_days.day_date / user_daily_meals.day_date) には依存せず、
- * 列名が `.day_date` で終わることと、値が期待する対象日であることだけを見る。
+ * 食事の日付は user_daily_meals.day_date (JST の暦日)。その列に、期待する対象日が渡されていることを見る。
  */
 function expectDayDateFilter(expectedDate: string) {
-  const call = findCall("planned_meals", "eq");
-  expect(call, "planned_meals に対象日の絞り込み (eq) が無い").toBeDefined();
-  const [column, value] = call?.args ?? [];
-  expect(String(column)).toMatch(/\.day_date$/);
-  expect(value).toBe(expectedDate);
+  const call = h.calls.find(
+    (c) => c.table === "planned_meals" && c.method === "eq" && c.args[0] === "user_daily_meals.day_date",
+  );
+  expect(call, "planned_meals に対象日の絞り込み (eq user_daily_meals.day_date) が無い").toBeDefined();
+  expect(call?.args[1]).toBe(expectedDate);
 }
 
 describe("aggregate-org-stats: 対象日を省略したときは JST の今日 (#1210)", () => {

@@ -170,6 +170,7 @@ supabase/functions/
 │   ├── cors.ts             # CORS設定
 │   ├── db-logger.ts        # ログ記録
 │   ├── log-sanitizer.ts    # ログ保存前の秘密情報マスキング・切り詰め（Next.js の src/lib/db-logger.ts と共用。import なし・Deno/Node 固有 API なし）
+│   ├── bulk-query.ts       # 集計バッチ向けの PostgREST の読み書き（失敗を例外にする・1 回の応答の上限 1000 行を超えて全件を取る・.in() の ids の分割）
 │   ├── allergy.ts          # アレルギー処理
 │   ├── nutrition-*.ts      # 栄養計算関連
 │   ├── meal-generator.ts   # 献立生成ロジック

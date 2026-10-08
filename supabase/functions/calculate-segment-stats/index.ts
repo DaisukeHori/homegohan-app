@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from '../_shared/cors.ts';
 import { requireServiceRole } from '../_shared/auth.ts';
+import { embeddedOne, fetchAllRows, throwIfError } from '../_shared/bulk-query.ts';
 import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
 
 const supabaseAdmin = createClient(
@@ -40,7 +41,7 @@ Deno.serve(async (req) => {
       .select('*')
       .eq('is_active', true);
     
-    if (metricsError) throw metricsError;
+    throwIfError('metric_definitions の取得', metricsError);
 
     // 2. セグメント定義を取得
     const { data: segments, error: segmentsError } = await supabaseAdmin
@@ -48,7 +49,7 @@ Deno.serve(async (req) => {
       .select('*')
       .eq('is_active', true);
     
-    if (segmentsError) throw segmentsError;
+    throwIfError('segment_definitions の取得', segmentsError);
 
     // 3. 期間を計算
     const { periodStart, periodEnd } = calculatePeriod(periodType);
@@ -160,33 +161,70 @@ interface BulkData {
   totalMeals: Map<string, number>;
 }
 
+// planned_meals の 1 行。所有者 (user_id) と日付 (day_date) は user_daily_meals にある。
+// 実際の応答は多対一なのでオブジェクトだが、型の上では配列になり得る。embeddedOne で 1 件に揃えて読む。
+interface DailyMealRef {
+  user_id: string;
+  day_date: string;
+}
+
+interface PlannedMealRow {
+  meal_type: string;
+  is_completed: boolean | null;
+  veg_score: number | null;
+  user_daily_meals: DailyMealRef | DailyMealRef[] | null;
+}
+
 async function fetchBulkData(periodStart: string, periodEnd: string): Promise<BulkData> {
   const startDate = new Date(periodStart);
   const endDate = new Date(periodEnd);
   const periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
   // 5 クエリを並列実行（ユーザー数×メトリクス数の N+1 を解消）
-  const [mealStreakResult, breakfastStreakResult, mealResult, plannedResult, totalMealResult] =
+  // どのクエリも、失敗したら例外にする (失敗を「行が無い」と取り違えて、0 の指標を保存しないため)。
+  // また API は 1 回の応答を 1000 行で打ち切るので、fetchAllRows で全件を取る。
+  //
+  // 日付の扱い (JST と UTC が混ざっているので、取得ごとにどちらかを明示する):
+  //   - 期間 (periodStart / periodEnd) は calculatePeriod が求める YYYY-MM-DD で、実行環境 (Deno = UTC) の暦日。
+  //     JST に揃えるのは #1211 の担当で、ここでは従来どおりの値をそのまま使う
+  //   - planned_meals: 日付は user_daily_meals.day_date (date 型。JST の暦日でタイムゾーンを持たない)。
+  //     期間の文字列とそのまま比較する
+  //   - meals: eaten_at は timestamptz (時刻)。期間の端は UTC の 0:00〜23:59:59 で切り、
+  //     日別の数え方 (下の mealDaySetByUser) も UTC の暦日
+  const [mealStreakRows, breakfastStreakRows, mealRows, plannedRows, totalMealRows] =
     await Promise.all([
-      supabaseAdmin.from('health_streaks').select('user_id, current_streak').eq('streak_type', 'meal_record'),
-      supabaseAdmin.from('health_streaks').select('user_id, current_streak').eq('streak_type', 'breakfast'),
-      supabaseAdmin.from('meals').select('user_id, eaten_at').gte('eaten_at', periodStart).lte('eaten_at', periodEnd + 'T23:59:59Z'),
-      supabaseAdmin.from('planned_meals').select(`
-        meal_type, is_completed, veg_score,
-        meal_plan_days!inner(day_date, meal_plans!inner(user_id))
-      `).gte('meal_plan_days.day_date', periodStart).lte('meal_plan_days.day_date', periodEnd),
-      supabaseAdmin.from('meals').select('user_id'),
+      fetchAllRows<{ user_id: string; current_streak: number | null }>('health_streaks (meal_record) の取得', () =>
+        supabaseAdmin.from('health_streaks').select('user_id, current_streak').eq('streak_type', 'meal_record'),
+      ),
+      fetchAllRows<{ user_id: string; current_streak: number | null }>('health_streaks (breakfast) の取得', () =>
+        supabaseAdmin.from('health_streaks').select('user_id, current_streak').eq('streak_type', 'breakfast'),
+      ),
+      fetchAllRows<{ user_id: string; eaten_at: string }>('meals (期間内) の取得', () =>
+        supabaseAdmin.from('meals').select('user_id, eaten_at').gte('eaten_at', periodStart).lte('eaten_at', periodEnd + 'T23:59:59Z'),
+      ),
+      // planned_meals に user_id / 日付の列は無い。所有者と日付は daily_meal_id でつながる user_daily_meals (user_id, day_date) にある
+      // (以前の meal_plan_days / meal_plans は date-based model への移行で削除済み。本番にも無い #1306)。
+      // ハンズオン (チュートリアル) 用の仮データ (is_sandbox = true) は、実際の食事ではないので集計から除く。
+      fetchAllRows<PlannedMealRow>('planned_meals (期間内) の取得', () =>
+        supabaseAdmin
+          .from('planned_meals')
+          .select('meal_type, is_completed, veg_score, user_daily_meals!inner(user_id, day_date)')
+          .gte('user_daily_meals.day_date', periodStart)
+          .lte('user_daily_meals.day_date', periodEnd)
+          .eq('user_daily_meals.is_sandbox', false),
+      ),
+      fetchAllRows<{ user_id: string }>('meals (全期間) の取得', () => supabaseAdmin.from('meals').select('user_id')),
     ]);
 
   const mealStreaks = new Map<string, number>(
-    (mealStreakResult.data ?? []).map(r => [r.user_id, r.current_streak ?? 0])
+    mealStreakRows.map((r): [string, number] => [r.user_id, r.current_streak ?? 0])
   );
   const breakfastStreaks = new Map<string, number>(
-    (breakfastStreakResult.data ?? []).map(r => [r.user_id, r.current_streak ?? 0])
+    breakfastStreakRows.map((r): [string, number] => [r.user_id, r.current_streak ?? 0])
   );
 
   const mealDaySetByUser = new Map<string, Set<string>>();
-  for (const row of mealResult.data ?? []) {
+  for (const row of mealRows) {
     if (!row.user_id || !row.eaten_at) continue;
     let s = mealDaySetByUser.get(row.user_id);
     if (!s) { s = new Set(); mealDaySetByUser.set(row.user_id, s); }
@@ -202,8 +240,8 @@ async function fetchBulkData(periodStart: string, periodEnd: string): Promise<Bu
   const plannedTotal = new Map<string, number>();
   const plannedCompleted = new Map<string, number>();
 
-  for (const row of plannedResult.data ?? []) {
-    const userId = (row.meal_plan_days as any)?.meal_plans?.user_id;
+  for (const row of plannedRows) {
+    const userId = embeddedOne(row.user_daily_meals)?.user_id;
     if (!userId) continue;
     plannedTotal.set(userId, (plannedTotal.get(userId) ?? 0) + 1);
     if (row.is_completed) plannedCompleted.set(userId, (plannedCompleted.get(userId) ?? 0) + 1);
@@ -218,8 +256,8 @@ async function fetchBulkData(periodStart: string, periodEnd: string): Promise<Bu
   }
 
   const totalMeals = new Map<string, number>();
-  for (const row of totalMealResult.data ?? []) {
-    const uid = (row as any).user_id as string | undefined;
+  for (const row of totalMealRows) {
+    const uid = row.user_id;
     if (!uid) continue;
     totalMeals.set(uid, (totalMeals.get(uid) ?? 0) + 1);
   }
@@ -292,12 +330,17 @@ async function calculateAllUserMetrics(
 ): Promise<Map<string, UserMetrics>> {
   const userMetricsMap = new Map<string, UserMetrics>();
 
-  const { data: profiles, error: profilesError } = await supabaseAdmin
-    .from('user_profiles')
-    .select('*');
+  // セグメントの判定 (filterUsersBySegment) に使う列だけを読む。全ユーザー分なので、select('*') で個人情報まで運ばない
+  const profiles = await fetchAllRows<{
+    id: string;
+    age_group: string | null;
+    gender: string | null;
+    perf_modes: string[] | null;
+  }>('user_profiles の取得', () =>
+    supabaseAdmin.from('user_profiles').select('id, age_group, gender, perf_modes'),
+  );
 
-  if (profilesError) throw profilesError;
-  if (!profiles || profiles.length === 0) return userMetricsMap;
+  if (profiles.length === 0) return userMetricsMap;
 
   // バルク事前取得（N+1 回避: ユーザー数×メトリクス数のクエリ → 固定 5 クエリ）
   const bulk = await fetchBulkData(periodStart, periodEnd);
@@ -305,12 +348,16 @@ async function calculateAllUserMetrics(
   const previousPeriodStart = getPreviousPeriodStart(periodType, periodStart);
   const prevMetricsByUser = new Map<string, Map<string, number>>();
   if (previousPeriodStart) {
-    const { data: prevRows } = await supabaseAdmin
-      .from('user_metrics')
-      .select('user_id, metric_id, value')
-      .eq('period_type', periodType)
-      .eq('period_start', previousPeriodStart);
-    for (const row of prevRows ?? []) {
+    const prevRows = await fetchAllRows<{ user_id: string; metric_id: string; value: number }>(
+      'user_metrics (前期間) の取得',
+      () =>
+        supabaseAdmin
+          .from('user_metrics')
+          .select('user_id, metric_id, value')
+          .eq('period_type', periodType)
+          .eq('period_start', previousPeriodStart),
+    );
+    for (const row of prevRows) {
       if (!prevMetricsByUser.has(row.user_id)) prevMetricsByUser.set(row.user_id, new Map());
       prevMetricsByUser.get(row.user_id)!.set(row.metric_id, row.value);
     }
@@ -357,9 +404,10 @@ async function calculateAllUserMetrics(
   // バルク upsert（チャンク分割で Supabase の上限を回避）
   const CHUNK = 200;
   for (let i = 0; i < upsertRows.length; i += CHUNK) {
-    await supabaseAdmin
+    const { error } = await supabaseAdmin
       .from('user_metrics')
       .upsert(upsertRows.slice(i, i + CHUNK), { onConflict: 'user_id,metric_id,period_type,period_start' });
+    throwIfError('user_metrics の保存', error);
   }
 
   return userMetricsMap;
@@ -396,7 +444,7 @@ async function calculateSegmentStats(
 
     const stats = calculateStatistics(values);
 
-    await supabaseAdmin
+    const { error } = await supabaseAdmin
       .from('segment_stats')
       .upsert({
         segment_id: segment.id,
@@ -417,6 +465,7 @@ async function calculateSegmentStats(
       }, {
         onConflict: 'segment_id,metric_id,period_type,period_start',
       });
+    throwIfError(`segment_stats の保存 (${segment.code} / ${metricDef.code})`, error);
   }
 }
 
@@ -515,14 +564,15 @@ async function calculateUserRankings(
       if (totalUsers === 0) continue;
 
       // セグメントの統計を取得
-      const { data: stats } = await supabaseAdmin
+      const { data: stats, error: statsError } = await supabaseAdmin
         .from('segment_stats')
         .select('avg_value')
         .eq('segment_id', segment.id)
         .eq('metric_id', metricDef.id)
         .eq('period_type', periodType)
         .eq('period_start', periodStart)
-        .single();
+        .maybeSingle();
+      throwIfError(`segment_stats の取得 (${segment.code} / ${metricDef.code})`, statsError);
 
       const avgValue = stats?.avg_value ?? 0;
 
@@ -535,7 +585,7 @@ async function calculateUserRankings(
           ? Math.round(((user.value - avgValue) / avgValue) * 100)
           : 0;
 
-        await supabaseAdmin
+        const { error } = await supabaseAdmin
           .from('user_segment_rankings')
           .upsert({
             user_id: user.userId,
@@ -552,6 +602,7 @@ async function calculateUserRankings(
           }, {
             onConflict: 'user_id,segment_id,metric_id,period_type,period_start',
           });
+        throwIfError(`user_segment_rankings の保存 (${segment.code} / ${metricDef.code})`, error);
       }
     }
   }
@@ -563,25 +614,30 @@ async function calculateUserRankings(
 
 async function awardSegmentBadges(periodType: string, periodStart: string): Promise<void> {
   // セグメント比較系のバッジを取得
-  const { data: badges } = await supabaseAdmin
+  // condition_json の type は文字列として比べる。`->` は jsonb を返すため、`eq.segment_rank` が
+  // json として解釈されて 22P02 (invalid input syntax for type json) になる。`->>` (text) を使う。
+  const { data: badges, error: badgesError } = await supabaseAdmin
     .from('badges')
     .select('*')
-    .or('condition_json->type.eq.segment_rank,condition_json->type.eq.segment_percentile,condition_json->type.eq.segment_vs_avg,condition_json->type.eq.improvement');
+    .or('condition_json->>type.eq.segment_rank,condition_json->>type.eq.segment_percentile,condition_json->>type.eq.segment_vs_avg,condition_json->>type.eq.improvement');
+  throwIfError('badges の取得', badgesError);
 
   if (!badges || badges.length === 0) return;
 
   // ランキングデータを取得
-  const { data: rankings } = await supabaseAdmin
-    .from('user_segment_rankings')
-    .select(`
-      *,
-      segment_definitions(code, name),
-      metric_definitions(code, name)
-    `)
-    .eq('period_type', periodType)
-    .eq('period_start', periodStart);
+  const rankings = await fetchAllRows<any>('user_segment_rankings の取得', () =>
+    supabaseAdmin
+      .from('user_segment_rankings')
+      .select(`
+        *,
+        segment_definitions(code, name),
+        metric_definitions(code, name)
+      `)
+      .eq('period_type', periodType)
+      .eq('period_start', periodStart),
+  );
 
-  if (!rankings || rankings.length === 0) return;
+  if (rankings.length === 0) return;
 
   // 各ランキングに対してバッジ条件をチェック
   for (const ranking of rankings) {
@@ -629,14 +685,15 @@ async function awardSegmentBadges(periodType: string, periodStart: string): Prom
 
         case 'improvement':
           // user_metricsから改善率を取得
-          const { data: userMetric } = await supabaseAdmin
+          const { data: userMetric, error: userMetricError } = await supabaseAdmin
             .from('user_metrics')
             .select('change_rate')
             .eq('user_id', ranking.user_id)
             .eq('metric_id', ranking.metric_id)
             .eq('period_type', periodType)
             .eq('period_start', periodStart)
-            .single();
+            .maybeSingle();
+          throwIfError('user_metrics (改善率) の取得', userMetricError);
 
           if (userMetric?.change_rate && userMetric.change_rate >= condition.threshold) {
             shouldAward = true;
@@ -669,9 +726,8 @@ async function awardSegmentBadges(periodType: string, periodStart: string): Prom
             ignoreDuplicates: true,
           });
 
-        if (!error) {
-          console.log(`Awarded badge ${badge.code} to user ${ranking.user_id}: ${message}`);
-        }
+        throwIfError(`user_badges の保存 (${badge.code})`, error);
+        console.log(`Awarded badge ${badge.code} to user ${ranking.user_id}: ${message}`);
       }
     }
   }
