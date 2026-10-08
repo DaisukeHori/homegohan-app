@@ -6,6 +6,7 @@ import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail, type EmailEnvelope } from '@/lib/emails/send';
+import { emailFailureReasons } from '@/lib/emails/send-result';
 import { renderFamilyTransferCompletedEmail } from '@/lib/emails/membership/family-transfer-completed';
 
 // accept_family_representative_transfer が RAISE するコードごとの、利用者向けの文言。
@@ -104,9 +105,11 @@ export async function POST(
 
     // 片方の送信が失敗しても、もう片方は送る
     const results = await Promise.allSettled(envelopes.map((envelope) => sendEmail(envelope)));
-    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    // 送れなかったもの: reject (想定外の例外) と ok: false の結果 (sendEmail は配信の失敗で例外を投げない)。
+    // 1 通ごとの詳細 (文面の名前・マスクした宛先・エラーコード) は sendEmail が app_logs に記録している
+    const failures = emailFailureReasons(results);
     if (failures.length > 0) {
-      log.error('完了メールの一部を送信できませんでした (代表者の譲渡は完了済み)', failures[0].reason, {
+      log.error('完了メールの一部を送信できませんでした (代表者の譲渡は完了済み)', failures[0], {
         proposal_id,
         failed_count: failures.length,
       });
