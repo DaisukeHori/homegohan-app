@@ -33,9 +33,12 @@ export const config = {
      * - api/health (死活監視用ヘルスチェック #1181。ちょうどこのパスだけ。
      *   Supabase のセッション処理を通さず、認証基盤の不調に引きずられないようにする。
      *   末尾の $ があるので /api/health/* (健康記録 API) は従来どおり対象のまま)
+     * - _vercel/ (Vercel が扱うパス。Speed Insights のスクリプトと計測値の送信先 /_vercel/speed-insights/* など #1179。
+     *   アプリのページではないので、未ログインの訪問者を /login へ送ったり、オンボーディングへ差し戻したりしない。
+     *   通すと、スクリプトのはずの応答がログイン画面の HTML にすり替わり、計測が静かに止まる)
      * Feel free to modify this pattern to include more paths.
      */
-    '/((?!_next/static|_next/image|favicon\\.ico|manifest\\.json|robots\\.txt|sw\\.js|workbox-|api/health$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|_vercel/|favicon\\.ico|manifest\\.json|robots\\.txt|sw\\.js|workbox-|api/health$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
 

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Sans_JP, Noto_Serif_JP } from "next/font/google";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import { PostHogProvider } from "@/components/PostHogProvider";
 import "./globals.css";
 
@@ -138,6 +139,16 @@ export default function RootLayout({
         <PostHogProvider>
           <div id="main-content">{children}</div>
         </PostHogProvider>
+        {/*
+          Vercel Speed Insights (#1179): 表示速度 (Web Vitals) の計測だけを行う。画面には何も描画しない。
+          エラーの記録は app_logs が担い、Sentry / Better Stack は採用しない (docs/design/00-architecture.md)。
+          本番 (Vercel) では、スクリプトも計測値の送信先も同じオリジンの /_vercel/speed-insights/* (Vercel の仕様)。
+          そのため CSP (next.config.mjs) は script-src / connect-src の 'self' で足り、変更していない。
+          スクリプトの読み込み先と 'self' は tests/speed-insights-1179.test.tsx が検査する (送信先はデプロイ後に確認する)。
+          /_vercel/ は認証ミドルウェアにも通さない (src/middleware.ts の matcher)。
+          Vercel のダッシュボードで Speed Insights を有効にするまでは、そのパスが 404 になるだけで画面には影響しない。
+        */}
+        <SpeedInsights />
       </body>
     </html>
   );
