@@ -26,6 +26,14 @@ import {
 } from "react-native";
 
 import { getApi, getApiBaseUrl } from "../../lib/api";
+import {
+  AI_CHAT_TIMEOUT_MESSAGE,
+  AI_CHAT_TIMEOUT_MS,
+  hasReplyAfterSend,
+  isTimeoutFailure,
+  isUncertainSendFailure,
+  type AiChatPostResponse,
+} from "../../lib/aiChat";
 import { supabase } from "../../lib/supabase";
 import { colors, radius, shadows, spacing } from "../../theme";
 import { AIDayMenuModal } from "./AIDayMenuModal";
@@ -144,7 +152,6 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
   const [inputText, setInputText] = useState("");
   const [sending, setSending] = useState(false);
-  const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [dayMenuModalVisible, setDayMenuModalVisible] = useState(false);
   const [isClosingSession, setIsClosingSession] = useState(false);
 
@@ -162,7 +169,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       scrollRef.current?.scrollToEnd({ animated: true });
     }, 100);
     return () => clearTimeout(t);
-  }, [messages.length, streamingContent, sending]);
+  }, [messages.length, sending]);
 
   async function initSession() {
     try {
@@ -194,19 +201,24 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     }
   }
 
-  async function loadMessages(sessionId: string) {
+  /** サーバーの履歴を取得する。失敗したら null (画面をどうするかは呼び出し側が決める) */
+  async function fetchMessages(sessionId: string): Promise<Message[] | null> {
     try {
       const api = getApi();
       const msgRes = await api.get<{ messages: Message[] }>(
         `/api/ai/consultation/sessions/${sessionId}/messages`
       );
-      const loaded = msgRes.messages ?? [];
-      if (loaded.length > 0) {
-        setMessages(loaded);
-      } else {
-        setMessages([WELCOME_MESSAGE]);
-      }
+      return msgRes.messages ?? [];
     } catch {
+      return null;
+    }
+  }
+
+  async function loadMessages(sessionId: string) {
+    const loaded = await fetchMessages(sessionId);
+    if (loaded && loaded.length > 0) {
+      setMessages(loaded);
+    } else {
       setMessages([WELCOME_MESSAGE]);
     }
   }
@@ -314,7 +326,12 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
     setSending(true);
     setInputText("");
-    setStreamingContent(null);
+
+    // 送信前に確定していたメッセージ数 (ウェルカムと送信中の仮メッセージは数えない)。
+    // タイムアウトしたあと、履歴を取り直して返信が届いていたかを見分ける目印にする
+    const persistedBefore = messages.filter(
+      (m) => m.id !== "welcome" && !m.id.startsWith("local-")
+    ).length;
 
     const optimistic: Message = {
       id: `local-${Date.now()}`,
@@ -328,10 +345,10 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       return [...withoutWelcome, optimistic];
     });
 
+    let sessionId = currentSessionId;
     try {
-      let sessionId = currentSessionId;
+      const api = getApi();
       if (!sessionId) {
-        const api = getApi();
         const createRes = await api.post<{
           success: boolean;
           session: { id: string };
@@ -340,134 +357,62 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         setCurrentSessionId(sessionId);
       }
 
-      // SSEストリーミング送信
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token ?? null;
-      const baseUrl = getApiBaseUrl();
-      const url = `${baseUrl}/api/ai/consultation/sessions/${sessionId}/messages?stream=true`;
+      // ストリーミングではない通常の POST (Web 版と同じ)。
+      // RN 標準の fetch は応答を最後まで溜めてから返すので、ストリーミングにしても途中経過は出ない。
+      // 一方で「応答が終わるまで」を 26 秒で打ち切ると、サーバーが成功していてもタイムアウト表示になっていた
+      // (#1049 F7-18)。サーバーの上限より長く待ち、待ち切れなかったときは履歴を取り直して確かめる。
+      const res = await api.post<AiChatPostResponse>(
+        `/api/ai/consultation/sessions/${sessionId}/messages`,
+        { message: trimmed },
+        { timeoutMs: AI_CHAT_TIMEOUT_MS }
+      );
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 26000);
-
-      let res: Response;
-      try {
-        res = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ message: trimmed }),
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeoutId);
-      }
-
-      if (!res.ok) {
-        const errText = await res.text().catch(() => "");
-        throw new Error(`HTTP ${res.status}: ${errText}`);
-      }
-
-      if (!res.body) {
-        // SSE非対応環境: メッセージ一覧を再取得
+      if (!res?.aiMessage) {
+        // 返信が入っていない想定外の応答: サーバーの履歴に合わせる
         await loadMessages(sessionId);
         return;
       }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let accumulated = "";
-      let finalHandled = false;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const raw = line.slice(6);
-          if (raw === "[DONE]") continue;
-
-          let parsed: any;
-          try {
-            parsed = JSON.parse(raw);
-          } catch {
-            continue;
-          }
-
-          const chunk = parsed?.choices?.[0]?.delta?.content;
-          if (chunk) {
-            accumulated += chunk;
-            setStreamingContent(accumulated);
-            continue;
-          }
-
-          if (parsed?.aiMessage) {
-            finalHandled = true;
-            setStreamingContent(null);
-            const aiMsg: Message = {
-              id: parsed.aiMessage.id ?? `ai-${Date.now()}`,
-              role: "assistant",
-              content: parsed.aiMessage.content ?? accumulated,
-              createdAt:
-                parsed.aiMessage.createdAt ?? new Date().toISOString(),
-            };
-            setMessages((prev) => {
-              const withoutOptimistic = prev.filter(
-                (m) => !m.id.startsWith("local-")
-              );
-              const userMsg: Message = parsed.userMessage
-                ? {
-                    id: parsed.userMessage.id,
-                    role: "user",
-                    content: parsed.userMessage.content ?? trimmed,
-                    createdAt:
-                      parsed.userMessage.createdAt ??
-                      new Date().toISOString(),
-                  }
-                : optimistic;
-              return [...withoutOptimistic, userMsg, aiMsg];
-            });
-          }
-        }
-      }
-
-      if (!finalHandled) {
-        setStreamingContent(null);
-        if (accumulated) {
-          const aiMsg: Message = {
-            id: `ai-${Date.now()}`,
-            role: "assistant",
-            content: accumulated,
-            createdAt: new Date().toISOString(),
-          };
-          setMessages((prev) => {
-            const withoutOptimistic = prev.filter(
-              (m) => !m.id.startsWith("local-")
-            );
-            return [...withoutOptimistic, optimistic, aiMsg];
-          });
-        } else {
-          await loadMessages(sessionId);
-        }
-      }
-    } catch (e: any) {
-      setStreamingContent(null);
-      if (e?.name === "AbortError") {
-        Alert.alert(
-          "タイムアウト",
-          "応答がタイムアウトしました。しばらく待ってから再度お試しください。"
+      const aiMsg: Message = {
+        id: res.aiMessage.id ?? `ai-${Date.now()}`,
+        role: "assistant",
+        content: res.aiMessage.content ?? "",
+        createdAt: res.aiMessage.createdAt ?? new Date().toISOString(),
+      };
+      setMessages((prev) => {
+        const withoutOptimistic = prev.filter(
+          (m) => !m.id.startsWith("local-")
         );
+        const userMsg: Message = res.userMessage?.id
+          ? {
+              id: res.userMessage.id,
+              role: "user",
+              content: res.userMessage.content ?? trimmed,
+              createdAt: res.userMessage.createdAt ?? new Date().toISOString(),
+            }
+          : optimistic;
+        return [...withoutOptimistic, userMsg, aiMsg];
+      });
+    } catch (e: any) {
+      if (sessionId && isUncertainSendFailure(e)) {
+        // タイムアウトや通信断でも、サーバーは処理を終えていることがある。
+        // 履歴を取り直して、返信が届いていれば何も言わずに画面を合わせる。
+        const loaded = await fetchMessages(sessionId);
+        if (loaded) {
+          setMessages(loaded.length > 0 ? loaded : [WELCOME_MESSAGE]);
+          if (hasReplyAfterSend(loaded, persistedBefore)) return;
+        } else {
+          setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
+        }
+      } else {
+        setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
+      }
+
+      if (isTimeoutFailure(e)) {
+        Alert.alert("タイムアウト", AI_CHAT_TIMEOUT_MESSAGE);
       } else {
         Alert.alert("エラー", e?.message ?? "送信に失敗しました。");
       }
-      setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
     } finally {
       setSending(false);
     }
@@ -477,8 +422,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   const isWelcomeOnly =
     messages.length === 1 && messages[0].id === "welcome";
 
-  // typing indicator を表示するか: 送信中かつストリームがまだ来ていない
-  const showTypingIndicator = sending && streamingContent === null;
+  // typing indicator を表示するか: 返信が来るまでの送信中
+  const showTypingIndicator = sending;
 
   return (
     <>
@@ -602,20 +547,6 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                     <MessageBubble key={msg.id} message={msg} />
                   ))}
 
-                  {/* ストリーミング中の仮メッセージ */}
-                  {streamingContent != null && (
-                    <MessageBubble
-                      key="streaming"
-                      message={{
-                        id: "streaming",
-                        role: "assistant",
-                        content: streamingContent,
-                        createdAt: new Date().toISOString(),
-                      }}
-                      isStreaming
-                    />
-                  )}
-
                   {/* 応答待ち typing indicator */}
                   {showTypingIndicator && (
                     <View style={styles.bubbleWrapperAssistant}>
@@ -704,13 +635,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
 interface MessageBubbleProps {
   message: Message;
-  isStreaming?: boolean;
 }
 
-const MessageBubble: React.FC<MessageBubbleProps> = ({
-  message,
-  isStreaming,
-}) => {
+const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const isUser = message.role === "user";
   return (
     <View
@@ -732,7 +659,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
           ]}
         >
           {message.content}
-          {isStreaming && <Text style={styles.cursor}>▌</Text>}
         </Text>
       </View>
     </View>
@@ -886,9 +812,6 @@ const styles = StyleSheet.create({
   },
   bubbleTextAssistant: {
     color: colors.text,
-  },
-  cursor: {
-    color: colors.accent,
   },
   quickQuestions: {
     flexDirection: "row",

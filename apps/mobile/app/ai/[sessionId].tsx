@@ -6,8 +6,15 @@ import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, Te
 
 import { LoadingState, PageHeader } from "../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../src/theme";
-import { getApi, getApiBaseUrl } from "../../src/lib/api";
-import { supabase } from "../../src/lib/supabase";
+import { getApi } from "../../src/lib/api";
+import {
+  AI_CHAT_TIMEOUT_MESSAGE,
+  AI_CHAT_TIMEOUT_MS,
+  hasReplyAfterSend,
+  isTimeoutFailure,
+  isUncertainSendFailure,
+  type AiChatPostResponse,
+} from "../../src/lib/aiChat";
 
 type Message = {
   id: string;
@@ -27,7 +34,6 @@ export default function AiSessionPage() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
-  const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [attachedImage, setAttachedImage] = useState<{ uri: string; base64: string } | null>(null);
   const [imagePreviewReady, setImagePreviewReady] = useState(false);
   // 自動実行済みのメッセージID集合。GET レスポンスは proposed_actions を返し続けるため、
@@ -37,6 +43,18 @@ export default function AiSessionPage() {
   const scrollRef = useRef<ScrollView | null>(null);
 
   const messagesPath = useMemo(() => `/api/ai/consultation/sessions/${sessionId}/messages`, [sessionId]);
+
+  /** サーバーの履歴を静かに取得する (読み込み中表示にしない)。失敗したら null */
+  async function fetchMessages(): Promise<Message[] | null> {
+    if (!sessionId) return null;
+    try {
+      const api = getApi();
+      const res = await api.get<{ messages: Message[] }>(messagesPath);
+      return res.messages ?? [];
+    } catch {
+      return null;
+    }
+  }
 
   async function load() {
     if (!sessionId) return;
@@ -90,9 +108,12 @@ export default function AiSessionPage() {
     if ((!trimmed && !attachedImage) || isSending) return;
     setIsSending(true);
     setError(null);
-    setStreamingContent(null);
 
     const imageSnapshot = attachedImage;
+
+    // 送信前に確定していたメッセージ数 (送信中の仮メッセージは数えない)。
+    // タイムアウトしたあと、履歴を取り直して返信が届いていたかを見分ける目印にする
+    const persistedBefore = messages.filter((m) => !m.id.startsWith("local-")).length;
 
     const optimistic: Message = {
       id: `local-${Date.now()}`,
@@ -106,141 +127,68 @@ export default function AiSessionPage() {
     setAttachedImage(null);
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token ?? null;
-      const baseUrl = getApiBaseUrl();
-      const url = `${baseUrl}${messagesPath}?stream=true`;
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 26000);
-
       const body: Record<string, any> = { message: trimmed };
       if (imageSnapshot) {
         body.imageBase64 = imageSnapshot.base64;
       }
 
-      let res: Response;
-      try {
-        res = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeoutId);
-      }
+      // ストリーミングではない通常の POST (Web 版と同じ)。
+      // RN 標準の fetch は応答を最後まで溜めてから返すので、ストリーミングにしても途中経過は出ない。
+      // 一方で「応答が終わるまで」を 26 秒で打ち切ると、サーバーが成功していてもタイムアウト表示になっていた
+      // (#1049 F7-18)。サーバーの上限より長く待ち、待ち切れなかったときは履歴を取り直して確かめる。
+      const api = getApi();
+      const res = await api.post<AiChatPostResponse>(messagesPath, body, { timeoutMs: AI_CHAT_TIMEOUT_MS });
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`HTTP ${res.status}: ${text}`);
-      }
-
-      if (!res.body) {
-        // ReadableStream 非対応環境: 通常レスポンスとして処理
+      if (!res?.aiMessage) {
+        // 返信が入っていない想定外の応答: サーバーの履歴に合わせる
         await load();
         return;
       }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let accumulated = "";
-      let finalHandled = false;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const raw = line.slice(6);
-          if (raw === "[DONE]") continue;
-
-          let parsed: any;
-          try {
-            parsed = JSON.parse(raw);
-          } catch {
-            continue;
-          }
-
-          // ストリーミングチャンク: choices[0].delta.content
-          const chunk = parsed?.choices?.[0]?.delta?.content;
-          if (chunk) {
-            accumulated += chunk;
-            setStreamingContent(accumulated);
-            continue;
-          }
-
-          // 完了メッセージ: aiMessage フィールドが存在
-          if (parsed?.aiMessage) {
-            finalHandled = true;
-            setStreamingContent(null);
-            const aiMsg: Message = {
-              id: parsed.aiMessage.id ?? `ai-${Date.now()}`,
-              role: "assistant",
-              content: parsed.aiMessage.content ?? accumulated,
-              proposedActions: parsed.aiMessage.proposedActions ?? null,
-              createdAt: parsed.aiMessage.createdAt ?? new Date().toISOString(),
-            };
-            // サーバー側でアクションが自動実行された場合はそのメッセージ ID を記録し、
-            // GET 再取得後もアクションボタンを非表示にする
-            if (parsed.actionExecuted) {
-              executedMessageIds.current.add(aiMsg.id);
-              Alert.alert("アクション実行", "AIの提案が自動的に実行されました。");
+      const aiMsg: Message = {
+        id: res.aiMessage.id ?? `ai-${Date.now()}`,
+        role: "assistant",
+        content: res.aiMessage.content ?? "",
+        proposedActions: res.aiMessage.proposedActions ?? null,
+        createdAt: res.aiMessage.createdAt ?? new Date().toISOString(),
+      };
+      // サーバー側でアクションが自動実行された場合はそのメッセージ ID を記録し、
+      // GET 再取得後もアクションボタンを非表示にする
+      if (res.actionExecuted) {
+        executedMessageIds.current.add(aiMsg.id);
+        Alert.alert("アクション実行", "AIの提案が自動的に実行されました。");
+      }
+      // optimistic ユーザーメッセージを確定 ID に差し替え
+      setMessages((prev) => {
+        const withoutOptimistic = prev.filter((m) => !m.id.startsWith("local-"));
+        const userMsg: Message = res.userMessage?.id
+          ? {
+              id: res.userMessage.id,
+              role: "user",
+              content: res.userMessage.content ?? trimmed,
+              isImportant: res.userMessage.isImportant ?? false,
+              createdAt: res.userMessage.createdAt ?? new Date().toISOString(),
             }
-            // optimistic ユーザーメッセージを確定 ID に差し替え
-            setMessages((prev) => {
-              const withoutOptimistic = prev.filter((m) => !m.id.startsWith("local-"));
-              const userMsg: Message = parsed.userMessage
-                ? {
-                    id: parsed.userMessage.id,
-                    role: "user",
-                    content: parsed.userMessage.content ?? trimmed,
-                    isImportant: parsed.userMessage.isImportant ?? false,
-                    createdAt: parsed.userMessage.createdAt ?? new Date().toISOString(),
-                  }
-                : optimistic;
-              return [...withoutOptimistic, userMsg, aiMsg];
-            });
-          }
+          : optimistic;
+        return [...withoutOptimistic, userMsg, aiMsg];
+      });
+    } catch (e: any) {
+      if (isUncertainSendFailure(e)) {
+        // タイムアウトや通信断でも、サーバーは処理を終えていることがある。
+        // 履歴を取り直して、返信が届いていれば何も言わずに画面を合わせる。
+        const loaded = await fetchMessages();
+        if (loaded) {
+          setMessages(loaded);
+          if (hasReplyAfterSend(loaded, persistedBefore)) return;
+        } else {
+          setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
         }
+      } else {
+        // optimistic メッセージを削除
+        setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
       }
 
-      if (!finalHandled) {
-        // ストリームが完了データなしで終了した場合、蓄積テキストをUIに反映してリロード
-        setStreamingContent(null);
-        if (accumulated) {
-          const aiMsg: Message = {
-            id: `ai-${Date.now()}`,
-            role: "assistant",
-            content: accumulated,
-            createdAt: new Date().toISOString(),
-          };
-          setMessages((prev) => {
-            const withoutOptimistic = prev.filter((m) => !m.id.startsWith("local-"));
-            return [...withoutOptimistic, optimistic, aiMsg];
-          });
-        } else {
-          await load();
-        }
-      }
-    } catch (e: any) {
-      setStreamingContent(null);
-      if (e?.name === "AbortError") {
-        setError("応答がタイムアウトしました（25秒）。しばらく待ってから再度お試しください。");
-      } else {
-        setError(e?.message ?? "送信に失敗しました。");
-      }
-      // optimistic メッセージを削除
-      setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
+      setError(isTimeoutFailure(e) ? AI_CHAT_TIMEOUT_MESSAGE : e?.message ?? "送信に失敗しました。");
     } finally {
       setIsSending(false);
     }
@@ -476,7 +424,7 @@ export default function AiSessionPage() {
                 );
               })}
 
-              {/* ストリーミング中: リアルタイム表示 or ドットインジケータ */}
+              {/* 返信待ち: ドットインジケータ (testID は Maestro の待ち合わせが使っている) */}
               {isSending && (
                 <View testID="ai-chat-streaming-view" style={{ alignSelf: "flex-start", maxWidth: "85%" }}>
                   <View
@@ -490,17 +438,11 @@ export default function AiSessionPage() {
                       ...shadows.sm,
                     }}
                   >
-                    {streamingContent ? (
-                      <Text style={{ color: colors.text, fontSize: 14, lineHeight: 21 }}>
-                        {streamingContent}
-                      </Text>
-                    ) : (
-                      <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
-                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.textMuted }} />
-                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.border }} />
-                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.border }} />
-                      </View>
-                    )}
+                    <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
+                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.textMuted }} />
+                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.border }} />
+                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.border }} />
+                    </View>
                   </View>
                 </View>
               )}

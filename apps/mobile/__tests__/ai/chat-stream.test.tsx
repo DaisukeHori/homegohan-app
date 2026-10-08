@@ -1,6 +1,11 @@
 /**
  * chat-stream.test.tsx
- * メッセージ送信・ストリーミング受信・executedMessageIds 重複防止のテスト
+ * メッセージ送信・返信の表示・executedMessageIds 重複防止のテスト
+ *
+ * 送信は、ストリーミングではない通常の POST (Web 版と同じ) を共通 API クライアント (getApi().post) で行う。
+ * RN 標準の fetch は応答を最後まで溜めてから返すので、SSE にしても途中経過は出ず、
+ * 「応答が終わるまで」を 26 秒で打ち切ると正常な応答まで失敗にしていたため (#1049 F7-18)。
+ * (ファイル名は経緯で chat-stream のまま。タイムアウト・履歴の取り直しは chat-stream-abort.test.tsx)
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
@@ -49,23 +54,35 @@ jest.mock('react-native-safe-area-context', () => ({
   SafeAreaView: ({ children }: { children: React.ReactNode }) => children,
 }));
 
-// fetch SSE モックユーティリティ
-function makeSseResponse(lines: string[]): Response {
-  const text = lines.join('\n') + '\n';
-  const encoder = new TextEncoder();
-  const encoded = encoder.encode(text);
-  const stream = new ReadableStream({
-    start(controller) {
-      controller.enqueue(encoded);
-      controller.close();
-    },
-  });
+const MESSAGES_PATH = '/api/ai/consultation/sessions/test-session-id/messages';
+
+/** サーバーが返す送信結果 (ストリーミングでない POST) */
+function chatResponse(overrides: {
+  aiId?: string;
+  aiContent?: string;
+  userId?: string;
+  userContent?: string;
+  proposedActions?: unknown;
+  actionExecuted?: boolean;
+} = {}) {
   return {
-    ok: true,
-    status: 200,
-    body: stream,
-    text: () => Promise.resolve(text),
-  } as unknown as Response;
+    success: true,
+    userMessage: {
+      id: overrides.userId ?? 'user-sent-1',
+      role: 'user',
+      content: overrides.userContent ?? '今日の夕食を教えて',
+      isImportant: false,
+      createdAt: '2026-04-01T10:59:00.000Z',
+    },
+    aiMessage: {
+      id: overrides.aiId ?? 'ai-resp-1',
+      role: 'assistant',
+      content: overrides.aiContent ?? '今日の夕食はカレーです',
+      proposedActions: overrides.proposedActions ?? null,
+      createdAt: '2026-04-01T11:00:00.000Z',
+    },
+    actionExecuted: overrides.actionExecuted ?? false,
+  };
 }
 
 /** テキスト入力欄を見つけて文字を入力し、送信ボタンを押す */
@@ -84,7 +101,6 @@ async function typeAndSend(inputText: string) {
 import React from 'react';
 import { Pressable } from 'react-native';
 import AiSessionPage from '../../app/ai/[sessionId]';
-import { supabase } from '../../src/lib/supabase';
 
 const INITIAL_MESSAGES = [
   {
@@ -103,10 +119,10 @@ const INITIAL_MESSAGES = [
 
 beforeEach(() => {
   jest.clearAllMocks();
-  (supabase.auth.getSession as jest.Mock).mockResolvedValue({
-    data: { session: { access_token: 'test-token' } },
-  });
-  global.fetch = jest.fn();
+  // 送信は fetch を直接使わない。使ったらテストが気付けるよう、呼ばれたら失敗するモックにしておく
+  global.fetch = jest.fn(() => {
+    throw new Error('fetch は直接使わない (getApi().post を使う)');
+  }) as unknown as typeof fetch;
 });
 
 describe('AiSessionPage — メッセージ一覧表示', () => {
@@ -144,7 +160,7 @@ describe('AiSessionPage — メッセージ一覧表示', () => {
   });
 });
 
-describe('AiSessionPage — メッセージ送信 (ストリーミング)', () => {
+describe('AiSessionPage — メッセージ送信', () => {
   it('テキスト入力後に送信ボタンが有効になる', async () => {
     mockGet.mockResolvedValueOnce({ messages: [] });
     render(<AiSessionPage />);
@@ -161,14 +177,12 @@ describe('AiSessionPage — メッセージ送信 (ストリーミング)', () =
     expect(input.props.value).toBe('今日の夕食を教えて');
   });
 
-  it('テキスト送信後、楽観的メッセージが表示される', async () => {
+  it('テキスト送信後、返信待ちの間は楽観的メッセージと待機表示が出る', async () => {
     mockGet.mockResolvedValueOnce({ messages: [] });
 
-    // fetch を delay させて楽観的 UI の確認中を維持
-    let resolveFetch!: (v: Response) => void;
-    (global.fetch as jest.Mock).mockReturnValueOnce(
-      new Promise((res) => { resolveFetch = res; })
-    );
+    // 返信を遅らせて、待っている間の表示を確認する
+    let rejectPost!: (e: Error) => void;
+    mockPost.mockReturnValueOnce(new Promise((_res, rej) => { rejectPost = rej; }));
 
     render(<AiSessionPage />);
 
@@ -178,32 +192,26 @@ describe('AiSessionPage — メッセージ送信 (ストリーミング)', () =
 
     await typeAndSend('今日の夕食を教えて');
 
-    // 楽観的メッセージが表示される
+    // 楽観的メッセージと、返信待ちの表示 (Maestro が待ち合わせに使う testID)
     await waitFor(() => {
       expect(screen.getByText('今日の夕食を教えて')).toBeTruthy();
     });
+    expect(screen.getByTestId('ai-chat-streaming-view')).toBeTruthy();
 
-    // クリーンアップ: fetch を失敗させて終了
-    act(() => {
-      resolveFetch({ ok: false, status: 500, text: () => Promise.resolve(''), body: null } as any);
+    // クリーンアップ: 送信を失敗させて終了
+    await act(async () => {
+      rejectPost(new Error('HTTP 500 Internal Server Error'));
     });
     await waitFor(() => {
       // エラー後、楽観的メッセージが削除される
       expect(screen.queryByText('今日の夕食を教えて')).toBeNull();
     });
+    expect(screen.queryByTestId('ai-chat-streaming-view')).toBeNull();
   });
 
-  it('SSE ストリームのチャンクが最終メッセージとして表示される', async () => {
+  it('AI の返信が最終メッセージとして表示され、楽観的メッセージはサーバーの確定 ID に置き換わる', async () => {
     mockGet.mockResolvedValueOnce({ messages: [] });
-
-    const sseLines = [
-      'data: {"choices":[{"delta":{"content":"今日"}}]}',
-      'data: {"choices":[{"delta":{"content":"の夕食"}}]}',
-      'data: {"choices":[{"delta":{"content":"はカレーです"}}]}',
-      'data: {"aiMessage":{"id":"ai-resp-1","content":"今日の夕食はカレーです","createdAt":"2026-04-01T11:00:00.000Z"},"userMessage":{"id":"user-sent-1","content":"今日の夕食を教えて","createdAt":"2026-04-01T10:59:00.000Z"}}',
-      'data: [DONE]',
-    ];
-    (global.fetch as jest.Mock).mockResolvedValueOnce(makeSseResponse(sseLines));
+    mockPost.mockResolvedValueOnce(chatResponse());
 
     render(<AiSessionPage />);
 
@@ -216,16 +224,36 @@ describe('AiSessionPage — メッセージ送信 (ストリーミング)', () =
     await waitFor(() => {
       expect(screen.getByText('今日の夕食はカレーです')).toBeTruthy();
     });
+    // ユーザーのメッセージは 1 通だけ (仮メッセージと確定メッセージが二重にならない)
+    expect(screen.getAllByText('今日の夕食を教えて')).toHaveLength(1);
   });
 
-  it('SSE 完了後、入力欄がクリアされる', async () => {
+  it('送信は ?stream=true を付けない通常の POST で、タイムアウトは 26 秒より長い', async () => {
     mockGet.mockResolvedValueOnce({ messages: [] });
+    mockPost.mockResolvedValueOnce(chatResponse());
 
-    const sseLines = [
-      'data: {"aiMessage":{"id":"ai-resp-2","content":"応答テキスト","createdAt":"2026-04-01T11:00:00.000Z"},"userMessage":{"id":"user-sent-2","content":"テスト送信","createdAt":"2026-04-01T10:59:00.000Z"}}',
-      'data: [DONE]',
-    ];
-    (global.fetch as jest.Mock).mockResolvedValueOnce(makeSseResponse(sseLines));
+    render(<AiSessionPage />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('相談内容を入力...')).toBeTruthy();
+    });
+
+    await typeAndSend('今日の夕食を教えて');
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledTimes(1);
+    });
+    const [path, body, init] = mockPost.mock.calls[0];
+    expect(path).toBe(MESSAGES_PATH);
+    expect(path).not.toContain('stream=true');
+    expect(body).toEqual({ message: '今日の夕食を教えて' });
+    // サーバーの AI 呼び出しだけで最大 25 秒かかる。26 秒で切ると正常な応答まで失敗になっていた
+    expect(init.timeoutMs).toBeGreaterThan(40_000);
+  });
+
+  it('送信後、入力欄がクリアされる', async () => {
+    mockGet.mockResolvedValueOnce({ messages: [] });
+    mockPost.mockResolvedValueOnce(chatResponse({ userContent: 'テスト送信', aiContent: '応答テキスト' }));
 
     render(<AiSessionPage />);
 
@@ -246,14 +274,9 @@ describe('AiSessionPage — メッセージ送信 (ストリーミング)', () =
     });
   });
 
-  it('fetch が HTTP エラーを返したとき、エラーメッセージを表示しオプティミスティックメッセージを削除する', async () => {
+  it('送信が HTTP エラーになったとき、エラーメッセージを表示しオプティミスティックメッセージを削除する', async () => {
     mockGet.mockResolvedValueOnce({ messages: [] });
-    (global.fetch as jest.Mock).mockResolvedValueOnce({
-      ok: false,
-      status: 500,
-      text: () => Promise.resolve('Internal Server Error'),
-      body: null,
-    } as any);
+    mockPost.mockRejectedValueOnce(new Error('HTTP 500 Internal Server Error: Internal Server Error'));
 
     render(<AiSessionPage />);
 
@@ -268,16 +291,15 @@ describe('AiSessionPage — メッセージ送信 (ストリーミング)', () =
     });
     // 楽観的メッセージが削除されていること
     expect(screen.queryByText('エラーテスト')).toBeNull();
+    // HTTP エラーはサーバーが処理しなかったと分かるので、履歴の取り直しはしない (初回の取得だけ)
+    expect(mockGet).toHaveBeenCalledTimes(1);
   });
 
-  it('fetch が呼ばれる際に Authorization ヘッダーが含まれる', async () => {
-    mockGet.mockResolvedValueOnce({ messages: [] });
-
-    const sseLines = [
-      'data: {"aiMessage":{"id":"ai-auth-test","content":"認証テスト応答","createdAt":"2026-04-01T11:00:00.000Z"},"userMessage":{"id":"user-auth","content":"認証テスト","createdAt":"2026-04-01T10:59:00.000Z"}}',
-      'data: [DONE]',
-    ];
-    (global.fetch as jest.Mock).mockResolvedValueOnce(makeSseResponse(sseLines));
+  it('返信が空 (aiMessage なし) の想定外の応答は、サーバーの履歴を取り直して合わせる', async () => {
+    mockGet
+      .mockResolvedValueOnce({ messages: [] })
+      .mockResolvedValueOnce({ messages: INITIAL_MESSAGES });
+    mockPost.mockResolvedValueOnce({ success: true });
 
     render(<AiSessionPage />);
 
@@ -285,28 +307,29 @@ describe('AiSessionPage — メッセージ送信 (ストリーミング)', () =
       expect(screen.getByPlaceholderText('相談内容を入力...')).toBeTruthy();
     });
 
-    await typeAndSend('認証テスト');
+    await typeAndSend('こんにちは');
 
     await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalled();
+      expect(screen.getByText('はじめまして！何かご相談がありますか？')).toBeTruthy();
     });
-
-    const fetchCall = (global.fetch as jest.Mock).mock.calls[0];
-    expect(fetchCall[1].headers['Authorization']).toBe('Bearer test-token');
-    expect(fetchCall[0]).toContain('/api/ai/consultation/sessions/test-session-id/messages?stream=true');
   });
 });
 
 describe('AiSessionPage — executedMessageIds 重複防止', () => {
-  it('actionExecuted=true の SSE 受信後、アクションボタンが非表示になる', async () => {
+  it('actionExecuted=true の応答後、アクションボタンが非表示になる', async () => {
     mockGet.mockResolvedValueOnce({ messages: [] });
 
-    // actionExecuted=true を含む SSE
-    const sseLines = [
-      'data: {"aiMessage":{"id":"ai-action-msg","content":"アクションを実行しました","proposedActions":{"type":"add_meal"},"createdAt":"2026-04-01T11:00:00.000Z"},"userMessage":{"id":"user-1","content":"追加して","createdAt":"2026-04-01T10:59:00.000Z"},"actionExecuted":true}',
-      'data: [DONE]',
-    ];
-    (global.fetch as jest.Mock).mockResolvedValueOnce(makeSseResponse(sseLines));
+    // actionExecuted=true を含む応答 (ストリーミングでは proposedActions が残ったまま来る)
+    mockPost.mockResolvedValueOnce(
+      chatResponse({
+        aiId: 'ai-action-msg',
+        aiContent: 'アクションを実行しました',
+        userId: 'user-1',
+        userContent: '追加して',
+        proposedActions: { type: 'add_meal' },
+        actionExecuted: true,
+      }),
+    );
 
     render(<AiSessionPage />);
 
@@ -326,15 +349,19 @@ describe('AiSessionPage — executedMessageIds 重複防止', () => {
     expect(screen.queryByText('却下')).toBeNull();
   });
 
-  it('actionExecuted=false の SSE では proposedActions がありアクションボタンが表示される', async () => {
+  it('actionExecuted=false の応答では proposedActions がありアクションボタンが表示される', async () => {
     mockGet.mockResolvedValueOnce({ messages: [] });
 
     // actionExecuted なし（フラグなし）= アクションボタン表示
-    const sseLines = [
-      'data: {"aiMessage":{"id":"ai-propose-msg","content":"献立を追加しましょうか？","proposedActions":{"type":"add_meal"},"createdAt":"2026-04-01T11:00:00.000Z"},"userMessage":{"id":"user-2","content":"提案して","createdAt":"2026-04-01T10:59:00.000Z"}}',
-      'data: [DONE]',
-    ];
-    (global.fetch as jest.Mock).mockResolvedValueOnce(makeSseResponse(sseLines));
+    mockPost.mockResolvedValueOnce(
+      chatResponse({
+        aiId: 'ai-propose-msg',
+        aiContent: '献立を追加しましょうか？',
+        userId: 'user-2',
+        userContent: '提案して',
+        proposedActions: { type: 'add_meal' },
+      }),
+    );
 
     render(<AiSessionPage />);
 
