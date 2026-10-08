@@ -13,6 +13,7 @@ export function renderFamilyInviteExistingEmail(vars: InviteEmailVars): EmailEnv
     : '';
 
   return {
+    template: 'family_invite_existing',
     to: vars.email_address,
     from: 'ほめゴハン <noreply@homegohan.app>',
     subject: `【ほめゴハン】${vars.scope_name}に家族として招待されました`,
