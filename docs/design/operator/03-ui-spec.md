@@ -238,6 +238,10 @@
 - `finance`: 上記 + 返金誘導 (Stripe 側で実行)
 - `admin` / `super_admin`: 全操作
 
+**返金の記録 (#1185)**: 返金は Stripe ダッシュボードで行うが、その前に理由を必須で入力させ、
+`admin.refund.issue` を監査ログに記録する (`07-audit-monitoring.md` §4.1.2)。記録できたときだけ Stripe を新しいタブで開く。
+この画面 (個人課金詳細) の実装までは、請求書詳細 (`/admin/finance/invoices/{id}`) の「返金を記録して Stripe で開く」から行う。
+
 ---
 
 ## 12. `/admin/finance/licenses` — 組織ライセンス販売管理

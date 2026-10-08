@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -16,8 +16,8 @@ import {
   NUTRIENT_DEFINITIONS,
 } from '@homegohan/shared';
 
+import { useNutritionFeedbackWatch } from '../../hooks/useNutritionFeedbackWatch';
 import { getApi } from '../../lib/api';
-import { subscribeNutritionFeedback } from '../../lib/realtime';
 import { colors } from '../../theme/colors';
 import { radius, spacing } from '../../theme/spacing';
 import { shadows } from '../../theme';
@@ -82,7 +82,6 @@ export interface StatsModalProps {
   weekRange: { start: string; end: string };
   todayNutrients: NutrientValues;
   weekNutrients: WeekNutrientData;
-  userId: string;
   /** 週の日付ラベル (曜日) */
   weekDayLabels?: string[];
   /** 既存の Today の meals (AI feedback 取得に使用) */
@@ -624,7 +623,6 @@ export const StatsModal: React.FC<StatsModalProps> = ({
   weekRange,
   todayNutrients,
   weekNutrients,
-  userId,
   weekDayLabels = ['月', '火', '水', '木', '金', '土', '日'],
   todayMeals = [],
 }) => {
@@ -633,8 +631,8 @@ export const StatsModal: React.FC<StatsModalProps> = ({
   const [radarKeys, setRadarKeys] = useState<string[]>(DEFAULT_RADAR_NUTRIENTS);
   const [feedback, setFeedback] = useState<{ praise: string | null; advice: string | null } | null>(null);
   const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const unsubRef = useRef<(() => void) | null>(null);
+  // 生成待ち (Realtime + ポーリング) の持ち主。閉じる / タブ切替 / 日付変更 / アンマウントで必ず解除される
+  const feedbackWatch = useNutritionFeedbackWatch();
 
   const mealCount = todayMeals.filter((m) => m.dish_name).length;
 
@@ -649,20 +647,8 @@ export const StatsModal: React.FC<StatsModalProps> = ({
       return;
     }
 
-    // Realtime subscription
-    unsubRef.current = subscribeNutritionFeedback(userId, (row) => {
-      if (row.praise_comment || row.advice) {
-        setFeedback({ praise: row.praise_comment ?? null, advice: row.advice ?? null });
-        setIsLoadingFeedback(false);
-        if (pollRef.current) {
-          clearInterval(pollRef.current);
-          pollRef.current = null;
-        }
-      }
-    });
-
-    // ポーリング fallback (2 秒間隔、最大 40 秒)
-    let resolved = false;
+    // 前回の取得の待ち受けを止め、前回の応答を無効にする
+    const request = feedbackWatch.startRequest();
 
     const fetchFeedback = async () => {
       try {
@@ -682,61 +668,50 @@ export const StatsModal: React.FC<StatsModalProps> = ({
           weekData: [],
         });
 
+        // 応答を待つ間にモーダルが閉じられた / タブや日付が変わった場合は何もしない
+        if (!request.isCurrent()) return;
+
         if (res.cached && (res.praiseComment || res.feedback)) {
           setFeedback({
             praise: res.praiseComment ?? null,
             advice: res.advice ?? res.feedback ?? null,
           });
           setIsLoadingFeedback(false);
-          resolved = true;
           return;
         }
 
         if (res.status === 'generating' && res.cacheId) {
-          let count = 0;
-          pollRef.current = setInterval(async () => {
-            count++;
-            if (resolved || count >= 20) {
-              if (pollRef.current) clearInterval(pollRef.current);
+          // nutrition_feedback_cache の行 (cacheId) が completed / error になるのを待つ
+          request.watch(res.cacheId, {
+            onResolved: (content) => {
+              setFeedback({
+                praise: content.praiseComment,
+                advice: content.advice || null,
+              });
               setIsLoadingFeedback(false);
-              return;
-            }
-            try {
-              const pollRes = await api.get<any>(`/api/ai/nutrition/feedback?cacheId=${res.cacheId}`);
-              if (pollRes.status === 'completed' && (pollRes.feedback || pollRes.praiseComment)) {
-                resolved = true;
-                setFeedback({
-                  praise: pollRes.praiseComment ?? null,
-                  advice: pollRes.advice ?? pollRes.feedback ?? null,
-                });
-                setIsLoadingFeedback(false);
-                if (pollRef.current) clearInterval(pollRef.current);
-              }
-            } catch {
-              // ignore
-            }
-          }, 2000);
+            },
+            onFailed: (message) => {
+              // 失敗 / タイムアウト。メッセージだけ出す
+              setFeedback({ praise: null, advice: message });
+              setIsLoadingFeedback(false);
+            },
+          });
         } else {
           setIsLoadingFeedback(false);
         }
       } catch {
+        if (!request.isCurrent()) return;
         setIsLoadingFeedback(false);
       }
     };
 
     fetchFeedback();
 
+    // 閉じる / タブ切替 / 日付変更 / アンマウントで、待ち受け (購読とポーリング) を必ず解除する
     return () => {
-      if (unsubRef.current) {
-        unsubRef.current();
-        unsubRef.current = null;
-      }
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+      feedbackWatch.cancel();
     };
-  }, [visible, tab, userId, selectedDate]);
+  }, [visible, tab, selectedDate]);
 
   // モーダルを閉じたときにリセット
   useEffect(() => {

@@ -141,6 +141,24 @@ describe("mapPgErrorToHttp", () => {
     expect(mapPgErrorToHttp("ERROR: EMAIL_MISMATCH").code).toBe(MembershipErrorCode.EMAIL_MISMATCH);
   });
 
+  // #1163: DB の 24 時間上限 (enforce_membership_daily_cap) は RAISE EXCEPTION 'RATE_LIMITED' USING ERRCODE = 'P0001' で
+  // 失敗する。DETAIL (上限名) と HINT (retry_after_sec) は message に入らないので、照合には影響しない。
+  it("#1163: RPC が RAISE する 'RATE_LIMITED' (SQLSTATE P0001) が 429/RATE_LIMITED になる", () => {
+    expect(mapPgErrorToHttp("RATE_LIMITED", "P0001")).toEqual({
+      code: MembershipErrorCode.RATE_LIMITED,
+      status: 429,
+    });
+    expect(mapPgErrorToHttp("RATE_LIMITED")).toEqual({ code: MembershipErrorCode.RATE_LIMITED, status: 429 });
+    expect(mapPgErrorToHttp("ERROR: RATE_LIMITED")).toEqual({ code: MembershipErrorCode.RATE_LIMITED, status: 429 });
+  });
+
+  it("#1163: 席数・人数の上限 (SEAT_LIMIT_EXCEEDED / MEMBER_LIMIT_EXCEEDED) は RATE_LIMITED に化けず、逆も起きない", () => {
+    expect(mapPgErrorToHttp("SEAT_LIMIT_EXCEEDED").code).toBe(MembershipErrorCode.SEAT_LIMIT_EXCEEDED);
+    expect(mapPgErrorToHttp("MEMBER_LIMIT_EXCEEDED").code).toBe(MembershipErrorCode.MEMBER_LIMIT_EXCEEDED);
+    expect(mapPgErrorToHttp("RATE_LIMITED").code).not.toBe(MembershipErrorCode.SEAT_LIMIT_EXCEEDED);
+    expect(mapPgErrorToHttp("RATE_LIMITED").code).not.toBe(MembershipErrorCode.MEMBER_LIMIT_EXCEEDED);
+  });
+
   it("#1232: 40P01 以外の pgCode は既存のメッセージ照合の結果を変えない", () => {
     expect(mapPgErrorToHttp("ERROR: USER_NOT_IN_ORG", "P0001")).toEqual({
       code: MembershipErrorCode.USER_NOT_IN_ORG,

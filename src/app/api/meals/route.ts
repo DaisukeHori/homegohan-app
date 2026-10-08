@@ -8,6 +8,7 @@ import {
 } from '../../../lib/meal-image-jobs';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { createLogger } from '@/lib/db-logger';
+import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
 
 /**
  * 食事一覧取得（日付ベースモデル: user_daily_meals → planned_meals）
@@ -95,6 +96,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    // #1205: meal_type と栄養素の型・範囲を、DB に触れる前に確認する（不正なら 400）
+    const validation = validatePlannedMealInput({
+      mealType,
+      nutrients: { calories_kcal: caloriesKcal },
+    });
+    if (!validation.ok) {
+      return NextResponse.json(plannedMealValidationErrorBody(validation), { status: 400 });
+    }
+
     const manualImageUrl = typeof imageUrl === 'string' ? imageUrl : undefined;
     const imageModel = process.env.GEMINI_IMAGE_MODEL ?? undefined;
     const triggerSource = 'nextjs:meals:POST';
@@ -142,7 +152,8 @@ export async function POST(request: Request) {
       dish_name: dishName,
       mode: mode,
       description: description,
-      calories_kcal: caloriesKcal,
+      // 検証済みの値（整数に丸め済み。未送信なら undefined のまま列を書かない）
+      calories_kcal: validation.nutrients.calories_kcal,
       ingredients: ingredients,
       image_url: dishImagePayload.mealCoverImageUrl,
       dishes: dishImagePayload.dishes,

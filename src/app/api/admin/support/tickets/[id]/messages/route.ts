@@ -4,6 +4,11 @@
  *
  * operator/02-api-spec.md §10 準拠
  * 内部メモ (is_internal=true) は support / admin / super_admin のみ閲覧・作成可能
+ *
+ * 顧客向けメッセージ (is_internal=false) を投稿すると、顧客本人へメールで知らせる (#1183)。
+ * 顧客がチケットを閲覧できる画面は無く、このメールが唯一の通知経路。
+ * メールが送れなくてもメッセージは保存済みなので 201 を返し、送信結果は応答の `email` に載せる。
+ * 内部メモはメールにしない。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
@@ -11,6 +16,9 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createMessageSchema } from '@/lib/admin/support-schemas';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { sendTicketReplyEmail } from '@/lib/admin/send-ticket-reply-email';
+import type { ReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
 
 type RouteContext = { params: { id: string } };
 
@@ -97,6 +105,8 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
 }
 
 export async function POST(request: NextRequest, { params }: RouteContext) {
+  const logger = createLogger('POST /api/admin/support/tickets/[id]/messages', generateRequestId());
+
   try {
     const currentUser = await requireRole(['support', 'admin', 'super_admin']);
 
@@ -126,10 +136,10 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 
     const supabase = await createClient();
 
-    // チケット存在確認
+    // チケット存在確認 (subject は顧客へのメールに載せる)
     const { data: ticket, error: ticketError } = await supabase
       .from('support_tickets')
-      .select('id, status, user_id')
+      .select('id, status, user_id, subject')
       .eq('id', params.id)
       .single();
 
@@ -159,11 +169,13 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       );
     }
 
-    // 顧客向けメッセージ (is_internal=false) の場合、Resend でメール送信
-    if (!is_internal) {
-      await sendEmailToUser(ticket.user_id, params.id, messageBody);
+    // 内部メモ (is_internal=true) は顧客に見せないため、メールにしない (email は応答に含めない)
+    let email: ReplyEmailOutcome | undefined;
 
+    // 顧客向けメッセージ (is_internal=false) の場合
+    if (!is_internal) {
       // first_response_at が未設定の場合は設定
+      // (メール通知の成否に関わらず、返信を投稿した時点で記録する)
       await supabase
         .from('support_tickets')
         .update({
@@ -173,9 +185,19 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         })
         .eq('id', params.id)
         .is('first_response_at', null);
+
+      // 顧客本人へメールで知らせる。送れなくても (キー未設定・宛先なし・Resend の失敗)
+      // メッセージは保存済みなので返信は成功させ、結果を email に載せて画面で案内する。
+      // sendTicketReplyEmail は例外を投げず、失敗は app_logs に記録する。
+      email = await sendTicketReplyEmail({
+        ticket: { id: ticket.id, user_id: ticket.user_id, subject: ticket.subject },
+        messageId: message.id,
+        messageBody,
+        logger: logger.withUser(currentUser.id),
+      });
     }
 
-    return NextResponse.json({ data: message }, { status: 201 });
+    return NextResponse.json({ data: message, email }, { status: 201 });
   } catch (err) {
     if (err instanceof AuthError) {
       return NextResponse.json(
@@ -194,45 +216,5 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
       { status: 500 },
     );
-  }
-}
-
-/**
- * ユーザーへのメール送信 (Resend)
- * API キーが未設定の場合は graceful degradation
- */
-async function sendEmailToUser(
-  userId: string,
-  ticketId: string,
-  messageBody: string,
-): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    console.warn('[support/messages] RESEND_API_KEY not set, skipping email');
-    return;
-  }
-
-  try {
-    const supabase = await createClient();
-    const { data: profile } = await supabase
-      .from('user_profiles')
-      .select('id')
-      .eq('id', userId)
-      .single();
-
-    // auth.users からメールアドレスを取得 (service_role が必要だが、graceful で skip)
-    // 実際の実装では service_role クライアントを使用するか、
-    // user_profiles にメールをキャッシュする列を追加する
-
-    // email_delivery_logs に記録
-    await supabase.from('email_delivery_logs').insert({
-      recipient_id: userId,
-      template_key: 'support_ticket_reply',
-      subject: `サポートチケット #${ticketId.slice(0, 8)} への返信`,
-      status: 'skipped',
-      metadata: { ticket_id: ticketId, message_length: messageBody.length },
-    });
-  } catch (e) {
-    console.error('[support/messages] Email delivery log error:', e);
   }
 }

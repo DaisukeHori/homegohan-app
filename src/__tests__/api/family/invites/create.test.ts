@@ -364,6 +364,102 @@ describe('POST /api/family/invites: 招待者のプロフィールの読み取�
   });
 });
 
+// enforce_membership_daily_cap が RAISE する RATE_LIMITED を、PostgREST が RPC のエラーとして返した形
+const dbRateLimitedError = (overrides: Record<string, unknown> = {}) => ({
+  data: null,
+  error: {
+    message: 'RATE_LIMITED',
+    code: 'P0001',
+    details: 'family_invite:per_actor',
+    hint: 'retry_after_sec=4321',
+    ...overrides,
+  },
+});
+
+describe('POST /api/family/invites: DB の 24 時間上限 (#1163)', () => {
+  const DAILY_MESSAGE = '本日の送信上限に達しました。しばらく時間をおいてからお試しください。';
+
+  it('RPC が RATE_LIMITED: アプリ層の上限と同じ 429 / 入れ子の RATE_LIMITED / Retry-After (HINT の秒数) を返す', async () => {
+    mockRpc.mockImplementation(async () => dbRateLimitedError());
+
+    const res = await POST(postRequest(validBody));
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(json).toEqual({ error: { code: 'RATE_LIMITED', message: DAILY_MESSAGE, retryAfter: 4321 } });
+    expect(res.headers.get('Retry-After')).toBe('4321');
+  });
+
+  it('招待メールを送らず、招待の詳細も取りにいかず、500 の RPC_FAILED のログも出さない', async () => {
+    mockRpc.mockImplementation(async () => dbRateLimitedError());
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await POST(postRequest(validBody));
+
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockRpc.mock.calls[0][0]).toBe('create_family_invite');
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it('HINT が読めないときも 429 にする (Retry-After は 1 時間)', async () => {
+    mockRpc.mockImplementation(async () => dbRateLimitedError({ hint: null }));
+
+    const res = await POST(postRequest(validBody));
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(json.error.retryAfter).toBe(3600);
+    expect(res.headers.get('Retry-After')).toBe('3600');
+  });
+
+  it('withUser(user.id).warn に上限名と秒数を記録する (メールアドレスは残さない)', async () => {
+    mockRpc.mockImplementation(async () => dbRateLimitedError());
+
+    await POST(postRequest(validBody));
+
+    expect(mockWithUser).toHaveBeenCalledWith(user.id);
+    expect(mockLogWarn).toHaveBeenCalledTimes(1);
+    expect(mockLogWarn.mock.calls[0][1]).toMatchObject({
+      flow: 'family-invite',
+      layer: 'db',
+      rule: 'family_invite:per_actor',
+      retry_after_sec: 4321,
+    });
+    expect(JSON.stringify(mockLogWarn.mock.calls)).not.toContain('taro');
+    expect(JSON.stringify(mockLogWarn.mock.calls)).not.toContain('@');
+  });
+
+  it('本文に RPC の生の文字列 (RATE_LIMITED 以外の内部情報) を出さない', async () => {
+    mockRpc.mockImplementation(async () =>
+      dbRateLimitedError({ message: 'RATE_LIMITED', details: 'family_invite:per_target' }),
+    );
+
+    const json = await (await POST(postRequest(validBody))).json();
+
+    expect(JSON.stringify(json)).not.toContain('per_target');
+    expect(JSON.stringify(json)).not.toContain('P0001');
+    expect(JSON.stringify(json)).not.toContain(inviteeEmail);
+  });
+
+  it('RATE_LIMITED 以外の RPC エラーは従来どおり (MEMBER_LIMIT_EXCEEDED は 409、未知のエラーは 500 RPC_FAILED)', async () => {
+    mockRpc.mockImplementation(async () => ({ data: null, error: { message: 'MEMBER_LIMIT_EXCEEDED', code: 'P0001' } }));
+    const full = await POST(postRequest(validBody));
+    expect(full.status).toBe(409);
+    expect((await full.json()).error.code).toBe('MEMBER_LIMIT_EXCEEDED');
+    expect(full.headers.get('Retry-After')).toBeNull();
+
+    mockRpc.mockImplementation(async () => ({ data: null, error: { message: 'connection refused', code: '08006' } }));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const broken = await POST(postRequest(validBody));
+    expect(broken.status).toBe(500);
+    expect((await broken.json()).error.code).toBe('RPC_FAILED');
+    expect(broken.headers.get('Retry-After')).toBeNull();
+    consoleError.mockRestore();
+  });
+});
+
 describe('POST /api/family/invites: 既存の挙動 (退行確認)', () => {
   it('RPC が ALREADY_IN_FAMILY: 409 を返し、メールは送らない', async () => {
     mockRpc.mockImplementation(async () => ({ data: null, error: { message: 'ALREADY_IN_FAMILY' } }));

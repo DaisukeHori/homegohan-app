@@ -106,13 +106,9 @@ import {
   type PersistedIngredientMatchCache,
   type TargetSlot as SharedTargetSlot,
 } from "../_shared/save-meal.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
 
 console.log("Generate Menu V4 Function loaded (Slot-based generation)");
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
 
 type V4InvocationContext = {
   startedAtMs: number;
@@ -2719,6 +2715,9 @@ async function executeStep6_FinalSave(
 // =========================================================
 
 Deno.serve(async (req: Request) => {
+  // 許可したオリジンにだけ CORS ヘッダーを付ける (#1167)
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
