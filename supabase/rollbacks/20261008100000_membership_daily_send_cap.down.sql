@@ -64,7 +64,6 @@ BEGIN
   RETURN v_invite;
 END $$;
 
---       監査行は (2) のトリガーが書く
 CREATE OR REPLACE FUNCTION public.create_org_invite(
   p_organization_id UUID,
   p_email TEXT,

@@ -301,24 +301,39 @@ async function proposalRows(scopeId: string, fromUserId: string) {
 // ────────────────────────────────────────────────────────────────
 // RPC の呼び出し
 // ────────────────────────────────────────────────────────────────
+/**
+ * ローカルスタックの Kong が、上流 (PostgREST) との接続のリセットで返す一過性の 502
+ * ("An invalid response was received from the upstream server") だけ、1 回やり直す。
+ * DDL (migration の適用) の直後や、使われていない keep-alive の接続が閉じられた瞬間に再利用されたときに、まれに起きる。
+ * 上限の判定が失敗したのではなく、応答が返らなかっただけ。やり直しで二重に実行されても、件数を確かめる expect が失敗するので見逃さない。
+ */
+const TRANSIENT_GATEWAY_ERROR = /invalid response was received from the upstream|bad gateway|ECONNRESET|socket hang up|fetch failed/i;
+
+async function retryOnceIfTransient(call: () => PromiseLike<RpcResult>): Promise<RpcResult> {
+  const first = await call();
+  if (!first.error || !TRANSIENT_GATEWAY_ERROR.test(`${first.error.message} ${first.error.details ?? ''}`)) return first;
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  return call();
+}
+
 const inviteToFamily = (user: TestUser, familyId: string, email: string): Promise<RpcResult> =>
-  Promise.resolve(asUser(user.jwt).rpc('create_family_invite', { p_family_id: familyId, p_email: email }));
+  retryOnceIfTransient(() => asUser(user.jwt).rpc('create_family_invite', { p_family_id: familyId, p_email: email }));
 
 const inviteToOrg = (user: TestUser, orgId: string, email: string): Promise<RpcResult> =>
-  Promise.resolve(
+  retryOnceIfTransient(() =>
     asUser(user.jwt).rpc('create_org_invite', { p_organization_id: orgId, p_email: email, p_role: 'member' }),
   );
 
 const requestPromotion = (user: TestUser, memberId: string, email: string): Promise<RpcResult> =>
-  Promise.resolve(asUser(user.jwt).rpc('request_child_promotion', { p_member_id: memberId, p_email: email }));
+  retryOnceIfTransient(() => asUser(user.jwt).rpc('request_child_promotion', { p_member_id: memberId, p_email: email }));
 
 const proposeFamilyTransfer = (user: TestUser, familyId: string, toUserId: string): Promise<RpcResult> =>
-  Promise.resolve(
+  retryOnceIfTransient(() =>
     asUser(user.jwt).rpc('propose_family_representative_transfer', { p_family_id: familyId, p_to_user_id: toUserId }),
   );
 
 const proposeOrgTransfer = (user: TestUser, orgId: string, toUserId: string): Promise<RpcResult> =>
-  Promise.resolve(
+  retryOnceIfTransient(() =>
     asUser(user.jwt).rpc('propose_org_owner_transfer', { p_organization_id: orgId, p_to_user_id: toUserId }),
   );
 
@@ -327,7 +342,7 @@ const callHelper = (
   args: { p_kind: string; p_scope_id: string | null; p_email?: string | null },
 ): Promise<RpcResult> => {
   const c = who === 'anon' ? anon() : who === 'service' ? client(serviceKey) : asUser(who.jwt);
-  return Promise.resolve(c.rpc('enforce_membership_daily_cap', args));
+  return retryOnceIfTransient(() => c.rpc('enforce_membership_daily_cap', args));
 };
 
 // ────────────────────────────────────────────────────────────────
@@ -899,6 +914,17 @@ describe('#1163 譲渡提案 (propose_family_representative_transfer / propose_o
 describe('#1163 同時実行: 上限の 1 つ手前で同時に来た呼び出しは、ちょうど 1 件だけ成功する', () => {
   // 同時に呼ぶ本数。多いほど、ロックが無いときに複数が通り抜ける確率が高くなる (変異テストで確認済み)
   const PARALLEL = 10;
+
+  // このグループ (RACE-*) は、同時に来た呼び出しが実際に重なるかが時間次第なので、確率的な確認。ロックを外した変異版では、
+  // 通り抜ける本数が実行ごとに 2〜9 本と変わり、まれに 1 本で済んでしまうこともある。確定的な確認は次の「同時実行 (確定的)」のグループ (DR-*)。
+  // PostgREST は DB への接続を必要になった分だけ開く。最初の同時呼び出しが接続の確立待ちで実質的に順番に実行されないよう、
+  // 先に安い問い合わせを同時に投げて、接続を開かせておく。
+  beforeAll(async () => {
+    const warmups = Array.from({ length: PARALLEL * 2 }, () =>
+      Promise.resolve(srAdmin.from('membership_audit').select('id').limit(1)),
+    );
+    await Promise.all(warmups);
+  }, 60_000);
 
   /** 結果を「成功」「RATE_LIMITED」「それ以外のエラー」に分ける */
   function tally(results: RpcResult[]) {
