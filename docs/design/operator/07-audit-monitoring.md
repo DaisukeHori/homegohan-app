@@ -431,6 +431,10 @@ logger.error('payment_failed を処理できなかった', error, {
 - 料金と間引き: 計測するデータの数に応じて Vercel の料金が増えることがある。抑えたいときは `<SpeedInsights sampleRate={0.5} />` のように
   間引ける (既定は全件)。
 - 外部送信の表示: 計測データは Vercel へ送られる。プライバシーポリシーなどへの表示が要るかは、弁護士の確認を待って決める (未確認)。
+- URL に含まれる情報: 計測ではページの URL も送られる。URL にメールアドレスや招待用の値が入るページがある
+  (`/invite/[token]`・`/family/promotions/[token]`・`/login?redirect=…&email=…`・`/signup?redirect=…&email=…`・`/auth/verify?email=…`)。
+  `?` 以降まで記録されるかは未確認。Vercel のダッシュボードで有効にする前に確認し、記録されるなら `beforeSend` で `?` 以降を取り除く。
+  `beforeSend` は関数なので、サーバーコンポーネントの `layout.tsx` から渡せない。`'use client'` の小さな部品に包んで使う。
 
 ## 8. Better Stack (Logtail) 統合 (採用しない)
 
@@ -883,4 +887,4 @@ cross/08-legal-compliance §13 に従い、`cookie_consents` テーブルで「�
 - PagerDuty 連携 (要件 §5.10.2 の将来): 現在は Slack のみ対応。PagerDuty は組織 Enterprise 契約時に検討
 - `audit_logs_archive` テーブルへの移動でインデックスが再作成されるため、large scale 時のパフォーマンス確認が必要
 - エラー急増・Stripe webhook の遅延・pg_cron の失敗・API p95 悪化の自動通知 (§8.1 の旧案): Better Stack を採用しないため未実装。`app_logs` の集計で代替するか、自動通知を持たない運用にするかを決める (#1179)
-- Speed Insights の計測データを Vercel へ送ることの表示 (§7.3): プライバシーポリシーなどへの記載が要るかは、弁護士の確認を待って決める (#1179)
+- Speed Insights の計測データ (ページの URL を含む) を Vercel へ送ることの表示と、URL の `?` 以降の扱い (§7.3): 記載が要るかは弁護士の確認を待って決める。有効化の前に、メールアドレスや招待用の値が URL ごと記録されないか確認する (#1179)
