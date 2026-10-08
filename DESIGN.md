@@ -1883,7 +1883,7 @@ V4は「週間献立生成」ではなく「汎用献立生成エンジン」と
 
 ### 4-3. 構成（v4）
 
-> **Status: 2026-10-07 確認 — 現行の本番主系は V5。** 本節は V4 の設計記録です。`generate-menu-v4` は非推奨で、feature flag OFF 時のフォールバックとして残っています。ただし `POST /api/ai/nutrition-analysis` は今もフラグに関係なく V4 を直接呼びます。`/api/ai/menu/v4/generate` も、`menu_generation_v5_direct`（既定 ON）の間は V5 を呼びます。最新の呼び出し関係は `supabase/functions/README.md` の「献立生成 v4 と v5 の使い分け」を参照してください。
+> **Status: 2026-10-07 確認 — 現行の本番主系は V5。** 4-3〜4-5（構成・データフロー・UI 設計の v4）は V4 の設計記録です。`generate-menu-v4` は非推奨で、feature flag OFF 時のフォールバックとして残っています。ただし `POST /api/ai/nutrition-analysis` は今もフラグに関係なく V4 を直接呼びます。`/api/ai/menu/v4/generate` も、`menu_generation_v5_direct`（既定 ON）の間は V5 を呼びます。最新の呼び出し関係は `supabase/functions/README.md` の「献立生成 v4 と v5 の使い分け」を参照してください。
 
 **V4アーキテクチャの追加点:**
 - **`generate-menu-v4`**: 汎用献立生成エンジン（1食〜31日分対応）
