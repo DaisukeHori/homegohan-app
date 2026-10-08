@@ -1,4 +1,4 @@
-import { createClient as createServerClient } from '@/lib/supabase/server';
+import { createClient as createServerClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { requireOrgAdmin, type OrgAdminContext } from '@/lib/auth/helpers';
@@ -16,10 +16,14 @@ export async function GET(_request: Request) {
   try {
     const { profile: adminProfile } = await requireOrgAdmin();
 
-    const supabase = await createServerClient();
-    const { data: members, error } = await supabase
+    // user_profiles の SELECT ポリシーは「本人の行だけ」(Users can view own profile) で、組織の管理者が使える
+    // 他のメンバーの行を読むポリシーは無い。利用者本人の権限で読むと、組織に何人いても管理者自身の 1 行しか返らない。
+    // そのため、認可 (上の requireOrgAdmin) を通したあとで service_role を使って読む。
+    // 読む範囲は、確認済みのプロフィールの organization_id (呼び出した管理者の所属組織) だけで、リクエストの値は使わない。
+    // 返す列は、Web の組織メンバー一覧 (org_role / joined_org_at) とモバイルのメンバー画面 (roles / created_at) が使うものだけ。
+    const { data: members, error } = await getSupabaseAdmin()
       .from('user_profiles')
-      .select('id, nickname, roles, created_at, updated_at, organization_id')
+      .select('id, nickname, roles, org_role, joined_org_at, created_at')
       .eq('organization_id', adminProfile.organization_id)
       .order('created_at', { ascending: false });
 

@@ -25,9 +25,11 @@ export default function MembersPage() {
   const [loading, setLoading] = useState(true);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
+    setLoadError(false);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -45,13 +47,20 @@ export default function MembersPage() {
 
       setCurrentUser({ id: user.id, org_role: profile.org_role ?? 'member' });
 
-      const { data: membersData } = await supabase
-        .from('user_profiles')
-        .select('id, nickname, org_role, joined_org_at')
-        .eq('organization_id', profile.organization_id)
-        .order('joined_org_at', { ascending: true });
-
-      setMembers(membersData ?? []);
+      // メンバー一覧は API から読む。user_profiles の SELECT ポリシーは「本人の行だけ」(Users can view own profile) で、
+      // ブラウザの Supabase クライアントで読むと、組織に何人いても自分の 1 行しか返らない。
+      // GET /api/org/members は、組織の管理者かを確認したあとで、所属組織のメンバー全員を返す。
+      const res = await fetch('/api/org/members');
+      if (!res.ok) throw new Error(`org members failed: HTTP ${res.status}`);
+      const body = await res.json();
+      const membersData: Member[] = body.members ?? [];
+      // 参加日の古い順 (参加日が無い人は最後)。同じ日なら API が返した順のまま
+      const joinedAt = (member: Member) => member.joined_org_at ?? '9999-12-31';
+      setMembers([...membersData].sort((a, b) => joinedAt(a).localeCompare(joinedAt(b))));
+    } catch (error) {
+      console.error('Org members fetch error:', error);
+      setMembers([]);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -154,6 +163,12 @@ export default function MembersPage() {
         </div>
       </div>
 
+      {loadError && (
+        <div role="alert" className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
+          メンバー一覧を取得できませんでした。時間をおいて、もう一度お試しください。
+        </div>
+      )}
+
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <table className="w-full text-left">
           <thead className="bg-gray-50 border-b border-gray-100">
@@ -167,7 +182,7 @@ export default function MembersPage() {
           <tbody className="divide-y divide-gray-100">
             {members.length === 0 ? (
               <tr>
-                <td colSpan={4} className="p-8 text-center text-gray-400">メンバーがいません</td>
+                <td colSpan={4} className="p-8 text-center text-gray-400">{loadError ? '—' : 'メンバーがいません'}</td>
               </tr>
             ) : (
               members.map((member) => (
