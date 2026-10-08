@@ -1,68 +1,87 @@
 /**
- * #1167 組織ダッシュボードの「Refresh Data」は、Edge Function を直接呼ばず API ルートを呼ぶ
+ * #1325 / #1120 組織ダッシュボード: 集計と部署別の表示を止め、「準備中」にする
  *
- * 以前は supabase.functions.invoke('aggregate-org-stats') でブラウザから Edge Function を直接呼んでいた。
- * この関数はバッチ専用 (service role / CRON_SECRET の認証) で、利用者の JWT では 401 になるため常に失敗していた。
- * ブラウザから呼べるように CORS を開けるのは危険なので、権限の確認と呼び出しをサーバー側の
- * POST /api/org/stats/refresh に移した。ボタンを実際に押して、次を確かめる。
- *   - Edge Function (functions.invoke) を呼ばない
- *   - POST /api/org/stats/refresh を呼び、成功したら統計を取り直して成功を知らせる
- *   - 失敗したら統計を取り直さず、失敗を知らせる
+ * 以前のダッシュボード (#1167) は、次のものを出していた。
+ *   - org_daily_stats (組織の日次統計) を直接読む 4 枚のスコアカード (活力スコア・朝食摂取率・深夜食率・活動率)
+ *   - 「↻ Refresh Data」ボタン (POST /api/org/stats/refresh で再集計を依頼する)
+ *   - 部署ランキング (Sales Team 88 など、コードに直接書いたダミーの数字)
+ * オーナー判断 (#1325 / #1120) で、組織の集計は止め、ダミーのランキングは取り除いた。
+ * いまのダッシュボードが出すのは、メンバー数 (GET /api/org/stats の member_count) と「準備中」の案内だけ。
+ * このテストは、ページを実際に描画して次を確かめる。
+ *   - 「準備中」の案内とメンバー数が出る
+ *   - 「Refresh Data」ボタンが無い (ボタンは 1 つも無い)
+ *   - 通信は GET /api/org/stats だけ。再集計の API・Edge Function は呼ばない
+ *   - org_daily_stats を読まない (ブラウザ用 Supabase クライアントを使わない)
+ *   - ダミーの部署ランキングやスコアカードが出ない
+ *   - メンバー数が取れなくても、案内は出る (失敗は「—」と短い文で伝える)
+ * ソースにも、取り除いたものの名前が残っていないことを確かめる。
  *
- * 集計する日付 (#1210: JST の今日) もブラウザは送らない。以前は todayLocal() を送っていたが、
- * 今は Edge Function の既定 (todayJst()) に任せる。ブラウザの時計で集計日が変わらない。
- * 既定が JST の今日になること自体は tests/aggregate-org-stats-jst-date.test.ts が確かめる。
- *
+ * ファイル名は #1167 のときのまま (ボタンから再集計 API を呼ぶテストだった)。
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  createClient: vi.fn(),
+  from: vi.fn(),
   invoke: vi.fn(),
-  statsRead: vi.fn(),
 }));
 
-// ブラウザ用 Supabase クライアントの偽物。ログイン済みの組織管理者 (組織 org-1) が見ている想定。
+// ブラウザ用 Supabase クライアントの罠。ダッシュボードがこれを使って org_daily_stats などを読んだら検出する。
 vi.mock('@/lib/supabase/client', () => ({
-  createClient: () => ({
-    auth: { getUser: async () => ({ data: { user: { id: 'admin-1' } }, error: null }) },
-    from: (table: string) => {
-      const query: Record<string, unknown> = {};
-      for (const method of ['select', 'eq', 'order', 'limit']) {
-        query[method] = () => query;
-      }
-      query.single = async () => {
-        if (table === 'org_daily_stats') {
-          mocks.statsRead();
-          return { data: null, error: { message: 'no rows' } };
+  createClient: () => {
+    mocks.createClient();
+    return {
+      auth: { getUser: async () => ({ data: { user: { id: 'admin-1' } }, error: null }) },
+      from: (table: string) => {
+        mocks.from(table);
+        const query: Record<string, unknown> = {};
+        for (const method of ['select', 'eq', 'order', 'limit']) {
+          query[method] = () => query;
         }
-        return { data: { organization_id: 'org-1' }, error: null };
-      };
-      return query;
-    },
-    functions: { invoke: mocks.invoke },
-  }),
+        query.single = async () => ({ data: null, error: { message: 'no rows' } });
+        return query;
+      },
+      functions: { invoke: mocks.invoke },
+    };
+  },
 }));
 
 const { default: OrgDashboardPage } = await import('@/app/(org)/org/dashboard/page');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const PAGE_SOURCE_PATH = path.resolve(__dirname, '../src/app/(org)/org/dashboard/page.tsx');
+const NOTICE = '組織の集計・部署別の表示は準備中です';
+
 let container: HTMLDivElement;
 let root: Root;
 let fetchMock: ReturnType<typeof vi.fn>;
 let alertSpy: ReturnType<typeof vi.spyOn>;
+let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+function jsonResponse(body: unknown, status = 200) {
+  return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) };
+}
 
 beforeEach(() => {
+  mocks.createClient.mockReset();
+  mocks.from.mockReset();
   mocks.invoke.mockReset();
-  mocks.invoke.mockResolvedValue({ data: { success: true }, error: null });
-  mocks.statsRead.mockReset();
 
-  fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }) });
+  fetchMock = vi.fn(async (input: unknown) => {
+    if (input === '/api/org/stats') {
+      return jsonResponse({ stats: { member_count: 7, organization_id: 'org-1' } });
+    }
+    return jsonResponse({ error: { code: 'NOT_FOUND' } }, 404);
+  });
   vi.stubGlobal('fetch', fetchMock);
   alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+  consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -75,10 +94,11 @@ afterEach(async () => {
   });
   container.remove();
   alertSpy.mockRestore();
+  consoleErrorSpy.mockRestore();
   vi.unstubAllGlobals();
 });
 
-/** 条件が満たされるまで待つ (非同期の読み込み・更新が終わるのを待つ) */
+/** 条件が満たされるまで待つ (非同期の読み込みが終わるのを待つ) */
 async function until(condition: () => boolean, what: string) {
   const startedAt = performance.now();
   while (!condition()) {
@@ -89,70 +109,126 @@ async function until(condition: () => boolean, what: string) {
   }
 }
 
+/** 描画して、メンバー数の取得が終わる (成功か失敗の表示になる) まで待つ */
 async function renderDashboard() {
   await act(async () => {
     root.render(<OrgDashboardPage />);
   });
-  // 初回の統計の読み込みが終わるまで待つ
-  await until(() => mocks.statsRead.mock.calls.length === 1, '初回の統計の読み込み');
+  await until(() => fetchMock.mock.calls.length >= 1, 'メンバー数の取得の開始');
+  await until(
+    () => /users/.test(container.textContent ?? '') || /取得できませんでした/.test(container.textContent ?? ''),
+    'メンバー数の取得の完了',
+  );
 }
 
-async function clickRefresh() {
-  const button = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Refresh Data'));
-  expect(button, '「Refresh Data」ボタンが見つかりません').toBeTruthy();
-  await act(async () => {
-    button!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-  });
-  await until(() => alertSpy.mock.calls.length > 0, '更新の結果の通知 (alert)');
-}
+const text = () => container.textContent ?? '';
 
-describe('組織ダッシュボード: Refresh Data (#1167)', () => {
-  it('DR-1: Edge Function を直接呼ばず、POST /api/org/stats/refresh を呼ぶ。組織 ID や集計日 (#1210) はブラウザから送らない', async () => {
+describe('組織ダッシュボード: 集計を止めて「準備中」にする (#1325 / #1120)', () => {
+  it('DR-1: 「準備中」の案内と、GET /api/org/stats のメンバー数が出る', async () => {
     await renderDashboard();
 
-    await clickRefresh();
+    expect(text()).toContain(NOTICE);
+    expect(text()).toContain('Total Members');
+    expect(text()).toMatch(/7\s*users/);
+  });
 
-    expect(mocks.invoke).not.toHaveBeenCalled();
+  it('DR-2: 「Refresh Data」ボタンが無い。ボタンは 1 つも無く、更新を促す文言も無い', async () => {
+    await renderDashboard();
+
+    expect(container.querySelectorAll('button')).toHaveLength(0);
+    expect(text()).not.toContain('Refresh');
+    expect(text()).not.toContain('Updating');
+    expect(text()).not.toContain('更新');
+  });
+
+  it('DR-3: 通信は GET /api/org/stats の 1 回だけ。再集計の API (/api/org/stats/refresh) も Edge Function も呼ばない', async () => {
+    await renderDashboard();
+
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith('/api/org/stats/refresh', { method: 'POST' });
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/org/stats');
+    const urls = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(urls.filter((url) => url.includes('refresh') || url.includes('functions/v1'))).toEqual([]);
+    expect(mocks.invoke).not.toHaveBeenCalled();
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 
-  it('DR-2: 成功したら統計を取り直し、成功を知らせる', async () => {
+  it('DR-4: org_daily_stats を読まない。ブラウザ用 Supabase クライアントを使わない', async () => {
     await renderDashboard();
 
-    await clickRefresh();
+    expect(mocks.createClient).not.toHaveBeenCalled();
+    expect(mocks.from).not.toHaveBeenCalled();
+  });
 
-    expect(mocks.statsRead).toHaveBeenCalledTimes(2); // 初回 + 更新後
-    expect(alertSpy).toHaveBeenCalledWith('最新データに更新しました');
+  it('DR-5: ダミーの部署ランキングも、集計のスコアカードも出ない', async () => {
+    await renderDashboard();
+
+    for (const gone of [
+      'Department Ranking',
+      'Sales Team',
+      'Engineering',
+      'HR & Admin',
+      '活力スコア',
+      '脳エネルギー',
+      'リズムリスク',
+      '活動率',
+      '朝食摂取率',
+      '深夜食率',
+      'Why these metrics',
+      'Last updated',
+    ]) {
+      expect(text(), `「${gone}」が残っている`).not.toContain(gone);
+    }
   });
 
   it.each([
-    ['権限が無い (403)', { ok: false, status: 403 }],
-    ['集計に失敗した (502)', { ok: false, status: 502 }],
-  ])('DR-3: %s ときは統計を取り直さず、失敗を知らせる', async (_label, response) => {
-    fetchMock.mockResolvedValue({ ...response, json: () => Promise.resolve({ error: { code: 'X' } }) });
+    ['権限が無い (HTTP 403)', () => jsonResponse({ error: { code: 'FORBIDDEN' } }, 403)],
+    ['サーバーの失敗 (HTTP 500)', () => jsonResponse({ error: { code: 'INTERNAL_ERROR' } }, 500)],
+    ['形式が違う応答 (member_count が無い)', () => jsonResponse({ stats: {} })],
+  ])('DR-6: メンバー数が取れない (%s) ときも、案内は出る。数は「—」にして、失敗を短く伝える', async (_label, respond) => {
+    fetchMock.mockImplementation(async () => respond());
+
     await renderDashboard();
 
-    await clickRefresh();
-
-    expect(mocks.invoke).not.toHaveBeenCalled();
-    expect(mocks.statsRead).toHaveBeenCalledTimes(1); // 初回だけ
-    expect(alertSpy).toHaveBeenCalledWith('更新に失敗しました');
+    expect(text()).toContain(NOTICE);
+    expect(text()).toContain('メンバー数を取得できませんでした');
+    expect(text()).not.toMatch(/\d+\s*users/);
+    expect(text()).toContain('—');
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 
-  it('DR-4: 通信自体が失敗しても、失敗を知らせてボタンを押せる状態に戻す', async () => {
+  it('DR-7: 通信自体が失敗しても、同じように案内と失敗の表示が出る', async () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+
     await renderDashboard();
 
-    await clickRefresh();
+    expect(text()).toContain(NOTICE);
+    expect(text()).toContain('メンバー数を取得できませんでした');
+  });
+});
 
-    expect(alertSpy).toHaveBeenCalledWith('更新に失敗しました');
-    await until(
-      () =>
-        Array.from(container.querySelectorAll('button')).some(
-          (b) => b.textContent?.includes('Refresh Data') && !b.disabled,
-        ),
-      'ボタンが押せる状態に戻る',
-    );
+describe('組織ダッシュボードのソース: 取り除いたものが残っていない (#1325 / #1120)', () => {
+  const source = fs.readFileSync(PAGE_SOURCE_PATH, 'utf8');
+
+  it.each([
+    'org_daily_stats',
+    'toOrgDailyStats',
+    'OrgDailyStats',
+    'handleRefresh',
+    'Refresh Data',
+    '/api/org/stats/refresh',
+    'aggregate-org-stats',
+    'createClient',
+    'Sales Team',
+    'Engineering',
+    'HR & Admin',
+    'Department Ranking',
+    'ScoreCard',
+  ])('DR-8: ソースに「%s」が無い', (banned) => {
+    expect(source).not.toContain(banned);
+  });
+
+  it('DR-9: 案内の文言と、メンバー数の取得先 (GET /api/org/stats) がソースにある', () => {
+    expect(source).toContain(NOTICE);
+    expect(source).toContain('"/api/org/stats"');
   });
 });

@@ -29,6 +29,7 @@ import {
 
 import { useNutritionFeedbackWatch } from '../../hooks/useNutritionFeedbackWatch';
 import { getApi } from '../../lib/api';
+import type { ImproveMealRequest } from '../../lib/improve-meal';
 import { colors } from '../../theme/colors';
 import { radius, spacing } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
@@ -61,6 +62,12 @@ interface Props {
   onRadarKeysSaved: (keys: string[]) => void;
   /** weekDays (フィードバック API に渡す) */
   weekDays?: Array<{ date: string; meals: Array<{ title: string; calories: number | null }> }>;
+  /**
+   * 「献立を改善」の確定処理 (献立の生成を始める)。
+   * 改善モーダルの内容に、このモーダルで表示中の AI栄養士の提案 (advice) を添えて呼ばれる。
+   * 失敗 (reject) したら改善モーダル側でエラーを表示する。成功後にこの画面を閉じるかどうかは親が決める。
+   */
+  onImprove: (request: ImproveMealRequest) => Promise<void>;
 }
 
 // ============================================================
@@ -83,10 +90,14 @@ export const NutritionDetailModal: React.FC<Props> = ({
   radarKeys,
   onRadarKeysSaved,
   weekDays = [],
+  onImprove,
 }) => {
   // --- AI feedback state ---
   const [praiseComment, setPraiseComment] = useState<string | null>(null);
   const [adviceText, setAdviceText] = useState<string | null>(null);
+  // adviceText が分析の失敗・タイムアウトのメッセージのとき true。
+  // これは AI栄養士の提案ではないので、「献立を改善」の要望 (LLM に送る note) には渡さない
+  const [adviceIsError, setAdviceIsError] = useState(false);
   const [nutritionTip, setNutritionTip] = useState<string | null>(null);
   const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
 
@@ -120,6 +131,7 @@ export const NutritionDetailModal: React.FC<Props> = ({
         if (res.cached && (res.feedback || res.praiseComment)) {
           setPraiseComment(res.praiseComment ?? null);
           setAdviceText(res.advice ?? res.feedback ?? null);
+          setAdviceIsError(false);
           setNutritionTip(res.nutritionTip ?? null);
           setIsLoadingFeedback(false);
           return;
@@ -130,6 +142,7 @@ export const NutritionDetailModal: React.FC<Props> = ({
             onResolved: (content) => {
               setPraiseComment(content.praiseComment);
               setAdviceText(content.advice || null);
+              setAdviceIsError(false);
               setNutritionTip(content.nutritionTip);
               setIsLoadingFeedback(false);
             },
@@ -137,6 +150,7 @@ export const NutritionDetailModal: React.FC<Props> = ({
               // 失敗 / タイムアウト。メッセージを出し、再分析ボタンで再試行できるようにする
               setPraiseComment(null);
               setAdviceText(message);
+              setAdviceIsError(true);
               setNutritionTip(null);
               setIsLoadingFeedback(false);
             },
@@ -162,6 +176,7 @@ export const NutritionDetailModal: React.FC<Props> = ({
     // reset
     setPraiseComment(null);
     setAdviceText(null);
+    setAdviceIsError(false);
     setNutritionTip(null);
     setIsLoadingFeedback(false);
 
@@ -179,158 +194,162 @@ export const NutritionDetailModal: React.FC<Props> = ({
   // ----------------------------------------------------------------
 
   return (
-    <>
-      <Modal
-        testID="nutrition-detail-modal"
-        visible={visible}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={onClose}
-      >
-        <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
-          <View style={{ flex: 1 }}>
-            {/* Header */}
-            <View style={styles.header}>
-              <View style={styles.headerLeft}>
-                <Ionicons name="bar-chart" size={18} color={colors.accent} />
-                <Text style={styles.headerTitle}>
-                  {dateLabel} の栄養分析
-                </Text>
+    <Modal
+      testID="nutrition-detail-modal"
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+        <View style={{ flex: 1 }}>
+          {/* Header */}
+          <View style={styles.header}>
+            <View style={styles.headerLeft}>
+              <Ionicons name="bar-chart" size={18} color={colors.accent} />
+              <Text style={styles.headerTitle}>
+                {dateLabel} の栄養分析
+              </Text>
+            </View>
+            <Pressable
+              testID="nutrition-detail-close"
+              onPress={onClose}
+              hitSlop={8}
+              style={styles.closeBtn}
+            >
+              <Ionicons name="close" size={22} color={colors.textMuted} />
+            </Pressable>
+          </View>
+
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Radar Chart */}
+            <View style={styles.radarSection}>
+              <View style={styles.radarChart}>
+                <RadarChart totals={totals} nutrientKeys={radarKeys} size={220} />
               </View>
-              <Pressable
-                testID="nutrition-detail-close"
-                onPress={onClose}
-                hitSlop={8}
-                style={styles.closeBtn}
-              >
-                <Ionicons name="close" size={22} color={colors.textMuted} />
-              </Pressable>
+              <View style={styles.radarPickerWrapper}>
+                <RadarKeyPicker
+                  selectedKeys={radarKeys}
+                  onSaved={onRadarKeysSaved}
+                />
+              </View>
             </View>
 
-            <ScrollView
-              contentContainerStyle={styles.scrollContent}
-              showsVerticalScrollIndicator={false}
-            >
-              {/* Radar Chart */}
-              <View style={styles.radarSection}>
-                <View style={styles.radarChart}>
-                  <RadarChart totals={totals} nutrientKeys={radarKeys} size={220} />
-                </View>
-                <View style={styles.radarPickerWrapper}>
-                  <RadarKeyPicker
-                    selectedKeys={radarKeys}
-                    onSaved={onRadarKeysSaved}
-                  />
-                </View>
-              </View>
-
-              {/* AI Feedback */}
-              <View testID="nutrition-detail-ai-feedback" style={styles.feedbackSection}>
-                {/* 褒めポイント */}
-                <View style={styles.praiseCard}>
-                  <View style={styles.cardHeader}>
-                    <Ionicons name="heart" size={14} color={colors.success} />
-                    <Text style={styles.praiseTitle}>褒めポイント</Text>
-                    {(praiseComment || adviceText) && !isLoadingFeedback && (
-                      <Pressable
-                        onPress={() => fetchFeedback(true)}
-                        style={styles.reanalyzeBtn}
-                      >
-                        <Text style={styles.reanalyzeBtnText}>再分析</Text>
-                      </Pressable>
-                    )}
-                  </View>
-                  {isLoadingFeedback ? (
-                    <View style={styles.loadingRow}>
-                      <ActivityIndicator size="small" color={colors.success} />
-                      <Text style={styles.loadingText}>
-                        あなたの献立を分析中...
-                      </Text>
-                    </View>
-                  ) : praiseComment ? (
-                    <Text style={styles.praiseText}>{praiseComment}</Text>
-                  ) : (
-                    <Text style={styles.emptyText}>分析データがありません</Text>
+            {/* AI Feedback */}
+            <View testID="nutrition-detail-ai-feedback" style={styles.feedbackSection}>
+              {/* 褒めポイント */}
+              <View style={styles.praiseCard}>
+                <View style={styles.cardHeader}>
+                  <Ionicons name="heart" size={14} color={colors.success} />
+                  <Text style={styles.praiseTitle}>褒めポイント</Text>
+                  {(praiseComment || adviceText) && !isLoadingFeedback && (
+                    <Pressable
+                      onPress={() => fetchFeedback(true)}
+                      style={styles.reanalyzeBtn}
+                    >
+                      <Text style={styles.reanalyzeBtnText}>再分析</Text>
+                    </Pressable>
                   )}
                 </View>
-
-                {/* 改善アドバイス */}
-                {(adviceText || isLoadingFeedback) && (
-                  <View style={styles.adviceCard}>
-                    <View style={styles.cardHeader}>
-                      <Ionicons name="sparkles" size={14} color={colors.accent} />
-                      <Text style={styles.adviceTitle}>改善アドバイス</Text>
-                    </View>
-                    {isLoadingFeedback ? (
-                      <Text style={styles.emptyText}>...</Text>
-                    ) : (
-                      <Text style={styles.adviceText}>{adviceText}</Text>
-                    )}
+                {isLoadingFeedback ? (
+                  <View style={styles.loadingRow}>
+                    <ActivityIndicator size="small" color={colors.success} />
+                    <Text style={styles.loadingText}>
+                      あなたの献立を分析中...
+                    </Text>
                   </View>
-                )}
-
-                {/* 栄養豆知識 */}
-                {nutritionTip && (
-                  <View style={styles.tipCard}>
-                    <Text style={styles.tipIcon}>💡</Text>
-                    <Text style={styles.tipText}>{nutritionTip}</Text>
-                  </View>
+                ) : praiseComment ? (
+                  <Text style={styles.praiseText}>{praiseComment}</Text>
+                ) : (
+                  <Text style={styles.emptyText}>分析データがありません</Text>
                 )}
               </View>
 
-              {/* 献立を改善ボタン */}
-              {mealCount > 0 && (
-                <Pressable
-                  testID="nutrition-detail-improve-btn"
-                  onPress={() => setShowImprove(true)}
-                  style={({ pressed }) => [
-                    styles.improveBtn,
-                    pressed && styles.improveBtnPressed,
-                  ]}
-                >
-                  <Ionicons name="refresh" size={16} color="#FFF" />
-                  <Text style={styles.improveBtnText}>献立を改善</Text>
-                </Pressable>
+              {/* 改善アドバイス */}
+              {(adviceText || isLoadingFeedback) && (
+                <View style={styles.adviceCard}>
+                  <View style={styles.cardHeader}>
+                    <Ionicons name="sparkles" size={14} color={colors.accent} />
+                    <Text style={styles.adviceTitle}>改善アドバイス</Text>
+                  </View>
+                  {isLoadingFeedback ? (
+                    <Text style={styles.emptyText}>...</Text>
+                  ) : (
+                    <Text style={styles.adviceText}>{adviceText}</Text>
+                  )}
+                </View>
               )}
 
-              {/* 全 26 栄養素 DRI バー */}
-              {CATEGORY_ORDER.map((cat) => {
-                const defs = NUTRIENT_BY_CATEGORY[cat];
-                return (
-                  <View
-                    key={cat}
-                    testID={`nutrition-detail-section-${cat}`}
-                    style={styles.categorySection}
-                  >
-                    <Text style={styles.categoryLabel}>
-                      {CATEGORY_LABELS[cat]}（{defs.length}）
-                    </Text>
-                    <View style={styles.barList}>
-                      {defs.map((def) => (
-                        <DriBar
-                          key={def.key}
-                          def={def}
-                          value={totals[def.key] ?? 0}
-                        />
-                      ))}
-                    </View>
+              {/* 栄養豆知識 */}
+              {nutritionTip && (
+                <View style={styles.tipCard}>
+                  <Text style={styles.tipIcon}>💡</Text>
+                  <Text style={styles.tipText}>{nutritionTip}</Text>
+                </View>
+              )}
+            </View>
+
+            {/* 献立を改善ボタン */}
+            {mealCount > 0 && (
+              <Pressable
+                testID="nutrition-detail-improve-btn"
+                onPress={() => setShowImprove(true)}
+                style={({ pressed }) => [
+                  styles.improveBtn,
+                  pressed && styles.improveBtnPressed,
+                ]}
+              >
+                <Ionicons name="refresh" size={16} color="#FFF" />
+                <Text style={styles.improveBtnText}>献立を改善</Text>
+              </Pressable>
+            )}
+
+            {/* 全 26 栄養素 DRI バー */}
+            {CATEGORY_ORDER.map((cat) => {
+              const defs = NUTRIENT_BY_CATEGORY[cat];
+              return (
+                <View
+                  key={cat}
+                  testID={`nutrition-detail-section-${cat}`}
+                  style={styles.categorySection}
+                >
+                  <Text style={styles.categoryLabel}>
+                    {CATEGORY_LABELS[cat]}（{defs.length}）
+                  </Text>
+                  <View style={styles.barList}>
+                    {defs.map((def) => (
+                      <DriBar
+                        key={def.key}
+                        def={def}
+                        value={totals[def.key] ?? 0}
+                      />
+                    ))}
                   </View>
-                );
-              })}
+                </View>
+              );
+            })}
 
-              <View style={styles.bottomPad} />
-            </ScrollView>
-          </View>
-        </SafeAreaView>
-      </Modal>
+            <View style={styles.bottomPad} />
+          </ScrollView>
 
-      {/* 献立改善モーダル */}
-      <ImproveMealModal
-        visible={showImprove}
-        onClose={() => setShowImprove(false)}
-        selectedDate={date}
-      />
-    </>
+          {/*
+            献立改善モーダル。
+            iOS は表示中のモーダルの上に、兄弟のモーダルを重ねて出せない。
+            この栄養分析モーダルの内側に置くことで、栄養分析の上に重ねて表示できるようにする。
+          */}
+          <ImproveMealModal
+            visible={showImprove}
+            onClose={() => setShowImprove(false)}
+            selectedDate={date}
+            advice={adviceIsError ? null : adviceText}
+            onSubmit={onImprove}
+          />
+        </View>
+      </SafeAreaView>
+    </Modal>
   );
 };
 

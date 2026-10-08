@@ -9,6 +9,7 @@ export function renderOrgInviteNewEmail(vars: InviteEmailVars): EmailEnvelope {
     : '';
 
   return {
+    template: 'org_invite_new',
     to: vars.email_address,
     from: 'ほめゴハン <noreply@homegohan.app>',
     subject: `[ほめゴハン] ${vars.scope_name} があなたを招待しています — アカウントを作成して参加`,

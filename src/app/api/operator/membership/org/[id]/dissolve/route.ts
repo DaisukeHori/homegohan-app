@@ -11,6 +11,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail } from '@/lib/emails/send';
+import { emailFailureReasons } from '@/lib/emails/send-result';
 import { renderForceDissolveEmail } from '@/lib/emails/membership/operator-force-dissolve';
 import { z } from 'zod';
 
@@ -112,10 +113,12 @@ export async function POST(
       });
 
       const results = await Promise.allSettled(emailTasks);
-      const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      // 送れなかったもの: reject (想定外の例外) と ok: false の結果 (sendEmail は配信の失敗で例外を投げない)。
+      // 1 通ごとの詳細 (文面の名前・マスクした宛先・エラーコード) は sendEmail が app_logs に記録している
+      const failures = emailFailureReasons(results);
       if (failures.length > 0) {
         // 個別の送信失敗も握りつぶさず記録する (ログに宛先のメールアドレスは残さない)
-        log.error('通知メールの一部を送信できませんでした', failures[0].reason, {
+        log.error('通知メールの一部を送信できませんでした', failures[0], {
           organization_id: orgId,
           failed_count: failures.length,
         });

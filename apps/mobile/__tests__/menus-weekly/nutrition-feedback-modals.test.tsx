@@ -204,6 +204,8 @@ describe('NutritionDetailModal: AI 栄養フィードバックの待ち受け (#
     mealCount: 3,
     radarKeys: ['caloriesKcal'],
     onRadarKeysSaved: jest.fn(),
+    // 「献立を改善」の確定処理 (#1138)。このテストは改善を使わない (ImproveMealModal は描画しない) が、必須の props
+    onImprove: jest.fn().mockResolvedValue(undefined),
   };
 
   it('生成中なら、実在する nutrition_feedback_cache を cacheId で購読する (存在しない ai_nutrition_feedback は見ない)', async () => {

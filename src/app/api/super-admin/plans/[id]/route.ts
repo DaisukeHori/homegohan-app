@@ -10,8 +10,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { PlanUpdateSchema, isAllowedPlanStatusTransition } from '@/lib/super-admin/plans-schemas';
+import {
+  PlanSubscriberCountError,
+  countPlanSubscribers,
+  planHasSubscribersMessage,
+  totalPlanSubscribers,
+  type PlanSubscriberCounts,
+} from '@/lib/super-admin/plan-subscribers';
 
 type RouteContext = { params: { id: string } };
 
@@ -55,6 +63,7 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
 }
 
 export async function PATCH(request: NextRequest, { params }: RouteContext) {
+  const logger = createLogger('PATCH /api/super-admin/plans/[id]', generateRequestId());
   try {
     const user = await requireRole(['super_admin']);
     const supabase = await createClient();
@@ -112,6 +121,50 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           },
           { status: 400 }
         );
+      }
+
+      // #1127: 契約者がいるプランは廃止できない。
+      // 契約者への移行案内・自動更新の停止・廃止前の通知 (90 / 30 / 7 日前) はまだ作っていないため、
+      // 契約者がいるまま廃止すると、案内が届かないまま廃止したプランで課金だけが続くおそれがある。
+      // 課金が始まるまでは「契約者が 0 になってから廃止する」運用にして、ここで止める。
+      // (新しい申込だけを止めたいときは、public --> private に変える。既存の契約は続く)
+      if (input.status === 'deprecated') {
+        let counts: PlanSubscriberCounts;
+        try {
+          // requireRole を通ったあとだけ service_role を使う。RLS に左右されず全員分を数えるため。
+          // plan_key で絞った件数 (head) だけを取り、他人の行の中身は読まない。
+          counts = await countPlanSubscribers(getSupabaseAdmin(), existing.plan_key);
+        } catch (countErr) {
+          // 数えられなかったときは、契約者なしとは見なさず廃止も止める (安全装置を黙って外さない)。
+          // 本文は汎用メッセージだけにし、DB の生のエラー文は返さずログに残す (#1172)。
+          logger.withUser(user.id).error('契約者数を確認できなかったため、プランの廃止を中止しました', countErr, {
+            plan_id: params.id,
+            plan_key: existing.plan_key,
+            ...(countErr instanceof PlanSubscriberCountError ? { table: countErr.table, pg_code: countErr.pgCode } : {}),
+          });
+          return NextResponse.json(
+            {
+              error: {
+                code: 'OP_PLAN_SUBSCRIBER_CHECK_FAILED',
+                message: '契約者数を確認できなかったため、廃止を中止しました。時間をおいて、もう一度お試しください。',
+              },
+            },
+            { status: 500 }
+          );
+        }
+
+        if (totalPlanSubscribers(counts) > 0) {
+          return NextResponse.json(
+            {
+              error: {
+                code: 'OP_PLAN_HAS_SUBSCRIBERS',
+                message: planHasSubscribersMessage(counts, { canUnpublish: existing.status === 'public' }),
+                counts,
+              },
+            },
+            { status: 409 }
+          );
+        }
       }
     }
 
