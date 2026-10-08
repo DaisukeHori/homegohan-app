@@ -1,21 +1,24 @@
 /**
- * #1306 組織統計・セグメント統計の Edge Function が、実際のスキーマで集計できることの回帰テスト
+ * #1306 セグメント統計の Edge Function (calculate-segment-stats) が、実際のスキーマで集計できることの回帰テスト
  *
  * 修正前の問題:
- *   aggregate-org-stats / calculate-segment-stats は planned_meals を
+ *   calculate-segment-stats は planned_meals を
  *   `meal_plan_days!inner(day_date, meal_plans!inner(user_id))` で取得していた。
  *   この 2 テーブルは date-based model への移行で削除済みで、本番にも無い。
  *   PostgREST は PGRST200 (テーブルどうしのつながりが見つからない) で失敗するが、supabase-js は例外にせず
  *   { data: null, error } を返す。error を無視して `data ?? []` としていたため、
- *   - 組織統計: メンバーのいる組織は、毎回ログを残して飛ばされ、集計が 1 行も作られなかった (応答は 200)
- *   - セグメント統計: planned_meals 由来の指標 (朝食実行率・野菜スコア・栄養スコア・メニュー実行率) が
- *     全員 0 になり、それが本当の値として保存され、統計・ランキングにも使われた
+ *   planned_meals 由来の指標 (朝食実行率・野菜スコア・栄養スコア・メニュー実行率) が
+ *   全員 0 になり、それが本当の値として保存され、統計・ランキングにも使われた。
  *   単体テストは Supabase を偽物にするので、このような「クエリが実スキーマで通るか」は見られない。
  *
+ * 組織統計 (aggregate-org-stats) も同じ表を読んでいるが、ここでは直さない。
+ * オーナー判断 (#1325「組織の集計を止める」) により、組織統計は直して動かすのではなく止める (計画の T08)。
+ * 直すと、組織ダッシュボードの「Refresh Data」から集計が実際に作られるようになり、判断と食い違うため。
+ *
  * 修正後の期待:
- *   - planned_meals を user_daily_meals!inner(user_id, day_date) で結合し、対象日・メンバー・非ハンズオン
+ *   - planned_meals を user_daily_meals!inner(user_id, day_date) で結合し、対象期間・非ハンズオン
  *     (is_sandbox = false) に絞って集計する。planned_meals の所有者は daily_meal_id → user_daily_meals.user_id
- *   - 集計結果が org_daily_stats / user_metrics / segment_stats / user_segment_rankings / user_badges に保存される
+ *   - 集計結果が user_metrics / segment_stats / user_segment_rankings / user_badges に保存される
  *   - 途中のクエリが失敗したら例外にして、ログと応答 (500) に残す (この統合テストでは、全クエリが成功することを確認する)
  *
  * 本物のハンドラ (Deno.serve に渡された関数) を、実際のローカル Supabase に向けて呼ぶ。
@@ -73,9 +76,7 @@ const MARK_ZERO = `x1306z-${TS}`; // 何も記録していない 5 人 (全指�
 const D = '2026-10-08'; // 集計する日 (2026-10-08 は木曜日)
 const PREV = '2026-10-07';
 
-let orgSeq = 0;
 const createdUserIds: string[] = [];
-const createdOrgIds: string[] = [];
 const createdMetricIds: string[] = [];
 let segmentId: string | null = null;
 let zeroSegmentId: string | null = null;
@@ -90,21 +91,6 @@ async function createUser(label: string, extra: Record<string, unknown> = {}): P
     .upsert({ id: data.user.id, nickname: `it1306-${label}`, age_group: '30s', gender: 'other', ...extra }, { onConflict: 'id' });
   if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
   return data.user.id;
-}
-
-async function createOrg(label: string, memberIds: string[]): Promise<string> {
-  orgSeq += 1;
-  const { data, error } = await sr.from('organizations').insert({ name: `it1306 ${label} ${TS}-${orgSeq}` }).select('id').single();
-  if (error || !data) throw new Error(`org ${label}: ${error?.message}`);
-  createdOrgIds.push(data.id as string);
-  for (const id of memberIds) {
-    const { error: memberError } = await sr
-      .from('user_profiles')
-      .update({ organization_id: data.id, org_role: 'member', is_active_in_org: true })
-      .eq('id', id);
-    if (memberError) throw new Error(`member ${label}: ${memberError.message}`);
-  }
-  return data.id as string;
 }
 
 interface MealSeed {
@@ -147,18 +133,7 @@ async function callHandler(index: number, body: Record<string, unknown>) {
   return { res, json: await res.json() };
 }
 
-const callOrgStats = (body: Record<string, unknown>) => callHandler(0, body);
-const callSegmentStats = (body: Record<string, unknown>) => callHandler(1, body);
-
-async function orgStatsRow(orgId: string, date: string) {
-  const { data, error } = await sr
-    .from('org_daily_stats')
-    .select('member_count, active_member_count, breakfast_rate, late_night_rate, avg_score')
-    .eq('organization_id', orgId)
-    .eq('date', date);
-  if (error) throw new Error(`org_daily_stats: ${error.message}`);
-  return data ?? [];
-}
+const callSegmentStats = (body: Record<string, unknown>) => callHandler(0, body);
 
 beforeAll(async () => {
   const env: Record<string, string> = {
@@ -172,142 +147,18 @@ beforeAll(async () => {
       h.serves.push(handler);
     },
   });
-  // 順番が serves の添字になる (0: 組織統計, 1: セグメント統計)
-  await import('../../../supabase/functions/aggregate-org-stats/index.ts');
   await import('../../../supabase/functions/calculate-segment-stats/index.ts');
 }, 60_000);
 
 afterAll(async () => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  // 組織 → ユーザーの順に消す (ユーザーを消すと user_daily_meals / planned_meals / user_metrics /
-  // user_segment_rankings / user_badges が CASCADE で消える。org_daily_stats は組織を消すと消える)
-  if (createdUserIds.length > 0) {
-    await sr.from('user_profiles').update({ organization_id: null, org_role: null, is_active_in_org: false }).in('id', createdUserIds);
-  }
-  if (createdOrgIds.length > 0) await sr.from('organizations').delete().in('id', createdOrgIds);
+  // ユーザーを消すと user_daily_meals / planned_meals / user_metrics / user_segment_rankings / user_badges が CASCADE で消える
   for (const id of createdUserIds) await sr.auth.admin.deleteUser(id);
   if (segmentId) await sr.from('segment_definitions').delete().eq('id', segmentId);
   if (zeroSegmentId) await sr.from('segment_definitions').delete().eq('id', zeroSegmentId);
   if (createdMetricIds.length > 0) await sr.from('metric_definitions').delete().in('id', createdMetricIds);
 }, 120_000);
-
-// ================================================================
-// aggregate-org-stats
-// ================================================================
-describe('aggregate-org-stats: 実スキーマで planned_meals を user_daily_meals 経由で集計できる (#1306)', () => {
-  let orgA: string;
-  let orgB: string;
-  let orgEmpty: string;
-
-  beforeAll(async () => {
-    const [a1, a2, a3, b1, outsider] = await Promise.all(
-      ['a1', 'a2', 'a3', 'b1', 'outsider'].map((label) => createUser(label)),
-    );
-    orgA = await createOrg('A', [a1, a2, a3]);
-    orgB = await createOrg('B', [b1]);
-    orgEmpty = await createOrg('empty', []);
-
-    // 組織 A
-    //   a1: 朝食 (JST 08:30) と夕食 (JST 22:00 → 深夜) を完了、昼食は未完了
-    await seedDay(a1, D, [
-      { type: 'breakfast', completedAt: '2026-10-07T23:30:00Z', veg: 4 },
-      { type: 'dinner', completedAt: '2026-10-08T13:00:00Z', veg: 2 },
-      { type: 'lunch', completed: false },
-    ]);
-    //   a2: 朝食 (JST 03:59:59 → 深夜) と昼食を完了。前日にも夕食があるが、対象日ではない
-    await seedDay(a2, D, [
-      { type: 'breakfast', completedAt: '2026-10-07T18:59:59Z', veg: 5 },
-      { type: 'lunch', completedAt: '2026-10-08T03:00:00Z', veg: 3 },
-    ]);
-    await seedDay(a2, PREV, [{ type: 'dinner', completedAt: '2026-10-07T10:00:00Z', veg: 1 }]);
-    //   a3: 対象日の食事はハンズオン (is_sandbox) だけ。実際の食事ではないので数えない
-    await seedDay(a3, D, [{ type: 'breakfast', completedAt: '2026-10-07T23:00:00Z', veg: 5 }], { sandbox: true });
-    // 組織 B のメンバーと、どの組織にも属さないユーザー: 組織 A の集計に入ってはいけない
-    await seedDay(b1, D, [{ type: 'breakfast', completedAt: '2026-10-07T23:00:00Z', veg: 1 }]);
-    await seedDay(outsider, D, [{ type: 'breakfast', completedAt: '2026-10-07T23:00:00Z', veg: 1 }]);
-  }, 60_000);
-
-  it('O-1: メンバーのいる組織が集計される (修正前は PGRST200 で、行が 1 つも作られなかった)', async () => {
-    h.errors.length = 0;
-
-    const { res, json } = await callOrgStats({ date: D, organizationId: orgA });
-
-    expect(json).toEqual({
-      success: true,
-      processed: [{ orgId: orgA, memberCount: 3, totalCompletedMeals: 4 }],
-      failed: [],
-    });
-    expect(res.status).toBe(200);
-    expect(h.errors).toEqual([]);
-
-    // 完了 4 件 (a1: 朝・夕、a2: 朝・昼)。a3 はハンズオンだけなのでアクティブに入らない → アクティブ 2 人
-    // 朝食 2/4 → 50%、深夜 (JST 22:00 の a1 の夕食・JST 03:59:59 の a2 の朝食) 2/4 → 50%
-    // スコア [4, 2, 5, 3] の平均 3.5 × 20 → 70 (前日の a2・ハンズオンの a3・他組織のスコアは入らない)
-    expect(await orgStatsRow(orgA, D)).toEqual([
-      { member_count: 3, active_member_count: 2, breakfast_rate: 50, late_night_rate: 50, avg_score: 70 },
-    ]);
-  });
-
-  it('O-2: 別の組織は、その組織のメンバーの食事だけで集計される', async () => {
-    h.errors.length = 0;
-
-    const { json } = await callOrgStats({ date: D, organizationId: orgB });
-
-    expect(json.failed).toEqual([]);
-    expect(h.errors).toEqual([]);
-    expect(await orgStatsRow(orgB, D)).toEqual([
-      { member_count: 1, active_member_count: 1, breakfast_rate: 100, late_night_rate: 0, avg_score: 20 },
-    ]);
-  });
-
-  it('O-3: 食事の無い日付でも、メンバー数だけの行が作られる。メンバーが 0 人の組織は 0 埋め', async () => {
-    h.errors.length = 0;
-
-    await callOrgStats({ date: '2026-10-09', organizationId: orgA });
-    await callOrgStats({ date: D, organizationId: orgEmpty });
-
-    expect(h.errors).toEqual([]);
-    expect(await orgStatsRow(orgA, '2026-10-09')).toEqual([
-      { member_count: 3, active_member_count: 0, breakfast_rate: 0, late_night_rate: 0, avg_score: 0 },
-    ]);
-    expect(await orgStatsRow(orgEmpty, D)).toEqual([
-      { member_count: 0, active_member_count: 0, breakfast_rate: 0, late_night_rate: 0, avg_score: 0 },
-    ]);
-  });
-
-  it('O-4: 同じ日付で再実行すると、行を増やさず上書きする (onConflict が実スキーマの一意制約と合っている)', async () => {
-    await callOrgStats({ date: D, organizationId: orgA });
-    await callOrgStats({ date: D, organizationId: orgA });
-
-    expect(await orgStatsRow(orgA, D)).toHaveLength(1);
-  });
-
-  it('O-5: 1 日の planned_meals が API の 1 回の応答の上限 (1000 行) を超えても、全件が集計される', async () => {
-    h.errors.length = 0;
-    const big = await createUser('big');
-    const orgBig = await createOrg('big', [big]);
-    // 1 人で 1,100 件 (すべて JST 12:00 に完了した昼食、スコア 5)。そのまま取ると、1000 行で黙って打ち切られる
-    await seedDay(
-      big,
-      D,
-      Array.from({ length: 1100 }, () => ({ type: 'lunch', completedAt: '2026-10-08T03:00:00Z', veg: 5 })),
-    );
-
-    const { res, json } = await callOrgStats({ date: D, organizationId: orgBig });
-
-    expect(res.status).toBe(200);
-    expect(json).toEqual({
-      success: true,
-      processed: [{ orgId: orgBig, memberCount: 1, totalCompletedMeals: 1100 }],
-      failed: [],
-    });
-    expect(h.errors).toEqual([]);
-    expect(await orgStatsRow(orgBig, D)).toEqual([
-      { member_count: 1, active_member_count: 1, breakfast_rate: 0, late_night_rate: 0, avg_score: 100 },
-    ]);
-  }, 60_000);
-});
 
 // ================================================================
 // calculate-segment-stats

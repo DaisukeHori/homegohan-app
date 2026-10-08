@@ -621,8 +621,7 @@ describe("バッチ専用の aggregate-org-stats: 認証に成功した応答に
   it("CORS-H3: サーバーからの呼び出し (CRON_SECRET) は従来どおり 200 で動く", async () => {
     const res = await call("aggregate-org-stats", { origin: ALLOWED, auth: `Bearer ${BATCH_SECRET}` });
     expect(res.status).toBe(200);
-    // 応答には、失敗した組織の一覧 failed が加わった (#1306。失敗した組織があると success: false と HTTP 500 になる)
-    expect(await res.json()).toEqual({ success: true, processed: [], failed: [] });
+    expect(await res.json()).toEqual({ success: true, processed: [] });
     expect(corsResponseHeaders(res)).toEqual([]);
   });
 });
