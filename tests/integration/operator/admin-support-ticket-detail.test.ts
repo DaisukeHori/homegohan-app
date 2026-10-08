@@ -68,6 +68,16 @@ afterAll(async () => {
     await supabaseAdmin.from('support_tickets').delete().in('id', createdTicketIds);
   }
 
+  // #1183: RESEND_API_KEY がある環境で流すと、顧客向け返信の送信ログが顧客 (= チケットの user_id のテストユーザー) の
+  // user_id で email_delivery_logs に残る。user_id の FK (NO ACTION) が下の deleteUser を失敗させるため、先に消す
+  await supabaseAdmin
+    .from('email_delivery_logs')
+    .delete()
+    .in(
+      'user_id',
+      [supportUser, adminUser, superAdminUser, generalUser, targetUser].map((u) => u.userId),
+    );
+
   await Promise.all([
     cleanupAuditLogs(supportUser.userId),
     cleanupAuditLogs(adminUser.userId),

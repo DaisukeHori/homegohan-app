@@ -442,6 +442,38 @@ describe('POST /api/admin/support/tickets/[id]/messages: 認可・入力検証�
     expect(mockSendEmail).not.toHaveBeenCalled();
   });
 
+  // 空白だけの本文は、顧客向けの返信としてメールに載せても「担当者からのメッセージ」が空欄になる。画面は trim で防いでいるが、API だけの穴だった
+  it.each([
+    ['半角スペース', '   '],
+    ['改行とタブ', '\n\t\n'],
+    ['全角スペース', '　　'],
+    ['空白の混在', ' \n　\t '],
+  ])('本文が空白だけ (%s): 400。保存もメールもしない', async (_label, body) => {
+    const res = await post({ body, is_internal: false });
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error.code).toBe('VALIDATION_ERROR');
+    expect(userDb.calls).toHaveLength(0);
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
+  });
+
+  it('内部メモでも本文が空白だけなら 400 (保存しない)', async () => {
+    const res = await post({ body: '  \n ', is_internal: true });
+
+    expect(res.status).toBe(400);
+    expect(userDb.calls).toHaveLength(0);
+  });
+
+  it('本文の前後の空白は除いて保存し、メールにもその本文を載せる', async () => {
+    await postExternal(`  \n${REPLY_BODY}\n　 `);
+
+    const insert = userDb.calls.find((c) => c.table === 'support_ticket_messages' && c.method === 'insert');
+    expect(insert?.args[0]).toMatchObject({ body: REPLY_BODY });
+    expect(sentEnvelopes()[0].text).toContain(REPLY_BODY);
+  });
+
   it('チケットが存在しない: 404。メールは送らない', async () => {
     userDb = createUserClientFake({
       ticket: { data: null, error: { message: 'no rows' } },
