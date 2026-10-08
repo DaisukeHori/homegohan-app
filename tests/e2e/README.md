@@ -47,10 +47,10 @@ test("...", async ({ authedPage }) => {
 });
 ```
 
-テストアカウントは環境変数で上書き可:
+共通のテストユーザーは環境変数で渡す。どちらも既定値は無く、未設定だと、ログインに使うところで分かりやすいエラーで止まる:
 
-- `E2E_USER_EMAIL` (default: `claude-debug-1777477826@homegohan.local`)
-- `E2E_USER_PASSWORD` (default: `ClaudeDebug2026!`)
+- `E2E_USER_EMAIL` (例: `e2e-user-01@homegohan.test`)
+- `E2E_USER_PASSWORD`
 
 ### パスワードの扱い
 
@@ -74,6 +74,20 @@ npx --yes tsx@4 scripts/create-e2e-accounts.ts
 
 テストの中で新しく作るユーザー (`fresh-user`、招待で作るユーザー、signup のテスト) は、
 `tests/e2e/helpers/credentials.ts` の `generateTestPassword()` で、実行ごとにランダムなパスワードを作る。
+
+### コミットしてはいけないもの (#1114)
+
+以前は、本番のデバッグ用アカウントのメールアドレスとパスワードを、環境変数が無いときの既定値として spec に書いていた。
+`tests/e2e/.exploration/` には、そのアカウントでログインしたときのブラウザの通信記録 (HAR) も置いていた。
+HAR にはログイン要求のパスワードやアクセストークンが平文で入る。どちらもリポジトリから消した。
+
+- 特定のアカウントのメールアドレスやパスワードを、環境変数の既定値として spec に書かない。
+  共通のテストユーザーは `tests/e2e/helpers/credentials.ts` の `requireE2eUserCredentials()` で読む (未設定ならエラーで止まる)
+- 通信記録 (`*.har`)、`secrets/` の中身、サービスアカウント鍵 (`*service-account*.json`) はコミットしない。`.gitignore` で除外している
+- 探索 spec で通信記録やトレースを残すときは、gitignore 済みの `tests/e2e/.output/` に出す (`.exploration/` の下には置かない)
+
+`tests/no-committed-credentials.test.ts` (`npm test`) が、リポジトリで管理しているファイルにこれらが残っていないかを調べる。
+一度でも公開した値は、消しても履歴に残る。パスワードの変更やアカウントの削除は別に必要。
 
 ## CI
 
