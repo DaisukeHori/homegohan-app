@@ -24,6 +24,9 @@ jest.mock('../../src/lib/api', () => ({
 import { ImproveMealModal } from '../../src/components/menu/ImproveMealModal';
 import { ImproveMealRejectedError } from '../../src/lib/improve-meal';
 
+// 最初の描画 (RN の Modal の初回描画) は読み込むモジュールが多く、キャッシュの無い環境では 5 秒の既定を超えることがある
+jest.setTimeout(30000);
+
 const alertMock = Alert.alert as jest.Mock;
 
 function renderModal(props: Partial<React.ComponentProps<typeof ImproveMealModal>> = {}) {
@@ -138,6 +141,34 @@ describe('ImproveMealModal: 送信', () => {
     fireEvent.press(getByTestId('improve-meal-submit'));
     fireEvent.press(getByTestId('improve-meal-submit'));
     fireEvent.press(getByTestId('improve-meal-submit'));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      finish();
+    });
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+
+  it('ボタンが無効になる前 (同じ描画のうち) に連打されても onSubmit は 1 回だけ', async () => {
+    let finish: () => void = () => {};
+    const onSubmit = jest.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const { getByTestId, onClose } = renderModal({ onSubmit });
+    const button = getByTestId('improve-meal-submit');
+
+    // 1 つの act の中で続けて押す。submitting の再描画 (= ボタンの無効化) は act が終わるまで反映されないので、
+    // 2 回目以降の押下も届く。state だけで止める実装だとここで onSubmit が複数回呼ばれる (ref で止めている)。
+    act(() => {
+      fireEvent.press(button);
+      fireEvent.press(button);
+      fireEvent.press(button);
+    });
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onClose).not.toHaveBeenCalled();

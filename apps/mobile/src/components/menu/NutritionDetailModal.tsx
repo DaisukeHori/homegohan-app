@@ -95,6 +95,9 @@ export const NutritionDetailModal: React.FC<Props> = ({
   // --- AI feedback state ---
   const [praiseComment, setPraiseComment] = useState<string | null>(null);
   const [adviceText, setAdviceText] = useState<string | null>(null);
+  // adviceText が分析の失敗・タイムアウトのメッセージのとき true。
+  // これは AI栄養士の提案ではないので、「献立を改善」の要望 (LLM に送る note) には渡さない
+  const [adviceIsError, setAdviceIsError] = useState(false);
   const [nutritionTip, setNutritionTip] = useState<string | null>(null);
   const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
 
@@ -128,6 +131,7 @@ export const NutritionDetailModal: React.FC<Props> = ({
         if (res.cached && (res.feedback || res.praiseComment)) {
           setPraiseComment(res.praiseComment ?? null);
           setAdviceText(res.advice ?? res.feedback ?? null);
+          setAdviceIsError(false);
           setNutritionTip(res.nutritionTip ?? null);
           setIsLoadingFeedback(false);
           return;
@@ -138,6 +142,7 @@ export const NutritionDetailModal: React.FC<Props> = ({
             onResolved: (content) => {
               setPraiseComment(content.praiseComment);
               setAdviceText(content.advice || null);
+              setAdviceIsError(false);
               setNutritionTip(content.nutritionTip);
               setIsLoadingFeedback(false);
             },
@@ -145,6 +150,7 @@ export const NutritionDetailModal: React.FC<Props> = ({
               // 失敗 / タイムアウト。メッセージを出し、再分析ボタンで再試行できるようにする
               setPraiseComment(null);
               setAdviceText(message);
+              setAdviceIsError(true);
               setNutritionTip(null);
               setIsLoadingFeedback(false);
             },
@@ -170,6 +176,7 @@ export const NutritionDetailModal: React.FC<Props> = ({
     // reset
     setPraiseComment(null);
     setAdviceText(null);
+    setAdviceIsError(false);
     setNutritionTip(null);
     setIsLoadingFeedback(false);
 
@@ -337,7 +344,7 @@ export const NutritionDetailModal: React.FC<Props> = ({
             visible={showImprove}
             onClose={() => setShowImprove(false)}
             selectedDate={date}
-            advice={adviceText}
+            advice={adviceIsError ? null : adviceText}
             onSubmit={onImprove}
           />
         </View>
