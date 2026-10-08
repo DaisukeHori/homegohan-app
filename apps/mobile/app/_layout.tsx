@@ -12,6 +12,7 @@ import { LogBox } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { NotificationRouter } from "../src/components/NotificationRouter";
+import { WebViewSessionCleaner } from "../src/components/web/WebViewSessionCleaner";
 import { registerAndSaveExpoPushToken, setupNotificationHandler } from "../src/lib/pushNotifications";
 import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
 import { PostHogProvider } from "../src/providers/PostHogProvider";
@@ -73,6 +74,8 @@ export default function RootLayout() {
           <ProfileProvider>
             <PushTokenRegistrar />
             <NotificationRouter />
+            {/* ログアウトのたびに、WebView (Web) 側に残る前のユーザーの状態を消す (#1049 F7-16) */}
+            <WebViewSessionCleaner />
             <Stack screenOptions={{ headerShown: false }}>
               <Stack.Screen name="index" />
               <Stack.Screen name="(public)" />

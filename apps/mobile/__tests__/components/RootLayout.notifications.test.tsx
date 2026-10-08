@@ -1,9 +1,10 @@
 /**
  * RootLayout.notifications.test.tsx
- * app/_layout.tsx が通知まわりを配線していることのテスト (#1049 F7-11)
+ * app/_layout.tsx が通知まわりと、ログアウト時の WebView の片付けを配線していることのテスト (#1049 F7-11 / F7-16)
  *
  *  - アプリ起動時 (モジュール読み込み時) に、フォアグラウンド通知の設定 (setupNotificationHandler) を 1 回呼ぶ
  *  - 通知タップで遷移する NotificationRouter を、各 Provider の内側に置く
+ *  - ログアウトのたびに WebView 側の状態を消す WebViewSessionCleaner を、アプリの根元に 1 つ置く
  */
 
 import React from 'react';
@@ -20,6 +21,13 @@ jest.mock('../../src/components/NotificationRouter', () => ({
   NotificationRouter: () => {
     const { View } = require('react-native');
     return <View testID="notification-router" />;
+  },
+}));
+
+jest.mock('../../src/components/web/WebViewSessionCleaner', () => ({
+  WebViewSessionCleaner: () => {
+    const { View } = require('react-native');
+    return <View testID="webview-session-cleaner-root" />;
   },
 }));
 
@@ -95,5 +103,11 @@ describe('RootLayout — 通知の配線', () => {
     }
     expect(ancestors).toEqual(expect.arrayContaining(['profile-provider', 'auth-provider']));
     expect(ancestors.indexOf('profile-provider')).toBeLessThan(ancestors.indexOf('auth-provider'));
+  });
+
+  it('ログアウトのたびに WebView 側の状態を消す WebViewSessionCleaner を、アプリの根元に 1 つ置く', () => {
+    const { getAllByTestId } = render(<RootLayout />);
+
+    expect(getAllByTestId('webview-session-cleaner-root')).toHaveLength(1);
   });
 });
