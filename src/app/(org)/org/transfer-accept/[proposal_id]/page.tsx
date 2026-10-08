@@ -11,7 +11,6 @@ interface ProposalInfo {
   status: string;
   proposed_at: string;
   expires_at: string;
-  reason: string | null;
   scope_id: string;
 }
 
@@ -48,9 +47,11 @@ export default function TransferAcceptPage() {
         }
         setCurrentUserId(user.id);
 
+        // ownership_transfer_proposals に reason 列は無い (存在しない列を select すると PostgREST が失敗し、
+        // 提案が「見つかりません」になっていた)。提案理由は DB に保存されず、提案メールにだけ載る
         const { data: proposalData } = await supabase
           .from('ownership_transfer_proposals')
-          .select('id, from_user_id, to_user_id, status, proposed_at, expires_at, reason, scope_id')
+          .select('id, from_user_id, to_user_id, status, proposed_at, expires_at, scope_id')
           .eq('id', proposalId)
           .single();
 
@@ -202,14 +203,6 @@ export default function TransferAcceptPage() {
                 {isExpired && ' (期限切れ)'}
               </span>
             </div>
-            {proposal.reason && (
-              <div className="text-sm">
-                <p className="text-gray-500 mb-1">理由</p>
-                <p className="text-gray-800 bg-gray-50 rounded-lg p-3 text-sm">
-                  {proposal.reason}
-                </p>
-              </div>
-            )}
           </div>
 
           {statusMsg && (

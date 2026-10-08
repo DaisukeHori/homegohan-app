@@ -57,12 +57,14 @@ export default function FamilyTransferAcceptPage() {
       setProposal(proposalData as TransferProposal);
 
       // 提案者情報
+      // user_profiles に email 列は無い (メールアドレスは auth.users にしか無く、他人のものは画面にも出さない)。
+      // 他人の行は RLS で読めないことが多く、読めなければ「代表者」と表示する
       const { data: fromProfile } = await supabase
         .from('user_profiles')
-        .select('nickname, email')
+        .select('nickname')
         .eq('id', proposalData.from_user_id)
         .single();
-      setFromName(fromProfile?.nickname ?? fromProfile?.email ?? '代表者');
+      setFromName(fromProfile?.nickname ?? '代表者');
 
       // 家族グループ名
       if (proposalData.scope === 'family') {
