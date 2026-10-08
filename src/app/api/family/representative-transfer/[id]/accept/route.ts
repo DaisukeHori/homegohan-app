@@ -2,15 +2,29 @@
 // (設計書 02-flow-spec.md §10)
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
-import { sendEmail } from '@/lib/emails/send';
+import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
+import { sendEmail, type EmailEnvelope } from '@/lib/emails/send';
 import { renderFamilyTransferCompletedEmail } from '@/lib/emails/membership/family-transfer-completed';
+
+// accept_family_representative_transfer が RAISE するコードごとの、利用者向けの文言。
+// RPC の生メッセージ (エラーコード文字列) は画面に出さない
+const TRANSFER_ACCEPT_MESSAGES: Partial<Record<MembershipErrorCode | 'UNKNOWN', string>> = {
+  [MembershipErrorCode.TRANSFER_PROPOSAL_NOT_FOUND]: '譲渡提案が見つかりません',
+  [MembershipErrorCode.TRANSFER_NOT_PENDING]: '譲渡提案は既に処理済みです',
+  // #1237: 承諾時点で家族の active な大人 / 代表者でない (脱退・除名済み等)
+  [MembershipErrorCode.TRANSFER_ACCEPTOR_NOT_IN_FAMILY]:
+    'あなたは現在この家族のメンバーではないため、代表者権限を引き継げません。',
+  [MembershipErrorCode.TRANSFER_PROPOSAL_EXPIRED]: '譲渡提案の有効期限が切れています。',
+};
 
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: proposal_id } = await params;
+  const logger = createLogger('POST /api/family/representative-transfer/[id]/accept', generateRequestId());
   const supabase = await createClient();
 
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -20,96 +34,85 @@ export async function POST(
       { status: 401 },
     );
   }
+  const log = logger.withUser(user.id);
+
+  // 完了メールの宛先にする旧代表者は、承諾する前の提案から控えておく (#1110)。
+  // RPC の戻り値は更新後の family_groups の行で、representative_id は承諾した本人 (新代表者)。旧代表者は含まれない。
+  // ownership_transfer_proposals は当事者 (提案者・宛先) だけが SELECT できる (RLS)。承諾する本人は宛先なので読める。
+  const { data: proposal, error: proposalError } = await supabase
+    .from('ownership_transfer_proposals')
+    .select('from_user_id')
+    .eq('id', proposal_id)
+    .single();
 
   const { data, error } = await supabase.rpc('accept_family_representative_transfer', {
     p_proposal_id: proposal_id,
   });
 
   if (error) {
-    if (error.message?.includes('TRANSFER_NOT_FOUND')) {
-      return NextResponse.json(
-        { error: { code: MembershipErrorCode.TRANSFER_NOT_FOUND, message: '譲渡提案が見つかりません' } },
-        { status: 404 },
-      );
-    }
-    if (error.message?.includes('TRANSFER_NOT_PENDING')) {
-      return NextResponse.json(
-        { error: { code: MembershipErrorCode.TRANSFER_NOT_PENDING, message: '譲渡提案は既に処理済みです' } },
-        { status: 409 },
-      );
-    }
-    // #1237: 承諾時点で家族の active な大人 / 代表者でない (脱退・除名済み等)
-    if (error.message?.includes('TRANSFER_ACCEPTOR_NOT_IN_FAMILY')) {
-      return NextResponse.json(
-        {
-          error: {
-            code: MembershipErrorCode.TRANSFER_ACCEPTOR_NOT_IN_FAMILY,
-            message: 'あなたは現在この家族のメンバーではないため、代表者権限を引き継げません。',
-          },
-        },
-        { status: 403 },
-      );
-    }
-    if (error.message?.includes('TRANSFER_PROPOSAL_EXPIRED')) {
-      return NextResponse.json(
-        { error: { code: MembershipErrorCode.TRANSFER_PROPOSAL_EXPIRED, message: '譲渡提案の有効期限が切れています。' } },
-        { status: 410 },
-      );
-    }
     const { code, status } = mapPgErrorToHttp(error.message ?? '');
     return NextResponse.json(
-      { error: { code, message: '代表者譲渡の承諾に失敗しました' } },
+      { error: { code, message: TRANSFER_ACCEPT_MESSAGES[code] ?? '代表者譲渡の承諾に失敗しました' } },
       { status },
     );
   }
 
-  // 完了メール送信
+  // 完了メール (best-effort)。承諾はすでに完了しているので、失敗しても 200 を返し、ログに残す。
+  // ログには宛先のメールアドレスを残さない。
   try {
-    const result = data as { family_id?: string; new_representative_id?: string; old_representative_id?: string };
-    if (result?.family_id) {
-      const { data: familyGroup } = await supabase
-        .from('family_groups')
-        .select('name')
-        .eq('id', result.family_id)
-        .single();
+    const family = data as { name?: string | null } | null;
+    const familyName = family?.name || '家族グループ';
+    const oldRepId: string | null = proposal?.from_user_id ?? null;
+    if (!oldRepId) {
+      log.error(
+        '旧代表者を特定できなかったため、旧代表者への完了メールを送信しません',
+        proposalError ?? new Error('ownership_transfer_proposals の行が見つかりません'),
+        { proposal_id },
+      );
+    }
 
-      const { data: newRepProfile } = await supabase
-        .from('user_profiles')
-        .select('nickname, email')
-        .eq('id', result.new_representative_id ?? user.id)
-        .single();
+    // 新代表者 (承諾した本人) のニックネームは本人の行なので読める。アドレスは認証済みセッションの値を使う。
+    // 旧代表者のアドレスは auth.users にしか無い (user_profiles に email 列は無く、他人の行も RLS で読めない)
+    const [{ data: newRepProfile }, oldRepEmails] = await Promise.all([
+      supabase.from('user_profiles').select('nickname').eq('id', user.id).single(),
+      resolveAuthEmails([oldRepId], { logger: log }),
+    ]);
+    const newRepName = newRepProfile?.nickname || '新代表者';
 
-      const { data: oldRepProfile } = await supabase
-        .from('user_profiles')
-        .select('email')
-        .eq('id', result.old_representative_id ?? '')
-        .single();
-
-      const familyName = familyGroup?.name ?? '家族グループ';
-      const newRepName = newRepProfile?.nickname ?? newRepProfile?.email ?? '新代表者';
-
-      if (oldRepProfile?.email) {
-        const envelope = renderFamilyTransferCompletedEmail({
-          to_email: oldRepProfile.email,
+    const envelopes: EmailEnvelope[] = [];
+    const oldRepEmail = oldRepId ? oldRepEmails.get(oldRepId) : undefined;
+    if (oldRepEmail) {
+      envelopes.push(
+        renderFamilyTransferCompletedEmail({
+          to_email: oldRepEmail,
           new_representative_name: newRepName,
           family_name: familyName,
           is_old_representative: true,
-        });
-        await sendEmail(envelope);
-      }
-
-      if (newRepProfile?.email) {
-        const envelope = renderFamilyTransferCompletedEmail({
-          to_email: newRepProfile.email,
+        }),
+      );
+    }
+    if (user.email) {
+      envelopes.push(
+        renderFamilyTransferCompletedEmail({
+          to_email: user.email,
           new_representative_name: newRepName,
           family_name: familyName,
           is_old_representative: false,
-        });
-        await sendEmail(envelope);
-      }
+        }),
+      );
+    }
+
+    // 片方の送信が失敗しても、もう片方は送る
+    const results = await Promise.allSettled(envelopes.map((envelope) => sendEmail(envelope)));
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failures.length > 0) {
+      log.error('完了メールの一部を送信できませんでした (代表者の譲渡は完了済み)', failures[0].reason, {
+        proposal_id,
+        failed_count: failures.length,
+      });
     }
   } catch (emailErr) {
-    console.error('[api/family/representative-transfer/accept] email send failed:', emailErr);
+    log.error('完了メールの送信処理に失敗しました (代表者の譲渡は完了済み)', emailErr, { proposal_id });
   }
 
   return NextResponse.json({ data }, { status: 200 });
