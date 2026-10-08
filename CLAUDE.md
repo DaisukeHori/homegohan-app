@@ -70,6 +70,15 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 
 `packages/shared` の `POSTHOG_DEFAULT_HOST` に集約する (#1197)。Web・モバイルのコードはこれを import し、ホストの文字列を直接書かない。素の Node ESM の `next.config.mjs` と `.env.example` だけは同じ値のリテラルが残るので、ホストを変えるときは 3 か所を合わせる (`src/__tests__/config/posthog-default-host.test.ts` が検査する)。
 
+### 状態色 (success / warning / error / danger)
+
+`packages/shared/src/design-tokens.ts` の `STATUS_COLOR_TOKENS` に集約する (#590)。Web の home・pantry・health 配下の画面とモバイルの `colors.ts` は、これを import して使い、状態色の hex を直書きしない (`src/__tests__/config/status-color-tokens.test.ts` がこの範囲の画面を検査する)。週間献立など、ほかの画面には A 系の値の直書きがまだ残っている。その画面を触るときにトークンへ寄せる。
+
+- 塗り (背景・枠線・アイコン・グラフの線や棒): `success` / `warning` / `error` / `danger` と、淡い下地の `*Light`
+- 文字: `successText` / `warningText` / `dangerText`。WCAG の AA (4.5:1) を、白地・各 Light の下地・ページの背景・塗りの薄い透過の下地の上で満たす (`packages/shared/src/design-tokens.test.ts` が数値で確かめる)。塗りの色は白地で 4.5:1 に届かないので、文字には使わない。`error` の赤い文字にも `dangerText` を使う
+- 値を変えるときは `design-tokens.ts` だけを直す。画面ごと・モバイルの `colors.ts` に同じ値を書き足さない
+- 中立色 (bg / text / border など) と accent / purple / blue はまだ対象外 (画面ごとに値が違う。別の変更で揃える)
+
 ### 栄養計算入力
 
 `src/lib/build-nutrition-input.ts` に集約。栄養計算に必要な入力オブジェクトを組み立てる際は、このモジュールを経由する。直接構築しない。
