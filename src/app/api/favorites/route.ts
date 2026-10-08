@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { clampIntParam } from '@/lib/http-params';
 import { NextResponse } from 'next/server';
 
 /**
@@ -32,6 +33,7 @@ async function queryFavorites(
     data: any[] | null;
     error: { code: string; message: string } | null;
     count: number | null;
+    status: number;
   };
 }
 
@@ -46,8 +48,13 @@ export async function GET(request: Request) {
   const userLogger = logger.withUser(user.id);
 
   const { searchParams } = new URL(request.url);
-  const limit = Math.min(Number(searchParams.get('limit') ?? '100'), 200);
-  const offset = Number(searchParams.get('offset') ?? '0');
+  // #1226: limit / offset は clampIntParam で丸める。以前は limit が Math.min(Number(...), 200) で
+  // 上限しか見ておらず、offset は無加工だったため、?limit=abc・?offset=abc (NaN) は空の一覧になり、
+  // ?limit=-50 や桁あふれする offset は不正な範囲が .range() に渡って
+  // PostgREST のエラー → 生のメッセージ付きの 500 になっていた。
+  // 数字でない値・空は既定値へ、範囲外の値は端に寄せる。
+  const limit = clampIntParam(searchParams.get('limit'), { min: 1, max: 200, default: 100 });
+  const offset = clampIntParam(searchParams.get('offset'), { min: 0, max: 100000, default: 0 });
   const query = searchParams.get('q')?.trim() ?? '';
   const sort = searchParams.get('sort') ?? 'newest'; // newest | oldest | name
   const params = { userId: user.id, query, sort, offset, limit };
@@ -76,6 +83,13 @@ export async function GET(request: Request) {
           })),
           total: r.count ?? 0,
         });
+      }
+      // offset が件数より先だと PostgREST は 416 (Range Not Satisfiable) を返す (#1226)。
+      // 上限までに丸めても、お気に入りの数より大きい offset はこの形で残る。
+      // 500 にはせず、空のページと本当の total を返す (total は先頭 1 件の問い合わせで取り直す)。
+      if (r.status === 416) {
+        const firstRow = await queryFavorites(supabase, columns, { ...params, offset: 0, limit: 1 });
+        if (!firstRow.error) return NextResponse.json({ favorites: [], total: firstRow.count ?? 0 });
       }
       // 42703 = column not found → 次の columns セットを試す
       if (r.error.code !== '42703') throw r.error;

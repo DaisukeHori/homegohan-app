@@ -170,7 +170,10 @@ Deno.serve(async (req) => {
 
   } catch (error: any) {
     console.error("Error:", error);
-    createLogger("generate-health-insights").withUser(_userId ?? "unknown").error(
+    // #1171: 認証前に失敗して _userId が無いときに withUser("unknown") とすると、uuid 列への insert が失敗して
+    // ログごと捨てられる。ユーザーが分からない場合はユーザーなしのロガーで記録する。
+    const logger = createLogger("generate-health-insights");
+    (_userId ? logger.withUser(_userId) : logger).error(
       "ヘルスインサイト生成でエラーが発生しました",
       error,
       { periodType: _periodType },
