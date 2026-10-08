@@ -6,6 +6,7 @@ import { CreateFamilyInviteBodySchema } from '@/schemas/membership/family-invite
 import { MembershipErrorCode } from '@/lib/errors/membership-errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { sendEmail } from '@/lib/emails/send';
+import { isEmailFailure } from '@/lib/emails/send-result';
 import { renderFamilyInviteExistingEmail } from '@/lib/emails/membership/family-invite-existing';
 import { renderFamilyInviteNewEmail } from '@/lib/emails/membership/family-invite-new';
 import {
@@ -211,7 +212,9 @@ export async function POST(request: Request) {
     const envelope = isExistingUser
       ? renderFamilyInviteExistingEmail(emailVars)
       : renderFamilyInviteNewEmail(emailVars);
-    await sendEmail(envelope);
+    const sent = await sendEmail(envelope);
+    // sendEmail は配信の失敗で例外を投げず、結果で返す。失敗も下の catch で、他の失敗と同じように警告に残す
+    if (isEmailFailure(sent)) throw sent.error;
   } catch (emailError) {
     // メール送信失敗は警告のみ (invite row は残す)
     console.warn('[api/family/invites] email send failed (invite row kept):', emailError);

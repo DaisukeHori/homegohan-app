@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useHomeData } from "@/hooks/useHomeData";
 import { Icons } from "@/components/icons";
 import { todayLocal, parseLocalDate } from "@/lib/date-utils";
+import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
 import { 
   ChefHat, Store, UtensilsCrossed, Zap, FastForward,
   Check, Flame, Calendar, Coffee, Sun, Moon, Sparkles,
@@ -24,11 +25,8 @@ const colors = {
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
   accentDark: '#C4634C',
-  success: '#4CAF50',
-  successLight: '#E8F5E9',
-  warning: '#FF9800',
-  warningLight: '#FFF3E0',
-  error: '#F44336',
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
   purple: '#7C4DFF',
   purpleLight: '#EDE7F6',
   blue: '#2196F3',
@@ -41,10 +39,10 @@ type MealMode = 'cook' | 'quick' | 'buy' | 'out' | 'skip';
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
 
 const MODE_CONFIG: Record<MealMode, { icon: typeof ChefHat; label: string; color: string; bg: string }> = {
-  cook: { icon: ChefHat, label: '自炊', color: colors.success, bg: colors.successLight },
+  cook: { icon: ChefHat, label: '自炊', color: colors.successText, bg: colors.successLight },
   quick: { icon: Zap, label: '時短', color: colors.blue, bg: colors.blueLight },
   buy: { icon: Store, label: '買う', color: colors.purple, bg: colors.purpleLight },
-  out: { icon: UtensilsCrossed, label: '外食', color: colors.warning, bg: colors.warningLight },
+  out: { icon: UtensilsCrossed, label: '外食', color: colors.warningText, bg: colors.warningLight },
   skip: { icon: FastForward, label: 'なし', color: colors.textMuted, bg: colors.bg },
 };
 
@@ -224,12 +222,12 @@ export default function HomePage() {
               className="flex-1 bg-white rounded-2xl p-4 shadow-sm border border-green-100"
             >
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${colors.success} 0%, #66BB6A 100%)` }}>
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: colors.success }}>
                   <ChefHat size={24} color="#fff" />
                 </div>
                 <div>
                   <p className="text-xs text-gray-500 font-medium">今月の自炊</p>
-                  <p className="text-2xl font-black" style={{ color: colors.success }}>
+                  <p className="text-2xl font-black" style={{ color: colors.successText }}>
                     {monthlyStats.cookCount}<span className="text-sm font-bold ml-0.5">食</span>
                   </p>
                 </div>
@@ -281,8 +279,8 @@ export default function HomePage() {
                       <span 
                         className="text-xs"
                         style={{ 
-                          color: healthSummary.weightChange < 0 ? colors.success : 
-                                 healthSummary.weightChange > 0 ? colors.error : colors.textMuted 
+                          color: healthSummary.weightChange < 0 ? colors.successText :
+                                 healthSummary.weightChange > 0 ? colors.dangerText : colors.textMuted
                         }}
                       >
                         {healthSummary.weightChange > 0 ? '+' : ''}{healthSummary.weightChange}
@@ -351,9 +349,9 @@ export default function HomePage() {
                   className="px-3 py-1 rounded-full text-sm font-bold"
                   style={{ 
                     background: nutritionAnalysis.score >= 80 ? colors.successLight : 
-                               nutritionAnalysis.score >= 60 ? colors.warningLight : '#FFEBEE',
-                    color: nutritionAnalysis.score >= 80 ? colors.success : 
-                           nutritionAnalysis.score >= 60 ? colors.warning : colors.error,
+                               nutritionAnalysis.score >= 60 ? colors.warningLight : colors.errorLight,
+                    color: nutritionAnalysis.score >= 80 ? colors.successText :
+                           nutritionAnalysis.score >= 60 ? colors.warningText : colors.dangerText,
                   }}
                 >
                   {nutritionAnalysis.score}点
@@ -387,7 +385,7 @@ export default function HomePage() {
 
               {/* 課題がある場合 */}
               {nutritionAnalysis.issues.length > 0 && (
-                <div className="bg-amber-50 rounded-lg p-2 text-xs" style={{ color: colors.warning }}>
+                <div className="bg-amber-50 rounded-lg p-2 text-xs" style={{ color: colors.warningText }}>
                   <div className="flex items-start gap-1.5">
                     <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
                     <span>{nutritionAnalysis.issues[0]}</span>
@@ -465,7 +463,7 @@ export default function HomePage() {
                 role="status"
                 aria-live="polite"
                 className="text-xs font-bold mt-1.5 px-1"
-                style={{ color: colors.success }}
+                style={{ color: colors.successText }}
               >
                 {conditionFeedback}
               </motion.p>
@@ -490,15 +488,15 @@ export default function HomePage() {
                 background:
                   checkinFeedback.type === 'success'
                     ? colors.successLight
-                    : '#FFEBEE',
+                    : colors.errorLight,
                 borderColor:
                   checkinFeedback.type === 'success'
                     ? colors.success
                     : colors.error,
                 color:
                   checkinFeedback.type === 'success'
-                    ? colors.success
-                    : colors.error,
+                    ? colors.successText
+                    : colors.dangerText,
               }}
             >
               <span className="text-sm font-bold">
@@ -676,7 +674,7 @@ export default function HomePage() {
                 <Check size={16} style={{ color: colors.success }} />
               </div>
               <div>
-                <p className="text-sm font-bold" style={{ color: colors.success }}>今日のチェックイン完了！</p>
+                <p className="text-sm font-bold" style={{ color: colors.successText }}>今日のチェックイン完了！</p>
                 <p className="text-xs" style={{ color: colors.textMuted }}>
                   {performanceAnalysis.eligibilityReason || '7日分のデータが揃うと分析が始まります'}
                 </p>
@@ -933,7 +931,7 @@ export default function HomePage() {
                   <h2 className="font-bold text-gray-900">今週の自炊率</h2>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-2xl font-black" style={{ color: colors.success }}>{weeklyStats.avgCookRate}%</span>
+                  <span className="text-2xl font-black" style={{ color: colors.successText }}>{weeklyStats.avgCookRate}%</span>
                   <ChevronRight size={18} color={colors.textMuted} />
                 </div>
               </div>
@@ -953,7 +951,7 @@ export default function HomePage() {
                         className="w-full rounded-t-lg"
                         style={{ 
                           background: day.mealCount > 0 
-                            ? `linear-gradient(180deg, ${colors.success} 0%, #81C784 100%)`
+                            ? colors.success
                             : colors.border,
                           minHeight: 4,
                         }}
@@ -1017,7 +1015,7 @@ export default function HomePage() {
                     <ChefHat size={14} color={colors.success} />
                     <span className="text-xs font-medium text-gray-600">自炊</span>
                   </div>
-                  <span className="text-sm font-bold" style={{ color: colors.success }}>{dailySummary.cookCount}食</span>
+                  <span className="text-sm font-bold" style={{ color: colors.successText }}>{dailySummary.cookCount}食</span>
                 </div>
               </div>
             </div>
@@ -1171,7 +1169,7 @@ export default function HomePage() {
                 <div className="grid grid-cols-2 gap-3 mb-6">
                   <div className="p-4 rounded-xl" style={{ background: colors.successLight }}>
                     <p className="text-xs text-gray-500 mb-1">自炊率</p>
-                    <p className="text-2xl font-black" style={{ color: colors.success }}>{weeklyStats.avgCookRate}%</p>
+                    <p className="text-2xl font-black" style={{ color: colors.successText }}>{weeklyStats.avgCookRate}%</p>
                   </div>
                   <div className="p-4 rounded-xl" style={{ background: colors.accentLight }}>
                     <p className="text-xs text-gray-500 mb-1">総食事数</p>
@@ -1205,7 +1203,7 @@ export default function HomePage() {
                               }} 
                             />
                           </div>
-                          <span className="text-sm font-bold" style={{ color: colors.success }}>{day.cookRate}%</span>
+                          <span className="text-sm font-bold" style={{ color: colors.successText }}>{day.cookRate}%</span>
                         </div>
                       </div>
                     );

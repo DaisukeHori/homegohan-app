@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import FinanceQuickLinks from "@/components/operator/finance/FinanceQuickLinks";
 import type { FinanceDashboard } from "@/lib/admin/finance-schemas";
 import { BILLING_NOT_STARTED_MESSAGE } from "@/components/operator/finance/BillingNotStartedNotice";
 
@@ -145,25 +145,8 @@ export default function FinanceDashboardPage() {
         </div>
       </div>
 
-      {/* クイックリンク */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        {[
-          { href: "/admin/finance/revenue", label: "収益推移グラフ", icon: "📈" },
-          { href: "/admin/finance/invoices", label: "請求書一覧", icon: "🧾" },
-          { href: "/admin/finance/reconciliation", label: "Stripe 整合チェック", icon: "🔄" },
-          { href: "/admin/finance/nps", label: "NPS / CSAT", icon: "⭐" },
-          { href: "/admin/finance/exports", label: "CSV エクスポート", icon: "📥" },
-        ].map((item) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            className="bg-white border border-slate-100 rounded-xl p-4 flex items-center gap-3 hover:border-indigo-200 hover:shadow-sm transition-all"
-          >
-            <span className="text-2xl">{item.icon}</span>
-            <span className="text-sm font-medium text-slate-700">{item.label}</span>
-          </Link>
-        ))}
-      </div>
+      {/* クイックリンク (NPS / CSAT は admin / super_admin にだけ出す。#1311) */}
+      <FinanceQuickLinks />
     </div>
   );
 }

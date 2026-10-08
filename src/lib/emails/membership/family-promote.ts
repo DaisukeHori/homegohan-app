@@ -1,7 +1,9 @@
 // src/lib/emails/membership/family-promote.ts
 // #1232: 「アカウント発行通知」から「家族グループ参加の本人同意依頼」へ書換え。
 // 書式は family-transfer-proposed.ts (accept_url + 依頼元名) に合わせる。
-import type { EmailEnvelope } from './templates';
+import type { EmailEnvelope } from '../envelope';
+import { emailSignature } from '../common';
+import { getEmailFrom, getSupportEmail } from '@/lib/site-config';
 
 export interface FamilyPromoteEmailVars {
   email_address: string; // 宛先 (対象者本人)
@@ -21,8 +23,9 @@ export function renderFamilyPromoteEmail(vars: FamilyPromoteEmailVars): EmailEnv
   const expiresDate = new Date(vars.expires_at).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' });
 
   return {
+    template: 'family_promote',
     to: vars.email_address,
-    from: 'ほめゴハン <noreply@homegohan.app>',
+    from: getEmailFrom(),
     subject: '【ほめゴハン】家族グループへの参加確認のお願い',
     text: `${vars.email_address} 様
 
@@ -38,11 +41,9 @@ ${vars.accept_url}
 
 このリンクは ${expiresDate} まで有効です。
 心当たりがない場合は、このメールを無視してください(何も起こりません)。
-不審に感じた場合は support@homegohan.app までご連絡ください。
+不審に感じた場合は ${getSupportEmail()} までご連絡ください。
 
-─────────────────
-ほめゴハン
-https://homegohan.app
+${emailSignature()}
 `,
   };
 }
