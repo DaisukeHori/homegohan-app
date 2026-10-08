@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { toOrgDailyStats } from "@/lib/converter";
+import { todayLocal } from "@/lib/date-utils";
 import type { OrgDailyStats } from "@/types/domain";
 
 // コンポーネント: スコアカード
@@ -82,10 +83,12 @@ export default function OrgDashboardPage() {
       const { data: adminProfile } = await supabase.from('user_profiles').select('organization_id').eq('id', user!.id).single();
       
       // 2. Edge Function 呼び出し
+      // 集計する日付は JST の今日。UTC の暦日だと JST 00:00〜08:59 に前日となり、
+      // user_daily_meals.day_date (JST の暦日) とズレる (#1210)
       const { error } = await supabase.functions.invoke('aggregate-org-stats', {
         body: { 
           organizationId: adminProfile?.organization_id,
-          date: new Date().toISOString().split('T')[0] 
+          date: todayLocal()
         }
       });
 

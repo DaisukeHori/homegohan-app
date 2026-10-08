@@ -157,6 +157,20 @@ if (!shouldRunIntegration()) {
       // imageUrl 必須のため 400 が返る
       expect(res.status).toBe(400);
     });
+
+    // #1227: imageUrl の型・形式を検証し、不正なら Vision API を呼ぶ前に 400 を返す (500 にしない)
+    it.each([
+      ['数値', 12345],
+      ['配列', ['https://example.com/a.jpg']],
+      ['http', 'http://example.com/a.jpg'],
+      ['javascript:', 'javascript:alert(1)'],
+    ])('認証あり + imageUrl が不正 (%s) → 400', async (_label, imageUrl) => {
+      const res = await invoke('analyze-fridge', {
+        body: { imageUrl },
+        authToken: testUserAccessToken,
+      });
+      expect(res.status).toBe(400);
+    });
   });
 
   // ---------------------------------------------------------------------------

@@ -25,6 +25,7 @@ import type { DailyMeal, PlannedMeal, ShoppingListItem, MealMode, MealDishes, Di
 import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
+import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
 import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, formatExpiry, formatDateJa } from "@homegohan/shared";
 import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
@@ -1886,9 +1887,21 @@ export default function WeeklyMenuPage() {
   const setServingsConfig = useServingsConfigStore((s) => s.setServingsConfig);
   const setIsLoadingServingsConfig = useServingsConfigStore((s) => s.setIsLoadingServingsConfig);
 
-  // feedbackChannelRef (nutrition 系は nutritionReducer 管理)
-  // RealtimeChannel か、ポーリング用のカスタムクリーンアップオブジェクトのどちらかを保持する
-  const feedbackChannelRef = useRef<RealtimeChannel | { unsubscribe: () => void } | null>(null);
+  // AI栄養士フィードバックの結果待ち (Realtime + ポーリング) の持ち主 (#1206)。
+  // アンマウント・モーダルを閉じる・別の取得の開始のどれでも、購読/ポーリングを必ず解除する。
+  // (nutrition 系の state は nutritionReducer 管理)
+  const feedbackWatch = useNutritionFeedbackWatch({
+    supabase: supabaseRef.current,
+    // フィードバックを見せているのは栄養詳細モーダルとサマリー(stats)モーダルの 2 つ。どちらかが開いている間は待ち続ける。
+    // サマリー → 栄養詳細への切り替えは同じ更新で起きるので、この値は true のまま変わらず購読は引き継がれる
+    isViewing: showNutritionDetailModal || activeModal === 'stats',
+    isLoading: isLoadingFeedback,
+    // 結果待ちのまま閉じられたら、スピナーを戻して、次に開いたとき取得し直せるようにする
+    onAbandoned: () => {
+      setIsLoadingFeedback(false);
+      setLastFeedbackDate(null);
+    },
+  });
 
   // 買い物リスト範囲選択 (#1031: shoppingStore に一本化)
   const shoppingRange = useShoppingStore((s) => s.shoppingRange);
@@ -2560,17 +2573,9 @@ export default function WeeklyMenuPage() {
     setIsLoadingFeedback(true);
     setFeedbackCacheId(null);
     
-    const supabase = supabaseRef.current;
-    
-    // 既存の購読/ポーリングをクリーンアップ
-    if (feedbackChannelRef.current) {
-      if ('unsubscribe' in feedbackChannelRef.current) {
-        feedbackChannelRef.current.unsubscribe();
-      } else {
-        supabase.removeChannel(feedbackChannelRef.current);
-      }
-      feedbackChannelRef.current = null;
-    }
+    // 既存の購読/ポーリングを解除し、この取得を「現役の取得」にする (#1206)。
+    // アンマウント・モーダルを閉じる・別の取得の開始のどれかで request.isCurrent() が false になる
+    const request = feedbackWatch.startRequest();
     
     const targetDay = currentPlan?.days?.find(d => d.dayDate === dateStr);
     const mealCount = targetDay?.meals?.filter(m => m.dishName)?.length || 0;
@@ -2595,9 +2600,13 @@ export default function WeeklyMenuPage() {
           })) || [],
         })
       });
+      // 応答を待つ間にアンマウント/モーダルが閉じられた/別の取得が始まった場合は、
+      // 購読を張らず state も触らずに終わる (#1206)
+      if (!request.isCurrent()) return;
       
       if (res.ok) {
         const data = await res.json();
+        if (!request.isCurrent()) return;
         
         // キャッシュから即座に取得できた場合
         if (data.cached && (data.feedback || data.praiseComment)) {
@@ -2615,118 +2624,22 @@ export default function WeeklyMenuPage() {
           setFeedbackCacheId(cacheId);
           console.log('Nutrition feedback generating, setting up Realtime + polling...');
           
-          let isResolved = false;
-          
-          // ポーリングを設定（フォールバック用、2秒間隔）
-          let pollCount = 0;
-          const maxPolls = 20; // 40秒
-          
-          const pollInterval = setInterval(async () => {
-            if (isResolved) {
-              clearInterval(pollInterval);
-              return;
-            }
-            
-            pollCount++;
-            
-            try {
-              const pollRes = await fetch(`/api/ai/nutrition/feedback?cacheId=${cacheId}`);
-              if (pollRes.ok) {
-                const pollData = await pollRes.json();
-                
-                if (pollData.status === 'completed' && (pollData.feedback || pollData.praiseComment)) {
-                  if (!isResolved) {
-                    isResolved = true;
-                    setNutritionFeedback(pollData.advice || pollData.feedback || '');
-                    setPraiseComment(pollData.praiseComment || null);
-                    setNutritionTip(pollData.nutritionTip || null);
-                    setIsLoadingFeedback(false);
-                    clearInterval(pollInterval);
-                    console.log('Nutrition feedback received via polling');
-                  }
-                } else if (pollData.status === 'error') {
-                  if (!isResolved) {
-                    isResolved = true;
-                    setNutritionFeedback(pollData.advice || pollData.feedback || '分析中にエラーが発生しました。');
-                    setPraiseComment(null);
-                    setNutritionTip(null);
-                    setIsLoadingFeedback(false);
-                    clearInterval(pollInterval);
-                  }
-                }
-              }
-            } catch (e) {
-              console.error('Polling error:', e);
-            }
-            
-            // タイムアウト
-            if (pollCount >= maxPolls && !isResolved) {
-              isResolved = true;
-              clearInterval(pollInterval);
-              setNutritionFeedback('分析がタイムアウトしました。再分析をお試しください。');
+          // 生成が終わる (成功 / 失敗 / タイムアウト) か、アンマウント・モーダルを閉じると、
+          // ポーリングの停止も Realtime チャンネルの除去も watch 側で必ず行われる (#1206)
+          request.watch(cacheId, {
+            onResolved: (content) => {
+              setNutritionFeedback(content.advice);
+              setPraiseComment(content.praiseComment);
+              setNutritionTip(content.nutritionTip);
               setIsLoadingFeedback(false);
-            }
-          }, 2000);
-          
-          // Realtimeも設定（より高速な通知のため）
-          const channel = supabase
-            .channel(`nutrition_feedback_${cacheId}`)
-            .on(
-              'postgres_changes',
-              {
-                event: 'UPDATE',
-                schema: 'public',
-                table: 'nutrition_feedback_cache',
-                filter: `id=eq.${cacheId}`,
-              },
-              (payload: any) => {
-                if (isResolved) return;
-
-                const newRecord = payload.new;
-                console.log('Realtime update received:', newRecord.status);
-
-                if (newRecord.status === 'completed' && newRecord.feedback) {
-                  isResolved = true;
-                  // DBから直接取得したJSONをパース
-                  let feedbackData;
-                  try {
-                    feedbackData = JSON.parse(newRecord.feedback);
-                  } catch {
-                    feedbackData = { praiseComment: '', advice: newRecord.feedback, nutritionTip: '' };
-                  }
-                  setNutritionFeedback(feedbackData.advice || newRecord.feedback);
-                  setPraiseComment(feedbackData.praiseComment || null);
-                  setNutritionTip(feedbackData.nutritionTip || null);
-                  setIsLoadingFeedback(false);
-                  clearInterval(pollInterval);
-                  console.log('Nutrition feedback received via Realtime');
-                } else if (newRecord.status === 'error') {
-                  isResolved = true;
-                  let feedbackData;
-                  try {
-                    feedbackData = JSON.parse(newRecord.feedback);
-                  } catch {
-                    feedbackData = { advice: newRecord.feedback };
-                  }
-                  setNutritionFeedback(feedbackData.advice || newRecord.feedback || '分析中にエラーが発生しました。');
-                  setPraiseComment(null);
-                  setNutritionTip(null);
-                  setIsLoadingFeedback(false);
-                  clearInterval(pollInterval);
-                }
-              }
-            )
-            .subscribe((status) => {
-              console.log('Realtime subscription status:', status);
-            });
-          
-          // クリーンアップ用に保存
-          feedbackChannelRef.current = {
-            unsubscribe: () => {
-              clearInterval(pollInterval);
-              supabase.removeChannel(channel);
-            }
-          };
+            },
+            onFailed: (message) => {
+              setNutritionFeedback(message);
+              setPraiseComment(null);
+              setNutritionTip(null);
+              setIsLoadingFeedback(false);
+            },
+          });
         } else {
           // UX2-03: 「キャッシュ済み」でも「生成中」でもない想定外のレスポンス形状
           // (例: cached=true だが feedback/praiseComment が空、status が想定外の値等) に
@@ -2742,6 +2655,8 @@ export default function WeeklyMenuPage() {
         setIsLoadingFeedback(false);
       }
     } catch (e) {
+      // 現役でなくなった取得 (離脱で中断された fetch など) のエラーは、画面にも state にも出さない (#1206)
+      if (!request.isCurrent()) return;
       console.error('Failed to get nutrition feedback:', e);
       setNutritionFeedback('分析中にエラーが発生しました。');
       setIsLoadingFeedback(false);
@@ -2758,13 +2673,9 @@ export default function WeeklyMenuPage() {
       fetchNutritionFeedback(currentDateStr);
     }
     
-    // クリーンアップ：モーダルが閉じたら購読/ポーリングを停止
-    return () => {
-      if (!showNutritionDetailModal && feedbackChannelRef.current) {
-        feedbackChannelRef.current.unsubscribe?.();
-        feedbackChannelRef.current = null;
-      }
-    };
+    // 購読/ポーリングの解除（モーダルを閉じたとき・アンマウント時）は useNutritionFeedbackWatch が行う。
+    // ここの cleanup で state (showNutritionDetailModal) を見て解除すると、effect 作成時点の古い値を掴み、
+    // モーダルを開いたまま離脱したときに解除されない (#1206)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showNutritionDetailModal, selectedDayIndex, weekDates, lastFeedbackDate]);  // fetchNutritionFeedback は通常関数のため deps に含めると毎回再実行されるため個別 disable
   

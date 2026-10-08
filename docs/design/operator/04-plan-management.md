@@ -115,10 +115,18 @@ export async function syncPriceChange(input: PriceChangeInput) {
 }
 ```
 
-**影響シミュレーション API** (`GET /api/super-admin/plans/{id}/impact`):
+**影響シミュレーション API** (`GET /api/super-admin/plans/{id}/price-impact`):
+
+適用範囲 (`applies_to`) ごとに「既存契約への影響」を切り分けて返す (#1212)。`applies_to` を省略した場合は `new_only` として扱う。
+
+| 適用範囲 | 既存契約への影響 | 影響契約数 / MRR 変化 | `effective_timing` |
+|---------|----------------|---------------------|--------------------|
+| `new_only` | なし (新規契約のみ新価格。既存契約は現行価格のまま) | 件数 0、MRR 変化 0 (`personal_subscriptions` は集計しない) | `none` |
+| `on_renewal` | 各契約の次回更新時から新価格 | 件数 = 下記 SQL の対象契約数、MRR 変化 = (新月額 − 現月額) × 件数 | `next_renewal` |
+| `immediately` | 即時に新価格 (日割り精算) | 同上 | `immediate` |
 
 ```sql
--- 影響する personal_subscriptions 数を計算
+-- 影響する personal_subscriptions 数を計算 (on_renewal / immediately のみ)
 SELECT COUNT(*), SUM(sp.monthly_price_jpy) as current_mrr
 FROM personal_subscriptions ps
 JOIN subscription_plans sp ON ps.plan_key = sp.plan_key
@@ -126,6 +134,9 @@ WHERE ps.plan_key = $1
   AND ps.status IN ('active', 'trialing', 'paused')
   AND ps.stripe_subscription_id IS NOT NULL;
 ```
+
+- 実装は件数のみを集計し、MRR 変化は `(新月額 − 現月額) × 件数` で概算する。`personal_subscriptions` に interval 列が無いため、年額契約も月額の差額で計算される。
+- `on_renewal` / `immediately` を既存サブスクリプションへ実際に反映する処理 (Stripe subscription items の更新) は未実装で、`stripe-price-sync` は `applies_to` を受け取るだけ (#1102)。シミュレーション結果は「反映された場合」の概算であり、UI にもその旨を注記している。
 
 ### 3.4 プランライフサイクル
 
@@ -246,6 +257,14 @@ async function applyCoupon(
   }
 }
 ```
+
+> **実装メモ (#1224)**: 上の疑似コードは処理の流れの説明。実装では 1〜5 を TS から順に呼ぶのではなく、
+> DB 関数 `public.apply_coupon` (migration `20261007160700`) の 1 トランザクションで行う。
+> `coupons` の行を `SELECT ... FOR UPDATE` でロックして同じクーポンの適用を直列化し (per_user_limit / 組織上限 / max_uses の
+> check-then-act 競合を防ぐ)、対象の契約行 (`personal_subscriptions` / `organizations`) もロックして、同じ契約への別クーポンの
+> 同時適用も直列化する。途中で失敗すれば uses_count の加算も旧 redemption の終了も全部ロールバックされる。
+> `src/lib/plan/coupon.ts` の `applyCoupon()` は RPC の呼び出しと、業務エラー (`OP_COUPON_*` など) の `CouponApplyError` への変換だけを持つ。
+> RPC は service_role のみ実行できる (呼び出し元の route は `requireRole(['super_admin'])` の後に service-role クライアントで呼ぶ)。
 
 **試用期間中のクーポン**: 試用中は適用不可。本契約開始時に自動適用。
 

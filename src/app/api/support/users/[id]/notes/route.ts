@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { recordAdminAudit } from '@/lib/admin/audit';
 import { NextResponse } from 'next/server';
 
 // ユーザーノート追加
@@ -54,14 +55,19 @@ export async function POST(
     if (error) throw error;
 
     // 監査ログ
-    await supabase
-      .from('admin_audit_logs')
-      .insert({
-        admin_id: user.id,
-        action_type: 'add_user_note',
-        target_id: params.id,
-        details: { noteId: data.id },
-      });
+    // #1200: 以前は存在しない列 admin_id (正しくは actor_id) に書いており、戻りの error も
+    // 見ていなかったため、ノート追加の監査は一度も記録されていなかった。
+    // action_type も設計書 (07-audit-monitoring.md §4.1) の admin.user.note_add に揃える。
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      actionType: 'admin.user.note_add',
+      targetId: params.id,
+      targetType: 'user',
+      details: { note_id: data.id },
+      request,
+      routeName: 'api/support/users/[id]/notes POST',
+    });
 
     return NextResponse.json({
       success: true,
@@ -79,6 +85,7 @@ export async function POST(
 }
 
 // ノート一覧取得
+// #1200: ノートを 1 件以上返したときは、admin_audit_logs へ admin.user.view_notes を記録する
 export async function GET(
   request: Request,
   { params }: { params: { id: string } }
@@ -113,15 +120,32 @@ export async function GET(
 
     if (error) throw error;
 
-    return NextResponse.json({
-      notes: (notes || []).map((n: any) => ({
-        id: n.id,
-        note: n.note,
-        createdAt: n.created_at,
-        adminId: n.admin_id,
-        adminName: n.user_profiles?.nickname || 'Unknown',
-      })),
-    });
+    const responseNotes = (notes || []).map((n: any) => ({
+      id: n.id,
+      note: n.note,
+      createdAt: n.created_at,
+      adminId: n.admin_id,
+      adminName: n.user_profiles?.nickname || 'Unknown',
+    }));
+
+    // #1200: 他ユーザーについての管理ノートを返す前に、誰が誰のノートを閲覧したかを残す。
+    // 返すノートが 0 件のときは何も開示していないため記録しない。
+    // 記録に失敗しても閲覧は止めない (失敗は db-logger に error で残る)。
+    // details にはノートの本文ではなく項目名だけを入れる。
+    if (responseNotes.length > 0) {
+      await recordAdminAudit({
+        supabase,
+        actorId: user.id,
+        actionType: 'admin.user.view_notes',
+        targetId: params.id,
+        targetType: 'user',
+        details: { viewed_fields: Object.keys(responseNotes[0]) },
+        request,
+        routeName: 'api/support/users/[id]/notes GET',
+      });
+    }
+
+    return NextResponse.json({ notes: responseNotes });
 
   } catch (error: any) {
     console.error('Notes fetch error:', error);

@@ -8,6 +8,8 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail } from '@/lib/emails/send';
 import { renderForceDissolveEmail } from '@/lib/emails/membership/operator-force-dissolve';
 import { z } from 'zod';
@@ -31,8 +33,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  const logger = createLogger('POST /api/operator/membership/org/[id]/dissolve', generateRequestId());
   try {
-    await requireSuperAdmin();
+    const { userId: operatorId } = await requireSuperAdmin();
     const { id: orgId } = params;
 
     const body = await req.json().catch(() => null);
@@ -47,7 +50,7 @@ export async function POST(
 
     // 解散前に全メンバ情報を取得 (解散後は取得困難)
     const admin = getServiceRoleClient();
-    const { data: preMembers } = await admin
+    const { data: preMembers, error: preMembersError } = await admin
       .from('user_profiles')
       .select('id, nickname')
       .eq('organization_id', orgId);
@@ -73,25 +76,31 @@ export async function POST(
       );
     }
 
-    // 通知メール (failed silent)
+    // 通知メール (best-effort)。解散はすでに完了しているので、失敗しても 200 を返し、ログに残す。
+    // ログには宛先のメールアドレスを残さない。
+    const log = logger.withUser(operatorId);
+    if (preMembersError) {
+      // 宛先が分からないので送れない。黙ってスキップせず記録する (解散自体は完了している)
+      log.error('解散前のメンバー一覧を取得できなかったため、通知メールを送信しませんでした', preMembersError, {
+        organization_id: orgId,
+      });
+      return NextResponse.json({ data: org });
+    }
+
     try {
       const userIds = (preMembers ?? []).map((m) => m.id);
-      const { data: authUsers } = await admin.auth.admin.listUsers();
-      const emailMap: Record<string, string> = {};
       const nicknameMap: Record<string, string> = {};
       for (const m of preMembers ?? []) {
         nicknameMap[m.id] = m.nickname ?? '';
       }
-      for (const u of authUsers?.users ?? []) {
-        if (userIds.includes(u.id) && u.email) {
-          emailMap[u.id] = u.email;
-        }
-      }
+
+      // auth.users のメールアドレス。listUsers() は先頭 50 件しか返さないため、通知先の分だけを引く (#1204)
+      const emailMap = await resolveAuthEmails(userIds, { admin, logger: log });
 
       const orgName = preOrg?.name ?? '';
-      const emailTasks = userIds.map((uid) => {
-        const recipientEmail = emailMap[uid];
-        if (!recipientEmail) return Promise.resolve();
+      const emailTasks = userIds.flatMap((uid) => {
+        const recipientEmail = emailMap.get(uid);
+        if (!recipientEmail) return [];
         const envelope = renderForceDissolveEmail({
           recipient_email: recipientEmail,
           recipient_name: nicknameMap[uid] ?? null,
@@ -99,12 +108,20 @@ export async function POST(
           scope_name: orgName,
           reason,
         });
-        return sendEmail(envelope);
+        return [sendEmail(envelope)];
       });
 
-      await Promise.allSettled(emailTasks);
+      const results = await Promise.allSettled(emailTasks);
+      const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (failures.length > 0) {
+        // 個別の送信失敗も握りつぶさず記録する (ログに宛先のメールアドレスは残さない)
+        log.error('通知メールの一部を送信できませんでした', failures[0].reason, {
+          organization_id: orgId,
+          failed_count: failures.length,
+        });
+      }
     } catch (emailErr) {
-      console.error('[operator/org/dissolve] 通知メール送信失敗 (graceful):', emailErr);
+      log.error('通知メール送信処理に失敗しました (解散は完了済み)', emailErr, { organization_id: orgId });
     }
 
     return NextResponse.json({ data: org });

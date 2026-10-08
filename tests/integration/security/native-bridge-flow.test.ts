@@ -87,8 +87,8 @@ const createdUserIds: string[] = [];
 /**
  * onboardingCompleted: true にすると、オンボーディング完了済みのユーザーになる。
  * 未完了のユーザーは、Cookie セッションを持つリクエストが middleware (lib/onboarding-routing.ts) によって
- * /auth/native-bridge を含む全ての非オンボーディングパスから /onboarding/welcome へ飛ばされ、
- * ルートハンドラに届かない。ブリッジのルート自身の挙動 (S-7) を確かめるときは完了済みのユーザーを使う。
+ * 非オンボーディングパスから /onboarding/welcome へ飛ばされる。ただし /auth/* (ネイティブ認証ブリッジを含む) は
+ * 差し戻さない (S-7b)。ブリッジ以外のページを経由する確認では完了済みのユーザーを使う。
  */
 async function createUser(label: string, options: { onboardingCompleted?: boolean } = {}): Promise<TestUser> {
   const email = `sec-1036-${label}-${TS}@homegohan.test`;
@@ -376,15 +376,32 @@ describe('#1036 GET /auth/native-bridge?code=...', () => {
     expect(reload.headers.get('cache-control')).toContain('no-store');
   });
 
-  it('S-7b: オンボーディング未完了のユーザーは、Cookie があると middleware が先に /onboarding/welcome へ飛ばす (従来どおり。/login にはならない)', async () => {
+  it('S-7b: オンボーディング未完了のユーザーの Cookie があっても、ブリッジは middleware に差し戻されずルートに届く (再読み込みは next へ)', async () => {
     const code = (await issueCode(userA)).body.code!;
     const first = await bridge({ code });
     const cookie = sessionCookieHeader(first);
     expect(cookie).not.toBe('');
 
+    // 修正前は middleware が先に /onboarding/welcome へ飛ばしていた
     const reload = await bridge({ code, next: '/menus?mode=app' }, cookie);
     expect(reload.status).toBe(307);
-    expect(locationOf(reload).pathname).toBe('/onboarding/welcome');
+    const location = locationOf(reload);
+    expect(location.pathname).toBe('/menus');
+    expect(location.search).toBe('?mode=app');
+  });
+
+  it('S-7c: オンボーディング未完了の別アカウントの Cookie が残っていても、新しいコードでアカウントが切り替わる', async () => {
+    const codeA = (await issueCode(userA)).body.code!;
+    const cookieA = sessionCookieHeader(await bridge({ code: codeA }));
+    expect(cookieA).not.toBe('');
+
+    // WebView に userA (オンボーディング未完了) のセッションが残ったまま、アプリが userB のコードでブリッジを開く
+    const codeB = (await issueCode(userB)).body.code!;
+    const switched = await bridge({ code: codeB, next: '/menus?mode=app' }, cookieA);
+    expect(switched.status).toBe(307);
+    expect(locationOf(switched).pathname).toBe('/menus');
+    expect(sessionCookieHeader(switched)).not.toBe('');
+    expect(readSession(switched)?.user?.id).toBe(userB.id);
   });
 
   it('S-8: Cookie だけで認証が通る (WebView へ localStorage を注入しなくてよい)', async () => {

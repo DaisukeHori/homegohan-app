@@ -400,6 +400,7 @@ CREATE TABLE app_logs (
 - Edge Functions用: `supabase/functions/_shared/db-logger.ts`
 - Next.js API用: `src/lib/db-logger.ts`
 - クライアント用: `POST /api/log`
+- 保存前のマスキング: いずれも `supabase/functions/_shared/log-sanitizer.ts` を通してから insert する（`message` / `error_message` / `error_stack` / `metadata` のトークン・キー・接続文字列・メールアドレスなどをマスクし、文字数を切り詰める。`user_id` は uuid の形でなければ NULL）
 
 **クエリ例（MCP経由でAIが実行可能）:**
 ```sql
@@ -2029,6 +2030,8 @@ CREATE OR REPLACE FUNCTION search_recipes_with_nutrition(
 
 **バージョン:** v4
 **ファイル:** `supabase/functions/generate-menu-v4/index.ts`
+
+> **Status: 2026-10-07 確認 — 現行の本番主系は V5**（`supabase/functions/generate-menu-v5/index.ts`）。本節は V4 の仕様記録です。`generate-menu-v4` は非推奨で、feature flag OFF 時のフォールバックとして残っています。ただし `POST /api/ai/nutrition-analysis` は今もフラグに関係なく V4 を直接呼びます。8.7.5 のコード例は V4 固定で書かれていますが、実装（`src/app/api/ai/menu/v4/generate/route.ts`）は `menu_generation_v5_direct`（既定 ON）で V5 / V4 を切り替えます。最新の呼び出し関係は `supabase/functions/README.md` の「献立生成 v4 と v5 の使い分け」を参照してください。
 
 #### 8.7.1 概要
 

@@ -1,5 +1,6 @@
 /**
  * GET /api/admin/users/{id} — ユーザー詳細
+ *   (#1200: 情報を返すたびに admin_audit_logs へ admin.user.view を記録する)
  * PATCH /api/admin/users/{id} — admin_note 更新
  * operator/02-api-spec.md §4 準拠
  */
@@ -9,13 +10,18 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { UserPatchBodySchema } from '@/lib/admin/users-schemas';
+import { recordAdminAudit } from '@/lib/admin/audit';
+import { canViewUserEmail, fetchUserEmails } from '@/lib/admin/user-emails';
 import { isAccountFrozen } from '@/lib/auth/frozen';
 
 export const dynamic = 'force-dynamic';
 
+/** ログの発生元 (src/lib/admin/user-emails.ts がメール取得の失敗を記録するときに使う) */
+const LOG_SOURCE = 'GET /api/admin/users/[id]';
+
 type Params = { params: { id: string } };
 
-export async function GET(_request: Request, { params }: Params) {
+export async function GET(request: Request, { params }: Params) {
   let actor;
   try {
     actor = await requireRole(['admin', 'super_admin', 'support']);
@@ -56,6 +62,13 @@ export async function GET(_request: Request, { params }: Params) {
       { status: 404 },
     );
   }
+
+  // メールアドレス (#1145): 見てよいのは admin / super_admin だけ。support には引かず null。
+  // この 1 件のぶんだけを service_role 専用の RPC で auth.users から引く。
+  // 引けなかった (メールを持たない / 取得に失敗した) ときも null。
+  const email = canViewUserEmail(actor.roles)
+    ? ((await fetchUserEmails(supabaseAdmin, [profile.id], LOG_SOURCE)).get(profile.id) ?? null)
+    : null;
 
   // サポートチケット数 (テーブルが存在する場合)
   let supportTicketCount = 0;
@@ -112,10 +125,10 @@ export async function GET(_request: Request, { params }: Params) {
 
   void auditLogs; // 現在は ban_history として返す
 
-  return NextResponse.json({
+  const body = {
     data: {
       id: profile.id,
-      email: null,
+      email,
       nickname: profile.nickname,
       roles: profile.roles ?? ['user'],
       plan_key: profile.plan_key_cached ?? 'free',
@@ -143,7 +156,27 @@ export async function GET(_request: Request, { params }: Params) {
       last_login_at: profile.last_login_at ?? null,
       registered_at: profile.created_at,
     },
+  };
+
+  // #1200: 他ユーザーの情報を返す前に、誰が誰を閲覧したかを監査ログへ残す。
+  // 404 (対象なし) は上で返しているため、ここに来るのは情報を返すときだけ。
+  // 記録に失敗しても閲覧は止めない (失敗は db-logger に error で残る)。
+  // details には返した項目名 (値が null の項目も含む) だけを入れ、値や email は入れない。
+  await recordAdminAudit({
+    supabase,
+    actorId: actor.id,
+    actionType: 'admin.user.view',
+    targetId: id,
+    targetType: 'user',
+    details: { viewed_fields: Object.keys(body.data) },
+    request,
+    routeName: 'api/admin/users/[id] GET',
   });
+
+  const response = NextResponse.json(body);
+  // メールアドレスを含むため、共有キャッシュに残さない
+  response.headers.set('Cache-Control', 'no-store');
+  return response;
 }
 
 export async function PATCH(request: Request, { params }: Params) {

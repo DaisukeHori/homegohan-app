@@ -7,6 +7,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,8 +25,9 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  const logger = createLogger('GET /api/operator/membership/family/[id]/candidates', generateRequestId());
   try {
-    await requireSuperAdmin();
+    const { userId: operatorId } = await requireSuperAdmin();
     const { id: familyId } = params;
 
     const admin = getServiceRoleClient();
@@ -46,7 +49,10 @@ export async function GET(
       );
     }
 
-    const userIds = (members ?? []).map((m) => m.user_id);
+    // adult / representative はアカウントを持つが、念のため NULL は除く (.in() に null を渡すと uuid として解釈できず失敗する)
+    const userIds = (members ?? [])
+      .map((m) => m.user_id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
 
     // user_profiles からニックネームを取得
     const { data: profiles } = await admin
@@ -59,20 +65,16 @@ export async function GET(
       profileMap[p.id] = { nickname: p.nickname, last_login_at: p.last_login_at };
     }
 
-    // email 取得
-    const { data: authUsers } = await admin.auth.admin.listUsers();
-    const emailMap: Record<string, string> = {};
-    for (const u of authUsers?.users ?? []) {
-      if (userIds.includes(u.id) && u.email) {
-        emailMap[u.id] = u.email;
-      }
-    }
+    // email 取得 (auth.users)。listUsers() は page / perPage を渡さないと先頭 50 件しか返さず、
+    // 登録ユーザーが 50 人を超えると候補者の email が欠けるため、候補者の分だけを引く (#1204)。
+    // 取得できなかった人は email: null で返し、警告ログに残す
+    const emailMap = await resolveAuthEmails(userIds, { admin, logger: logger.withUser(operatorId) });
 
     const candidates = (members ?? []).map((m) => ({
       id: m.user_id,
       role: m.role,
       nickname: profileMap[m.user_id]?.nickname ?? null,
-      email: emailMap[m.user_id] ?? null,
+      email: emailMap.get(m.user_id) ?? null,
       last_login_at: profileMap[m.user_id]?.last_login_at ?? null,
     }));
 
