@@ -7,6 +7,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,8 +27,9 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  const logger = createLogger('GET /api/operator/membership/org/[id]/candidates', generateRequestId());
   try {
-    await requireSuperAdmin();
+    const { userId: operatorId } = await requireSuperAdmin();
     const { id: orgId } = params;
 
     const admin = getServiceRoleClient();
@@ -45,25 +48,18 @@ export async function GET(
       );
     }
 
-    // auth.users からメールアドレスを取得
+    // auth.users からメールアドレスを取得する。listUsers() は page / perPage を渡さないと先頭 50 件しか返さず、
+    // 登録ユーザーが 50 人を超えると候補者の email が欠けるため、候補者の分だけを引く (#1204)。
+    // 取得できなかった人は email: null で返し、警告ログに残す
     const userIds = (data ?? []).map((r) => r.id);
-    const emailMap: Record<string, string> = {};
-
-    if (userIds.length > 0) {
-      const { data: authUsers } = await admin.auth.admin.listUsers();
-      for (const u of authUsers?.users ?? []) {
-        if (userIds.includes(u.id) && u.email) {
-          emailMap[u.id] = u.email;
-        }
-      }
-    }
+    const emailMap = await resolveAuthEmails(userIds, { admin, logger: logger.withUser(operatorId) });
 
     const candidates = (data ?? []).map((row) => ({
       id: row.id,
       nickname: row.nickname,
       org_role: row.org_role,
       last_login_at: row.last_login_at,
-      email: emailMap[row.id] ?? null,
+      email: emailMap.get(row.id) ?? null,
     }));
 
     return NextResponse.json({ data: candidates });
