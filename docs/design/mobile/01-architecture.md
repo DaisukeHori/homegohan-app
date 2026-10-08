@@ -81,6 +81,24 @@ type NativeToWebMessage =
 `open-image-picker` と `upload-meal-photo` は `nativeBridge.ts` (新規実装) で処理し、
 カメラ起動 → Supabase Storage アップロード → `upload-complete` で Web 側に URL を返す。
 
+#### `download` メッセージの制約 (#1159)
+
+`download` の `filename` / `content` / `mimeType` と、メッセージを送ってきたページは、WebView の中で動く JS が自由に作れる。
+ネイティブは何も信用せず、`src/lib/webViewDownload.ts` で次のとおりに扱う。Web 側でエクスポートを増やすときは、この制約に収まるようにする
+(収まらないものは、ネイティブ側が黙って捨てるか、別の名前・形式に直して書く)。
+
+| 項目 | 扱い |
+|------|------|
+| 送信元 | `EXPO_PUBLIC_WEB_URL` と同じオリジン (スキーム + ホスト + ポート) のページからのメッセージだけ処理する。それ以外は何も書かずに捨てる |
+| `filename` | ディレクトリ区切り (`/` `\`) より前は捨てる。英数字と `.` `_` `-` 以外は `_` にする。`..` は作らない。100 文字まで。拡張子は `csv` / `json` / `txt` だけで、それ以外・無いときは `mimeType` から決め、決まらなければ `txt`。使える名前が残らなければ `homegohan-export.<拡張子>` |
+| `mimeType` | 共有シートに渡す値は、最終的な拡張子から決める (`csv` → `text/csv`、`json` → `application/json`、`txt` → `text/plain`)。送られてきた値は、拡張子が使えないときの手がかりにだけ使う |
+| `content` | 文字列で、10,485,760 文字 (`MAX_DOWNLOAD_CONTENT_LENGTH`) 以下。UTF-8 の文字列として書くので、画像や PDF のようなバイナリは扱えない |
+| 保存先 | `cacheDirectory` の下の `webview-downloads/`。`documentDirectory` には書かない。1 時間より古いファイルは、次の書き出しのときに消す (共有した直後に消すと、Android では共有先のアプリがまだ読み終えていないことがある) |
+
+形式を増やすときは、`webViewDownload.ts` の `ALLOWED_EXTENSIONS` / `MIME_TYPE_BY_EXTENSION` と `__tests__/lib/webViewDownload.test.ts` を合わせて直す。
+OTA 更新は無効なので、配布済みのアプリの許可リストは後から直せない。許可リストにない拡張子の `download` は、このサニタイズが入ったアプリでは `txt` として書かれる。
+新しい形式を Web 側で使い始めるのは、その形式に対応したアプリが行き渡ってからにする。
+
 ### 3.3 セッション同期
 
 WebView ハイブリッドにおける最大の課題は「ネイティブ側セッション ↔ WebView 内 Web セッション」の同期である。
