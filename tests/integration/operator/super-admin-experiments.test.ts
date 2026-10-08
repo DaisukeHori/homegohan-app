@@ -38,7 +38,8 @@ beforeAll(async () => {
   ]);
 
   // Create a draft experiment directly via admin client for GET/PATCH/results tests
-  const { data } = await supabaseAdmin
+  // INSERT の error は必ず確認する (作れないまま黙ってスキップさせず、このあとのテストが空振りで通るのを防ぐ)
+  const { data, error } = await supabaseAdmin
     .from('experiments')
     .insert({
       key: `integration_exp_${TS}`,
@@ -54,12 +55,11 @@ beforeAll(async () => {
     .select('id')
     .single();
 
-  if (data) {
-    testExperimentId = data.id;
-  }
+  if (error || !data) throw new Error(`Failed to create the experiment: ${error?.message}`);
+  testExperimentId = data.id;
 
   // Create another experiment for DELETE tests
-  const { data: del } = await supabaseAdmin
+  const { data: del, error: delError } = await supabaseAdmin
     .from('experiments')
     .insert({
       key: `integration_del_exp_${TS}`,
@@ -74,9 +74,8 @@ beforeAll(async () => {
     .select('id')
     .single();
 
-  if (del) {
-    deletableExperimentId = del.id;
-  }
+  if (delError || !del) throw new Error(`Failed to create the experiment to delete: ${delError?.message}`);
+  deletableExperimentId = del.id;
 }, 60000);
 
 afterAll(async () => {

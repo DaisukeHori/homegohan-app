@@ -126,7 +126,7 @@ describe('DELETE /api/super-admin/coupons/[id]', () => {
     const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
     const nextMonth = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
 
-    const { data } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from('coupons')
       .insert({
         code: `DELTEST${TS}`,
@@ -143,9 +143,9 @@ describe('DELETE /api/super-admin/coupons/[id]', () => {
       .select('id')
       .single();
 
-    if (data) {
-      deletableCouponId = data.id;
-    }
+    // 作れなかったときに黙ってスキップさせない (このあとの DELETE のテストが空振りで通るのを防ぐ)
+    if (error || !data) throw new Error(`Failed to create the coupon to delete: ${error?.message}`);
+    deletableCouponId = data.id;
   });
 
   afterAll(async () => {
