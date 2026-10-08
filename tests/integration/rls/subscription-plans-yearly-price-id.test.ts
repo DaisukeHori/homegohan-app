@@ -6,7 +6,7 @@
  * また、この列は「最後に触った側 (月額か年額か) の Price」を指す意味になり、片方の Price の参照が失われた。
  *
  * オーナー判断 (2026-10-08): 価格変更は新規契約だけに適用し、年額用の欄を足す。
- * 修正 (20261008140100_add_stripe_yearly_price_id.sql):
+ * 修正 (20261008190000_add_stripe_yearly_price_id.sql):
  *   - subscription_plans に stripe_yearly_price_id varchar(255) (NULL 可・既定値なし) を足す
  *   - stripe_price_id は「月額」の Price ID と決め、列コメントに残す (stripe_yearly_price_id は「年額」)
  *   - 行の権限 (RLS ポリシー) は変えない
@@ -46,7 +46,7 @@ if (!url || !anonKey || !serviceKey) {
 }
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
-const MIGRATION_FILE = 'supabase/migrations/20261008140100_add_stripe_yearly_price_id.sql';
+const MIGRATION_FILE = 'supabase/migrations/20261008190000_add_stripe_yearly_price_id.sql';
 
 function client(key: string, accessToken?: string): SupabaseClient {
   return createClient(url, key, {

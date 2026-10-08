@@ -73,7 +73,7 @@ CREATE TABLE subscription_plans (
   -- Stripe 連携
   stripe_product_id       VARCHAR(255),   -- Stripe Product object ID
   stripe_price_id         VARCHAR(255),   -- 月額の現在有効な Stripe Price ID (#1102 で「月額」と決めた)
-  stripe_yearly_price_id  VARCHAR(255),   -- 年額の現在有効な Stripe Price ID (#1102 で追加。migration 20261008140100)
+  stripe_yearly_price_id  VARCHAR(255),   -- 年額の現在有効な Stripe Price ID (#1102 で追加。migration 20261008190000)
   -- 上限値
   max_members             INT,            -- 家族最大人数、組織最大 seat 数
   max_family_seats        INT,            -- 組織プランの家族同梱 seat 数

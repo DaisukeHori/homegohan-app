@@ -1,4 +1,4 @@
--- rollback: 20261008140100_add_stripe_yearly_price_id.sql
+-- rollback: 20261008190000_add_stripe_yearly_price_id.sql
 -- 戻すと #1102 より前の状態 (Stripe Price ID を stripe_price_id の 1 列しか持てない状態) に戻る。
 --
 -- 内容: 足した列 stripe_yearly_price_id を消し、stripe_price_id の列コメントを外す

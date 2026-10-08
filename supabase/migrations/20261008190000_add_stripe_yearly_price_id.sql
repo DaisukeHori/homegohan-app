@@ -1,4 +1,4 @@
--- migration: 20261008140100_add_stripe_yearly_price_id.sql
+-- migration: 20261008190000_add_stripe_yearly_price_id.sql
 -- #1102: subscription_plans に、年額用の Stripe Price ID を入れる欄 stripe_yearly_price_id を足す
 --        (stripe_price_id は「月額」の Price ID と決め、列コメントに残す)
 --
@@ -36,7 +36,7 @@
 -- 冪等: ADD COLUMN IF NOT EXISTS と COMMENT ON のため、2 回続けて適用してもエラーにならず、書いた値も消えない。
 -- 確認: tests/integration/rls/subscription-plans-yearly-price-id.test.ts。この migration の前は列が無いため失敗し、
 --   この migration の後は全件成功する (権限・冪等性も確かめる)。
--- ロールバック: supabase/rollbacks/20261008140100_add_stripe_yearly_price_id.down.sql
+-- ロールバック: supabase/rollbacks/20261008190000_add_stripe_yearly_price_id.down.sql
 --   (列を落とすと、記録済みの年額の Price ID は失われる。価格変更 API のコードも一緒に戻すこと)
 
 SET LOCAL lock_timeout = '10s';
