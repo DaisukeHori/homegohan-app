@@ -5,7 +5,7 @@
  * こちらは次を検証する:
  *   1. code 発行リクエスト (POST /api/auth/native-bridge/code, Bearer, body は refresh_token)
  *   2. 失敗時 (ネットワーク / 非 2xx / 不正レスポンス / セッション無し) はトークン無しの直接 URL へ倒れる
- *   3. access_token の残りが少なければ (Web 側の下限 150 秒 + 余裕) 先に refreshSession する。更新に失敗して下限を割るなら POST しない
+ *   3. access_token の残りが少なければ先に refreshSession する
  *   4. initialPath (deep link 由来) の検証: //evil.example 等は既定パスへ戻る
  *   5. onShouldStartLoadWithRequest: 自オリジン以外のトップフレーム遷移は遮断して既定ブラウザへ
  *   6. onOpenWindow (target=_blank): 自オリジンは今の WebView、他オリジンは既定ブラウザ
@@ -260,10 +260,10 @@ describe('code 発行に失敗した場合は直接 URL へ倒れる', () => {
 // 3. access_token の事前 refresh
 // ─────────────────────────────────────────────────────────────────────────────
 describe('access_token の残りが少ない場合', () => {
-  const expiresIn = (sec: number) => Math.floor(Date.now() / 1000) + sec;
-
-  it('残りが少なければ (30 秒) refreshSession してから、更新後のトークンで code を発行する', async () => {
-    mockGetSession.mockResolvedValue({ data: { session: makeSession({ expires_at: expiresIn(30) }) } });
+  it('120 秒未満なら refreshSession してから、更新後のトークンで code を発行する', async () => {
+    mockGetSession.mockResolvedValue({
+      data: { session: makeSession({ expires_at: Math.floor(Date.now() / 1000) + 30 }) },
+    });
     mockRefreshSession.mockResolvedValue({
       data: { session: makeSession({ access_token: 'renewed-access', refresh_token: 'renewed-refresh' }) },
       error: null,
@@ -278,53 +278,9 @@ describe('access_token の残りが少ない場合', () => {
     expect(uriOf()).toContain('/auth/native-bridge?code=');
   });
 
-  // Web 側の下限 (150 秒) の 1 秒前。端末の supabase-js の getSession() は残り 90 秒を切るまで更新しないので、
-  // ここで先に refreshSession しないと Web 側が 401 AUTH_TOKEN_EXPIRING を返し、タブがログイン画面になる (例: 閾値が 120 秒だと 121〜149 秒がこれに当たる)
-  it.each([149, 130, 121])(
-    '残りが %i 秒 (Web 側の下限 150 秒未満) でも、先に refreshSession してから、更新後のトークンで code を発行する',
-    async (remaining) => {
-      mockGetSession.mockResolvedValue({ data: { session: makeSession({ expires_at: expiresIn(remaining) }) } });
-      mockRefreshSession.mockResolvedValue({
-        data: { session: makeSession({ access_token: 'renewed-access', refresh_token: 'renewed-refresh' }) },
-        error: null,
-      });
-
-      await renderScreen('/home');
-
-      expect(mockRefreshSession).toHaveBeenCalledTimes(1);
-      expect(mockRefreshSession.mock.invocationCallOrder[0]).toBeLessThan(mockFetch.mock.invocationCallOrder[0]);
-      expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe('Bearer renewed-access');
-      expect(uriOf()).toContain('/auth/native-bridge?code=');
-    },
-  );
-
   it('十分に有効なら refreshSession しない', async () => {
     await renderScreen('/home');
     expect(mockRefreshSession).not.toHaveBeenCalled();
-  });
-
-  it('refreshSession に失敗し、残りが Web 側の下限 (150 秒) 未満なら、code 発行を呼ばず直接 URL を表示する (401 が確定している POST を省く)', async () => {
-    mockGetSession.mockResolvedValue({ data: { session: makeSession({ expires_at: expiresIn(100) }) } });
-    mockRefreshSession.mockRejectedValue(new Error('Network request failed'));
-
-    await renderScreen('/home');
-
-    expect(mockRefreshSession).toHaveBeenCalledTimes(1);
-    expect(mockFetch).not.toHaveBeenCalled();
-    expect(uriOf()).toBe(`${WEB_BASE_URL}/home?mode=app`);
-    expect(uriOf()).not.toContain(ACCESS);
-  });
-
-  it('refreshSession に失敗しても、残りが Web 側の下限以上 (170 秒) なら、現在のトークンで code を発行する', async () => {
-    mockGetSession.mockResolvedValue({ data: { session: makeSession({ expires_at: expiresIn(170) }) } });
-    mockRefreshSession.mockRejectedValue(new Error('Network request failed'));
-
-    await renderScreen('/home');
-
-    expect(mockRefreshSession).toHaveBeenCalledTimes(1);
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe(`Bearer ${ACCESS}`);
-    expect(uriOf()).toContain('/auth/native-bridge?code=');
   });
 });
 
@@ -338,31 +294,6 @@ describe('initialPath の検証', () => {
 
     const next = new URL(uriOf()).searchParams.get('next');
     expect(next).toBe('/menus/weekly?date=2026-10-07&modal=shopping&mode=app');
-  });
-
-  // tab-navigate の fullPath は pathname + search。WHATWG URL はクエリ中の @ をエンコードしないので、そのまま現れる。
-  // 弾くとタブの既定パスに黙って戻り、クエリが失われる
-  it('クエリ中の @ を含むパス (tab-navigate の fullPath) も、そのまま使う', async () => {
-    mockSearchParams = { initialPath: '/menus/weekly?q=a@b' };
-    await renderScreen('/menus/weekly');
-
-    expect(new URL(uriOf()).searchParams.get('next')).toBe('/menus/weekly?q=a@b&mode=app');
-  });
-
-  it('クエリ中の @ を含むパスも、セッション無しの直接 URL ではホストを変えない', async () => {
-    mockGetSession.mockResolvedValue({ data: { session: null } });
-    mockSearchParams = { initialPath: '/menus/weekly?q=a@b' };
-    await renderScreen('/menus/weekly');
-
-    expect(uriOf()).toBe(`${WEB_BASE_URL}/menus/weekly?q=a@b&mode=app`);
-    expect(new URL(uriOf()).host).toBe('homegohan-app.vercel.app');
-  });
-
-  it('パス部分に @ を含む値は、タブの配下でも既定パスへ戻る', async () => {
-    mockSearchParams = { initialPath: '/menus/x@evil.example' };
-    await renderScreen('/menus/weekly');
-
-    expect(new URL(uriOf()).searchParams.get('next')).toBe('/menus/weekly?mode=app');
   });
 
   it.each([

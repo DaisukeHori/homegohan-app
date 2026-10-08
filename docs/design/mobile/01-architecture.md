@@ -93,32 +93,13 @@ WebView ハイブリッドにおける最大の課題は「ネイティブ側セ
 1. ユーザーがネイティブ認証画面でメール/パスワードを入力
 2. Supabase Auth → access_token + refresh_token 取得
 3. ネイティブ側: expo-secure-store に保存 (AuthProvider)
-4. WebViewScreen: ネイティブのセッションを取得 (access_token の残りが 210 秒未満なら先に refreshSession。下の「code 発行時の access_token の残りの閾値」を参照)
+4. WebViewScreen: ネイティブのセッションを取得 (access_token の残りが 120 秒未満なら先に refreshSession)
 5. WebViewScreen: POST {WEB}/api/auth/native-bridge/code (Authorization: Bearer <access_token>, body: { refresh_token }) → { code, expires_in: 60 }
 6. WebViewScreen: /auth/native-bridge?code=C&next=/home?mode=app を WebView に表示 (URL に載るのは code のみ)
 7. native-bridge (Next.js Route): code を 1 回だけ消費 → Supabase setSession → Cookie にセット → next へリダイレクト
 8. これ以降 WebView は Cookie のセッションで認証済み (localStorage へは何も注入しない)
 9. code 発行に失敗した場合 (ネットワーク・非 2xx 等) は、トークンを含まない直接 URL を表示する。旧方式 (トークン付き URL) には決してフォールバックしない
 ```
-
-#### code 発行時の access_token の残りの閾値
-
-Web 側は、有効期限までの残りが 150 秒未満の access_token には code を発行せず、`401 AUTH_TOKEN_EXPIRING` を返す
-(`src/lib/auth/native-bridge-code.ts` の `MIN_ACCESS_TOKEN_REMAINING_SECONDS`)。code の引き換え時とその直後に、Web 側が
-refresh_token をローテーションしてしまわないようにするため (ローテーションされると、ネイティブが持つ refresh_token が使用済みになる)。
-
-| 値 | 意味 | 定義 |
-|----|------|------|
-| 90 秒 | 端末の supabase-js の `getSession()` が自動更新を始める残り (`EXPIRY_MARGIN_MS`)。これを切るまで更新しない | supabase-js (auth-js) |
-| 150 秒 | Web 側の下限 = code の有効期間 60 秒 + 上の 90 秒 | Web: `MIN_ACCESS_TOKEN_REMAINING_SECONDS` / モバイル: `BRIDGE_SERVER_MIN_TOKEN_TTL_SEC` |
-| 210 秒 | モバイルが先に `refreshSession` する閾値 = 150 秒 + 余裕 60 秒 (通信時間は最大 8 秒。残りは端末の時計の遅れを見込む) | モバイル: `BRIDGE_MIN_TOKEN_TTL_SEC` |
-
-- 端末の `getSession()` は残り 90 秒を切るまで更新しないので、bridge の時点の access_token の残りは 90〜3600 秒になる。90〜150 秒の区間は、事前に更新しないと Web 側が必ず 401 にする。
-  閾値を Web 側の下限より低くすると、その差の区間に開いたタブが、code を取れずに未ログインの直接 URL になる (例: 閾値が 120 秒なら、残り 120〜150 秒 = 1 時間のうち 30 秒)
-- 閾値を 210 秒にしたことで、`refreshSession` が走るのは 1 時間のうち約 3% のタブ表示 (残り 90〜210 秒) になる
-- 更新に失敗したときは、残りが 150 秒以上なら現在のトークンで code を発行してもらい、足りなければ code 発行を呼ばずに直接 URL を表示する (Web 側が必ず 401 にする POST を省く)
-- Web 側の 150 秒と、モバイル側の `BRIDGE_SERVER_MIN_TOKEN_TTL_SEC` は必ず同じ値に保つ。OTA が無効なので、配布済みのアプリの値は後から直せない
-- 端末の時計が実時間より 1 分前後以上遅れていると、余裕を使い切って 401 になり得る (そのときは直接 URL に倒れる)
 
 #### ログアウト時フロー
 
@@ -354,7 +335,6 @@ useEffect(() => {
 | WebView 読み込み失敗 | `renderLoading` スピナー + タイムアウト後リトライボタン |
 | セッション取得失敗 | `uri = WEB_BASE_URL + path?mode=app` (未ログイン状態で表示) |
 | bridge code 発行失敗 (ネットワーク・タイムアウト 8 秒・非 2xx) | 同上。トークンを含まない直接 URL を表示し、旧方式のトークン付き URL にはフォールバックしない |
-| access_token の残りが Web 側の下限 (150 秒) 未満で、`refreshSession` にも失敗 | code 発行を呼ばず (Web 側が必ず 401 にするため)、同上の直接 URL を表示 |
 | 他オリジンへの遷移 (レシピ等の外部リンク) | WebView では開かず OS の既定ブラウザで開く。WebView は元のページのまま |
 | バージョンチェック API エラー | スキップして起動継続 (オフライン対応) |
 | native-bridge リダイレクトエラー | Web 側で 500 → WebView がエラーページ → ネイティブで再ロード |

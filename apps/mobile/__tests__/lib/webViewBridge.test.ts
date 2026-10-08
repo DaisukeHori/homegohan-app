@@ -8,7 +8,7 @@
  *   - withAppMode / buildWebUrl / buildBridgeUrl: URL に載るのは code と next だけでトークンは載らない
  *   - decideNavigation / decideOpenWindow / openExternalUrl: WebView を自オリジンに固定し外部は既定ブラウザへ
  *   - buildOriginGuardScript / buildNavigateScript: 注入スクリプトのオリジンガード
- *   - getSessionForBridge: access_token の残りが少ないときの事前 refresh (Web 側の下限 150 秒との関係は webViewBridge.supabase.test.ts も参照)
+ *   - getSessionForBridge: access_token の残りが少ないときの事前 refresh
  *   - requestBridgeCode: Bearer 認証の POST、失敗時は null、ログにトークンを出さない
  */
 
@@ -25,7 +25,6 @@ import {
   ABOUT_BLANK,
   BRIDGE_MIN_TOKEN_TTL_SEC,
   BRIDGE_REQUEST_TIMEOUT_MS,
-  BRIDGE_SERVER_MIN_TOKEN_TTL_SEC,
   DEFAULT_WEB_ORIGIN,
   buildBridgeUrl,
   buildNavigateScript,
@@ -300,13 +299,6 @@ describe('sanitizeWebPath()', () => {
     '/a/b%2Fc', // 途中の %2F は問題なし
     '/search?q=a b', // 空白
     '/%E3%81', // 不正な UTF-8 の percent-encoding はデコードできないだけで、先頭は安全
-    // クエリ・ハッシュ中の @ は authority にならない。WHATWG URL はここの @ をエンコードしないので、
-    // tab-navigate が渡す fullPath (pathname + search) にそのまま現れる。弾くとクエリが黙って失われる
-    '/menus/weekly?q=a@b',
-    '/menus/weekly?email=user@example.com&x=1',
-    '/menus?next=/x@y#z@w',
-    '/profile#user@host',
-    '/?@',
   ])('安全なパスはそのまま返す: %s', (path) => {
     expect(sanitizeWebPath(path, FALLBACK)).toBe(path);
   });
@@ -319,10 +311,6 @@ describe('sanitizeWebPath()', () => {
     ['/\\/', '/\\/evil.example'],
     ['authority 注入 (@host)', '@evil.example'],
     ['パス中の @', '/x@evil.example'],
-    ['パス中の @ (セグメントの先頭)', '/@evil.example'],
-    ['パス中の @ (クエリが付いていても拒否する)', '/x@evil.example?y=1'],
-    ['パス中の @ (ハッシュが付いていても拒否する)', '/x@evil.example#y'],
-    ['先頭が / でなければ、クエリに @ があっても拒否 (authority 注入)', '@evil.example?x=a@b'],
     ['絶対 URL', 'https://evil.example/'],
     ['javascript:', 'javascript:alert(1)'],
     ['data:', 'data:text/html,x'],
@@ -468,8 +456,6 @@ describe('sanitizeInitialPath()', () => {
     '/menus/a..b',
     '/menus/...',
     '/menus/weekly?next=/auth/native-bridge', // パス部分が配下なら、クエリ内の値は見ない (サーバーが解釈するのはパス)
-    '/menus/weekly?q=a@b', // クエリ中の @ (tab-navigate の fullPath = pathname + search にそのまま現れる)
-    '/profile?invite=user@example.com&tab=a',
   ])('タブの prefix 配下のパスはそのまま返す: %s', (path) => {
     expect(sanitize(path)).toBe(path);
   });
@@ -509,7 +495,6 @@ describe('sanitizeInitialPath()', () => {
     ['バックスラッシュ', '/\\evil.example'],
     ['javascript:', 'javascript:alert(1)'],
     ['エンコードされた //', '/%2Fevil.example'],
-    ['パス中の @ (タブの配下でも拒否する)', '/menus/x@evil.example'],
     ['空文字', ''],
     ['文字列でない', 42],
     ['undefined', undefined],
@@ -650,13 +635,6 @@ describe('buildWebUrl()', () => {
     process.env.EXPO_PUBLIC_WEB_URL = 'https://homegohan.app';
     expect(buildWebUrl('/home')).toBe('https://homegohan.app/home');
   });
-
-  it('クエリ中の @ は残り、ホストは変わらない (tab-navigate の fullPath を失わない)', () => {
-    const built = buildWebUrl('/menus/weekly?q=a@b&mode=app');
-    expect(built).toBe(`${ORIGIN}/menus/weekly?q=a@b&mode=app`);
-    expect(new URL(built).host).toBe('homegohan-app.vercel.app');
-    expect(isOwnOrigin(built)).toBe(true);
-  });
 });
 
 describe('buildBridgeUrl()', () => {
@@ -692,12 +670,6 @@ describe('buildBridgeUrl()', () => {
       const parsed = new URL(buildBridgeUrl(CODE, bad));
       expect(parsed.searchParams.get('next')).toBe('/home?mode=app');
     }
-  });
-
-  it('next のクエリ中の @ は失わず、エンコードされて載る', () => {
-    const url = buildBridgeUrl(CODE, '/menus/weekly?q=a@b&mode=app');
-    expect(url).toContain('next=%2Fmenus%2Fweekly%3Fq%3Da%40b%26mode%3Dapp');
-    expect(new URL(url).searchParams.get('next')).toBe('/menus/weekly?q=a@b&mode=app');
   });
 });
 
@@ -983,29 +955,6 @@ describe('getSessionForBridge()', () => {
     expect(result).toEqual({ access_token: 'AT-new', refresh_token: 'RT-new' });
   });
 
-  /**
-   * Web 側 (src/lib/auth/native-bridge-code.ts の MIN_ACCESS_TOKEN_REMAINING_SECONDS) は、残りが 150 秒未満の
-   * access_token には code を発行せず 401 AUTH_TOKEN_EXPIRING を返す。端末の supabase-js の getSession() は残り 90 秒を切るまで
-   * 更新しないので、90〜150 秒の区間は、事前に refreshSession しないと必ず失敗する (例: 閾値が 120 秒だと 120〜150 秒がこれに当たる)。
-   */
-  describe('Web 側の下限 (BRIDGE_SERVER_MIN_TOKEN_TTL_SEC) より残りが少ないトークンは、必ず先に refresh する', () => {
-    const renewed = { access_token: 'AT-new', refresh_token: 'RT-new', expires_at: nowSec + 3600 };
-
-    it.each([
-      ['Web 側の下限の 1 秒前', BRIDGE_SERVER_MIN_TOKEN_TTL_SEC - 1],
-      ['旧閾値 (120 秒) より上で、Web 側の下限より下', 130],
-      ['旧閾値ちょうど', 120],
-      ['supabase-js が自動更新を始める直前', 91],
-      ['Web 側の下限ちょうど (通信時間・時計のずれの余裕が足りない)', BRIDGE_SERVER_MIN_TOKEN_TTL_SEC],
-      ['閾値の 1 秒前', BRIDGE_MIN_TOKEN_TTL_SEC - 1],
-    ])('%s (残り %i 秒): 先に refreshSession して、更新後のトークンを返す', async (_label, remainingSec) => {
-      const auth = makeAuth({ session: { ...fresh, expires_at: nowSec + remainingSec }, refreshed: renewed });
-      const result = await getSessionForBridge(auth, NOW_MS);
-      expect(auth.refreshSession).toHaveBeenCalledTimes(1);
-      expect(result).toEqual({ access_token: 'AT-new', refresh_token: 'RT-new' });
-    });
-  });
-
   it('期限切れ済みでも refreshSession する', async () => {
     const auth = makeAuth({
       session: { ...fresh, expires_at: nowSec - 30 },
@@ -1014,39 +963,24 @@ describe('getSessionForBridge()', () => {
     expect(await getSessionForBridge(auth, NOW_MS)).toEqual({ access_token: 'AT-new', refresh_token: 'RT-new' });
   });
 
-  /**
-   * 更新に失敗したとき: Web 側が受け付ける残り (150 秒) があるトークンならそのまま使い、
-   * 足りないなら null を返す (Web 側が必ず 401 にするので、失敗が確定している POST を省く)。
-   */
-  describe('refresh に失敗したとき', () => {
-    const failures: Array<[string, { refreshed?: null; refreshThrows?: boolean }]> = [
-      ['refreshSession が session を返さない', { refreshed: null }],
-      ['refreshSession が例外', { refreshThrows: true }],
-    ];
-
-    describe.each(failures)('%s', (_label, failure) => {
-      it.each([
-        ['Web 側の下限ちょうど', BRIDGE_SERVER_MIN_TOKEN_TTL_SEC],
-        ['閾値の 1 秒前 (余裕の分だけ閾値未満)', BRIDGE_MIN_TOKEN_TTL_SEC - 1],
-      ])('残りが Web 側の下限以上 (%s: 残り %i 秒) なら、現在のトークンをそのまま使う', async (_name, remainingSec) => {
-        const auth = makeAuth({ session: { ...fresh, expires_at: nowSec + remainingSec }, ...failure });
-        expect(await getSessionForBridge(auth, NOW_MS)).toEqual({ access_token: 'AT-fresh', refresh_token: 'RT-fresh' });
-        expect(auth.refreshSession).toHaveBeenCalledTimes(1);
-      });
-
-      it.each([
-        ['Web 側の下限の 1 秒前', BRIDGE_SERVER_MIN_TOKEN_TTL_SEC - 1],
-        ['旧閾値', 120],
-        ['残り 60 秒', 60],
-        ['残り 1 秒', 1],
-        ['ちょうど期限', 0],
-        ['期限切れ', -1],
-      ])('残りが Web 側の下限未満 (%s: 残り %i 秒) なら null (Web 側が必ず 401 にする POST を省く)', async (_name, remainingSec) => {
-        const auth = makeAuth({ session: { ...fresh, expires_at: nowSec + remainingSec }, ...failure });
-        expect(await getSessionForBridge(auth, NOW_MS)).toBeNull();
-        expect(auth.refreshSession).toHaveBeenCalledTimes(1);
-      });
+  it('refresh に失敗しても、まだ有効な access_token ならそれを使う', async () => {
+    const auth = makeAuth({
+      session: { ...fresh, expires_at: nowSec + 60 },
+      refreshed: null,
     });
+    expect(await getSessionForBridge(auth, NOW_MS)).toEqual({ access_token: 'AT-fresh', refresh_token: 'RT-fresh' });
+  });
+
+  it('refresh が例外でも、まだ有効な access_token ならそれを使う', async () => {
+    const auth = makeAuth({ session: { ...fresh, expires_at: nowSec + 60 }, refreshThrows: true });
+    expect(await getSessionForBridge(auth, NOW_MS)).toEqual({ access_token: 'AT-fresh', refresh_token: 'RT-fresh' });
+  });
+
+  it('refresh に失敗し、かつ期限切れなら null (無駄な code 発行をしない)', async () => {
+    const auth = makeAuth({ session: { ...fresh, expires_at: nowSec - 1 }, refreshed: null });
+    expect(await getSessionForBridge(auth, NOW_MS)).toBeNull();
+    const throwing = makeAuth({ session: { ...fresh, expires_at: nowSec - 1 }, refreshThrows: true });
+    expect(await getSessionForBridge(throwing, NOW_MS)).toBeNull();
   });
 
   it('expires_at が無ければ refresh しない', async () => {
@@ -1134,12 +1068,8 @@ describe('getSessionForBridge()', () => {
       expect(await second).toEqual({ access_token: 'AT-newer', refresh_token: 'RT-newer' });
     });
 
-    it('更新が例外で終わっても、待っていた全員が例外なく (Web 側の下限以上に残っている access_token で) 続行でき、その後は再試行できる', async () => {
-      // 残りは閾値未満 (更新を試みる) だが Web 側の下限以上 (更新に失敗しても code を発行してもらえる)
-      const { auth, refreshSession, fail, finish } = makeDeferredAuth({
-        ...fresh,
-        expires_at: nowSec + BRIDGE_SERVER_MIN_TOKEN_TTL_SEC,
-      });
+    it('更新が例外で終わっても、待っていた全員が例外なく (まだ有効な access_token で) 続行でき、その後は再試行できる', async () => {
+      const { auth, refreshSession, fail, finish } = makeDeferredAuth();
 
       const first = getSessionForBridge(auth, NOW_MS);
       const second = getSessionForBridge(auth, NOW_MS);
@@ -1157,19 +1087,6 @@ describe('getSessionForBridge()', () => {
       expect(refreshSession).toHaveBeenCalledTimes(2);
       finish(renewed);
       expect(await third).toEqual({ access_token: 'AT-new', refresh_token: 'RT-new' });
-    });
-
-    it('更新が例外で終わり、残りが Web 側の下限未満なら、待っていた全員が例外なく null で続行できる', async () => {
-      const { auth, refreshSession, fail } = makeDeferredAuth(); // 残り 30 秒
-
-      const first = getSessionForBridge(auth, NOW_MS);
-      const second = getSessionForBridge(auth, NOW_MS);
-      await settle();
-      fail(new Error('network'));
-
-      expect(await first).toBeNull();
-      expect(await second).toBeNull();
-      expect(refreshSession).toHaveBeenCalledTimes(1);
     });
 
     it('別の auth クライアントとは更新を共有しない', async () => {

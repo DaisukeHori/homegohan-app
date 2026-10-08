@@ -35,33 +35,8 @@ export const BRIDGE_PAGE_PATH = '/auth/native-bridge';
 export const BRIDGE_CODE_PATH = '/api/auth/native-bridge/code';
 /** code 発行リクエストの打ち切り時間。超えたら直接 URL へフォールバックする */
 export const BRIDGE_REQUEST_TIMEOUT_MS = 8000;
-
-/**
- * Web 側が code 発行時に要求する、access_token の有効期限までの最低残り秒数 (秒)。
- * これ未満の access_token には、Web 側は必ず 401 AUTH_TOKEN_EXPIRING を返す。
- *
- * **Web 側の MIN_ACCESS_TOKEN_REMAINING_SECONDS (src/lib/auth/native-bridge-code.ts) と必ず同じ値にすること。**
- * Web 側は「code の有効期間 60 秒 + supabase-js が getSession() で更新を始める余裕 90 秒」の 150 秒で、
- * どちらかが変わったらこの値も変える。OTA が無効なので、配布済みのアプリの値は後から直せない。
- * 食い違うと、その区間では bridge が失敗して WebView がログイン画面になる (#1036)。
- * __tests__/lib/webViewBridge.supabase.test.ts が、この値と本物の supabase-js の更新条件の組み合わせを確かめる。
- */
-export const BRIDGE_SERVER_MIN_TOKEN_TTL_SEC = 150;
-/**
- * BRIDGE_SERVER_MIN_TOKEN_TTL_SEC に足す余裕 (秒)。
- *   - 残りを確かめてから Web 側が判定するまでの通信時間 (最大 BRIDGE_REQUEST_TIMEOUT_MS = 8 秒)
- *   - 端末の時計が実時間より遅れている分。端末は expires_at を自分の時計と比べるので、遅れた分だけ残りを多く見積もる
- */
-const BRIDGE_TOKEN_TTL_MARGIN_SEC = 60;
-/**
- * access_token の残りがこれ未満なら、code 発行前に refreshSession する (秒)。
- *
- * 端末の supabase-js は、getSession() が残り 90 秒を切るまで自動更新しない。そのため bridge の時点の
- * access_token の残りは 90〜3600 秒になり、90〜150 秒の区間は Web 側が必ず 401 にする。
- * 閾値を Web 側の下限ちょうどにすると、通信時間や時計のずれでその下限を割るので、余裕を足す
- * (これで refreshSession が走るのは、1 時間のうち約 3% のタブ表示)。
- */
-export const BRIDGE_MIN_TOKEN_TTL_SEC = BRIDGE_SERVER_MIN_TOKEN_TTL_SEC + BRIDGE_TOKEN_TTL_MARGIN_SEC;
+/** access_token の残り有効期間がこれ未満なら、code 発行前に refreshSession する (秒) */
+export const BRIDGE_MIN_TOKEN_TTL_SEC = 120;
 
 /** initialPath は deep link 由来で長さを制御できないため上限を設ける */
 const MAX_WEB_PATH_LENGTH = 4096;
@@ -202,21 +177,12 @@ function startsWithSingleSlash(candidate: string): boolean {
   return normalized.startsWith('/') && !normalized.startsWith('//');
 }
 
-/** パスの `?` / `#` より前の部分 */
-function pathnameOf(path: string): string {
-  const end = path.search(/[?#]/);
-  return end === -1 ? path : path.slice(0, end);
-}
-
 /**
  * Web 側へ渡すパス (deep link の initialPath、tab-navigate の fullPath 等) を検証する。
  * 安全なら入力をそのまま、そうでなければ fallback を返す (fallback は呼び出し側が信頼できる値を渡すこと)。
  *
- * 拒否: 先頭が単一の `/` でないもの (`//host`、`scheme:`、`@host`)、`\`、パス部分 (`?` / `#` より前) の `@`、制御文字、
+ * 拒否: 先頭が単一の `/` でないもの (`//host`、`scheme:`、`@host`)、`\`、`@`、制御文字、
  *       percent-encoding で上記に化けるもの (`/%2F/evil`、`/%5Cevil`、二重エンコード含む)。
- * `@` を見るのはパス部分だけ。先頭が単一の `/` なら authority は `/` の手前で確定しているので、後ろの `@` は userinfo にならない。
- * WHATWG URL はクエリ・ハッシュ中の `@` をエンコードしないため、tab-navigate が渡す fullPath (pathname + search) が
- * `/menus/weekly?q=a@b` のような形になり得る。ここで弾くとタブの既定パスに黙って戻り、クエリが失われてしまう。
  * `src/lib/auth/safe-redirect.ts` と同じ考え方だが、こちらは入力を書き換えず(デコードせず)そのまま返す。
  * expo-router のクエリは `string | string[]` になり得るので、配列なら先頭要素だけを見る。
  */
@@ -224,7 +190,7 @@ export function sanitizeWebPath(raw: unknown, fallback: string): string {
   const value = Array.isArray(raw) ? raw[0] : raw;
   if (typeof value !== 'string') return fallback;
   if (value.length === 0 || value.length > MAX_WEB_PATH_LENGTH) return fallback;
-  if (hasControlChars(value) || value.includes('\\') || pathnameOf(value).includes('@')) return fallback;
+  if (hasControlChars(value) || value.includes('\\') || value.includes('@')) return fallback;
   if (!startsWithSingleSlash(value)) return fallback;
 
   let current = value;
@@ -240,6 +206,12 @@ export function sanitizeWebPath(raw: unknown, fallback: string): string {
     if (!startsWithSingleSlash(current)) return fallback;
   }
   return value;
+}
+
+/** パスの `?` / `#` より前の部分 */
+function pathnameOf(path: string): string {
+  const end = path.search(/[?#]/);
+  return end === -1 ? path : path.slice(0, end);
 }
 
 /**
@@ -485,14 +457,8 @@ function refreshSessionOnce(auth: BridgeAuthClient): Promise<SessionLike | null>
  * bridge に使うセッションを返す。例外は投げず、取れなければ null。
  *
  * access_token の残りが BRIDGE_MIN_TOKEN_TTL_SEC 未満なら先に refreshSession する (同時に呼ばれても更新は 1 回)。
- * 理由は 2 つある。
- *   - Web 側は、残りが BRIDGE_SERVER_MIN_TOKEN_TTL_SEC 未満の access_token には code を発行せず 401 を返す。
- *     端末の supabase-js の getSession() は残り 90 秒を切るまで更新しないので、そのままでは下限を割る区間がある
- *   - Web 側の setSession は期限切れの access_token を見ると refresh_token を使って更新 (=ローテーション) してしまい、
- *     ネイティブ側が持つ refresh_token が失効して強制ログアウトになり得る
- *
- * 更新に失敗したときは、残りが BRIDGE_SERVER_MIN_TOKEN_TTL_SEC 以上の access_token ならそのまま使う。
- * それ未満なら null を返す: Web 側が必ず 401 にするので、失敗が確定している POST を省いてすぐ直接 URL へ倒す。
+ * Web 側の setSession は期限切れの access_token を見ると refresh_token を使って更新 (=ローテーション) してしまい、
+ * ネイティブ側が持つ refresh_token が失効して強制ログアウトになり得るため。
  */
 export async function getSessionForBridge(
   auth: BridgeAuthClient,
@@ -512,8 +478,8 @@ export async function getSessionForBridge(
 
     const refreshedTokens = toBridgeSession(await refreshSessionOnce(auth));
     if (refreshedTokens) return refreshedTokens;
-    // 更新に失敗しても、Web 側が受け付ける残りがあるならそのまま使う (サーバー側が最終判断する)
-    return remainingSec >= BRIDGE_SERVER_MIN_TOKEN_TTL_SEC ? currentTokens : null;
+    // 更新に失敗しても、まだ有効な access_token ならそのまま使う (サーバー側が最終判断する)
+    return remainingSec > 0 ? currentTokens : null;
   } catch {
     return null;
   }
