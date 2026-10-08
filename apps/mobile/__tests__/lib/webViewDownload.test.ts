@@ -378,12 +378,9 @@ describe('isTrustedDownloadSender', () => {
     expect(isTrustedDownloadSender('https://evil.example/')).toBe(false);
   });
 
-  it('EXPO_PUBLIC_WEB_URL が解釈できない値のときは、WebView が実際に開く既定のオリジンだけを信用する (#1036)', () => {
-    // 解釈できない設定値のとき、WebViewScreen は webViewBridge の getWebOrigin() で既定のオリジンを開く。
-    // 送信元の確認も同じ getWebOrigin() から決めるので、既定のオリジンだけを信用し、ほかは信用しない
+  it('EXPO_PUBLIC_WEB_URL が解釈できない値のときは、何も信用しない', () => {
     process.env.EXPO_PUBLIC_WEB_URL = 'not a url';
-    expect(isTrustedDownloadSender(`${WEB_URL}/settings`)).toBe(true);
-    expect(isTrustedDownloadSender('https://evil.example/')).toBe(false);
+    expect(isTrustedDownloadSender(`${WEB_URL}/settings`)).toBe(false);
     expect(isTrustedDownloadSender('not a url')).toBe(false);
   });
 });

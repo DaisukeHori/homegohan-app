@@ -23,7 +23,7 @@
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
-import { getWebOrigin } from './webViewBridge';
+import { getWebBaseUrl } from './webBaseUrl';
 
 // ── 定数 ──────────────────────────────────────────────────────────────────────
 
@@ -149,9 +149,8 @@ function originOf(url: unknown): string | null {
  * 'https://homegohan-app.vercel.app.evil.example' や 'https://homegohan-app.vercel.app@evil.example' は一致しない。
  */
 export function isTrustedDownloadSender(senderUrl: unknown): boolean {
-  // WebViewScreen が WebView で開く URL と同じ値 (webViewBridge の getWebOrigin) から決める。
-  // ここだけ別の値 (既定値や、検証前の EXPO_PUBLIC_WEB_URL) を使うと、WebView が開いたページからの正規の書き出しを捨ててしまう (#1036 / #1159)
-  const trusted = originOf(getWebOrigin());
+  // WebViewScreen が WebView で開く URL と同じ値 (getWebBaseUrl) から決める。ここだけ既定値を持つと食い違う
+  const trusted = originOf(getWebBaseUrl());
   const sender = originOf(senderUrl);
   return trusted !== null && sender !== null && sender === trusted;
 }
