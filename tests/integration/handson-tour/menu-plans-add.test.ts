@@ -158,16 +158,15 @@ describe.skipIf(!shouldRunIntegration())(
       user = await createTestUser({ onboardingCompleted: true });
       const client = adminClient();
 
-      // (meals に dish_name 列は無い。必須列は user_id / eaten_at / meal_type)
-      const { error: mealError } = await client.from('meals').insert({
+      // meals に dish_name 列は無い。存在しない列を入れると INSERT が失敗して既存データが作れず、
+      // 判定が素通りして 200 になってしまうので、INSERT の成否も必ず確認する (#1109)。
+      const { error: seedError } = await client.from('meals').insert({
         user_id: user.id,
         eaten_at: new Date().toISOString().split('T')[0],
         meal_type: 'dinner',
         is_sandbox: false,
       });
-      // 前提データが入らないと API は 409 でなく 200 を返してしまい、原因が分かりにくい失敗になる。
-      // INSERT の失敗はここで落とす。
-      expect(mealError).toBeNull();
+      expect(seedError).toBeNull();
 
       const { status, body } = await postMenuAdd(user.accessToken, {
         ...MOCK_MENU_RESPONSE,

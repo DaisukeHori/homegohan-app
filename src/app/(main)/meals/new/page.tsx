@@ -5,6 +5,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveClassifyPhotoType } from "@/lib/ai/image-recognition";
 import { logToServer } from "@/lib/db-logger";
+import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
 import { formatLocalDate } from "@homegohan/shared";
 import type { CatalogDishMatch, CatalogProductSummary } from "@/types/catalog";
 import { motion, AnimatePresence } from "framer-motion";
@@ -262,6 +263,10 @@ export default function MealCaptureModal() {
   // 複数枚対応
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
+  // #1222: プレビュー用 Blob URL は、削除・撮り直し・各ステップのリセット (setPhotoPreviews([]) が多数ある)・
+  // ページ離脱のたびに、配列から外れた分をここでまとめて revoke する。
+  // ハンズオンの固定画像 (SAMPLE_MEAL_IMAGE.webPath) は blob: ではないので対象外。
+  useRevokeBlobUrls(photoPreviews);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   // 冷蔵庫解析結果
@@ -1070,7 +1075,10 @@ export default function MealCaptureModal() {
         router.push(`/menus/weekly?${params.toString()}`);
       } else {
         const err = await res.json();
-        alert(`保存に失敗しました: ${err.error || '不明なエラー'}`);
+        // sandbox の利用条件エラーなどは { error: { code, message } } 形式、それ以外は { error: '文字列' } 形式で返る。
+        // オブジェクトをそのまま埋め込むと '[object Object]' と表示されてしまうため、message を取り出す (#1109)。
+        const errorMessage = typeof err.error === 'string' ? err.error : err.error?.message;
+        alert(`保存に失敗しました: ${errorMessage || '不明なエラー'}`);
       }
     } catch (error) {
       console.error('Save error:', error);

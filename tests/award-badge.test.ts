@@ -9,9 +9,19 @@
  * 実 DB を使う結合テスト (tests/integration/handson-tour/menu-plans-add.test.ts) でも検出できるが、
  * このテストは DB 無しの通常の `npm test` でも列名の誤りを検出できるようにする。
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { awardBadge } from '@/lib/badges/awardBadge';
+
+// awardBadge は想定外のエラーを構造化ログ (createLogger) に残す (#1306)。このテストでは記録先に書かない
+vi.mock('@/lib/db-logger', () => {
+  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  return {
+    createLogger: () => ({ ...logger, withUser: () => logger }),
+    generateRequestId: () => 'req_test',
+  };
+});
+
+const { awardBadge } = await import('@/lib/badges/awardBadge');
 
 // 本番 badges テーブルに実在する列 (supabase/baseline/prod_schema.sql)
 const BADGES_COLUMNS = [
@@ -59,16 +69,20 @@ function createFakeSupabase(opts: FakeOptions) {
               .split(',')
               .map((c) => c.trim())
               .filter((c) => !BADGES_COLUMNS.includes(c));
+            const unknownColumnError = () => ({
+              data: null,
+              error: { code: '42703', message: `column badges.${unknownColumns[0]} does not exist` },
+            });
             return {
               eq: () => ({
                 single: async () => {
-                  if (unknownColumns.length > 0) {
-                    return {
-                      data: null,
-                      error: { code: '42703', message: `column badges.${unknownColumns[0]} does not exist` },
-                    };
-                  }
+                  if (unknownColumns.length > 0) return unknownColumnError();
                   return opts.badge ? { data: opts.badge, error: null } : { data: null, error: NO_ROWS };
+                },
+                // maybeSingle は 0 件をエラーにせず data: null で返す (supabase-js と同じ)
+                maybeSingle: async () => {
+                  if (unknownColumns.length > 0) return unknownColumnError();
+                  return { data: opts.badge, error: null };
                 },
               }),
             };
@@ -82,6 +96,7 @@ function createFakeSupabase(opts: FakeOptions) {
               eq: () => ({
                 single: async () =>
                   opts.existing ? { data: opts.existing, error: null } : { data: null, error: NO_ROWS },
+                maybeSingle: async () => ({ data: opts.existing ?? null, error: null }),
               }),
             }),
           }),

@@ -30,9 +30,12 @@ export const config = {
      * - manifest.json (PWA manifest — must not be redirected to /login)
      * - robots.txt (crawler instructions)
      * - sw.js / workbox-* (service worker files)
+     * - api/health (死活監視用ヘルスチェック #1181。ちょうどこのパスだけ。
+     *   Supabase のセッション処理を通さず、認証基盤の不調に引きずられないようにする。
+     *   末尾の $ があるので /api/health/* (健康記録 API) は従来どおり対象のまま)
      * Feel free to modify this pattern to include more paths.
      */
-    '/((?!_next/static|_next/image|favicon\\.ico|manifest\\.json|robots\\.txt|sw\\.js|workbox-|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon\\.ico|manifest\\.json|robots\\.txt|sw\\.js|workbox-|api/health$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
 

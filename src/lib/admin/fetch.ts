@@ -41,11 +41,15 @@ export async function adminFetch(
   const requestHeaders = await headers();
   const forwardedFor = requestHeaders.get('x-forwarded-for') ?? undefined;
   const host = requestHeaders.get('host') ?? undefined;
+  // #1200: 閲覧の監査ログ (admin_audit_logs.user_agent) に、サーバーの fetch ではなく
+  // 管理者のブラウザの User-Agent が残るように転送する。
+  const userAgent = requestHeaders.get('user-agent') ?? undefined;
 
   const fetchHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(cookieHeader ? { Cookie: cookieHeader } : {}),
     ...(forwardedFor ? { 'x-forwarded-for': forwardedFor } : {}),
+    ...(userAgent ? { 'user-agent': userAgent } : {}),
     ...(host ? { host } : {}),
     ...options.extraHeaders,
   };
