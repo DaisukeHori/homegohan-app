@@ -1,5 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { requireOrgAdmin, type OrgAdminContext } from '@/lib/auth/helpers';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { readJsonBody } from '@/lib/http-params';
 import {
   createOrgInviteWithEmail,
   invalidOrgInviteBodyResponse,
@@ -7,24 +11,29 @@ import {
 } from '@/lib/membership/org-invite';
 import { CreateOrgInviteRequestBodySchema } from '@/schemas/membership/organization-invite';
 
-// 招待一覧取得
-export async function GET(request: Request) {
-  const supabase = createClient();
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+// 権限: 所属組織の org_role が owner / admin。判定は共通の requireOrgAdmin() (#1161)
 
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('organization_id, org_role')
-    .eq('id', user.id)
-    .single();
-
-  const allowedGetRoles = ['owner', 'admin'];
-  if (!profile?.org_role || !allowedGetRoles.includes(profile.org_role as string) || !profile?.organization_id) {
+/**
+ * GET / DELETE の失敗応答。認可エラー (401 / 403) はそのまま返し、それ以外は 500 の汎用メッセージにする。
+ * 生のエラー文は返さず (#1172)、詳細は db-logger (app_logs) にだけ残す。
+ */
+function handleError(method: string, error: unknown) {
+  if (error instanceof AuthError) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (error instanceof ForbiddenError) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
+  createLogger(`${method} /api/org/invites`, generateRequestId()).error('組織の招待の処理に失敗しました', error);
+  return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+}
 
+// 招待一覧取得
+export async function GET(request: Request) {
   try {
+    const { profile } = await requireOrgAdmin();
+    const supabase = createClient();
+
     const { data: invites, error } = await supabase
       .from('organization_invites')
       .select(`
@@ -59,49 +68,49 @@ export async function GET(request: Request) {
       })),
     });
 
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    return handleError('GET', error);
   }
 }
 
 // 招待作成 (RPC create_org_invite + Resend 送信)
 export async function POST(request: Request) {
-  const supabase = createClient();
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) {
-    return NextResponse.json({ error: { code: 'NOT_AUTHENTICATED', message: '認証が必要です' } }, { status: 401 });
-  }
-
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('organization_id, org_role, nickname')
-    .eq('id', user.id)
-    .single();
-
-  const allowedOrgRoles = ['owner', 'admin'];
-  if (!profile?.org_role || !allowedOrgRoles.includes(profile.org_role as string) || !profile?.organization_id) {
+  let admin: OrgAdminContext;
+  try {
+    admin = await requireOrgAdmin();
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: { code: 'NOT_AUTHENTICATED', message: '認証が必要です' } }, { status: 401 });
+    }
+    if (error instanceof ForbiddenError) {
+      return NextResponse.json(
+        { error: { code: 'INSUFFICIENT_PERMISSION', message: 'owner/admin のみ招待可能です' } },
+        { status: 403 },
+      );
+    }
+    createLogger('POST /api/org/invites', generateRequestId()).error('組織管理者の確認に失敗しました', error);
     return NextResponse.json(
-      { error: { code: 'INSUFFICIENT_PERMISSION', message: 'owner/admin のみ招待可能です' } },
-      { status: 403 },
+      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
+      { status: 500 },
     );
   }
+  const { user, profile } = admin;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
+  const parsedBody = await readJsonBody(request);
+  if (!parsedBody.ok) {
     return NextResponse.json({ error: { code: 'INVALID_BODY', message: 'リクエストボディが不正です' } }, { status: 400 });
   }
 
   // #1163 メールアドレスは前後の空白を除いて小文字にし、形式と長さを確かめる (不正なアドレスでは招待を作らない)。
   // role に owner は指定できない。未知のキーは取り除く。
-  const parsed = CreateOrgInviteRequestBodySchema.safeParse(body);
+  const parsed = CreateOrgInviteRequestBodySchema.safeParse(parsedBody.body);
   if (!parsed.success) {
     return invalidOrgInviteBodyResponse(parsed.error);
   }
   const { email, role, custom_message } = parsed.data;
 
   // 招待を作り、招待メールを送る (POST /api/org/members と共通。送信回数の制限もこの中で判定する)
+  const supabase = createClient();
   const result = await createOrgInviteWithEmail({
     supabase,
     inviter: { id: user.id, email: user.email, nickname: profile.nickname },
@@ -119,22 +128,10 @@ export async function POST(request: Request) {
 
 // 招待削除
 export async function DELETE(request: Request) {
-  const supabase = createClient();
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('organization_id, org_role')
-    .eq('id', user.id)
-    .single();
-
-  const allowedDeleteRoles = ['owner', 'admin'];
-  if (!profile?.org_role || !allowedDeleteRoles.includes(profile.org_role as string) || !profile?.organization_id) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
   try {
+    const { profile } = await requireOrgAdmin();
+    const supabase = createClient();
+
     const { searchParams } = new URL(request.url);
     const inviteId = searchParams.get('id');
 
@@ -152,8 +149,7 @@ export async function DELETE(request: Request) {
 
     return NextResponse.json({ success: true });
 
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    return handleError('DELETE', error);
   }
 }
-

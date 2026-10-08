@@ -16,6 +16,7 @@ import { requireAuth } from "../_shared/auth.ts";
 import { getCorsHeaders, withCors } from "../_shared/cors.ts";
 import { aggregateIngredientOccurrences, InputIngredient } from "../_shared/shopping-list-aggregation.ts";
 import { verifyRequestOwnership } from "../_shared/request-ownership.ts";
+import { replaceActiveShoppingList } from "../_shared/shopping-list-replace.ts";
 
 // CORS ヘッダーは許可したオリジン (ALLOWED_ORIGINS) にだけ、リクエストごとに getCorsHeaders(req) で作る (#1167)。
 // 認証ヘルパー（_shared/auth.ts）が返す Response には CORS ヘッダーが付与されていないため、
@@ -470,29 +471,16 @@ async function processRegeneration(
 
     const rawIngredients = aggregateIngredientOccurrences(ingredientOccurrences);
 
-    // 既存のアクティブな買い物リストをアーカイブ
-    await supabase
-      .from("shopping_lists")
-      .update({ status: "archived", updated_at: new Date().toISOString() })
-      .eq("user_id", userId)
-      .eq("status", "active");
-
-    // 新しい買い物リストを作成
-    const { data: newShoppingList, error: listError } = await supabase
-      .from("shopping_lists")
-      .insert({
-        user_id: userId,
-        start_date: startDate,
-        end_date: endDate,
-        status: "active",
-        servings_config: effectiveServingsConfig,
-        title: `${startDate}〜${endDate}の買い物リスト`,
-      })
-      .select("id")
-      .single();
-
-    if (listError) throw listError;
-    const shoppingListId = newShoppingList.id;
+    // 既存のアクティブな買い物リストをアーカイブして、新しい買い物リストを作成する。
+    // アーカイブと INSERT は DB 関数 replace_active_shopping_list の 1 トランザクションで行う。
+    // ユーザーごとの排他ロックを取るので、同時に「レシピから追加」(add-recipe) がリストを作っても、
+    // INSERT が一意制約違反 (23505) で失敗しない (#1312)。失敗したらアーカイブも取り消される。
+    const shoppingListId = await replaceActiveShoppingList(supabase, {
+      userId,
+      startDate,
+      endDate,
+      servingsConfig: effectiveServingsConfig,
+    });
 
     if (rawIngredients.length === 0) {
       // 材料がない場合は空のリストで完了

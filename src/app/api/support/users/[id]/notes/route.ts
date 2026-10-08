@@ -1,58 +1,86 @@
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
+import { requireRole } from '@/lib/auth/helpers';
+import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { isUuid, readJsonBody } from '@/lib/http-params';
 import { NextResponse } from 'next/server';
+
+// 権限: support / admin / super_admin (共通の requireRole()、#1161)
+
+/**
+ * 500 の本文は汎用メッセージだけにする (#1172: Supabase / Postgres の生のエラー文を返さない)。
+ * 詳細は db-logger (app_logs) にだけ残す。
+ */
+function internalError(method: 'GET' | 'POST', err: unknown, metadata?: Record<string, unknown>) {
+  createLogger(`${method} /api/support/users/[id]/notes`, generateRequestId()).error(
+    'サポート用ユーザーノートの処理に失敗しました',
+    err,
+    metadata,
+  );
+  return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+}
 
 // ユーザーノート追加
 export async function POST(
   request: Request,
   { params }: { params: { id: string } }
 ) {
-  const supabase = await createClient();
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  // サポート権限確認
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('roles')
-    .eq('id', user.id)
-    .single();
-
-  if (!profile || !profile?.roles?.some((r: string) => ['admin', 'super_admin', 'support'].includes(r))) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
   try {
-    const body = await request.json();
-    const { note } = body;
+    const actor = await requireRole(['support', 'admin', 'super_admin']);
 
-    if (!note || note.trim().length === 0) {
+    // uuid 型の列に UUID でない文字列を渡すと 22P02 になり、存在しない id なのに 500 になる
+    if (!isUuid(params.id)) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
+    const parsedBody = await readJsonBody(request);
+    if (!parsedBody.ok) {
+      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+    }
+    const rawNote = (parsedBody.body as { note?: unknown } | null)?.note;
+    const note = typeof rawNote === 'string' ? rawNote.trim() : '';
+
+    if (note.length === 0) {
       return NextResponse.json({ error: 'Note content is required' }, { status: 400 });
     }
 
     // ターゲットユーザーの存在確認
-    const { data: targetUser } = await supabase
+    // user_profiles は RLS で本人の行しか見えないため、認可を通したあとだけ service_role で引く
+    const { data: targetUser, error: targetError } = await getSupabaseAdmin()
       .from('user_profiles')
       .select('id')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
+    if (targetError) {
+      return internalError('POST', new Error(targetError.message), {
+        failed_queries: ['user_profiles (target)'],
+        error_code: targetError.code,
+      });
+    }
     if (!targetUser) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    // ノート追加
+    // ノート追加 (admin_user_notes の RLS は運営ロールに許しているので、本人のセッションの client で書く)
+    const supabase = await createClient();
     const { data, error } = await supabase
       .from('admin_user_notes')
       .insert({
         user_id: params.id,
-        admin_id: user.id,
-        note: note.trim(),
+        admin_id: actor.id,
+        note,
       })
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      return internalError('POST', new Error(error.message), {
+        failed_queries: ['admin_user_notes (insert)'],
+        error_code: error.code,
+      });
+    }
 
     // 監査ログ
     // #1200: 以前は存在しない列 admin_id (正しくは actor_id) に書いており、戻りの error も
@@ -60,7 +88,7 @@ export async function POST(
     // action_type も設計書 (07-audit-monitoring.md §4.1) の admin.user.note_add に揃える。
     await recordAdminAudit({
       supabase,
-      actorId: user.id,
+      actorId: actor.id,
       actionType: 'admin.user.note_add',
       targetId: params.id,
       targetType: 'user',
@@ -78,9 +106,14 @@ export async function POST(
       },
     });
 
-  } catch (error: any) {
-    console.error('Note creation error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (error instanceof ForbiddenError) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    return internalError('POST', error);
   }
 }
 
@@ -90,52 +123,73 @@ export async function GET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
-  const supabase = await createClient();
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  // サポート権限確認
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('roles')
-    .eq('id', user.id)
-    .single();
-
-  if (!profile || !profile?.roles?.some((r: string) => ['admin', 'super_admin', 'support'].includes(r))) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
   try {
-    const { data: notes, error } = await supabase
+    const actor = await requireRole(['support', 'admin', 'super_admin']);
+
+    if (!isUuid(params.id)) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
+    // 認可を通したあとだけ service_role で読む (user_profiles は RLS で本人の行しか見えない)
+    const supabaseAdmin = getSupabaseAdmin();
+
+    // admin_user_notes.admin_id の外部キーは auth.users 宛で user_profiles とは繋がっていないため、
+    // user_profiles!admin_user_notes_admin_id_fkey(nickname) の埋め込みは PostgREST が解決できず、
+    // この GET は常に失敗していた。書いた人のニックネームは下で別に引く
+    const { data: notes, error } = await supabaseAdmin
       .from('admin_user_notes')
       .select(`
         id,
         note,
         created_at,
-        admin_id,
-        user_profiles!admin_user_notes_admin_id_fkey(nickname)
+        admin_id
       `)
       .eq('user_id', params.id)
       .order('created_at', { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      return internalError('GET', new Error(error.message), {
+        failed_queries: ['admin_user_notes'],
+        error_code: error.code,
+      });
+    }
 
-    const responseNotes = (notes || []).map((n: any) => ({
+    const noteRows = notes || [];
+    const adminIds = Array.from(
+      new Set(noteRows.map((n: any) => n.admin_id).filter((id: unknown): id is string => !!id)),
+    );
+    const nicknameById = new Map<string, string | null>();
+    if (adminIds.length > 0) {
+      const { data: admins, error: adminsError } = await supabaseAdmin
+        .from('user_profiles')
+        .select('id, nickname')
+        .in('id', adminIds);
+      if (adminsError) {
+        return internalError('GET', new Error(adminsError.message), {
+          failed_queries: ['user_profiles (note authors)'],
+          error_code: adminsError.code,
+        });
+      }
+      (admins || []).forEach((a: any) => nicknameById.set(a.id, a.nickname));
+    }
+
+    const responseNotes = noteRows.map((n: any) => ({
       id: n.id,
       note: n.note,
       createdAt: n.created_at,
       adminId: n.admin_id,
-      adminName: n.user_profiles?.nickname || 'Unknown',
+      adminName: (n.admin_id && nicknameById.get(n.admin_id)) || 'Unknown',
     }));
 
     // #1200: 他ユーザーについての管理ノートを返す前に、誰が誰のノートを閲覧したかを残す。
     // 返すノートが 0 件のときは何も開示していないため記録しない。
     // 記録に失敗しても閲覧は止めない (失敗は db-logger に error で残る)。
     // details にはノートの本文ではなく項目名だけを入れる。
+    // 監査ログの INSERT は RLS (actor_id = auth.uid() かつ運営ロール) を通すため、本人のセッションの client で行う。
     if (responseNotes.length > 0) {
       await recordAdminAudit({
-        supabase,
-        actorId: user.id,
+        supabase: await createClient(),
+        actorId: actor.id,
         actionType: 'admin.user.view_notes',
         targetId: params.id,
         targetType: 'user',
@@ -147,9 +201,13 @@ export async function GET(
 
     return NextResponse.json({ notes: responseNotes });
 
-  } catch (error: any) {
-    console.error('Notes fetch error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (error instanceof ForbiddenError) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    return internalError('GET', error);
   }
 }
-

@@ -2,15 +2,17 @@
  * Vitest integration test config (PR #839 + #840 統合版)
  * Run with: npx vitest run --config vitest.integration.config.ts
  *
- * 用途: 実 Supabase 接続が必要な integration test 専用 config
+ * 用途: Supabase 接続が必要な integration test 専用 config
  *   - tests/integration/handson-tour/ (PR #839 由来)
  *   - tests/integration/operator/ (PR #840 由来)
+ *   接続先はローカル Supabase (bash scripts/supabase-local.sh start / env .env.local)。本番には向けない。
+ *   手順は CONTRIBUTING.md の「Vitest — インテグレーションテスト」を参照。
  *
  * 実行前提:
  *   SUPABASE_INTEGRATION_TEST=1
  *   NEXT_PUBLIC_SUPABASE_URL
  *   SUPABASE_SERVICE_ROLE_KEY
- *   API_BASE_URL or PLAYWRIGHT_BASE_URL (default: http://localhost:3000)
+ *   INTEGRATION_BASE_URL or NEXT_PUBLIC_APP_URL (default: http://localhost:3000。tests/integration/helpers/api.ts が参照)
  */
 import { defineConfig } from 'vitest/config';
 import { loadEnv } from 'vite';

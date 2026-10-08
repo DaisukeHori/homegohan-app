@@ -165,6 +165,8 @@ grep -rn 'from "../generate-menu-v4/' supabase/functions --include=*.ts
 ```
 supabase/functions/
 ├── _shared/                 # 共有ユーティリティ（全関数から参照可能）
+│   ├── auth.ts             # 認証ヘルパー（requireAuth: ユーザーの JWT、requireServiceRole: cron 用の共有シークレットか service role key。await 必須）
+│   ├── cron-secret.ts      # cron 用シークレットの照合（Next.js の src/lib/cron-auth.ts と共用。import なし・Deno/Node 固有 API なし。入れ替え中は CRON_SECRET_PREVIOUS も受け付ける。手順は ENV_SETUP.md）
 │   ├── cors.ts             # CORS設定（許可したオリジンにだけ CORS ヘッダーを返す。下の「CORS」を参照）
 │   ├── db-logger.ts        # ログ記録
 │   ├── log-sanitizer.ts    # ログ保存前の秘密情報マスキング・切り詰め（Next.js の src/lib/db-logger.ts と共用。import なし・Deno/Node 固有 API なし）

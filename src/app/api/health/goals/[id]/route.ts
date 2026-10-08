@@ -45,7 +45,21 @@ export async function PUT(
 
   const { id } = await params;
   const body = await request.json().catch(() => null);
-  const { data: updates, errors } = sanitizeHealthGoalUpdate(body);
+
+  // 目標の所有者確認
+  // #1229: 目標値の範囲は goal_type ごとに違うため、入力の検証より先に対象の行を取得する
+  const { data: existing } = await supabase
+    .from('health_goals')
+    .select('*')
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .single();
+
+  if (!existing) {
+    return NextResponse.json({ error: 'Goal not found' }, { status: 404 });
+  }
+
+  const { data: updates, errors } = sanitizeHealthGoalUpdate(body, { goalType: existing.goal_type });
 
   if (errors.length > 0) {
     return NextResponse.json({ error: errors.join(', ') }, { status: 400 });
@@ -61,18 +75,6 @@ export async function PUT(
 
   if (updates.target_unit === null) {
     return NextResponse.json({ error: 'target_unit cannot be null' }, { status: 400 });
-  }
-
-  // 目標の所有者確認
-  const { data: existing } = await supabase
-    .from('health_goals')
-    .select('*')
-    .eq('id', id)
-    .eq('user_id', user.id)
-    .single();
-
-  if (!existing) {
-    return NextResponse.json({ error: 'Goal not found' }, { status: 404 });
   }
 
   // current_valueが更新された場合、進捗率を再計算

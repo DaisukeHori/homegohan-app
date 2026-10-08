@@ -1,6 +1,9 @@
 // POST /api/org/members/[user_id]/remove
+// 所属組織の owner/admin のみ実行可 (共通の requireOrgAdmin()、#1161)
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { requireOrgAdmin, type OrgAdminContext } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { notifyMemberRemoved, readOrganizationNotice } from '@/lib/membership/exit-notification';
@@ -10,28 +13,30 @@ export async function POST(
   { params }: { params: { user_id: string } },
 ) {
   const logger = createLogger('POST /api/org/members/[user_id]/remove', generateRequestId());
-  const supabase = createClient();
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) {
+  let admin: OrgAdminContext;
+  try {
+    admin = await requireOrgAdmin();
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json(
+        { error: { code: 'NOT_AUTHENTICATED', message: '認証が必要です' } },
+        { status: 401 },
+      );
+    }
+    if (error instanceof ForbiddenError) {
+      return NextResponse.json(
+        { error: { code: 'INSUFFICIENT_PERMISSION', message: 'owner/admin のみ除名可能です' } },
+        { status: 403 },
+      );
+    }
+    logger.error('組織管理者の確認に失敗しました', error);
     return NextResponse.json(
-      { error: { code: 'NOT_AUTHENTICATED', message: '認証が必要です' } },
-      { status: 401 },
+      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
+      { status: 500 },
     );
   }
+  const { user, profile } = admin;
   const log = logger.withUser(user.id);
-
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('organization_id, org_role')
-    .eq('id', user.id)
-    .single();
-
-  if (!profile?.org_role || !['owner', 'admin'].includes(profile.org_role as string) || !profile.organization_id) {
-    return NextResponse.json(
-      { error: { code: 'INSUFFICIENT_PERMISSION', message: 'owner/admin のみ除名可能です' } },
-      { status: 403 },
-    );
-  }
 
   const targetUserId = params.user_id;
   if (!targetUserId) {
@@ -40,6 +45,8 @@ export async function POST(
       { status: 400 },
     );
   }
+
+  const supabase = createClient();
 
   // 除名の通知メールに載せる組織名は、RPC の前に読む (#1160)
   const notice = await readOrganizationNotice(supabase, profile.organization_id, log);

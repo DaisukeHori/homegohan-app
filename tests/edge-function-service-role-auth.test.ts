@@ -41,60 +41,60 @@ async function errorOf(res: Response | null): Promise<{ status: number; body: un
 }
 
 describe("requireServiceRole: 従来の受け付け方 (変えていない)", () => {
-  it("SR-1: CRON_SECRET と一致する Bearer は通る", () => {
+  it("SR-1: CRON_SECRET と一致する Bearer は通る", async () => {
     env.CRON_SECRET = CRON_SECRET;
-    expect(requireServiceRole(requestWith(`Bearer ${CRON_SECRET}`))).toBeNull();
+    expect(await requireServiceRole(requestWith(`Bearer ${CRON_SECRET}`))).toBeNull();
   });
 
-  it("SR-2: CRON_SECRET が未設定なら SERVICE_ROLE_SECRET と比べる", () => {
+  it("SR-2: CRON_SECRET が未設定なら SERVICE_ROLE_SECRET と比べる", async () => {
     env.SERVICE_ROLE_SECRET = "service-role-secret-for-test";
-    expect(requireServiceRole(requestWith("Bearer service-role-secret-for-test"))).toBeNull();
+    expect(await requireServiceRole(requestWith("Bearer service-role-secret-for-test"))).toBeNull();
   });
 
   it("SR-3: CRON_SECRET が設定されていれば、SERVICE_ROLE_SECRET は受け付けない (CRON_SECRET が優先)", async () => {
     env.CRON_SECRET = CRON_SECRET;
     env.SERVICE_ROLE_SECRET = "service-role-secret-for-test";
-    const res = requireServiceRole(requestWith("Bearer service-role-secret-for-test"));
+    const res = await requireServiceRole(requestWith("Bearer service-role-secret-for-test"));
     expect(await errorOf(res)).toEqual({ status: 401, body: { error: "Unauthorized" } });
   });
 
   it("SR-4: 違う値・Authorization ヘッダー無し・Bearer 以外は 401", async () => {
     env.CRON_SECRET = CRON_SECRET;
     for (const authorization of ["Bearer wrong", undefined, CRON_SECRET, `Basic ${CRON_SECRET}`, "Bearer "]) {
-      const res = requireServiceRole(requestWith(authorization));
+      const res = await requireServiceRole(requestWith(authorization));
       expect(await errorOf(res)).toEqual({ status: 401, body: { error: "Unauthorized" } });
     }
   });
 
   it("SR-5: 秘密が何も設定されていなければ、service role key 以外は 503 (設定漏れを成功にしない)", async () => {
-    const res = requireServiceRole(requestWith("Bearer anything"));
+    const res = await requireServiceRole(requestWith("Bearer anything"));
     expect(await errorOf(res)).toEqual({ status: 503, body: { error: "Service not configured" } });
   });
 });
 
 describe("requireServiceRole: service role key の完全一致も許可する (#1167)", () => {
-  it("SR-6: SUPABASE_SERVICE_ROLE_KEY と一致する Bearer は通る (CRON_SECRET が設定されていても)", () => {
+  it("SR-6: SUPABASE_SERVICE_ROLE_KEY と一致する Bearer は通る (CRON_SECRET が設定されていても)", async () => {
     env.CRON_SECRET = CRON_SECRET;
     env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_KEY;
-    expect(requireServiceRole(requestWith(`Bearer ${SERVICE_ROLE_KEY}`))).toBeNull();
+    expect(await requireServiceRole(requestWith(`Bearer ${SERVICE_ROLE_KEY}`))).toBeNull();
   });
 
-  it("SR-7: SERVICE_ROLE_JWT (Edge Function の Secret に入れた service role の JWT) とも一致すれば通る", () => {
+  it("SR-7: SERVICE_ROLE_JWT (Edge Function の Secret に入れた service role の JWT) とも一致すれば通る", async () => {
     env.CRON_SECRET = CRON_SECRET;
     env.SUPABASE_SERVICE_ROLE_KEY = "platform-injected-key";
     env.SERVICE_ROLE_JWT = SERVICE_ROLE_JWT;
-    expect(requireServiceRole(requestWith(`Bearer ${SERVICE_ROLE_JWT}`))).toBeNull();
-    expect(requireServiceRole(requestWith("Bearer platform-injected-key"))).toBeNull();
+    expect(await requireServiceRole(requestWith(`Bearer ${SERVICE_ROLE_JWT}`))).toBeNull();
+    expect(await requireServiceRole(requestWith("Bearer platform-injected-key"))).toBeNull();
   });
 
-  it("SR-8: CRON_SECRET / SERVICE_ROLE_SECRET が未設定でも、service role key なら通る (503 にしない)", () => {
+  it("SR-8: CRON_SECRET / SERVICE_ROLE_SECRET が未設定でも、service role key なら通る (503 にしない)", async () => {
     env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_KEY;
-    expect(requireServiceRole(requestWith(`Bearer ${SERVICE_ROLE_KEY}`))).toBeNull();
+    expect(await requireServiceRole(requestWith(`Bearer ${SERVICE_ROLE_KEY}`))).toBeNull();
   });
 
-  it("SR-9: Bearer の綴りの大文字小文字や余分な空白は許す (regenerate-embeddings と同じ)", () => {
+  it("SR-9: Bearer の綴りの大文字小文字や余分な空白は許す (regenerate-embeddings と同じ)", async () => {
     env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_KEY;
-    expect(requireServiceRole(requestWith(`bearer   ${SERVICE_ROLE_KEY}  `))).toBeNull();
+    expect(await requireServiceRole(requestWith(`bearer   ${SERVICE_ROLE_KEY}  `))).toBeNull();
   });
 
   it("SR-12: 認証方式 (Bearer) を付けずに service role key だけを送っても通さない", async () => {
@@ -108,7 +108,7 @@ describe("requireServiceRole: service role key の完全一致も許可する (#
       `Token ${SERVICE_ROLE_KEY}`,
       `Bearer${SERVICE_ROLE_KEY}`,
     ]) {
-      const res = requireServiceRole(requestWith(authorization));
+      const res = await requireServiceRole(requestWith(authorization));
       expect(await errorOf(res), `Authorization: "${authorization}" が通ってはいけない`).toEqual({
         status: 401,
         body: { error: "Unauthorized" },
@@ -122,7 +122,7 @@ describe("requireServiceRole: service role key の完全一致も許可する (#
     const payload = Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url");
     const forged = `eyJhbGciOiJIUzI1NiJ9.${payload}.forged-signature`;
     for (const token of [forged, `${SERVICE_ROLE_KEY}x`, SERVICE_ROLE_KEY.slice(0, -1)]) {
-      const res = requireServiceRole(requestWith(`Bearer ${token}`));
+      const res = await requireServiceRole(requestWith(`Bearer ${token}`));
       expect(await errorOf(res)).toEqual({ status: 401, body: { error: "Unauthorized" } });
     }
   });
@@ -132,14 +132,14 @@ describe("requireServiceRole: service role key の完全一致も許可する (#
     env.SERVICE_ROLE_JWT = "";
     env.CRON_SECRET = CRON_SECRET;
     for (const authorization of ["Bearer ", "Bearer", ""]) {
-      const res = requireServiceRole(requestWith(authorization));
+      const res = await requireServiceRole(requestWith(authorization));
       expect(res, `Authorization: "${authorization}" が通ってはいけない`).not.toBeNull();
       expect(res!.status).toBe(401);
     }
 
     // 秘密が何も設定されていないときも、空の Bearer は 503 のまま (通らない)
     env.CRON_SECRET = undefined;
-    const res = requireServiceRole(requestWith("Bearer "));
+    const res = await requireServiceRole(requestWith("Bearer "));
     expect(await errorOf(res)).toEqual({ status: 503, body: { error: "Service not configured" } });
   });
 });
