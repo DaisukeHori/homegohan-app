@@ -1,7 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
+import { recordAdminAudit } from '@/lib/admin/audit';
 import { NextResponse } from 'next/server';
 
 // ユーザー詳細取得（サポート用 - 限定情報）
+// #1200: 情報を返すたびに admin_audit_logs へ admin.user.view_support を記録する
 export async function GET(
   request: Request,
   { params }: { params: { id: string } }
@@ -85,7 +87,7 @@ export async function GET(
       .eq('user_id', params.id)
       .order('created_at', { ascending: false });
 
-    return NextResponse.json({
+    const body = {
       user: {
         id: targetUser.id,
         nickname: targetUser.nickname,
@@ -108,7 +110,31 @@ export async function GET(
       },
       inquiries: inquiries || [],
       notes: notes || [],
+    };
+
+    // #1200: 他ユーザーの情報を返す前に、誰が誰を閲覧したかを監査ログへ残す。
+    // 404 (対象なし) は上で返しているため、ここに来るのは情報を返すときだけ。
+    // 記録に失敗しても閲覧は止めない (失敗は db-logger に error で残る)。
+    // details には返した項目名だけを入れ、値や問い合わせ・ノートの内容は入れない。
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      actionType: 'admin.user.view_support',
+      targetId: params.id,
+      targetType: 'user',
+      details: {
+        viewed_fields: [
+          ...Object.keys(body.user).map((field) => `user.${field}`),
+          'stats',
+          'inquiries',
+          'notes',
+        ],
+      },
+      request,
+      routeName: 'api/support/users/[id] GET',
     });
+
+    return NextResponse.json(body);
 
   } catch (error: any) {
     console.error('User fetch error:', error);

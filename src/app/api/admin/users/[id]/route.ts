@@ -1,5 +1,6 @@
 /**
  * GET /api/admin/users/{id} — ユーザー詳細
+ *   (#1200: 情報を返すたびに admin_audit_logs へ admin.user.view を記録する)
  * PATCH /api/admin/users/{id} — admin_note 更新
  * operator/02-api-spec.md §4 準拠
  */
@@ -9,6 +10,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { UserPatchBodySchema } from '@/lib/admin/users-schemas';
+import { recordAdminAudit } from '@/lib/admin/audit';
 import { canViewUserEmail, fetchUserEmails } from '@/lib/admin/user-emails';
 import { isAccountFrozen } from '@/lib/auth/frozen';
 
@@ -19,7 +21,7 @@ const LOG_SOURCE = 'GET /api/admin/users/[id]';
 
 type Params = { params: { id: string } };
 
-export async function GET(_request: Request, { params }: Params) {
+export async function GET(request: Request, { params }: Params) {
   let actor;
   try {
     actor = await requireRole(['admin', 'super_admin', 'support']);
@@ -123,7 +125,7 @@ export async function GET(_request: Request, { params }: Params) {
 
   void auditLogs; // 現在は ban_history として返す
 
-  const response = NextResponse.json({
+  const body = {
     data: {
       id: profile.id,
       email,
@@ -154,7 +156,24 @@ export async function GET(_request: Request, { params }: Params) {
       last_login_at: profile.last_login_at ?? null,
       registered_at: profile.created_at,
     },
+  };
+
+  // #1200: 他ユーザーの情報を返す前に、誰が誰を閲覧したかを監査ログへ残す。
+  // 404 (対象なし) は上で返しているため、ここに来るのは情報を返すときだけ。
+  // 記録に失敗しても閲覧は止めない (失敗は db-logger に error で残る)。
+  // details には返した項目名 (値が null の項目も含む) だけを入れ、値や email は入れない。
+  await recordAdminAudit({
+    supabase,
+    actorId: actor.id,
+    actionType: 'admin.user.view',
+    targetId: id,
+    targetType: 'user',
+    details: { viewed_fields: Object.keys(body.data) },
+    request,
+    routeName: 'api/admin/users/[id] GET',
   });
+
+  const response = NextResponse.json(body);
   // メールアドレスを含むため、共有キャッシュに残さない
   response.headers.set('Cache-Control', 'no-store');
   return response;
