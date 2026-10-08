@@ -27,6 +27,7 @@ export function renderMemberRemovedEmail(vars: MemberRemovedEmailVars): EmailEnv
   const label = membershipScopeLabel(vars.scope);
 
   return {
+    template: 'member_removed',
     to: vars.to_email,
     from: 'ほめゴハン <noreply@homegohan.app>',
     subject: `【ほめゴハン】${describeScopeForSubject(vars.scope, vars.scope_name)}から外されました`,

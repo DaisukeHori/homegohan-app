@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EmailSendError } from '@/lib/emails/send-result';
 import type { RateLimitCategory, RateLimitResult } from '@/lib/rate-limit';
 
 // Supabase クライアントのモック
@@ -438,6 +439,38 @@ describe('POST /api/family/members/[member_id]/promote', () => {
     // ログにも token を載せない
     expect(JSON.stringify(mockLogError.mock.calls)).not.toContain(promotionToken);
     expect(JSON.stringify(json)).not.toContain(promotionToken);
+  });
+
+  it('メール送信が ok: false の結果で返っても (sendEmail は配信の失敗で例外を投げない) 200 を返し、リクエストとの対応つきで構造化ログに記録する (#1193)', async () => {
+    const emailError = new EmailSendError('application_error', 'EMAIL_SEND_FAILED: Service Unavailable', 503, 4, true);
+    mockSendEmail.mockResolvedValue({ ok: false, id: null, attempts: 4, skipped: false, error: emailError });
+    mockRpc.mockResolvedValue({ data: rpcResult, error: null });
+
+    const res = await POST(postRequest({ email: childEmail }), makeParams(memberId));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data.request.id).toBe(rpcResult.id);
+    expect(json.data.request.status).toBe('pending');
+    expect(mockWithUser).toHaveBeenCalledWith(validUser.id);
+    expect(mockLogError).toHaveBeenCalledTimes(1);
+    expect(mockLogError).toHaveBeenCalledWith('promotion request email send failed', emailError, {
+      member_id: memberId,
+      request_id: rpcResult.id,
+    });
+    expect(JSON.stringify(mockLogError.mock.calls)).not.toContain(promotionToken);
+  });
+
+  it('RESEND_API_KEY が無くて送らなかった (skipped) ときは、エラーログを残さず 200 を返す (#1193)', async () => {
+    const skippedError = new EmailSendError('not_configured', 'EMAIL_NOT_CONFIGURED: RESEND_API_KEY が未設定', null, 0, false);
+    mockSendEmail.mockResolvedValue({ ok: false, id: null, attempts: 0, skipped: true, error: skippedError });
+    mockRpc.mockResolvedValue({ data: rpcResult, error: null });
+
+    const res = await POST(postRequest({ email: childEmail }), makeParams(memberId));
+
+    expect(res.status).toBe(200);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockLogError).not.toHaveBeenCalled();
   });
 });
 
