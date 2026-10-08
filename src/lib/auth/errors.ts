@@ -32,20 +32,6 @@ export class ForbiddenError extends Error {
 }
 
 /**
- * impersonate 専用エラークラス
- * super_admin 以外の実行・対象ユーザーが拒否設定 等
- */
-export class ImpersonationError extends Error {
-  constructor(
-    public readonly code: string,
-    message?: string,
-  ) {
-    super(message ?? code);
-    this.name = 'ImpersonationError';
-  }
-}
-
-/**
  * cross/01-auth-session.md §14 で定義された PermError (互換用エイリアス)
  * ForbiddenError を使用してください
  */
