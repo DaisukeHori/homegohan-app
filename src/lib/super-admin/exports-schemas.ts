@@ -1,8 +1,18 @@
 /**
  * データエクスポート スキーマ定義
  * operator/02-api-spec.md §16 + operator/03-ui-spec.md §28 準拠
+ *
+ * 注意 (#1126): データエクスポート機能は準備中 (未対応) で、API (/api/super-admin/exports) は
+ * 全メソッドが 501 (OP_NOT_SUPPORTED) を返す。ここにあるスキーマと型は、機能を作るときの
+ * 設計 (リクエスト・一覧・状態の形) を残してあるだけで、いまはどの API からも使っていない。
+ * 実装するときは、専用の exports テーブルとファイルを作る処理を先に用意すること
+ * (以前のように、本人の GDPR 削除要求の表 gdpr_deletion_requests を代用しない)。
  */
 import { z } from 'zod';
+
+/** API (501) の本文。画面の「準備中（未対応）」と同じ内容を伝える */
+export const EXPORTS_NOT_SUPPORTED_MESSAGE =
+  'データのエクスポートは準備中（未対応）です。依頼を受け付けても、ファイルを作る処理がまだ無いため、現在は利用できません。';
 
 export const ExportType = ['user_data', 'audit_logs', 'meal_records', 'org_data', 'gdpr'] as const;
 export const ExportFormat = ['csv', 'json', 'parquet'] as const;
@@ -31,25 +41,6 @@ export type CreateExportInput = z.infer<typeof CreateExportSchema>;
 export type ListExportsQuery = z.infer<typeof ListExportsQuerySchema>;
 
 export type ExportStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
-
-/**
- * gdpr_deletion_requests の行から、画面・API が使う状態を導く (#1306)。
- *
- * エクスポートは gdpr_deletion_requests を代用しているが、このテーブルに status 列は無い
- * (cross/08-legal-compliance.md §16.1: cancelled_at / executed_at で状態を判定する)。
- *   executed_at が入っている  → completed (実行済み。取り消せない)
- *   cancelled_at が入っている → cancelled
- *   どちらも空                → pending (クーリング期間中、またはバッチの実行待ち)
- * 両方入っている行は通常ありえないが、実行は取り消せないので completed を優先する。
- */
-export function deriveExportStatus(row: {
-  cancelled_at: string | null;
-  executed_at: string | null;
-}): ExportStatus {
-  if (row.executed_at) return 'completed';
-  if (row.cancelled_at) return 'cancelled';
-  return 'pending';
-}
 
 export interface DataExport {
   id: string;
