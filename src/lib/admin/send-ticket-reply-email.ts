@@ -16,6 +16,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure, type SendEmailResult } from '@/lib/emails/send-result';
 import { renderTicketReplyEmail } from '@/lib/emails/support/ticket-reply';
+import { getSiteUrl } from '@/lib/site-config';
 import type { ReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
 
 /** email_delivery_logs.template に入れる値 */
@@ -36,10 +37,6 @@ export interface SendTicketReplyEmailParams {
 }
 
 const replyToSchema = z.string().email();
-
-function appBaseUrl(): string {
-  return (process.env.NEXT_PUBLIC_APP_URL || 'https://homegohan.app').replace(/\/+$/, '');
-}
 
 /** SUPPORT_REPLY_TO (任意)。未設定、または不正な値なら undefined (noreply のまま送る) */
 function resolveReplyTo(logger: ReplyEmailLogger): string | undefined {
@@ -84,7 +81,7 @@ async function deliverTicketReplyEmail(params: SendTicketReplyEmailParams): Prom
         ticket_id: ticket.id,
         ticket_subject: ticket.subject,
         reply_body: messageBody,
-        contact_url: `${appBaseUrl()}/contact`,
+        contact_url: `${getSiteUrl()}/contact`,
         reply_to: resolveReplyTo(logger),
       }),
     );
