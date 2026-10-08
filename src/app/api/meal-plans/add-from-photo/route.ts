@@ -4,6 +4,11 @@ import { checkSandboxEligibility } from "@/lib/handson-tour/sandbox-eligibility"
 import { buildCatalogSelectionUpdate } from "../../../../lib/catalog-products";
 import { buildPhotoDishList } from "../../../../lib/meal-image";
 import { cancelPendingMealImageJobs } from "../../../../lib/meal-image-jobs";
+import {
+  plannedMealValidationErrorBody,
+  sanitizeAiNutrient,
+  validatePlannedMealInput,
+} from "@/lib/planned-meal-validation";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -38,6 +43,13 @@ export async function POST(request: Request) {
       if (!eligibility.eligible) {
         return NextResponse.json({ error: eligibility.error }, { status: eligibility.status });
       }
+    }
+
+    // #1205: meal_type は planned_meals の DB トリガー (trg_planned_meals_validate_values) と同じ 5 値だけ。
+    // 下の「同じ meal_type の食事を削除」より前に確認し、不正なら DB に触れず 400 を返す。
+    const validation = validatePlannedMealInput({ mealType });
+    if (!validation.ok) {
+      return NextResponse.json(plannedMealValidationErrorBody(validation), { status: 400 });
     }
     
     // 1. user_daily_meals を取得または作成
@@ -120,7 +132,9 @@ export async function POST(request: Request) {
       mode: 'cook',
       dish_name: allDishNames,
       description: nutritionalAdvice || null,
-      calories_kcal: totalCalories || null,
+      // totalCalories は写真解析 (AI) の推定値。桁を間違えても保存を止めず、範囲内に整える
+      // （数値でない・負 → null、上限超え → 上限、小数 → 四捨五入）。0 と未入力は従来どおり null。
+      calories_kcal: sanitizeAiNutrient('calories_kcal', totalCalories) || null,
       image_url: imageUrl,
       is_completed: false,
       dishes: photoDishes.length > 0 ? photoDishes : null,
