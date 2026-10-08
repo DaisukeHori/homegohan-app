@@ -56,6 +56,10 @@ const EXEMPT_EMAIL_SENDERS: Record<string, string> = {
     '運営の super_admin 専用 (requireSuperAdmin)。宛先は対象組織の既存メンバーで、利用者は宛先を指定できない',
   'src/app/api/operator/membership/org/[id]/dissolve/route.ts':
     '運営の super_admin 専用 (requireSuperAdmin)。宛先は対象組織の既存メンバーで、利用者は宛先を指定できない',
+  'src/lib/admin/send-ticket-reply-email.ts':
+    '運営 (support / admin / super_admin) 専用の POST /api/admin/support/tickets/[id]/messages が、requireRole を通した後の顧客向け返信 (内部メモはメールにしない) でだけ呼ぶ。' +
+    '宛先はチケットの顧客本人のアドレス (ticket.user_id を auth.admin.getUserById で引く) に固定で、呼び出し側は宛先を指定できない。' +
+    '運営による代理起票 (#1248) は admin_audit_logs に残る。送信回数の上限は設けていない (必要になったら、除外をやめて invite-throttle 相当の判定を通す)',
 };
 
 // ─────────────────────────────────────────────
