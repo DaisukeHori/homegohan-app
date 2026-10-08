@@ -69,6 +69,7 @@ const sr: SupabaseClient = createClient(url, serviceKey, {
 const TS = Date.now();
 const PASSWORD = `${randomBytes(18).toString('base64url')}Aa1!`; // 使い捨てユーザー用。実行のたびに変わる
 const MARK = `x1306-${TS}`; // このテストのユーザーだけが持つ perf_modes の値
+const MARK_ZERO = `x1306z-${TS}`; // 何も記録していない 5 人 (全指標が全員 0) だけが持つ perf_modes の値
 const D = '2026-10-08'; // 集計する日 (2026-10-08 は木曜日)
 const PREV = '2026-10-07';
 
@@ -77,6 +78,7 @@ const createdUserIds: string[] = [];
 const createdOrgIds: string[] = [];
 const createdMetricIds: string[] = [];
 let segmentId: string | null = null;
+let zeroSegmentId: string | null = null;
 
 async function createUser(label: string, extra: Record<string, unknown> = {}): Promise<string> {
   const email = `it1306-${label}-${TS}@homegohan.test`;
@@ -186,6 +188,7 @@ afterAll(async () => {
   if (createdOrgIds.length > 0) await sr.from('organizations').delete().in('id', createdOrgIds);
   for (const id of createdUserIds) await sr.auth.admin.deleteUser(id);
   if (segmentId) await sr.from('segment_definitions').delete().eq('id', segmentId);
+  if (zeroSegmentId) await sr.from('segment_definitions').delete().eq('id', zeroSegmentId);
   if (createdMetricIds.length > 0) await sr.from('metric_definitions').delete().in('id', createdMetricIds);
 }, 120_000);
 
@@ -311,6 +314,7 @@ describe('aggregate-org-stats: 実スキーマで planned_meals を user_daily_m
 // ================================================================
 describe('calculate-segment-stats: 実スキーマで指標・統計・ランキング・バッジが作られる (#1306)', () => {
   const userIds: string[] = [];
+  const zeroUserIds: string[] = [];
   const metricIds: Record<string, string> = {};
   let bulkUserId: string;
 
@@ -350,6 +354,19 @@ describe('calculate-segment-stats: 実スキーマで指標・統計・ランキ
       .single();
     if (error || !segment) throw new Error(`segment_definitions: ${error?.message}`);
     segmentId = segment.id as string;
+
+    // 何も記録していない 5 人のセグメント。全指標が全員 0 になる (本番で起きる見込みの状況。
+    // 修正前は、全員に『平均超え』、取得順の先頭の 1 人に『1 位』などが付いた)
+    for (let i = 1; i <= 5; i += 1) {
+      zeroUserIds.push(await createUser(`z${i}`, { perf_modes: [MARK_ZERO] }));
+    }
+    const { data: zeroSegment, error: zeroSegmentError } = await sr
+      .from('segment_definitions')
+      .insert({ code: MARK_ZERO, name: 'it1306 全員 0 セグメント', axes: { perf_mode: MARK_ZERO }, level: 9, is_active: true })
+      .select('id')
+      .single();
+    if (zeroSegmentError || !zeroSegment) throw new Error(`segment_definitions (zero): ${zeroSegmentError?.message}`);
+    zeroSegmentId = zeroSegment.id as string;
 
     // 同じ日 (2026-10-08) に 4 食ずつ。メニュー実行率が 100 / 75 / 50 / 25 / 0 になるようにする
     //   s1: 4/4 完了 (スコア 5, 4, 3, なし)  → 実行率 100, 朝食 100, 野菜 4.0, 栄養 80
@@ -476,15 +493,92 @@ describe('calculate-segment-stats: 実スキーマで指標・統計・ランキ
     ]);
   });
 
-  it('S-5: 1 位のユーザーに順位バッジが付与される (修正前は badges の取得が 22P02 で失敗し、バッジは一度も付与されなかった)', async () => {
+  it('S-4b: 同じ値の利用者は同じ順位になる (朝食実行率は s1〜s3 が 100 で同率 1 位、s4・s5 が 0 で同率 4 位)。百分位は同点の最後の順位で数える', async () => {
+    const { data, error } = await sr
+      .from('user_segment_rankings')
+      .select('user_id, rank, percentile, value, vs_avg_rate')
+      .eq('segment_id', segmentId!)
+      .eq('metric_id', metricIds.bf)
+      .eq('period_type', 'weekly');
+    expect(error).toBeNull();
+    const byUser = new Map((data ?? []).map((r) => [r.user_id as string, [r.rank, Number(r.percentile), Number(r.value), Number(r.vs_avg_rate)]]));
+    // [順位, 百分位, 値, 平均比]。平均 60 に対して 100 は +67%、0 は -100%。
+    // 百分位は「自分より厳密に下の利用者の割合」: s1〜s3 は 3 人同率なので 3 位ぶんの 40、s4・s5 は下に誰もいないので 0
+    expect(userIds.map((id) => byUser.get(id))).toEqual([
+      [1, 40, 100, 67],
+      [1, 40, 100, 67],
+      [1, 40, 100, 67],
+      [4, 0, 0, -100],
+      [4, 0, 0, -100],
+    ]);
+  });
+
+  /** バッジの code ごとに、userIds の中でそのバッジを持つ利用者の添字 (昇順) を返す */
+  async function badgeHolders(codes: string[]): Promise<Record<string, number[]>> {
+    const { data: badges, error: badgesError } = await sr.from('badges').select('id, code').in('code', codes);
+    expect(badgesError).toBeNull();
+    expect((badges ?? []).map((b) => b.code).sort()).toEqual([...codes].sort());
+    const { data, error } = await sr.from('user_badges').select('user_id, badge_id').in('badge_id', (badges ?? []).map((b) => b.id)).in('user_id', userIds);
+    expect(error).toBeNull();
+    const result: Record<string, number[]> = {};
+    for (const badge of badges ?? []) {
+      result[badge.code as string] = (data ?? [])
+        .filter((r) => r.badge_id === badge.id)
+        .map((r) => userIds.indexOf(r.user_id as string))
+        .sort((a, b) => a - b);
+    }
+    return result;
+  }
+
+  it('S-5: 同率を含む 1 位の利用者に順位バッジが付与される。同点を取得順で 1 人に決めない (修正前は badges の取得が 22P02 で失敗し、バッジは一度も付与されなかった)', async () => {
     const { data: badge, error: badgeError } = await sr.from('badges').select('id').eq('code', 'segment_rank_1').single();
     expect(badgeError).toBeNull();
 
     const { data, error } = await sr.from('user_badges').select('user_id, message, context_json').eq('badge_id', badge!.id).in('user_id', userIds);
     expect(error).toBeNull();
-    // 1 位になれるのは s1 だけ
-    expect(new Set((data ?? []).map((r) => r.user_id))).toEqual(new Set([userIds[0]]));
-    expect(data![0].context_json).toMatchObject({ segment_id: segmentId, rank: 1, period_type: 'weekly' });
-    expect(data![0].message).toContain('1位');
+    // 1 位になる指標があるのは s1〜s3 (メニュー実行率は s1 だけ、朝食実行率は s1〜s3 が同率、野菜・栄養は s1・s2 が同率)
+    expect(new Set((data ?? []).map((r) => r.user_id))).toEqual(new Set([userIds[0], userIds[1], userIds[2]]));
+    for (const row of data ?? []) {
+      expect(row.context_json).toMatchObject({ segment_id: segmentId, rank: 1, period_type: 'weekly' });
+      expect(row.message).toContain('1位');
+    }
+  });
+
+  it('S-5b: 指標を限ったバッジは、その指標で同率を含む 1 位の利用者に付く。実績の無い下位の利用者 (s4・s5) には何も付かない', async () => {
+    const holders = await badgeHolders(['breakfast_champion', 'veggie_champion', 'segment_rank_1', 'segment_rank_top3', 'segment_above_avg']);
+    expect(holders).toEqual({
+      breakfast_champion: [0, 1, 2], // 朝食実行率: s1〜s3 が同率 1 位
+      veggie_champion: [0, 1], // 野菜スコア: s1・s2 が同率 1 位
+      segment_rank_1: [0, 1, 2],
+      segment_rank_top3: [0, 1, 2], // s4・s5 はどの指標でも 4 位以下か、値が 0
+      segment_above_avg: [0, 1, 2], // s3 はメニュー実行率ではちょうど平均だが、朝食実行率などで平均を超える
+    });
+
+    const { data, error } = await sr.from('user_badges').select('user_id').in('user_id', [userIds[3], userIds[4]]);
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+  });
+
+  it('S-7: 5 人とも何も記録していない (全指標が全員 0) セグメントは、ランキングは作るが、バッジは 1 件も付かない', async () => {
+    const { data, error } = await sr
+      .from('user_segment_rankings')
+      .select('user_id, rank, total_users, percentile, value, vs_avg_rate')
+      .eq('segment_id', zeroSegmentId!)
+      .eq('period_type', 'weekly')
+      .in('metric_id', Object.values(metricIds))
+      .in('user_id', zeroUserIds);
+    expect(error).toBeNull();
+    expect(data).toHaveLength(4 * 5); // 4 指標 × 5 人
+    for (const row of data ?? []) {
+      // 全員 0 = 全員が同率 1 位 (自分より下の人はいないので百分位 0)。
+      // 平均が 0 なので平均との差の割合は決まらず null (0 で保存すると、平均ちょうどと区別できない)
+      expect(row).toMatchObject({ rank: 1, total_users: 5, vs_avg_rate: null });
+      expect(Number(row.percentile)).toBe(0);
+      expect(Number(row.value)).toBe(0);
+    }
+
+    const { data: badges, error: badgesError } = await sr.from('user_badges').select('user_id, badge_id').in('user_id', zeroUserIds);
+    expect(badgesError).toBeNull();
+    expect(badges).toEqual([]);
   });
 });
