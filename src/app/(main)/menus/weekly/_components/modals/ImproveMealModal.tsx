@@ -123,7 +123,7 @@ export function ImproveMealModal({
                     <div className="mb-4 p-3 rounded-lg" style={{ background: colors.accentLight }}>
                       <div className="flex items-center gap-1 mb-1">
                         <Sparkles size={12} color={colors.accent} />
-                        <span style={{ fontSize: 10, fontWeight: 600, color: colors.accent }}>AI栄養士の提案</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: colors.accent }}>AI栄養士の提案</span>
                       </div>
                       <p style={{ fontSize: 11, color: colors.text, lineHeight: 1.5 }} className="line-clamp-3">
                         {nutritionFeedback}

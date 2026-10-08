@@ -144,7 +144,7 @@ export function NutritionDetailModal({
                             onRefetchFeedback(currentDateStr);
                           }
                         }}
-                        className="text-[10px] px-2 py-0.5 rounded"
+                        className="text-[11px] px-2 py-0.5 rounded"
                         style={{ background: colors.bg, color: colors.textMuted }}
                       >
                         再分析
@@ -236,7 +236,7 @@ export function NutritionDetailModal({
                 </p>
                 {Object.entries(NUTRIENT_BY_CATEGORY).map(([category, nutrients]) => (
                   <div key={category} className="mb-3">
-                    <p className="text-[10px] font-bold mb-1.5" style={{ color: colors.textMuted }}>
+                    <p className="text-[11px] font-bold mb-1.5" style={{ color: colors.textMuted }}>
                       {CATEGORY_LABELS[category]}
                     </p>
                     <div className="grid grid-cols-2 gap-2">
@@ -249,11 +249,14 @@ export function NutritionDetailModal({
                         return (
                           <div key={def.key} className="flex items-center gap-2 p-1.5 rounded" style={{ background: colors.bg }}>
                             <div className="flex-1 min-w-0">
-                              <div className="flex justify-between items-center">
-                                <span className="text-[10px] truncate" style={{ color: colors.textLight }}>
+                              {/* #1119: 栄養名は 11px、摂取量と達成率 (主要情報) は 12px にする。
+                                  2 列グリッドの 1 枚は 360px 幅で内側約 132px。最長の「コレステロール」(約 77px) +
+                                  「1234mg」(約 42px) でも収まり、収まらない栄養名は truncate で省略される */}
+                              <div className="flex justify-between items-center gap-1">
+                                <span className="text-[11px] truncate" style={{ color: colors.textLight }}>
                                   {def.label}
                                 </span>
-                                <span className="text-[9px]" style={{ color: colors.textMuted }}>
+                                <span className="text-xs flex-shrink-0" style={{ color: colors.textMuted }}>
                                   {value.toFixed(def.decimals)}{def.unit}
                                 </span>
                               </div>
@@ -268,7 +271,7 @@ export function NutritionDetailModal({
                                   />
                                 </div>
                                 <span
-                                  className="text-[8px] w-7 text-right font-medium"
+                                  className="text-xs w-10 flex-shrink-0 text-right font-medium"
                                   style={{ color: isGood ? colors.success : isLow ? colors.warning : isHigh ? colors.accent : colors.textMuted }}
                                 >
                                   {percentage}%
@@ -292,7 +295,7 @@ export function NutritionDetailModal({
                   {!isEditingRadarNutrients && (
                     <button
                       onClick={onStartEditRadar}
-                      className="text-[10px] px-2 py-1 rounded"
+                      className="text-[11px] px-2 py-1 rounded"
                       style={{ background: colors.bg, color: colors.accent }}
                     >
                       変更
@@ -302,12 +305,12 @@ export function NutritionDetailModal({
 
                 {isEditingRadarNutrients ? (
                   <div>
-                    <p className="text-[9px] mb-2" style={{ color: colors.textMuted }}>
+                    <p className="text-[11px] mb-2" style={{ color: colors.textMuted }}>
                       3〜8個を選択してください（選択順で表示）
                     </p>
                     {Object.entries(NUTRIENT_BY_CATEGORY).map(([category, nutrients]) => (
                       <div key={category} className="mb-2">
-                        <p className="text-[9px] font-bold mb-1" style={{ color: colors.textMuted }}>
+                        <p className="text-[11px] font-bold mb-1" style={{ color: colors.textMuted }}>
                           {CATEGORY_LABELS[category]}
                         </p>
                         <div className="flex flex-wrap gap-1">
@@ -318,14 +321,15 @@ export function NutritionDetailModal({
                               <button
                                 key={def.key}
                                 onClick={() => onToggleRadarNutrient(def.key)}
-                                className="px-2 py-0.5 rounded-full text-[9px] transition-all flex items-center gap-1"
+                                className="px-2 py-0.5 rounded-full text-[11px] transition-all flex items-center gap-1"
                                 style={{
                                   background: isSelected ? colors.accent : colors.bg,
                                   color: isSelected ? '#fff' : colors.textLight,
                                   opacity: !isSelected && tempRadarNutrients.length >= 8 ? 0.5 : 1,
                                 }}
                               >
-                                {isSelected && <span className="text-[8px]">{index + 1}</span>}
+                                {/* data-testid: 選択順の番号。E2E が文字サイズのクラス名に頼らず、選択済みのボタンを見分けるために付ける */}
+                                {isSelected && <span data-testid="radar-nutrient-order-badge" className="text-[11px] font-bold">{index + 1}</span>}
                                 {def.label}
                               </button>
                             );
@@ -358,10 +362,10 @@ export function NutritionDetailModal({
                       return (
                         <span
                           key={key}
-                          className="px-2 py-0.5 rounded-full text-[10px] flex items-center gap-1"
+                          className="px-2 py-0.5 rounded-full text-[11px] flex items-center gap-1"
                           style={{ background: colors.accentLight, color: colors.accent }}
                         >
-                          <span className="text-[8px] opacity-70">{idx + 1}</span>
+                          <span className="text-[11px] opacity-70">{idx + 1}</span>
                           {def?.label}
                         </span>
                       );

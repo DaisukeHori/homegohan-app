@@ -128,8 +128,10 @@ export function FridgeModal({
                   <span style={{ fontSize: 11, color: colors.textMuted }}>{item.amount || ''}</span>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
+                  {/* #1119: 期限 (主要情報) は 12px。「期限切れ」「明日まで」は 4 文字で約 48px。折り返さない */}
                   <span style={{
-                    fontSize: 10,
+                    fontSize: 12,
+                    whiteSpace: 'nowrap',
                     fontWeight: 600,
                     color: daysLeft !== null && daysLeft <= 1 ? colors.danger : daysLeft !== null && daysLeft <= 3 ? colors.warning : colors.textMuted,
                   }}>
