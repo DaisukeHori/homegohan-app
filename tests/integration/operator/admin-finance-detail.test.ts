@@ -7,6 +7,8 @@
  *   GET  /api/admin/finance/reconciliation
  *
  * 権限: finance / admin / super_admin。ほかのロール (support など) と一般ユーザーは 403、未認証は 401。
+ * ただし NPS / CSAT の集計 (GET nps) と NPS の書き出し (POST exports の export_type=nps) は admin / super_admin だけ。
+ * finance は 403 (#1311。財務ロールを NPS / CSAT から外した)。書き出せる種別の一覧 (GET exports) にも、finance には nps を出さない。
  * 入力エラーは 400 を期待する (AC の「422 相当」)。ただし現状の finance ルートは、Zod の例外・不正な日時・
  * 最終ページより先のページ指定を握っておらず、500 になる (reconciliation は検証自体が無い) 箇所がある。
  * その箇所は `[既知の不具合]` の it.fails で固定してある。
@@ -35,6 +37,7 @@ const TS = Date.now();
 const pool = new TestUserPool(TS, 'findt');
 
 let financeUser: TestUser;
+let adminFinanceUser: TestUser; // admin と finance の両方を持つ (finance を外しても admin の権限は残る。#1311)
 let adminUser: TestUser;
 let superAdminUser: TestUser;
 let generalUser: TestUser; // 権限なし (role=user)。NPS の回答者としても使う
@@ -68,8 +71,9 @@ function csvLines(body: unknown): string[] {
 }
 
 beforeAll(async () => {
-  ({ financeUser, adminUser, superAdminUser, generalUser, supportUser } = await pool.createMany({
+  ({ financeUser, adminFinanceUser, adminUser, superAdminUser, generalUser, supportUser } = await pool.createMany({
     financeUser: ['finance'],
+    adminFinanceUser: ['admin', 'finance'],
     adminUser: ['admin'],
     superAdminUser: ['super_admin'],
     generalUser: ['user'],
@@ -328,6 +332,40 @@ describe('GET /api/admin/finance/invoices/[id]', () => {
   });
 });
 
+// ─── GET /api/admin/finance/exports ───────────────────────────────────────────
+
+describe('GET /api/admin/finance/exports', () => {
+  const NON_NPS_TYPES = ['revenue', 'invoices', 'subscriptions'];
+
+  it('200 for finance role - lists the export types without nps (#1311)', async () => {
+    const res = await apiCall('GET', '/api/admin/finance/exports', financeUser.jwt);
+    expect(dataOf<{ available_types: string[] }>(res).available_types).toEqual(NON_NPS_TYPES);
+  });
+
+  it.each([
+    { role: 'admin', user: () => adminUser },
+    { role: 'super_admin', user: () => superAdminUser },
+  ])('200 for $role role - lists the export types including nps', async ({ user }) => {
+    const res = await apiCall('GET', '/api/admin/finance/exports', user().jwt);
+    expect(dataOf<{ available_types: string[] }>(res).available_types).toEqual([...NON_NPS_TYPES, 'nps']);
+  });
+
+  it('403 for general user', async () => {
+    const res = await apiCall('GET', '/api/admin/finance/exports', generalUser.jwt);
+    expectError(res, 403, 'OP_PERMISSION_DENIED');
+  });
+
+  it('403 for support role (staff of another domain)', async () => {
+    const res = await apiCall('GET', '/api/admin/finance/exports', supportUser.jwt);
+    expectError(res, 403, 'OP_PERMISSION_DENIED');
+  });
+
+  it('401 for no auth', async () => {
+    const res = await apiCallNoAuth('GET', '/api/admin/finance/exports');
+    expectError(res, 401);
+  });
+});
+
 // ─── POST /api/admin/finance/exports ──────────────────────────────────────────
 
 describe('POST /api/admin/finance/exports', () => {
@@ -335,7 +373,9 @@ describe('POST /api/admin/finance/exports', () => {
     { exportType: 'revenue', role: 'finance' },
     { exportType: 'invoices', role: 'admin' },
     { exportType: 'subscriptions', role: 'super_admin' },
+    { exportType: 'subscriptions', role: 'finance' },
     { exportType: 'nps', role: 'admin' },
+    { exportType: 'nps', role: 'super_admin' },
   ] as const;
 
   it.each(cases)(
@@ -403,6 +443,43 @@ describe('POST /api/admin/finance/exports', () => {
     expect(res.status).toBe(200);
     const rows = csvLines(res.body).filter((line) => line.includes(NPS_PLAN_KEY));
     expect(rows).toHaveLength(4);
+  });
+
+  // #1311: NPS 回答の書き出しは admin / super_admin だけ。finance は 403 (これまでは RLS で空の CSV になるだけだった)
+  it('403 for finance role on the nps export - returns an error instead of a CSV, and leaves no audit log (#1311)', async () => {
+    const res = await apiCall('POST', '/api/admin/finance/exports', financeUser.jwt, {
+      export_type: 'nps',
+      from: NPS_SENT_AT,
+      to: NPS_SENT_AT,
+    });
+    expectError(res, 403, 'OP_PERMISSION_DENIED');
+    expect(res.headers['content-type']).toContain('application/json');
+    expect(res.headers['content-disposition']).toBeUndefined();
+    // seed した NPS 回答が本文に混ざっていない
+    expect(JSON.stringify(res.body)).not.toContain(NPS_PLAN_KEY);
+
+    // 監査ログ (admin.finance.export) に nps の記録が作られていない
+    const { data, error } = await supabaseAdmin
+      .from('admin_audit_logs')
+      .select('id')
+      .eq('actor_id', financeUser.userId)
+      .eq('action_type', 'admin.finance.export')
+      .eq('details->>export_type', 'nps');
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+  });
+
+  it('200 for a user who has both admin and finance - the nps export still works, and nps is listed', async () => {
+    const list = await apiCall('GET', '/api/admin/finance/exports', adminFinanceUser.jwt);
+    expect(dataOf<{ available_types: string[] }>(list).available_types).toContain('nps');
+
+    const res = await apiCall('POST', '/api/admin/finance/exports', adminFinanceUser.jwt, {
+      export_type: 'nps',
+      from: NPS_SENT_AT,
+      to: NPS_SENT_AT,
+    });
+    expect(res.status, `応答本文: ${JSON.stringify(res.body)}`).toBe(200);
+    expect(csvLines(res.body).filter((line) => line.includes(NPS_PLAN_KEY))).toHaveLength(4);
   });
 
   // 既知の不具合: invoices エクスポートも stripe_webhook_events を RLS 越しに読むため、行があっても空。
@@ -493,8 +570,26 @@ describe('GET /api/admin/finance/nps', () => {
     };
   }
 
-  it('200 for finance role - returns nps and csat data in the expected shape', async () => {
+  // #1311: NPS / CSAT の集計は admin / super_admin だけ。finance は 403 (これまでは RLS で NPS 0 件・CSAT は本人の分だけの、
+  // 誤った集計が返っていた)。admin と finance の両方を持つ人は admin として今までどおり使える。
+  it('403 for finance role - no nps / csat data is returned (#1311)', async () => {
     const res = await apiCall('GET', '/api/admin/finance/nps', financeUser.jwt);
+    expectError(res, 403, 'OP_PERMISSION_DENIED');
+    expect(JSON.stringify(res.body)).not.toContain('recent_comments');
+  });
+
+  it('200 for a user who has both admin and finance - aggregates the seeded surveys', async () => {
+    const res = await apiCall(
+      'GET',
+      `/api/admin/finance/nps?plan_key=${encodeURIComponent(NPS_PLAN_KEY)}`,
+      adminFinanceUser.jwt,
+    );
+    expect(res.status).toBe(200);
+    expect((res.body as NpsBody).data.nps).toMatchObject({ total_responses: 3, nps_score: 33.3 });
+  });
+
+  it('200 for admin role - returns nps and csat data in the expected shape', async () => {
+    const res = await apiCall('GET', '/api/admin/finance/nps', adminUser.jwt);
     expect(res.status).toBe(200);
     const { nps, csat } = (res.body as NpsBody).data;
     expect(nps).toEqual(
