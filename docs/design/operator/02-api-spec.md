@@ -71,7 +71,7 @@ await supabase.from('admin_audit_logs').insert({
 
 | パラメータ | 型 | 説明 |
 |----------|---|------|
-| `q` | string | 全文検索 (email/name/user_id) |
+| `q` | string | 全文検索 (email/name/user_id)。email の部分一致は `admin` / `super_admin` のみ (`support` は name/user_id のみ)。`%` `_` は文字どおりに一致する |
 | `plan` | string | plan_key でフィルタ |
 | `role` | string | ロールでフィルタ |
 | `status` | `active\|banned\|deleted` | ステータス |
@@ -106,10 +106,16 @@ await supabase.from('admin_audit_logs').insert({
 
 **権限**: `admin`, `super_admin`, `support`
 
+**email の扱い (#1145)**:
+- `email` は `auth.users` のメールアドレス。見られるのは `admin` / `super_admin` のみ。`support` は一覧・詳細を見られるが `email` は常に `null` で、`q` によるメール検索も効かない (検索でメールの存在を推測させない)。`support` にも見せる場合は `EMAIL_VIEWER_ROLES` (`src/lib/admin/user-emails.ts`) に足す。
+- 一覧は、その 1 ページに出た user_id のぶんだけを `admin_user_emails(p_ids)` (service_role 専用の RPC) で引く。`auth.admin.listUsers()` は先頭 50 件しか引けないため使わない (#1204)。
+- `q` のメール検索は `admin_find_user_ids_by_email(p_q, p_limit)` (service_role 専用)。新しいアカウントから最大 100 件までが対象。
+- メールを持たないユーザー (電話・匿名) や、取得に失敗したときは `email: null` (失敗はログに残り、API は 200 のまま)。応答は `Cache-Control: no-store`。
+
 ---
 
 ### GET /api/admin/users/{id}
-ユーザー詳細
+ユーザー詳細 (`email` の扱いは上の「email の扱い」と同じ。`support` には `null`)
 
 **レスポンス**:
 ```json
@@ -882,7 +888,7 @@ deprecated → private にロールバック (緊急用)
 ```
 
 **処理フロー**:
-1. 影響シミュレーション (GET impact を内部呼び出し)
+1. 影響シミュレーション (GET price-impact を内部呼び出し)
 2. Stripe: `prices.create` で新 Price object 生成
 3. DB: `subscription_plans` 更新 + `plan_price_history` INSERT
 4. 適用範囲: `on_renewal` → 既存サブスクリプションの次回更新時に切替
@@ -891,10 +897,11 @@ deprecated → private にロールバック (緊急用)
 
 ---
 
-### GET /api/super-admin/plans/{id}/impact
-価格変更影響シミュレーション
+### GET /api/super-admin/plans/{id}/price-impact
+価格変更影響シミュレーション (実装パスは `price-impact`)
 
 **クエリ**: `?new_monthly_price_jpy=1180&applies_to=on_renewal`
+- `applies_to`: `new_only` / `on_renewal` / `immediately` (省略時は `new_only`)
 
 **レスポンス**:
 ```json
@@ -902,10 +909,26 @@ deprecated → private にロールバック (緊急用)
   "data": {
     "affected_subscription_count": 3420,
     "affected_mrr_change_jpy": 680000,
-    "affected_user_sample": [ { "user_id": "uuid", "email": "..." } ]
+    "current_monthly_price_jpy": 980,
+    "new_monthly_price_jpy": 1180,
+    "applies_to": "on_renewal",
+    "effective_timing": "next_renewal",
+    "affected_user_sample": [ { "user_id": "uuid" } ]
   }
 }
 ```
+
+**`applies_to` ごとの集計** (#1212。詳細は `04-plan-management.md` §3.3):
+
+| applies_to | 既存契約への影響 | `affected_subscription_count` / `affected_mrr_change_jpy` | `effective_timing` |
+|-----------|----------------|-----------------------------------------------------------|--------------------|
+| `new_only` | なし (既存契約は現行価格のまま) | 件数 0、MRR 変化 0。`affected_user_sample` は空配列 | `none` |
+| `on_renewal` | 各契約の次回更新時から新価格 | 件数 = 対象契約数、MRR 変化 = (新月額 − 現月額) × 対象契約数 | `next_renewal` |
+| `immediately` | 即時に新価格 | 同上 | `immediate` |
+
+- 対象契約 = 同一 `plan_key` の `personal_subscriptions` のうち `status IN ('active','trialing','paused')` かつ `stripe_subscription_id IS NOT NULL`。`affected_subscription_count` は全件数、`affected_user_sample` は先頭 5 件。
+- MRR は月額の差額で概算する (interval 列が無く、年額契約も月額差で計算される)。
+- `on_renewal` / `immediately` の既存サブスクリプションへの実反映は未実装 (#1102)。
 
 ---
 

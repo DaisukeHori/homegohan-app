@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from '../_shared/cors.ts';
 import { requireServiceRole } from '../_shared/auth.ts';
 import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
+import { todayJst } from '../_shared/jst-date.ts';
 
 const supabaseAdmin = createClient(
   Deno.env.get('SUPABASE_URL') ?? '',
@@ -28,8 +29,12 @@ Deno.serve(async (req) => {
   try {
     const { date, organizationId } = await req.json().catch(() => ({}));
     
-    // 対象日付（指定なければ今日）
-    const targetDateStr = date || new Date().toISOString().split('T')[0];
+    // 対象日付（指定なければ JST の今日）
+    // UTC の暦日だと JST 00:00〜08:59 に前日となり、user_daily_meals.day_date (JST の暦日) とズレる (#1210)
+    // 注意: 下の planned_meals の取得クエリは、削除済みの meal_plan_days / meal_plans をまだ参照している。
+    // そのため本番では PGRST200 になり、メンバーのいる組織は集計されない。クエリの書き換えは別 Issue で直す
+    // (#1210 の修正は対象日の求め方だけ)。
+    const targetDateStr = date || todayJst();
 
     logger.info(`Aggregating stats for date: ${targetDateStr}`);
 

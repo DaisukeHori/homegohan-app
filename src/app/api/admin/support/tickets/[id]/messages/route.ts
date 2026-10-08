@@ -15,6 +15,7 @@ import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createMessageSchema } from '@/lib/admin/support-schemas';
+import { recordAdminAudit } from '@/lib/admin/audit';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { sendTicketReplyEmail } from '@/lib/admin/send-ticket-reply-email';
 import type { ReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
@@ -48,7 +49,40 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       );
     }
 
-    return NextResponse.json({ data: data ?? [] });
+    const messages = data ?? [];
+
+    // #1200: チケットの詳細 GET と同じメッセージ本文を返すため、こちらも閲覧を記録する。
+    // メッセージを 1 件も返さないときは何も開示していないため記録しない。
+    // 対象は「情報を見られた本人 (チケットを作ったユーザー)」にそろえる。
+    // チケットの持ち主を引けなかったときも記録は残したいので、チケット自体を対象にして記録する。
+    // 記録に失敗しても閲覧は止めない (失敗は db-logger に error で残る)。
+    // details には返した項目名だけを入れ、メッセージ本文は入れない。
+    if (messages.length > 0) {
+      let ticketOwnerId: string | null = null;
+      try {
+        const { data: ticketOwner } = await supabase
+          .from('support_tickets')
+          .select('user_id')
+          .eq('id', params.id)
+          .maybeSingle();
+        ticketOwnerId = ticketOwner?.user_id ?? null;
+      } catch {
+        // 持ち主を引けなくても閲覧は止めない。下でチケットを対象にして記録する。
+      }
+
+      await recordAdminAudit({
+        supabase,
+        actorId: currentUser.id,
+        actionType: 'admin.support.ticket.view_messages',
+        targetId: ticketOwnerId ?? params.id,
+        targetType: ticketOwnerId ? 'user' : 'support_ticket',
+        details: { ticket_id: params.id, viewed_fields: Object.keys(messages[0]) },
+        request,
+        routeName: 'api/admin/support/tickets/[id]/messages GET',
+      });
+    }
+
+    return NextResponse.json({ data: messages });
   } catch (err) {
     if (err instanceof AuthError) {
       return NextResponse.json(

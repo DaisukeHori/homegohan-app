@@ -70,23 +70,26 @@ supabase db reset --linked  # staging プロジェクトで実行
 supabase db push --linked --include-all
 
 # 3. smoke test (staging)
-npm run test:smoke:staging
+npm run test:smoke -- --base-url=https://staging.homegohan.app
 
 # 4. 本番適用 (2 名確認)
 supabase db push --linked --include-all
 # (本番プロジェクトの PROJECT_ID を確認してから実行)
 
-# 5. 型の再生成
-npm run db:types
-git add types/supabase.ts
+# 5. 型の再生成 (出力先は src/types/database.types.ts)
+npm run types:supabase
+git add src/types/database.types.ts
 git commit -m "chore: Supabase 型を再生成"
 
 # 6. seed データ投入
 supabase db execute --file supabase/seeds/subscription_plans.sql
 
 # 7. 動作確認
-npm run test:smoke:production
+npm run test:smoke -- --base-url=https://homegohan.app
 ```
+
+> `npm run test:smoke` の確認項目と使い方は `cross/07-dr-backup.md` §7.1 を参照 (#1181)。
+> 独自ドメインが確定するまでは、本番の URL は `https://homegohan-app.vercel.app` を指定する。
 
 ### 3.4 ロールバック手順
 
@@ -504,8 +507,10 @@ Step 4: PITR 復旧が必要な場合
   □ RTO: 30 分 (org_pro)
 
 Step 5: 復旧確認
-  □ /api/health エンドポイントで疎通確認
+  □ ヘルスチェックで疎通確認
+    curl -s "https://homegohan.app/api/health?deep=1" (200 = アプリ + DB OK / 503 = DB に届いていない)
   □ smoke test 実施
+    npm run test:smoke -- --base-url=https://homegohan.app
   □ Maintenance Mode を OFF
   □ status.homegohan.app を Resolved に更新
 ```

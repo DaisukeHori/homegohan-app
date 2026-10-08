@@ -18,7 +18,8 @@ type BadgeItem = {
   code: string;
   name: string;
   description: string;
-  icon_url: string | null;
+  // /api/badges は badges の行をそのまま返す。実列は icon (icon_url という列は無い。#1306)
+  icon: string | null;
   obtained_at: string | null;
 };
 

@@ -1,6 +1,6 @@
 /**
  * Wave 2 / F17: API セキュリティ修正の contract テスト
- * Issues: #163 #165 #166 #168 #169 #186 #187
+ * Issues: #163 #165 #166 #168 #169 #186 #187 #1219
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
@@ -318,6 +318,19 @@ function makeFakeBuffer() {
   return new Uint8Array([0x00, 0x01, 0x02, 0x03]);
 }
 
+/**
+ * 32 バイトの RIFF コンテナのバイト列を作る (#1219)。
+ * 'RIFF' (offset 0-3) + ファイルサイズ (offset 4-7, little endian) + 形式を表す FourCC (offset 8-11) + 本体。
+ * WebP なら formType は 'WEBP'、WAV なら 'WAVE'、AVI なら 'AVI '。
+ */
+function makeRiffBuffer(formType: string) {
+  const bytes = new Uint8Array(32);
+  bytes.set([0x52, 0x49, 0x46, 0x46], 0); // 'RIFF'
+  bytes.set([bytes.length - 8, 0x00, 0x00, 0x00], 4); // サイズ欄
+  bytes.set(Array.from(formType, (c) => c.charCodeAt(0)), 8); // offset 8-11 の FourCC
+  return bytes;
+}
+
 function makeUploadRequest(file: File) {
   const formData = new FormData();
   formData.append('file', file);
@@ -376,6 +389,113 @@ describe('#186 /api/upload POST', () => {
     const res = await uploadPOST(makeUploadRequest(file));
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({ url: expect.stringContaining('https://') });
+  });
+
+  // #1219: 以前は WebP を先頭 4 バイトの 'RIFF' だけで判定していたため、
+  // WAV / AVI など他の RIFF ファイルも image/webp として保存・公開できてしまった。
+  // 今は offset 8-11 の 'WEBP' (FourCC) まで確認する。PNG / PDF も短すぎる先頭一致をやめて標準のシグネチャ全体を見る。
+  describe('magic bytes の厳密化 (#1219)', () => {
+    /** 認証済みユーザーで Storage への保存が成功する状態にして、upload のモックを返す */
+    function mockUploadSuccess() {
+      mockGetUser.mockResolvedValue({ data: { user: { id: 'uid-1' } }, error: null });
+      const upload = vi.fn().mockResolvedValue({ error: null });
+      const getPublicUrl = vi.fn().mockReturnValue({ data: { publicUrl: 'https://storage/file' } });
+      mockStorageFrom.mockReturnValue({ upload, getPublicUrl });
+      return upload;
+    }
+
+    /** 受け付けられ、期待した MIME タイプと拡張子で保存されることを確認する */
+    async function expectAccepted(file: File, expected: { contentType: string; ext: string }) {
+      const upload = mockUploadSuccess();
+      const res = await uploadPOST(makeUploadRequest(file));
+      expect(res.status).toBe(200);
+      expect(upload).toHaveBeenCalledTimes(1);
+      const [path, , options] = upload.mock.calls[0];
+      expect(path).toMatch(new RegExp(`^uid-1/uploads/.+\\.${expected.ext}$`));
+      expect(options).toMatchObject({ contentType: expected.contentType });
+    }
+
+    /** 400 で拒否され、Storage には一切触れないことを確認する */
+    async function expectRejected(file: File) {
+      mockGetUser.mockResolvedValue({ data: { user: { id: 'uid-1' } }, error: null });
+      const res = await uploadPOST(makeUploadRequest(file));
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({ error: expect.stringContaining('does not match') });
+      expect(mockStorageFrom).not.toHaveBeenCalled();
+    }
+
+    // 実在する 1x1 の WebP ファイル (画像として読み込めることを確認済み)。先頭は 'RIFF' + サイズ + 'WEBP' + 最初のチャンク
+    const REAL_WEBP_FILES = [
+      { label: 'lossy (VP8 )', base64: 'UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA' },
+      { label: 'lossless (VP8L)', base64: 'UklGRiAAAABXRUJQVlA4TBQAAAAvAAAAAAdQgVQIIAAKmv7HiIj+Bw==' },
+    ];
+
+    it.each(REAL_WEBP_FILES)(
+      '本物の WebP ファイル $label は 200 で、image/webp の .webp として保存する',
+      async ({ base64 }) => {
+        const file = new File([Buffer.from(base64, 'base64')], 'photo.webp', { type: 'image/webp' });
+        await expectAccepted(file, { contentType: 'image/webp', ext: 'webp' });
+      },
+    );
+
+    it('署名の 12 バイト (RIFF + サイズ + WEBP) ちょうどのヘッダーは受け付ける', async () => {
+      const file = new File([makeRiffBuffer('WEBP').slice(0, 12)], 'min.webp', { type: 'image/webp' });
+      await expectAccepted(file, { contentType: 'image/webp', ext: 'webp' });
+    });
+
+    it.each([
+      { label: 'WAV (音声)', formType: 'WAVE' },
+      { label: 'AVI (動画)', formType: 'AVI ' },
+    ])('RIFF だが WEBP ではない $label を image/webp と偽っても 400 で拒否する', async ({ formType }) => {
+      await expectRejected(new File([makeRiffBuffer(formType)], 'fake.webp', { type: 'image/webp' }));
+    });
+
+    // 11 バイトは署名 (12 バイト) にちょうど 1 バイト足りない境界
+    it.each([0, 4, 8, 11])('短すぎるファイル (%i バイト) は 400 で拒否する', async (length) => {
+      const file = new File([makeRiffBuffer('WEBP').slice(0, length)], 'short.webp', { type: 'image/webp' });
+      await expectRejected(file);
+    });
+
+    it('WEBP の位置が offset 8 でない (RIFF の直後にある) ファイルは 400 で拒否する', async () => {
+      const bytes = new Uint8Array(32);
+      bytes.set([0x52, 0x49, 0x46, 0x46], 0); // 'RIFF'
+      bytes.set([0x57, 0x45, 0x42, 0x50], 4); // 'WEBP' が offset 4 にある
+      await expectRejected(new File([bytes], 'shifted.webp', { type: 'image/webp' }));
+    });
+
+    it('先頭が RIFF でなければ offset 8 が WEBP でも 400 で拒否する', async () => {
+      const bytes = makeRiffBuffer('WEBP');
+      bytes.set([0x58, 0x58, 0x58, 0x58], 0); // 'XXXX'
+      await expectRejected(new File([bytes], 'not-riff.webp', { type: 'image/webp' }));
+    });
+
+    it('PNG は 8 バイトのシグネチャ全体が一致すれば受け付ける', async () => {
+      const png = new Uint8Array(16);
+      png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+      await expectAccepted(new File([png], 'photo.png', { type: 'image/png' }), {
+        contentType: 'image/png',
+        ext: 'png',
+      });
+    });
+
+    it('PNG の先頭 4 バイトだけ合っていて続きが違うファイルは 400 で拒否する', async () => {
+      const fakePng = new Uint8Array(16);
+      fakePng.set([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x00, 0x00], 0);
+      await expectRejected(new File([fakePng], 'fake.png', { type: 'image/png' }));
+    });
+
+    it('PDF は %PDF- で始まれば受け付ける', async () => {
+      const pdf = new TextEncoder().encode('%PDF-1.7\n%....');
+      await expectAccepted(new File([pdf], 'doc.pdf', { type: 'application/pdf' }), {
+        contentType: 'application/pdf',
+        ext: 'pdf',
+      });
+    });
+
+    it('%PDF の直後が - ではないファイルは 400 で拒否する', async () => {
+      const fakePdf = new TextEncoder().encode('%PDFX1.7\n%....');
+      await expectRejected(new File([fakePdf], 'fake.pdf', { type: 'application/pdf' }));
+    });
   });
 });
 

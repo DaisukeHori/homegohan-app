@@ -130,6 +130,28 @@ admin.announcement.delete           - お知らせ削除
 admin.support.ticket_assign         - チケット担当者変更
 ```
 
+#### 4.1.1 ユーザー PII 閲覧系操作 (#1200)
+
+運営側がユーザーの個人情報を **閲覧** したことも記録する。開示請求のときに「誰が・いつ・誰の情報を見たか」に答えるため。
+実装は `src/lib/admin/audit.ts` の `recordAdminAudit()`。
+
+```
+admin.user.view                     - 管理コンソールでのユーザー詳細閲覧 (GET /api/admin/users/{id})
+admin.user.view_support             - サポートコンソールでのユーザー詳細閲覧 (GET /api/support/users/{id})
+admin.user.view_notes               - サポートコンソールでの管理ノート閲覧 (GET /api/support/users/{id}/notes)
+admin.support.ticket.view           - チケット詳細 (件名・メッセージ本文) の閲覧 (GET /api/admin/support/tickets/{id})
+admin.support.ticket.view_messages  - チケットのメッセージ一覧の閲覧 (GET /api/admin/support/tickets/{id}/messages)
+```
+
+記録のルール:
+- `target_id` は **情報を見られた本人 (ユーザー)** の id、`target_type` は `'user'`。チケットの閲覧も、チケットではなくチケットを作ったユーザーを対象にする。
+  こうすると、開示請求のときに `target_id = 本人` で全ての閲覧をまとめて引ける。チケット ID は `details.ticket_id` に入れる。
+- `details` には **閲覧した項目名だけ** を入れる (`viewed_fields`)。ニックネーム・メール・本文などの値は入れない。
+- `severity` は `info`。情報を実際に返したときだけ記録する (404 / 401 / 403 / 0 件のときは記録しない)。
+- `ip_address` は `x-forwarded-for` の先頭 1 IP を検証して入れる (inet 列のため、複数 IP や不正値をそのまま渡すと INSERT が失敗する)。`user_agent` も保存する。
+- 閲覧の記録は **fail-open**: 記録に失敗しても閲覧は止めず、失敗は db-logger (`app_logs`) に error で残す。
+  「記録できないなら実行しない」べき操作 (返金など) は、`recordAdminAudit()` の戻り値 `ok` を見て呼び出し側で止める。
+
 ### 4.2 super_admin 系操作
 
 ```
@@ -429,12 +451,25 @@ URL: `https://status.homegohan.app`
 | コンポーネント | 監視 URL / 方法 | 更新頻度 |
 |-------------|--------------|--------|
 | Web App | `https://homegohan.app/api/health` | 1 分 |
-| API (Auth) | `https://homegohan.app/api/auth/status` | 1 分 |
+| Web App (画面) | `https://homegohan.app/login` | 1 分 |
+| API (アプリ経由の DB 疎通) | `https://homegohan.app/api/health?deep=1` | 1 分 |
 | Database (Supabase) | Supabase Uptime API | 1 分 |
 | AI Chat (xAI) | `https://api.x.ai/v1/models` (HEAD) | 5 分 |
 | AI Images (Gemini) | Google API Health | 5 分 |
 | Email (Resend) | Resend Status API | 5 分 |
 | Payments (Stripe) | Stripe Status API | 1 分 |
+
+**`/api/health` について (#1181、実装: `src/app/api/health/route.ts`)**:
+
+- 認証不要・個人情報なし・`Cache-Control: no-store`。HEAD にも同じステータスで応答する
+  (UptimeRobot などは既定で HEAD)。判定は HTTP ステータスだけで足りる (200 = 正常)。
+- `/api/health` は認証ミドルウェアを通さず、アプリが応答できるかだけを見る (DB には触れない)。
+  画面側の不具合 (ミドルウェアや描画の故障) は拾えないため、`/login` も別に監視する。
+- `/api/health?deep=1` は加えて DB (Supabase) に anon キーで 1 行読みに行き、届かない・2 秒を超えると 503 を返す。
+  Supabase 側の障害だけでなく、アプリから DB に届かない状態 (鍵・権限・設定の不備) も拾える。
+- 旧設計の `/api/auth/status` は実装せず廃止した。認証系の疎通は `?deep=1` と、
+  `npm run test:smoke` の「未認証 API が 401」(500 ではない) の確認で代替する。
+- 独自ドメインが確定するまでは、`https://homegohan.app` を実 URL の `https://homegohan-app.vercel.app` に読み替える。
 
 ### 9.2 インシデント記録フロー
 

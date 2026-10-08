@@ -8,6 +8,10 @@
  * - stuck リクエストが無い場合は復元を呼ばないこと
  * - stuck リクエストのうち snapshot を持つものだけ復元し、結果を集計して response に含めること
  * - failed への更新自体が失敗した場合は復元を呼ばず 500 を返すこと
+ *
+ * #1203: 復元が打ち切られないよう maxDuration を明示していること、および
+ * 複数の stuck リクエストの復元を直列に実行すること
+ * (並列だと、同じスロットを指す snapshot が「空き」を同時に判定して二重復元してしまう)。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -49,7 +53,7 @@ vi.mock('@/lib/planned-meals-snapshot', async (importOriginal) => {
   };
 });
 
-const { POST } = await import('@/app/api/ai/menu/weekly/cleanup/route');
+const { POST, maxDuration } = await import('@/app/api/ai/menu/weekly/cleanup/route');
 
 const user = { id: 'user-1' };
 
@@ -116,5 +120,47 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
     expect(res.status).toBe(500);
     expect(json.error).toBe('update failed');
     expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('複数の stuck リクエストの復元は直列に実行し、結果を合算して返す (#1203)', async () => {
+    // 同じスロット (day-1 の朝食) を指す 2 件の snapshot: 並列に復元すると二重に復元されてしまう
+    const snapshotA = [{ id: 'meal-a', daily_meal_id: 'day-1', meal_type: 'breakfast' }];
+    const snapshotB = [{ id: 'meal-b', daily_meal_id: 'day-1', meal_type: 'breakfast' }];
+    fetchResultQueue.push({
+      data: [
+        { id: 'req-1', status: 'processing', created_at: '2026-07-06T00:00:00Z', generated_data: { snapshot: snapshotA } },
+        { id: 'req-2', status: 'pending', created_at: '2026-07-06T00:00:00Z', generated_data: { snapshot: snapshotB } },
+      ],
+      error: null,
+    });
+    updateResultQueue.push({ error: null });
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const slowRestore = async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+      return { restored: 1, skipped: 1, failed: 1 };
+    };
+    mockRestorePlannedMealsSnapshot.mockImplementationOnce(slowRestore).mockImplementationOnce(slowRestore);
+
+    const res = await POST();
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(2);
+    expect(mockRestorePlannedMealsSnapshot).toHaveBeenNthCalledWith(1, mockSupabase, snapshotA);
+    expect(mockRestorePlannedMealsSnapshot).toHaveBeenNthCalledWith(2, mockSupabase, snapshotB);
+    // 同時に実行中の復元は常に 1 件以下
+    expect(maxInFlight).toBe(1);
+    expect(json.restoredMeals).toBe(2);
+    expect(json.skippedMeals).toBe(2);
+    expect(json.failedMeals).toBe(2);
+  });
+
+  it('復元が打ち切られないよう maxDuration を明示している (#1203)', () => {
+    expect(maxDuration).toBe(60);
   });
 });

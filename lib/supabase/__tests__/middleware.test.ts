@@ -395,3 +395,91 @@ describe('updateSession — 家族参加の本人同意ページへの遷移 (#1
     expect(res.headers.get('location')).toBeNull();
   });
 });
+
+// S-7b (#1036 のレビュー): ネイティブ認証ブリッジ (/auth/native-bridge?code=...) は、WebView に
+// 残っている別アカウント (オンボーディング未完了・凍結中) のセッションがあっても、コードの引き換え前に
+// 差し戻してはならない。差し戻すとコードが使われず、WebView が古いアカウントのまま残る。
+describe('updateSession — 認証の途中の画面 (/auth/*) への遷移 (S-7b)', () => {
+  const bridgePath = '/auth/native-bridge';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+  });
+
+  it('オンボーディング未着手(not_started)のセッションが残っていても、/auth/native-bridge は /onboarding/welcome へ差し戻さない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        roles: [],
+        onboarding_started_at: null,
+        onboarding_completed_at: null,
+        frozen_at: null,
+        unban_at: null,
+      },
+      error: null,
+    });
+
+    const res = await updateSession(pageRequest(bridgePath));
+
+    expect(res.status).not.toBe(307);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('オンボーディング進行中(in_progress)のセッションが残っていても、/auth/native-bridge は /onboarding/resume へ差し戻さない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        roles: [],
+        onboarding_started_at: '2026-03-01T00:00:00.000Z',
+        onboarding_completed_at: null,
+        frozen_at: null,
+        unban_at: null,
+      },
+      error: null,
+    });
+
+    const res = await updateSession(pageRequest(bridgePath));
+
+    expect(res.status).not.toBe(307);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('凍結中のアカウントのセッションが残っていても、/auth/native-bridge は /frozen へ差し戻さない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        roles: [],
+        onboarding_started_at: '2026-03-01T00:00:00.000Z',
+        onboarding_completed_at: '2026-03-01T01:00:00.000Z',
+        frozen_at: '2026-03-02T00:00:00.000Z',
+        unban_at: null,
+      },
+      error: null,
+    });
+
+    const res = await updateSession(pageRequest(bridgePath));
+
+    expect(res.status).not.toBe(307);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('/authx のような似たパスは従来どおり差し戻す (前方一致の取りこぼし防止)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        roles: [],
+        onboarding_started_at: null,
+        onboarding_completed_at: null,
+        frozen_at: null,
+        unban_at: null,
+      },
+      error: null,
+    });
+
+    const res = await updateSession(pageRequest('/authx'));
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe('http://localhost/onboarding/welcome');
+  });
+});
