@@ -98,6 +98,31 @@ export async function POST(
         { status: 403 },
       );
     }
+    // #1213: 家族の人数が上限に達している。RPC は上限の確認を家族の行のロック下で行うため、
+    // 別の人の承諾と同時になった場合も、後から処理された側にここで返る (以前は対応が無く 500 RPC_FAILED になっていた)
+    if (msg.includes('MEMBER_LIMIT_EXCEEDED')) {
+      return NextResponse.json(
+        {
+          error: {
+            code: MembershipErrorCode.MEMBER_LIMIT_EXCEEDED,
+            message: 'この家族グループは人数の上限に達しているため、参加できません。招待した方にご確認ください',
+          },
+        },
+        { status: 409 },
+      );
+    }
+    // #1213: 招待先の家族が解散済み (または削除済み)
+    if (msg.includes('FAMILY_NOT_FOUND')) {
+      return NextResponse.json(
+        {
+          error: {
+            code: MembershipErrorCode.FAMILY_NOT_FOUND,
+            message: '招待先の家族グループが見つからないか、解散されています',
+          },
+        },
+        { status: 404 },
+      );
+    }
 
     console.error('[api/family/invites/accept] RPC error:', error);
     return NextResponse.json(

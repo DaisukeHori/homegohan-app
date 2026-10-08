@@ -1,182 +1,160 @@
 /**
- * #1041 (F4-07) 回帰防止テスト
- * src/lib/plan/coupon.ts — クーポン適用ロジック (作成のみで適用・上限強制が
- * 存在しなかった問題への対応)
+ * #1041 (F4-07) / #1224 回帰防止テスト
+ * src/lib/plan/coupon.ts — クーポン適用 (DB 関数 apply_coupon の呼び出しと、業務エラーの CouponApplyError への変換)
+ *
+ * #1224: 検証・per_user_limit / 組織上限 / max_uses の判定・uses_count の加算・旧 redemption の終了・
+ * 新規 redemption の作成・契約の参照更新を、DB 関数 apply_coupon の 1 トランザクションに移した
+ * (以前は TS から PostgREST を何度も呼ぶ check-then-act で、同時に来ると上限を超えて適用できた)。
+ * TS 側は RPC の呼び出しとエラー変換だけを持つので、ここではその薄い層を検証する。
+ * 業務ルールそのもの (競合・原子性・検証の順序・割引額) は、実 DB に対する結合テスト
+ * tests/integration/rls/coupon-apply-rpc.test.ts で検証している。
  */
 import { describe, expect, it } from 'vitest';
-import { applyCoupon, calculateDiscountAmount, CouponApplyError } from '@/lib/plan/coupon';
+import { applyCoupon, CouponApplyError } from '@/lib/plan/coupon';
 import { createFakeSupabase } from './helpers/fake-supabase';
 
-describe('calculateDiscountAmount', () => {
-  it('fixed: discount_value をそのまま (価格を超えない)', () => {
-    expect(calculateDiscountAmount({ discount_type: 'fixed', discount_value: 300 }, 1000)).toBe(300);
-    expect(calculateDiscountAmount({ discount_type: 'fixed', discount_value: 3000 }, 1000)).toBe(1000);
+const params = {
+  couponId: 'coupon-1',
+  subscriptionTarget: 'personal' as const,
+  subscriptionId: 'sub-1',
+  approvedBy: 'admin-1',
+};
+
+/** PostgREST が返す RPC エラーの形 (RAISE EXCEPTION '<コード>' USING ERRCODE = 'P0001', DETAIL = '<種別>') */
+function rpcError(message: string, details: string | null = null, code = 'P0001') {
+  return { code, message, details, hint: null };
+}
+
+describe('applyCoupon (apply_coupon RPC の呼び出し)', () => {
+  it('apply_coupon を正しい引数で 1 回だけ呼び、結果を返す。テーブルを直接読み書きしない (check-then-act に戻さない)', async () => {
+    const supabase = createFakeSupabase({}, [
+      { data: { redemption_id: 'redemption-1', discount_amount_jpy: 300, duration_months: 3 }, error: null },
+    ]);
+
+    const result = await applyCoupon(supabase as never, params);
+
+    expect(result).toEqual({ redemptionId: 'redemption-1', discountAmountJpy: 300, durationMonths: 3 });
+    expect(supabase.rpc).toHaveBeenCalledTimes(1);
+    expect(supabase.rpc).toHaveBeenCalledWith('apply_coupon', {
+      p_coupon_id: 'coupon-1',
+      p_target: 'personal',
+      p_subscription_id: 'sub-1',
+      p_approved_by: 'admin-1',
+    });
+    expect(supabase.from).not.toHaveBeenCalled();
   });
 
-  it('percentage: 整数 floor で計算する (JPY は小数を持たない)', () => {
-    // 1000 * 33% = 330
-    expect(calculateDiscountAmount({ discount_type: 'percentage', discount_value: 33 }, 1000)).toBe(330);
-    // 999 * 10% = 99.9 -> floor 99
-    expect(calculateDiscountAmount({ discount_type: 'percentage', discount_value: 10 }, 999)).toBe(99);
+  it('組織宛はそのまま p_target=org で渡す', async () => {
+    const supabase = createFakeSupabase({}, [
+      { data: { redemption_id: 'redemption-2', discount_amount_jpy: 0, duration_months: null }, error: null },
+    ]);
+
+    const result = await applyCoupon(supabase as never, { ...params, subscriptionTarget: 'org', subscriptionId: 'org-1' });
+
+    expect(result).toEqual({ redemptionId: 'redemption-2', discountAmountJpy: 0, durationMonths: null });
+    expect(supabase.rpc).toHaveBeenCalledWith('apply_coupon', expect.objectContaining({ p_target: 'org', p_subscription_id: 'org-1' }));
   });
 
-  it('価格が 0 以下なら 0', () => {
-    expect(calculateDiscountAmount({ discount_type: 'fixed', discount_value: 100 }, 0)).toBe(0);
+  it('duration_months が無い (null / 欠損) 結果は durationMonths=null', async () => {
+    const supabase = createFakeSupabase({}, [
+      { data: { redemption_id: 'redemption-3', discount_amount_jpy: 100 }, error: null },
+    ]);
+
+    await expect(applyCoupon(supabase as never, params)).resolves.toEqual({
+      redemptionId: 'redemption-3',
+      discountAmountJpy: 100,
+      durationMonths: null,
+    });
   });
 });
 
-function baseCoupon(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 'coupon-1',
-    code: 'WELCOME',
-    status: 'active',
-    discount_type: 'fixed',
-    discount_value: 300,
-    applicable_to: 'all',
-    applicable_plans: [],
-    valid_from: '2020-01-01T00:00:00.000Z',
-    valid_until: '2099-01-01T00:00:00.000Z',
-    max_uses: null,
-    uses_count: 0,
-    per_user_limit: 1,
-    duration_months: null,
-    ...overrides,
-  };
-}
+describe('applyCoupon (業務エラーの変換: 従来の CouponApplyError のコードと文言を保つ)', () => {
+  const cases: Array<{ message: string; details: string | null; code: string; text: string }> = [
+    { message: 'OP_COUPON_NOT_FOUND', details: null, code: 'OP_COUPON_NOT_FOUND', text: 'クーポンが見つかりません' },
+    { message: 'OP_COUPON_INVALID', details: null, code: 'OP_COUPON_INVALID', text: 'クーポンが有効な状態ではありません' },
+    { message: 'OP_COUPON_NOT_YET_VALID', details: null, code: 'OP_COUPON_NOT_YET_VALID', text: 'クーポンの有効開始日前です' },
+    { message: 'OP_COUPON_EXPIRED', details: null, code: 'OP_COUPON_EXPIRED', text: 'クーポンの有効期限が切れています' },
+    { message: 'OP_COUPON_NOT_APPLICABLE', details: 'target', code: 'OP_COUPON_NOT_APPLICABLE', text: 'このクーポンは指定の契約種別には適用できません' },
+    { message: 'OP_COUPON_NOT_APPLICABLE', details: 'plan', code: 'OP_COUPON_NOT_APPLICABLE', text: 'このクーポンは対象プランに適用できません' },
+    { message: 'OP_SUBSCRIPTION_NOT_FOUND', details: 'personal', code: 'OP_SUBSCRIPTION_NOT_FOUND', text: '契約が見つかりません' },
+    { message: 'OP_SUBSCRIPTION_NOT_FOUND', details: 'org', code: 'OP_SUBSCRIPTION_NOT_FOUND', text: '契約 (組織) が見つかりません' },
+    { message: 'OP_PLAN_NOT_FOUND', details: 'org_plan_unset', code: 'OP_PLAN_NOT_FOUND', text: '組織に契約プランが設定されていません' },
+    { message: 'OP_PLAN_NOT_FOUND', details: 'plan', code: 'OP_PLAN_NOT_FOUND', text: '契約先プランが見つかりません' },
+    { message: 'OP_COUPON_LIMIT_REACHED', details: 'per_user', code: 'OP_COUPON_LIMIT_REACHED', text: 'このユーザーはクーポンの利用上限に達しています' },
+    { message: 'OP_COUPON_LIMIT_REACHED', details: 'per_organization', code: 'OP_COUPON_LIMIT_REACHED', text: 'この組織はクーポンの利用上限に達しています' },
+    { message: 'OP_COUPON_LIMIT_REACHED', details: 'max_uses', code: 'OP_COUPON_LIMIT_REACHED', text: 'クーポンの利用上限に達しています' },
+  ];
 
-function baseSub(overrides: Record<string, unknown> = {}) {
-  return { id: 'sub-1', user_id: 'user-1', plan_key: 'pro', ...overrides };
-}
+  it.each(cases)('$message ($details) -> CouponApplyError($code, $text)', async ({ message, details, code, text }) => {
+    const supabase = createFakeSupabase({}, [{ data: null, error: rpcError(message, details) }]);
 
-function basePlan(overrides: Record<string, unknown> = {}) {
-  return { id: 'plan-uuid-1', monthly_price_jpy: 1000, ...overrides };
-}
+    const promise = applyCoupon(supabase as never, params);
 
-describe('applyCoupon', () => {
-  it('正常系: personal 契約に適用し、redemption を作成 + uses_count を increment する', async () => {
-    const supabase = createFakeSupabase({
-      coupons: [
-        { data: baseCoupon(), error: null }, // 1. クーポン取得
-        { data: { uses_count: 0 }, error: null }, // incrementCouponUsesCount: 現在値取得
-        { data: [{ id: 'coupon-1' }], error: null }, // incrementCouponUsesCount: CAS update
-      ],
-      personal_subscriptions: [
-        { data: baseSub(), error: null }, // 契約取得
-        { data: null, error: null }, // active_coupon_redemption_id 更新
-      ],
-      subscription_plans: [{ data: basePlan(), error: null }],
-      coupon_redemptions: [
-        { data: null, error: null, count: 0 }, // per_user_limit カウント
-        { data: null, error: null }, // 既存 redemption の終了処理
-        { data: { id: 'redemption-1' }, error: null }, // insert
-      ],
-    });
-
-    const result = await applyCoupon(supabase as never, {
-      couponId: 'coupon-1',
-      subscriptionTarget: 'personal',
-      subscriptionId: 'sub-1',
-      approvedBy: 'admin-1',
-    });
-
-    expect(result.redemptionId).toBe('redemption-1');
-    expect(result.discountAmountJpy).toBe(300);
+    await expect(promise).rejects.toBeInstanceOf(CouponApplyError);
+    await expect(promise).rejects.toMatchObject({ code, message: text });
   });
 
-  it('status が active でないクーポンは CouponApplyError(OP_COUPON_INVALID)', async () => {
-    const supabase = createFakeSupabase({
-      coupons: [{ data: baseCoupon({ status: 'paused' }), error: null }],
+  it('DETAIL が無い・未知の種別でも、そのコードの既定の文言で CouponApplyError にする', async () => {
+    const noDetail = createFakeSupabase({}, [{ data: null, error: rpcError('OP_COUPON_LIMIT_REACHED') }]);
+    await expect(applyCoupon(noDetail as never, params)).rejects.toMatchObject({
+      code: 'OP_COUPON_LIMIT_REACHED',
+      message: 'クーポンの利用上限に達しています',
     });
 
-    await expect(
-      applyCoupon(supabase as never, {
-        couponId: 'coupon-1',
-        subscriptionTarget: 'personal',
-        subscriptionId: 'sub-1',
-        approvedBy: 'admin-1',
-      }),
-    ).rejects.toMatchObject({ code: 'OP_COUPON_INVALID' });
-  });
-
-  it('有効期限切れのクーポンは OP_COUPON_EXPIRED', async () => {
-    const supabase = createFakeSupabase({
-      coupons: [{ data: baseCoupon({ valid_until: '2000-01-01T00:00:00.000Z' }), error: null }],
+    const unknownDetail = createFakeSupabase({}, [{ data: null, error: rpcError('OP_COUPON_NOT_APPLICABLE', 'something_new') }]);
+    await expect(applyCoupon(unknownDetail as never, params)).rejects.toMatchObject({
+      code: 'OP_COUPON_NOT_APPLICABLE',
+      message: 'このクーポンは指定の契約種別には適用できません',
     });
+  });
+});
 
-    await expect(
-      applyCoupon(supabase as never, {
-        couponId: 'coupon-1',
-        subscriptionTarget: 'personal',
-        subscriptionId: 'sub-1',
-        approvedBy: 'admin-1',
-      }),
-    ).rejects.toMatchObject({ code: 'OP_COUPON_EXPIRED' });
+describe('applyCoupon (業務エラー以外はそのまま投げる = route が 500 にする)', () => {
+  it('外部キー違反などの DB エラーは変換せず、同じオブジェクトを投げる', async () => {
+    const error = rpcError('insert or update on table "coupon_redemptions" violates foreign key constraint', null, '23503');
+    const supabase = createFakeSupabase({}, [{ data: null, error }]);
+
+    const promise = applyCoupon(supabase as never, params);
+
+    await expect(promise).rejects.toBe(error);
+    await expect(promise).rejects.not.toBeInstanceOf(CouponApplyError);
   });
 
-  it('per_user_limit に達している場合は OP_COUPON_LIMIT_REACHED (uses_count を increment しない)', async () => {
-    const supabase = createFakeSupabase({
-      coupons: [{ data: baseCoupon({ per_user_limit: 1 }), error: null }],
-      personal_subscriptions: [{ data: baseSub(), error: null }],
-      subscription_plans: [{ data: basePlan(), error: null }],
-      coupon_redemptions: [{ data: null, error: null, count: 1 }], // 既に 1 回使用済み
-    });
+  it('関数が無い (PGRST202) 場合も変換しない (migration の反映漏れを業務エラーと取り違えない)', async () => {
+    const error = rpcError('Could not find the function public.apply_coupon(...) in the schema cache', null, 'PGRST202');
+    const supabase = createFakeSupabase({}, [{ data: null, error }]);
 
-    await expect(
-      applyCoupon(supabase as never, {
-        couponId: 'coupon-1',
-        subscriptionTarget: 'personal',
-        subscriptionId: 'sub-1',
-        approvedBy: 'admin-1',
-      }),
-    ).rejects.toMatchObject({ code: 'OP_COUPON_LIMIT_REACHED' });
+    await expect(applyCoupon(supabase as never, params)).rejects.toBe(error);
   });
 
-  it('max_uses に既に達している場合は原子的 increment が false を返し OP_COUPON_LIMIT_REACHED', async () => {
-    const supabase = createFakeSupabase({
-      coupons: [
-        { data: baseCoupon({ max_uses: 5, uses_count: 5 }), error: null },
-        { data: { uses_count: 5 }, error: null }, // increment 時の現在値取得 (既に上限)
-      ],
-      personal_subscriptions: [{ data: baseSub(), error: null }],
-      subscription_plans: [{ data: basePlan(), error: null }],
-      coupon_redemptions: [{ data: null, error: null, count: 0 }],
-    });
+  it('P0001 でも未知のメッセージ (ほかのトリガー等が出したもの) は業務エラーにしない', async () => {
+    const error = rpcError('SOME_OTHER_ERROR');
+    const supabase = createFakeSupabase({}, [{ data: null, error }]);
 
-    await expect(
-      applyCoupon(supabase as never, {
-        couponId: 'coupon-1',
-        subscriptionTarget: 'personal',
-        subscriptionId: 'sub-1',
-        approvedBy: 'admin-1',
-      }),
-    ).rejects.toMatchObject({ code: 'OP_COUPON_LIMIT_REACHED' });
+    await expect(applyCoupon(supabase as never, params)).rejects.toBe(error);
   });
 
-  it('applicable_to が一致しない場合は OP_COUPON_NOT_APPLICABLE', async () => {
-    const supabase = createFakeSupabase({
-      coupons: [{ data: baseCoupon({ applicable_to: 'org' }), error: null }],
-    });
+  it('業務エラーのコードと同じメッセージでも、P0001 以外の SQLSTATE なら業務エラーにしない', async () => {
+    const error = rpcError('OP_COUPON_EXPIRED', null, '42501');
+    const supabase = createFakeSupabase({}, [{ data: null, error }]);
 
-    await expect(
-      applyCoupon(supabase as never, {
-        couponId: 'coupon-1',
-        subscriptionTarget: 'personal',
-        subscriptionId: 'sub-1',
-        approvedBy: 'admin-1',
-      }),
-    ).rejects.toMatchObject({ code: 'OP_COUPON_NOT_APPLICABLE' });
+    await expect(applyCoupon(supabase as never, params)).rejects.toBe(error);
   });
 
-  it('存在しないクーポンは OP_COUPON_NOT_FOUND', async () => {
-    const supabase = createFakeSupabase({ coupons: [{ data: null, error: null }] });
+  it('Object のプロパティ名と同じメッセージ (toString 等) でも業務エラーとして扱わない', async () => {
+    const error = rpcError('toString');
+    const supabase = createFakeSupabase({}, [{ data: null, error }]);
 
-    await expect(
-      applyCoupon(supabase as never, {
-        couponId: 'missing',
-        subscriptionTarget: 'personal',
-        subscriptionId: 'sub-1',
-        approvedBy: 'admin-1',
-      }),
-    ).rejects.toBeInstanceOf(CouponApplyError);
+    await expect(applyCoupon(supabase as never, params)).rejects.toBe(error);
+  });
+
+  it.each([
+    ['null', null],
+    ['redemption_id が無い', { discount_amount_jpy: 300 }],
+    ['discount_amount_jpy が数値でない', { redemption_id: 'r-1', discount_amount_jpy: '300' }],
+  ])('想定外の戻り値 (%s) は Error', async (_label, data) => {
+    const supabase = createFakeSupabase({}, [{ data, error: null }]);
+
+    await expect(applyCoupon(supabase as never, params)).rejects.toThrow('apply_coupon が想定外の結果を返しました');
   });
 });

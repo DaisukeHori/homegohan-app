@@ -12,6 +12,7 @@ import Link from 'next/link';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { adminFetch } from '@/lib/admin/fetch';
+import { canViewUserEmail } from '@/lib/admin/user-emails';
 
 interface PageProps {
   searchParams: { q?: string; status?: string; page?: string };
@@ -19,6 +20,8 @@ interface PageProps {
 
 interface UserItem {
   id: string;
+  /** メールアドレス (admin / super_admin にだけ API が返す。それ以外と、メールを持たないユーザーは null) */
+  email: string | null;
   nickname: string | null;
   plan_key: string;
   roles: string[];
@@ -38,14 +41,18 @@ interface UsersApiResponse {
 }
 
 export default async function AdminUsersPage({ searchParams }: PageProps) {
+  let actor;
   try {
-    await requireRole(['admin', 'super_admin', 'support']);
+    actor = await requireRole(['admin', 'super_admin', 'support']);
   } catch (err) {
     if (err instanceof AuthError || err instanceof ForbiddenError) {
       redirect('/login');
     }
     throw err;
   }
+
+  // メールアドレスを見られるのは admin / super_admin だけ (support には列を出さず、メール検索も効かない)
+  const canSeeEmail = canViewUserEmail(actor.roles);
 
   const q = searchParams.q ?? '';
   const status = searchParams.status ?? 'active';
@@ -90,7 +97,7 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
           type="text"
           name="q"
           defaultValue={q}
-          placeholder="名前・メール・ID で検索"
+          placeholder={canSeeEmail ? '名前・メール・ID で検索' : '名前・ID で検索'}
           className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
         />
         <select
@@ -116,6 +123,9 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
               <th className="px-4 py-3 text-left font-medium text-gray-600">ユーザー</th>
+              {canSeeEmail && (
+                <th className="px-4 py-3 text-left font-medium text-gray-600">メール</th>
+              )}
               <th className="px-4 py-3 text-left font-medium text-gray-600">プラン</th>
               <th className="px-4 py-3 text-left font-medium text-gray-600">ロール</th>
               <th className="px-4 py-3 text-left font-medium text-gray-600">ステータス</th>
@@ -126,7 +136,7 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
           <tbody className="divide-y divide-gray-100">
             {users.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                <td colSpan={canSeeEmail ? 7 : 6} className="px-4 py-8 text-center text-gray-400">
                   ユーザーが見つかりません
                 </td>
               </tr>
@@ -139,6 +149,9 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
                     </div>
                     <div className="text-xs text-gray-400 font-mono">{user.id.slice(0, 8)}...</div>
                   </td>
+                  {canSeeEmail && (
+                    <td className="px-4 py-3 text-gray-700 break-all">{user.email ?? '-'}</td>
+                  )}
                   <td className="px-4 py-3">
                     <span className="inline-block bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded font-mono">
                       {user.plan_key ?? 'free'}
@@ -196,7 +209,7 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
           <div className="flex gap-2">
             {page > 1 && (
               <Link
-                href={`/admin/users?q=${q}&status=${status}&page=${page - 1}`}
+                href={`/admin/users?q=${encodeURIComponent(q)}&status=${status}&page=${page - 1}`}
                 className="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50 transition-colors"
               >
                 前へ
@@ -204,7 +217,7 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
             )}
             {page < totalPages && (
               <Link
-                href={`/admin/users?q=${q}&status=${status}&page=${page + 1}`}
+                href={`/admin/users?q=${encodeURIComponent(q)}&status=${status}&page=${page + 1}`}
                 className="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50 transition-colors"
               >
                 次へ

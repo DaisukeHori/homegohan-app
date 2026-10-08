@@ -1,4 +1,6 @@
+import { createHash } from 'crypto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { RateLimitCategory, RateLimitResult } from '@/lib/rate-limit';
 
 // Supabase クライアントのモック
 const mockGetUser = vi.fn();
@@ -11,12 +13,23 @@ vi.mock('@/lib/supabase/server', () => ({
   }),
 }));
 
+// #1163 送信回数の制限 (limiter) は部分モック: 本物の応答ビルダー (getRetryAfterSec など) は残し、
+// checkRateLimit だけ差し替える。このファイルは同じユーザー ID で 20 回以上 POST するので、
+// 既定は「常に通す」にして、上限の確認は専用の describe で行う。
+const mockCheckRateLimit = vi.fn();
+
+vi.mock('@/lib/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/rate-limit')>()),
+  checkRateLimit: (...args: unknown[]) => mockCheckRateLimit(...args),
+}));
+
 // 構造化ログのモック (5xx は createLogger(...).withUser(user.id).error(...) で記録される)
 const mockLogError = vi.fn();
+const mockLogWarn = vi.fn();
 const mockWithUser = vi.fn(() => ({
   debug: vi.fn(),
   info: vi.fn(),
-  warn: vi.fn(),
+  warn: mockLogWarn,
   error: mockLogError,
 }));
 
@@ -110,6 +123,31 @@ const rpcError = (message: string, code = 'P0001') => ({
   error: { message, code },
 });
 
+const allow = (windowSec = 60): RateLimitResult => ({
+  success: true,
+  limit: 5,
+  remaining: 4,
+  reset: Date.now() + windowSec * 1000,
+  windowSec,
+});
+
+const deny = (windowSec: number, retryInSec = 30): RateLimitResult => ({
+  success: false,
+  limit: 5,
+  remaining: 0,
+  reset: Date.now() + retryInSec * 1000,
+  windowSec,
+});
+
+/** カテゴリごとに結果を差し替える。指定の無いカテゴリは通す */
+function limiter(overrides: Partial<Record<RateLimitCategory, RateLimitResult>>) {
+  mockCheckRateLimit.mockImplementation(
+    async (_key: string, category: RateLimitCategory) => overrides[category] ?? allow(),
+  );
+}
+
+const childHash = createHash('sha256').update(childEmail).digest('hex').slice(0, 32);
+
 beforeEach(() => {
   vi.clearAllMocks();
   // 既定は認証済み。未認証ケースは各テストで上書きする
@@ -118,6 +156,8 @@ beforeEach(() => {
   mockRpc.mockReset();
   mockSendEmail.mockReset();
   mockSendEmail.mockResolvedValue({ id: 'email-1' });
+  mockCheckRateLimit.mockReset();
+  limiter({});
   vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.example.test');
 });
 
@@ -401,6 +441,152 @@ describe('POST /api/family/members/[member_id]/promote', () => {
   });
 });
 
+describe('POST /api/family/members/[member_id]/promote: 送信回数の制限 (#1163)', () => {
+  it('上限内: 同意依頼メールを 1 通だけ送る', async () => {
+    mockRpc.mockResolvedValue({ data: rpcResult, error: null });
+
+    const res = await POST(postRequest({ email: childEmail }), makeParams(memberId));
+
+    expect(res.status).toBe(200);
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('依頼者 (user.id) と、user.id の範囲の宛先ハッシュで判定する。URL の member_id は鍵にしない', async () => {
+    mockRpc.mockResolvedValue({ data: rpcResult, error: null });
+
+    await POST(postRequest({ email: childEmail }), makeParams(memberId));
+
+    expect(mockCheckRateLimit.mock.calls).toEqual([
+      [validUser.id, 'child-promotion'],
+      [`child-promotion:${validUser.id}:${childHash}`, 'invite-target'],
+    ]);
+    expect(JSON.stringify(mockCheckRateLimit.mock.calls)).not.toContain(memberId);
+    for (const [key] of mockCheckRateLimit.mock.calls) {
+      expect(key).not.toContain('@');
+    }
+  });
+
+  it('大文字を含む宛先は小文字にそろえたハッシュで数える', async () => {
+    mockRpc.mockResolvedValue({ data: rpcResult, error: null });
+
+    await POST(postRequest({ email: 'Taro@Example.com' }), makeParams(memberId));
+
+    expect(mockCheckRateLimit.mock.calls[1]).toEqual([
+      `child-promotion:${validUser.id}:${childHash}`,
+      'invite-target',
+    ]);
+  });
+
+  it('依頼者の分あたり上限を超過: 429 / 入れ子の RATE_LIMITED / Retry-After。RPC もメール送信も呼ばない', async () => {
+    limiter({ 'child-promotion': deny(60, 30) });
+
+    const res = await POST(postRequest({ email: childEmail }), makeParams(memberId));
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(json.error.code).toBe('RATE_LIMITED');
+    expect(json.error.message).toBe('短時間に操作が集中しています。1分ほど待ってからお試しください。');
+    expect(json.error.retryAfter).toBeGreaterThanOrEqual(20);
+    expect(res.headers.get('Retry-After')).toBe(String(json.error.retryAfter));
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(renderFamilyPromoteEmail).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockCheckRateLimit).toHaveBeenCalledTimes(1);
+  });
+
+  it('依頼者の日次上限を超過: 429 と「本日の上限」の文言', async () => {
+    limiter({ 'child-promotion': deny(24 * 60 * 60, 7200) });
+
+    const res = await POST(postRequest({ email: childEmail }), makeParams(memberId));
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(json.error.message).toBe('本日の送信上限に達しました。しばらく時間をおいてからお試しください。');
+    expect(Number(res.headers.get('Retry-After'))).toBeGreaterThan(7000);
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it('宛先の上限だけを超過: 429。RPC もメール送信も呼ばない', async () => {
+    limiter({ 'invite-target': deny(24 * 60 * 60, 3600) });
+
+    const res = await POST(postRequest({ email: childEmail }), makeParams(memberId));
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(json.error.code).toBe('RATE_LIMITED');
+    expect(res.headers.get('Retry-After')).toBe(String(json.error.retryAfter));
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockCheckRateLimit).toHaveBeenCalledTimes(2);
+  });
+
+  it('429 の本文は宛先の登録状況を推測させない (どの上限でも同じ系統の文言)', async () => {
+    limiter({ 'invite-target': deny(24 * 60 * 60) });
+
+    const json = await (await POST(postRequest({ email: childEmail }), makeParams(memberId))).json();
+
+    expect(json.error.message).not.toMatch(/登録|存在|アカウント|既に|すでに/);
+    expect(JSON.stringify(json)).not.toContain(childEmail);
+  });
+
+  it('超過したら withUser(user.id).warn に記録する (メールアドレスは残さない)', async () => {
+    limiter({ 'child-promotion': deny(60) });
+
+    await POST(postRequest({ email: childEmail }), makeParams(memberId));
+
+    expect(mockWithUser).toHaveBeenCalledWith(validUser.id);
+    expect(mockLogWarn).toHaveBeenCalledTimes(1);
+    expect(mockLogWarn.mock.calls[0][1]).toMatchObject({ flow: 'child-promotion', layer: 'user' });
+    expect(JSON.stringify(mockLogWarn.mock.calls)).not.toContain('taro');
+  });
+
+  it('limiter のバックエンドが例外を投げたら伝播し (fail-closed)、RPC もメール送信も実行されない', async () => {
+    mockCheckRateLimit.mockRejectedValue(new Error('ECONNREFUSED: upstash unreachable'));
+
+    await expect(POST(postRequest({ email: childEmail }), makeParams(memberId))).rejects.toThrow('ECONNREFUSED');
+
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockLogError).toHaveBeenCalled();
+  });
+
+  it('未認証 (401): limiter を呼ばない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: new Error('no session') });
+
+    const res = await POST(postRequest({ email: childEmail }), makeParams(memberId));
+
+    expect(res.status).toBe(401);
+    expect(mockCheckRateLimit).not.toHaveBeenCalled();
+  });
+
+  it('member_id が UUID でない (400): limiter を呼ばない', async () => {
+    const res = await POST(postRequest({ email: childEmail }), makeParams('not-a-uuid'));
+
+    expect(res.status).toBe(400);
+    expect(mockCheckRateLimit).not.toHaveBeenCalled();
+  });
+
+  it('email が不正 (400): limiter を呼ばない', async () => {
+    const res = await POST(postRequest({ email: 'not-an-email' }), makeParams(memberId));
+
+    expect(res.status).toBe(400);
+    expect(mockCheckRateLimit).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('RPC が NOT_FAMILY_ADULT (403): 従来どおり Retry-After は付けない (試行は数えるが拒否理由は変えない)', async () => {
+    mockRpc.mockResolvedValue(rpcError('NOT_FAMILY_ADULT'));
+
+    const res = await POST(postRequest({ email: childEmail }), makeParams(memberId));
+
+    expect(res.status).toBe(403);
+    expect(res.headers.get('Retry-After')).toBeNull();
+    expect(mockCheckRateLimit).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('DELETE /api/family/members/[member_id]/promote', () => {
   it('未認証: 401 NOT_AUTHENTICATED を返し RPC を呼ばない', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: new Error('no session') });
@@ -469,6 +655,16 @@ describe('DELETE /api/family/members/[member_id]/promote', () => {
       pg_code: '08006',
     });
     expect(JSON.stringify(json)).not.toContain('connection to server');
+  });
+
+  it('取消はメールを送らないので送信回数の制限 (limiter) の対象外', async () => {
+    mockRpc.mockResolvedValue({ data: revokedRow, error: null });
+
+    const res = await DELETE(deleteRequest(), makeParams(memberId));
+
+    expect(res.status).toBe(200);
+    expect(mockCheckRateLimit).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
   });
 
   it('正常: 取り消したリクエストの id と status だけを返し、RPC の全行 (token を含む) は返さない', async () => {

@@ -5,9 +5,14 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { calculateNutritionTargets } from './calculate';
+import { calculateNutritionTargets, applyPerformanceGuardrails } from './calculate';
 import { ageToAgeGroup, getDRIValue } from './dri-tables';
-import type { NutritionCalculatorInput } from './types';
+import type {
+  CutStrategy,
+  NutritionCalculatorInput,
+  PerformanceProfile,
+  TrainingPhase,
+} from './types';
 
 describe('ageToAgeGroup', () => {
   it('should map ages to correct DRI age groups', () => {
@@ -429,5 +434,225 @@ describe('calculateNutritionTargets', () => {
       
       expect(result.targetData.user_id).toBe('test-user-123');
     });
+  });
+});
+
+// ================================================
+// 急速減量ガードレール (#1208)
+// ================================================
+
+/**
+ * 減量期 (phase=cut) の performance_profile を作る。
+ * demandVector はすべて 0 にして、スポーツ特有調整が結果に混ざらないようにする。
+ */
+function makeCutProfile(
+  overrides: { strategy?: CutStrategy; enabled?: boolean; phase?: TrainingPhase } = {}
+): PerformanceProfile {
+  return {
+    sport: {
+      id: 'boxing',
+      experience: 'intermediate',
+      phase: overrides.phase ?? 'cut',
+      demandVector: {
+        endurance: 0,
+        power: 0,
+        strength: 0,
+        technique: 0,
+        weightClass: 0,
+        heat: 0,
+        altitude: 0,
+      },
+    },
+    cut: {
+      enabled: overrides.enabled ?? true,
+      strategy: overrides.strategy ?? 'rapid',
+    },
+  };
+}
+
+describe('applyPerformanceGuardrails: rapid cut safety (#1208)', () => {
+  type GuardrailInput = Parameters<typeof applyPerformanceGuardrails>[0];
+
+  // 他のガードレール (タンパク質下限・脂質下限・絶対最低カロリー) が発火しない値にしておく。
+  // 70kg の減量期タンパク質下限は 70 × 2.0 = 140g。
+  const makeInput = (overrides: Partial<GuardrailInput> = {}): GuardrailInput => ({
+    age: 30,
+    gender: 'male',
+    weight: 70,
+    tdee: 3000,
+    calories: 2500,
+    protein: 150,
+    fat: 70,
+    carbs: 300,
+    performanceProfile: makeCutProfile(),
+    ...overrides,
+  });
+
+  const cutSafetyOf = (result: ReturnType<typeof applyPerformanceGuardrails>) =>
+    result.guardrails.filter((g) => g.type === 'cut_safety');
+
+  describe('赤字が 1100kcal/日 (週 1kg 相当) を超える計画', () => {
+    it('should raise calories to TDEE - 1100 and report cut_safety', () => {
+      // TDEE 3000 に対して 1600kcal = 赤字 1400kcal/日 (週 1kg 超)
+      const result = applyPerformanceGuardrails(makeInput({ tdee: 3000, calories: 1600 }));
+
+      expect(result.calories).toBe(1900); // 3000 - 1100
+      expect(result.guardrails).toEqual([
+        expect.objectContaining({
+          applied: true,
+          type: 'cut_safety',
+          original: 1600,
+          adjusted: 1900,
+          severity: 'warning',
+        }),
+      ]);
+      expect(result.guardrails[0].reason).toContain('1900kcal');
+    });
+
+    it('should fire when the deficit exceeds 1100 kcal by just 1 kcal', () => {
+      const result = applyPerformanceGuardrails(makeInput({ tdee: 3000, calories: 1899 }));
+
+      expect(result.calories).toBe(1900);
+      expect(cutSafetyOf(result)).toHaveLength(1);
+    });
+
+    it.each([1000, 1300, 1600, 1899])(
+      'should converge to the same minimum regardless of how low the calories are (calories=%i)',
+      (calories) => {
+        const result = applyPerformanceGuardrails(makeInput({ tdee: 3000, calories }));
+
+        expect(result.calories).toBe(1900);
+        expect(cutSafetyOf(result)).toHaveLength(1);
+        expect(cutSafetyOf(result)[0].original).toBe(calories);
+      }
+    );
+
+    it.each([
+      // [tdee, 期待される最低カロリー]
+      [2400, 1500], // 2400 - 1100 = 1300 は男性の下限 1500 を下回るので 1500
+      [3000, 1900],
+      [3500, 2400],
+    ])('should derive the minimum from the real TDEE (tdee=%i → %i kcal)', (tdee, expectedMin) => {
+      // 同じ 1400kcal でも、TDEE が高いほど赤字が大きくなり、引き上げ先も高くなる。
+      // (旧実装は calories から TDEE を逆算していたため、TDEE に関係なく常に素通りしていた)
+      const result = applyPerformanceGuardrails(makeInput({ tdee, calories: 1400 }));
+
+      expect(result.calories).toBe(expectedMin);
+      expect(cutSafetyOf(result)).toHaveLength(1);
+    });
+
+    it('should not go below the male floor (1500 kcal) when TDEE - 1100 is lower', () => {
+      const tooLow = applyPerformanceGuardrails(makeInput({ tdee: 2400, calories: 1400 }));
+      expect(tooLow.calories).toBe(1500);
+
+      // 下限ちょうどなら発火しない
+      const atFloor = applyPerformanceGuardrails(makeInput({ tdee: 2400, calories: 1500 }));
+      expect(atFloor.calories).toBe(1500);
+      expect(atFloor.guardrails).toEqual([]);
+    });
+
+    it('should not go below the female floor (1200 kcal) when TDEE - 1100 is lower', () => {
+      const female = { gender: 'female', weight: 55, protein: 120, fat: 50, carbs: 150 } as const;
+
+      const tooLow = applyPerformanceGuardrails(makeInput({ ...female, tdee: 2000, calories: 1100 }));
+      expect(tooLow.calories).toBe(1200); // 2000 - 1100 = 900 は女性の下限 1200 を下回る
+      expect(cutSafetyOf(tooLow)).toHaveLength(1);
+
+      const atFloor = applyPerformanceGuardrails(makeInput({ ...female, tdee: 2000, calories: 1200 }));
+      expect(atFloor.calories).toBe(1200);
+      expect(atFloor.guardrails).toEqual([]);
+    });
+  });
+
+  describe('赤字が 1100kcal/日 以内の計画 (安全な計画)', () => {
+    it.each([
+      [3000, 1900], // 赤字ちょうど 1100 (境界値)
+      [3000, 2250], // 赤字 750 (現行の「積極的」減量の最大)
+      [3000, 2500], // 赤字 500 (通常の減量)
+      [3000, 3000], // 赤字なし
+    ])('should not fire (tdee=%i, calories=%i)', (tdee, calories) => {
+      const result = applyPerformanceGuardrails(makeInput({ tdee, calories }));
+
+      expect(result.calories).toBe(calories);
+      expect(result.guardrails).toEqual([]);
+    });
+  });
+
+  describe('急速減量のガードレールが対象外になる条件', () => {
+    // どの条件でも「TDEE 3000 に対して 1600kcal (赤字 1400)」のまま素通りする
+    const tooFast = { tdee: 3000, calories: 1600 } as const;
+
+    it('should not fire when the strategy is gradual', () => {
+      const result = applyPerformanceGuardrails(
+        makeInput({ ...tooFast, performanceProfile: makeCutProfile({ strategy: 'gradual' }) })
+      );
+
+      expect(result.calories).toBe(1600);
+      expect(result.guardrails).toEqual([]);
+    });
+
+    it('should not fire when the cut is disabled', () => {
+      const result = applyPerformanceGuardrails(
+        makeInput({ ...tooFast, performanceProfile: makeCutProfile({ enabled: false }) })
+      );
+
+      expect(result.calories).toBe(1600);
+      expect(result.guardrails).toEqual([]);
+    });
+
+    it.each<TrainingPhase>(['training', 'competition', 'recovery'])(
+      'should not fire when the training phase is %s (not cut)',
+      (phase) => {
+        const result = applyPerformanceGuardrails(
+          makeInput({ ...tooFast, performanceProfile: makeCutProfile({ phase }) })
+        );
+
+        expect(result.calories).toBe(1600);
+        expect(result.guardrails).toEqual([]);
+      }
+    );
+
+    it.each([null, undefined])('should not fire without a performance profile (%s)', (performanceProfile) => {
+      const result = applyPerformanceGuardrails(makeInput({ ...tooFast, performanceProfile }));
+
+      expect(result.calories).toBe(1600);
+      expect(result.guardrails).toEqual([]);
+    });
+  });
+});
+
+describe('calculateNutritionTargets: rapid cut strategy (#1208)', () => {
+  // TDEE が大きいユーザー。BMR 1911 × PAL 1.75 = TDEE 3344kcal
+  const baseInput: NutritionCalculatorInput = {
+    id: 'rapid-cut-user',
+    age: 30,
+    gender: 'male',
+    height: 185,
+    weight: 90,
+    work_style: 'moderately_active',
+    exercise_intensity: 'intense',
+    exercise_frequency: 4,
+    nutrition_goal: 'lose_weight',
+    weight_change_rate: 'aggressive',
+  };
+
+  it('should leave a safe plan untouched even when the strategy is rapid', () => {
+    // 現行の減量設定の赤字は最大 750kcal/日 で、急速減量の上限 1100kcal/日 に届かない。
+    // 実際の TDEE を渡しても、通常の計算結果が変わらない (ガードレールが誤発火しない) ことを確認する。
+    const withProfile = calculateNutritionTargets({
+      ...baseInput,
+      performance_profile: makeCutProfile({ strategy: 'rapid' }),
+    });
+    const withoutProfile = calculateNutritionTargets(baseInput);
+
+    const { tdee_kcal, final_kcal } = withProfile.calculationBasis.energy;
+    // 前提: 減量計画であり、赤字は週 1kg 相当 (1100kcal/日) 以内
+    const deficit = tdee_kcal - final_kcal;
+    expect(deficit).toBeGreaterThan(0);
+    expect(deficit).toBeLessThanOrEqual(1100);
+
+    expect(withProfile.targetData.daily_calories).toBe(final_kcal);
+    expect(withProfile.targetData.daily_calories).toBe(withoutProfile.targetData.daily_calories);
+    expect(withProfile.calculationBasis.guardrails).toBeUndefined();
   });
 });

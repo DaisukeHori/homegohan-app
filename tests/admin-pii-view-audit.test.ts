@@ -37,7 +37,20 @@ vi.mock('@/lib/db-logger', () => ({
     error: (...errorArgs: unknown[]) => mockLoggerError(...args, ...errorArgs),
     withUser: vi.fn(),
   }),
+  generateRequestId: () => 'req_test',
 }));
+
+// ユーザー詳細のメールアドレス (#1145) は service_role の RPC で引く。このテストの対象外なので、
+// 見てよいロールの判定 (canViewUserEmail) は本物のまま、取得結果だけを差し替える。
+const mockFetchUserEmails = vi.fn();
+
+vi.mock('@/lib/admin/user-emails', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/admin/user-emails')>();
+  return {
+    ...actual,
+    fetchUserEmails: (...args: unknown[]) => mockFetchUserEmails(...args),
+  };
+});
 
 type QueryResult = {
   data?: unknown;
@@ -134,6 +147,7 @@ const SECRET_NICKNAME = '秘密のニックネーム太郎';
 const SECRET_SUBJECT = '病気のことで相談です';
 const SECRET_BODY = '持病はこれこれで、薬は〇〇を飲んでいます';
 const SECRET_NOTE = '本人から電話あり、住所変更を希望';
+const SECRET_EMAIL = 'secret-target@example.com';
 
 const adminActor = { id: ADMIN_ID, email: 'admin@example.com', roles: ['admin'], organization_id: null };
 const supportActor = { id: SUPPORT_ID, email: 'support@example.com', roles: ['support'], organization_id: null };
@@ -160,6 +174,7 @@ function expectNoValuesIn(details: unknown, ...secrets: string[]) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockRequireRole.mockResolvedValue(adminActor);
+  mockFetchUserEmails.mockResolvedValue(new Map());
   userScopedClient = makeClient({});
   serviceRoleClient = makeClient({});
 });
@@ -217,7 +232,8 @@ describe('GET /api/admin/users/[id] -> admin.user.view', () => {
     });
   });
 
-  it('details は返した項目名だけ (ニックネームなどの値は入れない)', async () => {
+  it('details は返した項目名だけ (ニックネームやメールアドレスなどの値は入れない)', async () => {
+    mockFetchUserEmails.mockResolvedValue(new Map([[TARGET_ID, SECRET_EMAIL]]));
     setup();
 
     const res = await call();
@@ -226,7 +242,8 @@ describe('GET /api/admin/users/[id] -> admin.user.view', () => {
     const [row] = userScopedClient.auditRows();
     expect(row.details).toEqual({ viewed_fields: Object.keys(body.data) });
     expect(body.data.nickname).toBe(SECRET_NICKNAME);
-    expectNoValuesIn(row.details, SECRET_NICKNAME);
+    expect(body.data.email).toBe(SECRET_EMAIL);
+    expectNoValuesIn(row.details, SECRET_NICKNAME, SECRET_EMAIL);
   });
 
   it('support ロールが閲覧した場合も記録する (actor_id は閲覧した本人)', async () => {
