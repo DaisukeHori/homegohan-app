@@ -104,7 +104,7 @@ const NUTRIENT_INFO: Record<string, { label: string; unit: string }> = {
   sodium_g: { label: '食塩相当量', unit: 'g' },
   fiber_g: { label: '食物繊維', unit: 'g' },
   cholesterol_mg: { label: 'コレステロール', unit: 'mg' },
-  sugar_g: { label: '糖類', unit: 'g' },
+  sugar_g: { label: '糖質', unit: 'g' },
 };
 
 const BASIS_TYPE_LABELS: Record<string, string> = {

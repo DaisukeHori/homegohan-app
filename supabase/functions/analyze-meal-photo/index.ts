@@ -8,6 +8,7 @@ import { createClient } from "@supabase/supabase-js";
 import { analyzeWithEvidence, ImageInput, GeminiAnalysisResult } from '../_shared/nutrition-pipeline.ts'
 import { buildPhotoDishList } from '../_shared/meal-image.ts'
 import { cancelPendingMealImageJobs } from '../_shared/meal-image-jobs.ts'
+import { buildPhotoOverwriteNutrition } from '../_shared/meal-photo-update.ts'
 import { createLogger } from '../_shared/db-logger.ts'
 import { getCorsHeaders } from '../_shared/cors.ts'
 
@@ -230,32 +231,9 @@ async function analyzeMealPhotoBackgroundTask({
       dishes: photoDishes,
         image_url: imageUrl,
         description: result.praiseComment,
-        // 基本栄養素
-        calories_kcal: result.totalCalories,
-        protein_g: result.totalProtein,
-        fat_g: result.totalFat,
-        carbs_g: result.totalCarbs,
-        // 拡張栄養素
-        sodium_g: result.nutrition.sodiumG,
-        fiber_g: result.nutrition.fiberG,
-        potassium_mg: result.nutrition.potassiumMg,
-        calcium_mg: result.nutrition.calciumMg,
-        phosphorus_mg: result.nutrition.phosphorusMg,
-        iron_mg: result.nutrition.ironMg,
-        zinc_mg: result.nutrition.zincMg,
-        iodine_ug: result.nutrition.iodineUg,
-        cholesterol_mg: result.nutrition.cholesterolMg,
-        vitamin_a_ug: result.nutrition.vitaminAUg,
-        vitamin_d_ug: result.nutrition.vitaminDUg,
-        vitamin_e_mg: result.nutrition.vitaminEMg,
-        vitamin_k_ug: result.nutrition.vitaminKUg,
-        vitamin_b1_mg: result.nutrition.vitaminB1Mg,
-        vitamin_b2_mg: result.nutrition.vitaminB2Mg,
-        vitamin_b6_mg: result.nutrition.vitaminB6Mg,
-        vitamin_b12_ug: result.nutrition.vitaminB12Ug,
-        folic_acid_ug: result.nutrition.folicAcidUg,
-        vitamin_c_mg: result.nutrition.vitaminCMg,
-        magnesium_mg: result.nutrition.magnesiumMg,
+        // 栄養素 (基本・拡張・糖質)。書く列は meal-photo-update.ts に集約している。
+        // 糖質 (sugar_g) を炭水化物・食物繊維と一緒に上書きしないと、上書き前の AI 献立の古い糖質が残る (#1146)
+        ...buildPhotoOverwriteNutrition(result),
         // スコア
         veg_score: result.vegScore,
         // メタデータ
