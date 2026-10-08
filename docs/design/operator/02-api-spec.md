@@ -466,6 +466,44 @@ MRR 時系列
 ### POST /api/admin/finance/invoices/{id}/resend
 請求書再送
 
+### POST /api/admin/finance/refunds
+返金の記録 (監査ログ) と Stripe ダッシュボードへの誘導 (#1185)
+
+このアプリは返金を実行しない。担当者が Stripe ダッシュボードで返金する前に、この API で
+`admin_audit_logs` に `admin.refund.issue` (severity=`warn`) を記録する。**記録できたときだけ**
+Stripe ダッシュボードのリンクを返す。記録できなかったときは 500 を返し、リンクは返さない。
+
+**リクエスト**:
+```json
+{
+  "user_id": "uuid",
+  "stripe_invoice_id": "in_xxx",
+  "amount": 1200,
+  "currency": "JPY",
+  "reason": "二重に請求されたため"
+}
+```
+
+- `stripe_invoice_id` (`in_...`) と `stripe_charge_id` (`ch_...` / `py_...`) は**どちらか一方だけ**を指定する
+- `amount` は通貨の最小単位の整数 (JPY は円そのもの、USD はセント)。1 〜 99,999,999
+- `currency` は ISO 4217 の 3 文字。省略時は `JPY`。大文字にそろえて保存する
+- `reason` は必須。前後の空白を除いて 1 〜 500 文字
+
+**レスポンス**:
+```json
+{ "data": { "stripe_dashboard_url": "https://dashboard.stripe.com/invoices/in_xxx" } }
+```
+決済 (`stripe_charge_id`) の場合は `.../payments/ch_xxx`。開発環境ではテストモード (`/test`) のリンクになる。
+
+**監査ログ**: `action_type=admin.refund.issue` / `target_type=user` / `target_id=user_id` / `severity=warn` /
+`details={ amount, currency, reason, stripe_charge_id, stripe_invoice_id }` (使わない側の ID は `null`) / `ip_address` / `user_agent`
+
+**権限**: `finance`, `admin`, `super_admin`
+
+**エラー**: `400 VALIDATION_ERROR` (入力不正) / `401 AUTH_UNAUTHENTICATED` / `403 OP_PERMISSION_DENIED` / `500 INTERNAL_ERROR` (監査ログに記録できなかった)
+
+2 名承認 (`finance.refund.approve`) と `charge.refunded` Webhook との突き合わせは Stripe 連携 (#1125) 側で後続。
+
 ---
 
 ## 10. サポート API
