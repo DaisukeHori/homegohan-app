@@ -16,7 +16,7 @@ import { sendEmail } from '@/lib/emails/send';
 import { renderOrgInviteExistingEmail } from '@/lib/emails/membership/org-invite-existing';
 import { renderOrgInviteNewEmail } from '@/lib/emails/membership/org-invite-new';
 import type { InviteEmailVars } from '@/lib/emails/membership/templates';
-import { checkInviteEmailLimits } from '@/lib/membership/invite-throttle';
+import { checkInviteEmailLimits, inviteThrottleFailureFromRpcError } from '@/lib/membership/invite-throttle';
 
 export type OrgInviteRole = 'admin' | 'member';
 
@@ -96,6 +96,18 @@ export async function createOrgInviteWithEmail(params: CreateOrgInviteParams): P
   });
 
   if (rpcError) {
+    // #1163 DB の 24 時間上限 (enforce_membership_daily_cap) に達したときは、アプリ層の上限と同じ形の 429
+    // (利用者向けの文言と Retry-After) にする。DB が返す生の文字列 'RATE_LIMITED' は見せない。
+    const dbThrottle = inviteThrottleFailureFromRpcError(rpcError, { flow: 'org-invite', userId: inviter.id });
+    if (dbThrottle) {
+      return {
+        ok: false,
+        status: ErrorStatusMap[MembershipErrorCode.RATE_LIMITED],
+        code: MembershipErrorCode.RATE_LIMITED,
+        message: dbThrottle.message,
+        retryAfterSec: dbThrottle.retryAfterSec,
+      };
+    }
     const { code, status } = mapPgErrorToHttp(rpcError.message);
     return { ok: false, status, code, message: rpcError.message };
   }

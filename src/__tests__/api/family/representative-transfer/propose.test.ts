@@ -205,6 +205,73 @@ describe('POST /api/family/representative-transfer/propose: 送信回数の制�
   });
 });
 
+describe('POST /api/family/representative-transfer/propose: DB の 24 時間上限 (#1163)', () => {
+  // enforce_membership_daily_cap が RAISE する RATE_LIMITED を、PostgREST が RPC のエラーとして返した形
+  const dbRateLimited = (overrides: Record<string, unknown> = {}) => ({
+    data: null,
+    error: {
+      message: 'RATE_LIMITED',
+      code: 'P0001',
+      details: 'transfer_propose:per_actor',
+      hint: 'retry_after_sec=900',
+      ...overrides,
+    },
+  });
+
+  it('RPC が RATE_LIMITED: アプリ層の上限と同じ 429 / 入れ子の RATE_LIMITED / Retry-After (HINT の秒数) を返す', async () => {
+    mockRpc.mockResolvedValue(dbRateLimited());
+
+    const res = await POST(postRequest(validBody));
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(json).toEqual({
+      error: {
+        code: 'RATE_LIMITED',
+        message: '本日の送信上限に達しました。しばらく時間をおいてからお試しください。',
+        retryAfter: 900,
+      },
+    });
+    expect(res.headers.get('Retry-After')).toBe('900');
+  });
+
+  it('提案メールを送らず、宛先のメールアドレスも対象者のプロフィールも読みにいかない', async () => {
+    mockRpc.mockResolvedValue(dbRateLimited());
+
+    await POST(postRequest(validBody));
+
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockGetUserById).not.toHaveBeenCalled();
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it('HINT が読めないときも 429 にする (Retry-After は 1 時間)', async () => {
+    mockRpc.mockResolvedValue(dbRateLimited({ hint: null }));
+
+    const res = await POST(postRequest(validBody));
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(json.error.retryAfter).toBe(3600);
+    expect(res.headers.get('Retry-After')).toBe('3600');
+  });
+
+  it('withUser(user.id).warn に flow=transfer-propose / layer=db / 上限名を記録する', async () => {
+    mockRpc.mockResolvedValue(dbRateLimited());
+
+    await POST(postRequest(validBody));
+
+    expect(mockWithUser).toHaveBeenCalledWith(rep.id);
+    expect(mockLogWarn).toHaveBeenCalledTimes(1);
+    expect(mockLogWarn.mock.calls[0][1]).toMatchObject({
+      flow: 'transfer-propose',
+      layer: 'db',
+      rule: 'transfer_propose:per_actor',
+      retry_after_sec: 900,
+    });
+  });
+});
+
 describe('POST /api/family/representative-transfer/propose: 提案メールの宛先 (#1110)', () => {
   // 修正前は宛先のメールアドレスを user_profiles.email から読んでいた。その列は無く (メールアドレスは
   // auth.users にしか無い)、読み取りは常に失敗するため、提案メールは 1 通も送られなかった。

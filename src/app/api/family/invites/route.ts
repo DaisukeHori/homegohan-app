@@ -8,7 +8,11 @@ import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { sendEmail } from '@/lib/emails/send';
 import { renderFamilyInviteExistingEmail } from '@/lib/emails/membership/family-invite-existing';
 import { renderFamilyInviteNewEmail } from '@/lib/emails/membership/family-invite-new';
-import { checkInviteEmailLimits, inviteThrottleResponse } from '@/lib/membership/invite-throttle';
+import {
+  checkInviteEmailLimits,
+  inviteThrottleFailureFromRpcError,
+  inviteThrottleResponse,
+} from '@/lib/membership/invite-throttle';
 import { buildFamilyInviteUrl } from '@/lib/membership/urls';
 
 // 招待一覧取得
@@ -146,6 +150,11 @@ export async function POST(request: Request) {
   });
 
   if (rpcError) {
+    // #1163 DB の 24 時間上限 (enforce_membership_daily_cap) に達したときは、アプリ層の上限と同じ 429 にする
+    const dbThrottle = inviteThrottleFailureFromRpcError(rpcError, { flow: 'family-invite', userId: user.id });
+    if (dbThrottle) {
+      return inviteThrottleResponse(dbThrottle);
+    }
     if (rpcError.message?.includes('ALREADY_IN_FAMILY')) {
       return NextResponse.json(
         { error: { code: MembershipErrorCode.ALREADY_IN_FAMILY, message: 'このメールアドレスは既に家族グループのメンバーです' } },

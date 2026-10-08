@@ -8,7 +8,11 @@ import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
 import { renderFamilyPromoteEmail } from '@/lib/emails/membership/family-promote';
-import { checkInviteEmailLimits, inviteThrottleResponse } from '@/lib/membership/invite-throttle';
+import {
+  checkInviteEmailLimits,
+  inviteThrottleFailureFromRpcError,
+  inviteThrottleResponse,
+} from '@/lib/membership/invite-throttle';
 import {
   FamilyMemberIdParamsSchema,
   RequestChildPromotionBodySchema,
@@ -93,6 +97,11 @@ export async function POST(
     p_email: parsed.data.email,
   });
   if (error) {
+    // #1163 DB の 24 時間上限 (enforce_membership_daily_cap) に達したときは、アプリ層の上限と同じ 429 にする
+    const dbThrottle = inviteThrottleFailureFromRpcError(error, { flow: 'child-promotion', userId: user.id });
+    if (dbThrottle) {
+      return inviteThrottleResponse(dbThrottle);
+    }
     // #1232 v3 (G10): SQLSTATE (PostgrestError.code) を渡し 40P01 → CONFLICT_RETRY(409) を有効化
     const { code, status } = mapPgErrorToHttp(error.message ?? '', error.code);
     if (status >= 500) {
