@@ -8,6 +8,7 @@ import {
   Trophy, Calendar, CheckCircle2, X, Trash2, Edit2
 } from 'lucide-react';
 import { GOAL_TYPE_DEFS } from '@/lib/health-goal-types';
+import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
 
 const colors = {
   bg: '#FAF9F7',
@@ -17,11 +18,8 @@ const colors = {
   textMuted: '#9A9A9A',
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
-  success: '#4CAF50',
-  successLight: '#E8F5E9',
-  warning: '#FF9800',
-  warningLight: '#FFF3E0',
-  error: '#F44336',
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
   purple: '#7C4DFF',
   purpleLight: '#EDE7F6',
   blue: '#2196F3',
@@ -352,7 +350,7 @@ export default function HealthGoalsPage() {
                               <span
                                 key={i}
                                 className="px-2 py-1 rounded-full text-xs"
-                                style={{ backgroundColor: colors.successLight, color: colors.success }}
+                                style={{ backgroundColor: colors.successLight, color: colors.successText }}
                               >
                                 ✓ {m.value}{goal.target_unit}
                               </span>
@@ -392,10 +390,10 @@ export default function HealthGoalsPage() {
                             <Trophy size={20} color="white" />
                           </div>
                           <div>
-                            <p className="font-semibold" style={{ color: colors.success }}>
+                            <p className="font-semibold" style={{ color: colors.successText }}>
                               {config.label} 目標達成！
                             </p>
-                            <p className="text-sm" style={{ color: colors.success }}>
+                            <p className="text-sm" style={{ color: colors.successText }}>
                               {goal.target_value}{goal.target_unit} を達成
                             </p>
                           </div>
@@ -531,7 +529,7 @@ export default function HealthGoalsPage() {
               </div>
 
               {editError && (
-                <p className="text-sm mb-4" style={{ color: colors.error }}>{editError}</p>
+                <p className="text-sm mb-4" style={{ color: colors.dangerText }}>{editError}</p>
               )}
 
               <div className="flex gap-3">
@@ -654,7 +652,7 @@ export default function HealthGoalsPage() {
               </div>
 
               {createError && (
-                <p className="text-sm mb-4" style={{ color: colors.error }}>{createError}</p>
+                <p className="text-sm mb-4" style={{ color: colors.dangerText }}>{createError}</p>
               )}
 
               {/* 作成ボタン */}

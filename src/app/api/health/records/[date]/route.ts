@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 import { RECORD_DATE_PATTERN, sanitizeHealthRecordPayload } from '@/lib/health-payloads';
 
 // 特定日の健康記録を取得
@@ -30,7 +31,7 @@ export async function GET(
     .single();
 
   if (error && error.code !== 'PGRST116') {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/health/records/[date]', error, { userId: user.id, table: 'health_records' });
   }
 
   // 前日の記録も取得（比較用）
@@ -101,7 +102,7 @@ export async function PUT(
     .single();
 
   if (result.error) {
-    return NextResponse.json({ error: result.error.message }, { status: 500 });
+    return internalError('PUT /api/health/records/[date]', result.error, { userId: user.id, table: 'health_records' });
   }
 
   return NextResponse.json({ record: result.data });
@@ -132,7 +133,7 @@ export async function DELETE(
     .eq('record_date', date);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('DELETE /api/health/records/[date]', error, { userId: user.id, table: 'health_records' });
   }
 
   return NextResponse.json({ success: true });

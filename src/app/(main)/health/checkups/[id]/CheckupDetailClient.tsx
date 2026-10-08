@@ -12,6 +12,7 @@ import {
   ALL_METRIC_DEFS, evaluateStatus, formatRangeText, getRangeForSex, getStatusLabel,
   type BiologicalSex, type MetricStatus,
 } from '@/lib/health-blood-test-reference';
+import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
 
 const colors = {
   bg: '#FAF9F7',
@@ -21,12 +22,8 @@ const colors = {
   textMuted: '#9A9A9A',
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
-  success: '#4CAF50',
-  successLight: '#E8F5E9',
-  warning: '#FF9800',
-  warningLight: '#FFF3E0',
-  error: '#F44336',
-  errorLight: '#FFEBEE',
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
   purple: '#7C4DFF',
   purpleLight: '#EDE7F6',
   blue: '#2196F3',
@@ -143,17 +140,18 @@ export default function CheckupDetailClient({ id }: Props) {
     return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
   };
 
+  // text は数値とラベルの文字、dot は色ドットの塗り (#590)
   const getStatusStyle = (status: MetricStatus) => {
     switch (status) {
       case 'high':
       case 'low':
-        return { bg: colors.errorLight, text: colors.error };
+        return { bg: colors.errorLight, text: colors.dangerText, dot: colors.error };
       // #1051 UX3-07: 基準値ぎりぎりも一律の赤ではなく「注意」として区別する
       case 'warning_high':
       case 'warning_low':
-        return { bg: colors.warningLight, text: colors.warning };
+        return { bg: colors.warningLight, text: colors.warningText, dot: colors.warning };
       default:
-        return { bg: colors.successLight, text: colors.success };
+        return { bg: colors.successLight, text: colors.successText, dot: colors.success };
     }
   };
 
@@ -186,7 +184,7 @@ export default function CheckupDetailClient({ id }: Props) {
             <span className="flex items-center gap-1">
               <span
                 className="w-2 h-2 rounded-full"
-                style={{ backgroundColor: statusStyle.text }}
+                style={{ backgroundColor: statusStyle.dot }}
               />
               <span className="text-xs font-medium" style={{ color: statusStyle.text }}>{statusLabel}</span>
             </span>
@@ -310,7 +308,7 @@ export default function CheckupDetailClient({ id }: Props) {
               >
                 <div className="flex items-center gap-2 mb-3">
                   <AlertTriangle size={20} style={{ color: colors.warning }} />
-                  <span className="font-bold" style={{ color: colors.warning }}>気になる点</span>
+                  <span className="font-bold" style={{ color: colors.warningText }}>気になる点</span>
                 </div>
                 <ul className="space-y-2">
                   {review.concerns.map((item, i) => (
@@ -334,7 +332,7 @@ export default function CheckupDetailClient({ id }: Props) {
               >
                 <div className="flex items-center gap-2 mb-3">
                   <CheckCircle2 size={20} style={{ color: colors.success }} />
-                  <span className="font-bold" style={{ color: colors.success }}>良い点</span>
+                  <span className="font-bold" style={{ color: colors.successText }}>良い点</span>
                 </div>
                 <ul className="space-y-2">
                   {review.positives.map((item, i) => (
@@ -487,7 +485,7 @@ export default function CheckupDetailClient({ id }: Props) {
             {deleteError && (
               <div className="flex items-start gap-2 p-3 mb-4 rounded-lg" style={{ backgroundColor: colors.errorLight }}>
                 <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" style={{ color: colors.error }} />
-                <p className="text-sm" style={{ color: colors.error }}>{deleteError}</p>
+                <p className="text-sm" style={{ color: colors.dangerText }}>{deleteError}</p>
               </div>
             )}
             <div className="flex gap-3">

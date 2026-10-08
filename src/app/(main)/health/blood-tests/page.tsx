@@ -11,6 +11,7 @@ import {
   BLOOD_METRIC_DEFS, evaluateStatus, formatRangeText, getRangeForSex, getStatusLabel,
   type BiologicalSex,
 } from "@/lib/health-blood-test-reference";
+import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
 
 const colors = {
   bg: "#FAF9F7",
@@ -20,12 +21,8 @@ const colors = {
   textMuted: "#9A9A9A",
   accent: "#E07A5F",
   accentLight: "#FDF0ED",
-  success: "#4CAF50",
-  successLight: "#E8F5E9",
-  warning: "#FF9800",
-  warningLight: "#FFF3E0",
-  error: "#F44336",
-  errorLight: "#FFEBEE",
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
   purple: "#7C4DFF",
   purpleLight: "#EDE7F6",
   blue: "#2196F3",
@@ -143,7 +140,7 @@ export default function BloodTestsPage() {
       {error && (
         <div className="mx-4 mb-4 p-4 rounded-xl flex items-center gap-3" style={{ backgroundColor: colors.errorLight }}>
           <AlertTriangle size={20} style={{ color: colors.error }} />
-          <p className="text-sm" style={{ color: colors.error }}>{error}</p>
+          <p className="text-sm" style={{ color: colors.dangerText }}>{error}</p>
         </div>
       )}
 
@@ -230,7 +227,12 @@ export default function BloodTestsPage() {
                           const isAbnormal = status === "high" || status === "low";
                           // #1051 UX3-07: 基準ぎりぎりも一律の異常扱いにせず「注意」として区別する
                           const isWarning = status === "warning_high" || status === "warning_low";
-                          const statusColor = isAbnormal ? colors.error : isWarning ? colors.warning : colors.text;
+                          // 数値とラベルの文字は文字用の濃い色、色ドットは塗りの色 (#590)
+                          const statusColors = isAbnormal
+                            ? { dot: colors.error, text: colors.dangerText }
+                            : isWarning
+                              ? { dot: colors.warning, text: colors.warningText }
+                              : { dot: colors.text, text: colors.text };
                           const statusLabel = getStatusLabel(status);
                           const rangeText = formatRangeText(getRangeForSex(key, sex));
                           return (
@@ -243,7 +245,7 @@ export default function BloodTestsPage() {
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <p
                                   className="font-bold text-base"
-                                  style={{ color: statusColor }}
+                                  style={{ color: statusColors.text }}
                                 >
                                   {String(value)}
                                   <span className="text-xs font-normal ml-1" style={{ color: colors.textMuted }}>{def.unit}</span>
@@ -251,8 +253,8 @@ export default function BloodTestsPage() {
                                 {/* #1051 UX3-07: 色ドットだけでなくテキストラベルも併記する */}
                                 {statusLabel && (
                                   <span className="flex items-center gap-1">
-                                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: statusColor }} />
-                                    <span className="text-[10px] font-medium" style={{ color: statusColor }}>{statusLabel}</span>
+                                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: statusColors.dot }} />
+                                    <span className="text-[10px] font-medium" style={{ color: statusColors.text }}>{statusLabel}</span>
                                   </span>
                                 )}
                               </div>
