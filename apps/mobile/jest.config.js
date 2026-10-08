@@ -27,6 +27,8 @@ module.exports = {
     // node_modules/@homegohan/shared (ワークスペースのシンボリックリンク) 経由だと、node_modules を
     // 別の場所のものと共有している作業コピー (git worktree など) で、手元ではなくリンク先の古い内容を読むため。
     '^@homegohan/shared$': path.join(repoRoot, 'packages/shared/src/index.ts'),
+    // @homegohan/core も同じ理由で、このリポジトリの packages/core を直接読む (tsconfig.json の paths とそろえる)。
+    '^@homegohan/core$': path.join(repoRoot, 'packages/core/src/index.ts'),
     // react-native-webview はネイティブモジュール (RNCWebViewModule) を必要とするため
     // Jest 環境では stub モックに差し替える。
     '^react-native-webview$': '<rootDir>/__mocks__/react-native-webview.js',
