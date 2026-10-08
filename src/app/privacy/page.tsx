@@ -1,16 +1,27 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+// #1174 (同意の前提): 未ログインでも読める公開ページ。サインアップ画面・LP フッターの同意リンクと、
+// ストア審査に出すプライバシー URL の着地点なので、(main) グループ (ログイン後の画面。アプリ用のナビ付き) の外に置く。
+// ログイン・オンボーディング・凍結の差し戻しからは、lib/supabase/middleware.ts の publicPaths と
+// lib/onboarding-routing.ts の isPolicyPath で除外している。
+export const metadata: Metadata = {
+  title: "プライバシーポリシー",
+};
 
 export default function PrivacyPage() {
   return (
-    <div className="min-h-screen bg-white pb-20">
-      <div className="bg-white p-6 border-b border-gray-100 sticky top-0 z-20 flex items-center gap-4">
-        <Link href="/settings" className="p-2 -ml-2 hover:bg-gray-50 rounded-full">
-          <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-        </Link>
-        <h1 className="text-xl font-bold text-gray-900">プライバシーポリシー</h1>
-      </div>
+    <div className="min-h-screen bg-white">
+      <header className="bg-white border-b border-gray-100 sticky top-0 z-20">
+        <div className="max-w-3xl mx-auto p-6 flex items-center gap-4">
+          <Link href="/" aria-label="トップページへ戻る" className="p-2 -ml-2 hover:bg-gray-50 rounded-full">
+            <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+          </Link>
+          <h1 className="text-xl font-bold text-gray-900">プライバシーポリシー</h1>
+        </div>
+      </header>
 
-      <div className="p-6 max-w-3xl mx-auto prose prose-gray">
+      <main className="p-6 max-w-3xl mx-auto text-gray-700 leading-relaxed [&_h3]:mt-8 [&_h3]:mb-2 [&_h3]:text-lg [&_h3]:font-bold [&_h3]:text-gray-900 [&_p]:mb-4 [&_ul]:mb-4 [&_ul]:list-disc [&_ul]:pl-6 [&_li]:mb-1">
         <p className="text-sm text-gray-500 mb-8">最終更新日: 2025年1月1日</p>
 
         <p>Homegohan Inc.（以下，「当社」といいます。）は，本ウェブサイト上で提供するサービス（以下,「本サービス」といいます。）における，ユーザーの個人情報の取扱いについて，以下のとおりプライバシーポリシー（以下，「本ポリシー」といいます。）を定めます。</p>
@@ -47,9 +58,11 @@ export default function PrivacyPage() {
           Homegohan Inc. 個人情報担当<br />
           E-mail: support@homegohan.jp
         </p>
-      </div>
+      </main>
+
+      <footer className="py-8 border-t border-gray-100">
+        <p className="text-center text-sm text-gray-500">© 2025 ほめゴハン All rights reserved.</p>
+      </footer>
     </div>
   );
 }
-
-

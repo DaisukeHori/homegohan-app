@@ -519,15 +519,14 @@ const mocks = vi.hoisted(() => ({
   requireAuth: vi.fn(),
   createCompletion: vi.fn(),
   upsert: vi.fn(),
-  orgSelect: vi.fn(),
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-// supabase-js の偽物: 組織の一覧 (aggregate-org-stats) と upsert (generate-hint) だけ答える
+// supabase-js の偽物: upsert (generate-hint) だけ答える。
+// aggregate-org-stats は停止中 (#1325) で DB を読まないので、組織の一覧を返す必要はない
 vi.mock("@supabase/supabase-js", () => ({
   createClient: () => ({
     from: (table: string) => ({
-      select: () => mocks.orgSelect(table),
       upsert: (...args: unknown[]) => mocks.upsert(table, ...args),
     }),
   }),
@@ -569,8 +568,6 @@ beforeEach(async () => {
   mocks.createCompletion.mockResolvedValue({ choices: [{ message: { content: JSON.stringify({ hint: "ok" }) } }] });
   mocks.upsert.mockReset();
   mocks.upsert.mockResolvedValue({ error: null });
-  mocks.orgSelect.mockReset();
-  mocks.orgSelect.mockResolvedValue({ data: [], error: null });
 
   if (!handlers["aggregate-org-stats"]) {
     await loadHandler("aggregate-org-stats", () => import("../supabase/functions/aggregate-org-stats/index.ts"));
@@ -618,10 +615,15 @@ describe.each(["aggregate-org-stats", "calculate-segment-stats"])(
 );
 
 describe("バッチ専用の aggregate-org-stats: 認証に成功した応答にも CORS ヘッダーが無い", () => {
-  it("CORS-H3: サーバーからの呼び出し (CRON_SECRET) は従来どおり 200 で動く", async () => {
+  it("CORS-H3: サーバーからの呼び出し (CRON_SECRET) は認証を通り、停止中 (#1325) の 410 を返す。CORS ヘッダーは無い", async () => {
     const res = await call("aggregate-org-stats", { origin: ALLOWED, auth: `Bearer ${BATCH_SECRET}` });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ success: true, processed: [] });
+    expect(res.status).toBe(410);
+    expect(res.headers.get("Content-Type")).toBe("application/json");
+    expect(await res.json()).toEqual({
+      success: false,
+      code: "DISABLED",
+      message: "組織の集計はオーナー判断 (#1325) により停止しています",
+    });
     expect(corsResponseHeaders(res)).toEqual([]);
   });
 });

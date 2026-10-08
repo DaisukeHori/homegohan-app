@@ -1,7 +1,14 @@
 import { Redirect, Stack, useSegments } from "expo-router";
+import type { ErrorBoundaryProps } from "expo-router";
 import { ActivityIndicator, View } from "react-native";
 
+import { ErrorFallback } from "../../src/components/ErrorFallback";
 import { useAuth } from "../../src/providers/AuthProvider";
+
+// この区画の画面で描画の例外が起きたとき、アプリ全体をクラッシュさせずに再試行を出す (#1207)
+export function ErrorBoundary(props: ErrorBoundaryProps) {
+  return <ErrorFallback {...props} boundary="auth" homeHref="/" homeLabel="最初の画面へ戻る" />;
+}
 
 export default function AuthLayout() {
   const { session, isLoading } = useAuth();

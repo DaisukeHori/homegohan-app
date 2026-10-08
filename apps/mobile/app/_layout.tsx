@@ -7,10 +7,12 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SplashScreen from 'expo-splash-screen';
 import { Stack } from "expo-router";
+import type { ErrorBoundaryProps } from "expo-router";
 import { useEffect } from "react";
 import { LogBox } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { ErrorFallback } from "../src/components/ErrorFallback";
 import { registerAndSaveExpoPushToken } from "../src/lib/pushNotifications";
 import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
 import { PostHogProvider } from "../src/providers/PostHogProvider";
@@ -23,6 +25,16 @@ LogBox.ignoreAllLogs();
 SplashScreen.preventAutoHideAsync();
 
 const PUSH_TOKEN_REGISTERED_KEY = "push_token_registered_v1";
+
+// 画面の描画中に起きた例外を受ける、ルートの境界 (#1207)。
+// expo-router は、この export がある layout の中で起きた描画の例外を受けて、画面の代わりにこれを出す。
+// 無いとアプリ全体がクラッシュする (白い画面)。グループ専用の境界を持たない画面 (献立・食事・レシピ・健康・AI など、
+// app 直下の画面) の例外は、ここで受ける。
+// ルートの境界は Provider ごと置き換えて描画されるため、Provider に頼らない最小の画面にしている。
+// 移動先のナビゲーションも残っていないので、「再試行」だけを出す。
+export function ErrorBoundary(props: ErrorBoundaryProps) {
+  return <ErrorFallback {...props} boundary="root" />;
+}
 
 function PushTokenRegistrar() {
   const { user } = useAuth();

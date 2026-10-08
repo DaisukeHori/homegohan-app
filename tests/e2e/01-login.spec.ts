@@ -3,8 +3,12 @@
  * ログインフローの基本動作確認
  */
 import { test, expect } from "@playwright/test";
+import { requireE2eUserCredentials } from "./helpers/credentials";
 
 test("ログインできる", async ({ page }) => {
+  // 認証情報は環境変数 (E2E_USER_EMAIL / E2E_USER_PASSWORD) からだけ取る。未設定ならすぐエラーで止まる (既定値は無い)
+  const { email, password } = requireE2eUserCredentials();
+
   await page.goto("/login");
   await page.waitForLoadState("networkidle");
 
@@ -32,12 +36,8 @@ test("ログインできる", async ({ page }) => {
     await new Promise((r) => setTimeout(r, 500));
   });
 
-  await page.locator("#email").fill(
-    process.env.E2E_USER_EMAIL ?? "claude-debug-1777477826@homegohan.local",
-  );
-  await page.locator("#password").fill(
-    process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!",
-  );
+  await page.locator("#email").fill(email);
+  await page.locator("#password").fill(password);
 
   // waitForURL を先に登録してから click する
   const navPromise = page.waitForURL(

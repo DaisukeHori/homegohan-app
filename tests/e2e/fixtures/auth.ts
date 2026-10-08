@@ -48,10 +48,11 @@ export function getUserCredentials(workerIndex: number): { email: string; passwo
   const isMultiUserPattern = !envEmail || /^e2e-user-\d+@homegohan\.test$/.test(envEmail);
 
   if (!isMultiUserPattern) {
-    // backward compat: 単一ユーザーモード
+    // backward compat: 単一ユーザーモード。パスワードは E2E_USER_PASSWORD からだけ取る。
+    // 既定値は持たない。未設定なら分かりやすいエラーで止める
     return {
       email: envEmail!,
-      password: process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!",
+      password: requireExistingUserPassword(),
     };
   }
 

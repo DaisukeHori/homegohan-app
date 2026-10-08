@@ -82,7 +82,7 @@ supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
 | `analyze-health-photo` | 健康写真分析 |
 | `generate-health-insights` | 健康インサイト生成 |
 | `create-derived-recipe` | 派生レシピ作成 |
-| `aggregate-org-stats` | 組織統計集約 |
+| `aggregate-org-stats` | 組織統計集約。**停止中**（オーナー判断 #1325）。認証（`requireServiceRole`）のあと、何もせず HTTP 410（`DISABLED`）を返すだけで、集計処理は削除済み。デプロイ先から関数を消さないよう、ディレクトリは残している。呼び出し元（画面のボタン・API ルート）も無い。本番に呼び出す `pg_cron` のジョブが残っていれば、migration `20261008130000_stop_aggregate_org_stats_cron.sql` が登録解除する |
 | `calculate-segment-stats` | セグメント統計計算 |
 | `backfill-ingredient-embeddings` | 材料埋め込みバックフィル |
 | `regenerate-embeddings` | 埋め込み再生成 |
@@ -235,7 +235,7 @@ CORS はブラウザだけが強制する仕組みです。Next.js の API ル�
 - 利用者の JWT で認証する関数は、`_shared/cors.ts` の `getCorsHeaders(req)` を使います。リクエストの `Origin` が許可リストに完全一致したときだけ `Access-Control-Allow-Origin` を返し、どの応答にも `Vary: Origin` を付けます。`*`（全オリジン許可）は使いません。
 - 許可するオリジンは、環境変数 `ALLOWED_ORIGINS`（カンマ区切り）で決めます。未設定のときは `https://homegohan.app` と `https://homegohan-app.vercel.app` です。設定すると既定値は置き換わります。
 - バッチ専用の関数（service role key や `CRON_SECRET` で認証する関数）は、ブラウザから呼ばれないので CORS を付けません。`aggregate-org-stats`、`calculate-segment-stats`、`regenerate-embeddings`、`stripe-price-sync`、`backfill-ingredient-embeddings`、`create-derived-recipe`、`import-*-catalog` が該当します。
-- ブラウザから Edge Function を直接呼ばないでください。権限の確認が要る処理は、Next.js の API ルートで確認してから、サーバーから Edge Function を呼びます（例: 組織ダッシュボードの更新ボタンは `POST /api/org/stats/refresh` を経由します）。
+- ブラウザから Edge Function を直接呼ばないでください。権限の確認が要る処理は、Next.js の API ルートで確認してから、サーバーから Edge Function を呼びます（例: 管理者用のコンビニカタログ取り込みは `POST /api/admin/catalog/import` を経由します）。
 - モバイルアプリの WebView が読み込むのは Web アプリ自身（`EXPO_PUBLIC_WEB_URL`）のページなので、そこから呼ぶときの `Origin` も Web アプリのオリジンです。ネイティブ側の `fetch` は `Origin` を付けません。
 - 新しい関数を足すときは、`tests/edge-function-cors.test.ts` が、`Access-Control-Allow-Origin: *`（ワイルドカード）を書き込んでいないか、CORS ヘッダーを `_shared/cors.ts` 以外に直書きしていないか、バッチ専用の関数に CORS を付けていないかを検査します。`requireServiceRole` を使う関数を足したら同じテストの `BATCH_ONLY_SOURCES` に、`_shared/cors.ts` を使う関数を足したら `USER_FACING_SOURCES` に、一覧として足してください。
 
