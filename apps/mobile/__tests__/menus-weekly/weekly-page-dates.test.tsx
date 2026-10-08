@@ -9,6 +9,10 @@
  *
  * 時計は「JST の 2026-10-12 (月) 08:30 = UTC の 2026-10-11 (日) 23:30」に固定する。
  * 月曜始まりの週は、JST なら 10/12〜10/18。UTC の端末 (CI) の暦で見ると日曜日なので 10/5〜10/11 になってしまう。
+ *
+ * 「献立を改善」(handleImprove) の過去の日付の判定 (#1138) も、同じ「今日」で行う。
+ * 端末のタイムゾーンの今日 (formatLocalDate(new Date())) を渡していた時期があり、UTC の端末では
+ * JST の昨日 (10/11) が「今日」になって、過去の日を改善できてしまった。
  */
 
 import React from 'react';
@@ -16,10 +20,11 @@ import { act, render } from '@testing-library/react-native';
 
 // ── モック ────────────────────────────────────────────────────────────────────
 const mockGet = jest.fn();
+const mockPost = jest.fn();
 jest.mock('../../src/lib/api', () => ({
   getApi: () => ({
     get: (...args: unknown[]) => mockGet(...args),
-    post: jest.fn().mockResolvedValue({}),
+    post: (...args: unknown[]) => mockPost(...args),
     patch: jest.fn().mockResolvedValue({}),
     del: jest.fn().mockResolvedValue({}),
   }),
@@ -71,6 +76,8 @@ jest.mock('expo-image-picker', () => ({
 }));
 
 import WeeklyMenuPage from '../../app/menus/weekly/index';
+import { ImproveMealModal } from '../../src/components/menu/ImproveMealModal';
+import { ImproveMealRejectedError, type ImproveMealRequest } from '../../src/lib/improve-meal';
 
 // ── 時計: Date だけを固定する ─────────────────────────────────────────────────────
 function freezeDate(iso: string) {
@@ -106,6 +113,10 @@ async function renderPage() {
 const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
+  mockPost.mockReset();
+  mockPost.mockImplementation(async (path: string) =>
+    path === '/api/ai/menu/v4/generate' ? { requestId: 'req-improve-1', totalSlots: 1 } : {},
+  );
   mockGet.mockReset();
   mockGet.mockImplementation(async (path: string) => {
     if (path.startsWith('/api/meal-plans')) return { dailyMeals: [] };
@@ -153,5 +164,66 @@ describe('WeeklyMenuPage — 今週は Asia/Tokyo の今日から決まる', () 
       .filter((path) => path.startsWith('/api/ai/menu/weekly/pending'));
 
     expect(pendingCalls).toContain('/api/ai/menu/weekly/pending?date=2026-10-12');
+  });
+});
+
+describe('WeeklyMenuPage — 「献立を改善」の過去の日付の判定は Asia/Tokyo の今日', () => {
+  const improveRequest = (overrides: Partial<ImproveMealRequest>): ImproveMealRequest => ({
+    date: '2026-10-12',
+    mealTypes: ['dinner'],
+    nextDay: false,
+    ...overrides,
+  });
+
+  const generateCalls = () =>
+    mockPost.mock.calls.filter(([path]) => path === '/api/ai/menu/v4/generate') as Array<[string, any]>;
+
+  async function submitImprove(request: ImproveMealRequest) {
+    const view = await renderPage();
+    const { onSubmit } = view.UNSAFE_getByType(ImproveMealModal).props as {
+      onSubmit: (request: ImproveMealRequest) => Promise<void>;
+    };
+    let error: unknown = null;
+    await act(async () => {
+      try {
+        await onSubmit(request);
+      } catch (e) {
+        error = e;
+      }
+    });
+    return error;
+  }
+
+  it('端末の暦 (UTC) の今日 = JST の昨日 (2026-10-11) は過去の日付なので、生成を始めない', async () => {
+    const error = await submitImprove(improveRequest({ date: '2026-10-11' }));
+
+    expect(error).toBeInstanceOf(ImproveMealRejectedError);
+    expect((error as Error).message).toContain('2026-10-11は過去の日付のため改善できません');
+    expect(generateCalls()).toEqual([]);
+  });
+
+  it('JST の今日 (2026-10-12) は改善できる (端末の暦では翌日でも、拒否されない)', async () => {
+    const error = await submitImprove(improveRequest({ date: '2026-10-12' }));
+
+    expect(error).toBeNull();
+    expect(generateCalls()).toHaveLength(1);
+    expect(generateCalls()[0][1].targetSlots).toEqual([{ date: '2026-10-12', mealType: 'dinner' }]);
+    expect(generateCalls()[0][1].resolveExistingMeals).toBe(true);
+  });
+
+  it('JST の昨日を選んで「翌日を改善」にすると、対象は JST の今日 (2026-10-12) になり、改善できる', async () => {
+    const error = await submitImprove(improveRequest({ date: '2026-10-11', nextDay: true }));
+
+    expect(error).toBeNull();
+    expect(generateCalls()).toHaveLength(1);
+    expect(generateCalls()[0][1].targetSlots).toEqual([{ date: '2026-10-12', mealType: 'dinner' }]);
+  });
+
+  it('JST の一昨日 (2026-10-10) を選んで「翌日を改善」にしても、対象 (JST の昨日) は過去なので改善できない', async () => {
+    const error = await submitImprove(improveRequest({ date: '2026-10-10', nextDay: true }));
+
+    expect(error).toBeInstanceOf(ImproveMealRejectedError);
+    expect((error as Error).message).toContain('2026-10-11は過去の日付のため改善できません');
+    expect(generateCalls()).toEqual([]);
   });
 });

@@ -64,6 +64,27 @@ export function isTimeoutFailure(error: unknown): boolean {
 }
 
 /**
+ * 画面だけにあって、サーバーの履歴には無いメッセージか。
+ *   - `welcome`   : 履歴が空のときに出す挨拶 (AIAdvisorSheet)
+ *   - `local-…`   : 送信中の仮メッセージ (楽観的 UI)
+ *   - `summary-…` : セッションを閉じたときに画面へ出す要約 (AIAdvisorSheet)
+ * 返信の id がサーバーの応答に無いときに画面で付ける `ai-…` は含めない。
+ * 返信はサーバーが保存してから返すので、`ai-…` のメッセージもサーバーの履歴に入っている (数えるのが正しい)。
+ */
+export function isLocalOnlyMessage(message: { id: string }): boolean {
+  return message.id === 'welcome' || message.id.startsWith('local-') || message.id.startsWith('summary-');
+}
+
+/**
+ * 送信前に確定していた (= サーバーの履歴に入っている) メッセージの数。hasReplyAfterSend の persistedBefore に渡す。
+ * 画面だけのメッセージ (isLocalOnlyMessage) を数えると、取り直した履歴の件数と比べたときに実際より多くなり、
+ * 返信が届いているのに「届いていない」と判定して、タイムアウトのアラートを出してしまう。
+ */
+export function countPersistedMessages(messages: ReadonlyArray<{ id: string }>): number {
+  return messages.filter((message) => !isLocalOnlyMessage(message)).length;
+}
+
+/**
  * 取り直した履歴に、今回の送信に対する返信が入っているか。
  *
  * サーバーは送信を受けるとまずユーザーのメッセージを保存し、AI の返信ができたらそれを保存する。

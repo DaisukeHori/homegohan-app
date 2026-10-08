@@ -11,7 +11,9 @@ import { HttpError, HttpNetworkError, HttpParseError, HttpTimeoutError } from '@
 import {
   AI_CHAT_TIMEOUT_MESSAGE,
   AI_CHAT_TIMEOUT_MS,
+  countPersistedMessages,
   hasReplyAfterSend,
+  isLocalOnlyMessage,
   isTimeoutFailure,
   isUncertainSendFailure,
 } from '../../src/lib/aiChat';
@@ -82,6 +84,53 @@ describe('hasReplyAfterSend', () => {
 
   it('件数が増えていても最後が AI の返信でなければ false', () => {
     expect(hasReplyAfterSend([user, assistant, assistant, user], 2)).toBe(false);
+  });
+});
+
+describe('isLocalOnlyMessage / countPersistedMessages', () => {
+  it('ウェルカム・送信中の仮メッセージ・要約の表示は、画面だけのメッセージ', () => {
+    expect(isLocalOnlyMessage({ id: 'welcome' })).toBe(true);
+    expect(isLocalOnlyMessage({ id: 'local-1767225600000' })).toBe(true);
+    expect(isLocalOnlyMessage({ id: 'summary-1767225600000' })).toBe(true);
+  });
+
+  it('サーバーが付けた id (UUID) のメッセージは、画面だけのメッセージではない', () => {
+    expect(isLocalOnlyMessage({ id: '3f2b6c1e-7a52-4c1a-9d0e-5b8f0a1c2d3e' })).toBe(false);
+    expect(isLocalOnlyMessage({ id: 'm-1' })).toBe(false);
+  });
+
+  it('返信の id が応答に無いときに付ける ai-… は、サーバーに保存済みの返信なので、画面だけのメッセージに含めない', () => {
+    expect(isLocalOnlyMessage({ id: 'ai-1767225600000' })).toBe(false);
+  });
+
+  it('送信前に確定していたメッセージだけを数える', () => {
+    const messages = [
+      { id: 'welcome' },
+      { id: 'm-1' },
+      { id: 'm-2' },
+      { id: 'summary-1767225600000' },
+      { id: 'local-1767225600001' },
+      { id: 'ai-1767225600002' },
+    ];
+
+    // m-1, m-2 と ai-…
+    expect(countPersistedMessages(messages)).toBe(3);
+    expect(countPersistedMessages([])).toBe(0);
+    expect(countPersistedMessages([{ id: 'welcome' }])).toBe(0);
+  });
+
+  it('要約を数えると、届いている返信を「届いていない」と取り違える (要約を数えない)', () => {
+    const screenMessages = [{ id: 'm-1' }, { id: 'm-2' }, { id: 'summary-1767225600000' }];
+    const serverHistory = [
+      { id: 'm-1', role: 'user' },
+      { id: 'm-2', role: 'assistant' },
+      { id: 'm-3', role: 'user' },
+      { id: 'm-4', role: 'assistant' },
+    ];
+
+    expect(hasReplyAfterSend(serverHistory, countPersistedMessages(screenMessages))).toBe(true);
+    // 参考: 画面の全件 (要約を含む) を数えると、3 + 2 = 5 件に届かず false になる
+    expect(hasReplyAfterSend(serverHistory, screenMessages.length)).toBe(false);
   });
 });
 

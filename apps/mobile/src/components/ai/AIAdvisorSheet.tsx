@@ -26,9 +26,11 @@ import {
 } from "react-native";
 
 import { getApi, getApiBaseUrl } from "../../lib/api";
+import { getApiErrorMessage } from "../../lib/api-error";
 import {
   AI_CHAT_TIMEOUT_MESSAGE,
   AI_CHAT_TIMEOUT_MS,
+  countPersistedMessages,
   hasReplyAfterSend,
   isTimeoutFailure,
   isUncertainSendFailure,
@@ -327,11 +329,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     setSending(true);
     setInputText("");
 
-    // 送信前に確定していたメッセージ数 (ウェルカムと送信中の仮メッセージは数えない)。
+    // 送信前に確定していたメッセージ数 (ウェルカム・送信中の仮メッセージ・要約の表示など、画面だけのものは数えない)。
     // タイムアウトしたあと、履歴を取り直して返信が届いていたかを見分ける目印にする
-    const persistedBefore = messages.filter(
-      (m) => m.id !== "welcome" && !m.id.startsWith("local-")
-    ).length;
+    const persistedBefore = countPersistedMessages(messages);
 
     const optimistic: Message = {
       id: `local-${Date.now()}`,
@@ -411,7 +411,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       if (isTimeoutFailure(e)) {
         Alert.alert("タイムアウト", AI_CHAT_TIMEOUT_MESSAGE);
       } else {
-        Alert.alert("エラー", e?.message ?? "送信に失敗しました。");
+        // 「HTTP 429 Too Many Requests: {...}」のような生の文字列ではなく、サーバーが返したメッセージを出す
+        Alert.alert("エラー", getApiErrorMessage(e, "送信に失敗しました。"));
       }
     } finally {
       setSending(false);

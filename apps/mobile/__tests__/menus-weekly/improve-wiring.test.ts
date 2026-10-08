@@ -64,6 +64,18 @@ describe('weekly 画面: 献立を改善の配線', () => {
     expect(body).toContain('isBusy: pendingRequestId !== null');
   });
 
+  it('handleImprove が過去の日付の判定に渡す「今日」は、画面と同じ Asia/Tokyo の todayLocal() (端末の new Date() ではない)', () => {
+    const start = page.indexOf('const handleImprove = useCallback(');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const body = page.slice(start, page.indexOf('}, [pendingRequestId, v4Generate]);', start));
+    // コメントでの言及 (経緯の説明) は許し、コードだけを見る
+    const code = body.replace(/\/\/.*$/gm, '');
+    expect(code).toContain('today: todayLocal(),');
+    expect(code).not.toMatch(/new Date\(/);
+    expect(code).not.toContain('formatLocalDate');
+    // 挙動そのもの (UTC の端末で JST の昨日が過去として拒否される) は weekly-page-dates.test.tsx が確かめる
+  });
+
   it('V4 生成モーダルの生成中表示は、完了しても戻らないフックの isGenerating ではなく pendingRequestId で決める', () => {
     const element = jsxElement(page, 'V4GenerateModal');
     expect(element).toContain('isGenerating={pendingRequestId !== null}');

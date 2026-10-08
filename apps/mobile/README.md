@@ -47,7 +47,7 @@ EXPO_PUBLIC_APP_ENV=development
 | `EXPO_PUBLIC_WEB_URL` | 任意 | Web 版のオリジン。WebView の表示先と「Web版を開く」リンク。未設定なら `https://homegohan-app.vercel.app` |
 | `EXPO_PUBLIC_APP_ENV` | 任意 | `development` / `preview` / `production` |
 | `EXPO_PUBLIC_EAS_PROJECT_ID` | プッシュ通知に必要 | Expo Push Token の取得 |
-| `EXPO_PUBLIC_POSTHOG_KEY` / `EXPO_PUBLIC_POSTHOG_HOST` | 任意 | PostHog の分析。KEY が未設定なら計測を送らない |
+| `EXPO_PUBLIC_POSTHOG_KEY` / `EXPO_PUBLIC_POSTHOG_HOST` | 任意 | PostHog の分析。KEY が未設定なら計測を送らない。HOST は空か省略で Web と共通の既定ホスト |
 
 ### 3) 起動
 

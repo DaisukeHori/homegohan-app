@@ -7,9 +7,11 @@ import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, Te
 import { LoadingState, PageHeader } from "../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
+import { getApiErrorMessage } from "../../src/lib/api-error";
 import {
   AI_CHAT_TIMEOUT_MESSAGE,
   AI_CHAT_TIMEOUT_MS,
+  countPersistedMessages,
   hasReplyAfterSend,
   isTimeoutFailure,
   isUncertainSendFailure,
@@ -111,9 +113,9 @@ export default function AiSessionPage() {
 
     const imageSnapshot = attachedImage;
 
-    // 送信前に確定していたメッセージ数 (送信中の仮メッセージは数えない)。
+    // 送信前に確定していたメッセージ数 (送信中の仮メッセージなど、画面だけのものは数えない)。
     // タイムアウトしたあと、履歴を取り直して返信が届いていたかを見分ける目印にする
-    const persistedBefore = messages.filter((m) => !m.id.startsWith("local-")).length;
+    const persistedBefore = countPersistedMessages(messages);
 
     const optimistic: Message = {
       id: `local-${Date.now()}`,
@@ -188,7 +190,8 @@ export default function AiSessionPage() {
         setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
       }
 
-      setError(isTimeoutFailure(e) ? AI_CHAT_TIMEOUT_MESSAGE : e?.message ?? "送信に失敗しました。");
+      // 「HTTP 429 Too Many Requests: {...}」のような生の文字列ではなく、サーバーが返したメッセージを出す
+      setError(isTimeoutFailure(e) ? AI_CHAT_TIMEOUT_MESSAGE : getApiErrorMessage(e, "送信に失敗しました。"));
     } finally {
       setIsSending(false);
     }

@@ -202,6 +202,36 @@ describe('AIAdvisorSheet — タイムアウト・通信断のあとの履歴の
     });
   });
 
+  it('画面だけにある要約が残っていても、返信が届いていれば、エラーを出さずに履歴を合わせる', async () => {
+    // 「相談を終了」(アーカイブ) は、成功すると要約を画面に出し、新しい相談を作る。
+    // 新しい相談の作成に失敗すると、要約 (サーバーの履歴には無い画面だけのメッセージ) が残ったまま、元の相談で続けられる
+    await openSheet();
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ summary: { summary: '夕食の相談でした' } }),
+    }) as unknown as typeof fetch;
+    mockPost.mockRejectedValueOnce(new Error('network')); // 新しい相談の作成に失敗
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-archive-btn'));
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/夕食の相談でした/)).toBeTruthy();
+    });
+    alertSpy.mockClear();
+
+    mockPost.mockRejectedValueOnce(namedError('TimeoutError', 'Request timed out after 75000ms'));
+    serverHistoryIs([...PRIOR, SENT_USER, SAVED_REPLY]);
+
+    await send('夕食を教えて');
+
+    await waitFor(() => {
+      expect(screen.getByText('カレーはいかがですか？')).toBeTruthy();
+    });
+    // 要約を「確定済みのメッセージ」に数えて、返信が届いていないと取り違えない
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
   it('履歴の取り直しにも失敗したら、エラーを知らせて仮メッセージを消し、画面の履歴は消さない', async () => {
     await openSheet();
     mockPost.mockRejectedValueOnce(namedError('TimeoutError', 'Request timed out after 75000ms'));
@@ -217,17 +247,35 @@ describe('AIAdvisorSheet — タイムアウト・通信断のあとの履歴の
     expect(screen.getByText('前回の返事')).toBeTruthy();
   });
 
-  it('HTTP エラー (サーバーが拒否) は履歴を取り直さない', async () => {
+  it('HTTP エラー (サーバーが拒否) は履歴を取り直さず、サーバーが返したメッセージを知らせる', async () => {
     await openSheet();
     const getCallsBefore = mockGet.mock.calls.length;
-    mockPost.mockRejectedValueOnce(namedError('HttpError', 'HTTP 429 Too Many Requests: {"error":"rate limited"}'));
+    // サーバーのレート制限 (src/lib/rate-limit.ts の rateLimitExceededResponse) の本文
+    mockPost.mockRejectedValueOnce(
+      namedError(
+        'HttpError',
+        'HTTP 429 Too Many Requests: {"error":"リクエストが多すぎます。しばらく時間をおいてからお試しください。","code":"RATE_LIMITED","retryAfter":30}',
+      ),
+    );
 
     await send('夕食を教えて');
 
     await waitFor(() => {
-      expect(alertSpy).toHaveBeenCalledWith('エラー', expect.stringContaining('HTTP 429'));
+      // 「HTTP 429 Too Many Requests: {...}」のような生の文字列ではなく、本文のメッセージだけを出す
+      expect(alertSpy).toHaveBeenCalledWith('エラー', 'リクエストが多すぎます。しばらく時間をおいてからお試しください。');
     });
     expect(mockGet.mock.calls.length).toBe(getCallsBefore);
     expect(screen.queryByText('夕食を教えて')).toBeNull();
+  });
+
+  it('本文が JSON でない HTTP エラー (ゲートウェイの HTML など) は、ステータスの文字列をそのまま知らせる', async () => {
+    await openSheet();
+    mockPost.mockRejectedValueOnce(namedError('HttpError', 'HTTP 502 Bad Gateway'));
+
+    await send('夕食を教えて');
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith('エラー', 'HTTP 502 Bad Gateway');
+    });
   });
 });

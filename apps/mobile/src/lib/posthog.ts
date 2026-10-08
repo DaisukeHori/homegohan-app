@@ -47,7 +47,8 @@ export function getPostHogClient(): PostHog | null {
  */
 export async function initPostHogMobile(): Promise<PostHog | null> {
   const key = process.env['EXPO_PUBLIC_POSTHOG_KEY'];
-  const host = process.env['EXPO_PUBLIC_POSTHOG_HOST'] ?? POSTHOG_DEFAULT_HOST;
+  // env.example は EXPO_PUBLIC_POSTHOG_HOST= (空) で書いてあるので、空文字も未設定として既定ホストを使う
+  const host = process.env['EXPO_PUBLIC_POSTHOG_HOST'] || POSTHOG_DEFAULT_HOST;
 
   // 環境変数未設定はスキップ (graceful degradation)
   if (!key) {

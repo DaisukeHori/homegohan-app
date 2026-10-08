@@ -12,7 +12,7 @@ import { supabase } from "../../src/lib/supabase";
 import { getApi } from "../../src/lib/api";
 import { MOCK_PHOTO_RESPONSE } from "@homegohan/handson-tour-shared";
 import { formatLocalDate } from "@homegohan/core";
-import { startOfTodayLocal, todayLocal } from "@homegohan/shared";
+import { formatDateJa, startOfTodayLocal, todayLocal } from "@homegohan/shared";
 import { registerTourTarget, unregisterTourTarget } from "../../src/handson-tour/useTourOverlayLogic";
 
 // Inlined from lib/meal-image to avoid importing server-side code
@@ -1313,11 +1313,12 @@ export default function MealNewPage() {
             })}
           </View>
 
-          {/* Summary */}
+          {/* Summary。selectedDate は日付だけの値 (YYYY-MM-DD)。月日は formatDateJa で読む
+              (Date のコンストラクタに渡すと UTC の 0 時として解釈され、UTC より西の端末では 1 日前になる) (#1049 F7-21) */}
           <View style={{ padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.card }}>
             <Text style={{ fontSize: 12, color: colors.textMuted, marginBottom: 4 }}>保存先</Text>
             <Text style={{ fontSize: 16, fontWeight: "600", color: colors.text }}>
-              {new Date(selectedDate).getMonth() + 1}月{new Date(selectedDate).getDate()}日（{weekDates.find((d) => d.dateStr === selectedDate)?.dayOfWeek}）の{MEAL_CONFIG[selectedMealType].label}
+              {formatDateJa(selectedDate)}（{weekDates.find((d) => d.dateStr === selectedDate)?.dayOfWeek}）の{MEAL_CONFIG[selectedMealType].label}
             </Text>
           </View>
 

@@ -15,6 +15,8 @@
  * React Native / Expo に依存しない純粋なロジックだけを置く (jest で素早く検証できるようにするため)。
  */
 
+import { addDaysToDateString as addDaysToDateStringShared } from "@homegohan/shared";
+
 import type { MenuGenerationConstraints, TargetSlot } from "../../../../types/domain";
 
 /** 「献立を改善」で選べる食事タイプ (Web の改善モーダルと同じ 朝・昼・夕) */
@@ -43,16 +45,14 @@ export const MAX_IMPROVE_NOTE_LENGTH = 800;
 
 const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
-function pad(value: number, length: number): string {
-  return String(value).padStart(length, "0");
-}
-
 /**
  * YYYY-MM-DD の日付に days 日を足して YYYY-MM-DD で返す。
  *
- * 暦の計算だけを UTC で行い、端末のタイムゾーン・夏時間に依存しない。
+ * 暦の計算は @homegohan/shared の addDaysToDateString (UTC の暦で計算するので、端末のタイムゾーン・夏時間に依存しない) に任せ、
+ * ここでは入力の検証だけを行う。
  * (`new Date("YYYY-MM-DD")` を端末のローカル時刻の setDate で動かして toISOString すると、
  *  夏時間のある地域で日付が 1 日ずれることがある。)
+ * shared 側は不正な値を黙って繰り上げる (2026-02-30 → 3/2) ので、サーバーへ送る前にここで弾く。
  * 形式が違う・実在しない日付 (2026-02-30 など) は例外にする。
  */
 export function addDaysToDateString(dateStr: string, days: number): string {
@@ -62,14 +62,13 @@ export function addDaysToDateString(dateStr: string, days: number): string {
   const month = Number(match[2]);
   const day = Number(match[3]);
 
-  const base = new Date(Date.UTC(year, month - 1, day));
   // Date.UTC は 2026-02-30 を 3/2 に繰り上げるので、元の値に戻らない = 実在しない日付は弾く
-  if (base.getUTCFullYear() !== year || base.getUTCMonth() !== month - 1 || base.getUTCDate() !== day) {
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) {
     throw new Error(`invalid date: ${dateStr}`);
   }
 
-  base.setUTCDate(base.getUTCDate() + days);
-  return `${pad(base.getUTCFullYear(), 4)}-${pad(base.getUTCMonth() + 1, 2)}-${pad(base.getUTCDate(), 2)}`;
+  return addDaysToDateStringShared(dateStr, days);
 }
 
 /** 実際に改善する日 (nextDay なら選択日の翌日) */
@@ -155,7 +154,10 @@ export type ImproveGenerate = (params: ImproveGenerateParams, options: { silent:
  */
 export async function submitImprove(params: {
   request: ImproveMealRequest;
-  /** 端末の今日 (YYYY-MM-DD) */
+  /**
+   * 今日 (YYYY-MM-DD)。画面の「今日」と同じ Asia/Tokyo の日付 (@homegohan/shared の todayLocal()) を渡す。
+   * 端末のタイムゾーンの今日 (new Date() の整形) を渡すと、過去の日付の判定が Web・サーバーとずれる (#1049 F7-21)。
+   */
   today: string;
   /** 別の献立生成が進行中か */
   isBusy: boolean;

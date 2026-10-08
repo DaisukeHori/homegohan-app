@@ -426,3 +426,25 @@ describe('daysBetweenDateStrings (#1049 F7-21)', () => {
     expect(results).toEqual({ usFall: 2, usSpring: 2, nzSpring: 2, euFall: 2 });
   });
 });
+
+describe('formatDateJa — 日付だけの文字列は端末のタイムゾーンに左右されない (#1049 F7-21)', () => {
+  it.each(DEVICE_TIME_ZONES)('端末のタイムゾーンが %s でも、月日は書いたとおりになる', (timeZone) => {
+    const results = withDeviceTimeZone(timeZone, () => ({
+      monthDay: formatDateJa('2026-10-08'),
+      withYear: formatDateJa('2026-01-01', { includeYear: true }),
+      monthEnd: formatDateJa('2026-03-31'),
+    }));
+
+    expect(results).toEqual({ monthDay: '10月8日', withYear: '2026年1月1日', monthEnd: '3月31日' });
+  });
+
+  it('(対照) new Date("YYYY-MM-DD") は UTC の 0 時として読まれ、UTC より西の端末では前日になる', () => {
+    // アプリの画面で `new Date(selectedDate).getDate()` のように読むと、この 1 日のずれが出る。
+    // tests/mobile-date-basis-contract.test.ts が、そう書いたコードが戻ってこないことを確かめている
+    const day = (timeZone: string) => withDeviceTimeZone(timeZone, () => new Date('2026-10-08').getDate());
+
+    expect(day('Asia/Tokyo')).toBe(8);
+    expect(day('America/Los_Angeles')).toBe(7);
+    expect(day('Pacific/Pago_Pago')).toBe(7);
+  });
+});

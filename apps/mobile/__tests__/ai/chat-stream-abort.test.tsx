@@ -267,16 +267,37 @@ describe('AiSessionPage — 通信が切れたとき', () => {
 });
 
 describe('AiSessionPage — サーバーが拒否したとき', () => {
-  it('HTTP エラーは履歴を取り直さず、エラー内容を知らせて仮メッセージを消す', async () => {
+  it('HTTP エラーは履歴を取り直さず、サーバーが返したメッセージを知らせて仮メッセージを消す', async () => {
     await renderWithPriorMessages();
-    mockPost.mockRejectedValueOnce(namedError('HttpError', 'HTTP 429 Too Many Requests: {"error":"rate limited"}'));
+    // サーバーのレート制限 (src/lib/rate-limit.ts の rateLimitExceededResponse) の本文
+    mockPost.mockRejectedValueOnce(
+      namedError(
+        'HttpError',
+        'HTTP 429 Too Many Requests: {"error":"リクエストが多すぎます。しばらく時間をおいてからお試しください。","code":"RATE_LIMITED","retryAfter":30}',
+      ),
+    );
 
     await typeAndSend('夕食を教えて');
 
     await waitFor(() => {
-      expect(screen.getByText(/HTTP 429/)).toBeTruthy();
+      expect(screen.getByText('リクエストが多すぎます。しばらく時間をおいてからお試しください。')).toBeTruthy();
     });
+    // 「HTTP 429 Too Many Requests: {...}」のような生の文字列は画面に出さない
+    expect(screen.queryByText(/HTTP 429/)).toBeNull();
+    expect(screen.queryByText(/RATE_LIMITED/)).toBeNull();
     expect(screen.queryByText('夕食を教えて')).toBeNull();
     expect(mockGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('本文が JSON でない HTTP エラー (ゲートウェイの HTML など) は、ステータスの文字列をそのまま知らせる', async () => {
+    await renderWithPriorMessages();
+    mockPost.mockRejectedValueOnce(namedError('HttpError', 'HTTP 502 Bad Gateway'));
+
+    await typeAndSend('夕食を教えて');
+
+    await waitFor(() => {
+      expect(screen.getByText('HTTP 502 Bad Gateway')).toBeTruthy();
+    });
+    expect(screen.queryByText('夕食を教えて')).toBeNull();
   });
 });

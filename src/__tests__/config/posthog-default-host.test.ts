@@ -8,7 +8,7 @@ import { POSTHOG_DEFAULT_HOST } from '@homegohan/shared';
 // 素の Node ESM である next.config.mjs は TypeScript を import できないので、CSP (connect-src) に使う
 // 既定のリテラルだけが残る。設定例の .env.example にも同じ値が書いてある。
 // ここでは、その 2 つのリテラルが共通の定数と一致していることと、
-// コード側に同じ文字列がまた増えていないことを確かめる (ホストを変えたのに直し忘れると落ちる)。
+// コード側 (と、モバイルの env.example) に同じ文字列がまた増えていないことを確かめる (ホストを変えたのに直し忘れると落ちる)。
 
 const ROOT = path.resolve(__dirname, '../../..');
 const read = (relativePath: string) => fs.readFileSync(path.join(ROOT, relativePath), 'utf-8');
@@ -54,6 +54,20 @@ describe('PostHog の既定ホスト: 素のリテラルが残る場所は共通
 
     expect(match, '.env.example に NEXT_PUBLIC_POSTHOG_HOST= の行が見つからない').not.toBeNull();
     expect(match![1]).toBe(POSTHOG_DEFAULT_HOST);
+  });
+});
+
+describe('PostHog の既定ホスト: モバイルの env.example には書き写さない', () => {
+  // 既定ホストのリテラルが残るのは next.config.mjs と .env.example だけ (CLAUDE.md の「3 か所」)。
+  // モバイルの env.example はそれに加えない: EXPO_PUBLIC_POSTHOG_HOST は空のままにし、未設定なら共通の定数を使う
+  // (apps/mobile/src/lib/posthog.ts は空文字も未設定として扱う)
+  it('apps/mobile/env.example の EXPO_PUBLIC_POSTHOG_HOST は空で、既定ホストの文字列を含まない', () => {
+    const source = read('apps/mobile/env.example');
+    const match = source.match(/^EXPO_PUBLIC_POSTHOG_HOST=(\S*)\s*$/m);
+
+    expect(match, 'apps/mobile/env.example に EXPO_PUBLIC_POSTHOG_HOST= の行が見つからない').not.toBeNull();
+    expect(match![1]).toBe('');
+    expect(source).not.toContain(POSTHOG_DEFAULT_HOST);
   });
 });
 

@@ -90,7 +90,7 @@ describe('モバイルの日付の基準 (#1049 F7-21)', () => {
     const ALLOWED = ['apps/mobile/app/onboarding/questions.tsx'];
     // 日付だけの値を持つ変数名・プロパティ名に限って確かめる (タイムスタンプ列の new Date(createdAt) などは対象外)
     const offenders = filesMatching(
-      /new Date\(\s*(?:[A-Za-z_.]*\.)?(?:target_date|record_date|day_date|checkup_date|expiration_date|expirationDate|analysis_date|dateStr)\s*\)/,
+      /new Date\(\s*(?:[A-Za-z_.]*\.)?(?:target_date|record_date|day_date|checkup_date|expiration_date|expirationDate|analysis_date|dateStr|selectedDate)\s*\)/,
     ).filter((file) => !ALLOWED.includes(file));
 
     expect(offenders).toEqual([]);

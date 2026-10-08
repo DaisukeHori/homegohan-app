@@ -416,7 +416,13 @@ export const useHomeData = (userId: string | undefined) => {
     try {
       setNutritionAnalysis((prev) => ({ ...prev, loading: true }));
       const api = getApi();
-      const data = await api.get<any>("/api/ai/nutrition-analysis?period=today&includeAdvice=true&includeSuggestion=true");
+      // この GET はサーバーで LLM を 1 回呼ぶ (includeAdvice / includeSuggestion)。共通の通信部品は GET を
+      // 502 / 503 / 504 で既定 2 回やり直すので、そのままだとゲートウェイのエラーのたびに LLM の生成が最大 3 回走る。
+      // 失敗してもホームの他の表示には影響しない (下の catch で何も出さない) ので、やり直さない (#1049 F7-12)
+      const data = await api.get<any>(
+        "/api/ai/nutrition-analysis?period=today&includeAdvice=true&includeSuggestion=true",
+        { retries: 0 },
+      );
 
       if (data?.success && data?.analysis) {
         setNutritionAnalysis({

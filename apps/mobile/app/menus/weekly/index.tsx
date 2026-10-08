@@ -705,7 +705,9 @@ export default function WeeklyMenuPage() {
   const handleImprove = useCallback(async (request: ImproveMealRequest) => {
     await submitImprove({
       request,
-      today: formatLocalDate(new Date()),
+      // 「今日」は Asia/Tokyo (Web・サーバーと同じ)。formatLocalDate(new Date()) は端末のタイムゾーンの今日になり、
+      // 過去の日付の判定 (isImproveTargetPast) が画面の「今日」とずれる (#1049 F7-21)
+      today: todayLocal(),
       isBusy: pendingRequestId !== null,
       generate: v4Generate,
     });

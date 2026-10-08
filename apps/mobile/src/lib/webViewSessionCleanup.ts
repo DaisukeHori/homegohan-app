@@ -14,6 +14,17 @@
  * 限界:
  *  - JavaScript から見えない Cookie (HttpOnly) は消せない。Web の Supabase セッション Cookie は HttpOnly ではない
  *    (ブラウザ側の Supabase クライアントが読むため)。サーバー側のセッションは、ネイティブの signOut が失効させる。
+ *  - iOS では、Cookie は消えたことにならない。WebViewScreen は sharedCookiesEnabled={true} なので、
+ *    react-native-webview (13.13.5 の apple/RNCWebViewImpl.m) が、WebView の Cookie をアプリ共通の Cookie 置き場
+ *    (NSHTTPCookieStorage) へ書き写し (cookiesDidChangeInCookieStore。追加だけで、削除は写さない)、
+ *    WebView を作るたびにその置き場から WebView へ書き戻す (syncCookiesToWebView)。
+ *    ここで消すのは WebView 側だけなので、次に WebViewScreen を作ったときに、Cookie (Supabase のセッション Cookie の
+ *    sb-*-auth-token と is_native_app) が戻る。localStorage / sessionStorage / IndexedDB / Cache Storage は戻らない。
+ *    影響は小さい: 戻るのは前のユーザーの Cookie だが、サーバー側のセッションはネイティブの signOut (全端末が対象の
+ *    global scope) で失効済みで使えず、次のログインでは認証ブリッジが Cookie を上書きする。
+ *    NSHTTPCookieStorage も消すには、ネイティブの Cookie 操作 (例: @react-native-cookies/cookies の clearAll) が要る。
+ *    実機で戻ることを確かめてから入れる (PR の「モバイルの確認手順」を参照)。Android は WebView の Cookie の置き場が
+ *    1 か所 (CookieManager) なので、JavaScript から見える Cookie は消えると考えている (これも実機では未確認)。
  *  - 消すのはベストエフォート。失敗してもログアウトは止めない。
  */
 

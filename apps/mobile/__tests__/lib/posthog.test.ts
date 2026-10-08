@@ -1,7 +1,7 @@
 /**
  * posthog.test.ts
  * apps/mobile/src/lib/posthog.ts の initPostHogMobile のテスト (#1197)
- * - EXPO_PUBLIC_POSTHOG_HOST 未設定 → packages/shared の POSTHOG_DEFAULT_HOST (Web と共通の既定ホスト) で初期化する
+ * - EXPO_PUBLIC_POSTHOG_HOST 未設定 (空文字を含む) → packages/shared の POSTHOG_DEFAULT_HOST (Web と共通の既定ホスト) で初期化する
  * - EXPO_PUBLIC_POSTHOG_HOST 設定済み → そのホストで初期化する
  * - EXPO_PUBLIC_POSTHOG_KEY 未設定 → 初期化しない (graceful degradation)
  */
@@ -57,6 +57,16 @@ describe('initPostHogMobile — 送信先ホスト', () => {
 
     expect(client).not.toBeNull();
     expect(mockPostHogConstructor).toHaveBeenCalledTimes(1);
+    expect(mockPostHogConstructor).toHaveBeenCalledWith('phc_test_key', { host: POSTHOG_DEFAULT_HOST });
+  });
+
+  it('EXPO_PUBLIC_POSTHOG_HOST が空文字 (env.example をそのまま写した状態) でも、共通の既定ホストで初期化する', async () => {
+    process.env['EXPO_PUBLIC_POSTHOG_KEY'] = 'phc_test_key';
+    process.env['EXPO_PUBLIC_POSTHOG_HOST'] = '';
+    const { initPostHogMobile } = loadModule();
+
+    await initPostHogMobile();
+
     expect(mockPostHogConstructor).toHaveBeenCalledWith('phc_test_key', { host: POSTHOG_DEFAULT_HOST });
   });
 
