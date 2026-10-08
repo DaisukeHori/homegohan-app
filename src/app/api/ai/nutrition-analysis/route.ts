@@ -228,6 +228,14 @@ export async function GET(request: Request) {
       const medications = profile?.medications || [];
       const nutritionGoal = profile?.nutrition_goal || 'maintain';
 
+      // 糖質の目標の書き方。栄養目標はあるのに糖質の目標が 0 以下で比較から外れたときは、
+      // 既定値 (例: 279g) を出すと実際の目標と食い違うので「なし」と書く。栄養目標そのものが無いときだけ既定値を使う。
+      const sugarTargetText = comparison.sugar
+        ? `${comparison.sugar.target}g`
+        : targets
+          ? 'なし'
+          : `${DEFAULT_SUGAR_TARGET_G}g`;
+
       const prompt = `あなたは専門の管理栄養士です。以下のユーザーの栄養データを分析し、アドバイスを提供してください。
 
 【ユーザー情報】
@@ -244,7 +252,7 @@ export async function GET(request: Request) {
 - 炭水化物: ${dailyAverage.carbs}g（目標: ${comparison.carbs?.target || DEFAULT_CARBS_TARGET_G}g）
 - 食物繊維: ${dailyAverage.fiber}g（目標: ${comparison.fiber?.target || DEFAULT_FIBER_TARGET_G}g）
 - 塩分: ${dailyAverage.sodium}g（目標: ${comparison.sodium?.target || 7}g）
-- 糖質: ${dailyAverage.sugar}g（目標: ${comparison.sugar?.target || DEFAULT_SUGAR_TARGET_G}g）
+- 糖質: ${dailyAverage.sugar}g（目標: ${sugarTargetText}）
 - カルシウム: ${dailyAverage.calcium}mg（目標: ${comparison.calcium?.target || 650}mg）
 - 鉄分: ${dailyAverage.iron}mg（目標: ${comparison.iron?.target || 10}mg）
 - ビタミンC: ${dailyAverage.vitaminC}mg（目標: ${comparison.vitaminC?.target || 100}mg）

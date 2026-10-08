@@ -1621,7 +1621,11 @@ export async function validateAndAdjustNutrition(
     
     // その他の栄養素はスケーリング
     adjustedNutrition.fiber_g *= scaleFactor;
-    adjustedNutrition.sugar_g *= scaleFactor;
+    // 糖質 (#1146): v4 (validateAndAdjustNutritionV4) と同じ方針。
+    // 炭水化物を参照レシピの値に置き換えたときは 炭水化物 − 食物繊維 で求め直し、置き換えないときは倍率で換算する。
+    adjustedNutrition.sugar_g = reference.carbs_g != null
+      ? calcSugarG(adjustedNutrition.carbs_g, adjustedNutrition.fiber_g)
+      : calculatedNutrition.sugar_g * scaleFactor;
     adjustedNutrition.potassium_mg *= scaleFactor;
     adjustedNutrition.calcium_mg *= scaleFactor;
     adjustedNutrition.phosphorus_mg *= scaleFactor;

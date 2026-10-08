@@ -327,10 +327,15 @@ export async function validateAndAdjustNutritionV4(
   adjustedNutrition.sodium_g = reference.sodium_g ?? adjustedNutrition.sodium_g * scaleFactor;
 
   adjustedNutrition.fiber_g *= scaleFactor;
-  // 糖質は調整後の炭水化物・食物繊維から求め直す (#1146)。
-  // 炭水化物だけ参照レシピの値に置き換わることがあり、糖質を単純にスケールすると
-  // 「糖質 > 炭水化物」のように食い違うため。
-  adjustedNutrition.sugar_g = calcSugarG(adjustedNutrition.carbs_g, adjustedNutrition.fiber_g);
+  // 糖質 (#1146)
+  // - 炭水化物が参照レシピの値に置き換わったとき: 置き換えた炭水化物 − 倍率で換算した食物繊維 で求め直す。
+  //   糖質を単純に倍率で換算すると、「糖質 > 炭水化物」のように食い違うことがあるため。
+  // - 置き換わらないとき: ほかの栄養素と同じく、補正前の糖質を倍率で換算する。
+  //   材料ごとに 0 で下限をとった糖質 (食物繊維の多い食材が、ほかの材料の糖質を打ち消さない) を崩さないため、
+  //   合計の炭水化物 − 合計の食物繊維 では求め直さない。
+  adjustedNutrition.sugar_g = reference.carbs_g != null
+    ? calcSugarG(adjustedNutrition.carbs_g, adjustedNutrition.fiber_g)
+    : calculatedNutrition.sugar_g * scaleFactor;
   adjustedNutrition.potassium_mg *= scaleFactor;
   adjustedNutrition.calcium_mg *= scaleFactor;
   adjustedNutrition.phosphorus_mg *= scaleFactor;

@@ -3,6 +3,7 @@
  *
  * - 材料から計算した糖質 (炭水化物 − 食物繊維) を、料理ごと (dishes[].sugar_g) と食事全体 (planned_meals.sugar_g) に保存する。
  * - 栄養が 1 つも計算できていない料理 (計算の失敗・材料が 1 件も当たらない) は、糖質を 0g ではなく null (不明) で保存する。
+ *   炭水化物の無い参照レシピで補正して kcal だけが入った料理も、炭水化物の根拠が無いので同じく null にする。
  *
  * saveMealToDb の DB 書き込み・栄養計算・画像ジョブは差し替え、planned_meals に渡る値だけを確かめる。
  */
@@ -14,6 +15,7 @@ import {
   sugarForSave,
 } from "../supabase/functions/_shared/save-meal.ts";
 import { emptyNutrition, type NutritionTotals } from "../supabase/functions/_shared/nutrition-calculator.ts";
+import type { ReferenceRecipe } from "../supabase/functions/_shared/evidence-verifier.ts";
 
 const { analyzeMock, validateMock } = vi.hoisted(() => ({
   analyzeMock: vi.fn(),
@@ -58,6 +60,40 @@ function analysisOf(calculatedNutrition: NutritionTotals) {
       calculate_dish_nutrition_ms: 0,
       total_ms: 0,
     },
+  };
+}
+
+function referenceRecipe(overrides: Partial<ReferenceRecipe>): ReferenceRecipe {
+  return {
+    id: "reference-1",
+    name: "参照レシピ",
+    name_norm: "参照レシピ",
+    source_url: null,
+    ingredients_text: null,
+    calories_kcal: 400,
+    protein_g: null,
+    fat_g: null,
+    carbs_g: null,
+    sodium_g: null,
+    similarity: 0.9,
+    ...overrides,
+  };
+}
+
+/** validateAndAdjustNutritionV4 が参照レシピで補正したときの結果 */
+function adjustedBy(reference: ReferenceRecipe, adjustedNutrition: NutritionTotals) {
+  return {
+    isValid: false,
+    calculatedCalories: 0,
+    referenceCalories: reference.calories_kcal ?? 0,
+    deviationPercent: 100,
+    adjustedNutrition,
+    referenceSource: "dataset_recipes",
+    message: "調整済み",
+    appliedAdjustment: true,
+    referenceRecipe: reference,
+    referenceCandidates: [reference],
+    timingMs: { reference_search_ms: 0, adjustment_ms: 0, total_ms: 0 },
   };
 }
 
@@ -127,6 +163,16 @@ describe("save-meal: 糖質 (sugar_g) の保存 (#1146)", () => {
 
     it("肉・魚だけの料理 (炭水化物 0、kcal あり) の糖質 0g は null ではなく 0", () => {
       expect(sugarForSave(nutrition({ calories_kcal: 220, protein_g: 30, fat_g: 10 }))).toBe(0);
+    });
+
+    it("炭水化物の根拠 (hasCarbBasis) を渡したときは、栄養の中身ではなくそれで決める", () => {
+      // kcal だけが入った補正後の栄養 (炭水化物 0) でも、根拠が無ければ null
+      expect(sugarForSave(nutrition({ calories_kcal: 400 }), false)).toBeNull();
+      // 根拠があれば、糖質 0g も 0 として保存する
+      expect(sugarForSave(nutrition({ calories_kcal: 400 }), true)).toBe(0);
+      expect(sugarForSave(nutrition({ calories_kcal: 400, carbs_g: 60, sugar_g: 52 }), true)).toBe(52);
+      // 栄養そのものが無ければ、根拠を渡しても null
+      expect(sugarForSave(null, true)).toBeNull();
     });
   });
 
@@ -245,6 +291,86 @@ describe("save-meal: 糖質 (sugar_g) の保存 (#1146)", () => {
 
     expect(row.dishes[0].sugar_g).toBe(52);
     expect(row.sugar_g).toBe(52);
+  });
+
+  describe("計算できなかった料理を参照レシピで補正したとき", () => {
+    it("参照レシピに炭水化物が無ければ、kcal だけが入っても糖質は 0g ではなく null で保存する", async () => {
+      analyzeMock.mockResolvedValue(analysisOf(emptyNutrition()));
+      const reference = referenceRecipe({ calories_kcal: 400, carbs_g: null });
+      validateMock.mockResolvedValue(
+        adjustedBy(reference, nutrition({ calories_kcal: 400, protein_g: 20, fat_g: 15 })),
+      );
+
+      const row = await save({ mealType: "dinner", dishes: [dish("謎の料理")], advice: "" });
+
+      // 補正で kcal は入るが、炭水化物は 0 のまま (他の栄養素はこれまでどおり)
+      expect(row.calories_kcal).toBe(400);
+      expect(row.carbs_g).toBe(0);
+      expect(row.dishes[0].sugar_g).toBeNull();
+      expect(row.sugar_g).toBeNull();
+    });
+
+    it("参照レシピに炭水化物があれば、それから求めた糖質を保存する", async () => {
+      analyzeMock.mockResolvedValue(analysisOf(emptyNutrition()));
+      const reference = referenceRecipe({ calories_kcal: 400, carbs_g: 60 });
+      validateMock.mockResolvedValue(
+        adjustedBy(reference, nutrition({ calories_kcal: 400, carbs_g: 60, fiber_g: 0, sugar_g: 60 })),
+      );
+
+      const row = await save({ mealType: "dinner", dishes: [dish("謎の丼")], advice: "" });
+
+      expect(row.dishes[0].sugar_g).toBe(60);
+      expect(row.sugar_g).toBe(60);
+    });
+
+    it("参照レシピの炭水化物が 0g (肉・魚の料理) なら、糖質 0g は根拠があるので 0 で保存する", async () => {
+      analyzeMock.mockResolvedValue(analysisOf(emptyNutrition()));
+      const reference = referenceRecipe({ calories_kcal: 300, carbs_g: 0 });
+      validateMock.mockResolvedValue(
+        adjustedBy(reference, nutrition({ calories_kcal: 300, protein_g: 35, fat_g: 18, carbs_g: 0, sugar_g: 0 })),
+      );
+
+      const row = await save({ mealType: "dinner", dishes: [dish("謎の焼き魚")], advice: "" });
+
+      expect(row.dishes[0].sugar_g).toBe(0);
+      expect(row.sugar_g).toBe(0);
+    });
+
+    it("補正の前から栄養が計算できていた料理は、参照レシピに炭水化物が無くても糖質を保存する", async () => {
+      // 計算した kcal は低いが、炭水化物 10 / 食物繊維 1 は材料から計算できている
+      analyzeMock.mockResolvedValue(
+        analysisOf(nutrition({ calories_kcal: 60, carbs_g: 10, fiber_g: 1, sugar_g: 9 })),
+      );
+      const reference = referenceRecipe({ calories_kcal: 300, carbs_g: null });
+      validateMock.mockResolvedValue(
+        adjustedBy(reference, nutrition({ calories_kcal: 300, carbs_g: 50, fiber_g: 5, sugar_g: 45 })),
+      );
+
+      const row = await save({ mealType: "dinner", dishes: [dish("カレーライス")], advice: "" });
+
+      expect(row.dishes[0].sugar_g).toBe(45);
+      expect(row.sugar_g).toBe(45);
+    });
+
+    it("食事全体の糖質は、根拠のある料理の分だけを合計する (根拠の無い料理の 0 は足さないが、null にもしない)", async () => {
+      analyzeMock
+        .mockResolvedValueOnce(analysisOf(nutrition({ calories_kcal: 450, carbs_g: 50, fiber_g: 5, sugar_g: 45 })))
+        .mockResolvedValueOnce(analysisOf(emptyNutrition()));
+      // 1 品目 (パスタ) は kcal が十分で検証されない。2 品目 (謎のスープ) だけ、炭水化物の無い参照レシピで補正される
+      validateMock.mockResolvedValue(
+        adjustedBy(referenceRecipe({ calories_kcal: 80, carbs_g: null }), nutrition({ calories_kcal: 80 })),
+      );
+
+      const row = await save({
+        mealType: "dinner",
+        dishes: [dish("パスタ", "main"), dish("謎のスープ", "soup")],
+        advice: "",
+      });
+
+      expect(row.dishes[0].sugar_g).toBe(45);
+      expect(row.dishes[1].sugar_g).toBeNull();
+      expect(row.sugar_g).toBe(45);
+    });
   });
 
   it("レシピDBから解決した栄養 (_resolvedNutrition) の糖質をそのまま保存する", async () => {

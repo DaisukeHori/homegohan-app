@@ -255,6 +255,68 @@ describe("v4 nutrition adapter: sugar_g (carbs - fiber)", () => {
       expect(result.adjustedNutrition!.sugar_g).toBe(0);
     });
 
+    // 食物繊維の多い食材 (ひじきなど) があると、材料ごとに 0 で下限をとった糖質は、
+    // 合計の 炭水化物 − 合計の食物繊維 より大きくなる。ご飯 (炭水化物 25) + ひじき (炭水化物 5 / 食物繊維 10):
+    // 材料ごとの糖質は 25 + 0 = 25、合計から求めると 30 - 10 = 20。
+    function fiberRichNutrition() {
+      return {
+        ...emptyNutrition(),
+        calories_kcal: 100,
+        carbs_g: 30,
+        fiber_g: 10,
+        sugar_g: 25,
+      };
+    }
+
+    it("keeps the per-ingredient sugar (scaled) when the reference has no carbs and a fiber-rich ingredient made the floor active", async () => {
+      searchSimilarRecipesMock.mockResolvedValue([reference({ calories_kcal: 400, carbs_g: null })]);
+
+      const result = await validateAndAdjustNutritionV4({} as never, "ひじきご飯", fiberRichNutrition());
+
+      const adjusted = result.adjustedNutrition!;
+      expect(adjusted.carbs_g).toBe(120); // 30 * 4
+      expect(adjusted.fiber_g).toBe(40); // 10 * 4
+      // 補正前の糖質 25 を他の栄養素と同じ倍率 (4) で換算した値。合計から求め直した (120 - 40) = 80 ではない
+      expect(adjusted.sugar_g).toBe(100);
+    });
+
+    it("recomputes sugar as the reference carbs minus the scaled fiber when the reference replaces carbs", async () => {
+      searchSimilarRecipesMock.mockResolvedValue([reference({ calories_kcal: 400, carbs_g: 150 })]);
+
+      const result = await validateAndAdjustNutritionV4({} as never, "ひじきご飯", fiberRichNutrition());
+
+      const adjusted = result.adjustedNutrition!;
+      expect(adjusted.carbs_g).toBe(150);
+      expect(adjusted.fiber_g).toBe(40);
+      // 参照レシピの炭水化物に合わせる (糖質 = 炭水化物 − 食物繊維)。補正前の糖質 25 * 4 = 100 のまま据え置かない
+      expect(adjusted.sugar_g).toBe(110);
+      expect(adjusted.sugar_g).toBeLessThanOrEqual(adjusted.carbs_g);
+    });
+
+    it("takes the sugar from the reference carbs when no ingredient was calculated (carbs 60g must not come with sugar 0g)", async () => {
+      searchSimilarRecipesMock.mockResolvedValue([reference({ calories_kcal: 400, carbs_g: 60 })]);
+
+      const result = await validateAndAdjustNutritionV4({} as never, "謎の料理", emptyNutrition());
+
+      expect(result.appliedAdjustment).toBe(true);
+      const adjusted = result.adjustedNutrition!;
+      expect(adjusted.calories_kcal).toBe(400);
+      expect(adjusted.carbs_g).toBe(60);
+      expect(adjusted.fiber_g).toBe(0);
+      expect(adjusted.sugar_g).toBe(60);
+    });
+
+    it("leaves carbs and sugar at 0 when no ingredient was calculated and the reference has no carbs (save-meal stores that sugar as unknown)", async () => {
+      searchSimilarRecipesMock.mockResolvedValue([reference({ calories_kcal: 400, carbs_g: null })]);
+
+      const result = await validateAndAdjustNutritionV4({} as never, "謎の料理", emptyNutrition());
+
+      const adjusted = result.adjustedNutrition!;
+      expect(adjusted.calories_kcal).toBe(400);
+      expect(adjusted.carbs_g).toBe(0);
+      expect(adjusted.sugar_g).toBe(0);
+    });
+
     it("leaves the calculated sugar untouched when no adjustment is needed", async () => {
       searchSimilarRecipesMock.mockResolvedValue([reference({ calories_kcal: 120, carbs_g: 22 })]);
 

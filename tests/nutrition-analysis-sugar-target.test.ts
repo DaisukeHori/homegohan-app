@@ -7,9 +7,10 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockGetUser, mockFrom } = vi.hoisted(() => ({
+const { mockGetUser, mockFrom, mockCreateCompletion } = vi.hoisted(() => ({
   mockGetUser: vi.fn(),
   mockFrom: vi.fn(),
+  mockCreateCompletion: vi.fn(),
 }));
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -20,7 +21,7 @@ vi.mock('@/lib/supabase/server', () => ({
 }));
 
 vi.mock('@/lib/ai/fast-llm', () => ({
-  getFastLLMClient: () => ({ chat: { completions: { create: vi.fn() } } }),
+  getFastLLMClient: () => ({ chat: { completions: { create: mockCreateCompletion } } }),
   getFastLLMModel: () => 'test-model',
 }));
 
@@ -33,10 +34,6 @@ vi.mock('@/lib/rate-limit', () => ({
   checkRateLimit: vi.fn(async () => ({ success: true })),
   rateLimitExceededResponse: vi.fn(),
 }));
-
-// @homegohan/core は node_modules のワークスペースリンク経由だと、node_modules を共有する作業コピー (git worktree など) で
-// 手元の packages/core ではなくリンク先の内容を読んでしまう。このテストの対象は手元の実装なので、直接読み込む。
-vi.mock('@homegohan/core', async () => await import('../packages/core/src/index'));
 
 /** select チェーンを返すモック。末尾の .single() は Promise、チェーンをそのまま await しても data/error を持つ */
 function makeSelectChain(finalValue: { data: unknown; error: unknown }) {
@@ -89,9 +86,9 @@ function setup(params: { targets: Record<string, unknown> | null; meals: unknown
   });
 }
 
-async function analyze() {
+async function analyze(query = '') {
   const { GET } = await import('../src/app/api/ai/nutrition-analysis/route');
-  const res = await GET(new Request('http://localhost/api/ai/nutrition-analysis?period=today'));
+  const res = await GET(new Request(`http://localhost/api/ai/nutrition-analysis?period=today${query}`));
   expect(res.status).toBe(200);
   return (await res.json()) as {
     analysis: {
@@ -107,6 +104,8 @@ describe('nutrition-analysis: 糖質の目標 = 炭水化物の目標 − 食物
   beforeEach(() => {
     mockGetUser.mockReset();
     mockFrom.mockReset();
+    mockCreateCompletion.mockReset();
+    mockCreateCompletion.mockResolvedValue({ choices: [{ message: { content: 'アドバイス: 野菜を増やしましょう' } }] });
   });
 
   it('以前に保存された WHO 遊離糖の目安 (sugar_g = 25) ではなく、炭水化物 − 食物繊維 と比べる', async () => {
@@ -189,5 +188,55 @@ describe('nutrition-analysis: 糖質の目標 = 炭水化物の目標 − 食物
     // 他の栄養素の比較は続けて行われる
     expect(analysis.comparison.carbs.target).toBe(20);
     expect(Object.values(analysis.comparison).every((c) => Number.isFinite(c.percentage))).toBe(true);
+  });
+
+  describe('AI へのプロンプトに書く糖質の目標', () => {
+    /** 直近の AI 呼び出しに渡したプロンプト本文 */
+    function lastPrompt(): string {
+      const call = mockCreateCompletion.mock.calls.at(-1);
+      expect(call).toBeDefined();
+      return String(call![0].messages[0].content);
+    }
+
+    function sugarLine(prompt: string): string {
+      const line = prompt.split('\n').find((l) => l.startsWith('- 糖質:'));
+      expect(line).toBeDefined();
+      return line!;
+    }
+
+    it('栄養目標があれば、炭水化物の目標 − 食物繊維の目標 を書く', async () => {
+      setup({
+        targets: { daily_calories: 2144, carbs_g: 295, fiber_g: 21, sugar_g: 25 },
+        meals: [mealWithSugar(80), mealWithSugar(80), mealWithSugar(80)],
+      });
+
+      await analyze('&includeAdvice=true');
+
+      expect(sugarLine(lastPrompt())).toBe('- 糖質: 240g（目標: 274g）');
+    });
+
+    it('糖質の目標が 0 以下で比較から外れたときは、既定値 (279g) ではなく「目標: なし」と書く', async () => {
+      setup({
+        targets: { daily_calories: 1200, carbs_g: 20, fiber_g: 25, sugar_g: 25 },
+        meals: [mealWithSugar(10)],
+      });
+
+      await analyze('&includeAdvice=true');
+
+      const line = sugarLine(lastPrompt());
+      expect(line).toBe('- 糖質: 10g（目標: なし）');
+      expect(line).not.toContain('279');
+    });
+
+    it('栄養目標そのものが無いときは、既定値 (炭水化物 300g − 食物繊維 21g = 279g) を書く', async () => {
+      setup({
+        targets: null,
+        meals: [mealWithSugar(90), mealWithSugar(90), mealWithSugar(90)],
+      });
+
+      await analyze('&includeAdvice=true');
+
+      expect(sugarLine(lastPrompt())).toBe('- 糖質: 270g（目標: 279g）');
+    });
   });
 });

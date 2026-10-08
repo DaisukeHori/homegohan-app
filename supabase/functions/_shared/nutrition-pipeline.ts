@@ -116,6 +116,8 @@ export interface NutritionPipelineResult {
   nutrition: {
     sodiumG: number
     fiberG: number
+    // 糖質 (炭水化物 − 食物繊維)。写真で献立を上書きするとき、炭水化物・食物繊維と一緒に保存する (#1146)
+    sugarG: number
     potassiumMg: number
     calciumMg: number
     magnesiumMg: number
@@ -1071,6 +1073,7 @@ export async function analyzeWithEvidence(
     nutrition: {
       sodiumG: mealTotals.sodium_mg / 1000, // mg → g
       fiberG: mealTotals.fiber_g,
+      sugarG: mealTotals.sugar_g,
       potassiumMg: mealTotals.potassium_mg,
       calciumMg: mealTotals.calcium_mg,
       magnesiumMg: mealTotals.magnesium_mg,
