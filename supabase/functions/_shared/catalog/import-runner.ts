@@ -96,7 +96,7 @@ export async function handleCatalogImportRequest(req: Request, options: HandlerO
   }
 
   // バッチ専用: CRON_SECRET 認証（Firecrawl / LLM コスト保護）
-  const authErr = requireServiceRole(req);
+  const authErr = await requireServiceRole(req);
   if (authErr) {
     return new Response(authErr.body, {
       status: authErr.status,

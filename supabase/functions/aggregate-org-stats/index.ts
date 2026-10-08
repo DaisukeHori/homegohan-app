@@ -14,7 +14,7 @@ Deno.serve(async (req) => {
   }
 
   // バッチ専用: CRON_SECRET 認証
-  const authErr = requireServiceRole(req);
+  const authErr = await requireServiceRole(req);
   if (authErr) {
     return new Response(authErr.body, {
       status: authErr.status,
