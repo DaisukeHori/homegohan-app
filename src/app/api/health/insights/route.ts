@@ -1,17 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { generateGeminiJson } from '@/lib/ai/gemini-json';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { clampIntParam } from '@/lib/http-params';
+import { fetchRecentMealDays, formatMealDaysForPrompt } from '@/lib/health-insight-meals';
+
+type UserLogger = ReturnType<ReturnType<typeof createLogger>['withUser']>;
+
+/**
+ * クエリの失敗を、どのクエリかと PostgreSQL のエラーコード付きでサーバーログ (app_logs) に残す。
+ * 生のエラー文 (テーブル名・列名・制約名を含み得る) はクライアントに返さない (#1172 の方針)。
+ * PostgREST のエラーは Error とは限らない { code, message, details, hint } なので、ログ用に Error へ包む。
+ */
+function logQueryError(
+  logger: UserLogger,
+  message: string,
+  query: string,
+  error: { message?: string; code?: string },
+) {
+  logger.error(
+    message,
+    error instanceof Error ? error : new Error(String(error.message ?? 'Unknown query error')),
+    { query, pg_code: typeof error.code === 'string' ? error.code : undefined },
+  );
+}
 
 // AI分析結果の取得
 export async function GET(request: NextRequest) {
+  const logger = createLogger('GET /api/health/insights', generateRequestId());
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const userLogger = logger.withUser(user.id);
 
   const { searchParams } = new URL(request.url);
   // #1048 F2-16: limit が未クランプで DoS/意図しない大量取得が可能だった。
@@ -37,24 +61,32 @@ export async function GET(request: NextRequest) {
   const { data, error } = await query;
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    logQueryError(userLogger, 'Health insights list query failed', 'health_insights', error);
+    return NextResponse.json({ error: 'インサイトの取得に失敗しました' }, { status: 500 });
   }
 
+  // 未読数・アラート数は一覧の補助情報。失敗しても一覧は返す (件数は 0 扱い) が、握りつぶさずに記録する。
   // 未読数もカウント
-  const { count: unreadCount } = await supabase
+  const { count: unreadCount, error: unreadError } = await supabase
     .from('health_insights')
     .select('*', { count: 'exact', head: true })
     .eq('user_id', user.id)
     .eq('is_read', false)
     .eq('is_dismissed', false);
+  if (unreadError) {
+    logQueryError(userLogger, 'Health insights unread count query failed', 'health_insights (unread count)', unreadError);
+  }
 
   // アラート数もカウント
-  const { count: alertCount } = await supabase
+  const { count: alertCount, error: alertError } = await supabase
     .from('health_insights')
     .select('*', { count: 'exact', head: true })
     .eq('user_id', user.id)
     .eq('is_alert', true)
     .eq('is_dismissed', false);
+  if (alertError) {
+    logQueryError(userLogger, 'Health insights alert count query failed', 'health_insights (alert count)', alertError);
+  }
 
   return NextResponse.json({
     insights: data,
@@ -65,18 +97,21 @@ export async function GET(request: NextRequest) {
 
 // health_insights を LLM で生成・挿入する
 export async function POST(request: NextRequest) {
+  const logger = createLogger('POST /api/health/insights', generateRequestId());
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const userLogger = logger.withUser(user.id);
 
   // #1022 LLM でインサイトを生成するため generation カテゴリで制限する
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
-  // ユーザーの最近の health_records, health_checkups, planned_meals を集約
+  // ユーザーの最近の health_records, health_checkups, 食事 (user_daily_meals → planned_meals) を集約
+  // 食事は planned_meals を直接引かない: planned_meals には user_id / planned_date 列が無い (#1040 F2-02 / #1306)
   const [recordsResult, checkupsResult, mealsResult] = await Promise.all([
     supabase
       .from('health_records')
@@ -90,17 +125,33 @@ export async function POST(request: NextRequest) {
       .eq('user_id', user.id)
       .order('checkup_date', { ascending: false })
       .limit(5),
-    supabase
-      .from('planned_meals')
-      .select('planned_date,calories_kcal,protein_g,fat_g,carbs_g')
-      .eq('user_id', user.id)
-      .order('planned_date', { ascending: false })
-      .limit(30),
+    fetchRecentMealDays(supabase, user.id),
   ]);
+
+  // 1 本でも失敗したまま続行すると、「データが無い」と区別できないまま欠けた文脈でインサイトを生成し、
+  // しかも health_insights に保存してしまう (以前は食事が常に取れていなかったのに、誰も気付けなかった)。
+  // 握りつぶさず、失敗した全クエリを記録して 500 を返す。
+  const queryResults = [
+    ['health_records', recordsResult.error],
+    ['health_checkups', checkupsResult.error],
+    ['user_daily_meals', mealsResult.error],
+  ] as const;
+  let hasQueryError = false;
+  for (const [query, queryError] of queryResults) {
+    if (!queryError) continue;
+    hasQueryError = true;
+    logQueryError(userLogger, `Health insights input query failed: ${query}`, query, queryError);
+  }
+  if (hasQueryError) {
+    return NextResponse.json(
+      { error: 'インサイトの生成に必要なデータを取得できませんでした。時間をおいて再試行してください。' },
+      { status: 500 },
+    );
+  }
 
   const records = recordsResult.data ?? [];
   const checkups = checkupsResult.data ?? [];
-  const meals = mealsResult.data ?? [];
+  const mealDays = mealsResult.data ?? [];
 
   if (records.length === 0 && checkups.length === 0) {
     return NextResponse.json({ error: 'データが不足しています。健康記録を追加してから再試行してください。' }, { status: 400 });
@@ -135,8 +186,8 @@ ${records.slice(0, 10).map((r: any) => `- ${r.record_date}: 体重${r.weight ?? 
 ## 健康診断（最新）
 ${checkups.slice(0, 2).map((c: any) => `- ${c.checkup_date}: HbA1c${c.hba1c ?? '-'}%, LDL${c.ldl_cholesterol ?? '-'}, HDL${c.hdl_cholesterol ?? '-'}, 中性脂肪${c.triglycerides ?? '-'}, γ-GTP${c.gamma_gtp ?? '-'}, 尿酸${c.uric_acid ?? '-'}`).join('\n') || 'データなし'}
 
-## 食事記録（直近）
-${meals.slice(0, 7).map((m: any) => `- ${m.planned_date}: ${m.calories_kcal ?? '-'}kcal, タンパク${m.protein_g ?? '-'}g, 脂質${m.fat_g ?? '-'}g, 炭水化物${m.carbs_g ?? '-'}g`).join('\n') || 'データなし'}
+## 食事記録（直近の献立・1日ごとの合計）
+${formatMealDaysForPrompt(mealDays) || 'データなし'}
 
 インサイトは日本語で、具体的かつ行動に繋がるものにしてください。
 is_alert は基準値逸脱や急激な変化がある場合のみ true にしてください。`;
@@ -152,7 +203,11 @@ is_alert は基準値逸脱や急激な変化がある場合のみ true にし�
     });
     generatedInsights = data.insights ?? [];
   } catch (err) {
-    console.error('Health insight generation failed:', err);
+    userLogger.error('Health insight generation failed', err, {
+      records: records.length,
+      checkups: checkups.length,
+      meal_days: mealDays.length,
+    });
     return NextResponse.json({ error: 'AIによるインサイト生成に失敗しました' }, { status: 500 });
   }
 
@@ -180,7 +235,8 @@ is_alert は基準値逸脱や急激な変化がある場合のみ true にし�
     .select();
 
   if (insertError) {
-    return NextResponse.json({ error: insertError.message }, { status: 500 });
+    logQueryError(userLogger, 'Health insights insert failed', 'health_insights', insertError);
+    return NextResponse.json({ error: 'インサイトの保存に失敗しました' }, { status: 500 });
   }
 
   return NextResponse.json({ insights: inserted, count: inserted?.length ?? 0 });
