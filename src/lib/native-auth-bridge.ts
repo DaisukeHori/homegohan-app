@@ -6,8 +6,9 @@
  * Web 側でセッションが終わったときは、次のメッセージでネイティブに知らせて、状態を揃えてもらう。
  *
  *   { type: 'sign-out' }
- *     利用者が Web 側でログアウトした (broadcastSignOut が送る)。
- *     ネイティブも同じようにログアウトして、ウェルカム画面へ戻る。
+ *     利用者が Web 側でログアウトする (各画面が supabase.auth.signOut() の「前」に notifyNativeSignOut() で送る。
+ *     broadcastSignOut() も、まだ送っていなければ送る)。
+ *     ネイティブも同じようにログアウトして (push token の削除 → 端末データの削除 → サインアウト)、ウェルカム画面へ戻る。
  *     これが無いと、Web だけがログアウトし、ネイティブは保存済みのセッションを持ったまま
  *     (最大 1 時間後に更新で失敗して突然ログアウトする) という食い違いになる (F7-04)。
  *
@@ -102,12 +103,25 @@ function post(bridge: ReactNativeWebViewBridge, message: NativeAuthMessage): boo
 }
 
 /**
- * Web 側でログアウトしたことをネイティブに知らせる。送ったら true。
- * 一度送ったら、このページが開いている間は session-expired を送らない (ログアウト後に再ブリッジを頼まない)。
+ * Web 側でログアウトすることをネイティブに知らせる。送ったら true。
+ *
+ * 利用者が意図したログアウトでは、`supabase.auth.signOut()` の「前」に呼ぶ (#1038 F7-10)。
+ *   - signOut() の途中で auth-js が SIGNED_OUT を出す。MainLayout はそれを「借り物のセッションを失った」ものとして
+ *     session-expired を送る。先に呼んで signOutNotified を立てておけば、それは送られず、ネイティブには sign-out だけが届く
+ *   - session-expired が先に届くと、ネイティブは自分のセッションをサーバーで確かめる。Web の signOut() は全端末のセッションを失効させるので、
+ *     サーバーは失効と答え、auth-js が端末のセッションを消す。ネイティブは、そのあとでも push token を消せるよう、
+ *     処理の最初にセッションを控えている (apps/mobile/src/lib/webViewAuthMessages.ts)。ここで先に知らせるのは、余計な確認の通信を避けて、
+ *     届く順番を 1 つに決めるため
+ *   - 呼ばなかった画面でも、signOut() のあとに broadcastSignOut() が呼ぶので、sign-out は届く (その場合は session-expired が先に届く)
+ *   - broadcastSignOut() 自体は signOut() の「あと」に呼ぶこと。先に呼ぶと、同じタブの BroadcastChannel で /login へ移ってしまい、signOut() が途中で止まる
+ * 画面側の並びは tests/native-sign-out-order-source-scan.test.ts が検査する。
+ *
+ * 一度送ったら、このページが開いている間は、ここで二度目を送らず、session-expired も送らない (ログアウト後に再ブリッジを頼まない)。
  */
 export function notifyNativeSignOut(): boolean {
   const bridge = getBridge()
   if (!bridge) return false
+  if (signOutNotified) return false
   signOutNotified = true
   return post(bridge, { type: 'sign-out' })
 }

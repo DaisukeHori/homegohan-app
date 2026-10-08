@@ -367,13 +367,21 @@ describe('registerAndSaveExpoPushToken — 失敗の観測 (#1038 F7-09)', () =>
 // #1038 F7-10: ログアウト時に push token を消す
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** from('user_push_tokens').delete().eq(...).eq(...) のチェーンを作る */
-function setupDelete(result: { error: unknown } | Promise<{ error: unknown }> = { error: null }) {
-  const eqToken = jest.fn().mockReturnValue(Promise.resolve(result));
+type DeleteResult = { error: unknown; count?: number | null };
+
+/**
+ * from('user_push_tokens').delete({ count: 'exact' }).eq(...).eq(...)[.setHeader(...)] のチェーンを作る。
+ * 最後に await されたとき result を返す (postgrest-js のビルダーと同じく、setHeader は自分自身を返す)
+ */
+function setupDelete(result: DeleteResult | Promise<DeleteResult> = { error: null }) {
+  const pending = Promise.resolve(result);
+  const builder = { then: pending.then.bind(pending), setHeader: jest.fn() };
+  builder.setHeader.mockReturnValue(builder);
+  const eqToken = jest.fn().mockReturnValue(builder);
   const eqUser = jest.fn().mockReturnValue({ eq: eqToken });
   const del = jest.fn().mockReturnValue({ eq: eqUser });
   mockFrom.mockReturnValue({ delete: del });
-  return { del, eqUser, eqToken };
+  return { del, eqUser, eqToken, setHeader: builder.setHeader };
 }
 
 describe('unregisterExpoPushToken — #1038 F7-10', () => {
@@ -386,11 +394,78 @@ describe('unregisterExpoPushToken — #1038 F7-10', () => {
     expect(result).toBe('deleted');
     expect(mockFrom).toHaveBeenCalledWith('user_push_tokens');
     expect(del).toHaveBeenCalledTimes(1);
+    // 消えた行の件数を数える (0 件を見逃さないため)
+    expect(del).toHaveBeenCalledWith({ count: 'exact' });
     expect(eqUser).toHaveBeenCalledWith('user_id', 'user-123');
     // 同じユーザーの他の端末の行まで消さない (expo_push_token で必ず絞る)
     expect(eqToken).toHaveBeenCalledWith('expo_push_token', 'ExponentPushToken[this-device]');
     // 控えを使えたので、Expo に問い合わせ直さない
     expect(mockGetExpoPushTokenAsync).not.toHaveBeenCalled();
+  });
+
+  it('アクセストークンを渡したら、Authorization ヘッダーをそのトークンで明示して削除する (セッションが先に失効しても、本人の行を消せる)', async () => {
+    await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`, 'ExponentPushToken[this-device]');
+    const { setHeader } = setupDelete();
+
+    const result = await unregisterExpoPushToken('user-123', { accessToken: 'saved-access-token' });
+
+    expect(result).toBe('deleted');
+    // supabase-js は Authorization ヘッダーが既にあれば、いまのセッション (消えていれば anon キー) で上書きしない
+    expect(setHeader).toHaveBeenCalledTimes(1);
+    expect(setHeader).toHaveBeenCalledWith('Authorization', 'Bearer saved-access-token');
+  });
+
+  it('アクセストークンを渡さなければ、ヘッダーは足さない (いまのセッションで認可される。設定画面・マイページのログアウト)', async () => {
+    await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`, 'ExponentPushToken[this-device]');
+    const { setHeader } = setupDelete();
+
+    expect(await unregisterExpoPushToken('user-123')).toBe('deleted');
+    expect(await unregisterExpoPushToken('user-123', { accessToken: null })).toBe('deleted');
+
+    expect(setHeader).not.toHaveBeenCalled();
+  });
+
+  it('DELETE は通ったが消えた行が 0 件だったら (RLS に弾かれた・行が既に無い。エラーにならない)、no_rows を返して PostHog に送る', async () => {
+    await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`, 'ExponentPushToken[this-device]');
+    setupDelete({ error: null, count: 0 });
+
+    const result = await unregisterExpoPushToken('user-123', { accessToken: 'saved-access-token' });
+
+    expect(result).toBe('no_rows');
+    // トークンの値やユーザー ID は載せない
+    expect(mockCaptureEvent).toHaveBeenCalledWith('push_token_unregister_no_rows', {
+      platform: 'ios',
+      token_source: 'stored',
+      explicit_access_token: true,
+    });
+    expect(mockCaptureEvent).not.toHaveBeenCalledWith('push_token_unregister_failed', expect.anything());
+  });
+
+  it('0 件のとき、取り直したトークンで削除したのか (token_source: refetched) と、アクセストークンを渡さなかったことも区別して送る', async () => {
+    setExpoConfig({ eas: { projectId: APP_JSON_PROJECT_ID } });
+    mockGetExpoPushTokenAsync.mockResolvedValue({ data: 'ExponentPushToken[refetched]' });
+    setupDelete({ error: null, count: 0 });
+
+    expect(await unregisterExpoPushToken('user-123')).toBe('no_rows');
+
+    expect(mockCaptureEvent).toHaveBeenCalledWith('push_token_unregister_no_rows', {
+      platform: 'ios',
+      token_source: 'refetched',
+      explicit_access_token: false,
+    });
+  });
+
+  it.each([
+    ['1 件', 1],
+    ['2 件', 2],
+    ['件数が返らない (undefined)', undefined],
+    ['件数が返らない (null)', null],
+  ])('消えた行が %s のときは deleted (0 件と断定できないものを、異常として送らない)', async (_label, count) => {
+    await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`, 'ExponentPushToken[this-device]');
+    setupDelete({ error: null, count });
+
+    expect(await unregisterExpoPushToken('user-123')).toBe('deleted');
+    expect(mockCaptureEvent).not.toHaveBeenCalled();
   });
 
   it('userId が無ければ何もしない', async () => {

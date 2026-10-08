@@ -2,8 +2,10 @@
  * アカウント凍結ページ (src/app/frozen/page.tsx) のログアウトのテスト (#1038 F7-04)
  *
  * - CLAUDE.md の規約: サインアウトでは Supabase の signOut より前に、端末のユーザー別データ (localStorage) を消す
- * - signOut のあとに broadcastSignOut() を呼び、ほかのタブと、モバイルアプリの WebView の場合はネイティブにもログアウトを伝える
+ * - モバイルアプリの WebView の場合は、signOut の「前」にネイティブへ sign-out を送る (#1038 F7-10)。
+ *   signOut() の途中で出る SIGNED_OUT が session-expired としてネイティブへ先に届くのを避けるため (理由は native-auth-bridge.ts)
  *   (伝えないと、Web だけがログアウトし、ネイティブは保存済みのセッションを持ったままになる)
+ * - signOut のあとに broadcastSignOut() を呼び、ほかのタブにもログアウトを伝える
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -79,7 +81,7 @@ describe('凍結ページのログアウト', () => {
     expect(pushMock).toHaveBeenCalledWith('/login')
   })
 
-  it('モバイルアプリの WebView の中なら、ネイティブにも sign-out を送る (signOut のあと)', async () => {
+  it('モバイルアプリの WebView の中なら、ネイティブにも sign-out を送る。signOut の「前」に、1 通だけ', async () => {
     const postMessage = vi.fn((message: string) => {
       events.push(`post:${JSON.parse(message).type}`)
     })
@@ -87,7 +89,8 @@ describe('凍結ページのログアウト', () => {
 
     await clickLogout()
 
-    expect(events).toEqual(['signOut', 'post:sign-out'])
+    // signOut のあとの broadcastSignOut() は、すでに知らせてあるので二重に送らない
+    expect(events).toEqual(['post:sign-out', 'signOut'])
   })
 
   it('ふつうのブラウザでは、ネイティブへは何も送らずに、同じ流れで終わる', async () => {

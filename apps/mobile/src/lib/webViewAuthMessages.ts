@@ -5,7 +5,8 @@
  * Web 側でセッションが終わったときは、Web が次のメッセージを送ってくる (Web 側は src/lib/native-auth-bridge.ts):
  *
  *   { type: 'sign-out' }
- *     利用者が Web 側 (設定・マイページ) でログアウトした。
+ *     利用者が Web 側 (設定・マイページ) でログアウトする。Web は supabase.auth.signOut() の「前」に送る
+ *     (signOut() の途中の SIGNED_OUT が session-expired として先に届くのを避けるため。理由は native-auth-bridge.ts の notifyNativeSignOut)。
  *     ネイティブも、push token の削除 → 端末データの削除 → サインアウトを行い、ウェルカム画面へ戻る。
  *     これが無いと、Web だけがログアウトし、ネイティブは保存済みのセッションを持ったまま
  *     (Web の signOut は全端末のセッションを失効させるので、最大 1 時間後の更新で突然ログアウトする) になる (F7-04)。
@@ -20,6 +21,19 @@
  *
  * メッセージは「自分のアプリの Web オリジンのページから」届いたものだけを処理する
  * (window.ReactNativeWebView はどのオリジンのページにも存在し、外部ページからも送れてしまうため)。
+ *
+ * ## ログアウトで push token を消すために、処理の最初にセッションを控える (#1038 F7-10)
+ * 利用者が Web でログアウトすると、Web の signOut() は全端末のセッションをサーバーで失効させる。
+ * 失効したあとにネイティブが auth-js (2.105) で getUser() を呼ぶと、サーバーは 403 session_not_found を返し、
+ * auth-js はそれを AuthSessionMissingError にして、端末のセッションを消す (_removeSession)。
+ * auth-js の処理はロックで直列になるので、そのあとに動く getSession() は null を返し、
+ *   - ユーザー ID が分からず、push token の削除を諦める (skipped)
+ *   - 削除の通信が anon キーで送られ、RLS で 0 行になる (エラーにならない)
+ * のどちらかになって、この端末の user_push_tokens の行が残ってしまう。
+ * そこで、メッセージを処理する最初に getSession() で { userId, accessToken } を控え (takeSessionSnapshot)、
+ * 失効と分かったあとのログアウトでも、その値で push token を DELETE する。Authorization ヘッダーを明示した DELETE は、
+ * セッションが失効済みでも、アクセストークンが期限内なら RLS を通る (PostgREST は JWT の署名と期限しか見ない)。
+ * session-expired と sign-out が同時に動いても控えを失わないよう、処理中のメッセージ同士で同じ控えを使い回す。
  */
 
 import { useCallback, useRef } from "react";
@@ -150,53 +164,87 @@ export type WebAuthHandlerDeps = {
 /** ログアウト処理中か。5 つのタブの WebView が同時に sign-out / session-expired を送ってくるので、1 回だけ行う */
 let signOutInFlight = false;
 
+/** 完了したログアウトの回数。確認の通信をしている間にログアウトが済んだかどうかを見分けるのに使う */
+let completedSignOuts = 0;
+
+// ── ログアウトに使うセッションの控え ─────────────────────────────────────────
+
+/** ログアウトで push token を消すために控える、ネイティブのセッションの情報 */
+type SessionSnapshot = { userId: string; accessToken: string | null };
+
+/** 処理中のメッセージの数。0 になったら、控えは捨てる */
+let messagesInFlight = 0;
+
+/**
+ * 処理中のメッセージが共有する、ネイティブのセッションの控え (null = ネイティブも未ログイン、または読めなかった)。
+ * 最初に必要としたメッセージが getSession() で取り、同時に動く他のメッセージは同じ値を使い回す。
+ * メッセージごとに getSession() を呼ぶと、先に動いている session-expired の getUser() が端末のセッションを消したあとで、
+ * 後から来た sign-out の getSession() が null を受け取ってしまう (上の「ログアウトで push token を消すために…」を参照)。
+ */
+let sharedSnapshot: Promise<SessionSnapshot | null> | null = null;
+
+async function readSessionSnapshot(): Promise<SessionSnapshot | null> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const session = data.session;
+    const userId = session?.user?.id;
+    return userId ? { userId, accessToken: session?.access_token ?? null } : null;
+  } catch {
+    return null;
+  }
+}
+
+function takeSessionSnapshot(): Promise<SessionSnapshot | null> {
+  if (!sharedSnapshot) sharedSnapshot = readSessionSnapshot();
+  return sharedSnapshot;
+}
+
 async function performNativeSignOut(deps: WebAuthHandlerDeps): Promise<WebAuthResult> {
   if (signOutInFlight) return "ignored";
   signOutInFlight = true;
   try {
-    let userId: string | null = null;
-    try {
-      const { data } = await supabase.auth.getSession();
-      userId = data.session?.user?.id ?? null;
-    } catch {
-      userId = null;
-    }
+    // 控えは、session-expired が getUser() の前に取ったものがあればそれ (getUser() が端末のセッションを消したあとでも使える)
+    const snapshot = await takeSessionSnapshot();
     try {
       // push token の削除 → 端末データの削除 → サインアウト。失敗してもログアウトは続ける
-      await signOutWithCleanup(userId);
+      await signOutWithCleanup(snapshot?.userId ?? null, { accessToken: snapshot?.accessToken });
     } catch {
       // ignore
     }
     deps.goToWelcome();
+    completedSignOuts += 1;
     return "signed-out";
   } finally {
     signOutInFlight = false;
+    // 古いセッションの控えを、後から来るメッセージが使わないようにする
+    sharedSnapshot = null;
   }
 }
 
 async function handleSessionExpired(deps: WebAuthHandlerDeps): Promise<WebAuthResult> {
   if (signOutInFlight) return "ignored";
+  const signOutsAtStart = completedSignOuts;
+  /** 待っている間に、ログアウトが始まった・済んだら、読み込み直しもログアウトもしない (ログアウトしたのに読み込み直させない) */
+  const supersededBySignOut = () => signOutInFlight || completedSignOuts !== signOutsAtStart;
 
-  // ネイティブも未ログインなら、読み込み直しても意味がない (ログアウト処理の直後に届いた通知など)
-  let hasSession = false;
-  try {
-    const { data } = await supabase.auth.getSession();
-    hasSession = !!data.session;
-  } catch {
-    hasSession = false;
-  }
-  if (!hasSession) return "no-session";
+  // ネイティブも未ログインなら、読み込み直しても意味がない (ログアウト処理の直後に届いた通知など)。
+  // この控えは getUser() の前に取る。getUser() が失効を見つけると端末のセッションを消すので、そのあとでは取れない
+  const snapshot = await takeSessionSnapshot();
+  if (!snapshot) return "no-session";
+  if (supersededBySignOut()) return "ignored";
 
   // ネイティブ自身のセッションをサーバーで確かめる。失効していれば (Web のログアウトで全端末のセッションが失効した後など)、
   // 読み込み直しても Web は復帰できないので、ログアウトを揃える。通信失敗など失効と断定できないときは、読み込み直しを試みる。
   try {
     const { error } = await supabase.auth.getUser();
+    if (supersededBySignOut()) return "ignored";
     if (error && classifyAuthError(error) === "invalid") {
       return performNativeSignOut(deps);
     }
   } catch {
     // 通信エラー等
   }
+  if (supersededBySignOut()) return "ignored";
 
   if (!deps.limiter.tryAcquire()) return "rate-limited";
   deps.rebridge();
@@ -217,10 +265,15 @@ export async function handleWebAuthMessage(
   if (!message) return "ignored";
   if (!isFromWebOrigin(senderUrl)) return "ignored";
 
+  // 同時に処理するメッセージ同士で、セッションの控えを使い回す (処理中のメッセージが無くなったら捨てる)
+  messagesInFlight += 1;
   try {
     return message.type === "sign-out" ? await performNativeSignOut(deps) : await handleSessionExpired(deps);
   } catch {
     return "ignored";
+  } finally {
+    messagesInFlight -= 1;
+    if (messagesInFlight === 0) sharedSnapshot = null;
   }
 }
 

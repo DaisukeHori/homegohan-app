@@ -12,6 +12,12 @@
  * (v4MenuGenerating など、リロード後に進行中の生成を復元する値) が消え、/login が一瞬出てしまう。
  * WebView の中では「借り物のセッションを失った」ものとして、ネイティブに再ブリッジを頼む。
  *
+ * 利用者が意図したログアウト (設定・マイページなど) でも、signOut() の途中で auth-js が SIGNED_OUT を出す。
+ * これを session-expired としてネイティブへ先に送ると、ネイティブは自分のセッションをサーバーで確かめ (Web の signOut は全端末を失効させる)、
+ * 失効を見つけた getUser() が端末のセッションを消すので、あとから届く sign-out で push token を消せなくなる (#1038 F7-10)。
+ * そこで各画面は signOut() の前に notifyNativeSignOut() を呼び、ネイティブには sign-out だけが届くようにする。
+ * ここでは、実際の設定画面を MainLayout の中に置いて、その順番を確かめる。
+ *
  * auth-js (GoTrueClient) は本物を使い、fetch だけを差し替える (src/__tests__/helpers/real-auth-js.ts)。auth-js をモックすると、
  * 更新の失敗から SIGNED_OUT が出るまでの本物の動きを確かめられない (watcher のテストは getSession をモックしている)。
  *
@@ -30,10 +36,11 @@ import {
   seedBorrowedSession,
 } from '../helpers/real-auth-js'
 
+const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }))
 vi.mock('next/navigation', () => ({
   usePathname: () => '/home',
   useSearchParams: () => new URLSearchParams(),
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: pushMock }),
 }))
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
@@ -56,6 +63,7 @@ let supabaseClient: ReturnType<typeof createRealBrowserClient>
 vi.mock('@/lib/supabase/client', () => ({ createClient: () => supabaseClient }))
 
 const { default: MainLayout } = await import('@/app/(main)/MainLayout')
+const { default: SettingsPage } = await import('@/app/(main)/settings/page')
 import {
   NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER,
   NATIVE_REBRIDGE_WAIT_MS,
@@ -109,13 +117,18 @@ let root: Root
 let fakeFetch: ReturnType<typeof createFakeSupabaseFetch>
 let postMessage: ReturnType<typeof vi.fn>
 
-async function mountLayout() {
+async function mountLayout(page: React.ReactNode = <p>page body</p>) {
   await act(async () => {
-    root.render(
-      <MainLayout initialIsNativeApp>
-        <p>page body</p>
-      </MainLayout>,
-    )
+    root.render(<MainLayout initialIsNativeApp>{page}</MainLayout>)
+  })
+}
+
+/** data-testid でボタンを探して押す */
+async function clickByTestId(testId: string) {
+  const button = container.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)
+  expect(button, `${testId} が描画されている`).not.toBeNull()
+  await act(async () => {
+    button!.click()
   })
 }
 
@@ -153,6 +166,9 @@ beforeEach(() => {
   localStorage.clear()
   for (const [key, value] of Object.entries(USER_SCOPED_ITEMS)) localStorage.setItem(key, value)
   stubLocation()
+  pushMock.mockReset()
+  // 設定画面が起動時に呼ぶ GET /api/notification-preferences (Supabase への通信は fakeFetch が受ける)
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })))
   postMessage = vi.fn()
   delete (window as WindowWithBridge).ReactNativeWebView
   Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
@@ -174,6 +190,7 @@ afterEach(async () => {
   clearAllCookies()
   localStorage.clear()
   vi.useRealTimers()
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
@@ -257,28 +274,34 @@ describe('MainLayout — モバイルアプリの WebView で auth-js が SIGNED
     expect(remainingKeys()).toEqual(Object.keys(USER_SCOPED_ITEMS))
   })
 
-  it('利用者が Web でログアウトした場合 (設定・マイページなど): 最後に sign-out をネイティブに送る。/login への移動は従来どおり (自分のタブへの BroadcastChannel の通知)', async () => {
+  it('利用者が設定画面 (実際の画面) でログアウトしたとき: ネイティブに届くのは sign-out だけ。signOut の前に届き、session-expired は届かない', async () => {
     enterNativeWebView()
     seedBorrowedSession(3000) // 更新が必要ない、普通に使えているセッション
-    // 画面側のログアウト処理 (settings / mypage など) と同じ順番
-    const logout = async () => {
-      clearUserScopedLocalStorage()
-      await supabaseClient.auth.signOut()
-      broadcastSignOut()
-    }
 
-    await mountLayout()
+    await mountLayout(<SettingsPage />)
     await advance(1_000)
-    await act(async () => {
-      await logout()
-    })
-    // signOut() が出す SIGNED_OUT の分の session-expired も先に届くが、ネイティブは自分のセッションをサーバーで確かめ、
-    // 失効していれば (Web のログアウトは全端末のセッションを失効させる) sign-out と同じログアウトに揃える
-    expect(sentTypes().at(-1)).toBe('sign-out')
-    expect(remainingKeys()).toEqual([]) // 各画面の処理が消している
+    expect(sentTypes()).toEqual([]) // ここまでは何も送っていない
 
+    await clickByTestId('logout-button')
+    await clickByTestId('logout-confirm-button')
+    await advance(1_000)
+
+    // 前提: ログアウトの途中で auth-js が本当に SIGNED_OUT を出した (= MainLayout の購読が呼ばれた) こと。
+    // 画面が signOut() を呼んでいなければ、このテストは空振りで通ってしまう
+    const { data } = await supabaseClient.auth.getSession()
+    expect(data.session).toBeNull()
+
+    // signOut() の途中の SIGNED_OUT は session-expired として送られない。ネイティブには sign-out だけが届く
+    expect(sentTypes()).toEqual(['sign-out'])
+    // sign-out は、Supabase への signOut の通信 (POST /auth/v1/logout) より前に送られている
+    const logoutCallIndex = fakeFetch.mock.calls.findIndex(([input]) => String(input).includes('/auth/v1/logout'))
+    expect(logoutCallIndex).toBeGreaterThanOrEqual(0)
+    expect(postMessage.mock.invocationCallOrder[0]).toBeLessThan(fakeFetch.mock.invocationCallOrder[logoutCallIndex])
+
+    expect(remainingKeys()).toEqual([]) // 画面の処理が signOut の前に消している
     // broadcastSignOut() は自分のタブの MainLayout にも届き、従来どおりログイン画面へ移す
     await vi.waitFor(() => expect(hrefSetter).toHaveBeenCalledWith('/login'))
+    expect(pushMock).toHaveBeenCalledWith('/login')
 
     // ページが移ったあとはこのレイアウトが無い。再ブリッジの待ち時間が過ぎても、二重に移したりしない
     await act(async () => {
@@ -287,6 +310,28 @@ describe('MainLayout — モバイルアプリの WebView で auth-js が SIGNED
     root = createRoot(container)
     await advance(NATIVE_REBRIDGE_WAIT_MS * 2)
     expect(hrefSetter).toHaveBeenCalledTimes(1)
+  })
+
+  it('安全網: signOut の前にネイティブへ知らせない画面でも、ログアウトはネイティブに伝わる (session-expired が先、sign-out が最後に届く。ネイティブはその順番でも push token を消せる)', async () => {
+    enterNativeWebView()
+    seedBorrowedSession(3000)
+    // notifyNativeSignOut() を呼び忘れた画面のログアウト処理 (broadcastSignOut() だけが signOut のあとに知らせる)
+    const logoutWithoutEarlyNotice = async () => {
+      clearUserScopedLocalStorage()
+      await supabaseClient.auth.signOut()
+      broadcastSignOut()
+    }
+
+    await mountLayout()
+    await advance(1_000)
+    await act(async () => {
+      await logoutWithoutEarlyNotice()
+    })
+
+    // signOut() が出す SIGNED_OUT の分の session-expired が先に届き、最後に sign-out が届く。
+    // ネイティブ側は apps/mobile/__tests__/lib/web-view-auth-messages.real-auth.test.ts で、この順番でも push token を消せることを確かめている
+    expect(sentTypes()).toEqual(['session-expired', 'sign-out'])
+    await vi.waitFor(() => expect(hrefSetter).toHaveBeenCalledWith('/login'))
   })
 })
 

@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { broadcastSignOut } from '@/lib/user-storage'
-import { resetNativeAuthBridgeForTests } from '@/lib/native-auth-bridge'
+import { notifyNativeSignOut, resetNativeAuthBridgeForTests } from '@/lib/native-auth-bridge'
 
 type WindowWithBridge = Window & { ReactNativeWebView?: unknown }
 
@@ -26,6 +26,17 @@ describe('broadcastSignOut', () => {
     const postMessage = vi.fn()
     ;(window as WindowWithBridge).ReactNativeWebView = { postMessage }
 
+    broadcastSignOut()
+
+    expect(postMessage).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(postMessage.mock.calls[0][0])).toEqual({ type: 'sign-out' })
+  })
+
+  it('signOut の前に notifyNativeSignOut() で知らせてあれば、broadcastSignOut() は二重に送らない (ネイティブには sign-out が 1 通だけ届く)', () => {
+    const postMessage = vi.fn()
+    ;(window as WindowWithBridge).ReactNativeWebView = { postMessage }
+
+    notifyNativeSignOut()
     broadcastSignOut()
 
     expect(postMessage).toHaveBeenCalledTimes(1)

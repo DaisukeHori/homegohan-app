@@ -46,6 +46,10 @@ export function clearUserScopedLocalStorage(): void {
  * モバイルアプリの WebView の中なら、ネイティブアプリにもログアウトを伝える (#1038 F7-04)。
  * 伝えないと、Web だけがログアウトし、ネイティブは保存済みのセッションを持ったままになる。
  * BroadcastChannel を使えない WebView (iOS 15.4 未満など) でも伝わるよう、最初に呼ぶ。
+ *
+ * 各画面は、これより前 (supabase.auth.signOut() の前) に notifyNativeSignOut() でネイティブへ知らせる (#1038 F7-10。
+ * 理由は native-auth-bridge.ts の notifyNativeSignOut)。知らせてあれば、ここでは二重に送らない。
+ * 並び (notifyNativeSignOut -> signOut -> broadcastSignOut) は tests/native-sign-out-order-source-scan.test.ts が検査する。
  */
 export function broadcastSignOut(): void {
   notifyNativeSignOut();

@@ -196,7 +196,31 @@ export async function ensurePushTokenRegistered(userId: string): Promise<void> {
 /** ログアウト時のトークン削除に使う待ち時間の上限 (ミリ秒)。通信が遅くてもログアウトを長く止めない */
 const UNREGISTER_TIMEOUT_MS = 3000;
 
-export type UnregisterPushTokenResult = "deleted" | "skipped" | "failed";
+export type UnregisterPushTokenResult =
+  /** 行を消した */
+  | "deleted"
+  /** DELETE は通ったが、消えた行が 0 件だった (RLS に弾かれた、または行が既に無い。どちらもエラーにならない) */
+  | "no_rows"
+  /** ユーザー ID や push token の値が分からないので、何もしなかった */
+  | "skipped"
+  /** 失敗した (エラー・タイムアウト) */
+  | "failed";
+
+export type UnregisterPushTokenOptions = {
+  /** 待ち時間の上限 (ミリ秒) */
+  timeoutMs?: number;
+  /**
+   * 削除を認可する、本人のアクセストークン (JWT)。呼び出し側が、セッションが生きているうちに控えた値。
+   *
+   * 渡さなければ、supabase-js が「いまのセッション」のトークンを付ける。それではログアウトの途中で足りなくなる。
+   * Web からの sign-out / session-expired を処理している間に、getUser() が 403 session_not_found を受けると、
+   * auth-js (2.105) は AuthSessionMissingError にして端末のセッションを消す (_removeSession)。
+   * そのあとに削除の通信を出すと、セッションが無いので anon キーが付き、RLS で 0 行になる (エラーにならない)。
+   * Authorization ヘッダーを明示すれば、supabase-js はそれを上書きしない (fetchWithAuth は、既にあれば付けない)。
+   * PostgREST は JWT の署名と期限だけを見て、セッションが失効済みかどうかは見ないので、期限内なら本人の行を消せる。
+   */
+  accessToken?: string | null;
+};
 
 /**
  * この端末の Expo Push Token を user_push_tokens から消す (ログアウトの直前に呼ぶ。#1038 F7-10)。
@@ -206,19 +230,23 @@ export type UnregisterPushTokenResult = "deleted" | "skipped" | "failed";
  *
  * - 消すのは「この端末のトークンの、このユーザーの行」だけ。同じユーザーの他の端末の行は消さない
  *   (消すと、他の端末は登録済みフラグが立っていて再登録されず、通知が届かなくなる)
- * - RLS (本人の行のみ削除可) のため、サインアウトの「前」に呼ぶこと
+ * - RLS (本人の行のみ削除可) のため、サインアウトの「前」に呼ぶこと。
+ *   セッションが先に失効してしまう場合 (Web からの sign-out / session-expired) は、控えておいたアクセストークンを options.accessToken で渡す
  * - 例外は投げない。失敗・タイムアウトでもログアウトは止めない (失敗は PostHog に送る)
+ * - 消えた行が 0 件のときも、エラーにならない (RLS は弾いた行を黙って除く) ので、件数を数えて PostHog に送る
+ *   (push_token_unregister_no_rows)。以前はこれを「削除できた」として扱っており、RLS で素通りしても気づけなかった
  * - アカウント削除では呼ばなくてよい (auth.users の削除で user_push_tokens が ON DELETE CASCADE で消える)
  */
 export async function unregisterExpoPushToken(
   userId: string | null | undefined,
-  options: { timeoutMs?: number } = {},
+  options: UnregisterPushTokenOptions = {},
 ): Promise<UnregisterPushTokenResult> {
   if (!userId) return "skipped";
   const timeoutMs = options.timeoutMs ?? UNREGISTER_TIMEOUT_MS;
 
   const work = async (): Promise<UnregisterPushTokenResult> => {
     let token: string | null = null;
+    let tokenSource: "stored" | "refetched" = "stored";
     try {
       token = await AsyncStorage.getItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:${userId}`);
     } catch {
@@ -230,17 +258,21 @@ export async function unregisterExpoPushToken(
       try {
         const { projectId } = resolveEasProjectId();
         token = (await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : {})).data;
+        tokenSource = "refetched";
       } catch {
         token = null;
       }
     }
     if (!token) return "skipped";
 
-    const { error } = await supabase
+    const query = supabase
       .from("user_push_tokens")
-      .delete()
+      .delete({ count: "exact" })
       .eq("user_id", userId)
       .eq("expo_push_token", token);
+    const { error, count } = await (options.accessToken
+      ? query.setHeader("Authorization", `Bearer ${options.accessToken}`)
+      : query);
     if (error) {
       captureEvent("push_token_unregister_failed", {
         platform: Platform.OS,
@@ -248,6 +280,14 @@ export async function unregisterExpoPushToken(
         error_code: typeof error.code === "string" ? error.code : "",
       });
       return "failed";
+    }
+    if (count === 0) {
+      captureEvent("push_token_unregister_no_rows", {
+        platform: Platform.OS,
+        token_source: tokenSource,
+        explicit_access_token: !!options.accessToken,
+      });
+      return "no_rows";
     }
     return "deleted";
   };

@@ -7,6 +7,10 @@
  *                       ウェルカム画面へ戻る (Web とネイティブの状態の食い違いを無くす)
  *   - session-expired : Web のセッションが切れたら、ネイティブのセッションを確かめたうえで、WebView を読み込み直す。
  *                       ネイティブも失効していれば、読み込み直さずログアウトを揃える
+ *
+ * ここでは getSession / getUser / signOutWithCleanup をモックして、処理の場合分けを確かめる。
+ * 本物の supabase-js (GoTrueClient) で、ログアウトの途中に端末のセッションが消えても push token を消せることは
+ * web-view-auth-messages.real-auth.test.ts が確かめる。
  */
 
 const mockGetSession = jest.fn();
@@ -41,6 +45,8 @@ import {
 
 const WEB_ORIGIN = 'https://homegohan-app.vercel.app';
 const PAGE = `${WEB_ORIGIN}/settings`;
+const SESSION = { user: { id: 'user-1' }, access_token: 'access-1' };
+const SESSION_GONE = { data: { session: null } };
 
 function makeDeps(overrides: Partial<WebAuthHandlerDeps> = {}) {
   const rebridge = jest.fn();
@@ -61,7 +67,7 @@ function authError(name: string, status: number | undefined, message: string, co
 beforeEach(() => {
   jest.clearAllMocks();
   delete process.env.EXPO_PUBLIC_WEB_URL;
-  mockGetSession.mockResolvedValue({ data: { session: { user: { id: 'user-1' } } } });
+  mockGetSession.mockResolvedValue({ data: { session: SESSION } });
   mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
   mockSignOutWithCleanup.mockResolvedValue({ error: null });
 });
@@ -220,7 +226,8 @@ describe('handleWebAuthMessage — sign-out (#1038 F7-04)', () => {
 
     expect(result).toBe('signed-out');
     expect(mockSignOutWithCleanup).toHaveBeenCalledTimes(1);
-    expect(mockSignOutWithCleanup).toHaveBeenCalledWith('user-1');
+    // アクセストークンも渡す。セッションが先に失効しても、push token の削除をそのトークンで認可するため
+    expect(mockSignOutWithCleanup).toHaveBeenCalledWith('user-1', { accessToken: 'access-1' });
     expect(goToWelcome).toHaveBeenCalledTimes(1);
     expect(rebridge).not.toHaveBeenCalled();
   });
@@ -244,7 +251,7 @@ describe('handleWebAuthMessage — sign-out (#1038 F7-04)', () => {
 
     expect(await handleWebAuthMessage({ type: 'sign-out' }, PAGE, deps)).toBe('signed-out');
 
-    expect(mockSignOutWithCleanup).toHaveBeenCalledWith(null);
+    expect(mockSignOutWithCleanup).toHaveBeenCalledWith(null, { accessToken: undefined });
     expect(goToWelcome).toHaveBeenCalledTimes(1);
   });
 
@@ -296,7 +303,7 @@ describe('handleWebAuthMessage — session-expired (#1038 F7-05)', () => {
   });
 
   it('ネイティブも未ログインなら、何もしない (ログアウト直後に届いた通知など)', async () => {
-    mockGetSession.mockResolvedValue({ data: { session: null } });
+    mockGetSession.mockResolvedValue(SESSION_GONE);
     const { deps, rebridge } = makeDeps();
 
     expect(await handleWebAuthMessage({ type: 'session-expired' }, PAGE, deps)).toBe('no-session');
@@ -315,7 +322,7 @@ describe('handleWebAuthMessage — session-expired (#1038 F7-05)', () => {
     const result = await handleWebAuthMessage({ type: 'session-expired' }, PAGE, deps);
 
     expect(result).toBe('signed-out');
-    expect(mockSignOutWithCleanup).toHaveBeenCalledWith('user-1');
+    expect(mockSignOutWithCleanup).toHaveBeenCalledWith('user-1', { accessToken: 'access-1' });
     expect(goToWelcome).toHaveBeenCalledTimes(1);
     expect(rebridge).not.toHaveBeenCalled();
   });
@@ -384,5 +391,184 @@ describe('handleWebAuthMessage — session-expired (#1038 F7-05)', () => {
     await expect(handleWebAuthMessage({ type: 'session-expired' }, PAGE, deps)).resolves.toBe('no-session');
 
     expect(rebridge).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ログアウトで push token を消すための、セッションの控え (#1038 F7-10 のレビュー指摘)
+//
+// 本物の auth-js では、サーバーが失効と答えた getUser() が端末のセッションを消す (_removeSession)。
+// auth-js の処理はロックで直列なので、そのあとの getSession() は null を返す。
+// そこで、メッセージの処理の最初に { userId, accessToken } を控え、getUser() の前後・並行する他のメッセージでも同じ値を使う。
+// (本物の supabase-js での確認は web-view-auth-messages.real-auth.test.ts)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 外から解決できる Promise */
+function deferred<T>() {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
+/** await 待ちの Promise が進む分だけ、マイクロタスクを流す */
+async function flushMicrotasks() {
+  for (let i = 0; i < 10; i += 1) await Promise.resolve();
+}
+
+const SESSION_NOT_FOUND = () => authError('AuthSessionMissingError', 400, 'Auth session missing!');
+
+/** getUser() が失効を見つけたとき、本物の auth-js と同じく端末のセッションを消す (以降の getSession() は null) */
+function makeGetUserRemoveTheSession(error: Error = SESSION_NOT_FOUND()) {
+  mockGetUser.mockImplementation(async () => {
+    mockGetSession.mockResolvedValue(SESSION_GONE);
+    return { data: { user: null }, error };
+  });
+}
+
+describe('handleWebAuthMessage — ログアウトで使うセッションの控え (#1038 F7-10)', () => {
+  it('session-expired でサーバーが失効と答え、getUser() が端末のセッションを消しても、getUser() の前に控えた値でログアウトする', async () => {
+    makeGetUserRemoveTheSession();
+    const { deps, goToWelcome } = makeDeps();
+
+    const result = await handleWebAuthMessage({ type: 'session-expired' }, PAGE, deps);
+
+    expect(result).toBe('signed-out');
+    // 控えが無ければ (getSession() を後から呼ぶと null)、ユーザー ID が分からず push token を消せなかった
+    expect(mockSignOutWithCleanup).toHaveBeenCalledWith('user-1', { accessToken: 'access-1' });
+    expect(goToWelcome).toHaveBeenCalledTimes(1);
+  });
+
+  it('控えは getUser() を呼ぶ前に取る', async () => {
+    const order: string[] = [];
+    mockGetSession.mockImplementation(async () => {
+      order.push('getSession');
+      return { data: { session: SESSION } };
+    });
+    mockGetUser.mockImplementation(async () => {
+      order.push('getUser');
+      return { data: { user: { id: 'user-1' } }, error: null };
+    });
+    const { deps } = makeDeps();
+
+    await handleWebAuthMessage({ type: 'session-expired' }, PAGE, deps);
+
+    expect(order).toEqual(['getSession', 'getUser']);
+  });
+
+  it('session-expired の getUser() の最中に sign-out が届いても、getUser() が消す前に控えた値を使う (getSession() は 1 回だけ)', async () => {
+    const userCheck = deferred<{ data: { user: null }; error: Error }>();
+    mockGetUser.mockReturnValue(userCheck.promise);
+    const tabA = makeDeps();
+    const tabB = makeDeps();
+
+    const sessionExpired = handleWebAuthMessage({ type: 'session-expired' }, PAGE, tabA.deps);
+    await flushMicrotasks();
+    expect(mockGetUser).toHaveBeenCalledTimes(1); // getUser() は応答待ち
+
+    // auth-js の動き: サーバーの失効の応答で端末のセッションが消える。後から来る sign-out の getSession() は null を受け取る
+    mockGetSession.mockResolvedValue(SESSION_GONE);
+    const signOut = handleWebAuthMessage({ type: 'sign-out' }, PAGE, tabB.deps);
+    await flushMicrotasks();
+    userCheck.resolve({ data: { user: null }, error: SESSION_NOT_FOUND() });
+    const results = await Promise.all([sessionExpired, signOut]);
+
+    expect(mockSignOutWithCleanup).toHaveBeenCalledTimes(1);
+    expect(mockSignOutWithCleanup).toHaveBeenCalledWith('user-1', { accessToken: 'access-1' });
+    expect(mockGetSession).toHaveBeenCalledTimes(1);
+    expect(results.filter((r) => r === 'signed-out')).toHaveLength(1);
+    expect(tabA.rebridge).not.toHaveBeenCalled();
+    expect(tabA.goToWelcome.mock.calls.length + tabB.goToWelcome.mock.calls.length).toBe(1);
+  });
+
+  it('session-expired と sign-out が同時に始まっても、getSession() は 1 回で、sign-out は控えた値を使う', async () => {
+    const firstRead = deferred<{ data: { session: typeof SESSION } }>();
+    mockGetSession.mockReturnValueOnce(firstRead.promise).mockResolvedValue(SESSION_GONE);
+    makeGetUserRemoveTheSession();
+    const tabA = makeDeps();
+    const tabB = makeDeps();
+
+    const pending = [
+      handleWebAuthMessage({ type: 'session-expired' }, PAGE, tabA.deps),
+      handleWebAuthMessage({ type: 'sign-out' }, PAGE, tabB.deps),
+    ];
+    await flushMicrotasks();
+    firstRead.resolve({ data: { session: SESSION } });
+    await Promise.all(pending);
+
+    expect(mockGetSession).toHaveBeenCalledTimes(1);
+    expect(mockSignOutWithCleanup).toHaveBeenCalledTimes(1);
+    expect(mockSignOutWithCleanup).toHaveBeenCalledWith('user-1', { accessToken: 'access-1' });
+    expect(tabA.rebridge).not.toHaveBeenCalled();
+  });
+
+  it('確かめている間に sign-out が始まったら、確認の結果が「生きている」でも読み込み直さない (ログアウトしたのに読み込み直させない)', async () => {
+    const userCheck = deferred<{ data: { user: { id: string } }; error: null }>();
+    mockGetUser.mockReturnValue(userCheck.promise);
+    const finishSignOut = deferred<{ error: null }>();
+    mockSignOutWithCleanup.mockReturnValue(finishSignOut.promise);
+    const tabA = makeDeps();
+    const tabB = makeDeps();
+
+    const sessionExpired = handleWebAuthMessage({ type: 'session-expired' }, PAGE, tabA.deps);
+    await flushMicrotasks();
+    const signOut = handleWebAuthMessage({ type: 'sign-out' }, PAGE, tabB.deps);
+    await flushMicrotasks();
+    userCheck.resolve({ data: { user: { id: 'user-1' } }, error: null });
+    await flushMicrotasks();
+    finishSignOut.resolve({ error: null });
+    const [expiredResult, signOutResult] = await Promise.all([sessionExpired, signOut]);
+
+    expect(expiredResult).toBe('ignored');
+    expect(signOutResult).toBe('signed-out');
+    expect(tabA.rebridge).not.toHaveBeenCalled();
+    expect(mockSignOutWithCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('確かめている間に sign-out が済んだら、確認の結果が「失効」でも、もう一度ログアウトしない (push token も二重に消さない)', async () => {
+    const userCheck = deferred<{ data: { user: null }; error: Error }>();
+    mockGetUser.mockReturnValue(userCheck.promise);
+    const tabA = makeDeps();
+    const tabB = makeDeps();
+
+    const sessionExpired = handleWebAuthMessage({ type: 'session-expired' }, PAGE, tabA.deps);
+    await flushMicrotasks();
+    expect(await handleWebAuthMessage({ type: 'sign-out' }, PAGE, tabB.deps)).toBe('signed-out');
+    userCheck.resolve({ data: { user: null }, error: SESSION_NOT_FOUND() });
+
+    expect(await sessionExpired).toBe('ignored');
+    expect(mockSignOutWithCleanup).toHaveBeenCalledTimes(1);
+    expect(tabA.goToWelcome).not.toHaveBeenCalled();
+    expect(tabA.rebridge).not.toHaveBeenCalled();
+  });
+
+  it('控えはメッセージの処理が終わったら捨てる: 次のメッセージは、そのときのセッションで取り直す (前のユーザーの控えを使わない)', async () => {
+    const { deps } = makeDeps();
+
+    await handleWebAuthMessage({ type: 'sign-out' }, PAGE, deps);
+    expect(mockSignOutWithCleanup).toHaveBeenLastCalledWith('user-1', { accessToken: 'access-1' });
+
+    mockGetSession.mockResolvedValue({ data: { session: { user: { id: 'user-2' }, access_token: 'access-2' } } });
+    await handleWebAuthMessage({ type: 'sign-out' }, PAGE, deps);
+
+    expect(mockSignOutWithCleanup).toHaveBeenLastCalledWith('user-2', { accessToken: 'access-2' });
+    expect(mockGetSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('ログアウトが済んだ後は、処理中のメッセージが残っていても、古い控えを使わない (ログアウト済みなので、ユーザー ID も null)', async () => {
+    const userCheck = deferred<{ data: { user: { id: string } }; error: null }>();
+    mockGetUser.mockReturnValue(userCheck.promise);
+    const { deps } = makeDeps();
+
+    const pendingSessionExpired = handleWebAuthMessage({ type: 'session-expired' }, PAGE, deps); // 控えを持ったまま確認待ち
+    await flushMicrotasks();
+    await handleWebAuthMessage({ type: 'sign-out' }, PAGE, deps);
+    mockGetSession.mockResolvedValue(SESSION_GONE); // ログアウト済み
+    await handleWebAuthMessage({ type: 'sign-out' }, PAGE, deps); // 後から届いた 2 通目 (別のタブなど)
+
+    expect(mockSignOutWithCleanup).toHaveBeenCalledTimes(2);
+    expect(mockSignOutWithCleanup).toHaveBeenLastCalledWith(null, { accessToken: undefined });
+
+    userCheck.resolve({ data: { user: { id: 'user-1' } }, error: null });
+    await pendingSessionExpired;
   });
 });

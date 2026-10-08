@@ -48,9 +48,17 @@ describe('signOutWithCleanup', () => {
     const result = await signOutWithCleanup('user-1');
 
     expect(calls).toEqual(['unregister', 'clearStorage', 'signOut']);
-    expect(mockUnregister).toHaveBeenCalledWith('user-1');
+    // アクセストークンを渡さなければ、削除は現在のセッションで認可される (設定画面・マイページ)
+    expect(mockUnregister).toHaveBeenCalledWith('user-1', { accessToken: undefined });
     expect(mockClearStorage).toHaveBeenCalledWith('user-1');
     expect(result).toEqual({ error: null });
+  });
+
+  it('呼び出し側が控えたアクセストークンは、push token の削除にそのまま渡す (Web からの sign-out でセッションが先に失効しても、削除を認可できる)', async () => {
+    await signOutWithCleanup('user-1', { accessToken: 'saved-access-token' });
+
+    expect(mockUnregister).toHaveBeenCalledWith('user-1', { accessToken: 'saved-access-token' });
+    expect(calls).toEqual(['unregister', 'clearStorage', 'signOut']);
   });
 
   it('push token の削除が失敗 (failed / skipped) でも、ログアウトは最後まで行う', async () => {
@@ -75,7 +83,7 @@ describe('signOutWithCleanup', () => {
   it('ユーザー ID が分からなくても (null) 実行できる。端末データの掃除は null で行う', async () => {
     await signOutWithCleanup(null);
 
-    expect(mockUnregister).toHaveBeenCalledWith(null);
+    expect(mockUnregister).toHaveBeenCalledWith(null, { accessToken: undefined });
     expect(mockClearStorage).toHaveBeenCalledWith(null);
     expect(mockSignOut).toHaveBeenCalledTimes(1);
   });

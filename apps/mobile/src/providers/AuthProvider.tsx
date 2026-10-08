@@ -35,9 +35,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!cachedSession && error && classifyAuthError(error) === "transient") {
           // access_token が期限切れで、更新しようとして通信に失敗した場合、getSession() は session: null を返す。
           // ただし保存済みのセッション (refresh_token) は消えていないので、それを信頼して画面を出す。
-          // 通信が戻れば supabase-js が自動で更新し (TOKEN_REFRESHED)、下の onAuthStateChange で差し替わる。
-          cachedSession = await getStoredSession();
+          // 通信が戻れば supabase-js が自動で更新し (TOKEN_REFRESHED)、下の onAuthStateChange で差し替わる
+          // (サーバーが refresh_token を失効と答えれば SIGNED_OUT になるので、失効の取りこぼしにはならない)。
+          //
+          // サーバーでの検証 (下の getUser()) は省く。getUser() も同じ更新をもう一度試み、同じ理由で失敗する。
+          // supabase-js は更新に失敗すると約 25 秒かけてやり直すので、検証を続けると、
+          // 読み込み中の表示がその分 (約 50 秒) さらに長くなる (実測で、getSession() と getUser() を合わせて約 100 秒)。
+          const stored = await getStoredSession();
           if (!isMounted) return;
+          setSession(stored);
+          return;
         }
 
         if (!cachedSession) {

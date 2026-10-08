@@ -102,7 +102,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   Object.keys(mockWebViewProps).forEach((k) => delete mockWebViewProps[k]);
   mockRouteParams = {};
-  mockGetSession.mockResolvedValue({ data: { session: { user: { id: 'user-1' } } } });
+  mockGetSession.mockResolvedValue({ data: { session: { user: { id: 'user-1' }, access_token: 'access-1' } } });
   mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
   mockSignOutWithCleanup.mockResolvedValue({ error: null });
 });
@@ -114,7 +114,7 @@ describe('WebViewScreen — sign-out (#1038 F7-04)', () => {
     postFromWeb({ type: 'sign-out' });
 
     await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/'));
-    expect(mockSignOutWithCleanup).toHaveBeenCalledWith('user-1');
+    expect(mockSignOutWithCleanup).toHaveBeenCalledWith('user-1', { accessToken: 'access-1' });
   });
 
   it('外部ページから届いた sign-out は無視する', async () => {
@@ -170,7 +170,7 @@ describe('WebViewScreen — session-expired (#1038 F7-05)', () => {
     postFromWeb({ type: 'session-expired' });
 
     await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/'));
-    expect(mockSignOutWithCleanup).toHaveBeenCalledWith('user-1');
+    expect(mockSignOutWithCleanup).toHaveBeenCalledWith('user-1', { accessToken: 'access-1' });
     expect(mockSetParams).not.toHaveBeenCalled();
   });
 

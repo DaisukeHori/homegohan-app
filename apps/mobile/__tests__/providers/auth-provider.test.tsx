@@ -220,6 +220,20 @@ describe('AuthProvider — 起動時のセッション復元', () => {
       expect(mockSignOut).not.toHaveBeenCalled();
     });
 
+    it('その場合、サーバーでの検証 (getUser()) は省く: getUser() も同じ更新をやり直して同じ理由で失敗し、読み込み中の表示を約 50 秒延ばすだけ', async () => {
+      const stored = makeSession('user-1', 'stored-access');
+      mockGetSession.mockResolvedValue({ data: { session: null }, error: retryableFetchError() });
+      mockGetStoredSession.mockResolvedValue(stored);
+      // 呼ばれたら、実機では約 50 秒かかる。呼ばれないことが大事なので、呼ばれたら解決しない Promise にして、画面が止まることで検出する
+      mockGetUser.mockReturnValue(new Promise(() => {}));
+
+      const api = renderProvider();
+
+      await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+      expect(text(api, 'session')).toBe('stored-access');
+      expect(mockGetUser).not.toHaveBeenCalled();
+    });
+
     it('保存済みのセッションが無ければ、通信エラーでも未ログイン', async () => {
       mockGetSession.mockResolvedValue({ data: { session: null }, error: retryableFetchError() });
       mockGetStoredSession.mockResolvedValue(null);

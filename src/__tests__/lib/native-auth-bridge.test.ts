@@ -61,6 +61,23 @@ describe('notifyNativeSignOut', () => {
     expect(notifyNativeSignOut()).toBe(false)
   })
 
+  it('このページでは二度目を送らない: signOut の前に呼んだあと、broadcastSignOut() がもう一度呼んでも、ネイティブへ二重に届けない', () => {
+    const postMessage = installBridge()
+
+    expect(notifyNativeSignOut()).toBe(true)
+    expect(notifyNativeSignOut()).toBe(false)
+
+    expect(postMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('普通のブラウザで呼んでも、あとで WebView になる (テストでの差し替えなど) ときの送信を妨げない', () => {
+    expect(notifyNativeSignOut()).toBe(false)
+    const postMessage = installBridge()
+
+    expect(notifyNativeSignOut()).toBe(true)
+    expect(postMessage).toHaveBeenCalledTimes(1)
+  })
+
   it('postMessage が例外を投げても、呼び出し側 (ログアウト処理) を止めない', () => {
     installBridge(
       vi.fn(() => {

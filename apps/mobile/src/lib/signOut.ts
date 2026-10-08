@@ -12,14 +12,27 @@
  * アカウント削除では使わない。auth.users の削除で user_push_tokens が ON DELETE CASCADE で消える。
  *
  * push token の削除に失敗してもログアウトは止めない (unregisterExpoPushToken は例外を投げない)。
+ *
+ * 設定画面・マイページのように、セッションが生きているまま呼ぶ場合は userId だけでよい (削除は現在のセッションで認可される)。
+ * Web (WebView) からの sign-out / session-expired を処理する場合 (webViewAuthMessages.ts) は、Web 側のログアウトが
+ * 全端末のセッションをサーバーで失効させ、処理の途中で getUser() が端末のセッションを消すことがある。
+ * 呼び出し側が処理の最初に控えた userId と accessToken を渡す。accessToken があれば、削除はそのトークンで認可される。
  */
 
 import { unregisterExpoPushToken } from "./pushNotifications";
 import { supabase } from "./supabase";
 import { clearUserScopedAsyncStorage } from "./user-storage";
 
-export async function signOutWithCleanup(userId: string | null | undefined): Promise<{ error: unknown | null }> {
-  await unregisterExpoPushToken(userId);
+export type SignOutOptions = {
+  /** push token の削除を認可する、本人のアクセストークン。セッションが先に失効する場合に、呼び出し側が控えた値を渡す */
+  accessToken?: string | null;
+};
+
+export async function signOutWithCleanup(
+  userId: string | null | undefined,
+  options: SignOutOptions = {},
+): Promise<{ error: unknown | null }> {
+  await unregisterExpoPushToken(userId, { accessToken: options.accessToken });
 
   try {
     await clearUserScopedAsyncStorage(userId ?? null);
