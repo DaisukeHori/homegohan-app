@@ -26,11 +26,17 @@
  * 日次の上限は Upstash Redis (UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN) が設定されている
  * ときだけ、サーバーインスタンスをまたいで共有される。未設定の in-memory フォールバックでは
  * インスタンスごとのベストエフォートになる。
+ *
+ * 【DB 側の 24 時間上限 (#1163)】
+ * Upstash が未設定でも日次の上限が効くよう、招待・昇格リクエスト・譲渡提案を作る RPC は、
+ * DB の enforce_membership_daily_cap (membership_audit の件数) でも 24 時間の上限を確かめ、超過したら
+ * `RATE_LIMITED` (HINT = 'retry_after_sec=<秒>') で失敗する。RPC のエラーをこのモジュールの
+ * inviteThrottleFailureFromRpcError で受け、アプリ層の上限と同じ形の 429 にする。
  */
 import { createHash } from 'crypto';
 import { NextResponse } from 'next/server';
 import { createLogger } from '@/lib/db-logger';
-import { ErrorStatusMap, MembershipErrorCode } from '@/lib/errors/membership-errors';
+import { ErrorStatusMap, MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import {
   checkRateLimit,
   getRetryAfterSec,
@@ -41,8 +47,8 @@ import {
 /** 宛先メールアドレスを指定してメールを送る流れ */
 export type InviteFlow = 'family-invite' | 'org-invite' | 'child-promotion';
 
-/** どの判定で止まったか (ログ用) */
-type ThrottleLayer = 'user' | 'scope' | 'target';
+/** どの判定で止まったか (ログ用)。'db' は DB の 24 時間上限 (RPC が返す RATE_LIMITED) */
+type ThrottleLayer = 'user' | 'scope' | 'target' | 'db';
 
 export interface InviteThrottleFailure {
   /** 何秒後に再試行できるか (Retry-After ヘッダーと body.error.retryAfter の値) */
@@ -180,6 +186,59 @@ export async function checkTransferProposeLimit(userId: string): Promise<InviteT
     { layer: 'user', category: 'transfer-propose', key: userId },
     { flow: 'transfer-propose', userId },
   );
+}
+
+// DB 側の 24 時間上限 (enforce_membership_daily_cap) はローリング 24 時間
+const DB_DAILY_WINDOW_SEC = 24 * 60 * 60;
+// HINT から再試行までの秒数を読めないときの代わりの値 (1 時間)。上限は最長 24 時間で解ける
+const DB_RETRY_AFTER_FALLBACK_SEC = 60 * 60;
+
+/** DB の上限名 (DETAIL。例: 'org_invite:per_target')。想定外の文字列をログに残さないための形 */
+const DB_RULE_NAME_PATTERN = /^[a-z_]{1,32}:[a-z_]{1,32}$/;
+
+/** PostgREST が返す RPC のエラーのうち、判定に使う項目 (supabase-js の PostgrestError と同じ名前) */
+export interface RpcErrorLike {
+  message?: string | null;
+  code?: string | null;
+  /** RAISE の DETAIL。DB の上限名 (例: 'family_invite:per_actor') */
+  details?: string | null;
+  /** RAISE の HINT。DB の上限では 'retry_after_sec=<秒>' */
+  hint?: string | null;
+}
+
+/**
+ * RPC のエラーが DB の 24 時間上限 (enforce_membership_daily_cap の RATE_LIMITED) なら、
+ * アプリ層の上限と同じ 429 にするための失敗情報を返す。それ以外のエラーなら null (呼び出し側が従来どおり処理する)。
+ *
+ * - retryAfterSec は HINT の `retry_after_sec=<秒>` (最古の対象行が 24 時間の窓から出るまでの秒数)。
+ *   読めない・1 未満のときは 1 時間にする。
+ * - 文言は日次の超過と同じ (宛先の登録状況を推測させない)。
+ * - 上限名 (DETAIL) と秒数だけをログに残す。宛先のメールアドレスは残さない。
+ */
+export function inviteThrottleFailureFromRpcError(
+  error: RpcErrorLike,
+  context: { flow: InviteFlow | 'transfer-propose'; userId: string },
+): InviteThrottleFailure | null {
+  if (mapPgErrorToHttp(error.message ?? '', error.code ?? undefined).code !== MembershipErrorCode.RATE_LIMITED) {
+    return null;
+  }
+
+  const hinted = Number(/\bretry_after_sec=(\d+)\b/.exec(error.hint ?? '')?.[1]);
+  const failure: InviteThrottleFailure = {
+    retryAfterSec: Number.isSafeInteger(hinted) && hinted >= 1 ? hinted : DB_RETRY_AFTER_FALLBACK_SEC,
+    windowSec: DB_DAILY_WINDOW_SEC,
+    message: throttleMessageForWindow(DB_DAILY_WINDOW_SEC),
+  };
+  const rule = error.details && DB_RULE_NAME_PATTERN.test(error.details) ? error.details : undefined;
+  const layer: ThrottleLayer = 'db';
+  createLogger('invite-throttle').withUser(context.userId).warn('DB の 24 時間上限に達しました', {
+    flow: context.flow,
+    layer,
+    window_sec: failure.windowSec,
+    retry_after_sec: failure.retryAfterSec,
+    ...(rule ? { rule } : {}),
+  });
+  return failure;
 }
 
 /**

@@ -3,6 +3,8 @@
 // Cookie 同意連携: docs/design/cross/08-legal-compliance.md §13
 
 import posthog from 'posthog-js';
+// #1197: 既定ホストは Web / モバイル共通の定数 (packages/shared) に一本化している
+import { POSTHOG_DEFAULT_HOST } from '@homegohan/shared';
 
 export { posthog };
 
@@ -61,7 +63,7 @@ export function initPostHog(): void {
   }
 
   const key = process.env['NEXT_PUBLIC_POSTHOG_KEY'];
-  const host = process.env['NEXT_PUBLIC_POSTHOG_HOST'] ?? 'https://us.i.posthog.com';
+  const host = process.env['NEXT_PUBLIC_POSTHOG_HOST'] ?? POSTHOG_DEFAULT_HOST;
 
   // 環境変数未設定 or 開発環境はスキップ (graceful degradation)
   if (!key || process.env.NODE_ENV !== 'production') {

@@ -587,6 +587,97 @@ describe('POST /api/family/members/[member_id]/promote: 送信回数の制限 (#
   });
 });
 
+describe('POST /api/family/members/[member_id]/promote: DB の 24 時間上限 (#1163)', () => {
+  // enforce_membership_daily_cap が RAISE する RATE_LIMITED を、PostgREST が RPC のエラーとして返した形
+  const dbRateLimited = (overrides: Record<string, unknown> = {}) => ({
+    data: null,
+    error: {
+      message: 'RATE_LIMITED',
+      code: 'P0001',
+      details: 'child_promotion:per_target',
+      hint: 'retry_after_sec=2500',
+      ...overrides,
+    },
+  });
+
+  it('RPC が RATE_LIMITED: アプリ層の上限と同じ 429 / 入れ子の RATE_LIMITED / Retry-After (HINT の秒数) を返す', async () => {
+    mockRpc.mockResolvedValue(dbRateLimited());
+
+    const res = await POST(postRequest({ email: childEmail }), makeParams(memberId));
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(json).toEqual({
+      error: {
+        code: 'RATE_LIMITED',
+        message: '本日の送信上限に達しました。しばらく時間をおいてからお試しください。',
+        retryAfter: 2500,
+      },
+    });
+    expect(res.headers.get('Retry-After')).toBe('2500');
+  });
+
+  it('同意依頼メールを送らず、5xx 用のエラーログも出さない', async () => {
+    mockRpc.mockResolvedValue(dbRateLimited());
+
+    await POST(postRequest({ email: childEmail }), makeParams(memberId));
+
+    expect(renderFamilyPromoteEmail).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockLogError).not.toHaveBeenCalled();
+  });
+
+  it('HINT が読めないときも 429 にする (Retry-After は 1 時間)', async () => {
+    mockRpc.mockResolvedValue(dbRateLimited({ hint: '' }));
+
+    const res = await POST(postRequest({ email: childEmail }), makeParams(memberId));
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(json.error.retryAfter).toBe(3600);
+    expect(res.headers.get('Retry-After')).toBe('3600');
+  });
+
+  it('withUser(user.id).warn に上限名と秒数を記録する (メールアドレス・member_id は残さない)', async () => {
+    mockRpc.mockResolvedValue(dbRateLimited());
+
+    await POST(postRequest({ email: childEmail }), makeParams(memberId));
+
+    expect(mockWithUser).toHaveBeenCalledWith(validUser.id);
+    expect(mockLogWarn).toHaveBeenCalledTimes(1);
+    expect(mockLogWarn.mock.calls[0][1]).toMatchObject({
+      flow: 'child-promotion',
+      layer: 'db',
+      rule: 'child_promotion:per_target',
+      retry_after_sec: 2500,
+    });
+    const logged = JSON.stringify(mockLogWarn.mock.calls);
+    expect(logged).not.toContain('taro');
+    expect(logged).not.toContain(memberId);
+  });
+
+  it('本文に宛先も内部の上限名も出さない', async () => {
+    mockRpc.mockResolvedValue(dbRateLimited());
+
+    const json = await (await POST(postRequest({ email: childEmail }), makeParams(memberId))).json();
+
+    expect(JSON.stringify(json)).not.toContain(childEmail);
+    expect(JSON.stringify(json)).not.toContain('per_target');
+    expect(json.error.message).not.toMatch(/登録|存在|アカウント|既に|すでに/);
+  });
+
+  it('RATE_LIMITED 以外の RPC エラーは従来どおり (固定文言の拒否・Retry-After なし)', async () => {
+    mockRpc.mockResolvedValue(rpcError('ALREADY_PROMOTED'));
+
+    const res = await POST(postRequest({ email: childEmail }), makeParams(memberId));
+    const json = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(json).toEqual({ error: { code: 'ALREADY_PROMOTED', message: '参加リクエストの作成に失敗しました' } });
+    expect(res.headers.get('Retry-After')).toBeNull();
+  });
+});
+
 describe('DELETE /api/family/members/[member_id]/promote', () => {
   it('未認証: 401 NOT_AUTHENTICATED を返し RPC を呼ばない', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: new Error('no session') });

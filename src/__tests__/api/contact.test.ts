@@ -88,11 +88,11 @@ describe('POST /api/contact (#1044 F6-19)', () => {
   });
 
   it('本番環境で Upstash 未設定 (テスト環境の常態) でも in-memory フォールバックで受け付ける', async () => {
-    // このテストスイートは UPSTASH_REDIS_REST_URL/TOKEN を設定していないため
-    // upstashRatelimiter は null のまま。#1044 round-2: Upstash 未設定を理由に
-    // hard 503 で拒否すると本番で問い合わせフォームが全壊するため、
-    // src/lib/rate-limit.ts と同じ canonical 方針 (in-memory フォールバック + warn ログ)
-    // に揃え、NODE_ENV=production でもリクエストを通す。
+    // このテストスイートは UPSTASH_REDIS_REST_URL/TOKEN を設定していないため、
+    // 共通ヘルパー (src/lib/rate-limit.ts) は in-memory フォールバックで数える。
+    // #1044 round-2: Upstash 未設定を理由に hard 503 で拒否すると本番で問い合わせフォームが
+    // 全壊するため、in-memory フォールバック + warn ログの canonical 方針に揃え、
+    // NODE_ENV=production でもリクエストを通す (#1197 で route の独自実装を共通ヘルパーに置き換えた後も同じ)。
     vi.stubEnv('NODE_ENV', 'production');
     const res = await POST(makeRequest(validBody));
     const json = await res.json();

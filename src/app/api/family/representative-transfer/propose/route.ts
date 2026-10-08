@@ -7,7 +7,11 @@ import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-e
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail } from '@/lib/emails/send';
 import { renderFamilyTransferProposedEmail } from '@/lib/emails/membership/family-transfer-proposed';
-import { checkTransferProposeLimit, inviteThrottleResponse } from '@/lib/membership/invite-throttle';
+import {
+  checkTransferProposeLimit,
+  inviteThrottleFailureFromRpcError,
+  inviteThrottleResponse,
+} from '@/lib/membership/invite-throttle';
 
 export async function POST(request: Request) {
   const logger = createLogger('POST /api/family/representative-transfer/propose', generateRequestId());
@@ -54,6 +58,12 @@ export async function POST(request: Request) {
   });
 
   if (error) {
+    // #1163 DB の 24 時間上限 (enforce_membership_daily_cap。家族の代表者譲渡と組織のオーナー譲渡の合計) に
+    // 達したときは、アプリ層の上限と同じ 429 にする
+    const dbThrottle = inviteThrottleFailureFromRpcError(error, { flow: 'transfer-propose', userId: user.id });
+    if (dbThrottle) {
+      return inviteThrottleResponse(dbThrottle);
+    }
     const { code, status } = mapPgErrorToHttp(error.message ?? '');
     return NextResponse.json(
       { error: { code, message: '代表者譲渡の提案に失敗しました' } },
