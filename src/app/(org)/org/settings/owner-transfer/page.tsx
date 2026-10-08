@@ -22,6 +22,7 @@ export default function OwnerTransferPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     const fetchCandidates = async () => {
@@ -45,16 +46,24 @@ export default function OwnerTransferPage() {
 
         setOrganizationId(profile.organization_id);
 
-        // owner 以外の org メンバーを候補として表示
-        const { data: members } = await supabase
-          .from('user_profiles')
-          .select('id, nickname, org_role, joined_org_at')
-          .eq('organization_id', profile.organization_id)
-          .neq('id', user.id)
-          .neq('org_role', 'owner')
-          .order('joined_org_at', { ascending: true });
-
-        setCandidates(members ?? []);
+        // owner 以外の org メンバーを候補として表示する。
+        // メンバー一覧は API から読む。user_profiles の SELECT ポリシーは「本人の行だけ」(Users can view own profile) で、
+        // ブラウザの Supabase クライアントでは他のメンバーの行を読めず、候補がいつも空になっていた。
+        // GET /api/org/members は、組織の管理者かを確認したあとで、所属組織のメンバー全員を返す。
+        const res = await fetch('/api/org/members');
+        if (!res.ok) throw new Error(`org members failed: HTTP ${res.status}`);
+        const body = await res.json();
+        const members: CandidateMember[] = body.members ?? [];
+        // 参加日の古い順 (参加日が無い人は最後)。同じ日なら API が返した順のまま
+        const joinedAt = (member: CandidateMember) => member.joined_org_at ?? '9999-12-31';
+        setCandidates(
+          members
+            .filter((member) => member.id !== user.id && member.org_role !== 'owner')
+            .sort((a, b) => joinedAt(a).localeCompare(joinedAt(b))),
+        );
+      } catch (fetchError) {
+        console.error('Org owner transfer candidates fetch error:', fetchError);
+        setLoadError(true);
       } finally {
         setLoading(false);
       }
@@ -124,7 +133,9 @@ export default function OwnerTransferPage() {
 
       {candidates.length === 0 ? (
         <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-100 text-center text-gray-500">
-          譲渡可能なメンバーがいません。先にメンバーを招待してください。
+          {loadError
+            ? 'メンバー一覧を取得できませんでした。時間をおいて、もう一度お試しください。'
+            : '譲渡可能なメンバーがいません。先にメンバーを招待してください。'}
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-6">

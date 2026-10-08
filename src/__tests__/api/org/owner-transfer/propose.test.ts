@@ -8,8 +8,13 @@ const mockRpc = vi.fn();
 const mockFrom = vi.fn();
 const client = { auth: { getUser: mockGetUser }, rpc: mockRpc, from: mockFrom };
 
+// 譲渡先のニックネームを読む service_role の client。提案者が対象組織の owner だと確認したあとでだけ作る
+const mockAdminFrom = vi.fn();
+const mockGetSupabaseAdmin = vi.fn(() => ({ from: mockAdminFrom }));
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(() => client),
+  getSupabaseAdmin: () => mockGetSupabaseAdmin(),
 }));
 
 // 宛先ユーザーのメールアドレスを引く管理者クライアント (SUPABASE_SERVICE_ROLE_KEY がある場合だけ使われる)
@@ -59,6 +64,8 @@ const owner = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', email: 'owner@exampl
 const orgId = 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22';
 const toUserId = 'c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33';
 const proposalId = 'd0eebc99-9c0b-4ef8-bb6d-6bb9bd380a44';
+const otherOrgId = 'e0eebc99-9c0b-4ef8-bb6d-6bb9bd380a55';
+const outsiderId = 'f0eebc99-9c0b-4ef8-bb6d-6bb9bd380a66';
 
 const allow = (windowSec = 60): RateLimitResult => ({
   success: true,
@@ -90,7 +97,44 @@ function chain(result: unknown) {
   return c;
 }
 
+type Row = Record<string, unknown>;
+type RecordedFilters = Array<Array<[string, unknown]>>;
+
+/**
+ * 行の配列に対して、.eq() の絞り込みを実際に適用する簡易クエリ (single / maybeSingle で 1 行を返す)。
+ * 呼ばれた絞り込みを queries に記録する。RLS そのものは再現しないので、見える行を呼び出し側が決める。
+ */
+function rowsChain(rows: Row[], queries: RecordedFilters) {
+  const filters: Array<[string, unknown]> = [];
+  const matched = () => rows.filter((row) => filters.every(([column, value]) => row[column] === value));
+  const notOne = { code: 'PGRST116', message: 'JSON object requested, multiple (or no) rows returned' };
+  const c: Record<string, unknown> = {};
+  c.select = vi.fn(() => c);
+  c.eq = vi.fn((column: string, value: unknown) => {
+    filters.push([column, value]);
+    return c;
+  });
+  c.single = vi.fn(async () => {
+    queries.push([...filters]);
+    const found = matched();
+    return found.length === 1 ? { data: found[0], error: null } : { data: null, error: notOne };
+  });
+  c.maybeSingle = vi.fn(async () => {
+    queries.push([...filters]);
+    const found = matched();
+    if (found.length > 1) return { data: null, error: notOne };
+    return { data: found[0] ?? null, error: null };
+  });
+  return c;
+}
+
 let profile: { organization_id: string | null; org_role: string | null; nickname: string | null };
+/** 本人のセッションの client が user_profiles に出した絞り込み (RLS で本人の行しか読めない) */
+let sessionProfileQueries: RecordedFilters;
+/** service_role の client に見える user_profiles の行 */
+let adminProfiles: Row[];
+/** service_role の client が user_profiles に出した絞り込み */
+let adminProfileQueries: RecordedFilters;
 
 const postRequest = (body: unknown) =>
   new Request('http://localhost/api/org/owner-transfer/propose', {
@@ -109,10 +153,24 @@ beforeEach(() => {
   limiter({});
 
   profile = { organization_id: orgId, org_role: 'owner', nickname: '山田' };
+  // user_profiles の SELECT ポリシーは「本人の行だけ」(Users can view own profile)。本人のセッションには本人の行しか見えない
+  sessionProfileQueries = [];
   mockFrom.mockImplementation((table: string) => {
-    if (table === 'user_profiles') return chain({ data: profile, error: null });
+    if (table === 'user_profiles') return rowsChain([{ id: owner.id, ...profile }], sessionProfileQueries);
     if (table === 'organizations') return chain({ data: { name: 'テスト株式会社' }, error: null });
     throw new Error(`unexpected table: ${table}`);
+  });
+
+  // service_role には全ての行が見える: 譲渡先 (対象組織のメンバー) と、別の組織のユーザー
+  adminProfiles = [
+    { id: toUserId, organization_id: orgId, nickname: '次期オーナー' },
+    { id: outsiderId, organization_id: otherOrgId, nickname: '組織外の人' },
+  ];
+  adminProfileQueries = [];
+  mockAdminFrom.mockReset();
+  mockAdminFrom.mockImplementation((table: string) => {
+    if (table === 'user_profiles') return rowsChain(adminProfiles, adminProfileQueries);
+    throw new Error(`unexpected admin table: ${table}`);
   });
 
   mockRpc.mockReset();
@@ -270,6 +328,166 @@ describe('POST /api/org/owner-transfer/propose: DB の 24 時間上限 (#1163)',
       layer: 'db',
       rule: 'transfer_propose:per_actor',
       retry_after_sec: 1800,
+    });
+  });
+});
+
+describe('POST /api/org/owner-transfer/propose: 譲渡先のニックネーム (提案メールの宛名)', () => {
+  const sentText = () => String(mockSendEmail.mock.calls[0][0].text);
+
+  it('譲渡先のニックネームを service_role で読み、提案メールの宛名にする (メールアドレスにはならない)', async () => {
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(200);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendEmail.mock.calls[0][0].to).toBe('next-owner@example.com');
+    expect(sentText()).toContain('次期オーナー 様');
+    expect(sentText()).not.toContain('next-owner@example.com 様');
+  });
+
+  it('service_role で読むのは「譲渡先の id かつ対象組織の id」の 1 行だけ。nickname 以外の列は読まない', async () => {
+    await POST(postRequest(validBody));
+
+    expect(mockAdminFrom.mock.calls).toEqual([['user_profiles']]);
+    expect(adminProfileQueries).toEqual([
+      [
+        ['id', toUserId],
+        ['organization_id', orgId],
+      ],
+    ]);
+    const adminQuery = mockAdminFrom.mock.results[0].value as { select: ReturnType<typeof vi.fn> };
+    expect(adminQuery.select).toHaveBeenCalledWith('nickname');
+  });
+
+  it('本人のセッションで user_profiles を読むのは、提案者本人の行だけ (他人の行は service_role を使う)', async () => {
+    await POST(postRequest(validBody));
+
+    expect(sessionProfileQueries.length).toBeGreaterThan(0);
+    for (const filters of sessionProfileQueries) {
+      expect(filters).toEqual([['id', owner.id]]);
+    }
+    expect(JSON.stringify(sessionProfileQueries)).not.toContain(toUserId);
+  });
+
+  it('譲渡先が対象組織のメンバーでなければ、そのプロフィールは読まない (宛名はメールアドレス)。組織の外の人のニックネームは出ない', async () => {
+    // RPC は成功したと仮定した防御の確認 (実際の RPC は TARGET_NOT_IN_ORG で断る)。絞り込みの organization_id だけで守られる
+    const res = await POST(postRequest({ organization_id: orgId, to_user_id: outsiderId }));
+
+    expect(res.status).toBe(200);
+    expect(adminProfileQueries).toEqual([
+      [
+        ['id', outsiderId],
+        ['organization_id', orgId],
+      ],
+    ]);
+    expect(sentText()).toContain('next-owner@example.com 様');
+    expect(sentText()).not.toContain('組織外の人');
+  });
+
+  it('ニックネームが空でも、宛名はメールアドレスにする', async () => {
+    adminProfiles = [{ id: toUserId, organization_id: orgId, nickname: '' }];
+
+    await POST(postRequest(validBody));
+
+    expect(sentText()).toContain('next-owner@example.com 様');
+  });
+
+  it('ニックネームを読めなくても (DB の失敗)、提案は作成済みなので 200 を返し、宛名をメールアドレスにして送る。警告に残す', async () => {
+    mockAdminFrom.mockImplementation(() => ({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({ data: null, error: { code: '42501', message: 'permission denied for table user_profiles' } }),
+          }),
+        }),
+      }),
+    }));
+
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(200);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    expect(sentText()).toContain('next-owner@example.com 様');
+    expect(mockWithUser).toHaveBeenCalledWith(owner.id);
+    expect(mockLogWarn).toHaveBeenCalledTimes(1);
+    expect(mockLogWarn.mock.calls[0][1]).toMatchObject({ organization_id: orgId, to_user_id: toUserId });
+  });
+
+  it('service_role の client を作れなくても (環境変数の不足など)、200 を返し、宛名をメールアドレスにして送る', async () => {
+    mockGetSupabaseAdmin.mockImplementationOnce(() => {
+      throw new Error('Supabase admin env is missing');
+    });
+
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(200);
+    expect(sentText()).toContain('next-owner@example.com 様');
+    expect(mockLogWarn).toHaveBeenCalledTimes(1);
+  });
+
+  it('SUPABASE_SERVICE_ROLE_KEY が無いときは、メールを送らないので service_role の client も作らない', async () => {
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', '');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(200);
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('service_role の client は、提案を作ったあと (RPC の成功後) にだけ作る', async () => {
+    await POST(postRequest(validBody));
+
+    expect(mockGetSupabaseAdmin).toHaveBeenCalledTimes(1);
+    expect(mockRpc.mock.invocationCallOrder[0]).toBeLessThan(mockGetSupabaseAdmin.mock.invocationCallOrder[0]);
+  });
+
+  describe('認可・検証・RPC を通らなかったときは、service_role の client を作らず、プロフィールも読まない', () => {
+    const expectUntouched = () => {
+      expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
+      expect(mockAdminFrom).not.toHaveBeenCalled();
+      expect(adminProfileQueries).toEqual([]);
+      expect(mockSendEmail).not.toHaveBeenCalled();
+    };
+
+    it('未認証 (401)', async () => {
+      mockGetUser.mockResolvedValue({ data: { user: null }, error: new Error('no session') });
+
+      expect((await POST(postRequest(validBody))).status).toBe(401);
+      expectUntouched();
+    });
+
+    it('送信回数の上限 (429)', async () => {
+      limiter({ 'transfer-propose': deny(60) });
+
+      expect((await POST(postRequest(validBody))).status).toBe(429);
+      expectUntouched();
+    });
+
+    it('本文が不正 (400)', async () => {
+      expect((await POST(postRequest({ organization_id: 'not-a-uuid' }))).status).toBe(400);
+      expectUntouched();
+    });
+
+    it.each([
+      ['owner ではない (admin)', { organization_id: orgId, org_role: 'admin', nickname: null }],
+      ['owner だが、別の組織の owner', { organization_id: otherOrgId, org_role: 'owner', nickname: '山田' }],
+      ['組織に所属していない', { organization_id: null, org_role: null, nickname: null }],
+    ])('403: %s', async (_label, row) => {
+      profile = row;
+
+      expect((await POST(postRequest(validBody))).status).toBe(403);
+      expectUntouched();
+      expect(mockRpc).not.toHaveBeenCalled();
+    });
+
+    it('RPC の失敗 (提案を作れなかった)', async () => {
+      mockRpc.mockResolvedValue({ data: null, error: { message: 'TARGET_NOT_IN_ORG' } });
+
+      expect((await POST(postRequest(validBody))).status).toBe(404);
+      expectUntouched();
     });
   });
 });

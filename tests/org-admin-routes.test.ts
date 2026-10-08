@@ -142,6 +142,19 @@ function failAfterAuthorization(message: string) {
   };
 }
 
+/**
+ * service_role の client (認可のあとで使う) の最初の DB 呼び出しで例外を投げる。
+ * 認可は通り、service_role での読み出しで想定外の失敗が起きた状況の再現
+ */
+function failAdminAfterAuthorization(message: string) {
+  adminDb = {
+    ...adminDb,
+    from: vi.fn(() => {
+      throw new Error(message);
+    }) as unknown as SchemaDb['from'],
+  };
+}
+
 const json = (res: Response) => res.json() as Promise<any>;
 const url = (path: string) => `http://localhost${path}`;
 
@@ -399,13 +412,18 @@ describe('組織の絞り込み: 呼び出した人の organization_id だけを
     expect(inserted.values).toEqual({ name: '新部署', organization_id: ORG_A });
   });
 
-  it('members GET: 自組織のメンバーだけを返し、読む列は限定されている', async () => {
+  it('members GET: 自組織のメンバーだけを返し、読む列は限定されている。読むのは認可のあとの service_role', async () => {
     const body = await json(await members.GET(new Request(url('/api/org/members'))));
 
     expect(body.members.map((m: Row) => m.id).sort()).toEqual([OWNER_A, ADMIN_A, MEMBER_A, RESIDUAL_IN_ORG].sort());
-    const query = sessionDb.recorded('user_profiles', 'select').at(-1)!;
-    expect(query.eq).toContainEqual(['organization_id', ORG_A]);
-    expect(query.select).toBe('id, nickname, roles, created_at, updated_at, organization_id');
+    // user_profiles は RLS で本人の行しか見えない。利用者の権限で読むと組織に何人いても管理者 1 人になるため、
+    // 認可のあとに service_role で、呼び出した管理者の組織だけを読む (詳しくは tests/org-members-list-route.test.ts)
+    const listed = adminDb.recorded('user_profiles', 'select');
+    expect(listed).toHaveLength(1);
+    expect(listed[0].eq).toEqual([['organization_id', ORG_A]]);
+    expect(listed[0].select).toBe('id, nickname, roles, org_role, joined_org_at, created_at');
+    // 利用者の権限で読んだのは、認可のための自分のプロフィールだけ
+    expect(sessionDb.recorded('user_profiles', 'select').every((q) => q.eq.some(([column, value]) => column === 'id' && value === OWNER_A))).toBe(true);
   });
 
   it('members POST: 招待の組織・差出人は認可で確定した値 (本文の organization_id や nickname は使わない)', async () => {
@@ -603,8 +621,15 @@ describe('500 の本文は汎用メッセージだけ (生のエラー文は db-
     await expectGeneric(await run(), { error: 'Internal server error' }, routeName);
   });
 
+  it('members GET: 一覧の取得 (service_role) の失敗', async () => {
+    setup();
+    adminDb = createSchemaDb({ tables: worldTables(), errors: { user_profiles: { message: RAW } } });
+
+    await expectGeneric(await members.GET(new Request(url('/api/org/members'))), { error: 'Internal server error' }, 'GET /api/org/members');
+  });
+
   it('members GET: 認可の後の想定外の例外', async () => {
-    failAfterAuthorization(RAW);
+    failAdminAfterAuthorization(RAW);
 
     await expectGeneric(await members.GET(new Request(url('/api/org/members'))), { error: 'Internal server error' }, 'GET /api/org/members');
   });

@@ -1,6 +1,7 @@
 // POST /api/org/owner-transfer/propose
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
 import { renderOrgTransferProposedEmail } from '@/lib/emails/membership/org-transfer-proposed';
@@ -16,6 +17,48 @@ const BodySchema = z.object({
   to_user_id: z.string().uuid(),
   reason: z.string().max(500).optional().nullable(),
 });
+
+/**
+ * 譲渡先ユーザーのニックネーム (提案メールの宛名) を読む。読めなければ null (宛名はメールアドレスになる)。
+ *
+ * user_profiles の SELECT ポリシーは「本人の行だけ」(Users can view own profile) のため、提案者本人のセッションでは
+ * 他のユーザー (譲渡先) の行は読めず、宛名がいつも既定のものになっていた。そこで service_role で読む。
+ * 使うのは、提案者が対象組織の owner だと確認した (POST の権限チェックの) あとだけ。
+ * 読む範囲は「譲渡先の id かつ対象組織の id」の 1 行に絞り、組織の外のユーザーのプロフィールは読まない。
+ * 提案はすでに作成済みなので、読めなくても例外にせず、警告に残して null を返す (メールは宛名をアドレスにして送る)。
+ */
+async function readRecipientNickname(params: {
+  organizationId: string;
+  toUserId: string;
+  actorUserId: string;
+}): Promise<string | null> {
+  const warn = (reason: string) =>
+    createLogger('POST /api/org/owner-transfer/propose', generateRequestId())
+      .withUser(params.actorUserId)
+      .warn('譲渡先のニックネームを読めませんでした (提案メールの宛名はメールアドレスになります)', {
+        organization_id: params.organizationId,
+        to_user_id: params.toUserId,
+        reason,
+      });
+
+  try {
+    const { data, error } = await getSupabaseAdmin()
+      .from('user_profiles')
+      .select('nickname')
+      .eq('id', params.toUserId)
+      .eq('organization_id', params.organizationId)
+      .maybeSingle();
+    if (error) {
+      warn(error.message);
+      return null;
+    }
+    return typeof data?.nickname === 'string' && data.nickname !== '' ? data.nickname : null;
+  } catch (err) {
+    // service_role の設定が無い環境 (SUPABASE_SERVICE_ROLE_KEY など) では client を作れない
+    warn(err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
 
 export async function POST(request: Request) {
   const supabase = createClient();
@@ -86,13 +129,6 @@ export async function POST(request: Request) {
     );
   }
 
-  // 送信先ユーザーのプロフィール取得 (メール通知用)
-  const { data: toProfile } = await supabase
-    .from('user_profiles')
-    .select('nickname')
-    .eq('id', body.to_user_id)
-    .single();
-
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
   const acceptUrl = `${baseUrl}/org/transfer-accept/${proposalId}`;
   const fromName = profile.nickname ?? user.email?.split('@')[0] ?? 'オーナー';
@@ -118,9 +154,15 @@ export async function POST(request: Request) {
       const toEmail = toUserData?.user?.email ?? null;
 
       if (toEmail) {
+        // 宛名にするニックネーム。メールを送るときだけ、必要な 1 行を service_role で読む (読めなくても送る)
+        const toNickname = await readRecipientNickname({
+          organizationId: body.organization_id,
+          toUserId: body.to_user_id,
+          actorUserId: user.id,
+        });
         const envelope = renderOrgTransferProposedEmail({
           to_email: toEmail,
-          to_name: toProfile?.nickname ?? null,
+          to_name: toNickname,
           from_name: fromName,
           org_name: orgData?.name ?? '組織',
           accept_url: acceptUrl,
