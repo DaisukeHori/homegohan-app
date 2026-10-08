@@ -28,6 +28,7 @@ export function renderOrgTransferCompletedEmail(vars: OrgTransferCompletedVars):
   }
 
   return {
+    template: 'org_transfer_completed',
     to: vars.to_email,
     from: 'ほめゴハン <noreply@homegohan.app>',
     subject: `【ほめゴハン】組織オーナーが変更されました`,

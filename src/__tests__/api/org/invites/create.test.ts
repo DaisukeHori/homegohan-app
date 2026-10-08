@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EmailSendError } from '@/lib/emails/send-result';
 import type { RateLimitCategory, RateLimitResult } from '@/lib/rate-limit';
 
 // POST /api/org/invites の招待メール送信回数制限と入力検証 (#1163)
@@ -451,5 +452,33 @@ describe('POST /api/org/invites: 既存の挙動 (退行確認)', () => {
     expect(json.error).not.toHaveProperty('retryAfter');
     expect(res.headers.get('Retry-After')).toBeNull();
     expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/org/invites: メール送信の失敗 (#1193)', () => {
+  it('メール送信が ok: false の結果で返っても (sendEmail は配信の失敗で例外を投げない) 200 を返し (招待は有効)、警告に残す', async () => {
+    const sendError = new EmailSendError('rate_limit_exceeded', 'EMAIL_SEND_FAILED: Too many requests', 429, 4, true);
+    mockSendEmail.mockResolvedValue({ ok: false, id: null, attempts: 4, skipped: false, error: sendError });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = await POST(postRequest({ email: inviteeEmail, role: 'member' }));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[org-invite]'), sendError);
+    warn.mockRestore();
+  });
+
+  it('RESEND_API_KEY が無くて送らなかった (skipped) ときは、警告を残さず 200 を返す', async () => {
+    const skippedError = new EmailSendError('not_configured', 'EMAIL_NOT_CONFIGURED: RESEND_API_KEY が未設定', null, 0, false);
+    mockSendEmail.mockResolvedValue({ ok: false, id: null, attempts: 0, skipped: true, error: skippedError });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = await POST(postRequest({ email: inviteeEmail, role: 'member' }));
+
+    expect(res.status).toBe(200);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

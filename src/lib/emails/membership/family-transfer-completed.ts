@@ -24,6 +24,7 @@ export function renderFamilyTransferCompletedEmail(vars: FamilyTransferCompleted
 あなたは新しい代表者として家族グループの管理ができるようになりました。`;
 
   return {
+    template: 'family_transfer_completed',
     to: vars.to_email,
     from: 'ほめゴハン <noreply@homegohan.app>',
     subject: '【ほめゴハン】家族代表者が変更されました',

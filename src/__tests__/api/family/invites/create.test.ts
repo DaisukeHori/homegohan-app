@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EmailSendError } from '@/lib/emails/send-result';
 import type { RateLimitCategory, RateLimitResult } from '@/lib/rate-limit';
 
 // POST /api/family/invites の招待メール送信回数制限 (#1163)
@@ -480,6 +481,30 @@ describe('POST /api/family/invites: 既存の挙動 (退行確認)', () => {
     const res = await POST(postRequest(validBody));
 
     expect(res.status).toBe(201);
+    warn.mockRestore();
+  });
+
+  it('メール送信が ok: false の結果で返っても (sendEmail は配信の失敗で例外を投げない) 201 を返し (招待は残る)、警告に残す (#1193)', async () => {
+    const sendError = new EmailSendError('rate_limit_exceeded', 'EMAIL_SEND_FAILED: Too many requests', 429, 4, true);
+    mockSendEmail.mockResolvedValue({ ok: false, id: null, attempts: 4, skipped: false, error: sendError });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(201);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('email send failed'), sendError);
+    warn.mockRestore();
+  });
+
+  it('RESEND_API_KEY が無くて送らなかった (skipped) ときは、警告を残さず 201 を返す (#1193)', async () => {
+    const skippedError = new EmailSendError('not_configured', 'EMAIL_NOT_CONFIGURED: RESEND_API_KEY が未設定', null, 0, false);
+    mockSendEmail.mockResolvedValue({ ok: false, id: null, attempts: 0, skipped: true, error: skippedError });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(201);
+    expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 });

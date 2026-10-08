@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EmailSendError } from '@/lib/emails/send-result';
 import type { RateLimitCategory, RateLimitResult } from '@/lib/rate-limit';
 
 // POST /api/family/representative-transfer/propose の譲渡提案メール送信回数制限 (#1163)
@@ -345,6 +346,33 @@ describe('POST /api/family/representative-transfer/propose: 提案メールの�
       to_user_id: toUserId,
     });
     expect(JSON.stringify(mockLogError.mock.calls)).not.toContain('@example.com');
+  });
+
+  it('メール送信が ok: false の結果で返っても (sendEmail は配信の失敗で例外を投げない) 201 を返し、提案との対応つきで構造化ログに残す (#1193)', async () => {
+    const sendError = new EmailSendError('rate_limit_exceeded', 'EMAIL_SEND_FAILED: Too many requests', 429, 4, true);
+    mockSendEmail.mockResolvedValue({ ok: false, id: null, attempts: 4, skipped: false, error: sendError });
+
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(201);
+    expect(mockWithUser).toHaveBeenCalledWith(rep.id);
+    expect(mockLogError).toHaveBeenCalledTimes(1);
+    expect(mockLogError).toHaveBeenCalledWith(expect.any(String), sendError, {
+      family_id: familyId,
+      to_user_id: toUserId,
+    });
+    expect(JSON.stringify(mockLogError.mock.calls)).not.toContain('@example.com');
+  });
+
+  it('RESEND_API_KEY が無くて送らなかった (skipped) ときは、エラーログを残さない (#1193)', async () => {
+    const skippedError = new EmailSendError('not_configured', 'EMAIL_NOT_CONFIGURED: RESEND_API_KEY が未設定', null, 0, false);
+    mockSendEmail.mockResolvedValue({ ok: false, id: null, attempts: 0, skipped: true, error: skippedError });
+
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(201);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockLogError).not.toHaveBeenCalled();
   });
 
   it('RPC が失敗したときは、宛先のメールアドレスも探さない', async () => {
