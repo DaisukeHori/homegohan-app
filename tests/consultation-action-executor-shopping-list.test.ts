@@ -8,6 +8,8 @@
  *   - SELECT → INSERT の check-then-act のため、同時実行で 23505 に負けた側が失敗する
  *
  * 共通ヘルパー (src/lib/shopping-list/active-list.ts) に置き換えた後の挙動を確かめる。
+ * #1312 以降、ヘルパーは DB 関数 get_or_create_active_shopping_list を呼ぶ (再生成の「アーカイブ -> INSERT」と
+ * 同じユーザーごとのロックで直列化される。ロックの確認は tests/integration/security/shopping-list-active-lock.test.ts)。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeShoppingListsDb, pgError, type FakeShoppingListsDb } from './helpers/fake-shopping-lists-db';
@@ -78,18 +80,14 @@ describe('runConsultationAction: add_to_shopping_list', () => {
     expect(db.items.every((i) => i.shopping_list_id === existing.id)).toBe(true);
   });
 
-  it('SELECT の後 INSERT の前に別リクエストがリストを作っても (23505)、失敗せず既存のリストへ追加する', async () => {
-    let winner = '';
-    db.beforeNextListInsert(() => {
-      winner = db.seedActiveList(USER_ID).id;
-    });
-
-    const { success, result } = await runConsultationAction(db.supabase, { id: USER_ID }, addToShoppingListAction(ITEMS));
+  it('リストの取得・作成は DB 関数 get_or_create_active_shopping_list を 1 回呼ぶだけで、shopping_lists へ直接 INSERT しない (#1312)', async () => {
+    const { success } = await runConsultationAction(db.supabase, { id: USER_ID }, addToShoppingListAction(ITEMS));
 
     expect(success).toBe(true);
-    expect(result).toEqual({ itemsAdded: 2 });
-    expect(db.lists).toHaveLength(1);
-    expect(db.items.every((i) => i.shopping_list_id === winner)).toBe(true);
+    expect(db.calls.filter((c) => c.op === 'rpc').map((c) => c.table)).toEqual([
+      'rpc:get_or_create_active_shopping_list',
+    ]);
+    expect(db.calls.some((c) => c.table === 'shopping_lists')).toBe(false);
     expect(logError).not.toHaveBeenCalled();
   });
 

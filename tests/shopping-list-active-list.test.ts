@@ -1,16 +1,24 @@
 /**
- * #1214: アクティブな買い物リストの get-or-create (getOrCreateActiveShoppingList) の単体テスト。
+ * #1214 / #1312: アクティブな買い物リストの get-or-create (getOrCreateActiveShoppingList) の単体テスト。
  *
- * 修正前の処理は「SELECT → 無ければ INSERT」で、同時に 2 件の追加が来ると後から INSERT した側が
+ * #1214 の修正前は「SELECT -> 無ければ INSERT」で、同時に 2 件の追加が来ると後から INSERT した側が
  * 部分ユニーク索引 idx_shopping_lists_active_unique の 23505 で失敗していた。
  * さらに INSERT のペイロード自体が実テーブルと合っていなかった
  * (name 列は無い。start_date / end_date は NOT NULL で既定値が無い)。
+ * #1214 の修正で TS 側に 23505 の再取得を入れたが、買い物リストの再生成の「アーカイブ -> INSERT」とは
+ * 直列化されておらず、再生成の INSERT が 23505 で失敗していた (#1312)。
  *
- * フェイクは本番スキーマの列定義と部分ユニーク索引を再現する (tests/helpers/fake-shopping-lists-db.ts)。
+ * #1312 の修正後は、DB 関数 get_or_create_active_shopping_list に任せる。
+ * 関数の中のロックと数え直し (同時実行への耐性) は、ローカル Supabase を使う結合テスト
+ * (tests/integration/security/shopping-list-active-lock.test.ts) で確認する。
+ * ここでは TS 側が次を守っていることを確かめる。
+ *   - 関数を、本物と同じ引数名・値 (title・JST の 7 日間) で呼ぶ。テーブルには直接触れない
+ *   - 返った id をそのまま返す。エラーはそのまま投げる (再試行しない。呼び出し側がログに残して固定文言を返す)
+ *
+ * フェイクは本番スキーマの列定義と部分ユニーク索引、DB 関数の振る舞いを再現する (tests/helpers/fake-shopping-lists-db.ts)。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getOrCreateActiveShoppingList } from '../src/lib/shopping-list/active-list';
-import { createFakeSupabase } from './helpers/fake-supabase';
 import { createFakeShoppingListsDb, pgError } from './helpers/fake-shopping-lists-db';
 
 const USER_ID = 'user-1';
@@ -23,59 +31,31 @@ function activeLists(db: ReturnType<typeof createFakeShoppingListsDb>, userId = 
   return db.lists.filter((l) => l.user_id === userId && l.status === 'active');
 }
 
-describe('getOrCreateActiveShoppingList: 既存リスト', () => {
-  it('アクティブなリストがあればそれを返し、INSERT しない', async () => {
+describe('getOrCreateActiveShoppingList: DB 関数の呼び出し', () => {
+  it('get_or_create_active_shopping_list を 1 回だけ呼び、テーブルには直接触れない (SELECT -> INSERT に戻さない)', async () => {
     const db = createFakeShoppingListsDb(USER_ID);
-    const existing = db.seedActiveList(USER_ID);
 
-    const result = await getOrCreateActiveShoppingList(db.supabase as never, USER_ID);
+    await getOrCreateActiveShoppingList(db.supabase as never, USER_ID);
 
-    expect(result).toEqual({ id: existing.id });
-    expect(db.calls.map((c) => c.op)).toEqual(['select']);
-    expect(db.lists).toHaveLength(1);
+    expect(db.supabase.rpc).toHaveBeenCalledTimes(1);
+    expect(db.supabase.rpc.mock.calls[0][0]).toBe('get_or_create_active_shopping_list');
+    expect(db.supabase.from).not.toHaveBeenCalled();
+    expect(db.calls.map((c) => c.op)).toEqual(['rpc']);
   });
 
-  it('他のユーザーのアクティブなリストは使わず、自分のリストを新しく作る', async () => {
-    const db = createFakeShoppingListsDb(USER_ID);
-    const others = db.seedActiveList('someone-else');
-
-    const result = await getOrCreateActiveShoppingList(db.supabase as never, USER_ID);
-
-    expect(result.id).not.toBe(others.id);
-    expect(activeLists(db)).toHaveLength(1);
-    expect(activeLists(db, 'someone-else')).toHaveLength(1);
-  });
-
-  it('アーカイブ済みのリストしか無ければ、新しいアクティブなリストを作る', async () => {
-    const db = createFakeShoppingListsDb(USER_ID);
-    const archived = db.seedActiveList(USER_ID, { status: 'archived' });
-
-    const result = await getOrCreateActiveShoppingList(db.supabase as never, USER_ID);
-
-    expect(result.id).not.toBe(archived.id);
-    expect(activeLists(db)).toHaveLength(1);
-  });
-});
-
-describe('getOrCreateActiveShoppingList: 新規作成', () => {
-  it('title / start_date / end_date を付けて INSERT する (name 列は送らない)', async () => {
+  it('引数は p_user_id / p_title / p_start_date / p_end_date (name 列は無い)', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-07T03:00:00Z')); // JST 2026-10-07 12:00
     const db = createFakeShoppingListsDb(USER_ID);
 
-    const result = await getOrCreateActiveShoppingList(db.supabase as never, USER_ID);
+    await getOrCreateActiveShoppingList(db.supabase as never, USER_ID);
 
-    const insert = db.calls.find((c) => c.op === 'insert');
-    expect(insert?.payload).toEqual({
-      user_id: USER_ID,
-      status: 'active',
-      title: '買い物リスト',
-      start_date: '2026-10-07',
-      end_date: '2026-10-13',
+    expect(db.supabase.rpc).toHaveBeenCalledWith('get_or_create_active_shopping_list', {
+      p_user_id: USER_ID,
+      p_title: '買い物リスト',
+      p_start_date: '2026-10-07',
+      p_end_date: '2026-10-13',
     });
-    expect(insert?.payload).not.toHaveProperty('name');
-    expect(db.lists).toHaveLength(1);
-    expect(result).toEqual({ id: db.lists[0].id });
   });
 
   it('日付は JST 基準 (UTC では前日の早朝でも JST の今日から 7 日間)', async () => {
@@ -100,39 +80,57 @@ describe('getOrCreateActiveShoppingList: 新規作成', () => {
   });
 });
 
-describe('getOrCreateActiveShoppingList: 同時実行 (TOCTOU)', () => {
-  it('SELECT の後 INSERT の前に別リクエストがリストを作っても (23505)、既存のリストを返して成功する', async () => {
+describe('getOrCreateActiveShoppingList: 戻り値', () => {
+  it('アクティブなリストが無ければ作られたリストの id を返す (title / start_date / end_date 付き)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-07T03:00:00Z'));
     const db = createFakeShoppingListsDb(USER_ID);
-    let winner: { id: string } | null = null;
-    // 自分の SELECT は「無い」と返り、INSERT が適用される直前に別リクエストが先にコミットする
-    db.beforeNextListInsert(() => {
-      winner = db.seedActiveList(USER_ID);
-    });
 
     const result = await getOrCreateActiveShoppingList(db.supabase as never, USER_ID);
 
-    expect(winner).not.toBeNull();
-    expect(result).toEqual({ id: winner!.id });
-    // SELECT → INSERT (23505 で負ける) → 再 SELECT
-    expect(db.calls.map((c) => c.op)).toEqual(['select', 'insert', 'select']);
-    expect(activeLists(db)).toHaveLength(1);
+    expect(db.lists).toHaveLength(1);
+    expect(db.lists[0]).toMatchObject({
+      user_id: USER_ID,
+      status: 'active',
+      title: '買い物リスト',
+      start_date: '2026-10-07',
+      end_date: '2026-10-13',
+    });
+    expect(result).toEqual({ id: db.lists[0].id });
   });
 
-  it('同時に呼んだ 2 本は、どちらも成功して同じリストを返す (アクティブなリストは 1 つのまま)', async () => {
+  it('アクティブなリストがあればその id を返し、新しいリストは作られない', async () => {
     const db = createFakeShoppingListsDb(USER_ID);
+    const existing = db.seedActiveList(USER_ID);
 
-    const [a, b] = await Promise.all([
-      getOrCreateActiveShoppingList(db.supabase as never, USER_ID),
-      getOrCreateActiveShoppingList(db.supabase as never, USER_ID),
-    ]);
+    const result = await getOrCreateActiveShoppingList(db.supabase as never, USER_ID);
 
-    expect(a.id).toBe(b.id);
-    expect(activeLists(db)).toHaveLength(1);
-    // 両方が「リスト無し」と判定して INSERT し、片方が 23505 で負けたことの確認 (競合を実際に踏んでいる)
-    expect(db.calls.filter((c) => c.op === 'insert')).toHaveLength(2);
+    expect(result).toEqual({ id: existing.id });
+    expect(db.lists).toHaveLength(1);
   });
 
-  it('同時に 8 本呼んでも、全て同じリストを返す', async () => {
+  it('他のユーザーのアクティブなリストは使わず、自分のリストを新しく作る', async () => {
+    const db = createFakeShoppingListsDb(USER_ID);
+    const others = db.seedActiveList('someone-else');
+
+    const result = await getOrCreateActiveShoppingList(db.supabase as never, USER_ID);
+
+    expect(result.id).not.toBe(others.id);
+    expect(activeLists(db)).toHaveLength(1);
+    expect(activeLists(db, 'someone-else')).toHaveLength(1);
+  });
+
+  it('アーカイブ済みのリストしか無ければ、新しいアクティブなリストを作る', async () => {
+    const db = createFakeShoppingListsDb(USER_ID);
+    const archived = db.seedActiveList(USER_ID, { status: 'archived' });
+
+    const result = await getOrCreateActiveShoppingList(db.supabase as never, USER_ID);
+
+    expect(result.id).not.toBe(archived.id);
+    expect(activeLists(db)).toHaveLength(1);
+  });
+
+  it('同時に 8 本呼んでも、全て同じリストを返す (アクティブなリストは 1 つ)', async () => {
     const db = createFakeShoppingListsDb(USER_ID);
 
     const results = await Promise.all(
@@ -144,44 +142,63 @@ describe('getOrCreateActiveShoppingList: 同時実行 (TOCTOU)', () => {
   });
 });
 
-describe('getOrCreateActiveShoppingList: 想定外のエラー', () => {
-  it('23505 以外の INSERT エラーは再試行せずに投げる', async () => {
-    const db = createFakeShoppingListsDb(USER_ID);
-    const rls = pgError('42501', 'new row violates row-level security policy for table "shopping_lists"');
-    db.failNext('shopping_lists', 'insert', rls);
-
-    await expect(getOrCreateActiveShoppingList(db.supabase as never, USER_ID)).rejects.toBe(rls);
-
-    expect(db.calls.filter((c) => c.op === 'insert')).toHaveLength(1);
-    expect(db.lists).toHaveLength(0);
-  });
-
-  it('SELECT がエラーなら、INSERT を試みずに投げる', async () => {
+describe('getOrCreateActiveShoppingList: エラー', () => {
+  it('DB 関数のエラーは、再試行せずにそのまま投げる (呼び出し側がログに残して固定文言を返す)', async () => {
     const db = createFakeShoppingListsDb(USER_ID);
     const down = pgError('08006', 'connection failure');
     db.failNext('shopping_lists', 'select', down);
 
     await expect(getOrCreateActiveShoppingList(db.supabase as never, USER_ID)).rejects.toBe(down);
 
-    expect(db.calls.map((c) => c.op)).toEqual(['select']);
+    expect(db.supabase.rpc).toHaveBeenCalledTimes(1);
+    expect(db.lists).toHaveLength(0);
   });
 
-  it('23505 の後に再 SELECT しても見つからない状態が続くなら、上限回数で諦めて投げる (無限ループしない)', async () => {
-    const conflict = pgError('23505', 'duplicate key value violates unique constraint "idx_shopping_lists_active_unique"');
-    const none = { data: null, error: null };
-    const lost = { data: null, error: conflict };
-    // SELECT(なし) → INSERT(23505) を繰り返し続ける。最後の要素は使い回される
-    const supabase = createFakeSupabase({ shopping_lists: [none, lost, none, lost, none, lost] });
+  it('関数の中の INSERT が失敗した場合も、そのまま投げる', async () => {
+    const db = createFakeShoppingListsDb(USER_ID);
+    const fk = pgError('23503', 'insert or update on table "shopping_lists" violates foreign key constraint');
+    db.failNext('shopping_lists', 'insert', fk);
 
-    await expect(getOrCreateActiveShoppingList(supabase as never, USER_ID)).rejects.toBe(conflict);
+    await expect(getOrCreateActiveShoppingList(db.supabase as never, USER_ID)).rejects.toBe(fk);
 
-    expect(supabase.from).toHaveBeenCalledTimes(6); // 3 回の試行 x (SELECT + INSERT)
+    expect(db.supabase.rpc).toHaveBeenCalledTimes(1);
+    expect(db.lists).toHaveLength(0);
   });
 
-  it('INSERT がエラーなしで行を返さなかった場合は、成功扱いにせず投げる', async () => {
-    const none = { data: null, error: null };
-    const supabase = createFakeSupabase({ shopping_lists: [none, none] });
+  it('本人以外の userId は DB 関数が 42501 (FORBIDDEN) で拒否し、何も作られない', async () => {
+    const db = createFakeShoppingListsDb(USER_ID);
 
-    await expect(getOrCreateActiveShoppingList(supabase as never, USER_ID)).rejects.toThrow();
+    await expect(getOrCreateActiveShoppingList(db.supabase as never, 'someone-else')).rejects.toMatchObject({
+      code: '42501',
+      message: 'FORBIDDEN',
+    });
+
+    expect(db.lists).toHaveLength(0);
+  });
+
+  it('関数が無い (migration 未適用) 場合は PGRST202 をそのまま投げる', async () => {
+    const supabase = {
+      rpc: vi.fn(async () => ({
+        data: null,
+        error: pgError('PGRST202', 'Could not find the function public.get_or_create_active_shopping_list'),
+      })),
+    };
+
+    await expect(getOrCreateActiveShoppingList(supabase as never, USER_ID)).rejects.toMatchObject({
+      code: 'PGRST202',
+    });
+    expect(supabase.rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['null', null],
+    ['空文字', ''],
+    ['文字列でない値', { id: 'list-1' }],
+  ])('エラーなしで id が返らなかった場合 (%s) は、成功扱いにせず投げる', async (_label, data) => {
+    const supabase = { rpc: vi.fn(async () => ({ data, error: null })) };
+
+    await expect(getOrCreateActiveShoppingList(supabase as never, USER_ID)).rejects.toThrow(
+      'get_or_create_active_shopping_list returned no id',
+    );
   });
 });

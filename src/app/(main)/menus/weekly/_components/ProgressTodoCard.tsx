@@ -76,7 +76,7 @@ export const ProgressTodoCard = ({
           <div className="flex items-center gap-2">
             {isError ? (
               <div className="w-4 h-4 rounded-full bg-white flex items-center justify-center">
-                <span style={{ fontSize: 10, color: '#ef4444', fontWeight: 700 }}>!</span>
+                <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 700 }}>!</span>
               </div>
             ) : (
               <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />

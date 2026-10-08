@@ -1,0 +1,158 @@
+name: Daily Consistency Check (read-only)
+
+# 毎日 1 回、次の 2 つを検査し、問題があれば Issue で知らせる (無くなれば Issue を自動で閉じる)。
+#
+#   1. db-drift: 本番 DB (flmeolcfutuwwbjmzyoz) とリポジトリの migration のずれ
+#      - `supabase migration list --linked` で台帳を読み、本番にだけある version (REMOTE_ONLY)・
+#        本番に適用されていない version (LOCAL_ONLY)・形式の違う version を探す
+#      - `supabase db diff --linked --schema public` で、migration を流した空の DB と本番のスキーマを比べる
+#   2. stale: 置き去りのブランチ・PR
+#      - 24 時間以上止まっている PR (CI が緑のまま・赤のまま・main と競合・CI が終わらない)
+#      - PR になっていない (または PR のあとに push された) まま、main に入っていないブランチ
+#
+# 背景: claude/ ブランチの即マージ (auto-merge.yml) をやめた (#1360) ため、マージが無い日にも
+#       「本番とリポジトリのずれ」と「push しただけで本番に出ていない作業」に気づけるようにする。
+#       #1064 では台帳のずれに 2 か月気づかず、その間デプロイが止まっていた。
+#
+# 本番への書き込みはしない:
+#   - 使う supabase のコマンドは link / migration list / db diff だけ (どれも本番を読むだけ)。
+#     db push・migration repair・db reset・SQL の実行はしない
+#   - db diff のシャドウ DB はランナーの Docker 上に作られる (本番ではない)
+#   - GitHub への書き込みは Issue の作成・本文の更新・コメント・クローズだけ (PR・ブランチ・設定には触らない)
+#
+# 判定と文面は scripts/lib/consistency-check.mjs、GitHub API の呼び出しは scripts/consistency-check.mjs。
+# テストは tests/consistency-check.test.ts。
+
+on:
+  schedule:
+    # 毎日 09:17 JST (00:17 UTC)。毎時 0 分は混むので少しずらす
+    - cron: '17 0 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: daily-consistency-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  checks: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  SUPABASE_PROJECT_ID: flmeolcfutuwwbjmzyoz
+
+jobs:
+  db-drift:
+    # 手動実行でも main の定義だけを検査する (作業ブランチの migration と本番を比べて誤報を出さない)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Link Supabase project (read-only)
+        id: link
+        continue-on-error: true
+        run: npx --yes supabase@2.62.10 link --project-ref "$SUPABASE_PROJECT_ID"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Fetch migration ledger (read-only)
+        id: ledger
+        if: steps.link.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npx --yes supabase@2.62.10 migration list --linked | tee /tmp/migration_list.txt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Diff production schema against migrations (read-only)
+        id: diff
+        if: steps.link.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          # db diff はシャドウ DB のために Docker イメージ (public.ecr.aws) を取得する。
+          # 取得がレート制限やタイムアウトで一時的に失敗したときだけ、間隔を空けて最大 3 回まで実行し直す
+          # (deploy-supabase-migrations.yml と同じ)。migration が流せないなどの本物の失敗はやり直さない。
+          PULL_ERROR_RE='toomanyrequests|failed to pull docker image|Client\.Timeout exceeded|context deadline exceeded|TLS handshake timeout'
+          for attempt in 1 2 3; do
+            set +e
+            npx --yes supabase@2.62.10 db diff --linked --schema public > /tmp/db_diff.sql 2> /tmp/db_diff.log
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ] || ! grep -qE "$PULL_ERROR_RE" /tmp/db_diff.log || [ "$attempt" -eq 3 ]; then
+              break
+            fi
+            echo "::warning::db diff: Docker イメージの取得に失敗しました。$((attempt * 60)) 秒後に再試行します (${attempt}/3)"
+            tail -n 5 /tmp/db_diff.log
+            sleep $((attempt * 60))
+          done
+          echo "$status" > /tmp/db_diff.status
+          if [ "$status" -ne 0 ]; then
+            echo "::error::supabase db diff が失敗しました (終了コード $status)"
+            tail -n 60 /tmp/db_diff.log
+          elif [ -s /tmp/db_diff.sql ]; then
+            # 差分の SQL は Issue には載せず、Step Summary とログにだけ出す
+            {
+              echo "## db diff (本番と migration の差分)"
+              echo ""
+              echo '```sql'
+              cat /tmp/db_diff.sql
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::group::db diff ($(wc -l < /tmp/db_diff.sql) 行)"
+            cat /tmp/db_diff.sql
+            echo "::endgroup::"
+          else
+            echo "db diff: 差分なし (migration と本番が一致)"
+          fi
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Report (Issue)
+        if: always()
+        shell: bash
+        run: |
+          # 台帳の取得が失敗したときは、途中まで書かれた出力を使わない (読めなかったものとして報告する)
+          if [ "$LEDGER_OUTCOME" != "success" ]; then rm -f /tmp/migration_list.txt; fi
+          status=""
+          if [ -f /tmp/db_diff.status ]; then status=$(cat /tmp/db_diff.status); fi
+          node scripts/consistency-check.mjs db \
+            --migration-list /tmp/migration_list.txt \
+            --db-diff /tmp/db_diff.sql \
+            --db-diff-status "$status"
+        env:
+          LEDGER_OUTCOME: ${{ steps.ledger.outcome }}
+          GH_TOKEN: ${{ github.token }}
+
+  stale:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Report (Issue)
+        run: node scripts/consistency-check.mjs stale
+        env:
+          GH_TOKEN: ${{ github.token }}

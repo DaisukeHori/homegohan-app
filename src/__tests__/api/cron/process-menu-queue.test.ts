@@ -34,6 +34,8 @@ function makeRequest(authorization?: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv('CRON_SECRET', 'my-cron-secret-value');
+  // #1196: 入れ替え中だけ設定する旧い値。開発者の環境に残っていても結果が変わらないよう未設定にそろえる
+  vi.stubEnv('CRON_SECRET_PREVIOUS', undefined);
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://example.supabase.co');
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-role-key');
   mockRpc.mockResolvedValue({ data: null, error: null }); // idle
@@ -188,5 +190,54 @@ describe('GET /api/cron/process-menu-queue: 取り直した行は続きから再
     expect(res.status).toBe(500);
     const json = await res.json();
     expect(json.failed).toBe('req-1');
+  });
+});
+
+describe('GET /api/cron/process-menu-queue (#1196 シークレットの入れ替え)', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('入れ替え中は CRON_SECRET_PREVIOUS (旧い値) でも認可され、現行の値も引き続き認可される', async () => {
+    vi.stubEnv('CRON_SECRET_PREVIOUS', 'my-old-cron-secret');
+
+    const withOld = await GET(makeRequest('Bearer my-old-cron-secret'));
+    expect(withOld.status).toBe(200);
+    expect((await withOld.json()).idle).toBe(true);
+
+    const withNew = await GET(makeRequest('Bearer my-cron-secret-value'));
+    expect(withNew.status).toBe(200);
+    expect((await withNew.json()).idle).toBe(true);
+  });
+
+  it('旧い値を外した (CRON_SECRET_PREVIOUS を空にした) あとは、旧い値は 401', async () => {
+    vi.stubEnv('CRON_SECRET_PREVIOUS', '');
+    const res = await GET(makeRequest('Bearer my-old-cron-secret'));
+    expect(res.status).toBe(401);
+  });
+
+  it('CRON_SECRET_PREVIOUS が空でも、Authorization ヘッダーなし・空のトークンは 401', async () => {
+    vi.stubEnv('CRON_SECRET_PREVIOUS', '');
+    expect((await GET(makeRequest())).status).toBe(401);
+    expect((await GET(makeRequest('Bearer '))).status).toBe(401);
+    expect((await GET(makeRequest('Bearer'))).status).toBe(401);
+  });
+
+  it('CRON_SECRET が未設定なら、CRON_SECRET_PREVIOUS があっても 503', async () => {
+    vi.stubEnv('CRON_SECRET', undefined);
+    vi.stubEnv('CRON_SECRET_PREVIOUS', 'my-old-cron-secret');
+    const res = await GET(makeRequest('Bearer my-old-cron-secret'));
+    expect(res.status).toBe(503);
+  });
+
+  it('認証に通らなければ、キューには触らない (RPC を呼ばない)', async () => {
+    vi.stubEnv('CRON_SECRET_PREVIOUS', 'my-old-cron-secret');
+    await GET(makeRequest('Bearer not-a-secret'));
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 });

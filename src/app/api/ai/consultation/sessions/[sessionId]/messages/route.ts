@@ -5,6 +5,7 @@ import OpenAI from 'openai';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
 import { runConsultationAction } from '@/lib/ai/consultation-action-executor';
+import { CANONICAL_GOAL_TYPES, describeGoalRangesForPrompt } from '@/lib/health-goal-types';
 
 // #1047 F2-21: アクション自動実行を self-fetch
 // (`${NEXT_PUBLIC_APP_URL}/api/ai/consultation/actions/.../execute`) 経由で行うと、
@@ -726,8 +727,10 @@ update_meal は入力された値をそのまま保存するため、栄養値�
 - update_nutrition_target: 栄養目標を更新 (params: { targets: { daily_calories?, protein_g?, fat_g?, carbs_g?, fiber_g?, sodium_g? } })
 
 ■ 健康目標関連:
-- set_health_goal: 健康目標を設定 (params: { goalType: "weight|body_fat|exercise|etc", targetValue: number, targetUnit?: string, targetDate?: "YYYY-MM-DD", note?: string })
+- set_health_goal: 健康目標を設定 (params: { goalType: "${CANONICAL_GOAL_TYPES.join('|')}", targetValue: number, targetUnit?: string, targetDate?: "YYYY-MM-DD", note?: string })
+  ※ goalType は上のいずれかのみ。targetValue の範囲: ${describeGoalRangesForPrompt()}。上記以外の goalType や範囲外の値は保存されない。targetUnit を省略すると goalType に合う単位になる
 - update_health_goal: 健康目標を更新 (params: { goalId: "uuid", updates: { target_value?, target_date?, status?, current_value? } })
+  ※ target_value / current_value は、その目標の goalType の範囲内の値のみ保存される
 - delete_health_goal: 健康目標を削除 (params: { goalId: "uuid" })
 
 ■ 健康記録関連:

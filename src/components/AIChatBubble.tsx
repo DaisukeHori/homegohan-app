@@ -13,50 +13,8 @@ import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { notifyMenuGenerated } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { todayLocal, parseLocalDate, formatLocalDate } from "@/lib/date-utils";
-
-// シンプルなマークダウンパーサー
-const parseMarkdown = (text: string): string => {
-  if (!text) return '';
-  
-  // アクションブロックを除去（別途表示されるため）
-  let html = text.replace(/```action[\s\S]*?```/g, '');
-  
-  // コードブロック（```）を処理
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre class="md-code-block"><code>$2</code></pre>');
-  
-  // インラインコード（`）を処理
-  html = html.replace(/`([^`]+)`/g, '<code class="md-inline-code">$1</code>');
-  
-  // 太字（**text** または __text__）
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-  
-  // 斜体（*text* または _text_）- 太字の後に処理
-  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
-  
-  // 見出し（### ## #）
-  html = html.replace(/^### (.+)$/gm, '<h4 class="md-h4">$1</h4>');
-  html = html.replace(/^## (.+)$/gm, '<h3 class="md-h3">$1</h3>');
-  html = html.replace(/^# (.+)$/gm, '<h2 class="md-h2">$1</h2>');
-  
-  // 箇条書き（- または *）
-  html = html.replace(/^[-*] (.+)$/gm, '<li class="md-li">$1</li>');
-  // 連続するliをulで囲む
-  html = html.replace(/(<li class="md-li">.*?<\/li>\n?)+/g, '<ul class="md-ul">$&</ul>');
-  
-  // 番号付きリスト
-  html = html.replace(/^\d+\. (.+)$/gm, '<li class="md-li-num">$1</li>');
-  html = html.replace(/(<li class="md-li-num">.*?<\/li>\n?)+/g, '<ol class="md-ol">$&</ol>');
-  
-  // リンク [text](url)
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="md-link">$1</a>');
-  
-  // 改行を<br>に変換（ただし、HTMLタグの直後は除く）
-  html = html.replace(/\n(?!<)/g, '<br>');
-  
-  return html;
-};
+// AI 応答を HTML にして dangerouslySetInnerHTML へ渡すときは、必ずこの関数を通す (#1169)
+import { parseMarkdown } from "@/lib/markdown-lite";
 
 const colors = {
   primary: '#E07A5F',

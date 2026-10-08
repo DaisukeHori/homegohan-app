@@ -8,6 +8,13 @@
 >
 > Web/Mobile 両方 v1 同時リリース。workspace package で型・mock・i18n キー・analytics 定義を共通化。Overlay UI は技術スタック差から別実装。
 
+> **2026-10-08 変更 (#1314。オーナー判断)**: ツアーのお試しの記録 (`is_sandbox = true`) は、バッジの件数 (食事数・自炊数・連続日数) に数えない。
+> そのため、以降の「Step 1 の保存で `first_bite` が付く」「Step 3 で `first_bite` が獲得済みになっている」という記述は実際と異なる
+> (`first_bite` は実際の食事の記録で付く。ツアー中に付くのは `planner` と、卒業時の `tutorial_complete`)。
+> Step 3 は `first_bite` / `planner` / `tutorial_complete` のカードを Spotlight で指すだけなので、未獲得でも成り立つ
+> (`GET /api/badges` は、この 3 つを未獲得でも必ず返す)。Step 3 の文言 (「もう 2 つ獲得しています」など) は web と app で共有しており、
+> 見直しには app のリリースが要るため未対応。
+
 ## ナビゲーション (並列開発単位)
 
 設計書はファイル単位で並列開発できるよう **意図的に分割** されている。各ファイルは独立した PR として実装可能 (`§12-phases.md` の Phase 計画を参照)。

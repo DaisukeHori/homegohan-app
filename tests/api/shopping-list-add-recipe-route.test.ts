@@ -9,7 +9,12 @@
  * (INSERT が存在しない name 列を送り、NOT NULL の start_date / end_date を送っていなかった) ため、
  * その経路もここで確かめる。
  *
- * フェイクは本番スキーマの列定義と部分ユニーク索引を再現する (tests/helpers/fake-shopping-lists-db.ts)。
+ * Issue #1312: リストの get-or-create は DB 関数 get_or_create_active_shopping_list に任せる。
+ * 再生成 (アーカイブ -> INSERT) と同じユーザーごとのロックを取るので、同時に来ても互いを失敗させない
+ * (ロックの確認は tests/integration/security/shopping-list-active-lock.test.ts)。
+ * ここでは route が DB 関数を呼ぶこと (テーブルへ直接 INSERT しないこと) と、レスポンスの形を確かめる。
+ *
+ * フェイクは本番スキーマの列定義と部分ユニーク索引、DB 関数の振る舞いを再現する (tests/helpers/fake-shopping-lists-db.ts)。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeShoppingListsDb, pgError, type FakeShoppingListsDb } from '../helpers/fake-shopping-lists-db';
@@ -71,7 +76,7 @@ describe('POST /api/shopping-list/add-recipe: 認証', () => {
 });
 
 describe('POST /api/shopping-list/add-recipe: アクティブなリストが無いユーザー (初回)', () => {
-  it('リストを作って食材を追加し 200 を返す (title / start_date / end_date 付きで INSERT する)', async () => {
+  it('リストを作って食材を追加し 200 を返す (title / start_date / end_date 付きで作る)', async () => {
     const res = await POST(post({ ingredients: RECIPE }));
     const json = await res.json();
 
@@ -136,22 +141,16 @@ describe('POST /api/shopping-list/add-recipe: アクティブなリストがあ�
   });
 });
 
-describe('POST /api/shopping-list/add-recipe: 同時実行 (#1214)', () => {
-  it('SELECT の後 INSERT の前に別リクエストがリストを作っても (23505)、500 にならず食材が失われない', async () => {
-    let winner = '';
-    db.beforeNextListInsert(() => {
-      winner = db.seedActiveList(USER_ID).id;
-    });
-
+describe('POST /api/shopping-list/add-recipe: 同時実行 (#1214 / #1312)', () => {
+  it('アクティブなリストの取得・作成は DB 関数 get_or_create_active_shopping_list を 1 回呼ぶだけで、shopping_lists へ直接 INSERT しない', async () => {
     const res = await POST(post({ ingredients: RECIPE }));
-    const json = await res.json();
 
     expect(res.status).toBe(200);
-    expect(json.items).toHaveLength(3);
-    expect(db.lists).toHaveLength(1);
-    expect(db.items).toHaveLength(3);
-    expect(db.items.every((item) => item.shopping_list_id === winner)).toBe(true);
-    expect(logError).not.toHaveBeenCalled();
+    const rpcCalls = db.calls.filter((c) => c.op === 'rpc');
+    expect(rpcCalls.map((c) => c.table)).toEqual(['rpc:get_or_create_active_shopping_list']);
+    expect(rpcCalls[0].payload).toMatchObject({ p_user_id: USER_ID, p_title: '買い物リスト' });
+    // 再生成のアーカイブ -> INSERT と直列化されるのは DB 関数の中だけ。route が SELECT -> INSERT に戻ると #1312 が再発する
+    expect(db.calls.some((c) => c.table === 'shopping_lists')).toBe(false);
   });
 
   it('初回ユーザーが 2 つのレシピをほぼ同時に追加しても、両方 200 で、食材は全て同じリストに入る', async () => {
@@ -165,6 +164,7 @@ describe('POST /api/shopping-list/add-recipe: 同時実行 (#1214)', () => {
     expect(db.lists).toHaveLength(1);
     expect(db.items.map((i) => i.item_name).sort()).toEqual(['キャベツ', '玉ねぎ', '豚バラ肉', '鶏むね肉'].sort());
     expect(db.items.every((item) => item.shopping_list_id === db.lists[0].id)).toBe(true);
+    expect(logError).not.toHaveBeenCalled();
   });
 });
 

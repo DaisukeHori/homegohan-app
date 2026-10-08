@@ -33,19 +33,17 @@ curl -X POST "https://flmeolcfutuwwbjmzyoz.supabase.co/functions/v1/<function-na
 
 **GitHub Actions による自動デプロイが設定されています。**
 
-#### claude/* ブランチからの完全自動化フロー
+#### PR からの反映
 
-`claude/*` ブランチにプッシュすると、以下が自動実行されます：
+自動マージの仕組みはありません (2026-10-08 のオーナー判断で廃止)。PR の CI を確認してから手動でマージします。
 
 ```
-claude/* にプッシュ
-    ↓ 自動
-PR 作成 → 自動マージ → main 更新
+作業ブランチに push → PR を作成 → CI を確認
+    ↓ 手動でマージ
+main 更新
     ↓ 自動
 Supabase Functions デプロイ
 ```
-
-ワークフロー: `.github/workflows/auto-merge.yml`
 
 #### main ブランチへの直接プッシュ
 
@@ -95,7 +93,7 @@ supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
 | `import-lawson-catalog` | 同上。ローソン（`lawson_jp`）に固定 |
 | `import-natural-lawson-catalog` | 同上。ナチュラルローソン（`natural_lawson_jp`）に固定 |
 | `import-ministop-catalog` | 同上。ミニストップ（`ministop_jp`）に固定 |
-| `generate-hint` | 食事データ（自炊率・平均カロリーなど）から短いヒントを AI で生成する。ユーザーの JWT で認証する（呼び出し元: `POST /api/ai/hint`。週間献立ページから呼ばれる）。**注意**: 生成結果を `user_hints` に upsert するコードはあるが、本番スキーマ（`supabase/baseline/prod_schema.sql`、2026-10-07 取得）に `user_hints` テーブルは無く、保存されない。upsert の `error` を見ていないため、失敗してもログに残らない。また `POST /api/ai/hint` は関数の戻り値を使わず、ルート内で作る既定のヒントを返す。そのため、AI が作ったヒントは現状、保存も表示もされない |
+| `generate-hint` | 食事データ（自炊率・平均カロリーなど）から短いヒントを AI で生成する。ユーザーの JWT で認証する。**現在、アプリ内に呼び出し元は無い**。以前は `POST /api/ai/hint`（週間献立ページから呼ばれる）が呼んでいたが、関数の戻り値を使わず、ルート内で作る既定のヒントを返していたため、AI の費用が無駄になっていた。#1327 で、このルートから関数を呼ばないようにした（ルートは AI を使わず、既定のヒントだけを返す）。関数はデプロイされたままで、`supabase/config.toml` で `verify_jwt = false`（認証は関数内の `requireAuth` で行う）のため、ユーザーの JWT があれば直接呼べる。**注意**: 生成結果を `user_hints` に upsert するコードはあるが、本番スキーマ（`supabase/baseline/prod_schema.sql`、2026-10-07 取得）に `user_hints` テーブルは無く、保存されない。upsert の `error` を見ていないため、失敗してもログに残らない。関数そのものの扱い（無効化・削除、直接呼び出しへのレート制限）は、#1153 とあわせて別途決める |
 | `process-meal-image-jobs` | 料理画像の生成ジョブ（`meal_image_jobs`）を処理する。Google GenAI で画像を作って保存し、`planned_meals` に反映する。内部専用で、献立の生成・保存・編集のあとに起動される |
 | `stripe-price-sync` | プランの価格変更時に、Stripe に新しい Price を作り、旧 Price を無効化する（無効化に失敗しても続行する）。内部専用（呼び出し元: `POST /api/super-admin/plans/[id]/price-change`） |
 
@@ -167,6 +165,8 @@ grep -rn 'from "../generate-menu-v4/' supabase/functions --include=*.ts
 ```
 supabase/functions/
 ├── _shared/                 # 共有ユーティリティ（全関数から参照可能）
+│   ├── auth.ts             # 認証ヘルパー（requireAuth: ユーザーの JWT、requireServiceRole: cron 用の共有シークレットか service role key。await 必須）
+│   ├── cron-secret.ts      # cron 用シークレットの照合（Next.js の src/lib/cron-auth.ts と共用。import なし・Deno/Node 固有 API なし。入れ替え中は CRON_SECRET_PREVIOUS も受け付ける。手順は ENV_SETUP.md）
 │   ├── cors.ts             # CORS設定（許可したオリジンにだけ CORS ヘッダーを返す。下の「CORS」を参照）
 │   ├── db-logger.ts        # ログ記録
 │   ├── log-sanitizer.ts    # ログ保存前の秘密情報マスキング・切り詰め（Next.js の src/lib/db-logger.ts と共用。import なし・Deno/Node 固有 API なし）

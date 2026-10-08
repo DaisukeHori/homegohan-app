@@ -1006,6 +1006,8 @@ export interface HealthFocusItem {
 
 export type SportExperience = 'beginner' | 'intermediate' | 'advanced';
 export type TrainingPhase = 'training' | 'competition' | 'cut' | 'recovery';
+// rapid は提供しない (#1208)。安全装置 (applyPerformanceGuardrails) は残す。
+// 詳しくは packages/core/src/nutrition/types.ts の CutStrategy を参照。
 export type CutStrategy = 'gradual' | 'rapid';
 export type NutrientPriority = 'high' | 'moderate' | 'low';
 

@@ -382,6 +382,30 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {/* セクション 2.5: アカウント (#1187: パスワード・メールアドレスの変更。FAQ の案内先) */}
+        <div>
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">アカウント</h2>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+
+             <button
+               type="button"
+               data-testid="settings-account-link"
+               onClick={() => router.push('/settings/account')}
+               className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-500" aria-hidden="true">🔑</div>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">パスワード・メールアドレス</span>
+                   <p className="text-xs text-gray-400">ログイン情報の変更</p>
+                 </div>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
+          </div>
+        </div>
+
         {/* セクション 3: データ・プライバシー */}
         <div>
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">データとプライバシー</h2>
