@@ -2,6 +2,10 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
 
+// #1203: 復元（スナップショットの書き戻し）が途中で打ち切られないよう、実行時間の上限を明示する。
+// 復元は 1 リクエストあたり DB 2 往復前後だが、failed 確定後に復元へ入る順序のため余裕を持たせる。
+export const maxDuration = 60; // Vercel Pro: 60s OK
+
 // スタックしているリクエストをクリーンアップ（5分以上前のpending/processingをfailedに）
 export async function POST() {
   const supabase = await createClient();
@@ -43,6 +47,9 @@ export async function POST() {
 
   // #1042: waitUntil 消失等で生成コールバックが実行されず stuck になったリクエストについて、
   // 削除済み献立のスナップショットが残っていれば復元する（sweeper 経由の救済ロールバック）。
+  // #1203: 復元は 1 リクエストあたり 2 往復前後に減ったので、リクエスト間は直列のままにしている。
+  // 並列にすると、同じ週に stuck が複数あるとき（snapshot が同じスロットを指す）に
+  // 「空きスロット確認」が互いの書き込み前に行われ、同じスロットへ二重に復元してしまう。
   let restoredMeals = 0;
   let skippedMeals = 0;
   let failedMeals = 0;
