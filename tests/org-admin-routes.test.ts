@@ -438,10 +438,17 @@ describe('組織の絞り込み: 呼び出した人の organization_id だけを
     expect(sessionDb.rows('organizations').find((o) => o.id === ORG_B)?.name).toBe('B 株式会社');
   });
 
-  it('stats GET: 自組織のメンバー数', async () => {
+  it('stats GET: 自組織のメンバー数。人数は認可のあとに service_role で、呼び出した管理者の組織だけを数える', async () => {
     const body = await json(await stats.GET());
 
     expect(body.stats).toEqual({ member_count: 4, organization_id: ORG_A });
+    // user_profiles は RLS で本人の行しか見えない。利用者の権限で数えると、組織の人数に関わらず常に 1 になってしまう
+    const counted = adminDb.recorded('user_profiles', 'select');
+    expect(counted).toHaveLength(1);
+    expect(counted[0]).toMatchObject({ select: 'id', count: true, head: true });
+    expect(counted[0].eq).toEqual([['organization_id', ORG_A]]);
+    // 利用者の権限で読んだのは、認可のためのプロフィールだけ (件数は数えていない)
+    expect(sessionDb.recorded('user_profiles', 'select').filter((q) => q.count)).toHaveLength(0);
   });
 
   it('challenges GET: 自組織のチャレンジだけ。参加者数と部署名つき', async () => {
@@ -572,8 +579,9 @@ describe('500 の本文は汎用メッセージだけ (生のエラー文は db-
     await expectGeneric(await settings.GET(), GENERIC_CODED, 'GET /api/org/settings');
   });
 
-  it('stats GET: 認可の後の想定外の例外', async () => {
-    failAfterAuthorization(RAW);
+  it('stats GET: 人数の集計 (service_role) の失敗は、人数 0 と偽らず 500', async () => {
+    setup();
+    adminDb = createSchemaDb({ tables: worldTables(), errors: { user_profiles: { message: RAW } } });
 
     await expectGeneric(await stats.GET(), GENERIC_CODED, 'GET /api/org/stats');
   });

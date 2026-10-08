@@ -1,9 +1,11 @@
 /**
  * GET /api/org/stats — 組織ダッシュボード統計 API
  * 所属組織の org_role が owner / admin のユーザーのみ (#1235)。判定は共通の requireOrgAdmin() (#1161)
+ *
+ * 返すのはメンバー数だけ。日次の集計 (活力スコアなど) は、オーナー判断 (#1325) で止めている。
  */
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
@@ -13,12 +15,14 @@ export async function GET() {
     const { profile } = await requireOrgAdmin();
     const orgId = profile.organization_id;
 
-    // メンバー数
-    const supabase = await createClient();
-    const { count: memberCount } = await supabase
+    // メンバー数。user_profiles は RLS で本人の行しか見えず、利用者本人の権限で数えると、組織の人数に関わらず
+    // 常に 1 (管理者自身) になる。そのため、認可 (上の requireOrgAdmin) を通したあとで service_role を使って数える。
+    // 数える範囲は、確認済みのプロフィールの organization_id (呼び出した管理者の所属組織) だけ。
+    const { count: memberCount, error } = await getSupabaseAdmin()
       .from('user_profiles')
       .select('id', { count: 'exact', head: true })
       .eq('organization_id', orgId);
+    if (error) throw new Error(error.message);
 
     return NextResponse.json({
       stats: {
