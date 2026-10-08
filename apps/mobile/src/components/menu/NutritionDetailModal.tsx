@@ -5,12 +5,12 @@
  * - 26 栄養素を category 別 (basic/mineral/vitamin/fat) に section 表示
  * - 各栄養素 DRI バー (DriBar コンポーネント)
  * - Radar chart 上部 + 編集ボタン (RadarChart / RadarKeyPicker)
- * - AI feedback Realtime + 2 秒ポーリング (最大 40 秒)
+ * - AI feedback: nutrition_feedback_cache の Realtime 通知 + 2 秒ポーリング (最大 40 秒) (useNutritionFeedbackWatch)
  * - 「献立を改善」ボタン → ImproveMealModal
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -27,9 +27,8 @@ import {
   NUTRIENT_BY_CATEGORY,
 } from '@homegohan/shared';
 
+import { useNutritionFeedbackWatch } from '../../hooks/useNutritionFeedbackWatch';
 import { getApi } from '../../lib/api';
-import { supabase } from '../../lib/supabase';
-import { useAuth } from '../../providers/AuthProvider';
 import { colors } from '../../theme/colors';
 import { radius, spacing } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
@@ -85,73 +84,27 @@ export const NutritionDetailModal: React.FC<Props> = ({
   onRadarKeysSaved,
   weekDays = [],
 }) => {
-  const { user } = useAuth();
-
   // --- AI feedback state ---
   const [praiseComment, setPraiseComment] = useState<string | null>(null);
   const [adviceText, setAdviceText] = useState<string | null>(null);
   const [nutritionTip, setNutritionTip] = useState<string | null>(null);
   const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
 
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const realtimeCleanupRef = useRef<(() => void) | null>(null);
+  // 生成待ち (Realtime + ポーリング) の持ち主。閉じる / 日付変更 / アンマウントで必ず解除される
+  const feedbackWatch = useNutritionFeedbackWatch();
 
   // --- ImproveMealModal state ---
   const [showImprove, setShowImprove] = useState(false);
 
   // ----------------------------------------------------------------
-  // fetch / polling helpers
+  // fetch helpers
   // ----------------------------------------------------------------
-
-  const clearPolling = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }, []);
-
-  const clearRealtime = useCallback(() => {
-    if (realtimeCleanupRef.current) {
-      realtimeCleanupRef.current();
-      realtimeCleanupRef.current = null;
-    }
-  }, []);
-
-  const startPolling = useCallback(
-    (cacheId: string) => {
-      let resolved = false;
-      let count = 0;
-      pollRef.current = setInterval(async () => {
-        if (resolved || count >= 20) {
-          clearPolling();
-          setIsLoadingFeedback(false);
-          return;
-        }
-        count++;
-        try {
-          const api = getApi();
-          const res = await api.get<any>(
-            `/api/ai/nutrition/feedback?cacheId=${cacheId}`
-          );
-          if (res.status === 'completed' && (res.feedback || res.praiseComment)) {
-            resolved = true;
-            setPraiseComment(res.praiseComment ?? null);
-            setAdviceText(res.advice ?? res.feedback ?? null);
-            setNutritionTip(res.nutritionTip ?? null);
-            setIsLoadingFeedback(false);
-            clearPolling();
-          }
-        } catch {
-          // ignore
-        }
-      }, 2000);
-    },
-    [clearPolling]
-  );
 
   const fetchFeedback = useCallback(
     async (forceRefresh = false) => {
       if (mealCount === 0) return;
+      // 前回の取得の待ち受けを止め、前回の応答を無効にする
+      const request = feedbackWatch.startRequest();
       setIsLoadingFeedback(true);
       try {
         const api = getApi();
@@ -162,6 +115,8 @@ export const NutritionDetailModal: React.FC<Props> = ({
           forceRefresh,
           weekData: weekDays,
         });
+        // 応答を待つ間にモーダルが閉じられた / 日付が変わった / 別の取得が始まった場合は何もしない
+        if (!request.isCurrent()) return;
         if (res.cached && (res.feedback || res.praiseComment)) {
           setPraiseComment(res.praiseComment ?? null);
           setAdviceText(res.advice ?? res.feedback ?? null);
@@ -170,15 +125,31 @@ export const NutritionDetailModal: React.FC<Props> = ({
           return;
         }
         if (res.status === 'generating' && res.cacheId) {
-          startPolling(res.cacheId);
+          // nutrition_feedback_cache の行 (cacheId) が completed / error になるのを待つ
+          request.watch(res.cacheId, {
+            onResolved: (content) => {
+              setPraiseComment(content.praiseComment);
+              setAdviceText(content.advice || null);
+              setNutritionTip(content.nutritionTip);
+              setIsLoadingFeedback(false);
+            },
+            onFailed: (message) => {
+              // 失敗 / タイムアウト。メッセージを出し、再分析ボタンで再試行できるようにする
+              setPraiseComment(null);
+              setAdviceText(message);
+              setNutritionTip(null);
+              setIsLoadingFeedback(false);
+            },
+          });
         } else {
           setIsLoadingFeedback(false);
         }
       } catch {
+        if (!request.isCurrent()) return;
         setIsLoadingFeedback(false);
       }
     },
-    [date, totals, mealCount, weekDays, startPolling]
+    [date, totals, mealCount, weekDays, feedbackWatch]
   );
 
   // ----------------------------------------------------------------
@@ -186,51 +157,19 @@ export const NutritionDetailModal: React.FC<Props> = ({
   // ----------------------------------------------------------------
 
   useEffect(() => {
-    if (!visible) {
-      clearPolling();
-      clearRealtime();
-      return;
-    }
+    if (!visible) return;
 
     // reset
     setPraiseComment(null);
     setAdviceText(null);
     setNutritionTip(null);
-    clearPolling();
-    clearRealtime();
-
-    // Realtime subscription for ai_nutrition_feedback INSERT
-    if (user?.id) {
-      const channel = supabase
-        .channel(`nutrition-detail-${user.id}-${date}`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'ai_nutrition_feedback',
-            filter: `user_id=eq.${user.id}`,
-          },
-          (payload: any) => {
-            if (payload.new?.summary) {
-              setPraiseComment(payload.new.summary);
-              setIsLoadingFeedback(false);
-              clearPolling();
-            }
-          }
-        )
-        .subscribe();
-
-      realtimeCleanupRef.current = () => {
-        supabase.removeChannel(channel);
-      };
-    }
+    setIsLoadingFeedback(false);
 
     fetchFeedback();
 
+    // 閉じる / 日付変更 / アンマウントで、待ち受け (購読とポーリング) を必ず解除する
     return () => {
-      clearPolling();
-      clearRealtime();
+      feedbackWatch.cancel();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, date]);
