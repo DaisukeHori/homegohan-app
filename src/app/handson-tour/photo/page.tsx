@@ -14,6 +14,12 @@ import {
   type SubStepOfStep1,
 } from '@homegohan/handson-tour-shared';
 import { createClient } from '@/lib/supabase/client';
+import {
+  EMPTY_PHOTO_TOUR_PROFILE,
+  fetchPhotoTourProfile,
+  type PhotoTourProfile,
+} from '@/lib/handson-tour/tour-profile';
+import { reportTourProfileFailures } from '@/lib/handson-tour/tour-profile-report';
 
 function safeNickname(raw: string | null | undefined): string {
   if (!raw) return 'あなた';
@@ -23,12 +29,7 @@ function safeNickname(raw: string | null | undefined): string {
   return trimmed;
 }
 
-type UserProfile = {
-  nickname: string | null;
-  target_kcal_per_day: number | null;
-};
-
-function buildBubble(subStep: SubStepOfStep1, profile: UserProfile) {
+function buildBubble(subStep: SubStepOfStep1, profile: PhotoTourProfile) {
   const i18n = HANDSON_TOUR_I18N_JA.tour.step1;
   const nickname = safeNickname(profile.nickname);
 
@@ -50,7 +51,7 @@ function buildBubble(subStep: SubStepOfStep1, profile: UserProfile) {
         position: 'auto' as const,
       };
     case '1.5': {
-      const targetKcal = profile.target_kcal_per_day;
+      const targetKcal = profile.target_kcal;
       if (targetKcal) {
         const percent = Math.round((MOCK_PHOTO_RESPONSE.calories / targetKcal) * 100);
         return {
@@ -90,32 +91,33 @@ function buildBubble(subStep: SubStepOfStep1, profile: UserProfile) {
 export default function HandsonTourPhotoPage() {
   const router = useRouter();
   const [subStep, setSubStep] = useState<SubStepOfStep1>('1.1');
-  const [profile, setProfile] = useState<UserProfile>({ nickname: null, target_kcal_per_day: null });
+  const [profile, setProfile] = useState<PhotoTourProfile>(EMPTY_PHOTO_TOUR_PROFILE);
   const [isSaving, setIsSaving] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const mountTimeRef = useRef(Date.now());
 
   useEffect(() => {
+    let cancelled = false;
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) return;
-      setUserId(user.id);
-      supabase
-        .from('user_profiles')
-        .select('nickname, target_kcal_per_day')
-        .eq('id', user.id)
-        .single()
-        .then(({ data }) => {
-          if (data) {
-            setProfile({
-              nickname: data.nickname ?? null,
-              target_kcal_per_day: (data as unknown as Record<string, unknown>).target_kcal_per_day != null
-                ? Number((data as unknown as Record<string, unknown>).target_kcal_per_day)
-                : null,
-            });
-          }
-        });
-    });
+    supabase.auth
+      .getUser()
+      .then(async ({ data: { user } }) => {
+        if (!user || cancelled) return;
+        setUserId(user.id);
+        // #1040: 目標カロリーは nutrition_targets.daily_calories にある
+        // (以前は存在しない user_profiles.target_kcal_per_day を select して 42703 で失敗し、ニックネームも空のままだった)
+        const { profile: loaded, failures } = await fetchPhotoTourProfile(supabase, user.id);
+        if (cancelled) return;
+        setProfile(loaded);
+        // 体験モードなので失敗してもブロックしないが、必ず記録する
+        reportTourProfileFailures({ step: 1, userId: user.id, failures });
+      })
+      .catch(() => {
+        // 認証情報の取得などに失敗してもパーソナライズなしで続ける(体験モードのため必須ではない)
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // mount 時に step_viewed (step=1) を発火
