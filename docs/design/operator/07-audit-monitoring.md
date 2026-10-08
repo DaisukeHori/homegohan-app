@@ -462,6 +462,21 @@ logger.warn('plan.price_change', {
 | pg_cron ジョブ失敗 | Slack #cron-alerts |
 | API p95 > 1000ms (3 分間継続) | Slack #performance |
 
+### 8.4 暫定: アプリログ画面 (実装済み: #1157)
+
+Better Stack を導入するまでの間、`app_logs` (db-logger が書く構造化ログ) を super_admin が画面で読める。
+
+| 項目 | 内容 |
+|-----|------|
+| 画面 | `/super-admin/logs` (左メニュー「運用 > アプリログ」)。読み取り専用 |
+| API | `GET /api/super-admin/logs`。権限は super_admin のみ (admin も不可)。`app_logs` の RLS は本人の行だけ読める (#1171) ため、`requireRole` を通したあとで service role の client を使う |
+| 絞り込み | `level` / `source` / `function_name` / `user_id` / `request_id` (いずれも完全一致) と `from` / `to` (ISO 8601、両端を含む) |
+| ページ送り | 新しい順 (`created_at`、同時刻は `id`)。`limit` は既定 50・最大 200。応答の `meta.next_cursor` を次回の `cursor` に渡す (OFFSET は使わない) |
+| 表示 | 文面は保存されたまま表示する。秘密情報のマスクは書き込み時 (`supabase/functions/_shared/log-sanitizer.ts`: #1171 / #1287) |
+| 索引 | `created_at` / `level` / `function_name` / `source` / `user_id`。`request_id` には索引が無く、単独で探すと全行を順に調べる |
+
+しきい値を超えたときの通知 (メールなど) と Sentry 連携は含まない。
+
 ## 9. Status Page (status.homegohan.app)
 
 ### 9.1 Better Stack Status Page 設定
