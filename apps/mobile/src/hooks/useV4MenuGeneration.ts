@@ -1,12 +1,8 @@
 import { useState, useCallback } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import type { TargetSlot, MenuGenerationConstraints } from "../../../../types/domain";
 import { getApi } from "../lib/api";
 import { supabase } from "../lib/supabase";
-
-// AsyncStorage key (localStorage 代替)
-const STORAGE_KEY_V4_GENERATING = "v4MenuGenerating";
 
 interface UseV4MenuGenerationOptions {
   onGenerationStart?: (requestId: string) => void;
@@ -47,15 +43,10 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
 
         setRequestId(data.requestId);
 
-        // AsyncStorage に生成状態を保存 (localStorage 代替)
-        await AsyncStorage.setItem(
-          STORAGE_KEY_V4_GENERATING,
-          JSON.stringify({
-            requestId: data.requestId,
-            timestamp: Date.now(),
-            totalSlots: data.totalSlots,
-          })
-        );
+        // 生成中の状態は端末 (AsyncStorage) に保存しない (#1049 F7-20)。
+        // 以前は "v4MenuGenerating" に生の JSON を書いていたが、読む処理がどこにも無く、
+        // persistence.ts の TTL 付き形式 ({ data, expiresAt }) とも食い違っていた。
+        // アプリを開き直したあとの復元は、サーバーの pending API (/api/ai/menu/weekly/pending) で行う。
 
         options.onGenerationStart?.(data.requestId);
         return data;
@@ -82,7 +73,7 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
             table: "weekly_menu_requests",
             filter: `id=eq.${reqId}`,
           },
-          async (payload) => {
+          (payload) => {
             const newData = payload.new as any;
 
             const progressWithStatus = {
@@ -97,7 +88,6 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
               newData.status === "failed"
             ) {
               setIsGenerating(false);
-              await AsyncStorage.removeItem(STORAGE_KEY_V4_GENERATING);
 
               if (newData.status === "completed") {
                 options.onGenerationComplete?.();
@@ -123,7 +113,6 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
   const cancelGeneration = useCallback(async () => {
     setIsGenerating(false);
     setRequestId(null);
-    await AsyncStorage.removeItem(STORAGE_KEY_V4_GENERATING);
   }, []);
 
   const getRequestStatus = useCallback(async (reqId: string) => {

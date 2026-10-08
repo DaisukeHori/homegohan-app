@@ -51,13 +51,15 @@ export async function clearItem(key: string): Promise<void> {
  * - weeklyMenuGenerating: 週間献立 AI 生成中フラグ（2 分 TTL）
  * - singleMealGenerating: 単品 AI 生成中フラグ（2 分 TTL）
  * - shoppingListRegenerating: 買い物リスト再生成中フラグ（5 分 TTL）
- * - v4MenuGenerating: V4 献立生成中状態 { requestId, totalSlots, startedAt }（30 分 TTL）
  * - v4_range_days: V4Modal の期間モード設定（永続）
+ *
+ * V4 献立生成中の状態 (Web の localStorage "v4MenuGenerating" に当たるもの) は、端末に保存しない。
+ * 保存しても読む処理が無く、アプリを開き直したあとの復元はサーバーの pending API
+ * (/api/ai/menu/weekly/pending) で行うため (#1049 F7-20)。
  */
 export const PERSISTENCE_KEYS = {
   weeklyMenuGenerating: { key: 'weeklyMenuGenerating', ttl: 2 * 60 * 1000 },
   singleMealGenerating: { key: 'singleMealGenerating', ttl: 2 * 60 * 1000 },
   shoppingListRegenerating: { key: 'shoppingListRegenerating', ttl: 5 * 60 * 1000 },
-  v4MenuGenerating: { key: 'v4MenuGenerating', ttl: 30 * 60 * 1000 },
   v4_range_days: { key: 'v4_range_days', ttl: Infinity },
 } as const;
