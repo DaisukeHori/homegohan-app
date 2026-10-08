@@ -9,6 +9,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { describeReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
 
 interface Message {
   id: string;
@@ -69,6 +70,8 @@ export default function TicketDetailPage({ params }: PageProps) {
   const [messageBody, setMessageBody] = useState('');
   const [isInternal, setIsInternal] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  // 返信は保存できたが、顧客へのメール通知が届いていないときの案内 (#1183)
+  const [emailNotice, setEmailNotice] = useState<string | null>(null);
 
   const [assigneeId, setAssigneeId] = useState('');
   const [isAssigning, setIsAssigning] = useState(false);
@@ -102,6 +105,7 @@ export default function TicketDetailPage({ params }: PageProps) {
   const handleSendMessage = async () => {
     if (!messageBody.trim()) return;
     setIsSending(true);
+    setEmailNotice(null);
     try {
       const res = await fetch(`/api/admin/support/tickets/${params.id}/messages`, {
         method: 'POST',
@@ -112,6 +116,10 @@ export default function TicketDetailPage({ params }: PageProps) {
         const json = await res.json();
         throw new Error(json.error?.message ?? '送信失敗');
       }
+      // 外部返信は顧客へメールで知らせる。メッセージ自体は保存済みなので、送れなかったときは案内だけ出す
+      // (内部メモは通知しないため、応答に email が無い)
+      const created = await res.json().catch(() => null);
+      setEmailNotice(describeReplyEmailOutcome(created?.email));
       setMessageBody('');
       await fetchTicket();
     } catch (e: unknown) {
@@ -192,6 +200,15 @@ export default function TicketDetailPage({ params }: PageProps) {
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4 text-sm">
             {error}
+          </div>
+        )}
+
+        {emailNotice && (
+          <div
+            role="status"
+            className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded mb-4 text-sm"
+          >
+            {emailNotice}
           </div>
         )}
 
