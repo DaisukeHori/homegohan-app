@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { todayLocal } from "@/lib/date-utils";
+import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
 import {
   Camera, Upload, X, ChevronDown, ChevronUp, Loader2,
   CheckCircle2, AlertTriangle, Sparkles, ArrowLeft, Activity,
@@ -96,6 +97,9 @@ export default function NewHealthCheckupPage() {
   const [step, setStep] = useState<Step>('upload');
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  // #1222: 画像を差し替えたとき・× で外したとき・ページ離脱のときに、プレビュー用 Blob URL を revoke する。
+  // PDF 選択中の目印 '__pdf__' は blob: ではないので対象外 (何もしない)。
+  useRevokeBlobUrls(imagePreview);
   const [formData, setFormData] = useState<FormData>(initialFormData);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     basic: true,

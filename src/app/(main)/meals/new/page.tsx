@@ -5,6 +5,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveClassifyPhotoType } from "@/lib/ai/image-recognition";
 import { logToServer } from "@/lib/db-logger";
+import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
 import { formatLocalDate } from "@homegohan/shared";
 import type { CatalogDishMatch, CatalogProductSummary } from "@/types/catalog";
 import { motion, AnimatePresence } from "framer-motion";
@@ -262,6 +263,10 @@ export default function MealCaptureModal() {
   // 複数枚対応
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
+  // #1222: プレビュー用 Blob URL は、削除・撮り直し・各ステップのリセット (setPhotoPreviews([]) が多数ある)・
+  // ページ離脱のたびに、配列から外れた分をここでまとめて revoke する。
+  // ハンズオンの固定画像 (SAMPLE_MEAL_IMAGE.webPath) は blob: ではないので対象外。
+  useRevokeBlobUrls(photoPreviews);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   // 冷蔵庫解析結果

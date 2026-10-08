@@ -12,6 +12,7 @@ import Link from 'next/link';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { adminFetch } from '@/lib/admin/fetch';
+import { canViewUserEmail } from '@/lib/admin/user-emails';
 
 interface PageProps {
   params: { id: string };
@@ -33,6 +34,8 @@ interface AuditLog {
 
 interface UserDetailProfile {
   id: string;
+  /** メールアドレス (admin / super_admin にだけ API が返す。それ以外と、メールを持たないユーザーは null) */
+  email: string | null;
   nickname: string | null;
   roles: string[];
   plan_key: string;
@@ -83,6 +86,8 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
   const isBanned = profile.is_banned;
   const isSuperAdmin = actor.roles.includes('super_admin');
   const isAdmin = actor.roles.includes('admin') || isSuperAdmin;
+  // メールアドレスを見られるのは admin / super_admin だけ (support には API も null を返す)
+  const canSeeEmail = canViewUserEmail(actor.roles);
 
   return (
     <div className="max-w-4xl">
@@ -106,6 +111,16 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
           <div>
             <dt className="text-gray-500 mb-1">ユーザー ID</dt>
             <dd className="font-mono text-gray-900 text-xs">{profile.id}</dd>
+          </div>
+          <div>
+            <dt className="text-gray-500 mb-1">メールアドレス</dt>
+            <dd className="text-gray-900 break-all">
+              {canSeeEmail ? (
+                (profile.email ?? '-')
+              ) : (
+                <span className="text-gray-400 text-xs">権限により非表示</span>
+              )}
+            </dd>
           </div>
           <div>
             <dt className="text-gray-500 mb-1">プラン</dt>

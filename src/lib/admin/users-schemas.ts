@@ -28,7 +28,9 @@ export type UsersSearchParams = z.infer<typeof UsersSearchSchema>;
 
 export const UserDetailResponseSchema = z.object({
   id: z.string().uuid(),
-  email: z.string().email().optional(),
+  // #1145: auth.users のメールアドレス。admin / super_admin にだけ返し、それ以外 (support など) と
+  // メールを持たないユーザー (電話・匿名) は null。
+  email: z.string().nullable(),
   nickname: z.string().nullable(),
   roles: z.array(z.string()),
   plan_key: z.string().nullable(),

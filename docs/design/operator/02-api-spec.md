@@ -71,7 +71,7 @@ await supabase.from('admin_audit_logs').insert({
 
 | パラメータ | 型 | 説明 |
 |----------|---|------|
-| `q` | string | 全文検索 (email/name/user_id) |
+| `q` | string | 全文検索 (email/name/user_id)。email の部分一致は `admin` / `super_admin` のみ (`support` は name/user_id のみ)。`%` `_` は文字どおりに一致する |
 | `plan` | string | plan_key でフィルタ |
 | `role` | string | ロールでフィルタ |
 | `status` | `active\|banned\|deleted` | ステータス |
@@ -106,10 +106,16 @@ await supabase.from('admin_audit_logs').insert({
 
 **権限**: `admin`, `super_admin`, `support`
 
+**email の扱い (#1145)**:
+- `email` は `auth.users` のメールアドレス。見られるのは `admin` / `super_admin` のみ。`support` は一覧・詳細を見られるが `email` は常に `null` で、`q` によるメール検索も効かない (検索でメールの存在を推測させない)。`support` にも見せる場合は `EMAIL_VIEWER_ROLES` (`src/lib/admin/user-emails.ts`) に足す。
+- 一覧は、その 1 ページに出た user_id のぶんだけを `admin_user_emails(p_ids)` (service_role 専用の RPC) で引く。`auth.admin.listUsers()` は先頭 50 件しか引けないため使わない (#1204)。
+- `q` のメール検索は `admin_find_user_ids_by_email(p_q, p_limit)` (service_role 専用)。新しいアカウントから最大 100 件までが対象。
+- メールを持たないユーザー (電話・匿名) や、取得に失敗したときは `email: null` (失敗はログに残り、API は 200 のまま)。応答は `Cache-Control: no-store`。
+
 ---
 
 ### GET /api/admin/users/{id}
-ユーザー詳細
+ユーザー詳細 (`email` の扱いは上の「email の扱い」と同じ。`support` には `null`)
 
 **レスポンス**:
 ```json
