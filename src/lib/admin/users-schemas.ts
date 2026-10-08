@@ -113,14 +113,6 @@ export const UnfreezeBodySchema = z.object({
 
 export type UnfreezeBody = z.infer<typeof UnfreezeBodySchema>;
 
-// ─── impersonate ──────────────────────────────────────────────────────────────
-
-export const ImpersonateBodySchema = z.object({
-  reason: z.string().min(1).max(2000),
-});
-
-export type ImpersonateBody = z.infer<typeof ImpersonateBodySchema>;
-
 // ─── 監査ログ検索 ─────────────────────────────────────────────────────────────
 
 export const AuditLogsSearchSchema = z.object({
