@@ -830,6 +830,21 @@ family/09 が新規追加するイベント。
 
 数えるとハンズオン固有 8 + Web Vitals 3 = 11 イベント、family/09 設計書では「10 イベント種類」と表記される(Web Vitals 3 種を「performance」で 1 グループ扱い)。本表では明示的に 11 行を canonical 化。
 
+#### 15.3.1 アプリ共通のイベント (ハンズオン以外)
+
+| event_name | カテゴリ | 発火タイミング | 主要プロパティ |
+|---|---|---|---|
+| `app_error_boundary` | error | モバイルの ErrorBoundary が、画面の描画中の例外を受けた (#1207) | `boundary`, `platform`, `error_name?`, `error_fingerprint?` |
+
+`app_error_boundary` は、§15.7 に従い **例外の文面 (`message`) もスタックも送らない**。PostHog は外部の計測サービスで、イベントがユーザー ID に紐づくうえ、§15.7 の PII フィルタはキー名しか見ず値の中身は除かないため。送るのは次の項目だけ。
+
+- `boundary`: どの境界か (例: `root` / `tabs` / `org`)。画面遷移のパスではない
+- `platform`: OS
+- `error_name`: 例外の種類。`/^[A-Za-z0-9_$.]{1,64}$/` に合う識別子 (`TypeError` など) のときだけ付く
+- `error_fingerprint`: 種類と文面から作る指紋 (32 bit FNV-1a の 16 進 8 桁)。元に戻せず、同じ例外を数えるためだけに使う
+
+PostHog で件数を見つけたら、同じ指紋を `app_logs` の `metadata.fingerprint` で引くと、生の文面 (300 文字に切り詰め済み) とスタックが見つかる。これらは `POST /api/log` の metadata にだけ残り、サーバー側 (`sanitizeLogEntry`) で秘密情報をマスクして保存される (ログイン前の画面の例外は、`/api/log` が 401 で断るので残らない)。実装は `apps/mobile/src/lib/error-report.ts`。
+
 ### 15.4 共通プロパティ (全イベント)
 
 ```ts
