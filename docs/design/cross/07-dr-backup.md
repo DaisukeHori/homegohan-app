@@ -203,15 +203,32 @@ pg_restore --clean --no-owner -d $DATABASE_URL homegohan.dump
 # 1. Supabase Dashboard から PITR 復元ポイントを選択
 #    (staging project に本番の N 時間前の状態を復元)
 
-# 2. 復元完了後、smoke test 実行
-curl -s https://staging.homegohan.app/api/v1/public/health | jq .
+# 2. 復元完了後、ヘルスチェック (200 = アプリ + DB 疎通 OK / 503 = DB に届いていない)
+curl -s "https://staging.homegohan.app/api/health?deep=1" | jq .
 
-# 3. 主要 API テスト
+# 3. 主要 API テスト (smoke test)
 npm run test:smoke -- --base-url=https://staging.homegohan.app
 
 # 4. 結果を admin_audit_logs に記録
 # action: "dr.test.monthly.pitr", metadata: { result: "success", restored_to: "..." }
 ```
+
+#### ヘルスチェックと smoke test の仕様 (#1181)
+
+| 手段 | 確認内容 | 失敗時 |
+|------|---------|--------|
+| `GET /api/health` | アプリが応答するか (DB には触れない) | 応答すれば常に 200 (応答が無ければアプリ停止) |
+| `GET /api/health?deep=1` | 上記 + DB (Supabase) を anon キーで 1 行読めるか (2 秒で打ち切り) | 503 `{"status":"degraded"}` |
+| `npm run test:smoke -- --base-url=<URL>` | 上の `?deep=1` が 200、`/login`・`/faq` が 200、未認証の `/api/profile` が 401 (500 ではない) | 終了コード 1 |
+
+- `/api/health` は認証不要・個人情報なし・`Cache-Control: no-store`。HEAD にも同じステータスで応答する。
+  応答はステータス・バージョン・時刻 (`?deep=1` のときは DB の可否) だけで、エラーの原因は返さない
+  (原因は `app_logs` / Vercel ログに残る)。
+  実装は `src/app/api/health/route.ts`。`/api/health/*` (blood-tests 等) は健康記録機能の別 API。
+- `npm run test:smoke` はデータを書き換えない。`--with-auth` を付けると、テストユーザー
+  (`E2E_USER_EMAIL` / `E2E_USER_PASSWORD`) でログインして `/api/profile` が 200 になることも確認する
+  (確認したい環境の `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` を環境変数で渡す)。
+  詳しい使い方は `npm run test:smoke -- --help`。
 
 ---
 
