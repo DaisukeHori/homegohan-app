@@ -3,6 +3,7 @@ import { SupabaseClient } from "@supabase/supabase-js";
 import { searchSimilarRecipes, type ReferenceRecipe } from "./evidence-verifier.ts";
 import { matchIngredients, type IngredientMatchMemo, type IngredientMatchResult } from "./ingredient-matcher.ts";
 import { calculateDishNutrition } from "./nutrition-calculator-v2.ts";
+import { calcSugarG } from "./nutrition-sugar.ts";
 import type { NutritionTotals } from "./nutrition-calculator.ts";
 import { adjustStockIngredient, emptyNutrition, isWaterishIngredient } from "./nutrition-calculator.ts";
 
@@ -28,6 +29,7 @@ export type V4IngredientMatchDebug = {
   calculated_fat_g: number;
   calculated_carbs_g: number;
   calculated_fiber_g: number;
+  calculated_sugar_g: number;
 };
 
 export type V4NutritionAnalysis = {
@@ -118,6 +120,8 @@ function toLegacyNutritionTotals(input: ReturnType<typeof calculateDishNutrition
     fat_g: input.fat_g,
     carbs_g: input.carbs_g,
     fiber_g: input.fiber_g,
+    // 糖質 (炭水化物 − 食物繊維)。v2 の材料ごとの計算結果をそのまま引き継ぐ (#1146)
+    sugar_g: input.sugar_g,
     sodium_g: input.salt_eq_g,
     potassium_mg: input.potassium_mg,
     calcium_mg: input.calcium_mg,
@@ -199,6 +203,7 @@ export async function analyzeNutritionFromIngredientsV4(
       calculated_fat_g: ingredientNutrition?.nutrition.fat_g ?? 0,
       calculated_carbs_g: ingredientNutrition?.nutrition.carbs_g ?? 0,
       calculated_fiber_g: ingredientNutrition?.nutrition.fiber_g ?? 0,
+      calculated_sugar_g: ingredientNutrition?.nutrition.sugar_g ?? 0,
     };
   });
 
@@ -322,7 +327,10 @@ export async function validateAndAdjustNutritionV4(
   adjustedNutrition.sodium_g = reference.sodium_g ?? adjustedNutrition.sodium_g * scaleFactor;
 
   adjustedNutrition.fiber_g *= scaleFactor;
-  adjustedNutrition.sugar_g *= scaleFactor;
+  // 糖質は調整後の炭水化物・食物繊維から求め直す (#1146)。
+  // 炭水化物だけ参照レシピの値に置き換わることがあり、糖質を単純にスケールすると
+  // 「糖質 > 炭水化物」のように食い違うため。
+  adjustedNutrition.sugar_g = calcSugarG(adjustedNutrition.carbs_g, adjustedNutrition.fiber_g);
   adjustedNutrition.potassium_mg *= scaleFactor;
   adjustedNutrition.calcium_mg *= scaleFactor;
   adjustedNutrition.phosphorus_mg *= scaleFactor;

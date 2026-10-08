@@ -31,6 +31,7 @@ import {
   MatchedIngredientInfo
 } from './evidence-verifier.ts'
 import { generateGeminiJson } from './gemini-json.ts'
+import { calcSugarG } from './nutrition-sugar.ts'
 import {
   estimateNutritionWithPerplexity,
   isPerplexityNutritionCandidate,
@@ -460,6 +461,7 @@ export function scaleNutritionTotalsRaw(totals: NutritionTotals, factor: number)
     fat_g: totals.fat_g * factor,
     carbs_g: totals.carbs_g * factor,
     fiber_g: totals.fiber_g * factor,
+    sugar_g: totals.sugar_g * factor,
     sodium_mg: totals.sodium_mg * factor,
     potassium_mg: totals.potassium_mg * factor,
     calcium_mg: totals.calcium_mg * factor,
@@ -553,6 +555,8 @@ export function totalsFromEstimatedNutritionRaw(estimate: MealNutritionEstimate)
     fat_g: estimate.fat_g,
     carbs_g: estimate.carbs_g,
     fiber_g: estimate.fiber_g,
+    // 糖質は推定した炭水化物・食物繊維から求める (#1146)
+    sugar_g: calcSugarG(estimate.carbs_g, estimate.fiber_g),
     salt_eq_g: estimate.salt_eq_g,
     sodium_mg: estimate.salt_eq_g * 393.4,
   }
@@ -571,6 +575,7 @@ export function overlayEstimatedTopLineNutrition(
     fat_g: estimatedTotals.fat_g,
     carbs_g: estimatedTotals.carbs_g,
     fiber_g: estimatedTotals.fiber_g,
+    sugar_g: estimatedTotals.sugar_g,
     sodium_mg: estimatedTotals.sodium_mg,
     salt_eq_g: estimatedTotals.salt_eq_g,
   }
@@ -970,6 +975,7 @@ export async function analyzeWithEvidence(
     mealTotals.fat_g += dishRaw.fat_g
     mealTotals.carbs_g += dishRaw.carbs_g
     mealTotals.fiber_g += dishRaw.fiber_g
+    mealTotals.sugar_g += dishRaw.sugar_g
     mealTotals.sodium_mg += dishRaw.sodium_mg
     mealTotals.potassium_mg += dishRaw.potassium_mg
     mealTotals.calcium_mg += dishRaw.calcium_mg

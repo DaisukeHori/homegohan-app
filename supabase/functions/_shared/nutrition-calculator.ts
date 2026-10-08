@@ -11,6 +11,7 @@ import {
   fetchDatasetEmbeddings,
 } from "../../../shared/dataset-embedding.mjs";
 import { fetchWithRetry, isRetryableError, withRetry, withTimeout } from "./network-retry.ts";
+import { calcSugarG } from "./nutrition-sugar.ts";
 
 function readDenoEnv(name: string): string | undefined {
   const denoLike = (globalThis as typeof globalThis & {
@@ -79,7 +80,7 @@ export type NutritionTotals = {
   fiber_g: number;
   fiber_soluble_g: number;
   fiber_insoluble_g: number;
-  sugar_g: number;           // 糖質
+  sugar_g: number;           // 糖質 (炭水化物 − 食物繊維)
   sodium_g: number;          // 塩分相当量 (g単位)
   
   // ミネラル
@@ -316,7 +317,9 @@ export function addNutritionFromMatch(totals: NutritionTotals, matched: any, amo
   add("fat_g", matched.fat_g);
   add("carbs_g", matched.carbs_g);
   add("fiber_g", matched.fiber_g);
-  // sugar_g: DBに存在しないので計算しない（常に0）
+  // 糖質: dataset_ingredients に列は無いので、炭水化物 − 食物繊維 で材料ごとに求める (#1146)。
+  // v2 (calculateIngredientNutrition) と同じ式。DBの値は文字列のことがあるので parseFloat で変換する。
+  add("sugar_g", calcSugarG(matched.carbs_g, matched.fiber_g));
   add("sodium_g", matched.salt_eq_g);        // 塩分相当量
   
   // ミネラル
@@ -512,7 +515,7 @@ export async function embedTexts(texts: string[], dimensions = DATASET_EMBEDDING
 }
 
 // DBに実際に存在するカラムのみを選択
-// 存在しないカラム: sugar_g, saturated_fat_g, monounsaturated_fat_g, polyunsaturated_fat_g
+// 存在しないカラム: sugar_g (carbs_g − fiber_g から計算する), saturated_fat_g, monounsaturated_fat_g, polyunsaturated_fat_g
 // #1046 F5-11: discard_rate_percent（廃棄率）を選択に含め、可食部補正をv2と揃える
 const INGREDIENT_SELECT = `
   id, name, name_norm, discard_rate_percent,
