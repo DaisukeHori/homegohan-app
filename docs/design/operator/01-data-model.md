@@ -991,6 +991,10 @@ CREATE POLICY "email_blacklist_admin" ON email_blacklist
 
 ### 3.21 `gdpr_deletion_requests`
 
+> **2026-10-08 オーナー判断 (#1130)**: 退会は即時削除が正式仕様で、このテーブルは退会フローでは使わない。
+> 下の `cooling_until` (30 日の待機) と `cancelled_at` は、待機期間を前提にした旧設計の列。
+> 廃止するか別用途にするかは未決 (cross/08-legal-compliance.md §16.4 / §19)。
+
 ```sql
 CREATE TABLE gdpr_deletion_requests (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
