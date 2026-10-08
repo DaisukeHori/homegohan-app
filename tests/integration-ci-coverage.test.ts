@@ -83,7 +83,8 @@ describe("#1313 / #850: tests/integration/ の結合テストが CI の実行対
   it("ワークフローの指定と、テストファイルの一覧を読み取れている (空のままで全部通ることを防ぐ)", () => {
     expect(filters).toEqual(expect.arrayContaining(["tests/integration/rls", "tests/integration/security"]));
     expect(files.length).toBeGreaterThan(50);
-    expect(files).toContain("tests/integration/operator/super-admin-plans.test.ts");
+    // #850: 以前は動いていなかった super-admin-*.test.ts を、ちゃんと検査の対象として読めている
+    expect(files.some((file) => file.startsWith("tests/integration/operator/super-admin-"))).toBe(true);
   });
 
   it("tests/integration/ の *.test.ts は、すべて security-regression.yml の指定のどれかに当たる", () => {

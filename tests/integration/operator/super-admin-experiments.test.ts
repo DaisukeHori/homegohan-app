@@ -38,7 +38,9 @@ beforeAll(async () => {
   ]);
 
   // Create a draft experiment directly via admin client for GET/PATCH/results tests
-  // INSERT の error は必ず確認する (作れないまま黙ってスキップさせず、このあとのテストが空振りで通るのを防ぐ)
+  // INSERT の error は必ず確認する (作れないまま黙ってスキップさせず、このあとのテストが空振りで通るのを防ぐ)。
+  // experiments.created_by は NOT NULL で auth.users への外部キーなので、実在するユーザーを入れる
+  // (以前は null を入れて INSERT が失敗し、詳細・更新・結果・削除のテストが黙ってスキップされていた)
   const { data, error } = await supabaseAdmin
     .from('experiments')
     .insert({
@@ -50,7 +52,7 @@ beforeAll(async () => {
         { key: 'variant_b', weight: 50 },
       ],
       status: 'draft',
-      created_by: null,
+      created_by: superAdminUser.userId,
     })
     .select('id')
     .single();
@@ -69,7 +71,7 @@ beforeAll(async () => {
         { key: 'variant_b', weight: 50 },
       ],
       status: 'draft',
-      created_by: null,
+      created_by: superAdminUser.userId,
     })
     .select('id')
     .single();
