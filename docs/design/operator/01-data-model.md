@@ -1158,7 +1158,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_sandbox_meal
 
 利用方針:
 - 通常 UI(週間献立 / 食事一覧)は `WHERE is_sandbox = false` を必ず付与
-- バッジ判定(`first_bite` 等)は `is_sandbox=true` も対象に含める(設計書 §03-step1-photo §03)
+- バッジ判定(`first_bite` 等)は `is_sandbox=true` を対象に含めない(#1314。オーナー判断 2026-10-08。当初の設計書 §03-step1-photo §03 は「含める」だったが変更。`GET /api/badges` の食事数・自炊数・連続日数は `is_sandbox = false` の日だけで数える)
 
 #### 3.26.3 `user_daily_meals` 拡張 (sandbox 識別子)
 
