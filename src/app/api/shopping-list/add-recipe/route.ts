@@ -59,8 +59,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    // アクティブな買い物リストを取得、なければ作成。
-    // 同時に 2 件の追加が来て作成に負けた場合 (23505) も、先に作られたリストを使うので失敗しない (#1214)
+    // アクティブな買い物リストを取得、なければ作成。DB 関数 get_or_create_active_shopping_list に任せる。
+    // 同時に 2 件の追加が来ても (#1214)、買い物リストの再生成 (アーカイブ -> 新規作成) と同時に走っても (#1312)、
+    // ユーザーごとのロックで 1 件ずつ処理されるので、どちらも一意制約違反 (23505) で失敗しない
     const shoppingList = await getOrCreateActiveShoppingList(supabase, user.id);
 
     // Create shopping list items from ingredients

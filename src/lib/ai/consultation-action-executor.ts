@@ -735,7 +735,8 @@ export async function runConsultationAction(
     case 'add_to_shopping_list': {
       const { items } = action.action_params;
 
-      // アクティブな買い物リストを取得または作成 (add-recipe API と共通のヘルパー。同時実行の 23505 にも耐える #1214)
+      // アクティブな買い物リストを取得または作成 (add-recipe API と共通のヘルパー。DB 関数のロックで、
+      // 同時の追加 (#1214) とも、買い物リストの再生成 (#1312) とも 23505 にならない)
       let shoppingList: { id: string } | null = null;
       try {
         shoppingList = await getOrCreateActiveShoppingList(supabase, user.id);
