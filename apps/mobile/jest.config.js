@@ -23,6 +23,10 @@ module.exports = {
     '^react-native/(.*)$': path.join(worktreeNodeModules, 'react-native', '$1'),
     '^react-test-renderer$': path.join(worktreeNodeModules, 'react-test-renderer'),
     '^react-test-renderer/(.*)$': path.join(worktreeNodeModules, 'react-test-renderer', '$1'),
+    // tsconfig.json の paths と同じく、このリポジトリの packages/shared を直接読む (#1197)。
+    // node_modules/@homegohan/shared (ワークスペースのシンボリックリンク) 経由だと、node_modules を
+    // 別の場所のものと共有している作業コピー (git worktree など) で、手元ではなくリンク先の古い内容を読むため。
+    '^@homegohan/shared$': path.join(repoRoot, 'packages/shared/src/index.ts'),
     // react-native-webview はネイティブモジュール (RNCWebViewModule) を必要とするため
     // Jest 環境では stub モックに差し替える。
     '^react-native-webview$': '<rootDir>/__mocks__/react-native-webview.js',

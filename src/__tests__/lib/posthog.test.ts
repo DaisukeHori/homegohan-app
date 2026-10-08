@@ -26,6 +26,7 @@ const {
   ANALYTICS_CONSENT_EVENT,
   redactTokenPath,
 } = await import('@/lib/posthog');
+const { POSTHOG_DEFAULT_HOST } = await import('@homegohan/shared');
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -77,6 +78,34 @@ describe('initPostHog (#1044 F6-15: 冒頭の同意ガード)', () => {
     initPostHog();
 
     expect(mockInit).not.toHaveBeenCalled();
+  });
+});
+
+describe('initPostHog: 送信先ホスト (#1197: 既定値は packages/shared の定数)', () => {
+  beforeEach(() => {
+    localStorage.setItem(ANALYTICS_CONSENT_KEY, 'true');
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('NEXT_PUBLIC_POSTHOG_KEY', 'phc_test_key');
+  });
+
+  it('NEXT_PUBLIC_POSTHOG_HOST が未設定なら、共通の既定ホストを api_host に渡す', () => {
+    vi.stubEnv('NEXT_PUBLIC_POSTHOG_HOST', undefined);
+    // 定数が読めていないと undefined 同士の比較で空振りするので、先に値の形を確かめる
+    expect(POSTHOG_DEFAULT_HOST).toMatch(/^https:\/\/\S+$/);
+
+    initPostHog();
+
+    expect(mockInit).toHaveBeenCalledTimes(1);
+    expect(mockInit.mock.calls[0][1]).toMatchObject({ api_host: POSTHOG_DEFAULT_HOST });
+  });
+
+  it('NEXT_PUBLIC_POSTHOG_HOST が設定されていれば、そのホストを api_host に渡す', () => {
+    vi.stubEnv('NEXT_PUBLIC_POSTHOG_HOST', 'https://eu.i.posthog.com');
+
+    initPostHog();
+
+    expect(mockInit).toHaveBeenCalledTimes(1);
+    expect(mockInit.mock.calls[0][1]).toMatchObject({ api_host: 'https://eu.i.posthog.com' });
   });
 });
 

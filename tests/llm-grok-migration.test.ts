@@ -18,7 +18,6 @@ const migratedTargets = [
   "src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts",
   "src/app/api/ai/consultation/sessions/[sessionId]/summarize/route.ts",
   "src/app/api/ai/consultation/sessions/[sessionId]/close/route.ts",
-  "src/app/api/ai/feedback/route.ts",
 ];
 
 const originalEnv = {

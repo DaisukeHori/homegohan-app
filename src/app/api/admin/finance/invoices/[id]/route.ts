@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { getStripeDashboardBase } from '@/lib/stripe/links';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,10 +50,13 @@ export async function GET(
       userId = sub?.user_id ?? null;
     }
 
-    // Stripe Dashboard リンク生成
-    const stripeBase = process.env.NODE_ENV === 'production'
-      ? 'https://dashboard.stripe.com'
-      : 'https://dashboard.stripe.com/test';
+    // Stripe Dashboard リンク生成 (返金の記録 API と同じモードのリンクにするため共通の判定を使う)
+    const stripeBase = getStripeDashboardBase();
+
+    // 返金の記録 (POST /api/admin/finance/refunds) に渡す請求書 ID。
+    // イベントの object が請求書 (in_...) のときだけ。upcoming には ID が無く、請求書以外のイベントでは別の ID が入る
+    const objectId = (invoiceObj as { id?: unknown })?.id;
+    const stripeInvoiceId = typeof objectId === 'string' && objectId.startsWith('in_') ? objectId : null;
 
     const invoice = {
       id: evt.id,
@@ -62,6 +66,7 @@ export async function GET(
       user_id: userId,
       stripe_customer_id: stripeCustomerId,
       stripe_subscription_id: stripeSubscriptionId,
+      stripe_invoice_id: stripeInvoiceId,
       amount_paid: (invoiceObj as { amount_paid?: number })?.amount_paid ?? null,
       amount_due: (invoiceObj as { amount_due?: number })?.amount_due ?? null,
       currency: (invoiceObj as { currency?: string })?.currency ?? null,

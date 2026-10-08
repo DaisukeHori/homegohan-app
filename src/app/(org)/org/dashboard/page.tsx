@@ -75,23 +75,14 @@ export default function OrgDashboardPage() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    const supabase = createClient();
     try {
-      // 1. 自分の組織ID取得
-      const { data: { user } } = await supabase.auth.getUser();
-      const { data: adminProfile } = await supabase.from('user_profiles').select('organization_id').eq('id', user!.id).single();
-      
-      // 2. Edge Function 呼び出し
-      const { error } = await supabase.functions.invoke('aggregate-org-stats', {
-        body: { 
-          organizationId: adminProfile?.organization_id,
-          date: new Date().toISOString().split('T')[0] 
-        }
-      });
+      // 1. 集計の更新を API ルートに依頼する
+      // aggregate-org-stats (Edge Function) はバッチ専用で、ブラウザからは呼べない (#1167)。
+      // 権限の確認と、自分の組織だけを集計することは、サーバー側 (POST /api/org/stats/refresh) が行う。
+      const res = await fetch('/api/org/stats/refresh', { method: 'POST' });
+      if (!res.ok) throw new Error(`stats refresh failed: HTTP ${res.status}`);
 
-      if (error) throw error;
-
-      // 3. データ再取得
+      // 2. データ再取得
       await fetchStats();
       alert("最新データに更新しました");
 

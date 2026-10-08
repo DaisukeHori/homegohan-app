@@ -311,7 +311,12 @@ BAN 解除
 
 ## 7. 機能フラグ API
 
-### GET /api/super-admin/feature-flags
+> 実装のパスは `/api/super-admin/flags` (一覧・作成) と `/api/super-admin/flags/{key}` (更新・削除) で、更新は PATCH。
+> この章は以前 `/api/super-admin/feature-flags` (更新は PUT) と書かれていたが、そのパスの route は存在しない。
+> Web の運営画面 (`src/app/super-admin/flags`)・結合テスト・E2E・モバイルの機能フラグ画面は、すべて `/flags` を使う (#1137)。
+> エラー本文は他の運営 API と同じ `{ "error": { "code": "...", "message": "..." } }`。
+
+### GET /api/super-admin/flags
 フラグ一覧
 
 **レスポンス**:
@@ -327,14 +332,15 @@ BAN 解除
       "active_user_count": 3200,
       "updated_at": "2026-05-06T00:00:00Z"
     }
-  ]
+  ],
+  "meta": { "total": 1, "page": 1, "per_page": 1 }
 }
 ```
 
 ---
 
-### PUT /api/super-admin/feature-flags/{key}
-フラグ更新
+### PATCH /api/super-admin/flags/{key}
+フラグ更新 (送った項目だけを更新する。ON/OFF の切り替えは `{ "enabled": true }` だけでよい)
 
 **リクエスト**:
 ```json
@@ -345,14 +351,17 @@ BAN 解除
 }
 ```
 
+**レスポンス**: `{ "data": { "key": "...", "description": "...", "enabled": true, "rollout_strategy": {}, "constraints": {}, "updated_at": "..." } }`
+(存在しないキーは 404 `OP_FEATURE_FLAG_NOT_FOUND`)
+
 **副作用**: 即座に全ユーザーへ反映、監査ログ記録
 
 ---
 
-### POST /api/super-admin/feature-flags
-フラグ新規作成
+### POST /api/super-admin/flags
+フラグ新規作成 (キーが重複すると 409 `OP_FEATURE_FLAG_IN_USE`)
 
-### DELETE /api/super-admin/feature-flags/{key}
+### DELETE /api/super-admin/flags/{key}
 フラグ削除 (利用中の場合は `OP_FEATURE_FLAG_IN_USE` で 409)
 
 ---
@@ -466,6 +475,44 @@ MRR 時系列
 ### POST /api/admin/finance/invoices/{id}/resend
 請求書再送
 
+### POST /api/admin/finance/refunds
+返金の記録 (監査ログ) と Stripe ダッシュボードへの誘導 (#1185)
+
+このアプリは返金を実行しない。担当者が Stripe ダッシュボードで返金する前に、この API で
+`admin_audit_logs` に `admin.refund.issue` (severity=`warn`) を記録する。**記録できたときだけ**
+Stripe ダッシュボードのリンクを返す。記録できなかったときは 500 を返し、リンクは返さない。
+
+**リクエスト**:
+```json
+{
+  "user_id": "uuid",
+  "stripe_invoice_id": "in_xxx",
+  "amount": 1200,
+  "currency": "JPY",
+  "reason": "二重に請求されたため"
+}
+```
+
+- `stripe_invoice_id` (`in_...`) と `stripe_charge_id` (`ch_...` / `py_...`) は**どちらか一方だけ**を指定する
+- `amount` は通貨の最小単位の整数 (JPY は円そのもの、USD はセント)。1 〜 99,999,999
+- `currency` は ISO 4217 の 3 文字。省略時は `JPY`。大文字にそろえて保存する
+- `reason` は必須。前後の空白を除いて 1 〜 500 文字
+
+**レスポンス**:
+```json
+{ "data": { "stripe_dashboard_url": "https://dashboard.stripe.com/invoices/in_xxx" } }
+```
+決済 (`stripe_charge_id`) の場合は `.../payments/ch_xxx`。開発環境ではテストモード (`/test`) のリンクになる。
+
+**監査ログ**: `action_type=admin.refund.issue` / `target_type=user` / `target_id=user_id` / `severity=warn` /
+`details={ amount, currency, reason, stripe_charge_id, stripe_invoice_id }` (使わない側の ID は `null`) / `ip_address` / `user_agent`
+
+**権限**: `finance`, `admin`, `super_admin`
+
+**エラー**: `400 VALIDATION_ERROR` (入力不正) / `401 AUTH_UNAUTHENTICATED` / `403 OP_PERMISSION_DENIED` / `500 INTERNAL_ERROR` (監査ログに記録できなかった)
+
+2 名承認 (`finance.refund.approve`) と `charge.refunded` Webhook との突き合わせは Stripe 連携 (#1125) 側で後続。
+
 ---
 
 ## 10. サポート API
@@ -510,6 +557,14 @@ MRR 時系列
   "attachments": []
 }
 ```
+
+**レスポンス** (201): `{ "data": { ...メッセージ }, "email": { "status": "sent" } }`
+
+- `body` は前後の空白 (全角スペース・改行・タブを含む) を除いて 1 文字以上であること。空白だけの本文は 400 (`VALIDATION_ERROR`) で、保存もメールもしない。保存される本文も前後の空白を除いたもの。
+- 顧客向けメッセージ (`is_internal=false`) は、チケットの顧客本人へメールで知らせる (顧客がチケットを閲覧できる画面は無く、このメールが唯一の通知経路)。内部メモ (`is_internal=true`) はメールにせず、`email` も含めない。
+- `email.status` は `sent` (送信済み) / `skipped` (メール送信の設定が無く未送信) / `failed` (宛先を取得できない、または送信エラー)。`sent` 以外は `email.reason` (`not_configured` / `no_recipient` / `send_failed`) も返す。
+- メールが送れなくてもメッセージは保存済みなので、ステータスは 201 のまま。失敗は `app_logs` に記録する。
+- 宛先は `auth.admin.getUserById(ticket.user_id)` で取得し、送信できたら `email_delivery_logs` (`template = 'support_ticket_reply'`) に残す。返信先は環境変数 `SUPPORT_REPLY_TO` (任意)。
 
 ---
 

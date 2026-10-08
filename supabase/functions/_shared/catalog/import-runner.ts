@@ -1,5 +1,4 @@
 import { createClient } from "@supabase/supabase-js";
-import { corsHeaders } from "../cors.ts";
 import { createLogger, generateRequestId } from "../db-logger.ts";
 import { requireServiceRole } from "../auth.ts";
 import { firecrawlScrapeStructured } from "../firecrawl-client.ts";
@@ -90,17 +89,15 @@ const DETAIL_SCHEMA: Record<string, unknown> = {
   required: ["name"],
 };
 
+// バッチ専用 (pg_cron と管理画面の API ルートから呼ばれ、ブラウザからは呼ばれない) なので CORS は付けない (#1167)。
+// ブラウザの事前確認 (OPTIONS) は下の認証で 401 になり、CORS ヘッダーが無いためブラウザ側で止まる。
 export async function handleCatalogImportRequest(req: Request, options: HandlerOptions) {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
   // バッチ専用: CRON_SECRET 認証（Firecrawl / LLM コスト保護）
   const authErr = await requireServiceRole(req);
   if (authErr) {
     return new Response(authErr.body, {
       status: authErr.status,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json" },
     });
   }
 
@@ -674,7 +671,6 @@ function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
       "Content-Type": "application/json",
     },
   });

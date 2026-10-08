@@ -160,17 +160,9 @@ async function deactivateStripePrice(priceId: string): Promise<void> {
   }
 }
 
+// 内部専用 (ブラウザからは呼ばれない) なので CORS は付けない (#1167)。
+// ブラウザの事前確認 (OPTIONS) は下の認証で 401 になり、CORS ヘッダーが無いためブラウザ側で止まる。
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, {
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      },
-    });
-  }
-
   // cron/内部専用: service role key の完全一致 (SERVICE_ROLE_JWT /
   // SUPABASE_SERVICE_ROLE_KEY のどちらでも可)、または CRON_SECRET/SERVICE_ROLE_SECRET
   // のいずれかを満たせば許可 (regenerate-embeddings と同じ規約)。

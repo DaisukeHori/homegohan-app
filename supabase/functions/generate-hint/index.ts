@@ -8,7 +8,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { corsHeaders } from "../_shared/cors.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
 import { requireAuth } from "../_shared/auth.ts";
 import { createLogger, generateRequestId } from "../_shared/db-logger.ts";
 import { createFastLLMClient, getFastLLMModel } from "../_shared/fast-llm.ts";
@@ -26,6 +26,9 @@ interface HintRequest {
 }
 
 Deno.serve(async (req) => {
+  // 許可したオリジンにだけ CORS ヘッダーを付ける (#1167)
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }

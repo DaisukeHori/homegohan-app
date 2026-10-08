@@ -37,6 +37,12 @@ export default defineConfig({
         __dirname,
         "packages/handson-tour-shared/src/index.ts",
       ),
+      // tsconfig.json の paths と同じく、このリポジトリの packages/shared を直接読む。
+      // node_modules/@homegohan/shared (ワークスペースのシンボリックリンク) 経由だと、
+      // node_modules を別の場所のものと共有している作業コピー (git worktree など) で
+      // 手元の packages/shared ではなくリンク先の古い内容を読んでしまい、
+      // 追加した定数が見えずにテストが空振りするため (#1197)。
+      "@homegohan/shared": path.resolve(__dirname, "packages/shared/src/index.ts"),
     },
   },
   // tsconfig.json は Next.js の SWC コンパイラ向けに jsx: "preserve" を指定しているが、

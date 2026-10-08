@@ -105,13 +105,9 @@ import {
   buildActiveRequestUpdate,
   wasRequestUpdated,
 } from "./request-finalize.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
 
 console.log("Generate Menu V5 Function loaded (template-anchored generation)");
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
 
 const DEFAULT_V5_INVOCATION_SOFT_BUDGET_MS = Number(Deno.env.get("V5_INVOCATION_SOFT_BUDGET_MS") ?? 18000);
 const STEP1_WAVE_RESERVE_MS = 9000;
@@ -3449,6 +3445,9 @@ async function executeStep6_FinalSave(
 }
 
 Deno.serve(async (req: Request) => {
+  // 許可したオリジンにだけ CORS ヘッダーを付ける (#1167)
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }

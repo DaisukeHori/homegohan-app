@@ -167,9 +167,9 @@ grep -rn 'from "../generate-menu-v4/' supabase/functions --include=*.ts
 ```
 supabase/functions/
 ├── _shared/                 # 共有ユーティリティ（全関数から参照可能）
-│   ├── auth.ts             # 認証ヘルパー（requireAuth: ユーザーの JWT、requireServiceRole: cron 用の共有シークレット。await 必須）
+│   ├── auth.ts             # 認証ヘルパー（requireAuth: ユーザーの JWT、requireServiceRole: cron 用の共有シークレットか service role key。await 必須）
 │   ├── cron-secret.ts      # cron 用シークレットの照合（Next.js の src/lib/cron-auth.ts と共用。import なし・Deno/Node 固有 API なし。入れ替え中は CRON_SECRET_PREVIOUS も受け付ける。手順は ENV_SETUP.md）
-│   ├── cors.ts             # CORS設定
+│   ├── cors.ts             # CORS設定（許可したオリジンにだけ CORS ヘッダーを返す。下の「CORS」を参照）
 │   ├── db-logger.ts        # ログ記録
 │   ├── log-sanitizer.ts    # ログ保存前の秘密情報マスキング・切り詰め（Next.js の src/lib/db-logger.ts と共用。import なし・Deno/Node 固有 API なし）
 │   ├── allergy.ts          # アレルギー処理
@@ -196,11 +196,16 @@ touch supabase/functions/<function-name>/index.ts
 
 ### 基本テンプレート
 
+利用者の JWT で認証する関数（ブラウザからも呼ばれうる関数）のテンプレートです。バッチ専用の関数には CORS を付けません（下の「CORS」を参照）。
+
 ```typescript
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { corsHeaders } from "../_shared/cors.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
 
 serve(async (req) => {
+  // Origin はリクエストごとに違うので、ハンドラの先頭で作る
+  const corsHeaders = getCorsHeaders(req);
+
   // CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -224,6 +229,17 @@ serve(async (req) => {
 });
 ```
 
+### CORS
+
+CORS はブラウザだけが強制する仕組みです。Next.js の API ルートや cron など、サーバーからの呼び出しには影響しません。
+
+- 利用者の JWT で認証する関数は、`_shared/cors.ts` の `getCorsHeaders(req)` を使います。リクエストの `Origin` が許可リストに完全一致したときだけ `Access-Control-Allow-Origin` を返し、どの応答にも `Vary: Origin` を付けます。`*`（全オリジン許可）は使いません。
+- 許可するオリジンは、環境変数 `ALLOWED_ORIGINS`（カンマ区切り）で決めます。未設定のときは `https://homegohan.app` と `https://homegohan-app.vercel.app` です。設定すると既定値は置き換わります。
+- バッチ専用の関数（service role key や `CRON_SECRET` で認証する関数）は、ブラウザから呼ばれないので CORS を付けません。`aggregate-org-stats`、`calculate-segment-stats`、`regenerate-embeddings`、`stripe-price-sync`、`backfill-ingredient-embeddings`、`create-derived-recipe`、`import-*-catalog` が該当します。
+- ブラウザから Edge Function を直接呼ばないでください。権限の確認が要る処理は、Next.js の API ルートで確認してから、サーバーから Edge Function を呼びます（例: 組織ダッシュボードの更新ボタンは `POST /api/org/stats/refresh` を経由します）。
+- モバイルアプリの WebView が読み込むのは Web アプリ自身（`EXPO_PUBLIC_WEB_URL`）のページなので、そこから呼ぶときの `Origin` も Web アプリのオリジンです。ネイティブ側の `fetch` は `Origin` を付けません。
+- 新しい関数を足すときは、`tests/edge-function-cors.test.ts` が、`Access-Control-Allow-Origin: *`（ワイルドカード）を書き込んでいないか、CORS ヘッダーを `_shared/cors.ts` 以外に直書きしていないか、バッチ専用の関数に CORS を付けていないかを検査します。`requireServiceRole` を使う関数を足したら同じテストの `BATCH_ONLY_SOURCES` に、`_shared/cors.ts` を使う関数を足したら `USER_FACING_SOURCES` に、一覧として足してください。
+
 ### ローカルでのテスト
 
 ```bash
@@ -234,11 +250,14 @@ supabase start
 supabase functions serve <function-name>
 ```
 
+ブラウザ（`http://localhost:3000` など）から直接呼ぶ必要がある場合だけ、`ALLOWED_ORIGINS` にそのオリジンを足してください（`ALLOWED_ORIGINS=http://localhost:3000` を書いた env ファイルを、`supabase functions serve --env-file <ファイル>` で渡します。コミットしないこと）。
+
 ## 環境変数
 
 Supabase Dashboard → Edge Functions → 対象関数 → Settings で設定。
 
 主な環境変数：
+- `ALLOWED_ORIGINS` - CORS で許可するオリジン（カンマ区切り、スキーム付き・末尾スラッシュなし）。未設定時は `https://homegohan.app,https://homegohan-app.vercel.app`。`*` と `null` は無視される
 - `OPENAI_API_KEY` - OpenAI API キー（LLM補助処理用）
 - `FIRECRAWL_BASE_URL` - Firecrawl API のベース URL。未指定時は `https://api.firecrawl.dev/v2`
 - `FIRECRAWL_API_KEY` - Firecrawl Cloud または Bearer 保護された self-host 用キー
