@@ -79,6 +79,13 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 `src/lib/user-storage.ts` の `clearUserScopedLocalStorage()` を使う。  
 サインアウト処理では **Supabase signOut を呼ぶ前に** このヘルパーを実行する。
 
+### エラー境界 (画面の描画中の例外を受ける)
+
+画面の描画中に起きた例外を受ける境界が無いと、Web ではルート全体を置き換える `global-error.tsx` まで、モバイルではアプリ全体のクラッシュまで届く (#1207)。新しい route group / layout を足すときは、境界も足す。
+
+- **Web**: layout (`layout.tsx`) を持つ区画には、同じ階層に `error.tsx` を置く。中身は共通部品 `src/components/error/RouteError.tsx` を返すだけにする (手書きしない)。`RouteError` は「再試行」(`router.refresh()` + `reset()`)・戻るリンク・記録 (`src/lib/report-boundary-error.ts`) をそろえる。`reset()` だけではサーバーコンポーネントの例外から復帰できないため、`router.refresh()` を一緒に呼ぶ。例外の文面・スタックは画面に出さず、出すのは `digest` だけ。記録に URL / パスを入れない (`/invite/{token}` など URL に秘密が入るページがあるため)。`tests/route-error-boundaries.test.tsx` が配置と表示を検査する。
+- **モバイル**: `apps/mobile/app` の `_layout.tsx` は、すべて `export function ErrorBoundary` を持ち、`src/components/ErrorFallback.tsx` を返す。expo-router は、この export がある layout の中の例外だけを受ける (無いと誰にも受けられない)。Provider の外 (ルートの境界) でも描画されるので、`ErrorFallback` は hooks や Provider に頼らない。`apps/mobile/__tests__/app/error-boundaries.test.tsx` が全 layout を検査する。記録は `apps/mobile/src/lib/error-report.ts`。PostHog (外部の計測サービス。イベントがユーザー ID に紐づく) には、例外の文面・スタックを送らない。`captureEvent` の PII フィルタはキー名しか見ず、値の中身は除かないため。送るのは境界・OS・例外の種類 (識別子の形のときだけ)・指紋 (元に戻せないハッシュ) だけにする (`docs/design/operator/07-audit-monitoring.md` §15.7)。生の文面は、サーバー側でマスクされる `POST /api/log` の metadata にだけ残す。`apps/mobile/__tests__/lib/error-report.test.ts` が、PostHog に送る内容を固定している。
+
 ---
 
 ## Web アプリは Next 14 + React 18 (React 19 / Next 15 前提の API は使わない)
