@@ -30,7 +30,10 @@ Deno.serve(async (req) => {
     const { date, organizationId } = await req.json().catch(() => ({}));
     
     // 対象日付（指定なければ JST の今日）
-    // UTC の暦日だと JST 00:00〜08:59 に前日となり、meal_plan_days.day_date (JST の暦日) とズレる (#1210)
+    // UTC の暦日だと JST 00:00〜08:59 に前日となり、user_daily_meals.day_date (JST の暦日) とズレる (#1210)
+    // 注意: 下の planned_meals の取得クエリは、削除済みの meal_plan_days / meal_plans をまだ参照している。
+    // そのため本番では PGRST200 になり、メンバーのいる組織は集計されない。クエリの書き換えは別 Issue で直す
+    // (#1210 の修正は対象日の求め方だけ)。
     const targetDateStr = date || todayJst();
 
     logger.info(`Aggregating stats for date: ${targetDateStr}`);

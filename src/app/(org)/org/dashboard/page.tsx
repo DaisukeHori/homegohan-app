@@ -84,7 +84,7 @@ export default function OrgDashboardPage() {
       
       // 2. Edge Function 呼び出し
       // 集計する日付は JST の今日。UTC の暦日だと JST 00:00〜08:59 に前日となり、
-      // meal_plan_days.day_date (JST の暦日) とズレる (#1210)
+      // user_daily_meals.day_date (JST の暦日) とズレる (#1210)
       const { error } = await supabase.functions.invoke('aggregate-org-stats', {
         body: { 
           organizationId: adminProfile?.organization_id,

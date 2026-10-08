@@ -3,10 +3,16 @@
 // #1210: aggregate-org-stats は「対象日」を省略されると今日の日付を使う。
 // 以前は new Date().toISOString().split('T')[0] (= UTC の暦日) だったため、
 // JST 00:00〜08:59 は前日の日付で集計・保存していた。
-// 集計の突き合わせ先 (meal_plan_days.day_date) は JST の暦日なので、JST の「今日」を使う。
+// 集計の突き合わせ先 (user_daily_meals.day_date) は JST の暦日なので、JST の「今日」を使う。
 //
 // Edge Function 本体は Deno.serve を import 時に呼ぶ。Deno と supabase-js / ロガーを
 // 差し替えて本物のハンドラを取り出し、省略時の対象日を実際に呼んで確かめる。
+//
+// 注意: このテストは偽の supabase-js を使い、確かめるのは対象日の求め方だけ。
+// 現状の planned_meals の取得クエリは、削除済みの meal_plan_days / meal_plans をまだ参照しており、
+// 本番では PGRST200 になる (別 Issue で直す)。このテストが通っても、本番で集計できることは保証しない。
+// クエリを user_daily_meals 経由に直したときに壊れないよう、突き合わせ先の列名は固定せず
+// 「*.day_date に対象日を指定したか」だけを見る (expectDayDateFilter)。
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -110,6 +116,19 @@ function findCall(table: string, method: string): Call | undefined {
   return h.calls.find((c) => c.table === table && c.method === method);
 }
 
+/**
+ * planned_meals を「対象日の食事」に絞る eq(列, 値) を検証する。
+ * どのテーブル経由の列か (meal_plan_days.day_date / user_daily_meals.day_date) には依存せず、
+ * 列名が `.day_date` で終わることと、値が期待する対象日であることだけを見る。
+ */
+function expectDayDateFilter(expectedDate: string) {
+  const call = findCall("planned_meals", "eq");
+  expect(call, "planned_meals に対象日の絞り込み (eq) が無い").toBeDefined();
+  const [column, value] = call?.args ?? [];
+  expect(String(column)).toMatch(/\.day_date$/);
+  expect(value).toBe(expectedDate);
+}
+
 describe("aggregate-org-stats: 対象日を省略したときは JST の今日 (#1210)", () => {
   // [UTC の現在時刻, JST での時刻 (説明用), 期待する対象日]
   const cases: Array<[string, string, string]> = [
@@ -128,8 +147,8 @@ describe("aggregate-org-stats: 対象日を省略したときは JST の今日 (
     const res = await callAggregate({ organizationId: ORG_ID });
     expect(res.status).toBe(200);
 
-    // 食事データの突き合わせ先 (meal_plan_days.day_date は JST の暦日)
-    expect(findCall("planned_meals", "eq")?.args).toEqual(["meal_plan_days.day_date", expectedDate]);
+    // 食事データの突き合わせ先 (user_daily_meals.day_date は JST の暦日)
+    expectDayDateFilter(expectedDate);
     // 集計結果の保存先 (org_daily_stats.date)
     expect(findCall("org_daily_stats", "upsert")?.args[0]).toMatchObject({
       organization_id: ORG_ID,
@@ -159,7 +178,7 @@ describe("aggregate-org-stats: 対象日を省略したときは JST の今日 (
     const res = await callAggregate({ date: "2026-01-02", organizationId: ORG_ID });
     expect(res.status).toBe(200);
 
-    expect(findCall("planned_meals", "eq")?.args).toEqual(["meal_plan_days.day_date", "2026-01-02"]);
+    expectDayDateFilter("2026-01-02");
     expect(findCall("org_daily_stats", "upsert")?.args[0]).toMatchObject({ date: "2026-01-02" });
   });
 });

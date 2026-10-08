@@ -4,7 +4,7 @@
  * Edge Runtime (Deno) のタイムゾーンは UTC。そのため
  * `new Date().toISOString().split('T')[0]` は UTC の暦日になり、
  * JST 00:00〜08:59 の間は「前日」を返してしまう (#1210)。
- * DB の日付列 (meal_plan_days.day_date など) は JST の暦日で入っているので、
+ * DB の日付列 (user_daily_meals.day_date など) は JST の暦日で入っているので、
  * 「今日」や「ある時刻が属する日」を求めるときは、このファイルの関数を使う。
  *
  * Web / Mobile 側の同等ヘルパーは packages/shared/src/date-utils.ts の
