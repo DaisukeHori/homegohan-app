@@ -6,16 +6,24 @@ import { createLogger } from '@/lib/db-logger';
 /**
  * #1022 AIエンドポイントのユーザー単位レートリミット共通ヘルパー
  * #1163 招待メール・参加リクエストなど「ユーザー操作で外部へメールが出る API」の送信回数制限にも使う
+ * #1197 ログイン前でも送れる公開フォーム (お問い合わせ) の IP 単位の制限にも使う
  *
- * src/app/api/contact/route.ts の Upstash Ratelimit 実装を汎用化し、
+ * 元は src/app/api/contact/route.ts の Upstash Ratelimit 実装を汎用化したもの。
  * `key` + カテゴリ単位でレート制限を判定する。
  * `key` は呼び出し側が決める不透明な文字列で、ユーザー ID のほか、組織 ID や
- * 「送信先メールアドレスのハッシュ」などを渡す (招待メールの制限は invite-throttle.ts 経由)。
+ * 「送信先メールアドレスのハッシュ」、クライアント IP などを渡す
+ * (招待メールの制限は invite-throttle.ts 経由、お問い合わせは contact カテゴリ)。
+ * レート制限の実装はこのファイルだけに置く。route ごとに Upstash / in-memory の制限を作り直さず、
+ * 新しい制限は RateLimitCategory にカテゴリを足して使う
+ * (tests/rate-limit-single-implementation.test.ts が @upstash/ratelimit を使うファイルを検査する)。
  *
  * 【key の信頼性】
  * リクエストの body / URL に載っていて未検証の ID (family_id, member_id など) を key にしてはならない。
  * 他テナントの ID を指定するだけで、その枠を使い切らせることができてしまうため。
  * key にするのは、認証で確定した user.id か、プロフィールなどサーバー側で検証済みの ID だけ。
+ * 例外はログイン前の公開 API (contact)。認証済みの ID が無いので、プロキシが付けるクライアント IP
+ * (x-forwarded-for の先頭、無ければ x-real-ip) を key にする。Vercel 上ではプラットフォームが付け直した値を
+ * 使う前提で、ヘッダーを自由に付けられる環境では偽装できるため、IP 単位の制限はベストエフォートである。
  *
  * 【本番運用について】
  * 本番環境では UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN の設定が必須。
@@ -38,6 +46,7 @@ export type RateLimitCategory =
   | 'child-promotion'
   | 'invite-target'
   | 'transfer-propose'
+  | 'contact'
   | 'export';
 
 /** 1 つの制限ルール。name は Upstash の prefix / in-memory の名前空間に使う (既存キーを変えないこと) */
@@ -68,6 +77,11 @@ const DAY_SEC = 24 * 60 * 60;
 // - child-promotion: 子供メンバーの昇格(参加リクエスト)メール (key = 依頼者の user.id)
 // - invite-target: 同じ宛先への連続送信 (key = `${flow}:${scopeId}:${宛先メールのハッシュ}`)
 // - transfer-propose: 代表者・オーナー譲渡の提案メール (key = 提案者の user.id)
+//
+// 【公開フォーム系 (#1197)】 ログイン前でも呼べる API。認証済みの ID が無いので key はクライアント IP
+// - contact: お問い合わせフォーム (src/app/api/contact/route.ts)。10 回/分。
+//   route が独自に持っていた制限と同じ値。Upstash 未設定のときは in-memory フォールバック、
+//   Upstash が例外を投げたときは fail-closed (例外を伝播) で、ほかのカテゴリと扱いは同じ
 //
 // 【その他】
 // - export: 個人データエクスポート（#1131。AI は使わないが全テーブルを走査する重い読み取り）。
@@ -100,6 +114,7 @@ const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
     { name: 'transfer-propose', max: 3, windowSec: MINUTE_SEC },
     { name: 'transfer-propose-daily', max: 10, windowSec: DAY_SEC },
   ],
+  contact: [{ name: 'contact', max: 10, windowSec: MINUTE_SEC }],
   export: [{ name: 'export', max: 5, windowSec: 10 * MINUTE_SEC }],
 };
 
@@ -141,8 +156,9 @@ const redisClient = getRedisClient();
 if (!redisClient) {
   logger.warn(
     '[rate-limit] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN が未設定です。' +
-      'AIエンドポイントや招待メールのレート制限は in-memory フォールバックで動作します（サーバーレス' +
-      '環境ではインスタンスごとに独立するため実効性が下がります。特に日次上限は成り立ちません）。' +
+      'AIエンドポイント・招待メール・お問い合わせフォームのレート制限は in-memory フォールバックで' +
+      '動作します（サーバーレス環境ではインスタンスごとに独立するため実効性が下がります。' +
+      '特に日次上限は成り立ちません）。' +
       '本番環境では必ず Upstash Redis の env を設定してください。',
   );
 }
@@ -249,7 +265,8 @@ async function checkSingleLimit(rule: RateRule, key: string): Promise<RateLimitR
  * すべて通った場合は先頭ルールの結果を返す。
  *
  * 呼び出し側は認証（user 確定）直後、他の処理を行う前に呼び出すこと。
- * key にはサーバー側で検証済みの ID だけを渡す（ファイル先頭の「key の信頼性」を参照）。
+ * key にはサーバー側で検証済みの ID だけを渡す。ログイン前の公開 API (contact) だけは
+ * クライアント IP を渡す（ファイル先頭の「key の信頼性」を参照）。
  */
 export async function checkRateLimit(
   key: string,
@@ -277,7 +294,8 @@ export function getRetryAfterSec(result: RateLimitResult): number {
 
 /**
  * レートリミット超過時の 429 レスポンスを生成する。
- * src/app/api/contact/route.ts の 429 応答形式に合わせる。
+ * AI 系 API とお問い合わせ (src/app/api/contact/route.ts) が共通で使う。
+ * error の文言は、共通化する前の contact route の 429 と同じ。
  * (membership 系 API は UI が error.message を読むため、別形式のネスト本文を
  *  src/lib/membership/invite-throttle.ts の inviteThrottleResponse で返す)
  */

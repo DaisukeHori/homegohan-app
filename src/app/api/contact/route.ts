@@ -1,5 +1,5 @@
-import { Ratelimit } from '@upstash/ratelimit';
-import { Redis } from '@upstash/redis';
+import { createLogger } from '@/lib/db-logger';
+import { checkRateLimit, rateLimitExceededResponse, type RateLimitResult } from '@/lib/rate-limit';
 import { createClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
@@ -67,76 +67,30 @@ async function sendAdminNotification(inquiry: {
   }
 }
 
-// #274 レートリミット: Upstash Redis があれば分散 ratelimit、なければ in-memory フォールバック
-// #1044 round-2: Upstash env 未設定時に POST を hard 503 で拒否すると、本番で Upstash が
-// 未接続の間 (docs/design/cross/06-perf-cache.md #549, .env.example, ENV_SETUP.md いずれも
-// 本番未設定を示す) 問い合わせフォームが全壊してしまう。同日実装の src/lib/rate-limit.ts が
-// 採用する canonical 方針 (fail-open は避けるが hard-block もしない = in-memory フォールバック
-// + warn ログ) に揃え、Upstash 未設定時も in-memory レートリミットで最低限の制限をかけつつ
-// リクエストは通す。
-
-const RATE_LIMIT_MAX = 10;
-const RATE_LIMIT_WINDOW_SEC = 60;
-const RATE_LIMIT_WINDOW_MS = RATE_LIMIT_WINDOW_SEC * 1000;
-
-// Upstash Redis を使った分散 ratelimiter（env 設定済みの場合のみ初期化）
-let upstashRatelimiter: Ratelimit | null = null;
-if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-  try {
-    const redis = new Redis({
-      url: process.env.UPSTASH_REDIS_REST_URL,
-      token: process.env.UPSTASH_REDIS_REST_TOKEN,
-    });
-    upstashRatelimiter = new Ratelimit({
-      redis,
-      limiter: Ratelimit.slidingWindow(RATE_LIMIT_MAX, `${RATE_LIMIT_WINDOW_SEC} s`),
-      prefix: 'homegohan:contact:rl',
-    });
-  } catch (err) {
-    console.warn('[contact] Upstash ratelimit 初期化失敗。in-memory フォールバックを使用します。', err);
-  }
-} else {
-  console.warn(
-    '[contact] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN が未設定です。' +
-    'in-memory レートリミットを使用します（Vercel サーバーレス環境では無効）。',
-  );
-}
-
-// in-memory フォールバック（単一インスタンス内でのみ有効）
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-
-function checkRateLimitInMemory(ip: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    return true;
-  }
-  if (entry.count >= RATE_LIMIT_MAX) return false;
-  entry.count++;
-  return true;
-}
-
-async function checkRateLimit(ip: string): Promise<boolean> {
-  if (upstashRatelimiter) {
-    const { success } = await upstashRatelimiter.limit(ip);
-    return success;
-  }
-  return checkRateLimitInMemory(ip);
-}
-
 export async function POST(request: NextRequest) {
-  // レートリミットチェック
+  // #1197 レートリミットは共通ヘルパー (src/lib/rate-limit.ts) の contact カテゴリ (クライアント IP 単位で
+  // 10 回/分) に一本化した。以前はこのファイルに Upstash / in-memory の制限が独自実装されていた。
+  // 失敗時の扱いは共通ヘルパーに揃える。
+  // - Upstash 未設定: fail-open (無制限に通す) にも hard 503 にもしない。in-memory フォールバック
+  //   (+ warn ログ) で最低限の制限をかけて受け付ける。本番で Upstash が未接続の間も問い合わせフォームを
+  //   止めないため (#1044 round-2)。Vercel ではインスタンスごとに数えるベストエフォートの防御になる。
+  // - Upstash への問い合わせが例外: fail-closed。判定できないときは通さず 500 を返し、
+  //   問い合わせの保存も管理者への通知メールも行わない。
   const ip =
     request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
     request.headers.get('x-real-ip') ??
     'unknown';
-  if (!await checkRateLimit(ip)) {
+  let rateLimit: RateLimitResult;
+  try {
+    rateLimit = await checkRateLimit(ip, 'contact');
+  } catch (error) {
+    createLogger('contact').error('レート制限の判定に失敗しました (fail-closed)', error);
     return NextResponse.json(
-      { error: 'リクエストが多すぎます。しばらく時間をおいてからお試しください。' },
-      { status: 429 },
+      { error: 'サーバーエラーが発生しました' },
+      { status: 500 },
     );
   }
+  if (!rateLimit.success) return rateLimitExceededResponse(rateLimit);
 
   const supabase = await createClient();
 
