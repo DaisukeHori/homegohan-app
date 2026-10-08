@@ -39,6 +39,13 @@ node_modules/
 .tmp/
 *.pem
 
+# 認証情報・秘密鍵 (#1114 #1139)。除外されているかは tests/no-committed-credentials.test.ts が検査する
+# ブラウザの通信記録 (HAR) には、ログインのパスワードやアクセストークンが平文で入る
+*.har
+# Google Play のサービスアカウント鍵などの置き場 (apps/mobile/eas.json の serviceAccountKeyPath が ../../secrets/ を指す)
+/secrets/
+*service-account*.json
+
 # debug
 npm-debug.log*
 yarn-debug.log*
