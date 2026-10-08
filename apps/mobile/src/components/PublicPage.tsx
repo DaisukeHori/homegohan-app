@@ -5,13 +5,8 @@ import React from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 
 import { Card } from "./ui";
+import { buildWebPageUrl } from "../lib/webBaseUrl";
 import { colors, spacing, radius, shadows } from "../theme";
-
-function getWebBaseUrl(): string | null {
-  const base = process.env.EXPO_PUBLIC_API_BASE_URL;
-  if (!base) return null;
-  return base.replace(/\/+$/, "");
-}
 
 export function PublicPage(props: {
   title: string;
@@ -19,9 +14,10 @@ export function PublicPage(props: {
   webPath?: string;
 }) {
   const { title, children, webPath } = props;
-  const webBaseUrl = getWebBaseUrl();
-  const canOpenWeb = !!webBaseUrl && !!webPath;
-  const url = canOpenWeb ? `${webBaseUrl}${webPath}` : null;
+  // 「Web版を開く」の行き先は Web 版のオリジン (EXPO_PUBLIC_WEB_URL)。
+  // 以前は API の基点 (EXPO_PUBLIC_API_BASE_URL) を流用していて、API の向き先を変えると
+  // Web 版リンクまで巻き込まれ、未設定だとリンク自体が出なかった (#1049 F7-19)。
+  const url = webPath ? buildWebPageUrl(webPath) : null;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>

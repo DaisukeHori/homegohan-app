@@ -23,6 +23,7 @@ npm install
 export EXPO_PUBLIC_SUPABASE_URL="https://xxx.supabase.co"
 export EXPO_PUBLIC_SUPABASE_ANON_KEY="xxx"
 export EXPO_PUBLIC_API_BASE_URL="https://homegohan.com"
+export EXPO_PUBLIC_WEB_URL="https://homegohan-app.vercel.app"   # 任意。未設定なら本番の Web (WebView の表示先 / 「Web版を開く」)
 export EXPO_PUBLIC_APP_ENV="development"
 ```
 
@@ -33,8 +34,20 @@ export EXPO_PUBLIC_APP_ENV="development"
 EXPO_PUBLIC_SUPABASE_URL=...
 EXPO_PUBLIC_SUPABASE_ANON_KEY=...
 EXPO_PUBLIC_API_BASE_URL=https://homegohan.com
+EXPO_PUBLIC_WEB_URL=https://homegohan-app.vercel.app
 EXPO_PUBLIC_APP_ENV=development
 ```
+
+使う環境変数の一覧と意味は `env.example` を見てください。
+
+| 変数 | 必須 | 用途 |
+|------|------|------|
+| `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY` | 必須 | Supabase への接続 |
+| `EXPO_PUBLIC_API_BASE_URL` | 必須 | Next.js API の呼び出し先 (`src/lib/api.ts`) |
+| `EXPO_PUBLIC_WEB_URL` | 任意 | Web 版のオリジン。WebView の表示先と「Web版を開く」リンク。未設定なら `https://homegohan-app.vercel.app` |
+| `EXPO_PUBLIC_APP_ENV` | 任意 | `development` / `preview` / `production` |
+| `EXPO_PUBLIC_EAS_PROJECT_ID` | プッシュ通知に必要 | Expo Push Token の取得 |
+| `EXPO_PUBLIC_POSTHOG_KEY` / `EXPO_PUBLIC_POSTHOG_HOST` | 任意 | PostHog の分析。KEY が未設定なら計測を送らない |
 
 ### 3) 起動
 

@@ -23,9 +23,12 @@ export default function HandsonTourLayout() {
   useEffect(() => {
     if (authLoading) return;
 
-    // 未認証ならサインイン画面へ
+    // 未認証ならログイン画面へ。
+    // 以前は存在しないルート '/(auth)/sign-in' へ replace していて、未ログインでツアーに入ると
+    // 「Unmatched Route」になっていた (#1049 F7-14)。ログイン画面の実体は app/(auth)/login.tsx で、
+    // 他のレイアウト ((org) / (admin) / onboarding など) も同じ '/login' を使う。
     if (!session) {
-      router.replace('/(auth)/sign-in' as never);
+      router.replace('/login' as never);
       return;
     }
 

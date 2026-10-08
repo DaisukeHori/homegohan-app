@@ -18,3 +18,18 @@ export const DEFAULT_WEB_URL = 'https://homegohan-app.vercel.app';
 export function getWebBaseUrl(): string {
   return process.env.EXPO_PUBLIC_WEB_URL || DEFAULT_WEB_URL;
 }
+
+/**
+ * Web のパス (例: "/terms") を、Web のオリジンにつないだ絶対 URL にする。
+ * 「Web版を開く」リンク (PublicPage) のように、人が見る Web ページの場所に使う。
+ * ベース URL の末尾のスラッシュと、パス先頭のスラッシュの有無は吸収する。
+ *
+ * 行き先は API の基点 (EXPO_PUBLIC_API_BASE_URL。src/lib/api.ts) とは別の設定値。
+ * 以前は PublicPage が API の基点を流用していたため、API の向き先を変えると Web 版リンクまで変わり、
+ * 未設定だとリンク自体が出なかった (#1049 F7-19)。
+ */
+export function buildWebPageUrl(path: string): string {
+  const base = getWebBaseUrl().replace(/\/+$/, '');
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+  return `${base}${normalized}`;
+}
