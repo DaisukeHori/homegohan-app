@@ -1343,6 +1343,10 @@ export function buildHealthFocus(profile: UserProfile): HealthFocusItem[] {
 
 **ファイル:** `/api/badges/route.ts`
 
+- 食事数・自炊数・連続日数は、完了した食事のうち、ハンズオンツアーのお試しの記録 (`user_daily_meals.is_sandbox = true`) を除いて数える (#1314)。
+- 一覧に返すのは、獲得済みのバッジと、付与処理のあるバッジ (`src/lib/badges/awardable.ts` の `AWARDABLE_BADGE_CODES`) の未獲得分だけ。
+  付与処理の無いバッジ (`health_streak_*` など) は、未獲得のうちは返さない。マスター (`badges` テーブル) の行は変えない。
+
 ```typescript
 const BADGE_CONDITIONS = {
   'first_bite': { type: 'meal_count', threshold: 1 },

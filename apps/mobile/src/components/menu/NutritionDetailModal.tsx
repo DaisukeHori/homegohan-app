@@ -5,12 +5,12 @@
  * - 26 栄養素を category 別 (basic/mineral/vitamin/fat) に section 表示
  * - 各栄養素 DRI バー (DriBar コンポーネント)
  * - Radar chart 上部 + 編集ボタン (RadarChart / RadarKeyPicker)
- * - AI feedback Realtime + 2 秒ポーリング (最大 40 秒)
+ * - AI feedback: nutrition_feedback_cache の Realtime 通知 + 2 秒ポーリング (最大 40 秒) (useNutritionFeedbackWatch)
  * - 「献立を改善」ボタン → ImproveMealModal
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -27,9 +27,9 @@ import {
   NUTRIENT_BY_CATEGORY,
 } from '@homegohan/shared';
 
+import { useNutritionFeedbackWatch } from '../../hooks/useNutritionFeedbackWatch';
 import { getApi } from '../../lib/api';
-import { supabase } from '../../lib/supabase';
-import { useAuth } from '../../providers/AuthProvider';
+import type { ImproveMealRequest } from '../../lib/improve-meal';
 import { colors } from '../../theme/colors';
 import { radius, spacing } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
@@ -62,6 +62,12 @@ interface Props {
   onRadarKeysSaved: (keys: string[]) => void;
   /** weekDays (フィードバック API に渡す) */
   weekDays?: Array<{ date: string; meals: Array<{ title: string; calories: number | null }> }>;
+  /**
+   * 「献立を改善」の確定処理 (献立の生成を始める)。
+   * 改善モーダルの内容に、このモーダルで表示中の AI栄養士の提案 (advice) を添えて呼ばれる。
+   * 失敗 (reject) したら改善モーダル側でエラーを表示する。成功後にこの画面を閉じるかどうかは親が決める。
+   */
+  onImprove: (request: ImproveMealRequest) => Promise<void>;
 }
 
 // ============================================================
@@ -84,74 +90,32 @@ export const NutritionDetailModal: React.FC<Props> = ({
   radarKeys,
   onRadarKeysSaved,
   weekDays = [],
+  onImprove,
 }) => {
-  const { user } = useAuth();
-
   // --- AI feedback state ---
   const [praiseComment, setPraiseComment] = useState<string | null>(null);
   const [adviceText, setAdviceText] = useState<string | null>(null);
+  // adviceText が分析の失敗・タイムアウトのメッセージのとき true。
+  // これは AI栄養士の提案ではないので、「献立を改善」の要望 (LLM に送る note) には渡さない
+  const [adviceIsError, setAdviceIsError] = useState(false);
   const [nutritionTip, setNutritionTip] = useState<string | null>(null);
   const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
 
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const realtimeCleanupRef = useRef<(() => void) | null>(null);
+  // 生成待ち (Realtime + ポーリング) の持ち主。閉じる / 日付変更 / アンマウントで必ず解除される
+  const feedbackWatch = useNutritionFeedbackWatch();
 
   // --- ImproveMealModal state ---
   const [showImprove, setShowImprove] = useState(false);
 
   // ----------------------------------------------------------------
-  // fetch / polling helpers
+  // fetch helpers
   // ----------------------------------------------------------------
-
-  const clearPolling = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }, []);
-
-  const clearRealtime = useCallback(() => {
-    if (realtimeCleanupRef.current) {
-      realtimeCleanupRef.current();
-      realtimeCleanupRef.current = null;
-    }
-  }, []);
-
-  const startPolling = useCallback(
-    (cacheId: string) => {
-      let resolved = false;
-      let count = 0;
-      pollRef.current = setInterval(async () => {
-        if (resolved || count >= 20) {
-          clearPolling();
-          setIsLoadingFeedback(false);
-          return;
-        }
-        count++;
-        try {
-          const api = getApi();
-          const res = await api.get<any>(
-            `/api/ai/nutrition/feedback?cacheId=${cacheId}`
-          );
-          if (res.status === 'completed' && (res.feedback || res.praiseComment)) {
-            resolved = true;
-            setPraiseComment(res.praiseComment ?? null);
-            setAdviceText(res.advice ?? res.feedback ?? null);
-            setNutritionTip(res.nutritionTip ?? null);
-            setIsLoadingFeedback(false);
-            clearPolling();
-          }
-        } catch {
-          // ignore
-        }
-      }, 2000);
-    },
-    [clearPolling]
-  );
 
   const fetchFeedback = useCallback(
     async (forceRefresh = false) => {
       if (mealCount === 0) return;
+      // 前回の取得の待ち受けを止め、前回の応答を無効にする
+      const request = feedbackWatch.startRequest();
       setIsLoadingFeedback(true);
       try {
         const api = getApi();
@@ -162,23 +126,44 @@ export const NutritionDetailModal: React.FC<Props> = ({
           forceRefresh,
           weekData: weekDays,
         });
+        // 応答を待つ間にモーダルが閉じられた / 日付が変わった / 別の取得が始まった場合は何もしない
+        if (!request.isCurrent()) return;
         if (res.cached && (res.feedback || res.praiseComment)) {
           setPraiseComment(res.praiseComment ?? null);
           setAdviceText(res.advice ?? res.feedback ?? null);
+          setAdviceIsError(false);
           setNutritionTip(res.nutritionTip ?? null);
           setIsLoadingFeedback(false);
           return;
         }
         if (res.status === 'generating' && res.cacheId) {
-          startPolling(res.cacheId);
+          // nutrition_feedback_cache の行 (cacheId) が completed / error になるのを待つ
+          request.watch(res.cacheId, {
+            onResolved: (content) => {
+              setPraiseComment(content.praiseComment);
+              setAdviceText(content.advice || null);
+              setAdviceIsError(false);
+              setNutritionTip(content.nutritionTip);
+              setIsLoadingFeedback(false);
+            },
+            onFailed: (message) => {
+              // 失敗 / タイムアウト。メッセージを出し、再分析ボタンで再試行できるようにする
+              setPraiseComment(null);
+              setAdviceText(message);
+              setAdviceIsError(true);
+              setNutritionTip(null);
+              setIsLoadingFeedback(false);
+            },
+          });
         } else {
           setIsLoadingFeedback(false);
         }
       } catch {
+        if (!request.isCurrent()) return;
         setIsLoadingFeedback(false);
       }
     },
-    [date, totals, mealCount, weekDays, startPolling]
+    [date, totals, mealCount, weekDays, feedbackWatch]
   );
 
   // ----------------------------------------------------------------
@@ -186,51 +171,20 @@ export const NutritionDetailModal: React.FC<Props> = ({
   // ----------------------------------------------------------------
 
   useEffect(() => {
-    if (!visible) {
-      clearPolling();
-      clearRealtime();
-      return;
-    }
+    if (!visible) return;
 
     // reset
     setPraiseComment(null);
     setAdviceText(null);
+    setAdviceIsError(false);
     setNutritionTip(null);
-    clearPolling();
-    clearRealtime();
-
-    // Realtime subscription for ai_nutrition_feedback INSERT
-    if (user?.id) {
-      const channel = supabase
-        .channel(`nutrition-detail-${user.id}-${date}`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'ai_nutrition_feedback',
-            filter: `user_id=eq.${user.id}`,
-          },
-          (payload: any) => {
-            if (payload.new?.summary) {
-              setPraiseComment(payload.new.summary);
-              setIsLoadingFeedback(false);
-              clearPolling();
-            }
-          }
-        )
-        .subscribe();
-
-      realtimeCleanupRef.current = () => {
-        supabase.removeChannel(channel);
-      };
-    }
+    setIsLoadingFeedback(false);
 
     fetchFeedback();
 
+    // 閉じる / 日付変更 / アンマウントで、待ち受け (購読とポーリング) を必ず解除する
     return () => {
-      clearPolling();
-      clearRealtime();
+      feedbackWatch.cancel();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, date]);
@@ -240,158 +194,162 @@ export const NutritionDetailModal: React.FC<Props> = ({
   // ----------------------------------------------------------------
 
   return (
-    <>
-      <Modal
-        testID="nutrition-detail-modal"
-        visible={visible}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={onClose}
-      >
-        <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
-          <View style={{ flex: 1 }}>
-            {/* Header */}
-            <View style={styles.header}>
-              <View style={styles.headerLeft}>
-                <Ionicons name="bar-chart" size={18} color={colors.accent} />
-                <Text style={styles.headerTitle}>
-                  {dateLabel} の栄養分析
-                </Text>
+    <Modal
+      testID="nutrition-detail-modal"
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+        <View style={{ flex: 1 }}>
+          {/* Header */}
+          <View style={styles.header}>
+            <View style={styles.headerLeft}>
+              <Ionicons name="bar-chart" size={18} color={colors.accent} />
+              <Text style={styles.headerTitle}>
+                {dateLabel} の栄養分析
+              </Text>
+            </View>
+            <Pressable
+              testID="nutrition-detail-close"
+              onPress={onClose}
+              hitSlop={8}
+              style={styles.closeBtn}
+            >
+              <Ionicons name="close" size={22} color={colors.textMuted} />
+            </Pressable>
+          </View>
+
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Radar Chart */}
+            <View style={styles.radarSection}>
+              <View style={styles.radarChart}>
+                <RadarChart totals={totals} nutrientKeys={radarKeys} size={220} />
               </View>
-              <Pressable
-                testID="nutrition-detail-close"
-                onPress={onClose}
-                hitSlop={8}
-                style={styles.closeBtn}
-              >
-                <Ionicons name="close" size={22} color={colors.textMuted} />
-              </Pressable>
+              <View style={styles.radarPickerWrapper}>
+                <RadarKeyPicker
+                  selectedKeys={radarKeys}
+                  onSaved={onRadarKeysSaved}
+                />
+              </View>
             </View>
 
-            <ScrollView
-              contentContainerStyle={styles.scrollContent}
-              showsVerticalScrollIndicator={false}
-            >
-              {/* Radar Chart */}
-              <View style={styles.radarSection}>
-                <View style={styles.radarChart}>
-                  <RadarChart totals={totals} nutrientKeys={radarKeys} size={220} />
-                </View>
-                <View style={styles.radarPickerWrapper}>
-                  <RadarKeyPicker
-                    selectedKeys={radarKeys}
-                    onSaved={onRadarKeysSaved}
-                  />
-                </View>
-              </View>
-
-              {/* AI Feedback */}
-              <View testID="nutrition-detail-ai-feedback" style={styles.feedbackSection}>
-                {/* 褒めポイント */}
-                <View style={styles.praiseCard}>
-                  <View style={styles.cardHeader}>
-                    <Ionicons name="heart" size={14} color={colors.success} />
-                    <Text style={styles.praiseTitle}>褒めポイント</Text>
-                    {(praiseComment || adviceText) && !isLoadingFeedback && (
-                      <Pressable
-                        onPress={() => fetchFeedback(true)}
-                        style={styles.reanalyzeBtn}
-                      >
-                        <Text style={styles.reanalyzeBtnText}>再分析</Text>
-                      </Pressable>
-                    )}
-                  </View>
-                  {isLoadingFeedback ? (
-                    <View style={styles.loadingRow}>
-                      <ActivityIndicator size="small" color={colors.success} />
-                      <Text style={styles.loadingText}>
-                        あなたの献立を分析中...
-                      </Text>
-                    </View>
-                  ) : praiseComment ? (
-                    <Text style={styles.praiseText}>{praiseComment}</Text>
-                  ) : (
-                    <Text style={styles.emptyText}>分析データがありません</Text>
+            {/* AI Feedback */}
+            <View testID="nutrition-detail-ai-feedback" style={styles.feedbackSection}>
+              {/* 褒めポイント */}
+              <View style={styles.praiseCard}>
+                <View style={styles.cardHeader}>
+                  <Ionicons name="heart" size={14} color={colors.success} />
+                  <Text style={styles.praiseTitle}>褒めポイント</Text>
+                  {(praiseComment || adviceText) && !isLoadingFeedback && (
+                    <Pressable
+                      onPress={() => fetchFeedback(true)}
+                      style={styles.reanalyzeBtn}
+                    >
+                      <Text style={styles.reanalyzeBtnText}>再分析</Text>
+                    </Pressable>
                   )}
                 </View>
-
-                {/* 改善アドバイス */}
-                {(adviceText || isLoadingFeedback) && (
-                  <View style={styles.adviceCard}>
-                    <View style={styles.cardHeader}>
-                      <Ionicons name="sparkles" size={14} color={colors.accent} />
-                      <Text style={styles.adviceTitle}>改善アドバイス</Text>
-                    </View>
-                    {isLoadingFeedback ? (
-                      <Text style={styles.emptyText}>...</Text>
-                    ) : (
-                      <Text style={styles.adviceText}>{adviceText}</Text>
-                    )}
+                {isLoadingFeedback ? (
+                  <View style={styles.loadingRow}>
+                    <ActivityIndicator size="small" color={colors.success} />
+                    <Text style={styles.loadingText}>
+                      あなたの献立を分析中...
+                    </Text>
                   </View>
-                )}
-
-                {/* 栄養豆知識 */}
-                {nutritionTip && (
-                  <View style={styles.tipCard}>
-                    <Text style={styles.tipIcon}>💡</Text>
-                    <Text style={styles.tipText}>{nutritionTip}</Text>
-                  </View>
+                ) : praiseComment ? (
+                  <Text style={styles.praiseText}>{praiseComment}</Text>
+                ) : (
+                  <Text style={styles.emptyText}>分析データがありません</Text>
                 )}
               </View>
 
-              {/* 献立を改善ボタン */}
-              {mealCount > 0 && (
-                <Pressable
-                  testID="nutrition-detail-improve-btn"
-                  onPress={() => setShowImprove(true)}
-                  style={({ pressed }) => [
-                    styles.improveBtn,
-                    pressed && styles.improveBtnPressed,
-                  ]}
-                >
-                  <Ionicons name="refresh" size={16} color="#FFF" />
-                  <Text style={styles.improveBtnText}>献立を改善</Text>
-                </Pressable>
+              {/* 改善アドバイス */}
+              {(adviceText || isLoadingFeedback) && (
+                <View style={styles.adviceCard}>
+                  <View style={styles.cardHeader}>
+                    <Ionicons name="sparkles" size={14} color={colors.accent} />
+                    <Text style={styles.adviceTitle}>改善アドバイス</Text>
+                  </View>
+                  {isLoadingFeedback ? (
+                    <Text style={styles.emptyText}>...</Text>
+                  ) : (
+                    <Text style={styles.adviceText}>{adviceText}</Text>
+                  )}
+                </View>
               )}
 
-              {/* 全 26 栄養素 DRI バー */}
-              {CATEGORY_ORDER.map((cat) => {
-                const defs = NUTRIENT_BY_CATEGORY[cat];
-                return (
-                  <View
-                    key={cat}
-                    testID={`nutrition-detail-section-${cat}`}
-                    style={styles.categorySection}
-                  >
-                    <Text style={styles.categoryLabel}>
-                      {CATEGORY_LABELS[cat]}（{defs.length}）
-                    </Text>
-                    <View style={styles.barList}>
-                      {defs.map((def) => (
-                        <DriBar
-                          key={def.key}
-                          def={def}
-                          value={totals[def.key] ?? 0}
-                        />
-                      ))}
-                    </View>
+              {/* 栄養豆知識 */}
+              {nutritionTip && (
+                <View style={styles.tipCard}>
+                  <Text style={styles.tipIcon}>💡</Text>
+                  <Text style={styles.tipText}>{nutritionTip}</Text>
+                </View>
+              )}
+            </View>
+
+            {/* 献立を改善ボタン */}
+            {mealCount > 0 && (
+              <Pressable
+                testID="nutrition-detail-improve-btn"
+                onPress={() => setShowImprove(true)}
+                style={({ pressed }) => [
+                  styles.improveBtn,
+                  pressed && styles.improveBtnPressed,
+                ]}
+              >
+                <Ionicons name="refresh" size={16} color="#FFF" />
+                <Text style={styles.improveBtnText}>献立を改善</Text>
+              </Pressable>
+            )}
+
+            {/* 全 26 栄養素 DRI バー */}
+            {CATEGORY_ORDER.map((cat) => {
+              const defs = NUTRIENT_BY_CATEGORY[cat];
+              return (
+                <View
+                  key={cat}
+                  testID={`nutrition-detail-section-${cat}`}
+                  style={styles.categorySection}
+                >
+                  <Text style={styles.categoryLabel}>
+                    {CATEGORY_LABELS[cat]}（{defs.length}）
+                  </Text>
+                  <View style={styles.barList}>
+                    {defs.map((def) => (
+                      <DriBar
+                        key={def.key}
+                        def={def}
+                        value={totals[def.key] ?? 0}
+                      />
+                    ))}
                   </View>
-                );
-              })}
+                </View>
+              );
+            })}
 
-              <View style={styles.bottomPad} />
-            </ScrollView>
-          </View>
-        </SafeAreaView>
-      </Modal>
+            <View style={styles.bottomPad} />
+          </ScrollView>
 
-      {/* 献立改善モーダル */}
-      <ImproveMealModal
-        visible={showImprove}
-        onClose={() => setShowImprove(false)}
-        selectedDate={date}
-      />
-    </>
+          {/*
+            献立改善モーダル。
+            iOS は表示中のモーダルの上に、兄弟のモーダルを重ねて出せない。
+            この栄養分析モーダルの内側に置くことで、栄養分析の上に重ねて表示できるようにする。
+          */}
+          <ImproveMealModal
+            visible={showImprove}
+            onClose={() => setShowImprove(false)}
+            selectedDate={date}
+            advice={adviceIsError ? null : adviceText}
+            onSubmit={onImprove}
+          />
+        </View>
+      </SafeAreaView>
+    </Modal>
   );
 };
 
