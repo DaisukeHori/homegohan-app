@@ -1,0 +1,68 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+
+// #1174 (同意の前提): 未ログインでも読める公開ページ。サインアップ画面・LP フッターの同意リンクと、
+// ストア審査に出すプライバシー URL の着地点なので、(main) グループ (ログイン後の画面。アプリ用のナビ付き) の外に置く。
+// ログイン・オンボーディング・凍結の差し戻しからは、lib/supabase/middleware.ts の publicPaths と
+// lib/onboarding-routing.ts の isPolicyPath で除外している。
+export const metadata: Metadata = {
+  title: "プライバシーポリシー",
+};
+
+export default function PrivacyPage() {
+  return (
+    <div className="min-h-screen bg-white">
+      <header className="bg-white border-b border-gray-100 sticky top-0 z-20">
+        <div className="max-w-3xl mx-auto p-6 flex items-center gap-4">
+          <Link href="/" aria-label="トップページへ戻る" className="p-2 -ml-2 hover:bg-gray-50 rounded-full">
+            <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+          </Link>
+          <h1 className="text-xl font-bold text-gray-900">プライバシーポリシー</h1>
+        </div>
+      </header>
+
+      <main className="p-6 max-w-3xl mx-auto text-gray-700 leading-relaxed [&_h3]:mt-8 [&_h3]:mb-2 [&_h3]:text-lg [&_h3]:font-bold [&_h3]:text-gray-900 [&_p]:mb-4 [&_ul]:mb-4 [&_ul]:list-disc [&_ul]:pl-6 [&_li]:mb-1">
+        <p className="text-sm text-gray-500 mb-8">最終更新日: 2025年1月1日</p>
+
+        <p>Homegohan Inc.（以下，「当社」といいます。）は，本ウェブサイト上で提供するサービス（以下,「本サービス」といいます。）における，ユーザーの個人情報の取扱いについて，以下のとおりプライバシーポリシー（以下，「本ポリシー」といいます。）を定めます。</p>
+
+        <h3>第1条（個人情報）</h3>
+        <p>「個人情報」とは，個人情報保護法にいう「個人情報」を指すものとし，生存する個人に関する情報であって，当該情報に含まれる氏名，生年月日，住所，電話番号，連絡先その他の記述等により特定の個人を識別できる情報及び容貌，指紋，声紋にかかるデータ，及び健康保険証の保険者番号などの当該情報単体から特定の個人を識別できる情報（個人識別情報）を指します。</p>
+
+        <h3>第2条（個人情報の収集方法）</h3>
+        <p>当社は，ユーザーが利用登録をする際に氏名，生年月日，メールアドレスなどの個人情報をお尋ねすることがあります。また、本サービスの利用において、食事画像や健康に関する情報（アレルギー、生活習慣など）を収集します。</p>
+
+        <h3>第3条（個人情報を収集・利用する目的）</h3>
+        <p>当社が個人情報を収集・利用する目的は，以下のとおりです。</p>
+        <ul>
+          <li>本サービスの提供・運営のため</li>
+          <li>ユーザーからのお問い合わせに回答するため（本人確認を行うことを含む）</li>
+          <li>AIによる食事解析・献立提案の精度向上のため</li>
+          <li>重要なお知らせなど必要に応じたご連絡のため</li>
+          <li>利用規約に違反したユーザーや，不正・不当な目的でサービスを利用しようとするユーザーの特定をし，ご利用をお断りするため</li>
+        </ul>
+
+        <h3>第4条（利用目的の変更）</h3>
+        <p>当社は，利用目的が変更前と関連性を有すると合理的に認められる場合に限り，個人情報の利用目的を変更するものとします。</p>
+
+        <h3>第5条（個人情報の第三者提供）</h3>
+        <p>当社は，次に掲げる場合を除いて，あらかじめユーザーの同意を得ることなく，第三者に個人情報を提供することはありません。ただし，個人情報保護法その他の法令で認められる場合を除きます。</p>
+        <p>なお、本サービスでは OpenAI 社および Google 社の AI API（Gemini を含む）を利用しており、解析や生成に必要な範囲で画像データおよびテキストデータが各事業者に送信される場合があります。</p>
+
+        <h3>第6条（個人情報の開示・訂正・削除）</h3>
+        <p>当社は，本人から個人情報の開示・訂正・削除を求められたときは，本人であることを確認の上で遅滞なくこれに応じます。</p>
+
+        <h3>第7条（お問い合わせ窓口）</h3>
+        <p>本ポリシーに関するお問い合わせは，以下の窓口までお願いいたします。</p>
+        <p>
+          Homegohan Inc. 個人情報担当<br />
+          E-mail: support@homegohan.jp
+        </p>
+      </main>
+
+      <footer className="py-8 border-t border-gray-100">
+        <p className="text-center text-sm text-gray-500">© 2025 ほめゴハン All rights reserved.</p>
+      </footer>
+    </div>
+  );
+}

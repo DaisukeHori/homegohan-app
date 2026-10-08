@@ -146,21 +146,23 @@ export function StatsModal({
             <div className="flex-1 rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.8)' }}>
               <ChefHat size={18} color={colors.success} className="mx-auto mb-0.5" />
               <p style={{ fontSize: 20, fontWeight: 700, color: colors.success, margin: 0 }}>{stats.cookRate}%</p>
-              <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>自炊率</p>
+              <p style={{ fontSize: 11, color: colors.textLight, margin: 0 }}>自炊率</p>
             </div>
             <div className="flex-1 rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.8)' }}>
               <Flame size={18} color={colors.accent} className="mx-auto mb-0.5" />
               <p style={{ fontSize: 20, fontWeight: 700, color: colors.accent, margin: 0 }}>{stats.avgCal}</p>
-              <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>平均kcal/日</p>
+              <p style={{ fontSize: 11, color: colors.textLight, margin: 0 }}>平均kcal/日</p>
             </div>
             <div className="flex-1 rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.8)' }}>
-              <div className="flex justify-center gap-1 mb-0.5">
-                <span style={{ fontSize: 9, color: colors.success }}>🍳{stats.cookCount}</span>
-                <span style={{ fontSize: 9, color: colors.purple }}>🛒{stats.buyCount}</span>
-                <span style={{ fontSize: 9, color: colors.warning }}>🍽{stats.outCount}</span>
+              {/* #1119: 3 枚が横並びの 360px 幅では 1 枚の内側が約 84px。
+                  11px の絵文字+数字 3 組は 2 桁だとちょうど収まる幅なので、はみ出さず折り返せるようにする */}
+              <div className="flex flex-wrap justify-center gap-x-1 mb-0.5">
+                <span style={{ fontSize: 11, color: colors.success, whiteSpace: 'nowrap' }}>🍳{stats.cookCount}</span>
+                <span style={{ fontSize: 11, color: colors.purple, whiteSpace: 'nowrap' }}>🛒{stats.buyCount}</span>
+                <span style={{ fontSize: 11, color: colors.warning, whiteSpace: 'nowrap' }}>🍽{stats.outCount}</span>
               </div>
               <p style={{ fontSize: 14, fontWeight: 600, color: colors.text, margin: 0 }}>{stats.cookCount + stats.buyCount + stats.outCount}食</p>
-              <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>今週の献立</p>
+              <p style={{ fontSize: 11, color: colors.textLight, margin: 0 }}>今週の献立</p>
             </div>
           </div>
         </div>
@@ -200,7 +202,7 @@ export function StatsModal({
                 <p style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>
                   {formatDateJa(formatLocalDate(today))}（{dayNames[today.getDay()]}）の栄養
                 </p>
-                <span className="px-2 py-0.5 rounded-full text-[10px]" style={{ background: colors.accentLight, color: colors.accent }}>
+                <span className="px-2 py-0.5 rounded-full text-xs" style={{ background: colors.accentLight, color: colors.accent }}>
                   {todayMealCount}食分
                 </span>
               </div>
@@ -253,8 +255,8 @@ export function StatsModal({
                 {/* 栄養豆知識 */}
                 {nutritionTip && (
                   <div className="p-2 rounded-lg flex items-start gap-2" style={{ background: colors.blueLight }}>
-                    <span style={{ fontSize: 10 }}>💡</span>
-                    <p style={{ fontSize: 10, color: colors.blue, lineHeight: 1.4 }}>{nutritionTip}</p>
+                    <span style={{ fontSize: 11 }}>💡</span>
+                    <p style={{ fontSize: 11, color: colors.blue, lineHeight: 1.5 }}>{nutritionTip}</p>
                   </div>
                 )}
               </div>
@@ -278,7 +280,7 @@ export function StatsModal({
                 <p style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>
                   {weekDates[0]?.date.getMonth() + 1}/{weekDates[0]?.date.getDate()} 〜 {weekDates[6]?.date.getMonth() + 1}/{weekDates[6]?.date.getDate()} の平均栄養
                 </p>
-                <span className="px-2 py-0.5 rounded-full text-[10px]" style={{ background: colors.purpleLight, color: colors.purple }}>
+                <span className="px-2 py-0.5 rounded-full text-xs" style={{ background: colors.purpleLight, color: colors.purple }}>
                   {weekNutrition.daysWithMeals}日分
                 </span>
               </div>
@@ -323,7 +325,12 @@ export function StatsModal({
                 ].map(item => (
                   <div key={item.label} className="p-2 rounded-lg text-center" style={{ background: colors.bg }}>
                     <p style={{ fontSize: 16, fontWeight: 600, color: item.color, margin: 0 }}>{item.value}</p>
-                    <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>{item.label}({item.unit}/日)</p>
+                    {/* #1119: 3 列の 1 枚は 360px 幅で内側約 88px。11px だと最長の「カロリー(kcal/日)」は約 85px で、
+                        フォントによっては収まらない。単位は 1 まとまりにして、「日)」だけが次の行に落ちないようにする
+                        (収まらないときは「カロリー」と「(kcal/日)」の 2 行になる。横にははみ出さない) */}
+                    <p style={{ fontSize: 11, color: colors.textLight, margin: 0, lineHeight: 1.3 }}>
+                      {item.label}<span style={{ whiteSpace: 'nowrap' }}>({item.unit}/日)</span>
+                    </p>
                   </div>
                 ))}
               </div>

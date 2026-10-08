@@ -187,11 +187,11 @@ export function ShoppingModal({
                         title={item.quantityVariants?.length > 1 ? 'タップで単位切替' : undefined}
                       >
                         {item.quantity || '適量'}
-                        {item.quantityVariants?.length > 1 && <span className="ml-0.5 text-[10px]">⟳</span>}
+                        {item.quantityVariants?.length > 1 && <span className="ml-0.5">⟳</span>}
                       </button>
                       {/* AI/手動バッジ */}
                       <span
-                        className="px-1.5 py-0.5 rounded text-[10px]"
+                        className="px-1.5 py-0.5 rounded text-[11px]"
                         style={{
                           background: item.source === 'generated' ? '#E8F5E9' : '#FFF3E0',
                           color: item.source === 'generated' ? '#2E7D32' : '#E65100'

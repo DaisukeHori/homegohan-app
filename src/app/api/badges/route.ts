@@ -1,5 +1,6 @@
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { isAwardableBadgeCode } from '@/lib/badges/awardable';
 import { NextResponse } from 'next/server';
 
 export async function GET(request: Request) {
@@ -21,6 +22,10 @@ export async function GET(request: Request) {
     // planned_meals には user_id 列が無い（所有者は daily_meal_id → user_daily_meals.user_id）。
     // `.eq('user_id', ...)` は PostgREST が 42703 で拒否し、error を見ていなかったため count が
     // 常に null（= 0 扱い）になっていた。他の API と同じく user_daily_meals!inner で本人の行に絞る。
+    //
+    // #1314: ハンズオンツアーが入れるお試しの記録 (user_daily_meals.is_sandbox = true) は、実際の食事の記録では
+    // ないので、食事の数にも自炊の数にも連続日数にも数えない (src/lib/health-insight-meals.ts と同じ規則)。
+    // 数えると、ダミーの献立を「完了」にしただけで first_bite などが付いてしまう。
     const [badgesRes, userBadgesRes, mealCountRes, cookCountRes, completedDaysRes] = await Promise.all([
       supabase.from('badges').select('*'),
       supabase
@@ -32,12 +37,14 @@ export async function GET(request: Request) {
         .from('planned_meals')
         .select('id, user_daily_meals!inner(user_id)', { count: 'exact', head: true })
         .eq('user_daily_meals.user_id', user.id)
+        .eq('user_daily_meals.is_sandbox', false)
         .eq('is_completed', true),
       // 自炊の数
       supabase
         .from('planned_meals')
         .select('id, user_daily_meals!inner(user_id)', { count: 'exact', head: true })
         .eq('user_daily_meals.user_id', user.id)
+        .eq('user_daily_meals.is_sandbox', false)
         .eq('is_completed', true)
         .in('mode', ['cook', 'quick']),
       // 連続日数計算（日付ベースモデル）
@@ -48,6 +55,7 @@ export async function GET(request: Request) {
           planned_meals!inner(is_completed)
         `)
         .eq('user_id', user.id)
+        .eq('is_sandbox', false)
         .eq('planned_meals.is_completed', true)
         .order('day_date', { ascending: false })
         .limit(30),
@@ -120,6 +128,8 @@ export async function GET(request: Request) {
       else if (badge.code === 'streak_7' && streak >= 7) {
         earned = true;
       }
+      // 以下の 3 つ (home_chef / master_chef / century) は、いまのマスターに行が無く、一覧に出すかどうかは
+      // オーナーの判断待ち (#1314)。判定は今のままにしてあり、src/lib/badges/awardable.ts のリストにも入れていない。
       // Home Chef (自炊10回)
       else if (badge.code === 'home_chef' && cookCount >= 10) {
         earned = true;
@@ -179,11 +189,16 @@ export async function GET(request: Request) {
     }
 
     // 6. レスポンス生成
-    const badges = allBadges.map(badge => ({
-      ...badge,
-      earned: earnedBadgeIds.has(badge.id),
-      obtainedAt: obtainedAtByBadgeId.get(badge.id) ?? null,
-    }));
+    // #1314: 付与処理の無いバッジ (health_streak_* など。src/lib/badges/awardable.ts に無いコード) は、
+    // 獲得のしようが無いので、未獲得のうちは一覧に出さない。獲得済みのバッジは、リストに無くても必ず返す。
+    // マスター (badges テーブル) の行は変えず、返すときに絞るだけにしている。
+    const badges = allBadges
+      .map(badge => ({
+        ...badge,
+        earned: earnedBadgeIds.has(badge.id),
+        obtainedAt: obtainedAtByBadgeId.get(badge.id) ?? null,
+      }))
+      .filter(badge => badge.earned || isAwardableBadgeCode(badge.code));
 
     // #1055 (wave-3b): 新規獲得バッジの匿名性を解消するため、
     // 件数だけでなくどのバッジを獲得したか (code) をレスポンスに含める

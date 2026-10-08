@@ -16,6 +16,7 @@
  *   INTEGRATION_TEST_FILTER=B001 node scripts/diagnostics/v5-integration-test.js  # 個別テスト
  */
 require('dotenv').config({ path: '.env.local' });
+const { randomBytes } = require('node:crypto');
 const { createClient } = require('@supabase/supabase-js');
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -56,12 +57,22 @@ function buildSlots(startDate, days, mealTypes) {
 
 let testUserId = null;
 
+/**
+ * 実行ごとに変わるランダムなテスト用パスワード。固定の値をリポジトリに置かない (#1114)。
+ * tests/e2e/helpers/credentials.ts の generateTestPassword() と同じ作り方
+ * (あちらは TypeScript なので、この .js からは読めず、ここに同じものを置いている)。
+ * アプリのパスワード要件 (8 文字以上・英数字混在) を満たすよう、末尾に Aa1! を付ける。
+ */
+function generateTestPassword() {
+  return `${randomBytes(18).toString('base64url')}Aa1!`;
+}
+
 async function ensureTestUser() {
   if (testUserId) return testUserId;
   const email = `v5-integ-test-${Date.now()}@test.homegohan.local`;
   const { data, error } = await supabase.auth.admin.createUser({
     email,
-    password: 'test-password-12345',
+    password: generateTestPassword(),
     email_confirm: true,
   });
   if (error) throw new Error(`Failed to create test user: ${error.message}`);
