@@ -7,6 +7,7 @@ import { createLogger } from '@/lib/db-logger';
  * #1022 AIエンドポイントのユーザー単位レートリミット共通ヘルパー
  * #1163 招待メール・参加リクエストなど「ユーザー操作で外部へメールが出る API」の送信回数制限にも使う
  * #1197 ログイン前でも送れる公開フォーム (お問い合わせ) の IP 単位の制限にも使う
+ * #1164 ファイルアップロード (POST /api/upload) のユーザー単位の回数制限にも使う
  *
  * 元は src/app/api/contact/route.ts の Upstash Ratelimit 実装を汎用化したもの。
  * `key` + カテゴリ単位でレート制限を判定する。
@@ -47,7 +48,8 @@ export type RateLimitCategory =
   | 'invite-target'
   | 'transfer-propose'
   | 'contact'
-  | 'export';
+  | 'export'
+  | 'upload';
 
 /** 1 つの制限ルール。name は Upstash の prefix / in-memory の名前空間に使う (既存キーを変えないこと) */
 interface RateRule {
@@ -86,6 +88,11 @@ const DAY_SEC = 24 * 60 * 60;
 // 【その他】
 // - export: 個人データエクスポート（#1131。AI は使わないが全テーブルを走査する重い読み取り）。
 //   正当な再実行（失敗後のやり直し等）は妨げず、連打による DB 負荷だけ防ぐ。10 分あたり 5 回
+// - upload: ファイルのアップロード（#1164。POST /api/upload。fridge-images バケットへ 1 ファイル最大 10MB を保存する。
+//   key = 認証で確定した user.id）。Web の呼び出し元は今のところ食事写真の保存
+//   (src/app/(main)/meals/new/page.tsx) だけで、1 回の保存につき 1 ファイル。
+//   分あたり 10 回・直近 24 時間で 100 回は、その実際の使い方を十分に上回る値。
+//   同じユーザーが 10MB のファイルを連打して Storage の容量と転送量を使い切るのを防ぐ
 const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   generation: [{ name: 'generation', max: 5, windowSec: MINUTE_SEC }],
   analysis: [{ name: 'analysis', max: 10, windowSec: MINUTE_SEC }],
@@ -116,6 +123,10 @@ const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   ],
   contact: [{ name: 'contact', max: 10, windowSec: MINUTE_SEC }],
   export: [{ name: 'export', max: 5, windowSec: 10 * MINUTE_SEC }],
+  upload: [
+    { name: 'upload', max: 10, windowSec: MINUTE_SEC },
+    { name: 'upload-daily', max: 100, windowSec: DAY_SEC },
+  ],
 };
 
 export interface RateLimitResult {
@@ -156,7 +167,7 @@ const redisClient = getRedisClient();
 if (!redisClient) {
   logger.warn(
     '[rate-limit] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN が未設定です。' +
-      'AIエンドポイント・招待メール・お問い合わせフォームのレート制限は in-memory フォールバックで' +
+      'AIエンドポイント・招待メール・お問い合わせフォーム・ファイルアップロードのレート制限は in-memory フォールバックで' +
       '動作します（サーバーレス環境ではインスタンスごとに独立するため実効性が下がります。' +
       '特に日次上限は成り立ちません）。' +
       '本番環境では必ず Upstash Redis の env を設定してください。',
