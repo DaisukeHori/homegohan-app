@@ -42,12 +42,11 @@ CRON_SECRET=<random-32-chars>
 
 ### インテグレーションテスト追加キー
 
-Supabase に直接アクセスするインテグレーションテストを実行する場合は以下も必要です。
+インテグレーションテスト (`tests/integration/`) の接続先は **ローカルの Supabase スタック** です。本番や共有の Supabase には向けないでください。
 
-```env
-SUPABASE_INTEGRATION_TEST=1
-# SUPABASE_SERVICE_ROLE_KEY は上記の値をそのまま利用
-```
+必要な変数 (`NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_INTEGRATION_TEST=1` など) は、
+`bash scripts/supabase-local.sh env .env.local` がローカルスタックの値で `.env.local` に書き出します。
+手順は下の「Vitest — インテグレーションテスト」を参照してください。
 
 ### モバイル (Expo)
 
@@ -81,11 +80,31 @@ npm run test
 
 ### Vitest — インテグレーションテスト
 
+`tests/integration/` のテストは、**ローカルの Supabase スタック** と **ローカルの Next dev サーバ** に対して実行します。
+テストはユーザーや業務データを作成・削除するため、**本番の Supabase には絶対に向けないでください**。
+
 ```bash
-SUPABASE_INTEGRATION_TEST=1 npm run test:integration
+# 1. ローカル Supabase を起動し (初回はイメージ取得で数分)、接続情報を .env.local に書き出す
+bash scripts/supabase-local.sh start
+bash scripts/supabase-local.sh env .env.local
+
+# 2. Next dev サーバを起動する (別ターミナル。既定は http://localhost:3000)
+npm run dev
+
+# 3. テストを実行する。対象のパスを渡して絞り込める (パスの部分一致)
+npm run test:integration -- tests/integration/operator/admin-
+npx vitest run --config vitest.integration.config.ts tests/integration/rls tests/integration/security
 ```
 
-実際の Supabase プロジェクトに接続します。`.env.local` に `SUPABASE_SERVICE_ROLE_KEY` が必要です。
+- `bash scripts/supabase-local.sh env .env.local` は `.env.local` を **上書き** します (既存のファイルは `.env.local.bak.<時刻>` に退避されます)。
+  開発用に別の接続先を `.env.local` に入れている場合は、テストが終わったら退避したファイルを戻してください。
+- 実行前に `.env.local` の `NEXT_PUBLIC_SUPABASE_URL` が `http://127.0.0.1:54321` であることを確認してください。
+- dev サーバを別のポートで起動したときは `INTEGRATION_BASE_URL=http://localhost:3001` を付けて実行します。
+- `supabase start` / `supabase db reset` をリポジトリの `supabase/` に対して直接実行しないでください。必ず `scripts/supabase-local.sh` を経由します (理由は [CLAUDE.md](./CLAUDE.md) の「ローカル / CI の Supabase」)。
+  migration を追加・変更したら `bash scripts/supabase-local.sh reset` で作り直します。
+- テストは自分で作ったデータを後片付けしますが、途中で中断するとローカル DB にデータが残ることがあります。そのときは `bash scripts/supabase-local.sh reset` で戻します。
+- CI では `.github/workflows/security-regression.yml` が同じ手順で `tests/integration/rls`・`tests/integration/security`・`tests/integration/operator/admin-*` (運営コンソール API) を実行します。
+- 失敗が既知の不具合によるテストは `it.fails` で書いてあります (`[既知の不具合]` と題名に付く)。不具合を直したら、そのテストの `.fails` を外してください。
 
 ### Playwright — E2E テスト (Web)
 

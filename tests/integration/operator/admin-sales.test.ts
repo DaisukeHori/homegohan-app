@@ -26,23 +26,26 @@ beforeAll(async () => {
     createTestUserWithRoles({ email: testEmail('sales-gen', TS), roles: ['user'] }),
   ]);
 
-  // Create a test lead with known stage for filter testing
-  const { data: lead } = await supabaseAdmin
+  // Create a test lead with known stage for filter testing.
+  // source は sales_leads_source_check (website / referral / event / cold_call / other) の許容値にする。
+  // 以前は 'integration_test' を入れて CHECK 違反になり、seed が黙って失敗していた。
+  const { data: lead, error: leadError } = await supabaseAdmin
     .from('sales_leads')
     .insert({
       company_name: `Test Company ${TS}`,
       industry: 'tech',
       contact_name: 'Test Contact',
-      source: 'integration_test',
+      source: 'other',
       stage: 'approach',
       assigned_to: salesUser.userId,
     })
     .select()
     .single();
 
-  if (lead?.id) {
-    createdLeadIds.push(lead.id);
+  if (leadError || !lead) {
+    throw new Error(`seed sales_leads failed: ${leadError?.message}`);
   }
+  createdLeadIds.push(lead.id);
 }, 60000);
 
 afterAll(async () => {

@@ -1,12 +1,15 @@
 name: security-regression
 
-# 認可 / RLS のセキュリティ回帰テスト (#1231 配下の修正の再発防止)。
+# 認可 / RLS のセキュリティ回帰テスト (#1231 配下の修正の再発防止) と、
+# 運営コンソール (admin) API の統合テスト (#849)。
 #
 # 本番には接続しない。PR の migration を含むローカル Supabase
 # (本番スキーマのベースライン + 本番台帳より新しい migration。scripts/supabase-local.sh)
 # とローカルの Next dev サーバに対して、次を実行する:
 #   - tests/integration/rls/       supabase-js で PostgREST / RPC を直接叩く RLS・RPC の検証
 #   - tests/integration/security/  API ルートを Bearer JWT で叩く越境・権限昇格の検証
+#   - tests/integration/operator/  運営コンソール API (/api/admin/*) の 200・401・403・400 と副作用の検証
+#                                  (admin-*.test.ts と auth-boundary.test.ts。super-admin-*.test.ts は #850 で追加する)
 #
 # 本番には merge 後にしか migration が当たらないため、本番向けの検証では修正 PR 自身が
 # merge 前に緑にならない。ローカルスタックで回すことで修正 PR 自身をゲートにできる。
@@ -30,7 +33,8 @@ env:
 jobs:
   security-regression:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # セキュリティ回帰テスト + 運営コンソールの統合テスト (どちらも直列実行) を 1 つのスタックで回すため長めにとる
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -60,6 +64,17 @@ jobs:
         run: >
           npx vitest run --config vitest.integration.config.ts --passWithNoTests
           tests/integration/rls tests/integration/security
+
+      # 運営コンソール (admin) API の統合テスト (#849)。
+      # 上のセキュリティ回帰テストが落ちた場合も結果が分かるよう、キャンセル時以外は必ず実行する
+      # (どちらかが落ちればジョブは失敗)。--passWithNoTests は付けない (対象が 0 件なら設定ミスとして落とす)。
+      # 絞り込みは vitest のパス部分一致。`operator/admin-` は super-admin-*.test.ts に当たらない。
+      - name: Run operator (admin) integration tests
+        if: ${{ !cancelled() }}
+        run: >
+          npx vitest run --config vitest.integration.config.ts
+          tests/integration/operator/admin-
+          tests/integration/operator/auth-boundary
 
       - name: Show logs on failure
         if: failure()
