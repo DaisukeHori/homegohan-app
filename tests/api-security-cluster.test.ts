@@ -34,6 +34,22 @@ vi.mock('@supabase/supabase-js', () => ({
   createClient: () => supabaseClient,
 }));
 
+// #1164 /api/upload は 1 ユーザーあたり 10 回/分 (upload カテゴリ) で制限される。
+// #186 の describe は同じユーザー (uid-1) で 10 回を超えて呼び、MIME / サイズ / magic bytes の検証だけを確かめたいので、
+// upload カテゴリの判定だけを常に通す。それ以外のカテゴリ (#166 の contact など) は本物の判定を通す。
+// upload の制限そのものは src/__tests__/api/upload-rate-limit.test.ts で確かめる。
+// (vi.fn() ではなく普通の関数にしているのは、各 describe の vi.resetAllMocks() で挙動が消えないようにするため)
+vi.mock('@/lib/rate-limit', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/rate-limit')>();
+  return {
+    ...actual,
+    checkRateLimit: (key: string, category: Parameters<typeof actual.checkRateLimit>[1]) =>
+      category === 'upload'
+        ? Promise.resolve({ success: true, limit: 10, remaining: 9, reset: Date.now() + 60_000, windowSec: 60 })
+        : actual.checkRateLimit(key, category),
+  };
+});
+
 // ─────────────────────────────────────────────
 // #163 /api/log — 認証なし書き込み禁止
 // ─────────────────────────────────────────────

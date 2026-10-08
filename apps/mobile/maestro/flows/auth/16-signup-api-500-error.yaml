@@ -21,7 +21,7 @@ env:
 
 # 以下は MAESTRO_RUN_NETWORK_FAULT=1 のときのみ実行される
 - launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
+# 前の状態をリセット (ホームにいる場合)
 - runFlow:
     file: "../_shared/ensure-welcome.yaml"
 - tapOn:

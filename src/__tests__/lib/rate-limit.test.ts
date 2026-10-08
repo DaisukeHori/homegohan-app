@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // #1197 共通レートリミッタ (src/lib/rate-limit.ts) の単体テスト。
 // ここでは「呼び出し側が決めた key (ユーザー ID 以外も含む) でカテゴリ単位に数える」使い方と、
-// お問い合わせフォーム用の contact カテゴリ (クライアント IP 単位で 10 回/分) を確かめる。
+// お問い合わせフォーム用の contact カテゴリ (クライアント IP 単位で 10 回/分)、
+// ファイルアップロード用の upload カテゴリ (#1164。ユーザー単位で 10 回/分 + 直近 24 時間で 100 回) を確かめる。
 // 既存カテゴリ (generation / analysis / image) の限度値と Upstash のモックによる共通の挙動は
 // tests/ai-rate-limit-contracts.test.ts、招待メール系の限度値は
 // src/__tests__/lib/membership/invite-throttle.in-memory.test.ts で確かめている。
@@ -23,6 +24,8 @@ vi.mock('@/lib/db-logger', () => ({
 }));
 
 const MINUTE_MS = 60_000;
+const DAY_SEC = 24 * 60 * 60;
+const DAY_MS = DAY_SEC * 1000;
 
 type RateLimit = typeof import('@/lib/rate-limit');
 let rateLimit: RateLimit;
@@ -263,5 +266,188 @@ describe('Upstash 未設定 (in-memory フォールバック)', () => {
       expect((await rateLimit.checkRateLimit('203.0.113.30', 'contact')).success).toBe(true);
     }
     expect((await rateLimit.checkRateLimit('203.0.113.30', 'contact')).success).toBe(false);
+  });
+});
+
+// #1164 POST /api/upload 用の upload カテゴリ。ユーザー単位 (key = 認証した user.id) で、
+// 分あたり 10 回と、直近 24 時間 (ローリング) で 100 回の 2 つのルールを順に判定する。
+describe('upload カテゴリ (in-memory フォールバック): ユーザーごとに 10 回/分 + 直近 24 時間で 100 回', () => {
+  it('分あたり: 同じ key では 10 回まで通り、11 回目は windowSec=60 で止まる。残り回数は 9 → 0 と減る', async () => {
+    const results = [];
+    for (let i = 0; i < 11; i++) {
+      results.push(await rateLimit.checkRateLimit('user-upload-1', 'upload'));
+    }
+
+    expect(results.slice(0, 10).map((r) => r.success)).toEqual(new Array(10).fill(true));
+    expect(results.slice(0, 10).map((r) => r.remaining)).toEqual([9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
+    // 通ったときの limit / windowSec は先頭のルール (分あたり) のもの
+    expect(results.slice(0, 10).every((r) => r.limit === 10 && r.windowSec === 60)).toBe(true);
+    expect(results[10]).toMatchObject({ success: false, limit: 10, remaining: 0, windowSec: 60 });
+  });
+
+  it('分あたり: 止まった結果の reset は最初のリクエストの 60 秒後。60 秒たつと枠が戻る', async () => {
+    const startedAt = Date.now();
+    for (let i = 0; i < 10; i++) {
+      await rateLimit.checkRateLimit('user-upload-2', 'upload');
+    }
+    vi.advanceTimersByTime(20_000);
+
+    const blocked = await rateLimit.checkRateLimit('user-upload-2', 'upload');
+
+    expect(blocked).toMatchObject({ success: false, reset: startedAt + MINUTE_MS });
+    expect(rateLimit.getRetryAfterSec(blocked)).toBe(40);
+
+    vi.advanceTimersByTime(MINUTE_MS);
+
+    expect(await rateLimit.checkRateLimit('user-upload-2', 'upload')).toMatchObject({ success: true, remaining: 9 });
+  });
+
+  it('日次: 分あたりの枠を戻しながら 100 回まで通り、101 回目は windowSec=86400 で止まる。reset は最初のリクエストの 24 時間後', async () => {
+    const startedAt = Date.now();
+    const results = [];
+    for (let i = 0; i < 101; i++) {
+      results.push(await rateLimit.checkRateLimit('user-upload-3', 'upload'));
+      // 分あたりの枠だけを戻して、日次の判定を分離して確かめる
+      vi.advanceTimersByTime(MINUTE_MS + 1_000);
+    }
+
+    expect(results.slice(0, 100).every((r) => r.success)).toBe(true);
+    expect(results[100]).toMatchObject({
+      success: false,
+      limit: 100,
+      remaining: 0,
+      windowSec: DAY_SEC,
+      reset: startedAt + DAY_MS,
+    });
+  });
+
+  it('日次: 24 時間たつまでは分あたりの枠が戻っていても止まったまま。24 時間たつと日次の枠が戻る', async () => {
+    const startedAt = Date.now();
+    for (let i = 0; i < 100; i++) {
+      await rateLimit.checkRateLimit('user-upload-4', 'upload');
+      vi.advanceTimersByTime(MINUTE_MS + 1_000);
+    }
+    expect((await rateLimit.checkRateLimit('user-upload-4', 'upload')).success).toBe(false);
+
+    vi.setSystemTime(startedAt + DAY_MS - 1_000);
+    expect((await rateLimit.checkRateLimit('user-upload-4', 'upload')).success).toBe(false);
+
+    vi.setSystemTime(startedAt + DAY_MS + 1_000);
+    expect(await rateLimit.checkRateLimit('user-upload-4', 'upload')).toMatchObject({ success: true, windowSec: 60 });
+  });
+
+  it('key (ユーザー) ごとに独立している。使い切った key があっても、別の key は新しい枠から始まる', async () => {
+    for (let i = 0; i < 10; i++) {
+      await rateLimit.checkRateLimit('user-upload-5', 'upload');
+    }
+    expect((await rateLimit.checkRateLimit('user-upload-5', 'upload')).success).toBe(false);
+
+    expect(await rateLimit.checkRateLimit('user-upload-6', 'upload')).toMatchObject({ success: true, remaining: 9 });
+  });
+
+  it('同じ key でも、カテゴリが違えば別々に数える (upload を使い切っても AI 系の枠は残り、逆も同じ)', async () => {
+    const key = 'user-upload-shared';
+    for (let i = 0; i < 10; i++) {
+      await rateLimit.checkRateLimit(key, 'upload');
+    }
+    expect((await rateLimit.checkRateLimit(key, 'upload')).success).toBe(false);
+
+    expect(await rateLimit.checkRateLimit(key, 'analysis')).toMatchObject({ success: true, limit: 10 });
+    expect(await rateLimit.checkRateLimit(key, 'generation')).toMatchObject({ success: true, limit: 5 });
+    expect(await rateLimit.checkRateLimit(key, 'export')).toMatchObject({ success: true, limit: 5 });
+
+    const other = 'user-upload-shared-2';
+    for (let i = 0; i < 10; i++) {
+      await rateLimit.checkRateLimit(other, 'analysis');
+    }
+    expect((await rateLimit.checkRateLimit(other, 'analysis')).success).toBe(false);
+
+    expect(await rateLimit.checkRateLimit(other, 'upload')).toMatchObject({ success: true, remaining: 9 });
+  });
+});
+
+describe('upload カテゴリ (Upstash 設定時)', () => {
+  const constructed: Array<{ prefix: string }> = [];
+  const limitMock = vi.fn();
+  const slidingWindowMock = vi.fn((max: number, window: string) => ({ max, window }));
+
+  async function loadWithUpstash() {
+    process.env.UPSTASH_REDIS_REST_URL = 'https://example.upstash.io';
+    process.env.UPSTASH_REDIS_REST_TOKEN = 'test-token';
+
+    vi.resetModules();
+    vi.doMock('@upstash/redis', () => ({
+      Redis: class {
+        constructor(_options: unknown) {}
+      },
+    }));
+    vi.doMock('@upstash/ratelimit', () => ({
+      Ratelimit: Object.assign(
+        class {
+          limit = limitMock;
+          constructor(options: { prefix: string }) {
+            constructed.push(options);
+          }
+        },
+        { slidingWindow: slidingWindowMock },
+      ),
+    }));
+    return import('@/lib/rate-limit');
+  }
+
+  beforeEach(() => {
+    constructed.length = 0;
+    limitMock.mockReset();
+    slidingWindowMock.mockClear();
+  });
+
+  it('専用の prefix (upload / upload-daily) で、10 回/60 秒と 100 回/86400 秒の sliding window を作り、key をそのまま渡す', async () => {
+    limitMock.mockResolvedValue({ success: true, limit: 10, remaining: 7, reset: Date.now() + 30_000 });
+    const { checkRateLimit } = await loadWithUpstash();
+
+    const result = await checkRateLimit('user-upload-up-1', 'upload');
+
+    expect(constructed.map((c) => c.prefix)).toEqual(['homegohan:ai-rl:upload', 'homegohan:ai-rl:upload-daily']);
+    expect(slidingWindowMock.mock.calls).toEqual([
+      [10, '60 s'],
+      [100, '86400 s'],
+    ]);
+    expect(limitMock).toHaveBeenCalledTimes(2);
+    expect(limitMock).toHaveBeenNthCalledWith(1, 'user-upload-up-1');
+    expect(limitMock).toHaveBeenNthCalledWith(2, 'user-upload-up-1');
+    // 通ったときは先頭のルール (分あたり) の結果を返す
+    expect(result).toMatchObject({ success: true, limit: 10, windowSec: 60 });
+  });
+
+  it('分あたりで止まったら、日次の判定には進まない (windowSec=60)', async () => {
+    limitMock.mockResolvedValueOnce({ success: false, limit: 10, remaining: 0, reset: Date.now() + 30_000 });
+    const { checkRateLimit } = await loadWithUpstash();
+
+    const result = await checkRateLimit('user-upload-up-2', 'upload');
+
+    expect(result).toMatchObject({ success: false, remaining: 0, windowSec: 60 });
+    expect(limitMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('分あたりを通ったあと日次で止まれば、日次のウィンドウ秒数 (86400) と reset を返す', async () => {
+    const dailyReset = Date.now() + 3_600_000;
+    limitMock
+      .mockResolvedValueOnce({ success: true, limit: 10, remaining: 9, reset: Date.now() + 60_000 })
+      .mockResolvedValueOnce({ success: false, limit: 100, remaining: 0, reset: dailyReset });
+    const { checkRateLimit, getRetryAfterSec } = await loadWithUpstash();
+
+    const result = await checkRateLimit('user-upload-up-3', 'upload');
+
+    expect(result).toEqual({ success: false, limit: 100, remaining: 0, reset: dailyReset, windowSec: DAY_SEC });
+    expect(getRetryAfterSec(result)).toBe(3600);
+    expect(limitMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('fail-closed: Upstash が例外を投げたら success: true に握りつぶさず、例外をそのまま伝播する', async () => {
+    const failure = new Error('ECONNREFUSED: upstash unreachable');
+    limitMock.mockRejectedValueOnce(failure);
+    const { checkRateLimit } = await loadWithUpstash();
+
+    await expect(checkRateLimit('user-upload-up-4', 'upload')).rejects.toBe(failure);
   });
 });

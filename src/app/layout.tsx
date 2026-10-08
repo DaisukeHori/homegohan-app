@@ -1,7 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Sans_JP, Noto_Serif_JP } from "next/font/google";
 import { PostHogProvider } from "@/components/PostHogProvider";
+import { getSiteUrl } from "@/lib/site-config";
 import "./globals.css";
+
+// サイトの URL (canonical・OGP の基点)。NEXT_PUBLIC_APP_URL、未設定なら既定値 (src/lib/site-config.ts, #1194)
+const siteUrl = getSiteUrl();
 
 const notoSans = Noto_Sans_JP({ 
   subsets: ["latin"],
@@ -41,14 +45,14 @@ export const metadata: Metadata = {
     address: false,
     telephone: false,
   },
-  metadataBase: new URL("https://homegohan.app"),
+  metadataBase: new URL(siteUrl),
   alternates: {
     canonical: "/",
   },
   openGraph: {
     title: "ほめゴハン | AIで食事管理をもっと簡単に",
     description: "写真を撮るだけでAIが栄養分析。毎日の食事記録から献立提案、健康管理まで。あなたの食生活をサポートする次世代の食事管理アプリ。",
-    url: "https://homegohan.app",
+    url: siteUrl,
     siteName: "ほめゴハン",
     locale: "ja_JP",
     type: "website",

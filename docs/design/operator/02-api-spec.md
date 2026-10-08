@@ -227,6 +227,15 @@ BAN 解除
 
 ---
 
+### POST /api/admin/users/{id}/impersonate — 提供しない (#1124)
+なりすまし (impersonate)。**提供しない** (オーナー判断 2026-10-08)。旧設計の `POST /api/super-admin/impersonate/{userId}` も作らない。
+
+以前は `super_admin` にだけ、トークンを発行する API があった。ただしトークンは `admin_audit_logs.details` に平文で書かれるだけで、
+受け取って使う側がどこにも無かったため、API ごと削除した (呼ぶと 404)。サポートは、読み取り専用のユーザー画面
+(`GET /api/admin/users/{id}` を使う `/admin/users/{id}` と、サポートコンソール) で対応する。詳細は `cross/01-auth-session.md` §11。
+
+---
+
 ## 5. モデレーション API
 
 ### GET /api/admin/moderation/{type}
@@ -1314,10 +1323,12 @@ NPS サーベイ送信 (日次 14:00 JST)
 2. `it('returns already_processed on second webhook with same event_id')`
 3. `it('applies coupon discount correctly to subscription price')`
 4. `it('returns 403 when non-super_admin calls POST /api/super-admin/plans')`
-5. `it('returns 403 when admin role calls impersonate endpoint')`
-6. `it('creates admin_audit_log entry on impersonation')`
-7. `it('updates plan status to deprecated and triggers migration job')`
-8. `it('E2E: super_admin creates plan, publishes, user purchases, webhook updates DB')`
+5. `it('updates plan status to deprecated and triggers migration job')`
+6. `it('E2E: super_admin creates plan, publishes, user purchases, webhook updates DB')`
+
+なりすまし (impersonate) の API は提供しない (#1124) ため、403 や監査ログのテストは書かない。
+代わりに、`POST /api/admin/users/{id}/impersonate` が super_admin でも 404 になり、監査ログが増えないことを
+`tests/integration/operator/admin-users.test.ts` で確認している。
 
 ```typescript
 // tests/unit/operator/stripe-webhook-signature.test.ts
@@ -1394,40 +1405,6 @@ describe('operator API 権限テスト', () => {
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error.code).toBe('FORBIDDEN');
-  });
-
-  it('returns 403 when admin role calls impersonate endpoint', async () => {
-    const adminToken = await signInAsUser('admin@test.local');
-    const res = await fetch(
-      `${BASE_URL}/api/super-admin/users/${faker.string.uuid()}/impersonate`,
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${adminToken}` },
-      },
-    );
-    expect(res.status).toBe(403);
-  });
-
-  it('creates admin_audit_log entry on successful impersonation', async () => {
-    const superToken = await signInAsUser('super@test.local');
-    const targetUserId = faker.string.uuid();
-
-    await fetch(`${BASE_URL}/api/super-admin/users/${targetUserId}/impersonate`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${superToken}` },
-    });
-
-    const { data: logs } = await supabaseAdmin
-      .from('admin_audit_logs')
-      .select('*')
-      .eq('action_type', 'impersonate')
-      .eq('target_id', targetUserId)
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    expect(logs).toHaveLength(1);
-    expect(logs![0].actor_id).toBeTruthy();
-    expect(logs![0].impersonated_by).toBeTruthy();
   });
 });
 ```

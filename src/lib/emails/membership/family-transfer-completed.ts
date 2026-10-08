@@ -1,6 +1,8 @@
 // src/lib/emails/membership/family-transfer-completed.ts
 // (設計書 04-email-templates.md — 家族代表者変更完了メール)
-import type { EmailEnvelope } from './templates';
+import type { EmailEnvelope } from '../envelope';
+import { emailSignature } from '../common';
+import { getEmailFrom, getSupportEmail } from '@/lib/site-config';
 
 export interface FamilyTransferCompletedEmailVars {
   to_email: string;
@@ -24,18 +26,17 @@ export function renderFamilyTransferCompletedEmail(vars: FamilyTransferCompleted
 あなたは新しい代表者として家族グループの管理ができるようになりました。`;
 
   return {
+    template: 'family_transfer_completed',
     to: vars.to_email,
-    from: 'ほめゴハン <noreply@homegohan.app>',
+    from: getEmailFrom(),
     subject: '【ほめゴハン】家族代表者が変更されました',
     text: `ほめゴハンをご利用いただきありがとうございます。
 
 ${bodyText}
 
-ご不明な点がございましたら support@homegohan.app までお問い合わせください。
+ご不明な点がございましたら ${getSupportEmail()} までお問い合わせください。
 
-─────────────────
-ほめゴハン
-https://homegohan.app
+${emailSignature()}
 `,
   };
 }

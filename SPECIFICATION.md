@@ -2583,11 +2583,12 @@ EXPO_PUBLIC_APP_ENV=development|preview|production
 ```
 
 ### 11.10 最終ゴール（機能完全移植）
-Webにある **全機能**（メイン機能/組織/管理者/サポート/スーパー管理を含む）を、
-段階的にモバイルへ実装する。移行の基準は以下:
+Webにある **全機能**（メイン機能/組織/サポート/スーパー管理を含む）を、
+段階的にモバイルへ実装する。ただし **管理者（admin）の画面はモバイルに作らない**
+（運営作業は Web に一本化する。2026-10-08 オーナー判断、#1122）。移行の基準は以下:
 - Phase A: **日常利用のメイン導線**（認証/オンボ/ホーム/献立/食事記録/AI相談）
 - Phase B: **生活・健康の拡張**（健康/買い物/冷蔵庫/レシピ/バッジ/比較/家族）
-- Phase C: **管理系の完全移植**（組織/管理者/サポート/スーパー管理）
+- Phase C: **管理系の移植**（組織/サポート/スーパー管理。管理者 (admin) は対象外）
 
 ### 11.11 機能・画面一覧（Web → Mobile）
 #### Webページ一覧（`src/app/**/page.tsx`）
@@ -2613,7 +2614,7 @@ Webにある **全機能**（メイン機能/組織/管理者/サポート/ス�
   - `/profile`, `/settings`
 - **組織（org）**
   - `/org/dashboard`, `/org/challenges`, `/org/departments`, `/org/invites`, `/org/members`, `/org/settings`
-- **管理者（admin）**
+- **管理者（admin）**（Web のみ。モバイルには作らない。運営作業は Web に一本化。#1122）
   - `/admin`
   - `/admin/announcements`, `/admin/audit-logs`, `/admin/inquiries`, `/admin/moderation`, `/admin/organizations`, `/admin/users`
 - **スーパー管理（super-admin）**
@@ -2627,7 +2628,7 @@ Webにある **全機能**（メイン機能/組織/管理者/サポート/ス�
 - `apps/mobile/app/(public)`：公開ページ（必要に応じて簡略UI）
 - `apps/mobile/app/(auth)`：ログイン/登録/パスワード再設定/メール確認
 - `apps/mobile/app/(tabs)`：日常導線（ホーム/献立/食事/健康/設定）
-- `apps/mobile/app/(org)` / `(admin)` / `(super-admin)` / `(support)`：ロールに応じた管理画面（設定画面から遷移）
+- `apps/mobile/app/(org)` / `(super-admin)` / `(support)`：ロールに応じた管理画面（設定画面から遷移）。管理者 (admin) の画面は作らない（#1122）
 
 #### バックエンドAPIの対応（モバイル）
 - **基本CRUD**: Supabase（RLS）をモバイルから直接利用（anon key + user JWT）

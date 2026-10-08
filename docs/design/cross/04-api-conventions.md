@@ -50,7 +50,7 @@ POST   /api/family/groups/{groupId}/freeze    # 状態変更アクション
 GET    /api/org/members                       # 組織メンバー一覧
 POST   /api/org/licenses/{poolId}/assignments/bulk  # バルク操作
 POST   /api/admin/users/{userId}/ban          # 管理アクション
-POST   /api/super-admin/impersonate/{userId}  # super_admin 専用
+POST   /api/super-admin/plans/{id}/publish    # super_admin 専用
 POST   /api/webhooks/stripe                   # Stripe Webhook
 ```
 
@@ -99,7 +99,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `AUTH_SESSION_REVOKED` | セッション無効化済み | 401 |
 | `AUTH_ACCOUNT_LOCKED` | アカウントロック中 | 403 |
 | `AUTH_PROFILE_NOT_FOUND` | user_profiles が見つからない | 403 |
-| `AUTH_IMPERSONATION_DENIED` | impersonate 対象ユーザーが拒否設定 | 403 |
+| `AUTH_IMPERSONATION_DENIED` | **廃止 (#1124)**: impersonate は提供しないため使わない (欠番。別の意味に再利用しない) | - |
 
 #### PERM 系
 

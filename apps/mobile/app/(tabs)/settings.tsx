@@ -8,6 +8,7 @@ import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text,
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getApi, getApiBaseUrl } from "../../src/lib/api";
+import { getPrivacyUrl, getSupportMailtoUrl, getTermsUrl } from "../../src/lib/siteConfig";
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing, radius, shadows } from "../../src/theme";
@@ -54,7 +55,6 @@ export default function SettingsTab() {
 
   const [notifications, setNotifications] = useState(true);
   const [autoAnalyze, setAutoAnalyze] = useState(true);
-  const [dataShare, setDataShare] = useState(true);
   const [weekStartDay, setWeekStartDay] = useState<WeekStartDay>("monday");
   const [savingWeekStart, setSavingWeekStart] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -76,11 +76,10 @@ export default function SettingsTab() {
       // 通知・自動解析設定を API から取得
       try {
         const api = getApi();
-        const res = await api.get<{ settings: { notifications_enabled: boolean; auto_analyze_enabled: boolean; data_share_enabled: boolean } }>("/api/notification-preferences");
+        const res = await api.get<{ settings: { notifications_enabled: boolean; auto_analyze_enabled: boolean } }>("/api/notification-preferences");
         if (res.settings) {
           setNotifications(res.settings.notifications_enabled);
           setAutoAnalyze(res.settings.auto_analyze_enabled);
-          setDataShare(res.settings.data_share_enabled);
         }
       } catch (e) {
         console.error("Failed to fetch notification preferences:", e);
@@ -90,7 +89,7 @@ export default function SettingsTab() {
   }, [user]);
 
   async function handleToggleNotificationPreference(
-    key: "notifications_enabled" | "auto_analyze_enabled" | "data_share_enabled",
+    key: "notifications_enabled" | "auto_analyze_enabled",
     setter: React.Dispatch<React.SetStateAction<boolean>>,
     currentValue: boolean,
   ) {
@@ -353,15 +352,10 @@ export default function SettingsTab() {
               testID="settings-export-csv-row"
               onPress={handleExportCsv}
               right={exportingCsv ? <Text style={{ fontSize: 12, color: "#6B7280" }}>処理中…</Text> : undefined}
-            />
-            <SettingRow
-              icon="📊"
-              iconBg="#FFF7ED"
-              title="トレーナーと共有"
-              subtitle="栄養士やジムと連携"
               last
-              right={<Switch value={dataShare} onValueChange={() => handleToggleNotificationPreference("data_share_enabled", setDataShare, dataShare)} trackColor={{ true: colors.accent }} />}
             />
+            {/* #1144: 「トレーナーと共有」の項目は外した。トレーナーなどに共有する機能が無いのに、項目だけが画面にあったため。
+                戻すときは、先に src/app/api/notification-preferences/route.ts のコメントを読むこと (保存済みの値は同意ではない)。 */}
           </View>
         </View>
 
@@ -390,20 +384,20 @@ export default function SettingsTab() {
               iconBg="#F9FAFB"
               title="利用規約"
               testID="settings-tos-row"
-              onPress={() => Linking.openURL("https://homegohan.app/terms")}
+              onPress={() => Linking.openURL(getTermsUrl())}
             />
             <SettingRow
               icon="🔒"
               iconBg="#F9FAFB"
               title="プライバシーポリシー"
               testID="settings-privacy-row"
-              onPress={() => Linking.openURL("https://homegohan.app/privacy")}
+              onPress={() => Linking.openURL(getPrivacyUrl())}
             />
             <SettingRow
               icon="✉️"
               iconBg="#F9FAFB"
               title="お問い合わせ"
-              onPress={() => Linking.openURL("mailto:support@homegohan.jp")}
+              onPress={() => Linking.openURL(getSupportMailtoUrl())}
               last
             />
           </View>
