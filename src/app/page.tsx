@@ -6,10 +6,10 @@ import Image from "next/image";
 import { motion, AnimatePresence, useInView } from "framer-motion";
 import { 
   Camera, Sparkles, ChefHat, TrendingUp, Award, Heart, 
-  Clock, Zap, Target, Users, Star, ChevronDown, ChevronRight,
-  Check, Play, ArrowRight, Flame, Moon, Sun, Coffee,
+  Clock, Zap, Target, Users, ChevronDown, ChevronRight,
+  Check, Play, ArrowRight, Moon, Sun, Coffee,
   Scale, Activity, Trophy, Calendar, BookOpen, ShoppingCart,
-  MessageCircle, ThumbsUp, Utensils, Leaf, Apple, Quote
+  MessageCircle, ThumbsUp, Utensils, Leaf, Apple
 } from "lucide-react";
 
 // カラーパレット
@@ -66,17 +66,6 @@ const sampleMeals = [
   }
 ];
 
-const userReviews = [
-  { name: "みさき", age: "32歳", job: "IT企業", avatar: "👩‍💻", rating: 5, text: "写真撮るだけなのに、こんなに詳しく分析してくれるなんて感動。しかも褒めてくれるから嬉しくて続けられる！", result: "-4.2kg / 3ヶ月" },
-  { name: "けんた", age: "28歳", job: "営業", avatar: "👨‍💼", rating: 5, text: "献立考えるのが苦手だったけど、AIが提案してくれるから楽。週末の作り置きが習慣になりました。", result: "自炊率0%→70%" },
-  { name: "ゆうこ", age: "45歳", job: "主婦", avatar: "👩‍🍳", rating: 5, text: "家族4人分の栄養管理が簡単に。子供たちも「今日のスコア何点？」って聞いてくるように（笑）", result: "野菜摂取量2倍" },
-  { name: "たくや", age: "35歳", job: "エンジニア", avatar: "👨‍💻", rating: 5, text: "カロリー計算とか面倒で続かなかったけど、これは写真だけでOK。ズボラな自分でも3ヶ月続いてる。", result: "連続記録89日" },
-  { name: "あやか", age: "26歳", job: "看護師", avatar: "👩‍⚕️", rating: 5, text: "夜勤明けの食事が乱れがちだったけど、記録するようになって意識が変わった。体調も良くなった気がする。", result: "体調スコア+30%" },
-  { name: "しんじ", age: "52歳", job: "経営者", avatar: "👨‍💼", rating: 5, text: "健康診断の数値が気になって始めた。妻と一緒に使ってるけど、食事の会話が増えたのが嬉しい。", result: "血圧-15mmHg" },
-];
-
-const mediaLogos = ["日経新聞", "東洋経済", "Forbes", "TechCrunch", "NewsPicks", "Wired"];
-
 const features = [
   { icon: <Camera size={24} />, title: "写真で記録", desc: "撮るだけでAIが自動分析", detail: "面倒なカロリー入力は不要。写真を撮るだけで、AIが食材を認識し、栄養素を瞬時に計算します。", color: colors.primary },
   { icon: <Sparkles size={24} />, title: "AIが褒める", desc: "ポジティブなフィードバック", detail: "ダメ出しじゃなく、良いところを見つけて褒める。だから続けられる、だから楽しい。", color: colors.warning },
@@ -104,19 +93,13 @@ const badges = [
 ];
 
 const faqs = [
-  { q: "本当に無料で使えますか？", a: "はい！基本機能は完全無料です。写真撮影、AI分析、献立提案、健康記録などすべてお使いいただけます。将来的にプレミアム機能を追加予定ですが、現在の機能は永久無料でご利用いただけます。課金を迫ることは一切ありませんのでご安心ください。" },
+  { q: "本当に無料で使えますか？", a: "はい！現在ご提供している機能は、写真撮影、AI分析、献立提案、健康記録などすべて無料でお使いいただけます。有料プランは準備中です（販売開始前）。内容や料金が決まりましたらご案内します。" },
   { q: "どんな写真を撮ればいいですか？", a: "食事全体が写っていれば大丈夫です！真上からでも斜めからでもOK。自然光で撮ると認識精度が上がります。お店のメニュー写真や、インスタ映えを狙った写真でも問題なく分析できますよ。" },
-  { q: "データは安全ですか？", a: "もちろんです。すべてのデータは暗号化して保存され、第三者に共有されることはありません。あなたの食事写真や健康データは、あなただけのもの。いつでもデータの削除をリクエストできます。" },
-  { q: "家族で使えますか？", a: "現在は個人アカウントのみですが、家族プラン機能を開発中です！お子様や高齢のご家族の食事管理にも使いやすい機能を準備しています。リリースをお楽しみに。" },
-  { q: "AIの分析は正確ですか？", a: "最新のAI技術を使用しており、一般的な料理であれば90%以上の精度で認識できます。ただし、あくまで推定値ですので、医療目的での使用はお控えください。日々の食生活の参考としてお使いいただくのがベストです。" },
+  // データの取り扱いの最終的な文言は、プライバシーポリシーの見直しと合わせて決める。それまでは断定せず、プライバシーポリシーへ案内する。
+  { q: "データは安全ですか？", a: "データの取り扱い（保存や第三者への提供など）については、プライバシーポリシーをご確認ください。いつでもデータの削除をリクエストできます。" },
+  { q: "家族で使えますか？", a: "はい、家族の食事も一緒に管理できます。" },
+  { q: "AIの分析は正確ですか？", a: "AIによる分析はあくまで推定値で、料理や撮影条件によっては実際の値と異なる場合があります。医療目的での使用はお控えください。日々の食生活の参考としてお使いいただくのがベストです。" },
   { q: "オフラインでも使えますか？", a: "写真の撮影と保存はオフラインでも可能です。AI分析や献立提案にはインターネット接続が必要ですが、接続時に自動で同期されるので、電波の悪い場所でも安心です。" },
-];
-
-const stats = [
-  { value: "1,234,567", label: "食の分析実績", suffix: "+", icon: <Camera size={20} /> },
-  { value: "98.7", label: "継続率", suffix: "%", icon: <Heart size={20} /> },
-  { value: "42", label: "最長連続記録", suffix: "日", icon: <Flame size={20} /> },
-  { value: "4.9", label: "App Store評価", suffix: "", icon: <Star size={20} /> },
 ];
 
 // カウントアップフック
@@ -208,7 +191,7 @@ export default function LandingPage() {
           <motion.div className="text-center max-w-4xl mx-auto mb-12" initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold mb-6" style={{ background: colors.primaryLight, color: colors.primary }}>
               <span className="relative flex h-2 w-2"><span className="animate-ping absolute h-full w-full rounded-full opacity-75" style={{ background: colors.primary }} /><span className="relative rounded-full h-2 w-2" style={{ background: colors.primary }} /></span>
-              🎉 10万人が使ってる食事管理アプリ
+              ✨ 褒めて伸ばす、AI食事管理アプリ
             </div>
             <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold leading-tight mb-6" style={{ color: colors.text }}>
               食べることを、<br />
@@ -235,19 +218,6 @@ export default function LandingPage() {
               <span className="flex items-center gap-1.5"><Check size={16} style={{ color: colors.success }} />1分で使い始められる</span>
               <span className="flex items-center gap-1.5"><Check size={16} style={{ color: colors.success }} />いつでも退会OK</span>
             </div>
-          </motion.div>
-
-          {/* 実績バー */}
-          <motion.div className="flex flex-wrap justify-center gap-4 md:gap-8 mb-16" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
-            {stats.map((stat, i) => (
-              <div key={i} className="flex items-center gap-3 px-4 py-3 rounded-2xl" style={{ background: colors.card, boxShadow: '0 2px 12px rgba(0,0,0,0.04)' }}>
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: colors.primaryLight, color: colors.primary }}>{stat.icon}</div>
-                <div>
-                  <div className="text-xl md:text-2xl font-bold" style={{ color: colors.text }}>{stat.value}{stat.suffix}</div>
-                  <div className="text-xs" style={{ color: colors.textMuted }}>{stat.label}</div>
-                </div>
-              </div>
-            ))}
           </motion.div>
 
           {/* AIデモ体験 */}
@@ -358,18 +328,6 @@ export default function LandingPage() {
               </div>
             </div>
           </motion.div>
-        </div>
-      </section>
-
-      {/* ========== メディア掲載 ========== */}
-      <section className="py-12 border-y" style={{ background: colors.card, borderColor: colors.border }}>
-        <div className="container mx-auto px-4 md:px-6">
-          <p className="text-center text-sm font-medium mb-6" style={{ color: colors.textMuted }}>📰 メディア掲載実績</p>
-          <div className="flex flex-wrap justify-center items-center gap-6 md:gap-12">
-            {mediaLogos.map((logo, i) => (
-              <span key={i} className="text-lg md:text-xl font-bold opacity-30 hover:opacity-60 transition-opacity" style={{ color: colors.text }}>{logo}</span>
-            ))}
-          </div>
         </div>
       </section>
 
@@ -511,115 +469,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ========== ユーザーの声 ========== */}
-      <section className="py-20 md:py-32">
-        <div className="container mx-auto px-4 md:px-6">
-          <motion.div className="text-center max-w-2xl mx-auto mb-16" initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
-            <h2 className="text-3xl md:text-5xl font-bold mb-4" style={{ color: colors.text }}>
-              みんなの<span style={{ color: colors.primary }}>リアルな声。</span>
-            </h2>
-            <p className="text-lg" style={{ color: colors.textLight }}>実際に使っているユーザーさんの感想をご紹介します。</p>
-          </motion.div>
-
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
-            {userReviews.map((review, i) => (
-              <motion.div key={i} className="p-6 rounded-3xl" style={{ background: colors.card, border: `1px solid ${colors.border}` }} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }}>
-                {/* ヘッダー */}
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl" style={{ background: colors.bgAlt }}>{review.avatar}</div>
-                    <div>
-                      <p className="font-bold" style={{ color: colors.text }}>{review.name}</p>
-                      <p className="text-xs" style={{ color: colors.textMuted }}>{review.age} / {review.job}</p>
-                    </div>
-                  </div>
-                  <div className="flex gap-0.5">
-                    {[...Array(review.rating)].map((_, j) => <Star key={j} size={14} fill={colors.warning} color={colors.warning} />)}
-                  </div>
-                </div>
-                
-                {/* コメント */}
-                <div className="relative mb-4">
-                  <Quote size={20} className="absolute -top-1 -left-1 opacity-20" style={{ color: colors.primary }} />
-                  <p className="text-sm leading-relaxed pl-4" style={{ color: colors.textLight }}>{review.text}</p>
-                </div>
-
-                {/* 結果 */}
-                <div className="p-3 rounded-xl flex items-center justify-between" style={{ background: colors.successLight }}>
-                  <span className="text-xs font-medium" style={{ color: colors.textMuted }}>結果</span>
-                  <span className="font-bold" style={{ color: colors.success }}>{review.result}</span>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-
-          <motion.div className="text-center mt-12" initial={{ opacity: 0 }} whileInView={{ opacity: 1 }} viewport={{ once: true }}>
-            <div className="inline-flex items-center gap-4 p-4 rounded-2xl" style={{ background: colors.card, boxShadow: '0 2px 12px rgba(0,0,0,0.04)' }}>
-              <div className="flex -space-x-3">
-                {['👩‍💻', '👨‍💼', '👩‍🍳', '👨‍💻', '👩‍⚕️'].map((emoji, i) => (
-                  <div key={i} className="w-10 h-10 rounded-full flex items-center justify-center text-lg border-2 border-white" style={{ background: colors.bgAlt }}>{emoji}</div>
-                ))}
-              </div>
-              <div className="text-left">
-                <p className="font-bold" style={{ color: colors.text }}>10万人以上が利用中</p>
-                <p className="text-xs" style={{ color: colors.textMuted }}>App Store評価 4.9 ⭐️</p>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      </section>
-
-      {/* ========== Before/After ストーリー ========== */}
-      <section className="py-20 md:py-32" style={{ background: colors.bgAlt }}>
-        <div className="container mx-auto px-4 md:px-6">
-          <motion.div className="text-center max-w-2xl mx-auto mb-16" initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
-            <h2 className="text-3xl md:text-5xl font-bold mb-4" style={{ color: colors.text }}>
-              <span style={{ color: colors.primary }}>変化</span>のストーリー。
-            </h2>
-            <p className="text-lg" style={{ color: colors.textLight }}>ほめゴハンを始める前と後で、こんなに変わりました。</p>
-          </motion.div>
-
-          <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-            {[
-              { name: "田中 美咲さん", avatar: "👩‍💻", age: "32歳・IT企業", before: "コンビニ弁当ばかりの毎日。健康診断の結果も悪くなる一方で、このままじゃマズいと思ってた...", after: "3ヶ月で自炊率80%に！AIに褒められるのが嬉しくて、気づいたら料理が楽しくなってました。体重も-4.2kg！", period: "3ヶ月", result: "-4.2kg" },
-              { name: "佐藤 健太さん", avatar: "👨‍💼", age: "28歳・営業", before: "外食続きで体重が増える一方。何を食べていいかわからなかったし、自炊なんて無理だと思ってた。", after: "献立提案機能のおかげで迷わなくなった。週末の作り置きが習慣に。会社の健康診断も改善！", period: "2ヶ月", result: "自炊率0%→70%" },
-              { name: "山田 花子さん", avatar: "👩‍🍳", age: "45歳・主婦", before: "家族の健康が心配。でも栄養計算は面倒で続かなかった。子供たちも野菜を食べてくれなくて...", after: "写真を撮るだけで家族全員の栄養管理ができるように。子供も「今日のスコア何点？」って聞いてくる！", period: "4ヶ月", result: "野菜摂取量2倍" },
-            ].map((story, i) => (
-              <motion.div key={i} className="p-6 rounded-3xl" style={{ background: colors.card }} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }}>
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl" style={{ background: colors.bgAlt }}>{story.avatar}</div>
-                  <div>
-                    <p className="font-bold" style={{ color: colors.text }}>{story.name}</p>
-                    <p className="text-xs" style={{ color: colors.textMuted }}>{story.age}</p>
-                  </div>
-                </div>
-
-                <div className="mb-4 p-4 rounded-xl" style={{ background: '#FEF2F2' }}>
-                  <p className="text-xs font-bold mb-2 flex items-center gap-1" style={{ color: '#DC2626' }}>😔 BEFORE</p>
-                  <p className="text-sm leading-relaxed" style={{ color: colors.textLight }}>{story.before}</p>
-                </div>
-
-                <div className="mb-4 p-4 rounded-xl" style={{ background: colors.successLight }}>
-                  <p className="text-xs font-bold mb-2 flex items-center gap-1" style={{ color: colors.success }}>🎉 AFTER</p>
-                  <p className="text-sm leading-relaxed" style={{ color: colors.textLight }}>{story.after}</p>
-                </div>
-
-                <div className="flex items-center justify-between p-3 rounded-xl" style={{ background: colors.primaryLight }}>
-                  <div>
-                    <p className="text-xs" style={{ color: colors.textMuted }}>期間</p>
-                    <p className="font-bold" style={{ color: colors.primary }}>{story.period}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs" style={{ color: colors.textMuted }}>結果</p>
-                    <p className="font-bold" style={{ color: colors.primary }}>{story.result}</p>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* ========== FAQ ========== */}
       <section className="py-20 md:py-32">
         <div className="container mx-auto px-4 md:px-6 max-w-3xl">
@@ -680,8 +529,8 @@ export default function LandingPage() {
               食事が変わる感覚を、きっと実感できるはずです。
             </p>
             <p className="text-sm mb-8" style={{ color: 'rgba(255,255,255,0.5)' }}>
-              10万人以上が使っている、AIダイエットパートナー。<br />
-              あなたも今日から始めてみませんか？
+              AIが食事を褒めてくれる、あなたのダイエットパートナー。<br />
+              今日から始めてみませんか？
             </p>
 
             <Link href="/signup">
