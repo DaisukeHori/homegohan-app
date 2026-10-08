@@ -35,12 +35,15 @@ const mockWithUser = vi.fn(() => ({
   error: mockLogError,
 }));
 
+// ルート自身の logger.error (プロフィール取得の失敗など)
+const mockRouteLogError = vi.fn();
+
 vi.mock('@/lib/db-logger', () => ({
   createLogger: vi.fn(() => ({
     debug: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
-    error: vi.fn(),
+    error: mockRouteLogError,
     withUser: mockWithUser,
   })),
   generateRequestId: vi.fn(() => 'req_test'),
@@ -114,7 +117,7 @@ beforeEach(() => {
 
   mockFrom.mockImplementation((table: string) => {
     if (table === 'user_profiles') {
-      return chain({ data: { family_id: familyId, nickname: '花子', display_name: null }, error: null });
+      return chain({ data: { family_id: familyId, nickname: '花子' }, error: null });
     }
     if (table === 'family_groups') return chain({ data: { name: '山田家' }, error: null });
     throw new Error(`unexpected table: ${table}`);
@@ -288,7 +291,7 @@ describe('POST /api/family/invites: 検証済みでないリクエストでは l
 
   it('家族に所属していないユーザー (403): limiter を呼ばない', async () => {
     mockFrom.mockImplementation((table: string) => {
-      if (table === 'user_profiles') return chain({ data: { family_id: null, nickname: null, display_name: null }, error: null });
+      if (table === 'user_profiles') return chain({ data: { family_id: null, nickname: '花子' }, error: null });
       throw new Error(`unexpected table: ${table}`);
     });
 
@@ -296,6 +299,68 @@ describe('POST /api/family/invites: 検証済みでないリクエストでは l
 
     expect(res.status).toBe(403);
     expect(mockCheckRateLimit).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/family/invites: 招待者のプロフィールの読み取り', () => {
+  /** user_profiles 用の chain を返し、select に渡された列を後で確かめられるようにする */
+  function profileChain(result: unknown) {
+    const c = chain(result);
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'user_profiles') return c;
+      if (table === 'family_groups') return chain({ data: { name: '山田家' }, error: null });
+      throw new Error(`unexpected table: ${table}`);
+    });
+    return c;
+  }
+
+  it('user_profiles に無い列 (display_name) を select しない', async () => {
+    const c = profileChain({ data: { family_id: familyId, nickname: '花子' }, error: null });
+
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(201);
+    const selected = String((c.select as ReturnType<typeof vi.fn>).mock.calls[0][0])
+      .split(',')
+      .map((col) => col.trim());
+    expect(selected).toEqual(expect.arrayContaining(['family_id', 'nickname']));
+    expect(selected).not.toContain('display_name');
+  });
+
+  it('プロフィールの取得が DB エラー (例: 42703) なら 500 RPC_FAILED。記録し、limiter も RPC もメールも呼ばない', async () => {
+    profileChain({ data: null, error: { code: '42703', message: 'column user_profiles.x does not exist' } });
+
+    const res = await POST(postRequest(validBody));
+    const json = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(json.error.code).toBe('RPC_FAILED');
+    expect(mockRouteLogError).toHaveBeenCalledTimes(1);
+    expect(mockCheckRateLimit).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it('プロフィールの行が無い (PGRST116) なら、従来どおり 403 NOT_FAMILY_ADULT', async () => {
+    profileChain({ data: null, error: { code: 'PGRST116', message: 'JSON object requested, multiple (or no) rows returned' } });
+
+    const res = await POST(postRequest(validBody));
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error.code).toBe('NOT_FAMILY_ADULT');
+    expect(mockRouteLogError).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('nickname が空文字なら、招待メールの招待者名にログイン中のメールアドレスを使う', async () => {
+    profileChain({ data: { family_id: familyId, nickname: '' }, error: null });
+
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(201);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(mockSendEmail.mock.calls[0][0])).toContain(user.email);
   });
 });
 

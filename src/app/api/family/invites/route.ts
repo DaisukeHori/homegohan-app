@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { CreateFamilyInviteBodySchema } from '@/schemas/membership/family-invite';
 import { MembershipErrorCode } from '@/lib/errors/membership-errors';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { sendEmail } from '@/lib/emails/send';
 import { renderFamilyInviteExistingEmail } from '@/lib/emails/membership/family-invite-existing';
 import { renderFamilyInviteNewEmail } from '@/lib/emails/membership/family-invite-new';
@@ -90,11 +91,24 @@ export async function POST(request: Request) {
   const { family_id, email, custom_message } = parsed.data;
 
   // 招待者のプロフィール取得 (名前, family_id 確認)
-  const { data: inviterProfile } = await supabase
+  // user_profiles に display_name 列は無い。存在しない列を select すると PostgREST が 42703 で失敗し、
+  // プロフィールが null になって全員が 403 になっていた
+  // (列の有無は tests/integration/security/select-columns-exist.test.ts で確かめる)。
+  const { data: inviterProfile, error: inviterProfileError } = await supabase
     .from('user_profiles')
-    .select('family_id, nickname, display_name')
+    .select('family_id, nickname')
     .eq('id', user.id)
     .single();
+
+  // 行が無い (PGRST116) のは「家族に入っていない」と同じ扱い。それ以外の失敗は 403 にせず 500 で返す
+  if (inviterProfileError && inviterProfileError.code !== 'PGRST116') {
+    const logger = createLogger('POST /api/family/invites', generateRequestId());
+    logger.error('招待者のプロフィール取得に失敗', inviterProfileError, { userId: user.id });
+    return NextResponse.json(
+      { error: { code: MembershipErrorCode.RPC_FAILED, message: 'プロフィールの取得に失敗しました' } },
+      { status: 500 },
+    );
+  }
 
   if (!inviterProfile?.family_id || inviterProfile.family_id !== family_id) {
     return NextResponse.json(
@@ -153,7 +167,7 @@ export async function POST(request: Request) {
 
   const invite = inviteData as { token: string; expires_at: string; id: string };
   const invite_url = buildFamilyInviteUrl(invite.token);
-  const inviterName = inviterProfile.nickname ?? inviterProfile.display_name ?? user.email ?? '招待者';
+  const inviterName = inviterProfile.nickname || user.email || '招待者';
   const scopeName = familyGroup?.name ?? '家族グループ';
   const expiresDate = invite.expires_at.slice(0, 10); // YYYY-MM-DD
 
