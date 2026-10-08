@@ -33,19 +33,17 @@ curl -X POST "https://flmeolcfutuwwbjmzyoz.supabase.co/functions/v1/<function-na
 
 **GitHub Actions による自動デプロイが設定されています。**
 
-#### claude/* ブランチからの完全自動化フロー
+#### PR からの反映
 
-`claude/*` ブランチにプッシュすると、以下が自動実行されます：
+自動マージの仕組みはありません (2026-10-08 のオーナー判断で廃止)。PR の CI を確認してから手動でマージします。
 
 ```
-claude/* にプッシュ
-    ↓ 自動
-PR 作成 → 自動マージ → main 更新
+作業ブランチに push → PR を作成 → CI を確認
+    ↓ 手動でマージ
+main 更新
     ↓ 自動
 Supabase Functions デプロイ
 ```
-
-ワークフロー: `.github/workflows/auto-merge.yml`
 
 #### main ブランチへの直接プッシュ
 
