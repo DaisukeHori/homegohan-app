@@ -3,10 +3,12 @@ env:
   E2E_ADMIN_EMAIL: ${E2E_ADMIN_EMAIL}
   E2E_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD}
 ---
-# 02: admin ロールで login → /admin に redirect
+# 02: admin ロールで login → 他のユーザーと同じ振り分けでホームに着く
+# (#1122: アプリの管理者画面 (Admin Console) は廃止した。運営作業は Web に一本化)
+# 前提: E2E_ADMIN_EMAIL は、オンボーディング完了済みの admin ロールのユーザー
 # 前提: 前のフロー後にホーム画面にいる可能性があるため、まずログアウト
 - launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
+# 前の状態をリセット (ホームにいる場合)
 - runFlow:
     file: "../_shared/ensure-welcome.yaml"
 # ホーム画面にいる場合はログアウトして welcome に戻る
@@ -31,7 +33,8 @@ env:
     id: "login-button"
 - extendedWaitUntil:
     visible:
-      text: "Admin Console"
+      id: "home-screen"
     timeout: 30000
+# 廃止した管理者画面には行かない
 - assertNotVisible:
-    id: "home-screen"
+    text: "Admin Console"
