@@ -23,6 +23,7 @@ vi.mock('@/lib/supabase/server', () => ({
 const { sendTicketReplyEmail, TICKET_REPLY_EMAIL_TEMPLATE } = await import(
   '@/lib/admin/send-ticket-reply-email'
 );
+const { DEFAULT_EMAIL_FROM, DEFAULT_SITE_URL } = await import('@/lib/site-config');
 
 const CUSTOMER_ID = 'c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 const CUSTOMER_EMAIL = 'customer@example.com';
@@ -41,6 +42,7 @@ beforeEach(() => {
   vi.stubEnv('RESEND_API_KEY', 're_test_key');
   vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.example.test');
   vi.stubEnv('SUPPORT_REPLY_TO', '');
+  vi.stubEnv('EMAIL_FROM', '');
 
   mockGetSupabaseAdmin.mockReturnValue({
     auth: { admin: { getUserById: mockGetUserById } },
@@ -72,7 +74,7 @@ describe('sendTicketReplyEmail: 送信できる場合', () => {
     expect(mockEmailsSend).toHaveBeenCalledTimes(1);
     const sent = mockEmailsSend.mock.calls[0][0];
     expect(sent.to).toBe(CUSTOMER_EMAIL);
-    expect(sent.from).toBe('ほめゴハン <noreply@homegohan.app>');
+    expect(sent.from).toBe(DEFAULT_EMAIL_FROM);
     expect(sent.subject).toContain('ログインできません');
     expect(sent.subject).toContain('#a1b2c3d4');
     expect(sent.text).toContain(REPLY_BODY);
@@ -124,12 +126,12 @@ describe('sendTicketReplyEmail: 送信できる場合', () => {
     expect(text).not.toContain('test//contact');
   });
 
-  it('NEXT_PUBLIC_APP_URL が未設定なら https://homegohan.app を基点にする', async () => {
+  it('NEXT_PUBLIC_APP_URL が未設定なら、サイトの URL の既定値 (DEFAULT_SITE_URL) を基点にする', async () => {
     vi.stubEnv('NEXT_PUBLIC_APP_URL', '');
 
     await run();
 
-    expect(mockEmailsSend.mock.calls[0][0].text.split('\n')).toContain('https://homegohan.app/contact');
+    expect(mockEmailsSend.mock.calls[0][0].text.split('\n')).toContain(`${DEFAULT_SITE_URL}/contact`);
   });
 
   it('SUPPORT_REPLY_TO 未設定: reply_to を付けない (noreply のまま)', async () => {
@@ -140,17 +142,17 @@ describe('sendTicketReplyEmail: 送信できる場合', () => {
   });
 
   it('SUPPORT_REPLY_TO 設定: 返信先に使う', async () => {
-    vi.stubEnv('SUPPORT_REPLY_TO', ' support@homegohan.app ');
+    vi.stubEnv('SUPPORT_REPLY_TO', ' support@example.test ');
 
     const outcome = await run();
 
     expect(outcome).toEqual({ status: 'sent' });
-    expect(mockEmailsSend.mock.calls[0][0].replyTo).toBe('support@homegohan.app');
+    expect(mockEmailsSend.mock.calls[0][0].replyTo).toBe('support@example.test');
     expect(mockEmailsSend.mock.calls[0][0].text).toContain('そのまま返信していただくと');
   });
 
   it('SUPPORT_REPLY_TO がメールアドレスの形式でなくても、通知は止めずに noreply のまま送り警告を残す', async () => {
-    vi.stubEnv('SUPPORT_REPLY_TO', 'ほめゴハン サポート <support@homegohan.app>');
+    vi.stubEnv('SUPPORT_REPLY_TO', 'ほめゴハン サポート <support@example.test>');
 
     const outcome = await run();
 

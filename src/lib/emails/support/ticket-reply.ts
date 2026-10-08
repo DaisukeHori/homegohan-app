@@ -3,7 +3,9 @@
 // 顧客向けのメッセージ (is_internal=false) の本文だけを載せる。
 // 内部メモ (is_internal=true) は顧客に見せないため、この関数には渡さない (呼び出し側で除外する)。
 // 顧客がチケットを閲覧できる画面は無く、このメールが唯一の通知経路なので、返信の全文を本文に入れる。
-import type { EmailEnvelope } from '@/lib/emails/send';
+import type { EmailEnvelope } from '../envelope';
+import { emailSignature } from '../common';
+import { getEmailFrom } from '@/lib/site-config';
 
 export interface TicketReplyEmailVars {
   to_email: string; // 宛先 (チケットの顧客本人)
@@ -62,7 +64,7 @@ export function renderTicketReplyEmail(vars: TicketReplyEmailVars): EmailEnvelop
 
   return {
     to: vars.to_email,
-    from: 'ほめゴハン <noreply@homegohan.app>',
+    from: getEmailFrom(),
     subject: buildTicketReplySubject(vars.ticket_id, vars.ticket_subject),
     ...(vars.reply_to ? { reply_to: vars.reply_to } : {}),
     text: `いつもほめゴハンをご利用いただきありがとうございます。
@@ -80,9 +82,7 @@ ${vars.reply_body.trim()}
 ${replyGuide}
 ${vars.contact_url}
 
-─────────────────
-ほめゴハン
-https://homegohan.app
+${emailSignature()}
 `,
   };
 }

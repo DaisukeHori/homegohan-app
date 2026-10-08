@@ -1,6 +1,9 @@
 // src/lib/emails/membership/family-invite.ts
 // (設計書 04-email-templates.md §4 テンプレート C: 家族招待)
-import type { InviteEmailVars, EmailEnvelope } from './templates';
+import type { InviteEmailVars } from './templates';
+import type { EmailEnvelope } from '../envelope';
+import { emailSignature } from '../common';
+import { getEmailFrom, getSupportEmail } from '@/lib/site-config';
 
 export function renderFamilyInviteEmail(vars: InviteEmailVars): EmailEnvelope {
   const greeting = vars.display_name ?? vars.email_address;
@@ -10,7 +13,7 @@ export function renderFamilyInviteEmail(vars: InviteEmailVars): EmailEnvelope {
 
   return {
     to: vars.email_address,
-    from: 'ほめゴハン <noreply@homegohan.app>',
+    from: getEmailFrom(),
     subject: `[ほめゴハン] ${vars.inviter_name} 様からご家族グループへの招待`,
     text: `${greeting} 様
 
@@ -25,11 +28,9 @@ ${vars.invite_url}
 このリンクは ${vars.expires_at} まで有効です。
 
 心当たりのない場合はこのメールを無視してください。
-不正利用のおそれがある場合は support@homegohan.app までご連絡ください。
+不正利用のおそれがある場合は ${getSupportEmail()} までご連絡ください。
 
-─────────────────
-ほめゴハン
-https://homegohan.app
+${emailSignature()}
 `,
   };
 }

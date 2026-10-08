@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { EmailEnvelopeSchema } from '@/lib/emails/send';
+import { DEFAULT_EMAIL_FROM } from '@/lib/site-config';
 
 // vi.mock はホイスト前提のため、factory 内にモック関数を定義する
 const mockEmailsSend = vi.hoisted(() =>
@@ -18,7 +19,7 @@ const { sendEmail } = await import('@/lib/emails/send');
 
 const validEnvelope = {
   to: 'test@example.com',
-  from: 'ほめゴハン <noreply@homegohan.app>',
+  from: DEFAULT_EMAIL_FROM,
   subject: 'テスト件名',
   text: 'テスト本文',
 };
@@ -105,5 +106,65 @@ describe('sendEmail', () => {
     });
 
     await expect(sendEmail(validEnvelope)).rejects.toThrow('EMAIL_SEND_FAILED: Invalid API key');
+  });
+});
+
+// #1194 送信元の既定値は src/lib/site-config.ts で決まり、スキーマは envelope.ts の 1 つだけにまとめた
+describe('EmailEnvelopeSchema: 送信元 (#1194)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const withoutFrom = { to: 'test@example.com', subject: 'テスト件名', text: 'テスト本文' };
+
+  it('from を省略すると、EMAIL_FROM が未設定なら既定値になる', () => {
+    vi.stubEnv('EMAIL_FROM', '');
+    expect(EmailEnvelopeSchema.parse(withoutFrom).from).toBe(DEFAULT_EMAIL_FROM);
+  });
+
+  it('from を省略すると、EMAIL_FROM があればそれになる (parse のたびに読む)', () => {
+    vi.stubEnv('EMAIL_FROM', 'ほめゴハン <noreply@mail.example.test>');
+    expect(EmailEnvelopeSchema.parse(withoutFrom).from).toBe('ほめゴハン <noreply@mail.example.test>');
+
+    vi.stubEnv('EMAIL_FROM', 'ほめゴハン <noreply@other.example.test>');
+    expect(EmailEnvelopeSchema.parse(withoutFrom).from).toBe('ほめゴハン <noreply@other.example.test>');
+  });
+
+  it('from が渡されたときは、それをそのまま使う (EMAIL_FROM より優先)', () => {
+    vi.stubEnv('EMAIL_FROM', 'ほめゴハン <noreply@mail.example.test>');
+    expect(EmailEnvelopeSchema.parse({ ...withoutFrom, from: 'テスト <t@example.test>' }).from).toBe(
+      'テスト <t@example.test>',
+    );
+  });
+
+  it('スキーマは 1 つだけ: send.ts・membership/templates.ts・envelope.ts が同じものを指す', async () => {
+    const templates = await import('@/lib/emails/membership/templates');
+    const envelope = await import('@/lib/emails/envelope');
+    expect(EmailEnvelopeSchema).toBe(envelope.EmailEnvelopeSchema);
+    expect(templates.EmailEnvelopeSchema).toBe(envelope.EmailEnvelopeSchema);
+  });
+
+  it('sendEmail: from の無い envelope は、EMAIL_FROM を送信元にして Resend へ渡す', async () => {
+    vi.stubEnv('EMAIL_FROM', 'ほめゴハン <noreply@mail.example.test>');
+    process.env.RESEND_API_KEY = 'test-api-key';
+    mockEmailsSend.mockResolvedValueOnce({ data: { id: 'sent-id' }, error: null });
+
+    await sendEmail(withoutFrom as unknown as Parameters<typeof sendEmail>[0]);
+
+    expect(mockEmailsSend).toHaveBeenCalledWith(
+      expect.objectContaining({ from: 'ほめゴハン <noreply@mail.example.test>' }),
+    );
+  });
+
+  it('sendEmail: 送信元のドメインが未検証で Resend が断ったときは、例外にして呼び出し側が記録できるようにする', async () => {
+    process.env.RESEND_API_KEY = 'test-api-key';
+    mockEmailsSend.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'The example.test domain is not verified', name: 'validation_error' },
+    });
+
+    await expect(sendEmail(validEnvelope)).rejects.toThrow(
+      'EMAIL_SEND_FAILED: The example.test domain is not verified',
+    );
   });
 });

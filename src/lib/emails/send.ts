@@ -1,15 +1,9 @@
 import { Resend } from 'resend';
-import { z } from 'zod';
+import { EmailEnvelopeSchema, type EmailEnvelope } from './envelope';
 
-export const EmailEnvelopeSchema = z.object({
-  to: z.string().email(),
-  from: z.string().default('ほめゴハン <noreply@homegohan.app>'),
-  subject: z.string().min(1).max(100),
-  text: z.string().min(1),
-  html: z.string().optional(),
-  reply_to: z.string().email().optional(),
-});
-export type EmailEnvelope = z.infer<typeof EmailEnvelopeSchema>;
+// メールの形 (スキーマ) は envelope.ts に 1 つだけある (#1194)。
+// 既存の import 先 (`@/lib/emails/send`) をそのまま使えるように、ここからも再エクスポートする。
+export { EmailEnvelopeSchema, type EmailEnvelope };
 
 let resendInstance: Resend | null = null;
 function getResend(): Resend {

@@ -1,6 +1,8 @@
 // src/lib/emails/membership/family-transfer-proposed.ts
 // (設計書 04-email-templates.md — 家族代表者譲渡提案メール)
-import type { EmailEnvelope } from './templates';
+import type { EmailEnvelope } from '../envelope';
+import { emailSignature } from '../common';
+import { getEmailFrom, getSupportEmail } from '@/lib/site-config';
 
 export interface FamilyTransferProposedEmailVars {
   to_email: string;
@@ -21,7 +23,7 @@ export function renderFamilyTransferProposedEmail(vars: FamilyTransferProposedEm
 
   return {
     to: vars.to_email,
-    from: 'ほめゴハン <noreply@homegohan.app>',
+    from: getEmailFrom(),
     subject: '【ほめゴハン】家族代表者譲渡の提案',
     text: `ほめゴハンをご利用いただきありがとうございます。
 
@@ -35,11 +37,9 @@ ${vars.accept_url}
 このリンクから承諾または拒否を選択できます。
 
 心当たりのない場合はこのメールを無視してください。
-不正利用のおそれがある場合は support@homegohan.app までご連絡ください。
+不正利用のおそれがある場合は ${getSupportEmail()} までご連絡ください。
 
-─────────────────
-ほめゴハン
-https://homegohan.app
+${emailSignature()}
 `,
   };
 }

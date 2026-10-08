@@ -2,6 +2,8 @@
 
 ブランド名は **「ほめゴハン」** で統一。 from = `ほめゴハン <noreply@homegohan.app>`。
 
+> **ドメインの正本 (2026-10-08, #1194)**: 本書のコード例にある `noreply@homegohan.app` / `support@homegohan.app` / `https://homegohan.app` は設計時の値。実装では、送信元・問い合わせ先・サイトの URL を `src/lib/site-config.ts` の 1 か所 (環境変数 `EMAIL_FROM` / `NEXT_PUBLIC_SUPPORT_EMAIL` / `NEXT_PUBLIC_APP_URL`) で決め、各テンプレートは直接書かない。`homegohan.com` への切り替え手順は `docs/operations/email-domain.md`。
+
 > **配信種別 (2026-10-08 オーナー判断, #1192)**: 本書のメールはすべて transactional (利用者の操作や契約関係に結び付いた通知)。配信停止の導線は付けない。マーケティング・ダイジェストメールを送る機能を足すときは、ワンクリックの `List-Unsubscribe` と本文中の配信停止リンクを必ず一緒に出荷する。詳細は §12。
 
 ---

@@ -17,6 +17,7 @@ import { renderOrgInviteExistingEmail } from '@/lib/emails/membership/org-invite
 import { renderOrgInviteNewEmail } from '@/lib/emails/membership/org-invite-new';
 import type { InviteEmailVars } from '@/lib/emails/membership/templates';
 import { checkInviteEmailLimits, inviteThrottleFailureFromRpcError } from '@/lib/membership/invite-throttle';
+import { buildOrgInviteUrl } from '@/lib/membership/urls';
 
 export type OrgInviteRole = 'admin' | 'member';
 
@@ -116,8 +117,8 @@ export async function createOrgInviteWithEmail(params: CreateOrgInviteParams): P
   }
 
   const inviteRow = invite as InviteRow;
-  const baseUrl = process.env.NEXT_PUBLIC_INVITE_BASE_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
-  const inviteUrl = `${baseUrl}/invite/${inviteRow.token}`;
+  // 招待 URL の基点は urls.ts に 1 つだけある (#1194)。ここで環境変数を読み直さない
+  const inviteUrl = buildOrgInviteUrl(inviteRow.token);
 
   // 組織名を取得
   const { data: orgData } = await supabase

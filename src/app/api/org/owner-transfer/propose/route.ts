@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
 import { renderOrgTransferProposedEmail } from '@/lib/emails/membership/org-transfer-proposed';
+import { buildOrgTransferAcceptUrl } from '@/lib/membership/urls';
 import {
   checkTransferProposeLimit,
   inviteThrottleFailureFromRpcError,
@@ -93,8 +94,8 @@ export async function POST(request: Request) {
     .eq('id', body.to_user_id)
     .single();
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
-  const acceptUrl = `${baseUrl}/org/transfer-accept/${proposalId}`;
+  // リンクの基点は src/lib/membership/urls.ts に 1 つだけある (#1194)
+  const acceptUrl = buildOrgTransferAcceptUrl(String(proposalId));
   const fromName = profile.nickname ?? user.email?.split('@')[0] ?? 'オーナー';
 
   const { data: orgData } = await supabase

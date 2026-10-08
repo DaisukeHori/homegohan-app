@@ -141,6 +141,28 @@ Vercel Dashboard → Settings → Environment Variables で `CRON_SECRET` の値
 
 ---
 
+## ✉️ サイトの URL・メールの送信元・問い合わせ先（Web）
+
+この 3 つは `src/lib/site-config.ts` の 1 か所で決まります（#1194）。どれも未設定なら、いま動いている既定値を使います。
+`homegohan.com` へ切り替えるときは、この環境変数を設定するだけで、コードの変更は要りません。手順（DNS・Resend・Supabase・Google の設定）は [`docs/operations/email-domain.md`](docs/operations/email-domain.md) にあります。
+
+| 環境変数 | 例 | 役割 | 未設定のときの既定値 |
+|---|---|---|---|
+| `NEXT_PUBLIC_APP_URL` | `https://homegohan.com` | サイトの URL。メールの中のリンク・招待や譲渡の URL・ページの OGP / canonical・`robots.txt` の基点 | `https://homegohan-app.vercel.app`（いま動いているサイト） |
+| `EMAIL_FROM` | `ほめゴハン <noreply@mail.homegohan.com>` | メールの送信元。Resend で検証済みのドメインにする | 従来の送信元（`noreply@homegohan.app`。このドメインは検証できないので、本番ではメールが届かない） |
+| `NEXT_PUBLIC_SUPPORT_EMAIL` | `support@homegohan.com` | 問い合わせ先。メールの文面・お問い合わせ画面・プライバシーポリシー・招待画面に出る | 従来のアドレス（`support@homegohan.app`） |
+
+- `NEXT_PUBLIC_` で始まる値は**ビルド時に埋め込まれる**ので、Vercel で変えたら再デプロイしてください。
+- 形が正しくない値（`https://` が無い URL、メールアドレスでない値）は無視して既定値に戻り、関数ログに警告が 1 回出ます。
+- `NEXT_PUBLIC_INVITE_BASE_URL` は以前の招待リンク専用の設定です。設定してあると `NEXT_PUBLIC_APP_URL` より優先されるので、切り替えるときは**削除**してください。
+- `SUPPORT_REPLY_TO`（任意）: サポートの返信メールの返信先。`support@` の受信箱ができたら設定します。
+- サインアップの確認メール・パスワード再設定メールは Supabase が送ります。`EMAIL_FROM` は効かず、Supabase の Custom SMTP の設定が必要です（手順は上の文書）。
+- メールが届かなくても、招待・お問い合わせ・サポート返信の処理は成功します（失敗は `app_logs` / 関数ログに残ります）。
+- `https://homegohan-app.vercel.app` は、配布済みのアプリのビルドが WebView で開くため、古いビルドが使われなくなるまで止めない・リダイレクトしないでください。
+- 送信用の DNS（Resend の DKIM・Return-Path・DMARC）が見えているかは、`node scripts/check-email-dns.mjs` で確かめられます（DNS を引くだけで、何も書き換えません）。
+
+---
+
 ## 📱 モバイル（Expo）での環境変数
 
 Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込まれます（=秘密情報は入れない）。
@@ -152,6 +174,8 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 ### オプション（モバイル）
 - `EXPO_PUBLIC_API_BASE_URL` - Next.js API（BFF）を叩く場合（例: `https://homegohan.com`）
 - `EXPO_PUBLIC_APP_ENV` - `development | preview | production`
+- `EXPO_PUBLIC_WEB_URL` - WebView が開く Web のオリジン（未設定なら `https://homegohan-app.vercel.app`）。設定画面の「利用規約」「プライバシーポリシー」も、このオリジンの `/terms` `/privacy` を開く
+- `EXPO_PUBLIC_SUPPORT_EMAIL` - 設定画面・プロフィール画面の「お問い合わせ」の宛先（未設定なら従来のアドレス。`apps/mobile/src/lib/siteConfig.ts`）
 
 サンプルは `apps/mobile/env.example` を参照してください。
 

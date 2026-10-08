@@ -1,5 +1,7 @@
 // src/lib/emails/membership/org-transfer-completed.ts
-import type { EmailEnvelope } from '@/lib/emails/send';
+import type { EmailEnvelope } from '../envelope';
+import { emailSignature } from '../common';
+import { getEmailFrom } from '@/lib/site-config';
 
 export type TransferCompletedRecipient = 'old_owner' | 'new_owner' | 'member';
 
@@ -29,7 +31,7 @@ export function renderOrgTransferCompletedEmail(vars: OrgTransferCompletedVars):
 
   return {
     to: vars.to_email,
-    from: 'ほめゴハン <noreply@homegohan.app>',
+    from: getEmailFrom(),
     subject: `【ほめゴハン】組織オーナーが変更されました`,
     text: `${greeting} 様
 
@@ -37,9 +39,7 @@ ${body}
 
 ほめゴハンをご利用いただきありがとうございます。
 
-─────────────────
-ほめゴハン
-https://homegohan.app
+${emailSignature()}
 `,
   };
 }
