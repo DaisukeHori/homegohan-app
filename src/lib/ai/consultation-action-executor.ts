@@ -38,7 +38,7 @@ const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'a
 // 実行時にもホワイトリストで防御する。
 // 当初は「planned_meals.meal_type には 4 値の CHECK (#221) があり、'midnight_snack' で 500 になる」
 // という理由だったが、その CHECK は本番に存在しなかった (#1205)。#1205 で足した
-// planned_meals_meal_type_check は 'midnight_snack' を含む 5 値で、ここの制限は DB の制約ではなく
+// DB のトリガー (trg_planned_meals_validate_values) は 'midnight_snack' を含む 5 値で、ここの制限は DB の制約ではなく
 // AI 経路の仕様として残している。
 const AI_ALLOWED_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
 

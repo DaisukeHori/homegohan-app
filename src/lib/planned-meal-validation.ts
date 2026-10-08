@@ -6,9 +6,11 @@
  * 負の値・NaN・桁外れの値が保存され、摂取カロリーの合計やエクスポートが静かに狂った。
  *
  * 範囲は AI 相談経由の更新 (src/lib/ai/consultation-action-executor.ts の sanitizeMealUpdate) と同じ値を共有する。
- * DB 側の CHECK 制約 (supabase/migrations/20261007160500_planned_meals_value_checks.sql) は、
+ * DB 側のトリガー trg_planned_meals_validate_values (supabase/migrations/20261008110000_planned_meals_value_checks.sql) は、
  * ここより緩い範囲 (calories 20000 / protein・fat・carbs 2000) で、アプリ層を通らない書き込み
  * (モバイルの直接 INSERT・Edge Function) の最後の砦として働く。ここの範囲を広げるときは DB 側も合わせて確認する。
+ * DB 側は CHECK 制約ではなくトリガーで、書き込む値 (INSERT は全部、UPDATE は値が変わる列) だけを検査する。
+ * 本番にすでに範囲外の値を持つ行があっても、その行の無関係な列の更新は止めないため。
  *
  * 入力の扱い (栄養素):
  *   - undefined      キーが無いのと同じ。何も書かない (PATCH で既存値を残す)。
@@ -26,7 +28,8 @@ import type { MealType } from '@homegohan/shared';
 
 /**
  * planned_meals.meal_type に入れてよい値。packages/shared の MealType (5 値) と、DB の
- * planned_meals_meal_type_check と同じ。夜食 (midnight_snack) を含む (UI・献立生成が使う)。
+ * トリガー trg_planned_meals_validate_values (validate_planned_meal_values) と同じ。
+ * 夜食 (midnight_snack) を含む (UI・献立生成が使う)。
  * MealType と食い違わないことは src/__tests__/lib/planned-meal-validation.test.ts で確認する。
  */
 export const PLANNED_MEAL_TYPES = [

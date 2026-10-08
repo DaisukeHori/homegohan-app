@@ -69,7 +69,7 @@ export async function POST(request: Request) {
       }
     }
 
-    // #1205: meal_type は planned_meals の CHECK (planned_meals_meal_type_check) と同じ 5 値だけ。
+    // #1205: meal_type は planned_meals の DB トリガー (trg_planned_meals_validate_values) と同じ 5 値だけ。
     // 下の「同じ meal_type の食事を削除」より前に確認し、不正なら DB に触れず 400 を返す。
     const validation = validatePlannedMealInput({ mealType });
     if (!validation.ok) {
