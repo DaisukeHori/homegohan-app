@@ -2,10 +2,14 @@ import React, { useRef, useState, useEffect } from 'react';
 import { ActivityIndicator, Alert, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
+import { WebViewErrorView } from './WebViewErrorView';
+import { useResetInitialPathOnBlur } from './useResetInitialPathOnBlur';
+import { useWebViewHttpFailure } from './useWebViewHttpFailure';
 import { useNavigation, useRouter, useLocalSearchParams } from 'expo-router';
 import { getDownloadFailureNotice, handleWebViewDownload } from '../../lib/webViewDownload';
 import { getWebBaseUrl } from '../../lib/webBaseUrl';
 import { colors } from '../../theme/colors';
+import { NATIVE_APP_TABS, findNativeAppTab } from '@homegohan/shared';
 import { supabase } from '../../lib/supabase';
 
 // download の送信元の確認 (webViewDownload.ts) と同じ値から決める (既定値を 2 か所に持たない)
@@ -21,13 +25,12 @@ interface Props {
 
 // 各タブの「所有する」パス prefix と Expo Router タブルート のマッピング
 // path は各タブの root path (サブパスも含む前方一致で判定)
-const TAB_ROUTES: Array<{ pathPrefix: string; tab: string }> = [
-  { pathPrefix: '/menus', tab: '/(tabs)/menus' },
-  { pathPrefix: '/meals', tab: '/(tabs)/meals' },
-  { pathPrefix: '/comparison', tab: '/(tabs)/comparison' },
-  { pathPrefix: '/profile', tab: '/(tabs)/profile' },
-  { pathPrefix: '/home', tab: '/(tabs)/home' },
-];
+// 定義は @homegohan/shared の NATIVE_APP_TABS が唯一の場所 (Web の NativeAppTabRouter も同じ表を見る)。
+// 以前はここと Web で別々の一覧を持っていて、'/meals' と '/meals/new' が食い違っていた (#1049 F7-22)。
+const TAB_ROUTES: Array<{ pathPrefix: string; tab: string }> = NATIVE_APP_TABS.map((t) => ({
+  pathPrefix: t.pathPrefix,
+  tab: t.route,
+}));
 
 // Fix 1: postMessage 方式によるタブ独立性
 // WebView 内に inject して <a> クリックを capture phase で捕捉し、
@@ -104,12 +107,16 @@ true;
 `;
 };
 
-export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
+const WebViewScreenBody: React.FC<Props & { onRetry: () => void }> = ({ path, testID, onRetry }) => {
   const webViewRef = useRef<WebView>(null);
   const [uri, setUri] = useState<string | null>(null);
   const [injectedJS, setInjectedJS] = useState<string>('');
   const navigation = useNavigation();
   const router = useRouter();
+  // 他のタブへ移ったら、残っている initialPath を消す (#1049 F7-15)
+  useResetInitialPathOnBlur();
+  // サーバーが 5xx を返したことを覚える (#1049 F7-15)
+  const httpFailure = useWebViewHttpFailure();
 
   // Fix 2: tab-navigate で fullPath (クエリ付き) を受け取った場合に初期 URL を上書き
   const params = useLocalSearchParams<{ initialPath?: string }>();
@@ -234,12 +241,15 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
           try {
             const data = JSON.parse(event.nativeEvent.data);
             if (data.type === 'tab-navigate') {
-              const matched = TAB_ROUTES.find((t) => t.pathPrefix === data.path);
+              // data.path はタブの prefix そのものが来るのが正だが、Web 側が '/meals/new' のように
+              // タブ配下のパスを送ってきても同じタブとして扱う (読み捨てない)
+              const matchedTab = typeof data.path === 'string' ? findNativeAppTab(data.path) : null;
+              const matched = matchedTab ? { pathPrefix: matchedTab.pathPrefix, tab: matchedTab.route } : undefined;
               if (matched) {
                 setTimeout(() => {
                   // Fix 2: fullPath (クエリパラメータ含む) を initialPath として渡すことで
                   // 買い物リストのモーダル等を開くクエリが失われないようにする
-                  if (data.fullPath && data.fullPath !== data.path) {
+                  if (data.fullPath && data.fullPath !== matched.pathPrefix) {
                     router.push({
                       pathname: matched.tab as any,
                       params: { initialPath: data.fullPath },
@@ -276,7 +286,25 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
             <ActivityIndicator size="large" color={colors.accent} />
           </View>
         )}
+        // #1049 F7-15: 読み込みに失敗したとき (オフライン・DNS・接続・タイムアウトなど) と、
+        // サーバーが 5xx を返したときに、日本語の案内と「再読み込み」を出す (以前は何も無かった)
+        onHttpError={httpFailure.onHttpError}
+        onLoadStart={httpFailure.onLoadStart}
+        renderError={() => <WebViewErrorView failure={{ kind: 'network' }} onRetry={onRetry} />}
       />
+      {httpFailure.statusCode !== null ? (
+        <WebViewErrorView failure={{ kind: 'server', statusCode: httpFailure.statusCode }} onRetry={onRetry} />
+      ) : null}
     </SafeAreaView>
   );
+};
+
+/**
+ * 画面の入口。読み込みに失敗して「再読み込み」が押されたら、WebView の reload() ではなく、画面ごと作り直す。
+ * 認証ブリッジの URL は、使い捨てにできる (一度しか使えない) 値を含みうるので、同じ URL を読み直すのではなく、
+ * セッションの確認から (init を) 最初からやり直して、新しい URL で読み込む (#1049 F7-15)。
+ */
+export const WebViewScreen: React.FC<Props> = (props) => {
+  const [attempt, setAttempt] = useState(0);
+  return <WebViewScreenBody key={attempt} {...props} onRetry={() => setAttempt((n) => n + 1)} />;
 };

@@ -5,6 +5,7 @@ export * from './meal-types';
 export * from './mode-config';
 export * from './progress-phases';
 export * from './date-utils';
+export * from './native-app-tabs';
 export * from './nutrition-planner';
 export * from './posthog-defaults';
 export type {
