@@ -15,8 +15,15 @@ import { supabase } from "./supabase";
  */
 export const PUSH_TOKEN_VALUE_KEY_PREFIX = "push_token_value_v1";
 
-/** push token を DB に登録済みであることの印。実際のキーは `${接頭辞}:${userId}` (ログアウトで消える) */
-export const PUSH_TOKEN_REGISTERED_KEY_PREFIX = "push_token_registered_v1";
+/**
+ * push token を DB に登録済みであることの印。実際のキーは `${接頭辞}:${userId}` (ログアウトで消える)。
+ *
+ * v1 は使わない。#1038 より前のビルドは、権限を拒否されて登録できなかった (null が返った) ときも v1 の印を付けていたため、
+ * 通知を拒否した端末には v1 の印が残っている。v1 をそのまま見ると、後から OS の設定で許可しても二度と登録されない。
+ * v2 は「トークンを実際に保存できたときだけ」付けるので、v1 は読まず (ログアウトでは消す: user-storage.ts)、
+ * 更新後の初回起動で 1 度だけ登録を確かめ直す (登録済みの端末では upsert が何も変えないだけ)。
+ */
+export const PUSH_TOKEN_REGISTERED_KEY_PREFIX = "push_token_registered_v2";
 
 /** プレースホルダーを無効値として扱う (eas init 前の app.json などに入っていた値) */
 const PLACEHOLDER = "PLEASE_SET_VIA_EAS_INIT";
@@ -90,7 +97,25 @@ function reportPushRegistrationFailure(
   });
 }
 
-export async function registerAndSaveExpoPushToken(): Promise<string | null> {
+/**
+ * 通知の権限をダイアログで尋ねてよいか。
+ *
+ * - 起動のたびに自動で呼ばれるとき (userInitiated = false) は、まだ一度も尋ねていない (undetermined) ときだけ。
+ *   拒否された後も毎回尋ねると、Android 13 以降は、一度拒否した利用者に次の起動でもう一度ダイアログが出てしまう
+ *   (iOS は 2 回目以降は何も表示されないが、尋ねる意味もない)。拒否した利用者は、OS の設定で許可すれば、次の起動で登録される
+ * - 利用者が登録のボタンを押したとき (userInitiated = true) は、OS がまだ尋ねられる (canAskAgain が false でない) なら尋ねる
+ */
+function shouldAskForPermission(perm: { status: string; canAskAgain?: boolean }, userInitiated: boolean): boolean {
+  if (perm.status === "undetermined") return true;
+  return userInitiated && perm.canAskAgain !== false;
+}
+
+export type RegisterPushTokenOptions = {
+  /** 利用者が設定画面の登録ボタンを押したとき true。起動時の自動登録 (ensurePushTokenRegistered) は false */
+  userInitiated?: boolean;
+};
+
+export async function registerAndSaveExpoPushToken(options: RegisterPushTokenOptions = {}): Promise<string | null> {
   if (!Device.isDevice) {
     // Expo Goでも動くが、物理端末推奨
     return null;
@@ -101,7 +126,7 @@ export async function registerAndSaveExpoPushToken(): Promise<string | null> {
 
   const perm = await Notifications.getPermissionsAsync();
   let finalStatus = perm.status;
-  if (finalStatus !== "granted") {
+  if (finalStatus !== "granted" && shouldAskForPermission(perm, options.userInitiated === true)) {
     const req = await Notifications.requestPermissionsAsync();
     finalStatus = req.status;
   }

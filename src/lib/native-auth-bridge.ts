@@ -12,9 +12,9 @@
  *     (最大 1 時間後に更新で失敗して突然ログアウトする) という食い違いになる (F7-04)。
  *
  *   { type: 'session-expired' }
- *     Web 側のセッションが切れた・切れそう (ログイン画面に落ちた・有効期限が近い)。
+ *     Web 側のセッションが切れた・切れそう (有効期限が近い・auth-js が更新に失敗して SIGNED_OUT を出した・ログイン画面に落ちた)。
  *     ネイティブは自分のセッションを確かめ、WebView を新しい bridge で読み込み直す (F7-05)。
- *     Web 側は refresh_token を持たない (native-bridge が使えない値を入れる) ので、自分でトークンを更新しない。
+ *     Web 側は refresh_token を持たない (native-bridge が使えない値を入れる) ので、自分でトークンを更新できない。
  *     更新の持ち主をネイティブ 1 つにして、同じ refresh_token を Web とネイティブが別々にローテーションして
  *     再利用検知でセッションごと失効する、という不具合を防ぐ。
  *
@@ -37,10 +37,22 @@ export type NativeAuthMessage = { type: 'sign-out' } | { type: 'session-expired'
  * そこで、更新の持ち主をネイティブだけにする。native-bridge は Web の Cookie に access_token だけを実際の値で入れ、
  * refresh_token にはこの値 (Supabase には存在しないので、更新は必ず失敗する) を入れる。
  *   - access_token の有効期間 (既定 1 時間) の間は、Web はそのまま使える
- *   - 期限が近づいた Web 側は更新に失敗してセッションが消えるが、その前に { type: 'session-expired' } を送り
- *     (NativeSessionWatcher)、ネイティブが新しいコードで読み込み直す
  *   - ネイティブの refresh_token は、DB の行 (60 秒) と、コードを発行するリクエストの body 以外には出ない。
  *     Web のページが読める Cookie (HttpOnly でない) にも載らない
+ *   - 期限が近づくと、ブラウザの supabase-js (auth-js) は refresh_token で更新しようとして必ず失敗し、
+ *     セッションを捨てて SIGNED_OUT を出す。auth-js が更新を試みるのは次の時点 (@supabase/auth-js 2.105)
+ *       自動更新の tick (30 秒ごと)                       : 残りが 120 秒未満 ((AUTO_REFRESH_TICK_THRESHOLD + 1) × 30 秒)
+ *       getSession() (Supabase への API 呼び出しのたびに) : 残りが 90 秒未満 (EXPIRY_MARGIN_MS)
+ *       バックグラウンドからの復帰 (visibilitychange)     : 残りが 90 秒未満。このとき tick も直ちに走る
+ *     これを次の 2 段構えで受ける
+ *       1. 前面で使っているとき: auth-js より先に NativeSessionWatcher が { type: 'session-expired' } を送り
+ *          (REFRESH_AHEAD_SECONDS = 180 秒。auth-js の 120 秒より十分に前)、ネイティブが新しいコードで読み込み直す。
+ *          auth-js は更新を試みる前に済む
+ *       2. 先回りできないとき (1 時間以上バックグラウンドに置いて戻った場合。タイマーも止まっているので、
+ *          復帰した瞬間に auth-js が更新を試みる): MainLayout が、WebView の中での SIGNED_OUT を「ログアウト」ではなく
+ *          「借り物のセッションを失った」ものとして扱う。localStorage を消さず、/login へも移さず、
+ *          session-expired を送って再ブリッジを待つ (NATIVE_REBRIDGE_WAIT_MS)。
+ *          利用者が意図したログアウトは、各画面が signOut の前に自分で localStorage を消し、broadcastSignOut() で sign-out を送る
  *
  * 実際の値ではないが、秘密でもないので、定数として持つ。ブラウザ側の見張り (NativeSessionWatcher) が
  * 「ネイティブから借りたセッションか」を見分けるのにも使うため、サーバー専用の native-bridge-code.ts ではなくここに置く。
@@ -53,6 +65,17 @@ interface ReactNativeWebViewBridge {
 
 /** session-expired を続けて送らない最小の間隔 (ミリ秒)。ネイティブ側にも回数制限があるが、Web 側でも送りすぎない */
 export const SESSION_EXPIRED_MIN_INTERVAL_MS = 15_000
+
+/**
+ * WebView の中で SIGNED_OUT になってから、ネイティブが WebView を読み込み直してくれるのを待つ時間 (ミリ秒)。
+ * 過ぎても読み込み直されなければ、MainLayout は従来どおりログアウトとして扱う (user-scoped の localStorage を消して /login へ移る)。
+ *
+ * 読み込み直されない場合がある: session-expired を知らない旧バージョンのアプリ (実際の refresh_token を持つセッションの
+ * 失効やログアウトで SIGNED_OUT になる)、ネイティブ側の回数制限、ネイティブも未ログイン、通信が極端に遅い。
+ * ネイティブが読み込み直すと、ページごと入れ替わるので待ちは自然に終わる。
+ * 通常の再ブリッジは数秒 (自分のセッションの確認 + コードの発行 + 読み込み) なので、それより十分に長くする。
+ */
+export const NATIVE_REBRIDGE_WAIT_MS = 15_000
 
 function getBridge(): ReactNativeWebViewBridge | null {
   if (typeof window === 'undefined') return null

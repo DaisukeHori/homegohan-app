@@ -21,6 +21,9 @@
  * - 旧バージョンが AsyncStorage に保存した平文のセッションは、最初に読んだときに保管庫へ移して AsyncStorage から消す
  * - 保管庫に書けない端末 (Keystore の破損など) でログインできなくならないよう、書き込みに失敗したときだけ
  *   AsyncStorage に退避する。次に読んだときに保管庫への移行を再び試みる
+ * - 保管庫に書けたのに平文の削除だけが失敗すると、平文には使用済み (ローテーション済み) の古いセッションが残る。
+ *   AsyncStorage に値があるときは、セッションの有効期限 (expires_at) を保管庫の値と比べ、保管庫のほうが新しければ
+ *   保管庫を採って平文を消す (古い平文で新しい値を上書きすると、使用済みの refresh_token でセッションごと失効し得る)
  * - iOS の Keychain はアプリを削除しても残る (AsyncStorage は消える)。再インストール後に前のセッションが
  *   復活しないよう、AsyncStorage に置いた印 (INSTALL_MARKER_KEY) が無いのに保管庫に値があるときは、
  *   再インストールの残りとみなして消す
@@ -71,7 +74,8 @@ export type SecureSessionStorageIssue =
   | "secure_delete_failed"
   | "migration_failed"
   | "corrupt_entry_removed"
-  | "reinstall_leftover_removed";
+  | "reinstall_leftover_removed"
+  | "stale_legacy_removed";
 
 /**
  * AsyncStorage に置く「この端末にこのアプリが入っている」印。
@@ -111,6 +115,20 @@ export function splitIntoChunks(value: string): string[] {
     start = end;
   }
   return chunks;
+}
+
+/**
+ * セッション (JSON) の有効期限 (expires_at。秒)。新しいセッションほど大きい。
+ * セッションの JSON でない値 (PKCE の code-verifier など) や、expires_at が無い値は null。
+ */
+function sessionExpiresAt(value: string): number | null {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    const expiresAt = (parsed as { expires_at?: unknown } | null)?.expires_at;
+    return typeof expiresAt === "number" && Number.isFinite(expiresAt) ? expiresAt : null;
+  } catch {
+    return null;
+  }
 }
 
 type Manifest = { generation: string; count: number };
@@ -259,12 +277,39 @@ export function createSecureSessionStorage(deps: SecureSessionStorageDeps): Auth
     }
   }
 
+  /**
+   * 旧来の AsyncStorage に値が残っているとき、保管庫のほうが新しければ、保管庫の値を返す (そうでなければ null)。
+   *
+   * 保管庫への書き込みは成功したのに、平文 (AsyncStorage) の削除が失敗すると、平文には使用済み (ローテーション済み) の
+   * 古いセッションが残る。次の起動でそれを「最新」として保管庫へ移すと、新しい値を古い値で上書きしてしまい、
+   * 使用済みの refresh_token をサーバーが再利用とみなして、セッションごと失効し得る (強制ログアウト)。
+   * そこで、セッション (JSON) の有効期限 (expires_at) が新しいほうを採る。比べられないとき
+   * (JSON でない・expires_at が無い) は、これまでどおり平文を最新とする (保管庫に書けなかったときの退避先は平文のほうが新しい)。
+   */
+  async function secureValueNewerThan(secureKey: string, legacyValue: string): Promise<string | null> {
+    const legacyExpiresAt = sessionExpiresAt(legacyValue);
+    if (legacyExpiresAt === null) return null;
+    // このインストールが保管庫を使った印が無いときは、保管庫の値は再インストールの残りかもしれないので採らない
+    if (!(await hasInstallMarker())) return null;
+
+    let read: SecureRead;
+    try {
+      read = await readSecure(secureKey);
+    } catch {
+      return null;
+    }
+    if (read.status !== "ok") return null;
+    const secureExpiresAt = sessionExpiresAt(read.value);
+    return secureExpiresAt !== null && secureExpiresAt > legacyExpiresAt ? read.value : null;
+  }
+
   // ── 公開する操作 ─────────────────────────────────────────────────────────
   async function loadFresh(key: string): Promise<string | null> {
     const secureKey = toSecureKey(key);
 
     // 1. 旧来の AsyncStorage。移行前の平文のセッションか、保管庫に書けなかったときの退避先。
-    //    ここに値があるものを最新として扱い、保管庫へ移す (移せなければそのまま使い続ける)
+    //    ここに値があるものを最新として扱い、保管庫へ移す (移せなければそのまま使い続ける)。
+    //    ただし、保管庫のほうが新しいときは、平文は消し損ねた古い残りなので、保管庫の値を使って平文を消す
     let legacyValue: string | null = null;
     try {
       legacyValue = await legacyStorage.getItem(key);
@@ -272,6 +317,16 @@ export function createSecureSessionStorage(deps: SecureSessionStorageDeps): Auth
       legacyValue = null;
     }
     if (legacyValue !== null) {
+      const newerSecureValue = await secureValueNewerThan(secureKey, legacyValue);
+      if (newerSecureValue !== null) {
+        onIssue("stale_legacy_removed");
+        try {
+          await legacyStorage.removeItem(key);
+        } catch (error) {
+          onIssue("migration_failed", error); // 消せなくても、次の読み出しでまた同じ判断をする
+        }
+        return newerSecureValue;
+      }
       try {
         await writeSecure(secureKey, legacyValue);
         await markInstalled();

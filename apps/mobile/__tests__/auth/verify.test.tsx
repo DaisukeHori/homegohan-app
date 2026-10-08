@@ -11,7 +11,7 @@
  */
 
 import React from 'react';
-import { Alert } from 'react-native';
+import { Alert, StyleSheet } from 'react-native';
 import { render, waitFor } from '@testing-library/react-native';
 import { resetAuthLinkResultsForTests } from '../../src/lib/authLink';
 
@@ -59,9 +59,14 @@ jest.mock('expo-router', () => ({
   },
 }));
 
-jest.mock('@expo/vector-icons', () => ({
-  Ionicons: () => null,
-}));
+// アイコンの名前を testID (icon-<name>) で確かめられるようにする
+jest.mock('@expo/vector-icons', () => {
+  const MockReact = require('react');
+  const { Text } = require('react-native');
+  return {
+    Ionicons: ({ name }: { name: string }) => MockReact.createElement(Text, { testID: `icon-${name}` }, name),
+  };
+});
 
 jest.mock('../../src/theme', () => ({
   colors: {
@@ -192,6 +197,47 @@ describe('VerifyPage — リンクの情報が無い・失敗したときの表�
     render(<VerifyPage />);
 
     await waitFor(() => expect(mockRedirect).toHaveBeenCalledWith({ href: '/(tabs)/home' }));
+  });
+});
+
+describe('VerifyPage — 見出しのアイコンと色 (#1038 F7-08)', () => {
+  const headerBackground = (api: ReturnType<typeof render>) =>
+    StyleSheet.flatten(api.getByTestId('verify-header-icon').props.style).backgroundColor;
+
+  it('エラー時は、緑のチェックではなく ×のアイコンとエラーの色にする (エラー時も isDone は true になるため、以前は成功の見た目のままだった)', async () => {
+    mockURL = null; // リンクなしで開かれた = エラー
+
+    const api = render(<VerifyPage />);
+
+    expect(await api.findByTestId('verify-error-text')).toBeTruthy();
+    expect(api.queryByTestId('icon-checkmark-circle-outline')).toBeNull();
+    expect(api.getByTestId('icon-close-circle-outline')).toBeTruthy();
+    expect(headerBackground(api)).toBe('#f00'); // colors.accent (success の緑ではない)
+  });
+
+  it('リンクが error を運んできたときも、×のアイコンにする', async () => {
+    mockURL = 'homegohan://auth/verify?error=access_denied&error_description=Token+expired';
+    mockExtract.mockReturnValue({ error: 'access_denied', error_description: 'Token expired' });
+
+    const api = render(<VerifyPage />);
+
+    expect(await api.findByTestId('verify-error-text')).toBeTruthy();
+    expect(api.queryByTestId('icon-checkmark-circle-outline')).toBeNull();
+    expect(headerBackground(api)).not.toBe('#0a0');
+  });
+
+  it('エラーなく確認できたがセッションは作られなかった (メールの確認だけが完了したリンクなど) ときは、緑のチェックにする', async () => {
+    mockURL = 'homegohan://auth/verify?token_hash=h&type=signup';
+    mockExtract.mockReturnValue({ token_hash: 'h', type: 'signup' });
+    mockVerifyOtp.mockResolvedValue({ error: null });
+    mockGetSession.mockResolvedValue({ data: { session: null } });
+
+    const api = render(<VerifyPage />);
+
+    expect(await api.findByText('確認が完了しました。ログインしてください。')).toBeTruthy();
+    expect(api.getByTestId('icon-checkmark-circle-outline')).toBeTruthy();
+    expect(api.queryByTestId('icon-close-circle-outline')).toBeNull();
+    expect(headerBackground(api)).toBe('#0a0'); // colors.success
   });
 });
 

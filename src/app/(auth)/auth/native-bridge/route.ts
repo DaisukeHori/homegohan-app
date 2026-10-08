@@ -26,7 +26,9 @@ import {
  *   URL に載るのはコードだけで、アクセストークン / リフレッシュトークンは URL にもリダイレクト先にも出ない。
  *   Cookie に入れる refresh_token は実際の値ではなく使えない値 (NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER)。
  *   ネイティブと Web が同じ refresh_token を別々にローテーションして、セッションごと失効するのを防ぐため (#1038 F7-05)。
- *   Web 側は期限が近づくと { type: 'session-expired' } でネイティブに知らせ、ネイティブが新しいコードで読み込み直す。
+ *   Web 側は期限が近づくと (NativeSessionWatcher)、または auth-js が更新に失敗して SIGNED_OUT になると (MainLayout。
+ *   バックグラウンドから戻ったときなど、先回りできない場合)、{ type: 'session-expired' } でネイティブに知らせ、
+ *   ネイティブが新しいコードで読み込み直す。詳しくは src/lib/native-auth-bridge.ts と docs/design/mobile/05-auth-session.md の 6 章。
  *   従来の動作 (実際の refresh_token を入れる) へ戻すスイッチ: 環境変数 NATIVE_BRIDGE_SHARE_REFRESH_TOKEN=on
  *
  * 【旧方式】トークンを URL クエリで渡す (access_token / refresh_token)

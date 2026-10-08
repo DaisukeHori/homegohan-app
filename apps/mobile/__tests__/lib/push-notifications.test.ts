@@ -131,6 +131,56 @@ describe('registerAndSaveExpoPushToken — 権限拒否', () => {
   });
 });
 
+describe('registerAndSaveExpoPushToken — 権限のダイアログを出すとき (#1038 F7-09)', () => {
+  it('起動時の自動登録 (引数なし): 一度拒否された端末 (Android 13 以降は canAskAgain が true のまま) では、ダイアログを出さない', async () => {
+    mockGetPermissionsAsync.mockResolvedValue({ status: 'denied', canAskAgain: true });
+
+    const result = await registerAndSaveExpoPushToken();
+
+    expect(mockRequestPermissionsAsync).not.toHaveBeenCalled();
+    expect(result).toBeNull();
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it('起動時の自動登録: 一度も尋ねていない (undetermined) 端末では、尋ねる。許可されたら登録まで進む', async () => {
+    mockGetPermissionsAsync.mockResolvedValue({ status: 'undetermined', canAskAgain: true });
+    mockRequestPermissionsAsync.mockResolvedValue({ status: 'granted' });
+
+    const result = await registerAndSaveExpoPushToken();
+
+    expect(mockRequestPermissionsAsync).toHaveBeenCalledTimes(1);
+    expect(result).toBe('ExponentPushToken[test-token]');
+  });
+
+  it('許可済みの端末では、尋ねずに登録する', async () => {
+    mockGetPermissionsAsync.mockResolvedValue({ status: 'granted', canAskAgain: true });
+
+    await registerAndSaveExpoPushToken();
+
+    expect(mockRequestPermissionsAsync).not.toHaveBeenCalled();
+    expect(mockGetExpoPushTokenAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('利用者がボタンを押した登録 (userInitiated): 拒否済みでも OS がまだ尋ねられる (canAskAgain) なら、ダイアログを出す', async () => {
+    mockGetPermissionsAsync.mockResolvedValue({ status: 'denied', canAskAgain: true });
+    mockRequestPermissionsAsync.mockResolvedValue({ status: 'granted' });
+
+    const result = await registerAndSaveExpoPushToken({ userInitiated: true });
+
+    expect(mockRequestPermissionsAsync).toHaveBeenCalledTimes(1);
+    expect(result).toBe('ExponentPushToken[test-token]');
+  });
+
+  it('利用者がボタンを押した登録: OS がもう尋ねられない (canAskAgain が false) なら、ダイアログを出さない', async () => {
+    mockGetPermissionsAsync.mockResolvedValue({ status: 'denied', canAskAgain: false });
+
+    const result = await registerAndSaveExpoPushToken({ userInitiated: true });
+
+    expect(mockRequestPermissionsAsync).not.toHaveBeenCalled();
+    expect(result).toBeNull();
+  });
+});
+
 describe('registerAndSaveExpoPushToken — Supabase upsert 成功', () => {
   it('upsert が成功した場合、トークンを返す', async () => {
     const mockUpsert = setupUpsert({ error: null });
@@ -460,6 +510,17 @@ describe('ensurePushTokenRegistered — #1038 F7-09', () => {
 
     expect(mockGetPermissionsAsync).not.toHaveBeenCalled();
     expect(mockGetExpoPushTokenAsync).not.toHaveBeenCalled();
+  });
+
+  it('旧ビルドが付けた「登録済み」の印 (v1) は信用しない。旧ビルドは権限を拒否されても印を付けたので、後から許可しても登録されなくなっていた', async () => {
+    // 旧ビルドで通知を拒否した端末の状態: v1 の印だけがあり、トークンは登録されていない
+    await AsyncStorage.setItem('push_token_registered_v1:user-123', '1');
+
+    await ensurePushTokenRegistered('user-123');
+
+    expect(mockGetExpoPushTokenAsync).toHaveBeenCalledTimes(1);
+    expect(await AsyncStorage.getItem(FLAG_KEY)).toBe('1');
+    expect(FLAG_KEY).toBe('push_token_registered_v2:user-123');
   });
 
   it('登録に失敗したら例外を伝え (呼び出し側が握りつぶす)、印は付けない', async () => {

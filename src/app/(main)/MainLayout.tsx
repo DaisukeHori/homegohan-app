@@ -8,6 +8,7 @@ import { Icons } from "@/components/icons";
 import AIChatBubble from "@/components/AIChatBubble";
 import { createClient } from "@/lib/supabase/client";
 import { clearUserScopedLocalStorage } from "@/lib/user-storage";
+import { NATIVE_REBRIDGE_WAIT_MS, isInNativeWebView, notifyNativeSessionExpired } from "@/lib/native-auth-bridge";
 import { isOrgAdmin } from "@/lib/auth/org-admin";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { NativeAppTabRouter } from "@/components/native-app/NativeAppTabRouter";
@@ -119,29 +120,64 @@ export default function MainLayout({
 
   // #145: signOut を別タブにも伝播させる
   useEffect(() => {
+    // ログアウトとして扱う: 端末のユーザー別データを消して、ログイン画面へ移る
+    const treatAsSignedOut = () => {
+      clearUserScopedLocalStorage();
+      window.location.href = '/login';
+    };
+
+    // モバイルアプリの WebView で、ネイティブが読み込み直してくれるのを待っている間のタイマー (#1038 F7-05)
+    let rebridgeWaitTimer: ReturnType<typeof setTimeout> | null = null;
+    const stopWaitingForRebridge = () => {
+      if (rebridgeWaitTimer !== null) {
+        clearTimeout(rebridgeWaitTimer);
+        rebridgeWaitTimer = null;
+      }
+    };
+
     // Supabase onAuthStateChange で同一タブ内のサインアウトを検知
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_OUT') {
-        clearUserScopedLocalStorage();
-        window.location.href = '/login';
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // 待っている間にセッションが戻った (別のタブが先に再ブリッジされ、共有の Cookie が新しくなったなど) ときは、何もしない
+      if (session) stopWaitingForRebridge();
+
+      if (event !== 'SIGNED_OUT') return;
+
+      if (!isInNativeWebView()) {
+        treatAsSignedOut();
+        return;
+      }
+
+      // モバイルアプリの WebView の中の SIGNED_OUT は、利用者のログアウトとは限らない (#1038 F7-05)。
+      // Web 側のセッションはネイティブから借りたもので、refresh_token は更新に使えない値。auth-js は期限が近づくと
+      // その値で更新しようとして必ず失敗し、セッションを捨てて SIGNED_OUT を出す。前面で使っているときは
+      // NativeSessionWatcher が先に再ブリッジを頼むので避けられるが、1 時間以上バックグラウンドに置いて戻ったときは、
+      // 復帰した瞬間に auth-js が更新を試みるので、どんな閾値でも先回りできない。
+      // ここでログアウト扱いにすると、ログアウトしていないのに v4MenuGenerating などの user-scoped の localStorage が消え
+      // (全タブの WebView で共有)、再ブリッジの読み込み直しで進行中の生成の追跡が途切れ、/login が一瞬出てしまう。
+      // そこでネイティブに再ブリッジを頼み、読み込み直されるのを待つ。
+      // 利用者が意図したログアウト (設定・マイページなど) は、各画面が signOut の前に自分で localStorage を消し、
+      // broadcastSignOut() で sign-out を送り、router.push('/login') で移る。その場合は、この画面を離れるときに待ちが終わる。
+      notifyNativeSessionExpired();
+      // 読み込み直されないとき (session-expired を知らない旧アプリで、実際の refresh_token のセッションが失効した場合など) は、
+      // 従来どおりログアウトとして扱う
+      if (rebridgeWaitTimer === null) {
+        rebridgeWaitTimer = setTimeout(treatAsSignedOut, NATIVE_REBRIDGE_WAIT_MS);
       }
     });
 
-    // BroadcastChannel で別タブからの signOut を受信
+    // BroadcastChannel で別タブからの signOut を受信 (broadcastSignOut() が送る。利用者が意図したログアウトなので、WebView の中でも待たずに移る)
     let channel: BroadcastChannel | null = null;
     if (typeof BroadcastChannel !== 'undefined') {
       channel = new BroadcastChannel('auth');
       channel.addEventListener('message', (e) => {
-        if (e.data === 'SIGNED_OUT') {
-          clearUserScopedLocalStorage();
-          window.location.href = '/login';
-        }
+        if (e.data === 'SIGNED_OUT') treatAsSignedOut();
       });
     }
 
     return () => {
       subscription.unsubscribe();
       channel?.close();
+      stopWaitingForRebridge();
     };
   }, [supabase]);
 

@@ -10,7 +10,7 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { broadcastSignOut } from "@/lib/user-storage";
+import { broadcastSignOut, clearUserScopedLocalStorage } from "@/lib/user-storage";
 import { useRouter } from "next/navigation";
 
 export default function FrozenPage() {
@@ -21,6 +21,8 @@ export default function FrozenPage() {
     if (isSigningOut) return;
     setIsSigningOut(true);
     try {
+      // CLAUDE.md: サインアウトでは Supabase の signOut より前に、端末のユーザー別データを消す
+      clearUserScopedLocalStorage();
       const supabase = createClient();
       await supabase.auth.signOut();
       // 開いている他のタブと、モバイルアプリの WebView の場合はネイティブアプリにも、ログアウトを伝える (#1038 F7-04)

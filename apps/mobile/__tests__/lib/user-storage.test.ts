@@ -53,6 +53,20 @@ describe('clearUserScopedAsyncStorage', () => {
     expect([...(await AsyncStorage.getAllKeys())].sort()).toEqual(['auth_last_fail_ts']);
   });
 
+  it('旧ビルドが付けた登録済みの印 (v1) も、今のビルドの印 (v2) も消す (文字列そのもので確かめる)', async () => {
+    await AsyncStorage.multiSet([
+      ['push_token_registered_v1:user-1', '1'],
+      ['push_token_registered_v2:user-1', '1'],
+      ['push_token_registered_v2:user-2', '1'],
+    ]);
+
+    await clearUserScopedAsyncStorage('user-1');
+
+    expect(await AsyncStorage.getItem('push_token_registered_v1:user-1')).toBeNull();
+    expect(await AsyncStorage.getItem('push_token_registered_v2:user-1')).toBeNull();
+    expect(await AsyncStorage.getItem('push_token_registered_v2:user-2')).toBe('1');
+  });
+
   it('pushNotifications.ts が使うキーの接頭辞と、ここで消す接頭辞が一致している (食い違うとログアウト後に値が残る)', async () => {
     await AsyncStorage.multiSet([
       [`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-9`, 'ExponentPushToken[zzz]'],

@@ -91,14 +91,18 @@ export default function VerifyPage() {
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: spacing.xl }}>
         {/* ヘッダー */}
         <View style={{ alignItems: "center", marginBottom: 32 }}>
-          <View style={{
-            width: 64, height: 64, borderRadius: 20,
-            backgroundColor: isProcessing ? colors.blue : isDone ? colors.success : colors.accent,
-            alignItems: "center", justifyContent: "center",
-            marginBottom: spacing.md, ...shadows.md,
-          }}>
+          {/* 成功 (緑のチェック) にするのは、エラーなく終わったときだけ。エラー時も isDone は true になる */}
+          <View
+            testID="verify-header-icon"
+            style={{
+              width: 64, height: 64, borderRadius: 20,
+              backgroundColor: isProcessing ? colors.blue : isDone && !hasError ? colors.success : colors.accent,
+              alignItems: "center", justifyContent: "center",
+              marginBottom: spacing.md, ...shadows.md,
+            }}
+          >
             <Ionicons
-              name={isProcessing ? "mail-outline" : isDone ? "checkmark-circle-outline" : "close-circle-outline"}
+              name={isProcessing ? "mail-outline" : isDone && !hasError ? "checkmark-circle-outline" : "close-circle-outline"}
               size={32}
               color="#fff"
             />

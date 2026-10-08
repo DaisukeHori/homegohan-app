@@ -58,7 +58,7 @@ function createFakeSecureStore() {
 // ── テスト用の AsyncStorage (メモリ) ──────────────────────────────────────────
 function createFakeLegacy() {
   const data = new Map<string, string>();
-  const state = { failSet: false, failGet: false };
+  const state = { failSet: false, failGet: false, failRemove: false };
   const legacy: LegacyStorageLike = {
     async getItem(key) {
       if (state.failGet) throw new Error('async storage unavailable');
@@ -69,6 +69,7 @@ function createFakeLegacy() {
       data.set(key, value);
     },
     async removeItem(key) {
+      if (state.failRemove) throw new Error('async storage is read-only');
       data.delete(key);
     },
   };
@@ -341,6 +342,84 @@ describe('createSecureSessionStorage — 旧バージョンからの移行', () 
     expect(legacy.data.get(INSTALL_MARKER_KEY)).toBe('1');
 
     expect(await restart().getItem(KEY)).toBe(makeSessionJson());
+  });
+});
+
+describe('createSecureSessionStorage — 平文の削除に失敗して古い値が残ったとき (#1038 F7-06)', () => {
+  const MIGRATED = makeSessionJson({ expires_at: 1_800_000_000, refresh_token: 'refresh-before-rotation' });
+  const ROTATED = makeSessionJson({ expires_at: 1_800_003_600, refresh_token: 'refresh-after-rotation' });
+
+  /** 移行は成功したが平文の削除に失敗し、そのあとトークンが更新された (ローテーションされた) 端末を作る */
+  async function setupStaleLegacy() {
+    const ctx = setup();
+    ctx.legacy.data.set(KEY, MIGRATED); // 旧バージョンの平文
+    ctx.legacy.state.failRemove = true; // AsyncStorage が削除だけ失敗する
+    expect(await ctx.storage.getItem(KEY)).toBe(MIGRATED); // 移行 (保管庫には書けたが、平文は残る)
+    expect(ctx.issues).toContain('migration_failed');
+    await ctx.storage.setItem(KEY, ROTATED); // 更新 (保管庫は新しい値。平文は消せず古いまま)
+    expect(ctx.legacy.data.get(KEY)).toBe(MIGRATED);
+    return ctx;
+  }
+
+  it('次の起動で、古い平文が保管庫の新しい値を上書きしない (使用済みの refresh_token でセッションごと失効するのを防ぐ)', async () => {
+    const { restart, secure, issues } = await setupStaleLegacy();
+
+    const next = restart();
+    expect(await next.getItem(KEY)).toBe(ROTATED);
+
+    // 保管庫は新しい値のまま。古い平文を最新として書き戻していない
+    const manifest = secure.data.get(KEY) as string;
+    expect(manifest).toMatch(/^v1\./);
+    expect(issues).toContain('stale_legacy_removed');
+    expect(await restart().getItem(KEY)).toBe(ROTATED);
+  });
+
+  it('平文を消せるようになったら消す。それまでは毎回、保管庫の新しい値を使う', async () => {
+    const { restart, legacy } = await setupStaleLegacy();
+
+    // まだ消せない: 何度起動しても新しい値
+    expect(await restart().getItem(KEY)).toBe(ROTATED);
+    expect(await restart().getItem(KEY)).toBe(ROTATED);
+    expect(legacy.data.get(KEY)).toBe(MIGRATED);
+
+    legacy.state.failRemove = false;
+    expect(await restart().getItem(KEY)).toBe(ROTATED);
+    expect(legacy.data.has(KEY)).toBe(false);
+  });
+
+  it('保管庫に書けなくて平文へ退避した値 (平文のほうが新しい) は、これまでどおり平文を採って保管庫へ移す', async () => {
+    const { storage, restart, secure, legacy } = setup();
+    await storage.setItem(KEY, MIGRATED); // 保管庫に古い値
+    secure.state.failSet = () => true;
+    await storage.setItem(KEY, ROTATED); // 保管庫に書けず、平文へ退避 (こちらが新しい)
+    secure.state.failSet = undefined;
+    expect(legacy.data.get(KEY)).toBe(ROTATED);
+
+    expect(await restart().getItem(KEY)).toBe(ROTATED);
+
+    expect(legacy.data.has(KEY)).toBe(false); // 移行できた
+    expect(await restart().getItem(KEY)).toBe(ROTATED);
+  });
+
+  it('有効期限で比べられない値 (PKCE の code-verifier など JSON でない値) は、これまでどおり平文を採る', async () => {
+    const { storage, restart, legacy } = setup();
+    const verifierKey = `${KEY}-code-verifier`;
+    await storage.setItem(verifierKey, 'verifier-old-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    legacy.data.set(verifierKey, 'verifier-new-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'); // 退避先に残った新しい値
+
+    expect(await restart().getItem(verifierKey)).toBe('verifier-new-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+    expect(legacy.data.has(verifierKey)).toBe(false);
+  });
+
+  it('このインストールが保管庫を使った印が無いときは、保管庫の値 (再インストールの残りかもしれない) を採らない', async () => {
+    const { restart, secure, legacy } = setup();
+    // Keychain に、より新しい有効期限のセッションが残っているが、AsyncStorage に印は無く、平文のセッションがある
+    const leftover = createSecureSessionStorage({ secureStore: secure.store, legacyStorage: createFakeLegacy().legacy });
+    await leftover.setItem(KEY, ROTATED);
+    legacy.data.set(KEY, MIGRATED);
+    expect(legacy.data.has(INSTALL_MARKER_KEY)).toBe(false);
+
+    expect(await restart().getItem(KEY)).toBe(MIGRATED);
   });
 });
 

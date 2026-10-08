@@ -6,11 +6,16 @@
  *  1. パスワードが一致しないとき updateUser を呼ばない
  *  2. パスワードが 8 文字未満のときエラーを出す
  *  3. 正常時に updateUser を呼ぶ
+ *  4. (#1038 F7-10) 更新後のサインアウトは、共通のログアウト処理 (signOutWithCleanup) を通す
+ *     (supabase.auth.signOut() を直接呼ぶと、この端末の push token が user_push_tokens に残る)
  */
 
 import React from 'react';
 import { Alert } from 'react-native';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
+
+// 最初のケースは初回の描画で重く、CPU の取り合いになる環境 (CI の並列実行など) では 5 秒の既定に近づく。上限を広げておく
+jest.setTimeout(30_000);
 
 // ---- Mocks ----
 
@@ -30,6 +35,11 @@ jest.mock('../../src/lib/supabase', () => ({
       setSession: (...args: any[]) => mockSetSession(...args),
     },
   },
+}));
+
+const mockSignOutWithCleanup = jest.fn();
+jest.mock('../../src/lib/signOut', () => ({
+  signOutWithCleanup: (...args: any[]) => mockSignOutWithCleanup(...args),
 }));
 
 jest.mock('../../src/lib/deeplink', () => ({
@@ -73,6 +83,7 @@ beforeEach(() => {
   // Simulate existing session so sessionReady = true immediately
   mockGetSession.mockResolvedValue({ data: { session: { access_token: 'tok' } } });
   mockExchangeCodeForSession.mockResolvedValue({ error: null });
+  mockSignOutWithCleanup.mockResolvedValue({ error: null });
 });
 
 describe('ResetPasswordPage', () => {
@@ -124,5 +135,45 @@ describe('ResetPasswordPage', () => {
       expect(mockUpdateUser).toHaveBeenCalledWith({ password: 'NewPassword1' });
     });
     expect(Alert.alert).toHaveBeenCalledWith('完了', expect.stringContaining('更新しました'));
+  });
+
+  it('4. 更新後のサインアウトは、共通のログアウト処理にユーザー ID を渡して行い、ログイン画面へ移る (supabase.auth.signOut を直接呼ばない)', async () => {
+    mockUpdateUser.mockResolvedValue({ data: { user: { id: 'user-reset-1' } }, error: null });
+
+    const { getByPlaceholderText, getByText } = render(<ResetPasswordPage />);
+    await waitFor(() => {
+      expect(mockGetSession).toHaveBeenCalled();
+    });
+
+    fireEvent.changeText(getByPlaceholderText('8文字以上'), 'NewPassword1');
+    fireEvent.changeText(getByPlaceholderText('もう一度入力'), 'NewPassword1');
+    fireEvent.press(getByText('パスワードを更新'));
+
+    await waitFor(() => {
+      expect(mockSignOutWithCleanup).toHaveBeenCalledWith('user-reset-1');
+    });
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith('/login');
+    });
+    expect(mockSignOut).not.toHaveBeenCalled();
+  });
+
+  it('5. パスワードの更新に失敗したときは、サインアウトしない', async () => {
+    mockUpdateUser.mockResolvedValue({ data: { user: null }, error: new Error('weak password') });
+
+    const { getByPlaceholderText, getByText } = render(<ResetPasswordPage />);
+    await waitFor(() => {
+      expect(mockGetSession).toHaveBeenCalled();
+    });
+
+    fireEvent.changeText(getByPlaceholderText('8文字以上'), 'NewPassword1');
+    fireEvent.changeText(getByPlaceholderText('もう一度入力'), 'NewPassword1');
+    fireEvent.press(getByText('パスワードを更新'));
+
+    await waitFor(() => {
+      expect(Alert.alert).toHaveBeenCalledWith('更新失敗', 'weak password');
+    });
+    expect(mockSignOutWithCleanup).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 });

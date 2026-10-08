@@ -10,6 +10,10 @@
 import React from 'react';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
+// 設定タブは画面が大きく、初回の描画が重い。CPU の取り合いになる環境 (CI の並列実行など) でも、
+// ケースごとの 5 秒の既定を超えて落ちないように上限を広げる (supabase-client.test.ts と同じ)
+jest.setTimeout(30_000);
+
 // ---- Mocks ----
 
 const mockSignOutWithCleanup = jest.fn();
