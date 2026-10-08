@@ -160,7 +160,7 @@ export default function MenuRequestWizard() {
               >
                 {step.id}
               </div>
-              <span className={`text-[10px] mt-1 font-bold ${step.id <= currentStep ? "text-[#FF8A65]" : "text-gray-400"}`}>
+              <span className={`text-xs mt-1 font-bold ${step.id <= currentStep ? "text-[#FF8A65]" : "text-gray-400"}`}>
                 {step.title}
               </span>
             </div>
@@ -218,7 +218,7 @@ export default function MenuRequestWizard() {
                   {formData.ingredients.map((item, i) => (
                     <span key={i} className="px-3 py-1 bg-green-50 text-green-700 rounded-full text-sm font-bold flex items-center gap-1">
                       {item}
-                      <button onClick={() => removeIngredient(item)} className="w-4 h-4 rounded-full bg-green-200 flex items-center justify-center text-[10px]">✕</button>
+                      <button onClick={() => removeIngredient(item)} className="w-4 h-4 rounded-full bg-green-200 flex items-center justify-center text-[11px]">✕</button>
                     </span>
                   ))}
                 </div>
