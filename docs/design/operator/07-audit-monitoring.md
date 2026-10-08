@@ -152,6 +152,23 @@ admin.support.ticket.view_messages  - チケットのメッセージ一覧の閲
 - 閲覧の記録は **fail-open**: 記録に失敗しても閲覧は止めず、失敗は db-logger (`app_logs`) に error で残す。
   「記録できないなら実行しない」べき操作 (返金など) は、`recordAdminAudit()` の戻り値 `ok` を見て呼び出し側で止める。
 
+#### 4.1.2 返金の記録 (#1185)
+
+このアプリは返金を実行しない。担当者が Stripe ダッシュボードで返金する **前に**、`POST /api/admin/finance/refunds`
+(実装: `src/app/api/admin/finance/refunds/route.ts`) で `admin.refund.issue` を 1 行記録する。API の仕様は `02-api-spec.md` §9。
+
+記録のルール:
+- `target_id` は **返金されるユーザー** の id、`target_type` は `'user'` (4.1.1 と同じく、`target_id = 本人` で本人に関わる操作をまとめて引ける)。
+- `severity` は `warn`。`details` は `{ amount, currency, reason, stripe_charge_id, stripe_invoice_id }`
+  (`amount` は Stripe と同じ最小通貨単位の整数。JPY は円そのもの。使わない側の Stripe ID は `null`)。
+- 4.1.1 と違い **fail-closed**: 記録できなかったら 500 を返し、Stripe ダッシュボードへのリンクは返さない
+  (監査ログの残らない返金を作らない)。失敗は `recordAdminAudit()` が db-logger (`app_logs`) に error で残す。
+- 記録は本人のセッションの client (RLS 有効) で行い、`actor_id` には `requireRole` が返した本人の id を渡す。
+  `finance` には `audit_logs_insert_admins` だけが効き、`actor_id = auth.uid()` と運営ロールを DB 側でも強制する
+  (`admin` / `super_admin` / `support` には `actor_id` を検査しない旧ポリシー "Admins can create audit logs" も効くため、`actor_id` はアプリ側で必ず本人にする)。
+  `finance` ロールは `admin_audit_logs` を SELECT できないため、INSERT した行を読み戻してはいけない。
+- 2 名承認 (`finance.refund.approve`) と、Stripe の `charge.refunded` Webhook との突き合わせは Stripe 連携 (#1125) 側で後続。
+
 ### 4.2 super_admin 系操作
 
 ```
