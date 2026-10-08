@@ -10,6 +10,7 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { broadcastSignOut } from "@/lib/user-storage";
 import { useRouter } from "next/navigation";
 
 export default function FrozenPage() {
@@ -22,6 +23,8 @@ export default function FrozenPage() {
     try {
       const supabase = createClient();
       await supabase.auth.signOut();
+      // 開いている他のタブと、モバイルアプリの WebView の場合はネイティブアプリにも、ログアウトを伝える (#1038 F7-04)
+      broadcastSignOut();
     } finally {
       router.push("/login");
     }

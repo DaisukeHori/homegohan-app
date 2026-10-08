@@ -7,7 +7,9 @@ import {
   consumeNativeBridgeCode,
   isLegacyNativeBridgeAllowed,
   isWellFormedNativeBridgeCode,
+  NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER,
   NativeBridgeCodeError,
+  shouldShareRefreshTokenWithWeb,
   type ConsumedNativeBridgeCode,
 } from '@/lib/auth/native-bridge-code'
 
@@ -22,6 +24,10 @@ import {
  *   3. このルートがコードを 1 回だけ引き換え (60 秒・使い捨て)、setSession() で Cookie にセッションを保存する
  *   4. next パスへ redirect → 以降の WebView ナビゲーションは Cookie セッション共有で認証済み
  *   URL に載るのはコードだけで、アクセストークン / リフレッシュトークンは URL にもリダイレクト先にも出ない。
+ *   Cookie に入れる refresh_token は実際の値ではなく使えない値 (NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER)。
+ *   ネイティブと Web が同じ refresh_token を別々にローテーションして、セッションごと失効するのを防ぐため (#1038 F7-05)。
+ *   Web 側は期限が近づくと { type: 'session-expired' } でネイティブに知らせ、ネイティブが新しいコードで読み込み直す。
+ *   従来の動作 (実際の refresh_token を入れる) へ戻すスイッチ: 環境変数 NATIVE_BRIDGE_SHARE_REFRESH_TOKEN=on
  *
  * 【旧方式】トークンを URL クエリで渡す (access_token / refresh_token)
  *   URL がアクセスログに残り、有効なトークンが漏れるため廃止する。ただし旧アプリが動かなくなるのを避けるため、
@@ -193,8 +199,12 @@ async function handleCode(requestUrl: URL, rawUrl: string, nextPath: string) {
     return continueIfAlreadySignedIn(supabase, nextPath, rawUrl)
   }
 
-  // トークンは URL (クエリ) ではなく、引き換えた行から取り出す
-  const session = await establishSession(supabase, consumed.accessToken, consumed.refreshToken)
+  // トークンは URL (クエリ) ではなく、引き換えた行から取り出す。
+  // Cookie に入れる refresh_token は実際の値ではなく使えない値にする (Web が更新してネイティブとフォークするのを防ぐ。#1038 F7-05)
+  const refreshTokenForWeb = shouldShareRefreshTokenWithWeb()
+    ? consumed.refreshToken
+    : NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER
+  const session = await establishSession(supabase, consumed.accessToken, refreshTokenForWeb)
   if (!session.ok) {
     console.error('[auth/native-bridge] setSession error:', session.message)
     return redirectTo('/login', rawUrl)

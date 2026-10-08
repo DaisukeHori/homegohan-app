@@ -21,6 +21,9 @@ const STATIC_USER_SCOPED_KEYS: readonly string[] = [];
  */
 const USER_ID_KEY_PREFIXES: readonly string[] = [
   "push_token_registered_v1",
+  // この端末の Expo Push Token の値 (ログアウト時に user_push_tokens の該当行だけを消すために控える)。
+  // 値は pushNotifications.ts の PUSH_TOKEN_VALUE_KEY_PREFIX と同じ (循環 import を避けて文字列で持つ。テストで一致を確認)
+  "push_token_value_v1",
 ];
 
 /**

@@ -6,7 +6,7 @@ import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextIn
 import { Card, ListItem, LoadingState, PageHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
-import { clearUserScopedAsyncStorage } from "../../src/lib/user-storage";
+import { signOutWithCleanup } from "../../src/lib/signOut";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { colors, spacing, radius } from "../../src/theme";
@@ -167,8 +167,8 @@ export default function ProfilePage() {
   }
 
   async function handleLogout() {
-    await clearUserScopedAsyncStorage(user?.id ?? null);
-    await supabase.auth.signOut();
+    // push token の削除 → ユーザー別データの削除 → サインアウトの順 (#1038 F7-10)
+    await signOutWithCleanup(user?.id ?? null);
     router.replace("/");
   }
 

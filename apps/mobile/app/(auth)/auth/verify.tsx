@@ -5,64 +5,67 @@ import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
 
 import { colors, spacing, radius, shadows } from "../../../src/theme";
+import { completeAuthLink } from "../../../src/lib/authLink";
 import { extractSupabaseLinkParams } from "../../../src/lib/deeplink";
 import { supabase } from "../../../src/lib/supabase";
 
 export default function VerifyPage() {
-  const url = Linking.useURL();
+  const eventUrl = Linking.useURL();
+  // 起動時に開かれたリンク。undefined = まだ取得できていない (null = リンクなしで開かれた)。
+  // useURL() は取得前も「リンクなし」も null を返すので、区別するために自分でも取得する
+  const [initialUrl, setInitialUrl] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    Linking.getInitialURL()
+      .then((u) => alive && setInitialUrl(u ?? null))
+      .catch(() => alive && setInitialUrl(null));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const url = eventUrl ?? initialUrl ?? null;
+  // リンクの取得が済むまでは「リンクが無い」とは判断しない (エラー表示がちらつくのを防ぐ)
+  const linkResolved = eventUrl != null || initialUrl !== undefined;
   const params = useMemo(() => (url ? extractSupabaseLinkParams(url) : null), [url]);
   const [isProcessing, setIsProcessing] = useState(true);
   const [isDone, setIsDone] = useState(false);
   const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
+    if (!linkResolved) return;
     let cancelled = false;
 
     async function run() {
       setIsProcessing(true);
+      setIsDone(false);
+      setHasError(false);
 
-      try {
-        if (params?.error) {
-          Alert.alert("エラー", params.error_description ?? params.error);
-          return;
-        }
+      // 3 種類の Supabase auth リンク形式 (code / token_hash+type / access_token+refresh_token) を処理する
+      const outcome = await completeAuthLink(params);
+      if (cancelled) return;
 
-        // 3 種類の Supabase auth リンク形式に対応:
-        //   1. PKCE/OAuth: code パラメータ
-        //   2. OTP: token_hash + type パラメータ (#438)
-        //   3. Legacy: access_token + refresh_token フラグメント
-        if (params?.code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(params.code);
-          if (error) throw error;
-        } else if (params?.token_hash && params?.type) {
-          const { error } = await supabase.auth.verifyOtp({
-            token_hash: params.token_hash,
-            type: params.type as "signup" | "email" | "recovery" | "invite",
-          });
-          if (error) throw error;
-        } else if (params?.access_token && params?.refresh_token) {
-          const { error } = await supabase.auth.setSession({
-            access_token: params.access_token,
-            refresh_token: params.refresh_token,
-          });
-          if (error) throw error;
-        }
-      } catch (e: any) {
-        if (!cancelled) setHasError(true);
-        Alert.alert("確認失敗", e?.message ?? "確認に失敗しました。");
-      } finally {
-        if (!cancelled) {
-          setIsDone(true);
-          setIsProcessing(false);
-        }
+      if (outcome.status === "link_error") {
+        // リンクがエラーを運んできた (期限切れ・拒否など)
+        setHasError(true);
+        Alert.alert("エラー", outcome.message);
+      } else if (outcome.status === "failed") {
+        setHasError(true);
+        Alert.alert("確認失敗", outcome.message);
+      } else if (outcome.status === "empty") {
+        // 処理できる情報が無い (リンクを経由せずに開いた・壊れたリンク)。
+        // 以前はここでも完了扱いにして「確認が完了しました」と誤表示していた (#1038 F7-08)
+        setHasError(true);
       }
+      setIsDone(true);
+      setIsProcessing(false);
     }
 
     run();
     return () => {
       cancelled = true;
     };
-  }, [params?.code, params?.token_hash, params?.type, params?.access_token, params?.refresh_token, params?.error, params?.error_description]);
+  }, [linkResolved, params?.code, params?.token_hash, params?.type, params?.access_token, params?.refresh_token, params?.error, params?.error_description]);
 
   // 認証成功後のみホームへリダイレクト
   const [hasSession, setHasSession] = useState(false);

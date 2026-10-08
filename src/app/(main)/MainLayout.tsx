@@ -11,6 +11,7 @@ import { clearUserScopedLocalStorage } from "@/lib/user-storage";
 import { isOrgAdmin } from "@/lib/auth/org-admin";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { NativeAppTabRouter } from "@/components/native-app/NativeAppTabRouter";
+import { NativeSessionWatcher } from "@/components/native-app/NativeSessionWatcher";
 
 // ロール別の管理メニュー
 const ADMIN_MENU_ITEMS: Record<string, { href: string; label: string; icon: string; color: string }> = {
@@ -179,6 +180,8 @@ export default function MainLayout({
   return (
     <div className="flex min-h-screen bg-gray-50">
       <NativeAppTabRouter />
+      {/* モバイルアプリの WebView の中で、セッションが切れる前にネイティブへ再ブリッジを頼む (#1038 F7-05)。ブラウザでは何もしない */}
+      <NativeSessionWatcher />
       
       {/* デスクトップ用サイドバー (Hidden on Mobile) */}
       <aside className={`${initialIsNativeApp ? 'hidden' : 'hidden lg:flex'} flex-col w-64 fixed inset-y-0 left-0 bg-white border-r border-gray-100 z-50 shadow-sm`}>
