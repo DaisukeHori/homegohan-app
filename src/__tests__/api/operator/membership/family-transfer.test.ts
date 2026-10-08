@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createFakeServiceRole, valueUnder, type FakeServiceRole } from './fake-service-role';
+import { createFakeServiceRole, leadingUsers, valueUnder, type FakeServiceRole } from './fake-service-role';
 
 // 外部との境界はすべてモックにする。通知の宛先・本文を決める本体 (route と renderForceTransferEmail) は実物を通す
 const mocks = vi.hoisted(() => ({
@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   createServiceRoleClient: vi.fn(),
   sendEmail: vi.fn(),
   logError: vi.fn(),
+  logWarn: vi.fn(),
   withUser: vi.fn(),
 }));
 
@@ -73,8 +74,11 @@ const RPC_NAME = 'operator_force_representative_transfer';
 type RpcArgs = { p_family_id: string; p_new_rep_id: string; p_reason: string };
 type SentEmail = { to: string; subject: string; text: string };
 
-/** 山田家: 旧代表者 (花子) → 新代表者 (太郎)。ほかに子供 (アカウントあり/なし)、退会済み、別の家族のメンバーがいる */
-function buildFake(): FakeServiceRole {
+/**
+ * 山田家: 旧代表者 (花子) → 新代表者 (太郎)。ほかに子供 (アカウントあり/なし)、退会済み、別の家族のメンバーがいる。
+ * leadingUserCount を指定すると、登録順で先頭にその人数の無関係なユーザーが並ぶ (#1204: 50 人超の登録状況)。
+ */
+function buildFake(leadingUserCount = 0): FakeServiceRole {
   return createFakeServiceRole({
     tables: {
       family_groups: [
@@ -99,6 +103,7 @@ function buildFake(): FakeServiceRole {
       ],
     },
     users: [
+      ...leadingUsers(leadingUserCount),
       { id: OLD_REP_ID, email: OLD_EMAIL },
       { id: NEW_REP_ID, email: NEW_EMAIL },
       { id: MEMBER_ID, email: MEMBER_EMAIL },
@@ -155,7 +160,7 @@ beforeEach(() => {
   mocks.withUser.mockImplementation(() => ({
     debug: vi.fn(),
     info: vi.fn(),
-    warn: vi.fn(),
+    warn: mocks.logWarn,
     error: mocks.logError,
   }));
 });
@@ -293,7 +298,7 @@ describe('POST /api/operator/membership/family/[id]/transfer: 通知メールの
     expect(JSON.stringify(mocks.logError.mock.calls)).not.toContain('@example.com');
   });
 
-  it('宛先メールの解決で例外が出ても 200 を返し、構造化ログに残す (譲渡は完了済み)', async () => {
+  it('宛先メールの取得がすべて失敗しても 200 を返し、取得できなかった人数を警告ログに残す (譲渡は完了済み)', async () => {
     const authError = new Error('auth admin api is down');
     fake.auth.admin.listUsers.mockRejectedValue(authError);
     fake.auth.admin.getUserById.mockRejectedValue(authError);
@@ -303,8 +308,23 @@ describe('POST /api/operator/membership/family/[id]/transfer: 通知メールの
     expect(res.status).toBe(200);
     expect(fake.tables.family_groups[0].representative_id).toBe(NEW_REP_ID);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
+    // 取得に失敗したことを黙って握りつぶさない (#1204)。通知先の 3 人 (旧代表者・新代表者・メンバー) の件数を残す
     expect(mocks.withUser).toHaveBeenCalledWith(OPERATOR_ID);
-    expect(mocks.logError).toHaveBeenCalledWith(expect.any(String), authError, {
+    expect(mocks.logWarn).toHaveBeenCalledTimes(1);
+    expect(mocks.logWarn.mock.calls[0][1]).toMatchObject({ requested: 3, failed: 3 });
+    expect(JSON.stringify(mocks.logWarn.mock.calls)).not.toContain('@example.com');
+  });
+
+  it('通知先のメンバー一覧を読めなくても 200 を返し、メールは送らず、構造化ログに残す (譲渡は完了済み)', async () => {
+    const readError = { message: 'connection reset by peer', code: '08006' };
+    fake.readErrors.family_members = readError;
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(fake.tables.family_groups[0].representative_id).toBe(NEW_REP_ID);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(mocks.logError).toHaveBeenCalledWith(expect.any(String), readError, {
       family_id: FAMILY_ID,
       to_user_id: NEW_REP_ID,
     });
@@ -342,6 +362,57 @@ describe('POST /api/operator/membership/family/[id]/transfer: 通知メールの
       expect.objectContaining({ message: 'Supabase service role env missing' }),
       { family_id: FAMILY_ID, to_user_id: NEW_REP_ID },
     );
+  });
+});
+
+describe('POST /api/operator/membership/family/[id]/transfer: 登録ユーザーが 50 人を超えているとき (#1204)', () => {
+  // auth.admin.listUsers() は page / perPage を渡さないと先頭 50 件しか返さない。
+  // 修正前は宛先が先頭 50 件の外にいると emailMap に載らず、通知メールが例外もログもなくスキップされた。
+  beforeEach(() => {
+    fake = buildFake(60);
+    mocks.createServiceRoleClient.mockImplementation(() => fake.client);
+  });
+
+  it('旧代表者・新代表者・メンバーが Auth ユーザー一覧の先頭 50 件より後ろにいても、全員に通知する', async () => {
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(sentEmails().map((envelope) => envelope.to).sort()).toEqual([OLD_EMAIL, NEW_EMAIL, MEMBER_EMAIL].sort());
+    const roleOf = (address: string) =>
+      vi.mocked(renderForceTransferEmail).mock.calls.map(([vars]) => vars).find((v) => v.recipient_email === address)
+        ?.recipient_role;
+    expect(roleOf(OLD_EMAIL)).toBe('old_owner');
+    expect(roleOf(NEW_EMAIL)).toBe('new_owner');
+    expect(roleOf(MEMBER_EMAIL)).toBe('member');
+    // 旧オーナー / 新オーナー欄のアドレスも解決できている (空にならない)
+    for (const [vars] of vi.mocked(renderForceTransferEmail).mock.calls) {
+      expect(vars).toMatchObject({ old_owner_email: OLD_EMAIL, new_owner_email: NEW_EMAIL });
+    }
+    expect(mocks.logWarn).not.toHaveBeenCalled();
+    expect(mocks.logError).not.toHaveBeenCalled();
+  });
+
+  it('通知先の人のメールアドレスだけを 1 人ずつ引く (listUsers は使わない・同じ人を二重に引かない)', async () => {
+    await call();
+
+    expect(fake.auth.admin.listUsers).not.toHaveBeenCalled();
+    expect(fake.auth.admin.getUserById.mock.calls.map(([id]) => id).sort()).toEqual(
+      [OLD_REP_ID, NEW_REP_ID, MEMBER_ID].sort(),
+    );
+  });
+
+  it('一部の人のメールアドレスを取得できなくても、取得できた人には送り、取得できなかった人数を警告ログに残す', async () => {
+    fake.authFailures.add(MEMBER_ID);
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(sentEmails().map((envelope) => envelope.to).sort()).toEqual([OLD_EMAIL, NEW_EMAIL].sort());
+    expect(mocks.withUser).toHaveBeenCalledWith(OPERATOR_ID);
+    expect(mocks.logWarn).toHaveBeenCalledTimes(1);
+    expect(mocks.logWarn.mock.calls[0][1]).toMatchObject({ requested: 3, failed: 1, failed_user_ids: [MEMBER_ID] });
+    // 取得に失敗した人のアドレスも、取得できた人のアドレスもログに残さない
+    expect(JSON.stringify(mocks.logWarn.mock.calls)).not.toContain('@example.com');
   });
 });
 

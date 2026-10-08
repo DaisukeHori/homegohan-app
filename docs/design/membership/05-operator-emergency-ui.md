@@ -364,6 +364,15 @@ POST /api/operator/membership/family/{id}/dissolve body: { reason }
 (dissolve が実行前にメンバーを取得するのと同じ考え方)。
 取得に失敗した場合は誤った宛先・本文を送らないよう通知だけを省略し、構造化ログ (`app_logs`) に残す。操作自体は止めない。
 
+**宛先のメールアドレスの引き方 (#1204)**
+
+メールアドレスは `auth.users` にしか無い (`user_profiles` に email 列は無い)。`auth.admin.listUsers()` は page / perPage を
+渡さないと先頭 50 件しか返さず、登録ユーザーが 50 人を超えると宛先が一覧に載らず、通知が例外もログもなく
+スキップされていた。そのため、通知先の user_id だけを `src/lib/membership/resolve-auth-emails.ts` の
+`resolveAuthEmails` で引く (`getUserById` を同時実行数の上限つきで呼ぶ。全体の登録人数に依存しない)。
+取得できなかった人には送らず、件数と user_id を警告ログ (`app_logs`) に残す (メールアドレスはログに残さない)。
+候補者一覧 (`candidates`) も同じ関数で email を引き、取得できなかった人は `email: null` で返す。
+
 ---
 
 ## 9. 24h 待機オプション (運用ベストプラクティス)
