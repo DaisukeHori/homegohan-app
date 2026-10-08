@@ -13,6 +13,13 @@ const compat = new FlatCompat({
   recommendedConfig: js.configs.recommended,
 });
 
+// src/ で React 19 / Next 15 前提の API を使わせないルール (#1199) に共通の説明。
+// 禁止の理由は「動かないから」だけではない。Next 14 の App Router が同梱する React (canary) には
+// use / useOptimistic / useFormStatus が実在するが、useActionState は無く、Next 14 の params は Promise ではない
+// (#1275: use(params) が本番で 500 になった)。Next 15 / React 19 前提の書き方を持ち込まないために使わない。
+const REACT19_ONLY_API_MESSAGE =
+  "React 19 / Next 15 前提の API です。この Web アプリは Next 14 + React 18 なので、Next 15 前提の書き方を持ち込まないよう src/ では使いません (#1275: use(params) が本番で 500 になりました)。";
+
 const config = [
   ...compat.extends("next/core-web-vitals"),
   {
@@ -42,12 +49,19 @@ const config = [
     },
   },
   {
-    // Web アプリ (src/) は Next 14 + React 18。React 19 専用の API を import させない (#1199)。
-    // @types/react を 18 系にそろえたので `use` などは型検査でも落ちるが、型が 19 系に戻っても
-    // 実行時に壊れる import を通さないよう lint でも止める (#1275: use(params) が本番で 500 になった再発防止)。
-    // apps/mobile (Expo 53 + React 19) は対象外。
+    // Web アプリ (src/) は Next 14 + React 18。React 19 / Next 15 前提の API を使わせない (#1199)。
+    //
+    // 型検査はこれらを止めない。Next 14 の型 (next/types/index.d.ts) が react/experimental と
+    // react-dom/experimental (canary の型) を読み込むため、@types/react が 18 系でも
+    // use / useOptimistic / useActionState / useFormStatus は `npm run typecheck` を通る (実測)。
+    // 止めているのはこの ESLint ルールだけなので、冗長に見えても外さないこと
+    // (#1275: use(params) が型検査を素通りして本番で 500 になった)。この前提は
+    // tests/eslint-react19-guard.test.ts が固定している。
+    //
+    // 対象は src/** だけ。apps/mobile (Expo 53 + React 19) と、ルート直下の components/ ・ lib/ は対象外。
     // 注意: importNames を指定すると `import * as React from 'react'` も検出される。
     // src/ では名前付き import (import { useState } from 'react') を使う。
+    // `import React from 'react'` のあとの React.use(...) などは、下の no-restricted-properties で止める。
     files: ["src/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [
@@ -57,16 +71,37 @@ const config = [
             {
               name: "react",
               importNames: ["use", "useActionState", "useOptimistic"],
-              message:
-                "React 19 専用の API です。この Web アプリは Next 14 + React 18 なので使えません (Next 14 の params は Promise ではなく、use(params) は例外になります)。名前空間 import (import * as React) も検出されるため、名前付き import にしてください。詳細は CLAUDE.md を参照 (#1199)。",
+              message: `${REACT19_ONLY_API_MESSAGE}名前空間 import (import * as React) も検出されるため、名前付き import にしてください。詳細は CLAUDE.md を参照 (#1199)。`,
             },
             {
               name: "react-dom",
               importNames: ["useFormStatus"],
-              message:
-                "React 19 専用の API です。この Web アプリは Next 14 + React 18 なので使えません。名前空間 import (import * as ReactDOM) も検出されるため、名前付き import にしてください。詳細は CLAUDE.md を参照 (#1199)。",
+              message: `${REACT19_ONLY_API_MESSAGE}名前空間 import (import * as ReactDOM) も検出されるため、名前付き import にしてください。詳細は CLAUDE.md を参照 (#1199)。`,
             },
           ],
+        },
+      ],
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "React",
+          property: "use",
+          message: `${REACT19_ONLY_API_MESSAGE}詳細は CLAUDE.md を参照 (#1199)。`,
+        },
+        {
+          object: "React",
+          property: "useActionState",
+          message: `${REACT19_ONLY_API_MESSAGE}詳細は CLAUDE.md を参照 (#1199)。`,
+        },
+        {
+          object: "React",
+          property: "useOptimistic",
+          message: `${REACT19_ONLY_API_MESSAGE}詳細は CLAUDE.md を参照 (#1199)。`,
+        },
+        {
+          object: "ReactDOM",
+          property: "useFormStatus",
+          message: `${REACT19_ONLY_API_MESSAGE}詳細は CLAUDE.md を参照 (#1199)。`,
         },
       ],
     },

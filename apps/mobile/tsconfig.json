@@ -3,8 +3,12 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      // ルートの @types/react は Web (Next 14 + React 18) 用の 18 系。ルートに巻き上げられた react-native などの型も
-      // このアプリの @types/react (19 系) で解決させ、モバイルの型検査が二重の React 型で壊れないよう固定する (#1199)。
+      // ルートの @types/react は Web (Next 14 + React 18) 用の 18 系。ルートに巻き上げられた react-native などが
+      // `from 'react'` で読む型を、このアプリの @types/react (19 系) に固定する (#1199)。
+      // 固定しないと react-native などの型が React 18 の型で解決され、モバイルの型エラーが 13 件から 34 件に増える (実測)。
+      // 固定するのは `react` だけで、型の React が 1 つにそろうわけではない。`react/jsx-runtime` (@react-navigation の型が読む)
+      // と暗黙の型ライブラリの @types/react-dom は、ルートの 18 系を指したまま。この状態でのエラーは 13 件で、
+      // ルートの型が 19 系だった変更前と件数も中身も同じ。
       // 末尾が .d.ts の別名は Expo の Metro には無視される (実行時の react の解決は metro.config.js のまま)。
       "react": ["./node_modules/@types/react/index.d.ts"],
       "@homegohan/handson-tour-shared": ["../../packages/handson-tour-shared/src/index.ts"],

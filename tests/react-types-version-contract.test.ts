@@ -3,10 +3,16 @@
  *
  * 以前はルートの react / react-dom が 18 系なのに @types/react / @types/react-dom が 19 系で、
  * 実行時は React 18・型検査は React 19 という食い違いが Web アプリ (Next 14) に及んでいた。
- * React 19 の型は `use` などを提供するため、Next 14 では動かない書き方が typecheck を素通りした
- * (#1275: `use(params)` が本番で 500 になった)。
+ * React 19 の型にしかない書き方 (例: `<Context value={...}>`) が typecheck を素通りしかねなかった。
+ * 型の版を実行時の React にそろえておくと、そうした書き方は型検査で落ちる。
  *
- * この安全網は「React 本体と型のメジャーが同じ」であることを、宣言 (package.json) と
+ * ただし、型の版をそろえても `use` / `useOptimistic` / `useActionState` / `useFormStatus` は止まらない。
+ * Next 14 の型 (next/types/index.d.ts) が react/experimental と react-dom/experimental (canary の型) を
+ * 読み込むため、@types/react が 18 系でも `npm run typecheck` を通る。#1275 (`use(params)` が本番で 500 に
+ * なった) のような書き方を止めているのは eslint.config.mjs の ESLint ルールだけで、前提と挙動は
+ * tests/eslint-react19-guard.test.ts が確かめる。このテストが守るのは「型の版をそろえておくこと」だけ。
+ *
+ * このテストは「React 本体と型のメジャーが同じ」であることを、宣言 (package.json) と
  * 実際に解決された版 (package-lock.json) の両方で確かめる。
  *
  *   - Web アプリ (ルート): react / react-dom ↔ @types/react / @types/react-dom

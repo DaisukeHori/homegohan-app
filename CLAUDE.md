@@ -64,13 +64,16 @@ CI では GitHub Secrets に登録する。
 
 ---
 
-## Web アプリは Next 14 + React 18 (React 19 専用 API は使わない)
+## Web アプリは Next 14 + React 18 (React 19 / Next 15 前提の API は使わない)
 
 - Web アプリ (`src/`) は **Next.js 14 + React 18** で動く。React 19 / Next 15 ではない (モバイルの `apps/mobile` だけが Expo 53 + React 19)。`docs/design/` には Next 15 / React 19 前提の記述が残っているが、実装の現状はこの節が正。
-- **React 19 専用の API は `src/` で使わない**: `use` / `useActionState` / `useOptimistic` (`react`)、`useFormStatus` (`react-dom`)。ESLint の `no-restricted-imports` が `src/**` で止める (#1199)。`import * as React from 'react'` も同じルールに掛かるので、名前付き import (`import { useState } from 'react'`) を使う。
+- **React 19 / Next 15 前提の API は `src/` で使わない**: `use` / `useActionState` / `useOptimistic` (`react`)、`useFormStatus` (`react-dom`)。ESLint の `no-restricted-imports` と `no-restricted-properties` が `src/**` で止める (#1199)。`import * as React from 'react'` も同じルールに掛かるので、名前付き import (`import { useState } from 'react'`) を使う。`import React from 'react'` のあとの `React.use(...)` なども止まる。
+  - 禁止する理由は、Next 15 / React 19 前提の書き方を持ち込まないため。Next 14 の App Router が同梱する React (canary) には `use` / `useOptimistic` / `useFormStatus` が実在するが、`useActionState` は無く、Next 14 の `params` は Promise ではない。
+  - ルールの対象は `src/**` だけ。モバイルと、ルート直下の `components/` ・ `lib/` (`@/` の別名の逃げ先 `./*` 経由で Web からも使われる) は対象外。そこにも React 19 / Next 15 前提の API を書かない。
+- **型検査ではこれらを止められない。止めているのは上の ESLint ルールだけなので、外さないこと。** Next 14 の型 (`next/types/index.d.ts`) が `react/experimental` と `react-dom/experimental` (canary の型) を読み込むため、`@types/react` が 18 系でも `use` / `useOptimistic` / `useActionState` / `useFormStatus` は `npm run typecheck` を通る。この前提は `tests/eslint-react19-guard.test.ts` が確かめる。
 - Next 14 のページでは `params` は Promise ではなく普通のオブジェクト。`use(params)` は実行時に例外になる (#1275)。クライアントページでは `useParams()` を使う。
-- 型も実行時の版にそろえてある。ルート `package.json` の `@types/react` / `@types/react-dom` は **18 系**。モバイルは自前の `@types/react ~19.0.10` を `apps/mobile/node_modules` に入れ子で持ち、`apps/mobile/tsconfig.json` の `paths` で `react` の型をそれに固定している (外すとモバイルの型エラーが増える)。ルートの型だけを 19 系に上げない。`tests/react-types-version-contract.test.ts` と `tests/eslint-react19-guard.test.ts` が検査する。
-- React 19 / Next 15 への移行は別タスク。やるときは `react` と `@types/react` を一緒に上げ、`eslint.config.mjs` のルール、`apps/mobile/tsconfig.json` の固定、この節も更新する。
+- 型の版は実行時の React にそろえてある。ルート `package.json` の `@types/react` / `@types/react-dom` は **18 系**。これで React 19 の型にしかない書き方 (例: `<Context value={...}>`) は型検査で落ちる (上の API は止まらない)。モバイルは自前の `@types/react ~19.0.10` を `apps/mobile/node_modules` に入れ子で持ち、`apps/mobile/tsconfig.json` の `paths` で `react` の型をそれに固定している (外すとモバイルの型エラーが増える)。ルートの型だけを 19 系に上げない。`tests/react-types-version-contract.test.ts` が検査する。
+- React 19 / Next 15 への移行は別タスク。やるときは `react` と `@types/react` を一緒に上げ、`eslint.config.mjs` のルールとそのテスト (`tests/eslint-react19-guard.test.ts`)、`apps/mobile/tsconfig.json` の固定、この節も更新する。
 - ルートで依存を更新する `npm install` は、`react-native` の peer (`react@^19`) とルートの `react@18` が衝突して ERESOLVE になることがある (モバイルが React 19 を入れ子で持つ構成のため)。その場合は `npm install --package-lock-only --legacy-peer-deps` で `package-lock.json` だけ更新し、続けて `npm install --package-lock-only` を 1 回実行して形をそろえる。差分が意図した変更だけであることと `npm ci --dry-run` が通ることを確認する。
 
 ---
