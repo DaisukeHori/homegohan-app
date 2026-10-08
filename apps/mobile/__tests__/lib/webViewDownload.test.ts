@@ -6,6 +6,7 @@
  *   2. mimeTypeForFilename
  *   3. isTrustedDownloadSender: 自アプリの Web オリジンだけを信用する
  *   4. handleWebViewDownload: 検証 → cacheDirectory への保存 → 共有 → 古いファイルの掃除
+ *   5. getDownloadFailureNotice: 正規の書き出しが失敗したときに、利用者へ知らせる文面
  *
  * WebViewScreen の onMessage を通した入口からのテストは
  * __tests__/components/WebViewScreen.download.test.tsx にある。
@@ -40,6 +41,7 @@ import {
   MAX_DOWNLOAD_CONTENT_LENGTH,
   MAX_DOWNLOAD_FILENAME_LENGTH,
   STALE_DOWNLOAD_MS,
+  getDownloadFailureNotice,
   handleWebViewDownload,
   isTrustedDownloadSender,
   mimeTypeForFilename,
@@ -369,6 +371,13 @@ describe('isTrustedDownloadSender', () => {
     expect(isTrustedDownloadSender('https://evil.example/')).toBe(false);
   });
 
+  it('EXPO_PUBLIC_WEB_URL が空文字のときも既定のオリジン (WebViewScreen が開くオリジンと同じ判定)', () => {
+    // 空文字を「設定あり」と見ると、WebView が開く URL と、download で信用するオリジンが食い違う
+    process.env.EXPO_PUBLIC_WEB_URL = '';
+    expect(isTrustedDownloadSender(`${WEB_URL}/settings`)).toBe(true);
+    expect(isTrustedDownloadSender('https://evil.example/')).toBe(false);
+  });
+
   it('EXPO_PUBLIC_WEB_URL が解釈できない値のときは、何も信用しない', () => {
     process.env.EXPO_PUBLIC_WEB_URL = 'not a url';
     expect(isTrustedDownloadSender(`${WEB_URL}/settings`)).toBe(false);
@@ -473,6 +482,45 @@ describe('handleWebViewDownload', () => {
 
       expect(result).toMatchObject({ ok: true, uri: `${SAFE_DIR}homegohan-meals-2026-10-08.csv` });
     });
+
+    describe('個人データエクスポート (設定画面の「データをエクスポート」の JSON)', () => {
+      const EXPORT_FILENAME = 'homegohan-export-2026-10-08.json';
+      const EXPORT_URI = `${SAFE_DIR}${EXPORT_FILENAME}`;
+
+      it('以前の上限 (10MiB) を超える本文でも、同じ名前で書いて、application/json で共有する', async () => {
+        // データの多いアカウントの個人データ JSON の大きさに見立てる (12,000,000 文字は 10,485,760 を超える)
+        const content = JSON.stringify({ data: { padding: 'x'.repeat(12_000_000) } });
+        expect(content.length).toBeGreaterThan(10 * 1024 * 1024);
+
+        const result = await handleWebViewDownload(
+          { type: 'download', filename: EXPORT_FILENAME, content, mimeType: 'application/json' },
+          SENDER,
+        );
+
+        expect(result).toEqual({ ok: true, uri: EXPORT_URI, shared: true });
+        // 失敗したときに 12MB の本文がテスト出力に載らないよう、本文は真偽値で比べる
+        expect(mockWrite.mock.calls.length).toBe(1);
+        expect(mockWrite.mock.calls[0][0]).toBe(EXPORT_URI);
+        expect(mockWrite.mock.calls[0][1] === content).toBe(true);
+        expect(mockShare).toHaveBeenCalledWith(EXPORT_URI, {
+          mimeType: 'application/json',
+          dialogTitle: EXPORT_FILENAME,
+        });
+      });
+
+      it('全部 ASCII で 50MiB ちょうどの出力 (API が返しうる最大) でも書く', async () => {
+        // 全部 ASCII なら 1 文字 1 バイトなので、50MiB の出力は 50MiB 文字。日本語などはもっと文字数が少ない
+        const content = 'x'.repeat(50 * 1024 * 1024);
+
+        const result = await handleWebViewDownload(
+          { type: 'download', filename: EXPORT_FILENAME, content, mimeType: 'application/json' },
+          SENDER,
+        );
+
+        expect(result).toEqual({ ok: true, uri: EXPORT_URI, shared: true });
+        expect(mockWrite.mock.calls.length).toBe(1);
+      });
+    });
   });
 
   describe('危険なファイル名は保存先フォルダの外に出られない', () => {
@@ -566,9 +614,13 @@ describe('handleWebViewDownload', () => {
       expectNothingWritten();
     });
 
-    it('上限は、実際の食事記録 CSV (数 MB) を弾かず、極端に大きくもない範囲にある', () => {
-      expect(MAX_DOWNLOAD_CONTENT_LENGTH).toBeGreaterThanOrEqual(5 * 1024 * 1024);
-      expect(MAX_DOWNLOAD_CONTENT_LENGTH).toBeLessThanOrEqual(50 * 1024 * 1024);
+    it('上限は、個人データエクスポート API が返しうる最大 (50MiB) 以上で、極端に大きくもない', () => {
+      // 設定画面の「データをエクスポート」(GET /api/account/export) の出力は、UTF-8 で最大 50MiB
+      // (src/lib/account-export.ts の DEFAULT_EXPORT_LIMITS.maxTotalBytes)。
+      // JS の文字列の長さ (UTF-16 の単位数) は UTF-8 のバイト数以下なので、50MiB 以上あれば API が出すエクスポートは必ず通る。
+      // API の値とのずれは、ルートの tests/webview-download-export-limit-contract.test.ts が見張る
+      expect(MAX_DOWNLOAD_CONTENT_LENGTH).toBeGreaterThanOrEqual(50 * 1024 * 1024);
+      expect(MAX_DOWNLOAD_CONTENT_LENGTH).toBeLessThanOrEqual(100 * 1024 * 1024);
     });
 
     it('本文が上限ちょうどなら書く', async () => {
@@ -727,5 +779,49 @@ describe('handleWebViewDownload', () => {
 
       expect(result).toEqual({ ok: false, reason: 'failed' });
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. getDownloadFailureNotice
+// ─────────────────────────────────────────────────────────────────────────────
+describe('getDownloadFailureNotice', () => {
+  it('書き出しに成功したときは、何も知らせない', () => {
+    expect(getDownloadFailureNotice({ ok: true, uri: `${SAFE_DIR}a.csv`, shared: true })).toBeNull();
+    // 共有が使えない端末で、書いただけのときも失敗ではない
+    expect(getDownloadFailureNotice({ ok: true, uri: `${SAFE_DIR}a.csv`, shared: false })).toBeNull();
+  });
+
+  it('送信元が自アプリでないときは、何も知らせない (正規のエクスポートではない。ログだけ)', () => {
+    expect(getDownloadFailureNotice({ ok: false, reason: 'untrusted-sender' })).toBeNull();
+  });
+
+  it('本文が大きすぎるときは、大きすぎることを知らせる', () => {
+    const notice = getDownloadFailureNotice({ ok: false, reason: 'too-large' });
+
+    expect(notice).not.toBeNull();
+    expect(notice?.title).toBe('エクスポートに失敗しました');
+    expect(notice?.message).toContain('大きすぎ');
+  });
+
+  it.each(['failed', 'invalid-payload', 'no-cache-directory'] as const)(
+    '%s のときは、書き出せなかったことと、空き容量の確認・再試行を知らせる',
+    (reason) => {
+      const notice = getDownloadFailureNotice({ ok: false, reason });
+
+      expect(notice).not.toBeNull();
+      expect(notice?.title).toBe('エクスポートに失敗しました');
+      expect(notice?.message).toContain('書き出せませんでした');
+      expect(notice?.message).toContain('空き容量');
+    },
+  );
+
+  it('知らせる文面は、どの理由でも空でない固定の文字列', () => {
+    for (const reason of ['too-large', 'failed', 'invalid-payload', 'no-cache-directory'] as const) {
+      const notice = getDownloadFailureNotice({ ok: false, reason });
+      expect(notice).toEqual({ title: expect.any(String), message: expect.any(String) });
+      expect(notice?.title.length).toBeGreaterThan(0);
+      expect(notice?.message.length).toBeGreaterThan(0);
+    }
   });
 });

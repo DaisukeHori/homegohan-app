@@ -1,18 +1,21 @@
 /**
  * #1159: WebView の `download` メッセージ (Web → ネイティブの postMessage) の安全性テスト
  *
- * Web の設定画面は、iOS の WebView で <a download> が動かないため、CSV の本文を postMessage で渡してくる。
+ * Web の設定画面は、iOS の WebView で <a download> が動かないため、エクスポートの本文
+ * (献立 CSV と、個人データ一式の JSON) を postMessage で渡してくる。
  * filename / content / mimeType と、メッセージを送ってきたページは WebView 内の JS が自由に作れる。
  * そのためネイティブは何も信用せず、端末への書き込みを次の範囲に閉じる:
  *   - 送信元は自アプリの Web オリジンのページだけ
  *   - 保存先は cacheDirectory の専用フォルダの中だけ (documentDirectory や、その外への ../ には書かない)
  *   - ファイル名は無害化され、本文は文字列で上限以下のものだけ
+ * 一方で、正規のエクスポートは、データが多くて大きくても捨てない (捨てるときは利用者に知らせる)。
  *
  * 関数単体の網羅テストは __tests__/lib/webViewDownload.test.ts にある。
  * ここでは WebViewScreen の onMessage を通して、実際の入口から効いていることを確かめる。
  */
 
 import React from 'react';
+import { Alert } from 'react-native';
 import { render, waitFor } from '@testing-library/react-native';
 
 // ── 環境変数 ──────────────────────────────────────────────────────────────────
@@ -102,9 +105,13 @@ const DOCUMENT_DIR = 'file:///data/app/Documents/';
 const SAFE_DIR = 'file:///data/app/Library/Caches/webview-downloads/';
 const SETTINGS_URL = `${WEB_BASE_URL}/settings?mode=app`;
 const CSV_BODY = 'date,meal_type,dish_name\r\n2026-10-08,dinner,カレー';
-// 本文の上限 (文字数)。webViewDownload.ts の MAX_DOWNLOAD_CONTENT_LENGTH と同じ値。
-// このテストは新しいモジュールを import せず挙動だけを見る (上限の値そのものは単体テスト側で確認)
-const MAX_CONTENT_LENGTH = 10 * 1024 * 1024;
+// 本文の上限 (文字数)。webViewDownload.ts の MAX_DOWNLOAD_CONTENT_LENGTH と同じ値で、
+// 個人データエクスポート API (src/lib/account-export.ts の DEFAULT_EXPORT_LIMITS.maxTotalBytes) が返しうる最大の 50MiB。
+// このテストは上限の定数を import せず、挙動だけを見る (定数が黙って小さくなっても気づけるように、値を直書きしている)。
+// 定数そのものは単体テストと、ルートの tests/webview-download-export-limit-contract.test.ts で API の上限と突き合わせる
+const MAX_CONTENT_LENGTH = 50 * 1024 * 1024;
+// 以前の上限 (10MiB)。データの多いアカウントの個人データ JSON は、これを超える
+const FORMER_MAX_CONTENT_LENGTH = 10 * 1024 * 1024;
 
 /** WebView を描画して、onMessage が渡されるまで待つ */
 async function renderWebView() {
@@ -199,6 +206,76 @@ describe('正規のエクスポート (設定画面の CSV)', () => {
     await flushPromises();
 
     expect(mockWriteAsString).toHaveBeenCalledTimes(1);
+  });
+
+  it('WebView が実際に最初に開く URL のページからの download は受け付ける (開くオリジンと信用するオリジンが同じ)', async () => {
+    await renderWebView();
+    const openedUrl = mockWebViewProps.source.uri as string;
+    expect(openedUrl.startsWith('http')).toBe(true);
+
+    sendDownload({ filename: 'a.csv', content: CSV_BODY, mimeType: 'text/csv' }, { url: openedUrl });
+    await flushPromises();
+
+    expect(mockWriteAsString).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 正規のエクスポート (設定画面の「データをエクスポート」= 個人データ一式の JSON) は、大きくても捨てない
+//
+// #1336 / #1131 で、設定画面は isNativeApp のとき、個人データの JSON を献立 CSV と同じ download メッセージで送る。
+// 個人データ API (GET /api/account/export) が返しうる最大は 50MiB。本文の上限がこれより小さいと、
+// データの多い利用者の「データをエクスポート」が、エラーも出ないまま何も起きなくなる。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('正規のエクスポート (設定画面の個人データ JSON)', () => {
+  const EXPORT_FILENAME = 'homegohan-export-2026-10-08.json';
+  const EXPORT_URI = `${SAFE_DIR}${EXPORT_FILENAME}`;
+
+  /** 個人データのエクスポートに見立てた、指定の文字数以上の JSON 文字列 */
+  const buildExportJson = (minLength: number): string =>
+    JSON.stringify({
+      format: 'homegohan-personal-data-export',
+      version: 1,
+      data: { meals: ['カレー'], padding: 'x'.repeat(minLength) },
+    });
+
+  it('本文が以前の上限 (10MiB) を超えても、cacheDirectory の専用フォルダに同じ名前で書き、application/json で共有シートに渡す', async () => {
+    await renderWebView();
+    const content = buildExportJson(FORMER_MAX_CONTENT_LENGTH + 1_000_000);
+    expect(content.length).toBeGreaterThan(FORMER_MAX_CONTENT_LENGTH);
+
+    sendDownload({ filename: EXPORT_FILENAME, content, mimeType: 'application/json' });
+    await flushPromises();
+
+    // 失敗したときに 10MiB 超の本文がテスト出力に載らないよう、本文は toBe(true) の真偽値で比べる
+    expect(mockWriteAsString.mock.calls.length).toBe(1);
+    expect(writtenUris()).toEqual([EXPORT_URI]);
+    expect(mockWriteAsString.mock.calls[0][1] === content).toBe(true);
+    expect(mockWriteAsString.mock.calls[0][2]).toEqual({ encoding: 'utf8' });
+    expect(mockShareAsync.mock.calls.length).toBe(1);
+    expect(mockShareAsync.mock.calls[0][0]).toBe(EXPORT_URI);
+    expect(mockShareAsync.mock.calls[0][1]).toEqual({
+      mimeType: 'application/json',
+      dialogTitle: EXPORT_FILENAME,
+    });
+    // 書けたので、利用者に失敗は知らせない
+    expect(Alert.alert).not.toHaveBeenCalled();
+  });
+
+  it('API が返しうる最大のサイズ (50MiB) のエクスポートも書いて共有する', async () => {
+    await renderWebView();
+
+    sendDownload({
+      filename: EXPORT_FILENAME,
+      content: 'x'.repeat(MAX_CONTENT_LENGTH),
+      mimeType: 'application/json',
+    });
+    await flushPromises();
+
+    expect(mockWriteAsString.mock.calls.length).toBe(1);
+    expect(writtenUris()).toEqual([EXPORT_URI]);
+    expect(mockShareAsync.mock.calls.length).toBe(1);
+    expect(Alert.alert).not.toHaveBeenCalled();
   });
 });
 
@@ -337,7 +414,7 @@ describe('本文 (content) の検証', () => {
     expect(mockShareAsync).not.toHaveBeenCalled();
   });
 
-  // 失敗したときに 5MB の本文がテスト出力に載らないよう、巨大本文のテストは呼び出し回数だけで検証する
+  // 失敗したときに 50MiB の本文がテスト出力に載らないよう、巨大本文のテストは呼び出し回数だけで検証する
   it('巨大な本文 (上限超え) は書かない', async () => {
     await renderWebView();
 
@@ -355,6 +432,85 @@ describe('本文 (content) の検証', () => {
     await flushPromises();
 
     expect(mockWriteAsString.mock.calls.length).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 正規の書き出しが失敗したら、利用者に知らせる (エクスポートを押しても何も起きない状態にしない)
+//
+// Web 側は postMessage を投げたら終わりで、結果を受け取る手段が無い。
+// 上限超え・書き込みや共有の失敗を console に出すだけにすると、利用者は失敗に気づけない。
+// ただし送信元が自アプリでないメッセージは、正規のエクスポートではないので画面には何も出さない。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('正規の書き出しが失敗したときは、利用者に知らせる', () => {
+  it('本文が上限を超えたら、何も書かずに、大きすぎることをアラートで知らせる', async () => {
+    await renderWebView();
+
+    sendDownload({
+      filename: 'homegohan-export-2026-10-08.json',
+      content: 'x'.repeat(MAX_CONTENT_LENGTH + 1),
+      mimeType: 'application/json',
+    });
+    await flushPromises();
+
+    expect(mockWriteAsString.mock.calls.length).toBe(0);
+    expect(Alert.alert).toHaveBeenCalledTimes(1);
+    expect(Alert.alert).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('大きすぎ'));
+  });
+
+  it('書き込みに失敗したら、共有せずに、アラートで知らせる', async () => {
+    mockWriteAsString.mockRejectedValue(new Error('disk full'));
+    await renderWebView();
+
+    sendDownload({ filename: 'a.csv', content: CSV_BODY, mimeType: 'text/csv' });
+    await flushPromises();
+
+    expect(mockShareAsync).not.toHaveBeenCalled();
+    expect(Alert.alert).toHaveBeenCalledTimes(1);
+    expect(Alert.alert).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('空き容量'));
+  });
+
+  it('共有に失敗したら、アラートで知らせる', async () => {
+    mockShareAsync.mockRejectedValue(new Error('share failed'));
+    await renderWebView();
+
+    sendDownload({ filename: 'a.csv', content: CSV_BODY, mimeType: 'text/csv' });
+    await flushPromises();
+
+    expect(Alert.alert).toHaveBeenCalledTimes(1);
+  });
+
+  it('本文が文字列でない (Web 側の不具合) ときも、アラートで知らせる', async () => {
+    await renderWebView();
+
+    sendDownload({ filename: 'a.csv', content: { not: 'a string' }, mimeType: 'text/csv' });
+    await flushPromises();
+
+    expect(mockWriteAsString).not.toHaveBeenCalled();
+    expect(Alert.alert).toHaveBeenCalledTimes(1);
+  });
+
+  it('自アプリでないページからのメッセージは、画面には何も出さない (ログだけ)', async () => {
+    await renderWebView();
+
+    sendDownload(
+      { filename: 'a.csv', content: CSV_BODY, mimeType: 'text/csv' },
+      { url: 'https://evil.example/settings' },
+    );
+    await flushPromises();
+
+    expect(mockWriteAsString).not.toHaveBeenCalled();
+    expect(Alert.alert).not.toHaveBeenCalled();
+  });
+
+  it('書き出しに成功したときは、アラートを出さない', async () => {
+    await renderWebView();
+
+    sendDownload({ filename: 'a.csv', content: CSV_BODY, mimeType: 'text/csv' });
+    await flushPromises();
+
+    expect(mockShareAsync).toHaveBeenCalledTimes(1);
+    expect(Alert.alert).not.toHaveBeenCalled();
   });
 });
 

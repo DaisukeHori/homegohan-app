@@ -85,19 +85,39 @@ type NativeToWebMessage =
 
 `download` の `filename` / `content` / `mimeType` と、メッセージを送ってきたページは、WebView の中で動く JS が自由に作れる。
 ネイティブは何も信用せず、`src/lib/webViewDownload.ts` で次のとおりに扱う。Web 側でエクスポートを増やすときは、この制約に収まるようにする
-(収まらないものは、ネイティブ側が黙って捨てるか、別の名前・形式に直して書く)。
+(収まらないものは、ネイティブ側が書かずに捨てるか、別の名前・形式に直して書く)。
+Web 側は `postMessage` を投げたら終わりで、結果を受け取れない。そのため、自アプリの Web ページからの書き出しが失敗したときは、
+アプリの画面にアラートを出して利用者に知らせる (何も出さないと、エクスポートを押しても何も起きないように見える)。
 
 | 項目 | 扱い |
 |------|------|
-| 送信元 | `EXPO_PUBLIC_WEB_URL` と同じオリジン (スキーム + ホスト + ポート) のページからのメッセージだけ処理する。それ以外は何も書かずに捨てる |
+| 送信元 | `EXPO_PUBLIC_WEB_URL` (未設定・空文字は既定の本番 URL。WebViewScreen が WebView で開く URL と同じ `getWebBaseUrl()`) と同じオリジン (スキーム + ホスト + ポート) のページからのメッセージだけ処理する。それ以外は何も書かずに捨てる (画面には何も出さず、ログだけ) |
 | `filename` | ディレクトリ区切り (`/` `\`) より前は捨てる。英数字と `.` `_` `-` 以外は `_` にする。`..` は作らない。100 文字まで。拡張子は `csv` / `json` / `txt` だけで、それ以外・無いときは `mimeType` から決め、決まらなければ `txt`。使える名前が残らなければ `homegohan-export.<拡張子>` |
 | `mimeType` | 共有シートに渡す値は、最終的な拡張子から決める (`csv` → `text/csv`、`json` → `application/json`、`txt` → `text/plain`)。送られてきた値は、拡張子が使えないときの手がかりにだけ使う |
-| `content` | 文字列で、10,485,760 文字 (`MAX_DOWNLOAD_CONTENT_LENGTH`) 以下。UTF-8 の文字列として書くので、画像や PDF のようなバイナリは扱えない |
+| `content` | 文字列で、52,428,800 文字 (50MiB、`MAX_DOWNLOAD_CONTENT_LENGTH`) 以下。UTF-8 の文字列として書くので、画像や PDF のようなバイナリは扱えない。上限の根拠は下の「本文の上限」 |
 | 保存先 | `cacheDirectory` の下の `webview-downloads/`。`documentDirectory` には書かない。1 時間より古いファイルは、次の書き出しのときに消す (共有した直後に消すと、Android では共有先のアプリがまだ読み終えていないことがある) |
+| 失敗したとき | 上限超え・本文が文字列でない・書き込みや共有の失敗は、アラート「エクスポートに失敗しました」で知らせる (文面は `getDownloadFailureNotice`。送られてきたファイル名や本文は載せない) |
 
 形式を増やすときは、`webViewDownload.ts` の `ALLOWED_EXTENSIONS` / `MIME_TYPE_BY_EXTENSION` と `__tests__/lib/webViewDownload.test.ts` を合わせて直す。
+
 OTA 更新は無効なので、配布済みのアプリの許可リストは後から直せない。許可リストにない拡張子の `download` は、このサニタイズが入ったアプリでは `txt` として書かれる。
 新しい形式を Web 側で使い始めるのは、その形式に対応したアプリが行き渡ってからにする。
+
+##### 本文の上限 (`MAX_DOWNLOAD_CONTENT_LENGTH`)
+
+この上限は、設定画面から送られる 2 種類のエクスポートの大きいほうに合わせる。
+
+| エクスポート | ファイル名 | 大きさ |
+|------|------|------|
+| 献立の CSV (`GET /api/export/meals`) | `homegohan-meals-YYYY-MM-DD.csv` | 取得する行数に PostgREST の既定の上限 (1000 行) があるため、数 MB 以下 |
+| 個人データ一式の JSON (`GET /api/account/export`、#1131) | `homegohan-export-YYYY-MM-DD.json` | UTF-8 で最大 50MiB (`src/lib/account-export.ts` の `DEFAULT_EXPORT_LIMITS.maxTotalBytes`)。データの多いアカウントでは 10MB を軽く超える |
+
+JS の文字列の長さ (UTF-16 の単位数) は UTF-8 のバイト数以下なので、上限を 50MiB 文字にしておけば、API が出すエクスポートは必ず通る。
+上限を小さくすると (例えば 10MiB にすると)、データの多い利用者のエクスポートが、エラーも出ないまま失敗する。
+API の上限を上げるときは、`MAX_DOWNLOAD_CONTENT_LENGTH` も合わせる。ずれたままだと、ルートの `tests/webview-download-export-limit-contract.test.ts` が失敗する。
+新しい上限は新しいアプリのビルドを配布するまで届かず、配布済みのアプリでは古い上限のまま、大きいエクスポートが失敗する点に注意する。
+
+この上限は、ディスク使用量の総量を抑えるものではない (1 時間以内なら別の名前でいくつでも書ける)。主な守りは、送信元の確認。
 
 ### 3.3 セッション同期
 

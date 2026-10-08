@@ -1,8 +1,8 @@
 /**
  * WebView (Web 側) から postMessage で届く `download` メッセージの検証と保存 (#1159)
  *
- * Web の設定画面は、iOS の WebView で <a download> が動かないため、CSV の本文を postMessage で
- * ネイティブへ渡し、ネイティブが端末に書き出して共有シートを開く。
+ * Web の設定画面は、iOS の WebView で <a download> が動かないため、エクスポートの本文
+ * (献立 CSV と、個人データ一式の JSON) を postMessage でネイティブへ渡し、ネイティブが端末に書き出して共有シートを開く。
  * メッセージの中身 (filename / content / mimeType) と、メッセージを送ってきたページは、
  * WebView の中で動く JS が自由に作れる。以前は filename をそのまま `${documentDirectory}${filename}` に
  * 繋いでいたため、'../' を含む名前でアプリのサンドボックス内の意図しない場所に書けた。
@@ -13,11 +13,17 @@
  *   3. 本文は文字列で、上限以下のサイズであること
  *   4. 保存先は cacheDirectory の専用フォルダの中だけにする (documentDirectory には書かない)
  *
+ * 一方で、正規のエクスポートは捨てない。上限は個人データエクスポート API が返しうる最大のサイズに合わせてあり、
+ * それでも書けなかったときは、getDownloadFailureNotice の文面で利用者に知らせる (Web 側は結果を受け取れず、
+ * 黙って捨てると「押しても何も起きない」ように見えるため)。
+ *
  * Web 側で書き出せる形式を増やすときは、ALLOWED_EXTENSIONS と docs/design/mobile/01-architecture.md の
  * 「download メッセージの制約」を合わせて直すこと。
  */
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+
+import { getWebBaseUrl } from './webBaseUrl';
 
 // ── 定数 ──────────────────────────────────────────────────────────────────────
 
@@ -40,21 +46,28 @@ export const MAX_DOWNLOAD_FILENAME_LENGTH = 100;
 const FALLBACK_FILENAME_STEM = 'homegohan-export';
 
 /**
- * 本文の最大文字数 (JS の文字列の長さ)。
- * 食事記録 CSV は、毎日記録して何年使っても数 MB 以下 (API が返す日数にも上限がある) なので、通常の使い方では届かない。
- * 上限に引っかかると利用者のエクスポートが黙って失敗するため、余裕を持たせてある。
- * UTF-8 の日本語は 1 文字 3 バイトなので、ディスクに書くのは最大でこの 3 倍 (約 30MB)。
+ * 本文の最大文字数 (JS の文字列の長さ = UTF-16 の単位数)。
+ *
+ * この download メッセージを使う最大のものは、個人データエクスポート (設定画面の「データをエクスポート」、
+ * GET /api/account/export) の JSON で、出力は UTF-8 で最大 50MiB
+ * (src/lib/account-export.ts の DEFAULT_EXPORT_LIMITS.maxTotalBytes)。
+ * JS の文字列の長さは UTF-8 のバイト数以下 (ASCII は同じ、それ以外は少ない) なので、50MiB 文字あれば、
+ * API が出すエクスポートは必ず通る。献立 CSV は、取得する行数に PostgREST の既定の上限 (1000 行) があり、
+ * 数 MB 以下に収まるので、これより小さい。
+ * これより小さくすると (例えば 10MiB にすると)、データの多い利用者のエクスポートが、エラーも出ないまま失敗する。
+ * API の上限とのずれは、ルートの tests/webview-download-export-limit-contract.test.ts が見張っている。
+ *
+ * この上限は、ディスク使用量の総量を抑えるものではない (1 時間以内なら別の名前でいくつでも書ける)。
+ * 主な守りは、送信元が自アプリの Web オリジンであることの確認 (isTrustedDownloadSender)。
+ * UTF-8 の日本語は 1 文字 3 バイトなので、1 回に書くのは最大でこの 3 倍 (約 150MB)。
  */
-export const MAX_DOWNLOAD_CONTENT_LENGTH = 10 * 1024 * 1024;
+export const MAX_DOWNLOAD_CONTENT_LENGTH = 50 * 1024 * 1024;
 
 /** 保存先: cacheDirectory の下の専用フォルダ。OS が空き容量不足のときに消してよい場所で、バックアップにも入らない */
 export const DOWNLOAD_DIRECTORY_NAME = 'webview-downloads/';
 
 /** この時間より古い書き出しファイルは、次の書き出しのときに消す */
 export const STALE_DOWNLOAD_MS = 60 * 60 * 1000;
-
-/** EXPO_PUBLIC_WEB_URL が無いときの Web のオリジン。WebViewScreen の既定値と同じ */
-const DEFAULT_WEB_URL = 'https://homegohan-app.vercel.app';
 
 // ── ファイル名 ────────────────────────────────────────────────────────────────
 
@@ -136,7 +149,8 @@ function originOf(url: unknown): string | null {
  * 'https://homegohan-app.vercel.app.evil.example' や 'https://homegohan-app.vercel.app@evil.example' は一致しない。
  */
 export function isTrustedDownloadSender(senderUrl: unknown): boolean {
-  const trusted = originOf(process.env.EXPO_PUBLIC_WEB_URL || DEFAULT_WEB_URL);
+  // WebViewScreen が WebView で開く URL と同じ値 (getWebBaseUrl) から決める。ここだけ既定値を持つと食い違う
+  const trusted = originOf(getWebBaseUrl());
   const sender = originOf(senderUrl);
   return trusted !== null && sender !== null && sender === trusted;
 }
@@ -153,6 +167,34 @@ function reject(reason: DownloadRejectReason): DownloadResult {
   // 中身 (ファイル名・本文) は、攻撃者が選べる文字列なのでログに出さない
   console.warn(`[webViewDownload] download rejected: ${reason}`);
   return { ok: false, reason };
+}
+
+/** 書き出しに失敗したことを利用者に知らせる文面 (Alert のタイトルと本文) */
+export interface DownloadFailureNotice {
+  title: string;
+  message: string;
+}
+
+/**
+ * 書き出しに失敗したとき、利用者に見せる文面。知らせなくてよいときは null。
+ *
+ * Web 側は postMessage を投げたら終わりで、結果を受け取る手段が無い。失敗を console に出すだけにすると、
+ * 利用者には「エクスポートを押しても何も起きない」ように見える。
+ * そのため、正規の書き出しが失敗したときは画面で知らせる。
+ * 知らせないのは、成功したときと、送信元が自アプリでないとき (正規のエクスポートではないので、ログだけにする)。
+ * 文面は固定で、送られてきたファイル名や本文は入れない。
+ */
+export function getDownloadFailureNotice(result: DownloadResult): DownloadFailureNotice | null {
+  if (result.ok || result.reason === 'untrusted-sender') return null;
+
+  const title = 'エクスポートに失敗しました';
+  if (result.reason === 'too-large') {
+    return { title, message: 'データが大きすぎて、この端末に書き出せませんでした。' };
+  }
+  return {
+    title,
+    message: 'ファイルを書き出せませんでした。端末の空き容量を確認して、時間をおいてもう一度お試しください。',
+  };
 }
 
 /**
