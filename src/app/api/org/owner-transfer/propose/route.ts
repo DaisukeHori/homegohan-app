@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
+import { isEmailFailure } from '@/lib/emails/send-result';
 import { renderOrgTransferProposedEmail } from '@/lib/emails/membership/org-transfer-proposed';
 import {
   checkTransferProposeLimit,
@@ -127,7 +128,9 @@ export async function POST(request: Request) {
           expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
           reason: body.reason,
         });
-        await sendEmail(envelope);
+        const sent = await sendEmail(envelope);
+        // sendEmail は配信の失敗で例外を投げず、結果で返す。失敗も下の catch で、他の失敗と同じように警告に残す
+        if (isEmailFailure(sent)) throw sent.error;
       }
     } catch (emailErr) {
       console.warn('[api/org/owner-transfer/propose] メール送信失敗:', emailErr);

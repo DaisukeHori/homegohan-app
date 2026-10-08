@@ -2,20 +2,29 @@
  * GET  /api/admin/finance/exports — エクスポート一覧 (権限確認用)
  * POST /api/admin/finance/exports — CSV エクスポート生成
  * 権限: admin, super_admin, finance
+ *       ただし export_type 'nps' (NPS 回答の書き出し) は admin, super_admin だけ。finance は 403 (#1311)
  *
  * E2E: w5-12-admin-adversarial F-24 (通常 user → 403)
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { requireRole } from '@/lib/auth/helpers';
+import { requireRole, type UserProfile } from '@/lib/auth/helpers';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { ExportRequestSchema } from '@/lib/admin/finance-schemas';
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * NPS 回答 (user_id とコメント付き) の書き出しを許すロール (#1311)。財務ロール (finance) は含めない。
+ * NPS / CSAT の集計 API (GET /api/admin/finance/nps) と同じ扱い。
+ * nps_surveys を読む RLS (nps_select_admin) は finance を許していないため、通しても空の CSV にしかならない。
+ */
+const NPS_EXPORT_ROLES = ['admin', 'super_admin'] as const;
+
 export async function GET(_request: NextRequest) {
+  let actor: UserProfile;
   try {
-    await requireRole(['admin', 'super_admin', 'finance']);
+    actor = await requireRole(['admin', 'super_admin', 'finance']);
   } catch (err) {
     if (err instanceof AuthError) {
       return NextResponse.json(
@@ -32,10 +41,16 @@ export async function GET(_request: NextRequest) {
     throw err;
   }
 
-  // エクスポート種別の一覧を返す (POST で実際の生成を行う)
+  // エクスポート種別の一覧を返す (POST で実際の生成を行う)。
+  // 呼んだ本人が書き出せる種別だけを返す: nps は admin / super_admin にだけ入れ、finance には出さない (#1311)。
+  // 管理画面 (財務ダッシュボードのクイックリンク) は、この一覧に nps があるかで NPS / CSAT のリンクを出すか決める
+  // (画面側で役割を判定し直すと、ここ・nps API の判定とずれるため)
+  const canExportNps = NPS_EXPORT_ROLES.some((role) => actor.roles.includes(role));
   return NextResponse.json({
     data: {
-      available_types: ['revenue', 'invoices', 'subscriptions', 'nps'],
+      available_types: canExportNps
+        ? ['revenue', 'invoices', 'subscriptions', 'nps']
+        : ['revenue', 'invoices', 'subscriptions'],
     },
   });
 }
@@ -60,6 +75,12 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json() as unknown;
     const req = ExportRequestSchema.parse(body);
+
+    // #1311: NPS 回答の書き出しは admin / super_admin だけ。入口の許可ロール (finance を含む) とは別に絞る。
+    // DB を読む前に確かめるので、finance には何も読まず、監査ログも作らない (403 は下の catch が返す)
+    if (req.export_type === 'nps') {
+      await requireRole(NPS_EXPORT_ROLES);
+    }
 
     let csvContent = '';
     let filename = '';

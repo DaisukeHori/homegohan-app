@@ -1,13 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// resend だけをモックし、sendEmail 本体 (RESEND_API_KEY 未設定なら { skipped: true } を返す等) は実装のまま通す。
+// resend とロガー (app_logs) だけをモックし、sendEmail 本体 (RESEND_API_KEY 未設定なら skipped: true を返す、
+// 一時的な失敗は再試行する等) は実装のまま通す。
 // vi.mock はホイストされるため、モック関数は vi.hoisted で定義する
-const { mockEmailsSend, mockGetUserById, mockAdminInsert, mockGetSupabaseAdmin } = vi.hoisted(() => ({
-  mockEmailsSend: vi.fn(),
-  mockGetUserById: vi.fn(),
-  mockAdminInsert: vi.fn(),
-  mockGetSupabaseAdmin: vi.fn(),
-}));
+const { mockEmailsSend, mockGetUserById, mockAdminInsert, mockGetSupabaseAdmin, emailLogWarn, emailLogError } =
+  vi.hoisted(() => ({
+    mockEmailsSend: vi.fn(),
+    mockGetUserById: vi.fn(),
+    mockAdminInsert: vi.fn(),
+    mockGetSupabaseAdmin: vi.fn(),
+    emailLogWarn: vi.fn(),
+    emailLogError: vi.fn(),
+  }));
 
 vi.mock('resend', () => {
   class MockResend {
@@ -18,6 +22,11 @@ vi.mock('resend', () => {
 
 vi.mock('@/lib/supabase/server', () => ({
   getSupabaseAdmin: mockGetSupabaseAdmin,
+}));
+
+// sendEmail が失敗・未設定を残す createLogger('email') (app_logs)。呼び出し元の logger とは別物
+vi.mock('@/lib/db-logger', () => ({
+  createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: emailLogWarn, error: emailLogError }),
 }));
 
 const { sendTicketReplyEmail, TICKET_REPLY_EMAIL_TEMPLATE } = await import(
@@ -55,6 +64,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.clearAllMocks();
   vi.restoreAllMocks();
@@ -163,7 +173,6 @@ describe('sendTicketReplyEmail: 送信できる場合', () => {
 describe('sendTicketReplyEmail: 送信できない場合 (返信は失敗させず、結果を返してログに残す)', () => {
   it('RESEND_API_KEY 未設定: 送らずに skipped / not_configured を返し、警告を残す (送信ログは作らない)', async () => {
     vi.stubEnv('RESEND_API_KEY', undefined);
-    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const outcome = await run();
 
@@ -172,7 +181,12 @@ describe('sendTicketReplyEmail: 送信できない場合 (返信は失敗させ�
     expect(mockAdminInsert).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('skipped'), logMeta);
     expect(logger.error).not.toHaveBeenCalled();
-    consoleWarn.mockRestore();
+    // #1193 設定漏れは console だけでなく app_logs (sendEmail の createLogger('email')) にも警告として残る。失敗のエラーログにはしない
+    expect(emailLogWarn).toHaveBeenCalledWith(expect.stringContaining('RESEND_API_KEY'), {
+      template: 'support_ticket_reply',
+      recipient: 'c***@example.com',
+    });
+    expect(emailLogError).not.toHaveBeenCalled();
   });
 
   it('Resend がエラーを返す: failed / send_failed を返し、構造化ログに記録する (送信ログは作らない)', async () => {
@@ -194,13 +208,59 @@ describe('sendTicketReplyEmail: 送信できない場合 (返信は失敗させ�
     expect(JSON.stringify(logger.error.mock.calls[0][2])).not.toContain(CUSTOMER_EMAIL);
   });
 
-  it('Resend の呼び出しが例外になる (ネットワーク断など): failed / send_failed', async () => {
+  it('Resend の呼び出しが例外になる (ネットワーク断など): 3 回再試行しても直らなければ failed / send_failed', async () => {
+    vi.useFakeTimers();
     mockEmailsSend.mockRejectedValue(new Error('fetch failed'));
+
+    const pending = run();
+    await vi.runAllTimersAsync();
+    const outcome = await pending;
+
+    expect(outcome).toEqual({ status: 'failed', reason: 'send_failed' });
+    expect(mockEmailsSend).toHaveBeenCalledTimes(4); // 最初の 1 回 + 再試行 3 回
+    expect(mockAdminInsert).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('send failed'), expect.any(Error), logMeta);
+    // #1193 sendEmail 自身も、文面の名前・マスクした宛先・エラーコードを app_logs に残す
+    expect(emailLogError).toHaveBeenCalledTimes(1);
+    expect(emailLogError.mock.calls[0][2]).toEqual({
+      template: 'support_ticket_reply',
+      recipient: 'c***@example.com',
+      error_code: 'network_error',
+      status_code: null,
+      attempts: 4,
+      retryable: true,
+    });
+  });
+
+  it('一時的な失敗 (503) は再試行して、直れば sent を返し、送信ログには最終的に受け付けられたメール ID を残す', async () => {
+    vi.useFakeTimers();
+    mockEmailsSend
+      .mockResolvedValueOnce({ data: null, error: { message: 'Service Unavailable', name: 'application_error', statusCode: 503 } })
+      .mockResolvedValueOnce({ data: { id: 're_retried' }, error: null });
+
+    const pending = run();
+    await vi.runAllTimersAsync();
+    const outcome = await pending;
+
+    expect(outcome).toEqual({ status: 'sent' });
+    expect(mockEmailsSend).toHaveBeenCalledTimes(2);
+    expect(mockAdminInsert).toHaveBeenCalledTimes(1);
+    expect(mockAdminInsert.mock.calls[0][1]).toMatchObject({ resend_message_id: 're_retried', status: 'sent' });
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('再試行しても直らない失敗 (403: 送信元ドメインが未検証) は 1 回だけ送って failed。送信ログは作らず、エラーコードを記録する', async () => {
+    mockEmailsSend.mockResolvedValue({
+      data: null,
+      error: { message: 'The homegohan.app domain is not verified', name: 'validation_error', statusCode: 403 },
+    });
 
     const outcome = await run();
 
     expect(outcome).toEqual({ status: 'failed', reason: 'send_failed' });
-    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('send failed'), expect.any(Error), logMeta);
+    expect(mockEmailsSend).toHaveBeenCalledTimes(1);
+    expect(mockAdminInsert).not.toHaveBeenCalled();
+    expect(emailLogError.mock.calls[0][2]).toMatchObject({ error_code: 'validation_error', status_code: 403, attempts: 1 });
   });
 
   it('顧客のユーザーが見つからない (getUserById がエラーを返す): failed / no_recipient、送信しない', async () => {

@@ -13,6 +13,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ZodError } from 'zod';
 import { ErrorStatusMap, MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
+import { isEmailFailure } from '@/lib/emails/send-result';
 import { renderOrgInviteExistingEmail } from '@/lib/emails/membership/org-invite-existing';
 import { renderOrgInviteNewEmail } from '@/lib/emails/membership/org-invite-new';
 import type { InviteEmailVars } from '@/lib/emails/membership/templates';
@@ -146,7 +147,9 @@ export async function createOrgInviteWithEmail(params: CreateOrgInviteParams): P
   // Resend 送信 (失敗時は warn のみ — 招待 row は残す)
   try {
     const envelope = isExistingUser ? renderOrgInviteExistingEmail(emailVars) : renderOrgInviteNewEmail(emailVars);
-    await sendEmail(envelope);
+    const sent = await sendEmail(envelope);
+    // sendEmail は配信の失敗で例外を投げず、結果で返す。失敗も下の catch で、他の失敗と同じように警告に残す
+    if (isEmailFailure(sent)) throw sent.error;
   } catch (emailErr) {
     console.warn('[org-invite] メール送信失敗 (招待は有効):', emailErr);
   }

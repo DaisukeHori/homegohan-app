@@ -2,7 +2,13 @@
  * GET /api/admin/finance/nps
  * NPS / CSAT 集計
  * operator/01-data-model.md §3.14
- * 権限: admin, super_admin, finance
+ * 権限: admin, super_admin (財務ロール finance は #1311 で外した)
+ *
+ * #1311: NPS / CSAT は財務の業務には要らない (オーナー判断)。かつては finance もこの API を通せたが、
+ * 行を読む RLS は finance を許していない (nps_surveys の nps_select_admin は admin / super_admin / support だけ、
+ * csat_feedbacks の csat_access は本人の行 + 同じ 3 ロール)。そのため finance には NPS は 0 件、CSAT は本人の分だけが返り、
+ * 運営全体の数字のように見える誤った集計になっていた。finance は入口で 403 にする。
+ * RLS は変えない (support / admin / super_admin のまま)。この API を通せるのは、そのうち admin / super_admin だけ。
  *
  * #1217: 件数・合計・分布は DB の関数 (get_nps_summary / get_csat_summary) が数え、
  * 直近の一覧だけを order + limit で取る。以前は nps_surveys / csat_feedbacks の該当行を全部読み込んで
@@ -33,7 +39,8 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
   const logger = createLogger('GET /api/admin/finance/nps', generateRequestId());
   try {
-    await requireRole(['admin', 'super_admin', 'finance']);
+    // #1311: 財務ロール (finance) は含めない。画面 (admin/finance/page.tsx) と書き出し (finance/exports の nps) も同じ扱い
+    await requireRole(['admin', 'super_admin']);
     const supabase = await createClient();
 
     const { searchParams } = new URL(request.url);
