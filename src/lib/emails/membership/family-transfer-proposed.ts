@@ -22,6 +22,7 @@ export function renderFamilyTransferProposedEmail(vars: FamilyTransferProposedEm
     : '';
 
   return {
+    template: 'family_transfer_proposed',
     to: vars.to_email,
     from: getEmailFrom(),
     subject: '【ほめゴハン】家族代表者譲渡の提案',

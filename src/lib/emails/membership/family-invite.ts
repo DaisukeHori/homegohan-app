@@ -12,6 +12,7 @@ export function renderFamilyInviteEmail(vars: InviteEmailVars): EmailEnvelope {
     : '';
 
   return {
+    template: 'family_invite',
     to: vars.email_address,
     from: getEmailFrom(),
     subject: `[ほめゴハン] ${vars.inviter_name} 様からご家族グループへの招待`,

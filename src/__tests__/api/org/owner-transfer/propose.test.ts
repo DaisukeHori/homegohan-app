@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EmailSendError } from '@/lib/emails/send-result';
 import type { RateLimitCategory, RateLimitResult } from '@/lib/rate-limit';
 import { DEFAULT_SITE_URL } from '@/lib/site-config';
 
@@ -328,5 +329,33 @@ describe('POST /api/org/owner-transfer/propose: 承諾リンクの基点 (#1194)
     const text: string = mockSendEmail.mock.calls[0][0].text;
     expect(text.split('\n')).toContain(`${DEFAULT_SITE_URL}/org/transfer-accept/${proposalId}`);
     expect(text).not.toContain('localhost');
+  });
+});
+
+describe('POST /api/org/owner-transfer/propose: メール送信の失敗 (#1193)', () => {
+  it('メール送信が ok: false の結果で返っても (sendEmail は配信の失敗で例外を投げない) 提案は作成済みなので 200 を返し、警告に残す', async () => {
+    const sendError = new EmailSendError('application_error', 'EMAIL_SEND_FAILED: Service Unavailable', 503, 4, true);
+    mockSendEmail.mockResolvedValue({ ok: false, id: null, attempts: 4, skipped: false, error: sendError });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = await POST(postRequest(validBody));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.proposal_id).toBe(proposalId);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('メール送信失敗'), sendError);
+    warn.mockRestore();
+  });
+
+  it('RESEND_API_KEY が無くて送らなかった (skipped) ときは、警告を残さず 200 を返す', async () => {
+    const skippedError = new EmailSendError('not_configured', 'EMAIL_NOT_CONFIGURED: RESEND_API_KEY が未設定', null, 0, false);
+    mockSendEmail.mockResolvedValue({ ok: false, id: null, attempts: 0, skipped: true, error: skippedError });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(200);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

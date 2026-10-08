@@ -15,5 +15,9 @@ export const EmailEnvelopeSchema = z.object({
   text: z.string().min(1),                   // プレーンテキスト本文
   html: z.string().optional(),               // 第 1 段階は省略 (text のみ)
   reply_to: z.string().email().optional(),
+  // どの文面のメールかを表す名前 (snake_case。例: org_invite_new)。失敗のログで文面を区別するために使い、Resend には送らない。
+  // 文面を作る render*Email 関数が必ず入れる (形式は src/__tests__/lib/emails/template-names.test.ts が検査する)。
+  // ログの印にすぎないので、ここでは長さなどを検証しない (名前の不備でメールが止まらないように)
+  template: z.string().optional(),
 });
 export type EmailEnvelope = z.infer<typeof EmailEnvelopeSchema>;

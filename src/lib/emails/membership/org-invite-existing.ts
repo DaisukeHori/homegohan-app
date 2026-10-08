@@ -12,6 +12,7 @@ export function renderOrgInviteExistingEmail(vars: InviteEmailVars): EmailEnvelo
     : '';
 
   return {
+    template: 'org_invite_existing',
     to: vars.email_address,
     from: getEmailFrom(),
     subject: `[ほめゴハン] ${vars.scope_name} からメンバー招待が届きました`,

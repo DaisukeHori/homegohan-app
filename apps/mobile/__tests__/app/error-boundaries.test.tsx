@@ -112,7 +112,6 @@ const FIRST = { href: '/', label: '最初の画面へ戻る' };
 
 const LAYOUTS: LayoutSpec[] = [
   { file: '_layout.tsx', boundary: 'root' },
-  { file: '(admin)/_layout.tsx', boundary: 'admin', home: HOME },
   { file: '(auth)/_layout.tsx', boundary: 'auth', home: FIRST },
   { file: '(org)/_layout.tsx', boundary: 'org', home: HOME },
   { file: '(public)/_layout.tsx', boundary: 'public', home: FIRST },

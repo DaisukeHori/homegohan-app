@@ -23,6 +23,7 @@ export function renderFamilyPromoteEmail(vars: FamilyPromoteEmailVars): EmailEnv
   const expiresDate = new Date(vars.expires_at).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' });
 
   return {
+    template: 'family_promote',
     to: vars.email_address,
     from: getEmailFrom(),
     subject: '【ほめゴハン】家族グループへの参加確認のお願い',

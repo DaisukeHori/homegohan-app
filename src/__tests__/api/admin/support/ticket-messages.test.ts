@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { NextRequest } from 'next/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { EmailSendError } from '@/lib/emails/send-result';
 
 const {
   mockRequireRole,
@@ -332,8 +333,32 @@ describe('POST /api/admin/support/tickets/[id]/messages: 顧客向けの返信 (
       expect(mockAdminInsert).not.toHaveBeenCalled();
     });
 
+    it('sendEmail が reject せず ok: false の結果を返す (#1193): 201 + email.status=failed。送信済みの送信ログは作らない', async () => {
+      const sendError = new EmailSendError('validation_error', 'EMAIL_SEND_FAILED: The domain is not verified', 403, 1, false);
+      mockSendEmail.mockResolvedValue({ ok: false, id: null, attempts: 1, skipped: false, error: sendError });
+
+      const res = await postExternal();
+      const json = await res.json();
+
+      expect(res.status).toBe(201);
+      expect(json.data.id).toBe(MESSAGE_ID);
+      expect(json.email).toEqual({ status: 'failed', reason: 'send_failed' });
+      expect(mockLogError).toHaveBeenCalledTimes(1);
+      expect(mockLogError).toHaveBeenCalledWith(expect.stringContaining('send failed'), sendError, {
+        ticket_id: TICKET_ID,
+        message_id: MESSAGE_ID,
+      });
+      expect(mockAdminInsert).not.toHaveBeenCalled();
+    });
+
     it('RESEND_API_KEY が未設定 (sendEmail が skipped を返す): 201 + email.status=skipped', async () => {
-      mockSendEmail.mockResolvedValue({ id: 'dev-no-send', skipped: true });
+      mockSendEmail.mockResolvedValue({
+        ok: false,
+        id: null,
+        attempts: 0,
+        skipped: true,
+        error: new EmailSendError('not_configured', 'EMAIL_NOT_CONFIGURED: RESEND_API_KEY が未設定', null, 0, false),
+      });
 
       const res = await postExternal();
       const json = await res.json();

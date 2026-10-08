@@ -15,6 +15,7 @@ export function renderFamilyInviteNewEmail(vars: InviteEmailVars): EmailEnvelope
     : '';
 
   return {
+    template: 'family_invite_new',
     to: vars.email_address,
     from: getEmailFrom(),
     subject: `【ほめゴハン】${vars.scope_name}に家族として招待されました — アカウントを作成して参加`,

@@ -63,6 +63,7 @@ export function renderTicketReplyEmail(vars: TicketReplyEmailVars): EmailEnvelop
 ご不明な点や追加のご連絡は、お問い合わせフォームからお願いします。`;
 
   return {
+    template: 'support_ticket_reply',
     to: vars.to_email,
     from: getEmailFrom(),
     subject: buildTicketReplySubject(vars.ticket_id, vars.ticket_subject),

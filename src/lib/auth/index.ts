@@ -7,18 +7,13 @@ export {
   requireRole,
   requireOrgRole,
   requireOrgAdmin,
-  impersonate,
-  endImpersonation,
-  isImpersonating,
   type RoleName,
   type OrgRoleName,
   type UserProfile,
   type OrgAdminContext,
 } from './helpers';
 
-export { AuthError, ForbiddenError, PermError, ImpersonationError } from './errors';
-
-export type { ImpersonationResult } from './types';
+export { AuthError, ForbiddenError, PermError } from './errors';
 
 export { getSafeRedirectPath, getSafeRedirectPathOrDefault } from './safe-redirect';
 

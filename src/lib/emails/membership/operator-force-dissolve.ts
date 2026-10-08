@@ -41,6 +41,7 @@ ${emailSignature()}
 
   const subjectScope = vars.scope === 'organization' ? '組織' : '家族グループ';
   return {
+    template: 'operator_force_dissolve',
     to: vars.recipient_email,
     from: getEmailFrom(),
     subject: `【ほめゴハン】運営により${subjectScope}「${vars.scope_name}」が解散されました`,

@@ -31,6 +31,7 @@ export function renderMemberLeftEmail(vars: MemberLeftEmailVars): EmailEnvelope 
   const recipientRole = vars.scope === 'organization' ? 'オーナー' : '代表者';
 
   return {
+    template: 'member_left',
     to: vars.to_email,
     from: getEmailFrom(),
     subject: `【ほめゴハン】${describeScopeForSubject(vars.scope, vars.scope_name)}からメンバーが脱退しました`,

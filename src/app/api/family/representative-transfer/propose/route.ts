@@ -7,6 +7,7 @@ import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-e
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { buildFamilyTransferAcceptUrl } from '@/lib/membership/urls';
 import { sendEmail } from '@/lib/emails/send';
+import { isEmailFailure } from '@/lib/emails/send-result';
 import { renderFamilyTransferProposedEmail } from '@/lib/emails/membership/family-transfer-proposed';
 import {
   checkTransferProposeLimit,
@@ -106,7 +107,9 @@ export async function POST(request: Request) {
         accept_url: acceptUrl,
         reason: parsed.reason,
       });
-      await sendEmail(envelope);
+      const sent = await sendEmail(envelope);
+      // sendEmail は配信の失敗で例外を投げず、結果で返す。失敗も下の catch で、提案との対応が分かる形で記録する
+      if (isEmailFailure(sent)) throw sent.error;
     }
   } catch (emailErr) {
     logger.withUser(user.id).error('譲渡提案メールの送信に失敗しました (提案は作成済み)', emailErr, {
