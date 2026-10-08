@@ -56,7 +56,6 @@ export default function SettingsPage() {
 
   const [settings, setSettings] = useState({
     notifications: true,
-    dataShare: false,
     autoAnalyze: true
   });
 
@@ -73,7 +72,6 @@ export default function SettingsPage() {
         setSettings({
           notifications: json.settings.notifications_enabled,
           autoAnalyze: json.settings.auto_analyze_enabled,
-          dataShare: json.settings.data_share_enabled,
         });
       }
     };
@@ -128,10 +126,7 @@ export default function SettingsPage() {
 
     setSettings(prev => ({ ...prev, [key]: newValue }));
     try {
-      const apiKey =
-        key === 'notifications' ? 'notifications_enabled' :
-        key === 'autoAnalyze' ? 'auto_analyze_enabled' :
-        'data_share_enabled';
+      const apiKey = key === 'notifications' ? 'notifications_enabled' : 'auto_analyze_enabled';
       const res = await fetch('/api/notification-preferences', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -218,14 +213,6 @@ export default function SettingsPage() {
     } finally {
       setExportingCsv(false);
     }
-  };
-
-  const handleTrainerShareInfo = () => {
-    alert(
-      'トレーナー連携機能は近日公開予定です。\n' +
-      '現状、データシェア設定の ON/OFF は記録のみで、外部共有は行っていません。\n' +
-      '正式リリースまで今しばらくお待ちください。'
-    );
   };
 
   const handleLogout = async () => {
@@ -431,7 +418,7 @@ export default function SettingsPage() {
                type="button"
                onClick={handleExportCsv}
                disabled={exportingCsv}
-               className="w-full flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+               className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
              >
                <div className="flex items-center gap-3">
                  <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600" aria-hidden="true">📋</div>
@@ -443,20 +430,8 @@ export default function SettingsPage() {
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
              </button>
 
-             <button
-               type="button"
-               onClick={handleTrainerShareInfo}
-               className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
-             >
-               <div className="flex items-center gap-3">
-                 <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500" aria-hidden="true">📊</div>
-                 <div className="text-left">
-                   <span className="font-bold text-gray-700">トレーナーと共有（準備中）</span>
-                   <p className="text-xs text-gray-400">栄養士やジムと連携・近日公開予定</p>
-                 </div>
-               </div>
-               <span className="text-xs text-gray-400">{settings.dataShare ? '記録ON' : '記録OFF'}</span>
-             </button>
+             {/* #1144: 「トレーナーと共有」の項目は外した。トレーナーなどに共有する機能が無いのに、項目だけが画面にあったため。
+                 戻すときは、先に src/app/api/notification-preferences/route.ts のコメントを読むこと (保存済みの値は同意ではない)。 */}
 
           </div>
         </div>

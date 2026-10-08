@@ -1,10 +1,14 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// POST /api/org/stats/refresh (組織ダッシュボードの「Refresh Data」) (#1167)
+// POST /api/org/stats/refresh (組織統計の再集計。停止中) (#1325)
 //
-// 以前はブラウザが Edge Function aggregate-org-stats を直接呼んでいた。この関数はバッチ専用で、
-// 利用者の JWT では 401 になるうえ、ブラウザから呼べるように CORS を開けるのは危険だった。
-// 今は、この API ルートが「所属組織の owner / admin か」を確認したあと、サーバーから service role key を付けて呼ぶ。
+// 以前は、組織ダッシュボードの「Refresh Data」ボタンが押されると、このルートが権限を確認したあと、
+// サーバーから Edge Function aggregate-org-stats を呼んでいた (#1167)。
+// オーナー判断 (#1325) で組織の集計は止めた。ボタンは取り除き、このルートは、古い画面から呼ばれたときに
+// 「停止している」とはっきり答えるために残してある。権限の確認 (401 / 403) は停止前と同じで、
+// 確認を通った owner / admin には 410 (DISABLED) を返す。Edge Function は一切呼ばない。
 
 const mockGetUser = vi.fn();
 const mockFrom = vi.fn();
@@ -30,6 +34,8 @@ const USER = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', email: 'admin@example
 const ORG_ID = 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22';
 const OTHER_ORG_ID = 'c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33';
 
+const DISABLED_BODY = { error: { code: 'DISABLED', message: '組織の集計は停止しています' } };
+
 const ORIGINAL_ENV = { ...process.env };
 
 function profileQuery(result: unknown) {
@@ -42,8 +48,9 @@ function profileQuery(result: unknown) {
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
-function edgeResponse(status: number, body: unknown = { success: true, processed: [] }) {
-  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+/** fetch が受け取った URL の一覧 (どこにも通信していないことの確認に使う) */
+function fetchedUrls(): string[] {
+  return fetchMock.mock.calls.map(([input]) => (input instanceof Request ? input.url : String(input)));
 }
 
 beforeEach(() => {
@@ -58,7 +65,8 @@ beforeEach(() => {
     throw new Error(`unexpected table: ${table}`);
   });
 
-  fetchMock = vi.fn().mockResolvedValue(edgeResponse(200));
+  // どこかへ通信しようとしたら検出できるよう、fetch は呼び出しを記録する偽物にしておく
+  fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
   vi.stubGlobal('fetch', fetchMock);
 });
 
@@ -67,8 +75,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('POST /api/org/stats/refresh: 権限の確認 (#1167)', () => {
-  it('RF-1: 未ログインは 401。Edge Function は呼ばない', async () => {
+describe('POST /api/org/stats/refresh: 権限の確認 (停止前と同じ。#1167)', () => {
+  it('RF-1: 未ログインは 401。何も呼ばない', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
 
     const res = await POST();
@@ -83,7 +91,7 @@ describe('POST /api/org/stats/refresh: 権限の確認 (#1167)', () => {
     ['組織に所属していない', { organization_id: null, org_role: 'admin' }],
     ['org_role が無い', { organization_id: ORG_ID, org_role: null }],
     ['プロフィールが読めない', null],
-  ])('RF-2: %s は 403。Edge Function は呼ばない', async (_label, profile) => {
+  ])('RF-2: %s は 403。何も呼ばない', async (_label, profile) => {
     mockFrom.mockImplementation(() => profileQuery({ data: profile, error: null }));
 
     const res = await POST();
@@ -93,104 +101,61 @@ describe('POST /api/org/stats/refresh: 権限の確認 (#1167)', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it.each(['owner', 'admin'])('RF-3: org_role が %s なら実行できる', async (orgRole) => {
+  it.each(['owner', 'admin'])('RF-3: org_role が %s なら権限の確認を通り、410 (DISABLED) を返す', async (orgRole) => {
     mockFrom.mockImplementation(() =>
       profileQuery({ data: { organization_id: ORG_ID, org_role: orgRole }, error: null }),
     );
 
     const res = await POST();
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(410);
+    expect(await res.json()).toEqual(DISABLED_BODY);
   });
 });
 
-describe('POST /api/org/stats/refresh: Edge Function の呼び出し (#1167)', () => {
-  it('RF-4: 自分の組織だけを、service role key を付けて aggregate-org-stats に依頼する', async () => {
+describe('POST /api/org/stats/refresh: 集計の停止 (#1325)', () => {
+  it('RF-4: Edge Function aggregate-org-stats を呼ばない。どこにも通信しない', async () => {
     const res = await POST();
 
-    expect(res.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe(`${SUPABASE_URL}/functions/v1/aggregate-org-stats`);
-    expect(init.method).toBe('POST');
-    expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${SERVICE_ROLE_KEY}`);
-    // 組織はプロフィールで確認した organization_id だけ。日付は関数の既定 (今日) に任せるので送らない
-    expect(JSON.parse(init.body as string)).toEqual({ organizationId: ORG_ID });
+    expect(res.status).toBe(410);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchedUrls().filter((url) => url.includes('aggregate-org-stats') || url.includes('/functions/v1/'))).toEqual(
+      [],
+    );
   });
 
-  it('RF-5: リクエストに別の組織 ID を載せても使わない (他の組織を集計させられない)', async () => {
-    await (POST as unknown as (req: Request) => Promise<Response>)(
+  it('RF-5: リクエストに組織 ID や日付を載せても結果は同じ (410。集計を依頼しない)', async () => {
+    const res = await (POST as unknown as (req: Request) => Promise<Response>)(
       new Request('http://localhost/api/org/stats/refresh', {
         method: 'POST',
         body: JSON.stringify({ organizationId: OTHER_ORG_ID, date: '2020-01-01' }),
       }),
     );
 
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(JSON.parse(init.body as string)).toEqual({ organizationId: ORG_ID });
-    expect(init.body as string).not.toContain(OTHER_ORG_ID);
-  });
-
-  it('RF-6: service role key を応答に含めない', async () => {
-    const ok = await POST();
-    expect(JSON.stringify(await ok.json())).not.toContain(SERVICE_ROLE_KEY);
-
-    fetchMock.mockResolvedValue(edgeResponse(500, { error: `boom ${SERVICE_ROLE_KEY}` }));
-    const failed = await POST();
-    expect(JSON.stringify(await failed.json())).not.toContain(SERVICE_ROLE_KEY);
-  });
-
-  it('RF-7: Supabase の接続情報が無いときは、成功を装わず 503。Edge Function は呼ばない', async () => {
-    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-    const res = await POST();
-
-    expect(res.status).toBe(503);
-    expect((await res.json()).error.code).toBe('ORG_STATS_REFRESH_UNAVAILABLE');
+    expect(res.status).toBe(410);
+    expect(await res.json()).toEqual(DISABLED_BODY);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(mockLogError).toHaveBeenCalledTimes(1);
+  });
+
+  it('RF-6: Supabase の接続情報の有無に関係なく 410 (以前の 503 にはならない)。service role key を応答に含めない', async () => {
+    const withKey = await POST();
+    expect(withKey.status).toBe(410);
+    expect(JSON.stringify(await withKey.json())).not.toContain(SERVICE_ROLE_KEY);
+
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const withoutKey = await POST();
+    expect(withoutKey.status).toBe(410);
+    expect(await withoutKey.json()).toEqual(DISABLED_BODY);
 
     process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_KEY;
     delete process.env.NEXT_PUBLIC_SUPABASE_URL;
-    expect((await POST()).status).toBe(503);
+    expect((await POST()).status).toBe(410);
+
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockLogError).not.toHaveBeenCalled();
   });
 
-  it.each([401, 500, 503])('RF-8: Edge Function が %i を返したら 502。関数のエラー文は利用者へ返さずログに残す', async (status) => {
-    fetchMock.mockResolvedValue(edgeResponse(status, { error: 'relation "internal_table" does not exist' }));
-
-    const res = await POST();
-    const body = await res.json();
-
-    expect(res.status).toBe(502);
-    expect(body.error.code).toBe('ORG_STATS_REFRESH_FAILED');
-    expect(JSON.stringify(body)).not.toContain('internal_table');
-    expect(mockLogError).toHaveBeenCalledTimes(1);
-    expect(mockLogError.mock.calls[0][2]).toEqual(
-      expect.objectContaining({ organizationId: ORG_ID, status, detail: expect.stringContaining('internal_table') }),
-    );
-  });
-
-  it('RF-9: Edge Function への接続に失敗 (タイムアウトなど) したら 502', async () => {
-    fetchMock.mockRejectedValue(new DOMException('The operation timed out.', 'TimeoutError'));
-
-    const res = await POST();
-
-    expect(res.status).toBe(502);
-    expect((await res.json()).error.code).toBe('ORG_STATS_REFRESH_FAILED');
-    expect(mockLogError).toHaveBeenCalledTimes(1);
-  });
-
-  it('RF-10: 呼び出しには待ち時間の上限 (タイムアウト) が付く', async () => {
-    await POST();
-
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(init.signal).toBeInstanceOf(AbortSignal);
-  });
-
-  it('RF-11: 予期しない例外は 500。内部のエラー文は返さない', async () => {
+  it('RF-7: 予期しない例外は 500。内部のエラー文は返さず、ログに残す', async () => {
     mockGetUser.mockRejectedValue(new Error('connection refused to 10.0.0.5'));
 
     const res = await POST();
@@ -199,6 +164,18 @@ describe('POST /api/org/stats/refresh: Edge Function の呼び出し (#1167)', (
     expect(res.status).toBe(500);
     expect(body.error.code).toBe('INTERNAL_ERROR');
     expect(JSON.stringify(body)).not.toContain('10.0.0.5');
+    expect(mockLogError).toHaveBeenCalledTimes(1);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('RF-8: ルートのソースが、fetch・Edge Function の URL・service role key を使っていない', () => {
+    const source = fs.readFileSync(path.resolve(__dirname, '../../../../app/api/org/stats/refresh/route.ts'), 'utf8');
+
+    expect(source).not.toMatch(/\bfetch\s*\(/);
+    expect(source).not.toContain('functions/v1');
+    expect(source).not.toContain('SERVICE_ROLE');
+    // 権限の確認は共通ヘルパー (#1161)。user_profiles を手書きで読まない
+    expect(source).toContain('requireOrgAdmin');
+    expect(source).not.toContain('user_profiles');
   });
 });

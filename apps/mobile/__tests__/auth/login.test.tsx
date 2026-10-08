@@ -8,6 +8,8 @@
  *  3. 30 秒 rate-limit が AsyncStorage から復元され UI に表示される
  *  4. (#1038 F7-08) Google ログイン: openAuthSessionAsync の result.url からその場でセッションにする
  *     (iOS の ASWebAuthenticationSession は URL を result.url にだけ返し、Linking には流さない)
+ *  5. ログイン後の振り分け (#1122): admin / super_admin も一般ユーザーと同じ振り分けになり、
+ *     廃止した管理者画面 (/admin) へは行かない
  */
 
 import React from 'react';
@@ -42,10 +44,12 @@ jest.mock('../../src/lib/supabase', () => ({
 // expo-router mock
 const mockReplace = jest.fn();
 const mockBack = jest.fn();
+// ?next= を試すテストだけ差し替える (beforeEach で空に戻す)
+let mockSearchParams: { next?: string } = {};
 jest.mock('expo-router', () => ({
   router: { replace: (...args: any[]) => mockReplace(...args), back: (...args: any[]) => mockBack(...args) },
   Link: ({ children }: { children: React.ReactNode }) => children,
-  useLocalSearchParams: () => ({}),
+  useLocalSearchParams: () => mockSearchParams,
 }));
 
 // expo-linking mock
@@ -93,7 +97,14 @@ import { resetAuthLinkResultsForTests } from '../../src/lib/authLink';
 
 // ---- Helpers ----
 
-function setupSuccessfulLogin() {
+/** user_profiles から返す行 (ログイン後の振り分けに使う列) */
+type ProfileRow = {
+  roles: string[];
+  onboarding_started_at: string | null;
+  onboarding_completed_at: string | null;
+};
+
+function setupSuccessfulLogin(profile: Partial<ProfileRow> = {}) {
   (AsyncStorage.getItem as jest.Mock).mockResolvedValue(null);
   mockSignInWithPassword.mockResolvedValue({ error: null });
   mockGetUser.mockResolvedValue({ data: { user: { id: 'uid-1' } } });
@@ -101,16 +112,31 @@ function setupSuccessfulLogin() {
   const selectMock = jest.fn();
   const eqMock = jest.fn();
   const singleMock = jest.fn().mockResolvedValue({
-    data: { roles: [], onboarding_completed_at: null, onboarding_started_at: null },
+    data: { roles: [], onboarding_completed_at: null, onboarding_started_at: null, ...profile },
   });
   selectMock.mockReturnValue({ eq: eqMock });
   eqMock.mockReturnValue({ single: singleMock });
   mockFrom.mockReturnValue({ select: selectMock });
 }
 
+/** メールとパスワードを入れてログインボタンを押し、ログイン後の振り分け (router.replace) まで待つ */
+async function loginAndWaitForRouting() {
+  const { getByPlaceholderText, getAllByText } = render(<LoginScreen />);
+  fireEvent.changeText(getByPlaceholderText('email@example.com'), 'user@example.com');
+  fireEvent.changeText(getByPlaceholderText('パスワード'), 'password123');
+  // "ログイン" appears as title + button; press the last occurrence (button)
+  const loginEls = getAllByText('ログイン');
+  fireEvent.press(loginEls[loginEls.length - 1]);
+
+  await waitFor(() => {
+    expect(mockReplace).toHaveBeenCalled();
+  });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   resetAuthLinkResultsForTests();
+  mockSearchParams = {};
   // Re-apply spy since clearAllMocks resets mock implementations
   jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   (AsyncStorage.getItem as jest.Mock).mockResolvedValue(null);
@@ -220,7 +246,7 @@ describe('LoginScreen — Google ログイン (#1038 F7-08)', () => {
     await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/home'));
   });
 
-  it('4-3. 初回ログイン (オンボーディング未開始) はウェルカムへ、管理者は /admin へ — メール・パスワードのログインと同じ振り分け', async () => {
+  it('4-3. 初回ログイン (オンボーディング未開始) はウェルカムへ、管理者もホームへ (/admin へは行かない) — メール・パスワードのログインと同じ振り分け', async () => {
     setupProfile({ roles: [], onboarding_completed_at: null, onboarding_started_at: null });
     mockOpenAuthSessionAsync.mockResolvedValue({ type: 'success', url: 'homegohan:///auth/verify?code=c1' });
     const api = render(<LoginScreen />);
@@ -232,7 +258,9 @@ describe('LoginScreen — Google ログイン (#1038 F7-08)', () => {
     setupProfile({ roles: ['admin'], onboarding_completed_at: '2026-01-01T00:00:00Z', onboarding_started_at: null });
     mockOpenAuthSessionAsync.mockResolvedValue({ type: 'success', url: 'homegohan:///auth/verify?code=c2' });
     await pressGoogleLogin(api);
-    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/admin'));
+    // #1122: アプリの管理者画面は廃止した。admin も他の人と同じ振り分け (オンボーディング完了済みならホーム)
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/home'));
+    expect(mockReplace).not.toHaveBeenCalledWith('/admin');
   });
 
   it('4-4. コールバックに code も token も無ければ、成功扱いにせずエラーを出す (セッションが無いまま画面遷移しない)', async () => {
@@ -293,5 +321,73 @@ describe('LoginScreen — Google ログイン (#1038 F7-08)', () => {
 
     await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Googleログイン失敗', 'OAuth URL が取得できませんでした。'));
     expect(mockOpenAuthSessionAsync).not.toHaveBeenCalled();
+  });
+});
+
+// ---- 5. ログイン後の振り分け (#1122) ----
+//
+// アプリの管理者画面 ((admin)) は廃止した (運営作業は Web に一本化)。
+// 以前は admin / super_admin ロールのユーザーだけ、ログイン後に router.replace('/admin') で管理者画面へ送っていた。
+// いまは roles を見ず、全員が同じ振り分け (?next= → ホーム / オンボーディング再開 / ウェルカム) になる。
+
+const ROLE_CASES = [
+  { label: '一般ユーザー', roles: ['user'] },
+  { label: 'admin', roles: ['user', 'admin'] },
+  { label: 'super_admin', roles: ['user', 'super_admin'] },
+  { label: 'admin と super_admin の両方', roles: ['user', 'admin', 'super_admin'] },
+];
+
+describe.each(ROLE_CASES)('ログイン後の振り分け: $label', ({ roles }) => {
+  it('オンボーディング完了済みならホームへ。/admin へは行かない', async () => {
+    setupSuccessfulLogin({
+      roles,
+      onboarding_started_at: '2026-01-01T00:00:00Z',
+      onboarding_completed_at: '2026-01-02T00:00:00Z',
+    });
+    await loginAndWaitForRouting();
+
+    expect(mockReplace).toHaveBeenCalledTimes(1);
+    expect(mockReplace).toHaveBeenCalledWith('/(tabs)/home');
+    expect(mockReplace).not.toHaveBeenCalledWith('/admin');
+  });
+
+  it('オンボーディングが途中なら再開ページへ', async () => {
+    setupSuccessfulLogin({ roles, onboarding_started_at: '2026-01-01T00:00:00Z', onboarding_completed_at: null });
+    await loginAndWaitForRouting();
+
+    expect(mockReplace).toHaveBeenCalledTimes(1);
+    expect(mockReplace).toHaveBeenCalledWith('/onboarding/resume');
+  });
+
+  it('オンボーディング未開始ならウェルカムへ', async () => {
+    setupSuccessfulLogin({ roles, onboarding_started_at: null, onboarding_completed_at: null });
+    await loginAndWaitForRouting();
+
+    expect(mockReplace).toHaveBeenCalledTimes(1);
+    expect(mockReplace).toHaveBeenCalledWith('/onboarding/welcome');
+  });
+
+  it('?next= があれば、オンボーディングの状態にかかわらずそのパスへ戻る', async () => {
+    mockSearchParams = { next: '/meals/new' };
+    setupSuccessfulLogin({ roles, onboarding_started_at: null, onboarding_completed_at: null });
+    await loginAndWaitForRouting();
+
+    expect(mockReplace).toHaveBeenCalledTimes(1);
+    expect(mockReplace).toHaveBeenCalledWith('/meals/new');
+  });
+});
+
+describe('ログイン後の振り分け: ?next= の安全確認', () => {
+  it('/ で始まらない next (外部 URL など) は無視して、通常の振り分けにする', async () => {
+    mockSearchParams = { next: 'https://evil.example.com/' };
+    setupSuccessfulLogin({
+      roles: ['user', 'admin'],
+      onboarding_started_at: '2026-01-01T00:00:00Z',
+      onboarding_completed_at: '2026-01-02T00:00:00Z',
+    });
+    await loginAndWaitForRouting();
+
+    expect(mockReplace).toHaveBeenCalledTimes(1);
+    expect(mockReplace).toHaveBeenCalledWith('/(tabs)/home');
   });
 });
