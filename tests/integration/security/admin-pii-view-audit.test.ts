@@ -267,17 +267,17 @@ describe('#1200 チケットとサポート画面のユーザー詳細の閲覧'
     expect(JSON.stringify(rows[0].details)).not.toContain(SECRET_BODY);
   });
 
-  it('サポート画面のユーザー詳細: 返したときに記録する (自分自身の詳細で確認)', async () => {
-    // GET /api/support/users/[id] は user_profiles を本人の権限 (RLS: 自分の行のみ) で読むため、
-    // 現状は自分自身の id でだけ 200 になる。他人の id が読めない件は本 Issue の対象外。
-    const res = await call('GET', `/api/support/users/${support.id}`, support.jwt, { headers: viewHeaders });
+  it('サポート画面のユーザー詳細: 返したときに、閲覧された本人 (他のユーザー) を target にして記録する', async () => {
+    // #1161: 認可の後に service_role で読むようにしたので、サポート担当が他のユーザーの詳細を開ける
+    // (以前は user_profiles が RLS で本人の行しか見えず、自分自身の id でだけ 200 になっていた)
+    const res = await call('GET', `/api/support/users/${target.id}`, support.jwt, { headers: viewHeaders });
     expect(res.status).toBe(200);
-    expect(res.body.user.id).toBe(support.id);
+    expect(res.body.user.id).toBe(target.id);
 
     const rows = await auditRows({ actorId: support.id, actionType: 'admin.user.view_support' });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      target_id: support.id,
+      target_id: target.id,
       target_type: 'user',
       severity: 'info',
       ip_address: '203.0.113.7',
@@ -292,16 +292,16 @@ describe('#1200 チケットとサポート画面のユーザー詳細の閲覧'
 
 describe('#1200 ノート追加の監査 (旧実装は存在しない列 admin_id に書いて黙って失敗していた)', () => {
   it('POST で追加すると、actor_id で admin.user.note_add が保存される', async () => {
-    // POST /api/support/users/[id]/notes は対象の存在確認を本人の権限 (user_profiles は RLS で自分の行のみ)
-    // で行うため、現状は自分自身の id でだけ 200 になる。他人の id が 404 になる件は本 Issue の対象外。
-    const res = await call('POST', `/api/support/users/${support.id}/notes`, support.jwt, {
+    // #1161: 対象の存在確認を認可の後に service_role で行うようにしたので、他のユーザーにもノートを書ける
+    // (以前は user_profiles が RLS で本人の行しか見えず、自分自身の id でだけ 200、他人の id は 404 だった)
+    const res = await call('POST', `/api/support/users/${target.id}/notes`, support.jwt, {
       body: { note: `追加するノート ${TS}` },
       headers: viewHeaders,
     });
     expect(res.status).toBe(200);
     const noteId = res.body.note.id as string;
 
-    const rows = await auditRows({ actorId: support.id, actionType: 'admin.user.note_add', targetId: support.id });
+    const rows = await auditRows({ actorId: support.id, actionType: 'admin.user.note_add', targetId: target.id });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       actor_id: support.id,
