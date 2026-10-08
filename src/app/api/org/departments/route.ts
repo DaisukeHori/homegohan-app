@@ -1,6 +1,6 @@
 /**
  * GET/POST/PUT/DELETE /api/org/departments — 部署管理 API
- * 所属組織の org_role が owner / admin のユーザーのみ (#1235)
+ * 所属組織の org_role が owner / admin のユーザーのみ (#1235)。判定は共通の requireOrgAdmin() (#1161)
  *
  * #1235 第2段 (設計 v2 §3.3.1):
  *  - 参照テーブルを実在する departments に修正 (organization_departments は存在しない)
@@ -13,7 +13,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { isOrgAdmin } from '@/lib/auth/org-admin';
+import { requireOrgAdmin } from '@/lib/auth/helpers';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { readJsonBody } from '@/lib/http-params';
 
 const MAX_NAME_LENGTH = 100;
 const DEPARTMENT_COLUMNS = 'id, name, parent_id, manager_id, display_order, created_at';
@@ -27,32 +29,23 @@ interface DepartmentRow {
   created_at: string | null;
 }
 
-async function requireOrgAdmin() {
-  const supabase = await createClient();
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) {
-    throw new AuthError('AUTH_UNAUTHENTICATED');
-  }
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('organization_id, org_role')
-    .eq('id', user.id)
-    .single();
-  if (!isOrgAdmin(profile)) {
-    throw new ForbiddenError('PERM_DENIED', 'owner/admin role required');
-  }
-  return { user, profile };
+/**
+ * 500 の本文は汎用メッセージだけにする (#1172: Supabase / Postgres の生のエラー文を返さない)。
+ * 詳細は db-logger (app_logs) にだけ残す。
+ */
+function internalError(method: string, message: string, err: unknown) {
+  createLogger(`${method} /api/org/departments`, generateRequestId()).error(message, err);
+  return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } }, { status: 500 });
 }
 
-function handleError(err: unknown) {
+function handleError(method: string, err: unknown) {
   if (err instanceof AuthError) {
     return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
   }
   if (err instanceof ForbiddenError) {
     return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
   }
-  const message = err instanceof Error ? err.message : 'Unknown error';
-  return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+  return internalError(method, '部署 API の処理に失敗しました', err);
 }
 
 function toDto(row: DepartmentRow, memberCount: number) {
@@ -96,6 +89,13 @@ async function fetchMemberCounts(organizationId: string): Promise<Map<string, nu
   return counts;
 }
 
+function invalidJsonResponse() {
+  return NextResponse.json(
+    { error: { code: 'INVALID_JSON', message: 'リクエストボディが不正です' } },
+    { status: 400 },
+  );
+}
+
 export async function GET() {
   try {
     const { profile } = await requireOrgAdmin();
@@ -107,21 +107,23 @@ export async function GET() {
       .order('display_order', { ascending: true })
       .order('created_at', { ascending: true });
     if (error) {
-      return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
+      return internalError('GET', '部署一覧の取得に失敗しました', error);
     }
     const counts = await fetchMemberCounts(profile.organization_id);
     const departments = ((data ?? []) as DepartmentRow[]).map((row) => toDto(row, counts.get(row.id) ?? 0));
     return NextResponse.json({ departments });
   } catch (err) {
-    return handleError(err);
+    return handleError('GET', err);
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
     const { profile } = await requireOrgAdmin();
-    const body = await request.json();
-    const name = validateName(body?.name);
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return invalidJsonResponse();
+    const body = (parsed.body ?? {}) as { name?: unknown };
+    const name = validateName(body.name);
     if (!name) return invalidNameResponse();
 
     const supabase = await createClient();
@@ -131,23 +133,25 @@ export async function POST(request: NextRequest) {
       .select(DEPARTMENT_COLUMNS)
       .single();
     if (error) {
-      return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
+      return internalError('POST', '部署の作成に失敗しました', error);
     }
     return NextResponse.json({ department: toDto(data as DepartmentRow, 0) }, { status: 201 });
   } catch (err) {
-    return handleError(err);
+    return handleError('POST', err);
   }
 }
 
 export async function PUT(request: NextRequest) {
   try {
     const { profile } = await requireOrgAdmin();
-    const body = await request.json();
-    const id = body?.id;
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return invalidJsonResponse();
+    const body = (parsed.body ?? {}) as { id?: unknown; name?: unknown };
+    const id = body.id;
     if (!id || typeof id !== 'string') {
       return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'id は必須です' } }, { status: 400 });
     }
-    const name = validateName(body?.name);
+    const name = validateName(body.name);
     if (!name) return invalidNameResponse();
 
     const supabase = await createClient();
@@ -159,7 +163,7 @@ export async function PUT(request: NextRequest) {
       .select(DEPARTMENT_COLUMNS)
       .maybeSingle();
     if (error) {
-      return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
+      return internalError('PUT', '部署の更新に失敗しました', error);
     }
     if (!data) {
       return NextResponse.json({ error: { code: 'NOT_FOUND', message: '部署が見つかりません' } }, { status: 404 });
@@ -167,7 +171,7 @@ export async function PUT(request: NextRequest) {
     const counts = await fetchMemberCounts(profile.organization_id);
     return NextResponse.json({ department: toDto(data as DepartmentRow, counts.get(id) ?? 0) });
   } catch (err) {
-    return handleError(err);
+    return handleError('PUT', err);
   }
 }
 
@@ -201,13 +205,13 @@ export async function DELETE(request: NextRequest) {
           { status: 409 },
         );
       }
-      return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
+      return internalError('DELETE', '部署の削除に失敗しました', error);
     }
     if (!data || data.length === 0) {
       return NextResponse.json({ error: { code: 'NOT_FOUND', message: '部署が見つかりません' } }, { status: 404 });
     }
     return NextResponse.json({ success: true });
   } catch (err) {
-    return handleError(err);
+    return handleError('DELETE', err);
   }
 }

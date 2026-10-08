@@ -93,7 +93,7 @@ const DETAIL_SCHEMA: Record<string, unknown> = {
 // ブラウザの事前確認 (OPTIONS) は下の認証で 401 になり、CORS ヘッダーが無いためブラウザ側で止まる。
 export async function handleCatalogImportRequest(req: Request, options: HandlerOptions) {
   // バッチ専用: CRON_SECRET 認証（Firecrawl / LLM コスト保護）
-  const authErr = requireServiceRole(req);
+  const authErr = await requireServiceRole(req);
   if (authErr) {
     return new Response(authErr.body, {
       status: authErr.status,

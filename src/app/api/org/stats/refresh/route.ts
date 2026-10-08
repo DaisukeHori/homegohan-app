@@ -1,7 +1,8 @@
 /**
  * POST /api/org/stats/refresh — 組織ダッシュボードの「Refresh Data」 (#1167)
  * 自分の組織の日次統計 (org_daily_stats) を、今すぐ集計し直す。
- * 権限: 所属組織の org_role が owner / admin のユーザーのみ (#1235)。集計できるのは自分の組織だけ。
+ * 権限: 所属組織の org_role が owner / admin のユーザーのみ (#1235)。判定は共通の requireOrgAdmin() (#1161)。
+ * 集計できるのは自分の組織だけ。
  *
  * 以前は、ブラウザが Edge Function aggregate-org-stats を直接呼んでいた。
  * この関数はバッチ専用 (service role / CRON_SECRET の認証) で、ログイン中の利用者の JWT では 401 になるため、
@@ -15,9 +16,8 @@
  */
 
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { isOrgAdmin } from '@/lib/auth/org-admin';
+import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 
 export const dynamic = 'force-dynamic';
@@ -31,20 +31,8 @@ export async function POST() {
   const logger = createLogger('POST /api/org/stats/refresh', generateRequestId());
 
   try {
-    const supabase = await createClient();
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
-      throw new AuthError('AUTH_UNAUTHENTICATED');
-    }
-
-    const { data: profile } = await supabase
-      .from('user_profiles')
-      .select('organization_id, org_role')
-      .eq('id', user.id)
-      .single();
-    if (!isOrgAdmin(profile)) {
-      throw new ForbiddenError('PERM_DENIED', 'owner/admin role required');
-    }
+    // 未ログインは AuthError (401)、所属組織の owner / admin でなければ ForbiddenError (403)
+    const { user, profile } = await requireOrgAdmin();
 
     const userLogger = logger.withUser(user.id);
     const organizationId = profile.organization_id;

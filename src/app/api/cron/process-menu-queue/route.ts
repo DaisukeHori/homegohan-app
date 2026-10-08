@@ -1,38 +1,15 @@
-import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { requireCronAuth } from '@/lib/cron-auth';
 import { createLogger } from '@/lib/db-logger';
 
 export const runtime = 'edge';
 export const maxDuration = 60; // Vercel Pro: 60s OK
 
-// #1044 (cron timing suggestion): edge runtime では node:crypto の timingSafeEqual が
-// 使えないため、固定長で比較する簡易 constant-time 比較を実装する。
-function timingSafeEqualString(a: string, b: string): boolean {
-  const encoder = new TextEncoder();
-  const aBytes = encoder.encode(a);
-  const bBytes = encoder.encode(b);
-  const maxLength = Math.max(aBytes.length, bBytes.length);
-
-  let diff = aBytes.length ^ bBytes.length;
-  for (let i = 0; i < maxLength; i++) {
-    const x = i < aBytes.length ? aBytes[i] : 0;
-    const y = i < bBytes.length ? bBytes[i] : 0;
-    diff |= x ^ y;
-  }
-  return diff === 0;
-}
-
 export async function GET(req: Request) {
-  // CRON 認証 (Vercel Cron の Authorization header をチェック)
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) {
-    console.error('[cron] CRON_SECRET not set');
-    return NextResponse.json({ error: 'cron_disabled' }, { status: 503 });
-  }
-  const auth = req.headers.get('authorization');
-  if (!auth || !timingSafeEqualString(auth, `Bearer ${cronSecret}`)) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
+  // CRON 認証 (Vercel Cron の Authorization header をチェック)。
+  // #1044: 定数時間の比較、#1196: 入れ替え中の旧シークレット (CRON_SECRET_PREVIOUS) の受け付けは共通ヘルパーに集約
+  const authError = await requireCronAuth(req);
+  if (authError) return authError;
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;

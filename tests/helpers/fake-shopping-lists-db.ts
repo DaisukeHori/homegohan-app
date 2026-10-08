@@ -1,16 +1,18 @@
 /**
- * #1214: shopping_lists / shopping_list_items の挙動を模した、状態を持つ Supabase フェイク。
+ * #1214 / #1312: shopping_lists / shopping_list_items の挙動を模した、状態を持つ Supabase フェイク。
  *
  * 通常のモック (tests/helpers/fake-supabase.ts) は「呼び出し順に決め打ちの結果を返す」だけなので、
- * 次の 2 点を検出できない。
+ * 次の点を検出できない。
  *   1. INSERT ペイロードの列が実テーブルと合っていないこと
  *      (shopping_lists に name 列は無く、start_date / end_date は NOT NULL で既定値が無い)
  *   2. 部分ユニーク索引 idx_shopping_lists_active_unique (user_id) WHERE status = 'active' による 23505
- * このフェイクは本番スキーマ (supabase/baseline/prod_schema.sql) の列定義とこの索引を再現し、
+ *   3. DB 関数 get_or_create_active_shopping_list (#1312) の引数名・本人確認・「あれば返す / 無ければ作る」
+ * このフェイクは本番スキーマ (supabase/baseline/prod_schema.sql) の列定義とこの索引、上の DB 関数の振る舞いを再現し、
  * PostgREST と同じ形のエラー ({ code, message, details, hint }) を返す。
  *
- * 検証できないもの: RLS、型の厳密なチェック、同時実行の「本物の」並行性。
- * それらはローカル Supabase を使う結合テスト (tests/integration/security/shopping-list-add-recipe.test.ts) で確認する。
+ * 検証できないもの: RLS、型の厳密なチェック、同時実行の「本物の」並行性 (DB 関数のロック)。
+ * それらはローカル Supabase を使う結合テスト
+ * (tests/integration/security/shopping-list-active-lock.test.ts、shopping-list-add-recipe.test.ts) で確認する。
  */
 import { vi } from 'vitest';
 
@@ -49,11 +51,12 @@ export type ShoppingListItemRow = {
 };
 
 type TableName = 'shopping_lists' | 'shopping_list_items';
-type Operation = 'select' | 'insert';
+type Operation = 'select' | 'insert' | 'rpc';
 type Row = Record<string, unknown>;
 type Result = { data: unknown; error: PgError | null };
 
 export interface RecordedCall {
+  /** テーブル名。RPC のときは 'rpc:<関数名>' */
   table: string;
   op: Operation;
   payload: unknown;
@@ -91,21 +94,26 @@ function isTable(name: string): name is TableName {
   return name === 'shopping_lists' || name === 'shopping_list_items';
 }
 
+/** 本物の DB 関数 public.get_or_create_active_shopping_list の引数名 (PostgREST は引数名の集合で関数を探す) */
+const GET_OR_CREATE_ARGS = ['p_end_date', 'p_start_date', 'p_title', 'p_user_id'] as const;
+
 export interface FakeShoppingListsDb {
   /** supabase クライアントの代わりに渡す */
   supabase: {
     from: ReturnType<typeof vi.fn>;
+    rpc: ReturnType<typeof vi.fn>;
     auth: { getUser: ReturnType<typeof vi.fn> };
   };
   lists: ShoppingListRow[];
   items: ShoppingListItemRow[];
-  /** 実行された SELECT / INSERT の記録 (実行順) */
+  /** 実行された SELECT / INSERT / RPC の記録 (実行順) */
   calls: RecordedCall[];
-  /** アクティブな買い物リストを直接作る (別リクエストが先に作った状況・既存ユーザーの再現) */
+  /** アクティブな買い物リストを直接作る (既存ユーザー・他のユーザーのリストの再現) */
   seedActiveList(userId: string, overrides?: Partial<ShoppingListRow>): ShoppingListRow;
-  /** 次に shopping_lists への INSERT が適用される直前に実行するフック (別リクエストが先にコミットした状況の再現) */
-  beforeNextListInsert(hook: () => void): void;
-  /** 指定テーブル・操作の次の count 回を、実行せずに指定のエラーで失敗させる */
+  /**
+   * 指定テーブル・操作の次の count 回を、実行せずに指定のエラーで失敗させる。
+   * ('shopping_lists', 'select' / 'insert') は、DB 関数 get_or_create_active_shopping_list の中の SELECT / INSERT の失敗も表す。
+   */
   failNext(table: TableName, op: Operation, error: PgError, count?: number): void;
 }
 
@@ -113,7 +121,6 @@ export function createFakeShoppingListsDb(userId = 'user-1'): FakeShoppingListsD
   const tables: Record<TableName, Row[]> = { shopping_lists: [], shopping_list_items: [] };
   const calls: RecordedCall[] = [];
   const injected: Array<{ table: TableName; op: Operation; error: PgError; remaining: number }> = [];
-  const listInsertHooks: Array<() => void> = [];
 
   function takeInjected(table: TableName, op: Operation): PgError | null {
     const entry = injected.find((e) => e.table === table && e.op === op && e.remaining > 0);
@@ -313,11 +320,6 @@ export function createFakeShoppingListsDb(userId = 'user-1'): FakeShoppingListsD
     private execute(): Result {
       calls.push({ table: this.table, op: this.op, payload: this.payload, filters: [...this.filters] });
 
-      if (this.op === 'insert' && this.table === 'shopping_lists') {
-        // 別リクエストが先にコミットした状況を、この INSERT が適用される直前に再現する
-        listInsertHooks.shift()?.();
-      }
-
       const failure = takeInjected(this.table, this.op);
       if (failure) return { data: null, error: failure };
 
@@ -337,18 +339,77 @@ export function createFakeShoppingListsDb(userId = 'user-1'): FakeShoppingListsD
     return new FakeQuery(table);
   });
 
+  /**
+   * DB 関数 public.get_or_create_active_shopping_list の振る舞い (#1312)。
+   * 本物は 1 トランザクションの中で、ユーザーごとの排他ロックを取って「あれば返す / 無ければ作る」を行う。
+   * フェイクは JS の単一スレッドで 1 回の呼び出しを丸ごと実行するので、同じ性質 (同時に呼んでも 1 つだけ作られる) を満たす。
+   * 本物の関数が検証するものを、同じエラーコードで再現する。
+   *   - 引数名の集合が合わない: PostgREST は関数を見つけられず PGRST202
+   *   - p_user_id が呼び出した本人 (userId) でない: 42501 FORBIDDEN
+   *   - p_start_date / p_end_date が無い: 22023
+   */
+  function executeRpc(name: string, args: Row): Result {
+    const argNames = Object.keys(args).sort();
+    if (name !== 'get_or_create_active_shopping_list' || argNames.join(',') !== GET_OR_CREATE_ARGS.join(',')) {
+      return {
+        data: null,
+        error: pgError(
+          'PGRST202',
+          `Could not find the function public.${name}(${argNames.join(', ')}) in the schema cache`,
+        ),
+      };
+    }
+    if (args.p_user_id !== userId) return { data: null, error: pgError('42501', 'FORBIDDEN') };
+    if (args.p_start_date == null || args.p_end_date == null) {
+      return {
+        data: null,
+        error: pgError(
+          '22023',
+          'get_or_create_active_shopping_list: p_start_date and p_end_date are required',
+        ),
+      };
+    }
+
+    const selectFailure = takeInjected('shopping_lists', 'select');
+    if (selectFailure) return { data: null, error: selectFailure };
+    const existing = tables.shopping_lists.find(
+      (row) => row.user_id === args.p_user_id && row.status === 'active',
+    );
+    if (existing) return { data: existing.id, error: null };
+
+    const insertFailure = takeInjected('shopping_lists', 'insert');
+    if (insertFailure) return { data: null, error: insertFailure };
+    const created = runInsert(
+      'shopping_lists',
+      {
+        user_id: args.p_user_id,
+        title: args.p_title,
+        start_date: args.p_start_date,
+        end_date: args.p_end_date,
+        status: 'active',
+      },
+      'single',
+      'id',
+    );
+    if (created.error) return created;
+    return { data: (created.data as { id: string }).id, error: null };
+  }
+
+  const rpc = vi.fn(async (name: string, args: Row = {}): Promise<Result> => {
+    calls.push({ table: `rpc:${name}`, op: 'rpc', payload: args, filters: [] });
+    return executeRpc(name, args);
+  });
+
   return {
     supabase: {
       from,
+      rpc,
       auth: { getUser: vi.fn(async () => ({ data: { user: { id: userId } }, error: null })) },
     },
     lists: tables.shopping_lists as unknown as ShoppingListRow[],
     items: tables.shopping_list_items as unknown as ShoppingListItemRow[],
     calls,
     seedActiveList,
-    beforeNextListInsert(hook) {
-      listInsertHooks.push(hook);
-    },
     failNext(table, op, error, count = 1) {
       injected.push({ table, op, error, remaining: count });
     },
