@@ -72,7 +72,8 @@ CREATE TABLE subscription_plans (
   currency                VARCHAR(3) NOT NULL DEFAULT 'JPY',
   -- Stripe 連携
   stripe_product_id       VARCHAR(255),   -- Stripe Product object ID
-  stripe_price_id         VARCHAR(255),   -- 現在有効な Stripe Price ID
+  stripe_price_id         VARCHAR(255),   -- 月額の現在有効な Stripe Price ID (#1102 で「月額」と決めた)
+  stripe_yearly_price_id  VARCHAR(255),   -- 年額の現在有効な Stripe Price ID (#1102 で追加。migration 20261008190000)
   -- 上限値
   max_members             INT,            -- 家族最大人数、組織最大 seat 数
   max_family_seats        INT,            -- 組織プランの家族同梱 seat 数
@@ -200,11 +201,13 @@ CREATE TABLE plan_price_history (
   new_monthly_price_jpy INT,
   old_yearly_price_jpy  INT,
   new_yearly_price_jpy  INT,
-  old_stripe_price_id   VARCHAR(255),
+  old_stripe_price_id   VARCHAR(255),   -- 月額の Stripe Price ID (subscription_plans.stripe_price_id と同じ意味。年額の Price ID は admin_audit_logs.details に残す。#1102)
   new_stripe_price_id   VARCHAR(255),
   changed_by            UUID NOT NULL REFERENCES auth.users(id),
   reason                TEXT,
   effective_at          TIMESTAMPTZ NOT NULL,
+  -- 価格変更 API が書くのは 'new_only' だけ (#1102。オーナー判断 2026-10-08: 価格変更は新規契約のみ)。
+  -- CHECK は旧値 (on_renewal / immediately) を許したまま (過去の行を読めるように)
   applies_to            VARCHAR(30) NOT NULL
     CHECK (applies_to IN ('new_only', 'on_renewal', 'immediately')),
   affected_subscription_count INT,
@@ -1440,10 +1443,10 @@ sequenceDiagram
   API->>DB: SELECT personal_subscriptions COUNT (影響シミュレーション)
   DB-->>API: affected_count
   API-->>SA: 影響シミュレーション結果
-  SA->>API: 確定 (applies_to='on_renewal')
-  API->>Stripe: prices.create(new_price)
-  Stripe-->>API: new_stripe_price_id
-  API->>DB: UPDATE subscription_plans SET stripe_price_id, monthly_price_jpy
+  SA->>API: 確定 (applies_to='new_only'。#1102: 価格変更は新規契約のみ)
+  API->>Stripe: prices.create(new_price) (変えた月額 / 年額それぞれ。旧 Price は同じ interval のものだけ無効化)
+  Stripe-->>API: new_stripe_price_id (月額) / new_stripe_yearly_price_id (年額)
+  API->>DB: UPDATE subscription_plans SET stripe_price_id (月額) / stripe_yearly_price_id (年額), monthly_price_jpy / yearly_price_jpy
   API->>DB: INSERT plan_price_history
   API->>DB: INSERT admin_audit_logs (actor_id WITH CHECK)
   API-->>SA: 200 OK
