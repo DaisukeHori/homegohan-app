@@ -520,6 +520,58 @@ MRR 時系列
 
 ---
 
+### GET /api/admin/inquiries
+問い合わせ (`/api/contact` が `inquiries` に保存したもの。チケットとは別物) の一覧 (#1121)
+
+**クエリ**: `?status=pending|in_progress|resolved|closed&limit=1〜100(既定50)&page=1〜(既定1)`
+(`limit` / `page` は `clampIntParam` で丸める。`status` が上の 4 値以外なら 400)
+
+**レスポンス**: `{ "inquiries": [InquirySummary], "total": 120, "page": 1, "limit": 50 }`
+(新しい順。範囲外のページは `inquiries: []` / `total: null`。DB の読み込みに失敗したときは空配列ではなく 500)
+
+> 既存の Web (`/support/inquiries`) とモバイルの問い合わせ画面がこの形 (camelCase、`{ data, meta }` ではない) で読むため、
+> この API だけは §3.2 の標準形ではなく画面側の形に合わせている。
+
+一覧は **概要だけ** を返す。問い合わせ本文 (`message`) と管理者メモ (`adminNotes`) は詳細でだけ返し、詳細を返すときに閲覧を監査ログへ記録する (#1200)。
+
+```json
+{
+  "id": "uuid", "userId": "uuid|null", "userName": "ニックネーム|null",
+  "inquiryType": "general|support|bug|feature", "email": "...", "subject": "...",
+  "status": "pending|in_progress|resolved|closed",
+  "createdAt": "...", "updatedAt": "...", "resolvedAt": "...|null"
+}
+```
+
+`userName` は `user_profiles.nickname` (RLS では本人の行しか読めないため、`requireRole` 通過後に service_role で解決)。
+ゲストの問い合わせ、または解決できなかったときは `null` で、画面は `email` を表示する。
+
+**権限**: `support`, `admin`, `super_admin` (未ログインは 401、それ以外のロールと凍結中は 403)
+
+---
+
+### GET /api/admin/inquiries/{id}
+問い合わせ詳細。レスポンスは `{ "inquiry": InquiryDetail }` (= InquirySummary + `message` + `adminNotes`)。
+`id` が UUID でなければ 400、無ければ 404、DB の読み込みに失敗したときは 500 (404 にしない)。
+
+返すたびに `admin.inquiry.view` を `admin_audit_logs` へ記録する (記録のルールは 07-audit-monitoring.md §4.1.1)。
+
+---
+
+### PATCH /api/admin/inquiries/{id} (PUT も同じ処理)
+ステータス・管理者メモの更新。Web は PUT、モバイルは PATCH で同じボディを送る。
+
+**リクエスト**: `{ "status": "resolved", "adminNotes": "回答済み" }` (どちらか一方だけでもよい。両方無いと 400。メモは空文字か `null` で消える。最大 5000 文字)
+
+- `resolved_at` は API が決める: `resolved` / `closed` になるとき現在時刻 (解決済みから `closed` へは最初の時刻を保つ)、`pending` / `in_progress` に戻すと `null`
+- 書き込む列は `status` / `admin_notes` / `resolved_at` だけ。本文・メールアドレス・問い合わせ者などがボディに入っていても無視する。変更が無いときは書き込まない (`updated_at` を動かさない)
+- レスポンスは更新後の `{ "inquiry": InquiryDetail }`
+- 更新後の問い合わせ (本文を含む) を返すので、変更が無い更新を含めて毎回 `admin.inquiry.update` を記録する
+
+エラーコードは `VALIDATION_ERROR` / `INVALID_JSON` (400)、`AUTH_UNAUTHENTICATED` (401)、`OP_PERMISSION_DENIED` (403)、`NOT_FOUND` (404)、`INTERNAL_ERROR` (500)。
+
+---
+
 ## 11. 通知配信 API
 
 ### GET /api/admin/notifications/campaigns
