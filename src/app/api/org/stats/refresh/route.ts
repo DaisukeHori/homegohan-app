@@ -1,18 +1,14 @@
 /**
- * POST /api/org/stats/refresh — 組織ダッシュボードの「Refresh Data」 (#1167)
- * 自分の組織の日次統計 (org_daily_stats) を、今すぐ集計し直す。
- * 権限: 所属組織の org_role が owner / admin のユーザーのみ (#1235)。判定は共通の requireOrgAdmin() (#1161)。
- * 集計できるのは自分の組織だけ。
+ * POST /api/org/stats/refresh — 組織統計の再集計 (停止中。常に 410)
  *
- * 以前は、ブラウザが Edge Function aggregate-org-stats を直接呼んでいた。
- * この関数はバッチ専用 (service role / CRON_SECRET の認証) で、ログイン中の利用者の JWT では 401 になるため、
- * ボタンは押しても常に失敗していた。かといって、ブラウザから呼べるように関数へ CORS を開けるのは危険なので、
- * ここで権限を確認したあと、サーバーから service role key を付けて呼ぶ。
+ * オーナー判断 (#1325): 組織の統計の集計は「止める」。組織ダッシュボードの「Refresh Data」ボタンは取り除いた。
+ * このルートは、古い画面 (ボタンがまだ残っている、開きっぱなしのタブなど) から呼ばれたときに
+ * 「停止している」とはっきり答えるために残している。集計はしない。
  *
- * 集計する組織は、リクエストの内容ではなく、確認済みのプロフィールの organization_id だけを使う
- * (リクエストに組織 ID を載せても無視する。他の組織を集計させられないように)。
- * 集計する日付も送らず、Edge Function の既定 (JST の今日。#1210) に任せる。
- * ブラウザの時計や、UTC の暦日 (JST の早朝は前日になる) には頼らない。
+ * 認可は停止前と同じ (#1167 / #1235)。未ログインは 401、所属組織の owner / admin 以外は 403。
+ * 共通の requireOrgAdmin() (#1161) を通ったあとに 410 を返す。
+ * Edge Function aggregate-org-stats は呼ばない (関数も 410 を返すだけで、何も集計しない)。
+ * 集計を再開するには、新しいオーナー判断が要る。
  */
 
 import { NextResponse } from 'next/server';
@@ -21,86 +17,18 @@ import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 
 export const dynamic = 'force-dynamic';
-// 下の待ち時間の上限 (25 秒) より先に、Vercel の実行時間の上限で打ち切られないようにする
-export const maxDuration = 30;
-
-// Edge Function の応答を待つ上限 (ミリ秒)。1 組織分の集計なので通常は数秒で終わる
-const EDGE_FUNCTION_TIMEOUT_MS = 25_000;
 
 export async function POST() {
   const logger = createLogger('POST /api/org/stats/refresh', generateRequestId());
 
   try {
     // 未ログインは AuthError (401)、所属組織の owner / admin でなければ ForbiddenError (403)
-    const { user, profile } = await requireOrgAdmin();
+    await requireOrgAdmin();
 
-    const userLogger = logger.withUser(user.id);
-    const organizationId = profile.organization_id;
-
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!supabaseUrl || !serviceRoleKey) {
-      // 呼び出せないのに成功を装わず、明示的にサービス利用不可を返す (fail-closed)
-      userLogger.error(
-        '組織統計を更新できません (Supabase の接続情報が不足しています)',
-        new Error('Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY'),
-        { organizationId },
-      );
-      return NextResponse.json(
-        {
-          error: {
-            code: 'ORG_STATS_REFRESH_UNAVAILABLE',
-            message: '統計の更新サービスが設定されていません',
-          },
-        },
-        { status: 503 },
-      );
-    }
-
-    let edgeRes: Response;
-    try {
-      edgeRes = await fetch(`${supabaseUrl}/functions/v1/aggregate-org-stats`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${serviceRoleKey}`,
-        },
-        body: JSON.stringify({ organizationId }),
-        signal: AbortSignal.timeout(EDGE_FUNCTION_TIMEOUT_MS),
-      });
-    } catch (fetchErr) {
-      userLogger.error('aggregate-org-stats の呼び出しに失敗しました', fetchErr, { organizationId });
-      return NextResponse.json(
-        {
-          error: {
-            code: 'ORG_STATS_REFRESH_FAILED',
-            message: '統計の更新に失敗しました。しばらくしてからもう一度お試しください',
-          },
-        },
-        { status: 502 },
-      );
-    }
-
-    if (!edgeRes.ok) {
-      // 関数のエラー文 (DB の内部情報を含みうる) はクライアントへ返さず、ログにだけ残す
-      const detail = await edgeRes.text().catch(() => '');
-      userLogger.error(
-        'aggregate-org-stats がエラーを返しました',
-        new Error(`HTTP ${edgeRes.status}`),
-        { organizationId, status: edgeRes.status, detail: detail.slice(0, 500) },
-      );
-      return NextResponse.json(
-        {
-          error: {
-            code: 'ORG_STATS_REFRESH_FAILED',
-            message: '統計の更新に失敗しました。しばらくしてからもう一度お試しください',
-          },
-        },
-        { status: 502 },
-      );
-    }
-
-    return NextResponse.json({ ok: true });
+    return NextResponse.json(
+      { error: { code: 'DISABLED', message: '組織の集計は停止しています' } },
+      { status: 410 },
+    );
   } catch (err) {
     if (err instanceof AuthError) {
       return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
@@ -108,7 +36,7 @@ export async function POST() {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    logger.error('組織統計の更新で予期しないエラーが発生しました', err);
+    logger.error('組織統計の再集計の認可で予期しないエラーが発生しました', err);
     return NextResponse.json(
       { error: { code: 'INTERNAL_ERROR', message: '統計の更新に失敗しました' } },
       { status: 500 },

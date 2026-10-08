@@ -81,7 +81,9 @@ jobs:
           done
           curl -s -o /dev/null -w 'GET /login -> %{http_code}\n' http://localhost:3000/login
 
-      - name: Run Playwright tests (MVP, AI を使わないもの)
+      # public-policy-pages は未ログインで動く (AI も使わない)。利用規約・プライバシーポリシーが
+      # ログイン画面へ飛ばされず読めること (#1174) を、PR のコードの本番ビルドで確かめる。
+      - name: Run Playwright tests (MVP, AI を使わないもの + 未ログインで読める公開ページ)
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:3000
           E2E_USER_EMAIL: e2e-user-01@homegohan.test
@@ -92,6 +94,7 @@ jobs:
           tests/e2e/01-login.spec.ts
           tests/e2e/04-menu-page.spec.ts
           tests/e2e/05-shopping-list.spec.ts
+          tests/e2e/public-policy-pages.spec.ts
 
       - name: Show logs on failure
         if: failure()

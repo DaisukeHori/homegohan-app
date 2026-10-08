@@ -14,6 +14,7 @@
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
+import { requireE2eUserCredentials } from "../helpers/credentials";
 
 // ────────────────────────────────────────────────────────
 // 設定
@@ -27,15 +28,15 @@ test.use({
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "https://homegohan-app.vercel.app";
 
-// E2E テスト用アカウント（存在しているはずのアカウント）
-const VALID_EMAIL = process.env.E2E_USER_EMAIL ?? "claude-debug-1777477826@homegohan.local";
-const VALID_PASSWORD = process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!";
+// E2E テスト用アカウント（存在しているはずのアカウント）は、各テストの中で requireE2eUserCredentials() で読む。
+// 認証情報は環境変数 (E2E_USER_EMAIL / E2E_USER_PASSWORD) からだけ取り、リポジトリには既定値を置かない (#1114)。
+// 未設定ならそのテストがエラーで止まる。モジュール直下で読まないのは、
+// 未設定のときに spec の読み込みで投げて、他の spec まで巻き込むため。
 
 // 意図的に不正なクレデンシャル
 const WRONG_PASSWORD = "WrongPassword999!";
 const INVALID_EMAIL = "not-an-email";
 const WEAK_PASSWORD = "123";
-const DUPLICATE_EMAIL = VALID_EMAIL; // 同一アカウントで重複テスト
 
 // スクリーンショット保存先
 const SCREENSHOT_DIR = path.resolve(__dirname, "auth");
@@ -134,10 +135,11 @@ test.describe("Scenario 1: /login フォームバリデーション & 正常ロ�
   });
 
   test("1-3: wrong password → 日本語エラーメッセージが表示される", async ({ page }) => {
+    const { email } = requireE2eUserCredentials();
     const { consoleLogs, networkErrors } = attachMonitors(page);
     await page.goto(`${BASE_URL}/login`);
 
-    await page.locator("#email").fill(VALID_EMAIL);
+    await page.locator("#email").fill(email);
     await page.locator("#password").fill(WRONG_PASSWORD);
     await page.locator('button[type="submit"]').click();
 
@@ -177,11 +179,12 @@ test.describe("Scenario 1: /login フォームバリデーション & 正常ロ�
   });
 
   test("1-4: 正常ログイン → /home にリダイレクト", async ({ page }) => {
+    const { email, password } = requireE2eUserCredentials();
     const { consoleLogs, networkErrors } = attachMonitors(page);
     await page.goto(`${BASE_URL}/login`);
 
-    await page.locator("#email").fill(VALID_EMAIL);
-    await page.locator("#password").fill(VALID_PASSWORD);
+    await page.locator("#email").fill(email);
+    await page.locator("#password").fill(password);
 
     await Promise.all([
       page.waitForURL(
@@ -238,11 +241,12 @@ test.describe("Scenario 2: /signup バリデーション & 重複エラー", () 
   });
 
   test("2-2: 重複メールアドレス → 日本語エラーメッセージが表示される", async ({ page }) => {
+    const { email: duplicateEmail } = requireE2eUserCredentials(); // 同一アカウントで重複テスト
     const { consoleLogs, networkErrors } = attachMonitors(page);
     await page.goto(`${BASE_URL}/signup`);
 
     // 既存アカウントのメールアドレスを使う
-    await page.locator("#email").fill(DUPLICATE_EMAIL);
+    await page.locator("#email").fill(duplicateEmail);
     await page.locator("#password").fill("ValidPassword1!");
     await page.locator('button[type="submit"]').click();
 
@@ -367,10 +371,11 @@ test.describe("Scenario 3: /auth/forgot-password 画面確認", () => {
   });
 
   test("3-3: 有効なメールアドレスを送信 → 成功メッセージが表示される", async ({ page }) => {
+    const { email } = requireE2eUserCredentials();
     const { consoleLogs, networkErrors } = attachMonitors(page);
     await page.goto(`${BASE_URL}/auth/forgot-password`);
 
-    await page.locator('input[type="email"]').fill(VALID_EMAIL);
+    await page.locator('input[type="email"]').fill(email);
     await page.locator('button[type="submit"]').click();
 
     // 「メールを送信しました」の成功メッセージを待つ

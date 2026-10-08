@@ -50,7 +50,6 @@ const KNOWN_MISSING = new Set<string>([
   'src/app/handson-tour/menu/page.tsx|user_profiles.dislikes',
   'src/app/handson-tour/photo/page.tsx|user_profiles.target_kcal_per_day',
   'src/lib/badges/awardBadge.ts|badges.icon_url',
-  'supabase/functions/aggregate-org-stats/index.ts|planned_meals.meal_plan_days',
   'supabase/functions/calculate-segment-stats/index.ts|planned_meals.meal_plan_days',
 ]);
 

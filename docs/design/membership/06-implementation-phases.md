@@ -113,12 +113,22 @@ P0-P7 のタスク分解。各 phase で **並列起動可否** を明示。
 
 ### deliverables
 - `src/components/membership/FamilyViewSwitcher.tsx`
-- `src/components/membership/MealRow.tsx`, `PasteGroupedMealRows.tsx`
-- `src/components/membership/MealActionSheet.tsx`, `PasteTargetModal.tsx`
 - `src/app/(main)/menus/weekly/page.tsx` 修正 (view switcher 配置, mix 表示)
 - `src/app/(main)/settings/membership/page.tsx`
-- API: `/api/meals/paste`, `/api/meals/paste-group/{id}` (bulk update), `PATCH /api/family/members/me/share`
+- API: `/api/meals/paste`, `PATCH /api/family/members/me/share`
 - `useFamilyView` hook (localStorage 永続化)
+
+### #1135 で外したもの・残したもの (2026-10-08 のオーナー判断)
+当初の deliverables にあった次の 2 つは、提供しないことにし、実装も削除した。
+- 取りやめ: paste_group の一括編集 (「全員に反映」)。API `PATCH /api/meals/paste-group/{id}` は、常に 501 を返すだけの未実装スタブで、呼び出す画面もなかったため、ルートごと削除した (03-ui-spec.md §6.3)。
+- 削除: 献立画面に組み込まれず、使われていなかった部品 4 つ (`MealRow.tsx` / `PasteGroupedMealRows.tsx` / `MealActionSheet.tsx` / `PasteTargetModal.tsx`)。
+
+触らずに残したもの。
+- ペースト API (`POST /api/meals/paste`) と RPC `paste_meal_to_family`。これを呼び出す画面は今のところない。ペースト機能そのものを今後どうするかは、別に判断する。
+- `meals.paste_group_id` と `idx_meals_paste_group` (DB は変更しない)。
+
+まだ作っていないもの (2026-10-08 時点)。
+- 献立画面の mix 表示 (03-ui-spec.md §5)。ビューの切り替え (`FamilyViewSwitcher`) は置いてあるが、選んだ内容で食事を絞り込む処理は無い。
 
 ### 検証
 - E2E `09-meal-paste.spec.ts` PASS
