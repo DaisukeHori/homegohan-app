@@ -82,6 +82,15 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 4. 再デプロイする（環境変数は再デプロイで反映される）
 5. 反映の確認: Vercel の関数ログに `[rate-limit] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN が未設定です` という警告が出ていなければ、Upstash が使われている
 
+### 任意の環境変数: Edge Function の CORS（`ALLOWED_ORIGINS`）
+
+これは Vercel の環境変数ではなく、**Supabase の Edge Function の Secret** です（Supabase Dashboard → Edge Functions → Secrets、または `supabase secrets set ALLOWED_ORIGINS=...`）。
+
+- 用途: ブラウザから Edge Function を直接呼ぶときに、呼び出し元として認めるサイトのオリジン（カンマ区切り。`https://` から書き、末尾に `/` を付けない）。
+- 未設定なら `https://homegohan.app` と `https://homegohan-app.vercel.app` だけを認めます。設定すると、この 2 つの代わりに、設定した値だけを認めます。`*` と `null` は書いても無視されます。
+- 普段は設定不要です。このアプリのブラウザやモバイルアプリが Edge Function を直接呼ぶ処理は無く、Next.js の API ルートがサーバーから呼んでいます（サーバーからの呼び出しは CORS の対象外です）。自社の別ドメインのページから直接呼ぶ処理を足すときだけ設定してください。
+- バッチ専用の関数（`aggregate-org-stats` など）には、この設定に関係なく CORS を付けません。
+
 ---
 
 ## 🖥️ ローカル開発環境での設定
