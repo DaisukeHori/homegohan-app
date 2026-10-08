@@ -20,7 +20,8 @@
 //   - 画面は「同意する」「あとで」のどちらを押しても閉じ、Esc は「あとで」。
 //     「同意する」の記録に失敗したときは、画面にメッセージを出して閉じずに待つが、「あとで」はいつでも押せる。
 //   - 「あとで」は同じブラウザで 24 時間、画面を出さない (localStorage)。サーバーには記録しない (拒否の行は作らない)。
-//   - 同意済みの状況は、このページを開いている間は覚えておく。
+//   - 同意済みの状況は、このページを開いている間は覚えておく。サインアウト (clearUserScopedLocalStorage) で捨てる:
+//     同じタブで別の利用者がログインしても、前の利用者の状況を引き継がない (取得の途中だったものも、結果を覚えない)。
 //   - 画面が出ている間に、その画面を使っているページから離れたとき (戻る操作など) は、待っていた操作を再開しない
 //     (同意の確認をしないまま、本人が離れたページの操作を送らないため)。
 //   - 呼び出し側が consentModal を描画し忘れた場合も、操作を止めない: 画面が MODAL_SHOWN_TIMEOUT_MS 以内に表示されなければ、
@@ -33,6 +34,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { AiDataConsentModal } from "@/components/consent/AiDataConsentModal";
 import { fetchAiConsentStatus, postAiConsentGrant } from "@/lib/ai/consent-client";
 import { AI_CONSENT_LATER_SNOOZE_MS, AI_CONSENT_LATER_STORAGE_KEY } from "@/lib/ai/consent-config";
+import { USER_SCOPED_STORAGE_CLEARED_EVENT } from "@/lib/user-storage";
 
 export type AiConsentOutcome = "consented" | "later" | "skipped";
 
@@ -54,23 +56,38 @@ interface KnownStatus {
 let knownStatus: KnownStatus | null = null;
 let unavailableUntil = 0;
 let inflightStatus: Promise<KnownStatus | null> | null = null;
+/** 覚えている状況を捨てるたびに増やす。捨てる前に始めた取得の結果 (前の利用者の結果など) を覚えないための目印 */
+let statusEpoch = 0;
 
 /** テスト用: 共有している状態を初期化する */
 export function resetAiConsentClientStateForTests(): void {
   knownStatus = null;
   unavailableUntil = 0;
   inflightStatus = null;
+  statusEpoch = 0;
 }
 
-/** 設定ページで撤回・同意をしたあとなど、覚えている状況を捨てて、次の操作で取り直させる */
+/**
+ * 覚えている状況を捨てて、次の操作で取り直させる。
+ * 設定ページで撤回・同意をしたあと、サインアウトのとき (別の利用者が同じタブでログインしても、前の利用者の状況を引き継がない)。
+ * 取得の途中だったものは、結果が戻っても覚えない。
+ */
 export function forgetAiConsentStatus(): void {
   knownStatus = null;
   unavailableUntil = 0;
+  inflightStatus = null;
+  statusEpoch += 1;
+}
+
+// サインアウトで利用者別の保存が消されたら、メモリの状況も捨てる (src/lib/user-storage.ts)
+if (typeof window !== "undefined") {
+  window.addEventListener(USER_SCOPED_STORAGE_CLEARED_EVENT, forgetAiConsentStatus);
 }
 
 function loadStatus(): Promise<KnownStatus | null> {
   if (inflightStatus) return inflightStatus;
-  const run = (async () => {
+  const startedEpoch = statusEpoch;
+  const run: Promise<KnownStatus | null> = (async () => {
     // fetchAiConsentStatus は失敗しても例外を投げない作りだが、万一投げても AI の操作を止めない
     let status: Awaited<ReturnType<typeof fetchAiConsentStatus>> = null;
     try {
@@ -78,15 +95,20 @@ function loadStatus(): Promise<KnownStatus | null> {
     } catch {
       status = null;
     }
+    // 取得している間に覚えている状況を捨てられた (サインアウトなど)。結果は待っていた呼び出し元にだけ返し、覚えない
+    const stale = startedEpoch !== statusEpoch;
     if (!status) {
-      unavailableUntil = Date.now() + UNAVAILABLE_BACKOFF_MS;
+      if (!stale) unavailableUntil = Date.now() + UNAVAILABLE_BACKOFF_MS;
       return null;
     }
-    unavailableUntil = 0;
-    knownStatus = { consented: status.consented, fetchedAt: Date.now() };
-    return knownStatus;
+    const known: KnownStatus = { consented: status.consented, fetchedAt: Date.now() };
+    if (!stale) {
+      unavailableUntil = 0;
+      knownStatus = known;
+    }
+    return known;
   })().finally(() => {
-    inflightStatus = null;
+    if (inflightStatus === run) inflightStatus = null;
   });
   inflightStatus = run;
   return run;

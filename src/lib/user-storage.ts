@@ -28,6 +28,13 @@ const USER_SCOPED_KEYS: readonly string[] = [
 ];
 
 /**
+ * 利用者別の localStorage を消したこと (= サインアウト) を知らせる window のイベント。
+ * localStorage に無い、メモリに持っている利用者別の状態 (外国の AI 事業者への提供の同意の状況など、
+ * src/hooks/useAiConsent.tsx) を、同じタブで次にログインする別の利用者へ引き継がないために、持ち主が聞いて捨てる。
+ */
+export const USER_SCOPED_STORAGE_CLEARED_EVENT = 'homegohan:user-scoped-storage-cleared';
+
+/**
  * Removes all user-scoped localStorage keys.
  * Safe to call in a non-browser environment (no-op if `localStorage` is
  * not available, e.g. during SSR).
@@ -37,6 +44,7 @@ export function clearUserScopedLocalStorage(): void {
   for (const key of USER_SCOPED_KEYS) {
     localStorage.removeItem(key);
   }
+  window.dispatchEvent(new Event(USER_SCOPED_STORAGE_CLEARED_EVENT));
 }
 
 /**

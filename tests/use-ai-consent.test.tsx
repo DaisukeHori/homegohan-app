@@ -38,6 +38,7 @@ vi.mock('next/link', async () => {
 });
 
 const { useAiConsent, resetAiConsentClientStateForTests, forgetAiConsentStatus } = await import('@/hooks/useAiConsent');
+const { clearUserScopedLocalStorage } = await import('@/lib/user-storage');
 const { AI_CONSENT_LATER_SNOOZE_MS, AI_CONSENT_LATER_STORAGE_KEY, AI_CONSENT_PROVIDERS, AI_CONSENT_VERSION } = await import(
   '@/lib/ai/consent-config'
 );
@@ -191,6 +192,67 @@ describe('useAiConsent: 同意済みなら何も出さず、待たない', () =>
 
     const pending = startEnsure();
     await flush();
+    expect(modal()).not.toBeNull();
+    expect(pending.settled).toBe(false);
+  });
+});
+
+describe('useAiConsent: サインアウトしたら、別の利用者に状況を引き継がない', () => {
+  it('利用者別の保存を消したら (サインアウト)、覚えていた「同意済み」を捨てる。次の利用者の最初の AI の操作で取り直す', async () => {
+    mocks.fetchStatus.mockResolvedValueOnce(status(true));
+    mount();
+    await flush();
+    await expect(ensure()).resolves.toBe('consented');
+    expect(mocks.fetchStatus).toHaveBeenCalledTimes(1);
+
+    // 同じタブで、別の利用者がログインする (ページは読み込み直さない)
+    clearUserScopedLocalStorage();
+    mocks.fetchStatus.mockResolvedValueOnce(status(false));
+    const pending = startEnsure();
+    await flush();
+
+    expect(mocks.fetchStatus).toHaveBeenCalledTimes(2);
+    expect(modal()).not.toBeNull(); // 次の利用者は未同意なので、画面を出す
+    expect(pending.settled).toBe(false);
+  });
+
+  it('「あとで」の期限も、サインアウトで消える (次の利用者に引き継がない)', async () => {
+    mocks.fetchStatus.mockResolvedValue(status(false));
+    mount();
+    await flush();
+    const first = startEnsure();
+    await flush();
+    await click(byTestId('ai-consent-later'));
+    expect(first.outcome).toBe('later');
+    expect(localStorage.getItem(AI_CONSENT_LATER_STORAGE_KEY)).not.toBeNull();
+
+    clearUserScopedLocalStorage();
+
+    expect(localStorage.getItem(AI_CONSENT_LATER_STORAGE_KEY)).toBeNull();
+    const next = startEnsure();
+    await flush();
+    expect(modal()).not.toBeNull();
+    expect(next.settled).toBe(false);
+  });
+
+  it('サインアウトの前に始めた取得が、サインアウトのあとに戻っても、その結果を覚えない', async () => {
+    let resolveOld!: (value: AiConsentStatus) => void;
+    mocks.fetchStatus.mockReturnValueOnce(new Promise<AiConsentStatus>((resolve) => (resolveOld = resolve)));
+    mount(); // ページを開いたときの先読み (前の利用者の取得。まだ戻らない)
+    await flush();
+    expect(mocks.fetchStatus).toHaveBeenCalledTimes(1);
+
+    clearUserScopedLocalStorage();
+    await act(async () => {
+      resolveOld(status(true)); // 前の利用者の結果が、サインアウトのあとに戻る
+    });
+    await flush();
+
+    mocks.fetchStatus.mockResolvedValueOnce(status(false));
+    const pending = startEnsure();
+    await flush();
+
+    expect(mocks.fetchStatus).toHaveBeenCalledTimes(2); // 前の利用者の結果は覚えていないので取り直す
     expect(modal()).not.toBeNull();
     expect(pending.settled).toBe(false);
   });
