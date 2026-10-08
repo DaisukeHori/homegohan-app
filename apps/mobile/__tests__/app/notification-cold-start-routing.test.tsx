@@ -21,6 +21,8 @@
  *     実行され、app/index.tsx の画面は focus を失っている (focus されていない画面の <Redirect> は replace を呼ばない)
  * 実機では確かめられない部分なので、expo-router を上げたときに壊れたら、このテストで気づけるようにしてある。
  * (このテストが落ちたら、通知で起動したとき、行き先ではなくホームが開く)
+ * 行き先の画面から戻る操作をしたときは、通常の起動と同じホームに戻る (スタックの一番下の app/index.tsx が、
+ * 戻ってきたときにホームへの <Redirect> を呼ぶ) ことも、あわせて確かめる。
  */
 
 import path from 'path';
@@ -36,6 +38,8 @@ const { ExpoRoot } = require('expo-router/build/ExpoRoot');
 const { getMockContext } = require('expo-router/build/testing-library/mock-config');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { store } = require('expo-router/build/global-state/router-store');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { router } = require('expo-router/build/imperative-api');
 
 // ── 通知 ───────────────────────────────────────────────────────────────────
 const mockGetLast = jest.fn();
@@ -196,6 +200,14 @@ describe('通知のタップで起動したときの遷移 (本物の expo-route
 
     expect(pathname()).toBe('/pantry');
     expect(rootStack()).toEqual(['index', 'pantry/index']);
+
+    // 戻る操作で、通常の起動と同じホームに戻る (一番下の index が、ホームへの <Redirect> を持つ)
+    await act(async () => {
+      router.back();
+    });
+    await act(async () => {});
+    await act(async () => {});
+    expect(pathname()).toBe('/home');
   });
 
   it('WebView のタブへの行き先は、ページ指定 (initialPath) つきで開く', async () => {
@@ -209,6 +221,14 @@ describe('通知のタップで起動したときの遷移 (本物の expo-route
     expect(pathname()).toBe('/menus');
     expect(params()).toMatchObject({ initialPath: '/menus/weekly?date=2026-10-08' });
     expect(rootStack()).toEqual(['index', '(tabs)']);
+
+    // 戻る操作で、通常の起動と同じホームに戻る
+    await act(async () => {
+      router.back();
+    });
+    await act(async () => {});
+    await act(async () => {});
+    expect(pathname()).toBe('/home');
   });
 
   it('通知のタップが無い通常の起動では、ホームが開く', async () => {
