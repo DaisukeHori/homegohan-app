@@ -11,7 +11,7 @@
  *      ログインへリダイレクトしたり 401/403 で止めたりしない。
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // ── @supabase/ssr モック (lib/supabase/__tests__/middleware.test.ts と同型) ───
@@ -82,8 +82,15 @@ describe('src/middleware.ts の matcher (#1181)', () => {
 describe('updateSession — 未ログインの /api/health (#1181)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // updateSession は必須の環境変数 (#1182) が無いと変数名つきの例外を投げる。Supabase のクライアントはモックなので値はダミー
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://example.supabase.co');
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'anon-key-for-test');
     mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
     mockGetUser.mockResolvedValue({ data: { user: null }, error: { message: 'Auth session missing!' } });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('ログインへリダイレクトせず、そのまま route に渡す', async () => {

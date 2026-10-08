@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
 import { runConsultationAction } from '@/lib/ai/consultation-action-executor';
@@ -971,6 +972,10 @@ export async function POST(
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
+    // 必須の環境変数は、ユーザーのメッセージを保存する前に確かめる。欠けていれば変数名つきの例外で 500 にする
+    // (保存したあとで気づくと、メッセージだけが残って AI の返答が付かない) (#1182)
+    const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
+
     const openai = getFastLLMClient();
     // セッション所有者確認
     const { data: session } = await supabase
@@ -1029,9 +1034,7 @@ export async function POST(
     const url = new URL(request.url);
     const useStreaming = url.searchParams.get('stream') === 'true';
 
-    // knowledge-gpt（ナレッジベース付きAI）で応答生成
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    // knowledge-gpt（ナレッジベース付きAI）で応答生成 (接続情報は上で取得済み)
 
     // ストリーミングモード
     if (useStreaming) {

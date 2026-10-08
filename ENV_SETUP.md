@@ -2,6 +2,31 @@
 
 このプロジェクトで必要な環境変数の設定方法を説明します。
 
+## 環境変数の検査（`npm run check:env`）
+
+このアプリが読む環境変数が、手元の `.env.local`（と実行中の環境変数）にそろっているかを確かめるコマンドです（#1182）。値は表示せず、変数の名前と、設定されているかどうかだけを出します。
+
+```bash
+npm run check:env                                  # .env.local → .env の順に読む
+npm run check:env -- --file=.env.production.local  # 別の環境の値を書いたファイルを確かめる
+npm run check:env -- --strict                      # 任意の変数の「値の形式の誤り」「組の片方だけの設定」も失敗にする
+```
+
+コマンドは `src/lib/env.ts`（TypeScript）を Node.js の型の除去で直接読み込むため、Node.js 22.18 以上が要ります（このリポジトリの `engines` は `22.x`）。古い Node.js では、その旨を案内して終了コード 2 で止まります。
+
+変数は 2 種類に分かれています。一覧とその説明は `src/lib/env.ts` にあります（コマンドもコードも、同じ一覧を使います）。
+
+| 種類 | 変数 | 足りないとき |
+|---|---|---|
+| **必須** | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | アプリが動きません。コードは、使う場面で「どの変数が足りないか」を書いたエラー（`Missing required environment variable: …`）を出します。コマンドは終了コード 1 |
+| **任意** | メール（`RESEND_API_KEY`）・レート制限（`UPSTASH_REDIS_REST_*`）・課金（`STRIPE_SECRET_KEY`）・AI（`GOOGLE_AI_STUDIO_API_KEY`・`XAI_API_KEY`・`OPENAI_API_KEY`）・`CRON_SECRET`・監視など | アプリは動きますが、その機能が使えなくなったり弱くなったりします。コマンドは「未設定です。…が起きます」と表示するだけです |
+
+- 任意の変数が足りないことで、本番を止めてはいけません。コードは、任意の変数が無いときは例外を投げず、`undefined` を返して、プロセスごとに 1 回だけ警告をログに残します。
+- 下の「必須の環境変数」に載っている `CRON_SECRET` は、「cron（定期処理）を動かすには必要」という意味です。`check:env` では任意に分類しています（無くてもアプリ本体は動き、cron の API が 503 を返すだけのため）。
+- `check:env` は **CI には組み込んでいません**（CI にはシークレットが無く、必須の変数がそろわないため）。デプロイ前や環境を作り直したときに、手元で実行してください。
+- 新しい環境変数を足すときは、`src/lib/env.ts` の一覧に足し（必須にするのは、無いとアプリが動かないものだけ）、`.env.example` にも書いてください（`tests/env-source-scan.test.ts` が確かめます）。コードで `process.env.X!` と書くのは禁止です。
+- モバイルアプリ（`apps/mobile`）の変数は別です。下の「モバイル（Expo）での環境変数」を見てください。`EXPO_PUBLIC_SUPABASE_URL` と `EXPO_PUBLIC_SUPABASE_ANON_KEY` が無いビルドは、開発中は起動時にエラーを出し、リリースビルドでは「アプリの設定が不足しています」という画面を出します（接続先の無いままログイン画面を出し続けません）。
+
 ## 📋 必要な環境変数一覧
 
 ### 必須の環境変数
@@ -170,6 +195,11 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 ### 必須（モバイル）
 - `EXPO_PUBLIC_SUPABASE_URL`
 - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+
+この 2 つはビルドのときに埋め込まれます（EAS Build なら、EAS の環境変数に登録しておく）。入っていないビルドは、次のように動きます（#1182。以前は `https://placeholder.supabase.co` という存在しない接続先でクライアントを作り、ログインなどが原因の分かりにくいエラーで失敗し続けていました）。
+
+- 開発中（`npx expo start`・development ビルド）: アプリの起動時に、足りない変数名を書いたエラー（`[mobile] Missing env: EXPO_PUBLIC_SUPABASE_URL, …`）で止まります。
+- リリースビルド（preview・production）: クラッシュはさせず、「アプリの設定が不足しています」の画面を出し、足りない変数名を端末のログ（`console.error`）に残します。このビルドは配布せず、環境変数を直して作り直してください。
 
 ### オプション（モバイル）
 - `EXPO_PUBLIC_API_BASE_URL` - Next.js API（BFF）を叩く場合（例: `https://homegohan.com`）

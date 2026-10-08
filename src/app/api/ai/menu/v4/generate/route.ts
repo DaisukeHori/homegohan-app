@@ -6,6 +6,7 @@ import { getSeasonalIngredientsForRange } from '@/lib/seasonal-ingredients';
 import { getEventsForRange } from '@/lib/seasonal-events';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
 import type {
   TargetSlot,
   ExistingMenuContext,
@@ -104,8 +105,12 @@ export async function POST(request: Request) {
   const supabase = await createClient();
 
   try {
+    // 必須の環境変数は、DB に書き込む前に確かめる。欠けていれば変数名つきの例外で 500 にする
+    // (書き込んだあとで気づくと、リクエストの行が processing のまま残る) (#1182)
+    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
+
     const body = await request.json().catch(() => ({}));
-    
+
     // 1. Validate targetSlots (required)
     const { valid, slots: validatedTargetSlots, error: slotsError } = validateTargetSlots(body?.targetSlots);
     if (!valid) {
@@ -314,9 +319,6 @@ export async function POST(request: Request) {
     }
 
     // 11. Call Edge Function in background
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-    
     const generator = useV5Direct ? callGenerateMenuV5WithRetry : callGenerateMenuV4WithRetry;
     const targetLabel = useV5Direct ? 'generate-menu-v5' : 'generate-menu-v4';
 

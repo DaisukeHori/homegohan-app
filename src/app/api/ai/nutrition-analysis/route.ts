@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 /**
@@ -366,8 +367,8 @@ export async function POST(request: Request) {
     }
 
     // generate-menu-v4を呼び出す（同期呼び出し）
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    // 必須の環境変数が欠けていれば、リクエストの行を作る前に変数名つきの例外で 500 にする (#1182)
+    const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
 
     // リクエストを作成
     const targetSlots = [{ date: targetDate, mealType: targetMealType, plannedMealId: meal.id }];

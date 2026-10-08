@@ -2,6 +2,8 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { isAuthFlowPath, isPolicyPath, resolveOnboardingRedirect } from '@/lib/onboarding-routing'
 import { isAccountFrozen } from '@/lib/auth/frozen'
+// Edge Runtime (middleware) で動くので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
+import { getSupabaseAnonKey, getSupabaseUrl } from '@/lib/env-required'
 
 // #1030 (round-4 Warning fix): Authorization ヘッダーが Supabase JWT (dot 区切り
 // 3 セグメント) の Bearer トークンかどうかを軽量に判定する。CRON_SECRET のような
@@ -41,8 +43,8 @@ export async function updateSession(request: NextRequest) {
   const authHeader = isJwtBearerHeader(rawAuthHeader) ? rawAuthHeader : null
 
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    getSupabaseUrl(),
+    getSupabaseAnonKey(),
     {
       global: authHeader ? { headers: { Authorization: authHeader } } : undefined,
       cookies: {

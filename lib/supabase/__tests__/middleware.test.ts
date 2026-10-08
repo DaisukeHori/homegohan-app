@@ -9,7 +9,7 @@
  * #1174: 利用規約 (/terms)・プライバシーポリシー (/privacy) は、未ログインでも、
  * ログイン済みのオンボーディング未完了・凍結中でも差し戻さない
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,6 +40,20 @@ vi.mock('@supabase/ssr', () => ({
 }));
 
 import { updateSession } from '../middleware';
+
+// updateSession は必須の環境変数 (#1182) が無いと変数名つきの例外を投げる。
+// このファイルでは Supabase クライアントをモックしているので、値はダミーでよい (テストごとに入れ直す)。
+const TEST_SUPABASE_URL = 'https://example.supabase.co';
+const TEST_SUPABASE_ANON_KEY = 'anon-key-for-test';
+
+beforeEach(() => {
+  vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', TEST_SUPABASE_URL);
+  vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', TEST_SUPABASE_ANON_KEY);
+});
+
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
 
 function apiRequest(path = '/api/pantry', headers?: Record<string, string>) {
   return new NextRequest(new URL(`http://localhost${path}`), { headers });
@@ -622,6 +636,49 @@ describe.each(['/terms', '/privacy'])('updateSession — %s への遷移 (#1174)
 
     expect(res.status).toBe(307);
     expect(res.headers.get('location')).toBe('http://localhost/frozen');
+  });
+});
+
+// #1182: `process.env.X!` では、未設定のとき undefined が Supabase のクライアントに流れ込み、変数名の分からない
+// エラー ("Your project's URL and Key are required...") になっていた。必須の環境変数が無いときは、
+// 変数名つきの MissingEnvError を投げる (認証を素通りさせる fail-open にはしない)。
+describe('updateSession — 必須の環境変数 (#1182)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+  });
+
+  it('設定されていれば、その値をそのまま createServerClient に渡す', async () => {
+    await updateSession(apiRequest());
+
+    expect(mockCreateServerClient).toHaveBeenCalledTimes(1);
+    expect(mockCreateServerClient.mock.calls[0][0]).toBe(TEST_SUPABASE_URL);
+    expect(mockCreateServerClient.mock.calls[0][1]).toBe(TEST_SUPABASE_ANON_KEY);
+  });
+
+  it.each(['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY'])(
+    '%s が未設定なら、変数名つきの MissingEnvError を投げ、Supabase のクライアントを作らない',
+    async (name) => {
+      vi.stubEnv(name, undefined);
+
+      await expect(updateSession(apiRequest())).rejects.toMatchObject({
+        name: 'MissingEnvError',
+        envName: name,
+        message: expect.stringContaining(name),
+      });
+      expect(mockCreateServerClient).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['', '   '])('値が %j (空・空白だけ) でも、未設定として扱う', async (blank) => {
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', blank);
+
+    await expect(updateSession(pageRequest('/home'))).rejects.toMatchObject({
+      name: 'MissingEnvError',
+      envName: 'NEXT_PUBLIC_SUPABASE_URL',
+    });
+    expect(mockCreateServerClient).not.toHaveBeenCalled();
   });
 });
 

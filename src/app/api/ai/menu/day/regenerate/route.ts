@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
@@ -13,6 +14,10 @@ export async function POST(request: Request) {
   const supabase = await createClient();
 
   try {
+    // 必須の環境変数は、DB に書き込む前に確かめる。欠けていれば変数名つきの例外で 500 にする
+    // (書き込んだあとで気づくと、リクエストの行が processing のまま残る) (#1182)
+    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
+
     const { dailyMealId, dayDate, preferences, includeCompleted } = await request.json();
 
     if (!dailyMealId && !dayDate) {
@@ -119,9 +124,6 @@ export async function POST(request: Request) {
     }
 
     // 6. Edge Functionを呼び出し（V5/V4をfeature flagで切り替え）
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
     const generator = useV5 ? callGenerateMenuV5WithRetry : callGenerateMenuV4WithRetry;
     const edgeFunctionPromise = generator({
       supabaseUrl,

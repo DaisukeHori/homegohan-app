@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 import { requireCronAuth } from '@/lib/cron-auth';
 import { createLogger } from '@/lib/db-logger';
+// runtime = 'edge' のルートなので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
+import { getSupabaseServiceConfig } from '@/lib/env-required';
 
 export const runtime = 'edge';
 export const maxDuration = 60; // Vercel Pro: 60s OK
@@ -11,8 +13,8 @@ export async function GET(req: Request) {
   const authError = await requireCronAuth(req);
   if (authError) return authError;
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  // 必須の環境変数が欠けていれば、変数名つきの例外にする (#1182)
+  const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const workerId = crypto.randomUUID();

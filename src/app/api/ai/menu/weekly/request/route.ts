@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { cancelPendingMealImageJobs } from '../../../../../../lib/meal-image-jobs';
 import { createLogger } from '@/lib/db-logger';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
@@ -99,6 +100,10 @@ export async function POST(request: Request) {
   let _startDate: string | undefined;
 
   try {
+    // 必須の環境変数は、既存の献立を消す前・DB に書き込む前に確かめる。欠けていれば変数名つきの例外で 500 にする
+    // (消したあとで気づくと、献立が消えたままリクエストの行が processing のまま残る) (#1182)
+    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
+
     const body = await request.json().catch(() => ({}));
     const startDate = body?.startDate;
     _startDate = startDate;
@@ -232,8 +237,6 @@ export async function POST(request: Request) {
       .eq('id', requestData.id);
 
     // 5. Edge Function generate-menu-v4 をバックグラウンドで呼び出し
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     const generator = useV5Wrapped ? callGenerateMenuV5WithRetry : callGenerateMenuV4WithRetry;
     const targetLabel = useV5Wrapped ? 'generate-menu-v5' : 'generate-menu-v4';
     console.log(`🚀 Calling Edge Function ${targetLabel}...`);
