@@ -1,6 +1,6 @@
 // @vitest-environment node
 //
-// #1306: 集計バッチ (aggregate-org-stats / calculate-segment-stats) の PostgREST の読み書きの部品。
+// #1306: 集計バッチ (calculate-segment-stats) の PostgREST の読み書きの部品。
 // supabase-js をそのまま使うと、(1) 失敗が例外にならず「行が無い」と見分けがつかない、
 // (2) 1 回の応答が 1000 行で黙って打ち切られる、(3) .in() の ids で URL が長くなる、で集計値が黙って狂う。
 
