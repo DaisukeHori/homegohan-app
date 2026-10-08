@@ -64,7 +64,6 @@ const ALLOWLIST: Record<string, number> = {
   'src/app/api/admin/sales/leads/route.ts': 2,
   'src/app/api/admin/support/tickets/[id]/messages/route.ts': 2,
   'src/app/api/admin/support/tickets/route.ts': 2,
-  'src/app/api/admin/users/[id]/impersonate/route.ts': 1,
   'src/app/api/ai/analyze-fridge/route.ts': 1,
   'src/app/api/ai/analyze-health-checkup/route.ts': 1,
   'src/app/api/ai/analyze-meal-photo/route.ts': 1,
@@ -170,7 +169,6 @@ const ALLOWLIST: Record<string, number> = {
   'src/app/api/super-admin/plans/[id]/route.ts': 2,
   'src/app/api/super-admin/plans/route.ts': 2,
   'src/app/api/super-admin/settings/route.ts': 2,
-  'src/app/api/upload/route.ts': 1,
 };
 
 // ─────────────────────────────────────────────
