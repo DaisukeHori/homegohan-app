@@ -8,6 +8,8 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail } from '@/lib/emails/send';
 import { renderForceTransferEmail } from '@/lib/emails/membership/operator-force-transfer';
 import { z } from 'zod';
@@ -32,8 +34,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  const logger = createLogger('POST /api/operator/membership/family/[id]/transfer', generateRequestId());
   try {
-    await requireSuperAdmin();
+    const { userId: operatorId } = await requireSuperAdmin();
     const { id: familyId } = params;
 
     const body = await req.json().catch(() => null);
@@ -45,6 +48,26 @@ export async function POST(
       );
     }
     const { to_user_id, reason } = parsed.data;
+
+    // 通知メール用に、RPC 実行"前"の旧代表者と家族名を控えておく (#1209)。
+    // operator_force_representative_transfer は family_groups.representative_id を新代表者へ
+    // 書き換えてから戻るため、RPC の後に読み直すと「旧代表者」が新代表者自身になってしまう。
+    // その結果、本当の旧代表者に旧オーナー向けの通知が届かず、新代表者宛の「旧オーナー」欄も
+    // 新代表者自身のアドレスになる。
+    // 通知は best-effort (設計 §8) なので、ここで失敗しても譲渡は止めず、後段で通知だけを省く。
+    let preFg: { name: string | null; representative_id: string } | null = null;
+    let preFgError: unknown = null;
+    try {
+      const { data, error } = await getServiceRoleClient()
+        .from('family_groups')
+        .select('name, representative_id')
+        .eq('id', familyId)
+        .maybeSingle();
+      preFg = data;
+      preFgError = error;
+    } catch (err) {
+      preFgError = err;
+    }
 
     const supabase = createClient();
 
@@ -64,30 +87,43 @@ export async function POST(
       return NextResponse.json({ error: { code, message: rpcError.message } }, { status: code === 'FORBIDDEN' ? 403 : 400 });
     }
 
-    // 通知メール (failed silent)
+    // 通知メール (best-effort)。譲渡はすでに完了しているので、失敗しても 200 を返し、ログに残す。
+    // ログには宛先のメールアドレスを残さない。
+    const log = logger.withUser(operatorId);
+    if (!preFg) {
+      // 旧代表者が分からないまま送ると、旧代表者に一般メンバー向けの本文が届いてしまう。
+      // 誤った宛先・本文で送るより、送らずにログへ残す (譲渡自体は完了している)。
+      log.error(
+        '譲渡前の家族情報を取得できなかったため、通知メールを送信しませんでした',
+        preFgError ?? new Error('family_groups の行が見つかりません'),
+        { family_id: familyId, to_user_id },
+      );
+      return NextResponse.json({ data: family });
+    }
+
     try {
       const admin = getServiceRoleClient();
 
-      const { data: members } = await admin
+      const { data: members, error: membersError } = await admin
         .from('family_members')
         .select('user_id')
         .eq('family_id', familyId)
         .eq('status', 'active');
+      // 読めなかったときに「メンバーがいない」と区別がつかず、黙って誰にも送らなくなるのを防ぐ (下の catch で記録する)
+      if (membersError) throw membersError;
 
-      const { data: fg } = await admin
-        .from('family_groups')
-        .select('name, representative_id')
-        .eq('id', familyId)
-        .single();
+      // アカウントを持たない子供は user_id が NULL (通知先にならない)。.in() に null を渡すと uuid として解釈できず失敗する
+      const userIds = (members ?? [])
+        .map((m) => m.user_id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0);
 
-      const userIds = (members ?? []).map((m) => m.user_id);
-      const { data: authUsers } = await admin.auth.admin.listUsers();
-      const emailMap: Record<string, string> = {};
-      for (const u of authUsers?.users ?? []) {
-        if (userIds.includes(u.id) && u.email) {
-          emailMap[u.id] = u.email;
-        }
-      }
+      // 旧代表者・家族名は RPC 実行前に控えた値を使う (RPC 後の representative_id は新代表者)
+      const familyName = preFg.name ?? '';
+      const oldRepId = preFg.representative_id;
+
+      // auth.users のメールアドレス。listUsers() は先頭 50 件しか返さないため、通知先と
+      // 旧・新代表者の分だけを引く (#1204)。取得できなかった人は警告ログに残り、その人には送らない
+      const emailMap = await resolveAuthEmails([...userIds, oldRepId, to_user_id], { admin, logger: log });
 
       const { data: profiles } = await admin
         .from('user_profiles')
@@ -98,14 +134,12 @@ export async function POST(
         nicknameMap[p.id] = p.nickname ?? '';
       }
 
-      const familyName = fg?.name ?? '';
-      const oldRepId = fg?.representative_id ?? null;
-      const newOwnerEmail = emailMap[to_user_id] ?? '';
-      const oldOwnerEmail = oldRepId ? (emailMap[oldRepId] ?? '') : '';
+      const newOwnerEmail = emailMap.get(to_user_id) ?? '';
+      const oldOwnerEmail = oldRepId ? (emailMap.get(oldRepId) ?? '') : '';
 
-      const emailTasks = userIds.map((uid) => {
-        const recipientEmail = emailMap[uid];
-        if (!recipientEmail) return Promise.resolve();
+      const emailTasks = userIds.flatMap((uid) => {
+        const recipientEmail = emailMap.get(uid);
+        if (!recipientEmail) return [];
 
         let role: 'old_owner' | 'new_owner' | 'member' = 'member';
         if (uid === oldRepId) role = 'old_owner';
@@ -121,12 +155,24 @@ export async function POST(
           reason,
           recipient_role: role,
         });
-        return sendEmail(envelope);
+        return [sendEmail(envelope)];
       });
 
-      await Promise.allSettled(emailTasks);
+      const results = await Promise.allSettled(emailTasks);
+      const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (failures.length > 0) {
+        // 個別の送信失敗も握りつぶさず記録する (ログに宛先のメールアドレスは残さない)
+        log.error('通知メールの一部を送信できませんでした', failures[0].reason, {
+          family_id: familyId,
+          to_user_id,
+          failed_count: failures.length,
+        });
+      }
     } catch (emailErr) {
-      console.error('[operator/family/transfer] 通知メール送信失敗 (graceful):', emailErr);
+      log.error('通知メール送信処理に失敗しました (譲渡は完了済み)', emailErr, {
+        family_id: familyId,
+        to_user_id,
+      });
     }
 
     return NextResponse.json({ data: family });

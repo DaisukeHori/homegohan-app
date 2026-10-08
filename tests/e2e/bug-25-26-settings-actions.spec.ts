@@ -25,6 +25,18 @@ test.describe("settings data & privacy actions", () => {
 
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toMatch(/^homegohan-export-.*\.json$/);
+
+    // #1131: 中身はご本人のデータ一式の JSON (形式・打ち切りなし・プロフィールを含む)
+    const stream = await download.createReadStream();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const exported = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+    expect(exported.format).toBe("homegohan-personal-data-export");
+    expect(exported.summary.complete).toBe(true);
+    expect(exported.data.user_profiles).toHaveLength(1);
+    expect(exported.data.user_profiles[0].id).toBe(exported.user_id);
   });
 
   test("trainer share button shows coming-soon alert (not a div)", async ({ tourPendingUser }) => {

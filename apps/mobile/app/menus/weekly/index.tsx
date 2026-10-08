@@ -61,6 +61,7 @@ import { ManualEditModal, type ManualEditMeal } from "../../../src/components/me
 import { useV4MenuGeneration } from "../../../src/hooks/useV4MenuGeneration";
 import { colors, spacing, radius } from "../../../src/theme";
 import { getApi, getApiBaseUrl } from "../../../src/lib/api";
+import { submitImprove, type ImproveMealRequest } from "../../../src/lib/improve-meal";
 import { supabase } from "../../../src/lib/supabase";
 import { useProfile } from "../../../src/providers/ProfileProvider";
 import type { WeekStartDay } from "../../../src/providers/ProfileProvider";
@@ -615,7 +616,7 @@ export default function WeeklyMenuPage() {
   const [pendingIsUltimate, setPendingIsUltimate] = useState(false);
   const [showV4Modal, setShowV4Modal] = useState(false);
 
-  const { isGenerating: isV4Generating, generate: v4Generate } = useV4MenuGeneration({
+  const { generate: v4Generate } = useV4MenuGeneration({
     onGenerationStart: (reqId) => {
       setPendingRequestId(reqId);
       setPendingStatus("processing");
@@ -668,6 +669,8 @@ export default function WeeklyMenuPage() {
   const [showServingsModal, setShowServingsModal] = useState(false);
   const [deleteTargetMeal, setDeleteTargetMeal] = useState<{ id: string; name: string } | null>(null);
   const [showImproveMealModal, setShowImproveMealModal] = useState(false);
+  // 栄養分析 (StatsModal) から改善を開いたときに表示していた AI栄養士の提案。改善の要望として渡す
+  const [improveAdvice, setImproveAdvice] = useState<string | null>(null);
 
   // AddMealSlotModal state
   const [addMealSlotVisible, setAddMealSlotVisible] = useState(false);
@@ -696,6 +699,22 @@ export default function WeeklyMenuPage() {
   // 日別栄養サマリー 3 段階 UX
   const [dayNutritionExpanded, setDayNutritionExpanded] = useState(false);
   const [showNutritionDetailModal, setShowNutritionDetailModal] = useState(false);
+
+  // 「献立を改善」の確定処理 (#1138)。
+  // 改善モーダルは API を直接呼ばず、Web の handleImprove と同じ既存の v4 生成 (POST /api/ai/menu/v4/generate) に
+  // 委譲する。生成を始めると useV4MenuGeneration の onGenerationStart で pendingRequestId が入り、
+  // 進捗カードの表示と完了時の loadData() は、上の Realtime / ポーリングがそのまま行う。
+  // 失敗は例外で改善モーダルに返す (画面全体のエラー表示には出さない)。
+  const handleImprove = useCallback(async (request: ImproveMealRequest) => {
+    await submitImprove({
+      request,
+      today: formatLocalDate(new Date()),
+      isBusy: pendingRequestId !== null,
+      generate: v4Generate,
+    });
+    // 生成を始められた。栄養分析の詳細が開いていれば閉じて、進捗カードが見えるようにする
+    setShowNutritionDetailModal(false);
+  }, [pendingRequestId, v4Generate]);
 
   useEffect(() => {
     const fetchRadarProfile = async () => {
@@ -1338,7 +1357,9 @@ export default function WeeklyMenuPage() {
         mealPlanDays={days}
         weekStartDate={weekStartStr}
         weekEndDate={weekEndStr}
-        isGenerating={isV4Generating}
+        // フックの isGenerating は完了しても false に戻らない (この画面は subscribeToProgress を使わない) ため、
+        // この画面が進捗を追っている生成 (pendingRequestId) の有無で判定する
+        isGenerating={pendingRequestId !== null}
       />
       {/* 月カレンダー展開バー (ScrollView の外で固定) */}
       <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.lg }}>
@@ -2225,7 +2246,8 @@ export default function WeeklyMenuPage() {
       <StatsModal
         visible={activeModal === 'stats'}
         onClose={() => setActiveModal(null)}
-        onOpenImprove={() => {
+        onOpenImprove={(advice) => {
+          setImproveAdvice(advice ?? null);
           setActiveModal(null);
           setShowImproveMealModal(true);
         }}
@@ -2233,7 +2255,6 @@ export default function WeeklyMenuPage() {
         weekRange={{ start: weekStartStr, end: weekEndStr }}
         todayNutrients={todayNutrientsForStats}
         weekNutrients={weekNutrientsForStats}
-        userId={profile?.id ?? ''}
         weekDayLabels={getDayLabels(weekStartDay)}
         todayMeals={todayMealsForStats}
       />
@@ -2252,6 +2273,8 @@ export default function WeeklyMenuPage() {
         visible={showImproveMealModal}
         onClose={() => setShowImproveMealModal(false)}
         selectedDate={selectedDate}
+        advice={improveAdvice}
+        onSubmit={handleImprove}
       />
 
       {/* 栄養分析詳細モーダル (段階 3: フルスクリーン) */}
@@ -2272,6 +2295,7 @@ export default function WeeklyMenuPage() {
               calories: m.calories_kcal,
             })),
           }))}
+          onImprove={handleImprove}
         />
       )}
 

@@ -16,6 +16,24 @@ npx playwright test --ui
 PLAYWRIGHT_BASE_URL=https://homegohan-app.vercel.app npx playwright test
 ```
 
+### dev サーバー (next dev) に対して動かすときの注意
+
+dev サーバーは、プロジェクトの中のファイルが変わると再コンパイルし、その間はページの読み込みが止まる
+(プロジェクトの外にファイルを書いても起きない。#854 で確認)。
+Playwright は、成果物 (動画・スクリーンショットなど) を `tests/e2e/.output/` に、
+ログイン情報の更新を `tests/e2e/.auth/` に書く。どちらもプロジェクトの中なので、書き込みが続くと再コンパイルが重なり、
+テストが「要素が見えない」と待ち切れずに失敗することがある。
+次のどちらかで動かすと安定する。
+
+```bash
+# 成果物の出力先をプロジェクトの外にする (.auth への書き込みによる再コンパイルは残る)
+npx playwright test --output=/tmp/playwright-output tests/e2e/w5-1-onboarding-adversarial.spec.ts
+
+# 本番ビルドに対して動かす (CI の e2e-local.yml と同じ。再コンパイル自体が起きない)
+npm run build && npm run start   # 別ターミナル
+PLAYWRIGHT_BASE_URL=http://localhost:3000 npx playwright test
+```
+
 ## 認証
 
 ログインを伴うテストは `tests/e2e/fixtures/auth.ts` の `authedPage` フィクスチャを使う:
@@ -29,10 +47,10 @@ test("...", async ({ authedPage }) => {
 });
 ```
 
-テストアカウントは環境変数で上書き可:
+共通のテストユーザーは環境変数で渡す。どちらも既定値は無く、未設定だと、ログインに使うところで分かりやすいエラーで止まる:
 
-- `E2E_USER_EMAIL` (default: `claude-debug-1777477826@homegohan.local`)
-- `E2E_USER_PASSWORD` (default: `ClaudeDebug2026!`)
+- `E2E_USER_EMAIL` (例: `e2e-user-01@homegohan.test`)
+- `E2E_USER_PASSWORD`
 
 ### パスワードの扱い
 
@@ -57,11 +75,25 @@ npx --yes tsx@4 scripts/create-e2e-accounts.ts
 テストの中で新しく作るユーザー (`fresh-user`、招待で作るユーザー、signup のテスト) は、
 `tests/e2e/helpers/credentials.ts` の `generateTestPassword()` で、実行ごとにランダムなパスワードを作る。
 
+### コミットしてはいけないもの (#1114)
+
+以前は、本番のデバッグ用アカウントのメールアドレスとパスワードを、環境変数が無いときの既定値として spec に書いていた。
+`tests/e2e/.exploration/` には、そのアカウントでログインしたときのブラウザの通信記録 (HAR) も置いていた。
+HAR にはログイン要求のパスワードやアクセストークンが平文で入る。どちらもリポジトリから消した。
+
+- 特定のアカウントのメールアドレスやパスワードを、環境変数の既定値として spec に書かない。
+  共通のテストユーザーは `tests/e2e/helpers/credentials.ts` の `requireE2eUserCredentials()` で読む (未設定ならエラーで止まる)
+- 通信記録 (`*.har`)、`secrets/` の中身、サービスアカウント鍵 (`*service-account*.json`) はコミットしない。`.gitignore` で除外している
+- 探索 spec で通信記録やトレースを残すときは、gitignore 済みの `tests/e2e/.output/` に出す (`.exploration/` の下には置かない)
+
+`tests/no-committed-credentials.test.ts` (`npm test`) が、リポジトリで管理しているファイルにこれらが残っていないかを調べる。
+一度でも公開した値は、消しても履歴に残る。パスワードの変更やアカウントの削除は別に必要。
+
 ## CI
 
 | ワークフロー | 対象 | テストユーザー |
 |---|---|---|
-| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 を実行 | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
+| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 と、未ログインで読める公開ページの `public-policy-pages.spec.ts` (利用規約・プライバシーポリシー #1174) を実行 | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
 | `.github/workflows/e2e.yml` | 本番 URL。ローカル dev server は起動しない | 本番の `e2e-user-01〜04@homegohan.test`。Secrets `E2E_USER_EMAIL` (= `e2e-user-01@homegohan.test`) / `E2E_USER_PASSWORD` が必要 (未設定ならジョブを最初に止める) |
 
 本番のテストユーザーのパスワードはランダムな値で、Secrets `E2E_USER_PASSWORD` にだけ置く (リポジトリにも `.env.local` の共有にも書かない)。

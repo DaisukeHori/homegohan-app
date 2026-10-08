@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
+import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
 import { ArrowLeft, Camera, Plus, Trash2, RefreshCw, Package, AlertCircle, X, Pencil } from "lucide-react";
 import { PantryItemForm, emptyPantryItemFormValues, type PantryItemFormValues } from "@/components/pantry/PantryItemForm";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
@@ -53,6 +54,8 @@ export default function PantryPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  // #1222: 写真を選び直したとき・保存後に null へ戻したとき・ページ離脱のときに、前のプレビュー用 Blob URL を revoke する
+  useRevokeBlobUrls(previewUrl);
   // UX2-18: 手入力での追加・編集（写真のみ・編集不可だった機能非対称を解消）
   const [formValues, setFormValues] = useState<PantryItemFormValues>(emptyPantryItemFormValues);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);

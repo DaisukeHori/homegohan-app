@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import Link from "next/link";
 
 const colors = {
@@ -13,6 +14,40 @@ const colors = {
   textMuted: '#8A8A8A',
   border: '#E8E8E8',
 };
+
+// 事業者の実在情報がまだ確定していない項目の表示。
+// 架空の値 (ダミーの代表者名・住所・電話番号など) は載せない。確定したら実際の値に差し替える。
+const PENDING = '準備中（確定次第掲載します）';
+
+// 有料プランは販売開始前。価格・支払・解約などの条件はまだ決まっていないので載せない。
+const PAID_PLAN_PENDING = '有料プランは準備中です（販売開始前）';
+
+const rows: { label: string; value: ReactNode }[] = [
+  { label: '販売事業者', value: '株式会社ほめゴハン' },
+  { label: '代表者', value: PENDING },
+  { label: '所在地', value: PENDING },
+  { label: '電話番号', value: PENDING },
+  { label: 'メールアドレス', value: PENDING },
+  {
+    label: 'お問い合わせ',
+    value: (
+      <>
+        <Link href="/contact" className="font-bold underline" style={{ color: colors.primary }}>
+          お問い合わせフォーム
+        </Link>
+        からご連絡ください。
+      </>
+    ),
+  },
+  { label: '販売価格', value: PAID_PLAN_PENDING },
+  { label: '商品代金以外の必要料金', value: 'インターネット接続料金、通信料金等はお客様のご負担となります。' },
+  { label: '支払方法', value: PAID_PLAN_PENDING },
+  { label: '支払時期', value: PAID_PLAN_PENDING },
+  { label: 'サービス提供時期', value: PAID_PLAN_PENDING },
+  { label: '返品・キャンセル', value: 'デジタルコンテンツの性質上、購入後の返品・返金は原則としてお受けしておりません。\n\nただし、サービスに重大な瑕疵があった場合は、個別に対応いたします。' },
+  { label: '解約について', value: PAID_PLAN_PENDING },
+  { label: '動作環境', value: '【Webブラウザ】\nChrome、Safari、Firefox、Edgeの最新版\n\n【スマートフォン】\niOS 14.0以上\nAndroid 8.0以上' },
+];
 
 export default function LegalPage() {
   return (
@@ -39,22 +74,7 @@ export default function LegalPage() {
         <div className="rounded-3xl p-6 md:p-8" style={{ background: colors.card, border: `1px solid ${colors.border}` }}>
           <table className="w-full">
             <tbody>
-              {[
-                { label: '販売事業者', value: '株式会社ほめゴハン' },
-                { label: '代表者', value: '代表取締役 山田 太郎' },
-                { label: '所在地', value: '〒150-0001\n東京都渋谷区神宮前1-2-3\nほめゴハンビル 5F' },
-                { label: '電話番号', value: '03-1234-5678\n（お問い合わせはメールでお願いします）' },
-                { label: 'メールアドレス', value: 'support@homegohan.jp' },
-                { label: 'URL', value: 'https://homegohan.jp' },
-                { label: '販売価格', value: 'フリープラン：無料\nプレミアムプラン：月額980円（税込）\nファミリープラン：月額1,980円（税込）\n\n年払いの場合は2ヶ月分お得になります。' },
-                { label: '商品代金以外の必要料金', value: 'インターネット接続料金、通信料金等はお客様のご負担となります。' },
-                { label: '支払方法', value: 'クレジットカード決済\n（Visa、Mastercard、JCB、American Express）' },
-                { label: '支払時期', value: '月払い：毎月の契約更新日に自動決済\n年払い：契約開始日に一括決済' },
-                { label: 'サービス提供時期', value: '決済完了後、即時ご利用いただけます。' },
-                { label: '返品・キャンセル', value: 'デジタルコンテンツの性質上、購入後の返品・返金は原則としてお受けしておりません。\n\nただし、サービスに重大な瑕疵があった場合は、個別に対応いたします。' },
-                { label: '解約について', value: 'いつでも解約可能です。\n解約後も次回更新日まではサービスをご利用いただけます。\n\n設定画面の「アカウント」→「プラン管理」から解約できます。' },
-                { label: '動作環境', value: '【Webブラウザ】\nChrome、Safari、Firefox、Edgeの最新版\n\n【スマートフォン】\niOS 14.0以上\nAndroid 8.0以上' },
-              ].map((row, i) => (
+              {rows.map((row, i) => (
                 <tr key={i} className="border-b last:border-b-0" style={{ borderColor: colors.border }}>
                   <th className="py-4 pr-4 text-left align-top w-1/3 font-bold text-sm" style={{ color: colors.text }}>
                     {row.label}
@@ -69,7 +89,7 @@ export default function LegalPage() {
         </div>
 
         <p className="text-center text-sm mt-8" style={{ color: colors.textMuted }}>
-          最終更新日：2025年1月1日
+          最終更新日：2026年10月8日
         </p>
       </main>
 

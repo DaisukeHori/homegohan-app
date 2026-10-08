@@ -9,6 +9,7 @@
 import type { TargetSlot } from '@/types/domain';
 import {
   RECORD_DATE_PATTERN,
+  sanitizeHealthGoalCreate,
   sanitizeHealthGoalUpdate,
   sanitizeHealthRecordPayload,
   stripUndefined,
@@ -27,15 +28,19 @@ import {
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { createLogger } from '@/lib/db-logger';
+import { PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
+import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
 
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
 
-// #1048 F2-23: planned_meals.meal_type / meals.meal_type には
-// CHECK (meal_type IN ('breakfast','lunch','dinner','snack')) が存在し、
-// 'midnight_snack' を挿入すると DB 制約違反で 500 になる
-// (supabase/migrations/20260430160000_db_audit_fixes.sql #221)。
-// AI 生成アクション経由でこの不整合値が渡らないようホワイトリストで防御する。
+// #1048 F2-23: AI 生成アクションが扱う meal_type は朝・昼・夕・おやつの 4 値に限る
+// (システムプロンプトも夜食 'midnight_snack' は提示しない)。AI の出力は信頼できないため、
+// 実行時にもホワイトリストで防御する。
+// 当初は「planned_meals.meal_type には 4 値の CHECK (#221) があり、'midnight_snack' で 500 になる」
+// という理由だったが、その CHECK は本番に存在しなかった (#1205)。#1205 で足した
+// DB のトリガー (trg_planned_meals_validate_values) は 'midnight_snack' を含む 5 値で、ここの制限は DB の制約ではなく
+// AI 経路の仕様として残している。
 const AI_ALLOWED_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
 
 // ==================== mass assignment 対策: サニタイザ ====================
@@ -110,12 +115,8 @@ function sanitizeMealUpdate(input: unknown): { data: PlainRecord; errors: string
     }
   }
 
-  const numericFieldRanges: Record<string, { min: number; max: number }> = {
-    calories_kcal: { min: 0, max: 5000 },
-    protein_g: { min: 0, max: 500 },
-    fat_g: { min: 0, max: 300 },
-    carbs_g: { min: 0, max: 800 },
-  };
+  // 範囲は HTTP 経由の食事登録・更新 (src/lib/planned-meal-validation.ts) と共有する (#1205)。
+  const numericFieldRanges: Record<string, { min: number; max: number }> = PLANNED_MEAL_NUTRIENT_LIMITS;
   for (const [key, range] of Object.entries(numericFieldRanges)) {
     if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
     const value = input[key];
@@ -207,38 +208,6 @@ function sanitizeShoppingItemUpdate(input: unknown): { data: PlainRecord; errors
   }
 
   return { data, errors };
-}
-
-// ユーザーのアクティブな買い物リストを取得または作成するヘルパー関数
-async function getOrCreateActiveShoppingList(supabase: any, userId: string): Promise<{ id: string } | null> {
-  // アクティブな買い物リストを探す
-  let { data: shoppingList, error } = await supabase
-    .from('shopping_lists')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('status', 'active')
-    .maybeSingle();
-
-  if (error) return null;
-  if (shoppingList) return shoppingList;
-
-  // なければ新規作成
-  const today = new Date().toISOString().slice(0, 10);
-  const weekLater = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const { data: newList, error: createError } = await supabase
-    .from('shopping_lists')
-    .insert({
-      user_id: userId,
-      status: 'active',
-      name: '買い物リスト',
-      start_date: today,
-      end_date: weekLater,
-    })
-    .select('id')
-    .single();
-
-  if (createError) return null;
-  return newList;
 }
 
 export interface ConsultationActionRow {
@@ -468,8 +437,8 @@ export async function runConsultationAction(
         break;
       }
 
-      // #1048 F2-23: DB CHECK 制約と矛盾する mealType(例: 'midnight_snack')を
-      // 拒否する。プロンプトからは既に除去済みだが、AI 出力は信頼できないため
+      // #1048 F2-23: AI 経路で扱わない mealType(例: 'midnight_snack')を拒否する。
+      // プロンプトからは既に除去済みだが、AI 出力は信頼できないため
       // 実行時にも二重で防御する。
       if (!AI_ALLOWED_MEAL_TYPES.includes(mealType)) {
         result = { error: `mealType は ${AI_ALLOWED_MEAL_TYPES.join('/')} のいずれかである必要があります` };
@@ -766,8 +735,20 @@ export async function runConsultationAction(
     case 'add_to_shopping_list': {
       const { items } = action.action_params;
 
-      // アクティブな買い物リストを取得または作成
-      const shoppingList = await getOrCreateActiveShoppingList(supabase, user.id);
+      // アクティブな買い物リストを取得または作成 (add-recipe API と共通のヘルパー。DB 関数のロックで、
+      // 同時の追加 (#1214) とも、買い物リストの再生成 (#1312) とも 23505 にならない)
+      let shoppingList: { id: string } | null = null;
+      try {
+        shoppingList = await getOrCreateActiveShoppingList(supabase, user.id);
+      } catch (listError) {
+        // PostgREST のエラーは Error ではないプレーンオブジェクトなので、ログ用に Error へ包む
+        const pgError = listError as { code?: unknown; message?: unknown } | null;
+        createLogger('api/ai/consultation/actions/execute').withUser(user.id).error(
+          'Failed to get or create active shopping list',
+          listError instanceof Error ? listError : new Error(String(pgError?.message ?? listError)),
+          { actionId: action.id, pg_code: typeof pgError?.code === 'string' ? pgError.code : undefined },
+        );
+      }
       if (!shoppingList) {
         result = { error: '買い物リストの作成に失敗しました' };
         break;
@@ -1134,15 +1115,30 @@ export async function runConsultationAction(
     // health_goalsカラム: note (descriptionではない)
     case 'set_health_goal': {
       const { goalType, targetValue, targetUnit, targetDate, note, description } = action.action_params;
-      const { data: newGoal, error: insertError } = await supabase
-        .from('health_goals')
-        .insert({
-          user_id: user.id,
+
+      // #1229: AI が生成した値をそのまま INSERT すると、未知の goal_type や 0 以下・範囲外の目標値が
+      // 保存できてしまう (POST /api/health/goals の検証をバイパスしていた)。API と同じ検証を通す。
+      // targetUnit はプロンプト上 optional なので、省略されたら goal_type に合う単位を入れる。
+      const { data: safeGoal, errors: goalErrors } = sanitizeHealthGoalCreate(
+        {
           goal_type: goalType,
           target_value: targetValue,
           target_unit: targetUnit,
           target_date: targetDate,
           note: note || description, // 後方互換性のためdescriptionもサポート
+        },
+        { defaultUnit: true },
+      );
+      if (!safeGoal) {
+        result = { error: goalErrors.join(', ') };
+        break;
+      }
+
+      const { data: newGoal, error: insertError } = await supabase
+        .from('health_goals')
+        .insert({
+          ...safeGoal,
+          user_id: user.id,
           status: 'active',
         })
         .select('id')
@@ -1162,7 +1158,7 @@ export async function runConsultationAction(
       // セキュリティチェック
       const { data: goal } = await supabase
         .from('health_goals')
-        .select('user_id')
+        .select('user_id, goal_type')
         .eq('id', goalId)
         .single();
 
@@ -1171,13 +1167,19 @@ export async function runConsultationAction(
         break;
       }
 
-      const { data: safeUpdates, errors } = sanitizeHealthGoalUpdate(updates);
+      // #1229: 目標値の範囲は goal_type ごとに違うため、対象の行の goal_type を渡して検証する
+      const { data: safeUpdates, errors } = sanitizeHealthGoalUpdate(updates, { goalType: goal.goal_type });
       if (errors.length > 0) {
         result = { error: errors.join(', ') };
         break;
       }
       if (Object.keys(safeUpdates).length === 0) {
         result = { error: '更新可能な目標項目がありません' };
+        break;
+      }
+      // target_value / target_unit は NOT NULL の列。null を送ると DB エラーになるので、先に弾く
+      if (safeUpdates.target_value === null || safeUpdates.target_unit === null) {
+        result = { error: 'target_value と target_unit は空にできません' };
         break;
       }
 

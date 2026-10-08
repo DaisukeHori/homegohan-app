@@ -3,7 +3,7 @@
 // Agent SDK がDenoで動作しない場合のフォールバック版
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import { corsHeaders } from '../_shared/cors.ts'
+import { getCorsHeaders } from '../_shared/cors.ts'
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
 import OpenAI from "openai";
@@ -369,6 +369,9 @@ async function* runChatStream(
 
 // ===== Edge Function HTTP ハンドラ =====
 Deno.serve(async (req) => {
+  // 許可したオリジンにだけ CORS ヘッダーを付ける (#1167)
+  const corsHeaders = getCorsHeaders(req)
+
   // CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })

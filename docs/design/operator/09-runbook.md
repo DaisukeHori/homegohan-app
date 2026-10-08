@@ -2,7 +2,7 @@
 
 ## 1. 目的・スコープ
 
-本番運用で必要となる手順を網羅する。Stripe reconciliation・pg_cron 手動実行・deprecated プラン rollback・緊急 bulk-revoke・org_admin ゼロ復旧・GDPR 削除・情報漏洩報告・DR シナリオ・マイグレーション適用手順・障害対応フローを定義する。
+本番運用で必要となる手順を網羅する。Stripe reconciliation・pg_cron 手動実行・deprecated プラン rollback・緊急 bulk-revoke・org_admin ゼロ復旧・退会 (GDPR 削除)・情報漏洩報告・DR シナリオ・マイグレーション適用手順・障害対応フローを定義する。
 
 **このドキュメントは super_admin および on-call エンジニア向け。本番操作は必ず 2 名確認を推奨。**
 
@@ -70,23 +70,26 @@ supabase db reset --linked  # staging プロジェクトで実行
 supabase db push --linked --include-all
 
 # 3. smoke test (staging)
-npm run test:smoke:staging
+npm run test:smoke -- --base-url=https://staging.homegohan.app
 
 # 4. 本番適用 (2 名確認)
 supabase db push --linked --include-all
 # (本番プロジェクトの PROJECT_ID を確認してから実行)
 
-# 5. 型の再生成
-npm run db:types
-git add types/supabase.ts
+# 5. 型の再生成 (出力先は src/types/database.types.ts)
+npm run types:supabase
+git add src/types/database.types.ts
 git commit -m "chore: Supabase 型を再生成"
 
 # 6. seed データ投入
 supabase db execute --file supabase/seeds/subscription_plans.sql
 
 # 7. 動作確認
-npm run test:smoke:production
+npm run test:smoke -- --base-url=https://homegohan.app
 ```
+
+> `npm run test:smoke` の確認項目と使い方は `cross/07-dr-backup.md` §7.1 を参照 (#1181)。
+> 独自ドメインが確定するまでは、本番の URL は `https://homegohan-app.vercel.app` を指定する。
 
 ### 3.4 ロールバック手順
 
@@ -344,60 +347,64 @@ Step 5: org_admin に手順案内
 
 ---
 
-## 9. GDPR 削除要求対応フロー (§15.7)
+## 9. 退会 (アカウント削除) 対応フロー (§15.7)
+
+> **オーナー判断 (2026-10-08, #1130)**: 退会は **即時削除が正式仕様**。30 日の cooling period (クーリングオフ) は設けない。
+> 旧版の「`gdpr_deletion_requests` に記録 → 30 日待機 → 月次バッチで削除」は廃止した。
+> `POST /api/account/gdpr-delete-request` と `/api/cron/gdpr-delete` は作らない。
+> 仕様は cross/08-legal-compliance.md §16。本節はその運用面。
 
 ### 9.1 フロー全体
 
 ```
-Day 0: 削除要求受信 (ユーザー自身 or サポート経由)
-  → POST /api/account/gdpr-delete-request
-  → gdpr_deletion_requests テーブルに記録
-  → cooling_until = NOW() + 30 days
-  → 本人確認メール送信 (「削除要求を受け付けました」)
+削除の実行 (即時):
+  ユーザー: 設定画面「アカウントを削除する」→ 確認 (Web は「削除します」入力 / モバイルは確認アラート)
+  → POST /api/account/delete { confirm: true }
+  → 削除をブロックする条件 (409。先に譲渡または解散してもらう):
+     - 組織の owner         → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
+     - 家族グループの代表者  → ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE
+  → FK で消えない参照を解消 (ai_content_logs の削除、invited_by / created_by 等の NULL 化)
+  → ライセンス席を解放 (RPC release_user_membership)
+  → auth.users を削除 (auth.admin.deleteUser)
+     - 旧設計の「email を deleted+...@example.com に書き換える匿名化」はしない。行ごと削除する
+     - public 側は FK の ON DELETE CASCADE / SET NULL で削除・匿名化される
+  → 200 { success: true }。クライアントはサインアウトする
 
-Day 0-30: Cooling Period
-  → ユーザーは /account/settings でキャンセル可能
-  → サポートがチケット経由で連絡可能
+削除後:
+  - 取り消し・復旧はできない (画面にも明記している)
+  - 監査ログ (admin_audit_logs) は FK の ON DELETE SET NULL で操作者 ID が外れて残る (法的要件)
+  - org_health_access_logs など、ほかの法定保管データの扱いは未確認。棚卸しが必要 (作業計画 T11)
 
-Day 30: 自動削除バッチ実行 (/api/cron/gdpr-delete で月次)
-  → cooling_until 経過かつ cancelled_at IS NULL のレコードを処理
-  → 物理削除対象:
-     - meals, planned_meals, health_checkups (個人データ)
-     - family_members (family_group メンバー情報)
-     - user_profiles の PII 列を NULL/HASH 化
-  → 保持対象 (匿名化):
-     - admin_audit_logs (user_id を NULL に、法的要件)
-     - org_health_access_logs (同上)
-  → auth.users を匿名化:
-     UPDATE auth.users
-     SET email = 'deleted+' || id || '@example.com',
-         phone = NULL
-     WHERE id = '{user_id}';
-
-削除完了:
-  → gdpr_deletion_requests.executed_at = NOW()
-  → 削除完了証明書 PDF 生成 → 本人メール
-  → admin_audit_logs に severity='critical' で記録
+まだ無いもの (追加予定):
+  - 削除前の確認メールと削除完了メール (#1152、作業計画 T20)
+  - Storage の写真・Stripe の顧客/サブスクリプション・送信ログの生メールアドレスの後始末と、
+    途中で失敗したときの耐性 (#1175、作業計画 T11)
 ```
 
-### 9.2 手動対応手順 (support から依頼された場合)
+### 9.2 運営が関わる場合 (サポート経由の依頼)
+
+運営が本人に代わって削除する画面・API は未実装。旧版の「GDPR 削除要求を代理作成」ボタンと `cooling_until` の短縮は、30 日の待機を廃止したため不要になった。
+依頼を受けたら、次の手順で本人に削除してもらう。
 
 ```
 Step 1: 本人確認
   - パスポート / 運転免許証の写真をサポートチャンネルで確認
   - メールアドレスが一致することを確認
 
-Step 2: 削除要求を代理作成 (super_admin)
-  - /admin/users/{id} でユーザー詳細を確認
-  - 「GDPR 削除要求を代理作成」ボタン (super_admin のみ表示)
-  - cooling_until を短縮する場合は super_admin の判断で可能
+Step 2: 本人に設定画面から削除してもらう
+  - ログインできる場合: 設定画面の「アカウントを削除する」を案内する
+  - ログインできない場合: /auth/forgot-password でパスワードを再設定してもらい、
+    ログインを回復してから削除してもらう
+  - 409 で止まった場合 (組織の owner / 家族グループの代表者):
+    先に譲渡または解散してもらう (運営の強制操作は membership/05-operator-emergency-ui.md)
 
-Step 3: 削除実行確認
-  - gdpr_deletion_requests.executed_at が設定されていることを確認
-  - 証明書 PDF が送信されていることを確認
+Step 3: 削除完了の確認
+  SELECT COUNT(*) FROM auth.users WHERE id = '{user_id}';
+  -- 0 であれば削除済み
 
-Step 4: 監査ログ確認
-  - admin_audit_logs で action_type='super_admin.gdpr_delete.execute' を確認
+Step 4: 期限と記録
+  - 受付から 1 ヶ月以内に完了させる (EU GDPR の回答期限)
+  - 受付・本人確認・案内の内容を support チケットに残す
 ```
 
 ---
@@ -504,8 +511,10 @@ Step 4: PITR 復旧が必要な場合
   □ RTO: 30 分 (org_pro)
 
 Step 5: 復旧確認
-  □ /api/health エンドポイントで疎通確認
+  □ ヘルスチェックで疎通確認
+    curl -s "https://homegohan.app/api/health?deep=1" (200 = アプリ + DB OK / 503 = DB に届いていない)
   □ smoke test 実施
+    npm run test:smoke -- --base-url=https://homegohan.app
   □ Maintenance Mode を OFF
   □ status.homegohan.app を Resolved に更新
 ```
@@ -675,32 +684,30 @@ WHERE action_type = 'admin.user.ban'
 
 ---
 
-## 13. シーケンス — GDPR 削除フロー
+## 13. シーケンス — 退会 (即時削除) フロー
 
 ```mermaid
 sequenceDiagram
   participant User
-  participant API as /api/account/gdpr-delete-request
-  participant DB as Supabase DB
-  participant Email as Resend
-  participant Cron as /api/cron/gdpr-delete (monthly)
+  participant App as 設定画面 (Web / モバイル)
+  participant API as POST /api/account/delete
+  participant DB as Supabase DB / Auth
 
-  User->>API: POST (本人確認済み)
-  API->>DB: INSERT gdpr_deletion_requests (cooling_until = NOW()+30d)
-  API->>DB: INSERT admin_audit_logs
-  API->>Email: 「削除要求を受け付けました」メール送信
-  API-->>User: 200 { cooling_until: '2026-06-06' }
+  User->>App: 「アカウントを削除する」→ 確認 (「削除します」入力 / 確認アラート)
+  App->>API: POST { confirm: true }
+  API->>DB: 組織の owner / 家族グループの代表者かを確認
+  alt owner または代表者
+    API-->>App: 409 ACCOUNT_DELETE_BLOCKED_ORG_OWNER / _FAMILY_REPRESENTATIVE
+  else 削除できる
+    API->>DB: FK で消えない参照を解消 (ai_content_logs の削除、invited_by 等の NULL 化)
+    API->>DB: RPC release_user_membership (ライセンス席の解放)
+    API->>DB: auth.admin.deleteUser (public 側は FK の CASCADE / SET NULL)
+    API-->>App: 200 { success: true }
+    App->>App: サインアウトして、ログイン前の画面へ戻る
+  end
 
-  Note over User,DB: 30 日 Cooling Period (キャンセル可能)
-
-  Cron->>DB: SELECT gdpr_deletion_requests WHERE cooling_until <= NOW() AND cancelled_at IS NULL
-  DB-->>Cron: [{ user_id, id }]
-  Cron->>DB: DELETE meals, health_checkups, etc. WHERE user_id=xxx
-  Cron->>DB: UPDATE auth.users SET email='deleted+xxx@example.com'
-  Cron->>DB: UPDATE admin_audit_logs SET user_id=NULL WHERE user_id=xxx (匿名化)
-  Cron->>DB: UPDATE gdpr_deletion_requests SET executed_at=NOW()
-  Cron->>Email: 削除完了証明書 PDF を送信
-  Cron->>DB: INSERT admin_audit_logs (severity='critical')
+  Note over API,DB: 30 日の待機と月次バッチはない (2026-10-08 オーナー判断)
+  Note over API,DB: 削除前の確認メール・削除完了メール (T20) と、Storage / Stripe の後始末 (T11) は今後追加
 ```
 
 ## 14. エラーハンドリング
@@ -708,7 +715,7 @@ sequenceDiagram
 | シナリオ | 対処 |
 |---------|------|
 | PITR 復元失敗 | Supabase サポートに即時連絡、Cold Backup 復元に切替 |
-| GDPR バッチ途中失敗 | 冪等設計 (executed_at IS NULL のレコードのみ処理) → 翌月バッチで継続 |
+| 退会 API が途中で失敗 (FK 違反など) | 500 を返し、`auth.users` は消えない。手前の後始末 (削除・NULL 化) は何度流しても結果が変わらない。FK 違反が原因なら再実行しても同じ理由で失敗するため、運営が原因のテーブルを特定して対処する (恒久対策は #1175、作業計画 T11) |
 | bulk-revoke 途中失敗 | `org_license_assignments` の revoked_at で冪等化 → 再実行可能 |
 | reconcile 不一致 > 100 件 | Slack #incident に escalate + 手動調査 |
 
@@ -716,7 +723,7 @@ sequenceDiagram
 
 - **Integration**:
   - `process_license_expire()` のテスト (期限切れ = 正しく expired に変更)
-  - GDPR 削除の匿名化確認 (admin_audit_logs の user_id が NULL になること)
+  - 退会 (即時削除) の確認: 組織の owner / 家族グループの代表者は 409 で止まること、削除後に `auth.users` が残らないこと、admin_audit_logs の操作者 ID が NULL になること
   - `bulk-revoke` の冪等性 (同じ条件で 2 回実行しても副作用なし)
 - **E2E** (Staging 環境で定期実行):
   - マイグレーション手順の smoke test
@@ -725,12 +732,13 @@ sequenceDiagram
 ## 16. 既存実装との関連
 
 - `hr_revoke_jobs` テーブル: 要件 §15.2 で DDL 定義
-- `gdpr_deletion_requests` テーブル: 01-data-model.md で DDL 定義
+- `gdpr_deletion_requests` テーブル: 01-data-model.md で DDL 定義 (退会フローでは使わない。cross/08-legal-compliance.md §16.4)
 - `org_license_pools.auto_renew_was_force_disabled_at`: 要件 §15.4 で定義
 
 ## 17. 未解決事項
 
-- GDPR 削除完了証明書 PDF の生成方法: pdf-lib / Puppeteer / Vercel Edge での生成方法は Phase 2 で決定
+- 削除完了の通知: 削除完了メールは作業計画 T20 (#1152) で追加する。旧設計の「削除完了証明書 PDF」を別に出すかは未決 (出す場合の生成方法: pdf-lib / Puppeteer / Vercel Edge は Phase 2 で決定)
 - `logical_backup` cron (`pg_dump → S3`): S3 接続情報と IAM 権限の設定は本番環境構築時に確定
-- EU GDPR の 1 ヶ月以内回答 SLA: 現在は 30 日 cooling period があるため最大 60 日。EU 規制との整合性を法務確認が必要
+- EU GDPR の 1 ヶ月以内回答 SLA: 退会は即時削除 (cooling period なし) のため、アプリからの削除で遅れは出ない。サポート経由の依頼は受付から 1 ヶ月以内に完了させる (§9.2)。EU 規制との整合性の法務確認は引き続き必要
+- 退会の実行記録: 旧設計は `gdpr_deletion_requests` (永久保管) と admin_audit_logs (severity='critical') に残していたが、現行実装はどちらにも記録しない。何で残すかは作業計画 T11 と合わせて決める (cross/08-legal-compliance.md §19)
 - ランサムウェア対応での「新しい Supabase プロジェクト」への DNS 切替: Vercel の環境変数変更とドメイン設定変更の手順を別途ドキュメント化が必要

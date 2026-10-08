@@ -400,6 +400,7 @@ CREATE TABLE app_logs (
 - Edge Functions用: `supabase/functions/_shared/db-logger.ts`
 - Next.js API用: `src/lib/db-logger.ts`
 - クライアント用: `POST /api/log`
+- 保存前のマスキング: いずれも `supabase/functions/_shared/log-sanitizer.ts` を通してから insert する（`message` / `error_message` / `error_stack` / `metadata` のトークン・キー・接続文字列・メールアドレスなどをマスクし、文字数を切り詰める。`user_id` は uuid の形でなければ NULL）
 
 **クエリ例（MCP経由でAIが実行可能）:**
 ```sql
@@ -443,8 +444,8 @@ SELECT * FROM app_logs WHERE created_at >= CURRENT_DATE ORDER BY created_at DESC
 | `/settings` | 設定 | アプリ設定 |
 | `/about` | アプリについて | 機能紹介 |
 | `/contact` | お問い合わせ | 問い合わせフォーム |
-| `/terms` | 利用規約 | 利用規約 |
-| `/privacy` | プライバシー | プライバシーポリシー |
+| `/terms` | 利用規約 | 利用規約（未ログインでも閲覧可） |
+| `/privacy` | プライバシー | プライバシーポリシー（未ログインでも閲覧可） |
 
 #### 健康記録 (`/health`)
 | パス | 画面名 | 説明 |
@@ -1342,6 +1343,10 @@ export function buildHealthFocus(profile: UserProfile): HealthFocusItem[] {
 
 **ファイル:** `/api/badges/route.ts`
 
+- 食事数・自炊数・連続日数は、完了した食事のうち、ハンズオンツアーのお試しの記録 (`user_daily_meals.is_sandbox = true`) を除いて数える (#1314)。
+- 一覧に返すのは、獲得済みのバッジと、付与処理のあるバッジ (`src/lib/badges/awardable.ts` の `AWARDABLE_BADGE_CODES`) の未獲得分だけ。
+  付与処理の無いバッジ (`health_streak_*` など) は、未獲得のうちは返さない。マスター (`badges` テーブル) の行は変えない。
+
 ```typescript
 const BADGE_CONDITIONS = {
   'first_bite': { type: 'meal_count', threshold: 1 },
@@ -2030,6 +2035,8 @@ CREATE OR REPLACE FUNCTION search_recipes_with_nutrition(
 **バージョン:** v4
 **ファイル:** `supabase/functions/generate-menu-v4/index.ts`
 
+> **Status: 2026-10-07 確認 — 現行の本番主系は V5**（`supabase/functions/generate-menu-v5/index.ts`）。本節は V4 の仕様記録です。`generate-menu-v4` は非推奨で、feature flag OFF 時のフォールバックとして残っています。ただし `POST /api/ai/nutrition-analysis` は今もフラグに関係なく V4 を直接呼びます。8.7.5 のコード例は V4 固定で書かれていますが、実装（`src/app/api/ai/menu/v4/generate/route.ts`）は `menu_generation_v5_direct`（既定 ON）で V5 / V4 を切り替えます。最新の呼び出し関係は `supabase/functions/README.md` の「献立生成 v4 と v5 の使い分け」を参照してください。
+
 #### 8.7.1 概要
 
 V4は「週間献立生成」ではなく「汎用献立生成エンジン」として設計される。
@@ -2589,6 +2596,7 @@ Webにある **全機能**（メイン機能/組織/管理者/サポート/ス�
 - **公開ページ（未ログインでも閲覧可）**
   - `/`（LP）
   - `/about`, `/company`, `/contact`, `/faq`, `/guide`, `/legal`, `/news`, `/pricing`
+  - `/terms`, `/privacy`（利用規約・プライバシーポリシー。サインアップ画面・LP フッターの同意リンクとストア審査 URL の着地点なので、未ログインでも読める。#1174）
 - **認証**
   - `/login`, `/signup`
   - `/auth/forgot-password`, `/auth/reset-password`, `/auth/verify`
@@ -2603,7 +2611,6 @@ Webにある **全機能**（メイン機能/組織/管理者/サポート/ス�
     - `/health/graphs`, `/health/insights`, `/health/goals`, `/health/challenges`, `/health/settings`
   - `/badges`, `/comparison`
   - `/profile`, `/settings`
-  - `/terms`, `/privacy`
 - **組織（org）**
   - `/org/dashboard`, `/org/challenges`, `/org/departments`, `/org/invites`, `/org/members`, `/org/settings`
 - **管理者（admin）**

@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { sanitizeBloodTestPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { clampIntParam } from '@/lib/http-params';
 
 // 血液検査結果一覧の取得（+ 経年レビュー）
 export async function GET(request: NextRequest) {
@@ -15,7 +16,10 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   // #265: limit に上限を設けて DoS を防ぐ
-  const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '10'), 1), 200);
+  // #1329: parseInt だと ?limit=abc が NaN のまま Math.min / Math.max を素通りし、
+  // .limit(NaN) として DB に渡っていた。clampIntParam なら数字でない値・空は既定値の 10、
+  // 範囲外は 1〜200 に丸める。
+  const limit = clampIntParam(searchParams.get('limit'), { min: 1, max: 200, default: 10 });
 
   const { data, error } = await supabase
     .from('blood_test_results')

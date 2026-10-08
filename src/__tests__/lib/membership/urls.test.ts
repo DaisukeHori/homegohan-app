@@ -5,6 +5,8 @@ import {
   buildFamilyInviteUrl,
   buildOrgTransferAcceptUrl,
   buildFamilyTransferAcceptUrl,
+  buildFamilyMembersUrl,
+  buildOrgMembersUrl,
 } from '@/lib/membership/urls';
 
 const DEFAULT_BASE_URL = 'https://homegohan-app.vercel.app';
@@ -59,5 +61,30 @@ describe('buildFamilyTransferAcceptUrl', () => {
     expect(buildFamilyTransferAcceptUrl('prop-002')).toBe(
       `${DEFAULT_BASE_URL}/family/transfer-accept/prop-002`,
     );
+  });
+});
+
+// #1160 脱退の通知メールに載せる、メンバー管理画面の URL
+describe('buildFamilyMembersUrl', () => {
+  it('デフォルト base URL + /family/members を返す', () => {
+    delete process.env.NEXT_PUBLIC_INVITE_BASE_URL;
+    expect(buildFamilyMembersUrl()).toBe(`${DEFAULT_BASE_URL}/family/members`);
+  });
+
+  it('env override 時に正しい URL を返す', () => {
+    process.env.NEXT_PUBLIC_INVITE_BASE_URL = 'https://example.com';
+    expect(buildFamilyMembersUrl()).toBe('https://example.com/family/members');
+  });
+});
+
+describe('buildOrgMembersUrl', () => {
+  it('デフォルト base URL + /org/members を返す', () => {
+    delete process.env.NEXT_PUBLIC_INVITE_BASE_URL;
+    expect(buildOrgMembersUrl()).toBe(`${DEFAULT_BASE_URL}/org/members`);
+  });
+
+  it('env override 時に正しい URL を返す', () => {
+    process.env.NEXT_PUBLIC_INVITE_BASE_URL = 'https://example.com';
+    expect(buildOrgMembersUrl()).toBe('https://example.com/org/members');
   });
 });

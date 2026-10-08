@@ -8,6 +8,7 @@ import {
 } from '../../../../lib/meal-image-jobs';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { createLogger } from '@/lib/db-logger';
+import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -32,6 +33,15 @@ export async function POST(request: Request) {
 
     if (!dayDate || !mealType) {
       return NextResponse.json({ error: 'dayDate and mealType are required' }, { status: 400 });
+    }
+
+    // #1205: meal_type と栄養素の型・範囲を、DB に触れる前に確認する（不正なら 400）
+    const validation = validatePlannedMealInput({
+      mealType,
+      nutrients: { calories_kcal: caloriesKcal },
+    });
+    if (!validation.ok) {
+      return NextResponse.json(plannedMealValidationErrorBody(validation), { status: 400 });
     }
 
     const manualImageUrl = typeof imageUrl === 'string' ? imageUrl : undefined;
@@ -92,7 +102,8 @@ export async function POST(request: Request) {
       dish_name: dishName || '未設定',
       is_simple: isSimple ?? true,
       dishes: dishImagePayload.dishes,
-      calories_kcal: caloriesKcal || null,
+      // 検証済みの値（整数に丸め済み）。0 と未入力は従来どおり null にする
+      calories_kcal: validation.nutrients.calories_kcal || null,
       description: description || null,
       ingredients: ingredients || null,
       image_url: dishImagePayload.mealCoverImageUrl,

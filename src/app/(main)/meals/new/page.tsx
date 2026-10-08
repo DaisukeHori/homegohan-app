@@ -5,6 +5,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveClassifyPhotoType } from "@/lib/ai/image-recognition";
 import { logToServer } from "@/lib/db-logger";
+import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
 import { formatLocalDate } from "@homegohan/shared";
 import type { CatalogDishMatch, CatalogProductSummary } from "@/types/catalog";
 import { motion, AnimatePresence } from "framer-motion";
@@ -103,6 +104,16 @@ const PHOTO_MODE_COPY: Record<PhotoMode, {
     analyzingDescription: '体重や体組成の表示値を読み取っています',
   },
 };
+
+// #1141: ?mode=<撮影の種類> で来たときは、モード選択を飛ばしてその種類の撮影ステップから始める
+// (例: 健康記録の「写真で記録」→ /meals/new?mode=weight_scale)。
+// mode クエリには撮影の種類以外の値も来る (ネイティブアプリの WebView は全 URL に mode=app を付ける。
+// src/middleware.ts / useNativeAppMode 参照)。PHOTO_MODES に無い値は無視して従来どおりモード選択から始める。
+// `in` 演算子だと constructor / toString などの組み込みプロパティ名も「ある」と判定されるため、
+// PHOTO_MODES 自身のキーだけで判定する。
+const parsePhotoModeParam = (value: string | null): PhotoMode | null => (
+  value !== null && Object.prototype.hasOwnProperty.call(PHOTO_MODES, value) ? (value as PhotoMode) : null
+);
 
 // 冷蔵庫解析結果
 interface FridgeIngredient {
@@ -253,15 +264,26 @@ const scaleDimensions = (
 
 export default function MealCaptureModal() {
   const router = useRouter();
+  // クエリ: mode (撮影の種類の指定) / prefill (ネイティブアプリから渡される AI 解析済みデータ) /
+  // source + sandbox (ハンズオンツアー)
+  const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  const [step, setStep] = useState<Step>('mode-select');
-  const [photoMode, setPhotoMode] = useState<PhotoMode>('auto');
+  // #1141: ?mode=weight_scale などが指定されていれば、モード選択を飛ばしてその種類の撮影ステップから始める。
+  // 使うのは初回表示の値だけ (useState の初期値)。画面を使っている途中で URL が変わっても、
+  // 解析中・結果表示中の状態は壊さない。
+  const requestedPhotoMode = parsePhotoModeParam(searchParams.get('mode'));
+  const [step, setStep] = useState<Step>(requestedPhotoMode ? 'capture' : 'mode-select');
+  const [photoMode, setPhotoMode] = useState<PhotoMode>(requestedPhotoMode ?? 'auto');
   const modeCopy = PHOTO_MODE_COPY[photoMode];
   // 複数枚対応
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
+  // #1222: プレビュー用 Blob URL は、削除・撮り直し・各ステップのリセット (setPhotoPreviews([]) が多数ある)・
+  // ページ離脱のたびに、配列から外れた分をここでまとめて revoke する。
+  // ハンズオンの固定画像 (SAMPLE_MEAL_IMAGE.webPath) は blob: ではないので対象外。
+  useRevokeBlobUrls(photoPreviews);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   // 冷蔵庫解析結果
@@ -324,12 +346,10 @@ export default function MealCaptureModal() {
   
   const [isSaving, setIsSaving] = useState(false);
 
-  // ネイティブアプリから渡される AI 解析済みデータを prefill として受け取る
-  const searchParams = useSearchParams();
-
   // ハンズオンツアー sandbox モード検出
   const isSandboxMode = searchParams.get('source') === 'handson_tour' && searchParams.get('sandbox') === 'true';
 
+  // ネイティブアプリから渡される AI 解析済みデータを prefill として受け取る
   useEffect(() => {
     const prefillParam = searchParams.get('prefill');
     if (!prefillParam) return;
@@ -1070,7 +1090,10 @@ export default function MealCaptureModal() {
         router.push(`/menus/weekly?${params.toString()}`);
       } else {
         const err = await res.json();
-        alert(`保存に失敗しました: ${err.error || '不明なエラー'}`);
+        // sandbox の利用条件エラーなどは { error: { code, message } } 形式、それ以外は { error: '文字列' } 形式で返る。
+        // オブジェクトをそのまま埋め込むと '[object Object]' と表示されてしまうため、message を取り出す (#1109)。
+        const errorMessage = typeof err.error === 'string' ? err.error : err.error?.message;
+        alert(`保存に失敗しました: ${errorMessage || '不明なエラー'}`);
       }
     } catch (error) {
       console.error('Save error:', error);

@@ -53,9 +53,15 @@ jest.mock('react-native-webview', () => ({
   },
 }));
 
+// download の保存は webViewDownload.ts (#1159) が cacheDirectory の専用フォルダに書く
 jest.mock('expo-file-system', () => ({
+  cacheDirectory: '/tmp/cache/',
   documentDirectory: '/tmp/',
   writeAsStringAsync: jest.fn(() => Promise.resolve()),
+  makeDirectoryAsync: jest.fn(() => Promise.resolve()),
+  readDirectoryAsync: jest.fn(() => Promise.resolve([])),
+  getInfoAsync: jest.fn(() => Promise.resolve({ exists: false })),
+  deleteAsync: jest.fn(() => Promise.resolve()),
   EncodingType: { UTF8: 'utf8' },
 }));
 jest.mock('expo-sharing', () => ({
@@ -72,6 +78,7 @@ jest.mock('../../src/lib/supabase', () => ({
   },
 }));
 import { supabase as mockSupabase } from '../../src/lib/supabase';
+import { DOWNLOAD_DIRECTORY_NAME } from '../../src/lib/webViewDownload';
 const mockGetSession = mockSupabase.auth.getSession as jest.Mock;
 const mockRefreshSession = mockSupabase.auth.refreshSession as jest.Mock;
 
@@ -651,7 +658,11 @@ describe('onMessage の送信元検証', () => {
       mimeType: 'text/csv',
     });
     await flushTimers();
-    expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith('/tmp/export.csv', 'a,b', { encoding: 'utf8' });
+    expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith(
+      `/tmp/cache/${DOWNLOAD_DIRECTORY_NAME}export.csv`,
+      'a,b',
+      { encoding: 'utf8' },
+    );
   });
 
   it('JSON でないデータは (自オリジンでも) 例外を投げず無視する', async () => {

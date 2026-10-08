@@ -8,7 +8,7 @@
  * 画面ごとに挙動が不一致だった。共通化して login/signup でも同じ操作性を提供する。
  */
 
-import * as React from 'react';
+import { forwardRef, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { Input, type InputProps } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
@@ -19,9 +19,9 @@ export interface PasswordInputProps extends Omit<InputProps, 'type'> {
   hideLabel?: string;
 }
 
-export const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
+export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(
   ({ className, showLabel = 'パスワードを表示する', hideLabel = 'パスワードを非表示にする', ...props }, ref) => {
-    const [visible, setVisible] = React.useState(false);
+    const [visible, setVisible] = useState(false);
 
     return (
       <div className="relative">

@@ -68,6 +68,8 @@ export default function HealthGoalsPage() {
     target_date: '',
   });
   const [creating, setCreating] = useState(false);
+  // #1229: サーバーが目標値の範囲外 (例: 体重 500kg) を 400 で返したとき、理由を画面に出す
+  const [createError, setCreateError] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null); // #87: window.confirm 廃止
   // #1055 UX3-15: 目標を編集できるようにする
   const [editGoal, setEditGoal] = useState<HealthGoal | null>(null);
@@ -93,10 +95,21 @@ export default function HealthGoalsPage() {
     setLoading(false);
   };
 
+  const openCreateModal = () => {
+    setCreateError(null);
+    setShowCreateModal(true);
+  };
+
+  const closeCreateModal = () => {
+    setShowCreateModal(false);
+    setCreateError(null);
+  };
+
   const handleCreateGoal = async () => {
     if (!newGoal.target_value) return;
 
     setCreating(true);
+    setCreateError(null);
     try {
       const goalType = GOAL_TYPES.find(t => t.type === newGoal.goal_type);
       const res = await fetch('/api/health/goals', {
@@ -111,12 +124,16 @@ export default function HealthGoalsPage() {
       });
 
       if (res.ok) {
-        setShowCreateModal(false);
+        closeCreateModal();
         setNewGoal({ goal_type: 'weight', target_value: '', target_date: '' });
         fetchGoals();
+      } else {
+        const data = await res.json().catch(() => null);
+        setCreateError(data?.error || '目標の作成に失敗しました');
       }
     } catch (error) {
       console.error('Failed to create goal:', error);
+      setCreateError('目標の作成に失敗しました');
     }
     setCreating(false);
   };
@@ -208,7 +225,7 @@ export default function HealthGoalsPage() {
         </div>
         <motion.button
           whileTap={{ scale: 0.95 }}
-          onClick={() => setShowCreateModal(true)}
+          onClick={openCreateModal}
           className="p-2 rounded-lg"
           style={{ backgroundColor: colors.accentLight }}
         >
@@ -241,7 +258,7 @@ export default function HealthGoalsPage() {
                 </p>
                 <motion.button
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => setShowCreateModal(true)}
+                  onClick={openCreateModal}
                   className="px-6 py-2 rounded-lg font-medium text-white"
                   style={{ backgroundColor: colors.accent }}
                 >
@@ -547,7 +564,7 @@ export default function HealthGoalsPage() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/50 z-[60] flex items-end"
-            onClick={() => setShowCreateModal(false)}
+            onClick={closeCreateModal}
           >
             <motion.div
               initial={{ y: '100%' }}
@@ -635,6 +652,10 @@ export default function HealthGoalsPage() {
                   style={{ backgroundColor: colors.bg, color: colors.text }}
                 />
               </div>
+
+              {createError && (
+                <p className="text-sm mb-4" style={{ color: colors.error }}>{createError}</p>
+              )}
 
               {/* 作成ボタン */}
               <motion.button

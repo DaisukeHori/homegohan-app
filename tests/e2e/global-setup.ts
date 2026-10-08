@@ -22,6 +22,7 @@
 import { chromium, type FullConfig } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
+import { getExistingUserPassword } from "./helpers/credentials";
 import { seedClassifyFixtures } from "./setup/seed-classify-fixtures";
 
 /** backward compat: 既存コードが参照するエクスポート (user-01 のパスを返す) */
@@ -64,6 +65,23 @@ function assertLoggedIn(email: string, loggedIn: boolean): void {
     `[global-setup] ${email} でログインできませんでした (E2E_REQUIRE_LOGIN=1)。` +
       "テストユーザーと E2E_USER_EMAIL / E2E_USER_PASSWORD を確認してください。",
   );
+}
+
+/**
+ * ユーザーのパスワードが環境変数に無いときの扱い。既定のパスワードは無い (リポジトリに置かない)。
+ * E2E_REQUIRE_LOGIN=1 (CI) では全テストを走らせずに止める。既定 (未設定) では警告だけ出して続行する
+ * (storageState は作らない。各テストは getUserCredentials() で同じエラーになる)。
+ *
+ * @param envNames - 設定すべき環境変数の名前 (メッセージ用)
+ */
+function reportMissingPassword(email: string, envNames: string): void {
+  const message =
+    `[global-setup] ${email} のパスワードが未設定です。` +
+    `${envNames} を設定してください (既定値はありません)。`;
+  if (process.env.E2E_REQUIRE_LOGIN === "1") {
+    throw new Error(`${message} (E2E_REQUIRE_LOGIN=1)`);
+  }
+  console.warn(`${message} storageState なしで続行します。`);
 }
 
 /**
@@ -331,8 +349,12 @@ async function globalSetup(config: FullConfig): Promise<void> {
   const isMultiUserPattern = !envEmail || /^e2e-user-\d+@homegohan\.test$/.test(envEmail);
 
   if (!isMultiUserPattern) {
-    // backward compat: 単一ユーザーモード
-    const password = process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!";
+    // backward compat: 単一ユーザーモード。パスワードは E2E_USER_PASSWORD からだけ取る (既定値は無い)
+    const password = getExistingUserPassword();
+    if (!password) {
+      reportMissingPassword(envEmail!, "E2E_USER_PASSWORD");
+      return;
+    }
     console.log(`[global-setup] 単一ユーザーモード (E2E_USER_EMAIL=${envEmail})`);
     const loggedIn = await setupUserSession(
       baseURL,
@@ -362,15 +384,7 @@ async function globalSetup(config: FullConfig): Promise<void> {
     const commonPassword = process.env.E2E_USER_PASSWORD;
     const userPassword = perUserPassword || commonPassword;
     if (!userPassword) {
-      // E2E_REQUIRE_LOGIN=1 (CI) では全テストを走らせずに止める。既定 (未設定) では警告だけ出して続行する
-      // (storageState は作らない。各テストは getUserCredentials() で同じエラーになる)
-      const message =
-        `[global-setup] ${userEmail} のパスワードが未設定です。` +
-        `E2E_USER_${padded}_PASSWORD または E2E_USER_PASSWORD を設定してください (既定値はありません)。`;
-      if (process.env.E2E_REQUIRE_LOGIN === "1") {
-        throw new Error(`${message} (E2E_REQUIRE_LOGIN=1)`);
-      }
-      console.warn(`${message} storageState なしで続行します。`);
+      reportMissingPassword(userEmail, `E2E_USER_${padded}_PASSWORD または E2E_USER_PASSWORD`);
       continue;
     }
     const passwordSource = perUserPassword

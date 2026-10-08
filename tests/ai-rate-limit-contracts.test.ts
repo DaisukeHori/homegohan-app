@@ -901,3 +901,389 @@ describe('consultation/actions/execute update_meal: 画像トリガーは genera
     expect(secondBody.result).toMatchObject({ imageGenerationThrottled: true });
   });
 });
+
+// ─────────────────────────────────────────────
+// 7. #1163 招待メール・参加リクエスト・譲渡提案メールの送信回数カテゴリ (in-memory フォールバック)
+//    限度値 (Standard):
+//      family-invite 5/分 + 20/日 / org-invite 10/分 + 200/日 / org-invite-scope 500/日 /
+//      child-promotion 5/分 + 10/日 / invite-target 3/日 / transfer-propose 3/分 + 10/日
+// ─────────────────────────────────────────────
+describe('src/lib/rate-limit.ts 招待メール系カテゴリ (#1163)', () => {
+  const MINUTE_MS = 60_000;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...ORIGINAL_ENV };
+    resetUpstashEnv();
+    vi.doUnmock('@upstash/redis');
+    vi.doUnmock('@upstash/ratelimit');
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.useRealTimers();
+    vi.doUnmock('@upstash/redis');
+    vi.doUnmock('@upstash/ratelimit');
+  });
+
+  it.each([
+    ['family-invite', 5],
+    ['org-invite', 10],
+    ['child-promotion', 5],
+    ['transfer-propose', 3],
+  ] as const)('%s: 分あたり %i 回まで許可し、次は windowSec=60 で失敗する', async (category, burst) => {
+    const { checkRateLimit } = await import('@/lib/rate-limit');
+    const key = `user-burst-${category}`;
+
+    const results = [];
+    for (let i = 0; i < burst + 1; i++) {
+      results.push(await checkRateLimit(key, category));
+    }
+
+    expect(results.slice(0, burst).every((r) => r.success)).toBe(true);
+    expect(results[burst].success).toBe(false);
+    expect(results[burst].windowSec).toBe(60);
+    // 成功時の windowSec は先頭ルール (分あたり) のもの
+    expect(results[0].windowSec).toBe(60);
+  });
+
+  it.each([
+    ['family-invite', 20],
+    ['org-invite', 200],
+    ['child-promotion', 10],
+    ['transfer-propose', 10],
+  ] as const)('%s: 日次 %i 回まで許可し、次は windowSec=86400 で失敗する (分あたり制限とは別)', async (category, daily) => {
+    vi.useFakeTimers();
+    const { checkRateLimit } = await import('@/lib/rate-limit');
+    const key = `user-daily-${category}`;
+
+    const results = [];
+    for (let i = 0; i < daily + 1; i++) {
+      results.push(await checkRateLimit(key, category));
+      // 分あたりの枠だけをリセットし、日次クォータの判定を分離して検証する
+      vi.advanceTimersByTime(MINUTE_MS + 1_000);
+    }
+
+    expect(results.slice(0, daily).every((r) => r.success)).toBe(true);
+    expect(results[daily].success).toBe(false);
+    expect(results[daily].windowSec).toBe(24 * 60 * 60);
+    expect(results[daily].reset).toBeGreaterThan(Date.now());
+
+    // 24 時間たてば日次の枠はリセットされる
+    vi.advanceTimersByTime(DAY_MS);
+    expect((await checkRateLimit(key, category)).success).toBe(true);
+  });
+
+  it('org-invite-scope: 組織あたり 1 日 500 回まで (分あたりの制限は無い)。501 回目は失敗する', async () => {
+    const { checkRateLimit } = await import('@/lib/rate-limit');
+    const orgKey = 'org-scope-1';
+
+    let failures = 0;
+    for (let i = 0; i < 500; i++) {
+      if (!(await checkRateLimit(orgKey, 'org-invite-scope')).success) failures += 1;
+    }
+    const over = await checkRateLimit(orgKey, 'org-invite-scope');
+
+    expect(failures).toBe(0);
+    expect(over.success).toBe(false);
+    expect(over.windowSec).toBe(24 * 60 * 60);
+    // 別の組織は影響を受けない
+    expect((await checkRateLimit('org-scope-2', 'org-invite-scope')).success).toBe(true);
+  });
+
+  it('invite-target: 同じ鍵へは 1 日 3 回まで。4 回目は失敗し、別の鍵は影響を受けない', async () => {
+    vi.useFakeTimers();
+    const { checkRateLimit } = await import('@/lib/rate-limit');
+    const targetKey = 'family-invite:family-1:0123456789abcdef0123456789abcdef';
+
+    const results = [];
+    for (let i = 0; i < 4; i++) {
+      results.push(await checkRateLimit(targetKey, 'invite-target'));
+      vi.advanceTimersByTime(MINUTE_MS + 1_000);
+    }
+
+    expect(results.map((r) => r.success)).toEqual([true, true, true, false]);
+    expect(results[3].windowSec).toBe(24 * 60 * 60);
+    expect(
+      (await checkRateLimit('family-invite:family-1:ffffffffffffffffffffffffffffffff', 'invite-target')).success,
+    ).toBe(true);
+
+    vi.advanceTimersByTime(DAY_MS);
+    expect((await checkRateLimit(targetKey, 'invite-target')).success).toBe(true);
+  });
+
+  it('同じ key でもカテゴリが違えば別々に数える (family-invite の枠を使い切っても org-invite は通る)', async () => {
+    const { checkRateLimit } = await import('@/lib/rate-limit');
+    const key = 'user-shared-key';
+
+    for (let i = 0; i < 5; i++) {
+      expect((await checkRateLimit(key, 'family-invite')).success).toBe(true);
+    }
+    expect((await checkRateLimit(key, 'family-invite')).success).toBe(false);
+
+    expect((await checkRateLimit(key, 'org-invite')).success).toBe(true);
+    expect((await checkRateLimit(key, 'child-promotion')).success).toBe(true);
+    expect((await checkRateLimit(key, 'transfer-propose')).success).toBe(true);
+    // AI 系の枠とも混ざらない
+    expect((await checkRateLimit(key, 'generation')).success).toBe(true);
+  });
+
+  it('key ごとにカウンタが独立している', async () => {
+    const { checkRateLimit } = await import('@/lib/rate-limit');
+
+    for (let i = 0; i < 3; i++) {
+      expect((await checkRateLimit('user-a', 'transfer-propose')).success).toBe(true);
+    }
+    expect((await checkRateLimit('user-a', 'transfer-propose')).success).toBe(false);
+    expect((await checkRateLimit('user-b', 'transfer-propose')).success).toBe(true);
+  });
+
+  it('既存カテゴリにも windowSec が付く (generation/analysis/image は 60、image の日次超過は 86400)', async () => {
+    vi.useFakeTimers();
+    const { checkRateLimit } = await import('@/lib/rate-limit');
+
+    expect((await checkRateLimit('u-gen', 'generation')).windowSec).toBe(60);
+    expect((await checkRateLimit('u-ana', 'analysis')).windowSec).toBe(60);
+
+    let last = await checkRateLimit('u-img', 'image');
+    expect(last.windowSec).toBe(60);
+    for (let i = 0; i < 20; i++) {
+      vi.advanceTimersByTime(MINUTE_MS + 1_000);
+      last = await checkRateLimit('u-img', 'image');
+    }
+    expect(last.success).toBe(false);
+    expect(last.windowSec).toBe(24 * 60 * 60);
+  });
+
+  it('超過時の reset は将来の時刻で、getRetryAfterSec は 1 以上の整数秒を返す', async () => {
+    const { checkRateLimit, getRetryAfterSec } = await import('@/lib/rate-limit');
+
+    for (let i = 0; i < 3; i++) await checkRateLimit('u-retry', 'transfer-propose');
+    const exceeded = await checkRateLimit('u-retry', 'transfer-propose');
+
+    expect(exceeded.success).toBe(false);
+    expect(exceeded.reset).toBeGreaterThan(Date.now());
+    const retryAfter = getRetryAfterSec(exceeded);
+    expect(Number.isInteger(retryAfter)).toBe(true);
+    expect(retryAfter).toBeGreaterThanOrEqual(1);
+    expect(retryAfter).toBeLessThanOrEqual(60);
+    // reset が過去でも 1 秒以上
+    expect(getRetryAfterSec({ ...exceeded, reset: Date.now() - 10_000 })).toBe(1);
+  });
+
+  it('既存の rateLimitExceededResponse (AI 系の平らな形式) は変えない', async () => {
+    const { checkRateLimit, rateLimitExceededResponse } = await import('@/lib/rate-limit');
+    await checkRateLimit('u-flat', 'image');
+    const exceeded = await checkRateLimit('u-flat', 'image');
+
+    const res = rateLimitExceededResponse(exceeded);
+    const body = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe(String(body.retryAfter));
+    expect(body).toEqual({
+      error: 'リクエストが多すぎます。しばらく時間をおいてからお試しください。',
+      code: 'RATE_LIMITED',
+      retryAfter: body.retryAfter,
+    });
+  });
+});
+
+describe('src/lib/rate-limit.ts in-memory ストアの掃除 (#1163)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...ORIGINAL_ENV };
+    resetUpstashEnv();
+    vi.doUnmock('@upstash/redis');
+    vi.doUnmock('@upstash/ratelimit');
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.useRealTimers();
+  });
+
+  it('件数がしきい値 (10,000) を超えている状態で新しい鍵が来ると、期限切れのエントリだけを掃除する', async () => {
+    const { checkRateLimit, getInMemoryStoreSize } = await import('@/lib/rate-limit');
+
+    // generation は 1 回の判定でエントリを 1 つ作る (60 秒ウィンドウ)
+    for (let i = 0; i < 10_001; i++) {
+      await checkRateLimit(`prune-key-${i}`, 'generation');
+    }
+    expect(getInMemoryStoreSize()).toBe(10_001);
+
+    // 全エントリの期限が切れてから、新しい鍵で判定する → 掃除されて 1 件だけ残る
+    vi.advanceTimersByTime(61_000);
+    await checkRateLimit('prune-trigger', 'generation');
+
+    expect(getInMemoryStoreSize()).toBe(1);
+  });
+
+  it('期限内のエントリは掃除しない (カウンタが消えて上限が緩むことはない)', async () => {
+    const { checkRateLimit, getInMemoryStoreSize } = await import('@/lib/rate-limit');
+
+    for (let i = 0; i < 10_001; i++) {
+      await checkRateLimit(`live-key-${i}`, 'generation');
+    }
+    // しきい値を超えた状態で新しい鍵が来ても、期限内なので何も消えない
+    await checkRateLimit('live-trigger', 'generation');
+    expect(getInMemoryStoreSize()).toBe(10_002);
+
+    // live-key-0 は 1 回使用済み: あと 4 回で上限 (5 回) に達し、その次は失敗する
+    const results = [];
+    for (let i = 0; i < 5; i++) {
+      results.push((await checkRateLimit('live-key-0', 'generation')).success);
+    }
+    expect(results).toEqual([true, true, true, true, false]);
+  });
+
+  it('しきい値以下なら掃除しない (期限切れのエントリは再利用時に上書きされるだけ)', async () => {
+    const { checkRateLimit, getInMemoryStoreSize } = await import('@/lib/rate-limit');
+
+    for (let i = 0; i < 100; i++) {
+      await checkRateLimit(`small-key-${i}`, 'generation');
+    }
+    vi.advanceTimersByTime(61_000);
+    await checkRateLimit('small-trigger', 'generation');
+
+    expect(getInMemoryStoreSize()).toBe(101);
+  });
+});
+
+describe('src/lib/rate-limit.ts Upstash 利用時の prefix とウィンドウ (#1163)', () => {
+  const constructed: Array<{ prefix: string; limiter: unknown }> = [];
+  const slidingWindow = vi.fn((max: number, window: string) => ({ max, window }));
+  // すべての Ratelimit インスタンスが共有する limit()。テストごとに挙動を差し替える
+  // (同じモジュールへ vi.doMock を重ねて登録すると、どちらが有効になるかが不定になるため 1 回だけ登録する)
+  const limitMock = vi.fn();
+
+  beforeEach(() => {
+    vi.resetModules();
+    constructed.length = 0;
+    slidingWindow.mockClear();
+    limitMock.mockReset();
+    limitMock.mockResolvedValue({ success: true, limit: 1, remaining: 0, reset: Date.now() + 60_000 });
+    process.env = { ...ORIGINAL_ENV };
+    process.env.UPSTASH_REDIS_REST_URL = 'https://example.upstash.io';
+    process.env.UPSTASH_REDIS_REST_TOKEN = 'test-token';
+
+    vi.doMock('@upstash/redis', () => ({
+      Redis: class {
+        constructor(_opts: unknown) {}
+      },
+    }));
+    vi.doMock('@upstash/ratelimit', () => ({
+      Ratelimit: Object.assign(
+        class {
+          constructor(opts: { prefix: string; limiter: unknown }) {
+            constructed.push(opts);
+          }
+          limit = limitMock;
+        },
+        { slidingWindow },
+      ),
+    }));
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.doUnmock('@upstash/redis');
+    vi.doUnmock('@upstash/ratelimit');
+  });
+
+  it('既存カテゴリの prefix とウィンドウは変えない (generation / analysis / image / image-daily)', async () => {
+    const { checkRateLimit } = await import('@/lib/rate-limit');
+
+    await checkRateLimit('u1', 'generation');
+    await checkRateLimit('u1', 'analysis');
+    await checkRateLimit('u1', 'image');
+
+    expect(constructed.map((c) => c.prefix)).toEqual([
+      'homegohan:ai-rl:generation',
+      'homegohan:ai-rl:analysis',
+      'homegohan:ai-rl:image',
+      'homegohan:ai-rl:image-daily',
+    ]);
+    expect(slidingWindow.mock.calls).toEqual([
+      [5, '60 s'],
+      [10, '60 s'],
+      [1, '60 s'],
+      [20, '86400 s'],
+    ]);
+  });
+
+  it('招待メール系は専用の prefix と、Standard の上限・ウィンドウで Ratelimit を作る', async () => {
+    const { checkRateLimit } = await import('@/lib/rate-limit');
+
+    await checkRateLimit('u1', 'family-invite');
+    await checkRateLimit('u1', 'org-invite');
+    await checkRateLimit('org1', 'org-invite-scope');
+    await checkRateLimit('u1', 'child-promotion');
+    await checkRateLimit('t1', 'invite-target');
+    await checkRateLimit('u1', 'transfer-propose');
+
+    expect(constructed.map((c) => c.prefix)).toEqual([
+      'homegohan:ai-rl:family-invite',
+      'homegohan:ai-rl:family-invite-daily',
+      'homegohan:ai-rl:org-invite',
+      'homegohan:ai-rl:org-invite-daily',
+      'homegohan:ai-rl:org-invite-scope-daily',
+      'homegohan:ai-rl:child-promotion',
+      'homegohan:ai-rl:child-promotion-daily',
+      'homegohan:ai-rl:invite-target-daily',
+      'homegohan:ai-rl:transfer-propose',
+      'homegohan:ai-rl:transfer-propose-daily',
+    ]);
+    expect(slidingWindow.mock.calls).toEqual([
+      [5, '60 s'],
+      [20, '86400 s'],
+      [10, '60 s'],
+      [200, '86400 s'],
+      [500, '86400 s'],
+      [5, '60 s'],
+      [10, '86400 s'],
+      [3, '86400 s'],
+      [3, '60 s'],
+      [10, '86400 s'],
+    ]);
+  });
+
+  it('Upstash でも超過したルールの windowSec を返し、超過した時点で後ろのルールは判定しない', async () => {
+    limitMock.mockReset();
+    limitMock.mockResolvedValueOnce({ success: false, limit: 5, remaining: 0, reset: Date.now() + 30_000 });
+
+    const { checkRateLimit } = await import('@/lib/rate-limit');
+    const result = await checkRateLimit('u1', 'family-invite');
+
+    // 分あたりで止まったら、日次のルールは判定しない
+    expect(result.success).toBe(false);
+    expect(result.windowSec).toBe(60);
+    expect(limitMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('Upstash でも分あたりを通ったあと日次で止まれば、日次のウィンドウ秒数を返す', async () => {
+    limitMock.mockReset();
+    limitMock
+      .mockResolvedValueOnce({ success: true, limit: 5, remaining: 4, reset: Date.now() + 60_000 })
+      .mockResolvedValueOnce({ success: false, limit: 20, remaining: 0, reset: Date.now() + 3_600_000 });
+
+    const { checkRateLimit } = await import('@/lib/rate-limit');
+    const result = await checkRateLimit('u1', 'family-invite');
+
+    expect(result.success).toBe(false);
+    expect(result.windowSec).toBe(24 * 60 * 60);
+    expect(limitMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('fail-close: 招待メール系も Redis が例外を投げたら握りつぶさず伝播する', async () => {
+    limitMock.mockReset();
+    limitMock.mockRejectedValue(new Error('ECONNREFUSED: upstash unreachable'));
+
+    const { checkRateLimit } = await import('@/lib/rate-limit');
+
+    await expect(checkRateLimit('u1', 'family-invite')).rejects.toThrow('ECONNREFUSED');
+    await expect(checkRateLimit('t1', 'invite-target')).rejects.toThrow('ECONNREFUSED');
+  });
+});

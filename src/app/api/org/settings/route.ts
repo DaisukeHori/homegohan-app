@@ -1,7 +1,7 @@
 /**
  * GET /api/org/settings — 組織設定取得
  * PUT /api/org/settings — 組織設定更新
- * 権限: 所属組織の org_role が owner / admin (自組織のみ、#1235)
+ * 権限: 所属組織の org_role が owner / admin (自組織のみ、#1235)。判定は共通の requireOrgAdmin() (#1161)
  *
  * E2E: w5-13-new-features-adversarial A-1, A-4, A-7
  */
@@ -9,7 +9,8 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { isOrgAdmin } from '@/lib/auth/org-admin';
+import { requireOrgAdmin } from '@/lib/auth/helpers';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -21,24 +22,39 @@ const OrgSettingsUpdateSchema = z.object({
   message: '更新するフィールドを少なくとも1つ指定してください',
 });
 
+/**
+ * 500 の本文は汎用メッセージだけにする (#1172: 生のエラー文を返さない)。
+ * 詳細は db-logger (app_logs) にだけ残す。
+ */
+function internalError(method: string, message: string, err: unknown) {
+  createLogger(`${method} /api/org/settings`, generateRequestId()).error(message, err);
+  return NextResponse.json(
+    { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
+    { status: 500 },
+  );
+}
+
+function handleError(method: string, err: unknown) {
+  if (err instanceof AuthError) {
+    return NextResponse.json(
+      { error: { code: 'UNAUTHORIZED', message: err.message } },
+      { status: 401 },
+    );
+  }
+  if (err instanceof ForbiddenError) {
+    return NextResponse.json(
+      { error: { code: 'FORBIDDEN', message: err.message } },
+      { status: 403 },
+    );
+  }
+  return internalError(method, '組織設定の処理に失敗しました', err);
+}
+
 export async function GET() {
   try {
+    const { profile } = await requireOrgAdmin();
+
     const supabase = await createClient();
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
-      throw new AuthError('AUTH_UNAUTHENTICATED');
-    }
-
-    const { data: profile } = await supabase
-      .from('user_profiles')
-      .select('organization_id, org_role')
-      .eq('id', user.id)
-      .single();
-
-    if (!isOrgAdmin(profile)) {
-      throw new ForbiddenError('PERM_DENIED', 'owner/admin role required');
-    }
-
     const { data: org, error: orgError } = await supabase
       .from('organizations')
       .select('id, name, plan, created_at, updated_at')
@@ -54,43 +70,13 @@ export async function GET() {
 
     return NextResponse.json({ data: org });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json(
-        { error: { code: 'UNAUTHORIZED', message: err.message } },
-        { status: 401 },
-      );
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: err.message } },
-        { status: 403 },
-      );
-    }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message } },
-      { status: 500 },
-    );
+    return handleError('GET', err);
   }
 }
 
 export async function PUT(request: Request) {
   try {
-    const supabase = await createClient();
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
-      throw new AuthError('AUTH_UNAUTHENTICATED');
-    }
-
-    const { data: profile } = await supabase
-      .from('user_profiles')
-      .select('organization_id, org_role')
-      .eq('id', user.id)
-      .single();
-
-    if (!isOrgAdmin(profile)) {
-      throw new ForbiddenError('PERM_DENIED', 'owner/admin role required');
-    }
+    const { profile } = await requireOrgAdmin();
 
     let body: unknown;
     try {
@@ -112,6 +98,7 @@ export async function PUT(request: Request) {
 
     const updates = parseResult.data;
 
+    const supabase = await createClient();
     const { data: org, error: updateError } = await supabase
       .from('organizations')
       .update({ ...updates, updated_at: new Date().toISOString() } as Record<string, unknown>)
@@ -120,7 +107,10 @@ export async function PUT(request: Request) {
       .single();
 
     if (updateError || !org) {
-      console.error('[api/org/settings] PUT update error:', updateError?.message);
+      createLogger('PUT /api/org/settings', generateRequestId()).error(
+        '組織設定の更新に失敗しました',
+        updateError ?? new Error('organizations の更新結果が空です'),
+      );
       return NextResponse.json(
         { error: { code: 'INTERNAL_ERROR', message: '設定の更新に失敗しました' } },
         { status: 500 },
@@ -129,22 +119,6 @@ export async function PUT(request: Request) {
 
     return NextResponse.json({ data: org });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json(
-        { error: { code: 'UNAUTHORIZED', message: err.message } },
-        { status: 401 },
-      );
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: err.message } },
-        { status: 403 },
-      );
-    }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message } },
-      { status: 500 },
-    );
+    return handleError('PUT', err);
   }
 }

@@ -20,10 +20,15 @@ import 'react-native-url-polyfill/auto';
 import Constants from 'expo-constants';
 import { Linking, Platform } from 'react-native';
 
+import { DEFAULT_WEB_URL } from './webBaseUrl';
+
 // ── 定数 ──────────────────────────────────────────────────────────────────────
 
-/** EXPO_PUBLIC_WEB_URL が未設定・不正なときの Web オリジン (#1049 F7-19 で別途見直すため現状維持) */
-export const DEFAULT_WEB_ORIGIN = 'https://homegohan-app.vercel.app';
+/**
+ * EXPO_PUBLIC_WEB_URL が未設定・不正なときの Web オリジン。
+ * 既定値は webBaseUrl.ts の DEFAULT_WEB_URL の 1 か所だけに置く (#1159: ダウンロードの送信元の確認と食い違わないように)
+ */
+export const DEFAULT_WEB_ORIGIN = DEFAULT_WEB_URL;
 /** 遷移先が不正・未指定のときの既定パス (タブ側が渡す trusted な path が無い場合の最後の砦) */
 export const DEFAULT_WEB_PATH = '/home';
 /** bridge の next が不正なときの既定。Web 側 native-bridge の既定値と揃える */

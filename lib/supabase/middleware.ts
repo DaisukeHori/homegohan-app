@@ -1,6 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
-import { resolveOnboardingRedirect } from '@/lib/onboarding-routing'
+import { isAuthFlowPath, isPolicyPath, resolveOnboardingRedirect } from '@/lib/onboarding-routing'
 import { isAccountFrozen } from '@/lib/auth/frozen'
 
 // #1030 (round-4 Warning fix): Authorization ヘッダーが Supabase JWT (dot 区切り
@@ -160,6 +160,8 @@ export async function updateSession(request: NextRequest) {
     '/faq',
     '/contact',
     '/legal',
+    '/terms',  // #1174 利用規約 (サインアップ画面・LP フッターの同意リンクの着地点。未ログインで読める必要がある)
+    '/privacy',  // #1174 プライバシーポリシー (同上。ストア審査に出す URL でもある)
     '/company',
     '/news',
     '/invite',  // 招待トークンページ (認証不要で内容確認できる必要がある)
@@ -205,11 +207,19 @@ export async function updateSession(request: NextRequest) {
         // ユーザーが /contact に遷移しても即座に /frozen へ差し戻され、唯一の異議
         // 申し立て導線が事実上のデッドリンクになっていた。/contact のみ除外する。
         const frozenExemptPaths = ['/frozen', '/contact']
-        const isFrozenExemptPath = frozenExemptPaths.some(
-          (path) =>
-            request.nextUrl.pathname === path ||
-            request.nextUrl.pathname.startsWith(path + '/'),
-        )
+        // S-7b: /auth/* (ネイティブ認証ブリッジなど) も除外する。WebView に凍結中の別アカウントの
+        // セッションが残っていても、ブリッジのワンタイムコードの引き換え (= アカウントの切り替え) を止めない。
+        // 引き換え後の遷移先では、新しいセッションのアカウントで改めて凍結判定される。
+        // #1174: 利用規約・プライバシーポリシー (/terms・/privacy) も除外する。未ログインでも読める公開の文面で、
+        // 凍結の理由になる規約を本人が読めなくなるのを防ぐ (/contact と同じ扱い)。
+        const isFrozenExemptPath =
+          isAuthFlowPath(request.nextUrl.pathname) ||
+          isPolicyPath(request.nextUrl.pathname) ||
+          frozenExemptPaths.some(
+            (path) =>
+              request.nextUrl.pathname === path ||
+              request.nextUrl.pathname.startsWith(path + '/'),
+          )
         if (!isFrozenExemptPath) {
           const url = request.nextUrl.clone()
           url.pathname = '/frozen'

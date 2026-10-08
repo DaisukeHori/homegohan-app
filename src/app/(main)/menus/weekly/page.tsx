@@ -25,6 +25,7 @@ import type { DailyMeal, PlannedMeal, ShoppingListItem, MealMode, MealDishes, Di
 import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
+import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
 import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, formatExpiry, formatDateJa } from "@homegohan/shared";
 import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
@@ -240,7 +241,7 @@ const NutritionItem = ({ label, value, unit, decimals = 1, textColor }: {
   const formatted = formatNutrition(value, decimals);
   if (!formatted) return null; // 追加の安全チェック
   return (
-    <div className="flex justify-between">
+    <div className="flex justify-between gap-1">
       <span style={{ color: textColor }}>{label}</span>
       <span className="font-medium">{formatted}{unit}</span>
     </div>
@@ -1886,9 +1887,21 @@ export default function WeeklyMenuPage() {
   const setServingsConfig = useServingsConfigStore((s) => s.setServingsConfig);
   const setIsLoadingServingsConfig = useServingsConfigStore((s) => s.setIsLoadingServingsConfig);
 
-  // feedbackChannelRef (nutrition 系は nutritionReducer 管理)
-  // RealtimeChannel か、ポーリング用のカスタムクリーンアップオブジェクトのどちらかを保持する
-  const feedbackChannelRef = useRef<RealtimeChannel | { unsubscribe: () => void } | null>(null);
+  // AI栄養士フィードバックの結果待ち (Realtime + ポーリング) の持ち主 (#1206)。
+  // アンマウント・モーダルを閉じる・別の取得の開始のどれでも、購読/ポーリングを必ず解除する。
+  // (nutrition 系の state は nutritionReducer 管理)
+  const feedbackWatch = useNutritionFeedbackWatch({
+    supabase: supabaseRef.current,
+    // フィードバックを見せているのは栄養詳細モーダルとサマリー(stats)モーダルの 2 つ。どちらかが開いている間は待ち続ける。
+    // サマリー → 栄養詳細への切り替えは同じ更新で起きるので、この値は true のまま変わらず購読は引き継がれる
+    isViewing: showNutritionDetailModal || activeModal === 'stats',
+    isLoading: isLoadingFeedback,
+    // 結果待ちのまま閉じられたら、スピナーを戻して、次に開いたとき取得し直せるようにする
+    onAbandoned: () => {
+      setIsLoadingFeedback(false);
+      setLastFeedbackDate(null);
+    },
+  });
 
   // 買い物リスト範囲選択 (#1031: shoppingStore に一本化)
   const shoppingRange = useShoppingStore((s) => s.shoppingRange);
@@ -2560,17 +2573,9 @@ export default function WeeklyMenuPage() {
     setIsLoadingFeedback(true);
     setFeedbackCacheId(null);
     
-    const supabase = supabaseRef.current;
-    
-    // 既存の購読/ポーリングをクリーンアップ
-    if (feedbackChannelRef.current) {
-      if ('unsubscribe' in feedbackChannelRef.current) {
-        feedbackChannelRef.current.unsubscribe();
-      } else {
-        supabase.removeChannel(feedbackChannelRef.current);
-      }
-      feedbackChannelRef.current = null;
-    }
+    // 既存の購読/ポーリングを解除し、この取得を「現役の取得」にする (#1206)。
+    // アンマウント・モーダルを閉じる・別の取得の開始のどれかで request.isCurrent() が false になる
+    const request = feedbackWatch.startRequest();
     
     const targetDay = currentPlan?.days?.find(d => d.dayDate === dateStr);
     const mealCount = targetDay?.meals?.filter(m => m.dishName)?.length || 0;
@@ -2595,9 +2600,13 @@ export default function WeeklyMenuPage() {
           })) || [],
         })
       });
+      // 応答を待つ間にアンマウント/モーダルが閉じられた/別の取得が始まった場合は、
+      // 購読を張らず state も触らずに終わる (#1206)
+      if (!request.isCurrent()) return;
       
       if (res.ok) {
         const data = await res.json();
+        if (!request.isCurrent()) return;
         
         // キャッシュから即座に取得できた場合
         if (data.cached && (data.feedback || data.praiseComment)) {
@@ -2615,118 +2624,22 @@ export default function WeeklyMenuPage() {
           setFeedbackCacheId(cacheId);
           console.log('Nutrition feedback generating, setting up Realtime + polling...');
           
-          let isResolved = false;
-          
-          // ポーリングを設定（フォールバック用、2秒間隔）
-          let pollCount = 0;
-          const maxPolls = 20; // 40秒
-          
-          const pollInterval = setInterval(async () => {
-            if (isResolved) {
-              clearInterval(pollInterval);
-              return;
-            }
-            
-            pollCount++;
-            
-            try {
-              const pollRes = await fetch(`/api/ai/nutrition/feedback?cacheId=${cacheId}`);
-              if (pollRes.ok) {
-                const pollData = await pollRes.json();
-                
-                if (pollData.status === 'completed' && (pollData.feedback || pollData.praiseComment)) {
-                  if (!isResolved) {
-                    isResolved = true;
-                    setNutritionFeedback(pollData.advice || pollData.feedback || '');
-                    setPraiseComment(pollData.praiseComment || null);
-                    setNutritionTip(pollData.nutritionTip || null);
-                    setIsLoadingFeedback(false);
-                    clearInterval(pollInterval);
-                    console.log('Nutrition feedback received via polling');
-                  }
-                } else if (pollData.status === 'error') {
-                  if (!isResolved) {
-                    isResolved = true;
-                    setNutritionFeedback(pollData.advice || pollData.feedback || '分析中にエラーが発生しました。');
-                    setPraiseComment(null);
-                    setNutritionTip(null);
-                    setIsLoadingFeedback(false);
-                    clearInterval(pollInterval);
-                  }
-                }
-              }
-            } catch (e) {
-              console.error('Polling error:', e);
-            }
-            
-            // タイムアウト
-            if (pollCount >= maxPolls && !isResolved) {
-              isResolved = true;
-              clearInterval(pollInterval);
-              setNutritionFeedback('分析がタイムアウトしました。再分析をお試しください。');
+          // 生成が終わる (成功 / 失敗 / タイムアウト) か、アンマウント・モーダルを閉じると、
+          // ポーリングの停止も Realtime チャンネルの除去も watch 側で必ず行われる (#1206)
+          request.watch(cacheId, {
+            onResolved: (content) => {
+              setNutritionFeedback(content.advice);
+              setPraiseComment(content.praiseComment);
+              setNutritionTip(content.nutritionTip);
               setIsLoadingFeedback(false);
-            }
-          }, 2000);
-          
-          // Realtimeも設定（より高速な通知のため）
-          const channel = supabase
-            .channel(`nutrition_feedback_${cacheId}`)
-            .on(
-              'postgres_changes',
-              {
-                event: 'UPDATE',
-                schema: 'public',
-                table: 'nutrition_feedback_cache',
-                filter: `id=eq.${cacheId}`,
-              },
-              (payload: any) => {
-                if (isResolved) return;
-
-                const newRecord = payload.new;
-                console.log('Realtime update received:', newRecord.status);
-
-                if (newRecord.status === 'completed' && newRecord.feedback) {
-                  isResolved = true;
-                  // DBから直接取得したJSONをパース
-                  let feedbackData;
-                  try {
-                    feedbackData = JSON.parse(newRecord.feedback);
-                  } catch {
-                    feedbackData = { praiseComment: '', advice: newRecord.feedback, nutritionTip: '' };
-                  }
-                  setNutritionFeedback(feedbackData.advice || newRecord.feedback);
-                  setPraiseComment(feedbackData.praiseComment || null);
-                  setNutritionTip(feedbackData.nutritionTip || null);
-                  setIsLoadingFeedback(false);
-                  clearInterval(pollInterval);
-                  console.log('Nutrition feedback received via Realtime');
-                } else if (newRecord.status === 'error') {
-                  isResolved = true;
-                  let feedbackData;
-                  try {
-                    feedbackData = JSON.parse(newRecord.feedback);
-                  } catch {
-                    feedbackData = { advice: newRecord.feedback };
-                  }
-                  setNutritionFeedback(feedbackData.advice || newRecord.feedback || '分析中にエラーが発生しました。');
-                  setPraiseComment(null);
-                  setNutritionTip(null);
-                  setIsLoadingFeedback(false);
-                  clearInterval(pollInterval);
-                }
-              }
-            )
-            .subscribe((status) => {
-              console.log('Realtime subscription status:', status);
-            });
-          
-          // クリーンアップ用に保存
-          feedbackChannelRef.current = {
-            unsubscribe: () => {
-              clearInterval(pollInterval);
-              supabase.removeChannel(channel);
-            }
-          };
+            },
+            onFailed: (message) => {
+              setNutritionFeedback(message);
+              setPraiseComment(null);
+              setNutritionTip(null);
+              setIsLoadingFeedback(false);
+            },
+          });
         } else {
           // UX2-03: 「キャッシュ済み」でも「生成中」でもない想定外のレスポンス形状
           // (例: cached=true だが feedback/praiseComment が空、status が想定外の値等) に
@@ -2742,6 +2655,8 @@ export default function WeeklyMenuPage() {
         setIsLoadingFeedback(false);
       }
     } catch (e) {
+      // 現役でなくなった取得 (離脱で中断された fetch など) のエラーは、画面にも state にも出さない (#1206)
+      if (!request.isCurrent()) return;
       console.error('Failed to get nutrition feedback:', e);
       setNutritionFeedback('分析中にエラーが発生しました。');
       setIsLoadingFeedback(false);
@@ -2758,13 +2673,9 @@ export default function WeeklyMenuPage() {
       fetchNutritionFeedback(currentDateStr);
     }
     
-    // クリーンアップ：モーダルが閉じたら購読/ポーリングを停止
-    return () => {
-      if (!showNutritionDetailModal && feedbackChannelRef.current) {
-        feedbackChannelRef.current.unsubscribe?.();
-        feedbackChannelRef.current = null;
-      }
-    };
+    // 購読/ポーリングの解除（モーダルを閉じたとき・アンマウント時）は useNutritionFeedbackWatch が行う。
+    // ここの cleanup で state (showNutritionDetailModal) を見て解除すると、effect 作成時点の古い値を掴み、
+    // モーダルを開いたまま離脱したときに解除されない (#1206)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showNutritionDetailModal, selectedDayIndex, weekDates, lastFeedbackDate]);  // fetchNutritionFeedback は通常関数のため deps に含めると毎回再実行されるため個別 disable
   
@@ -4212,7 +4123,7 @@ export default function WeeklyMenuPage() {
     const dishName = validDishes.map(d => d.name).join('、');
 
     try {
-      await fetch(`/api/meal-plans/meals/${manualEditMeal.id}`, {
+      const patchRes = await fetch(`/api/meal-plans/meals/${manualEditMeal.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4225,6 +4136,12 @@ export default function WeeklyMenuPage() {
           sourceType: selectedCatalogProduct ? 'catalog_product' : 'manual',
         })
       });
+      // #1205: API が入力を拒否した（合計 kcal が範囲外など）ときは、保存できたように閉じずにメッセージを出す
+      if (!patchRes.ok) {
+        const payload = await patchRes.json().catch(() => null);
+        alert(typeof payload?.error === 'string' ? payload.error : '更新に失敗しました');
+        return;
+      }
 
       const targetDate = formatLocalDate(weekStart);
       const endDate = addDaysStr(targetDate, 6);
@@ -5385,21 +5302,28 @@ export default function WeeklyMenuPage() {
                   className="text-left flex flex-col min-h-[85px] rounded-xl p-3"
                   style={{ background: config.bg }}
                 >
-                  <div className="flex justify-between mb-1">
-                    <span style={{ fontSize: 9, fontWeight: 700, color: config.color }}>{config.label}</span>
-                    <span style={{ fontSize: 9, color: colors.textMuted }}>{dish.calories_kcal ?? dish.cal ?? '-'}kcal</span>
+                  {/* #1119: 3 品の並びは 360px 幅で 1 枚の内側が約 72px しかない。
+                      役割名 (11px) と kcal (12px) が収まらない組み合わせ (例: 「デザート」+「250kcal」) は、
+                      はみ出さずに kcal を次の行へ折り返す */}
+                  <div className="flex flex-wrap gap-x-1 mb-1">
+                    <span style={{ fontSize: 11, fontWeight: 700, color: config.color }}>{config.label}</span>
+                    <span className="ml-auto" style={{ fontSize: 12, color: colors.textMuted }}>{dish.calories_kcal ?? dish.cal ?? '-'}kcal</span>
                   </div>
                   <p style={{ fontSize: 13, fontWeight: 500, color: colors.text, margin: 0 }}>{dish.name}</p>
-                  {/* 栄養素（P/F/C）- 新旧形式両対応 */}
+                  {/* 栄養素（P/F/C）- 新旧形式両対応。12px にすると 3 品の並びでは 1 行に収まらないため折り返す */}
                   {(dish.protein_g || dish.fat_g || dish.carbs_g || dish.protein || dish.fat || dish.carbs) && (
-                    <div className="flex gap-2 mt-1 text-[8px]" style={{ color: colors.textMuted }}>
+                    <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-1 text-xs" style={{ color: colors.textMuted }}>
                       {((dish.protein_g ?? dish.protein) ?? 0) > 0 && <span>P:{dish.protein_g ?? dish.protein}g</span>}
                       {((dish.fat_g ?? dish.fat) ?? 0) > 0 && <span>F:{dish.fat_g ?? dish.fat}g</span>}
                       {((dish.carbs_g ?? dish.carbs) ?? 0) > 0 && <span>C:{dish.carbs_g ?? dish.carbs}g</span>}
                     </div>
                   )}
-                  <span className="inline-flex items-center gap-1 mt-auto text-[9px]" style={{ color: colors.blue }}>
-                    <BookOpen size={9} /> レシピを見る
+                  {/* 「レシピを見る」は E2E がこの文言で探すため変えない。折り返すと「レシピを見」「る」と
+                      1 文字だけ落ちるので 1 行にする (文字だけで約 66px)。
+                      3 品の並び (360px 幅で内側約 72px) ではアイコン込みの約 79px が入らず、アイコンだけが
+                      縮んで点のようになるため、380px 以下の画面の 3 品のときだけアイコンを外す */}
+                  <span className="inline-flex items-center gap-0.5 mt-auto text-[11px] whitespace-nowrap" style={{ color: colors.blue }}>
+                    <BookOpen size={11} aria-hidden="true" className={`flex-shrink-0${dishesArray.length === 3 ? ' max-[380px]:hidden' : ''}`} /> レシピを見る
                   </span>
                 </button>
               );
@@ -5421,7 +5345,9 @@ export default function WeeklyMenuPage() {
               <BarChart3 size={12} color={colors.textMuted} />
               <span style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted }}>この食事の栄養素</span>
             </div>
-            <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-[10px]" style={{ color: colors.text }}>
+            {/* #1119: 栄養値 (主要情報) は 12px。3 列だと 360px 幅で 1 列が約 85px しかなく
+                「エネルギー」+「250kcal」(約 102px) も収まらないため、狭い画面は 2 列 (1 列約 134px) にする */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-1.5 text-xs" style={{ color: colors.text }}>
               {/* 基本栄養素 */}
               <NutritionItem label="エネルギー" value={meal.caloriesKcal} unit="kcal" decimals={0} textColor={colors.textMuted} />
               <NutritionItem label="タンパク質" value={meal.proteinG} unit="g" textColor={colors.textMuted} />
@@ -5517,7 +5443,7 @@ export default function WeeklyMenuPage() {
             <Calendar size={18} color={colors.accent} />
             <div>
               <h1 style={{ fontSize: 16, fontWeight: 600, color: colors.text, margin: 0 }}>献立表</h1>
-              <p style={{ fontSize: 10, color: colors.textMuted, margin: 0 }}>
+              <p style={{ fontSize: 12, color: colors.textMuted, margin: 0 }}>
                 {weekDates[0]?.date.getMonth() + 1}/{weekDates[0]?.date.getDate()} - {weekDates[6]?.date.getMonth() + 1}/{weekDates[6]?.date.getDate()}
               </p>
             </div>
@@ -5540,9 +5466,10 @@ export default function WeeklyMenuPage() {
               style={{ background: expiringItems.some(i => getDaysUntil(i.expirationDate)! <= 1) ? colors.dangerLight : colors.bg }}
             >
               <Refrigerator size={16} color={expiringItems.some(i => getDaysUntil(i.expirationDate)! <= 1) ? colors.danger : colors.textLight} aria-hidden="true" />
+              {/* #1119: 件数バッジの数字は 11px。2 桁でも丸からはみ出さないよう、固定の 16px 円ではなく最小 18px の丸み付き枠にする */}
               {expiringItems.length > 0 && (
-                <div className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: colors.warning }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, color: '#fff' }}>{expiringItems.length}</span>
+                <div className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center" style={{ background: colors.warning }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', lineHeight: 1 }}>{expiringItems.length}</span>
                 </div>
               )}
             </button>
@@ -5555,8 +5482,8 @@ export default function WeeklyMenuPage() {
             >
               <ShoppingCart size={16} color={colors.textLight} aria-hidden="true" />
               {shoppingList.filter(i => !i.isChecked).length > 0 && (
-                <div className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: colors.accent }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, color: '#fff' }}>{shoppingList.filter(i => !i.isChecked).length}</span>
+                <div className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center" style={{ background: colors.accent }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', lineHeight: 1 }}>{shoppingList.filter(i => !i.isChecked).length}</span>
                 </div>
               )}
             </button>
@@ -5628,7 +5555,7 @@ export default function WeeklyMenuPage() {
                         key={dayName}
                         className="text-center py-1"
                         style={{
-                          fontSize: 10,
+                          fontSize: 12,
                           color: isWeekendColumn ? colors.accent : colors.textMuted
                         }}
                       >
@@ -5708,7 +5635,7 @@ export default function WeeklyMenuPage() {
             className="flex flex-col items-center justify-center px-1.5 py-1 rounded-lg hover:bg-gray-100 transition-colors"
           >
             <ChevronLeft size={16} color={colors.textMuted} aria-hidden="true" />
-            <span style={{ fontSize: 8, color: colors.textMuted, whiteSpace: 'nowrap' }}>前の週</span>
+            <span style={{ fontSize: 11, color: colors.textMuted, whiteSpace: 'nowrap' }}>前の週</span>
           </button>
           
           {/* 日付タブ */}
@@ -5736,7 +5663,7 @@ export default function WeeklyMenuPage() {
                     border: isToday && !isSelected ? `2px solid ${colors.accent}` : 'none',
                   }}
                 >
-                  <span style={{ fontSize: 9, color: isSelected ? 'rgba(255,255,255,0.7)' : colors.textMuted }}>{day.date.getDate()}</span>
+                  <span style={{ fontSize: 11, color: isSelected ? 'rgba(255,255,255,0.7)' : colors.textMuted }}>{day.date.getDate()}</span>
                   <span style={{
                     fontSize: 13,
                     fontWeight: 600,
@@ -5755,7 +5682,7 @@ export default function WeeklyMenuPage() {
             className="flex flex-col items-center justify-center px-1.5 py-1 rounded-lg hover:bg-gray-100 transition-colors"
           >
             <ChevronRight size={16} color={colors.textMuted} aria-hidden="true" />
-            <span style={{ fontSize: 8, color: colors.textMuted, whiteSpace: 'nowrap' }}>翌週</span>
+            <span style={{ fontSize: 11, color: colors.textMuted, whiteSpace: 'nowrap' }}>翌週</span>
           </button>
         </div>
       </div>
@@ -5865,10 +5792,10 @@ export default function WeeklyMenuPage() {
               {weekDates[selectedDayIndex]?.dateStr && formatDateJa(weekDates[selectedDayIndex].dateStr)}（{weekDates[selectedDayIndex]?.dayOfWeek}）
             </span>
             {weekDates[selectedDayIndex]?.dateStr === todayStr && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: colors.accent, color: '#fff' }}>今日</span>
+              <span className="px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ background: colors.accent, color: '#fff' }}>今日</span>
             )}
             {weekDates[selectedDayIndex]?.dateStr < todayStr && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: colors.textMuted, color: '#fff' }}>過去</span>
+              <span className="px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ background: colors.textMuted, color: '#fff' }}>過去</span>
             )}
           </div>
             <div className="flex items-center gap-1">
@@ -5913,7 +5840,7 @@ export default function WeeklyMenuPage() {
                             showLabels={false}
                             onTap={() => setShowNutritionDetailModal(true)}
                           />
-                          <p className="text-center text-[9px] mt-1" style={{ color: colors.textMuted }}>
+                          <p className="text-center text-[11px] mt-1" style={{ color: colors.textMuted }}>
                             タップで詳細
                           </p>
                         </div>
@@ -5934,12 +5861,24 @@ export default function WeeklyMenuPage() {
                               const isGood = percentage >= 80 && percentage <= 120;
                               const isLow = percentage < 50;
                               const isHigh = percentage > 150;
+                              // #1119: 達成率 (主要情報) を 12px にする。この列は 360px 幅で約 160px しかなく、
+                              // 「栄養名 | 棒 | 達成率」を 1 行に並べると棒が約 40px まで細くなり、
+                              // 長い栄養名 (例: コレステロール) も省略されてしまうため、
+                              // 1 行目に栄養名と達成率、2 行目に棒の 2 段にする
                               return (
-                                <div key={key} className="flex items-center gap-2">
-                                  <span className="text-[10px] w-16 truncate" style={{ color: colors.textMuted }}>
-                                    {def?.label}
-                                  </span>
-                                  <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: colors.bg }}>
+                                <div key={key}>
+                                  <div className="flex items-baseline justify-between gap-2">
+                                    <span className="text-[11px] truncate" style={{ color: colors.textMuted }}>
+                                      {def?.label}
+                                    </span>
+                                    <span
+                                      className="text-xs flex-shrink-0 font-medium"
+                                      style={{ color: isGood ? colors.success : isLow ? colors.warning : isHigh ? colors.accent : colors.textMuted }}
+                                    >
+                                      {percentage}%
+                                    </span>
+                                  </div>
+                                  <div className="h-1.5 rounded-full overflow-hidden" style={{ background: colors.bg }}>
                                     <div
                                       className="h-full rounded-full transition-all"
                                       style={{
@@ -5948,12 +5887,6 @@ export default function WeeklyMenuPage() {
                                       }}
                                     />
                                   </div>
-                                  <span 
-                                    className="text-[9px] w-8 text-right font-medium"
-                                    style={{ color: isGood ? colors.success : isLow ? colors.warning : isHigh ? colors.accent : colors.textMuted }}
-                                  >
-                                    {percentage}%
-                                  </span>
                                 </div>
                               );
                             })}

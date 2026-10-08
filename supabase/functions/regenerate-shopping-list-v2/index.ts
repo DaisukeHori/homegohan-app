@@ -13,29 +13,14 @@ import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from 
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
 import { requireAuth } from "../_shared/auth.ts";
+import { getCorsHeaders, withCors } from "../_shared/cors.ts";
 import { aggregateIngredientOccurrences, InputIngredient } from "../_shared/shopping-list-aggregation.ts";
 import { verifyRequestOwnership } from "../_shared/request-ownership.ts";
+import { replaceActiveShoppingList } from "../_shared/shopping-list-replace.ts";
 
-// ============================================
-// CORS
-// ============================================
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
+// CORS ヘッダーは許可したオリジン (ALLOWED_ORIGINS) にだけ、リクエストごとに getCorsHeaders(req) で作る (#1167)。
 // 認証ヘルパー（_shared/auth.ts）が返す Response には CORS ヘッダーが付与されていないため、
-// ブラウザからの呼び出し（functions.invoke）でも CORS エラーにならないようここで付け直す。
-function withCors(res: Response): Response {
-  const headers = new Headers(res.headers);
-  for (const [key, value] of Object.entries(corsHeaders)) {
-    headers.set(key, value);
-  }
-  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
-}
+// ブラウザからの呼び出し（functions.invoke）でも CORS エラーにならないよう withCors で付け直す。
 
 // ============================================
 // 型定義
@@ -486,29 +471,16 @@ async function processRegeneration(
 
     const rawIngredients = aggregateIngredientOccurrences(ingredientOccurrences);
 
-    // 既存のアクティブな買い物リストをアーカイブ
-    await supabase
-      .from("shopping_lists")
-      .update({ status: "archived", updated_at: new Date().toISOString() })
-      .eq("user_id", userId)
-      .eq("status", "active");
-
-    // 新しい買い物リストを作成
-    const { data: newShoppingList, error: listError } = await supabase
-      .from("shopping_lists")
-      .insert({
-        user_id: userId,
-        start_date: startDate,
-        end_date: endDate,
-        status: "active",
-        servings_config: effectiveServingsConfig,
-        title: `${startDate}〜${endDate}の買い物リスト`,
-      })
-      .select("id")
-      .single();
-
-    if (listError) throw listError;
-    const shoppingListId = newShoppingList.id;
+    // 既存のアクティブな買い物リストをアーカイブして、新しい買い物リストを作成する。
+    // アーカイブと INSERT は DB 関数 replace_active_shopping_list の 1 トランザクションで行う。
+    // ユーザーごとの排他ロックを取るので、同時に「レシピから追加」(add-recipe) がリストを作っても、
+    // INSERT が一意制約違反 (23505) で失敗しない (#1312)。失敗したらアーカイブも取り消される。
+    const shoppingListId = await replaceActiveShoppingList(supabase, {
+      userId,
+      startDate,
+      endDate,
+      servingsConfig: effectiveServingsConfig,
+    });
 
     if (rawIngredients.length === 0) {
       // 材料がない場合は空のリストで完了
@@ -609,6 +581,8 @@ async function processRegeneration(
 // ============================================
 
 Deno.serve(async (req: Request) => {
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -641,7 +615,7 @@ Deno.serve(async (req: Request) => {
       userId = bodyUserId;
     } else {
       const authResult = await requireAuth(req);
-      if (authResult instanceof Response) return withCors(authResult);
+      if (authResult instanceof Response) return withCors(authResult, req);
 
       if (bodyUserId && bodyUserId !== authResult.userId) {
         return new Response(

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
@@ -32,9 +33,12 @@ const colors = {
 export default function QuickRecordPage() {
   const router = useRouter();
 
-  // #1051 UX3-01: 「写真で記録」は AI 読み取り API が未実装で、常にダミー値
-  // (65.2kg) を「読み取り結果」として提示していた。API実装まではモードを
-  // 無効化し「準備中」表示にする。手入力のみを実際の記録経路とする。
+  // 「写真で記録」は、体重計を撮影して AI が数値を読み取る既存のフロー
+  // (/meals/new の体重計モード) へのリンク (#1141)。読み取った値は /meals/new の
+  // 確認ステップで利用者が見て「この体重を記録」を押すまで保存されない。
+  // #1051 UX3-01 でダミー値 (65.2kg) を「読み取り結果」として出していた問題の再発防止のため、
+  // この画面で読み取り結果を作ったり、確認なしに保存したりしない。
+  // 手入力は、この画面の中で体重を入力して保存する。
   const [mode, setMode] = useState<'select' | 'manual'>('select');
   const [manualWeight, setManualWeight] = useState<string>('');
   const [saving, setSaving] = useState(false);
@@ -130,38 +134,34 @@ export default function QuickRecordPage() {
               記録方法を選んでください
             </p>
 
-            {/* 写真で記録 (#1051 UX3-01: AI読み取り未実装のため準備中表示。ダミー値は出さない) */}
-            <div
-              aria-disabled="true"
-              className="w-full p-6 rounded-2xl text-left opacity-60 cursor-not-allowed"
-              style={{
-                backgroundColor: colors.card,
-                boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
-              }}
-            >
-              <div className="flex items-center gap-4">
-                <div
-                  className="w-16 h-16 rounded-xl flex items-center justify-center"
-                  style={{ backgroundColor: colors.blueLight }}
-                >
-                  <Scale size={32} style={{ color: colors.blue }} />
+            {/* 写真で記録 (#1141: /meals/new の体重計モードへ。AI の読み取り結果は確認ステップで見てから記録する) */}
+            <Link href="/meals/new?mode=weight_scale" className="block">
+              <motion.div
+                whileTap={{ scale: 0.98 }}
+                className="w-full p-6 rounded-2xl text-left"
+                style={{
+                  backgroundColor: colors.card,
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
+                }}
+              >
+                <div className="flex items-center gap-4">
+                  <div
+                    className="w-16 h-16 rounded-xl flex items-center justify-center"
+                    style={{ backgroundColor: colors.blueLight }}
+                  >
+                    <Scale size={32} style={{ color: colors.blue }} />
+                  </div>
+                  <div>
+                    <p className="font-bold text-lg" style={{ color: colors.text }}>
+                      📸 写真で記録
+                    </p>
+                    <p className="text-sm mt-1" style={{ color: colors.textMuted }}>
+                      体重計を撮影すると、AIが数値を読み取ります。記録前に確認できます
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <p className="font-bold text-lg flex items-center gap-2" style={{ color: colors.text }}>
-                    📸 写真で記録
-                    <span
-                      className="text-xs font-normal px-2 py-0.5 rounded-full"
-                      style={{ backgroundColor: colors.border, color: colors.textMuted }}
-                    >
-                      準備中
-                    </span>
-                  </p>
-                  <p className="text-sm mt-1" style={{ color: colors.textMuted }}>
-                    AIによる自動読み取りは準備中です。手入力をご利用ください
-                  </p>
-                </div>
-              </div>
-            </div>
+              </motion.div>
+            </Link>
 
             {/* 手入力 */}
             <motion.button

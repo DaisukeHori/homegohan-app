@@ -2,6 +2,8 @@
 
 ブランド名は **「ほめゴハン」** で統一。 from = `ほめゴハン <noreply@homegohan.app>`。
 
+> **配信種別 (2026-10-08 オーナー判断, #1192)**: 本書のメールはすべて transactional (利用者の操作や契約関係に結び付いた通知)。配信停止の導線は付けない。マーケティング・ダイジェストメールを送る機能を足すときは、ワンクリックの `List-Unsubscribe` と本文中の配信停止リンクを必ず一緒に出荷する。詳細は §12。
+
 ---
 
 ## 1. テンプレート定義 (Zod 型)
@@ -31,6 +33,8 @@ export const EmailEnvelopeSchema = z.object({
 });
 export type EmailEnvelope = z.infer<typeof EmailEnvelopeSchema>;
 ```
+
+> 現時点の `EmailEnvelopeSchema` には、配信停止用のヘッダや URL のフィールドがない (transactional だけのため)。marketing を足すときの拡張は §12.3。
 
 ---
 
@@ -193,6 +197,14 @@ https://homegohan.app
 ### 5.2 譲渡完了通知 (旧 owner/representative 向け)
 完了後に旧名義人に通知。テンプレート省略 (上記と同パターン)。
 
+宛先は旧名義人と新名義人の 2 人で、それぞれの立場の本文を送る
+(`renderOrgTransferCompletedEmail` / `renderFamilyTransferCompletedEmail`、#1110)。
+承諾した本人 (新名義人) のアドレスは認証済みセッションの値を使い、旧名義人 (提案者) のアドレスは
+`auth.users` から `resolveAuthEmails` (`src/lib/membership/resolve-auth-emails.ts`) で引く。
+旧名義人は承諾 RPC の戻り値には含まれない (戻り値は更新後の行で、`owner_id` / `representative_id` は新名義人) ため、
+承諾する前に `ownership_transfer_proposals.from_user_id` を読んで控える。
+送信に失敗しても承諾の結果は変えず (200)、構造化ログに残す。
+
 ---
 
 ## 6. 除名/脱退通知
@@ -212,6 +224,19 @@ https://homegohan.app
 ほめゴハン
 ```
 
+実装は `renderMemberRemovedEmail` (`src/lib/emails/membership/member-removed.ts`、#1160)。
+個人情報を載せない方針で、宛名 (`{display_name} 様`) は書かず、載せるのは家族グループ名 / 組織名と何が起きたかだけ。
+件名の括弧は他の通知メールと同じ `【ほめゴハン】`。
+
+- 宛先は除名された本人だけ (除名を実行した人・ほかのメンバーには送らない)。アドレスは `auth.users` から
+  `resolveAuthEmails` (`src/lib/membership/resolve-auth-emails.ts`) で引く。
+  アカウントを持たない子供メンバー (`family_members.user_id` が NULL) と、自分で自分を外した場合は送らない。
+- 家族の除名 RPC (`remove_family_member`) は行の `status` を確かめず、すでに脱退・除名済みの行にも成功する。
+  同じ行の除名を繰り返して同じ人にメールを送り付けられないよう、除名の前に `active` だった行にだけ送る。
+- 家族グループ名 / 組織名と、外される人 (家族は除名する行の `user_id`、組織は URL の `user_id`) は、除名 RPC を呼ぶ前に読む。
+- 送る処理は `src/lib/membership/exit-notification.ts`。送信に失敗しても除名の結果は変えず (200)、構造化ログに残す。
+  ログにメールアドレスは残さない。
+
 ### 6.2 メンバ脱退通知 (representative/owner 向け)
 ```
 件名: [ほめゴハン] {member_name} 様が「{scope_name}」から脱退しました
@@ -226,6 +251,16 @@ https://homegohan.app
 ───────
 ほめゴハン
 ```
+
+実装は `renderMemberLeftEmail` (`src/lib/emails/membership/member-left.ts`、#1160)。
+個人情報を載せない方針で、脱退した人の名前 (`{member_name}`) と宛名 (`{representative_name} 様`) は書かず、
+載せるのは家族グループ名 / 組織名と、メンバーが脱退したこと、メンバー管理画面の URL (`/family/members` / `/org/members`) だけ。
+
+- 宛先は家族グループの代表者 (`family_groups.representative_id`) / 組織のオーナー (`organizations.owner_id`) だけ。
+  脱退した本人には送らない。オーナーが未設定の組織では送らない。アドレスは `resolveAuthEmails` で引く。
+- 脱退すると、本人はその家族グループ / 組織を RLS で読めなくなる (`leave_org` の戻り値の `organization_id` も NULL)。
+  家族グループ名 / 組織名と代表者 / オーナーは、脱退 RPC を呼ぶ前に読む。
+- 送信に失敗しても脱退の結果は変えず (200)、構造化ログに残す。ログにメールアドレスは残さない。
 
 ---
 
@@ -309,6 +344,15 @@ export function buildOrgTransferAcceptUrl(proposalId: string): string {
 export function buildFamilyTransferAcceptUrl(proposalId: string): string {
   return `${getInviteBaseUrl()}/family/transfer-accept/${proposalId}`;
 }
+
+// 脱退の通知メール (§6.2) に載せる、メンバー管理画面 (#1160)
+export function buildFamilyMembersUrl(): string {
+  return `${getInviteBaseUrl()}/family/members`;
+}
+
+export function buildOrgMembersUrl(): string {
+  return `${getInviteBaseUrl()}/org/members`;
+}
 ```
 
 `.env.example` に `NEXT_PUBLIC_INVITE_BASE_URL` を追加。本番デプロイ時に `https://homegohan.com` (取得後) または現状の `https://homegohan-app.vercel.app` を設定。
@@ -354,3 +398,58 @@ test('Template A renders valid envelope', () => {
 - アプリ内 UI 文言 (header logo の alt, footer copyright, error message 内のサービス名等)
 
 このタスクは **本設計の scope 外**として別 PR で対応 (Task #159 として後で create)。
+
+---
+
+## 12. 配信種別と配信停止 (オプトアウト) の方針
+
+> **オーナー判断 (2026-10-08, #1192)**: 現在のメールは transactional (利用者の操作や契約関係に結び付いた通知) だけで、配信停止の導線は付けない。
+> マーケティングメールやダイジェストメールを送る機能は、**ワンクリックの `List-Unsubscribe` と本文中の配信停止リンクを必ず一緒に出荷する**。どちらかが欠けたまま送信を始めない。
+
+### 12.1 いまのメールは、すべて transactional
+
+次のメールは、利用者の操作や契約関係に結び付いた必要な通知で、配信停止の対象にしない。
+
+| 種別 | 場所 |
+|------|------|
+| 招待 (組織 / 家族、既存ユーザ向け / 新規ユーザ向け) | 本書 §2〜§4 |
+| 譲渡の提案・完了 | 本書 §5 |
+| 除名・脱退の通知 | 本書 §6 |
+| 運営の強制操作 (強制譲渡・強制解散) の通知 | 本書 §7 |
+| 子供メンバーの昇格の案内 | `src/lib/emails/membership/family-promote.ts` |
+| お問い合わせの受付、サポートチケットへの返信 | `src/app/api/contact/route.ts`、`src/app/api/admin/support/tickets/[id]/messages/route.ts` |
+
+Supabase Auth のメール (サインアップ確認・パスワード再設定・マジックリンク) と、アカウント削除の確認メール・完了メール (#1152) も transactional として扱い、配信停止の対象にしない。
+配信停止を認めると、招待や譲渡の承諾、削除前の確認が届かなくなるため。
+
+Gmail / Yahoo の一括送信者ガイドライン (2024) も、ワンクリック配信停止を求めるのはマーケティング・購読メールで、transactional は対象外としている。
+そのため、現時点では、これらのメールに配信停止の導線を付けない。
+
+招待メールは、まだ登録していない人のアドレスにも届く。その受信者には、次の 2 点で配慮している。
+
+- 本文に「心当たりのない場合はこのメールを無視してください」と `support@homegohan.app` の連絡先を入れる (§2〜§4)
+- 送信回数に上限を付けて、迷惑メールの踏み台にならないようにする (`src/lib/membership/invite-throttle.ts`、#1163)
+
+### 12.2 マーケティング・ダイジェストメールを送るときのルール
+
+ニュースレター、週次ダイジェスト、新機能のお知らせ、キャンペーン案内など、利用者の操作に結び付かない配信を足すときは、次の 2 つを**一緒に**出荷する。
+
+| # | 必須の仕組み | 内容 |
+|---|-------------|------|
+| 1 | ワンクリックの `List-Unsubscribe` | ヘッダ `List-Unsubscribe: <https://…/unsubscribe/{token}>` と `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058)。受信者が 1 回押す (POST) だけで停止が完了し、ログインや確認画面を挟まない |
+| 2 | 本文中の配信停止リンク | 人が読んで押せるリンクを、本文 (text / html の両方) の末尾に入れる |
+
+1 と 2 を働かせるために、次も同時に用意する。
+
+- 配信停止を受け付ける API。宛先は、メールごとに発行した署名付きのトークンで特定する
+- 停止した宛先の保存と、送信のたびにその宛先を除く判定
+
+### 12.3 実装メモ (marketing を始めるとき)
+
+- `EmailEnvelopeSchema` (`src/lib/emails/send.ts`) に、メールの種別 (`category: 'transactional' | 'marketing'`) と追加ヘッダ (`headers`) を足す。`headers` は Resend の `emails.send` の `headers` にそのまま渡す。
+- `category: 'marketing'` なのに、上の 2 本のヘッダか本文の配信停止リンクが無いときは、`sendEmail` が送信前にエラーにする。ルールを機械的に守らせ、テストで固定する。
+- 利用者が指定した宛先へ送る処理は、これまでどおり `src/lib/membership/invite-throttle.ts` の送信回数制限を通す (CLAUDE.md、#1163)。
+- 招待メールのために入力されたアドレスを、本人の同意なく marketing の配信先に使わない。
+- 日本向けの広告宣伝メールには、特定電子メール法 (事前の同意、送信者の表示、受信拒否の手段) が関わる。配信先の範囲と同意の取り方は、marketing を始める前に法務で確認して決める (cross/08-legal-compliance.md §19 の弁護士レビューと合わせる)。
+
+現時点で、marketing・ダイジェストメールを送る機能はない。

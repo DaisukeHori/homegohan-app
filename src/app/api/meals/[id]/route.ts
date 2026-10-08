@@ -13,6 +13,7 @@ import {
 } from '../../../../lib/meal-image-jobs';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { createLogger } from '@/lib/db-logger';
+import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
 
 /**
  * 特定の食事を取得（planned_mealsベース）
@@ -73,6 +74,20 @@ export async function PATCH(
     }
 
     const body = await request.json();
+
+    // #1205: 栄養素の型・範囲を、DB に触れる前に確認する（不正なら 400）。
+    // 下の allowlist はキー名を絞るだけで値は見ないため、ここで値を確認する。
+    const validation = validatePlannedMealInput({
+      nutrients: {
+        calories_kcal: body.calories_kcal,
+        protein_g: body.protein_g,
+        fat_g: body.fat_g,
+        carbs_g: body.carbs_g,
+      },
+    });
+    if (!validation.ok) {
+      return NextResponse.json(plannedMealValidationErrorBody(validation), { status: 400 });
+    }
     
     // 許可されたフィールドのみ更新
     const allowedFields = [
@@ -87,6 +102,8 @@ export async function PATCH(
         updateData[key] = body[key];
       }
     }
+    // 栄養素は検証済みの値で上書きする（calories_kcal は整数に丸め済み。null は値なし）
+    Object.assign(updateData, validation.nutrients);
     updateData.updated_at = new Date().toISOString();
     const manualImageUrl = typeof body.image_url === 'string' ? body.image_url : undefined;
 

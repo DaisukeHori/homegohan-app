@@ -9,6 +9,11 @@ import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-e
 import { sendEmail } from '@/lib/emails/send';
 import { renderFamilyPromoteEmail } from '@/lib/emails/membership/family-promote';
 import {
+  checkInviteEmailLimits,
+  inviteThrottleFailureFromRpcError,
+  inviteThrottleResponse,
+} from '@/lib/membership/invite-throttle';
+import {
   FamilyMemberIdParamsSchema,
   RequestChildPromotionBodySchema,
 } from '@/schemas/membership/family-promote-action';
@@ -72,11 +77,31 @@ export async function POST(
     );
   }
 
+  // #1163 同意依頼メールの送信回数を制限する。最初の副作用 (RPC) の前に判定する。
+  // この時点では URL の member_id が自分の家族の枠かどうかを確認できていない (RPC が確かめる) ので、
+  // member_id も、そこから引く family_id も鍵にしない。鍵は認証で確定した user.id だけ
+  // (宛先の上限も user.id の範囲で数える)。
+  // 判定できない (Redis 障害など) ときは例外がそのまま伝播し、RPC もメールも実行されない (fail-closed)。
+  const throttle = await checkInviteEmailLimits({
+    flow: 'child-promotion',
+    userId: user.id,
+    scopeId: user.id,
+    recipientEmail: parsed.data.email,
+  });
+  if (throttle) {
+    return inviteThrottleResponse(throttle);
+  }
+
   const { data, error } = await supabase.rpc('request_child_promotion', {
     p_member_id: member_id,
     p_email: parsed.data.email,
   });
   if (error) {
+    // #1163 DB の 24 時間上限 (enforce_membership_daily_cap) に達したときは、アプリ層の上限と同じ 429 にする
+    const dbThrottle = inviteThrottleFailureFromRpcError(error, { flow: 'child-promotion', userId: user.id });
+    if (dbThrottle) {
+      return inviteThrottleResponse(dbThrottle);
+    }
     // #1232 v3 (G10): SQLSTATE (PostgrestError.code) を渡し 40P01 → CONFLICT_RETRY(409) を有効化
     const { code, status } = mapPgErrorToHttp(error.message ?? '', error.code);
     if (status >= 500) {

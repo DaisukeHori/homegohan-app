@@ -9,10 +9,7 @@ import {
   fetchDatasetEmbeddings,
 } from "../../../shared/dataset-embedding.mjs";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+// service_role key 専用 (ブラウザからは呼ばれない) なので CORS は付けない (#1167)。
 
 type CreateDerivedRecipeRequest = {
   // 派生料理名（例: 麻婆茄子）
@@ -34,7 +31,7 @@ type CreateDerivedRecipeRequest = {
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
   });
 }
 
@@ -468,10 +465,6 @@ const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 });
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
   // service_role key の完全一致のみで判定（署名未検証のJWTペイロードは信用しない）
   const token = getBearerToken(req);
   if (!token || !SERVICE_ROLE_KEY || token !== SERVICE_ROLE_KEY) {

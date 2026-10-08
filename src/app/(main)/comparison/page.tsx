@@ -36,20 +36,36 @@ export default function ComparisonPage() {
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
 
   useEffect(() => {
+    // 期間を切り替えたとき (またはページを離れたとき) に前のリクエストを中断する (#1228)。
+    // 中断しないと、先に発行した週間の応答が後から届いて月間の表示を上書きしたり、
+    // 古い応答の finally でスピナーが消えたりする。
+    const controller = new AbortController();
+    const { signal } = controller;
+
     const fetchData = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/comparison/rankings?periodType=${periodType}`);
+        const res = await fetch(`/api/comparison/rankings?periodType=${periodType}`, { signal });
         if (!res.ok) throw new Error('Failed');
         const result = await res.json();
+        // 中断済みのリクエストの応答は、fetch が中断を返さなかった場合も含めて必ず捨てる
+        if (signal.aborted) return;
         setData(result);
       } catch (e) {
+        // abort() による AbortError は期間切替・離脱に伴う正常動作なので、エラー扱いにせず何もしない
+        if (signal.aborted) return;
         console.error(e);
+        // 失敗時に直前の期間のデータを残すと、別期間の内容が現在のタブの下に表示されてしまうため、
+        // データを空にして「取得に失敗しました」の表示に切り替える
+        setData(null);
       } finally {
-        setLoading(false);
+        // 中断された古いリクエストが、新しいリクエストの実行中にスピナーを消してしまわないようにする
+        if (!signal.aborted) setLoading(false);
       }
     };
     fetchData();
+
+    return () => controller.abort();
   }, [periodType]);
 
   return (

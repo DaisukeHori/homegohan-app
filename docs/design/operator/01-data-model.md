@@ -662,6 +662,10 @@ CREATE TABLE sales_lead_activities (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- リード単位の活動履歴 (WHERE lead_id = ? ORDER BY created_at DESC) と ON DELETE CASCADE 用。
+-- 初版には無く、#1216 で追加 (supabase/migrations/20261007160200_sales_lead_activities_lead_index.sql)
+CREATE INDEX idx_sales_lead_activities_lead_created ON sales_lead_activities(lead_id, created_at DESC);
+
 ALTER TABLE sales_leads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sales_lead_activities ENABLE ROW LEVEL SECURITY;
 
@@ -987,6 +991,10 @@ CREATE POLICY "email_blacklist_admin" ON email_blacklist
 
 ### 3.21 `gdpr_deletion_requests`
 
+> **2026-10-08 オーナー判断 (#1130)**: 退会は即時削除が正式仕様で、このテーブルは退会フローでは使わない。
+> 下の `cooling_until` (30 日の待機) と `cancelled_at` は、待機期間を前提にした旧設計の列。
+> 廃止するか別用途にするかは未決 (cross/08-legal-compliance.md §16.4 / §19)。
+
 ```sql
 CREATE TABLE gdpr_deletion_requests (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1154,7 +1162,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_sandbox_meal
 
 利用方針:
 - 通常 UI(週間献立 / 食事一覧)は `WHERE is_sandbox = false` を必ず付与
-- バッジ判定(`first_bite` 等)は `is_sandbox=true` も対象に含める(設計書 §03-step1-photo §03)
+- バッジ判定(`first_bite` 等)は `is_sandbox=true` を対象に含めない(#1314。オーナー判断 2026-10-08。当初の設計書 §03-step1-photo §03 は「含める」だったが変更。`GET /api/badges` の食事数・自炊数・連続日数は `is_sandbox = false` の日だけで数える)
 
 #### 3.26.3 `user_daily_meals` 拡張 (sandbox 識別子)
 

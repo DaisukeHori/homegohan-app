@@ -1,10 +1,9 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Alert, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { useNavigation, useRouter, useLocalSearchParams } from 'expo-router';
-import * as FileSystem from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
+import { getDownloadFailureNotice, handleWebViewDownload } from '../../lib/webViewDownload';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 // 認証ブリッジ・オリジン検証・外部遷移の判定は webViewBridge.ts に集約 (#1036 / #1158)
@@ -288,24 +287,13 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
             } else if (data.type === 'download') {
               // Fix 3: iOS WebView でのエクスポート対応
               // Web 側から postMessage で受け取ったファイル内容を expo-sharing で保存・共有
-              const { filename, content, mimeType } = data;
-              (async () => {
-                try {
-                  const filePath = `${FileSystem.documentDirectory}${filename}`;
-                  await FileSystem.writeAsStringAsync(filePath, content, {
-                    encoding: FileSystem.EncodingType.UTF8,
-                  });
-                  const isAvailable = await Sharing.isAvailableAsync();
-                  if (isAvailable) {
-                    await Sharing.shareAsync(filePath, {
-                      mimeType,
-                      dialogTitle: filename,
-                    });
-                  }
-                } catch (e) {
-                  console.error('[WebViewScreen] download failed', e);
-                }
-              })();
+              // filename / content / mimeType も送信元ページも WebView 内の JS が自由に作れるので信用せず、
+              // 送信元・ファイル名・サイズの検証と cacheDirectory への保存は webViewDownload.ts に集約 (#1159)
+              // 正規のエクスポートが失敗したときは、「押しても何も起きない」ように見えないよう利用者に知らせる
+              void handleWebViewDownload(data, event.nativeEvent.url).then((result) => {
+                const notice = getDownloadFailureNotice(result);
+                if (notice) Alert.alert(notice.title, notice.message);
+              });
             }
           } catch {
             // JSON パース失敗は無視

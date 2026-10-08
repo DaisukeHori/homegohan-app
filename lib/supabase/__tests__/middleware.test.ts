@@ -6,6 +6,8 @@
  * frozen_at チェックが効くよう Authorization ヘッダーを createServerClient へ転送する
  * #1030 round-3 Warning: 凍結リダイレクトから /contact を除外する
  * #1030 round-4 Warning: CRON_SECRET (非 JWT Bearer) は Auth API へ転送しない
+ * #1174: 利用規約 (/terms)・プライバシーポリシー (/privacy) は、未ログインでも、
+ * ログイン済みのオンボーディング未完了・凍結中でも差し戻さない
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -394,4 +396,254 @@ describe('updateSession — 家族参加の本人同意ページへの遷移 (#1
     expect(res.status).not.toBe(307);
     expect(res.headers.get('location')).toBeNull();
   });
+});
+
+// S-7b (#1036 のレビュー): ネイティブ認証ブリッジ (/auth/native-bridge?code=...) は、WebView に
+// 残っている別アカウント (オンボーディング未完了・凍結中) のセッションがあっても、コードの引き換え前に
+// 差し戻してはならない。差し戻すとコードが使われず、WebView が古いアカウントのまま残る。
+describe('updateSession — 認証の途中の画面 (/auth/*) への遷移 (S-7b)', () => {
+  const bridgePath = '/auth/native-bridge';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+  });
+
+  it('オンボーディング未着手(not_started)のセッションが残っていても、/auth/native-bridge は /onboarding/welcome へ差し戻さない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        roles: [],
+        onboarding_started_at: null,
+        onboarding_completed_at: null,
+        frozen_at: null,
+        unban_at: null,
+      },
+      error: null,
+    });
+
+    const res = await updateSession(pageRequest(bridgePath));
+
+    expect(res.status).not.toBe(307);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('オンボーディング進行中(in_progress)のセッションが残っていても、/auth/native-bridge は /onboarding/resume へ差し戻さない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        roles: [],
+        onboarding_started_at: '2026-03-01T00:00:00.000Z',
+        onboarding_completed_at: null,
+        frozen_at: null,
+        unban_at: null,
+      },
+      error: null,
+    });
+
+    const res = await updateSession(pageRequest(bridgePath));
+
+    expect(res.status).not.toBe(307);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('凍結中のアカウントのセッションが残っていても、/auth/native-bridge は /frozen へ差し戻さない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        roles: [],
+        onboarding_started_at: '2026-03-01T00:00:00.000Z',
+        onboarding_completed_at: '2026-03-01T01:00:00.000Z',
+        frozen_at: '2026-03-02T00:00:00.000Z',
+        unban_at: null,
+      },
+      error: null,
+    });
+
+    const res = await updateSession(pageRequest(bridgePath));
+
+    expect(res.status).not.toBe(307);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('/authx のような似たパスは従来どおり差し戻す (前方一致の取りこぼし防止)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        roles: [],
+        onboarding_started_at: null,
+        onboarding_completed_at: null,
+        frozen_at: null,
+        unban_at: null,
+      },
+      error: null,
+    });
+
+    const res = await updateSession(pageRequest('/authx'));
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe('http://localhost/onboarding/welcome');
+  });
+});
+
+// #1174 (同意の前提): 利用規約 (/terms) とプライバシーポリシー (/privacy) は、サインアップ画面の同意リンク・
+// LP のフッター・ストア審査に出すプライバシー URL の着地点。以前は (main) グループにあり publicPaths にも無かったため、
+// 未ログインで開くと 307 → /login?next=%2Fprivacy になり、同意の根拠になる文面を読めないまま
+// 「同意したものとみなす」状態だった。未ログインでも読めること、ログイン済みでも
+// オンボーディング (/onboarding/welcome・/resume) や凍結 (/frozen) の差し戻しで弾かれないことを、
+// 実際の updateSession 経路で検証する。
+describe.each(['/terms', '/privacy'])('updateSession — %s への遷移 (#1174)', (policyPath) => {
+  function profile(overrides: Record<string, unknown> = {}) {
+    return {
+      data: {
+        roles: [],
+        onboarding_started_at: '2026-03-01T00:00:00.000Z',
+        onboarding_completed_at: '2026-03-01T01:00:00.000Z',
+        frozen_at: null,
+        unban_at: null,
+        ...overrides,
+      },
+      error: null,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+  });
+
+  it('未ログインでも /login へリダイレクトされない (同意リンクの着地点)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+    const res = await updateSession(pageRequest(policyPath));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('未ログインでクエリ付き (?mode=app など) でも /login へリダイレクトされない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+    const res = await updateSession(pageRequest(`${policyPath}?mode=app`));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('getUser() が例外を投げた (認証基盤の一時障害) ときも /login へリダイレクトされない', async () => {
+    mockGetUser.mockRejectedValue(new Error('network error'));
+
+    const res = await updateSession(pageRequest(policyPath));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('オンボーディング未着手(not_started)のログイン済みユーザーも /onboarding/welcome へ差し戻されない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue(
+      profile({ onboarding_started_at: null, onboarding_completed_at: null }),
+    );
+
+    const res = await updateSession(pageRequest(policyPath));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('オンボーディング進行中(in_progress)のログイン済みユーザーも /onboarding/resume へ差し戻されない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue(profile({ onboarding_completed_at: null }));
+
+    const res = await updateSession(pageRequest(policyPath));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('凍結中のログイン済みユーザーも /frozen へ差し戻されない (凍結の理由になる規約を読める)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue(profile({ frozen_at: '2026-07-01T00:00:00.000Z' }));
+
+    const res = await updateSession(pageRequest(policyPath));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('オンボーディング完了済みのログイン済みユーザーは従来どおり素通りする', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue(profile());
+
+    const res = await updateSession(pageRequest(policyPath));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('管理者ロールのログイン済みユーザーも差し戻されない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue(profile({ roles: ['admin'] }));
+
+    const res = await updateSession(pageRequest(policyPath));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it(`${policyPath}x のような似たパスは、未ログインなら従来どおり /login?next=... へリダイレクトされる (前方一致の取りこぼし防止)`, async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+    const res = await updateSession(pageRequest(`${policyPath}x`));
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe(
+      `http://localhost/login?next=${encodeURIComponent(`${policyPath}x`)}`,
+    );
+  });
+
+  it(`${policyPath}x のような似たパスは、オンボーディング未着手のログイン済みユーザーなら従来どおり welcome へ差し戻される`, async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue(
+      profile({ onboarding_started_at: null, onboarding_completed_at: null }),
+    );
+
+    const res = await updateSession(pageRequest(`${policyPath}x`));
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe('http://localhost/onboarding/welcome');
+  });
+
+  it(`${policyPath}x のような似たパスは、凍結中のログイン済みユーザーなら従来どおり /frozen へ差し戻される`, async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue(profile({ frozen_at: '2026-07-01T00:00:00.000Z' }));
+
+    const res = await updateSession(pageRequest(`${policyPath}x`));
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe('http://localhost/frozen');
+  });
+});
+
+// 公開にするのは /terms と /privacy だけ。同じ「設定」まわりの保護ページ (/settings など) は
+// 未ログインなら従来どおりログイン画面へ回す (publicPaths を広げすぎていないことの確認)。
+describe('updateSession — 保護ページは未ログインなら従来どおり /login へ回す (#1174 回帰確認)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+  });
+
+  it.each(['/settings', '/profile', '/home'])(
+    '未ログインで %s を開くと /login?next=... へリダイレクトされる',
+    async (path) => {
+      mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+      const res = await updateSession(pageRequest(path));
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get('location')).toBe(
+        `http://localhost/login?next=${encodeURIComponent(path)}`,
+      );
+    },
+  );
 });

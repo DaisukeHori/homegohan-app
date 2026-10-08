@@ -5,20 +5,27 @@
  *   同じメールアドレスへの pending の招待があれば取り消してから作り直す。
  * - 招待メールは Resend で送る。送信に失敗しても招待は有効なまま (警告ログのみ)。
  * - アカウントは作らない。招待された本人が、自分でメールを確認したアカウントで /invite/<token> から承諾する。
+ * - #1163 RPC の前に送信回数を判定する (invite-throttle.ts)。2 つの route が共有するこの関数に置くことで、
+ *   どちらの入口からも回避できないようにしている。
  */
+import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
+import type { ZodError } from 'zod';
+import { ErrorStatusMap, MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
 import { renderOrgInviteExistingEmail } from '@/lib/emails/membership/org-invite-existing';
 import { renderOrgInviteNewEmail } from '@/lib/emails/membership/org-invite-new';
 import type { InviteEmailVars } from '@/lib/emails/membership/templates';
+import { checkInviteEmailLimits, inviteThrottleFailureFromRpcError } from '@/lib/membership/invite-throttle';
 
 export type OrgInviteRole = 'admin' | 'member';
 
 export interface CreateOrgInviteParams {
   /** 招待する人 (組織の owner / admin) のセッションのクライアント */
   supabase: SupabaseClient;
-  inviter: { email?: string | null; nickname?: string | null };
+  /** id は認証で確定した招待者の user.id (送信回数制限の鍵) */
+  inviter: { id: string; email?: string | null; nickname?: string | null };
+  /** 呼び出し元のプロフィールから取った所属組織の ID。リクエストの body の値を渡さないこと */
   organizationId: string;
   email: string;
   role: OrgInviteRole;
@@ -36,9 +43,16 @@ export interface OrgInviteSummary {
   invite_url: string;
 }
 
-export type CreateOrgInviteResult =
-  | { ok: true; invite: OrgInviteSummary }
-  | { ok: false; status: number; code: string; message: string };
+export type CreateOrgInviteFailure = {
+  ok: false;
+  status: number;
+  code: string;
+  message: string;
+  /** 送信回数の上限 (429) のときだけ付く。何秒後に再試行できるか */
+  retryAfterSec?: number;
+};
+
+export type CreateOrgInviteResult = { ok: true; invite: OrgInviteSummary } | CreateOrgInviteFailure;
 
 interface InviteRow {
   id: string;
@@ -53,7 +67,25 @@ interface InviteRow {
 
 export async function createOrgInviteWithEmail(params: CreateOrgInviteParams): Promise<CreateOrgInviteResult> {
   const { supabase, inviter, organizationId, role, customMessage, displayName } = params;
-  const email = params.email.toLowerCase();
+  const email = params.email.trim().toLowerCase();
+
+  // #1163 送信回数の制限。最初の副作用 (RPC) の前に、招待者 → 組織 → 宛先の順で判定する。
+  // 判定できない (Redis 障害など) ときは例外がそのまま伝播し、RPC もメールも実行されない (fail-closed)。
+  const throttle = await checkInviteEmailLimits({
+    flow: 'org-invite',
+    userId: inviter.id,
+    scopeId: organizationId,
+    recipientEmail: email,
+  });
+  if (throttle) {
+    return {
+      ok: false,
+      status: ErrorStatusMap[MembershipErrorCode.RATE_LIMITED],
+      code: MembershipErrorCode.RATE_LIMITED,
+      message: throttle.message,
+      retryAfterSec: throttle.retryAfterSec,
+    };
+  }
 
   // create_org_invite RPC 呼び出し (既存 pending は RPC 内で revoke)
   const { data: invite, error: rpcError } = await supabase.rpc('create_org_invite', {
@@ -64,6 +96,18 @@ export async function createOrgInviteWithEmail(params: CreateOrgInviteParams): P
   });
 
   if (rpcError) {
+    // #1163 DB の 24 時間上限 (enforce_membership_daily_cap) に達したときは、アプリ層の上限と同じ形の 429
+    // (利用者向けの文言と Retry-After) にする。DB が返す生の文字列 'RATE_LIMITED' は見せない。
+    const dbThrottle = inviteThrottleFailureFromRpcError(rpcError, { flow: 'org-invite', userId: inviter.id });
+    if (dbThrottle) {
+      return {
+        ok: false,
+        status: ErrorStatusMap[MembershipErrorCode.RATE_LIMITED],
+        code: MembershipErrorCode.RATE_LIMITED,
+        message: dbThrottle.message,
+        retryAfterSec: dbThrottle.retryAfterSec,
+      };
+    }
     const { code, status } = mapPgErrorToHttp(rpcError.message);
     return { ok: false, status, code, message: rpcError.message };
   }
@@ -118,4 +162,41 @@ export async function createOrgInviteWithEmail(params: CreateOrgInviteParams): P
       invite_url: inviteUrl,
     },
   };
+}
+
+/**
+ * createOrgInviteWithEmail の失敗を HTTP レスポンスにする (POST /api/org/invites と POST /api/org/members で共通)。
+ * 送信回数の上限 (429) のときだけ Retry-After ヘッダーと error.retryAfter を付ける。
+ */
+export function orgInviteFailureResponse(failure: CreateOrgInviteFailure): NextResponse {
+  const hasRetryAfter = failure.retryAfterSec !== undefined;
+  return NextResponse.json(
+    {
+      error: {
+        code: failure.code,
+        message: failure.message,
+        ...(hasRetryAfter ? { retryAfter: failure.retryAfterSec } : {}),
+      },
+    },
+    {
+      status: failure.status,
+      ...(hasRetryAfter ? { headers: { 'Retry-After': String(failure.retryAfterSec) } } : {}),
+    },
+  );
+}
+
+// リクエストボディのどの項目が不正だったかで出し分ける UI 向けの文言
+const INVALID_BODY_MESSAGES: Record<string, string> = {
+  email: 'メールアドレスを正しい形式で入力してください',
+  role: 'role は admin または member のみ指定できます',
+  custom_message: 'メッセージは 500 文字以内の文字列で入力してください',
+  nickname: 'ニックネームは 50 文字以内の文字列で入力してください',
+};
+
+/** 招待のリクエストボディが不正なときの 400 (code は既存と同じ INVALID_BODY) */
+export function invalidOrgInviteBodyResponse(error: ZodError): NextResponse {
+  const field = error.issues[0]?.path[0];
+  const message =
+    (typeof field === 'string' ? INVALID_BODY_MESSAGES[field] : undefined) ?? 'リクエストボディが不正です';
+  return NextResponse.json({ error: { code: 'INVALID_BODY', message } }, { status: 400 });
 }

@@ -19,3 +19,13 @@ export function buildOrgTransferAcceptUrl(proposalId: string): string {
 export function buildFamilyTransferAcceptUrl(proposalId: string): string {
   return `${getInviteBaseUrl()}/family/transfer-accept/${proposalId}`;
 }
+
+/** 家族グループのメンバー管理画面 (脱退の通知メールに載せる) */
+export function buildFamilyMembersUrl(): string {
+  return `${getInviteBaseUrl()}/family/members`;
+}
+
+/** 組織のメンバー管理画面 (脱退の通知メールに載せる) */
+export function buildOrgMembersUrl(): string {
+  return `${getInviteBaseUrl()}/org/members`;
+}

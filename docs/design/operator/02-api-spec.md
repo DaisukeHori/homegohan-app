@@ -71,7 +71,7 @@ await supabase.from('admin_audit_logs').insert({
 
 | パラメータ | 型 | 説明 |
 |----------|---|------|
-| `q` | string | 全文検索 (email/name/user_id) |
+| `q` | string | 全文検索 (email/name/user_id)。email の部分一致は `admin` / `super_admin` のみ (`support` は name/user_id のみ)。`%` `_` は文字どおりに一致する |
 | `plan` | string | plan_key でフィルタ |
 | `role` | string | ロールでフィルタ |
 | `status` | `active\|banned\|deleted` | ステータス |
@@ -106,10 +106,16 @@ await supabase.from('admin_audit_logs').insert({
 
 **権限**: `admin`, `super_admin`, `support`
 
+**email の扱い (#1145)**:
+- `email` は `auth.users` のメールアドレス。見られるのは `admin` / `super_admin` のみ。`support` は一覧・詳細を見られるが `email` は常に `null` で、`q` によるメール検索も効かない (検索でメールの存在を推測させない)。`support` にも見せる場合は `EMAIL_VIEWER_ROLES` (`src/lib/admin/user-emails.ts`) に足す。
+- 一覧は、その 1 ページに出た user_id のぶんだけを `admin_user_emails(p_ids)` (service_role 専用の RPC) で引く。`auth.admin.listUsers()` は先頭 50 件しか引けないため使わない (#1204)。
+- `q` のメール検索は `admin_find_user_ids_by_email(p_q, p_limit)` (service_role 専用)。新しいアカウントから最大 100 件までが対象。
+- メールを持たないユーザー (電話・匿名) や、取得に失敗したときは `email: null` (失敗はログに残り、API は 200 のまま)。応答は `Cache-Control: no-store`。
+
 ---
 
 ### GET /api/admin/users/{id}
-ユーザー詳細
+ユーザー詳細 (`email` の扱いは上の「email の扱い」と同じ。`support` には `null`)
 
 **レスポンス**:
 ```json
@@ -305,7 +311,12 @@ BAN 解除
 
 ## 7. 機能フラグ API
 
-### GET /api/super-admin/feature-flags
+> 実装のパスは `/api/super-admin/flags` (一覧・作成) と `/api/super-admin/flags/{key}` (更新・削除) で、更新は PATCH。
+> この章は以前 `/api/super-admin/feature-flags` (更新は PUT) と書かれていたが、そのパスの route は存在しない。
+> Web の運営画面 (`src/app/super-admin/flags`)・結合テスト・E2E・モバイルの機能フラグ画面は、すべて `/flags` を使う (#1137)。
+> エラー本文は他の運営 API と同じ `{ "error": { "code": "...", "message": "..." } }`。
+
+### GET /api/super-admin/flags
 フラグ一覧
 
 **レスポンス**:
@@ -321,14 +332,15 @@ BAN 解除
       "active_user_count": 3200,
       "updated_at": "2026-05-06T00:00:00Z"
     }
-  ]
+  ],
+  "meta": { "total": 1, "page": 1, "per_page": 1 }
 }
 ```
 
 ---
 
-### PUT /api/super-admin/feature-flags/{key}
-フラグ更新
+### PATCH /api/super-admin/flags/{key}
+フラグ更新 (送った項目だけを更新する。ON/OFF の切り替えは `{ "enabled": true }` だけでよい)
 
 **リクエスト**:
 ```json
@@ -339,14 +351,17 @@ BAN 解除
 }
 ```
 
+**レスポンス**: `{ "data": { "key": "...", "description": "...", "enabled": true, "rollout_strategy": {}, "constraints": {}, "updated_at": "..." } }`
+(存在しないキーは 404 `OP_FEATURE_FLAG_NOT_FOUND`)
+
 **副作用**: 即座に全ユーザーへ反映、監査ログ記録
 
 ---
 
-### POST /api/super-admin/feature-flags
-フラグ新規作成
+### POST /api/super-admin/flags
+フラグ新規作成 (キーが重複すると 409 `OP_FEATURE_FLAG_IN_USE`)
 
-### DELETE /api/super-admin/feature-flags/{key}
+### DELETE /api/super-admin/flags/{key}
 フラグ削除 (利用中の場合は `OP_FEATURE_FLAG_IN_USE` で 409)
 
 ---
@@ -460,6 +475,44 @@ MRR 時系列
 ### POST /api/admin/finance/invoices/{id}/resend
 請求書再送
 
+### POST /api/admin/finance/refunds
+返金の記録 (監査ログ) と Stripe ダッシュボードへの誘導 (#1185)
+
+このアプリは返金を実行しない。担当者が Stripe ダッシュボードで返金する前に、この API で
+`admin_audit_logs` に `admin.refund.issue` (severity=`warn`) を記録する。**記録できたときだけ**
+Stripe ダッシュボードのリンクを返す。記録できなかったときは 500 を返し、リンクは返さない。
+
+**リクエスト**:
+```json
+{
+  "user_id": "uuid",
+  "stripe_invoice_id": "in_xxx",
+  "amount": 1200,
+  "currency": "JPY",
+  "reason": "二重に請求されたため"
+}
+```
+
+- `stripe_invoice_id` (`in_...`) と `stripe_charge_id` (`ch_...` / `py_...`) は**どちらか一方だけ**を指定する
+- `amount` は通貨の最小単位の整数 (JPY は円そのもの、USD はセント)。1 〜 99,999,999
+- `currency` は ISO 4217 の 3 文字。省略時は `JPY`。大文字にそろえて保存する
+- `reason` は必須。前後の空白を除いて 1 〜 500 文字
+
+**レスポンス**:
+```json
+{ "data": { "stripe_dashboard_url": "https://dashboard.stripe.com/invoices/in_xxx" } }
+```
+決済 (`stripe_charge_id`) の場合は `.../payments/ch_xxx`。開発環境ではテストモード (`/test`) のリンクになる。
+
+**監査ログ**: `action_type=admin.refund.issue` / `target_type=user` / `target_id=user_id` / `severity=warn` /
+`details={ amount, currency, reason, stripe_charge_id, stripe_invoice_id }` (使わない側の ID は `null`) / `ip_address` / `user_agent`
+
+**権限**: `finance`, `admin`, `super_admin`
+
+**エラー**: `400 VALIDATION_ERROR` (入力不正) / `401 AUTH_UNAUTHENTICATED` / `403 OP_PERMISSION_DENIED` / `500 INTERNAL_ERROR` (監査ログに記録できなかった)
+
+2 名承認 (`finance.refund.approve`) と `charge.refunded` Webhook との突き合わせは Stripe 連携 (#1125) 側で後続。
+
 ---
 
 ## 10. サポート API
@@ -505,12 +558,72 @@ MRR 時系列
 }
 ```
 
+**レスポンス** (201): `{ "data": { ...メッセージ }, "email": { "status": "sent" } }`
+
+- `body` は前後の空白 (全角スペース・改行・タブを含む) を除いて 1 文字以上であること。空白だけの本文は 400 (`VALIDATION_ERROR`) で、保存もメールもしない。保存される本文も前後の空白を除いたもの。
+- 顧客向けメッセージ (`is_internal=false`) は、チケットの顧客本人へメールで知らせる (顧客がチケットを閲覧できる画面は無く、このメールが唯一の通知経路)。内部メモ (`is_internal=true`) はメールにせず、`email` も含めない。
+- `email.status` は `sent` (送信済み) / `skipped` (メール送信の設定が無く未送信) / `failed` (宛先を取得できない、または送信エラー)。`sent` 以外は `email.reason` (`not_configured` / `no_recipient` / `send_failed`) も返す。
+- メールが送れなくてもメッセージは保存済みなので、ステータスは 201 のまま。失敗は `app_logs` に記録する。
+- 宛先は `auth.admin.getUserById(ticket.user_id)` で取得し、送信できたら `email_delivery_logs` (`template = 'support_ticket_reply'`) に残す。返信先は環境変数 `SUPPORT_REPLY_TO` (任意)。
+
 ---
 
 ### PATCH /api/support/tickets/{id}
 ステータス・担当者変更
 
 **リクエスト**: `{ "status": "resolved", "assignee_id": "uuid" }`
+
+---
+
+### GET /api/admin/inquiries
+問い合わせ (`/api/contact` が `inquiries` に保存したもの。チケットとは別物) の一覧 (#1121)
+
+**クエリ**: `?status=pending|in_progress|resolved|closed&limit=1〜100(既定50)&page=1〜(既定1)`
+(`limit` / `page` は `clampIntParam` で丸める。`status` が上の 4 値以外なら 400)
+
+**レスポンス**: `{ "inquiries": [InquirySummary], "total": 120, "page": 1, "limit": 50 }`
+(新しい順。範囲外のページは `inquiries: []` / `total: null`。DB の読み込みに失敗したときは空配列ではなく 500)
+
+> 既存の Web (`/support/inquiries`) とモバイルの問い合わせ画面がこの形 (camelCase、`{ data, meta }` ではない) で読むため、
+> この API だけは §3.2 の標準形ではなく画面側の形に合わせている。
+
+一覧は **概要だけ** を返す。問い合わせ本文 (`message`) と管理者メモ (`adminNotes`) は詳細でだけ返し、詳細を返すときに閲覧を監査ログへ記録する (#1200)。
+
+```json
+{
+  "id": "uuid", "userId": "uuid|null", "userName": "ニックネーム|null",
+  "inquiryType": "general|support|bug|feature", "email": "...", "subject": "...",
+  "status": "pending|in_progress|resolved|closed",
+  "createdAt": "...", "updatedAt": "...", "resolvedAt": "...|null"
+}
+```
+
+`userName` は `user_profiles.nickname` (RLS では本人の行しか読めないため、`requireRole` 通過後に service_role で解決)。
+ゲストの問い合わせ、または解決できなかったときは `null` で、画面は `email` を表示する。
+
+**権限**: `support`, `admin`, `super_admin` (未ログインは 401、それ以外のロールと凍結中は 403)
+
+---
+
+### GET /api/admin/inquiries/{id}
+問い合わせ詳細。レスポンスは `{ "inquiry": InquiryDetail }` (= InquirySummary + `message` + `adminNotes`)。
+`id` が UUID でなければ 400、無ければ 404、DB の読み込みに失敗したときは 500 (404 にしない)。
+
+返すたびに `admin.inquiry.view` を `admin_audit_logs` へ記録する (記録のルールは 07-audit-monitoring.md §4.1.1)。
+
+---
+
+### PATCH /api/admin/inquiries/{id} (PUT も同じ処理)
+ステータス・管理者メモの更新。Web は PUT、モバイルは PATCH で同じボディを送る。
+
+**リクエスト**: `{ "status": "resolved", "adminNotes": "回答済み" }` (どちらか一方だけでもよい。両方無いと 400。メモは空文字か `null` で消える。最大 5000 文字)
+
+- `resolved_at` は API が決める: `resolved` / `closed` になるとき現在時刻 (解決済みから `closed` へは最初の時刻を保つ)、`pending` / `in_progress` に戻すと `null`
+- 書き込む列は `status` / `admin_notes` / `resolved_at` だけ。本文・メールアドレス・問い合わせ者などがボディに入っていても無視する。変更が無いときは書き込まない (`updated_at` を動かさない)
+- レスポンスは更新後の `{ "inquiry": InquiryDetail }`
+- 更新後の問い合わせ (本文を含む) を返すので、変更が無い更新を含めて毎回 `admin.inquiry.update` を記録する
+
+エラーコードは `VALIDATION_ERROR` / `INVALID_JSON` (400)、`AUTH_UNAUTHENTICATED` (401)、`OP_PERMISSION_DENIED` (403)、`NOT_FOUND` (404)、`INTERNAL_ERROR` (500)。
 
 ---
 
@@ -875,7 +988,7 @@ deprecated → private にロールバック (緊急用)
 ```
 
 **処理フロー**:
-1. 影響シミュレーション (GET impact を内部呼び出し)
+1. 影響シミュレーション (GET price-impact を内部呼び出し)
 2. Stripe: `prices.create` で新 Price object 生成
 3. DB: `subscription_plans` 更新 + `plan_price_history` INSERT
 4. 適用範囲: `on_renewal` → 既存サブスクリプションの次回更新時に切替
@@ -884,10 +997,11 @@ deprecated → private にロールバック (緊急用)
 
 ---
 
-### GET /api/super-admin/plans/{id}/impact
-価格変更影響シミュレーション
+### GET /api/super-admin/plans/{id}/price-impact
+価格変更影響シミュレーション (実装パスは `price-impact`)
 
 **クエリ**: `?new_monthly_price_jpy=1180&applies_to=on_renewal`
+- `applies_to`: `new_only` / `on_renewal` / `immediately` (省略時は `new_only`)
 
 **レスポンス**:
 ```json
@@ -895,10 +1009,26 @@ deprecated → private にロールバック (緊急用)
   "data": {
     "affected_subscription_count": 3420,
     "affected_mrr_change_jpy": 680000,
-    "affected_user_sample": [ { "user_id": "uuid", "email": "..." } ]
+    "current_monthly_price_jpy": 980,
+    "new_monthly_price_jpy": 1180,
+    "applies_to": "on_renewal",
+    "effective_timing": "next_renewal",
+    "affected_user_sample": [ { "user_id": "uuid" } ]
   }
 }
 ```
+
+**`applies_to` ごとの集計** (#1212。詳細は `04-plan-management.md` §3.3):
+
+| applies_to | 既存契約への影響 | `affected_subscription_count` / `affected_mrr_change_jpy` | `effective_timing` |
+|-----------|----------------|-----------------------------------------------------------|--------------------|
+| `new_only` | なし (既存契約は現行価格のまま) | 件数 0、MRR 変化 0。`affected_user_sample` は空配列 | `none` |
+| `on_renewal` | 各契約の次回更新時から新価格 | 件数 = 対象契約数、MRR 変化 = (新月額 − 現月額) × 対象契約数 | `next_renewal` |
+| `immediately` | 即時に新価格 | 同上 | `immediate` |
+
+- 対象契約 = 同一 `plan_key` の `personal_subscriptions` のうち `status IN ('active','trialing','paused')` かつ `stripe_subscription_id IS NOT NULL`。`affected_subscription_count` は全件数、`affected_user_sample` は先頭 5 件。
+- MRR は月額の差額で概算する (interval 列が無く、年額契約も月額差で計算される)。
+- `on_renewal` / `immediately` の既存サブスクリプションへの実反映は未実装 (#1102)。
 
 ---
 

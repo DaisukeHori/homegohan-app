@@ -2,6 +2,8 @@
 // Canonical: docs/design/operator/07-audit-monitoring.md §15.1, §15.7, §15.9
 
 import PostHog from 'posthog-react-native';
+// #1197: 既定ホストは Web / モバイル共通の定数 (packages/shared) に一本化している
+import { POSTHOG_DEFAULT_HOST } from '@homegohan/shared';
 
 // PostHogEventProperties は posthog-core からのもの
 // named export が公開されていないため互換型をローカル定義
@@ -45,7 +47,7 @@ export function getPostHogClient(): PostHog | null {
  */
 export async function initPostHogMobile(): Promise<PostHog | null> {
   const key = process.env['EXPO_PUBLIC_POSTHOG_KEY'];
-  const host = process.env['EXPO_PUBLIC_POSTHOG_HOST'] ?? 'https://us.i.posthog.com';
+  const host = process.env['EXPO_PUBLIC_POSTHOG_HOST'] ?? POSTHOG_DEFAULT_HOST;
 
   // 環境変数未設定はスキップ (graceful degradation)
   if (!key) {

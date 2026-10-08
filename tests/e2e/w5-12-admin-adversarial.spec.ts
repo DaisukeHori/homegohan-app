@@ -8,15 +8,30 @@
  *   B. ユーザー管理               — B-8〜B-13
  *   C. 組織管理                   — C-14〜C-16
  *   D. 監査ログ                   — D-17〜D-19
- *   E. お問い合わせ               — E-20〜E-22
- *   F. お知らせ                   — F-23〜F-26
+ *   E. サポートチケット(お問い合わせ) — E-20〜E-22  (/api/admin/support/tickets)
+ *   F. 財務・クーポン・実験       — F-23〜F-26  (/api/admin/finance, /api/super-admin/coupons|experiments)
  *   G. モデレーション             — G-27〜G-30
  *   H. Super Admin 機能           — H-31〜H-36
  *   I. Super Admin 嫌がらせ       — I-37〜I-40
  *   J. catalog 手動 trigger       — J-41〜J-43
  *
- * 実行方法:
- *   PLAYWRIGHT_BASE_URL=https://homegohan-app.vercel.app npm run test:e2e -- w5-12-admin-adversarial
+ * 叩く API パスは src/app/api/{admin,super-admin}/ に実在するものだけにする (#847)。
+ * 存在しないパスは Next.js の 404 になるだけで、404 を許容する期待値だと偽陽性で通ってしまう。
+ * 「ユーザーが見つからない」という route 自身の 404 は error.code (NOT_FOUND) まで確認して区別する。
+ * パスの実在は tests/e2e-api-paths.test.ts (Vitest、npm test) が静的に検査する (メソッドは見ない)。
+ *
+ * ユーザー種別 (fixtures/fresh-user.ts):
+ *   - regularUser           — user_profiles あり・roles=['user']。管理 API は 403 (権限不足)
+ *   - onboardingPendingUser — user_profiles なし。requireRole が AUTH_PROFILE_NOT_FOUND で 401 にするため、
+ *                             「権限不足 = 403」を確かめるテストには使わない
+ *
+ * 実行方法 (fixture が service_role で fresh user を作るため .env.local に SUPABASE_SERVICE_ROLE_KEY が必要):
+ *   ローカル (ローカル Supabase を向いた .env.local。開発サーバーは自動で起動する):
+ *     npx playwright test w5-12-admin-adversarial
+ *   next dev は初回コンパイルや HMR の再読み込みで fetch が途切れることがある (CI は retries: 2)。
+ *   不安定なら npm run build && npm run start で起動し、PLAYWRIGHT_BASE_URL=http://localhost:3000 を付けて実行する。
+ *   本番相当: PLAYWRIGHT_BASE_URL=https://homegohan-app.vercel.app npm run test:e2e -- w5-12-admin-adversarial
+ *   (C-15b / I-38 / D-18 は組織・設定・監査ログの行を作る。いずれも終了時に service_role で消す)
  *
  * prefix: [admin][adversarial] or [super-admin][adversarial]
  */
@@ -29,7 +44,78 @@ const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 
 const NON_EXISTING_UUID = "00000000-0000-0000-0000-000000000000";
 
+// POST /api/admin/users/{id}/freeze の正しい body (src/lib/admin/users-schemas.ts の FreezeBodySchema)
+const VALID_FREEZE_BODY = {
+  ban_type: "temporary",
+  reason_category: "spam",
+  reason_detail: "e2e adversarial",
+  duration_days: 1,
+} as const;
+
+// DELETE /api/admin/users/{id}/freeze の正しい body (UnfreezeBodySchema)
+const VALID_UNFREEZE_BODY = { reason: "e2e adversarial" } as const;
+
 // ─── ヘルパー ─────────────────────────────────────────────────────────────────
+
+/**
+ * 認証済み Cookie を使った same-origin fetch の足場として、軽い公開ページ (/about) を開く。
+ * API を呼ぶだけなので画面は何でもよい。onboarding 完了済みのユーザーが /home を開くと重い画面が
+ * 読み込まれ、画面遷移で page.evaluate が中断されるおそれがあるため避ける。
+ */
+async function openAppOrigin(page: Page): Promise<void> {
+  await page.goto(`${BASE_URL}/about`);
+}
+
+/**
+ * service_role で PostgREST を直接呼ぶ (テストデータの用意と、テストが作った行の後始末用)。
+ * fixtures/fresh-user.ts と同じく .env.local の NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY を使う。
+ */
+async function serviceRoleRest(
+  pathAndQuery: string,
+  init: { method: "POST" | "PATCH" | "DELETE"; body?: unknown },
+): Promise<void> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error(
+      "[w5-12] NEXT_PUBLIC_SUPABASE_URL または SUPABASE_SERVICE_ROLE_KEY が未設定です。.env.local を確認してください。",
+    );
+  }
+  const resp = await fetch(`${supabaseUrl}/rest/v1/${pathAndQuery}`, {
+    method: init.method,
+    headers: {
+      "Content-Type": "application/json",
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      Prefer: "return=minimal",
+    },
+    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(
+      `[w5-12] ${init.method} ${pathAndQuery} 失敗 (${resp.status}): ${text.substring(0, 200)}`,
+    );
+  }
+}
+
+/**
+ * admin API (POST /api/admin/organizations) で作った組織を片付ける。
+ * owner は admin 本人。組織が残ると、fixture のユーザー削除が organizations.owner_id
+ * (ON DELETE RESTRICT) の FK で失敗する。
+ * user_profiles は organization_id と org_role が「同時に NULL」か「同時に非 NULL」の制約
+ * (user_profiles_org_consistency) を持つので、両方を外してから組織を消す。
+ */
+async function cleanupOwnedOrganization(
+  orgId: string,
+  ownerUserId: string,
+): Promise<void> {
+  await serviceRoleRest(`user_profiles?id=eq.${ownerUserId}`, {
+    method: "PATCH",
+    body: { organization_id: null, org_role: null },
+  });
+  await serviceRoleRest(`organizations?id=eq.${orgId}`, { method: "DELETE" });
+}
 
 /**
  * 認証済みセッションで API を fetch する (page.evaluate 経由)
@@ -177,11 +263,11 @@ test("[admin][adversarial] A-5: super_admin で /super-admin → 表示", async 
 });
 
 test("[admin][adversarial] A-6: 通常 user で admin API → 403", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
   // /api/admin/users に通常 user でアクセス
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  const result = await apiFetch(onboardingPendingUser, "/api/admin/users");
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/admin/users");
   expect(result.status).toBe(403);
 });
 
@@ -231,12 +317,12 @@ test("[admin][adversarial] B-8b: ユーザー検索 SQL injection payload → �
 });
 
 test("[admin][adversarial] B-9: 非 super_admin が role → super_admin に変更 → 拒否", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
+  await openAppOrigin(regularUser);
   // 通常 user でロール変更を試みる → 403
   const result = await apiFetch(
-    onboardingPendingUser,
+    regularUser,
     `/api/admin/users/${NON_EXISTING_UUID}/role`,
     {
       method: "PUT",
@@ -266,32 +352,106 @@ test("[admin][adversarial] B-9b: admin が roles に super_admin を含めて PU
   expect([400, 403, 404]).toContain(result.status);
 });
 
-test("[admin][adversarial] B-10: 存在しない user の BAN → 404 または 403", async ({
-  onboardingPendingUser,
+// ユーザーの BAN は /api/admin/users/{id}/freeze (POST = 凍結 / DELETE = 凍結解除)。
+// /ban という route は無い (存在しないパスは Next.js の 404 になり、403/404 を許容する期待値だと偽陽性で通る)。
+
+test("[admin][adversarial] B-10: 通常 user が凍結 (BAN) を試みる → 403", async ({
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
+  await openAppOrigin(regularUser);
   const result = await apiFetch(
-    onboardingPendingUser,
-    `/api/admin/users/${NON_EXISTING_UUID}/ban`,
-    {
-      method: "POST",
-      body: { reason: "test ban" },
-    },
+    regularUser,
+    `/api/admin/users/${NON_EXISTING_UUID}/freeze`,
+    { method: "POST", body: VALID_FREEZE_BODY },
   );
-  // 通常 user なので 403、または admin でも 404
-  expect([403, 404]).toContain(result.status);
+  // 権限チェックは対象ユーザーの存在確認より前 → 存在しない UUID でも 403
+  expect(result.status).toBe(403);
+  expect((result.body as any)?.error?.code).toBe("OP_PERMISSION_DENIED");
 });
 
-test("[admin][adversarial] B-11: BAN 解除 API → 通常 user は 403", async ({
-  onboardingPendingUser,
+test("[admin][adversarial] B-10b: admin が存在しない user を凍結 → 404 (NOT_FOUND)", async ({
+  adminUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
+  const { page } = adminUser;
+  await page.goto(`${BASE_URL}/admin`);
   const result = await apiFetch(
-    onboardingPendingUser,
-    `/api/admin/users/${NON_EXISTING_UUID}/ban`,
-    { method: "DELETE" },
+    page,
+    `/api/admin/users/${NON_EXISTING_UUID}/freeze`,
+    { method: "POST", body: VALID_FREEZE_BODY },
+  );
+  // route が無い場合の 404 と区別するため error.code まで確認する
+  expect(result.status).toBe(404);
+  expect((result.body as any)?.error?.code).toBe("NOT_FOUND");
+});
+
+test("[admin][adversarial] B-10c: admin が永久 BAN を要求 → 403 (super_admin のみ)", async ({
+  adminUser,
+}) => {
+  const { page } = adminUser;
+  await page.goto(`${BASE_URL}/admin`);
+  const result = await apiFetch(
+    page,
+    `/api/admin/users/${NON_EXISTING_UUID}/freeze`,
+    { method: "POST", body: { ...VALID_FREEZE_BODY, ban_type: "permanent" } },
+  );
+  // 永久 BAN の権限チェックは対象の存在確認より前 → 404 ではなく 403
+  expect(result.status).toBe(403);
+  expect((result.body as any)?.error?.code).toBe("OP_PERMISSION_DENIED");
+});
+
+test("[admin][adversarial] B-10d: admin が不正な body で凍結 → 400 (VALIDATION_ERROR)", async ({
+  adminUser,
+}) => {
+  const { page } = adminUser;
+  await page.goto(`${BASE_URL}/admin`);
+  const invalidBodies: Array<Record<string, unknown>> = [
+    {},
+    { ...VALID_FREEZE_BODY, ban_type: "forever" },
+    { ...VALID_FREEZE_BODY, reason_category: "bored" },
+    { ...VALID_FREEZE_BODY, reason_detail: "" },
+    { ...VALID_FREEZE_BODY, duration_days: 0 },
+    { ...VALID_FREEZE_BODY, duration_days: 366 },
+    // 一時 BAN は duration_days が必須
+    { ban_type: "temporary", reason_category: "spam", reason_detail: "e2e adversarial" },
+  ];
+  for (const body of invalidBodies) {
+    const result = await apiFetch(
+      page,
+      `/api/admin/users/${NON_EXISTING_UUID}/freeze`,
+      { method: "POST", body },
+    );
+    expect(result.status, JSON.stringify(body)).toBe(400);
+    expect((result.body as any)?.error?.code, JSON.stringify(body)).toBe(
+      "VALIDATION_ERROR",
+    );
+  }
+});
+
+test("[admin][adversarial] B-11: 凍結解除 API → 通常 user は 403", async ({
+  regularUser,
+}) => {
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(
+    regularUser,
+    `/api/admin/users/${NON_EXISTING_UUID}/freeze`,
+    { method: "DELETE", body: VALID_UNFREEZE_BODY },
   );
   expect(result.status).toBe(403);
+  expect((result.body as any)?.error?.code).toBe("OP_PERMISSION_DENIED");
+});
+
+test("[admin][adversarial] B-11b: admin が存在しない user の凍結解除 → 404 (NOT_FOUND)", async ({
+  adminUser,
+}) => {
+  const { page } = adminUser;
+  await page.goto(`${BASE_URL}/admin`);
+  const result = await apiFetch(
+    page,
+    `/api/admin/users/${NON_EXISTING_UUID}/freeze`,
+    { method: "DELETE", body: VALID_UNFREEZE_BODY },
+  );
+  expect(result.status).toBe(404);
+  expect((result.body as any)?.error?.code).toBe("NOT_FOUND");
 });
 
 test("[admin][adversarial] B-12: 自分自身の role 変更 → 拒否 (admin のみ)", async ({
@@ -309,32 +469,45 @@ test("[admin][adversarial] B-12: 自分自身の role 変更 → 拒否 (admin �
   }
 });
 
-test("[admin][adversarial] B-13: ページネーション limit=200 → 正常動作", async ({
-  onboardingPendingUser,
+// ページネーションのパラメータは per_page (上限 200)。limit は route が読まないので指定しても無視される。
+// 通常 user と admin を 1 テストで同時に使うと、2 つの fixture が同じ page の Cookie を上書きし合うため別テストにする。
+
+test("[admin][adversarial] B-13: ページネーション per_page=200 → 通常 user は 403", async ({
+  regularUser,
+}) => {
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/admin/users?page=1&per_page=200");
+  expect(result.status).toBe(403);
+});
+
+test("[admin][adversarial] B-13b: ページネーション per_page=200 (上限ちょうど) → admin は 200", async ({
   adminUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  // 通常 user → 403
-  const result = await apiFetch(onboardingPendingUser, "/api/admin/users?page=1&limit=200");
-  expect(result.status).toBe(403);
-  // admin 権限で確認
-  const { page: adminPage } = adminUser;
-  await adminPage.goto(`${BASE_URL}/admin`);
-  const adminResult = await apiFetch(
-    adminPage,
-    "/api/admin/users?page=1&limit=200",
-  );
-  expect(adminResult.status).toBe(200);
-  expect(Array.isArray((adminResult.body as any)?.users)).toBe(true);
+  const { page } = adminUser;
+  await page.goto(`${BASE_URL}/admin`);
+  const result = await apiFetch(page, "/api/admin/users?page=1&per_page=200");
+  expect(result.status).toBe(200);
+  expect(Array.isArray((result.body as any)?.data)).toBe(true);
+  expect((result.body as any)?.meta?.per_page).toBe(200);
+});
+
+test("[admin][adversarial] B-13c: ページネーション per_page=201 (上限超過) → admin は 400", async ({
+  adminUser,
+}) => {
+  const { page } = adminUser;
+  await page.goto(`${BASE_URL}/admin`);
+  const result = await apiFetch(page, "/api/admin/users?page=1&per_page=201");
+  expect(result.status).toBe(400);
+  expect((result.body as any)?.error?.code).toBe("VALIDATION_ERROR");
 });
 
 // ─── C. 組織管理 ──────────────────────────────────────────────────────────────
 
 test("[admin][adversarial] C-14: 組織一覧取得 → 通常 user は 403", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  const result = await apiFetch(onboardingPendingUser, "/api/admin/organizations");
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/admin/organizations");
   expect(result.status).toBe(403);
 });
 
@@ -363,28 +536,29 @@ test("[admin][adversarial] C-15: 組織作成 name 必須 → 空文字で 400",
 test("[admin][adversarial] C-15b: 組織作成 name に XSS payload → エスケープされて保存", async ({
   adminUser,
 }) => {
-  const { page } = adminUser;
+  const { page, userId } = adminUser;
   await page.goto(`${BASE_URL}/admin`);
   const xssName = '<script>alert("xss")</script>TestOrg';
   const result = await apiFetch(page, "/api/admin/organizations", {
     method: "POST",
     body: { name: xssName, plan: "standard" },
   });
-  // 201 or 200 で作成成功、またはバリデーションエラー
-  // 500 は不可
-  expect(result.status).not.toBe(500);
-  if (result.status === 200) {
-    // 作成された id を保存して後でクリーンアップ可能
-    const orgId = (result.body as any)?.organization?.id;
-    console.log(`[INFO] XSS org created with id: ${orgId} (cleanup needed)`);
+  const orgId: string | undefined = (result.body as any)?.organization?.id;
+  try {
+    // 201 or 200 で作成成功、またはバリデーションエラー
+    // 500 は不可
+    expect(result.status).not.toBe(500);
+  } finally {
+    // 作った組織は必ず片付ける (残すと fixture のユーザー削除が失敗し、テストデータも残る)
+    if (orgId) await cleanupOwnedOrganization(orgId, userId);
   }
 });
 
 test("[admin][adversarial] C-16: 通常 user が組織作成 → 403", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  const result = await apiFetch(onboardingPendingUser, "/api/admin/organizations", {
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/admin/organizations", {
     method: "POST",
     body: { name: "Attacker Org" },
   });
@@ -394,10 +568,10 @@ test("[admin][adversarial] C-16: 通常 user が組織作成 → 403", async ({
 // ─── D. 監査ログ ──────────────────────────────────────────────────────────────
 
 test("[admin][adversarial] D-17: 監査ログ取得 → 通常 user は 403", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  const result = await apiFetch(onboardingPendingUser, "/api/super-admin/audit-logs");
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/super-admin/audit-logs");
   expect(result.status).toBe(403);
 });
 
@@ -411,20 +585,50 @@ test("[super-admin][adversarial] D-17b: super_admin で監査ログ取得 → 20
   expect(Array.isArray((result.body as any)?.data)).toBe(true);
 });
 
-test("[super-admin][adversarial] D-18: 監査ログ action_type フィルタ → 正常", async ({
+test("[super-admin][adversarial] D-18: 監査ログ action_type フィルタ → 一致するログだけ返る", async ({
   superAdminUser,
 }) => {
-  const { page } = superAdminUser;
+  const { page, userId } = superAdminUser;
   await page.goto(`${BASE_URL}/super-admin`);
-  const result = await apiFetch(
-    page,
-    "/api/super-admin/audit-logs?action_type=ban_user",
-  );
-  expect(result.status).toBe(200);
-  const logs = (result.body as any)?.data ?? [];
-  // フィルタが効いている: 全ログが ban_user を含むか 0 件
-  const allBanLogs = logs.every((l: any) => (l.action_type as string)?.includes("ban_user"));
-  expect(allBanLogs).toBe(true);
+
+  // 以前は存在しない action_type ('ban_user'。実在するのは 'admin.user.ban' など) で絞っていたため、
+  // 結果が常に 0 件になり、every() が空配列で必ず真になる (何も確かめていない) テストだった。
+  // 実行ごとに一意な action_type のログを 2 種類 service_role で作り、絞り込みの「含む / 除く」を確かめる。
+  const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+  const wanted = `e2e.d18.wanted.${suffix}`;
+  const other = `e2e.d18.other.${suffix}`;
+  const unused = `e2e.d18.unused.${suffix}`;
+  await serviceRoleRest("admin_audit_logs", {
+    method: "POST",
+    body: [
+      { actor_id: userId, action_type: wanted, severity: "info" },
+      { actor_id: userId, action_type: other, severity: "info" },
+    ],
+  });
+  try {
+    const hit = await apiFetch(
+      page,
+      `/api/super-admin/audit-logs?action_type=${encodeURIComponent(wanted)}`,
+    );
+    expect(hit.status).toBe(200);
+    const hitLogs: Array<{ action_type: string }> = (hit.body as any)?.data ?? [];
+    // 0 件では通らない。other の action_type は混ざらない
+    expect(hitLogs.map((l) => l.action_type)).toEqual([wanted]);
+
+    // 一致する action_type が無ければ 0 件
+    const miss = await apiFetch(
+      page,
+      `/api/super-admin/audit-logs?action_type=${encodeURIComponent(unused)}`,
+    );
+    expect(miss.status).toBe(200);
+    expect((miss.body as any)?.data).toEqual([]);
+  } finally {
+    // 監査ログは通常 UPDATE/DELETE 禁止 (RLS)。このテストが作った 2 行だけ service_role で消す
+    await serviceRoleRest(
+      `admin_audit_logs?action_type=in.(${wanted},${other})`,
+      { method: "DELETE" },
+    );
+  }
 });
 
 test("[admin][adversarial] D-19: 監査ログ SQL injection → 安全", async ({
@@ -442,10 +646,10 @@ test("[admin][adversarial] D-19: 監査ログ SQL injection → 安全", async (
 // ─── E. お問い合わせ ─────────────────────────────────────────────────────────
 
 test("[admin][adversarial] E-20: お問い合わせ一覧 → 通常 user は 403", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  const result = await apiFetch(onboardingPendingUser, "/api/admin/support/tickets");
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/admin/support/tickets");
   expect(result.status).toBe(403);
 });
 
@@ -491,11 +695,11 @@ test("[admin][adversarial] E-21: 存在しないお問い合わせに PATCH → 
 });
 
 test("[admin][adversarial] E-22: 既読フラグ更新 → 通常 user は 403", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
+  await openAppOrigin(regularUser);
   const result = await apiFetch(
-    onboardingPendingUser,
+    regularUser,
     `/api/admin/support/tickets/${NON_EXISTING_UUID}`,
     {
       method: "PATCH",
@@ -508,10 +712,10 @@ test("[admin][adversarial] E-22: 既読フラグ更新 → 通常 user は 403",
 // ─── F. 財務・クーポン・実験 (旧お知らせ節を実在パスへ差替) ────────────────
 
 test("[admin][adversarial] F-23: 財務ダッシュボード → 通常 user は 403", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  const result = await apiFetch(onboardingPendingUser, "/api/admin/finance/dashboard");
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/admin/finance/dashboard");
   expect(result.status).toBe(403);
 });
 
@@ -528,36 +732,36 @@ test("[admin][adversarial] F-23b: admin で財務ダッシュボード → 200 �
 });
 
 test("[admin][adversarial] F-24: 財務エクスポート → 通常 user は 403", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  const result = await apiFetch(onboardingPendingUser, "/api/admin/finance/exports");
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/admin/finance/exports");
   expect(result.status).toBe(403);
 });
 
 test("[super-admin][adversarial] F-25: クーポン一覧 → 通常 user は 403", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  const result = await apiFetch(onboardingPendingUser, "/api/super-admin/coupons");
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/super-admin/coupons");
   expect(result.status).toBe(403);
 });
 
 test("[super-admin][adversarial] F-26: A/B 実験一覧 → 通常 user は 403", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  const result = await apiFetch(onboardingPendingUser, "/api/super-admin/experiments");
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/super-admin/experiments");
   expect(result.status).toBe(403);
 });
 
 // ─── G. モデレーション ────────────────────────────────────────────────────────
 
 test("[admin][adversarial] G-27: モデレーション一覧 → 通常 user は 403", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  const result = await apiFetch(onboardingPendingUser, "/api/admin/moderation");
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/admin/moderation");
   expect(result.status).toBe(403);
 });
 
@@ -613,11 +817,11 @@ test("[admin][adversarial] G-29: モデレーション reject → type/action �
 });
 
 test("[admin][adversarial] G-30: モデレーション 通常 user は PUT 403", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
+  await openAppOrigin(regularUser);
   const result = await apiFetch(
-    onboardingPendingUser,
+    regularUser,
     `/api/admin/moderation/food/${NON_EXISTING_UUID}`,
     {
       method: "PUT",
@@ -650,11 +854,11 @@ test("[super-admin][adversarial] H-31: /super-admin ダッシュボード → �
 });
 
 test("[super-admin][adversarial] H-32: LLM 利用量 API → super_admin のみ 200", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
+  await openAppOrigin(regularUser);
   const result = await apiFetch(
-    onboardingPendingUser,
+    regularUser,
     "/api/super-admin/llm/usage?period=7d",
   );
   expect(result.status).toBe(403);
@@ -677,18 +881,18 @@ test("[super-admin][adversarial] H-32b: LLM 利用量 period パラメータ →
 });
 
 test("[super-admin][adversarial] H-33: DB 統計 API → 通常 user は 403", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  const result = await apiFetch(onboardingPendingUser, "/api/super-admin/db-stats");
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/super-admin/db-stats");
   expect(result.status).toBe(403);
 });
 
 test("[super-admin][adversarial] H-34: Feature flags 取得 → super_admin のみ", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  const result = await apiFetch(onboardingPendingUser, "/api/super-admin/flags");
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/super-admin/flags");
   expect(result.status).toBe(403);
 });
 
@@ -735,18 +939,18 @@ test("[super-admin][adversarial] H-34c: Feature flags POST invalid body → 400"
 });
 
 test("[super-admin][adversarial] H-35: Admin 一覧取得 → super_admin のみ", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  const result = await apiFetch(onboardingPendingUser, "/api/super-admin/admins");
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/super-admin/admins");
   expect(result.status).toBe(403);
 });
 
 test("[super-admin][adversarial] H-36: Settings PUT → super_admin のみ", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  const result = await apiFetch(onboardingPendingUser, "/api/super-admin/settings", {
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/super-admin/settings", {
     method: "PUT",
     body: { key: "test", value: "hacked" },
   });
@@ -806,22 +1010,30 @@ test("[super-admin][adversarial] I-38: Settings に巨大 JSON 投入 → 500 �
   await page.goto(`${BASE_URL}/super-admin`);
   // 100KB 相当の巨大 value
   const hugeValue = { data: "x".repeat(100_000) };
-  const result = await apiFetch(page, "/api/super-admin/settings", {
-    method: "PUT",
-    body: { key: "test_huge_value", value: hugeValue },
-  });
-  // DB 制限に引っかかっても graceful fail (400/500 は許容)
-  // クラッシュや unhandled error でないことを確認
-  expect(typeof result.status).toBe("number");
-  expect(result.status).toBeGreaterThanOrEqual(200);
+  try {
+    const result = await apiFetch(page, "/api/super-admin/settings", {
+      method: "PUT",
+      body: { key: "test_huge_value", value: hugeValue },
+    });
+    // DB 制限に引っかかっても graceful fail (400/500 は許容)
+    // クラッシュや unhandled error でないことを確認
+    expect(typeof result.status).toBe("number");
+    expect(result.status).toBeGreaterThanOrEqual(200);
+  } finally {
+    // 書き込めていた場合は片付ける。system_settings.updated_by が fixture のユーザーを指したままだと、
+    // fixture のユーザー削除が FK (NO ACTION) で失敗し、100KB の設定値も残る
+    await serviceRoleRest("system_settings?key=eq.test_huge_value", {
+      method: "DELETE",
+    });
+  }
 });
 
 test("[super-admin][adversarial] I-39: embedding 再生成 → 通常 user は 403", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
+  await openAppOrigin(regularUser);
   const result = await apiFetch(
-    onboardingPendingUser,
+    regularUser,
     "/api/super-admin/embeddings/regenerate",
     {
       method: "POST",
@@ -866,10 +1078,10 @@ test("[super-admin][adversarial] I-40: LLM 利用量 invalid period → graceful
 // ─── J. catalog 手動 trigger ─────────────────────────────────────────────────
 
 test("[admin][adversarial] J-41: /api/admin/catalog/import に通常 user → 403", async ({
-  onboardingPendingUser,
+  regularUser,
 }) => {
-  await onboardingPendingUser.goto(`${BASE_URL}/home`);
-  const result = await apiFetch(onboardingPendingUser, "/api/admin/catalog/import", {
+  await openAppOrigin(regularUser);
+  const result = await apiFetch(regularUser, "/api/admin/catalog/import", {
     method: "POST",
     body: { sourceCode: "seven_eleven_jp" },
   });

@@ -83,6 +83,43 @@ describe('POST /api/log (#1044 F6-20)', () => {
     expect(insertedArg.metadata.note).toBe('ok');
   });
 
+  it('message に混入した秘密情報の書式もマスクされて保存される (#1171)', async () => {
+    const res = await POST(
+      makeRequest({
+        level: 'error',
+        message: 'login failed password=hunter2 Bearer abcdefghijklmnopqrstuvwxyz0123456789',
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const insertedArg = mockInsert.mock.calls[0][0];
+    expect(insertedArg.message).toBe('login failed password=*** Bearer ***');
+    expect(insertedArg.source).toBe('client');
+    expect(insertedArg.user_id).toBe(validUser.id);
+  });
+
+  it('metadata の文字列の値に混入した秘密情報もマスクされて保存される (#1171)', async () => {
+    const res = await POST(
+      makeRequest({
+        level: 'info',
+        message: 'm',
+        metadata: { error: 'connect postgresql://u:hunter2@db.example.com/postgres failed', ok: 1 },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const insertedArg = mockInsert.mock.calls[0][0];
+    expect(insertedArg.metadata).toEqual({ error: 'connect postgresql://u:***@db.example.com/postgres failed', ok: 1 });
+  });
+
+  it('metadata を省略したときは metadata なしで保存される', async () => {
+    const res = await POST(makeRequest({ level: 'info', message: 'hello' }));
+
+    expect(res.status).toBe(200);
+    const insertedArg = mockInsert.mock.calls[0][0];
+    expect(insertedArg.metadata).toBeUndefined();
+  });
+
   it('巨大な metadata は切り詰められて保存される', async () => {
     const res = await POST(
       makeRequest({

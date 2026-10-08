@@ -14,6 +14,12 @@ import {
   type SubStepOfStep2,
 } from '@homegohan/handson-tour-shared';
 import { createClient } from '@/lib/supabase/client';
+import {
+  EMPTY_MENU_TOUR_PROFILE,
+  fetchMenuTourProfile,
+  type MenuTourProfile,
+} from '@/lib/handson-tour/tour-profile';
+import { reportTourProfileFailures } from '@/lib/handson-tour/tour-profile-report';
 
 function safeNickname(raw: string | null | undefined): string {
   if (!raw) return 'あなた';
@@ -23,20 +29,13 @@ function safeNickname(raw: string | null | undefined): string {
   return trimmed;
 }
 
-type UserProfile = {
-  nickname: string | null;
-  allergies: string[] | null;
-  dislikes: string[] | null;
-  cooking_experience: string | null;
-};
-
 const COOKING_EXP_TEXT: Record<string, string> = {
   beginner: '初心者でも作れる',
   intermediate: 'いつもの手順で作れる',
   advanced: 'シェフの腕前を活かせる',
 };
 
-function buildBubble(subStep: SubStepOfStep2, profile: UserProfile) {
+function buildBubble(subStep: SubStepOfStep2, profile: MenuTourProfile) {
   const i18n = HANDSON_TOUR_I18N_JA.tour.step2;
   const nickname = safeNickname(profile.nickname);
 
@@ -52,9 +51,7 @@ function buildBubble(subStep: SubStepOfStep2, profile: UserProfile) {
     case '2.5':
       return { body: i18n.generate_bubble, position: 'auto' as const };
     case '2.6': {
-      const allergies = profile.allergies ?? [];
-      const dislikes = profile.dislikes ?? [];
-      const excludeList = [...allergies, ...dislikes].slice(0, 3);
+      const excludeList = [...profile.allergies, ...profile.dislikes].slice(0, 3);
       const cookingExp = profile.cooking_experience ?? 'beginner';
       const cookingExpText = COOKING_EXP_TEXT[cookingExp] ?? '初心者でも作れる';
 
@@ -89,39 +86,33 @@ function buildBubble(subStep: SubStepOfStep2, profile: UserProfile) {
 export default function HandsonTourMenuPage() {
   const router = useRouter();
   const [subStep, setSubStep] = useState<SubStepOfStep2>('2.1');
-  const [profile, setProfile] = useState<UserProfile>({
-    nickname: null,
-    allergies: null,
-    dislikes: null,
-    cooking_experience: null,
-  });
+  const [profile, setProfile] = useState<MenuTourProfile>(EMPTY_MENU_TOUR_PROFILE);
   const [isSaving, setIsSaving] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const mountTimeRef = useRef(Date.now());
 
   useEffect(() => {
+    let cancelled = false;
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) return;
-      setUserId(user.id);
-      supabase
-        .from('user_profiles')
-        .select('nickname, allergies, dislikes, cooking_experience')
-        // #1057 (UX1-02 round-2): user_profiles の PK は `id` (`user_id` 列は存在しない)
-        .eq('id', user.id)
-        .single()
-        .then(({ data }) => {
-          if (data) {
-            const d = data as unknown as Record<string, unknown>;
-            setProfile({
-              nickname: (d.nickname as string | null) ?? null,
-              allergies: Array.isArray(d.allergies) ? (d.allergies as string[]) : null,
-              dislikes: Array.isArray(d.dislikes) ? (d.dislikes as string[]) : null,
-              cooking_experience: (d.cooking_experience as string | null) ?? null,
-            });
-          }
-        });
-    });
+    supabase.auth
+      .getUser()
+      .then(async ({ data: { user } }) => {
+        if (!user || cancelled) return;
+        setUserId(user.id);
+        // #1040: アレルギー・苦手な食材は user_profiles.diet_flags にある
+        // (以前は存在しない allergies / dislikes 列を select して 42703 で失敗し、ニックネームも含め空のままだった)
+        const { profile: loaded, failures } = await fetchMenuTourProfile(supabase, user.id);
+        if (cancelled) return;
+        setProfile(loaded);
+        // 体験モードなので失敗してもブロックしないが、必ず記録する
+        reportTourProfileFailures({ step: 2, userId: user.id, failures });
+      })
+      .catch(() => {
+        // 認証情報の取得などに失敗してもパーソナライズなしで続ける(体験モードのため必須ではない)
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // mount 時に step_viewed (step=2) を発火

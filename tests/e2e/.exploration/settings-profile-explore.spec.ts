@@ -16,6 +16,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
+import { requireE2eUserCredentials } from "../helpers/credentials";
 
 // ────────────────────────────────────────────────────────
 // 設定
@@ -28,9 +29,6 @@ test.use({
 });
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "https://homegohan-app.vercel.app";
-
-const VALID_EMAIL = process.env.E2E_USER_EMAIL ?? "claude-debug-1777477826@homegohan.local";
-const VALID_PASSWORD = process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!";
 
 const SCREENSHOT_DIR = path.resolve(__dirname, "settings-profile");
 
@@ -62,9 +60,13 @@ async function saveScreenshot(page: Page, name: string) {
 }
 
 async function login(page: Page) {
+  // E2E テスト用アカウント (存在しているはずのアカウント)。認証情報は環境変数 (E2E_USER_EMAIL / E2E_USER_PASSWORD)
+  // からだけ取り、リポジトリには既定値を置かない (#1114)。未設定ならここでエラーで止まる。
+  // モジュール直下で読まないのは、未設定のときに spec の読み込みで投げて、他の spec まで巻き込むため
+  const { email, password } = requireE2eUserCredentials();
   await page.goto(`${BASE_URL}/login`);
-  await page.locator("#email").fill(VALID_EMAIL);
-  await page.locator("#password").fill(VALID_PASSWORD);
+  await page.locator("#email").fill(email);
+  await page.locator("#password").fill(password);
   await Promise.all([
     page.waitForURL(
       (url) =>
