@@ -18,6 +18,7 @@ export function renderOrgTransferProposedEmail(vars: OrgTransferProposedVars): E
     : '';
 
   return {
+    template: 'org_transfer_proposed',
     to: vars.to_email,
     from: 'ほめゴハン <noreply@homegohan.app>',
     subject: `【ほめゴハン】組織オーナー譲渡の提案を受信しました`,

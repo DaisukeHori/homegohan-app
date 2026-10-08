@@ -14,6 +14,7 @@
 import { z } from 'zod';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/emails/send';
+import { isEmailFailure, type SendEmailResult } from '@/lib/emails/send-result';
 import { renderTicketReplyEmail } from '@/lib/emails/support/ticket-reply';
 import type { ReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
 
@@ -52,11 +53,6 @@ function resolveReplyTo(logger: ReplyEmailLogger): string | undefined {
   return raw;
 }
 
-/** sendEmail は RESEND_API_KEY が無いと送らずに { skipped: true } を返す */
-function isSkippedSend(result: unknown): boolean {
-  return typeof result === 'object' && result !== null && (result as { skipped?: unknown }).skipped === true;
-}
-
 async function deliverTicketReplyEmail(params: SendTicketReplyEmailParams): Promise<ReplyEmailOutcome> {
   const { ticket, messageId, messageBody, logger } = params;
   const logMeta = { ticket_id: ticket.id, message_id: messageId };
@@ -78,10 +74,11 @@ async function deliverTicketReplyEmail(params: SendTicketReplyEmailParams): Prom
     return { status: 'failed', reason: 'no_recipient' };
   }
 
-  // 2) 文面を組み立てて送る
-  let resendMessageId: string;
+  // 2) 文面を組み立てて送る。sendEmail は配信の失敗で例外を投げず、結果 (ok / skipped / error) で返す
+  //    (失敗は sendEmail も app_logs に記録する。ここでは、どのチケットの返信かが分かる形でも残す)
+  let result: SendEmailResult;
   try {
-    const result = await sendEmail(
+    result = await sendEmail(
       renderTicketReplyEmail({
         to_email: recipient,
         ticket_id: ticket.id,
@@ -91,15 +88,21 @@ async function deliverTicketReplyEmail(params: SendTicketReplyEmailParams): Prom
         reply_to: resolveReplyTo(logger),
       }),
     );
-    if (isSkippedSend(result)) {
-      logger.warn('support ticket reply email skipped: email sending is not configured', logMeta);
-      return { status: 'skipped', reason: 'not_configured' };
-    }
-    resendMessageId = result.id;
   } catch (err) {
+    // 文面の組み立てなど、想定外の例外
     logger.error('support ticket reply email: send failed', err, logMeta);
     return { status: 'failed', reason: 'send_failed' };
   }
+  // RESEND_API_KEY が無く、送らなかった (sendEmail が app_logs に警告を残している)
+  if (result.skipped) {
+    logger.warn('support ticket reply email skipped: email sending is not configured', logMeta);
+    return { status: 'skipped', reason: 'not_configured' };
+  }
+  if (isEmailFailure(result)) {
+    logger.error('support ticket reply email: send failed', result.error, logMeta);
+    return { status: 'failed', reason: 'send_failed' };
+  }
+  const resendMessageId = result.id;
 
   // 3) 送信ログを残す。supabase-js は DB のエラーを例外にせず { error } で返すため、必ず error を確認する
   //    (旧実装は結果を見ておらず、INSERT が失敗してもログすら残らなかった)

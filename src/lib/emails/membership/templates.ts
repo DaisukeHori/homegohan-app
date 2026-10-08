@@ -20,5 +20,6 @@ export const EmailEnvelopeSchema = z.object({
   text: z.string().min(1),                   // プレーンテキスト本文
   html: z.string().optional(),               // 第 1 段階は省略 (text のみ)
   reply_to: z.string().email().optional(),
+  template: z.string().optional(),            // 文面の名前 (snake_case)。失敗のログで区別する。send.ts の EmailEnvelopeSchema と同じ
 });
 export type EmailEnvelope = z.infer<typeof EmailEnvelopeSchema>;
