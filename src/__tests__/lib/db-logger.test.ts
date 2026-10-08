@@ -1,5 +1,22 @@
 import { describe, it, expect } from 'vitest';
-import { maskSecrets, truncateMetadata, sanitizeMetadata } from '@/lib/db-logger';
+import {
+  maskSecrets,
+  truncateMetadata,
+  sanitizeMetadata,
+  sanitizeLogText,
+  sanitizeLogEntry,
+} from '@/lib/db-logger';
+
+// 秘密情報に見える文字列は、リポジトリのシークレットスキャンに誤検知されないよう実行時に組み立てる
+const FAKE_OPENAI_KEY = ['sk-', 'proj-', 'abcdefghijklmnopqrstuvwxyz0123456789ABCD'].join('');
+const FAKE_JWT = [
+  'eyJ',
+  'hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+  '.',
+  'eyJzdWIiOiIxMjM0NTY3ODkwIn0',
+  '.',
+  'SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
+].join('');
 
 describe('maskSecrets (#1044 F6-20)', () => {
   it('password/token/secret/authorization/api_key を含むキーをマスクする', () => {
@@ -68,6 +85,36 @@ describe('maskSecrets (#1044 F6-20)', () => {
     // 生の秘密値が結果のどこにも残っていないこと
     expect(serialized).not.toContain('super-secret-at-the-bottom');
     expect(serialized).toContain('***');
+  });
+});
+
+describe('maskSecrets – 値の文字列 (#1171)', () => {
+  it('キー名が無関係でも、値の文字列に含まれる秘密情報の書式をマスクする', () => {
+    const result = maskSecrets({ error: `upstream said ${FAKE_OPENAI_KEY}`, note: 'ok', count: 3 });
+
+    expect(result.error).toBe('upstream said ***');
+    expect(result.note).toBe('ok');
+    expect(result.count).toBe(3);
+  });
+
+  it('配列・ネストの中の文字列値もマスクする', () => {
+    const result = maskSecrets({ items: [`Bearer ${FAKE_JWT}`, 'plain'], deep: { url: 'postgres://u:p@h:5432/db' } }) as any;
+
+    expect(result.items).toEqual(['Bearer ***', 'plain']);
+    expect(result.deep.url).toBe('postgres://u:***@h:5432/db');
+  });
+
+  it('BigInt を含んでいても sanitizeMetadata が例外を投げない (JSON.stringify は BigInt で投げるため)', () => {
+    // (tsconfig の target が ES2017 のため、BigInt リテラル 10n ではなく BigInt() を使う)
+    expect(() => sanitizeMetadata({ total: BigInt(10) })).not.toThrow();
+    expect(sanitizeMetadata({ total: BigInt(10) })).toEqual({ total: '10' });
+  });
+});
+
+describe('@/lib/db-logger の再エクスポート (#1171)', () => {
+  it('sanitizeLogText / sanitizeLogEntry も同じモジュールから使える', () => {
+    expect(sanitizeLogText('password=hunter2', 100)).toBe('password=***');
+    expect(sanitizeLogEntry({ level: 'info', source: 'api-route', message: 'password=hunter2' }).message).toBe('password=***');
   });
 });
 

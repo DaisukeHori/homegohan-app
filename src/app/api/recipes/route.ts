@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { clampIntParam } from '@/lib/http-params';
 import { NextResponse } from 'next/server';
 
 // レシピ一覧取得
@@ -12,10 +13,15 @@ export async function GET(request: Request) {
   const category = searchParams.get('category');
   const cuisineType = searchParams.get('cuisine_type');
   const difficulty = searchParams.get('difficulty');
-  const maxTime = searchParams.get('max_time');
-  const page = parseInt(searchParams.get('page') || '1');
-  const limit = parseInt(searchParams.get('limit') || '20');
+  // #1220: ?limit=100000 のような値で 1 リクエストが大量行を要求できた（公開レシピは未認証でも
+  // 取れる）ため clampIntParam で丸める。数字でない値は既定値へ（以前は NaN になり、
+  // DB エラー→空の 200 になっていた）。limit の上限 100 は呼び出し元のモバイル（limit=30 固定）に十分。
+  const page = clampIntParam(searchParams.get('page'), { min: 1, max: 1000, default: 1 });
+  const limit = clampIntParam(searchParams.get('limit'), { min: 1, max: 100, default: 20 });
   const offset = (page - 1) * limit;
+  // max_time は数字として読めるときだけ 1〜1440 分に丸めて絞り込む（数字でない値・空は無視）。
+  // clampIntParam は無効な値を default に倒すので、min より小さい 0 を「指定なし」の目印にしている。
+  const maxTime = clampIntParam(searchParams.get('max_time'), { min: 1, max: 1440, default: 0 });
 
   // 認証済みの場合のみ recipe_likes を JOIN する（未認証では RLS で空配列になるが
   // user_profiles FK の PostgREST キャッシュ問題を避けるためシンプルなクエリを使用）
@@ -47,8 +53,8 @@ export async function GET(request: Request) {
   if (difficulty) {
     dbQuery = dbQuery.eq('difficulty', difficulty);
   }
-  if (maxTime) {
-    dbQuery = dbQuery.lte('cooking_time_minutes', parseInt(maxTime));
+  if (maxTime > 0) {
+    dbQuery = dbQuery.lte('cooking_time_minutes', maxTime);
   }
 
   const { data, error, count } = await dbQuery

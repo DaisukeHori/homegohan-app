@@ -3495,7 +3495,10 @@ Deno.serve(async (req: Request) => {
         );
       } catch (error: any) {
         console.error("generate-menu-v5 background error:", error);
-        createLogger("generate-menu-v5", requestId ?? undefined).withUser(userId ?? "unknown").error(
+        // #1171: userId が無いときに withUser("unknown") とすると、uuid 列 (auth.users への外部キー) への insert が
+        // 失敗してログごと捨てられる。ユーザーが分からない場合はユーザーなしのロガーで記録する。
+        const backgroundLogger = createLogger("generate-menu-v5", requestId ?? undefined);
+        (userId ? backgroundLogger.withUser(userId) : backgroundLogger).error(
           "バックグラウンド処理でエラーが発生しました",
           error,
           { requestId, step: currentStep },
@@ -3540,7 +3543,9 @@ Deno.serve(async (req: Request) => {
     );
   } catch (error: any) {
     console.error("generate-menu-v5 handler error:", error);
-    createLogger("generate-menu-v5", requestId ?? undefined).withUser(userId ?? "unknown").error(
+    // #1171: userId が確定する前に失敗した場合は withUser("unknown") を使わず、ユーザーなしのロガーで記録する
+    const handlerLogger = createLogger("generate-menu-v5", requestId ?? undefined);
+    (userId ? handlerLogger.withUser(userId) : handlerLogger).error(
       "ハンドラでエラーが発生しました",
       error,
       { requestId },

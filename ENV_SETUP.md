@@ -63,6 +63,25 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
     - `gemini-2.5-flash-image-preview` (Nano Banana)
     - `gemini-3-pro-image-preview` (Nano Banana Pro - デフォルト)
 
+### 本番では設定する環境変数: レート制限（Upstash Redis）
+
+- `UPSTASH_REDIS_REST_URL` - Upstash Redis の REST URL
+- `UPSTASH_REDIS_REST_TOKEN` - Upstash Redis の REST トークン（秘密情報。サーバーサイドのみ）
+
+用途: AI 系 API の分あたりの上限と、招待メール・子供メンバーの参加リクエストメール・オーナー／代表者の譲渡提案メールの送信回数の上限（#1163）。
+
+- **ローカル開発**: 未設定でよい。サーバープロセス内のメモリで数える（再起動でリセットされる）。
+- **本番（Vercel）**: Production に必ず設定する。未設定でも動くが、Vercel は同じユーザーのリクエストを別のサーバーインスタンスで処理することがあり、カウンタがインスタンスごとに分かれてしまう。特に **1 日あたりの上限（招待メールなど）は、Upstash を設定したときだけサーバーインスタンスをまたいで共有される**。未設定のままだと、日次の上限はほとんど効かない。
+- **Redis に接続できないとき**: 上限を判定できないので、安全側に倒して処理を断る（API は 500 を返し、メールは送らない）。
+
+設定手順:
+
+1. [Upstash Console](https://console.upstash.com/) で Redis データベースを作成する（リージョンは Vercel の関数リージョンに近いものにする）
+2. データベースの「REST API」欄から `UPSTASH_REDIS_REST_URL` と `UPSTASH_REDIS_REST_TOKEN` の値をコピーする
+3. Vercel Dashboard → Settings → Environment Variables に、この 2 つの名前のまま追加する（Environment は Production）。Marketplace 連携で自動追加される変数名はこのアプリが読む名前と異なる場合があるので、上の 2 つの名前で入っているかを確認する
+4. 再デプロイする（環境変数は再デプロイで反映される）
+5. 反映の確認: Vercel の関数ログに `[rate-limit] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN が未設定です` という警告が出ていなければ、Upstash が使われている
+
 ---
 
 ## 🖥️ ローカル開発環境での設定
@@ -99,6 +118,10 @@ OPENAI_API_KEY=your_openai_api_key
 
 # オプション: 画像生成モデル（デフォルト: gemini-3-pro-image-preview）
 GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
+
+# オプション: レート制限（Upstash Redis）。ローカルは未設定でよい。本番では必ず設定する
+# UPSTASH_REDIS_REST_URL=your_upstash_redis_rest_url
+# UPSTASH_REDIS_REST_TOKEN=your_upstash_redis_rest_token
 ```
 
 ### 3. 実際の値を取得

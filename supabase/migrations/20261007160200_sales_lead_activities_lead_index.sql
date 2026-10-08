@@ -1,0 +1,39 @@
+-- migration: 20261007160200_sales_lead_activities_lead_index.sql
+-- sales_lead_activities (営業活動ログ) の外部キー列 lead_id に索引を足す (#1216)
+--
+-- 背景:
+--   sales_lead_activities.lead_id は sales_leads(id) への外部キー (ON DELETE CASCADE) だが、この列の索引が無い。
+--   2026-10-07 の本番スナップショット (supabase/baseline/prod_schema.sql) でも、sales_lead_activities にある索引は主キー (id) だけ。
+--   (sales 系で索引があるのは、兄弟の sales_leads の idx_sales_leads_stage だけ。)
+--   リードの活動履歴を出す 2 つの API が、同じ形のクエリを投げている。
+--     GET /api/admin/sales/leads/[id]/activities  (src/app/api/admin/sales/leads/[id]/activities/route.ts)
+--     GET /api/admin/sales/leads/[id]            (src/app/api/admin/sales/leads/[id]/route.ts。リード詳細に活動履歴を含める)
+--     SELECT id, lead_id, actor_id, activity_type, details, created_at
+--       FROM sales_lead_activities WHERE lead_id = $1 ORDER BY created_at DESC
+--   lead_id の索引が無いと、1 件のリードの履歴を出すたびに、全リード分の活動ログを全件読んで (Seq Scan)、created_at で並べ替える (Sort)。
+--   活動ログが溜まるほど、1 回ごとの呼び出しが遅くなる。
+--   リード (sales_leads) の行を DELETE したときの ON DELETE CASCADE も、消す活動を探すために同じく全件を読む。
+--   使うのは営業担当・管理者 (sales / admin / super_admin) だけで、行数も営業活動ログの分だけなので、いま実害が出ている問題ではない。
+--   ログが増える前に安く直しておく対策で、直すのは性能だけ (API の結果・動作は変わらない)。
+--   2026-10-07 にローカル (本番スキーマのベースライン) で、上のクエリの実行計画が Sort + Seq Scan になることを確かめた
+--   (tests/integration/rls/sales-lead-activities-index.test.ts の 2 件が修正前に失敗する)。
+--
+-- 変更:
+--   idx_sales_lead_activities_lead_created を (lead_id, created_at DESC) で作る。
+--     - lead_id の等価条件で、1 件のリード分の活動だけに絞れる (全件を読まなくなる)。
+--     - 2 列目を API の並び順 (created_at DESC) に揃えてあるので、索引を順に読むだけで Sort なしに返す計画も取れる。
+--     - 先頭の列が lead_id なので、ON DELETE CASCADE が活動を探すときにも使われる。
+--   アプリ側の変更は無い (クエリはそのままで索引が使われる)。
+--
+-- 本番への影響:
+--   データの変更は無い (索引を足すだけで、既存の行を UPDATE / DELETE しない)。API の結果も変わらない。
+--   CREATE INDEX は、索引を作る間このテーブルへの書き込み (INSERT / UPDATE / DELETE) を待たせる (SHARE ロック。読み取りは待たない)。
+--   migration はトランザクション内で流すので CONCURRENTLY は使えない。管理者だけが使うログのテーブルで、作成は一瞬で終わる見込み。
+--   索引の分だけ、このテーブルへの INSERT がわずかに重くなり、ディスクを少し使う (ログ 1 行ごとに数十バイト程度)。
+--
+-- 冪等: CREATE INDEX IF NOT EXISTS。2 回続けて適用してもエラーにならない (2 回目は何もしない)。
+-- 確認: tests/integration/rls/sales-lead-activities-index.test.ts (2 件)。修正前は 2 件とも失敗し、この migration の後は全件成功する。
+-- ロールバック: supabase/rollbacks/20261007160200_sales_lead_activities_lead_index.down.sql
+
+CREATE INDEX IF NOT EXISTS "idx_sales_lead_activities_lead_created"
+  ON "public"."sales_lead_activities" USING "btree" ("lead_id", "created_at" DESC);

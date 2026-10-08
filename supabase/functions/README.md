@@ -97,6 +97,7 @@ supabase/functions/
 ├── _shared/                 # 共有ユーティリティ（全関数から参照可能）
 │   ├── cors.ts             # CORS設定
 │   ├── db-logger.ts        # ログ記録
+│   ├── log-sanitizer.ts    # ログ保存前の秘密情報マスキング・切り詰め（Next.js の src/lib/db-logger.ts と共用。import なし・Deno/Node 固有 API なし）
 │   ├── allergy.ts          # アレルギー処理
 │   ├── nutrition-*.ts      # 栄養計算関連
 │   ├── meal-generator.ts   # 献立生成ロジック

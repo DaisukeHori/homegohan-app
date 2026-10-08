@@ -55,7 +55,7 @@ vi.mock('@/lib/planned-meals-snapshot', async (importOriginal) => {
   };
 });
 
-const { GET } = await import('@/app/api/ai/menu/weekly/status/route');
+const { GET, maxDuration } = await import('@/app/api/ai/menu/weekly/status/route');
 
 const user = { id: 'user-1' };
 
@@ -190,5 +190,9 @@ describe('GET /api/ai/menu/weekly/status', () => {
     expect(json.status).toBe('failed');
     expect(json.restore).toBeUndefined();
     expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('stale 判定時の復元が打ち切られないよう maxDuration を明示している (#1203)', () => {
+    expect(maxDuration).toBe(60);
   });
 });
