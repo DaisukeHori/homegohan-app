@@ -8,7 +8,11 @@
  *   - 直近の一覧 (recent_comments / recent_feedbacks) は新しい順に LIMIT 10 で取る。全件は読まない。
  *   - レスポンスの形と、平均・NPS スコア・回答率の丸めは以前と同じ。
  *   - 関数や一覧の取得に失敗したら、欠けた数字を 0 として返さず、ログに残して 500 を返す。
- *   - 認可 (requireRole の許可ロール) と、401 / 403 の返し方は変えない。
+ *   - 401 / 403 の返し方は変えない。
+ *
+ * #1311: 許可するロールを admin / super_admin だけにした (財務ロール finance は外した)。
+ *   finance は入口で 403 になり、DB には何も問い合わせない。admin / super_admin は今までどおり 200。
+ *   RLS (csat_access / nps_select_admin) は変えていない。
  *
  * Supabase クライアントはモック。関数の中身 (SQL) と RLS は
  * tests/integration/rls/csat-nps-summary-rpc.test.ts、route 全体の結果は
@@ -445,13 +449,71 @@ describe('GET /api/admin/finance/nps — 以前の JS 集計と同じ数字に�
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 認可 (変えていない)
+// 認可 (#1311: 財務ロール finance を外した。admin / super_admin は今までどおり)
 // ═════════════════════════════════════════════════════════════════════════════
 
+/**
+ * 本物の requireRole と同じく、route が渡した許可ロールと本人のロールの重なりで判定する。
+ * (route が許可ロールの一覧を間違えたら、ここで気づける。呼び出しの引数だけを見るテストでは分からない)
+ */
+function actAs(...roles: string[]) {
+  mocks.requireRole.mockImplementation(async (allowedRoles: readonly string[]) => {
+    if (!roles.some((role) => allowedRoles.includes(role))) {
+      throw new ForbiddenError('PERM_DENIED', `Requires one of: ${allowedRoles.join(', ')}`);
+    }
+    return actor(...roles);
+  });
+}
+
 describe('GET /api/admin/finance/nps — 認可', () => {
-  it('許可するロールは admin / super_admin / finance (変えていない)', async () => {
+  it('許可するロールは admin / super_admin だけ。財務ロール (finance) は含めない (#1311)', async () => {
     await GET(req());
-    expect(mocks.requireRole).toHaveBeenCalledWith(['admin', 'super_admin', 'finance']);
+    expect(mocks.requireRole).toHaveBeenCalledTimes(1);
+    expect(mocks.requireRole).toHaveBeenCalledWith(['admin', 'super_admin']);
+    expect(mocks.requireRole.mock.calls[0][0]).not.toContain('finance');
+  });
+
+  it.each([
+    ['admin', ['admin']],
+    ['super_admin', ['super_admin']],
+    ['admin と finance の両方を持つ人', ['admin', 'finance']],
+  ])('%s は 200 (今までどおり)', async (_label, roles) => {
+    actAs(...roles);
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as NpsBody;
+    expect(body.data.nps.total_responses).toBe(8);
+    expect(mocks.rpc).toHaveBeenCalledTimes(2);
+  });
+
+  it('財務ロール (finance) だけの人は 403。NPS / CSAT のデータは返さず、DB にも何も問い合わせない', async () => {
+    actAs('finance');
+    const res = await GET(req('?from=2026-03-01&to=2026-03-31&plan_key=pro'));
+    expect(res.status).toBe(403);
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({
+      error: { code: 'OP_PERMISSION_DENIED', message: 'Requires one of: admin, super_admin' },
+    });
+    // 本文にデータが混ざっていない
+    expect(text).not.toContain('recent_comments');
+    expect(text).not.toContain('使いやすい');
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.chains).toHaveLength(0);
+    expect(mocks.loggerError).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['support (RLS は読めるが、この API は通さない。今までどおり)', ['support']],
+    ['sales', ['sales']],
+    ['content_moderator', ['content_moderator']],
+    ['org_admin', ['user', 'org_admin']],
+    ['一般ユーザー', ['user']],
+  ])('%s は 403。DB には何も問い合わせない', async (_label, roles) => {
+    actAs(...roles);
+    const res = await GET(req());
+    expect(res.status).toBe(403);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.chains).toHaveLength(0);
   });
 
   it('未認証は 401。DB には何も問い合わせない', async () => {
@@ -465,11 +527,11 @@ describe('GET /api/admin/finance/nps — 認可', () => {
   });
 
   it('権限なしは 403。DB には何も問い合わせない', async () => {
-    mocks.requireRole.mockRejectedValue(new ForbiddenError('PERM_DENIED', 'Requires one of: admin, super_admin, finance'));
+    mocks.requireRole.mockRejectedValue(new ForbiddenError('PERM_DENIED', 'Requires one of: admin, super_admin'));
     const res = await GET(req());
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({
-      error: { code: 'OP_PERMISSION_DENIED', message: 'Requires one of: admin, super_admin, finance' },
+      error: { code: 'OP_PERMISSION_DENIED', message: 'Requires one of: admin, super_admin' },
     });
     expect(mocks.rpc).not.toHaveBeenCalled();
     expect(mocks.chains).toHaveLength(0);
