@@ -205,11 +205,6 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
                 凍結 (BAN)
               </Link>
             )}
-            {isSuperAdmin && (
-              <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-orange-500 text-white text-sm font-medium opacity-60 cursor-not-allowed">
-                impersonate (要 reason 入力)
-              </span>
-            )}
           </div>
         )}
       </div>

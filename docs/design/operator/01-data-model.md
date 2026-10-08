@@ -475,7 +475,7 @@ ALTER TABLE admin_audit_logs
   ADD COLUMN IF NOT EXISTS target_type          VARCHAR(30),
   ADD COLUMN IF NOT EXISTS severity             VARCHAR(20) NOT NULL DEFAULT 'info'
     CHECK (severity IN ('info', 'warn', 'critical')),
-  ADD COLUMN IF NOT EXISTS impersonated_by      UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS impersonated_by      UUID REFERENCES auth.users(id) ON DELETE SET NULL,  -- 履歴用 (#1124: impersonate は提供しない。新しく書く処理は無い)
   ADD COLUMN IF NOT EXISTS session_id           VARCHAR(255),
   ADD COLUMN IF NOT EXISTS ip_address           INET,
   ADD COLUMN IF NOT EXISTS user_agent           TEXT,
@@ -1601,6 +1601,7 @@ describe('subscription_plans seed', () => {
 ## 8. 既存実装との関連
 
 - `admin_audit_logs`: 既存テーブルに `target_type`, `severity`, `impersonated_by` 等を ALTER で追加
+  - `impersonated_by`: なりすまし (impersonate) は提供しない (#1124)。新しく書き込む処理は無く、過去に書かれた行の履歴として列だけ残す (列を消す migration は作らない)
 - `organizations`: `coupon_redemptions` が FK 参照 — org/ ドメインの `organizations` テーブルが先に存在すること
 - `family_members`: `parental_consents` が FK 参照 — DDL は family/01-data-model.md に移動済み。family/ ドメイン適用後に作成されること
 
