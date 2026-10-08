@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 import { sanitizeBloodTestPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
     .limit(limit);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/health/blood-tests', error, { userId: user.id, table: 'blood_test_results' });
   }
 
   // 経年レビューも取得
@@ -76,7 +77,7 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/health/blood-tests', error, { userId: user.id, table: 'blood_test_results' });
   }
 
   // 個別 AI レビューを生成

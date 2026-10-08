@@ -60,7 +60,8 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 - 運営ロール (support / admin / super_admin など): `requireRole([...])` (`src/lib/auth/helpers.ts`)
 - 組織の管理者 (所属組織の `org_role` が owner / admin): `requireOrgAdmin()` (同上。判定の実体は `src/lib/auth/org-admin.ts` の `isOrgAdmin`。roles 配列の `org_admin` は見ない)
 - 他ユーザーの行を読む必要があるとき (`user_profiles` などは RLS で本人の行しか見えない) だけ、認可を通した**あとに** `getSupabaseAdmin()` (service_role) を使う。認可の前には使わない。使うときは、対象を絞る条件 (対象ユーザーの id など) を必ず付ける
-- 500 の本文は汎用メッセージだけにし、DB の生のエラー文は返さない。詳細は上記の構造化ログに残す (#1172)
+- 500 の本文は汎用メッセージだけにし、DB の生のエラー文は返さない。詳細は上記の構造化ログに残す (#1172)。route では共通ヘルパー `internalError(routeName, error, ctx?)` (`src/lib/api/errors.ts`) を `return` する。構造化ログへの記録と、汎用の本文 `{ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' }` の返却を一度に行う。`error` は文字列のままにする (画面が `data.error` をそのまま表示するため。オブジェクトにすると描画で落ちる)。運営 API のように `error.message` を読むクライアントには `{ shape: 'nested' }` を渡す
+- JSON 本文に `error.message` を入れている既存の route は `tests/api-raw-error-message-scan.test.ts` の許可リストに載っている。新しく足すとテストが落ちる。直したら許可リストの件数を減らす (0 件になったら行を消す)
 
 ### レート制限
 
