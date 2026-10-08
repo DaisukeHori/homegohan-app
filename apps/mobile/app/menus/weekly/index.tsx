@@ -2233,7 +2233,6 @@ export default function WeeklyMenuPage() {
         weekRange={{ start: weekStartStr, end: weekEndStr }}
         todayNutrients={todayNutrientsForStats}
         weekNutrients={weekNutrientsForStats}
-        userId={profile?.id ?? ''}
         weekDayLabels={getDayLabels(weekStartDay)}
         todayMeals={todayMealsForStats}
       />
