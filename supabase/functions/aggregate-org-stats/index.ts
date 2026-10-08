@@ -1,12 +1,15 @@
-import { createClient } from "@supabase/supabase-js";
 import { requireServiceRole } from '../_shared/auth.ts';
 import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
-import { todayJst } from '../_shared/jst-date.ts';
 
-const supabaseAdmin = createClient(
-  Deno.env.get('SUPABASE_URL') ?? '',
-  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-);
+// 組織統計の集計は、オーナー判断 (#1325) により停止している。
+// 以前は、組織ごとの日次統計 (活力スコア・朝食摂取率・深夜食率・活動率) を集計して保存していたが、
+// 読み取り先が、すでに削除された表を指していて、本番では何も保存できていなかった。
+// これを直すと止めると決めた集計が動き出すため、直さずに、集計処理そのものを削除した。
+// 組織の画面には「準備中」を出している。
+//
+// この関数は、デプロイ先に残す (デプロイは関数を削除しないため)。
+// 古い呼び出し元 (本番に残った pg_cron のジョブなど) が呼んでも、何も書かずに 410 を返す。
+// 集計を再開するには、新しいオーナー判断のもとで、集計処理を作り直す。
 
 // バッチ専用 (ブラウザからは呼ばれない) なので CORS は付けない (#1167)。
 // ブラウザの事前確認 (OPTIONS) は下の認証で 401 になり、CORS ヘッダーが無いためブラウザ側で止まる。
@@ -20,167 +23,21 @@ Deno.serve(async (req) => {
     });
   }
 
-  const requestId = generateRequestId();
-  const logger = createLogger('aggregate-org-stats', requestId);
+  // 認証に通った呼び出しは、停止後も呼び出し元が残っている印。記録しておく
+  // (本番の pg_cron のジョブが残っていないかを確かめる手がかりになる)
+  createLogger('aggregate-org-stats', generateRequestId()).warn(
+    '組織統計の集計は停止中です (#1325)。呼び出し元 (pg_cron のジョブなど) が残っていないか確認してください',
+  );
 
-  try {
-    const { date, organizationId } = await req.json().catch(() => ({}));
-    
-    // 対象日付（指定なければ JST の今日）
-    // UTC の暦日だと JST 00:00〜08:59 に前日となり、user_daily_meals.day_date (JST の暦日) とズレる (#1210)
-    // 注意: 下の planned_meals の取得クエリは、削除済みの meal_plan_days / meal_plans をまだ参照している。
-    // そのため本番では PGRST200 になり、メンバーのいる組織は集計されない。クエリの書き換えは別 Issue で直す
-    // (#1210 の修正は対象日の求め方だけ)。
-    const targetDateStr = date || todayJst();
-
-    logger.info(`Aggregating stats for date: ${targetDateStr}`);
-
-    // 1. 集計対象の組織を取得
-    let orgQuery = supabaseAdmin.from('organizations').select('id');
-    if (organizationId) {
-      orgQuery = orgQuery.eq('id', organizationId);
-    }
-    const { data: orgs, error: orgError } = await orgQuery;
-    if (orgError) throw orgError;
-
-    const results = [];
-
-    // 2. 各組織ごとに集計を実行
-    for (const org of orgs || []) {
-      // メンバー取得
-      const { data: members, error: memError } = await supabaseAdmin
-        .from('user_profiles')
-        .select('id')
-        .eq('organization_id', org.id);
-      
-      if (memError) {
-        logger.error(`Error fetching members for org ${org.id}`, memError);
-        continue;
-      }
-
-      const memberIds = members?.map(m => m.id) || [];
-      const memberCount = memberIds.length;
-
-      if (memberCount === 0) {
-        // メンバー0の場合は0埋めでレコード作成
-        await upsertStats(org.id, targetDateStr, 0, 0, 0, 0, 0);
-        continue;
-      }
-
-      // planned_mealsから該当日のデータを取得
-      // meal_plan_days経由でユーザーを特定
-      const { data: plannedMeals, error: mealError } = await supabaseAdmin
-        .from('planned_meals')
-        .select(`
-          id, 
-          meal_type, 
-          is_completed, 
-          completed_at,
-          veg_score,
-          meal_plan_days!inner(
-            day_date,
-            meal_plans!inner(user_id)
-          )
-        `)
-        .eq('meal_plan_days.day_date', targetDateStr)
-        .in('meal_plan_days.meal_plans.user_id', memberIds);
-
-      if (mealError) {
-        logger.error(`Error fetching planned_meals for org ${org.id}`, mealError);
-        continue;
-      }
-
-      const meals = plannedMeals || [];
-
-      // --- 指標計算 ---
-
-      // アクティブ人数（完了した食事があるユーザー）
-      const activeUserIds = new Set(
-        meals
-          .filter(m => m.is_completed)
-          .map(m => (m.meal_plan_days as any)?.meal_plans?.user_id)
-          .filter(Boolean)
-      );
-      const activeMemberCount = activeUserIds.size;
-
-      // 完了した食事数
-      const completedMeals = meals.filter(m => m.is_completed);
-      const totalCompletedMeals = completedMeals.length;
-
-      // 朝食率（完了した朝食 / 完了した食事総数）
-      const breakfastCount = completedMeals.filter(m => m.meal_type === 'breakfast').length;
-      const breakfastRate = totalCompletedMeals > 0 ? Math.round((breakfastCount / totalCompletedMeals) * 100) : 0;
-
-      // 深夜食率 (22:00-04:00に完了した食事)
-      const lateNightCount = completedMeals.filter(m => {
-        if (!m.completed_at) return false;
-        const d = new Date(m.completed_at);
-        // UTC時間に9時間足してJSTの時間を取得
-        const jstHour = (d.getUTCHours() + 9) % 24;
-        return jstHour >= 22 || jstHour < 4;
-      }).length;
-      const lateNightRate = totalCompletedMeals > 0 ? Math.round((lateNightCount / totalCompletedMeals) * 100) : 0;
-
-      // 平均スコア（veg_scoreを使用）
-      const scores = meals
-        .filter(m => m.veg_score !== null && m.veg_score !== undefined)
-        .map(m => m.veg_score as number);
-      
-      const totalScore = scores.reduce((sum, score) => sum + score, 0);
-      // veg_score(0-5) -> 100点満点換算 (*20)
-      const avgScore = scores.length > 0 ? Math.round((totalScore / scores.length) * 20) : 0;
-
-      // DB保存
-      await upsertStats(
-        org.id,
-        targetDateStr,
-        memberCount,
-        activeMemberCount,
-        breakfastRate,
-        lateNightRate,
-        avgScore
-      );
-
-      results.push({ orgId: org.id, memberCount, totalCompletedMeals });
-    }
-
-    return new Response(JSON.stringify({ success: true, processed: results }), {
+  return new Response(
+    JSON.stringify({
+      success: false,
+      code: 'DISABLED',
+      message: '組織の集計はオーナー判断 (#1325) により停止しています',
+    }),
+    {
+      status: 410,
       headers: { 'Content-Type': 'application/json' },
-      status: 200,
-    });
-
-  } catch (error: any) {
-    logger.error('Aggregation error', error);
-    return new Response(JSON.stringify({ error: error.message }), {
-      headers: { 'Content-Type': 'application/json' },
-      status: 500,
-    });
-  }
+    },
+  );
 });
-
-async function upsertStats(
-  orgId: string,
-  date: string,
-  memberCount: number,
-  activeCount: number,
-  breakfastRate: number,
-  lateNightRate: number,
-  avgScore: number
-) {
-  const { error } = await supabaseAdmin
-    .from('org_daily_stats')
-    .upsert({
-      organization_id: orgId,
-      date: date,
-      member_count: memberCount,
-      active_member_count: activeCount,
-      breakfast_rate: breakfastRate,
-      late_night_rate: lateNightRate,
-      avg_score: avgScore,
-      updated_at: new Date().toISOString()
-    }, {
-      onConflict: 'organization_id, date'
-    });
-
-  if (error) throw error;
-}

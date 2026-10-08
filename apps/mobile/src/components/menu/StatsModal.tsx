@@ -73,7 +73,11 @@ export interface WeekNutrientData {
 export interface StatsModalProps {
   visible: boolean;
   onClose: () => void;
-  onOpenImprove: () => void;
+  /**
+   * 「献立を改善」を押したときに呼ばれる。
+   * 表示中の AI栄養士の提案 (改善アドバイス) があれば渡す。改善の要望として使われる。
+   */
+  onOpenImprove: (advice?: string | null) => void;
   selectedDate: string;
   weekRange: { start: string; end: string };
   todayNutrients: NutrientValues;
@@ -235,15 +239,22 @@ const pfcStyles = StyleSheet.create({
 // 今日タブ
 // ============================================================
 
+/**
+ * 画面に出す AI栄養士のフィードバック。
+ * isError が true のとき advice は提案ではなく、分析の失敗・タイムアウトのメッセージ。
+ * 「献立を改善」の要望 (LLM に送る note) には渡さない。
+ */
+type AiFeedback = { praise: string | null; advice: string | null; isError?: boolean };
+
 interface TodayTabProps {
   nutrients: NutrientValues;
   radarKeys: string[];
   setRadarKeys: (keys: string[]) => void;
   editingRadar: boolean;
   setEditingRadar: (v: boolean) => void;
-  feedback: { praise: string | null; advice: string | null } | null;
+  feedback: AiFeedback | null;
   isLoadingFeedback: boolean;
-  onOpenImprove: () => void;
+  onOpenImprove: (advice?: string | null) => void;
   selectedDate: string;
   mealCount: number;
 }
@@ -358,7 +369,9 @@ function TodayTab({
       {/* 献立を改善ボタン */}
       <Pressable
         testID="stats-improve-btn"
-        onPress={onOpenImprove}
+        // onPress のイベントを advice と取り違えないよう、表示中の提案だけを渡す
+        // (分析の失敗メッセージは提案ではないので渡さない)
+        onPress={() => onOpenImprove(feedback?.isError ? null : (feedback?.advice ?? null))}
         style={({ pressed }) => [todayStyles.improveBtn, pressed && { opacity: 0.85 }]}
       >
         <Ionicons name="refresh" size={16} color="#FFF" />
@@ -624,7 +637,7 @@ export const StatsModal: React.FC<StatsModalProps> = ({
   const [tab, setTab] = useState<Tab>('today');
   const [editingRadar, setEditingRadar] = useState(false);
   const [radarKeys, setRadarKeys] = useState<string[]>(DEFAULT_RADAR_NUTRIENTS);
-  const [feedback, setFeedback] = useState<{ praise: string | null; advice: string | null } | null>(null);
+  const [feedback, setFeedback] = useState<AiFeedback | null>(null);
   const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
   // 生成待ち (Realtime + ポーリング) の持ち主。閉じる / タブ切替 / 日付変更 / アンマウントで必ず解除される
   const feedbackWatch = useNutritionFeedbackWatch();
@@ -686,8 +699,8 @@ export const StatsModal: React.FC<StatsModalProps> = ({
               setIsLoadingFeedback(false);
             },
             onFailed: (message) => {
-              // 失敗 / タイムアウト。メッセージだけ出す
-              setFeedback({ praise: null, advice: message });
+              // 失敗 / タイムアウト。メッセージだけ出す (提案ではないので isError を立てる)
+              setFeedback({ praise: null, advice: message, isError: true });
               setIsLoadingFeedback(false);
             },
           });

@@ -7,6 +7,10 @@
  * Next.js が持っているのは CRON_SECRET ではなく service role key なので、
  * regenerate-embeddings / stripe-price-sync が関数の中でやっているのと同じく、service role key の完全一致も許可する。
  *
+ * 注: その後、オーナー判断 (#1325) で組織統計の集計は止まり、POST /api/org/stats/refresh は関数を呼ばず 410 を返すだけになった。
+ * aggregate-org-stats も認証のあとに 410 を返すだけ (tests/aggregate-org-stats-disabled.test.ts)。
+ * このテストが確かめる requireServiceRole の受け付け方は、ほかのバッチ関数のために変えていない。
+ *
  * 既存の受け付け方 (CRON_SECRET / SERVICE_ROLE_SECRET) と、拒否する場合は変えない。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
