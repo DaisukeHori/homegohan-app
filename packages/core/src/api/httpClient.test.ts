@@ -193,7 +193,43 @@ describe('タイムアウト', () => {
     const error = await promise;
     expect(error).toBeInstanceOf(HttpTimeoutError);
     expect((error as HttpTimeoutError).timeoutMs).toBe(30_000);
-    expect((error as HttpTimeoutError).message).toContain('GET /api/x');
+    // どのリクエストだったかはプロパティで分かる
+    expect((error as HttpTimeoutError).method).toBe('GET');
+    expect((error as HttpTimeoutError).path).toBe('/api/x');
+  });
+
+  it('message は利用者に読める日本語で、API のパスや英語の定型文を含まない (多くの画面が e.message をそのまま出すため)', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockImplementation(hangingFetch());
+    const api = createHttpClient({ baseUrl: BASE, retries: 0 });
+
+    const promise = api.get('/api/secret-path?token=abc').catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    const error = (await promise) as HttpTimeoutError;
+    expect(error).toBeInstanceOf(HttpTimeoutError);
+    expect(error.message).toContain('タイムアウト');
+    expect(error.message).not.toContain('/api/');
+    expect(error.message).not.toContain('token');
+    expect(error.message).not.toMatch(/timed out|GET|POST/i);
+    expect(error.name).toBe('TimeoutError');
+  });
+
+  it('書き込み (POST) の message は、サーバーの処理が終わっていることがあるので、確かめてからやり直すよう案内する', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockImplementation(hangingFetch());
+    const api = createHttpClient({ baseUrl: BASE });
+
+    const promise = api.post('/api/secret-path?token=abc', {}).catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const error = (await promise) as HttpTimeoutError;
+    expect(error).toBeInstanceOf(HttpTimeoutError);
+    expect(error.method).toBe('POST');
+    expect(error.message).toContain('タイムアウト');
+    expect(error.message).toContain('処理が終わっている場合がある');
+    expect(error.message).not.toContain('/api/');
+    expect(error.message).not.toMatch(/timed out|GET|POST/i);
   });
 
   it('書き込み系 (POST) の既定は 60 秒: 30 秒を過ぎても待ち、60 秒で打ち切る', async () => {

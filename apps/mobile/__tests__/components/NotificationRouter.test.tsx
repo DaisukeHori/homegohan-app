@@ -6,7 +6,8 @@
  * 受け取る経路は 2 つ:
  *   - アプリが起動中のタップ (addNotificationResponseReceivedListener)
  *   - アプリが終了していて通知のタップで起動した場合 (getLastNotificationResponseAsync)
- * 遷移はログイン状態・初期設定の完了が分かってから行う。
+ * 遷移はログイン状態・初期設定の完了が分かってから行う。「分かってから」は、今のユーザーのプロフィールが読めたこと。
+ * (本物の AuthProvider / ProfileProvider を通した cold start の順序は NotificationRouter.coldStart.test.tsx)
  */
 
 import React from 'react';
@@ -44,10 +45,10 @@ jest.mock('expo-router', () => ({
 
 // ── 認証・プロフィールの状態 ───────────────────────────────────────────────────
 type AuthState = { session: unknown; isLoading: boolean };
-type ProfileState = { profile: { onboardingCompletedAt?: string | null } | null; isLoading: boolean };
+type ProfileState = { profile: { id: string; onboardingCompletedAt?: string | null } | null; isLoading: boolean };
 
 let mockAuth: AuthState = { session: { user: { id: 'u1' } }, isLoading: false };
-let mockProfile: ProfileState = { profile: { onboardingCompletedAt: '2026-10-01T00:00:00Z' }, isLoading: false };
+let mockProfile: ProfileState = { profile: { id: 'u1', onboardingCompletedAt: '2026-10-01T00:00:00Z' }, isLoading: false };
 
 jest.mock('../../src/providers/AuthProvider', () => ({
   useAuth: () => mockAuth,
@@ -90,7 +91,7 @@ beforeEach(() => {
   mockGetLast.mockResolvedValue(null);
   mockClearLast.mockResolvedValue(undefined);
   mockAuth = { session: { user: { id: 'u1' } }, isLoading: false };
-  mockProfile = { profile: { onboardingCompletedAt: '2026-10-01T00:00:00Z' }, isLoading: false };
+  mockProfile = { profile: { id: 'u1', onboardingCompletedAt: '2026-10-01T00:00:00Z' }, isLoading: false };
 });
 
 describe('NotificationRouter — 起動中のタップ', () => {
@@ -210,7 +211,64 @@ describe('NotificationRouter — 通知のタップでアプリが起動した�
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(mockPush).not.toHaveBeenCalled();
 
-    mockProfile = { profile: { onboardingCompletedAt: '2026-10-01T00:00:00Z' }, isLoading: false };
+    mockProfile = { profile: { id: 'u1', onboardingCompletedAt: '2026-10-01T00:00:00Z' }, isLoading: false };
+    view.rerender(<NotificationRouter />);
+    await act(async () => {});
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/pantry');
+    });
+  });
+
+  // 本物の Provider では、「読み込み中」から「読み込み済み」へ直接は切り替わらない。
+  // ProfileProvider は、ログイン前の最初の読み込み (user=null) で isLoading=false・profile=null にするので、
+  // ログイン状態が届いた直後の一瞬だけ、「認証済み・読み込み済みに見える・プロフィールはまだ null」になる。
+  it('ログイン直後の一瞬 (認証済み・profileLoading=false・profile=null) は、行き先を捨てずに待つ', async () => {
+    mockAuth = { session: null, isLoading: true };
+    mockProfile = { profile: null, isLoading: false }; // ProfileProvider の最初の読み込み (user=null) が終わった状態
+    mockGetLast.mockResolvedValue(tap('homegohan://pantry', { id: 'cold-start' }));
+
+    const view = await renderRouter();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockPush).not.toHaveBeenCalled();
+
+    // ログイン状態が届いた。ProfileProvider の新しいユーザーの読み込みは、まだ始まっていない
+    mockAuth = { session: { user: { id: 'u1' } }, isLoading: false };
+    view.rerender(<NotificationRouter />);
+    await act(async () => {});
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockPush).not.toHaveBeenCalled();
+
+    // 新しいユーザーの読み込みが始まった
+    mockProfile = { profile: null, isLoading: true };
+    view.rerender(<NotificationRouter />);
+    await act(async () => {});
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockPush).not.toHaveBeenCalled();
+
+    // プロフィールが届いた (初期設定は完了済み)。捨てられていなければ、ここで遷移する
+    mockProfile = { profile: { id: 'u1', onboardingCompletedAt: '2026-10-01T00:00:00Z' }, isLoading: false };
+    view.rerender(<NotificationRouter />);
+    await act(async () => {});
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/pantry');
+    });
+    expect(mockPush).toHaveBeenCalledTimes(1);
+  });
+
+  it('前のユーザーのプロフィールが残っている間は、判定に使わず待つ', async () => {
+    // ログインし直した直後: 認証は新しいユーザー (u2) だが、プロフィールはまだ前のユーザー (u1、初期設定の完了済み) のもの
+    mockAuth = { session: { user: { id: 'u2' } }, isLoading: false };
+    mockProfile = { profile: { id: 'u1', onboardingCompletedAt: '2026-10-01T00:00:00Z' }, isLoading: false };
+    mockGetLast.mockResolvedValue(tap('homegohan://pantry', { id: 'cold-start' }));
+
+    const view = await renderRouter();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockPush).not.toHaveBeenCalled();
+
+    // u2 のプロフィールが届いた (初期設定は完了済み)
+    mockProfile = { profile: { id: 'u2', onboardingCompletedAt: '2026-10-02T00:00:00Z' }, isLoading: false };
     view.rerender(<NotificationRouter />);
     await act(async () => {});
 
@@ -237,12 +295,29 @@ describe('NotificationRouter — 遷移しない状態', () => {
   });
 
   it('初期設定が終わっていないユーザーは遷移しない (初期設定の流れに任せる)', async () => {
-    mockProfile = { profile: { onboardingCompletedAt: null }, isLoading: false };
+    mockProfile = { profile: { id: 'u1', onboardingCompletedAt: null }, isLoading: false };
     await renderRouter();
 
     await receiveTap(tap('homegohan://family'));
 
     await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('初期設定が終わっていないユーザー向けに捨てた行き先は、あとで初期設定が終わっても使わない', async () => {
+    mockProfile = { profile: { id: 'u1', onboardingCompletedAt: null }, isLoading: false };
+    const view = await renderRouter();
+
+    await receiveTap(tap('homegohan://family'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockPush).not.toHaveBeenCalled();
+
+    // 初期設定が終わった
+    mockProfile = { profile: { id: 'u1', onboardingCompletedAt: '2026-10-08T00:00:00Z' }, isLoading: false };
+    view.rerender(<NotificationRouter />);
+    await act(async () => {});
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
     expect(mockPush).not.toHaveBeenCalled();
   });
 

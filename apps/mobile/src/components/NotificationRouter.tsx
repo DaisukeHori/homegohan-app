@@ -10,6 +10,13 @@
  * 遷移はログイン状態・初期設定の完了が分かってから行う (起動直後に遷移すると、ナビゲーションの準備前だったり、
  * 未ログイン・初期設定前の画面を開いてしまったりするため)。条件を満たさないときは遷移せず、
  * アプリを開いたところ (ホームや初期設定) に任せる。
+ *
+ * 「分かってから」は、今ログインしているユーザーのプロフィールが読めたこと。ログインの確認が済んだだけでは足りない。
+ * ProfileProvider は、ログイン前の最初の読み込みで isLoading=false・profile=null にするので、
+ * INITIAL_SESSION が届いた直後に、authLoading=false・session あり・profileLoading=false・profile=null の状態が
+ * 一瞬だけある (新しいユーザーの読み込みは、その描画の effect で始まり、子であるこの部品の effect より後に走る)。
+ * この状態を「初期設定が終わっていない」と取り違えて行き先を捨てると、通知のタップで起動したときの遷移が黙って消える。
+ * 行き先を捨てるのは、今のユーザーのプロフィールが読めていて、初期設定が終わっていないときだけにする。
  */
 
 import * as Notifications from "expo-notifications";
@@ -70,7 +77,10 @@ export function NotificationRouter() {
       return;
     }
     if (profileLoading) return; // 初期設定の完了状況の確認待ち
-    if (!profile?.onboardingCompletedAt) {
+    // 今のユーザーのプロフィールがまだ読めていない (ログイン直後の一瞬の profile=null や、前のユーザーの残り) 間は待つ。
+    // これを初期設定の判定に使うと、まだ読めていないだけなのに「初期設定が終わっていない」として行き先を捨ててしまう
+    if (!profile || profile.id !== session.user.id) return;
+    if (!profile.onboardingCompletedAt) {
       setPending(null); // 初期設定が終わっていないユーザーは、初期設定の流れに任せる
       return;
     }
@@ -90,7 +100,7 @@ export function NotificationRouter() {
       // 遷移の失敗でアプリを落とさない
       console.warn("[NotificationRouter] navigation failed", error);
     }
-  }, [pending, authLoading, session, profileLoading, profile?.onboardingCompletedAt, router]);
+  }, [pending, authLoading, session, profileLoading, profile?.id, profile?.onboardingCompletedAt, router]);
 
   return null;
 }

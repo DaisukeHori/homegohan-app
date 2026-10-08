@@ -81,15 +81,30 @@ export class HttpParseError extends Error {
   }
 }
 
-/** タイムアウトで打ち切った。呼び出し側の中断 (AbortError) とは区別できる */
+/** タイムアウトのときの文言 (読み取り)。そのままやり直してよい */
+const TIMEOUT_MESSAGE_READ = '通信がタイムアウトしました。電波の良い場所で、少し待ってからもう一度お試しください。';
+/** タイムアウトのときの文言 (書き込み)。時間切れでも、サーバーの処理は終わっていることがあるので、確かめてからやり直してもらう */
+const TIMEOUT_MESSAGE_WRITE =
+  '通信がタイムアウトしました。処理が終わっている場合があるので、画面を開き直して確かめてから、もう一度お試しください。';
+
+/**
+ * タイムアウトで打ち切った。呼び出し側の中断 (AbortError) とは区別できる。
+ *
+ * 多くの画面が `e.message` をそのまま画面に出すので、message は利用者に読める日本語にする。
+ * どのリクエストだったか (メソッドとパス) は message に入れず、`method` / `path` に持つ (画面に API のパスを出さない)。
+ */
 export class HttpTimeoutError extends Error {
   readonly timeoutMs: number;
+  readonly method: string;
+  readonly path: string;
 
   constructor(timeoutMs: number, method: string, path: string) {
-    super(`Request timed out after ${timeoutMs}ms: ${method} ${path}`);
+    super(method === 'GET' ? TIMEOUT_MESSAGE_READ : TIMEOUT_MESSAGE_WRITE);
     Object.setPrototypeOf(this, new.target.prototype);
     this.name = 'TimeoutError';
     this.timeoutMs = timeoutMs;
+    this.method = method;
+    this.path = path;
   }
 }
 

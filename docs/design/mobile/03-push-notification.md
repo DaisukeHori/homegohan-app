@@ -111,7 +111,16 @@ type PushPayload = {
 - フォアグラウンドで届いた通知は、バナー・通知音を出し、`badge` があればアイコンのバッジも合わせる
   (`src/lib/pushNotifications.ts` の `setupNotificationHandler()`。`app/_layout.tsx` の起動時に 1 回呼ぶ)。
 - 通知本体をタップすると、`data.deep_link` の行き先へ遷移する (`src/components/NotificationRouter.tsx`)。
-  アプリが終了していてタップで起動した場合も同じ。ログイン済みで初期設定が終わっているときだけ遷移する。
+  アプリが終了していてタップで起動した場合も同じ (起動時に `getLastNotificationResponseAsync()` でそのタップを拾う)。
+  - 遷移は、**今ログインしているユーザーのプロフィール (初期設定の完了状況) が読めてから**行う。読めるまでは行き先を保留する。
+    ログインしていないとき、初期設定が終わっていないときは、遷移せず行き先を捨てる (アプリを開いたところ = ログイン画面・初期設定・ホームのまま)。
+  - 起動直後は、ログイン状態が分かった瞬間に、「ログイン済み・プロフィールは読み込み済みに見えるが、中身はまだ無い」状態が一瞬ある
+    (`ProfileProvider` が、ログイン前の最初の読み込みで読み込み済み・プロフィールなしにするため)。これを「初期設定が終わっていない」と
+    取り違えて行き先を捨てないよう、プロフィールが今のユーザーのもの (`profile.id` が `session.user.id` と同じ) であることを確かめてから判定する。
+    本物の `AuthProvider` / `ProfileProvider` でこの順序を確かめるテストが `apps/mobile/__tests__/components/NotificationRouter.coldStart.test.tsx`。
+  - 行き先への `push` は、起動時の画面の振り分け (`app/index.tsx` と `app/onboarding/index.tsx` の `<Redirect>`) に上書きされず、
+    スタックの一番上に残る。これは expo-router 5.1 の `<Redirect>` / `router.push` の実行順に頼っているので、
+    本物の expo-router で確かめるテスト `apps/mobile/__tests__/app/notification-cold-start-routing.test.tsx` を置いた (expo-router を上げたときの回帰検知)。
 - 行き先の決め方は `src/lib/notificationRoute.ts`。**送信側 (notify-push) は次の形に合わせること**。
   外れるものは、アプリを開くだけで遷移しない。
   - `homegohan://<パス>` か、先頭が `/` のアプリ内パス。`https://` など他のスキームは使えない。
