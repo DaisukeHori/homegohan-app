@@ -193,6 +193,13 @@ async function handleDisputeCreated(dispute: Stripe.Dispute) {
 
 ## 5. 価格変更 → Stripe Price 同期
 
+> **実装の現状 (#1102。オーナー判断 2026-10-08)**: 価格変更は**新規契約のみ**に適用する。下のコード例にある `on_renewal` / `immediately` と、
+> 既存サブスクリプションを新 Price へ切り替える処理 (`batchUpdateExistingSubscriptions`) は作らない (廃止)。
+> 実装は `supabase/functions/stripe-price-sync/index.ts` (HTTP の入口) と `sync.ts` (処理本体) で、`apply_price_change` RPC は無い。
+> 月額・年額を 1 回の呼び出しで同期し、`{ month, year }` を返す。DB の更新 (`subscription_plans` の
+> `stripe_price_id` = 月額 / `stripe_yearly_price_id` = 年額、`plan_price_history`、`admin_audit_logs`) は呼び出し元の
+> `POST /api/super-admin/plans/{id}/price-change` が行う。詳細は `04-plan-management.md` §3.3 を参照。
+
 ### 5.1 Edge Function: stripe-price-sync
 
 `supabase/functions/stripe-price-sync/index.ts`:
@@ -262,9 +269,9 @@ Deno.serve(async (req) => {
 
 | 適用範囲 | Stripe 操作 |
 |---------|------------|
-| `new_only` | 旧 Price を `active=false` に更新 (新規購入で旧 Price が選ばれないようにする) |
-| `on_renewal` | 各 `personal_subscriptions` の `stripe_subscription_id` に `items.update` で新 Price を次回更新時から適用 |
-| `immediately` | `stripe.subscriptions.update({ proration_behavior: 'create_prorations', items: [{ price: newPriceId }] })` を全既存 sub に適用 |
+| `new_only` (唯一の適用範囲。#1102) | 変えた interval ごとに新 Price を作り、**同じ interval の旧 Price だけ** `active=false` に更新する (新規購入で旧 Price が選ばれないようにする。既存サブスクリプションは旧 Price のまま) |
+| ~~`on_renewal`~~ (廃止) | ~~各 `personal_subscriptions` の `stripe_subscription_id` に `items.update` で新 Price を次回更新時から適用~~ |
+| ~~`immediately`~~ (廃止) | ~~`stripe.subscriptions.update({ proration_behavior: 'create_prorations', items: [{ price: newPriceId }] })` を全既存 sub に適用~~ |
 
 ```sql
 -- apply_price_change RPC 内の処理
