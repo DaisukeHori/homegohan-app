@@ -128,6 +128,8 @@ admin.moderation.resolve            - モデレーション解決
 admin.announcement.create           - お知らせ作成
 admin.announcement.delete           - お知らせ削除
 admin.support.ticket_assign         - チケット担当者変更
+admin.inquiry.update                - 問い合わせのステータス・管理者メモ更新 (PATCH / PUT /api/admin/inquiries/{id})。更新後の本文を返すので、変更が無い更新も記録する
+                                      (details: inquiry_id / status_from / status_to / admin_notes_changed / changed。メモの中身は入れない。対象は 4.1.1 と同じ)
 ```
 
 #### 4.1.1 ユーザー PII 閲覧系操作 (#1200)
@@ -141,11 +143,14 @@ admin.user.view_support             - サポートコンソールでのユーザ
 admin.user.view_notes               - サポートコンソールでの管理ノート閲覧 (GET /api/support/users/{id}/notes)
 admin.support.ticket.view           - チケット詳細 (件名・メッセージ本文) の閲覧 (GET /api/admin/support/tickets/{id})
 admin.support.ticket.view_messages  - チケットのメッセージ一覧の閲覧 (GET /api/admin/support/tickets/{id}/messages)
+admin.inquiry.view                  - 問い合わせ詳細 (本文・管理者メモ) の閲覧 (GET /api/admin/inquiries/{id})。一覧は概要 (件名・連絡先・状態) だけなので記録しない
 ```
 
 記録のルール:
 - `target_id` は **情報を見られた本人 (ユーザー)** の id、`target_type` は `'user'`。チケットの閲覧も、チケットではなくチケットを作ったユーザーを対象にする。
   こうすると、開示請求のときに `target_id = 本人` で全ての閲覧をまとめて引ける。チケット ID は `details.ticket_id` に入れる。
+  問い合わせ (`admin.inquiry.view` / `admin.inquiry.update`) も同じで、会員の問い合わせは `inquiries.user_id` の本人を対象にし、問い合わせ ID は `details.inquiry_id` に入れる。
+  ゲストの問い合わせ (`user_id` なし。会員が退会して外れたものを含む) には本人の id が無いので、`target_type = 'inquiry'` で問い合わせ自体の id を対象にする。
 - `details` には **閲覧した項目名だけ** を入れる (`viewed_fields`)。ニックネーム・メール・本文などの値は入れない。
 - `severity` は `info`。情報を実際に返したときだけ記録する (404 / 401 / 403 / 0 件のときは記録しない)。
 - `ip_address` は `x-forwarded-for` の先頭 1 IP を検証して入れる (inet 列のため、複数 IP や不正値をそのまま渡すと INSERT が失敗する)。`user_agent` も保存する。
