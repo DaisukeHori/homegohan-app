@@ -36,6 +36,9 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { UltimateModeToggle } from '../../src/components/menu/UltimateModeToggle';
 import { V4GenerateModal } from '../../src/components/menu/V4GenerateModal';
 
+// V4GenerateModal の最初の描画は読み込むモジュールが多く、キャッシュの無い CI や負荷の高い環境では 5 秒の既定を超えることがある
+jest.setTimeout(30000);
+
 beforeEach(() => {
   (Alert.alert as jest.Mock).mockClear();
 });
