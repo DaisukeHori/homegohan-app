@@ -12,6 +12,117 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 
 ## 3. ジョブ一覧
 
+### 3.0 実装状況 (2026-10-08 更新)
+
+§3.1 以降の表と各節は、設計時の計画であり、**ほとんどは実装されていない**。§4 の pg_cron 用の関数 (`process_license_expire()` など 7 本) は本番に無く (`supabase/baseline/catalog/catalog_functions.csv`)、`vercel.json` に登録されている Vercel Cron は `process-menu-queue` の 1 本だけである。
+2026-10-08 のオーナー判断 (#1125) で、**課金・収益に関わる定期処理 (収益スナップショット・Stripe Webhook など) は作らない**と決めた。
+いま、このリポジトリの migration が pg_cron に登録しているジョブは次の 2 つ (migration `20261008140000_schedule_log_cleanup_and_dau_snapshot.sql`)。
+
+| ジョブ名 | 実行時刻 | 実行する SQL | 内容 |
+|---------|---------|-------------|------|
+| `cleanup-old-app-logs` | 毎日 03:15 JST (`15 18 * * *` UTC) | `SELECT public.cleanup_old_logs();` | `app_logs` の `created_at` が 30 日より古い行を削除する (#1157) |
+| `snapshot-daily-active-users` | 毎日 01:30 JST (`30 16 * * *` UTC) | `SELECT public.snapshot_daily_active_users((now() AT TIME ZONE 'Asia/Tokyo')::date - 1);` | 前日 (JST) の DAU / WAU / MAU を数えて `daily_active_users` に書く (#1125) |
+
+- pg_cron は UTC で時刻を解釈する (`cron.timezone` = GMT)。JST は UTC + 9 時間。
+- 2 つとも所有者 `postgres` として動く。2 つの関数の `EXECUTE` は `service_role` だけに付けてあり、`anon` / `authenticated` は呼べない。
+- migration は同じ処理を呼ぶ既存のジョブ (名前は問わない) と同じ名前のジョブを先に登録解除してから登録するので、何度流しても 2 つだけになる。
+- ロールバック: `supabase/rollbacks/20261008140000_schedule_log_cleanup_and_dau_snapshot.down.sql` (ジョブの登録解除・関数の削除・`cleanup_old_logs()` の権限とコメントの復元)。集計した行と、消えたログは戻らない。
+- そのほか、過去の migration で登録されたジョブ (`catalog-import-*` の 5 本、`handson-tour-sandbox-cleanup`) がある。これらは #1116 でベースラインに統合され、いまの migration には登録の SQL が無い。本番で動いているかは `cron.job` で確認する。
+
+#### 3.0.1 `snapshot-daily-active-users` — アクティブ利用者 (DAU / WAU / MAU) の数え方
+
+財務ダッシュボード (`GET /api/admin/finance/dashboard`、画面は `/admin/finance`) の MAU カードは、`daily_active_users` のうち `plan_type = 'all'` かつ `plan_key = ''` の**最新の行**の `mau` を出す (`src/app/api/admin/finance/dashboard/route.ts`)。この行を毎日書くのが `public.snapshot_daily_active_users(p_date date)` である。
+
+**「アクティブ」の元データ** (Supabase Auth の表。GoTrue のどの版にもある列だけを使う):
+
+| 元データ | 意味 |
+|---------|------|
+| `auth.sessions.created_at` | サインインでセッションが作られた時刻 |
+| `auth.sessions.updated_at` | セッションが更新された時刻 (アクセストークンの更新。アプリを開いている間に起きる) |
+| `auth.users.last_sign_in_at` | 最後にサインインした時刻 |
+
+この 3 つのどれかが「その日」にある利用者を、その日のアクティブ利用者とする (`auth.users.deleted_at` が入っている利用者は除く)。
+
+ローカルのスタックの GoTrue (`auth.schema_migrations` の最新が `20251111201300`) で動きを確かめた: サインインすると `sessions.created_at` と `sessions.updated_at` と `users.last_sign_in_at` がほぼ同じ時刻になり、トークンを更新するたびに `sessions.updated_at` だけが進む (`last_sign_in_at` は変わらない)。
+**本番の GoTrue の版はリポジトリから分からない**ので、本番でも `updated_at` が更新で進んでいるかは、§3.0.3 の読み取り SQL で確かめる。
+
+- 日付は `Asia/Tokyo` の暦日。範囲は「その日の 0:00 以上、翌日の 0:00 未満」。0:00 ちょうどはその日に入り、翌日の 0:00 ちょうどは翌日に入る。
+- DAU = その日。WAU = その日を最後の日とする 7 日間。MAU = その日を最後の日とする 30 日間 (どちらも JST の暦日)。
+- `auth.sessions.refreshed_at` と `auth.users.is_anonymous` は使わない。GoTrue の古い版には無く、本番の GoTrue の版はリポジトリから分からないため。使う列を足すときは、全ての版にあることを確かめる。
+- 運営・テスト用のアカウントも、サインインしていれば数える。プランの区別はせず、`plan_type = 'all'` の 1 行だけを書く。
+- 関数は `LANGUAGE sql` で書いてある。列名の誤りは migration の適用時 (`CREATE FUNCTION`) に分かる。`plpgsql` に書き換えると、最初の cron の実行まで分からなくなる。
+- migration は関数を作った直後に、昔の日付 (2000-01-01) で 1 回試し実行し、書いた行を取り消す。auth の表を読めない・`daily_active_users` に書けない、といった「作れるが動かない」状態は、翌日の cron ではなく、適用時に migration が止まって分かる。
+- migration を適用してから最初の 01:30 JST までは、`daily_active_users` に行が無いので、MAU カードは 0 のまま。
+
+**数字は概算で、実際より小さめに出る**:
+
+- セッションはサインアウトや期限切れで消える。消えたセッションの活動は数えられない。
+- `last_sign_in_at` は利用者ごとに最後の 1 回分、`sessions.updated_at` は 1 セッションにつき最後の 1 回分しか残らない。あとから更新されると、前の日の分は見えなくなる (集計の 01:30 JST までに更新された分を含む)。
+- そのため、日が終わった直後 (翌日 01:30 JST) に 1 度だけ数えて固定する。**過去の日を後から数え直すと、消えたセッションの分だけ小さくなることがある** (数え直すと、その日の行を上書きする)。
+- MAU カードの数字は「サインインまたはトークン更新があった利用者数の目安」であり、請求や契約の根拠には使わない。
+
+#### 3.0.2 `cleanup-old-app-logs` — 古いログの削除
+
+`public.cleanup_old_logs()` は `DELETE FROM app_logs WHERE created_at < NOW() - INTERVAL '30 days'` を行う (本番に以前からあった関数。中身は変えていない)。これまで呼ぶジョブが無く、`app_logs` は溜まる一方だった。
+
+- **最初の実行 (migration を本番に適用したあとの、次の 03:15 JST) で、30 日より古い行がまとめて消える。** 以降は毎日、その日に 30 日を超えた分が消える。
+- `app_logs` を 30 日より長く残したいときは、先にジョブを止めて (下記)、保存期間を決め直す。
+- 権限: `PUBLIC` / `anon` / `authenticated` から `EXECUTE` を外した (本番では、これらにも付いていた)。ジョブは所有者 `postgres` として動くので影響しない。
+- `meal_nutrition_debug_logs` / `llm_usage_logs` の保存期間は、この PR の対象外 (必要ならオーナー判断のうえで別の PR)。`failed_invite_lookups` と `infra_metrics` は書き込む処理が無い (表が常に空) ため、掃除のジョブは作らない。
+
+#### 3.0.3 確認・手動実行・停止
+
+ジョブの登録・変更は migration で行う (本番への直接 DDL は禁止。CLAUDE.md)。次は SQL エディタ (`postgres` ロール) から読み取りに使ってよい。
+
+```sql
+-- ジョブが登録されているか (command は表示しない。秘密が入っているジョブがあるため)
+SELECT jobid, jobname, schedule, active
+FROM cron.job
+WHERE jobname IN ('cleanup-old-app-logs', 'snapshot-daily-active-users');
+
+-- 直近の実行結果。status が failed のとき、エラーの内容が return_message に入る
+SELECT j.jobname, d.status, d.start_time, d.end_time, d.return_message
+FROM cron.job_run_details AS d
+JOIN cron.job AS j USING (jobid)
+WHERE j.jobname IN ('cleanup-old-app-logs', 'snapshot-daily-active-users')
+ORDER BY d.start_time DESC
+LIMIT 10;
+
+-- 集計の結果。MAU カードに出る値は、いちばん新しい日の mau
+SELECT date, dau, wau, mau, computed_at
+FROM public.daily_active_users
+WHERE plan_type = 'all' AND plan_key = ''
+ORDER BY date DESC
+LIMIT 7;
+
+-- 次の cleanup-old-app-logs の実行で消える行数 (読み取りのみ)
+SELECT count(*) AS rows_to_delete, min(created_at) AS oldest
+FROM public.app_logs
+WHERE created_at < now() - interval '30 days';
+
+-- すでに cleanup_old_logs() を呼ぶジョブが無いか (command は表示しない。migration は、あれば登録解除して、上の 2 つに置き換える)
+SELECT jobid, jobname, schedule, active,
+       command ~* '[[:<:]]cleanup_old_logs[[:>:]]' AS calls_cleanup_old_logs
+FROM cron.job
+ORDER BY jobid;
+
+-- auth.sessions の updated_at が、トークン更新のたびに進んでいるか (読み取りのみ。個人情報は出ない)。
+-- updated_after_1h が 0 に近いときは、updated_at が更新で進まない版の可能性があり、MAU が小さく出る (§3.0.1)
+SELECT count(*) AS sessions,
+       count(*) FILTER (WHERE updated_at > created_at + interval '1 hour') AS updated_after_1h,
+       min(created_at) AS oldest_session,
+       max(updated_at) AS latest_update
+FROM auth.sessions;
+```
+
+抜けた日を埋めるなど、集計を手で流すときは `service_role` か `postgres` で実行する (結果の行を返し、その日の行を上書きする)。過去の日は、消えたセッションの分だけ小さい値になりうる (§3.0.1)。
+
+```sql
+SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
+```
+
+緊急にジョブを止めるときだけ、`SELECT cron.unschedule('snapshot-daily-active-users');` (または `'cleanup-old-app-logs'`) を使い、そのあと同じ内容を migration にして PR で入れる。
+
 ### 3.1 pg_cron ジョブ (Supabase 内)
 
 | ジョブ名 | スケジュール | 概要 |
@@ -25,6 +136,11 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 | `infra_metrics_cleanup` | daily 05:00 UTC | 30 日超の infra_metrics 削除 |
 | `stripe_event_stuck_check` | daily 05:00 UTC | Stripe webhook の processing 状態スタック検出 |
 | `failed_invite_lookups_cleanup` | daily 05:30 UTC | 7 日超の failed_invite_lookups 削除 |
+
+> **2026-10-08 時点の状態**: 上の 9 本は、どれも migration で登録していない (§4 の関数 7 本は本番に無い)。
+> `infra_metrics_cleanup` と `failed_invite_lookups_cleanup` は、それぞれの表に書き込む処理がまだ無く (表が常に空)、消す対象が無いため作らない。
+> `stripe_event_stuck_check` は、Stripe Webhook を作らない (#1125) ため作らない。
+> いま動いているのは、この表に無い `cleanup-old-app-logs` と `snapshot-daily-active-users` (§3.0)。
 
 ### 3.2 Vercel Cron ジョブ (HTTP)
 
@@ -41,6 +157,11 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 | `revenue_snapshot` | daily 01:00 | 日次収益スナップショット生成 |
 | `dau_snapshot` | daily 01:30 | DAU/WAU/MAU スナップショット |
 | `logical_backup` | daily 02:00 | pg_dump → S3 |
+
+> **2026-10-08 時点の状態**: `vercel.json` に登録されているのは `process-menu-queue` の 1 本だけで、この表の 11 本は実装されていない。
+> 課金・収益に関わるバッチ (`revenue_snapshot`・`stripe_integrity_check`・`grace_period_check` など) は、オーナー判断 (#1125) で**作らない**。
+> `dau_snapshot` は、Vercel Cron ではなく pg_cron のジョブ `snapshot-daily-active-users` として実装した (§3.0)。時刻は同じ 01:30 JST。
+> それ以外の行は未実装のまま (作るときは別の PR)。
 
 ---
 
@@ -339,6 +460,9 @@ $$ LANGUAGE plpgsql;
 ---
 
 ## 5. Vercel Cron ジョブ詳細
+
+> **2026-10-08 時点**: §5 は設計時の計画である。`vercel.json` にあるのは `process-menu-queue` だけで、`/api/cron/dau-snapshot` と `/api/cron/revenue-snapshot` は作っていない。
+> `revenue_snapshot` (§5.8) は作らない (オーナー判断 #1125)。DAU / WAU / MAU の日次集計は、pg_cron のジョブ `snapshot-daily-active-users` として動いている (§3.0)。
 
 ### 5.1 vercel.json 設定
 
@@ -776,5 +900,5 @@ sequenceDiagram
 ## 12. 未解決事項
 
 - `family_archive_purge_batch` の dry-run モード実装方法 → `?dry_run=true` クエリパラメータで制御する予定
-- `revenue_snapshot` の `calculate_daily_mrr` RPC: Stripe データと DB の差異をどう調整するか → stripe reconcile 後に実行するよう依存順序を設定
+- `revenue_snapshot` の `calculate_daily_mrr` RPC: Stripe データと DB の差異をどう調整するか → stripe reconcile 後に実行するよう依存順序を設定 (2026-10-08: オーナー判断 #1125 で `revenue_snapshot` 自体を作らないことにしたため、この論点は保留。作る場合は新しい判断が要る)
 - pg_cron の失敗ログ長期保管: `cron.job_run_details` は Supabase が自動でクリアするため、重要な失敗は `admin_audit_logs` に都度 INSERT する設計で対応
