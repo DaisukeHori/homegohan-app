@@ -311,7 +311,12 @@ BAN 解除
 
 ## 7. 機能フラグ API
 
-### GET /api/super-admin/feature-flags
+> 実装のパスは `/api/super-admin/flags` (一覧・作成) と `/api/super-admin/flags/{key}` (更新・削除) で、更新は PATCH。
+> この章は以前 `/api/super-admin/feature-flags` (更新は PUT) と書かれていたが、そのパスの route は存在しない。
+> Web の運営画面 (`src/app/super-admin/flags`)・結合テスト・E2E・モバイルの機能フラグ画面は、すべて `/flags` を使う (#1137)。
+> エラー本文は他の運営 API と同じ `{ "error": { "code": "...", "message": "..." } }`。
+
+### GET /api/super-admin/flags
 フラグ一覧
 
 **レスポンス**:
@@ -327,14 +332,15 @@ BAN 解除
       "active_user_count": 3200,
       "updated_at": "2026-05-06T00:00:00Z"
     }
-  ]
+  ],
+  "meta": { "total": 1, "page": 1, "per_page": 1 }
 }
 ```
 
 ---
 
-### PUT /api/super-admin/feature-flags/{key}
-フラグ更新
+### PATCH /api/super-admin/flags/{key}
+フラグ更新 (送った項目だけを更新する。ON/OFF の切り替えは `{ "enabled": true }` だけでよい)
 
 **リクエスト**:
 ```json
@@ -345,14 +351,17 @@ BAN 解除
 }
 ```
 
+**レスポンス**: `{ "data": { "key": "...", "description": "...", "enabled": true, "rollout_strategy": {}, "constraints": {}, "updated_at": "..." } }`
+(存在しないキーは 404 `OP_FEATURE_FLAG_NOT_FOUND`)
+
 **副作用**: 即座に全ユーザーへ反映、監査ログ記録
 
 ---
 
-### POST /api/super-admin/feature-flags
-フラグ新規作成
+### POST /api/super-admin/flags
+フラグ新規作成 (キーが重複すると 409 `OP_FEATURE_FLAG_IN_USE`)
 
-### DELETE /api/super-admin/feature-flags/{key}
+### DELETE /api/super-admin/flags/{key}
 フラグ削除 (利用中の場合は `OP_FEATURE_FLAG_IN_USE` で 409)
 
 ---
