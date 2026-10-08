@@ -38,6 +38,7 @@ const {
   checkInviteEmailLimits,
   checkTransferProposeLimit,
   hashRecipientEmail,
+  inviteThrottleFailureFromRpcError,
   inviteThrottleResponse,
   throttleMessageForWindow,
 } = await import('@/lib/membership/invite-throttle');
@@ -368,6 +369,113 @@ describe('checkTransferProposeLimit', () => {
   it('userId が空なら limiter を呼ばずに例外にする', async () => {
     await expect(checkTransferProposeLimit('')).rejects.toThrow('invite-throttle');
     expect(mockCheckRateLimit).not.toHaveBeenCalled();
+  });
+});
+
+describe('inviteThrottleFailureFromRpcError: DB の 24 時間上限 (#1163)', () => {
+  // enforce_membership_daily_cap が RAISE する RATE_LIMITED を PostgREST が返した形
+  const dbRateLimited = (overrides: Record<string, unknown> = {}) => ({
+    message: 'RATE_LIMITED',
+    code: 'P0001',
+    details: 'org_invite:per_target',
+    hint: 'retry_after_sec=1234',
+    ...overrides,
+  });
+  const context = { flow: 'org-invite', userId } as const;
+
+  it('RATE_LIMITED: HINT の秒数を retryAfterSec にし、日次の文言とウィンドウ 86400 秒を返す', () => {
+    const failure = inviteThrottleFailureFromRpcError(dbRateLimited(), context);
+
+    expect(failure).toEqual({ retryAfterSec: 1234, windowSec: 86400, message: DAILY_MESSAGE });
+  });
+
+  it('返した失敗情報は inviteThrottleResponse でアプリ層の上限と同じ形の 429 になる', async () => {
+    const res = inviteThrottleResponse(inviteThrottleFailureFromRpcError(dbRateLimited(), context)!);
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('1234');
+    expect(json).toEqual({ error: { code: 'RATE_LIMITED', message: DAILY_MESSAGE, retryAfter: 1234 } });
+  });
+
+  it.each([
+    ['HINT が無い', { hint: null }],
+    ['HINT が undefined', { hint: undefined }],
+    ['HINT が空文字', { hint: '' }],
+    ['HINT が想定外の文字列', { hint: 'try again later' }],
+    ['秒数が 0', { hint: 'retry_after_sec=0' }],
+    ['秒数が数字でない', { hint: 'retry_after_sec=abc' }],
+    ['秒数が負', { hint: 'retry_after_sec=-5' }],
+  ])('%s: retryAfterSec は 1 時間にする', (_label, overrides) => {
+    const failure = inviteThrottleFailureFromRpcError(dbRateLimited(overrides), context);
+
+    expect(failure).toMatchObject({ retryAfterSec: 3600, windowSec: 86400 });
+  });
+
+  it('HINT に他の文言が混じっていても retry_after_sec の秒数を読む', () => {
+    const failure = inviteThrottleFailureFromRpcError(dbRateLimited({ hint: 'cap; retry_after_sec=77.' }), context);
+
+    expect(failure!.retryAfterSec).toBe(77);
+  });
+
+  it('message が RATE_LIMITED を含んでいれば SQLSTATE が無くても対象にする (PostgREST のメッセージ前置きを許す)', () => {
+    expect(inviteThrottleFailureFromRpcError(dbRateLimited({ code: undefined }), context)).not.toBeNull();
+    expect(
+      inviteThrottleFailureFromRpcError(dbRateLimited({ message: 'ERROR: RATE_LIMITED', code: null }), context),
+    ).not.toBeNull();
+  });
+
+  it.each([
+    ['別のコード (NOT_ORG_ADMIN)', { message: 'NOT_ORG_ADMIN' }],
+    ['別のコード (SEAT_LIMIT_EXCEEDED)', { message: 'SEAT_LIMIT_EXCEEDED' }],
+    ['別のコード (MEMBER_LIMIT_EXCEEDED)', { message: 'MEMBER_LIMIT_EXCEEDED' }],
+    ['想定外のエラー', { message: 'connection refused', code: '08006' }],
+    ['デッドロック (40P01)', { message: 'deadlock detected', code: '40P01' }],
+    ['message が null', { message: null }],
+    ['message が無い', { message: undefined }],
+  ])('RATE_LIMITED 以外 (%s) は null を返し、ログも残さない', (_label, overrides) => {
+    const failure = inviteThrottleFailureFromRpcError(dbRateLimited(overrides), context);
+
+    expect(failure).toBeNull();
+    expect(mockWithUser).not.toHaveBeenCalled();
+    expect(mockLogWarn).not.toHaveBeenCalled();
+  });
+
+  it('withUser(userId).warn に flow / layer=db / 上限名 / 秒数を残す (メールアドレスは残さない)', () => {
+    inviteThrottleFailureFromRpcError(dbRateLimited(), { flow: 'family-invite', userId });
+
+    expect(mockWithUser).toHaveBeenCalledWith(userId);
+    expect(mockLogWarn).toHaveBeenCalledTimes(1);
+    const [message, metadata] = mockLogWarn.mock.calls[0];
+    expect(message).toBe('DB の 24 時間上限に達しました');
+    expect(metadata).toEqual({
+      flow: 'family-invite',
+      layer: 'db',
+      window_sec: 86400,
+      retry_after_sec: 1234,
+      rule: 'org_invite:per_target',
+    });
+    expect(JSON.stringify(mockLogWarn.mock.calls)).not.toContain('@');
+  });
+
+  it('上限名 (DETAIL) が想定の形でなければログに残さない (メールアドレスなどを紛れ込ませない)', () => {
+    inviteThrottleFailureFromRpcError(dbRateLimited({ details: 'taro@example.com' }), context);
+    inviteThrottleFailureFromRpcError(dbRateLimited({ details: null }), context);
+
+    expect(mockLogWarn).toHaveBeenCalledTimes(2);
+    for (const [, metadata] of mockLogWarn.mock.calls) {
+      expect(metadata).not.toHaveProperty('rule');
+    }
+    expect(JSON.stringify(mockLogWarn.mock.calls)).not.toContain('taro');
+  });
+
+  it('譲渡提案 (transfer-propose) の flow も記録できる', () => {
+    inviteThrottleFailureFromRpcError(dbRateLimited({ details: 'transfer_propose:per_actor' }), {
+      flow: 'transfer-propose',
+      userId,
+    });
+
+    expect(mockLogWarn.mock.calls[0][1]).toMatchObject({ flow: 'transfer-propose', rule: 'transfer_propose:per_actor' });
   });
 });
 

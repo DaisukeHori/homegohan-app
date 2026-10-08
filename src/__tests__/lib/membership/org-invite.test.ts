@@ -10,8 +10,30 @@ import {
 
 const mockCheckInviteEmailLimits = vi.fn();
 
-vi.mock('@/lib/membership/invite-throttle', () => ({
+// 部分モック: 送信回数の判定 (checkInviteEmailLimits) だけ差し替え、DB の上限 (RATE_LIMITED) の変換は本物を使う
+vi.mock('@/lib/membership/invite-throttle', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/membership/invite-throttle')>()),
   checkInviteEmailLimits: (...args: unknown[]) => mockCheckInviteEmailLimits(...args),
+}));
+
+// 構造化ログのモック (DB の上限の超過は createLogger(...).withUser(userId).warn(...) で記録される)
+const mockLogWarn = vi.fn();
+const mockWithUser = vi.fn(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: mockLogWarn,
+  error: vi.fn(),
+}));
+
+vi.mock('@/lib/db-logger', () => ({
+  createLogger: vi.fn(() => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    withUser: mockWithUser,
+  })),
+  generateRequestId: vi.fn(() => 'req_test'),
 }));
 
 const mockSendEmail = vi.fn();
@@ -133,6 +155,99 @@ describe('createOrgInviteWithEmail: 送信回数の制限 (#1163)', () => {
 
     expect(mockRpc).not.toHaveBeenCalled();
     expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe('createOrgInviteWithEmail: DB の 24 時間上限 (#1163)', () => {
+  const DAILY_MESSAGE = '本日の送信上限に達しました。しばらく時間をおいてからお試しください。';
+  // enforce_membership_daily_cap が RAISE する RATE_LIMITED を、PostgREST が RPC のエラーとして返した形
+  const dbRateLimited = (overrides: Record<string, unknown> = {}) => ({
+    data: null,
+    error: {
+      message: 'RATE_LIMITED',
+      code: 'P0001',
+      details: 'org_invite:per_org',
+      hint: 'retry_after_sec=5400',
+      ...overrides,
+    },
+  });
+  const create = () =>
+    createOrgInviteWithEmail({
+      supabase: makeSupabase(),
+      inviter,
+      organizationId,
+      email: 'taro@example.com',
+      role: 'member',
+    });
+
+  it('RPC が RATE_LIMITED: アプリ層の上限と同じ 429 / RATE_LIMITED / 日次の文言 / retryAfterSec (HINT の秒数) を返す', async () => {
+    mockRpc.mockImplementation(async () => dbRateLimited());
+
+    const result = await create();
+
+    expect(result).toEqual({
+      ok: false,
+      status: 429,
+      code: 'RATE_LIMITED',
+      message: DAILY_MESSAGE,
+      retryAfterSec: 5400,
+    });
+  });
+
+  it('RPC の生の文字列 (RATE_LIMITED) ではなく利用者向けの文言を返し、メールは送らない', async () => {
+    mockRpc.mockImplementation(async () => dbRateLimited());
+
+    const result = await create();
+
+    expect(result.ok).toBe(false);
+    expect((result as { message: string }).message).not.toBe('RATE_LIMITED');
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    // 招待の詳細取得 (get_invite_details) にも進まない
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+  });
+
+  it('HINT が読めないときも 429 にする (retryAfterSec は 1 時間)', async () => {
+    mockRpc.mockImplementation(async () => dbRateLimited({ hint: null }));
+
+    const result = await create();
+
+    expect(result).toMatchObject({ ok: false, status: 429, code: 'RATE_LIMITED', retryAfterSec: 3600 });
+  });
+
+  it('withUser(招待者 ID).warn に flow=org-invite / layer=db / 上限名を記録する (メールアドレスは残さない)', async () => {
+    mockRpc.mockImplementation(async () => dbRateLimited({ details: 'org_invite:per_target' }));
+
+    await create();
+
+    expect(mockWithUser).toHaveBeenCalledWith(inviter.id);
+    expect(mockLogWarn).toHaveBeenCalledTimes(1);
+    expect(mockLogWarn.mock.calls[0][1]).toMatchObject({
+      flow: 'org-invite',
+      layer: 'db',
+      rule: 'org_invite:per_target',
+      retry_after_sec: 5400,
+    });
+    expect(JSON.stringify(mockLogWarn.mock.calls)).not.toContain('taro');
+  });
+
+  it('失敗は orgInviteFailureResponse で Retry-After 付きの 429 になる (POST /api/org/invites と /api/org/members 共通)', async () => {
+    mockRpc.mockImplementation(async () => dbRateLimited());
+
+    const res = orgInviteFailureResponse((await create()) as never);
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('5400');
+    expect(json).toEqual({ error: { code: 'RATE_LIMITED', message: DAILY_MESSAGE, retryAfter: 5400 } });
+  });
+
+  it('RATE_LIMITED 以外の RPC エラーは従来どおり (Retry-After なし。ログも出さない)', async () => {
+    mockRpc.mockImplementation(async () => ({ data: null, error: { message: 'SEAT_LIMIT_EXCEEDED', code: 'P0001' } }));
+
+    const result = await create();
+
+    expect(result).toEqual({ ok: false, status: 409, code: 'SEAT_LIMIT_EXCEEDED', message: 'SEAT_LIMIT_EXCEEDED' });
+    expect(mockLogWarn).not.toHaveBeenCalled();
   });
 });
 

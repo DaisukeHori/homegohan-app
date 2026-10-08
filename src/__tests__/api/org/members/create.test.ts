@@ -290,6 +290,66 @@ describe('POST /api/org/members: 入力の検証 (#1163)', () => {
   });
 });
 
+describe('POST /api/org/members: DB の 24 時間上限 (#1163)', () => {
+  // enforce_membership_daily_cap が RAISE する RATE_LIMITED を、PostgREST が RPC のエラーとして返した形
+  const dbRateLimited = (overrides: Record<string, unknown> = {}) => ({
+    data: null,
+    error: {
+      message: 'RATE_LIMITED',
+      code: 'P0001',
+      details: 'org_invite:per_org',
+      hint: 'retry_after_sec=3000',
+      ...overrides,
+    },
+  });
+
+  it('RPC が RATE_LIMITED: アプリ層の上限と同じ 429 / 入れ子の RATE_LIMITED / Retry-After (HINT の秒数) を返し、メールは送らない', async () => {
+    mockRpc.mockImplementation(async () => dbRateLimited());
+
+    const res = await POST(postRequest({ email: inviteeEmail }));
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(json).toEqual({
+      error: {
+        code: 'RATE_LIMITED',
+        message: '本日の送信上限に達しました。しばらく時間をおいてからお試しください。',
+        retryAfter: 3000,
+      },
+    });
+    expect(res.headers.get('Retry-After')).toBe('3000');
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    // 招待の詳細取得 (get_invite_details) にも進まない
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+  });
+
+  it('HINT が読めないときも 429 にする (Retry-After は 1 時間)', async () => {
+    mockRpc.mockImplementation(async () => dbRateLimited({ hint: null }));
+
+    const res = await POST(postRequest({ email: inviteeEmail }));
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(json.error.retryAfter).toBe(3600);
+    expect(res.headers.get('Retry-After')).toBe('3600');
+  });
+
+  it('withUser(招待者 ID).warn に flow=org-invite / layer=db / 上限名を記録する (メールアドレスは残さない)', async () => {
+    mockRpc.mockImplementation(async () => dbRateLimited());
+
+    await POST(postRequest({ email: inviteeEmail }));
+
+    expect(mockLogWarn).toHaveBeenCalledTimes(1);
+    expect(mockLogWarn.mock.calls[0][1]).toMatchObject({
+      flow: 'org-invite',
+      layer: 'db',
+      rule: 'org_invite:per_org',
+      retry_after_sec: 3000,
+    });
+    expect(JSON.stringify(mockLogWarn.mock.calls)).not.toContain('@');
+  });
+});
+
 describe('POST /api/org/members: 既存の挙動 (退行確認)', () => {
   it('RPC が SEAT_LIMIT_EXCEEDED: 409 を返し、Retry-After は付けない', async () => {
     mockRpc.mockImplementation(async () => ({ data: null, error: { message: 'SEAT_LIMIT_EXCEEDED' } }));

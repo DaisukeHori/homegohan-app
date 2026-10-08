@@ -207,6 +207,73 @@ describe('POST /api/org/owner-transfer/propose: 送信回数の制限 (#1163)', 
   });
 });
 
+describe('POST /api/org/owner-transfer/propose: DB の 24 時間上限 (#1163)', () => {
+  // enforce_membership_daily_cap が RAISE する RATE_LIMITED を、PostgREST が RPC のエラーとして返した形
+  const dbRateLimited = (overrides: Record<string, unknown> = {}) => ({
+    data: null,
+    error: {
+      message: 'RATE_LIMITED',
+      code: 'P0001',
+      details: 'transfer_propose:per_actor',
+      hint: 'retry_after_sec=1800',
+      ...overrides,
+    },
+  });
+
+  it('RPC が RATE_LIMITED: アプリ層の上限と同じ 429 / 入れ子の RATE_LIMITED / Retry-After (HINT の秒数) を返す', async () => {
+    mockRpc.mockResolvedValue(dbRateLimited());
+
+    const res = await POST(postRequest(validBody));
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(json).toEqual({
+      error: {
+        code: 'RATE_LIMITED',
+        message: '本日の送信上限に達しました。しばらく時間をおいてからお試しください。',
+        retryAfter: 1800,
+      },
+    });
+    expect(res.headers.get('Retry-After')).toBe('1800');
+  });
+
+  it('RPC の生の文字列 (RATE_LIMITED) を message にせず、提案メールも送らない', async () => {
+    mockRpc.mockResolvedValue(dbRateLimited());
+
+    const json = await (await POST(postRequest(validBody))).json();
+
+    expect(json.error.message).not.toBe('RATE_LIMITED');
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockGetUserById).not.toHaveBeenCalled();
+  });
+
+  it('HINT が読めないときも 429 にする (Retry-After は 1 時間)', async () => {
+    mockRpc.mockResolvedValue(dbRateLimited({ hint: 'retry later' }));
+
+    const res = await POST(postRequest(validBody));
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(json.error.retryAfter).toBe(3600);
+    expect(res.headers.get('Retry-After')).toBe('3600');
+  });
+
+  it('withUser(user.id).warn に flow=transfer-propose / layer=db / 上限名を記録する', async () => {
+    mockRpc.mockResolvedValue(dbRateLimited());
+
+    await POST(postRequest(validBody));
+
+    expect(mockWithUser).toHaveBeenCalledWith(owner.id);
+    expect(mockLogWarn).toHaveBeenCalledTimes(1);
+    expect(mockLogWarn.mock.calls[0][1]).toMatchObject({
+      flow: 'transfer-propose',
+      layer: 'db',
+      rule: 'transfer_propose:per_actor',
+      retry_after_sec: 1800,
+    });
+  });
+});
+
 describe('POST /api/org/owner-transfer/propose: 既存の挙動 (退行確認)', () => {
   it('owner でないユーザー (403): RPC もメール送信も呼ばない', async () => {
     profile = { organization_id: orgId, org_role: 'admin', nickname: null };
