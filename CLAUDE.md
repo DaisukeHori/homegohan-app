@@ -38,6 +38,13 @@ CI では GitHub Secrets に登録する。
 
 `.github/workflows/e2e.yml` が PR で自動実行。Playwright レポートは artifact として 14 日間保持。
 
+### 依存パッケージ・シークレットの検査と Dependabot (#1156)
+
+- `.github/workflows/security.yml`: **gitleaks** (PR で増えたコミットと main への push だけを検査。見つかったら失敗)・**npm audit** (参考情報。`continue-on-error` で止めない。critical が 0 件になったら外す)・**依存関係レビュー**と **CodeQL** (リポジトリが公開の間だけ動く。非公開にすると自動でスキップされる)。
+- gitleaks の誤検知は `.gitleaks.toml` に**値そのもの**を足す (ファイル・ディレクトリ単位では除外しない)。1 行だけなら行末に `gitleaks:allow`。本物のキーが見つかったときは除外せず、そのキーを無効にして発行し直す (履歴から消すだけでは取り消せない)。gitleaks の版と SHA-256 は workflow に固定してある。上げるときはリリースの `checksums.txt` の値に合わせる。
+- `.github/dependabot.yml`: npm (ルートの package-lock.json が workspaces をまとめて管理) と GitHub Actions を週 1 回。マイナー・パッチは 1 本の PR にまとめる。Next / React / Expo / React Native は、メジャー更新 (Expo / React Native はマイナー更新も) の PR を出さない。計画して上げる (#1199)。自動承認・自動マージはしない。
+- **Dependabot の PR には Actions のシークレットが渡されない。** `pull_request` で動き、`secrets.*` (`GITHUB_TOKEN` 以外) を使うジョブには `if: github.actor != 'dependabot[bot]'` を付ける。付け忘れると、依存更新の PR が毎回赤くなる (`tests/security-workflow.test.ts` が検査する)。
+
 ---
 
 ## 共通ヘルパー規約

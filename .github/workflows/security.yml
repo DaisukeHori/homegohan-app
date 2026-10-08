@@ -1,0 +1,206 @@
+name: security
+
+# 依存パッケージの脆弱性の検知と、シークレット (キー・パスワード) の検査 (#1156)。
+# 4 つのジョブがある。止める (赤くなる) もの・止めないもの・公開リポジトリの間だけ動くものに分かれる。
+#
+#   gitleaks            [止める]   PR で増えたコミット / main への push で、キーやパスワードが入っていないかを調べる。
+#                                  非公開のリポジトリでも動く。見る範囲は「今回増えたコミット」だけで、過去の履歴は見ない
+#                                  (履歴に残っている過去の指摘で、関係のない PR を落とさないため)。
+#                                  誤検知は .gitleaks.toml に足す (書き方はそのファイルの先頭)。
+#   npm-audit           [止めない] `npm audit` の結果を Summary に出す。next / shell-quote / tar に critical が残っている間は
+#                                  赤くなってしまうので、continue-on-error にしてある。critical が 0 件になったら外す。
+#   dependency-review   [止める]   PR で依存パッケージを増やす・上げるときに、high 以上の既知の脆弱性がある版を入れていないかを調べる。
+#   codeql              [止めない] ソースコード (JavaScript / TypeScript) の脆弱性を調べ、結果を Security タブに出す。週 1 回の定期実行もある。
+#                                  この 2 つは、リポジトリが公開の間だけ動く (github.event.repository.private == false)。
+#                                  非公開にすると GitHub Advanced Security (有料) が無いと使えないので、自動でスキップされる。
+#                                  非公開のまま運用すると決めたら、この 2 つのジョブは消してよい。
+#
+# 注意:
+#   - Dependabot が作る PR には、Actions のシークレットが渡されない。このワークフローはシークレットを使わないので、
+#     Dependabot の PR でも動く (CodeQL だけは、ソースが変わらないので Dependabot の PR では動かさない)。
+#   - 事前の設定 (リポジトリの Settings > Code security): Dependabot alerts / Dependabot security updates / Dependency graph を
+#     有効にする。依存関係レビューは Dependency graph が無いと動かない。コードスキャンの「デフォルト設定」を有効にしていると、
+#     このワークフローの CodeQL (詳細設定) の結果は受け付けられないので、どちらか一方にする。
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # 毎週月曜 12:23 JST (03:23 UTC)。毎時 0 分は混むので少しずらす
+    - cron: '23 3 * * 1'
+  workflow_dispatch:
+
+# PR は新しい push で古い実行を止める。push (main) は止めない: 連続した push の途中の実行を止めると、
+# そのコミットが検査されずに残るため、コミットごとに別のグループにする。
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  gitleaks:
+    name: gitleaks
+    # 週次の定期実行・手動実行には「増えたコミット」が無いので動かさない
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 比べる相手のコミットまで必要なので、履歴をすべて取る。
+          # 浅く取ると、いちばん古いコミットが「全ファイルを追加したコミット」に見えて、全体を検査してしまう
+          fetch-depth: 0
+          persist-credentials: false
+
+      # gitleaks は、バージョンと SHA-256 を固定したリリースの配布物を入れる (別のものに差し替えられていたら止まる)。
+      # この版は Dependabot では上がらないので、ときどき手で上げる。上げるときは、リリースの gitleaks_<版>_checksums.txt から
+      # linux_x64 の値を写し、上げたあとに手元で全体を検査して (gitleaks dir .)、新しい誤検知が増えていないかを見る。
+      - name: Install gitleaks (version and checksum pinned)
+        env:
+          GITLEAKS_VERSION: '8.30.1'
+          GITLEAKS_TARBALL_SHA256: '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
+        run: |
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl --fail --silent --show-error --location --retry 4 --retry-delay 2 --retry-all-errors \
+            --output "${RUNNER_TEMP}/${tarball}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}"
+          echo "${GITLEAKS_TARBALL_SHA256}  ${RUNNER_TEMP}/${tarball}" | sha256sum --check --strict -
+          mkdir -p "${RUNNER_TEMP}/gitleaks"
+          tar -xzf "${RUNNER_TEMP}/${tarball}" -C "${RUNNER_TEMP}/gitleaks" gitleaks
+          echo "${RUNNER_TEMP}/gitleaks" >> "${GITHUB_PATH}"
+
+      - name: Scan new commits for secrets
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_AFTER_SHA: ${{ github.sha }}
+        run: |
+          # 見る範囲は「今回増えたコミット」だけ。過去の履歴は見ない
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            range="${PR_BASE_SHA}..${PR_HEAD_SHA}"
+          elif git cat-file -e "${PUSH_BEFORE_SHA}^{commit}" 2>/dev/null; then
+            range="${PUSH_BEFORE_SHA}..${PUSH_AFTER_SHA}"
+          else
+            # 新しいブランチの最初の push や強制 push で、比べる相手が無いときは、最新の 1 コミットだけ調べる
+            range="-1 ${PUSH_AFTER_SHA}"
+          fi
+          echo "scan range: ${range}"
+
+          # --redact: 見つけた値をログ・レポートに出さない (公開リポジトリのログは誰でも読める)
+          # --exit-code 2: 「見つかった」(2) と「検査そのものが失敗した」(1 など) を区別する。どちらも失敗として扱う
+          report="${RUNNER_TEMP}/gitleaks-report.json"
+          status=0
+          gitleaks git . \
+            --config .gitleaks.toml \
+            --log-opts="${range}" \
+            --redact --no-banner --exit-code 2 \
+            --report-format json --report-path "${report}" || status=$?
+
+          if [ "${status}" -eq 0 ]; then
+            echo "シークレットは見つかりませんでした。"
+            exit 0
+          fi
+
+          if [ "${status}" -ne 2 ]; then
+            echo "::error title=gitleaks::gitleaks の実行に失敗しました (終了コード ${status})。検査できていないので失敗として扱います。"
+            exit 1
+          fi
+
+          # 見つかった場所を、ログ・注釈 (ファイルの該当行に付く赤い印)・Summary に出す。値そのものは出さない。
+          # ファイル名は PR を出した人が決められるので、改行を含むものでログの行が偽装されないよう置き換える
+          jq -r '.[] | "  - \(.RuleID): \(.File | gsub("[\r\n]"; "_")):\(.StartLine) (コミット \(.Commit[0:8]))"' "${report}"
+          jq -r '
+            def esc: gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
+            def prop: esc | gsub(":"; "%3A") | gsub(","; "%2C");
+            .[] | "::error file=\(.File | prop),line=\(.StartLine),title=\("gitleaks: " + .RuleID | prop)::シークレットの疑いがあります (コミット \(.Commit[0:8]))。値はログに出していません。"
+          ' "${report}"
+          {
+            echo "## シークレットの疑いが見つかりました"
+            echo
+            echo "| ルール | 場所 | コミット |"
+            echo "| --- | --- | --- |"
+            jq -r '.[] | "| \(.RuleID) | `\(.File | gsub("[`|\n]"; "_")):\(.StartLine)` | `\(.Commit[0:8])` |"' "${report}"
+            echo
+            echo "- 本物のキー・パスワードだった場合: そのキーを無効にして、新しく発行し直してください。コミットや PR から消すだけでは、公開された値は取り消せません。"
+            echo "- テスト用のダミーの値だった場合: その行の末尾に \`gitleaks:allow\` と書くか、\`.gitleaks.toml\` に除外を足してください (書き方はそのファイルの先頭)。"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit 1
+
+  npm-audit:
+    name: npm audit (non-blocking)
+    # critical が残っている間は、止めずに結果だけ見せる。critical が 0 件になったら、この行を消して止める検査に切り替える
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      # npm audit は package-lock.json だけで動く (npm ci は要らない)。
+      # --omit=dev: 本番で動く依存だけを見る。--audit-level=critical: critical があると終了コードが 1 になる
+      - name: npm audit (production dependencies, critical)
+        run: |
+          report="${RUNNER_TEMP}/npm-audit.json"
+          status=0
+          npm audit --omit=dev --audit-level=critical --json > "${report}" || status=$?
+          node scripts/npm-audit-summary.mjs "${report}" >> "${GITHUB_STEP_SUMMARY}"
+          if [ "${status}" -ne 0 ]; then
+            echo "::warning title=npm audit::critical の脆弱性が残っています (内訳はこの実行の Summary)。今は参考情報で、PR は止めません。"
+          fi
+          exit "${status}"
+
+  dependency-review:
+    name: dependency review
+    if: github.event_name == 'pull_request' && github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # PR で増える・上がる依存パッケージに、high 以上の既知の脆弱性があると失敗する。
+      # 見るのは本番で動く依存 (runtime) だけ。すでに入っている古い脆弱性は対象外 (PR の差分だけを見る)
+      - uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high
+          fail-on-scopes: runtime
+          license-check: false
+          show-openssf-scorecard: false
+
+  codeql:
+    name: CodeQL
+    # Dependabot の PR はソースが変わらない (権限も読み取りだけで結果を送れない) ので動かさない。
+    # fork からの PR も、結果を送る権限が無いので動かさない
+    if: >-
+      github.event.repository.private == false
+      && github.actor != 'dependabot[bot]'
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          # JavaScript / TypeScript はビルド不要
+          build-mode: none
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: '/language:javascript-typescript'

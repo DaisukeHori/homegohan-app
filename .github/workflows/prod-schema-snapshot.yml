@@ -43,8 +43,11 @@ env:
 
 jobs:
   snapshot:
-    # fork からの PR では secrets が無いため実行しない
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # secrets が無い PR では実行しない。fork からの PR と、Dependabot の PR (Dependabot の PR には Actions のシークレットが
+    # 渡されない。GitHub Actions の更新でこのファイルが変わると、この workflow が動いてしまう。#1156)
+    if: >-
+      github.actor != 'dependabot[bot]'
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
