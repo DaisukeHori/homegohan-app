@@ -9,7 +9,7 @@
 | 項目 | 採用状況 | 実態 |
 |------|---------|------|
 | エラー監視 | `app_logs` テーブル + `/super-admin/logs` | Sentry は採用しない。`@sentry/nextjs` は入れていない (§7) |
-| 性能の計測 | Vercel Speed Insights のみ | `@vercel/speed-insights` を `src/app/layout.tsx` で読み込む (§7.3) |
+| 性能の計測 | Vercel Speed Insights のみ | `@vercel/speed-insights` を、送る URL から `?` 以降と招待トークンを消す部品 (`SpeedInsightsClient`) 経由で `src/app/layout.tsx` に置く。本番ではすでに有効とみられる (§7.3) |
 | ログ集約 | `app_logs` テーブル | Better Stack (Logtail) は採用しない。`@logtail/node` は入れていない (§8) |
 | Status Page | 設置しない | `status.homegohan.app` は作らない。死活監視用の `/api/health` は実装済み (§9) |
 
@@ -417,24 +417,52 @@ logger.error('payment_failed を処理できなかった', error, {
 ### 7.3 Vercel Speed Insights (性能の計測)
 
 - パッケージ: `@vercel/speed-insights` (`package.json` の dependencies)。
-- 読み込み: `src/app/layout.tsx` の `<body>` の中に `<SpeedInsights />` (`@vercel/speed-insights/next`) を 1 つだけ置く。画面には何も描画しない。
+- 読み込み: `src/app/layout.tsx` の `<body>` の中に `<SpeedInsightsClient />` (`src/components/SpeedInsightsClient.tsx`) を 1 つだけ置く。画面には何も描画しない。
+  `SpeedInsightsClient` は `'use client'` の小さな部品で、`@vercel/speed-insights/next` の `<SpeedInsights />` に `beforeSend` を渡す。
+  `beforeSend` は関数なので、サーバーコンポーネントの `layout.tsx` からは渡せない。`<SpeedInsights />` を、この部品を通さずに置かない
+  (理由は下の「URL に含まれる情報」。`tests/speed-insights-scrub-1179.test.ts` が、`src` の中で読み込むのはこの部品だけであることを検査する)。
 - 計測するもの: Web Vitals (LCP / INP / CLS など) だけ。エラーの記録はしない (§7.1 の `app_logs` が担う)。
-- 配信と CSP: 本番 (Vercel) では、スクリプトは同じオリジンの `/_vercel/speed-insights/script.js` から読み込まれる。
-  計測値の送信先は Vercel が配るスクリプトの側で決まり、公式の仕様では同じオリジンの `/_vercel/speed-insights/*`。
-  そのため CSP (`next.config.mjs`) の `script-src` / `connect-src` の `'self'` で足り、CSP は変えていない。
-  読み込み先と `'self'` は `tests/speed-insights-1179.test.tsx` が検査する。送信先は検査できないので、
-  デプロイ後に、ブラウザのコンソールへ CSP 違反が出ていないことで確かめる。
-- 認証ミドルウェア: `src/middleware.ts` の matcher は `/_vercel/` 以下を対象から外してある。通すと、未ログインの訪問者のスクリプト取得が
-  `/login` の HTML にすり替わり、計測が静かに止まる (`tests/speed-insights-middleware-1179.test.ts`)。
-- 有効化: Vercel のダッシュボードで Speed Insights を有効にする。コードを入れただけでは計測は始まらず、有効にするまでは
-  `/_vercel/speed-insights/script.js` が 404 になるだけで、画面には影響しない。
-- 料金と間引き: 計測するデータの数に応じて Vercel の料金が増えることがある。抑えたいときは `<SpeedInsights sampleRate={0.5} />` のように
-  間引ける (既定は全件)。
-- 外部送信の表示: 計測データは Vercel へ送られる。プライバシーポリシーなどへの表示が要るかは、弁護士の確認を待って決める (未確認)。
-- URL に含まれる情報: 計測ではページの URL も送られる。URL にメールアドレスや招待用の値が入るページがある
-  (`/invite/[token]`・`/family/promotions/[token]`・`/login?redirect=…&email=…`・`/signup?redirect=…&email=…`・`/auth/verify?email=…`)。
-  `?` 以降まで記録されるかは未確認。Vercel のダッシュボードで有効にする前に確認し、記録されるなら `beforeSend` で `?` 以降を取り除く。
-  `beforeSend` は関数なので、サーバーコンポーネントの `layout.tsx` から渡せない。`'use client'` の小さな部品に包んで使う。
+- 有効化の状態: **本番ではすでに有効とみられ、このコードをデプロイした時点から、全ページで計測が始まる。** ダッシュボードで有効にするのを待つ関門は無い。
+  2026-10-08 に、本番 (`homegohan-app.vercel.app`) へ GET だけで確かめた (計測値の POST はしていない)。
+  - `/_vercel/speed-insights/script.js` は 200 で JavaScript を返す。アプリのミドルウェアを通らず、Vercel が先に応答している。
+  - 有効にしていない `/_vercel/insights/script.js` や、存在しない `/_vercel/speed-insights/nonexistent-check.js` は、アプリのミドルウェアに届いて `/login` への 307 になる。
+
+  ダッシュボードの実際の状態 (有効か、いつから有効か) は、デプロイの前にオーナーが確かめる。計測を止めたいときは、ダッシュボードで Speed Insights を無効にする (コードを変えずに止まる)。
+- 配信と CSP: スクリプトも計測値の送信先も、同じオリジンのパス。設定が無いときの既定値は `/_vercel/speed-insights/script.js` と `/_vercel/speed-insights/vitals`。
+  有効にしたプロジェクトのビルドでは、Vercel が `NEXT_PUBLIC_VERCEL_OBSERVABILITY_CLIENT_CONFIG` を渡し、その中の `speedInsights.scriptSrc` / `endpoint`
+  (`/<固有のパス>/script.js` / `/<固有のパス>/vitals` の形) が優先される。どちらも同じオリジンなので、CSP (`next.config.mjs`) の `script-src` / `connect-src` の
+  `'self'` で足り、CSP は変えていない。読み込み先と `'self'` は `tests/speed-insights-1179.test.tsx` が検査する (設定が無いときの既定値と、設定が渡ったときの両方)。
+  実際の送信先は検査できないので、デプロイ後に、ブラウザの開発者ツールで `script[data-sdkn]` の `src` と計測値の送信先を見て、
+  未ログインでも 2xx になること、コンソールに CSP 違反が出ていないことを確かめる。
+- 認証ミドルウェア: `src/middleware.ts` の matcher は `/_vercel/` 以下を対象から外してある (`tests/speed-insights-middleware-1179.test.ts`)。
+  Vercel 上で有効にした機能のパスは、上のとおり Vercel がミドルウェアより前に応答するので、この除外が Vercel 上の計測を守っているわけではない。
+  効くのは、Vercel が応答しないとき (有効にしていない機能、存在しないパス、`next start` で Vercel の外に置いたとき) に、
+  `/_vercel/*` の応答が `/login` の HTML にすり替わるのを防ぐ場面。害は無いので残している。
+- 料金と間引き: 計測するデータの数に応じて Vercel の料金が増えることがある。抑えたいときは `SpeedInsightsClient` の `<SpeedInsights … />` に
+  `sampleRate={0.5}` のように渡して間引ける (既定は全件)。
+- 外部送信の表示: 計測データは Vercel へ送られる。プライバシーポリシーなどへの表示が要るかは、弁護士の確認 (T30) を待って決める (未確認)。
+- URL に含まれる情報: 計測値にはページの URL も載る。Vercel が配るスクリプトは、`location.href` (`?` 以降と `#` 以降を含む URL 全体) をそのまま送る
+  (パッケージが `data-path` を付けないため)。このアプリには、URL に個人情報や招待用の値が入るページがある。
+  - 招待先のメールアドレス: `/login?redirect=/invite/<token>&email=…`・`/signup?redirect=…&email=…`・`/auth/verify?email=…`
+  - パスに入る招待トークン: `/invite/[token]`・`/family/promotions/[token]`
+
+  本番はすでに有効とみられるので、対策なしで出すと、デプロイした時点から、これらが URL ごと Vercel へ送られる。
+  そこで `beforeSend` (`scrubSpeedInsightsEvent`、`src/lib/speed-insights-scrub.ts`) で、送る前に URL を直す。
+  - `?` 以降、`#` 以降、ユーザー名、パスワードを消す。オリジンとパスだけが残る。
+  - `route` (動的セグメントを置き換えた形。例: `/invite/[token]`・`/meals/[id]`) があれば、パスはそれにする。トークンや ID が URL に残らない。
+  - パスに招待トークンが入るページ (`/invite/…`・`/family/promotions/…`) は、送るパスが `…/[token]` の形に置き換わっているときだけ送る。
+    `route` が無いとき、置き換えに失敗して生のトークンが残っているときは、計測値ごと送らない。
+    配られるスクリプトは、`beforeSend` が返した `route` を使わず、元の `route` を送るので、直さずに落とす。
+  - URL として読めないときも送らない。
+
+  `beforeSend` の仕様 (計測値を送る直前に 1 件ずつ呼ばれる。null などを返すと送られない。返した `url` が送られる) は、
+  配られるスクリプト (scriptVersion 0.1.3) を読んで確かめた。スクリプトは Vercel が更新できるので、デプロイ後に、実際の送信内容
+  (開発者ツールの Network) で、`href` にクエリ・`#`・招待トークンが無いことを確かめる。
+  `beforeSend` に渡す関数はモジュール直下に置き、参照を変えない (参照が変わるたびに、パッケージが登録し直す)。
+  パスに秘密の値が入る `[token]` のページを足したら、`src/lib/speed-insights-scrub.ts` の `TOKEN_PATH_PREFIX` にも足す
+  (`tests/speed-insights-scrub-1179.test.ts` が `src/app` を走査して検査する)。
+  限界: 変わるのは、Speed Insights の計測値に載る URL だけ。計測の通信そのものに、ブラウザが付ける `Referer` ヘッダなどは残る
+  (同じオリジンへの通信で、ページの取得や API と同じ扱い)。Vercel 側がそれを保存するかどうかは確認できていない。
 
 ## 8. Better Stack (Logtail) 統合 (採用しない)
 
@@ -767,7 +795,7 @@ test('BAN action creates audit_log entry visible to super_admin', async ({
 - Better Stack: 採用しない (#1179)。`@logtail/node` は入れない
 - Status Page: 設置しない (#1179)。`status.homegohan.app` は作らない
 - エラー監視: `app_logs` (`src/lib/db-logger.ts` / `supabase/functions/_shared/db-logger.ts`) と `/super-admin/logs`
-- 性能の計測: Vercel Speed Insights (`@vercel/speed-insights`、`src/app/layout.tsx`)
+- 性能の計測: Vercel Speed Insights (`@vercel/speed-insights`。`src/app/layout.tsx` から `src/components/SpeedInsightsClient.tsx` 経由で置く)
 
 ## 15. プロダクト Analytics イベント (PostHog)
 
@@ -917,4 +945,4 @@ cross/08-legal-compliance §13 に従い、`cookie_consents` テーブルで「�
 - PagerDuty 連携 (要件 §5.10.2 の将来): 現在は Slack のみ対応。PagerDuty は組織 Enterprise 契約時に検討
 - `audit_logs_archive` テーブルへの移動でインデックスが再作成されるため、large scale 時のパフォーマンス確認が必要
 - エラー急増・Stripe webhook の遅延・pg_cron の失敗・API p95 悪化の自動通知 (§8.1 の旧案): Better Stack を採用しないため未実装。`app_logs` の集計で代替するか、自動通知を持たない運用にするかを決める (#1179)
-- Speed Insights の計測データ (ページの URL を含む) を Vercel へ送ることの表示と、URL の `?` 以降の扱い (§7.3): 記載が要るかは弁護士の確認を待って決める。有効化の前に、メールアドレスや招待用の値が URL ごと記録されないか確認する (#1179)
+- Speed Insights の計測データ (ページの URL を含む) を Vercel へ送ることの表示 (§7.3): 記載が要るかは弁護士の確認 (T30) を待って決める。本番はすでに有効とみられ、デプロイした時点から送られる。送る URL からは `?` 以降・`#` 以降・招待トークンを消してある (`beforeSend`)。デプロイ後に、実際の送信内容で確かめる (#1179)

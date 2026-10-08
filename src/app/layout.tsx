@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Sans_JP, Noto_Serif_JP } from "next/font/google";
-import { SpeedInsights } from "@vercel/speed-insights/next";
 import { PostHogProvider } from "@/components/PostHogProvider";
+import { SpeedInsightsClient } from "@/components/SpeedInsightsClient";
 import "./globals.css";
 
 const notoSans = Noto_Sans_JP({ 
@@ -142,13 +142,15 @@ export default function RootLayout({
         {/*
           Vercel Speed Insights (#1179): 表示速度 (Web Vitals) の計測だけを行う。画面には何も描画しない。
           エラーの記録は app_logs が担い、Sentry / Better Stack は採用しない (docs/design/00-architecture.md)。
-          本番 (Vercel) では、スクリプトも計測値の送信先も同じオリジンの /_vercel/speed-insights/* (Vercel の仕様)。
+          本番の Speed Insights は、すでに有効とみられる (/_vercel/speed-insights/script.js が 200 を返す)。
+          そのため、デプロイした時点から、全ページで計測が始まる。ダッシュボードで有効にするのを待つ関門は無い。
+          計測値には URL が載る。URL には招待先のメールアドレスと招待トークンが入るページがあるので、
+          <SpeedInsights /> を直に置かず、送る前に URL を直す SpeedInsightsClient を使う (docs/design/operator/07-audit-monitoring.md §7.3)。
+          スクリプトも計測値の送信先も同じオリジンのパス (既定は /_vercel/speed-insights/*、Vercel がビルドに設定を渡すときはその固有のパス)。
           そのため CSP (next.config.mjs) は script-src / connect-src の 'self' で足り、変更していない。
-          スクリプトの読み込み先と 'self' は tests/speed-insights-1179.test.tsx が検査する (送信先はデプロイ後に確認する)。
-          /_vercel/ は認証ミドルウェアにも通さない (src/middleware.ts の matcher)。
-          Vercel のダッシュボードで Speed Insights を有効にするまでは、そのパスが 404 になるだけで画面には影響しない。
+          読み込み先と 'self' は tests/speed-insights-1179.test.tsx が検査する (実際の送信先はデプロイ後に確認する)。
         */}
-        <SpeedInsights />
+        <SpeedInsightsClient />
       </body>
     </html>
   );

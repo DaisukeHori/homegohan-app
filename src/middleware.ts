@@ -35,7 +35,10 @@ export const config = {
      *   末尾の $ があるので /api/health/* (健康記録 API) は従来どおり対象のまま)
      * - _vercel/ (Vercel が扱うパス。Speed Insights のスクリプトと計測値の送信先 /_vercel/speed-insights/* など #1179。
      *   アプリのページではないので、未ログインの訪問者を /login へ送ったり、オンボーディングへ差し戻したりしない。
-     *   通すと、スクリプトのはずの応答がログイン画面の HTML にすり替わり、計測が静かに止まる)
+     *   Vercel 上で有効にした機能のパスは、Vercel がこのミドルウェアより前に応答する (本番で確認: script.js は 200)。
+     *   なので、Vercel 上で計測を守っているのはこの除外ではない。除外が効くのは、Vercel が応答しないとき
+     *   (有効にしていない機能、存在しないパス、next start で Vercel の外に置いたとき) に、/_vercel/* の応答が
+     *   ログイン画面の HTML にすり替わるのを防ぐ場面。害は無いので残す)
      * Feel free to modify this pattern to include more paths.
      */
     '/((?!_next/static|_next/image|_vercel/|favicon\\.ico|manifest\\.json|robots\\.txt|sw\\.js|workbox-|api/health$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',

@@ -36,7 +36,7 @@ PR #797 要件定義 (01/02/03 + 100-scenarios.md) に基づく実装基本設�
   - Google Gemini (画像認識・OCR)
   - 産業医アドバイス用の LLM は未採用 (#1133 が保留のため。採用が決まったら追記する)
 - **エラー監視**: アプリ内の `app_logs` テーブルに記録し、`/super-admin/logs` で見る。Sentry は採用しない (#1179)
-- **APM**: Vercel Speed Insights のみ (`@vercel/speed-insights` を `src/app/layout.tsx` で読み込む)。Sentry Performance は採用しない (#1179)
+- **APM**: Vercel Speed Insights のみ (`@vercel/speed-insights` を、送る URL から `?` 以降と招待トークンを消す `SpeedInsightsClient` 経由で `src/app/layout.tsx` に置く。本番ではすでに有効とみられる。`operator/07-audit-monitoring.md` §7.3)。Sentry Performance は採用しない (#1179)
 - **ログ集約**: `app_logs` に構造化ログを集める (Next.js: `src/lib/db-logger.ts`、Edge Functions: `supabase/functions/_shared/db-logger.ts`)。Better Stack は採用しない (#1179)
 - **Status Page**: 設置しない (`status.homegohan.app` は作らない)。死活監視用の `/api/health` は残す (`operator/07-audit-monitoring.md` §9)
 - **CAPTCHA**: Cloudflare Turnstile

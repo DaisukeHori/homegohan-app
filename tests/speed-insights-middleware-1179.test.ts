@@ -2,12 +2,15 @@
 /**
  * tests/speed-insights-middleware-1179.test.ts
  *
- * #1179: Vercel Speed Insights は、スクリプトを同じオリジンの /_vercel/speed-insights/script.js から読み込む。
- * このパスは Vercel が扱うもので、アプリのページではない。認証ミドルウェア (Supabase のセッション処理) に通すと、
- * 未ログインの訪問者は /login へ、ログイン済みでも初期設定の途中の人はオンボーディングへ送られてしまい、
- * スクリプトのはずの応答が HTML にすり替わる (ブラウザは実行を拒否するので、計測が静かに止まる)。
+ * #1179: /_vercel/ 以下は Vercel が扱うパス (Speed Insights のスクリプト /_vercel/speed-insights/script.js など) で、
+ * アプリのページではない。認証ミドルウェア (Supabase のセッション処理) に通すと、未ログインの訪問者は /login へ、
+ * ログイン済みでも初期設定の途中の人はオンボーディングへ送られ、スクリプトのはずの応答が HTML にすり替わる。
  *
- * そこで src/middleware.ts の matcher は、/_vercel/ 以下をミドルウェアの対象から外す。
+ * ただし、Vercel 上で有効にした機能のパスは、Vercel がミドルウェアより前に応答する (本番で確認: script.js は 200)。
+ * なので、この除外が Vercel 上の計測を守っているわけではない。効くのは、Vercel が応答しないとき
+ * (有効にしていない機能、存在しないパス、next start で Vercel の外に置いたとき)。害は無いので残している。
+ *
+ * src/middleware.ts の matcher は、/_vercel/ 以下をミドルウェアの対象から外す。
  * それ以外のパスの扱いは変えない (tests/health-middleware-exemption.test.ts の除外もそのまま)。
  */
 
