@@ -1,7 +1,12 @@
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { isOrgAdmin } from '@/lib/auth/org-admin';
-import { createOrgInviteWithEmail } from '@/lib/membership/org-invite';
+import {
+  createOrgInviteWithEmail,
+  invalidOrgInviteBodyResponse,
+  orgInviteFailureResponse,
+} from '@/lib/membership/org-invite';
+import { AddOrgMemberRequestBodySchema } from '@/schemas/membership/organization-invite';
 
 // メンバー一覧取得
 export async function GET(_request: Request) {
@@ -64,29 +69,35 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { email?: unknown; nickname?: unknown };
+  let body: unknown;
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: { code: 'INVALID_BODY', message: 'リクエストボディが不正です' } }, { status: 400 });
   }
 
-  const email = typeof body.email === 'string' ? body.email.trim() : '';
-  if (!email) {
-    return NextResponse.json({ error: { code: 'INVALID_BODY', message: 'email は必須です' } }, { status: 400 });
+  // #1163 メールアドレスは前後の空白を除いて小文字にし、形式と長さを確かめる。nickname は 50 文字まで。
+  // password など未知のキーは取り除かれる (受け取っても使わない)
+  const parsed = AddOrgMemberRequestBodySchema.safeParse(body);
+  if (!parsed.success) {
+    return invalidOrgInviteBodyResponse(parsed.error);
   }
-  const nickname = typeof body.nickname === 'string' && body.nickname.trim() !== '' ? body.nickname.trim() : null;
+  const { email } = parsed.data;
+  // 未入力 (空文字) は宛名なしにする
+  const nickname = parsed.data.nickname ? parsed.data.nickname : null;
 
+  // 招待を作り、招待メールを送る (POST /api/org/invites と共通。送信回数の制限もこの中で判定するので、
+  // この入口からも回避できない)
   const result = await createOrgInviteWithEmail({
     supabase,
-    inviter: { email: actor.email, nickname: adminProfile.nickname },
+    inviter: { id: actor.id, email: actor.email, nickname: adminProfile.nickname },
     organizationId: adminProfile.organization_id,
     email,
     role: 'member',
     displayName: nickname,
   });
   if (!result.ok) {
-    return NextResponse.json({ error: { code: result.code, message: result.message } }, { status: result.status });
+    return orgInviteFailureResponse(result);
   }
 
   return NextResponse.json({ ok: true, invite: result.invite }, { status: 201 });

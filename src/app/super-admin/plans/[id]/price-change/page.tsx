@@ -18,6 +18,8 @@ type ImpactData = {
   current_monthly_price_jpy: number;
   new_monthly_price_jpy: number;
   applies_to: string;
+  /** 既存契約へ新価格が反映されるタイミング (#1212)。new_only は 'none' (既存契約は不変) */
+  effective_timing: 'none' | 'next_renewal' | 'immediate';
 };
 
 type Plan = {
@@ -34,6 +36,31 @@ const APPLIES_TO_LABELS: Record<string, string> = {
   on_renewal: '次回更新時から全契約',
   immediately: '即時に全契約 (日割り適用)',
 };
+
+// #1212: 既存契約への反映タイミング (API の effective_timing に対応)
+const EFFECTIVE_TIMING_LABELS: Record<ImpactData['effective_timing'], string> = {
+  none: '既存契約には反映されません',
+  next_renewal: '各契約の次回更新時から (全契約が更新されるまで収益は徐々に変わります)',
+  immediate: '即時 (日割り精算あり)',
+};
+
+/**
+ * #1212: 既存契約への影響がある適用範囲 (on_renewal / immediately) の注記。
+ * new_only は既存契約に影響しないため何も出さない。
+ * TODO(#1102): 既存サブスクリプションへの自動反映を実装したら、1 つ目の注記を外す。
+ */
+function ExistingContractNotes({ impact }: { impact: ImpactData }) {
+  if (impact.applies_to === 'new_only') return null;
+  return (
+    <ul className="text-xs text-orange-700 mt-2 space-y-1">
+      <li>
+        ※ 既存契約への自動反映 (Stripe サブスクリプションの価格切替) は未実装です (#1102)。
+        現時点では、価格変更を実行しても既存契約者の請求額は変わりません。上の数値は「反映された場合」の概算です。
+      </li>
+      <li>※ 契約が月額か年額かは区別できないため、年額契約も月額の差額で計算しています。</li>
+    </ul>
+  );
+}
 
 export default function PriceChangePage() {
   const params = useParams();
@@ -193,7 +220,13 @@ export default function PriceChangePage() {
                 <input
                   type="number"
                   value={newMonthlyPrice}
-                  onChange={(e) => setNewMonthlyPrice(e.target.value)}
+                  onChange={(e) => {
+                    setNewMonthlyPrice(e.target.value);
+                    // #1212: 入力を変えたら古いシミュレーション結果は無効 (再シミュレーションを必須にする)
+                    setImpact(null);
+                  }}
+                  // #1212: シミュレーション中に入力を変えると、遅れて届いた古い結果が表示されてしまうため固定する
+                  disabled={isSimulating}
                   min="0"
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
                 />
@@ -214,8 +247,15 @@ export default function PriceChangePage() {
               <label className="block text-sm font-medium text-slate-700 mb-1">適用範囲</label>
               <select
                 value={appliesTo}
-                onChange={(e) => setAppliesTo(e.target.value as typeof appliesTo)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                onChange={(e) => {
+                  setAppliesTo(e.target.value as typeof appliesTo);
+                  // #1212: 適用範囲ごとに結果が異なるため、古いシミュレーション結果を残さない。
+                  // 残すと確認ステップで「選択中の適用範囲」と「別の適用範囲で計算した数値」が並んでしまう。
+                  setImpact(null);
+                }}
+                // #1212: シミュレーション中に変えると、遅れて届いた古い結果が表示されてしまうため固定する
+                disabled={isSimulating}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:opacity-50"
               >
                 {Object.entries(APPLIES_TO_LABELS).map(([value, label]) => (
                   <option key={value} value={value}>{label}</option>
@@ -251,19 +291,35 @@ export default function PriceChangePage() {
             {impact && (
               <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
                 <h3 className="text-sm font-semibold text-orange-800 mb-3">影響シミュレーション結果</h3>
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <span className="text-orange-600">影響契約数:</span>{' '}
-                    <strong className="text-orange-800">{impact.affected_subscription_count.toLocaleString()} 件</strong>
-                  </div>
-                  <div>
-                    <span className="text-orange-600">MRR 変化:</span>{' '}
-                    <strong className={`${impact.affected_mrr_change_jpy >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                      {impact.affected_mrr_change_jpy >= 0 ? '+' : ''}
-                      ¥{impact.affected_mrr_change_jpy.toLocaleString()}
-                    </strong>
-                  </div>
-                </div>
+                {impact.applies_to === 'new_only' ? (
+                  // #1212: 新規契約のみの変更は既存契約に影響しない (影響契約数・MRR 変化は出さない)
+                  <p className="text-sm text-orange-800">
+                    <strong>既存契約への影響なし</strong>
+                    <span className="block text-xs text-orange-600 mt-1">
+                      新しい価格は新規契約にのみ適用されます。既存の契約者は現行価格のままです。
+                    </span>
+                  </p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <span className="text-orange-600">影響契約数:</span>{' '}
+                        <strong className="text-orange-800">{impact.affected_subscription_count.toLocaleString()} 件</strong>
+                      </div>
+                      <div>
+                        <span className="text-orange-600">MRR 変化:</span>{' '}
+                        <strong className={`${impact.affected_mrr_change_jpy >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                          {impact.affected_mrr_change_jpy >= 0 ? '+' : ''}
+                          ¥{impact.affected_mrr_change_jpy.toLocaleString()}
+                        </strong>
+                      </div>
+                    </div>
+                    <p className="text-xs text-orange-600 mt-2">
+                      反映タイミング: {EFFECTIVE_TIMING_LABELS[impact.effective_timing]}
+                    </p>
+                    <ExistingContractNotes impact={impact} />
+                  </>
+                )}
                 <p className="text-xs text-orange-600 mt-2">
                   適用範囲: {APPLIES_TO_LABELS[impact.applies_to]}
                 </p>
@@ -316,7 +372,7 @@ export default function PriceChangePage() {
                   <span className="text-slate-400">変更なし (¥{(plan.yearly_price_jpy ?? 0).toLocaleString()})</span>
                 )}
               </div>
-              {yearlyChanged && (
+              {yearlyChanged && impact.applies_to !== 'new_only' && (
                 <p className="text-xs text-orange-400">
                   ※影響シミュレーション (影響契約数・MRR変化) は月額の変更のみ反映されます
                 </p>
@@ -325,17 +381,32 @@ export default function PriceChangePage() {
                 <span className="text-orange-600">適用範囲:</span>
                 <strong>{APPLIES_TO_LABELS[appliesTo]}</strong>
               </div>
-              <div className="flex justify-between">
-                <span className="text-orange-600">影響契約数:</span>
-                <strong>{impact.affected_subscription_count.toLocaleString()} 件</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-orange-600">MRR 変化:</span>
-                <strong className={impact.affected_mrr_change_jpy >= 0 ? 'text-green-700' : 'text-red-700'}>
-                  {impact.affected_mrr_change_jpy >= 0 ? '+' : ''}
-                  ¥{impact.affected_mrr_change_jpy.toLocaleString()}
-                </strong>
-              </div>
+              {impact.applies_to === 'new_only' ? (
+                // #1212: 新規契約のみの変更は既存契約に影響しない (影響契約数・MRR 変化は出さない)
+                <div className="flex justify-between">
+                  <span className="text-orange-600">既存契約への影響:</span>
+                  <strong>なし (既存の契約者は現行価格のまま)</strong>
+                </div>
+              ) : (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-orange-600">影響契約数:</span>
+                    <strong>{impact.affected_subscription_count.toLocaleString()} 件</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-orange-600">MRR 変化:</span>
+                    <strong className={impact.affected_mrr_change_jpy >= 0 ? 'text-green-700' : 'text-red-700'}>
+                      {impact.affected_mrr_change_jpy >= 0 ? '+' : ''}
+                      ¥{impact.affected_mrr_change_jpy.toLocaleString()}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-orange-600 shrink-0">反映タイミング:</span>
+                    <strong className="text-right">{EFFECTIVE_TIMING_LABELS[impact.effective_timing]}</strong>
+                  </div>
+                  <ExistingContractNotes impact={impact} />
+                </>
+              )}
             </div>
           </div>
 

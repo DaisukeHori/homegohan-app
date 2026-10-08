@@ -400,6 +400,7 @@ CREATE TABLE app_logs (
 - Edge Functions用: `supabase/functions/_shared/db-logger.ts`
 - Next.js API用: `src/lib/db-logger.ts`
 - クライアント用: `POST /api/log`
+- 保存前のマスキング: いずれも `supabase/functions/_shared/log-sanitizer.ts` を通してから insert する（`message` / `error_message` / `error_stack` / `metadata` のトークン・キー・接続文字列・メールアドレスなどをマスクし、文字数を切り詰める。`user_id` は uuid の形でなければ NULL）
 
 **クエリ例（MCP経由でAIが実行可能）:**
 ```sql

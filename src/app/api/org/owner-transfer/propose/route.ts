@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
 import { renderOrgTransferProposedEmail } from '@/lib/emails/membership/org-transfer-proposed';
+import { checkTransferProposeLimit, inviteThrottleResponse } from '@/lib/membership/invite-throttle';
 import { z } from 'zod';
 
 const BodySchema = z.object({
@@ -20,6 +21,13 @@ export async function POST(request: Request) {
       { error: { code: 'NOT_AUTHENTICATED', message: '認証が必要です' } },
       { status: 401 },
     );
+  }
+
+  // #1163 譲渡提案メールの送信回数を制限する (提案者の user.id 単位)。
+  // 判定できない (Redis 障害など) ときは例外がそのまま伝播し、RPC もメールも実行されない (fail-closed)。
+  const throttle = await checkTransferProposeLimit(user.id);
+  if (throttle) {
+    return inviteThrottleResponse(throttle);
   }
 
   let body: z.infer<typeof BodySchema>;

@@ -28,6 +28,7 @@ import {
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { createLogger } from '@/lib/db-logger';
+import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
 
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
@@ -208,38 +209,6 @@ function sanitizeShoppingItemUpdate(input: unknown): { data: PlainRecord; errors
   }
 
   return { data, errors };
-}
-
-// ユーザーのアクティブな買い物リストを取得または作成するヘルパー関数
-async function getOrCreateActiveShoppingList(supabase: any, userId: string): Promise<{ id: string } | null> {
-  // アクティブな買い物リストを探す
-  let { data: shoppingList, error } = await supabase
-    .from('shopping_lists')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('status', 'active')
-    .maybeSingle();
-
-  if (error) return null;
-  if (shoppingList) return shoppingList;
-
-  // なければ新規作成
-  const today = new Date().toISOString().slice(0, 10);
-  const weekLater = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const { data: newList, error: createError } = await supabase
-    .from('shopping_lists')
-    .insert({
-      user_id: userId,
-      status: 'active',
-      name: '買い物リスト',
-      start_date: today,
-      end_date: weekLater,
-    })
-    .select('id')
-    .single();
-
-  if (createError) return null;
-  return newList;
 }
 
 export interface ConsultationActionRow {
@@ -767,8 +736,19 @@ export async function runConsultationAction(
     case 'add_to_shopping_list': {
       const { items } = action.action_params;
 
-      // アクティブな買い物リストを取得または作成
-      const shoppingList = await getOrCreateActiveShoppingList(supabase, user.id);
+      // アクティブな買い物リストを取得または作成 (add-recipe API と共通のヘルパー。同時実行の 23505 にも耐える #1214)
+      let shoppingList: { id: string } | null = null;
+      try {
+        shoppingList = await getOrCreateActiveShoppingList(supabase, user.id);
+      } catch (listError) {
+        // PostgREST のエラーは Error ではないプレーンオブジェクトなので、ログ用に Error へ包む
+        const pgError = listError as { code?: unknown; message?: unknown } | null;
+        createLogger('api/ai/consultation/actions/execute').withUser(user.id).error(
+          'Failed to get or create active shopping list',
+          listError instanceof Error ? listError : new Error(String(pgError?.message ?? listError)),
+          { actionId: action.id, pg_code: typeof pgError?.code === 'string' ? pgError.code : undefined },
+        );
+      }
       if (!shoppingList) {
         result = { error: '買い物リストの作成に失敗しました' };
         break;

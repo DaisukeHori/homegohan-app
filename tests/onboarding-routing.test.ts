@@ -3,6 +3,37 @@ import { describe, expect, it } from "vitest";
 import { resolveOnboardingRedirect } from "../lib/onboarding-routing";
 
 describe("resolveOnboardingRedirect", () => {
+
+  // S-7b (#1036 のレビュー): /auth/* はセッションを確立・切り替える途中の画面。
+  // オンボーディング未完了のセッションが残った WebView でネイティブ認証ブリッジを開いても、
+  // ワンタイムコードの引き換え前に差し戻さない。
+  it.each([
+    ["/auth/native-bridge", "not_started", null],
+    ["/auth/native-bridge", "in_progress", "2026-03-01T00:00:00Z"],
+    ["/auth/callback", "not_started", null],
+    ["/auth/reset-password", "in_progress", "2026-03-01T00:00:00Z"],
+    ["/auth", "not_started", null],
+  ])("does not redirect %s for %s users", (pathname, _status, startedAt) => {
+    expect(
+      resolveOnboardingRedirect({
+        pathname,
+        roles: [],
+        onboardingStartedAt: startedAt,
+        onboardingCompletedAt: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("still redirects look-alike paths such as /authx (prefix boundary)", () => {
+    expect(
+      resolveOnboardingRedirect({
+        pathname: "/authx",
+        roles: [],
+        onboardingStartedAt: null,
+        onboardingCompletedAt: null,
+      }),
+    ).toBe("/onboarding/welcome");
+  });
   it("redirects unauthenticated onboarding-incomplete users from app pages to welcome", () => {
     expect(
       resolveOnboardingRedirect({

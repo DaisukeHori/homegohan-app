@@ -1,6 +1,11 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
-import { createOrgInviteWithEmail, type OrgInviteRole } from '@/lib/membership/org-invite';
+import {
+  createOrgInviteWithEmail,
+  invalidOrgInviteBodyResponse,
+  orgInviteFailureResponse,
+} from '@/lib/membership/org-invite';
+import { CreateOrgInviteRequestBodySchema } from '@/schemas/membership/organization-invite';
 
 // 招待一覧取得
 export async function GET(request: Request) {
@@ -81,33 +86,32 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { email?: string; role?: string; custom_message?: string };
+  let body: unknown;
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: { code: 'INVALID_BODY', message: 'リクエストボディが不正です' } }, { status: 400 });
   }
 
-  const { email, role = 'member', custom_message } = body;
-
-  if (!email) {
-    return NextResponse.json({ error: { code: 'INVALID_BODY', message: 'email は必須です' } }, { status: 400 });
+  // #1163 メールアドレスは前後の空白を除いて小文字にし、形式と長さを確かめる (不正なアドレスでは招待を作らない)。
+  // role に owner は指定できない。未知のキーは取り除く。
+  const parsed = CreateOrgInviteRequestBodySchema.safeParse(body);
+  if (!parsed.success) {
+    return invalidOrgInviteBodyResponse(parsed.error);
   }
-  if (!['admin', 'member'].includes(role)) {
-    return NextResponse.json({ error: { code: 'INVALID_BODY', message: 'role は admin または member のみ' } }, { status: 400 });
-  }
+  const { email, role, custom_message } = parsed.data;
 
-  // 招待を作り、招待メールを送る (POST /api/org/members と共通)
+  // 招待を作り、招待メールを送る (POST /api/org/members と共通。送信回数の制限もこの中で判定する)
   const result = await createOrgInviteWithEmail({
     supabase,
-    inviter: { email: user.email, nickname: profile.nickname },
+    inviter: { id: user.id, email: user.email, nickname: profile.nickname },
     organizationId: profile.organization_id,
     email,
-    role: role as OrgInviteRole,
+    role,
     customMessage: custom_message,
   });
   if (!result.ok) {
-    return NextResponse.json({ error: { code: result.code, message: result.message } }, { status: result.status });
+    return orgInviteFailureResponse(result);
   }
 
   return NextResponse.json({ ok: true, invite: result.invite });
