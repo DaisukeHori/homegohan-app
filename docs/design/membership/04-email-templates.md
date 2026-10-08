@@ -220,6 +220,19 @@ https://homegohan.app
 ほめゴハン
 ```
 
+実装は `renderMemberRemovedEmail` (`src/lib/emails/membership/member-removed.ts`、#1160)。
+個人情報を載せない方針で、宛名 (`{display_name} 様`) は書かず、載せるのは家族グループ名 / 組織名と何が起きたかだけ。
+件名の括弧は他の通知メールと同じ `【ほめゴハン】`。
+
+- 宛先は除名された本人だけ (除名を実行した人・ほかのメンバーには送らない)。アドレスは `auth.users` から
+  `resolveAuthEmails` (`src/lib/membership/resolve-auth-emails.ts`) で引く。
+  アカウントを持たない子供メンバー (`family_members.user_id` が NULL) と、自分で自分を外した場合は送らない。
+- 家族の除名 RPC (`remove_family_member`) は行の `status` を確かめず、すでに脱退・除名済みの行にも成功する。
+  同じ行の除名を繰り返して同じ人にメールを送り付けられないよう、除名の前に `active` だった行にだけ送る。
+- 家族グループ名 / 組織名と、外される人 (家族は除名する行の `user_id`、組織は URL の `user_id`) は、除名 RPC を呼ぶ前に読む。
+- 送る処理は `src/lib/membership/exit-notification.ts`。送信に失敗しても除名の結果は変えず (200)、構造化ログに残す。
+  ログにメールアドレスは残さない。
+
 ### 6.2 メンバ脱退通知 (representative/owner 向け)
 ```
 件名: [ほめゴハン] {member_name} 様が「{scope_name}」から脱退しました
@@ -234,6 +247,16 @@ https://homegohan.app
 ───────
 ほめゴハン
 ```
+
+実装は `renderMemberLeftEmail` (`src/lib/emails/membership/member-left.ts`、#1160)。
+個人情報を載せない方針で、脱退した人の名前 (`{member_name}`) と宛名 (`{representative_name} 様`) は書かず、
+載せるのは家族グループ名 / 組織名と、メンバーが脱退したこと、メンバー管理画面の URL (`/family/members` / `/org/members`) だけ。
+
+- 宛先は家族グループの代表者 (`family_groups.representative_id`) / 組織のオーナー (`organizations.owner_id`) だけ。
+  脱退した本人には送らない。オーナーが未設定の組織では送らない。アドレスは `resolveAuthEmails` で引く。
+- 脱退すると、本人はその家族グループ / 組織を RLS で読めなくなる (`leave_org` の戻り値の `organization_id` も NULL)。
+  家族グループ名 / 組織名と代表者 / オーナーは、脱退 RPC を呼ぶ前に読む。
+- 送信に失敗しても脱退の結果は変えず (200)、構造化ログに残す。ログにメールアドレスは残さない。
 
 ---
 
@@ -316,6 +339,15 @@ export function buildOrgTransferAcceptUrl(proposalId: string): string {
 
 export function buildFamilyTransferAcceptUrl(proposalId: string): string {
   return `${getInviteBaseUrl()}/family/transfer-accept/${proposalId}`;
+}
+
+// 脱退の通知メール (§6.2) に載せる、メンバー管理画面 (#1160)
+export function buildFamilyMembersUrl(): string {
+  return `${getInviteBaseUrl()}/family/members`;
+}
+
+export function buildOrgMembersUrl(): string {
+  return `${getInviteBaseUrl()}/org/members`;
 }
 ```
 

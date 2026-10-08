@@ -56,6 +56,14 @@ const EXEMPT_EMAIL_SENDERS: Record<string, string> = {
     '運営の super_admin 専用 (requireSuperAdmin)。宛先は対象組織の既存メンバーで、利用者は宛先を指定できない',
   'src/app/api/operator/membership/org/[id]/dissolve/route.ts':
     '運営の super_admin 専用 (requireSuperAdmin)。宛先は対象組織の既存メンバーで、利用者は宛先を指定できない',
+  // #1160 除名・脱退の通知。送る入口は 4 つの route (family/org の除名・脱退) だが、送信はこの共通ヘルパーだけが行う
+  'src/lib/membership/exit-notification.ts':
+    '家族グループ / 組織の除名・脱退 (remove_family_member / leave_family / remove_org_member / leave_org) の RPC が成功した直後に、' +
+    '1 回の操作につき 1 通だけ送る (家族の除名は、それまで active だった行に限る。すでに外れた行の再実行では送らない)。' +
+    '除名は家族の代表者・大人 / 組織の owner・admin、脱退は本人が実行する。' +
+    '宛先は、除名された本人、または脱退先の家族の代表者 / 組織のオーナーの auth.users 上の登録アドレス (resolveAuthEmails) に固定で、' +
+    '利用者はアドレスを指定できない。宛先になるのは本人の同意 (招待の承諾) でメンバーになった人と、その所属先の責任者だけなので、' +
+    '任意のアドレスへ送り付けることはできない',
 };
 
 // ─────────────────────────────────────────────
