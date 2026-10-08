@@ -73,7 +73,11 @@ export interface WeekNutrientData {
 export interface StatsModalProps {
   visible: boolean;
   onClose: () => void;
-  onOpenImprove: () => void;
+  /**
+   * 「献立を改善」を押したときに呼ばれる。
+   * 表示中の AI栄養士の提案 (改善アドバイス) があれば渡す。改善の要望として使われる。
+   */
+  onOpenImprove: (advice?: string | null) => void;
   selectedDate: string;
   weekRange: { start: string; end: string };
   todayNutrients: NutrientValues;
@@ -244,7 +248,7 @@ interface TodayTabProps {
   setEditingRadar: (v: boolean) => void;
   feedback: { praise: string | null; advice: string | null } | null;
   isLoadingFeedback: boolean;
-  onOpenImprove: () => void;
+  onOpenImprove: (advice?: string | null) => void;
   selectedDate: string;
   mealCount: number;
 }
@@ -359,7 +363,8 @@ function TodayTab({
       {/* 献立を改善ボタン */}
       <Pressable
         testID="stats-improve-btn"
-        onPress={onOpenImprove}
+        // onPress のイベントを advice と取り違えないよう、表示中の提案だけを渡す
+        onPress={() => onOpenImprove(feedback?.advice ?? null)}
         style={({ pressed }) => [todayStyles.improveBtn, pressed && { opacity: 0.85 }]}
       >
         <Ionicons name="refresh" size={16} color="#FFF" />
