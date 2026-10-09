@@ -13,14 +13,14 @@
 --   古い方が残っているため、SET NULL の方があっても削除は止まる。
 --   退会 API が「admin_audit_logs.admin_id を NULL にする」更新を送っていたが、その列は存在しない (actor_id に改名済み) ので何もしていなかった。
 --
--- 決めたルール (オーナー判断 2026-10-08、#1175):
+-- 退会時の扱いの方針 (#1175 の実装で定めた):
 --   1. 本人だけの記録は、本人と一緒に消す (CASCADE):
 --        nps_surveys / csat_feedbacks / experiment_assignments / ai_content_logs (AI へ送った文面と応答を含む)
 --   2. 運営者・作成者・承認者を指す列は、退会しても記録そのものを残す (SET NULL):
 --        誰がやったかの紐づけだけが外れる。作成日時・内容は残る。
 --   3. サポート・会計のために残す記録は、行を残して本人との紐づけだけを外す (列を NULL を許す形にして SET NULL):
 --        support_tickets / support_ticket_messages / coupon_redemptions / referral_rewards
---        (どれも、誰の記録かが分からなくなるだけ。何年残すかは税理士の確認待ちで、この migration は消去の期限を決めない)
+--        (どれも、誰の記録かが分からなくなるだけ。何年残すかは別途決める。この migration は消去の期限を決めない)
 --      同じ考えで、gdpr_deletion_requests (削除要求の記録) と email_delivery_logs (メール配信ログ) も行を残す。
 --   4. admin_audit_logs の重複した外部キー (admin_audit_logs_admin_id_fkey) は外す。
 --   5. 組織のオーナー (organizations.owner_id) と家族の代表者 (family_groups.representative_id) の ON DELETE RESTRICT は
@@ -457,7 +457,8 @@ BEGIN
   --    recipes.user_id は ON DELETE SET NULL で、user_id が NULL の行は RLS ("Users can view public recipes":
   --    user_id IS NULL OR is_public OR 本人) で全員に見える。退会で user_id が外れると、非公開のレシピまで全員に公開されてしまう。
   --    公開レシピ (is_public = true) は、本人が公開したもので、他の利用者のコレクション・いいね・コメントが付いていることがあるので
-  --    残す (user_id だけが外れる)。recipes を指す外部キーはすべて ON DELETE CASCADE なので、消して詰まることは無い。
+  --    残す (user_id だけが外れる)。recipes を指す外部キーはすべて ON DELETE CASCADE なので、消して詰まることは無い
+  --    (tests/integration/security/auth-users-fk-on-delete.test.ts の E が、ここで DELETE する表を削除の起点に含めて検査する)。
   DELETE FROM public.recipes AS r
    WHERE r.user_id = p_user_id
      AND r.is_public IS NOT TRUE;

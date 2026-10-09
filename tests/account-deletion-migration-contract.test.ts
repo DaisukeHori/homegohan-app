@@ -11,6 +11,8 @@
  *   4. prepare_account_deletion は SECURITY DEFINER + SET search_path = ''、EXECUTE は service_role だけ
  *   5. ロックの待ちに上限を付ける (SET LOCAL lock_timeout)
  *   6. ロールバックは、migration が触った外部キー 33 本をすべて NO ACTION に戻す
+ *   7. コメントに、記録の無い決定の帰属 (「オーナー判断」) や、実在を確かめられない確認の手続き (「税理士の確認待ち」) を書かない。
+ *      migration は後から読む人が正典として扱うので、方針は「#1175 の実装で定めた」とだけ書き、保存の期限は未決と書く
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -96,6 +98,15 @@ describe('#1175 migration の書き方 (auth_users_fk_on_delete)', () => {
       (match) => match[1].trim(),
     );
     expect(grants).toEqual(['service_role']);
+  });
+
+  it('コメントに、記録の無い決定の帰属 (オーナー判断) や、確かめられない確認の手続き (税理士) を書かない', () => {
+    for (const raw of [migrationRaw, rollbackRaw]) {
+      expect(raw).not.toMatch(/オーナー判断|オーナーが決め|税理士/);
+    }
+    // 方針の見出しは帰属を持たない書き方で残っている (コメントごと消して検査を素通りさせていない)
+    expect(migrationRaw).toContain('-- 退会時の扱いの方針 (#1175 の実装で定めた):');
+    expect(migrationRaw).toContain('何年残すかは別途決める。この migration は消去の期限を決めない');
   });
 
   it('ロックの待ちに上限を付ける (migration もロールバックも)', () => {

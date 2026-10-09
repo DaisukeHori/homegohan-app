@@ -12,7 +12,9 @@
  *   B. RESTRICT は「組織のオーナー」と「家族の代表者」の 2 本だけ (退会 API が先に 409 で止める仕様)
  *   C. SET NULL の外部キーの列はすべて NULL を許す (NOT NULL のままだと、退会が 23502 で失敗する)
  *   D. 張り直した 32 本が、決めたとおりの動作 (CASCADE / SET NULL) になっている。admin_audit_logs の actor_id を指す外部キーは 1 本だけ
- *   E. CASCADE で消える表を指す NO ACTION の外部キーは、同じ削除で一緒に消える行からだけ参照されている (許可リスト)
+ *   E. 退会で消える表 (auth.users と、prepare_account_deletion が直接 DELETE する表から、CASCADE でたどれる表) を指す
+ *      NO ACTION / RESTRICT の外部キーは、同じ削除で一緒に消える行からだけ参照されている (許可リスト)。
+ *      同じ表を指す SET NULL の外部キーの列は NULL を許す (NOT NULL のままだと、退会が 23502 で失敗する)
  *   F. coupon_redemptions の CHECK は anonymized_at で緩めてある。トリガーが user_id を外す更新で anonymized_at を入れる
  *   G. prepare_account_deletion は service_role だけが実行できる (トリガー関数 coupon_redemptions_mark_anonymized は誰にも直接実行させない)
  *   H. メールアドレスらしい列 (列名に mail を含む) が、退会時の扱いを決めた一覧と一致する (新しい列を足したら扱いを決める)
@@ -207,9 +209,9 @@ describe('#1175 D. 張り直した外部キーの動作', () => {
   });
 });
 
-describe('#1175 E. CASCADE の連鎖の中の NO ACTION', () => {
+describe('#1175 E. CASCADE の連鎖の中の NO ACTION / SET NULL', () => {
   /**
-   * 退会で消える表 (auth.users から CASCADE でたどれる表) を指す外部キーのうち、NO ACTION / RESTRICT のもの。
+   * 退会で消える表 (削除の起点から CASCADE でたどれる表) を指す外部キーのうち、NO ACTION / RESTRICT のもの。
    * 参照する行も同じ削除の連鎖で一緒に消えるので、退会は止まらない (account-deletion.test.ts で実際に確かめる)。
    * 新しく増えたときは、参照する行が同じ連鎖で消えるかを確かめてから足すこと。
    */
@@ -218,17 +220,49 @@ describe('#1175 E. CASCADE の連鎖の中の NO ACTION', () => {
     'shopping_list_requests.shopping_list_id': 'shopping_lists を指す。shopping_list_requests も user_id の CASCADE で一緒に消える',
   };
 
-  it('CASCADE の連鎖の中の表を指す NO ACTION / RESTRICT の外部キーは、許可リストだけ', async () => {
-    const rows = await pgQuery<{ table: string; column: string; constraint: string }>(`
+  /**
+   * prepare_account_deletion が退会の直前に直接 DELETE する表 (auth.users のほかの、削除の起点)。
+   * 関数の定義 (pg_get_functiondef) から読み取る。関数に DELETE を足すと、ここに自動で入り、下の検査の起点になる。
+   * 退会の連鎖は auth.users だけから始まるわけではない: 本人の非公開レシピ (recipes) は auth.users から CASCADE でたどれない
+   * (recipes.user_id は SET NULL) が、prepare_account_deletion が消す。recipes やその子を NO ACTION で指す外部キーが
+   * 足されると、prepare が失敗して退会できなくなる。
+   */
+  async function prepareDeletionRoots(): Promise<string[]> {
+    const rows = await pgQuery<{ def: string }>(`
+      select pg_catalog.pg_get_functiondef('public.prepare_account_deletion(uuid)'::regprocedure) as def
+    `);
+    expect(rows).toHaveLength(1);
+    const roots = new Set<string>();
+    for (const match of rows[0].def.matchAll(/delete\s+from\s+(?:only\s+)?public\.("?)(\w+)\1/gi)) {
+      roots.add(`public.${match[2]}`);
+    }
+    return [...roots].sort();
+  }
+
+  /** 削除の起点 (auth.users と prepare_account_deletion が DELETE する表) から CASCADE でたどれる表を chain に持つ CTE */
+  function chainCte(roots: readonly string[]): string {
+    const rootOids = ['auth.users', ...roots].map((rel) => `'${rel}'::regclass::oid`).join(', ');
+    return `
       with recursive chain(rel) as (
-        select 'auth.users'::regclass::oid
+        select unnest(array[${rootOids}])
         union
         select c.conrelid
         from pg_catalog.pg_constraint c
         join chain on c.confrelid = chain.rel
         where c.contype = 'f' and c.confdeltype = 'c'
-      )
-      select cl.relname as "table", a.attname as "column", c.conname as "constraint"
+      )`;
+  }
+
+  it('prepare_account_deletion が直接消す表は public.recipes だけ (増えたら、下の検査の起点に自動で入る)', async () => {
+    // 読み取りの正規表現が何も拾わなくなった (関数の書き方が変わった) ときに、起点が黙って auth.users だけに戻らないための確認
+    expect(await prepareDeletionRoots()).toEqual(['public.recipes']);
+  });
+
+  it('退会で消える表を指す NO ACTION / RESTRICT の外部キーは、許可リストだけ', async () => {
+    const roots = await prepareDeletionRoots();
+    const rows = await pgQuery<{ table: string; column: string; constraint: string }>(`
+      ${chainCte(roots)}
+      select distinct cl.relname as "table", a.attname as "column", c.conname as "constraint"
       from pg_catalog.pg_constraint c
       join chain on c.confrelid = chain.rel
       join pg_catalog.pg_class cl on cl.oid = c.conrelid
@@ -242,6 +276,25 @@ describe('#1175 E. CASCADE の連鎖の中の NO ACTION', () => {
     `);
     const found = rows.map((row) => `${row.table}.${row.column}`);
     expect(found.sort()).toEqual(Object.keys(CASCADE_CHAIN_ALLOWLIST).sort());
+  });
+
+  it('退会で消える表を指す SET NULL の外部キーの列は、すべて NULL を許す', async () => {
+    // auth.users を直接指すものは C が見る。ここはその先 (連鎖で消える表と、prepare_account_deletion が消す表) を見る
+    const roots = await prepareDeletionRoots();
+    const rows = await pgQuery<{ table: string; column: string; constraint: string }>(`
+      ${chainCte(roots)}
+      select distinct cl.relname as "table", a.attname as "column", c.conname as "constraint"
+      from pg_catalog.pg_constraint c
+      join chain on c.confrelid = chain.rel
+      join pg_catalog.pg_class cl on cl.oid = c.conrelid
+      cross join lateral unnest(c.conkey) as k(attnum)
+      join pg_catalog.pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum
+      where c.contype = 'f' and c.confdeltype = 'n'
+        and chain.rel <> 'auth.users'::regclass::oid
+        and a.attnotnull
+      order by 1, 2
+    `);
+    expect(rows.map((row) => `${row.table}.${row.column} (${row.constraint})`)).toEqual([]);
   });
 });
 

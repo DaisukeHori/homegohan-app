@@ -181,6 +181,8 @@ const rows = {
   recipePublicOfS: id(),
   recipeOfB: id(),
   recipeFlag: id(),
+  /** 他人 (B) が S の非公開レシピに付けた通報。prepare_account_deletion がレシピを消すと、CASCADE で一緒に消える */
+  recipeFlagOnPrivateOfS: id(),
   mealOfB: id(),
   moderationFlag: id(),
   noteOnS: id(),
@@ -330,6 +332,7 @@ async function seedStaffSide(): Promise<void> {
       (${q(rows.recipePublicOfS)}, 't11 public recipe of S', ${q(S.id)}, true),
       (${q(rows.recipeOfB)}, 't11 private recipe of B', ${q(B.id)}, false);
     insert into public.recipe_flags (id, recipe_id, reporter_id, reviewed_by) values (${q(rows.recipeFlag)}, ${q(rows.recipeOfB)}, ${q(S.id)}, ${q(T.id)});
+    insert into public.recipe_flags (id, recipe_id, reporter_id, reviewed_by) values (${q(rows.recipeFlagOnPrivateOfS)}, ${q(rows.recipeOfS)}, ${q(B.id)}, null);
     insert into public.meals (id, user_id, eaten_at, meal_type) values (${q(rows.mealOfB)}, ${q(B.id)}, now(), 'dinner');
     insert into public.moderation_flags (id, meal_id, user_id, resolved_by) values (${q(rows.moderationFlag)}, ${q(rows.mealOfB)}, ${q(S.id)}, ${q(T.id)});
     insert into public.admin_user_notes (id, user_id, admin_id, note) values
@@ -399,7 +402,7 @@ async function cleanup(): Promise<void> {
     `delete from public.support_ticket_messages where ticket_id = ${q(rows.ticket)}`,
     `delete from public.support_tickets where id = ${q(rows.ticket)}`,
     `delete from public.moderation_flags where id = ${q(rows.moderationFlag)}`,
-    `delete from public.recipe_flags where id = ${q(rows.recipeFlag)}`,
+    `delete from public.recipe_flags where id in (${list([rows.recipeFlag, rows.recipeFlagOnPrivateOfS])})`,
     `delete from public.recipes where id in (${list([rows.recipeOfS, rows.recipePublicOfS, rows.recipeOfB])})`,
     `delete from public.meals where id in (${list([rows.mealOfB, rows.mealOfS, rows.mealWithForeignPhoto, rows.mealWithForeignGenerated])})`,
     `delete from public.planned_meals where id in (${list([rows.planned, rows.plannedForeign])})`,
@@ -612,6 +615,9 @@ describe('#1175 退会: 外部キーのある全ての表に行がある状態�
     expect(await count('recipes', `id = ${q(rows.recipeOfS)}`)).toBe(0);
     expect(await count('recipes', `id = ${q(rows.recipePublicOfS)} and user_id is null and is_public`)).toBe(1);
     expect(await count('recipes', `id = ${q(rows.recipeOfB)} and user_id = ${q(B.id)}`)).toBe(1);
+    // 他人の行から参照されている非公開レシピでも、消すことで退会が止まらない (recipes を指す外部キーは CASCADE。
+    // 外部キーの検査は auth-users-fk-on-delete.test.ts の E)。参照していた他人の通報は、レシピと一緒に消える
+    expect(await count('recipe_flags', `id = ${q(rows.recipeFlagOnPrivateOfS)}`)).toBe(0);
 
     // recipes.user_id は ON DELETE SET NULL で、user_id が NULL の行は RLS で全員に見える ("Users can view public recipes")。
     // 非公開のままだったレシピが、ログインしていない人 (anon) にも読めるようになっていない
