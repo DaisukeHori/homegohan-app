@@ -8,7 +8,8 @@
  *   - チェックの文面から、利用規約 (/terms)・プライバシーポリシー (/privacy) を開ける
  *   - 押せないボタンを何らかの方法で動かされても、登録の処理 (signUp / signInWithOAuth) は呼ばない
  *
- * 同意の記録 (版・日時) は、サインイン後の最初のリクエストで同意ゲートが同意画面へ回して取る。ここでは書かない。
+ * このチェックは同意の記録 (版・日時) を残さない。記録は同意画面 /legal-consent で同意したときだけ残り、
+ * 登録後に同意画面へ回すのは同意ゲートを強制 (LEGAL_CONSENT_ENFORCE=on) にしたときだけ (既定では回さない)。
  */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
