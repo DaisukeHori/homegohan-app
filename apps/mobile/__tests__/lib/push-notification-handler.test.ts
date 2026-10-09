@@ -24,6 +24,8 @@ jest.mock('expo-device', () => ({ __esModule: true, isDevice: true }));
 jest.mock('expo-constants', () => ({ default: {} }));
 jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
 jest.mock('../../src/lib/supabase', () => ({ supabase: {} }));
+// pushNotifications.ts は、登録の失敗を PostHog に送るために posthog.ts を読む (#1038)。ここで見るのは通知の扱いだけなので、モックにする
+jest.mock('../../src/lib/posthog', () => ({ captureEvent: jest.fn() }));
 
 import { setNotificationBadge, setupNotificationHandler } from '../../src/lib/pushNotifications';
 

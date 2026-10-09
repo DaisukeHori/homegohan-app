@@ -41,14 +41,24 @@ jest.mock('../../src/components/ai/AIDayMenuModal', () => ({
   AIDayMenuModal: () => null,
 }));
 
+import { HttpNetworkError } from '@homegohan/core';
 import React from 'react';
 import { Alert } from 'react-native';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
+import { NETWORK_ERROR_MESSAGES } from '../../src/lib/api-error';
 
-function namedError(name: string, message: string): Error {
-  const error = new Error(message);
-  error.name = name;
-  return error;
+// 最初のテストでは、シートの読み込みと変換が走る。CI の --coverage (全ファイルの計装) や、
+// 他の処理で混み合った環境では、既定の 5 秒を超えることがあるので、余裕を持たせる
+jest.setTimeout(60_000);
+
+/** 共通クライアントが、待ち時間を過ぎたときに投げるエラー */
+function timeoutError(): HttpNetworkError {
+  return new HttpNetworkError('timeout', 'Request timed out after 75000ms', { timeoutMs: 75_000 });
+}
+
+/** 共通クライアントが、通信が切れたときに投げるエラー */
+function offlineError(): HttpNetworkError {
+  return new HttpNetworkError('offline', 'Network request failed', { cause: new TypeError('Network request failed') });
 }
 
 const SESSION = { id: 'session-1', title: 'AI相談', messageCount: 2, status: 'active' };
@@ -163,7 +173,7 @@ describe('AIAdvisorSheet — 送信', () => {
 describe('AIAdvisorSheet — タイムアウト・通信断のあとの履歴の取り直し', () => {
   it('サーバーに返信が保存済みなら、エラーを出さずに履歴を合わせる', async () => {
     await openSheet();
-    mockPost.mockRejectedValueOnce(namedError('TimeoutError', 'Request timed out after 75000ms'));
+    mockPost.mockRejectedValueOnce(timeoutError());
     serverHistoryIs([...PRIOR, SENT_USER, SAVED_REPLY]);
 
     await send('夕食を教えて');
@@ -177,7 +187,7 @@ describe('AIAdvisorSheet — タイムアウト・通信断のあとの履歴の
 
   it('返信が届いていなければ、タイムアウトを知らせる', async () => {
     await openSheet();
-    mockPost.mockRejectedValueOnce(namedError('TimeoutError', 'Request timed out after 75000ms'));
+    mockPost.mockRejectedValueOnce(timeoutError());
     serverHistoryIs(PRIOR);
 
     await send('夕食を教えて');
@@ -190,16 +200,30 @@ describe('AIAdvisorSheet — タイムアウト・通信断のあとの履歴の
     expect(screen.getByText('前回の返事')).toBeTruthy();
   });
 
-  it('通信が切れて返信も無ければ、元のエラーメッセージを知らせる', async () => {
+  it('通信が切れて返信も無ければ、「通信できません」と知らせる (タイムアウトの文言にはしない)', async () => {
     await openSheet();
-    mockPost.mockRejectedValueOnce(namedError('HttpNetworkError', 'Network request failed'));
+    mockPost.mockRejectedValueOnce(offlineError());
     serverHistoryIs(PRIOR);
 
     await send('夕食を教えて');
 
     await waitFor(() => {
-      expect(alertSpy).toHaveBeenCalledWith('エラー', 'Network request failed');
+      expect(alertSpy).toHaveBeenCalledWith('エラー', NETWORK_ERROR_MESSAGES.offline);
     });
+    expect(alertSpy).not.toHaveBeenCalledWith('タイムアウト', expect.anything());
+  });
+
+  it('通信が切れても、サーバーに返信が保存済みなら、エラーを出さずに履歴を合わせる', async () => {
+    await openSheet();
+    mockPost.mockRejectedValueOnce(offlineError());
+    serverHistoryIs([...PRIOR, SENT_USER, SAVED_REPLY]);
+
+    await send('夕食を教えて');
+
+    await waitFor(() => {
+      expect(screen.getByText('カレーはいかがですか？')).toBeTruthy();
+    });
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 
   it('画面だけにある要約が残っていても、返信が届いていれば、エラーを出さずに履歴を合わせる', async () => {
@@ -220,7 +244,7 @@ describe('AIAdvisorSheet — タイムアウト・通信断のあとの履歴の
     });
     alertSpy.mockClear();
 
-    mockPost.mockRejectedValueOnce(namedError('TimeoutError', 'Request timed out after 75000ms'));
+    mockPost.mockRejectedValueOnce(timeoutError());
     serverHistoryIs([...PRIOR, SENT_USER, SAVED_REPLY]);
 
     await send('夕食を教えて');
@@ -234,7 +258,7 @@ describe('AIAdvisorSheet — タイムアウト・通信断のあとの履歴の
 
   it('履歴の取り直しにも失敗したら、エラーを知らせて仮メッセージを消し、画面の履歴は消さない', async () => {
     await openSheet();
-    mockPost.mockRejectedValueOnce(namedError('TimeoutError', 'Request timed out after 75000ms'));
+    mockPost.mockRejectedValueOnce(timeoutError());
     mockGet.mockImplementation(() => Promise.reject(new Error('Network request failed')));
 
     await send('夕食を教えて');
@@ -251,9 +275,9 @@ describe('AIAdvisorSheet — タイムアウト・通信断のあとの履歴の
     await openSheet();
     const getCallsBefore = mockGet.mock.calls.length;
     // サーバーのレート制限 (src/lib/rate-limit.ts の rateLimitExceededResponse) の本文
+    // 共通クライアントは、HTTP のエラー応答を `HTTP <status> <statusText>: <本文>` の Error にして投げる
     mockPost.mockRejectedValueOnce(
-      namedError(
-        'HttpError',
+      new Error(
         'HTTP 429 Too Many Requests: {"error":"リクエストが多すぎます。しばらく時間をおいてからお試しください。","code":"RATE_LIMITED","retryAfter":30}',
       ),
     );
@@ -270,12 +294,12 @@ describe('AIAdvisorSheet — タイムアウト・通信断のあとの履歴の
 
   it('本文が JSON でない HTTP エラー (ゲートウェイの HTML など) は、ステータスの文字列をそのまま知らせる', async () => {
     await openSheet();
-    mockPost.mockRejectedValueOnce(namedError('HttpError', 'HTTP 502 Bad Gateway'));
+    mockPost.mockRejectedValueOnce(new Error('HTTP 502 Bad Gateway: <html>Bad Gateway</html>'));
 
     await send('夕食を教えて');
 
     await waitFor(() => {
-      expect(alertSpy).toHaveBeenCalledWith('エラー', 'HTTP 502 Bad Gateway');
+      expect(alertSpy).toHaveBeenCalledWith('エラー', 'HTTP 502 Bad Gateway: <html>Bad Gateway</html>');
     });
   });
 });

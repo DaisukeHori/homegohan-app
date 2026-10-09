@@ -102,6 +102,10 @@ import React from 'react';
 import { Pressable } from 'react-native';
 import AiSessionPage from '../../app/ai/[sessionId]';
 
+// 最初のテストでは、画面の読み込みと変換が走る。CI の --coverage (全ファイルの計装) や、
+// 他の処理で混み合った環境では、既定の 5 秒を超えることがあるので、余裕を持たせる
+jest.setTimeout(60_000);
+
 const INITIAL_MESSAGES = [
   {
     id: 'msg-1',

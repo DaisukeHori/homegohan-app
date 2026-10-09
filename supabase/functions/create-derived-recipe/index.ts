@@ -8,6 +8,7 @@ import {
   DATASET_EMBEDDING_MODEL,
   fetchDatasetEmbeddings,
 } from "../../../shared/dataset-embedding.mjs";
+import { addScaled, emptyTotals, hasSugarData } from "./nutrition-totals.ts";
 
 // service_role key 専用 (ブラウザからは呼ばれない) なので CORS は付けない (#1167)。
 
@@ -363,100 +364,6 @@ type IngredientMatch = {
   note?: string | null;
 };
 
-type NutritionTotals = {
-  calories_kcal: number;
-  protein_g: number;
-  fat_g: number;
-  carbs_g: number;
-  fiber_g: number;
-  sugar_g: number; // 今回は0（食材DBに糖質が無い/定義が複雑なので後回し）
-  sodium_g: number; // 食塩相当量(g)
-  potassium_mg: number;
-  calcium_mg: number;
-  phosphorus_mg: number;
-  iron_mg: number;
-  zinc_mg: number;
-  iodine_ug: number;
-  cholesterol_mg: number;
-  vitamin_b1_mg: number;
-  vitamin_b2_mg: number;
-  vitamin_b6_mg: number;
-  vitamin_b12_ug: number;
-  folic_acid_ug: number;
-  vitamin_c_mg: number;
-  vitamin_a_ug: number;
-  vitamin_d_ug: number;
-  vitamin_k_ug: number;
-  vitamin_e_mg: number;
-};
-
-function addScaled(totals: NutritionTotals, m: IngredientMatch["matched"], amount_g: number) {
-  if (!m) return;
-  const f = amount_g / 100.0;
-  const add = (key: keyof NutritionTotals, v: number | null | undefined) => {
-    if (v == null) return;
-    // @ts-ignore
-    totals[key] += v * f;
-  };
-
-  add("calories_kcal", m.calories_kcal);
-  add("protein_g", m.protein_g);
-  add("fat_g", m.fat_g);
-  add("carbs_g", m.carbs_g);
-  add("fiber_g", m.fiber_g);
-  add("sodium_g", m.salt_eq_g);
-
-  add("potassium_mg", m.potassium_mg);
-  add("calcium_mg", m.calcium_mg);
-  add("phosphorus_mg", m.phosphorus_mg);
-  add("iron_mg", m.iron_mg);
-  add("zinc_mg", m.zinc_mg);
-  add("iodine_ug", m.iodine_ug);
-  add("cholesterol_mg", m.cholesterol_mg);
-
-  add("vitamin_b1_mg", m.vitamin_b1_mg);
-  add("vitamin_b2_mg", m.vitamin_b2_mg);
-  add("vitamin_b6_mg", m.vitamin_b6_mg);
-  add("vitamin_b12_ug", m.vitamin_b12_ug);
-  add("folic_acid_ug", m.folic_acid_ug);
-  add("vitamin_c_mg", m.vitamin_c_mg);
-  add("vitamin_a_ug", m.vitamin_a_ug);
-  add("vitamin_d_ug", m.vitamin_d_ug);
-  add("vitamin_k_ug", m.vitamin_k_ug);
-
-  // vitamin_e: dataset_ingredients は alpha/beta/gamma/delta を持つが、derived_recipes は合算を入れる
-  if (m.vitamin_e_alpha_mg != null) totals.vitamin_e_mg += m.vitamin_e_alpha_mg * f;
-}
-
-function emptyTotals(): NutritionTotals {
-  return {
-    calories_kcal: 0,
-    protein_g: 0,
-    fat_g: 0,
-    carbs_g: 0,
-    fiber_g: 0,
-    sugar_g: 0,
-    sodium_g: 0,
-    potassium_mg: 0,
-    calcium_mg: 0,
-    phosphorus_mg: 0,
-    iron_mg: 0,
-    zinc_mg: 0,
-    iodine_ug: 0,
-    cholesterol_mg: 0,
-    vitamin_b1_mg: 0,
-    vitamin_b2_mg: 0,
-    vitamin_b6_mg: 0,
-    vitamin_b12_ug: 0,
-    folic_acid_ug: 0,
-    vitamin_c_mg: 0,
-    vitamin_a_ug: 0,
-    vitamin_d_ug: 0,
-    vitamin_k_ug: 0,
-    vitamin_e_mg: 0,
-  };
-}
-
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
@@ -755,6 +662,9 @@ Deno.serve(async (req) => {
       if (m.skip) continue;
       addScaled(totals, m.matched, m.amount_g);
     }
+    // 糖質 = 炭水化物 − 食物繊維 (食材ごとに計算して合算)。炭水化物のデータがある食材が 1 つも当たらなかったときは、
+    // 0g と保存せず null (不明) にする (#1146)
+    const sugarG = hasSugarData(matches) ? totals.sugar_g : null;
 
     const effective = matches.filter((m) => !m.skip);
     const matchedCount = effective.filter((m) => m.matched).length;
@@ -804,7 +714,7 @@ Deno.serve(async (req) => {
         carbs_g: totals.carbs_g,
         sodium_g: totals.sodium_g,
         fiber_g: totals.fiber_g,
-        sugar_g: totals.sugar_g,
+        sugar_g: sugarG,
         potassium_mg: totals.potassium_mg,
         calcium_mg: totals.calcium_mg,
         phosphorus_mg: totals.phosphorus_mg,
@@ -834,7 +744,7 @@ Deno.serve(async (req) => {
         derived_recipe: saved,
         mapping_rate: mappingRate,
         ingredient_matches: matches,
-        nutrition_totals: totals,
+        nutrition_totals: { ...totals, sugar_g: sugarG },
         elapsed_ms: Date.now() - startedAt,
       });
     }); // withOpenAIUsageContext end

@@ -58,19 +58,22 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 // --- コンポーネント import (モック設定後) ---
+import { HttpNetworkError } from '@homegohan/core';
 import React from 'react';
 import { Pressable } from 'react-native';
 import AiSessionPage from '../../app/ai/[sessionId]';
+import { NETWORK_ERROR_MESSAGES } from '../../src/lib/api-error';
 
-/** 共通 API クライアント (packages/core) の失敗と同じ name を持つエラー */
-function namedError(name: string, message: string): Error {
-  const error = new Error(message);
-  error.name = name;
-  return error;
-}
-const timeoutError = () => namedError('TimeoutError', 'Request timed out after 75000ms: POST /api/ai/consultation/sessions/test-session-id/messages');
-const networkError = () => namedError('HttpNetworkError', 'Network request failed');
-const abortError = () => namedError('AbortError', 'The operation was aborted.');
+// 最初のテストでは、画面の読み込みと変換が走る。CI の --coverage (全ファイルの計装) や、
+// 他の処理で混み合った環境では、既定の 5 秒を超えることがあるので、余裕を持たせる
+jest.setTimeout(60_000);
+
+/** 共通 API クライアント (packages/core) が、待ち時間を過ぎたときに投げるエラー */
+const timeoutError = () => new HttpNetworkError('timeout', 'Request timed out after 75000ms', { timeoutMs: 75_000 });
+/** 同じく、通信が切れたとき (圏外・接続の切断など) に投げるエラー */
+const networkError = () => new HttpNetworkError('offline', 'Network request failed', { cause: new TypeError('Network request failed') });
+/** fetch が中断されたときの例外 (DOMException と同じ name) */
+const abortError = () => Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
 
 const PRIOR_MESSAGES = [
   { id: 'msg-1', role: 'user' as const, content: 'こんにちは', createdAt: '2026-04-01T10:00:00.000Z' },
@@ -236,10 +239,11 @@ describe('AiSessionPage — 通信が切れたとき', () => {
     await waitFor(() => {
       expect(screen.getByText('カレーはいかがですか？')).toBeTruthy();
     });
+    expect(screen.queryByText(/通信できません/)).toBeNull();
     expect(screen.queryByText(/Network request failed/)).toBeNull();
   });
 
-  it('返信が無ければ、元のエラーメッセージを知らせる (タイムアウト表示にはしない)', async () => {
+  it('返信が無ければ、「通信できません」と知らせる (タイムアウト表示にはしない。英語の技術的な文面も出さない)', async () => {
     await renderWithPriorMessages();
     mockPost.mockRejectedValueOnce(networkError());
     mockGet.mockResolvedValueOnce({ messages: PRIOR_MESSAGES });
@@ -247,8 +251,9 @@ describe('AiSessionPage — 通信が切れたとき', () => {
     await typeAndSend('夕食を教えて');
 
     await waitFor(() => {
-      expect(screen.getByText(/Network request failed/)).toBeTruthy();
+      expect(screen.getByText(NETWORK_ERROR_MESSAGES.offline)).toBeTruthy();
     });
+    expect(screen.queryByText(/Network request failed/)).toBeNull();
     expect(screen.queryByText(/タイムアウト/)).toBeNull();
     expect(screen.queryByText('夕食を教えて')).toBeNull();
   });
@@ -270,9 +275,9 @@ describe('AiSessionPage — サーバーが拒否したとき', () => {
   it('HTTP エラーは履歴を取り直さず、サーバーが返したメッセージを知らせて仮メッセージを消す', async () => {
     await renderWithPriorMessages();
     // サーバーのレート制限 (src/lib/rate-limit.ts の rateLimitExceededResponse) の本文
+    // 共通クライアントは、HTTP のエラー応答を `HTTP <status> <statusText>: <本文>` の Error にして投げる
     mockPost.mockRejectedValueOnce(
-      namedError(
-        'HttpError',
+      new Error(
         'HTTP 429 Too Many Requests: {"error":"リクエストが多すぎます。しばらく時間をおいてからお試しください。","code":"RATE_LIMITED","retryAfter":30}',
       ),
     );
@@ -291,12 +296,12 @@ describe('AiSessionPage — サーバーが拒否したとき', () => {
 
   it('本文が JSON でない HTTP エラー (ゲートウェイの HTML など) は、ステータスの文字列をそのまま知らせる', async () => {
     await renderWithPriorMessages();
-    mockPost.mockRejectedValueOnce(namedError('HttpError', 'HTTP 502 Bad Gateway'));
+    mockPost.mockRejectedValueOnce(new Error('HTTP 502 Bad Gateway: <html>Bad Gateway</html>'));
 
     await typeAndSend('夕食を教えて');
 
     await waitFor(() => {
-      expect(screen.getByText('HTTP 502 Bad Gateway')).toBeTruthy();
+      expect(screen.getByText('HTTP 502 Bad Gateway: <html>Bad Gateway</html>')).toBeTruthy();
     });
     expect(screen.queryByText('夕食を教えて')).toBeNull();
   });

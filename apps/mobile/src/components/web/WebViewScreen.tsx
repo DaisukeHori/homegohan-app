@@ -9,6 +9,7 @@ import { useNavigation, useRouter, useLocalSearchParams } from 'expo-router';
 import { getDownloadFailureNotice, handleWebViewDownload } from '../../lib/webViewDownload';
 import { getWebBaseUrl } from '../../lib/webBaseUrl';
 import { colors } from '../../theme/colors';
+import { useWebAuthMessages } from '../../lib/webViewAuthMessages';
 import { NATIVE_APP_TABS, findNativeAppTab } from '@homegohan/shared';
 import { supabase } from '../../lib/supabase';
 
@@ -109,6 +110,8 @@ true;
 
 const WebViewScreenBody: React.FC<Props & { onRetry: () => void }> = ({ path, testID, onRetry }) => {
   const webViewRef = useRef<WebView>(null);
+  // Web 側のログアウト・セッション失効の通知 (sign-out / session-expired) をネイティブに反映する (#1038 F7-04 / F7-05)
+  const handleAuthMessage = useWebAuthMessages(path);
   const [uri, setUri] = useState<string | null>(null);
   const [injectedJS, setInjectedJS] = useState<string>('');
   const navigation = useNavigation();
@@ -276,6 +279,9 @@ const WebViewScreenBody: React.FC<Props & { onRetry: () => void }> = ({ path, te
                 const notice = getDownloadFailureNotice(result);
                 if (notice) Alert.alert(notice.title, notice.message);
               });
+            } else if (data.type === 'sign-out' || data.type === 'session-expired') {
+              // Web 側でログアウトした / Web 側のセッションが切れた。送り元の検証と処理は useWebAuthMessages に集約している
+              handleAuthMessage(data, event.nativeEvent.url);
             }
           } catch {
             // JSON パース失敗は無視

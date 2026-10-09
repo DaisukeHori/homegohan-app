@@ -2,11 +2,11 @@
  * ai-chat.test.ts
  * src/lib/aiChat.ts のテスト (#1049 F7-18)
  *
- * 共通 API クライアント (packages/core) のエラーは name で見分けているので、
- * 本物のエラークラスを使って、名前が変わっても気付けるようにしておく。
+ * 共通 API クライアント (packages/core) のエラーは isHttpNetworkError() / kind で見分けているので、
+ * モックではなく本物のエラークラス・本物のクライアントを使って、仕様が変わったときに気付けるようにしておく。
  */
 
-import { HttpError, HttpNetworkError, HttpParseError, HttpTimeoutError } from '@homegohan/core';
+import { createHttpClient, HttpNetworkError, HttpParseError } from '@homegohan/core';
 
 import {
   AI_CHAT_TIMEOUT_MESSAGE,
@@ -25,14 +25,14 @@ function domAbortError(): Error {
 }
 
 describe('isUncertainSendFailure / isTimeoutFailure', () => {
-  it('タイムアウト (HttpTimeoutError) は「届いたか分からない」失敗で、時間切れでもある', () => {
-    const error = new HttpTimeoutError(75_000, 'POST', '/api/x');
+  it('待ち時間切れ (HttpNetworkError の kind: timeout) は「届いたか分からない」失敗で、時間切れでもある', () => {
+    const error = new HttpNetworkError('timeout', 'Request timed out after 75000ms', { timeoutMs: 75_000 });
     expect(isUncertainSendFailure(error)).toBe(true);
     expect(isTimeoutFailure(error)).toBe(true);
   });
 
-  it('通信の切断 (HttpNetworkError) は「届いたか分からない」失敗だが、時間切れではない', () => {
-    const error = new HttpNetworkError(new TypeError('Network request failed'));
+  it('通信の切断 (HttpNetworkError の kind: offline) は「届いたか分からない」失敗だが、時間切れではない', () => {
+    const error = new HttpNetworkError('offline', 'Network request failed', { cause: new TypeError('Network request failed') });
     expect(isUncertainSendFailure(error)).toBe(true);
     expect(isTimeoutFailure(error)).toBe(false);
   });
@@ -42,24 +42,90 @@ describe('isUncertainSendFailure / isTimeoutFailure', () => {
     expect(isTimeoutFailure(domAbortError())).toBe(true);
   });
 
-  it('HTTP のエラー応答 (HttpError) は、サーバーが処理しなかったと分かるので対象外', () => {
-    const error = new HttpError({
-      status: 429,
-      statusText: 'Too Many Requests',
-      body: '{"error":"rate limited"}',
-      message: 'HTTP 429 Too Many Requests',
-    });
+  it('HTTP のエラー応答 (429 など) は、サーバーが処理しなかったと分かるので対象外', () => {
+    const error = new Error('HTTP 429 Too Many Requests: {"error":"rate limited"}');
     expect(isUncertainSendFailure(error)).toBe(false);
     expect(isTimeoutFailure(error)).toBe(false);
   });
 
   it('JSON でない 2xx (HttpParseError) や普通のエラー、エラーでない値は対象外', () => {
-    expect(isUncertainSendFailure(new HttpParseError({ status: 200, statusText: 'OK', body: '<html>' }))).toBe(false);
+    expect(isUncertainSendFailure(new HttpParseError('x', { status: 200 }))).toBe(false);
+    expect(isTimeoutFailure(new HttpParseError('x', { status: 200 }))).toBe(false);
     expect(isUncertainSendFailure(new Error('boom'))).toBe(false);
     expect(isUncertainSendFailure(null)).toBe(false);
     expect(isUncertainSendFailure(undefined)).toBe(false);
     expect(isUncertainSendFailure('TimeoutError')).toBe(false);
     expect(isTimeoutFailure(null)).toBe(false);
+  });
+});
+
+describe('isUncertainSendFailure / isTimeoutFailure — 本物の共通クライアントが投げるエラー', () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
+    try {
+      await promise;
+    } catch (e) {
+      return e;
+    }
+    throw new Error('rejected されませんでした');
+  }
+
+  function respondWith(status: number, statusText: string, body: string) {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: status >= 200 && status < 300,
+      status,
+      statusText,
+      text: async () => body,
+    }) as unknown as typeof fetch;
+  }
+
+  const client = (timeoutMs?: number) => createHttpClient({ baseUrl: 'https://api.example.com', retry: false, timeoutMs });
+
+  it('待ち時間を過ぎたら、届いたか分からない失敗かつ時間切れ', async () => {
+    // abort されたら AbortError で失敗する、本物の fetch と同じ動きの fetch (応答は返さない)
+    global.fetch = jest.fn((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(domAbortError()));
+      });
+    }) as unknown as typeof fetch;
+
+    const error = await rejectionOf(client(20).post('/api/ai/consultation/sessions/s1/messages', { message: 'こんにちは' }));
+
+    expect(isUncertainSendFailure(error)).toBe(true);
+    expect(isTimeoutFailure(error)).toBe(true);
+  });
+
+  it('通信が切れたら、届いたか分からない失敗だが時間切れではない', async () => {
+    global.fetch = jest.fn().mockRejectedValue(new TypeError('Network request failed')) as unknown as typeof fetch;
+
+    const error = await rejectionOf(client().post('/api/ai/consultation/sessions/s1/messages', { message: 'こんにちは' }));
+
+    expect(isUncertainSendFailure(error)).toBe(true);
+    expect(isTimeoutFailure(error)).toBe(false);
+  });
+
+  it('レート制限 (429) のようなエラー応答は、どちらでもない (サーバーが受け取って断った)', async () => {
+    respondWith(429, 'Too Many Requests', JSON.stringify({ error: 'リクエストが多すぎます。' }));
+
+    const error = await rejectionOf(client().post('/api/ai/consultation/sessions/s1/messages', { message: 'こんにちは' }));
+
+    expect(isUncertainSendFailure(error)).toBe(false);
+    expect(isTimeoutFailure(error)).toBe(false);
+  });
+
+  it('200 なのに JSON でない応答 (HttpParseError) も、どちらでもない', async () => {
+    respondWith(200, 'OK', '<html>Wi-Fi ログイン</html>');
+
+    const error = await rejectionOf(client().post('/api/ai/consultation/sessions/s1/messages', { message: 'こんにちは' }));
+
+    expect(error).toBeInstanceOf(HttpParseError);
+    expect(isUncertainSendFailure(error)).toBe(false);
+    expect(isTimeoutFailure(error)).toBe(false);
   });
 });
 

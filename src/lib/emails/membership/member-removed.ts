@@ -1,6 +1,8 @@
 // src/lib/emails/membership/member-removed.ts
 // (設計書 04-email-templates.md §6.1 — 家族グループ / 組織から外されたメンバー本人への通知メール、#1160)
-import type { EmailEnvelope } from './templates';
+import type { EmailEnvelope } from '../envelope';
+import { emailSignature } from '../common';
+import { getEmailFrom, getSupportEmail } from '@/lib/site-config';
 import {
   describeScope,
   describeScopeForSubject,
@@ -29,7 +31,7 @@ export function renderMemberRemovedEmail(vars: MemberRemovedEmailVars): EmailEnv
   return {
     template: 'member_removed',
     to: vars.to_email,
-    from: 'ほめゴハン <noreply@homegohan.app>',
+    from: getEmailFrom(),
     subject: `【ほめゴハン】${describeScopeForSubject(vars.scope, vars.scope_name)}から外されました`,
     text: `ほめゴハンをご利用いただきありがとうございます。
 
@@ -38,11 +40,9 @@ ${describeScope(vars.scope, vars.scope_name)}のメンバーから外されま�
 あなたのほめゴハンの個人アカウントは、引き続きご利用いただけます。
 ${label}で記録した個人データも、あなたのアカウントに残ります。
 
-心当たりがない場合や、ご不明な点がございましたら support@homegohan.app までお問い合わせください。
+心当たりがない場合や、ご不明な点がございましたら ${getSupportEmail()} までお問い合わせください。
 
-─────────────────
-ほめゴハン
-https://homegohan.app
+${emailSignature()}
 `,
   };
 }

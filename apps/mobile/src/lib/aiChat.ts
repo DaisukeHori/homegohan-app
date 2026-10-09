@@ -13,6 +13,8 @@
  * 返信が届いていたかを確かめる。
  */
 
+import { isHttpNetworkError } from '@homegohan/core';
+
 /**
  * AI 相談 1 通の送信を待つ上限 (ミリ秒)。
  * サーバーは AI 呼び出し最大 25 秒 (失敗時は直接 OpenAI へ再度 25 秒) + 重要度判定最大 5 秒 + 保存で、
@@ -43,24 +45,27 @@ export type AiChatPostResponse = {
   actionExecuted?: boolean;
 };
 
+/** fetch が中断されたときの例外 (DOMException / Error の name が AbortError) */
+function isAbortError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { name?: unknown }).name === 'AbortError';
+}
+
 /**
  * 送信がサーバーに届いたかどうか分からない失敗か。
- * タイムアウト・通信の切断・呼び出し側の中断。このときは履歴を取り直して確かめる。
+ * 応答を受け取れなかったとき (共通 API クライアントの HttpNetworkError。待ち時間切れ 'timeout' も、通信の切断 'offline' も)
+ * と、呼び出し側の中断 (AbortError)。このときは履歴を取り直して確かめる。
  * HTTP のエラー応答 (4xx / 5xx) は、サーバーが処理しなかったと分かるので含めない。
- *
- * 共通 API クライアント (packages/core) のエラーは name で見分ける:
- *   HttpTimeoutError.name = 'TimeoutError' / HttpNetworkError.name = 'HttpNetworkError'
- * (名前が変わったら __tests__/lib/ai-chat.test.ts が落ちる)
+ * 成功 (2xx) なのに本文が JSON でなかった (HttpParseError) ときも、サーバーが処理を終えたかどうかは分からないが、
+ * 送信そのものは届いている (応答を受け取れている) ので、ここでは対象外にする。
  */
 export function isUncertainSendFailure(error: unknown): boolean {
-  const name = typeof error === 'object' && error !== null ? (error as { name?: unknown }).name : undefined;
-  return name === 'TimeoutError' || name === 'HttpNetworkError' || name === 'AbortError';
+  return isHttpNetworkError(error) || isAbortError(error);
 }
 
 /** isUncertainSendFailure のうち、時間切れ (タイムアウト) のもの。文言をタイムアウト用にする */
 export function isTimeoutFailure(error: unknown): boolean {
-  const name = typeof error === 'object' && error !== null ? (error as { name?: unknown }).name : undefined;
-  return name === 'TimeoutError' || name === 'AbortError';
+  if (isHttpNetworkError(error)) return error.kind === 'timeout';
+  return isAbortError(error);
 }
 
 /**

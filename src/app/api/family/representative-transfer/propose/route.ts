@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
+import { buildFamilyTransferAcceptUrl } from '@/lib/membership/urls';
 import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure } from '@/lib/emails/send-result';
 import { renderFamilyTransferProposedEmail } from '@/lib/emails/membership/family-transfer-proposed';
@@ -94,9 +95,9 @@ export async function POST(request: Request) {
         .eq('id', parsed.family_id)
         .single();
 
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://homegohan.app';
       const proposalId = typeof data === 'string' ? data : (data as { proposal_id?: string })?.proposal_id ?? '';
-      const acceptUrl = `${baseUrl}/family/transfer-accept/${proposalId}`;
+      // リンクの基点は src/lib/membership/urls.ts に 1 つだけある (#1194)
+      const acceptUrl = buildFamilyTransferAcceptUrl(proposalId);
 
       const envelope = renderFamilyTransferProposedEmail({
         to_email: toEmail,

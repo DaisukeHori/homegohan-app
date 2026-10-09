@@ -1,0 +1,339 @@
+// @vitest-environment node
+//
+// #1211: 集計期間 (daily / weekly / monthly / all_time) の境界が、実行環境のタイムゾーンではなく
+// JST (Asia/Tokyo, UTC+9) の暦で決まることの単体テスト。
+//
+// - Edge Functions 用: supabase/functions/_shared/jst-date.ts の calculateJstPeriod / jstDayRangeToTimestamps
+// - Web 用            : src/lib/date-utils.ts → packages/shared の calculatePeriodLocal
+//
+// 以前は calculate-segment-stats (Edge Function) と /api/comparison/rankings (Next.js) が、それぞれ
+// new Date().getDay() / getDate() / getMonth() (実行環境のローカル時刻。どちらも UTC) で期間を求めていた。
+// UTC の暦だと、JST の 00:00〜08:59 の 9 時間はまだ「前日」なので、月曜の早朝は日曜日扱いで週の開始日が
+// 1 週間前の月曜になり、月初の早朝は前月、毎日の早朝は前日の期間になっていた。
+// 2 つの実装が同じ期間を返すこと (パリティ) は、保存側 (Edge) と読み出し側 (Web) の period_start が
+// 食い違わないための条件なので、あわせて確かめる。tests/jst-date.test.ts と同じ並びで書いている。
+//
+// 期待値は、実装とは別の計算 (Python の datetime で JST の暦を引いたもの) で求めた固定値。
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { calculatePeriodLocal } from "../src/lib/date-utils";
+import { calculateJstPeriod, jstDayRangeToTimestamps } from "../supabase/functions/_shared/jst-date.ts";
+
+type Period = { periodStart: string; periodEnd: string };
+type Calculator = (periodType: string, now?: Date) => Period;
+
+const implementations: Array<[string, Calculator]> = [
+  ["Edge 用 calculateJstPeriod", calculateJstPeriod],
+  ["Web 用 calculatePeriodLocal", (periodType, now) => calculatePeriodLocal(periodType, now)],
+];
+
+const period = (periodStart: string, periodEnd: string): Period => ({ periodStart, periodEnd });
+
+const originalTz = process.env.TZ;
+
+afterEach(() => {
+  vi.useRealTimers();
+  if (originalTz === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTz;
+});
+
+/**
+ * 日付の変わり目・月またぎ・年またぎ・うるう日を中心にした固定の時刻と、その時刻が属する JST の期間。
+ * [UTC の時刻, JST での時刻, daily, weekly, monthly]
+ */
+const CASES: Array<[string, string, Period, Period, Period]> = [
+  // 週の境界 (2026-07-13 は月曜日)
+  ["2026-07-12T14:59:59.999Z", "日 7/12 23:59:59.999", period("2026-07-12", "2026-07-12"), period("2026-07-06", "2026-07-12"), period("2026-07-01", "2026-07-31")],
+  ["2026-07-12T15:00:00.000Z", "月 7/13 00:00:00.000", period("2026-07-13", "2026-07-13"), period("2026-07-13", "2026-07-19"), period("2026-07-01", "2026-07-31")],
+  ["2026-07-12T23:59:59.999Z", "月 7/13 08:59:59.999", period("2026-07-13", "2026-07-13"), period("2026-07-13", "2026-07-19"), period("2026-07-01", "2026-07-31")],
+  ["2026-07-13T00:00:00.000Z", "月 7/13 09:00:00.000", period("2026-07-13", "2026-07-13"), period("2026-07-13", "2026-07-19"), period("2026-07-01", "2026-07-31")],
+  ["2026-07-19T14:59:59.999Z", "日 7/19 23:59:59.999", period("2026-07-19", "2026-07-19"), period("2026-07-13", "2026-07-19"), period("2026-07-01", "2026-07-31")],
+  ["2026-07-19T15:00:00.000Z", "月 7/20 00:00:00.000", period("2026-07-20", "2026-07-20"), period("2026-07-20", "2026-07-26"), period("2026-07-01", "2026-07-31")],
+  // 月の境界
+  ["2026-07-31T14:59:59.999Z", "金 7/31 23:59:59.999", period("2026-07-31", "2026-07-31"), period("2026-07-27", "2026-08-02"), period("2026-07-01", "2026-07-31")],
+  ["2026-07-31T15:00:00.000Z", "土 8/1 00:00:00.000", period("2026-08-01", "2026-08-01"), period("2026-07-27", "2026-08-02"), period("2026-08-01", "2026-08-31")],
+  ["2026-06-30T15:00:00.000Z", "水 7/1 00:00:00.000", period("2026-07-01", "2026-07-01"), period("2026-06-29", "2026-07-05"), period("2026-07-01", "2026-07-31")],
+  ["2026-08-31T15:00:00.000Z", "火 9/1 00:00:00.000", period("2026-09-01", "2026-09-01"), period("2026-08-31", "2026-09-06"), period("2026-09-01", "2026-09-30")],
+  // 年またぎ
+  ["2026-12-31T15:00:00.000Z", "金 2027/1/1 00:00:00.000", period("2027-01-01", "2027-01-01"), period("2026-12-28", "2027-01-03"), period("2027-01-01", "2027-01-31")],
+  ["2027-01-03T15:00:00.000Z", "月 2027/1/4 00:00:00.000", period("2027-01-04", "2027-01-04"), period("2027-01-04", "2027-01-10"), period("2027-01-01", "2027-01-31")],
+  // うるう年・うるう日
+  ["2028-01-31T15:00:00.000Z", "火 2028/2/1 00:00:00.000", period("2028-02-01", "2028-02-01"), period("2028-01-31", "2028-02-06"), period("2028-02-01", "2028-02-29")],
+  ["2028-02-28T15:00:00.000Z", "火 2028/2/29 00:00:00.000", period("2028-02-29", "2028-02-29"), period("2028-02-28", "2028-03-05"), period("2028-02-01", "2028-02-29")],
+  ["2028-02-29T15:00:00.000Z", "水 2028/3/1 00:00:00.000", period("2028-03-01", "2028-03-01"), period("2028-02-28", "2028-03-05"), period("2028-03-01", "2028-03-31")],
+  // うるう年でない年の 2 月
+  ["2027-01-31T15:00:00.000Z", "月 2027/2/1 00:00:00.000", period("2027-02-01", "2027-02-01"), period("2027-02-01", "2027-02-07"), period("2027-02-01", "2027-02-28")],
+];
+
+/** all_time は開始日が固定 (2024-01-01) で、終了日は JST の今日 */
+const ALL_TIME_CASES: Array<[string, Period]> = [
+  ["2026-07-12T14:59:59.999Z", period("2024-01-01", "2026-07-12")],
+  ["2026-07-12T15:00:00.000Z", period("2024-01-01", "2026-07-13")],
+  ["2026-12-31T15:00:00.000Z", period("2024-01-01", "2027-01-01")],
+];
+
+/** 知らない periodType は「JST の今日の 7 日前 〜 今日」 */
+const UNKNOWN_CASES: Array<[string, Period]> = [
+  ["2026-07-12T14:59:59.999Z", period("2026-07-05", "2026-07-12")],
+  ["2026-07-12T15:00:00.000Z", period("2026-07-06", "2026-07-13")],
+  ["2026-03-03T15:00:00.000Z", period("2026-02-25", "2026-03-04")], // うるう年でない年の 2 月をまたぐ
+  ["2028-03-03T15:00:00.000Z", period("2028-02-26", "2028-03-04")], // うるう日をまたぐ
+];
+
+describe.each(implementations)("%s: 期間の境界は JST の暦で決まる (#1211)", (_name, calc) => {
+  it.each(CASES)("%s (JST %s): daily / weekly / monthly", (utc, _jst, daily, weekly, monthly) => {
+    const now = new Date(utc);
+    expect(calc("daily", now)).toEqual(daily);
+    expect(calc("weekly", now)).toEqual(weekly);
+    expect(calc("monthly", now)).toEqual(monthly);
+  });
+
+  it("Issue の再現例: JST 月曜 0:00〜8:59 (UTC はまだ日曜) の週は、前の週ではなく、その月曜から始まる週", () => {
+    // 修正前は getDay() が UTC の日曜日になり、週の開始日が 1 週間前の月曜 (2026-07-06) になっていた
+    for (const utc of ["2026-07-12T15:00:00.000Z", "2026-07-12T20:00:00.000Z", "2026-07-12T23:59:59.999Z"]) {
+      expect(calc("weekly", new Date(utc)), utc).toEqual(period("2026-07-13", "2026-07-19"));
+    }
+  });
+
+  it("週は月曜日始まりの 7 日間。JST の月曜 0:00 から日曜 23:59 までの 168 時間は、1 時間刻みで同じ週", () => {
+    const mondayStart = Date.parse("2026-07-12T15:00:00.000Z"); // JST 月曜 7/13 0:00
+    for (let h = 0; h < 7 * 24; h++) {
+      const now = new Date(mondayStart + h * 3_600_000);
+      expect(calc("weekly", now), now.toISOString()).toEqual(period("2026-07-13", "2026-07-19"));
+    }
+    // 168 時間目 (次の月曜 0:00) で次の週になる
+    expect(calc("weekly", new Date(mondayStart + 7 * 24 * 3_600_000))).toEqual(period("2026-07-20", "2026-07-26"));
+    // その 1 ミリ秒前はまだ同じ週
+    expect(calc("weekly", new Date(mondayStart + 7 * 24 * 3_600_000 - 1))).toEqual(period("2026-07-13", "2026-07-19"));
+  });
+
+  it("月は 1 日から末日まで。JST の 1 日 0:00 ちょうどで翌月になる", () => {
+    expect(calc("monthly", new Date("2026-07-31T14:59:59.999Z"))).toEqual(period("2026-07-01", "2026-07-31"));
+    expect(calc("monthly", new Date("2026-07-31T15:00:00.000Z"))).toEqual(period("2026-08-01", "2026-08-31"));
+  });
+
+  it("毎日 (daily) は開始日と終了日が同じ日で、JST の 0 時ちょうどで日が変わる", () => {
+    expect(calc("daily", new Date("2026-07-12T14:59:59.999Z"))).toEqual(period("2026-07-12", "2026-07-12"));
+    expect(calc("daily", new Date("2026-07-12T15:00:00.000Z"))).toEqual(period("2026-07-13", "2026-07-13"));
+  });
+
+  it.each(ALL_TIME_CASES)("all_time: %s → 2024-01-01 から JST の今日まで", (utc, expected) => {
+    expect(calc("all_time", new Date(utc))).toEqual(expected);
+  });
+
+  it.each(UNKNOWN_CASES)("知らない periodType: %s → 7 日前から JST の今日まで (従来どおりの形)", (utc, expected) => {
+    expect(calc("yearly", new Date(utc))).toEqual(expected);
+    expect(calc("", new Date(utc))).toEqual(expected);
+  });
+
+  it("YYYY-MM-DD (ゼロ埋め) で返す", () => {
+    for (const type of ["daily", "weekly", "monthly", "all_time", "other"]) {
+      const result = calc(type, new Date("2026-01-05T00:00:00Z"));
+      expect(result.periodStart, type).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(result.periodEnd, type).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+    expect(calc("weekly", new Date("2026-01-05T00:00:00Z"))).toEqual(period("2026-01-05", "2026-01-11"));
+  });
+
+  it("期間は JST の今日を含み、daily は 1 日・weekly は月曜始まりの 7 日・monthly は 1 日から末日までの 28〜31 日", () => {
+    const day = (iso: string) => Date.parse(`${iso}T00:00:00Z`);
+    const days = (p: Period) => (day(p.periodEnd) - day(p.periodStart)) / 86_400_000 + 1;
+    // 3 日 7 時間 13 分刻みで走査する (時刻と曜日が少しずつずれるので、1 日のどの時間帯・どの曜日も通る)
+    for (let t = day("2026-01-01"); t < day("2028-03-10"); t += (3 * 24 + 7) * 3_600_000 + 13 * 60_000) {
+      const now = new Date(t);
+      const jstToday = new Date(t + 9 * 3_600_000).toISOString().slice(0, 10); // この関数とは別に求めた JST の今日
+      const label = `${now.toISOString()} (JST ${jstToday})`;
+
+      const daily = calc("daily", now);
+      expect(days(daily), label).toBe(1);
+      expect(daily.periodStart, label).toBe(jstToday);
+
+      const weekly = calc("weekly", now);
+      expect(days(weekly), label).toBe(7);
+      expect(new Date(day(weekly.periodStart)).getUTCDay(), `${label} weekly は月曜始まり`).toBe(1);
+      expect(day(weekly.periodStart) <= day(jstToday) && day(jstToday) <= day(weekly.periodEnd), `${label} weekly は今日を含む`).toBe(true);
+
+      const monthly = calc("monthly", now);
+      expect(monthly.periodStart, label).toBe(`${jstToday.slice(0, 8)}01`);
+      expect([28, 29, 30, 31], label).toContain(days(monthly));
+      expect(new Date(day(monthly.periodEnd) + 86_400_000).getUTCDate(), `${label} monthly は末日で終わる`).toBe(1);
+      expect(monthly.periodEnd >= jstToday, `${label} monthly は今日を含む`).toBe(true);
+    }
+  }, 30_000);
+
+  it("now を省略したときは、現在時刻を基準にする (JST 0 時で日が変わる)", () => {
+    vi.useFakeTimers();
+
+    vi.setSystemTime(new Date("2026-07-12T14:59:59.999Z")); // JST 日曜 7/12 23:59:59.999
+    expect(calc("weekly")).toEqual(period("2026-07-06", "2026-07-12"));
+
+    vi.setSystemTime(new Date("2026-07-12T15:00:00.000Z")); // JST 月曜 7/13 0:00
+    expect(calc("weekly")).toEqual(period("2026-07-13", "2026-07-19"));
+  });
+
+  it("now を渡したときは、システム時計ではなく now を基準にする", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
+    expect(calc("weekly", new Date("2026-07-12T16:00:00Z"))).toEqual(period("2026-07-13", "2026-07-19"));
+  });
+
+  it("不正な Date は黙って変な日付を返さず、例外にする", () => {
+    for (const type of ["daily", "weekly", "monthly", "all_time", "other"]) {
+      expect(() => calc(type, new Date(Number.NaN)), type).toThrow(RangeError);
+    }
+  });
+});
+
+describe("実行環境のタイムゾーンに依存しない (#1211)", () => {
+  // UTC からの偏移が 0・正・負・サマータイムありの実行環境。Deno (Supabase) と Vercel は UTC だが、
+  // 手元の開発機やテスト環境の TZ が何であっても、同じ期間になること
+  const timeZones = ["UTC", "Asia/Tokyo", "Pacific/Kiritimati", "Pacific/Midway", "America/Los_Angeles", "Europe/London"];
+
+  it.each(implementations)("%s: どのタイムゾーンの実行環境でも、固定の期待値と同じ", (_name, calc) => {
+    for (const tz of timeZones) {
+      process.env.TZ = tz;
+      for (const [utc, jst, daily, weekly, monthly] of CASES) {
+        const now = new Date(utc);
+        expect(calc("daily", now), `${tz} ${utc} (JST ${jst}) daily`).toEqual(daily);
+        expect(calc("weekly", now), `${tz} ${utc} (JST ${jst}) weekly`).toEqual(weekly);
+        expect(calc("monthly", now), `${tz} ${utc} (JST ${jst}) monthly`).toEqual(monthly);
+      }
+      for (const [utc, expected] of ALL_TIME_CASES) {
+        expect(calc("all_time", new Date(utc)), `${tz} ${utc} all_time`).toEqual(expected);
+      }
+      for (const [utc, expected] of UNKNOWN_CASES) {
+        expect(calc("other", new Date(utc)), `${tz} ${utc} other`).toEqual(expected);
+      }
+    }
+  });
+
+  // 修正前の求め方 (実行環境のローカル時刻の getDay() / getDate() / getMonth() で求めて、toISOString() で UTC の暦日にする)。
+  // 実行環境のタイムゾーンしだいで答えが変わることと、JST 月曜の早朝に前の週になることを示す対照実験
+  function legacyWeekly(now: Date): Period {
+    const dayOfWeek = now.getDay();
+    const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diff);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    return { periodStart: start.toISOString().split("T")[0], periodEnd: end.toISOString().split("T")[0] };
+  }
+
+  it("（対照実験）修正前の求め方は、UTC の実行環境では JST 月曜の早朝に前の週を返し、JST の実行環境でも日付がずれる", () => {
+    const jstMondayMidnight = new Date("2026-07-12T15:00:00.000Z"); // JST 月曜 7/13 0:00
+
+    process.env.TZ = "UTC"; // Supabase の Edge Runtime (Deno) と Vercel の実行環境
+    expect(legacyWeekly(jstMondayMidnight)).toEqual(period("2026-07-06", "2026-07-12")); // 前の週 (Issue の不具合)
+
+    process.env.TZ = "Asia/Tokyo"; // 日本の開発機: 週は合うが、ローカルの 0 時を UTC の暦日にするので 1 日前になる
+    expect(legacyWeekly(jstMondayMidnight)).toEqual(period("2026-07-12", "2026-07-18"));
+
+    // 修正後は、どちらの環境でも同じ (正しい) 週
+    for (const tz of ["UTC", "Asia/Tokyo"]) {
+      process.env.TZ = tz;
+      expect(calculateJstPeriod("weekly", jstMondayMidnight), tz).toEqual(period("2026-07-13", "2026-07-19"));
+      expect(calculatePeriodLocal("weekly", jstMondayMidnight), tz).toEqual(period("2026-07-13", "2026-07-19"));
+    }
+  });
+});
+
+describe("Edge 用 (calculateJstPeriod) と Web 用 (calculatePeriodLocal) の一致 (#1211)", () => {
+  /** start から end まで stepMinutes 刻みの時刻 */
+  function* sweep(startIso: string, endIso: string, stepMinutes: number) {
+    const end = new Date(endIso).getTime();
+    for (let t = new Date(startIso).getTime(); t <= end; t += stepMinutes * 60_000) {
+      yield new Date(t);
+    }
+  }
+
+  it("年末年始・うるう日・月またぎ・週またぎを 97 分刻みで走査しても、すべての periodType で同じ期間", () => {
+    const ranges: Array<[string, string]> = [
+      ["2026-12-27T00:00:00Z", "2027-01-04T00:00:00Z"], // 年またぎ (週またぎも含む)
+      ["2028-02-27T00:00:00Z", "2028-03-02T00:00:00Z"], // うるう日
+      ["2026-07-11T00:00:00Z", "2026-07-14T12:00:00Z"], // 週またぎ (7/13 月曜)
+      ["2026-07-30T00:00:00Z", "2026-08-02T12:00:00Z"], // 月またぎ (8/1)
+      ["2027-02-27T00:00:00Z", "2027-03-02T00:00:00Z"], // うるう年でない年の 2 月末
+    ];
+    let checked = 0;
+    for (const [start, end] of ranges) {
+      for (const d of sweep(start, end, 97)) {
+        for (const type of ["daily", "weekly", "monthly", "all_time", "other"]) {
+          expect(calculateJstPeriod(type, d), `${type} ${d.toISOString()}`).toEqual(calculatePeriodLocal(type, d));
+        }
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(250);
+  }, 30_000);
+
+  it("JST 0 時ちょうどの前後 1 ミリ秒でも、すべての periodType で同じ期間", () => {
+    for (const midnightUtc of [
+      "2026-07-12T15:00:00.000Z", // 月曜 0 時
+      "2026-07-31T15:00:00.000Z", // 月初 0 時
+      "2026-12-31T15:00:00.000Z", // 元日 0 時
+      "2028-02-28T15:00:00.000Z", // うるう日 0 時
+    ]) {
+      const t = new Date(midnightUtc).getTime();
+      for (const d of [new Date(t - 1), new Date(t), new Date(t + 1)]) {
+        for (const type of ["daily", "weekly", "monthly", "all_time", "other"]) {
+          expect(calculateJstPeriod(type, d), `${type} ${d.toISOString()}`).toEqual(calculatePeriodLocal(type, d));
+        }
+      }
+    }
+  });
+
+  it("now を省略した場合も、同じ現在時刻なら同じ期間", () => {
+    vi.useFakeTimers();
+    for (const nowUtc of ["2026-07-12T15:00:00.000Z", "2026-07-12T23:59:59.999Z", "2026-07-13T14:59:59.999Z", "2026-07-31T15:00:00.000Z"]) {
+      vi.setSystemTime(new Date(nowUtc));
+      for (const type of ["daily", "weekly", "monthly", "all_time", "other"]) {
+        expect(calculateJstPeriod(type), `${type} ${nowUtc}`).toEqual(calculatePeriodLocal(type));
+      }
+    }
+  });
+});
+
+describe("jstDayRangeToTimestamps: JST の暦日の範囲を、timestamptz 列を絞る時刻の範囲にする (#1211)", () => {
+  it("開始日の JST 0 時 (含む) から、終了日の翌日の JST 0 時 (含まない) まで", () => {
+    // 2026-07-13 (月) の週: JST 7/13 0:00 = UTC 7/12 15:00。終了日 7/19 の翌日 JST 7/20 0:00 = UTC 7/19 15:00
+    expect(jstDayRangeToTimestamps("2026-07-13", "2026-07-19")).toEqual({
+      from: "2026-07-12T15:00:00.000Z",
+      before: "2026-07-19T15:00:00.000Z",
+    });
+  });
+
+  it("1 日だけの範囲は、ちょうど 24 時間", () => {
+    expect(jstDayRangeToTimestamps("2026-07-13", "2026-07-13")).toEqual({
+      from: "2026-07-12T15:00:00.000Z",
+      before: "2026-07-13T15:00:00.000Z",
+    });
+  });
+
+  it("月末・年末・うるう日をまたいでも、終了日の翌日の 0 時になる", () => {
+    expect(jstDayRangeToTimestamps("2026-07-01", "2026-07-31")).toEqual({
+      from: "2026-06-30T15:00:00.000Z",
+      before: "2026-07-31T15:00:00.000Z",
+    });
+    expect(jstDayRangeToTimestamps("2026-12-31", "2026-12-31").before).toBe("2026-12-31T15:00:00.000Z");
+    expect(jstDayRangeToTimestamps("2028-02-29", "2028-02-29")).toEqual({
+      from: "2028-02-28T15:00:00.000Z",
+      before: "2028-02-29T15:00:00.000Z",
+    });
+  });
+
+  it("calculateJstPeriod の週と組み合わせると、JST の月曜 0:00〜日曜 23:59:59.999 の食事だけが範囲に入る", () => {
+    const { periodStart, periodEnd } = calculateJstPeriod("weekly", new Date("2026-07-12T15:00:00.000Z"));
+    const { from, before } = jstDayRangeToTimestamps(periodStart, periodEnd);
+    const inRange = (iso: string) => Date.parse(iso) >= Date.parse(from) && Date.parse(iso) < Date.parse(before);
+
+    expect(inRange("2026-07-12T14:59:59.999Z")).toBe(false); // JST 日曜 7/12 23:59:59.999 (前の週)
+    expect(inRange("2026-07-12T15:00:00.000Z")).toBe(true); // JST 月曜 7/13 0:00:00
+    expect(inRange("2026-07-19T14:59:59.999Z")).toBe(true); // JST 日曜 7/19 23:59:59.999
+    expect(inRange("2026-07-19T15:00:00.000Z")).toBe(false); // JST 月曜 7/20 0:00:00 (次の週)
+  });
+
+  it("不正な日付は黙って変な範囲を返さず、例外にする", () => {
+    expect(() => jstDayRangeToTimestamps("not-a-date", "2026-07-19")).toThrow(RangeError);
+    expect(() => jstDayRangeToTimestamps("2026-07-13", "")).toThrow(RangeError);
+  });
+});

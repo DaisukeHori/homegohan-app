@@ -45,6 +45,7 @@ EXPO_PUBLIC_APP_ENV=development
 | `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY` | 必須 | Supabase への接続 |
 | `EXPO_PUBLIC_API_BASE_URL` | 必須 | Next.js API の呼び出し先 (`src/lib/api.ts`) |
 | `EXPO_PUBLIC_WEB_URL` | 任意 | Web 版のオリジン。WebView の表示先と「Web版を開く」リンク。未設定なら `https://homegohan-app.vercel.app` |
+| `EXPO_PUBLIC_SUPPORT_EMAIL` | 任意 | 設定画面・プロフィール画面の「お問い合わせ」の宛先 (`src/lib/siteConfig.ts`)。未設定なら既定のアドレス |
 | `EXPO_PUBLIC_APP_ENV` | 任意 | `development` / `preview` / `production` |
 | `EXPO_PUBLIC_EAS_PROJECT_ID` | プッシュ通知に必要 | Expo Push Token の取得 |
 | `EXPO_PUBLIC_POSTHOG_KEY` / `EXPO_PUBLIC_POSTHOG_HOST` | 任意 | PostHog の分析。KEY が未設定なら計測を送らない。HOST は空か省略で Web と共通の既定ホスト |

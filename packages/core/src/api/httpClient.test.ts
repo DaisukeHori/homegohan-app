@@ -1,495 +1,849 @@
-// @vitest-environment node
-/**
- * 共有 HTTP クライアント (createHttpClient) のテスト (#1049 F7-12)
- *
- * 直したこと:
- *  - 502 / 504 の HTML エラーページで JSON.parse が SyntaxError を投げていた → HTTP エラーとして扱う
- *  - タイムアウトが無く、回線が不安定だと永久に待っていた → GET 30 秒 / 書き込み 60 秒で打ち切る
- *  - 一時的な通信エラーでも即失敗していた → GET だけ軽く再試行する
- */
-
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  HttpError,
+  DEFAULT_TIMEOUT_MS,
   HttpNetworkError,
   HttpParseError,
-  HttpTimeoutError,
   createHttpClient,
-} from './httpClient';
+  isHttpNetworkError,
+  isHttpParseError,
+  type HttpClient,
+} from "./httpClient";
 
-type FetchInit = RequestInit & { signal: AbortSignal };
+/**
+ * #1168 共通 HTTP クライアントのタイムアウト・リトライ・通信エラーのテスト
+ *
+ * fetch は差し替え、時間は vi.useFakeTimers() で進める (待ち時間を実際に待たない)。
+ */
 
-/** fetch の Response 相当 (ok / status / statusText / text だけ使う) */
-function fakeResponse(status: number, body: string, statusText = ''): Response {
-  return {
-    ok: status >= 200 && status < 300,
+const BASE_URL = "https://api.example.com";
+
+type FetchMock = ReturnType<typeof vi.fn>;
+
+/** JSON の応答を作る。status が 204 などで本文なしのときは null を渡す */
+function jsonResponse(status: number, body: unknown, headers: Record<string, string> = {}): Response {
+  return new Response(body === null ? null : JSON.stringify(body), {
     status,
-    statusText,
-    text: () => Promise.resolve(body),
-  } as unknown as Response;
+    statusText: statusTextOf(status),
+    headers: { "Content-Type": "application/json", ...headers },
+  });
+}
+
+function textResponse(status: number, body: string, headers: Record<string, string> = {}): Response {
+  return new Response(body, { status, statusText: statusTextOf(status), headers });
+}
+
+function statusTextOf(status: number): string {
+  const names: Record<number, string> = {
+    200: "OK",
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    408: "Request Timeout",
+    422: "Unprocessable Entity",
+    429: "Too Many Requests",
+    500: "Internal Server Error",
+    501: "Not Implemented",
+    502: "Bad Gateway",
+    503: "Service Unavailable",
+    504: "Gateway Timeout",
+    505: "HTTP Version Not Supported",
+  };
+  return names[status] ?? "";
 }
 
 function abortError(): Error {
-  const error = new Error('The operation was aborted.');
-  error.name = 'AbortError';
+  const error = new Error("The operation was aborted.");
+  error.name = "AbortError";
   return error;
 }
 
-/** signal が abort されるまで返らない fetch。abort されたら AbortError で reject する */
-function hangingFetch() {
-  return vi.fn((_url: string, init: FetchInit) => {
+/** signal が abort されるまで応答しない fetch (本物の fetch と同じく、abort されたら AbortError で失敗する) */
+function neverRespondingFetch(): FetchMock {
+  return vi.fn((_url: string, init?: RequestInit) => {
     return new Promise<Response>((_resolve, reject) => {
-      init.signal.addEventListener('abort', () => reject(abortError()));
+      init?.signal?.addEventListener("abort", () => reject(abortError()));
     });
   });
 }
 
-const BASE = 'https://api.example.com';
+/** 結果を { ok: true, value } / { ok: false, error } にして返す。reject が先に起きても未処理にならないようにする */
+function settle<T>(promise: Promise<T>) {
+  const state: { done: boolean; ok?: boolean; value?: T; error?: unknown } = { done: false };
+  const settled = promise.then(
+    (value) => {
+      state.done = true;
+      state.ok = true;
+      state.value = value;
+    },
+    (error) => {
+      state.done = true;
+      state.ok = false;
+      state.error = error;
+    },
+  );
+  return { state, settled };
+}
 
-let fetchMock: ReturnType<typeof vi.fn>;
+let fetchMock: FetchMock;
+
+function installFetch(mock: FetchMock) {
+  fetchMock = mock;
+  vi.stubGlobal("fetch", mock);
+}
+
+function client(config: Partial<Parameters<typeof createHttpClient>[0]> = {}): HttpClient {
+  return createHttpClient({ baseUrl: BASE_URL, ...config });
+}
 
 beforeEach(() => {
-  fetchMock = vi.fn();
-  vi.stubGlobal('fetch', fetchMock);
+  vi.useFakeTimers();
+  // 待ち時間の乱数を固定する (個別のテストで変える)
+  vi.spyOn(Math, "random").mockReturnValue(0);
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
-describe('レスポンスの読み取り', () => {
-  it('JSON を読んで返す', async () => {
-    fetchMock.mockResolvedValueOnce(fakeResponse(200, '{"ok":true,"items":[1,2]}'));
-    const api = createHttpClient({ baseUrl: BASE });
+describe("createHttpClient — 基本の動作 (従来どおり)", () => {
+  it("GET は JSON を返し、Authorization と Content-Type を付ける", async () => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(200, { items: [1, 2] })));
+    const api = client({ getAccessToken: async () => "token-123" });
 
-    await expect(api.get<{ ok: boolean; items: number[] }>('/api/x')).resolves.toEqual({ ok: true, items: [1, 2] });
-  });
+    await expect(api.get("/api/pantry")).resolves.toEqual({ items: [1, 2] });
 
-  it('本文が空 (204 など) なら null を返す', async () => {
-    fetchMock.mockResolvedValueOnce(fakeResponse(204, ''));
-    const api = createHttpClient({ baseUrl: BASE });
-
-    await expect(api.del('/api/x')).resolves.toBeNull();
-  });
-
-  it('502 の HTML エラーページは SyntaxError ではなく HttpError (HTTP 502) になる', async () => {
-    fetchMock.mockResolvedValueOnce(fakeResponse(502, '<html><body><h1>502 Bad Gateway</h1></body></html>', 'Bad Gateway'));
-    // POST は再試行しないので 1 回で結果が出る
-    const api = createHttpClient({ baseUrl: BASE });
-
-    const error = await api.post('/api/x', {}).catch((e: unknown) => e);
-
-    expect(error).toBeInstanceOf(HttpError);
-    expect(error).not.toBeInstanceOf(SyntaxError);
-    const httpError = error as HttpError;
-    expect(httpError.status).toBe(502);
-    expect(httpError.message).toBe('HTTP 502 Bad Gateway');
-    // HTML をそのまま画面に出さないよう、メッセージには載せない。生の本文は body に残る
-    expect(httpError.message).not.toContain('<html>');
-    expect(httpError.body).toContain('502 Bad Gateway');
-  });
-
-  it('エラー本文が JSON で error / message を持つなら、従来どおり JSON をメッセージに載せる', async () => {
-    fetchMock.mockResolvedValueOnce(fakeResponse(400, '{"error":"invalid date"}', 'Bad Request'));
-    const api = createHttpClient({ baseUrl: BASE });
-
-    const error = (await api.post('/api/x', {}).catch((e: unknown) => e)) as HttpError;
-
-    expect(error).toBeInstanceOf(HttpError);
-    expect(error.message).toBe('HTTP 400 Bad Request: {"error":"invalid date"}');
-    expect(error.json).toEqual({ error: 'invalid date' });
-  });
-
-  it('statusText が空 (HTTP/2) でも、従来どおり "HTTP 403 : <本文>" の形にする (api-error.ts がこの形を前提にしている)', async () => {
-    fetchMock.mockResolvedValueOnce(fakeResponse(403, '{"error":{"code":"FORBIDDEN","message":"権限がありません"}}', ''));
-    const api = createHttpClient({ baseUrl: BASE });
-
-    const error = (await api.post('/api/x', {}).catch((e: unknown) => e)) as HttpError;
-
-    expect(error.message).toBe('HTTP 403 : {"error":{"code":"FORBIDDEN","message":"権限がありません"}}');
-  });
-
-  it('エラー本文が短いプレーンテキストならメッセージに載せ、長い本文は切り詰める', async () => {
-    const api = createHttpClient({ baseUrl: BASE });
-
-    fetchMock.mockResolvedValueOnce(fakeResponse(500, 'Internal Server Error', 'Internal Server Error'));
-    const short = (await api.post('/api/x', {}).catch((e: unknown) => e)) as HttpError;
-    expect(short.message).toBe('HTTP 500 Internal Server Error: Internal Server Error');
-
-    fetchMock.mockResolvedValueOnce(fakeResponse(500, 'x'.repeat(1000), 'Internal Server Error'));
-    const long = (await api.post('/api/x', {}).catch((e: unknown) => e)) as HttpError;
-    expect(long.message.length).toBeLessThan(300);
-    expect(long.body.length).toBe(1000);
-  });
-
-  it('2xx なのに JSON でない本文 (キャプティブポータルの HTML など) は HttpParseError', async () => {
-    fetchMock.mockResolvedValueOnce(fakeResponse(200, '<html>login to wifi</html>', 'OK'));
-    const api = createHttpClient({ baseUrl: BASE });
-
-    const error = await api.get('/api/x', { retries: 0 }).catch((e: unknown) => e);
-
-    expect(error).toBeInstanceOf(HttpParseError);
-    expect(error).not.toBeInstanceOf(SyntaxError);
-    expect((error as HttpParseError).status).toBe(200);
-  });
-});
-
-describe('リクエストの組み立て', () => {
-  it('base URL とパスを連結し、Content-Type と Authorization を付ける', async () => {
-    fetchMock.mockResolvedValueOnce(fakeResponse(200, '{}'));
-    const api = createHttpClient({ baseUrl: `${BASE}/`, getAccessToken: () => 'tok-1' });
-
-    await api.post('api/things', { a: 1 });
-
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('https://api.example.com/api/things');
-    expect(init.method).toBe('POST');
-    expect(init.body).toBe('{"a":1}');
+    expect(url).toBe("https://api.example.com/api/pantry");
+    expect(init.method).toBe("GET");
+    expect(init.body).toBeUndefined();
     const headers = init.headers as Headers;
-    expect(headers.get('Content-Type')).toBe('application/json');
-    expect(headers.get('Authorization')).toBe('Bearer tok-1');
+    expect(headers.get("Authorization")).toBe("Bearer token-123");
+    expect(headers.get("Content-Type")).toBe("application/json");
   });
 
-  it('呼び出し側が指定した Authorization は上書きしない', async () => {
-    fetchMock.mockResolvedValueOnce(fakeResponse(200, '{}'));
-    const api = createHttpClient({ baseUrl: BASE, getAccessToken: () => 'tok-1' });
+  it("POST は body を JSON にして送り、本文が空の応答は null を返す", async () => {
+    installFetch(vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
 
-    await api.get('/api/x', { headers: { Authorization: 'Bearer other' } });
+    await expect(client().post("/api/x", { a: 1 })).resolves.toBeNull();
 
-    const init = fetchMock.mock.calls[0][1] as RequestInit;
-    expect((init.headers as Headers).get('Authorization')).toBe('Bearer other');
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe('{"a":1}');
   });
 
-  it('timeoutMs / retries は fetch に渡さない', async () => {
-    fetchMock.mockResolvedValueOnce(fakeResponse(200, '{}'));
-    const api = createHttpClient({ baseUrl: BASE });
+  it("HTTP エラーは `HTTP <status> <statusText>: <本文>` の Error (エラー本文は JSON のまま)", async () => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(403, { error: { code: "FORBIDDEN", message: "権限がありません" } })));
 
-    await api.get('/api/x', { timeoutMs: 1234, retries: 0 });
+    const { state, settled } = settle(client().get("/api/x"));
+    await settled;
 
-    const init = fetchMock.mock.calls[0][1] as Record<string, unknown>;
-    expect(init).not.toHaveProperty('timeoutMs');
-    expect(init).not.toHaveProperty('retries');
+    expect(state.ok).toBe(false);
+    expect(state.error).toBeInstanceOf(Error);
+    expect(isHttpNetworkError(state.error)).toBe(false);
+    expect((state.error as Error).message).toBe(
+      'HTTP 403 Forbidden: {"error":{"code":"FORBIDDEN","message":"権限がありません"}}',
+    );
+    // 403 はやり直さない
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("JSON ではない本文のエラー応答 (ゲートウェイの HTML など) も、ステータス付きの Error になる", async () => {
+    installFetch(vi.fn().mockResolvedValue(textResponse(404, "<!DOCTYPE html><html><body>404</body></html>")));
+
+    const { state, settled } = settle(client().get("/api/x"));
+    await settled;
+
+    expect((state.error as Error).message).toBe("HTTP 404 Not Found: <!DOCTYPE html><html><body>404</body></html>");
+  });
+
+  it("JSON ではない長い本文は、200 文字で切る (画面にゲートウェイの HTML 全体を出さない)", async () => {
+    installFetch(vi.fn().mockResolvedValue(textResponse(404, `<html>${"a".repeat(1000)}</html>`)));
+
+    const { state, settled } = settle(client().get("/api/x"));
+    await settled;
+
+    const message = (state.error as Error).message;
+    expect(message.startsWith("HTTP 404 Not Found: <html>aaa")).toBe(true);
+    expect(message.endsWith("…")).toBe(true);
+    expect(message.length).toBeLessThan(260);
+  });
+
+  it("成功 (2xx) の本文が JSON として読めないときは、SyntaxError ではなく HttpParseError を投げる (#1049)", async () => {
+    installFetch(vi.fn().mockResolvedValue(textResponse(200, "<html>not json</html>")));
+
+    const { state, settled } = settle(client().get("/api/x"));
+    await settled;
+
+    expect(state.ok).toBe(false);
+    expect(state.error).toBeInstanceOf(HttpParseError);
+    expect(isHttpParseError(state.error)).toBe(true);
+    // 通信できなかった (HttpNetworkError) わけではない
+    expect(isHttpNetworkError(state.error)).toBe(false);
+    expect(state.error).not.toBeInstanceOf(SyntaxError);
+    const error = state.error as HttpParseError;
+    expect(error.name).toBe("HttpParseError");
+    expect(error.status).toBe(200);
+    expect(error.message).toBe("Response body is not JSON (HTTP 200)");
+    // 元の JSON.parse のエラーは cause に持つ
+    expect((error as { cause?: unknown }).cause).toBeInstanceOf(SyntaxError);
+  });
+
+  it("HttpParseError は、同じ応答が返るだけなのでやり直さない (GET でも fetch は 1 回)", async () => {
+    installFetch(vi.fn().mockResolvedValue(textResponse(200, "<html>Wi-Fi ログイン</html>")));
+
+    const { state, settled } = settle(client().get("/api/x"));
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settled;
+
+    expect(isHttpParseError(state.error)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("書き込み (POST) の成功応答が JSON でなくても HttpParseError になる (fetch は 1 回)", async () => {
+    installFetch(vi.fn().mockResolvedValue(textResponse(201, "created")));
+
+    const { state, settled } = settle(client().post("/api/x", { a: 1 }));
+    await settled;
+
+    expect(isHttpParseError(state.error)).toBe(true);
+    expect((state.error as HttpParseError).status).toBe(201);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidResponseMessage で、HttpParseError の文面を画面に出せる文にできる", async () => {
+    installFetch(vi.fn().mockResolvedValue(textResponse(200, "<html></html>")));
+
+    const { state, settled } = settle(client({ invalidResponseMessage: "応答を読み取れませんでした。" }).get("/api/x"));
+    await settled;
+
+    expect(isHttpParseError(state.error)).toBe(true);
+    expect((state.error as Error).message).toBe("応答を読み取れませんでした。");
+  });
+
+  it("JSON として読める本文は、null や 0 のような値でもそのまま返す (空の本文だけが null)", async () => {
+    installFetch(
+      vi
+        .fn()
+        .mockResolvedValueOnce(textResponse(200, "null"))
+        .mockResolvedValueOnce(textResponse(200, "0"))
+        .mockResolvedValueOnce(textResponse(200, "false"))
+        .mockResolvedValueOnce(textResponse(200, "")),
+    );
+    const api = client();
+
+    await expect(api.get("/api/a")).resolves.toBeNull();
+    await expect(api.get("/api/b")).resolves.toBe(0);
+    await expect(api.get("/api/c")).resolves.toBe(false);
+    await expect(api.get("/api/d")).resolves.toBeNull();
+  });
+
+  it("isHttpParseError は、HttpParseError だけを見分ける", () => {
+    expect(isHttpParseError(new HttpParseError("x", { status: 200 }))).toBe(true);
+    expect(isHttpParseError(new Error("HTTP 200 OK: x"))).toBe(false);
+    expect(isHttpParseError(new SyntaxError("Unexpected token"))).toBe(false);
+    expect(isHttpParseError(new HttpNetworkError("offline", "x"))).toBe(false);
+    expect(isHttpParseError(null)).toBe(false);
+    expect(isHttpParseError(undefined)).toBe(false);
+  });
+
+  it("headers を持たない応答 (簡易なモック) でも動く", async () => {
+    installFetch(
+      vi.fn().mockResolvedValue({ ok: false, status: 503, statusText: "Service Unavailable", text: async () => "" }),
+    );
+
+    // 503 は GET なのでやり直す。待ち時間 (乱数 0 なので 250ms → 500ms) を進めて、最後はエラーになる
+    const { state, settled } = settle(client().get("/api/x"));
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settled;
+
+    expect((state.error as Error).message).toBe("HTTP 503 Service Unavailable: ");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
 
-describe('タイムアウト', () => {
-  it('GET の既定は 30 秒: 29.999 秒では待ち続け、30 秒で HttpTimeoutError', async () => {
-    vi.useFakeTimers();
-    fetchMock.mockImplementation(hangingFetch());
-    const api = createHttpClient({ baseUrl: BASE, retries: 0 });
+describe("タイムアウト", () => {
+  it("既定は 20 秒 (DEFAULT_TIMEOUT_MS)", () => {
+    expect(DEFAULT_TIMEOUT_MS).toBe(20_000);
+  });
 
-    const settled = vi.fn();
-    const promise = api.get('/api/x').catch((e: unknown) => {
-      settled(e);
-      return e;
-    });
+  it("20 秒を過ぎると、fetch を中断して kind が timeout の HttpNetworkError を投げる", async () => {
+    installFetch(neverRespondingFetch());
 
-    await vi.advanceTimersByTimeAsync(29_999);
-    expect(settled).not.toHaveBeenCalled();
+    const { state, settled } = settle(client().get("/api/x"));
+
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(state.done).toBe(false);
 
     await vi.advanceTimersByTimeAsync(1);
-    const error = await promise;
-    expect(error).toBeInstanceOf(HttpTimeoutError);
-    expect((error as HttpTimeoutError).timeoutMs).toBe(30_000);
-    // どのリクエストだったかはプロパティで分かる
-    expect((error as HttpTimeoutError).method).toBe('GET');
-    expect((error as HttpTimeoutError).path).toBe('/api/x');
+    await settled;
+
+    expect(state.ok).toBe(false);
+    const error = state.error as HttpNetworkError;
+    expect(error).toBeInstanceOf(HttpNetworkError);
+    expect(isHttpNetworkError(error)).toBe(true);
+    expect(error.kind).toBe("timeout");
+    expect(error.timeoutMs).toBe(20_000);
+    expect(error.message).toBe("Request timed out after 20000ms");
+    expect((error as { cause?: unknown }).cause).toMatchObject({ name: "AbortError" });
+    // fetch に渡した signal は中断されている
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.signal?.aborted).toBe(true);
   });
 
-  it('message は利用者に読める日本語で、API のパスや英語の定型文を含まない (多くの画面が e.message をそのまま出すため)', async () => {
-    vi.useFakeTimers();
-    fetchMock.mockImplementation(hangingFetch());
-    const api = createHttpClient({ baseUrl: BASE, retries: 0 });
+  it("タイムアウトはやり直さない (GET でも fetch は 1 回。待ち時間が 3 倍にならない)", async () => {
+    installFetch(neverRespondingFetch());
 
-    const promise = api.get('/api/secret-path?token=abc').catch((e: unknown) => e);
-    await vi.advanceTimersByTimeAsync(30_000);
-
-    const error = (await promise) as HttpTimeoutError;
-    expect(error).toBeInstanceOf(HttpTimeoutError);
-    expect(error.message).toContain('タイムアウト');
-    expect(error.message).not.toContain('/api/');
-    expect(error.message).not.toContain('token');
-    expect(error.message).not.toMatch(/timed out|GET|POST/i);
-    expect(error.name).toBe('TimeoutError');
-  });
-
-  it('書き込み (POST) の message は、サーバーの処理が終わっていることがあるので、確かめてからやり直すよう案内する', async () => {
-    vi.useFakeTimers();
-    fetchMock.mockImplementation(hangingFetch());
-    const api = createHttpClient({ baseUrl: BASE });
-
-    const promise = api.post('/api/secret-path?token=abc', {}).catch((e: unknown) => e);
+    const { settled } = settle(client().get("/api/x"));
     await vi.advanceTimersByTimeAsync(60_000);
+    await settled;
 
-    const error = (await promise) as HttpTimeoutError;
-    expect(error).toBeInstanceOf(HttpTimeoutError);
-    expect(error.method).toBe('POST');
-    expect(error.message).toContain('タイムアウト');
-    expect(error.message).toContain('処理が終わっている場合がある');
-    expect(error.message).not.toContain('/api/');
-    expect(error.message).not.toMatch(/timed out|GET|POST/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('書き込み系 (POST) の既定は 60 秒: 30 秒を過ぎても待ち、60 秒で打ち切る', async () => {
-    vi.useFakeTimers();
-    fetchMock.mockImplementation(hangingFetch());
-    const api = createHttpClient({ baseUrl: BASE });
+  it("timeoutMs は、クライアントの設定で変えられる", async () => {
+    installFetch(neverRespondingFetch());
 
-    const settled = vi.fn();
-    const promise = api.post('/api/ai/analyze', {}).catch((e: unknown) => {
-      settled(e);
-      return e;
-    });
-
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(settled).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(29_999);
-    expect(settled).not.toHaveBeenCalled();
-
+    const { state, settled } = settle(client({ timeoutMs: 5_000 }).post("/api/x", {}));
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(state.done).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
-    expect(await promise).toBeInstanceOf(HttpTimeoutError);
+    await settled;
+
+    expect((state.error as HttpNetworkError).kind).toBe("timeout");
+    expect((state.error as HttpNetworkError).timeoutMs).toBe(5_000);
   });
 
-  it('リクエストごとの timeoutMs が既定より優先される', async () => {
-    vi.useFakeTimers();
-    fetchMock.mockImplementation(hangingFetch());
-    const api = createHttpClient({ baseUrl: BASE, retries: 0 });
+  it("timeoutMs は、呼び出しごとに上書きできる (クライアントの設定より優先)", async () => {
+    installFetch(neverRespondingFetch());
 
-    const promise = api.get('/api/x', { timeoutMs: 500 }).catch((e: unknown) => e);
-    await vi.advanceTimersByTimeAsync(500);
+    const { state, settled } = settle(client({ timeoutMs: 5_000 }).post("/api/x", {}, { timeoutMs: 90_000 }));
+    await vi.advanceTimersByTimeAsync(89_999);
+    expect(state.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await settled;
 
-    const error = await promise;
-    expect(error).toBeInstanceOf(HttpTimeoutError);
-    expect((error as HttpTimeoutError).timeoutMs).toBe(500);
+    expect((state.error as HttpNetworkError).timeoutMs).toBe(90_000);
   });
 
-  it('timeoutMs: 0 ならタイムアウトを付けない', async () => {
-    vi.useFakeTimers();
-    fetchMock.mockImplementation(hangingFetch());
-    const api = createHttpClient({ baseUrl: BASE });
+  it("timeoutMs が 0 以下なら、待ち時間の上限を付けない", async () => {
+    const hanging = new Promise<Response>(() => {});
+    installFetch(vi.fn().mockReturnValue(hanging));
 
-    const settled = vi.fn();
-    void api.post('/api/x', {}, { timeoutMs: 0 }).catch(settled);
-
+    const { state } = settle(client().get("/api/x", { timeoutMs: 0 }));
     await vi.advanceTimersByTimeAsync(10 * 60_000);
-    expect(settled).not.toHaveBeenCalled();
+
+    expect(state.done).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('応答ヘッダーが届いても、本文を読み終えるまでがタイムアウトの対象', async () => {
-    vi.useFakeTimers();
-    fetchMock.mockImplementation((_url: string, init: FetchInit) =>
-      Promise.resolve({
-        ok: true,
-        status: 200,
-        statusText: 'OK',
-        // 本文の読み取りが止まったまま。abort されたら AbortError で reject する (実機の fetch と同じ)
-        text: () =>
-          new Promise<string>((_resolve, reject) => {
-            init.signal.addEventListener('abort', () => reject(abortError()));
-          }),
-      } as unknown as Response),
+  it("応答の本文を読んでいる途中で時間切れになっても timeout になる", async () => {
+    installFetch(
+      vi.fn((_url: string, init?: RequestInit) =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          text: () =>
+            new Promise<string>((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () => reject(abortError()));
+            }),
+        }),
+      ),
     );
-    const api = createHttpClient({ baseUrl: BASE, retries: 0, timeoutMs: 1000 });
 
-    const promise = api.get('/api/x').catch((e: unknown) => e);
-    await vi.advanceTimersByTimeAsync(1000);
+    const { state, settled } = settle(client({ timeoutMs: 1_000 }).get("/api/x"));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settled;
 
-    expect(await promise).toBeInstanceOf(HttpTimeoutError);
+    expect((state.error as HttpNetworkError).kind).toBe("timeout");
   });
 
-  it('終わったリクエストのタイマーは残らない', async () => {
-    vi.useFakeTimers();
-    fetchMock.mockResolvedValueOnce(fakeResponse(200, '{}'));
-    const api = createHttpClient({ baseUrl: BASE });
+  it("応答が間に合えばタイマーは残らない (成功・失敗のどちらでも)", async () => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(200, { ok: true })));
+    await client().get("/api/x");
+    expect(vi.getTimerCount()).toBe(0);
 
-    await api.get('/api/x');
-
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(400, { error: "bad" })));
+    await settle(client().get("/api/x")).settled;
     expect(vi.getTimerCount()).toBe(0);
   });
 });
 
-describe('呼び出し側の中断 (signal)', () => {
-  it('呼び出し側が abort したら AbortError のまま投げ、タイムアウトや再試行にはしない', async () => {
-    fetchMock.mockImplementation(hangingFetch());
-    const api = createHttpClient({ baseUrl: BASE, retryDelayMs: 0 });
-    const controller = new AbortController();
+describe("通信できないとき (offline)", () => {
+  it("fetch が応答を受け取れずに失敗したら、kind が offline の HttpNetworkError (元のエラーは cause)", async () => {
+    const original = new TypeError("Network request failed");
+    installFetch(vi.fn().mockRejectedValue(original));
 
-    const promise = api.get('/api/x', { signal: controller.signal }).catch((e: unknown) => e);
-    // fetch が呼ばれてから中断する
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    controller.abort();
+    // POST はやり直さないので、1 回で失敗する
+    const { state, settled } = settle(client().post("/api/x", {}));
+    await settled;
 
-    const error = (await promise) as Error;
-    expect(error.name).toBe('AbortError');
-    expect(error).not.toBeInstanceOf(HttpTimeoutError);
+    const error = state.error as HttpNetworkError;
+    expect(error).toBeInstanceOf(HttpNetworkError);
+    expect(error.kind).toBe("offline");
+    expect(error.name).toBe("HttpNetworkError");
+    expect(error.message).toBe("Network request failed");
+    expect((error as { cause?: unknown }).cause).toBe(original);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('最初から abort 済みの signal なら fetch を呼ばずに AbortError', async () => {
-    const api = createHttpClient({ baseUrl: BASE });
+  it("エラーの文面は networkErrorMessages で差し替えられる (画面にそのまま出せる文面を渡す)", async () => {
+    installFetch(vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    const api = client({
+      networkErrorMessages: { offline: "通信できません (offline)", timeout: "通信できません (timeout)" },
+    });
+
+    const offline = settle(api.post("/api/x", {}));
+    await offline.settled;
+    expect((offline.state.error as Error).message).toBe("通信できません (offline)");
+
+    installFetch(neverRespondingFetch());
+    const timeout = settle(api.post("/api/x", {}));
+    await vi.advanceTimersByTimeAsync(DEFAULT_TIMEOUT_MS);
+    await timeout.settled;
+    expect((timeout.state.error as Error).message).toBe("通信できません (timeout)");
+  });
+
+  it("呼び出し側の signal で中断したときは、timeout や offline にせず AbortError のまま投げる", async () => {
+    installFetch(neverRespondingFetch());
+    const controller = new AbortController();
+
+    const { state, settled } = settle(client().get("/api/x", { signal: controller.signal }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    controller.abort();
+    await settled;
+
+    expect(isHttpNetworkError(state.error)).toBe(false);
+    expect((state.error as Error).name).toBe("AbortError");
+    // 中断はやり直さない
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("すでに中断済みの signal なら、fetch を呼ばずに AbortError を投げる", async () => {
+    installFetch(vi.fn());
     const controller = new AbortController();
     controller.abort();
 
-    const error = (await api.get('/api/x', { signal: controller.signal }).catch((e: unknown) => e)) as Error;
+    const { state, settled } = settle(client().get("/api/x", { signal: controller.signal }));
+    await settled;
 
-    expect(error.name).toBe('AbortError');
+    expect((state.error as Error).name).toBe("AbortError");
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('再試行の待ち時間の間に中断されたら、待たずに AbortError', async () => {
-    vi.useFakeTimers();
-    fetchMock.mockResolvedValue(fakeResponse(503, 'unavailable', 'Service Unavailable'));
-    const api = createHttpClient({ baseUrl: BASE, retryDelayMs: 10_000 });
-    const controller = new AbortController();
-
-    const promise = api.get('/api/x', { signal: controller.signal }).catch((e: unknown) => e);
-    await vi.advanceTimersByTimeAsync(0); // 1 回目の 503 が返り、再試行の待ちに入る
-    controller.abort();
-
-    const error = (await promise) as Error;
-    expect(error.name).toBe('AbortError');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('GET の再試行', () => {
-  it('502 / 503 / 504 は再試行して、成功した結果を返す', async () => {
-    for (const status of [502, 503, 504]) {
-      fetchMock.mockReset();
-      fetchMock
-        .mockResolvedValueOnce(fakeResponse(status, '<html>gateway</html>'))
-        .mockResolvedValueOnce(fakeResponse(200, '{"ok":true}'));
-      const api = createHttpClient({ baseUrl: BASE, retryDelayMs: 0 });
+describe("リトライ — GET / HEAD / PUT / DELETE だけ、一時的な失敗のときだけ", () => {
+  it("GET: 503 のあと成功したら、成功の結果を返す (fetch は 2 回)", async () => {
+    installFetch(
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(503, { error: "unavailable" }))
+        .mockResolvedValueOnce(jsonResponse(200, { items: ["ok"] })),
+    );
 
-      await expect(api.get('/api/x')).resolves.toEqual({ ok: true });
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-    }
-  });
+    const { state, settled } = settle(client().get("/api/pantry"));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settled;
 
-  it('通信エラー (オフラインなど) も再試行する', async () => {
-    fetchMock
-      .mockRejectedValueOnce(new TypeError('Network request failed'))
-      .mockResolvedValueOnce(fakeResponse(200, '{"ok":true}'));
-    const api = createHttpClient({ baseUrl: BASE, retryDelayMs: 0 });
-
-    await expect(api.get('/api/x')).resolves.toEqual({ ok: true });
+    expect(state.ok).toBe(true);
+    expect(state.value).toEqual({ items: ["ok"] });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('再試行しても直らなければ、最後の失敗を投げる (既定は 1 + 2 回)', async () => {
-    fetchMock.mockResolvedValue(fakeResponse(503, 'unavailable', 'Service Unavailable'));
-    const api = createHttpClient({ baseUrl: BASE, retryDelayMs: 0 });
+  it("GET: 通信できなかった (応答を受け取れなかった) あと成功したら、成功の結果を返す", async () => {
+    installFetch(
+      vi
+        .fn()
+        .mockRejectedValueOnce(new TypeError("Network request failed"))
+        .mockResolvedValueOnce(jsonResponse(200, { items: [] })),
+    );
 
-    const error = await api.get('/api/x').catch((e: unknown) => e);
+    const { state, settled } = settle(client().get("/api/pantry"));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settled;
 
-    expect(error).toBeInstanceOf(HttpError);
-    expect((error as HttpError).status).toBe(503);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-  });
-
-  it('通信エラーが続いたときは HttpNetworkError (メッセージは元のまま)', async () => {
-    fetchMock.mockRejectedValue(new TypeError('Network request failed'));
-    const api = createHttpClient({ baseUrl: BASE, retryDelayMs: 0 });
-
-    const error = await api.get('/api/x').catch((e: unknown) => e);
-
-    expect(error).toBeInstanceOf(HttpNetworkError);
-    expect((error as HttpNetworkError).message).toBe('Network request failed');
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-  });
-
-  it('待ち時間は 1 回目 400ms / 2 回目 800ms と倍々に増える', async () => {
-    vi.useFakeTimers();
-    fetchMock.mockResolvedValue(fakeResponse(503, '', 'Service Unavailable'));
-    const api = createHttpClient({ baseUrl: BASE });
-
-    const promise = api.get('/api/x').catch((e: unknown) => e);
-
-    await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(399);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1);
+    expect(state.value).toEqual({ items: [] });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 
-    await vi.advanceTimersByTimeAsync(799);
+  it.each(["PUT", "DELETE"] as const)("%s も、5xx のあと成功したら成功の結果を返す", async (method) => {
+    installFetch(
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(502, { error: "bad gateway" }))
+        .mockResolvedValueOnce(jsonResponse(200, { done: true })),
+    );
+    const api = client();
+
+    const { state, settled } = settle(method === "PUT" ? api.put("/api/x", { a: 1 }) : api.del("/api/x"));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settled;
+
+    expect(state.value).toEqual({ done: true });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-
-    expect(await promise).toBeInstanceOf(HttpError);
+    expect((fetchMock.mock.calls[1] as [string, RequestInit])[1].method).toBe(method);
   });
 
-  it('再試行しないもの: 500 / 404 などのエラー応答、JSON でない 2xx', async () => {
-    const api = createHttpClient({ baseUrl: BASE, retryDelayMs: 0 });
+  it("やり直しでも、同じ body・Authorization で送る", async () => {
+    installFetch(
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(503, {}))
+        .mockResolvedValueOnce(jsonResponse(200, {})),
+    );
 
-    for (const status of [400, 401, 404, 500]) {
-      fetchMock.mockReset();
-      fetchMock.mockResolvedValue(fakeResponse(status, '{"error":"x"}'));
-      await expect(api.get('/api/x')).rejects.toBeInstanceOf(HttpError);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    }
+    const { settled } = settle(client({ getAccessToken: () => "tok" }).put("/api/x", { name: "a" }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settled;
 
-    fetchMock.mockReset();
-    fetchMock.mockResolvedValue(fakeResponse(200, 'not json'));
-    await expect(api.get('/api/x')).rejects.toBeInstanceOf(HttpParseError);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('タイムアウトは再試行しない (待ち時間が倍々に伸びるのを避ける)', async () => {
-    vi.useFakeTimers();
-    fetchMock.mockImplementation(hangingFetch());
-    const api = createHttpClient({ baseUrl: BASE, timeoutMs: 1000 });
-
-    const promise = api.get('/api/x').catch((e: unknown) => e);
-    await vi.advanceTimersByTimeAsync(1000);
-
-    expect(await promise).toBeInstanceOf(HttpTimeoutError);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('書き込み系 (POST / PUT / PATCH / DELETE) は 503 や通信エラーでも再試行しない', async () => {
-    const api = createHttpClient({ baseUrl: BASE, retryDelayMs: 0 });
-    const calls: Array<() => Promise<unknown>> = [
-      () => api.post('/api/x', {}),
-      () => api.put('/api/x', {}),
-      () => api.patch('/api/x', {}),
-      () => api.del('/api/x'),
-    ];
-
-    for (const call of calls) {
-      fetchMock.mockReset();
-      fetchMock.mockResolvedValue(fakeResponse(503, '', 'Service Unavailable'));
-      await expect(call()).rejects.toBeInstanceOf(HttpError);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-
-      fetchMock.mockReset();
-      fetchMock.mockRejectedValue(new TypeError('Network request failed'));
-      await expect(call()).rejects.toBeInstanceOf(HttpNetworkError);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+    for (const call of fetchMock.mock.calls as [string, RequestInit][]) {
+      expect(call[1].body).toBe('{"name":"a"}');
+      expect((call[1].headers as Headers).get("Authorization")).toBe("Bearer tok");
     }
   });
 
-  it('retries: 0 で再試行を止められ、retries: N で回数を変えられる', async () => {
-    fetchMock.mockResolvedValue(fakeResponse(503, '', 'Service Unavailable'));
-    const api = createHttpClient({ baseUrl: BASE, retryDelayMs: 0 });
+  it.each([408, 429, 500, 502, 503, 504])("HTTP %i はやり直す", async (status) => {
+    installFetch(vi.fn().mockResolvedValueOnce(jsonResponse(status, {})).mockResolvedValueOnce(jsonResponse(200, { ok: 1 })));
 
-    await expect(api.get('/api/x', { retries: 0 })).rejects.toBeInstanceOf(HttpError);
+    const { state, settled } = settle(client().get("/api/x"));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settled;
+
+    expect(state.value).toEqual({ ok: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([400, 401, 403, 404, 422])("HTTP %i はやり直さない (何度やっても同じ結果になるため)", async (status) => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(status, { error: "x" })));
+
+    const { state, settled } = settle(client().get("/api/x"));
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settled;
+
+    expect(state.ok).toBe(false);
+    expect((state.error as Error).message).toContain(`HTTP ${status}`);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([501, 505])("HTTP %i (未実装・未対応) は 5xx でもやり直さない", async (status) => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(status, { error: "not implemented" })));
+
+    const { state, settled } = settle(client().get("/api/x"));
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settled;
+
+    expect(state.ok).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("JSON ではない本文の 503 (ゲートウェイの HTML など) もやり直す", async () => {
+    installFetch(
+      vi
+        .fn()
+        .mockResolvedValueOnce(textResponse(503, "<html>Service Unavailable</html>"))
+        .mockResolvedValueOnce(jsonResponse(200, { ok: true })),
+    );
+
+    const { state, settled } = settle(client().get("/api/x"));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settled;
+
+    expect(state.value).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("POST はやり直さない: 503 でも fetch は 1 回 (AI の生成が二重に走らないように)", async () => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(503, { error: "unavailable" })));
+
+    const { state, settled } = settle(client().post("/api/ai/menu/v4/generate", { targetSlots: [] }));
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settled;
+
+    expect(state.ok).toBe(false);
+    expect((state.error as Error).message).toContain("HTTP 503");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("POST はやり直さない: 通信できなかったときも fetch は 1 回", async () => {
+    installFetch(vi.fn().mockRejectedValue(new TypeError("Network request failed")));
+
+    const { state, settled } = settle(client().post("/api/x", {}));
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settled;
+
+    expect((state.error as HttpNetworkError).kind).toBe("offline");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("PATCH もやり直さない (同じ変更を二重に適用してはいけない場合があるため)", async () => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(500, { error: "x" })));
+
+    const { settled } = settle(client().patch("/api/x", { a: 1 }));
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settled;
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("POST でも、呼び出しごとに retry: true で明示すれば、やり直す", async () => {
+    installFetch(
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(503, {}))
+        .mockResolvedValueOnce(jsonResponse(200, { created: true })),
+    );
+
+    const { state, settled } = settle(client().post("/api/x", { a: 1 }, { retry: true }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settled;
+
+    expect(state.value).toEqual({ created: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retry: false なら、GET でもやり直さない", async () => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(503, {})));
+
+    const { state, settled } = settle(client().get("/api/x", { retry: false }));
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settled;
+
+    expect(state.ok).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("クライアントの retry: false で、既定のやり直しを止められる (呼び出しごとの retry: true は効く)", async () => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(503, {})));
+    const api = client({ retry: false });
+
+    const stopped = settle(api.get("/api/x"));
+    await vi.advanceTimersByTimeAsync(10_000);
+    await stopped.settled;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const forced = settle(api.get("/api/x", { retry: true }));
+    await vi.advanceTimersByTimeAsync(10_000);
+    await forced.settled;
+    expect(fetchMock).toHaveBeenCalledTimes(1 + 3);
+  });
+
+  it("最大 2 回までやり直す: 503 が続くなら fetch は 3 回で、最後の応答のエラーを投げる", async () => {
+    installFetch(
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(503, { error: "first" }))
+        .mockResolvedValueOnce(jsonResponse(503, { error: "second" }))
+        .mockResolvedValueOnce(jsonResponse(503, { error: "third" }))
+        .mockResolvedValue(jsonResponse(200, { ok: true })),
+    );
+
+    const { state, settled } = settle(client().get("/api/x"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settled;
+
+    expect(state.ok).toBe(false);
+    expect((state.error as Error).message).toBe('HTTP 503 Service Unavailable: {"error":"third"}');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("通信できない状態が続くなら fetch は 3 回で、offline の HttpNetworkError を投げる", async () => {
+    installFetch(vi.fn().mockRejectedValue(new TypeError("Network request failed")));
+
+    const { state, settled } = settle(client().get("/api/x"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settled;
+
+    expect((state.error as HttpNetworkError).kind).toBe("offline");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("やり直しの回数は、クライアントの設定でも呼び出しごとでも変えられる", async () => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(500, {})));
+
+    const one = settle(client({ retry: { retries: 1 } }).get("/api/x"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    await one.settled;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
     fetchMock.mockClear();
-    await expect(api.get('/api/x', { retries: 4 })).rejects.toBeInstanceOf(HttpError);
-    expect(fetchMock).toHaveBeenCalledTimes(5);
+    const five = settle(client().get("/api/x", { retry: { retries: 5 } }));
+    await vi.advanceTimersByTimeAsync(60_000);
+    await five.settled;
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+
+    fetchMock.mockClear();
+    const zero = settle(client().get("/api/x", { retry: { retries: 0 } }));
+    await vi.advanceTimersByTimeAsync(60_000);
+    await zero.settled;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('設定の retries で全体の既定を変えられる', async () => {
-    fetchMock.mockResolvedValue(fakeResponse(503, '', 'Service Unavailable'));
-    const api = createHttpClient({ baseUrl: BASE, retries: 1, retryDelayMs: 0 });
-
-    await expect(api.get('/api/x')).rejects.toBeInstanceOf(HttpError);
+  it("やり直しの前に待つ: 指数的に増え (500ms → 1000ms が上限)、半分は乱数で散らす", async () => {
+    // 乱数 0: 上限の半分 (250ms, 500ms)
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(503, {})));
+    const low = settle(client().get("/api/x"));
+    await vi.advanceTimersByTimeAsync(249);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(499);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await low.settled;
+
+    // 乱数が 1 に近い: 上限いっぱい (500ms, 1000ms)
+    vi.spyOn(Math, "random").mockReturnValue(0.999999);
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(503, {})));
+    const high = settle(client().get("/api/x"));
+    await vi.advanceTimersByTimeAsync(499);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(998);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await high.settled;
+  });
+
+  it("待ち時間の基準・上限は retry で変えられる (maxDelayMs で頭打ち)", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.999999);
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(503, {})));
+
+    // 基準 1000ms → 1 回目の上限 1000ms、2 回目は 2000ms だが maxDelayMs の 1500ms で頭打ち
+    const { settled } = settle(client({ retry: { baseDelayMs: 1_000, maxDelayMs: 1_500 } }).get("/api/x"));
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1_498);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await settled;
+  });
+});
+
+describe("リトライ — Retry-After を守る", () => {
+  it("Retry-After (秒) の間は待ってからやり直す", async () => {
+    installFetch(
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(429, { error: "slow down" }, { "Retry-After": "3" }))
+        .mockResolvedValueOnce(jsonResponse(200, { ok: true })),
+    );
+
+    const { state, settled } = settle(client().get("/api/x"));
+    // 待ち時間の基準 (250ms) より Retry-After の 3 秒が長いので、3 秒待つ
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await settled;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(state.value).toEqual({ ok: true });
+  });
+
+  it("Retry-After が待ち時間の基準より短いときは、基準の待ち時間を守る", async () => {
+    installFetch(
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(503, {}, { "Retry-After": "0" }))
+        .mockResolvedValueOnce(jsonResponse(200, { ok: true })),
+    );
+
+    const { settled } = settle(client().get("/api/x"));
+    await vi.advanceTimersByTimeAsync(249);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await settled;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("Retry-After が HTTP の日時でも守る", async () => {
+    vi.setSystemTime(new Date("2026-10-08T00:00:00Z"));
+    installFetch(
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse(503, {}, { "Retry-After": new Date("2026-10-08T00:00:04Z").toUTCString() }),
+        )
+        .mockResolvedValueOnce(jsonResponse(200, { ok: true })),
+    );
+
+    const { settled } = settle(client().get("/api/x"));
+    await vi.advanceTimersByTimeAsync(3_999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await settled;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("Retry-After が長すぎる (10 秒より長い) ときは、待たずにそのままエラーにする", async () => {
+    installFetch(
+      vi.fn().mockResolvedValue(jsonResponse(429, { error: "リクエストが多すぎます" }, { "Retry-After": "60" })),
+    );
+
+    const { state, settled } = settle(client().get("/api/x"));
+    // 時間を進めなくても、すぐにエラーになる
+    await settled;
+
+    expect(state.ok).toBe(false);
+    expect((state.error as Error).message).toContain("HTTP 429");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("上限は maxRetryAfterMs で変えられる", async () => {
+    installFetch(
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(429, {}, { "Retry-After": "30" }))
+        .mockResolvedValueOnce(jsonResponse(200, { ok: true })),
+    );
+
+    const { state, settled } = settle(client({ retry: { maxRetryAfterMs: 30_000 } }).get("/api/x"));
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settled;
+
+    expect(state.value).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("読めない Retry-After は無視して、通常の待ち時間でやり直す", async () => {
+    installFetch(
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(503, {}, { "Retry-After": "soon" }))
+        .mockResolvedValueOnce(jsonResponse(200, { ok: true })),
+    );
+
+    const { state, settled } = settle(client().get("/api/x"));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settled;
+
+    expect(state.value).toEqual({ ok: true });
+  });
+
+  it("やり直しを待っている間に呼び出し側が中断したら、やり直さずに AbortError を投げる", async () => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(503, {}, { "Retry-After": "5" })));
+    const controller = new AbortController();
+
+    const { state, settled } = settle(client().get("/api/x", { signal: controller.signal }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    controller.abort();
+    await settled;
+
+    expect((state.error as Error).name).toBe("AbortError");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

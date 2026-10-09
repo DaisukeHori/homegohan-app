@@ -259,15 +259,27 @@ export default function PantryPage() {
       return;
     }
 
-    setPreviewUri(asset.uri ?? null);
+    await analyzePickedPhoto(asset.uri);
+  }
+
+  /**
+   * 選んだ写真 (ローカルの uri) を、アップロードして解析する (#1168)。
+   * 失敗したときのアラートの「もう一度試す」は、撮影し直さずに、同じ写真でこの関数を呼び直す。
+   * アップロードまで済んでいたら、その URL (uploadedUrl) を使い回して、同じ写真を二重にアップロードしない。
+   */
+  async function analyzePickedPhoto(uri: string, uploadedUrl: string | null = null) {
+    setPreviewUri(uri);
     setIsAnalyzing(true);
     setAnalysisSummary(null);
     setDetected([]);
     setSuggestions([]);
+    let imageUrl = uploadedUrl;
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("ログインが必要です");
-      const imageUrl = await uploadFridgePhoto(asset.uri, user.id);
+      if (!imageUrl) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) throw new Error("ログインが必要です");
+        imageUrl = await uploadFridgePhoto(uri, user.id);
+      }
       const api = getApi();
       const res = await api.post<{
         ingredients: string[];
@@ -281,7 +293,17 @@ export default function PantryPage() {
       setDetected((res.detailedIngredients ?? []) as any);
       setSuggestions(res.suggestions ?? []);
     } catch (e: any) {
-      Alert.alert("解析失敗", e?.message ?? "解析に失敗しました。");
+      // 通信できなかったとき (圏外・待ち時間切れ) の文面は、getApi() が e.message に入れてくれる
+      const retryUrl = imageUrl;
+      Alert.alert("解析失敗", e?.message ?? "解析に失敗しました。", [
+        { text: "閉じる", style: "cancel" },
+        {
+          text: "もう一度試す",
+          onPress: () => {
+            void analyzePickedPhoto(uri, retryUrl);
+          },
+        },
+      ]);
     } finally {
       setIsAnalyzing(false);
     }

@@ -177,7 +177,7 @@ export default function TicketDetailPage({ params }: PageProps) {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <p className="text-red-600 mb-4">{error}</p>
-          <Link href="/support" className="text-blue-600 hover:underline">チケット一覧に戻る</Link>
+          <Link href="/admin/support" className="text-blue-600 hover:underline">チケット一覧に戻る</Link>
         </div>
       </div>
     );
@@ -190,7 +190,7 @@ export default function TicketDetailPage({ params }: PageProps) {
       <div className="max-w-6xl mx-auto px-4 py-8">
         {/* ヘッダー */}
         <div className="flex items-center gap-3 mb-6">
-          <Link href="/support" className="text-gray-500 hover:text-gray-700 text-sm">
+          <Link href="/admin/support" className="text-gray-500 hover:text-gray-700 text-sm">
             ← チケット一覧
           </Link>
           <span className="text-gray-300">/</span>

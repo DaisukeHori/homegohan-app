@@ -4,9 +4,12 @@
  *
  * GET /api/ai/nutrition-analysis?...includeAdvice=true&includeSuggestion=true は、サーバー側で LLM を 1 回呼ぶ
  * (時間制限は付いていない)。共通の通信部品 (@homegohan/core の createHttpClient) の GET は、
- * 通信エラーと 502 / 503 / 504 のときに既定で 2 回やり直すので、ゲートウェイ系のエラーが出ると、
+ * 通信エラーと 408 / 429 / 5xx (501 と 505 を除く) のときに既定で 2 回やり直すので、ゲートウェイ系のエラーが出ると、
  * ホームを 1 回読むだけで LLM の生成が最大 3 回走ってしまう。
- * 失敗してもホームの他の表示には影響しない (何も出さずに諦める) ので、この呼び出しはやり直さない ({ retries: 0 })。
+ * 失敗してもホームの他の表示には影響しない (何も出さずに諦める) ので、この呼び出しはやり直さない ({ retry: false })。
+ *
+ * このテストは、api.ts の「/api/ai/ 以下はやり直さない」方針 (#1168) を通さない素の通信部品で動かし、
+ * 呼び出し自身が指定を持っていること (方針が変わっても LLM が二重に走らないこと) を確かめる。
  */
 
 import { act, renderHook } from '@testing-library/react-native';
@@ -38,8 +41,8 @@ jest.mock('../../src/lib/api', () => {
   const { createHttpClient: create } = require('@homegohan/core');
   const client = create({
     baseUrl: 'https://api.example.test',
-    // 再試行の待ち時間を 0 にして、テストを速くする
-    retryDelayMs: 0,
+    // やり直しの待ち時間を 0 にして、テストを速くする
+    retry: { baseDelayMs: 0, maxDelayMs: 0 },
   });
   return { getApi: () => client };
 });
@@ -63,7 +66,7 @@ function jsonResponse(body: unknown, init: { status?: number; statusText?: strin
 
 async function renderAndFlush() {
   renderHook(() => useHomeData('user-1'));
-  // 再試行の待ち (retryDelayMs: 0) も含めて、通信が落ち着くまで待つ
+  // やり直しの待ち (baseDelayMs: 0) も含めて、通信が落ち着くまで待つ
   for (let i = 0; i < 5; i++) {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -85,9 +88,9 @@ afterEach(() => {
 });
 
 describe('useHomeData — LLM を呼ぶ nutrition-analysis の GET は、やり直さない', () => {
-  it('(前提) 共通の通信部品の GET は、502 のとき既定で 2 回やり直す (= retries: 0 を付けないと 3 回走る)', async () => {
+  it('(前提) 共通の通信部品の GET は、502 のとき既定で 2 回やり直す (= retry: false を付けないと 3 回走る)', async () => {
     mockFetch.mockImplementation(async () => jsonResponse({}, { status: 502, statusText: 'Bad Gateway' }));
-    const client = createHttpClient({ baseUrl: 'https://api.example.test', retryDelayMs: 0 });
+    const client = createHttpClient({ baseUrl: 'https://api.example.test', retry: { baseDelayMs: 0, maxDelayMs: 0 } });
 
     await expect(client.get('/api/ai/nutrition-analysis?period=today&includeAdvice=true')).rejects.toThrow('HTTP 502');
 
