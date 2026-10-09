@@ -58,6 +58,12 @@ function client(key: string): SupabaseClient {
 
 const srAdmin = client(serviceKey);
 
+// メールアドレス変更の確認リンクの戻り先。ローカル Supabase の site_url (http://127.0.0.1:<アプリのポート>) と同じ形にする。
+// アプリのポートは scripts/local-ci.sh の枠 (slot) で変わるので、アプリの URL (tests/integration/helpers/api.ts と同じ環境変数) から取る
+const DEFAULT_APP_PORT = '3000';
+const appBaseUrl = new URL(process.env.INTEGRATION_BASE_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? `http://localhost:${DEFAULT_APP_PORT}`);
+const EMAIL_REDIRECT_TO = `http://127.0.0.1:${appBaseUrl.port || DEFAULT_APP_PORT}/auth/callback`;
+
 const TS = Date.now();
 const OLD_PASSWORD = 'OldPass!2026-sec1187';
 const NEW_PASSWORD = 'NewPass!2026-sec1187';
@@ -209,7 +215,7 @@ describe('#1187 ログイン中のメールアドレス変更 (GoTrue)', () => {
 
     const { data, error } = await device.client.auth.updateUser(
       { email: newEmail },
-      { emailRedirectTo: 'http://127.0.0.1:3000/auth/callback' },
+      { emailRedirectTo: EMAIL_REDIRECT_TO },
     );
     expect(error).toBeNull();
     // 画面が確認前に「変更しました」と言わない根拠: 返ってくるユーザーも、サーバー上のユーザーも、メールアドレスはまだ元のまま

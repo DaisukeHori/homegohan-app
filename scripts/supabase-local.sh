@@ -21,8 +21,13 @@
 #   bash scripts/supabase-local.sh migrations     適用対象の migration 一覧を表示
 #   bash scripts/supabase-local.sh verify         ベースライン単体が本番カタログと一致するか確認
 #                                                 (ベースライン更新時に使う。終了後は reset で戻す)
+#   bash scripts/supabase-local.sh stop-leftover  枠 (LOCAL_CI_SLOT。1 以上) の project_id のコンテナ・ボリュームを止めて消す
+#                                                 (scripts/local-ci.sh が、持ち主の死んだ枠を取り直したときに残骸を片付けるために使う。
+#                                                 枠 0 は他の作業と共有しているので受け付けない)
 #
 # 環境変数:
+#   LOCAL_CI_SLOT                    枠 (0〜9。既定 0)。枠 1 以上は project_id とポートをずらして、同じ機械で複数のスタックを
+#                                    同時に動かせるようにする (値の表は scripts/lib/local-ci-slot.sh)。枠 0 は今までと同じ
 #   SUPABASE_CLI                     supabase CLI の呼び出し方 (既定: npx --yes supabase@2.62.10)
 #   SUPABASE_LOCAL_EXCLUDE           supabase start -x に渡すサービス
 #                                    (既定: studio,imgproxy,logflare,vector,edge-runtime)
@@ -40,7 +45,17 @@ ROOT="$(git rev-parse --show-toplevel)"
 WORK="$ROOT/.supabase-local"
 BASELINE_DIR="$ROOT/supabase/baseline"
 CLI_VERSION="2.62.10"
-PROJECT_ID="homegohan-local"
+# 枠 (slot) ごとの project_id とポート。枠 0 (既定。CI はこれ) は project_id = homegohan-local・CLI の既定のポートのまま
+# shellcheck source=lib/local-ci-slot.sh
+. "$ROOT/scripts/lib/local-ci-slot.sh"
+SLOT="${LOCAL_CI_SLOT:-0}"
+if ! local_ci_slot_valid "$SLOT"; then
+  echo "[supabase-local] LOCAL_CI_SLOT は 0〜$LCS_SLOT_MAX の整数にしてください: $SLOT" >&2
+  exit 2
+fi
+SLOT="$((10#$SLOT))"
+local_ci_slot_apply "$SLOT"
+PROJECT_ID="$SLOT_PROJECT_ID"
 if [ -z "${SUPABASE_CLI:-}" ]; then
   # 同じ版の supabase が入っていればそれを使い、無ければ CI と同じく npx で実行する
   # (CLI は実行ディレクトリの supabase/.temp/cli-latest を書き換えるため、リポジトリ外で版を確認する)
@@ -81,6 +96,42 @@ ensure_docker() {
   exit 1
 }
 
+# 枠 1 以上の config.toml に足す設定: CLI が開くポートをすべて枠の値にずらし、認証のリダイレクト先を枠の Next に向ける。
+# 枠 0 では何も足さない (CLI の既定のまま。生成する config.toml は今までと同じ)
+slot_config() {
+  local table
+  # リポジトリの config.toml が同じ表を持っていると TOML の表が 2 回になって CLI が読めないので、先に止める
+  for table in api db db.pooler studio inbucket analytics edge_runtime auth; do
+    if grep -qE "^[[:space:]]*\[$table\][[:space:]]*(#.*)?$" "$ROOT/supabase/config.toml"; then
+      log "supabase/config.toml に [$table] があるため、枠 $SLOT のポートを足せません (scripts/supabase-local.sh の slot_config を直す)"
+      exit 1
+    fi
+  done
+  echo
+  echo "# ローカル専用: 枠 $SLOT (LOCAL_CI_SLOT)。同じ機械の他の枠と重ならないポート (scripts/lib/local-ci-slot.sh)"
+  echo '[api]'
+  echo "port = $SLOT_API_PORT"
+  echo '[db]'
+  echo "port = $SLOT_DB_PORT"
+  echo "shadow_port = $SLOT_SHADOW_PORT"
+  echo '[db.pooler]'
+  echo "port = $SLOT_POOLER_PORT"
+  echo '[studio]'
+  echo "port = $SLOT_STUDIO_PORT"
+  echo '[inbucket]'
+  echo "port = $SLOT_INBUCKET_PORT"
+  echo "smtp_port = $SLOT_INBUCKET_SMTP_PORT"
+  echo "pop3_port = $SLOT_INBUCKET_POP3_PORT"
+  echo '[analytics]'
+  echo "port = $SLOT_ANALYTICS_PORT"
+  echo '[edge_runtime]'
+  echo "inspector_port = $SLOT_INSPECTOR_PORT"
+  # CLI の既定 (site_url = http://127.0.0.1:3000) と同じ形で、ポートだけ枠の Next に合わせる
+  echo '[auth]'
+  echo "site_url = \"http://127.0.0.1:$SLOT_APP_PORT\""
+  echo "additional_redirect_urls = [\"https://127.0.0.1:$SLOT_APP_PORT\"]"
+}
+
 # 作業ディレクトリ .supabase-local/supabase を組み立てる
 prepare() {
   local version
@@ -105,6 +156,9 @@ prepare() {
     echo 'sign_in_sign_ups = 1000'
     echo 'token_refresh = 1000'
     echo 'token_verifications = 1000'
+    if [ "$SLOT" -ne 0 ]; then
+      slot_config
+    fi
   } > "$WORK/supabase/config.toml"
 
   # イメージの版は本番に合わせたもの (supabase/.temp/*-version) を使う。
@@ -244,6 +298,19 @@ cmd_stop() {
   fi
 }
 
+# 枠 (1 以上) の project_id のコンテナ・ボリュームを止めて消す。持ち主が死んで残った枠のスタックを片付ける。
+# 枠 0 は、枠を使わない作業 (CI・手で起動したスタック・外側のロックで動く Workflow) と共有しているので止めない
+cmd_stop_leftover() {
+  if [ "$SLOT" -eq 0 ]; then
+    log "stop-leftover は枠 1 以上だけで使えます (枠 0 は他の作業と共有しているため止めません)"
+    exit 2
+  fi
+  ensure_docker
+  prepare
+  log "枠 $SLOT ($PROJECT_ID) の残ったスタックを止めます"
+  cli stop --no-backup
+}
+
 cmd_status() {
   cli status
 }
@@ -328,6 +395,7 @@ case "${1:-}" in
   env) cmd_env "${2:-}" ;;
   migrations) cmd_migrations ;;
   verify) cmd_verify ;;
+  stop-leftover) cmd_stop_leftover ;;
   *)
     awk 'NR > 1 && /^#/ { print; next } NR > 1 { exit }' "$0"
     exit 1

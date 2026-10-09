@@ -34,7 +34,17 @@
 #   LOCAL_CI_WORKDIR               作業用 worktree の親 (既定: ${TMPDIR:-/tmp}/homegohan-local-ci)
 #   LOCAL_CI_ARTIFACTS             JSON とログの置き場 (既定: ${TMPDIR:-/tmp}/homegohan-local-ci-artifacts/<HEAD の短い sha>)
 #   LOCAL_CI_FETCH                 0 にすると --base (origin/...) を fetch しない (既定 1)
-#   LOCAL_CI_SUPABASE_PORTS        空いていることを確かめるローカル Supabase のポート (空白区切り)
+#   LOCAL_CI_SUPABASE_PORTS        空いていることを確かめるローカル Supabase のポート (空白区切り。既定は枠の値)
+#
+# 枠 (slot): integration / e2e (ローカル Supabase と Next を立てる段) を、同じ機械で複数の local-ci.sh が同時に回せるよう、
+# 枠ごとに project_id (コンテナ名) と全ポートをずらす (値の表は scripts/lib/local-ci-slot.sh。枠 0 は今までと同じ値)。
+# Docker を使う段の直前に、空いている枠のロックを mkdir で取り、終わったら (trap で必ず) 外す。unit / mobile だけなら取らない。
+#   LOCAL_CI_SLOTS                 使ってよい枠 (空白区切り。既定 "0")。例: "0 1" なら 2 本まで同時に回せる
+#   LOCAL_CI_SLOT                  この枠だけを使う (LOCAL_CI_SLOTS より優先。空くまで待つ)
+#   LOCAL_CI_LOCK_DIR              枠のロックの置き場 (既定: ${TMPDIR:-/tmp}/homegohan-local-ci-locks)
+#   LOCAL_CI_SLOT_WAIT_SECONDS     空きを待つ上限の秒数 (既定 SLOT_WAIT_SECONDS_DEFAULT)。過ぎたら「待ちの時間切れ」で終了コード 3
+#   LOCAL_CI_LEGACY_LOCK           枠 0 を使う前に、このパスが無いことも確かめる (枠を使わずに既定のポートで動く作業の外側のロック。既定は空 = 確かめない)
+#   LOCAL_CI_SLOT_MEMORY_MIB       1 枠の Docker のメモリの目安 (MiB。既定 SLOT_MEMORY_MIB_DEFAULT)。空きがこれより少なければ警告する (止めない)
 #   LOCAL_CI_PLAYWRIGHT_WITH_DEPS  1 にすると playwright install に --with-deps を付ける (Linux で OS の依存も入れる。root 権限が要る)
 # =====================================================================
 
@@ -53,18 +63,12 @@ set -u -o pipefail
 # ---------------------------------------------------------------------
 readonly EXIT_RED=1         # どれかの段が赤
 readonly EXIT_USAGE=2       # 使い方の誤り
+readonly EXIT_SLOT_TIMEOUT=3 # 枠の空き待ちの時間切れ (検査そのものは赤でない。Docker を使う段を回せなかった)
 readonly EXIT_SIGINT=130    # 128 + SIGINT(2)
 readonly EXIT_SIGTERM=143   # 128 + SIGTERM(15)
 readonly ALL_STAGES="unit,mobile,integration,e2e"
-# 結合テスト (tests/integration/helpers/api.ts の既定) と e2e の yml が前提にするアプリの URL。CI と同じく固定
-readonly APP_ORIGIN="http://localhost:3000"
-readonly APP_PORT=3000
-# e2e-local.yml の規約の同意ゲート (#1174) の 2 つ目・3 つ目のサーバー。同じビルドを、環境変数を変えて別のポートで起動する
-#   2 つ目: LEGAL_CONSENT_ENFORCE=on (強制あり)  3 つ目: LEGAL_CONSENT_NOTICE=on (お知らせあり)
-readonly ENFORCED_APP_ORIGIN="http://localhost:3001"
-readonly ENFORCED_APP_PORT=3001
-readonly NOTICE_APP_ORIGIN="http://localhost:3002"
-readonly NOTICE_APP_PORT=3002
+# アプリの URL のホスト部分。ポートは枠で決まる (apply_slot。枠 0 は CI と同じ 3000 / 3001 / 3002)
+readonly APP_HOST_URL="http://localhost"
 # GitHub の ubuntu ランナーの LANG (Node の Intl の既定ロケールがこれで決まる)
 readonly CI_LANG="C.UTF-8"
 # security-regression.yml の next dev の待ち (seq 1 120 × sleep 2)
@@ -78,9 +82,20 @@ readonly PRECOMPILE_MAX_TIME_SEC=120
 readonly STOP_WAIT_TRIES=15
 # 結果の表に出すログの末尾の行数 (赤のときの手がかり)
 readonly LOG_TAIL_LINES=40
-# supabase/config.toml はポートを指定していないので supabase CLI 2.62.10 の既定を使う
-# (54320 shadow DB / 54321 API / 54322 DB / 54323 studio / 54324-54326 inbucket / 54327 analytics / 54329 pooler)
-SUPABASE_PORTS="${LOCAL_CI_SUPABASE_PORTS:-54320 54321 54322 54323 54324 54325 54326 54327 54328 54329}"
+# 枠の空きを待つ上限の既定 (90 分)。Workflow が外側のロック (Docker を使う作業を 1 本ずつにする) を待つ上限と同じにしてある
+readonly SLOT_WAIT_SECONDS_DEFAULT=5400
+# 枠の空きを確かめる間隔
+readonly SLOT_POLL_SEC=10
+# ロックのディレクトリを作ってから持ち主 (owner) を書き終えるまでの猶予。これを過ぎても owner が無ければ持ち主が死んだとみなす
+readonly LOCK_OWNER_GRACE_SEC=60
+# 1 枠の Docker のメモリの目安 (MiB)。2026-10-10 に Docker Desktop (VM: CPU 5 / メモリ 7.75 GiB) で実測した、
+# 結合テスト・e2e を回している最中のローカル Supabase 一式 (studio などを除く 8 コンテナ) の使用量の最大 (約 1.1 GiB) に余裕を足した値。
+# Next (next dev / next start) と Playwright は Docker の外 (ホスト) で動くので入れていない
+readonly SLOT_MEMORY_MIB_DEFAULT=1536
+readonly BYTES_PER_MIB=1048576
+# 枠の値 (project_id・Supabase と Next のポート) を決める関数 (local_ci_slot_valid / local_ci_slot_apply)
+# shellcheck source=lib/local-ci-slot.sh
+. "$(dirname "$0")/lib/local-ci-slot.sh"
 PLAYWRIGHT_WITH_DEPS="${LOCAL_CI_PLAYWRIGHT_WITH_DEPS:-0}"
 
 # CI の実行対象 (yml から写す。ずれは tests/local-ci-workflow-sync.test.ts が検出する)
@@ -97,6 +112,8 @@ PW_CONSENT_ARGS=(--trace off tests/e2e/legal-consent-gate.spec.ts)
 readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT"
 # 段の中だけで追加で持ち込む変数名 (e2e のパスワード)
 ENV_EXTRA=""
+# 枠を取ったあとに持ち込む変数名 (apply_slot が決める。supabase-local.sh が読む枠と、結合テストが叩くアプリの URL)
+ENV_SLOT=""
 
 # ---------------------------------------------------------------------
 # JSON の読み取り (node -e。jq に依存しない)
@@ -250,7 +267,7 @@ now() { date +%s; }
 ci_env() {
   local name
   for name in $(compgen -e); do
-    case " $ENV_ALLOWLIST $ENV_EXTRA " in
+    case " $ENV_ALLOWLIST $ENV_EXTRA $ENV_SLOT " in
       *" $name "*) ;;
       *) unset "$name" 2>/dev/null || true ;;
     esac
@@ -405,6 +422,159 @@ check_docker() {
 tail_hint() { printf '%s (末尾は %s)' "$1" "$2"; }
 
 # ---------------------------------------------------------------------
+# 枠 (slot) とロック
+# ---------------------------------------------------------------------
+SLOT=""
+SLOT_LOCK=""
+ART_LOCK=""
+SLOT_TIMED_OUT=0
+
+# apply_slot <枠>: 枠の値 (scripts/lib/local-ci-slot.sh) を、段が使う変数と子プロセスの環境に入れる。
+# tests/local-ci-workflow-sync.test.ts は、ここの代入を枠 0 の値に置き換えて yml と照合する (枠 0 = CI と同じ値)
+apply_slot() {
+  local_ci_slot_apply "$1"
+  SLOT="$1"
+  # 結合テスト (tests/integration/helpers/api.ts) と e2e の yml が前提にするアプリの URL
+  APP_PORT="$SLOT_APP_PORT"
+  APP_ORIGIN="$APP_HOST_URL:$SLOT_APP_PORT"
+  # e2e-local.yml の規約の同意ゲート (#1174) の 2 つ目・3 つ目のサーバー。同じビルドを、環境変数を変えて別のポートで起動する
+  #   2 つ目: LEGAL_CONSENT_ENFORCE=on (強制あり)  3 つ目: LEGAL_CONSENT_NOTICE=on (お知らせあり)
+  ENFORCED_APP_PORT="$SLOT_ENFORCED_APP_PORT"
+  ENFORCED_APP_ORIGIN="$APP_HOST_URL:$SLOT_ENFORCED_APP_PORT"
+  NOTICE_APP_PORT="$SLOT_NOTICE_APP_PORT"
+  NOTICE_APP_ORIGIN="$APP_HOST_URL:$SLOT_NOTICE_APP_PORT"
+  SUPABASE_PORTS="${LOCAL_CI_SUPABASE_PORTS:-$SLOT_SUPABASE_PORTS}"
+  # supabase-local.sh は LOCAL_CI_SLOT で project_id とポートを決める。結合テストは INTEGRATION_BASE_URL のアプリを叩く
+  export LOCAL_CI_SLOT="$SLOT" INTEGRATION_BASE_URL="$APP_ORIGIN"
+  ENV_SLOT="LOCAL_CI_SLOT INTEGRATION_BASE_URL"
+}
+
+file_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
+
+# プロセスの開始時刻 (pid が使い回されたときに、別のプロセスを持ち主と取り違えないために記録する)
+proc_lstart() { ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//; s/ *$//'; }
+
+# lock_held <ロックのディレクトリ>: 生きている持ち主がいる (または作られた直後で持ち主をまだ書いていない) なら真
+lock_held() {
+  local dir="$1" pid lstart mtime
+  [ -d "$dir" ] || return 1
+  if [ ! -f "$dir/owner" ]; then
+    mtime="$(file_mtime "$dir")" || return 1
+    [ "$(($(now) - mtime))" -lt "$LOCK_OWNER_GRACE_SEC" ]
+    return
+  fi
+  pid="$(sed -n 's/^pid=//p' "$dir/owner")"
+  lstart="$(sed -n 's/^lstart=//p' "$dir/owner")"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  [ -n "$lstart" ] && [ "$(proc_lstart "$pid")" = "$lstart" ]
+}
+
+write_owner() {
+  local dir="$1"
+  {
+    echo "pid=$$"
+    echo "lstart=$(proc_lstart "$$")"
+    echo "started=$(date '+%Y-%m-%dT%H:%M:%S%z')"
+    echo "head=$HEAD_SHA"
+    echo "artifacts=$ART"
+  } >"$dir/owner.tmp" && mv "$dir/owner.tmp" "$dir/owner"
+}
+
+# reclaim_lock <ロックのディレクトリ>: 持ち主の死んだロックを消す。回収は <dir>.reclaim を取った 1 本だけが行う
+reclaim_lock() {
+  local dir="$1" guard="$1.reclaim" mtime
+  if ! mkdir "$guard" 2>/dev/null; then
+    # 回収の途中で死んだ跡なら消しておく (次の回で回収する)
+    mtime="$(file_mtime "$guard")" && [ "$(($(now) - mtime))" -ge "$LOCK_OWNER_GRACE_SEC" ] && rm -rf "$guard"
+    return 1
+  fi
+  if lock_held "$dir"; then
+    rmdir "$guard"
+    return 1
+  fi
+  say "持ち主のいないロックを回収します: $dir ($(tr '\n' ' ' <"$dir/owner" 2>/dev/null || echo 'owner なし'))"
+  rm -rf "$dir"
+  rmdir "$guard"
+}
+
+# try_lock <ロックのディレクトリ>: mkdir で原子的に取る。持ち主が死んでいれば回収して取り直す
+try_lock() {
+  local dir="$1"
+  if mkdir "$dir" 2>/dev/null; then write_owner "$dir"; return 0; fi
+  lock_held "$dir" && return 1
+  reclaim_lock "$dir" || return 1
+  if mkdir "$dir" 2>/dev/null; then write_owner "$dir"; return 0; fi
+  return 1
+}
+
+# release_lock <ロックのディレクトリ>: 自分が持ち主のときだけ外す
+release_lock() {
+  local dir="$1"
+  [ -n "$dir" ] && [ -f "$dir/owner" ] || return 0
+  if [ "$(sed -n 's/^pid=//p' "$dir/owner")" = "$$" ]; then rm -rf "$dir"; fi
+}
+
+# 枠を使わずに既定のポートで動く作業 (Workflow など) の外側のロックがあるか
+legacy_lock_held() { [ -n "$LEGACY_LOCK" ] && [ -e "$LEGACY_LOCK" ]; }
+
+# Docker の空きメモリが 1 枠の目安より少なければ警告する (止めない)
+check_docker_memory() {
+  local total used free_mib
+  total="$(docker info --format '{{.MemTotal}}' 2>/dev/null)" || return 0
+  [[ "$total" =~ ^[0-9]+$ ]] || return 0
+  used="$(docker stats --no-stream --format '{{.MemUsage}}' 2>/dev/null | awk '
+    { v = $1; n = v + 0; u = v; sub(/^[0-9.]+/, "", u)
+      m = 1
+      if (u == "KiB") m = 1024; else if (u == "MiB") m = 1024 * 1024; else if (u == "GiB") m = 1024 * 1024 * 1024
+      else if (u == "kB") m = 1000; else if (u == "MB") m = 1000 * 1000; else if (u == "GB") m = 1000 * 1000 * 1000
+      sum += n * m }
+    END { printf "%d\n", sum }')"
+  [[ "$used" =~ ^[0-9]+$ ]] || used=0
+  free_mib="$(((total - used) / BYTES_PER_MIB))"
+  if [ "$free_mib" -lt "$SLOT_MEMORY_MIB" ]; then
+    say "警告: Docker の空きメモリ ${free_mib} MiB (全体 $((total / BYTES_PER_MIB)) MiB) が 1 枠の目安 ${SLOT_MEMORY_MIB} MiB より少ない。落ちたら同時に回す本数を減らす (止めずに続けます)"
+  fi
+}
+
+# acquire_slot: 空いている枠を取る。取れたら 0、待ちの時間切れなら 1
+acquire_slot() {
+  local s deadline waited=0
+  mkdir -p "$LOCK_DIR" || { say "枠のロックの置き場を作れません: $LOCK_DIR"; return 1; }
+  check_docker_memory
+  deadline="$(($(now) + SLOT_WAIT_SECONDS))"
+  while :; do
+    for s in $SLOT_CANDIDATES; do
+      if [ "$s" -eq 0 ] && legacy_lock_held; then continue; fi
+      if try_lock "$LOCK_DIR/slot-$s"; then
+        # 外側のロックは別の作業が mkdir するので、取ったあとにもう一度確かめる
+        if [ "$s" -eq 0 ] && legacy_lock_held; then release_lock "$LOCK_DIR/slot-$s"; continue; fi
+        SLOT_LOCK="$LOCK_DIR/slot-$s"
+        apply_slot "$s"
+        say "枠 $s を取りました (project_id $SLOT_PROJECT_ID / Supabase API $SLOT_API_PORT / Next $APP_PORT・$ENFORCED_APP_PORT・$NOTICE_APP_PORT。ロック $SLOT_LOCK)"
+        return 0
+      fi
+    done
+    if [ "$(now)" -ge "$deadline" ]; then return 1; fi
+    if [ "$waited" = 0 ]; then
+      say "空いている枠がありません (候補: $SLOT_CANDIDATES / ロック: $LOCK_DIR${LEGACY_LOCK:+ / 外側のロック: $LEGACY_LOCK})。最大 $SLOT_WAIT_SECONDS 秒待ちます"
+      waited=1
+    fi
+    sleep "$SLOT_POLL_SEC"
+  done
+}
+
+# 前の実行が死んで残った、この枠 (1 以上) のスタックを片付ける (枠のロックを持っているので、この枠の project_id は自分だけのもの)
+clear_slot_leftovers() {
+  [ "$SLOT" -ne 0 ] || return 0
+  local filter="label=com.supabase.cli.project=$SLOT_PROJECT_ID"
+  if [ -z "$(docker ps -aq --filter "$filter" 2>/dev/null)" ] && [ -z "$(docker volume ls -q --filter "$filter" 2>/dev/null)" ]; then
+    return 0
+  fi
+  say "枠 $SLOT ($SLOT_PROJECT_ID) に前の実行の残ったコンテナ / ボリュームがあるので片付けます"
+  run_in "$WT" "$ART/slot-leftover.log" bash scripts/supabase-local.sh stop-leftover || true
+}
+
+# ---------------------------------------------------------------------
 # 段: unit (.github/workflows/ci.yml)
 # ---------------------------------------------------------------------
 stage_unit() {
@@ -491,7 +661,7 @@ stage_integration() {
   # Next dev サーバ (yml と同じく /login が応答するまで待つ)
   log="$ART/integration-next-dev.log"
   say "integration: next dev を起動します"
-  ( ci_env && cd "$WT" && exec nohup npm run dev ) >"$log" 2>&1 &
+  ( ci_env && cd "$WT" && export PORT="$APP_PORT" && exec nohup npm run dev ) >"$log" 2>&1 &
   SERVER_PID=$!
   if ! wait_app "$DEV_WAIT_TRIES" "$log"; then
     record integration:setup RED - - - - - "$(($(now) - t0))" "$(tail_hint "next dev が $APP_ORIGIN/login に応答しない" "$log")"
@@ -591,7 +761,7 @@ stage_e2e() {
     return 0
   fi
   log="$ART/e2e-next-start.log"
-  ( ci_env && cd "$WT" && exec nohup npm run start ) >"$log" 2>&1 &
+  ( ci_env && cd "$WT" && export PORT="$APP_PORT" && exec nohup npm run start ) >"$log" 2>&1 &
   SERVER_PID=$!
   if ! wait_app "$START_WAIT_TRIES" "$log"; then
     record e2e:build RED - - - - - "$(($(now) - t0))" "$(tail_hint "next start が $APP_ORIGIN/login に応答しない" "$log")"
@@ -681,14 +851,17 @@ FINISHED=0
 finish() {
   [ "$FINISHED" = 1 ] && return 0
   FINISHED=1
-  local stage v p f s files exp secs note red=0 rows=0 mark md
+  local stage v p f s files exp secs note red=0 red_checks=0 rows=0 mark md
   md="$ART/summary.md"
 
   printf '\n%-22s %-6s %8s %8s %8s %13s %6s  %s\n' stage result passed failed skipped files secs note
   while IFS=$'\t' read -r stage v p f s files exp secs note; do
     [ -n "$stage" ] || continue
     rows=$((rows + 1))
-    [ "$v" = GREEN ] || red=1
+    if [ "$v" != GREEN ]; then
+      red=1
+      [ "$stage" = slot:wait ] || red_checks=1
+    fi
     printf '%-22s %-6s %8s %8s %8s %13s %6s  %s\n' "$stage" "$v" "$p" "$f" "$s" "$files/$exp" "$secs" "$note"
   done <"$RESULTS"
   [ "$rows" -gt 0 ] || red=1
@@ -704,6 +877,9 @@ finish() {
       echo "- --base: なし (${MERGE_STATE:-HEAD そのもの})"
     fi
     echo "- 実行した段: \`$ONLY\` (全段は \`$ALL_STAGES\`)"
+    if [ -n "$SLOT" ]; then
+      echo "- 枠: $SLOT (project_id \`$SLOT_PROJECT_ID\` / Supabase API $SLOT_API_PORT / Next $APP_PORT・$ENFORCED_APP_PORT・$NOTICE_APP_PORT)"
+    fi
     echo "- TZ=UTC / CI=true / LANG=$CI_LANG / NODE_OPTIONS なし / Node ${NODE_VERSION:-?} / $(uname -s) $(uname -m)"
     if [ "${DIRTY_TRACKED:-0}" != 0 ] || [ "${DIRTY_UNTRACKED:-0}" != 0 ]; then
       echo "- 未コミットの変更: 変更 ${DIRTY_TRACKED:-0} / 未追跡 ${DIRTY_UNTRACKED:-0} (検査に含まれていない)"
@@ -738,6 +914,11 @@ finish() {
       tail -n "$LOG_TAIL_LINES" "$lf" >&2
     fi
   done <"$RESULTS"
+  # 枠の空き待ちの時間切れだけで赤なら、検査の失敗と区別できる終了コードにする
+  if [ "$SLOT_TIMED_OUT" = 1 ] && [ "$red_checks" = 0 ]; then
+    say "枠の空き待ちの時間切れ: Docker を使う段 (integration / e2e) を回していません。検査の失敗ではありません (終了コード $EXIT_SLOT_TIMEOUT)"
+    exit "$EXIT_SLOT_TIMEOUT"
+  fi
   exit "$EXIT_RED"
 }
 
@@ -747,6 +928,8 @@ cleanup() {
   CLEANED=1
   stop_server
   stop_supabase
+  # 枠のロックは、その枠のコンテナと Next を止めたあとに外す
+  release_lock "$SLOT_LOCK"
   if [ -n "${WT:-}" ] && [ -d "$WT" ]; then
     if [ "$KEEP" = 1 ]; then
       say "作業用の worktree を残しました: $WT (片付け: git worktree remove --force $WT)"
@@ -758,6 +941,7 @@ cleanup() {
       git -C "$SRC_ROOT" worktree prune >/dev/null 2>&1 || true
     fi
   fi
+  release_lock "$ART_LOCK"
 }
 
 # ---------------------------------------------------------------------
@@ -791,6 +975,22 @@ for s in $(echo "$ONLY" | tr ',' ' '); do
 done
 want() { case ",$ONLY," in *",$1,"*) return 0 ;; esac; return 1; }
 
+# 枠の設定 (使い方の誤りは、何かを作る前に止める)
+if [ -n "${LOCAL_CI_SLOT:-}" ]; then SLOT_CANDIDATES="$LOCAL_CI_SLOT"; else SLOT_CANDIDATES="${LOCAL_CI_SLOTS:-0}"; fi
+normalized=""
+for s in $SLOT_CANDIDATES; do
+  local_ci_slot_valid "$s" || { say "LOCAL_CI_SLOT / LOCAL_CI_SLOTS の枠は 0〜$LCS_SLOT_MAX の整数: $s"; exit "$EXIT_USAGE"; }
+  normalized="$normalized${normalized:+ }$((10#$s))"
+done
+[ -n "$normalized" ] || { say "LOCAL_CI_SLOTS が空です (例: LOCAL_CI_SLOTS='0 1')"; exit "$EXIT_USAGE"; }
+SLOT_CANDIDATES="$normalized"
+SLOT_WAIT_SECONDS="${LOCAL_CI_SLOT_WAIT_SECONDS:-$SLOT_WAIT_SECONDS_DEFAULT}"
+SLOT_MEMORY_MIB="${LOCAL_CI_SLOT_MEMORY_MIB:-$SLOT_MEMORY_MIB_DEFAULT}"
+for v in "$SLOT_WAIT_SECONDS" "$SLOT_MEMORY_MIB"; do
+  [[ "$v" =~ ^[0-9]+$ ]] || { say "LOCAL_CI_SLOT_WAIT_SECONDS / LOCAL_CI_SLOT_MEMORY_MIB は 0 以上の整数: $v"; exit "$EXIT_USAGE"; }
+done
+LEGACY_LOCK="${LOCAL_CI_LEGACY_LOCK:-}"
+
 for c in git node npm curl; do
   command -v "$c" >/dev/null 2>&1 || { say "$c が見つかりません"; exit "$EXIT_RED"; }
 done
@@ -808,15 +1008,32 @@ TMP_ROOT="${TMP_ROOT%/}"
 ART="${LOCAL_CI_ARTIFACTS:-$TMP_ROOT/homegohan-local-ci-artifacts/$HEAD_SHORT}"
 WORK_PARENT="${LOCAL_CI_WORKDIR:-$TMP_ROOT/homegohan-local-ci}"
 WORK_PARENT="${WORK_PARENT%/}"
+LOCK_DIR="${LOCAL_CI_LOCK_DIR:-$TMP_ROOT/homegohan-local-ci-locks}"
+LOCK_DIR="${LOCK_DIR%/}"
 mkdir -p "$ART" "$WORK_PARENT" || { say "作業場所を作れません: $ART / $WORK_PARENT"; exit "$EXIT_RED"; }
 chmod 700 "$ART" 2>/dev/null || true
-for s in $(echo "$ONLY" | tr ',' ' '); do rm -rf "$ART/$s"-*; done
-RESULTS="$ART/results.tsv"
-: >"$RESULTS"
 
 trap cleanup EXIT
 trap 'exit "$EXIT_SIGINT"' INT
 trap 'exit "$EXIT_SIGTERM"' TERM
+
+# 同じ HEAD を同時に回すと、既定の結果の置き場 (HEAD の sha ごと) が重なる。使用中なら、既定のときは別の場所に替え、
+# LOCAL_CI_ARTIFACTS で指定されたときは止める (他の実行の結果を消さない)
+if ! try_lock "$ART/.in-use"; then
+  if [ -n "${LOCAL_CI_ARTIFACTS:-}" ]; then
+    say "LOCAL_CI_ARTIFACTS ($ART) は、同時に動いている別の local-ci.sh が使っています。別の場所を指定してください"
+    exit "$EXIT_USAGE"
+  fi
+  ART="$ART.$$"
+  say "既定の結果の置き場は別の local-ci.sh が使っているので、$ART に出します"
+  mkdir -p "$ART" && chmod 700 "$ART" 2>/dev/null
+  try_lock "$ART/.in-use" || { say "結果の置き場を取れません: $ART"; exit "$EXIT_RED"; }
+fi
+ART_LOCK="$ART/.in-use"
+for s in $(echo "$ONLY" | tr ',' ' '); do rm -rf "$ART/$s"-*; done
+rm -f "$ART/slot-leftover.log"
+RESULTS="$ART/results.tsv"
+: >"$RESULTS"
 
 # 未コミットの変更は検査に入らない (検査するのはコミット済みの HEAD)。止めずに警告して続ける
 DIRTY_TRACKED="$(git -C "$SRC_ROOT" status --porcelain --untracked-files=no | wc -l | tr -d ' ')"
@@ -869,6 +1086,17 @@ say "npm ci: $(($(now) - t_ci)) 秒"
 
 if want unit; then say "== unit (ci.yml)"; stage_unit; fi
 if want mobile; then say "== mobile (mobile-test.yml)"; stage_mobile; fi
+# Docker を使う段 (integration / e2e) の前に枠を取る。unit / mobile だけなら取らない
+if want integration || want e2e; then
+  say "== 枠 (候補: $SLOT_CANDIDATES)"
+  if acquire_slot; then
+    clear_slot_leftovers
+  else
+    SLOT_TIMED_OUT=1
+    record slot:wait RED - - - - - "$SLOT_WAIT_SECONDS" "待ちの時間切れ: $SLOT_WAIT_SECONDS 秒待っても枠 ($SLOT_CANDIDATES) が空かなかった。integration / e2e は回していない (検査の失敗ではない。ロック: $LOCK_DIR${LEGACY_LOCK:+ / 外側のロック: $LEGACY_LOCK})"
+    finish
+  fi
+fi
 if want integration; then say "== integration (security-regression.yml)"; stage_integration; fi
 if want e2e; then say "== e2e (e2e-local.yml)"; stage_e2e; fi
 
