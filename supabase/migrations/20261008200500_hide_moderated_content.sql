@@ -37,6 +37,14 @@
 --          保管期間を過ぎた行を探す完全削除ジョブ (別の作業) のため。
 --        idx_meals_hidden_by / idx_recipes_hidden_by    (hidden_by)  WHERE hidden_by IS NOT NULL
 --          auth.users の行を消すたびに、外部キー (ON DELETE SET NULL) が「hidden_by がその人の行」を探す。索引が無いと毎回表全体を読む。
+--   5. paste_meal_to_family (食事を家族のメンバーに貼り付ける関数。SECURITY DEFINER) が、隠された食事を貼り付け元にするのを拒否する。
+--        貼り付けは、元の行の写真 (photo_url) とメモ (memo) を、貼り付け先のメンバーの持ち物として新しい行に写す。
+--        新しい行は隠れていないので、これを止めないと、隠された食事の持ち主が自分で家族に貼り付け直して、隠した内容を家族に見せ直せてしまう。
+--        - 拒否のしかた: 持ち主の確認 (NOT_MEAL_OWNER) のあとで RAISE EXCEPTION 'MEAL_HIDDEN' USING ERRCODE = 'P0001'
+--          (持ち主でない人には、隠れているかどうかを教えない)。POST /api/meals/paste は 403 MEAL_HIDDEN を返す。
+--        - それ以外は本番の定義 (supabase/baseline/prod_schema.sql) と同じ。CREATE OR REPLACE なので実行権限 (ACL) は変わらない。
+--      運営が食事を隠すとき (hideModeratedContent) は、貼り付けで作られた複製 (同じ paste_group_id の行) もまとめて隠す。
+--      複製は家族のメンバーの持ち物なので、その人には自分の行として見えたまま、ほかの家族には見えなくなる。
 --
 -- やらないこと:
 --   - 完全削除 (保管期間を過ぎた行と、その画像の削除) はこの migration に入れない。保管期間はオーナー・弁護士が決めるまで未定で、
@@ -46,11 +54,15 @@
 --   - 既存の通報 (moderation_flags / recipe_flags) で、すでに rejected になっているものの食事・レシピは隠さない。
 --     これまで delete_* は何も隠さなかったので、該当があるかは PR の本文の読み取り専用 SQL で数える。隠すかどうかは件数を見てから別に決める。
 --   - 運営が隠した行を元に戻す画面・API (hidden_* を NULL に戻す操作) は作らない。必要になったときは service_role で戻す。
---   - paste_meal_to_family (食事を家族に貼り付ける関数) は変えない。貼り付けは新しい行を作るので、隠した状態は引き継がれない。
+--   - 画像ファイル (食事の photo_url・レシピの image_url) そのものは隠さない。画像は公開バケット (POST /api/upload が使う fridge-images など) や外部の URL にあり、
+--     URL を知っていれば誰でも取得できる。行を隠すと本人以外は URL を読めなくなるので、新しく画像にたどり着く経路は無くなるが、
+--     隠す前に URL を見た人 (家族・公開レシピを見た人) は取得できる。画像を見えなくするには Storage API でファイルを動かす必要があり
+--     (同じ URL をペーストの複製・献立が共有していることがある)、完全削除のジョブと合わせて別の作業で扱う。
 --
 -- 本番のデータへの影響: なし。
 --   - 3 列は NULL のまま足すだけで、表の書き換え (rewrite) も既存の行の更新も無い。
 --   - ポリシーは、hidden_at が NULL の行 (= 既存のすべての行) については今と同じ結果を返す。変わるのは「隠した行」だけ。
+--   - paste_meal_to_family は、隠された食事 (この migration の時点では 0 件) を貼り付け元にしたときだけ挙動が変わる。
 --   - トリガーは、hidden_* を書く文でだけ動く。今のアプリ (Web・モバイル・Edge Function) に hidden_* を書く箇所は無い。
 --     行を丸ごと送り直すクライアントが hidden_* を NULL で送っても、今の値 (NULL) と同じなので通る。
 --   - ロック: ALTER TABLE ... ADD COLUMN は meals / recipes に ACCESS EXCLUSIVE ロックを短く取る。hidden_by の外部キーのため auth.users にも
@@ -64,6 +76,7 @@
 -- 確認: tests/integration/rls/hidden-content-visibility.test.ts
 --   隠された食事・レシピが本人以外 (家族・ほかのログインユーザー・anon) に見えないこと、本人は読めること、本人が隠し状態を書き換えられないこと、
 --   運営 (service_role) が隠せること、運営ユーザーを消すと hidden_by だけ NULL に戻ること、定義 (ポリシー・列・外部キー・索引・トリガー) を確かめる。
+--   隠された食事を家族に貼り付けられないこと (MEAL_HIDDEN)、運営が隠すとペーストの複製も隠れることも確かめる。
 -- ロールバック: supabase/rollbacks/20261008200500_hide_moderated_content.down.sql
 --   ⚠️ 戻すと hidden_* 列ごと「隠した状態」が消え、隠していたコンテンツがすべて元どおり見えるようになる。
 -- マージ順: migration は version の順にマージすること (この version: 20261008200500)。
@@ -145,3 +158,66 @@ ALTER POLICY "Users can view public recipes" ON public.recipes
     (hidden_at IS NULL OR auth.uid() = user_id)
     AND (user_id IS NULL OR is_public = true OR auth.uid() = user_id)
   );
+
+-- 5. 隠された食事を、家族への貼り付けの元にさせない (本番の定義に、MEAL_HIDDEN の確認だけを足す)
+CREATE OR REPLACE FUNCTION public.paste_meal_to_family(p_source_meal_id uuid, p_target_user_ids uuid[])
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+DECLARE
+  v_source meals;
+  v_paste_group_id UUID;
+  v_target UUID;
+  v_caller_family_id UUID;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'NOT_AUTHENTICATED' USING ERRCODE = 'P0001';
+  END IF;
+
+  SELECT * INTO v_source FROM meals WHERE id = p_source_meal_id;
+  IF v_source.user_id <> auth.uid() THEN
+    RAISE EXCEPTION 'NOT_MEAL_OWNER' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- #1101: 運営が隠した食事は、貼り付けの元にできない (写した新しい行は隠れていないので、隠した内容を家族に見せ直せてしまう)
+  IF v_source.hidden_at IS NOT NULL THEN
+    RAISE EXCEPTION 'MEAL_HIDDEN' USING ERRCODE = 'P0001';
+  END IF;
+
+  SELECT family_id INTO v_caller_family_id FROM user_profiles WHERE id = auth.uid();
+  IF v_caller_family_id IS NULL THEN
+    RAISE EXCEPTION 'NOT_IN_FAMILY' USING ERRCODE = 'P0001';
+  END IF;
+
+  v_paste_group_id := COALESCE(v_source.paste_group_id, gen_random_uuid());
+
+  IF v_source.paste_group_id IS NULL THEN
+    UPDATE meals SET paste_group_id = v_paste_group_id WHERE id = p_source_meal_id;
+  END IF;
+
+  FOREACH v_target IN ARRAY p_target_user_ids LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM family_members
+      WHERE family_id = v_caller_family_id AND user_id = v_target AND status = 'active'
+    ) THEN
+      RAISE EXCEPTION 'TARGET_NOT_IN_FAMILY' USING ERRCODE = 'P0001';
+    END IF;
+
+    INSERT INTO meals (
+      user_id, paste_group_id, eaten_at, meal_type, photo_url, memo
+    )
+    SELECT
+      v_target, v_paste_group_id, eaten_at, meal_type, photo_url, memo
+    FROM meals WHERE id = p_source_meal_id;
+  END LOOP;
+
+  INSERT INTO membership_audit (scope, scope_id, action, actor_id, metadata)
+  VALUES ('family', v_caller_family_id, 'paste_executed', auth.uid(),
+          jsonb_build_object('source_meal_id', p_source_meal_id,
+                             'paste_group_id', v_paste_group_id,
+                             'target_count', array_length(p_target_user_ids, 1)));
+
+  RETURN v_paste_group_id;
+END $$;

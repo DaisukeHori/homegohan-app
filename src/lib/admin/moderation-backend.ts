@@ -263,25 +263,52 @@ export interface HideModeratedContentParams {
  * `hidden_*` を書き換えられるのは service-role だけ (DB のトリガー guard_hidden_content_columns)
  * なので、`supabase` には、認可 (requireRole) を通したあとの `getSupabaseAdmin()` を渡すこと。
  *
+ * - 食事 (food) は、家族へのペースト (paste_meal_to_family) で同じ写真・メモの行が家族のメンバーの
+ *   持ち物として複製されている。通報された行だけを隠すと、複製が家族に見えたまま残るので、
+ *   同じ `paste_group_id` の行 (元の行とすべての複製) をまとめて隠す。複製の持ち主には、
+ *   自分の行として見えたまま (本人には見える、の規則どおり)。隠した行は、ペーストの元にできない (DB の関数が拒否する)
  * - すでに隠れている行は上書きしない (`hidden_at IS NULL` の行だけ更新する)。保管期間は
  *   最初に隠した日時から数える。同じコンテンツへの 2 件目の通報を処理しても、起点は延びない
  * - 行がもう無い (持ち主が先に消した) ときも、何も更新せずに成功する。隠す対象が無いだけで、失敗ではない
  * - DB エラー時は例外を throw する。呼び出し側で「隠せなかった」と明示し、成功を装わないこと
+ *
+ * @returns この呼び出しで新しく隠した行の ID (すでに隠れていた行・無かった行は含まない)
  */
 export async function hideModeratedContent(
   supabase: SupabaseClient<any>,
   type: ModerationBackedType,
   contentId: string,
   params: HideModeratedContentParams,
-): Promise<void> {
-  const { error } = await supabase
-    .from(contentTable(type))
+): Promise<string[]> {
+  const table = contentTable(type);
+  // 絞り込み: 既定は通報された行だけ。食事でペーストの複製があれば、同じ paste_group_id の行すべて
+  let filterColumn: 'id' | 'paste_group_id' = 'id';
+  let filterValue = contentId;
+  if (table === 'meals') {
+    const { data: source, error: sourceError } = await supabase
+      .from('meals')
+      .select('paste_group_id')
+      .eq('id', contentId)
+      .maybeSingle();
+    if (sourceError) throw sourceError;
+    if (!source) return []; // 行がもう無い。隠す対象が無いだけで、失敗ではない
+    const pasteGroupId = (source as { paste_group_id?: string | null }).paste_group_id ?? null;
+    if (pasteGroupId) {
+      filterColumn = 'paste_group_id';
+      filterValue = pasteGroupId;
+    }
+  }
+
+  const { data, error } = await supabase
+    .from(table)
     .update({
       hidden_at: new Date().toISOString(),
       hidden_by: params.hiddenBy,
       hidden_reason: params.reason,
     })
-    .eq('id', contentId)
-    .is('hidden_at', null);
+    .eq(filterColumn, filterValue)
+    .is('hidden_at', null)
+    .select('id'); // 隠した行の ID を返す (監査ログに残し、運営が戻すときの手がかりにする)
   if (error) throw error;
+  return ((data ?? []) as Array<{ id: string }>).map((row) => row.id);
 }

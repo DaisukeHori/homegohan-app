@@ -17,6 +17,8 @@
  *        運営ユーザーのアカウントを消すと hidden_by だけ NULL に戻り、隠した状態は残る (外部キー ON DELETE SET NULL)
  *   - D (定義): ポリシー・列・外部キー・索引・トリガー・関数の属性
  *   - E (運営 API が使う関数): hideModeratedContent を実 DB で。隠す・すでに隠れた行は上書きしない・行が無くても成功・本人の権限では隠せない
+ *   - F (家族への貼り付け): 隠された食事は paste_meal_to_family の元にできない (MEAL_HIDDEN。写した行は隠れていないので、
+ *        隠した内容を家族に見せ直せてしまう)。運営が隠すと、貼り付けで作られた複製 (同じ paste_group_id) もまとめて隠れる
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない (PostgREST を直接呼ぶ)。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -509,7 +511,8 @@ describe('#1101 E: hideModeratedContent を実 DB で', () => {
     const mealId = await insertMeal(owner.id, `#1101 E1 ${TS}`);
     expect(await readableIds(asUser(famMember.jwt), 'meals', [mealId])).toEqual([mealId]);
 
-    await hideModeratedContent(srAdmin, 'food', mealId, params(moderator.id));
+    // 戻り値は、この呼び出しで新しく隠した行の ID (監査ログの hidden_ids)
+    expect(await hideModeratedContent(srAdmin, 'food', mealId, params(moderator.id))).toEqual([mealId]);
 
     const row = await readHidden('meals', mealId);
     expect(row.hidden_at).not.toBeNull();
@@ -544,15 +547,18 @@ describe('#1101 E: hideModeratedContent を実 DB で', () => {
       const first = await readHidden(table, id);
 
       await new Promise((resolve) => setTimeout(resolve, 20));
-      await hideModeratedContent(srAdmin, type, id, { hiddenBy: secondModerator.id, reason: 'moderation:delete_and_warn' });
+      // 2 回目は何も隠さない (戻り値は空)
+      expect(
+        await hideModeratedContent(srAdmin, type, id, { hiddenBy: secondModerator.id, reason: 'moderation:delete_and_warn' }),
+      ).toEqual([]);
 
       expect(await readHidden(table, id), table).toEqual(first);
     }
   });
 
   it('E4: 行がもう無いとき (持ち主が先に消した等) は、何も更新せずに成功する', async () => {
-    await expect(hideModeratedContent(srAdmin, 'food', randomUUID(), params(moderator.id))).resolves.toBeUndefined();
-    await expect(hideModeratedContent(srAdmin, 'recipe', randomUUID(), params(moderator.id))).resolves.toBeUndefined();
+    await expect(hideModeratedContent(srAdmin, 'food', randomUUID(), params(moderator.id))).resolves.toEqual([]);
+    await expect(hideModeratedContent(srAdmin, 'recipe', randomUUID(), params(moderator.id))).resolves.toEqual([]);
   });
 
   it('E5: 運営の権限 (service_role) ではなく、本人のクライアントで呼ぶと隠せない (hidden_* の書き換えが 42501 で拒否され、例外になる)', async () => {
@@ -562,6 +568,111 @@ describe('#1101 E: hideModeratedContent を実 DB で', () => {
       code: '42501',
     });
     expect((await readHidden('meals', mealId)).hidden_at).toBeNull();
+  });
+});
+
+// ================================================================
+// F: 家族への貼り付け (paste_meal_to_family) と隠した食事
+// ================================================================
+
+describe('#1101 F: 家族への貼り付け (paste_meal_to_family)', () => {
+  // paste_meal_to_family は呼んだ人の user_profiles.family_id を見る。この describe の間だけ入れる
+  beforeAll(async () => {
+    const { error } = await srAdmin.from('user_profiles').update({ family_id: familyId }).in('id', [owner.id, famMember.id]);
+    if (error) throw new Error(`user_profiles.family_id: ${error.message}`);
+  }, LONG);
+  afterAll(async () => {
+    await srAdmin.from('user_profiles').update({ family_id: null }).in('id', [owner.id, famMember.id]);
+  }, LONG);
+
+  /** 本人の権限で貼り付ける (POST /api/meals/paste と同じ RPC) */
+  async function pasteAs(user: TestUser, sourceMealId: string, targets: string[]) {
+    return asUser(user.jwt).rpc('paste_meal_to_family', {
+      p_source_meal_id: sourceMealId,
+      p_target_user_ids: targets,
+    });
+  }
+
+  /** 貼り付けで作られた複製 (同じ paste_group_id で、元の行ではないもの) */
+  async function copiesOf(sourceMealId: string): Promise<Array<{ id: string; user_id: string }>> {
+    const { data: source, error } = await srAdmin.from('meals').select('paste_group_id').eq('id', sourceMealId).single();
+    if (error || !source?.paste_group_id) throw new Error(`paste_group_id: ${error?.message}`);
+    const { data: rows, error: rowsError } = await srAdmin
+      .from('meals')
+      .select('id, user_id')
+      .eq('paste_group_id', source.paste_group_id as string)
+      .neq('id', sourceMealId);
+    if (rowsError) throw new Error(`copies: ${rowsError.message}`);
+    for (const row of rows ?? []) createdMealIds.push(row.id as string);
+    return (rows ?? []) as Array<{ id: string; user_id: string }>;
+  }
+
+  it('F1: 持ち主は、隠された自分の食事を家族に貼り付けられない (MEAL_HIDDEN)。複製の行は作られない', async () => {
+    const { error } = await pasteAs(owner, mealIds.hidden, [famMember.id]);
+
+    expect(error?.message).toContain('MEAL_HIDDEN');
+    const { data: rows } = await srAdmin.from('meals').select('id').eq('user_id', famMember.id).eq('memo', `#1101 hidden ${TS}`);
+    expect(rows ?? []).toEqual([]);
+  });
+
+  it('F2: 持ち主でない人が隠された食事を指定しても NOT_MEAL_OWNER のまま (隠れているかどうかを教えない)', async () => {
+    const { error } = await pasteAs(famMember, mealIds.hidden, [owner.id]);
+
+    expect(error?.message).toContain('NOT_MEAL_OWNER');
+    expect(error?.message).not.toContain('MEAL_HIDDEN');
+  });
+
+  it('F3: 隠されていない食事は、これまでどおり貼り付けられる', async () => {
+    const mealId = await insertMeal(owner.id, `#1101 F3 ${TS}`);
+
+    const { data, error } = await pasteAs(owner, mealId, [famMember.id]);
+
+    expect(error).toBeNull();
+    expect(typeof data).toBe('string');
+    const copies = await copiesOf(mealId);
+    expect(copies.map((c) => c.user_id)).toEqual([famMember.id]);
+  });
+
+  it('F4: 運営が貼り付けた元の食事を隠すと、家族の持ち物になった複製もまとめて隠れる。複製の持ち主には自分の行として見え、ほかの人 (元の持ち主・家族の外・anon) には見えない', async () => {
+    const mealId = await insertMeal(owner.id, `#1101 F4 ${TS}`);
+    const { error: pasteError } = await pasteAs(owner, mealId, [famMember.id]);
+    expect(pasteError).toBeNull();
+    const [copy] = await copiesOf(mealId);
+    expect(copy.user_id).toBe(famMember.id);
+    // 隠す前: 元の持ち主は、家族の複製も読める
+    expect(await readableIds(asUser(owner.jwt), 'meals', [copy.id])).toEqual([copy.id]);
+
+    const hiddenIds = await hideModeratedContent(srAdmin, 'food', mealId, {
+      hiddenBy: moderator.id,
+      reason: 'moderation:delete_only',
+    });
+
+    expect(sorted(hiddenIds)).toEqual(sorted([mealId, copy.id]));
+    expect((await readHidden('meals', copy.id)).hidden_reason).toBe('moderation:delete_only');
+    // 複製の持ち主 (家族のメンバー) は、自分の行として読める。元の食事は読めない
+    expect(await readableIds(asUser(famMember.jwt), 'meals', [mealId, copy.id])).toEqual([copy.id]);
+    // 元の持ち主は、自分の行は読めるが、家族の複製は読めない
+    expect(await readableIds(asUser(owner.jwt), 'meals', [mealId, copy.id])).toEqual([mealId]);
+    expect(await readableIds(asUser(stranger.jwt), 'meals', [mealId, copy.id])).toEqual([]);
+    expect(await readableIds(anon(), 'meals', [mealId, copy.id])).toEqual([]);
+  });
+
+  it('F5: 通報されたのが複製の側でも、元の行を含む同じ paste_group_id の行がまとめて隠れる。隠れた複製は、貼り付けの元にもできない', async () => {
+    const mealId = await insertMeal(owner.id, `#1101 F5 ${TS}`);
+    const { error: pasteError } = await pasteAs(owner, mealId, [famMember.id]);
+    expect(pasteError).toBeNull();
+    const [copy] = await copiesOf(mealId);
+
+    const hiddenIds = await hideModeratedContent(srAdmin, 'food', copy.id, {
+      hiddenBy: moderator.id,
+      reason: 'moderation:delete_only',
+    });
+
+    expect(sorted(hiddenIds)).toEqual(sorted([mealId, copy.id]));
+    expect((await readHidden('meals', mealId)).hidden_at).not.toBeNull();
+    // 複製の持ち主が、隠れた複製を貼り付け直して元の持ち主に見せることもできない
+    const { error } = await pasteAs(famMember, copy.id, [owner.id]);
+    expect(error?.message).toContain('MEAL_HIDDEN');
   });
 });
 

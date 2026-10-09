@@ -284,7 +284,8 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
         },
         { data: null, error: null }, // resolveModerationItem の update
       ],
-      meals: [{ data: null, error: null }], // hideModeratedContent の update (#1101)
+      // hideModeratedContent (#1101): paste_group_id の読み取り → update
+      meals: [{ data: { paste_group_id: null }, error: null }, { data: [{ id: 'meal-1' }], error: null }],
       user_profiles: [
         { data: { id: 'owner-x', roles: ['user'] }, error: null }, // applyUserBan: 存在確認
         { data: null, error: null }, // applyUserBan: frozen_at 更新
@@ -591,13 +592,17 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
   }
 
   const ok = { data: null, error: null };
+  /** hideModeratedContent の 1 回目: 通報された食事の paste_group_id (ペーストの複製なし) */
+  const mealLookup = { data: { paste_group_id: null }, error: null };
+  /** hideModeratedContent の 2 回目: update ... select('id') の結果 (隠した行) */
+  const mealHidden = { data: [{ id: 'meal-1' }], error: null };
 
   it.each(['delete_only', 'delete_and_warn'] as const)(
     '%s: 通報された食事 (meals) を隠す。行は消さず、BAN もしない。解決メモ (運営の自由記述) は hidden_reason に入れない',
     async (action) => {
       fakeSupabase = createFakeSupabase({
         moderation_flags: [{ data: foodFlagRow(), error: null }, ok],
-        meals: [ok],
+        meals: [mealLookup, mealHidden],
         admin_audit_logs: [ok],
       });
       const before = Date.now();
@@ -611,8 +616,9 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       expect(await res.json()).toEqual({ data: { success: true, status: 'rejected', ban_applied: null } });
 
       const mealBuilders = buildersFor(fakeSupabase, 'meals');
-      expect(mealBuilders).toHaveLength(1);
-      const [meal] = mealBuilders;
+      expect(mealBuilders).toHaveLength(2); // paste_group_id の読み取り + 隠す update
+      const [lookup, meal] = mealBuilders;
+      expect(lookup.update).not.toHaveBeenCalled();
       const payload = meal.update.mock.calls[0][0] as Record<string, unknown>;
       expect(Date.parse(payload.hidden_at as string)).toBeGreaterThanOrEqual(before);
       expect(payload).toMatchObject({ hidden_by: 'admin-1', hidden_reason: `moderation:${action}` });
@@ -626,7 +632,13 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       expect(firstCallIndex(fakeSupabase, 'user_profiles')).toBe(-1);
 
       const audit = auditInsertPayload(fakeSupabase);
-      expect(audit.details).toMatchObject({ action, content_id: 'meal-1', hidden: true, hide_error: null });
+      expect(audit.details).toMatchObject({
+        action,
+        content_id: 'meal-1',
+        hidden: true,
+        hidden_ids: ['meal-1'],
+        hide_error: null,
+      });
       expect(audit.severity).toBe('info');
     },
   );
@@ -638,7 +650,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
     mockRequireRole.mockResolvedValue(actor);
     fakeSupabase = createFakeSupabase({
       moderation_flags: [{ data: foodFlagRow(), error: null }, ok],
-      meals: [ok],
+      meals: [mealLookup, mealHidden],
       user_profiles: [{ data: { id: 'owner-x', roles: ['user'] }, error: null }, ok],
       admin_audit_logs: [ok],
     });
@@ -649,11 +661,35 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
     expect(((await res.json()) as { data: { ban_applied: boolean } }).data.ban_applied).toBe(true);
     expect(firstCallIndex(fakeSupabase, 'meals')).toBeGreaterThanOrEqual(0);
     expect(firstCallIndex(fakeSupabase, 'meals')).toBeLessThan(firstCallIndex(fakeSupabase, 'user_profiles'));
-    expect(buildersFor(fakeSupabase, 'meals')[0].update.mock.calls[0][0]).toMatchObject({
+    expect(buildersFor(fakeSupabase, 'meals')[1].update.mock.calls[0][0]).toMatchObject({
       hidden_by: actor.id,
       hidden_reason: `moderation:${action}`,
     });
     expect(auditInsertPayload(fakeSupabase).details).toMatchObject({ content_id: 'meal-1', hidden: true });
+  });
+
+  it('delete_only: 家族へのペーストで複製された食事は、同じ paste_group_id の行 (元の行と複製) をまとめて隠し、監査ログの hidden_ids に全部残す', async () => {
+    fakeSupabase = createFakeSupabase({
+      moderation_flags: [{ data: foodFlagRow(), error: null }, ok],
+      meals: [
+        { data: { paste_group_id: 'group-1' }, error: null },
+        { data: [{ id: 'meal-1' }, { id: 'meal-copy-a' }], error: null },
+      ],
+      admin_audit_logs: [ok],
+    });
+
+    const res = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'flag-1' } });
+
+    expect(res.status).toBe(200);
+    const [, meal] = buildersFor(fakeSupabase, 'meals');
+    expect(meal.eq).toHaveBeenCalledWith('paste_group_id', 'group-1');
+    expect(meal.is).toHaveBeenCalledWith('hidden_at', null);
+    expect(meal.delete).not.toHaveBeenCalled();
+    expect(auditInsertPayload(fakeSupabase).details).toMatchObject({
+      content_id: 'meal-1',
+      hidden: true,
+      hidden_ids: ['meal-1', 'meal-copy-a'],
+    });
   });
 
   it.each(['approve', 'escalate'] as const)(
@@ -680,7 +716,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
   it('delete_only: 隠せなかったら 500 OP_CONTENT_HIDE_FAILED。成功を装わず、DB の生のエラー文は本文に出さない。判定は保存済みで、監査ログと構造化ログに失敗を残す', async () => {
     fakeSupabase = createFakeSupabase({
       moderation_flags: [{ data: foodFlagRow(), error: null }, ok],
-      meals: [{ data: null, error: { message: 'permission denied for table meals' } }],
+      meals: [mealLookup, { data: null, error: { message: 'permission denied for table meals' } }],
       admin_audit_logs: [ok],
     });
 
@@ -714,7 +750,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
   it('delete_and_temp_ban: 隠せなかったときは BAN しない (user_profiles に触らない)。500 OP_CONTENT_HIDE_FAILED、ban_applied は null', async () => {
     fakeSupabase = createFakeSupabase({
       moderation_flags: [{ data: foodFlagRow(), error: null }, ok],
-      meals: [{ data: null, error: { message: 'connection reset' } }],
+      meals: [mealLookup, { data: null, error: { message: 'connection reset' } }],
       admin_audit_logs: [ok],
     });
 

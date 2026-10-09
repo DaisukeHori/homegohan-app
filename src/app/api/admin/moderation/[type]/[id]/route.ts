@@ -52,7 +52,8 @@
  *    実行すれば隠し直せる (すでに隠れている行は上書きしない)
  *  - 通報にコンテンツが紐づかない (`content_id` が null。持ち主が先に消した等) ときは、隠す対象が
  *    無いので隠さずに続行する。監査ログには `hidden: false` と `content_id: null` が残る
- *  - 監査ログの details に `content_id` と `hidden` を記録する
+ *  - 監査ログの details に `content_id` と `hidden`、この操作で新しく隠した行の ID (`hidden_ids`) を記録する
+ *  - 食事は、家族へのペーストで作られた複製 (同じ `paste_group_id`) もまとめて隠す
  */
 
 import { NextResponse } from 'next/server';
@@ -282,10 +283,12 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   const contentId = item.content_id;
   const hideRequested = isModerationDeleteAction(action);
   let contentHidden = false;
+  // この操作で新しく隠した行の ID (食事はペーストの複製を含む)。運営が戻すときの手がかりとして監査ログに残す
+  let hiddenIds: string[] = [];
   let hideErrorMessage: string | null = null;
   if (hideRequested && contentId !== null) {
     try {
-      await hideModeratedContent(supabaseAdmin, moderationType, contentId, {
+      hiddenIds = await hideModeratedContent(supabaseAdmin, moderationType, contentId, {
         hiddenBy: actor.id,
         // 持ち主も読める列なので、解決メモ (運営の自由記述) は入れない
         reason: `moderation:${action}`,
@@ -356,6 +359,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
       // コンテンツが紐づかない通報、隠せなかったときは hidden: false (隠せなかった理由は hide_error)
       content_id: contentId,
       hidden: contentHidden,
+      hidden_ids: hiddenIds,
       hide_error: hideErrorMessage,
       ban_applied: banTargetUnresolved ? null : banApplied,
       ban_error: banTargetUnresolved
