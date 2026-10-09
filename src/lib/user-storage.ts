@@ -6,6 +6,8 @@
  * settings from leaking to the next user on a shared device.
  */
 
+import { notifyNativeSignOut } from './native-auth-bridge';
+
 /**
  * localStorage keys that belong to a specific auth session.
  * These must be cleared when the user signs out.
@@ -40,8 +42,17 @@ export function clearUserScopedLocalStorage(): void {
  * Call this after supabase.auth.signOut() to ensure all open tabs redirect.
  * Safe to call in a non-browser environment (no-op if BroadcastChannel is
  * not available).
+ *
+ * モバイルアプリの WebView の中なら、ネイティブアプリにもログアウトを伝える (#1038 F7-04)。
+ * 伝えないと、Web だけがログアウトし、ネイティブは保存済みのセッションを持ったままになる。
+ * BroadcastChannel を使えない WebView (iOS 15.4 未満など) でも伝わるよう、最初に呼ぶ。
+ *
+ * 各画面は、これより前 (supabase.auth.signOut() の前) に notifyNativeSignOut() でネイティブへ知らせる (#1038 F7-10。
+ * 理由は native-auth-bridge.ts の notifyNativeSignOut)。知らせてあれば、ここでは二重に送らない。
+ * 並び (notifyNativeSignOut -> signOut -> broadcastSignOut) は tests/native-sign-out-order-source-scan.test.ts が検査する。
  */
 export function broadcastSignOut(): void {
+  notifyNativeSignOut();
   if (typeof BroadcastChannel === 'undefined') return;
   const channel = new BroadcastChannel('auth');
   channel.postMessage('SIGNED_OUT');
