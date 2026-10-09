@@ -31,10 +31,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
-    const aiConsentDenied = await requireAiConsent(supabase, user.id);
-    if (aiConsentDenied) return aiConsentDenied;
-
     const rateLimitResult = await checkRateLimit(user.id, 'analysis');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
@@ -94,6 +90,11 @@ export async function POST(request: Request) {
 
     // 4. 画像URLが提供された場合はAI解析を実行
     if (imageUrl) {
+      // 写真の URL を外国の AI 事業者へ送って栄養を推定する。同意が無ければ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+      // 栄養の数値をそのまま渡す保存 (上の nutritionData) は AI へ送らないので止めない
+      const aiConsentDenied = await requireAiConsent(supabase, user.id);
+      if (aiConsentDenied) return aiConsentDenied;
+
       const prompt = `
         この食事の写真を栄養士の視点で分析し、以下のJSON形式で出力してください。
         数値は概算で構いません。

@@ -51,6 +51,9 @@ import { POST as REVOKE } from '@/app/api/ai/consent/revoke/route';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { AI_CONSENT_PROVIDERS, AI_CONSENT_VERSION } from '@/lib/ai/consent';
 
+/** 同意を取る事業者の数 (1 回の同意で作る行・撤回する行の数) */
+const PROVIDER_COUNT = AI_CONSENT_PROVIDERS.length;
+
 const TABLE = 'external_data_consents';
 let userCounter = 0;
 const newUserId = () => `00000000-0000-4000-8000-${String(++userCounter).padStart(12, '0')}`;
@@ -184,7 +187,7 @@ describe('POST /api/ai/consent', () => {
     expect(checkRateLimit).not.toHaveBeenCalled();
   });
 
-  it('3 事業者ぶんの同意を、現行の版・x-forwarded-for の先頭の IP・User-Agent つきで記録し、consented = true を返す', async () => {
+  it('全事業者ぶんの同意を、現行の版・x-forwarded-for の先頭の IP・User-Agent つきで記録し、consented = true を返す', async () => {
     const userId = newUserId();
     loginAs(userId);
     const db = setUpDb([]);
@@ -197,7 +200,7 @@ describe('POST /api/ai/consent', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('Cache-Control')).toBe('no-store');
     expect(json).toMatchObject({ version: AI_CONSENT_VERSION, consented: true });
-    expect(db.tables[TABLE]).toHaveLength(3);
+    expect(db.tables[TABLE]).toHaveLength(PROVIDER_COUNT);
     for (const provider of AI_CONSENT_PROVIDERS) {
       expect(db.tables[TABLE].find((r) => r.provider === provider)).toMatchObject({
         user_id: userId,
@@ -236,7 +239,7 @@ describe('POST /api/ai/consent', () => {
       ),
     );
 
-    expect(db.tables[TABLE]).toHaveLength(3);
+    expect(db.tables[TABLE]).toHaveLength(PROVIDER_COUNT);
     expect(db.tables[TABLE].every((r) => r.user_id === userId)).toBe(true);
     expect(db.tables[TABLE].every((r) => r.ip_address === '203.0.113.6' && r.user_agent === 'real-ua')).toBe(true);
     expect(db.tables[TABLE].every((r) => r.consented === true)).toBe(true);
@@ -251,7 +254,7 @@ describe('POST /api/ai/consent', () => {
     const res = await POST(postRequest(validBody(), { 'x-forwarded-for': 'not an ip' }));
 
     expect(res.status).toBe(200);
-    expect(db.tables[TABLE]).toHaveLength(3);
+    expect(db.tables[TABLE]).toHaveLength(PROVIDER_COUNT);
     expect(db.tables[TABLE].every((r) => r.ip_address === null)).toBe(true);
   });
 
@@ -276,7 +279,7 @@ describe('POST /api/ai/consent', () => {
     const json = await (await POST(postRequest(validBody()))).json();
 
     expect(json.consented).toBe(true);
-    expect(db.tables[TABLE]).toHaveLength(6);
+    expect(db.tables[TABLE]).toHaveLength(PROVIDER_COUNT * 2);
     expect(db.tables[TABLE].filter((r) => r.policy_version === 'older-version').every((r) => r.revoked_at)).toBe(true);
   });
 
@@ -384,9 +387,9 @@ describe('POST /api/ai/consent/revoke', () => {
     const json = await res.json();
 
     expect(res.status).toBe(200);
-    expect(json).toMatchObject({ consented: false, revokedCount: 3 });
+    expect(json).toMatchObject({ consented: false, revokedCount: PROVIDER_COUNT });
     expect(json.revokedAt).toEqual(expect.any(String));
-    expect(db.tables[TABLE]).toHaveLength(6);
+    expect(db.tables[TABLE]).toHaveLength(PROVIDER_COUNT * 2);
     expect(db.tables[TABLE].filter((r) => r.user_id === userId).every((r) => typeof r.revoked_at === 'string')).toBe(true);
     expect(db.tables[TABLE].filter((r) => r.user_id === OTHER).every((r) => r.revoked_at === null)).toBe(true);
   });
@@ -433,7 +436,7 @@ describe('POST /api/ai/consent/revoke', () => {
     const res = await POST(postRequest(validBody(), { 'x-forwarded-for': '203.0.113.9' }));
 
     expect((await res.json()).consented).toBe(true);
-    expect(db.tables[TABLE]).toHaveLength(6);
+    expect(db.tables[TABLE]).toHaveLength(PROVIDER_COUNT * 2);
   });
 
   it('DB の失敗は 500。本文は汎用メッセージだけで、DB の生のエラー文は返さず、ログに残す', async () => {

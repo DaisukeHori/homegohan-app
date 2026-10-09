@@ -1,24 +1,21 @@
 /**
  * T15 (#1154) 外国の AI 事業者への提供の同意画面: AI の入口の contract テスト
  *
- * 同意画面は、利用者が AI にデータを送る操作を始める直前に、初回だけ出す (src/hooks/useAiConsent.tsx)。
+ * 未同意の利用者のデータは、サーバーが AI へ送る手前で止める (403 AI_CONSENT_REQUIRED。src/lib/ai/consent-guard.ts)。
+ * 画面は、止められる前に同意画面を出し (useAiConsent の ensureAiConsent)、「同意しない」なら操作をやめる。
+ * それでも止められたとき (状況が古い・別のタブで撤回したなど) は、aiFetch が全画面共通の同意画面 (AiConsentRequiredHost) を出す。
  * 画面ごとにフックを呼ぶ作りなので、入口を足したり直したりしたときに、呼び忘れ・描画し忘れが起きやすい。
- * 起きても画面が壊れるわけではなく (フックは 1 秒で諦めて操作を進める)、同意の画面が静かに出なくなるだけなので、気づきにくい。
  * そこで、AI の入口になっている画面のソースを TypeScript の構文木で読み (コメントや文字列の中は見ない)、次を確かめる。
  *
  *   1. useAiConsent() を呼び、ensureAiConsent と consentModal の両方を受け取っている
- *   2. consentModal を JSX で描画している (描画し忘れると、画面が出ないまま 1 秒待たせてしまう)
+ *   2. consentModal を JSX で描画している
  *   3. 決めた関数が、AI の操作の前に ensureAiConsent() を呼んでいる
- *   4. fetch('/api/ai/...') の呼び出しは、(a) 同じ関数の中で先に ensureAiConsent() を呼んでいる、または
- *      (b) 下の分類 (delegated / notSending / automatic) に理由つきで載っている。
- *      載せ忘れた AI の呼び出し (= 新しく足した入口) があると失敗する。入口を足したら、確認を入れるか、載せない理由を書くこと。
- *   5. 分類が古くならないこと (載せた関数が無くなった・AI の呼び出しが無くなったら失敗する)
- *
- * 【AI への送信は止めない】このテストが確かめるのは「同意画面を出す呼び出しがあること」だけ。
- * 同意の有無で AI の呼び出しを止める処理 (強制) は、この PR にも、このテストにも無い (別タスク T18)。
- *
- * 範囲: 利用者の操作で始まる AI の入口のうち、web の主な画面。ホームの栄養アドバイスのように、画面を開くと自動で
- * AI に送る処理は `automatic` に載せて、T18 の強制のときに扱いを決める。
+ *   4. AI の API (/api/ai/... と /api/shopping-list/regenerate) の呼び出しは、(a) 同じ関数の中で先に ensureAiConsent() を
+ *      呼んでいる、または (b) 下の分類 (delegated / notSending / automatic) に理由つきで載っている
+ *   5. 利用者の操作で AI に送る呼び出し (確認済み・delegated) は aiFetch を使う (止められたら同意画面を出すため)。
+ *      画面を開くと自動で送る呼び出し (automatic) は fetch を使う (同意画面を勝手に出さない)
+ *   6. ensureAiConsent() の戻り値が 'declined' なら AI に送らない (戻り値を比べている)。比べない呼び出しは理由つきで載せる
+ *   7. 分類が古くならないこと (載せた関数が無くなった・AI の呼び出しが無くなったら失敗する)
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -39,6 +36,8 @@ interface EntryPoint {
   notSending?: Record<string, string>;
   /** 画面を開くと自動で AI に送る処理 (利用者の操作で始まらない) → 理由 */
   automatic?: Record<string, string>;
+  /** ensureAiConsent() の戻り値を見ない (「同意しない」でも続ける) 関数 → 理由 (続けても AI へは送られないこと) */
+  continuesOnDecline?: Record<string, string>;
 }
 
 const ENTRY_POINTS: EntryPoint[] = [
@@ -59,6 +58,10 @@ const ENTRY_POINTS: EntryPoint[] = [
     file: 'src/app/(main)/health/checkups/new/page.tsx',
     // handleSave: 保存すると、サーバーが数値を AI に送って個別レビューを作る (画像を使わず手入力した人もここで確認を受ける)
     mustEnsure: ['handleUploadAndAnalyze', 'handleSave'],
+    continuesOnDecline: {
+      handleSave:
+        '「同意しない」でも記録は保存する。サーバー (POST /api/health/checkups) は同意が無ければ AI のレビューを作らずに保存だけする',
+    },
   },
   {
     // 冷蔵庫・パントリーの写真
@@ -81,6 +84,7 @@ const ENTRY_POINTS: EntryPoint[] = [
       'analyzePhotoWithAI',
       'generateMealImage',
       'handleImprove',
+      'regenerateShoppingList',
     ],
     notSending: {
       restoreGeneration: '生成の進み具合を確認するだけ (status)',
@@ -90,10 +94,12 @@ const ENTRY_POINTS: EntryPoint[] = [
       handleV4Generate: 'V4GenerateModal の runGenerate が確認してから呼ぶ。ここの fetch は生成の進み具合の確認だけ (status)',
       poll: '生成の進み具合の確認だけ (status)',
       pollRegenerate: '再生成の進み具合の確認だけ (status)',
+      pollImprove: '献立の改善 (handleImprove が確認してから依頼する) の進み具合の確認だけ (status)',
     },
     automatic: {
-      fetchAiHint: '献立が読み込まれると自動で AI にヒントを頼む (集計の数字と期限の近い食材名だけを送る)。T18 で扱いを決める',
-      fetchNutritionFeedback: '栄養の詳細を開くと自動で AI に栄養士のコメントを頼む (栄養の数字と料理名を送る)。T18 で扱いを決める',
+      fetchAiHint: '献立が読み込まれると自動でヒントを頼む (#1327 以降、サーバーは AI を呼ばず定型のヒントを返す)',
+      fetchNutritionFeedback:
+        '栄養の詳細を開くと自動で AI に栄養士のコメントを頼む。同意が無ければサーバーが 403 で止め、画面は同意画面を出さずに案内の一文だけを出す',
     },
   },
   {
@@ -216,22 +222,31 @@ interface AiFetchSite {
   url: string;
   guarded: boolean;
   line: number;
+  /** aiFetch (止められたら同意画面を出す) で呼んでいるか */
+  viaAiFetch: boolean;
 }
 
-/** fetch('/api/ai/...') の呼び出しを全部集める (文字列・テンプレートで URL が書かれているもの) */
+/** AI へ送る API の URL か (/api/ai/... と、買い物リストの作り直し。作り直しの進み具合 (/status) は AI へ送らない) */
+function isAiUrl(url: string): boolean {
+  return url.startsWith('/api/ai/') || url === '/api/shopping-list/regenerate';
+}
+
+/** AI の API の fetch / aiFetch の呼び出しを全部集める (文字列・テンプレートで URL が書かれているもの) */
 function aiFetchSites(sf: ts.SourceFile): AiFetchSite[] {
   const sites: AiFetchSite[] = [];
   walk(sf, (node) => {
-    if (!isCallTo(node, 'fetch') || node.arguments.length === 0) return;
+    const viaAiFetch = isCallTo(node, 'aiFetch');
+    if (!(viaAiFetch || isCallTo(node, 'fetch')) || node.arguments.length === 0) return;
     const arg = node.arguments[0];
     if (!ts.isStringLiteralLike(arg) && !ts.isTemplateExpression(arg)) return;
-    const url = arg.getText().slice(1, -1);
-    if (!url.startsWith('/api/ai/')) return;
+    const url = arg.getText().slice(1, -1).split('?')[0];
+    if (!isAiUrl(url)) return;
     sites.push({
       owner: ownerName(node),
       url,
       guarded: isGuarded(node),
       line: sf.getLineAndCharacterOfPosition(node.getStart()).line + 1,
+      viaAiFetch,
     });
   });
   return sites;
@@ -301,7 +316,7 @@ describe.each(ENTRY_POINTS)('AI の入口の同意画面: $file', (entry) => {
     }
   });
 
-  it("fetch('/api/ai/...') の呼び出しは、先に確認しているか、理由つきで分類されている", () => {
+  it('AI の API の呼び出しは、先に確認しているか、理由つきで分類されている', () => {
     const sites = aiFetchSites(sf);
     if (entry.directAiFetch === false) {
       expect(sites, '直接の AI の呼び出しは無いはず (directAiFetch: false)').toEqual([]);
@@ -321,6 +336,54 @@ describe.each(ENTRY_POINTS)('AI の入口の同意画面: $file', (entry) => {
     ).toEqual([]);
   });
 
+  it('利用者の操作で AI に送る呼び出しは aiFetch、画面を開くと自動で送る呼び出しは fetch を使う', () => {
+    const sites = aiFetchSites(sf);
+    const isIn = (kind: Record<string, string>, owner: string | null) =>
+      owner !== null && Object.prototype.hasOwnProperty.call(kind, owner);
+    const sending = sites.filter(
+      (s) => (s.guarded || isIn(classified.delegated, s.owner)) && !isIn(classified.notSending, s.owner),
+    );
+    expect(
+      sending.filter((s) => !s.viaAiFetch).map((s) => `L${s.line} ${s.owner ?? '(無名)'}: ${s.url}`),
+      '利用者の操作で AI に送る呼び出しが fetch のまま。止められたときに同意画面が出ないので aiFetch にすること',
+    ).toEqual([]);
+    const automatic = sites.filter(
+      (s) => s.owner !== null && Object.prototype.hasOwnProperty.call(classified.automatic, s.owner),
+    );
+    expect(
+      automatic.filter((s) => s.viaAiFetch).map((s) => `L${s.line} ${s.owner}: ${s.url}`),
+      '画面を開くと自動で送る呼び出しが aiFetch になっている (同意画面を勝手に出してしまう)',
+    ).toEqual([]);
+  });
+
+  it('ensureAiConsent() の戻り値が "declined" なら AI に送らない (戻り値を比べている)', () => {
+    const continues = entry.continuesOnDecline ?? {};
+    const notCompared: string[] = [];
+    walk(sf, (node) => {
+      if (!isCallTo(node, 'ensureAiConsent')) return;
+      let cur: ts.Node = node.parent;
+      if (cur && ts.isAwaitExpression(cur)) cur = cur.parent;
+      if (cur && ts.isParenthesizedExpression(cur)) cur = cur.parent;
+      const compared =
+        cur &&
+        ts.isBinaryExpression(cur) &&
+        cur.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken &&
+        ts.isStringLiteralLike(cur.right) &&
+        cur.right.text === 'declined';
+      const owner = ownerName(node);
+      if (!compared && !(owner && Object.prototype.hasOwnProperty.call(continues, owner))) {
+        notCompared.push(`L${sf.getLineAndCharacterOfPosition(node.getStart()).line + 1} ${owner ?? '(無名)'}`);
+      }
+    });
+    expect(
+      notCompared,
+      'ensureAiConsent() の戻り値を見ていない。「同意しない」なら送らないよう、=== "declined" で比べて処理をやめること',
+    ).toEqual([]);
+    for (const name of Object.keys(continues)) {
+      expect(findFunctions(sf, name).length, `continuesOnDecline: 関数 ${name} が見つからない`).toBeGreaterThanOrEqual(1);
+    }
+  });
+
   it('分類 (delegated / notSending / automatic) が古くなっていない', () => {
     const sites = aiFetchSites(sf);
     for (const kind of ['delegated', 'notSending', 'automatic'] as const) {
@@ -328,7 +391,7 @@ describe.each(ENTRY_POINTS)('AI の入口の同意画面: $file', (entry) => {
         expect(findFunctions(sf, name).length, `${kind}: 関数 ${name} が見つからない`).toBeGreaterThanOrEqual(1);
         expect(
           sites.some((s) => s.owner === name),
-          `${kind}: ${name} に fetch('/api/ai/...') が無い。分類から外すこと`,
+          `${kind}: ${name} に AI の API の呼び出しが無い。分類から外すこと`,
         ).toBe(true);
       }
     }
@@ -356,30 +419,6 @@ describe.each(ENTRY_POINTS)('AI の入口の同意画面: $file', (entry) => {
       for (const call of calls) {
         expect(isGuarded(call), `${name} を、確認する前に呼んでいる (L${sf.getLineAndCharacterOfPosition(call.getStart()).line + 1})`).toBe(true);
       }
-    }
-  });
-});
-
-describe('AI の入口の同意画面: 使い方の約束', () => {
-  it('入口の画面は、ensureAiConsent() の戻り値で処理を分けない (「あとで」でも操作は進む)', () => {
-    for (const entry of ENTRY_POINTS) {
-      const sf = parse(entry.file);
-      const branching: string[] = [];
-      walk(sf, (node) => {
-        if (!isCallTo(node, 'ensureAiConsent')) return;
-        // `await ensureAiConsent();` (式文) 以外 = 戻り値を使っている
-        const parent = node.parent;
-        const isAwaitedStatement =
-          parent && ts.isAwaitExpression(parent) && parent.parent && ts.isExpressionStatement(parent.parent);
-        if (!isAwaitedStatement) {
-          branching.push(`L${sf.getLineAndCharacterOfPosition(node.getStart()).line + 1}`);
-        }
-      });
-      expect(
-        branching,
-        `${entry.file}: ensureAiConsent() の戻り値を使っている。同意の有無で AI の呼び出しを止める処理は別タスク T18 で入れる。` +
-          'そのときに、このテストの方を直すこと',
-      ).toEqual([]);
     }
   });
 });

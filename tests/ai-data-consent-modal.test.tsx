@@ -2,11 +2,12 @@
  * T15 (#1154) 外国の AI 事業者への提供の同意画面 (AiDataConsentModal) の component テスト
  *
  * 確認すること:
- *   - 提供先 (xAI / Google / OpenAI とその所在国)・提供する情報 (食事の写真と記録、健康診断・血液検査、相談文、冷蔵庫の写真)・
- *     利用目的・事業者での保存・撤回の方法が画面に出る
- *   - 押せるのは「同意する」と「あとで」の 2 つ。Esc は「あとで」。背景のクリックでは閉じない
- *   - 「あとで」の説明 (AI 機能はそのまま使える) が出る。AI への送信を止めていない間は、止まるとは書かない
- *   - 記録中は「同意する」だけを押せなくし、「あとで」は押せるまま。記録に失敗したときはメッセージを出す
+ *   - 提供先 (xAI / Google / OpenAI / Perplexity / AI/ML API とその所在国)・提供する情報 (食事の写真と記録、健康診断・血液検査、
+ *     相談文、冷蔵庫の写真、献立・買い物リストの料理名と食材)・利用目的・事業者での保存・撤回の方法が画面に出る
+ *   - 押せるのは「同意する」と「同意しない」の 2 つ。Esc は「同意しない」。背景のクリックでは閉じない
+ *   - 「同意しない」と AI 機能は使えないことを説明する (未同意なら、サーバーが AI へ送らずに止める)
+ *   - サーバーに止められて出した画面 (required) は、「この機能を使うには同意が必要です」の一文を足す
+ *   - 記録中は「同意する」だけを押せなくし、「同意しない」は押せるまま。記録に失敗したときはメッセージを出す
  *   - role="dialog" / aria-modal / aria-labelledby で、見出しに結び付く
  *   - body 直下 (portal) に描画される
  *
@@ -50,7 +51,7 @@ afterEach(() => {
 type Props = Parameters<typeof AiDataConsentModal>[0];
 
 function render(props: Partial<Props> = {}) {
-  const merged: Props = { isOpen: true, onAccept: () => {}, onLater: () => {}, ...props };
+  const merged: Props = { isOpen: true, onAccept: () => {}, onDecline: () => {}, ...props };
   act(() => {
     root.render(createElement(AiDataConsentModal, merged));
   });
@@ -68,19 +69,20 @@ function click(el: HTMLElement | null) {
 }
 
 describe('AiDataConsentModal: 文面', () => {
-  it('提供先の事業者 3 社と所在国が出る', () => {
+  it('提供先の事業者 (実際に送っている 5 社) と所在国が出る', () => {
     render();
     expect(modal()).not.toBeNull();
+    expect([...AI_CONSENT_PROVIDERS]).toEqual(['xai', 'google', 'openai', 'perplexity', 'aimlapi']);
     for (const provider of AI_CONSENT_PROVIDERS) {
       const info = AI_CONSENT_PROVIDER_INFO[provider];
       const row = byTestId(`ai-consent-provider-${provider}`);
       expect(row, info.name).not.toBeNull();
       expect(row!.textContent).toContain(info.name);
-      expect(row!.textContent).toContain('アメリカ合衆国');
+      expect(row!.textContent).toContain(info.country);
     }
-    expect(text()).toContain('xAI');
-    expect(text()).toContain('Google');
-    expect(text()).toContain('OpenAI');
+    for (const name of ['xAI', 'Google', 'OpenAI', 'Perplexity', 'AI/ML API']) expect(text()).toContain(name);
+    expect(AI_CONSENT_PROVIDER_INFO.aimlapi.country).toBe('エストニア');
+    expect(AI_CONSENT_PROVIDER_INFO.perplexity.country).toBe('アメリカ合衆国');
   });
 
   it('提供する情報・利用目的・事業者での保存・撤回の方法が出る', () => {
@@ -90,6 +92,7 @@ describe('AiDataConsentModal: 文面', () => {
     expect(body).toContain('健康診断・血液検査の写真と数値');
     expect(body).toContain('AI 相談に入力した文章');
     expect(body).toContain('冷蔵庫の写真と食材の情報');
+    expect(body).toContain('献立・買い物リストの料理名と食材の名前');
     for (const purpose of AI_CONSENT_COPY.purposes) expect(body).toContain(purpose);
     expect(body).toContain(AI_CONSENT_COPY.retention);
     expect(body).toContain(AI_CONSENT_COPY.withdrawal);
@@ -102,12 +105,22 @@ describe('AiDataConsentModal: 文面', () => {
     expect(AI_CONSENT_SETTINGS_PATH).toBe('/settings/ai-consent');
   });
 
-  it('「あとで」でも AI 機能が使えることを説明し、AI への送信が止まるとは書かない', () => {
+  it('同意しないと AI 機能は使えないこと、あとからでも同意できることを説明する', () => {
     render();
-    const note = byTestId('ai-consent-later-note')?.textContent ?? '';
-    expect(note).toContain('「あとで」を選んでも');
-    expect(note).toContain('お使いいただけます');
-    expect(text()).not.toMatch(/ご利用いただけません|使えなくなります|停止/);
+    const note = byTestId('ai-consent-decline-note')?.textContent ?? '';
+    expect(note).toBe(AI_CONSENT_COPY.declineNote);
+    expect(note).toContain('同意しない場合、AI 機能');
+    expect(note).toContain('お使いいただけません');
+    expect(note).toContain('あとからいつでも同意できます');
+    // 「あとで」(送信は止めない) の古い文面は残っていない
+    expect(text()).not.toContain('あとで');
+  });
+
+  it('サーバーに止められて出した画面 (required) だけ、「この機能を使うには同意が必要です」の一文を足す', () => {
+    render();
+    expect(byTestId('ai-consent-required-lead')).toBeNull();
+    render({ required: true });
+    expect(byTestId('ai-consent-required-lead')?.textContent).toBe(AI_CONSENT_COPY.requiredLead);
   });
 
   it('見出しに結び付いたダイアログ (role / aria-modal / aria-labelledby) で、body 直下に描画される', () => {
@@ -130,68 +143,68 @@ describe('AiDataConsentModal: 文面', () => {
 });
 
 describe('AiDataConsentModal: 操作', () => {
-  it('押せるボタンは「同意する」と「あとで」の 2 つ (拒否のボタンは無い)', () => {
+  it('押せるボタンは「同意しない」と「同意する」の 2 つ', () => {
     render();
     const labels = Array.from(modal()!.querySelectorAll('button')).map((b) => b.textContent?.trim());
-    expect(labels).toEqual(['あとで', '同意する']);
+    expect(labels).toEqual(['同意しない', '同意する']);
   });
 
-  it('「同意する」で onAccept、「あとで」で onLater が呼ばれる', () => {
+  it('「同意する」で onAccept、「同意しない」で onDecline が呼ばれる', () => {
     const onAccept = vi.fn();
-    const onLater = vi.fn();
-    render({ onAccept, onLater });
+    const onDecline = vi.fn();
+    render({ onAccept, onDecline });
 
     click(byTestId('ai-consent-accept'));
     expect(onAccept).toHaveBeenCalledTimes(1);
-    expect(onLater).not.toHaveBeenCalled();
+    expect(onDecline).not.toHaveBeenCalled();
 
-    click(byTestId('ai-consent-later'));
-    expect(onLater).toHaveBeenCalledTimes(1);
+    click(byTestId('ai-consent-decline'));
+    expect(onDecline).toHaveBeenCalledTimes(1);
   });
 
-  it('Esc キーは「あとで」として扱う', () => {
-    const onLater = vi.fn();
+  it('Esc キーは「同意しない」として扱う', () => {
+    const onDecline = vi.fn();
     const onAccept = vi.fn();
-    render({ onLater, onAccept });
+    render({ onDecline, onAccept });
 
     act(() => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     });
 
-    expect(onLater).toHaveBeenCalledTimes(1);
+    expect(onDecline).toHaveBeenCalledTimes(1);
     expect(onAccept).not.toHaveBeenCalled();
   });
 
-  it('背景のクリックでは閉じない (うっかり「あとで」にしない)', () => {
-    const onLater = vi.fn();
-    render({ onLater });
+  it('背景のクリックでは閉じない (うっかり「同意しない」にしない)', () => {
+    const onDecline = vi.fn();
+    render({ onDecline });
 
     click(modal());
 
-    expect(onLater).not.toHaveBeenCalled();
+    expect(onDecline).not.toHaveBeenCalled();
   });
 
-  it('記録中は「同意する」を押せず、「あとで」は押せるまま', () => {
+  it('記録中は「同意する」を押せず、「同意しない」は押せるまま', () => {
     const onAccept = vi.fn();
-    const onLater = vi.fn();
-    render({ isSubmitting: true, onAccept, onLater });
+    const onDecline = vi.fn();
+    render({ isSubmitting: true, onAccept, onDecline });
 
     expect((byTestId('ai-consent-accept') as HTMLButtonElement).disabled).toBe(true);
-    expect((byTestId('ai-consent-later') as HTMLButtonElement).disabled).toBe(false);
+    expect((byTestId('ai-consent-decline') as HTMLButtonElement).disabled).toBe(false);
     expect(byTestId('ai-consent-accept')!.textContent).toContain('記録しています');
 
-    click(byTestId('ai-consent-later'));
-    expect(onLater).toHaveBeenCalledTimes(1);
+    click(byTestId('ai-consent-decline'));
+    expect(onDecline).toHaveBeenCalledTimes(1);
   });
 
-  it('記録に失敗したときのメッセージを alert として出す。そのあとも「同意する」「あとで」を押せる', () => {
+  it('記録に失敗したときのメッセージを alert として出す。そのあとも「同意する」「同意しない」を押せる', () => {
     render({ errorMessage: '同意を記録できませんでした。通信状況を確認して、もう一度お試しください。' });
 
     const alert = byTestId('ai-consent-error');
     expect(alert?.getAttribute('role')).toBe('alert');
     expect(alert?.textContent).toContain('同意を記録できませんでした');
     expect((byTestId('ai-consent-accept') as HTMLButtonElement).disabled).toBe(false);
-    expect((byTestId('ai-consent-later') as HTMLButtonElement).disabled).toBe(false);
+    expect((byTestId('ai-consent-decline') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('エラーが無いときは alert を出さない', () => {

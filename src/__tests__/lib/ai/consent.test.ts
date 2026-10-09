@@ -7,7 +7,7 @@
  *
  * 確認すること:
  *   - 状況の判定: 現行の版に全事業者が同意していれば consented。古い版・版なし・拒否の行・撤回済みは同意として数えない
- *   - 同意の記録: 3 事業者ぶんの行を、版・IP アドレス・User-Agent つきで作る。2 回目以降は行を増やさない (冪等)
+ *   - 同意の記録: 全事業者 (AI_CONSENT_PROVIDERS) ぶんの行を、版・IP アドレス・User-Agent つきで作る。2 回目以降は行を増やさない (冪等)
  *   - 版が変わったとき: 古い有効な行に revoked_at を入れて閉じ、新しい行を作る。他人の行には触れない
  *   - 同時に押されたとき (部分ユニーク索引の 23505): 成功として扱う。それ以外の失敗は例外にする
  *   - 撤回: 本人の有効な行にだけ revoked_at を入れる。行は消さない
@@ -33,6 +33,8 @@ import {
   type AiConsentRow,
 } from '@/lib/ai/consent';
 
+/** 同意を取る事業者の数 (全事業者ぶんの行を作る・撤回する件数) */
+const PROVIDER_COUNT = AI_CONSENT_PROVIDERS.length;
 const TABLE = 'external_data_consents';
 const USER = '11111111-1111-4111-8111-111111111111';
 const OTHER = '22222222-2222-4222-8222-222222222222';
@@ -72,11 +74,13 @@ describe('summarizeAiConsent: 同意の状況の判定', () => {
   });
 
   it('現行の版に全事業者が同意していれば consented = true。同意の日時は最も新しいもの', () => {
-    const rows = [
-      row({ provider: 'xai', consented_at: '2026-10-01T00:00:00.000Z' }),
-      row({ provider: 'google', consented_at: '2026-10-03T00:00:00.000Z' }),
-      row({ provider: 'openai', consented_at: '2026-10-02T00:00:00.000Z' }),
-    ];
+    // 事業者ごとに同意の日時をずらす (google が最も新しい)
+    const rows = AI_CONSENT_PROVIDERS.map((provider) =>
+      row({
+        provider,
+        consented_at: provider === 'google' ? '2026-10-03T00:00:00.000Z' : '2026-10-01T00:00:00.000Z',
+      }),
+    );
     const status = summarizeAiConsent(toRows(rows));
     expect(status.consented).toBe(true);
     expect(status.providers.every((p) => p.state === 'granted' && p.policyVersion === AI_CONSENT_VERSION)).toBe(true);
@@ -85,15 +89,20 @@ describe('summarizeAiConsent: 同意の状況の判定', () => {
   });
 
   it('古い版・版を記録する前 (null) の同意は outdated。consented にならない', () => {
-    const rows = [
-      row({ provider: 'xai', policy_version: 'old-version' }),
-      row({ provider: 'google', policy_version: null }),
-      row({ provider: 'openai' }),
-    ];
+    // xai は古い版、google は版を記録する前 (null)、ほかは現行の版
+    const rows = AI_CONSENT_PROVIDERS.map((provider) =>
+      provider === 'xai'
+        ? row({ provider, policy_version: 'old-version' })
+        : provider === 'google'
+          ? row({ provider, policy_version: null })
+          : row({ provider }),
+    );
     const status = summarizeAiConsent(toRows(rows));
     expect(status.consented).toBe(false);
-    expect(status.providers.map((p) => p.state)).toEqual(['outdated', 'outdated', 'granted']);
-    expect(status.providers[1].policyVersion).toBeNull();
+    expect(status.providers.map((p) => p.state)).toEqual(
+      AI_CONSENT_PROVIDERS.map((provider) => (provider === 'xai' || provider === 'google' ? 'outdated' : 'granted')),
+    );
+    expect(status.providers.find((p) => p.provider === 'google')?.policyVersion).toBeNull();
     expect(status.consentedAt).toBeNull();
   });
 
@@ -119,12 +128,10 @@ describe('summarizeAiConsent: 同意の状況の判定', () => {
     const status = summarizeAiConsent(toRows(rows));
     expect(status.consented).toBe(false);
     expect(status.providers.every((p) => p.state === 'none')).toBe(true);
-    expect(status.providers.map((p) => p.revokedAt)).toEqual([
-      '2026-10-02T00:00:00.000Z',
-      '2026-10-03T00:00:00.000Z',
-      '2026-10-04T00:00:00.000Z',
-    ]);
-    expect(status.revokedAt).toBe('2026-10-04T00:00:00.000Z');
+    expect(status.providers.map((p) => p.revokedAt)).toEqual(
+      AI_CONSENT_PROVIDERS.map((_, i) => `2026-10-0${i + 2}T00:00:00.000Z`),
+    );
+    expect(status.revokedAt).toBe(`2026-10-0${AI_CONSENT_PROVIDERS.length + 1}T00:00:00.000Z`);
   });
 
   it('撤回済みの行があっても、有効な同意が残っていれば全体の revokedAt は null', () => {
@@ -162,12 +169,12 @@ describe('getAiConsentStatus: DB からの読み取り', () => {
 describe('grantAiConsent: 同意の記録', () => {
   const input = { userId: USER, ipAddress: '203.0.113.7', userAgent: 'Mozilla/5.0 test', now: NOW };
 
-  it('3 事業者ぶんの行を、現行の版・IP アドレス・User-Agent つきで作り、consented = true を返す', async () => {
+  it('全事業者ぶんの行を、現行の版・IP アドレス・User-Agent つきで作り、consented = true を返す', async () => {
     const db = createSchemaCheckedDb({ [TABLE]: [] });
     const status = await grantAiConsent(input, db.supabase as never);
 
     expect(status.consented).toBe(true);
-    expect(db.tables[TABLE]).toHaveLength(3);
+    expect(db.tables[TABLE]).toHaveLength(PROVIDER_COUNT);
     for (const provider of AI_CONSENT_PROVIDERS) {
       expect(db.tables[TABLE].find((r) => r.provider === provider)).toMatchObject({
         user_id: USER,
@@ -185,7 +192,7 @@ describe('grantAiConsent: 同意の記録', () => {
   it('IP アドレス・User-Agent が取れなかったときは null で記録する (同意の記録そのものは作る)', async () => {
     const db = createSchemaCheckedDb({ [TABLE]: [] });
     await grantAiConsent({ ...input, ipAddress: null, userAgent: null }, db.supabase as never);
-    expect(db.tables[TABLE]).toHaveLength(3);
+    expect(db.tables[TABLE]).toHaveLength(PROVIDER_COUNT);
     expect(db.tables[TABLE].every((r) => r.ip_address === null && r.user_agent === null)).toBe(true);
   });
 
@@ -200,7 +207,7 @@ describe('grantAiConsent: 同意の記録', () => {
     );
 
     expect(second.consented).toBe(true);
-    expect(db.tables[TABLE]).toHaveLength(3);
+    expect(db.tables[TABLE]).toHaveLength(PROVIDER_COUNT);
     expect(db.calls.filter((c) => c.op === 'insert' || c.op === 'update')).toHaveLength(callsBefore);
     expect(db.tables[TABLE].every((r) => r.ip_address === '203.0.113.7' && r.consented_at === NOW.toISOString())).toBe(true);
   });
@@ -214,17 +221,17 @@ describe('grantAiConsent: 同意の記録', () => {
     const status = await grantAiConsent(input, db.supabase as never);
 
     expect(status.consented).toBe(true);
-    expect(db.tables[TABLE]).toHaveLength(6);
+    expect(db.tables[TABLE]).toHaveLength(PROVIDER_COUNT * 2);
     const olds = db.tables[TABLE].filter((r) => r.policy_version === 'old-version');
-    expect(olds).toHaveLength(3);
+    expect(olds).toHaveLength(PROVIDER_COUNT);
     expect(olds.every((r) => r.revoked_at === NOW.toISOString())).toBe(true);
     const news = db.tables[TABLE].filter((r) => r.policy_version === AI_CONSENT_VERSION);
-    expect(news).toHaveLength(3);
+    expect(news).toHaveLength(PROVIDER_COUNT);
     expect(news.every((r) => r.revoked_at === undefined || r.revoked_at === null)).toBe(true);
 
     // 閉じる更新は service role で行うので、行の id だけでなく、対象の利用者と「有効な行だけ」でも絞る
     const closes = db.calls.filter((c) => c.table === TABLE && c.op === 'update');
-    expect(closes).toHaveLength(3);
+    expect(closes).toHaveLength(PROVIDER_COUNT);
     for (const close of closes) {
       expect(close.filters).toEqual(
         expect.arrayContaining([
@@ -247,7 +254,7 @@ describe('grantAiConsent: 同意の記録', () => {
 
     expect(status.consented).toBe(true);
     const active = db.tables[TABLE].filter((r) => r.revoked_at == null);
-    expect(active).toHaveLength(3);
+    expect(active).toHaveLength(PROVIDER_COUNT);
     expect(active.every((r) => r.consented === true && r.policy_version === AI_CONSENT_VERSION)).toBe(true);
   });
 
@@ -259,21 +266,21 @@ describe('grantAiConsent: 同意の記録', () => {
     await grantAiConsent(input, db.supabase as never);
 
     expect(JSON.stringify(db.tables[TABLE].filter((r) => r.user_id === OTHER))).toBe(snapshot);
-    expect(db.tables[TABLE].filter((r) => r.user_id === USER)).toHaveLength(3);
+    expect(db.tables[TABLE].filter((r) => r.user_id === USER)).toHaveLength(PROVIDER_COUNT);
   });
 
   it('同時に押されて部分ユニーク索引 (23505) に弾かれても、同意は記録されているので成功として扱う', async () => {
     const db = createSchemaCheckedDb({ [TABLE]: [] });
-    // 読み取りのあと、挿入の直前に、別のリクエストが同じ 3 件を先に作った状況
+    // 読み取りのあと、挿入の直前に、別のリクエストが同じ全事業者ぶんの行を先に作った状況
     db.beforeNext(TABLE, 'insert', () => {
       db.tables[TABLE].push(...allGranted());
     });
-    db.failNext(TABLE, 'insert', pgError('23505', 'duplicate key value violates unique constraint "idx_ext_consents_active"'), 3);
+    db.failNext(TABLE, 'insert', pgError('23505', 'duplicate key value violates unique constraint "idx_ext_consents_active"'), PROVIDER_COUNT);
 
     const status = await grantAiConsent(input, db.supabase as never);
 
     expect(status.consented).toBe(true);
-    expect(db.tables[TABLE]).toHaveLength(3);
+    expect(db.tables[TABLE]).toHaveLength(PROVIDER_COUNT);
   });
 
   it('23505 以外の挿入の失敗は例外にする (記録できていないのに成功と見せない)', async () => {
@@ -287,12 +294,12 @@ describe('grantAiConsent: 同意の記録', () => {
     db.failNext(TABLE, 'insert', pgError('XX000', 'transient'));
 
     await expect(grantAiConsent(input, db.supabase as never)).rejects.toThrow('grantAiConsent: insert (openai)');
-    expect(db.tables[TABLE]).toHaveLength(2);
+    expect(db.tables[TABLE]).toHaveLength(PROVIDER_COUNT - 1);
     expect(summarizeAiConsent(toRows(db.tables[TABLE])).consented).toBe(false);
 
     const status = await grantAiConsent(input, db.supabase as never);
     expect(status.consented).toBe(true);
-    expect(db.tables[TABLE]).toHaveLength(3);
+    expect(db.tables[TABLE]).toHaveLength(PROVIDER_COUNT);
   });
 
   it('有効な行の読み取りに失敗したら、何も書かずに例外にする', async () => {
@@ -311,8 +318,8 @@ describe('revokeAiConsent: 撤回', () => {
 
     const result = await revokeAiConsent(USER, db.supabase as never, NOW);
 
-    expect(result).toEqual({ revokedCount: 3 });
-    expect(db.tables[TABLE]).toHaveLength(6);
+    expect(result).toEqual({ revokedCount: PROVIDER_COUNT });
+    expect(db.tables[TABLE]).toHaveLength(PROVIDER_COUNT * 2);
     expect(db.tables[TABLE].filter((r) => r.user_id === USER).every((r) => r.revoked_at === NOW.toISOString())).toBe(true);
     expect(db.tables[TABLE].filter((r) => r.user_id === OTHER).every((r) => r.revoked_at === null)).toBe(true);
     expect(summarizeAiConsent(toRows(db.tables[TABLE].filter((r) => r.user_id === USER))).consented).toBe(false);
@@ -342,7 +349,7 @@ describe('revokeAiConsent: 撤回', () => {
       db.supabase as never,
     );
     expect(status.consented).toBe(true);
-    expect(db.tables[TABLE]).toHaveLength(6);
+    expect(db.tables[TABLE]).toHaveLength(PROVIDER_COUNT * 2);
   });
 });
 

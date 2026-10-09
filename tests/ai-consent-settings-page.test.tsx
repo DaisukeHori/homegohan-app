@@ -4,7 +4,7 @@
  * 確認すること:
  *   - 同意済み / 未同意 / 撤回済み / 古い版 (再確認が必要) の状況が、事業者ごとに分かる形で出る
  *   - 未同意なら「同意する」、有効な同意があれば「同意を撤回する」が出る。撤回は確認ダイアログを通る
- *   - 撤回の説明は「いまは撤回しても AI 機能は引き続き使える」と正直に書き、AI が止まるとは書かない
+ *   - 撤回の説明は「撤回すると AI 機能は使えなくなる」と書く (未同意なら、サーバーが AI へ送らずに止める)
  *   - 読み込み・同意・撤回に失敗したときは、メッセージを出して、もう一度試せる
  */
 import { act, createElement, type ReactNode } from 'react';
@@ -58,7 +58,7 @@ function status(overrides: Partial<AiConsentStatus> & { states?: ProviderState[]
   };
 }
 
-const granted = () => status({ states: ['granted', 'granted', 'granted'] });
+const granted = () => status({ states: AI_CONSENT_PROVIDERS.map(() => 'granted' as const) });
 
 let container: HTMLDivElement;
 let root: Root;
@@ -147,10 +147,11 @@ describe('/settings/ai-consent: 状況の表示', () => {
 
     expect(byTestId('ai-consent-overall')?.textContent).toBe('まだ同意していません');
     expect(bodyText()).toContain('2026年10月9日 10:05 に同意を撤回しました');
+    expect(bodyText()).toContain('同意するまで、AI 機能はお使いいただけません。');
   });
 
   it('古い版への同意: 「もう一度ご確認ください」と、同意・撤回の両方のボタンが出る', async () => {
-    mocks.fetchStatus.mockResolvedValue(status({ states: ['outdated', 'outdated', 'outdated'] }));
+    mocks.fetchStatus.mockResolvedValue(status({ states: AI_CONSENT_PROVIDERS.map(() => 'outdated' as const) }));
     await renderPage();
 
     expect(byTestId('ai-consent-overall')?.textContent).toBe('もう一度ご確認ください');
@@ -180,7 +181,7 @@ describe('/settings/ai-consent: 状況の表示', () => {
 });
 
 describe('/settings/ai-consent: 撤回', () => {
-  it('撤回は確認ダイアログを通る。説明は「撤回しても AI 機能は引き続き使える」と書き、止まるとは書かない', async () => {
+  it('撤回は確認ダイアログを通る。説明は「撤回すると AI 機能は使えなくなる」と書く', async () => {
     mocks.fetchStatus.mockResolvedValue(granted());
     await renderPage();
 
@@ -189,8 +190,9 @@ describe('/settings/ai-consent: 撤回', () => {
     const dialog = byTestId('confirm-delete-modal');
     expect(dialog).not.toBeNull();
     expect(dialog!.textContent).toContain('同意を撤回しますか？');
-    expect(dialog!.textContent).toContain('引き続きお使いいただけます');
-    expect(dialog!.textContent).not.toMatch(/ご利用いただけません|使えなくなります|停止/);
+    expect(dialog!.textContent).toContain(AI_CONSENT_COPY.revokeNote);
+    expect(dialog!.textContent).toContain('使えなくなります');
+    expect(dialog!.textContent).not.toContain('引き続きお使いいただけます');
     expect(mocks.revoke).not.toHaveBeenCalled();
   });
 

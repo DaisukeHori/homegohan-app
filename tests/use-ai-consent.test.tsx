@@ -1,15 +1,17 @@
 /**
- * T15 (#1154) useAiConsent() の挙動テスト: AI の入口で「初回だけ同意画面を出す」フック
+ * T15 (#1154) useAiConsent() の挙動テスト: AI の入口で、未同意なら同意画面を出すフック
  *
- * オーナーの決定: 外国の AI 事業者へのデータ送信は止めない。したがって、このフックは次を守る。
- *   [止めない]
- *     - ensureAiConsent() は reject しない。「あとで」でも、同意の記録に失敗しても、状況が取れなくても、必ず戻る
- *     - 「あとで」は記録せず (サーバーに拒否の行を作らない)、同じブラウザで 24 時間は画面を出さない
+ * 未同意の利用者のデータは、サーバーが AI へ送る手前で止める (403 AI_CONSENT_REQUIRED)。このフックは、止められる前に
+ * 同意画面を出し、「同意する」なら操作を続け、「同意しない」なら操作をやめさせる。次を守る。
+ *   [戻り値]
+ *     - ensureAiConsent() は reject しない。'consented' (続ける) / 'declined' (やめる) / 'skipped' (状況が分からない。続けてサーバーに任せる)
+ *     - 「同意しない」は記録せず (サーバーに拒否の行を作らない)、次の AI の操作でもう一度画面を出す
  *     - 状況が取れていないときは、操作を長く待たせない (最大 1.5 秒。取得に失敗した直後は待たない)
- *     - 呼び出し側が consentModal を描画し忘れても、1 秒で諦めて進める
- *   [初回だけ出す]
+ *     - 呼び出し側が consentModal を描画し忘れても、1 秒で諦めて進める (サーバーが止める)
+ *   [同意済みなら出さない]
  *     - 同意済みなら画面を出さず、ネットワークも待たない
- *     - 未同意なら画面を出し、「同意する」「あとで」のどちらかが選ばれるまで待つ
+ *     - 未同意なら画面を出し、「同意する」「同意しない」のどちらかが選ばれるまで待つ
+ *     - サーバーに 403 AI_CONSENT_REQUIRED で止められたら (別のタブで撤回したなど)、覚えていた「同意済み」を捨てる
  *   [離れたら再開しない]
  *     - 画面が出ている間にページを離れたら、待っていた操作は再開しない
  */
@@ -39,7 +41,8 @@ vi.mock('next/link', async () => {
 
 const { useAiConsent, resetAiConsentClientStateForTests, forgetAiConsentStatus } = await import('@/hooks/useAiConsent');
 const { clearUserScopedLocalStorage } = await import('@/lib/user-storage');
-const { AI_CONSENT_LATER_SNOOZE_MS, AI_CONSENT_LATER_STORAGE_KEY, AI_CONSENT_PROVIDERS, AI_CONSENT_VERSION } = await import(
+const { AI_CONSENT_REQUIRED_EVENT } = await import('@/lib/ai/consent-required');
+const { AI_CONSENT_PROVIDERS, AI_CONSENT_VERSION } = await import(
   '@/lib/ai/consent-config'
 );
 
@@ -81,6 +84,14 @@ function HarnessWithPrefetch({ initial }: { initial: boolean }) {
   setPrefetch = setPrefetchState;
   const consent = useAiConsent({ prefetch });
   ensure = consent.ensureAiConsent;
+  return createElement('div', { 'data-testid': 'harness' }, consent.consentModal);
+}
+
+/** サーバーに止められたときの画面 (AiConsentRequiredHost と同じ使い方) */
+let prompt: () => Promise<Outcome>;
+function HarnessWithPrompt() {
+  const consent = useAiConsent({ prefetch: false });
+  prompt = consent.promptAiConsent;
   return createElement('div', { 'data-testid': 'harness' }, consent.consentModal);
 }
 
@@ -216,25 +227,6 @@ describe('useAiConsent: サインアウトしたら、別の利用者に状況�
     expect(pending.settled).toBe(false);
   });
 
-  it('「あとで」の期限も、サインアウトで消える (次の利用者に引き継がない)', async () => {
-    mocks.fetchStatus.mockResolvedValue(status(false));
-    mount();
-    await flush();
-    const first = startEnsure();
-    await flush();
-    await click(byTestId('ai-consent-later'));
-    expect(first.outcome).toBe('later');
-    expect(localStorage.getItem(AI_CONSENT_LATER_STORAGE_KEY)).not.toBeNull();
-
-    clearUserScopedLocalStorage();
-
-    expect(localStorage.getItem(AI_CONSENT_LATER_STORAGE_KEY)).toBeNull();
-    const next = startEnsure();
-    await flush();
-    expect(modal()).not.toBeNull();
-    expect(next.settled).toBe(false);
-  });
-
   it('サインアウトの前に始めた取得が、サインアウトのあとに戻っても、その結果を覚えない', async () => {
     let resolveOld!: (value: AiConsentStatus) => void;
     mocks.fetchStatus.mockReturnValueOnce(new Promise<AiConsentStatus>((resolve) => (resolveOld = resolve)));
@@ -287,7 +279,7 @@ describe('useAiConsent: prefetch オプション (全ページに常駐する部
     expect(mocks.fetchStatus).toHaveBeenCalledTimes(1);
   });
 
-  it('prefetch: false のままでも、ensureAiConsent() のときに取得して、未同意なら画面を出す (AI の操作は止めない)', async () => {
+  it('prefetch: false のままでも、ensureAiConsent() のときに取得して、未同意なら画面を出す', async () => {
     mocks.fetchStatus.mockResolvedValue(status(false));
     act(() => {
       root.render(createElement(HarnessWithPrefetch as never, { initial: false }));
@@ -302,8 +294,8 @@ describe('useAiConsent: prefetch オプション (全ページに常駐する部
     expect(modal()).not.toBeNull();
     expect(pending.settled).toBe(false);
 
-    await click(byTestId('ai-consent-later'));
-    expect(pending.outcome).toBe('later');
+    await click(byTestId('ai-consent-decline'));
+    expect(pending.outcome).toBe('declined');
   });
 
   it('prefetch: false のまま、取得が間に合わなければ (1.5 秒)、画面を出さずに skipped で戻る', async () => {
@@ -324,7 +316,7 @@ describe('useAiConsent: prefetch オプション (全ページに常駐する部
   });
 });
 
-describe('useAiConsent: 未同意なら初回だけ画面を出す。どちらを選んでも操作は進む', () => {
+describe('useAiConsent: 未同意なら画面を出す。「同意する」なら進み、「同意しない」なら操作をやめる', () => {
   it('未同意: 画面を出し、選ばれるまで待つ', async () => {
     mocks.fetchStatus.mockResolvedValue(status(false));
     mount();
@@ -337,67 +329,37 @@ describe('useAiConsent: 未同意なら初回だけ画面を出す。どちら�
     expect(pending.settled).toBe(false);
   });
 
-  it('「あとで」: later で戻り、画面は閉じる。サーバーには何も送らず (拒否の行を作らない)、24 時間の期限を覚える', async () => {
+  it('「同意しない」: declined で戻り、画面は閉じる。サーバーには何も送らない (拒否の行を作らない)', async () => {
     mocks.fetchStatus.mockResolvedValue(status(false));
     mount();
     await flush();
-    const before = Date.now();
     const pending = startEnsure();
     await flush();
 
-    await click(byTestId('ai-consent-later'));
+    await click(byTestId('ai-consent-decline'));
     await flush();
 
-    expect(pending.outcome).toBe('later');
+    expect(pending.outcome).toBe('declined');
     expect(modal()).toBeNull();
     expect(mocks.grant).not.toHaveBeenCalled();
-    const until = Number(localStorage.getItem(AI_CONSENT_LATER_STORAGE_KEY));
-    expect(until).toBeGreaterThanOrEqual(before + AI_CONSENT_LATER_SNOOZE_MS);
-    expect(until).toBeLessThanOrEqual(Date.now() + AI_CONSENT_LATER_SNOOZE_MS);
   });
 
-  it('「あとで」のあと 24 時間は、画面を出さず待たずに later で戻る', async () => {
+  it('「同意しない」のあと、次の AI の操作ではもう一度画面を出す (覚えておいて黙って止めることはしない)', async () => {
     mocks.fetchStatus.mockResolvedValue(status(false));
     mount();
     await flush();
     startEnsure();
     await flush();
-    await click(byTestId('ai-consent-later'));
+    await click(byTestId('ai-consent-decline'));
     await flush();
 
-    await expect(ensure()).resolves.toBe('later');
-    await expect(ensure()).resolves.toBe('later');
-
-    expect(modal()).toBeNull();
-    expect(mocks.fetchStatus).toHaveBeenCalledTimes(1);
-  });
-
-  it('期限が切れたら、もう一度画面を出す', async () => {
-    mocks.fetchStatus.mockResolvedValue(status(false));
-    localStorage.setItem(AI_CONSENT_LATER_STORAGE_KEY, String(Date.now() - 1));
-    mount();
+    const next = startEnsure();
     await flush();
-
-    const pending = startEnsure();
-    await flush();
-
     expect(modal()).not.toBeNull();
-    expect(pending.settled).toBe(false);
+    expect(next.settled).toBe(false);
   });
 
-  it('壊れた期限の値 (数字でない) は、期限切れとして扱う', async () => {
-    mocks.fetchStatus.mockResolvedValue(status(false));
-    localStorage.setItem(AI_CONSENT_LATER_STORAGE_KEY, 'not-a-number');
-    mount();
-    await flush();
-
-    startEnsure();
-    await flush();
-
-    expect(modal()).not.toBeNull();
-  });
-
-  it('Esc キーは「あとで」: later で戻り、画面は閉じる', async () => {
+  it('Esc キーは「同意しない」: declined で戻り、画面は閉じる', async () => {
     mocks.fetchStatus.mockResolvedValue(status(false));
     mount();
     await flush();
@@ -409,14 +371,13 @@ describe('useAiConsent: 未同意なら初回だけ画面を出す。どちら�
     });
     await flush();
 
-    expect(pending.outcome).toBe('later');
+    expect(pending.outcome).toBe('declined');
     expect(modal()).toBeNull();
   });
 
   it('「同意する」: 同意を記録して consented で戻り、画面は閉じる。以後は待たずに consented', async () => {
     mocks.fetchStatus.mockResolvedValue(status(false));
     mocks.grant.mockResolvedValue({ ok: true, data: status(true) });
-    localStorage.setItem(AI_CONSENT_LATER_STORAGE_KEY, String(Date.now() - 1));
     mount();
     await flush();
     const pending = startEnsure();
@@ -428,7 +389,6 @@ describe('useAiConsent: 未同意なら初回だけ画面を出す。どちら�
     expect(mocks.grant).toHaveBeenCalledTimes(1);
     expect(pending.outcome).toBe('consented');
     expect(modal()).toBeNull();
-    expect(localStorage.getItem(AI_CONSENT_LATER_STORAGE_KEY)).toBeNull(); // 同意したので「あとで」の期限は不要
     await expect(ensure()).resolves.toBe('consented');
     expect(mocks.fetchStatus).toHaveBeenCalledTimes(1);
   });
@@ -442,16 +402,59 @@ describe('useAiConsent: 未同意なら初回だけ画面を出す。どちら�
     await flush();
 
     expect(document.body.querySelectorAll('[data-testid="ai-consent-modal"]')).toHaveLength(1);
-    await click(byTestId('ai-consent-later'));
+    await click(byTestId('ai-consent-decline'));
     await flush();
 
-    expect(first.outcome).toBe('later');
-    expect(second.outcome).toBe('later');
+    expect(first.outcome).toBe('declined');
+    expect(second.outcome).toBe('declined');
   });
 });
 
-describe('useAiConsent: 同意の記録に失敗しても、操作は止めない', () => {
-  it('記録に失敗: 画面を閉じずにメッセージを出し、「あとで」で戻れる', async () => {
+describe('useAiConsent: サーバーに止められたとき (403 AI_CONSENT_REQUIRED)', () => {
+  it('AI_CONSENT_REQUIRED_EVENT を受けたら、覚えていた「同意済み」を捨てて、次の操作で取り直す', async () => {
+    mocks.fetchStatus.mockResolvedValueOnce(status(true));
+    mount();
+    await flush();
+    await expect(ensure()).resolves.toBe('consented');
+
+    // 別のタブで撤回した。AI の API が 403 AI_CONSENT_REQUIRED を返し、aiFetch がイベントを出す
+    act(() => {
+      window.dispatchEvent(new Event(AI_CONSENT_REQUIRED_EVENT));
+    });
+    mocks.fetchStatus.mockResolvedValueOnce(status(false));
+    const pending = startEnsure();
+    await flush();
+
+    expect(mocks.fetchStatus).toHaveBeenCalledTimes(2);
+    expect(modal()).not.toBeNull();
+    expect(pending.settled).toBe(false);
+  });
+
+  it('promptAiConsent() は、状況に関わらず「同意が必要です」の一文つきで画面を出す', async () => {
+    mocks.fetchStatus.mockResolvedValue(status(true));
+    mocks.grant.mockResolvedValue({ ok: true, data: status(true) });
+    mount(HarnessWithPrompt as never);
+    await flush();
+
+    let outcome: Outcome | undefined;
+    act(() => {
+      void prompt().then((value) => {
+        outcome = value;
+      });
+    });
+    await flush();
+
+    expect(modal()).not.toBeNull();
+    expect(byTestId('ai-consent-required-lead')).not.toBeNull();
+    await click(byTestId('ai-consent-accept'));
+    await flush();
+    expect(outcome).toBe('consented');
+    expect(modal()).toBeNull();
+  });
+});
+
+describe('useAiConsent: 同意の記録に失敗したとき', () => {
+  it('記録に失敗: 画面を閉じずにメッセージを出し、「同意しない」で戻れる', async () => {
     mocks.fetchStatus.mockResolvedValue(status(false));
     mocks.grant.mockResolvedValue({ ok: false, status: 500, code: 'AI_CONSENT_GRANT_FAILED', message: '同意を記録できませんでした。' });
     mount();
@@ -467,9 +470,9 @@ describe('useAiConsent: 同意の記録に失敗しても、操作は止めな�
     expect(pending.settled).toBe(false);
     expect((byTestId('ai-consent-accept') as HTMLButtonElement).disabled).toBe(false);
 
-    await click(byTestId('ai-consent-later'));
+    await click(byTestId('ai-consent-decline'));
     await flush();
-    expect(pending.outcome).toBe('later');
+    expect(pending.outcome).toBe('declined');
     expect(modal()).toBeNull();
   });
 
@@ -495,7 +498,7 @@ describe('useAiConsent: 同意の記録に失敗しても、操作は止めな�
     expect(modal()).toBeNull();
   });
 
-  it('文面が更新された (409) 場合も、メッセージを出して「あとで」で戻れる', async () => {
+  it('文面が更新された (409) 場合も、メッセージを出して「同意しない」で戻れる', async () => {
     mocks.fetchStatus.mockResolvedValue(status(false));
     mocks.grant.mockResolvedValue({
       ok: false,
@@ -512,12 +515,12 @@ describe('useAiConsent: 同意の記録に失敗しても、操作は止めな�
     await flush();
     expect(byTestId('ai-consent-error')?.textContent).toContain('文面が更新されました');
 
-    await click(byTestId('ai-consent-later'));
+    await click(byTestId('ai-consent-decline'));
     await flush();
-    expect(pending.outcome).toBe('later');
+    expect(pending.outcome).toBe('declined');
   });
 
-  it('記録中に「あとで」を押しても戻る。あとから記録が成功しても、画面は開き直さない', async () => {
+  it('記録中に「同意しない」を押しても戻る。あとから記録が成功しても、画面は開き直さない', async () => {
     mocks.fetchStatus.mockResolvedValue(status(false));
     let resolveGrant!: (value: unknown) => void;
     mocks.grant.mockReturnValue(new Promise((resolve) => (resolveGrant = resolve)));
@@ -528,31 +531,15 @@ describe('useAiConsent: 同意の記録に失敗しても、操作は止めな�
 
     await click(byTestId('ai-consent-accept'));
     expect((byTestId('ai-consent-accept') as HTMLButtonElement).disabled).toBe(true);
-    await click(byTestId('ai-consent-later'));
+    await click(byTestId('ai-consent-decline'));
     await flush();
-    expect(pending.outcome).toBe('later');
+    expect(pending.outcome).toBe('declined');
 
     await act(async () => resolveGrant({ ok: false, status: 500, code: null, message: '失敗' }));
     await flush();
     expect(modal()).toBeNull();
   });
 
-  it('localStorage が使えなくても (例外)、「あとで」で戻る', async () => {
-    mocks.fetchStatus.mockResolvedValue(status(false));
-    mount();
-    await flush();
-    const pending = startEnsure();
-    await flush();
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('QuotaExceededError');
-    });
-
-    await click(byTestId('ai-consent-later'));
-    await flush();
-
-    expect(pending.outcome).toBe('later');
-    expect(modal()).toBeNull();
-  });
 });
 
 describe('useAiConsent: 同意の状況が取れなくても、操作を長く待たせない', () => {

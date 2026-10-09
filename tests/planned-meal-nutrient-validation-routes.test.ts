@@ -14,6 +14,8 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに止めることは tests/ai-consent-enforcement.test.ts が確かめる
+vi.mock('@/lib/ai/consent-guard', () => import('./helpers/ai-consent-guard-allowed'));
 vi.mock('../lib/catalog-products', () => ({
   buildCatalogSelectionUpdate: vi.fn(),
   clearCatalogSelectionMetadata: vi.fn(),
