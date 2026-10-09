@@ -11,6 +11,7 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { restorePlannedMealsSnapshot, type PlannedMealSnapshotRow } from '@/lib/planned-meals-snapshot';
 import { todayLocal } from '@/lib/date-utils';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { aiConsentReasonOfStoredError } from '@/lib/ai/consent-config';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -272,7 +273,11 @@ export async function POST(request: Request) {
           console.log(
             `🔁 Restored meals after generation failure: restored=${restoreResult.restored} skipped=${restoreResult.skipped} failed=${restoreResult.failed}`,
           );
-          errorMessage = `${result.errorMessage} (rollback: restored=${restoreResult.restored}, skipped=${restoreResult.skipped}, failed=${restoreResult.failed})`;
+          // Edge Function が同意の判定で止めたときの文 (T15 / #1154) は、画面がこの文を見分けて同意画面へ案内するので、
+          // 復元の件数を足さずにそのまま残す (件数はこのログに残っている)
+          if (aiConsentReasonOfStoredError(result.errorMessage) === null) {
+            errorMessage = `${result.errorMessage} (rollback: restored=${restoreResult.restored}, skipped=${restoreResult.skipped}, failed=${restoreResult.failed})`;
+          }
         }
 
         await markWeeklyMenuRequestFailed({

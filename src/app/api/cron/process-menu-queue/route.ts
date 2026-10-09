@@ -1,7 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 import { requireCronAuth } from '@/lib/cron-auth';
 import { createLogger } from '@/lib/db-logger';
-import { aiConsentDeniedPayload, aiConsentDeniedStoredMessage, checkUserAiConsent } from '@/lib/ai/consent-guard';
+import {
+  aiConsentDeniedPayload,
+  aiConsentDeniedStoredMessage,
+  aiConsentDeniedStoredMessageOfResponse,
+  checkUserAiConsent,
+} from '@/lib/ai/consent-guard';
 // runtime = 'edge' のルートなので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
@@ -94,7 +99,11 @@ export async function GET(req: Request) {
     });
 
     if (!v5Res.ok) {
-      throw new Error(`V5 returned ${v5Res.status}: ${await v5Res.text().catch(() => '')}`);
+      const v5Text = await v5Res.text().catch(() => '');
+      // Edge Function が同意の判定で止めた (T15 / #1154。ここでの判定のあとに撤回された・Edge Function 側で読めなかった)。
+      // 行は Edge Function が人向けの文で失敗にしている。その書き込みが失敗していても、下の catch が内部の文 (状態コードと本文) を
+      // error_message に書かないよう、同じ人向けの文にする
+      throw new Error(aiConsentDeniedStoredMessageOfResponse(v5Res.status, v5Text) ?? `V5 returned ${v5Res.status}: ${v5Text}`);
     }
 
     // Edge Function は自身で status を completed / failed に更新するため、

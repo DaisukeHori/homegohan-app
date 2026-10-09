@@ -4,6 +4,8 @@
  * キューに積まれたあとに同意を撤回した利用者 (または同意の状況を読めない場合) のリクエストは、
  * Edge Function generate-menu-v5 を呼ばずに失敗にする。error_message は画面がそのまま出すので、コードではなく人向けの文
  * (AI_CONSENT_REQUIRED_MESSAGE / AI_CONSENT_CHECK_FAILED_MESSAGE) を書く (画面はこの文を見分けて同意画面へ案内する)。
+ * ここで同意済みでも、呼んだ Edge Function が同意の判定で止めた (その間に撤回された) ときは、失敗の欄に内部の文
+ * (状態コードと応答の本文) ではなく同じ人向けの文を書く。
  * 判定に使う user_id は、利用者が書き換えられる generated_data ではなく、行の user_id。
  * 判定は差し替えない (src/lib/ai/consent-guard.ts をそのまま使う)。
  */
@@ -129,6 +131,22 @@ describe('cron/process-menu-queue: 同意の判定', () => {
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(mocks.updates[0].values).toMatchObject({ status: 'failed', error_message: AI_CONSENT_CHECK_FAILED_MESSAGE });
     expect(mocks.updates[0].values.error_message).not.toBe(AI_CONSENT_CHECK_FAILED_CODE);
+  });
+
+  it('同意済みでも Edge Function が同意の判定で止めた (その間に撤回された) ら、行の失敗の欄には内部の文ではなく人向けの文を書く', async () => {
+    mocks.consentResult = {
+      data: AI_CONSENT_PROVIDERS.map((provider) => ({ provider, consented: true, policy_version: AI_CONSENT_VERSION })),
+      error: null,
+    };
+    mocks.fetch.mockImplementation(
+      async () => new Response(JSON.stringify({ error: AI_CONSENT_REQUIRED_MESSAGE, code: AI_CONSENT_REQUIRED_CODE }), { status: 403 }),
+    );
+    const res = await call();
+    expect(res.status).toBe(500);
+    expect(mocks.updates).toHaveLength(1);
+    expect(mocks.updates[0].values).toMatchObject({ status: 'failed', error_message: AI_CONSENT_REQUIRED_MESSAGE });
+    // Edge Function が先に失敗にしていれば上書きしない (処理中の行だけ)
+    expect(mocks.updates[0].filters).toEqual(expect.arrayContaining([['in', 'status', ['queued', 'processing']]]));
   });
 
   it('同意済み: Edge Function generate-menu-v5 を呼ぶ', async () => {
