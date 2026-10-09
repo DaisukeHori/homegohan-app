@@ -7,16 +7,25 @@
  * DB の日付列 (user_daily_meals.day_date など) は JST の暦日で入っているので、
  * 「今日」や「ある時刻が属する日」を求めるときは、このファイルの関数を使う。
  *
+ * 週・月・日の集計期間 (calculateJstPeriod) も同じ理由で JST の暦で求める (#1211)。
+ * new Date().getDay() / getDate() / getMonth() はどれも実行環境 (UTC) のローカル時刻で答えるので、
+ * 月曜の JST 00:00〜08:59 (UTC ではまだ日曜) は週の開始日が 1 週間前の月曜になっていた。
+ *
  * Web / Mobile 側の同等ヘルパーは packages/shared/src/date-utils.ts の
- * formatLocalDate / todayLocal (src/lib/date-utils.ts から import できる)。
+ * formatLocalDate / todayLocal / calculatePeriodLocal (src/lib/date-utils.ts から import できる)。
  * Edge Functions は packages/shared (workspace パッケージ) を import していないため、
  * 同じ結果を返す実装をここに置く。こちらは Intl やタイムゾーンデータに頼らず、
  * 固定オフセットで求める (日本は夏時間が無く、JST は常に UTC+9 なので結果は同じ)。
- * 2 つの実装が一致することは tests/jst-date.test.ts で確認している。
+ * 2 つの実装が一致することは tests/jst-date.test.ts と tests/jst-period.test.ts で確認している。
  */
 
 /** JST の UTC からのオフセット (ミリ秒)。日本は夏時間が無いので常に +9 時間。 */
 export const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** 全期間 (all_time) の集計の開始日 */
+const ALL_TIME_START = '2024-01-01';
 
 /**
  * その時刻が属する JST の暦日を YYYY-MM-DD で返す。
@@ -35,4 +44,70 @@ export function formatJstDate(date: Date): string {
  */
 export function todayJst(now: Date = new Date()): string {
   return formatJstDate(now);
+}
+
+/**
+ * 集計期間 (segment_stats / user_metrics / user_segment_rankings の period_type) の、
+ * now が属する期間の開始日と終了日 (どちらも YYYY-MM-DD で、その日を含む) を JST の暦で返す (#1211)。
+ *
+ *   - daily    : JST の今日だけ
+ *   - weekly   : JST の月曜日から日曜日までの 7 日間
+ *   - monthly  : JST の 1 日から末日まで
+ *   - all_time : 2024-01-01 から JST の今日まで
+ *   - それ以外 : JST の今日の 7 日前から今日まで
+ *
+ * 保存する側 (Edge Function calculate-segment-stats) と、読み出す側 (Web の /api/comparison/rankings。
+ * packages/shared の calculatePeriodLocal) は、同じ period_start を使わないと、保存した集計を引けない。
+ * 2 つの実装が一致することは tests/jst-period.test.ts で確認している。
+ *
+ * JST の今日 (YYYY-MM-DD) を UTC の 0 時として扱い、暦の計算だけを UTC の関数で行う。
+ * 実行環境のタイムゾーンやサマータイムに左右されない。
+ *
+ * 不正な Date (Invalid Date) を渡すと RangeError になる。
+ */
+export function calculateJstPeriod(
+  periodType: string,
+  now: Date = new Date(),
+): { periodStart: string; periodEnd: string } {
+  const [year, month, day] = formatJstDate(now).split('-').map(Number);
+  // 年・月 (1〜12)・日 → YYYY-MM-DD。日や月が範囲を超えても、繰り上がり・繰り下がりは Date.UTC が処理する
+  const ymd = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10);
+  // JST の今日から offsetDays 日ずらした日
+  const dayOf = (offsetDays: number) => ymd(year, month, day + offsetDays);
+
+  switch (periodType) {
+    case 'daily':
+      return { periodStart: dayOf(0), periodEnd: dayOf(0) };
+    case 'weekly': {
+      // 月曜日起点。getUTCDay() は日曜 0 〜 土曜 6 なので、月曜日からの経過日数は (曜日 + 6) % 7
+      const sinceMonday = (new Date(Date.UTC(year, month - 1, day)).getUTCDay() + 6) % 7;
+      return { periodStart: dayOf(-sinceMonday), periodEnd: dayOf(6 - sinceMonday) };
+    }
+    case 'monthly':
+      // 翌月の 0 日 = 当月の末日
+      return { periodStart: ymd(year, month, 1), periodEnd: ymd(year, month + 1, 0) };
+    case 'all_time':
+      return { periodStart: ALL_TIME_START, periodEnd: dayOf(0) };
+    default:
+      return { periodStart: dayOf(-7), periodEnd: dayOf(0) };
+  }
+}
+
+/**
+ * JST の暦日の範囲 (開始日〜終了日。どちらの日も含む。YYYY-MM-DD) を、timestamptz 列を絞る時刻の範囲にする (#1211)。
+ * from は開始日の JST 0 時 (含む)、before は終了日の翌日の JST 0 時 (含まない)。
+ * `列 >= from AND 列 < before` で絞る。
+ * 例: ("2026-07-13", "2026-07-19") → { from: "2026-07-12T15:00:00.000Z", before: "2026-07-19T15:00:00.000Z" }
+ *
+ * 日付の文字列を timestamptz 列にそのまま渡すと、DB のタイムゾーン (UTC) の 0 時として解釈され、JST と 9 時間ずれる。
+ *
+ * 不正な日付を渡すと RangeError になる。
+ */
+export function jstDayRangeToTimestamps(startDay: string, endDay: string): { from: string; before: string } {
+  // "YYYY-MM-DDT00:00:00Z" から 9 時間引いた時刻が、その日の JST 0 時
+  const jstMidnightMs = (day: string) => Date.parse(`${day}T00:00:00Z`) - JST_OFFSET_MS;
+  return {
+    from: new Date(jstMidnightMs(startDay)).toISOString(),
+    before: new Date(jstMidnightMs(endDay) + DAY_MS).toISOString(),
+  };
 }
