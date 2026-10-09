@@ -94,7 +94,7 @@ bash scripts/local-ci.sh --keep                   # 作業用の worktree を残
 - 毎回 **まっさらな git worktree** を作り、`npm ci` をやり直します (使い回すと `.next/types` など CI に無い生成物まで型検査してしまうため)。終わったら worktree は消します。
 - `TZ=UTC` (CI のランナーは UTC)・`CI=true`・`LANG=C.UTF-8`・`NODE_OPTIONS` なし (ヒープを盛ると CI のメモリ不足を隠すため)。
 - 親シェルの環境変数は持ち込みません (`PATH`・`HOME`・Docker / プロキシの設定など、動かすのに要るものだけを残す)。シェルに入っている本番の接続先などは混ざりません (新しい worktree には `.env.local` もありません)。`SUPABASE_ACCESS_TOKEN` などは最初に外します。
-- コマンド・対象パス・環境変数は 4 つの yml から写しています。yml を変えてスクリプトを直し忘れると、`tests/local-ci-workflow-sync.test.ts` が PR の `npm test` で落ちます。
+- コマンド・対象パス・環境変数は 4 つの yml から写しています。yml を変えてスクリプトを直し忘れると、`tests/local-ci-workflow-sync.test.ts` が PR の `npm test` で落ちます。照合は yml ごとに対応する段の関数 (`stage_unit` など) の中だけで行い、yml のコマンドがスクリプトの 1 つのコマンドの先頭に同じ引数の並びで現れるか (後ろに足してよいのは結果を JSON で出す引数だけ)、作業ディレクトリ・環境変数 (ステップ / ジョブ / ワークフロー) が同じかまで比べます。テストが知らないアクション・キー・`if` の条件が yml に増えたときも落ちるので、スクリプトに写したうえでテストの対応表に理由を付けて足してください。
 
 **結果の読み方**
 

@@ -10,6 +10,8 @@
 #   e2e          .github/workflows/e2e-local.yml       ローカル Supabase + 本番ビルドに対する Playwright
 #
 # yml とこのスクリプトのずれは tests/local-ci-workflow-sync.test.ts が検出する (PR の npm test で落ちる)。
+# そのテストは、段の関数名 (stage_unit / stage_mobile / stage_integration / stage_e2e)・run_in / run_in_stdout の引数の形・
+# ci_env の export・readonly の定数・配列 ("${NAME[@]}") を手がかりに読む。これらの形を変えるときはテストも合わせる。
 #
 # 使い方:
 #   bash scripts/local-ci.sh [--only unit,mobile,integration,e2e] [--base <ref>] [--keep] [--no-merge]
