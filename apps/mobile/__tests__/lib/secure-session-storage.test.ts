@@ -437,6 +437,32 @@ describe('createSecureSessionStorage — 保管庫に書けない端末', () => 
     expect(await restart().getItem(KEY)).toBe(json);
   });
 
+  it('onIssue を渡さなければ、異常は端末のコンソール (console.warn) にだけ出す。セッションの中身は載せず、通信もしない', async () => {
+    // PostHog などの外部の計測サービスには送らない (#1166)。サーバーログ (POST /api/log) にも送らない:
+    // 送るにはアクセストークンが要り、それを取る getSession() がこの storage を読むので、異常の通知から自分自身を呼び直すことになる
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn();
+    try {
+      const secure = createFakeSecureStore();
+      const legacy = createFakeLegacy();
+      secure.state.failSet = () => true;
+      const storage = createSecureSessionStorage({ secureStore: secure.store, legacyStorage: legacy.legacy });
+      const json = makeSessionJson();
+
+      await storage.setItem(KEY, json);
+
+      expect(warn).toHaveBeenCalledWith('[secureSessionStorage] secure_write_failed', 'keystore write failed');
+      const output = JSON.stringify(warn.mock.calls);
+      expect(output).not.toContain(JSON.parse(json).refresh_token);
+      expect(output).not.toContain('user@example.com');
+      expect(global.fetch).not.toHaveBeenCalled();
+    } finally {
+      global.fetch = originalFetch;
+      warn.mockRestore();
+    }
+  });
+
   it('途中の断片で失敗しても、古い世代が壊れず読め、書きかけの断片は残らない', async () => {
     const { storage, restart, secure } = setup();
     const first = makeSessionJson({ expires_at: 1 });

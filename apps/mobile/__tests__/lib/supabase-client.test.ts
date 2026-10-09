@@ -14,9 +14,6 @@ process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'anon-key-for-tests';
 // キャッシュが冷えた CI でも、ケースごとの 5 秒の既定を超えないように上限を広げる
 jest.setTimeout(30_000);
 
-// 異常の通知に使う PostHog の SDK は重く、このテストの対象ではないので読み込まない
-jest.mock('../../src/lib/posthog', () => ({ captureEvent: jest.fn() }));
-
 type SecureStoreMock = { __reset: () => void; __store: Map<string, string> };
 
 /**

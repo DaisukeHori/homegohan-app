@@ -4,7 +4,6 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
-import { captureEvent } from "./posthog";
 import { supabase } from "./supabase";
 
 /**
@@ -80,14 +79,28 @@ export function resolveEasProjectId(): ResolvedEasProjectId {
   return { projectId: undefined, source: "none", rejected };
 }
 
-/** 登録失敗を PostHog に送る (トークンやユーザー ID は載せない。PostHog 未初期化なら何もしない) */
+/**
+ * 登録・削除の異常を、端末のコンソールに出す (トークンやユーザー ID は載せない。例外は投げない)。
+ *
+ * 呼び出し元は失敗を握りつぶす (起動時の自動登録、ログアウト) ので、開発中に気づけるようにするためのもの。
+ * PostHog などの外部の計測サービスには送らない (#1166)。サーバーログ (app_logs) への記録は、今は無い。
+ */
+function reportPushIssue(event: string, details: Record<string, string | number | boolean>): void {
+  try {
+    console.warn(`[pushNotifications] ${event}`, details);
+  } catch {
+    // ignore
+  }
+}
+
+/** 登録失敗を端末のコンソールに出す (トークンやユーザー ID は載せない) */
 function reportPushRegistrationFailure(
   stage: "get_token" | "save_token",
   error: unknown,
   resolved: ResolvedEasProjectId,
 ): void {
   const e = error as { name?: unknown; message?: unknown } | null | undefined;
-  captureEvent("push_token_registration_failed", {
+  reportPushIssue("push_token_registration_failed", {
     stage,
     platform: Platform.OS,
     error_name: typeof e?.name === "string" ? e.name : "unknown",
@@ -232,8 +245,8 @@ export type UnregisterPushTokenOptions = {
  *   (消すと、他の端末は登録済みフラグが立っていて再登録されず、通知が届かなくなる)
  * - RLS (本人の行のみ削除可) のため、サインアウトの「前」に呼ぶこと。
  *   セッションが先に失効してしまう場合 (Web からの sign-out / session-expired) は、控えておいたアクセストークンを options.accessToken で渡す
- * - 例外は投げない。失敗・タイムアウトでもログアウトは止めない (失敗は PostHog に送る)
- * - 消えた行が 0 件のときも、エラーにならない (RLS は弾いた行を黙って除く) ので、件数を数えて PostHog に送る
+ * - 例外は投げない。失敗・タイムアウトでもログアウトは止めない (失敗は端末のコンソールに出す)
+ * - 消えた行が 0 件のときも、エラーにならない (RLS は弾いた行を黙って除く) ので、件数を数えて端末のコンソールに出す
  *   (push_token_unregister_no_rows)。以前はこれを「削除できた」として扱っており、RLS で素通りしても気づけなかった
  * - アカウント削除では呼ばなくてよい (auth.users の削除で user_push_tokens が ON DELETE CASCADE で消える)
  */
@@ -274,7 +287,7 @@ export async function unregisterExpoPushToken(
       ? query.setHeader("Authorization", `Bearer ${options.accessToken}`)
       : query);
     if (error) {
-      captureEvent("push_token_unregister_failed", {
+      reportPushIssue("push_token_unregister_failed", {
         platform: Platform.OS,
         error_name: typeof error.name === "string" ? error.name : "PostgrestError",
         error_code: typeof error.code === "string" ? error.code : "",
@@ -282,7 +295,7 @@ export async function unregisterExpoPushToken(
       return "failed";
     }
     if (count === 0) {
-      captureEvent("push_token_unregister_no_rows", {
+      reportPushIssue("push_token_unregister_no_rows", {
         platform: Platform.OS,
         token_source: tokenSource,
         explicit_access_token: !!options.accessToken,

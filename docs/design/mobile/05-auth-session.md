@@ -76,7 +76,7 @@ iOS の `ASWebAuthenticationSession` は、コールバック URL を `openAuthS
 - `eas.json` の `EXPO_PUBLIC_EAS_PROJECT_ID` の行は削除した。`app.json` の `extra.eas.projectId` を使う。
   eas.json の `"$VAR"` は展開されずに文字列のまま入っていた (Issue #1038 の報告)。形式の検査があるので、どちらでも壊れない。
   `01-architecture.md` §7.2 の表にある同名の行 (preview / production) は、この変更で eas.json に設定しなくなった (環境変数や EAS Secret として注入することは今でもできる)
-- 失敗は PostHog に送る (`push_token_registration_failed`。トークンやユーザー ID は載せない)
+- 失敗は端末のコンソールに出す (`push_token_registration_failed`。トークンやユーザー ID は載せない)。PostHog には送らない (#1166)
 - 「登録済み」の印は、トークンを実際に保存できたときだけ付ける。権限を拒否された場合に印を付けると、後から許可しても二度と登録されない。
   旧ビルドは権限を拒否されても印 (`push_token_registered_v1:<uid>`) を付けていたため、通知を拒否した端末には v1 の印が残っている。
   そのまま読むと、後から許可しても登録されないので、印のキーを `push_token_registered_v2` に上げた (v1 は読まず、ログアウトで消す)。
@@ -101,7 +101,7 @@ iOS の `ASWebAuthenticationSession` は、コールバック URL を `openAuthS
   詳しい順番と対策は §6.2
 - `Authorization` ヘッダーを明示すると、supabase-js は上書きしない (`fetchWithAuth` は、既にあれば付けない)。
   PostgREST は JWT の署名と期限だけを見て、セッションが失効済みかどうかは見ないので、アクセストークンの期限内なら、失効後でも RLS で本人の行を消せる
-- 消えた行の件数を数える (`delete({ count: 'exact' })`)。0 件 (RLS に弾かれた、または行が既に無い。どちらもエラーにならない) のときは `push_token_unregister_no_rows` を PostHog に送る。
+- 消えた行の件数を数える (`delete({ count: 'exact' })`)。0 件 (RLS に弾かれた、または行が既に無い。どちらもエラーにならない) のときは `push_token_unregister_no_rows` を端末のコンソールに出す (PostHog には送らない: #1166)。
   以前は 0 件でも「削除できた」扱いで、RLS を素通りしても気づけなかった。Web からアカウントを削除したときも `sign-out` が届くが、そのときは `auth.users` の削除で行が CASCADE で先に消えているので、この通知が出る (正常)
 - 消すのは「この端末のトークンの、このユーザーの行」だけ。同じユーザーの他の端末の行を消すと、その端末は登録済みの印が立っていて再登録されず、通知が届かなくなる
 - 失敗・タイムアウト (3 秒) でもログアウトは止めない
