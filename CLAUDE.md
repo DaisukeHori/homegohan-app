@@ -200,9 +200,12 @@ npx vitest run --config vitest.integration.config.ts tests/integration/rls   # R
 
 ## マージ前の検査 (ローカル CI)
 
-PR の検査は `bash scripts/local-ci.sh` でローカルに回せる (CI の ci.yml・mobile-test.yml・security-regression.yml・e2e-local.yml と同じコマンド・同じ件数。TZ=UTC・main を取り込んだマージ状態・まっさらな worktree で回す)。
+PR の検査は `bash scripts/local-ci.sh` でローカルに回せる (CI の ci.yml・mobile-test.yml・security-regression.yml・e2e-local.yml と同じコマンド・同じ件数、security.yml の gitleaks (シークレットの検査) と同じ版・同じ設定・同じ範囲 (PR で増えるコミット)。TZ=UTC・main を取り込んだマージ状態・まっさらな worktree で回す)。
 
-- migration を含まない PR は、local-ci.sh の 4 段が緑で、出力の Markdown (sha と件数) を PR 本文に貼れば、CI の完了を待たずにマージしてよい (オーナー判断 2026-10-09)。CI の結果はマージ後に確かめ、赤なら直す。
+- migration を含まない PR は、local-ci.sh の 5 段 (secrets・unit・mobile・integration・e2e) が緑で、出力の Markdown (sha と件数) を PR 本文に貼れば、CI の完了を待たずにマージしてよい (オーナー判断 2026-10-09)。CI の結果はマージ後に確かめ、赤なら直す。
+- secrets 段 (gitleaks) が赤のときはマージしない。リポジトリは公開なので、main に入った秘密は取り消せない (本物のキーなら無効にして発行し直す。ダミーなら `.gitleaks.toml` か行末の `gitleaks:allow`)。
+- 依存 (`package.json` / `package-lock.json`) を変える PR は、security.yml の dependency review (high 以上の既知の脆弱性がある版を入れていないか) の緑を待ってからマージする。これは GitHub の Dependency graph を使うので、ローカルでは再現できない。
+- PR で動くワークフローのうち local-ci.sh に写していないもの (と理由) は `tests/local-ci-workflow-sync.test.ts` の `EXCLUDED_WORKFLOWS` / `EXCLUDED_JOBS` にある。PR で動くワークフロー・ジョブを足したら、local-ci.sh に写すか、そこに理由を書く (書かないと `npm test` が落ちる)。
 - migration (`supabase/migrations/**`) を含む PR は、Deploy Supabase Migrations の PR ジョブ (本番台帳とのドリフト検知) の緑を待ってからマージする。これはローカルでは再現できない。
 - 本番への反映 (Vercel・`db push`・functions deploy) は従来どおり PR → main → CI の経路だけ。
 

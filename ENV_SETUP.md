@@ -81,7 +81,7 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 |---|---|---|---|
 | Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue`（`vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
 | Supabase の Edge Function secrets | `CRON_SECRET`（別名 `SERVICE_ROLE_SECRET`。`CRON_SECRET` が無いときだけ代わりに使われます） | **受ける側**。`supabase/functions/_shared/auth.ts` の `requireServiceRole` が、次の Edge Function でこの値と照らし合わせます: コンビニカタログ取り込み 5 本（`import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog`）、`aggregate-org-stats`（停止中。認証だけ行い 410 を返します。#1325）、`calculate-segment-stats`、`regenerate-embeddings`、`stripe-price-sync`（最後の 2 本は service role key でも呼べます） | Vault の `app_cron_secret` と **同じ値にする** |
-| Supabase Vault | `app_cron_secret` | **送る側**。pg_cron が定期実行する `public.invoke_catalog_import()` がこの値を読み、`Authorization: Bearer ...` に付けて、コンビニカタログ取り込みの Edge Function 5 本を呼びます（登録時のスケジュールは、毎日 UTC 3:00〜4:00 に 15 分おき） | Edge Function secrets の `CRON_SECRET` と **同じ値にする** |
+| Supabase Vault | `app_cron_secret` | **送る側**。pg_cron が定期実行する次の関数がこの値を読み、`Authorization: Bearer ...` に付けて Edge Function を呼びます: `public.invoke_catalog_import()`（コンビニカタログ取り込みの Edge Function 5 本。登録時のスケジュールは、毎日 UTC 3:00〜4:00 に 15 分おき）、`public.invoke_calculate_segment_stats()`（比較ランキングの集計 `calculate-segment-stats` を daily / weekly / monthly の 3 回。期間が切り替わった直後の回は直前の期間の分も。ジョブ `calculate-segment-stats`、1 時間ごと（毎時 5 分）。#1406） | Edge Function secrets の `CRON_SECRET` と **同じ値にする** |
 
 つまり、**値を合わせないと動かないのは「Edge Function secrets の `CRON_SECRET`」と「Vault の `app_cron_secret`」の 2 つだけ**です。Vercel の `CRON_SECRET` は独立しています。
 
@@ -152,7 +152,28 @@ Edge Function は、現行の `CRON_SECRET` に加えて `CRON_SECRET_PREVIOUS`�
 - 手順 3 の前なら、`CRON_SECRET` を旧い値に戻し、`CRON_SECRET_PREVIOUS` を削除します。
 - 手順 3 の後なら、Vault の `app_cron_secret` を旧い値に戻します（`CRON_SECRET_PREVIOUS` が残っている間は、新旧どちらでも通ります）。
 
-旧い値の控えが無いときは、`CRON_SECRET_PREVIOUS` を使えません。定期実行のない時間帯（UTC 4:30〜翌 2:30）に、手順 2 では `CRON_SECRET` だけを新しい値にして、すぐ手順 3 を行ってください。その数分の間だけ、手動で呼ぶ処理が 401 になります。
+旧い値の控えが無いときは、`CRON_SECRET_PREVIOUS` を使えません。コンビニカタログの取り込みが動かない時間帯（UTC 4:30〜翌 2:30）の、比較ランキングの集計の回（毎時 5 分）を避けた時刻（例: 毎時 10 分〜55 分）に、手順 2 では `CRON_SECRET` だけを新しい値にして、すぐ手順 3 を行ってください。その数分の間だけ、手動で呼ぶ処理が 401 になります。比較ランキングの集計の回と重なって 401 になっても、次の回（1 時間後）で取り戻せます（JST 0 時台の回だけは、直前の期間の集計し直しが行われないので、避けてください）。
+
+### 比較ランキングの集計の間隔
+
+比較ランキング（Web の `/comparison`・モバイルの比較画面）の集計 `calculate-segment-stats` は、pg_cron のジョブ `calculate-segment-stats` が **1 時間ごと（毎時 5 分）** に呼びます（migration `20261009100000_schedule_calculate_segment_stats.sql`。#1406）。
+
+- 毎回、daily / weekly / monthly の 3 つの要求が pg_net から並行して出ます。どれも、自分の期間の食事の記録（monthly は 1 か月分）を全件読みます。
+- 日・週・月が切り替わった直後の回（JST 0:05）は、切り替わった種類について直前の期間も 1 回だけ集計し直します（最大 3 つ増えます）。期間の最後の 1 時間（例: 23:05〜23:59）の記録を、その期間の最終の値に入れるためです。
+- 応答を待つ上限は 400 秒です。間隔（1 時間）より十分短いので、前の回と重なりません。直近の結果は `net._http_response`（上の「値が合っていないとどうなるか」のクエリ）で確かめられます。
+
+利用者が増えて毎時の集計が重くなったら、Supabase Dashboard の SQL Editor で間隔を広げられます（migration は要りません）。例: 3 時間ごと
+
+```sql
+SELECT cron.alter_job(
+  job_id := (SELECT jobid FROM cron.job WHERE jobname = 'calculate-segment-stats'),
+  schedule := '5 */3 * * *'
+);
+```
+
+- **UTC 15 時台（= JST 0 時台）の回を必ず含めてください。** 直前の期間の集計し直しは、期間が切り替わってから 1 時間以内（`calculate_segment_stats_request_bodies` の `c_finalize_window`）の回だけが行います。`'5 */3 * * *'` は UTC 0, 3, …, 15, 18, 21 時なので含みます。`'5 */2 * * *'` は含まないので使えません。
+- 間隔を変えたら、モバイルの比較画面の案内（`apps/mobile/app/comparison/index.tsx` の `RANKING_UPDATE_INTERVAL_HOURS`）も同じ時間に直し、次の migration でジョブのスケジュールも揃えてください（`tests/segment-stats-schedule-sync.test.ts` が migration と画面を突き合わせます）。
+- 今の設定は `SELECT jobname, schedule, active FROM cron.job WHERE jobname = 'calculate-segment-stats';` で確かめられます。
 
 ### Vercel の `CRON_SECRET` を入れ替えるとき
 
