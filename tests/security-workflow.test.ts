@@ -495,6 +495,8 @@ describe('.gitleaks.toml (誤検知の除外は、値を狭く指定する)', ()
     '5-1-analyzing-or-result',
     'vitamin_b12_ug',
     'dummy-api-key-for-test-0123456789',
+    'v1.MR5OBK2qk3lA9wxkmjm0YRkd0tg9FdcYT5CqvW9_pw9nE0j',
+    '3f9a1c0be77d4c2a9b1e5d6f7a8b9c0d',
   ])('確かめたダミーの値は除外する: %s', (value) => {
     expect(allowed(value)).toBe(true);
   });
@@ -507,6 +509,10 @@ describe('.gitleaks.toml (誤検知の除外は、値を狭く指定する)', ()
     'vitamin_b12_ug_extra',
     'dummy-api-key-for-test-01234567890',
     'Zq8mR2vL5nT7xK1dF4hJ9bW3',
+    // 点 (.) を任意の 1 文字として扱っていないこと・前後に足した値を通さないこと
+    'v1xMR5OBK2qk3lA9wxkmjm0YRkd0tg9FdcYT5CqvW9_pw9nE0j',
+    'v1.MR5OBK2qk3lA9wxkmjm0YRkd0tg9FdcYT5CqvW9_pw9nE0jX',
+    '3f9a1c0be77d4c2a9b1e5d6f7a8b9c0d1e2f3a4b5c6d4e7f8a9b0c1d2e3f4a5b',
   ])('少しでも違う値や、ランダムに見える値は除外しない: %s', (value) => {
     expect(allowed(value)).toBe(false);
   });

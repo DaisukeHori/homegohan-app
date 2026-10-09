@@ -37,6 +37,10 @@ regexes = [
 #   5-1-analyzing-or-result            スクリーンショットのファイル名
 #   vitamin_b12_ug                     栄養素の項目名 (key: "vitamin_b12_ug" の形が API キーに見えた)
 #   dummy-api-key-for-test-0123456789  メール送信のテスト (send.test.ts) の、ログに出ないことを確かめるための目印のダミー
+#   v1.MR5OBK2qk3lA9wxkmjm0YRkd0tg9FdcYT5CqvW9_pw9nE0j
+#                                      モバイルのセッション保存のテスト (secure-session-storage.test.ts) の、作り物の refresh_token
+#   3f9a1c0be77d4c2a9b1e5d6f7a8b9c0d   Speed Insights の URL 消去のテスト (speed-insights-scrub-1179.test.ts) の、招待トークンの形の
+#                                      作り物 (64 桁を 2 つに分けて書いた前半。gitleaks は前半だけを拾う)
 [[allowlists]]
 description = "テスト用のダミーの値と栄養素の項目名 (generic-api-key の誤検知)"
 targetRules = ["generic-api-key"]
@@ -48,4 +52,6 @@ regexes = [
   '''^5-1-analyzing-or-result$''',
   '''^vitamin_b12_ug$''',
   '''^dummy-api-key-for-test-0123456789$''',
+  '''^v1\.MR5OBK2qk3lA9wxkmjm0YRkd0tg9FdcYT5CqvW9_pw9nE0j$''',
+  '''^3f9a1c0be77d4c2a9b1e5d6f7a8b9c0d$''',
 ]
