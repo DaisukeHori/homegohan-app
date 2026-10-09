@@ -221,6 +221,18 @@ describe('grantAiConsent: 同意の記録', () => {
     const news = db.tables[TABLE].filter((r) => r.policy_version === AI_CONSENT_VERSION);
     expect(news).toHaveLength(3);
     expect(news.every((r) => r.revoked_at === undefined || r.revoked_at === null)).toBe(true);
+
+    // 閉じる更新は service role で行うので、行の id だけでなく、対象の利用者と「有効な行だけ」でも絞る
+    const closes = db.calls.filter((c) => c.table === TABLE && c.op === 'update');
+    expect(closes).toHaveLength(3);
+    for (const close of closes) {
+      expect(close.filters).toEqual(
+        expect.arrayContaining([
+          { kind: 'eq', column: 'user_id', value: USER },
+          { kind: 'is', column: 'revoked_at', value: null },
+        ]),
+      );
+    }
   });
 
   it('版が無い行・拒否の行 (consented = false) が有効なまま残っていても、閉じて同意の行を作る', async () => {

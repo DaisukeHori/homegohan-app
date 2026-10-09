@@ -9,6 +9,7 @@
  *   3. 「同意する」を押すと、同意が記録され (POST /api/ai/consent)、AI の操作が進む。以後は画面が出ない。
  *      設定ページ (/settings/ai-consent) で確認と撤回ができ、撤回したあとの AI の操作では、もう一度画面が出る
  *   4. 同意の記録に失敗しても、「あとで」で AI の操作は進む。同意の状況が取れなくても、画面を出さずに進む
+ *   5. fresh-user の fixture は、既定では同意画面を「あとで」にした状態で始まる (AI を使うほかの spec が止まらない)
  *
  * 【AI への送信は止めない】どの場面でも、利用者が始めた AI の操作は最後まで進む (同意の強制は別タスク T18)。
  * AI の API (/api/ai/analyze-fridge) はブラウザの通信を差し替えて (page.route) 本物は呼ばない。AI の API キーは要らない。
@@ -247,5 +248,27 @@ test.describe("外国の AI 事業者への提供の同意画面 (初回の AI �
     await expect(page.getByText(RESULT_TEXT)).toBeVisible(FIRST_LOAD);
     expect(fridge.calls).toBe(1);
     await expect(page.getByTestId("ai-consent-modal")).toHaveCount(0);
+  });
+});
+
+test.describe("同意画面を試さない spec の既定 (fresh-user の fixture は「あとで」にした状態で始まる)", () => {
+  test.setTimeout(240_000);
+  // aiConsentSnoozed は既定のまま (true)。AI を使う既存の spec が、同意画面で止まらないことの確認
+
+  test("既定では、初回の AI 操作でも同意画面を出さずに進む。サーバーには何も記録しない", async ({ regularUser: page }) => {
+    const fridge = await mockFridgeAnalysis(page);
+    await page.goto("/pantry");
+    await expect(page.getByTestId("add-by-photo-btn")).toBeVisible(FIRST_LOAD);
+
+    await pickFridgePhoto(page);
+
+    await expect(page.getByText(RESULT_TEXT)).toBeVisible(FIRST_LOAD);
+    expect(fridge.calls).toBe(1);
+    await expect(page.getByTestId("ai-consent-modal")).toHaveCount(0);
+
+    // 「あとで」の期限は fixture が入れたもの。同意は記録されていない (拒否の行も作らない)
+    const status = await readConsentStatus(page);
+    expect(status.consented).toBe(false);
+    expect(status.providers.map((p) => p.state)).toEqual(["none", "none", "none"]);
   });
 });

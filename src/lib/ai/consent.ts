@@ -167,10 +167,12 @@ export async function grantAiConsent(input: GrantAiConsentInput, db?: ConsentDb)
     if (current && current.consented === true && current.policy_version === AI_CONSENT_VERSION) continue;
 
     if (current) {
+      // service role は RLS を通さないので、行の id だけでなく、対象の利用者でも絞る
       const { error: closeError } = await client
         .from(TABLE)
         .update({ revoked_at: now })
         .eq('id', current.id)
+        .eq('user_id', input.userId)
         .is('revoked_at', null);
       if (closeError) {
         throw new Error(`grantAiConsent: close old row (${provider}): ${closeError.message}`);
