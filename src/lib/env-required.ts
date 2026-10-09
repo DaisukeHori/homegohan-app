@@ -2,7 +2,7 @@
  * 必須の環境変数 (Supabase の接続情報) の取り出し (#1182)
  *
  * アプリが動くのに欠かせない環境変数を、使う場所で取り出す。値が無い (未設定・空・空白だけ) と、
- * 変数名を入れた MissingEnvError を投げる。`process.env.X!` と書くと、未設定でも型の上では string のまま
+ * MissingEnvError を投げる (変数名は envName に持ち、message には入れない)。`process.env.X!` と書くと、未設定でも型の上では string のまま
  * undefined が Supabase のクライアントや fetch の URL に流れ込み、`supabaseUrl is required.` のような
  * 変数名の分からないエラーや、`undefined/functions/v1/...` への通信になってしまう。
  *
@@ -22,17 +22,29 @@
  */
 
 /**
- * 必須の環境変数が無いときに投げる。message と envName に変数名が入る (値は入らない)。
- * message は route の 500 の本文に載ることがあるので、変数名だけの短い文にしている。
+ * MissingEnvError の message。どの変数が欠けていても同じ文にし、変数名も値も入れない。
+ * 500 の本文には汎用メッセージだけを返す規則 (#1172) があり、error.message をそのまま本文に入れる route が
+ * 書かれても、変数名が利用者に漏れないようにするため。欠けている変数名は envName にある
+ * (db-logger の error() が構造化ログの metadata に missing_env_name として記録する)。
+ */
+export const MISSING_ENV_ERROR_MESSAGE =
+  'Missing a required environment variable (run `npm run check:env` to find which one)';
+
+/**
+ * 必須の環境変数が無いときに投げる。
+ *  - message は MISSING_ENV_ERROR_MESSAGE で固定 (変数名も値も入らない)。
+ *  - 変数名は envName に入る (値は入らない)。envName は列挙されないプロパティにしてあるので、
+ *    `JSON.stringify(error)`・`{ ...error }`・`NextResponse.json({ error })` のようにエラーごと本文に入れても出てこない。
+ *    構造化ログ (src/lib/db-logger.ts の error()) が envName を読んで記録する。
  * 設定のしかたは ENV_SETUP.md と、`npm run check:env` の出力にある。
  */
 export class MissingEnvError extends Error {
-  readonly envName: string;
+  declare readonly envName: string;
 
   constructor(envName: string) {
-    super(`Missing required environment variable: ${envName}`);
+    super(MISSING_ENV_ERROR_MESSAGE);
     this.name = 'MissingEnvError';
-    this.envName = envName;
+    Object.defineProperty(this, 'envName', { value: envName, enumerable: false, writable: false, configurable: false });
   }
 }
 

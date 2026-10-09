@@ -3,6 +3,7 @@ import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
 import { runConsultationAction } from '@/lib/ai/consultation-action-executor';
@@ -972,7 +973,7 @@ export async function POST(
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
-    // 必須の環境変数は、ユーザーのメッセージを保存する前に確かめる。欠けていれば変数名つきの例外で 500 にする
+    // 必須の環境変数は、ユーザーのメッセージを保存する前に確かめる。欠けていれば MissingEnvError で汎用の 500 にする (変数名は構造化ログにだけ残す)
     // (保存したあとで気づくと、メッセージだけが残って AI の返答が付かない) (#1182)
     const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
 
@@ -1426,8 +1427,8 @@ JSONで回答してください：
       actionResult,
     });
 
-  } catch (error: any) {
-    console.error('Message error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
+    return internalError('POST /api/ai/consultation/sessions/[sessionId]/messages', error, { userId: user.id });
   }
 }

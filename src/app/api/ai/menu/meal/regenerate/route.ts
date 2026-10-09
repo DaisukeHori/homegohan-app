@@ -5,6 +5,7 @@ import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 import { createLogger } from '@/lib/db-logger';
 import type { Tables } from '@homegohan/shared';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
@@ -29,7 +30,7 @@ export async function POST(request: Request) {
     const rateLimitResult = await checkRateLimit(user.id, 'generation');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
-    // 必須の環境変数は、認証とレート制限のあと・DB に書き込む前に確かめる。欠けていれば変数名つきの例外で 500 にする。
+    // 必須の環境変数は、認証とレート制限のあと・DB に書き込む前に確かめる。欠けていれば MissingEnvError で汎用の 500 にする (変数名は構造化ログにだけ残す)。
     // (未ログインの呼び出しに、設定の不足を教えない。書き込んだあとで気づくと、Edge Function を呼べないまま、
     //  リクエストの行を作って失敗として記録するだけの無駄な動きになる) (#1182)
     const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
@@ -147,8 +148,8 @@ export async function POST(request: Request) {
       regeneratingMealId: mealId,
     });
 
-  } catch (error: any) {
-    console.error("Meal Regeneration Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
+    return internalError('POST /api/ai/menu/meal/regenerate', error);
   }
 }

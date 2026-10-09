@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { SUGAR_APP_DEFAULT } from '@homegohan/core';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 // 栄養目標が未設定のときの既定値（g/日）。
@@ -389,7 +390,7 @@ export async function POST(request: Request) {
     }
 
     // generate-menu-v4を呼び出す（同期呼び出し）
-    // 必須の環境変数が欠けていれば、リクエストの行を作る前に変数名つきの例外で 500 にする (#1182)
+    // 必須の環境変数が欠けていれば、リクエストの行を作る前に MissingEnvError で汎用の 500 にする (変数名は構造化ログにだけ残す) (#1182)
     const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
 
     // リクエストを作成
@@ -455,8 +456,8 @@ export async function POST(request: Request) {
       result,
     });
 
-  } catch (error: any) {
-    console.error('Meal update error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
+    return internalError('POST /api/ai/nutrition-analysis', error);
   }
 }

@@ -3,6 +3,7 @@ import { requireCronAuth } from '@/lib/cron-auth';
 import { createLogger } from '@/lib/db-logger';
 // runtime = 'edge' のルートなので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
 import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 
 export const runtime = 'edge';
 export const maxDuration = 60; // Vercel Pro: 60s OK
@@ -13,8 +14,15 @@ export async function GET(req: Request) {
   const authError = await requireCronAuth(req);
   if (authError) return authError;
 
-  // 必須の環境変数が欠けていれば、変数名つきの例外にする (#1182)
-  const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
+  // 必須の環境変数が欠けていれば、汎用の 500 で止める。本文には変数名を出さず、変数名は構造化ログにだけ残す (#1182 / #1172)
+  let serviceConfig: { url: string; serviceRoleKey: string };
+  try {
+    serviceConfig = getSupabaseServiceConfig();
+  } catch (error) {
+    return internalError('GET /api/cron/process-menu-queue', error);
+  }
+
+  const { url: supabaseUrl, serviceRoleKey } = serviceConfig;
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const workerId = crypto.randomUUID();

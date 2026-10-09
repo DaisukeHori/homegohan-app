@@ -3,6 +3,7 @@ import { createBrowserClient } from '@supabase/ssr'
 import { getSupabaseAnonKey, getSupabaseUrl } from '@/lib/env-required'
 
 export function createClient() {
-  // 未設定なら、変数名つきの MissingEnvError になる (`process.env.X!` では undefined のまま渡って分かりにくいエラーになっていた)
+  // 未設定なら MissingEnvError になる (`process.env.X!` では undefined のまま渡って分かりにくいエラーになっていた)。
+  // 欠けている変数名は envName にあり、message には入らない (どれが欠けているかは `npm run check:env` で分かる)
   return createBrowserClient(getSupabaseUrl(), getSupabaseAnonKey())
 }

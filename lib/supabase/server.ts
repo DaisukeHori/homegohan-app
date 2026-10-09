@@ -11,7 +11,7 @@ import { getSupabaseAnonKey, getSupabaseServiceRoleKey, getSupabaseUrl } from '@
  * admin/* の API ルートが管理者操作(他ユーザーの user_profiles 参照・更新等)を
  * 行う際の共通ヘルパー。#1028 で organizations route の重複実装を集約した。
  *
- * 環境変数が欠けていれば、欠けている変数名つきの MissingEnvError を投げる (#1182)。
+ * 環境変数が欠けていれば MissingEnvError を投げる (#1182)。欠けている変数名は envName にあり、message には入らない。
  */
 export function getSupabaseAdmin() {
   return createAdminClient(getSupabaseUrl(), getSupabaseServiceRoleKey(), {

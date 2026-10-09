@@ -5,7 +5,7 @@
  * それぞれに「必須」と「任意」の区別がある。
  *
  *  - 必須: 無いとアプリが動かない。Supabase の接続情報 3 つだけ。
- *    使う場所では src/lib/env-required.ts の getSupabaseUrl() などで取り出す。無ければ変数名つきで MissingEnvError。
+ *    使う場所では src/lib/env-required.ts の getSupabaseUrl() などで取り出す。無ければ MissingEnvError (変数名は envName に持ち、message には入れない)。
  *  - 任意: 無くても動くが、機能が縮退する (メールが送れない・レート制限がメモリ内になる・AI が使えない など)。
  *    getOptionalEnv(name) で取り出す。無ければ undefined を返し、プロセスごとに 1 回だけ警告を出す。
  *    本番の起動を、任意の変数が無いことで止めてはならない。投げるのは必須の変数だけ。
