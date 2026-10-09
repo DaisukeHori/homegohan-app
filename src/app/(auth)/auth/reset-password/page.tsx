@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { validatePassword, PASSWORD_MIN_LENGTH } from "@/lib/auth/validate-password";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
+import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { Lock, CheckCircle2, AlertCircle, Eye, EyeOff } from "lucide-react";
 
 /**
@@ -27,6 +28,8 @@ async function signOutEverywhere(supabase: ReturnType<typeof createClient>): Pro
   try {
     // CLAUDE.md: サインアウトでは Supabase の signOut より前に、端末のユーザー別データを消す
     clearUserScopedLocalStorage();
+    // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
+    notifyNativeSignOut();
     const { error } = await supabase.auth.signOut({ scope: "global" });
     if (error) {
       throw error;
