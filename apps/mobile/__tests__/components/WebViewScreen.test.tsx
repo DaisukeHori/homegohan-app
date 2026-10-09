@@ -1,12 +1,16 @@
 /**
  * T02: WebViewScreen RNTL 単体テスト
  * Issue #844 — RN↔Web 認証ブリッジテスト
+ * Issue #1036 / #1158 — トークンを URL / 注入スクリプトに載せない code 方式へ変更
  *
  * カバレッジ:
- *   1. bridge URL 生成 (token 埋め込み)
+ *   1. bridge URL 生成 (ワンタイム code。URL にトークンを載せない)
  *   2. mode=app 重複付与の抑制
- *   3. injectedJS の localStorage 書込みスクリプト生成
+ *   3. WebView にセッションを注入しない (localStorage 書込みスクリプトを廃止)
  *   4. セッション無し時の直接 URL 遷移
+ *
+ * WebView のナビゲーション制限・postMessage の送信元検証・code 発行失敗時のフォールバック等は
+ * WebViewScreen.bridge.test.tsx にある。
  */
 
 import React from 'react';
@@ -14,9 +18,7 @@ import { render, waitFor } from '@testing-library/react-native';
 
 // ── 環境変数 ──────────────────────────────────────────────────────────────────
 const WEB_BASE_URL = 'https://homegohan-app.vercel.app';
-const SUPABASE_URL = 'https://abcdef1234.supabase.co';
 process.env.EXPO_PUBLIC_WEB_URL = WEB_BASE_URL;
-process.env.EXPO_PUBLIC_SUPABASE_URL = SUPABASE_URL;
 
 // ── expo-router モック ────────────────────────────────────────────────────────
 jest.mock('expo-router', () => ({
@@ -68,6 +70,7 @@ jest.mock('../../src/lib/supabase', () => ({
   supabase: {
     auth: {
       getSession: jest.fn(),
+      refreshSession: jest.fn(),
     },
   },
 }));
@@ -105,17 +108,32 @@ function makeSession(overrides: Partial<{
   };
 }
 
+// ワンタイム code 発行 API (POST /api/auth/native-bridge/code) のモック
+const BRIDGE_CODE = 'Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MGFiY2RlZmdoaWo';
+const mockFetch = jest.fn();
+const originalFetch = global.fetch;
+afterAll(() => {
+  global.fetch = originalFetch;
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
   // mockWebViewProps をクリア
   Object.keys(mockWebViewProps).forEach((k) => delete mockWebViewProps[k]);
+  // 既定では code 発行に成功する
+  mockFetch.mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => ({ code: BRIDGE_CODE, expires_in: 60 }),
+  });
+  global.fetch = mockFetch as unknown as typeof fetch;
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ケース 1: bridge URL 生成 (token 埋め込み)
+// ケース 1: bridge URL 生成 (ワンタイム code)
 // ─────────────────────────────────────────────────────────────────────────────
 describe('ケース1: bridge URL 生成', () => {
-  it('セッションがある場合に /auth/native-bridge URL を構築する', async () => {
+  it('セッションがある場合に code 付きの /auth/native-bridge URL を構築する', async () => {
     const session = makeSession();
     mockGetSession.mockResolvedValue({ data: { session } });
 
@@ -127,8 +145,24 @@ describe('ケース1: bridge URL 生成', () => {
 
     const uri: string = mockWebViewProps.source.uri;
     expect(uri).toContain(`${WEB_BASE_URL}/auth/native-bridge`);
-    expect(uri).toContain(`access_token=${session.access_token}`);
-    expect(uri).toContain(`refresh_token=${session.refresh_token}`);
+    expect(new URL(uri).searchParams.get('code')).toBe(BRIDGE_CODE);
+  });
+
+  it('bridge URL に access_token / refresh_token を載せない (#1036)', async () => {
+    const session = makeSession();
+    mockGetSession.mockResolvedValue({ data: { session } });
+
+    render(<WebViewScreen path="/home" />);
+
+    await waitFor(() => {
+      expect(mockWebViewProps.source?.uri).toBeDefined();
+    });
+
+    const uri: string = mockWebViewProps.source.uri;
+    expect(uri).not.toContain('access_token');
+    expect(uri).not.toContain('refresh_token');
+    expect(uri).not.toContain(session.access_token);
+    expect(uri).not.toContain(session.refresh_token);
   });
 
   it('bridge URL の next パラメータに mode=app が含まれる', async () => {
@@ -186,53 +220,57 @@ describe('ケース2: mode=app 重複付与の抑制', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ケース 3: injectedJS の localStorage 書込みスクリプト生成
+// ケース 3: WebView にセッションを注入しない (#1036)
+//   旧実装は injectedJavaScriptBeforeContentLoaded で sb-*-auth-token を localStorage に書き込んでいた。
+//   Web のクライアントは Cookie を読むため不要で、しかも全オリジンで実行されていた。
 // ─────────────────────────────────────────────────────────────────────────────
-describe('ケース3: injectedJS localStorage 書込みスクリプト', () => {
-  it('セッションがある場合に localStorage.setItem スクリプトが生成される', async () => {
+describe('ケース3: WebView にセッションを注入しない', () => {
+  it('セッションがあっても injectedJavaScriptBeforeContentLoaded を渡さない', async () => {
     const session = makeSession();
     mockGetSession.mockResolvedValue({ data: { session } });
 
     render(<WebViewScreen path="/home" />);
 
     await waitFor(() => {
-      expect(mockWebViewProps.injectedJavaScriptBeforeContentLoaded).toBeDefined();
+      expect(mockWebViewProps.source?.uri).toBeDefined();
     });
 
-    const js: string = mockWebViewProps.injectedJavaScriptBeforeContentLoaded;
-    expect(js).toContain('localStorage.setItem');
+    expect(mockWebViewProps.injectedJavaScriptBeforeContentLoaded).toBeUndefined();
   });
 
-  it('injectedJS にプロジェクト参照キー (sb-*-auth-token) が含まれる', async () => {
+  it('注入スクリプトに localStorage への書込みやプロジェクト参照キー (sb-*-auth-token) が無い', async () => {
     const session = makeSession();
     mockGetSession.mockResolvedValue({ data: { session } });
 
     render(<WebViewScreen path="/home" />);
 
     await waitFor(() => {
-      expect(mockWebViewProps.injectedJavaScriptBeforeContentLoaded).toBeDefined();
+      expect(mockWebViewProps.source?.uri).toBeDefined();
     });
 
-    const js: string = mockWebViewProps.injectedJavaScriptBeforeContentLoaded;
-    // PROJECT_REF は EXPO_PUBLIC_SUPABASE_URL からモジュールロード時に抽出される。
-    // Jest 環境では env がモジュールロード前に設定されないため PROJECT_REF が空になる場合がある。
-    // ここでは localStorage キーのプレフィックス "sb-" とサフィックス "-auth-token" が
-    // スクリプト内に含まれることを確認する (キーのスキームの正当性を検証)。
-    expect(js).toMatch(/sb-[^']*-auth-token/);
+    const js: string = mockWebViewProps.injectedJavaScript ?? '';
+    expect(js).not.toContain('localStorage');
+    expect(js).not.toMatch(/sb-[^'"]*-auth-token/);
   });
 
-  it('injectedJS に access_token が埋め込まれる', async () => {
-    const session = makeSession({ access_token: 'unique-access-xyz' });
+  it('source・注入スクリプトのどこにも access_token / refresh_token / user が現れない', async () => {
+    const session = makeSession({ access_token: 'unique-access-xyz', refresh_token: 'unique-refresh-xyz' });
     mockGetSession.mockResolvedValue({ data: { session } });
 
     render(<WebViewScreen path="/home" />);
 
     await waitFor(() => {
-      expect(mockWebViewProps.injectedJavaScriptBeforeContentLoaded).toBeDefined();
+      expect(mockWebViewProps.source?.uri).toBeDefined();
     });
 
-    const js: string = mockWebViewProps.injectedJavaScriptBeforeContentLoaded;
-    expect(js).toContain('unique-access-xyz');
+    const serialized = JSON.stringify({
+      source: mockWebViewProps.source,
+      injectedJavaScript: mockWebViewProps.injectedJavaScript,
+      injectedJavaScriptBeforeContentLoaded: mockWebViewProps.injectedJavaScriptBeforeContentLoaded,
+    });
+    expect(serialized).not.toContain('unique-access-xyz');
+    expect(serialized).not.toContain('unique-refresh-xyz');
+    expect(serialized).not.toContain('test@example.com');
   });
 });
 
