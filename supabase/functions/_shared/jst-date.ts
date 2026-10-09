@@ -94,6 +94,43 @@ export function calculateJstPeriod(
   }
 }
 
+/** 暦で区切る期間の種類 (日・月曜始まりの週・月)。「直前の期間」が 1 つに決まるのは、この 3 つだけ */
+export const JST_CALENDAR_PERIOD_TYPES = ['daily', 'weekly', 'monthly'] as const;
+export type JstCalendarPeriodType = (typeof JST_CALENDAR_PERIOD_TYPES)[number];
+
+export function isJstCalendarPeriodType(periodType: unknown): periodType is JstCalendarPeriodType {
+  return typeof periodType === 'string' && (JST_CALENDAR_PERIOD_TYPES as readonly string[]).includes(periodType);
+}
+
+/** 期間の開始日の JST 0 時から、この分だけ前の時刻を「直前の期間の最後の瞬間」とする (Date の最小単位の 1 ミリ秒) */
+const LAST_MOMENT_BEFORE_MS = 1;
+
+/**
+ * now が属する期間 (calculateJstPeriod) の、1 つ前の期間の開始日と終了日を JST の暦で返す (#1406)。
+ *   - daily   : JST の昨日
+ *   - weekly  : JST の先週の月曜日から日曜日まで
+ *   - monthly : JST の先月の 1 日から末日まで
+ * 例: (weekly, JST 月曜 2026-10-12 0:05) → { periodStart: "2026-10-05", periodEnd: "2026-10-11" }
+ *
+ * 1 時間ごとの定期実行は、期間の最後の 1 時間 (例: 日曜 23:05〜23:59) の記録を、その期間の集計に入れられない
+ * (次の回はもう次の期間を集計する)。期間が切り替わった直後の回が、この関数で直前の期間を 1 回だけ集計し直す。
+ * 今の期間の開始日の JST 0 時の 1 ミリ秒前 (= 直前の期間の最後の瞬間) が属する期間を、calculateJstPeriod で求める。
+ *
+ * all_time などの暦で区切らない種類には「直前の期間」が無いので RangeError。不正な Date (Invalid Date) も RangeError。
+ */
+export function calculateJstPreviousPeriod(
+  periodType: string,
+  now: Date = new Date(),
+): { periodStart: string; periodEnd: string } {
+  if (!isJstCalendarPeriodType(periodType)) {
+    throw new RangeError(`No previous period for periodType: ${periodType}`);
+  }
+  const { periodStart } = calculateJstPeriod(periodType, now);
+  // "YYYY-MM-DDT00:00:00Z" から 9 時間引いた時刻が、その日の JST 0 時
+  const currentStartMs = Date.parse(`${periodStart}T00:00:00Z`) - JST_OFFSET_MS;
+  return calculateJstPeriod(periodType, new Date(currentStartMs - LAST_MOMENT_BEFORE_MS));
+}
+
 /** YYYY-MM-DD の形 (ゼロ埋め) */
 const YMD_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 

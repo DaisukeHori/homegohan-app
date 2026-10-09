@@ -3,7 +3,7 @@
  * 権限: super_admin だけ
  *
  * 集計 (Edge Function calculate-segment-stats) は、全利用者の指標・順位・バッジを作り直す重い処理。
- * 通常は pg_cron が毎日 JST 4:00 に呼ぶ (supabase/migrations/20261009100000_schedule_calculate_segment_stats.sql)。
+ * 通常は pg_cron が 1 時間ごと (毎時 5 分) に呼ぶ (supabase/migrations/20261009100000_schedule_calculate_segment_stats.sql)。
  * この API は、運営が定期実行を待たずに作り直したいときのためだけに残す。
  *
  * 以前の問題:

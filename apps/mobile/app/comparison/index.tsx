@@ -29,11 +29,12 @@ type ComparisonResponse = {
 };
 
 /**
- * ランキングが更新される時刻 (日本時間)。集計は pg_cron が毎日 UTC 19:00 = JST 4:00 に走らせる
- * (supabase/migrations/20261009100000_schedule_calculate_segment_stats.sql のジョブ calculate-segment-stats-daily)。
- * 時刻を変えるときは、その migration (の後継) と一緒に変える (tests/segment-stats-schedule-sync.test.ts が突き合わせる)
+ * ランキングが更新される間隔 (時間)。集計は pg_cron が毎時 5 分に走らせる
+ * (supabase/migrations/20261009100000_schedule_calculate_segment_stats.sql のジョブ calculate-segment-stats)。
+ * 間隔を変えるときは、ジョブのスケジュールと一緒に変える (tests/segment-stats-schedule-sync.test.ts が migration と突き合わせる。
+ * 運用で cron.alter_job により変えたときも、ここを直す。手順は ENV_SETUP.md の「比較ランキングの集計の間隔」)
  */
-const RANKING_UPDATE_TIME_JST = "4:00";
+const RANKING_UPDATE_INTERVAL_HOURS = 1;
 
 const PERIOD_OPTIONS = [
   { value: "daily" as const, label: "日" },
@@ -43,7 +44,7 @@ const PERIOD_OPTIONS = [
 
 export default function ComparisonPage() {
   // 再計算 (POST /api/comparison/trigger) は全員分の集計を作り直す重い処理で、呼べるのは運営 (super_admin) だけ (#1406)。
-  // それ以外の利用者にはボタンを出さず、毎日の更新時刻だけを案内する
+  // それ以外の利用者にはボタンを出さず、更新の間隔だけを案内する
   const { hasRole } = useProfile();
   const canRecalculate = hasRole("super_admin");
   const [periodType, setPeriodType] = useState<"daily" | "weekly" | "monthly">("weekly");
@@ -98,7 +99,7 @@ export default function ComparisonPage() {
       <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
 
       <Text testID="comparison-update-schedule" style={{ fontSize: 13, color: colors.textMuted }}>
-        ランキングは毎日 {RANKING_UPDATE_TIME_JST} (日本時間) に更新されます。
+        {`ランキングは ${RANKING_UPDATE_INTERVAL_HOURS} 時間ごとに更新されます。`}
       </Text>
 
       <ChipSelector

@@ -22,6 +22,9 @@ import {
   addDaysToDate,
   calculateJstLookbackPeriod,
   calculateJstPeriod,
+  calculateJstPreviousPeriod,
+  isJstCalendarPeriodType,
+  JST_OFFSET_MS,
   jstDayRangeToTimestamps,
 } from "../supabase/functions/_shared/jst-date.ts";
 
@@ -444,5 +447,70 @@ describe("calculateJstLookbackPeriod(lookbackDays, now): JST の今日から N �
     expect(() => calculateJstLookbackPeriod(-1, now)).toThrow(RangeError);
     expect(() => calculateJstLookbackPeriod(1.5, now)).toThrow(RangeError);
     expect(() => calculateJstLookbackPeriod(7, new Date("invalid"))).toThrow(RangeError);
+  });
+});
+
+describe("calculateJstPreviousPeriod(periodType, now): now が属する期間の 1 つ前の期間 (#1406)", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  /** 暦日 (YYYY-MM-DD) の JST 0 時 (UTC の時刻) */
+  const jstMidnightMs = (day: string) => Date.parse(`${day}T00:00:00Z`) - JST_OFFSET_MS;
+  it.each([
+    // [種類, 現在時刻 (UTC), 期待する開始日, 期待する終了日, 説明]
+    ["daily", "2026-10-12T15:05:00.000Z", "2026-10-12", "2026-10-12", "JST 火曜 10/13 0:05 の回 → 前日 10/12 (UTC の暦ではまだ 10/12)"],
+    ["daily", "2026-10-12T14:59:59.999Z", "2026-10-11", "2026-10-11", "JST 10/12 23:59:59.999 → 前日 10/11"],
+    ["weekly", "2026-10-11T15:05:00.000Z", "2026-10-05", "2026-10-11", "JST 月曜 10/12 0:05 の回 → 先週 (UTC の暦ではまだ日曜)"],
+    ["weekly", "2026-10-11T14:59:59.999Z", "2026-09-28", "2026-10-04", "JST 日曜 10/11 23:59:59.999 → その前の週"],
+    ["monthly", "2026-10-31T15:05:00.000Z", "2026-10-01", "2026-10-31", "JST 11/1 0:05 の回 → 10 月 (UTC の暦ではまだ 10/31)"],
+    ["monthly", "2026-12-31T15:05:00.000Z", "2026-12-01", "2026-12-31", "年をまたぐ: JST 元日 0:05 → 前年 12 月"],
+    ["monthly", "2028-02-29T15:05:00.000Z", "2028-02-01", "2028-02-29", "うるう年: JST 3/1 0:05 → 2 月 (29 日まで)"],
+    ["daily", "2027-01-31T15:05:00.000Z", "2027-01-31", "2027-01-31", "JST 月曜 2027-02-01 0:05 (日・週・月が同時に切り替わる)"],
+    ["weekly", "2027-01-31T15:05:00.000Z", "2027-01-25", "2027-01-31", "JST 月曜 2027-02-01 0:05 (日・週・月が同時に切り替わる)"],
+    ["monthly", "2027-01-31T15:05:00.000Z", "2027-01-01", "2027-01-31", "JST 月曜 2027-02-01 0:05 (日・週・月が同時に切り替わる)"],
+  ])("%s @ %s → %s 〜 %s (%s)", (periodType, nowUtc, start, end) => {
+    expect(calculateJstPreviousPeriod(periodType, new Date(nowUtc))).toEqual(period(start, end));
+  });
+
+  it("直前の期間の終了日の翌日が、今の期間の開始日 (隙間も重なりも無い)。期間の途中のどの時刻でも同じ直前の期間になる", () => {
+    for (const periodType of ["daily", "weekly", "monthly"]) {
+      // JST 2026-10-01 0:30 から 1 時間おきに 40 日分
+      for (let h = 0; h < 40 * 24; h++) {
+        const now = new Date(Date.UTC(2026, 8, 30, 15 + h, 30, 0, 0));
+        const current = calculateJstPeriod(periodType, now);
+        const previous = calculateJstPreviousPeriod(periodType, now);
+        const dayAfter = new Date(Date.parse(`${previous.periodEnd}T00:00:00Z`) + DAY_MS).toISOString().slice(0, 10);
+        expect(dayAfter, `${periodType} ${now.toISOString()}`).toBe(current.periodStart);
+        // 直前の期間は、その期間の最後の瞬間で求めた期間と同じ
+        expect(calculateJstPeriod(periodType, new Date(jstMidnightMs(current.periodStart) - 1))).toEqual(previous);
+      }
+    }
+  });
+
+  it("実行環境のタイムゾーンに左右されない", () => {
+    for (const tz of ["UTC", "Asia/Tokyo", "America/Los_Angeles", "Pacific/Kiritimati"]) {
+      process.env.TZ = tz;
+      expect(calculateJstPreviousPeriod("weekly", new Date("2026-10-11T15:05:00.000Z")), tz).toEqual(
+        period("2026-10-05", "2026-10-11"),
+      );
+    }
+  });
+
+  it("now を省略すると現在時刻で求める", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-11T15:05:00.000Z"));
+    expect(calculateJstPreviousPeriod("daily")).toEqual(period("2026-10-11", "2026-10-11"));
+  });
+
+  it("暦で区切らない種類 (all_time・不明な種類) と不正な Date は例外にする", () => {
+    const now = new Date("2026-10-11T15:05:00.000Z");
+    expect(() => calculateJstPreviousPeriod("all_time", now)).toThrow(RangeError);
+    expect(() => calculateJstPreviousPeriod("yearly", now)).toThrow(RangeError);
+    expect(() => calculateJstPreviousPeriod("daily", new Date("invalid"))).toThrow(RangeError);
+  });
+
+  it("isJstCalendarPeriodType は daily / weekly / monthly だけを真にする", () => {
+    expect(["daily", "weekly", "monthly"].every(isJstCalendarPeriodType)).toBe(true);
+    for (const value of ["all_time", "", "Daily", null, undefined, 1, true]) {
+      expect(isJstCalendarPeriodType(value), String(value)).toBe(false);
+    }
   });
 });

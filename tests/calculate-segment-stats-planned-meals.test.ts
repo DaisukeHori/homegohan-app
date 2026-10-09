@@ -1046,22 +1046,24 @@ describe("calculate-segment-stats: 集計期間は JST の暦で決まる (#1211
 
 // ── 定期実行・手動実行のどちらでも、直近の 1 期間だけを集計する (#1406) ─────────────────
 //
-// 定期実行: pg_cron のジョブ calculate-segment-stats-daily が毎日 UTC 19:00 (= JST 4:00) に
-//   public.invoke_calculate_segment_stats() を呼び、CRON_SECRET (Vault の app_cron_secret) を付けて
-//   本文 { periodType } で daily / weekly / monthly の 3 回この関数を呼ぶ
-//   (supabase/migrations/20261009100000_schedule_calculate_segment_stats.sql)。
+// 定期実行: pg_cron のジョブ calculate-segment-stats が毎時 5 分に public.invoke_calculate_segment_stats() を呼び、
+//   CRON_SECRET (Vault の app_cron_secret) を付けて、本文 { periodType } で daily / weekly / monthly の 3 回この関数を呼ぶ
+//   (supabase/migrations/20261009100000_schedule_calculate_segment_stats.sql)。期間が切り替わった直後の回 (JST 0 時台) は、
+//   切り替わった種類について本文 { periodType, previousPeriod: true } でも呼び、直前の期間を 1 回だけ集計し直す
+//   (期間の最後の 1 時間の記録を、その期間の最終の値に入れるため)。
 // 手動実行: POST /api/comparison/trigger (super_admin だけ) が service role の鍵を付けて、本文 { periodType } で呼ぶ。
-// 初回も含めて、過去の期間の埋め戻しはしない (オーナーの選択 2026-10-09)。関数は本文から期間を受け取らず、
-// 実行した時刻 (JST) が属する期間 1 つだけを書く。本文に期間の開始日などを書いても無視されることを、ここで固定する。
+// 初回も含めて、過去の期間の埋め戻しはしない (オーナーの選択 2026-10-09)。関数は本文から期間の日付を受け取らず、
+// 実行した時刻 (JST) が属する期間 (previousPeriod: true なら、その 1 つ前) の 1 つだけを書く。
+// 本文に期間の開始日などを書いても無視されることを、ここで固定する。
 
 describe("calculate-segment-stats: 定期実行・手動実行のどちらでも直近の 1 期間だけを集計する (#1406)", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  // ジョブが動く時刻: UTC 日曜 2026-10-11 19:00 = JST 月曜 2026-10-12 4:00。
+  // ジョブが動く時刻: UTC 日曜 2026-10-11 19:05 = JST 月曜 2026-10-12 4:05。
   // UTC の暦ではまだ日曜 (前の週・前日) なので、JST で求めていなければ期間がずれる
-  const CRON_FIRED_AT = "2026-10-11T19:00:00.000Z";
+  const CRON_FIRED_AT = "2026-10-11T19:05:00.000Z";
   // [periodType, 期間の開始日, 期間の終了日] (JST 月曜 10/12 が属する期間)
   const expectedPeriods: Array<[string, string, string]> = [
     ["daily", "2026-10-12", "2026-10-12"],
@@ -1125,4 +1127,76 @@ describe("calculate-segment-stats: 定期実行・手動実行のどちらでも
       }
     });
   }
+});
+
+// ── 期間が切り替わった直後の回は、直前の期間を集計し直す (previousPeriod: true) (#1406) ─────────────────
+describe("calculate-segment-stats: previousPeriod: true は、今の期間の 1 つ前の期間だけを集計し直す (#1406)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // JST 月曜 2027-02-01 0:05 (UTC 日曜 2027-01-31 15:05)。日・週・月が同時に切り替わった直後の回
+  const FIRST_RUN_OF_PERIOD_AT = "2027-01-31T15:05:00.000Z";
+  // [periodType, 直前の期間の開始日, 終了日]
+  const previousPeriods: Array<[string, string, string]> = [
+    ["daily", "2027-01-31", "2027-01-31"],
+    ["weekly", "2027-01-25", "2027-01-31"],
+    ["monthly", "2027-01-01", "2027-01-31"],
+  ];
+
+  it.each(previousPeriods)("%s: 直前の期間 %s 〜 %s の 1 つだけを読み、書く", async (periodType, start, end) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(FIRST_RUN_OF_PERIOD_AT));
+    const db = newDb();
+    const { queries } = install(db);
+
+    const { res, json } = await call({ periodType, previousPeriod: true });
+
+    expect(res.status).toBe(200);
+    expect(json).toMatchObject({ success: true, periodType, previousPeriod: true, periodStart: start, periodEnd: end });
+
+    const written = [
+      ...db.saved.user_metrics.map((r) => `${r.period_type} ${r.period_start} ${r.period_end}`),
+      ...db.saved.segment_stats.map((r) => `${r.period_type} ${r.period_start} ${r.period_end}`),
+      ...db.saved.user_segment_rankings.map((r) => `${r.period_type} ${r.period_start}`),
+    ];
+    expect(written.length).toBeGreaterThan(0);
+    expect([...new Set(written)].sort()).toEqual([`${periodType} ${start}`, `${periodType} ${start} ${end}`].sort());
+
+    const planned = queriesOf(queries, "planned_meals");
+    expect(planned).toHaveLength(1);
+    expect(argsOf(planned[0], "gte")).toEqual([["user_daily_meals.day_date", start]]);
+    expect(argsOf(planned[0], "lte")).toEqual([["user_daily_meals.day_date", end]]);
+  });
+
+  it.each(previousPeriods)("%s: previousPeriod が false・省略なら、今の期間 (直前の期間ではない) を集計する", async (periodType, previousStart) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(FIRST_RUN_OF_PERIOD_AT));
+    for (const body of [{ periodType }, { periodType, previousPeriod: false }]) {
+      install(newDb());
+      const { res, json } = await call(body);
+      expect(res.status).toBe(200);
+      expect(json).toMatchObject({ success: true, periodType, previousPeriod: false });
+      expect((json as { periodStart: string }).periodStart).not.toBe(previousStart);
+    }
+  });
+
+  it.each([
+    ["all_time は直前の期間が無い", { periodType: "all_time", previousPeriod: true }],
+    ["不明な種類", { periodType: "yearly", previousPeriod: true }],
+    ["previousPeriod が文字列", { periodType: "daily", previousPeriod: "true" }],
+    ["previousPeriod が数値", { periodType: "daily", previousPeriod: 1 }],
+  ])("%s → 400 で、何も読まず何も書かない", async (_label, body) => {
+    const db = newDb();
+    const { queries } = install(db);
+
+    const { res, json } = await call(body);
+
+    expect(res.status).toBe(400);
+    expect(json).toEqual({ error: expect.any(String) });
+    expect(queries).toHaveLength(0);
+    expect(db.saved.user_metrics).toHaveLength(0);
+    expect(db.saved.segment_stats).toHaveLength(0);
+    expect(db.saved.user_segment_rankings).toHaveLength(0);
+  });
 });

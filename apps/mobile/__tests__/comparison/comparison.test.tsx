@@ -1,10 +1,10 @@
 /**
  * comparison.test.tsx
- * 比較画面 (app/comparison/index.tsx) の再計算ボタンと更新時刻の案内 (#1406)
+ * 比較画面 (app/comparison/index.tsx) の再計算ボタンと更新の間隔の案内 (#1406)
  *
  * 再計算 (POST /api/comparison/trigger) は全員分のランキングを作り直す重い処理で、サーバーは super_admin 以外を 403 にする。
  * 以前の画面は、誰にでも「再計算」ボタンを出していた (押しても必ず失敗した)。
- * 集計は毎日 JST 4:00 に pg_cron が走らせるので、一般の利用者にはボタンを出さず、更新時刻だけを案内する。
+ * 集計は 1 時間ごと (毎時 5 分) に pg_cron が走らせるので、一般の利用者にはボタンを出さず、更新の間隔だけを案内する。
  * super_admin にはボタンを出し、押すと選んでいる期間の種類 (periodType) で再計算を呼ぶ。
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
@@ -79,13 +79,13 @@ describe('比較画面 — 再計算ボタン (#1406)', () => {
     ['一般の利用者', ['user']],
     ['admin', ['user', 'admin']],
     ['support', ['user', 'support']],
-  ])('%s には再計算ボタンを出さず、毎日の更新時刻 (JST 4:00) を案内する', async (_label, roles) => {
+  ])('%s には再計算ボタンを出さず、1 時間ごとに更新されることを案内する', async (_label, roles) => {
     mockRoles = roles;
     await renderLoaded();
 
     expect(screen.queryByTestId('comparison-recalculate-button')).toBeNull();
     expect(screen.getByTestId('comparison-update-schedule')).toHaveTextContent(
-      'ランキングは毎日 4:00 (日本時間) に更新されます。',
+      'ランキングは 1 時間ごとに更新されます。',
     );
     expect(mockPost).not.toHaveBeenCalled();
   });
