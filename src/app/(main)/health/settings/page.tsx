@@ -7,6 +7,7 @@ import {
   ArrowLeft, Bell, BellOff, Clock, Moon, Smile, Brain,
   Trophy, Zap, Heart, Save, ChevronRight, Calendar
 } from 'lucide-react';
+import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
 
 const colors = {
   bg: '#FAF9F7',
@@ -16,10 +17,8 @@ const colors = {
   textMuted: '#9A9A9A',
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
-  success: '#4CAF50',
-  successLight: '#E8F5E9',
-  warning: '#FF9800',
-  warningLight: '#FFF3E0',
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
   purple: '#7C4DFF',
   purpleLight: '#EDE7F6',
   blue: '#2196F3',
@@ -176,7 +175,7 @@ export default function HealthSettingsPage() {
             className="p-3 rounded-lg text-sm"
             style={{
               backgroundColor: saveMessage ? colors.successLight : colors.warningLight,
-              color: saveMessage ? colors.success : colors.warning,
+              color: saveMessage ? colors.successText : colors.warningText,
             }}
           >
             {saveMessage ?? saveError}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 
 // チャレンジ一覧の取得
 export async function GET(request: NextRequest) {
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
   const { data, error } = await query;
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/health/challenges', error, { userId: user.id, table: 'health_challenges' });
   }
 
   // 利用可能なチャレンジテンプレートも返す
@@ -85,7 +86,7 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/health/challenges', error, { userId: user.id, table: 'health_challenges' });
   }
 
   return NextResponse.json({ challenge: data });

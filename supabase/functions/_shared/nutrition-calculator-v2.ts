@@ -6,6 +6,7 @@
  */
 
 import { IngredientMatchResult } from './ingredient-matcher.ts'
+import { calcSugarG } from './nutrition-sugar.ts'
 
 // ============================================
 // 型定義
@@ -18,6 +19,8 @@ export interface NutritionTotals {
   fat_g: number
   carbs_g: number
   fiber_g: number
+  // 糖質 = 炭水化物 − 食物繊維 (材料ごとに 0 で下限をとって合算)。#1146
+  sugar_g: number
   // ミネラル
   sodium_mg: number
   potassium_mg: number
@@ -85,6 +88,7 @@ export function initNutritionTotals(): NutritionTotals {
     fat_g: 0,
     carbs_g: 0,
     fiber_g: 0,
+    sugar_g: 0,
     sodium_mg: 0,
     potassium_mg: 0,
     calcium_mg: 0,
@@ -144,6 +148,9 @@ export function calculateIngredientNutrition(
   nutrition.fat_g = (matched.fat_g || 0) * factor
   nutrition.carbs_g = (matched.carbs_g || 0) * factor
   nutrition.fiber_g = (matched.fiber_g || 0) * factor
+  // 糖質 = 炭水化物 − 食物繊維。食物繊維が未登録の食材は 0 として扱い、炭水化物をそのまま糖質にする。
+  // 食物繊維が炭水化物より多い食材 (海藻など) で負にならないよう、材料ごとに 0 で下限をとる (#1146)。
+  nutrition.sugar_g = calcSugarG(nutrition.carbs_g, nutrition.fiber_g)
   nutrition.sodium_mg = (matched.sodium_mg || 0) * factor
   nutrition.potassium_mg = (matched.potassium_mg || 0) * factor
   nutrition.calcium_mg = (matched.calcium_mg || 0) * factor
@@ -190,6 +197,7 @@ export function sumNutrition(a: NutritionTotals, b: NutritionTotals): NutritionT
     fat_g: a.fat_g + b.fat_g,
     carbs_g: a.carbs_g + b.carbs_g,
     fiber_g: a.fiber_g + b.fiber_g,
+    sugar_g: a.sugar_g + b.sugar_g,
     sodium_mg: a.sodium_mg + b.sodium_mg,
     potassium_mg: a.potassium_mg + b.potassium_mg,
     calcium_mg: a.calcium_mg + b.calcium_mg,
@@ -230,6 +238,7 @@ export function roundNutrition(n: NutritionTotals): NutritionTotals {
     fat_g: round1(n.fat_g),
     carbs_g: round1(n.carbs_g),
     fiber_g: round1(n.fiber_g),
+    sugar_g: round1(n.sugar_g),
     sodium_mg: round1(n.sodium_mg),
     potassium_mg: round1(n.potassium_mg),
     calcium_mg: round1(n.calcium_mg),

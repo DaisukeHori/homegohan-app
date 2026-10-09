@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 import { RECORD_DATE_PATTERN, sanitizeHealthRecordPayload, stripUndefined } from '@/lib/health-payloads';
 import { todayLocal, formatLocalDate } from '@/lib/date-utils';
 import { updateHealthStreak } from '@/lib/health-streaks';
@@ -86,7 +87,7 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (result.error) {
-    return NextResponse.json({ error: result.error.message }, { status: 500 });
+    return internalError('POST /api/health/records/quick', result.error, { userId: user.id, table: 'health_records' });
   }
 
   // 連続記録を更新

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { getSupportEmail } from "@/lib/site-config";
 
 // #1174 (同意の前提): 未ログインでも読める公開ページ。サインアップ画面・LP フッターの同意リンクと、
 // ストア審査に出すプライバシー URL の着地点なので、(main) グループ (ログイン後の画面。アプリ用のナビ付き) の外に置く。
@@ -56,7 +57,7 @@ export default function PrivacyPage() {
         <p>本ポリシーに関するお問い合わせは，以下の窓口までお願いいたします。</p>
         <p>
           Homegohan Inc. 個人情報担当<br />
-          E-mail: support@homegohan.jp
+          E-mail: {getSupportEmail()}
         </p>
       </main>
 
