@@ -8,8 +8,15 @@
  *   - .github/workflows/mobile-test.yml         → stage_mobile      (apps/mobile の jest / packages/core の vitest)
  *   - .github/workflows/security-regression.yml → stage_integration (結合テスト 2 本)
  *   - .github/workflows/e2e-local.yml           → stage_e2e         (Playwright)
+ * また、次のジョブはジョブ単位で写す (ワークフローのほかのジョブは写さず、理由を EXCLUDED_JOBS に書く)。
+ *   - .github/workflows/security.yml の gitleaks → stage_secrets     (PR で増えるコミットのシークレットの検査)
  * ワークフローだけを変えてスクリプトを直し忘れると、「ローカルは緑なのに CI は赤」(またはその逆) になり、
  * ローカルの緑を根拠にマージする運用が成り立たなくなる。
+ *
+ * さらに、PR で動くワークフローはすべて、写した段 (WORKFLOW_STAGES / JOB_STAGES) か、理由つきの除外
+ * (EXCLUDED_WORKFLOWS) のどちらかに入っていなければならない。ジョブ単位で写したワークフローは、
+ * すべてのジョブが段か理由つきの除外 (EXCLUDED_JOBS) に入っていなければならない。
+ * 後から入ったワークフロー・ジョブ (例: security.yml の gitleaks を写す前の状態) が、ローカル CI から黙って抜けるのを防ぐ。
  *
  * そこで、DB もサーバーも使わずにソースだけを見る静的検査にして、通常の `npm test` (PR の CI) に載せる。
  *
@@ -44,6 +51,34 @@ const WORKFLOW_STAGES = {
 } as const;
 type WorkflowPath = keyof typeof WORKFLOW_STAGES;
 const WORKFLOWS = Object.keys(WORKFLOW_STAGES) as WorkflowPath[];
+
+const WORKFLOW_DIR = ".github/workflows";
+/** PR で動くワークフローを見分けるイベント */
+const PR_EVENTS = new Set(["pull_request", "pull_request_target"]);
+
+const SECURITY_WORKFLOW = ".github/workflows/security.yml";
+const GITLEAKS_JOB = "gitleaks";
+/** ジョブ単位で写したワークフロー: ワークフロー → (ジョブ → スクリプトの段の関数) */
+const JOB_STAGES: Record<string, Record<string, string>> = {
+  [SECURITY_WORKFLOW]: { [GITLEAKS_JOB]: "stage_secrets" },
+};
+/** ジョブ単位で写したワークフローのうち、写していないジョブと理由 */
+const EXCLUDED_JOBS: Record<string, Record<string, string>> = {
+  [SECURITY_WORKFLOW]: {
+    "dependency-review":
+      "GitHub の Dependency graph の API (PR の base と head の依存の差分) と GitHub の脆弱性データベースで判定する。ローカルでは同じ判定を再現できない。依存 (package.json / package-lock.json) を変える PR は、CI のこのジョブの緑を待ってからマージする (CLAUDE.md の「マージ前の検査」)",
+    "npm-audit": "止めない検査 (npm audit のステップに continue-on-error)。結果は Summary に出るだけで、PR の判定を変えない",
+    codeql: "止めない検査 (ジョブはアラートで失敗しない)。結果は GitHub の Security タブと Code scanning results に出る。ローカルに同じ解析の環境は無い",
+  },
+};
+/** PR で動くが、local-ci.sh に写さないワークフローと理由 */
+const EXCLUDED_WORKFLOWS: Record<string, string> = {
+  ".github/workflows/e2e.yml":
+    "本番の URL に、本番のテスト用アカウント (Actions のシークレット) でつなぐ Playwright。ローカル CI は本番に触れない (PR の変更そのものは e2e-local.yml を写した e2e 段がローカル Supabase で確かめる)",
+  ".github/workflows/prod-schema-snapshot.yml": "本番 Supabase のスキーマを読み取る (本番の接続情報を使う)。ローカル CI は本番に触れない",
+  ".github/workflows/deploy-supabase-migrations.yml":
+    "PR ジョブは本番の migration 台帳とのドリフトを検知する (本番に接続する)。migration を含む PR は CI の緑を待ってからマージする (CLAUDE.md の「マージ前の検査」)",
+};
 
 /** スクリプトで作業用 worktree を指す変数。CI の作業ディレクトリ (リポジトリの直下) にあたる */
 const WORKTREE_VAR = "$WT";
@@ -144,6 +179,56 @@ const REPORTING_FLAGS = new Map<string, boolean>([
 ]);
 /** スクリプトがコマンドの前に足してよい環境変数 (結果の JSON の出力先) */
 const REPORTING_ENV = ["PLAYWRIGHT_JSON_OUTPUT_NAME"];
+
+/** gitleaks ジョブの照合に使う値 */
+const GITLEAKS_STAGE = JOB_STAGES[SECURITY_WORKFLOW][GITLEAKS_JOB];
+const GITLEAKS_JOB_KEYS: Record<string, string> = {
+  ...JOB_KEYS,
+  if: "ジョブを動かすイベント (pull_request / push) の条件。ローカルでは明示して回す",
+};
+/** checkout の with と、受け付ける値。fetch-depth は「履歴をすべて取る」(0) でなければならない (スクリプトは元のリポジトリの worktree で、履歴はすべてある) */
+const GITLEAKS_CHECKOUT_WITH: Record<string, string> = {
+  "fetch-depth": "0",
+  "persist-credentials": "false",
+};
+const CHECKOUT = "actions/checkout";
+/** インストールのステップの env: 版と、CI が取る配布物 (linux_x64) の SHA-256 */
+const GITLEAKS_VERSION_ENV = "GITLEAKS_VERSION";
+const GITLEAKS_SHA_ENV = "GITLEAKS_TARBALL_SHA256";
+/** CI のインストールが取る配布物の名前 (この SHA-256 を、スクリプトの同じ配布物の定数と突き合わせる) */
+const GITLEAKS_CI_TARBALL = "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz";
+/** スクリプトの定数の名前 */
+const SCRIPT_GITLEAKS_VERSION = "GITLEAKS_VERSION";
+const SCRIPT_GITLEAKS_CI_SHA = "GITLEAKS_SHA256_LINUX_X64";
+const SCRIPT_GITLEAKS_URL = "GITLEAKS_RELEASE_URL";
+/** スクリプトが持つ配布物ごとの SHA-256 の定数 (gitleaks_platform が返す OS と CPU の組み合わせ) */
+const GITLEAKS_SHA_CONSTANT_PREFIX = "GITLEAKS_SHA256_";
+const GITLEAKS_PLATFORM_SHA_CONSTANTS = [
+  "GITLEAKS_SHA256_DARWIN_ARM64",
+  "GITLEAKS_SHA256_DARWIN_X64",
+  "GITLEAKS_SHA256_LINUX_ARM64",
+  "GITLEAKS_SHA256_LINUX_X64",
+];
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+/**
+ * スキャンのステップの env (検査する範囲を決めるためだけのもの)。値も固定する。
+ * ここに無い env (例: gitleaks が読む GITLEAKS_CONFIG) が増えたら赤にする
+ */
+const GITLEAKS_SCAN_ENV: Record<string, string> = {
+  EVENT_NAME: "${{ github.event_name }}",
+  PR_BASE_SHA: "${{ github.event.pull_request.base.sha }}",
+  PR_HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
+  PUSH_BEFORE_SHA: "${{ github.event.before }}",
+  PUSH_AFTER_SHA: "${{ github.sha }}",
+};
+/** CI の pull_request の検査範囲 (base.sha..head.sha) と、それにあたるスクリプトの範囲 (--base..HEAD) */
+const CI_PR_RANGE = 'range="${PR_BASE_SHA}..${PR_HEAD_SHA}"';
+const LOCAL_GITLEAKS_RANGE = "${BASE_SHA}..${HEAD_SHA}";
+const LOG_OPTS_FLAG = "--log-opts=";
+const GITLEAKS_PROGRAM = "gitleaks";
+/** スクリプトで、回す段の一覧 (既定で全部回す) を持つ定数 */
+const ALL_STAGES_CONSTANT = "ALL_STAGES";
+const STAGE_FUNCTION_PREFIX = "stage_";
 
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 const NVMRC_MAJOR = read(NVMRC).trim().replace(/^v/, "").split(".")[0];
@@ -536,11 +621,14 @@ interface Scope {
   code: string;
   /** ci_env が export する環境変数 */
   ciEnv: Map<string, string>;
+  /** readonly で宣言した定数 (名前 → 値) */
+  constants: Map<string, string>;
 }
 
 interface ParsedScript {
   functions: Map<string, string>;
   topLevel: string;
+  constants: Map<string, string>;
 }
 
 /**
@@ -603,12 +691,12 @@ function parseScript(scriptText: string): ParsedScript {
     }
     functions.set(f[1], body.join("\n"));
   }
-  return { functions, topLevel: topLevel.join("\n") };
+  return { functions, topLevel: topLevel.join("\n"), constants };
 }
 
 /** 段の関数と、そこから (たどって) 呼ぶ関数と、関数の外のコード。段の関数が無ければ例外 */
 function buildScope(scriptText: string, stage: string): Scope {
-  const { functions, topLevel } = parseScript(scriptText);
+  const { functions, topLevel, constants } = parseScript(scriptText);
   if (!functions.has(stage)) throw new Error(`${SCRIPT} に段の関数 ${stage} が無い`);
   const reached = new Set<string>([stage]);
   for (const caller of reached) {
@@ -628,7 +716,7 @@ function buildScope(scriptText: string, stage: string): Scope {
       if (a) ciEnv.set(a[1], a[2]);
     }
   }
-  return { commands: parts.flatMap((part) => shellCommands(part)), code: parts.join("\n"), ciEnv };
+  return { commands: parts.flatMap((part) => shellCommands(part)), code: parts.join("\n"), ciEnv, constants };
 }
 
 // ---------------------------------------------------------------------
@@ -851,6 +939,242 @@ function workflowCommands(yamlText: string): string[] {
     .filter((w) => w.length > 0 && !has(PLUMBING_COMMANDS, w[0]))
     .map((w) => w.join(" "));
 }
+
+// ---------------------------------------------------------------------
+// PR で動くワークフロー・ジョブの網羅 (写したか、理由つきで除外したか)
+// ---------------------------------------------------------------------
+
+/** ワークフローを起動するイベントの名前 (on: の文字列 / 配列 / 対応表のどの書き方でも読む) */
+function triggersOf(yamlText: string): string[] {
+  const root = parseYaml(yamlText);
+  if (!isMap(root)) throw new Error("ワークフローの最上位が対応表でない");
+  const on = root.on;
+  if (typeof on === "string") return [on];
+  if (Array.isArray(on)) return on.filter((v): v is string => typeof v === "string");
+  if (isMap(on)) return Object.keys(on);
+  throw new Error("on が無いか読めない");
+}
+
+/** ワークフローの .yml / .yaml を、パス → 本文で読む */
+function readWorkflowFiles(): Map<string, string> {
+  const files = new Map<string, string>();
+  for (const name of fs.readdirSync(path.join(ROOT, WORKFLOW_DIR)).sort()) {
+    if (!/\.ya?ml$/.test(name)) continue;
+    const rel = `${WORKFLOW_DIR}/${name}`;
+    files.set(rel, read(rel));
+  }
+  return files;
+}
+
+/**
+ * PR で動くワークフローが、すべて写した段 (WORKFLOW_STAGES / JOB_STAGES) か、理由つきの除外 (EXCLUDED_WORKFLOWS) の
+ * ちょうど 1 つに入っているか。一覧に残っているのに無い / PR で動かないワークフローも問題にする
+ */
+function workflowCoverageProblems(
+  files: ReadonlyMap<string, string>,
+  lists: { stages: readonly string[]; jobStages: readonly string[]; excluded: Readonly<Record<string, string>> },
+): string[] {
+  const problems: string[] = [];
+  const classified = new Map<string, string[]>();
+  const add = (file: string, list: string) => classified.set(file, [...(classified.get(file) ?? []), list]);
+  lists.stages.forEach((file) => add(file, "WORKFLOW_STAGES"));
+  lists.jobStages.forEach((file) => add(file, "JOB_STAGES"));
+  for (const [file, reason] of Object.entries(lists.excluded)) {
+    add(file, "EXCLUDED_WORKFLOWS");
+    if (reason.trim() === "") problems.push(`EXCLUDED_WORKFLOWS の ${file} に理由が無い`);
+  }
+  for (const [file, where] of classified) {
+    if (where.length > 1) problems.push(`${file} が 2 つの一覧 (${where.join(" / ")}) にある`);
+    if (!files.has(file)) problems.push(`${file} が ${where.join(" / ")} にあるが、ファイルが無い`);
+  }
+  for (const [file, text] of files) {
+    let triggers: string[];
+    try {
+      triggers = triggersOf(text);
+    } catch (e) {
+      problems.push(`${file} の on を読めない: ${e instanceof Error ? e.message : String(e)}`);
+      continue;
+    }
+    const onPullRequest = triggers.some((t) => PR_EVENTS.has(t));
+    const where = classified.get(file);
+    if (onPullRequest && where === undefined) {
+      problems.push(
+        `${file} は PR で動くのに、local-ci.sh に写した段 (WORKFLOW_STAGES / JOB_STAGES) にも、理由つきの除外 (EXCLUDED_WORKFLOWS) にも無い`,
+      );
+    }
+    if (!onPullRequest && where !== undefined) problems.push(`${file} は PR で動かないのに ${where.join(" / ")} にある (一覧を見直す)`);
+  }
+  return problems;
+}
+
+/** ジョブ単位で写したワークフローの、すべてのジョブが段 (JOB_STAGES) か理由つきの除外 (EXCLUDED_JOBS) のちょうど 1 つに入っているか */
+function jobCoverageProblems(
+  workflow: string,
+  yamlText: string,
+  mapped: Readonly<Record<string, string>>,
+  excluded: Readonly<Record<string, string>>,
+): string[] {
+  const problems: string[] = [];
+  const root = parseYaml(yamlText);
+  if (!isMap(root) || !isMap(root.jobs)) return [`${workflow} の jobs を読めない`];
+  const jobs = new Set(Object.keys(root.jobs));
+  for (const job of jobs) {
+    const inMapped = has(mapped, job);
+    const inExcluded = has(excluded, job);
+    if (inMapped && inExcluded) problems.push(`${workflow} の jobs.${job} が JOB_STAGES と EXCLUDED_JOBS の両方にある`);
+    if (!inMapped && !inExcluded) {
+      problems.push(`${workflow} の jobs.${job} が、local-ci.sh に写した段 (JOB_STAGES) にも、理由つきの除外 (EXCLUDED_JOBS) にも無い`);
+    }
+  }
+  for (const job of [...Object.keys(mapped), ...Object.keys(excluded)]) {
+    if (!jobs.has(job)) problems.push(`${workflow} に jobs.${job} が無いのに一覧にある`);
+  }
+  for (const [job, reason] of Object.entries(excluded)) {
+    if (reason.trim() === "") problems.push(`EXCLUDED_JOBS の ${workflow} の ${job} に理由が無い`);
+  }
+  return problems;
+}
+
+/** 写した段がすべて、既定で回る (ALL_STAGES にあり、本体で `if want <段>; then ... stage_<段>; fi` と呼ぶ) か */
+function stageWiringProblems(scriptText: string, stageFunctions: readonly string[]): string[] {
+  const { topLevel, constants } = parseScript(scriptText);
+  const allStages = (constants.get(ALL_STAGES_CONSTANT) ?? "").split(",");
+  const problems: string[] = [];
+  for (const fn of stageFunctions) {
+    const name = fn.slice(STAGE_FUNCTION_PREFIX.length);
+    if (!fn.startsWith(STAGE_FUNCTION_PREFIX) || !allStages.includes(name)) {
+      problems.push(`${fn} の段 ${name} が ${ALL_STAGES_CONSTANT} (既定で回す段) に無い`);
+    }
+    const call = new RegExp(`\\bwant ${escapeRegExp(name)};\\s*then\\b[^\\n]*(?<![\\w-])${escapeRegExp(fn)}(?![\\w-])`);
+    if (!call.test(topLevel)) problems.push(`本体に \`if want ${name}; then ... ${fn}; fi\` が無い`);
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------
+// security.yml の gitleaks ジョブ (ジョブ単位で stage_secrets に写す)
+// ---------------------------------------------------------------------
+
+/** ワークフローの語 (`${...}` は任意の値) と、スクリプトの語が同じか */
+function wordMatches(expected: string, actual: string): boolean {
+  const parts = expected.split(/\$\{[^}]*\}/).map(escapeRegExp);
+  return new RegExp(`^${parts.join(".+")}$`).test(actual);
+}
+
+function scriptGitleaksCommandMatches(command: ShellCommand, expectedWords: string[]): boolean {
+  if (command.words[0] !== GITLEAKS_PROGRAM || command.env.size > 0 || command.dir !== WORKTREE_VAR) return false;
+  if (command.words.length !== expectedWords.length) return false;
+  if (!expectedWords.every((w, k) => wordMatches(w, command.words[k]))) return false;
+  const logOpts = command.words.filter((w) => w.startsWith(LOG_OPTS_FLAG));
+  return logOpts.length === 1 && logOpts[0] === `${LOG_OPTS_FLAG}${LOCAL_GITLEAKS_RANGE}`;
+}
+
+/** security.yml の gitleaks ジョブから、スクリプトの stage_secrets が満たすべき条件を作る */
+function gitleaksRequirements(yamlText: string): Requirement[] {
+  let root: YamlValue;
+  try {
+    root = parseYaml(yamlText);
+  } catch (e) {
+    return [unsatisfiable(`ワークフローを読めない: ${e instanceof Error ? e.message : String(e)}`)];
+  }
+  if (!isMap(root) || !isMap(root.jobs)) return [unsatisfiable("jobs を読めない")];
+  const job = root.jobs[GITLEAKS_JOB];
+  if (!isMap(job)) return [unsatisfiable(`jobs.${GITLEAKS_JOB} が無い`)];
+  const problems: string[] = [];
+  const requirements: Requirement[] = [];
+
+  for (const [key, value] of Object.entries(stringMap(root.env, "env", problems))) {
+    if (!has(ACTIONS_ONLY_ENV, key)) problems.push(`ワークフローの環境変数 ${key}=${value} (gitleaks に効きうる。stage_secrets に写して照合を足す)`);
+  }
+  checkKeys(job, GITLEAKS_JOB_KEYS, `jobs.${GITLEAKS_JOB}`, problems);
+  for (const key of Object.keys(stringMap(job.env, `jobs.${GITLEAKS_JOB}.env`, problems))) {
+    problems.push(`jobs.${GITLEAKS_JOB} のジョブの環境変数 ${key} (gitleaks に効きうる。stage_secrets に写して照合を足す)`);
+  }
+  if (!Array.isArray(job.steps)) return [unsatisfiable(`jobs.${GITLEAKS_JOB}.steps が無い`)];
+
+  let installs = 0;
+  let scans = 0;
+  job.steps.forEach((raw, index) => {
+    if (!isMap(raw)) {
+      problems.push(`jobs.${GITLEAKS_JOB}.steps[${index}] が対応表でない`);
+      return;
+    }
+    const where = `${GITLEAKS_JOB}: ${typeof raw.name === "string" ? raw.name : `steps[${index}]`}`;
+    checkKeys(raw, STEP_KEYS, where, problems);
+    if (raw.if !== undefined) problems.push(`${where} の if (gitleaks ジョブのステップの条件は照合していない)`);
+    const env = stringMap(raw.env, `${where} の env`, problems);
+    const run = typeof raw.run === "string" ? stripShellComments(raw.run) : undefined;
+    if (typeof raw.uses === "string") {
+      if (raw.uses.split("@")[0] !== CHECKOUT) problems.push(`${where} の未対応のアクション ${raw.uses} (stage_secrets に写して照合を足す)`);
+      for (const [key, value] of Object.entries(stringMap(raw.with, `${where} の with`, problems))) {
+        if (!has(GITLEAKS_CHECKOUT_WITH, key)) problems.push(`${where} の checkout の未対応の with \`${key}\``);
+        else if (GITLEAKS_CHECKOUT_WITH[key] !== value) problems.push(`${where} の checkout の with \`${key}: ${value}\` (${GITLEAKS_CHECKOUT_WITH[key]} のときだけ照合できる)`);
+      }
+      if (Object.keys(env).length > 0) problems.push(`${where} の uses のステップの env は照合できない`);
+      return;
+    }
+    if (run === undefined) {
+      problems.push(`${where} が uses でも run でもない`);
+      return;
+    }
+    const gitleaksCommands = shellCommands(run).filter((c) => c.words[0] === GITLEAKS_PROGRAM);
+    if (has(env, GITLEAKS_VERSION_ENV)) {
+      // インストール: 版と SHA-256 (linux_x64) と取得元をスクリプトの定数と突き合わせる
+      installs += 1;
+      for (const key of Object.keys(env)) {
+        if (key !== GITLEAKS_VERSION_ENV && key !== GITLEAKS_SHA_ENV) problems.push(`${where} の未対応の環境変数 ${key}`);
+      }
+      if (gitleaksCommands.length > 0) problems.push(`${where} でインストールと検査が同じステップにある (照合できない)`);
+      const version = env[GITLEAKS_VERSION_ENV];
+      const sha = env[GITLEAKS_SHA_ENV];
+      requirements.push({
+        label: `gitleaks の版 ${version} (${where}。スクリプトの readonly ${SCRIPT_GITLEAKS_VERSION})`,
+        satisfiedBy: (scope) => scope.constants.get(SCRIPT_GITLEAKS_VERSION) === version,
+      });
+      requirements.push({
+        label: `CI が取る配布物 ${GITLEAKS_CI_TARBALL} の SHA-256 ${sha ?? "(無し)"} (${where}。スクリプトの readonly ${SCRIPT_GITLEAKS_CI_SHA})`,
+        satisfiedBy: (scope) => sha !== undefined && run.includes(GITLEAKS_CI_TARBALL) && scope.constants.get(SCRIPT_GITLEAKS_CI_SHA) === sha,
+      });
+      requirements.push({
+        label: `gitleaks の取得元 (${where}。スクリプトの readonly ${SCRIPT_GITLEAKS_URL} と、版のディレクトリ v<版>/)`,
+        satisfiedBy: (scope) => {
+          const url = scope.constants.get(SCRIPT_GITLEAKS_URL);
+          const ver = scope.constants.get(SCRIPT_GITLEAKS_VERSION);
+          return url !== undefined && run.includes(`${url}/v\${GITLEAKS_VERSION}/`) && scope.code.includes(`${url}/v${ver}/`);
+        },
+      });
+      return;
+    }
+    if (gitleaksCommands.length > 0) {
+      // 検査: 範囲を決める env・pull_request の範囲・gitleaks の引数を突き合わせる
+      scans += 1;
+      for (const [key, value] of Object.entries(env)) {
+        if (!has(GITLEAKS_SCAN_ENV, key)) problems.push(`${where} の未対応の環境変数 ${key} (gitleaks に効きうる。stage_secrets に写して照合を足す)`);
+        else if (GITLEAKS_SCAN_ENV[key] !== value) problems.push(`${where} の環境変数 ${key}=${value} (${GITLEAKS_SCAN_ENV[key]} のときだけ照合できる)`);
+      }
+      if (!run.includes(CI_PR_RANGE)) problems.push(`${where} の pull_request の範囲が \`${CI_PR_RANGE}\` でない (スクリプトの範囲 ${LOCAL_GITLEAKS_RANGE} を見直す)`);
+      if (gitleaksCommands.length !== 1) problems.push(`${where} に gitleaks のコマンドが ${gitleaksCommands.length} 個ある (1 個のときだけ照合できる)`);
+      for (const command of gitleaksCommands) {
+        const expected = command.words;
+        if (command.env.size > 0) problems.push(`${where} の gitleaks の前の環境変数 (照合できない)`);
+        requirements.push({
+          label: `コマンド \`${expected.join(" ")}\` (${where}。範囲は ${LOG_OPTS_FLAG}${LOCAL_GITLEAKS_RANGE}・作業場所の直下・前に環境変数を置かない)`,
+          satisfiedBy: (scope) => scope.commands.some((c) => scriptGitleaksCommandMatches(c, expected)),
+        });
+      }
+      return;
+    }
+    problems.push(`${where} の未対応のステップ (stage_secrets に写して照合を足す)`);
+  });
+  if (installs !== 1) problems.push(`gitleaks のインストールのステップが ${installs} 個 (1 個のときだけ照合できる)`);
+  if (scans !== 1) problems.push(`gitleaks の検査のステップが ${scans} 個 (1 個のときだけ照合できる)`);
+  return [...problems.map(unsatisfiable), ...requirements];
+}
+
+/** ジョブ単位で写したジョブの照合のしかた (JOB_STAGES のジョブごとに要る) */
+const JOB_REQUIREMENTS: Record<string, Record<string, (yamlText: string) => Requirement[]>> = {
+  [SECURITY_WORKFLOW]: { [GITLEAKS_JOB]: gitleaksRequirements },
+};
 
 // ---------------------------------------------------------------------
 // テスト
@@ -1107,5 +1431,170 @@ describe("検査ロジック自体 (ワークフローやスクリプトを変�
     const requirements = requirementsOf(yml);
     expect(requirements).toHaveLength(1);
     expect(requirements[0].satisfiedBy(buildScope("stage_x() {\n  :\n}", "stage_x"))).toBe(false);
+  });
+});
+
+describe("PR で動くワークフロー・ジョブが、ローカル CI から黙って抜けない", () => {
+  const scriptText = read(SCRIPT);
+  const lists = { stages: WORKFLOWS, jobStages: Object.keys(JOB_STAGES), excluded: EXCLUDED_WORKFLOWS };
+
+  it("PR で動くワークフローはすべて、local-ci.sh に写した段か、理由つきの除外のどちらかに入っている", () => {
+    const files = readWorkflowFiles();
+    // 読み取りが空のまま通ることを防ぐ (PR で動くものが実際に見つかっている)
+    const onPullRequest = Array.from(files).filter(([, text]) => triggersOf(text).some((t) => PR_EVENTS.has(t)));
+    expect(onPullRequest.map(([file]) => file)).toEqual(expect.arrayContaining([...WORKFLOWS, SECURITY_WORKFLOW]));
+    expect(
+      workflowCoverageProblems(files, lists),
+      "PR で動くワークフローが増えたら、local-ci.sh に段を足して WORKFLOW_STAGES / JOB_STAGES に足すか、写さない理由を EXCLUDED_WORKFLOWS に書く",
+    ).toEqual([]);
+  });
+
+  it("ジョブ単位で写したワークフローは、すべてのジョブが段か理由つきの除外に入っていて、写したジョブには照合のしかたがある", () => {
+    for (const [workflow, mapped] of Object.entries(JOB_STAGES)) {
+      expect(jobCoverageProblems(workflow, read(workflow), mapped, EXCLUDED_JOBS[workflow] ?? {})).toEqual([]);
+      for (const job of Object.keys(mapped)) {
+        expect(JOB_REQUIREMENTS[workflow]?.[job], `${workflow} の jobs.${job} の照合のしかた (JOB_REQUIREMENTS)`).toBeTypeOf("function");
+      }
+    }
+    for (const workflow of Object.keys(EXCLUDED_JOBS)) expect(has(JOB_STAGES, workflow), `${workflow} が JOB_STAGES に無い`).toBe(true);
+  });
+
+  it("写した段はすべて、既定で回る (ALL_STAGES にあり、本体から呼ばれる)", () => {
+    const stageFunctions = [...Object.values(WORKFLOW_STAGES), ...Object.values(JOB_STAGES).flatMap((m) => Object.values(m))];
+    expect(stageFunctions).toContain(GITLEAKS_STAGE);
+    expect(stageWiringProblems(scriptText, stageFunctions)).toEqual([]);
+  });
+
+  it(`${SECURITY_WORKFLOW} の ${GITLEAKS_JOB} の版・SHA-256・引数・範囲が local-ci.sh の ${GITLEAKS_STAGE} にもある`, () => {
+    const requirements = gitleaksRequirements(read(SECURITY_WORKFLOW));
+    // 版・SHA-256・取得元・コマンドの 4 つ (読み取りが空のまま通ることを防ぐ)
+    expect(requirements.length).toBeGreaterThanOrEqual(4);
+    // linux_x64 以外の配布物の SHA-256 は yml に無い (CI は linux_x64 だけ)。形 (16 進 64 桁) だけ確かめる
+    const shaConstants = Array.from(parseScript(scriptText).constants).filter(([name]) => name.startsWith(GITLEAKS_SHA_CONSTANT_PREFIX));
+    expect(shaConstants.map(([name]) => name).sort()).toEqual(GITLEAKS_PLATFORM_SHA_CONSTANTS);
+    for (const [name, value] of shaConstants) expect(value, name).toMatch(SHA256_HEX);
+    expect(
+      unmet(requirements, buildScope(scriptText, GITLEAKS_STAGE)),
+      `${SECURITY_WORKFLOW} の gitleaks が変わったのに ${SCRIPT} が追随していません。スクリプトを直してください (yml が正)。`,
+    ).toEqual([]);
+  });
+});
+
+describe("網羅と gitleaks の検査ロジック自体 (写しを変えると赤になること)", () => {
+  const scriptText = read(SCRIPT);
+  const lists = { stages: WORKFLOWS, jobStages: Object.keys(JOB_STAGES), excluded: EXCLUDED_WORKFLOWS };
+
+  it("PR で動くワークフローを足す・一覧から外すと検出する (on: の書き方によらず)", () => {
+    const files = readWorkflowFiles();
+    expect(workflowCoverageProblems(files, lists)).toEqual([]);
+    const jobs = "jobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm run new-check\n";
+    const added: Array<[string, string]> = [
+      ["map", `on:\n  pull_request:\n${jobs}`],
+      ["list", `on: [push, pull_request]\n${jobs}`],
+      ["scalar", `on: pull_request\n${jobs}`],
+      ["target", `on:\n  pull_request_target:\n    types: [opened]\n${jobs}`],
+    ];
+    for (const [label, text] of added) {
+      const mutated = new Map(files);
+      const file = `${WORKFLOW_DIR}/new-${label}.yml`;
+      mutated.set(file, text);
+      // 読めないから赤、ではなく「PR で動くのに一覧に無い」として検出する
+      expect(workflowCoverageProblems(mutated, lists), `PR で動くワークフローの追加 (${label}) が検出されない`).toEqual([
+        expect.stringContaining(`${file} は PR で動くのに`),
+      ]);
+    }
+    // PR で動かないワークフローは足しても問題にしない
+    const pushOnly = new Map(files);
+    pushOnly.set(`${WORKFLOW_DIR}/new-push.yml`, `on:\n  push:\n    branches: [main]\n${jobs}`);
+    expect(workflowCoverageProblems(pushOnly, lists)).toEqual([]);
+    // 除外の一覧から外す / 写した段の一覧から外す
+    const { [".github/workflows/e2e.yml"]: _e2e, ...withoutE2e } = EXCLUDED_WORKFLOWS;
+    expect(workflowCoverageProblems(files, { ...lists, excluded: withoutE2e }).length).toBeGreaterThan(0);
+    expect(workflowCoverageProblems(files, { ...lists, jobStages: [] }).length).toBeGreaterThan(0);
+    // 理由が空 / ファイルが無いのに一覧にある / 2 つの一覧にある
+    expect(workflowCoverageProblems(files, { ...lists, excluded: { ...EXCLUDED_WORKFLOWS, ".github/workflows/e2e.yml": " " } }).length).toBeGreaterThan(0);
+    expect(workflowCoverageProblems(files, { ...lists, excluded: { ...EXCLUDED_WORKFLOWS, ".github/workflows/gone.yml": "x" } }).length).toBeGreaterThan(0);
+    expect(workflowCoverageProblems(files, { ...lists, excluded: { ...EXCLUDED_WORKFLOWS, [SECURITY_WORKFLOW]: "x" } }).length).toBeGreaterThan(0);
+  });
+
+  it("ジョブ単位で写したワークフローにジョブを足す・除外から外すと検出する", () => {
+    const security = read(SECURITY_WORKFLOW);
+    const mapped = JOB_STAGES[SECURITY_WORKFLOW];
+    const excluded = EXCLUDED_JOBS[SECURITY_WORKFLOW];
+    const from = "  npm-audit:\n";
+    expect(security).toContain(from);
+    const withNewJob = security.split(from).join(`  new-check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm run new-check\n${from}`);
+    expect(jobCoverageProblems(SECURITY_WORKFLOW, withNewJob, mapped, excluded).length).toBeGreaterThan(0);
+    const { "dependency-review": _dr, ...withoutDependencyReview } = excluded;
+    expect(jobCoverageProblems(SECURITY_WORKFLOW, security, mapped, withoutDependencyReview).length).toBeGreaterThan(0);
+    expect(jobCoverageProblems(SECURITY_WORKFLOW, security, {}, excluded).length).toBeGreaterThan(0);
+    expect(jobCoverageProblems(SECURITY_WORKFLOW, security, mapped, { ...excluded, [GITLEAKS_JOB]: "x" }).length).toBeGreaterThan(0);
+  });
+
+  it(`${SECURITY_WORKFLOW} の ${GITLEAKS_JOB} の一部を変えると、満たされない条件として検出する`, () => {
+    const security = read(SECURITY_WORKFLOW);
+    const scope = buildScope(scriptText, GITLEAKS_STAGE);
+    const mutations: Array<[string, string]> = [
+      // 版・SHA-256 を上げる
+      ["GITLEAKS_VERSION: '8.30.1'", "GITLEAKS_VERSION: '8.31.0'"],
+      ["GITLEAKS_TARBALL_SHA256: '551f", "GITLEAKS_TARBALL_SHA256: '651f"],
+      // 引数を減らす / 足す / 設定ファイルを変える
+      ["--redact --no-banner", "--no-banner"],
+      ["--exit-code 2 \\", "--exit-code 2 --max-target-megabytes 5 \\"],
+      ["--config .gitleaks.toml", "--config other.toml"],
+      // 検査する範囲を変える
+      ['range="${PR_BASE_SHA}..${PR_HEAD_SHA}"', 'range="${PR_BASE_SHA}~5..${PR_HEAD_SHA}"'],
+      ["PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}", "PR_HEAD_SHA: ${{ github.sha }}"],
+      ["fetch-depth: 0", "fetch-depth: 1"],
+      // gitleaks に効く環境変数を足す (ステップ / ジョブ / ワークフロー)
+      ["          PUSH_AFTER_SHA: ${{ github.sha }}", "          PUSH_AFTER_SHA: ${{ github.sha }}\n          GITLEAKS_CONFIG: other.toml"],
+      ["  gitleaks:\n    name: gitleaks\n", "  gitleaks:\n    name: gitleaks\n    env:\n      GITLEAKS_CONFIG: other.toml\n"],
+      ["env:\n  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true\n", "env:\n  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true\n  GITLEAKS_CONFIG: other.toml\n"],
+      // ステップを足す
+      ["      - name: Scan new commits for secrets\n", "      - run: gitleaks dir .\n      - name: Scan new commits for secrets\n"],
+    ];
+    expect(unmet(gitleaksRequirements(security), scope)).toEqual([]);
+    for (const [from, to] of mutations) {
+      expect(security, `写しを作る元の文字列が見つからない: ${from}`).toContain(from);
+      const mutated = security.split(from).join(to);
+      expect(unmet(gitleaksRequirements(mutated), scope).length, `変更が検出されない: ${from} → ${to}`).toBeGreaterThan(0);
+    }
+  });
+
+  it("local-ci.sh の secrets 段の一部を変えると、満たされない条件として検出する", () => {
+    const requirements = gitleaksRequirements(read(SECURITY_WORKFLOW));
+    const mutations: Array<[string, string]> = [
+      ['readonly GITLEAKS_VERSION="8.30.1"', 'readonly GITLEAKS_VERSION="8.29.0"'],
+      ['readonly GITLEAKS_SHA256_LINUX_X64="551f', 'readonly GITLEAKS_SHA256_LINUX_X64="651f'],
+      ['readonly GITLEAKS_RELEASE_URL="https://github.com/gitleaks/gitleaks/releases/download"', 'readonly GITLEAKS_RELEASE_URL="https://example.com/gitleaks"'],
+      [" --redact --no-banner", " --no-banner"],
+      ['--log-opts="${BASE_SHA}..${HEAD_SHA}"', '--log-opts="${HEAD_SHA}~1..${HEAD_SHA}"'],
+      ['run_in "$WT" "$log" gitleaks git .', 'run_in "$WT" "$log" env GITLEAKS_CONFIG=other.toml gitleaks git .'],
+      ["stage_secrets() {", "stage_secrets_renamed() {"],
+    ];
+    for (const [from, to] of mutations) {
+      expect(scriptText, `写しを作る元の文字列が見つからない: ${from}`).toContain(from);
+      const mutated = scriptText.split(from).join(to);
+      let missing: string[];
+      try {
+        missing = unmet(requirements, buildScope(mutated, GITLEAKS_STAGE));
+      } catch (e) {
+        missing = [String(e)];
+      }
+      expect(missing.length, `スクリプトの変更が検出されない: ${from} → ${to}`).toBeGreaterThan(0);
+    }
+  });
+
+  it("secrets 段を既定の段から外す・本体から呼ばなくすると検出する", () => {
+    const stageFunctions = [GITLEAKS_STAGE];
+    const mutations: Array<[string, string]> = [
+      ['readonly ALL_STAGES="secrets,', 'readonly ALL_STAGES="'],
+      ["; stage_secrets; fi", "; :; fi"],
+    ];
+    expect(stageWiringProblems(scriptText, stageFunctions)).toEqual([]);
+    for (const [from, to] of mutations) {
+      expect(scriptText, `写しを作る元の文字列が見つからない: ${from}`).toContain(from);
+      expect(stageWiringProblems(scriptText.split(from).join(to), stageFunctions).length, `変更が検出されない: ${from} → ${to}`).toBeGreaterThan(0);
+    }
   });
 });

@@ -80,6 +80,9 @@ jobs:
       # gitleaks は、バージョンと SHA-256 を固定したリリースの配布物を入れる (別のものに差し替えられていたら止まる)。
       # この版は Dependabot では上がらないので、ときどき手で上げる。上げるときは、リリースの gitleaks_<版>_checksums.txt から
       # linux_x64 の値を写し、上げたあとに手元で全体を検査して (gitleaks dir .)、新しい誤検知が増えていないかを見る。
+      # ローカル CI (scripts/local-ci.sh の secrets 段) も同じ版を使う。上げるときは、そちらの GITLEAKS_VERSION と
+      # GITLEAKS_SHA256_* (linux_x64 / linux_arm64 / darwin_x64 / darwin_arm64) も同時に上げる
+      # (ずれは tests/local-ci-workflow-sync.test.ts が検出する)。
       - name: Install gitleaks (version and checksum pinned)
         env:
           GITLEAKS_VERSION: '8.30.1'
