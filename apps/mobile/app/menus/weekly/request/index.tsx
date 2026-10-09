@@ -5,7 +5,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Alert, Image, ScrollView, Text, View } from "react-native";
 
 import { Button, Card, ChipSelector, Input, PageHeader, SectionHeader } from "../../../../src/components/ui";
-import { UltimateModeToggle } from "../../../../src/components/menu/UltimateModeToggle";
 import { getApi } from "../../../../src/lib/api";
 import { uploadFridgePhoto } from "../../../../src/lib/storage";
 import { colors, radius, spacing } from "../../../../src/theme";
@@ -132,7 +131,9 @@ export default function WeeklyRequestPage() {
 
       const api = getApi();
 
-      // 通常モード: WEB 形式 constraints で送信 (ultimateMode は WEB に揃えて false 固定)
+      // WEB 形式 constraints で送信。
+      // この API (/api/ai/menu/weekly/request) は究極モード (ultimateMode) を受け付けない。
+      // 究極モードは、週間献立画面の AI アシスタント (V4GenerateModal → /api/ai/menu/v4/generate) から選ぶ (#1142)。
       // 過渡期: cookingTime は固定値 (PR 3-2 でスライダー追加予定)
       await api.post("/api/ai/menu/weekly/request", {
         startDate: weekStartStr,
@@ -146,7 +147,6 @@ export default function WeeklyRequestPage() {
         inventoryImageUrl: inventoryImageUrl ?? null,
         detectedIngredients: ingredients,
         note: note.trim() || null,
-        ultimateMode: false,
       });
       Alert.alert("生成開始", "週間献立の生成を開始しました。生成中は「生成中...」と表示されます。");
 
@@ -280,9 +280,6 @@ export default function WeeklyRequestPage() {
           />
         </View>
       </Card>
-
-      {/* 究極モードトグル (WEB に揃えて disabled) */}
-      <UltimateModeToggle enabled={false} />
 
       <Button testID="weekly-request-submit-button" onPress={submit} disabled={isSubmitting || isUploading} loading={isSubmitting} size="lg">
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>

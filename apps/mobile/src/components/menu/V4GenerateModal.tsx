@@ -44,7 +44,8 @@ export interface V4GenerateParams {
   resolveExistingMeals: boolean;
   constraints: MenuGenerationConstraints;
   note: string;
-  ultimateMode: false;
+  /** 究極モード (AIが献立を見直して栄養バランスを改善)。全員が使える (#1142) */
+  ultimateMode: boolean;
 }
 
 // ── Sandbox props (discriminated union) ──────────────────────
@@ -379,6 +380,8 @@ function V4GenerateModalNormal({
   });
 
   const [note, setNote] = useState("");
+  // 究極モード。通常より時間がかかるため既定は OFF にし、モーダルを開くたびに OFF に戻す (WEB と同じ)
+  const [ultimateMode, setUltimateMode] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // モーダルが開くたびに状態をリセット
@@ -386,6 +389,7 @@ function V4GenerateModalNormal({
     if (visible) {
       setIsSubmitting(false);
       setIncludeExisting(false); // 破壊的フラグは毎回リセット
+      setUltimateMode(false);
     }
   }, [visible]);
 
@@ -524,7 +528,7 @@ function V4GenerateModalNormal({
         resolveExistingMeals: includeExisting,
         constraints,
         note,
-        ultimateMode: false,
+        ultimateMode,
       });
     } catch {
       setIsSubmitting(false);
@@ -825,8 +829,12 @@ function V4GenerateModalNormal({
               <ConditionPills values={constraints} onChange={setConstraints} />
             </View>
 
-            {/* 究極モード (PR 4-3) */}
-            <UltimateModeToggle enabled={false} />
+            {/* 究極モード (#1142: 全員に開放) */}
+            <UltimateModeToggle
+              value={ultimateMode}
+              onValueChange={setUltimateMode}
+              disabled={isSubmitting || isGenerating}
+            />
 
             {/* メモ */}
             <TextInput

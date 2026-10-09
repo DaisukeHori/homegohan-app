@@ -25,7 +25,7 @@ Step 2 は **「ボタン 1 つで明日の献立が決まる」体験を提供�
 | `generation-retry-button` | リトライ |
 | `success-message-title` | 成功メッセージ |
 | `success-message-body` | 同上 |
-| `ultimate-mode-toggle` | (Premium、disabled) |
+| `ultimate-mode-toggle` | 究極モードのスイッチ (全員に開放 / #1142) |
 
 ### 2.3 既存 API
 - `POST /api/ai/menu/v5/generate` (V4 で v5 という命名)

@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { Alert, Pressable, Switch, Text, View } from "react-native";
+import { Pressable, Switch, Text, View } from "react-native";
 
 import { radius, spacing } from "../../theme";
 
@@ -12,8 +12,8 @@ const C = {
   card: "#FFFFFF",
   text: "#2D2D2D",
   textLight: "#6B6B6B",
-  textMuted: "#A0A0A0",
-  purple: "#7C6BA0",
+  accent: "#E07A5F",
+  accentLight: "#FDF0ED",
   border: "#E8E8E8",
 } as const;
 
@@ -21,32 +21,38 @@ const C = {
 // Props
 // ============================================================
 interface Props {
-  /** 将来用プレースホルダ。本 PR では常に false (disabled) */
-  enabled?: boolean;
+  /** 究極モードが ON か */
+  value: boolean;
+  /** 押されたとき、切り替え後の値を渡す */
+  onValueChange: (next: boolean) => void;
+  /** 生成中など、操作させないとき */
+  disabled?: boolean;
 }
 
 // ============================================================
 // UltimateModeToggle
 // ============================================================
-export const UltimateModeToggle: React.FC<Props> = ({ enabled = false }) => {
-  const handlePress = () => {
-    if (!enabled) {
-      Alert.alert(
-        "究極モード",
-        "究極モードは Premium プラン準備中です。今しばらくお待ちください。"
-      );
-    }
-  };
-
+// 究極モード: AIが献立を自動で見直し、栄養バランスを改善する。
+// 以前は Premium プラン向けとして常に OFF・操作不可 (「準備中」) だったが、
+// プランによる制限は無く、全員が使える (#1142)。WEB の AI アシスタントと同じ。
+export const UltimateModeToggle: React.FC<Props> = ({
+  value,
+  onValueChange,
+  disabled = false,
+}) => {
   return (
     <Pressable
       testID="ultimate-mode-toggle"
-      onPress={handlePress}
+      accessibilityRole="switch"
+      accessibilityLabel="究極モード"
+      accessibilityState={{ checked: value, disabled }}
+      disabled={disabled}
+      onPress={() => onValueChange(!value)}
       style={{
         padding: spacing.md,
         borderRadius: radius.xl,
-        backgroundColor: C.bg,
-        opacity: enabled ? 1 : 0.65,
+        backgroundColor: value ? C.accentLight : C.bg,
+        opacity: disabled ? 0.6 : 1,
         flexDirection: "row",
         alignItems: "center",
         gap: spacing.md,
@@ -58,46 +64,44 @@ export const UltimateModeToggle: React.FC<Props> = ({ enabled = false }) => {
           width: 40,
           height: 40,
           borderRadius: 20,
-          backgroundColor: C.border,
+          backgroundColor: value ? C.accent : C.border,
           alignItems: "center",
           justifyContent: "center",
         }}
       >
-        <Ionicons name="ribbon" size={20} color={C.purple} />
+        <Ionicons
+          name="color-wand"
+          size={20}
+          color={value ? C.card : C.textLight}
+        />
       </View>
 
       {/* テキスト */}
       <View style={{ flex: 1 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <Text style={{ fontSize: 14, fontWeight: "700", color: C.text }}>
-            究極モード
-          </Text>
-          <View
-            style={{
-              backgroundColor: "#FEF3C7",
-              paddingHorizontal: 6,
-              paddingVertical: 2,
-              borderRadius: radius.sm,
-            }}
-          >
-            <Text style={{ fontSize: 10, fontWeight: "700", color: "#D97706" }}>
-              Premium
-            </Text>
-          </View>
-          <Text style={{ fontSize: 11, color: C.textMuted }}>準備中</Text>
-        </View>
+        <Text style={{ fontSize: 14, fontWeight: "700", color: C.text }}>
+          究極モード
+        </Text>
         <Text style={{ fontSize: 12, color: C.textLight, marginTop: 2 }}>
           AIが献立を自動で見直し、栄養バランスを改善
         </Text>
+        <Text style={{ fontSize: 12, color: C.textLight }}>
+          通常より生成に時間がかかります
+        </Text>
       </View>
 
-      {/* トグルスイッチ (常に off / disabled) */}
-      <Switch
-        value={false}
-        disabled={!enabled}
-        trackColor={{ false: C.border, true: C.border }}
-        thumbColor={C.card}
-      />
+      {/* スイッチ (見た目だけ)。押す操作は行全体の Pressable が受けるので、Switch 自身は触れないようにして二重に切り替わるのを防ぐ */}
+      <View
+        pointerEvents="none"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      >
+        <Switch
+          value={value}
+          disabled={disabled}
+          trackColor={{ false: C.border, true: C.accent }}
+          thumbColor={C.card}
+        />
+      </View>
     </Pressable>
   );
 };
