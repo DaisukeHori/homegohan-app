@@ -16,8 +16,8 @@
 //
 // 注意: このテストの supabase-js は偽物なので、PostgREST が実際にクエリを受け付けるかは確かめない。
 // 実 DB での確認は tests/integration/rls/stats-edge-functions-user-daily-meals.test.ts が担当する。
-// 期間 (週の境界) の求め方は #1211 の担当なので、具体的な日付は固定せず、
-// 「レスポンスの periodStart / periodEnd と、クエリに渡した日付が一致する」ことだけを見る。
+// 期間 (週・月・日の境界) の求め方は #1211 の担当で、末尾の「集計期間は JST の暦で決まる」で、固定した時刻を使って確かめる。
+// それ以外のテストは具体的な日付を固定せず、「レスポンスの periodStart / periodEnd と、クエリに渡した日付が一致する」ことだけを見る。
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -139,6 +139,8 @@ interface Db {
   metrics?: Row[];
   /** 前の期間の user_metrics (変化率の計算元) */
   prevMetrics: Row[];
+  /** meals の行 (user_id, eaten_at)。省略すると空。eaten_at の絞り込み (gte / gt / lte / lt) は問い合わせのとおりに適用する */
+  meals?: Row[];
   badges: Row[];
   /** 書き込まれた行 */
   saved: { user_metrics: Row[]; segment_stats: Row[]; user_segment_rankings: Row[]; user_badges: Row[] };
@@ -155,6 +157,19 @@ function newDb(overrides: Partial<Db> = {}): Db {
     saved: { user_metrics: [], segment_stats: [], user_segment_rankings: [], user_badges: [] },
     ...overrides,
   };
+}
+
+/** meals への問い合わせの eaten_at の絞り込み (gte / gt / lte / lt) を、PostgREST と同じように行へ適用する */
+function mealsWithin(rows: Row[], query: RecordedQuery): Row[] {
+  const bound = (method: string): number | undefined => {
+    const value = argsOf(query, method).find((args) => args[0] === "eaten_at")?.[1];
+    return value === undefined ? undefined : Date.parse(String(value));
+  };
+  const [gte, gt, lte, lt] = [bound("gte"), bound("gt"), bound("lte"), bound("lt")];
+  return rows.filter((row) => {
+    const at = Date.parse(String(row.eaten_at));
+    return (gte === undefined || at >= gte) && (gt === undefined || at > gt) && (lte === undefined || at <= lte) && (lt === undefined || at < lt);
+  });
 }
 
 /** upsert の第 1 引数 (行、または行の配列) を、行の配列にして返す */
@@ -178,8 +193,9 @@ function install(db: Db) {
       case "user_profiles":
         return { data: pageOf(db.profiles, query) };
       case "health_streaks":
-      case "meals":
         return { data: [] };
+      case "meals":
+        return { data: pageOf(mealsWithin(db.meals ?? [], query), query) };
       case "planned_meals":
         return { data: pageOf(db.planned, query) };
       case "badges":
@@ -873,5 +889,157 @@ describe("calculate-segment-stats: 認証", () => {
     expect(wrong.res.status).toBe(401);
     expect(missing.res.status).toBe(401);
     expect(queries).toEqual([]);
+  });
+});
+
+// ── 集計期間は JST の暦で決まる (#1211) ──────────────────────────────────────
+//
+// Edge Function (Deno) の実行環境のタイムゾーンは UTC。以前は new Date() の getDay() / getDate() / getMonth() で期間を求めていたので、
+// JST の 00:00〜08:59 (UTC では前日) の間は、月曜の早朝が日曜日扱いで週の開始日が 1 週間前の月曜に、月初は前月に、毎日は前日になっていた。
+// 時刻は Date だけを固定する (setTimeout などには触れない)。期間の求め方そのものは tests/jst-period.test.ts が確かめる。
+// ここでは、ハンドラがその期間を、保存・読み出し・前の期間の探索・meals の絞り込みの全部に使うことを見る。
+
+/** 現在時刻 (Date) を固定する */
+function setNow(iso: string) {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(iso));
+}
+
+describe("calculate-segment-stats: 集計期間は JST の暦で決まる (#1211)", () => {
+  const originalTz = process.env.TZ;
+
+  afterEach(() => {
+    vi.useRealTimers();
+    if (originalTz === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTz;
+  });
+
+  // [periodType, 現在時刻 (UTC), 期間の開始日, 期間の終了日, 説明]
+  const boundaries: Array<[string, string, string, string, string]> = [
+    ["weekly", "2026-07-12T14:59:59.999Z", "2026-07-06", "2026-07-12", "JST 日曜 7/12 23:59:59 は、まだ前の週"],
+    ["weekly", "2026-07-12T15:00:00.000Z", "2026-07-13", "2026-07-19", "JST 月曜 7/13 0:00 から新しい週 (UTC はまだ日曜。修正前は前の週のままだった)"],
+    ["weekly", "2026-07-12T23:59:59.999Z", "2026-07-13", "2026-07-19", "JST 月曜 7/13 8:59:59 も新しい週 (UTC はまだ日曜)"],
+    ["monthly", "2026-07-31T14:59:59.999Z", "2026-07-01", "2026-07-31", "JST 7/31 23:59:59 は、まだ 7 月"],
+    ["monthly", "2026-07-31T15:00:00.000Z", "2026-08-01", "2026-08-31", "JST 8/1 0:00 から 8 月 (UTC はまだ 7/31。修正前は 7 月のままだった)"],
+    ["daily", "2026-07-12T14:59:59.999Z", "2026-07-12", "2026-07-12", "JST 7/12 23:59:59 は、まだ 7/12"],
+    ["daily", "2026-07-12T15:00:00.000Z", "2026-07-13", "2026-07-13", "JST 7/13 0:00 から 7/13 (UTC はまだ 7/12。修正前は前日のままだった)"],
+    ["all_time", "2026-07-12T15:00:00.000Z", "2024-01-01", "2026-07-13", "全期間は 2024-01-01 から JST の今日まで"],
+  ];
+
+  it.each(boundaries)("%s @ %s → %s 〜 %s (%s)", async (periodType, now, start, end) => {
+    setNow(now);
+    const db = newDb();
+    const { queries } = install(db);
+
+    const { res, json } = await call({ periodType });
+
+    expect(res.status).toBe(200);
+    expect(json).toMatchObject({ periodType, periodStart: start, periodEnd: end });
+
+    // 保存する行は、すべて同じ期間
+    expect(db.saved.user_metrics).toHaveLength(20);
+    for (const row of db.saved.user_metrics) {
+      expect(row).toMatchObject({ period_type: periodType, period_start: start, period_end: end });
+    }
+    expect(db.saved.segment_stats).toHaveLength(4);
+    for (const row of db.saved.segment_stats) {
+      expect(row).toMatchObject({ period_type: periodType, period_start: start, period_end: end });
+    }
+    expect(db.saved.user_segment_rankings).toHaveLength(20);
+    for (const row of db.saved.user_segment_rankings) {
+      expect(row).toMatchObject({ period_type: periodType, period_start: start });
+    }
+
+    // 食事の予定 (day_date は JST の暦日) は、その期間の開始日と終了日で絞る
+    const planned = queriesOf(queries, "planned_meals");
+    expect(argsOf(planned[0], "gte")).toEqual([["user_daily_meals.day_date", start]]);
+    expect(argsOf(planned[0], "lte")).toEqual([["user_daily_meals.day_date", end]]);
+  });
+
+  // [periodType, 現在時刻 (UTC), 今の期間の開始日, 前の期間の開始日]
+  const previousPeriods: Array<[string, string, string, string]> = [
+    ["weekly", "2026-07-12T15:00:00.000Z", "2026-07-13", "2026-07-06"],
+    ["weekly", "2026-12-31T15:00:00.000Z", "2026-12-28", "2026-12-21"], // 年またぎ (JST 2027/1/1 金曜の週)
+    ["monthly", "2026-07-31T15:00:00.000Z", "2026-08-01", "2026-07-01"],
+    ["monthly", "2026-12-31T15:00:00.000Z", "2027-01-01", "2026-12-01"], // 年またぎ
+    ["monthly", "2027-02-28T15:00:00.000Z", "2027-03-01", "2027-02-01"],
+  ];
+
+  it.each(previousPeriods)("前の期間の探索: %s @ %s は、今の期間 %s の 1 つ前 (%s) の user_metrics を読む", async (periodType, now, start, previousStart) => {
+    setNow(now);
+    const db = newDb();
+    const { queries } = install(db);
+
+    const { json } = await call({ periodType });
+
+    expect(json.periodStart).toBe(start);
+    const previous = queriesOf(queries, "user_metrics").filter((q) => firstMethodOf(q) === "select");
+    expect(previous).toHaveLength(1);
+    expect(eqValue(previous[0], "period_type")).toBe(periodType);
+    expect(eqValue(previous[0], "period_start")).toBe(previousStart);
+  });
+
+  it("毎日 (daily) と全期間 (all_time) は、前の期間を探さない", async () => {
+    for (const periodType of ["daily", "all_time"]) {
+      setNow("2026-07-12T15:00:00.000Z");
+      const { queries } = install(newDb());
+
+      await call({ periodType });
+
+      expect(queriesOf(queries, "user_metrics").filter((q) => firstMethodOf(q) === "select"), periodType).toEqual([]);
+    }
+  });
+
+  it("前の期間の開始日は、実行環境のタイムゾーン (サマータイムのある地域も含む) に左右されない", async () => {
+    // 米国西海岸は 2026-11-01 にサマータイムが終わる。ローカル時刻の setDate() で 7 日戻すと、日付がずれる地域がある。
+    // 2026-11-01T15:00Z は JST 月曜 11/2 0:00 → 今週は 11/2 始まり、前の週は 10/26 始まり
+    for (const tz of ["UTC", "Asia/Tokyo", "America/Los_Angeles", "Europe/London", "Pacific/Kiritimati"]) {
+      process.env.TZ = tz;
+      setNow("2026-11-01T15:00:00.000Z");
+      const { queries } = install(newDb());
+
+      const { json } = await call({ periodType: "weekly" });
+
+      expect(json.periodStart, tz).toBe("2026-11-02");
+      const previous = queriesOf(queries, "user_metrics").filter((q) => firstMethodOf(q) === "select");
+      expect(eqValue(previous[0], "period_start"), tz).toBe("2026-10-26");
+    }
+  });
+
+  it("meals (timestamptz) は、期間の初日の JST 0 時〜終了日の翌日の JST 0 時の手前で絞り、記録した日数は JST の暦日で数える", async () => {
+    setNow("2026-07-12T15:00:00.000Z"); // JST 月曜 7/13 0:00 → 今週は 7/13〜7/19
+    const meal = (no: number, eatenAt: string) => ({ user_id: uid(no), eaten_at: eatenAt });
+    const db = newDb({
+      metrics: [{ id: "m-rec", code: "weekly_record_rate", name: "週の記録率", higher_is_better: true, is_active: true }],
+      planned: [],
+      meals: [
+        // u1: JST 月曜 8:30 と 9:30。UTC では 7/12 と 7/13 の別の日だが、JST ではどちらも 7/13 → 1 日
+        meal(1, "2026-07-12T23:30:00+00:00"),
+        meal(1, "2026-07-13T00:30:00+00:00"),
+        // u2: JST 日曜 7/12 23:30 (前の週の最後) → 今週には数えない
+        meal(2, "2026-07-12T14:30:00+00:00"),
+        // u3: JST 日曜 7/19 23:30 (今週の最後) → 1 日
+        meal(3, "2026-07-19T14:30:00+00:00"),
+        // u4: JST 月曜 7/20 0:30 (次の週の最初) → 今週には数えない
+        meal(4, "2026-07-19T15:30:00+00:00"),
+      ],
+    });
+    const { queries } = install(db);
+
+    const { res, json } = await call({ periodType: "weekly" });
+
+    expect(res.status).toBe(200);
+    expect(json).toMatchObject({ periodStart: "2026-07-13", periodEnd: "2026-07-19" });
+
+    // 期間内の meals の問い合わせ (全期間の件数を数える問い合わせは eaten_at で絞らない)
+    const inPeriod = queriesOf(queries, "meals").filter((q) => argsOf(q, "gte").length > 0);
+    expect(inPeriod).toHaveLength(1);
+    expect(argsOf(inPeriod[0], "gte")).toEqual([["eaten_at", "2026-07-12T15:00:00.000Z"]]); // JST 7/13 0:00 (含む)
+    expect(argsOf(inPeriod[0], "lt")).toEqual([["eaten_at", "2026-07-19T15:00:00.000Z"]]); // JST 7/20 0:00 (含まない)
+    expect(argsOf(inPeriod[0], "lte")).toEqual([]);
+
+    // 7 日間のうち記録した日数の割合 (1 日 → 14%)
+    const rate = (no: number) => metricRow(db, no, "m-rec").value;
+    expect([1, 2, 3, 4, 5].map(rate)).toEqual([14, 0, 14, 0, 0]);
   });
 });

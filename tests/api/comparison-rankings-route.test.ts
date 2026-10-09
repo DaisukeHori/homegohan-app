@@ -15,12 +15,14 @@
  *       他 3 クエリの error → 無視して空扱いで 200
  *       例外               → 500 と error メッセージ
  *
- * 期間 (periodStart / periodEnd) の境界計算は #1211 の担当。ここでは具体的な日付を固定せず、
+ * 期間 (periodStart / periodEnd) の境界 (JST の暦) は #1211 の担当で、末尾の「集計期間は JST の暦で決まる」で、
+ * 固定した時刻を使って確かめる。それ以外のテストは具体的な日付を固定せず、
  * 「4 クエリに渡した periodStart とレスポンスの periodStart が一致する」ことだけを見る
  * (実行マシンのタイムゾーンにも依存しない)。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MetricDefinition, SegmentDefinition } from '@/types/comparison';
+import { calculateJstPeriod } from '../../supabase/functions/_shared/jst-date.ts';
 
 // ── supabase/server モック ────────────────────────────────────────────────────
 
@@ -583,5 +585,101 @@ describe('GET /api/comparison/rankings: エラー処理 (従来どおり)', () =
     // 2 つ目の reject が未処理のまま残らないこと (残ると Vitest が unhandled rejection として失敗にする)。
     // テストが終わる前に、残りのタイマーを消化させておく。
     await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+});
+
+// ── 集計期間は JST の暦で決まる (#1211) ──────────────────────────────────────
+//
+// 以前は new Date() の getDay() / getDate() / getMonth() (Vercel の実行環境は UTC) で期間を求めていたので、
+// JST の 00:00〜08:59 (UTC では前日) の間は、月曜の早朝が日曜日扱いで週の開始日が 1 週間前の月曜に、月初は前月に、
+// 毎日は前日になっていた。集計の Edge Function (calculate-segment-stats) が保存する period_start と
+// 食い違うと、新しい週の集計が見つからない (または前の週の数字が出る)。
+// 期間の求め方そのものは tests/jst-period.test.ts が確かめる。ここでは、この API がその期間で読むことを見る。
+
+describe('GET /api/comparison/rankings: 集計期間は JST の暦で決まる (#1211)', () => {
+  const originalTz = process.env.TZ;
+
+  afterEach(() => {
+    vi.useRealTimers();
+    if (originalTz === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTz;
+  });
+
+  /** 現在時刻 (Date だけ) を固定する。DB の往復を模した setTimeout は本物のまま動かす */
+  function setNow(iso: string) {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(iso));
+  }
+
+  // [periodType, 現在時刻 (UTC), 期間の開始日, 期間の終了日, 説明]
+  const boundaries: Array<[string, string, string, string, string]> = [
+    ['weekly', '2026-07-12T14:59:59.999Z', '2026-07-06', '2026-07-12', 'JST 日曜 7/12 23:59:59 は、まだ前の週'],
+    ['weekly', '2026-07-12T15:00:00.000Z', '2026-07-13', '2026-07-19', 'JST 月曜 7/13 0:00 から新しい週 (UTC はまだ日曜。修正前は前の週のままだった)'],
+    ['weekly', '2026-07-12T23:59:59.999Z', '2026-07-13', '2026-07-19', 'JST 月曜 7/13 8:59:59 も新しい週 (UTC はまだ日曜)'],
+    ['monthly', '2026-07-31T14:59:59.999Z', '2026-07-01', '2026-07-31', 'JST 7/31 23:59:59 は、まだ 7 月'],
+    ['monthly', '2026-07-31T15:00:00.000Z', '2026-08-01', '2026-08-31', 'JST 8/1 0:00 から 8 月 (UTC はまだ 7/31。修正前は 7 月のままだった)'],
+    ['daily', '2026-07-12T14:59:59.999Z', '2026-07-12', '2026-07-12', 'JST 7/12 23:59:59 は、まだ 7/12'],
+    ['daily', '2026-07-12T15:00:00.000Z', '2026-07-13', '2026-07-13', 'JST 7/13 0:00 から 7/13 (UTC はまだ 7/12。修正前は前日のままだった)'],
+    ['all_time', '2026-07-12T15:00:00.000Z', '2024-01-01', '2026-07-13', '全期間は 2024-01-01 から JST の今日まで (集計側が保存する全期間と同じ。修正前は直近 7 日を探していた)'],
+  ];
+
+  it.each(boundaries)('%s @ %s → %s 〜 %s (%s)', async (periodType, now, start, end) => {
+    setNow(now);
+
+    const res = await GET(makeRequest(`?periodType=${periodType}`));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json).toMatchObject({ periodType, periodStart: start, periodEnd: end });
+    // 期間で絞る 3 クエリも、同じ開始日で読む
+    for (const table of ['user_segment_rankings', 'segment_stats', 'user_metrics']) {
+      expect(issued.find((q) => q.table === table)?.ops, table).toContainEqual(['eq', 'period_start', start]);
+    }
+  });
+
+  it('periodType を省略すると週 (weekly) で、JST の月曜 0 時から新しい週になる', async () => {
+    setNow('2026-07-12T15:00:00.000Z');
+
+    const res = await GET(makeRequest());
+    const json = await res.json();
+
+    expect(json).toMatchObject({ periodType: 'weekly', periodStart: '2026-07-13', periodEnd: '2026-07-19' });
+  });
+
+  it('集計の Edge Function (calculate-segment-stats) が保存する期間と、同じ期間で読む (保存側と読み出し側が食い違わない)', async () => {
+    for (const now of [
+      '2026-07-12T14:59:59.999Z',
+      '2026-07-12T15:00:00.000Z',
+      '2026-07-12T23:59:59.999Z',
+      '2026-07-13T00:00:00.000Z',
+      '2026-07-31T15:00:00.000Z',
+      '2026-12-31T15:00:00.000Z',
+      '2028-02-28T15:00:00.000Z',
+    ]) {
+      setNow(now);
+      for (const periodType of ['daily', 'weekly', 'monthly', 'all_time']) {
+        const res = await GET(makeRequest(`?periodType=${periodType}`));
+        const json = await res.json();
+
+        expect({ periodStart: json.periodStart, periodEnd: json.periodEnd }, `${periodType} @ ${now}`).toEqual(
+          calculateJstPeriod(periodType, new Date(now)),
+        );
+      }
+    }
+  });
+
+  it('実行環境のタイムゾーンに左右されない (JST の実行環境でも、サマータイムのある地域でも同じ期間)', async () => {
+    for (const tz of ['UTC', 'Asia/Tokyo', 'America/Los_Angeles', 'Pacific/Kiritimati', 'Pacific/Midway']) {
+      process.env.TZ = tz;
+      setNow('2026-07-12T15:00:00.000Z'); // JST 月曜 7/13 0:00
+
+      const weekly = await (await GET(makeRequest('?periodType=weekly'))).json();
+      const monthly = await (await GET(makeRequest('?periodType=monthly'))).json();
+      const daily = await (await GET(makeRequest('?periodType=daily'))).json();
+
+      expect([weekly.periodStart, weekly.periodEnd], `${tz} weekly`).toEqual(['2026-07-13', '2026-07-19']);
+      expect([monthly.periodStart, monthly.periodEnd], `${tz} monthly`).toEqual(['2026-07-01', '2026-07-31']);
+      expect([daily.periodStart, daily.periodEnd], `${tz} daily`).toEqual(['2026-07-13', '2026-07-13']);
+    }
   });
 });
