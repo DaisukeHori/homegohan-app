@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { calculateNutritionTargets, applyPerformanceGuardrails } from './calculate';
-import { ageToAgeGroup, getDRIValue } from './dri-tables';
+import { ageToAgeGroup, getDRIValue, SUGAR_APP_DEFAULT } from './dri-tables';
 import type {
   CutStrategy,
   NutritionCalculatorInput,
@@ -654,5 +654,122 @@ describe('calculateNutritionTargets: rapid cut strategy (#1208)', () => {
     expect(withProfile.targetData.daily_calories).toBe(final_kcal);
     expect(withProfile.targetData.daily_calories).toBe(withoutProfile.targetData.daily_calories);
     expect(withProfile.calculationBasis.guardrails).toBeUndefined();
+  });
+});
+
+// ================================================
+// 糖質 (sugar_g) の目標 (#1146)
+// ================================================
+//
+// 献立の糖質は「炭水化物 − 食物繊維」で計算する。目標も同じ定義にそろえる。
+// (以前は WHO の遊離糖の推奨 = エネルギーの5% ≒ 25g で、糖質の実績と比べると常に「過剰」になっていた)
+// 注意: 導出式と炭水化物の比率は管理栄養士の確認前の暫定値。確認の結果で変えるときは、
+// 数値の固定値ではなく「炭水化物の目標 − 食物繊維の目標」という関係を守っているかを見ること。
+describe('糖質 (sugar_g) の目標: 炭水化物の目標 − 食物繊維の目標 (#1146)', () => {
+  const baseInput: NutritionCalculatorInput = {
+    id: 'sugar-target-user',
+    age: 30,
+    gender: 'male',
+    height: 175,
+    weight: 70,
+  };
+
+  it('SUGAR_APP_DEFAULT.calculateFromCarbs は 炭水化物 − 食物繊維 を g 単位で丸めて返す', () => {
+    expect(SUGAR_APP_DEFAULT.calculateFromCarbs(295, 21)).toBe(274);
+    expect(SUGAR_APP_DEFAULT.calculateFromCarbs(250.4, 20.2)).toBe(230);
+  });
+
+  it('SUGAR_APP_DEFAULT.calculateFromCarbs は食物繊維の目標が炭水化物の目標以上でも負にならない', () => {
+    expect(SUGAR_APP_DEFAULT.calculateFromCarbs(10, 25)).toBe(0);
+    expect(SUGAR_APP_DEFAULT.calculateFromCarbs(25, 25)).toBe(0);
+  });
+
+  it('targetData.sugar_g は carbs_g − fiber_g になる (WHO 遊離糖の 5% ではない)', () => {
+    const { targetData } = calculateNutritionTargets(baseInput);
+
+    expect(targetData.sugar_g).toBe(targetData.carbs_g - targetData.fiber_g);
+
+    // 以前の値 (エネルギーの5% ÷ 4kcal/g ≒ 25g) とは桁が違う
+    const legacyWhoFreeSugar = Math.round((targetData.daily_calories * 0.05) / 4);
+    expect(legacyWhoFreeSugar).toBeLessThan(40);
+    expect(targetData.sugar_g).toBeGreaterThan(legacyWhoFreeSugar * 5);
+    // 献立で計算される糖質 (1日 200〜300g 前後) と比べられる大きさ
+    expect(targetData.sugar_g).toBeGreaterThan(150);
+    expect(targetData.sugar_g).toBeLessThan(targetData.carbs_g);
+  });
+
+  it('計算根拠 (references.sugar_g) も同じ値で、出典は WHO ではなく炭水化物・食物繊維の目標を示す', () => {
+    const { targetData, calculationBasis } = calculateNutritionTargets(baseInput);
+    const reference = calculationBasis.references.sugar_g;
+
+    expect(reference).toBeDefined();
+    expect(reference.final_value).toBe(targetData.sugar_g);
+    expect(reference.reference_value).toBe(targetData.sugar_g);
+    expect(reference.source.url).not.toContain('who.int');
+    expect(reference.source.title).not.toContain('WHO');
+    expect(reference.source.title).toContain('炭水化物');
+    expect(reference.source.title).toContain('食物繊維');
+  });
+
+  it('炭水化物の比率を下げる目標では糖質の目標も小さくなる (減量 45% < 維持 55%)', () => {
+    const maintain = calculateNutritionTargets({ ...baseInput, nutrition_goal: 'maintain' });
+    const lose = calculateNutritionTargets({ ...baseInput, nutrition_goal: 'lose_weight' });
+
+    expect(lose.targetData.sugar_g).toBe(lose.targetData.carbs_g - lose.targetData.fiber_g);
+    expect(lose.targetData.sugar_g).toBeLessThan(maintain.targetData.sugar_g);
+  });
+
+  it('糖尿病: 固定の 25g にせず、炭水化物 40% と食物繊維 25g 以上から導く', () => {
+    const { targetData, calculationBasis } = calculateNutritionTargets({
+      ...baseInput,
+      health_conditions: ['糖尿病'],
+    });
+
+    expect(calculationBasis.macros.ratios.carbs).toBe(0.4);
+    expect(targetData.fiber_g).toBeGreaterThanOrEqual(25);
+    expect(targetData.sugar_g).toBe(targetData.carbs_g - targetData.fiber_g);
+    expect(targetData.sugar_g).not.toBe(25);
+
+    // 糖質だけを固定値に書き換える調整は記録されない (食物繊維の増加だけが残る)
+    const diabetes = calculationBasis.health_adjustments?.find((a) => a.condition === '糖尿病');
+    expect(diabetes).toBeDefined();
+    expect(diabetes!.adjustments.map((a) => a.nutrient)).toEqual(['fiber_g']);
+    expect(calculationBasis.references.sugar_g.final_value).toBe(targetData.sugar_g);
+  });
+
+  it.each([
+    ['小柄な高齢女性', { age: 78, gender: 'female', height: 148, weight: 42 } as const],
+    ['妊娠中', { age: 32, gender: 'female', height: 160, weight: 55, pregnancy_status: 'pregnant' } as const],
+    ['未成年 (成長期保護)', { age: 14, gender: 'male', height: 160, weight: 50 } as const],
+    ['急速減量 (ガードレール)', { age: 30, gender: 'male', height: 185, weight: 90, nutrition_goal: 'lose_weight' } as const],
+    ['入力なし (既定値)', {} as const],
+  ])('どの入力でも糖質の目標は最終の炭水化物 − 食物繊維に一致し、負にならない: %s', (_label, overrides) => {
+    const { targetData, calculationBasis } = calculateNutritionTargets({
+      id: 'sugar-invariant-user',
+      ...overrides,
+    } as NutritionCalculatorInput);
+
+    expect(targetData.sugar_g).toBe(Math.max(0, targetData.carbs_g - targetData.fiber_g));
+    expect(targetData.sugar_g).toBeGreaterThanOrEqual(0);
+    expect(calculationBasis.references.sugar_g.final_value).toBe(targetData.sugar_g);
+  });
+
+  it('ガードレールで炭水化物が変わっても、糖質の目標は調整後の炭水化物に追従する', () => {
+    const { targetData, calculationBasis } = calculateNutritionTargets({
+      id: 'sugar-guardrail-user',
+      age: 30,
+      gender: 'male',
+      height: 185,
+      weight: 90,
+      work_style: 'moderately_active',
+      exercise_intensity: 'intense',
+      exercise_frequency: 4,
+      nutrition_goal: 'lose_weight',
+      weight_change_rate: 'aggressive',
+      performance_profile: makeCutProfile({ strategy: 'rapid' }),
+    });
+
+    expect(targetData.sugar_g).toBe(Math.max(0, targetData.carbs_g - targetData.fiber_g));
+    expect(calculationBasis.references.sugar_g.final_value).toBe(targetData.sugar_g);
   });
 });

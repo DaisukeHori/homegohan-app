@@ -8,6 +8,7 @@ import {
   ArrowLeft, Scale, CheckCircle2, AlertTriangle,
 } from 'lucide-react';
 import { todayLocal } from '@/lib/date-utils';
+import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
 
 const colors = {
   bg: '#FAF9F7',
@@ -17,12 +18,8 @@ const colors = {
   textMuted: '#9A9A9A',
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
-  success: '#4CAF50',
-  successLight: '#E8F5E9',
-  warning: '#FF9800',
-  warningLight: '#FFF3E0',
-  error: '#F44336',
-  errorLight: '#FFEBEE',
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
   purple: '#7C4DFF',
   purpleLight: '#EDE7F6',
   blue: '#2196F3',
@@ -248,7 +245,7 @@ export default function QuickRecordPage() {
             {saveError && (
               <div className="flex items-start gap-2 p-3 rounded-lg" style={{ backgroundColor: colors.errorLight }}>
                 <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" style={{ color: colors.error }} />
-                <p className="text-sm" style={{ color: colors.error }}>{saveError}</p>
+                <p className="text-sm" style={{ color: colors.dangerText }}>{saveError}</p>
               </div>
             )}
 

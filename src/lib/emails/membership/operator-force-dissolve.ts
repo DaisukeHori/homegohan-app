@@ -3,7 +3,9 @@
  * docs/design/membership/05-operator-emergency-ui.md §8 準拠
  */
 
-import type { EmailEnvelope } from './templates';
+import type { EmailEnvelope } from '../envelope';
+import { emailSignature } from '../common';
+import { getEmailFrom, getSupportEmail } from '@/lib/site-config';
 
 export type ForceDissolveEmailVars = {
   recipient_email: string;
@@ -32,17 +34,16 @@ ${vars.reason}
 メンバーシップは自動的に解除されています。
 今後も引き続きほめゴハンを個人でご利用いただけます。
 
-ご不明な点がございましたら support@homegohan.app までお問い合わせください。
+ご不明な点がございましたら ${getSupportEmail()} までお問い合わせください。
 
-─────────────────
-ほめゴハン
-https://homegohan.app
+${emailSignature()}
 `;
 
   const subjectScope = vars.scope === 'organization' ? '組織' : '家族グループ';
   return {
+    template: 'operator_force_dissolve',
     to: vars.recipient_email,
-    from: 'ほめゴハン <noreply@homegohan.app>',
+    from: getEmailFrom(),
     subject: `【ほめゴハン】運営により${subjectScope}「${vars.scope_name}」が解散されました`,
     text: body,
   };
