@@ -16,10 +16,16 @@
  *   4. 分類が古くならない (載せた関数が無くなった・判定を呼ぶようになった・使う関数が判定しなくなったら失敗する)
  *   5. 1 の API を呼ぶアプリのファイルの一覧が、下の AI_ENTRY_FILES と一致する (足した・消したら、ここで気づく)
  *   6. アプリは Edge Function を直接呼ばない (呼ぶと 1 の検査の外になるため。呼ぶなら、このテストを広げること)
+ *   7. 判定の関数で「同意が必要」と分かった分岐 (if (isAiConsentRequiredError(e)) { ... } など) の中で、例外を投げ直さない。
+ *      案内を出したあとに投げ直すと、呼び出し側 (モーダルなど) の catch が同意のことを知らないまま「失敗しました」を重ねて出す
+ *      (R3 の指摘: 生成のフックが投げ直し、改善モーダルが「改善に失敗しました」を出していた)。
+ *      呼び出し側に「止められた」ことを伝えるときは、例外ではなく戻り値 (useV4MenuGeneration の generate は null) で伝える
  *
  * 挙動 (案内を出す・エラーの表示を出さない) は、代表の画面ごとの jest のテストが確かめる:
- *   apps/mobile/__tests__/ai/advisor-sheet-consent.test.tsx・pantry/analyze-consent.test.tsx・
- *   menus-weekly/use-v4-menu-generation.test.tsx (と、判定の関数そのものは lib/ai-consent.test.ts)
+ *   apps/mobile/__tests__/ai/advisor-sheet-consent.test.tsx・ai/day-menu-consent.test.tsx・pantry/analyze-consent.test.tsx・
+ *   menus-weekly/use-v4-menu-generation.test.tsx・menus-weekly/improve-consent.test.tsx (改善モーダルの 2 つの置き場)
+ *   (と、判定の関数そのものは lib/ai-consent.test.ts)。
+ * 受け付けたあとにサーバーが止めた失敗 (リクエストの行に保存された文) の扱いは tests/ai-consent-stored-failure-readers.test.ts
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,6 +38,9 @@ const API_DIR = 'src/app/api';
 
 /** 判定の関数 (apps/mobile/src/lib/ai-consent.ts)。どれかを、AI の API を呼ぶ関数の中で呼ぶ */
 const CONSENT_HANDLERS = ['handleAiConsentRequiredError', 'isAiConsentRequiredError', 'isAiConsentRequiredResponse'];
+
+/** 7 の検査で「同意が必要」と分かった分岐を見つける関数 (受け付けたあとの失敗の文を見分ける関数を含む) */
+const CONSENT_BRANCH_CHECKS = [...CONSENT_HANDLERS, 'handleStoredAiConsentFailure'];
 
 /** 1 の API を呼ぶアプリのファイル (apps/mobile からの相対パス) */
 const AI_ENTRY_FILES = [
@@ -448,5 +457,94 @@ describe('呼ぶ側: アプリが AI の API に止められたら、同意画�
       });
     }
     expect(direct).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────
+// 7. 同意が必要と分かった分岐で、例外を投げ直さない
+// ─────────────────────────────────────────────
+
+/** 条件の式が、判定の関数の呼び出し (await や ! を含む) か。! なら negated */
+function consentCheckOf(condition: ts.Expression): { negated: boolean } | null {
+  let expr: ts.Expression = condition;
+  let negated = false;
+  for (;;) {
+    if (ts.isParenthesizedExpression(expr)) expr = expr.expression;
+    else if (ts.isAwaitExpression(expr)) expr = expr.expression;
+    else if (ts.isPrefixUnaryExpression(expr) && expr.operator === ts.SyntaxKind.ExclamationToken) {
+      negated = !negated;
+      expr = expr.operand;
+    } else break;
+  }
+  if (ts.isCallExpression(expr) && ts.isIdentifier(expr.expression) && CONSENT_BRANCH_CHECKS.includes(expr.expression.text)) {
+    return { negated };
+  }
+  return null;
+}
+
+/** statement の中 (中の関数の中は除く) の throw の行 */
+function throwsIn(sf: ts.SourceFile, statement: ts.Statement | undefined): number[] {
+  if (!statement) return [];
+  const lines: number[] = [];
+  const visit = (node: ts.Node) => {
+    if (isFunctionLike(node)) return;
+    if (ts.isThrowStatement(node)) lines.push(lineOf(sf, node));
+    ts.forEachChild(node, visit);
+  };
+  visit(statement);
+  return lines;
+}
+
+interface ConsentBranch {
+  file: string;
+  line: number;
+  throws: number[];
+}
+
+function consentBranches(file: string, sf: ts.SourceFile): ConsentBranch[] {
+  const out: ConsentBranch[] = [];
+  walk(sf, (node) => {
+    if (!ts.isIfStatement(node)) return;
+    const check = consentCheckOf(node.expression);
+    if (!check) return;
+    // 同意が必要なときに通る側 (! なら else 側)
+    const branch = check.negated ? node.elseStatement : node.thenStatement;
+    out.push({ file, line: lineOf(sf, node), throws: throwsIn(sf, branch) });
+  });
+  return out;
+}
+
+describe('同意が必要と分かった分岐で、例外を投げ直さない (呼び出し側が「失敗しました」を重ねて出さないように)', () => {
+  const branches = mobileSources().flatMap((file) => consentBranches(file.slice('apps/mobile/'.length), parse(file)));
+
+  it('走査が空振りしていない (判定の関数で分岐している場所を見つけている)', () => {
+    expect(branches.length).toBeGreaterThanOrEqual(10);
+    expect(branches.some((b) => b.file === 'src/hooks/useV4MenuGeneration.ts')).toBe(true);
+    expect(branches.some((b) => b.file === 'src/components/menu/ImproveMealModal.tsx')).toBe(true);
+  });
+
+  it('判定の関数で「同意が必要」と分かった分岐の中に throw が無い', () => {
+    const offenders = branches.filter((b) => b.throws.length > 0).map((b) => `${b.file} L${b.line} (throw: L${b.throws.join(', L')})`);
+    expect(
+      offenders,
+      '案内を出したあとに例外を投げ直すと、呼び出し側の catch が「失敗しました」を重ねて出す。戻り値で「止められた」ことを伝えること',
+    ).toEqual([]);
+  });
+
+  it('検査そのものの確かめ: 前の周の不具合の形 (案内を出してから投げ直す) を見つけ、! の分岐は else 側を見る', () => {
+    const source = `
+      async function generate() {
+        try { await api.post("/api/ai/menu/v4/generate", {}); }
+        catch (err) {
+          if (isAiConsentRequiredError(err)) { promptAiConsentRequired(); throw err; }
+          throw err;
+        }
+      }
+      function ok(e) { if (handleAiConsentRequiredError(e)) return; throw e; }
+      function negated(e) { if (!isAiConsentRequiredError(e)) { throw e; } else { promptAiConsentRequired(); throw e; } }
+      function nested(e) { if (isAiConsentRequiredError(e)) { const later = () => { throw e; }; later; return null; } }
+    `;
+    const found = consentBranches('example.ts', ts.createSourceFile('example.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS));
+    expect(found.map((b) => b.throws.length)).toEqual([1, 0, 1, 0]);
   });
 });

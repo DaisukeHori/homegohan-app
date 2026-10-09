@@ -66,7 +66,13 @@ import { supabase } from "../../../src/lib/supabase";
 import { useProfile } from "../../../src/providers/ProfileProvider";
 import type { WeekStartDay } from "../../../src/providers/ProfileProvider";
 import type { V4GenerateParams } from "../../../src/components/menu/V4GenerateModal";
-import { AI_CONSENT_AUTOMATIC_LOCKED_NOTE, handleAiConsentRequiredError, isAiConsentRequiredError, promptAiConsentRequired } from "../../../src/lib/ai-consent";
+import {
+  AI_CONSENT_AUTOMATIC_LOCKED_NOTE,
+  handleAiConsentRequiredError,
+  handleStoredAiConsentFailure,
+  isAiConsentRequiredError,
+  promptAiConsentRequired,
+} from "../../../src/lib/ai-consent";
 
 type PlannedMealRow = {
   id: string;
@@ -622,6 +628,16 @@ export default function WeeklyMenuPage() {
   const [pendingIsUltimate, setPendingIsUltimate] = useState(false);
   const [showV4Modal, setShowV4Modal] = useState(false);
 
+  // 同意が必要で止められたとき (T15 / #1154) の案内。開いているモーダルを閉じてから出す
+  // (閉じないと、案内から開いた同意画面がモーダルの下に隠れる)。生成を受け付ける前に止められたとき (useV4MenuGeneration) と、
+  // 受け付けたあとにサーバーが止めたとき (下の Realtime / ポーリングで「同意が必要です」の文の失敗を受けたとき) の両方で使う
+  const promptAiConsentAfterClosingModals = () => {
+    setShowV4Modal(false);
+    setShowImproveMealModal(false);
+    setShowNutritionDetailModal(false);
+    promptAiConsentRequired();
+  };
+
   const { generate: v4Generate } = useV4MenuGeneration({
     onGenerationStart: (reqId) => {
       setPendingRequestId(reqId);
@@ -637,13 +653,7 @@ export default function WeeklyMenuPage() {
       Alert.alert("完了", "週間献立の生成が完了しました。");
     },
     // 同意が必要で止められた (T15 / #1154): 生成を始めるモーダルを閉じてから、同意画面への案内を出す
-    // (閉じないと、案内から開いた同意画面がモーダルの下に隠れる)
-    onAiConsentRequired: () => {
-      setShowV4Modal(false);
-      setShowImproveMealModal(false);
-      setShowNutritionDetailModal(false);
-      promptAiConsentRequired();
-    },
+    onAiConsentRequired: () => promptAiConsentAfterClosingModals(),
     onError: (msg) => {
       setPendingRequestId(null);
       setPendingStatus(null);
@@ -719,6 +729,7 @@ export default function WeeklyMenuPage() {
   // 委譲する。生成を始めると useV4MenuGeneration の onGenerationStart で pendingRequestId が入り、
   // 進捗カードの表示と完了時の loadData() は、上の Realtime / ポーリングがそのまま行う。
   // 失敗は例外で改善モーダルに返す (画面全体のエラー表示には出さない)。
+  // 同意が必要で止められたとき (T15 / #1154) は例外にならず、上の onAiConsentRequired がモーダルを閉じて案内を出す。
   const handleImprove = useCallback(async (request: ImproveMealRequest) => {
     await submitImprove({
       request,
@@ -726,7 +737,8 @@ export default function WeeklyMenuPage() {
       isBusy: pendingRequestId !== null,
       generate: v4Generate,
     });
-    // 生成を始められた。栄養分析の詳細が開いていれば閉じて、進捗カードが見えるようにする
+    // 生成を始めた (または同意が必要で止められ、案内を出した)。栄養分析の詳細が開いていれば閉じて、
+    // 進捗カード (または案内から開く同意画面) が見えるようにする
     setShowNutritionDetailModal(false);
   }, [pendingRequestId, v4Generate]);
 
@@ -1021,6 +1033,8 @@ export default function WeeklyMenuPage() {
             setPendingStatus(null);
             setPendingProgress(null);
             setPendingIsUltimate(false);
+            // サーバーが同意の判定で止めた (未同意。T15 / #1154) なら案内を出し、失敗の表示は出さない
+            if (handleStoredAiConsentFailure(newRecord.error_message, promptAiConsentAfterClosingModals)) return;
             setError(newRecord.error_message ?? "週間献立の生成に失敗しました。");
           }
         }
@@ -1060,6 +1074,8 @@ export default function WeeklyMenuPage() {
           setPendingStatus(null);
           setPendingProgress(null);
           setPendingIsUltimate(false);
+          // サーバーが同意の判定で止めた (未同意。T15 / #1154) なら案内を出し、失敗の表示は出さない
+          if (handleStoredAiConsentFailure(res.errorMessage, promptAiConsentAfterClosingModals)) return;
           setError(res.errorMessage ?? "週間献立の生成に失敗しました。");
         }
       } catch {

@@ -4,7 +4,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { TargetSlot, MenuGenerationConstraints } from "../../../../types/domain";
 import { getApi } from "../lib/api";
 import { supabase } from "../lib/supabase";
-import { isAiConsentRequiredError, promptAiConsentRequired } from "../lib/ai-consent";
+import { handleStoredAiConsentFailure, isAiConsentRequiredError, promptAiConsentRequired } from "../lib/ai-consent";
 
 // AsyncStorage key (localStorage 代替)
 const STORAGE_KEY_V4_GENERATING = "v4MenuGenerating";
@@ -14,7 +14,9 @@ interface UseV4MenuGenerationOptions {
   onGenerationComplete?: () => void;
   onError?: (error: string) => void;
   /**
-   * 同意が必要で止められたとき (403 AI_CONSENT_REQUIRED。T15 / #1154) に呼ぶ。onError は呼ばない。
+   * 同意が必要で止められたとき (T15 / #1154) に呼ぶ。onError は呼ばない。
+   *   - 受け付ける前に止められた (generate が 403 AI_CONSENT_REQUIRED を受けた)
+   *   - 受け付けたあとに止められた (subscribeToProgress が、サーバーが書いた「同意が必要です」の文で失敗を受けた)
    * 省略すると、同意画面への案内 (promptAiConsentRequired) を出す。モーダルから生成する画面は、
    * モーダルを閉じてから案内を出すように渡す (閉じないと、案内から開いた同意画面がモーダルの下に隠れる)。
    */
@@ -34,8 +36,15 @@ interface GenerateCallOptions {
    * true のとき、失敗を options.onError に通知せず、例外としてだけ呼び出し元へ返す。
    * 呼び出し元が自分でエラーを表示する場合 (例: 献立改善モーダルを開いたまま再試行させる) に使う。
    * 既定 (false) は従来どおり onError にも通知する。
+   * 同意が必要で止められたときは、silent でも例外にしない (generate の戻り値の説明を参照)。
    */
   silent?: boolean;
+}
+
+/** 生成を受け付けたときの応答 */
+interface GenerateAccepted {
+  requestId: string;
+  totalSlots: number;
 }
 
 export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
@@ -43,17 +52,27 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
   const [requestId, setRequestId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /** 同意が必要で止められたことを知らせる (onAiConsentRequired。省略時は同意画面への案内) */
+  const notifyAiConsentRequired = useCallback(() => {
+    if (options.onAiConsentRequired) options.onAiConsentRequired();
+    else promptAiConsentRequired();
+  }, [options]);
+
+  /**
+   * 生成を始める。受け付けられたら応答を返す。
+   * 同意が必要で止められたら (403 AI_CONSENT_REQUIRED。T15 / #1154)、onAiConsentRequired (省略時は同意画面への案内) を呼んで
+   * null を返す。例外にはしない: 案内はもう出ているので、呼び出し側の catch が「失敗しました」を重ねて出さないようにするため
+   * (silent で呼ぶ改善モーダルも同じ。呼び出し側は null を「生成は始まっていない・案内は出し済み」として扱う)。
+   * それ以外の失敗は例外を投げる (silent でなければ onError にも通知する)。
+   */
   const generate = useCallback(
-    async (params: GenerateParams, callOptions: GenerateCallOptions = {}) => {
+    async (params: GenerateParams, callOptions: GenerateCallOptions = {}): Promise<GenerateAccepted | null> => {
       setIsGenerating(true);
       setError(null);
 
       try {
         const api = getApi();
-        const data = await api.post<{
-          requestId: string;
-          totalSlots: number;
-        }>("/api/ai/menu/v4/generate", {
+        const data = await api.post<GenerateAccepted>("/api/ai/menu/v4/generate", {
           targetSlots: params.targetSlots,
           resolveExistingMeals: params.resolveExistingMeals ?? false,
           constraints: params.constraints,
@@ -77,11 +96,10 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
         return data;
       } catch (err: any) {
         if (isAiConsentRequiredError(err)) {
-          // リクエストは受け付けられていない。失敗の表示 (onError) は出さず、同意画面へ案内する
+          // リクエストは受け付けられていない。失敗の表示 (onError) は出さず、同意画面へ案内して、例外にせずに終える
           setIsGenerating(false);
-          if (options.onAiConsentRequired) options.onAiConsentRequired();
-          else promptAiConsentRequired();
-          throw err;
+          notifyAiConsentRequired();
+          return null;
         }
         const errorMessage = err.message || "生成に失敗しました";
         setError(errorMessage);
@@ -94,7 +112,7 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
       }
       // Note: isGenerating stays true until progress tracking shows completion
     },
-    [options]
+    [options, notifyAiConsentRequired]
   );
 
   const subscribeToProgress = useCallback(
@@ -128,6 +146,8 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
 
               if (newData.status === "completed") {
                 options.onGenerationComplete?.();
+              } else if (handleStoredAiConsentFailure(newData.error_message, notifyAiConsentRequired)) {
+                // 受け付けたあとに、サーバーが同意の判定で止めた: 同意画面へ案内したので、失敗の表示 (onError) は出さない
               } else {
                 options.onError?.(
                   newData.error_message || "生成に失敗しました"
@@ -144,7 +164,7 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
         channel.unsubscribe();
       };
     },
-    [options]
+    [options, notifyAiConsentRequired]
   );
 
   const cancelGeneration = useCallback(async () => {

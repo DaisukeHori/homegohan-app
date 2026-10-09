@@ -77,13 +77,18 @@ export const AIDayMenuModal: React.FC<Props> = ({ visible, onClose }) => {
       mealType,
     }));
 
-    await generate({
-      targetSlots,
-      constraints: {},
-      note: "",
-      ultimateMode: false,
-      resolveExistingMeals: false,
-    });
+    try {
+      await generate({
+        targetSlots,
+        constraints: {},
+        note: "",
+        ultimateMode: false,
+        resolveExistingMeals: false,
+      });
+    } catch {
+      // 失敗はフックの onError が表示済み (ボタンの onPress から呼ばれるので、ここで止めないと未処理の reject になる)。
+      // 同意が必要で止められたときは、フックが例外にせず onAiConsentRequired を呼ぶ
+    }
   }
 
   return (

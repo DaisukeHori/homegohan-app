@@ -21,11 +21,12 @@ import {
   aiConsentSkippedField,
   AI_CONSENT_TABLE,
   aiConsentDeniedPayload,
+  aiConsentDeniedStoredMessage,
   runAiConsentCheck,
   type AiConsentDecision,
 } from '../../../supabase/functions/_shared/ai-consent';
 
-export { aiConsentDeniedPayload, aiConsentSkippedField };
+export { aiConsentDeniedPayload, aiConsentDeniedStoredMessage, aiConsentSkippedField };
 
 /** 判定に使うクライアント (本人のセッションのクライアントか、service role のクライアント) */
 export type AiConsentGuardDb = Pick<SupabaseClient, 'from'>;

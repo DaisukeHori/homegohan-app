@@ -64,6 +64,21 @@ describe('weekly 画面: 献立を改善の配線', () => {
     expect(body).toContain('isBusy: pendingRequestId !== null');
   });
 
+  it('同意が必要で止められたとき (T15 / #1154) の案内は、改善モーダル・栄養分析の詳細・V4 生成モーダルを閉じてから出す', () => {
+    // 生成のフックの onAiConsentRequired は、モーダルを閉じてから案内を出す関数につながっている
+    expect(page).toContain('onAiConsentRequired: () => promptAiConsentAfterClosingModals(),');
+    const start = page.indexOf('const promptAiConsentAfterClosingModals = () => {');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const body = page.slice(start, page.indexOf('};', start));
+    expect(body).toContain('setShowImproveMealModal(false)');
+    expect(body).toContain('setShowNutritionDetailModal(false)');
+    expect(body).toContain('setShowV4Modal(false)');
+    // 閉じたあとに案内を出す (閉じる前に出すと、案内から開いた同意画面がモーダルの下に隠れる)
+    expect(body.indexOf('promptAiConsentRequired()')).toBeGreaterThan(body.indexOf('setShowNutritionDetailModal(false)'));
+    // 受け付けたあとにサーバーが止めたとき (Realtime / ポーリング) も、同じ関数で案内する
+    expect(page.match(/handleStoredAiConsentFailure\([^)]*, promptAiConsentAfterClosingModals\)/g)?.length).toBe(2);
+  });
+
   it('V4 生成モーダルの生成中表示は、完了しても戻らないフックの isGenerating ではなく pendingRequestId で決める', () => {
     const element = jsxElement(page, 'V4GenerateModal');
     expect(element).toContain('isGenerating={pendingRequestId !== null}');

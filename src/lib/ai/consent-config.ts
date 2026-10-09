@@ -41,6 +41,7 @@ export {
   AI_CONSENT_CHECK_FAILED_STATUS,
   AI_CONSENT_CHECK_FAILED_MESSAGE,
   isAiConsentRequiredBody,
+  aiConsentReasonOfStoredError,
   aiSkippedReasonOf,
   aiSummarySkippedNote,
   summarizeAiConsent,

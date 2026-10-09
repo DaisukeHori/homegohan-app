@@ -13,7 +13,7 @@ import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { notifyMenuGenerated } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { useAiConsent } from "@/hooks/useAiConsent";
-import { AiConsentRequiredError, aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
+import { AiConsentRequiredError, aiFetch, handleStoredAiConsentFailure, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { aiSummarySkippedNote } from "@/lib/ai/consent-config";
 import { todayLocal, parseLocalDate, formatLocalDate } from "@/lib/date-utils";
 // AI 応答を HTML にして dangerouslySetInnerHTML へ渡すときは、必ずこの関数を通す (#1169)
@@ -100,6 +100,10 @@ const ACTION_LABELS: Record<string, { label: string; icon: any; color: string }>
   // プロフィール関連
   update_profile_preferences: { label: '好み・習慣を更新', icon: User, color: colors.secondary },
 };
+
+/** 献立の作成が、同意が無くて止められたときにチャットに出す一文 (T15 / #1154。同意画面は AiConsentRequiredHost が出す) */
+const V4_CONSENT_REQUIRED_CHAT_NOTE =
+  'AI へのデータ提供への同意が必要なため、献立は作成しませんでした。同意したあとに、もう一度お試しください。';
 
 export default function AIChatBubble() {
   const isNativeApp = useNativeAppMode();
@@ -190,6 +194,17 @@ export default function AIChatBubble() {
     },
     onError: (error) => {
       setV4Progress(null);
+      // 生成を受け付けたあとに、サーバーが同意の判定で止めた (未同意。T15 / #1154): 同意画面 (AiConsentRequiredHost) が案内する。
+      // 同期で止められたとき (下の catch) と同じ一文だけを出し、失敗の文は出さない
+      if (handleStoredAiConsentFailure(error)) {
+        setMessages(prev => [...prev, {
+          id: `v4-consent-${Date.now()}`,
+          role: 'assistant',
+          content: V4_CONSENT_REQUIRED_CHAT_NOTE,
+          createdAt: new Date().toISOString(),
+        }]);
+        return;
+      }
       setMessages(prev => [...prev, {
         id: `v4-error-${Date.now()}`,
         role: 'assistant',
@@ -803,7 +818,7 @@ export default function AIChatBubble() {
         setMessages(prev => [...prev, {
           id: `v4-consent-${Date.now()}`,
           role: 'assistant',
-          content: 'AI へのデータ提供への同意が必要なため、献立は作成しませんでした。同意したあとに、もう一度お試しください。',
+          content: V4_CONSENT_REQUIRED_CHAT_NOTE,
           createdAt: new Date().toISOString(),
         }]);
         return;

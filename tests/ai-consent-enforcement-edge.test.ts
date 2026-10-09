@@ -46,6 +46,8 @@ const GUARD_CALLEES = new Set(['requireAiConsentForUser', 'requireAiConsent', 'c
 const SEND_CALLEES = new Set([
   'fetch',
   'fetchWithRetry',
+  // 献立生成の続きの工程を呼ぶ (呼んだ先が AI へ送る。_shared/ai-consent-guard.ts)
+  'invokeMenuContinuation',
   'generateGeminiJson',
   'generateContent',
   'callV4FastLLM',

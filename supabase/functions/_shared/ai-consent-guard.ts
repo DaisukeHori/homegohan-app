@@ -14,9 +14,11 @@ import {
   AI_CONSENT_DECISION_COLUMNS,
   AI_CONSENT_TABLE,
   aiConsentDeniedPayload,
+  aiConsentDeniedStoredMessageOfResponse,
   runAiConsentCheck,
   type AiConsentDecision,
 } from "./ai-consent.ts";
+import { fetchWithRetry, getErrorStatus, isRetryableError, type FetchRetryOptions } from "./network-retry.ts";
 
 export type { AiConsentDecision };
 
@@ -86,4 +88,45 @@ export function requireAiConsentForUser(
     auth: { persistSession: false, autoRefreshToken: false },
   });
   return requireAiConsent(client, userId, headers);
+}
+
+/**
+ * fetchWithRetry の失敗 (状態コードと本文を持つ例外) が、呼んだ先の Edge Function が同意の判定で止めたもの
+ * (403 AI_CONSENT_REQUIRED / 503 AI_CONSENT_CHECK_FAILED の応答) か。
+ */
+export function isAiConsentDeniedFetchError(error: unknown): boolean {
+  const body = (error as { body?: unknown } | null | undefined)?.body;
+  return aiConsentDeniedStoredMessageOfResponse(getErrorStatus(error), body) !== null;
+}
+
+/**
+ * 献立生成の続きの工程 (generate-menu-v4 / v5 を _continue: true で呼び直す) を呼ぶ。中身は fetchWithRetry と同じ。
+ * 続きの工程も送る手前で同意を確かめる (生成の途中で撤回したら、次の工程から止まる) ので、呼んだ先が同意の判定で止めたとき
+ * (403 AI_CONSENT_REQUIRED / 503 AI_CONSENT_CHECK_FAILED) は:
+ *   - 再試行しない (呼んだ先はリクエストの行をもう失敗にしている。再試行で判定が通ると、失敗にした行のまま生成が進む)
+ *   - 例外を投げずに false を返す (呼んだ先が error_message に人向けの文を書いている。投げると、呼ぶ側の catch が
+ *     error_message を内部の文 (状態コードや応答の本文) で上書きし、画面にそれが出る)
+ * 呼べたら true を返す。それ以外の失敗は fetchWithRetry と同じく例外を投げる。
+ */
+export async function invokeMenuContinuation(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  opts: FetchRetryOptions = {},
+): Promise<boolean> {
+  const shouldRetry = opts.shouldRetry ?? isRetryableError;
+  try {
+    await fetchWithRetry(input, init, {
+      ...opts,
+      shouldRetry: (error) => !isAiConsentDeniedFetchError(error) && shouldRetry(error),
+    });
+    return true;
+  } catch (error) {
+    if (isAiConsentDeniedFetchError(error)) {
+      console.warn(
+        `[ai-consent-guard] ${opts.label ?? "continuation"}: 続きの工程が同意の判定で止まりました (リクエストは続きの工程が失敗にしています)`,
+      );
+      return false;
+    }
+    throw error;
+  }
 }

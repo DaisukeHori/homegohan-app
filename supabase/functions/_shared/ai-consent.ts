@@ -229,6 +229,50 @@ export function aiConsentDeniedPayload(
 }
 
 /**
+ * 非同期の処理 (キューの献立生成・献立生成の続きの工程・買い物リストの作り直し) が、同意の判定で止めたときに
+ * リクエストの行の失敗の欄 (weekly_menu_requests.error_message / shopping_list_requests.result.error) に書く文。
+ * 画面はこの欄をそのまま表示する (Web とアプリの週の献立の画面・買い物リストなど) ので、
+ * コード (AI_CONSENT_REQUIRED) ではなく、応答の本文と同じ人向けの文を書く (#1172: 内部の詳細を出さない)。
+ * 画面は aiConsentReasonOfStoredError でこの文を見分け、同意が必要なら同意画面へ案内する。
+ */
+export function aiConsentDeniedStoredMessage(decision: Extract<AiConsentDecision, { allowed: false }>): string {
+  return aiConsentDeniedPayload(decision).body.error;
+}
+
+/**
+ * リクエストの行に保存された失敗の文 (aiConsentDeniedStoredMessage が書いたもの) が、同意の判定で止めたものか。
+ *   - consent_required: 同意が無くて止めた。画面は同意画面へ案内し、自分のエラー表示は出さない
+ *   - check_failed    : 同意の状況を読めなくて止めた。保存された文 (一時的に使えません) は人向けなので、そのまま出してよい
+ *   - null            : それ以外の失敗
+ */
+export function aiConsentReasonOfStoredError(stored: unknown): AiSkippedReason | null {
+  if (stored === AI_CONSENT_REQUIRED_MESSAGE) return 'consent_required';
+  if (stored === AI_CONSENT_CHECK_FAILED_MESSAGE) return 'check_failed';
+  return null;
+}
+
+/**
+ * 応答 (状態コードと本文) が、同意の判定で止めたとき (aiConsentDeniedPayload の 403 AI_CONSENT_REQUIRED /
+ * 503 AI_CONSENT_CHECK_FAILED) のものなら、リクエストの行に書く文 (aiConsentDeniedStoredMessage と同じ) を返す。それ以外は null。
+ * 献立生成の Edge Function を呼ぶ側 (Next.js の API Route・続きの工程を呼ぶ Edge Function) が、呼んだ先に止められたかを
+ * 見分けるのに使う (呼んだ先はリクエストの行をもう失敗にし、この文を書いている。呼ぶ側は再試行せず、内部の文で上書きしない)。
+ */
+export function aiConsentDeniedStoredMessageOfResponse(status: number | null | undefined, bodyText: unknown): string | null {
+  if (typeof bodyText !== 'string' || bodyText === '') return null;
+  let body: unknown;
+  try {
+    body = JSON.parse(bodyText);
+  } catch {
+    return null;
+  }
+  if (!body || typeof body !== 'object') return null;
+  const code = (body as { code?: unknown }).code;
+  if (status === AI_CONSENT_REQUIRED_STATUS && code === AI_CONSENT_REQUIRED_CODE) return AI_CONSENT_REQUIRED_MESSAGE;
+  if (status === AI_CONSENT_CHECK_FAILED_STATUS && code === AI_CONSENT_CHECK_FAILED_CODE) return AI_CONSENT_CHECK_FAILED_MESSAGE;
+  return null;
+}
+
+/**
  * AI を使わない部分も返す API (例: 栄養の集計 + AI のアドバイス) が、AI の部分だけを省いたときに応答へ足す欄。
  * 画面は aiSkipped を見て「AI のコメントは同意が必要」などと出し分ける。送ってよい (allowed) なら何も足さない。
  */

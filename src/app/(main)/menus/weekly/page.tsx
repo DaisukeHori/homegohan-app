@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo, useReducer } 
 import {
   weekViewReducer, initialWeekViewState,
   modalReducer, initialModalState,
-  aiGenerationReducer, initialAiGenerationState,
+  aiGenerationReducer, initialAiGenerationState, routeAiConsentGenerationFailure,
   nutritionReducer, initialNutritionState,
   recipeReducer, initialRecipeState,
   uiFlagReducer, initialUiFlagState,
@@ -55,7 +55,7 @@ import { ServingsModal } from "./_components/modals/ServingsModal";
 import { AddMealSlotModal } from "./_components/modals/AddMealSlotModal";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 import { useAiConsent } from "@/hooks/useAiConsent";
-import { AiConsentRequiredError, aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
+import { AiConsentRequiredError, aiFetch, handleStoredAiConsentFailure, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { AI_CONSENT_COPY } from "@/lib/ai/consent-config";
 import { AiMealModal } from "./_components/modals/AiMealModal";
 import { RegenerateMealModal } from "./_components/modals/RegenerateMealModal";
@@ -660,7 +660,13 @@ export default function WeeklyMenuPage() {
   // -------------------------------------------------------
   const [weekView, dispatchWeekView] = useReducer(weekViewReducer, initialWeekViewState);
   const [modal, dispatchModal] = useReducer(modalReducer, initialModalState);
-  const [aiGen, dispatchAiGen] = useReducer(aiGenerationReducer, initialAiGenerationState);
+  const [aiGen, dispatchAiGenState] = useReducer(aiGenerationReducer, initialAiGenerationState);
+  // T15 (#1154): 生成の失敗 (GEN_FAIL) の文が「同意が無くてサーバーが止めた」ものなら、同意画面を出して失敗パネルには出さない。
+  // 失敗を出す経路 (onError・復元・Realtime・ポーリング) はどれも GEN_FAIL を通るので、ここ 1 か所で見分ける
+  const dispatchAiGen = useCallback(
+    (action: Parameters<typeof dispatchAiGenState>[0]) => dispatchAiGenState(routeAiConsentGenerationFailure(action)),
+    [],
+  );
   const [nutrition, dispatchNutrition] = useReducer(nutritionReducer, initialNutritionState);
   const [recipe, dispatchRecipe] = useReducer(recipeReducer, initialRecipeState);
   const [uiFlag, dispatchUiFlag] = useReducer(uiFlagReducer, initialUiFlagState);
@@ -3085,6 +3091,18 @@ export default function WeeklyMenuPage() {
     // タイムアウト処理（2分で強制終了）
     const TIMEOUT_MS = 120000;
     const startTime = Date.now();
+
+    // T15 (#1154): 失敗の文 (result.error) が「同意が無くてサーバーが止めた」ものなら、同意画面を出し、
+    // 失敗の表示は出さずに進み具合を閉じて true を返す (Realtime・ポーリングのどちらで失敗を受けても通る)
+    const closeShoppingListIfAiConsentRequired = (stored: string | undefined): boolean => {
+      if (!handleStoredAiConsentFailure(stored)) return false;
+      setIsRegeneratingShoppingList(false);
+      setShoppingListProgress(null);
+      setShoppingListRequestId(null);
+      localStorage.removeItem('shoppingListRegenerating');
+      cleanupShoppingListSubscription();
+      return true;
+    };
     
     // ポーリングも並行開始（Realtimeのバックアップ）
     const poll = async () => {
@@ -3137,6 +3155,7 @@ export default function WeeklyMenuPage() {
           cleanupShoppingListSubscription();
         } else if (data.status === 'failed') {
           console.log('❌ Shopping list regeneration failed (polling)');
+          if (closeShoppingListIfAiConsentRequired(data.result?.error)) return;
           const errorMsg = data.result?.error || '再生成に失敗しました';
           setShoppingListProgress({ phase: 'failed', message: errorMsg, percentage: 0 });
           // 5秒後に自動で閉じる
@@ -3217,6 +3236,7 @@ export default function WeeklyMenuPage() {
             cleanupShoppingListSubscription();
           } else if (newData.status === 'failed') {
             console.log('❌ Shopping list regeneration failed (realtime)');
+            if (closeShoppingListIfAiConsentRequired(newData.result?.error)) return;
             const errorMsg = newData.result?.error || '再生成に失敗しました';
             setShoppingListProgress({ phase: 'failed', message: errorMsg, percentage: 0 });
             // 5秒後に自動で閉じる
@@ -3928,6 +3948,8 @@ export default function WeeklyMenuPage() {
         console.log('❌ Regeneration failed');
         setIsRegenerating(false);
         setRegeneratingMealId(null);
+        // T15 (#1154): サーバーが同意の判定で止めた (未同意) なら同意画面を出し、失敗のモーダルは出さない
+        if (handleStoredAiConsentFailure(errorMessage)) return;
         // #1050 round-2 (UX2-02残): alert() ではなく完了モーダル(type:'error')に集約。
         // ここは Realtime/ポーリングで非同期に検知した失敗で、対象の regeneratingMeal は
         // 初回リクエスト成功時点で既にクリア済みのため、直前の呼び出しをそのまま安全に
@@ -4615,6 +4637,8 @@ export default function WeeklyMenuPage() {
           setGenerationProgress(null);
 
           if (status === 'failed') {
+            // T15 (#1154): サーバーが同意の判定で止めた (未同意) なら同意画面を出し、失敗のモーダルは出さない
+            if (handleStoredAiConsentFailure(errorMessage)) return;
             // #1050 round-2 (UX2-02残): alert() ではなく完了モーダル(type:'error')に集約。
             // improveMealTargets/improveNextDay/selectedDayIndex はこの非同期失敗検知時点でも
             // クリアされていないため、改善対象選択モーダルを再度開けばそのままリトライできる。

@@ -13,11 +13,18 @@ jest.mock("expo-router", () => ({ router: { push: (...args: unknown[]) => mockPu
 import {
   AI_CONSENT_SCREEN_PATH,
   handleAiConsentRequiredError,
+  handleStoredAiConsentFailure,
   isAiConsentRequiredError,
   isAiConsentRequiredResponse,
   promptAiConsentRequired,
   resetAiConsentPromptForTests,
 } from "../../src/lib/ai-consent";
+import {
+  AI_CONSENT_CHECK_FAILED_CODE,
+  AI_CONSENT_CHECK_FAILED_MESSAGE,
+  AI_CONSENT_REQUIRED_CODE,
+  AI_CONSENT_REQUIRED_MESSAGE,
+} from "../../../../supabase/functions/_shared/ai-consent";
 
 const body = JSON.stringify({ error: "AI 機能を使うには同意が必要です", code: "AI_CONSENT_REQUIRED" });
 
@@ -82,5 +89,35 @@ describe("handleAiConsentRequiredError / promptAiConsentRequired", () => {
     promptAiConsentRequired();
     promptAiConsentRequired();
     expect(Alert.alert).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("handleStoredAiConsentFailure (受け付けたあとの失敗に保存された文。T15 / #1154)", () => {
+  it("サーバーが同意の判定で止めた文なら、案内を出して true (画面は自分のエラー表示を出さない)", () => {
+    expect(handleStoredAiConsentFailure(AI_CONSENT_REQUIRED_MESSAGE)).toBe(true);
+    expect(Alert.alert).toHaveBeenCalledTimes(1);
+    expect(Alert.alert).toHaveBeenCalledWith("同意が必要です", AI_CONSENT_REQUIRED_MESSAGE, expect.any(Array));
+  });
+
+  it("案内の出し方を渡せば、それを呼ぶ (モーダルを閉じてから案内を出す画面のため)", () => {
+    const prompt = jest.fn();
+    expect(handleStoredAiConsentFailure(AI_CONSENT_REQUIRED_MESSAGE, prompt)).toBe(true);
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(Alert.alert).not.toHaveBeenCalled();
+  });
+
+  it("同意の状況を読めなかった文 (一時的)・ほかの失敗・コードそのもの・空は false で、何も出さない", () => {
+    for (const stored of [
+      AI_CONSENT_CHECK_FAILED_MESSAGE,
+      "stale_request_timeout",
+      AI_CONSENT_REQUIRED_CODE,
+      AI_CONSENT_CHECK_FAILED_CODE,
+      null,
+      undefined,
+      "",
+    ]) {
+      expect(handleStoredAiConsentFailure(stored)).toBe(false);
+    }
+    expect(Alert.alert).not.toHaveBeenCalled();
   });
 });

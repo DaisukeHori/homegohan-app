@@ -11,6 +11,9 @@
  *     Alert.alert("エラー", getApiErrorMessage(e, "..."));
  *   }
  *
+ * 非同期の処理 (献立の生成・買い物リストの作り直し) は、受け付けたあとに同意の判定で止まると、リクエストの行に人向けの文を書いて
+ * 失敗にする。失敗を表示する場所は、その文を handleStoredAiConsentFailure に渡し、true なら自分のエラー表示を出さずに終える。
+ *
  * 案内の「同意画面を開く」は、アプリの同意画面 (/settings/ai-consent。Web の同じページを WebView で開く) へ移る。
  * 画面を開くと自動で AI に送る処理 (栄養士のコメントなど) は handleAiConsentRequiredError を使わず、
  * isAiConsentRequiredError で見分けて、案内の一文 (AI_CONSENT_AUTOMATIC_LOCKED_NOTE) だけを出す (勝手に案内を出さない)。
@@ -25,6 +28,7 @@ import {
   AI_CONSENT_REQUIRED_STATUS,
   AI_CONSENT_SETTINGS_ENTRY_TITLE,
   AI_CONSENT_SKIPPED_NOTE,
+  aiConsentReasonOfStoredError,
   aiSkippedReasonOf,
   aiSummarySkippedNote,
   isAiConsentRequiredBody,
@@ -103,5 +107,18 @@ export function promptAiConsentRequired(): void {
 export function handleAiConsentRequiredError(error: unknown): boolean {
   if (!isAiConsentRequiredError(error)) return false;
   promptAiConsentRequired();
+  return true;
+}
+
+/**
+ * 非同期の処理が失敗で終わったときに、リクエストの行に保存された文 (weekly_menu_requests.error_message /
+ * shopping_list_requests.result.error) を渡す。サーバーが同意の判定で止めたもの (未同意。aiConsentDeniedStoredMessage が書いた文)
+ * なら「同意が必要です」の案内を出して true を返す。呼び出し側は true なら自分のエラー表示を出さない。
+ * 同意の状況を読めなくて止めたもの (一時的に使えません) は false (保存された文は人向けなので、そのまま出してよい)。
+ * prompt には、モーダルを開いている画面が「モーダルを閉じてから案内を出す」関数を渡せる (省略時は案内を出すだけ)。
+ */
+export function handleStoredAiConsentFailure(stored: unknown, prompt: () => void = promptAiConsentRequired): boolean {
+  if (aiConsentReasonOfStoredError(stored) !== "consent_required") return false;
+  prompt();
   return true;
 }

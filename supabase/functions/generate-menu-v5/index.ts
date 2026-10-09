@@ -38,7 +38,6 @@ import {
 } from "../_shared/nutrition-feedback.ts";
 import { createLogger } from "../_shared/db-logger.ts";
 import {
-  fetchWithRetry,
   isRetryableError,
   withRetry,
   withTimeout,
@@ -107,8 +106,8 @@ import {
   wasRequestUpdated,
 } from "./request-finalize.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
-import { aiConsentDeniedResponse, checkAiConsent } from "../_shared/ai-consent-guard.ts";
-import { aiConsentDeniedPayload } from "../_shared/ai-consent.ts";
+import { aiConsentDeniedResponse, checkAiConsent, invokeMenuContinuation } from "../_shared/ai-consent-guard.ts";
+import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
 
 console.log("Generate Menu V5 Function loaded (template-anchored generation)");
 
@@ -397,7 +396,8 @@ async function triggerNextV5Step(
   userId: string,
 ) {
   const url = `${supabaseUrl}/functions/v1/generate-menu-v5`;
-  await fetchWithRetry(url, {
+  // 続きの工程が同意の判定で止めたら (T15 / #1154)、再試行も例外もしない。行は続きの工程が失敗にし、人向けの文を書いている
+  await invokeMenuContinuation(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -3533,15 +3533,16 @@ Deno.serve(async (req: Request) => {
     // 献立の生成は、利用者のデータ (好み・アレルギー・健康目標・冷蔵庫の食材など) を外国の AI 事業者へ送る。
     // 同意が無ければ (判定に失敗した場合も)、送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
     // 利用者の JWT で直接呼ばれた場合・Next.js / cron から service role で呼ばれた場合・続きの工程 (_continue) のどれもここを通る
-    // (続きの工程でも確かめるので、生成の途中で撤回すると次の工程から止まる)。リクエストの行は失敗にしておく
+    // (続きの工程でも確かめるので、生成の途中で撤回すると次の工程から止まる)。リクエストの行は失敗にしておく。
+    // error_message は画面がそのまま出すので、コードではなく人向けの文を書く (画面はこの文を見分けて同意画面へ案内する)。
+    // 続きの工程を呼んだ側 (前の工程) は invokeMenuContinuation で呼ぶので、この文を内部の文で上書きしない
     const aiConsent = await checkAiConsent(supabase, userId);
     if (!aiConsent.allowed) {
-      const { body: deniedBody } = aiConsentDeniedPayload(aiConsent);
       const { error: persistError } = await supabase
         .from("weekly_menu_requests")
         .update({
           status: "failed",
-          error_message: deniedBody.code,
+          error_message: aiConsentDeniedStoredMessage(aiConsent),
           updated_at: new Date().toISOString(),
         })
         .eq("id", requestId!)

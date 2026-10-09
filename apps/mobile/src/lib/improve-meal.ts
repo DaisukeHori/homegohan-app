@@ -152,6 +152,8 @@ export type ImproveGenerate = (params: ImproveGenerateParams, options: { silent:
  * - 過去の日付・食事タイプ未選択・別の生成が進行中のときは、生成を始めずに ImproveMealRejectedError を投げる。
  * - 生成リクエストの失敗はそのまま投げる。失敗は改善モーダルが表示するので、
  *   画面全体のエラー表示 (onError) には出さないよう silent を指定する。
+ * - 同意が必要で止められたとき (T15 / #1154) は、generate が同意画面への案内を出して null を返す (例外にしない) ので、
+ *   ここも例外を投げずに終える。改善モーダルは失敗を表示せずに閉じる (案内と「改善に失敗しました」を重ねない)。
  */
 export async function submitImprove(params: {
   request: ImproveMealRequest;
@@ -186,7 +188,7 @@ export async function submitImprove(params: {
       ultimateMode: false,
       resolveExistingMeals: true,
     },
-    // 失敗は改善モーダルが自分で表示する (画面全体のエラー表示に出さない)
+    // 失敗は改善モーダルが自分で表示する (画面全体のエラー表示に出さない)。同意で止められたときは例外にならない (上の説明)
     { silent: true },
   );
 }

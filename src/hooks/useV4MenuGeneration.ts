@@ -9,6 +9,12 @@ import { AiConsentRequiredError, aiFetch, isAiConsentRequiredResponse } from "@/
 interface UseV4MenuGenerationOptions {
   onGenerationStart?: (requestId: string) => void;
   onGenerationComplete?: () => void;
+  /**
+   * 失敗の通知。受け付けたあとの失敗 (subscribeToProgress) では、リクエストの行に保存された文 (error_message) を渡す。
+   * その文が「同意が無くてサーバーが止めた」もの (T15 / #1154) のときもここに届くので、呼び出し側は
+   * handleStoredAiConsentFailure(error) で見分け、true なら自分のエラー表示を出さない (同意画面が案内する)。
+   * 受け付ける前に止められたとき (403 AI_CONSENT_REQUIRED) は呼ばない (generate が AiConsentRequiredError を投げる)。
+   */
   onError?: (error: string) => void;
 }
 

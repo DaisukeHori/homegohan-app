@@ -17,6 +17,7 @@ export type { ModalState, ModalAction, ModalType } from './reducers/modalReducer
 
 export { aiGenerationReducer, initialAiGenerationState } from './reducers/aiGenerationReducer';
 export type { AiGenerationState, AiGenerationAction, GenerationProgress } from './reducers/aiGenerationReducer';
+export { routeAiConsentGenerationFailure } from './aiGenerationConsent';
 
 export { nutritionReducer, initialNutritionState } from './reducers/nutritionReducer';
 export type { NutritionState, NutritionAction } from './reducers/nutritionReducer';

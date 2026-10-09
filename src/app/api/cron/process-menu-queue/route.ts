@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { requireCronAuth } from '@/lib/cron-auth';
 import { createLogger } from '@/lib/db-logger';
-import { aiConsentDeniedPayload, checkUserAiConsent } from '@/lib/ai/consent-guard';
+import { aiConsentDeniedPayload, aiConsentDeniedStoredMessage, checkUserAiConsent } from '@/lib/ai/consent-guard';
 // runtime = 'edge' のルートなので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
@@ -39,6 +39,7 @@ export async function GET(req: Request) {
   // 献立の生成は、利用者のデータ (好み・アレルギー・健康目標など) を外国の AI 事業者へ送る。
   // キューに積まれたあとに同意を撤回した利用者 (または判定に失敗した場合) は、送らずに失敗にする (T15 / #1154。fail-closed)。
   // 判定に使う user_id は、利用者が書き換えられる generated_data ではなく、行の user_id。
+  // error_message は画面がそのまま出すので、コードではなく人向けの文を書く (画面はこの文を見分けて同意画面へ案内する)
   const aiConsent = await checkUserAiConsent(supabase, claimed.user_id);
   if (!aiConsent.allowed) {
     const { body } = aiConsentDeniedPayload(aiConsent);
@@ -50,7 +51,7 @@ export async function GET(req: Request) {
       .from('weekly_menu_requests')
       .update({
         status: 'failed',
-        error_message: body.code,
+        error_message: aiConsentDeniedStoredMessage(aiConsent),
         updated_at: new Date().toISOString(),
       })
       .eq('id', claimed.id)

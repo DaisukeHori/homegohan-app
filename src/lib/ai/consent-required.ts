@@ -7,11 +7,19 @@
  * window に AI_CONSENT_REQUIRED_EVENT を出し、全画面共通の AiConsentRequiredHost (src/components/consent) が同意画面を出す。
  * 呼び出し側は、応答が isAiConsentRequiredResponse なら自分のエラー表示を出さずに終える (同意画面が案内する)。
  *
+ * 非同期の処理 (献立の生成など) は、受け付けたあとに同意の判定で止まると、リクエストの行に人向けの文を書いて失敗にする。
+ * 失敗を表示する場所は、その文を handleStoredAiConsentFailure に渡し、true なら自分のエラー表示を出さずに終える。
+ *
  * 画面を開くと自動で AI に送る処理 (ホームの栄養アドバイスなど) は aiFetch を使わない (同意画面を勝手に出さない)。
  * 403 (または、AI の部分だけを省いた応答の aiSkipped) を受けたら、AI の部分の代わりに案内の一文だけを出す
  * (AI_CONSENT_COPY.automaticLockedNote / src/components/consent/AiSkippedNotice.tsx)。
  */
-import { AI_CONSENT_REQUIRED_MESSAGE, AI_CONSENT_REQUIRED_STATUS, isAiConsentRequiredBody } from './consent-config';
+import {
+  AI_CONSENT_REQUIRED_MESSAGE,
+  AI_CONSENT_REQUIRED_STATUS,
+  aiConsentReasonOfStoredError,
+  isAiConsentRequiredBody,
+} from './consent-config';
 
 /** 「同意が必要です」で止められたことを知らせる window のイベント */
 export const AI_CONSENT_REQUIRED_EVENT = 'homegohan:ai-consent-required';
@@ -30,6 +38,19 @@ export async function isAiConsentRequiredResponse(res: Response): Promise<boolea
 export function notifyAiConsentRequired(): void {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new Event(AI_CONSENT_REQUIRED_EVENT));
+}
+
+/**
+ * 非同期の AI の処理 (献立の生成・買い物リストの作り直しなど) が失敗で終わったときに、リクエストの行に保存された文
+ * (weekly_menu_requests.error_message / shopping_list_requests.result.error) を渡す。
+ * サーバーが同意の判定で止めたもの (未同意。aiConsentDeniedStoredMessage が書いた文) なら同意画面を出して true を返す。
+ * 呼び出し側は true なら自分のエラー表示を出さずに終える (同期の 403 を isAiConsentRequiredResponse で見分けるのと同じ扱い)。
+ * 同意の状況を読めなくて止めたもの (一時的に使えません) は false (保存された文は人向けなので、そのまま出してよい)。
+ */
+export function handleStoredAiConsentFailure(stored: unknown): boolean {
+  if (aiConsentReasonOfStoredError(stored) !== 'consent_required') return false;
+  notifyAiConsentRequired();
+  return true;
 }
 
 /**

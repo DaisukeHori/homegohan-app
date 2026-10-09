@@ -2,12 +2,20 @@
  * T15 (#1154) cron (献立の生成のキュー) は、未同意の利用者のリクエストを AI へ送らない
  *
  * キューに積まれたあとに同意を撤回した利用者 (または同意の状況を読めない場合) のリクエストは、
- * Edge Function generate-menu-v5 を呼ばずに失敗にする (error_message = 'AI_CONSENT_REQUIRED' / 'AI_CONSENT_CHECK_FAILED')。
+ * Edge Function generate-menu-v5 を呼ばずに失敗にする。error_message は画面がそのまま出すので、コードではなく人向けの文
+ * (AI_CONSENT_REQUIRED_MESSAGE / AI_CONSENT_CHECK_FAILED_MESSAGE) を書く (画面はこの文を見分けて同意画面へ案内する)。
  * 判定に使う user_id は、利用者が書き換えられる generated_data ではなく、行の user_id。
  * 判定は差し替えない (src/lib/ai/consent-guard.ts をそのまま使う)。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AI_CONSENT_PROVIDERS, AI_CONSENT_VERSION } from '../supabase/functions/_shared/ai-consent';
+import {
+  AI_CONSENT_CHECK_FAILED_CODE,
+  AI_CONSENT_CHECK_FAILED_MESSAGE,
+  AI_CONSENT_PROVIDERS,
+  AI_CONSENT_REQUIRED_CODE,
+  AI_CONSENT_REQUIRED_MESSAGE,
+  AI_CONSENT_VERSION,
+} from '../supabase/functions/_shared/ai-consent';
 
 const mocks = vi.hoisted(() => ({
   rpc: vi.fn(),
@@ -94,7 +102,7 @@ afterEach(() => {
 });
 
 describe('cron/process-menu-queue: 同意の判定', () => {
-  it('未同意: Edge Function を呼ばず、行を AI_CONSENT_REQUIRED で失敗にする (自分が取った行・処理中の行だけ)', async () => {
+  it('未同意: Edge Function を呼ばず、行を「同意が必要です」の文で失敗にする (自分が取った行・処理中の行だけ)', async () => {
     mocks.consentResult = { data: [], error: null };
     const res = await call();
 
@@ -103,7 +111,9 @@ describe('cron/process-menu-queue: 同意の判定', () => {
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(mocks.consentUserIds).toEqual([ROW_USER]);
     expect(mocks.updates).toHaveLength(1);
-    expect(mocks.updates[0].values).toMatchObject({ status: 'failed', error_message: 'AI_CONSENT_REQUIRED' });
+    expect(mocks.updates[0].values).toMatchObject({ status: 'failed', error_message: AI_CONSENT_REQUIRED_MESSAGE });
+    // コードそのもの (画面に英字のまま出てしまう) は書かない
+    expect(mocks.updates[0].values.error_message).not.toBe(AI_CONSENT_REQUIRED_CODE);
     expect(mocks.updates[0].filters).toEqual(
       expect.arrayContaining([
         ['eq', 'id', 'req-1'],
@@ -112,12 +122,13 @@ describe('cron/process-menu-queue: 同意の判定', () => {
     );
   });
 
-  it('同意の状況を読めない: Edge Function を呼ばず、AI_CONSENT_CHECK_FAILED で失敗にする (fail-closed)', async () => {
+  it('同意の状況を読めない: Edge Function を呼ばず、「一時的に使えません」の文で失敗にする (fail-closed)', async () => {
     mocks.consentResult = { data: null, error: { message: 'boom' } };
     const res = await call();
     await expect(res.json()).resolves.toEqual({ skipped: 'req-1', code: 'AI_CONSENT_CHECK_FAILED' });
     expect(mocks.fetch).not.toHaveBeenCalled();
-    expect(mocks.updates[0].values).toMatchObject({ status: 'failed', error_message: 'AI_CONSENT_CHECK_FAILED' });
+    expect(mocks.updates[0].values).toMatchObject({ status: 'failed', error_message: AI_CONSENT_CHECK_FAILED_MESSAGE });
+    expect(mocks.updates[0].values.error_message).not.toBe(AI_CONSENT_CHECK_FAILED_CODE);
   });
 
   it('同意済み: Edge Function generate-menu-v5 を呼ぶ', async () => {
