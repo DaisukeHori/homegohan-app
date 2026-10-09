@@ -88,8 +88,9 @@ readonly SLOT_WAIT_SECONDS_DEFAULT=5400
 readonly SLOT_POLL_SEC=10
 # ロックのディレクトリを作ってから持ち主 (owner) を書き終えるまでの猶予。これを過ぎても owner が無ければ持ち主が死んだとみなす
 readonly LOCK_OWNER_GRACE_SEC=60
-# 1 枠の Docker のメモリの目安 (MiB)。2026-10-10 に Docker Desktop (VM: CPU 5 / メモリ 7.75 GiB) で実測した、
-# 結合テスト・e2e を回している最中のローカル Supabase 一式 (studio などを除く 8 コンテナ) の使用量の最大 (約 1.1 GiB) に余裕を足した値。
+# 1 枠の Docker のメモリの目安 (MiB)。2026-10-10 に Docker Desktop (VM: CPU 8 / メモリ 15.6 GiB) で 20 秒ごとに docker stats を取って実測した、
+# 結合テスト・e2e を回している最中のローカル Supabase 一式 (studio などを除く 8 コンテナ) の使用量の最大 (1 枠で 1164 MiB。
+# 2 枠同時で合計 2019 MiB = 1 枠あたり約 1 GiB) に余裕を足した値。
 # Next (next dev / next start) と Playwright は Docker の外 (ホスト) で動くので入れていない
 readonly SLOT_MEMORY_MIB_DEFAULT=1536
 readonly BYTES_PER_MIB=1048576
