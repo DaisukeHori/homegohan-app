@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { calculatePeriodLocal } from '@/lib/date-utils';
 import { NextResponse } from 'next/server';
 import type {
   MetricRankingSummary,
@@ -20,8 +21,8 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 期間を計算
-    const { periodStart, periodEnd } = calculatePeriod(periodType);
+    // 期間を計算 (JST の暦。集計の Edge Function calculate-segment-stats が保存する period_start と同じ値 #1211)
+    const { periodStart, periodEnd } = calculatePeriodLocal(periodType);
 
     // 1〜4. 互いに独立した 4 クエリを並列に取得する (#1225)
     //   絞り込み条件は冒頭で確定済みの user.id / periodType / periodStart だけで、クエリ同士に依存は無い。
@@ -128,38 +129,6 @@ export async function GET(request: Request) {
     console.error('Comparison API error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
-}
-
-function calculatePeriod(periodType: string): { periodStart: string; periodEnd: string } {
-  const now = new Date();
-  let periodStart: Date;
-  let periodEnd: Date;
-
-  switch (periodType) {
-    case 'daily':
-      periodStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      periodEnd = periodStart;
-      break;
-    case 'weekly':
-      const dayOfWeek = now.getDay();
-      const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      periodStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diff);
-      periodEnd = new Date(periodStart);
-      periodEnd.setDate(periodEnd.getDate() + 6);
-      break;
-    case 'monthly':
-      periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      break;
-    default:
-      periodStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
-      periodEnd = now;
-  }
-
-  return {
-    periodStart: periodStart.toISOString().split('T')[0],
-    periodEnd: periodEnd.toISOString().split('T')[0],
-  };
 }
 
 function determinePrize(ranking: any, userBadges: any[]): ComparisonPrize | null {
