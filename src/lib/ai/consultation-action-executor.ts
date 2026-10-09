@@ -41,7 +41,7 @@ const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'a
 // AI の出力は信頼できないため、実行時にもホワイトリストで防御する。
 // 以前は夜食を除く 4 値だった。理由は「planned_meals.meal_type には 4 値の CHECK (#221) があり、
 // 'midnight_snack' を入れると 500 になる」だったが、その CHECK は本番に存在しなかった (#1205)。
-// オーナーの判断 (2026-10-08) で夜食を正式な食事区分とし、DB の検査とこの許可リストを 5 値にそろえた。
+// #1103 (項目 9) で夜食を正式な食事区分とし、DB の検査とこの許可リストを 5 値にそろえた。
 // システムプロンプト (api/ai/consultation/sessions/[sessionId]/messages/route.ts) の mealType もこの配列から作る。
 // 値を足す・減らすときは DB のトリガーと PLANNED_MEAL_TYPES (src/lib/planned-meal-validation.ts) も合わせる
 // (tests/consultation-meal-type-actions.test.ts が PLANNED_MEAL_TYPES と同じであることを確かめる)。

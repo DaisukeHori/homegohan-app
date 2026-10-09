@@ -1,7 +1,7 @@
--- migration: 20261008200600_meals_meal_type_trigger.sql
+-- migration: 20261010042500_meals_meal_type_trigger.sql
 -- #1103 (T45): 夜食 (midnight_snack) を正式な食事区分として、meals.meal_type の値を「書き込む値だけ」検査するトリガーで守る
 --
--- 決定 (オーナー判断 2026-10-08): 食事区分は 朝食 breakfast・昼食 lunch・夕食 dinner・おやつ snack・夜食 midnight_snack の 5 値とし、
+-- 方針 (#1103 項目 9): 食事区分は 朝食 breakfast・昼食 lunch・夕食 dinner・おやつ snack・夜食 midnight_snack の 5 値とし、
 --   DB の検査と AI 相談の許可リスト (src/lib/ai/consultation-action-executor.ts の AI_ALLOWED_MEAL_TYPES) を 5 値にそろえる。
 --   この migration は DB の検査のうち meals の分。AI 相談の許可リストとプロンプトは同じ PR のアプリのコードで 5 値にしている。
 --
@@ -78,8 +78,8 @@
 --   (planned_meals の validate_planned_meal_values と同じ扱い)。
 -- 確認: tests/integration/rls/meals-meal-type-trigger.test.ts。この migration の前は、5 値以外の書き込みが通るため失敗し、
 --   この migration の後は全件成功する (5 値以外を持つ既存の行を、meal_type 以外の列で更新できることも確かめる)。
--- ロールバック: supabase/rollbacks/20261008200600_meals_meal_type_trigger.down.sql
--- マージ順: migration は version の順にマージすること (この version: 20261008200600)。
+-- ロールバック: supabase/rollbacks/20261010042500_meals_meal_type_trigger.down.sql
+-- マージ順: migration は version の順にマージすること (この version: 20261010042500)。
 
 SET LOCAL lock_timeout = '10s';
 

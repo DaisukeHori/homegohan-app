@@ -1,4 +1,4 @@
--- rollback: 20261008200600_meals_meal_type_trigger.sql
+-- rollback: 20261010042500_meals_meal_type_trigger.sql
 -- ⚠️ DB 側の検査が外れる: 戻すと、meals.meal_type にどんな文字列でも DB が再び受け付ける
 --    (この migration の前の状態。ログインした本人が PostgREST から直接書く場合も止まらない)。
 --    planned_meals の検査 (20261008110000 の trg_planned_meals_validate_values) はそのまま残る。緊急時の切り戻し専用。

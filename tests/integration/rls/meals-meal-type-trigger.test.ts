@@ -6,7 +6,7 @@
  * 一方、meals.meal_type (NOT NULL の text) には、本番のスナップショット (supabase/baseline/prod_schema.sql) でも
  * 値の制約が無く、どんな文字列でも保存できた (#221 の meal_type の CHECK は台帳では適用済みだが、本番には無い)。
  *
- * 修正 (20261008200600_meals_meal_type_trigger.sql): meals に BEFORE INSERT OR UPDATE OF meal_type の行トリガー
+ * 修正 (20261010042500_meals_meal_type_trigger.sql): meals に BEFORE INSERT OR UPDATE OF meal_type の行トリガー
  * trg_meals_validate_meal_type (関数 validate_meals_meal_type) を足す。planned_meals と同じ 5 値だけを通し、
  * それ以外は SQLSTATE 23514 (check_violation) で拒否する。
  * 検査するのは「書き込む値」だけ: INSERT は meal_type、UPDATE は meal_type の値が変わるときだけ。
@@ -55,8 +55,8 @@ if (!url || !anonKey || !serviceKey) {
 }
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
-const MIGRATION_FILE = 'supabase/migrations/20261008200600_meals_meal_type_trigger.sql';
-const ROLLBACK_FILE = 'supabase/rollbacks/20261008200600_meals_meal_type_trigger.down.sql';
+const MIGRATION_FILE = 'supabase/migrations/20261010042500_meals_meal_type_trigger.sql';
+const ROLLBACK_FILE = 'supabase/rollbacks/20261010042500_meals_meal_type_trigger.down.sql';
 
 const TRIGGER = 'trg_meals_validate_meal_type';
 const FUNCTION = 'validate_meals_meal_type';
