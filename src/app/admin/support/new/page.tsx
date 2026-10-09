@@ -64,7 +64,7 @@ export default function NewTicketPage() {
       }
 
       const json = await res.json();
-      router.push(`/support/${json.data.id}`);
+      router.push(`/admin/support/${json.data.id}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '不明なエラー');
     } finally {
@@ -78,7 +78,7 @@ export default function NewTicketPage() {
         {/* ヘッダー */}
         <div className="flex items-center gap-3 mb-6">
           <Link
-            href="/support"
+            href="/admin/support"
             className="text-gray-500 hover:text-gray-700 text-sm"
           >
             ← チケット一覧
@@ -189,7 +189,7 @@ export default function NewTicketPage() {
             {/* 送信ボタン */}
             <div className="flex justify-end gap-3">
               <Link
-                href="/support"
+                href="/admin/support"
                 className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
               >
                 キャンセル
