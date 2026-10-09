@@ -1,7 +1,7 @@
 name: security-regression
 
 # 認可 / RLS のセキュリティ回帰テスト (#1231 配下の修正の再発防止) と、
-# 運営コンソール (admin) API の統合テスト (#849)。
+# 運営コンソール (admin / super-admin) API の統合テスト (#849 / #850)。
 #
 # 本番には接続しない。PR の migration を含むローカル Supabase
 # (本番スキーマのベースライン + 本番台帳より新しい migration。scripts/supabase-local.sh)
@@ -10,8 +10,13 @@ name: security-regression
 #   - tests/integration/security/      API ルートを Bearer JWT で叩く越境・権限昇格の検証
 #   - tests/integration/handson-tour/  ハンズオンツアーの RPC / API の検証 (#857)。適格性ゲートの 403/409 や
 #                                      RPC の EXECUTE 権限、sandbox 行の定期削除 (90 日超) を含む
-#   - tests/integration/operator/      運営コンソール API (/api/admin/*) の 200・401・403・400 と副作用の検証
-#                                      (admin-*.test.ts と auth-boundary.test.ts。super-admin-*.test.ts は #850 で追加する)
+#   - tests/integration/operator/      運営コンソール API の 200・401・403・400 と副作用の検証
+#                                      admin-*.test.ts と auth-boundary.test.ts は /api/admin/*、
+#                                      super-admin-*.test.ts は /api/super-admin/* (#850。入力検証は super-admin-input-validation)
+#
+# 実行するテストは、vitest に渡すパスの文字列 (部分一致) で選んでいる。新しい結合テストを足すときは、
+# ファイル名を下の指定に合わせること。当たらないファイルは CI で動かない。
+# tests/integration-ci-coverage.test.ts が、動かないファイルが無いことを PR の CI (npm test) で確かめる (#1313)。
 #
 # 本番には merge 後にしか migration が当たらないため、本番向けの検証では修正 PR 自身が
 # merge 前に緑にならない。ローカルスタックで回すことで修正 PR 自身をゲートにできる。
@@ -74,16 +79,19 @@ jobs:
           npx vitest run --config vitest.integration.config.ts --passWithNoTests
           tests/integration/rls tests/integration/security tests/integration/handson-tour
 
-      # 運営コンソール (admin) API の統合テスト (#849)。
+      # 運営コンソール API の統合テスト: admin (#849) と super_admin 専用 (#850)。
       # 上のセキュリティ回帰テストが落ちた場合も結果が分かるよう、キャンセル時以外は必ず実行する
       # (どちらかが落ちればジョブは失敗)。--passWithNoTests は付けない (対象が 0 件なら設定ミスとして落とす)。
-      # 絞り込みは vitest のパス部分一致。`operator/admin-` は super-admin-*.test.ts に当たらない。
-      - name: Run operator (admin) integration tests
+      # 絞り込みは vitest のパス部分一致。`operator/admin-` は super-admin-*.test.ts に当たらないため、
+      # `operator/super-admin-` を別に渡す (tests/integration/operator/ の下は、この 3 つの指定ですべて実行される)。
+      # 実行時間は数分で、ジョブの timeout-minutes に対して十分小さいため、ステップは分けない。
+      - name: Run operator (admin / super-admin) integration tests
         if: ${{ !cancelled() }}
         run: >
           npx vitest run --config vitest.integration.config.ts
           tests/integration/operator/admin-
           tests/integration/operator/auth-boundary
+          tests/integration/operator/super-admin-
 
       - name: Show logs on failure
         if: failure()

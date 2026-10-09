@@ -103,7 +103,8 @@ npx vitest run --config vitest.integration.config.ts tests/integration/rls tests
 - `supabase start` / `supabase db reset` をリポジトリの `supabase/` に対して直接実行しないでください。必ず `scripts/supabase-local.sh` を経由します (理由は [CLAUDE.md](./CLAUDE.md) の「ローカル / CI の Supabase」)。
   migration を追加・変更したら `bash scripts/supabase-local.sh reset` で作り直します。
 - テストは自分で作ったデータを後片付けしますが、途中で中断するとローカル DB にデータが残ることがあります。そのときは `bash scripts/supabase-local.sh reset` で戻します。
-- CI では `.github/workflows/security-regression.yml` が同じ手順で `tests/integration/rls`・`tests/integration/security`・`tests/integration/operator/admin-*` (運営コンソール API) を実行します。
+- CI では `.github/workflows/security-regression.yml` が同じ手順で `tests/integration/rls`・`tests/integration/security`・`tests/integration/handson-tour`・`tests/integration/operator` (運営コンソール API。`admin-*` / `auth-boundary` / `super-admin-*`) を実行します。
+  実行するファイルは vitest に渡すパスの文字列 (部分一致) で選んでいるため、新しい結合テストを足すときは、ファイル名を既存の指定に合わせてください。どの指定にも当たらないファイルは CI で動かないので、`tests/integration-ci-coverage.test.ts` が検出して落ちます。
 - 失敗が既知の不具合によるテストは `it.fails` で書いてあります (`[既知の不具合]` と題名に付く)。不具合を直したら、そのテストの `.fails` を外してください。
 
 ### Playwright — E2E テスト (Web)
