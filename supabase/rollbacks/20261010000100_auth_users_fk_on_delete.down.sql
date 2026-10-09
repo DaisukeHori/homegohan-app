@@ -1,4 +1,4 @@
--- rollback: 20261008200400_auth_users_fk_on_delete.sql
+-- rollback: 20261010000100_auth_users_fk_on_delete.sql
 -- 戻すと、auth.users を指す外部キー 33 本が NO ACTION (ON DELETE の指定なし) に戻り、行が残っている利用者・運営者の
 -- 退会 (auth.admin.deleteUser) が、外部キー違反 (23503) で再び失敗するようになる。緊急時の切り戻し専用。
 -- 先に退会 API のコード (src/lib/account-deletion.ts。prepare_account_deletion を呼ぶ) を戻すこと。

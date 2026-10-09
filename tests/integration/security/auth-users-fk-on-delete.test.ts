@@ -4,7 +4,7 @@
  * 問題: auth.users を指す外部キーのうち 33 本は ON DELETE の指定が無く (= NO ACTION)、参照する行が 1 つでも残っていると
  * auth.admin.deleteUser が外部キー違反 (23503) で失敗した。退会 API は 11 テーブルだけを事前に掃除していて、
  * support_tickets / email_delivery_logs / coupon_redemptions / nps_surveys / gdpr_deletion_requests などが漏れていた。
- * 修正: migration 20261008200400_auth_users_fk_on_delete.sql が、本人だけの記録は CASCADE、サポート・会計・運営者の参照は
+ * 修正: migration 20261010000100_auth_users_fk_on_delete.sql が、本人だけの記録は CASCADE、サポート・会計・運営者の参照は
  * SET NULL (列を NULL を許す形にして) に張り直し、重複していた admin_audit_logs_admin_id_fkey を外した。
  *
  * 確認すること (DB のカタログ。データは作らない。実際に退会して消えること・残ることは account-deletion.test.ts):

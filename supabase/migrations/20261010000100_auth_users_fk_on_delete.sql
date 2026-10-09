@@ -1,4 +1,4 @@
--- migration: 20261008200400_auth_users_fk_on_delete.sql
+-- migration: 20261010000100_auth_users_fk_on_delete.sql
 -- 退会 (auth.admin.deleteUser) が外部キーで失敗しないようにし、残す記録からは個人を特定できないようにする (#1175)
 --
 -- 背景:
@@ -86,10 +86,10 @@
 --
 -- 冪等: ADD COLUMN IF NOT EXISTS / DROP NOT NULL / DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT / CREATE OR REPLACE FUNCTION /
 --   DROP TRIGGER IF EXISTS + CREATE TRIGGER。2 回続けて流しても同じ結果になる。
--- 適用順: migration は version 順にマージする (この version: 20261008200400)。退会 API のコードと同じ PR。
+-- 適用順: migration は version 順にマージする (この version: 20261010000100)。退会 API のコードと同じ PR。
 --   コードが migration より先に出ると、prepare_account_deletion が無いため退会は ACCOUNT_DELETE_FAILED (500) で止まる
 --   (何も消えない。migration が入れば再試行できる)。
--- ロールバック: supabase/rollbacks/20261008200400_auth_users_fk_on_delete.down.sql
+-- ロールバック: supabase/rollbacks/20261010000100_auth_users_fk_on_delete.down.sql
 -- 確認: tests/integration/security/auth-users-fk-on-delete.test.ts / tests/integration/security/account-deletion.test.ts /
 --       tests/integration/security/account-delete-route.test.ts
 

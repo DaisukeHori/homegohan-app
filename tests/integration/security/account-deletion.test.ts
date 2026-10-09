@@ -2,7 +2,7 @@
  * #1175 退会 (deleteAccount = POST /api/account/delete の本体) の結合テスト
  *
  * 外部キーに「ON DELETE の指定が無い」(NO ACTION) 表に行がある利用者・運営者は、auth.admin.deleteUser が外部キー違反 (23503) で
- * 失敗していた。migration 20261008200400_auth_users_fk_on_delete.sql と src/lib/account-deletion.ts で直した。
+ * 失敗していた。migration 20261010000100_auth_users_fk_on_delete.sql と src/lib/account-deletion.ts で直した。
  *
  * このテストは、本物のローカル Supabase (DB・Auth・Storage) に対して次を確かめる:
  *   A. 外部キーのある全ての表 (NO ACTION だった 28 テーブル + SET NULL / CASCADE の主な表) に行を作ってから、

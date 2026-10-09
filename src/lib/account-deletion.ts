@@ -12,7 +12,7 @@
  *   3. release_user_membership (DB 関数): 組織のライセンス席を解放する。失敗しても削除は続ける (要手動リコンサイル)。
  *   4. Storage のファイルを消す (src/lib/account-deletion-storage.ts)。
  *   5. auth.admin.deleteUser。public 側の個人データは外部キーの CASCADE / SET NULL で消える・匿名化される
- *      (20261008200400_auth_users_fk_on_delete.sql。外部キーで失敗する経路は無い)。
+ *      (20261010000100_auth_users_fk_on_delete.sql。外部キーで失敗する経路は無い)。
  *
  * 2〜4 を 5 より先に行うのは、削除したあとでは本人の user_id でファイルや記録を探せないため。
  * 5 が失敗したら、2〜4 は済んでいてもアカウントは残る。もう一度削除を実行すれば、残りが片付いて削除できる。

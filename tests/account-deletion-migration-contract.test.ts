@@ -1,5 +1,5 @@
 /**
- * #1175 migration 20261008200400_auth_users_fk_on_delete.sql (と、そのロールバック) のソース走査 contract テスト (DB は使わない)
+ * #1175 migration 20261010000100_auth_users_fk_on_delete.sql (と、そのロールバック) のソース走査 contract テスト (DB は使わない)
  *
  * 本物の DB での振る舞い (外部キーの動作・退会・権限) は tests/integration/security/auth-users-fk-on-delete.test.ts と
  * account-deletion.test.ts が確かめる。ここでは、migration の書き方の決まりごとが崩れていないかを、SQL の文面だけで確かめる。
@@ -19,8 +19,8 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = path.resolve(__dirname, '..');
-const MIGRATION = 'supabase/migrations/20261008200400_auth_users_fk_on_delete.sql';
-const ROLLBACK = 'supabase/rollbacks/20261008200400_auth_users_fk_on_delete.down.sql';
+const MIGRATION = 'supabase/migrations/20261010000100_auth_users_fk_on_delete.sql';
+const ROLLBACK = 'supabase/rollbacks/20261010000100_auth_users_fk_on_delete.down.sql';
 
 /** `--` から行末までのコメントを除く (この 2 つのファイルでは、文字列リテラルの中に `--` は出てこない) */
 function stripLineComments(sql: string): string {
