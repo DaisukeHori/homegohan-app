@@ -14,6 +14,8 @@
  *   5. 必須の変数名を、例外 (new XxxError(...) / throw) や応答 (NextResponse.json / Response.json / new Response) の
  *      文字列に書かない。書くと 500 の本文に変数名が出うる (#1172)。以前 account/delete が自前の取り出しで
  *      'Supabase admin env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)' を投げ、本文に返していた
+ *   6. Web の本番コードが名前を書いて読む環境変数は、すべて src/lib/env.ts の一覧にある (Node.js・Next.js が入れる NODE_ENV・NEXT_RUNTIME を除く)。
+ *      値を読む場所が決まっている変数 (一覧の readOnlyBy) は、そのファイルだけが読む
  *
  * 走査は TypeScript の構文木で行うので、コメントや文字列の中の `process.env.X!` には反応しない。
  */
@@ -60,6 +62,39 @@ function findEnvNonNullAssertions(source: string, fileName = 'file.ts'): number[
   };
   visit(sf);
   return lines;
+}
+
+interface EnvRead {
+  name: string;
+  /** 1 始まり */
+  line: number;
+}
+
+/**
+ * 名前を書いて読んでいる環境変数 (`process.env.X` / `process.env['X']` / `const { X } = process.env`)。
+ * `process.env[name]` のように名前が変数のものは、どの変数か決まらないので拾わない (src/lib/env.ts の getOptionalEnv だけ)。
+ */
+function findEnvReads(source: string, fileName = 'file.ts'): EnvRead[] {
+  const sf = parse(source, fileName);
+  const reads: EnvRead[] = [];
+  const lineOf = (node: ts.Node) => sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+  const visit = (node: ts.Node): void => {
+    if (ts.isPropertyAccessExpression(node) && isProcessEnv(node.expression)) {
+      reads.push({ name: node.name.text, line: lineOf(node) });
+    }
+    if (ts.isElementAccessExpression(node) && isProcessEnv(node.expression) && ts.isStringLiteralLike(node.argumentExpression)) {
+      reads.push({ name: node.argumentExpression.text, line: lineOf(node) });
+    }
+    if (ts.isVariableDeclaration(node) && node.initializer && isProcessEnv(node.initializer) && ts.isObjectBindingPattern(node.name)) {
+      for (const element of node.name.elements) {
+        const key = element.propertyName ?? element.name;
+        if (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) reads.push({ name: key.text, line: lineOf(element) });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return reads;
 }
 
 /** 呼び出し先の名前 (`Foo` / `a.b`)。それ以外の形は null */
@@ -185,6 +220,27 @@ describe('走査の仕組みの確認 (検出が空振りしないこと)', () =
     ].join('\n');
 
     expect(findEnvNonNullAssertions(source)).toEqual([1, 2]);
+  });
+
+  it('名前を書いた環境変数の読み取り (ドット・添字・分割代入) を見つけ、コメント・文字列・名前が変数の読み取りは見つけない', () => {
+    const source = [
+      'const a = process.env.FOO;', // 1
+      "const b = process.env['BAR'] ?? '';", // 2
+      'const { BAZ, QUX: renamed } = process.env;', // 3: 分割代入 (2 つ)
+      'export function f(v = process.env.DEFAULT_PARAM) { return v; }', // 4: 引数の既定値
+      '// process.env.COMMENTED', // 5: コメント
+      'const e = "process.env.IN_STRING";', // 6: 文字列
+      'const g = process.env[name];', // 7: 名前が変数
+      'const h = other.env.NOT_PROCESS;', // 8: process ではない
+    ].join('\n');
+
+    expect(findEnvReads(source)).toEqual([
+      { name: 'FOO', line: 1 },
+      { name: 'BAR', line: 2 },
+      { name: 'BAZ', line: 3 },
+      { name: 'QUX', line: 3 },
+      { name: 'DEFAULT_PARAM', line: 4 },
+    ]);
   });
 
   it('例外・応答の文字列に書かれた必須の変数名を見つけ、ログ・コメント・変数の読み取りは見つけない', () => {
@@ -393,4 +449,61 @@ describe('.env.example と check:env の導線 (#1182)', () => {
     expect(readRepoFile('ENV_SETUP.md')).toContain(MISSING_ENV_SERVER_LOG_PREFIX);
     expect(readRepoFile('CLAUDE.md')).toContain(MISSING_ENV_SERVER_LOG_PREFIX);
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. 本番コードで読む環境変数は、すべて一覧にある / 値を読む場所が決まっている変数は、そのファイルだけが読む
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('本番コードで読む環境変数は src/lib/env.ts の一覧にある (#1182)', () => {
+  /** Web の本番コードの置き場。モバイル (apps/mobile) の変数は apps/mobile/src/lib/env.ts が持つので除く */
+  const WEB_ROOTS = PRODUCTION_ROOTS.filter((root) => !root.startsWith('apps/mobile'));
+  /** 一覧に載せない変数: Node.js・Next.js が入れるもの (設定する変数ではないので check:env の案内に出さない) */
+  const RUNTIME_PROVIDED = new Set(['NODE_ENV', 'NEXT_RUNTIME']);
+
+  function envReadsByFile(roots: readonly string[]): Map<string, EnvRead[]> {
+    const byFile = new Map<string, EnvRead[]>();
+    for (const file of roots.flatMap((root) => collectProductionFiles(path.join(ROOT, root)))) {
+      const source = fs.readFileSync(file, 'utf-8');
+      // 構文木の解析は重いので、process.env に触れていないファイルは読み飛ばす
+      if (!/process\s*\.\s*env/.test(source)) continue;
+      const reads = findEnvReads(source, file);
+      if (reads.length > 0) byFile.set(path.relative(ROOT, file), reads);
+    }
+    return byFile;
+  }
+
+  const listed = new Set<string>(ENV_VARS.map((entry) => entry.name));
+
+  it('Web の本番コードが名前を書いて読む環境変数は、すべて一覧にある (Node.js・Next.js が入れるものを除く)', () => {
+    const byFile = envReadsByFile(WEB_ROOTS);
+    const unlisted = [...byFile.entries()].flatMap(([file, reads]) =>
+      reads
+        .filter((read) => !listed.has(read.name) && !RUNTIME_PROVIDED.has(read.name))
+        .map((read) => `${file}:${read.line} ${read.name}`),
+    );
+
+    // 走査が空振りしていないこと: 一覧の変数を読んでいる箇所が見つかる
+    expect(byFile.size).toBeGreaterThan(10);
+    expect(byFile.get('src/lib/env-required.ts')?.map((read) => read.name)).toContain('NEXT_PUBLIC_SUPABASE_URL');
+    // 失敗したら、その変数を src/lib/env.ts の一覧と .env.example に足す (必須か任意か・無いと何が起きるかを書く)。
+    // 一覧に無いと、npm run check:env がその変数を案内できない (#1174 の LEGAL_CONSENT_* が一覧から漏れていた)
+    expect(unlisted).toEqual([]);
+  }, 30_000);
+
+  it('値を読む場所が決まっている変数 (一覧の readOnlyBy) は、本番コードではそのファイルだけが読む', () => {
+    const byFile = envReadsByFile(PRODUCTION_ROOTS);
+    const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
+
+    // 走査が空振りしていないこと: 値を読む場所が決まっている変数がある
+    expect(sealed.length).toBeGreaterThan(0);
+    for (const entry of sealed) {
+      const readers = [...byFile.entries()]
+        .filter(([, reads]) => reads.some((read) => read.name === entry.name))
+        .map(([file]) => file);
+
+      // 読み方 (定数時間の比較・on だけを有効とみなす など) を 1 か所に集めておくため、ほかのファイルで直接読まない
+      expect(readers, entry.name).toEqual([entry.readOnlyBy]);
+    }
+  }, 30_000);
 });

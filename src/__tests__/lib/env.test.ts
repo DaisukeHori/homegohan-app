@@ -416,10 +416,16 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     }
   });
 
-  it('値を読む場所が決まっている変数 (CRON_SECRET・CRON_SECRET_PREVIOUS) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
+  it('値を読む場所が決まっている変数 (CRON_SECRET・CRON_SECRET_PREVIOUS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
     const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
 
-    expect(sealed.map((entry) => entry.name).sort()).toEqual(['CRON_SECRET', 'CRON_SECRET_PREVIOUS']);
+    expect(sealed.map((entry) => [entry.name, entry.readOnlyBy]).sort()).toEqual([
+      ['CRON_SECRET', 'src/lib/cron-auth.ts'],
+      ['CRON_SECRET_PREVIOUS', 'src/lib/cron-auth.ts'],
+      // #1174 の同意ゲートのフラグ。middleware (Edge Runtime) が lib/legal-consent.ts の isLegalConsentFlagOn で読む
+      ['LEGAL_CONSENT_ENFORCE', 'lib/legal-consent.ts'],
+      ['LEGAL_CONSENT_NOTICE', 'lib/legal-consent.ts'],
+    ]);
     for (const entry of sealed) {
       // 任意の変数にだけ付ける。読むファイルは実在する (ファイルを移したのに一覧が古いままにならない)
       expect(entry.required, entry.name).toBe(false);
@@ -434,6 +440,10 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       getOptionalEnv('CRON_SECRET');
       // @ts-expect-error CRON_SECRET_PREVIOUS も同じ
       getOptionalEnv('CRON_SECRET_PREVIOUS');
+      // @ts-expect-error LEGAL_CONSENT_ENFORCE の値を読むのは lib/legal-consent.ts だけ (読み方を 1 つにしておく)
+      getOptionalEnv('LEGAL_CONSENT_ENFORCE');
+      // @ts-expect-error LEGAL_CONSENT_NOTICE も同じ
+      getOptionalEnv('LEGAL_CONSENT_NOTICE');
       getOptionalEnv('RESEND_API_KEY'); // 値を読む場所が決まっていない任意の変数は渡せる
     };
     expect(typeof typeOnly).toBe('function');

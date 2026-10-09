@@ -9,10 +9,11 @@
  *  - 任意: 無くても動くが、機能が縮退する (メールが送れない・レート制限がメモリ内になる・AI が使えない など)。
  *    getOptionalEnv(name) で取り出す。無ければ undefined を返し、プロセスごとに 1 回だけ警告を出す。
  *    本番の起動を、任意の変数が無いことで止めてはならない。投げるのは必須の変数だけ。
- *  - 値を読む場所が 1 か所に決まっている任意の変数 (CRON_SECRET など。readOnlyBy を書く): 一覧には、
+ *  - 値を読む場所が 1 か所に決まっている任意の変数 (CRON_SECRET・LEGAL_CONSENT_ENFORCE など。readOnlyBy を書く): 一覧には、
  *    check:env が「無いと何が起きるか」を案内するための名前だけを置く。値は一覧に書いたファイルだけが読み、
- *    getOptionalEnv では読めない (型で渡せない)。tests/cron-secret-contract.test.ts の CC-4 が、
- *    このファイルは名前を一覧のキーに書くだけで、値を読んでいないことを確かめる。
+ *    getOptionalEnv では読めない (型で渡せない)。tests/env-source-scan.test.ts が、本番コードで値を読むのが
+ *    readOnlyBy のファイルだけであることを確かめる (CRON_SECRET は tests/cron-secret-contract.test.ts の CC-4 も、
+ *    このファイルは名前を一覧のキーに書くだけで、値を読んでいないことを確かめる)。
  *
  * このファイルは zod を読み込む (最小のスキーマでも minify 後に約 59 KB)。そのため、ブラウザ向けのコード
  * (lib/supabase/client.ts) と Edge Runtime のコード (middleware・runtime = 'edge' の route) からは
@@ -27,6 +28,8 @@
  *  2. .env.example に書く (tests/env-source-scan.test.ts が、一覧の全変数が書かれているかを検査する)。
  *     逆に、.env.example から変数を消す (採用をやめたサービスなど) ときは、ここからも消す。
  *  3. コードでは `process.env.X!` と書かない (tests/env-source-scan.test.ts が検査する)。
+ *  1 を忘れると、tests/env-source-scan.test.ts が「本番コード (Web) で読む環境変数が一覧に無い」と失敗する
+ *  (Node.js・Next.js が入れる NODE_ENV・NEXT_RUNTIME は除く。モバイル (apps/mobile) は apps/mobile/src/lib/env.ts)。
  */
 
 import { z } from 'zod';
@@ -212,6 +215,22 @@ export const SERVER_ENV_VARS = {
       "モバイルの認証ブリッジ (コード方式) が WebView の Cookie に入れる refresh_token の扱いのスイッチ。'on' で実際の refresh_token を入れる (従来の動作)",
     whenMissing:
       '更新に使えない値を入れる。Web は自分で更新せず、期限が近づくとネイティブに再ブリッジを頼む (src/lib/native-auth-bridge.ts)',
+  },
+  LEGAL_CONSENT_ENFORCE: {
+    required: false,
+    description:
+      "利用規約・プライバシーポリシーの再同意の強制 (#1174)。'on' のときだけ、同意が済んでいない利用者を同意画面 (/legal-consent) へ回す",
+    whenMissing: '誰も同意画面へ回さない (既定)。お知らせを出すかは LEGAL_CONSENT_NOTICE で決まる',
+    // middleware (Edge Runtime) が読むので、zod を持つこのファイルの getOptionalEnv は使えない。
+    // 2 つのフラグの読み方 (on だけを有効とみなす) は lib/legal-consent.ts の isLegalConsentFlagOn に 1 つだけ置く
+    readOnlyBy: 'lib/legal-consent.ts',
+  },
+  LEGAL_CONSENT_NOTICE: {
+    required: false,
+    description:
+      "同意が済んでいない利用者の画面の上に「同意のお願い」のお知らせを出すか (#1174)。'on' のときだけ出す。強制していない間だけ効く",
+    whenMissing: 'お知らせを出さない (既定)',
+    readOnlyBy: 'lib/legal-consent.ts',
   },
   SERVICE_ROLE_JWT: {
     required: false,

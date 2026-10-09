@@ -19,12 +19,12 @@ npm run check:env -- --strict                      # 任意の変数の「値の
 | 種類 | 変数 | 足りないとき |
 |---|---|---|
 | **必須** | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | アプリが動きません。コードは、使う場面でエラー（`MissingEnvError`）を出し、500 になります。URL か anon キーが無いと、middleware がページと API（`/api/health` を除く）を汎用の 500 で止めます。`SUPABASE_SERVICE_ROLE_KEY` だけが無いと、それを使う API が 500 になります。応答（本文・ヘッダ・エラーページ）には変数名も値も出しません。本文は API によって、汎用の文（「処理中にエラーが発生しました」）・`MissingEnvError` の固定の文（変数名は入りません）・Next.js の既定のエラーのどれかです。どの変数が足りないかは、サーバーのログの `[env] missing required env: <変数名>` の行（どの経路でも出ます）と、`npm run check:env` で分かります。500 を `internalError()` で返す API と middleware では、構造化ログの `missing_env_name` にも残ります（console に出る構造化ログには必ず入ります。`app_logs` に書けるのは URL と `SUPABASE_SERVICE_ROLE_KEY` がそろっているとき、つまり anon キーだけが無いときです）。コマンドは終了コード 1 |
-| **任意** | メール（`RESEND_API_KEY`）・レート制限（`UPSTASH_REDIS_REST_*`）・課金（`STRIPE_SECRET_KEY`）・AI（`GOOGLE_AI_STUDIO_API_KEY`・`XAI_API_KEY`・`OPENAI_API_KEY`）・`CRON_SECRET`・モバイル認証ブリッジのスイッチ（`NATIVE_BRIDGE_*`）など | アプリは動きますが、その機能が使えなくなったり弱くなったりします。コマンドは「未設定です。…が起きます」と表示するだけです |
+| **任意** | メール（`RESEND_API_KEY`）・レート制限（`UPSTASH_REDIS_REST_*`）・課金（`STRIPE_SECRET_KEY`）・AI（`GOOGLE_AI_STUDIO_API_KEY`・`XAI_API_KEY`・`OPENAI_API_KEY`）・`CRON_SECRET`・モバイル認証ブリッジのスイッチ（`NATIVE_BRIDGE_*`）・規約の再同意のスイッチ（`LEGAL_CONSENT_*`）など | アプリは動きますが、その機能が使えなくなったり弱くなったりします。コマンドは「未設定です。…が起きます」と表示するだけです |
 
 - 任意の変数が足りないことで、本番を止めてはいけません。任意の変数を読む共通の関数（`getOptionalEnv()`。`src/lib/env.ts`）は、変数が無いときに例外を投げず、`undefined` を返して、プロセスごとに 1 回だけ警告をログに残します。メール送信・レート制限・Stripe・AI など、いまは各機能が `process.env` を直接読んでいる箇所が残っていて、ほかの作業と重ならないところから順にこの関数へ置き換えていきます。
 - 下の「必須の環境変数」に載っている `CRON_SECRET` は、「cron（定期処理）を動かすには必要」という意味です。`check:env` では任意に分類しています（無くてもアプリ本体は動き、cron の API が 503 を返すだけのため）。
 - `check:env` は **CI には組み込んでいません**（CI にはシークレットが無く、必須の変数がそろわないため）。デプロイ前や環境を作り直したときに、手元で実行してください。
-- 新しい環境変数を足すときは、`src/lib/env.ts` の一覧に足し（必須にするのは、無いとアプリが動かないものだけ）、`.env.example` にも書いてください（`tests/env-source-scan.test.ts` が確かめます）。コードで `process.env.X!` と書くのは禁止です。
+- 新しい環境変数を足すときは、`src/lib/env.ts` の一覧に足し（必須にするのは、無いとアプリが動かないものだけ）、`.env.example` にも書いてください（`tests/env-source-scan.test.ts` が、Web のコードが読む変数が一覧に無いとき・一覧の変数が `.env.example` に無いときに失敗します）。コードで `process.env.X!` と書くのは禁止です。
 - モバイルアプリ（`apps/mobile`）の変数は別です。下の「モバイル（Expo）での環境変数」を見てください。`EXPO_PUBLIC_SUPABASE_URL` と `EXPO_PUBLIC_SUPABASE_ANON_KEY` が無いビルドは、開発中は起動時にエラーを出し、リリースビルドでは「アプリの設定が不足しています」という画面を出します（接続先の無いままログイン画面を出し続けません）。
 
 ## 📋 必要な環境変数一覧
