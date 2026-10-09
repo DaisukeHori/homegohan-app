@@ -37,6 +37,7 @@ const NON_AI_HOSTS: Record<string, string> = {
   'homegohan-app.vercel.app': '自社のサイト',
   'flmeolcfutuwwbjmzyoz.supabase.co': '自社の Supabase',
   'placeholder.supabase.co': 'アプリの Supabase の URL が未設定のときの仮の値',
+  'xxxx.supabase.co': '環境変数の一覧 (src/lib/env.ts) の書き方の例',
   'api.stripe.com': '決済 (Stripe)',
   'dashboard.stripe.com': '決済 (Stripe) の管理画面へのリンク',
   'api.resend.com': 'メールの送信 (Resend)',
