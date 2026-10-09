@@ -83,7 +83,7 @@ supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
 | `generate-health-insights` | 健康インサイト生成 |
 | `create-derived-recipe` | 派生レシピ作成 |
 | `aggregate-org-stats` | 組織統計集約。**停止中**（オーナー判断 #1325）。認証（`requireServiceRole`）のあと、何もせず HTTP 410（`DISABLED`）を返すだけで、集計処理は削除済み。デプロイ先から関数を消さないよう、ディレクトリは残している。呼び出し元（画面のボタン・API ルート）も無い。本番に呼び出す `pg_cron` のジョブが残っていれば、migration `20261008130000_stop_aggregate_org_stats_cron.sql` が登録解除する |
-| `calculate-segment-stats` | セグメント統計計算 |
+| `calculate-segment-stats` | セグメント統計計算 (比較ランキング)。pg_cron のジョブ `calculate-segment-stats-daily` が毎日 JST 4:00 に daily / weekly / monthly を呼ぶ。手動は `POST /api/comparison/trigger` (super_admin だけ)。#1406 |
 | `backfill-ingredient-embeddings` | 材料埋め込みバックフィル |
 | `regenerate-embeddings` | 埋め込み再生成 |
 | `regenerate-shopping-list-v2` | 買い物リスト再生成 v2 |
