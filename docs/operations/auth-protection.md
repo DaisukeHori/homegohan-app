@@ -23,7 +23,7 @@
 Supabase の CAPTCHA を有効にすると、ログイン・登録・パスワード再設定の API は、Turnstile のトークンが付いていないリクエストを**断る**ようになる。
 
 - 今配られているモバイルのビルドは、トークンを付けられない。有効にした瞬間に、ログインも新規登録もできなくなる。
-- 本番を対象にした e2e (`tests/e2e/global-setup.ts` など) は、Supabase の `/auth/v1/token?grant_type=password` を直接呼んでいる。トークンが無いので失敗する。
+- 本番を対象にした e2e (`tests/e2e/global-setup.ts` など) は、Supabase の `/auth/v1/token?grant_type=password` を直接呼んでいる。トークンが無いので失敗する。デプロイ後の動作確認スクリプト (`--with-auth`) と Maestro の補助スクリプトも同じ (§4)。
 
 一方で、**Web の画面に Turnstile を出しただけでは、本当の防御にはならない**。Supabase の URL と anon key は公開されているので、攻撃者は画面を通さずに Supabase の Auth API を直接呼べる。トークンを必須にする (= Supabase で CAPTCHA を有効にする) まで、直接呼ぶ攻撃は止まらない。だから、順番は「Web とモバイルの両方がトークンを付けるようになる → 古いビルドが消える → Supabase で有効にする」になる。
 
@@ -107,6 +107,8 @@ Supabase の CAPTCHA を有効にすると、ログイン・登録・パスワ�
 そのほか、CAPTCHA を有効にすると動かなくなるもの:
 
 - 本番 (Supabase の本番プロジェクト) を対象にした e2e のログイン (`tests/e2e/global-setup.ts`、`tests/e2e/fixtures/auth.ts` など。Supabase の REST を直接呼ぶ)。有効にするのと同時に、トークンが要らない方法 (管理 API でセッションを作るなど) へ変える。
+- **デプロイ後の動作確認スクリプトの `--with-auth`** (`npm run test:smoke -- --with-auth`、本体は `scripts/lib/smoke.mjs`)。テストユーザーで Supabase の `/auth/v1/token?grant_type=password` を直接呼ぶので、トークンが無く断られ、「ログインに失敗しました」と報告されて確認全体が失敗 (終了コード 1) になる。有効にするのと同時に、`--with-auth` を使わない運用 (未ログインで叩ける範囲だけの確認) にするか、トークンが要らない方法へ変える。`--with-auth` を付けない通常の確認は影響しない。
+- **Maestro (モバイルの e2e) の補助スクリプト** `apps/mobile/maestro/flows/scripts/reset-onboarding.js`。同じく Supabase のパスワードログインを直接呼ぶので、有効にすると失敗する。e2e と同じ扱いで直す。
 - 結合テスト (`tests/integration/`) は、ローカルの Supabase (CAPTCHA は常に無効) に向けて動くので影響しない。
 
 ---
@@ -176,6 +178,7 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
 2. 実機 (iOS・Android) で、ログイン・新規登録・パスワード再設定の画面を確認する。
    - ウィジェットが出て、トークンが取れる (取れるまで送信ボタンは押せない)。
    - チェックボックスが出る場合に、押せる。
+   - ウィジェットの中の Cloudflare の「プライバシー」「利用規約」のリンクを押すと、外のブラウザで開く。アプリの中のウィジェットは別のページに置き換わらず、そのまま残る (WebView の `onOpenWindow` で受けている。実機でしか確かめられない)。
    - ログインできる。
    - 機内モードなど、通信できないときに、エラーと「もう一度確認する」が出る。
 3. 本番ビルドを作り、TestFlight / ストアで配布する。
@@ -185,6 +188,7 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
 - [ ] モバイルの新しいビルドが配られ、**古いビルドが使われなくなった** (使われているビルドの内訳は、App Store Connect / Google Play Console で見る)
 - [ ] §4 の「未対応」の 2 つ (メール確認の再送、設定画面のパスワード変更の本人確認) に、トークンを付ける対応が入った
 - [ ] 本番向け e2e のログインを、トークンが要らない方法へ変えた (§4)
+- [ ] デプロイ後の動作確認スクリプトの `--with-auth` (`scripts/lib/smoke.mjs`) と、Maestro の補助スクリプト (`apps/mobile/maestro/flows/scripts/reset-onboarding.js`) を、トークンが要らない方法へ変えた、または使わない運用にした (§4)
 - [ ] Web の本番に `NEXT_PUBLIC_TURNSTILE_SITE_KEY` が入っていて、3 画面で動いている
 - [ ] ロールバック手順 (§7) を読んだ
 
@@ -245,6 +249,6 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
 - [ ] Supabase ダッシュボードの**現在の設定値** (§3.1・§3.2) を、この文書の表に記入する
 - [ ] Web の本番に入れる時期を決める (§6 手順 2)
 - [ ] モバイルの新しいビルドを配り、**古いビルドが使われなくなる**のを待つ。実機での確認は §6 手順 3
-- [ ] §4 の「未対応」の 2 つと、本番向け e2e のログインの対応を依頼する
+- [ ] §4 の「未対応」の 2 つと、本番向け e2e・動作確認スクリプト (`--with-auth`)・Maestro 補助スクリプトのログインの対応を依頼する
 - [ ] **Supabase で CAPTCHA を有効にする時期**を決める (§6 手順 5)
 - [ ] プライバシーポリシーへの追記が要るか判断する (§9)

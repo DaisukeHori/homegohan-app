@@ -69,6 +69,15 @@ export function parseTurnstileMessage(data: unknown): TurnstileMessage | null {
 }
 
 /**
+ * ウィジェットの中のリンク (Cloudflare の「プライバシー」「利用規約」など。target="_blank" や window.open で開くもの) を、
+ * 外のブラウザで開いてよい URL か。https のものだけ (http・javascript:・intent:・file: などは開かない)。
+ * 届いた値は WebView の中のページ由来なので、形を確かめてから使う。
+ */
+export function isExternalHttpsUrl(url: unknown): url is string {
+  return typeof url === 'string' && /^https:\/\/[^\s/?#]+\S*$/i.test(url);
+}
+
+/**
  * WebView に読み込ませる HTML。Cloudflare のウィジェットを 1 つ描画して、結果を postMessage で知らせる。
  * 設定は JSON にして埋め込む ("<" は < にして、</script> などで HTML が壊れないようにする)。
  */

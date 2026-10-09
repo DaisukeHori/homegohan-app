@@ -74,7 +74,7 @@ jest.mock('@expo/vector-icons', () => ({
 jest.mock('../../src/theme', () => ({
   colors: {
     bg: '#fff', accent: '#f00', text: '#000', textMuted: '#888',
-    textLight: '#666', card: '#fafafa', border: '#eee', error: '#f44', errorLight: '#fee',
+    textLight: '#666', card: '#fafafa', border: '#eee', error: '#f44', errorLight: '#fee', dangerText: '#b00',
   },
   spacing: { sm: 8, md: 16, lg: 24, xl: 32 },
   radius: { lg: 12 },

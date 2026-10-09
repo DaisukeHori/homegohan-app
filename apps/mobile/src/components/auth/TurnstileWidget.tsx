@@ -30,11 +30,17 @@ import {
   useState,
   type RefObject,
 } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Linking, Pressable, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import type { WebViewMessageEvent } from 'react-native-webview';
 
-import { buildTurnstileHtml, getTurnstileSiteKey, parseTurnstileMessage, type TurnstileAction } from '../../lib/turnstile';
+import {
+  buildTurnstileHtml,
+  getTurnstileSiteKey,
+  isExternalHttpsUrl,
+  parseTurnstileMessage,
+  type TurnstileAction,
+} from '../../lib/turnstile';
 import { getWebBaseUrl } from '../../lib/webBaseUrl';
 import { colors, radius, spacing } from '../../theme';
 
@@ -109,6 +115,20 @@ export const TurnstileWidget = forwardRef<TurnstileWidgetHandle, TurnstileWidget
     [fail],
   );
 
+  // ウィジェットの中の別ウィンドウのリンク (Cloudflare の「プライバシー」「利用規約」。target="_blank") は、外のブラウザで開く。
+  // onOpenWindow を渡さないと、iOS はそのページを同じ WebView (高さ 70px のウィジェット) に読み込んで、ウィジェットを置き換えてしまう
+  // (トークンを取る前なら、45 秒後の見張りまで確認をやり直せなくなる)。Android は画面に出ない別の WebView に読み込むだけで、何も起きない。
+  // 渡すと、どちらも WebView はそのままで、リンクの URL だけがここへ届く (react-native-webview 13.13.5 のネイティブ実装で確認)。
+  const handleOpenWindow = useCallback(async (event: { nativeEvent: { targetUrl: string } }) => {
+    const url = event.nativeEvent.targetUrl;
+    if (!isExternalHttpsUrl(url)) return;
+    try {
+      await Linking.openURL(url);
+    } catch {
+      // 外のブラウザを開けなくても、ウィジェットはそのまま使える
+    }
+  }, []);
+
   // WebView の中から何も知らせが来ないとき (JavaScript が動かないなど) の見張り
   useEffect(() => {
     if (!siteKey || status !== 'loading') return;
@@ -138,6 +158,7 @@ export const TurnstileWidget = forwardRef<TurnstileWidgetHandle, TurnstileWidget
           javaScriptEnabled
           domStorageEnabled
           onMessage={handleMessage}
+          onOpenWindow={handleOpenWindow}
           onError={() => fail('webview')}
           scrollEnabled={false}
           bounces={false}
@@ -148,7 +169,8 @@ export const TurnstileWidget = forwardRef<TurnstileWidgetHandle, TurnstileWidget
         />
       </View>
       {status === 'loading' && (
-        <Text testID="turnstile-hint" style={{ fontSize: 12, color: colors.textMuted }}>
+        // 送信ボタンが押せない理由を伝える文なので、文字として読める濃さにする (textMuted は薄くて AA の 4.5:1 に届かない。textLight は届く)
+        <Text testID="turnstile-hint" style={{ fontSize: 12, color: colors.textLight }}>
           ボットではないことを確認しています。確認が終わるとボタンを押せます。
         </Text>
       )}
@@ -162,11 +184,12 @@ export const TurnstileWidget = forwardRef<TurnstileWidgetHandle, TurnstileWidget
             gap: spacing.sm,
           }}
         >
-          <Text style={{ fontSize: 14, color: colors.error }}>
+          {/* 赤い文字には、塗り用の error ではなく、AA (4.5:1) を満たす dangerText を使う (CLAUDE.md「状態色」) */}
+          <Text style={{ fontSize: 14, color: colors.dangerText }}>
             ボットではないことの確認を完了できませんでした。通信状況をご確認のうえ、もう一度お試しください。
           </Text>
           {errorCode !== null && (
-            <Text style={{ fontSize: 12, color: colors.error }}>エラーコード: {errorCode}</Text>
+            <Text style={{ fontSize: 12, color: colors.dangerText }}>エラーコード: {errorCode}</Text>
           )}
           <Pressable testID="turnstile-retry" onPress={reset} accessibilityRole="button" hitSlop={8}>
             <Text style={{ fontSize: 14, color: colors.accent, fontWeight: '700' }}>もう一度確認する</Text>

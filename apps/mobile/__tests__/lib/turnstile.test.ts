@@ -5,6 +5,7 @@
  *   - getTurnstileSiteKey: 未設定・空文字・空白だけは null (= Turnstile は無効)。前後の空白は取り除く
  *   - parseTurnstileMessage: WebView から届いた postMessage を、形を確かめてから受け取る
  *     (Android では Cloudflare の iframe を含むどのフレームからも送れるので、形が違うものは捨てる)
+ *   - isExternalHttpsUrl: ウィジェットの中の別ウィンドウのリンクのうち、外のブラウザで開いてよい (https の) ものだけを通す
  *   - buildTurnstileHtml: サイトキーと action を安全に埋め込み、WebView の中で動くスクリプトが
  *     parseTurnstileMessage が読める形でアプリへ知らせる (HTML と受け取り側の約束が食い違わない)
  *   - isCaptchaFailure: Supabase Auth の CAPTCHA エラーだけを見分ける
@@ -17,6 +18,7 @@ import {
   CAPTCHA_FAILED_MESSAGE,
   getTurnstileSiteKey,
   isCaptchaFailure,
+  isExternalHttpsUrl,
   parseTurnstileMessage,
   TURNSTILE_SCRIPT_URL,
 } from '../../src/lib/turnstile';
@@ -91,6 +93,47 @@ describe('parseTurnstileMessage', () => {
     expect(parseTurnstileMessage('[1,2]')).toBeNull();
     expect(parseTurnstileMessage(JSON.stringify({ type: 'something-else', token: 'tok' }))).toBeNull();
     expect(parseTurnstileMessage(JSON.stringify({ token: 'tok' }))).toBeNull();
+  });
+});
+
+describe('isExternalHttpsUrl', () => {
+  it.each([
+    'https://www.cloudflare.com/privacypolicy/',
+    'https://www.cloudflare.com/website-terms/',
+    'https://www.cloudflare.com/ja-jp/privacypolicy/?utm_source=turnstile#section',
+    'HTTPS://WWW.CLOUDFLARE.COM/',
+    'https://example.com',
+  ])('https の URL (%s) は外のブラウザで開いてよい', (url) => {
+    expect(isExternalHttpsUrl(url)).toBe(true);
+  });
+
+  it.each([
+    ['http', 'http://www.cloudflare.com/privacypolicy/'],
+    ['javascript:', 'javascript:alert(1)'],
+    ['data:', 'data:text/html,<script>alert(1)</script>'],
+    ['file:', 'file:///etc/passwd'],
+    ['Android の intent:', 'intent://scan/#Intent;scheme=zxing;end'],
+    ['アプリ独自のスキーム', 'homegohan://settings'],
+    ['mailto:', 'mailto:someone@example.com'],
+    ['about:blank', 'about:blank'],
+    ['スキームだけ', 'https:'],
+    ['ホストが無い', 'https://'],
+    ['ホストが無い (パスだけ)', 'https:///path'],
+    ['前に空白', ' https://example.com/'],
+    ['途中に空白', 'https://example.com/a b'],
+    ['途中に改行', 'https://example.com/a\nb'],
+    ['スキームがない', 'www.cloudflare.com/privacypolicy/'],
+    ['空文字', ''],
+  ])('%s は開かない', (_label, url) => {
+    expect(isExternalHttpsUrl(url)).toBe(false);
+  });
+
+  it('文字列でないもの (WebView の中のページ由来の値) は開かない', () => {
+    expect(isExternalHttpsUrl(undefined)).toBe(false);
+    expect(isExternalHttpsUrl(null)).toBe(false);
+    expect(isExternalHttpsUrl(123)).toBe(false);
+    expect(isExternalHttpsUrl({ href: 'https://example.com/' })).toBe(false);
+    expect(isExternalHttpsUrl(['https://example.com/'])).toBe(false);
   });
 });
 

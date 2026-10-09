@@ -321,6 +321,24 @@ describe('B. サイトキーがあるとき', () => {
     expect(submitButton().disabled).toBe(true);
   });
 
+  it('確認中の案内文とエラーコードの文字色は、背景の上で WCAG AA (4.5:1) を満たす濃さ', async () => {
+    // Tailwind v4 の既定パレットで計算したコントラスト比 (AA は 4.5:1):
+    //   白地      の上: gray-400 2.60 (届かない) / gray-500 4.84 / gray-600 7.56
+    //   red-50 地 の上: red-600  4.36 (届かない) / red-700 5.88 / red-800 7.67
+    await renderHarness();
+
+    const hint = container.querySelector('[role="status"]');
+    expect(hint?.textContent).toContain('ボットではないことを確認しています');
+    expect(hint?.className).toMatch(/\btext-gray-(500|600|700|800|900)\b/);
+
+    await act(async () => {
+      fake.renders[0].options['error-callback']('300030');
+    });
+    const code = Array.from(container.querySelectorAll('p')).find((p) => p.textContent?.includes('エラーコード: 300030'));
+    expect(code).toBeTruthy();
+    expect(code!.className).toMatch(/\btext-red-(700|800|900)\b/);
+  });
+
   it('「もう一度確認する」を押すと reset して確認し直す。自動再試行で成功すればエラー表示は消えて送信できる', async () => {
     await renderHarness();
     await act(async () => {

@@ -180,8 +180,9 @@ export const TurnstileWidget = forwardRef<TurnstileWidgetHandle, TurnstileWidget
     >
       {/* Cloudflare が iframe を入れる場所。React の子要素は置かない (Cloudflare が書き換えるため) */}
       <div ref={containerRef} data-testid="turnstile-widget" className="flex min-h-[65px] w-full justify-center" />
+      {/* 送信ボタンが押せない理由を伝える文なので、白い背景の上で WCAG AA (4.5:1) を満たす濃さにする (gray-600 は約 7.6:1。gray-400 は約 2.6:1 で届かない) */}
       {status === 'loading' && (
-        <p role="status" className="text-xs text-gray-400">
+        <p role="status" className="text-xs text-gray-600">
           ボットではないことを確認しています。確認が終わるとボタンを押せます。
         </p>
       )}
@@ -190,7 +191,8 @@ export const TurnstileWidget = forwardRef<TurnstileWidgetHandle, TurnstileWidget
           <p className="text-sm font-medium text-red-800">
             ボットではないことの確認を完了できませんでした。通信状況をご確認のうえ、もう一度お試しください。広告ブロッカーなどの拡張機能が原因のこともあります。
           </p>
-          {errorCode && <p className="text-xs text-red-600">エラーコード: {errorCode}</p>}
+          {/* 小さい文字なので、red-50 の下地の上で AA を満たす red-700 (約 5.9:1)。red-600 は約 4.4:1 でわずかに届かない */}
+          {errorCode && <p className="text-xs text-red-700">エラーコード: {errorCode}</p>}
           <button
             type="button"
             onClick={reset}

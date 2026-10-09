@@ -14,10 +14,14 @@
  *        Turnstile の自動再試行で成功したら、エラー表示は消える
  *      - 形の違うメッセージは無視する
  *      - 何も知らせが来ないまま 45 秒たったら、失敗として「もう一度確認する」を出す
+ *   C. ウィジェットの中のリンク (Cloudflare の「プライバシー」「利用規約」。target="_blank")
+ *      - onOpenWindow を WebView に渡す (渡さないと iOS は同じ WebView に読み込んで、ウィジェットを置き換えてしまう)
+ *      - https のリンクだけ外のブラウザで開く。ウィジェット (WebView・トークン・表示) はそのまま
+ *   D. 文字色 (WCAG AA 4.5:1): 案内文は textLight、赤い文字は塗り用の error ではなく dangerText
  */
 
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { act, fireEvent, render } from '@testing-library/react-native';
 
 // ---- Mocks (before any component imports) ----
@@ -41,7 +45,7 @@ jest.mock('react-native-webview', () => ({
 jest.mock('../../src/theme', () => ({
   colors: {
     bg: '#fff', accent: '#f00', text: '#000', textMuted: '#888',
-    textLight: '#666', card: '#fafafa', border: '#eee', error: '#f44', errorLight: '#fee',
+    textLight: '#666', card: '#fafafa', border: '#eee', error: '#f44', errorLight: '#fee', dangerText: '#b00',
   },
   spacing: { sm: 8, md: 16, lg: 24, xl: 32 },
   radius: { lg: 12 },
@@ -282,5 +286,114 @@ describe('B. サイトキーがあるとき', () => {
 
     expect(queryByTestId('turnstile-error')).toBeNull();
     expect(getByTestId('submit')).toBeEnabled();
+  });
+});
+
+describe('C. ウィジェットの中のリンク (Cloudflare の「プライバシー」「利用規約」など)', () => {
+  let openURL: jest.SpyInstance;
+
+  beforeEach(() => {
+    process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY = SITE_KEY;
+    openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    openURL.mockRestore();
+  });
+
+  /** WebView の中で target="_blank" のリンクが押された (または window.open が呼ばれた) ことにする */
+  async function openWindowFromWebView(targetUrl: unknown) {
+    await act(async () => {
+      await mockWebViewProps.onOpenWindow({ nativeEvent: { targetUrl } });
+    });
+  }
+
+  it('WebView に onOpenWindow を渡す (渡さないと、iOS は別ウィンドウのリンクを同じ WebView に読み込んで、ウィジェットを置き換える)', () => {
+    render(<Harness onSubmit={() => {}} />);
+
+    expect(typeof mockWebViewProps.onOpenWindow).toBe('function');
+  });
+
+  it('https のリンクは外のブラウザで開く。ウィジェットは作り直さず、取れたトークンも捨てない', async () => {
+    const { getByTestId } = render(<Harness onSubmit={() => {}} />);
+    postFromWebView({ type: 'token', token: 'tok-1' });
+    expect(mockMounts).toBe(1);
+
+    await openWindowFromWebView('https://www.cloudflare.com/privacypolicy/');
+
+    expect(openURL).toHaveBeenCalledTimes(1);
+    expect(openURL).toHaveBeenCalledWith('https://www.cloudflare.com/privacypolicy/');
+    expect(mockMounts).toBe(1); // WebView は作り直されていない
+    expect(getByTestId('submit')).toBeEnabled(); // トークンはそのまま
+  });
+
+  it('確認中 (トークン前) に押されても、ウィジェットはそのまま確認を続ける (エラー表示にならない)', async () => {
+    const { getByTestId, queryByTestId } = render(<Harness onSubmit={() => {}} />);
+
+    await openWindowFromWebView('https://www.cloudflare.com/website-terms/');
+
+    expect(openURL).toHaveBeenCalledWith('https://www.cloudflare.com/website-terms/');
+    expect(mockMounts).toBe(1);
+    expect(queryByTestId('turnstile-error')).toBeNull();
+    expect(getByTestId('turnstile-hint')).toBeTruthy();
+    expect(getByTestId('submit')).toBeDisabled();
+    // その後に届いたトークンは、今までどおり受け取れる
+    postFromWebView({ type: 'token', token: 'tok-1' });
+    expect(getByTestId('submit')).toBeEnabled();
+  });
+
+  it.each([
+    ['http', 'http://www.cloudflare.com/privacypolicy/'],
+    ['javascript:', 'javascript:alert(1)'],
+    ['Android の intent:', 'intent://scan/#Intent;scheme=zxing;end'],
+    ['file:', 'file:///etc/passwd'],
+    ['ホストが無い', 'https://'],
+    ['空白を含む', 'https://example.com/a b'],
+    ['空文字', ''],
+    ['URL でない文字列', 'cloudflare'],
+    ['文字列でない', 123],
+    ['無い', undefined],
+  ])('https の URL ではないもの (%s) は開かない', async (_label, targetUrl) => {
+    render(<Harness onSubmit={() => {}} />);
+
+    await openWindowFromWebView(targetUrl);
+
+    expect(openURL).not.toHaveBeenCalled();
+  });
+
+  it('外のブラウザを開けなくても (openURL が失敗しても)、例外にならず、ウィジェットはそのまま', async () => {
+    openURL.mockRejectedValue(new Error('No Activity found to handle Intent'));
+    const { getByTestId, queryByTestId } = render(<Harness onSubmit={() => {}} />);
+    postFromWebView({ type: 'token', token: 'tok-1' });
+
+    await expect(openWindowFromWebView('https://www.cloudflare.com/privacypolicy/')).resolves.toBeUndefined();
+
+    expect(openURL).toHaveBeenCalledTimes(1);
+    expect(queryByTestId('turnstile-error')).toBeNull();
+    expect(getByTestId('submit')).toBeEnabled();
+  });
+});
+
+describe('D. 文字色 (WCAG AA 4.5:1。CLAUDE.md「状態色」)', () => {
+  beforeEach(() => {
+    process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY = SITE_KEY;
+  });
+
+  /** testID で見つけた Text の文字色 (style が配列でもオブジェクトでも読む) */
+  const colorOf = (element: { props: { style?: unknown } }) =>
+    (StyleSheet.flatten(element.props.style as never) as { color?: string }).color;
+
+  it('確認中の案内文は textLight (textMuted は薄くて届かない)', () => {
+    const { getByTestId } = render(<Harness onSubmit={() => {}} />);
+
+    expect(colorOf(getByTestId('turnstile-hint'))).toBe('#666'); // 上の theme のモックの textLight
+  });
+
+  it('エラーの赤い文字は、塗り用の error ではなく dangerText', () => {
+    const { getByText } = render(<Harness onSubmit={() => {}} />);
+    postFromWebView({ type: 'error', code: '300030' });
+
+    expect(colorOf(getByText(/ボットではないことの確認を完了できませんでした/))).toBe('#b00');
+    expect(colorOf(getByText('エラーコード: 300030'))).toBe('#b00'); // 上の theme のモックの dangerText
   });
 });
