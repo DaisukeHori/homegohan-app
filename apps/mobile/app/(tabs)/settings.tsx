@@ -12,7 +12,7 @@ import { getPrivacyUrl, getSupportMailtoUrl, getTermsUrl } from "../../src/lib/s
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing, radius, shadows } from "../../src/theme";
-import { clearUserScopedAsyncStorage } from "../../src/lib/user-storage";
+import { signOutWithCleanup } from "../../src/lib/signOut";
 
 type WeekStartDay = "sunday" | "monday";
 
@@ -236,8 +236,8 @@ export default function SettingsTab() {
 
   async function handleLogout() {
     try {
-      await clearUserScopedAsyncStorage(user?.id ?? null);
-      await supabase.auth.signOut();
+      // push token の削除 → ユーザー別データの削除 → サインアウトの順 (#1038 F7-10)
+      await signOutWithCleanup(user?.id ?? null);
     } catch {}
     router.replace("/");
   }
