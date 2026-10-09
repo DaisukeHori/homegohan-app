@@ -59,6 +59,12 @@ readonly ALL_STAGES="unit,mobile,integration,e2e"
 # 結合テスト (tests/integration/helpers/api.ts の既定) と e2e の yml が前提にするアプリの URL。CI と同じく固定
 readonly APP_ORIGIN="http://localhost:3000"
 readonly APP_PORT=3000
+# e2e-local.yml の規約の同意ゲート (#1174) の 2 つ目・3 つ目のサーバー。同じビルドを、環境変数を変えて別のポートで起動する
+#   2 つ目: LEGAL_CONSENT_ENFORCE=on (強制あり)  3 つ目: LEGAL_CONSENT_NOTICE=on (お知らせあり)
+readonly ENFORCED_APP_ORIGIN="http://localhost:3001"
+readonly ENFORCED_APP_PORT=3001
+readonly NOTICE_APP_ORIGIN="http://localhost:3002"
+readonly NOTICE_APP_PORT=3002
 # GitHub の ubuntu ランナーの LANG (Node の Intl の既定ロケールがこれで決まる)
 readonly CI_LANG="C.UTF-8"
 # security-regression.yml の next dev の待ち (seq 1 120 × sleep 2)
@@ -83,7 +89,9 @@ INTEG1_ARGS=(--config vitest.integration.config.ts --passWithNoTests tests/integ
 # security-regression.yml の 2 本目 (運営コンソール。--passWithNoTests は付けない)
 INTEG2_ARGS=(--config vitest.integration.config.ts tests/integration/operator/admin- tests/integration/operator/auth-boundary tests/integration/operator/super-admin-)
 # e2e-local.yml の Playwright
-PW_ARGS=(--trace off tests/e2e/01-login.spec.ts tests/e2e/04-menu-page.spec.ts tests/e2e/05-shopping-list.spec.ts tests/e2e/public-policy-pages.spec.ts)
+PW_ARGS=(--trace off tests/e2e/01-login.spec.ts tests/e2e/04-menu-page.spec.ts tests/e2e/05-shopping-list.spec.ts tests/e2e/public-policy-pages.spec.ts tests/e2e/legal-consent-gate.spec.ts)
+# e2e-local.yml の Playwright (2 つ目・3 つ目のサーバーに対して。規約の同意ゲートだけ)
+PW_CONSENT_ARGS=(--trace off tests/e2e/legal-consent-gate.spec.ts)
 
 # 子プロセスへ持ち込む環境変数 (これ以外は外す。CI のランナーに無いものを持ち込まない)
 readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT"
@@ -297,10 +305,16 @@ descendants() {
 }
 
 SERVER_PID=""
+# e2e の 2 つ目・3 つ目のサーバー (LEGAL_CONSENT_ENFORCE=on / LEGAL_CONSENT_NOTICE=on)
+ENFORCED_SERVER_PID=""
+NOTICE_SERVER_PID=""
+# 起動したサーバー (と、その子孫のプロセス) をすべて止める
 stop_server() {
-  [ -n "$SERVER_PID" ] || return 0
-  local pids alive="" p
-  pids="$SERVER_PID $(descendants "$SERVER_PID" | tr '\n' ' ')"
+  local roots="$SERVER_PID $ENFORCED_SERVER_PID $NOTICE_SERVER_PID" pids="" alive="" p root
+  [ -n "${roots// /}" ] || return 0
+  for root in $roots; do
+    pids="$pids $root $(descendants "$root" | tr '\n' ' ')"
+  done
   # shellcheck disable=SC2086
   kill $pids 2>/dev/null || true
   for _ in $(seq 1 "$STOP_WAIT_TRIES"); do
@@ -312,6 +326,8 @@ stop_server() {
   # shellcheck disable=SC2086
   if [ -n "$alive" ]; then kill -9 $alive 2>/dev/null || true; fi
   SERVER_PID=""
+  ENFORCED_SERVER_PID=""
+  NOTICE_SERVER_PID=""
 }
 
 SUPA_STARTED=0
@@ -337,10 +353,40 @@ wait_app() {
   curl -s -o /dev/null -w 'GET /login -> %{http_code}\n' "$APP_ORIGIN/login" >>"$log" 2>&1
 }
 
+# server_gone <pid> <サーバーのログ>: サーバーが途中で終了していたら真
+server_gone() {
+  if kill -0 "$1" 2>/dev/null; then return 1; fi
+  say "サーバーが途中で終了しました (ログ: $2)"
+}
+
+# wait_enforced_app <サーバーのログ>: 2 つ目のサーバー (LEGAL_CONSENT_ENFORCE=on) が応答するまで待つ (yml と同じ curl)
+wait_enforced_app() {
+  local log="$1"
+  for _ in $(seq 1 "$START_WAIT_TRIES"); do
+    if curl -s -o /dev/null "$ENFORCED_APP_ORIGIN/login"; then break; fi
+    if server_gone "$ENFORCED_SERVER_PID" "$log"; then return 1; fi
+    sleep "$WAIT_INTERVAL_SEC"
+  done
+  curl -s -o /dev/null -w 'GET /login (LEGAL_CONSENT_ENFORCE=on) -> %{http_code}\n' "$ENFORCED_APP_ORIGIN/login" >>"$log" 2>&1
+}
+
+# wait_notice_app <サーバーのログ>: 3 つ目のサーバー (LEGAL_CONSENT_NOTICE=on) が応答するまで待つ (yml と同じ curl)
+wait_notice_app() {
+  local log="$1"
+  for _ in $(seq 1 "$START_WAIT_TRIES"); do
+    if curl -s -o /dev/null "$NOTICE_APP_ORIGIN/login"; then break; fi
+    if server_gone "$NOTICE_SERVER_PID" "$log"; then return 1; fi
+    sleep "$WAIT_INTERVAL_SEC"
+  done
+  curl -s -o /dev/null -w 'GET /login (LEGAL_CONSENT_NOTICE=on) -> %{http_code}\n' "$NOTICE_APP_ORIGIN/login" >>"$log" 2>&1
+}
+
 # integration / e2e の前に、使うポートが空いているかを確かめる (他のプロセスやコンテナは止めない)
+#   引数: <段> [その段だけが追加で使うポート...]
 check_ports() {
   local stage="$1" busy="" p
-  for p in $APP_PORT $SUPABASE_PORTS; do
+  shift
+  for p in $APP_PORT "$@" $SUPABASE_PORTS; do
     if port_busy "$p"; then busy="$busy $p"; fi
   done
   if [ -n "$busy" ]; then
@@ -487,7 +533,7 @@ stage_integration() {
 # ---------------------------------------------------------------------
 stage_e2e() {
   local t0 rc line log setup_log e2e_password
-  check_ports e2e || return 0
+  check_ports e2e "$ENFORCED_APP_PORT" "$NOTICE_APP_PORT" || return 0
   check_docker e2e || return 0
 
   setup_log="$ART/e2e-setup.log"
@@ -567,9 +613,61 @@ stage_e2e() {
   rc=$?
   line=$(parse playwright "$ART/e2e-playwright.json" "$ART/e2e-playwright-list.json" "$rc")
   record_parsed e2e:playwright "$(($(now) - t0))" "$line"
-  # yml が artifact に上げるのと同じもの (失敗時のスクリーンショット・動画・エラー内容) を残す
+  # yml が artifact に上げるのと同じもの (失敗時のスクリーンショット・動画・エラー内容) を残す。
+  # Playwright は実行のたびに tests/e2e/.output を空にするので、実行ごとに別の場所へ写す
   if [ -d "$WT/tests/e2e/.output" ]; then
     cp -R "$WT/tests/e2e/.output" "$ART/e2e-output" 2>/dev/null || true
+  fi
+
+  # 規約の同意ゲート (#1174) の「強制あり」: 同じビルドを LEGAL_CONSENT_ENFORCE=on で 2 つ目のポートに起動する (yml と同じ)。
+  # yml では前の手順が赤だとこの先は回らないが、ここでは手がかりを多く残すため、前の結果によらず回す
+  log="$ART/e2e-next-start-enforced.log"
+  t0=$(now)
+  ( ci_env && cd "$WT" && exec nohup env LEGAL_CONSENT_ENFORCE=on npx next start -p "$ENFORCED_APP_PORT" ) >"$log" 2>&1 &
+  ENFORCED_SERVER_PID=$!
+  if wait_enforced_app "$log"; then
+    record e2e:start-enforced GREEN - - - - - "$(($(now) - t0))" "-"
+    log="$ART/e2e-playwright-enforced.log"
+    t0=$(now)
+    # shellcheck disable=SC2030,SC2031
+    ( export E2E_USER_PASSWORD="$e2e_password"; ENV_EXTRA="E2E_USER_PASSWORD"
+      run_in "$WT" "$log" env PLAYWRIGHT_BASE_URL="$ENFORCED_APP_ORIGIN" LEGAL_CONSENT_ENFORCE=on E2E_USER_EMAIL=e2e-user-01@homegohan.test PLAYWRIGHT_NO_COPY_PROMPT=1 \
+        PLAYWRIGHT_JSON_OUTPUT_NAME="$ART/e2e-playwright-enforced-list.json" npx playwright test --list "${PW_CONSENT_ARGS[@]}" --reporter=json
+      run_in "$WT" "$log" env PLAYWRIGHT_BASE_URL="$ENFORCED_APP_ORIGIN" LEGAL_CONSENT_ENFORCE=on E2E_USER_EMAIL=e2e-user-01@homegohan.test PLAYWRIGHT_NO_COPY_PROMPT=1 \
+        PLAYWRIGHT_JSON_OUTPUT_NAME="$ART/e2e-playwright-enforced.json" npx playwright test "${PW_CONSENT_ARGS[@]}" --reporter=list,json )
+    rc=$?
+    line=$(parse playwright "$ART/e2e-playwright-enforced.json" "$ART/e2e-playwright-enforced-list.json" "$rc")
+    record_parsed e2e:playwright-enforced "$(($(now) - t0))" "$line"
+    if [ -d "$WT/tests/e2e/.output" ]; then
+      cp -R "$WT/tests/e2e/.output" "$ART/e2e-output-enforced" 2>/dev/null || true
+    fi
+  else
+    record e2e:start-enforced RED - - - - - "$(($(now) - t0))" "$(tail_hint "next start (LEGAL_CONSENT_ENFORCE=on) が $ENFORCED_APP_ORIGIN/login に応答しない" "$log")"
+  fi
+
+  # 規約の同意ゲート (#1174) の「お知らせあり」: 同じビルドを LEGAL_CONSENT_NOTICE=on で 3 つ目のポートに起動する (yml と同じ)
+  log="$ART/e2e-next-start-notice.log"
+  t0=$(now)
+  ( ci_env && cd "$WT" && exec nohup env LEGAL_CONSENT_NOTICE=on npx next start -p "$NOTICE_APP_PORT" ) >"$log" 2>&1 &
+  NOTICE_SERVER_PID=$!
+  if wait_notice_app "$log"; then
+    record e2e:start-notice GREEN - - - - - "$(($(now) - t0))" "-"
+    log="$ART/e2e-playwright-notice.log"
+    t0=$(now)
+    # shellcheck disable=SC2030,SC2031
+    ( export E2E_USER_PASSWORD="$e2e_password"; ENV_EXTRA="E2E_USER_PASSWORD"
+      run_in "$WT" "$log" env PLAYWRIGHT_BASE_URL="$NOTICE_APP_ORIGIN" LEGAL_CONSENT_NOTICE=on E2E_USER_EMAIL=e2e-user-01@homegohan.test PLAYWRIGHT_NO_COPY_PROMPT=1 \
+        PLAYWRIGHT_JSON_OUTPUT_NAME="$ART/e2e-playwright-notice-list.json" npx playwright test --list "${PW_CONSENT_ARGS[@]}" --reporter=json
+      run_in "$WT" "$log" env PLAYWRIGHT_BASE_URL="$NOTICE_APP_ORIGIN" LEGAL_CONSENT_NOTICE=on E2E_USER_EMAIL=e2e-user-01@homegohan.test PLAYWRIGHT_NO_COPY_PROMPT=1 \
+        PLAYWRIGHT_JSON_OUTPUT_NAME="$ART/e2e-playwright-notice.json" npx playwright test "${PW_CONSENT_ARGS[@]}" --reporter=list,json )
+    rc=$?
+    line=$(parse playwright "$ART/e2e-playwright-notice.json" "$ART/e2e-playwright-notice-list.json" "$rc")
+    record_parsed e2e:playwright-notice "$(($(now) - t0))" "$line"
+    if [ -d "$WT/tests/e2e/.output" ]; then
+      cp -R "$WT/tests/e2e/.output" "$ART/e2e-output-notice" 2>/dev/null || true
+    fi
+  else
+    record e2e:start-notice RED - - - - - "$(($(now) - t0))" "$(tail_hint "next start (LEGAL_CONSENT_NOTICE=on) が $NOTICE_APP_ORIGIN/login に応答しない" "$log")"
   fi
 
   stop_server

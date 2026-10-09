@@ -72,7 +72,7 @@ GitHub Actions の PR 検査のうち、本番に触れない 4 本を、CI と�
 | `unit` | `.github/workflows/ci.yml` | `npm run typecheck` → `npm run lint` → `npm test` (vitest) |
 | `mobile` | `.github/workflows/mobile-test.yml` | `apps/mobile` の jest (`--ci --coverage`) → `packages/core` の vitest |
 | `integration` | `.github/workflows/security-regression.yml` | ローカル Supabase + `next dev` に対する結合テスト 2 本 (2 本目の運営コンソールは 1 本目が落ちても回す) |
-| `e2e` | `.github/workflows/e2e-local.yml` | ローカル Supabase + 本番ビルド (`next build` / `next start`) に対する Playwright |
+| `e2e` | `.github/workflows/e2e-local.yml` | ローカル Supabase + 本番ビルド (`next build` / `next start`) に対する Playwright。規約の同意ゲート (#1174) は、同じビルドを既定 (3000)・`LEGAL_CONSENT_ENFORCE=on` (3001)・`LEGAL_CONSENT_NOTICE=on` (3002) の 3 つのサーバーで確かめる |
 
 ```bash
 bash scripts/local-ci.sh                          # 4 段すべて (origin/main を取り込んだ状態で検査)
@@ -86,7 +86,7 @@ bash scripts/local-ci.sh --keep                   # 作業用の worktree を残
 
 - Node は `.nvmrc` の major (22)。違う版だと赤で止まり、入れ方を表示します (`nvm install 22 && nvm use 22` など)。
 - `integration` / `e2e` は Docker が要ります。ローカル Supabase は段ごとに `scripts/supabase-local.sh` で起動・停止します。
-- `integration` / `e2e` の前に、ポート 3000 とローカル Supabase のポート (54320〜54329) が空いているかを確かめ、塞がっていれば赤で止まります (他のプロセスやコンテナは止めません)。開発用の `npm run dev` やローカル Supabase を止めてから回してください。
+- `integration` / `e2e` の前に、ポート 3000 (`e2e` は 3001・3002 も) とローカル Supabase のポート (54320〜54329) が空いているかを確かめ、塞がっていれば赤で止まります (他のプロセスやコンテナは止めません)。開発用の `npm run dev` やローカル Supabase を止めてから回してください。
 
 **CI と揃えている条件** (ずれると「ローカルは緑・CI は赤」になる)
 

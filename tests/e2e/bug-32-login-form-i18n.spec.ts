@@ -6,6 +6,7 @@
  *       日本語のカスタムメッセージが表示される。
  */
 import { test, expect } from "@playwright/test";
+import { acceptSignupLegalConsent } from "./helpers/signup";
 
 test.describe("auth form validation messages are localized to Japanese", () => {
   test("login: empty email shows Japanese validationMessage", async ({ page }) => {
@@ -25,6 +26,8 @@ test.describe("auth form validation messages are localized to Japanese", () => {
 
   test("signup: empty email shows Japanese validationMessage", async ({ page }) => {
     await page.goto("/signup");
+    // #1174: 利用規約・プライバシーポリシーへの同意のチェックを入れるまで、登録ボタンは押せない
+    await acceptSignupLegalConsent(page);
 
     const submit = page.locator('form button[type="submit"]');
     await submit.click();

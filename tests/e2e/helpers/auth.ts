@@ -8,6 +8,7 @@
 
 import type { Page } from "@playwright/test";
 import { requireExistingUserPassword } from "./credentials";
+import { acceptLegalConsentIfShown } from "./legal-consent";
 
 const LOGIN_TIMEOUT_MS = 90_000;
 const HYDRATION_TIMEOUT_MS = 15_000;
@@ -79,6 +80,10 @@ export async function login(
     ),
     page.locator("button[type=submit]").click(),
   ]);
+
+  // #1174: 規約の同意画面に回された (サーバーが LEGAL_CONSENT_ENFORCE=on で、このユーザーの同意の記録が無い) ときは同意する。
+  // 同意画面でなければ何もしない
+  await acceptLegalConsentIfShown(page);
 
   // オンボーディング未完了の場合はAPIで完了させてホームへ誘導
   if (page.url().includes("/onboarding")) {
