@@ -1,4 +1,4 @@
--- migration: 20261008150500_org_challenge_progress.sql
+-- migration: 20261008200800_org_challenge_progress.sql
 -- #1132: 組織チャレンジの進み具合 (current_value) と順位 (rank) を、食事の記録から毎日自動で計算する
 --
 -- 背景:
@@ -78,9 +78,9 @@
 --   - 表への書き込みを待たせるロックは、ポリシーの付け替え (ACCESS EXCLUSIVE。一瞬) だけ。10 秒でロック待ちを諦める。
 --
 -- 冪等: CREATE OR REPLACE FUNCTION / DROP POLICY IF EXISTS → CREATE POLICY / 既存の同名ジョブの登録解除 → 登録。何度流しても同じ結果になる。
--- 適用順: API・画面のコードと同じ PR。migration は version 順にマージする (20261008150500)。
+-- 適用順: API・画面のコードと同じ PR。migration は version 順にマージする (20261008200800)。
 -- 確認: tests/integration/rls/org-challenge-progress.test.ts / tests/integration/security/org-challenges-api.test.ts
--- ロールバック: supabase/rollbacks/20261008150500_org_challenge_progress.down.sql
+-- ロールバック: supabase/rollbacks/20261008200800_org_challenge_progress.down.sql
 --   (ポリシーを元に戻すと、同じ組織の全員が参加行を読めるようになる。権限が広がるので注意)
 
 SET LOCAL lock_timeout = '10s';

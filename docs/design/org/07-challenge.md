@@ -410,7 +410,7 @@ sequenceDiagram
 
 §3〜§9 は clean-build を前提にした設計 (新規テーブル `org_challenge_participants`、`auto_join`、`achieved` など) で、
 実際の実装は本番に既にあるテーブル (`organization_challenges` / `organization_challenge_participants`) の上に最小限で作った。
-実装の正は次のとおり (migration `supabase/migrations/*_org_challenge_progress.sql`。作成時の version は 20261008150500)。
+実装の正は次のとおり (migration `supabase/migrations/*_org_challenge_progress.sql`。作成時の version は 20261008200800)。
 
 オーナー判断 (2026-10-08): **参加は任意**。食事ログの **3 指標**で始める。順位は **参加者どうしにだけ**見せ、管理者には**集計だけ**を見せる。
 歩数・体重は、健康データの同意の仕組みができてから足す。
