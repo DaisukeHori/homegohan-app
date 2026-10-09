@@ -14,6 +14,7 @@
  */
 import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { createLogger } from '@/lib/db-logger';
 import {
   AI_CONSENT_DECISION_COLUMNS,
   aiConsentSkippedField,
@@ -32,10 +33,22 @@ export type AiConsentGuardDb = Pick<SupabaseClient, 'from'>;
  * 利用者のデータを AI へ送ってよいかを判定する。例外は投げない (失敗は check_failed)。
  * userId は認証で確定した本人の ID (cron ではキューの行の user_id) を渡す。
  */
-export function checkUserAiConsent(db: AiConsentGuardDb, userId: string | null | undefined): Promise<AiConsentDecision> {
-  return runAiConsentCheck(userId, (id) =>
+export async function checkUserAiConsent(
+  db: AiConsentGuardDb,
+  userId: string | null | undefined,
+): Promise<AiConsentDecision> {
+  const decision = await runAiConsentCheck(userId, (id) =>
     db.from(AI_CONSENT_TABLE).select(AI_CONSENT_DECISION_COLUMNS).eq('user_id', id).is('revoked_at', null),
   );
+  if (!decision.allowed && decision.reason === 'check_failed') {
+    // 読めずに止めたことは運用で気づけるよう残す (未同意で止めたのは利用者の選択なので残さない)
+    const logger = createLogger('ai-consent-guard');
+    (typeof userId === 'string' && userId ? logger.withUser(userId) : logger).warn(
+      '外国の AI 事業者への提供の同意を読めなかったため、AI へ送らずに止めました',
+      { reason: decision.reason },
+    );
+  }
+  return decision;
 }
 
 /** 止めたときの応答を作る */

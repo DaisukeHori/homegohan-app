@@ -27,10 +27,18 @@ export type AiConsentEdgeDb = Pick<SupabaseClient, "from">;
  * 利用者のデータを AI へ送ってよいかを判定する。例外は投げない (失敗は check_failed)。
  * 読む表・列・条件は Next.js 側 (src/lib/ai/consent-guard.ts の checkUserAiConsent) と同じ。
  */
-export function checkAiConsent(client: AiConsentEdgeDb, userId: string | null | undefined): Promise<AiConsentDecision> {
-  return runAiConsentCheck(userId, (id) =>
+export async function checkAiConsent(
+  client: AiConsentEdgeDb,
+  userId: string | null | undefined,
+): Promise<AiConsentDecision> {
+  const decision = await runAiConsentCheck(userId, (id) =>
     client.from(AI_CONSENT_TABLE).select(AI_CONSENT_DECISION_COLUMNS).eq("user_id", id).is("revoked_at", null),
   );
+  if (!decision.allowed && decision.reason === "check_failed") {
+    // 読めずに止めたことは Edge Function のログで気づけるよう残す (利用者の ID や DB のエラー文は出さない)
+    console.warn("[ai-consent-guard] 外国の AI 事業者への提供の同意を読めなかったため、AI へ送らずに止めました");
+  }
+  return decision;
 }
 
 /** 止めたときの応答 (403 AI_CONSENT_REQUIRED / 503 AI_CONSENT_CHECK_FAILED) */
