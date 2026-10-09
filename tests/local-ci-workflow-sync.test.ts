@@ -618,8 +618,10 @@ function buildScope(scriptText: string, stage: string): Scope {
     }
   }
   const parts = [topLevel, ...Array.from(reached, (name) => functions.get(name) ?? "")];
+  // ci_env の export は、段から ci_env に届くとき (run_in などを経由するとき) だけ効く
   const ciEnv = new Map<string, string>();
-  for (const command of shellCommands(functions.get(CI_ENV_FUNCTION) ?? "")) {
+  const ciEnvBody = reached.has(CI_ENV_FUNCTION) ? functions.get(CI_ENV_FUNCTION) ?? "" : "";
+  for (const command of shellCommands(ciEnvBody)) {
     if (command.words[0] !== "export") continue;
     for (const word of command.words.slice(1)) {
       const a = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(word);
@@ -963,6 +965,11 @@ describe("検査ロジック自体 (ワークフローやスクリプトを変�
     const mutated = ci.split("    runs-on: ubuntu-latest").join("    runs-on: ubuntu-latest\n    env:\n      TZ: UTC");
     expect(mutated).not.toBe(ci);
     expect(unmet(requirementsOf(mutated), scopeOf(".github/workflows/ci.yml"))).toEqual([]);
+    // 段から ci_env に届かなければ (run_in を通らなければ)、ci_env の export では満たさない
+    const yml = ["jobs:", "  test:", "    runs-on: ubuntu-latest", "    env:", "      TZ: UTC", "    steps:", "      - run: npm test"].join("\n");
+    const ciEnv = "ci_env() {\n  export TZ=UTC\n}\nrun_in() {\n  ( ci_env && cd \"$1\" && \"${@:3}\" )\n}";
+    expect(unmet(requirementsOf(yml), buildScope(`${ciEnv}\nstage_x() {\n  run_in "$WT" "$log" npm test\n}`, "stage_x"))).toEqual([]);
+    expect(unmet(requirementsOf(yml), buildScope(`${ciEnv}\nstage_x() {\n  npm test\n}`, "stage_x"))).toHaveLength(1);
   });
 
   it("スクリプトの一部を変えると、満たされない条件として検出する", () => {
