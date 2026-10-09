@@ -4,19 +4,23 @@
  * 仕組み (lib/supabase/middleware.ts):
  *   サインイン中の利用者の user_profiles.terms_version_accepted / privacy_version_accepted が、
  *   packages/shared の LEGAL_DOCUMENTS (いま有効な版) と食い違うとき、
- *     - 環境変数 LEGAL_CONSENT_ENFORCE=on : 同意画面 /legal-consent?next=<元のパス> へ回す
- *     - それ以外 (既定)                   : 通す。(main) の画面の上に「同意のお願い」のお知らせを出すだけ
+ *     - 環境変数 LEGAL_CONSENT_ENFORCE=on            : 同意画面 /legal-consent?next=<元のパス> へ回す
+ *     - LEGAL_CONSENT_NOTICE=on (強制なし)            : 通す。(main) の画面の上に「同意のお願い」のお知らせを出すだけ
+ *     - どちらも on でない (既定)                     : 何もしない (お知らせも出さず、誰も止めない)
  *   同意画面で 2 つのチェックを入れて「同意して続ける」を押すと、POST /api/legal/accept が DB 関数 accept_legal_documents を呼び、
  *   user_profiles の同意済みの版と、terms_acceptances の証跡 (版・日時・IP・user_agent) が残る。
  *
  * 実行 (ローカル Supabase と、Next のサーバーが要る):
  *   強制あり (ゲートの検証):
  *     LEGAL_CONSENT_ENFORCE=on npx playwright test tests/e2e/legal-consent-gate.spec.ts
- *   既定 = 強制なし (お知らせの検証):
+ *   強制なし・お知らせあり (お知らせの検証):
+ *     LEGAL_CONSENT_NOTICE=on npx playwright test tests/e2e/legal-consent-gate.spec.ts
+ *   既定 = どちらもなし (何も出さず、止めないことの検証):
  *     npx playwright test tests/e2e/legal-consent-gate.spec.ts
  *   playwright.config.ts が dev サーバーを起動するときは、このプロセスの環境変数がサーバーに引き継がれる。
- *   PLAYWRIGHT_BASE_URL で起動済みのサーバーに向けるときは、サーバー側にも同じ LEGAL_CONSENT_ENFORCE を設定すること
- *   (この spec は、このプロセスの値を見て、強制あり / なしのどちらの検証をするかを決める)。
+ *   PLAYWRIGHT_BASE_URL で起動済みのサーバーに向けるときは、サーバー側にも同じ LEGAL_CONSENT_ENFORCE / LEGAL_CONSENT_NOTICE を
+ *   設定すること (この spec は、このプロセスの値を見て、どの検証をするかを決める)。
+ *   値の読み方 (on のときだけ有効。大文字小文字と前後の空白は区別しない) は lib/legal-consent.ts の isLegalConsentFlagOn と同じ。
  *
  * テストユーザーは admin API で作り、終わったら削除する (user_profiles・terms_acceptances も連動して消える)。
  * 既存の共通ユーザー (e2e-user-01〜) は使わない: 同意済みかどうかを、テストごとに自分で決めたいため。
@@ -34,6 +38,7 @@ const ws = require("ws") as typeof WebSocket;
 test.use({ storageState: { cookies: [], origins: [] } });
 
 const ENFORCED = process.env.LEGAL_CONSENT_ENFORCE?.trim().toLowerCase() === "on";
+const NOTICE = process.env.LEGAL_CONSENT_NOTICE?.trim().toLowerCase() === "on";
 const CURRENT_TERMS = LEGAL_DOCUMENTS.terms_of_service.version;
 const CURRENT_PRIVACY = LEGAL_DOCUMENTS.privacy_policy.version;
 
@@ -162,6 +167,9 @@ const banner = (page: Page) => page.getByTestId("legal-consent-banner");
  */
 async function acceptOnConsentPage(page: Page) {
   await expect(consentHeading(page)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+  // 2 つのチェックは、どちらも必須として支援技術に伝わる
+  await expect(termsCheckbox(page)).toHaveAttribute("aria-required", "true");
+  await expect(privacyCheckbox(page)).toHaveAttribute("aria-required", "true");
   await waitForHydration(page, 'input[type="checkbox"]');
   await expect(async () => {
     await termsCheckbox(page).uncheck({ timeout: 5_000 });
@@ -420,10 +428,49 @@ test.describe("再同意ゲート: 強制あり (LEGAL_CONSENT_ENFORCE=on) (#117
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 強制なし (既定): お知らせだけ。誰も止めない
+// 既定 (強制なし・お知らせなし): 何も出さない。誰も止めない
 // ─────────────────────────────────────────────────────────────────────────────
-test.describe("再同意ゲート: 強制なし (既定) のお知らせ (#1174)", () => {
-  test.skip(ENFORCED, "LEGAL_CONSENT_ENFORCE=on のときは対象外 (強制ありのテストを実行する)");
+test.describe("再同意ゲート: 既定 (強制なし・お知らせなし) (#1174)", () => {
+  test.skip(ENFORCED || NOTICE, "LEGAL_CONSENT_ENFORCE / LEGAL_CONSENT_NOTICE のどちらも on でないときだけ実行する");
+  test.setTimeout(180_000);
+
+  test("★未同意でもホームに入れる (止まらない)。お知らせも出さない", async ({ page }) => {
+    await signInAsNewUser(page, { profile: true });
+
+    await page.goto("/home");
+    await expect(page.locator("main")).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+    expect(new URL(page.url()).pathname).toBe("/home");
+    await expect(banner(page)).toHaveCount(0);
+  });
+
+  test("同意画面を自分で開けば、既定でも同意を記録できる", async ({ page }) => {
+    const user = await signInAsNewUser(page, { profile: true });
+
+    await page.goto("/legal-consent?next=%2Fhome");
+    await acceptOnConsentPage(page);
+    await page.waitForURL((url) => url.pathname === "/home", URL_CHANGE);
+    await expect(banner(page)).toHaveCount(0);
+
+    expect(await readProfile(user.id)).toMatchObject({
+      terms_version_accepted: CURRENT_TERMS,
+      privacy_version_accepted: CURRENT_PRIVACY,
+    });
+  });
+
+  test("新規ユーザー (プロフィールの行なし) も止めない: 従来どおり初期設定へ回り、同意画面へは回さない", async ({ page }) => {
+    await signInAsNewUser(page, { profile: false });
+
+    await page.goto("/home");
+    await page.waitForURL((url) => url.pathname.startsWith("/onboarding"), URL_CHANGE);
+    expect(new URL(page.url()).pathname).not.toBe("/legal-consent");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 強制なし・お知らせあり (LEGAL_CONSENT_NOTICE=on): お知らせだけ。誰も止めない
+// ─────────────────────────────────────────────────────────────────────────────
+test.describe("再同意ゲート: 強制なし・お知らせあり (LEGAL_CONSENT_NOTICE=on) (#1174)", () => {
+  test.skip(ENFORCED || !NOTICE, "LEGAL_CONSENT_NOTICE=on で、LEGAL_CONSENT_ENFORCE=on でないときだけ実行する");
   test.setTimeout(180_000);
 
   test("★未同意でもホームに入れる (止まらない)。上部にお知らせが出て、リンクから同意画面へ行き、同意するとお知らせが消える", async ({ page }) => {

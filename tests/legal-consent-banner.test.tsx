@@ -1,7 +1,8 @@
 /**
  * #1174 「利用規約・プライバシーポリシーへの同意のお願い」のお知らせ (非ブロッキング)
  *
- * 強制 (LEGAL_CONSENT_ENFORCE=on) にしていない間、同意が済んでいない人の画面の上に出す。
+ * お知らせを有効にしていて (LEGAL_CONSENT_NOTICE=on)、強制 (LEGAL_CONSENT_ENFORCE=on) にしていない間、同意が済んでいない人の
+ * 画面の上に出す (既定ではどちらも off なので出ない。フラグの組み合わせは middleware-legal-consent-matrix.test.ts)。
  * 判定は middleware がリクエストヘッダー x-legal-consent-pending で (main) の layout に渡し、layout が MainLayout に渡す。
  * 確認すること:
  *   - お知らせは、同意画面 /legal-consent へのリンク (戻り先 = いま見ているパス) を持つ

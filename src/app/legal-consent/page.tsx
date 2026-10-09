@@ -8,7 +8,8 @@ import LegalConsentForm from './LegalConsentForm';
 
 // #1174: 利用規約・プライバシーポリシーへの同意画面。
 // lib/supabase/middleware.ts の同意ゲートが、LEGAL_CONSENT_ENFORCE=on のとき、同意が済んでいない
-// サインイン中の利用者を ?next=<元のパス> つきでここへ回す。(main) グループの外に置く: アプリ用のナビ・AI チャットを
+// サインイン中の利用者を ?next=<元のパス> つきでここへ回す (LEGAL_CONSENT_NOTICE=on のときのお知らせのリンクからも来る。
+// 既定ではどちらのフラグも off で、誰も回されない)。(main) グループの外に置く: アプリ用のナビ・AI チャットを
 // 付けずに、同意だけに集中してもらう (ゲートの対象外のパスなので、ここへ来た人がさらに回されることはない)。
 export const metadata: Metadata = {
   title: '規約への同意',

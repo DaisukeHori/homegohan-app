@@ -93,7 +93,7 @@ HAR にはログイン要求のパスワードやアクセストークンが平�
 
 | ワークフロー | 対象 | テストユーザー |
 |---|---|---|
-| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 と、未ログインで読める公開ページの `public-policy-pages.spec.ts` (利用規約・プライバシーポリシー #1174)、規約の再同意ゲートの `legal-consent-gate.spec.ts` (#1174。強制なしのサーバーと、`LEGAL_CONSENT_ENFORCE=on` で別ポートに起動したサーバーの 2 回) を実行 | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
+| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 と、未ログインで読める公開ページの `public-policy-pages.spec.ts` (利用規約・プライバシーポリシー #1174)、規約の再同意ゲートの `legal-consent-gate.spec.ts` (#1174。既定 (強制なし・お知らせなし) のサーバーと、`LEGAL_CONSENT_ENFORCE=on`・`LEGAL_CONSENT_NOTICE=on` でそれぞれ別ポートに起動したサーバーの 3 回) を実行 | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
 | `.github/workflows/e2e.yml` | 本番 URL。ローカル dev server は起動しない | 本番の `e2e-user-01〜04@homegohan.test`。Secrets `E2E_USER_EMAIL` (= `e2e-user-01@homegohan.test`) / `E2E_USER_PASSWORD` が必要 (未設定ならジョブを最初に止める) |
 
 本番のテストユーザーのパスワードはランダムな値で、Secrets `E2E_USER_PASSWORD` にだけ置く (リポジトリにも `.env.local` の共有にも書かない)。

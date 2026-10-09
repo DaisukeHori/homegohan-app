@@ -6,7 +6,7 @@
  *   - 利用者のプロフィール (user_profiles.terms_version_accepted / privacy_version_accepted) に記録された版と
  *     食い違うので、サインイン中の全員に再同意が求められる
  *     (lib/supabase/middleware.ts の同意ゲート。環境変数 LEGAL_CONSENT_ENFORCE=on のときは同意画面 /legal-consent へ回し、
- *      それ以外の間は画面上部の控えめなお知らせだけを出す)
+ *      それ以外の間は、LEGAL_CONSENT_NOTICE=on のときだけ画面上部に控えめなお知らせを出す。既定ではどちらも off で何も出さない)
  *
  * 版を変えずに文面だけを直すと、すでに同意した人には再同意を求めない。誤字の修正など「内容が変わらない」直しはそれでよい。
  * 内容が変わる改定 (利用目的・第三者提供・AI の扱いなど) は、必ず版を上げること。
