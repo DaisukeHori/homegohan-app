@@ -1,4 +1,4 @@
--- rollback: 20261008140300_ai_quota_foundation.sql
+-- rollback: 20261008200200_ai_quota_foundation.sql
 -- AI の利用回数の記録の仕組み (#1177 / T26) を消す。戻すのは、この migration が足した関数 3 本とテーブル 2 つだけ。
 -- 既存のテーブル・制約・データには、migration で一切触れていない。
 --
