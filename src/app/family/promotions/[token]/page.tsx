@@ -13,6 +13,7 @@ import { useParams, useRouter } from 'next/navigation';
 import FocusTrap from 'focus-trap-react';
 import { createClient } from '@/lib/supabase/client';
 import { clearUserScopedLocalStorage, broadcastSignOut } from '@/lib/user-storage';
+import { notifyNativeSignOut } from '@/lib/native-auth-bridge';
 import { useDialogA11y } from '@/components/common/useDialogA11y';
 
 interface PromotionDetails {
@@ -198,6 +199,8 @@ export default function FamilyPromotionConsentPage() {
   const handleSignOutAndRetry = async () => {
     // CLAUDE.md: サインアウトでは Supabase の signOut より前に端末のユーザー別データを消す
     clearUserScopedLocalStorage();
+    // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
+    notifyNativeSignOut();
     await supabase.auth.signOut();
     broadcastSignOut();
     router.push(`/login?redirect=/family/promotions/${token}`);

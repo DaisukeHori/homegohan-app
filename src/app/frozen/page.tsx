@@ -10,6 +10,8 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { broadcastSignOut, clearUserScopedLocalStorage } from "@/lib/user-storage";
+import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { useRouter } from "next/navigation";
 
 export default function FrozenPage() {
@@ -20,8 +22,14 @@ export default function FrozenPage() {
     if (isSigningOut) return;
     setIsSigningOut(true);
     try {
+      // CLAUDE.md: サインアウトでは Supabase の signOut より前に、端末のユーザー別データを消す
+      clearUserScopedLocalStorage();
+      // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-04 / F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
+      notifyNativeSignOut();
       const supabase = createClient();
       await supabase.auth.signOut();
+      // 開いている他のタブにも、ログアウトを伝える (#1038 F7-04)
+      broadcastSignOut();
     } finally {
       router.push("/login");
     }
