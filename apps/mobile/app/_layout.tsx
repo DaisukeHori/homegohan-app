@@ -43,7 +43,7 @@ function PushTokenRegistrar() {
         // 登録済みの印は、トークンを保存できたときだけ付く (権限の拒否などで未登録なら、次の起動でまた試す)
         await ensurePushTokenRegistered(user.id);
       } catch {
-        // silent — 失敗は registerAndSaveExpoPushToken() が PostHog に送る。user can retry via settings toggle
+        // silent — 失敗は registerAndSaveExpoPushToken() が端末のコンソールに出す。user can retry via settings toggle
       }
     })();
   }, [user?.id]);

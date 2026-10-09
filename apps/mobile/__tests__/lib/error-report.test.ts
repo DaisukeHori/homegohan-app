@@ -87,6 +87,11 @@ describe('reportBoundaryError', () => {
   });
 
   describe('外部の計測サービス (PostHog など) には送らない (#1166)', () => {
+    // 限界: このテストだけでは、PostHog への送信が戻ったことは検出できない。
+    //   PostHog の SDK を戻して captureEvent を呼んでも、テストでは PostHog のクライアントが初期化されず何もしない
+    //   (fetch も呼ばれない) ので、ここは通ってしまう。モバイルで PostHog が戻るのを止めているのは、
+    //   tests/posthog-not-adopted-contract.test.ts の import の検査 (PostHog の package・モジュールを import するソースが落とす)。
+    //   ここで確かめるのは、サーバーログ以外へ fetch で直接送っていないことと、送り先がサーバーログの 1 回だけであること。
     it('送るのは、サーバーログ (POST /api/log) への 1 回だけ。fetch で外部へ直接送らない', () => {
       reportBoundaryError('tabs', makeError());
 
