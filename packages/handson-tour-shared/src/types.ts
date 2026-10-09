@@ -84,6 +84,12 @@ export interface TourOverlayProps {
     position: 'top' | 'bottom' | 'left' | 'right' | 'auto';
     /** 吹き出し最大幅 (default 280px) */
     maxWidth?: number;
+    /**
+     * 吹き出しの中身を包む要素に付ける testID (例: 各 Step の最初の intro 吹き出しの `tour-step-1-intro`)。
+     * 吹き出し全体の `tour-bubble` とは別に、E2E がどの吹き出しかを見分けるための目印。
+     * 省略すると何も付けない。いまは Web の TourBubble だけが使う (モバイルは未対応)。
+     */
+    testId?: string;
   };
 
   /** 進行ボタン (null なら非表示 = 自動進行 mode) */
@@ -146,6 +152,8 @@ export interface TourBubbleProps {
     title?: string;
     body: string;
     maxWidth?: number;
+    /** 吹き出しの中身を包む要素に付ける testID (TourOverlayProps.bubble.testId と同じ) */
+    testId?: string;
   };
   /** 配置位置 */
   position: 'top' | 'bottom' | 'left' | 'right' | 'auto';

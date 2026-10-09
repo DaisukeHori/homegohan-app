@@ -1,11 +1,13 @@
 name: e2e-local
 
 # PR のコードを、ローカルの Supabase (本番スキーマのベースライン + 新しい migration) と
-# 本番ビルド (next build && next start) で動かし、Playwright の MVP スイートを実行する。
+# 本番ビルド (next build && next start) で動かし、Playwright の MVP スイートとハンズオンツアー (tests/e2e/tour/) を実行する。
 # 本番 URL に対して動かす e2e.yml と違い、PR の変更そのものを確かめる。
 #
 # - テストユーザー (e2e-user-01〜10@homegohan.test) は実行ごとにローカルの DB に作る。
 #   パスワードは実行ごとにランダムに作り、ログには出さない (マスクする)。
+# - ハンズオンツアーの spec (tests/e2e/tour/) は、上のユーザーではなく、テストごとに新規ユーザーを service_role で作って消す
+#   (.env.local に書いたローカルの Supabase に対して)。ツアーの「生成」はサンドボックスの固定値で AI は使わないため、このジョブで動く (#846)。
 # - AI を使う 02-meal-photo / 03-ai-advisor は、AI の API キーを持たないため対象外。
 # - Playwright のトレースと失敗時のページスナップショットは、入力したパスワードを平文で含むため取らない
 #   (--trace off / PLAYWRIGHT_NO_COPY_PROMPT=1)。HTML レポートも同じ理由で artifact に上げない。
@@ -83,7 +85,10 @@ jobs:
 
       # public-policy-pages は未ログインで動く (AI も使わない)。利用規約・プライバシーポリシーが
       # ログイン画面へ飛ばされず読めること (#1174) を、PR のコードの本番ビルドで確かめる。
-      - name: Run Playwright tests (MVP, AI を使わないもの + 未ログインで読める公開ページ)
+      # tests/e2e/tour/ はハンズオンツアーの Step 0〜4・スキップ・やり直し・対象判定 API (#846)。
+      # 以前は skip だらけで CI のどこでも動いていなかった。いまは skip を使わない (tests/e2e-tour-contract.test.ts が検査する)。
+      # 既知の不具合で動かせないものだけ、理由付きの test.fixme にしてある。それ以外が落ちたら、ツアーの不具合として扱う。
+      - name: Run Playwright tests (MVP, AI を使わないもの + 未ログインで読める公開ページ + ハンズオンツアー)
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:3000
           E2E_USER_EMAIL: e2e-user-01@homegohan.test
@@ -95,6 +100,7 @@ jobs:
           tests/e2e/04-menu-page.spec.ts
           tests/e2e/05-shopping-list.spec.ts
           tests/e2e/public-policy-pages.spec.ts
+          tests/e2e/tour/
 
       - name: Show logs on failure
         if: failure()

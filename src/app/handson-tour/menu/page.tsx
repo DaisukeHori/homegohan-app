@@ -41,7 +41,8 @@ function buildBubble(subStep: SubStepOfStep2, profile: MenuTourProfile) {
 
   switch (subStep) {
     case '2.1':
-      return { body: i18n.intro_title, position: 'auto' as const };
+      // testId は E2E (tests/e2e/tour) が intro 吹き出しを見分ける目印 (設計書の testID 一覧どおり)
+      return { body: i18n.intro_title, position: 'auto' as const, testId: 'tour-step-2-intro' };
     case '2.2':
       return { body: i18n.flags_bubble, position: 'auto' as const };
     case '2.3':

@@ -2,8 +2,9 @@
  * tests/e2e/tour/07-skip-and-replay.spec.ts
  *
  * スキップ & リプレイシナリオ:
- * 1. Step 0 で「あとで」→ /home へ即遷移
- * 2. /settings から `settings-restart-handson-tour` タップ → Step 0 再表示
+ * 1. Step 0 で「あとで」→ /home へ即遷移 (スキップが DB に記録される)
+ * 2. スキップ済みなら /handson-tour を開いても /home に戻される
+ * 3. /settings から `settings-restart-handson-tour` タップ → Step 0 再表示
  *
  * 実装済み testID:
  *   tour-step-0, tour-step-0-skip
@@ -12,142 +13,69 @@
  * 注意: API モック禁止。実 Supabase に接続する。
  */
 
-import { test, expect } from "@playwright/test";
-import { signupAsNewUser, cleanupTestUser, generateTestEmail } from "./helpers";
+import { test, expect, openTour, selectRows, waitForReactHandlers } from "./helpers";
 
 test.describe("Tour - Skip and Replay", () => {
   test.setTimeout(60_000);
 
-  let userId: string | null = null;
-
-  test.afterEach(async () => {
-    if (userId) {
-      await cleanupTestUser(userId);
-      userId = null;
-    }
-  });
-
-  test("Step 0 で「あとで」タップ → /home へ即遷移", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-skip-later");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
-
-    // Step 0 表示を確認
-    await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
+  test("Step 0 で「あとで」タップ → /home へ即遷移", async ({ page, tourUser }) => {
+    await openTour(page);
 
     // 「あとで」ボタンをクリック
     await page.getByTestId("tour-step-0-skip").click();
 
     // /home に遷移することを確認
-    await page.waitForURL("**/home", { timeout: 15_000 });
+    await page.waitForURL("**/home", { timeout: 30_000, waitUntil: "commit" });
     expect(page.url()).toContain("/home");
+
+    // スキップしたことが DB に記録される (ツアーを完了したことにはならない)
+    const [profile] = await selectRows<{ handson_tour_skipped_at: string | null; handson_tour_completed_at: string | null }>(
+      "user_profiles",
+      `id=eq.${tourUser.id}&select=handson_tour_skipped_at,handson_tour_completed_at`,
+    );
+    expect(profile.handson_tour_skipped_at).not.toBeNull();
+    expect(profile.handson_tour_completed_at).toBeNull();
   });
 
-  test("「あとで」後に /handson-tour に戻っても tour-step-0 が表示されない (skipped)", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-skip-noshow");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
-
-    await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
+  test("「あとで」後に /handson-tour に戻っても tour-step-0 が表示されない (skipped)", async ({ page, tourUser }) => {
+    await openTour(page);
     await page.getByTestId("tour-step-0-skip").click();
-    await page.waitForURL("**/home", { timeout: 15_000 });
+    await page.waitForURL("**/home", { timeout: 30_000, waitUntil: "commit" });
 
     // スキップ後に /handson-tour に直接遷移しても /home にリダイレクトされる
-    await page.goto("/handson-tour");
-    await page.waitForLoadState("domcontentloaded");
+    // (layout.tsx が status API と同じ判定 (already_skipped) で redirect('/home') する)
+    await page.goto("/handson-tour", { waitUntil: "commit" });
+    await page.waitForURL("**/home", { timeout: 30_000, waitUntil: "commit" });
 
-    // /handson-tour は /home にリダイレクトされるはず (skipped_at が設定された後)
-    // または tour-step-0 が表示されない
-    await page.waitForTimeout(2000);
-    const isOnHome = page.url().includes("/home");
-    const isTourStep0Visible = await page.getByTestId("tour-step-0").isVisible({ timeout: 3_000 }).catch(() => false);
-
-    expect(isOnHome || !isTourStep0Visible).toBe(true);
+    await expect(page.getByTestId("tour-step-0")).toHaveCount(0);
   });
 
-  test("/settings から settings-restart-handson-tour タップ → Step 0 再表示", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-replay");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
-
+  test("/settings から settings-restart-handson-tour タップ → Step 0 再表示", async ({ page, tourUser }) => {
     // まず「あとで」でスキップ
-    await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
+    await openTour(page);
     await page.getByTestId("tour-step-0-skip").click();
-    await page.waitForURL("**/home", { timeout: 15_000 });
+    await page.waitForURL("**/home", { timeout: 30_000, waitUntil: "commit" });
 
-    // /settings に遷移
+    // /settings に遷移して、「使い方ガイドをもう一度見る」を押す
     await page.goto("/settings");
-    await page.waitForLoadState("domcontentloaded");
-
-    // settings-restart-handson-tour ボタンを探す
     const restartBtn = page.getByTestId("settings-restart-handson-tour");
-    const isRestartVisible = await restartBtn.isVisible({ timeout: 10_000 }).catch(() => false);
-
-    if (!isRestartVisible) {
-      test.skip(true, "settings-restart-handson-tour が /settings に表示されない - 設定画面の実装を要確認");
-      return;
-    }
-
-    // 「ハンズオンガイドをもう一度見る」をクリック
+    await expect(restartBtn).toBeVisible({ timeout: 30_000 });
+    await waitForReactHandlers(page, "settings-restart-handson-tour");
     await restartBtn.click();
 
-    // /handson-tour または Step 0 に遷移する
-    await page.waitForURL((url) => url.pathname.includes("/handson-tour") || url.pathname.includes("/home"), { timeout: 10_000 });
-
-    if (page.url().includes("/handson-tour")) {
-      // /handson-tour で tour-step-0 が再表示される
-      await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 10_000 });
-    } else {
-      // /home のままの場合、ハンズオンツアーがオーバーレイで表示されるかチェック
-      await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 10_000 });
-    }
+    // /handson-tour/replay (Cookie を発行) を経て /handson-tour に戻り、スキップ済みでも Step 0 が再表示される
+    await page.waitForURL((url) => url.pathname === "/handson-tour", { timeout: 30_000 });
+    await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 20_000 });
   });
 
-  test("settings-restart-handson-tour が /settings ページに存在する", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-settings-check");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
-
+  test("settings-restart-handson-tour が /settings ページに存在する", async ({ page, tourUser }) => {
     // スキップして /settings に移動
-    await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
+    await openTour(page);
     await page.getByTestId("tour-step-0-skip").click();
-    await page.waitForURL("**/home", { timeout: 15_000 });
+    await page.waitForURL("**/home", { timeout: 30_000, waitUntil: "commit" });
 
     await page.goto("/settings");
-    await page.waitForLoadState("domcontentloaded");
 
-    // settings-restart-handson-tour の存在確認 (visible でなくてもよい - スクロール要の場合あり)
-    const restartBtn = page.getByTestId("settings-restart-handson-tour");
-    const isPresent = await restartBtn.isVisible({ timeout: 5_000 }).catch(() => false);
-
-    if (!isPresent) {
-      // スクロールして確認
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await page.waitForTimeout(500);
-      const isPresentAfterScroll = await restartBtn.isVisible({ timeout: 5_000 }).catch(() => false);
-
-      if (!isPresentAfterScroll) {
-        test.skip(true, "settings-restart-handson-tour が見つからない - /settings での実装を要確認");
-        return;
-      }
-    }
-
-    await expect(restartBtn).toBeVisible();
+    await expect(page.getByTestId("settings-restart-handson-tour")).toBeVisible({ timeout: 30_000 });
   });
 });
