@@ -7,6 +7,8 @@
  *    - 既定: onError (画面全体のエラー表示) に通知する
  *    - silent: onError に通知せず、例外だけを返す (改善モーダルが自分でエラーを表示するため)
  *    - どちらも失敗後に isGenerating が true のまま残らない
+ * 3. 「同意が必要です」(403 AI_CONSENT_REQUIRED。T15 / #1154) で止められたら、onError を呼ばず onAiConsentRequired を呼ぶ
+ *    (渡されていなければ、フックが同意画面への案内を出す)
  * を固定する。
  */
 
@@ -22,7 +24,12 @@ jest.mock('../../src/lib/supabase', () => ({
   supabase: { channel: jest.fn(), from: jest.fn(), removeChannel: jest.fn() },
 }));
 
+jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
+
+import { Alert } from 'react-native';
 import { useV4MenuGeneration } from '../../src/hooks/useV4MenuGeneration';
+import { resetAiConsentPromptForTests } from '../../src/lib/ai-consent';
+import { AI_CONSENT_REQUIRED_CODE, AI_CONSENT_REQUIRED_MESSAGE } from '../../../../supabase/functions/_shared/ai-consent';
 import { submitImprove } from '../../src/lib/improve-meal';
 
 const params = {
@@ -35,7 +42,12 @@ const params = {
 
 beforeEach(() => {
   mockPost.mockReset();
+  (Alert.alert as jest.Mock).mockClear();
+  resetAiConsentPromptForTests();
 });
+
+/** getApi() が「同意が必要です」で投げるエラー (T15 / #1154) */
+const CONSENT_ERROR_MESSAGE = `HTTP 403 Forbidden: ${JSON.stringify({ error: AI_CONSENT_REQUIRED_MESSAGE, code: AI_CONSENT_REQUIRED_CODE })}`;
 
 describe('useV4MenuGeneration.generate', () => {
   it('v4 生成 API に targetSlots / resolveExistingMeals / constraints / note / ultimateMode を送り、開始を通知する', async () => {
@@ -94,6 +106,54 @@ describe('useV4MenuGeneration.generate', () => {
     });
 
     expect(onGenerationStart).toHaveBeenCalledWith('req-2');
+  });
+});
+
+describe('useV4MenuGeneration.generate — 「同意が必要です」で止められたとき (T15 / #1154)', () => {
+  it('onError (失敗の表示) を呼ばず onAiConsentRequired を呼び、例外を返して、生成中のままにしない', async () => {
+    mockPost.mockRejectedValue(new Error(CONSENT_ERROR_MESSAGE));
+    const onError = jest.fn();
+    const onAiConsentRequired = jest.fn();
+    const onGenerationStart = jest.fn();
+    const { result } = renderHook(() => useV4MenuGeneration({ onError, onAiConsentRequired, onGenerationStart }));
+
+    await act(async () => {
+      await expect(result.current.generate(params)).rejects.toThrow('HTTP 403');
+    });
+
+    expect(onAiConsentRequired).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+    expect(onGenerationStart).not.toHaveBeenCalled();
+    expect(result.current.error).toBeNull();
+    expect(result.current.isGenerating).toBe(false);
+    // 案内は呼び出し元 (onAiConsentRequired) が出す。フック自身は出さない (二重に出さない)
+    expect(Alert.alert).not.toHaveBeenCalled();
+  });
+
+  it('onAiConsentRequired を渡さなければ、フックが同意画面への案内を出す (onError は呼ばない)', async () => {
+    mockPost.mockRejectedValue(new Error(CONSENT_ERROR_MESSAGE));
+    const onError = jest.fn();
+    const { result } = renderHook(() => useV4MenuGeneration({ onError }));
+
+    await act(async () => {
+      await expect(result.current.generate(params)).rejects.toThrow('HTTP 403');
+    });
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(Alert.alert).toHaveBeenCalledWith('同意が必要です', AI_CONSENT_REQUIRED_MESSAGE, expect.any(Array));
+    expect(result.current.isGenerating).toBe(false);
+  });
+
+  it('silent 指定でも、同意が必要なら onAiConsentRequired を呼ぶ', async () => {
+    mockPost.mockRejectedValue(new Error(CONSENT_ERROR_MESSAGE));
+    const onAiConsentRequired = jest.fn();
+    const { result } = renderHook(() => useV4MenuGeneration({ onAiConsentRequired }));
+
+    await act(async () => {
+      await expect(result.current.generate(params, { silent: true })).rejects.toThrow('HTTP 403');
+    });
+
+    expect(onAiConsentRequired).toHaveBeenCalledTimes(1);
   });
 });
 

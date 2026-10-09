@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import React from 'react';
+import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
@@ -142,6 +143,46 @@ const SKIPPED_NOT_SHOWN: Record<string, string> = {
   'apps/mobile/src/hooks/useHomeData.ts': 'アプリのホームは、この集計 (nutritionAnalysis) をどの画面にも出していない',
 };
 
+/**
+ * aiSummarySkippedNote( を呼ぶ関数の中で、createNewSession() の呼び出しがすべて aiSummarySkippedNote( より前にあるか。
+ * 構文木で見る (コメント・文字列の中は数えない)。問題があれば、その説明を返す
+ */
+function summaryNoteOrderProblems(file: string): string[] {
+  const sf = ts.createSourceFile(file, fs.readFileSync(path.join(ROOT, file), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const isCallTo = (node: ts.Node, name: string): node is ts.CallExpression =>
+    ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === name;
+  const noteCalls: ts.CallExpression[] = [];
+  const visit = (node: ts.Node): void => {
+    if (isCallTo(node, 'aiSummarySkippedNote')) noteCalls.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  const problems: string[] = [];
+  if (noteCalls.length === 0) problems.push('aiSummarySkippedNote( の呼び出しが構文木に無い');
+  for (const call of noteCalls) {
+    let fn: ts.Node | undefined = call.parent;
+    while (fn && !ts.isFunctionDeclaration(fn) && !ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) fn = fn.parent;
+    if (!fn) {
+      problems.push('aiSummarySkippedNote( が関数の外にある');
+      continue;
+    }
+    const creates: ts.CallExpression[] = [];
+    const collect = (node: ts.Node): void => {
+      if (isCallTo(node, 'createNewSession')) creates.push(node);
+      ts.forEachChild(node, collect);
+    };
+    collect(fn);
+    const line = (node: ts.Node) => sf.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+    if (creates.length === 0) problems.push(`L${line(call)}: 相談を閉じる関数が createNewSession() を呼んでいない`);
+    for (const create of creates) {
+      if (create.getStart() > call.getStart()) {
+        problems.push(`L${line(create)}: createNewSession() が一文 (L${line(call)}) より後にあり、一文を置き換えで消す`);
+      }
+    }
+  }
+  return problems;
+}
+
 function stripComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
 }
@@ -189,6 +230,9 @@ describe('aiSkipped を返す API を呼ぶ画面は、aiSkipped を読む', () 
     for (const { file, text } of callers.filter(({ text }) => READS_SKIPPED.test(text))) {
       if (/aiSummarySkippedNote\(/.test(text)) {
         expect(text, file).toMatch(/content:\s*skippedNote/);
+        // 一文は、新しいセッションの作成 (createNewSession。messages を置き換える) のあとに足す。先に足すと置き換えで消える (R2 の指摘)。
+        // 挙動はアプリの __tests__/ai/advisor-sheet-consent.test.tsx が確かめる。ここは Web とアプリの両方の順番を押さえる
+        expect(summaryNoteOrderProblems(file), file).toEqual([]);
       } else if (file.endsWith('useHomeData.ts')) {
         // ホームは集計の状態に理由を持ち、ホームの画面が AiSkippedNotice で出す
         expect(stripComments(fs.readFileSync(path.join(ROOT, 'src/app/(main)/home/page.tsx'), 'utf8'))).toMatch(

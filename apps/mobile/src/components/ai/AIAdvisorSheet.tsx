@@ -277,6 +277,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       );
       if (res.ok) {
         const data = await res.json();
+        // 先に新しいセッションを作る。createNewSession は成功すると messages を [WELCOME_MESSAGE] に置き換えるので、
+        // 要約 (または要約を省いた旨の一文) をその前に足すと、作成を待つ間しか出ずに消えてしまう (Web の AIChatBubble と同じ順)
+        await createNewSession();
         if (data.summary) {
           setMessages((prev) => [
             ...prev,
@@ -302,7 +305,6 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
             ]);
           }
         }
-        await createNewSession();
       } else if (res.status === 400) {
         // Already closed: UI を最新に合わせる
         Alert.alert("情報", "このセッションは既にアーカイブ済みです。");
