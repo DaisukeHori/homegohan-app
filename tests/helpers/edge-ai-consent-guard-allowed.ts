@@ -5,7 +5,7 @@
  *
  *   vi.mock('../supabase/functions/_shared/ai-consent-guard.ts', () => import('./helpers/edge-ai-consent-guard-allowed'));
  *
- * 同意が無いときに止めることは tests/ai-consent-enforcement.test.ts が確かめる。
+ * 同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-edge.test.ts が実際のハンドラと構文木で確かめる。
  */
 import {
   aiConsentDeniedPayload,

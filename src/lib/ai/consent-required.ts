@@ -8,7 +8,8 @@
  * 呼び出し側は、応答が isAiConsentRequiredResponse なら自分のエラー表示を出さずに終える (同意画面が案内する)。
  *
  * 画面を開くと自動で AI に送る処理 (ホームの栄養アドバイスなど) は aiFetch を使わない (同意画面を勝手に出さない)。
- * 403 を受けたら、AI の部分を出さないだけにする。
+ * 403 (または、AI の部分だけを省いた応答の aiSkipped) を受けたら、AI の部分の代わりに案内の一文だけを出す
+ * (AI_CONSENT_COPY.automaticLockedNote / src/components/consent/AiSkippedNotice.tsx)。
  */
 import { AI_CONSENT_REQUIRED_MESSAGE, AI_CONSENT_REQUIRED_STATUS, isAiConsentRequiredBody } from './consent-config';
 

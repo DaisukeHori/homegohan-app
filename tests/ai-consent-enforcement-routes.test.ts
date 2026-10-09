@@ -111,7 +111,7 @@ function consentResult(): { data: unknown; error: unknown } {
   }
 }
 
-const DEFAULT_SINGLE_ROW: Row = { id: 'row-1', user_id: '11111111-1111-4111-8111-111111111111', status: 'active', day_date: '2026-10-10' };
+const DEFAULT_SINGLE_ROW: Row = { id: 'row-1', user_id: USER, status: 'active', day_date: TODAY };
 
 /** Supabase のクエリの作り物。どのメソッドを繋いでも同じ作り物を返し、await / single() で表ごとの結果を返す */
 function makeQuery(table: string): unknown {

@@ -8,7 +8,9 @@
  *    - 応答の本文に内部の詳細 (テーブル名・DB のエラー文) を出さない (#1172)
  * 2. 送る経路の一覧 (棚卸し): AI へ送るコードに届く API Route・Edge Function・cron は、すべて判定を呼ぶか、
  *    利用者のデータを送らない理由つきで除外されている。新しく経路を足して判定を呼び忘れると、このテストが落ちる
- * 3. 実際の route で、未同意なら AI を呼ばずに 403 を返し、同意済みなら進むこと (判定は差し替えない)
+ * 3. 実際の route (analyze-fridge) で、本人の有効な行を読んで判定すること (判定は差し替えない)。
+ *    送る手前で判定する全経路を実際に呼ぶ検査は tests/ai-consent-enforcement-routes.test.ts (API Route) と
+ *    tests/ai-consent-enforcement-edge.test.ts (Edge Functions) にある。ここの棚卸しは「判定を import して呼んでいる」までしか見ない
  * 4. cron (献立の生成のキュー) で、未同意の利用者のリクエストは Edge Function を呼ばずに失敗にすること
  * 5. Edge Functions 側の部品 (_shared/ai-consent-guard.ts)
  */
@@ -249,7 +251,7 @@ describe('送る経路の一覧 (棚卸し)', () => {
     expect(unlisted, '判定を呼ぶ (src/lib/ai/consent-guard.ts) か、利用者のデータを送らない理由を EXEMPT_ROUTES に書くこと').toEqual([]);
   });
 
-  it.each(Object.keys(ENFORCED_ROUTES))('%s は送る手前で判定を呼ぶ', (file) => {
+  it.each(Object.keys(ENFORCED_ROUTES))('%s は判定を import して呼んでいる (送らないことは ai-consent-enforcement-routes.test.ts)', (file) => {
     const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
     expect(text).toMatch(/from '@\/lib\/ai\/consent-guard'/);
     expect(text).toMatch(GUARD_CALL_PATTERN);
@@ -278,7 +280,7 @@ describe('送る経路の一覧 (棚卸し)', () => {
     expect(unlisted, '判定を呼ぶ (_shared/ai-consent-guard.ts) か、利用者のデータを送らない理由を EXEMPT_EDGE に書くこと').toEqual([]);
   });
 
-  it.each(Object.keys(ENFORCED_EDGE))('Edge Function %s は送る手前で判定を呼ぶ', (name) => {
+  it.each(Object.keys(ENFORCED_EDGE))('Edge Function %s は判定を import して呼んでいる (送る手前で止めることは ai-consent-enforcement-edge.test.ts)', (name) => {
     const text = fs.readFileSync(path.join(functionsDir, name, 'index.ts'), 'utf8');
     expect(text).toMatch(/from ['"]\.\.\/_shared\/ai-consent-guard\.ts['"]/);
     expect(text).toMatch(GUARD_CALL_PATTERN);

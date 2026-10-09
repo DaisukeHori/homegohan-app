@@ -6,7 +6,7 @@
  *
  *   vi.mock('@/lib/ai/consent-guard', () => import('../helpers/ai-consent-guard-allowed'));
  *
- * 同意が無いときに止めることは tests/ai-consent-enforcement.test.ts が確かめる。
+ * 同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる。
  * このファイルは '@/lib/ai/consent-guard' を import しない (差し替えた先から自分を読むと循環するため)。
  */
 import { NextResponse } from 'next/server';

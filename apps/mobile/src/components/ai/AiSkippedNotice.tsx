@@ -16,7 +16,7 @@ import {
   AI_CONSENT_SKIPPED_NOTE,
   type AiSkippedReason,
 } from "../../lib/ai-consent";
-import { colors, radius, spacing } from "../../theme";
+import { colors, radius, spacing, typography } from "../../theme";
 import { Button } from "../ui";
 
 /** AI の分析が無いが、省いた理由も無いとき (AI の失敗) の一文 */
@@ -56,9 +56,8 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   text: {
+    ...typography.body,
     color: colors.textMuted,
-    fontSize: 14,
-    lineHeight: 21,
     textAlign: "center",
   },
   action: {

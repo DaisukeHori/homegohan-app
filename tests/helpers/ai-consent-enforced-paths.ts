@@ -1,11 +1,13 @@
 /**
  * テスト用: 利用者のデータを外国の AI 事業者へ送る経路のうち、送る手前で同意を判定するものの一覧 (T15 / #1154)
  *
- * 2 つのテストが同じ一覧を使う。
+ * 3 つのテストが同じ一覧を使う。
  *   - tests/ai-consent-enforcement.test.ts        : 棚卸し (AI へ送るコードに届く経路は、すべてこの一覧か除外の一覧にある)
- *   - tests/ai-consent-enforcement-routes.test.ts : 一覧の各経路を実際に呼び、未同意なら AI へ送らないこと
- * 新しく経路を足したら、ここに載せ、tests/ai-consent-enforcement-routes.test.ts の表にも行を足す
- * (表に行の無い経路があると、そのテストが落ちる)。
+ *   - tests/ai-consent-enforcement-routes.test.ts : ENFORCED_ROUTES の各 route を実際に呼び、未同意なら AI へ送らないこと
+ *   - tests/ai-consent-enforcement-edge.test.ts   : ENFORCED_EDGE の各関数で、判定の結果で止める if が送る呼び出しより前にあること
+ *                                                   (構文木。代表の関数は実際のハンドラも呼ぶ)
+ * 新しく API Route を足したら、ここに載せ、tests/ai-consent-enforcement-routes.test.ts の表にも行を足す
+ * (表に行の無い route があると、そのテストが落ちる)。
  */
 
 /** Next.js の API Route で、送る手前で判定を呼ぶもの → 判定の場所 */
