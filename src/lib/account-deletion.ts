@@ -13,6 +13,10 @@
  *   4. Storage のファイルを消す (src/lib/account-deletion-storage.ts)。
  *   5. auth.admin.deleteUser。public 側の個人データは外部キーの CASCADE / SET NULL で消える・匿名化される
  *      (20261010000100_auth_users_fk_on_delete.sql。外部キーで失敗する経路は無い)。
+ *   6. 本人に退会の完了メールを 1 通送る (#1152。src/lib/account-deletion-notification.ts)。
+ *      宛先 (auth.users の登録アドレス) は 1 の後・2 の前に控えておき、メモリ上だけで使う (ログには残さない)。
+ *      送るのは 5 が実際に削除した 1 回だけ (409・途中の失敗・すでに消えていたユーザーのやり直しでは送らない)。
+ *      送信の失敗は退会の結果を変えない (アカウントはもう消えている)。失敗はログに残す。
  *
  * 2〜4 を 5 より先に行うのは、削除したあとでは本人の user_id でファイルや記録を探せないため。
  * 5 が失敗したら、2〜4 は済んでいてもアカウントは残る。もう一度削除を実行すれば、残りが片付いて削除できる。
@@ -24,6 +28,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { removeAccountStorage } from '@/lib/account-deletion-storage';
+import { notifyAccountDeleted, readAccountDeletionEmail } from '@/lib/account-deletion-notification';
 
 /** どの段階で失敗したか (ログ用。応答には出さない) */
 export type AccountDeletionStep =
@@ -91,6 +96,8 @@ export interface DeleteAccountParams {
   logger?: AccountDeletionLogger;
   /** Storage の掃除に使ってよい時間 (ms)。省略すると既定 (45 秒) */
   storageMaxDurationMs?: number;
+  /** テスト用に差し替える。完了メールに書く退会日時の時計。省略すると new Date() */
+  now?: () => Date;
 }
 
 const LOG_NAME = 'lib/account-deletion';
@@ -211,9 +218,16 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
   const userLog = log.withUser(userId);
 
   let step: AccountDeletionStep = 'check_blockers';
+  // 完了メール (#1152) の宛先。削除の後では引けないので、記録を伏せる・消す前に控える。メモリ上だけで使い、ログに渡さない
+  let completionEmailTo: string | null = null;
+  // deleteUser が実際に削除したか (すでに消えていたユーザーのやり直しでは false。完了メールは最初の退会で送っている)
+  let deletedNow = false;
+  let deletedAt: Date | null = null;
   try {
     const blocker = await findBlocker(admin, userId);
     if (blocker) return blocker;
+
+    completionEmailTo = await readAccountDeletionEmail(admin, userId, { log, requestId });
 
     step = 'prepare';
     const { data: prepareReport, error: prepareError } = await admin.rpc('prepare_account_deletion', {
@@ -248,11 +262,13 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
       if (!isUserAlreadyGone(deleteError)) throw deleteError;
       // すでに消えているユーザーには user_id を付けられない (app_logs.user_id の外部キーで保存に失敗する)
       log.warn('account deletion: user was already deleted', { request_id: requestId });
+    } else {
+      deletedNow = true;
+      deletedAt = params.now?.() ?? new Date();
     }
 
     // 削除後なので withUser は使わない。メールアドレスも user_id も載せない
     log.info('account deleted', { request_id: requestId, prepare: prepareReport ?? null, storage });
-    return { ok: true };
   } catch (error) {
     userLog.error(`account deletion failed at step: ${step}`, toError(error), {
       step,
@@ -261,4 +277,11 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
     });
     return accountDeletionFailure(requestId, step);
   }
+
+  // 削除が済んでから、本人に完了メールを送る (#1152)。try の外に置き、送信の失敗が退会の失敗 (500) にならないようにする。
+  // notifyAccountDeleted は例外を投げず、失敗は user_id もアドレスも付けずにログへ残す
+  if (deletedNow && deletedAt && completionEmailTo) {
+    await notifyAccountDeleted({ toEmail: completionEmailTo, deletedAt, requestId, log });
+  }
+  return { ok: true };
 }
