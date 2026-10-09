@@ -36,7 +36,8 @@ beforeAll(async () => {
   ]);
 
   // Create a draft plan for GET / DELETE tests
-  const { data: draft } = await supabaseAdmin
+  // INSERT の error は必ず確認する (作れないまま黙ってスキップさせず、このあとのテストが空振りで通るのを防ぐ)
+  const { data: draft, error: draftError } = await supabaseAdmin
     .from('subscription_plans')
     .insert({
       plan_key: `test_get_draft_${TS}`,
@@ -50,12 +51,11 @@ beforeAll(async () => {
     .select('id')
     .single();
 
-  if (draft) {
-    draftPlanId = draft.id;
-  }
+  if (draftError || !draft) throw new Error(`Failed to create the draft plan: ${draftError?.message}`);
+  draftPlanId = draft.id;
 
   // Create a public plan for price-change / price-impact tests
-  const { data: pub } = await supabaseAdmin
+  const { data: pub, error: pubError } = await supabaseAdmin
     .from('subscription_plans')
     .insert({
       plan_key: `test_public_plan_${TS}`,
@@ -69,9 +69,8 @@ beforeAll(async () => {
     .select('id')
     .single();
 
-  if (pub) {
-    publicPlanId = pub.id;
-  }
+  if (pubError || !pub) throw new Error(`Failed to create the public plan: ${pubError?.message}`);
+  publicPlanId = pub.id;
 }, 60000);
 
 afterAll(async () => {
@@ -152,7 +151,7 @@ describe('DELETE /api/super-admin/plans/[id]', () => {
   let deletablePlanId: string;
 
   beforeAll(async () => {
-    const { data } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from('subscription_plans')
       .insert({
         plan_key: `test_del_plan_${TS}`,
@@ -164,9 +163,8 @@ describe('DELETE /api/super-admin/plans/[id]', () => {
       .select('id')
       .single();
 
-    if (data) {
-      deletablePlanId = data.id;
-    }
+    if (error || !data) throw new Error(`Failed to create the plan to delete: ${error?.message}`);
+    deletablePlanId = data.id;
   });
 
   afterAll(async () => {

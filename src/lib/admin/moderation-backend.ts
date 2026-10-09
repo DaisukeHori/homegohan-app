@@ -4,6 +4,8 @@
  * #1041 (F4-04) 修正: 実在しない `moderation_items` テーブル参照を廃止し、
  * 実在する `moderation_flags` (food/meal 用) / `recipe_flags` (recipe 用) に統一する。
  * `ai_content` タイプはバックエンドテーブルが存在しないため未サポート (要 migration)。
+ * ai_content を指定された API は、空の一覧や 404 ではなく 501 (OP_NOT_SUPPORTED) を返し、
+ * 画面は「AIコンテンツ（未対応）」と明示する (#1128。オーナー判断 2026-10-08)。
  *
  * 重要: BAN 対象ユーザー (`user_id`) は各フラグテーブル自身の `user_id` /
  * `reporter_id` ではなく、フラグが指す **コンテンツの所有者** (meals.user_id /
@@ -34,6 +36,10 @@ export type ModerationBackedType = 'food' | 'recipe';
 export function isModerationBacked(type: ModerationType): type is ModerationBackedType {
   return type === 'food' || type === 'recipe';
 }
+
+/** バックエンドの無いタイプ (ai_content) を指定された API の 501 の本文 (#1128) */
+export const AI_CONTENT_NOT_SUPPORTED_MESSAGE =
+  'AIコンテンツの審査は準備中（未対応）です。審査できるのは、食事画像とレシピの通報だけです。';
 
 export interface NormalizedModerationItem {
   /** 通報 (moderation_flags.id / recipe_flags.id) の ID。コンテンツ本体の ID は `content_id` */

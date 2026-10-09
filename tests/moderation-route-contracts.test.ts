@@ -3,7 +3,8 @@
  * GET/POST /api/admin/moderation/[type]/[id]
  *
  * 検証観点:
- *  - ai_content は未サポートのため 404 (実在しない moderation_items を叩かない)
+ *  - ai_content は準備中 (未対応) のため 501 OP_NOT_SUPPORTED (#1128。実在しない moderation_items を叩かない。
+ *    以前は GET 一覧が空 (通報 0 件に見える)・詳細が 404 で、未対応と区別できなかった)
  *  - 対象が存在しない場合は 404、DB エラー時は 500 (fail-closed。以前は
  *    全エラーが 404 に丸められ、テーブル未作成時と実障害時が区別できなかった)
  *  - BAN 対象ユーザーはコンテンツ所有者 (meals.user_id) であり、
@@ -55,7 +56,9 @@ vi.mock('@/lib/supabase/server', () => ({
   getSupabaseAdmin: (...args: unknown[]) => mockGetSupabaseAdmin(...args),
 }));
 
-const { GET, POST } = await import('@/app/api/admin/moderation/[type]/[id]/route');
+const { GET, POST, PUT } = await import('@/app/api/admin/moderation/[type]/[id]/route');
+const { GET: queueGET } = await import('@/app/api/admin/moderation/queue/route');
+const { GET: listGET } = await import('@/app/api/admin/moderation/route');
 
 const adminActor = { id: 'admin-1', email: 'admin@example.com', roles: ['admin'], organization_id: null };
 const superAdminActor = { id: 'sa-1', email: 'sa@example.com', roles: ['super_admin'], organization_id: null };
@@ -115,13 +118,38 @@ beforeEach(() => {
 });
 
 describe('GET /api/admin/moderation/[type]/[id]', () => {
-  it('ai_content は未サポートのため 404 (存在しないテーブルを叩かない)', async () => {
+  it('ai_content は準備中 (未対応) のため 501 OP_NOT_SUPPORTED (404 にしない。存在しないテーブルを叩かない)', async () => {
     fakeSupabase = createFakeSupabase({});
     const res = await GET(new Request('http://localhost/api/admin/moderation/ai_content/x'), {
       params: { type: 'ai_content', id: 'x' },
     });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(501);
+    const json = (await res.json()) as { error: { code: string; message: string } };
+    expect(json.error.code).toBe('OP_NOT_SUPPORTED');
+    expect(json.error.message).toContain('準備中（未対応）');
     expect(fakeSupabase.from).not.toHaveBeenCalled();
+    // DB (service-role) のクライアントも作らない
+    expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
+  });
+
+  it('ai_content でも未認証は 401、権限不足は 403 (未対応とは教えない)', async () => {
+    const { AuthError, ForbiddenError } = await import('@/lib/auth/errors');
+    fakeSupabase = createFakeSupabase({});
+    const request = new Request('http://localhost/api/admin/moderation/ai_content/x');
+
+    mockRequireRole.mockRejectedValueOnce(new AuthError('AUTH_UNAUTHENTICATED'));
+    expect((await GET(request, { params: { type: 'ai_content', id: 'x' } })).status).toBe(401);
+
+    mockRequireRole.mockRejectedValueOnce(new ForbiddenError('PERM_DENIED'));
+    expect((await GET(request, { params: { type: 'ai_content', id: 'x' } })).status).toBe(403);
+  });
+
+  it('未知の type は 400 のまま (ai_content だけが 501)', async () => {
+    fakeSupabase = createFakeSupabase({});
+    const res = await GET(new Request('http://localhost/api/admin/moderation/unknown/x'), {
+      params: { type: 'unknown', id: 'x' },
+    });
+    expect(res.status).toBe(400);
   });
 
   it('food: 見つからない場合は 404 (service-role 経由)', async () => {
@@ -414,7 +442,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
     expect(json.data.ban_applied).toBe(false);
   });
 
-  it('ai_content への POST は 404', async () => {
+  it('ai_content への POST は 501 OP_NOT_SUPPORTED (404 にしない)。何も更新せず、監査ログも残さない', async () => {
     fakeSupabase = createFakeSupabase({});
     const req = new Request('http://localhost/api/admin/moderation/ai_content/x', {
       method: 'POST',
@@ -422,7 +450,29 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
       body: JSON.stringify({ action: 'approve' }),
     });
     const res = await POST(req, { params: { type: 'ai_content', id: 'x' } });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(501);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('OP_NOT_SUPPORTED');
+    expect(fakeSupabase.from).not.toHaveBeenCalled();
+    expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
+  });
+
+  it('ai_content への PUT も 501。本文が不正でも (本文の検証より前に) 501 を返す', async () => {
+    fakeSupabase = createFakeSupabase({});
+    const valid = new Request('http://localhost/api/admin/moderation/ai_content/x', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'approve' }),
+    });
+    expect((await PUT(valid, { params: { type: 'ai_content', id: 'x' } })).status).toBe(501);
+
+    const invalid = new Request('http://localhost/api/admin/moderation/ai_content/x', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'not json',
+    });
+    const res = await PUT(invalid, { params: { type: 'ai_content', id: 'x' } });
+    expect(res.status).toBe(501);
+    expect(fakeSupabase.from).not.toHaveBeenCalled();
   });
 
   it('対象が見つからない場合は 404', async () => {
@@ -741,5 +791,91 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       content_id: 'recipe-1',
       hidden: true,
     });
+  });
+});
+
+describe('GET /api/admin/moderation/queue (#1128: ai_content は 501)', () => {
+  const queueRequest = (query: string) => new Request(`http://localhost/api/admin/moderation/queue${query}`);
+
+  it('type=ai_content は 501 OP_NOT_SUPPORTED。空の一覧 (通報 0 件に見える) を返さず、DB にも触れない', async () => {
+    fakeSupabase = createFakeSupabase({});
+
+    const res = await queueGET(queueRequest('?type=ai_content'));
+    const json = (await res.json()) as { error: { code: string; message: string }; data?: unknown };
+
+    expect(res.status).toBe(501);
+    expect(json.error.code).toBe('OP_NOT_SUPPORTED');
+    expect(json.error.message).toContain('準備中（未対応）');
+    expect(json).not.toHaveProperty('data');
+    expect(fakeSupabase.from).not.toHaveBeenCalled();
+    expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
+  });
+
+  it('type=ai_content でも、未認証は 401・権限不足は 403', async () => {
+    const { AuthError, ForbiddenError } = await import('@/lib/auth/errors');
+    fakeSupabase = createFakeSupabase({});
+
+    mockRequireRole.mockRejectedValueOnce(new AuthError('AUTH_UNAUTHENTICATED'));
+    expect((await queueGET(queueRequest('?type=ai_content'))).status).toBe(401);
+
+    mockRequireRole.mockRejectedValueOnce(new ForbiddenError('PERM_DENIED'));
+    expect((await queueGET(queueRequest('?type=ai_content'))).status).toBe(403);
+    expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
+  });
+
+  it('type 未指定・food・recipe は従来どおり一覧を返す (service-role 経由。ai_content は含まない)', async () => {
+    fakeSupabase = createFakeSupabase({
+      // 1 回目: fetchModerationList の一覧、2 回目: countModeration の件数
+      moderation_flags: [
+        {
+          data: [
+            {
+              id: 'flag-1',
+              status: 'pending',
+              reason: null,
+              created_at: '2026-01-01T00:00:00Z',
+              meals: { user_id: 'owner-x', photo_url: null },
+            },
+          ],
+          error: null,
+        },
+        { count: 1, error: null },
+      ],
+      recipe_flags: [{ data: [], error: null }, { count: 0, error: null }],
+    });
+
+    const res = await queueGET(queueRequest(''));
+    const json = (await res.json()) as { data: Array<{ id: string; type: string }>; meta: { total: number } };
+
+    expect(res.status).toBe(200);
+    expect(json.data.map((item) => item.type)).toEqual(['food']);
+    expect(json.meta.total).toBe(1);
+    expect(mockGetSupabaseAdmin).toHaveBeenCalled();
+  });
+
+  it('未知の type は 400 のまま', async () => {
+    fakeSupabase = createFakeSupabase({});
+    expect((await queueGET(queueRequest('?type=unknown'))).status).toBe(400);
+  });
+});
+
+describe('GET /api/admin/moderation (#1128: aiFlags は未対応と分かる)', () => {
+  it('aiFlags は空配列のまま (配布済みの古いモバイルアプリが配列として展開する) で、aiFlagsSupported: false を添える', async () => {
+    fakeSupabase = createFakeSupabase({
+      moderation_flags: [{ data: [], error: null }],
+      recipe_flags: [{ data: [], error: null }],
+    });
+
+    const res = await listGET(new Request('http://localhost/api/admin/moderation?status=pending'));
+    const json = (await res.json()) as Record<string, unknown>;
+
+    expect(res.status).toBe(200);
+    expect(json.mealFlags).toEqual([]);
+    expect(json.recipeFlags).toEqual([]);
+    // 配列のままであること (配布済みの古いモバイルアプリの運営画面は `...(res.aiFlags ?? [])` と展開する。画面は #1389 で削除済み)
+    expect(Array.isArray(json.aiFlags)).toBe(true);
+    expect(json.aiFlags).toEqual([]);
+    // 空は「通報 0 件」ではなく「未対応」
+    expect(json.aiFlagsSupported).toBe(false);
   });
 });

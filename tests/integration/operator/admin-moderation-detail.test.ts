@@ -8,6 +8,8 @@
  * 凍結解除は admin / super_admin。ほかのロール (support など) と一般ユーザーは 403、未認証は 401。
  * 入力エラーは 400 + code=VALIDATION_ERROR または INVALID_JSON (AC の「422 相当」はこの 400)。
  * BAN 対象を特定できないときだけ 422 (OP_BAN_TARGET_UNRESOLVED)。
+ * type=ai_content (AI コンテンツ) の審査は準備中 (未対応) で、バックエンドのテーブルが無いため 501 (OP_NOT_SUPPORTED)。
+ * 以前の「一覧が空 (200)」「詳細・解決が 404」は、通報 0 件・該当なしと区別できなかった (#1128)。
  *
  * #1041 (#1081) で実テーブル moderation_flags / recipe_flags を使う実装に書き換わっている。
  * このテストは、通報フラグ・通報された食事 (meals)・レシピ (recipes) を service_role で seed し、
@@ -386,11 +388,16 @@ describe('GET /api/admin/moderation/queue', () => {
     expect(second.body.data[0].id).not.toBe(res.body.data[0].id);
   });
 
-  it('200 type=ai_content returns an empty list (no backing table yet)', async () => {
-    const res = await apiCall<QueueBody>('GET', '/api/admin/moderation/queue?type=ai_content', adminUser.jwt);
-    expect(res.status).toBe(200);
-    expect(res.body.data).toEqual([]);
-    expect(res.body.meta).toMatchObject({ total: 0, capped: false });
+  // #1128: AI コンテンツの審査は準備中 (未対応)。空の一覧 (通報 0 件に見える) ではなく 501 で未対応と伝える
+  it('501 OP_NOT_SUPPORTED for type=ai_content (no backing table yet; not an empty list)', async () => {
+    const res = await apiCall<{ data?: unknown; error?: { code?: string; message?: string } }>(
+      'GET',
+      '/api/admin/moderation/queue?type=ai_content',
+      adminUser.jwt,
+    );
+    expectError(res, 501, 'OP_NOT_SUPPORTED');
+    expect(res.body.error?.message).toContain('準備中（未対応）');
+    expect(res.body.data).toBeUndefined();
   });
 
   describe('400 for invalid query parameters (validation error)', () => {
@@ -886,11 +893,17 @@ describe('POST /api/admin/moderation/[type]/[id]', () => {
       expect(res.status).toBeLessThan(500);
     });
 
-    it('404 for type=ai_content (no backing table yet)', async () => {
+    // #1128: AI コンテンツの審査は準備中 (未対応)。404 (該当なし) ではなく 501 で未対応と伝える
+    it('501 OP_NOT_SUPPORTED for type=ai_content (no backing table yet)', async () => {
       const res = await apiCall('POST', `/api/admin/moderation/ai_content/${randomUuid()}`, adminUser.jwt, {
         action: 'approve',
       });
-      expectError(res, 404, 'NOT_FOUND');
+      expectError(res, 501, 'OP_NOT_SUPPORTED');
+    });
+
+    it('501 OP_NOT_SUPPORTED for GET type=ai_content', async () => {
+      const res = await apiCall('GET', `/api/admin/moderation/ai_content/${randomUuid()}`, adminUser.jwt);
+      expectError(res, 501, 'OP_NOT_SUPPORTED');
     });
 
     it('404 when a recipe flag id is used with type=food (the types are separate tables)', async () => {

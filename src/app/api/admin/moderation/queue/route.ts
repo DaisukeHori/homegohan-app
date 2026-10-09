@@ -6,8 +6,11 @@
  * #1041 (F4-04) 修正: 実在しない `moderation_items` テーブル参照を廃止し、
  * 実テーブル (moderation_flags / recipe_flags) を参照する。
  * `type` 未指定時は両テーブルをマージしてページングする。
- * ai_content はバックエンドテーブル未実装のため常に空 (要 migration)。
  * DB エラー時は空配列にフォールバックせず 500 を返す (fail-closed)。
+ *
+ * #1128: ai_content (AI コンテンツ) の審査は準備中 (未対応)。バックエンドテーブルが無いため、
+ * `type=ai_content` は空の一覧 (「通報 0 件」に見える) ではなく 501 (OP_NOT_SUPPORTED) を返す。
+ * `type` 未指定の一覧は食事画像とレシピだけで、AI コンテンツは含まない。
  *
  * #1041 round-2 修正:
  *  - (F) `moderation_flags_admin_all` は admin/super_admin のみで
@@ -26,12 +29,14 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { ModerationQueueSearchSchema } from '@/lib/admin/moderation-schemas';
 import {
+  AI_CONTENT_NOT_SUPPORTED_MESSAGE,
   countModeration,
   fetchModerationList,
   isModerationBacked,
   type ModerationBackedType,
   type NormalizedModerationItem,
 } from '@/lib/admin/moderation-backend';
+import { notSupportedResponse } from '@/lib/admin/not-supported';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,16 +72,15 @@ export async function GET(request: Request) {
   }
 
   const params = parseResult.data;
+
+  // ai_content (または将来追加され得る未サポートタイプ) は準備中 (未対応)。
+  // 空の一覧を返すと「通報 0 件」に見えるため、501 で未対応と伝える (#1128)。DB には触れない。
+  if (params.type && !isModerationBacked(params.type)) {
+    return notSupportedResponse(AI_CONTENT_NOT_SUPPORTED_MESSAGE);
+  }
+
   // requireRole 通過後のみ到達する (#1041 round-2 F)。
   const supabaseAdmin = getSupabaseAdmin();
-
-  // ai_content (または将来追加され得る未サポートタイプ) は空を返す (要 migration、捏造しない)
-  if (params.type && !isModerationBacked(params.type)) {
-    return NextResponse.json({
-      data: [],
-      meta: { total: 0, page: params.page, per_page: params.per_page, capped: false },
-    });
-  }
 
   const typesToQuery: ModerationBackedType[] = params.type ? [params.type] : ['food', 'recipe'];
 

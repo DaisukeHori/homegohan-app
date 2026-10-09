@@ -5,7 +5,12 @@
  *   PATCH /api/super-admin/llm/quotas
  *
  * Roles: super_admin only
- * Auth boundary: 403 (admin), 401 (no auth), 400 (validation)
+ * Auth boundary: 403 (admin), 401 (no auth)
+ *
+ * クォータ管理は準備中 (未対応) (#1149)。
+ *   - GET は目安の値を返す。応答の enforced: false が「AI の呼び出しには適用されていない」ことを表す
+ *   - PATCH は 501 OP_NOT_SUPPORTED。何も保存せず、監査ログ (super_admin.llm_quota.override) も残さない
+ *     (以前は、値を保存せずに監査ログだけを残して、受け取った値をそのまま返していた)
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
@@ -15,6 +20,7 @@ import {
   testEmail,
   type TestUser,
 } from '../helpers/users';
+import { supabaseAdmin } from '../helpers/supabase';
 import { apiCall, apiCallNoAuth } from '../helpers/api';
 
 const TS = Date.now();
@@ -113,11 +119,16 @@ describe('GET /api/super-admin/llm/quotas', () => {
     expect(res.status).toBe(200);
     const body = res.body as {
       data: Array<{ plan_key: string; daily_limit: number | null; monthly_limit: number | null }>;
+      enforced: boolean;
+      note: string;
     };
     expect(Array.isArray(body.data)).toBe(true);
     // Verify at least one canonical plan key is present
     const planKeys = body.data.map((q) => q.plan_key);
     expect(planKeys).toContain('free');
+    // 目安の値で、AI の呼び出しには適用されていない
+    expect(body.enforced).toBe(false);
+    expect(body.note).toContain('適用されておらず');
   });
 
   it('403 for admin', async () => {
@@ -138,50 +149,49 @@ describe('GET /api/super-admin/llm/quotas', () => {
 describe('PATCH /api/super-admin/llm/quotas', () => {
   /** UUID used as target_id for user-level quota override */
   const testTargetId = '00000000-0000-0000-0000-000000000001';
+  const validBody = {
+    target_type: 'user',
+    target_id: testTargetId,
+    daily_limit: 200,
+    monthly_limit: 5000,
+    reason: 'Integration test quota override',
+  };
 
-  it('200 for super_admin overriding user quota', async () => {
-    const res = await apiCall('PATCH', '/api/super-admin/llm/quotas', superAdminUser.jwt, {
-      target_type: 'user',
-      target_id: testTargetId,
-      daily_limit: 200,
-      monthly_limit: 5000,
-      reason: 'Integration test quota override',
-    });
-    expect(res.status).toBe(200);
-    const body = res.body as {
-      data: { target_type: string; target_id: string; daily_limit: number; updated_by: string };
-    };
-    expect(body.data.target_type).toBe('user');
-    expect(body.data.target_id).toBe(testTargetId);
-    expect(body.data.daily_limit).toBe(200);
-    expect(body.data.updated_by).toBe(superAdminUser.userId);
+  it('501 OP_NOT_SUPPORTED for super_admin (nothing is saved, so no success-looking response)', async () => {
+    const res = await apiCall('PATCH', '/api/super-admin/llm/quotas', superAdminUser.jwt, validBody);
+    expect(res.status).toBe(501);
+    const body = res.body as { error?: { code?: string; message?: string }; data?: unknown };
+    expect(body.error?.code).toBe('OP_NOT_SUPPORTED');
+    expect(body.error?.message).toContain('準備中（未対応）');
+    // 受け取った値をそのまま返さない
+    expect(body.data).toBeUndefined();
   });
 
-  it('400 for missing reason field', async () => {
-    const res = await apiCall('PATCH', '/api/super-admin/llm/quotas', superAdminUser.jwt, {
-      target_type: 'user',
-      target_id: testTargetId,
-      daily_limit: 100,
-      // reason is required
-    });
-    expect(res.status).toBe(400);
+  it('does not write the super_admin.llm_quota.override audit log', async () => {
+    await apiCall('PATCH', '/api/super-admin/llm/quotas', superAdminUser.jwt, validBody);
+
+    const { count, error } = await supabaseAdmin
+      .from('admin_audit_logs')
+      .select('id', { count: 'exact', head: true })
+      .eq('actor_id', superAdminUser.userId)
+      .eq('action_type', 'super_admin.llm_quota.override');
+    expect(error).toBeNull();
+    expect(count).toBe(0);
   });
 
-  it('400 for invalid target_type', async () => {
+  it('501 for super_admin even with an invalid body (no validation: the feature itself is not supported)', async () => {
     const res = await apiCall('PATCH', '/api/super-admin/llm/quotas', superAdminUser.jwt, {
       target_type: 'invalid_type',
       target_id: testTargetId,
       daily_limit: 100,
-      reason: 'Should fail',
+      reason: 'Should not be validated',
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(501);
   });
 
   it('403 for admin', async () => {
     const res = await apiCall('PATCH', '/api/super-admin/llm/quotas', adminUser.jwt, {
-      target_type: 'user',
-      target_id: testTargetId,
-      daily_limit: 100,
+      ...validBody,
       reason: 'Admin should fail',
     });
     expect(res.status).toBe(403);
@@ -189,9 +199,7 @@ describe('PATCH /api/super-admin/llm/quotas', () => {
 
   it('401 for no auth', async () => {
     const res = await apiCallNoAuth('PATCH', '/api/super-admin/llm/quotas', {
-      target_type: 'user',
-      target_id: testTargetId,
-      daily_limit: 100,
+      ...validBody,
       reason: 'No auth',
     });
     expect(res.status).toBe(401);

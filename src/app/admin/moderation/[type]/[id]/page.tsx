@@ -7,6 +7,8 @@
  * #1101: 審査アクションの欄は、クライアントコンポーネント (ModerationReviewForm) で JSON を送る。
  * 以前のサーバー側の <form method="POST"> は urlencoded で送られ、JSON だけを受ける API に毎回
  * 400 で拒否されていた。
+ *
+ * #1128: type=ai_content (AI コンテンツ) の審査は準備中 (未対応)。API が 501 を返すので呼ばず、案内を出す。
  */
 
 export const dynamic = 'force-dynamic';
@@ -18,6 +20,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { adminFetch } from '@/lib/admin/fetch';
 import { MODERATION_TYPES, type ModerationType } from '@/lib/admin/moderation-schemas';
 import ModerationReviewForm from '@/components/operator/moderation/ModerationReviewForm';
+import { PreparingNotice } from '@/components/operator/PreparingNotice';
 
 interface PageProps {
   params: { type: string; id: string };
@@ -57,6 +60,26 @@ export default async function AdminModerationDetailPage({ params }: PageProps) {
   // type バリデーション
   if (!MODERATION_TYPES.includes(type as ModerationType)) {
     notFound();
+  }
+
+  // AI コンテンツの審査は準備中 (未対応)。API は 501 を返すので呼ばず、案内を出す (#1128)
+  if (type === 'ai_content') {
+    return (
+      <div className="max-w-3xl">
+        <nav className="mb-4 text-sm text-gray-500">
+          <Link href="/admin/moderation" className="hover:text-orange-500 transition-colors">
+            モデレーション
+          </Link>
+        </nav>
+
+        <h1 className="text-2xl font-bold text-gray-900 mb-6">コンテンツ審査</h1>
+
+        <PreparingNotice title="AIコンテンツの審査は準備中（未対応）です" tone="light">
+          <p>AI が作った内容に対する通報・審査の仕組みは、まだ作られていません。</p>
+          <p>審査できるのは、食事画像とレシピの通報だけです。</p>
+        </PreparingNotice>
+      </div>
+    );
   }
 
   // GET /api/admin/moderation/{type}/{id} 経由でデータ取得

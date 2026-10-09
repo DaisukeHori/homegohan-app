@@ -56,7 +56,7 @@ export default function LLMUsagePage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-white">LLM 使用量</h1>
-          <p className="text-slate-400 mt-1">プロバイダー別使用量・コスト・クォータ管理</p>
+          <p className="text-slate-400 mt-1">プロバイダー別使用量・コスト</p>
         </div>
 
         <div className="flex gap-2">
@@ -161,12 +161,9 @@ export default function LLMUsagePage() {
             <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold text-white">ユーザー別使用量 Top 50</h2>
-                <Link
-                  href="/super-admin/llm/quotas"
-                  className="text-purple-400 hover:text-purple-300 text-sm"
-                >
-                  クォータ設定 →
-                </Link>
+                {/* クォータ管理は準備中 (未対応)。リンク先の /super-admin/llm/quotas は
+                    プロバイダー別の詳細画面 ([provider]) に解決され「不明なプロバイダー」になるため、リンクにしない (#1149) */}
+                <span className="text-slate-400 text-sm">クォータ設定（準備中）</span>
               </div>
               <table className="w-full">
                 <thead>
