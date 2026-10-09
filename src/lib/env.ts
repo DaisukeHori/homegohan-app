@@ -9,6 +9,10 @@
  *  - 任意: 無くても動くが、機能が縮退する (メールが送れない・レート制限がメモリ内になる・AI が使えない など)。
  *    getOptionalEnv(name) で取り出す。無ければ undefined を返し、プロセスごとに 1 回だけ警告を出す。
  *    本番の起動を、任意の変数が無いことで止めてはならない。投げるのは必須の変数だけ。
+ *  - 値を読む場所が 1 か所に決まっている任意の変数 (CRON_SECRET など。readOnlyBy を書く): 一覧には、
+ *    check:env が「無いと何が起きるか」を案内するための名前だけを置く。値は一覧に書いたファイルだけが読み、
+ *    getOptionalEnv では読めない (型で渡せない)。tests/cron-secret-contract.test.ts の CC-4 が、
+ *    このファイルは名前を一覧のキーに書くだけで、値を読んでいないことを確かめる。
  *
  * このファイルは zod を読み込む (最小のスキーマでも minify 後に約 59 KB)。そのため、ブラウザ向けのコード
  * (lib/supabase/client.ts) と Edge Runtime のコード (middleware・runtime = 'edge' の route) からは
@@ -21,6 +25,7 @@
  *  1. 下の PUBLIC_ENV_VARS / SERVER_ENV_VARS に足し、必須か任意かを決める。任意なら whenMissing に、無いと何が起きるかを書く。
  *     必須にするのは、無いとアプリが動かないものだけ (迷ったら任意にする)。
  *  2. .env.example に書く (tests/env-source-scan.test.ts が、一覧の全変数が書かれているかを検査する)。
+ *     逆に、.env.example から変数を消す (採用をやめたサービスなど) ときは、ここからも消す。
  *  3. コードでは `process.env.X!` と書かない (tests/env-source-scan.test.ts が検査する)。
  */
 
@@ -37,6 +42,12 @@ export interface EnvVarSpec {
   whenMissing?: string;
   /** 値の形式。'url' は http(s) の URL。check:env だけが検査し、実行時の取り出しは存在しか見ない */
   format?: 'url';
+  /**
+   * 値を読むコードを 1 か所に決めている変数の、そのファイル (リポジトリのルートからのパス)。
+   * 一覧には、check:env が「無いと何が起きるか」を案内するための名前だけを置く。値を読むのはこのファイルだけで、
+   * getOptionalEnv では読めない (OptionalEnvName に入らない)。任意の変数にだけ付ける。
+   */
+  readOnlyBy?: string;
 }
 
 /** 公開用 (NEXT_PUBLIC_*)。ブラウザのバンドルに値が埋め込まれるので、秘密の値は入れない */
@@ -181,26 +192,26 @@ export const SERVER_ENV_VARS = {
     required: false,
     description: 'Vercel Cron が /api/cron/* に付ける Bearer トークンの照合用シークレット',
     whenMissing: 'cron の API が 503 を返し、定期処理 (献立生成キューの処理など) が動かない',
+    // 定数時間の比較と入れ替え中の旧い値の受け付けを 1 か所に集めている (tests/cron-secret-contract.test.ts の CC-4)
+    readOnlyBy: 'src/lib/cron-auth.ts',
   },
   CRON_SECRET_PREVIOUS: {
     required: false,
     description: 'CRON_SECRET を入れ替える間だけ設定する、旧い値',
     whenMissing: '旧い値は受け付けない (普段はこれで正しい)',
-  },
-  SENTRY_DSN: {
-    required: false,
-    description: 'Sentry の DSN。運営画面の「連携状況」の表示にだけ使う',
-    whenMissing: '運営画面の連携状況で Sentry が未接続と表示される',
-  },
-  BETTER_STACK_TOKEN: {
-    required: false,
-    description: 'Better Stack のトークン。運営画面の「連携状況」の表示にだけ使う',
-    whenMissing: '運営画面の連携状況で Better Stack が未接続と表示される',
+    readOnlyBy: 'src/lib/cron-auth.ts',
   },
   NATIVE_BRIDGE_LEGACY_GET: {
     required: false,
     description: "モバイルの旧い認証ブリッジ (URL にトークンを載せる方式) の受け付けを止めるスイッチ。'off' で止める",
     whenMissing: '旧方式を、src/lib/auth/native-bridge-code.ts の LEGACY_SUNSET_AT まで受け付ける',
+  },
+  NATIVE_BRIDGE_SHARE_REFRESH_TOKEN: {
+    required: false,
+    description:
+      "モバイルの認証ブリッジ (コード方式) が WebView の Cookie に入れる refresh_token の扱いのスイッチ。'on' で実際の refresh_token を入れる (従来の動作)",
+    whenMissing:
+      '更新に使えない値を入れる。Web は自分で更新せず、期限が近づくとネイティブに再ブリッジを頼む (src/lib/native-auth-bridge.ts)',
   },
   SERVICE_ROLE_JWT: {
     required: false,
@@ -230,7 +241,7 @@ export type ServerEnvName = keyof typeof SERVER_ENV_VARS;
 export type EnvName = PublicEnvName | ServerEnvName;
 
 type OptionalNames<T extends Record<string, EnvVarSpec>> = {
-  [K in keyof T]: T[K]['required'] extends false ? K : never;
+  [K in keyof T]: T[K]['required'] extends false ? (T[K] extends { readonly readOnlyBy: string } ? never : K) : never;
 }[keyof T] &
   string;
 
@@ -239,7 +250,7 @@ type RequiredNames<T extends Record<string, EnvVarSpec>> = {
 }[keyof T] &
   string;
 
-/** 任意の環境変数の名前 */
+/** getOptionalEnv で取り出せる、任意の環境変数の名前 (値を読む場所が決まっている変数 = readOnlyBy を持つものは含まない) */
 export type OptionalEnvName = OptionalNames<typeof PUBLIC_ENV_VARS> | OptionalNames<typeof SERVER_ENV_VARS>;
 /** 必須の環境変数の名前 (src/lib/env-required.ts の REQUIRED_ENV_NAMES と一致する) */
 export type RequiredEnvName = RequiredNames<typeof PUBLIC_ENV_VARS> | RequiredNames<typeof SERVER_ENV_VARS>;

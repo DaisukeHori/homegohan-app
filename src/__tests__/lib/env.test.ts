@@ -11,6 +11,8 @@
  *   4. validateEnv (npm run check:env が使う): 必須の不足は errors、任意の不足は warnings。値は出力に含めない
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // 警告は Node.js のサーバーでは db-logger (console と app_logs) に出す。DB には書かせない
@@ -42,6 +44,8 @@ import {
   getSupabaseUrl,
   isMissingEnvError,
 } from '@/lib/env-required';
+
+const ROOT = path.resolve(__dirname, '../../..');
 
 const URL_VALUE = 'https://abcdefgh.supabase.co';
 const ANON_VALUE = 'anon-key-value-for-test';
@@ -260,9 +264,9 @@ describe('任意の環境変数 (getOptionalEnv)', () => {
 
   it('警告の文面に、他の環境変数の値は含まれない', async () => {
     vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', SERVICE_VALUE);
-    vi.stubEnv('CRON_SECRET', undefined);
+    vi.stubEnv('STRIPE_SECRET_KEY', undefined);
 
-    getOptionalEnv('CRON_SECRET');
+    getOptionalEnv('STRIPE_SECRET_KEY');
 
     await vi.waitFor(() => expect(mockWarn).toHaveBeenCalledTimes(1));
     expect(JSON.stringify(mockWarn.mock.calls[0])).not.toContain(SERVICE_VALUE);
@@ -304,7 +308,7 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     ]);
   });
 
-  it('Supabase の接続情報以外 (メール・レート制限・課金・AI・監視) はすべて任意', () => {
+  it('Supabase の接続情報以外 (メール・レート制限・課金・AI・cron・モバイル連携) はすべて任意', () => {
     const optional = ENV_VARS.filter((entry) => !entry.required).map((entry) => entry.name);
 
     for (const name of [
@@ -316,10 +320,43 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       'XAI_API_KEY',
       'OPENAI_API_KEY',
       'CRON_SECRET',
-      'SENTRY_DSN',
+      'CRON_SECRET_PREVIOUS',
+      'NATIVE_BRIDGE_LEGACY_GET',
+      'NATIVE_BRIDGE_SHARE_REFRESH_TOKEN',
     ]) {
       expect(optional).toContain(name);
     }
+  });
+
+  it('採用しないと決めたサービス (Sentry・Better Stack。#1179) の変数は、一覧に載せない (.env.example からも消えている)', () => {
+    const names: string[] = ENV_VARS.map((entry) => entry.name);
+
+    for (const name of ['SENTRY_DSN', 'NEXT_PUBLIC_SENTRY_DSN', 'BETTER_STACK_TOKEN']) {
+      expect(names).not.toContain(name);
+    }
+  });
+
+  it('値を読む場所が決まっている変数 (CRON_SECRET・CRON_SECRET_PREVIOUS) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
+    const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
+
+    expect(sealed.map((entry) => entry.name).sort()).toEqual(['CRON_SECRET', 'CRON_SECRET_PREVIOUS']);
+    for (const entry of sealed) {
+      // 任意の変数にだけ付ける。読むファイルは実在する (ファイルを移したのに一覧が古いままにならない)
+      expect(entry.required, entry.name).toBe(false);
+      expect(entry.whenMissing?.trim(), entry.name).toBeTruthy();
+      expect(fs.existsSync(path.join(ROOT, entry.readOnlyBy as string)), `${entry.name}: ${entry.readOnlyBy}`).toBe(true);
+    }
+
+    // 型で渡せないこと。npm run typecheck が、次の @ts-expect-error が不要になった (= 渡せてしまう) ときに失敗する。
+    // 実行はしない (呼ぶと process.env から値を読んでしまうため)
+    const typeOnly = () => {
+      // @ts-expect-error CRON_SECRET の値を読むのは src/lib/cron-auth.ts だけ。getOptionalEnv には渡せない
+      getOptionalEnv('CRON_SECRET');
+      // @ts-expect-error CRON_SECRET_PREVIOUS も同じ
+      getOptionalEnv('CRON_SECRET_PREVIOUS');
+      getOptionalEnv('RESEND_API_KEY'); // 値を読む場所が決まっていない任意の変数は渡せる
+    };
+    expect(typeof typeOnly).toBe('function');
   });
 
   it('すべての変数に説明があり、任意の変数には「無いと何が起きるか」が書いてある', () => {

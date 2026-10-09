@@ -59,14 +59,15 @@ export function ConfigErrorScreen({ missing }: ConfigErrorScreenProps) {
 
       {missing.length > 0 ? (
         <View testID="config-error-missing" style={{ alignItems: "center" }}>
-          <Text style={{ fontSize: 12, lineHeight: 18, color: colors.textMuted, textAlign: "center" }}>
+          {/* 12px の小さい文字なので、背景 (colors.bg) の上で AA (4.5:1) に届く textLight にする (textMuted は届かない) */}
+          <Text style={{ fontSize: 12, lineHeight: 18, color: colors.textLight, textAlign: "center" }}>
             開発者向け: 次の環境変数がビルドに入っていません
           </Text>
           {missing.map((name) => (
             <Text
               key={name}
               selectable
-              style={{ fontSize: 12, lineHeight: 18, color: colors.textMuted, textAlign: "center" }}
+              style={{ fontSize: 12, lineHeight: 18, color: colors.textLight, textAlign: "center" }}
             >
               {name}
             </Text>

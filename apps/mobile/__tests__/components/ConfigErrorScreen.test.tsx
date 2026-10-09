@@ -10,9 +10,27 @@
  */
 
 import React from 'react';
+import { StyleSheet } from 'react-native';
 import { render } from '@testing-library/react-native';
 
 import { ConfigErrorScreen } from '../../src/components/ConfigErrorScreen';
+import { colors } from '../../src/theme';
+
+// WCAG 2.x のコントラスト比 (https://www.w3.org/TR/WCAG21/#dfn-contrast-ratio)
+function relativeLuminance(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map((start) => {
+    const channel = parseInt(hex.slice(start, start + 2), 16) / 255;
+    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrastRatio(a: string, b: string): number {
+  const [light, dark] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+const AA_NORMAL_TEXT = 4.5;
 
 describe('ConfigErrorScreen', () => {
   it('見出しと案内を出す (Provider なしで描画できる)', () => {
@@ -38,6 +56,18 @@ describe('ConfigErrorScreen', () => {
 
     expect(getByTestId('config-error-screen')).toBeTruthy();
     expect(queryByTestId('config-error-missing')).toBeNull();
+  });
+
+  it('小さい文字 (12px) の開発者向けの文は、背景の上で AA (4.5:1) のコントラストに届く', () => {
+    const { getByText } = render(<ConfigErrorScreen missing={['EXPO_PUBLIC_SUPABASE_URL']} />);
+
+    for (const element of [getByText(/開発者向け/), getByText('EXPO_PUBLIC_SUPABASE_URL')]) {
+      const style = StyleSheet.flatten(element.props.style);
+      expect(style.fontSize).toBe(12);
+      expect(contrastRatio(String(style.color), colors.bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    }
+    // 前提の確認: 以前の色 (textMuted) は届かない
+    expect(contrastRatio(colors.textMuted, colors.bg)).toBeLessThan(AA_NORMAL_TEXT);
   });
 
   it('再試行のボタンは出さない (ビルドを作り直さないと直らない)', () => {

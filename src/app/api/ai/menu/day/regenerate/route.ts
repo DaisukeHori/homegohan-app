@@ -14,10 +14,6 @@ export async function POST(request: Request) {
   const supabase = await createClient();
 
   try {
-    // 必須の環境変数は、DB に書き込む前に確かめる。欠けていれば変数名つきの例外で 500 にする
-    // (書き込んだあとで気づくと、リクエストの行が processing のまま残る) (#1182)
-    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
-
     const { dailyMealId, dayDate, preferences, includeCompleted } = await request.json();
 
     if (!dailyMealId && !dayDate) {
@@ -32,6 +28,11 @@ export async function POST(request: Request) {
 
     const rateLimitResult = await checkRateLimit(user.id, 'generation');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+    // 必須の環境変数は、認証とレート制限のあと・DB に書き込む前に確かめる。欠けていれば変数名つきの例外で 500 にする。
+    // (未ログインの呼び出しに、設定の不足を教えない。書き込んだあとで気づくと、Edge Function を呼べないまま、
+    //  リクエストの行を作って失敗として記録するだけの無駄な動きになる) (#1182)
+    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
 
     // 2. daily_meal_idを取得
     let targetDayId = dailyMealId;

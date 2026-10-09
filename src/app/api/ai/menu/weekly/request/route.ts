@@ -100,10 +100,6 @@ export async function POST(request: Request) {
   let _startDate: string | undefined;
 
   try {
-    // 必須の環境変数は、既存の献立を消す前・DB に書き込む前に確かめる。欠けていれば変数名つきの例外で 500 にする
-    // (消したあとで気づくと、献立が消えたままリクエストの行が processing のまま残る) (#1182)
-    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
-
     const body = await request.json().catch(() => ({}));
     const startDate = body?.startDate;
     _startDate = startDate;
@@ -137,6 +133,11 @@ export async function POST(request: Request) {
 
     const rateLimitResult = await checkRateLimit(user.id, 'generation');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+    // 必須の環境変数は、認証とレート制限のあと・既存の献立を消す前に確かめる。欠けていれば変数名つきの例外で 500 にする。
+    // (未ログインの呼び出しに、設定の不足を教えない。消したあとで気づくと、Edge Function を呼べず、
+    //  献立を消して戻すだけの無駄な動きになる) (#1182)
+    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
 
     // 2. 今日以降の日付の既存食事を削除（Edge Functionが新規INSERTするため）
     const todayStr = todayLocal();
