@@ -89,11 +89,14 @@ vi.mock('@/lib/meal-image-jobs', () => ({
   cancelPendingMealImageJobs: vi.fn(async () => {}),
 }));
 
+// internalError() が使う構造化ログ。変数名がここに渡ることを見る (#1182)
+const mockLoggerError = vi.fn();
 vi.mock('@/lib/db-logger', () => ({
   createLogger: vi.fn(() => ({
     withUser: vi.fn().mockReturnThis(),
-    error: vi.fn(),
+    error: mockLoggerError,
   })),
+  generateRequestId: vi.fn(() => 'req-test'),
 }));
 
 const mockCallGenerateMenuV4WithRetry = vi.fn(async (..._args: any[]): Promise<
@@ -283,7 +286,7 @@ describe('POST /api/ai/menu/weekly/request', () => {
 });
 
 // #1182: 必須の環境変数が欠けているとき、既存の献立を消したり weekly_menu_requests を作ったりする「前」に、
-// 変数名つきの 500 で止める。以前は `process.env.X!` を、献立を消してリクエストの行を作った「後」に読んでいたため、
+// 汎用の 500 で止める (本文には変数名を出さず (#1172)、変数名は構造化ログにだけ渡す)。以前は `process.env.X!` を、献立を消してリクエストの行を作った「後」に読んでいたため、
 // 欠けていると undefined の URL への通信になり、(失敗の復元は走るものの) 無駄に献立を消して戻す動きになっていた。
 describe('POST /api/ai/menu/weekly/request — 必須の環境変数 (#1182)', () => {
   it('設定されていれば、その値をそのまま Edge Function の呼び出しに渡す', async () => {
@@ -301,15 +304,18 @@ describe('POST /api/ai/menu/weekly/request — 必須の環境変数 (#1182)', (
   });
 
   it.each(['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'])(
-    '%s が未設定なら、献立を消す前・リクエストを作る前に、変数名つきの 500 で止める',
+    '%s が未設定なら、献立を消す前・リクエストを作る前に、汎用の 500 で止める (本文に変数名なし・ログに変数名あり)',
     async (name) => {
       vi.stubEnv(name, undefined);
 
       const res = await POST(makeRequest({ startDate }));
-      const json = await res.json();
+      const text = await res.text();
 
       expect(res.status).toBe(500);
-      expect(json.error).toContain(name);
+      expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+      expect(text).not.toContain(name);
+      expect(mockLoggerError).toHaveBeenCalledTimes(1);
+      expect(mockLoggerError.mock.calls[0][1]).toMatchObject({ name: 'MissingEnvError', envName: name });
 
       // 何も書き込んでいない・消していない・Edge Function を呼んでいない
       expect(mockPlannedMealsDeleteEq).not.toHaveBeenCalled();

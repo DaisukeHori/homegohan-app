@@ -82,6 +82,16 @@ vi.mock('@/lib/generate-menu-v5-retry', () => ({
 }));
 
 const waitUntilPromises: Promise<unknown>[] = [];
+// internalError() が使う構造化ログ。変数名がここに渡ることを見る (#1182)。app_logs には書かせない
+const mockLoggerError = vi.fn();
+vi.mock('@/lib/db-logger', () => ({
+  createLogger: vi.fn(() => ({
+    withUser: vi.fn().mockReturnThis(),
+    error: mockLoggerError,
+  })),
+  generateRequestId: vi.fn(() => 'req-test'),
+}));
+
 vi.mock('@vercel/functions', () => ({
   waitUntil: vi.fn((p: Promise<unknown>) => {
     waitUntilPromises.push(p);
@@ -209,7 +219,8 @@ describe('POST /api/ai/menu/day/regenerate', () => {
   });
 });
 
-// #1182: 必須の環境変数が欠けているとき、weekly_menu_requests を作る「前」に、変数名つきの 500 で止める。
+// #1182: 必須の環境変数が欠けているとき、weekly_menu_requests を作る「前」に、汎用の 500 で止める。
+// 本文には変数名を出さず (#1172)、変数名は構造化ログ (db-logger) にだけ渡す。
 // 以前は `process.env.X!` を行を作った「後」に読んでいたため、欠けていると undefined の URL を呼びに行っていた。
 describe('POST /api/ai/menu/day/regenerate — 必須の環境変数 (#1182)', () => {
   beforeEach(() => {
@@ -232,15 +243,18 @@ describe('POST /api/ai/menu/day/regenerate — 必須の環境変数 (#1182)', (
   });
 
   it.each(['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'])(
-    '%s が未設定なら、リクエストを作る前に、変数名つきの 500 で止める',
+    '%s が未設定なら、リクエストを作る前に、汎用の 500 で止める (本文に変数名なし・ログに変数名あり)',
     async (name) => {
       vi.stubEnv(name, undefined);
 
       const res = await POST(makeRequest({ dailyMealId }));
-      const json = await res.json();
+      const text = await res.text();
 
       expect(res.status).toBe(500);
-      expect(json.error).toContain(name);
+      expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+      expect(text).not.toContain(name);
+      expect(mockLoggerError).toHaveBeenCalledTimes(1);
+      expect(mockLoggerError.mock.calls[0][1]).toMatchObject({ name: 'MissingEnvError', envName: name });
       expect(mockWeeklyInsertSingle).not.toHaveBeenCalled();
       expect(mockCallGenerateMenuV4WithRetry).not.toHaveBeenCalled();
     },

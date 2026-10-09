@@ -82,7 +82,7 @@ describe('src/middleware.ts の matcher (#1181)', () => {
 describe('updateSession — 未ログインの /api/health (#1181)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // updateSession は必須の環境変数 (#1182) が無いと変数名つきの例外を投げる。Supabase のクライアントはモックなので値はダミー
+    // updateSession は必須の環境変数 (#1182) が無いと汎用の 500 を返して止まる。Supabase のクライアントはモックなので値はダミー
     vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://example.supabase.co');
     vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'anon-key-for-test');
     mockGetSession.mockResolvedValue({ data: { session: null }, error: null });

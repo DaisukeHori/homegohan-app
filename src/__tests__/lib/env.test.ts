@@ -5,7 +5,8 @@
  * 以前は `process.env.X!` が散らばっていて、環境変数が欠けていても型の上では string のまま undefined が
  * Supabase のクライアントや fetch の URL に流れ込み、変数名の分からないエラーになっていた。
  *
- *   1. 必須の環境変数 (env-required): 欠けていれば変数名つきの MissingEnvError。値はそのまま返す
+ *   1. 必須の環境変数 (env-required): 欠けていれば MissingEnvError。変数名は envName (列挙されない) にだけ持ち、
+ *      message には変数名も値も入れない (500 の本文に漏れないように。#1172)。値はそのまま返す
  *   2. 任意の環境変数 (env): 欠けていれば undefined と、プロセスごとに 1 回だけの警告。例外は投げない
  *   3. 一覧 (zod のスキーマ): 公開用 (NEXT_PUBLIC_*) とサーバー用に分かれ、必須/任意の分類が env-required と一致する
  *   4. validateEnv (npm run check:env が使う): 必須の不足は errors、任意の不足は warnings。値は出力に含めない
@@ -35,6 +36,7 @@ import {
   validateEnv,
 } from '@/lib/env';
 import {
+  MISSING_ENV_ERROR_MESSAGE,
   MissingEnvError,
   REQUIRED_ENV_NAMES,
   getSupabaseAnonKey,
@@ -91,62 +93,92 @@ describe('必須の環境変数 (env-required)', () => {
     expect(getSupabaseUrl()).toBe(` ${URL_VALUE} `);
   });
 
+  /** getter を呼んで、投げた例外を返す (投げなければ undefined) */
+  function thrownBy(getter: () => unknown): unknown {
+    try {
+      getter();
+    } catch (error) {
+      return error;
+    }
+    return undefined;
+  }
+
+  /** エラーを、本文やログに入りうる形 (message・toString・JSON・スプレッド・stack) にすべて書き出す */
+  function everySerialization(error: unknown): string {
+    const err = error as Error;
+    return [err.message, String(err), JSON.stringify(err), JSON.stringify({ ...err }), JSON.stringify({ error: err }), err.stack ?? ''].join('\n');
+  }
+
   it.each([
     ['NEXT_PUBLIC_SUPABASE_URL', getSupabaseUrl],
     ['NEXT_PUBLIC_SUPABASE_ANON_KEY', getSupabaseAnonKey],
     ['SUPABASE_SERVICE_ROLE_KEY', getSupabaseServiceRoleKey],
-  ] as const)('%s が未設定なら、その変数名を入れた MissingEnvError を投げる', (name, getter) => {
+  ] as const)('%s が未設定なら MissingEnvError を投げ、変数名は envName にだけ入る (message には入らない)', (name, getter) => {
     vi.stubEnv(name, undefined);
 
-    let thrown: unknown;
-    try {
-      getter();
-    } catch (error) {
-      thrown = error;
-    }
+    const thrown = thrownBy(getter);
 
     expect(thrown).toBeInstanceOf(MissingEnvError);
     expect(isMissingEnvError(thrown)).toBe(true);
     expect((thrown as MissingEnvError).envName).toBe(name);
     expect((thrown as MissingEnvError).name).toBe('MissingEnvError');
-    expect((thrown as MissingEnvError).message).toContain(name);
+    // message はどの変数でも同じ固定の文で、変数名を含まない (#1172: 500 の本文に error.message を入れるコードが書かれても漏れない)
+    expect((thrown as MissingEnvError).message).toBe(MISSING_ENV_ERROR_MESSAGE);
+    expect((thrown as MissingEnvError).message).not.toContain(name);
+  });
+
+  it.each(REQUIRED_ENV_NAMES)('%s の MissingEnvError は、message・toString・JSON・スプレッド・stack のどれにも変数名が出ない', (name) => {
+    const error = new MissingEnvError(name);
+
+    expect(everySerialization(error)).not.toContain(name);
+    // envName は列挙されないプロパティ (エラーごと JSON にしても出ない)。読めば変数名が分かる
+    expect(Object.keys(error)).not.toContain('envName');
+    expect(error.envName).toBe(name);
+  });
+
+  it('message の固定の文には、どの必須の変数名も入っていない', () => {
+    for (const name of REQUIRED_ENV_NAMES) expect(MISSING_ENV_ERROR_MESSAGE).not.toContain(name);
+    // 調べ方 (npm run check:env) は案内する
+    expect(MISSING_ENV_ERROR_MESSAGE).toContain('npm run check:env');
   });
 
   it.each(['', ' ', '\t\n'])('値が %j (空・空白だけ) でも、未設定として扱う', (blank) => {
     vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', blank);
 
-    expect(() => getSupabaseServiceRoleKey()).toThrow(/SUPABASE_SERVICE_ROLE_KEY/);
+    expect(thrownBy(() => getSupabaseServiceRoleKey())).toMatchObject({
+      name: 'MissingEnvError',
+      envName: 'SUPABASE_SERVICE_ROLE_KEY',
+    });
   });
 
-  it('接続情報をまとめて取るときも、欠けている変数名を報告する (URL が先)', () => {
+  it('接続情報をまとめて取るときも、欠けている変数名を envName で報告する (URL が先)', () => {
     vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', undefined);
     vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', undefined);
     vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', SERVICE_VALUE);
 
-    expect(() => getSupabasePublicConfig()).toThrow(/NEXT_PUBLIC_SUPABASE_URL/);
-    expect(() => getSupabaseServiceConfig()).toThrow(/NEXT_PUBLIC_SUPABASE_URL/);
+    expect((thrownBy(() => getSupabasePublicConfig()) as MissingEnvError).envName).toBe('NEXT_PUBLIC_SUPABASE_URL');
+    expect((thrownBy(() => getSupabaseServiceConfig()) as MissingEnvError).envName).toBe('NEXT_PUBLIC_SUPABASE_URL');
 
     vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', URL_VALUE);
-    expect(() => getSupabasePublicConfig()).toThrow(/NEXT_PUBLIC_SUPABASE_ANON_KEY/);
+    expect((thrownBy(() => getSupabasePublicConfig()) as MissingEnvError).envName).toBe('NEXT_PUBLIC_SUPABASE_ANON_KEY');
     expect(getSupabaseServiceConfig()).toEqual({ url: URL_VALUE, serviceRoleKey: SERVICE_VALUE });
 
     vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', undefined);
-    expect(() => getSupabaseServiceConfig()).toThrow(/SUPABASE_SERVICE_ROLE_KEY/);
+    expect((thrownBy(() => getSupabaseServiceConfig()) as MissingEnvError).envName).toBe('SUPABASE_SERVICE_ROLE_KEY');
   });
 
-  it('エラーの文面に、他の環境変数の値は含まれない', () => {
+  it('エラーのどの書き出しにも、他の環境変数の値は含まれない', () => {
     vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', undefined);
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', ANON_VALUE);
     vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', SERVICE_VALUE);
 
-    let message = '';
-    try {
-      getSupabaseServiceConfig();
-    } catch (error) {
-      message = (error as Error).message;
-    }
+    const thrown = thrownBy(() => getSupabaseServiceConfig());
 
-    expect(message).toContain('NEXT_PUBLIC_SUPABASE_URL');
-    expect(message).not.toContain(SERVICE_VALUE);
+    expect((thrown as MissingEnvError).envName).toBe('NEXT_PUBLIC_SUPABASE_URL');
+    const written = everySerialization(thrown);
+    expect(written).not.toContain(SERVICE_VALUE);
+    expect(written).not.toContain(ANON_VALUE);
+    expect(written).not.toContain('NEXT_PUBLIC_SUPABASE_URL');
   });
 
   it('isMissingEnvError は、別のバンドルで作られた同名のエラー (instanceof が使えない場合) も認める', () => {

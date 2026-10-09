@@ -8,7 +8,8 @@
  *   1. 未ログインの呼び出しには、設定の不足を教えず、これまでどおり 401 を返す
  *      (以前は取り出しが認証より前にあり、未ログインでも 500 になり、本文に変数名が出ていた)
  *   2. レート制限を超えた呼び出しは、これまでどおり 429 を返す
- *   3. ログイン済みで制限内なら、DB に何も書く前 (どのテーブルにも触れる前) に、変数名つきの 500 で止める
+ *   3. ログイン済みで制限内なら、DB に何も書く前 (どのテーブルにも触れる前) に、汎用の 500 で止める。
+ *      本文には変数名を出さず (#1172)、変数名は構造化ログ (db-logger) にだけ渡す
  *   4. 設定が揃っていれば、DB の処理に進む (3 が「そもそも DB に進まない route」で成り立っているのではないことの確認)
  *
  * 個々の route の動き (生成の中身) は、day-regenerate.test.ts・weekly-request.test.ts などが見る。
@@ -45,12 +46,15 @@ vi.mock('@/lib/planned-meals-snapshot', () => ({
   restorePlannedMealsSnapshot: vi.fn(async () => ({ restored: 0, skipped: 0, failed: 0 })),
 }));
 
+// internalError() が使う構造化ログ。変数名がここに渡ることを見る (#1182)
+const mockLoggerError = vi.fn();
 vi.mock('@/lib/db-logger', () => ({
   createLogger: vi.fn(() => ({
     withUser: vi.fn().mockReturnThis(),
-    error: vi.fn(),
+    error: mockLoggerError,
     warn: vi.fn(),
   })),
+  generateRequestId: vi.fn(() => 'req-test'),
 }));
 
 vi.mock('@/lib/generate-menu-v4-retry', () => ({
@@ -152,21 +156,26 @@ describe.each(ROUTES.map((route) => [route.name, route] as const))('POST /api/ai
     expect(mockFrom).not.toHaveBeenCalled();
   });
 
-  it.each(REQUIRED_NAMES)('%s が未設定なら、ログイン・レート制限のあと、DB に触れる前に、変数名つきの 500 で止める', async (name) => {
+  it.each(REQUIRED_NAMES)('%s が未設定なら、ログイン・レート制限のあと、DB に触れる前に、汎用の 500 で止める (本文に変数名なし・ログに変数名あり)', async (name) => {
     vi.stubEnv(name, undefined);
     const { POST } = await route.load();
 
     const response = await POST(makeRequest(route.body));
-    const json = await response.json();
+    const text = await response.text();
 
     expect(response.status).toBe(500);
-    expect(json.error).toContain(name);
+    expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+    expect(text).not.toContain(name);
+    expect(JSON.stringify([...response.headers.entries()])).not.toContain(name);
+    // 変数名は構造化ログに渡す
+    expect(mockLoggerError).toHaveBeenCalledTimes(1);
+    expect(mockLoggerError.mock.calls[0][1]).toMatchObject({ name: 'MissingEnvError', envName: name });
     expect(mockCheckRateLimit).toHaveBeenCalledWith('user-1', 'generation');
     expect(mockFrom).not.toHaveBeenCalled();
     expect(mockCallGenerateMenuV4WithRetry).not.toHaveBeenCalled();
   });
 
-  it('設定が揃っていれば、DB の処理に進む (変数名の 500 にはならない)', async () => {
+  it('設定が揃っていれば、DB の処理に進む (環境変数の不足の 500 にはならない)', async () => {
     const { POST } = await route.load();
 
     const response = await POST(makeRequest(route.body));
@@ -176,5 +185,7 @@ describe.each(ROUTES.map((route) => [route.name, route] as const))('POST /api/ai
     expect(mockFrom).toHaveBeenCalled();
     expect(response.status).toBe(500);
     expect(JSON.stringify(json)).not.toMatch(/NEXT_PUBLIC_SUPABASE_URL|SUPABASE_SERVICE_ROLE_KEY/);
+    // ログに渡ったのは DB のエラー (MissingEnvError ではない)
+    expect(mockLoggerError.mock.calls[0][1]).not.toMatchObject({ name: 'MissingEnvError' });
   });
 });

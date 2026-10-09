@@ -41,7 +41,7 @@ vi.mock('@supabase/ssr', () => ({
 
 import { updateSession } from '../middleware';
 
-// updateSession は必須の環境変数 (#1182) が無いと変数名つきの例外を投げる。
+// updateSession は必須の環境変数 (#1182) が無いと汎用の 500 を返して止まる。
 // このファイルでは Supabase クライアントをモックしているので、値はダミーでよい (テストごとに入れ直す)。
 const TEST_SUPABASE_URL = 'https://example.supabase.co';
 const TEST_SUPABASE_ANON_KEY = 'anon-key-for-test';
@@ -641,7 +641,14 @@ describe.each(['/terms', '/privacy'])('updateSession — %s への遷移 (#1174)
 
 // #1182: `process.env.X!` では、未設定のとき undefined が Supabase のクライアントに流れ込み、変数名の分からない
 // エラー ("Your project's URL and Key are required...") になっていた。必須の環境変数が無いときは、
-// 変数名つきの MissingEnvError を投げる (認証を素通りさせる fail-open にはしない)。
+// 認証を素通りさせず (fail-open にしない)、internalError の汎用の 500 で止める。
+// #1172: 応答 (本文・ヘッダ) には変数名を出さない。変数名は db-logger (構造化ログ) にだけ渡す。
+const mockLoggerError = vi.fn();
+vi.mock('@/lib/db-logger', () => ({
+  createLogger: vi.fn(() => ({ error: mockLoggerError, withUser: vi.fn(() => ({ error: mockLoggerError })) })),
+  generateRequestId: vi.fn(() => 'req-test'),
+}));
+
 describe('updateSession — 必須の環境変数 (#1182)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -655,29 +662,56 @@ describe('updateSession — 必須の環境変数 (#1182)', () => {
     expect(mockCreateServerClient).toHaveBeenCalledTimes(1);
     expect(mockCreateServerClient.mock.calls[0][0]).toBe(TEST_SUPABASE_URL);
     expect(mockCreateServerClient.mock.calls[0][1]).toBe(TEST_SUPABASE_ANON_KEY);
+    expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  describe.each([
+    ['API', apiRequest],
+    ['ページ', () => pageRequest('/home')],
+  ] as const)('%s へのリクエスト', (_kind, makeRequest) => {
+    it.each(['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY'])(
+      '%s が未設定なら、汎用の 500 を返し (本文・ヘッダに変数名なし)、Supabase のクライアントを作らない',
+      async (name) => {
+        vi.stubEnv(name, undefined);
+
+        const res = await updateSession(makeRequest());
+        const text = await res.text();
+
+        expect(res.status).toBe(500);
+        expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+        expect(text).not.toContain(name);
+        expect(JSON.stringify([...res.headers.entries()])).not.toContain(name);
+        // 認証を素通りさせない (リダイレクトでも next() でもない)
+        expect(res.headers.get('location')).toBeNull();
+        expect(res.headers.get('x-middleware-next')).toBeNull();
+        expect(mockCreateServerClient).not.toHaveBeenCalled();
+      },
+    );
   });
 
   it.each(['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY'])(
-    '%s が未設定なら、変数名つきの MissingEnvError を投げ、Supabase のクライアントを作らない',
+    '%s が未設定なら、変数名を持つ MissingEnvError を db-logger に渡す (値は渡さない)',
     async (name) => {
       vi.stubEnv(name, undefined);
 
-      await expect(updateSession(apiRequest())).rejects.toMatchObject({
-        name: 'MissingEnvError',
-        envName: name,
-        message: expect.stringContaining(name),
-      });
-      expect(mockCreateServerClient).not.toHaveBeenCalled();
+      await updateSession(pageRequest('/home'));
+
+      expect(mockLoggerError).toHaveBeenCalledTimes(1);
+      const [, error, metadata] = mockLoggerError.mock.calls[0];
+      expect(error).toMatchObject({ name: 'MissingEnvError', envName: name });
+      expect(metadata).toEqual({ path: '/home' });
+      expect(JSON.stringify(metadata)).not.toContain(TEST_SUPABASE_URL);
+      expect(JSON.stringify(metadata)).not.toContain(TEST_SUPABASE_ANON_KEY);
     },
   );
 
   it.each(['', '   '])('値が %j (空・空白だけ) でも、未設定として扱う', async (blank) => {
     vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', blank);
 
-    await expect(updateSession(pageRequest('/home'))).rejects.toMatchObject({
-      name: 'MissingEnvError',
-      envName: 'NEXT_PUBLIC_SUPABASE_URL',
-    });
+    const res = await updateSession(pageRequest('/home'));
+
+    expect(res.status).toBe(500);
+    expect(mockLoggerError.mock.calls[0][1]).toMatchObject({ envName: 'NEXT_PUBLIC_SUPABASE_URL' });
     expect(mockCreateServerClient).not.toHaveBeenCalled();
   });
 });
