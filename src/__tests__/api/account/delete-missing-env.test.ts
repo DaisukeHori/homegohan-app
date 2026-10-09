@@ -13,6 +13,11 @@
  *   2. ログイン済みで欠けていれば、汎用の 500。本文・ヘッダに変数名が無い。変数名は構造化ログと、サーバーのログの 1 行に残る
  *   3. 設定がそろっていて削除が失敗しても、DB のエラー文を本文に出さない (構造化ログには元のエラーが渡る)
  *   4. 成功すれば 200 { success: true } (切り替えで成功の経路を壊していない)
+ *
+ * 退会の本体は src/lib/account-deletion.ts の deleteAccount (#1175)。route は入口の確認と結果の変換だけを行う。
+ * deleteAccount は prepare_account_deletion (rpc) → release_user_membership (rpc) → Storage の掃除 → deleteUser の順に進み、
+ * 失敗したら元のエラーを自分の構造化ログ (step 付き) に残して ACCOUNT_DELETE_FAILED を返す。route はそれを internalError で 500 にする。
+ * そのため削除が失敗したときの構造化ログは 2 件 (lib の元のエラー + route の 500) になる。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -33,9 +38,14 @@ vi.mock('@/lib/supabase/server', async (importOriginal) => {
 const mockDeleteUser = vi.fn();
 const mockRpc = vi.fn();
 const mockAdminFrom = vi.fn();
+// Storage の掃除 (src/lib/account-deletion-storage.ts)。本人のフォルダは空 (一覧が空なら remove は呼ばれない)
+const mockStorageList = vi.fn();
+const mockStorageRemove = vi.fn();
+const mockStorageFrom = vi.fn((_bucket: string) => ({ list: mockStorageList, remove: mockStorageRemove }));
 const mockCreateAdminClient = vi.fn((_url: string, _key: string, _options: unknown) => ({
   from: mockAdminFrom,
   rpc: mockRpc,
+  storage: { from: mockStorageFrom },
   auth: { admin: { deleteUser: mockDeleteUser } },
 }));
 vi.mock('@supabase/supabase-js', () => ({
@@ -44,10 +54,14 @@ vi.mock('@supabase/supabase-js', () => ({
 
 // internalError() が使う構造化ログ。変数名・元のエラーがここに渡ることを見る
 const mockLoggerError = vi.fn();
+const mockLoggerWarn = vi.fn();
+const mockLoggerInfo = vi.fn();
 const mockWithUser = vi.fn();
+const mockCreateLogger = vi.fn();
 vi.mock('@/lib/db-logger', () => ({
-  createLogger: vi.fn(() => {
-    const logger = { withUser: mockWithUser, error: mockLoggerError, warn: vi.fn() };
+  createLogger: vi.fn((functionName: string, requestId: string) => {
+    mockCreateLogger(functionName, requestId);
+    const logger = { withUser: mockWithUser, error: mockLoggerError, warn: mockLoggerWarn, info: mockLoggerInfo };
     mockWithUser.mockReturnValue(logger);
     return logger;
   }),
@@ -65,11 +79,18 @@ const GENERIC_BODY = { error: '処理中にエラーが発生しました', code
 /** DB (auth) が返しうる生のエラー文。本文に出てはいけない */
 const RAW_DB_ERROR = 'update or delete on table "users" violates foreign key constraint "x_user_id_fkey"';
 
-/** select().eq().limit() / delete().eq() / update().eq() のどれにも答える、空の結果を返すクエリ */
+/** route / deleteAccount の構造化ログの function_name */
+const ROUTE_LOG_NAME = 'POST /api/account/delete';
+const LIB_LOG_NAME = 'lib/account-deletion';
+
+/**
+ * select().eq().limit() / delete().eq() / update().eq() と、Storage の掃除が使う
+ * select().eq().not().order().range() のどれにも答える、空の結果を返すクエリ
+ */
 function emptyQuery() {
   const result = { data: [], error: null };
   const query: Record<string, unknown> = {};
-  for (const method of ['select', 'eq', 'delete', 'update']) query[method] = vi.fn(() => query);
+  for (const method of ['select', 'eq', 'delete', 'update', 'not', 'order', 'range']) query[method] = vi.fn(() => query);
   query.limit = vi.fn(async () => result);
   query.then = (resolve: (value: typeof result) => unknown) => resolve(result);
   return query;
@@ -92,6 +113,8 @@ beforeEach(() => {
   mockAdminFrom.mockImplementation(() => emptyQuery());
   mockRpc.mockResolvedValue({ error: null });
   mockDeleteUser.mockResolvedValue({ error: null });
+  mockStorageList.mockResolvedValue({ data: [], error: null });
+  mockStorageRemove.mockResolvedValue({ data: [], error: null });
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 
@@ -150,9 +173,26 @@ describe('POST /api/account/delete — 設定がそろっているとき', () =>
     expect(response.status).toBe(500);
     expect(JSON.parse(text)).toEqual(GENERIC_BODY);
     expect(text).not.toContain('violates');
-    expect(mockLoggerError).toHaveBeenCalledTimes(1);
-    expect((mockLoggerError.mock.calls[0][1] as Error).message).toBe(RAW_DB_ERROR);
-    expect(mockLoggerError.mock.calls[0][1]).not.toMatchObject({ name: 'MissingEnvError' });
+    // 段階・request_id も本文に出さない (ログにだけ残す)
+    expect(text).not.toContain('delete_user');
+    expect(text).not.toContain('req-test');
+    // 構造化ログは 2 件: deleteAccount が元のエラーを step 付きで残し、route が 500 を返したことを残す
+    expect(mockLoggerError).toHaveBeenCalledTimes(2);
+    expect(mockCreateLogger).toHaveBeenCalledWith(LIB_LOG_NAME, 'req-test');
+    expect(mockCreateLogger).toHaveBeenCalledWith(ROUTE_LOG_NAME, 'req-test');
+    const [libCall, routeCall] = mockLoggerError.mock.calls;
+    // 1 件目 (deleteAccount): 元の DB のエラー文がそのまま渡る
+    expect(libCall[0]).toBe('account deletion failed at step: delete_user');
+    expect((libCall[1] as Error).message).toBe(RAW_DB_ERROR);
+    expect(libCall[2]).toMatchObject({ step: 'delete_user', request_id: 'req-test' });
+    // 2 件目 (route の internalError): 段階は渡るが、元の DB のエラー文は二重に載せない
+    expect((routeCall[1] as Error).message).toBe('account deletion failed at step: delete_user');
+    expect(routeCall[2]).toMatchObject({ step: 'delete_user' });
+    for (const call of mockLoggerError.mock.calls) {
+      expect(call[1]).not.toMatchObject({ name: 'MissingEnvError' });
+    }
+    // 削除前のログは利用者に紐づける (user_id)
+    expect(mockWithUser).toHaveBeenCalledWith(USER_ID);
   });
 
   it('成功すれば 200 { success: true }。service_role のクライアントは共通の getSupabaseAdmin が環境変数の値で作る', async () => {
@@ -164,6 +204,13 @@ describe('POST /api/account/delete — 設定がそろっているとき', () =>
     expect(mockCreateAdminClient.mock.calls[0][0]).toBe(URL_VALUE);
     expect(mockCreateAdminClient.mock.calls[0][1]).toBe(SERVICE_VALUE);
     expect(mockDeleteUser).toHaveBeenCalledWith(USER_ID);
+    // deleteAccount の流れを通っている: メールアドレスを伏せる準備 → 席の解放 → Storage の掃除 → deleteUser
+    expect(mockRpc).toHaveBeenCalledWith('prepare_account_deletion', { p_user_id: USER_ID });
+    expect(mockRpc).toHaveBeenCalledWith('release_user_membership', { p_user_id: USER_ID });
+    expect(mockStorageList).toHaveBeenCalled();
     expect(mockLoggerError).not.toHaveBeenCalled();
+    // Storage の URL の読み出しも含めて、どの段階も警告なしで通る
+    expect(mockLoggerWarn).not.toHaveBeenCalled();
+    expect(mockLoggerInfo).toHaveBeenCalledWith('account deleted', expect.objectContaining({ request_id: 'req-test' }));
   });
 });
