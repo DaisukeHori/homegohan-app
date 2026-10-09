@@ -15,6 +15,11 @@
  * BAN の対象は「通報者」ではなく「コンテンツの所有者」であることも確かめる。
  * 凍結解除は #1074 以降 service_role で動くため、200 だけを期待する。
  *
+ * #1101: delete_* アクション (delete_only / delete_and_warn / delete_and_temp_ban / delete_and_perm_ban) は、通報された食事・レシピを
+ * 消さずに隠す (hidden_at / hidden_by / hidden_reason)。approve / escalate は隠さない。隠したレシピは、公開レシピでも
+ * 未ログインの GET /api/recipes に出なくなる (ログイン中の見え方は tests/integration/rls/hidden-content-visibility.test.ts)。
+ * 同じコンテンツへの 2 件目の通報では、隠した日時を延ばさない。監査ログに content_id と hidden が残る。
+ *
  * 実行: CONTRIBUTING.md の「インテグレーションテスト」(ローカル Supabase + Next dev サーバ) を参照。
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
@@ -110,17 +115,18 @@ async function seedFoodFlag(ownerId: string) {
 }
 
 /** 通報されたレシピ + 通報フラグ (recipe_flags) を作る。所有者 = ownerId、通報者 = reporterUser */
-async function seedRecipeFlag(ownerId: string) {
+async function seedRecipeFlag(ownerId: string, options: { isPublic?: boolean; name?: string } = {}) {
   seq += 1;
   const imageUrl = `https://test.example.com/t849/recipe-${TS}-${seq}.jpg`;
   const reason = `T849 recipe flag ${TS}-${seq}`;
+  const name = options.name ?? `T849 recipe ${TS}-${seq}`;
   const { data: recipe, error: recipeError } = await supabaseAdmin
     .from('recipes')
     .insert({
       user_id: ownerId,
-      name: `T849 recipe ${TS}-${seq}`,
+      name,
       image_url: imageUrl,
-      is_public: false,
+      is_public: options.isPublic ?? false,
     })
     .select('id')
     .single();
@@ -139,7 +145,7 @@ async function seedRecipeFlag(ownerId: string) {
     .select('id')
     .single();
   if (flagError || !flag) throw new Error(`seed recipe_flags failed: ${flagError?.message}`);
-  return { flagId: flag.id as string, recipeId: recipe.id as string, imageUrl, reason };
+  return { flagId: flag.id as string, recipeId: recipe.id as string, imageUrl, reason, name };
 }
 
 /** 食事が紐づかない (= コンテンツ所有者を特定できない) 通報フラグを作る */
@@ -185,6 +191,19 @@ async function readRecipeFlag(flagId: string) {
   if (error || !data) throw new Error(`readRecipeFlag failed: ${error?.message}`);
   return data as { status: string; reviewed_by: string | null; reviewed_at: string | null };
 }
+
+/** 通報されたコンテンツ (meals / recipes) の隠し状態 (#1101) */
+async function readHidden(table: 'meals' | 'recipes', id: string) {
+  const { data, error } = await supabaseAdmin
+    .from(table)
+    .select('hidden_at, hidden_by, hidden_reason')
+    .eq('id', id)
+    .single();
+  if (error || !data) throw new Error(`readHidden ${table} failed: ${error?.message}`);
+  return data as { hidden_at: string | null; hidden_by: string | null; hidden_reason: string | null };
+}
+
+const NOT_HIDDEN = { hidden_at: null, hidden_by: null, hidden_reason: null };
 
 async function readFrozen(userId: string): Promise<FrozenState> {
   const { data, error } = await supabaseAdmin
@@ -420,7 +439,7 @@ describe('POST /api/admin/moderation/[type]/[id]', () => {
     it.each(resolveCases)(
       '200 for admin role - $action -> $status (no ban), records the resolver and an audit log',
       async ({ action, status }) => {
-        const { flagId } = await seedFoodFlag(ownerUser.userId);
+        const { flagId, mealId } = await seedFoodFlag(ownerUser.userId);
         const note = `T849 ${action} note`;
         const res = await apiCall('POST', `/api/admin/moderation/food/${flagId}`, adminUser.jwt, {
           action,
@@ -439,6 +458,17 @@ describe('POST /api/admin/moderation/[type]/[id]', () => {
         expect((await readFrozen(ownerUser.userId)).frozen_at).toBeNull();
         expect((await readFrozen(reporterUser.userId)).frozen_at).toBeNull();
 
+        // #1101: delete_* は通報された食事を隠す (消さない)。approve / escalate は隠さない
+        const hides = action.startsWith('delete_');
+        if (hides) {
+          const hidden = await readHidden('meals', mealId);
+          expect(hidden.hidden_at).not.toBeNull();
+          expect(hidden.hidden_by).toBe(adminUser.userId);
+          expect(hidden.hidden_reason).toBe(`moderation:${action}`);
+        } else {
+          expect(await readHidden('meals', mealId)).toEqual(NOT_HIDDEN);
+        }
+
         const log = await latestAuditLog({
           actorId: adminUser.userId,
           actionType: `admin.moderation.${action}`,
@@ -452,6 +482,8 @@ describe('POST /api/admin/moderation/[type]/[id]', () => {
           moderation_type: 'food',
           resolution_note: note,
           content_user_id: ownerUser.userId,
+          content_id: mealId,
+          hidden: hides,
           ban_applied: null,
         });
       },
@@ -484,7 +516,7 @@ describe('POST /api/admin/moderation/[type]/[id]', () => {
     it.each(resolveCases)(
       '200 for admin role - $action -> $status, records the reviewer',
       async ({ action, status }) => {
-        const { flagId } = await seedRecipeFlag(ownerUser.userId);
+        const { flagId, recipeId } = await seedRecipeFlag(ownerUser.userId);
         const res = await apiCall('POST', `/api/admin/moderation/recipe/${flagId}`, adminUser.jwt, {
           action,
           resolution_note: `T849 ${action} note`,
@@ -496,13 +528,29 @@ describe('POST /api/admin/moderation/[type]/[id]', () => {
         expect(flag).toMatchObject({ status, reviewed_by: adminUser.userId });
         expect(flag.reviewed_at).not.toBeNull();
 
+        // #1101: delete_* は通報されたレシピを隠す (消さない)。approve / escalate は隠さない
+        const hides = action.startsWith('delete_');
+        const hidden = await readHidden('recipes', recipeId);
+        if (hides) {
+          expect(hidden.hidden_at).not.toBeNull();
+          expect(hidden.hidden_by).toBe(adminUser.userId);
+          expect(hidden.hidden_reason).toBe(`moderation:${action}`);
+        } else {
+          expect(hidden).toEqual(NOT_HIDDEN);
+        }
+
         const log = await latestAuditLog({
           actorId: adminUser.userId,
           actionType: `admin.moderation.${action}`,
           targetId: flagId,
         });
         expect(log!.target_type).toBe('moderation_item:recipe');
-        expect(log!.details).toMatchObject({ moderation_type: 'recipe', content_user_id: ownerUser.userId });
+        expect(log!.details).toMatchObject({
+          moderation_type: 'recipe',
+          content_user_id: ownerUser.userId,
+          content_id: recipeId,
+          hidden: hides,
+        });
       },
     );
 
@@ -523,7 +571,7 @@ describe('POST /api/admin/moderation/[type]/[id]', () => {
     });
 
     it('200 for admin role - delete_and_temp_ban freezes the owner until now + ban_duration_days', async () => {
-      const { flagId } = await seedFoodFlag(ownerUser.userId);
+      const { flagId, mealId } = await seedFoodFlag(ownerUser.userId);
       const res = await apiCall('POST', `/api/admin/moderation/food/${flagId}`, adminUser.jwt, {
         action: 'delete_and_temp_ban',
         ban_duration_days: 7,
@@ -531,6 +579,8 @@ describe('POST /api/admin/moderation/[type]/[id]', () => {
       });
       expect(dataOf(res)).toEqual({ success: true, status: 'rejected', ban_applied: true });
       expect((await readFoodFlag(flagId)).status).toBe('rejected');
+      // #1101: BAN と一緒に、通報された食事も隠される
+      expect((await readHidden('meals', mealId)).hidden_reason).toBe('moderation:delete_and_temp_ban');
 
       const owner = await readFrozen(ownerUser.userId);
       expect(owner.frozen_at).not.toBeNull();
@@ -552,6 +602,8 @@ describe('POST /api/admin/moderation/[type]/[id]', () => {
       expect(log!.details).toMatchObject({
         ban_duration_days: 7,
         content_user_id: ownerUser.userId,
+        content_id: mealId,
+        hidden: true,
         ban_applied: true,
         ban_error: null,
       });
@@ -684,6 +736,92 @@ describe('POST /api/admin/moderation/[type]/[id]', () => {
         action: 'delete_only',
       });
       expect(dataOf(res)).toEqual({ success: true, status: 'rejected', ban_applied: null });
+
+      // #1101: 通報にコンテンツが紐づかないので、隠す対象が無い (隠さずに続行する)
+      const log = await latestAuditLog({
+        actorId: adminUser.userId,
+        actionType: 'admin.moderation.delete_only',
+        targetId: flagId,
+      });
+      expect(log!.details).toMatchObject({ content_id: null, hidden: false });
+    });
+  });
+
+  describe('hidden content (#1101): a hidden public recipe disappears from GET /api/recipes', () => {
+    type RecipeListBody = { recipes: Array<{ id: string; name: string }> };
+
+    /**
+     * 未ログインの GET /api/recipes?q=<name> で見える、その名前のレシピ。
+     * ログイン中の GET /api/recipes は、recipes と user_profiles の関係が無く (embed が失敗し、DB エラーを握りつぶして空の 200 を返す)、
+     * 隠す・隠さないに関係なく常に空になる既存の不具合がある。そのため API 経由の確認は未ログインで行う。
+     * ログイン中のユーザー・本人・家族の見え方は、PostgREST を直接叩く tests/integration/rls/hidden-content-visibility.test.ts で確かめている
+     */
+    const listNamesAsAnon = async (name: string) => {
+      const res = await apiCallNoAuth<RecipeListBody>('GET', `/api/recipes?q=${encodeURIComponent(name)}&limit=100`);
+      expect(res.status, `応答本文: ${JSON.stringify(res.body)}`).toBe(200);
+      return res.body.recipes.map((r) => r.name);
+    };
+
+    it('200 delete_only hides a public recipe from the public list (GET /api/recipes) without deleting the row', async () => {
+      seq += 1;
+      const name = `t1101hide${TS}x${seq}`;
+      const { flagId, recipeId } = await seedRecipeFlag(ownerUser.userId, { isPublic: true, name });
+      // 隠す前は、未ログインにも見える
+      expect(await listNamesAsAnon(name)).toEqual([name]);
+
+      const res = await apiCall('POST', `/api/admin/moderation/recipe/${flagId}`, adminUser.jwt, {
+        action: 'delete_only',
+        resolution_note: 'T1101 hide a public recipe',
+      });
+      expect(dataOf(res)).toEqual({ success: true, status: 'rejected', ban_applied: null });
+      expect((await readHidden('recipes', recipeId)).hidden_at).not.toBeNull();
+
+      expect(await listNamesAsAnon(name)).toEqual([]);
+      // 行は消えていない (本人と運営には残る)
+      const { data: row } = await supabaseAdmin.from('recipes').select('id').eq('id', recipeId).maybeSingle();
+      expect(row?.id).toBe(recipeId);
+      // next dev は GET /api/recipes を初回リクエスト時にコンパイルする。初回でも 30 秒の既定に収まるよう余裕を持たせる
+    }, 60_000);
+
+    it('200 approve keeps a public recipe in the public list', async () => {
+      seq += 1;
+      const name = `t1101keep${TS}x${seq}`;
+      const { flagId } = await seedRecipeFlag(ownerUser.userId, { isPublic: true, name });
+
+      const res = await apiCall('POST', `/api/admin/moderation/recipe/${flagId}`, adminUser.jwt, { action: 'approve' });
+      expect(dataOf<{ status: string }>(res).status).toBe('approved');
+
+      expect(await listNamesAsAnon(name)).toEqual([name]);
+    });
+
+    it('200 a second report on the same content does not move hidden_at forward (the retention starts at the first hide)', async () => {
+      const first = await seedFoodFlag(ownerUser.userId);
+      const firstRes = await apiCall('POST', `/api/admin/moderation/food/${first.flagId}`, adminUser.jwt, {
+        action: 'delete_only',
+      });
+      expect(dataOf(firstRes)).toEqual({ success: true, status: 'rejected', ban_applied: null });
+      const hiddenOnce = await readHidden('meals', first.mealId);
+      expect(hiddenOnce.hidden_at).not.toBeNull();
+
+      // 同じ食事への 2 件目の通報 (別の運営が処理する)
+      const { data: flag, error } = await supabaseAdmin
+        .from('moderation_flags')
+        .insert({
+          meal_id: first.mealId,
+          user_id: reporterUser.userId,
+          reason: 'T1101 second report',
+          status: 'pending',
+          flag_type: 'inappropriate',
+        })
+        .select('id')
+        .single();
+      expect(error).toBeNull();
+      const secondRes = await apiCall('POST', `/api/admin/moderation/food/${flag!.id}`, moderatorUser.jwt, {
+        action: 'delete_and_warn',
+      });
+      expect(dataOf(secondRes)).toEqual({ success: true, status: 'rejected', ban_applied: null });
+
+      expect(await readHidden('meals', first.mealId)).toEqual(hiddenOnce);
     });
   });
 

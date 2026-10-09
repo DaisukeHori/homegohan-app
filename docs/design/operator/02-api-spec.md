@@ -277,6 +277,17 @@ BAN 解除
 
 `action`: `approve` | `delete_only` | `delete_and_warn` | `delete_and_temp_ban` | `delete_and_perm_ban` | `escalate`
 
+**`delete_*` の意味 (#1101)**: `delete_only` / `delete_and_warn` / `delete_and_temp_ban` / `delete_and_perm_ban` は、通報されたコンテンツ
+(食事 `meals` / レシピ `recipes`) の行を**消さずに隠す**。`hidden_at` / `hidden_by` / `hidden_reason` を書き、RLS により本人以外
+(家族・ほかのユーザー・未ログイン) には見えなくなる (本人には見える)。完全な削除は、保管期間のあとに別のジョブで行う (保管期間とジョブは未定)。
+
+- 実行の順番は「判定の保存 → コンテンツを隠す → BAN」。隠せなかったときは BAN をせず `500 OP_CONTENT_HIDE_FAILED` を返す
+  (判定は保存済み。同じ操作をもう一度実行すれば隠し直せる。すでに隠れている行は上書きしない)
+- 通報にコンテンツが紐づかない (レスポンスの `content_id` が null。持ち主が先に消した等) ときは、隠す対象が無いので隠さずに続行する
+- `approve` / `escalate` は何も隠さない。隠した行を元に戻す操作は、まだ無い (必要なときは service_role で `hidden_*` を NULL に戻す)
+- 監査ログ (`admin_audit_logs.details`) に `content_id` (隠す対象) と `hidden` (隠したか)、隠せなかったときは `hide_error` を記録する
+- `hidden_reason` は持ち主も読める列なので、解決メモ (`resolution_note`) は入れず、`moderation:<action>` の識別子を書く
+
 ---
 
 ### POST /api/admin/moderation/auto-rules

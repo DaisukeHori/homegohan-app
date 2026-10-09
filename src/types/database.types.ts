@@ -3835,6 +3835,9 @@ export type Database = {
         Row: {
           created_at: string | null
           eaten_at: string
+          hidden_at: string | null
+          hidden_by: string | null
+          hidden_reason: string | null
           id: string
           is_sandbox: boolean
           meal_type: string
@@ -3847,6 +3850,9 @@ export type Database = {
         Insert: {
           created_at?: string | null
           eaten_at: string
+          hidden_at?: string | null
+          hidden_by?: string | null
+          hidden_reason?: string | null
           id?: string
           is_sandbox?: boolean
           meal_type: string
@@ -3859,6 +3865,9 @@ export type Database = {
         Update: {
           created_at?: string | null
           eaten_at?: string
+          hidden_at?: string | null
+          hidden_by?: string | null
+          hidden_reason?: string | null
           id?: string
           is_sandbox?: boolean
           meal_type?: string
@@ -5353,6 +5362,9 @@ export type Database = {
           cuisine_type: string | null
           description: string | null
           difficulty: string | null
+          hidden_at: string | null
+          hidden_by: string | null
+          hidden_reason: string | null
           id: string
           image_url: string | null
           ingredients: Json | null
@@ -5378,6 +5390,9 @@ export type Database = {
           cuisine_type?: string | null
           description?: string | null
           difficulty?: string | null
+          hidden_at?: string | null
+          hidden_by?: string | null
+          hidden_reason?: string | null
           id?: string
           image_url?: string | null
           ingredients?: Json | null
@@ -5403,6 +5418,9 @@ export type Database = {
           cuisine_type?: string | null
           description?: string | null
           difficulty?: string | null
+          hidden_at?: string | null
+          hidden_by?: string | null
+          hidden_reason?: string | null
           id?: string
           image_url?: string | null
           ingredients?: Json | null

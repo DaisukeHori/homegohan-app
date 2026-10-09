@@ -18,6 +18,11 @@
  * は admin/super_admin のみのため、content_moderator が呼ぶと 0 件/0 行更新に
  * なる。呼び出し側 (route) は **requireRole 等の authz を通した後** に
  * `getSupabaseAdmin()` (service-role) を渡すこと。
+ *
+ * #1101: 違反コンテンツの「削除」は、行を消さずに `hidden_at` を入れて「隠す」
+ * (`hideModeratedContent`)。隠した行は RLS により本人以外には見えず、保管期間のあとに
+ * 完全削除する (削除ジョブは別の作業)。注意: service-role で `meals` / `recipes` を読むコードは
+ * RLS を通らないので、他のユーザーに見せる一覧を作るなら `hidden_at IS NULL` で絞ること。
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -31,8 +36,14 @@ export function isModerationBacked(type: ModerationType): type is ModerationBack
 }
 
 export interface NormalizedModerationItem {
+  /** 通報 (moderation_flags.id / recipe_flags.id) の ID。コンテンツ本体の ID は `content_id` */
   id: string;
   type: ModerationBackedType;
+  /**
+   * 通報されたコンテンツ本体の ID (meals.id / recipes.id)。`hideModeratedContent` の対象。
+   * 通報にコンテンツが紐づいていない (meal_id / recipe_id が NULL) ときは null
+   */
+  content_id: string | null;
   content_url: string | null;
   reporter_count: number;
   /** コンテンツ所有者 (BAN 対象)。所有者取得に失敗した場合は null */
@@ -52,6 +63,7 @@ function normalizeFoodRow(row: RawRow): NormalizedModerationItem {
   return {
     id: row.id as string,
     type: 'food',
+    content_id: (row.meal_id as string | null) ?? null,
     content_url: meal?.photo_url ?? null,
     // moderation_flags は 1 通報 = 1 行のため、集約は行わず 1 件として扱う
     reporter_count: 1,
@@ -70,6 +82,7 @@ function normalizeRecipeRow(row: RawRow): NormalizedModerationItem {
   return {
     id: row.id as string,
     type: 'recipe',
+    content_id: (row.recipe_id as string | null) ?? null,
     // #1041 round-2 (G) 修正: recipes.image_url が実在する (database.types.ts) ため、
     // 常に null 固定にせず実データを反映する。
     content_url: recipe?.image_url ?? null,
@@ -205,5 +218,64 @@ export async function resolveModerationItem(
       reviewed_at: nowIso,
     })
     .eq('id', id);
+  if (error) throw error;
+}
+
+/**
+ * 通報されたコンテンツ本体のテーブル (food = 食事 meals / recipe = レシピ recipes)。
+ * タイプを足したら、ここで型エラーになる (対応するテーブルを決めずに、別のテーブルの行を隠さないため)
+ */
+function contentTable(type: ModerationBackedType): 'meals' | 'recipes' {
+  switch (type) {
+    case 'food':
+      return 'meals';
+    case 'recipe':
+      return 'recipes';
+    default: {
+      const unsupported: never = type;
+      throw new Error(`hideModeratedContent: 対応していないタイプです (${String(unsupported)})`);
+    }
+  }
+}
+
+export interface HideModeratedContentParams {
+  /** `hidden_by` に記録する運営ユーザー (操作した人) */
+  hiddenBy: string;
+  /**
+   * `hidden_reason` に記録する理由。この列はコンテンツの持ち主も読めるので、運営の自由記述
+   * (解決メモ) は入れず、`moderation:<action>` のような短い識別子にする。
+   * 解決メモは監査ログ (admin_audit_logs) と moderation_flags.resolution_note に残る。
+   */
+  reason: string;
+}
+
+/**
+ * 通報されたコンテンツ (meals / recipes の行) を「隠す」(#1101)。行は消さない。
+ *
+ * `hidden_at` を入れると、RLS により本人以外 (家族・他のログインユーザー・未ログイン) には
+ * 見えなくなる (本人には見える)。完全な削除は保管期間のあとに別のジョブで行う。
+ * `hidden_*` を書き換えられるのは service-role だけ (DB のトリガー guard_hidden_content_columns)
+ * なので、`supabase` には、認可 (requireRole) を通したあとの `getSupabaseAdmin()` を渡すこと。
+ *
+ * - すでに隠れている行は上書きしない (`hidden_at IS NULL` の行だけ更新する)。保管期間は
+ *   最初に隠した日時から数える。同じコンテンツへの 2 件目の通報を処理しても、起点は延びない
+ * - 行がもう無い (持ち主が先に消した) ときも、何も更新せずに成功する。隠す対象が無いだけで、失敗ではない
+ * - DB エラー時は例外を throw する。呼び出し側で「隠せなかった」と明示し、成功を装わないこと
+ */
+export async function hideModeratedContent(
+  supabase: SupabaseClient<any>,
+  type: ModerationBackedType,
+  contentId: string,
+  params: HideModeratedContentParams,
+): Promise<void> {
+  const { error } = await supabase
+    .from(contentTable(type))
+    .update({
+      hidden_at: new Date().toISOString(),
+      hidden_by: params.hiddenBy,
+      hidden_reason: params.reason,
+    })
+    .eq('id', contentId)
+    .is('hidden_at', null);
   if (error) throw error;
 }

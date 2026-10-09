@@ -9,13 +9,16 @@
  *    フラグ行自身の user_id/reporter_id (通報者) ではないこと
  *  - DB エラー時は空配列/null に丸めず例外を throw する (呼び出し側で fail-closed にするため)
  *  - ai_content はバックエンドテーブル未実装のため isModerationBacked が false を返すこと
+ *  - (#1101) 通報されたコンテンツ本体の ID (meals.id / recipes.id) を content_id として返し、
+ *    hideModeratedContent がその行 (通報の行ではない) の hidden_* だけを更新すること
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createFakeSupabase } from './helpers/fake-supabase';
 import {
   countModeration,
   fetchModerationList,
   fetchModerationSingle,
+  hideModeratedContent,
   isModerationBacked,
   resolveModerationItem,
 } from '@/lib/admin/moderation-backend';
@@ -64,6 +67,7 @@ describe('moderation-backend', () => {
       expect(items[0]).toMatchObject({
         id: 'flag-1',
         type: 'food',
+        content_id: 'meal-1', // 通報の ID (flag-1) ではなく、通報されたコンテンツ本体の ID
         content_url: 'https://example.com/meal.jpg',
         reporter_count: 1,
         user_id: 'owner-user-id', // reporter-user-id ではないこと
@@ -99,6 +103,7 @@ describe('moderation-backend', () => {
       expect(items[0]).toMatchObject({
         id: 'rflag-1',
         type: 'recipe',
+        content_id: 'recipe-1',
         content_url: 'https://example.com/recipe.jpg',
         user_id: 'recipe-owner-1',
         resolution_note: null,
@@ -155,6 +160,38 @@ describe('moderation-backend', () => {
       });
       await expect(fetchModerationSingle(supabase as never, 'food', 'x')).rejects.toBeTruthy();
     });
+
+    it('#1101 food: 通報にコンテンツが紐づかない (meal_id が null) ときは content_id も user_id も null', async () => {
+      const supabase = createFakeSupabase({
+        moderation_flags: [
+          {
+            data: { id: 'flag-orphan', status: 'pending', user_id: 'reporter-1', meal_id: null, meals: null },
+            error: null,
+          },
+        ],
+      });
+      const item = await fetchModerationSingle(supabase as never, 'food', 'flag-orphan');
+      expect(item).toMatchObject({ id: 'flag-orphan', content_id: null, user_id: null, content_url: null });
+    });
+
+    it('#1101 recipe: content_id は recipe_flags.recipe_id (レシピ本体の ID)。通報の ID ではない', async () => {
+      const supabase = createFakeSupabase({
+        recipe_flags: [
+          {
+            data: {
+              id: 'rflag-9',
+              status: 'pending',
+              reporter_id: 'reporter-1',
+              recipe_id: 'recipe-9',
+              recipes: { user_id: 'owner-9', image_url: null },
+            },
+            error: null,
+          },
+        ],
+      });
+      const item = await fetchModerationSingle(supabase as never, 'recipe', 'rflag-9');
+      expect(item).toMatchObject({ id: 'rflag-9', content_id: 'recipe-9', user_id: 'owner-9' });
+    });
   });
 
   describe('resolveModerationItem', () => {
@@ -198,6 +235,64 @@ describe('moderation-backend', () => {
           resolutionNote: null,
         }),
       ).rejects.toBeTruthy();
+    });
+  });
+
+  describe('hideModeratedContent (#1101)', () => {
+    const params = { hiddenBy: 'admin-1', reason: 'moderation:delete_only' };
+
+    /** `.from()` が返したクエリビルダー (update / eq / is の呼び出しを調べる) */
+    function firstBuilder(supabase: ReturnType<typeof createFakeSupabase>) {
+      return supabase.from.mock.results[0]!.value as {
+        update: ReturnType<typeof vi.fn>;
+        eq: ReturnType<typeof vi.fn>;
+        is: ReturnType<typeof vi.fn>;
+        delete: ReturnType<typeof vi.fn>;
+      };
+    }
+
+    it('food: meals の該当行に hidden_at / hidden_by / hidden_reason を書く。行は消さず、通報 (moderation_flags) には触れない', async () => {
+      const supabase = createFakeSupabase({ meals: [{ data: null, error: null }] });
+      const before = Date.now();
+
+      await hideModeratedContent(supabase as never, 'food', 'meal-1', params);
+
+      expect(supabase.from).toHaveBeenCalledTimes(1);
+      expect(supabase.from).toHaveBeenCalledWith('meals');
+      const builder = firstBuilder(supabase);
+      const payload = builder.update.mock.calls[0][0] as Record<string, unknown>;
+      expect(Object.keys(payload).sort()).toEqual(['hidden_at', 'hidden_by', 'hidden_reason']);
+      expect(Date.parse(payload.hidden_at as string)).toBeGreaterThanOrEqual(before);
+      expect(payload.hidden_by).toBe('admin-1');
+      expect(payload.hidden_reason).toBe('moderation:delete_only');
+      expect(builder.eq).toHaveBeenCalledWith('id', 'meal-1');
+      expect(builder.delete).not.toHaveBeenCalled();
+    });
+
+    it('recipe: recipes の該当行を隠す', async () => {
+      const supabase = createFakeSupabase({ recipes: [{ data: null, error: null }] });
+
+      await hideModeratedContent(supabase as never, 'recipe', 'recipe-1', params);
+
+      expect(supabase.from).toHaveBeenCalledTimes(1);
+      expect(supabase.from).toHaveBeenCalledWith('recipes');
+      expect(firstBuilder(supabase).eq).toHaveBeenCalledWith('id', 'recipe-1');
+    });
+
+    it('すでに隠れている行は上書きしない (hidden_at IS NULL の行だけ更新する)。保管期間の起点を延ばさない', async () => {
+      const supabase = createFakeSupabase({ meals: [{ data: null, error: null }] });
+
+      await hideModeratedContent(supabase as never, 'food', 'meal-1', params);
+
+      expect(firstBuilder(supabase).is).toHaveBeenCalledWith('hidden_at', null);
+    });
+
+    it('更新エラー時は例外を throw する (呼び出し側が「隠せなかった」と明示できるように)', async () => {
+      const supabase = createFakeSupabase({
+        meals: [{ data: null, error: { message: 'permission denied' } }],
+      });
+
+      await expect(hideModeratedContent(supabase as never, 'food', 'meal-1', params)).rejects.toBeTruthy();
     });
   });
 

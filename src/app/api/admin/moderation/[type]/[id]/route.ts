@@ -39,19 +39,33 @@
  * 含まれていたが、`delete_and_warn` (BAN を伴わない警告) にはこのブロック内に
  * 対応処理が無く (実体は常に実行される監査ログ INSERT のみ)、dead condition
  * だった。挙動を変えず `banRequested` のみの条件に整理する。
+ *
+ * #1101 修正: `delete_*` アクションは通報の状態を rejected にするだけで、通報された
+ * コンテンツ (meals / recipes) には何もしていなかった (「削除」と名乗る偽成功)。
+ * コンテンツを消さずに `hidden_at` を入れて「隠す」(`hideModeratedContent`)。隠した行は
+ * RLS により本人以外には見えず、保管期間のあとに完全削除する (削除ジョブは別の作業)。
+ *  - 判定の保存 (`resolveModerationItem`) のあと、BAN の前に隠す。隠せなかったら BAN はせず、
+ *    500 `OP_CONTENT_HIDE_FAILED` を返す (成功を装わない)。判定は保存済みで、同じ操作をもう一度
+ *    実行すれば隠し直せる (すでに隠れている行は上書きしない)
+ *  - 通報にコンテンツが紐づかない (`content_id` が null。持ち主が先に消した等) ときは、隠す対象が
+ *    無いので隠さずに続行する。監査ログには `hidden: false` と `content_id: null` が残る
+ *  - 監査ログの details に `content_id` と `hidden` を記録する
  */
 
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
 import {
   ModerationResolveBodySchema,
   MODERATION_TYPES,
+  isModerationDeleteAction,
   type ModerationType,
 } from '@/lib/admin/moderation-schemas';
 import {
   fetchModerationSingle,
+  hideModeratedContent,
   isModerationBacked,
   resolveModerationItem,
 } from '@/lib/admin/moderation-backend';
@@ -73,6 +87,13 @@ function internalErrorResponse() {
     { error: { code: 'INTERNAL_ERROR', message: '内部エラーが発生しました' } },
     { status: 500 },
   );
+}
+
+/** 監査ログ用にエラーを文字列にする (supabase-js のエラーは Error とは限らない) */
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  const message = (err as { message?: unknown } | null | undefined)?.message;
+  return typeof message === 'string' && message ? message : String(err);
 }
 
 export async function GET(_request: Request, { params }: Params) {
@@ -247,6 +268,37 @@ async function handleResolve(request: Request, params: { type: string; id: strin
     );
   }
 
+  // #1101: delete_* アクションは、通報されたコンテンツ (meals / recipes の行) を「隠す」。
+  // 行は消さず、hidden_at を入れて本人以外に見えなくする (完全削除は保管期間のあと)。
+  // 判定の保存 (上の resolveModerationItem) のあと、BAN の前に行う。隠せなかったときは、
+  // BAN をせずに 500 を返す (「削除した」と見せかけない)。判定は保存済みなので、同じ操作を
+  // もう一度実行すれば隠し直せる。通報にコンテンツが紐づいていなければ、隠す対象が無い。
+  const contentId = item.content_id;
+  const hideRequested = isModerationDeleteAction(action);
+  let contentHidden = false;
+  let hideErrorMessage: string | null = null;
+  if (hideRequested && contentId !== null) {
+    try {
+      await hideModeratedContent(supabaseAdmin, moderationType, contentId, {
+        hiddenBy: actor.id,
+        // 持ち主も読める列なので、解決メモ (運営の自由記述) は入れない
+        reason: `moderation:${action}`,
+      });
+      contentHidden = true;
+    } catch (err) {
+      // 監査ログ (admin_audit_logs.details.hide_error) にだけ残す。レスポンスには出さない (固定の文面を返す)
+      hideErrorMessage = describeError(err);
+      createLogger('POST /api/admin/moderation/[type]/[id]', generateRequestId())
+        .withUser(actor.id)
+        .error('通報されたコンテンツを隠せませんでした', err, {
+          moderation_type: type,
+          flag_id: id,
+          content_id: contentId,
+        });
+    }
+  }
+  const hideFailed = hideErrorMessage !== null;
+
   // BAN アクションの場合、/api/admin/users/[id]/freeze と同じ frozen_at 機構で
   // BAN を適用する (#1041 round-2 D: 'banned' roles 追加は管理画面に反映されない
   // 偽成功だった)。
@@ -264,7 +316,9 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   // 条件だったが、`delete_and_warn` (BAN を伴わない警告) には対応処理が無く
   // (実体は下の監査ログ INSERT のみで、それは action によらず常に実行される)、
   // `delete_and_warn` 側は dead condition だった。挙動を変えず条件を整理する。
-  if (contentUserId && banRequested) {
+  // #1101: コンテンツを隠せなかったときは BAN しない (隠れていないコンテンツが残ったまま
+  // 持ち主だけ止めることになる)。同じ操作をやり直せば、隠してから BAN する。
+  if (contentUserId && banRequested && !hideFailed) {
     const banResult = await applyUserBan(supabaseAdmin, {
       userId: contentUserId,
       actorId: actor.id,
@@ -292,17 +346,41 @@ async function handleResolve(request: Request, params: { type: string; id: strin
       ban_duration_days,
       resolution_note,
       content_user_id: contentUserId,
+      // #1101: 通報されたコンテンツ本体の ID と、隠したかどうか。delete_* 以外のアクション、
+      // コンテンツが紐づかない通報、隠せなかったときは hidden: false (隠せなかった理由は hide_error)
+      content_id: contentId,
+      hidden: contentHidden,
+      hide_error: hideErrorMessage,
       ban_applied: banTargetUnresolved ? null : banApplied,
       ban_error: banTargetUnresolved
         ? 'BAN 対象ユーザーを特定できませんでした (コンテンツ所有者不明)'
-        : banErrorMessage,
+        : hideFailed && banRequested
+          ? 'コンテンツを隠せなかったため BAN を実行していません'
+          : banErrorMessage,
       // #1041 round-3 (W1): freeze route (unban_at) とのパリティ。temp ban の
       // 解除予定日時を永続化する列が無いため、監査ログが唯一の記録経路。
       unban_at: banUnbanAt,
     },
-    severity: action.includes('ban') ? 'warn' : 'info',
+    severity: action.includes('ban') || hideFailed ? 'warn' : 'info',
     ip_address: request.headers.get('x-forwarded-for'),
   });
+
+  // #1101: 判定 (status 更新) は保存済みだが、コンテンツを隠せなかった。200 (「削除した」の
+  // 偽成功) にせず 500 で明示する。BAN は実行していない。同じ操作をもう一度実行すると隠し直せる。
+  if (hideFailed) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'OP_CONTENT_HIDE_FAILED',
+          message: banRequested
+            ? 'コンテンツを非表示にできませんでした。モデレーション判定自体は保存されていますが、BAN はまだ実行していません。もう一度同じ操作を実行してください。'
+            : 'コンテンツを非表示にできませんでした。モデレーション判定自体は保存されています。もう一度同じ操作を実行してください。',
+        },
+        data: { status: newStatus, content_hidden: false, ban_applied: null },
+      },
+      { status: 500 },
+    );
+  }
 
   // #1041 round-3 (W2): BAN を要求したがコンテンツ所有者を特定できない場合は、
   // モデレーション判定 (status 更新) 自体は保存済みでも 200 (ban_applied: null
