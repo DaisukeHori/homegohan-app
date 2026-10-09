@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EmailEnvelopeSchema, maskEmailAddress, sendEmail, type EmailEnvelope } from '@/lib/emails/send';
 import { EmailSendError } from '@/lib/emails/send-result';
+import { DEFAULT_EMAIL_FROM } from '@/lib/site-config';
 import { maskSecrets } from '../../../../supabase/functions/_shared/log-sanitizer';
 
 // #1193 メール送信の失敗の記録・再試行・Idempotency-Key。
@@ -31,7 +32,7 @@ const MASKED_RECIPIENT = 't***@example.com';
 
 const validEnvelope: EmailEnvelope = {
   to: RECIPIENT,
-  from: 'ほめゴハン <noreply@homegohan.app>',
+  from: DEFAULT_EMAIL_FROM,
   subject: 'テスト件名',
   text: 'テスト本文',
   template: 'org_invite_new',
@@ -132,7 +133,7 @@ describe('sendEmail: 送れた場合', () => {
     await sendAndSettle({
       ...validEnvelope,
       html: '<p>テスト本文</p>',
-      reply_to: 'support@homegohan.app',
+      reply_to: 'support@example.test',
     });
 
     const [payload] = mocks.emailsSend.mock.calls[0];
@@ -142,7 +143,7 @@ describe('sendEmail: 送れた場合', () => {
       subject: validEnvelope.subject,
       text: validEnvelope.text,
       html: '<p>テスト本文</p>',
-      replyTo: 'support@homegohan.app',
+      replyTo: 'support@example.test',
     });
     expect(payload).not.toHaveProperty('template');
   });
@@ -160,11 +161,12 @@ describe('sendEmail: 送れた場合', () => {
   });
 
   it('from を省略した封筒には既定の送信元を使う', async () => {
+    vi.stubEnv('EMAIL_FROM', ''); // 手元の環境変数に左右されないように、未設定にそろえる
     const { from: _from, ...withoutFrom } = validEnvelope;
 
-    await sendAndSettle(withoutFrom as EmailEnvelope); // from は schema の default で補われる
+    await sendAndSettle(withoutFrom as EmailEnvelope); // from は schema の default (site-config の既定値) で補われる
 
-    expect(mocks.emailsSend.mock.calls[0][0].from).toBe('ほめゴハン <noreply@homegohan.app>');
+    expect(mocks.emailsSend.mock.calls[0][0].from).toBe(DEFAULT_EMAIL_FROM);
   });
 });
 
@@ -543,5 +545,62 @@ describe('maskEmailAddress', () => {
 
     expect(masked).toBe('😀***@example.com');
     expect(() => encodeURIComponent(masked)).not.toThrow(); // 孤立サロゲートがあると URIError
+  });
+});
+
+// #1194 送信元の既定値は src/lib/site-config.ts で決まり、スキーマは envelope.ts の 1 つだけにまとめた
+describe('EmailEnvelopeSchema: 送信元 (#1194)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const withoutFrom = { to: 'test@example.com', subject: 'テスト件名', text: 'テスト本文' };
+
+  it('from を省略すると、EMAIL_FROM が未設定なら既定値になる', () => {
+    vi.stubEnv('EMAIL_FROM', '');
+    expect(EmailEnvelopeSchema.parse(withoutFrom).from).toBe(DEFAULT_EMAIL_FROM);
+  });
+
+  it('from を省略すると、EMAIL_FROM があればそれになる (parse のたびに読む)', () => {
+    vi.stubEnv('EMAIL_FROM', 'ほめゴハン <noreply@mail.example.test>');
+    expect(EmailEnvelopeSchema.parse(withoutFrom).from).toBe('ほめゴハン <noreply@mail.example.test>');
+
+    vi.stubEnv('EMAIL_FROM', 'ほめゴハン <noreply@other.example.test>');
+    expect(EmailEnvelopeSchema.parse(withoutFrom).from).toBe('ほめゴハン <noreply@other.example.test>');
+  });
+
+  it('from が渡されたときは、それをそのまま使う (EMAIL_FROM より優先)', () => {
+    vi.stubEnv('EMAIL_FROM', 'ほめゴハン <noreply@mail.example.test>');
+    expect(EmailEnvelopeSchema.parse({ ...withoutFrom, from: 'テスト <t@example.test>' }).from).toBe(
+      'テスト <t@example.test>',
+    );
+  });
+
+  it('スキーマは 1 つだけ: send.ts・membership/templates.ts・envelope.ts が同じものを指す', async () => {
+    const templates = await import('@/lib/emails/membership/templates');
+    const envelope = await import('@/lib/emails/envelope');
+    expect(EmailEnvelopeSchema).toBe(envelope.EmailEnvelopeSchema);
+    expect(templates.EmailEnvelopeSchema).toBe(envelope.EmailEnvelopeSchema);
+  });
+
+  it('sendEmail: from の無い envelope は、EMAIL_FROM を送信元にして Resend へ渡す', async () => {
+    vi.stubEnv('EMAIL_FROM', 'ほめゴハン <noreply@mail.example.test>');
+    mocks.emailsSend.mockResolvedValueOnce(accepted());
+
+    await sendAndSettle(withoutFrom as unknown as EmailEnvelope);
+
+    expect(mocks.emailsSend.mock.calls[0][0].from).toBe('ほめゴハン <noreply@mail.example.test>');
+  });
+
+  it('sendEmail: 送信元のドメインが未検証で Resend が断ったときは、例外ではなく失敗の結果を返し、運用ログに残す (#1193)', async () => {
+    mocks.emailsSend.mockResolvedValueOnce(
+      rejected('validation_error', 403, 'The example.test domain is not verified'),
+    );
+
+    const result = await sendAndSettle(validEnvelope);
+
+    expect(result).toMatchObject({ ok: false, skipped: false, attempts: 1 }); // 403 は待っても直らないので再試行しない
+    expect(result.error).toBeInstanceOf(EmailSendError);
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
   });
 });

@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
+import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { isOrgAdmin as isOrgAdminProfile } from "@/lib/auth/org-admin";
 
 const orgNavItems = [
@@ -71,6 +72,8 @@ export default function OrgLayout({
 
   const handleLogout = async () => {
     clearUserScopedLocalStorage();
+    // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
+    notifyNativeSignOut();
     await supabase.auth.signOut();
     broadcastSignOut();
     router.push("/login");

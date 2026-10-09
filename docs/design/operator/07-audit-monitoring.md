@@ -2,14 +2,26 @@
 
 ## 1. 目的・スコープ
 
-監査ログの不可逆設計・監査対象操作の網羅リスト・外部監視ツール連携 (Sentry / Better Stack)・インシデント管理フロー・Status Page 運用を定義する。
+監査ログの不可逆設計・監査対象操作の網羅リスト・エラー監視と性能計測 (`app_logs` と Vercel Speed Insights。Sentry / Better Stack は採用しない)・インシデント管理フロー・死活監視 (Status Page は設置しない) を定義する。
+
+### 1.1 採用状況 (オーナー決定 2026-10-08、#1179)
+
+| 項目 | 採用状況 | 実態 |
+|------|---------|------|
+| エラー監視 | `app_logs` テーブル + `/super-admin/logs` | Sentry は採用しない。`@sentry/nextjs` は入れていない (§7) |
+| 性能の計測 | Vercel Speed Insights のみ | `@vercel/speed-insights` を、送る URL から `?` 以降と招待トークンを消す部品 (`SpeedInsightsClient`) 経由で `src/app/layout.tsx` に置く。本番ではすでに有効とみられる (§7.3) |
+| ログ集約 | `app_logs` テーブル | Better Stack (Logtail) は採用しない。`@logtail/node` は入れていない (§8) |
+| Status Page | 設置しない | `status.homegohan.app` は作らない。死活監視用の `/api/health` は実装済み (§9) |
+
+§8 のアラートルール、§9 の監視対象の表、§10.1 の手順のうち、Better Stack / Sentry / Status Page を前提にしていた部分は、
+採用しないことが決まる前の記述で、実装の根拠にしない (各節に注記を置いた)。
 
 ## 2. 関連要件
 
 - 要件 03 §5.3 F-OP-003 監査ログ
 - 要件 03 §15.8 監査ログ対象操作の網羅リスト
 - 要件 03 §15.9 監査ログ保持期間
-- 要件 03 §22.9 Status Page
+- 要件 03 §22.9 Status Page (要件定義にはあるが、設置しないことをオーナーが決めた。§1.1)
 - 100-scenarios.md F17, F18
 
 ## 3. admin_audit_logs DDL + RLS (不可逆)
@@ -375,88 +387,95 @@ CREATE TRIGGER audit_log_critical_notify
 
 Edge Function が `pg_notify` をリッスンして Slack #incident に即時通知。
 
-## 7. Sentry 統合
+## 7. エラー監視と性能計測 (Sentry は採用しない)
 
-### 7.1 設定
+### 7.1 方針
 
-```typescript
-// src/lib/monitoring/sentry.ts
-import * as Sentry from '@sentry/nextjs';
+オーナー決定 (2026-10-08、#1179): Sentry は採用しない。`@sentry/nextjs` は入れておらず (`package.json` に無い)、
+`Sentry.captureException` などを呼ぶコードも作らない。旧案にあった Sentry 連携のコード例
+(`setSentryAdminContext`・`captureException`・`startTransaction`) は削除した。
+エラーの記録・閲覧と性能の計測は、次で足りる。
 
-// Error は自動的に Sentry に送信される
-// admin 操作の追加 context を送信:
-export function setSentryAdminContext(user: AdminUser): void {
-  Sentry.setUser({
-    id: user.id,
-    email: user.email,
-    role: user.roles.join(','),
-  });
-  Sentry.setTag('admin_role', user.roles[0]);
-}
-```
+| 目的 | 手段 |
+|------|------|
+| エラー・警告の記録 | `app_logs` テーブルへ構造化ログを書く。Next.js は `src/lib/db-logger.ts`、Edge Functions は `supabase/functions/_shared/db-logger.ts`。新規のエンドポイント・Edge Function は必ずこれを通す。ブラウザ側のログは `/api/log` 経由で同じテーブルに入る |
+| エラーの閲覧 | `/super-admin/logs` (運用ログ画面) で `app_logs` を見る |
+| 性能の計測 (Web Vitals) | Vercel Speed Insights (§7.3) |
 
-### 7.2 カスタムイシュー送信
+### 7.2 重大エラーの記録
+
+重大エラーは `error` レベルで `app_logs` に残す。管理者の操作に関わるものは、`app_logs` とは別に `admin_audit_logs` (§3-4) にも
+記録する (運用ログと監査ログは用途が違う。混同しない)。
 
 ```typescript
-// 重大エラーは Sentry に手動送信
-Sentry.captureException(error, {
-  tags: { component: 'stripe-webhook', severity: 'critical' },
-  extra: { stripe_event_id: eventId, action_type: 'payment_failed' },
+import { createLogger } from '@/lib/db-logger';
+
+const logger = createLogger('stripe-webhook');
+logger.error('payment_failed を処理できなかった', error, {
+  stripe_event_id: eventId,
+  action_type: 'payment_failed',
 });
 ```
 
-### 7.3 Performance トレース
+### 7.3 Vercel Speed Insights (性能の計測)
 
-```typescript
-// Edge Function のパフォーマンストレース (Phase 2: OpenTelemetry に移行予定)
-const transaction = Sentry.startTransaction({ name: 'stripe-price-sync' });
-// ... 処理 ...
-transaction.finish();
-```
+- パッケージ: `@vercel/speed-insights` (`package.json` の dependencies)。
+- 読み込み: `src/app/layout.tsx` の `<body>` の中に `<SpeedInsightsClient />` (`src/components/SpeedInsightsClient.tsx`) を 1 つだけ置く。画面には何も描画しない。
+  `SpeedInsightsClient` は `'use client'` の小さな部品で、`@vercel/speed-insights/next` の `<SpeedInsights />` に `beforeSend` を渡す。
+  `beforeSend` は関数なので、サーバーコンポーネントの `layout.tsx` からは渡せない。`<SpeedInsights />` を、この部品を通さずに置かない
+  (理由は下の「URL に含まれる情報」。`tests/speed-insights-scrub-1179.test.ts` が、`src` の中で読み込むのはこの部品だけであることを検査する)。
+- 計測するもの: Web Vitals (LCP / INP / CLS など) だけ。エラーの記録はしない (§7.1 の `app_logs` が担う)。
+- 有効化の状態: **本番ではすでに有効とみられ、このコードをデプロイした時点から、全ページで計測が始まる。** ダッシュボードで有効にするのを待つ関門は無い。
+  2026-10-08 に、本番 (`homegohan-app.vercel.app`) へ GET だけで確かめた (計測値の POST はしていない)。
+  - `/_vercel/speed-insights/script.js` は 200 で JavaScript を返す。アプリのミドルウェアを通らず、Vercel が先に応答している。
+  - 有効にしていない `/_vercel/insights/script.js` や、存在しない `/_vercel/speed-insights/nonexistent-check.js` は、アプリのミドルウェアに届いて `/login` への 307 になる。
 
-## 8. Better Stack (Logtail) 統合
+  ダッシュボードの実際の状態 (有効か、いつから有効か) は、デプロイの前にオーナーが確かめる。計測を止めたいときは、ダッシュボードで Speed Insights を無効にする (コードを変えずに止まる)。
+- 配信と CSP: スクリプトも計測値の送信先も、同じオリジンのパス。設定が無いときの既定値は `/_vercel/speed-insights/script.js` と `/_vercel/speed-insights/vitals`。
+  有効にしたプロジェクトのビルドでは、Vercel が `NEXT_PUBLIC_VERCEL_OBSERVABILITY_CLIENT_CONFIG` を渡し、その中の `speedInsights.scriptSrc` / `endpoint`
+  (`/<固有のパス>/script.js` / `/<固有のパス>/vitals` の形) が優先される。どちらも同じオリジンなので、CSP (`next.config.mjs`) の `script-src` / `connect-src` の
+  `'self'` で足り、CSP は変えていない。読み込み先と `'self'` は `tests/speed-insights-1179.test.tsx` が検査する (設定が無いときの既定値と、設定が渡ったときの両方)。
+  実際の送信先は検査できないので、デプロイ後に、ブラウザの開発者ツールで `script[data-sdkn]` の `src` と計測値の送信先を見て、
+  未ログインでも 2xx になること、コンソールに CSP 違反が出ていないことを確かめる。
+- 認証ミドルウェア: `src/middleware.ts` の matcher は `/_vercel/` 以下を対象から外してある (`tests/speed-insights-middleware-1179.test.ts`)。
+  Vercel 上で有効にした機能のパスは、上のとおり Vercel がミドルウェアより前に応答するので、この除外が Vercel 上の計測を守っているわけではない。
+  効くのは、Vercel が応答しないとき (有効にしていない機能、存在しないパス、`next start` で Vercel の外に置いたとき) に、
+  `/_vercel/*` の応答が `/login` の HTML にすり替わるのを防ぐ場面。害は無いので残している。
+- 料金と間引き: 計測するデータの数に応じて Vercel の料金が増えることがある。抑えたいときは `SpeedInsightsClient` の `<SpeedInsights … />` に
+  `sampleRate={0.5}` のように渡して間引ける (既定は全件)。
+- 外部送信の表示: 計測データは Vercel へ送られる。プライバシーポリシーなどへの表示が要るかは、弁護士の確認 (T30) を待って決める (未確認)。
+- URL に含まれる情報: 計測値にはページの URL も載る。Vercel が配るスクリプトは、`location.href` (`?` 以降と `#` 以降を含む URL 全体) をそのまま送る
+  (パッケージが `data-path` を付けないため)。このアプリには、URL に個人情報や招待用の値が入るページがある。
+  - 招待先のメールアドレス: `/login?redirect=/invite/<token>&email=…`・`/signup?redirect=…&email=…`・`/auth/verify?email=…`
+  - パスに入る招待トークン: `/invite/[token]`・`/family/promotions/[token]`
 
-### 8.1 ログ送信
+  本番はすでに有効とみられるので、対策なしで出すと、デプロイした時点から、これらが URL ごと Vercel へ送られる。
+  そこで `beforeSend` (`scrubSpeedInsightsEvent`、`src/lib/speed-insights-scrub.ts`) で、送る前に URL を直す。
+  - `?` 以降、`#` 以降、ユーザー名、パスワードを消す。オリジンとパスだけが残る。
+  - `route` (動的セグメントを置き換えた形。例: `/invite/[token]`・`/meals/[id]`) があれば、パスはそれにする。トークンや ID が URL に残らない。
+  - パスに招待トークンが入るページ (`/invite/…`・`/family/promotions/…`) は、送るパスが `…/[token]` の形に置き換わっているときだけ送る。
+    `route` が無いとき、置き換えに失敗して生のトークンが残っているときは、計測値ごと送らない。
+    配られるスクリプトは、`beforeSend` が返した `route` を使わず、元の `route` を送るので、直さずに落とす。
+  - URL として読めないときも送らない。
 
-全 Vercel API Routes と Edge Functions で Better Stack に構造化ログを送信:
+  `beforeSend` の仕様 (計測値を送る直前に 1 件ずつ呼ばれる。null などを返すと送られない。返した `url` が送られる) は、
+  配られるスクリプト (scriptVersion 0.1.3) を読んで確かめた。スクリプトは Vercel が更新できるので、デプロイ後に、実際の送信内容
+  (開発者ツールの Network) で、`href` にクエリ・`#`・招待トークンが無いことを確かめる。
+  `beforeSend` に渡す関数はモジュール直下に置き、参照を変えない (参照が変わるたびに、パッケージが登録し直す)。
+  パスに秘密の値が入る `[token]` のページを足したら、`src/lib/speed-insights-scrub.ts` の `TOKEN_PATH_PREFIX` にも足す
+  (`tests/speed-insights-scrub-1179.test.ts` が `src/app` を走査して検査する)。
+  限界: 変わるのは、Speed Insights の計測値に載る URL だけ。計測の通信そのものに、ブラウザが付ける `Referer` ヘッダなどは残る
+  (同じオリジンへの通信で、ページの取得や API と同じ扱い)。Vercel 側がそれを保存するかどうかは確認できていない。
 
-```typescript
-// src/lib/monitoring/logger.ts
-import { Logtail } from '@logtail/node';
+## 8. Better Stack (Logtail) 統合 (採用しない)
 
-const logtail = new Logtail(process.env.BETTER_STACK_TOKEN!);
+オーナー決定 (2026-10-08、#1179): Better Stack は採用しない。`@logtail/node` は入れておらず、`BETTER_STACK_TOKEN` も使わない。
+ログは `app_logs` に集める (§7.1)。旧案にあった `logger` ラッパーとログ出力例のコードは削除した。
 
-export const logger = {
-  info: (message: string, meta?: Record<string, unknown>) =>
-    logtail.info(message, meta),
-  warn: (message: string, meta?: Record<string, unknown>) =>
-    logtail.warn(message, meta),
-  error: (message: string, meta?: Record<string, unknown>) =>
-    logtail.error(message, meta),
-};
-```
+### 8.1 旧案のアラートルール (未実装)
 
-### 8.2 重要イベントのログ出力
-
-```typescript
-// Webhook 受信
-logger.info('stripe.webhook.received', {
-  event_id: event.id,
-  event_type: event.type,
-  processing_time_ms: processingTime,
-});
-
-// 価格変更
-logger.warn('plan.price_change', {
-  plan_key: planKey,
-  old_price: oldPrice,
-  new_price: newPrice,
-  applies_to: appliesTo,
-  actor_id: actorId,
-});
-```
-
-### 8.3 アラートルール (Better Stack で設定)
+下の表は Better Stack で設定する予定だったもので、実現する手段がなくなったため実装されていない。
+代わりが必要になったら、`app_logs` の集計などで改めて設計する (§16)。
 
 | 条件 | アクション |
 |-----|---------|
@@ -465,9 +484,9 @@ logger.warn('plan.price_change', {
 | pg_cron ジョブ失敗 | Slack #cron-alerts |
 | API p95 > 1000ms (3 分間継続) | Slack #performance |
 
-### 8.4 暫定: アプリログ画面 (実装済み: #1157)
+### 8.2 アプリログ画面 (実装済み: #1157)
 
-Better Stack を導入するまでの間、`app_logs` (db-logger が書く構造化ログ) を super_admin が画面で読める。
+Better Stack は採用しない (上記)。代わりに、`app_logs` (db-logger が書く構造化ログ) を super_admin が画面で読める (§7.1)。
 
 | 項目 | 内容 |
 |-----|------|
@@ -478,15 +497,17 @@ Better Stack を導入するまでの間、`app_logs` (db-logger が書く構造
 | 表示 | 文面は保存されたまま表示する。秘密情報のマスクは書き込み時 (`supabase/functions/_shared/log-sanitizer.ts`: #1171 / #1287) |
 | 索引 | `created_at` / `level` / `function_name` / `source` / `user_id`。`request_id` には索引が無く、単独で探すと全行を順に調べる |
 
-しきい値を超えたときの通知 (メールなど) と Sentry 連携は含まない。
+しきい値を超えたときの通知 (メールなど) は含まない (§8.1 の旧案は未実装)。Sentry は採用しない (§7)。
 
-## 9. Status Page (status.homegohan.app)
+## 9. Status Page (status.homegohan.app) は設置しない
 
-### 9.1 Better Stack Status Page 設定
+オーナー決定 (2026-10-08、#1179): Status Page は設置しない。`status.homegohan.app` は作らず、Better Stack の Status Page 機能も使わない。
+障害を利用者へ公開する画面は無いので、利用者への連絡は、影響の範囲に応じてメール / Push で個別に行う (§10.1)。
+外部の死活監視サービス (UptimeRobot など) から見る URL は、次のとおり残す。
 
-URL: `https://status.homegohan.app`
+### 9.1 死活監視の対象
 
-**監視コンポーネント**:
+**監視コンポーネント** (表は旧案の Status Page 用のものをそのまま残す。どの監視サービスで見るかは、この文書では決めない。Better Stack は使わない):
 
 | コンポーネント | 監視 URL / 方法 | 更新頻度 |
 |-------------|--------------|--------|
@@ -513,15 +534,8 @@ URL: `https://status.homegohan.app`
 
 ### 9.2 インシデント記録フロー
 
-```
-1. 自動検知 or 手動検知
-2. Better Stack で「インシデント作成」
-   → status.homegohan.app に表示
-3. 影響コンポーネントとステータスを選択
-   (Investigating / Identified / Monitoring / Resolved)
-4. ユーザーへの影響範囲によりメール/Push 通知
-5. 復旧確認 → Resolved + 今後の対応予定を記載
-```
+Status Page が無いので、旧案の「Better Stack でインシデントを作成し、`status.homegohan.app` に表示する」流れは使わない。
+記録は、§10.1 の Slack スレッドの作業ログと、§10.2 のポストモーテムで行う。
 
 ## 10. インシデント管理フロー
 
@@ -529,7 +543,8 @@ URL: `https://status.homegohan.app`
 
 ```
 Step 1: 検知
-  - 自動: Better Stack / Sentry アラート → Slack #incident
+  - 自動: severity='critical' の監査ログ (§6.2) → Slack #incident
+    (Better Stack / Sentry のアラートは採用しないため無い。エラー急増の自動検知は未実装で、§8.1 の旧案のまま)
   - 手動: ユーザー報告 → support チケット → admin が確認
 
 Step 2: トリアージ (5 分以内)
@@ -542,7 +557,7 @@ Step 2: トリアージ (5 分以内)
     P3: 軽微な問題 (計画的に対応)
 
 Step 3: 通知 (P0/P1 は即時)
-  - status.homegohan.app を更新
+  - (Status Page は設置しない。利用者への連絡は、影響の範囲に応じてメール / Push で個別に行う)
   - Slack #incident に状況共有
   - Org Pro/Enterprise 顧客には直接メール通知
 
@@ -552,7 +567,7 @@ Step 4: 対応
 
 Step 5: 復旧確認
   - smoke test 実施
-  - status.homegohan.app を Resolved に更新
+  - (Status Page は設置しないので、更新するものは無い)
   - ユーザーへ復旧通知
 
 Step 6: ポストモーテム (P0/P1 は 48 時間以内)
@@ -632,9 +647,8 @@ sequenceDiagram
 | シナリオ | 対処 |
 |---------|------|
 | 監査ログ INSERT 失敗 | 操作自体をロールバック (監査ログなしの破壊的操作は禁止) |
-| Sentry 送信失敗 | fire-and-forget (業務には影響させない) |
-| Better Stack 送信失敗 | fire-and-forget |
-| Slack 通知失敗 | Better Stack に fallback ログ記録 |
+| `app_logs` への記録失敗 | 握りつぶす (`console.error` に出すだけで、業務の処理は止めない。`src/lib/db-logger.ts` の `saveLog`) |
+| Slack 通知失敗 | `app_logs` に warn で記録 |
 
 ## 13. テスト方針
 
@@ -646,8 +660,8 @@ sequenceDiagram
 4. `it('returns 0 rows when admin role (non-super_admin) selects audit_logs')`
 5. `it('super_admin can SELECT all audit_logs')`
 6. `it('E2E: BAN action creates audit_log entry visible to super_admin')`
-7. `it('Sentry error is captured when unhandled exception occurs in API route')`
-8. `it('Slack alert is sent when error rate exceeds 1% threshold')`
+7. `it('writes an error row to app_logs when an API route handles an unexpected exception')`
+8. `it('Slack alert is sent when error rate exceeds 1% threshold')` (未実装: Better Stack を採用しないため、エラー率のアラートは §8.1 の旧案のまま)
 
 ```typescript
 // tests/integration/operator/audit-log-rls.integration.test.ts
@@ -775,13 +789,16 @@ test('BAN action creates audit_log entry visible to super_admin', async ({
   await expect(latestLog).toContainText('user_ban');
   await expect(latestLog).toContainText(targetUserId ?? '');
 });
+```
 
 ## 14. 既存実装との関連
 
 - `admin_audit_logs`: 既存テーブルあり、ALTER で拡張
-- Sentry: `@sentry/nextjs` は既存インストール済み
-- Better Stack: 新規追加 (`@logtail/node`)
-- Status Page: Better Stack の Status Page 機能を利用
+- Sentry: 採用しない (#1179)。`@sentry/nextjs` は入れていない (`package.json` に無い)。以前ここに書いていた「既存インストール済み」は誤りだった
+- Better Stack: 採用しない (#1179)。`@logtail/node` は入れない
+- Status Page: 設置しない (#1179)。`status.homegohan.app` は作らない
+- エラー監視: `app_logs` (`src/lib/db-logger.ts` / `supabase/functions/_shared/db-logger.ts`) と `/super-admin/logs`
+- 性能の計測: Vercel Speed Insights (`@vercel/speed-insights`。`src/app/layout.tsx` から `src/components/SpeedInsightsClient.tsx` 経由で置く)
 
 ## 15. プロダクト Analytics イベント (PostHog) 【不採用】
 
@@ -945,3 +962,5 @@ cross/08-legal-compliance §13 に従い、`cookie_consents` テーブルで「�
 - 監査ログの 1 年後コールドストレージ移行: S3 Glacier への転送ジョブは別途実装 (Phase 3)
 - PagerDuty 連携 (要件 §5.10.2 の将来): 現在は Slack のみ対応。PagerDuty は組織 Enterprise 契約時に検討
 - `audit_logs_archive` テーブルへの移動でインデックスが再作成されるため、large scale 時のパフォーマンス確認が必要
+- エラー急増・Stripe webhook の遅延・pg_cron の失敗・API p95 悪化の自動通知 (§8.1 の旧案): Better Stack を採用しないため未実装。`app_logs` の集計で代替するか、自動通知を持たない運用にするかを決める (#1179)
+- Speed Insights の計測データ (ページの URL を含む) を Vercel へ送ることの表示 (§7.3): 記載が要るかは弁護士の確認 (T30) を待って決める。本番はすでに有効とみられ、デプロイした時点から送られる。送る URL からは `?` 以降・`#` 以降・招待トークンを消してある (`beforeSend`)。デプロイ後に、実際の送信内容で確かめる (#1179)

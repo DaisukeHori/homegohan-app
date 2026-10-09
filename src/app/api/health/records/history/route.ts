@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 import { addDays, formatLocalDate } from '@/lib/date-utils';
 import { clampIntParam } from '@/lib/http-params';
 
@@ -30,8 +31,7 @@ export async function GET(request: NextRequest) {
     .order('record_date', { ascending: true });
 
   if (error) {
-    console.error('Failed to fetch weight history:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/health/records/history', error, { userId: user.id, table: 'health_records' });
   }
 
   return NextResponse.json(data || []);

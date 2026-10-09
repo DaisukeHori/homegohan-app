@@ -21,25 +21,15 @@
  */
 import { randomUUID } from 'crypto';
 import { Resend } from 'resend';
-import { z } from 'zod';
 import { createLogger } from '@/lib/db-logger';
 import { EmailSendError, type SendEmailResult } from '@/lib/emails/send-result';
+import { EmailEnvelopeSchema, type EmailEnvelope } from './envelope';
 
 export type { SendEmailFailed, SendEmailResult, SendEmailSent, SendEmailSkipped } from '@/lib/emails/send-result';
 
-export const EmailEnvelopeSchema = z.object({
-  to: z.string().email(),
-  from: z.string().default('ほめゴハン <noreply@homegohan.app>'),
-  subject: z.string().min(1).max(100),
-  text: z.string().min(1),
-  html: z.string().optional(),
-  reply_to: z.string().email().optional(),
-  // どの文面のメールかを表す名前 (snake_case。例: org_invite_new)。失敗のログで文面を区別するために使い、Resend には送らない。
-  // 文面を作る render*Email 関数が必ず入れる (形式は src/__tests__/lib/emails/template-names.test.ts が検査する)。
-  // ログの印にすぎないので、ここでは長さなどを検証しない (名前の不備でメールが止まらないように)
-  template: z.string().optional(),
-});
-export type EmailEnvelope = z.infer<typeof EmailEnvelopeSchema>;
+// メールの形 (スキーマ) は envelope.ts に 1 つだけある (#1194)。
+// 既存の import 先 (`@/lib/emails/send`) をそのまま使えるように、ここからも再エクスポートする。
+export { EmailEnvelopeSchema, type EmailEnvelope };
 
 export interface SendEmailOptions {
   /**

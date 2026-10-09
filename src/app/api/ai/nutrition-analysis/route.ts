@@ -1,8 +1,15 @@
 import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
+import { SUGAR_APP_DEFAULT } from '@homegohan/core';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+
+// 栄養目標が未設定のときの既定値（g/日）。
+// 糖質は「炭水化物 − 食物繊維」で計算しているので、目標も同じ定義（炭水化物の目標 − 食物繊維の目標）で導く (#1146)。
+const DEFAULT_CARBS_TARGET_G = 300;
+const DEFAULT_FIBER_TARGET_G = 21;
+const DEFAULT_SUGAR_TARGET_G = SUGAR_APP_DEFAULT.calculateFromCarbs(DEFAULT_CARBS_TARGET_G, DEFAULT_FIBER_TARGET_G);
 
 /**
  * 栄養分析API
@@ -141,14 +148,19 @@ export async function GET(request: Request) {
     const comparison: Record<string, { actual: number; target: number; percentage: number; status: string }> = {};
     
     if (targets) {
+      const carbsTarget = targets.carbs_g || DEFAULT_CARBS_TARGET_G;
+      const fiberTarget = targets.fiber_g || DEFAULT_FIBER_TARGET_G;
       const targetMap: Record<string, number> = {
         calories: targets.daily_calories || 2000,
         protein: targets.protein_g || 60,
         fat: targets.fat_g || 60,
-        carbs: targets.carbs_g || 300,
-        fiber: targets.fiber_g || 21,
+        carbs: carbsTarget,
+        fiber: fiberTarget,
         sodium: targets.sodium_g || 7,
-        sugar: targets.sugar_g || 50,
+        // 糖質の目標は、保存済みの sugar_g ではなく 炭水化物の目標 − 食物繊維の目標 から求める。
+        // 以前に保存された sugar_g は WHO の遊離糖の目安（約25g）で、糖質（炭水化物 − 食物繊維）の実績と比べると
+        // 常に「過剰」と判定されてしまう。手動編集された炭水化物の目標にも追従する。 (#1146)
+        sugar: SUGAR_APP_DEFAULT.calculateFromCarbs(carbsTarget, fiberTarget),
         potassium: targets.potassium_mg || 2500,
         calcium: targets.calcium_mg || 650,
         iron: targets.iron_mg || 10,
@@ -158,6 +170,8 @@ export async function GET(request: Request) {
       };
 
       for (const [key, target] of Object.entries(targetMap)) {
+        // 目標が 0 以下（炭水化物の目標が食物繊維の目標以下で糖質の目標が 0 になる場合など）は割り算できないので比べない
+        if (!(target > 0)) continue;
         const actual = dailyAverage[key] || 0;
         const percentage = Math.round((actual / target) * 100);
         let status = 'ok';
@@ -214,6 +228,14 @@ export async function GET(request: Request) {
       const medications = profile?.medications || [];
       const nutritionGoal = profile?.nutrition_goal || 'maintain';
 
+      // 糖質の目標の書き方。栄養目標はあるのに糖質の目標が 0 以下で比較から外れたときは、
+      // 既定値 (例: 279g) を出すと実際の目標と食い違うので「なし」と書く。栄養目標そのものが無いときだけ既定値を使う。
+      const sugarTargetText = comparison.sugar
+        ? `${comparison.sugar.target}g`
+        : targets
+          ? 'なし'
+          : `${DEFAULT_SUGAR_TARGET_G}g`;
+
       const prompt = `あなたは専門の管理栄養士です。以下のユーザーの栄養データを分析し、アドバイスを提供してください。
 
 【ユーザー情報】
@@ -227,10 +249,10 @@ export async function GET(request: Request) {
 - カロリー: ${dailyAverage.calories}kcal（目標: ${comparison.calories?.target || 2000}kcal）
 - タンパク質: ${dailyAverage.protein}g（目標: ${comparison.protein?.target || 60}g）
 - 脂質: ${dailyAverage.fat}g（目標: ${comparison.fat?.target || 60}g）
-- 炭水化物: ${dailyAverage.carbs}g（目標: ${comparison.carbs?.target || 300}g）
-- 食物繊維: ${dailyAverage.fiber}g（目標: ${comparison.fiber?.target || 21}g）
+- 炭水化物: ${dailyAverage.carbs}g（目標: ${comparison.carbs?.target || DEFAULT_CARBS_TARGET_G}g）
+- 食物繊維: ${dailyAverage.fiber}g（目標: ${comparison.fiber?.target || DEFAULT_FIBER_TARGET_G}g）
 - 塩分: ${dailyAverage.sodium}g（目標: ${comparison.sodium?.target || 7}g）
-- 糖質: ${dailyAverage.sugar}g（目標: ${comparison.sugar?.target || 50}g）
+- 糖質: ${dailyAverage.sugar}g（目標: ${sugarTargetText}）
 - カルシウム: ${dailyAverage.calcium}mg（目標: ${comparison.calcium?.target || 650}mg）
 - 鉄分: ${dailyAverage.iron}mg（目標: ${comparison.iron?.target || 10}mg）
 - ビタミンC: ${dailyAverage.vitaminC}mg（目標: ${comparison.vitaminC?.target || 100}mg）
