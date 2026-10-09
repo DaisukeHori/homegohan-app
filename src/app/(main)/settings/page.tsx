@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
+import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { requestNotificationPermission } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 
@@ -217,6 +218,8 @@ export default function SettingsPage() {
 
   const handleLogout = async () => {
     clearUserScopedLocalStorage();
+    // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
+    notifyNativeSignOut();
     await supabase.auth.signOut();
     broadcastSignOut();
     router.push('/login');
@@ -242,6 +245,8 @@ export default function SettingsPage() {
         throw new Error(json.error ?? `Delete failed: ${res.status}`);
       }
       clearUserScopedLocalStorage();
+      // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
+      notifyNativeSignOut();
       await supabase.auth.signOut();
       broadcastSignOut();
       router.push('/login');

@@ -8,6 +8,16 @@
  *
  * Stripe Secret Key 未設定時はモック動作 (graceful degradation)
  *
+ * #1102 (オーナー判断 2026-10-08): 価格変更は新規契約だけに適用し、年額用の Stripe 価格 ID の欄を追加する。
+ *   - applies_to は new_only だけ (省略時も new_only)。on_renewal / immediately は 400 (OP_INVALID_INPUT)。
+ *     既存サブスクリプションの Stripe 価格の切り替えは作らない (既存の契約者の請求額は変わらない)。
+ *   - subscription_plans.stripe_price_id は月額の Stripe Price ID、stripe_yearly_price_id は年額の Stripe Price ID。
+ *     月額・年額を 1 回のリクエストで同時に変えられる (従来の 422 OP_STRIPE_SYNC_BOTH_INTERVALS_UNSUPPORTED は廃止)。
+ *     Edge Function stripe-price-sync が interval ごとに新しい Price を作り、同じ interval の旧 Price だけを無効化して
+ *     { month, year } を返す。この route は、変えた interval の列だけを新しい Price の ID に更新する。
+ *   - plan_price_history の old/new_stripe_price_id は月額の Price ID を記録する (列の意味を subscription_plans に合わせた)。
+ *     年額の Price ID は監査ログ (admin_audit_logs.details) に残す。
+ *
  * #1041 round-2 (C) 修正: `supabase/functions/stripe-price-sync` を新規実装した
  * (旧: 関数が存在せず常に 404→502)。Edge Function が未デプロイの間 (404) は
  * 一時的な Stripe API 障害 (`OP_STRIPE_SYNC_FAILED`) と区別できるよう
@@ -24,21 +34,6 @@
  * 失敗した場合に価格 UPDATE 自体を行わせない (価格は変更したが監査証跡が無い
  * 状態を構造的に発生させない)。
  *
- * #1041 round-3 (C2) 修正: subscription_plans.stripe_price_id は 1 プランにつき
- * 1 本しか保持できないため、月額・年額を同時に変更するリクエストは Stripe
- * 同期が必須な状況では拒否する (route/Edge Function/UI の 3 点セット)。
- *
- * #1041 round-4 (C・Critical) 修正: 上記の「1 本しか保持できない」制約により、
- * subscription_plans.stripe_price_id は「直近に触った interval の Price」を
- * 指す意味論になる (月額のみ変更した直後は月額 Price を指すが、その後年額のみ
- * 変更すると DB 上は年額 Price を指すように置換され、月額 Price への参照は
- * DB から失われる)。Edge Function (stripe-price-sync) 側で interval を確認して
- * からでないと deactivate しない防御を入れているが (同ファイル参照)、この
- * 「連続片方変更で参照が interval を跨いで置換される」こと自体は本 route の
- * 責務では解消できないデータモデル上の制約であり、恒久対応には
- * new_yearly_stripe_price_id 相当の列追加 (月額・年額を同時に保持できる
- * migration) が必要 (round-3 C2 のコメントにある「別途 migration」と同一)。
- *
  * #1041 round-4 (W1) 修正: OP_INVALID_INPUT のメッセージに
  * `parseResult.error.message` (issues 配列の生 JSON 文字列) をそのまま
  * 返していたため、UI にエラーメッセージとして生 JSON がダンプされていた。
@@ -51,6 +46,9 @@
  * Price 作成 (履歴 INSERT より前に実行済み) には触れていなかった。Stripe 同期が
  * 必須な状況では、この時点で新 Price が Stripe 上に作成済みの可能性がある旨を
  * 追記する (metadata の plan_key/changed_by で当該 Price を識別できる)。
+ *
+ * (#1041 round-3 (C2) / round-4 (C) の「stripe_price_id は 1 本しか保持できない」制約は、
+ * #1102 で年額用の列 stripe_yearly_price_id を足して解消した。)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -60,6 +58,23 @@ import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { PriceChangeSchema } from '@/lib/super-admin/plans-schemas';
 
 type RouteContext = { params: { id: string } };
+
+/** Edge Function stripe-price-sync が interval ごとに返す結果 (変えなかった interval は null / 省略) */
+type StripeSyncIntervalResult = {
+  new_stripe_price_id?: string;
+  deactivated?: boolean;
+  deactivation_skipped_reason?: string;
+};
+
+/** 1 つの interval (月額 / 年額) の同期結果。Stripe 同期をしなかった / 変えなかったときは null の ID と未無効化 */
+type IntervalSync = {
+  newPriceId: string | null;
+  /** 旧 Price を無効化したか (Edge Function の interval ガードの結果。監査ログに記録する) */
+  oldPriceDeactivated: boolean;
+  oldPriceDeactivationSkippedReason: string | null;
+};
+
+const NO_SYNC: IntervalSync = { newPriceId: null, oldPriceDeactivated: false, oldPriceDeactivationSkippedReason: null };
 
 export async function POST(request: NextRequest, { params }: RouteContext) {
   try {
@@ -76,6 +91,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       // #1041 round-4 (W1): parseResult.error.message は issues 配列の生 JSON 文字列
       // であり、そのまま UI に表示すると意味不明なダンプになる。最初の issue の
       // message のみを抽出して返す (details には引き続き全 issues を含める)。
+      // #1102: applies_to が on_renewal / immediately のときも、ここで 400 になる
+      // (DB・Stripe のどちらにも触れる前に拒否する)。
       const firstIssueMessage = parseResult.error.issues[0]?.message ?? '入力値が不正です';
       return NextResponse.json(
         { error: { code: 'OP_INVALID_INPUT', message: firstIssueMessage, details: parseResult.error.issues } },
@@ -107,11 +124,13 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       );
     }
 
-    let newStripePriceId: string | null = null;
-    // #1041 round-4 (C): Edge Function 側の interval ガードによる deactivate 結果
-    // (監査ログ details に記録するため、DB 更新前に受け取っておく)。
-    let oldPriceDeactivated = false;
-    let oldPriceDeactivationSkippedReason: string | null = null;
+    const monthlyChange = input.new_monthly_price_jpy != null;
+    const yearlyChange = input.new_yearly_price_jpy != null;
+
+    // 月額・年額それぞれの Stripe 同期結果 (Edge Function の interval ガードによる deactivate 結果を含む。
+    // 監査ログ details に記録するため、DB 更新前に受け取っておく)。
+    let monthly: IntervalSync = NO_SYNC;
+    let yearly: IntervalSync = NO_SYNC;
 
     // #1041 (F4-06) 修正: STRIPE_SECRET_KEY が設定されている場合は「本番で Stripe 同期が
     // 必須」という明示的な状態であり、Edge Function 呼び出しに失敗した場合はそれを
@@ -119,29 +138,12 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     // STRIPE_SECRET_KEY が未設定の場合のみ、意図された dev/mock モードとして続行する。
     const stripeSyncExpected = Boolean(process.env.STRIPE_SECRET_KEY && plan.stripe_product_id);
 
-    // #1041 round-3 (C2): subscription_plans.stripe_price_id は 1 本しか保持できない
-    // (月額用・年額用の Price ID を同時に保存する列が無い)。UI は月額・年額を常に
-    // prefill するため、両方変更するリクエストが来ると Edge Function は片方
-    // (月額優先) しか Stripe に反映せず、年額の変更が黙って無視されたまま 200 を
-    // 返す偽成功になっていた。Stripe 同期が必須な状況では明示的に拒否し、DB 更新・
-    // Stripe 呼び出しのどちらも実行しない (年額用 Price ID 列の追加は別途 migration)。
-    if (stripeSyncExpected && input.new_monthly_price_jpy != null && input.new_yearly_price_jpy != null) {
-      return NextResponse.json(
-        {
-          error: {
-            code: 'OP_STRIPE_SYNC_BOTH_INTERVALS_UNSUPPORTED',
-            message: '現データモデルでは月額と年額を同時に Stripe 同期できません。片方ずつ変更してください。',
-          },
-        },
-        { status: 422 },
-      );
-    }
-
     if (stripeSyncExpected) {
       const edgeFnUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/stripe-price-sync`;
       let edgeRes: Response;
       try {
-        // Edge Function stripe-price-sync を呼ぶ (operator/04-plan-management.md §3.3 準拠)
+        // Edge Function stripe-price-sync を呼ぶ (operator/04-plan-management.md §3.3 準拠)。
+        // 月額・年額を変えるときは、1 回の呼び出しで両方を渡す (#1102)。
         edgeRes = await fetch(edgeFnUrl, {
           method: 'POST',
           headers: {
@@ -204,26 +206,40 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         );
       }
 
-      const edgeData = (await edgeRes.json()) as {
-        new_stripe_price_id?: string;
-        deactivated?: boolean;
-        deactivation_skipped_reason?: string;
+      const edgeData = (await edgeRes.json().catch(() => ({}))) as {
+        month?: StripeSyncIntervalResult | null;
+        year?: StripeSyncIntervalResult | null;
       };
-      newStripePriceId = edgeData.new_stripe_price_id ?? null;
-      // #1041 round-4 (C): Edge Function が interval 不一致等で旧 Price の
-      // deactivate をスキップした場合、監査ログに残して運用者が把握できるようにする。
-      oldPriceDeactivated = edgeData.deactivated ?? false;
-      oldPriceDeactivationSkippedReason = edgeData.deactivation_skipped_reason ?? null;
 
-      if (!newStripePriceId) {
-        // Edge Function が 200 を返したのに Price ID が取得できない場合も
-        // 同期未完了とみなし、偽成功にしない。
-        console.error('[super-admin/price-change] Edge Function returned ok but no new_stripe_price_id');
+      // 変えると指定した interval ごとに、新しい Price の ID を受け取る。
+      // #1041 round-4 (C): Edge Function が interval 不一致等で旧 Price の deactivate をスキップした場合、
+      // 監査ログに残して運用者が把握できるようにする。
+      const toIntervalSync = (changed: boolean, result: StripeSyncIntervalResult | null | undefined): IntervalSync =>
+        changed
+          ? {
+              newPriceId: result?.new_stripe_price_id ?? null,
+              oldPriceDeactivated: result?.deactivated ?? false,
+              oldPriceDeactivationSkippedReason: result?.deactivation_skipped_reason ?? null,
+            }
+          : NO_SYNC;
+      monthly = toIntervalSync(monthlyChange, edgeData.month);
+      yearly = toIntervalSync(yearlyChange, edgeData.year);
+
+      // Edge Function が 200 を返したのに、変えると指定した interval の Price ID が取得できない場合も
+      // 同期未完了とみなし、偽成功にしない (一方だけ取れた場合も、DB を片方だけ更新する中途半端な状態にしない)。
+      const missing = [
+        ...(monthlyChange && !monthly.newPriceId ? ['月額'] : []),
+        ...(yearlyChange && !yearly.newPriceId ? ['年額'] : []),
+      ];
+      if (missing.length > 0) {
+        console.error(
+          `[super-admin/price-change] Edge Function returned ok but no new_stripe_price_id for: ${missing.join(', ')}`,
+        );
         return NextResponse.json(
           {
             error: {
               code: 'OP_STRIPE_SYNC_FAILED',
-              message: 'Stripe Price の作成結果を確認できませんでした。DB は更新していません。',
+              message: `Stripe Price の作成結果を確認できませんでした (${missing.join('・')})。DB は更新していません。`,
             },
           },
           { status: 502 },
@@ -240,6 +256,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     // 変更されたのに監査証跡が無い」という中途半端な状態を残さずに済む
     // (UPDATE を先に行い失敗時にロールバックする方式は、ロールバック自体が
     // 失敗し得る二重障害点を増やすため採用しない)。
+    // old/new_stripe_price_id は月額の Price ID (subscription_plans.stripe_price_id と同じ意味。#1102)。
+    // new_stripe_price_id は、この変更で新しい月額の Price を作ったときだけ入る (年額だけ変えたときは null)。
     const { error: historyErr } = await supabaseAdmin.from('plan_price_history').insert({
       plan_id: params.id,
       old_monthly_price_jpy: plan.monthly_price_jpy,
@@ -247,7 +265,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       old_yearly_price_jpy: plan.yearly_price_jpy,
       new_yearly_price_jpy: input.new_yearly_price_jpy ?? plan.yearly_price_jpy,
       old_stripe_price_id: plan.stripe_price_id,
-      new_stripe_price_id: newStripePriceId,
+      new_stripe_price_id: monthly.newPriceId,
       changed_by: user.id,
       reason: input.reason,
       effective_at: input.effective_at,
@@ -282,10 +300,13 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     // 履歴行の事後的な取消/訂正は行わない (履歴は「変更を試みた記録」として残す
     // 設計。ロールバック処理自体が失敗し得る二重障害点を増やさないため採用しない
     // — round-3 (C1) の historyErr 側の設計判断と対称)。
+    // #1102: 変えた interval の Price ID の列だけを更新する (月額 = stripe_price_id / 年額 = stripe_yearly_price_id)。
+    // 変えなかった interval の列は一切書かない (もう片方の Price への参照を消さない)。
     const planUpdate: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (input.new_monthly_price_jpy != null) planUpdate.monthly_price_jpy = input.new_monthly_price_jpy;
     if (input.new_yearly_price_jpy != null) planUpdate.yearly_price_jpy = input.new_yearly_price_jpy;
-    if (newStripePriceId) planUpdate.stripe_price_id = newStripePriceId;
+    if (monthly.newPriceId) planUpdate.stripe_price_id = monthly.newPriceId;
+    if (yearly.newPriceId) planUpdate.stripe_yearly_price_id = yearly.newPriceId;
 
     const { error: updateErr } = await supabase
       .from('subscription_plans')
@@ -315,11 +336,19 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
           new_yearly_price_jpy: input.new_yearly_price_jpy,
           applies_to: input.applies_to,
           reason: input.reason,
-          stripe_mock: !newStripePriceId,
+          stripe_mock: !stripeSyncExpected,
+          // #1102: 月額 (stripe_price_id) と年額 (stripe_yearly_price_id) の Price ID。
+          // 変えなかった interval の new_* は null。
+          old_stripe_price_id: plan.stripe_price_id ?? null,
+          new_stripe_price_id: monthly.newPriceId,
+          old_stripe_yearly_price_id: plan.stripe_yearly_price_id ?? null,
+          new_stripe_yearly_price_id: yearly.newPriceId,
           // #1041 round-4 (C): 旧 Price の deactivate 結果 (interval 不一致等で
-          // スキップされた場合、運用者が気づけるよう監査ログに残す)。
-          old_stripe_price_deactivated: oldPriceDeactivated,
-          old_stripe_price_deactivation_skipped_reason: oldPriceDeactivationSkippedReason,
+          // スキップされた場合、運用者が気づけるよう監査ログに残す)。月額 / 年額それぞれ。
+          old_stripe_price_deactivated: monthly.oldPriceDeactivated,
+          old_stripe_price_deactivation_skipped_reason: monthly.oldPriceDeactivationSkippedReason,
+          old_stripe_yearly_price_deactivated: yearly.oldPriceDeactivated,
+          old_stripe_yearly_price_deactivation_skipped_reason: yearly.oldPriceDeactivationSkippedReason,
         },
         severity: 'warn',
         ip_address: request.headers.get('x-forwarded-for'),
@@ -334,9 +363,11 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         plan_key: plan.plan_key,
         new_monthly_price_jpy: input.new_monthly_price_jpy,
         new_yearly_price_jpy: input.new_yearly_price_jpy,
-        new_stripe_price_id: newStripePriceId,
+        // 月額 (stripe_price_id) / 年額 (stripe_yearly_price_id) の新しい Stripe Price ID。変えなかった方は null
+        new_stripe_price_id: monthly.newPriceId,
+        new_stripe_yearly_price_id: yearly.newPriceId,
         applies_to: input.applies_to,
-        stripe_mock: !newStripePriceId,
+        stripe_mock: !stripeSyncExpected,
       },
     });
   } catch (err) {

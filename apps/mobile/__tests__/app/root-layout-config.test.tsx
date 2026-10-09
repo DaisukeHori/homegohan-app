@@ -45,7 +45,7 @@ jest.mock(
   }),
   { virtual: true },
 );
-jest.mock('../../src/lib/pushNotifications', () => ({ registerAndSaveExpoPushToken: jest.fn() }));
+jest.mock('../../src/lib/pushNotifications', () => ({ ensurePushTokenRegistered: jest.fn() }));
 jest.mock('../../src/lib/error-report', () => ({ reportBoundaryError: jest.fn() }));
 jest.mock('@expo-google-fonts/noto-sans-jp', () => ({
   NotoSansJP_400Regular: 1,
