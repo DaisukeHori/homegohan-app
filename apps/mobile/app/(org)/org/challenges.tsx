@@ -108,7 +108,7 @@ export default function OrgChallengesPage() {
             <Input
               value={challengeType}
               onChangeText={setChallengeType}
-              placeholder="breakfast_rate / veg_score / cooking_rate / steps / weight_loss / custom"
+              placeholder="breakfast_rate / veg_score / cooking_rate (歩数・体重は準備中)"
               label="チャレンジタイプ"
             />
             <Input value={startDate} onChangeText={setStartDate} placeholder="YYYY-MM-DD" label="開始日" />

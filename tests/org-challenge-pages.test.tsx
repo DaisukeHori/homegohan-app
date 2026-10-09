@@ -21,7 +21,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const nav = vi.hoisted(() => ({ id: '00000000-0000-4000-8000-0000000000c1' }));
+const nav = vi.hoisted(() => ({ id: '00000000-0000-4000-8000-0000000000c1', push: vi.fn() }));
 
 vi.mock('next/link', () => ({
   default: ({ href, children, className }: { href: string; children: React.ReactNode; className?: string }) => (
@@ -33,6 +33,7 @@ vi.mock('next/link', () => ({
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: nav.id }),
+  useRouter: () => ({ push: nav.push }),
 }));
 
 const { OrgChallengeEntry } = await import('@/components/org-challenges/OrgChallengeEntry');
@@ -89,6 +90,7 @@ async function click(target: HTMLElement) {
 }
 
 beforeEach(() => {
+  nav.push.mockReset();
   fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -296,12 +298,16 @@ describe('メンバー向けの一覧 (/challenges)', () => {
     expect(container.querySelector('[role="alert"]')).not.toBeNull();
   });
 
-  it('ホームへ戻るリンクがある', async () => {
+  it('ホームへ戻るボタンで /home へ移る (リンク <a> にしない: アプリの WebView では、タブの画面へ向かう <a> を NativeAppTabRouter が横取りして何も起きなくなる)', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ challenges: [] }));
 
     await render(<ChallengesListPage />);
 
-    expect(container.querySelector('a[href="/home"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/home"]')).toBeNull();
+    expect(nav.push).not.toHaveBeenCalled();
+    await click(button('← ホームへ戻る'));
+    expect(nav.push).toHaveBeenCalledTimes(1);
+    expect(nav.push).toHaveBeenCalledWith('/home');
   });
 });
 

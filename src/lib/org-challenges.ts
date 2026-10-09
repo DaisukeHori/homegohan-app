@@ -8,6 +8,8 @@
 // 指標の計算そのものは DB の関数 update_org_challenge_progress (supabase/migrations/*_org_challenge_progress.sql)。
 // ここには「どの種類が使えるか」「画面に出す名前と単位」「順位表に名前を出すかどうか」だけを置く。
 
+import { formatLocalDate } from '@/lib/date-utils';
+
 /** 食事の記録から自動で計算できる種類。DB の関数 update_org_challenge_progress が対象にする challenge_type と同じ */
 export const ORG_CHALLENGE_TYPES = ['breakfast_rate', 'veg_score', 'cooking_rate'] as const;
 
@@ -128,14 +130,12 @@ export function isIsoDate(value: unknown): value is string {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
-/** 今日の日付 (JST の暦日, YYYY-MM-DD)。DB の update_org_challenge_progress と同じく Asia/Tokyo で決める (#1210 / #1211) */
+/**
+ * 今日の日付 (JST の暦日, YYYY-MM-DD)。DB の update_org_challenge_progress と同じく Asia/Tokyo で決める (#1210 / #1211)。
+ * 日付の書式づくりは共通の formatLocalDate (src/lib/date-utils.ts) に任せ、ここでは JST に固定するだけ。
+ */
 export function todayJst(now: Date = new Date()): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Tokyo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(now);
+  return formatLocalDate(now, 'Asia/Tokyo');
 }
 
 /** 参加者数を画面に出す形にする。最小人数に満たない (API が null で返す) ときは「5人未満」 */

@@ -30,7 +30,6 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
-import { todayJst } from '../../../src/lib/org-challenges';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -96,7 +95,15 @@ function addDays(isoDate: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-const TODAY = todayJst();
+/**
+ * JST の今日 (YYYY-MM-DD)。アプリのコードを import せず、ここで独立に求める (サーバーの決め方と食い違えば、テストが落ちる)。
+ * JST は UTC+9 で夏時間が無いので、9 時間進めた時刻の UTC の日付が JST の暦日になる
+ */
+function jstToday(now: Date = new Date()): string {
+  return new Date(now.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+const TODAY = jstToday();
 const START = addDays(TODAY, -3);
 const END = addDays(TODAY, 20);
 

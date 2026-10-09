@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ORG_CHALLENGE_MIN_PARTICIPANTS,
   ORG_CHALLENGE_TYPE_LABELS,
@@ -49,6 +50,7 @@ const STATUS_LABELS: Record<string, { label: string; className: string }> = {
 };
 
 export default function ChallengesPage() {
+  const router = useRouter();
   const [state, setState] = useState<ListState>({ status: "loading" });
 
   const load = useCallback(async (signal?: AbortSignal) => {
@@ -83,9 +85,16 @@ export default function ChallengesPage() {
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
       <header className="bg-white p-6 pb-8 rounded-b-[40px] shadow-sm mb-6">
-        <Link href="/home" className="inline-block text-sm text-gray-600 mb-3 hover:text-gray-900">
+        {/* リンク (<a>) にしない: アプリの WebView では、タブの画面 (/home) へ向かう <a> のクリックを
+            NativeAppTabRouter が横取りして「タブの切り替え」に変えてしまい、いまの画面 (ホームのタブの WebView) のままで
+            何も起きなくなる。ボタンから router.push で移れば、Web でもアプリの WebView でもホームへ戻れる */}
+        <button
+          type="button"
+          onClick={() => router.push("/home")}
+          className="inline-block text-sm text-gray-600 mb-3 hover:text-gray-900"
+        >
           ← ホームへ戻る
-        </Link>
+        </button>
         <h1 className="text-2xl font-bold text-gray-900 mb-2">組織チャレンジ</h1>
         <p className="text-gray-600 text-sm">
           職場のみんなと、食事の記録で楽しく競い合えます。参加するかどうかは、あなたの自由です。
