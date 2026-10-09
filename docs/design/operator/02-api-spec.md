@@ -243,6 +243,13 @@ BAN 解除
 
 `type`: `food` | `recipe` | `ai_content`
 
+> **現状 (2026-10, #1128)**: `ai_content` (AI コンテンツ) の審査は**準備中 (未対応)**。バックエンドのテーブルが無いため、
+> `ai_content` を指定した一覧 (`/queue?type=ai_content`)・個別取得・解決 (`PUT` / `POST` `/{type}/{id}`) は
+> 空や 404 ではなく **501 `OP_NOT_SUPPORTED`** を返す。画面の「AIコンテンツ（未対応）」は選べない。
+> 集約 API `GET /api/admin/moderation` の `aiFlags` は空配列のままで、`aiFlagsSupported: false` を添える
+> (空は「通報 0 件」ではなく「未対応」の意味。配布済みの古いモバイルアプリの運営画面 (リポジトリからは #1389 で削除済み) が
+> `...(res.aiFlags ?? [])` と配列として展開するため、形は変えない)。
+
 **クエリ**: `?status=pending&page=1&per_page=30`
 
 **レスポンス**:
@@ -415,6 +422,13 @@ LLM 使用量ダッシュボード
 ### POST /api/super-admin/llm-usage/quota-update
 クォータ更新
 
+> **現状 (2026-10, #1149)**: LLM 利用クォータの管理は**準備中 (未対応)**。実装は `/api/super-admin/llm/quotas` にあり、
+> `PATCH` は 501 `OP_NOT_SUPPORTED` を返す (値を保存せず、監査ログも残さない)。`GET` は設計上の目安の値を、
+> `enforced: false` (AI の呼び出しには適用されていない) を添えて返す。AI を呼ぶ処理は、クォータで止まらない
+> (§23 の `OP_QUOTA_EXCEEDED` 429 は未実装)。クォータを AI の呼び出しに効かせる処理は、まだ作っていない (効かせるかどうかは別の判断が要る)。
+> なお、オーナー判断 (2026-10-08) により、海外の AI プロバイダーへのデータ送信を止める変更は入れない。
+> 画面の「クォータ設定」は「クォータ設定（準備中）」の文字だけで、リンクにしない。
+
 **リクエスト**:
 ```json
 {
@@ -429,6 +443,11 @@ LLM 使用量ダッシュボード
 ---
 
 ## 9. 売上・経理 API
+
+> **現状 (2026-10, #1125)**: 課金 (Stripe の Webhook 受信・収益の日次スナップショットなどの集計バッチ) は**未開始**で、
+> 請求書・収益推移・Stripe 整合チェックの元になるデータが無い。画面 (`/admin/finance/invoices` `/revenue` `/reconciliation`) は
+> 「課金は未開始のため準備中」と表示し、売上ダッシュボードの MRR / ARR / Churn Rate / LTV / 契約数は「準備中」とする
+> (MAU は `daily_active_users` の実データなのでそのまま出す)。API は残してある。
 
 ### GET /api/admin/finance/dashboard
 売上ダッシュボード
@@ -739,6 +758,12 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 
 ## 13. インフラ監視 API
 
+> **現状 (2026-10, #1180)**: `infra_metrics` / `infra_alerts` に書き込む処理 (監視データの収集) が**無い**ため、
+> `/api/super-admin/infra/metrics` と `/alerts` は常に空を返す。画面は、空を「問題なし」と見せず
+> 「未接続: 監視データの収集は設定されていません」と表示し、Vercel / Supabase のダッシュボードへのリンクを出す。
+> `/alerts` の応答にあった `external_sources` (SENTRY_DSN / BETTER_STACK_TOKEN の有無) は、どちらもコードで使われておらず
+> 接続状態を表さないため廃止した。
+
 ### GET /api/super-admin/infra/dashboard
 統合監視ダッシュボード
 
@@ -875,6 +900,12 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 ---
 
 ## 16. データエクスポート API
+
+> **現状 (2026-10, #1126)**: データエクスポートは**準備中 (未対応)**。ファイルを作る処理 (cron / worker) と専用の
+> `exports` テーブルが無いため、`/api/super-admin/exports` と `/exports/{id}` は全メソッドが 501 `OP_NOT_SUPPORTED` を返し、
+> DB には触れない。画面 (`/super-admin/exports`, `/new`) は「準備中（未対応）」だけを出し、依頼フォームは無い。
+> 以前は、利用者本人の GDPR 削除要求の表 (`gdpr_deletion_requests`) を代用していたが、これは本人の削除要求を
+> 取り消す事故につながるため止めた。実装するときは、専用テーブルを先に用意すること。
 
 ### POST /api/super-admin/exports
 エクスポートリクエスト
@@ -1314,6 +1345,7 @@ NPS サーベイ送信 (日次 14:00 JST)
 | `OP_STRIPE_SYNC_FAILED` | 502 | Stripe API 呼び出し失敗 |
 | `OP_COUPON_EXPIRED` | 422 | クーポン期限切れ |
 | `OP_TRIAL_ALREADY_USED` | 422 | 同一プランの試用は 1 回のみ |
+| `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応 (準備中) の機能。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査・LLM クォータの変更) |
 
 ## 24. テスト方針
 
