@@ -6,6 +6,7 @@ import { useNavigation, useRouter, useLocalSearchParams } from 'expo-router';
 import { getDownloadFailureNotice, handleWebViewDownload } from '../../lib/webViewDownload';
 import { getWebBaseUrl } from '../../lib/webBaseUrl';
 import { colors } from '../../theme/colors';
+import { useWebAuthMessages } from '../../lib/webViewAuthMessages';
 import { supabase } from '../../lib/supabase';
 
 // download の送信元の確認 (webViewDownload.ts) と同じ値から決める (既定値を 2 か所に持たない)
@@ -106,6 +107,8 @@ true;
 
 export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
   const webViewRef = useRef<WebView>(null);
+  // Web 側のログアウト・セッション失効の通知 (sign-out / session-expired) をネイティブに反映する (#1038 F7-04 / F7-05)
+  const handleAuthMessage = useWebAuthMessages(path);
   const [uri, setUri] = useState<string | null>(null);
   const [injectedJS, setInjectedJS] = useState<string>('');
   const navigation = useNavigation();
@@ -266,6 +269,9 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
                 const notice = getDownloadFailureNotice(result);
                 if (notice) Alert.alert(notice.title, notice.message);
               });
+            } else if (data.type === 'sign-out' || data.type === 'session-expired') {
+              // Web 側でログアウトした / Web 側のセッションが切れた。送り元の検証と処理は useWebAuthMessages に集約している
+              handleAuthMessage(data, event.nativeEvent.url);
             }
           } catch {
             // JSON パース失敗は無視
