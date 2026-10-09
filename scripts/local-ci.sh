@@ -428,6 +428,8 @@ tail_hint() { printf '%s (末尾は %s)' "$1" "$2"; }
 # ---------------------------------------------------------------------
 SLOT=""
 SLOT_LOCK=""
+# 枠のロックを、持ち主の死んだロックを回収して取ったか (1 のときだけ、その枠に残ったスタックを片付ける)
+SLOT_RECLAIMED=0
 ART_LOCK=""
 SLOT_TIMED_OUT=0
 
@@ -453,8 +455,10 @@ apply_slot() {
 
 file_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 
-# プロセスの開始時刻 (pid が使い回されたときに、別のプロセスを持ち主と取り違えないために記録する)
-proc_lstart() { LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//; s/ *$//'; }
+# プロセスの開始時刻 (pid が使い回されたときに、別のプロセスを持ち主と取り違えないために記録する)。
+# 書いた実行と確かめる実行でロケールやタイムゾーンが違っても同じ文字列になるよう、LC_ALL=C・TZ=UTC で出す
+# (違う文字列になると、生きている持ち主を死んだとみなしてロックを回収し、その枠のスタックまで片付けてしまう)
+proc_lstart() { LC_ALL=C TZ=UTC ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//; s/ *$//'; }
 
 # lock_held <ロックのディレクトリ>: 生きている持ち主がいる (または作られた直後で持ち主をまだ書いていない) なら真
 lock_held() {
@@ -499,13 +503,16 @@ reclaim_lock() {
   rmdir "$guard"
 }
 
-# try_lock <ロックのディレクトリ>: mkdir で原子的に取る。持ち主が死んでいれば回収して取り直す
+# try_lock <ロックのディレクトリ>: mkdir で原子的に取る。持ち主が死んでいれば回収して取り直す。
+# 取れたとき、持ち主の死んだロックを回収して取ったなら LOCK_RECLAIMED=1、空いていたのを取ったなら 0 にする
+LOCK_RECLAIMED=0
 try_lock() {
   local dir="$1"
+  LOCK_RECLAIMED=0
   if mkdir "$dir" 2>/dev/null; then write_owner "$dir"; return 0; fi
   lock_held "$dir" && return 1
   reclaim_lock "$dir" || return 1
-  if mkdir "$dir" 2>/dev/null; then write_owner "$dir"; return 0; fi
+  if mkdir "$dir" 2>/dev/null; then write_owner "$dir"; LOCK_RECLAIMED=1; return 0; fi
   return 1
 }
 
@@ -551,6 +558,7 @@ acquire_slot() {
         # 外側のロックは別の作業が mkdir するので、取ったあとにもう一度確かめる
         if [ "$s" -eq 0 ] && legacy_lock_held; then release_lock "$LOCK_DIR/slot-$s"; continue; fi
         SLOT_LOCK="$LOCK_DIR/slot-$s"
+        SLOT_RECLAIMED="$LOCK_RECLAIMED"
         apply_slot "$s"
         say "枠 $s を取りました (project_id $SLOT_PROJECT_ID / Supabase API $SLOT_API_PORT / Next ${APP_PORT}・${ENFORCED_APP_PORT}・${NOTICE_APP_PORT}。ロック $SLOT_LOCK)"
         return 0
@@ -565,15 +573,30 @@ acquire_slot() {
   done
 }
 
-# 前の実行が死んで残った、この枠 (1 以上) のスタックを片付ける (枠のロックを持っているので、この枠の project_id は自分だけのもの)
-clear_slot_leftovers() {
-  [ "$SLOT" -ne 0 ] || return 0
+# slot_stack_exists: この枠の project_id のコンテナかボリュームが 1 つでもあれば真
+slot_stack_exists() {
   local filter="label=com.supabase.cli.project=$SLOT_PROJECT_ID"
-  if [ -z "$(docker ps -aq --filter "$filter" 2>/dev/null)" ] && [ -z "$(docker volume ls -q --filter "$filter" 2>/dev/null)" ]; then
-    return 0
-  fi
-  say "枠 $SLOT ($SLOT_PROJECT_ID) に前の実行の残ったコンテナ / ボリュームがあるので片付けます"
+  [ -n "$(docker ps -aq --filter "$filter" 2>/dev/null)" ] || [ -n "$(docker volume ls -q --filter "$filter" 2>/dev/null)" ]
+}
+
+# 持ち主の死んだ枠 (1 以上) のロックを回収して取ったときだけ、その持ち主が残したスタックを片付ける。
+# 回収していない (空いていたロックを取った) ときは片付けない。そのときにこの枠のスタックがあるのは、ロックを取らずに
+# 手で LOCAL_CI_SLOT を付けて起動したスタックなど、ほかの作業のものかもしれないので、消さずに段の前で赤にする (check_slot_stack)。
+# 枠 0 は、枠を使わない作業 (CI・手で起動したスタック・外側のロックで動く Workflow) と共有しているので、どちらもしない
+clear_slot_leftovers() {
+  [ "$SLOT" -ne 0 ] && [ "$SLOT_RECLAIMED" = 1 ] || return 0
+  slot_stack_exists || return 0
+  say "枠 $SLOT ($SLOT_PROJECT_ID) のロックを持ち主の死んだ実行から回収したので、その実行が残したコンテナ / ボリュームを片付けます"
   run_in "$WT" "$ART/slot-leftover.log" bash scripts/supabase-local.sh stop-leftover || true
+}
+
+# check_slot_stack <段>: integration / e2e の前に、この枠 (1 以上) の project_id のコンテナ・ボリュームが残っていないかを確かめる。
+# 残っていれば消さずに赤で終える (check_ports と同じく、他の作業のものには触らない)。枠 0 は今までどおり確かめない
+check_slot_stack() {
+  [ "$SLOT" -ne 0 ] || return 0
+  slot_stack_exists || return 0
+  record "$1:setup" RED - - - - - 0 "枠 $SLOT の project_id ($SLOT_PROJECT_ID) のコンテナ / ボリュームが残っている (ロックを取らずに手で起動したスタックなどかもしれないので消さずに赤で終える。持ち主を確かめ、要らなければ LOCAL_CI_SLOT=$SLOT bash scripts/supabase-local.sh stop-leftover で止めてから再実行する)"
+  return 1
 }
 
 # ---------------------------------------------------------------------
@@ -644,6 +667,7 @@ stage_integration() {
   local t0 rc line log p
   check_ports integration || return 0
   check_docker integration || return 0
+  check_slot_stack integration || return 0
 
   SUPA_LOG="$ART/integration-supabase.log"
   t0=$(now)
@@ -707,6 +731,7 @@ stage_e2e() {
   local t0 rc line log setup_log e2e_password
   check_ports e2e "$ENFORCED_APP_PORT" "$NOTICE_APP_PORT" || return 0
   check_docker e2e || return 0
+  check_slot_stack e2e || return 0
 
   setup_log="$ART/e2e-setup.log"
   t0=$(now)
@@ -1092,6 +1117,7 @@ if want mobile; then say "== mobile (mobile-test.yml)"; stage_mobile; fi
 if want integration || want e2e; then
   say "== 枠 (候補: $SLOT_CANDIDATES)"
   if acquire_slot; then
+    # 持ち主の死んだロックを回収したときだけ片付ける (回収していなければ何もしない。残っていれば段の前で赤になる)
     clear_slot_leftovers
   else
     SLOT_TIMED_OUT=1
