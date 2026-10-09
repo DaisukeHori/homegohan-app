@@ -33,8 +33,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
 
-import { captureEvent } from "./posthog";
-
 /** supabase-js の auth.storage に渡せる形 (すべて Promise を返す) */
 export type AuthStorage = {
   getItem: (key: string) => Promise<string | null>;
@@ -62,7 +60,7 @@ export type LegacyStorageLike = {
 export type SecureSessionStorageDeps = {
   secureStore: SecureStoreLike;
   legacyStorage: LegacyStorageLike;
-  /** 異常の通知先 (既定は console.warn と PostHog)。値そのものは渡さない */
+  /** 異常の通知先 (既定は console.warn だけ)。値そのものは渡さない */
   onIssue?: (event: SecureSessionStorageIssue, error?: unknown) => void;
   /** 世代名の元になる現在時刻 (テスト用) */
   now?: () => number;
@@ -145,13 +143,13 @@ function formatManifest(manifest: Manifest): string {
   return `v1.${manifest.generation}.${manifest.count}`;
 }
 
+// 既定の通知先は端末のコンソールだけ。
+//  - PostHog などの外部の計測サービスには送らない (#1166)。
+//  - サーバーログ (POST /api/log) にも送らない。送るにはログイン中のアクセストークンが要り、それを取る
+//    supabase.auth.getSession() がこの storage を読む。異常の通知から、この storage を呼び直す形になってしまう。
 const defaultOnIssue = (event: SecureSessionStorageIssue, error?: unknown): void => {
-  const e = error as { name?: unknown; message?: unknown } | null | undefined;
+  const e = error as { message?: unknown } | null | undefined;
   console.warn(`[secureSessionStorage] ${event}`, typeof e?.message === "string" ? e.message : "");
-  captureEvent("secure_session_storage_issue", {
-    issue: event,
-    error_name: typeof e?.name === "string" ? e.name : "",
-  });
 };
 
 /**

@@ -36,7 +36,6 @@ jest.mock('expo-router', () => ({
   useNavigation: () => ({}),
   useRouter: () => ({ replace: jest.fn() }),
 }));
-jest.mock('../../src/lib/posthog', () => ({ captureEvent: jest.fn() }));
 jest.mock('expo-notifications', () => ({
   getPermissionsAsync: jest.fn(),
   requestPermissionsAsync: jest.fn(),
@@ -190,7 +189,6 @@ type Modules = {
   secureSessionStorage: { setItem: (key: string, value: string) => Promise<void> };
   handleWebAuthMessage: typeof import('../../src/lib/webViewAuthMessages').handleWebAuthMessage;
   AsyncStorage: { getItem: (k: string) => Promise<string | null>; setItem: (k: string, v: string) => Promise<void> };
-  captureEvent: jest.Mock;
 };
 
 /** 実機に近づけるため、端末のストレージの読み書きを数 ms 遅らせる (処理の割り込みが起きやすくなる) */
@@ -219,9 +217,8 @@ function loadModules(server: ReturnType<typeof createFakeSupabaseServer>): Modul
   const { supabase, SUPABASE_AUTH_STORAGE_KEY } = require('../../src/lib/supabase');
   const { secureSessionStorage } = require('../../src/lib/secureSessionStorage');
   const { handleWebAuthMessage } = require('../../src/lib/webViewAuthMessages');
-  const { captureEvent } = require('../../src/lib/posthog');
   /* eslint-enable @typescript-eslint/no-require-imports */
-  return { supabase, SUPABASE_AUTH_STORAGE_KEY, secureSessionStorage, handleWebAuthMessage, AsyncStorage, captureEvent };
+  return { supabase, SUPABASE_AUTH_STORAGE_KEY, secureSessionStorage, handleWebAuthMessage, AsyncStorage };
 }
 
 function makeDeps() {
@@ -419,19 +416,30 @@ describe('session-expired だけが届いたとき', () => {
 });
 
 describe('DELETE が行を消せなかったとき', () => {
-  it('0 行だった (RLS に弾かれた・行が既に無い。どちらもエラーにならない) ことを、PostHog に送って観測できる。ログアウトは止めない', async () => {
-    server.pushTokenRows = [{ user_id: OTHER_USER_ID, expo_push_token: THIS_DEVICE_TOKEN }];
-    const tab = makeDeps();
+  it('0 行だった (RLS に弾かれた・行が既に無い。どちらもエラーにならない) ことを、端末のコンソールに出して観測できる。ログアウトは止めない', async () => {
+    // PostHog などの外部には送らない (#1166)。観測できるのは端末のコンソールだけ
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      server.pushTokenRows = [{ user_id: OTHER_USER_ID, expo_push_token: THIS_DEVICE_TOKEN }];
+      const tab = makeDeps();
 
-    await m.handleWebAuthMessage({ type: 'sign-out' }, PAGE, tab.deps);
+      await m.handleWebAuthMessage({ type: 'sign-out' }, PAGE, tab.deps);
 
-    expect(server.deleteCalls()).toHaveLength(1);
-    expect(m.captureEvent).toHaveBeenCalledWith(
-      'push_token_unregister_no_rows',
-      expect.objectContaining({ token_source: 'stored' }),
-    );
-    expect(m.captureEvent).not.toHaveBeenCalledWith('push_token_unregister_failed', expect.anything());
-    expect(tab.goToWelcome).toHaveBeenCalledTimes(1);
-    expect(await nativeSessionIsGone()).toBe(true);
+      expect(server.deleteCalls()).toHaveLength(1);
+      const pushIssues = warn.mock.calls.filter(([label]) => String(label).startsWith('[pushNotifications] '));
+      expect(pushIssues).toEqual([
+        [
+          '[pushNotifications] push_token_unregister_no_rows',
+          expect.objectContaining({ token_source: 'stored', explicit_access_token: true }),
+        ],
+      ]);
+      // トークンの値・ユーザー ID は載せない
+      expect(JSON.stringify(pushIssues)).not.toContain(THIS_DEVICE_TOKEN);
+      expect(JSON.stringify(pushIssues)).not.toContain(USER_ID);
+      expect(tab.goToWelcome).toHaveBeenCalledTimes(1);
+      expect(await nativeSessionIsGone()).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

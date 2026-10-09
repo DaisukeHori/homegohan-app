@@ -58,6 +58,18 @@ export function isPolicyPath(pathname: string): boolean {
   );
 }
 
+// #1174: 規約・プライバシーポリシーへの同意画面。同意ゲート (lib/legal-consent.ts。LEGAL_CONSENT_ENFORCE=on のとき) が、
+// 同意していないサインイン中の人をここへ回す。
+// 初期設定の差し戻しをここにも掛けると、初期設定が済んでいない人 (= 新規登録した人) は
+//   保護ページ -> /legal-consent (同意ゲート) -> /onboarding/welcome (差し戻し) -> /legal-consent (同意ゲート) -> ...
+// と無限にリダイレクトして、同意画面に着けない。初期設定の状態に関わらず素通りさせる
+// (見せるのは同意のチェックだけで、素通りさせても見せる範囲は広がらない)。
+export const LEGAL_CONSENT_PATH = "/legal-consent";
+
+export function isLegalConsentPath(pathname: string): boolean {
+  return pathname === LEGAL_CONSENT_PATH || pathname.startsWith(`${LEGAL_CONSENT_PATH}/`);
+}
+
 export function resolveOnboardingRedirect(input: OnboardingRedirectInput): string | null {
   const pathname = input.pathname;
   const roles = input.roles ?? [];
@@ -90,7 +102,8 @@ export function resolveOnboardingRedirect(input: OnboardingRedirectInput): strin
     isInvitePath(pathname) ||
     isFamilyPromotionPath(pathname) ||
     isAuthFlowPath(pathname) ||
-    isPolicyPath(pathname)
+    isPolicyPath(pathname) ||
+    isLegalConsentPath(pathname)
   ) {
     return null;
   }

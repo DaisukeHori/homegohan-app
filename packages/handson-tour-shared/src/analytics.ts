@@ -107,8 +107,9 @@ export type HandsonTourEventPayload<T extends HandsonTourEventName> = z.infer<
 
 // ============================================================
 // Analytics injector interface
-// PostHog SDK は Web/Mobile が個別に inject する。
 // 共通 package はインターフェースのみ定義し、具体実装を持たない。
+// #1166: 利用状況の計測 (PostHog) は採用しないことにした。Web・モバイルとも adapter を注入していないので、
+// fireAnalytics は何も送らない (呼び出し側はそのままでよい)。
 // ============================================================
 
 export interface AnalyticsAdapter {
@@ -119,7 +120,8 @@ let _adapter: AnalyticsAdapter | null = null;
 
 /**
  * analytics adapter を注入する。
- * Web: posthog-js、Mobile: posthog-react-native を注入する想定。
+ * #1166 以降、アプリ内に注入している箇所はない。ここで注入すると fireAnalytics のイベントが adapter に渡り始める
+ * (外部に送るなら、送るデータと同意の取り方を決めてから)。
  */
 export function setAnalyticsAdapter(adapter: AnalyticsAdapter): void {
   _adapter = adapter;

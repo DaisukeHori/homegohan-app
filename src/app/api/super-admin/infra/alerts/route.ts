@@ -1,7 +1,11 @@
 /**
  * GET /api/super-admin/infra/alerts  — インフラアラート一覧
  * operator/02-api-spec.md §13 準拠
- * Sentry / Better Stack キー未設定時は infra_alerts テーブルのみ表示 (graceful)
+ *
+ * #1180: infra_alerts に書き込む処理 (監視データの収集) はまだ無く、この一覧は常に空になる。
+ * 以前の応答にあった external_sources (SENTRY_DSN / BETTER_STACK_TOKEN の環境変数が設定されているか) は、
+ * 画面で「Sentry / Better Stack が接続済み」に見えるが、Sentry / Better Stack を使う処理はリポジトリのどこにも無く、
+ * 環境変数があっても接続はされていない。誤解を招くため、応答から取り除いた。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
@@ -43,16 +47,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
     }
 
-    // Sentry / Better Stack の外部情報は graceful: キー未設定時は DB データのみ返す
-    const externalSources: { source: string; available: boolean }[] = [
-      { source: 'sentry', available: !!process.env.SENTRY_DSN },
-      { source: 'better_stack', available: !!process.env.BETTER_STACK_TOKEN },
-    ];
-
     return NextResponse.json({
       data: data ?? [],
       meta: { total: count ?? 0, page, per_page },
-      external_sources: externalSources,
     });
   } catch (err) {
     if (err instanceof AuthError) {
