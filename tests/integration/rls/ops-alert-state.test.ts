@@ -413,8 +413,8 @@ describe('release_ops_alert', () => {
     const k = key('c2');
     const token = (await claim(k, 60)).data as string;
 
-    // 別の実行が取り直した、という状態を作る (時刻が token と違う行)
-    const newer = ago(0);
+    // 別の実行が取り直した、という状態を作る (token より後の時刻の行。ミリ秒の丸めで token と偶然同じにならないよう 1 秒後にする)
+    const newer = new Date(new Date(token).getTime() + 1000).toISOString();
     await setLastSentAt(k, newer);
 
     const released = await release(k, token);
