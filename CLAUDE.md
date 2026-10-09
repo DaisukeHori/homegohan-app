@@ -38,6 +38,17 @@ CI では GitHub Secrets に登録する。
 
 `.github/workflows/e2e.yml` が PR で自動実行。Playwright レポートは artifact として 14 日間保持。
 
+### 依存パッケージ・シークレットの検査と Dependabot (#1156)
+
+- `.github/workflows/security.yml`:
+  - **gitleaks**: PR で増えたコミットと main への push だけを検査し、見つかったら失敗する。
+  - **npm audit**: 参考情報で、PR を止めない。critical が 0 件になったら、止める検査に切り替える。**`continue-on-error` は、ジョブではなく npm audit の「ステップ」に付ける。** ジョブに付けると、ワークフローは通っても、そのジョブの check run が失敗 (赤い ×) のまま残る。すると、すべての PR の Checks が赤くなり、毎日の整合性チェック (`scripts/lib/consistency-check.mjs`) も、止まっている PR を「赤のまま」に数える (`tests/security-workflow.test.ts` が、`pull_request` で動くワークフローのジョブ単位の `continue-on-error` を検出する)。
+  - **依存関係レビュー**と **CodeQL**: リポジトリが公開の間だけ動く。非公開にすると自動でスキップされる。依存関係レビューは、リポジトリの Dependency graph が無効の間 (GitHub が依存の差分を 403 Forbidden で断る) だけ、レビューを飛ばして警告と Summary を出す (すべての PR を赤くしないため)。有効にすれば、次の PR から止める検査として働く。CodeQL のジョブそのものは止めないが、コードスキャンの結果を知らせる別の check run が付き、新しい重大なアラートが増えた PR では赤くなる。
+- gitleaks の誤検知は `.gitleaks.toml` に**値そのもの**を足す (ファイル・ディレクトリ単位では除外しない)。1 行だけなら行末に `gitleaks:allow`。本物のキーが見つかったときは除外せず、そのキーを無効にして発行し直す (履歴から消すだけでは取り消せない)。gitleaks の版と SHA-256 は workflow に固定してある。上げるときはリリースの `checksums.txt` の値に合わせる。
+- **テストに書くダミーの認証値** (`apiKey` / `token` / `secret` / `password` など) は、gitleaks の汎用ルール (generic-api-key) に掛かりやすい。掛かると PR の `security / gitleaks` が失敗するので、ダミーの値の行の末尾に `gitleaks:allow` と書く。ダミーでも、`sk-` や `ghp_` や JWT のような、本物のキーの書式にしない。
+- `.github/dependabot.yml`: npm (ルートの package-lock.json が workspaces をまとめて管理) と GitHub Actions を週 1 回。マイナー・パッチは 1 本の PR にまとめる。Next / React / Expo / React Native は、メジャー更新 (Expo / React Native はマイナー更新も) の PR を出さない。計画して上げる (#1199)。自動承認・自動マージはしない。
+- **Dependabot の PR には Actions のシークレットが渡されない。** `pull_request` で動き、`secrets.*` (`GITHUB_TOKEN` 以外) を使うジョブには `if: github.actor != 'dependabot[bot]'` を付ける。付け忘れると、依存更新の PR が毎回赤くなる (`tests/security-workflow.test.ts` が検査する)。
+
 ---
 
 ## 共通ヘルパー規約
@@ -89,6 +100,14 @@ PostHog による利用状況の計測は採用しない (オーナー判断 202
 - 文字: `successText` / `warningText` / `dangerText`。WCAG の AA (4.5:1) を、白地・各 Light の下地・ページの背景・塗りの薄い透過の下地の上で満たす (`packages/shared/src/design-tokens.test.ts` が数値で確かめる)。塗りの色は白地で 4.5:1 に届かないので、文字には使わない。`error` の赤い文字にも `dangerText` を使う
 - 値を変えるときは `design-tokens.ts` だけを直す。画面ごと・モバイルの `colors.ts` に同じ値を書き足さない
 - 中立色 (bg / text / border など) と accent / purple / blue はまだ対象外 (画面ごとに値が違う。別の変更で揃える)
+
+### 利用規約・プライバシーポリシーの版と再同意ゲート
+
+「いま有効な版」と施行日は `packages/shared/src/legal-versions.ts` の `LEGAL_DOCUMENTS` に集約する (#1174)。`/terms`・`/privacy` の版・施行日の表示、同意の記録 (DB 関数 `accept_legal_documents` が `user_profiles` の `terms_version_accepted` / `privacy_version_accepted` / `legal_accepted_at` と `terms_acceptances` に書く)、再同意ゲートは、すべてこの定数を見る。内容が変わる改定をするときは、必ず `version` を上げる (上げると全員に再同意を求める)。版・施行日・同意文言は弁護士の確認を経て決める。
+
+- ゲートは `lib/supabase/middleware.ts` (判定は `lib/legal-consent.ts`)。環境変数 `LEGAL_CONSENT_ENFORCE=on` のときだけ、未同意の人を `/legal-consent?next=...` へ回す。強制していない間は、`LEGAL_CONSENT_NOTICE=on` のときだけ `(main)` の画面の上にお知らせを出す。どちらも未設定 (既定) なら何も出さず、誰も止めない。2 つのフラグの読み方は `isLegalConsentFlagOn` で共有する (`ENV_SETUP.md` 参照)。
+- 対象外のパスは `isLegalConsentExemptPath` (`/terms` `/privacy` `/legal` `/legal-consent` `/contact` `/frozen` `/auth/*` `/api/*` `/handson-tour` と静的ファイル)。同意なしで開けないと困る画面 (認証の途中・問い合わせなど) を足すときは、ここと `tests/legal-consent-gate.test.ts` に足す。`/legal-consent` は初期設定の差し戻し (`resolveOnboardingRedirect`) からも除いてある (外すと、初期設定前の新規登録者が同意画面との間で無限にリダイレクトする)。
+- 同意済みの版の 3 列は、特権列ガード (`guard_user_profiles_privileged` と `_on_insert`) の対象。書けるのは `accept_legal_documents` (SECURITY DEFINER。`auth.uid()` 本人の行だけ) だけ。この 2 本のガード関数を `CREATE OR REPLACE` するときは、既存の列を外さず、この 3 列も残す (`tests/integration/security/legal-documents-acceptance.test.ts` が検査する)。
 
 ### 栄養計算入力
 

@@ -8,6 +8,7 @@
  * 「今日」や「ある時刻が属する日」を求めるときは、このファイルの関数を使う。
  *
  * 週・月・日の集計期間 (calculateJstPeriod) も同じ理由で JST の暦で求める (#1211)。
+ * 「今日から N 日さかのぼる」期間 (calculateJstLookbackPeriod / addDaysToDate) も同じ (#1407)。
  * new Date().getDay() / getDate() / getMonth() はどれも実行環境 (UTC) のローカル時刻で答えるので、
  * 月曜の JST 00:00〜08:59 (UTC ではまだ日曜) は週の開始日が 1 週間前の月曜になっていた。
  *
@@ -91,6 +92,55 @@ export function calculateJstPeriod(
     default:
       return { periodStart: dayOf(-7), periodEnd: dayOf(0) };
   }
+}
+
+/** YYYY-MM-DD の形 (ゼロ埋め) */
+const YMD_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * 暦日 (YYYY-MM-DD) から offsetDays 日ずらした暦日を YYYY-MM-DD で返す (#1407)。負の数で過去の日。
+ * 例: ("2027-01-01", -30) → "2026-12-02" / ("2028-03-01", -1) → "2028-02-29"
+ *
+ * 暦の計算だけをする (時刻もタイムゾーンも持たない) ので、formatJstDate で求めた JST の暦日を渡せば、
+ * 結果も JST の暦日になる。月末・年末・うるう日の繰り上がり・繰り下がりは Date.UTC が処理する。
+ * 実行環境のタイムゾーンやサマータイムに左右されない (Date#setDate / getDate はローカル時刻なので使わない)。
+ *
+ * 形の違う日付・存在しない日付 (2026-02-30 など)・整数でない日数を渡すと RangeError になる (変な日付を黙って返さない)。
+ */
+export function addDaysToDate(day: string, offsetDays: number): string {
+  if (!YMD_PATTERN.test(day)) {
+    throw new RangeError(`Invalid date (expected YYYY-MM-DD): ${day}`);
+  }
+  if (!Number.isInteger(offsetDays)) {
+    throw new RangeError(`offsetDays must be an integer: ${offsetDays}`);
+  }
+  const [year, month, date] = day.split('-').map(Number);
+  // 存在しない日付 (2026-02-30 → 3/2 に繰り上がる) は、0 日ずらしても元の文字列に戻らないので弾く
+  if (new Date(Date.UTC(year, month - 1, date)).toISOString().slice(0, 10) !== day) {
+    throw new RangeError(`Invalid date (no such day): ${day}`);
+  }
+  return new Date(Date.UTC(year, month - 1, date + offsetDays)).toISOString().slice(0, 10);
+}
+
+/**
+ * now が属する JST の暦日 (今日) を終了日、その lookbackDays 日前を開始日とする期間 (どちらの日も含む。YYYY-MM-DD) を返す (#1407)。
+ * 例: (7, JST 2026-07-13 03:00) → { periodStart: "2026-07-06", periodEnd: "2026-07-13" }
+ *
+ * calculateJstPeriod (週は月曜始まり・月は 1 日始まりの暦の区切り) と違い、「今日からさかのぼって N 日」の期間。
+ * 健康インサイトの生成 (generate-health-insights) が、日付の列 (health_records.record_date) を
+ * `record_date >= periodStart AND record_date <= periodEnd` で絞るのに使う。
+ *
+ * 不正な Date (Invalid Date)・負の数や整数でない日数を渡すと RangeError になる。
+ */
+export function calculateJstLookbackPeriod(
+  lookbackDays: number,
+  now: Date = new Date(),
+): { periodStart: string; periodEnd: string } {
+  if (!Number.isInteger(lookbackDays) || lookbackDays < 0) {
+    throw new RangeError(`lookbackDays must be a non-negative integer: ${lookbackDays}`);
+  }
+  const periodEnd = formatJstDate(now);
+  return { periodStart: addDaysToDate(periodEnd, -lookbackDays), periodEnd };
 }
 
 /**

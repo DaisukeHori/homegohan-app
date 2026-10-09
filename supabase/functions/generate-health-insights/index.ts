@@ -4,6 +4,7 @@ import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from 
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
+import { calculateJstLookbackPeriod, formatJstDate } from "../_shared/jst-date.ts";
 
 interface HealthRecord {
   record_date: string;
@@ -27,6 +28,23 @@ interface Insight {
   recommendations: string[];
   priority: 'low' | 'medium' | 'high' | 'critical';
   is_alert: boolean;
+}
+
+/**
+ * 分析する期間の、終了日 (JST の今日) から開始日までさかのぼる日数。期間は開始日と終了日の両方を含む。
+ * 以前の UTC 版 (startDate.setDate(startDate.getDate() - N)) と同じ日数を保つ (#1407 で直したのは暦が UTC だった点だけ)。
+ *   - daily  : 前日と今日
+ *   - weekly : 7 日前から今日
+ *   - それ以外 (monthly と、想定外の値) : 30 日前から今日
+ */
+const DAILY_LOOKBACK_DAYS = 1;
+const WEEKLY_LOOKBACK_DAYS = 7;
+const MONTHLY_LOOKBACK_DAYS = 30;
+
+function lookbackDaysOf(periodType: string): number {
+  if (periodType === 'daily') return DAILY_LOOKBACK_DAYS;
+  if (periodType === 'weekly') return WEEKLY_LOOKBACK_DAYS;
+  return MONTHLY_LOOKBACK_DAYS;
 }
 
 Deno.serve(async (req) => {
@@ -68,24 +86,21 @@ Deno.serve(async (req) => {
     const periodType = body.period_type || 'weekly'; // 'daily', 'weekly', 'monthly'
     _periodType = periodType;
 
-    // 期間を計算
-    const endDate = new Date();
-    const startDate = new Date();
-    if (periodType === 'daily') {
-      startDate.setDate(startDate.getDate() - 1);
-    } else if (periodType === 'weekly') {
-      startDate.setDate(startDate.getDate() - 7);
-    } else {
-      startDate.setDate(startDate.getDate() - 30);
-    }
+    // 期間を JST の暦日で求める (#1407)。
+    // Edge Function の時計は UTC なので、toISOString() の日付 (UTC の暦日) を使うと、JST の 0:00〜8:59 は
+    // 終了日が JST の昨日になり、今日の health_records が分析に入らず、保存する日付も 1 日前になっていた。
+    // record_date / analysis_date / period_start / period_end はどれも JST の暦日 (YYYY-MM-DD) で扱う。
+    const now = new Date();
+    const analysisDate = formatJstDate(now);
+    const { periodStart, periodEnd } = calculateJstLookbackPeriod(lookbackDaysOf(periodType), now);
 
     // 健康記録を取得
     const { data: records, error: recordsError } = await supabase
       .from('health_records')
       .select('*')
       .eq('user_id', user.id)
-      .gte('record_date', startDate.toISOString().split('T')[0])
-      .lte('record_date', endDate.toISOString().split('T')[0])
+      .gte('record_date', periodStart)
+      .lte('record_date', periodEnd)
       .order('record_date', { ascending: true });
 
     if (recordsError) {
@@ -135,8 +150,8 @@ Deno.serve(async (req) => {
         profile,
         goals || [],
         periodType,
-        startDate,
-        endDate
+        periodStart,
+        periodEnd
       );
     });
 
@@ -144,9 +159,9 @@ Deno.serve(async (req) => {
     for (const insight of insights) {
       await supabase.from('health_insights').insert({
         user_id: user.id,
-        analysis_date: new Date().toISOString().split('T')[0],
-        period_start: startDate.toISOString().split('T')[0],
-        period_end: endDate.toISOString().split('T')[0],
+        analysis_date: analysisDate,
+        period_start: periodStart,
+        period_end: periodEnd,
         period_type: periodType,
         ...insight,
       });
@@ -157,8 +172,8 @@ Deno.serve(async (req) => {
         success: true,
         insights,
         period: {
-          start: startDate.toISOString().split('T')[0],
-          end: endDate.toISOString().split('T')[0],
+          start: periodStart,
+          end: periodEnd,
           type: periodType,
         },
         records_analyzed: records.length,
@@ -188,8 +203,8 @@ async function generateInsights(
   profile: any,
   goals: any[],
   periodType: string,
-  startDate: Date,
-  endDate: Date
+  periodStart: string,
+  periodEnd: string
 ): Promise<Insight[]> {
   const insights: Insight[] = [];
 

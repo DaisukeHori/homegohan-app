@@ -18,7 +18,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { calculatePeriodLocal } from "../src/lib/date-utils";
-import { calculateJstPeriod, jstDayRangeToTimestamps } from "../supabase/functions/_shared/jst-date.ts";
+import {
+  addDaysToDate,
+  calculateJstLookbackPeriod,
+  calculateJstPeriod,
+  jstDayRangeToTimestamps,
+} from "../supabase/functions/_shared/jst-date.ts";
 
 type Period = { periodStart: string; periodEnd: string };
 type Calculator = (periodType: string, now?: Date) => Period;
@@ -335,5 +340,109 @@ describe("jstDayRangeToTimestamps: JST の暦日の範囲を、timestamptz 列�
   it("不正な日付は黙って変な範囲を返さず、例外にする", () => {
     expect(() => jstDayRangeToTimestamps("not-a-date", "2026-07-19")).toThrow(RangeError);
     expect(() => jstDayRangeToTimestamps("2026-07-13", "")).toThrow(RangeError);
+  });
+});
+
+// ── 今日から N 日さかのぼる期間 (#1407) ───────────────────────────────────────
+//
+// generate-health-insights は、期間 (前日〜今日・7 日前〜今日・30 日前〜今日) を
+// new Date() の setDate(getDate() - N) と toISOString() の日付 (どちらも UTC の暦) で求めていたので、
+// JST の 00:00〜08:59 は終了日が JST の昨日になり、今日の記録が分析に入らなかった。
+// 期待値は、上と同じく実装とは別の計算 (Python の datetime で JST の暦を引いたもの) で求めた固定値。
+
+describe("addDaysToDate(day, offsetDays): 暦日を N 日ずらす (#1407)", () => {
+  it.each([
+    // [暦日, ずらす日数, 期待する暦日, 説明]
+    ["2026-07-13", -7, "2026-07-06", "同じ月の中"],
+    ["2027-01-01", -30, "2026-12-02", "年をまたいで過去へ"],
+    ["2026-12-31", 1, "2027-01-01", "年をまたいで未来へ"],
+    ["2028-03-01", -1, "2028-02-29", "うるう年の 3/1 の前日 = 2/29"],
+    ["2027-03-01", -1, "2027-02-28", "うるう年でない年の 3/1 の前日 = 2/28"],
+    ["2026-01-31", 30, "2026-03-02", "月の日数の違いをまたぐ"],
+    ["2024-02-29", 365, "2025-02-28", "うるう日から 365 日後"],
+    ["2026-07-13", 0, "2026-07-13", "0 日はそのまま"],
+  ])("%s を %i 日ずらす → %s (%s)", (day, offset, expected) => {
+    expect(addDaysToDate(day, offset)).toBe(expected);
+  });
+
+  it("実行環境のタイムゾーンに左右されない", () => {
+    for (const tz of ["UTC", "Asia/Tokyo", "America/Los_Angeles", "Pacific/Kiritimati"]) {
+      process.env.TZ = tz;
+      expect(addDaysToDate("2027-01-01", -30), tz).toBe("2026-12-02");
+      expect(addDaysToDate("2028-03-01", -1), tz).toBe("2028-02-29");
+    }
+  });
+
+  it("形の違う日付・存在しない日付・整数でない日数は、黙って変な日付を返さず例外にする", () => {
+    expect(() => addDaysToDate("not-a-date", 1)).toThrow(RangeError);
+    expect(() => addDaysToDate("2026-7-13", 1)).toThrow(RangeError);
+    expect(() => addDaysToDate("2026-07-13T00:00:00Z", 1)).toThrow(RangeError);
+    expect(() => addDaysToDate("2026-02-30", 0)).toThrow(RangeError);
+    expect(() => addDaysToDate("2027-02-29", 0)).toThrow(RangeError);
+    expect(() => addDaysToDate("2026-13-01", 0)).toThrow(RangeError);
+    expect(() => addDaysToDate("2026-07-13", 1.5)).toThrow(RangeError);
+    expect(() => addDaysToDate("2026-07-13", Number.NaN)).toThrow(RangeError);
+  });
+});
+
+describe("calculateJstLookbackPeriod(lookbackDays, now): JST の今日から N 日さかのぼる期間 (#1407)", () => {
+  /** 以前の書き方 (UTC の暦)。JST 00:00〜08:59 に 1 日前へずれることを示すために使う */
+  const utcLookback = (lookbackDays: number, now: Date) => {
+    const start = new Date(now);
+    start.setUTCDate(start.getUTCDate() - lookbackDays);
+    return period(start.toISOString().split("T")[0], now.toISOString().split("T")[0]);
+  };
+
+  it.each([
+    // [さかのぼる日数, 現在時刻 (UTC), 期待する開始日, 期待する終了日, 説明]
+    [7, "2026-07-12T14:59:59.999Z", "2026-07-05", "2026-07-12", "JST 7/12 23:59:59.999 は、まだ 7/12 が今日"],
+    [7, "2026-07-12T15:00:00.000Z", "2026-07-06", "2026-07-13", "JST 7/13 0:00 ちょうどから 7/13 が今日 (UTC はまだ 7/12)"],
+    [7, "2026-07-12T23:59:59.999Z", "2026-07-06", "2026-07-13", "JST 7/13 8:59:59.999 も 7/13 が今日 (UTC はまだ 7/12)"],
+    [7, "2026-07-13T00:00:00.000Z", "2026-07-06", "2026-07-13", "JST 7/13 9:00 (UTC も 7/13)"],
+    [1, "2026-07-31T14:59:59.999Z", "2026-07-30", "2026-07-31", "月末 JST 7/31 23:59:59.999"],
+    [1, "2026-07-31T15:00:00.000Z", "2026-07-31", "2026-08-01", "月をまたぐ: JST 8/1 0:00 (UTC はまだ 7/31)"],
+    [30, "2026-12-31T14:59:59.999Z", "2026-12-01", "2026-12-31", "大晦日 JST 23:59:59.999"],
+    [30, "2026-12-31T15:00:00.000Z", "2026-12-02", "2027-01-01", "年をまたぐ: JST 元日 0:00 (UTC はまだ 12/31)"],
+    [30, "2026-12-31T23:59:59.999Z", "2026-12-02", "2027-01-01", "年をまたぐ: JST 元日 8:59:59.999 (UTC はまだ 12/31)"],
+    [7, "2027-01-06T15:00:00.000Z", "2026-12-31", "2027-01-07", "開始日だけが前の年"],
+    [30, "2028-02-29T15:00:00.000Z", "2028-01-31", "2028-03-01", "うるう日の翌日 JST 3/1 0:00 (UTC はまだ 2/29)"],
+    [1, "2028-02-29T15:00:00.000Z", "2028-02-29", "2028-03-01", "うるう日と、その翌日"],
+    [30, "2026-03-31T20:00:00.000Z", "2026-03-02", "2026-04-01", "JST 4/1 5:00 (UTC はまだ 3/31)"],
+    [0, "2026-07-12T15:00:00.000Z", "2026-07-13", "2026-07-13", "0 日なら JST の今日だけ"],
+  ])("%i 日 @ %s → %s 〜 %s (%s)", (lookbackDays, nowUtc, start, end) => {
+    expect(calculateJstLookbackPeriod(lookbackDays, new Date(nowUtc))).toEqual(period(start, end));
+  });
+
+  it("JST 00:00〜08:59 の 9 時間は、以前の書き方 (UTC の暦) より 1 日先の期間になる。09:00 以降は一致する", () => {
+    for (let h = 0; h < 24; h++) {
+      // JST 2027-01-01 の h 時 (UTC では h-9 時。h < 9 のときは UTC の 2026-12-31)
+      const now = new Date(Date.UTC(2027, 0, 1, h - 9, 30, 0, 0));
+      expect(calculateJstLookbackPeriod(30, now), `JST ${h}:30`).toEqual(period("2026-12-02", "2027-01-01"));
+      const before = utcLookback(30, now);
+      if (h < 9) expect(before, `以前の書き方 JST ${h}:30`).toEqual(period("2026-12-01", "2026-12-31"));
+      else expect(before, `以前の書き方 JST ${h}:30`).toEqual(period("2026-12-02", "2027-01-01"));
+    }
+  });
+
+  it("実行環境のタイムゾーンに左右されない", () => {
+    for (const tz of ["UTC", "Asia/Tokyo", "America/Los_Angeles", "Pacific/Kiritimati"]) {
+      process.env.TZ = tz;
+      expect(calculateJstLookbackPeriod(30, new Date("2026-12-31T15:00:00.000Z")), tz).toEqual(
+        period("2026-12-02", "2027-01-01"),
+      );
+    }
+  });
+
+  it("now を省略すると現在時刻の JST の今日を終了日にする", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-12-31T15:00:00.000Z"));
+    expect(calculateJstLookbackPeriod(7)).toEqual(period("2026-12-25", "2027-01-01"));
+  });
+
+  it("負の数・整数でない日数・不正な Date は例外にする", () => {
+    const now = new Date("2026-07-12T15:00:00.000Z");
+    expect(() => calculateJstLookbackPeriod(-1, now)).toThrow(RangeError);
+    expect(() => calculateJstLookbackPeriod(1.5, now)).toThrow(RangeError);
+    expect(() => calculateJstLookbackPeriod(7, new Date("invalid"))).toThrow(RangeError);
   });
 });
