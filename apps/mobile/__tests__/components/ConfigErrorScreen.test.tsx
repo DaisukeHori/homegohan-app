@@ -4,7 +4,8 @@
  *
  * 必須の環境変数が入っていないビルドで、app/_layout.tsx が Provider の代わりに出す画面。
  *  - 見出しと、利用者向けの案内を出す
- *  - 足りない環境変数の「名前」を、開発者向けに出す (値は読まない)
+ *  - 足りない環境変数の「名前」を、開発ビルド (__DEV__) でだけ開発者向けに出す (値は読まない)。
+ *    リリースビルドの利用者には名前を見せない
  *  - 再試行のボタンは出さない (利用者が直せる問題ではない)
  *  - Provider の外でも描画できる (hooks を使わない)
  */
@@ -41,7 +42,7 @@ describe('ConfigErrorScreen', () => {
     expect(getByText(/サーバーに接続するための設定が入っていません/)).toBeTruthy();
   });
 
-  it('足りない環境変数の名前を 1 つずつ出す', () => {
+  it('開発ビルド (__DEV__) では、足りない環境変数の名前を 1 つずつ出す', () => {
     const { getByTestId, getByText } = render(
       <ConfigErrorScreen missing={['EXPO_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_SUPABASE_ANON_KEY']} />,
     );
@@ -68,6 +69,42 @@ describe('ConfigErrorScreen', () => {
     }
     // 前提の確認: 以前の色 (textMuted) は届かない
     expect(contrastRatio(colors.textMuted, colors.bg)).toBeLessThan(AA_NORMAL_TEXT);
+  });
+
+  describe('リリースビルド (__DEV__ が false)', () => {
+    const globalWithDev = globalThis as typeof globalThis & { __DEV__: boolean };
+    let originalDev: boolean;
+
+    beforeEach(() => {
+      originalDev = globalWithDev.__DEV__;
+      globalWithDev.__DEV__ = false;
+    });
+
+    afterEach(() => {
+      globalWithDev.__DEV__ = originalDev;
+    });
+
+    it('足りない環境変数の名前を画面に出さない (見出しと案内だけを出す)', () => {
+      const { getByText, queryByTestId, queryByText } = render(
+        <ConfigErrorScreen missing={['EXPO_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_SUPABASE_ANON_KEY']} />,
+      );
+
+      expect(getByText('アプリの設定が不足しています')).toBeTruthy();
+      expect(getByText(/サーバーに接続するための設定が入っていません/)).toBeTruthy();
+      expect(queryByTestId('config-error-missing')).toBeNull();
+      expect(queryByText(/EXPO_PUBLIC_SUPABASE_URL/)).toBeNull();
+      expect(queryByText(/EXPO_PUBLIC_SUPABASE_ANON_KEY/)).toBeNull();
+      expect(queryByText(/開発者向け/)).toBeNull();
+    });
+  });
+
+  it('showMissingNames で明示すれば、__DEV__ に関わらずそれに従う', () => {
+    const hidden = render(<ConfigErrorScreen missing={['EXPO_PUBLIC_SUPABASE_URL']} showMissingNames={false} />);
+    expect(hidden.queryByText('EXPO_PUBLIC_SUPABASE_URL')).toBeNull();
+    hidden.unmount();
+
+    const shown = render(<ConfigErrorScreen missing={['EXPO_PUBLIC_SUPABASE_URL']} showMissingNames />);
+    expect(shown.getByText('EXPO_PUBLIC_SUPABASE_URL')).toBeTruthy();
   });
 
   it('再試行のボタンは出さない (ビルドを作り直さないと直らない)', () => {

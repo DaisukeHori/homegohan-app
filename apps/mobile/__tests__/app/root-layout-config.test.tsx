@@ -6,7 +6,8 @@
  * クライアントでアプリが起動し、ログイン画面が出るのにログインが失敗するだけだった (原因が分からない)。
  *
  *  - 環境変数がそろっていれば、従来どおり Provider と Stack を立ち上げる
- *  - 足りなければ、Provider を立ち上げず (Supabase を触らず)、足りない変数名つきの設定エラーの画面を出す
+ *  - 足りなければ、Provider を立ち上げず (Supabase を触らず)、設定エラーの画面を出す。
+ *    足りない変数名を画面に出すのは開発ビルド (__DEV__) だけで、リリースビルドの利用者には見せない
  */
 
 import React from 'react';
@@ -96,7 +97,7 @@ describe('RootLayout — 必須の環境変数 (#1182)', () => {
     expect(mockAuthProviderRendered).toHaveBeenCalled();
   });
 
-  it('両方無ければ、Provider を立ち上げず、足りない変数名つきの設定エラーの画面を出す', () => {
+  it('両方無ければ、Provider を立ち上げず、設定エラーの画面を出す (開発ビルドは足りない変数名も出す)', () => {
     delete process.env.EXPO_PUBLIC_SUPABASE_URL;
     delete process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -121,5 +122,25 @@ describe('RootLayout — 必須の環境変数 (#1182)', () => {
     expect(queryByText('EXPO_PUBLIC_SUPABASE_URL')).toBeNull();
     expect(queryByTestId('stack')).toBeNull();
     expect(mockAuthProviderRendered).not.toHaveBeenCalled();
+  });
+  it('リリースビルド (__DEV__ が false) では、設定エラーの画面に変数名を出さない', () => {
+    const globalWithDev = globalThis as typeof globalThis & { __DEV__: boolean };
+    const originalDev = globalWithDev.__DEV__;
+    delete process.env.EXPO_PUBLIC_SUPABASE_URL;
+    delete process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+    globalWithDev.__DEV__ = false;
+    try {
+      const { getByTestId, getByText, queryByText, queryByTestId } = renderRootLayout();
+
+      expect(getByTestId('config-error-screen')).toBeTruthy();
+      expect(getByText('アプリの設定が不足しています')).toBeTruthy();
+      expect(queryByText(/EXPO_PUBLIC_SUPABASE_URL/)).toBeNull();
+      expect(queryByText(/EXPO_PUBLIC_SUPABASE_ANON_KEY/)).toBeNull();
+      expect(queryByTestId('config-error-missing')).toBeNull();
+      expect(queryByTestId('stack')).toBeNull();
+      expect(mockAuthProviderRendered).not.toHaveBeenCalled();
+    } finally {
+      globalWithDev.__DEV__ = originalDev;
+    }
   });
 });

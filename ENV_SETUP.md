@@ -18,7 +18,7 @@ npm run check:env -- --strict                      # 任意の変数の「値の
 
 | 種類 | 変数 | 足りないとき |
 |---|---|---|
-| **必須** | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | アプリが動きません。コードは、使う場面で「どの変数が足りないか」を書いたエラー（`Missing required environment variable: …`）を出します。コマンドは終了コード 1 |
+| **必須** | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | アプリが動きません。コードは、使う場面でエラー（`MissingEnvError`）を出し、API は汎用の 500（「処理中にエラーが発生しました」）を返します。応答には変数名を出しません。どの変数が足りないかは、サーバーのログ（構造化ログの `missing_env_name`）と `npm run check:env` で分かります。コマンドは終了コード 1 |
 | **任意** | メール（`RESEND_API_KEY`）・レート制限（`UPSTASH_REDIS_REST_*`）・課金（`STRIPE_SECRET_KEY`）・AI（`GOOGLE_AI_STUDIO_API_KEY`・`XAI_API_KEY`・`OPENAI_API_KEY`）・`CRON_SECRET`・モバイル認証ブリッジのスイッチ（`NATIVE_BRIDGE_*`）など | アプリは動きますが、その機能が使えなくなったり弱くなったりします。コマンドは「未設定です。…が起きます」と表示するだけです |
 
 - 任意の変数が足りないことで、本番を止めてはいけません。任意の変数を読む共通の関数（`getOptionalEnv()`。`src/lib/env.ts`）は、変数が無いときに例外を投げず、`undefined` を返して、プロセスごとに 1 回だけ警告をログに残します。メール送信・レート制限・Stripe・AI など、いまは各機能が `process.env` を直接読んでいる箇所が残っていて、ほかの作業と重ならないところから順にこの関数へ置き換えていきます。
@@ -199,7 +199,7 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 この 2 つはビルドのときに埋め込まれます（EAS Build なら、EAS の環境変数に登録しておく）。入っていないビルドは、次のように動きます（#1182。以前は `https://placeholder.supabase.co` という存在しない接続先でクライアントを作り、ログインなどが原因の分かりにくいエラーで失敗し続けていました）。
 
 - 開発中（`npx expo start`・development ビルド）: アプリの起動時に、足りない変数名を書いたエラー（`[mobile] Missing env: EXPO_PUBLIC_SUPABASE_URL, …`）で止まります。
-- リリースビルド（preview・production）: クラッシュはさせず、「アプリの設定が不足しています」の画面を出し、足りない変数名を端末のログ（`console.error`）に残します。このビルドは配布せず、環境変数を直して作り直してください。
+- リリースビルド（preview・production）: クラッシュはさせず、「アプリの設定が不足しています」の画面を出し、足りない変数名を端末のログ（`console.error`）に残します。画面には変数名を出しません（開発ビルドでは画面にも出します）。このビルドは配布せず、環境変数を直して作り直してください。
 
 ### オプション（モバイル）
 - `EXPO_PUBLIC_API_BASE_URL` - Next.js API（BFF）を叩く場合（例: `https://homegohan.com`）

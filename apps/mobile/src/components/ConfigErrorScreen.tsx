@@ -8,6 +8,9 @@
 //  - Provider の外で描画される (ルートの layout が、Provider を立ち上げる前に返す)。ErrorFallback と同じく
 //    useAuth / useProfile / useSafeAreaInsets などの hooks を使わない。
 //  - 出すのは環境変数の「名前」だけ。値は出さない (読まない)。
+//  - 名前を画面に出すのは開発ビルド (__DEV__) だけ。リリースビルド (preview・production) の利用者には、
+//    設定の内部の名前を見せず、案内の文だけを出す。リリースビルドでも、足りない変数名は lib/supabase.ts が
+//    端末のログ (console.error) に残すので、調べる人はそちらで分かる。
 //  - 利用者が直せる問題ではない (ビルドを作り直す必要がある) ので、再試行のボタンは出さない。
 
 import { Text, View } from "react-native";
@@ -17,9 +20,14 @@ import { colors, radius, spacing } from "../theme";
 export type ConfigErrorScreenProps = {
   /** 足りない環境変数の名前 */
   missing: readonly string[];
+  /**
+   * 足りない環境変数の名前を画面に出すか。既定は開発ビルドだけ (__DEV__)。
+   * リリースビルドの利用者には名前を見せない (上の「守ること」を参照)。
+   */
+  showMissingNames?: boolean;
 };
 
-export function ConfigErrorScreen({ missing }: ConfigErrorScreenProps) {
+export function ConfigErrorScreen({ missing, showMissingNames = __DEV__ }: ConfigErrorScreenProps) {
   return (
     <View
       testID="config-error-screen"
@@ -57,7 +65,7 @@ export function ConfigErrorScreen({ missing }: ConfigErrorScreenProps) {
         </Text>
       </View>
 
-      {missing.length > 0 ? (
+      {showMissingNames && missing.length > 0 ? (
         <View testID="config-error-missing" style={{ alignItems: "center" }}>
           {/* 12px の小さい文字なので、背景 (colors.bg) の上で AA (4.5:1) に届く textLight にする (textMuted は届かない) */}
           <Text style={{ fontSize: 12, lineHeight: 18, color: colors.textLight, textAlign: "center" }}>
