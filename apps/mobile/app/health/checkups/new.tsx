@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
 import { colors, radius, shadows, spacing } from "../../../src/theme";
+import { handleAiConsentRequiredError } from "../../../src/lib/ai-consent";
 
 // ─── Types ────────────────────────────────────────────
 interface FormData {
@@ -181,6 +182,8 @@ export default function NewCheckupPage() {
       setIsOcrDone(true);
       Alert.alert("OCR完了", "検査値を自動入力しました。内容を確認して登録してください。");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、ここのエラー表示は出さない
+      if (handleAiConsentRequiredError(e)) return;
       Alert.alert("OCRエラー", e?.message ?? "画像の読み取りに失敗しました。手動で入力してください。");
     } finally {
       setIsOcrProcessing(false);

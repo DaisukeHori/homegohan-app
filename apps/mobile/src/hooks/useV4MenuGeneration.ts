@@ -4,6 +4,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { TargetSlot, MenuGenerationConstraints } from "../../../../types/domain";
 import { getApi } from "../lib/api";
 import { supabase } from "../lib/supabase";
+import { isAiConsentRequiredError, promptAiConsentRequired } from "../lib/ai-consent";
 
 // AsyncStorage key (localStorage 代替)
 const STORAGE_KEY_V4_GENERATING = "v4MenuGenerating";
@@ -12,6 +13,12 @@ interface UseV4MenuGenerationOptions {
   onGenerationStart?: (requestId: string) => void;
   onGenerationComplete?: () => void;
   onError?: (error: string) => void;
+  /**
+   * 同意が必要で止められたとき (403 AI_CONSENT_REQUIRED。T15 / #1154) に呼ぶ。onError は呼ばない。
+   * 省略すると、同意画面への案内 (promptAiConsentRequired) を出す。モーダルから生成する画面は、
+   * モーダルを閉じてから案内を出すように渡す (閉じないと、案内から開いた同意画面がモーダルの下に隠れる)。
+   */
+  onAiConsentRequired?: () => void;
 }
 
 interface GenerateParams {
@@ -69,6 +76,13 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
         options.onGenerationStart?.(data.requestId);
         return data;
       } catch (err: any) {
+        if (isAiConsentRequiredError(err)) {
+          // リクエストは受け付けられていない。失敗の表示 (onError) は出さず、同意画面へ案内する
+          setIsGenerating(false);
+          if (options.onAiConsentRequired) options.onAiConsentRequired();
+          else promptAiConsentRequired();
+          throw err;
+        }
         const errorMessage = err.message || "生成に失敗しました";
         setError(errorMessage);
         // リクエストが受け付けられなかったので、進行中の生成は無い (生成中のまま残さない)

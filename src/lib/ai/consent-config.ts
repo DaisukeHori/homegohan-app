@@ -5,7 +5,7 @@
  * 同意画面 (src/components/consent/AiDataConsentModal.tsx) と設定ページ (src/app/(main)/settings/ai-consent/page.tsx) は、
  * ここを import する。DB を読み書きする関数は src/lib/ai/consent.ts (サーバー専用) にある。
  *
- * 事業者の一覧 (AI_CONSENT_PROVIDERS)・版 (AI_CONSENT_VERSION)・状態の型・判定 (summarizeAiConsent / checkAiConsent)・
+ * 事業者の一覧 (AI_CONSENT_PROVIDERS)・版 (AI_CONSENT_VERSION)・状態の型・判定 (summarizeAiConsent / runAiConsentCheck)・
  * 止めたときのエラーコード (AI_CONSENT_REQUIRED_CODE) は、Edge Functions と共用の
  * supabase/functions/_shared/ai-consent.ts にある。ここはそれを再エクスポートする (定義を 2 か所に持たない)。
  *

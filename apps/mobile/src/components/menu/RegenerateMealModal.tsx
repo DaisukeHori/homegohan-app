@@ -19,6 +19,7 @@ import { colors, radius, spacing } from "../../theme";
 import { MEAL_LABELS } from "@homegohan/shared";
 import { getApiBaseUrl } from "../../lib/api";
 import { supabase } from "../../lib/supabase";
+import { isAiConsentRequiredResponse, promptAiConsentRequired } from "../../lib/ai-consent";
 
 // ============================================================
 // Constants
@@ -104,6 +105,12 @@ export const RegenerateMealModal: React.FC<Props> = ({ visible, meal, onClose })
         },
         body: JSON.stringify({ mealId: meal.id, conditions, note }),
       });
+      // 同意が必要で止められた (T15 / #1154): この画面 (モーダル) を閉じてから、同意画面への案内を出す
+      if (await isAiConsentRequiredResponse(r)) {
+        handleClose();
+        promptAiConsentRequired();
+        return;
+      }
       if (!r.ok) throw new Error("regenerate failed");
       await setItemWithTTL("singleMealGenerating", { mealId: meal.id }, 2 * 60 * 1000);
       handleClose();

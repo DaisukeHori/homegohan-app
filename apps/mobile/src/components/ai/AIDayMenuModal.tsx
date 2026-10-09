@@ -13,6 +13,7 @@ import {
 
 import { colors, radius, shadows, spacing } from "../../theme";
 import { useV4MenuGeneration } from "../../hooks/useV4MenuGeneration";
+import { promptAiConsentRequired } from "../../lib/ai-consent";
 
 // ============================================================
 // Props
@@ -40,6 +41,11 @@ export const AIDayMenuModal: React.FC<Props> = ({ visible, onClose }) => {
         "1日分の献立を生成しています。しばらくお待ちください。"
       );
       onClose();
+    },
+    // 同意が必要で止められた (T15 / #1154): このモーダルを閉じてから、同意画面への案内を出す
+    onAiConsentRequired: () => {
+      onClose();
+      promptAiConsentRequired();
     },
     onError: (err) => {
       Alert.alert("エラー", err ?? "献立の生成に失敗しました。");

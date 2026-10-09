@@ -37,6 +37,7 @@ import { DriBar } from './DriBar';
 import { ImproveMealModal } from './ImproveMealModal';
 import { RadarChart } from './RadarChart';
 import { RadarKeyPicker } from './RadarKeyPicker';
+import { AI_CONSENT_AUTOMATIC_LOCKED_NOTE, isAiConsentRequiredError } from '../../lib/ai-consent';
 
 // ============================================================
 // Types
@@ -158,8 +159,14 @@ export const NutritionDetailModal: React.FC<Props> = ({
         } else {
           setIsLoadingFeedback(false);
         }
-      } catch {
+      } catch (e) {
         if (!request.isCurrent()) return;
+        // 同意が無いため AI に送らなかった (403 AI_CONSENT_REQUIRED。T15 / #1154)。開くと自動で頼む処理なので、
+        // 同意の案内は出さず、案内の一文だけを出す
+        if (isAiConsentRequiredError(e)) {
+          setAdviceText(AI_CONSENT_AUTOMATIC_LOCKED_NOTE);
+          setAdviceIsError(false);
+        }
         setIsLoadingFeedback(false);
       }
     },

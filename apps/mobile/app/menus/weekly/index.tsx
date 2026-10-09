@@ -66,6 +66,7 @@ import { supabase } from "../../../src/lib/supabase";
 import { useProfile } from "../../../src/providers/ProfileProvider";
 import type { WeekStartDay } from "../../../src/providers/ProfileProvider";
 import type { V4GenerateParams } from "../../../src/components/menu/V4GenerateModal";
+import { AI_CONSENT_AUTOMATIC_LOCKED_NOTE, handleAiConsentRequiredError, isAiConsentRequiredError, promptAiConsentRequired } from "../../../src/lib/ai-consent";
 
 type PlannedMealRow = {
   id: string;
@@ -378,7 +379,12 @@ function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys, wee
       }
       if (res.status === "generating" && res.cacheId) { startPolling(res.cacheId); }
       else { setIsLoadingFeedback(false); }
-    } catch { setIsLoadingFeedback(false); }
+    } catch (e) {
+      // 同意が無いため AI に送らなかった (403 AI_CONSENT_REQUIRED。T15 / #1154)。画面を開くと自動で頼む処理なので、
+      // 同意の案内は出さず、案内の一文だけを出す
+      if (isAiConsentRequiredError(e)) setAdviceText(AI_CONSENT_AUTOMATIC_LOCKED_NOTE);
+      setIsLoadingFeedback(false);
+    }
   }
 
   function startPolling(cacheId: string) {
@@ -629,6 +635,14 @@ export default function WeeklyMenuPage() {
       setPendingProgress(null);
       setPendingIsUltimate(false);
       Alert.alert("完了", "週間献立の生成が完了しました。");
+    },
+    // 同意が必要で止められた (T15 / #1154): 生成を始めるモーダルを閉じてから、同意画面への案内を出す
+    // (閉じないと、案内から開いた同意画面がモーダルの下に隠れる)
+    onAiConsentRequired: () => {
+      setShowV4Modal(false);
+      setShowImproveMealModal(false);
+      setShowNutritionDetailModal(false);
+      promptAiConsentRequired();
     },
     onError: (msg) => {
       setPendingRequestId(null);
@@ -1091,6 +1105,8 @@ export default function WeeklyMenuPage() {
       });
       await loadData();
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、ここのエラー表示は出さない
+      if (handleAiConsentRequiredError(e)) return;
       setError(e?.message ?? "再生成に失敗しました。");
     } finally {
       setRegeneratingMealId(null);

@@ -12,6 +12,7 @@ import { supabase } from "../../src/lib/supabase";
 import { getApi } from "../../src/lib/api";
 import { MOCK_PHOTO_RESPONSE } from "@homegohan/handson-tour-shared";
 import { registerTourTarget, unregisterTourTarget } from "../../src/handson-tour/useTourOverlayLogic";
+import { handleAiConsentRequiredError } from "../../src/lib/ai-consent";
 
 // Inlined from lib/meal-image to avoid importing server-side code
 interface MealImageDish { name?: string | null; image_url?: string | null; image_source?: string | null; image_status?: string | null; image_generated_at?: string | null; [key: string]: any; }
@@ -384,6 +385,8 @@ export default function MealNewPage() {
       setNutrition(data.nutrition || {});
       setStep("result");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す
+      if (handleAiConsentRequiredError(e)) { setStep("capture"); return; }
       Alert.alert("解析失敗", e?.message ?? "解析に失敗しました。"); setStep("capture");
     } finally { setIsAnalyzing(false); }
   }
@@ -397,6 +400,8 @@ export default function MealNewPage() {
       setFridgeSummary(data.summary || ""); setFridgeSuggestions(data.suggestions || []);
       setStep("fridge-result");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す
+      if (handleAiConsentRequiredError(e)) { setStep("capture"); return; }
       Alert.alert("解析失敗", e?.message ?? "冷蔵庫の解析に失敗しました。"); setStep("capture");
     } finally { setIsAnalyzing(false); }
   }
@@ -411,6 +416,8 @@ export default function MealNewPage() {
       setHealthNotes(data.notes || ""); setHealthModelUsed(data.modelUsed || "");
       setStep("health-result");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す
+      if (handleAiConsentRequiredError(e)) { setStep("capture"); return; }
       Alert.alert("解析失敗", e?.message ?? "健康診断結果の解析に失敗しました。"); setStep("capture");
     } finally { setIsAnalyzing(false); }
   }
@@ -429,6 +436,8 @@ export default function MealNewPage() {
       } catch { /* ignore */ }
       setStep("weight-result");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す
+      if (handleAiConsentRequiredError(e)) { setStep("capture"); return; }
       Alert.alert("解析失敗", e?.message ?? "体重計の読み取りに失敗しました。"); setStep("capture");
     } finally { setIsAnalyzing(false); }
   }
@@ -462,6 +471,8 @@ export default function MealNewPage() {
         await analyzeResolvedMode(resolvedType, data.mealAnalysis);
       } catch (e: any) {
         setIsAnalyzing(false);
+        // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す
+        if (handleAiConsentRequiredError(e)) { setStep("capture"); return; }
         Alert.alert("判別失敗", e?.message ?? "写真の判別に失敗しました。"); setStep("capture");
       }
     } else {

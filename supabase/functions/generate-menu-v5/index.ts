@@ -3537,23 +3537,17 @@ Deno.serve(async (req: Request) => {
     const aiConsent = await checkAiConsent(supabase, userId);
     if (!aiConsent.allowed) {
       const { body: deniedBody } = aiConsentDeniedPayload(aiConsent);
-      await runSupabaseQuery(
-        () => supabase
-          .from("weekly_menu_requests")
-          .update({
-            status: "failed",
-            error_message: deniedBody.code,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", requestId!)
-          .eq("user_id", userId!)
-          .in("status", ["queued", "processing"]),
-        `weekly_menu_requests.fail_ai_consent:${requestId}`,
-        null,
-      ).catch((persistError) => {
-        console.error("Failed to persist AI consent failure:", persistError);
-        return null;
-      });
+      const { error: persistError } = await supabase
+        .from("weekly_menu_requests")
+        .update({
+          status: "failed",
+          error_message: deniedBody.code,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId!)
+        .eq("user_id", userId!)
+        .in("status", ["queued", "processing"]);
+      if (persistError) console.error("Failed to persist AI consent failure:", persistError);
       return aiConsentDeniedResponse(aiConsent, corsHeaders);
     }
 

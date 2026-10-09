@@ -29,6 +29,7 @@ import { getApi, getApiBaseUrl } from "../../lib/api";
 import { supabase } from "../../lib/supabase";
 import { colors, radius, shadows, spacing } from "../../theme";
 import { AIDayMenuModal } from "./AIDayMenuModal";
+import { isAiConsentRequiredError, promptAiConsentRequired } from "../../lib/ai-consent";
 
 // ============================================================
 // Types
@@ -459,6 +460,15 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       }
     } catch (e: any) {
       setStreamingContent(null);
+      // 同意が必要で止められた (T15 / #1154): 送らなかったので、メッセージを消して入力を戻す。
+      // このシート (モーダル) を閉じてから同意画面への案内を出す (閉じないと、同意画面がモーダルの下に隠れる)
+      if (isAiConsentRequiredError(e)) {
+        setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
+        setInputText(trimmed);
+        onClose();
+        promptAiConsentRequired();
+        return;
+      }
       if (e?.name === "AbortError") {
         Alert.alert(
           "タイムアウト",

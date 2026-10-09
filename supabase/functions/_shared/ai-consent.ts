@@ -1,7 +1,7 @@
 /**
  * 外国の AI 事業者への提供の同意: 判定の本体 - Next.js (API Routes / Edge Runtime) / Supabase Edge Functions 共用 (T15 / #1154)
  *
- * 利用者のデータを外国の AI 事業者へ送る処理は、送る手前でかならず checkAiConsent() を通し、
+ * 利用者のデータを外国の AI 事業者へ送る処理は、送る手前でかならず runAiConsentCheck() を通し、
  * allowed: false なら送らない。判定はこのファイルの 1 か所だけで行う
  * (Next.js 側は src/lib/ai/consent-guard.ts、Edge Functions 側は _shared/ai-consent-guard.ts が、ここを呼んで応答を作る)。
  *
@@ -14,7 +14,8 @@
  * このファイルが守る制約 (崩すと Edge Functions か Next.js のどちらかが動かなくなる):
  *   - 純粋な TypeScript。import なし、Deno / Node 固有の API なし (log-sanitizer.ts / cron-secret.ts と同じ前例)。
  *     ブラウザのコード (同意画面) も src/lib/ai/consent-config.ts 経由でここの定数と型を読む。
- *   - DB のクライアントは、Supabase のクライアントの形 (from → select → eq → is) だけを要求する (AiConsentReadClient)。
+ *   - DB を読むクエリは呼び出し側が渡す (Node と Deno で Supabase のクライアントの型が違うため)。読む表・列・条件は
+ *     AI_CONSENT_TABLE / AI_CONSENT_DECISION_COLUMNS と runAiConsentCheck のコメントのとおりで、両側の部品が同じ形で書く。
  */
 
 /**
@@ -165,17 +166,6 @@ export interface AiConsentQueryResult {
   error: unknown;
 }
 
-/** 判定に必要な、Supabase のクライアントの形 (from → select → eq → is)。Node / Deno のどちらのクライアントも満たす */
-export interface AiConsentReadClient {
-  from(table: string): {
-    select(columns: string): {
-      eq(column: string, value: string): {
-        is(column: string, value: null): PromiseLike<AiConsentQueryResult>;
-      };
-    };
-  };
-}
-
 function isDecisionRow(value: unknown): value is AiConsentRow {
   if (!value || typeof value !== 'object') return false;
   const row = value as Record<string, unknown>;
@@ -204,7 +194,7 @@ export function decideAiConsent(result: AiConsentQueryResult, version: string = 
 }
 
 /**
- * 利用者のデータを AI 事業者へ送ってよいかを判定する (送る経路はすべてこれか checkAiConsent を通す)。
+ * 利用者のデータを AI 事業者へ送ってよいかを判定する (送る経路はすべてこれを通す)。
  * read は、有効な行 (revoked_at IS NULL) を本人の user_id で読むクエリ
  * (AI_CONSENT_TABLE から AI_CONSENT_DECISION_COLUMNS を .eq('user_id', userId).is('revoked_at', null) で読む)。
  * userId は、認証で確定した本人の ID (または cron / キューの行の user_id) を渡す。
@@ -220,16 +210,6 @@ export async function runAiConsentCheck(
   } catch {
     return { allowed: false, reason: 'check_failed' };
   }
-}
-
-/**
- * runAiConsentCheck を、Supabase のクライアントで読む形にしたもの (Edge Functions と、型の浅いクライアントから使う)。
- * client は本人のセッションのクライアント (RLS で自分の行だけが読める) か、service role のクライアント。
- */
-export function checkAiConsent(client: AiConsentReadClient, userId: string | null | undefined): Promise<AiConsentDecision> {
-  return runAiConsentCheck(userId, (id) =>
-    client.from(AI_CONSENT_TABLE).select(AI_CONSENT_DECISION_COLUMNS).eq('user_id', id).is('revoked_at', null),
-  );
 }
 
 /** 止めたときの応答の中身 (HTTP ステータスと本文)。応答を作るのは呼び出し側 (NextResponse / Response) */

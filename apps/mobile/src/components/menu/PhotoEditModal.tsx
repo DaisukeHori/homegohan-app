@@ -17,6 +17,7 @@ import {
 
 import { getApi } from "../../lib/api";
 import { colors, radius, shadows, spacing } from "../../theme";
+import { isAiConsentRequiredError, promptAiConsentRequired } from "../../lib/ai-consent";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -92,6 +93,13 @@ export function PhotoEditModal({ visible, onClose, onResult }: Props) {
       onResult(data);
       handleClose();
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): この画面 (モーダル) を閉じてから、同意画面への案内を出す
+      // (閉じないと、案内から開いた同意画面がモーダルの下に隠れる)
+      if (isAiConsentRequiredError(e)) {
+        handleClose();
+        promptAiConsentRequired();
+        return;
+      }
       Alert.alert("解析エラー", "写真の解析に失敗しました");
     } finally {
       setAnalyzing(false);
