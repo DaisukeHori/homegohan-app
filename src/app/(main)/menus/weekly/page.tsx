@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo, useReducer } 
 import {
   weekViewReducer, initialWeekViewState,
   modalReducer, initialModalState,
-  aiGenerationReducer, initialAiGenerationState, routeAiConsentGenerationFailure,
+  aiGenerationReducer, initialAiGenerationState, useAiConsentGenerationFailure,
   nutritionReducer, initialNutritionState,
   recipeReducer, initialRecipeState,
   uiFlagReducer, initialUiFlagState,
@@ -660,13 +660,7 @@ export default function WeeklyMenuPage() {
   // -------------------------------------------------------
   const [weekView, dispatchWeekView] = useReducer(weekViewReducer, initialWeekViewState);
   const [modal, dispatchModal] = useReducer(modalReducer, initialModalState);
-  const [aiGen, dispatchAiGenState] = useReducer(aiGenerationReducer, initialAiGenerationState);
-  // T15 (#1154): 生成の失敗 (GEN_FAIL) の文が「同意が無くてサーバーが止めた」ものなら、同意画面を出して失敗パネルには出さない。
-  // 失敗を出す経路 (onError・復元・Realtime・ポーリング) はどれも GEN_FAIL を通るので、ここ 1 か所で見分ける
-  const dispatchAiGen = useCallback(
-    (action: Parameters<typeof dispatchAiGenState>[0]) => dispatchAiGenState(routeAiConsentGenerationFailure(action)),
-    [],
-  );
+  const [aiGen, dispatchAiGen] = useReducer(aiGenerationReducer, initialAiGenerationState);
   const [nutrition, dispatchNutrition] = useReducer(nutritionReducer, initialNutritionState);
   const [recipe, dispatchRecipe] = useReducer(recipeReducer, initialRecipeState);
   const [uiFlag, dispatchUiFlag] = useReducer(uiFlagReducer, initialUiFlagState);
@@ -863,7 +857,9 @@ export default function WeeklyMenuPage() {
     }
   }, [aiGen.generationProgress]);
 
-  const generationFailedError = aiGen.generationFailedError;
+  // T15 (#1154): 生成の失敗の文が「同意が無くてサーバーが止めた」ものなら、同意画面を出して失敗をクリアし、失敗パネルには出さない
+  // (失敗を出す経路 = onError・復元・Realtime・ポーリングはどれも GEN_FAIL でここに入るので、ここ 1 か所で見分ける)
+  const generationFailedError = useAiConsentGenerationFailure(aiGen.generationFailedError, dispatchAiGen);
   const generationFailedRequestId = aiGen.generationFailedRequestId;
   // F1b-02: error/requestId は必ず単一 GEN_FAIL dispatch でセット・単一 GEN_FAILED_CLEAR で解除する。
   // 個別 setter は二重 dispatch (片方が null で上書き) を招くため廃止し、呼び出し元で直接 dispatch する。

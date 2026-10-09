@@ -9,20 +9,23 @@
  * 失敗を表示する場所は画面ごとに書く作りなので、場所を足したときに通し忘れやすい (前の周の指摘の型)。そこで、
  *
  *   1. 構文木の検査 (Web とアプリの全部): 非同期のリクエストの状態を読むファイルの中で、失敗の欄を読む場所
- *      (.error_message / .errorMessage / .result.error、分割代入を含む) は、
- *        (a) その場所を含む関数が、見分ける関数 (handleStoredAiConsentFailure / routeAiConsentGenerationFailure、
- *            またはそれを呼ぶ同じファイルの関数) を呼んでいる、または
- *        (b) その場所が、見分ける関数の引数の中にある、または
- *        (c) 下の PASS_THROUGH に理由つきで載っている (値を呼び出し元へ渡すだけ。渡した先も検査する)
- *      のどれか
- *   2. 挙動: Web の見分ける関数と、週の献立の画面の失敗の振り分け (routeAiConsentGenerationFailure) が、
- *      「同意が必要です」の文のときだけ同意画面を出し、失敗パネルを出さない
+ *      (.error_message / .errorMessage / .result.error。分割代入は、その変数を使う場所) は、次のどれか:
+ *        (a) その場所を含む関数が、見分ける関数 (handleStoredAiConsentFailure) か、その関数を自分の中で直接呼ぶ
+ *            同じファイルの関数 (finishImprove・handleFailed など。以下「通す関数」) を呼んでいる
+ *        (b) その場所が、見分ける関数か通す関数の引数の中にある
+ *        (c) その場所が、週の献立の画面の失敗パネルへ入る GEN_FAIL の引数の中にある
+ *            (失敗パネルの文は useAiConsentGenerationFailure を通してから出す。ROUTED_FAILURE_DISPATCH と下の it で検査する)
+ *        (d) 下の PASS_THROUGH に理由つきで載っている (値を呼び出し元へ渡すだけ。渡した先も検査する)
+ *   2. 挙動: Web の見分ける関数と、週の献立の画面の失敗パネルの文 (useAiConsentGenerationFailure) が、
+ *      「同意が必要です」の文のときだけ同意画面を出し、失敗パネルを出さずに失敗をクリアする
  * を確かめる。アプリの挙動は apps/mobile の jest (lib/ai-consent.test.ts・menus-weekly/use-v4-menu-generation.test.tsx) が確かめる。
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, createElement, useReducer } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   AI_CONSENT_CHECK_FAILED_MESSAGE,
   AI_CONSENT_REQUIRED_CODE,
@@ -32,8 +35,13 @@ import { AI_CONSENT_REQUIRED_EVENT, handleStoredAiConsentFailure } from '../src/
 import {
   aiGenerationReducer,
   initialAiGenerationState,
-  routeAiConsentGenerationFailure,
+  useAiConsentGenerationFailure,
+  type AiGenerationAction,
+  type AiGenerationState,
 } from '../src/app/(main)/menus/weekly/_state';
+
+// React の act を jsdom で使う
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -57,16 +65,24 @@ const READER_FILES = [
 ];
 
 /** 見分ける関数 */
-const HANDLERS = ['handleStoredAiConsentFailure', 'routeAiConsentGenerationFailure'];
+const HANDLER = 'handleStoredAiConsentFailure';
+
+/**
+ * 失敗パネルへ入る生成の失敗 (GEN_FAIL) を出すファイル → その dispatch の名前。
+ * 失敗パネルの文は useAiConsentGenerationFailure(aiGen.generationFailedError, dispatch) を通してから出すこと (下の it で検査する)
+ */
+const ROUTED_FAILURE_DISPATCH: Record<string, string> = {
+  'src/app/(main)/menus/weekly/page.tsx': 'dispatchAiGen',
+};
 
 /**
  * 失敗の欄を読むが、値を呼び出し元へ渡すだけの関数 (ファイル::関数名) → 理由。
- * 渡した先は、それぞれの読む場所としてこの検査の対象になる (渡した先の検査は下の it で行う)
+ * 渡した先は、それぞれの読む場所としてこの検査の対象になる (onError を渡す側は下の it で検査する)
  */
 const PASS_THROUGH: Record<string, string> = {
   'src/hooks/useV4MenuGeneration.ts::subscribeToProgress':
     'Realtime の行を onProgress (errorMessage) と onError に渡すだけ。onProgress の受け取り側の .errorMessage は読む場所として検査し、' +
-    'onError を渡す側 (useV4MenuGeneration({ onError })) は下の it で、見分ける関数を呼ぶことを検査する',
+    'onError を渡す側 (useV4MenuGeneration({ onError })) は下の it で、見分けることを検査する',
   'src/hooks/useV4MenuGeneration.ts::getRequestStatus': '行の値を返すだけ (表示しない)。受け取り側の .errorMessage は読む場所として検査する',
   'apps/mobile/src/hooks/useV4MenuGeneration.ts::getRequestStatus':
     '行の値を返すだけ (表示しない)。受け取り側の .errorMessage は読む場所として検査する',
@@ -151,34 +167,29 @@ function callsAnyDirectly(fn: FunctionLike, names: Set<string>): boolean {
   return found;
 }
 
-/** そのファイルの中で、見分ける関数を (直接・同じファイルの関数を通して) 呼ぶ関数の名前と、見分ける関数そのもの */
+/** 見分ける関数と、そのファイルで見分ける関数を自分の中で直接呼ぶ関数 (通す関数) の名前 */
 function handlerNames(sf: ts.SourceFile): Set<string> {
-  const names = new Set(HANDLERS);
-  const fns: FunctionLike[] = [];
+  const names = new Set([HANDLER]);
+  const handler = new Set([HANDLER]);
   walk(sf, (node) => {
-    if (isFunctionLike(node) && nameOf(node)) fns.push(node);
+    if (isFunctionLike(node) && nameOf(node) && callsAnyDirectly(node, handler)) names.add(nameOf(node)!);
   });
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const fn of fns) {
-      const name = nameOf(fn)!;
-      if (names.has(name)) continue;
-      // 名前のある関数は、中の無名の関数 (コールバック) の中の呼び出しも数える
-      let found = false;
-      walk(fn, (node) => {
-        if (ts.isCallExpression(node) && namedOwner(node) === fn) {
-          const callee = calleeName(node);
-          if (callee && names.has(callee)) found = true;
-        }
-      });
-      if (found) {
-        names.add(name);
-        changed = true;
-      }
-    }
-  }
   return names;
+}
+
+/** dispatch({ type: 'GEN_FAIL', ... }) の呼び出しか */
+function isFailureDispatch(call: ts.CallExpression, dispatchName: string): boolean {
+  if (calleeName(call) !== dispatchName) return false;
+  const action = call.arguments[0];
+  if (!action || !ts.isObjectLiteralExpression(action)) return false;
+  return action.properties.some(
+    (prop) =>
+      ts.isPropertyAssignment(prop) &&
+      ts.isIdentifier(prop.name) &&
+      prop.name.text === 'type' &&
+      ts.isStringLiteralLike(prop.initializer) &&
+      prop.initializer.text === 'GEN_FAIL',
+  );
 }
 
 function isInsideType(node: ts.Node): boolean {
@@ -224,8 +235,14 @@ function listFiles(dir: string): string[] {
 function readsAsyncRequests(sf: ts.SourceFile): boolean {
   let found = false;
   walk(sf, (node) => {
-    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) &&
-      SOURCE_MARKERS.some((marker) => node.text.includes(marker))) {
+    if (
+      (ts.isStringLiteral(node) ||
+        ts.isNoSubstitutionTemplateLiteral(node) ||
+        ts.isTemplateHead(node) ||
+        ts.isTemplateMiddle(node) ||
+        ts.isTemplateTail(node)) &&
+      SOURCE_MARKERS.some((marker) => node.text.includes(marker))
+    ) {
       found = true;
     }
     if (ts.isCallExpression(node) && SOURCE_CALLS.includes(calleeName(node) ?? '')) found = true;
@@ -245,26 +262,46 @@ function lineOf(sf: ts.SourceFile, node: ts.Node): number {
   return sf.getLineAndCharacterOfPosition(node.getStart()).line + 1;
 }
 
-/** site が、names のどれかの呼び出しの引数の中にあるか */
-function isArgumentOfHandler(site: ts.Node, names: Set<string>): boolean {
-  for (let cur: ts.Node | undefined = site; cur && !isFunctionLike(cur); cur = cur.parent) {
+/** node が、ok を満たす呼び出しの引数の中にあるか (node を含む関数の外までは上がらない) */
+function isInsideArgumentOf(node: ts.Node, ok: (call: ts.CallExpression) => boolean): boolean {
+  for (let cur: ts.Node | undefined = node; cur && !isFunctionLike(cur); cur = cur.parent) {
     const parent: ts.Node | undefined = cur.parent;
-    if (parent && ts.isCallExpression(parent) && parent.arguments.some((arg) => arg === cur)) {
-      const name = calleeName(parent);
-      if (name && names.has(name)) return true;
-    }
+    if (parent && ts.isCallExpression(parent) && parent.arguments.some((arg) => arg === cur) && ok(parent)) return true;
   }
   return false;
 }
 
+/** 分割代入で受けた変数を、同じ関数の中で使う場所 */
+function referencesOf(binding: ts.BindingElement, fn: FunctionLike): ts.Identifier[] {
+  if (!ts.isIdentifier(binding.name)) return [];
+  const name = binding.name.text;
+  const refs: ts.Identifier[] = [];
+  walk(fn, (node) => {
+    if (ts.isIdentifier(node) && node.text === name && node !== binding.name && !ts.isBindingElement(node.parent)) refs.push(node);
+  });
+  return refs;
+}
+
 function readSites(file: string, sf: ts.SourceFile = parse(file)): ReadSite[] {
   const names = handlerNames(sf);
+  const routedDispatch = ROUTED_FAILURE_DISPATCH[file];
+  const isHandledCall = (call: ts.CallExpression) =>
+    names.has(calleeName(call) ?? '') || Boolean(routedDispatch && isFailureDispatch(call, routedDispatch));
+  const usageHandled = (node: ts.Node) => isInsideArgumentOf(node, isHandledCall);
   const sites: ReadSite[] = [];
   walk(sf, (node) => {
     if (!isFailureRead(node)) return;
     const inner = innermostFunction(node);
     const owner = namedOwner(node);
-    const handled = Boolean(inner && callsAnyDirectly(inner, names)) || isArgumentOfHandler(node, names);
+    let handled = Boolean(inner && callsAnyDirectly(inner, names));
+    if (!handled) {
+      if (ts.isBindingElement(node)) {
+        const refs = inner ? referencesOf(node, inner) : [];
+        handled = refs.length > 0 && refs.every(usageHandled);
+      } else {
+        handled = usageHandled(node);
+      }
+    }
     sites.push({ file, line: lineOf(sf, node), text: node.getText().slice(0, 60), owner: owner ? nameOf(owner) : null, handled });
   });
   return sites;
@@ -292,7 +329,7 @@ describe('読む側の構文木の検査: 失敗の欄を読む場所は、同�
     const unhandled = sites.filter((s) => !s.handled && !(s.owner && PASS_THROUGH[`${s.file}::${s.owner}`]));
     expect(
       unhandled.map(describeSite),
-      `同意で止めた文を見分けていない。失敗を表示する前に handleStoredAiConsentFailure(文) を呼び、true なら自分のエラー表示を出さないこと`,
+      `同意で止めた文を見分けていない。失敗を表示する前に ${HANDLER}(文) を呼び、true なら自分のエラー表示を出さないこと`,
     ).toEqual([]);
   });
 
@@ -306,11 +343,40 @@ describe('読む側の構文木の検査: 失敗の欄を読む場所は、同�
     }
   });
 
+  it('失敗パネルへ入る GEN_FAIL を出すファイルは、失敗パネルの文を useAiConsentGenerationFailure を通してから出す', () => {
+    for (const [file, dispatchName] of Object.entries(ROUTED_FAILURE_DISPATCH)) {
+      const sf = parse(file);
+      const routed: string[] = [];
+      const directReads: number[] = [];
+      let failureDispatches = 0;
+      walk(sf, (node) => {
+        if (ts.isCallExpression(node) && calleeName(node) === 'useAiConsentGenerationFailure') {
+          routed.push(node.arguments.map((arg) => arg.getText()).join(', '));
+        }
+        if (ts.isCallExpression(node) && isFailureDispatch(node, dispatchName)) failureDispatches += 1;
+        // 失敗パネルの文 (generationFailedError) を、通さずに state から直接読む場所
+        if (
+          ts.isPropertyAccessExpression(node) &&
+          node.name.text === 'generationFailedError' &&
+          !isInsideArgumentOf(node, (call) => calleeName(call) === 'useAiConsentGenerationFailure')
+        ) {
+          directReads.push(lineOf(sf, node));
+        }
+      });
+      expect(failureDispatches, `${file}: GEN_FAIL を出す場所が見つからない (走査の空振り)`).toBeGreaterThanOrEqual(1);
+      expect(routed, `${file}: useAiConsentGenerationFailure(aiGen.generationFailedError, ${dispatchName}) が無い`).toEqual([
+        `aiGen.generationFailedError, ${dispatchName}`,
+      ]);
+      expect(directReads, `${file}: 失敗パネルの文を通さずに読んでいる`).toEqual([]);
+    }
+  });
+
   it('Web の useV4MenuGeneration に onError を渡す画面は、onError の中で見分ける (subscribeToProgress が保存された文を渡すため)', () => {
     const consumers: string[] = [];
     for (const file of readerFiles.filter((f) => f.startsWith('src/'))) {
       const sf = parse(file);
       const names = handlerNames(sf);
+      const routedDispatch = ROUTED_FAILURE_DISPATCH[file];
       walk(sf, (node) => {
         if (!ts.isCallExpression(node) || calleeName(node) !== 'useV4MenuGeneration') return;
         const options = node.arguments[0];
@@ -320,7 +386,14 @@ describe('読む側の構文木の検査: 失敗の欄を読む場所は、同�
           const fn = prop.initializer;
           consumers.push(file);
           expect(isFunctionLike(fn), `${file}: onError は関数を直接書く`).toBe(true);
-          expect(callsAnyDirectly(fn as FunctionLike, names), `${file} L${lineOf(sf, prop)}: onError が見分ける関数を呼んでいない`).toBe(true);
+          let routed = false;
+          walk(fn, (inner) => {
+            if (ts.isCallExpression(inner) && routedDispatch && isFailureDispatch(inner, routedDispatch)) routed = true;
+          });
+          expect(
+            callsAnyDirectly(fn as FunctionLike, names) || routed,
+            `${file} L${lineOf(sf, prop)}: onError が見分ける関数を呼ばず、失敗パネルへも渡していない`,
+          ).toBe(true);
         }
       });
     }
@@ -336,12 +409,16 @@ describe('読む側の構文木の検査: 失敗の欄を読む場所は、同�
       const ok = async () => { const res = await api.get("/api/ai/menu/weekly/status"); if (handleStoredAiConsentFailure(res.errorMessage)) return; setError(res.errorMessage); };
       const handleFailed = (msg) => { if (handleStoredAiConsentFailure(msg)) return; Alert.alert("x", msg); };
       const viaHelper = (data) => handleFailed(data.result?.error || "x");
+      const wrapper = () => { handleFailed("x"); };
+      const notDirect = (data) => { wrapper(); setError(data.errorMessage); };
     `;
     const file = 'example.tsx';
-    const found = readSites(file, ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX));
-    expect(found.filter((s) => !s.handled).map((s) => s.text)).toEqual(['payload.new.error_message', 'error_message']);
+    const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const found = readSites(file, sf);
+    // 通す関数 (handleFailed) を呼ぶだけの関数 (wrapper) を呼んでも、見分けたことにはならない
+    expect(found.filter((s) => !s.handled).map((s) => s.text)).toEqual(['payload.new.error_message', 'error_message', 'data.errorMessage']);
     expect(found.filter((s) => s.handled).map((s) => s.text)).toEqual(['res.errorMessage', 'res.errorMessage', 'data.result?.error']);
-    expect(readsAsyncRequests(ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX))).toBe(true);
+    expect(readsAsyncRequests(sf)).toBe(true);
   });
 });
 
@@ -350,58 +427,88 @@ describe('読む側の構文木の検査: 失敗の欄を読む場所は、同�
 // ─────────────────────────────────────────────
 
 describe('Web: 受け付けたあとに同意で止めた失敗の扱い', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+  let root: Root | null = null;
+  let container: HTMLDivElement | null = null;
+
+  function cleanup() {
+    if (root) act(() => root!.unmount());
+    container?.remove();
+    root = null;
+    container = null;
+  }
+
+  afterEach(cleanup);
 
   function listenConsentEvent() {
-    const listener = vi.fn();
+    const events: Event[] = [];
+    const listener = (event: Event) => events.push(event);
     window.addEventListener(AI_CONSENT_REQUIRED_EVENT, listener);
-    return { listener, stop: () => window.removeEventListener(AI_CONSENT_REQUIRED_EVENT, listener) };
+    return { events, stop: () => window.removeEventListener(AI_CONSENT_REQUIRED_EVENT, listener) };
+  }
+
+  /** 週の献立の画面と同じ組み方 (useReducer(aiGenerationReducer) + useAiConsentGenerationFailure) で、生成中に失敗を 1 回出す */
+  function renderFailure(error: string) {
+    const seen: { state: AiGenerationState | null; panel: string | null; dispatch: ((action: AiGenerationAction) => void) | null } = {
+      state: null,
+      panel: null,
+      dispatch: null,
+    };
+    function Harness() {
+      const [state, dispatch] = useReducer(aiGenerationReducer, { ...initialAiGenerationState, isGenerating: true });
+      const panel = useAiConsentGenerationFailure(state.generationFailedError, dispatch);
+      seen.state = state;
+      seen.panel = panel;
+      seen.dispatch = dispatch;
+      return createElement('div', { 'data-panel': panel ?? '' });
+    }
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => root!.render(createElement(Harness)));
+    act(() => seen.dispatch!({ type: 'GEN_FAIL', payload: { error, requestId: 'req-1' } }));
+    return seen;
   }
 
   it('handleStoredAiConsentFailure: 「同意が必要です」の文なら同意画面を出して true、それ以外は何もしないで false', () => {
-    const { listener, stop } = listenConsentEvent();
+    const { events, stop } = listenConsentEvent();
     try {
       expect(handleStoredAiConsentFailure(AI_CONSENT_REQUIRED_MESSAGE)).toBe(true);
-      expect(listener).toHaveBeenCalledTimes(1);
+      expect(events).toHaveLength(1);
       for (const stored of [AI_CONSENT_CHECK_FAILED_MESSAGE, AI_CONSENT_REQUIRED_CODE, 'stale_request_timeout', '', null, undefined]) {
         expect(handleStoredAiConsentFailure(stored)).toBe(false);
       }
-      expect(listener).toHaveBeenCalledTimes(1);
+      expect(events).toHaveLength(1);
     } finally {
       stop();
     }
   });
 
-  it('週の献立の画面: 「同意が必要です」の失敗は同意画面を出し、失敗パネルを出さずに生成中の表示を消す', () => {
-    const { listener, stop } = listenConsentEvent();
+  it('週の献立の画面: 「同意が必要です」の失敗は同意画面を 1 回出し、失敗パネルを出さずに失敗をクリアし、生成中の表示を消す', () => {
+    const { events, stop } = listenConsentEvent();
     try {
-      const generating = { ...initialAiGenerationState, isGenerating: true, generationProgress: { phase: 'x', message: 'x', percentage: 40 } };
-      const action = routeAiConsentGenerationFailure({ type: 'GEN_FAIL', payload: { error: AI_CONSENT_REQUIRED_MESSAGE, requestId: 'req-1' } });
-      const next = aiGenerationReducer(generating, action);
-
-      expect(listener).toHaveBeenCalledTimes(1);
-      expect(next.generationFailedError).toBeNull();
-      expect(next.isGenerating).toBe(false);
-      expect(next.generationProgress).toBeNull();
+      const seen = renderFailure(AI_CONSENT_REQUIRED_MESSAGE);
+      expect(events).toHaveLength(1);
+      expect(seen.panel).toBeNull();
+      expect(seen.state?.generationFailedError).toBeNull();
+      expect(seen.state?.generationFailedRequestId).toBeNull();
+      expect(seen.state?.isGenerating).toBe(false);
+      expect(container?.querySelector('[data-panel]')?.getAttribute('data-panel')).toBe('');
     } finally {
       stop();
     }
   });
 
-  it('週の献立の画面: それ以外の失敗 (一時的に使えないを含む) は、これまでどおり失敗パネルに出す', () => {
-    const { listener, stop } = listenConsentEvent();
+  it('週の献立の画面: それ以外の失敗 (一時的に使えないを含む) は、これまでどおり失敗パネルに出し、同意画面は出さない', () => {
+    const { events, stop } = listenConsentEvent();
     try {
       for (const error of [AI_CONSENT_CHECK_FAILED_MESSAGE, '生成に失敗しました']) {
-        const action = { type: 'GEN_FAIL' as const, payload: { error, requestId: 'req-1' } };
-        expect(routeAiConsentGenerationFailure(action)).toBe(action);
-        expect(aiGenerationReducer(initialAiGenerationState, routeAiConsentGenerationFailure(action)).generationFailedError).toBe(error);
+        const seen = renderFailure(error);
+        expect(seen.panel).toBe(error);
+        expect(seen.state?.generationFailedError).toBe(error);
+        expect(container?.querySelector('[data-panel]')?.getAttribute('data-panel')).toBe(error);
+        cleanup();
       }
-      // GEN_FAIL 以外は触らない
-      const other = { type: 'GEN_SUCCESS' as const };
-      expect(routeAiConsentGenerationFailure(other)).toBe(other);
-      expect(listener).not.toHaveBeenCalled();
+      expect(events).toHaveLength(0);
     } finally {
       stop();
     }
