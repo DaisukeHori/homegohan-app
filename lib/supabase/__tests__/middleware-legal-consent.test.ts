@@ -52,6 +52,7 @@ vi.mock('@supabase/ssr', () => ({
 }));
 
 import { updateSession } from '../middleware';
+import { stubSupabasePublicEnv } from './supabase-public-env';
 
 function apiRequest(path = '/api/pantry') {
   return new NextRequest(new URL(`http://localhost${path}`));
@@ -105,6 +106,8 @@ function mockGetUserRefreshingToken() {
 function setUp(enforce: string | undefined, notice: string | undefined = undefined) {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
+  // updateSession は Supabase の URL・anon キーが無いと汎用の 500 で止まる (#1182)。unstubAllEnvs で消えるので入れ直す
+  stubSupabasePublicEnv();
   if (enforce !== undefined) vi.stubEnv('LEGAL_CONSENT_ENFORCE', enforce);
   else delete process.env.LEGAL_CONSENT_ENFORCE;
   if (notice !== undefined) vi.stubEnv('LEGAL_CONSENT_NOTICE', notice);

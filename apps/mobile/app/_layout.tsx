@@ -11,7 +11,9 @@ import { useEffect } from "react";
 import { LogBox } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { ConfigErrorScreen } from "../src/components/ConfigErrorScreen";
 import { ErrorFallback } from "../src/components/ErrorFallback";
+import { resolveSupabaseEnv } from "../src/lib/env";
 import { ensurePushTokenRegistered } from "../src/lib/pushNotifications";
 import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
 import { ProfileProvider } from "../src/providers/ProfileProvider";
@@ -65,6 +67,11 @@ export default function RootLayout() {
   }, [fontsLoaded]);
 
   if (!fontsLoaded) return null;
+
+  // 必須の環境変数 (EXPO_PUBLIC_SUPABASE_*) が入っていないビルドは、Provider を立ち上げずに設定エラーの画面を出す (#1182)。
+  // Supabase を使う Provider が動くと、存在しない接続先に向かって失敗し続け、原因が分からないため。
+  const supabaseEnv = resolveSupabaseEnv();
+  if (!supabaseEnv.ok) return <ConfigErrorScreen missing={supabaseEnv.missing} />;
 
   return (
     <SafeAreaProvider>
