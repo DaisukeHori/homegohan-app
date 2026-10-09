@@ -10,6 +10,7 @@ import {
   Award, Clock, Smile, Frown, Meh, AlertTriangle, CheckCircle2, Settings
 } from 'lucide-react';
 import { getGoalTypeLabel } from "@/lib/health-goal-types";
+import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
 
 // カラーパレット
 const colors = {
@@ -20,12 +21,8 @@ const colors = {
   textMuted: '#9A9A9A',
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
-  success: '#4CAF50',
-  successLight: '#E8F5E9',
-  warning: '#FF9800',
-  warningLight: '#FFF3E0',
-  error: '#F44336',
-  errorLight: '#FFEBEE',
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
   purple: '#7C4DFF',
   purpleLight: '#EDE7F6',
   blue: '#2196F3',
@@ -218,11 +215,12 @@ export default function HealthDashboardPage() {
     return actualDirection === goodDirection ? 'good' : 'bad';
   };
   const weightChangeSentiment = getWeightChangeSentiment();
-  const weightChangeColor = weightChangeSentiment === 'good'
-    ? colors.success
+  // 矢印アイコンは塗りの色、数字は文字用の濃い色 (#590)
+  const weightChangeColors = weightChangeSentiment === 'good'
+    ? { icon: colors.success, text: colors.successText }
     : weightChangeSentiment === 'bad'
-      ? colors.error
-      : colors.textMuted;
+      ? { icon: colors.error, text: colors.dangerText }
+      : { icon: colors.textMuted, text: colors.textMuted };
 
   // 週間カレンダーを生成
   const getWeekDays = () => {
@@ -288,7 +286,7 @@ export default function HealthDashboardPage() {
           >
             <div className="flex items-center gap-3">
               <CheckCircle2 size={24} style={{ color: colors.success }} />
-              <p className="text-sm font-medium" style={{ color: colors.success }}>
+              <p className="text-sm font-medium" style={{ color: colors.successText }}>
                 {message}
               </p>
             </div>
@@ -532,13 +530,13 @@ export default function HealthDashboardPage() {
                 {weightChange !== null && (
                   <div className="flex items-center justify-center gap-1 mt-1">
                     {weightChange < 0 ? (
-                      <TrendingDown size={12} style={{ color: weightChangeColor }} />
+                      <TrendingDown size={12} style={{ color: weightChangeColors.icon }} />
                     ) : weightChange > 0 ? (
-                      <TrendingUp size={12} style={{ color: weightChangeColor }} />
+                      <TrendingUp size={12} style={{ color: weightChangeColors.icon }} />
                     ) : null}
                     <span
                       className="text-xs"
-                      style={{ color: weightChangeColor }}
+                      style={{ color: weightChangeColors.text }}
                     >
                       {weightChange > 0 ? '+' : ''}{weightChange}
                     </span>
@@ -872,7 +870,7 @@ export default function HealthDashboardPage() {
               {quickSaveError && (
                 <div className="flex items-start gap-2 p-3 mb-4 rounded-lg" style={{ backgroundColor: colors.errorLight }}>
                   <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" style={{ color: colors.error }} />
-                  <p className="text-sm" style={{ color: colors.error }}>{quickSaveError}</p>
+                  <p className="text-sm" style={{ color: colors.dangerText }}>{quickSaveError}</p>
                 </div>
               )}
 

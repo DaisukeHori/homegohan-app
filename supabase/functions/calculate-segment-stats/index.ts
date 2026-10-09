@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { requireServiceRole } from '../_shared/auth.ts';
 import { chunkArray, embeddedOne, fetchAllRows, throwIfError } from '../_shared/bulk-query.ts';
 import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
+import { calculateJstPeriod, formatJstDate, jstDayRangeToTimestamps } from '../_shared/jst-date.ts';
 
 const supabaseAdmin = createClient(
   Deno.env.get('SUPABASE_URL') ?? '',
@@ -66,9 +67,9 @@ Deno.serve(async (req) => {
     
     throwIfError('segment_definitions の取得', segmentsError);
 
-    // 3. 期間を計算
-    const { periodStart, periodEnd } = calculatePeriod(periodType);
-    logger.info(`Period: ${periodStart} to ${periodEnd}`);
+    // 3. 期間を計算 (JST の暦。Deno の実行環境は UTC なので、new Date() のローカル時刻では求めない #1211)
+    const { periodStart, periodEnd } = calculateJstPeriod(periodType);
+    logger.info(`Period (JST): ${periodStart} to ${periodEnd}`);
 
     // 4. 全ユーザーのメトリクスを計算
     const userMetricsMap = await calculateAllUserMetrics(metrics!, periodType, periodStart, periodEnd);
@@ -105,47 +106,6 @@ Deno.serve(async (req) => {
     });
   }
 });
-
-// =====================================================
-// 期間計算
-// =====================================================
-
-function calculatePeriod(periodType: string): { periodStart: string; periodEnd: string } {
-  const now = new Date();
-  let periodStart: Date;
-  let periodEnd: Date;
-
-  switch (periodType) {
-    case 'daily':
-      periodStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      periodEnd = periodStart;
-      break;
-    case 'weekly':
-      // 月曜日起点
-      const dayOfWeek = now.getDay();
-      const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      periodStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diff);
-      periodEnd = new Date(periodStart);
-      periodEnd.setDate(periodEnd.getDate() + 6);
-      break;
-    case 'monthly':
-      periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      break;
-    case 'all_time':
-      periodStart = new Date(2024, 0, 1);
-      periodEnd = now;
-      break;
-    default:
-      periodStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
-      periodEnd = now;
-  }
-
-  return {
-    periodStart: periodStart.toISOString().split('T')[0],
-    periodEnd: periodEnd.toISOString().split('T')[0],
-  };
-}
 
 // =====================================================
 // ユーザーメトリクス計算
@@ -201,13 +161,14 @@ async function fetchBulkData(periodStart: string, periodEnd: string): Promise<Bu
   // どのクエリも、失敗したら例外にする (失敗を「行が無い」と取り違えて、0 の指標を保存しないため)。
   // また API は 1 回の応答を 1000 行で打ち切るので、fetchAllRows で全件を取る。
   //
-  // 日付の扱い (JST と UTC が混ざっているので、取得ごとにどちらかを明示する):
-  //   - 期間 (periodStart / periodEnd) は calculatePeriod が求める YYYY-MM-DD で、実行環境 (Deno = UTC) の暦日。
-  //     JST に揃えるのは #1211 の担当で、ここでは従来どおりの値をそのまま使う
+  // 日付の扱い (期間も、日別の数え方も、JST の暦にそろえる #1211。Deno の実行環境は UTC なので、取得ごとに明示する):
+  //   - 期間 (periodStart / periodEnd) は calculateJstPeriod が求める JST の暦日 (YYYY-MM-DD。両端の日を含む)
   //   - planned_meals: 日付は user_daily_meals.day_date (date 型。JST の暦日でタイムゾーンを持たない)。
   //     期間の文字列とそのまま比較する
-  //   - meals: eaten_at は timestamptz (時刻)。期間の端は UTC の 0:00〜23:59:59 で切り、
-  //     日別の数え方 (下の mealDaySetByUser) も UTC の暦日
+  //   - meals: eaten_at は timestamptz (時刻)。期間の初日の JST 0 時から、終了日の翌日の JST 0 時の手前までで絞り、
+  //     日別の数え方 (下の mealDaySetByUser) も JST の暦日。
+  //     日付の文字列をそのまま渡すと DB のタイムゾーン (UTC) の 0 時になり、JST と 9 時間ずれる
+  const mealsRange = jstDayRangeToTimestamps(periodStart, periodEnd);
   const [mealStreakRows, breakfastStreakRows, mealRows, plannedRows, totalMealRows] =
     await Promise.all([
       fetchAllRows<{ user_id: string; current_streak: number | null }>('health_streaks (meal_record) の取得', () =>
@@ -217,7 +178,7 @@ async function fetchBulkData(periodStart: string, periodEnd: string): Promise<Bu
         supabaseAdmin.from('health_streaks').select('user_id, current_streak').eq('streak_type', 'breakfast'),
       ),
       fetchAllRows<{ user_id: string; eaten_at: string }>('meals (期間内) の取得', () =>
-        supabaseAdmin.from('meals').select('user_id, eaten_at').gte('eaten_at', periodStart).lte('eaten_at', periodEnd + 'T23:59:59Z'),
+        supabaseAdmin.from('meals').select('user_id, eaten_at').gte('eaten_at', mealsRange.from).lt('eaten_at', mealsRange.before),
       ),
       // planned_meals に user_id / 日付の列は無い。所有者と日付は daily_meal_id でつながる user_daily_meals (user_id, day_date) にある
       // (以前の meal_plan_days / meal_plans は date-based model への移行で削除済み。本番にも無い #1306)。
@@ -245,7 +206,7 @@ async function fetchBulkData(periodStart: string, periodEnd: string): Promise<Bu
     if (!row.user_id || !row.eaten_at) continue;
     let s = mealDaySetByUser.get(row.user_id);
     if (!s) { s = new Set(); mealDaySetByUser.set(row.user_id, s); }
-    s.add(String(row.eaten_at).slice(0, 10));
+    s.add(formatJstDate(new Date(row.eaten_at)));
   }
   const mealDays = new Map<string, number>();
   for (const [uid, s] of mealDaySetByUser) mealDays.set(uid, s.size);
@@ -321,17 +282,19 @@ function computeMetricFromBulk(userId: string, metricCode: string, bulk: BulkDat
   }
 }
 
+// 前の期間の開始日 (YYYY-MM-DD)。currentPeriodStart は JST の暦日 (週は月曜、月は 1 日) で、暦の計算だけなので、
+// 実行環境のタイムゾーンに左右されない UTC の関数で行う (ローカル時刻の setDate() / setMonth() だと、夏時間のある環境で日付がずれる)
 function getPreviousPeriodStart(periodType: string, currentPeriodStart: string): string | null {
   const currentStart = new Date(currentPeriodStart);
   switch (periodType) {
     case 'weekly': {
       const d = new Date(currentStart);
-      d.setDate(d.getDate() - 7);
+      d.setUTCDate(d.getUTCDate() - 7);
       return d.toISOString().split('T')[0];
     }
     case 'monthly': {
       const d = new Date(currentStart);
-      d.setMonth(d.getMonth() - 1);
+      d.setUTCMonth(d.getUTCMonth() - 1);
       return d.toISOString().split('T')[0];
     }
     default:

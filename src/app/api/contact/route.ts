@@ -1,5 +1,6 @@
 import { createLogger } from '@/lib/db-logger';
 import { checkRateLimit, rateLimitExceededResponse, type RateLimitResult } from '@/lib/rate-limit';
+import { getEmailFrom } from '@/lib/site-config';
 import { createClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
@@ -41,7 +42,8 @@ async function sendAdminNotification(inquiry: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: 'ほめゴハン <noreply@homegohan.app>',
+        // 送信元は EMAIL_FROM (未設定なら既定値)。ほかのメールと同じく src/lib/site-config.ts で決める (#1194)
+        from: getEmailFrom(),
         to: [adminEmail],
         subject: `[お問い合わせ] ${inquiry.subject}`,
         text: [

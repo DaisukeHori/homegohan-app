@@ -2257,7 +2257,7 @@ CREATE TABLE gdpr_deletion_requests (
 
 ```
 [admin 系]
-- admin.user.ban / unban / role_change / impersonate
+- admin.user.ban / unban / role_change (impersonate は提供しない: §17.11, #1124)
 - admin.organization.create / suspend / restore / delete
 - admin.coupon.create / pause / activate / retroactive_apply
 - admin.refund.issue
@@ -2690,13 +2690,15 @@ CREATE TABLE parental_consents (
 );
 ```
 
-### 17.11 impersonation (なりすまし支援)
+### 17.11 impersonation (なりすまし支援) — 提供しない (#1124)
 
-- `super_admin` のみ実行可
-- API: `POST /api/super-admin/impersonate/{userId}` → 一時セッショントークン発行 (max 1 時間)
-- **画面上部に常時赤バナー表示**: 「⚠ 〇〇 (運営) として 山田太郎 さんとしてログイン中。すべての操作が記録されます」
-- 全操作が `admin_audit_logs` に `impersonated_by` 列付きで記録
-- 個別ユーザーの設定で impersonate 拒否可能 (デフォルト: 許可)
+**提供しない** (オーナー判断 2026-10-08)。
+
+- 以前の要件 (`super_admin` が一時セッショントークンを発行して他ユーザーとしてログインする / 画面上部の常時赤バナー / 個別ユーザーの設定での拒否) は採用しない
+- 実装されていたのはトークンの発行だけで、トークンは `admin_audit_logs` に平文で書かれるだけだった (受け取って使う側が無かった)。API・ヘルパー・画面の表示をすべて削除した
+- サポート対応は、本人として操作せず、読み取り専用のユーザー画面で行う
+- `admin_audit_logs.impersonated_by` 列は、過去に書かれた行の履歴として残す (新しく書く処理は無い)
+- 設計の詳細は `docs/design/cross/01-auth-session.md` §11
 
 ### 17.12 ログアウト時の Cookie 完全削除
 

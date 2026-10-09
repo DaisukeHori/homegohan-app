@@ -1,7 +1,9 @@
 /**
  * Auth boundary tests: parameterized cross-endpoint tests
  * Validates 401 (no auth) and 403 (general user) for all operator endpoints
- * 15 specs covering all major endpoints
+ * 14 specs covering all major endpoints
+ *
+ * 注: POST /api/admin/users/[id]/impersonate は #1124 で API ごと削除した (admin-users.test.ts で 404 を確認する)。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createTestUserWithRoles, cleanupTestUser, testEmail, type TestUser } from '../helpers/users';
@@ -56,12 +58,6 @@ const endpoints: Array<{
       duration_days: 1,
       notify_user: false,
     },
-  },
-  {
-    method: 'POST',
-    path: '/api/admin/users/00000000-0000-0000-0000-000000000000/impersonate',
-    description: 'POST /api/admin/users/[id]/impersonate',
-    body: { reason: 'test' },
   },
   // admin/finance
   { method: 'GET', path: '/api/admin/finance/dashboard', description: 'GET /api/admin/finance/dashboard' },
