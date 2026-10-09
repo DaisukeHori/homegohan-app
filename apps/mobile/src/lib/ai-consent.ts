@@ -19,17 +19,38 @@ import { Alert } from "react-native";
 import { router } from "expo-router";
 
 import {
+  AI_CONSENT_AUTOMATIC_LOCKED_NOTE,
+  AI_CONSENT_CHECK_FAILED_SKIPPED_NOTE,
   AI_CONSENT_REQUIRED_MESSAGE,
   AI_CONSENT_REQUIRED_STATUS,
+  AI_CONSENT_SETTINGS_ENTRY_TITLE,
+  AI_CONSENT_SKIPPED_NOTE,
+  aiSkippedReasonOf,
+  aiSummarySkippedNote,
   isAiConsentRequiredBody,
+  type AiSkippedReason,
 } from "../../../../supabase/functions/_shared/ai-consent";
+
+/**
+ * 文面は Web と共用の定義をそのまま使う (2 か所に持たない)。
+ *   - AI_CONSENT_AUTOMATIC_LOCKED_NOTE: 画面を開くと自動で作る AI のコメントを、同意が無くて作らなかったときに出す一文
+ *   - AI_CONSENT_SKIPPED_NOTE / AI_CONSENT_CHECK_FAILED_SKIPPED_NOTE: 保存と AI の分析を一緒にする画面で、AI の分析を省いたときの一文
+ *   - AI_CONSENT_SETTINGS_ENTRY_TITLE: 設定タブの項目の名前 (案内の一文が「設定の「…」から」と指す先)
+ *   - aiSkippedReasonOf: 応答の aiSkipped を、出し分けの理由 (consent_required / check_failed) に直す
+ *   - aiSummarySkippedNote: AI 相談を閉じた応答の aiSkipped から、要約を省いた旨の一文を選ぶ
+ */
+export {
+  AI_CONSENT_AUTOMATIC_LOCKED_NOTE,
+  AI_CONSENT_CHECK_FAILED_SKIPPED_NOTE,
+  AI_CONSENT_SETTINGS_ENTRY_TITLE,
+  AI_CONSENT_SKIPPED_NOTE,
+  aiSkippedReasonOf,
+  aiSummarySkippedNote,
+  type AiSkippedReason,
+};
 
 /** アプリの同意画面 (Web の /settings/ai-consent を WebView で開く画面) */
 export const AI_CONSENT_SCREEN_PATH = "/settings/ai-consent";
-
-/** 画面を開くと自動で作る AI のコメントを、同意が無くて作らなかったときに出す一文 (Web の AI_CONSENT_COPY.automaticLockedNote と同じ) */
-export const AI_CONSENT_AUTOMATIC_LOCKED_NOTE =
-  "AI のコメントは、AI へのデータ提供に同意すると表示されます（設定の「AI へのデータ提供の同意」から同意できます）。";
 
 /** 案内を出してから、次の案内を出さない時間 (ミリ秒)。1 つの操作で複数の API が同時に止められても、案内を重ねない */
 const PROMPT_DEDUP_MS = 3_000;

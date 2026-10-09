@@ -9,6 +9,8 @@ import { todayLocal } from "@/lib/date-utils";
 import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
 import { useAiConsent } from "@/hooks/useAiConsent";
 import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
+import { aiSkippedReasonOf, type AiSkippedReason } from "@/lib/ai/consent-config";
+import { AiSkippedNotice } from "@/components/consent/AiSkippedNotice";
 import {
   Camera, Upload, X, ChevronDown, ChevronUp, Loader2,
   CheckCircle2, AlertTriangle, Sparkles, ArrowLeft, Activity,
@@ -112,6 +114,8 @@ export default function NewHealthCheckupPage() {
   const [analyzing, setAnalyzing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedCheckup, setSavedCheckup] = useState<any>(null);
+  // 同意が無くて (または同意の状況を読めなくて) サーバーが AI の分析を省いた理由 (応答の aiSkipped。T15 / #1154)
+  const [aiSkipped, setAiSkipped] = useState<AiSkippedReason | null>(null);
   const [error, setError] = useState<string | null>(null);
   // #1055 UX3-10: OCR失敗を無告知にせず、confirm画面でバナー表示する
   // #1055 (wave-3b): OCR API が 200 を返しても抽出項目が0件の場合は
@@ -287,7 +291,8 @@ export default function NewHealthCheckupPage() {
 
     try {
       // 保存すると、数値を AI に送って個別レビューを作る。画像を使わず手入力した人も、ここで同意の確認を受ける。
-      // 「同意しない」でも保存はする (サーバーは同意が無ければレビューを作らずに保存だけする。応答の aiSkipped)
+      // 「同意しない」でも保存はする (サーバーは同意が無ければレビューを作らずに保存だけし、応答の aiSkipped で知らせる。
+      // review の画面は、そのときレビューの代わりに同意の案内 (AiSkippedNotice) を出す)
       await ensureAiConsent();
 
       // フォームデータを数値に変換
@@ -327,6 +332,7 @@ export default function NewHealthCheckupPage() {
 
       const data = await res.json();
       setSavedCheckup(data.checkup);
+      setAiSkipped(aiSkippedReasonOf(data));
       setStep('review');
 
     } catch (err: any) {
@@ -800,6 +806,13 @@ export default function NewHealthCheckupPage() {
                   </div>
                 )}
               </>
+            ) : aiSkipped ? (
+              <AiSkippedNotice
+                reason={aiSkipped}
+                variant="saved"
+                className="p-4 rounded-xl text-center"
+                style={{ backgroundColor: colors.card, color: colors.textMuted }}
+              />
             ) : (
               <div className="p-4 rounded-xl text-center" style={{ backgroundColor: colors.card }}>
                 <p className="text-sm" style={{ color: colors.textMuted }}>

@@ -26,8 +26,8 @@
  *     AI/ML API は、受け取った文章を Voyage AI のモデル (voyage-multilingual-2) で数値化する中継の事業者である
  *   - 各事業者での保存期間と、送った内容を事業者の AI の学習に使うかどうか (いまは「事業者ごとに異なる」としか書いていない)
  *   - 提供する情報の範囲 (写真・数値・相談文のほか、献立の作成に使う好み・アレルギー・健康目標を含めるか)
- *   - 画面を開くと自動で AI に送る処理 (ホームの栄養アドバイス、週間献立のヒント・栄養士コメント) は、同意が無ければ送らず、
- *     画面には何も出さない (同意画面も出さない)。この扱いでよいか
+ *   - 画面を開くと自動で AI に送る処理 (ホームの栄養アドバイス、週間献立の栄養士コメントなど) は、同意が無ければ送らず、
+ *     同意画面は出さずに案内の一文 (automaticLockedNote) だけを出す。この扱いでよいか
  *   - Anthropic は、現在 AI の呼び出しに使っていないので一覧に入れていない (DB の CHECK には値が残っている)
  */
 
@@ -41,7 +41,14 @@ export {
   AI_CONSENT_CHECK_FAILED_STATUS,
   AI_CONSENT_CHECK_FAILED_MESSAGE,
   isAiConsentRequiredBody,
+  aiSkippedReasonOf,
+  aiSummarySkippedNote,
   summarizeAiConsent,
+  AI_CONSENT_SETTINGS_ENTRY_TITLE,
+  AI_CONSENT_AUTOMATIC_LOCKED_NOTE,
+  AI_CONSENT_SKIPPED_NOTE,
+  AI_CONSENT_CHECK_FAILED_SKIPPED_NOTE,
+  type AiSkippedReason,
   type AiConsentProvider,
   type AiConsentProviderState,
   type AiConsentProviderStatus,
@@ -49,7 +56,11 @@ export {
   type AiConsentRow,
 } from '../../../supabase/functions/_shared/ai-consent';
 
-import type { AiConsentProvider } from '../../../supabase/functions/_shared/ai-consent';
+import {
+  AI_CONSENT_AUTOMATIC_LOCKED_NOTE,
+  AI_CONSENT_SETTINGS_ENTRY_TITLE,
+  type AiConsentProvider,
+} from '../../../supabase/functions/_shared/ai-consent';
 
 /** 設定ページ (同意の確認・撤回) の URL */
 export const AI_CONSENT_SETTINGS_PATH = '/settings/ai-consent';
@@ -138,13 +149,12 @@ export const AI_CONSENT_COPY = {
   acceptLabel: '同意する',
   declineLabel: '同意しない',
   /** 画面を開くと自動で作る AI のコメント (栄養士のコメントなど) を、同意が無くて作らなかったときに出す一文 (同意画面は出さない) */
-  automaticLockedNote:
-    'AI のコメントは、AI へのデータ提供に同意すると表示されます（設定の「AI へのデータ提供の同意」から同意できます）。',
+  automaticLockedNote: AI_CONSENT_AUTOMATIC_LOCKED_NOTE,
   /** AI 機能を使おうとしたが、同意が無くて止められたときの見出し (同意画面のタイトルの上に出す) */
   requiredLead: 'この機能を使うには、次の内容への同意が必要です。',
   settingsLinkLabel: 'AI へのデータ提供の同意（確認・撤回）',
   /** 設定ページ（確認・撤回）の文面 */
-  settingsTitle: 'AI へのデータ提供の同意',
+  settingsTitle: AI_CONSENT_SETTINGS_ENTRY_TITLE,
   /** 撤回の確認ダイアログの説明 */
   revokeNote:
     '同意を撤回すると、AI 機能（写真の解析、献立の作成、AI 相談など）は使えなくなります。' +

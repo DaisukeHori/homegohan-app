@@ -10,7 +10,8 @@
  * 本文は固定の文 (#1172: 変数名・DB のエラー文は出さない)。
  *
  * このファイルは next/headers や node: の API を使わない (runtime = 'edge' の cron からも使うため)。
- * 一覧 (どの経路がどこで止めるか) は tests/ai-consent-enforcement-inventory.test.ts にある。
+ * 一覧 (どの経路がどこで止めるか) と、未同意なら送らないことの実際の route での確かめは tests/ai-consent-enforcement.test.ts と
+ * tests/ai-consent-enforcement-routes.test.ts にある。
  */
 import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';

@@ -7,6 +7,7 @@ import { formatLocalDate } from "@homegohan/shared";
 import type { Tables } from "@homegohan/shared";
 import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
 import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
+import { aiSkippedReasonOf, type AiSkippedReason } from "@/lib/ai/consent-config";
 
 // 今日の献立データ
 interface TodayMealPlan {
@@ -110,6 +111,8 @@ export const useHomeData = () => {
     advice: string | null;
     suggestion: any | null;
     comparison: Record<string, { actual: number; target: number; percentage: number; status: string }>;
+    /** 同意が無くて (または同意の状況を読めなくて) サーバーが AI のアドバイスを省いた理由 (応答の aiSkipped。T15 / #1154) */
+    aiSkipped: AiSkippedReason | null;
     loading: boolean;
   }>({
     score: 0,
@@ -117,6 +120,7 @@ export const useHomeData = () => {
     advice: null,
     suggestion: null,
     comparison: {},
+    aiSkipped: null,
     loading: false,
   });
 
@@ -674,6 +678,7 @@ export const useHomeData = () => {
             advice: data.advice || null,
             suggestion: data.suggestion || null,
             comparison: data.analysis.comparison || {},
+            aiSkipped: aiSkippedReasonOf(data),
             loading: false,
           });
           

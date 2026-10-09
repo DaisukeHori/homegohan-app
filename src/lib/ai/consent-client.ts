@@ -4,8 +4,9 @@
  * 同意画面 (src/hooks/useAiConsent.tsx) と設定ページ (src/app/(main)/settings/ai-consent/page.tsx) が使う。
  * サーバー専用のコード (src/lib/ai/consent.ts) は import しない。
  *
- * 【AI への送信は止めない】ここの関数は、失敗しても例外を投げない (結果の値で返す)。
- * 呼び出し側 (useAiConsent) は、状況が取れなかったときも AI の操作をそのまま進める。
+ * ここの関数は、失敗しても例外を投げない (結果の値で返す)。
+ * 呼び出し側 (useAiConsent) は、状況が取れなかったときは同意画面を出さずに操作を進める ('skipped')。
+ * そのときも、送ってよいかはサーバーが判定する (未同意なら 403 AI_CONSENT_REQUIRED で止め、送らない)。
  */
 import { AI_CONSENT_VERSION, type AiConsentStatus } from './consent-config';
 

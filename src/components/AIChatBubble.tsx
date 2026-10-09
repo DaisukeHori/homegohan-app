@@ -14,6 +14,7 @@ import { notifyMenuGenerated } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { useAiConsent } from "@/hooks/useAiConsent";
 import { AiConsentRequiredError, aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
+import { aiSummarySkippedNote } from "@/lib/ai/consent-config";
 import { todayLocal, parseLocalDate, formatLocalDate } from "@/lib/date-utils";
 // AI 応答を HTML にして dangerouslySetInnerHTML へ渡すときは、必ずこの関数を通す (#1169)
 import { parseMarkdown } from "@/lib/markdown-lite";
@@ -728,6 +729,20 @@ export default function AIChatBubble() {
               createdAt: new Date().toISOString(),
             },
           ]);
+        } else {
+          // 同意が無くて (または同意の状況を読めなくて) サーバーが要約 (AI) を省いた (T15 / #1154): その旨を一言だけ出す
+          const skippedNote = aiSummarySkippedNote(data);
+          if (skippedNote) {
+            setMessages(prev => [
+              ...prev,
+              {
+                id: `summary-skipped-${Date.now()}`,
+                role: 'assistant',
+                content: skippedNote,
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+          }
         }
       }
     } catch (e) {

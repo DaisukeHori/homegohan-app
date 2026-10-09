@@ -112,7 +112,7 @@ describe('AiDataConsentModal: 文面', () => {
     expect(note).toContain('同意しない場合、AI 機能');
     expect(note).toContain('お使いいただけません');
     expect(note).toContain('あとからいつでも同意できます');
-    // 「あとで」(送信は止めない) の古い文面は残っていない
+    // 以前の「あとで」(同意せずに AI の操作を続ける) の文面は残っていない
     expect(text()).not.toContain('あとで');
   });
 

@@ -3,8 +3,8 @@
 // src/app/(main)/settings/ai-consent/page.tsx
 // 外国の AI 事業者への提供の同意: 状況の確認と撤回 (T15 / #1154)
 //
-// 設定のトップ (settings/page.tsx) からのリンクは、モバイルの設定画面の変更 (PR #1079) が片付いてから足す。
-// それまでは、同意画面 (AiDataConsentModal) のリンクと、この URL (/settings/ai-consent) から開く。
+// 入口: 設定のトップ (settings/page.tsx の「データとプライバシー」) とアプリの設定タブの「AI へのデータ提供の同意」、
+// 同意画面 (AiDataConsentModal) のリンク、AI の分析を省いた画面の案内 (AiSkippedNotice)。
 //
 // 【未同意なら AI へ送らない】同意していない間 (撤回後・文面の版が上がったあとを含む) は、AI 機能を使えない
 // (サーバーが送る手前で 403 AI_CONSENT_REQUIRED で止める)。AI の API に止められた画面からは、同意画面か、このページへ案内する。

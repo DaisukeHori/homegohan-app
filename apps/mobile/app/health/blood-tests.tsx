@@ -18,7 +18,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button, EmptyState, LoadingState } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
 import { colors, radius, shadows, spacing } from "../../src/theme";
-import { handleAiConsentRequiredError } from "../../src/lib/ai-consent";
+import { aiSkippedReasonOf, handleAiConsentRequiredError, type AiSkippedReason } from "../../src/lib/ai-consent";
+import { AiSkippedNotice } from "../../src/components/ai/AiSkippedNotice";
 
 // ─── Types ────────────────────────────────────────────
 
@@ -203,6 +204,7 @@ export default function BloodTestsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isOcrProcessing, setIsOcrProcessing] = useState(false);
   const [savedResult, setSavedResult] = useState<any>(null);
+  const [aiSkipped, setAiSkipped] = useState<AiSkippedReason | null>(null);
 
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     lipid: true,
@@ -352,12 +354,14 @@ export default function BloodTestsPage() {
       if (form.note.trim()) body.note = form.note.trim();
 
       const api = getApi();
-      const data = await api.post<{ result: any; longitudinalReview: LongitudinalReview | null }>(
+      const data = await api.post<{ result: any; longitudinalReview: LongitudinalReview | null; aiSkipped?: string }>(
         "/api/health/blood-tests",
         body,
       );
 
       setSavedResult(data.result);
+      // 同意が無い (または同意の状況を読めない) とき、サーバーは記録だけを保存し、AI の分析を省いて aiSkipped で知らせる (T15 / #1154)
+      setAiSkipped(aiSkippedReasonOf(data));
       if (data.longitudinalReview) {
         setLongitudinalReview(data.longitudinalReview);
       }
@@ -488,11 +492,7 @@ export default function BloodTestsPage() {
               ) : null}
             </>
           ) : (
-            <View style={styles.reviewCard}>
-              <Text style={[styles.reviewCardBody, { color: colors.textMuted, textAlign: "center" }]}>
-                AI分析を実行できませんでした
-              </Text>
-            </View>
+            <AiSkippedNotice reason={aiSkipped} />
           )}
 
           <Button onPress={() => { setScreen("list"); void load(); }}>完了</Button>

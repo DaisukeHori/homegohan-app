@@ -29,7 +29,7 @@ import { getApi, getApiBaseUrl } from "../../lib/api";
 import { supabase } from "../../lib/supabase";
 import { colors, radius, shadows, spacing } from "../../theme";
 import { AIDayMenuModal } from "./AIDayMenuModal";
-import { isAiConsentRequiredError, promptAiConsentRequired } from "../../lib/ai-consent";
+import { aiSummarySkippedNote, isAiConsentRequiredError, promptAiConsentRequired } from "../../lib/ai-consent";
 
 // ============================================================
 // Types
@@ -287,6 +287,20 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
               createdAt: new Date().toISOString(),
             },
           ]);
+        } else {
+          // 同意が無くて (または同意の状況を読めなくて) サーバーが要約 (AI) を省いた (T15 / #1154): その旨を一言だけ出す
+          const skippedNote = aiSummarySkippedNote(data);
+          if (skippedNote) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `summary-skipped-${Date.now()}`,
+                role: "assistant",
+                content: skippedNote,
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+          }
         }
         await createNewSession();
       } else if (res.status === 400) {

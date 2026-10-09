@@ -237,6 +237,55 @@ export function aiConsentSkippedField(decision: AiConsentDecision | null): { aiS
   return { aiSkipped: aiConsentDeniedPayload(decision).body.code };
 }
 
+/**
+ * 応答の aiSkipped (aiConsentSkippedField が足す欄) を、画面の出し分けの理由に直す (Web・モバイル共用)。
+ *   - consent_required: 同意が無いので AI の部分を省いた。画面は同意の画面へ案内する
+ *   - check_failed    : 同意の状況を読めなかったので AI の部分を省いた。画面は「一時的に」と出す
+ *   - null            : 省いていない (aiSkipped が無い・知らない値)
+ */
+export type AiSkippedReason = 'consent_required' | 'check_failed';
+
+export function aiSkippedReasonOf(body: unknown): AiSkippedReason | null {
+  if (!body || typeof body !== 'object') return null;
+  const skipped = (body as { aiSkipped?: unknown }).aiSkipped;
+  if (skipped === AI_CONSENT_REQUIRED_CODE) return 'consent_required';
+  if (skipped === AI_CONSENT_CHECK_FAILED_CODE) return 'check_failed';
+  return null;
+}
+
+/**
+ * 同意の確認・撤回の画面の名前。Web の設定 (/settings) とアプリの設定タブの項目の名前で、
+ * 下の案内の一文が「設定の「…」から」と指す先 (tests/ai-consent-settings-entry.test.ts が、両方の設定に項目があることを検査する)。
+ */
+export const AI_CONSENT_SETTINGS_ENTRY_TITLE = 'AI へのデータ提供の同意';
+
+/** 画面を開くと自動で作る AI のコメントを、同意が無くて作らなかったときに出す一文 (同意画面は出さない) */
+export const AI_CONSENT_AUTOMATIC_LOCKED_NOTE =
+  `AI のコメントは、AI へのデータ提供に同意すると表示されます（設定の「${AI_CONSENT_SETTINGS_ENTRY_TITLE}」から同意できます）。`;
+
+/** 記録の保存と AI の分析を一緒にする画面 (健康診断・血液検査) で、同意が無くて AI の分析を省いたときに出す一文 */
+export const AI_CONSENT_SKIPPED_NOTE =
+  `記録は保存しました。AI の分析は、AI へのデータ提供に同意すると行えます（設定の「${AI_CONSENT_SETTINGS_ENTRY_TITLE}」から同意できます）。`;
+
+/** 同上で、同意の状況を読めなくて AI の分析を省いたときに出す一文 */
+export const AI_CONSENT_CHECK_FAILED_SKIPPED_NOTE =
+  '記録は保存しました。AI の分析は一時的に行えませんでした。時間をおいて再度お試しください。';
+
+/** AI 相談を閉じたとき、同意が無くて要約 (AI) を省いたことを相談の画面に出す一文 */
+export const AI_CONSENT_SUMMARY_SKIPPED_NOTE =
+  `相談を終了しました。要約は、AI へのデータ提供に同意すると作られます（設定の「${AI_CONSENT_SETTINGS_ENTRY_TITLE}」から同意できます）。`;
+
+/** 同上で、同意の状況を読めなくて要約を省いたときの一文 */
+export const AI_CONSENT_SUMMARY_CHECK_FAILED_NOTE = '相談を終了しました。要約は一時的に作れませんでした。';
+
+/** AI 相談を閉じた応答の aiSkipped から、相談の画面に出す一文を選ぶ (省いていなければ null) */
+export function aiSummarySkippedNote(body: unknown): string | null {
+  const reason = aiSkippedReasonOf(body);
+  if (reason === 'consent_required') return AI_CONSENT_SUMMARY_SKIPPED_NOTE;
+  if (reason === 'check_failed') return AI_CONSENT_SUMMARY_CHECK_FAILED_NOTE;
+  return null;
+}
+
 /** 応答の本文が「未同意で止めた」ことを表すか (画面・モバイルの判定用) */
 export function isAiConsentRequiredBody(body: unknown): boolean {
   if (!body || typeof body !== 'object') return false;

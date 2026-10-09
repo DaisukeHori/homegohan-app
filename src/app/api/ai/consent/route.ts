@@ -22,7 +22,9 @@ import {
  * 対象は常に認証で確定した本人。リクエストの body / URL から ID を受け取らない。
  * Web (Cookie 認証) とモバイルの WebView / アプリ (Authorization: Bearer) が同じ契約で使う。
  *
- * 【AI への送信は止めない】同意の有無で AI の呼び出しを止める処理は、この PR には無い (強制は T18)。
+ * 【未同意なら AI へ送らない】ここで記録した同意は、AI へ送る各経路が送る手前で判定する
+ * (src/lib/ai/consent-guard.ts / supabase/functions/_shared/ai-consent-guard.ts。判定の本体は _shared/ai-consent.ts)。
+ * 全事業者について現行の版の同意が無ければ送らず 403 AI_CONSENT_REQUIRED、同意の状況を読めなければ 503 AI_CONSENT_CHECK_FAILED。
  */
 export const dynamic = 'force-dynamic';
 

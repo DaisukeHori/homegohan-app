@@ -13,7 +13,8 @@ import { getAiConsentStatus, revokeAiConsent } from '@/lib/ai/consent';
  * 有効な同意が無いときは何も変えず、成功 (revokedCount = 0) を返す。
  * 撤回は利用者の権利なので、回数制限はかけない (行を増やさず、既存の行に revoked_at を入れるだけ)。
  *
- * 【AI への送信は止めない】撤回しても、いまは AI の呼び出しは止まらない (強制は T18)。
+ * 【撤回したら AI へ送らない】撤回のあとは、AI へ送る各経路が送る手前で 403 AI_CONSENT_REQUIRED を返して止める
+ * (判定は src/lib/ai/consent-guard.ts / supabase/functions/_shared/ai-consent-guard.ts)。もう一度使うには、あらためて同意が要る。
  */
 export const dynamic = 'force-dynamic';
 
