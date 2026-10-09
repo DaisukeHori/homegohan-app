@@ -1,24 +1,32 @@
 #!/usr/bin/env bash
 # =====================================================================
-# PR の CI 検査 (本番に触れない 4 本) をローカルで CI と同じ条件で回す
+# PR の CI 検査 (本番に触れない 5 段) をローカルで CI と同じ条件で回す
 # =====================================================================
 # 対象と CI 上の正本 (コマンド・対象パス・env は各 yml から写している。yml が正):
+#   secrets      .github/workflows/security.yml の gitleaks ジョブ (ジョブ単位で写す)
+#                同じ版・同じ SHA-256 の gitleaks で、--base から HEAD までのコミット (PR で増えるコミット) を検査する
 #   unit         .github/workflows/ci.yml              typecheck → lint → vitest (root の vitest.config.ts)
 #   mobile       .github/workflows/mobile-test.yml     apps/mobile の jest → root の vitest (packages/core)
 #   integration  .github/workflows/security-regression.yml
 #                ローカル Supabase + next dev に対する結合テスト 2 本 (2 本目は 1 本目が落ちても回す)
 #   e2e          .github/workflows/e2e-local.yml       ローカル Supabase + 本番ビルドに対する Playwright
 #
+# PR で動くほかのワークフロー・ジョブ (security.yml の dependency-review など) は写していない。
+# 写していないものと理由は tests/local-ci-workflow-sync.test.ts の EXCLUDED_WORKFLOWS / EXCLUDED_JOBS にある。
+#
 # yml とこのスクリプトのずれは tests/local-ci-workflow-sync.test.ts が検出する (PR の npm test で落ちる)。
-# そのテストは、段の関数名 (stage_unit / stage_mobile / stage_integration / stage_e2e)・run_in / run_in_stdout の引数の形・
-# ci_env の export・readonly の定数・配列 ("${NAME[@]}") を手がかりに読む。これらの形を変えるときはテストも合わせる。
+# PR で動くワークフローが増えて、ここにもテストの除外の一覧にも無いときも落ちる。
+# そのテストは、段の関数名 (stage_secrets / stage_unit / stage_mobile / stage_integration / stage_e2e)・
+# run_in / run_in_stdout の引数の形・ci_env の export・readonly の定数・配列 ("${NAME[@]}") を手がかりに読む。
+# これらの形を変えるときはテストも合わせる。
 #
 # 使い方:
-#   bash scripts/local-ci.sh [--only unit,mobile,integration,e2e] [--base <ref>] [--keep] [--no-merge]
-#     --only      回す段 (カンマ区切り。既定は 4 段すべて)
+#   bash scripts/local-ci.sh [--only secrets,unit,mobile,integration,e2e] [--base <ref>] [--keep] [--no-merge]
+#     --only      回す段 (カンマ区切り。既定は 5 段すべて)
 #     --base      取り込む基準 (既定 origin/main)。「いまの HEAD (コミット済み) に --base をマージした状態」を検査する
 #                 (CI の pull_request が PR と main のマージコミットを検査するのと揃える)
-#     --no-merge  マージせず HEAD そのものを検査する (main の上で回すとき)
+#     --no-merge  マージせず HEAD そのものを検査する (main の上で回すとき)。secrets 段は --no-merge でも
+#                 --base から HEAD までのコミットを検査する (main の上では 0 件になる)
 #     --keep      作業用の worktree を消さずに残す (調査用)
 #
 # CI と揃えている条件:
@@ -46,6 +54,8 @@
 #   LOCAL_CI_LEGACY_LOCK           枠 0 を使う前に、このパスが無いことも確かめる (枠を使わずに既定のポートで動く作業の外側のロック。既定は空 = 確かめない)
 #   LOCAL_CI_SLOT_MEMORY_MIB       1 枠の Docker のメモリの目安 (MiB。既定 SLOT_MEMORY_MIB_DEFAULT)。空きがこれより少なければ警告する (止めない)
 #   LOCAL_CI_PLAYWRIGHT_WITH_DEPS  1 にすると playwright install に --with-deps を付ける (Linux で OS の依存も入れる。root 権限が要る)
+#   LOCAL_CI_TOOLS                 gitleaks の配布物 (tar.gz) を置いておく場所 (既定: ${XDG_CACHE_HOME:-$HOME/.cache}/homegohan-local-ci)。
+#                                  毎回 SHA-256 を確かめ、合わなければ取り直す
 # =====================================================================
 
 # 本番に届く余地を消す (このスクリプトは本番の Supabase に一切つながない)
@@ -66,7 +76,7 @@ readonly EXIT_USAGE=2       # 使い方の誤り
 readonly EXIT_SLOT_TIMEOUT=3 # 枠の空き待ちの時間切れ (検査そのものは赤でない。Docker を使う段を回せなかった)
 readonly EXIT_SIGINT=130    # 128 + SIGINT(2)
 readonly EXIT_SIGTERM=143   # 128 + SIGTERM(15)
-readonly ALL_STAGES="unit,mobile,integration,e2e"
+readonly ALL_STAGES="secrets,unit,mobile,integration,e2e"
 # アプリの URL のホスト部分。ポートは枠で決まる (apply_slot。枠 0 は CI と同じ 3000 / 3001 / 3002)
 readonly APP_HOST_URL="http://localhost"
 # GitHub の ubuntu ランナーの LANG (Node の Intl の既定ロケールがこれで決まる)
@@ -98,6 +108,23 @@ readonly BYTES_PER_MIB=1048576
 # shellcheck source=lib/local-ci-slot.sh
 . "$(dirname "$0")/lib/local-ci-slot.sh"
 PLAYWRIGHT_WITH_DEPS="${LOCAL_CI_PLAYWRIGHT_WITH_DEPS:-0}"
+
+# security.yml の gitleaks ジョブと同じ版の gitleaks。版を上げるときは security.yml と同時に上げる
+# (ずれは tests/local-ci-workflow-sync.test.ts が検出する)
+readonly GITLEAKS_VERSION="8.30.1"
+# 配布物 (gitleaks_<版>_<OS>_<CPU>.tar.gz) の SHA-256。リリースの gitleaks_<版>_checksums.txt から写す。
+# linux_x64 は security.yml の GITLEAKS_TARBALL_SHA256 と同じ値 (テストが突き合わせる)
+readonly GITLEAKS_SHA256_LINUX_X64="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+readonly GITLEAKS_SHA256_LINUX_ARM64="e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080"
+readonly GITLEAKS_SHA256_DARWIN_X64="dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709"
+readonly GITLEAKS_SHA256_DARWIN_ARM64="b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5"
+readonly GITLEAKS_RELEASE_URL="https://github.com/gitleaks/gitleaks/releases/download"
+# gitleaks の --exit-code (security.yml と同じ)。「見つかった」をこの値で返させ、検査そのものの失敗 (1 など) と区別する
+readonly GITLEAKS_FOUND_EXIT=2
+# 配布物を取るときの curl の再試行の回数と間隔 (秒)。security.yml の --retry 4 --retry-delay 2 と同じ
+readonly DOWNLOAD_RETRY=4
+readonly DOWNLOAD_RETRY_DELAY_SEC=2
+TOOLS_DIR="${LOCAL_CI_TOOLS:-${XDG_CACHE_HOME:-$HOME/.cache}/homegohan-local-ci}"
 
 # CI の実行対象 (yml から写す。ずれは tests/local-ci-workflow-sync.test.ts が検出する)
 # security-regression.yml の 1 本目 (セキュリティ回帰 + handson-tour)
@@ -246,6 +273,28 @@ function tryListen() {
 })();
 '
 
+# ファイルの SHA-256 (16 進)。sha256sum / shasum の有無が OS で違うので node で計る
+# shellcheck disable=SC2016
+SHA256_JS='
+const crypto = require("crypto");
+const fs = require("fs");
+process.stdout.write(crypto.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"));
+'
+
+# gitleaks のレポート (JSON の配列) を読む。出力: 1 行目に件数、2 行目以降に「ルール ファイル:行 (コミット)」。
+# 値そのものは出さない (--redact で伏せてあるが、念のため読まない)。読めなければ終了コード 1
+# shellcheck disable=SC2016
+GITLEAKS_REPORT_JS='
+const fs = require("fs");
+let findings;
+try { findings = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch (e) { process.exit(1); }
+if (!Array.isArray(findings)) process.exit(1);
+const clean = (v) => String(v).replace(/[\r\n\t]/g, "_");
+const lines = [String(findings.length)];
+for (const f of findings) lines.push(`${clean(f.RuleID)} ${clean(f.File)}:${clean(f.StartLine)} (コミット ${clean(f.Commit).slice(0, 8)})`);
+process.stdout.write(lines.join("\n") + "\n");
+'
+
 # ---------------------------------------------------------------------
 # 共通の関数
 # ---------------------------------------------------------------------
@@ -253,13 +302,14 @@ say() { printf '[local-ci] %s\n' "$*" >&2; }
 
 usage() {
   cat <<'USAGE'
-使い方: bash scripts/local-ci.sh [--only unit,mobile,integration,e2e] [--base <ref>] [--keep] [--no-merge]
-  --only      回す段 (カンマ区切り。既定は 4 段すべて)
-  --base      取り込む基準 (既定 origin/main)。HEAD (コミット済み) にこれをマージした状態を検査する
+使い方: bash scripts/local-ci.sh [--only secrets,unit,mobile,integration,e2e] [--base <ref>] [--keep] [--no-merge]
+  --only      回す段 (カンマ区切り。既定は 5 段すべて)
+  --base      取り込む基準 (既定 origin/main)。HEAD (コミット済み) にこれをマージした状態を検査する。
+              secrets 段は、ここから HEAD までのコミットを gitleaks で検査する
   --no-merge  マージせず HEAD そのものを検査する
   --keep      作業用の worktree を消さずに残す
 同時に複数回すとき: LOCAL_CI_SLOTS='0 1' (使ってよい枠。integration / e2e は空いている枠のポートで回す)
-前提: Docker (integration / e2e)、Node は .nvmrc の major。詳しくは CONTRIBUTING.md の「ローカル CI」
+前提: Docker (integration / e2e)、Node は .nvmrc の major、secrets は初回だけ GitHub から gitleaks を取得する。詳しくは CONTRIBUTING.md の「ローカル CI」
 USAGE
 }
 
@@ -308,6 +358,8 @@ record_parsed() {
 parse() { node -e "$PARSE_JS" "$@"; }
 
 port_busy() { node -e "$PORT_PROBE_JS" "$1"; }
+
+sha256_of() { node -e "$SHA256_JS" "$1"; }
 
 # 赤で止める (段の外の失敗。表と Markdown を出して終わる)
 fail_stop() {
@@ -597,6 +649,105 @@ check_slot_stack() {
   slot_stack_exists || return 0
   record "$1:setup" RED - - - - - 0 "枠 $SLOT の project_id ($SLOT_PROJECT_ID) のコンテナ / ボリュームが残っている (ロックを取らずに手で起動したスタックなどかもしれないので消さずに赤で終える。持ち主を確かめ、要らなければ LOCAL_CI_SLOT=$SLOT bash scripts/supabase-local.sh stop-leftover で止めてから再実行する)"
   return 1
+}
+
+# ---------------------------------------------------------------------
+# 段: secrets (.github/workflows/security.yml の gitleaks ジョブ)
+# ---------------------------------------------------------------------
+# gitleaks の配布物の名前に使う「<OS>_<CPU>」。配布物の無い組み合わせなら失敗
+gitleaks_platform() {
+  local os arch
+  case "$(uname -s)" in
+    Darwin) os=darwin ;;
+    Linux) os=linux ;;
+    *) return 1 ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64) arch=x64 ;;
+    arm64|aarch64) arch=arm64 ;;
+    *) return 1 ;;
+  esac
+  printf '%s_%s\n' "$os" "$arch"
+}
+
+# gitleaks_sha256 <OS>_<CPU>: その配布物の SHA-256
+gitleaks_sha256() {
+  case "$1" in
+    linux_x64) printf '%s\n' "$GITLEAKS_SHA256_LINUX_X64" ;;
+    linux_arm64) printf '%s\n' "$GITLEAKS_SHA256_LINUX_ARM64" ;;
+    darwin_x64) printf '%s\n' "$GITLEAKS_SHA256_DARWIN_X64" ;;
+    darwin_arm64) printf '%s\n' "$GITLEAKS_SHA256_DARWIN_ARM64" ;;
+    *) return 1 ;;
+  esac
+}
+
+GL_DIR=""
+stage_secrets() {
+  local t0 rc log platform want_sha tarball cached tmp report parsed findings commits range
+  log="$ART/secrets-gitleaks.log"
+  report="$ART/secrets-gitleaks.json"
+  t0=$(now)
+
+  # 1) security.yml と同じ版の gitleaks を、SHA-256 を確かめてから使う (合わなければ止める)
+  if ! platform="$(gitleaks_platform)" || ! want_sha="$(gitleaks_sha256 "$platform")"; then
+    record secrets:gitleaks RED - - - - - "$(($(now) - t0))" "gitleaks $GITLEAKS_VERSION の配布物が無い OS / CPU: $(uname -s) $(uname -m)"
+    return 0
+  fi
+  tarball="gitleaks_${GITLEAKS_VERSION}_${platform}.tar.gz"
+  cached="$TOOLS_DIR/$tarball"
+  if ! mkdir -p "$TOOLS_DIR"; then
+    record secrets:gitleaks RED - - - - - "$(($(now) - t0))" "gitleaks の置き場を作れない: $TOOLS_DIR"
+    return 0
+  fi
+  if [ ! -f "$cached" ] || [ "$(sha256_of "$cached")" != "$want_sha" ]; then
+    say "secrets: gitleaks $GITLEAKS_VERSION ($platform) を取得します"
+    tmp="$(mktemp "$TOOLS_DIR/download.XXXXXX")"
+    if ! curl --fail --silent --show-error --location --retry "$DOWNLOAD_RETRY" --retry-delay "$DOWNLOAD_RETRY_DELAY_SEC" --retry-all-errors \
+      --output "$tmp" "$GITLEAKS_RELEASE_URL/v${GITLEAKS_VERSION}/${tarball}" >>"$log" 2>&1; then
+      rm -f "$tmp"
+      record secrets:gitleaks RED - - - - - "$(($(now) - t0))" "$(tail_hint "gitleaks の配布物を取得できない" "$log")"
+      return 0
+    fi
+    if [ "$(sha256_of "$tmp")" != "$want_sha" ]; then
+      rm -f "$tmp"
+      record secrets:gitleaks RED - - - - - "$(($(now) - t0))" "gitleaks の配布物の SHA-256 が合わない ($tarball)。差し替えられた可能性があるので使わない"
+      return 0
+    fi
+    mv -f "$tmp" "$cached"
+  fi
+  GL_DIR="$(mktemp -d "$WORK_PARENT/gitleaks.XXXXXX")" && tar -xzf "$cached" -C "$GL_DIR" gitleaks >>"$log" 2>&1
+  rc=$?
+  if [ "$rc" -ne 0 ] || [ ! -x "$GL_DIR/gitleaks" ]; then
+    record secrets:gitleaks RED - - - - - "$(($(now) - t0))" "$(tail_hint "gitleaks の配布物を展開できない" "$log")"
+    return 0
+  fi
+
+  # 2) PR で増えるコミット (--base から HEAD まで) だけを検査する。security.yml の pull_request と同じ範囲
+  #    (base.sha..head.sha)。過去の履歴は見ない。検査するのはコミット済みのものだけで、マージの差分は見ない (CI と同じ)
+  range="${BASE_SHA}..${HEAD_SHA}"
+  commits="$(git -C "$WT" rev-list --count "$range" 2>>"$log")" || commits="-"
+  rm -f "$report"
+  # shellcheck disable=SC2030,SC2031  # PATH はサブシェルの中だけで足す
+  ( PATH="$GL_DIR:$PATH"
+    run_in "$WT" "$log" gitleaks git . --config .gitleaks.toml --log-opts="${BASE_SHA}..${HEAD_SHA}" --redact --no-banner --exit-code "$GITLEAKS_FOUND_EXIT" --report-format json --report-path "$report" )
+  rc=$?
+
+  # 3) 判定。0 = 見つからない (緑)。GITLEAKS_FOUND_EXIT = 見つかった (赤)。それ以外 = 検査そのものの失敗 (赤。security.yml と同じ)
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne "$GITLEAKS_FOUND_EXIT" ]; then
+    record secrets:gitleaks RED - - - "$commits" - "$(($(now) - t0))" "$(tail_hint "gitleaks の実行に失敗 (終了コード $rc)。検査できていないので赤" "$log")"
+    return 0
+  fi
+  if ! parsed="$(node -e "$GITLEAKS_REPORT_JS" "$report")"; then
+    record secrets:gitleaks RED - - - "$commits" - "$(($(now) - t0))" "$(tail_hint "gitleaks のレポートが無いか壊れている (終了コード $rc)" "$log")"
+    return 0
+  fi
+  findings="$(printf '%s\n' "$parsed" | head -n 1)"
+  if [ "$rc" -eq 0 ] && [ "$findings" = 0 ]; then
+    record secrets:gitleaks GREEN - 0 - "$commits" - "$(($(now) - t0))" "検査したコミット $commits 件 (${BASE_SHA:0:8}..${HEAD_SHA:0:8})"
+    return 0
+  fi
+  printf '%s\n' "$parsed" | tail -n +2 >>"$log"
+  record secrets:gitleaks RED - "$findings" - "$commits" - "$(($(now) - t0))" "$(tail_hint "シークレットの疑い $findings 件 (終了コード ${rc}。値は出していない。本物ならキーを無効にして発行し直す。ダミーなら .gitleaks.toml か行末の gitleaks:allow)" "$log")"
 }
 
 # ---------------------------------------------------------------------
@@ -968,6 +1119,10 @@ cleanup() {
       git -C "$SRC_ROOT" worktree prune >/dev/null 2>&1 || true
     fi
   fi
+  case "$GL_DIR" in
+    "$WORK_PARENT"/gitleaks.*) rm -rf "$GL_DIR" ;;
+  esac
+  # 結果の置き場のロックは最後に外す (片付けが終わるまで、別の実行に同じ置き場を使わせない)
   release_lock "$ART_LOCK"
 }
 
@@ -1075,7 +1230,8 @@ if [ "${NODE_VERSION%%.*}" != "$REQUIRED_NODE_MAJOR" ]; then
   fail_stop preflight "Node $NODE_VERSION では回せない。.nvmrc の $REQUIRED_NODE_MAJOR 系を PATH の先頭に置く (例: nvm install $REQUIRED_NODE_MAJOR && nvm use $REQUIRED_NODE_MAJOR / fnm use / https://nodejs.org/dist/latest-v$REQUIRED_NODE_MAJOR.x/ の tarball を展開して PATH に足す)"
 fi
 
-if [ "$MERGE" = 1 ]; then
+# --base は、マージする (MERGE=1) ときと、secrets 段で「PR で増えるコミット」の起点に使うときに要る
+if [ "$MERGE" = 1 ] || want secrets; then
   case "$BASE" in
     origin/*)
       if [ "${LOCAL_CI_FETCH:-1}" = 1 ]; then
@@ -1106,10 +1262,15 @@ else
 fi
 say "検査対象: $MERGE_STATE"
 
-say "npm ci (作業場所ごとに 1 回)"
-t_ci=$(now)
-run_in "$WT" "$ART/preflight-npm-ci.log" npm ci || fail_stop preflight "$(tail_hint "npm ci が失敗" "$ART/preflight-npm-ci.log")"
-say "npm ci: $(($(now) - t_ci)) 秒"
+# secrets は npm の依存を使わないので、npm ci の前に回す (npm ci が失敗しても結果が残る)
+if want secrets; then say "== secrets (security.yml の gitleaks)"; stage_secrets; fi
+
+if want unit || want mobile || want integration || want e2e; then
+  say "npm ci (作業場所ごとに 1 回)"
+  t_ci=$(now)
+  run_in "$WT" "$ART/preflight-npm-ci.log" npm ci || fail_stop preflight "$(tail_hint "npm ci が失敗" "$ART/preflight-npm-ci.log")"
+  say "npm ci: $(($(now) - t_ci)) 秒"
+fi
 
 if want unit; then say "== unit (ci.yml)"; stage_unit; fi
 if want mobile; then say "== mobile (mobile-test.yml)"; stage_mobile; fi

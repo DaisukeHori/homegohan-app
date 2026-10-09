@@ -38,6 +38,17 @@ CI では GitHub Secrets に登録する。
 
 `.github/workflows/e2e.yml` が PR で自動実行。Playwright レポートは artifact として 14 日間保持。
 
+### 依存パッケージ・シークレットの検査と Dependabot (#1156)
+
+- `.github/workflows/security.yml`:
+  - **gitleaks**: PR で増えたコミットと main への push だけを検査し、見つかったら失敗する。
+  - **npm audit**: 参考情報で、PR を止めない。critical が 0 件になったら、止める検査に切り替える。**`continue-on-error` は、ジョブではなく npm audit の「ステップ」に付ける。** ジョブに付けると、ワークフローは通っても、そのジョブの check run が失敗 (赤い ×) のまま残る。すると、すべての PR の Checks が赤くなり、毎日の整合性チェック (`scripts/lib/consistency-check.mjs`) も、止まっている PR を「赤のまま」に数える (`tests/security-workflow.test.ts` が、`pull_request` で動くワークフローのジョブ単位の `continue-on-error` を検出する)。
+  - **依存関係レビュー**と **CodeQL**: リポジトリが公開の間だけ動く。非公開にすると自動でスキップされる。依存関係レビューは、リポジトリの Dependency graph が無効の間 (GitHub が依存の差分を 403 Forbidden で断る) だけ、レビューを飛ばして警告と Summary を出す (すべての PR を赤くしないため)。有効にすれば、次の PR から止める検査として働く。CodeQL のジョブそのものは止めないが、コードスキャンの結果を知らせる別の check run が付き、新しい重大なアラートが増えた PR では赤くなる。
+- gitleaks の誤検知は `.gitleaks.toml` に**値そのもの**を足す (ファイル・ディレクトリ単位では除外しない)。1 行だけなら行末に `gitleaks:allow`。本物のキーが見つかったときは除外せず、そのキーを無効にして発行し直す (履歴から消すだけでは取り消せない)。gitleaks の版と SHA-256 は workflow に固定してある。上げるときはリリースの `checksums.txt` の値に合わせる。
+- **テストに書くダミーの認証値** (`apiKey` / `token` / `secret` / `password` など) は、gitleaks の汎用ルール (generic-api-key) に掛かりやすい。掛かると PR の `security / gitleaks` が失敗するので、ダミーの値の行の末尾に `gitleaks:allow` と書く。ダミーでも、`sk-` や `ghp_` や JWT のような、本物のキーの書式にしない。
+- `.github/dependabot.yml`: npm (ルートの package-lock.json が workspaces をまとめて管理) と GitHub Actions を週 1 回。マイナー・パッチは 1 本の PR にまとめる。Next / React / Expo / React Native は、メジャー更新 (Expo / React Native はマイナー更新も) の PR を出さない。計画して上げる (#1199)。自動承認・自動マージはしない。
+- **Dependabot の PR には Actions のシークレットが渡されない。** `pull_request` で動き、`secrets.*` (`GITHUB_TOKEN` 以外) を使うジョブには `if: github.actor != 'dependabot[bot]'` を付ける。付け忘れると、依存更新の PR が毎回赤くなる (`tests/security-workflow.test.ts` が検査する)。
+
 ---
 
 ## 共通ヘルパー規約
@@ -101,6 +112,17 @@ PostHog による利用状況の計測は採用しない (オーナー判断 202
 ### 栄養計算入力
 
 `src/lib/build-nutrition-input.ts` に集約。栄養計算に必要な入力オブジェクトを組み立てる際は、このモジュールを経由する。直接構築しない。
+
+### 環境変数
+
+読む環境変数の一覧は `src/lib/env.ts` (zod のスキーマ。公開用 `NEXT_PUBLIC_*` とサーバー用に分け、必須/任意を区別する) に集約する (#1182)。
+
+- **必須** (Supabase の接続情報 3 つ: `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY`) は、`src/lib/env-required.ts` の `getSupabaseUrl()` などで取り出す。欠けていれば、サーバーのログに `[env] missing required env: <変数名>` を 1 行出して (ブラウザでは出さない。例外を誰が捕まえても残る)、`MissingEnvError` を投げる (message は固定の文で変数名を含まない。変数名は列挙されない `envName` に持ち、例外が `src/lib/db-logger.ts` の `error()` (`internalError()` 経由を含む) に渡れば構造化ログの metadata `missing_env_name` にも記録される。値は記録しない)。route の 500 は `internalError()` で返す (本文に変数名を出さない。#1172)。service_role のクライアントは `lib/supabase/server.ts` の `getSupabaseAdmin()` を使い、route ごとに自前の取り出しを書かない (自前の取り出しが、変数名入りの文を 500 の本文に返していた。`tests/env-source-scan.test.ts` が、必須の変数名を例外・応答の文字列に書いていないかを検査する)。middleware は欠けていれば `internalError()` の汎用 500 を返す (認証は素通りさせない)。**`process.env.X!` と書かない** (`tests/env-source-scan.test.ts` が検査する)。API route では、認証とレート制限のあと・DB に書き込む前に取り出す (未ログインの呼び出しに設定の不足を教えない。書き込んだあとで気づくと、Edge Function を呼べないまま、リクエストの行を作って失敗として記録する (週間献立は、消した献立を戻す) だけの無駄な動きになる)。
+- **任意** (メール・レート制限・AI・課金など) は `src/lib/env.ts` の `getOptionalEnv(name)` で取り出す。無ければ `undefined` を返し、プロセスごとに 1 回だけ警告を出す。**任意の変数が無いことで本番を止めない**。既存の `process.env.X` の読み取りは、ほかの作業と重ならないところから順に置き換える途中 (新しく書くコードは `getOptionalEnv` を使う)。
+- 値を読む場所を 1 か所に決めている変数 (一覧の `readOnlyBy`) は、`check:env` の案内のために名前だけが一覧にあり、`getOptionalEnv` では読めない。`CRON_SECRET` / `CRON_SECRET_PREVIOUS` を読むのは `src/lib/cron-auth.ts` だけ (`tests/cron-secret-contract.test.ts` の CC-4)、同意ゲートのフラグ `LEGAL_CONSENT_ENFORCE` / `LEGAL_CONSENT_NOTICE` を読むのは `lib/legal-consent.ts` だけ (middleware は Edge Runtime なので `getOptionalEnv` を使えない)。`tests/env-source-scan.test.ts` が、本番コードでそのファイルだけが読んでいることを検査する。
+- `env-required.ts` は何も import しない。ブラウザ向け (`lib/supabase/client.ts`) と Edge Runtime (middleware・`runtime = 'edge'` の route) のコードは `env.ts` を import しない (zod は最小のスキーマでも minify 後に約 59 KB、gzip 約 16 KB 加わるため。`tests/env-source-scan.test.ts` が到達性を検査する)。`env.ts` は `scripts/check-env.mjs` が Node.js から直接読むため、静的に import してよいのは zod だけ。
+- 新しい環境変数は、`env.ts` の一覧 (必須にするのは、無いとアプリが動かないものだけ。無いと何が起きるかも書く) と `.env.example` の両方に足す。逆に、採用をやめたサービスの変数を `.env.example` から消すときは、一覧からも消す (`tests/env-source-scan.test.ts` が、Web の本番コードが名前を書いて読む変数が一覧に無いとき (`NODE_ENV`・`NEXT_RUNTIME` を除く) と、一覧の変数が `.env.example` に無いときに失敗する)。`npm run check:env` が `.env.local` などを一覧に照らして検査する (CI には組み込まない。CI にシークレットが無いため)。
+- **モバイル** (`apps/mobile`) は `src/lib/env.ts`。`EXPO_PUBLIC_*` は `process.env.EXPO_PUBLIC_X` と名前を直接書く (`process.env[name]` はビルド時に置き換わらず、リリースビルドで常に undefined になる)。必須の `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY` が無いと、`lib/supabase.ts` は存在しない接続先のクライアントを作らず、開発中は読み込み時に例外、リリースビルドは `app/_layout.tsx` が設定エラーの画面を出す (足りない変数名を画面に出すのは開発ビルドだけ。リリースビルドでは `lib/supabase.ts` が端末のログに残す)。モバイルの jest では `process.env` を差し替えず、同じオブジェクトを書き換える (`expo/virtual/env` が読み込み時の `process.env` を握るため)。
 
 ### localStorage クリーンアップ
 
@@ -174,9 +196,12 @@ npx vitest run --config vitest.integration.config.ts tests/integration/rls   # R
 
 ## マージ前の検査 (ローカル CI)
 
-PR の検査は `bash scripts/local-ci.sh` でローカルに回せる (CI の ci.yml・mobile-test.yml・security-regression.yml・e2e-local.yml と同じコマンド・同じ件数。TZ=UTC・main を取り込んだマージ状態・まっさらな worktree で回す)。
+PR の検査は `bash scripts/local-ci.sh` でローカルに回せる (CI の ci.yml・mobile-test.yml・security-regression.yml・e2e-local.yml と同じコマンド・同じ件数、security.yml の gitleaks (シークレットの検査) と同じ版・同じ設定・同じ範囲 (PR で増えるコミット)。TZ=UTC・main を取り込んだマージ状態・まっさらな worktree で回す)。
 
-- migration を含まない PR は、local-ci.sh の 4 段が緑で、出力の Markdown (sha と件数) を PR 本文に貼れば、CI の完了を待たずにマージしてよい (オーナー判断 2026-10-09)。CI の結果はマージ後に確かめ、赤なら直す。
+- migration を含まない PR は、local-ci.sh の 5 段 (secrets・unit・mobile・integration・e2e) が緑で、出力の Markdown (sha と件数) を PR 本文に貼れば、CI の完了を待たずにマージしてよい (オーナー判断 2026-10-09)。CI の結果はマージ後に確かめ、赤なら直す。
+- secrets 段 (gitleaks) が赤のときはマージしない。リポジトリは公開なので、main に入った秘密は取り消せない (本物のキーなら無効にして発行し直す。ダミーなら `.gitleaks.toml` か行末の `gitleaks:allow`)。
+- 依存 (`package.json` / `package-lock.json`) を変える PR は、security.yml の dependency review (high 以上の既知の脆弱性がある版を入れていないか) の緑を待ってからマージする。これは GitHub の Dependency graph を使うので、ローカルでは再現できない。
+- PR で動くワークフローのうち local-ci.sh に写していないもの (と理由) は `tests/local-ci-workflow-sync.test.ts` の `EXCLUDED_WORKFLOWS` / `EXCLUDED_JOBS` にある。PR で動くワークフロー・ジョブを足したら、local-ci.sh に写すか、そこに理由を書く (書かないと `npm test` が落ちる)。
 - migration (`supabase/migrations/**`) を含む PR は、Deploy Supabase Migrations の PR ジョブ (本番台帳とのドリフト検知) の緑を待ってからマージする。これはローカルでは再現できない。
 - 本番への反映 (Vercel・`db push`・functions deploy) は従来どおり PR → main → CI の経路だけ。
 

@@ -4,8 +4,9 @@ import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 import { cancelPendingMealImageJobs } from '../../../../../../lib/meal-image-jobs';
-import { createLogger } from '@/lib/db-logger';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { restorePlannedMealsSnapshot, type PlannedMealSnapshotRow } from '@/lib/planned-meals-snapshot';
 import { todayLocal } from '@/lib/date-utils';
@@ -133,6 +134,11 @@ export async function POST(request: Request) {
     const rateLimitResult = await checkRateLimit(user.id, 'generation');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
+    // 必須の環境変数は、認証とレート制限のあと・既存の献立を消す前に確かめる。欠けていれば MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す)。
+    // (未ログインの呼び出しに、設定の不足を教えない。消したあとで気づくと、Edge Function を呼べず、
+    //  献立を消して戻すだけの無駄な動きになる) (#1182)
+    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
+
     // 2. 今日以降の日付の既存食事を削除（Edge Functionが新規INSERTするため）
     const todayStr = todayLocal();
     // #1042: 削除前に旧値をスナップショットしておく（生成失敗時のロールバック用）。
@@ -232,8 +238,6 @@ export async function POST(request: Request) {
       .eq('id', requestData.id);
 
     // 5. Edge Function generate-menu-v4 をバックグラウンドで呼び出し
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     const generator = useV5Wrapped ? callGenerateMenuV5WithRetry : callGenerateMenuV4WithRetry;
     const targetLabel = useV5Wrapped ? 'generate-menu-v5' : 'generate-menu-v4';
     console.log(`🚀 Calling Edge Function ${targetLabel}...`);
@@ -286,12 +290,8 @@ export async function POST(request: Request) {
       requestId: requestData.id,
     });
 
-  } catch (error: any) {
-    console.error("API Error:", error);
-    const logger = _userId
-      ? createLogger('api/ai/menu/weekly/request').withUser(_userId)
-      : createLogger('api/ai/menu/weekly/request');
-    logger.error('週次献立リクエストでエラーが発生しました', error, { startDate: _startDate });
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
+    return internalError('api/ai/menu/weekly/request', error, { userId: _userId, startDate: _startDate });
   }
 }

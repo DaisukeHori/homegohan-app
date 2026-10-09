@@ -65,18 +65,19 @@ EXPO_PUBLIC_API_BASE_URL=http://localhost:3000
 
 ### ローカル CI — PR の検査をまとめて回す (`scripts/local-ci.sh`)
 
-GitHub Actions の PR 検査のうち、本番に触れない 4 本を、CI と同じ条件でローカルで回し、件数で緑 / 赤を判定します。
+GitHub Actions の PR 検査のうち、本番に触れない 4 本と security.yml の gitleaks (シークレットの検査) を、CI と同じ条件でローカルで回し、件数で緑 / 赤を判定します。
 
 | 段 | CI 上の正本 | 中身 |
 |---|---|---|
+| `secrets` | `.github/workflows/security.yml` の `gitleaks` ジョブ | 同じ版・同じ SHA-256 の gitleaks で、`--base` から HEAD までのコミット (PR で増えるコミット) を `.gitleaks.toml` で検査する (`--redact`。値はログに出さない)。配布物は初回だけ GitHub から取得し、`LOCAL_CI_TOOLS` に置いて毎回 SHA-256 を確かめる |
 | `unit` | `.github/workflows/ci.yml` | `npm run typecheck` → `npm run lint` → `npm test` (vitest) |
 | `mobile` | `.github/workflows/mobile-test.yml` | `apps/mobile` の jest (`--ci --coverage`) → `packages/core` の vitest |
 | `integration` | `.github/workflows/security-regression.yml` | ローカル Supabase + `next dev` に対する結合テスト 2 本 (2 本目の運営コンソールは 1 本目が落ちても回す) |
 | `e2e` | `.github/workflows/e2e-local.yml` | ローカル Supabase + 本番ビルド (`next build` / `next start`) に対する Playwright。規約の同意ゲート (#1174) は、同じビルドを既定 (3000)・`LEGAL_CONSENT_ENFORCE=on` (3001)・`LEGAL_CONSENT_NOTICE=on` (3002) の 3 つのサーバーで確かめる |
 
 ```bash
-bash scripts/local-ci.sh                          # 4 段すべて (origin/main を取り込んだ状態で検査)
-bash scripts/local-ci.sh --only unit,mobile       # Docker を使わない 2 段だけ
+bash scripts/local-ci.sh                          # 5 段すべて (origin/main を取り込んだ状態で検査)
+bash scripts/local-ci.sh --only secrets,unit,mobile  # Docker を使わない 3 段だけ
 bash scripts/local-ci.sh --base origin/main       # 取り込む基準を指定 (既定 origin/main)
 bash scripts/local-ci.sh --no-merge               # マージせず HEAD そのもの (main の上で回すとき)
 bash scripts/local-ci.sh --keep                   # 作業用の worktree を残す (調べるとき)
@@ -120,7 +121,8 @@ LOCAL_CI_SLOT=1 bash scripts/local-ci.sh          # 枠 1 だけを使う (空�
 - 毎回 **まっさらな git worktree** を作り、`npm ci` をやり直します (使い回すと `.next/types` など CI に無い生成物まで型検査してしまうため)。終わったら worktree は消します。
 - `TZ=UTC` (CI のランナーは UTC)・`CI=true`・`LANG=C.UTF-8`・`NODE_OPTIONS` なし (ヒープを盛ると CI のメモリ不足を隠すため)。
 - 親シェルの環境変数は持ち込みません (`PATH`・`HOME`・Docker / プロキシの設定など、動かすのに要るものだけを残す)。シェルに入っている本番の接続先などは混ざりません (新しい worktree には `.env.local` もありません)。`SUPABASE_ACCESS_TOKEN` などは最初に外します。
-- コマンド・対象パス・環境変数は 4 つの yml から写しています。yml を変えてスクリプトを直し忘れると、`tests/local-ci-workflow-sync.test.ts` が PR の `npm test` で落ちます。照合は yml ごとに対応する段の関数 (`stage_unit` など) の中だけで行い、yml のコマンドがスクリプトの 1 つのコマンドの先頭に同じ引数の並びで現れるか (後ろに足してよいのは結果を JSON で出す引数だけ)、作業ディレクトリ・環境変数 (ステップ / ジョブ / ワークフロー) が同じかまで比べます。テストが知らないアクション・キー・`if` の条件が yml に増えたときも落ちるので、スクリプトに写したうえでテストの対応表に理由を付けて足してください。
+- コマンド・対象パス・環境変数は 4 つの yml と security.yml の gitleaks ジョブから写しています。yml を変えてスクリプトを直し忘れると、`tests/local-ci-workflow-sync.test.ts` が PR の `npm test` で落ちます。照合は yml ごとに対応する段の関数 (`stage_unit` など) の中だけで行い、yml のコマンドがスクリプトの 1 つのコマンドの先頭に同じ引数の並びで現れるか (後ろに足してよいのは結果を JSON で出す引数だけ)、作業ディレクトリ・環境変数 (ステップ / ジョブ / ワークフロー) が同じかまで比べます。テストが知らないアクション・キー・`if` の条件が yml に増えたときも落ちるので、スクリプトに写したうえでテストの対応表に理由を付けて足してください。gitleaks は、版・SHA-256 (linux_x64)・引数・検査する範囲・効きうる環境変数を照合します。
+- PR で動くワークフローはすべて、写した段 (`WORKFLOW_STAGES` / `JOB_STAGES`) か、理由つきの除外 (`EXCLUDED_WORKFLOWS`) に入っていなければなりません。ジョブ単位で写した security.yml は、ジョブごとに段か除外 (`EXCLUDED_JOBS`) に入っていなければなりません。PR で動くワークフロー・ジョブを足して、どちらにも入れないと `npm test` が落ちます。
 
 **結果の読み方**
 
@@ -143,8 +145,9 @@ LOCAL_CI_SLOT=1 bash scripts/local-ci.sh          # 枠 1 だけを使う (空�
 | `LOCAL_CI_LEGACY_LOCK` | 枠 0 を使う前に、無いことを確かめるパス (外側のロック。既定は空) |
 | `LOCAL_CI_SLOT_MEMORY_MIB` | 1 枠の Docker のメモリの目安 (MiB。既定 1536)。空きが少なければ警告 |
 | `LOCAL_CI_PLAYWRIGHT_WITH_DEPS=1` | `playwright install` に `--with-deps` を付ける (Linux で OS の依存も入れる。root 権限が要る) |
+| `LOCAL_CI_TOOLS` | gitleaks の配布物の置き場 (既定 `${XDG_CACHE_HOME:-$HOME/.cache}/homegohan-local-ci`) |
 
-**ローカルでは再現できないもの**: migration を含む PR の Deploy Supabase Migrations の PR ジョブ (本番台帳とのドリフト検知) は本番に接続するため、このスクリプトでは回しません。また CI のランナーは Linux なので、OS に依存する違い (ファイル名の大文字小文字など) は残ります。
+**ローカルでは再現できないもの**: migration を含む PR の Deploy Supabase Migrations の PR ジョブ (本番台帳とのドリフト検知) は本番に接続するため、このスクリプトでは回しません。security.yml の dependency review (依存を変える PR で、high 以上の既知の脆弱性がある版を入れていないか) は GitHub の Dependency graph を使うため回しません。依存を変える PR は CI のこのジョブの緑を待ってからマージします。また CI のランナーは Linux なので、OS に依存する違い (ファイル名の大文字小文字など) は残ります。
 
 ### 型チェック / Lint
 
