@@ -25,7 +25,9 @@ readonly LCS_NEXT_PORT_STRIDE=10
 # 枠 0 の project_id (scripts/supabase-local.sh が今まで使ってきた名前)
 readonly LCS_PROJECT_ID_BASE="homegohan-local"
 
-# Supabase CLI 2.62.10 の既定のポート (`npx supabase@2.62.10 init` が生成する config.toml の値)。
+# Supabase CLI 2.62.10 の既定のポート (`npx supabase@2.62.10 init` が生成する config.toml の値と、生成する config.toml には
+# 書かれない既定 ([analytics] vector_port))。CLI のポートの設定は、CLI の本体の設定の型の toml タグ
+# (port / shadow_port / smtp_port / pop3_port / inspector_port / vector_port) をすべて拾って列挙した。版を上げるときは同じ方法で数え直す。
 # supabase/config.toml はポートを指定していないので、枠 0 ではこの値のまま CLI に任せる
 readonly LCS_API_PORT_BASE=54321              # [api] port (Kong。REST / Auth / Storage の入口)
 readonly LCS_DB_PORT_BASE=54322               # [db] port
@@ -35,9 +37,10 @@ readonly LCS_INBUCKET_PORT_BASE=54324         # [inbucket] port (メールの受
 readonly LCS_INBUCKET_SMTP_PORT_BASE=54325    # [inbucket] smtp_port (既定では公開しない。枠 1 以上では明示する)
 readonly LCS_INBUCKET_POP3_PORT_BASE=54326    # [inbucket] pop3_port (既定では公開しない。枠 1 以上では明示する)
 readonly LCS_ANALYTICS_PORT_BASE=54327        # [analytics] port (logflare)
+readonly LCS_VECTOR_PORT_BASE=54328           # [analytics] vector_port (vector。analytics がコンテナのログを受ける口をホストに開く)
 readonly LCS_POOLER_PORT_BASE=54329           # [db.pooler] port
 readonly LCS_INSPECTOR_PORT_BASE=8083         # [edge_runtime] inspector_port (functions serve --inspect のときだけ開く)
-# 上の 54xxx のポートが収まる範囲 (54320〜54329)。枠 0 では今までの local-ci.sh と同じく、この 10 個が空いているかを確かめる
+# 上の 54xxx のポートが収まる範囲 (54320〜54329。10 個すべてが上のどれかのポート)。枠 0 では今までの local-ci.sh と同じく、この 10 個が空いているかを確かめる
 readonly LCS_SUPABASE_PORT_BLOCK_START=54320
 readonly LCS_SUPABASE_PORT_BLOCK_SIZE=10
 
@@ -47,7 +50,7 @@ readonly LCS_ENFORCED_APP_PORT_BASE=3001      # e2e の 2 つ目 (LEGAL_CONSENT_
 readonly LCS_NOTICE_APP_PORT_BASE=3002        # e2e の 3 つ目 (LEGAL_CONSENT_NOTICE=on)
 
 # local_ci_slot_apply が決める変数 (この順で出力する)
-readonly LCS_SLOT_VARS="SLOT_PROJECT_ID SLOT_API_PORT SLOT_DB_PORT SLOT_SHADOW_PORT SLOT_STUDIO_PORT SLOT_INBUCKET_PORT SLOT_INBUCKET_SMTP_PORT SLOT_INBUCKET_POP3_PORT SLOT_ANALYTICS_PORT SLOT_POOLER_PORT SLOT_INSPECTOR_PORT SLOT_SUPABASE_PORTS SLOT_APP_PORT SLOT_ENFORCED_APP_PORT SLOT_NOTICE_APP_PORT"
+readonly LCS_SLOT_VARS="SLOT_PROJECT_ID SLOT_API_PORT SLOT_DB_PORT SLOT_SHADOW_PORT SLOT_STUDIO_PORT SLOT_INBUCKET_PORT SLOT_INBUCKET_SMTP_PORT SLOT_INBUCKET_POP3_PORT SLOT_ANALYTICS_PORT SLOT_VECTOR_PORT SLOT_POOLER_PORT SLOT_INSPECTOR_PORT SLOT_SUPABASE_PORTS SLOT_APP_PORT SLOT_ENFORCED_APP_PORT SLOT_NOTICE_APP_PORT"
 
 local_ci_slot_valid() {
   [[ "${1:-}" =~ ^[0-9]+$ ]] && [ "$((10#$1))" -le "$LCS_SLOT_MAX" ]
@@ -69,6 +72,7 @@ local_ci_slot_apply() {
   SLOT_INBUCKET_SMTP_PORT="$((LCS_INBUCKET_SMTP_PORT_BASE + sp))"
   SLOT_INBUCKET_POP3_PORT="$((LCS_INBUCKET_POP3_PORT_BASE + sp))"
   SLOT_ANALYTICS_PORT="$((LCS_ANALYTICS_PORT_BASE + sp))"
+  SLOT_VECTOR_PORT="$((LCS_VECTOR_PORT_BASE + sp))"
   SLOT_POOLER_PORT="$((LCS_POOLER_PORT_BASE + sp))"
   SLOT_INSPECTOR_PORT="$((LCS_INSPECTOR_PORT_BASE + sp))"
   # 空いていることを確かめる Supabase のポート (local-ci.sh の check_ports)。54xxx の範囲をまるごと確かめる。

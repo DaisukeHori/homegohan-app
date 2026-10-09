@@ -11,11 +11,13 @@
  *     (同じチェックアウトで 2 つの枠を使っても、別の枠を止めたり別の枠の接続先を書いたりしない)
  *   - scripts/local-ci.sh は、持ち主の死んだ枠のロックを回収したときだけ、その枠に残ったスタックを片付ける
  *     (空いていた枠に残っているスタックは、ロックを取らずに手で起動したものかもしれないので消さずに赤にする)
+ *   - scripts/local-ci.sh の枠のロックは、同時に同じ死んだロックを回収しに来ても 1 本しか取れない。ロックを外すのも回収と同時に走らない。
+ *     持ち主が生きているか確かめられないときは回収しない
  *
  * 値はスクリプトを実際に実行して得る (文字列を読んで推測しない)。
  */
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -43,6 +45,7 @@ const SLOT_ZERO_EXPECTED: Record<string, string> = {
   SLOT_INBUCKET_SMTP_PORT: "54325",
   SLOT_INBUCKET_POP3_PORT: "54326",
   SLOT_ANALYTICS_PORT: "54327",
+  SLOT_VECTOR_PORT: "54328",
   SLOT_POOLER_PORT: "54329",
   SLOT_INSPECTOR_PORT: "8083",
   // 今までの local-ci.sh が空きを確かめていたポート (LOCAL_CI_SUPABASE_PORTS の既定)
@@ -63,6 +66,7 @@ const SUPABASE_PORT_VARS = [
   "SLOT_INBUCKET_SMTP_PORT",
   "SLOT_INBUCKET_POP3_PORT",
   "SLOT_ANALYTICS_PORT",
+  "SLOT_VECTOR_PORT",
   "SLOT_POOLER_PORT",
 ];
 const NEXT_PORT_VARS = ["SLOT_APP_PORT", "SLOT_ENFORCED_APP_PORT", "SLOT_NOTICE_APP_PORT"];
@@ -83,6 +87,7 @@ const SLOT_CONFIG: Array<{ table: string; key: string; slotVar: string }> = [
   { table: "inbucket", key: "smtp_port", slotVar: "SLOT_INBUCKET_SMTP_PORT" },
   { table: "inbucket", key: "pop3_port", slotVar: "SLOT_INBUCKET_POP3_PORT" },
   { table: "analytics", key: "port", slotVar: "SLOT_ANALYTICS_PORT" },
+  { table: "analytics", key: "vector_port", slotVar: "SLOT_VECTOR_PORT" },
   { table: "edge_runtime", key: "inspector_port", slotVar: "SLOT_INSPECTOR_PORT" },
 ];
 
@@ -169,6 +174,17 @@ describe("scripts/lib/local-ci-slot.sh の枠ごとの値", () => {
         expect(block.has(Number(values.get(v))), `枠 ${slot} の ${v}=${values.get(v)} が範囲に無い`).toBe(true);
       }
     }
+  });
+
+  it("Supabase のポートの範囲 (SLOT_SUPABASE_PORTS) は、どれも名前の付いた CLI のポートで、そのすべてを config.toml でずらす (範囲だけ確かめて、ずらし忘れるポートが無い)", () => {
+    for (const { slot, values } of all) {
+      const block = (values.get("SLOT_SUPABASE_PORTS") ?? "").split(" ").map(Number).sort((a, b) => a - b);
+      const named = SUPABASE_PORT_VARS.map((v) => Number(values.get(v))).sort((a, b) => a - b);
+      expect(named, `枠 ${slot}`).toEqual(block);
+    }
+    // inspector_port は supabase start では開かないので範囲に入れないが、config.toml ではずらす
+    const shifted = new Set(SLOT_CONFIG.map(({ slotVar }) => slotVar));
+    for (const v of [...SUPABASE_PORT_VARS, "SLOT_INSPECTOR_PORT"]) expect(shifted.has(v), `${v} を config.toml に書いていない`).toBe(true);
   });
 
   it("範囲外の枠・整数でない枠は受け付けない", () => {
@@ -332,14 +348,23 @@ describe("scripts/supabase-local.sh が枠に合わせて組み立てる config.
 
 /**
  * scripts/local-ci.sh の枠のロックの関数を、スクリプトから名前で取り出して動かす (スクリプトの本体は動かさない)。
- * docker / run_in / record などは記録だけする代わりに置き換える
+ * docker / run_in / record などは記録だけする代わりに置き換える。
+ * 同時に動かすときの順序を決めるため、環境変数で次の待ちを差し込める (どれも指定しなければ何もしない):
+ *   HOOK_PS_DELAY       ps を呼ぶ前に待つ秒数 (持ち主が生きているかの確かめが遅い実行)
+ *   HOOK_PS_FAIL        1 なら ps を失敗させる (fork の失敗などで ps が動かない)
+ *   HOOK_SAY_DELAY      say (回収するときの表示) のあとで待つ秒数
+ *   HOOK_LOCK / HOOK_REMKDIR_DELAY  HOOK_LOCK のディレクトリを 2 回目に mkdir する直前 (回収したあとの作り直し) に待つ秒数
  */
-describe("scripts/local-ci.sh: 枠に残ったスタックの片付けは、持ち主の死んだロックを回収したときだけ", () => {
+describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)", () => {
   const LOCK_FUNCTIONS = [
     "file_mtime",
     "proc_lstart",
     "lock_held",
     "write_owner",
+    "make_lock",
+    "take_guard",
+    "drop_guard",
+    "warn_stale_guard",
     "reclaim_lock",
     "try_lock",
     "release_lock",
@@ -362,55 +387,119 @@ describe("scripts/local-ci.sh: 枠に残ったスタックの片付けは、持�
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "local-ci-slot-lock-"));
   afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
-  const harness = path.join(tmp, "harness.sh");
-  fs.writeFileSync(
-    harness,
-    [
-      "set -u -o pipefail",
-      'say() { echo "SAY $*" >&2; }',
-      "now() { date +%s; }",
-      'record() { echo "RECORD $*"; }',
-      'run_in() { echo "RUN_IN ${*:3}"; }',
-      // 枠の project_id のラベルで絞った一覧を、FAKE_CONTAINERS / FAKE_VOLUMES の中身で返す
-      'docker() { case "$1" in ps) printf "%s" "${FAKE_CONTAINERS:-}" ;; volume) printf "%s" "${FAKE_VOLUMES:-}" ;; esac; }',
-      "check_docker_memory() { :; }",
-      'LOCK_OWNER_GRACE_SEC=60; SLOT_POLL_SEC=1; SLOT_WAIT_SECONDS=0; LEGACY_LOCK=""',
-      'HEAD_SHA=test; ART="$HARNESS_TMP"; WT="$HARNESS_TMP"; APP_HOST_URL="http://localhost"; ENV_SLOT=""',
-      'SLOT=""; SLOT_LOCK=""; SLOT_RECLAIMED=0; LOCK_RECLAIMED=0',
-      `. "${path.join(ROOT, SLOT_LIB)}"`,
-      ...LOCK_FUNCTIONS.map(extract),
-      'acquire_slot || { echo "ACQUIRE_FAILED"; exit 0; }',
-      'echo "SLOT=$SLOT RECLAIMED=$SLOT_RECLAIMED"',
-      "clear_slot_leftovers",
-      'if check_slot_stack integration; then echo "STACK_OK"; else echo "STACK_RED"; fi',
-      'release_lock "$SLOT_LOCK"',
-      "",
-    ].join("\n"),
-  );
+  const prelude = [
+    "set -u -o pipefail",
+    'say() { echo "SAY $*" >&2; if [ -n "${HOOK_SAY_DELAY:-}" ]; then sleep "$HOOK_SAY_DELAY"; fi; return 0; }',
+    'ps() { if [ -n "${HOOK_PS_FAIL:-}" ]; then return 1; fi; if [ -n "${HOOK_PS_DELAY:-}" ]; then sleep "$HOOK_PS_DELAY"; fi; command ps "$@"; }',
+    "HOOK_MKDIR_N=0",
+    'mkdir() { if [ -n "${HOOK_LOCK:-}" ] && [ "$1" = "$HOOK_LOCK" ]; then HOOK_MKDIR_N=$((HOOK_MKDIR_N + 1)); if [ "$HOOK_MKDIR_N" = 2 ] && [ -n "${HOOK_REMKDIR_DELAY:-}" ]; then sleep "$HOOK_REMKDIR_DELAY"; fi; fi; command mkdir "$@"; }',
+    "now() { date +%s; }",
+    'record() { echo "RECORD $*"; }',
+    'run_in() { echo "RUN_IN ${*:3}"; }',
+    // 枠の project_id のラベルで絞った一覧を、FAKE_CONTAINERS / FAKE_VOLUMES の中身で返す
+    'docker() { case "$1" in ps) printf "%s" "${FAKE_CONTAINERS:-}" ;; volume) printf "%s" "${FAKE_VOLUMES:-}" ;; esac; }',
+    "check_docker_memory() { :; }",
+    'LOCK_OWNER_GRACE_SEC=60; GUARD_POLL_SEC=1; SLOT_POLL_SEC=1; SLOT_WAIT_SECONDS=0; LEGACY_LOCK=""',
+    'HEAD_SHA=test; ART="$HARNESS_TMP"; WT="$HARNESS_TMP"; APP_HOST_URL="http://localhost"; ENV_SLOT=""',
+    'SLOT=""; SLOT_LOCK=""; SLOT_RECLAIMED=0; LOCK_RECLAIMED=0; GUARD_HELD=""; STALE_GUARDS_WARNED=""',
+    `. "${path.join(ROOT, SLOT_LIB)}"`,
+    ...LOCK_FUNCTIONS.map(extract),
+  ];
+  const writeHarness = (name: string, body: string[]) => {
+    const file = path.join(tmp, name);
+    fs.writeFileSync(file, [...prelude, ...body, ""].join("\n"));
+    return file;
+  };
+  // 枠を取り、残ったスタックを片付ける / 確かめてから、ロックを外す (local-ci.sh の本体と同じ順)
+  const harness = writeHarness("harness.sh", [
+    'acquire_slot || { echo "ACQUIRE_FAILED"; exit 0; }',
+    'echo "SLOT=$SLOT RECLAIMED=$SLOT_RECLAIMED"',
+    "clear_slot_leftovers",
+    'if check_slot_stack integration; then echo "STACK_OK"; else echo "STACK_RED"; fi',
+    'release_lock "$SLOT_LOCK"',
+  ]);
+  // HOOK_LOCK のロックを 1 回だけ取りに行き、取れたら HARNESS_STOP ができるまで持ったままにする (外さない)
+  const tryHarness = writeHarness("try.sh", [
+    'if try_lock "$HOOK_LOCK"; then echo "GOT reclaimed=$LOCK_RECLAIMED pid=$$"; else echo "MISSED pid=$$"; exit 0; fi',
+    'while [ ! -e "$HARNESS_STOP" ]; do sleep 0.1; done',
+  ]);
+  // HOOK_LOCK のロックを作ってから外す
+  const releaseHarness = writeHarness("release.sh", [
+    'make_lock "$HOOK_LOCK" || { echo "MAKE_FAILED"; exit 1; }',
+    'echo "READY pid=$$"',
+    'release_lock "$HOOK_LOCK"',
+    'echo "RELEASED"',
+  ]);
+
+  const baseEnv = (): NodeJS.ProcessEnv => ({ PATH: process.env.PATH, HOME: process.env.HOME, HARNESS_TMP: tmp });
 
   let caseNo = 0;
-  /** 枠の候補・前もって置くロックの持ち主・残っているコンテナ / ボリュームを決めて、ハーネスを 1 回動かす */
-  const runCase = (opts: { slot: string; owner?: string; containers?: string; volumes?: string; tz?: string }) => {
+  const newLockDir = () => {
     caseNo += 1;
-    const lockDir = path.join(tmp, `locks-${caseNo}`);
-    fs.mkdirSync(lockDir, { recursive: true });
-    if (opts.owner !== undefined) {
-      fs.mkdirSync(path.join(lockDir, `slot-${opts.slot}`));
-      fs.writeFileSync(path.join(lockDir, `slot-${opts.slot}`, "owner"), opts.owner);
+    const dir = path.join(tmp, `locks-${caseNo}`);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  };
+  /** ロック (または見張り) のディレクトリを、持ち主の内容と、作られてからの秒数を決めて置く */
+  const placeLock = (dir: string, owner: string, ageSec = 0) => {
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, "owner"), owner);
+    if (ageSec > 0) {
+      const t = new Date(Date.now() - ageSec * 1000);
+      fs.utimesSync(dir, t, t);
     }
+  };
+  /** 枠の候補・前もって置くロックの持ち主・残っているコンテナ / ボリュームを決めて、ハーネスを 1 回動かす */
+  const runCase = (opts: {
+    slot: string;
+    owner?: string;
+    guard?: { owner: string; ageSec: number };
+    containers?: string;
+    volumes?: string;
+    tz?: string;
+    env?: Record<string, string>;
+  }) => {
+    const lockDir = newLockDir();
+    const slotLock = path.join(lockDir, `slot-${opts.slot}`);
+    if (opts.owner !== undefined) placeLock(slotLock, opts.owner);
+    if (opts.guard !== undefined) placeLock(`${slotLock}.reclaim`, opts.guard.owner, opts.guard.ageSec);
     const env: NodeJS.ProcessEnv = {
-      PATH: process.env.PATH,
-      HOME: process.env.HOME,
-      HARNESS_TMP: tmp,
+      ...baseEnv(),
       LOCK_DIR: lockDir,
       SLOT_CANDIDATES: opts.slot,
       FAKE_CONTAINERS: opts.containers ?? "",
       FAKE_VOLUMES: opts.volumes ?? "",
+      ...opts.env,
     };
     if (opts.tz !== undefined) env.TZ = opts.tz;
     const r = spawnSync("bash", [harness], { cwd: tmp, env, encoding: "utf8" });
-    return { status: r.status, out: r.stdout, err: r.stderr };
+    return { status: r.status, out: r.stdout, err: r.stderr, slotLock };
   };
+
+  /** 起動したハーネスの標準出力が条件を満たすまで待つ */
+  type Proc = { child: ReturnType<typeof spawn>; out: () => string; exited: Promise<number | null> };
+  const start = (file: string, env: NodeJS.ProcessEnv): Proc => {
+    const child = spawn("bash", [file], { cwd: tmp, env, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    child.stdout?.on("data", (d: Buffer) => {
+      out += d.toString("utf8");
+    });
+    child.stderr?.on("data", () => undefined);
+    const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+    return { child, out: () => out, exited };
+  };
+  const POLL_MS = 50;
+  const WAIT_LIMIT_MS = 15_000;
+  const waitFor = async (cond: () => boolean, what: string) => {
+    const deadline = Date.now() + WAIT_LIMIT_MS;
+    while (!cond()) {
+      if (Date.now() > deadline) throw new Error(`待ちの時間切れ: ${what}`);
+      await new Promise((r) => setTimeout(r, POLL_MS));
+    }
+  };
+  const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const ownerPidOf = (dir: string) => /^pid=(\d+)$/m.exec(fs.readFileSync(path.join(dir, "owner"), "utf8"))?.[1];
+
   // 持ち主の死んだロック: pid 1 は生きているが、開始時刻が違う (= pid が使い回された別のプロセス) ので持ち主ではない
   const DEAD_OWNER = "pid=1\nlstart=Thu Jan  1 00:00:00 1970\n";
   // 生きている持ち主: このテストのプロセス。local-ci.sh の write_owner と同じく LC_ALL=C・TZ=UTC で開始時刻を書く
@@ -421,6 +510,11 @@ describe("scripts/local-ci.sh: 枠に残ったスタックの片付けは、持�
     }).trim();
     return `pid=${process.pid}\nlstart=${lstart}\n`;
   };
+  // 見張りが空くのを待っているあいだに、まだ外していないことを確かめるまでの時間
+  const RELEASE_BLOCKED_MS = 1_500;
+  // 持ち主の死んだ見張りとみなす古さ (LOCK_OWNER_GRACE_SEC=60 より古い)
+  const STALE_GUARD_AGE_SEC = 120;
+  const RACE_TIMEOUT_MS = 30_000;
 
   it("空いていた枠 1 に、その枠のコンテナが残っていれば、消さずに integration:setup を赤にする", () => {
     const r = runCase({ slot: "1", containers: "c0ffee" });
@@ -443,6 +537,9 @@ describe("scripts/local-ci.sh: 枠に残ったスタックの片付けは、持�
     expect(r.status, r.err).toBe(0);
     expect(r.out).toContain("SLOT=1 RECLAIMED=1");
     expect(r.out).toContain("RUN_IN bash scripts/supabase-local.sh stop-leftover");
+    // 外したあとは、ロックも回収の見張りも残らない
+    expect(fs.existsSync(r.slotLock)).toBe(false);
+    expect(fs.existsSync(`${r.slotLock}.reclaim`)).toBe(false);
   });
 
   it("持ち主の死んだロックを回収しても、何も残っていなければ片付けず、赤にもしない", () => {
@@ -489,5 +586,127 @@ describe("scripts/local-ci.sh: 枠に残ったスタックの片付けは、持�
       expect(r.out, `TZ=${tz}`).toContain("ACQUIRE_FAILED");
       expect(r.out, `TZ=${tz}`).not.toContain("RUN_IN");
     }
+  });
+
+  it("ps が動かない (fork の失敗など) ときは、持ち主が生きている限り回収しない", () => {
+    const r = runCase({ slot: "1", owner: liveOwner(), containers: "c0ffee", env: { HOOK_PS_FAIL: "1" } });
+    expect(r.out, r.err).toContain("ACQUIRE_FAILED");
+    expect(r.out).not.toContain("RUN_IN");
+    expect(ownerPidOf(r.slotLock)).toBe(String(process.pid));
+  });
+
+  it("持ち主が開始時刻を書けなかったロックは、その pid のプロセスが生きている限り回収しない", () => {
+    const r = runCase({ slot: "1", owner: `pid=${process.pid}\nlstart=\n`, containers: "c0ffee" });
+    expect(r.out, r.err).toContain("ACQUIRE_FAILED");
+    expect(r.out).not.toContain("RUN_IN");
+  });
+
+  it(
+    "同時に 2 本が同じ死んだロックを回収しに来ても、取れるのは 1 本だけ (遅れて回収に来た方が、先に回収して作り直したロックを消さない)",
+    async () => {
+      const lock = path.join(newLockDir(), "slot-1");
+      placeLock(lock, DEAD_OWNER);
+      const stop = path.join(tmp, `stop-${caseNo}`);
+      // B: 持ち主の確かめが遅く (ps の前に待つ)、回収の表示のあとでも待つ。A: 死んだロックを消してから作り直すまでに待つ。
+      // 見張りを外してから作り直す作りだと、A が作り直すまでのあいだに B が見張りを取り、ロックが無いのを見て、
+      // A の作り直したロックを消して自分も取る (2 本が同じ枠を持つ)
+      const b = start(tryHarness, { ...baseEnv(), HOOK_LOCK: lock, HARNESS_STOP: stop, HOOK_PS_DELAY: "0.3", HOOK_SAY_DELAY: "1.5" });
+      await sleepMs(100);
+      const a = start(tryHarness, { ...baseEnv(), HOOK_LOCK: lock, HARNESS_STOP: stop, HOOK_REMKDIR_DELAY: "0.5" });
+      try {
+        await waitFor(() => /^(GOT|MISSED)/m.test(a.out()) && /^(GOT|MISSED)/m.test(b.out()), "2 本の結果");
+        const winners = [a, b].filter((p) => /^GOT /m.test(p.out()));
+        expect(winners.map((p) => p.out()), `A: ${a.out()} / B: ${b.out()}`).toHaveLength(1);
+        // 取れた 1 本が、いまのロックの持ち主 (死んだ持ち主のロックは残っていない)
+        const winnerPid = /pid=(\d+)/.exec(winners[0].out())?.[1];
+        expect(ownerPidOf(lock)).toBe(winnerPid);
+      } finally {
+        fs.writeFileSync(stop, "");
+        await Promise.all([a.exited, b.exited]);
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it(
+    "同時に何本が同じ死んだロックを取りに来ても、取れるのは 1 本だけ",
+    async () => {
+      const ACQUIRERS = 6;
+      const lock = path.join(newLockDir(), "slot-1");
+      placeLock(lock, DEAD_OWNER);
+      const stop = path.join(tmp, `stop-${caseNo}`);
+      const procs = Array.from({ length: ACQUIRERS }, () => start(tryHarness, { ...baseEnv(), HOOK_LOCK: lock, HARNESS_STOP: stop }));
+      try {
+        await waitFor(() => procs.every((p) => /^(GOT|MISSED)/m.test(p.out())), "全部の結果");
+        const winners = procs.filter((p) => /^GOT /m.test(p.out()));
+        expect(winners, procs.map((p) => p.out()).join(" / ")).toHaveLength(1);
+        expect(ownerPidOf(lock)).toBe(/pid=(\d+)/.exec(winners[0].out())?.[1]);
+      } finally {
+        fs.writeFileSync(stop, "");
+        await Promise.all(procs.map((p) => p.exited));
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it(
+    "ロックを外すのは見張りを取ってから (回収している実行が見張りを持っているあいだは外さずに待つ)",
+    async () => {
+      const lock = path.join(newLockDir(), "slot-1");
+      const guard = `${lock}.reclaim`;
+      // 生きている別の実行 (このテストのプロセス) が回収の見張りを持っている
+      placeLock(guard, liveOwner());
+      const p = start(releaseHarness, { ...baseEnv(), HOOK_LOCK: lock });
+      try {
+        await waitFor(() => p.out().includes("READY"), "ロックを作る");
+        await sleepMs(RELEASE_BLOCKED_MS);
+        expect(p.out()).not.toContain("RELEASED");
+        expect(fs.existsSync(lock)).toBe(true);
+        // 見張りが外れたら、見張りを取って外す
+        fs.rmSync(guard, { recursive: true, force: true });
+        await waitFor(() => p.out().includes("RELEASED"), "ロックを外す");
+        expect(fs.existsSync(lock)).toBe(false);
+        expect(fs.existsSync(guard)).toBe(false);
+      } finally {
+        p.child.kill();
+        await p.exited;
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it("終わるとき (Ctrl-C などを含む) は、ほかの片付けより先に見張りを外し、枠のロックはスタックを止めてから外す", () => {
+    const body = extract("cleanup").split("\n").map((line) => line.trim());
+    const at = (cmd: string) => body.findIndex((line) => line === cmd);
+    expect(at("drop_guard"), "cleanup に drop_guard が無い").toBeGreaterThan(0);
+    expect(at("drop_guard")).toBeLessThan(at("stop_server"));
+    expect(at("stop_supabase")).toBeLessThan(at('release_lock "$SLOT_LOCK"'));
+    expect(at('release_lock "$SLOT_LOCK"')).toBeLessThan(at('release_lock "$ART_LOCK"'));
+  });
+
+  it("持ち主の死んだ見張りが残っていても、自分のロックは外せる (見張りは消さない)", () => {
+    const lock = path.join(newLockDir(), "slot-1");
+    const guard = `${lock}.reclaim`;
+    placeLock(guard, DEAD_OWNER, STALE_GUARD_AGE_SEC);
+    const r = spawnSync("bash", [releaseHarness], { cwd: tmp, env: { ...baseEnv(), HOOK_LOCK: lock }, encoding: "utf8" });
+    expect(r.stdout, r.stderr).toContain("RELEASED");
+    expect(fs.existsSync(lock)).toBe(false);
+    expect(fs.existsSync(guard)).toBe(true);
+  });
+
+  it("持ち主の死んだ見張りが残っていれば、死んだロックを回収せず (見張りも消さず) に知らせる", () => {
+    const r = runCase({ slot: "1", owner: DEAD_OWNER, guard: { owner: DEAD_OWNER, ageSec: STALE_GUARD_AGE_SEC }, containers: "c0ffee" });
+    expect(r.out, r.err).toContain("ACQUIRE_FAILED");
+    expect(r.out).not.toContain("RUN_IN");
+    expect(r.err).toMatch(/回収の見張り .*slot-1\.reclaim が、持ち主の死んだまま残っています/);
+    expect(fs.existsSync(`${r.slotLock}.reclaim`)).toBe(true);
+    expect(ownerPidOf(r.slotLock)).toBe("1");
+  });
+
+  it("作られて間もない見張りは、持ち主が死んで見えても残った跡とみなさない (取り直された直後の見張りと取り違えない)", () => {
+    const r = runCase({ slot: "1", owner: DEAD_OWNER, guard: { owner: DEAD_OWNER, ageSec: 0 } });
+    expect(r.out, r.err).toContain("ACQUIRE_FAILED");
+    expect(r.err).not.toContain("回収の見張り");
+    expect(fs.existsSync(`${r.slotLock}.reclaim`)).toBe(true);
   });
 });

@@ -46,7 +46,7 @@
 #
 # 枠 (slot): integration / e2e (ローカル Supabase と Next を立てる段) を、同じ機械で複数の local-ci.sh が同時に回せるよう、
 # 枠ごとに project_id (コンテナ名) と全ポートをずらす (値の表は scripts/lib/local-ci-slot.sh。枠 0 は今までと同じ値)。
-# Docker を使う段の直前に、空いている枠のロックを mkdir で取り、終わったら (trap で必ず) 外す。unit / mobile だけなら取らない。
+# Docker を使う段の直前に、空いている枠のロックを mkdir で取り、終わったら (trap で必ず) 外す。secrets / unit / mobile だけなら取らない。
 #   LOCAL_CI_SLOTS                 使ってよい枠 (空白区切り。既定 "0")。例: "0 1" なら 2 本まで同時に回せる
 #   LOCAL_CI_SLOT                  この枠だけを使う (LOCAL_CI_SLOTS より優先。空くまで待つ)
 #   LOCAL_CI_LOCK_DIR              枠のロックの置き場 (既定: ${TMPDIR:-/tmp}/homegohan-local-ci-locks)
@@ -96,8 +96,12 @@ readonly LOG_TAIL_LINES=40
 readonly SLOT_WAIT_SECONDS_DEFAULT=5400
 # 枠の空きを確かめる間隔
 readonly SLOT_POLL_SEC=10
-# ロックのディレクトリを作ってから持ち主 (owner) を書き終えるまでの猶予。これを過ぎても owner が無ければ持ち主が死んだとみなす
+# ロックのディレクトリを作ってから持ち主 (owner) を書き終えるまでの猶予。これを過ぎても owner が無ければ持ち主が死んだとみなす。
+# 回収の見張り (<ロック>.reclaim) を、作られてからこれだけ経つまでは持ち主の判定によらず死んだとみなさない猶予と、
+# ロックを外すときに見張りが空くのを待つ上限にも使う (見張りを持つのは mkdir と ps 数回のあいだだけなので、これだけあれば足りる)
 readonly LOCK_OWNER_GRACE_SEC=60
+# ロックを外すときに、見張りが空いたかを確かめる間隔
+readonly GUARD_POLL_SEC=1
 # 1 枠の Docker のメモリの目安 (MiB)。2026-10-10 に Docker Desktop (VM: CPU 8 / メモリ 15.6 GiB) で 20 秒ごとに docker stats を取って実測した、
 # 結合テスト・e2e を回している最中のローカル Supabase 一式 (studio などを除く 8 コンテナ) の使用量の最大 (1 枠で 1164 MiB。
 # 2 枠同時で合計 2019 MiB = 1 枠あたり約 1 GiB) に余裕を足した値。
@@ -512,9 +516,11 @@ file_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 # (違う文字列になると、生きている持ち主を死んだとみなしてロックを回収し、その枠のスタックまで片付けてしまう)
 proc_lstart() { LC_ALL=C TZ=UTC ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//; s/ *$//'; }
 
-# lock_held <ロックのディレクトリ>: 生きている持ち主がいる (または作られた直後で持ち主をまだ書いていない) なら真
+# lock_held <ロックのディレクトリ>: 生きている持ち主がいる (または作られた直後で持ち主をまだ書いていない) なら真。
+# 持ち主が生きているか確かめられないとき (ps が開始時刻を出さないのに pid のプロセスはある・持ち主が開始時刻を書けなかった) は
+# 生きているとみなす (死んだと取り違えて回収すると、生きている持ち主の枠のスタックまで片付けてしまう。待つ方を選ぶ)
 lock_held() {
-  local dir="$1" pid lstart mtime
+  local dir="$1" pid lstart cur mtime
   [ -d "$dir" ] || return 1
   if [ ! -f "$dir/owner" ]; then
     mtime="$(file_mtime "$dir")" || return 1
@@ -524,7 +530,15 @@ lock_held() {
   pid="$(sed -n 's/^pid=//p' "$dir/owner")"
   lstart="$(sed -n 's/^lstart=//p' "$dir/owner")"
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-  [ -n "$lstart" ] && [ "$(proc_lstart "$pid")" = "$lstart" ]
+  cur="$(proc_lstart "$pid")"
+  if [ -z "$cur" ]; then
+    # ps が開始時刻を出さない: その pid のプロセスが無ければ死んでいる。あれば ps が動かなかった (fork の失敗など) だけ
+    kill -0 "$pid" 2>/dev/null
+    return
+  fi
+  # 持ち主が開始時刻を書けなかった (書いたときに ps が動かなかった) なら、その pid のプロセスがある限り生きているとみなす
+  [ -n "$lstart" ] || return 0
+  [ "$cur" = "$lstart" ]
 }
 
 write_owner() {
@@ -538,41 +552,117 @@ write_owner() {
   } >"$dir/owner.tmp" && mv "$dir/owner.tmp" "$dir/owner"
 }
 
-# reclaim_lock <ロックのディレクトリ>: 持ち主の死んだロックを消す。回収は <dir>.reclaim を取った 1 本だけが行う
-reclaim_lock() {
-  local dir="$1" guard="$1.reclaim" mtime
-  if ! mkdir "$guard" 2>/dev/null; then
-    # 回収の途中で死んだ跡なら消しておく (次の回で回収する)
-    mtime="$(file_mtime "$guard")" && [ "$(($(now) - mtime))" -ge "$LOCK_OWNER_GRACE_SEC" ] && rm -rf "$guard"
-    return 1
-  fi
-  if lock_held "$dir"; then
-    rmdir "$guard"
-    return 1
-  fi
-  say "持ち主のいないロックを回収します: $dir ($(tr "\n" " " 2>/dev/null <"$dir/owner" || echo "owner なし"))"
-  rm -rf "$dir"
-  rmdir "$guard"
+# make_lock <ロックのディレクトリ>: mkdir で原子的に作り、持ち主を書く。持ち主を書けなければ (容量不足など) 作ったものを消して失敗にする
+# (持ち主の無いロックは LOCK_OWNER_GRACE_SEC を過ぎると死んだとみなされ、生きているのに回収されてしまう)
+make_lock() {
+  mkdir "$1" 2>/dev/null || return 1
+  write_owner "$1" && return 0
+  rm -rf "$1"
+  return 1
 }
 
-# try_lock <ロックのディレクトリ>: mkdir で原子的に取る。持ち主が死んでいれば回収して取り直す。
+# 回収の見張り (<ロックのディレクトリ>.reclaim)。持ち主の死んだロックの回収と、自分のロックを外すことは、見張りを持った 1 本だけが行う。
+# 見張りを持っているあいだ、ロックのディレクトリは消えも作り直されもしない (消すのは見張りを持つ者だけ。見張りの外でできるのは、
+# ディレクトリが無いときの mkdir だけ)。だから「持ち主が死んでいると確かめたロック」と「消すロック」が必ず同じものになり、
+# 消したあとの作り直しも見張りの中で行うので、遅れて回収に来た実行が、別の実行の取ったロックを消すことが無い
+GUARD_HELD=""
+# 持ち主の死んだ見張りを知らせ済みのもの (同じ見張りを待ちのたびに知らせない)
+STALE_GUARDS_WARNED=""
+
+# take_guard <ロックのディレクトリ>: 見張りを取る。取れたら 0、生きている誰かが持っていれば 1、
+# 持ち主の死んだ見張り (回収かロックを外す途中で強制終了された跡) が残っていれば 2。
+# 死んだ見張りは自動では消さない (「死んでいる」と確かめてから消すまでのあいだに、同じく死んでいると見た別の実行が見張りを消して
+# 取り直しているかもしれず、それを消すと 2 本が同時に回収に入る)。作られてから LOCK_OWNER_GRACE_SEC 経っていない見張りは、
+# 持ち主の判定によらず死んだとみなさない (見ているあいだに外されて取り直された見張りを、死んだと取り違えない)
+take_guard() {
+  local guard="$1.reclaim" mtime
+  if make_lock "$guard"; then
+    GUARD_HELD="$guard"
+    return 0
+  fi
+  lock_held "$guard" && return 1
+  mtime="$(file_mtime "$guard")" || return 1
+  [ "$(($(now) - mtime))" -ge "$LOCK_OWNER_GRACE_SEC" ] || return 1
+  return 2
+}
+
+# drop_guard: 持っている見張りを外す (cleanup からも呼ぶ。見張りを持ったまま Ctrl-C などで終わらない)
+drop_guard() {
+  [ -n "$GUARD_HELD" ] || return 0
+  rm -rf "$GUARD_HELD"
+  GUARD_HELD=""
+}
+
+# warn_stale_guard <ロックのディレクトリ>: 持ち主の死んだ見張りが残っていることを、見張りごとに 1 回だけ知らせる
+warn_stale_guard() {
+  local guard="$1.reclaim"
+  case " $STALE_GUARDS_WARNED " in *" $guard "*) return 0 ;; esac
+  STALE_GUARDS_WARNED="$STALE_GUARDS_WARNED $guard"
+  say "回収の見張り $guard が、持ち主の死んだまま残っています (回収かロックを外す途中で強制終了された跡)。2 本が同時に回収に入らないよう自動では消しません。ほかに local-ci.sh が動いていないことを確かめてから rm -rf '$guard' で消すと、$1 を回収できるようになります"
+}
+
+# reclaim_lock <ロックのディレクトリ>: 見張りを持ったまま、持ち主の死んだロックを消して自分のロックとして作り直す
+# (見張りを外してから作り直すと、そのあいだに別の実行が取ったロックを、遅れて見張りを取った実行が消してしまい、2 本が同じロックを持つ)。
+# 取れたら 0 (持ち主の死んだロックを回収したなら LOCK_RECLAIMED=1。見張りを取るまでに持ち主が外していて空いていたなら 0)、取れなければ 1
+reclaim_lock() {
+  local dir="$1" rc=1 st
+  take_guard "$dir"
+  st=$?
+  if [ "$st" -ne 0 ]; then
+    if [ "$st" -eq 2 ]; then warn_stale_guard "$dir"; fi
+    return 1
+  fi
+  if [ ! -d "$dir" ]; then
+    make_lock "$dir" && rc=0
+  elif ! lock_held "$dir"; then
+    say "持ち主のいないロックを回収します: $dir ($(tr "\n" " " 2>/dev/null <"$dir/owner" || echo "owner なし"))"
+    rm -rf "$dir"
+    if make_lock "$dir"; then
+      LOCK_RECLAIMED=1
+      rc=0
+    fi
+  fi
+  drop_guard
+  return "$rc"
+}
+
+# try_lock <ロックのディレクトリ>: mkdir で原子的に取る。持ち主が死んでいれば (見張りを持って) 回収して取り直す。
 # 取れたとき、持ち主の死んだロックを回収して取ったなら LOCK_RECLAIMED=1、空いていたのを取ったなら 0 にする
 LOCK_RECLAIMED=0
 try_lock() {
   local dir="$1"
   LOCK_RECLAIMED=0
-  if mkdir "$dir" 2>/dev/null; then write_owner "$dir"; return 0; fi
+  make_lock "$dir" && return 0
+  # 生きている持ち主がいれば見張りを取りに行かない (ここで死んでいると見えても、見張りの中でもう一度確かめてから回収する)
   lock_held "$dir" && return 1
-  reclaim_lock "$dir" || return 1
-  if mkdir "$dir" 2>/dev/null; then write_owner "$dir"; LOCK_RECLAIMED=1; return 0; fi
-  return 1
+  reclaim_lock "$dir"
 }
 
-# release_lock <ロックのディレクトリ>: 自分が持ち主のときだけ外す
+# release_lock <ロックのディレクトリ>: 自分が持ち主のときだけ、見張りを持って外す (回収する側が「持ち主が死んでいる」と確かめてから
+# 消すまでのあいだに、ここで外したあと別の実行が取り直したロックを消させない)。見張りが空くのを最大 LOCK_OWNER_GRACE_SEC 秒待つ。
+# 持ち主の死んだ見張りが残っているときは、誰も回収に入れないので見張りなしで外す。待っても空かなければ外さずに残す
+# (この実行が終われば持ち主の死んだロックになり、次の実行が回収する)
 release_lock() {
-  local dir="$1"
+  local dir="$1" waited=0 st
   [ -n "$dir" ] && [ -f "$dir/owner" ] || return 0
-  if [ "$(sed -n 's/^pid=//p' "$dir/owner")" = "$$" ]; then rm -rf "$dir"; fi
+  [ "$(sed -n 's/^pid=//p' "$dir/owner")" = "$$" ] || return 0
+  while :; do
+    take_guard "$dir"
+    st=$?
+    [ "$st" -eq 0 ] && break
+    if [ "$st" -eq 2 ]; then
+      rm -rf "$dir"
+      return 0
+    fi
+    if [ "$waited" -ge "$LOCK_OWNER_GRACE_SEC" ]; then
+      say "ロックの見張り $dir.reclaim が $LOCK_OWNER_GRACE_SEC 秒待っても空かないので、$dir は外さずに残します (この実行が終われば、次の実行が持ち主の死んだロックとして回収します)"
+      return 0
+    fi
+    sleep "$GUARD_POLL_SEC"
+    waited=$((waited + GUARD_POLL_SEC))
+  done
+  rm -rf "$dir"
+  drop_guard
 }
 
 # 枠を使わずに既定のポートで動く作業 (Workflow など) の外側のロックがあるか
@@ -1104,6 +1194,8 @@ CLEANED=0
 cleanup() {
   [ "$CLEANED" = 1 ] && return 0
   CLEANED=1
+  # 回収やロックを外す途中で終わる (Ctrl-C など) なら、見張りを最初に外す (残すと、その枠を誰も回収できなくなる)
+  drop_guard
   stop_server
   stop_supabase
   # 枠のロックは、その枠のコンテナと Next を止めたあとに外す
@@ -1274,7 +1366,7 @@ fi
 
 if want unit; then say "== unit (ci.yml)"; stage_unit; fi
 if want mobile; then say "== mobile (mobile-test.yml)"; stage_mobile; fi
-# Docker を使う段 (integration / e2e) の前に枠を取る。unit / mobile だけなら取らない
+# Docker を使う段 (integration / e2e) の前に枠を取る。secrets / unit / mobile だけなら取らない
 if want integration || want e2e; then
   say "== 枠 (候補: $SLOT_CANDIDATES)"
   if acquire_slot; then

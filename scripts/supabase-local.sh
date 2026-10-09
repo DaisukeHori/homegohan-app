@@ -136,6 +136,7 @@ slot_config() {
   echo "pop3_port = $SLOT_INBUCKET_POP3_PORT"
   echo '[analytics]'
   echo "port = $SLOT_ANALYTICS_PORT"
+  echo "vector_port = $SLOT_VECTOR_PORT"
   echo '[edge_runtime]'
   echo "inspector_port = $SLOT_INSPECTOR_PORT"
   # CLI の既定 (site_url = http://127.0.0.1:3000) と同じ形で、ポートだけ枠の Next に合わせる
