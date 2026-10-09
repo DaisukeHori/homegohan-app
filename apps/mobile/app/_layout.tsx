@@ -16,7 +16,6 @@ import { ErrorFallback } from "../src/components/ErrorFallback";
 import { resolveSupabaseEnv } from "../src/lib/env";
 import { ensurePushTokenRegistered } from "../src/lib/pushNotifications";
 import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
-import { PostHogProvider } from "../src/providers/PostHogProvider";
 import { ProfileProvider } from "../src/providers/ProfileProvider";
 
 // E2E テスト中に LogBox の自動ポップアップがタップを横取りして失敗するため抑制する
@@ -46,7 +45,7 @@ function PushTokenRegistrar() {
         // 登録済みの印は、トークンを保存できたときだけ付く (権限の拒否などで未登録なら、次の起動でまた試す)
         await ensurePushTokenRegistered(user.id);
       } catch {
-        // silent — 失敗は registerAndSaveExpoPushToken() が PostHog に送る。user can retry via settings toggle
+        // silent — 失敗は registerAndSaveExpoPushToken() が端末のコンソールに出す。user can retry via settings toggle
       }
     })();
   }, [user?.id]);
@@ -76,23 +75,21 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <PostHogProvider>
-        <AuthProvider>
-          <ProfileProvider>
-            <PushTokenRegistrar />
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="index" />
-              <Stack.Screen name="(public)" />
-              <Stack.Screen name="(auth)" />
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen name="(org)" />
-              <Stack.Screen name="(support)" />
-              <Stack.Screen name="(super-admin)" />
-              <Stack.Screen name="meals/new" options={{ presentation: "modal" }} />
-            </Stack>
-          </ProfileProvider>
-        </AuthProvider>
-      </PostHogProvider>
+      <AuthProvider>
+        <ProfileProvider>
+          <PushTokenRegistrar />
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="(public)" />
+            <Stack.Screen name="(auth)" />
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="(org)" />
+            <Stack.Screen name="(support)" />
+            <Stack.Screen name="(super-admin)" />
+            <Stack.Screen name="meals/new" options={{ presentation: "modal" }} />
+          </Stack>
+        </ProfileProvider>
+      </AuthProvider>
     </SafeAreaProvider>
   );
 }
