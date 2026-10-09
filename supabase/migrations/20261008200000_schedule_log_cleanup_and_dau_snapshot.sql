@@ -1,4 +1,4 @@
--- migration: 20261008140000_schedule_log_cleanup_and_dau_snapshot.sql
+-- migration: 20261008200000_schedule_log_cleanup_and_dau_snapshot.sql
 -- #1125 / #1157: 古いログの定期削除と、日次のアクティブ利用者 (DAU / WAU / MAU) の集計を pg_cron で動かす
 --
 -- 背景:
@@ -23,19 +23,23 @@
 --        cleanup-old-app-logs          15 18 * * *   毎日 03:15 JST   SELECT public.cleanup_old_logs();
 --        snapshot-daily-active-users   30 16 * * *   毎日 01:30 JST   SELECT public.snapshot_daily_active_users(前日 (JST));
 --      登録の前に、同じ処理を呼ぶ既存のジョブ (名前は問わない。名前なしも含む) と同じ名前のジョブを登録解除するので、
---      本番に手作業で作られたジョブがあっても二重にならず、何度流しても同じ結果になる。
+--      本番に手作業で作られたジョブがあっても二重にならず、何度流しても同じ結果になる
+--      (登録解除できるのは postgres が作ったジョブだけ。「設計上の判断」の最後を参照)。
 --
 -- 「アクティブ」の数え方 (活動の元データ):
 --   Supabase Auth (GoTrue) の次の 3 つの時刻のどれかが、その日 (JST) の中にある利用者を、その日のアクティブ利用者とする。
 --     auth.sessions.created_at     サインインでセッションが作られた時刻
 --     auth.sessions.updated_at     セッションが更新された時刻 (アクセストークンの更新。アプリを開いている間に起きる。
---                                  ローカルの GoTrue で確認した動き。本番の GoTrue では未確認で、確かめる SQL は設計書 08-cron-batches.md §3.0.3)
+--                                  ローカルの GoTrue (v2.183.0) で確認した動き。本番の GoTrue では未確認で、確かめる SQL は設計書 08-cron-batches.md §3.0.3)
 --     auth.users.last_sign_in_at   最後にサインインした時刻
 --   - 日付は Asia/Tokyo の暦日。範囲は [その日の 0:00, 翌日の 0:00) (0:00 ちょうどはその日に含め、翌日の 0:00 ちょうどは含めない)。
 --   - DAU = その日 / WAU = その日を最後の日とする 7 日間 / MAU = その日を最後の日とする 30 日間 (どれも JST の暦日)。
 --   - auth.users.deleted_at が入っている利用者 (削除済み) は数えない。運営・テスト用のアカウントも、サインインしていれば数える。
 --   - 使う列は user_id / created_at / updated_at / last_sign_in_at / deleted_at / id だけ。GoTrue の版によらず存在する列に限る。
---     auth.sessions.refreshed_at と auth.users.is_anonymous は、古い版には無い (本番の GoTrue の版はリポジトリから分からない) ため使わない。
+--     auth.sessions.refreshed_at と auth.users.is_anonymous は、古い版には無い。
+--     本番の GoTrue の版は、リポジトリの supabase/.temp/gotrue-version では v2.183.0 (supabase link をした時点の版。
+--     scripts/supabase-local.sh が、ローカル / CI のスタックをこの版に合わせる)。その後に本番が更新されたかは、リポジトリからは分からない。
+--     そのため、版を問わず存在する列だけを使う。
 --
 -- 数字は概算で、実際より小さめに出る:
 --   - セッションはサインアウトや期限切れで消える。消えたセッションの活動は数えられない。
@@ -60,6 +64,10 @@
 --     実行ログ (NOTICE) には command を載せない。載せるのは jobid / jobname / schedule だけ。
 --   - cleanup_old_logs を呼ぶ既存のジョブは、command に関数名が「単語として」入っているものを探す
 --     (cleanup_old_logs_v2 のような別の関数を呼ぶジョブは対象にしない)。
+--   - 既存のジョブを登録解除できるのは、postgres 自身が作ったジョブだけ。postgres 以外のロールが持つジョブが見つかると、
+--     cron.job の DELETE 権限が無いため、この migration は「permission denied for table job」で止まる (ローカルで確認)。
+--     Supabase で postgres 以外のロールがジョブを持つことは通常ない。
+--     適用前に設計書 08-cron-batches.md §3.0.3 の SQL で username を確かめる。
 --
 -- 本番のデータへの影響:
 --   - アプリのデータ (public の表の行) は、この migration では 1 行も変えず、消さない (関数の追加・権限の変更・ジョブの登録だけ)。
@@ -72,7 +80,8 @@
 --
 -- 冪等: CREATE OR REPLACE FUNCTION / REVOKE / GRANT / COMMENT は何度流しても同じ結果になる。ジョブは、流すたびに登録解除して登録し直す (jobid は変わる)。
 -- 適用順: migration は version 順にマージする。コードの変更は無い (財務ダッシュボードは、行があれば MAU を出し、無ければ 0 を出す)。
--- ロールバック: supabase/rollbacks/20261008140000_schedule_log_cleanup_and_dau_snapshot.down.sql
+-- ロールバック: supabase/rollbacks/20261008200000_schedule_log_cleanup_and_dau_snapshot.down.sql
+--   (この migration が登録解除した、本番に手作業で作られていた既存のジョブは、定義を保存しないので戻らない。rollback の冒頭を参照)
 -- 確認: tests/integration/security/log-cleanup-and-dau-snapshot.test.ts / tests/log-cleanup-dau-snapshot-contract.test.ts
 
 -- ─────────────────────────────────────────────────────────
@@ -186,7 +195,11 @@ BEGIN
 
   -- 同じ処理を呼ぶ既存のジョブ (名前は問わない。名前なしも含む) と、これから登録する名前のジョブを、先に登録解除する。
   -- cron.job を見られるのは postgres ロールで、本番の migration もこのロールで流れる。
-  -- postgres は cron.job の行の RLS (username = current_user) を BYPASSRLS で通り抜けるので、別のロールが作ったジョブも対象になる。
+  -- postgres は cron.job の行の RLS (username = current_user) を BYPASSRLS で通り抜けるので、別のロールが作ったジョブも探せる。
+  -- ただし、登録解除 (cron.unschedule) できるのは postgres 自身が作ったジョブだけ。postgres には cron.job の DELETE 権限が無く、
+  -- 別のロールのジョブを消そうとすると「permission denied for table job」で、この migration が止まる (ローカルで確認)。
+  -- Supabase で postgres 以外のロールがジョブを作ることは通常ない。念のため、適用前に設計書 08-cron-batches.md §3.0.3 の SQL で
+  -- username を確かめる (postgres 以外のジョブがあれば、先に知らせてもらう)。
   -- command は NOTICE に載せない (秘密が入っていることがある)。
   FOR v_job IN
     SELECT jobid, jobname, schedule

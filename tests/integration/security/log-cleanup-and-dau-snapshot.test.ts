@@ -1,7 +1,7 @@
 /**
  * #1125 / #1157 古いログの定期削除 (cleanup-old-app-logs) と、日次のアクティブ利用者の集計 (snapshot-daily-active-users) の回帰テスト
  *
- * migration 20261008140000_schedule_log_cleanup_and_dau_snapshot.sql が、次を行う。
+ * migration 20261008200000_schedule_log_cleanup_and_dau_snapshot.sql が、次を行う。
  *   - pg_cron のジョブ cleanup-old-app-logs (毎日 03:15 JST = 18:15 UTC) が public.cleanup_old_logs() (app_logs の 30 日より古い行を削除) を呼ぶ
  *   - public.snapshot_daily_active_users(p_date) が、JST の日付 p_date の DAU / WAU / MAU を daily_active_users に upsert する。
  *     pg_cron のジョブ snapshot-daily-active-users (毎日 01:30 JST = 16:30 UTC) が前日 (JST) の分を呼ぶ。
@@ -30,6 +30,11 @@
  * 最初に何も入れない状態で集計して基準の件数を取り、期待値は「基準 + このテストが入れた利用者の分」で比べる。
  * このテストが作った行 (利用者・セッション・集計の行・ログ・テスト用のジョブ) は、終わりに必ず消す。
  *
+ * 既知の偶然: migration が登録する本物のジョブも、ローカル / CI のスタックで毎日動く
+ * (cleanup-old-app-logs は 18:15 UTC = 03:15 JST、snapshot-daily-active-users は 16:30 UTC = 01:30 JST)。
+ * E / F がちょうど 18:15 UTC の 1 分間に重なると、準備した 30 日より古い app_logs の行が途中で消され、テストが偶然落ちる
+ * (窓はごく短い。落ちたら再実行する)。ほかの group は影響を受けない (集計は昔の日付 (2021 年) で行い、本物のジョブが書くのは前日の行だけ)。
+ *
  * SQL は、ローカルスタックの postgres-meta (/pg/query、service_role キーが必要) で流す。本番には接続しない。
  * migration を流すのは、本番 (supabase db push) と同じ postgres ロールで行う (SET LOCAL ROLE postgres)。
  *
@@ -55,7 +60,7 @@ if (!url || !anonKey || !serviceKey) {
 }
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
-const VERSION = '20261008140000';
+const VERSION = '20261008200000';
 const NAME = 'schedule_log_cleanup_and_dau_snapshot';
 const MIGRATION_SQL = fs.readFileSync(path.join(REPO_ROOT, `supabase/migrations/${VERSION}_${NAME}.sql`), 'utf8');
 const ROLLBACK_SQL = fs.readFileSync(path.join(REPO_ROOT, `supabase/rollbacks/${VERSION}_${NAME}.down.sql`), 'utf8');
@@ -114,13 +119,18 @@ function lit(value: string): string {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** PostgREST のスキーマキャッシュの更新待ち: 500ms × 20 回 = 最大 10 秒 */
+const SCHEMA_CACHE_RETRIES = 20;
+
 /**
  * migration を流した直後は、PostgREST が関数を見つけられない (PGRST202) ことがある (スキーマキャッシュの更新待ち)。
- * その場合だけ、少し待ってやり直す。関数が本当に無いときは、数秒後に同じエラーで返る。
+ * J グループは関数を DROP して作り直すので、遅い CI のランナーでは更新に数秒かかりうる。
+ * その場合だけ、最大 10 秒待ってやり直す。関数が本当に無いときは、10 秒後に同じエラーで返る
+ * (migration を入れる前の赤の確認では、最初の呼び出しで 10 秒待って失敗する。テストの時間切れは 30 秒)。
  */
 async function withSchemaCacheRetry<T extends { error: PostgrestError | null }>(call: () => PromiseLike<T>): Promise<T> {
   let last = await call();
-  for (let attempt = 0; attempt < 6 && last.error?.code === 'PGRST202'; attempt += 1) {
+  for (let attempt = 0; attempt < SCHEMA_CACHE_RETRIES && last.error?.code === 'PGRST202'; attempt += 1) {
     await sleep(500);
     last = await call();
   }

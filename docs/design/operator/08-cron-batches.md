@@ -16,7 +16,7 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 
 §3.1 以降の表と各節は、設計時の計画であり、**ほとんどは実装されていない**。§4 の pg_cron 用の関数 (`process_license_expire()` など 7 本) は本番に無く (`supabase/baseline/catalog/catalog_functions.csv`)、`vercel.json` に登録されている Vercel Cron は `process-menu-queue` の 1 本だけである。
 2026-10-08 のオーナー判断 (#1125) で、**課金・収益に関わる定期処理 (収益スナップショット・Stripe Webhook など) は作らない**と決めた。
-いま、このリポジトリの migration が pg_cron に登録しているジョブは次の 2 つ (migration `20261008140000_schedule_log_cleanup_and_dau_snapshot.sql`)。
+いま、このリポジトリの migration が pg_cron に登録しているジョブは次の 2 つ (migration `20261008200000_schedule_log_cleanup_and_dau_snapshot.sql`)。
 
 | ジョブ名 | 実行時刻 | 実行する SQL | 内容 |
 |---------|---------|-------------|------|
@@ -25,8 +25,8 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 
 - pg_cron は UTC で時刻を解釈する (`cron.timezone` = GMT)。JST は UTC + 9 時間。
 - 2 つとも所有者 `postgres` として動く。2 つの関数の `EXECUTE` は `service_role` だけに付けてあり、`anon` / `authenticated` は呼べない。
-- migration は同じ処理を呼ぶ既存のジョブ (名前は問わない) と同じ名前のジョブを先に登録解除してから登録するので、何度流しても 2 つだけになる。
-- ロールバック: `supabase/rollbacks/20261008140000_schedule_log_cleanup_and_dau_snapshot.down.sql` (ジョブの登録解除・関数の削除・`cleanup_old_logs()` の権限とコメントの復元)。集計した行と、消えたログは戻らない。
+- migration は同じ処理を呼ぶ既存のジョブ (名前は問わない) と同じ名前のジョブを先に登録解除してから登録するので、何度流しても 2 つだけになる。登録解除できるのは `postgres` が作ったジョブだけ (§3.0.3)。
+- ロールバック: `supabase/rollbacks/20261008200000_schedule_log_cleanup_and_dau_snapshot.down.sql` (ジョブの登録解除・関数の削除・`cleanup_old_logs()` の権限とコメントの復元)。消えたログと、migration が登録解除した既存のジョブ (定義を保存していない) は戻らない。集計した行は消さない。
 - そのほか、過去の migration で登録されたジョブ (`catalog-import-*` の 5 本、`handson-tour-sandbox-cleanup`) がある。これらは #1116 でベースラインに統合され、いまの migration には登録の SQL が無い。本番で動いているかは `cron.job` で確認する。
 
 #### 3.0.1 `snapshot-daily-active-users` — アクティブ利用者 (DAU / WAU / MAU) の数え方
@@ -43,12 +43,12 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 
 この 3 つのどれかが「その日」にある利用者を、その日のアクティブ利用者とする (`auth.users.deleted_at` が入っている利用者は除く)。
 
-ローカルのスタックの GoTrue (`auth.schema_migrations` の最新が `20251111201300`) で動きを確かめた: サインインすると `sessions.created_at` と `sessions.updated_at` と `users.last_sign_in_at` がほぼ同じ時刻になり、トークンを更新するたびに `sessions.updated_at` だけが進む (`last_sign_in_at` は変わらない)。
-**本番の GoTrue の版はリポジトリから分からない**ので、本番でも `updated_at` が更新で進んでいるかは、§3.0.3 の読み取り SQL で確かめる。
+ローカルのスタックの GoTrue (v2.183.0。`auth.schema_migrations` の最新が `20251111201300`) で動きを確かめた: サインインすると `sessions.created_at` と `sessions.updated_at` と `users.last_sign_in_at` がほぼ同じ時刻になり、トークンを更新するたびに `sessions.updated_at` だけが進む (`last_sign_in_at` は変わらない)。
+本番の GoTrue の版は、リポジトリの `supabase/.temp/gotrue-version` では **v2.183.0** (`supabase link` をした時点の版。`scripts/supabase-local.sh` が、ローカル / CI のスタックをこの版に合わせる)。その後に本番が更新されたかは、リポジトリからは分からない。本番でも `updated_at` が更新で進んでいるかは、§3.0.3 の読み取り SQL で確かめる。
 
 - 日付は `Asia/Tokyo` の暦日。範囲は「その日の 0:00 以上、翌日の 0:00 未満」。0:00 ちょうどはその日に入り、翌日の 0:00 ちょうどは翌日に入る。
 - DAU = その日。WAU = その日を最後の日とする 7 日間。MAU = その日を最後の日とする 30 日間 (どちらも JST の暦日)。
-- `auth.sessions.refreshed_at` と `auth.users.is_anonymous` は使わない。GoTrue の古い版には無く、本番の GoTrue の版はリポジトリから分からないため。使う列を足すときは、全ての版にあることを確かめる。
+- `auth.sessions.refreshed_at` と `auth.users.is_anonymous` は使わない。GoTrue の古い版には無く、本番が更新されたあとの版はリポジトリから分からないため、版を問わず存在する列だけを使う (本番に `refreshed_at` があると分かれば、数え方を細かくできる)。使う列を足すときは、全ての版にあることを確かめる。
 - 運営・テスト用のアカウントも、サインインしていれば数える。プランの区別はせず、`plan_type = 'all'` の 1 行だけを書く。
 - 関数は `LANGUAGE sql` で書いてある。列名の誤りは migration の適用時 (`CREATE FUNCTION`) に分かる。`plpgsql` に書き換えると、最初の cron の実行まで分からなくなる。
 - migration は関数を作った直後に、昔の日付 (2000-01-01) で 1 回試し実行し、書いた行を取り消す。auth の表を読めない・`daily_active_users` に書けない、といった「作れるが動かない」状態は、翌日の cron ではなく、適用時に migration が止まって分かる。
@@ -76,7 +76,7 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 
 ```sql
 -- ジョブが登録されているか (command は表示しない。秘密が入っているジョブがあるため)
-SELECT jobid, jobname, schedule, active
+SELECT jobid, jobname, schedule, active, username
 FROM cron.job
 WHERE jobname IN ('cleanup-old-app-logs', 'snapshot-daily-active-users');
 
@@ -100,8 +100,10 @@ SELECT count(*) AS rows_to_delete, min(created_at) AS oldest
 FROM public.app_logs
 WHERE created_at < now() - interval '30 days';
 
--- すでに cleanup_old_logs() を呼ぶジョブが無いか (command は表示しない。migration は、あれば登録解除して、上の 2 つに置き換える)
-SELECT jobid, jobname, schedule, active,
+-- すでに cleanup_old_logs() を呼ぶジョブが無いか (command は表示しない。migration は、あれば登録解除して、上の 2 つに置き換える)。
+-- username は、ジョブを持つロール。postgres 以外のロールのジョブは、migration が登録解除できず (postgres に cron.job の DELETE 権限が無い)、
+-- 適用が「permission denied for table job」で止まる。calls_cleanup_old_logs が true で username が postgres 以外の行があれば、migration を本番に入れる前に開発側へ知らせる。
+SELECT jobid, jobname, schedule, active, username,
        command ~* '[[:<:]]cleanup_old_logs[[:>:]]' AS calls_cleanup_old_logs
 FROM cron.job
 ORDER BY jobid;

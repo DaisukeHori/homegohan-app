@@ -1,5 +1,5 @@
 /**
- * #1125 / #1157 古いログの定期削除と日次のアクティブ利用者の集計 (migration 20261008140000) のソース走査 contract テスト (DB には接続しない)
+ * #1125 / #1157 古いログの定期削除と日次のアクティブ利用者の集計 (migration 20261008200000) のソース走査 contract テスト (DB には接続しない)
  *
  * 実際の動き (JST の境界・権限・ジョブの登録) は tests/integration/security/log-cleanup-and-dau-snapshot.test.ts で確かめる。
  * ここでは、DB を立てなくても CI の通常のテストで止められる「書き方の取り決め」を固定する。
@@ -7,7 +7,8 @@
  *   1. migration と rollback が同じ version / 名前で対になっている
  *   2. snapshot_daily_active_users は LANGUAGE sql (列名の誤りが適用時に分かる)・SECURITY DEFINER・search_path 空で、
  *      GoTrue の古い版に無い列 (auth.sessions.refreshed_at / auth.users.is_anonymous) を参照しない。
- *      本番の GoTrue の版はリポジトリから分からないので、全ての版にある列 (user_id / created_at / updated_at / last_sign_in_at / deleted_at) だけを使う
+ *      本番の GoTrue は supabase/.temp/gotrue-version では v2.183.0 (link 時点の版) だが、その後の更新はリポジトリから分からないので、
+ *      全ての版にある列 (user_id / created_at / updated_at / last_sign_in_at / deleted_at) だけを使う
  *      さらに、関数を作った直後に昔の日付で 1 回試し実行して、書いた行を取り消す (作れても動かない状態を、適用時に止める)
  *   3. 2 つの関数の EXECUTE は service_role だけ (PUBLIC / anon / authenticated から外す)
  *   4. ジョブ 2 つの名前・時刻 (UTC) ・command が決めたとおり。時刻は JST で 03:15 と 01:30 になる
@@ -22,7 +23,7 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 
 const ROOT = path.resolve(__dirname, '..');
-const VERSION = '20261008140000';
+const VERSION = '20261008200000';
 const NAME = 'schedule_log_cleanup_and_dau_snapshot';
 const MIGRATION_PATH = path.join(ROOT, 'supabase', 'migrations', `${VERSION}_${NAME}.sql`);
 const ROLLBACK_PATH = path.join(ROOT, 'supabase', 'rollbacks', `${VERSION}_${NAME}.down.sql`);
@@ -223,7 +224,7 @@ describe('#1125 設計書', () => {
       'cleanup_old_logs',
       '15 18 * * *',
       '30 16 * * *',
-      '20261008140000',
+      '20261008200000',
     ]) {
       expect(doc, `設計書に ${text} が書かれていること`).toContain(text);
     }
