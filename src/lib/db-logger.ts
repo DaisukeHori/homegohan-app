@@ -24,7 +24,9 @@ type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 /**
  * 必須の環境変数が欠けていたとき (MissingEnvError)、その変数名を入れる metadata のキー (#1182)。
  * MissingEnvError の message には変数名を入れない (500 の本文に漏れないように。#1172)。
- * 調べる人は、構造化ログ (console と app_logs) の metadata のこのキーで、どの変数が欠けているかを知る。値は記録しない。
+ * 例外が error() に渡った経路 (internalError() など) では、構造化ログ (console と app_logs) の metadata のこのキーに
+ * 欠けている変数名が入る。値は記録しない。error() を通らない経路でも、env-required.ts が投げる前に
+ * サーバーのログへ変数名を 1 行出す (MISSING_ENV_SERVER_LOG_PREFIX)。
  */
 export const MISSING_ENV_NAME_LOG_KEY = 'missing_env_name';
 

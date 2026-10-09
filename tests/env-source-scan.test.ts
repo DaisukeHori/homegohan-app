@@ -6,11 +6,14 @@
  * 型の上では string にするだけで、環境変数が欠けていると undefined がそのまま Supabase クライアントや
  * fetch の URL (`undefined/functions/v1/...`) に流れ込み、変数名の分からないエラーや、無駄なリクエストになっていた。
  *
- *   1. 本番コードに `process.env.X!` / `process.env['X']!` を書かない (欠けていれば getter が変数名つきで投げる)
+ *   1. 本番コードに `process.env.X!` / `process.env['X']!` を書かない (欠けていれば getter が MissingEnvError を投げる。message は固定の文で、変数名はサーバーのログに残る)
  *   2. env-required.ts は何も import しない / env.ts の静的な import は zod だけ
  *      (ブラウザ・Edge に zod を持ち込まない。scripts/check-env.mjs が Node.js から直接読めるようにする)
  *   3. ブラウザ向け (lib/supabase/client.ts) と Edge Runtime (middleware・cron route) のコードは env.ts に到達しない
  *   4. 一覧の全変数が .env.example に書かれている / check:env の導線がそろっている
+ *   5. 必須の変数名を、例外 (new XxxError(...) / throw) や応答 (NextResponse.json / Response.json / new Response) の
+ *      文字列に書かない。書くと 500 の本文に変数名が出うる (#1172)。以前 account/delete が自前の取り出しで
+ *      'Supabase admin env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)' を投げ、本文に返していた
  *
  * 走査は TypeScript の構文木で行うので、コメントや文字列の中の `process.env.X!` には反応しない。
  */
@@ -20,6 +23,7 @@ import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { ENV_VARS } from '../src/lib/env';
+import { MISSING_ENV_SERVER_LOG_PREFIX, REQUIRED_ENV_NAMES } from '../src/lib/env-required';
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -56,6 +60,50 @@ function findEnvNonNullAssertions(source: string, fileName = 'file.ts'): number[
   };
   visit(sf);
   return lines;
+}
+
+/** 呼び出し先の名前 (`Foo` / `a.b`)。それ以外の形は null */
+function calleeName(node: ts.Expression): string | null {
+  if (ts.isIdentifier(node)) return node.text;
+  if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) return `${node.expression.text}.${node.name.text}`;
+  return null;
+}
+
+/** 応答を作る呼び出し (本文が利用者に届く) */
+const RESPONSE_CALLS = new Set(['NextResponse.json', 'Response.json']);
+const RESPONSE_CONSTRUCTORS = new Set(['Response', 'NextResponse']);
+
+/**
+ * 例外 (throw 文・`new XxxError(...)`) と応答 (`NextResponse.json(...)` など) の引数の文字列に、
+ * names のどれかが書かれている行 (1 始まり)。コメントや、それ以外の場所の文字列 (console.error など) は見ない。
+ */
+function findEnvNamesInErrorsOrResponses(source: string, names: readonly string[], fileName = 'file.ts'): number[] {
+  const sf = parse(source, fileName);
+  const lines = new Set<number>();
+  const scanStrings = (node: ts.Node): void => {
+    const text =
+      ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateLiteralToken(node)
+        ? node.text
+        : null;
+    if (text !== null && names.some((name) => text.includes(name))) {
+      lines.add(sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1);
+    }
+    ts.forEachChild(node, scanStrings);
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isThrowStatement(node)) scanStrings(node.expression);
+    if (ts.isNewExpression(node)) {
+      const name = calleeName(node.expression);
+      if (name && (/Error$/.test(name) || RESPONSE_CONSTRUCTORS.has(name))) node.arguments?.forEach(scanStrings);
+    }
+    if (ts.isCallExpression(node)) {
+      const name = calleeName(node.expression);
+      if (name && RESPONSE_CALLS.has(name)) node.arguments.forEach(scanStrings);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return [...lines].sort((a, b) => a - b);
 }
 
 interface ModuleSpecifiers {
@@ -139,6 +187,24 @@ describe('走査の仕組みの確認 (検出が空振りしないこと)', () =
     expect(findEnvNonNullAssertions(source)).toEqual([1, 2]);
   });
 
+  it('例外・応答の文字列に書かれた必須の変数名を見つけ、ログ・コメント・変数の読み取りは見つけない', () => {
+    const source = [
+      "throw new Error('env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)');", // 1
+      'const e = new TypeError(`no SUPABASE_SERVICE_ROLE_KEY for ${x}`);', // 2: テンプレートの先頭
+      "return NextResponse.json({ error: 'SUPABASE_SERVICE_ROLE_KEY is missing' }, { status: 500 });", // 3
+      "return Response.json({ detail: `x ${y} NEXT_PUBLIC_SUPABASE_ANON_KEY` });", // 4: テンプレートの末尾
+      "return new Response('NEXT_PUBLIC_SUPABASE_URL', { status: 500 });", // 5
+      "throw 'NEXT_PUBLIC_SUPABASE_URL';", // 6: 文字列をそのまま投げる
+      "console.error('Missing SUPABASE_SERVICE_ROLE_KEY');", // 7: ログは対象外
+      '// throw new Error("SUPABASE_SERVICE_ROLE_KEY")', // 8: コメント
+      'const v = process.env.SUPABASE_SERVICE_ROLE_KEY;', // 9: 読み取り
+      "throw new Error('Missing a required environment variable');", // 10: 名前なし
+      "return NextResponse.json({ error: 'SUPABASE_URL' });", // 11: 一覧に無い名前
+    ].join('\n');
+
+    expect(findEnvNamesInErrorsOrResponses(source, REQUIRED_ENV_NAMES)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
   it('import / export from / 動的 import / require を静的と動的に分けて拾う', () => {
     const source = [
       "import { z } from 'zod';",
@@ -171,7 +237,23 @@ describe('本番コードに `process.env.X!` を書かない (#1182)', () => {
     });
 
     // 失敗したら、`process.env.X!` を src/lib/env-required.ts の getSupabaseUrl() などか、
-    // src/lib/env.ts の getOptionalEnv() に置き換える (欠けていれば変数名つきで投げる / undefined を返す)
+    // src/lib/env.ts の getOptionalEnv() に置き換える (欠けていれば MissingEnvError を投げる / undefined を返す)
+    expect(offenders).toEqual([]);
+  }, 30_000);
+
+  it('必須の変数名を、例外・応答の文字列に書いていない (500 の本文に変数名が出うる。#1172)', () => {
+    const offenders = files.flatMap((file) => {
+      const source = fs.readFileSync(file, 'utf-8');
+      // 構文木の解析は重いので、必須の変数名を含まないファイルは読み飛ばす
+      if (!REQUIRED_ENV_NAMES.some((name) => source.includes(name))) return [];
+      return findEnvNamesInErrorsOrResponses(source, REQUIRED_ENV_NAMES, file).map(
+        (line) => `${path.relative(ROOT, file)}:${line}`,
+      );
+    });
+
+    // 失敗したら、自前で取り出して名前入りの文を投げるのをやめ、src/lib/env-required.ts の getter
+    // (service_role のクライアントは lib/supabase/server.ts の getSupabaseAdmin()) を使う。
+    // 欠けていれば MissingEnvError (message は固定の文) になり、変数名はサーバーのログにだけ残る
     expect(offenders).toEqual([]);
   }, 30_000);
 });
@@ -305,5 +387,10 @@ describe('.env.example と check:env の導線 (#1182)', () => {
   it('ENV_SETUP.md と .env.example が check:env の使い方を案内している', () => {
     expect(readRepoFile('ENV_SETUP.md')).toContain('npm run check:env');
     expect(readRepoFile('.env.example')).toContain('npm run check:env');
+  });
+
+  it('ENV_SETUP.md と CLAUDE.md が、欠けた変数名の出るサーバーのログの行を、コードと同じ文で案内している', () => {
+    expect(readRepoFile('ENV_SETUP.md')).toContain(MISSING_ENV_SERVER_LOG_PREFIX);
+    expect(readRepoFile('CLAUDE.md')).toContain(MISSING_ENV_SERVER_LOG_PREFIX);
   });
 });

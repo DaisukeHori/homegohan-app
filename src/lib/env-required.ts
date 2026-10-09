@@ -2,7 +2,8 @@
  * 必須の環境変数 (Supabase の接続情報) の取り出し (#1182)
  *
  * アプリが動くのに欠かせない環境変数を、使う場所で取り出す。値が無い (未設定・空・空白だけ) と、
- * MissingEnvError を投げる (変数名は envName に持ち、message には入れない)。`process.env.X!` と書くと、未設定でも型の上では string のまま
+ * サーバーのログに変数名を 1 行残して (ブラウザでは残さない)、MissingEnvError を投げる
+ * (変数名は envName に持ち、message には入れない)。`process.env.X!` と書くと、未設定でも型の上では string のまま
  * undefined が Supabase のクライアントや fetch の URL に流れ込み、`supabaseUrl is required.` のような
  * 変数名の分からないエラーや、`undefined/functions/v1/...` への通信になってしまう。
  *
@@ -24,8 +25,11 @@
 /**
  * MissingEnvError の message。どの変数が欠けていても同じ文にし、変数名も値も入れない。
  * 500 の本文には汎用メッセージだけを返す規則 (#1172) があり、error.message をそのまま本文に入れる route が
- * 書かれても、変数名が利用者に漏れないようにするため。欠けている変数名は envName にある
- * (db-logger の error() が構造化ログの metadata に missing_env_name として記録する)。
+ * 書かれても、変数名が利用者に漏れないようにするため。欠けている変数名は、
+ *  - 投げる前に必ずサーバーのログに 1 行出す (MISSING_ENV_SERVER_LOG_PREFIX。どの経路でも残る)
+ *  - envName にも入る。例外が internalError() / db-logger の error() に渡った経路では、構造化ログの metadata に
+ *    missing_env_name として記録される (console には必ず出る。app_logs に書けるのは、書き込みに使う URL と
+ *    service_role キーがそろっているときだけ)
  */
 export const MISSING_ENV_ERROR_MESSAGE =
   'Missing a required environment variable (run `npm run check:env` to find which one)';
@@ -63,9 +67,30 @@ export const REQUIRED_ENV_NAMES = [
   'SUPABASE_SERVICE_ROLE_KEY',
 ] as const;
 
-/** 値があればそのまま返す。未設定・空・空白だけなら MissingEnvError */
+/**
+ * 必須の環境変数が欠けていたとき、サーバーのログ (console.error。Vercel の関数ログ) に出す 1 行の前置き。
+ * このあとに変数名だけが続く (値は出さない)。
+ */
+export const MISSING_ENV_SERVER_LOG_PREFIX = '[env] missing required env:';
+
+/**
+ * 欠けている変数名を、サーバー (Node.js・Edge Runtime) のログに 1 行残す。ブラウザ (window がある所) では出さない
+ * (利用者の開発者ツールに変数名を見せない)。
+ *
+ * MissingEnvError を捕まえる側に頼らずに、ここで必ず残す。route によっては、例外を internalError() /
+ * createLogger().error() に渡さず (error.message をそのまま返す・try の外で投げて Next.js の既定の 500 になる)、
+ * 構造化ログの missing_env_name が書かれない。envName は列挙されないプロパティなので、
+ * console.error(error) の表示にも出ない。この 1 行が無いと、どの変数が欠けているかがサーバーのログに残らない。
+ */
+function logMissingEnvOnServer(name: (typeof REQUIRED_ENV_NAMES)[number]): void {
+  if (typeof window !== 'undefined') return;
+  console.error(MISSING_ENV_SERVER_LOG_PREFIX, name);
+}
+
+/** 値があればそのまま返す。未設定・空・空白だけなら、サーバーのログに変数名を残して MissingEnvError */
 function requireValue(name: (typeof REQUIRED_ENV_NAMES)[number], value: string | undefined): string {
   if (value === undefined || value.trim() === '') {
+    logMissingEnvOnServer(name);
     throw new MissingEnvError(name);
   }
   return value;

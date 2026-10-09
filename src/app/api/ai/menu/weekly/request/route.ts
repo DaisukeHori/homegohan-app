@@ -134,7 +134,7 @@ export async function POST(request: Request) {
     const rateLimitResult = await checkRateLimit(user.id, 'generation');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
-    // 必須の環境変数は、認証とレート制限のあと・既存の献立を消す前に確かめる。欠けていれば MissingEnvError で汎用の 500 にする (変数名は構造化ログにだけ残す)。
+    // 必須の環境変数は、認証とレート制限のあと・既存の献立を消す前に確かめる。欠けていれば MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す)。
     // (未ログインの呼び出しに、設定の不足を教えない。消したあとで気づくと、Edge Function を呼べず、
     //  献立を消して戻すだけの無駄な動きになる) (#1182)
     const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();

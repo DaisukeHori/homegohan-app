@@ -973,7 +973,7 @@ export async function POST(
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
-    // 必須の環境変数は、ユーザーのメッセージを保存する前に確かめる。欠けていれば MissingEnvError で汎用の 500 にする (変数名は構造化ログにだけ残す)
+    // 必須の環境変数は、ユーザーのメッセージを保存する前に確かめる。欠けていれば MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す)
     // (保存したあとで気づくと、メッセージだけが残って AI の返答が付かない) (#1182)
     const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
 

@@ -44,7 +44,8 @@ export async function updateSession(request: NextRequest) {
   const authHeader = isJwtBearerHeader(rawAuthHeader) ? rawAuthHeader : null
 
   // #1182: 必須の環境変数 (Supabase の URL・anon キー) が欠けていたら、認証を素通りさせず (fail-open にしない)、
-  // 汎用の 500 で止める。本文には変数名を出さず (#1172)、変数名は internalError → db-logger の構造化ログにだけ残す。
+  // 汎用の 500 で止める。本文には変数名を出さず (#1172)、変数名はサーバーのログ (env-required の 1 行と、
+  // internalError → db-logger の構造化ログ) にだけ残す。
   let supabaseConfig: { url: string; anonKey: string }
   try {
     supabaseConfig = getSupabasePublicConfig()

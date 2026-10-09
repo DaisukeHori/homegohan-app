@@ -390,7 +390,7 @@ export async function POST(request: Request) {
     }
 
     // generate-menu-v4を呼び出す（同期呼び出し）
-    // 必須の環境変数が欠けていれば、リクエストの行を作る前に MissingEnvError で汎用の 500 にする (変数名は構造化ログにだけ残す) (#1182)
+    // 必須の環境変数が欠けていれば、リクエストの行を作る前に MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す) (#1182)
     const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
 
     // リクエストを作成

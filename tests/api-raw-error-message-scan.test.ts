@@ -59,7 +59,6 @@ const SCAN_ROOT = 'src/app/api';
  * 直す (internalError() に替える) か、固定の文面にして件数を減らす。
  */
 const ALLOWLIST: Record<string, number> = {
-  'src/app/api/account/delete/route.ts': 1,
   'src/app/api/admin/sales/leads/[id]/activities/route.ts': 2,
   'src/app/api/admin/sales/leads/route.ts': 2,
   'src/app/api/admin/support/tickets/[id]/messages/route.ts': 2,

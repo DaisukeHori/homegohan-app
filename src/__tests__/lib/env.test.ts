@@ -5,8 +5,9 @@
  * 以前は `process.env.X!` が散らばっていて、環境変数が欠けていても型の上では string のまま undefined が
  * Supabase のクライアントや fetch の URL に流れ込み、変数名の分からないエラーになっていた。
  *
- *   1. 必須の環境変数 (env-required): 欠けていれば MissingEnvError。変数名は envName (列挙されない) にだけ持ち、
- *      message には変数名も値も入れない (500 の本文に漏れないように。#1172)。値はそのまま返す
+ *   1. 必須の環境変数 (env-required): 欠けていれば、サーバーのログに変数名を 1 行出して MissingEnvError。
+ *      エラーの中では変数名を envName (列挙されない) にだけ持ち、message には変数名も値も入れない
+ *      (500 の本文に漏れないように。#1172)。値はそのまま返す
  *   2. 任意の環境変数 (env): 欠けていれば undefined と、プロセスごとに 1 回だけの警告。例外は投げない
  *   3. 一覧 (zod のスキーマ): 公開用 (NEXT_PUBLIC_*) とサーバー用に分かれ、必須/任意の分類が env-required と一致する
  *   4. validateEnv (npm run check:env が使う): 必須の不足は errors、任意の不足は warnings。値は出力に含めない
@@ -37,6 +38,7 @@ import {
 } from '@/lib/env';
 import {
   MISSING_ENV_ERROR_MESSAGE,
+  MISSING_ENV_SERVER_LOG_PREFIX,
   MissingEnvError,
   REQUIRED_ENV_NAMES,
   getSupabaseAnonKey,
@@ -179,6 +181,52 @@ describe('必須の環境変数 (env-required)', () => {
     expect(written).not.toContain(SERVICE_VALUE);
     expect(written).not.toContain(ANON_VALUE);
     expect(written).not.toContain('NEXT_PUBLIC_SUPABASE_URL');
+  });
+
+  // #1182 R1: 例外を internalError() / db-logger に渡さない route (error.message をそのまま返す・try の外で投げる) でも、
+  // どの変数が欠けているかをサーバーのログに残す。envName は列挙されないので console.error(error) では見えない
+  it.each([
+    ['NEXT_PUBLIC_SUPABASE_URL', getSupabaseUrl],
+    ['NEXT_PUBLIC_SUPABASE_ANON_KEY', getSupabaseAnonKey],
+    ['SUPABASE_SERVICE_ROLE_KEY', getSupabaseServiceRoleKey],
+  ] as const)('サーバー (window が無い所) では、%s が欠けていると、投げる前にサーバーのログへ変数名を 1 行出す (値は出さない)', (name, getter) => {
+    stubRequiredEnv();
+    vi.stubEnv(name, undefined);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(thrownBy(getter)).toMatchObject({ name: 'MissingEnvError', envName: name });
+
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith(MISSING_ENV_SERVER_LOG_PREFIX, name);
+    const logged = JSON.stringify(consoleError.mock.calls);
+    for (const value of [URL_VALUE, ANON_VALUE, SERVICE_VALUE]) expect(logged).not.toContain(value);
+  });
+
+  it('値がそろっていれば、サーバーのログに何も出さない', () => {
+    stubRequiredEnv();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    getSupabaseServiceConfig();
+    getSupabasePublicConfig();
+
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it('ブラウザ (window がある所) では、変数名をログに出さない (利用者の開発者ツールに見せない)。例外は同じく投げる', () => {
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', undefined);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('window', {});
+    try {
+      expect(thrownBy(() => getSupabaseUrl())).toMatchObject({ name: 'MissingEnvError', envName: 'NEXT_PUBLIC_SUPABASE_URL' });
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('ログの前置きには変数名も値も入っておらず、変数名は別の引数で渡る', () => {
+    expect(MISSING_ENV_SERVER_LOG_PREFIX).toBe('[env] missing required env:');
+    for (const name of REQUIRED_ENV_NAMES) expect(MISSING_ENV_SERVER_LOG_PREFIX).not.toContain(name);
   });
 
   it('isMissingEnvError は、別のバンドルで作られた同名のエラー (instanceof が使えない場合) も認める', () => {
