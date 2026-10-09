@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, Mail, MessageSquare, HelpCircle, Bug, Lightbulb, CheckCircle2, Send, ChevronRight } from "lucide-react";
+import { getSupportEmail } from "@/lib/site-config";
 
 const colors = {
   primary: '#E07A5F',
@@ -27,6 +28,8 @@ const INQUIRY_TYPES = [
 ];
 
 export default function ContactPage() {
+  // 問い合わせ先は NEXT_PUBLIC_SUPPORT_EMAIL (未設定なら既定値)。src/lib/site-config.ts (#1194)
+  const supportEmail = getSupportEmail();
   const [formData, setFormData] = useState({
     inquiryType: 'general',
     email: '',
@@ -323,11 +326,11 @@ export default function ContactPage() {
                   お急ぎの場合は直接メールでもお問い合わせいただけます
                 </p>
                 <a 
-                  href="mailto:support@homegohan.jp"
+                  href={`mailto:${supportEmail}`}
                   className="text-sm font-bold hover:underline"
                   style={{ color: colors.primary }}
                 >
-                  support@homegohan.jp
+                  {supportEmail}
                 </a>
               </div>
             </motion.div>

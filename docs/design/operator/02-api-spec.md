@@ -1028,61 +1028,62 @@ deprecated → private にロールバック (緊急用)
 ---
 
 ### POST /api/super-admin/plans/{id}/price-change
-価格変更
+価格変更 (新規契約のみに適用。#1102)
 
 **リクエスト**:
 ```json
 {
   "new_monthly_price_jpy": 1180,
   "new_yearly_price_jpy": 11800,
-  "applies_to": "on_renewal",
+  "applies_to": "new_only",
   "reason": "物価上昇に伴うインフレ調整",
   "effective_at": "2026-06-01T00:00:00Z"
 }
 ```
 
-**処理フロー**:
-1. 影響シミュレーション (GET price-impact を内部呼び出し)
-2. Stripe: `prices.create` で新 Price object 生成
-3. DB: `subscription_plans` 更新 + `plan_price_history` INSERT
-4. 適用範囲: `on_renewal` → 既存サブスクリプションの次回更新時に切替
+- `new_monthly_price_jpy` / `new_yearly_price_jpy`: 変える方だけを指定する (どちらか一方、または両方)。両方指定しても 1 回のリクエストで Stripe へ同期できる。
+- `applies_to`: `new_only` だけ (省略時も `new_only`)。`on_renewal` / `immediately` は 400 `OP_INVALID_INPUT` (オーナー判断 2026-10-08: 価格変更は新規契約だけに適用し、既存の契約者の請求額は変えない)。
 
-**エラー**: Stripe 側失敗時は新 Price を deactivate + DB rollback
+**処理フロー**:
+1. 入力の検証 (`applies_to` が `new_only` 以外なら 400。DB にも Stripe にも触れない)
+2. Stripe (Edge Function `stripe-price-sync`): 変えた interval ごとに `prices.create` で新 Price object を作り、**同じ interval の旧 Price だけ** `active=false` にする。`{ month, year }` を返す (変えなかった方は null)
+3. DB: `plan_price_history` INSERT (service-role。月額の Stripe Price ID を記録) → `subscription_plans` 更新 (変えた interval の列だけ: 月額 = `stripe_price_id` / 年額 = `stripe_yearly_price_id`) → `admin_audit_logs` INSERT (年額の Price ID と、interval ごとの旧 Price 無効化結果を含む)
+4. 既存サブスクリプションの Price は切り替えない (既存の契約者は旧 Price のまま請求される)
+
+**エラー**: `STRIPE_SECRET_KEY` と `stripe_product_id` がある (Stripe 同期が必須の) プランで同期に失敗したら 502 `OP_STRIPE_SYNC_FAILED` (Edge Function 未デプロイは 503 `OP_STRIPE_SYNC_UNAVAILABLE`)。DB は更新しない (fail-closed)。月額・年額の両方を変えたのに片方の新 Price ID が返らなかった場合も 502 で、DB は更新しない。`STRIPE_SECRET_KEY` 未設定の環境は mock モード (DB だけ更新、`stripe_mock: true`)。
 
 ---
 
 ### GET /api/super-admin/plans/{id}/price-impact
 価格変更影響シミュレーション (実装パスは `price-impact`)
 
-**クエリ**: `?new_monthly_price_jpy=1180&applies_to=on_renewal`
-- `applies_to`: `new_only` / `on_renewal` / `immediately` (省略時は `new_only`)
+**クエリ**: `?new_monthly_price_jpy=1180&applies_to=new_only`
+- `applies_to`: `new_only` だけ (省略時も `new_only`)。`on_renewal` / `immediately` は 400 `OP_INVALID_QUERY` (#1102)
 
 **レスポンス**:
 ```json
 {
   "data": {
-    "affected_subscription_count": 3420,
-    "affected_mrr_change_jpy": 680000,
+    "affected_subscription_count": 0,
+    "affected_mrr_change_jpy": 0,
     "current_monthly_price_jpy": 980,
     "new_monthly_price_jpy": 1180,
-    "applies_to": "on_renewal",
-    "effective_timing": "next_renewal",
-    "affected_user_sample": [ { "user_id": "uuid" } ]
+    "applies_to": "new_only",
+    "effective_timing": "none",
+    "affected_user_sample": []
   }
 }
 ```
 
-**`applies_to` ごとの集計** (#1212。詳細は `04-plan-management.md` §3.3):
+**既存契約への影響** (#1102。詳細は `04-plan-management.md` §3.3):
+
+価格変更は新規契約のみに適用されるため、既存契約 (`personal_subscriptions`) は集計せず、影響は常にゼロ。
 
 | applies_to | 既存契約への影響 | `affected_subscription_count` / `affected_mrr_change_jpy` | `effective_timing` |
 |-----------|----------------|-----------------------------------------------------------|--------------------|
 | `new_only` | なし (既存契約は現行価格のまま) | 件数 0、MRR 変化 0。`affected_user_sample` は空配列 | `none` |
-| `on_renewal` | 各契約の次回更新時から新価格 | 件数 = 対象契約数、MRR 変化 = (新月額 − 現月額) × 対象契約数 | `next_renewal` |
-| `immediately` | 即時に新価格 | 同上 | `immediate` |
 
-- 対象契約 = 同一 `plan_key` の `personal_subscriptions` のうち `status IN ('active','trialing','paused')` かつ `stripe_subscription_id IS NOT NULL`。`affected_subscription_count` は全件数、`affected_user_sample` は先頭 5 件。
-- MRR は月額の差額で概算する (interval 列が無く、年額契約も月額差で計算される)。
-- `on_renewal` / `immediately` の既存サブスクリプションへの実反映は未実装 (#1102)。
+- 返す形は #1212 のときのまま (画面の型と互換)。#1212 では `on_renewal` / `immediately` で既存契約を集計して MRR 変化を返していたが、既存サブスクリプションへの反映が実装されていなかったため、#1102 で廃止した。
 
 ---
 

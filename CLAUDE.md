@@ -70,7 +70,8 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 - 運営ロール (support / admin / super_admin など): `requireRole([...])` (`src/lib/auth/helpers.ts`)
 - 組織の管理者 (所属組織の `org_role` が owner / admin): `requireOrgAdmin()` (同上。判定の実体は `src/lib/auth/org-admin.ts` の `isOrgAdmin`。roles 配列の `org_admin` は見ない)
 - 他ユーザーの行を読む必要があるとき (`user_profiles` などは RLS で本人の行しか見えない) だけ、認可を通した**あとに** `getSupabaseAdmin()` (service_role) を使う。認可の前には使わない。使うときは、対象を絞る条件 (対象ユーザーの id など) を必ず付ける
-- 500 の本文は汎用メッセージだけにし、DB の生のエラー文は返さない。詳細は上記の構造化ログに残す (#1172)
+- 500 の本文は汎用メッセージだけにし、DB の生のエラー文は返さない。詳細は上記の構造化ログに残す (#1172)。route では共通ヘルパー `internalError(routeName, error, ctx?)` (`src/lib/api/errors.ts`) を `return` する。構造化ログへの記録と、汎用の本文 `{ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' }` の返却を一度に行う。`error` は文字列のままにする (画面が `data.error` をそのまま表示するため。オブジェクトにすると描画で落ちる)。運営 API のように `error.message` を読むクライアントには `{ shape: 'nested' }` を渡す
+- JSON 本文に `error.message` を入れている既存の route は `tests/api-raw-error-message-scan.test.ts` の許可リストに載っている。新しく足すとテストが落ちる。直したら許可リストの件数を減らす (0 件になったら行を消す)
 
 ### レート制限
 
@@ -89,6 +90,15 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 
 `packages/shared` の `POSTHOG_DEFAULT_HOST` に集約する (#1197)。Web・モバイルのコードはこれを import し、ホストの文字列を直接書かない。素の Node ESM の `next.config.mjs` と `.env.example` だけは同じ値のリテラルが残るので、ホストを変えるときは 3 か所を合わせる (`src/__tests__/config/posthog-default-host.test.ts` が検査する)。
 
+### 状態色 (success / warning / error / danger)
+
+`packages/shared/src/design-tokens.ts` の `STATUS_COLOR_TOKENS` に集約する (#590)。Web の home・pantry・health 配下の画面とモバイルの `colors.ts` は、これを import して使い、状態色の hex を直書きしない (`src/__tests__/config/status-color-tokens.test.ts` がこの範囲の画面を検査する)。週間献立など、ほかの画面には A 系の値の直書きがまだ残っている。その画面を触るときにトークンへ寄せる。
+
+- 塗り (背景・枠線・アイコン・グラフの線や棒): `success` / `warning` / `error` / `danger` と、淡い下地の `*Light`
+- 文字: `successText` / `warningText` / `dangerText`。WCAG の AA (4.5:1) を、白地・各 Light の下地・ページの背景・塗りの薄い透過の下地の上で満たす (`packages/shared/src/design-tokens.test.ts` が数値で確かめる)。塗りの色は白地で 4.5:1 に届かないので、文字には使わない。`error` の赤い文字にも `dangerText` を使う
+- 値を変えるときは `design-tokens.ts` だけを直す。画面ごと・モバイルの `colors.ts` に同じ値を書き足さない
+- 中立色 (bg / text / border など) と accent / purple / blue はまだ対象外 (画面ごとに値が違う。別の変更で揃える)
+
 ### 栄養計算入力
 
 `src/lib/build-nutrition-input.ts` に集約。栄養計算に必要な入力オブジェクトを組み立てる際は、このモジュールを経由する。直接構築しない。
@@ -97,6 +107,12 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 
 `src/lib/user-storage.ts` の `clearUserScopedLocalStorage()` を使う。  
 サインアウト処理では **Supabase signOut を呼ぶ前に** このヘルパーを実行する。
+
+### Web のログアウト画面と、モバイルアプリの WebView への通知
+
+Web の画面で利用者がログアウトするときは、`clearUserScopedLocalStorage()` → `notifyNativeSignOut()` (`src/lib/native-auth-bridge.ts`) → `supabase.auth.signOut()` → `broadcastSignOut()` (`src/lib/user-storage.ts`) の順に呼ぶ (#1038)。
+`signOut()` の前に `notifyNativeSignOut()` を呼ばないと、`signOut()` の途中の `SIGNED_OUT` が `session-expired` としてネイティブへ先に届き、ネイティブが `user_push_tokens` のこの端末の行を消せなくなる。
+`broadcastSignOut()` は `signOut()` のあとに呼ぶ (先に呼ぶと同じタブが `/login` へ移り、`signOut()` が途中で止まる)。`tests/native-sign-out-order-source-scan.test.ts` が検査する。
 
 ### エラー境界 (画面の描画中の例外を受ける)
 
