@@ -957,10 +957,13 @@ describe('#1232 DB 定義 (関数・権限・CHECK 制約)', () => {
     }
   });
 
-  it('退行ガード: can_view_user_meals の anon 実行権限は変えていない', async () => {
-    const [row] = await pgQuery<{ anon_exec: boolean }>(
-      `SELECT has_function_privilege('anon', 'public.can_view_user_meals(uuid)', 'EXECUTE') AS anon_exec`,
+  it('退行ガード: can_view_user_meals の実行権限は、昇格の変更で変えていない (authenticated は可。anon は #1103 (7) で外した)', async () => {
+    // meals の SELECT ポリシーが、ログインユーザーの権限でこの関数を呼ぶ。anon の EXECUTE は
+    // 20261008160000_revoke_anon_execute_on_definer_functions.sql で外した (ポリシーも TO authenticated にした)。
+    const [row] = await pgQuery<{ anon_exec: boolean; auth_exec: boolean }>(
+      `SELECT has_function_privilege('anon', 'public.can_view_user_meals(uuid)', 'EXECUTE') AS anon_exec,
+              has_function_privilege('authenticated', 'public.can_view_user_meals(uuid)', 'EXECUTE') AS auth_exec`,
     );
-    expect(row.anon_exec).toBe(true);
+    expect(row).toEqual({ anon_exec: false, auth_exec: true });
   });
 });

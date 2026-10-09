@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 import { todayLocal } from '@/lib/date-utils';
 
 // 連続記録の取得
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest) {
     .single();
 
   if (error && error.code !== 'PGRST116') {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/health/streaks', error, { userId: user.id, table: 'health_streaks' });
   }
 
   // 連続記録がない場合のデフォルト値
@@ -131,7 +132,7 @@ export async function DELETE(request: NextRequest) {
     .eq('streak_type', streakType);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('DELETE /api/health/streaks', error, { userId: user.id, table: 'health_streaks' });
   }
 
   return NextResponse.json({ success: true });

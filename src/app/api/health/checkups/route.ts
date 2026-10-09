@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 import { sanitizeHealthCheckupPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
@@ -27,7 +28,7 @@ export async function GET(request: NextRequest) {
     .limit(limit);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/health/checkups', error, { userId: user.id, table: 'health_checkups' });
   }
 
   // 経年レビューも取得
@@ -97,7 +98,7 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (insertError) {
-    return NextResponse.json({ error: insertError.message }, { status: 500 });
+    return internalError('POST /api/health/checkups', insertError, { userId: user.id, table: 'health_checkups' });
   }
 
   // 個別レビューを生成

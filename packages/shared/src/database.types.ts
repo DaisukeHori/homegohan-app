@@ -5908,6 +5908,7 @@ export type Database = {
           status: string
           stripe_price_id: string | null
           stripe_product_id: string | null
+          stripe_yearly_price_id: string | null
           superseded_by_plan_id: string | null
           trial_days: number
           updated_at: string
@@ -5934,6 +5935,7 @@ export type Database = {
           status?: string
           stripe_price_id?: string | null
           stripe_product_id?: string | null
+          stripe_yearly_price_id?: string | null
           superseded_by_plan_id?: string | null
           trial_days?: number
           updated_at?: string
@@ -5960,6 +5962,7 @@ export type Database = {
           status?: string
           stripe_price_id?: string | null
           stripe_product_id?: string | null
+          stripe_yearly_price_id?: string | null
           superseded_by_plan_id?: string | null
           trial_days?: number
           updated_at?: string

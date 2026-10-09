@@ -12,6 +12,7 @@ import {
   CheckCircle2, AlertTriangle, Sparkles, ArrowLeft, Activity,
   Heart, Scale, Droplet, Filter, Info
 } from 'lucide-react';
+import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
 
 const colors = {
   bg: '#FAF9F7',
@@ -21,11 +22,8 @@ const colors = {
   textMuted: '#9A9A9A',
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
-  success: '#4CAF50',
-  successLight: '#E8F5E9',
-  warning: '#FF9800',
-  warningLight: '#FFF3E0',
-  error: '#F44336',
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
   border: '#EEEEEE',
   purple: '#7C4DFF',
   purpleLight: '#EDE7FF',
@@ -492,7 +490,7 @@ export default function NewHealthCheckupPage() {
 
             {error && (
               <div className="p-3 rounded-lg" style={{ backgroundColor: colors.warningLight }}>
-                <p className="text-sm" style={{ color: colors.warning }}>{error}</p>
+                <p className="text-sm" style={{ color: colors.warningText }}>{error}</p>
               </div>
             )}
 
@@ -560,7 +558,7 @@ export default function NewHealthCheckupPage() {
             {ocrStatus === 'failed' && (
               <div className="flex items-start gap-2 p-3 rounded-lg" style={{ backgroundColor: colors.warningLight }}>
                 <AlertTriangle size={18} className="flex-shrink-0 mt-0.5" style={{ color: colors.warning }} />
-                <p className="text-sm" style={{ color: colors.warning }}>
+                <p className="text-sm" style={{ color: colors.warningText }}>
                   ⚠ 自動読み取りできませんでした。内容を確認し、手動で入力してください。
                 </p>
               </div>
@@ -570,7 +568,7 @@ export default function NewHealthCheckupPage() {
             {ocrStatus === 'empty' && (
               <div className="flex items-start gap-2 p-3 rounded-lg" style={{ backgroundColor: colors.warningLight }}>
                 <AlertTriangle size={18} className="flex-shrink-0 mt-0.5" style={{ color: colors.warning }} />
-                <p className="text-sm" style={{ color: colors.warning }}>
+                <p className="text-sm" style={{ color: colors.warningText }}>
                   ⚠ 読み取れる項目がありませんでした。内容を確認し、手動で入力してください。
                 </p>
               </div>
@@ -578,7 +576,7 @@ export default function NewHealthCheckupPage() {
             {ocrStatus === 'success' && (
               <div className="flex items-start gap-2 p-3 rounded-lg" style={{ backgroundColor: colors.successLight }}>
                 <CheckCircle2 size={18} className="flex-shrink-0 mt-0.5" style={{ color: colors.success }} />
-                <p className="text-sm" style={{ color: colors.success }}>
+                <p className="text-sm" style={{ color: colors.successText }}>
                   {ocrFilledCount}項目を自動入力しました。内容を確認してください。
                 </p>
               </div>
@@ -679,7 +677,7 @@ export default function NewHealthCheckupPage() {
 
             {error && (
               <div className="p-3 rounded-lg" style={{ backgroundColor: colors.warningLight }}>
-                <p className="text-sm" style={{ color: colors.warning }}>{error}</p>
+                <p className="text-sm" style={{ color: colors.warningText }}>{error}</p>
               </div>
             )}
 
@@ -731,7 +729,7 @@ export default function NewHealthCheckupPage() {
                   <div className="p-4 rounded-xl" style={{ backgroundColor: colors.warningLight }}>
                     <div className="flex items-center gap-2 mb-3">
                       <AlertTriangle size={20} style={{ color: colors.warning }} />
-                      <span className="font-bold" style={{ color: colors.warning }}>気になる点</span>
+                      <span className="font-bold" style={{ color: colors.warningText }}>気になる点</span>
                     </div>
                     <ul className="space-y-2">
                       {savedCheckup.individual_review.concerns.map((item: string, i: number) => (
@@ -749,7 +747,7 @@ export default function NewHealthCheckupPage() {
                   <div className="p-4 rounded-xl" style={{ backgroundColor: colors.successLight }}>
                     <div className="flex items-center gap-2 mb-3">
                       <CheckCircle2 size={20} style={{ color: colors.success }} />
-                      <span className="font-bold" style={{ color: colors.success }}>良い点</span>
+                      <span className="font-bold" style={{ color: colors.successText }}>良い点</span>
                     </div>
                     <ul className="space-y-2">
                       {savedCheckup.individual_review.positives.map((item: string, i: number) => (

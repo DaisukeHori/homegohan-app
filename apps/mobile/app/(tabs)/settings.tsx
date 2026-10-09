@@ -8,10 +8,11 @@ import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text,
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getApi, getApiBaseUrl } from "../../src/lib/api";
+import { getPrivacyUrl, getSupportMailtoUrl, getTermsUrl } from "../../src/lib/siteConfig";
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing, radius, shadows } from "../../src/theme";
-import { clearUserScopedAsyncStorage } from "../../src/lib/user-storage";
+import { signOutWithCleanup } from "../../src/lib/signOut";
 
 type WeekStartDay = "sunday" | "monday";
 
@@ -235,8 +236,8 @@ export default function SettingsTab() {
 
   async function handleLogout() {
     try {
-      await clearUserScopedAsyncStorage(user?.id ?? null);
-      await supabase.auth.signOut();
+      // push token の削除 → ユーザー別データの削除 → サインアウトの順 (#1038 F7-10)
+      await signOutWithCleanup(user?.id ?? null);
     } catch {}
     router.replace("/");
   }
@@ -383,20 +384,20 @@ export default function SettingsTab() {
               iconBg="#F9FAFB"
               title="利用規約"
               testID="settings-tos-row"
-              onPress={() => Linking.openURL("https://homegohan.app/terms")}
+              onPress={() => Linking.openURL(getTermsUrl())}
             />
             <SettingRow
               icon="🔒"
               iconBg="#F9FAFB"
               title="プライバシーポリシー"
               testID="settings-privacy-row"
-              onPress={() => Linking.openURL("https://homegohan.app/privacy")}
+              onPress={() => Linking.openURL(getPrivacyUrl())}
             />
             <SettingRow
               icon="✉️"
               iconBg="#F9FAFB"
               title="お問い合わせ"
-              onPress={() => Linking.openURL("mailto:support@homegohan.jp")}
+              onPress={() => Linking.openURL(getSupportMailtoUrl())}
               last
             />
           </View>

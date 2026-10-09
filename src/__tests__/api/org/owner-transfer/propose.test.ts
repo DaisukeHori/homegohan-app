@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EmailSendError } from '@/lib/emails/send-result';
 import type { RateLimitCategory, RateLimitResult } from '@/lib/rate-limit';
+import { DEFAULT_SITE_URL } from '@/lib/site-config';
 
 // POST /api/org/owner-transfer/propose の譲渡提案メール送信回数制限 (#1163)
 
@@ -519,6 +520,33 @@ describe('POST /api/org/owner-transfer/propose: 既存の挙動 (退行確認)',
     expect(res.status).toBe(404);
     expect(res.headers.get('Retry-After')).toBeNull();
     expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/org/owner-transfer/propose: 承諾リンクの基点 (#1194)', () => {
+  // リンクの基点は src/lib/membership/urls.ts (= サイトの URL。NEXT_PUBLIC_APP_URL) に 1 つだけある。
+  // 以前は未設定のとき http://localhost:3000 になり、本番のメールに localhost のリンクが載りえた。
+  // 手元の環境変数に左右されないよう、2 つとも明示する。
+  it('NEXT_PUBLIC_APP_URL があれば、それを基点にした承諾リンクをメールに載せる', async () => {
+    vi.stubEnv('NEXT_PUBLIC_INVITE_BASE_URL', '');
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.example.test');
+
+    await POST(postRequest(validBody));
+
+    expect(mockSendEmail.mock.calls[0][0].text.split('\n')).toContain(
+      `https://app.example.test/org/transfer-accept/${proposalId}`,
+    );
+  });
+
+  it('どちらも未設定なら、localhost ではなくサイトの URL の既定値 (DEFAULT_SITE_URL) を基点にする', async () => {
+    vi.stubEnv('NEXT_PUBLIC_INVITE_BASE_URL', '');
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', '');
+
+    await POST(postRequest(validBody));
+
+    const text: string = mockSendEmail.mock.calls[0][0].text;
+    expect(text.split('\n')).toContain(`${DEFAULT_SITE_URL}/org/transfer-accept/${proposalId}`);
+    expect(text).not.toContain('localhost');
   });
 });
 

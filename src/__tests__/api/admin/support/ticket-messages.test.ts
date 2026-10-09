@@ -288,11 +288,11 @@ describe('POST /api/admin/support/tickets/[id]/messages: 顧客向けの返信 (
   });
 
   it('SUPPORT_REPLY_TO があれば reply_to に付ける', async () => {
-    vi.stubEnv('SUPPORT_REPLY_TO', 'support@homegohan.app');
+    vi.stubEnv('SUPPORT_REPLY_TO', 'support@example.test');
 
     await postExternal();
 
-    expect(sentEnvelopes()[0].reply_to).toBe('support@homegohan.app');
+    expect(sentEnvelopes()[0].reply_to).toBe('support@example.test');
   });
 
   it('SUPPORT_REPLY_TO が無ければ reply_to は付けず、本文でお問い合わせフォームへ誘導する', async () => {

@@ -13,13 +13,6 @@ export const InviteEmailVarsSchema = z.object({
 });
 export type InviteEmailVars = z.infer<typeof InviteEmailVarsSchema>;
 
-export const EmailEnvelopeSchema = z.object({
-  to: z.string().email(),
-  from: z.string().default('ほめゴハン <noreply@homegohan.app>'),
-  subject: z.string().min(1).max(100),
-  text: z.string().min(1),                   // プレーンテキスト本文
-  html: z.string().optional(),               // 第 1 段階は省略 (text のみ)
-  reply_to: z.string().email().optional(),
-  template: z.string().optional(),            // 文面の名前 (snake_case)。失敗のログで区別する。send.ts の EmailEnvelopeSchema と同じ
-});
-export type EmailEnvelope = z.infer<typeof EmailEnvelopeSchema>;
+// メールの形 (EmailEnvelopeSchema) は send.ts と重複して持っていたため、envelope.ts の 1 つにまとめた (#1194)。
+// 既存の import 先 (`./templates`) をそのまま使えるように、ここからも再エクスポートする。
+export { EmailEnvelopeSchema, type EmailEnvelope } from '../envelope';
