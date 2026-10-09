@@ -7,13 +7,14 @@
  * 【ブラウザのコード ('use client') は、このファイルを import しない】
  * next/headers を読み込むサーバー専用の部品を引き込み、ビルドが失敗する。画面は consent-config.ts と consent-client.ts を使う。
  *
- * 【AI への送信は止めない】
- * この PR では、同意の有無で AI の呼び出しを止めない (オーナーの決定。強制は別タスク T18 で、AI_CONSENT_ENFORCEMENT で切り替える予定)。
- * getAiConsentStatus は、T18 が各 AI の route で同意の有無を判定するときにも使う。
+ * 【未同意なら AI へ送らない】
+ * AI へ送る手前の判定 (403 + AI_CONSENT_REQUIRED) は src/lib/ai/consent-guard.ts (Next.js) と
+ * supabase/functions/_shared/ai-consent-guard.ts (Edge Functions) が、共用の supabase/functions/_shared/ai-consent.ts を呼んで行う。
+ * ここは同意の状況の表示 (GET /api/ai/consent) と、同意・撤回の記録だけを受け持つ。
  *
  * 【書き込みは service role だけ】
  * external_data_consents の書き込み (INSERT / UPDATE) は、サーバーの API だけが service role で行う
- * (20261008200300_ai_consent_policy_version.sql が、クライアントからの INSERT のポリシーと権限を外した)。
+ * (20261010090000_ai_consent_policy_version.sql が、クライアントからの INSERT のポリシーと権限を外した)。
  * IP アドレスと User-Agent は、クライアントの申告ではなくリクエストのヘッダーから取る (extractClientIp / extractUserAgent)。
  * grantAiConsent / revokeAiConsent は、認証で確定した userId だけを渡して呼ぶこと
  * (リクエストの body / URL の値を userId に使わない。service role は RLS を通さないため)。
@@ -29,16 +30,18 @@
 import { isIP } from 'node:net';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
+import { AI_CONSENT_TABLE } from '../../../supabase/functions/_shared/ai-consent';
 import {
   AI_CONSENT_PROVIDERS,
   AI_CONSENT_VERSION,
-  type AiConsentProviderStatus,
+  summarizeAiConsent,
+  type AiConsentRow,
   type AiConsentStatus,
 } from './consent-config';
 
 export * from './consent-config';
 
-const TABLE = 'external_data_consents';
+const TABLE = AI_CONSENT_TABLE;
 
 /** DB の外部キー・索引を考えて、1 ユーザーぶんの履歴として読む上限 (1 回の同意で事業者数ぶん増える。レート制限で増え方は抑えている) */
 const HISTORY_LIMIT = 200;
@@ -48,67 +51,6 @@ const USER_AGENT_MAX_LENGTH = 512;
 
 /** 呼び出し側が持っている Supabase クライアント (テストでは差し替える) */
 export type ConsentDb = Pick<SupabaseClient, 'from'>;
-
-/** external_data_consents の行のうち、状況の判定に使う列 */
-export interface AiConsentRow {
-  id?: string;
-  provider: string;
-  consented: boolean;
-  consented_at: string | null;
-  revoked_at: string | null;
-  policy_version: string | null;
-}
-
-function toTime(value: string | null): number {
-  if (!value) return Number.NEGATIVE_INFINITY;
-  const time = Date.parse(value);
-  return Number.isNaN(time) ? Number.NEGATIVE_INFINITY : time;
-}
-
-function latest(values: Array<string | null>): string | null {
-  let best: string | null = null;
-  for (const value of values) {
-    if (value && (best === null || toTime(value) > toTime(best))) best = value;
-  }
-  return best;
-}
-
-/** 行の一覧から、同意の状況を求める (DB には触れない) */
-export function summarizeAiConsent(
-  rows: readonly AiConsentRow[],
-  version: string = AI_CONSENT_VERSION,
-): AiConsentStatus {
-  const providers: AiConsentProviderStatus[] = AI_CONSENT_PROVIDERS.map((provider) => {
-    const mine = rows.filter((row) => row.provider === provider);
-    // 拒否の行 (consented = false) は同意として数えない
-    const active = mine.find((row) => row.revoked_at === null && row.consented === true);
-    if (active) {
-      return {
-        provider,
-        state: active.policy_version === version ? 'granted' : 'outdated',
-        consentedAt: active.consented_at,
-        policyVersion: active.policy_version ?? null,
-        revokedAt: null,
-      };
-    }
-    return {
-      provider,
-      state: 'none',
-      consentedAt: null,
-      policyVersion: null,
-      revokedAt: latest(mine.map((row) => row.revoked_at)),
-    };
-  });
-
-  const consented = providers.every((p) => p.state === 'granted');
-  return {
-    version,
-    consented,
-    providers,
-    consentedAt: consented ? latest(providers.map((p) => p.consentedAt)) : null,
-    revokedAt: providers.some((p) => p.state !== 'none') ? null : latest(providers.map((p) => p.revokedAt)),
-  };
-}
 
 /**
  * ユーザーの同意の状況を返す。
@@ -199,7 +141,7 @@ export async function grantAiConsent(input: GrantAiConsentInput, db?: ConsentDb)
 
 /**
  * 有効な同意をすべて撤回する (revoked_at を入れる。行は消さない)。有効な同意が無ければ何もしない。
- * 撤回しても、いまは AI への送信は止まらない (止めるのは T18)。
+ * 撤回した直後から、この利用者のデータは AI へ送られなくなる (送る手前の判定が未同意として止める)。
  * db を省略すると service role のクライアントを使う。
  */
 export async function revokeAiConsent(

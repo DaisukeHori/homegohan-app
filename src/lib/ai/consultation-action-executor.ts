@@ -210,6 +210,17 @@ function sanitizeShoppingItemUpdate(input: unknown): { data: PlainRecord; errors
   return { data, errors };
 }
 
+/**
+ * 実行すると、利用者のデータを外国の AI 事業者へ送るアクション (献立の生成。Edge Function generate-menu-v4 / v5 を呼ぶ)。
+ * 実行の API は、これらの前に同意を確かめる (T15 / #1154。同意が無ければ 403 AI_CONSENT_REQUIRED で、アクションは pending のまま残す)。
+ * Edge Function の側でも同じ判定で止まる。
+ */
+export const AI_SENDING_ACTION_TYPES: ReadonlySet<string> = new Set([
+  'generate_day_menu',
+  'generate_week_menu',
+  'generate_single_meal',
+]);
+
 export interface ConsultationActionRow {
   id: string;
   action_type: string;

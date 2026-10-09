@@ -6,8 +6,9 @@
 // 設定のトップ (settings/page.tsx) からのリンクは、モバイルの設定画面の変更 (PR #1079) が片付いてから足す。
 // それまでは、同意画面 (AiDataConsentModal) のリンクと、この URL (/settings/ai-consent) から開く。
 //
-// 【AI への送信は止めない】撤回しても、いまは AI の呼び出しは止まらない (強制は別タスク T18)。
-// 撤回後に AI 機能を使うときは、同意の確認画面があらためて出る。文面は仮 (src/lib/ai/consent-config.ts)。
+// 【未同意なら AI へ送らない】同意していない間 (撤回後・文面の版が上がったあとを含む) は、AI 機能を使えない
+// (サーバーが送る手前で 403 AI_CONSENT_REQUIRED で止める)。AI の API に止められた画面からは、同意画面か、このページへ案内する。
+// 文面は仮 (src/lib/ai/consent-config.ts)。
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -50,14 +51,15 @@ function describeOverall(status: AiConsentStatus): { label: string; tone: "ok" |
     return {
       label: "もう一度ご確認ください",
       tone: "warn",
-      detail: "同意の文面が更新されました。あらためて内容をご確認のうえ、同意してください。",
+      detail: "同意の文面が更新されました。あらためて内容をご確認のうえ同意するまで、AI 機能はお使いいただけません。",
     };
   }
   const revokedAt = formatDateTime(status.revokedAt);
+  const unavailable = "同意するまで、AI 機能はお使いいただけません。";
   return {
     label: "まだ同意していません",
     tone: "none",
-    detail: revokedAt ? `${revokedAt} に同意を撤回しました` : null,
+    detail: revokedAt ? `${revokedAt} に同意を撤回しました。${unavailable}` : unavailable,
   };
 }
 

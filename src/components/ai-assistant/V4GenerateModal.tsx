@@ -462,8 +462,8 @@ function V4GenerateModalNormal({
   // ローカルの送信中状態（即座にフィードバックを与えるため）
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。初回だけ生成の直前に出す。
-  // 「あとで」を選んでも生成は進める (同意の有無で止めない)
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。未同意なら生成の直前に出す。
+  // 「同意しない」なら生成しない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)
   const { ensureAiConsent, consentModal } = useAiConsent();
 
   // UX2-04: 既存献立を上書きする破壊的な生成（「既存の献立も作り直す」/ 1日献立変更 /
@@ -551,7 +551,11 @@ function V4GenerateModalNormal({
     setIsSubmitting(true);
 
     try {
-      await ensureAiConsent();
+      // 「同意しない」なら生成を依頼しない (好み・アレルギーなどを AI に送らない)
+      if ((await ensureAiConsent()) === "declined") {
+        setIsSubmitting(false);
+        return;
+      }
       await onGenerate({
         targetSlots: slots,
         constraints,
@@ -915,7 +919,7 @@ function V4GenerateModalNormal({
       />
     )}
 
-    {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。初回だけ出る */}
+    {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。未同意なら出る */}
     {consentModal}
     </>
   );

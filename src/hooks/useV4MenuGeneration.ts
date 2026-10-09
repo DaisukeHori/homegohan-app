@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import type { TargetSlot, MenuGenerationConstraints } from "@/types/domain";
 import { createClient } from "@/lib/supabase/client";
 import type { Tables } from "@homegohan/shared";
+import { AiConsentRequiredError, aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 
 interface UseV4MenuGenerationOptions {
   onGenerationStart?: (requestId: string) => void;
@@ -29,7 +30,7 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
     setError(null);
 
     try {
-      const response = await fetch("/api/ai/menu/v4/generate", {
+      const response = await aiFetch("/api/ai/menu/v4/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -40,6 +41,11 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
           ultimateMode: params.ultimateMode ?? false,
         }),
       });
+
+      // 同意が必要で止められた (T15 / #1154): 同意画面 (AiConsentRequiredHost) が案内するので、onError (失敗の表示) は呼ばない
+      if (await isAiConsentRequiredResponse(response)) {
+        throw new AiConsentRequiredError();
+      }
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -60,6 +66,10 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
 
       return data;
     } catch (err: any) {
+      if (err instanceof AiConsentRequiredError) {
+        setIsGenerating(false);
+        throw err;
+      }
       const errorMessage = err.message || "生成に失敗しました";
       setError(errorMessage);
       options.onError?.(errorMessage);

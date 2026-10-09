@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import { todayLocal } from "@/lib/date-utils";
 import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
 import { useAiConsent } from "@/hooks/useAiConsent";
+import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import {
   Camera, Upload, X, ChevronDown, ChevronUp, Loader2,
   CheckCircle2, AlertTriangle, Sparkles, ArrowLeft, Activity,
@@ -121,7 +122,7 @@ export default function NewHealthCheckupPage() {
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 
   // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。健診結果の画像の読み取り (OCR) と、保存時の AI コメントの作成の前に、
-  // 初回だけ出す。「あとで」を選んでも読み取り・保存は進める (同意の有無で止めない)
+  // 未同意なら出す。「同意しない」なら AI に送る処理をしない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)
   const { ensureAiConsent, consentModal } = useAiConsent();
 
   const supabase = createClient();
@@ -157,7 +158,11 @@ export default function NewHealthCheckupPage() {
     setError(null);
 
     try {
-      await ensureAiConsent();
+      // 同意していなければ同意画面を出す。「同意しない」なら画像を AI に送らず、手入力へ進む
+      if ((await ensureAiConsent()) === "declined") {
+        setStep('confirm');
+        return;
+      }
 
       // 1. ファイルをBase64に変換 (画像・PDF 共通)
       const base64 = await new Promise<string>((resolve, reject) => {
@@ -172,7 +177,7 @@ export default function NewHealthCheckupPage() {
 
       // 2. OCR API を呼んで検査値を抽出 (画像・PDF 共通)
       const mimeType = imageFile.type || 'image/jpeg';
-      const ocrRes = await fetch('/api/ai/analyze-health-checkup', {
+      const ocrRes = await aiFetch('/api/ai/analyze-health-checkup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -180,6 +185,12 @@ export default function NewHealthCheckupPage() {
           mimeType,
         }),
       });
+
+      if (await isAiConsentRequiredResponse(ocrRes)) {
+        // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内する。読み取りはせず、手入力へ進む
+        setStep('confirm');
+        return;
+      }
 
       if (ocrRes.ok) {
         const ocrData = await ocrRes.json();
@@ -275,7 +286,8 @@ export default function NewHealthCheckupPage() {
     setError(null);
 
     try {
-      // 保存すると、数値を AI に送って個別レビューを作る。画像を使わず手入力した人も、ここで初回の確認を受ける
+      // 保存すると、数値を AI に送って個別レビューを作る。画像を使わず手入力した人も、ここで同意の確認を受ける。
+      // 「同意しない」でも保存はする (サーバーは同意が無ければレビューを作らずに保存だけする。応答の aiSkipped)
       await ensureAiConsent();
 
       // フォームデータを数値に変換
@@ -850,7 +862,7 @@ export default function NewHealthCheckupPage() {
         )}
       </AnimatePresence>
 
-      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。初回だけ出る */}
+      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。未同意なら出る */}
       {consentModal}
     </div>
   );

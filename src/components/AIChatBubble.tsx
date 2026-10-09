@@ -13,6 +13,7 @@ import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { notifyMenuGenerated } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { useAiConsent } from "@/hooks/useAiConsent";
+import { AiConsentRequiredError, aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { todayLocal, parseLocalDate, formatLocalDate } from "@/lib/date-utils";
 // AI 応答を HTML にして dangerouslySetInnerHTML へ渡すときは、必ずこの関数を通す (#1169)
 import { parseMarkdown } from "@/lib/markdown-lite";
@@ -104,7 +105,7 @@ export default function AIChatBubble() {
   const [isMounted, setIsMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。初回の送信の直前だけ出す。
-  // 「あとで」を選んでも送信は進める (同意の有無で止めない)。
+  // 「同意しない」なら送らない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)。
   // この部品は全ページに常駐するので、同意の状況は相談の画面を開くまで取りにいかない (毎ページの読み込みで API を呼ばない)
   const { ensureAiConsent, consentModal } = useAiConsent({ prefetch: isOpen });
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -424,8 +425,19 @@ export default function AIChatBubble() {
       },
     ]);
 
-    // 初回だけ同意画面を出す。選択を待つ時間をタイムアウトに含めないよう、タイマーを始める前に待つ
-    await ensureAiConsent();
+    // 送らなかったとき (「同意しない」・同意が必要で止められた) は、楽観的に出したメッセージを消して、入力を戻す
+    const undoOptimisticMessages = () => {
+      setMessages(prev => prev.filter(m => m.id !== tempUserMsgId && m.id !== tempAiMsgId));
+      setInputText(userMessage);
+    };
+
+    // 未同意なら同意画面を出す。選択を待つ時間をタイムアウトに含めないよう、タイマーを始める前に待つ。
+    // 「同意しない」なら相談文を AI に送らない
+    if ((await ensureAiConsent()) === 'declined') {
+      undoOptimisticMessages();
+      setIsSending(false);
+      return;
+    }
 
     // クライアント側タイムアウト（28秒）: サーバーが応答しない場合にユーザーへ通知
     const clientAbortController = new AbortController();
@@ -433,12 +445,18 @@ export default function AIChatBubble() {
 
     try {
       // ストリーミングモードでAPI呼び出し
-      const res = await fetch(`/api/ai/consultation/sessions/${currentSessionId}/messages?stream=true`, {
+      const res = await aiFetch(`/api/ai/consultation/sessions/${currentSessionId}/messages?stream=true`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMessage }),
         signal: clientAbortController.signal,
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内する。送らなかったので、メッセージを消して入力を戻す
+      if (await isAiConsentRequiredResponse(res)) {
+        undoOptimisticMessages();
+        return;
+      }
 
       if (!res.ok) {
         throw new Error(`HTTP error: ${res.status}`);
@@ -588,13 +606,16 @@ export default function AIChatBubble() {
   const executeAction = async (actionId: string, messageId: string) => {
     setExecutingActionId(messageId);
     try {
-      // 提案の実行は、サーバーで献立の生成などの AI の処理を始めることがある。初回だけ同意画面を出す (「あとで」でも実行は進める)
-      await ensureAiConsent();
+      // 提案の実行は、サーバーで献立の生成などの AI の処理を始めることがある。未同意なら同意画面を出す (「同意しない」なら実行しない)
+      if ((await ensureAiConsent()) === 'declined') return;
 
       // まずアクションログを取得
-      const res = await fetch(`/api/ai/consultation/actions/${messageId}/execute`, {
+      const res = await aiFetch(`/api/ai/consultation/actions/${messageId}/execute`, {
         method: 'POST',
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内する。提案は残っているので、同意したあとにもう一度実行できる
+      if (await isAiConsentRequiredResponse(res)) return;
 
       if (res.ok) {
         const data = await res.json();
@@ -722,8 +743,8 @@ export default function AIChatBubble() {
 
     setShowDayMenuModal(false);
 
-    // 初回だけ同意画面を出す (「あとで」でも生成は進める)
-    await ensureAiConsent();
+    // 未同意なら同意画面を出す (「同意しない」なら生成しない)
+    if ((await ensureAiConsent()) === 'declined') return;
 
     // 日付をフォーマット
     const dateObj = new Date(selectedDate);
@@ -762,6 +783,16 @@ export default function AIChatBubble() {
         });
       }
     } catch (e: any) {
+      if (e instanceof AiConsentRequiredError) {
+        // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内する。作成中の表示を打ち消しておく
+        setMessages(prev => [...prev, {
+          id: `v4-consent-${Date.now()}`,
+          role: 'assistant',
+          content: 'AI へのデータ提供への同意が必要なため、献立は作成しませんでした。同意したあとに、もう一度お試しください。',
+          createdAt: new Date().toISOString(),
+        }]);
+        return;
+      }
       console.error('Failed to generate day menu:', e);
       // エラーはフックのonErrorで処理される
     }
@@ -1029,17 +1060,29 @@ export default function AIChatBubble() {
                               { id: tempUserMsgId, role: 'user', content: prompt, createdAt: new Date().toISOString() },
                               { id: tempAiMsgId, role: 'assistant', content: '', createdAt: new Date().toISOString(), isStreaming: true },
                             ]);
-                            // 初回だけ同意画面を出す (「あとで」でも送信は進める)
-                            await ensureAiConsent();
+                            // 送らなかったとき (「同意しない」・同意が必要で止められた) は、楽観的に出したメッセージを消す
+                            const undoOptimisticMessages = () =>
+                              setMessages(prev => prev.filter(m => m.id !== tempUserMsgId && m.id !== tempAiMsgId));
+                            // 未同意なら同意画面を出す (「同意しない」なら送らない)
+                            if ((await ensureAiConsent()) === 'declined') {
+                              undoOptimisticMessages();
+                              setIsSending(false);
+                              return;
+                            }
                             const clientAbortController = new AbortController();
                             const clientTimeoutId = setTimeout(() => clientAbortController.abort(), 28000);
                             try {
-                              const res = await fetch(`/api/ai/consultation/sessions/${currentSessionId}/messages?stream=true`, {
+                              const res = await aiFetch(`/api/ai/consultation/sessions/${currentSessionId}/messages?stream=true`, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ message: prompt }),
                                 signal: clientAbortController.signal,
                               });
+                              // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内する
+                              if (await isAiConsentRequiredResponse(res)) {
+                                undoOptimisticMessages();
+                                return;
+                              }
                               if (!res.ok) throw new Error(`HTTP error: ${res.status}`);
                               const reader = res.body?.getReader();
                               if (!reader) throw new Error('No reader available');
@@ -1423,7 +1466,7 @@ export default function AIChatBubble() {
         )}
       </AnimatePresence>
 
-      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。初回だけ出る */}
+      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。未同意なら出る */}
       {consentModal}
 
       {/* マークダウン用スタイル */}

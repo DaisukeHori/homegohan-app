@@ -1,42 +1,45 @@
 "use client";
 
-// 外国の AI 事業者への提供の同意: AI の入口で「初回だけ同意画面を出す」ためのフック (T15 / #1154)
+// 外国の AI 事業者への提供の同意: AI の入口で、未同意なら同意画面を出すフック (T15 / #1154)
 //
 // 使い方 (AI にデータを送る操作の先頭で呼ぶ):
 //
 //   const { ensureAiConsent, consentModal } = useAiConsent();
 //   ...
 //   const onAnalyze = async () => {
-//     await ensureAiConsent();   // 同意済みなら即座に戻る。初回だけ画面が出て、「同意する」「あとで」のどちらでも戻る
-//     await fetch("/api/ai/...");
+//     if ((await ensureAiConsent()) === "declined") return;   // 「同意しない」なら送らない
+//     await aiFetch("/api/ai/...");
 //   };
 //   return (<>... {consentModal}</>);   // 画面の出る場所 (どこに置いてもよい。body 直下に描画される)
 //
-// 【AI への送信は止めない】(オーナーの決定。強制は別タスク T18 で、AI_CONSENT_ENFORCEMENT で切り替える予定)
-//   - ensureAiConsent() は絶対に失敗しない (reject しない)。「あとで」を選んでも、状況が取れなくても、AI の操作は進む。
+// 【未同意なら AI へ送らない】
+//   止めるのはサーバー (送る手前で 403 AI_CONSENT_REQUIRED を返す。src/lib/ai/consent-guard.ts)。このフックは、
+//   止められる前に利用者へ同意画面を出して、同意すればそのまま操作を続け、同意しなければ操作をやめさせるためのもの。
+//   - ensureAiConsent() は reject しない。戻り値:
+//       'consented' 同意済み・いま同意した → 操作を続ける
+//       'declined'  「同意しない」(Esc も同じ) → 呼び出し側は AI へ送る操作をやめる
+//       'skipped'   状況が取れなかった・画面が出せなかった → 操作を続ける (送ってよいかはサーバーが判定し、
+//                   未同意なら 403 になる。aiFetch がそれを受けて、全画面共通の同意画面 (AiConsentRequiredHost) を出す)
 //   - 同意の状況の取得は、ページを開いたときに先に済ませておく (prefetch。useAiConsent({ prefetch: false }) で止められる)。
-//     操作のときに長く待たせない。取得が終わっていなければ最大 ENSURE_WAIT_MS だけ待ち、それでも取れなければ画面を出さずに進める。
+//     取得が終わっていなければ最大 ENSURE_WAIT_MS だけ待ち、それでも取れなければ画面を出さずに進める ('skipped')。
 //     取得に失敗した直後は、UNAVAILABLE_BACKOFF_MS のあいだ状況の確認自体を省く (障害時に毎回待たせない)。
-//   - 画面は「同意する」「あとで」のどちらを押しても閉じ、Esc は「あとで」。
-//     「同意する」の記録に失敗したときは、画面にメッセージを出して閉じずに待つが、「あとで」はいつでも押せる。
-//   - 「あとで」は同じブラウザで 24 時間、画面を出さない (localStorage)。サーバーには記録しない (拒否の行は作らない)。
+//   - 「同意しない」はサーバーに記録しない (拒否の行は作らない)。次に AI の操作をしたときに、もう一度画面を出す。
+//   - 同意の記録に失敗したときは、画面にメッセージを出して閉じずに待つ (「同意しない」はいつでも押せる)。
 //   - 同意済みの状況は、このページを開いている間は覚えておく。サインアウト (clearUserScopedLocalStorage) で捨てる:
 //     同じタブで別の利用者がログインしても、前の利用者の状況を引き継がない (取得の途中だったものも、結果を覚えない)。
-//   - 画面が出ている間に、その画面を使っているページから離れたとき (戻る操作など) は、待っていた操作を再開しない
-//     (同意の確認をしないまま、本人が離れたページの操作を送らないため)。
-//   - 呼び出し側が consentModal を描画し忘れた場合も、操作を止めない: 画面が MODAL_SHOWN_TIMEOUT_MS 以内に表示されなければ、
-//     'skipped' として進める (console.error で知らせる。tests/ai-consent-entry-points.test.ts が描画し忘れも検査する)。
-//
-// 戻り値の ensureAiConsent は 'consented' (同意済み・いま同意した) / 'later' (あとで) / 'skipped' (状況が取れず、画面を出さなかった)。
-// 現在は呼び出し側がこの値で処理を分けることは無い (T18 で強制するときに使う)。
+//     サーバーに 403 AI_CONSENT_REQUIRED で止められたとき (別のタブで撤回したなど) も捨てる (src/lib/ai/consent-required.ts)。
+//   - 画面が出ている間に、その画面を使っているページから離れたとき (戻る操作など) は、待っていた操作を再開しない。
+//   - 呼び出し側が consentModal を描画し忘れた場合: 画面が MODAL_SHOWN_TIMEOUT_MS 以内に表示されなければ 'skipped' として進める
+//     (console.error で知らせる。サーバーが止めるので、未同意のまま送られることはない)。
+//   - promptAiConsent() は、状況に関わらず同意画面を出す (サーバーに止められたとき用。AiConsentRequiredHost が使う)。
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AiDataConsentModal } from "@/components/consent/AiDataConsentModal";
 import { fetchAiConsentStatus, postAiConsentGrant } from "@/lib/ai/consent-client";
-import { AI_CONSENT_LATER_SNOOZE_MS, AI_CONSENT_LATER_STORAGE_KEY } from "@/lib/ai/consent-config";
+import { AI_CONSENT_REQUIRED_EVENT } from "@/lib/ai/consent-required";
 import { USER_SCOPED_STORAGE_CLEARED_EVENT } from "@/lib/user-storage";
 
-export type AiConsentOutcome = "consented" | "later" | "skipped";
+export type AiConsentOutcome = "consented" | "declined" | "skipped";
 
 /** この間に取得済みの状況は、ページを開いたときの確認 (prefetch) で取り直さない */
 const STATUS_FRESH_MS = 60_000;
@@ -79,9 +82,11 @@ export function forgetAiConsentStatus(): void {
   statusEpoch += 1;
 }
 
-// サインアウトで利用者別の保存が消されたら、メモリの状況も捨てる (src/lib/user-storage.ts)
+// サインアウトで利用者別の保存が消されたら、メモリの状況も捨てる (src/lib/user-storage.ts)。
+// サーバーに 403 AI_CONSENT_REQUIRED で止められたとき (別のタブで撤回した・文面の版が上がったなど) も、覚えていた「同意済み」を捨てる
 if (typeof window !== "undefined") {
   window.addEventListener(USER_SCOPED_STORAGE_CLEARED_EVENT, forgetAiConsentStatus);
+  window.addEventListener(AI_CONSENT_REQUIRED_EVENT, forgetAiConsentStatus);
 }
 
 function loadStatus(): Promise<KnownStatus | null> {
@@ -139,40 +144,15 @@ function waitForStatus(ms: number): Promise<KnownStatus | null> {
   });
 }
 
-// ── 「あとで」の期限 (localStorage。使えない環境では覚えない) ──
-function isLaterActive(): boolean {
-  try {
-    const raw = window.localStorage.getItem(AI_CONSENT_LATER_STORAGE_KEY);
-    const until = raw ? Number(raw) : 0;
-    return Number.isFinite(until) && until > Date.now();
-  } catch {
-    return false;
-  }
-}
-
-function rememberLater(): void {
-  try {
-    window.localStorage.setItem(AI_CONSENT_LATER_STORAGE_KEY, String(Date.now() + AI_CONSENT_LATER_SNOOZE_MS));
-  } catch {
-    // localStorage が使えなくても、この操作は進む
-  }
-}
-
-function forgetLater(): void {
-  try {
-    window.localStorage.removeItem(AI_CONSENT_LATER_STORAGE_KEY);
-  } catch {
-    // 使えない環境では何もしない
-  }
-}
-
 interface ModalState {
   open: boolean;
   submitting: boolean;
   error: string | null;
+  /** サーバーに止められて出した画面 (「この機能を使うには同意が必要です」の一文を足す) */
+  required: boolean;
 }
 
-const CLOSED: ModalState = { open: false, submitting: false, error: null };
+const CLOSED: ModalState = { open: false, submitting: false, error: null, required: false };
 
 export interface UseAiConsentOptions {
   /**
@@ -185,6 +165,7 @@ export interface UseAiConsentOptions {
 
 export function useAiConsent(options: UseAiConsentOptions = {}): {
   ensureAiConsent: () => Promise<AiConsentOutcome>;
+  promptAiConsent: () => Promise<AiConsentOutcome>;
   consentModal: ReactNode;
 } {
   const { prefetch = true } = options;
@@ -231,12 +212,12 @@ export function useAiConsent(options: UseAiConsentOptions = {}): {
     [clearShownTimer],
   );
 
-  const openModal = useCallback((): Promise<AiConsentOutcome> => {
+  const openModal = useCallback((required: boolean): Promise<AiConsentOutcome> => {
     return new Promise<AiConsentOutcome>((resolve) => {
       const pending = { resolve };
       pendingRef.current = pending;
       shownRef.current = false;
-      setModal({ open: true, submitting: false, error: null });
+      setModal({ open: true, submitting: false, error: null, required });
 
       // 画面が表示されなければ (consentModal を描画していないなど)、待たずに進める
       clearShownTimer();
@@ -259,8 +240,6 @@ export function useAiConsent(options: UseAiConsentOptions = {}): {
       if (sharedRef.current) return sharedRef.current;
       // 同意済み。ここを通る操作はネットワークを待たない
       if (knownStatus?.consented) return Promise.resolve("consented");
-      // 「あとで」を選んでから 24 時間は出さない
-      if (isLaterActive()) return Promise.resolve("later");
       // 状況が分からず、直前に取得に失敗している。確認を省いて進める
       if (!knownStatus && Date.now() < unavailableUntil) return Promise.resolve("skipped");
 
@@ -269,7 +248,7 @@ export function useAiConsent(options: UseAiConsentOptions = {}): {
         if (!status) return "skipped";
         if (status.consented) return "consented";
         if (!mountedRef.current) return "skipped";
-        return openModal();
+        return openModal(false);
       })()
         .catch((): AiConsentOutcome => "skipped")
         .finally(() => {
@@ -282,31 +261,50 @@ export function useAiConsent(options: UseAiConsentOptions = {}): {
     }
   }, [openModal]);
 
-  const handleLater = useCallback(() => {
-    rememberLater();
-    closeWith("later");
+  /**
+   * 状況に関わらず同意画面を出す (サーバーに 403 AI_CONSENT_REQUIRED で止められたとき)。
+   * すでに画面を出している (選択を待っている) ときは、その選択を待つ。
+   */
+  const promptAiConsent = useCallback((): Promise<AiConsentOutcome> => {
+    try {
+      if (!mountedRef.current) return Promise.resolve("skipped");
+      if (sharedRef.current) return sharedRef.current;
+      const run = openModal(true)
+        .catch((): AiConsentOutcome => "skipped")
+        .finally(() => {
+          sharedRef.current = null;
+        });
+      sharedRef.current = run;
+      return run;
+    } catch {
+      return Promise.resolve("skipped");
+    }
+  }, [openModal]);
+
+  const handleDecline = useCallback(() => {
+    // 記録はしない (拒否の行は作らない)。次に AI の操作をしたときに、もう一度画面を出す
+    closeWith("declined");
   }, [closeWith]);
 
   const handleAccept = useCallback(async () => {
     const pending = pendingRef.current;
-    setModal({ open: true, submitting: true, error: null });
+    setModal((prev) => ({ ...prev, open: true, submitting: true, error: null }));
     const result = await postAiConsentGrant();
 
     if (result.ok && result.data.consented) {
-      // 記録できた。利用者が待っている間に「あとで」で閉じていても、状況は更新しておく
+      // 記録できた。利用者が待っている間に「同意しない」で閉じていても、状況は更新しておく
       knownStatus = { consented: true, fetchedAt: Date.now() };
       unavailableUntil = 0;
-      forgetLater();
       if (pendingRef.current === pending) closeWith("consented");
       return;
     }
 
-    // 記録できなかった。閉じずにメッセージを出す (「あとで」はいつでも押せる)
+    // 記録できなかった。閉じずにメッセージを出す (「同意しない」はいつでも押せる)
     if (!mountedRef.current || pendingRef.current !== pending) return;
     const message = result.ok
       ? "同意を記録できませんでした。もう一度お試しください。"
       : result.message;
-    setModal({ open: true, submitting: false, error: message });
+    setModal((prev) => ({ ...prev, open: true, submitting: false, error: message }));
   }, [closeWith]);
 
   const handleShown = useCallback(() => {
@@ -318,11 +316,12 @@ export function useAiConsent(options: UseAiConsentOptions = {}): {
       isOpen
       isSubmitting={modal.submitting}
       errorMessage={modal.error}
+      required={modal.required}
       onAccept={handleAccept}
-      onLater={handleLater}
+      onDecline={handleDecline}
       onShown={handleShown}
     />
   ) : null;
 
-  return { ensureAiConsent, consentModal };
+  return { ensureAiConsent, promptAiConsent, consentModal };
 }

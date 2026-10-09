@@ -7,6 +7,7 @@ import { resolveClassifyPhotoType } from "@/lib/ai/image-recognition";
 import { logToServer } from "@/lib/db-logger";
 import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
 import { useAiConsent } from "@/hooks/useAiConsent";
+import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { formatLocalDate } from "@homegohan/shared";
 import type { CatalogDishMatch, CatalogProductSummary } from "@/types/catalog";
 import { motion, AnimatePresence } from "framer-motion";
@@ -286,8 +287,8 @@ export default function MealCaptureModal() {
   // ハンズオンの固定画像 (SAMPLE_MEAL_IMAGE.webPath) は blob: ではないので対象外。
   useRevokeBlobUrls(photoPreviews);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。写真を AI に送る前に、初回だけ出す。
-  // 「あとで」を選んでも解析は進める (同意の有無で止めない)
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。写真を AI に送る前に、未同意なら出す。
+  // 「同意しない」なら解析しない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)
   const { ensureAiConsent, consentModal } = useAiConsent();
 
   // 冷蔵庫解析結果
@@ -539,7 +540,7 @@ export default function MealCaptureModal() {
       });
       const imageDataArray = await buildImagePayloads(photoFiles, IMAGE_PAYLOAD_CONFIG.meal);
 
-      const res = await fetch('/api/ai/analyze-meal-photo', {
+      const res = await aiFetch('/api/ai/analyze-meal-photo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -549,6 +550,12 @@ export default function MealCaptureModal() {
         }),
       });
       
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さずに種類の選択へ戻す (写真は残す)
+      if (await isAiConsentRequiredResponse(res)) {
+        setStep('mode-select');
+        return;
+      }
+
       if (res.ok) {
         const data = await res.json();
         void logToServer('info', 'meal-photo analysis succeeded', {
@@ -616,7 +623,8 @@ export default function MealCaptureModal() {
   };
 
   // 写真タイプを判別（オートモード）
-  const classifyPhoto = async (files: File[]): Promise<ClassificationResponse> => {
+  // 同意が必要で止められたときは null (同意画面 (AiConsentRequiredHost) が案内する)
+  const classifyPhoto = async (files: File[]): Promise<ClassificationResponse | null> => {
     try {
       const startedAt = Date.now();
       void logToServer('info', 'photo classification started', {
@@ -624,7 +632,7 @@ export default function MealCaptureModal() {
         photoMode,
       });
       const images = await buildImagePayloads(files, IMAGE_PAYLOAD_CONFIG.classify);
-      const res = await fetch('/api/ai/classify-photo', {
+      const res = await aiFetch('/api/ai/classify-photo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -633,6 +641,8 @@ export default function MealCaptureModal() {
           mealType: selectedMealType,
         }),
       });
+
+      if (await isAiConsentRequiredResponse(res)) return null;
 
       if (res.ok) {
         const data = await res.json();
@@ -702,11 +712,17 @@ export default function MealCaptureModal() {
     try {
       const [{ base64, mimeType }] = await buildImagePayloads([photoFiles[0]], IMAGE_PAYLOAD_CONFIG.fridge);
 
-      const res = await fetch('/api/ai/analyze-fridge', {
+      const res = await aiFetch('/api/ai/analyze-fridge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64: base64, mimeType }),
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さずに種類の選択へ戻す (写真は残す)
+      if (await isAiConsentRequiredResponse(res)) {
+        setStep('mode-select');
+        return;
+      }
 
       if (res.ok) {
         const data = await res.json();
@@ -740,11 +756,17 @@ export default function MealCaptureModal() {
     try {
       const [{ base64, mimeType }] = await buildImagePayloads([photoFiles[0]], IMAGE_PAYLOAD_CONFIG.health_checkup);
 
-      const res = await fetch('/api/ai/analyze-health-checkup', {
+      const res = await aiFetch('/api/ai/analyze-health-checkup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64: base64, mimeType }),
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さずに種類の選択へ戻す (写真は残す)
+      if (await isAiConsentRequiredResponse(res)) {
+        setStep('mode-select');
+        return;
+      }
 
       if (res.ok) {
         const data = await res.json();
@@ -796,11 +818,17 @@ export default function MealCaptureModal() {
     try {
       const [{ base64, mimeType }] = await buildImagePayloads([photoFiles[0]], IMAGE_PAYLOAD_CONFIG.weight_scale);
 
-      const res = await fetch('/api/ai/analyze-weight-scale', {
+      const res = await aiFetch('/api/ai/analyze-weight-scale', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image: base64, mimeType }),
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さずに種類の選択へ戻す (写真は残す)
+      if (await isAiConsentRequiredResponse(res)) {
+        setStep('mode-select');
+        return;
+      }
 
       if (res.ok) {
         const data = await res.json();
@@ -873,8 +901,9 @@ export default function MealCaptureModal() {
     targetMode: Exclude<ClassifyResult, 'unknown'>,
     classification?: ClassificationResponse,
   ) => {
-    // 手動で種類を選び直した場合など、analyzeByMode を通らない経路でも確認する (同意済み・確認済みなら待たない)
-    await ensureAiConsent();
+    // 手動で種類を選び直した場合など、analyzeByMode を通らない経路でも確認する (同意済み・確認済みなら待たない)。
+    // 「同意しない」なら写真を AI に送らない
+    if ((await ensureAiConsent()) === 'declined') return;
     switch (targetMode) {
       case 'fridge':
         await analyzeFridge();
@@ -895,8 +924,9 @@ export default function MealCaptureModal() {
   const analyzeByMode = async () => {
     if (photoFiles.length === 0) return;
 
-    // 初回だけ同意画面を出す。オートモードの種類判別 (classify-photo) も写真を送るので、その前に確認する
-    await ensureAiConsent();
+    // 未同意なら同意画面を出す。オートモードの種類判別 (classify-photo) も写真を送るので、その前に確認する。
+    // 「同意しない」なら写真を AI に送らない
+    if ((await ensureAiConsent()) === 'declined') return;
 
     let targetMode: ClassifyResult = photoMode as ClassifyResult;
     let classification: ClassificationResponse | undefined;
@@ -910,8 +940,14 @@ export default function MealCaptureModal() {
       setStep('analyzing');
       setIsAnalyzing(true);
 
-      classification = await classifyPhoto(photoFiles);
+      const classified = await classifyPhoto(photoFiles);
       setIsAnalyzing(false);
+      if (!classified) {
+        // 同意が必要で止められた: 同意画面が案内する。種類の選択へ戻す (写真は残す)
+        setStep('mode-select');
+        return;
+      }
+      classification = classified;
 
       const resolvedClassification = resolveClassifyPhotoType(classification);
       if (!resolvedClassification.type) {
@@ -2540,7 +2576,7 @@ export default function MealCaptureModal() {
           />
         )}
 
-        {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。初回だけ出る */}
+        {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。未同意なら出る */}
         {consentModal}
     </div>
   );

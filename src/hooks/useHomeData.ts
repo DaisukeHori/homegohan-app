@@ -6,6 +6,7 @@ import { resolveDisplayName } from "@/lib/user-display";
 import { formatLocalDate } from "@homegohan/shared";
 import type { Tables } from "@homegohan/shared";
 import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
+import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 
 // 今日の献立データ
 interface TodayMealPlan {
@@ -842,7 +843,7 @@ export const useHomeData = () => {
       
       setSuggestion('献立を変更中...');
       
-      const response = await fetch('/api/ai/nutrition-analysis', {
+      const response = await aiFetch('/api/ai/nutrition-analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -852,6 +853,12 @@ export const useHomeData = () => {
         }),
       });
       
+      // 同意が必要で止められた (T15 / #1154): 同意画面 (AiConsentRequiredHost) が案内するので、失敗の表示は出さない
+      if (await isAiConsentRequiredResponse(response)) {
+        setSuggestion(null);
+        return;
+      }
+
       if (response.ok) {
         // 成功したらデータを再取得
         await fetchHomeData();

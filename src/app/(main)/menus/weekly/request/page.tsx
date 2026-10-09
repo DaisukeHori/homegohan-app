@@ -12,6 +12,7 @@ import { userScopedStoragePath } from "@/lib/storage-paths";
 import { BackButton } from "@/components/ui/shared/BackButton";
 import { THEME_LABELS_REQUEST, todayLocal } from "@homegohan/shared";
 import { useAiConsent } from "@/hooks/useAiConsent";
+import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 
 // ステップ定義
 const STEPS = [
@@ -28,8 +29,8 @@ export default function MenuRequestWizard() {
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。冷蔵庫の写真の解析と献立の生成依頼の前に、初回だけ出す。
-  // 「あとで」を選んでも進める (同意の有無で止めない)
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。冷蔵庫の写真の解析と献立の生成依頼の前に、未同意なら出す。
+  // 「同意しない」なら進めない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)
   const { ensureAiConsent, consentModal } = useAiConsent();
   
   const [formData, setFormData] = useState({
@@ -67,11 +68,11 @@ export default function MenuRequestWizard() {
 
       setFormData(p => ({ ...p, imageUrl: publicUrl }));
 
-      // 写真を AI に送る前に、初回だけ同意画面を出す
-      await ensureAiConsent();
+      // 写真を AI に送る前に、未同意なら同意画面を出す。「同意しない」なら解析しない (写真は献立の依頼に添付される)
+      if ((await ensureAiConsent()) === "declined") return;
 
-      // Call AI analysis API
-      const res = await fetch('/api/ai/analyze-fridge', {
+      // Call AI analysis API (同意が必要で止められたときは、同意画面 (AiConsentRequiredHost) が案内する。res.ok ではないので何もしない)
+      const res = await aiFetch('/api/ai/analyze-fridge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageUrl: publicUrl }),
@@ -110,8 +111,9 @@ export default function MenuRequestWizard() {
   const handleSubmit = async () => {
     setLoading(true);
     try {
-      await ensureAiConsent();
-      const res = await fetch('/api/ai/menu/weekly/request', {
+      // 献立の生成は好みや食材を AI に送る。「同意しない」なら依頼しない
+      if ((await ensureAiConsent()) === "declined") return;
+      const res = await aiFetch('/api/ai/menu/weekly/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -131,6 +133,9 @@ export default function MenuRequestWizard() {
           note: formData.note,
         }),
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さない
+      if (await isAiConsentRequiredResponse(res)) return;
 
       if (!res.ok) throw new Error('Request failed');
 
@@ -463,7 +468,7 @@ export default function MenuRequestWizard() {
         </AnimatePresence>
       </div>
 
-      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。初回だけ出る */}
+      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。未同意なら出る */}
       {consentModal}
     </div>
   );

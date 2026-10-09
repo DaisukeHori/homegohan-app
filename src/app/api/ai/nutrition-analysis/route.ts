@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { SUGAR_APP_DEFAULT } from '@homegohan/core';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiConsentSkippedField, checkUserAiConsent, requireAiConsent } from '@/lib/ai/consent-guard';
 
 // 栄養目標が未設定のときの既定値（g/日）。
 // 糖質は「炭水化物 − 食物繊維」で計算しているので、目標も同じ定義（炭水化物の目標 − 食物繊維の目標）で導く (#1146)。
@@ -223,7 +224,13 @@ export async function GET(request: Request) {
     let advice: string | null = null;
     let suggestion: any = null;
 
-    if (includeAdvice || includeSuggestion) {
+    // 外国の AI 事業者への提供の同意が無ければ (判定に失敗した場合も)、AI へ送らない (T15 / #1154)。
+    // この GET はホームを開くと自動で呼ばれ、AI を使わない集計 (analysis) も返すので、403 で全体を止めずに
+    // AI の部分 (advice / suggestion) だけを省き、aiSkipped (AI_CONSENT_REQUIRED など) で画面に知らせる。
+    const aiRequested = includeAdvice || includeSuggestion;
+    const aiConsent = aiRequested ? await checkUserAiConsent(supabase, user.id) : null;
+
+    if (aiRequested && aiConsent?.allowed) {
       const healthConditions = profile?.health_conditions || [];
       const medications = profile?.medications || [];
       const nutritionGoal = profile?.nutrition_goal || 'maintain';
@@ -330,6 +337,7 @@ JSON形式で出力してください：
       },
       advice,
       suggestion,
+      ...aiConsentSkippedField(aiConsent),
       profile: {
         nutritionGoal: profile?.nutrition_goal,
         healthConditions: profile?.health_conditions,
@@ -351,6 +359,10 @@ export async function POST(request: Request) {
   if (userError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
+  const aiConsentDenied = await requireAiConsent(supabase, user.id);
+  if (aiConsentDenied) return aiConsentDenied;
 
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);

@@ -10,6 +10,7 @@ import { PantryItemForm, emptyPantryItemFormValues, type PantryItemFormValues } 
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
 import { useAiConsent } from "@/hooks/useAiConsent";
+import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 
 const colors = {
   bg: "#FAF9F7",
@@ -48,8 +49,8 @@ interface AnalysisResult {
 export default function PantryPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。冷蔵庫の写真を AI に送る前に、初回だけ出す。
-  // 「あとで」を選んでも解析は進める (同意の有無で止めない)
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。冷蔵庫の写真を AI に送る前に、未同意なら出す。
+  // 「同意しない」なら解析しない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)
   const { ensureAiConsent, consentModal } = useAiConsent();
   const [items, setItems] = useState<PantryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,7 +100,11 @@ export default function PantryPage() {
     setAnalyzing(true);
 
     try {
-      await ensureAiConsent();
+      // 同意していなければ同意画面を出す。「同意しない」なら写真を AI に送らない
+      if ((await ensureAiConsent()) === "declined") {
+        setPreviewUrl(null);
+        return;
+      }
 
       // Base64に変換してAPIへ送信
       const arrayBuffer = await file.arrayBuffer();
@@ -107,7 +112,7 @@ export default function PantryPage() {
         new Uint8Array(arrayBuffer).reduce((acc, byte) => acc + String.fromCharCode(byte), "")
       );
 
-      const res = await fetch("/api/ai/analyze-fridge", {
+      const res = await aiFetch("/api/ai/analyze-fridge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -115,6 +120,12 @@ export default function PantryPage() {
           mimeType: file.type || "image/jpeg",
         }),
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、ここではエラーを出さない
+      if (await isAiConsentRequiredResponse(res)) {
+        setPreviewUrl(null);
+        return;
+      }
 
       if (!res.ok) {
         const data = await res.json();
@@ -565,7 +576,7 @@ export default function PantryPage() {
         />
       )}
 
-      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。初回だけ出る */}
+      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。未同意なら出る */}
       {consentModal}
     </div>
   );

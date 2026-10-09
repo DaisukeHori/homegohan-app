@@ -108,6 +108,8 @@ import {
   type TargetSlot as SharedTargetSlot,
 } from "../_shared/save-meal.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
+import { aiConsentDeniedResponse, checkAiConsent } from "../_shared/ai-consent-guard.ts";
+import { aiConsentDeniedPayload } from "../_shared/ai-consent.ts";
 
 console.log("Generate Menu V4 Function loaded (Slot-based generation)");
 
@@ -2797,6 +2799,33 @@ Deno.serve(async (req: Request) => {
           { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
+    }
+
+    // 献立の生成は、利用者のデータ (好み・アレルギー・健康目標・冷蔵庫の食材など) を外国の AI 事業者へ送る。
+    // 同意が無ければ (判定に失敗した場合も)、送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+    // 利用者の JWT で直接呼ばれた場合・Next.js / cron から service role で呼ばれた場合・続きの工程 (_continue) のどれもここを通る
+    // (続きの工程でも確かめるので、生成の途中で撤回すると次の工程から止まる)。リクエストの行は失敗にしておく
+    const aiConsent = await checkAiConsent(supabase, userId);
+    if (!aiConsent.allowed) {
+      const { body: deniedBody } = aiConsentDeniedPayload(aiConsent);
+      await runSupabaseQuery(
+        () => supabase
+          .from("weekly_menu_requests")
+          .update({
+            status: "failed",
+            error_message: deniedBody.code,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", requestId!)
+          .eq("user_id", userId!)
+          .in("status", ["queued", "processing"]),
+        `weekly_menu_requests.fail_ai_consent:${requestId}`,
+        null,
+      ).catch((persistError) => {
+        console.error("Failed to persist AI consent failure:", persistError);
+        return null;
+      });
+      return aiConsentDeniedResponse(aiConsent, corsHeaders);
     }
 
     // 現在のステップを取得

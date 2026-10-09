@@ -2,10 +2,10 @@
 
 // 外国の AI 事業者への提供の同意画面 (T15 / #1154)
 //
-// AI 機能を初めて使う前に出す。押せるのは「同意する」と「あとで」の 2 つだけ。
-//   - 同意する: 同意を記録する (POST /api/ai/consent)。記録できなかったときは画面に出し、もう一度押せる
-//   - あとで   : 記録は作らない (拒否の行は作らない)。Esc キーも同じ扱い
-// 【AI への送信は止めない】どちらを選んでも、利用者が始めた AI の操作はそのまま進む (オーナーの決定。強制は別タスク T18)。
+// 同意していない利用者が AI 機能を使おうとしたときに出す。押せるのは「同意する」と「同意しない」の 2 つだけ。
+//   - 同意する  : 同意を記録する (POST /api/ai/consent)。記録できなかったときは画面に出し、もう一度押せる
+//   - 同意しない: 記録は作らない (拒否の行は作らない)。Esc キーも同じ扱い。AI へ送る操作はやめる
+// 【未同意なら AI へ送らない】同意しないまま AI の操作を続けることはできない (サーバーが 403 AI_CONSENT_REQUIRED で止める)。
 // このコンポーネントは見た目だけを持つ。いつ出すか・押した結果どうするかは src/hooks/useAiConsent.tsx が決める。
 //
 // 文面は仮 (弁護士の確認前)。文面と版は src/lib/ai/consent-config.ts にある。
@@ -24,9 +24,11 @@ export interface AiDataConsentModalProps {
   isSubmitting?: boolean;
   /** 「同意する」の記録に失敗したときに出す文言 */
   errorMessage?: string | null;
+  /** サーバーに止められて出した画面なら true (「この機能を使うには同意が必要です」の一文を足す) */
+  required?: boolean;
   onAccept: () => void;
-  /** 「あとで」・Esc キー。AI の操作は止めない */
-  onLater: () => void;
+  /** 「同意しない」・Esc キー。AI へ送る操作はやめる */
+  onDecline: () => void;
   /** 画面が実際に表示されたとき。呼び出し側 (useAiConsent) が「画面が出なかったので待たずに進める」判断に使う */
   onShown?: () => void;
 }
@@ -35,8 +37,9 @@ export function AiDataConsentModal({
   isOpen,
   isSubmitting = false,
   errorMessage = null,
+  required = false,
   onAccept,
-  onLater,
+  onDecline,
   onShown,
 }: AiDataConsentModalProps) {
   const titleId = useId();
@@ -58,9 +61,9 @@ export function AiDataConsentModal({
   return createPortal(
     <BottomSheet
       isOpen={isOpen}
-      onClose={onLater}
+      onClose={onDecline}
       ariaLabelledBy={titleId}
-      // 背景のクリックでは閉じない (うっかり「あとで」にしないため)。Esc は「あとで」
+      // 背景のクリックでは閉じない (うっかり「同意しない」にしないため)。Esc は「同意しない」
       closeOnOverlayClick={false}
       // 週間献立のモーダル (z-[201]) や確認ダイアログ (z-[202]) より前に出す
       overlayClassName="z-[400]"
@@ -88,6 +91,14 @@ export function AiDataConsentModal({
         role="region"
         aria-label="提供先・提供する情報・利用目的の説明"
       >
+        {required && (
+          <p
+            data-testid="ai-consent-required-lead"
+            style={{ fontSize: 13, fontWeight: 700, color: colors.text, lineHeight: 1.7, margin: "0 0 8px" }}
+          >
+            {AI_CONSENT_COPY.requiredLead}
+          </p>
+        )}
         <AiConsentDetails headingLevel={3} />
 
         <section style={{ marginTop: 16 }}>
@@ -108,7 +119,7 @@ export function AiDataConsentModal({
         </section>
 
         <p
-          data-testid="ai-consent-later-note"
+          data-testid="ai-consent-decline-note"
           style={{
             fontSize: 12,
             color: colors.textMuted,
@@ -119,7 +130,7 @@ export function AiDataConsentModal({
             padding: "8px 10px",
           }}
         >
-          {AI_CONSENT_COPY.laterNote}
+          {AI_CONSENT_COPY.declineNote}
         </p>
       </div>
 
@@ -144,12 +155,12 @@ export function AiDataConsentModal({
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={onLater}
-            data-testid="ai-consent-later"
+            onClick={onDecline}
+            data-testid="ai-consent-decline"
             className="flex-1 py-3 rounded-xl"
             style={{ background: colors.bg, color: colors.textLight, fontSize: 14, fontWeight: 600 }}
           >
-            {AI_CONSENT_COPY.laterLabel}
+            {AI_CONSENT_COPY.declineLabel}
           </button>
           <button
             type="button"

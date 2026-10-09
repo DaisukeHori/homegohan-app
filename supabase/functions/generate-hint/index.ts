@@ -12,6 +12,7 @@ import { getCorsHeaders } from "../_shared/cors.ts";
 import { requireAuth } from "../_shared/auth.ts";
 import { createLogger, generateRequestId } from "../_shared/db-logger.ts";
 import { createFastLLMClient, getFastLLMModel } from "../_shared/fast-llm.ts";
+import { requireAiConsentForUser } from "../_shared/ai-consent-guard.ts";
 
 const openai = createFastLLMClient();
 
@@ -42,6 +43,11 @@ Deno.serve(async (req) => {
     });
   }
   const { userId } = authResult;
+
+  // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+  // この関数は利用者の JWT で直接呼べる (Next.js からは #1327 以降呼んでいない) ので、ここで止める
+  const aiConsentDenied = await requireAiConsentForUser(userId, corsHeaders);
+  if (aiConsentDenied) return aiConsentDenied;
 
   const requestId = generateRequestId();
   const logger = createLogger("generate-hint", requestId).withUser(userId);
