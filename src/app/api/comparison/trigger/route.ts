@@ -26,6 +26,7 @@ import { z } from 'zod';
 import { internalError } from '@/lib/api/errors';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { requireRole } from '@/lib/auth/helpers';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
 
 export const dynamic = 'force-dynamic';
 // 集計の Edge Function の応答を待つ上限 (秒)。他の重い API (AI の献立生成など) と同じ値。
@@ -87,16 +88,15 @@ export async function POST(request: Request) {
   }
   const { periodType } = parsed.data;
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !serviceRoleKey) {
-    return internalError(
-      ROUTE_NAME,
-      new Error('NEXT_PUBLIC_SUPABASE_URL または SUPABASE_SERVICE_ROLE_KEY が未設定のため、集計の Edge Function を呼べません'),
-      { userId: actorId, periodType },
-      { shape: 'nested' },
-    );
+  // 必須の環境変数 (Supabase の URL・service role の鍵) が欠けていれば、関数を呼ばずに汎用の 500 で止める。
+  // MissingEnvError の message は固定の文で変数名を含まない。欠けた変数名はサーバーのログと構造化ログにだけ残る (#1182 / #1172)
+  let serviceConfig: { url: string; serviceRoleKey: string };
+  try {
+    serviceConfig = getSupabaseServiceConfig();
+  } catch (err) {
+    return internalError(ROUTE_NAME, err, { userId: actorId, periodType, stage: 'env' }, { shape: 'nested' });
   }
+  const { url: supabaseUrl, serviceRoleKey } = serviceConfig;
 
   let edgeRes: Response;
   try {

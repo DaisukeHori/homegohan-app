@@ -1,3 +1,5 @@
+// @vitest-environment node
+// route はサーバー (Node.js) で動く。欠けた環境変数の名前をサーバーのログに残す処理は window がある所 (jsdom) では動かないため、node で回す
 /**
  * tests/api/comparison-trigger-route.test.ts
  *
@@ -16,11 +18,19 @@
  *     (期間の開始日などを本文に書いても渡さない = 関数は直近の 1 期間だけを集計する)
  *   - periodType は daily / weekly / monthly のどれか。省略・空の本文は weekly。それ以外・壊れた JSON は 400 で関数を呼ばない
  *   - 関数の失敗・通信の失敗・設定の不足は 500 で、本文は汎用メッセージだけ (関数が返した文面や原因は出さない)
+ *   - 設定の不足 (Supabase の URL・service role の鍵が未設定) は src/lib/env-required.ts の MissingEnvError で止め、
+ *     変数名は本文にも例外の文にも出さない (サーバーのログと構造化ログにだけ残す。#1182)
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuthError, ForbiddenError } from '../../src/lib/auth/errors';
 import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '../../src/lib/api/errors';
+import {
+  isMissingEnvError,
+  MISSING_ENV_ERROR_MESSAGE,
+  MISSING_ENV_SERVER_LOG_PREFIX,
+  type MissingEnvError,
+} from '../../src/lib/env-required';
 
 const mocks = vi.hoisted(() => ({
   requireRole: vi.fn(),
@@ -255,17 +265,43 @@ describe('POST /api/comparison/trigger: 失敗しても原因を本文に出さ�
     expectGenericInternalError(await res.json());
   });
 
-  it.each(['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'])(
-    '%s が未設定なら、関数を呼ばずに 500 (汎用メッセージ)',
-    async (name) => {
-      vi.stubEnv(name, '');
+  // 未設定 (空) と空白だけの両方。値の無い変数は src/lib/env-required.ts の取り出し (getSupabaseServiceConfig) が
+  // MissingEnvError にする。例外の文に変数名を書くと、500 の本文に変数名が出うる (#1172 / #1182)
+  it.each([
+    ['NEXT_PUBLIC_SUPABASE_URL', ''],
+    ['SUPABASE_SERVICE_ROLE_KEY', ''],
+    ['NEXT_PUBLIC_SUPABASE_URL', '   '],
+    ['SUPABASE_SERVICE_ROLE_KEY', '   '],
+  ])(
+    '%s が未設定 (値 "%s") なら、関数を呼ばずに 500 (汎用メッセージ)。変数名は本文にも例外の文にも出さず、ログにだけ残す',
+    async (name, value) => {
+      vi.stubEnv(name, value);
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-      const res = await POST(request({ periodType: 'weekly' }));
+      try {
+        const res = await POST(request({ periodType: 'weekly' }));
 
-      expect(res.status).toBe(500);
-      expectGenericInternalError(await res.json());
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(mocks.loggerError).toHaveBeenCalledTimes(1);
+        expect(res.status).toBe(500);
+        const text = await res.text();
+        expect(text).not.toContain(name);
+        expectGenericInternalError(JSON.parse(text));
+        expect(fetchMock).not.toHaveBeenCalled();
+
+        // 構造化ログには MissingEnvError を渡す (db-logger が envName を missing_env_name として記録する)。
+        // 例外の文 (message) は固定の文で、変数名を含まない
+        expect(mocks.loggerError).toHaveBeenCalledTimes(1);
+        const [, loggedError, loggedMeta] = mocks.loggerError.mock.calls[0] as [string, unknown, Record<string, unknown>];
+        expect(isMissingEnvError(loggedError)).toBe(true);
+        expect((loggedError as MissingEnvError).envName).toBe(name);
+        expect((loggedError as MissingEnvError).message).toBe(MISSING_ENV_ERROR_MESSAGE);
+        expect((loggedError as MissingEnvError).message).not.toContain(name);
+        expect(loggedMeta).toMatchObject({ periodType: 'weekly', stage: 'env' });
+
+        // 欠けた変数名は、サーバーのログに 1 行残る (値は出さない)
+        expect(consoleError).toHaveBeenCalledWith(MISSING_ENV_SERVER_LOG_PREFIX, name);
+      } finally {
+        consoleError.mockRestore();
+      }
     },
   );
 });
