@@ -41,11 +41,11 @@ jest.mock('../../src/components/ai/AIDayMenuModal', () => ({
   AIDayMenuModal: () => null,
 }));
 
-import { HttpNetworkError } from '@homegohan/core';
+import { HttpNetworkError, HttpParseError } from '@homegohan/core';
 import React from 'react';
 import { Alert } from 'react-native';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
-import { NETWORK_ERROR_MESSAGES } from '../../src/lib/api-error';
+import { INVALID_RESPONSE_MESSAGE, NETWORK_ERROR_MESSAGES } from '../../src/lib/api-error';
 
 // 最初のテストでは、シートの読み込みと変換が走る。CI の --coverage (全ファイルの計装) や、
 // 他の処理で混み合った環境では、既定の 5 秒を超えることがあるので、余裕を持たせる
@@ -224,6 +224,32 @@ describe('AIAdvisorSheet — タイムアウト・通信断のあとの履歴の
       expect(screen.getByText('カレーはいかがですか？')).toBeTruthy();
     });
     expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it('成功なのに本文が JSON でなくても (HttpParseError)、返信が保存済みなら、エラーを出さずに履歴を合わせる', async () => {
+    await openSheet();
+    mockPost.mockRejectedValueOnce(new HttpParseError(INVALID_RESPONSE_MESSAGE, { status: 200 }));
+    serverHistoryIs([...PRIOR, SENT_USER, SAVED_REPLY]);
+
+    await send('夕食を教えて');
+
+    await waitFor(() => {
+      expect(screen.getByText('カレーはいかがですか？')).toBeTruthy();
+    });
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it('本文が JSON でなく、返信も保存されていなければ、読める文面を知らせる (タイムアウトの文言にはしない)', async () => {
+    await openSheet();
+    mockPost.mockRejectedValueOnce(new HttpParseError(INVALID_RESPONSE_MESSAGE, { status: 200 }));
+    serverHistoryIs(PRIOR);
+
+    await send('夕食を教えて');
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith('エラー', INVALID_RESPONSE_MESSAGE);
+    });
+    expect(alertSpy).not.toHaveBeenCalledWith('タイムアウト', expect.anything());
   });
 
   it('画面だけにある要約が残っていても、返信が届いていれば、エラーを出さずに履歴を合わせる', async () => {

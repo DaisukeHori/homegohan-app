@@ -58,11 +58,11 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 // --- コンポーネント import (モック設定後) ---
-import { HttpNetworkError } from '@homegohan/core';
+import { HttpNetworkError, HttpParseError } from '@homegohan/core';
 import React from 'react';
 import { Pressable } from 'react-native';
 import AiSessionPage from '../../app/ai/[sessionId]';
-import { NETWORK_ERROR_MESSAGES } from '../../src/lib/api-error';
+import { INVALID_RESPONSE_MESSAGE, NETWORK_ERROR_MESSAGES } from '../../src/lib/api-error';
 
 // 最初のテストでは、画面の読み込みと変換が走る。CI の --coverage (全ファイルの計装) や、
 // 他の処理で混み合った環境では、既定の 5 秒を超えることがあるので、余裕を持たせる
@@ -254,6 +254,33 @@ describe('AiSessionPage — 通信が切れたとき', () => {
       expect(screen.getByText(NETWORK_ERROR_MESSAGES.offline)).toBeTruthy();
     });
     expect(screen.queryByText(/Network request failed/)).toBeNull();
+    expect(screen.queryByText(/タイムアウト/)).toBeNull();
+    expect(screen.queryByText('夕食を教えて')).toBeNull();
+  });
+
+  it('成功なのに本文が JSON でなかった (HttpParseError) ときも、返信が保存済みなら、エラーにせず画面を合わせる', async () => {
+    await renderWithPriorMessages();
+    mockPost.mockRejectedValueOnce(new HttpParseError(INVALID_RESPONSE_MESSAGE, { status: 200 }));
+    mockGet.mockResolvedValueOnce({ messages: [...PRIOR_MESSAGES, SENT_USER, SAVED_REPLY] });
+
+    await typeAndSend('夕食を教えて');
+
+    await waitFor(() => {
+      expect(screen.getByText('カレーはいかがですか？')).toBeTruthy();
+    });
+    expect(screen.queryByText(INVALID_RESPONSE_MESSAGE)).toBeNull();
+  });
+
+  it('本文が JSON でなく、返信も保存されていなければ、読める文面を知らせる (タイムアウト表示にはしない)', async () => {
+    await renderWithPriorMessages();
+    mockPost.mockRejectedValueOnce(new HttpParseError(INVALID_RESPONSE_MESSAGE, { status: 200 }));
+    mockGet.mockResolvedValueOnce({ messages: PRIOR_MESSAGES });
+
+    await typeAndSend('夕食を教えて');
+
+    await waitFor(() => {
+      expect(screen.getByText(INVALID_RESPONSE_MESSAGE)).toBeTruthy();
+    });
     expect(screen.queryByText(/タイムアウト/)).toBeNull();
     expect(screen.queryByText('夕食を教えて')).toBeNull();
   });

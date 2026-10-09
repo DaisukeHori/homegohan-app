@@ -48,9 +48,13 @@ describe('isUncertainSendFailure / isTimeoutFailure', () => {
     expect(isTimeoutFailure(error)).toBe(false);
   });
 
-  it('JSON でない 2xx (HttpParseError) や普通のエラー、エラーでない値は対象外', () => {
-    expect(isUncertainSendFailure(new HttpParseError('x', { status: 200 }))).toBe(false);
-    expect(isTimeoutFailure(new HttpParseError('x', { status: 200 }))).toBe(false);
+  it('成功なのに JSON でない応答 (HttpParseError) は、サーバーが処理を終えたか分からない失敗だが、時間切れではない', () => {
+    const error = new HttpParseError('x', { status: 200 });
+    expect(isUncertainSendFailure(error)).toBe(true);
+    expect(isTimeoutFailure(error)).toBe(false);
+  });
+
+  it('普通のエラー、エラーでない値は対象外', () => {
     expect(isUncertainSendFailure(new Error('boom'))).toBe(false);
     expect(isUncertainSendFailure(null)).toBe(false);
     expect(isUncertainSendFailure(undefined)).toBe(false);
@@ -118,13 +122,13 @@ describe('isUncertainSendFailure / isTimeoutFailure — 本物の共通クライ
     expect(isTimeoutFailure(error)).toBe(false);
   });
 
-  it('200 なのに JSON でない応答 (HttpParseError) も、どちらでもない', async () => {
+  it('200 なのに JSON でない応答 (HttpParseError) は、届いたか分からない失敗だが、時間切れではない', async () => {
     respondWith(200, 'OK', '<html>Wi-Fi ログイン</html>');
 
     const error = await rejectionOf(client().post('/api/ai/consultation/sessions/s1/messages', { message: 'こんにちは' }));
 
     expect(error).toBeInstanceOf(HttpParseError);
-    expect(isUncertainSendFailure(error)).toBe(false);
+    expect(isUncertainSendFailure(error)).toBe(true);
     expect(isTimeoutFailure(error)).toBe(false);
   });
 });

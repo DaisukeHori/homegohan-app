@@ -13,7 +13,7 @@
  * 返信が届いていたかを確かめる。
  */
 
-import { isHttpNetworkError } from '@homegohan/core';
+import { isHttpNetworkError, isHttpParseError } from '@homegohan/core';
 
 /**
  * AI 相談 1 通の送信を待つ上限 (ミリ秒)。
@@ -51,15 +51,16 @@ function isAbortError(error: unknown): boolean {
 }
 
 /**
- * 送信がサーバーに届いたかどうか分からない失敗か。
- * 応答を受け取れなかったとき (共通 API クライアントの HttpNetworkError。待ち時間切れ 'timeout' も、通信の切断 'offline' も)
- * と、呼び出し側の中断 (AbortError)。このときは履歴を取り直して確かめる。
- * HTTP のエラー応答 (4xx / 5xx) は、サーバーが処理しなかったと分かるので含めない。
- * 成功 (2xx) なのに本文が JSON でなかった (HttpParseError) ときも、サーバーが処理を終えたかどうかは分からないが、
- * 送信そのものは届いている (応答を受け取れている) ので、ここでは対象外にする。
+ * 送信がサーバーで処理されたか (返信が保存されたか) 分からない失敗か。このときは履歴を取り直して確かめる。
+ *   - 応答を受け取れなかったとき (共通 API クライアントの HttpNetworkError。待ち時間切れ 'timeout' も、通信の切断 'offline' も)
+ *   - 呼び出し側の中断 (AbortError)
+ *   - 成功 (2xx) の応答は受け取れたが、本文が JSON として読めなかったとき (HttpParseError)。サーバーは処理を終えている
+ *     かもしれない (途中のプロキシが本文を書き換えた場合など)。公衆 Wi-Fi のログイン画面が返っただけなら、
+ *     取り直しも同じ理由で失敗して、下のエラー表示になる
+ * HTTP のエラー応答 (4xx / 5xx) は、サーバーが受け取って断った (処理しなかった) と分かるので含めない。
  */
 export function isUncertainSendFailure(error: unknown): boolean {
-  return isHttpNetworkError(error) || isAbortError(error);
+  return isHttpNetworkError(error) || isHttpParseError(error) || isAbortError(error);
 }
 
 /** isUncertainSendFailure のうち、時間切れ (タイムアウト) のもの。文言をタイムアウト用にする */
