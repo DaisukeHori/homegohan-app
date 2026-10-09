@@ -72,71 +72,57 @@ SSO            |      |     |             |           |              |          
 
 ### 3.3 価格変更フロー
 
-**3 種の適用範囲**:
+**適用範囲は新規契約のみ (`new_only`)** (#1102。オーナー判断 2026-10-08):
+
+価格変更は新規契約だけに適用する。既存の契約者の請求額は変えない。設計当初にあった `on_renewal` (次回更新時から全契約) と `immediately` (即時に全契約・日割り) は、既存サブスクリプションの Stripe 価格を切り替える処理が作られておらず、選んでも請求額が変わらない偽の選択肢だったため廃止した。API は `applies_to` に `new_only` 以外が来ると 400 (価格変更は `OP_INVALID_INPUT`、影響シミュレーションは `OP_INVALID_QUERY`)、画面からも選択欄を外した。既存の契約者を新しい Price へ移す処理は作らない (対象外)。
 
 | 適用範囲 | DB 更新 | Stripe 連携 |
 |---------|--------|------------|
-| `new_only` | `subscription_plans.stripe_price_id` を新 Price ID に更新 | 新 Price object を作成 |
-| `on_renewal` | 各 `personal_subscriptions.stripe_price_id` を次回更新時に切替 | 既存 Subscription の phase 変更 |
-| `immediately` | 即時に全 `personal_subscriptions` を新 Price に切替 | `stripe.subscriptions.update({ proration_behavior: 'create_prorations' })` |
+| `new_only` | `subscription_plans` の `stripe_price_id` (**月額**) / `stripe_yearly_price_id` (**年額**) のうち、変えた方を新 Price ID に更新する。月額・年額は 1 回のリクエストで同時に変えられる | 変えた interval ごとに新 Price object を作成し、**同じ interval の旧 Price だけ** `active=false` にする (旧 Price は新規の申し込みで選べなくなる。既存サブスクリプションは旧 Price のまま請求される) |
+
+`plan_price_history` の `old_stripe_price_id` / `new_stripe_price_id` は月額の Price ID (`subscription_plans.stripe_price_id` と同じ意味)。年額の Price ID は `admin_audit_logs.details` (`old_stripe_yearly_price_id` / `new_stripe_yearly_price_id`) に残す。
 
 **Stripe Price の immutability 対応**:
 - Stripe Price は作成後に amount を変更できない (Stripe の設計)
 - 価格変更 = 新 Price object を作成し、旧 Price を `active=false` にする
 
 ```typescript
-// supabase/functions/stripe-price-sync/index.ts
-export async function syncPriceChange(input: PriceChangeInput) {
-  // 1. 新 Stripe Price を作成
-  const newPrice = await stripe.prices.create({
-    product: input.stripe_product_id,
-    unit_amount: input.new_monthly_price_jpy,
-    currency: 'jpy',
-    recurring: { interval: 'month' },
-  });
-
-  // 2. DB 更新 (トランザクション内)
-  // 引数名は operator/05-stripe-integration.md §5.2 の apply_price_change RPC 定義に合わせて p_ プレフィックスを使用
-  await supabase.rpc('apply_price_change', {
-    p_plan_id: input.plan_id,
-    p_new_stripe_price_id: newPrice.id,
-    p_new_monthly_price_jpy: input.new_monthly_price_jpy,
-    p_applies_to: input.applies_to,
-    p_changed_by: input.actor_id,
-    p_reason: input.reason ?? '',
-  });
-
-  // 3. on_renewal / immediately の場合は既存サブスクリプションを更新
-  if (input.applies_to === 'immediately') {
-    await batchUpdateSubscriptions(input.plan_key, newPrice.id);
+// supabase/functions/stripe-price-sync (処理本体は sync.ts。DB の更新は呼び出し元の price-change route が行う) (#1102)
+// 入力: { plan_id, stripe_product_id, new_monthly_price_jpy?, new_yearly_price_jpy?, applies_to?: 'new_only', ... }
+// 出力: { success: true, month: { new_stripe_price_id, deactivated, deactivation_skipped_reason? } | null, year: { ... } | null }
+export async function syncPlanPrices(request: SyncRequest, deps: SyncDeps) {
+  // 1. 変える interval ごとに新 Stripe Price を作成する (月額 → 年額)。
+  //    途中で失敗したら、作成済みの新 Price を無効化して 502 を返す (旧 Price には触れない)
+  for (const { interval, amount } of targets) {
+    await stripe.prices.create({
+      product: request.stripe_product_id,
+      unit_amount: amount,
+      currency: 'jpy',
+      recurring: { interval }, // 'month' | 'year'
+    });
   }
 
-  // エラー時: 新 Price を deactivate + DB rollback
+  // 2. 旧 Price の ID を DB から読む: 月額 = subscription_plans.stripe_price_id / 年額 = stripe_yearly_price_id
+
+  // 3. interval ごとに、旧 Price を Stripe から取り直して recurring.interval が今回作った Price と同じと
+  //    確認できたときだけ active=false にする (別の interval の現役の Price は無効化しない: deactivation.ts)。
+  //    無効化の失敗はベストエフォート (新しい Price の作成が必須の契約)
+  return { month, year };
 }
+// その後、price-change route が plan_price_history (service-role) → subscription_plans (変えた interval の列だけ) →
+// admin_audit_logs の順に書く。Stripe 同期が必須の環境 (STRIPE_SECRET_KEY あり) で同期に失敗したら、DB は一切更新しない (fail-closed)。
 ```
 
 **影響シミュレーション API** (`GET /api/super-admin/plans/{id}/price-impact`):
 
-適用範囲 (`applies_to`) ごとに「既存契約への影響」を切り分けて返す (#1212)。`applies_to` を省略した場合は `new_only` として扱う。
+価格変更は新規契約のみに適用されるため、既存契約への影響は常にゼロ (#1102)。`applies_to` は `new_only` だけ受け付ける (省略時も `new_only`。`on_renewal` / `immediately` は 400 `OP_INVALID_QUERY`)。
 
 | 適用範囲 | 既存契約への影響 | 影響契約数 / MRR 変化 | `effective_timing` |
 |---------|----------------|---------------------|--------------------|
-| `new_only` | なし (新規契約のみ新価格。既存契約は現行価格のまま) | 件数 0、MRR 変化 0 (`personal_subscriptions` は集計しない) | `none` |
-| `on_renewal` | 各契約の次回更新時から新価格 | 件数 = 下記 SQL の対象契約数、MRR 変化 = (新月額 − 現月額) × 件数 | `next_renewal` |
-| `immediately` | 即時に新価格 (日割り精算) | 同上 | `immediate` |
+| `new_only` | なし (新規契約のみ新価格。既存契約は現行価格のまま) | 件数 0、MRR 変化 0、`affected_user_sample` は空 (`personal_subscriptions` は集計しない) | `none` |
 
-```sql
--- 影響する personal_subscriptions 数を計算 (on_renewal / immediately のみ)
-SELECT COUNT(*), SUM(sp.monthly_price_jpy) as current_mrr
-FROM personal_subscriptions ps
-JOIN subscription_plans sp ON ps.plan_key = sp.plan_key
-WHERE ps.plan_key = $1
-  AND ps.status IN ('active', 'trialing', 'paused')
-  AND ps.stripe_subscription_id IS NOT NULL;
-```
-
-- 実装は件数のみを集計し、MRR 変化は `(新月額 − 現月額) × 件数` で概算する。`personal_subscriptions` に interval 列が無いため、年額契約も月額の差額で計算される。
-- `on_renewal` / `immediately` を既存サブスクリプションへ実際に反映する処理 (Stripe subscription items の更新) は未実装で、`stripe-price-sync` は `applies_to` を受け取るだけ (#1102)。シミュレーション結果は「反映された場合」の概算であり、UI にもその旨を注記している。
+- 返す形は #1212 のときのまま (画面の型と互換)。画面は常に「既存契約への影響なし」を表示する。
+- 経緯: #1212 では `applies_to` ごとに既存契約 (`personal_subscriptions`) を集計し、`on_renewal` / `immediately` で MRR 変化 `(新月額 − 現月額) × 件数` を返していた。ただし既存サブスクリプションへ新価格を反映する処理 (Stripe subscription items の更新) は作られておらず、選んでも請求額は変わらなかったため、#1102 で選択肢ごと廃止した。
 
 ### 3.4 プランライフサイクル
 

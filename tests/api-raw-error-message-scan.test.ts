@@ -165,7 +165,6 @@ const ALLOWLIST: Record<string, number> = {
   'src/app/api/super-admin/infra/metrics/route.ts': 2,
   'src/app/api/super-admin/llm/quotas/route.ts': 2,
   'src/app/api/super-admin/plans/[id]/price-change/route.ts': 1,
-  'src/app/api/super-admin/plans/[id]/price-impact/route.ts': 1,
   'src/app/api/super-admin/plans/[id]/route.ts': 2,
   'src/app/api/super-admin/plans/route.ts': 2,
   'src/app/api/super-admin/settings/route.ts': 2,
