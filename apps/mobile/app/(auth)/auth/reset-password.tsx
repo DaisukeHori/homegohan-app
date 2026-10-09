@@ -6,6 +6,7 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, Tex
 
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { extractSupabaseLinkParams } from "../../../src/lib/deeplink";
+import { signOutWithCleanup } from "../../../src/lib/signOut";
 import { supabase } from "../../../src/lib/supabase";
 
 export default function ResetPasswordPage() {
@@ -86,10 +87,12 @@ export default function ResetPasswordPage() {
 
     setIsSubmitting(true);
     try {
-      const { error } = await supabase.auth.updateUser({ password });
+      const { data, error } = await supabase.auth.updateUser({ password });
       if (error) throw error;
       Alert.alert("完了", "パスワードを更新しました。ログインし直してください。");
-      await supabase.auth.signOut();
+      // 設定・マイページのログアウトと同じ共通処理 (push token の削除 → 端末データの削除 → サインアウト。#1038 F7-10)。
+      // 直接 supabase.auth.signOut() を呼ぶと、この端末の push token が user_push_tokens に残る
+      await signOutWithCleanup(data?.user?.id);
       router.replace("/login");
     } catch (e: any) {
       Alert.alert("更新失敗", e?.message ?? "更新に失敗しました。");
