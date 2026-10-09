@@ -76,6 +76,7 @@ readonly EXIT_USAGE=2       # 使い方の誤り
 readonly EXIT_SLOT_TIMEOUT=3 # 枠の空き待ちの時間切れ (検査そのものは赤でない。Docker を使う段を回せなかった)
 readonly EXIT_SIGINT=130    # 128 + SIGINT(2)
 readonly EXIT_SIGTERM=143   # 128 + SIGTERM(15)
+readonly EXIT_SIGHUP=129    # 128 + SIGHUP(1) (端末を閉じたとき)
 readonly ALL_STAGES="secrets,unit,mobile,integration,e2e"
 # アプリの URL のホスト部分。ポートは枠で決まる (apply_slot。枠 0 は CI と同じ 3000 / 3001 / 3002)
 readonly APP_HOST_URL="http://localhost"
@@ -98,10 +99,13 @@ readonly SLOT_WAIT_SECONDS_DEFAULT=5400
 readonly SLOT_POLL_SEC=10
 # ロックのディレクトリを作ってから持ち主 (owner) を書き終えるまでの猶予。これを過ぎても owner が無ければ持ち主が死んだとみなす。
 # 回収の見張り (<ロック>.reclaim) を、作られてからこれだけ経つまでは持ち主の判定によらず死んだとみなさない猶予と、
-# ロックを外すときに見張りが空くのを待つ上限にも使う (見張りを持つのは mkdir と ps 数回のあいだだけなので、これだけあれば足りる)
+# ロックを外すときに見張りが空くのを待つ上限にも使う (見張りを持つのは、ロックの持ち主の確かめと rm・mkdir の数回のあいだだけなので、これだけあれば足りる)
 readonly LOCK_OWNER_GRACE_SEC=60
 # ロックを外すときに、見張りが空いたかを確かめる間隔
 readonly GUARD_POLL_SEC=1
+# 見張りを消す rm を試す回数の上限。Ctrl-C は子プロセスの rm にも届くので、消す前に止められた rm を、まだ自分の見張りが残っている限り
+# やり直す (1 回目が同じ Ctrl-C で止められても 2 回目で消える。続けて押されたときの分を 1 回足した)
+readonly GUARD_DROP_TRIES=3
 # 1 枠の Docker のメモリの目安 (MiB)。2026-10-10 に Docker Desktop (VM: CPU 8 / メモリ 15.6 GiB) で 20 秒ごとに docker stats を取って実測した、
 # 結合テスト・e2e を回している最中のローカル Supabase 一式 (studio などを除く 8 コンテナ) の使用量の最大 (1 枠で 1164 MiB。
 # 2 枠同時で合計 2019 MiB = 1 枠あたり約 1 GiB) に余裕を足した値。
@@ -516,36 +520,106 @@ file_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 # (違う文字列になると、生きている持ち主を死んだとみなしてロックを回収し、その枠のスタックまで片付けてしまう)
 proc_lstart() { LC_ALL=C TZ=UTC ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//; s/ *$//'; }
 
-# lock_held <ロックのディレクトリ>: 生きている持ち主がいる (または作られた直後で持ち主をまだ書いていない) なら真。
-# 持ち主が生きているか確かめられないとき (ps が開始時刻を出さないのに pid のプロセスはある・持ち主が開始時刻を書けなかった) は
-# 生きているとみなす (死んだと取り違えて回収すると、生きている持ち主の枠のスタックまで片付けてしまう。待つ方を選ぶ)
+# この実行の持ち主の印 (pid と開始時刻)。ロックと見張りに書き、見張りがこの実行のものかを確かめるのにも使う。
+# 開始時刻は始めに 1 回だけ取る (見張りを作る・消すあいだに ps などの子プロセスを動かさない。Ctrl-C は子プロセスにも届くので、
+# 途中で止められた子プロセスの答えで、見張りを取り違えないため)
+MY_LSTART=""
+GUARD_TOKEN=""
+init_owner_identity() {
+  MY_LSTART="$(proc_lstart "$$")"
+  GUARD_TOKEN="pid=$$"$'\n'"lstart=$MY_LSTART"$'\n'
+}
+
+# ---------------------------------------------------------------------
+# 終わらせるシグナル (INT / TERM / HUP) と、後回しにする区間
+# ---------------------------------------------------------------------
+# 「見張りを作ってから GUARD_HELD に入れるまで」「見張りを消してから GUARD_HELD を空にするまで」「ロックを取ってから
+# SLOT_LOCK / ART_LOCK に入れるまで」に届いたシグナルは、その区間を出てから終了に使う。区間の途中で終わると、cleanup が知らない
+# 見張りやロックが残る (見張りは自動では消さないので、残るとその枠を誰も回収できなくなる)。区間は入れ子にできる (いちばん外の区間を出たときに終わる)
+SIGNAL_DEFER_DEPTH=0
+PENDING_SIGNAL_EXIT=""
+# exit_on_signal <終了コード>: 持っている見張りを外してから終わる。cleanup (EXIT の trap) の途中に届いたシグナルで終わるときは
+# cleanup がもう一度は動かないので、ここで外さないと見張りが残る
+exit_on_signal() {
+  drop_guard
+  exit "$1"
+}
+on_signal() {
+  if [ "$SIGNAL_DEFER_DEPTH" -gt 0 ]; then
+    [ -n "$PENDING_SIGNAL_EXIT" ] || PENDING_SIGNAL_EXIT="$1"
+    return 0
+  fi
+  exit_on_signal "$1"
+}
+defer_signals() { SIGNAL_DEFER_DEPTH=$((SIGNAL_DEFER_DEPTH + 1)); }
+resume_signals() {
+  local code
+  SIGNAL_DEFER_DEPTH=$((SIGNAL_DEFER_DEPTH - 1))
+  [ "$SIGNAL_DEFER_DEPTH" -eq 0 ] && [ -n "$PENDING_SIGNAL_EXIT" ] || return 0
+  # 1 度だけ使う (終わる途中の cleanup が区間に入って出るたびに、同じシグナルでもう一度終わらない)
+  code="$PENDING_SIGNAL_EXIT"
+  PENDING_SIGNAL_EXIT=""
+  exit_on_signal "$code"
+}
+# 後回しにしているシグナルがあれば真 (終わる途中なので、持ち主の死んだロックの回収のような消す操作には入らない)
+signal_pending() { [ -n "$PENDING_SIGNAL_EXIT" ]; }
+install_signal_traps() {
+  trap cleanup EXIT
+  trap 'on_signal "$EXIT_SIGINT"' INT
+  trap 'on_signal "$EXIT_SIGTERM"' TERM
+  trap 'on_signal "$EXIT_SIGHUP"' HUP
+}
+
+# read_owner <ロックか見張り>: 持ち主の pid と開始時刻を OWNER_PID / OWNER_LSTART に読む (ロックはディレクトリの中の owner、
+# 見張りはファイルそのもの)。外のコマンド (sed など) を使わない (Ctrl-C で止められた子プロセスの空の答えを「持ち主がいない」と取り違えない)
+OWNER_PID=""
+OWNER_LSTART=""
+read_owner() {
+  local file="$1" line
+  OWNER_PID=""
+  OWNER_LSTART=""
+  if [ -d "$file" ]; then file="$file/owner"; fi
+  [ -f "$file" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      pid=*) OWNER_PID="${line#pid=}" ;;
+      lstart=*) OWNER_LSTART="${line#lstart=}" ;;
+    esac
+  done 2>/dev/null <"$file"
+}
+
+# lock_held <ロックか見張り>: 生きている持ち主がいる (または作られた直後で持ち主をまだ書いていない) なら真。
+# 持ち主が生きているか確かめられないとき (ps が開始時刻を出さないのに pid のプロセスはある・持ち主が開始時刻を書けなかった・
+# 作られた時刻を読めない) は生きているとみなす (死んだと取り違えて回収すると、生きている持ち主の枠のスタックまで片付けてしまう。待つ方を選ぶ)
 lock_held() {
-  local dir="$1" pid lstart cur mtime
-  [ -d "$dir" ] || return 1
-  if [ ! -f "$dir/owner" ]; then
-    mtime="$(file_mtime "$dir")" || return 1
-    [ "$(($(now) - mtime))" -lt "$LOCK_OWNER_GRACE_SEC" ]
+  local path="$1" cur mtime
+  [ -e "$path" ] || return 1
+  read_owner "$path"
+  if ! [[ "$OWNER_PID" =~ ^[0-9]+$ ]]; then
+    # 持ち主をまだ書いていない: 作られてから LOCK_OWNER_GRACE_SEC 経つまでは持たれているとみなす
+    if mtime="$(file_mtime "$path")" && [ -n "$mtime" ]; then
+      [ "$(($(now) - mtime))" -lt "$LOCK_OWNER_GRACE_SEC" ]
+      return
+    fi
+    [ -e "$path" ]
     return
   fi
-  pid="$(sed -n 's/^pid=//p' "$dir/owner")"
-  lstart="$(sed -n 's/^lstart=//p' "$dir/owner")"
-  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-  cur="$(proc_lstart "$pid")"
+  cur="$(proc_lstart "$OWNER_PID")"
   if [ -z "$cur" ]; then
     # ps が開始時刻を出さない: その pid のプロセスが無ければ死んでいる。あれば ps が動かなかった (fork の失敗など) だけ
-    kill -0 "$pid" 2>/dev/null
+    kill -0 "$OWNER_PID" 2>/dev/null
     return
   fi
   # 持ち主が開始時刻を書けなかった (書いたときに ps が動かなかった) なら、その pid のプロセスがある限り生きているとみなす
-  [ -n "$lstart" ] || return 0
-  [ "$cur" = "$lstart" ]
+  [ -n "$OWNER_LSTART" ] || return 0
+  [ "$cur" = "$OWNER_LSTART" ]
 }
 
 write_owner() {
   local dir="$1"
   {
     echo "pid=$$"
-    echo "lstart=$(proc_lstart "$$")"
+    echo "lstart=$MY_LSTART"
     echo "started=$(date '+%Y-%m-%dT%H:%M:%S%z')"
     echo "head=$HEAD_SHA"
     echo "artifacts=$ART"
@@ -561,36 +635,79 @@ make_lock() {
   return 1
 }
 
-# 回収の見張り (<ロックのディレクトリ>.reclaim)。持ち主の死んだロックの回収と、自分のロックを外すことは、見張りを持った 1 本だけが行う。
-# 見張りを持っているあいだ、ロックのディレクトリは消えも作り直されもしない (消すのは見張りを持つ者だけ。見張りの外でできるのは、
-# ディレクトリが無いときの mkdir だけ)。だから「持ち主が死んでいると確かめたロック」と「消すロック」が必ず同じものになり、
-# 消したあとの作り直しも見張りの中で行うので、遅れて回収に来た実行が、別の実行の取ったロックを消すことが無い
+# 回収の見張り (<ロックのディレクトリ>.reclaim。持ち主の印を書いたファイル)。持ち主の死んだロックの回収と、自分のロックを外すことは、
+# 見張りを持った 1 本だけが行う。見張りを持っているあいだ、ロックのディレクトリは消えも作り直されもしない (消すのは見張りを持つ者だけ。
+# 見張りの外でできるのは、ディレクトリが無いときの mkdir だけ)。だから「持ち主が死んでいると確かめたロック」と「消すロック」が必ず同じものになり、
+# 消したあとの作り直しも見張りの中で行うので、遅れて回収に来た実行が、別の実行の取ったロックを消すことが無い。
+# 見張りは、シグナル (INT / TERM / HUP) でどこで終わっても外す (作る・消すところは後回しの区間、そのあいだは exit_on_signal と cleanup が外す)。
+# 外せないのは、外す機会の無い終わり方 (kill -9・電源断など) だけ
 GUARD_HELD=""
 # 持ち主の死んだ見張りを知らせ済みのもの (同じ見張りを待ちのたびに知らせない)
 STALE_GUARDS_WARNED=""
 
+# create_guard_file <見張りのパス>: 見張りのファイルを、無ければ作る (作れたら 0。あれば 1)。noclobber (set -C) のリダイレクトは
+# O_EXCL で開くので、同時に作りに来ても作れるのは 1 本だけ。子プロセスを使わない (mkdir のような子プロセスが Ctrl-C で、作ったあと・
+# 終了コードを返す前に止められると、自分の作った見張りを「作れなかった」と取り違えて残してしまう)。
+# 後回しの区間の中でだけ呼ぶ (set -C のあいだにシグナルで終わらない)
+create_guard_file() {
+  local created
+  set -C
+  { : >"$1"; } 2>/dev/null
+  created=$?
+  set +C
+  return "$created"
+}
+
+# make_guard <見張りのパス>: 見張りを作って GUARD_HELD に入れ、持ち主の印を書く。作れたら 0。後回しの区間の中でだけ呼ぶ
+make_guard() {
+  local guard="$1"
+  create_guard_file "$guard" || return 1
+  GUARD_HELD="$guard"
+  if printf '%s' "$GUARD_TOKEN" 2>/dev/null >>"$guard"; then return 0; fi
+  # 持ち主の印を書けない (容量不足など): 印の無い見張りは猶予を過ぎると持ち主の死んだ見張りになり、誰も回収できなくなるので消す
+  rm -f "$guard"
+  GUARD_HELD=""
+  return 1
+}
+
+# guard_is_mine <見張りのパス>: 見張りが、この実行の作ったもの (中身が持ち主の印と同じ) なら真。外のコマンドを使わない
+guard_is_mine() {
+  local content=""
+  [ -f "$1" ] || return 1
+  IFS= read -r -d '' content 2>/dev/null <"$1"
+  [ "$content" = "$GUARD_TOKEN" ]
+}
+
 # take_guard <ロックのディレクトリ>: 見張りを取る。取れたら 0、生きている誰かが持っていれば 1、
-# 持ち主の死んだ見張り (回収かロックを外す途中で強制終了された跡) が残っていれば 2。
+# 持ち主の死んだ見張り (回収かロックを外す途中で kill -9 などで終わった跡) が残っていれば 2。
 # 死んだ見張りは自動では消さない (「死んでいる」と確かめてから消すまでのあいだに、同じく死んでいると見た別の実行が見張りを消して
 # 取り直しているかもしれず、それを消すと 2 本が同時に回収に入る)。作られてから LOCK_OWNER_GRACE_SEC 経っていない見張りは、
 # 持ち主の判定によらず死んだとみなさない (見ているあいだに外されて取り直された見張りを、死んだと取り違えない)
 take_guard() {
-  local guard="$1.reclaim" mtime
-  if make_lock "$guard"; then
-    GUARD_HELD="$guard"
-    return 0
-  fi
+  local guard="$1.reclaim" made mtime
+  defer_signals
+  make_guard "$guard"
+  made=$?
+  resume_signals
+  [ "$made" -eq 0 ] && return 0
   lock_held "$guard" && return 1
   mtime="$(file_mtime "$guard")" || return 1
   [ "$(($(now) - mtime))" -ge "$LOCK_OWNER_GRACE_SEC" ] || return 1
   return 2
 }
 
-# drop_guard: 持っている見張りを外す (cleanup からも呼ぶ。見張りを持ったまま Ctrl-C などで終わらない)
+# drop_guard: 持っている見張りを外す (cleanup と exit_on_signal からも呼ぶ)。消すのは中身がこの実行の印のときだけ
+# (消したあとに別の実行が取り直した見張りを、もう一度消さない)。rm が Ctrl-C で消す前に止められたら、GUARD_DROP_TRIES 回までやり直す
 drop_guard() {
   [ -n "$GUARD_HELD" ] || return 0
-  rm -rf "$GUARD_HELD"
+  local guard="$GUARD_HELD" tries=0
+  defer_signals
+  while [ "$tries" -lt "$GUARD_DROP_TRIES" ] && guard_is_mine "$guard"; do
+    rm -f "$guard"
+    tries=$((tries + 1))
+  done
   GUARD_HELD=""
+  resume_signals
 }
 
 # warn_stale_guard <ロックのディレクトリ>: 持ち主の死んだ見張りが残っていることを、見張りごとに 1 回だけ知らせる
@@ -598,7 +715,7 @@ warn_stale_guard() {
   local guard="$1.reclaim"
   case " $STALE_GUARDS_WARNED " in *" $guard "*) return 0 ;; esac
   STALE_GUARDS_WARNED="$STALE_GUARDS_WARNED $guard"
-  say "回収の見張り $guard が、持ち主の死んだまま残っています (回収かロックを外す途中で強制終了された跡)。2 本が同時に回収に入らないよう自動では消しません。ほかに local-ci.sh が動いていないことを確かめてから rm -rf '$guard' で消すと、$1 を回収できるようになります"
+  say "回収の見張り $guard が、持ち主の死んだまま残っています (回収かロックを外す途中で kill -9 などで終わった跡)。2 本が同時に回収に入らないよう自動では消しません。ほかに local-ci.sh が動いていないことを確かめてから rm -rf '$guard' で消すと、$1 を回収できるようになります"
 }
 
 # reclaim_lock <ロックのディレクトリ>: 見張りを持ったまま、持ち主の死んだロックを消して自分のロックとして作り直す
@@ -614,7 +731,9 @@ reclaim_lock() {
   fi
   if [ ! -d "$dir" ]; then
     make_lock "$dir" && rc=0
-  elif ! lock_held "$dir"; then
+  elif ! lock_held "$dir" && ! signal_pending; then
+    # シグナルを後回しにしているあいだは回収しない (そのシグナルで止められた ps などの答えで、生きている持ち主を死んだと取り違えうる。
+    # 終わる途中なので枠も要らない)
     say "持ち主のいないロックを回収します: $dir ($(tr "\n" " " 2>/dev/null <"$dir/owner" || echo "owner なし"))"
     rm -rf "$dir"
     if make_lock "$dir"; then
@@ -627,7 +746,8 @@ reclaim_lock() {
 }
 
 # try_lock <ロックのディレクトリ>: mkdir で原子的に取る。持ち主が死んでいれば (見張りを持って) 回収して取り直す。
-# 取れたとき、持ち主の死んだロックを回収して取ったなら LOCK_RECLAIMED=1、空いていたのを取ったなら 0 にする
+# 取れたとき、持ち主の死んだロックを回収して取ったなら LOCK_RECLAIMED=1、空いていたのを取ったなら 0 にする。
+# 取ったロックを変数 (SLOT_LOCK など) に入れ終えるまでを後回しの区間にして呼ぶ (defer_signals / resume_signals)
 LOCK_RECLAIMED=0
 try_lock() {
   local dir="$1"
@@ -644,8 +764,9 @@ try_lock() {
 # (この実行が終われば持ち主の死んだロックになり、次の実行が回収する)
 release_lock() {
   local dir="$1" waited=0 st
-  [ -n "$dir" ] && [ -f "$dir/owner" ] || return 0
-  [ "$(sed -n 's/^pid=//p' "$dir/owner")" = "$$" ] || return 0
+  [ -n "$dir" ] || return 0
+  read_owner "$dir"
+  [ "$OWNER_PID" = "$$" ] || return 0
   while :; do
     take_guard "$dir"
     st=$?
@@ -696,15 +817,25 @@ acquire_slot() {
   while :; do
     for s in $SLOT_CANDIDATES; do
       if [ "$s" -eq 0 ] && legacy_lock_held; then continue; fi
+      # 取ってから SLOT_LOCK に入れ終えるまでのシグナルは後回しにする (そこで終わると、cleanup の知らないロックが残る)
+      defer_signals
       if try_lock "$LOCK_DIR/slot-$s"; then
-        # 外側のロックは別の作業が mkdir するので、取ったあとにもう一度確かめる
-        if [ "$s" -eq 0 ] && legacy_lock_held; then release_lock "$LOCK_DIR/slot-$s"; continue; fi
         SLOT_LOCK="$LOCK_DIR/slot-$s"
         SLOT_RECLAIMED="$LOCK_RECLAIMED"
-        apply_slot "$s"
-        say "枠 $s を取りました (project_id $SLOT_PROJECT_ID / Supabase API $SLOT_API_PORT / Next ${APP_PORT}・${ENFORCED_APP_PORT}・${NOTICE_APP_PORT}。ロック $SLOT_LOCK)"
-        return 0
       fi
+      resume_signals
+      [ -n "$SLOT_LOCK" ] || continue
+      # 外側のロックは別の作業が mkdir するので、取ったあとにもう一度確かめる
+      # (外してから SLOT_LOCK を空にするまでに終わっても、cleanup の release_lock は持ち主がこの実行のロックしか外さない)
+      if [ "$s" -eq 0 ] && legacy_lock_held; then
+        release_lock "$SLOT_LOCK"
+        SLOT_LOCK=""
+        SLOT_RECLAIMED=0
+        continue
+      fi
+      apply_slot "$s"
+      say "枠 $s を取りました (project_id $SLOT_PROJECT_ID / Supabase API $SLOT_API_PORT / Next ${APP_PORT}・${ENFORCED_APP_PORT}・${NOTICE_APP_PORT}。ロック $SLOT_LOCK)"
+      return 0
     done
     if [ "$(now)" -ge "$deadline" ]; then return 1; fi
     if [ "$waited" = 0 ]; then
@@ -1194,7 +1325,7 @@ CLEANED=0
 cleanup() {
   [ "$CLEANED" = 1 ] && return 0
   CLEANED=1
-  # 回収やロックを外す途中で終わる (Ctrl-C など) なら、見張りを最初に外す (残すと、その枠を誰も回収できなくなる)
+  # 見張りを持ったまま終わるなら、最初に外す (残すと、その枠を誰も回収できなくなる。シグナルで終わるときは exit_on_signal が先に外している)
   drop_guard
   stop_server
   stop_supabase
@@ -1287,13 +1418,17 @@ LOCK_DIR="${LOCK_DIR%/}"
 mkdir -p "$ART" "$WORK_PARENT" || { say "作業場所を作れません: $ART / $WORK_PARENT"; exit "$EXIT_RED"; }
 chmod 700 "$ART" 2>/dev/null || true
 
-trap cleanup EXIT
-trap 'exit "$EXIT_SIGINT"' INT
-trap 'exit "$EXIT_SIGTERM"' TERM
+# ロックと見張りに書く持ち主の印を決めてから、終わるときの片付け (cleanup) とシグナルの trap を入れる
+init_owner_identity
+install_signal_traps
 
 # 同じ HEAD を同時に回すと、既定の結果の置き場 (HEAD の sha ごと) が重なる。使用中なら、既定のときは別の場所に替え、
-# LOCAL_CI_ARTIFACTS で指定されたときは止める (他の実行の結果を消さない)
-if ! try_lock "$ART/.in-use"; then
+# LOCAL_CI_ARTIFACTS で指定されたときは止める (他の実行の結果を消さない)。
+# 取ってから ART_LOCK に入れ終えるまでのシグナルは後回しにする (そこで終わると、cleanup の知らないロックが残る)
+defer_signals
+try_lock "$ART/.in-use" && ART_LOCK="$ART/.in-use"
+resume_signals
+if [ -z "$ART_LOCK" ]; then
   if [ -n "${LOCAL_CI_ARTIFACTS:-}" ]; then
     say "LOCAL_CI_ARTIFACTS ($ART) は、同時に動いている別の local-ci.sh が使っています。別の場所を指定してください"
     exit "$EXIT_USAGE"
@@ -1301,9 +1436,11 @@ if ! try_lock "$ART/.in-use"; then
   ART="$ART.$$"
   say "既定の結果の置き場は別の local-ci.sh が使っているので、$ART に出します"
   mkdir -p "$ART" && chmod 700 "$ART" 2>/dev/null
-  try_lock "$ART/.in-use" || { say "結果の置き場を取れません: $ART"; exit "$EXIT_RED"; }
+  defer_signals
+  try_lock "$ART/.in-use" && ART_LOCK="$ART/.in-use"
+  resume_signals
+  [ -n "$ART_LOCK" ] || { say "結果の置き場を取れません: $ART"; exit "$EXIT_RED"; }
 fi
-ART_LOCK="$ART/.in-use"
 for s in $(echo "$ONLY" | tr ',' ' '); do rm -rf "$ART/$s"-*; done
 rm -f "$ART/slot-leftover.log"
 RESULTS="$ART/results.tsv"

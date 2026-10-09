@@ -13,6 +13,8 @@
  *     (空いていた枠に残っているスタックは、ロックを取らずに手で起動したものかもしれないので消さずに赤にする)
  *   - scripts/local-ci.sh の枠のロックは、同時に同じ死んだロックを回収しに来ても 1 本しか取れない。ロックを外すのも回収と同時に走らない。
  *     持ち主が生きているか確かめられないときは回収しない
+ *   - scripts/local-ci.sh の回収の見張りは、シグナル (INT / TERM / HUP。Ctrl-C のようにプロセスグループ全体に届くものを含む) で
+ *     どこで終わっても残らない (残ると、その枠の死んだロックを誰も回収できなくなる)。外すときに、別の実行が取り直した見張りは消さない
  *
  * 値はスクリプトを実際に実行して得る (文字列を読んで推測しない)。
  */
@@ -354,14 +356,31 @@ describe("scripts/supabase-local.sh が枠に合わせて組み立てる config.
  *   HOOK_PS_FAIL        1 なら ps を失敗させる (fork の失敗などで ps が動かない)
  *   HOOK_SAY_DELAY      say (回収するときの表示) のあとで待つ秒数
  *   HOOK_LOCK / HOOK_REMKDIR_DELAY  HOOK_LOCK のディレクトリを 2 回目に mkdir する直前 (回収したあとの作り直し) に待つ秒数
+ *   HOOK_LOCK_MADE_DELAY  HOOK_LOCK のディレクトリを mkdir した直後 (持ち主を書く前・SLOT_LOCK に入れる前) に LOCK_MADE を出して待つ秒数
+ *   HOOK_GUARD_CREATED_DELAY  見張りのファイルを作った直後 (GUARD_HELD に入れる前) に GUARD_CREATED を出して待つ秒数
+ *   HOOK_RM_LOCK_DELAY  HOOK_LOCK のディレクトリを rm する直前に RM_LOCK を出して待つ秒数 (見張りを持ってロックを外している最中)
+ *   HOOK_RM_GUARD       HOOK_LOCK の見張りを rm するときの振る舞い。killed-once: 1 回目は消さずに 130 で返す (Ctrl-C で止められた rm)。
+ *                       pause: 消したあとに GUARD_REMOVED を出して HOOK_PAUSE_SEC 秒待つ (GUARD_HELD を空にする前)
+ * 待ちの sleep は、テストがプロセスグループに送るシグナル (Ctrl-C と同じ届き方) で止まる
  */
 describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)", () => {
   const LOCK_FUNCTIONS = [
     "file_mtime",
     "proc_lstart",
+    "init_owner_identity",
+    "exit_on_signal",
+    "on_signal",
+    "defer_signals",
+    "resume_signals",
+    "signal_pending",
+    "install_signal_traps",
+    "read_owner",
     "lock_held",
     "write_owner",
     "make_lock",
+    "create_guard_file",
+    "make_guard",
+    "guard_is_mine",
     "take_guard",
     "drop_guard",
     "warn_stale_guard",
@@ -374,6 +393,7 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
     "slot_stack_exists",
     "clear_slot_leftovers",
     "check_slot_stack",
+    "cleanup",
   ];
   const scriptLines = fs.readFileSync(path.join(ROOT, LOCAL_CI), "utf8").split("\n");
   const extract = (name: string): string => {
@@ -384,6 +404,14 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
     if (end < 0) throw new Error(`${LOCAL_CI} の関数 ${name} の終わりが無い`);
     return scriptLines.slice(start, end + 1).join("\n");
   };
+  /** スクリプトの定数 (readonly NAME=値) の値 */
+  const constant = (name: string): string => {
+    const m = new RegExp(`^readonly ${name}=([0-9]+)\\b`).exec(scriptLines.find((line) => line.startsWith(`readonly ${name}=`)) ?? "");
+    if (!m) throw new Error(`${LOCAL_CI} に定数 ${name} が無い`);
+    return m[1];
+  };
+  // 見張りを作った直後・消した直後などで待つ秒数 (テストがシグナルを送ると、待ちの sleep はその場で止まる)
+  const HOOK_PAUSE_SEC = 10;
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "local-ci-slot-lock-"));
   afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -392,18 +420,39 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
     'say() { echo "SAY $*" >&2; if [ -n "${HOOK_SAY_DELAY:-}" ]; then sleep "$HOOK_SAY_DELAY"; fi; return 0; }',
     'ps() { if [ -n "${HOOK_PS_FAIL:-}" ]; then return 1; fi; if [ -n "${HOOK_PS_DELAY:-}" ]; then sleep "$HOOK_PS_DELAY"; fi; command ps "$@"; }',
     "HOOK_MKDIR_N=0",
-    'mkdir() { if [ -n "${HOOK_LOCK:-}" ] && [ "$1" = "$HOOK_LOCK" ]; then HOOK_MKDIR_N=$((HOOK_MKDIR_N + 1)); if [ "$HOOK_MKDIR_N" = 2 ] && [ -n "${HOOK_REMKDIR_DELAY:-}" ]; then sleep "$HOOK_REMKDIR_DELAY"; fi; fi; command mkdir "$@"; }',
+    'mkdir() { if [ -n "${HOOK_LOCK:-}" ] && [ "$1" = "$HOOK_LOCK" ]; then HOOK_MKDIR_N=$((HOOK_MKDIR_N + 1)); if [ "$HOOK_MKDIR_N" = 2 ] && [ -n "${HOOK_REMKDIR_DELAY:-}" ]; then sleep "$HOOK_REMKDIR_DELAY"; fi; if [ -n "${HOOK_LOCK_MADE_DELAY:-}" ]; then command mkdir "$@" || return; echo "LOCK_MADE"; sleep "$HOOK_LOCK_MADE_DELAY"; return 0; fi; fi; command mkdir "$@"; }',
+    `HOOK_RM_GUARD_KILLED=0; HOOK_PAUSE_SEC=${HOOK_PAUSE_SEC}`,
+    [
+      'rm() { local target; for target; do :; done',
+      '  if [ -n "${HOOK_LOCK:-}" ] && [ "$target" = "$HOOK_LOCK" ] && [ -n "${HOOK_RM_LOCK_DELAY:-}" ]; then echo "RM_LOCK"; sleep "$HOOK_RM_LOCK_DELAY"; fi',
+      '  if [ -n "${HOOK_LOCK:-}" ] && [ "$target" = "$HOOK_LOCK.reclaim" ]; then',
+      '    case "${HOOK_RM_GUARD:-}" in',
+      '      killed-once) if [ "$HOOK_RM_GUARD_KILLED" = 0 ]; then HOOK_RM_GUARD_KILLED=1; echo "RM_GUARD_KILLED"; return 130; fi ;;',
+      '      pause) command rm "$@"; echo "GUARD_REMOVED"; sleep "$HOOK_PAUSE_SEC"; return 0 ;;',
+      "    esac",
+      "  fi",
+      '  command rm "$@"; }',
+    ].join("\n"),
     "now() { date +%s; }",
     'record() { echo "RECORD $*"; }',
     'run_in() { echo "RUN_IN ${*:3}"; }',
     // 枠の project_id のラベルで絞った一覧を、FAKE_CONTAINERS / FAKE_VOLUMES の中身で返す
     'docker() { case "$1" in ps) printf "%s" "${FAKE_CONTAINERS:-}" ;; volume) printf "%s" "${FAKE_VOLUMES:-}" ;; esac; }',
     "check_docker_memory() { :; }",
+    // cleanup が呼ぶ片付け (枠のスタックと Next は動かしていないので何もしない)
+    "stop_server() { :; }",
+    "stop_supabase() { :; }",
     'LOCK_OWNER_GRACE_SEC=60; GUARD_POLL_SEC=1; SLOT_POLL_SEC=1; SLOT_WAIT_SECONDS=0; LEGACY_LOCK=""',
+    `GUARD_DROP_TRIES=${constant("GUARD_DROP_TRIES")}; EXIT_SIGINT=${constant("EXIT_SIGINT")}; EXIT_SIGTERM=${constant("EXIT_SIGTERM")}; EXIT_SIGHUP=${constant("EXIT_SIGHUP")}`,
     'HEAD_SHA=test; ART="$HARNESS_TMP"; WT="$HARNESS_TMP"; APP_HOST_URL="http://localhost"; ENV_SLOT=""',
     'SLOT=""; SLOT_LOCK=""; SLOT_RECLAIMED=0; LOCK_RECLAIMED=0; GUARD_HELD=""; STALE_GUARDS_WARNED=""',
+    'SIGNAL_DEFER_DEPTH=0; PENDING_SIGNAL_EXIT=""; OWNER_PID=""; OWNER_LSTART=""; MY_LSTART=""; GUARD_TOKEN=""',
     `. "${path.join(ROOT, SLOT_LIB)}"`,
     ...LOCK_FUNCTIONS.map(extract),
+    // 見張りのファイルを作った直後 (GUARD_HELD に入れる前) で待てるようにする
+    extract("create_guard_file").replace(/^create_guard_file\(\)/, "orig_create_guard_file()"),
+    'create_guard_file() { orig_create_guard_file "$@"; local rc=$?; if [ "$rc" -eq 0 ] && [ -n "${HOOK_GUARD_CREATED_DELAY:-}" ]; then echo "GUARD_CREATED"; sleep "$HOOK_GUARD_CREATED_DELAY"; fi; return "$rc"; }',
+    "init_owner_identity",
   ];
   const writeHarness = (name: string, body: string[]) => {
     const file = path.join(tmp, name);
@@ -430,6 +479,20 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
     'release_lock "$HOOK_LOCK"',
     'echo "RELEASED"',
   ]);
+  // local-ci.sh の本体と同じく cleanup とシグナルの trap を入れてから、HARNESS_MODE の操作をして HARNESS_STOP ができるまで待つ。
+  //   acquire: 枠を取りに行く (持ち主の死んだロックがあれば回収に入る)
+  //   hold:    HOOK_LOCK のロックを作って SLOT_LOCK に入れる (終わるときに cleanup が外す)
+  //   release: HOOK_LOCK のロックを作り、cleanup の外で外す (外側のロックに気づいたときの acquire_slot と同じ)
+  const signalHarness = writeHarness("signal.sh", [
+    'WT=""; KEEP=0; GL_DIR=""; WORK_PARENT="$HARNESS_TMP/no-work"; SRC_ROOT="$HARNESS_TMP"; CLEANED=0; ART_LOCK=""',
+    "install_signal_traps",
+    'case "$HARNESS_MODE" in',
+    '  acquire) if acquire_slot; then echo "ACQUIRED pid=$$"; else echo "ACQUIRE_FAILED pid=$$"; fi ;;',
+    '  hold) make_lock "$HOOK_LOCK" || exit 1; SLOT_LOCK="$HOOK_LOCK"; echo "READY pid=$$" ;;',
+    '  release) make_lock "$HOOK_LOCK" || exit 1; echo "READY pid=$$"; release_lock "$HOOK_LOCK"; echo "RELEASED" ;;',
+    "esac",
+    'while [ ! -e "$HARNESS_STOP" ]; do sleep 0.1; done',
+  ]);
 
   const baseEnv = (): NodeJS.ProcessEnv => ({ PATH: process.env.PATH, HOME: process.env.HOME, HARNESS_TMP: tmp });
 
@@ -440,14 +503,22 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
     fs.mkdirSync(dir, { recursive: true });
     return dir;
   };
-  /** ロック (または見張り) のディレクトリを、持ち主の内容と、作られてからの秒数を決めて置く */
+  const backdate = (p: string, ageSec: number) => {
+    if (ageSec > 0) {
+      const t = new Date(Date.now() - ageSec * 1000);
+      fs.utimesSync(p, t, t);
+    }
+  };
+  /** ロックのディレクトリを、持ち主の内容と、作られてからの秒数を決めて置く */
   const placeLock = (dir: string, owner: string, ageSec = 0) => {
     fs.mkdirSync(dir);
     fs.writeFileSync(path.join(dir, "owner"), owner);
-    if (ageSec > 0) {
-      const t = new Date(Date.now() - ageSec * 1000);
-      fs.utimesSync(dir, t, t);
-    }
+    backdate(dir, ageSec);
+  };
+  /** 回収の見張り (持ち主の印を書いたファイル) を、持ち主の内容と、作られてからの秒数を決めて置く */
+  const placeGuard = (file: string, owner: string, ageSec = 0) => {
+    fs.writeFileSync(file, owner, { flag: "wx" });
+    backdate(file, ageSec);
   };
   /** 枠の候補・前もって置くロックの持ち主・残っているコンテナ / ボリュームを決めて、ハーネスを 1 回動かす */
   const runCase = (opts: {
@@ -462,7 +533,7 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
     const lockDir = newLockDir();
     const slotLock = path.join(lockDir, `slot-${opts.slot}`);
     if (opts.owner !== undefined) placeLock(slotLock, opts.owner);
-    if (opts.guard !== undefined) placeLock(`${slotLock}.reclaim`, opts.guard.owner, opts.guard.ageSec);
+    if (opts.guard !== undefined) placeGuard(`${slotLock}.reclaim`, opts.guard.owner, opts.guard.ageSec);
     const env: NodeJS.ProcessEnv = {
       ...baseEnv(),
       LOCK_DIR: lockDir,
@@ -478,8 +549,9 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
 
   /** 起動したハーネスの標準出力が条件を満たすまで待つ */
   type Proc = { child: ReturnType<typeof spawn>; out: () => string; exited: Promise<number | null> };
-  const start = (file: string, env: NodeJS.ProcessEnv): Proc => {
-    const child = spawn("bash", [file], { cwd: tmp, env, stdio: ["ignore", "pipe", "pipe"] });
+  // group: 自分のプロセスグループで起動する (signalGroup で、Ctrl-C と同じくハーネスと子プロセスの sleep などの全部にシグナルを送れる)
+  const start = (file: string, env: NodeJS.ProcessEnv, group = false): Proc => {
+    const child = spawn("bash", [file], { cwd: tmp, env, stdio: ["ignore", "pipe", "pipe"], detached: group });
     let out = "";
     child.stdout?.on("data", (d: Buffer) => {
       out += d.toString("utf8");
@@ -498,6 +570,18 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
     }
   };
   const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const signalGroup = (p: Proc, sig: NodeJS.Signals) => process.kill(-(p.child.pid as number), sig);
+  /** 後始末: まだ動いていれば、プロセスグループごと止める */
+  const killGroup = async (p: Proc) => {
+    if (p.child.exitCode === null && p.child.signalCode === null) {
+      try {
+        signalGroup(p, "SIGKILL");
+      } catch {
+        // すでに終わっている
+      }
+    }
+    await p.exited;
+  };
   const ownerPidOf = (dir: string) => /^pid=(\d+)$/m.exec(fs.readFileSync(path.join(dir, "owner"), "utf8"))?.[1];
 
   // 持ち主の死んだロック: pid 1 は生きているが、開始時刻が違う (= pid が使い回された別のプロセス) ので持ち主ではない
@@ -655,7 +739,7 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
       const lock = path.join(newLockDir(), "slot-1");
       const guard = `${lock}.reclaim`;
       // 生きている別の実行 (このテストのプロセス) が回収の見張りを持っている
-      placeLock(guard, liveOwner());
+      placeGuard(guard, liveOwner());
       const p = start(releaseHarness, { ...baseEnv(), HOOK_LOCK: lock });
       try {
         await waitFor(() => p.out().includes("READY"), "ロックを作る");
@@ -687,7 +771,7 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
   it("持ち主の死んだ見張りが残っていても、自分のロックは外せる (見張りは消さない)", () => {
     const lock = path.join(newLockDir(), "slot-1");
     const guard = `${lock}.reclaim`;
-    placeLock(guard, DEAD_OWNER, STALE_GUARD_AGE_SEC);
+    placeGuard(guard, DEAD_OWNER, STALE_GUARD_AGE_SEC);
     const r = spawnSync("bash", [releaseHarness], { cwd: tmp, env: { ...baseEnv(), HOOK_LOCK: lock }, encoding: "utf8" });
     expect(r.stdout, r.stderr).toContain("RELEASED");
     expect(fs.existsSync(lock)).toBe(false);
@@ -709,4 +793,165 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
     expect(r.err).not.toContain("回収の見張り");
     expect(fs.existsSync(`${r.slotLock}.reclaim`)).toBe(true);
   });
+
+  // 見張りが残ると、その枠の持ち主の死んだロックを誰も回収できなくなる (待ちの時間切れまで待つ)。
+  // シグナルは Ctrl-C と同じくプロセスグループに送る (ハーネスの子プロセスの sleep なども止まる)
+  const SIGNALS: Array<[NodeJS.Signals, string]> = [
+    ["SIGINT", "EXIT_SIGINT"],
+    ["SIGTERM", "EXIT_SIGTERM"],
+    ["SIGHUP", "EXIT_SIGHUP"],
+  ];
+  // acquire: 持ち主の死んだ枠のロックを回収しに行き、見張りを作った直後に届く (枠を取る後回しの区間の中)
+  // release: 自分のロックを外しに行き、見張りを作った直後に届く (後回しの区間は見張りを作るところだけ)
+  const GUARD_CREATED_CASES: Array<[string, NodeJS.Signals, string]> = [
+    ...SIGNALS.map(([sig, exitName]): [string, NodeJS.Signals, string] => ["acquire", sig, exitName]),
+    ["release", "SIGTERM", "EXIT_SIGTERM"],
+  ];
+  it.each(GUARD_CREATED_CASES)(
+    "(%s) 見張りのファイルを作った直後 (GUARD_HELD に入れる前) に %s が届いても、見張りを残さずに終わり、ロックは次の実行が回収できる",
+    async (mode, sig, exitName) => {
+      const lockDir = newLockDir();
+      const slotLock = path.join(lockDir, "slot-1");
+      if (mode === "acquire") placeLock(slotLock, DEAD_OWNER);
+      const stop = path.join(tmp, `stop-${caseNo}`);
+      const p = start(
+        signalHarness,
+        {
+          ...baseEnv(),
+          HARNESS_MODE: mode,
+          LOCK_DIR: lockDir,
+          SLOT_CANDIDATES: "1",
+          HOOK_LOCK: slotLock,
+          HARNESS_STOP: stop,
+          HOOK_GUARD_CREATED_DELAY: String(HOOK_PAUSE_SEC),
+        },
+        true,
+      );
+      try {
+        await waitFor(() => p.out().includes("GUARD_CREATED"), "見張りを作る");
+        signalGroup(p, sig);
+        expect(await p.exited, p.out()).toBe(Number(constant(exitName)));
+        expect(p.out()).not.toMatch(/ACQUIRED|RELEASED/);
+        expect(fs.existsSync(`${slotLock}.reclaim`)).toBe(false);
+        // 終わる途中なので回収はしていない (acquire: 死んだ持ち主のまま。release: 外す前に終わったので、終わったハーネスが持ち主)
+        if (mode === "acquire") expect(ownerPidOf(slotLock)).toBe("1");
+        const nextStop = path.join(tmp, `stop-next-${caseNo}`);
+        fs.writeFileSync(nextStop, "");
+        const next = spawnSync("bash", [tryHarness], { cwd: tmp, env: { ...baseEnv(), HOOK_LOCK: slotLock, HARNESS_STOP: nextStop }, encoding: "utf8" });
+        expect(next.stdout, next.stderr).toMatch(/^GOT reclaimed=1 /m);
+      } finally {
+        fs.writeFileSync(stop, "");
+        await killGroup(p);
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it(
+    "枠のロックを作った直後 (SLOT_LOCK に入れる前) に Ctrl-C が届いても、終わるときにそのロックを外す",
+    async () => {
+      const lockDir = newLockDir();
+      const slotLock = path.join(lockDir, "slot-1");
+      const stop = path.join(tmp, `stop-${caseNo}`);
+      const p = start(
+        signalHarness,
+        { ...baseEnv(), HARNESS_MODE: "acquire", LOCK_DIR: lockDir, SLOT_CANDIDATES: "1", HOOK_LOCK: slotLock, HARNESS_STOP: stop, HOOK_LOCK_MADE_DELAY: String(HOOK_PAUSE_SEC) },
+        true,
+      );
+      try {
+        await waitFor(() => p.out().includes("LOCK_MADE"), "枠のロックを作る");
+        signalGroup(p, "SIGINT");
+        expect(await p.exited, p.out()).toBe(Number(constant("EXIT_SIGINT")));
+        expect(fs.existsSync(slotLock)).toBe(false);
+        expect(fs.existsSync(`${slotLock}.reclaim`)).toBe(false);
+      } finally {
+        fs.writeFileSync(stop, "");
+        await killGroup(p);
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it("try_lock の呼び出しは、取ったロックを変数に入れ終えるまでを後回しの区間 (defer_signals / resume_signals) で囲む", () => {
+    // 枠のロック (acquire_slot) は上のテストで動かして確かめる。結果の置き場のロックは本体にあって動かせないので、並びで確かめる
+    const code = scriptLines.map((line) => line.trim()).filter((line) => line !== "" && !line.startsWith("#"));
+    const calls = code.map((line, i) => [line, i] as const).filter(([line]) => /\btry_lock "/.test(line));
+    expect(calls.length, "try_lock の呼び出しが無い").toBeGreaterThan(0);
+    for (const [line, i] of calls) {
+      expect(code[i - 1], line).toBe("defer_signals");
+      const resume = code.findIndex((l, j) => j > i && l === "resume_signals");
+      expect(resume, line).toBeGreaterThan(i);
+      // 区間の中で、取ったロックを変数に入れる
+      expect(code.slice(i, resume).some((l) => /\b(SLOT_LOCK|ART_LOCK)="/.test(l)), line).toBe(true);
+    }
+  });
+
+  // 見張りを持ってロックを外している最中 (rm の前で待つ) に Ctrl-C が届く。
+  //   hold:    1 回目の Ctrl-C で終わる途中 (cleanup が SLOT_LOCK を外している最中) に、もう一度 Ctrl-C が届く。
+  //            bash 3.2 は EXIT の trap の最中に INT の trap を動かさない (cleanup を最後まで終えてロックも外す)。
+  //            bash 4 以降で INT の trap が動けば、exit_on_signal が見張りを外して終わる (ロックは持ち主の死んだロックとして残る)
+  //   release: cleanup の外で外している最中に届く (exit_on_signal が見張りを外してから終わる)
+  const MID_RELEASE_CASES: Array<[string, number]> = [
+    ["hold", 2],
+    ["release", 1],
+  ];
+  it.each(MID_RELEASE_CASES)(
+    "見張りを持ってロックを外している最中に Ctrl-C が届いても、見張りを残さず、枠は次の実行が取れる (%s)",
+    async (mode, interrupts) => {
+      const lock = path.join(newLockDir(), "slot-1");
+      const stop = path.join(tmp, `stop-${caseNo}`);
+      const p = start(signalHarness, { ...baseEnv(), HARNESS_MODE: mode, HOOK_LOCK: lock, HARNESS_STOP: stop, HOOK_RM_LOCK_DELAY: String(HOOK_PAUSE_SEC) }, true);
+      try {
+        await waitFor(() => p.out().includes("READY"), "ロックを作る");
+        if (interrupts === 2) signalGroup(p, "SIGINT");
+        await waitFor(() => p.out().includes("RM_LOCK"), "見張りを持ってロックを外し始める");
+        signalGroup(p, "SIGINT");
+        expect(await p.exited, p.out()).toBe(Number(constant("EXIT_SIGINT")));
+        expect(fs.existsSync(`${lock}.reclaim`)).toBe(false);
+        // ロックは外れているか、持ち主の死んだロックとして残っている。どちらでも次の実行が取れる
+        const nextStop = path.join(tmp, `stop-next-${caseNo}`);
+        fs.writeFileSync(nextStop, "");
+        const next = spawnSync("bash", [tryHarness], { cwd: tmp, env: { ...baseEnv(), HOOK_LOCK: lock, HARNESS_STOP: nextStop }, encoding: "utf8" });
+        expect(next.stdout, next.stderr).toMatch(/^GOT reclaimed=[01] /m);
+      } finally {
+        fs.writeFileSync(stop, "");
+        await killGroup(p);
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it("見張りを消す rm が Ctrl-C で消す前に止められても、やり直して見張りを残さない", () => {
+    const lock = path.join(newLockDir(), "slot-1");
+    const r = spawnSync("bash", [releaseHarness], { cwd: tmp, env: { ...baseEnv(), HOOK_LOCK: lock, HOOK_RM_GUARD: "killed-once" }, encoding: "utf8" });
+    expect(r.stdout, r.stderr).toContain("RM_GUARD_KILLED");
+    expect(r.stdout).toContain("RELEASED");
+    expect(fs.existsSync(`${lock}.reclaim`)).toBe(false);
+    expect(fs.existsSync(lock)).toBe(false);
+  });
+
+  it(
+    "見張りを消した直後にシグナルで終わっても、そのあいだに別の実行が取った見張りは消さない (2 本が同時に回収に入らない)",
+    async () => {
+      const lock = path.join(newLockDir(), "slot-1");
+      const guard = `${lock}.reclaim`;
+      const stop = path.join(tmp, `stop-${caseNo}`);
+      const p = start(signalHarness, { ...baseEnv(), HARNESS_MODE: "release", HOOK_LOCK: lock, HARNESS_STOP: stop, HOOK_RM_GUARD: "pause" }, true);
+      try {
+        await waitFor(() => p.out().includes("GUARD_REMOVED"), "見張りを消す");
+        // 別の実行 (このテストのプロセス) が、空いた見張りを取る
+        const other = liveOwner();
+        placeGuard(guard, other);
+        signalGroup(p, "SIGTERM");
+        expect(await p.exited, p.out()).toBe(Number(constant("EXIT_SIGTERM")));
+        expect(fs.readFileSync(guard, "utf8")).toBe(other);
+        expect(fs.existsSync(lock)).toBe(false);
+      } finally {
+        fs.writeFileSync(stop, "");
+        await killGroup(p);
+        fs.rmSync(guard, { force: true });
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
 });
