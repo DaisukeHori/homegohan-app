@@ -107,7 +107,9 @@ afterAll(async () => {
 
 describe('#1432 health_insights への保存', () => {
   it('ルートと同じ行を service_role で insert すると成功し、本人の JWT で読める', async () => {
-    const rows = buildHealthInsightRows(owner.id, GENERATED);
+    // 期待値の期間と保存する行の期間を同じ時刻から作る (JST の 0 時をまたいでも食い違わないように)
+    const now = new Date();
+    const rows = buildHealthInsightRows(owner.id, GENERATED, now);
     expect(rows).toHaveLength(GENERATED.length);
 
     const { data: inserted, error } = await srAdmin.from('health_insights').insert(rows).select();
@@ -124,7 +126,7 @@ describe('#1432 health_insights への保存', () => {
     expect(listError).toBeNull();
     expect(listed).toHaveLength(GENERATED.length);
 
-    const { analysisDate, periodStart, periodEnd, periodType } = calculateHealthInsightPeriod();
+    const { analysisDate, periodStart, periodEnd, periodType } = calculateHealthInsightPeriod(now);
     const sleep = listed!.find((row) => row.insight_type === 'sleep');
     expect(sleep).toMatchObject({
       user_id: owner.id,
