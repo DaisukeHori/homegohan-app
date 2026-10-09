@@ -1,4 +1,4 @@
--- migration: 20261008150000_ai_consent_policy_version.sql
+-- migration: 20261008200300_ai_consent_policy_version.sql
 -- T15 (#1154 / #1133 / #1169): 外国の AI 事業者へのデータ提供について、同意の記録・確認・撤回の土台を作る
 --   (AI への送信は止めない。同意の強制は別タスク (T18) で、この migration では何も強制しない)
 --
@@ -40,7 +40,7 @@
 -- データの書き換え (UPDATE / DELETE): なし。列の追加・ポリシーの削除・権限の変更・索引の追加だけ。
 --
 -- 冪等: ADD COLUMN IF NOT EXISTS / DROP POLICY IF EXISTS / CREATE INDEX IF NOT EXISTS。REVOKE / GRANT は何度流しても同じ結果になる。
--- ロールバック: supabase/rollbacks/20261008150000_ai_consent_policy_version.down.sql
+-- ロールバック: supabase/rollbacks/20261008200300_ai_consent_policy_version.down.sql
 --   (Web のデプロイを戻したあとに流すこと。列を落とすと、記録済みの「同意した文面の版」が失われる)
 -- 確認: tests/integration/rls/external-data-consents.test.ts (15 件)。この migration の前は 5 件が失敗し、後は全件成功する。
 

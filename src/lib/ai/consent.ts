@@ -13,7 +13,7 @@
  *
  * 【書き込みは service role だけ】
  * external_data_consents の書き込み (INSERT / UPDATE) は、サーバーの API だけが service role で行う
- * (20261008150000_ai_consent_policy_version.sql が、クライアントからの INSERT のポリシーと権限を外した)。
+ * (20261008200300_ai_consent_policy_version.sql が、クライアントからの INSERT のポリシーと権限を外した)。
  * IP アドレスと User-Agent は、クライアントの申告ではなくリクエストのヘッダーから取る (extractClientIp / extractUserAgent)。
  * grantAiConsent / revokeAiConsent は、認証で確定した userId だけを渡して呼ぶこと
  * (リクエストの body / URL の値を userId に使わない。service role は RLS を通さないため)。

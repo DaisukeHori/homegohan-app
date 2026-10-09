@@ -221,7 +221,7 @@ CREATE POLICY "ext_consent_no_delete"
   ON external_data_consents FOR DELETE USING (false);
 ```
 
-> **実装メモ (2026-10、T15 / #1154 / #1133 / #1169。マイグレーション `20261008150000_ai_consent_policy_version.sql`)**
+> **実装メモ (2026-10、T15 / #1154 / #1133 / #1169。マイグレーション `20261008200300_ai_consent_policy_version.sql`)**
 >
 > 上の DDL は設計時のもの。実装では次のとおり変えた。
 >

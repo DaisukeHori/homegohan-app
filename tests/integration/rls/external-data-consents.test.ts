@@ -12,7 +12,7 @@
  *   - そこで同意・撤回は、サーバーの API (service role) だけが書く。IP アドレスと User-Agent は、クライアントの申告ではなく
  *     サーバーがリクエストから取る。クライアント (anon / authenticated) は、自分の行の SELECT だけができる。
  *
- * 期待する認可 (20261008150000_ai_consent_policy_version.sql の後):
+ * 期待する認可 (20261008200300_ai_consent_policy_version.sql の後):
  *   - 列 policy_version (同意した文面の版) がある
  *   - anon: 何も読み書きできない
  *   - ログインユーザー: 自分の行だけ SELECT できる。INSERT・UPDATE・DELETE は、自分の行にも他人の行にもできない
@@ -212,7 +212,7 @@ async function countRows(userId: string): Promise<number> {
 describe('external_data_consents: ログインユーザーは自分の行だけ読める', () => {
   it('X-1: 本人は自分の行を SELECT できる。同意した文面の版 (policy_version) も読める', async () => {
     const { ownerRowId } = await seed();
-    // 版は migration (20261008150000) で足した列。サーバーが同意を記録するときに入れる
+    // 版は migration (20261008200300) で足した列。サーバーが同意を記録するときに入れる
     const versioned = await srAdmin.from(TABLE).update({ policy_version: VERSION }).eq('id', ownerRowId);
     expect(versioned.error).toBeNull();
 

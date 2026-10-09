@@ -14,14 +14,19 @@
  * AI の API (/api/ai/analyze-fridge) はブラウザの通信を差し替えて (page.route) 本物は呼ばない。AI の API キーは要らない。
  * 同意の API (/api/ai/consent, /api/ai/consent/revoke) とデータベースは本物を使う。
  *
- * ユーザー: fixtures/fresh-user.ts の regularUser (test ごとに新しく作る。同意の行も localStorage も空の状態から始まる)。
- *   authedPage は同意画面を「あとで」にした状態で始まるので、この spec では使わない (fixtures/auth.ts, helpers/ai-consent.ts)。
+ * ユーザー: fixtures/fresh-user.ts の regularUser (test ごとに新しく作る。同意の行も空の状態から始まる)。
+ *   fresh-user の fixture と authedPage は、既定では同意画面を「あとで」にした状態で始まる (ほかの AI を使う spec が
+ *   この画面で止まらないようにするため。fixtures/fresh-user.ts, fixtures/auth.ts, helpers/ai-consent.ts)。
+ *   この spec は画面そのものを試すので、test.use({ aiConsentSnoozed: false }) で localStorage も空の状態から始める。
  *
  * 実行方法 (fixture が service_role で fresh user を作るため .env.local に SUPABASE_SERVICE_ROLE_KEY が必要):
  *   ローカル (ローカル Supabase を向いた .env.local):
  *     npx playwright test ai-consent-first-use
- *   next dev は初回コンパイルで遅いことがある。不安定なら npm run build && npm run start で起動し、
- *   PLAYWRIGHT_BASE_URL=http://localhost:3000 を付けて実行する (CI の e2e-local.yml と同じ)。
+ *   next dev は初回コンパイルで遅いことがある。さらに、Playwright の出力 (動画・スクリーンショット。既定は tests/e2e/.output) が
+ *   リポジトリの中にあると、dev server が再コンパイルを繰り返してページの読み込みが止まり、タイムアウトすることがあった。
+ *   dev server で動かすときは、出力先をリポジトリの外にする:
+ *     PLAYWRIGHT_BASE_URL=http://localhost:3000 npx playwright test ai-consent-first-use --output=/tmp/pw-out
+ *   それでも不安定なら npm run build && npm run start で起動して同じように実行する (CI の e2e-local.yml と同じ)。
  */
 import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures/fresh-user";
@@ -95,6 +100,8 @@ async function readConsentStatus(page: Page) {
 
 test.describe("外国の AI 事業者への提供の同意画面 (初回の AI 操作)", () => {
   test.setTimeout(240_000);
+  // 同意画面を「あとで」にした状態で始めない (既定の fixture の挙動を切る)
+  test.use({ aiConsentSnoozed: false });
 
   test("初回の AI 操作で同意画面が出る。「あとで」を押しても AI の操作は進み、サーバーには何も記録しない", async ({
     regularUser: page,

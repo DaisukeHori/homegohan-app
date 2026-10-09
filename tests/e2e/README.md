@@ -113,12 +113,16 @@ artifact には上げず、`tests/e2e/.output/` (失敗時のスクリーンシ�
 同意していない利用者が AI を初めて使うと、同意画面 (`data-testid="ai-consent-modal"`) が出て、「同意する」「あとで」のどちらかが押されるまで
 その操作が止まる (同意の有無で AI の呼び出しを止めてはいない。選べば必ず進む)。AI を使う spec が、この画面で止まらないよう、次のようにしている。
 
-- `fixtures/auth.ts` の `authedPage` (と `login()` / `newAuthedContext()`) は、同意画面を**「あとで」にした状態**でページを開く
-  (`helpers/ai-consent.ts` の `snoozeAiConsent`。localStorage に期限を入れるだけで、サーバーには何も書かない)。
-- 同意画面そのものを試す spec (`ai-consent-first-use.spec.ts`) は、`fixtures/fresh-user.ts` の `regularUser` (毎回新しく作るユーザー) を使う。
-  `authedPage` を使うなら `test.use({ aiConsentSnoozed: false })` にする。
-- `fixtures/fresh-user.ts` の fixture と、`@playwright/test` の `page` を自分でログインさせる spec は、「あとで」にならない。
+- `fixtures/auth.ts` の `authedPage` (と `login()` / `newAuthedContext()`) と、`fixtures/fresh-user.ts` のすべての fixture
+  (`regularUser` / `adminUser` / `tourPendingUser` など。組み込みの `page` を上書きしている) は、同意画面を**「あとで」にした状態**で
+  ページを開く (`helpers/ai-consent.ts` の `snoozeAiConsent`。localStorage に期限を入れるだけで、サーバーには何も書かない)。
+- 同意画面そのものを試す spec (`ai-consent-first-use.spec.ts`) は、`fixtures/fresh-user.ts` の `regularUser` (毎回新しく作るユーザー) を使い、
+  `test.use({ aiConsentSnoozed: false })` で「あとで」にしない。`authedPage` を使うときも同じ。
+- `@playwright/test` の `page` を自分でログインさせる spec は、「あとで」にならない。
   そこで AI を使う操作をするなら、`snoozeAiConsent(page.context())` を呼ぶか、出た画面の「あとで」(`data-testid="ai-consent-later"`) を押す。
+- ローカルで `next dev` に向けて実行するときは、`--output=/tmp/pw-out` のように Playwright の出力先 (動画・スクリーンショット) を
+  リポジトリの外にする。出力先がリポジトリの中 (既定の `tests/e2e/.output`) だと、dev server が再コンパイルを繰り返してページの読み込みが
+  止まり、`waitForResponse` などがタイムアウトすることがあった。本番ビルド (`npm run build && npm run start`) では起きない。
 
 ## NPM スクリプト
 

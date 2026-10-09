@@ -1,4 +1,4 @@
--- rollback: 20261008150000_ai_consent_policy_version.sql
+-- rollback: 20261008200300_ai_consent_policy_version.sql
 -- ⚠️ 戻すと次のことが起きる。緊急時の切り戻し専用。先に Web のデプロイ (同意画面・同意の API) を戻してから流すこと。
 --    - policy_version の列が消え、記録済みの「同意した文面の版」が失われる。
 --    - anon / authenticated がこのテーブルへ書き込めるようになる (INSERT は ext_consent_self_insert で自分の行だけ)。

@@ -15,6 +15,7 @@ import { createClient } from "@supabase/supabase-js";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
 import { generateTestPassword } from "../helpers/credentials";
+import { snoozeAiConsent } from "../helpers/ai-consent";
 
 // Node.js 20 は native WebSocket を持たないため ws パッケージを明示的に指定。
 // Supabase Realtime クライアントが WebSocket を必要とするが admin API のみ使うため
@@ -328,6 +329,15 @@ export type RoleUserFixtureValue = {
 
 type FreshUserFixtures = {
   /**
+   * 外国の AI 事業者への提供の同意画面 (T15 / #1154) を「あとで」にした状態でページを開く (既定 true)。
+   * 同意画面は、同意していない利用者が AI を初めて使うときに出て、選ぶまで操作が止まる。
+   * fresh user は同意が空の状態から始まるので、AI を使う spec (AI 相談・献立の生成・写真の解析など) が
+   * その画面で止まらないよう、既定では localStorage に「あとで」の期限を入れてから始める (サーバーには何も記録しない)。
+   * 同意画面そのものを試す spec だけ test.use({ aiConsentSnoozed: false }) にする。
+   */
+  aiConsentSnoozed: boolean;
+
+  /**
    * signup UI フロー検証用。
    * admin.generateLink で signup トークンを取得し /auth/callback 経由で確認済みにする。
    * use(page) 時点でログイン済み + /auth/verify か /onboarding に遷移した状態。
@@ -394,6 +404,17 @@ type FreshUserFixtures = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const test = base.extend<FreshUserFixtures>({
+  aiConsentSnoozed: [true, { option: true }],
+
+  /**
+   * page: 組み込みの page を、同意画面を「あとで」にした状態にして渡す (aiConsentSnoozed が true のとき)。
+   * 以下の fixture はすべてこの page を使うので、1 か所で全部に効く。ページを開く前 (最初の goto の前) に入れる。
+   */
+  page: async ({ page, aiConsentSnoozed }, use) => {
+    if (aiConsentSnoozed) await snoozeAiConsent(page.context());
+    await use(page);
+  },
+
   /**
    * freshUserPage: signup 直後のページ。
    * admin.generateLink (type: "signup") でトークンを取得し /auth/callback に直接 goto。
