@@ -94,7 +94,6 @@ const ALLOWLIST: Record<string, number> = {
   'src/app/api/catalog/products/[id]/route.ts': 1,
   'src/app/api/catalog/products/route.ts': 1,
   'src/app/api/comparison/rankings/route.ts': 1,
-  'src/app/api/comparison/trigger/route.ts': 2,
   'src/app/api/cron/process-menu-queue/route.ts': 2,
   'src/app/api/e2e/reset-onboarding/route.ts': 2,
   'src/app/api/experiments/[key]/assignment/route.ts': 1,
