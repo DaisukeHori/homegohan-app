@@ -7,6 +7,7 @@ import {
   LEGAL_CONSENT_PENDING_HEADER,
   buildLegalConsentNext,
   isLegalConsentEnforced,
+  isLegalConsentNoticeEnabled,
   resolveLegalConsent,
 } from '@/lib/legal-consent'
 
@@ -295,7 +296,8 @@ export async function updateSession(request: NextRequest) {
       // #1174: 利用規約・プライバシーポリシーの同意ゲート。
       // 同意済みの版が packages/shared の LEGAL_DOCUMENTS と食い違う (未同意・古い版に同意) サインイン中の利用者を、
       //   - LEGAL_CONSENT_ENFORCE=on のとき: 同意画面 /legal-consent へ回す (戻り先は next)
-      //   - それ以外 (既定): 通す。画面の上に「同意のお願い」のお知らせを出すだけで、誰も止めない
+      //   - LEGAL_CONSENT_NOTICE=on のとき (強制していない間): 通す。画面の上に「同意のお願い」のお知らせを出すだけ
+      //   - どちらも on でない (既定): 何もしない。お知らせも出さず、誰も止めない
       // /api/* はこの分岐の手前 (上の isApiRoute) で返っているので対象外。ほかの対象外 (規約・同意画面・認証の途中・
       // 問い合わせ・凍結・ハンズオンツアー・静的ファイル) は lib/legal-consent.ts の isLegalConsentExemptPath。
       // リダイレクトは画面の取得 (GET / HEAD) にだけ掛ける (POST を 307 で同意画面へ回しても、受け取れず失敗するだけのため)。
@@ -306,6 +308,7 @@ export async function updateSession(request: NextRequest) {
           pathname: request.nextUrl.pathname,
           accepted: profile,
           enforce: isLegalConsentEnforced(),
+          notice: isLegalConsentNoticeEnabled(),
         })
 
         if (legalDecision === 'redirect' && (request.method === 'GET' || request.method === 'HEAD')) {

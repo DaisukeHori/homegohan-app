@@ -3,8 +3,11 @@
  *
  * 同意済みの版 (user_profiles.terms_version_accepted / privacy_version_accepted) が packages/shared の
  * LEGAL_DOCUMENTS (いま有効な版) と食い違う利用者を、次のように扱う。
- *   - LEGAL_CONSENT_ENFORCE=on : 同意画面 /legal-consent?next=<元のパス> へ回す (GET / HEAD の画面だけ)
- *   - それ以外 (既定)          : 通す。サーバー側の画面へ「同意のお願い」を出すヘッダーを渡すだけ
+ *   - LEGAL_CONSENT_ENFORCE=on              : 同意画面 /legal-consent?next=<元のパス> へ回す (GET / HEAD の画面だけ)
+ *   - LEGAL_CONSENT_NOTICE=on (強制なし)     : 通す。サーバー側の画面へ「同意のお願い」を出すヘッダーを渡すだけ
+ *   - どちらも on でない (既定)              : 何もしない (ヘッダーも付けない)
+ *
+ * 2 つのフラグ × 同意の状態 × 画面 の組み合わせ表は middleware-legal-consent-matrix.test.ts。
  *
  * 判定の組み合わせ (版 × パス × フラグ) そのものは tests/legal-consent-gate.test.ts。
  * ここでは middleware を通した挙動を確かめる:
@@ -99,17 +102,73 @@ function mockGetUserRefreshingToken() {
   });
 }
 
-function setUp(enforce: string | undefined) {
+function setUp(enforce: string | undefined, notice: string | undefined = undefined) {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
   if (enforce !== undefined) vi.stubEnv('LEGAL_CONSENT_ENFORCE', enforce);
   else delete process.env.LEGAL_CONSENT_ENFORCE;
+  if (notice !== undefined) vi.stubEnv('LEGAL_CONSENT_NOTICE', notice);
+  else delete process.env.LEGAL_CONSENT_NOTICE;
   mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
   mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
 }
 
-describe('updateSession — 規約の再同意ゲート (#1174): 強制していない既定の挙動 (お知らせだけ)', () => {
-  beforeEach(() => setUp(undefined));
+describe('updateSession — 規約の再同意ゲート (#1174): 既定 (どちらのフラグも on でない) は何もしない', () => {
+  beforeEach(() => setUp(undefined, undefined));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('★未同意でも、止めず、「同意のお願い」のヘッダーも付けない (既定ではお知らせを出さない)', async () => {
+    mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED));
+
+    const res = await updateSession(pageRequest('/home'));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+    expect(forwardedPending(res)).toBeNull();
+    expect(overriddenHeaders(res)).not.toContain(PENDING_HEADER);
+  });
+
+  it.each([
+    ['未設定', undefined, undefined],
+    ['NOTICE=off', undefined, 'off'],
+    ['NOTICE が空', undefined, ''],
+    ['NOTICE=true (on 以外の値)', undefined, 'true'],
+    ['NOTICE=1 (on 以外の値)', 'off', '1'],
+    ['ENFORCE=off・NOTICE=off', 'off', 'off'],
+  ])('%s なら、未同意でもお知らせも同意画面もない', async (_name, enforce, notice) => {
+    setUp(enforce, notice);
+    mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED));
+
+    const res = await updateSession(pageRequest('/menus/weekly'));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+    expect(forwardedPending(res)).toBeNull();
+  });
+
+  it('プロフィールの行がまだ無い (新規登録したばかり) 人にも、何も出さない。従来どおり初期設定へ回る', async () => {
+    mockMaybeSingle.mockResolvedValue({ data: null, error: null });
+
+    const res = await updateSession(pageRequest('/home'));
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe('http://localhost/onboarding/welcome');
+    expect(forwardedPending(res)).toBeNull();
+  });
+
+  it('クライアントが送ってきた同名のヘッダーは、既定でも転送しない (お知らせを出させない)', async () => {
+    mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED));
+
+    const res = await updateSession(pageRequest('/home', { [PENDING_HEADER]: '1' }));
+
+    expect(res.status).toBe(200);
+    expect(forwardedPending(res)).toBeNull();
+    expect(overriddenHeaders(res)).not.toContain(PENDING_HEADER);
+  });
+});
+
+describe('updateSession — 規約の再同意ゲート (#1174): お知らせ (LEGAL_CONSENT_NOTICE=on・強制なし)', () => {
+  beforeEach(() => setUp(undefined, 'on'));
   afterEach(() => vi.unstubAllEnvs());
 
   it('未同意でも誰も止めない: リダイレクトせず、「同意のお願い」を出すヘッダーを画面へ渡す', async () => {
@@ -129,7 +188,7 @@ describe('updateSession — 規約の再同意ゲート (#1174): 強制してい
     ['off', 'off'],
     ['true (on 以外の値)', 'true'],
   ])('LEGAL_CONSENT_ENFORCE が %s でも、止めない', async (_name, value) => {
-    setUp(value);
+    setUp(value, 'on');
     mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED));
 
     const res = await updateSession(pageRequest('/menus/weekly'));
@@ -483,6 +542,19 @@ describe('updateSession — 規約の再同意ゲート (#1174): 同意済みの
 
   beforeEach(() => setUp('on'));
   afterEach(() => vi.unstubAllEnvs());
+
+  it('列が無い間は、お知らせ (LEGAL_CONSENT_NOTICE=on) も出さない', async () => {
+    setUp(undefined, 'on');
+    mockMaybeSingle
+      .mockResolvedValueOnce(columnMissing)
+      .mockResolvedValueOnce(consentProfile('columns-missing'));
+
+    const res = await updateSession(pageRequest('/home'));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+    expect(forwardedPending(res)).toBeNull();
+  });
 
   it('★列が無くて select が 42703 で失敗しても、列を除いた select でやり直し、強制 on でも同意ゲートだけを素通りさせる', async () => {
     mockMaybeSingle

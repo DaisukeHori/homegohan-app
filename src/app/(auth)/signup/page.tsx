@@ -18,9 +18,12 @@ function SignupContent() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   // #1174: 利用規約・プライバシーポリシーへの明示的な同意 (チェックするまで、どの登録方法のボタンも押せない)。
-  // 「続行することで同意したものとみなされる」というみなし同意をやめた。同意の記録 (版・日時) は、サインイン後の最初の
-  // リクエストで同意ゲート (lib/supabase/middleware.ts) が同意画面 /legal-consent へ回して取る。
-  // Google 登録・メール確認を経る登録・アプリ (WebView) から始めた登録のどれでも、同じゲートを通るため。
+  // 「続行することで同意したものとみなされる」というみなし同意をやめた。
+  // このチェックは登録のボタンを押せるようにするだけで、同意の記録 (版・日時) は残さない。記録は同意画面
+  // /legal-consent で同意したとき (POST /api/legal/accept) だけ残る。登録後に同意画面へ回すのは、同意ゲート
+  // (lib/supabase/middleware.ts) を強制にしたとき (環境変数 LEGAL_CONSENT_ENFORCE=on) だけで、既定では回さない。
+  // 既定ではお知らせも出さない (お知らせは LEGAL_CONSENT_NOTICE=on のときだけ)。
+  // 強制にすれば、Google 登録・メール確認を経る登録・アプリ (WebView) から始めた登録のどれでも、同じゲートを通る。
   const [agreedToLegal, setAgreedToLegal] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();

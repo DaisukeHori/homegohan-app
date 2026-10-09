@@ -3,7 +3,8 @@
 // src/app/legal-consent/LegalConsentForm.tsx
 // #1174: 利用規約・プライバシーポリシーへの同意画面 (改定時の再同意ゲート / 新規登録後の初回の同意)
 //
-// - 利用規約・プライバシーポリシーそれぞれに必須のチェックボックス (どちらかが未チェックの間は「同意して続ける」を押せない)
+// - 利用規約・プライバシーポリシーそれぞれに必須のチェックボックス (required と aria-required="true"。
+//   どちらかが未チェックの間は「同意して続ける」を押せない)
 // - 「同意して続ける」: POST /api/legal/accept で同意を記録し、元の画面 (next) へ戻る。記録は DB 関数が本人の行だけに行う
 // - 「同意しない」: ログアウトして、ご利用いただけないこと・保存データの削除の依頼先 (お問い合わせ) を案内する
 //
@@ -185,6 +186,10 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
                 <input
                   type="checkbox"
                   name={`agree-${type}`}
+                  // 同意は必須であることを、支援技術にも伝える。フォームは noValidate なので、ブラウザの検証で
+                  // 送信を止めることはしない (送れるかどうかは、従来どおり「同意して続ける」の無効化で決まる)
+                  required
+                  aria-required="true"
                   checked={agreed[type]}
                   onChange={(e) => setAgreed((current) => ({ ...current, [type]: e.target.checked }))}
                   disabled={busy}

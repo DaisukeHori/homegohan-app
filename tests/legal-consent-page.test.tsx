@@ -255,6 +255,28 @@ describe('/legal-consent フォーム (クライアント側)', () => {
     expect(submitButton().disabled).toBe(true);
   });
 
+  it('2 つのチェックボックスは、どちらも必須として示す (required と aria-required="true")', async () => {
+    await renderForm();
+
+    const boxes = checkboxes();
+    expect(boxes).toHaveLength(2);
+    for (const box of boxes) {
+      expect(box.required).toBe(true);
+      expect(box.hasAttribute('required')).toBe(true);
+      expect(box.getAttribute('aria-required')).toBe('true');
+    }
+  });
+
+  it('必須の印を付けても、フォームはブラウザの検証で止めない (noValidate)。送れるかどうかは「同意して続ける」の無効化で決まる', async () => {
+    await renderForm();
+
+    const form = submitButton().closest('form')!;
+    expect(form.noValidate).toBe(true);
+    expect(submitButton().disabled).toBe(true);
+    await checkBoth();
+    expect(submitButton().disabled).toBe(false);
+  });
+
   it('片方だけチェックしても押せない。両方チェックして初めて押せる。外すとまた押せない', async () => {
     await renderForm();
 

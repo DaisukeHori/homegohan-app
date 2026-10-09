@@ -96,7 +96,7 @@ export default function MainLayout({
 }: {
   children: React.ReactNode
   initialIsNativeApp?: boolean
-  /** #1174: 規約への同意が済んでいない (強制はしていない) とき、画面の上に「同意のお願い」を出す */
+  /** #1174: 規約への同意が済んでいない (お知らせは有効・強制はしていない) とき、画面の上に「同意のお願い」を出す */
   legalConsentPending?: boolean
 }) {
   const pathname = usePathname();

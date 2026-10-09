@@ -4,12 +4,15 @@
  * lib/supabase/middleware.ts が、サインイン中の利用者のプロフィール (すでに毎回読んでいる user_profiles の行) の
  * 「同意済みの版」を、packages/shared の LEGAL_DOCUMENTS (いま有効な版) と突き合わせて、次のどれにするかを決める。
  *
- *   none     何もしない (同意済み / ゲートの対象外のパス)
+ *   none     何もしない (同意済み / ゲートの対象外のパス / どちらのフラグも on でない)
  *   banner   通す。ただし画面の上に「同意のお願い」のお知らせを出す (非ブロッキング)
  *   redirect 同意画面 /legal-consent へ回す (next に元のパスを付ける)
  *
- * redirect になるのは、環境変数 LEGAL_CONSENT_ENFORCE=on のときだけ。未設定・それ以外のときは、未同意の人にも
- * banner を出すだけで、誰も止めない (強制を始める日はオーナーが決める。それまでは同意の記録を集めるだけ)。
+ * 2 つの環境変数で決まる (どちらも既定は off。明示的に on と書いたときだけ有効):
+ *   LEGAL_CONSENT_ENFORCE=on  未同意の人を redirect する (お知らせより優先)
+ *   LEGAL_CONSENT_NOTICE=on   強制していない間、未同意の人に banner を出す
+ * どちらも on でない既定では、未同意の人にも何も出さず、誰も止めない。同意の記録は、同意画面 /legal-consent を
+ * 開いて同意したときだけ残る (強制やお知らせを始める日はオーナーが決める)。
  *
  * ここは副作用のない関数だけを置く (Edge ランタイムの middleware から import されるので、Node 専用の API は使わない)。
  */
@@ -24,7 +27,7 @@ import { LEGAL_CONSENT_PATH, isAuthFlowPath, isLegalConsentPath, isPolicyPath } 
 export { LEGAL_CONSENT_PATH };
 
 /**
- * middleware が、未同意 (かつ強制していない) のときに、サーバー側の画面 (layout) へ渡すリクエストヘッダー。
+ * middleware が、未同意 (かつ強制しておらず、お知らせを有効にしている) のときに、サーバー側の画面 (layout) へ渡すリクエストヘッダー。
  * 値が '1' のときだけ「同意のお願い」のお知らせを出す。クライアントから送られてきた同名のヘッダーは
  * middleware が毎回捨ててから、必要なときだけ付け直す (利用者が自分の画面に出すお知らせを偽装できても害は無いが、
  * 「出ているかどうか」の根拠を middleware の判定だけにしておく)。
@@ -33,13 +36,33 @@ export const LEGAL_CONSENT_PENDING_HEADER = 'x-legal-consent-pending';
 
 export type LegalConsentDecision = 'none' | 'banner' | 'redirect';
 
+/** 同意ゲートの環境変数 (LEGAL_CONSENT_ENFORCE / LEGAL_CONSENT_NOTICE) を有効とみなす、ただ 1 つの値 */
+const LEGAL_CONSENT_FLAG_ON = 'on';
+
 /**
- * 強制 (同意画面へ回す) を有効にするか。環境変数 LEGAL_CONSENT_ENFORCE が on のときだけ true。
- * 未設定・off・空・その他の値はすべて false (誤って全員を止めないよう、明示的に on と書いたときだけ有効にする)。
+ * 同意ゲートの環境変数の値を読む (2 つのフラグで共有する。読み方を別々に実装しない)。
+ * on のときだけ true。未設定・off・空・その他の値 (true / 1 / yes など) はすべて false
+ * (誤って全員を止めたり、全員にお知らせを出したりしないよう、明示的に on と書いたときだけ有効にする)。
  * 大文字小文字と前後の空白は区別しない (Vercel の画面で ON と入れても効くように)。
  */
+export function isLegalConsentFlagOn(value: string | undefined): boolean {
+  return typeof value === 'string' && value.trim().toLowerCase() === LEGAL_CONSENT_FLAG_ON;
+}
+
+/**
+ * 強制 (同意画面へ回す) を有効にするか。環境変数 LEGAL_CONSENT_ENFORCE が on のときだけ true (既定は off)。
+ */
 export function isLegalConsentEnforced(value: string | undefined = process.env.LEGAL_CONSENT_ENFORCE): boolean {
-  return typeof value === 'string' && value.trim().toLowerCase() === 'on';
+  return isLegalConsentFlagOn(value);
+}
+
+/**
+ * 強制していない間に、未同意の人へ「同意のお願い」のお知らせを出すか。
+ * 環境変数 LEGAL_CONSENT_NOTICE が on のときだけ true (既定は off = お知らせを出さない)。
+ * サーバー側 (middleware) だけで読む。クライアントの部品へは、layout から props で渡す (NEXT_PUBLIC_ にしない)。
+ */
+export function isLegalConsentNoticeEnabled(value: string | undefined = process.env.LEGAL_CONSENT_NOTICE): boolean {
+  return isLegalConsentFlagOn(value);
 }
 
 /** パスが prefix そのもの、または prefix/ 以下か ('/legal' が '/legal-consent' や '/legalx' に当たらないように) */
@@ -87,12 +110,15 @@ export interface ResolveLegalConsentInput {
   accepted: AcceptedLegalVersions | null | undefined;
   /** LEGAL_CONSENT_ENFORCE=on か (isLegalConsentEnforced の結果) */
   enforce: boolean;
+  /** LEGAL_CONSENT_NOTICE=on か (isLegalConsentNoticeEnabled の結果)。強制しているときは見ない */
+  notice: boolean;
 }
 
 export function resolveLegalConsent(input: ResolveLegalConsentInput): LegalConsentDecision {
   if (hasAcceptedCurrentLegalDocuments(input.accepted)) return 'none';
   if (isLegalConsentExemptPath(input.pathname)) return 'none';
-  return input.enforce ? 'redirect' : 'banner';
+  if (input.enforce) return 'redirect';
+  return input.notice ? 'banner' : 'none';
 }
 
 /**

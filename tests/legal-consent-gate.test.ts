@@ -1,10 +1,12 @@
 /**
  * #1174 規約・プライバシーポリシーの再同意ゲートの判定 (lib/legal-consent.ts)
  *
- * 判定は「同意済みの版 × パス × 強制のフラグ (LEGAL_CONSENT_ENFORCE)」で決まる。
+ * 判定は「同意済みの版 × パス × 強制のフラグ (LEGAL_CONSENT_ENFORCE) × お知らせのフラグ (LEGAL_CONSENT_NOTICE)」で決まる。
  *   - 現行の版に同意済み                     -> none (何もしない)
  *   - 未同意 / 古い版 かつ ゲートの対象外のパス -> none
- *   - 未同意 / 古い版 かつ 対象のパス          -> 強制 on なら redirect (同意画面へ)、それ以外は banner (お知らせだけ)
+ *   - 未同意 / 古い版 かつ 対象のパス          -> 強制 on なら redirect (同意画面へ)、強制 off でお知らせ on なら banner、
+ *                                              どちらも off (既定) なら none
+ * 2 つのフラグの組み合わせを middleware を通して確かめる表は lib/supabase/__tests__/middleware-legal-consent-matrix.test.ts。
  *
  * 版の値そのものは検査しない (オーナーが書き換える)。LEGAL_DOCUMENTS から取った「現行の版」と、
  * それとは別の値の「古い版」の組み合わせで確かめる。
@@ -18,6 +20,8 @@ import {
   buildLegalConsentPath,
   isLegalConsentEnforced,
   isLegalConsentExemptPath,
+  isLegalConsentFlagOn,
+  isLegalConsentNoticeEnabled,
   resolveLegalConsent,
   resolveLegalConsentNext,
 } from '@/lib/legal-consent';
@@ -104,6 +108,51 @@ const LOOK_ALIKE_PATHS = [
   '/_nextx',
 ];
 
+const FLAG_ON_VALUES = ['on', 'ON', 'On', ' on ', 'on\n'];
+const FLAG_OFF_VALUES = [undefined, '', ' ', 'off', 'OFF', 'true', '1', 'yes', 'enabled', 'onn', 'on1', '0'];
+
+describe('isLegalConsentFlagOn (2 つのフラグで共有する読み方)', () => {
+  it.each(FLAG_ON_VALUES)('%j は有効', (value) => {
+    expect(isLegalConsentFlagOn(value)).toBe(true);
+  });
+
+  it.each(FLAG_OFF_VALUES)('%j は無効 (明示的に on と書いたときだけ有効)', (value) => {
+    expect(isLegalConsentFlagOn(value)).toBe(false);
+  });
+
+  it.each([...FLAG_ON_VALUES, ...FLAG_OFF_VALUES])(
+    '%j の読み方は、強制 (ENFORCE) とお知らせ (NOTICE) で同じ',
+    (value) => {
+      expect(isLegalConsentEnforced(value)).toBe(isLegalConsentFlagOn(value));
+      expect(isLegalConsentNoticeEnabled(value)).toBe(isLegalConsentFlagOn(value));
+    },
+  );
+});
+
+describe('isLegalConsentNoticeEnabled (LEGAL_CONSENT_NOTICE)', () => {
+  it('引数を省略すると環境変数 LEGAL_CONSENT_NOTICE を読む (未設定なら無効 = お知らせを出さない)', () => {
+    const original = process.env.LEGAL_CONSENT_NOTICE;
+    const originalEnforce = process.env.LEGAL_CONSENT_ENFORCE;
+    try {
+      delete process.env.LEGAL_CONSENT_NOTICE;
+      expect(isLegalConsentNoticeEnabled()).toBe(false);
+      process.env.LEGAL_CONSENT_NOTICE = 'on';
+      expect(isLegalConsentNoticeEnabled()).toBe(true);
+      process.env.LEGAL_CONSENT_NOTICE = 'off';
+      expect(isLegalConsentNoticeEnabled()).toBe(false);
+      // 強制のフラグは見ない (別の環境変数)
+      delete process.env.LEGAL_CONSENT_NOTICE;
+      process.env.LEGAL_CONSENT_ENFORCE = 'on';
+      expect(isLegalConsentNoticeEnabled()).toBe(false);
+    } finally {
+      if (original === undefined) delete process.env.LEGAL_CONSENT_NOTICE;
+      else process.env.LEGAL_CONSENT_NOTICE = original;
+      if (originalEnforce === undefined) delete process.env.LEGAL_CONSENT_ENFORCE;
+      else process.env.LEGAL_CONSENT_ENFORCE = originalEnforce;
+    }
+  });
+});
+
 describe('isLegalConsentEnforced (LEGAL_CONSENT_ENFORCE)', () => {
   it.each(['on', 'ON', 'On', ' on ', 'on\n'])('%j は有効', (value) => {
     expect(isLegalConsentEnforced(value)).toBe(true);
@@ -146,10 +195,21 @@ describe('isLegalConsentExemptPath', () => {
   });
 });
 
+/** 未同意 / 古い版の人が、ゲートの対象のパスを開いたときの判定 (フラグの組み合わせごと) */
+function expectedForGated(enforce: boolean, notice: boolean): 'redirect' | 'banner' | 'none' {
+  if (enforce) return 'redirect';
+  return notice ? 'banner' : 'none';
+}
+
 describe('resolveLegalConsent: 同意済みの版 × パス × フラグ', () => {
-  describe.each([true, false])('強制 (LEGAL_CONSENT_ENFORCE=on) = %s', (enforce) => {
+  describe.each([
+    [true, true],
+    [true, false],
+    [false, true],
+    [false, false],
+  ])('強制 (LEGAL_CONSENT_ENFORCE=on) = %s / お知らせ (LEGAL_CONSENT_NOTICE=on) = %s', (enforce, notice) => {
     it.each(GATED_PATHS)('現行の版に同意済みなら、%s でも何もしない', (pathname) => {
-      expect(resolveLegalConsent({ pathname, accepted: ACCEPTED.current, enforce })).toBe('none');
+      expect(resolveLegalConsent({ pathname, accepted: ACCEPTED.current, enforce, notice })).toBe('none');
     });
 
     describe.each([
@@ -162,15 +222,12 @@ describe('resolveLegalConsent: 同意済みの版 × パス × フラグ', () =>
       ['利用規約だけ同意 (プライバシーポリシーが未同意)', ACCEPTED.onlyTerms],
     ])('%s', (_name, accepted) => {
       it.each(EXEMPT_PATHS)('対象外の %s では何もしない', (pathname) => {
-        expect(resolveLegalConsent({ pathname, accepted, enforce })).toBe('none');
+        expect(resolveLegalConsent({ pathname, accepted, enforce, notice })).toBe('none');
       });
 
-      it.each([...GATED_PATHS, ...LOOK_ALIKE_PATHS])(
-        `対象の %s では ${enforce ? '同意画面へ回す (redirect)' : 'お知らせだけ出す (banner)'}`,
-        (pathname) => {
-          expect(resolveLegalConsent({ pathname, accepted, enforce })).toBe(enforce ? 'redirect' : 'banner');
-        },
-      );
+      it.each([...GATED_PATHS, ...LOOK_ALIKE_PATHS])(`対象の %s では ${expectedForGated(enforce, notice)}`, (pathname) => {
+        expect(resolveLegalConsent({ pathname, accepted, enforce, notice })).toBe(expectedForGated(enforce, notice));
+      });
     });
   });
 });
