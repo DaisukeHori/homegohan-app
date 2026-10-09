@@ -241,19 +241,33 @@ async function counters(userId: string): Promise<CounterRow[]> {
 const total = (rows: CounterRow[]) => rows.reduce((sum, row) => sum + row.count, 0);
 
 afterAll(async () => {
-  // 上限の行 -> ユーザー (計測・契約・プロフィールは CASCADE で消える) -> 家族 -> 組織 の順に消す
+  // 上限の行 -> 家族 -> ユーザー -> 組織 の順に消す。
+  //   - 家族を先に消す: family_groups.representative_id は auth.users への ON DELETE RESTRICT なので、
+  //     代表者のユーザーは、家族が残っていると消せない (メンバー行は CASCADE、プロフィールの family_id は SET NULL)。
+  //   - ユーザーを消すと、計測 (ai_usage_counters)・契約 (personal_subscriptions)・プロフィールは CASCADE で消える。
+  //   - 組織は、ユーザーのプロフィール (organization_id は SET NULL) が無くなってから消す。
+  // 消せなかったら、行が残ったことが分かるように失敗させる (黙って残さない)。
+  const failures: string[] = [];
+  const check = (label: string, error: { message: string } | null) => {
+    if (error) failures.push(`${label}: ${error.message}`);
+  };
+
   if (createdLimitPlanKeys.length > 0) {
-    await srAdmin.from('ai_plan_limits').delete().in('plan_key', createdLimitPlanKeys);
-  }
-  for (const id of createdUserIds) {
-    await srAdmin.auth.admin.deleteUser(id);
+    check('ai_plan_limits', (await srAdmin.from('ai_plan_limits').delete().in('plan_key', createdLimitPlanKeys)).error);
   }
   if (createdFamilyIds.length > 0) {
-    await srAdmin.from('family_groups').delete().in('id', createdFamilyIds);
+    // create_family_group が足した監査ログ (membership_audit) も消す
+    check('membership_audit', (await srAdmin.from('membership_audit').delete().in('scope_id', createdFamilyIds)).error);
+    check('family_groups', (await srAdmin.from('family_groups').delete().in('id', createdFamilyIds)).error);
+  }
+  for (const id of createdUserIds) {
+    check(`auth.users ${id}`, (await srAdmin.auth.admin.deleteUser(id)).error);
   }
   if (createdOrgIds.length > 0) {
-    await srAdmin.from('organizations').delete().in('id', createdOrgIds);
+    check('organizations', (await srAdmin.from('organizations').delete().in('id', createdOrgIds)).error);
   }
+
+  if (failures.length > 0) throw new Error(`テストが作った行を消せませんでした: ${failures.join(' / ')}`);
 }, 120_000);
 
 // ---------------------------------------------------------------
@@ -917,5 +931,7 @@ describe('#1177 G. クライアント (anon / authenticated) の権限とアカ�
     const { error } = await srAdmin.auth.admin.deleteUser(user.userId);
     expect(error).toBeNull();
     expect(await counters(user.userId)).toEqual([]);
+    // もう消えたので、afterAll の片付けの対象から外す
+    createdUserIds.splice(createdUserIds.indexOf(user.userId), 1);
   });
 });
