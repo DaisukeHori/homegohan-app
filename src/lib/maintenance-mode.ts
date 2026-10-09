@@ -11,7 +11,12 @@
  *   - /login と /auth/*。運営がログインし直せるように。ネイティブ認証ブリッジ (/auth/native-bridge) も通る
  *   - /terms と /privacy。利用規約とプライバシーポリシーは、いつでも読めるようにする (ストア審査に出す URL でもある)
  *   - 死活監視 /api/health、cron (/api/cron/*)、認証 API (/api/auth/*)、クライアントが状態を知るための /api/feature-flags
- *   - 静的ファイル (/_next/*、画像・フォント・CSS・JS など)。ミドルウェアの matcher がほとんどを外しているが、念のためここでも通す
+ *   - /_next/* (Next の静的ファイル)。ミドルウェアの matcher が外しているが、念のためここでも通す
+ *
+ * 静的ファイル (画像・manifest・robots・サービスワーカーなど) は、ミドルウェアの matcher (src/middleware.ts) が外していて、
+ * そもそもミドルウェアに届かない。ここで拡張子 (.json / .txt / .js / .css など) を見て通すことはしない:
+ * 動的なページのパス (/meals/abc.json のような、末尾が静的ファイルに見えるもの) まで、メンテナンス中の画面を通り抜けてしまうため。
+ * 静的ファイルを足すときは、matcher に足す (tests/health-middleware-exemption.test.ts と src/__tests__/lib/maintenance-mode.test.ts が見る)。
  *
  * 【止めない側に倒す (fail-open)】
  * maintenance_mode の読み出しに失敗した・行が無い・待ちきれなかったときは OFF として扱う (src/lib/feature-flags.ts)。
@@ -46,9 +51,6 @@ function isSameOrUnder(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(`${prefix}/`);
 }
 
-/** ページ (API 以外) の静的ファイル。ミドルウェアの matcher (src/middleware.ts) が外している拡張子より少し広く取る */
-const STATIC_FILE_PATTERN = /\.(?:svg|png|jpe?g|gif|webp|ico|css|js|map|txt|xml|json|webmanifest|woff2?|ttf|otf)$/i;
-
 /**
  * メンテナンス中でも止めないパスか。
  * pathname は URL の path 部分 (クエリを含まない)。
@@ -58,7 +60,7 @@ export function isMaintenanceExemptPath(pathname: string): boolean {
   if (isSameOrUnder(pathname, '/login') || isSameOrUnder(pathname, '/auth')) return true;
   // 利用規約・プライバシーポリシー
   if (isPolicyPath(pathname)) return true;
-  // 静的ファイル
+  // Next の静的ファイル (ミドルウェアの matcher が外しているが、念のため)
   if (isSameOrUnder(pathname, '/_next')) return true;
 
   if (pathname === '/api' || pathname.startsWith('/api/')) {
@@ -70,8 +72,8 @@ export function isMaintenanceExemptPath(pathname: string): boolean {
     );
   }
 
-  // 静的ファイルの拡張子は、API 以外のパスだけで通す (動的な API ルートの末尾に拡張子を付けて抜けられないように)
-  return STATIC_FILE_PATTERN.test(pathname);
+  // それ以外は止める。拡張子で静的ファイルかどうかは見ない (上の説明を参照)
+  return false;
 }
 
 /**

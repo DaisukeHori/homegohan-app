@@ -6,7 +6,8 @@
  *   - ページ: 503 の HTML (Retry-After 付き。ログイン画面へ回さない)
  *   - API:    503 の JSON { error: { code: 'MAINTENANCE_MODE', message } }
  * 止めないもの: 運営ロール / ログイン・認証 (/login・/auth/*) / 利用規約・プライバシーポリシー /
- *   死活監視 (/api/health)・cron・認証 API・フラグの取得 (/api/feature-flags) / 静的ファイル
+ *   死活監視 (/api/health)・cron・認証 API・フラグの取得 (/api/feature-flags) / /_next
+ *   (画像などの静的ファイルは、ミドルウェアの matcher が外していて、ここには届かない。拡張子で通す処理は無い)
  * フラグの読み出しの失敗は fail-open (止めない)。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -297,7 +298,6 @@ describe('updateSession — メンテナンスモード: ページ (#1148)', () 
     '/terms',
     '/privacy',
     '/_next/static/chunks/main.js',
-    '/logo.css',
   ])('%s はメンテナンス中でも止めない (未ログイン。フラグも読まない)', async (path) => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
 
@@ -324,6 +324,26 @@ describe('updateSession — メンテナンスモード: ページ (#1148)', () 
       expect(res.status).toBe(503);
     },
   );
+
+  // 静的ファイルは matcher がミドルウェアから外している。拡張子で通すことはしないので、
+  // 末尾が静的ファイルに見える動的なページのパスも、一般ユーザーはメンテナンス中の画面で止まる
+  it.each(['/meals/abc.json', '/invite/x.txt', '/family/members/x.js', '/pantry/x.css'])(
+    '%s のような、末尾が静的ファイルに見えるページのパスも止める (未ログイン)',
+    async (path) => {
+      mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+      const res = await updateSession(pageRequest(path));
+      expect(res.status).toBe(503);
+    },
+  );
+
+  it('ログイン中の一般ユーザーが /meals/abc.json を開いても止める (ページの描画まで進ませない)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockMaybeSingle.mockResolvedValue(profile());
+
+    const res = await updateSession(pageRequest('/meals/abc.json'));
+    expect(res.status).toBe(503);
+  });
 
   it('プロフィールを読めなかった (運営かどうか確かめられない) ときは、運営ではない人として止める', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });

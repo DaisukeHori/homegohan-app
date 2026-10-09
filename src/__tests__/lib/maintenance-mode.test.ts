@@ -65,12 +65,6 @@ describe('isMaintenanceExemptPath', () => {
     '/privacy',
     '/_next/static/chunks/main.js',
     '/_next/image',
-    '/favicon.ico',
-    '/robots.txt',
-    '/manifest.json',
-    '/sw.js',
-    '/og-image.svg',
-    '/fonts/noto.woff2',
     '/api/health',
     '/api/auth/session-sync',
     '/api/auth/native-bridge/code',
@@ -114,13 +108,22 @@ describe('isMaintenanceExemptPath', () => {
     }
   });
 
-  it('ミドルウェアの matcher が外している静的ファイル・死活監視は、こちらでも通す (どちらかを直しても食い違わない)', () => {
+  it('ミドルウェアの matcher が外している /_next と死活監視は、こちらでも通す (どちらかを直しても食い違わない)', () => {
+    const [matcher] = config.matcher;
+    const runsMiddleware = (path: string) => new RegExp(`^${matcher}$`).test(path);
+
+    for (const path of ['/_next/static/chunks/main.js', '/_next/image', '/api/health']) {
+      expect(runsMiddleware(path), `${path} は matcher が外している前提`).toBe(false);
+      // matcher を通らないので、メンテナンスの判定には届かないが、通る側に倒してある
+      expect(isMaintenanceExemptPath(path), `${path} はメンテナンス中も通す`).toBe(true);
+    }
+  });
+
+  it('静的ファイル (画像・manifest・robots・サービスワーカー) は matcher が外していて、ミドルウェアに届かない。拡張子で通す処理は持たない', () => {
     const [matcher] = config.matcher;
     const runsMiddleware = (path: string) => new RegExp(`^${matcher}$`).test(path);
 
     for (const path of [
-      '/_next/static/chunks/main.js',
-      '/_next/image',
       '/favicon.ico',
       '/manifest.json',
       '/robots.txt',
@@ -132,11 +135,24 @@ describe('isMaintenanceExemptPath', () => {
       '/anim.gif',
       '/hero.webp',
       '/icon.svg',
-      '/api/health',
+      '/_vercel/speed-insights/script.js',
     ]) {
-      expect(runsMiddleware(path), `${path} は matcher が外している前提`).toBe(false);
-      // matcher を通らないので、メンテナンスの判定には届かないが、通る側に倒してある
-      expect(isMaintenanceExemptPath(path), `${path} はメンテナンス中も通す`).toBe(true);
+      // ミドルウェアが走らないので、メンテナンスの対象にもならない (一般ユーザーにもそのまま届く)
+      expect(runsMiddleware(path), `${path} は matcher が外している`).toBe(false);
+    }
+  });
+
+  it('動的なページのパスは、末尾が静的ファイルに見えても止める (/meals/abc.json のようなパスで、メンテナンス中の画面を通り抜けさせない)', () => {
+    for (const path of [
+      '/meals/abc.json',
+      '/invite/x.txt',
+      '/family/members/x.js',
+      '/pantry/x.css',
+      '/home.xml',
+      '/fonts/noto.woff2',
+      '/chunk.js.map',
+    ]) {
+      expect(isMaintenanceExemptPath(path), path).toBe(false);
     }
   });
 });

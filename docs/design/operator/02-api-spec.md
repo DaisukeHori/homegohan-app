@@ -353,7 +353,9 @@ BAN 解除
 
 `active_user_count` は、そのフラグが今 ON になっているユーザーの数。アプリの判定 (`evaluateFlag`) を全ユーザーの
 `user_profiles` に対して実行して数える (OFF は 0、全員が対象で条件の無いフラグはユーザー総数)。
-ユーザーが 20,000 人を超えるときと、集計に失敗したときは `null` (一覧そのものは返す)。
+ユーザーが 20,000 人を超えるときは、1 人ずつ判定が要るフラグ (段階公開・条件つき) だけ `null`。
+全員が対象で条件の無いフラグは、20,000 人を超えても総数を返す (件数だけを数えるため)。
+集計に失敗したときは、すべてのフラグが `null` (一覧そのものは返す)。
 
 **レスポンス**:
 ```json
@@ -416,7 +418,9 @@ BAN 解除
 - API: 503 `{ "error": { "code": "MAINTENANCE_MODE", "message": "..." } }` (`Retry-After: 300`)
 
 止めないもの: 運営ロール、`/login`・`/auth/*` (運営がログインし直せるように)、`/terms`・`/privacy`、
-`/api/health` (死活監視)、`/api/auth/*`、`/api/cron/*`、`/api/feature-flags`、静的ファイル。
+`/api/health` (死活監視)、`/api/auth/*`、`/api/cron/*`、`/api/feature-flags`、`/_next/*`。
+画像・manifest・robots・サービスワーカーなどの静的ファイルは、ミドルウェアの `matcher` (`src/middleware.ts`) が外していて、そもそもミドルウェアが走らない。
+拡張子で通す処理は持たないので、動的なページのパスは、末尾が `.json` や `.txt` に見えても (`/meals/abc.json` など) 止める。
 フラグを読めない・行が無いときは止めない (OFF 扱い)。
 
 ### AI 相談の緊急停止 (`ai_chat_enabled` が OFF のとき)

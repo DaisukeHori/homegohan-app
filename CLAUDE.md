@@ -85,6 +85,7 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 - `isFeatureEnabled` は例外を投げない。行が無い・読み出しに失敗・待ちきれないときは既定値で答え、失敗は構造化ログに残す。値はサーバーのメモリに 30 秒覚えるので、切り替えの反映に最大 30 秒かかる (ミドルウェアは Edge、API route は Node で、メモリは別)。
 - `ai_chat_enabled` は AI 相談の緊急停止スイッチ。通常は ON のままで、AI への送信を止める機能ではない (オーナー判断)。AI 相談の API を足すときは、認証のあと・レート制限の前に `aiChatDisabledResponse` (`src/lib/ai/ai-chat-gate.ts`) を呼ぶ。`maintenance_mode` はメンテナンスモード (admin / super_admin は通す。ミドルウェアが判定する)。
 - 運営画面や E2E で既存のフラグを切り替えるテストは、本番の緊急スイッチを一瞬でも動かしてしまう。テストは専用のフラグを作って切り替え、終わったら消す。
+- 「ロール認可」の節の「service_role で読むときは対象を絞る条件を付ける」の例外が 1 か所ある。運営画面の一覧が返す `active_user_count` (`src/lib/super-admin/flag-active-users.ts`) は、`requireRole(['super_admin'])` を通したあとに、サービスロールで `user_profiles` の全行を読んで人数を数える。集計なので絞り込みは付けられない。読むのは判定に要る 5 列 (id / roles / organization_id / plan_key_cached / created_at) だけで、返すのは人数だけ (メール・名前は読まない・返さない)。ユーザーが増えて重くなったら、DB 側で数える RPC に置き換える。
 
 ### PostHog の既定ホスト
 

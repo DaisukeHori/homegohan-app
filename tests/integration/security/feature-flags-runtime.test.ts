@@ -100,6 +100,29 @@ async function getPage(pathname: string, jwt?: string): Promise<{ status: number
 
 const createSession = (jwt: string) => apiCall<ErrorBody & { session?: { id: string } }>('POST', '/api/ai/consultation/sessions', jwt, { title: 'AI相談' });
 
+/**
+ * next dev は、ルートを最初に呼ばれたときにコンパイルする。CI の初回は 1 本あたり数十秒かかることがあり、
+ * 最初のいくつかのテストの既定のタイムアウト (30 秒) に収まらないことがある。
+ * そのため、テストの前に、認証なしで 1 回ずつ呼んで先にコンパイルさせておく
+ * (認証で 401 になるだけで、副作用は無い。結果は見ない。AI は呼ばれない)。
+ */
+const WARM_UP_ROUTES = [
+  ['GET', '/api/feature-flags'],
+  ['GET', '/api/super-admin/flags'],
+  ['GET', '/api/pantry'],
+  ['POST', '/api/ai/consultation/sessions'],
+] as const;
+
+beforeAll(async () => {
+  for (const [method, path] of WARM_UP_ROUTES) {
+    try {
+      await apiCallNoAuth(method, path);
+    } catch {
+      // 温めるだけ。dev サーバーに届かないときは、あとのテストが失敗して知らせる
+    }
+  }
+}, 240_000);
+
 beforeAll(async () => {
   originalEnabled = await readFlags();
   [normalUser, adminUser, superAdminUser] = await Promise.all([
