@@ -7,6 +7,7 @@ export * from './progress-phases';
 export * from './date-utils';
 export * from './nutrition-planner';
 export * from './design-tokens';
+export * from './legal-versions';
 export type {
   Json,
   Database,

@@ -2,6 +2,31 @@
 
 このプロジェクトで必要な環境変数の設定方法を説明します。
 
+## 環境変数の検査（`npm run check:env`）
+
+このアプリが読む環境変数が、手元の `.env.local`（と実行中の環境変数）にそろっているかを確かめるコマンドです（#1182）。値は表示せず、変数の名前と、設定されているかどうかだけを出します。
+
+```bash
+npm run check:env                                  # .env.local → .env の順に読む
+npm run check:env -- --file=.env.production.local  # 別の環境の値を書いたファイルを確かめる
+npm run check:env -- --strict                      # 任意の変数の「値の形式の誤り」「組の片方だけの設定」も失敗にする
+```
+
+コマンドは `src/lib/env.ts`（TypeScript）を Node.js の型の除去で直接読み込むため、Node.js 22.18 以上が要ります（このリポジトリの `engines` は `22.x`）。古い Node.js では、その旨を案内して終了コード 2 で止まります。
+
+変数は 2 種類に分かれています。一覧とその説明は `src/lib/env.ts` にあります（コマンドもコードも、同じ一覧を使います）。
+
+| 種類 | 変数 | 足りないとき |
+|---|---|---|
+| **必須** | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | アプリが動きません。コードは、使う場面でエラー（`MissingEnvError`）を出し、500 になります。URL か anon キーが無いと、middleware がページと API（`/api/health` を除く）を汎用の 500 で止めます。`SUPABASE_SERVICE_ROLE_KEY` だけが無いと、それを使う API が 500 になります。応答（本文・ヘッダ・エラーページ）には変数名も値も出しません。本文は API によって、汎用の文（「処理中にエラーが発生しました」）・`MissingEnvError` の固定の文（変数名は入りません）・Next.js の既定のエラーのどれかです。どの変数が足りないかは、サーバーのログの `[env] missing required env: <変数名>` の行（どの経路でも出ます）と、`npm run check:env` で分かります。500 を `internalError()` で返す API と middleware では、構造化ログの `missing_env_name` にも残ります（console に出る構造化ログには必ず入ります。`app_logs` に書けるのは URL と `SUPABASE_SERVICE_ROLE_KEY` がそろっているとき、つまり anon キーだけが無いときです）。コマンドは終了コード 1 |
+| **任意** | メール（`RESEND_API_KEY`）・レート制限（`UPSTASH_REDIS_REST_*`）・課金（`STRIPE_SECRET_KEY`）・AI（`GOOGLE_AI_STUDIO_API_KEY`・`XAI_API_KEY`・`OPENAI_API_KEY`）・`CRON_SECRET`・モバイル認証ブリッジのスイッチ（`NATIVE_BRIDGE_*`）・規約の再同意のスイッチ（`LEGAL_CONSENT_*`）など | アプリは動きますが、その機能が使えなくなったり弱くなったりします。コマンドは「未設定です。…が起きます」と表示するだけです |
+
+- 任意の変数が足りないことで、本番を止めてはいけません。任意の変数を読む共通の関数（`getOptionalEnv()`。`src/lib/env.ts`）は、変数が無いときに例外を投げず、`undefined` を返して、プロセスごとに 1 回だけ警告をログに残します。メール送信・レート制限・Stripe・AI など、いまは各機能が `process.env` を直接読んでいる箇所が残っていて、ほかの作業と重ならないところから順にこの関数へ置き換えていきます。
+- 下の「必須の環境変数」に載っている `CRON_SECRET` は、「cron（定期処理）を動かすには必要」という意味です。`check:env` では任意に分類しています（無くてもアプリ本体は動き、cron の API が 503 を返すだけのため）。
+- `check:env` は **CI には組み込んでいません**（CI にはシークレットが無く、必須の変数がそろわないため）。デプロイ前や環境を作り直したときに、手元で実行してください。
+- 新しい環境変数を足すときは、`src/lib/env.ts` の一覧に足し（必須にするのは、無いとアプリが動かないものだけ）、`.env.example` にも書いてください（`tests/env-source-scan.test.ts` が、Web のコードが読む変数が一覧に無いとき・一覧の変数が `.env.example` に無いときに失敗します）。コードで `process.env.X!` と書くのは禁止です。
+- モバイルアプリ（`apps/mobile`）の変数は別です。下の「モバイル（Expo）での環境変数」を見てください。`EXPO_PUBLIC_SUPABASE_URL` と `EXPO_PUBLIC_SUPABASE_ANON_KEY` が無いビルドは、開発中は起動時にエラーを出し、リリースビルドでは「アプリの設定が不足しています」という画面を出します（接続先の無いままログイン画面を出し続けません）。
+
 ## 📋 必要な環境変数一覧
 
 ### 必須の環境変数
@@ -171,6 +196,11 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 - `EXPO_PUBLIC_SUPABASE_URL`
 - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
 
+この 2 つはビルドのときに埋め込まれます（EAS Build なら、EAS の環境変数に登録しておく）。入っていないビルドは、次のように動きます（#1182。以前は `https://placeholder.supabase.co` という存在しない接続先でクライアントを作り、ログインなどが原因の分かりにくいエラーで失敗し続けていました）。
+
+- 開発中（`npx expo start`・development ビルド）: アプリの起動時に、足りない変数名を書いたエラー（`[mobile] Missing env: EXPO_PUBLIC_SUPABASE_URL, …`）で止まります。
+- リリースビルド（preview・production）: クラッシュはさせず、「アプリの設定が不足しています」の画面を出し、足りない変数名を端末のログ（`console.error`）に残します。画面には変数名を出しません（開発ビルドでは画面にも出します）。このビルドは配布せず、環境変数を直して作り直してください。
+
 ### オプション（モバイル）
 - `EXPO_PUBLIC_API_BASE_URL` - Next.js API（BFF）を叩く場合（例: `https://homegohan.com`）
 - `EXPO_PUBLIC_APP_ENV` - `development | preview | production`
@@ -213,6 +243,28 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 - 未設定なら `https://homegohan.app` と `https://homegohan-app.vercel.app` だけを認めます。設定すると、この 2 つの代わりに、設定した値だけを認めます。`*` と `null` は書いても無視されます。
 - 普段は設定不要です。このアプリのブラウザやモバイルアプリが Edge Function を直接呼ぶ処理は無く、Next.js の API ルートがサーバーから呼んでいます（サーバーからの呼び出しは CORS の対象外です）。自社の別ドメインのページから直接呼ぶ処理を足すときだけ設定してください。
 - バッチ専用の関数（`aggregate-org-stats` など）には、この設定に関係なく CORS を付けません。
+
+### 任意の環境変数: 規約への再同意の強制（`LEGAL_CONSENT_ENFORCE`）
+
+利用規約・プライバシーポリシーへの同意を、画面を開くたびに確かめる仕組み（#1174）のスイッチです。Vercel の環境変数に設定します。
+
+- 確かめるもの: 利用者ごとに記録された「同意済みの版」（`user_profiles.terms_version_accepted` / `privacy_version_accepted`）が、`packages/shared/src/legal-versions.ts` の `LEGAL_DOCUMENTS`（いま有効な版）と同じか。同意の証跡（いつ・どの版に・どの IP と端末から）は `terms_acceptances` に残ります。
+- 未設定、または `on` 以外（既定）: 誰も止めません。同意が済んでいない人の画面の上にお知らせを出すかどうかは、次の `LEGAL_CONSENT_NOTICE` で決まります（既定は出しません）。
+- `on`: 同意が済むまで、画面を開くと同意画面（`/legal-consent`）へ回します。同意すると元の画面に戻ります。次は回しません: API、利用規約（`/terms`）、プライバシーポリシー（`/privacy`）、特定商取引法の表記（`/legal`）、問い合わせ（`/contact`）、凍結の案内（`/frozen`）、認証の途中の画面（`/auth/*`。アプリの認証ブリッジを含む）、ハンズオンツアー（`/handson-tour`）。
+- 同意しない人は、同意画面の「同意しない」でログアウトでき、データの削除は問い合わせフォームから依頼する案内が出ます。
+- 強制を始める前に決めること（オーナー）: ①版番号と施行日と同意文言（弁護士の確認。いまの値は仮置き）②強制を始める日。③始める前に、お知らせだけの期間（`LEGAL_CONSENT_NOTICE=on`）を置くかどうか。
+- 改定のたびにやること: `LEGAL_DOCUMENTS` の `version` と `effectiveDate` を書き換えて出す。版が変わると、同意済みの人も含めて、全員に再同意を求めます（版を変えずに文面だけ直すと、再同意は求めません）。
+- 戻し方: 環境変数を消す（または `off` にする）と、再デプロイ後に同意画面へ回さなくなります。記録済みの同意は残ります。
+
+### 任意の環境変数: 規約への同意のお知らせ（`LEGAL_CONSENT_NOTICE`）
+
+同意が済んでいない人に、画面の上で「同意のお願い」を出すかどうかのスイッチです（#1174）。Vercel の環境変数に設定します。値の読み方は `LEGAL_CONSENT_ENFORCE` と同じです（`on` のときだけ有効。大文字小文字と前後の空白は区別しません）。
+
+- 未設定、または `on` 以外（既定）: 出しません。未同意の人にも何も表示せず、誰も止めません。この間、同意の記録が残るのは、同意画面（`/legal-consent`）を開いて同意した人だけです。
+- `on`: 強制（`LEGAL_CONSENT_ENFORCE=on`）していない間、同意が済んでいない人の `(main)` の画面の上に、同意画面へのリンクつきのお知らせを出します。使うのは止めません。お知らせは規約・プライバシーポリシー・同意画面・ログインや新規登録の画面などには出ません。
+- `LEGAL_CONSENT_ENFORCE=on` のときは、この設定によらず同意画面へ回します（お知らせは出しません）。
+- サーバー側（middleware）だけで読みます。`NEXT_PUBLIC_` は付けません。
+- 戻し方: 環境変数を消す（または `off` にする）と、再デプロイ後にお知らせを出さなくなります。
 
 ---
 

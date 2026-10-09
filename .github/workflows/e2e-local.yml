@@ -7,6 +7,9 @@ name: e2e-local
 # - テストユーザー (e2e-user-01〜10@homegohan.test) は実行ごとにローカルの DB に作る。
 #   パスワードは実行ごとにランダムに作り、ログには出さない (マスクする)。
 # - AI を使う 02-meal-photo / 03-ai-advisor は、AI の API キーを持たないため対象外。
+# - 規約・プライバシーポリシーの再同意ゲート (#1174。legal-consent-gate.spec.ts) は、既定 (3000。強制なし・お知らせなし)、
+#   強制あり (3001。LEGAL_CONSENT_ENFORCE=on)、お知らせあり (3002。LEGAL_CONSENT_NOTICE=on) の 3 つのサーバーで確かめる
+#   (後ろの手順を参照)。
 # - Playwright のトレースと失敗時のページスナップショットは、入力したパスワードを平文で含むため取らない
 #   (--trace off / PLAYWRIGHT_NO_COPY_PROMPT=1)。HTML レポートも同じ理由で artifact に上げない。
 
@@ -95,11 +98,60 @@ jobs:
           tests/e2e/04-menu-page.spec.ts
           tests/e2e/05-shopping-list.spec.ts
           tests/e2e/public-policy-pages.spec.ts
+          tests/e2e/legal-consent-gate.spec.ts
+
+      # 規約・プライバシーポリシーの再同意ゲート (#1174) の「強制あり」(LEGAL_CONSENT_ENFORCE=on) の挙動は、
+      # 同じビルドを on でもう 1 つ別のポート (3001) に起動して確かめる (環境変数はサーバーの起動時に読まれる)。
+      # 上のサーバー (3000。どちらのフラグも無し) では、既定の挙動 (お知らせも出さず、誰も止めない)・サインアップ画面・版の表示を確かめた。
+      # 上のサーバーを強制ありで起動しないのは、共通のテストユーザー (同意の記録が無い) が同意画面へ回され、01 / 04 / 05 が動かなくなるため。
+      - name: Start a second app instance with LEGAL_CONSENT_ENFORCE=on (port 3001)
+        env:
+          LEGAL_CONSENT_ENFORCE: "on"
+        run: |
+          nohup npx next start -p 3001 > /tmp/next-start-enforced.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -s -o /dev/null http://localhost:3001/login; then break; fi
+            sleep 2
+          done
+          curl -s -o /dev/null -w 'GET /login (LEGAL_CONSENT_ENFORCE=on) -> %{http_code}\n' http://localhost:3001/login
+
+      - name: Run Playwright tests (consent gate, LEGAL_CONSENT_ENFORCE=on)
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:3001
+          # spec が、強制あり / なしのどちらを確かめるかを決めるために見る (サーバー側と同じ値にする)
+          LEGAL_CONSENT_ENFORCE: "on"
+          E2E_USER_EMAIL: e2e-user-01@homegohan.test
+          PLAYWRIGHT_NO_COPY_PROMPT: "1"
+        run: npx playwright test --trace off tests/e2e/legal-consent-gate.spec.ts
+
+      # 「お知らせあり」(LEGAL_CONSENT_NOTICE=on。強制なし) の挙動も、同じビルドを別のポート (3002) に起動して確かめる。
+      # 既定ではお知らせを出さないので、3000 のサーバーでは確かめられない。
+      - name: Start a third app instance with LEGAL_CONSENT_NOTICE=on (port 3002)
+        env:
+          LEGAL_CONSENT_NOTICE: "on"
+        run: |
+          nohup npx next start -p 3002 > /tmp/next-start-notice.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -s -o /dev/null http://localhost:3002/login; then break; fi
+            sleep 2
+          done
+          curl -s -o /dev/null -w 'GET /login (LEGAL_CONSENT_NOTICE=on) -> %{http_code}\n' http://localhost:3002/login
+
+      - name: Run Playwright tests (consent notice, LEGAL_CONSENT_NOTICE=on)
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:3002
+          # spec が、どの検証をするかを決めるために見る (サーバー側と同じ値にする)
+          LEGAL_CONSENT_NOTICE: "on"
+          E2E_USER_EMAIL: e2e-user-01@homegohan.test
+          PLAYWRIGHT_NO_COPY_PROMPT: "1"
+        run: npx playwright test --trace off tests/e2e/legal-consent-gate.spec.ts
 
       - name: Show logs on failure
         if: failure()
         run: |
           echo "::group::next start log"; tail -n 300 /tmp/next-start.log || true; echo "::endgroup::"
+          echo "::group::next start log (LEGAL_CONSENT_ENFORCE=on)"; tail -n 300 /tmp/next-start-enforced.log || true; echo "::endgroup::"
+          echo "::group::next start log (LEGAL_CONSENT_NOTICE=on)"; tail -n 300 /tmp/next-start-notice.log || true; echo "::endgroup::"
           echo "::group::containers"; docker ps -a || true; echo "::endgroup::"
 
       - if: always()
