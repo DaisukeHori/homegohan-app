@@ -6,14 +6,28 @@ name: security
 #   gitleaks            [止める]   PR で増えたコミット / main への push で、キーやパスワードが入っていないかを調べる。
 #                                  非公開のリポジトリでも動く。見る範囲は「今回増えたコミット」だけで、過去の履歴は見ない
 #                                  (履歴に残っている過去の指摘で、関係のない PR を落とさないため)。
+#                                  マージコミットそのものの差分 (競合の解決など) は、PR では見ない。squash マージで main に入るときは
+#                                  PR 全体が 1 つのコミットになるので、main への push の検査で見られる。
 #                                  誤検知は .gitleaks.toml に足す (書き方はそのファイルの先頭)。
-#   npm-audit           [止めない] `npm audit` の結果を Summary に出す。next / shell-quote / tar に critical が残っている間は
-#                                  赤くなってしまうので、continue-on-error にしてある。critical が 0 件になったら外す。
+#   npm-audit           [止めない] `npm audit` の結果を Summary に出す。next / shell-quote / tar に critical が残っている間は、
+#                                  失敗しても止めない。止めない設定 (continue-on-error) は、ジョブではなく npm audit の「ステップ」に付ける。
+#                                  ジョブに付けると、ワークフロー全体は通っても、そのジョブの check run が失敗 (赤い ×) のまま残る。
+#                                  すると、すべての PR・main・週次の Checks が失敗と表示され、毎日の整合性チェック
+#                                  (scripts/lib/consistency-check.mjs) も、止まっている PR をすべて「赤のまま」に数えてしまう。
+#                                  ステップに付ければ、ジョブの check run は緑のままで、::warning:: の注釈と Summary は残る。
+#                                  critical が 0 件になったら、ステップの continue-on-error を外して、止める検査に切り替える。
 #   dependency-review   [止める]   PR で依存パッケージを増やす・上げるときに、high 以上の既知の脆弱性がある版を入れていないかを調べる。
+#                                  Dependabot のまとめ PR が、脆弱性の残る版 (例: next 14.2.x の別のパッチ) に上げると赤くなる。仕様どおり。
+#                                  運用で詰まるようなら、Dependabot の PR だけ警告にとどめる (warn-only)・allow-ghsas で個別に許す、などを検討する。
 #   codeql              [止めない] ソースコード (JavaScript / TypeScript) の脆弱性を調べ、結果を Security タブに出す。週 1 回の定期実行もある。
-#                                  この 2 つは、リポジトリが公開の間だけ動く (github.event.repository.private == false)。
-#                                  非公開にすると GitHub Advanced Security (有料) が無いと使えないので、自動でスキップされる。
-#                                  非公開のまま運用すると決めたら、この 2 つのジョブは消してよい。
+#                                  ジョブそのものは、アラートが見つかっても失敗しない。ただし、コードスキャンの結果を受け取ると、
+#                                  PR に「Code scanning results」という別の check run が付き、その PR で新しい重大なアラート
+#                                  (high 以上 / error) が増えると赤くなる。マージを止める設定にはしていないが、
+#                                  毎日の整合性チェックは、この check run が赤い PR も「赤のまま」に数える。
+#
+#   codeql と dependency-review は、リポジトリが公開の間だけ動く (github.event.repository.private == false)。
+#   非公開にすると GitHub Advanced Security (有料) が無いと使えないので、自動でスキップされる。
+#   非公開のまま運用すると決めたら、この 2 つのジョブは消してよい。
 #
 # 注意:
 #   - Dependabot が作る PR には、Actions のシークレットが渡されない。このワークフローはシークレットを使わないので、
@@ -136,8 +150,8 @@ jobs:
 
   npm-audit:
     name: npm audit (non-blocking)
-    # critical が残っている間は、止めずに結果だけ見せる。critical が 0 件になったら、この行を消して止める検査に切り替える
-    continue-on-error: true
+    # ここ (ジョブ) には continue-on-error を付けない。付けると、このジョブの check run が失敗 (赤い ×) のまま残る。
+    # 止めない設定は、下の npm audit のステップに付けている (理由は冒頭のコメント)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -150,6 +164,9 @@ jobs:
       # npm audit は package-lock.json だけで動く (npm ci は要らない)。
       # --omit=dev: 本番で動く依存だけを見る。--audit-level=critical: critical があると終了コードが 1 になる
       - name: npm audit (production dependencies, critical)
+        # critical が残っている間は、失敗してもジョブを止めない (ジョブの check run は緑のまま)。
+        # critical が 0 件になったら、この 1 行を消して、止める検査に切り替える
+        continue-on-error: true
         run: |
           report="${RUNNER_TEMP}/npm-audit.json"
           status=0
@@ -180,8 +197,9 @@ jobs:
 
   codeql:
     name: CodeQL
-    # Dependabot の PR はソースが変わらない (権限も読み取りだけで結果を送れない) ので動かさない。
-    # fork からの PR も、結果を送る権限が無いので動かさない
+    # Dependabot の PR は、ソースコードを変えない (変えるのは package.json / package-lock.json とワークフローの YAML だけ。
+    # CodeQL が調べるのは JavaScript / TypeScript のソース) ので動かさない。
+    # fork からの PR は、結果を Security タブに送る権限 (security-events: write) が無いので動かさない
     if: >-
       github.event.repository.private == false
       && github.actor != 'dependabot[bot]'

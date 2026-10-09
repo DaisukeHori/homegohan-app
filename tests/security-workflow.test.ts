@@ -21,7 +21,14 @@ import { describe, expect, it } from 'vitest';
 const ROOT = process.cwd();
 const WORKFLOW_DIR = path.join(ROOT, '.github', 'workflows');
 
-type Step = { name?: string; uses?: string; run?: string; with?: Record<string, unknown>; env?: Record<string, unknown> };
+type Step = {
+  name?: string;
+  uses?: string;
+  run?: string;
+  with?: Record<string, unknown>;
+  env?: Record<string, unknown>;
+  'continue-on-error'?: boolean;
+};
 type Job = {
   name?: string;
   if?: string;
@@ -68,12 +75,18 @@ function onlyFiresForPathsDependabotNeverTouches(workflow: Workflow): boolean {
   return Array.isArray(paths) && paths.length > 0 && paths.every((p: string) => p.startsWith('supabase/migrations/'));
 }
 
-/** pull_request で起動し、シークレットを使うのに、Dependabot の PR を外していないジョブ (workflow:job) を返す */
+/**
+ * pull_request で起動し、シークレットを使うのに、Dependabot の PR を外していないジョブ (workflow:job) を返す。
+ * ワークフロー直下 (env: など、jobs の外) でシークレットを参照しているときは、すべてのジョブが使えてしまうので、
+ * すべてのジョブを対象にする。
+ */
 function findUnguardedSecretJobs(file: string, workflow: Workflow): string[] {
   if (!('pull_request' in triggersOf(workflow))) return [];
   if (onlyFiresForPathsDependabotNeverTouches(workflow)) return [];
-  return Object.entries(workflow.jobs)
-    .filter(([, job]) => usesRepositorySecrets(job) && !(job.if ?? '').includes(BOT_GUARD))
+  const { jobs, ...workflowLevel } = workflow;
+  const sharedSecrets = usesRepositorySecrets(workflowLevel as unknown as Job);
+  return Object.entries(jobs)
+    .filter(([, job]) => (sharedSecrets || usesRepositorySecrets(job)) && !(job.if ?? '').includes(BOT_GUARD))
     .map(([id]) => `${file}:${id}`);
 }
 
@@ -233,13 +246,26 @@ describe('.github/workflows/security.yml', () => {
 
   describe('npm audit (止めない参考情報)', () => {
     const job = workflow.jobs['npm-audit'];
+    const auditStep = step('npm-audit', 'npm audit (production dependencies, critical)');
 
-    it('continue-on-error で、失敗しても PR を止めない', () => {
-      expect(job['continue-on-error']).toBe(true);
+    // ジョブに continue-on-error を付けると、ワークフロー全体は通るが、そのジョブの check run は失敗 (赤い ×) のまま残る。
+    // すると、すべての PR の Checks が赤くなり、毎日の整合性チェック (scripts/lib/consistency-check.mjs) も、
+    // 止まっている PR を「赤のまま」に数える。止めない設定は、ステップに付ける (ステップなら、ジョブの check run は緑になる)
+    it('ジョブには continue-on-error を付けない (check run が赤い × のまま残るため)', () => {
+      expect(job['continue-on-error']).toBeUndefined();
+    });
+
+    it('npm audit のステップには continue-on-error を付ける (失敗しても、ジョブと PR を止めない)', () => {
+      expect(auditStep['continue-on-error']).toBe(true);
+    });
+
+    it('continue-on-error を付けたステップは npm audit だけ (checkout などの失敗まで隠さない)', () => {
+      const names = job.steps!.filter((s) => s['continue-on-error'] !== undefined).map((s) => s.name);
+      expect(names).toEqual([auditStep.name]);
     });
 
     it('本番で動く依存だけを、critical の基準で調べる', () => {
-      const run = step('npm-audit', 'npm audit (production dependencies, critical)').run!;
+      const run = auditStep.run!;
       expect(run).toContain('npm audit --omit=dev --audit-level=critical');
       expect(run).toContain('scripts/npm-audit-summary.mjs');
     });
@@ -277,6 +303,23 @@ describe('.github/workflows/security.yml', () => {
       expect(init.with?.languages).toBe('javascript-typescript');
       expect(job.permissions).toEqual({ actions: 'read', contents: 'read', 'security-events': 'write' });
     });
+  });
+});
+
+describe('PR の Checks を赤く残さない', () => {
+  // ジョブ単位の continue-on-error は、ワークフロー全体の失敗を防ぐだけで、そのジョブの check run は失敗 (赤い ×) のまま残る。
+  // すると、その PR の Checks は失敗と表示され、gh pr checks も失敗を返し、毎日の整合性チェック
+  // (scripts/lib/consistency-check.mjs の classifyOpenPullRequests) は、止まっている PR を「赤のまま」に数える。
+  // 失敗しても止めたくないものは、止めたくないステップに continue-on-error を付ける (ジョブの check run は緑になる)
+  it('pull_request で動くワークフローのジョブに、ジョブ単位の continue-on-error を付けない (止めたくないステップに付ける)', () => {
+    const offenders = workflowFiles().flatMap((file) => {
+      const workflow = loadWorkflow(file);
+      if (!('pull_request' in triggersOf(workflow))) return [];
+      return Object.entries(workflow.jobs)
+        .filter(([, job]) => job['continue-on-error'] !== undefined)
+        .map(([id]) => `${file}:${id}`);
+    });
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -370,6 +413,40 @@ jobs:
           TOKEN: \${{ secrets.SOME_PRODUCTION_TOKEN }}
 `) as Workflow;
     expect(findUnguardedSecretJobs('sample.yml', pushOnly)).toEqual([]);
+
+    // ワークフロー直下 (jobs の外) の env: でシークレットを参照していると、すべてのジョブが使える。
+    // シークレットをジョブの中で書いていなくても、外していないジョブは見つかる
+    const workflowEnv = yaml.load(`
+on:
+  pull_request:
+env:
+  TOKEN: \${{ secrets.SOME_PRODUCTION_TOKEN }}
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo lint
+  deploy:
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo deploy
+`) as Workflow;
+    expect(findUnguardedSecretJobs('sample.yml', workflowEnv)).toEqual(['sample.yml:lint']);
+
+    // ワークフロー直下で GITHUB_TOKEN だけを使うのは問題ない
+    const workflowEnvTokenOnly = yaml.load(`
+on:
+  pull_request:
+env:
+  GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo lint
+`) as Workflow;
+    expect(findUnguardedSecretJobs('sample.yml', workflowEnvTokenOnly)).toEqual([]);
   });
 });
 
@@ -417,6 +494,7 @@ describe('.gitleaks.toml (誤検知の除外は、値を狭く指定する)', ()
     'it-1306-cron-secret',
     '5-1-analyzing-or-result',
     'vitamin_b12_ug',
+    'dummy-api-key-for-test-0123456789',
   ])('確かめたダミーの値は除外する: %s', (value) => {
     expect(allowed(value)).toBe(true);
   });
@@ -427,6 +505,7 @@ describe('.gitleaks.toml (誤検知の除外は、値を狭く指定する)', ()
     'WrongPass2026xy',
     'x-it-1306-cron-secret',
     'vitamin_b12_ug_extra',
+    'dummy-api-key-for-test-01234567890',
     'Zq8mR2vL5nT7xK1dF4hJ9bW3',
   ])('少しでも違う値や、ランダムに見える値は除外しない: %s', (value) => {
     expect(allowed(value)).toBe(false);

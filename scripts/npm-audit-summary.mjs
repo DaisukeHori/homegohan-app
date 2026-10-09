@@ -95,8 +95,8 @@ export function renderAuditSummary(report) {
           '> critical が 0 件になったら、止める検査に切り替えます。',
         ]
       : [
-          '> critical の脆弱性は 0 件です。`.github/workflows/security.yml` の npm-audit ジョブの `continue-on-error` を外して、',
-          '> PR を止める検査に切り替えられます。',
+          '> critical の脆弱性は 0 件です。`.github/workflows/security.yml` の npm-audit ジョブにある、npm audit のステップの',
+          '> `continue-on-error` を外して、PR を止める検査に切り替えられます。',
         ]),
     '',
     '| 重大度 | 件数 |',

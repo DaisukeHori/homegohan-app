@@ -36,6 +36,7 @@ regexes = [
 #   it-1306-cron-secret                結合テスト用のダミーの Cron 認証値
 #   5-1-analyzing-or-result            スクリーンショットのファイル名
 #   vitamin_b12_ug                     栄養素の項目名 (key: "vitamin_b12_ug" の形が API キーに見えた)
+#   dummy-api-key-for-test-0123456789  メール送信のテスト (send.test.ts) の、ログに出ないことを確かめるための目印のダミー
 [[allowlists]]
 description = "テスト用のダミーの値と栄養素の項目名 (generic-api-key の誤検知)"
 targetRules = ["generic-api-key"]
@@ -46,4 +47,5 @@ regexes = [
   '''^it-1306-cron-secret$''',
   '''^5-1-analyzing-or-result$''',
   '''^vitamin_b12_ug$''',
+  '''^dummy-api-key-for-test-0123456789$''',
 ]
