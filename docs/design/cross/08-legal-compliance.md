@@ -766,7 +766,7 @@ $$);
      DB の URL が指す本人のファイル (失敗したら削除しない)
 5. auth.users を削除 (auth.admin.deleteUser)
    - public 側のデータは FK の ON DELETE CASCADE / SET NULL で削除・匿名化される
-     (auth.users を指す外部キーに NO ACTION は無い。20261008150100_auth_users_fk_on_delete.sql)
+     (auth.users を指す外部キーに NO ACTION は無い。20261008200400_auth_users_fk_on_delete.sql)
 6. 200 { success: true }
    - クライアントはサインアウトして、ログイン前の画面へ戻る
    - (今後追加) 削除完了メールを送る (#1152、T20)

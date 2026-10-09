@@ -4,7 +4,7 @@
  * 問題: auth.users を指す外部キーのうち 33 本は ON DELETE の指定が無く (= NO ACTION)、参照する行が 1 つでも残っていると
  * auth.admin.deleteUser が外部キー違反 (23503) で失敗した。退会 API は 10 テーブルだけを事前に掃除していて、
  * support_tickets / email_delivery_logs / coupon_redemptions / nps_surveys / gdpr_deletion_requests などが漏れていた。
- * 修正: migration 20261008150100_auth_users_fk_on_delete.sql が、本人だけの記録は CASCADE、サポート・会計・運営者の参照は
+ * 修正: migration 20261008200400_auth_users_fk_on_delete.sql が、本人だけの記録は CASCADE、サポート・会計・運営者の参照は
  * SET NULL (列を NULL を許す形にして) に張り直し、重複していた admin_audit_logs_admin_id_fkey を外した。
  *
  * 確認すること (DB のカタログ。データは作らない。実際に退会して消えること・残ることは account-deletion.test.ts):
@@ -14,7 +14,7 @@
  *   D. 張り直した 32 本が、決めたとおりの動作 (CASCADE / SET NULL) になっている。admin_audit_logs の actor_id を指す外部キーは 1 本だけ
  *   E. CASCADE で消える表を指す NO ACTION の外部キーは、同じ削除で一緒に消える行からだけ参照されている (許可リスト)
  *   F. coupon_redemptions の CHECK は anonymized_at で緩めてある。トリガーが user_id を外す更新で anonymized_at を入れる
- *   G. prepare_account_deletion は service_role だけが実行できる
+ *   G. prepare_account_deletion は service_role だけが実行できる (トリガー関数 coupon_redemptions_mark_anonymized は誰にも直接実行させない)
  *   H. メールアドレスらしい列 (列名に mail を含む) が、退会時の扱いを決めた一覧と一致する (新しい列を足したら扱いを決める)
  *
  * 修正前 (migration を流す前) に流すと A・D・F・G が失敗する。
@@ -352,6 +352,27 @@ describe('#1175 G. prepare_account_deletion の実行権限', () => {
       select exists (
         select 1 from pg_catalog.pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) as acl
         where p.oid = 'public.prepare_account_deletion(uuid)'::regprocedure and acl.grantee = 0
+      ) as has_public
+    `);
+    expect(publicGrant[0].has_public).toBe(false);
+  });
+
+  it('トリガー関数 coupon_redemptions_mark_anonymized は、誰にも直接実行させない (PUBLIC / anon / authenticated / service_role に EXECUTE が無い)', async () => {
+    const rows = await pgQuery<{ role: string; allowed: boolean }>(`
+      select r.role, has_function_privilege(r.role, 'public.coupon_redemptions_mark_anonymized()', 'EXECUTE') as allowed
+      from (values ('anon'), ('authenticated'), ('service_role')) as r(role)
+      order by r.role
+    `);
+    expect(Object.fromEntries(rows.map((row) => [row.role, row.allowed]))).toEqual({
+      anon: false,
+      authenticated: false,
+      service_role: false,
+    });
+
+    const publicGrant = await pgQuery<{ has_public: boolean }>(`
+      select exists (
+        select 1 from pg_catalog.pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) as acl
+        where p.oid = 'public.coupon_redemptions_mark_anonymized()'::regprocedure and acl.grantee = 0
       ) as has_public
     `);
     expect(publicGrant[0].has_public).toBe(false);

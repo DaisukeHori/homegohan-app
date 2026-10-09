@@ -110,7 +110,7 @@ Web の画面で利用者がログアウトするときは、`clearUserScopedLoc
 退会の本体は `src/lib/account-deletion.ts` の `deleteAccount()` (#1175)。`POST /api/account/delete` も、今後の確認リンク方式 (T20) も、これを呼ぶだけにする。route に手順を書き足さない。失敗は `ACCOUNT_DELETE_FAILED` (`request_id` つき。DB の生のエラー文は返さない) で返し、詳細は `src/lib/db-logger.ts` で `app_logs` に残す。
 
 - **`auth.users` を指す外部キーには、必ず `ON DELETE` を書く。** `NO ACTION` のままだと、参照する行が 1 件でも残っている利用者・運営者の `auth.admin.deleteUser` が外部キー違反で失敗する。本人だけの記録は `CASCADE`、サポート・会計・運営者の記録は行を残して `SET NULL` (列は NULL を許す形にする)。`tests/integration/security/auth-users-fk-on-delete.test.ts` が検査する。
-- 退会後も行が残る表に、利用者の生のメールアドレスを入れる列を足したら、`prepare_account_deletion` (migration `20261008150100`) で伏せるか、伏せない理由を同じテストの一覧 (H) に書く。
+- 退会後も行が残る表に、利用者の生のメールアドレスを入れる列を足したら、`prepare_account_deletion` (migration `20261008200400`) で伏せるか、伏せない理由を同じテストの一覧 (H) に書く。
 - 利用者のファイルを置く Storage は、先頭のフォルダを `<user_id>/` にする (`src/lib/storage-paths.ts`)。退会はこのフォルダを丸ごと消す (`src/lib/account-deletion-storage.ts`)。それ以外の場所に置くと、DB の URL から辿れるものだけが消える。
 
 ### エラー境界 (画面の描画中の例外を受ける)

@@ -1,4 +1,4 @@
--- migration: 20261008150100_auth_users_fk_on_delete.sql
+-- migration: 20261008200400_auth_users_fk_on_delete.sql
 -- 退会 (auth.admin.deleteUser) が外部キーで失敗しないようにし、残す記録からは個人を特定できないようにする (#1175)
 --
 -- 背景:
@@ -71,7 +71,8 @@
 --     関数の中では呼び出し元を確認しない: EXECUTE 権限 (service_role だけ) が唯一の境界。
 --     呼ぶのは、ログイン済みの本人を確認した退会 API (src/lib/account-deletion.ts) だけ。
 --   - 新しい関数は Supabase の既定権限で anon / authenticated / service_role に EXECUTE が自動付与され、PUBLIC にも付く。
---     引数の型まで含めた完全形で REVOKE する (20261007160800 と同じ理屈)。
+--     引数の型まで含めた完全形で REVOKE する (20261007160800 と同じ理屈)。prepare_account_deletion は service_role にだけ GRANT し直し、
+--     トリガー関数 coupon_redemptions_mark_anonymized は誰にも GRANT しない (トリガーとして動くときは EXECUTE を確認されない)。
 --
 -- 既存データへの影響:
 --   - 既存の行を書き換える UPDATE / DELETE 文は無い (データの修復はしない)。外部キーを張り直すときに既存の行を検証するだけで、
@@ -85,10 +86,10 @@
 --
 -- 冪等: ADD COLUMN IF NOT EXISTS / DROP NOT NULL / DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT / CREATE OR REPLACE FUNCTION /
 --   DROP TRIGGER IF EXISTS + CREATE TRIGGER。2 回続けて流しても同じ結果になる。
--- 適用順: migration は version 順にマージする (この version: 20261008150100)。退会 API のコードと同じ PR。
+-- 適用順: migration は version 順にマージする (この version: 20261008200400)。退会 API のコードと同じ PR。
 --   コードが migration より先に出ると、prepare_account_deletion が無いため退会は ACCOUNT_DELETE_FAILED (500) で止まる
 --   (何も消えない。migration が入れば再試行できる)。
--- ロールバック: supabase/rollbacks/20261008150100_auth_users_fk_on_delete.down.sql
+-- ロールバック: supabase/rollbacks/20261008200400_auth_users_fk_on_delete.down.sql
 -- 確認: tests/integration/security/auth-users-fk-on-delete.test.ts / tests/integration/security/account-deletion.test.ts /
 --       tests/integration/security/account-delete-route.test.ts
 
@@ -123,7 +124,10 @@ ALTER TABLE public.coupon_redemptions
     CHECK (user_id IS NOT NULL OR organization_id IS NOT NULL OR anonymized_at IS NOT NULL);
 
 -- user_id が NOT NULL → NULL に変わる更新 (外部キーの ON DELETE SET NULL が行う更新) で、anonymized_at を自動で入れる。
--- 関数は SECURITY INVOKER (他の表を読まない)。トリガーとして動くときは EXECUTE 権限を確認されないので、権限は付け替えない。
+-- 関数は SECURITY INVOKER (他の表を読まない)。
+-- トリガーとして動くときは EXECUTE 権限を確認されない (確認されるのは CREATE TRIGGER の時だけ) ので、
+-- 新しい関数に Supabase の既定で付く EXECUTE (PUBLIC / anon / authenticated / service_role) は外しておく
+-- (membership_audit のトリガー関数 audit_organization_invite_created と同じ扱い。関数を直接呼ぶ口を作らない)。
 CREATE OR REPLACE FUNCTION public.coupon_redemptions_mark_anonymized()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -137,6 +141,8 @@ BEGIN
   RETURN NEW;
 END
 $function$;
+
+REVOKE ALL ON FUNCTION public.coupon_redemptions_mark_anonymized() FROM PUBLIC, anon, authenticated, service_role;
 
 DROP TRIGGER IF EXISTS trg_coupon_redemptions_mark_anonymized ON public.coupon_redemptions;
 CREATE TRIGGER trg_coupon_redemptions_mark_anonymized

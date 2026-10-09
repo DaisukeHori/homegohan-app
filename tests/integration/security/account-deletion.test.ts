@@ -2,7 +2,7 @@
  * #1175 退会 (deleteAccount = POST /api/account/delete の本体) の結合テスト
  *
  * 外部キーに「ON DELETE の指定が無い」(NO ACTION) 表に行がある利用者・運営者は、auth.admin.deleteUser が外部キー違反 (23503) で
- * 失敗していた。migration 20261008150100_auth_users_fk_on_delete.sql と src/lib/account-deletion.ts で直した。
+ * 失敗していた。migration 20261008200400_auth_users_fk_on_delete.sql と src/lib/account-deletion.ts で直した。
  *
  * このテストは、本物のローカル Supabase (DB・Auth・Storage) に対して次を確かめる:
  *   A. 外部キーのある全ての表 (NO ACTION だった 28 テーブル + SET NULL / CASCADE の主な表) に行を作ってから、
@@ -675,7 +675,7 @@ describe('#1175 退会: 外部キーのある全ての表に行がある状態�
   it('ログ (app_logs) にメールアドレスも user_id も載らない。成功のログが 1 行残る', async () => {
     let logs: Array<{ message: string; user_id: string | null; metadata: unknown; error_message: string | null }> = [];
     // db-logger は非同期で書くので、現れるまで少し待つ
-    for (let attempt = 0; attempt < 20 && logs.length === 0; attempt += 1) {
+    for (let attempt = 0; attempt < 40 && logs.length === 0; attempt += 1) {
       logs = await pgQuery(
         `select message, user_id, metadata, error_message from public.app_logs where request_id = ${q(requestId)}`,
       );
