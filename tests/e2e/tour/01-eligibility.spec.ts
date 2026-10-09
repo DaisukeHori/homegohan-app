@@ -2,296 +2,114 @@
  * tests/e2e/tour/01-eligibility.spec.ts
  *
  * /api/handson-tour/status API のレスポンス reason 検証。
- * onboarding 未完 / 完了 / 既存活動有り / admin / スキップ済 / 通常新規
+ * 未ログイン / onboarding 未完 / 完了 / 既存活動有り / admin / スキップ済 / 完了済 / 通常新規
  *
  * 注意: 実 API を叩く E2E。API モックは使用しない。
+ * ブラウザは使わず、ユーザーの JWT を Bearer で渡して直接呼ぶ (モバイルアプリと同じ呼び方)。
+ * 以前は「API が未実装の可能性」などの理由で test.skip にしていたが、API は実在し、ローカルの
+ * Supabase に対して動く。失敗は skip にせず、ステータスと本文を付けて落とす (#846)。
  */
 
-import { test, expect } from "@playwright/test";
-import { cleanupTestUser, generateTestEmail, signupViaApi } from "./helpers";
-import * as path from "path";
-import { config as dotenvConfig } from "dotenv";
-
-dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-
-/** サービスロール経由で JWT を取得する (admin 操作用) */
-async function getUserToken(email: string, password: string): Promise<string | null> {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
-  try {
-    const resp = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!resp.ok) return null;
-    const data = await resp.json() as Record<string, unknown>;
-    return (data.access_token as string) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/** service_role 経由でユーザーの onboarding_completed_at を設定する */
-async function setOnboardingCompleted(userId: string, value: string | null): Promise<void> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
-  await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?id=eq.${userId}`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      Prefer: "return=minimal",
-    },
-    body: JSON.stringify({ onboarding_completed_at: value }),
-  });
-}
-
-/** service_role 経由でユーザーの handson_tour_skipped_at を設定する */
-async function setTourSkipped(userId: string, value: string | null): Promise<void> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
-  await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?id=eq.${userId}`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      Prefer: "return=minimal",
-    },
-    body: JSON.stringify({ handson_tour_skipped_at: value }),
-  });
-}
-
-/** service_role 経由でユーザーの handson_tour_completed_at を設定する */
-async function setTourCompleted(userId: string, value: string | null): Promise<void> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
-  await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?id=eq.${userId}`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      Prefer: "return=minimal",
-    },
-    body: JSON.stringify({ handson_tour_completed_at: value }),
-  });
-}
-
-/** service_role 経由でユーザーの roles を設定する */
-async function setUserRoles(userId: string, roles: string[]): Promise<void> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
-  await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?id=eq.${userId}`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      Prefer: "return=minimal",
-    },
-    body: JSON.stringify({ roles }),
-  });
-}
-
-/** ユーザー jwt でステータス API を叩く */
-async function fetchTourStatus(
-  token: string,
-  baseURL: string,
-): Promise<{ should_show: boolean; reason: string } | null> {
-  try {
-    const resp = await fetch(`${baseURL}/api/handson-tour/status`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Cookie: "",
-      },
-    });
-    if (!resp.ok) return null;
-    return await resp.json() as { should_show: boolean; reason: string };
-  } catch {
-    return null;
-  }
-}
-
-const TEST_PASSWORD = "E2eTourUser2026!";
+import { appBaseUrl, test, expect, fetchTourStatus, getAccessToken, insertRow, selectRows } from "./helpers";
 
 test.describe("Tour - Eligibility API", () => {
   test.setTimeout(60_000);
 
-  test("onboarding 未完のユーザーは reason=onboarding_not_completed", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-eligi-noob");
-    const userId = await signupViaApi(email, TEST_PASSWORD);
-    if (!userId) {
-      test.skip(true, "signup API が利用不可");
-      return;
-    }
+  test("未ログインは 401 (unauthorized)", async ({ baseURL }) => {
+    const res = await fetchTourStatus(appBaseUrl(baseURL));
 
-    try {
-      // onboarding_completed_at を null のままにする
-      await setOnboardingCompleted(userId, null);
-
-      const token = await getUserToken(email, TEST_PASSWORD);
-      if (!token) {
-        test.skip(true, "JWT 取得不可");
-        return;
-      }
-
-      const baseURL = page.url().includes("localhost") ? "http://localhost:3000" : (process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000");
-      const status = await fetchTourStatus(token, baseURL);
-
-      // API が存在しない場合はスキップ
-      if (!status) {
-        test.skip(true, "/api/handson-tour/status が未実装の可能性あり");
-        return;
-      }
-
-      expect(status.should_show).toBe(false);
-      expect(status.reason).toBe("onboarding_not_completed");
-    } finally {
-      await cleanupTestUser(userId);
-    }
+    expect(res.status, JSON.stringify(res.body)).toBe(401);
+    expect(res.body).toMatchObject({ error: { code: "unauthorized" } });
   });
 
-  test("onboarding 完了済のユーザーは reason=eligible (通常新規)", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-eligi-new");
-    const userId = await signupViaApi(email, TEST_PASSWORD);
-    if (!userId) {
-      test.skip(true, "signup API が利用不可");
-      return;
-    }
+  test("onboarding 未完のユーザーは reason=onboarding_not_completed", async ({ createUser, baseURL }) => {
+    const user = await createUser("e2e-tour-eligi-noob", { onboarding_completed_at: null });
 
-    try {
-      // onboarding 完了状態にする
-      await setOnboardingCompleted(userId, new Date().toISOString());
+    const res = await fetchTourStatus(appBaseUrl(baseURL), await getAccessToken(user));
 
-      const token = await getUserToken(email, TEST_PASSWORD);
-      if (!token) {
-        test.skip(true, "JWT 取得不可");
-        return;
-      }
-
-      const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
-      const status = await fetchTourStatus(token, baseURL);
-
-      if (!status) {
-        test.skip(true, "/api/handson-tour/status が未実装の可能性あり");
-        return;
-      }
-
-      expect(status.should_show).toBe(true);
-      expect(status.reason).toBe("eligible");
-    } finally {
-      await cleanupTestUser(userId);
-    }
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ should_show: false, reason: "onboarding_not_completed" });
   });
 
-  test("ハンズオンツアー完了済ユーザーは reason=already_completed", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-eligi-done");
-    const userId = await signupViaApi(email, TEST_PASSWORD);
-    if (!userId) {
-      test.skip(true, "signup API が利用不可");
-      return;
-    }
+  test("onboarding 完了済のユーザーは reason=eligible (通常新規)", async ({ createUser, baseURL }) => {
+    const user = await createUser("e2e-tour-eligi-new");
 
-    try {
-      await setOnboardingCompleted(userId, new Date().toISOString());
-      await setTourCompleted(userId, new Date().toISOString());
+    const res = await fetchTourStatus(appBaseUrl(baseURL), await getAccessToken(user));
 
-      const token = await getUserToken(email, TEST_PASSWORD);
-      if (!token) {
-        test.skip(true, "JWT 取得不可");
-        return;
-      }
-
-      const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
-      const status = await fetchTourStatus(token, baseURL);
-
-      if (!status) {
-        test.skip(true, "/api/handson-tour/status が未実装の可能性あり");
-        return;
-      }
-
-      expect(status.should_show).toBe(false);
-      expect(status.reason).toBe("already_completed");
-    } finally {
-      await cleanupTestUser(userId);
-    }
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({
+      should_show: true,
+      reason: "eligible",
+      completed_at: null,
+      skipped_at: null,
+    });
   });
 
-  test("スキップ済ユーザーは reason=already_skipped", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-eligi-skip");
-    const userId = await signupViaApi(email, TEST_PASSWORD);
-    if (!userId) {
-      test.skip(true, "signup API が利用不可");
-      return;
-    }
+  test("ハンズオンツアー完了済ユーザーは reason=already_completed", async ({ createUser, baseURL }) => {
+    const completedAt = new Date().toISOString();
+    const user = await createUser("e2e-tour-eligi-done", { handson_tour_completed_at: completedAt });
 
-    try {
-      await setOnboardingCompleted(userId, new Date().toISOString());
-      await setTourSkipped(userId, new Date().toISOString());
+    const res = await fetchTourStatus(appBaseUrl(baseURL), await getAccessToken(user));
 
-      const token = await getUserToken(email, TEST_PASSWORD);
-      if (!token) {
-        test.skip(true, "JWT 取得不可");
-        return;
-      }
-
-      const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
-      const status = await fetchTourStatus(token, baseURL);
-
-      if (!status) {
-        test.skip(true, "/api/handson-tour/status が未実装の可能性あり");
-        return;
-      }
-
-      expect(status.should_show).toBe(false);
-      expect(status.reason).toBe("already_skipped");
-    } finally {
-      await cleanupTestUser(userId);
-    }
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ should_show: false, reason: "already_completed" });
+    // 完了日時は DB の値がそのまま返る
+    const { completed_at } = res.body as { completed_at: string };
+    expect(new Date(completed_at).getTime()).toBe(new Date(completedAt).getTime());
   });
 
-  test("admin ロールユーザーは reason=admin_role", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-eligi-admin");
-    const userId = await signupViaApi(email, TEST_PASSWORD);
-    if (!userId) {
-      test.skip(true, "signup API が利用不可");
-      return;
-    }
+  test("スキップ済ユーザーは reason=already_skipped", async ({ createUser, baseURL }) => {
+    const skippedAt = new Date().toISOString();
+    const user = await createUser("e2e-tour-eligi-skip", { handson_tour_skipped_at: skippedAt });
 
-    try {
-      await setOnboardingCompleted(userId, new Date().toISOString());
-      await setUserRoles(userId, ["user", "admin"]);
+    const res = await fetchTourStatus(appBaseUrl(baseURL), await getAccessToken(user));
 
-      const token = await getUserToken(email, TEST_PASSWORD);
-      if (!token) {
-        test.skip(true, "JWT 取得不可");
-        return;
-      }
-
-      const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
-      const status = await fetchTourStatus(token, baseURL);
-
-      if (!status) {
-        test.skip(true, "/api/handson-tour/status が未実装の可能性あり");
-        return;
-      }
-
-      expect(status.should_show).toBe(false);
-      expect(status.reason).toBe("admin_role");
-    } finally {
-      await cleanupTestUser(userId);
-    }
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ should_show: false, reason: "already_skipped" });
+    const { skipped_at } = res.body as { skipped_at: string };
+    expect(new Date(skipped_at).getTime()).toBe(new Date(skippedAt).getTime());
   });
 
-  // TODO: 既存活動有り (non-sandbox meals あり) のテストは meal 挿入ヘルパーが必要なため
-  // 実装後に追加する。現状 reason=existing_user_auto_skip を返す条件の検証は別 PR で対応。
-  test.skip("既存活動有りユーザーは reason=existing_user_auto_skip (未実装)", async () => {
-    // TODO: service_role 経由で meals テーブルに is_sandbox=false の行を挿入してから
-    // status API を叩いて reason を検証する
+  test("admin ロールユーザーは reason=admin_role", async ({ createUser, baseURL }) => {
+    const user = await createUser("e2e-tour-eligi-admin", { roles: ["user", "admin"] });
+
+    const res = await fetchTourStatus(appBaseUrl(baseURL), await getAccessToken(user));
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ should_show: false, reason: "admin_role" });
+  });
+
+  test("既存活動有りユーザーは reason=existing_user_auto_skip (以後は already_skipped)", async ({
+    createUser,
+    baseURL,
+  }) => {
+    const user = await createUser("e2e-tour-eligi-existing");
+    // ツアーのお試し (is_sandbox = true) ではない、本物の食事の記録がある = すでに使っているユーザー。
+    // user_has_non_sandbox_activity() が user_daily_meals の is_sandbox = false の行を見る
+    await insertRow("user_daily_meals", {
+      user_id: user.id,
+      day_date: new Date().toISOString().slice(0, 10),
+      is_sandbox: false,
+    });
+    const token = await getAccessToken(user);
+    const url = appBaseUrl(baseURL);
+
+    const first = await fetchTourStatus(url, token);
+
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    expect(first.body).toMatchObject({ should_show: false, reason: "existing_user_auto_skip" });
+    const { skipped_at } = first.body as { skipped_at: string | null };
+    expect(skipped_at).not.toBeNull();
+
+    // 判定したときに、スキップ済みとして DB にも記録される (次からはツアーを出さない)
+    const [profile] = await selectRows<{ handson_tour_skipped_at: string | null }>(
+      "user_profiles",
+      `id=eq.${user.id}&select=handson_tour_skipped_at`,
+    );
+    expect(profile.handson_tour_skipped_at).not.toBeNull();
+
+    const second = await fetchTourStatus(url, token);
+    expect(second.status, JSON.stringify(second.body)).toBe(200);
+    expect(second.body).toMatchObject({ should_show: false, reason: "already_skipped" });
   });
 });

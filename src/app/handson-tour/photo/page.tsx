@@ -38,6 +38,8 @@ function buildBubble(subStep: SubStepOfStep1, profile: PhotoTourProfile) {
       return {
         body: i18n.intro_title,
         position: 'auto' as const,
+        // E2E (tests/e2e/tour) が intro 吹き出しを見分ける目印。設計書 09-onboarding-handson-tour の testID 一覧どおり
+        testId: 'tour-step-1-intro',
       };
     case '1.2':
       return {
@@ -51,6 +53,8 @@ function buildBubble(subStep: SubStepOfStep1, profile: PhotoTourProfile) {
         position: 'auto' as const,
       };
     case '1.5': {
+      // 吹き出しを「下」に固定すると、小さい画面 (360x640 など) では [次へ] が画面の外に出て押せず、先へ進めない
+      // (E2E が見つけた。#846)。下に収まるときは従来どおり下、収まらないときは上に出す 'auto' にする。
       const targetKcal = profile.target_kcal;
       if (targetKcal) {
         const percent = Math.round((MOCK_PHOTO_RESPONSE.calories / targetKcal) * 100);
@@ -61,13 +65,13 @@ function buildBubble(subStep: SubStepOfStep1, profile: PhotoTourProfile) {
             target_kcal: String(targetKcal),
             percent: String(percent),
           }),
-          position: 'bottom' as const,
+          position: 'auto' as const,
         };
       }
       return {
         title: i18n.result_title,
         body: i18n.result_bubble_no_target,
-        position: 'bottom' as const,
+        position: 'auto' as const,
       };
     }
     case '1.6':

@@ -93,7 +93,7 @@ HAR にはログイン要求のパスワードやアクセストークンが平�
 
 | ワークフロー | 対象 | テストユーザー |
 |---|---|---|
-| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 と、未ログインで読める公開ページの `public-policy-pages.spec.ts` (利用規約・プライバシーポリシー #1174) を実行 | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
+| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 と、未ログインで読める公開ページの `public-policy-pages.spec.ts` (利用規約・プライバシーポリシー #1174)、ハンズオンツアーの `tour/` (#846) を実行 | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム)。`tour/` はテストごとに新規ユーザーを service_role で作って消す |
 | `.github/workflows/e2e.yml` | 本番 URL。ローカル dev server は起動しない | 本番の `e2e-user-01〜04@homegohan.test`。Secrets `E2E_USER_EMAIL` (= `e2e-user-01@homegohan.test`) / `E2E_USER_PASSWORD` が必要 (未設定ならジョブを最初に止める) |
 
 本番のテストユーザーのパスワードはランダムな値で、Secrets `E2E_USER_PASSWORD` にだけ置く (リポジトリにも `.env.local` の共有にも書かない)。
@@ -144,6 +144,37 @@ cp ~/Downloads/karaage.jpg tests/e2e/fixtures/karaage.jpg
 ```
 
 画像が存在しない場合、`02-meal-photo.spec.ts` は自動的にスキップされます。
+
+## ハンズオンツアー (`tour/`, #846)
+
+初回の使い方ガイド (`/handson-tour`) の Step 0〜4・スキップ・やり直し・対象判定 API (`/api/handson-tour/status`) を確かめる。
+`e2e-local.yml` で PR ごとに動く。
+
+| ファイル | カバーするフロー |
+|---|---|
+| `tour/01-eligibility.spec.ts` | 対象判定 API の reason (未ログイン / onboarding 未完 / 通常 / 完了済 / スキップ済 / admin / 既存活動) |
+| `tour/02-step0-welcome.spec.ts` | Step 0 の表示・「はじめる」・「あとで」 |
+| `tour/03-step1-photo.spec.ts` ・ `04-step2-menu.spec.ts` ・ `05-step3-badges.spec.ts` | Step 1 (写真) ・ 2 (献立) ・ 3 (バッジ)。それぞれのページを直接開いて確かめる |
+| `tour/06-step4-graduate.spec.ts` | 卒業画面・完了の記録・エラーからのやり直し・Step 0 から /home までの通し |
+| `tour/07-skip-and-replay.spec.ts` | スキップ・設定からのやり直し |
+| `tour/08-small-screen.spec.ts` | 小さい画面 (360x640) で Step 0 から卒業画面まで通しで進める |
+
+- テストごとに新規ユーザーを service_role で作り (`tour/helpers.ts` の `tourUser` / `createUser`)、終わったら消す。
+  `.env.local` に `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` が要る
+  (ローカルは `bash scripts/supabase-local.sh env .env.local`)。足りないとき、本番 URL に向けた実行などでは理由付きの
+  `test.fixme` になる。CI (`E2E_REQUIRE_LOGIN=1`) では `fixme` にせず失敗にする (判断は `tour/provisioning.ts`)。
+- ツアーの「生成」「写真の解析」はサンドボックスの固定値で、AI は使わない。
+- Spotlight の対象 (`meal-save-button` など) の上にはオーバーレイがかぶさっていて直接は押せない。進めるときは吹き出しの
+  `tour-next-button` を押す (`completeStep1〜3`)。
+- **`test.skip` は使わない**。以前は「未実装かも」「UI が見つからない」で skip にしていたため、動いていなくても緑のままだった。
+  Playwright の `isVisible({ timeout })` は timeout を無視する (今の状態を返すだけ) ので、待つときは `expect(...).toBeVisible({ timeout })`。
+  動かせない理由があるときは `test.fixme` に理由を書く。`tests/e2e-tour-contract.test.ts` が `npm test` で検査する。
+- 既知の不具合で `test.fixme` にしているもの (直したら外す。`grep -rn "test.fixme" tests/e2e/tour` で探せる):
+  - Step 1 の保存 API (`POST /api/meal-plans/add-from-photo`) が、ツアーが送る本文に `dayDate` / `mealType` が無く 400 になる。
+    お試しの記録 (`is_sandbox = true`) を何として残すか (日付・食事の区分・カレンダーに出すか) は製品判断が要る。
+  - Step 3 のバッジ一覧が、`/api/badges` の `earned` / `obtainedAt` ではなく存在しない `obtained_at` を見ていて、
+    獲得済みでも「獲得済」が付かない。直すと、お試しの記録を数えない (#1314) ため `first_bite` が付かないのに
+    「もう 2 つ獲得しています」と出る食い違いが見えるため、見せ方は製品判断が要る。
 
 ## バグ回帰スペック
 

@@ -1,138 +1,89 @@
 /**
  * tests/e2e/tour/03-step1-photo.spec.ts
  *
- * Step 1: 写真追加 → API 200 → first_bite バッジ獲得 → Step 2 遷移
+ * Step 1: 写真追加。intro → カメラ → 解析中 → 結果 → [次へ] → [保存] → Step 2 遷移
  *
- * 実装済み testID:
- *   meal-camera-button, meal-result-dish-name, meal-save-button
+ * testID (実装済み):
+ *   tour-step-1-intro, meal-camera-button, meal-analyzing-view, meal-result-screen,
+ *   meal-result-dish-name, meal-save-button, tour-next-button
  *
- * 未実装 testID (skip):
- *   tour-step-1-intro  — intro 吹き出し
+ * Step 1 は、写真の撮影・AI 解析をせず、サンドボックスの固定値 (MOCK_PHOTO_RESPONSE) で自動進行する。
+ * 利用者の操作は結果の [次へ] と [保存] だけ。ただし meal-save-button などの Spotlight 対象の上には
+ * オーバーレイがかぶさっていて直接は押せないため、吹き出しの tour-next-button で進める (helpers の completeStep1)。
  *
- * 注意: API モック禁止。実 Supabase に接続する。
- * Step 1 は自動進行 (サンドボックス画像を使ったシミュレーション) のため
- * ユーザー操作は meal-save-button のタップのみ。
+ * 注意: API モック禁止。実 Supabase に接続する。Step 1 だけを見るテストは、Step 0 を通らず /handson-tour/photo を直接開く
+ * (Step 0 → Step 1 の遷移は 02-step0-welcome が確かめる)。
  */
 
-import { test, expect } from "@playwright/test";
-import { signupAsNewUser, cleanupTestUser, generateTestEmail } from "./helpers";
+import { test, expect, completeStep1, selectRows } from "./helpers";
 
 test.describe("Tour - Step 1: 写真追加", () => {
   test.setTimeout(60_000);
 
-  let userId: string | null = null;
+  test("Step 1 intro 吹き出しが表示される (tour-step-1-intro)", async ({ page, tourUser }) => {
+    await page.goto("/handson-tour/photo");
 
-  test.afterEach(async () => {
-    if (userId) {
-      await cleanupTestUser(userId);
-      userId = null;
-    }
+    await expect(page.getByTestId("tour-step-1-intro")).toBeVisible({ timeout: 20_000 });
+    // 吹き出し (tour-bubble) の中に、intro の文言が入っている
+    await expect(page.getByTestId("tour-step-1-intro").getByTestId("tour-bubble-body")).not.toBeEmpty();
   });
 
-  // TODO: testID tour-step-1-intro 未実装、別 PR で対応
-  test.skip("Step 1 intro 吹き出しが表示される (tour-step-1-intro)", () => {
-    // intro 吹き出し (tour-step-1-intro) が実装されたら有効化する
-  });
+  test("Step 1: meal-camera-button が Spotlight ターゲットとして表示される", async ({ page, tourUser }) => {
+    await page.goto("/handson-tour/photo");
 
-  test("Step 1: meal-camera-button が Spotlight ターゲットとして表示される", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s1-camera");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
-
-    // Step 0 表示確認
-    await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
-
-    // 「はじめる」をクリックして Step 1 へ
-    await page.getByTestId("tour-step-0-start").click();
-
-    // Step 1 では自動進行後に meal-camera-button が表示される
-    // intro が 2.5 秒 auto-advance するためタイムアウトを長めに設定
+    // intro (1.1) とカメラの Spotlight (1.2) の間、カメラボタンは画面にある。解析中 (1.3) からは消える
     await expect(page.getByTestId("meal-camera-button")).toBeVisible({ timeout: 20_000 });
+    // intro が終わるとカメラの吹き出し (1.2) に切り替わる
+    await expect(page.getByTestId("tour-step-1-intro")).toBeHidden({ timeout: 10_000 });
+    await expect(page.getByTestId("tour-bubble")).toBeVisible();
   });
 
-  test("Step 1: meal-save-button タップ → Step 2 へ遷移", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s1-save");
-    userId = await signupAsNewUser(page, email);
+  test("Step 1: 結果を確認して [保存] → Step 2 へ遷移 (meal-save-button は Spotlight の対象)", async ({ page, tourUser }) => {
+    await page.goto("/handson-tour/photo");
 
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+    // 結果 → [次へ] → 保存ボタンの Spotlight → [保存] → /handson-tour/menu
+    await completeStep1(page);
 
-    await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
-    await page.getByTestId("tour-step-0-start").click();
-
-    // meal-camera-button が表示されるまで待機
-    await expect(page.getByTestId("meal-camera-button")).toBeVisible({ timeout: 20_000 });
-
-    // tour-next-button をクリックして次のサブステップへ
-    // (meal-camera-button の Spotlight 後に tour-next-button が出現する)
-    const nextButton = page.getByTestId("tour-next-button");
-    if (await nextButton.isVisible()) {
-      await nextButton.click();
-    }
-
-    // meal-result-dish-name が表示される (サンドボックスの固定料理名)
-    // または直接 meal-save-button が表示される
-    // ハンズオンツアーのサンドボックスでは結果画面が自動で遷移する
-    const hasDishName = await page.getByTestId("meal-result-dish-name").isVisible({ timeout: 15_000 }).catch(() => false);
-    const hasSaveButton = await page.getByTestId("meal-save-button").isVisible({ timeout: 5_000 }).catch(() => false);
-
-    if (hasDishName || hasSaveButton) {
-      // meal-save-button をクリックして API を呼び出す
-      if (hasSaveButton) {
-        await page.getByTestId("meal-save-button").click();
-      } else {
-        // tour-next-button で meal-save-button まで進める
-        const nextBtn = page.getByTestId("tour-next-button");
-        if (await nextBtn.isVisible()) {
-          await nextBtn.click();
-        }
-        await expect(page.getByTestId("meal-save-button")).toBeVisible({ timeout: 10_000 });
-        await page.getByTestId("meal-save-button").click();
-      }
-
-      // Step 2 系の UI が表示されるか、tour-overlay が続く
-      // v4-no-cook-toggle は Step 2 の実装済み testID
-      await expect(
-        page.getByTestId("v4-no-cook-toggle").or(page.getByTestId("tour-overlay"))
-      ).toBeVisible({ timeout: 20_000 });
-    } else {
-      // Step 1 の自動進行 UI が未実装の可能性
-      test.skip(true, "Step 1 の sandwich UI が未実装または異なる実装パターン");
-    }
+    // Step 2 の intro 吹き出しが出る
+    await expect(page.getByTestId("tour-step-2-intro")).toBeVisible({ timeout: 20_000 });
   });
 
-  test("Step 1: meal-result-dish-name が表示される (サンドボックス固定値)", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s1-dish");
-    userId = await signupAsNewUser(page, email);
+  // 既知の不具合 (#846 の E2E で見つけた)。直したら .fixme を外す。
+  test.fixme(
+    "Step 1: 保存の API (POST /api/meal-plans/add-from-photo) が成功し、お試しの記録 (is_sandbox = true) が DB に入る",
+    {
+      annotation: {
+        type: "fixme",
+        description:
+          "ツアーが送る本文 (MOCK_PHOTO_RESPONSE) に dayDate と mealType が無く、API が 400 (mealType を指定してください) を返す。" +
+          "画面は失敗を無視して Step 2 へ進むので、利用者には見えない。" +
+          "お試しの記録を何として残すか (日付・食事の区分・カレンダーに出すか) は製品判断が要る。",
+      },
+    },
+    async ({ page, tourUser }) => {
+      await page.goto("/handson-tour/photo");
 
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+      const saved = await completeStep1(page);
 
-    await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
-    await page.getByTestId("tour-step-0-start").click();
+      expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+      const sandboxDays = await selectRows(
+        "user_daily_meals",
+        `user_id=eq.${tourUser.id}&is_sandbox=eq.true&select=id`,
+      );
+      expect(sandboxDays).toHaveLength(1);
+    },
+  );
 
-    // meal-camera-button 表示まで待機
-    await expect(page.getByTestId("meal-camera-button")).toBeVisible({ timeout: 20_000 });
+  test("Step 1: meal-result-dish-name が表示される (サンドボックス固定値)", async ({ page, tourUser }) => {
+    await page.goto("/handson-tour/photo");
 
-    // meal-result-dish-name が表示されるか確認
-    // (サンドボックスでは自動進行して固定の料理名が表示される)
+    // 解析中 (meal-analyzing-view。1.5 秒だけ出る) を経て結果が出る。短い間の画面なので、フレームごとに見る waitFor で待つ
+    await page.getByTestId("meal-analyzing-view").waitFor({ state: "visible", timeout: 20_000 });
     const dishName = page.getByTestId("meal-result-dish-name");
-    const isDishVisible = await dishName.isVisible({ timeout: 15_000 }).catch(() => false);
+    await expect(dishName).toBeVisible({ timeout: 20_000 });
 
-    if (isDishVisible) {
-      // 料理名が空でないことを確認
-      const text = await dishName.textContent();
-      expect(text?.trim().length).toBeGreaterThan(0);
-    } else {
-      test.skip(true, "meal-result-dish-name が表示されない - Step 1 自動進行UI を要確認");
-    }
+    // 固定の料理名 (packages/handson-tour-shared の MOCK_PHOTO_RESPONSE.dishName。v1 では変更しない値)
+    await expect(dishName).toContainText("鶏の唐揚げ定食");
+    await expect(page.getByTestId("meal-result-screen")).toBeVisible();
   });
 });

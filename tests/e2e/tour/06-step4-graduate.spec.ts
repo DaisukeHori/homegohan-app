@@ -1,195 +1,78 @@
 /**
  * tests/e2e/tour/06-step4-graduate.spec.ts
  *
- * Step 4: 卒業画面 → tutorial_complete バッジ表示 → disclaimer 表示 → 「ホームへ」タップ → /home 遷移
+ * Step 4: 卒業画面。完了処理 (saving) → 卒業画面 (tutorial_complete バッジ・disclaimer) → 「ホームへ」→ /home 遷移
  *
- * 実装済み testID:
+ * testID (実装済み):
  *   tour-step-4-saving, tour-step-4-graduate, tour-step-4-go-home,
  *   tour-step-4-error, tour-step-4-retry, tour-step-4-badge-disclaimer (PR #834 で追加済)
  *
- * 注意: API モック禁止。実 Supabase に接続する。
- * Step 4 に到達するには Step 1/2/3 を完了させる必要があるため、
- * 可能な場合は service_role 経由で状態を直接設定して /handson-tour?step=4 等に遷移する。
+ * 卒業画面は開いた瞬間に POST /api/handson-tour/complete (RPC complete_handson_tour) を呼び、
+ * ツアー完了日時と tutorial_complete バッジを DB に記録する。
+ *
+ * 注意: API モック禁止。実 Supabase に接続する。Step 4 だけを見るテストは、前の Step を通らず /handson-tour/graduate を直接開く。
+ * Step 0 から卒業までを 1 本で通すのは「tour-step-4-go-home タップ → /home へ遷移」だけ。
+ * 例外: 完了の通信が失敗したときの画面 (tour-step-4-error / tour-step-4-retry) は、本物の API を失敗させる手段が無いため、
+ * そのテストだけ complete API の最初の 1 回を 500 に差し替える (2 回目以降は本物の API に通す)。
  */
 
-import { test, expect } from "@playwright/test";
-import { signupAsNewUser, cleanupTestUser, generateTestEmail } from "./helpers";
-import { config as dotenvConfig } from "dotenv";
-import * as path from "path";
-
-dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
-/** service_role 経由でバッジを付与する */
-async function awardBadge(userId: string, badgeCode: string): Promise<void> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
-  try {
-    const badgeResp = await fetch(
-      `${SUPABASE_URL}/rest/v1/badge_definitions?code=eq.${badgeCode}&select=id`,
-      {
-        headers: {
-          apikey: SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        },
-      },
-    );
-    if (!badgeResp.ok) return;
-    const badges = await badgeResp.json() as Array<{ id: string }>;
-    if (!badges.length) return;
-    const badgeId = badges[0].id;
-
-    await fetch(`${SUPABASE_URL}/rest/v1/user_badges`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: SUPABASE_SERVICE_ROLE_KEY,
-        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        Prefer: "resolution=ignore-duplicates",
-      },
-      body: JSON.stringify({
-        user_id: userId,
-        badge_id: badgeId,
-        obtained_at: new Date().toISOString(),
-      }),
-    });
-  } catch (err) {
-    console.warn(`[06-step4] awardBadge error: ${err}`);
-  }
-}
-
-/** フルフローを高速に通過するためのヘルパー */
-async function reachStep4(page: typeof test.info extends (...args: infer _) => infer _ ? never : import("@playwright/test").Page): Promise<boolean> {
-  await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
-  await page.getByTestId("tour-step-0-start").click();
-
-  // Step 1
-  const cameraVisible = await page.getByTestId("meal-camera-button").isVisible({ timeout: 20_000 }).catch(() => false);
-  if (!cameraVisible) return false;
-
-  const nb = page.getByTestId("tour-next-button");
-  if (await nb.isVisible()) { await nb.click(); }
-
-  const saveBtn = page.getByTestId("meal-save-button");
-  if (!(await saveBtn.isVisible({ timeout: 10_000 }).catch(() => false))) return false;
-  await saveBtn.click();
-
-  // Step 2
-  const generateBtn = page.getByTestId("v4-generate-button");
-  let isGenVisible = await generateBtn.isVisible({ timeout: 20_000 }).catch(() => false);
-  if (!isGenVisible) {
-    for (let i = 0; i < 3; i++) {
-      const nb2 = page.getByTestId("tour-next-button");
-      if (await nb2.isVisible()) { await nb2.click(); await page.waitForTimeout(500); }
-    }
-    isGenVisible = await generateBtn.isVisible({ timeout: 10_000 }).catch(() => false);
-  }
-  if (!isGenVisible) return false;
-  await generateBtn.click();
-
-  if (!(await page.getByTestId("v4-result-card").isVisible({ timeout: 30_000 }).catch(() => false))) return false;
-  const nb3 = page.getByTestId("tour-next-button");
-  if (await nb3.isVisible()) { await nb3.click(); }
-
-  const addBtn = page.getByTestId("v4-add-to-menu-button");
-  if (!(await addBtn.isVisible({ timeout: 10_000 }).catch(() => false))) return false;
-  await addBtn.click();
-
-  // Step 3
-  if (!(await page.getByTestId("tour-step-3-loading").isVisible({ timeout: 20_000 }).catch(() => false))) return false;
-  if (!(await page.getByTestId("badge-card-first_bite").isVisible({ timeout: 20_000 }).catch(() => false))) return false;
-
-  for (let i = 0; i < 3; i++) {
-    const nb4 = page.getByTestId("tour-next-button");
-    if (await nb4.isVisible({ timeout: 5_000 }).catch(() => false)) {
-      await nb4.click();
-      await page.waitForTimeout(500);
-    }
-  }
-
-  return true;
-}
+import {
+  test,
+  expect,
+  completeStep1,
+  completeStep2,
+  completeStep3,
+  hasBadge,
+  openTour,
+  selectRows,
+  startTour,
+} from "./helpers";
 
 test.describe("Tour - Step 4: 卒業画面", () => {
   test.setTimeout(60_000);
 
-  let userId: string | null = null;
+  test("Step 4: tour-step-4-saving → tour-step-4-graduate が表示される", async ({ page, tourUser }) => {
+    await page.goto("/handson-tour/graduate");
 
-  test.afterEach(async () => {
-    if (userId) {
-      await cleanupTestUser(userId);
-      userId = null;
-    }
+    // 完了処理中 (saving) か完了後 (graduate)。処理は速いので saving は一瞬のことがある
+    await expect(page.getByTestId("tour-step-4-saving").or(page.getByTestId("tour-step-4-graduate"))).toBeVisible({
+      timeout: 20_000,
+    });
+
+    // 完了処理後に卒業画面が表示される
+    await expect(page.getByTestId("tour-step-4-graduate")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("tour-step-4-saving")).toHaveCount(0);
+
+    // 完了が DB に記録され、tutorial_complete バッジが付く
+    const [profile] = await selectRows<{ handson_tour_completed_at: string | null }>(
+      "user_profiles",
+      `id=eq.${tourUser.id}&select=handson_tour_completed_at`,
+    );
+    expect(profile.handson_tour_completed_at).not.toBeNull();
+    expect(await hasBadge(tourUser.id, "tutorial_complete")).toBe(true);
   });
 
-  test("Step 4: tour-step-4-saving → tour-step-4-graduate が表示される", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s4-grad");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
-
-    await awardBadge(userId, "first_bite");
-    await awardBadge(userId, "planner");
-
-    const reached = await reachStep4(page);
-    if (!reached) {
-      test.skip(true, "Step 4 到達に失敗 - 前段 UI を要確認");
-      return;
-    }
-
-    // tour-step-4-saving が表示される
-    await expect(page.getByTestId("tour-step-4-saving").or(page.getByTestId("tour-step-4-graduate"))).toBeVisible({ timeout: 20_000 });
-
-    // 完了処理後に tour-step-4-graduate が表示される
-    await expect(page.getByTestId("tour-step-4-graduate")).toBeVisible({ timeout: 15_000 });
-  });
-
-  test("Step 4: tour-step-4-badge-disclaimer が表示される (PR #834 追加済)", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s4-disc");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
-
-    await awardBadge(userId, "first_bite");
-    await awardBadge(userId, "planner");
-
-    const reached = await reachStep4(page);
-    if (!reached) {
-      test.skip(true, "Step 4 到達に失敗 - 前段 UI を要確認");
-      return;
-    }
+  test("Step 4: tour-step-4-badge-disclaimer が表示される (PR #834 追加済)", async ({ page, tourUser }) => {
+    await page.goto("/handson-tour/graduate");
 
     // 卒業画面表示
     await expect(page.getByTestId("tour-step-4-graduate")).toBeVisible({ timeout: 20_000 });
 
-    // disclaimer が表示される (PR #834 で追加済)
-    await expect(page.getByTestId("tour-step-4-badge-disclaimer")).toBeVisible({ timeout: 10_000 });
+    // disclaimer が表示される (PR #834 で追加済)。バッジは課金・特典に連動しない、という注意書き
+    const disclaimer = page.getByTestId("tour-step-4-badge-disclaimer");
+    await expect(disclaimer).toBeVisible({ timeout: 10_000 });
+    await expect(disclaimer).toContainText("課金");
   });
 
-  test("Step 4: tour-step-4-go-home タップ → /home へ遷移", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s4-home");
-    userId = await signupAsNewUser(page, email);
+  test("Step 4: tour-step-4-go-home タップ → /home へ遷移 (Step 0 から通しで)", async ({ page, tourUser }) => {
+    // 通しで 25 秒前後かかる (各 Step の自動進行 + 卒業ボタンが有効になるまでの 5 秒)
+    test.setTimeout(120_000);
 
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
-
-    await awardBadge(userId, "first_bite");
-    await awardBadge(userId, "planner");
-
-    const reached = await reachStep4(page);
-    if (!reached) {
-      test.skip(true, "Step 4 到達に失敗 - 前段 UI を要確認");
-      return;
-    }
+    await openTour(page);
+    await startTour(page);
+    await completeStep1(page);
+    await completeStep2(page);
+    await completeStep3(page);
 
     // 卒業画面表示を確認
     await expect(page.getByTestId("tour-step-4-graduate")).toBeVisible({ timeout: 20_000 });
@@ -201,37 +84,64 @@ test.describe("Tour - Step 4: 卒業画面", () => {
     await page.getByTestId("tour-step-4-go-home").click();
 
     // /home に遷移することを確認
-    await page.waitForURL("**/home", { timeout: 15_000 });
+    await page.waitForURL("**/home", { timeout: 30_000, waitUntil: "commit" });
     expect(page.url()).toContain("/home");
+
+    // ツアーを最後まで終えたので、完了が記録され、tutorial_complete バッジが付いている (スキップではない)
+    const [profile] = await selectRows<{ handson_tour_completed_at: string | null; handson_tour_skipped_at: string | null }>(
+      "user_profiles",
+      `id=eq.${tourUser.id}&select=handson_tour_completed_at,handson_tour_skipped_at`,
+    );
+    expect(profile.handson_tour_completed_at).not.toBeNull();
+    expect(profile.handson_tour_skipped_at).toBeNull();
+    expect(await hasBadge(tourUser.id, "tutorial_complete")).toBe(true);
   });
 
-  test("Step 4: エラー時に tour-step-4-error と tour-step-4-retry が表示される構造確認", async ({ page }) => {
-    // このテストは実際にエラーを起こすのではなく、エラー UI の testID が実装されていることを確認
-    // 実際のエラー誘発は API モックなしでは困難なため、存在チェックのみ
-    const email = generateTestEmail("e2e-tour-s4-err");
-    userId = await signupAsNewUser(page, email);
+  test("Step 4: 完了の通信が成功したときは、エラー画面 (tour-step-4-error / tour-step-4-retry) を出さない", async ({
+    page,
+    tourUser,
+  }) => {
+    await page.goto("/handson-tour/graduate");
 
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+    // 卒業画面 (成功パス) が出る
+    await expect(page.getByTestId("tour-step-4-graduate")).toBeVisible({ timeout: 20_000 });
 
-    await awardBadge(userId, "first_bite");
-    await awardBadge(userId, "planner");
+    // 成功時は、エラー画面も [もう一度] も出ない
+    await expect(page.getByTestId("tour-step-4-error")).toHaveCount(0);
+    await expect(page.getByTestId("tour-step-4-retry")).toHaveCount(0);
+  });
 
-    const reached = await reachStep4(page);
-    if (!reached) {
-      test.skip(true, "Step 4 到達に失敗 - 前段 UI を要確認");
-      return;
-    }
+  test("Step 4: 完了の通信が失敗すると tour-step-4-error と tour-step-4-retry が出て、[もう一度] で卒業画面へ進める", async ({
+    page,
+    tourUser,
+  }) => {
+    // 最初の 1 回だけ 500 にする。2 回目 ([もう一度]) からは本物の API に通す
+    let completeCalls = 0;
+    await page.route("**/api/handson-tour/complete", async (route) => {
+      completeCalls += 1;
+      if (completeCalls === 1) {
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "internal_error", message: "サーバーエラーが発生しました" } }),
+        });
+        return;
+      }
+      await route.continue();
+    });
 
-    // 卒業画面 (成功パス) が表示される前提で tour-step-4-graduate を確認
-    const isGraduateVisible = await page.getByTestId("tour-step-4-graduate").isVisible({ timeout: 20_000 }).catch(() => false);
+    await page.goto("/handson-tour/graduate");
 
-    if (isGraduateVisible) {
-      // 成功時は tour-step-4-error が非表示
-      await expect(page.getByTestId("tour-step-4-error")).not.toBeVisible();
-    }
-    // エラーパスは API モックが必要なため、ここでは構造確認のみ
+    // エラー画面と [もう一度] が出て、卒業画面は出ない
+    await expect(page.getByTestId("tour-step-4-error")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("tour-step-4-retry")).toBeVisible();
+    await expect(page.getByTestId("tour-step-4-graduate")).toHaveCount(0);
+
+    // [もう一度] を押すと、今度は本物の API が成功して卒業画面になる
+    await page.getByTestId("tour-step-4-retry").click();
+    await expect(page.getByTestId("tour-step-4-graduate")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("tour-step-4-error")).toHaveCount(0);
+    expect(completeCalls).toBe(2);
+    expect(await hasBadge(tourUser.id, "tutorial_complete")).toBe(true);
   });
 });

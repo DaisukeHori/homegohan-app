@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { TourOverlay } from '@/components/handson-tour/TourOverlay';
+import { useReducedMotion } from '@/components/handson-tour/useReducedMotion';
 import {
   HANDSON_TOUR_I18N_JA,
   HANDSON_TOUR_ROUTES,
@@ -49,24 +50,29 @@ function buildBubble(subStep: SubStepOfStep3, nickname: string) {
       return {
         body: personalize(i18n.intro_title, { nickname }),
         position: 'auto' as const,
+        // E2E (tests/e2e/tour) が intro 吹き出しを見分ける目印。設計書 09-onboarding-handson-tour の testID 一覧どおり
+        testId: 'tour-step-3-intro',
       };
+    // 3.2〜3.4 の吹き出しは、対象のカードの下に出すのを基本にする (設計書 §3.4「target の下」)。
+    // ただし一覧の最後の方のカードは、スクロールしても画面の下端までしか来られず、下に吹き出しの場所が無い。
+    // そのとき [次へ] が画面の外に出て押せなくなる (E2E が見つけた。#846) ため、下に余白が無ければ上に出す 'auto' にする。
     case '3.2':
       return {
         title: i18n.first_bite_title,
         body: i18n.first_bite_bubble,
-        position: 'bottom' as const,
+        position: 'auto' as const,
       };
     case '3.3':
       return {
         title: i18n.planner_title,
         body: i18n.planner_bubble,
-        position: 'bottom' as const,
+        position: 'auto' as const,
       };
     case '3.4':
       return {
         title: i18n.tutorial_complete_title,
         body: i18n.tutorial_complete_bubble,
-        position: 'bottom' as const,
+        position: 'auto' as const,
       };
     default:
       return { body: '', position: 'auto' as const };
@@ -75,6 +81,7 @@ function buildBubble(subStep: SubStepOfStep3, nickname: string) {
 
 export default function HandsonTourBadgesPage() {
   const router = useRouter();
+  const prefersReducedMotion = useReducedMotion();
   const [subStep, setSubStep] = useState<SubStepOfStep3>('3.0');
   const [badges, setBadges] = useState<BadgeItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -188,6 +195,17 @@ export default function HandsonTourBadgesPage() {
   const rawTarget = STEP3_SUB_STEP_TO_TARGET[subStep];
   const targetTestId = typeof rawTarget === 'string' ? rawTarget : null;
   const targetTestIds = Array.isArray(rawTarget) ? rawTarget : undefined;
+
+  // 設計書 05-step3-badges §7.2: バッジの一覧は 1 画面に収まらない (いまは 20 種前後)。Spotlight の対象 (3.2〜3.4) の
+  // カードを画面の中央にスクロールしてから案内する。しないと、一覧の下の方にあるカードは画面の外のままで、
+  // 吹き出しとその [次へ] も画面の外に出て押せず、Step 4 へ進めない (E2E が 1280x720 で見つけた。#846)。
+  // 動きを減らす設定 (§7.3) のときはアニメーションなしで動かす。
+  useEffect(() => {
+    if (!targetTestId) return;
+    document
+      .querySelector(`[data-testid="${targetTestId}"]`)
+      ?.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'center' });
+  }, [targetTestId, prefersReducedMotion]);
 
   return (
     <div className="fixed inset-0 z-40 bg-white overflow-y-auto">

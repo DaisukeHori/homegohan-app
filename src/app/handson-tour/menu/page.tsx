@@ -41,7 +41,8 @@ function buildBubble(subStep: SubStepOfStep2, profile: MenuTourProfile) {
 
   switch (subStep) {
     case '2.1':
-      return { body: i18n.intro_title, position: 'auto' as const };
+      // testId は E2E (tests/e2e/tour) が intro 吹き出しを見分ける目印 (設計書の testID 一覧どおり)
+      return { body: i18n.intro_title, position: 'auto' as const, testId: 'tour-step-2-intro' };
     case '2.2':
       return { body: i18n.flags_bubble, position: 'auto' as const };
     case '2.3':
@@ -51,6 +52,8 @@ function buildBubble(subStep: SubStepOfStep2, profile: MenuTourProfile) {
     case '2.5':
       return { body: i18n.generate_bubble, position: 'auto' as const };
     case '2.6': {
+      // Step 1 の結果 (1.5) と同じ。「下」に固定すると、小さい画面では [次へ] が画面の外に出て押せない (#846)。
+      // 下に収まるときは従来どおり下、収まらないときは上に出す 'auto' にする。
       const excludeList = [...profile.allergies, ...profile.dislikes].slice(0, 3);
       const cookingExp = profile.cooking_experience ?? 'beginner';
       const cookingExpText = COOKING_EXP_TEXT[cookingExp] ?? '初心者でも作れる';
@@ -62,7 +65,7 @@ function buildBubble(subStep: SubStepOfStep2, profile: MenuTourProfile) {
             exclude_list: excludeList.join('・'),
             cooking_experience_text: cookingExpText,
           }),
-          position: 'bottom' as const,
+          position: 'auto' as const,
         };
       }
       return {
@@ -70,7 +73,7 @@ function buildBubble(subStep: SubStepOfStep2, profile: MenuTourProfile) {
         body: personalize(i18n.result_bubble_no_exclude, {
           cooking_experience_text: cookingExpText,
         }),
-        position: 'bottom' as const,
+        position: 'auto' as const,
       };
     }
     case '2.7':

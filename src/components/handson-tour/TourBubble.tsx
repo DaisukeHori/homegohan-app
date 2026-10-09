@@ -196,26 +196,8 @@ export function TourBubble(props: TourBubbleProps) {
     offset,
   );
 
-  return (
-    <div
-      data-testid="tour-bubble"
-      role="status"
-      aria-live="polite"
-      style={{
-        position: 'absolute',
-        left: pos.x,
-        top: pos.y,
-        maxWidth: bubble.maxWidth ?? BUBBLE_WIDTH,
-        width: bubble.maxWidth ?? BUBBLE_WIDTH,
-        background: 'white',
-        borderRadius: 12,
-        padding: 16,
-        boxShadow: '0 8px 16px rgba(0,0,0,0.12)',
-        zIndex: 60,
-      }}
-    >
-      <ArrowElement position={pos.actualPosition} />
-
+  const content = (
+    <>
       {progress && (
         <TourProgress current={progress.current} total={progress.total} />
       )}
@@ -248,6 +230,32 @@ export function TourBubble(props: TourBubbleProps) {
           {primaryAction.showSpinner ? <Spinner /> : primaryAction.label}
         </button>
       )}
+    </>
+  );
+
+  return (
+    <div
+      data-testid="tour-bubble"
+      role="status"
+      aria-live="polite"
+      style={{
+        position: 'absolute',
+        left: pos.x,
+        top: pos.y,
+        maxWidth: bubble.maxWidth ?? BUBBLE_WIDTH,
+        width: bubble.maxWidth ?? BUBBLE_WIDTH,
+        background: 'white',
+        borderRadius: 12,
+        padding: 16,
+        boxShadow: '0 8px 16px rgba(0,0,0,0.12)',
+        zIndex: 60,
+      }}
+    >
+      <ArrowElement position={pos.actualPosition} />
+
+      {/* 各 Step の最初の intro 吹き出し (tour-step-1-intro など) を E2E が見分けるための目印。
+          testId が無い吹き出しは、これまでと同じ DOM のまま (余計な要素を足さない)。 */}
+      {bubble.testId ? <div data-testid={bubble.testId}>{content}</div> : content}
     </div>
   );
 }
