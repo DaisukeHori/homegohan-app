@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { cookies, headers } from 'next/headers'
+import { getSupabaseAnonKey, getSupabaseServiceRoleKey, getSupabaseUrl } from '@/lib/env-required'
 
 /**
  * service_role キーで動作する Supabase クライアントを返す。
@@ -9,14 +10,11 @@ import { cookies, headers } from 'next/headers'
  *
  * admin/* の API ルートが管理者操作(他ユーザーの user_profiles 参照・更新等)を
  * 行う際の共通ヘルパー。#1028 で organizations route の重複実装を集約した。
+ *
+ * 環境変数が欠けていれば MissingEnvError を投げる (#1182)。欠けている変数名は envName にあり、message には入らない。
  */
 export function getSupabaseAdmin() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!url || !serviceKey) {
-    throw new Error('Supabase admin env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)')
-  }
-  return createAdminClient(url, serviceKey, {
+  return createAdminClient(getSupabaseUrl(), getSupabaseServiceRoleKey(), {
     auth: { autoRefreshToken: false, persistSession: false },
   })
 }
@@ -26,8 +24,8 @@ export function createClient(cookieStore?: ReturnType<typeof cookies>) {
   const authHeader = headers().get('authorization')
 
   return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    getSupabaseUrl(),
+    getSupabaseAnonKey(),
     {
       global: authHeader ? { headers: { Authorization: authHeader } } : undefined,
       cookies: {

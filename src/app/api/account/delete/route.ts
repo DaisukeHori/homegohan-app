@@ -1,17 +1,6 @@
-import { createClient } from '@/lib/supabase/server';
-import { createClient as createAdminClient } from '@supabase/supabase-js';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
-
-function getSupabaseAdmin() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceKey) {
-    throw new Error('Supabase admin env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)');
-  }
-  return createAdminClient(url, serviceKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
+import { internalError } from '@/lib/api/errors';
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -97,9 +86,11 @@ export async function POST(request: Request) {
     if (delError) throw delError;
 
     return NextResponse.json({ success: true });
-  } catch (error: any) {
-    console.error('[account/delete] error', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // 本文は汎用メッセージだけにし、元のエラーは構造化ログ (db-logger) に残す (#1172)。
+    // service_role のクライアント (getSupabaseAdmin) は必須の環境変数が欠けていれば MissingEnvError を投げる。
+    // その message は固定の文で、欠けている変数名は本文に出ず、サーバーのログにだけ残る (#1182)
+    return internalError('POST /api/account/delete', error, { userId });
   }
 }
 

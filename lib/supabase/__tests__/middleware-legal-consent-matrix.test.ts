@@ -32,6 +32,7 @@ vi.mock('@supabase/ssr', () => ({
 }));
 
 import { updateSession } from '../middleware';
+import { stubSupabasePublicEnv } from './supabase-public-env';
 
 const PENDING_HEADER = 'x-legal-consent-pending';
 const forwardedPending = (res: Response) => res.headers.get(`x-middleware-request-${PENDING_HEADER}`);
@@ -115,6 +116,8 @@ function profile(accepted: Record<string, string | null>) {
 
 function setFlags(notice: NoticeKey, enforce: EnforceKey) {
   vi.unstubAllEnvs();
+  // updateSession は Supabase の URL・anon キーが無いと汎用の 500 で止まる (#1182)。unstubAllEnvs で消えるので入れ直す
+  stubSupabasePublicEnv();
   delete process.env.LEGAL_CONSENT_NOTICE;
   delete process.env.LEGAL_CONSENT_ENFORCE;
   const noticeValue = NOTICE_VALUES[notice];
