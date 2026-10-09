@@ -1,4 +1,4 @@
--- migration: 20261008200500_hide_moderated_content.sql
+-- migration: 20261009000500_hide_moderated_content.sql
 -- #1101: 運営が違反コンテンツを「削除」するとき、行を消さずに「隠す」。完全な削除は保管期間のあとに行う (その削除ジョブは別の作業)
 --
 -- 背景 (本番の現状: supabase/baseline/prod_schema.sql と supabase/baseline/catalog/catalog_policies.csv。
@@ -90,9 +90,9 @@
 --   運営 (service_role) が隠せること、運営ユーザーを消すと hidden_by だけ NULL に戻ること、定義 (ポリシー・列・外部キー・索引・トリガー) を確かめる。
 --   隠された食事を家族に貼り付けられないこと (MEAL_HIDDEN)、運営が隠すとペーストの複製 (中身が同じもの) も隠れること、
 --   中身を書き換えた行は隠れないこと、本人が paste_group_id を書き換えられないことも確かめる。
--- ロールバック: supabase/rollbacks/20261008200500_hide_moderated_content.down.sql
+-- ロールバック: supabase/rollbacks/20261009000500_hide_moderated_content.down.sql
 --   ⚠️ 戻すと hidden_* 列ごと「隠した状態」が消え、隠していたコンテンツがすべて元どおり見えるようになる。
--- マージ順: migration は version の順にマージすること (この version: 20261008200500)。
+-- マージ順: migration は version の順にマージすること (この version: 20261009000500)。
 
 SET LOCAL lock_timeout = '10s';
 

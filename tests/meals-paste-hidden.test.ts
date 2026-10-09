@@ -3,7 +3,7 @@
  *
  * 運営のモデレーションで「削除」(= 隠す) された食事を、持ち主が家族に貼り付け直すと、
  * 写した新しい行 (家族のメンバーの持ち物) は隠れていないので、隠した内容が家族に見え直してしまう。
- * DB の paste_meal_to_family が RAISE EXCEPTION 'MEAL_HIDDEN' で拒否し (migration 20261008200500)、
+ * DB の paste_meal_to_family が RAISE EXCEPTION 'MEAL_HIDDEN' で拒否し (migration 20261009000500)、
  * この route は 403 MEAL_HIDDEN を返す。実 DB での拒否は tests/integration/rls/hidden-content-visibility.test.ts (F)。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';

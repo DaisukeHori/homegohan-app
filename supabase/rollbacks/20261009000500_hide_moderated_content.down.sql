@@ -1,4 +1,4 @@
--- rollback: 20261008200500_hide_moderated_content.sql
+-- rollback: 20261009000500_hide_moderated_content.sql
 -- meals / recipes の「隠す」仕組み (#1101) を、この migration の直前の状態へ戻す。
 -- ⚠️ 戻すと hidden_at / hidden_by / hidden_reason の列ごと「隠した状態」が消える。運営が隠していた食事・レシピは、すべて元どおり
 --    他のユーザー (家族・ほかのログインユーザー・未ログイン) に見えるようになる。緊急時の切り戻し専用。
