@@ -779,6 +779,8 @@ test("[admin][adversarial] G-27b: admin でモデレーション各フラグ取�
   expect(Array.isArray(body?.mealFlags)).toBe(true);
   expect(Array.isArray(body?.recipeFlags)).toBe(true);
   expect(Array.isArray(body?.aiFlags)).toBe(true);
+  // #1128: AI コンテンツの審査は準備中 (未対応)。aiFlags が空配列なのは「通報 0 件」ではなく「未対応」の意味
+  expect(body?.aiFlagsSupported).toBe(false);
 });
 
 test("[admin][adversarial] G-28: モデレーション resolve → 存在しない ID は 500 or 404", async ({

@@ -5,6 +5,9 @@
  * operator/02-api-spec.md §5 準拠
  * 権限: admin, super_admin, content_moderator
  *
+ * #1128: type=ai_content (AI コンテンツ) の審査は準備中 (未対応)。バックエンドテーブルが無いため、
+ * GET / POST / PUT のどれも 404 (該当なし) ではなく 501 (OP_NOT_SUPPORTED) を返す。
+ *
  * #1041 (F4-04) 修正: 実在しない `moderation_items` テーブル参照を廃止し、
  * 実テーブル (moderation_flags / recipe_flags) を参照する。
  * BAN 対象ユーザーはフラグテーブル自身の user_id/reporter_id ではなく、
@@ -51,10 +54,12 @@ import {
   type ModerationType,
 } from '@/lib/admin/moderation-schemas';
 import {
+  AI_CONTENT_NOT_SUPPORTED_MESSAGE,
   fetchModerationSingle,
   isModerationBacked,
   resolveModerationItem,
 } from '@/lib/admin/moderation-backend';
+import { notSupportedResponse } from '@/lib/admin/not-supported';
 import { applyUserBan } from '@/lib/admin/user-ban';
 
 export const dynamic = 'force-dynamic';
@@ -105,9 +110,9 @@ export async function GET(_request: Request, { params }: Params) {
 
   const moderationType = type as ModerationType;
 
-  // ai_content はバックエンドテーブル未実装 (要 migration)。該当アイテムは存在しない。
+  // ai_content は準備中 (未対応。バックエンドテーブルが無い)。404 (該当なし) ではなく 501 で未対応と伝える (#1128)。
   if (!isModerationBacked(moderationType)) {
-    return notFoundResponse();
+    return notSupportedResponse(AI_CONTENT_NOT_SUPPORTED_MESSAGE);
   }
 
   // requireRole 通過後のみ到達する。meals/recipes の embed は admin bypass 無し
@@ -167,9 +172,10 @@ async function handleResolve(request: Request, params: { type: string; id: strin
 
   const moderationType = type as ModerationType;
 
-  // ai_content はバックエンドテーブル未実装 (要 migration)。該当アイテムは存在しない。
+  // ai_content は準備中 (未対応。バックエンドテーブルが無い)。404 (該当なし) ではなく 501 で未対応と伝える (#1128)。
+  // 本文の検証より前に返す (未対応の機能には、入力の良し悪しを答えない)。
   if (!isModerationBacked(moderationType)) {
-    return notFoundResponse();
+    return notSupportedResponse(AI_CONTENT_NOT_SUPPORTED_MESSAGE);
   }
 
   let body: unknown;
