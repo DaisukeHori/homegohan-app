@@ -174,18 +174,104 @@ describe('WebViewScreen — 読み込み失敗の表示 (サーバーが 5xx を
     expect(screen.getByText(/エラー 502/)).toBeTruthy();
   });
 
-  it('新しい読み込みが始まったら (読み直しが成功したら)、失敗の表示を消す', async () => {
+  // onLoadStart と onHttpError が来る順序は OS で逆 (react-native-webview 13.13.5)。
+  //   iOS:     onLoadStart → onHttpError → onLoadEnd
+  //   Android: onHttpError → onLoadStart → onLoadEnd (onLoadStart は doUpdateVisitedHistory = ページの確定で発火するため)
+  // どちらの順でも、5xx の案内が出たまま残ること (Android で消えて、サーバーのエラーページがそのまま見えないこと)。
+  const PAGE = 'https://example.test/menus/weekly';
+
+  it('iOS の順 (onLoadStart → onHttpError → onLoadEnd) で、5xx の案内が出て、読み込みが終わっても残る', async () => {
+    await renderScreen();
+
+    act(() => {
+      mockLastWebViewProps.onLoadStart?.({ nativeEvent: { url: PAGE, navigationType: 'other' } });
+      mockLastWebViewProps.onHttpError({ nativeEvent: { statusCode: 503, url: PAGE } });
+    });
+    expect(screen.getByText(/サーバーに接続できませんでした \(エラー 503\)/)).toBeTruthy();
+
+    act(() => {
+      mockLastWebViewProps.onLoadEnd({ nativeEvent: { url: PAGE } });
+    });
+    expect(screen.getByText(/サーバーに接続できませんでした \(エラー 503\)/)).toBeTruthy();
+    expect(screen.getByText('再読み込み')).toBeTruthy();
+  });
+
+  it('Android の順 (onHttpError → onLoadStart → onLoadEnd) でも、5xx の案内が出て、残る (同じ読み込みの onLoadStart で消えない)', async () => {
+    await renderScreen();
+
+    act(() => {
+      mockLastWebViewProps.onHttpError({ nativeEvent: { statusCode: 503, url: PAGE } });
+    });
+    expect(screen.getByText(/エラー 503/)).toBeTruthy();
+
+    // 同じ読み込みのページの確定 (Android の onLoadStart)
+    act(() => {
+      mockLastWebViewProps.onLoadStart?.({ nativeEvent: { url: PAGE } });
+    });
+    expect(screen.getByText(/エラー 503/)).toBeTruthy();
+
+    act(() => {
+      mockLastWebViewProps.onLoadEnd({ nativeEvent: { url: PAGE } });
+    });
+    expect(screen.getByText(/エラー 503/)).toBeTruthy();
+    expect(screen.getByText('再読み込み')).toBeTruthy();
+  });
+
+  it('5xx の読み込みが終わったあとに、5xx を受けない読み直しが終わったら (成功したら)、失敗の案内を消す', async () => {
     await renderScreen();
     act(() => {
-      mockLastWebViewProps.onHttpError({ nativeEvent: { statusCode: 503 } });
+      mockLastWebViewProps.onHttpError({ nativeEvent: { statusCode: 503, url: PAGE } });
+      mockLastWebViewProps.onLoadEnd({ nativeEvent: { url: PAGE } });
     });
     expect(screen.getByTestId('webview-error')).toBeTruthy();
 
+    // タブの再タップ (location.replace) などによる読み直し。成功すると、HTTP エラー無しで onLoadStart と onLoadEnd だけが来る
     act(() => {
-      mockLastWebViewProps.onLoadStart({ nativeEvent: { url: 'https://example.test/' } });
+      mockLastWebViewProps.onLoadStart?.({ nativeEvent: { url: PAGE } });
+    });
+    // 読み込んでいる間は、案内を出したまま
+    expect(screen.getByTestId('webview-error')).toBeTruthy();
+
+    act(() => {
+      mockLastWebViewProps.onLoadEnd({ nativeEvent: { url: PAGE } });
+    });
+    expect(screen.queryByTestId('webview-error')).toBeNull();
+  });
+
+  it('読み直しもまた 5xx なら、案内は残り続ける (ステータスは新しい方になる)', async () => {
+    await renderScreen();
+    act(() => {
+      mockLastWebViewProps.onHttpError({ nativeEvent: { statusCode: 503, url: PAGE } });
+      mockLastWebViewProps.onLoadStart?.({ nativeEvent: { url: PAGE } });
+      mockLastWebViewProps.onLoadEnd({ nativeEvent: { url: PAGE } });
     });
 
-    expect(screen.queryByTestId('webview-error')).toBeNull();
+    // 2 回目 (Android の順)
+    act(() => {
+      mockLastWebViewProps.onHttpError({ nativeEvent: { statusCode: 502, url: PAGE } });
+      mockLastWebViewProps.onLoadStart?.({ nativeEvent: { url: PAGE } });
+      mockLastWebViewProps.onLoadEnd({ nativeEvent: { url: PAGE } });
+    });
+
+    expect(screen.getByText(/エラー 502/)).toBeTruthy();
+    expect(screen.queryByText(/エラー 503/)).toBeNull();
+  });
+
+  it('iOS が history の書き換え (ページ内の移動) のたびに送る onLoadEnd では、5xx の案内を消さない', async () => {
+    await renderScreen();
+    act(() => {
+      mockLastWebViewProps.onLoadStart?.({ nativeEvent: { url: PAGE, navigationType: 'other' } });
+      mockLastWebViewProps.onHttpError({ nativeEvent: { statusCode: 500, url: PAGE } });
+      mockLastWebViewProps.onLoadEnd({ nativeEvent: { url: PAGE } });
+    });
+
+    // エラーページ自身の history.replaceState / pushState / 戻る。読み込みの終わりではない (navigationType を持つ)
+    act(() => {
+      mockLastWebViewProps.onLoadEnd({ nativeEvent: { url: PAGE, navigationType: 'other' } });
+      mockLastWebViewProps.onLoadEnd({ nativeEvent: { url: PAGE, navigationType: 'backforward' } });
+    });
+
+    expect(screen.getByText(/エラー 500/)).toBeTruthy();
   });
 
   it('「再読み込み」を押すと、セッションの確認からやり直して WebView を作り直す', async () => {

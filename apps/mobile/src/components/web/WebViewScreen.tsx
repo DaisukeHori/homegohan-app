@@ -295,7 +295,7 @@ const WebViewScreenBody: React.FC<Props & { onRetry: () => void }> = ({ path, te
         // #1049 F7-15: 読み込みに失敗したとき (オフライン・DNS・接続・タイムアウトなど) と、
         // サーバーが 5xx を返したときに、日本語の案内と「再読み込み」を出す (以前は何も無かった)
         onHttpError={httpFailure.onHttpError}
-        onLoadStart={httpFailure.onLoadStart}
+        onLoadEnd={httpFailure.onLoadEnd}
         renderError={() => <WebViewErrorView failure={{ kind: 'network' }} onRetry={onRetry} />}
       />
       {httpFailure.statusCode !== null ? (
