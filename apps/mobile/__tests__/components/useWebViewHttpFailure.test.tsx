@@ -104,6 +104,22 @@ describe('useWebViewHttpFailure — 失敗の表示を消す条件', () => {
     expect(result.current.statusCode).toBeNull();
   });
 
+  it('読み込みそのものの失敗 (オフラインなど。onError のあとにも onLoadEnd が呼ばれる) でも、前の 5xx の案内は消える (WebView の失敗の案内に切り替わる)', () => {
+    const { result, http, end } = setup();
+    http(503);
+    end();
+    expect(result.current.statusCode).toBe(503);
+
+    // 再タップの読み直しがオフラインで失敗。ライブラリは、エラーのイベントで onLoadEnd を呼ぶ
+    act(() =>
+      result.current.onLoadEnd({
+        nativeEvent: { domain: 'NSURLErrorDomain', code: -1009, description: 'The Internet connection appears to be offline.' },
+      }),
+    );
+
+    expect(result.current.statusCode).toBeNull();
+  });
+
   it('消したあとの 5xx は、また覚える', () => {
     const { result, http, end } = setup();
     http(503);

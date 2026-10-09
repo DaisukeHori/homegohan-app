@@ -38,6 +38,9 @@ function isHistoryNavigationEnd(event: unknown): boolean {
  *     このイベントだけが navigationType を持つ (読み込みの終わりのイベントは持たない)。
  *     5xx のエラーページ自身が履歴を書き換えても、案内が消えないようにする。
  *   - Android の onLoadStart は、ページ内の移動でも発火する (doUpdateVisitedHistory)。使わないので影響しない。
+ *
+ * 読み込みそのものの失敗 (オフライン・DNS・接続など) のときも、ライブラリは onLoadEnd を呼ぶ (onError のあと)。
+ * このときは WebView の renderError が「通信に失敗しました」の案内を出すので、前の 5xx の案内は消えてよい。
  */
 export function useWebViewHttpFailure() {
   const [statusCode, setStatusCode] = useState<number | null>(null);
