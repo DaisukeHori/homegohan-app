@@ -790,7 +790,7 @@ DDL は **operator/01-data-model.md §3.21** を参照 (テーブル定義とし
 
 - `cooling_until` (INSERT 時に `NOW() + 30 days`) と `cancelled_at` は、待機期間を前提にした列。正式仕様では使わない。
 - 退会時にこのテーブルへ行を作らない。削除の実行記録を何で残すかは §19 の未解決事項。
-- テーブルを廃止するか、別の用途にするかは未決 (§19)。現状は super-admin の exports API (`/api/super-admin/exports`) がエクスポート依頼の記録先として流用している。
+- テーブルを廃止するか、別の用途にするかは未決 (§19)。super-admin の exports API (`/api/super-admin/exports`) は、以前はエクスポート依頼の記録先として流用していたが、#1126 で止めた。現状は全メソッドが 501 (`OP_NOT_SUPPORTED`) を返し、このテーブルには触れない (operator/02-api-spec.md §16)。
 
 ### 16.5 運営による代理削除
 
