@@ -3,7 +3,7 @@
 --
 -- 背景:
 --   auth.users を参照する外部キーのうち 33 本は ON DELETE の指定が無く (= NO ACTION)、参照している行が 1 つでも残っていると
---   auth.users の行を消せない (外部キー違反 23503)。退会 API (POST /api/account/delete) は 10 テーブルだけを事前に掃除していて、
+--   auth.users の行を消せない (外部キー違反 23503)。退会 API (POST /api/account/delete) は 11 テーブルだけを事前に掃除していて、
 --   support_tickets / support_ticket_messages / email_delivery_logs / coupon_redemptions / referral_rewards / nps_surveys /
 --   csat_feedbacks / experiment_assignments / gdpr_deletion_requests / sales_lead_activities / infra_alerts などは対象外だった。
 --   その利用者・運営者が 1 件でも書き込んでいると、削除は 500 で失敗する (消去権の行使が黙って失敗する)。
