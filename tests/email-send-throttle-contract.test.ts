@@ -42,6 +42,12 @@ const MAIL_TRIGGERING_RPCS = [
  * 理由は「利用者が宛先を指定できない」「本人が 1 回しか実行できない」など、乱用の余地が無い根拠を書く。
  */
 const EXEMPT_EMAIL_SENDERS: Record<string, string> = {
+  // #1157 エラー急増の運用メール。利用者の操作で動く API ではなく、Vercel Cron だけが呼ぶ
+  'src/app/api/cron/app-log-alerts/route.ts':
+    '宛先は環境変数 OPS_ALERT_EMAIL の固定アドレス 1 つだけ (未設定なら送らない) で、利用者は宛先も本文も指定できない。' +
+    'CRON_SECRET の Bearer 認証 (requireCronAuth) を通った Vercel Cron からしか動かない。' +
+    '送信は DB の claim_ops_alert で原子的に「送る権利」を取った 1 回だけで、同じアラートは 60 分に 1 通までに制限される (Cron が同じ回を 2 回呼んでも 1 通)。' +
+    '本文は件数と関数名だけで、利用者の情報・ログの本文は含めない',
   'src/app/api/contact/route.ts':
     '宛先は環境変数 ADMIN_NOTIFICATION_EMAIL の固定アドレスだけで、利用者は宛先を指定できない。IP 単位の制限 (共通ヘルパー src/lib/rate-limit.ts の contact カテゴリ、10 回/分) がある',
   'src/app/api/family/representative-transfer/[id]/accept/route.ts':

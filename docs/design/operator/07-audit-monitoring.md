@@ -8,7 +8,7 @@
 
 | 項目 | 採用状況 | 実態 |
 |------|---------|------|
-| エラー監視 | `app_logs` テーブル + `/super-admin/logs` | Sentry は採用しない。`@sentry/nextjs` は入れていない (§7) |
+| エラー監視 | `app_logs` テーブル + `/super-admin/logs` + エラー急増のメール通知 | Sentry は採用しない。`@sentry/nextjs` は入れていない (§7)。急増したら運用のメールアドレス (`OPS_ALERT_EMAIL`) に 1 通知らせる (§8.3。宛先の設定と、メールの送信ドメインの検証はオーナーの作業) |
 | 性能の計測 | Vercel Speed Insights のみ | `@vercel/speed-insights` を、送る URL から `?` 以降と招待トークンを消す部品 (`SpeedInsightsClient`) 経由で `src/app/layout.tsx` に置く。本番ではすでに有効とみられる (§7.3) |
 | ログ集約 | `app_logs` テーブル | Better Stack (Logtail) は採用しない。`@logtail/node` は入れていない (§8) |
 | Status Page | 設置しない | `status.homegohan.app` は作らない。死活監視用の `/api/health` は実装済み (§9) |
@@ -476,10 +476,11 @@ logger.error('payment_failed を処理できなかった', error, {
 
 下の表は Better Stack で設定する予定だったもので、実現する手段がなくなったため実装されていない。
 代わりが必要になったら、`app_logs` の集計などで改めて設計する (§16)。
+ただし 1 行目 (`error` の急増) だけは、Slack ではなくメールで、`app_logs` の集計から通知する形で実装した (§8.3。しきい値・窓も旧案とは違う)。
 
 | 条件 | アクション |
 |-----|---------|
-| `error` ログが 5 分間に 10 件超 | Slack #incident 通知 |
+| `error` ログが 5 分間に 10 件超 | Slack #incident 通知 (→ §8.3 のメール通知で代替: 15 分間に 20 件超) |
 | `stripe.webhook` の processing_time > 5s | Slack #stripe-alerts |
 | pg_cron ジョブ失敗 | Slack #cron-alerts |
 | API p95 > 1000ms (3 分間継続) | Slack #performance |
@@ -497,7 +498,31 @@ Better Stack は採用しない (上記)。代わりに、`app_logs` (db-logger 
 | 表示 | 文面は保存されたまま表示する。秘密情報のマスクは書き込み時 (`supabase/functions/_shared/log-sanitizer.ts`: #1171 / #1287) |
 | 索引 | `created_at` / `level` / `function_name` / `source` / `user_id`。`request_id` には索引が無く、単独で探すと全行を順に調べる |
 
-しきい値を超えたときの通知 (メールなど) は含まない (§8.1 の旧案は未実装)。Sentry は採用しない (§7)。
+この画面と API は読み取り専用で、通知は含まない。しきい値を超えたときの通知は、別の仕組み (§8.3) が行う。Sentry は採用しない (§7)。
+
+### 8.3 エラー急増のメール通知 (実装済み: #1157)
+
+`app_logs` の `error` が短時間に増えたら、運用のメールアドレスに 1 通知らせる。オーナー決定 (2026-10-08): 通知先は、共有の受信箱ができるまで個人のアドレスでよい。
+`infra_alerts` は書かない (インフラ画面は「未接続」のまま: #1180)。
+
+| 項目 | 内容 |
+|-----|------|
+| 起動 | Vercel Cron が 15 分おきに `GET /api/cron/app-log-alerts` を呼ぶ (`vercel.json`)。認証は他の cron と同じ `requireCronAuth` (`CRON_SECRET` の Bearer。旧シークレット `CRON_SECRET_PREVIOUS` の受け付けを含む。#1196) |
+| 宛先 | 環境変数 `OPS_ALERT_EMAIL` (メールアドレス 1 つ)。**未設定なら何もしない** (info ログを 1 行残すだけで、DB にもメールにも触れない)。形が不正なときは warn を残して送らない |
+| 数え方 | DB の `app_log_error_counts(窓 15 分, 上位 10)` が、`level='error'` を `function_name` ごとに数える。返すのは関数名と件数 (と全体の件数) だけで、ログの本文・ユーザー ID は読まない。既存の索引 `idx_app_logs_created_at` で足りる |
+| 判定 | 全体の合計が **20 件を超えた** (21 件以上) とき。関数ごとではなく合計で見る (小さな失敗が広く散らばる障害も拾うため)。定数は `src/lib/ops-alerts/app-log-error-spike.ts` |
+| 重複の抑止 | 同じアラートは **60 分は送り直さない**。表 `ops_alert_state (alert_key PK, last_sent_at)` (service_role のみ) に覚える。「送ってよいか」は `claim_ops_alert` が 1 つの `INSERT ... ON CONFLICT DO UPDATE ... WHERE` で原子的に決める (Vercel Cron は同じ回をまれに 2 回呼ぶ。読んでから書くと 2 通出る)。キーは固定の `app_logs_error_spike` で、関数名など動的な値は入れない |
+| 送れなかったとき | メールは届くことに依存しない。送信の設定が未完了 (`RESEND_API_KEY` なし)・Resend が断った・例外のときは、`release_ops_alert` で取った権利を返し (「送った」と記録したままにしない)、15 分後の次の回でもう一度試す。失敗は `sendEmail` が `app_logs` に error で残し (宛先はマスク)、cron も件数と関数名を warn で残す。応答は 200 のまま (`status: send_failed` / `send_skipped`) |
+| 載せる内容 | 件数・関数名 (多い順に最大 10 件、残りは合計)・`/super-admin/logs` へのリンク・検知した時刻 (日本時間)。**ユーザー ID・メールアドレス・ログの本文は載せない** (送信先の Resend は米国の事業者)。関数名も、UUID・メールアドレス・トークンの書式はマスクし、80 文字までにしてから載せる |
+| 実装 | `src/app/api/cron/app-log-alerts/route.ts`、`src/lib/ops-alerts/app-log-error-spike.ts` (判定・整形)、`src/lib/emails/ops/app-log-error-spike.ts` (文面)、migration `20261008200900_ops_alert_state.sql` |
+| テスト | `src/__tests__/api/cron/app-log-alerts.test.ts` (401・しきい値・重複の抑止・メールの内容・送れなかったとき)、`src/__tests__/lib/ops-alerts/`、`src/__tests__/lib/emails/ops/`、`tests/integration/rls/ops-alert-state.test.ts` (DB の関数。同時に呼んでも権利を取れるのは 1 本だけ) |
+
+限界:
+
+- 窓 (15 分) と cron の間隔が同じなので、窓の境目をまたいで集中した少数の error は、どちらの窓でも届かず見逃すことがある。続く障害は次の窓で届く。
+- 数えるのは `app_logs` に書かれた error だけ。ログを書く前に落ちる障害 (関数ごと落ちる・DB に繋がらない) は数えられない。死活の監視 (§9.1) は別。
+- `error` レベルのログがそのままアラートの種になる。想定内の失敗 (入力の誤りなど) は `warn` で書く。`error` で書き続けると、本物の障害と区別できなくなる。
+- 本番はメールの送信ドメインが未検証で、メールは届かない (`docs/operations/email-domain.md`)。それまでは、送れなかったことが `app_logs` に残るだけ。
 
 ## 9. Status Page (status.homegohan.app) は設置しない
 
@@ -544,7 +569,7 @@ Status Page が無いので、旧案の「Better Stack でインシデントを�
 ```
 Step 1: 検知
   - 自動: severity='critical' の監査ログ (§6.2) → Slack #incident
-    (Better Stack / Sentry のアラートは採用しないため無い。エラー急増の自動検知は未実装で、§8.1 の旧案のまま)
+    (Better Stack / Sentry のアラートは採用しないため無い。`app_logs` の error の急増は、§8.3 のメール通知で検知する。宛先 `OPS_ALERT_EMAIL` を設定した場合のみ。それ以外の自動検知は未実装)
   - 手動: ユーザー報告 → support チケット → admin が確認
 
 Step 2: トリアージ (5 分以内)
@@ -966,5 +991,6 @@ cross/08-legal-compliance §13 に従い、`cookie_consents` テーブルで「�
 - 監査ログの 1 年後コールドストレージ移行: S3 Glacier への転送ジョブは別途実装 (Phase 3)
 - PagerDuty 連携 (要件 §5.10.2 の将来): 現在は Slack のみ対応。PagerDuty は組織 Enterprise 契約時に検討
 - `audit_logs_archive` テーブルへの移動でインデックスが再作成されるため、large scale 時のパフォーマンス確認が必要
-- エラー急増・Stripe webhook の遅延・pg_cron の失敗・API p95 悪化の自動通知 (§8.1 の旧案): Better Stack を採用しないため未実装。`app_logs` の集計で代替するか、自動通知を持たない運用にするかを決める (#1179)
+- エラー急増の自動通知 (§8.1 の旧案の 1 行目): `app_logs` の集計とメールで実装した (§8.3。#1157)。残る作業はオーナーのもの: `OPS_ALERT_EMAIL` の決定と設定、本番のメール送信の有効化 (Resend の送信ドメインの検証。`docs/operations/email-domain.md`)
+- Stripe webhook の遅延・pg_cron の失敗・API p95 悪化の自動通知 (§8.1 の旧案の残り): Better Stack を採用しないため未実装。`app_logs` の集計で代替するか、自動通知を持たない運用にするかを決める (#1179)
 - Speed Insights の計測データ (ページの URL を含む) を Vercel へ送ることの表示 (§7.3): 記載が要るかは弁護士の確認 (T30) を待って決める。本番はすでに有効とみられ、デプロイした時点から送られる。送る URL からは `?` 以降・`#` 以降・招待トークンを消してある (`beforeSend`)。デプロイ後に、実際の送信内容で確かめる (#1179)

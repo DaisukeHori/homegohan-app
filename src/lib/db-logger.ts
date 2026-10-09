@@ -1,6 +1,9 @@
 /**
  * DBログヘルパー - Next.js API Routes用
  * ログをapp_logsテーブルに保存する
+ *
+ * error レベルは運用アラートの種になる: 直近 15 分の error が 20 件を超えると、運用のメールに知らされる
+ * (GET /api/cron/app-log-alerts。#1157)。想定内の失敗 (入力の誤りなど) は warn で書き、本物の障害だけを error にする。
  */
 
 import { createClient } from '@supabase/supabase-js';
