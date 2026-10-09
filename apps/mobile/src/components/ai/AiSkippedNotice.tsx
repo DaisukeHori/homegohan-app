@@ -16,7 +16,7 @@ import {
   AI_CONSENT_SKIPPED_NOTE,
   type AiSkippedReason,
 } from "../../lib/ai-consent";
-import { colors, radius, spacing, typography } from "../../theme";
+import { colors, radius, spacing } from "../../theme";
 import { Button } from "../ui";
 
 /** AI の分析が無いが、省いた理由も無いとき (AI の失敗) の一文 */
@@ -55,8 +55,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.xl,
     padding: spacing.lg,
   },
+  // 文字の大きさは、置き換えた「AI分析を実行できませんでした」(各画面の reviewCardBody) と同じ
   text: {
-    ...typography.body,
+    fontSize: 13,
+    lineHeight: 20,
     color: colors.textMuted,
     textAlign: "center",
   },
