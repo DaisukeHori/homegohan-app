@@ -257,6 +257,7 @@ usage() {
   --base      取り込む基準 (既定 origin/main)。HEAD (コミット済み) にこれをマージした状態を検査する
   --no-merge  マージせず HEAD そのものを検査する
   --keep      作業用の worktree を消さずに残す
+同時に複数回すとき: LOCAL_CI_SLOTS='0 1' (使ってよい枠。integration / e2e は空いている枠のポートで回す)
 前提: Docker (integration / e2e)、Node は .nvmrc の major。詳しくは CONTRIBUTING.md の「ローカル CI」
 USAGE
 }
@@ -452,7 +453,7 @@ apply_slot() {
 file_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 
 # プロセスの開始時刻 (pid が使い回されたときに、別のプロセスを持ち主と取り違えないために記録する)
-proc_lstart() { ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//; s/ *$//'; }
+proc_lstart() { LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//; s/ *$//'; }
 
 # lock_held <ロックのディレクトリ>: 生きている持ち主がいる (または作られた直後で持ち主をまだ書いていない) なら真
 lock_held() {
@@ -492,7 +493,7 @@ reclaim_lock() {
     rmdir "$guard"
     return 1
   fi
-  say "持ち主のいないロックを回収します: $dir ($(tr '\n' ' ' <"$dir/owner" 2>/dev/null || echo 'owner なし'))"
+  say "持ち主のいないロックを回収します: $dir ($(tr "\n" " " 2>/dev/null <"$dir/owner" || echo "owner なし"))"
   rm -rf "$dir"
   rmdir "$guard"
 }
@@ -528,7 +529,7 @@ check_docker_memory() {
       if (u == "KiB") m = 1024; else if (u == "MiB") m = 1024 * 1024; else if (u == "GiB") m = 1024 * 1024 * 1024
       else if (u == "kB") m = 1000; else if (u == "MB") m = 1000 * 1000; else if (u == "GB") m = 1000 * 1000 * 1000
       sum += n * m }
-    END { printf "%d\n", sum }')"
+    END { printf "%.0f\n", sum }')"
   [[ "$used" =~ ^[0-9]+$ ]] || used=0
   free_mib="$(((total - used) / BYTES_PER_MIB))"
   if [ "$free_mib" -lt "$SLOT_MEMORY_MIB" ]; then
@@ -550,7 +551,7 @@ acquire_slot() {
         if [ "$s" -eq 0 ] && legacy_lock_held; then release_lock "$LOCK_DIR/slot-$s"; continue; fi
         SLOT_LOCK="$LOCK_DIR/slot-$s"
         apply_slot "$s"
-        say "枠 $s を取りました (project_id $SLOT_PROJECT_ID / Supabase API $SLOT_API_PORT / Next $APP_PORT・$ENFORCED_APP_PORT・$NOTICE_APP_PORT。ロック $SLOT_LOCK)"
+        say "枠 $s を取りました (project_id $SLOT_PROJECT_ID / Supabase API $SLOT_API_PORT / Next ${APP_PORT}・${ENFORCED_APP_PORT}・${NOTICE_APP_PORT}。ロック $SLOT_LOCK)"
         return 0
       fi
     done
@@ -878,7 +879,7 @@ finish() {
     fi
     echo "- 実行した段: \`$ONLY\` (全段は \`$ALL_STAGES\`)"
     if [ -n "$SLOT" ]; then
-      echo "- 枠: $SLOT (project_id \`$SLOT_PROJECT_ID\` / Supabase API $SLOT_API_PORT / Next $APP_PORT・$ENFORCED_APP_PORT・$NOTICE_APP_PORT)"
+      echo "- 枠: $SLOT (project_id \`$SLOT_PROJECT_ID\` / Supabase API $SLOT_API_PORT / Next ${APP_PORT}・${ENFORCED_APP_PORT}・${NOTICE_APP_PORT})"
     fi
     echo "- TZ=UTC / CI=true / LANG=$CI_LANG / NODE_OPTIONS なし / Node ${NODE_VERSION:-?} / $(uname -s) $(uname -m)"
     if [ "${DIRTY_TRACKED:-0}" != 0 ] || [ "${DIRTY_UNTRACKED:-0}" != 0 ]; then

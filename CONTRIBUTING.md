@@ -86,7 +86,32 @@ bash scripts/local-ci.sh --keep                   # 作業用の worktree を残
 
 - Node は `.nvmrc` の major (22)。違う版だと赤で止まり、入れ方を表示します (`nvm install 22 && nvm use 22` など)。
 - `integration` / `e2e` は Docker が要ります。ローカル Supabase は段ごとに `scripts/supabase-local.sh` で起動・停止します。
-- `integration` / `e2e` の前に、ポート 3000 (`e2e` は 3001・3002 も) とローカル Supabase のポート (54320〜54329) が空いているかを確かめ、塞がっていれば赤で止まります (他のプロセスやコンテナは止めません)。開発用の `npm run dev` やローカル Supabase を止めてから回してください。
+- `integration` / `e2e` の前に、ポート 3000 (`e2e` は 3001・3002 も) とローカル Supabase のポート (54320〜54329) が空いているかを確かめ、塞がっていれば赤で止まります (他のプロセスやコンテナは止めません)。開発用の `npm run dev` やローカル Supabase を止めてから回してください。ポートは枠 0 の値で、枠 1 以上では下の「同時に複数回す (枠)」のとおりずれます。
+
+**同時に複数回す (枠)**
+
+`integration` / `e2e` はローカル Supabase と Next を立てるため、そのままでは同じ機械で 1 本ずつしか回せません。**枠 (slot)** ごとにコンテナ名 (`project_id`) と全ポートをずらし、空いている枠を取った `local-ci.sh` から順に回します。
+
+```bash
+LOCAL_CI_SLOTS='0 1' bash scripts/local-ci.sh     # 枠 0 と 1 を使ってよい (2 本まで同時に回る。3 本目は空くまで待つ)
+LOCAL_CI_SLOT=1 bash scripts/local-ci.sh          # 枠 1 だけを使う (空くまで待つ)
+```
+
+| 枠 | `project_id` (コンテナ・ボリューム名の元) | ローカル Supabase のポート | Next のポート (既定 / 同意の強制あり / お知らせあり) |
+|---|---|---|---|
+| 0 (既定。CI と同じ) | `homegohan-local` | 54320〜54329 (CLI の既定: API 54321・DB 54322 など) | 3000 / 3001 / 3002 |
+| n (1〜9) | `homegohan-local-s<n>` | 0 の値 + n × 100 (例: 枠 1 は API 54421・DB 54422) | 0 の値 + n × 10 (例: 枠 1 は 3010 / 3011 / 3012) |
+
+- 値の表の正本は `scripts/lib/local-ci-slot.sh` です (`bash scripts/lib/local-ci-slot.sh 1` で枠 1 の値を表示)。`tests/local-ci-slot.test.ts` が、枠 0 が今までの値のままであることと、枠どうしで重ならないことを確かめます。
+- CI の yml は `scripts/supabase-local.sh` を枠を指定せずに呼ぶので、枠 0 (今までと同じ `config.toml`) で動きます。手で `LOCAL_CI_SLOT=1 bash scripts/supabase-local.sh start` のようにも使えます。
+- 枠は `integration` / `e2e` の直前に取り、終わったら (Ctrl-C や途中の失敗でも) 外します。`unit` / `mobile` だけなら取りません。ロックは `LOCAL_CI_LOCK_DIR` (既定 `${TMPDIR:-/tmp}/homegohan-local-ci-locks`) の下の `slot-<n>/` で、持ち主の pid と開始時刻を `owner` に書きます。持ち主のプロセスが死んでいれば次の実行が回収し、その枠に残ったコンテナ・ボリュームも片付けます (枠 1 以上だけ。枠 0 は枠を使わない作業と共有しているので止めません)。
+- 空いている枠が無ければ `LOCAL_CI_SLOT_WAIT_SECONDS` (既定 5400 秒 = 90 分) まで 10 秒おきに待ちます。過ぎたら表に `slot:wait` の行 (「待ちの時間切れ」) を出し、**終了コード 3** で終わります (検査の失敗の 1 とは別。ほかの段が赤なら 1)。
+- 片付けは自分の枠のものだけです (`supabase-local.sh stop` はその枠の `project_id` のコンテナ・ボリュームだけを消し、Next は自分が起動したプロセスだけを止める)。
+- 同じ HEAD を同時に回すと結果の置き場 (既定は HEAD の sha ごと) が重なるので、既定のときは `<sha>.<pid>` に替えます。`LOCAL_CI_ARTIFACTS` を指定したときは、使用中なら止まります (実行ごとに別の場所を指定してください)。
+
+**資源の目安**: 1 枠でローカル Supabase 一式 (studio などを除く 8 コンテナ) が Docker のメモリを約 1 GiB 使います (2026-10-10 の実測。`LOCAL_CI_SLOT_MEMORY_MIB` の既定 1536 MiB は余裕を足した値)。Next のサーバーと Playwright は Docker の外 (ホスト) で動き、`e2e` の `next build` はホストの CPU とメモリを多く使います。枠を取る前に Docker の空きメモリがこの目安より少なければ警告します (止めません)。Docker Desktop の VM のメモリが 8 GiB 程度なら 2〜3 枠が目安です。
+
+**外側のロックとの関係 (移行期間)**: 枠を使わずに既定のポート (枠 0 と同じ) で動く作業が、別のロック (例: Workflow の `mkdir` のロック) で 1 本ずつに並んでいる場合は、`LOCAL_CI_LEGACY_LOCK` にそのパスを渡します。枠 0 を使う前に、そのパスが無いことも確かめます (あれば枠 0 は使用中として扱い、ほかの枠か空くのを待ちます)。既定は空 (確かめない) です。すべての作業が枠で回るようになれば要りません。
 
 **CI と揃えている条件** (ずれると「ローカルは緑・CI は赤」になる)
 
@@ -109,7 +134,13 @@ bash scripts/local-ci.sh --keep                   # 作業用の worktree を残
 | `LOCAL_CI_WORKDIR` | 作業用 worktree の親 (既定 `${TMPDIR:-/tmp}/homegohan-local-ci`) |
 | `LOCAL_CI_ARTIFACTS` | JSON とログの置き場 (既定は上記) |
 | `LOCAL_CI_FETCH=0` | `--base` (`origin/...`) を fetch しない |
-| `LOCAL_CI_SUPABASE_PORTS` | 空きを確かめるローカル Supabase のポート (空白区切り) |
+| `LOCAL_CI_SUPABASE_PORTS` | 空きを確かめるローカル Supabase のポート (空白区切り。既定は枠の値) |
+| `LOCAL_CI_SLOTS` | 使ってよい枠 (空白区切り。既定 `0`)。例: `'0 1'` |
+| `LOCAL_CI_SLOT` | この枠だけを使う (`LOCAL_CI_SLOTS` より優先) |
+| `LOCAL_CI_LOCK_DIR` | 枠のロックの置き場 (既定 `${TMPDIR:-/tmp}/homegohan-local-ci-locks`) |
+| `LOCAL_CI_SLOT_WAIT_SECONDS` | 枠の空きを待つ上限の秒数 (既定 5400)。過ぎたら終了コード 3 |
+| `LOCAL_CI_LEGACY_LOCK` | 枠 0 を使う前に、無いことを確かめるパス (外側のロック。既定は空) |
+| `LOCAL_CI_SLOT_MEMORY_MIB` | 1 枠の Docker のメモリの目安 (MiB。既定 1536)。空きが少なければ警告 |
 | `LOCAL_CI_PLAYWRIGHT_WITH_DEPS=1` | `playwright install` に `--with-deps` を付ける (Linux で OS の依存も入れる。root 権限が要る) |
 
 **ローカルでは再現できないもの**: migration を含む PR の Deploy Supabase Migrations の PR ジョブ (本番台帳とのドリフト検知) は本番に接続するため、このスクリプトでは回しません。また CI のランナーは Linux なので、OS に依存する違い (ファイル名の大文字小文字など) は残ります。
