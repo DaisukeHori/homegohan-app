@@ -5,8 +5,9 @@
  *   - 認証: 未ログインは 401 で、service_role の client を作らず、何も削除しない
  *   - confirm が無ければ 400 (service_role の client を作らない)
  *   - 本人のセッションで確認した user.id だけを、本体に渡す (リクエストの本文の user_id などは見ない)
- *   - 結果の HTTP への変換: 成功は { success: true }、409 は従来と同じ形、失敗は構造化した ACCOUNT_DELETE_FAILED (生のエラー文なし)
- *   - service_role の設定が無いときも、生のエラー文を返さず ACCOUNT_DELETE_FAILED にする
+ *   - 結果の HTTP への変換: 成功は { success: true }、409 は従来と同じ形、
+ *     失敗は #1172 の internalError (汎用メッセージと INTERNAL_ERROR だけ。生のエラー文・段階・request_id は本文に出さない)
+ *   - service_role の設定が無いときも、生のエラー文を返さず internalError の 500 にする
  *   - Storage の削除に時間がかかるので maxDuration を 60 秒にしてある
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -16,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   getSupabaseAdmin: vi.fn(),
   deleteAccount: vi.fn(),
   loggerError: vi.fn(),
+  withUser: vi.fn(),
+  createLogger: vi.fn(),
 }));
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -24,13 +27,19 @@ vi.mock('@/lib/supabase/server', () => ({
 }));
 
 vi.mock('@/lib/db-logger', () => ({
-  createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: mocks.loggerError,
-    withUser: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: mocks.loggerError }),
-  }),
+  createLogger: (...args: unknown[]) => {
+    mocks.createLogger(...args);
+    return {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: mocks.loggerError,
+      withUser: (userId: string) => {
+        mocks.withUser(userId);
+        return { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: mocks.loggerError };
+      },
+    };
+  },
   generateRequestId: () => 'req_route_test',
 }));
 
@@ -41,6 +50,7 @@ vi.mock('@/lib/account-deletion', async (importOriginal) => {
 });
 
 import { POST, maxDuration } from '../src/app/api/account/delete/route';
+import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '../src/lib/api/errors';
 
 const USER = { id: '11111111-1111-4111-8111-111111111111', email: 'someone@example.com' };
 const ADMIN_CLIENT = { marker: 'service-role-client' };
@@ -139,34 +149,45 @@ describe('POST /api/account/delete: 結果の HTTP への変換', () => {
     });
   });
 
-  it('失敗は 500 の構造化された ACCOUNT_DELETE_FAILED (request_id つき。段階も生のエラー文も入れない)', async () => {
+  it('失敗 (ACCOUNT_DELETE_FAILED) は #1172 の internalError: 汎用メッセージと INTERNAL_ERROR だけ (段階・request_id・生のエラー文を出さない)', async () => {
     mocks.deleteAccount.mockResolvedValue({
       ok: false,
       status: 500,
       error: 'ACCOUNT_DELETE_FAILED',
-      message: '退会の処理に失敗しました。',
       request_id: 'req_route_test',
       step: 'storage',
     });
     const res = await POST(request({ confirm: true }));
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({
-      error: 'ACCOUNT_DELETE_FAILED',
-      message: '退会の処理に失敗しました。',
-      request_id: 'req_route_test',
-    });
+    const body = await res.json();
+    expect(body).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
+    expect(JSON.stringify(body)).not.toContain('storage');
+    expect(JSON.stringify(body)).not.toContain('req_route_test');
+    // 500 を返したことは、同じ request_id と段階でログに残す (原因は deleteAccount 側のログにある)
+    expect(mocks.loggerError).toHaveBeenCalledTimes(1);
+    const [, loggedError, metadata] = mocks.loggerError.mock.calls[0];
+    expect((loggedError as Error).message).toBe('account deletion failed at step: storage');
+    expect(metadata).toMatchObject({ step: 'storage' });
+    // 削除後かもしれないので user_id を付けない (app_logs.user_id の外部キーで記録が保存できなくなる)
+    expect(mocks.withUser).not.toHaveBeenCalled();
+    expect(mocks.createLogger).toHaveBeenCalledWith('POST /api/account/delete', 'req_route_test');
   });
 
-  it('service_role の設定が無いとき (getSupabaseAdmin が例外) も、生のエラー文を返さず ACCOUNT_DELETE_FAILED にして、ログに残す', async () => {
+  it('service_role の設定が無いとき (getSupabaseAdmin が例外) も、生のエラー文を返さず internalError の 500 にして、ログに残す', async () => {
     mocks.getSupabaseAdmin.mockImplementation(() => {
       throw new Error('Supabase admin env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)');
     });
     const res = await POST(request({ confirm: true }));
     expect(res.status).toBe(500);
     const body = await res.json();
-    expect(body).toMatchObject({ error: 'ACCOUNT_DELETE_FAILED', request_id: 'req_route_test' });
+    expect(body).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
     expect(JSON.stringify(body)).not.toContain('SUPABASE_SERVICE_ROLE_KEY');
     expect(mocks.deleteAccount).not.toHaveBeenCalled();
     expect(mocks.loggerError).toHaveBeenCalledTimes(1);
+    const [, loggedError, metadata] = mocks.loggerError.mock.calls[0];
+    expect((loggedError as Error).message).toContain('SUPABASE_SERVICE_ROLE_KEY');
+    expect(metadata).toMatchObject({ step: 'init' });
+    // まだ削除していないので、本人の user_id を付けてよい
+    expect(mocks.withUser).toHaveBeenCalledWith(USER.id);
   });
 });

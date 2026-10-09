@@ -18,7 +18,8 @@
  * 5 が失敗したら、2〜4 は済んでいてもアカウントは残る。もう一度削除を実行すれば、残りが片付いて削除できる。
  *
  * ログは src/lib/db-logger.ts (app_logs) に残す。メールアドレスは載せない (db-logger のマスクに頼らず、そもそも渡さない)。
- * 失敗の応答には内部のエラー文を入れず、request_id だけを返す (サポートが app_logs から該当のログを探せる)。
+ * 失敗 (ACCOUNT_DELETE_FAILED) は HTTP の応答にしない。呼び出し側 (route) が #1172 の規則どおり internalError
+ * (src/lib/api/errors.ts。汎用メッセージだけの 500) で返す。調査は結果の request_id と step で app_logs を探す。
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
@@ -37,9 +38,6 @@ export type AccountDeletionErrorCode =
   | 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER'
   | 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE'
   | 'ACCOUNT_DELETE_FAILED';
-
-export const ACCOUNT_DELETE_FAILED_MESSAGE =
-  '退会の処理に失敗しました。時間をおいてもう一度お試しください。解決しない場合は、お問い合わせ画面からご連絡ください。';
 
 export type DeleteAccountResult =
   | { ok: true }
@@ -61,14 +59,21 @@ export type DeleteAccountResult =
       ok: false;
       status: 500;
       error: 'ACCOUNT_DELETE_FAILED';
-      message: string;
-      /** app_logs の request_id と同じ値。問い合わせのときに伝えてもらう */
+      /** app_logs の request_id と同じ値 (調査用。HTTP の応答には含めない) */
       request_id: string;
       /** 失敗した段階 (ログ・テスト用。HTTP の応答には含めない) */
       step: AccountDeletionStep;
     };
 
 export type DeleteAccountFailure = Extract<DeleteAccountResult, { error: 'ACCOUNT_DELETE_FAILED' }>;
+
+/** 失敗 (500) 以外の結果。accountDeletionHttp で HTTP の応答にできるのはこちらだけ */
+export type DeleteAccountHttpResult = Exclude<DeleteAccountResult, DeleteAccountFailure>;
+
+/** 失敗 (ACCOUNT_DELETE_FAILED) かどうか。失敗は呼び出し側が internalError (汎用メッセージの 500) で返す */
+export function isAccountDeletionFailure(result: DeleteAccountResult): result is DeleteAccountFailure {
+  return !result.ok && result.error === 'ACCOUNT_DELETE_FAILED';
+}
 
 /** 退会で使う client。service_role の SupabaseClient を渡す */
 export type AccountDeletionAdmin = Pick<SupabaseClient, 'from' | 'rpc' | 'storage' | 'auth'>;
@@ -96,17 +101,18 @@ export function accountDeletionFailure(requestId: string, step: AccountDeletionS
     ok: false,
     status: 500,
     error: 'ACCOUNT_DELETE_FAILED',
-    message: ACCOUNT_DELETE_FAILED_MESSAGE,
     request_id: requestId,
     step,
   };
 }
 
 /**
- * 結果を HTTP の応答 (ステータスと JSON) にする。step は含めない。
+ * 失敗 (500) 以外の結果を HTTP の応答 (ステータスと JSON) にする。
  * 成功は { success: true } (従来の応答と同じ)。409 は従来と同じ形 ({ error, message, organization | family_group })。
+ * 失敗 (ACCOUNT_DELETE_FAILED) は受け取らない: 呼び出し側が isAccountDeletionFailure で先に分け、
+ * internalError (src/lib/api/errors.ts。#1172。汎用メッセージだけ) で返す。
  */
-export function accountDeletionHttp(result: DeleteAccountResult): { status: number; body: Record<string, unknown> } {
+export function accountDeletionHttp(result: DeleteAccountHttpResult): { status: number; body: Record<string, unknown> } {
   if (result.ok) return { status: 200, body: { success: true } };
   if (result.error === 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER') {
     return {
@@ -114,15 +120,9 @@ export function accountDeletionHttp(result: DeleteAccountResult): { status: numb
       body: { error: result.error, message: result.message, organization: result.organization },
     };
   }
-  if (result.error === 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE') {
-    return {
-      status: result.status,
-      body: { error: result.error, message: result.message, family_group: result.family_group },
-    };
-  }
   return {
     status: result.status,
-    body: { error: result.error, message: result.message, request_id: result.request_id },
+    body: { error: result.error, message: result.message, family_group: result.family_group },
   };
 }
 
@@ -201,7 +201,7 @@ async function findBlocker(admin: AccountDeletionAdmin, userId: string): Promise
 
 /**
  * アカウントを削除する。例外は投げない (想定外の例外も ACCOUNT_DELETE_FAILED にして返す)。
- * 成功したら { ok: true }。409 / 500 は accountDeletionHttp で HTTP の応答にできる。
+ * 成功したら { ok: true }。成功と 409 は accountDeletionHttp で HTTP の応答にする。失敗 (500) は呼び出し側が internalError で返す。
  */
 export async function deleteAccount(params: DeleteAccountParams): Promise<DeleteAccountResult> {
   const { userId, admin } = params;

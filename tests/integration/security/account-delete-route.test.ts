@@ -12,7 +12,7 @@
  *        - Storage の <user_id>/ 以下のファイルが消える
  *        - 退会したあと、同じトークンで呼ぶと 401
  *
- * 修正前 (migration を流す前) に流すと、C が 500 ACCOUNT_DELETE_FAILED (prepare_account_deletion が無い) で失敗する。
+ * 修正前 (migration を流す前) に流すと、C が 500 (本体は ACCOUNT_DELETE_FAILED。prepare_account_deletion が無い) で失敗する。
  * 退会は外部キーの違反では失敗しなくなったので、migration のあとは C が通る。
  *
  * 実行 (ローカル Supabase と Next の dev サーバが必要):

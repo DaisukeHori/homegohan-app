@@ -8,16 +8,17 @@
  *   - 順序: 確認 → prepare_account_deletion → release_user_membership → Storage → auth.admin.deleteUser
  *   - 失敗の扱い: prepare / Storage / deleteUser の失敗はそこで止めて ACCOUNT_DELETE_FAILED (deleteUser より前なら deleteUser を呼ばない)。
  *     ライセンス解放 (release_user_membership) の失敗だけは続ける
- *   - 失敗の応答に、DB・Storage の生のエラー文を入れない。request_id を返す
+ *   - 失敗の結果に、DB・Storage の生のエラー文を入れない。request_id と段階を持つ (HTTP の応答は route が #1172 の internalError で返す)
  *   - すでに消えているユーザーの deleteUser (404) は成功として扱う (やり直せる)
  *   - ログにメールアドレスを載せない。削除後のログに user_id を付けない
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
-  ACCOUNT_DELETE_FAILED_MESSAGE,
   accountDeletionFailure,
   accountDeletionHttp,
+  isAccountDeletionFailure,
   deleteAccount,
+  type DeleteAccountResult,
   type AccountDeletionAdmin,
   type AccountDeletionLogger,
 } from '../src/lib/account-deletion';
@@ -25,6 +26,12 @@ import {
 const USER = '11111111-1111-4111-8111-111111111111';
 const REQUEST_ID = 'req_test_1';
 const SECRET_DB_MESSAGE = 'duplicate key value violates unique constraint "secret_constraint" (user@example.com)';
+
+/** 成功・409 の結果を HTTP の応答にする (失敗の結果は accountDeletionHttp に渡せない。route が internalError で返す) */
+function httpOf(result: DeleteAccountResult) {
+  if (isAccountDeletionFailure(result)) throw new Error(`unexpected failure at step: ${result.step}`);
+  return accountDeletionHttp(result);
+}
 
 interface World {
   calls: string[];
@@ -135,7 +142,7 @@ describe('deleteAccount: 409 (従来と同じ形)', () => {
       organization: { id: 'org-1', name: '株式会社テスト' },
     });
     expect(world.calls).toEqual(['from:organizations']);
-    expect(accountDeletionHttp(result)).toEqual({
+    expect(httpOf(result)).toEqual({
       status: 409,
       body: {
         error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER',
@@ -157,7 +164,7 @@ describe('deleteAccount: 409 (従来と同じ形)', () => {
       family_group: { id: 'fg-1', name: 'うちの家族' },
     });
     expect(world.calls).toEqual(['from:organizations', 'from:family_groups']);
-    expect(accountDeletionHttp(result).body).toEqual({
+    expect(httpOf(result).body).toEqual({
       error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE',
       message: '家族グループの代表者です。先に代表者を譲渡するか家族グループを解散してください。',
       family_group: { id: 'fg-1', name: 'うちの家族' },
@@ -191,7 +198,7 @@ describe('deleteAccount: 成功', () => {
     for (const bucket of ['meal_photos', 'fridge-images', 'health-checkups']) {
       expect(world.calls).toContain(`storage.list:${bucket}`);
     }
-    expect(accountDeletionHttp(result)).toEqual({ status: 200, body: { success: true } });
+    expect(httpOf(result)).toEqual({ status: 200, body: { success: true } });
   });
 
   it('成功のログには user_id もメールアドレスも載せず (削除後なので withUser を使わない)、掃除の件数だけを載せる', async () => {
@@ -218,16 +225,10 @@ describe('deleteAccount: 失敗の扱い', () => {
     expect(world.calls.some((call) => call.startsWith('storage.'))).toBe(false);
     expect(world.calls).not.toContain('auth.deleteUser');
 
-    const http = accountDeletionHttp(result);
-    expect(http.status).toBe(500);
-    expect(http.body).toEqual({
-      error: 'ACCOUNT_DELETE_FAILED',
-      message: ACCOUNT_DELETE_FAILED_MESSAGE,
-      request_id: REQUEST_ID,
-    });
-    expect(JSON.stringify(http.body)).not.toContain('secret_constraint');
-    expect(JSON.stringify(http.body)).not.toContain('user@example.com');
-    expect(JSON.stringify(http.body)).not.toContain('step');
+    // 失敗の結果に、DB の生のエラー文・メールアドレスを入れない (HTTP の応答は route が internalError で返す)
+    expect(isAccountDeletionFailure(result)).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('secret_constraint');
+    expect(JSON.stringify(result)).not.toContain('user@example.com');
   });
 
   it('失敗はログ (error) に、段階・request_id・SQLSTATE を残す。user_id は付ける (まだ削除されていない)', async () => {
@@ -258,7 +259,7 @@ describe('deleteAccount: 失敗の扱い', () => {
     const result = await run();
 
     expect(result).toMatchObject({ ok: false, status: 500, error: 'ACCOUNT_DELETE_FAILED', step: 'delete_user' });
-    expect(JSON.stringify(accountDeletionHttp(result).body)).not.toContain('secret_constraint');
+    expect(JSON.stringify(result)).not.toContain('secret_constraint');
     const failure = logs.entries.find((entry) => entry.level === 'error');
     expect(failure?.metadata).toMatchObject({ step: 'delete_user', error_status: 500, error_code: 'unexpected_failure' });
   });
@@ -293,14 +294,32 @@ describe('deleteAccount: 失敗の扱い', () => {
   });
 });
 
-describe('accountDeletionHttp / accountDeletionFailure', () => {
-  it('失敗の結果は request_id を持ち、HTTP の応答には step を含めない', () => {
+describe('accountDeletionHttp / accountDeletionFailure / isAccountDeletionFailure', () => {
+  it('失敗の結果は request_id と段階を持つ (調査用。HTTP の応答には route が internalError を使うので出ない)', () => {
     const failure = accountDeletionFailure('req_x', 'storage');
-    expect(failure).toMatchObject({ ok: false, status: 500, error: 'ACCOUNT_DELETE_FAILED', request_id: 'req_x', step: 'storage' });
-    expect(accountDeletionHttp(failure).body).toEqual({
-      error: 'ACCOUNT_DELETE_FAILED',
-      message: ACCOUNT_DELETE_FAILED_MESSAGE,
-      request_id: 'req_x',
-    });
+    expect(failure).toEqual({ ok: false, status: 500, error: 'ACCOUNT_DELETE_FAILED', request_id: 'req_x', step: 'storage' });
+  });
+
+  it('isAccountDeletionFailure は ACCOUNT_DELETE_FAILED だけを失敗とみなす (成功・409 は accountDeletionHttp へ)', () => {
+    expect(isAccountDeletionFailure(accountDeletionFailure('req_x', 'prepare'))).toBe(true);
+    expect(isAccountDeletionFailure({ ok: true })).toBe(false);
+    expect(
+      isAccountDeletionFailure({
+        ok: false,
+        status: 409,
+        error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER',
+        message: 'm',
+        organization: { id: 'o', name: 'n' },
+      }),
+    ).toBe(false);
+    expect(
+      isAccountDeletionFailure({
+        ok: false,
+        status: 409,
+        error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE',
+        message: 'm',
+        family_group: { id: 'f', name: 'n' },
+      }),
+    ).toBe(false);
   });
 });
