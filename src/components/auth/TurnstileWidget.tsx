@@ -181,7 +181,9 @@ export const TurnstileWidget = forwardRef<TurnstileWidgetHandle, TurnstileWidget
       {/* Cloudflare が iframe を入れる場所。React の子要素は置かない (Cloudflare が書き換えるため) */}
       <div ref={containerRef} data-testid="turnstile-widget" className="flex min-h-[65px] w-full justify-center" />
       {status === 'loading' && (
-        <p role="status" className="text-xs text-gray-400">
+        // 送信ボタンが押せない理由を伝える文なので、白い背景の上で WCAG AA (4.5:1) を満たす濃さにする
+        // (text-gray-400 は白地で約 2.6:1 で届かない。text-gray-600 は約 7.6:1)
+        <p role="status" className="text-xs text-gray-600">
           ボットではないことを確認しています。確認が終わるとボタンを押せます。
         </p>
       )}
