@@ -1,35 +1,57 @@
 /**
  * tests/e2e/helpers/ai-consent.ts
  *
- * 外国の AI 事業者への提供の同意画面 (T15 / #1154) の e2e 用の道具。
+ * 外国の AI 事業者への提供の同意 (T15 / #1154) の e2e 用の道具。
  *
- * AI を使う操作 (食事の写真の解析・AI 相談・献立の生成など) は、同意をしていない利用者が初めて使うときに、
- * 同意画面 (data-testid="ai-consent-modal") を出して、「同意する」「あとで」のどちらかが押されるまで待つ。
- * 同意画面を試すわけではない spec が、その画面で止まらないように、既定では「あとで」を選んだ状態でページを開く。
- * (「あとで」の期限は localStorage に持つ。サーバーには何も記録しない。src/hooks/useAiConsent.tsx)
+ * 未同意の利用者のデータは、サーバーが AI へ送る手前で止める (403 AI_CONSENT_REQUIRED)。画面は、AI の操作の前に
+ * 同意画面 (data-testid="ai-consent-modal") を出す。同意画面を試すわけではない spec が止められないよう、
+ * テスト用のアカウントは同意済みにしておく:
+ *   - ローカルの e2e-user-01〜10: scripts/create-e2e-accounts.ts が作るときに記録する
+ *   - test ごとに作るユーザー: fixtures/fresh-user.ts が作るときに記録する (aiConsentGranted: false で記録しない)
+ *   - 本番の e2e-user (e2e.yml) とログインの共通処理: ensureAiConsentGranted がアプリの API で記録する
+ *     (GET /api/ai/consent で同意済みなら何もしない。未同意・古い版なら POST /api/ai/consent)
  *
- * 同意画面そのものを試す spec は、これを使わない (fixtures/fresh-user.ts の regularUser など。
- * fixtures/auth.ts の authedPage を使うなら test.use({ aiConsentSnoozed: false }) にする)。
+ * 同意画面そのものを試す spec は、同意していない状態から始める (fixtures/fresh-user.ts の test.use({ aiConsentGranted: false }))。
  */
-import type { BrowserContext } from "@playwright/test";
-import { AI_CONSENT_LATER_STORAGE_KEY } from "../../../src/lib/ai/consent-config";
+import type { APIRequestContext, Page } from "@playwright/test";
+import { AI_CONSENT_VERSION } from "../../../supabase/functions/_shared/ai-consent";
 
-/** 「あとで」の期限。十分先にしておく (実行中に切れて、途中から画面が出ることが無いように) */
-const SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
+/** HTTP 404 (同意の API がまだ無いデプロイ) */
+const NOT_FOUND = 404;
 
 /**
- * このコンテキストで開くすべてのページを、外国の AI 事業者への提供の同意画面を「あとで」にした状態で始める。
- * すでに値があるとき (利用者が自分で選んだ後など) は上書きしない。
+ * ログイン済みのセッション (page と同じ Cookie) で、同意を記録する。すでに現行の版に同意していれば何もしない。
+ * origin はアプリの URL (例: http://localhost:3000)。
+ * 記録できなかったら例外にする (AI を使う spec が、あとで分かりにくい 403 で落ちないように)。
  */
-export async function snoozeAiConsent(context: BrowserContext): Promise<void> {
-  await context.addInitScript(
-    ({ key, until }) => {
-      try {
-        if (!window.localStorage.getItem(key)) window.localStorage.setItem(key, String(until));
-      } catch {
-        // localStorage が使えないページ (about:blank など) では何もしない
-      }
-    },
-    { key: AI_CONSENT_LATER_STORAGE_KEY, until: Date.now() + SNOOZE_MS },
-  );
+export async function ensureAiConsentGranted(target: Page | APIRequestContext, origin: string): Promise<void> {
+  const request = "request" in target ? target.request : target;
+  const base = origin.replace(/\/+$/, "");
+  const status = await request.get(`${base}/api/ai/consent`);
+  // 同意の API がまだ無いデプロイ (本番の e2e.yml を、この変更の反映前に走らせたとき) では、AI も止めていないので何もしない
+  if (status.status() === NOT_FOUND) {
+    console.warn("[e2e] /api/ai/consent が無いため、AI の同意の記録を省きます (同意の判定が入る前のデプロイ)");
+    return;
+  }
+  if (!status.ok()) {
+    throw new Error(`[e2e] AI の同意の状況を取得できない (${status.status()})`);
+  }
+  const body = (await status.json()) as { consented?: unknown; version?: unknown };
+  if (body.consented === true && body.version === AI_CONSENT_VERSION) return;
+
+  const res = await request.post(`${base}/api/ai/consent`, { data: { version: AI_CONSENT_VERSION } });
+  if (!res.ok()) {
+    throw new Error(`[e2e] AI の同意を記録できない (${res.status()})`);
+  }
+}
+
+/** page が開いているアプリの origin。開いていなければ fallback */
+export function appOrigin(page: Page, fallback: string): string {
+  try {
+    const url = new URL(page.url());
+    if (url.protocol === "http:" || url.protocol === "https:") return url.origin;
+  } catch {
+    // about:blank など
+  }
+  return fallback;
 }

@@ -9,6 +9,8 @@
  *   - 同時に 2 回押されても、有効な行は (user_id, provider) ごとに 1 件に収まること
  *   - 利用者本人のセッション (RLS) で、自分の行だけが読めること。他人の user_id を指定しても何も見えないこと
  *   - 撤回しても行は残り (監査のため)、撤回のあとに同意し直せること (拒否の行を作らない設計の裏返し)
+ *   - 送る手前の判定 (src/lib/ai/consent-guard.ts の checkUserAiConsent) が、本人のセッション (RLS) と service role の
+ *     どちらで読んでも、同意済みなら送ってよい・未同意 / 撤回後 / 古い版なら送らない、になること
  *
  * 書き込み (grant / revoke) は service role、読み取りは本人のセッション (本番の route と同じ使い分け)。
  *
@@ -26,6 +28,7 @@ import {
   grantAiConsent,
   revokeAiConsent,
 } from '@/lib/ai/consent';
+import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -136,7 +139,7 @@ const input = (userId: string, overrides: Record<string, unknown> = {}) => ({
 });
 
 describe('grantAiConsent / getAiConsentStatus: 実 DB', () => {
-  it('同意: 3 事業者ぶんの行が、版・IP アドレス・User-Agent つきで作られ、本人のセッションで読める', async () => {
+  it('同意: 全事業者ぶんの行が、版・IP アドレス・User-Agent つきで作られ、本人のセッションで読める', async () => {
     await clearRows(userA.id);
 
     const status = await grantAiConsent(input(userA.id), srAdmin);
@@ -178,7 +181,7 @@ describe('grantAiConsent / getAiConsentStatus: 実 DB', () => {
     await clearRows(userA.id);
     await grantAiConsent(input(userA.id, { ipAddress: null, userAgent: null }), srAdmin);
     const rows = await rowsOf(userA.id);
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(AI_CONSENT_PROVIDERS.length);
     expect(rows.every((r) => r.ip_address === null && r.user_agent === null && r.consented)).toBe(true);
   });
 
@@ -313,5 +316,40 @@ describe('revokeAiConsent: 実 DB', () => {
     expect(rows).toHaveLength(AI_CONSENT_PROVIDERS.length * 2);
     expect(activeRows(rows).every((r) => r.ip_address === '198.51.100.20')).toBe(true);
     expect(rows.filter((r) => r.revoked_at !== null).every((r) => r.ip_address === '203.0.113.5')).toBe(true);
+  });
+});
+
+describe('checkUserAiConsent (送る手前の判定): 実 DB', () => {
+  it('未同意 → 撤回 → 同意 → 古い版: 本人のセッションでも service role でも、同意済みのときだけ送ってよい', async () => {
+    await clearRows(userA.id);
+    for (const db of [userA.client, srAdmin]) {
+      await expect(checkUserAiConsent(db, userA.id)).resolves.toEqual({ allowed: false, reason: 'not_consented' });
+    }
+
+    await grantAiConsent(input(userA.id), srAdmin);
+    for (const db of [userA.client, srAdmin]) {
+      await expect(checkUserAiConsent(db, userA.id)).resolves.toEqual({ allowed: true });
+    }
+
+    await revokeAiConsent(userA.id, srAdmin);
+    for (const db of [userA.client, srAdmin]) {
+      await expect(checkUserAiConsent(db, userA.id)).resolves.toEqual({ allowed: false, reason: 'not_consented' });
+    }
+
+    // 古い版への同意だけが有効 (文面の版を上げたあと)
+    await clearRows(userA.id);
+    for (const provider of AI_CONSENT_PROVIDERS) {
+      const { error } = await srAdmin
+        .from(TABLE)
+        .insert({ user_id: userA.id, provider, consented: true, policy_version: 'draft-2026-10-08' });
+      expect(error).toBeNull();
+    }
+    await expect(checkUserAiConsent(userA.client, userA.id)).resolves.toEqual({ allowed: false, reason: 'not_consented' });
+  });
+
+  it('RLS: 別のユーザーのセッションで、同意済みの人の user_id を判定しても、送ってよいことにはならない', async () => {
+    await clearRows(userA.id);
+    await grantAiConsent(input(userA.id), srAdmin);
+    await expect(checkUserAiConsent(userB.client, userA.id)).resolves.toEqual({ allowed: false, reason: 'not_consented' });
   });
 });

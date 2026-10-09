@@ -49,7 +49,8 @@
 --   REVOKE / GRANT は何度流しても同じ結果になる。
 -- ロールバック: supabase/rollbacks/20261010090000_ai_consent_policy_version.down.sql
 --   (Web のデプロイを戻したあとに流すこと。列を落とすと、記録済みの「同意した文面の版」が失われる)
--- 確認: tests/integration/rls/external-data-consents.test.ts (15 件)。この migration の前は 5 件が失敗し、後は全件成功する。
+-- 確認: tests/integration/rls/external-data-consents.test.ts (16 件)。この migration の後は全件成功する
+--   (X-12 は perplexity / aimlapi の行を入れるので、CHECK を付け直す前は失敗する)。
 
 -- 1. 同意した文面の版
 ALTER TABLE public.external_data_consents

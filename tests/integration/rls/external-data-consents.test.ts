@@ -14,6 +14,8 @@
  *
  * 期待する認可 (20261010090000_ai_consent_policy_version.sql の後):
  *   - 列 policy_version (同意した文面の版) がある
+ *   - provider は、同意を取る事業者 (xai / google / openai / perplexity / aimlapi。supabase/functions/_shared/ai-consent.ts) と、
+ *     元からの anthropic を受け付ける。それ以外は CHECK で拒否する
  *   - anon: 何も読み書きできない
  *   - ログインユーザー: 自分の行だけ SELECT できる。INSERT・UPDATE・DELETE は、自分の行にも他人の行にもできない
  *   - service role: 従来どおり読み書きできる。有効な (revoked_at が NULL の) 行は (user_id, provider) ごとに 1 件
@@ -28,6 +30,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
+import { AI_CONSENT_PROVIDERS } from '../../../supabase/functions/_shared/ai-consent';
 
 // ---------------------------------------------------------------
 // 環境変数
@@ -361,11 +364,11 @@ describe('external_data_consents: クライアントからは更新・削除・�
 // service role: サーバーの API が同意を記録・撤回する経路は影響を受けない
 // ================================================================
 describe('external_data_consents: service role (サーバー) は同意を記録・撤回できる', () => {
-  it('X-12: 3 事業者 (xai / google / openai) ぶんを、文面の版・IP アドレス・User-Agent つきで INSERT して読み戻せる', async () => {
+  it('X-12: 同意を取る全事業者 (xai / google / openai / perplexity / aimlapi) ぶんを、文面の版・IP アドレス・User-Agent つきで INSERT して読み戻せる', async () => {
     await seed();
     await srAdmin.from(TABLE).delete().eq('user_id', owner.userId);
 
-    for (const provider of ['xai', 'google', 'openai']) {
+    for (const provider of AI_CONSENT_PROVIDERS) {
       const { error } = await srAdmin.from(TABLE).insert({
         user_id: owner.userId,
         provider,
@@ -383,8 +386,8 @@ describe('external_data_consents: service role (サーバー) は同意を記録
       .eq('user_id', owner.userId)
       .order('provider');
     expect(error).toBeNull();
-    expect(data).toHaveLength(3);
-    expect((data ?? []).map((r: { provider: string }) => r.provider)).toEqual(['google', 'openai', 'xai']);
+    expect(data).toHaveLength(AI_CONSENT_PROVIDERS.length);
+    expect((data ?? []).map((r: { provider: string }) => r.provider)).toEqual([...AI_CONSENT_PROVIDERS].sort());
     for (const row of (data ?? []) as Array<Record<string, unknown>>) {
       expect(row).toMatchObject({
         consented: true,
@@ -394,6 +397,14 @@ describe('external_data_consents: service role (サーバー) は同意を記録
         user_agent: `rls-test-ua-${row.provider}`,
       });
     }
+  });
+
+  it('X-12b: provider の CHECK は、同意を取る事業者以外 (知らない事業者) を拒否する (23514)', async () => {
+    await seed();
+    const { error } = await srAdmin
+      .from(TABLE)
+      .insert({ user_id: owner.userId, provider: 'unknown-ai', consented: true, policy_version: VERSION });
+    expect(error?.code).toBe('23514');
   });
 
   it('X-13: 有効な行 (revoked_at が NULL) は (user_id, provider) ごとに 1 件。撤回 (revoked_at を入れる) と、その後の同意はできる', async () => {
