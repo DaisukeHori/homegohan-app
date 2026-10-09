@@ -139,10 +139,12 @@ describe('GET /api/super-admin/coupons/[id]/redemptions', () => {
       valid_until: nextMonth,
     });
 
-    if (res.status === 201) {
-      testCouponId = (res.body as { data: { id: string } }).data.id;
-      createdCouponIds.push(testCouponId);
+    // 作れなかったときに黙ってスキップさせない (このあとのテストが空振りで通るのを防ぐ)
+    if (res.status !== 201) {
+      throw new Error(`Failed to create the coupon for the redemptions tests: ${res.status} ${JSON.stringify(res.body)}`);
     }
+    testCouponId = (res.body as { data: { id: string } }).data.id;
+    createdCouponIds.push(testCouponId);
   });
 
   it('200 for super_admin with empty redemptions array', async () => {

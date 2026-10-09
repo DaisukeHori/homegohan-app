@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Sans_JP, Noto_Serif_JP } from "next/font/google";
-import { PostHogProvider } from "@/components/PostHogProvider";
 import { SpeedInsightsClient } from "@/components/SpeedInsightsClient";
 import { getSiteUrl } from "@/lib/site-config";
 import "./globals.css";
@@ -140,9 +139,7 @@ export default function RootLayout({
         <a href="#main-content" className="skip-link">
           メインコンテンツへスキップ
         </a>
-        <PostHogProvider>
-          <div id="main-content">{children}</div>
-        </PostHogProvider>
+        <div id="main-content">{children}</div>
         {/*
           Vercel Speed Insights (#1179): 表示速度 (Web Vitals) の計測だけを行う。画面には何も描画しない。
           エラーの記録は app_logs が担い、Sentry / Better Stack は採用しない (docs/design/00-architecture.md)。
