@@ -144,12 +144,20 @@ await supabase.from('admin_audit_logs').insert({
 ---
 
 ### PATCH /api/admin/users/{id}
-ユーザー基本情報更新 (admin note のみ更新可)
+管理ノート (admin note) の追加 (#1103)
 
 **リクエスト**:
 ```json
 { "admin_note": "要注意ユーザー、規約違反1回目" }
 ```
+
+**保存先**: `admin_user_notes` に 1 行追加する (`user_id` = 対象、`admin_id` = 操作者、`note` = 前後の空白を除いた `admin_note`)。`user_profiles` に列は持たない (本人の行は本人が全列読めるため、運営の内部メモを置かない)。
+
+**バリデーション**: `admin_note` は前後の空白を除いて 1〜5000 文字。
+
+**レスポンス**: `{ "data": { "success": true, "note_id": "uuid" } }`。対象ユーザーがいない (UUID でない id を含む) ときは 404 `NOT_FOUND`。
+
+**監査ログ**: `admin.user.note_add` (details は `{ note_id }` だけ。本文は入れない)
 
 **権限**: `admin`, `super_admin`
 
