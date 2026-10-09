@@ -18,7 +18,9 @@
  *   - D (定義): ポリシー・列・外部キー・索引・トリガー・関数の属性
  *   - E (運営 API が使う関数): hideModeratedContent を実 DB で。隠す・すでに隠れた行は上書きしない・行が無くても成功・本人の権限では隠せない
  *   - F (家族への貼り付け): 隠された食事は paste_meal_to_family の元にできない (MEAL_HIDDEN。写した行は隠れていないので、
- *        隠した内容を家族に見せ直せてしまう)。運営が隠すと、貼り付けで作られた複製 (同じ paste_group_id) もまとめて隠れる
+ *        隠した内容を家族に見せ直せてしまう)。運営が隠すと、貼り付けで作られた複製 (同じ paste_group_id) のうち、
+ *        中身 (写真とメモ) が通報された行と同じものもまとめて隠れる。中身を書き換えた行は隠れない (違反していない他人の行を隠さない)。
+ *        本人は paste_group_id を書き換えられない (他人のまとまりに入る・まとまりから外れる・まとまりに入った行を作る は 42501)
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない (PostgREST を直接呼ぶ)。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -657,7 +659,7 @@ describe('#1101 F: 家族への貼り付け (paste_meal_to_family)', () => {
     expect(await readableIds(anon(), 'meals', [mealId, copy.id])).toEqual([]);
   });
 
-  it('F5: 通報されたのが複製の側でも、元の行を含む同じ paste_group_id の行がまとめて隠れる。隠れた複製は、貼り付けの元にもできない', async () => {
+  it('F5: 通報されたのが複製の側でも、中身が同じなら、元の行を含む同じ paste_group_id の行がまとめて隠れる。隠れた複製は、貼り付けの元にもできない', async () => {
     const mealId = await insertMeal(owner.id, `#1101 F5 ${TS}`);
     const { error: pasteError } = await pasteAs(owner, mealId, [famMember.id]);
     expect(pasteError).toBeNull();
@@ -673,6 +675,138 @@ describe('#1101 F: 家族への貼り付け (paste_meal_to_family)', () => {
     // 複製の持ち主が、隠れた複製を貼り付け直して元の持ち主に見せることもできない
     const { error } = await pasteAs(famMember, copy.id, [owner.id]);
     expect(error?.message).toContain('MEAL_HIDDEN');
+  });
+
+  it('F6: 複製の持ち主が貼り付けのあとで中身 (メモ・写真) を書き換え、その複製が通報されたときは、複製だけが隠れる。元の持ち主の (違反していない) 元の行は隠れない', async () => {
+    const mealId = await insertMeal(owner.id, `#1101 F6 ${TS}`);
+    const { error: pasteError } = await pasteAs(owner, mealId, [famMember.id]);
+    expect(pasteError).toBeNull();
+    const [copy] = await copiesOf(mealId);
+    // 複製の持ち主は、自分の行の中身を本人の権限 (meals_update_owner) で書き換えられる
+    const { error: editError } = await asUser(famMember.jwt)
+      .from('meals')
+      .update({ memo: `#1101 F6 edited by copy owner ${TS}`, photo_url: 'https://example.com/f6-edited.jpg' })
+      .eq('id', copy.id)
+      .select('id');
+    expect(editError).toBeNull();
+
+    const hiddenIds = await hideModeratedContent(srAdmin, 'food', copy.id, {
+      hiddenBy: moderator.id,
+      reason: 'moderation:delete_only',
+    });
+
+    expect(hiddenIds).toEqual([copy.id]);
+    expect((await readHidden('meals', mealId)).hidden_at).toBeNull();
+    // 元の行は、家族のメンバー (複製を書き換えた人) からも、これまでどおり見える
+    expect(await readableIds(asUser(famMember.jwt), 'meals', [mealId, copy.id])).toEqual(sorted([mealId, copy.id]));
+    expect(await readableIds(asUser(owner.jwt), 'meals', [mealId, copy.id])).toEqual([mealId]);
+    // 元の行は、これまでどおり貼り付けの元にできる (MEAL_HIDDEN にならない)
+    const { error: repasteError } = await pasteAs(owner, mealId, [famMember.id]);
+    expect(repasteError).toBeNull();
+    await copiesOf(mealId); // 増えた複製を後片付けの対象に入れる
+  });
+
+  it('F7: 元の行が通報されたとき、メモだけを書き換えた複製は隠れない (中身が違う行は、まとまりが同じでも隠さない)。中身が同じ複製は隠れる', async () => {
+    const mealId = await insertMeal(owner.id, `#1101 F7 ${TS}`);
+    const second = await createUser('f7-member', true);
+    const { error: joinError } = await srAdmin
+      .from('family_members')
+      .insert({ family_id: familyId, user_id: second.id, role: 'adult', status: 'active', share_meals: true });
+    expect(joinError).toBeNull();
+    try {
+      const { error: pasteError } = await pasteAs(owner, mealId, [famMember.id, second.id]);
+      expect(pasteError).toBeNull();
+      const copies = await copiesOf(mealId);
+      const edited = copies.find((c) => c.user_id === famMember.id)!;
+      const untouched = copies.find((c) => c.user_id === second.id)!;
+      const { error: editError } = await asUser(famMember.jwt)
+        .from('meals')
+        .update({ memo: `#1101 F7 edited ${TS}` })
+        .eq('id', edited.id)
+        .select('id');
+      expect(editError).toBeNull();
+
+      const hiddenIds = await hideModeratedContent(srAdmin, 'food', mealId, {
+        hiddenBy: moderator.id,
+        reason: 'moderation:delete_only',
+      });
+
+      expect(sorted(hiddenIds)).toEqual(sorted([mealId, untouched.id]));
+      expect((await readHidden('meals', edited.id)).hidden_at).toBeNull();
+      expect(await readableIds(asUser(owner.jwt), 'meals', [edited.id, untouched.id])).toEqual([edited.id]);
+    } finally {
+      await srAdmin.from('meals').delete().eq('user_id', second.id);
+      await srAdmin.from('family_members').delete().eq('family_id', familyId).eq('user_id', second.id);
+    }
+  });
+
+  it('F8: 本人は paste_group_id を書き換えられない (他人のまとまりに自分の行を入れる・まとまりから外す・まとまりに入った行を作る は 42501)。同じ値を送り直すのは通る', async () => {
+    const mealId = await insertMeal(owner.id, `#1101 F8 ${TS}`);
+    const { data: groupId, error: pasteError } = await pasteAs(owner, mealId, [famMember.id]);
+    expect(pasteError).toBeNull();
+    const [copy] = await copiesOf(mealId);
+    const ownMealId = await insertMeal(famMember.id, `#1101 F8 own ${TS}`);
+    const readGroup = async (id: string) => {
+      const { data, error } = await srAdmin.from('meals').select('paste_group_id').eq('id', id).single();
+      if (error || !data) throw new Error(`read paste_group_id: ${error?.message}`);
+      return data.paste_group_id as string | null;
+    };
+
+    // 自分の別の行を、他人のまとまりに入れる
+    const join = await asUser(famMember.jwt).from('meals').update({ paste_group_id: groupId }).eq('id', ownMealId).select('id');
+    expect(join.error?.code).toBe('42501');
+    expect(await readGroup(ownMealId)).toBeNull();
+    // まとまりに入った行を新しく作る
+    const insert = await asUser(famMember.jwt)
+      .from('meals')
+      .insert({ user_id: famMember.id, eaten_at: new Date().toISOString(), meal_type: 'lunch', memo: `#1101 F8 insert ${TS}`, paste_group_id: groupId });
+    expect(insert.error?.code).toBe('42501');
+    // 自分の複製を、まとまりから外す・別のまとまりに付け替える
+    for (const next of [null, randomUUID()]) {
+      const leave = await asUser(famMember.jwt).from('meals').update({ paste_group_id: next }).eq('id', copy.id).select('id');
+      expect(leave.error?.code, String(next)).toBe('42501');
+    }
+    expect(await readGroup(copy.id)).toBe(groupId);
+    // 同じ値を送り直す (行をまるごと送り直すクライアント) のは止めない
+    const resend = await asUser(famMember.jwt)
+      .from('meals')
+      .update({ paste_group_id: groupId, memo: `#1101 F8 resend ${TS}` })
+      .eq('id', copy.id)
+      .select('id');
+    expect(resend.error).toBeNull();
+    expect((resend.data ?? []).map((r) => r.id as string)).toEqual([copy.id]);
+    // paste_group_id を NULL で送る INSERT (まとまりに入らない普通の行) も通る
+    const plain = await asUser(famMember.jwt)
+      .from('meals')
+      .insert({ user_id: famMember.id, eaten_at: new Date().toISOString(), meal_type: 'lunch', memo: `#1101 F8 plain ${TS}`, paste_group_id: null })
+      .select('id')
+      .single();
+    expect(plain.error).toBeNull();
+    createdMealIds.push(plain.data!.id as string);
+  });
+
+  it('F9: 仮にまとまりに他人の行が入っていても (運営の権限で入れた場合)、中身が違えば、その行は隠れない', async () => {
+    const mealId = await insertMeal(owner.id, `#1101 F9 ${TS}`);
+    const { data: groupId, error: pasteError } = await pasteAs(owner, mealId, [famMember.id]);
+    expect(pasteError).toBeNull();
+    const copies = await copiesOf(mealId);
+    // 家族のメンバーの、中身が違う行を、同じまとまりに入れる (本人の権限では F8 のとおり入れられないので、service_role で入れる)
+    const { data: intruder, error: intruderError } = await srAdmin
+      .from('meals')
+      .insert({ user_id: famMember.id, eaten_at: new Date().toISOString(), meal_type: 'dinner', memo: `#1101 F9 violating ${TS}`, paste_group_id: groupId })
+      .select('id')
+      .single();
+    expect(intruderError).toBeNull();
+    createdMealIds.push(intruder!.id as string);
+
+    const hiddenIds = await hideModeratedContent(srAdmin, 'food', intruder!.id as string, {
+      hiddenBy: moderator.id,
+      reason: 'moderation:delete_only',
+    });
+
+    expect(hiddenIds).toEqual([intruder!.id]);
+    expect((await readHidden('meals', mealId)).hidden_at).toBeNull();
+    for (const c of copies) expect((await readHidden('meals', c.id)).hidden_at, c.id).toBeNull();
   });
 });
 
@@ -776,6 +910,28 @@ describe('#1101 D: 定義', () => {
       SELECT p.prosecdef AS secdef, p.proconfig AS config
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname = 'public' AND p.proname = 'guard_hidden_content_columns'
+    `);
+    expect(fn).toHaveLength(1);
+    expect(fn[0].secdef).toBe(false);
+    expect(fn[0].config).toEqual(['search_path=""']);
+  });
+
+  it('D7: paste_group_id の守りのトリガーは meals の INSERT と paste_group_id の UPDATE だけで動く。関数は SECURITY INVOKER で search_path が空', async () => {
+    const triggers = await pgQuery<{ rel: string; def: string }>(`
+      SELECT t.tgrelid::regclass::text AS rel, pg_get_triggerdef(t.oid) AS def
+      FROM pg_trigger t
+      WHERE NOT t.tgisinternal AND t.tgname = 'trg_meals_guard_paste_group_id'
+    `);
+    expect(triggers).toHaveLength(1);
+    expect(triggers[0].rel).toBe('meals');
+    expect(triggers[0].def).toContain('BEFORE INSERT OR UPDATE OF paste_group_id');
+    expect(triggers[0].def).toContain('FOR EACH ROW');
+    expect(triggers[0].def).toContain('guard_meal_paste_group_id()');
+
+    const fn = await pgQuery<{ secdef: boolean; config: string[] | null }>(`
+      SELECT p.prosecdef AS secdef, p.proconfig AS config
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.proname = 'guard_meal_paste_group_id'
     `);
     expect(fn).toHaveLength(1);
     expect(fn[0].secdef).toBe(false);

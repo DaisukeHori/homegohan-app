@@ -10,7 +10,8 @@
  *     resolution_note は入力があるときだけ付ける (空文字は API の検証で 400 になる)
  *   - 入力の誤り (アクション未選択・BAN 期間の範囲外) は送らずに画面で知らせる
  *   - 成功したら結果を表示し、左側の状態表示を更新する (router.refresh)
- *   - 失敗 (判定は保存済みだがコンテンツを隠せなかった 500 など) は API の文面を出し、フォームを閉じない
+ *   - 失敗 (コンテンツを隠せなかった 500 OP_CONTENT_HIDE_FAILED など) は API の文面を出し、フォームを閉じない。
+ *     隠せなかったとき API は判定を保存しない (pending のまま) ので、画面を開き直してもフォームが出て、やり直せる
  *   - 送信中は二重に送れない
  *   - 審査済み (pending 以外) ではフォームを出さない。永久 BAN の選択肢は super_admin だけ
  *
@@ -245,12 +246,13 @@ describe('ModerationReviewForm: 結果の表示', () => {
     expect(document.querySelector('a[href="/admin/moderation"]')).not.toBeNull();
   });
 
-  it('コンテンツを隠せなかった (判定は保存済みの 500 OP_CONTENT_HIDE_FAILED) ときは、API の文面を出し、フォームを閉じない。成功表示も refresh もしない', async () => {
-    const message = 'コンテンツを非表示にできませんでした。モデレーション判定自体は保存されています。もう一度同じ操作を実行してください。';
+  it('コンテンツを隠せなかった (判定は保存しない 500 OP_CONTENT_HIDE_FAILED) ときは、API の文面を出し、フォームを閉じない。成功表示も refresh もしない', async () => {
+    const message =
+      'コンテンツを非表示にできませんでした。モデレーション判定はまだ保存していません (審査待ちのままです)。もう一度同じ操作を実行してください。';
     fetchMock.mockResolvedValue(
       jsonResponse(500, {
         error: { code: 'OP_CONTENT_HIDE_FAILED', message },
-        data: { status: 'rejected', content_hidden: false, ban_applied: null },
+        data: { status: 'pending', content_hidden: false, ban_applied: null },
       }),
     );
     await renderForm();
@@ -333,6 +335,33 @@ describe('ModerationReviewForm: 結果の表示', () => {
 });
 
 describe('ModerationReviewForm: 表示', () => {
+  it('コンテンツを隠せなかったあとで画面を開き直したとき (API は判定を保存せず、通報は pending のまま) は、フォームが出て、同じ操作をやり直せる', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(500, {
+        error: { code: 'OP_CONTENT_HIDE_FAILED', message: 'コンテンツを非表示にできませんでした。' },
+        data: { status: 'pending', content_hidden: false, ban_applied: null },
+      }),
+    );
+    await renderForm();
+    await selectAction('delete_only');
+    await submit();
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+
+    // 開き直し: ページは DB の status (= API が返した pending) を渡して描き直す
+    await act(async () => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    await renderForm({ status: 'pending' });
+
+    expect(document.querySelector('form')).not.toBeNull();
+    expect(allText()).not.toContain('このアイテムは既に審査済みです');
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { data: { success: true, status: 'rejected', ban_applied: null } }));
+    await selectAction('delete_only');
+    await submit();
+    expect(document.querySelector('[role="status"]')?.textContent).toContain('審査を確定しました');
+  });
+
   it('審査済み (pending 以外) ではフォームを出さず、ステータスを表示する', async () => {
     await renderForm({ status: 'rejected' });
 
@@ -366,6 +395,21 @@ describe('ModerationReviewForm: 表示', () => {
       await selectAction(action);
       expect(allText(), action).not.toContain('他のユーザー (家族を含む) から見えなくなります');
     }
+  });
+
+  it('食事 (food) の「削除」では、家族への貼り付けで作られた同じ中身 (写真とメモ) の複製も見えなくなることを説明する。レシピ (recipe) には複製が無いので出さない', async () => {
+    await renderForm({ type: 'food' });
+    await selectAction('delete_only');
+    expect(allText()).toContain('家族への貼り付けで作られた複製のうち、写真とメモが同じものも');
+
+    await act(async () => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    await renderForm({ type: 'recipe' });
+    await selectAction('delete_only');
+    expect(allText()).toContain('他のユーザー (家族を含む) から見えなくなります');
+    expect(allText()).not.toContain('家族への貼り付け');
   });
 
   it('画面の選択肢は、API が受け付けるアクションと一致する', async () => {

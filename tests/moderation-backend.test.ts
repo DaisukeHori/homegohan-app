@@ -11,7 +11,7 @@
  *  - ai_content はバックエンドテーブル未実装のため isModerationBacked が false を返すこと
  *  - (#1101) 通報されたコンテンツ本体の ID (meals.id / recipes.id) を content_id として返し、
  *    hideModeratedContent がその行 (通報の行ではない) の hidden_* だけを更新すること。食事は、家族へのペーストの複製
- *    (同じ paste_group_id) もまとめて隠すこと
+ *    (同じ paste_group_id) のうち、中身 (写真とメモ) が通報された行と同じものもまとめて隠し、中身が違う行は隠さないこと
  */
 import { describe, expect, it, vi } from 'vitest';
 import { createFakeSupabase } from './helpers/fake-supabase';
@@ -247,6 +247,7 @@ describe('moderation-backend', () => {
       update: ReturnType<typeof vi.fn>;
       eq: ReturnType<typeof vi.fn>;
       is: ReturnType<typeof vi.fn>;
+      in: ReturnType<typeof vi.fn>;
       delete: ReturnType<typeof vi.fn>;
       maybeSingle: ReturnType<typeof vi.fn>;
     };
@@ -255,10 +256,10 @@ describe('moderation-backend', () => {
       return supabase.from.mock.results[index]!.value as Builder;
     }
 
-    it('food: まず通報された食事の paste_group_id を読み、ペーストの複製が無ければその行だけに hidden_at / hidden_by / hidden_reason を書く。行は消さず、通報 (moderation_flags) には触れない', async () => {
+    it('food: まず通報された食事の paste_group_id と中身 (写真・メモ) を読み、ペーストの複製が無ければその行だけに hidden_at / hidden_by / hidden_reason を書く。行は消さず、通報 (moderation_flags) には触れない', async () => {
       const supabase = createFakeSupabase({
         meals: [
-          { data: { paste_group_id: null }, error: null },
+          { data: { paste_group_id: null, photo_url: null, memo: 'm' }, error: null },
           { data: [{ id: 'meal-1' }], error: null },
         ],
       });
@@ -270,7 +271,7 @@ describe('moderation-backend', () => {
       expect(supabase.from).toHaveBeenCalledTimes(2);
       expect(supabase.from.mock.calls.map((c) => c[0])).toEqual(['meals', 'meals']);
       const lookup = builderAt(supabase, 0);
-      expect(lookup.select).toHaveBeenCalledWith('paste_group_id');
+      expect(lookup.select).toHaveBeenCalledWith('paste_group_id, photo_url, memo');
       expect(lookup.eq).toHaveBeenCalledWith('id', 'meal-1');
       expect(lookup.update).not.toHaveBeenCalled();
 
@@ -280,16 +281,25 @@ describe('moderation-backend', () => {
       expect(Date.parse(payload.hidden_at as string)).toBeGreaterThanOrEqual(before);
       expect(payload.hidden_by).toBe('admin-1');
       expect(payload.hidden_reason).toBe('moderation:delete_only');
-      expect(builder.eq).toHaveBeenCalledWith('id', 'meal-1');
+      expect(builder.in).toHaveBeenCalledWith('id', ['meal-1']);
       expect(builder.eq).not.toHaveBeenCalledWith('paste_group_id', expect.anything());
       expect(builder.select).toHaveBeenCalledWith('id');
       expect(builder.delete).not.toHaveBeenCalled();
     });
 
-    it('food: 家族へのペーストの複製がある (paste_group_id がある) ときは、同じ paste_group_id の行 (元の行と複製) をまとめて隠し、隠した行の ID をすべて返す', async () => {
+    it('food: 家族へのペーストの複製がある (paste_group_id がある) ときは、同じ paste_group_id のまだ隠れていない行を読み、中身 (写真とメモ) が通報された行と同じ行 (元の行と複製) だけをまとめて隠す', async () => {
+      const flagged = { photo_url: 'https://example.com/a.jpg', memo: 'same memo' };
       const supabase = createFakeSupabase({
         meals: [
-          { data: { paste_group_id: 'group-1' }, error: null },
+          { data: { paste_group_id: 'group-1', ...flagged }, error: null },
+          {
+            data: [
+              { id: 'meal-1', ...flagged },
+              { id: 'meal-copy-a', ...flagged },
+              { id: 'meal-copy-b', ...flagged },
+            ],
+            error: null,
+          },
           { data: [{ id: 'meal-1' }, { id: 'meal-copy-a' }, { id: 'meal-copy-b' }], error: null },
         ],
       });
@@ -297,11 +307,90 @@ describe('moderation-backend', () => {
       const hiddenIds = await hideModeratedContent(supabase as never, 'food', 'meal-1', params);
 
       expect(hiddenIds).toEqual(['meal-1', 'meal-copy-a', 'meal-copy-b']);
-      const builder = builderAt(supabase, 1);
-      expect(builder.eq).toHaveBeenCalledWith('paste_group_id', 'group-1');
-      expect(builder.eq).not.toHaveBeenCalledWith('id', 'meal-1');
+      const group = builderAt(supabase, 1);
+      expect(group.select).toHaveBeenCalledWith('id, photo_url, memo');
+      expect(group.eq).toHaveBeenCalledWith('paste_group_id', 'group-1');
+      expect(group.is).toHaveBeenCalledWith('hidden_at', null);
+      expect(group.update).not.toHaveBeenCalled();
+      const builder = builderAt(supabase, 2);
+      expect(builder.in).toHaveBeenCalledWith('id', ['meal-1', 'meal-copy-a', 'meal-copy-b']);
       expect(builder.is).toHaveBeenCalledWith('hidden_at', null);
       expect(builder.delete).not.toHaveBeenCalled();
+    });
+
+    it('food: 同じ paste_group_id でも、ペーストのあとで中身を書き換えた行 (写真だけ・メモだけ違う行も) は隠さない。違反していない他人の行を、通報の結果として隠さない', async () => {
+      // 通報されたのは、持ち主がメモを書き換えた複製 (meal-copy-edited)。元の行 (meal-1) は中身が違う
+      const flagged = { photo_url: 'https://example.com/a.jpg', memo: 'edited by copy owner' };
+      const supabase = createFakeSupabase({
+        meals: [
+          { data: { paste_group_id: 'group-1', ...flagged }, error: null },
+          {
+            data: [
+              { id: 'meal-1', photo_url: 'https://example.com/a.jpg', memo: 'original memo' },
+              { id: 'meal-copy-edited', ...flagged },
+              { id: 'meal-copy-photo', photo_url: 'https://example.com/other.jpg', memo: 'edited by copy owner' },
+              { id: 'meal-copy-null', photo_url: null, memo: 'edited by copy owner' },
+            ],
+            error: null,
+          },
+          { data: [{ id: 'meal-copy-edited' }], error: null },
+        ],
+      });
+
+      const hiddenIds = await hideModeratedContent(supabase as never, 'food', 'meal-copy-edited', params);
+
+      expect(hiddenIds).toEqual(['meal-copy-edited']);
+      expect(builderAt(supabase, 2).in).toHaveBeenCalledWith('id', ['meal-copy-edited']);
+    });
+
+    it('food: 中身の比較は NULL どうしを同じとみなす (写真の無い食事の複製も隠す)', async () => {
+      const flagged = { photo_url: null, memo: null };
+      const supabase = createFakeSupabase({
+        meals: [
+          { data: { paste_group_id: 'group-1', ...flagged }, error: null },
+          {
+            data: [
+              { id: 'meal-1', ...flagged },
+              { id: 'meal-copy-a', ...flagged },
+              { id: 'meal-copy-memo', photo_url: null, memo: '' },
+            ],
+            error: null,
+          },
+          { data: [{ id: 'meal-1' }, { id: 'meal-copy-a' }], error: null },
+        ],
+      });
+
+      await hideModeratedContent(supabase as never, 'food', 'meal-1', params);
+
+      expect(builderAt(supabase, 2).in).toHaveBeenCalledWith('id', ['meal-1', 'meal-copy-a']);
+    });
+
+    it('food: まとまりの中に、まだ隠れていない同じ中身の行が無い (通報された行もすでに隠れている) ときは、何も更新せずに空の一覧を返す', async () => {
+      const supabase = createFakeSupabase({
+        meals: [
+          { data: { paste_group_id: 'group-1', photo_url: null, memo: 'm' }, error: null },
+          { data: [{ id: 'meal-copy-other', photo_url: null, memo: 'other' }], error: null },
+        ],
+      });
+
+      await expect(hideModeratedContent(supabase as never, 'food', 'meal-1', params)).resolves.toEqual([]);
+      expect(supabase.from).toHaveBeenCalledTimes(2);
+      expect(builderAt(supabase, 1).update).not.toHaveBeenCalled();
+    });
+
+    it('food: まとまりの行の読み取りでエラーになったら例外を throw する (隠さずに成功を装わない)', async () => {
+      const supabase = createFakeSupabase({
+        meals: [
+          { data: { paste_group_id: 'group-1', photo_url: null, memo: 'm' }, error: null },
+          { data: null, error: { message: 'statement timeout' } },
+        ],
+      });
+
+      await expect(hideModeratedContent(supabase as never, 'food', 'meal-1', params)).rejects.toMatchObject({
+        message: 'statement timeout',
+      });
+      expect(supabase.from).toHaveBeenCalledTimes(2);
+      expect(builderAt(supabase, 1).update).not.toHaveBeenCalled();
     });
 
     it('food: 通報された食事がもう無い (持ち主が先に消した等) ときは、何も更新せずに空の一覧を返す (失敗ではない)', async () => {
@@ -312,7 +401,7 @@ describe('moderation-backend', () => {
       expect(builderAt(supabase, 0).update).not.toHaveBeenCalled();
     });
 
-    it('food: paste_group_id の読み取りでエラーになったら例外を throw する (隠さずに成功を装わない)', async () => {
+    it('food: 通報された食事 (paste_group_id と中身) の読み取りでエラーになったら例外を throw する (隠さずに成功を装わない)', async () => {
       const supabase = createFakeSupabase({ meals: [{ data: null, error: { message: 'connection reset' } }] });
 
       await expect(hideModeratedContent(supabase as never, 'food', 'meal-1', params)).rejects.toMatchObject({
@@ -329,14 +418,14 @@ describe('moderation-backend', () => {
       expect(hiddenIds).toEqual(['recipe-1']);
       expect(supabase.from).toHaveBeenCalledTimes(1);
       expect(supabase.from).toHaveBeenCalledWith('recipes');
-      expect(builderAt(supabase, 0).eq).toHaveBeenCalledWith('id', 'recipe-1');
+      expect(builderAt(supabase, 0).in).toHaveBeenCalledWith('id', ['recipe-1']);
       expect(builderAt(supabase, 0).update).toHaveBeenCalledTimes(1);
     });
 
     it('すでに隠れている行は上書きしない (hidden_at IS NULL の行だけ更新する)。保管期間の起点を延ばさない。隠した行が無ければ空の一覧', async () => {
       const supabase = createFakeSupabase({
         meals: [
-          { data: { paste_group_id: null }, error: null },
+          { data: { paste_group_id: null, photo_url: null, memo: 'm' }, error: null },
           { data: [], error: null },
         ],
       });
@@ -349,7 +438,7 @@ describe('moderation-backend', () => {
     it('更新エラー時は例外を throw する (呼び出し側が「隠せなかった」と明示できるように)', async () => {
       const supabase = createFakeSupabase({
         meals: [
-          { data: { paste_group_id: null }, error: null },
+          { data: { paste_group_id: null, photo_url: null, memo: 'm' }, error: null },
           { data: null, error: { message: 'permission denied' } },
         ],
       });

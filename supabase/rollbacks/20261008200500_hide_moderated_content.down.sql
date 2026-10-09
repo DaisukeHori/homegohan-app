@@ -14,7 +14,7 @@
 --   2. paste_meal_to_family を、この migration の直前の定義 (MEAL_HIDDEN の確認が無いもの) へ戻す。
 --      列を消す前に戻すこと (plpgsql は実行時に列を解決するので、先に列を消すと、戻すまでの間の貼り付けが hidden_at の参照で失敗する)。
 --      CREATE OR REPLACE なので実行権限 (ACL) は変わらない
---   3. 守りのトリガー 2 本と関数を消す
+--   3. 守りのトリガー 3 本 (hidden_* の 2 本と paste_group_id の 1 本) と関数 2 つを消す
 --   4. 部分索引 4 本を消す
 --   5. 列 3 本 (+ hidden_by の外部キー) を meals / recipes から消す。列の COMMENT は列と一緒に消える
 -- 実行権限 (ACL)・RLS の有効状態・ほかのポリシー・ほかのトリガーには触れない。
@@ -92,6 +92,8 @@ END $$;
 DROP TRIGGER IF EXISTS trg_meals_guard_hidden_columns ON public.meals;
 DROP TRIGGER IF EXISTS trg_recipes_guard_hidden_columns ON public.recipes;
 DROP FUNCTION IF EXISTS public.guard_hidden_content_columns();
+DROP TRIGGER IF EXISTS trg_meals_guard_paste_group_id ON public.meals;
+DROP FUNCTION IF EXISTS public.guard_meal_paste_group_id();
 
 -- 4. 部分索引 (列を消すと一緒に消えるが、意図が分かるよう先に消す)
 DROP INDEX IF EXISTS public.idx_meals_hidden_at;

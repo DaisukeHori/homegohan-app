@@ -23,8 +23,10 @@
  *  - delete_* アクション (delete_only / delete_and_warn / delete_and_temp_ban / delete_and_perm_ban) は、
  *    通報されたコンテンツ (meals / recipes) に hidden_at / hidden_by / hidden_reason を書く。
  *    approve / escalate は何も隠さない
- *  - 隠すのは判定の保存のあと・BAN の前。隠せなかったら BAN せず 500 OP_CONTENT_HIDE_FAILED
- *    (成功を装わない。DB の生のエラー文は本文に出さない)
+ *  - 順番は「隠す → 判定の保存 → BAN」。隠せなかったら判定を保存せず (通報は pending のまま。画面を開き直しても
+ *    審査のフォームが出て、やり直せる)、BAN もせずに 500 OP_CONTENT_HIDE_FAILED (成功を装わない。DB の生のエラー文は本文に出さない)
+ *  - 隠したあとで判定の保存に失敗したら、BAN せず 500。隠した行の ID を監査ログに残す (やり直すと hidden_ids は空になるため)
+ *  - 食事は、ペーストの複製のうち中身 (写真とメモ) が同じ行だけをまとめて隠す
  *  - 通報にコンテンツが紐づかない (content_id が null) ときは、隠さずに続行する
  *  - 監査ログの details に content_id と hidden を記録する
  */
@@ -88,6 +90,7 @@ type QueryBuilderMock = {
   delete: ReturnType<typeof vi.fn>;
   eq: ReturnType<typeof vi.fn>;
   is: ReturnType<typeof vi.fn>;
+  in: ReturnType<typeof vi.fn>;
 };
 
 /** 指定テーブルへの `.from()` 呼び出しの、クエリビルダー (呼び出し順) */
@@ -102,6 +105,18 @@ function buildersFor(fake: ReturnType<typeof createFakeSupabase>, table: string)
 /** 指定テーブルを `.from()` した呼び出しが、全体の何番目か (呼び出し順の比較用)。無ければ -1 */
 function firstCallIndex(fake: ReturnType<typeof createFakeSupabase>, table: string): number {
   return fake.from.mock.calls.findIndex((call) => call[0] === table);
+}
+
+/** 指定テーブルを n 回目 (1 始まり) に `.from()` した呼び出しが、全体の何番目か。無ければ -1 */
+function nthCallIndex(fake: ReturnType<typeof createFakeSupabase>, table: string, occurrence: number): number {
+  let count = 0;
+  for (let i = 0; i < fake.from.mock.calls.length; i++) {
+    if (fake.from.mock.calls[i][0] === table) {
+      count++;
+      if (count === occurrence) return i;
+    }
+  }
+  return -1;
 }
 
 /** 監査ログ (admin_audit_logs) に INSERT された行 */
@@ -284,8 +299,8 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
         },
         { data: null, error: null }, // resolveModerationItem の update
       ],
-      // hideModeratedContent (#1101): paste_group_id の読み取り → update
-      meals: [{ data: { paste_group_id: null }, error: null }, { data: [{ id: 'meal-1' }], error: null }],
+      // hideModeratedContent (#1101): paste_group_id と中身の読み取り → update
+      meals: [{ data: { paste_group_id: null, photo_url: null, memo: null }, error: null }, { data: [{ id: 'meal-1' }], error: null }],
       user_profiles: [
         { data: { id: 'owner-x', roles: ['user'] }, error: null }, // applyUserBan: 存在確認
         { data: null, error: null }, // applyUserBan: frozen_at 更新
@@ -592,8 +607,8 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
   }
 
   const ok = { data: null, error: null };
-  /** hideModeratedContent の 1 回目: 通報された食事の paste_group_id (ペーストの複製なし) */
-  const mealLookup = { data: { paste_group_id: null }, error: null };
+  /** hideModeratedContent の 1 回目: 通報された食事の paste_group_id と中身 (ペーストの複製なし) */
+  const mealLookup = { data: { paste_group_id: null, photo_url: null, memo: 'reported memo' }, error: null };
   /** hideModeratedContent の 2 回目: update ... select('id') の結果 (隠した行) */
   const mealHidden = { data: [{ id: 'meal-1' }], error: null };
 
@@ -616,7 +631,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       expect(await res.json()).toEqual({ data: { success: true, status: 'rejected', ban_applied: null } });
 
       const mealBuilders = buildersFor(fakeSupabase, 'meals');
-      expect(mealBuilders).toHaveLength(2); // paste_group_id の読み取り + 隠す update
+      expect(mealBuilders).toHaveLength(2); // paste_group_id と中身の読み取り + 隠す update
       const [lookup, meal] = mealBuilders;
       expect(lookup.update).not.toHaveBeenCalled();
       const payload = meal.update.mock.calls[0][0] as Record<string, unknown>;
@@ -624,7 +639,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       expect(payload).toMatchObject({ hidden_by: 'admin-1', hidden_reason: `moderation:${action}` });
       expect(JSON.stringify(payload)).not.toContain('internal note');
       // 通報の ID (flag-1) ではなく、コンテンツ本体の ID (meal-1) の行を、まだ隠れていない場合だけ更新する
-      expect(meal.eq).toHaveBeenCalledWith('id', 'meal-1');
+      expect(meal.in).toHaveBeenCalledWith('id', ['meal-1']);
       expect(meal.is).toHaveBeenCalledWith('hidden_at', null);
       // 行は消さない
       expect(meal.delete).not.toHaveBeenCalled();
@@ -646,7 +661,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
   it.each([
     { action: 'delete_and_temp_ban', actor: adminActor, extra: { ban_duration_days: 7 } },
     { action: 'delete_and_perm_ban', actor: superAdminActor, extra: {} },
-  ] as const)('$action: コンテンツを隠してから BAN する (隠す → BAN の順)', async ({ action, actor, extra }) => {
+  ] as const)('$action: コンテンツを隠してから判定を保存し、そのあとで BAN する (隠す → 判定の保存 → BAN の順)', async ({ action, actor, extra }) => {
     mockRequireRole.mockResolvedValue(actor);
     fakeSupabase = createFakeSupabase({
       moderation_flags: [{ data: foodFlagRow(), error: null }, ok],
@@ -660,7 +675,11 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
     expect(res.status).toBe(200);
     expect(((await res.json()) as { data: { ban_applied: boolean } }).data.ban_applied).toBe(true);
     expect(firstCallIndex(fakeSupabase, 'meals')).toBeGreaterThanOrEqual(0);
-    expect(firstCallIndex(fakeSupabase, 'meals')).toBeLessThan(firstCallIndex(fakeSupabase, 'user_profiles'));
+    // 判定の保存 (moderation_flags の 2 回目 = update) は、隠す (meals の update) のあと・BAN (user_profiles) の前
+    const flagUpdateIndex = nthCallIndex(fakeSupabase, 'moderation_flags', 2);
+    expect(buildersFor(fakeSupabase, 'moderation_flags')[1].update).toHaveBeenCalledTimes(1);
+    expect(nthCallIndex(fakeSupabase, 'meals', 2)).toBeLessThan(flagUpdateIndex);
+    expect(flagUpdateIndex).toBeLessThan(firstCallIndex(fakeSupabase, 'user_profiles'));
     expect(buildersFor(fakeSupabase, 'meals')[1].update.mock.calls[0][0]).toMatchObject({
       hidden_by: actor.id,
       hidden_reason: `moderation:${action}`,
@@ -668,11 +687,20 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
     expect(auditInsertPayload(fakeSupabase).details).toMatchObject({ content_id: 'meal-1', hidden: true });
   });
 
-  it('delete_only: 家族へのペーストで複製された食事は、同じ paste_group_id の行 (元の行と複製) をまとめて隠し、監査ログの hidden_ids に全部残す', async () => {
+  it('delete_only: 家族へのペーストで複製された食事は、同じ paste_group_id で中身 (写真とメモ) が同じ行 (元の行と複製) をまとめて隠し、中身を書き換えた行は隠さない。監査ログの hidden_ids に隠した行を全部残す', async () => {
+    const content = { photo_url: 'https://example.com/a.jpg', memo: 'reported memo' };
     fakeSupabase = createFakeSupabase({
       moderation_flags: [{ data: foodFlagRow(), error: null }, ok],
       meals: [
-        { data: { paste_group_id: 'group-1' }, error: null },
+        { data: { paste_group_id: 'group-1', ...content }, error: null },
+        {
+          data: [
+            { id: 'meal-1', ...content },
+            { id: 'meal-copy-a', ...content },
+            { id: 'meal-copy-edited', photo_url: content.photo_url, memo: 'edited by copy owner' },
+          ],
+          error: null,
+        },
         { data: [{ id: 'meal-1' }, { id: 'meal-copy-a' }], error: null },
       ],
       admin_audit_logs: [ok],
@@ -681,8 +709,10 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
     const res = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'flag-1' } });
 
     expect(res.status).toBe(200);
-    const [, meal] = buildersFor(fakeSupabase, 'meals');
-    expect(meal.eq).toHaveBeenCalledWith('paste_group_id', 'group-1');
+    const [, group, meal] = buildersFor(fakeSupabase, 'meals');
+    expect(group.eq).toHaveBeenCalledWith('paste_group_id', 'group-1');
+    expect(group.update).not.toHaveBeenCalled();
+    expect(meal.in).toHaveBeenCalledWith('id', ['meal-1', 'meal-copy-a']);
     expect(meal.is).toHaveBeenCalledWith('hidden_at', null);
     expect(meal.delete).not.toHaveBeenCalled();
     expect(auditInsertPayload(fakeSupabase).details).toMatchObject({
@@ -713,7 +743,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
     },
   );
 
-  it('delete_only: 隠せなかったら 500 OP_CONTENT_HIDE_FAILED。成功を装わず、DB の生のエラー文は本文に出さない。判定は保存済みで、監査ログと構造化ログに失敗を残す', async () => {
+  it('delete_only: 隠せなかったら 500 OP_CONTENT_HIDE_FAILED。判定は保存せず (通報は pending のまま。画面を開き直しても審査のフォームからやり直せる)、成功を装わず、DB の生のエラー文は本文に出さない。監査ログと構造化ログに失敗を残す', async () => {
     fakeSupabase = createFakeSupabase({
       moderation_flags: [{ data: foodFlagRow(), error: null }, ok],
       meals: [mealLookup, { data: null, error: { message: 'permission denied for table meals' } }],
@@ -728,26 +758,58 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
     const json = JSON.parse(text) as { error: { code: string; message: string }; data: Record<string, unknown> };
     expect(json.error.code).toBe('OP_CONTENT_HIDE_FAILED');
     expect(json.error.message).toContain('非表示にできませんでした');
-    // success: true を返さない。判定が保存済みであることと、隠せていないことだけを返す
-    expect(json.data).toEqual({ status: 'rejected', content_hidden: false, ban_applied: null });
+    expect(json.error.message).toContain('判定はまだ保存していません');
+    expect(json.error.message).not.toContain('保存されています');
+    // success: true を返さない。通報は審査待ち (pending) のままで、隠せていないことだけを返す
+    expect(json.data).toEqual({ status: 'pending', content_hidden: false, ban_applied: null });
 
-    // 判定 (status の更新) は隠す前に保存されている
+    // 判定 (通報の status) は保存しない: moderation_flags は取得の 1 回だけで、update は呼ばれない
     const flags = buildersFor(fakeSupabase, 'moderation_flags');
-    expect(flags).toHaveLength(2); // 取得 + 更新
-    expect(flags[1].update.mock.calls[0][0]).toMatchObject({ status: 'rejected', resolved_by: 'admin-1' });
+    expect(flags).toHaveLength(1);
+    expect(flags[0].update).not.toHaveBeenCalled();
 
     const audit = auditInsertPayload(fakeSupabase);
     expect(audit.details).toMatchObject({
       content_id: 'meal-1',
       hidden: false,
+      hidden_ids: [],
       hide_error: 'permission denied for table meals',
+      status_saved: false,
+      status_error: null,
+      ban_applied: null,
+      ban_error: null,
     });
     expect(audit.severity).toBe('warn');
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
     expect(mockLoggerError.mock.calls[0][2]).toMatchObject({ content_id: 'meal-1', flag_id: 'flag-1' });
   });
 
-  it('delete_and_temp_ban: 隠せなかったときは BAN しない (user_profiles に触らない)。500 OP_CONTENT_HIDE_FAILED、ban_applied は null', async () => {
+  it('delete_only: 隠せなかったあとで同じ操作をやり直すと (通報は pending のまま残っている)、隠してから判定を保存し、200 を返す', async () => {
+    // 1 回目: 隠せない
+    fakeSupabase = createFakeSupabase({
+      moderation_flags: [{ data: foodFlagRow(), error: null }, ok],
+      meals: [mealLookup, { data: null, error: { message: 'connection reset' } }],
+      admin_audit_logs: [ok],
+    });
+    const first = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'flag-1' } });
+    expect(first.status).toBe(500);
+    expect(buildersFor(fakeSupabase, 'moderation_flags')[0].update).not.toHaveBeenCalled();
+
+    // 2 回目: 画面を開き直したあと (通報はまだ pending) のやり直し
+    fakeSupabase = createFakeSupabase({
+      moderation_flags: [{ data: foodFlagRow({ status: 'pending' }), error: null }, ok],
+      meals: [mealLookup, mealHidden],
+      admin_audit_logs: [ok],
+    });
+    const retry = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'flag-1' } });
+
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual({ data: { success: true, status: 'rejected', ban_applied: null } });
+    expect(buildersFor(fakeSupabase, 'moderation_flags')[1].update.mock.calls[0][0]).toMatchObject({ status: 'rejected' });
+    expect(auditInsertPayload(fakeSupabase).details).toMatchObject({ hidden: true, hidden_ids: ['meal-1'], status_saved: true });
+  });
+
+  it('delete_and_temp_ban: 隠せなかったときは判定を保存せず、BAN もしない (user_profiles に触らない)。500 OP_CONTENT_HIDE_FAILED、ban_applied は null', async () => {
     fakeSupabase = createFakeSupabase({
       moderation_flags: [{ data: foodFlagRow(), error: null }, ok],
       meals: [mealLookup, { data: null, error: { message: 'connection reset' } }],
@@ -761,15 +823,70 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
     expect(res.status).toBe(500);
     const json = (await res.json()) as { error: { code: string; message: string }; data: Record<string, unknown> };
     expect(json.error.code).toBe('OP_CONTENT_HIDE_FAILED');
-    expect(json.error.message).toContain('BAN はまだ実行していません');
-    expect(json.data).toEqual({ status: 'rejected', content_hidden: false, ban_applied: null });
-    // 隠れていないコンテンツが残ったまま持ち主だけ止めない
+    expect(json.error.message).toContain('BAN も実行していません');
+    expect(json.data).toEqual({ status: 'pending', content_hidden: false, ban_applied: null });
+    // 隠れていないコンテンツが残ったまま持ち主だけ止めない。判定も保存しない
     expect(firstCallIndex(fakeSupabase, 'user_profiles')).toBe(-1);
     expect(fakeSupabase.rpc).not.toHaveBeenCalled();
+    expect(buildersFor(fakeSupabase, 'moderation_flags')).toHaveLength(1);
 
     const audit = auditInsertPayload(fakeSupabase);
-    expect(audit.details).toMatchObject({ hidden: false, ban_applied: null, unban_at: null });
+    expect(audit.details).toMatchObject({ hidden: false, status_saved: false, ban_applied: null, unban_at: null });
     expect(audit.details.ban_error).toEqual(expect.stringContaining('BAN を実行していません'));
+  });
+
+  it.each([
+    { action: 'delete_only', extra: {}, banText: null },
+    { action: 'delete_and_temp_ban', extra: { ban_duration_days: 7 }, banText: 'BAN はまだ実行していません' },
+  ] as const)(
+    '$action: 隠したあとで判定の保存に失敗したら、BAN せず 500。通報は pending のまま (やり直せる)。隠した行の ID を監査ログ (warn) に残す',
+    async ({ action, extra, banText }) => {
+      fakeSupabase = createFakeSupabase({
+        moderation_flags: [{ data: foodFlagRow(), error: null }, { data: null, error: { message: 'deadlock detected' } }],
+        meals: [mealLookup, mealHidden],
+        admin_audit_logs: [ok],
+      });
+
+      const res = await POST(postRequest({ action, ...extra }), { params: { type: 'food', id: 'flag-1' } });
+
+      expect(res.status).toBe(500);
+      const text = await res.text();
+      expect(text).not.toContain('deadlock');
+      const json = JSON.parse(text) as { error: { code: string; message: string }; data: Record<string, unknown> };
+      expect(json.error.code).toBe('INTERNAL_ERROR');
+      expect(json.error.message).toContain('判定を保存できませんでした');
+      expect(json.error.message).toContain('非表示にしました');
+      if (banText) expect(json.error.message).toContain(banText);
+      expect(json.data).toEqual({ status: 'pending', content_hidden: true, ban_applied: null });
+      // 隠す (meals の update) が、判定の保存 (moderation_flags の update) より先
+      expect(nthCallIndex(fakeSupabase, 'meals', 2)).toBeLessThan(nthCallIndex(fakeSupabase, 'moderation_flags', 2));
+      expect(firstCallIndex(fakeSupabase, 'user_profiles')).toBe(-1);
+
+      const audit = auditInsertPayload(fakeSupabase);
+      expect(audit.details).toMatchObject({
+        content_id: 'meal-1',
+        hidden: true,
+        hidden_ids: ['meal-1'],
+        hide_error: null,
+        status_saved: false,
+        status_error: 'deadlock detected',
+        ban_applied: null,
+      });
+      expect(audit.severity).toBe('warn');
+    },
+  );
+
+  it('approve: 判定の保存に失敗したときは、これまでどおり 500 INTERNAL_ERROR (何も隠していないので監査ログは残さない)', async () => {
+    fakeSupabase = createFakeSupabase({
+      moderation_flags: [{ data: foodFlagRow(), error: null }, { data: null, error: { message: 'deadlock detected' } }],
+    });
+
+    const res = await POST(postRequest({ action: 'approve' }), { params: { type: 'food', id: 'flag-1' } });
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: { code: 'INTERNAL_ERROR', message: '更新に失敗しました' } });
+    expect(firstCallIndex(fakeSupabase, 'meals')).toBe(-1);
+    expect(firstCallIndex(fakeSupabase, 'admin_audit_logs')).toBe(-1);
   });
 
   it('通報にコンテンツが紐づかない (meal_id が null) ときは、隠さずに 200 で続行する。監査ログは content_id: null, hidden: false', async () => {
@@ -820,7 +937,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       hidden_by: 'admin-1',
       hidden_reason: 'moderation:delete_only',
     });
-    expect(recipe.eq).toHaveBeenCalledWith('id', 'recipe-1');
+    expect(recipe.in).toHaveBeenCalledWith('id', ['recipe-1']);
     expect(recipe.is).toHaveBeenCalledWith('hidden_at', null);
     expect(auditInsertPayload(fakeSupabase).details).toMatchObject({
       moderation_type: 'recipe',

@@ -43,8 +43,18 @@
 --        - 拒否のしかた: 持ち主の確認 (NOT_MEAL_OWNER) のあとで RAISE EXCEPTION 'MEAL_HIDDEN' USING ERRCODE = 'P0001'
 --          (持ち主でない人には、隠れているかどうかを教えない)。POST /api/meals/paste は 403 MEAL_HIDDEN を返す。
 --        - それ以外は本番の定義 (supabase/baseline/prod_schema.sql) と同じ。CREATE OR REPLACE なので実行権限 (ACL) は変わらない。
---      運営が食事を隠すとき (hideModeratedContent) は、貼り付けで作られた複製 (同じ paste_group_id の行) もまとめて隠す。
+--      運営が食事を隠すとき (hideModeratedContent) は、貼り付けで作られた複製 (同じ paste_group_id の行) のうち、
+--      中身 (写真 photo_url とメモ memo) が通報された行と同じものもまとめて隠す。中身を書き換えた行は隠さない。
 --      複製は家族のメンバーの持ち物なので、その人には自分の行として見えたまま、ほかの家族には見えなくなる。
+--   6. paste_group_id (貼り付けのまとまり) を、ログインユーザーと anon が書き換えられないようにするトリガーを足す。
+--        guard_meal_paste_group_id()  BEFORE INSERT OR UPDATE OF paste_group_id ON meals
+--      運営は paste_group_id で複製をまとめて隠すので、まとまりを信用できる必要がある。これまでは meals_insert_owner / meals_update_owner が
+--      列を限らずに本人の書き込みを許していたので、家族のメンバーが自分の行に他人のまとまりの paste_group_id を入れたり、
+--      自分の複製をまとまりから外したりできた。paste_group_id を書くのはペーストの関数 (paste_meal_to_family。SECURITY DEFINER) だけで、
+--      アプリ (Web・モバイル・Edge Function) に paste_group_id を書く箇所は無い (まとまりを編集する API も提供しない: docs/design/membership/03-ui-spec.md)。
+--      - 拒否のしかたは 3. と同じ: current_user が authenticated / anon のときだけ RAISE EXCEPTION 'CANNOT_MODIFY_PRIVILEGED_COLUMN' USING ERRCODE = '42501'。
+--      - 値を変えない更新 (NEW.paste_group_id = OLD.paste_group_id) は拒否しない。INSERT は paste_group_id が NULL でなければ拒否する。
+--      - ペーストの関数 (所有者 postgres)、運営 (service_role) は止まらない。SECURITY INVOKER のまま。SET search_path = ''。
 --
 -- やらないこと:
 --   - 完全削除 (保管期間を過ぎた行と、その画像の削除) はこの migration に入れない。保管期間はオーナー・弁護士が決めるまで未定で、
@@ -65,6 +75,8 @@
 --   - paste_meal_to_family は、隠された食事 (この migration の時点では 0 件) を貼り付け元にしたときだけ挙動が変わる。
 --   - トリガーは、hidden_* を書く文でだけ動く。今のアプリ (Web・モバイル・Edge Function) に hidden_* を書く箇所は無い。
 --     行を丸ごと送り直すクライアントが hidden_* を NULL で送っても、今の値 (NULL) と同じなので通る。
+--   - paste_group_id のトリガーは、INSERT と paste_group_id を書く UPDATE でだけ動く。アプリに paste_group_id を書く箇所は無く、
+--     ペーストの関数は postgres として書くので止まらない。行を丸ごと送り直すクライアントも、今の値と同じなので通る。
 --   - ロック: ALTER TABLE ... ADD COLUMN は meals / recipes に ACCESS EXCLUSIVE ロックを短く取る。hidden_by の外部キーのため auth.users にも
 --     SHARE ROW EXCLUSIVE ロックを取る (新しい列は全行 NULL なので、外部キーに違反する既存の行は無い)。ALTER POLICY も ACCESS EXCLUSIVE、
 --     CREATE INDEX は書き込みを待たせる (CONCURRENTLY は migration がトランザクションの中で流れるため使えない)。
@@ -76,7 +88,8 @@
 -- 確認: tests/integration/rls/hidden-content-visibility.test.ts
 --   隠された食事・レシピが本人以外 (家族・ほかのログインユーザー・anon) に見えないこと、本人は読めること、本人が隠し状態を書き換えられないこと、
 --   運営 (service_role) が隠せること、運営ユーザーを消すと hidden_by だけ NULL に戻ること、定義 (ポリシー・列・外部キー・索引・トリガー) を確かめる。
---   隠された食事を家族に貼り付けられないこと (MEAL_HIDDEN)、運営が隠すとペーストの複製も隠れることも確かめる。
+--   隠された食事を家族に貼り付けられないこと (MEAL_HIDDEN)、運営が隠すとペーストの複製 (中身が同じもの) も隠れること、
+--   中身を書き換えた行は隠れないこと、本人が paste_group_id を書き換えられないことも確かめる。
 -- ロールバック: supabase/rollbacks/20261008200500_hide_moderated_content.down.sql
 --   ⚠️ 戻すと hidden_* 列ごと「隠した状態」が消え、隠していたコンテンツがすべて元どおり見えるようになる。
 -- マージ順: migration は version の順にマージすること (この version: 20261008200500)。
@@ -221,3 +234,33 @@ BEGIN
 
   RETURN v_paste_group_id;
 END $$;
+
+-- 6. 貼り付けのまとまり (paste_group_id) を、ログインユーザーと anon に書き換えさせない
+--    (運営は paste_group_id で複製をまとめて隠すので、他人の行を自分のまとまりに入れたり、まとまりから外したりさせない)
+CREATE OR REPLACE FUNCTION public.guard_meal_paste_group_id()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $function$
+BEGIN
+  IF current_user IN ('authenticated', 'anon') THEN
+    IF TG_OP = 'INSERT' THEN
+      -- INSERT: まとまりに入った行を作らせない (まとまりに入れるのは paste_meal_to_family だけ)
+      IF NEW.paste_group_id IS NOT NULL THEN
+        RAISE EXCEPTION 'CANNOT_MODIFY_PRIVILEGED_COLUMN' USING ERRCODE = '42501';
+      END IF;
+    ELSIF NEW.paste_group_id IS DISTINCT FROM OLD.paste_group_id THEN
+      -- UPDATE: 値が変わるときだけ拒否する (行をまるごと送り直すクライアントは壊さない)
+      RAISE EXCEPTION 'CANNOT_MODIFY_PRIVILEGED_COLUMN' USING ERRCODE = '42501';
+    END IF;
+  END IF;
+  RETURN NEW;
+END
+$function$;
+
+COMMENT ON FUNCTION public.guard_meal_paste_group_id() IS 'meals.paste_group_id (家族への貼り付けのまとまり) を、authenticated / anon が書き換えるのを拒否するトリガー関数 (#1101)。書けるのは paste_meal_to_family (DEFINER) と運営 (service_role) だけ。';
+
+CREATE OR REPLACE TRIGGER trg_meals_guard_paste_group_id
+  BEFORE INSERT OR UPDATE OF paste_group_id ON public.meals
+  FOR EACH ROW EXECUTE FUNCTION public.guard_meal_paste_group_id();

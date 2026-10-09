@@ -256,6 +256,18 @@ export interface HideModeratedContentParams {
 }
 
 /**
+ * 食事の「中身」の列 (#1101)。家族へのペースト (paste_meal_to_family) が元の行から複製する列のうち、
+ * 通報の対象になるもの (写真とメモ。eaten_at / meal_type は日時と区分で、中身ではない)。
+ * ペーストの複製をまとめて隠すときは、この列が通報された行と同じ値の行だけを対象にする。
+ */
+type MealContent = { photo_url: string | null; memo: string | null };
+
+/** 2 つの食事の中身 (写真とメモ) が同じか。NULL どうしも同じとみなす (SQL の IS NOT DISTINCT FROM と同じ) */
+function isSameMealContent(a: MealContent, b: MealContent): boolean {
+  return a.photo_url === b.photo_url && a.memo === b.memo;
+}
+
+/**
  * 通報されたコンテンツ (meals / recipes の行) を「隠す」(#1101)。行は消さない。
  *
  * `hidden_at` を入れると、RLS により本人以外 (家族・他のログインユーザー・未ログイン) には
@@ -264,9 +276,16 @@ export interface HideModeratedContentParams {
  * なので、`supabase` には、認可 (requireRole) を通したあとの `getSupabaseAdmin()` を渡すこと。
  *
  * - 食事 (food) は、家族へのペースト (paste_meal_to_family) で同じ写真・メモの行が家族のメンバーの
- *   持ち物として複製されている。通報された行だけを隠すと、複製が家族に見えたまま残るので、
- *   同じ `paste_group_id` の行 (元の行とすべての複製) をまとめて隠す。複製の持ち主には、
- *   自分の行として見えたまま (本人には見える、の規則どおり)。隠した行は、ペーストの元にできない (DB の関数が拒否する)
+ *   持ち物として複製されている。通報された行だけを隠すと、同じ中身の複製が家族に見えたまま残るので、
+ *   同じ `paste_group_id` の行のうち、**中身 (写真とメモ) が通報された行と同じもの**をまとめて隠す。
+ *   複製の持ち主には、自分の行として見えたまま (本人には見える、の規則どおり)。隠した行は、ペーストの元にできない (DB の関数が拒否する)
+ * - 同じ `paste_group_id` でも、中身が違う行は隠さない。ペーストのあとで持ち主が自分の行 (元の行・複製) の
+ *   写真やメモを書き換えられるので、`paste_group_id` が同じでも、通報された中身と同じとは限らない
+ *   (書き換えた複製が通報されたとき、元の持ち主の、違反していない元の行まで隠さないため)。
+ *   `paste_group_id` 自体は、ログインユーザーが書き換えられない (DB のトリガー guard_meal_paste_group_id。
+ *   書けるのはペーストの関数だけ) ので、他人の行を自分の行と同じまとまりに入れることもできない
+ * - 同じまとまりの行を読んでから、隠す行を ID で更新する (2 回に分ける。メモは長くなりうるので、URL の絞り込みに入れない)。
+ *   読んだあとの、ほんの短い間に持ち主が中身を書き換えた行は、読んだときの中身で判断する
  * - すでに隠れている行は上書きしない (`hidden_at IS NULL` の行だけ更新する)。保管期間は
  *   最初に隠した日時から数える。同じコンテンツへの 2 件目の通報を処理しても、起点は延びない
  * - 行がもう無い (持ち主が先に消した) ときも、何も更新せずに成功する。隠す対象が無いだけで、失敗ではない
@@ -281,21 +300,29 @@ export async function hideModeratedContent(
   params: HideModeratedContentParams,
 ): Promise<string[]> {
   const table = contentTable(type);
-  // 絞り込み: 既定は通報された行だけ。食事でペーストの複製があれば、同じ paste_group_id の行すべて
-  let filterColumn: 'id' | 'paste_group_id' = 'id';
-  let filterValue = contentId;
+  // 隠す行の ID。既定は通報された行だけ。食事でペーストの複製があれば、同じ paste_group_id で中身が同じ行すべて
+  let targetIds: string[] = [contentId];
   if (table === 'meals') {
     const { data: source, error: sourceError } = await supabase
       .from('meals')
-      .select('paste_group_id')
+      .select('paste_group_id, photo_url, memo')
       .eq('id', contentId)
       .maybeSingle();
     if (sourceError) throw sourceError;
     if (!source) return []; // 行がもう無い。隠す対象が無いだけで、失敗ではない
-    const pasteGroupId = (source as { paste_group_id?: string | null }).paste_group_id ?? null;
-    if (pasteGroupId) {
-      filterColumn = 'paste_group_id';
-      filterValue = pasteGroupId;
+    const flagged = source as MealContent & { paste_group_id: string | null };
+    if (flagged.paste_group_id) {
+      const { data: groupRows, error: groupError } = await supabase
+        .from('meals')
+        .select('id, photo_url, memo')
+        .eq('paste_group_id', flagged.paste_group_id)
+        .is('hidden_at', null);
+      if (groupError) throw groupError;
+      targetIds = ((groupRows ?? []) as Array<MealContent & { id: string }>)
+        .filter((row) => row.id === contentId || isSameMealContent(row, flagged))
+        .map((row) => row.id);
+      // まとまりの中に、まだ隠れていない同じ中身の行が無い (通報された行もすでに隠れている)
+      if (targetIds.length === 0) return [];
     }
   }
 
@@ -306,7 +333,7 @@ export async function hideModeratedContent(
       hidden_by: params.hiddenBy,
       hidden_reason: params.reason,
     })
-    .eq(filterColumn, filterValue)
+    .in('id', targetIds)
     .is('hidden_at', null)
     .select('id'); // 隠した行の ID を返す (監査ログに残し、運営が戻すときの手がかりにする)
   if (error) throw error;
