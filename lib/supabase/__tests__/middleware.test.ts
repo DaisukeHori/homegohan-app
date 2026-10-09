@@ -9,7 +9,7 @@
  * #1174: 利用規約 (/terms)・プライバシーポリシー (/privacy) は、未ログインでも、
  * ログイン済みのオンボーディング未完了・凍結中でも差し戻さない
  */
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,15 +40,12 @@ vi.mock('@supabase/ssr', () => ({
 }));
 
 import { updateSession } from '../middleware';
+import { TEST_SUPABASE_ANON_KEY, TEST_SUPABASE_URL, stubSupabasePublicEnv } from './supabase-public-env';
 
 // updateSession は必須の環境変数 (#1182) が無いと汎用の 500 を返して止まる。
 // このファイルでは Supabase クライアントをモックしているので、値はダミーでよい (テストごとに入れ直す)。
-const TEST_SUPABASE_URL = 'https://example.supabase.co';
-const TEST_SUPABASE_ANON_KEY = 'anon-key-for-test';
-
 beforeEach(() => {
-  vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', TEST_SUPABASE_URL);
-  vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', TEST_SUPABASE_ANON_KEY);
+  stubSupabasePublicEnv();
 });
 
 afterAll(() => {
@@ -713,6 +710,66 @@ describe('updateSession — 必須の環境変数 (#1182)', () => {
     expect(res.status).toBe(500);
     expect(mockLoggerError.mock.calls[0][1]).toMatchObject({ envName: 'NEXT_PUBLIC_SUPABASE_URL' });
     expect(mockCreateServerClient).not.toHaveBeenCalled();
+  });
+
+  // 規約の同意ゲート (#1174) と合わせたときの順序。必須の変数の検査は、同意ゲート (user_profiles の読み取り・
+  // 同意画面への 307・お知らせのヘッダー) より前にある。欠けていれば、同意画面へも回さず、
+  // クライアントが送ってきた同意のお知らせのヘッダーも画面へ転送しない (汎用の 500 だけを返す)
+  describe('同意ゲート (#1174) との順序', () => {
+    const PENDING_HEADER = 'x-legal-consent-pending';
+    const NOT_ACCEPTED_PROFILE = {
+      data: {
+        roles: [],
+        onboarding_started_at: '2026-03-01T00:00:00.000Z',
+        onboarding_completed_at: '2026-03-01T01:00:00.000Z',
+        frozen_at: null,
+        unban_at: null,
+        terms_version_accepted: null,
+        privacy_version_accepted: null,
+      },
+      error: null,
+    };
+
+    beforeEach(() => {
+      vi.stubEnv('LEGAL_CONSENT_ENFORCE', 'on');
+      vi.stubEnv('LEGAL_CONSENT_NOTICE', 'on');
+      mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+      mockMaybeSingle.mockResolvedValue(NOT_ACCEPTED_PROFILE);
+    });
+
+    // 同意のフラグを後ろの describe に持ち越さない (Supabase の 2 つはファイル先頭の beforeEach が入れ直す)
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('対照: 変数がそろっていれば、未同意の利用者は同意画面へ回る (この組み立てで同意ゲートが働くことの確認)', async () => {
+      const res = await updateSession(pageRequest('/home'));
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get('location')).toBe('http://localhost/legal-consent?next=%2Fhome');
+      expect(mockCreateServerClient).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY'])(
+      '%s が無ければ、同意画面へ回さず汎用の 500 で止め、送られてきた同意のヘッダーも転送しない',
+      async (name) => {
+        vi.stubEnv(name, undefined);
+
+        const res = await updateSession(pageRequest('/home', { [PENDING_HEADER]: '1' }));
+        const text = await res.text();
+
+        expect(res.status).toBe(500);
+        expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+        expect(text).not.toContain(name);
+        expect(JSON.stringify([...res.headers.entries()])).not.toContain(name);
+        expect(res.headers.get('location')).toBeNull();
+        expect(res.headers.get(`x-middleware-request-${PENDING_HEADER}`)).toBeNull();
+        expect(res.headers.get('x-middleware-override-headers')).toBeNull();
+        expect(mockCreateServerClient).not.toHaveBeenCalled();
+        expect(mockMaybeSingle).not.toHaveBeenCalled();
+        expect(mockLoggerError.mock.calls[0][1]).toMatchObject({ envName: name });
+      },
+    );
   });
 });
 

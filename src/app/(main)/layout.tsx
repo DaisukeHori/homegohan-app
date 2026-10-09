@@ -4,7 +4,8 @@
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
+import { LEGAL_CONSENT_PENDING_HEADER } from '@/lib/legal-consent';
 import MainLayout from './MainLayout';
 
 export default async function Layout({ children }: { children: React.ReactNode }) {
@@ -14,5 +15,15 @@ export default async function Layout({ children }: { children: React.ReactNode }
   const cookieStore = await cookies();
   const initialIsNativeApp = cookieStore.get('is_native_app')?.value === '1';
 
-  return <MainLayout initialIsNativeApp={initialIsNativeApp}>{children}</MainLayout>;
+  // #1174: 利用規約・プライバシーポリシーへの同意が済んでいない人には、画面の上に「同意のお願い」を出す。
+  // 判定は middleware (lib/supabase/middleware.ts の同意ゲート) が、すでに読んでいる user_profiles の行で行い、
+  // お知らせを有効にしていて (LEGAL_CONSENT_NOTICE=on)、強制 (LEGAL_CONSENT_ENFORCE=on) にしていない間だけ、
+  // このヘッダーで画面へ渡す (既定ではどちらも off なので、お知らせは出ない)。ここでは DB も環境変数も読み直さない。
+  const legalConsentPending = headers().get(LEGAL_CONSENT_PENDING_HEADER) === '1';
+
+  return (
+    <MainLayout initialIsNativeApp={initialIsNativeApp} legalConsentPending={legalConsentPending}>
+      {children}
+    </MainLayout>
+  );
 }
