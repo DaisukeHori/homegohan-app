@@ -7,7 +7,8 @@
  *   - フォーム: 必須のチェックボックスが 2 つ (利用規約・プライバシーポリシー)。両方チェックするまで「同意して続ける」は押せない。
  *     押すと POST /api/legal/accept に、いま有効な版を送る。成功したら戻り先へ (読み込み直し)。
  *     401 はログイン画面へ、409 (規約が更新された) は読み込み直しを案内、それ以外は汎用のエラー。いずれもやり直せる
- *   - 「同意しない」: localStorage を消してから signOut し、ご利用いただけないことと、データ削除の依頼先 (お問い合わせ) を案内する。
+ *   - 「同意しない」: localStorage を消し、ネイティブ (アプリの WebView) へ知らせてから signOut し (#1038)、
+ *     ご利用いただけないことと、データ削除の依頼先 (お問い合わせ) を案内する。
  *     API は呼ばない。signOut に失敗したら案内に進まず、エラーを出す
  *
  * このリポジトリには @testing-library/react が無いため、サーバー側は react-dom/server、フォームは react-dom/client + act で描画する。
@@ -42,6 +43,7 @@ const mocks = vi.hoisted(() => ({
   maybeSingle: vi.fn(),
   signOut: vi.fn(),
   clearUserScopedLocalStorage: vi.fn(),
+  notifyNativeSignOut: vi.fn(),
   broadcastSignOut: vi.fn(),
   callOrder: [] as string[],
 }));
@@ -73,6 +75,15 @@ vi.mock('@/lib/user-storage', () => ({
   broadcastSignOut: () => {
     mocks.callOrder.push('broadcastSignOut');
     mocks.broadcastSignOut();
+  },
+}));
+
+// #1038: WebView ならネイティブへも signOut の前に知らせる (アプリの中で「同意しない」を押したとき、アプリ側のログインも外す)
+vi.mock('@/lib/native-auth-bridge', () => ({
+  notifyNativeSignOut: () => {
+    mocks.callOrder.push('notifyNativeSignOut');
+    mocks.notifyNativeSignOut();
+    return true;
   },
 }));
 
@@ -401,9 +412,10 @@ describe('/legal-consent フォーム (クライアント側)', () => {
       });
 
       expect(mocks.signOut).toHaveBeenCalledTimes(1);
-      // CLAUDE.md の規約: Supabase の signOut より先に、利用者単位の localStorage を消す
-      expect(mocks.callOrder).toEqual(['clearUserScopedLocalStorage', 'broadcastSignOut']);
+      // CLAUDE.md の規約: Supabase の signOut より先に、利用者単位の localStorage を消す。続けて、ネイティブへ知らせる (#1038)
+      expect(mocks.callOrder).toEqual(['clearUserScopedLocalStorage', 'notifyNativeSignOut', 'broadcastSignOut']);
       expect(mocks.clearUserScopedLocalStorage).toHaveBeenCalledTimes(1);
+      expect(mocks.notifyNativeSignOut).toHaveBeenCalledTimes(1);
       expect(mocks.broadcastSignOut).toHaveBeenCalledTimes(1);
       expect(fetchMock).not.toHaveBeenCalled();
 
@@ -417,9 +429,10 @@ describe('/legal-consent フォーム (クライアント側)', () => {
       expect(container.querySelector('input[type="checkbox"]')).toBeNull();
     });
 
-    it('signOut の前に localStorage を消していること (呼び出し順)', async () => {
+    it('signOut の前に localStorage を消し、ネイティブへ知らせていること。broadcastSignOut は signOut のあと (呼び出し順)', async () => {
       const order: string[] = [];
       mocks.clearUserScopedLocalStorage.mockImplementation(() => order.push('clear'));
+      mocks.notifyNativeSignOut.mockImplementation(() => order.push('notifyNative'));
       mocks.signOut.mockImplementation(async () => {
         order.push('signOut');
         return { error: null };
@@ -431,7 +444,7 @@ describe('/legal-consent フォーム (クライアント側)', () => {
         declineButton().click();
       });
 
-      expect(order).toEqual(['clear', 'signOut', 'broadcast']);
+      expect(order).toEqual(['clear', 'notifyNative', 'signOut', 'broadcast']);
     });
 
     it('signOut に失敗したら、案内に進まず、エラーを出す。フォームはそのまま使える', async () => {

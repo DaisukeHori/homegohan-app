@@ -21,6 +21,7 @@ import {
 } from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/client';
 import { broadcastSignOut, clearUserScopedLocalStorage } from '@/lib/user-storage';
+import { notifyNativeSignOut } from '@/lib/native-auth-bridge';
 import { LEGAL_CONSENT_PATH } from '@/lib/legal-consent';
 
 interface LegalConsentFormProps {
@@ -96,6 +97,10 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
     try {
       // CLAUDE.md の規約: サインアウトでは、Supabase の signOut より先に利用者単位の localStorage を消す
       clearUserScopedLocalStorage();
+      // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)。
+      // アプリの中で「同意しない」を押したとき、Web だけでなくアプリ側のログインも外す。
+      // 順番は notifyNativeSignOut -> signOut -> broadcastSignOut (tests/native-sign-out-order-source-scan.test.ts が検査する)
+      notifyNativeSignOut();
       // supabase-js の signOut は、通信に失敗しても例外を投げず { error } を返し、その間はセッションが残る。
       // 「ログアウトしました」と案内してしまわないよう、返ってきた error も失敗として扱う
       const { error: signOutError } = await createClient().auth.signOut();
