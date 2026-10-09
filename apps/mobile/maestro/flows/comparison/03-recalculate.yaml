@@ -3,7 +3,9 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 03-recalculate: 再計算ボタンをタップしてランキングを更新する (正常系)
+# 03-recalculate: 一般の利用者には再計算ボタンを出さず、毎日の更新時刻を案内する (#1406)
+# 再計算 (POST /api/comparison/trigger) は super_admin だけが呼べる。集計は毎日 JST 4:00 に pg_cron が走らせる。
+# E2E_USER_01 は一般の利用者なので、ボタンは出ない。
 - runFlow: ../_shared/login.yaml
 
 # 比較画面へ移動
@@ -18,14 +20,8 @@ env:
 - waitForAnimationToEnd:
     timeout: 10000
 
-# 再計算ボタンをタップ
-- tapOn:
-    id: "comparison-recalculate-button"
-
-# 再計算後のロード完了を待機
-- waitForAnimationToEnd:
-    timeout: 15000
-
-# 比較画面が表示されていることを確認
+# 更新時刻の案内が出ていて、再計算ボタンは出ていない
 - assertVisible:
-    id: "comparison-screen"
+    id: "comparison-update-schedule"
+- assertNotVisible:
+    id: "comparison-recalculate-button"

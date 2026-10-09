@@ -4,6 +4,8 @@ import { Alert, ScrollView, Text, View } from "react-native";
 
 import { Button, Card, ChipSelector, EmptyState, LoadingState, PageHeader, SectionHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
+import { getApiErrorMessage } from "../../src/lib/api-error";
+import { useProfile } from "../../src/providers/ProfileProvider";
 import { colors, spacing } from "../../src/theme";
 
 type ComparisonResponse = {
@@ -26,6 +28,13 @@ type ComparisonResponse = {
   periodEnd: string;
 };
 
+/**
+ * ランキングが更新される時刻 (日本時間)。集計は pg_cron が毎日 UTC 19:00 = JST 4:00 に走らせる
+ * (supabase/migrations/20261009100000_schedule_calculate_segment_stats.sql のジョブ calculate-segment-stats-daily)。
+ * 時刻を変えるときは、その migration (の後継) と一緒に変える (tests/segment-stats-schedule-sync.test.ts が突き合わせる)
+ */
+const RANKING_UPDATE_TIME_JST = "4:00";
+
 const PERIOD_OPTIONS = [
   { value: "daily" as const, label: "日" },
   { value: "weekly" as const, label: "週" },
@@ -33,6 +42,10 @@ const PERIOD_OPTIONS = [
 ];
 
 export default function ComparisonPage() {
+  // 再計算 (POST /api/comparison/trigger) は全員分の集計を作り直す重い処理で、呼べるのは運営 (super_admin) だけ (#1406)。
+  // それ以外の利用者にはボタンを出さず、毎日の更新時刻だけを案内する
+  const { hasRole } = useProfile();
+  const canRecalculate = hasRole("super_admin");
   const [periodType, setPeriodType] = useState<"daily" | "weekly" | "monthly">("weekly");
   const [data, setData] = useState<ComparisonResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -63,7 +76,7 @@ export default function ComparisonPage() {
       Alert.alert("実行しました", JSON.stringify(res));
       await load();
     } catch (e: any) {
-      Alert.alert("実行失敗", e?.message ?? "失敗しました。");
+      Alert.alert("実行失敗", getApiErrorMessage(e, "失敗しました。"));
     }
   }
 
@@ -72,15 +85,21 @@ export default function ComparisonPage() {
       <PageHeader
         title="比較"
         right={
-          <Button testID="comparison-recalculate-button" onPress={trigger} variant="primary" size="sm">
-            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
-              <Ionicons name="refresh" size={16} color="#FFFFFF" />
-              <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 13 }}>再計算</Text>
-            </View>
-          </Button>
+          canRecalculate ? (
+            <Button testID="comparison-recalculate-button" onPress={trigger} variant="primary" size="sm">
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                <Ionicons name="refresh" size={16} color="#FFFFFF" />
+                <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 13 }}>再計算</Text>
+              </View>
+            </Button>
+          ) : undefined
         }
       />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
+
+      <Text testID="comparison-update-schedule" style={{ fontSize: 13, color: colors.textMuted }}>
+        ランキングは毎日 {RANKING_UPDATE_TIME_JST} (日本時間) に更新されます。
+      </Text>
 
       <ChipSelector
         options={PERIOD_OPTIONS}

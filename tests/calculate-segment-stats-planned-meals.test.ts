@@ -1043,3 +1043,86 @@ describe("calculate-segment-stats: 集計期間は JST の暦で決まる (#1211
     expect([1, 2, 3, 4, 5].map(rate)).toEqual([14, 0, 14, 0, 0]);
   });
 });
+
+// ── 定期実行・手動実行のどちらでも、直近の 1 期間だけを集計する (#1406) ─────────────────
+//
+// 定期実行: pg_cron のジョブ calculate-segment-stats-daily が毎日 UTC 19:00 (= JST 4:00) に
+//   public.invoke_calculate_segment_stats() を呼び、CRON_SECRET (Vault の app_cron_secret) を付けて
+//   本文 { periodType } で daily / weekly / monthly の 3 回この関数を呼ぶ
+//   (supabase/migrations/20261009100000_schedule_calculate_segment_stats.sql)。
+// 手動実行: POST /api/comparison/trigger (super_admin だけ) が service role の鍵を付けて、本文 { periodType } で呼ぶ。
+// 初回も含めて、過去の期間の埋め戻しはしない (オーナーの選択 2026-10-09)。関数は本文から期間を受け取らず、
+// 実行した時刻 (JST) が属する期間 1 つだけを書く。本文に期間の開始日などを書いても無視されることを、ここで固定する。
+
+describe("calculate-segment-stats: 定期実行・手動実行のどちらでも直近の 1 期間だけを集計する (#1406)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // ジョブが動く時刻: UTC 日曜 2026-10-11 19:00 = JST 月曜 2026-10-12 4:00。
+  // UTC の暦ではまだ日曜 (前の週・前日) なので、JST で求めていなければ期間がずれる
+  const CRON_FIRED_AT = "2026-10-11T19:00:00.000Z";
+  // [periodType, 期間の開始日, 期間の終了日] (JST 月曜 10/12 が属する期間)
+  const expectedPeriods: Array<[string, string, string]> = [
+    ["daily", "2026-10-12", "2026-10-12"],
+    ["weekly", "2026-10-12", "2026-10-18"],
+    ["monthly", "2026-10-01", "2026-10-31"],
+  ];
+
+  /** 保存された行の (period_type, period_start, period_end) の組を重複なしで返す */
+  function savedPeriods(db: Db): string[] {
+    const rows = [
+      ...db.saved.user_metrics,
+      ...db.saved.segment_stats,
+      ...db.saved.user_segment_rankings.map((r) => ({ ...r, period_end: "(なし)" })),
+    ];
+    return [...new Set(rows.map((r) => `${r.period_type} ${r.period_start} ${r.period_end}`))].sort();
+  }
+
+  // [呼び方, 認証ヘッダー, 本文に periodType 以外を足すか]
+  const callers: Array<[string, Record<string, string>, Record<string, unknown>]> = [
+    ["定期実行 (pg_cron: CRON_SECRET・本文は periodType だけ)", { authorization: `Bearer ${CRON_SECRET}` }, {}],
+    ["手動実行 (trigger API: service role の鍵・本文は periodType だけ)", { authorization: "Bearer test-service-role" }, {}],
+    [
+      "本文に過去の期間・再計算の指定を書いた呼び出し",
+      { authorization: `Bearer ${CRON_SECRET}` },
+      { periodStart: "2025-01-06", periodEnd: "2025-01-12", forceRecalc: true, backfill: 12 },
+    ],
+  ];
+
+  for (const [caller, headers, extraBody] of callers) {
+    it.each(expectedPeriods)(`${caller}: %s は JST の実行時刻が属する期間 %s 〜 %s の 1 つだけを書く`, async (periodType, start, end) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(CRON_FIRED_AT));
+      const db = newDb();
+      const { queries } = install(db);
+
+      const { res, json } = await call({ periodType, ...extraBody }, headers);
+
+      expect(res.status).toBe(200);
+      expect(json).toMatchObject({ success: true, periodType, periodStart: start, periodEnd: end });
+
+      // 書いた行の期間は 1 つだけ (user_segment_rankings に period_end の列は無い)
+      expect(db.saved.user_metrics.length).toBeGreaterThan(0);
+      expect(db.saved.segment_stats.length).toBeGreaterThan(0);
+      expect(db.saved.user_segment_rankings.length).toBeGreaterThan(0);
+      expect(savedPeriods(db)).toEqual(
+        [`${periodType} ${start} ${end}`, `${periodType} ${start} (なし)`].sort(),
+      );
+
+      // 読み取りも、その 1 期間だけ (食事の予定はその期間の日付)
+      const planned = queriesOf(queries, "planned_meals");
+      expect(planned).toHaveLength(1);
+      expect(argsOf(planned[0], "gte")).toEqual([["user_daily_meals.day_date", start]]);
+      expect(argsOf(planned[0], "lte")).toEqual([["user_daily_meals.day_date", end]]);
+      // 集計結果の読み直し (平均との比較に使う segment_stats) も、その期間の開始日だけ。
+      // user_metrics の読み取りは、変化率のための「1 つ前の期間」(書き込みはしない) なので、ここでは見ない
+      const statsReads = queriesOf(queries, "segment_stats").filter((q) => firstMethodOf(q) === "select");
+      expect(statsReads.length, "segment_stats の読み直しが発行されていること").toBeGreaterThan(0);
+      for (const q of statsReads) {
+        expect(eqValue(q, "period_type")).toBe(periodType);
+        expect(eqValue(q, "period_start")).toBe(start);
+      }
+    });
+  }
+});
