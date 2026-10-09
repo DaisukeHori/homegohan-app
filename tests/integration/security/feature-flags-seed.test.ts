@@ -1,7 +1,7 @@
 /**
  * #1148 機能フラグの一本化: feature_flags に最初の 4 行を入れる migration の回帰テスト
  *
- * 20261008140200_unify_feature_flags_seed.sql は、旧の置き場 (system_settings の key = 'feature_flags') から
+ * 20261008200100_unify_feature_flags_seed.sql は、旧の置き場 (system_settings の key = 'feature_flags') から
  * 新しい置き場 (feature_flags テーブル) へ、献立生成の 2 つのフラグを引き継ぎ、AI 相談の緊急停止スイッチと
  * メンテナンスモードの行を作る。
  *
@@ -39,7 +39,7 @@ if (!url || !serviceKey) {
 }
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
-const VERSION = '20261008140200';
+const VERSION = '20261008200100';
 const NAME = 'unify_feature_flags_seed';
 const MIGRATION_FILE = `supabase/migrations/${VERSION}_${NAME}.sql`;
 const ROLLBACK_FILE = `supabase/rollbacks/${VERSION}_${NAME}.down.sql`;

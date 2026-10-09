@@ -60,7 +60,7 @@ async function readFlags(): Promise<Record<Key, boolean>> {
   const { data, error } = await supabaseAdmin.from('feature_flags').select('key, enabled').in('key', [...KEYS]);
   expect(error, 'feature_flags の SELECT').toBeNull();
   const map = new Map((data ?? []).map((row) => [row.key as string, row.enabled as boolean]));
-  for (const key of KEYS) expect(map.has(key), `feature_flags に ${key} の行が無い (migration 20261008140200)`).toBe(true);
+  for (const key of KEYS) expect(map.has(key), `feature_flags に ${key} の行が無い (migration 20261008200100)`).toBe(true);
   return { ai_chat_enabled: map.get('ai_chat_enabled')!, maintenance_mode: map.get('maintenance_mode')! };
 }
 

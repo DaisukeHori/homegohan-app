@@ -1,4 +1,4 @@
--- rollback: 20261008140200_unify_feature_flags_seed.sql
+-- rollback: 20261008200100_unify_feature_flags_seed.sql
 -- この migration が feature_flags に作った 4 行 (ai_chat_enabled / maintenance_mode / menu_generation_v5_wrapped /
 -- menu_generation_v5_direct) を消す。表・RLS・権限・system_settings には触れない。
 --

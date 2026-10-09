@@ -1,4 +1,4 @@
--- migration: 20261008140200_unify_feature_flags_seed.sql
+-- migration: 20261008200100_unify_feature_flags_seed.sql
 -- #1148: 機能フラグを feature_flags テーブル (運営画面で ON/OFF できる新しい仕組み) に一本化する。その最初の中身を入れる。
 --
 -- 背景:
@@ -57,8 +57,10 @@
 --   (運営画面でフラグを切り替えたあとに流し直しても、切り替えは元に戻らない。)
 -- 権限: GRANT / REVOKE はしない。feature_flags の RLS (super_admin だけ) も変えない。アプリはサーバー側 (service_role) で読む。
 -- 確認: tests/integration/security/feature-flags-seed.test.ts
--- ロールバック: supabase/rollbacks/20261008140200_unify_feature_flags_seed.down.sql
--- マージ順: version の順 (この migration は 20261008140100 の後)。
+-- ロールバック: supabase/rollbacks/20261008200100_unify_feature_flags_seed.down.sql
+-- マージ順: version の順。この migration (20261008200100) は、すでに本番に入っている最大の version 20261008190000 (#1401) より新しい。
+--   (本番の台帳の最大 version 以下の migration は、deploy-supabase-migrations.yml の "Detect migration drift" と
+--    supabase db push が拒否する。version を振り直すときは、そのときの本番の最大 version より新しくすること。)
 
 DO $$
 DECLARE
