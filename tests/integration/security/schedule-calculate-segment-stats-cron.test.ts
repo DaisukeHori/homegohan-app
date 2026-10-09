@@ -9,7 +9,8 @@
  *
  * 確認すること (ローカル Supabase の DB で):
  *   A. ジョブが 1 つだけ、UTC 19:00 毎日・postgres の権限・有効で登録されている。migration を流し直しても 1 つのまま
- *   B. Vault に app_cron_secret が無いと、関数は失敗し (pg_cron の実行履歴に failed として残る)、要求を 1 つも積まない
+ *   B. Vault に app_cron_secret が無いと、関数は例外で失敗し、要求を 1 つも積まない
+ *      (例外で終わるので、pg_cron のジョブとして動いたときは実行履歴 cron.job_run_details に failed として残る)
  *   C. app_cron_secret があると、Edge Function calculate-segment-stats への POST を 3 つ (daily / weekly / monthly) 積む。
  *      本文は { periodType } だけ (過去の期間を指定しない = 直近の 1 期間だけを集計する)、Bearer は Vault の値
  *   D. anon / authenticated / service_role は関数を EXECUTE できない (呼べるのは所有者 postgres = pg_cron のジョブだけ)
@@ -150,7 +151,7 @@ describe('#1406 A. pg_cron のジョブ', () => {
 // B / C. 関数が積む要求 (どちらもロールバックするので、本番へは送らない)
 // ---------------------------------------------------------------
 describe('#1406 B. Vault に app_cron_secret が無いとき', () => {
-  it('関数は失敗し (pg_cron の実行履歴に failed として残る)、要求を 1 つも積まない', async () => {
+  it('関数は例外で失敗し (pg_cron のジョブとして動いたときは、実行履歴 cron.job_run_details に failed として残る)、要求を 1 つも積まない', async () => {
     const before = await queuedRequestCount();
 
     const result = await pgQueryRaw(`
