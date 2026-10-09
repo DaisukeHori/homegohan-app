@@ -268,6 +268,9 @@ onLCP((metric) => fireAnalytics('web_vitals_lcp', {
 
 ## 4. PostHog 配信実装
 
+> **【不採用】オーナー判断 (2026-10-08, #1166)**: PostHog は採用しない。この節のコード (`src/lib/posthog.ts` / `apps/mobile/src/lib/posthog.ts` など) は削除した。
+> `fireAnalytics` は送り先 (adapter) を誰も注入していないので何も送らない。経緯と後始末は `docs/design/operator/07-audit-monitoring.md` §15 と `docs/operations/posthog-dashboard.md`。
+
 ### 4.1 SDK 初期化
 
 ```ts
