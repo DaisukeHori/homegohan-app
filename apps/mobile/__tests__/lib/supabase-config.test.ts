@@ -21,8 +21,6 @@ import path from 'path';
 
 // ── 周辺モジュールのモック ───────────────────────────────────────────────────
 jest.mock('react-native-url-polyfill/auto', () => ({}));
-// secureSessionStorage が異常の通知に使う PostHog の SDK は重く、このテストの対象ではないので読み込まない
-jest.mock('../../src/lib/posthog', () => ({ captureEvent: jest.fn() }));
 
 const mockCreateClient = jest.fn((url: string, key: string, options: unknown) => ({ kind: 'real-client', url, key, options }));
 jest.mock('@supabase/supabase-js', () => ({
