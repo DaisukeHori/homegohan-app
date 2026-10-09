@@ -164,6 +164,16 @@ npx vitest run --config vitest.integration.config.ts tests/integration/rls   # R
 
 ---
 
+## マージ前の検査 (ローカル CI)
+
+PR の検査は `bash scripts/local-ci.sh` でローカルに回せる (CI の ci.yml・mobile-test.yml・security-regression.yml・e2e-local.yml と同じコマンド・同じ件数。TZ=UTC・main を取り込んだマージ状態・まっさらな worktree で回す)。
+
+- migration を含まない PR は、local-ci.sh の 4 段が緑で、出力の Markdown (sha と件数) を PR 本文に貼れば、CI の完了を待たずにマージしてよい (オーナー判断 2026-10-09)。CI の結果はマージ後に確かめ、赤なら直す。
+- migration (`supabase/migrations/**`) を含む PR は、Deploy Supabase Migrations の PR ジョブ (本番台帳とのドリフト検知) の緑を待ってからマージする。これはローカルでは再現できない。
+- 本番への反映 (Vercel・`db push`・functions deploy) は従来どおり PR → main → CI の経路だけ。
+
+---
+
 ## 家族 (family_*) を変える関数のロック順 (DB)
 
 家族のメンバー・所属・代表者を変える関数 (`accept_family_invite` / `add_family_child` / `leave_family` / `remove_family_member` / `operator_force_dissolve_family` / `operator_force_representative_transfer` / `accept_family_representative_transfer` / `accept_child_promotion`) は、**最初に `family_groups` の行をロックし**、そのあとで子の行 (`family_invites` / `ownership_transfer_proposals` / `family_members` / `family_promotion_requests` / `user_profiles`) を触る (#1310)。代表者による家族の削除 (`DELETE FROM family_groups` + CASCADE) は、DELETE 文が最初に家族の行を取るので、もともとこの順になっている。
