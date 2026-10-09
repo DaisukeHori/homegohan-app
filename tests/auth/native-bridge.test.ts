@@ -17,6 +17,8 @@
  *  11. 旧方式の期限 (LEGACY_SUNSET_AT) と NATIVE_BRIDGE_LEGACY_GET=off → 426
  *  12. 旧方式の使用ログ (トークンを含めない)
  *  13. 全応答の共通ヘッダ / トークンがリダイレクト先・本文に出ないこと
+ *  14. Web の Cookie セッションに入れる refresh_token は実際の値ではなく使えない値 (#1038 F7-05)
+ *      NATIVE_BRIDGE_SHARE_REFRESH_TOKEN=on で従来の動作 (実際の値) に戻せる
  */
 
 import { createHash } from 'node:crypto';
@@ -72,6 +74,7 @@ vi.mock('@/lib/db-logger', () => ({
 
 // ── Route handler import ──────────────────────────────────────────────────────
 import { GET } from '../../src/app/(auth)/auth/native-bridge/route';
+import { NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER } from '../../src/lib/auth/native-bridge-code';
 
 // ── ヘルパー ──────────────────────────────────────────────────────────────────
 const BASE = 'https://homegohan-app.vercel.app';
@@ -411,9 +414,13 @@ describe('ケース7: コード方式の成功フロー', () => {
     expect(mocks.rpc).toHaveBeenCalledWith('consume_native_bridge_code', { p_code_hash: sha256Hex(VALID_CODE) });
     expect(JSON.stringify(mocks.rpc.mock.calls)).not.toContain(VALID_CODE);
 
-    // setSession には DB から引き換えたトークンを渡す
+    // setSession には DB から引き換えた access_token を渡す。
+    // refresh_token は実際の値ではなく使えない値にする (ネイティブとフォークして強制ログアウトしないため。#1038 F7-05)
     expect(mocks.setSession).toHaveBeenCalledTimes(1);
-    expect(mocks.setSession).toHaveBeenCalledWith({ access_token: STORED_ACCESS, refresh_token: STORED_REFRESH });
+    expect(mocks.setSession).toHaveBeenCalledWith({
+      access_token: STORED_ACCESS,
+      refresh_token: NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER,
+    });
   });
 
   it('URL に旧方式のトークンが付いていても、setSession に渡すのは保存されたトークンだけ', async () => {
@@ -429,7 +436,10 @@ describe('ケース7: コード方式の成功フロー', () => {
     );
 
     expect(mocks.setSession).toHaveBeenCalledTimes(1);
-    expect(mocks.setSession).toHaveBeenCalledWith({ access_token: STORED_ACCESS, refresh_token: STORED_REFRESH });
+    expect(mocks.setSession).toHaveBeenCalledWith({
+      access_token: STORED_ACCESS,
+      refresh_token: NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER,
+    });
     expect(JSON.stringify(mocks.setSession.mock.calls)).not.toContain('query-');
   });
 
@@ -904,5 +914,68 @@ describe('ケース13: どの応答も no-store / no-referrer で、トークン
     ]) {
       expect(everything).not.toContain(secret);
     }
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ケース 14: Web の Cookie セッションに入れる refresh_token (#1038 F7-05)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('ケース14: Web の Cookie セッションの refresh_token は使えない値 (#1038 F7-05)', () => {
+  it('既定: ネイティブの実際の refresh_token は setSession に渡さない (Web が更新してフォークするのを防ぐ)', async () => {
+    consumeReturnsRow();
+    setSessionSucceeds();
+
+    await GET(makeRequest({ code: VALID_CODE }));
+
+    const [arg] = mocks.setSession.mock.calls[0];
+    expect(arg.access_token).toBe(STORED_ACCESS);
+    expect(arg.refresh_token).toBe(NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER);
+    expect(arg.refresh_token).not.toBe(STORED_REFRESH);
+    expect(JSON.stringify(mocks.setSession.mock.calls)).not.toContain(STORED_REFRESH);
+  });
+
+  it('使えない値は、実在しそうな長いトークンではなく、一目で分かる固定値', () => {
+    // Supabase に存在しないので、更新は必ず失敗する。ログに出ても問題ない (秘密ではない)
+    expect(NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER).toMatch(/^[a-z-]+$/);
+    expect(NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER.length).toBeGreaterThan(10);
+  });
+
+  it.each(['on', 'ON', '  On  '])(
+    'NATIVE_BRIDGE_SHARE_REFRESH_TOKEN=%j: 従来の動作 (実際の refresh_token を渡す) に戻せる',
+    async (value) => {
+      vi.stubEnv('NATIVE_BRIDGE_SHARE_REFRESH_TOKEN', value);
+      consumeReturnsRow();
+      setSessionSucceeds();
+
+      await GET(makeRequest({ code: VALID_CODE }));
+
+      expect(mocks.setSession).toHaveBeenCalledWith({ access_token: STORED_ACCESS, refresh_token: STORED_REFRESH });
+    },
+  );
+
+  it.each(['', 'off', 'true', '1', 'yes'])(
+    'NATIVE_BRIDGE_SHARE_REFRESH_TOKEN=%j: "on" 以外は切り替わらない (使えない値のまま)',
+    async (value) => {
+      vi.stubEnv('NATIVE_BRIDGE_SHARE_REFRESH_TOKEN', value);
+      consumeReturnsRow();
+      setSessionSucceeds();
+
+      await GET(makeRequest({ code: VALID_CODE }));
+
+      expect(mocks.setSession).toHaveBeenCalledWith({
+        access_token: STORED_ACCESS,
+        refresh_token: NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER,
+      });
+    },
+  );
+
+  it('旧方式 (トークンを URL で渡す GET) は変えない: 旧アプリは再ブリッジの仕組みを持たないので、実際の refresh_token のまま', async () => {
+    setSessionSucceeds();
+
+    const res = await GET(makeRequest({ access_token: 'legacy-access', refresh_token: 'legacy-refresh', next: '/home?mode=app' }));
+
+    expect(res.status).toBe(307);
+    expect(mocks.setSession).toHaveBeenCalledWith({ access_token: 'legacy-access', refresh_token: 'legacy-refresh' });
   });
 });

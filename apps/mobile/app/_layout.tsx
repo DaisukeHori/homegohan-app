@@ -4,7 +4,6 @@ import {
   NotoSansJP_700Bold,
   useFonts,
 } from '@expo-google-fonts/noto-sans-jp';
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SplashScreen from 'expo-splash-screen';
 import { Stack } from "expo-router";
 import type { ErrorBoundaryProps } from "expo-router";
@@ -13,9 +12,8 @@ import { LogBox } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorFallback } from "../src/components/ErrorFallback";
-import { registerAndSaveExpoPushToken } from "../src/lib/pushNotifications";
+import { ensurePushTokenRegistered } from "../src/lib/pushNotifications";
 import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
-import { PostHogProvider } from "../src/providers/PostHogProvider";
 import { ProfileProvider } from "../src/providers/ProfileProvider";
 
 // E2E テスト中に LogBox の自動ポップアップがタップを横取りして失敗するため抑制する
@@ -23,8 +21,6 @@ import { ProfileProvider } from "../src/providers/ProfileProvider";
 LogBox.ignoreAllLogs();
 
 SplashScreen.preventAutoHideAsync();
-
-const PUSH_TOKEN_REGISTERED_KEY = "push_token_registered_v1";
 
 // 画面の描画中に起きた例外を受ける、ルートの境界 (#1207)。
 // expo-router は、この export がある layout の中で起きた描画の例外を受けて、画面の代わりにこれを出す。
@@ -44,14 +40,10 @@ function PushTokenRegistrar() {
 
     (async () => {
       try {
-        const key = `${PUSH_TOKEN_REGISTERED_KEY}:${user.id}`;
-        const already = await AsyncStorage.getItem(key);
-        if (already === "1") return;
-
-        await registerAndSaveExpoPushToken();
-        await AsyncStorage.setItem(key, "1");
+        // 登録済みの印は、トークンを保存できたときだけ付く (権限の拒否などで未登録なら、次の起動でまた試す)
+        await ensurePushTokenRegistered(user.id);
       } catch {
-        // silent — user can retry via settings toggle
+        // silent — 失敗は registerAndSaveExpoPushToken() が端末のコンソールに出す。user can retry via settings toggle
       }
     })();
   }, [user?.id]);
@@ -76,23 +68,21 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <PostHogProvider>
-        <AuthProvider>
-          <ProfileProvider>
-            <PushTokenRegistrar />
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="index" />
-              <Stack.Screen name="(public)" />
-              <Stack.Screen name="(auth)" />
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen name="(org)" />
-              <Stack.Screen name="(support)" />
-              <Stack.Screen name="(super-admin)" />
-              <Stack.Screen name="meals/new" options={{ presentation: "modal" }} />
-            </Stack>
-          </ProfileProvider>
-        </AuthProvider>
-      </PostHogProvider>
+      <AuthProvider>
+        <ProfileProvider>
+          <PushTokenRegistrar />
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="(public)" />
+            <Stack.Screen name="(auth)" />
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="(org)" />
+            <Stack.Screen name="(support)" />
+            <Stack.Screen name="(super-admin)" />
+            <Stack.Screen name="meals/new" options={{ presentation: "modal" }} />
+          </Stack>
+        </ProfileProvider>
+      </AuthProvider>
     </SafeAreaProvider>
   );
 }

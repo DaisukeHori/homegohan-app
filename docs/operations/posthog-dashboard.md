@@ -1,4 +1,21 @@
-# PostHog Dashboard セットアップ手順 — family/09 ハンズオンチュートリアル
+# 【不採用】PostHog Dashboard セットアップ手順 — family/09 ハンズオンチュートリアル
+
+> **【不採用】オーナー判断 (2026-10-08, #1166)**: PostHog による利用状況の計測は採用しない。
+> Web・モバイルアプリのコードから、PostHog の SDK (`posthog-js` / `posthog-react-native`)、`PostHogProvider`、CSP の送信先許可、環境変数の読み取りを取り除いた。
+> **この文書の手順 (PostHog に Insight・Dashboard・Alert を作る) は実施しない。** 以下は 2026-05-08 時点の旧設計で、経緯の記録としてだけ残している。
+>
+> - ハンズオンチュートリアルの `fireAnalytics` (`packages/handson-tour-shared/src/analytics.ts`) は、送り先 (adapter) を誰も注入していないので何も送らない。
+> - 設計側の扱いは `docs/design/operator/07-audit-monitoring.md` §15 (同じく不採用)。
+> - `cookie_consents` テーブルは残している (migration は変えていない)。
+>
+> **後始末 (オーナー作業。コードの変更では片付かない)**
+>
+> 1. Vercel の環境変数 `NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST` を削除する (Production / Preview / Development)。
+> 2. モバイルアプリのビルドに使っている場所 (EAS の環境変数・シークレット、または手元の `apps/mobile/.env`) の `EXPO_PUBLIC_POSTHOG_KEY` / `EXPO_PUBLIC_POSTHOG_HOST` を削除する。
+> 3. PostHog のプロジェクトの API キーを失効させる (ローテーションする)。配布済みのアプリのビルドには、ビルド時の `EXPO_PUBLIC_POSTHOG_KEY` が埋め込まれていることがあり、利用者がアプリを更新するまで、そのビルドは PostHog への送信を続けるため。キーを失効させれば受け口が閉じる。
+> 4. PostHog に溜まったデータ (identify したユーザー ID、`signup_at`、`plan_key_cached` など) を、削除するか保持するか決める。
+>
+> 以下、旧設計の本文。
 
 > 作成: 2026-05-08 (family/09 Phase 4 PostHog dashboard 公開)
 > 関連: `docs/design/operator/07-audit-monitoring.md` §15 (analytics events canonical)
@@ -217,3 +234,4 @@ https://us.posthog.com/shared_dashboard/<TOKEN>
 | 日付 | 担当 | 内容 |
 |---|---|---|
 | 2026-05-08 | Opus | 初版作成 (family/09 Phase 4 PostHog dashboard セットアップ手順) |
+| 2026-10-08 | Claude | 不採用 (オーナー判断 #1166)。冒頭に注記を追加。本文は経緯の記録として残す |

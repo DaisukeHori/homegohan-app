@@ -74,7 +74,8 @@ export default function HealthSettingsPage() {
 
   async function registerPush() {
     try {
-      const token = await registerAndSaveExpoPushToken();
+      // 利用者が自分でボタンを押した操作なので、OS がまだ尋ねられるなら、権限のダイアログを出してよい
+      const token = await registerAndSaveExpoPushToken({ userInitiated: true });
       if (!token) {
         Alert.alert("通知", "通知許可が必要です（または物理端末で試してください）。");
       } else {

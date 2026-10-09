@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 import { createClient } from "@/lib/supabase/client";
 import { getSafeRedirectPath } from "@/lib/auth/safe-redirect";
+import { notifyNativeSessionExpired } from "@/lib/native-auth-bridge";
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle } from "lucide-react";
@@ -43,6 +44,12 @@ function LoginContent() {
   // #1057 (round-2 Warning fix): invite/[token]/page.tsx は `/login?redirect=...&email=...`
   // で email も渡すが、signup 側のみ事前入力していた不整合を解消する
   const prefilledEmail = searchParams.get('email') ?? '';
+
+  // モバイルアプリの WebView でログイン画面が出た = Web 側のセッションが無い (切れた)。
+  // ネイティブに知らせて、新しい bridge で読み込み直してもらう (#1038 F7-05)。普通のブラウザでは何もしない
+  useEffect(() => {
+    notifyNativeSessionExpired();
+  }, []);
 
   // URLからエラーパラメータを読み取る
   useEffect(() => {

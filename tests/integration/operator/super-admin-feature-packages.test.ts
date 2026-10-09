@@ -94,23 +94,31 @@ describe('POST /api/super-admin/feature-packages', () => {
   });
 
   it('409 for duplicate package_key', async () => {
-    // Use a pre-existing or already created package_key
-    if (createdPackageIds.length === 0) return;
-
-    const { data: pkg } = await supabaseAdmin
+    // 前のテストの結果に頼らず、重複させる元のパッケージをここで作る
+    // (INSERT の error を確認しないと、元が無いまま 201 になって気づけない)
+    const packageKey = `test_dup_pkg_${TS}`;
+    const { data: pkg, error } = await supabaseAdmin
       .from('feature_packages')
-      .select('package_key')
-      .eq('id', createdPackageIds[0])
+      .insert({
+        package_key: packageKey,
+        display_name: `Duplicate Source Package ${TS}`,
+        feature_flags: ['test_flag_a'],
+        display_order: 98,
+        status: 'active',
+      })
+      .select('id')
       .single();
+    if (error || !pkg) throw new Error(`Failed to create the package to duplicate: ${error?.message}`);
+    createdPackageIds.push(pkg.id);
 
-    if (!pkg) return;
-
+    // feature_flags は 1 つ以上が必要 (空配列だと 409 の前に 400 になる)
     const res = await apiCall('POST', '/api/super-admin/feature-packages', superAdminUser.jwt, {
-      package_key: pkg.package_key,
+      package_key: packageKey,
       display_name: 'Duplicate Package',
-      feature_flags: [],
+      feature_flags: ['test_flag_a'],
     });
-    expect(res.status).toBe(409);
+    expect(res.status, `応答本文: ${JSON.stringify(res.body)}`).toBe(409);
+    expect((res.body as { error: { code: string } }).error.code).toBe('OP_PACKAGE_KEY_DUPLICATE');
   });
 
   it('403 for admin', async () => {
