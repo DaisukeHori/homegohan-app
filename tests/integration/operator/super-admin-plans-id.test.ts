@@ -217,6 +217,7 @@ describe('POST /api/super-admin/plans/[id]/price-change', () => {
       console.warn('Skipping — public plan creation failed');
       return;
     }
+    // #1102: 月額・年額を同時に変えられる (Stripe 同期が必須の環境でも 1 回のリクエストで両方を同期する)
     const res = await apiCall(
       'POST',
       `/api/super-admin/plans/${publicPlanId}/price-change`,
@@ -230,10 +231,102 @@ describe('POST /api/super-admin/plans/[id]/price-change', () => {
       }
     );
     expect(res.status).toBe(200);
-    const body = res.body as { data: { plan_id: string; new_monthly_price_jpy: number } };
+    const body = res.body as {
+      data: { plan_id: string; new_monthly_price_jpy: number; new_yearly_price_jpy: number; applies_to: string };
+    };
     expect(body.data.plan_id).toBe(publicPlanId);
     expect(body.data.new_monthly_price_jpy).toBe(1800);
+    expect(body.data.new_yearly_price_jpy).toBe(18000);
+    expect(body.data.applies_to).toBe('new_only');
+
+    const { data: row } = await supabaseAdmin
+      .from('subscription_plans')
+      .select('monthly_price_jpy, yearly_price_jpy')
+      .eq('id', publicPlanId)
+      .single();
+    expect(row).toEqual({ monthly_price_jpy: 1800, yearly_price_jpy: 18000 });
   });
+
+  it('200 when only the yearly price changes (monthly price and Price IDs stay as they were)', async () => {
+    if (!publicPlanId) {
+      console.warn('Skipping — public plan creation failed');
+      return;
+    }
+    const { data: before } = await supabaseAdmin
+      .from('subscription_plans')
+      .select('monthly_price_jpy, stripe_price_id, stripe_yearly_price_id')
+      .eq('id', publicPlanId)
+      .single();
+
+    const res = await apiCall(
+      'POST',
+      `/api/super-admin/plans/${publicPlanId}/price-change`,
+      superAdminUser.jwt,
+      {
+        new_monthly_price_jpy: null,
+        new_yearly_price_jpy: 19000,
+        reason: 'Integration test yearly-only price change (applies_to omitted = new_only)',
+        effective_at: new Date().toISOString(),
+      }
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as { data: { applies_to: string } };
+    expect(body.data.applies_to).toBe('new_only');
+
+    const { data: after } = await supabaseAdmin
+      .from('subscription_plans')
+      .select('monthly_price_jpy, yearly_price_jpy, stripe_price_id, stripe_yearly_price_id')
+      .eq('id', publicPlanId)
+      .single();
+    expect(after).toEqual({ ...before, yearly_price_jpy: 19000 });
+  });
+
+  it.each(['on_renewal', 'immediately'])(
+    '400 for applies_to=%s (price changes apply to new contracts only), and the plan is left untouched',
+    async (appliesTo) => {
+      if (!publicPlanId) {
+        console.warn('Skipping — public plan creation failed');
+        return;
+      }
+      const { data: before } = await supabaseAdmin
+        .from('subscription_plans')
+        .select('monthly_price_jpy, yearly_price_jpy')
+        .eq('id', publicPlanId)
+        .single();
+      const { count: historyBefore } = await supabaseAdmin
+        .from('plan_price_history')
+        .select('id', { count: 'exact', head: true })
+        .eq('plan_id', publicPlanId);
+
+      const res = await apiCall(
+        'POST',
+        `/api/super-admin/plans/${publicPlanId}/price-change`,
+        superAdminUser.jwt,
+        {
+          new_monthly_price_jpy: 2500,
+          applies_to: appliesTo,
+          reason: 'Should be rejected: existing contracts cannot be re-priced',
+          effective_at: new Date().toISOString(),
+        }
+      );
+      expect(res.status).toBe(400);
+      const body = res.body as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('OP_INVALID_INPUT');
+      expect(body.error.message).toContain('new_only');
+
+      const { data: after } = await supabaseAdmin
+        .from('subscription_plans')
+        .select('monthly_price_jpy, yearly_price_jpy')
+        .eq('id', publicPlanId)
+        .single();
+      expect(after).toEqual(before);
+      const { count: historyAfter } = await supabaseAdmin
+        .from('plan_price_history')
+        .select('id', { count: 'exact', head: true })
+        .eq('plan_id', publicPlanId);
+      expect(historyAfter).toBe(historyBefore);
+    }
+  );
 
   it('422 for draft plan (use PATCH instead)', async () => {
     if (!draftPlanId) {
@@ -342,20 +435,22 @@ describe('GET /api/super-admin/plans/[id]/price-impact', () => {
 });
 
 // ─────────────────────────────────────────
-// GET /api/super-admin/plans/[id]/price-impact — applies_to 別の集計 (#1212)
+// GET /api/super-admin/plans/[id]/price-impact — 価格変更は新規契約のみ (#1102 / #1212)
 //
 // 従来は applies_to を無視して常に「全既存契約者 x 価格差」を返していたため、
-// 新規契約のみ (new_only) でも既存契約への即時の収益影響として表示されていた。
-// personal_subscriptions を実際に seed し、applies_to ごとの件数・MRR 変化を検証する。
+// 新規契約のみ (new_only) でも既存契約への即時の収益影響として表示されていた (#1212)。
+// オーナー判断 (2026-10-08, #1102): 価格変更は新規契約だけに適用する。applies_to は new_only だけ。
+// on_renewal / immediately は 400 で、既存契約者が居ても影響は常に 0 件 / 0 円。
+// personal_subscriptions を実際に seed し、既存契約者が居ても数えられないことを検証する。
 // 他の describe が公開プランの価格を変更する (price-change) ため、専用のプランを使う。
 // ─────────────────────────────────────────
 
-describe('GET /api/super-admin/plans/[id]/price-impact (#1212: applies_to 別の集計)', () => {
+describe('GET /api/super-admin/plans/[id]/price-impact (#1102: 新規契約のみ。既存契約者が居ても影響なし)', () => {
   const CURRENT_PRICE = 1000;
   const NEW_PRICE = 1300;
   /**
-   * 集計対象の契約 (同一プラン + active/trialing/paused + Stripe サブスクあり)。
-   * 影響サンプルの上限 (5 件) を超える 6 件にして、件数がサンプル数ではなく全件数であることも確認する。
+   * 既存の契約 (同一プラン + active/trialing/paused + Stripe サブスクあり)。
+   * 以前はこれらを数えて MRR 変化を返していた。いまは居ても数えない (新規契約のみ)。
    * 1 ユーザーが持てる有効な契約は 1 件 (部分ユニーク索引) のため、契約ごとに別ユーザーを使う。
    */
   const COUNTED_STATUSES = ['active', 'active', 'active', 'active', 'trialing', 'paused'] as const;
@@ -484,25 +579,16 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1212: applies_to 別の
     expect(data.affected_mrr_change_jpy).toBe(0);
   });
 
-  it.each([
-    ['on_renewal', 'next_renewal'],
-    ['immediately', 'immediate'],
-  ])('%s: 対象の既存契約だけを数え (件数はサンプル上限 5 件に依存しない)、価格差 x 件数を MRR 変化とする', async (appliesTo, timing) => {
-    const res = await apiCall('GET', impactPath(appliesTo), superAdminUser.jwt);
-    expect(res.status).toBe(200);
-    const { data } = res.body as ImpactBody;
-    // 解約済み / Stripe サブスク無し / 別プランの契約は数えない
-    expect(data.affected_subscription_count).toBe(COUNTED);
-    expect(data.affected_mrr_change_jpy).toBe((NEW_PRICE - CURRENT_PRICE) * COUNTED);
-    expect(data.applies_to).toBe(appliesTo);
-    expect(data.effective_timing).toBe(timing);
-    // サンプルは先頭 5 件のみで、すべて集計対象のユーザー
-    expect(data.affected_user_sample).toHaveLength(5);
-    const countedUserIds = userIds.slice(0, COUNTED);
-    for (const s of data.affected_user_sample) {
-      expect(countedUserIds).toContain(s.user_id);
+  it.each(['on_renewal', 'immediately'])(
+    '400 for applies_to=%s (既存契約へは反映できないため、選択肢ごと廃止)',
+    async (appliesTo) => {
+      const res = await apiCall('GET', impactPath(appliesTo), superAdminUser.jwt);
+      expect(res.status).toBe(400);
+      const body = res.body as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('OP_INVALID_QUERY');
+      expect(body.error.message).toContain('new_only');
     }
-  });
+  );
 
   it('400 for invalid applies_to', async () => {
     const res = await apiCall('GET', impactPath('everyone'), superAdminUser.jwt);
