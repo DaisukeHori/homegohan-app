@@ -23,6 +23,7 @@ import { chromium, type FullConfig } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
 import { getExistingUserPassword } from "./helpers/credentials";
+import { acceptLegalConsentIfShown } from "./helpers/legal-consent";
 import { seedClassifyFixtures } from "./setup/seed-classify-fixtures";
 
 /** backward compat: 既存コードが参照するエクスポート (user-01 のパスを返す) */
@@ -251,6 +252,11 @@ async function setupUserSession(
             }
           }
           if (!navigated) throw new Error(`[global-setup] ${email}: /home に遷移できませんでした`);
+          // #1174: 規約の同意画面に回された (サーバーが LEGAL_CONSENT_ENFORCE=on で、このユーザーの同意の記録が無い) ときは同意する。
+          // 同意は DB に残るので、以降の spec はどれも同意画面に回されない。同意画面でなければ何もしない
+          if (await acceptLegalConsentIfShown(page)) {
+            console.log(`[global-setup] 規約の同意画面に回されたため、同意しました (${email})`);
+          }
           console.log(`[global-setup] 認証確認成功 (${email}): ${page.url()}`);
           sessionInjected = true;
         }
@@ -288,6 +294,9 @@ async function setupUserSession(
         );
         await page.locator("button[type=submit]").click();
         await navPromise;
+
+        // #1174: 規約の同意画面に回されたときは同意する (上の Cookie 注入の経路と同じ)
+        await acceptLegalConsentIfShown(page);
 
         if (page.url().includes("/onboarding")) {
           await page.evaluate(async () => {

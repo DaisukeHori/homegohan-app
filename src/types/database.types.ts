@@ -3835,6 +3835,9 @@ export type Database = {
         Row: {
           created_at: string | null
           eaten_at: string
+          hidden_at: string | null
+          hidden_by: string | null
+          hidden_reason: string | null
           id: string
           is_sandbox: boolean
           meal_type: string
@@ -3847,6 +3850,9 @@ export type Database = {
         Insert: {
           created_at?: string | null
           eaten_at: string
+          hidden_at?: string | null
+          hidden_by?: string | null
+          hidden_reason?: string | null
           id?: string
           is_sandbox?: boolean
           meal_type: string
@@ -3859,6 +3865,9 @@ export type Database = {
         Update: {
           created_at?: string | null
           eaten_at?: string
+          hidden_at?: string | null
+          hidden_by?: string | null
+          hidden_reason?: string | null
           id?: string
           is_sandbox?: boolean
           meal_type?: string
@@ -5353,6 +5362,9 @@ export type Database = {
           cuisine_type: string | null
           description: string | null
           difficulty: string | null
+          hidden_at: string | null
+          hidden_by: string | null
+          hidden_reason: string | null
           id: string
           image_url: string | null
           ingredients: Json | null
@@ -5378,6 +5390,9 @@ export type Database = {
           cuisine_type?: string | null
           description?: string | null
           difficulty?: string | null
+          hidden_at?: string | null
+          hidden_by?: string | null
+          hidden_reason?: string | null
           id?: string
           image_url?: string | null
           ingredients?: Json | null
@@ -5403,6 +5418,9 @@ export type Database = {
           cuisine_type?: string | null
           description?: string | null
           difficulty?: string | null
+          hidden_at?: string | null
+          hidden_by?: string | null
+          hidden_reason?: string | null
           id?: string
           image_url?: string | null
           ingredients?: Json | null
@@ -6466,6 +6484,7 @@ export type Database = {
           kitchen_appliances: string[] | null
           last_login_at: string | null
           last_profile_update: string | null
+          legal_accepted_at: string | null
           lifestyle: Json | null
           login_count: number | null
           meal_prep_ok: boolean | null
@@ -6494,6 +6513,7 @@ export type Database = {
           preferred_stores: string[] | null
           pregnancy_status: string | null
           presentation_importance: string | null
+          privacy_version_accepted: string | null
           profile_completeness: number | null
           radar_chart_nutrients: string[] | null
           region: string | null
@@ -6517,6 +6537,7 @@ export type Database = {
           target_weight: number | null
           taste_preferences: Json | null
           temperature_preference: string | null
+          terms_version_accepted: string | null
           texture_preferences: string[] | null
           travel_frequency: string | null
           unban_at: string | null
@@ -6601,6 +6622,7 @@ export type Database = {
           kitchen_appliances?: string[] | null
           last_login_at?: string | null
           last_profile_update?: string | null
+          legal_accepted_at?: string | null
           lifestyle?: Json | null
           login_count?: number | null
           meal_prep_ok?: boolean | null
@@ -6629,6 +6651,7 @@ export type Database = {
           preferred_stores?: string[] | null
           pregnancy_status?: string | null
           presentation_importance?: string | null
+          privacy_version_accepted?: string | null
           profile_completeness?: number | null
           radar_chart_nutrients?: string[] | null
           region?: string | null
@@ -6652,6 +6675,7 @@ export type Database = {
           target_weight?: number | null
           taste_preferences?: Json | null
           temperature_preference?: string | null
+          terms_version_accepted?: string | null
           texture_preferences?: string[] | null
           travel_frequency?: string | null
           unban_at?: string | null
@@ -6736,6 +6760,7 @@ export type Database = {
           kitchen_appliances?: string[] | null
           last_login_at?: string | null
           last_profile_update?: string | null
+          legal_accepted_at?: string | null
           lifestyle?: Json | null
           login_count?: number | null
           meal_prep_ok?: boolean | null
@@ -6764,6 +6789,7 @@ export type Database = {
           preferred_stores?: string[] | null
           pregnancy_status?: string | null
           presentation_importance?: string | null
+          privacy_version_accepted?: string | null
           profile_completeness?: number | null
           radar_chart_nutrients?: string[] | null
           region?: string | null
@@ -6787,6 +6813,7 @@ export type Database = {
           target_weight?: number | null
           taste_preferences?: Json | null
           temperature_preference?: string | null
+          terms_version_accepted?: string | null
           texture_preferences?: string[] | null
           travel_frequency?: string | null
           unban_at?: string | null
@@ -7135,6 +7162,15 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      accept_legal_documents: {
+        Args: {
+          p_ip?: unknown
+          p_privacy_version: string
+          p_terms_version: string
+          p_user_agent?: string
+        }
+        Returns: Json
+      }
       accept_org_invite: {
         Args: { p_token: string }
         Returns: {
@@ -7203,6 +7239,7 @@ export type Database = {
           kitchen_appliances: string[] | null
           last_login_at: string | null
           last_profile_update: string | null
+          legal_accepted_at: string | null
           lifestyle: Json | null
           login_count: number | null
           meal_prep_ok: boolean | null
@@ -7231,6 +7268,7 @@ export type Database = {
           preferred_stores: string[] | null
           pregnancy_status: string | null
           presentation_importance: string | null
+          privacy_version_accepted: string | null
           profile_completeness: number | null
           radar_chart_nutrients: string[] | null
           region: string | null
@@ -7254,6 +7292,7 @@ export type Database = {
           target_weight: number | null
           taste_preferences: Json | null
           temperature_preference: string | null
+          terms_version_accepted: string | null
           texture_preferences: string[] | null
           travel_frequency: string | null
           updated_at: string | null
@@ -7623,6 +7662,7 @@ export type Database = {
           kitchen_appliances: string[] | null
           last_login_at: string | null
           last_profile_update: string | null
+          legal_accepted_at: string | null
           lifestyle: Json | null
           login_count: number | null
           meal_prep_ok: boolean | null
@@ -7651,6 +7691,7 @@ export type Database = {
           preferred_stores: string[] | null
           pregnancy_status: string | null
           presentation_importance: string | null
+          privacy_version_accepted: string | null
           profile_completeness: number | null
           radar_chart_nutrients: string[] | null
           region: string | null
@@ -7674,6 +7715,7 @@ export type Database = {
           target_weight: number | null
           taste_preferences: Json | null
           temperature_preference: string | null
+          terms_version_accepted: string | null
           texture_preferences: string[] | null
           travel_frequency: string | null
           updated_at: string | null
@@ -8033,6 +8075,7 @@ export type Database = {
           kitchen_appliances: string[] | null
           last_login_at: string | null
           last_profile_update: string | null
+          legal_accepted_at: string | null
           lifestyle: Json | null
           login_count: number | null
           meal_prep_ok: boolean | null
@@ -8061,6 +8104,7 @@ export type Database = {
           preferred_stores: string[] | null
           pregnancy_status: string | null
           presentation_importance: string | null
+          privacy_version_accepted: string | null
           profile_completeness: number | null
           radar_chart_nutrients: string[] | null
           region: string | null
@@ -8084,6 +8128,7 @@ export type Database = {
           target_weight: number | null
           taste_preferences: Json | null
           temperature_preference: string | null
+          terms_version_accepted: string | null
           texture_preferences: string[] | null
           travel_frequency: string | null
           updated_at: string | null

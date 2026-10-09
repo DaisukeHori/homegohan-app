@@ -243,6 +243,13 @@ BAN 解除
 
 `type`: `food` | `recipe` | `ai_content`
 
+> **現状 (2026-10, #1128)**: `ai_content` (AI コンテンツ) の審査は**準備中 (未対応)**。バックエンドのテーブルが無いため、
+> `ai_content` を指定した一覧 (`/queue?type=ai_content`)・個別取得・解決 (`PUT` / `POST` `/{type}/{id}`) は
+> 空や 404 ではなく **501 `OP_NOT_SUPPORTED`** を返す。画面の「AIコンテンツ（未対応）」は選べない。
+> 集約 API `GET /api/admin/moderation` の `aiFlags` は空配列のままで、`aiFlagsSupported: false` を添える
+> (空は「通報 0 件」ではなく「未対応」の意味。配布済みの古いモバイルアプリの運営画面 (リポジトリからは #1389 で削除済み) が
+> `...(res.aiFlags ?? [])` と配列として展開するため、形は変えない)。
+
 **クエリ**: `?status=pending&page=1&per_page=30`
 
 **レスポンス**:
@@ -276,6 +283,29 @@ BAN 解除
 ```
 
 `action`: `approve` | `delete_only` | `delete_and_warn` | `delete_and_temp_ban` | `delete_and_perm_ban` | `escalate`
+
+**`delete_*` の意味 (#1101)**: `delete_only` / `delete_and_warn` / `delete_and_temp_ban` / `delete_and_perm_ban` は、通報されたコンテンツ
+(食事 `meals` / レシピ `recipes`) の行を**消さずに隠す**。`hidden_at` / `hidden_by` / `hidden_reason` を書き、RLS により本人以外
+(家族・ほかのユーザー・未ログイン) には見えなくなる (本人には見える)。完全な削除は、保管期間のあとに別のジョブで行う (保管期間とジョブは未定)。
+
+- 実行の順番は「コンテンツを隠す → 判定の保存 → BAN」。隠せなかったときは判定を保存せず (通報は `pending` のまま)、BAN もせずに
+  `500 OP_CONTENT_HIDE_FAILED` を返す。通報が審査待ちのまま残るので、画面を開き直しても審査のフォームから同じ操作をやり直せる
+  (判定を先に保存すると、隠せなかった通報が審査済みになって一覧からもフォームからも消え、違反コンテンツが見えたまま残る)
+- 隠したあとで判定の保存に失敗したときも、BAN をせず `500 INTERNAL_ERROR` を返す (通報は `pending` のまま)。隠すのは冪等
+  (すでに隠れている行は上書きしない。保管期間の起点も延びない) なので、同じ操作をやり直せばよい
+- 通報にコンテンツが紐づかない (レスポンスの `content_id` が null。持ち主が先に消した等) ときは、隠す対象が無いので隠さずに続行する
+- `approve` / `escalate` は何も隠さない。隠した行を元に戻す操作は、まだ無い (必要なときは service_role で `hidden_*` を NULL に戻す)
+- 食事は、家族へのペースト (`paste_meal_to_family`) で作られた複製 (同じ `paste_group_id` の行) のうち、中身 (`photo_url` と `memo`) が
+  通報された行と同じもの (NULL どうしも同じとみなす) もまとめて隠す。ペーストのあとで持ち主が中身を書き換えた行は隠さない
+  (違反していない他人の行を、通報の結果として隠さない)。複製の持ち主には自分の行として見えたまま、ほかの人には見えなくなる。
+  隠した食事 (複製を含む) はペーストの元にできない (`403 MEAL_HIDDEN`)
+- `meals.paste_group_id` は、ログインユーザー・anon が書き換えられない (トリガー `guard_meal_paste_group_id`。書けるのは
+  `paste_meal_to_family` と service_role だけ)。他人の行を自分のまとまりに入れる・まとまりから外す、はできない
+- 監査ログ (`admin_audit_logs.details`) に `content_id` (隠す対象) と `hidden` (隠したか)、この操作で新しく隠した行の ID の一覧 `hidden_ids`、
+  隠せなかったときは `hide_error`、判定を保存したか `status_saved` (保存できなかった理由は `status_error`) を記録する。
+  隠せなかったとき・隠したあとで判定を保存できなかったときも、監査ログ (severity `warn`) を残す
+- 画像ファイル (`photo_url` / `image_url`) そのものは隠さない (公開バケットの URL は、隠す前に見た人なら取得できる)。完全削除のジョブと合わせて別に扱う
+- `hidden_reason` は持ち主も読める列なので、解決メモ (`resolution_note`) は入れず、`moderation:<action>` の識別子を書く
 
 ---
 
@@ -415,6 +445,13 @@ LLM 使用量ダッシュボード
 ### POST /api/super-admin/llm-usage/quota-update
 クォータ更新
 
+> **現状 (2026-10, #1149)**: LLM 利用クォータの管理は**準備中 (未対応)**。実装は `/api/super-admin/llm/quotas` にあり、
+> `PATCH` は 501 `OP_NOT_SUPPORTED` を返す (値を保存せず、監査ログも残さない)。`GET` は設計上の目安の値を、
+> `enforced: false` (AI の呼び出しには適用されていない) を添えて返す。AI を呼ぶ処理は、クォータで止まらない
+> (§23 の `OP_QUOTA_EXCEEDED` 429 は未実装)。クォータを AI の呼び出しに効かせる処理は、まだ作っていない (効かせるかどうかは別の判断が要る)。
+> なお、オーナー判断 (2026-10-08) により、海外の AI プロバイダーへのデータ送信を止める変更は入れない。
+> 画面の「クォータ設定」は「クォータ設定（準備中）」の文字だけで、リンクにしない。
+
 **リクエスト**:
 ```json
 {
@@ -429,6 +466,11 @@ LLM 使用量ダッシュボード
 ---
 
 ## 9. 売上・経理 API
+
+> **現状 (2026-10, #1125)**: 課金 (Stripe の Webhook 受信・収益の日次スナップショットなどの集計バッチ) は**未開始**で、
+> 請求書・収益推移・Stripe 整合チェックの元になるデータが無い。画面 (`/admin/finance/invoices` `/revenue` `/reconciliation`) は
+> 「課金は未開始のため準備中」と表示し、売上ダッシュボードの MRR / ARR / Churn Rate / LTV / 契約数は「準備中」とする
+> (MAU は `daily_active_users` の実データなのでそのまま出す)。API は残してある。
 
 ### GET /api/admin/finance/dashboard
 売上ダッシュボード
@@ -739,6 +781,12 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 
 ## 13. インフラ監視 API
 
+> **現状 (2026-10, #1180)**: `infra_metrics` / `infra_alerts` に書き込む処理 (監視データの収集) が**無い**ため、
+> `/api/super-admin/infra/metrics` と `/alerts` は常に空を返す。画面は、空を「問題なし」と見せず
+> 「未接続: 監視データの収集は設定されていません」と表示し、Vercel / Supabase のダッシュボードへのリンクを出す。
+> `/alerts` の応答にあった `external_sources` (SENTRY_DSN / BETTER_STACK_TOKEN の有無) は、どちらもコードで使われておらず
+> 接続状態を表さないため廃止した。
+
 ### GET /api/super-admin/infra/dashboard
 統合監視ダッシュボード
 
@@ -875,6 +923,12 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 ---
 
 ## 16. データエクスポート API
+
+> **現状 (2026-10, #1126)**: データエクスポートは**準備中 (未対応)**。ファイルを作る処理 (cron / worker) と専用の
+> `exports` テーブルが無いため、`/api/super-admin/exports` と `/exports/{id}` は全メソッドが 501 `OP_NOT_SUPPORTED` を返し、
+> DB には触れない。画面 (`/super-admin/exports`, `/new`) は「準備中（未対応）」だけを出し、依頼フォームは無い。
+> 以前は、利用者本人の GDPR 削除要求の表 (`gdpr_deletion_requests`) を代用していたが、これは本人の削除要求を
+> 取り消す事故につながるため止めた。実装するときは、専用テーブルを先に用意すること。
 
 ### POST /api/super-admin/exports
 エクスポートリクエスト
@@ -1314,6 +1368,7 @@ NPS サーベイ送信 (日次 14:00 JST)
 | `OP_STRIPE_SYNC_FAILED` | 502 | Stripe API 呼び出し失敗 |
 | `OP_COUPON_EXPIRED` | 422 | クーポン期限切れ |
 | `OP_TRIAL_ALREADY_USED` | 422 | 同一プランの試用は 1 回のみ |
+| `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応 (準備中) の機能。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査・LLM クォータの変更) |
 
 ## 24. テスト方針
 

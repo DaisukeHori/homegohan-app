@@ -63,6 +63,60 @@ EXPO_PUBLIC_API_BASE_URL=http://localhost:3000
 
 ## ローカルテスト実走手順
 
+### ローカル CI — PR の検査をまとめて回す (`scripts/local-ci.sh`)
+
+GitHub Actions の PR 検査のうち、本番に触れない 4 本と security.yml の gitleaks (シークレットの検査) を、CI と同じ条件でローカルで回し、件数で緑 / 赤を判定します。
+
+| 段 | CI 上の正本 | 中身 |
+|---|---|---|
+| `secrets` | `.github/workflows/security.yml` の `gitleaks` ジョブ | 同じ版・同じ SHA-256 の gitleaks で、`--base` から HEAD までのコミット (PR で増えるコミット) を `.gitleaks.toml` で検査する (`--redact`。値はログに出さない)。配布物は初回だけ GitHub から取得し、`LOCAL_CI_TOOLS` に置いて毎回 SHA-256 を確かめる |
+| `unit` | `.github/workflows/ci.yml` | `npm run typecheck` → `npm run lint` → `npm test` (vitest) |
+| `mobile` | `.github/workflows/mobile-test.yml` | `apps/mobile` の jest (`--ci --coverage`) → `packages/core` の vitest |
+| `integration` | `.github/workflows/security-regression.yml` | ローカル Supabase + `next dev` に対する結合テスト 2 本 (2 本目の運営コンソールは 1 本目が落ちても回す) |
+| `e2e` | `.github/workflows/e2e-local.yml` | ローカル Supabase + 本番ビルド (`next build` / `next start`) に対する Playwright。規約の同意ゲート (#1174) は、同じビルドを既定 (3000)・`LEGAL_CONSENT_ENFORCE=on` (3001)・`LEGAL_CONSENT_NOTICE=on` (3002) の 3 つのサーバーで確かめる |
+
+```bash
+bash scripts/local-ci.sh                          # 5 段すべて (origin/main を取り込んだ状態で検査)
+bash scripts/local-ci.sh --only secrets,unit,mobile  # Docker を使わない 3 段だけ
+bash scripts/local-ci.sh --base origin/main       # 取り込む基準を指定 (既定 origin/main)
+bash scripts/local-ci.sh --no-merge               # マージせず HEAD そのもの (main の上で回すとき)
+bash scripts/local-ci.sh --keep                   # 作業用の worktree を残す (調べるとき)
+```
+
+**前提**
+
+- Node は `.nvmrc` の major (22)。違う版だと赤で止まり、入れ方を表示します (`nvm install 22 && nvm use 22` など)。
+- `integration` / `e2e` は Docker が要ります。ローカル Supabase は段ごとに `scripts/supabase-local.sh` で起動・停止します。
+- `integration` / `e2e` の前に、ポート 3000 (`e2e` は 3001・3002 も) とローカル Supabase のポート (54320〜54329) が空いているかを確かめ、塞がっていれば赤で止まります (他のプロセスやコンテナは止めません)。開発用の `npm run dev` やローカル Supabase を止めてから回してください。
+
+**CI と揃えている条件** (ずれると「ローカルは緑・CI は赤」になる)
+
+- 検査するのは **コミット済みの HEAD に `--base` をマージした状態** (CI の `pull_request` が PR と main のマージコミットを検査するのと同じ)。未コミットの変更は検査に入りません (警告を出して続けます)。衝突したら赤で止まります。
+- 毎回 **まっさらな git worktree** を作り、`npm ci` をやり直します (使い回すと `.next/types` など CI に無い生成物まで型検査してしまうため)。終わったら worktree は消します。
+- `TZ=UTC` (CI のランナーは UTC)・`CI=true`・`LANG=C.UTF-8`・`NODE_OPTIONS` なし (ヒープを盛ると CI のメモリ不足を隠すため)。
+- 親シェルの環境変数は持ち込みません (`PATH`・`HOME`・Docker / プロキシの設定など、動かすのに要るものだけを残す)。シェルに入っている本番の接続先などは混ざりません (新しい worktree には `.env.local` もありません)。`SUPABASE_ACCESS_TOKEN` などは最初に外します。
+- コマンド・対象パス・環境変数は 4 つの yml と security.yml の gitleaks ジョブから写しています。yml を変えてスクリプトを直し忘れると、`tests/local-ci-workflow-sync.test.ts` が PR の `npm test` で落ちます。照合は yml ごとに対応する段の関数 (`stage_unit` など) の中だけで行い、yml のコマンドがスクリプトの 1 つのコマンドの先頭に同じ引数の並びで現れるか (後ろに足してよいのは結果を JSON で出す引数だけ)、作業ディレクトリ・環境変数 (ステップ / ジョブ / ワークフロー) が同じかまで比べます。テストが知らないアクション・キー・`if` の条件が yml に増えたときも落ちるので、スクリプトに写したうえでテストの対応表に理由を付けて足してください。gitleaks は、版・SHA-256 (linux_x64)・引数・検査する範囲・効きうる環境変数を照合します。
+- PR で動くワークフローはすべて、写した段 (`WORKFLOW_STAGES` / `JOB_STAGES`) か、理由つきの除外 (`EXCLUDED_WORKFLOWS`) に入っていなければなりません。ジョブ単位で写した security.yml は、ジョブごとに段か除外 (`EXCLUDED_JOBS`) に入っていなければなりません。PR で動くワークフロー・ジョブを足して、どちらにも入れないと `npm test` が落ちます。
+
+**結果の読み方**
+
+- 判定は終了コードだけでなく、各ツールの JSON (vitest / jest / Playwright / ESLint) の件数で行います。失敗が 1 件でもある、結果の JSON が無い・壊れている、収集されたファイルが 0、のどれかで赤です。
+- 収集漏れの偽の緑を防ぐため、各段で「収集されるはずのファイル」をツール自身に数えさせ (`vitest list --filesOnly` / `jest --listTests` / `playwright test --list`)、結果のファイルと突き合わせます。食い違えば赤です。
+- `it.fails` (既知の不具合) は、期待どおり失敗すれば passed、直って通ってしまうと failed として数えられます (vitest の JSON の扱いのまま)。
+- 最後に段ごとの表 (passed / failed / skipped / 収集ファイル / 秒) と、**PR 本文に貼る Markdown** (検査した HEAD と `--base` の sha・マージ状態・TZ・Node の版・各段の件数) を出します。どれかが赤なら終了コード 1 です。
+- JSON とログは worktree の外 (`${TMPDIR:-/tmp}/homegohan-local-ci-artifacts/<HEAD の短い sha>/`) に残ります。赤の段はログの末尾も表示します。
+
+| 環境変数 | 意味 |
+|---|---|
+| `LOCAL_CI_WORKDIR` | 作業用 worktree の親 (既定 `${TMPDIR:-/tmp}/homegohan-local-ci`) |
+| `LOCAL_CI_ARTIFACTS` | JSON とログの置き場 (既定は上記) |
+| `LOCAL_CI_FETCH=0` | `--base` (`origin/...`) を fetch しない |
+| `LOCAL_CI_SUPABASE_PORTS` | 空きを確かめるローカル Supabase のポート (空白区切り) |
+| `LOCAL_CI_PLAYWRIGHT_WITH_DEPS=1` | `playwright install` に `--with-deps` を付ける (Linux で OS の依存も入れる。root 権限が要る) |
+| `LOCAL_CI_TOOLS` | gitleaks の配布物の置き場 (既定 `${XDG_CACHE_HOME:-$HOME/.cache}/homegohan-local-ci`) |
+
+**ローカルでは再現できないもの**: migration を含む PR の Deploy Supabase Migrations の PR ジョブ (本番台帳とのドリフト検知) は本番に接続するため、このスクリプトでは回しません。security.yml の dependency review (依存を変える PR で、high 以上の既知の脆弱性がある版を入れていないか) は GitHub の Dependency graph を使うため回しません。依存を変える PR は CI のこのジョブの緑を待ってからマージします。また CI のランナーは Linux なので、OS に依存する違い (ファイル名の大文字小文字など) は残ります。
+
 ### 型チェック / Lint
 
 ```bash
@@ -103,7 +157,8 @@ npx vitest run --config vitest.integration.config.ts tests/integration/rls tests
 - `supabase start` / `supabase db reset` をリポジトリの `supabase/` に対して直接実行しないでください。必ず `scripts/supabase-local.sh` を経由します (理由は [CLAUDE.md](./CLAUDE.md) の「ローカル / CI の Supabase」)。
   migration を追加・変更したら `bash scripts/supabase-local.sh reset` で作り直します。
 - テストは自分で作ったデータを後片付けしますが、途中で中断するとローカル DB にデータが残ることがあります。そのときは `bash scripts/supabase-local.sh reset` で戻します。
-- CI では `.github/workflows/security-regression.yml` が同じ手順で `tests/integration/rls`・`tests/integration/security`・`tests/integration/operator/admin-*` (運営コンソール API) を実行します。
+- CI では `.github/workflows/security-regression.yml` が同じ手順で `tests/integration/rls`・`tests/integration/security`・`tests/integration/handson-tour`・`tests/integration/operator` (運営コンソール API。`admin-*` / `auth-boundary` / `super-admin-*`) を実行します。
+  実行するファイルは vitest に渡すパスの文字列 (部分一致) で選んでいるため、新しい結合テストを足すときは、ファイル名を既存の指定に合わせてください。どの指定にも当たらないファイルは CI で動かないので、`tests/integration-ci-coverage.test.ts` が検出して落ちます。
 - 失敗が既知の不具合によるテストは `it.fails` で書いてあります (`[既知の不具合]` と題名に付く)。不具合を直したら、そのテストの `.fails` を外してください。
 
 ### Playwright — E2E テスト (Web)

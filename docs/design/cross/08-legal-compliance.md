@@ -330,45 +330,32 @@ CREATE POLICY "terms_no_delete"
   ON terms_acceptances FOR DELETE USING (false);
 ```
 
-### 7.2 変更時の再同意フロー
+### 7.2 変更時の再同意フロー (実装済み: #1174)
 
-```typescript
-// src/lib/terms/check-acceptance.ts
+「いま有効な版」と、利用者ごとの「同意済みの版」の食い違いを見て、再同意を求める。判定は、リクエストごとに `terms_acceptances` を数えるのではなく、すでに毎回読んでいる `user_profiles` の行の列で行う (クエリを増やさない)。`terms_acceptances` は、いつ・どの版に・どの IP と端末から同意したかの証跡として残す。
 
-/**
- * 最新バージョンの利用規約・プライバシーポリシーへの同意を確認する。
- * 未同意の場合は再同意モーダルを表示すべき旨のフラグを返す。
- */
-export async function checkTermsAcceptance(userId: string): Promise<{
-  needsReAcceptance: boolean;
-  pendingDocuments: Array<{ type: string; version: string }>;
-}> {
-  const CURRENT_VERSIONS = {
-    terms_of_service: 'v2026.1',
-    privacy_policy: 'v2026.1',
-  };
+| 部品 | 場所 | 役割 |
+|---|---|---|
+| いま有効な版・施行日 | `packages/shared/src/legal-versions.ts` の `LEGAL_DOCUMENTS` | `{ terms_of_service, privacy_policy }` それぞれの `{ version, effectiveDate }`。`/terms`・`/privacy` の版・施行日の表示、同意の記録、ゲートが同じ値を見る。内容が変わる改定は `version` を上げる (上げると全員に再同意を求める)。版の形式は英数字・`.`・`_`・`-` の 1〜20 文字 (`terms_acceptances.document_version` が varchar(20) のため) |
+| 同意済みの版 | `user_profiles.terms_version_accepted` / `privacy_version_accepted` / `legal_accepted_at` | NULL = 未同意。特権列ガード (`guard_user_profiles_privileged` と `_on_insert`) の対象で、本人は直接書き換えられない |
+| 同意の記録 | DB 関数 `accept_legal_documents(p_terms_version, p_privacy_version, p_ip, p_user_agent)` (SECURITY DEFINER、authenticated のみ) | `auth.uid()` 本人の行だけを書く。`user_profiles` の 3 列を更新し (行が無ければ既定値で作る)、`terms_acceptances` に文書ごとに 1 行足す (同じ版は重複して足さない)。UPDATE / DELETE は RLS で禁止のまま |
+| 記録の API | `POST /api/legal/accept` | body の版がいま有効な版と一致するときだけ関数を呼ぶ (違えば 409)。IP・user_agent は、body ではなくサーバーが受け取ったリクエストから取る |
+| ゲート | `lib/supabase/middleware.ts` (判定は `lib/legal-consent.ts`) | 同意済みの版が `LEGAL_DOCUMENTS` と違う、サインイン中の利用者を、環境変数 `LEGAL_CONSENT_ENFORCE=on` のときだけ `/legal-consent?next=<元のパス>` へ回す。強制していない間は、環境変数 `LEGAL_CONSENT_NOTICE=on` のときだけ `(main)` の画面の上に「同意のお願い」のお知らせ (同意画面へのリンク) を出し、誰も止めない。どちらも未設定 (既定) なら何も出さず、誰も止めない。2 つのフラグの値の読み方は共通 (`isLegalConsentFlagOn`。`on` のときだけ有効、大文字小文字と前後の空白は区別しない)。どちらもサーバー側 (middleware) だけで読み、お知らせを出すかは `(main)` の layout から props で画面へ渡す |
+| 同意画面 | `src/app/legal-consent/` | 必須チェック 2 つ (利用規約・プライバシーポリシー。それぞれ全文へのリンクつき。`required` と `aria-required="true"`。フォームは `noValidate` で、送れるかどうかは両方のチェックで「同意して続ける」が押せるようになるかで決まる)。「同意しない」はログアウトして、データ削除の依頼先 (お問い合わせ) を案内する |
+| サインアップ | `src/app/(auth)/signup/page.tsx` | 「続行することで同意したものとみなされます」をやめ、必須チェックボックスにした (チェックするまで Google 登録も登録ボタンも押せない)。このチェックは同意の記録を残さない。記録が残るのは同意画面で同意したときだけで、登録後に同意画面へ回すのは `LEGAL_CONSENT_ENFORCE=on` のときだけ (Google 登録・メール確認を経る登録・アプリの WebView から始めた登録のどれも、同じ middleware を通る)。既定ではお知らせも出さないので、登録後に同意画面を開かない限り記録は残らない |
 
-  const supabase = createServerClient();
-  const { data } = await supabase
-    .from('terms_acceptances')
-    .select('document_type, document_version')
-    .eq('user_id', userId)
-    .in('document_type', Object.keys(CURRENT_VERSIONS));
-
-  const pending = Object.entries(CURRENT_VERSIONS)
-    .filter(([type, version]) =>
-      !data?.some(a => a.document_type === type && a.document_version === version)
-    )
-    .map(([type, version]) => ({ type, version }));
-
-  return { needsReAcceptance: pending.length > 0, pendingDocuments: pending };
-}
-```
+ゲートの対象外のパス: `/terms` `/privacy` `/legal` `/legal-consent` `/contact` `/frozen` `/auth/*` (ネイティブ認証ブリッジを含む) `/api/*` `/handson-tour` と静的ファイル。リダイレクトは画面の取得 (GET / HEAD) だけに掛ける。凍結の判定のあと、初期設定の差し戻しの前に見る。
 
 **重要変更時の対応**:
-- 全ユーザーへ 30 日前メール通知 (Resend 一斉送信)
-- アプリ内強制再同意モーダル (ダッシュボードアクセス時にインターセプト)
-- 旧バージョンを `docs/legal/archive/v{version}/` に永久保管
+- 版・施行日・同意文言は弁護士の確認を経て決める (オーナー判断。T30)。`LEGAL_DOCUMENTS` の値を書き換えて出す
+- 強制 (`LEGAL_CONSENT_ENFORCE=on`) を始める日はオーナーが決める。始める前に、お知らせだけの期間 (`LEGAL_CONSENT_NOTICE=on`) を置くかどうかも決める。お知らせも既定では出ない
+- 全ユーザーへ 30 日前メール通知 (Resend 一斉送信): **未実装**。本番のメール配信は、送信ドメインの検証が済むまで動かない
+- アプリ内強制再同意: 上のゲート (ダッシュボードアクセス時にインターセプト) として実装済み。効くのは `LEGAL_CONSENT_ENFORCE=on` のときだけ (既定は off)
+- 旧バージョンを `docs/legal/archive/v{version}/` に永久保管: 改定のたびに手で行う
+
+**既知の残課題**:
+- `terms_acceptances` の本人による直接 INSERT (RLS `terms_self_insert`) は開いたまま。直接入れた行は端末情報を偽れるので、証跡として確かなのは `accept_legal_documents` が書いた行。閉じるのは、未成年・AI の同意 (`parental_consent` / `external_data_provision`) の書き込みが関数経由になってから
+- アプリ (Expo) のネイティブのサインアップ画面には、まだ同意のチェックが無い (ゲートは WebView 側で効く)
 
 ---
 
@@ -790,7 +777,7 @@ DDL は **operator/01-data-model.md §3.21** を参照 (テーブル定義とし
 
 - `cooling_until` (INSERT 時に `NOW() + 30 days`) と `cancelled_at` は、待機期間を前提にした列。正式仕様では使わない。
 - 退会時にこのテーブルへ行を作らない。削除の実行記録を何で残すかは §19 の未解決事項。
-- テーブルを廃止するか、別の用途にするかは未決 (§19)。現状は super-admin の exports API (`/api/super-admin/exports`) がエクスポート依頼の記録先として流用している。
+- テーブルを廃止するか、別の用途にするかは未決 (§19)。super-admin の exports API (`/api/super-admin/exports`) は、以前はエクスポート依頼の記録先として流用していたが、#1126 で止めた。現状は全メソッドが 501 (`OP_NOT_SUPPORTED`) を返し、このテーブルには触れない (operator/02-api-spec.md §16)。
 
 ### 16.5 運営による代理削除
 

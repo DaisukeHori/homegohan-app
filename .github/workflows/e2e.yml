@@ -30,6 +30,10 @@ concurrency:
 
 jobs:
   test:
+    # Dependabot の PR には Actions のシークレット (E2E_USER_EMAIL / E2E_USER_PASSWORD) が渡されない。
+    # 空のまま動かすと、最初の「Check E2E credentials」で必ず失敗し、依存更新の PR が毎回赤くなるため、
+    # Dependabot の PR では動かさない (スキップは緑扱い)。シークレットを使うジョブには同じ条件を付ける (#1156)
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     # MVP スイート (01-05 spec) は 15 分。フルスイートは 30 分を上限とする。
     timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.full_suite == 'true') && 30 || 15 }}
