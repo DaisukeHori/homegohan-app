@@ -119,6 +119,38 @@ export function getMinExpectedCaloriesForRole(role: string | undefined): number 
   }
 }
 
+/**
+ * 栄養を 1 つでも計算できた料理か (kcal か炭水化物が 0 より大きい)。
+ *
+ * 栄養計算の失敗や、材料が 1 件も DB に当たらなかった料理は、栄養がすべて 0 のままになる。
+ * その料理の糖質を「0g」と保存すると、本当に糖質ゼロの料理と区別がつかず、画面にも 0g と出てしまう (#1146)。
+ * そのため、栄養が 1 つも計算できていない料理の糖質は 0 ではなく null (不明) で保存する。
+ * 肉・魚だけの料理のように炭水化物がほぼ 0 でも、kcal があれば計算済みなので糖質 0g は正しい値として扱う。
+ */
+export function hasComputedNutrition(
+  nutrition: Pick<NutritionTotals, "calories_kcal" | "carbs_g"> | null | undefined,
+): boolean {
+  return Number(nutrition?.calories_kcal ?? 0) > 0 || Number(nutrition?.carbs_g ?? 0) > 0;
+}
+
+/**
+ * 料理 1 品の糖質 (g, 小数 1 桁) を保存用に決める。炭水化物の根拠が無い料理は null (不明)。
+ *
+ * hasCarbBasis は、その料理の炭水化物に根拠 (材料から計算した値、または参照レシピの値) があるか。
+ * 省略すると、栄養が計算できているか (hasComputedNutrition) で決める。
+ * 計算できなかった料理 (栄養がすべて 0) を参照レシピで補正した場合は、参照レシピに炭水化物の値があったかを
+ * 呼び出し側が渡す。炭水化物の値が無い参照レシピで補正すると kcal だけが入り、炭水化物は 0 のままなので、
+ * 糖質 0g を「計算した値」として保存してはいけない (#1146)。
+ */
+export function sugarForSave(
+  nutrition: NutritionTotals | null | undefined,
+  hasCarbBasis: boolean = hasComputedNutrition(nutrition),
+): number | null {
+  if (!nutrition || !hasCarbBasis) return null;
+  const sugar = Number(nutrition.sugar_g);
+  return Number.isFinite(sugar) ? Math.round(sugar * 10) / 10 : null;
+}
+
 export function deserializeIngredientMatchCache(
   cache: PersistedIngredientMatchCache | undefined,
 ): Map<string, IngredientMatchMemo> {
@@ -386,6 +418,9 @@ export async function saveMealToDb(
         }
       }
 
+      // 糖質に炭水化物の根拠があるか (栄養が計算できているか)。参照レシピで補正したときは、下で見直す (#1146)
+      let hasCarbBasis = hasComputedNutrition(nutrition);
+
       // V3同様: 低カロリーなど怪しい料理のみ参照レシピで検証・補正
       if ((nutrition.calories_kcal ?? 0) < minExpectedCal) {
         validationDebug = {
@@ -426,6 +461,9 @@ export async function saveMealToDb(
           };
           if (validation.adjustedNutrition) {
             nutrition = validation.adjustedNutrition;
+            // 計算できなかった料理 (栄養がすべて 0) を、炭水化物の値が無い参照レシピで補正すると、
+            // kcal だけが入って炭水化物は 0 のままになる。その糖質 0g は根拠が無いので、不明 (null) のままにする。
+            hasCarbBasis = hasCarbBasis || validation.referenceRecipe?.carbs_g != null;
             const after = nutrition.calories_kcal ?? 0;
             console.log(
               `📝 Adjusted "${dish.name}": ${Math.round(before)}kcal → ${Math.round(after)}kcal (${validation.message})`,
@@ -501,7 +539,8 @@ export async function saveMealToDb(
         fat_g: round1(nutrition?.fat_g),
         carbs_g: round1(nutrition?.carbs_g),
         fiber_g: round1(nutrition?.fiber_g),
-        sugar_g: round1(nutrition?.sugar_g),
+        // 糖質 = 炭水化物 − 食物繊維 (v2 で材料ごとに計算)。炭水化物の根拠が無い料理は 0 ではなく null (#1146)
+        sugar_g: sugarForSave(nutrition, hasCarbBasis),
         sodium_g: round1(nutrition?.sodium_g),
         fiber_soluble_g: round1(nutrition?.fiber_soluble_g),
         fiber_insoluble_g: round1(nutrition?.fiber_insoluble_g),
@@ -541,6 +580,7 @@ export async function saveMealToDb(
 
       return {
         nutrition,
+        hasCarbBasis,
         dishDetail,
         debugEntry,
         ingredientLines,
@@ -551,10 +591,13 @@ export async function saveMealToDb(
   );
 
   // --- 結果を順序通りに集約（Promise.all は入力順を保証） ---
+  // 糖質は、炭水化物の根拠がある料理が 1 品でもあるときだけ合計を保存する (全品が根拠なしなら null)。#1146
+  let hasSugarData = false;
   for (const result of dishResults) {
     for (const key of Object.keys(totalNutrition) as (keyof NutritionTotals)[]) {
       totalNutrition[key] = (totalNutrition[key] || 0) + (result.nutrition[key] || 0);
     }
+    if (result.hasCarbBasis) hasSugarData = true;
     dishDetails.push(result.dishDetail);
     nutritionDebugEntries.push(result.debugEntry);
     aggregatedIngredients.push(...result.ingredientLines);
@@ -610,7 +653,7 @@ export async function saveMealToDb(
     fat_g: Math.round((totalNutrition.fat_g ?? 0) * 10) / 10,
     carbs_g: Math.round((totalNutrition.carbs_g ?? 0) * 10) / 10,
     sodium_g: Math.round((totalNutrition.sodium_g ?? 0) * 10) / 10,
-    sugar_g: Math.round((totalNutrition.sugar_g ?? 0) * 10) / 10,
+    sugar_g: hasSugarData ? Math.round((totalNutrition.sugar_g ?? 0) * 10) / 10 : null,
     fiber_g: Math.round((totalNutrition.fiber_g ?? 0) * 10) / 10,
     fiber_soluble_g: Math.round((totalNutrition.fiber_soluble_g ?? 0) * 10) / 10,
     fiber_insoluble_g: Math.round((totalNutrition.fiber_insoluble_g ?? 0) * 10) / 10,

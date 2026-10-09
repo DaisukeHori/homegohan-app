@@ -28,6 +28,7 @@ import {
   emptyNutrition,
   type NutritionTotals,
 } from "../_shared/nutrition-calculator.ts";
+import { resolveRecipeSugarG } from "../_shared/nutrition-sugar.ts";
 import {
   analyzeNutritionFromIngredientsV4,
   validateAndAdjustNutritionV4,
@@ -445,6 +446,8 @@ async function resolveRecipeFromDB(
       fat_g: data.fat_g ?? 0,
       carbs_g: data.carbs_g ?? 0,
       fiber_g: data.fiber_g ?? 0,
+      // 糖質: レシピDBの sugar_g、無ければ 炭水化物 − 食物繊維 (#1146)
+      sugar_g: resolveRecipeSugarG(data),
       sodium_g: data.sodium_g ?? 0,
       potassium_mg: data.potassium_mg ?? 0,
       calcium_mg: data.calcium_mg ?? 0,
