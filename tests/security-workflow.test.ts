@@ -8,12 +8,16 @@
  *   - .github/dependabot.yml: npm と GitHub Actions を週 1 回、PR の数を絞る。メジャー更新を出さないパッケージ。
  *   - .github/workflows/security.yml: gitleaks は PR を止める (範囲は増えたコミットだけ・値をログに出さない・版を固定)。
  *     npm audit は止めない。依存関係レビューと CodeQL は、リポジトリが公開の間だけ動く。
+ *     依存関係レビューは、Dependency graph が無効のとき (GitHub が 403 Forbidden を返す) だけ飛ばす
+ *     (確かめるステップの run は、偽の curl で実際に動かして確かめる)。
  *   - Dependabot の PR には Actions のシークレットが渡されない。シークレットを使うジョブが Dependabot の PR で動くと、
  *     必ず失敗して依存更新の PR が赤くなるので、`github.actor != 'dependabot[bot]'` で外してあること。
  *   - .gitleaks.toml: 誤検知の除外は値を狭く指定していて、本物の service_role キーなどを隠さないこと。
  */
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import { describe, expect, it } from 'vitest';
@@ -283,6 +287,117 @@ describe('.github/workflows/security.yml', () => {
       const review = job.steps!.find((s) => s.uses?.startsWith('actions/dependency-review-action@'))!;
       expect(review).toBeDefined();
       expect(review.with?.['fail-on-severity']).toBe('high');
+    });
+
+    describe('Dependency graph が無効の間は、すべての PR を赤くしない (最初に確かめて、無効のときだけ飛ばす)', () => {
+      const steps = job.steps!;
+      const probe = steps[0] as Step & { id?: string; if?: string };
+      const ENABLED = "steps.graph.outputs.enabled == 'true'";
+
+      it('最初のステップで、アクションと同じ API (依存の差分) を、PR の base と head の組で呼ぶ', () => {
+        expect(probe.name).toBe('Check that the dependency graph is enabled');
+        expect(probe.id).toBe('graph');
+        expect(probe.run).toContain('/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}');
+        expect(probe.env?.BASE_SHA).toBe('${{ github.event.pull_request.base.sha }}');
+        expect(probe.env?.HEAD_SHA).toBe('${{ github.event.pull_request.head.sha }}');
+      });
+
+      it('トークンは GITHUB_TOKEN (github.token) で、リポジトリのシークレットは使わない', () => {
+        expect(probe.env?.GH_TOKEN).toBe('${{ github.token }}');
+        expect(JSON.stringify(probe)).not.toMatch(/\bsecrets\./);
+      });
+
+      it('飛ばす設定 (continue-on-error) で失敗を隠さない', () => {
+        expect(job['continue-on-error']).toBeUndefined();
+        for (const s of steps) expect(s['continue-on-error']).toBeUndefined();
+      });
+
+      it('確かめたステップのあとのステップ (checkout とレビュー) は、すべて「有効」のときだけ動く', () => {
+        const rest = steps.slice(1) as Array<Step & { if?: string }>;
+        expect(rest.length).toBeGreaterThan(0);
+        for (const s of rest) expect(s.if).toBe(ENABLED);
+        expect(rest.some((s) => s.uses?.startsWith('actions/dependency-review-action@'))).toBe(true);
+      });
+
+      /**
+       * 確かめるステップの run を、偽の curl (決めた HTTP の状態と本文を返す) で実際に動かす。
+       * GitHub の bash と同じく `bash --noprofile --norc -eo pipefail` で動かす。jq は本物を使う。
+       */
+      function runProbe(fake: { code: string; body?: string; curlExit?: number }) {
+        const dir = mkdtempSync(path.join(tmpdir(), 'dep-graph-probe-'));
+        try {
+          const fakeCurl = path.join(dir, 'curl');
+          writeFileSync(
+            fakeCurl,
+            [
+              '#!/usr/bin/env bash',
+              'out=""',
+              'while [ $# -gt 0 ]; do if [ "$1" = "--output" ]; then out="$2"; shift; fi; shift; done',
+              'if [ -n "$out" ] && [ -n "${FAKE_BODY:-}" ]; then printf "%s" "$FAKE_BODY" > "$out"; fi',
+              'printf "%s" "$FAKE_CODE"',
+              'exit "${FAKE_EXIT:-0}"',
+              '',
+            ].join('\n'),
+          );
+          chmodSync(fakeCurl, 0o755);
+          const script = path.join(dir, 'probe.sh');
+          writeFileSync(script, probe.run!);
+          const output = path.join(dir, 'output');
+          const summary = path.join(dir, 'summary');
+          writeFileSync(output, '');
+          writeFileSync(summary, '');
+          const env: Record<string, string> = {
+            PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}`,
+            HOME: process.env.HOME ?? dir,
+            GH_TOKEN: 'fake-token-for-test',
+            REPO: 'owner/repo',
+            BASE_SHA: 'a'.repeat(40),
+            HEAD_SHA: 'b'.repeat(40),
+            PROBE_MAX_TIME_SEC: String(probe.env?.PROBE_MAX_TIME_SEC),
+            PROBE_RETRY: String(probe.env?.PROBE_RETRY),
+            PROBE_RETRY_DELAY_SEC: String(probe.env?.PROBE_RETRY_DELAY_SEC),
+            RUNNER_TEMP: dir,
+            GITHUB_OUTPUT: output,
+            GITHUB_STEP_SUMMARY: summary,
+            GITHUB_API_URL: 'https://api.github.invalid',
+            FAKE_CODE: fake.code,
+            FAKE_BODY: fake.body ?? '',
+            FAKE_EXIT: String(fake.curlExit ?? 0),
+          };
+          const result = spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', script], { env, encoding: 'utf8' });
+          return {
+            status: result.status,
+            stdout: result.stdout,
+            output: readFileSync(output, 'utf8'),
+            summary: readFileSync(summary, 'utf8'),
+          };
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      }
+
+      it('無効のときの応答 (403 で本文が Forbidden) なら、飛ばして警告と Summary を出す (ステップは成功)', () => {
+        const r = runProbe({ code: '403', body: '{"message":"Forbidden","status":"403"}' });
+        expect(r.status).toBe(0);
+        expect(r.output).toBe('enabled=false\n');
+        expect(r.stdout).toContain('::warning title=dependency review::');
+        expect(r.summary).toContain('Dependency graph');
+      });
+
+      it.each([
+        ['依存の差分が返ってきた (200)', { code: '200', body: '[]' }],
+        ['レート制限など、ほかの理由の 403', { code: '403', body: '{"message":"API rate limit exceeded for installation."}' }],
+        ['本文が JSON でない 403', { code: '403', body: '<html>Forbidden</html>' }],
+        ['見つからない (404)', { code: '404', body: '{"message":"Not Found"}' }],
+        ['GitHub の一時的な失敗 (502)', { code: '502', body: '' }],
+        ['通信そのものの失敗 (curl が失敗)', { code: '000', curlExit: 7 }],
+      ])('%s なら飛ばさず、レビューを動かす (失敗はアクションが赤で出す)', (_label, fake) => {
+        const r = runProbe(fake);
+        expect(r.status).toBe(0);
+        expect(r.output).toBe('enabled=true\n');
+        expect(r.stdout).not.toContain('::warning');
+        expect(r.summary).toBe('');
+      });
     });
   });
 

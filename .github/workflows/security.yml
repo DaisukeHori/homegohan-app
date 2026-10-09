@@ -19,6 +19,11 @@ name: security
 #   dependency-review   [止める]   PR で依存パッケージを増やす・上げるときに、high 以上の既知の脆弱性がある版を入れていないかを調べる。
 #                                  Dependabot のまとめ PR が、脆弱性の残る版 (例: next 14.2.x の別のパッチ) に上げると赤くなる。仕様どおり。
 #                                  運用で詰まるようなら、Dependabot の PR だけ警告にとどめる (warn-only)・allow-ghsas で個別に許す、などを検討する。
+#                                  リポジトリの Dependency graph が無効の間は、GitHub が依存の差分を返さない (403)。そのまま動かすと、
+#                                  すべての PR が赤くなる。そこで最初に同じ API を呼んで確かめ、無効のとき (403 で、本文が "Forbidden")
+#                                  だけは、レビューを飛ばして ::warning:: と Summary に「Dependency graph を有効にする」と出す (ジョブは緑)。
+#                                  ほかの応答 (200・404・5xx・通信の失敗など) では、そのままレビューを動かす (その失敗は赤のまま)。
+#                                  Dependency graph を有効にすれば、設定を変えなくても、次の PR から止める検査として働く。
 #   codeql              [止めない] ソースコード (JavaScript / TypeScript) の脆弱性を調べ、結果を Security タブに出す。週 1 回の定期実行もある。
 #                                  ジョブそのものは、アラートが見つかっても失敗しない。ただし、コードスキャンの結果を受け取ると、
 #                                  PR に「Code scanning results」という別の check run が付き、その PR で新しい重大なアラート
@@ -183,12 +188,51 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      # Dependency graph が無効だと、下の dependency-review-action は「Dependency review is not supported」で必ず失敗し、
+      # すべての PR が赤くなる。アクションが呼ぶのと同じ API (依存の差分) を、同じトークン・同じコミットの組で先に呼んで確かめる。
+      # 飛ばすのは「403 で本文が Forbidden」(無効のときの応答) のときだけ。レート制限など、ほかの理由の 403 や
+      # それ以外の応答では飛ばさず、アクションに任せる (失敗は赤のまま。検査を黙って外さない)
+      - name: Check that the dependency graph is enabled
+        id: graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # 1 回の問い合わせの上限 (秒) と、一時的な失敗 (5xx など) の再試行の回数・間隔 (秒)
+          PROBE_MAX_TIME_SEC: '30'
+          PROBE_RETRY: '4'
+          PROBE_RETRY_DELAY_SEC: '2'
+        run: |
+          body="${RUNNER_TEMP}/dependency-graph-probe.json"
+          status=$(curl --silent --show-error --output "${body}" --write-out '%{http_code}' \
+            --max-time "${PROBE_MAX_TIME_SEC}" --retry "${PROBE_RETRY}" --retry-delay "${PROBE_RETRY_DELAY_SEC}" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "${GITHUB_API_URL}/repos/${REPO}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}") || true
+          message=$(jq -r '.message? // empty' "${body}" 2>/dev/null || true)
+          echo "dependency graph probe: HTTP ${status}"
+          if [ "${status}" = "403" ] && [ "${message}" = "Forbidden" ]; then
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning title=dependency review::このリポジトリの Dependency graph が無効なので、依存関係レビューを飛ばしました。Settings > Code security で Dependency graph を有効にしてください。"
+            {
+              echo "## 依存関係レビューを飛ばしました"
+              echo
+              echo "このリポジトリの Dependency graph が無効なので、GitHub が依存の差分を返しませんでした (HTTP 403)。"
+              echo "Settings > Code security で Dependency graph (と Dependabot alerts) を有効にすると、次の PR から検査が動きます。"
+            } >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+          fi
+      - if: steps.graph.outputs.enabled == 'true'
+        uses: actions/checkout@v4
         with:
           persist-credentials: false
       # PR で増える・上がる依存パッケージに、high 以上の既知の脆弱性があると失敗する。
       # 見るのは本番で動く依存 (runtime) だけ。すでに入っている古い脆弱性は対象外 (PR の差分だけを見る)
-      - uses: actions/dependency-review-action@v5
+      - if: steps.graph.outputs.enabled == 'true'
+        uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: high
           fail-on-scopes: runtime

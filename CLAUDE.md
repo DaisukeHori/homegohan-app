@@ -43,7 +43,7 @@ CI では GitHub Secrets に登録する。
 - `.github/workflows/security.yml`:
   - **gitleaks**: PR で増えたコミットと main への push だけを検査し、見つかったら失敗する。
   - **npm audit**: 参考情報で、PR を止めない。critical が 0 件になったら、止める検査に切り替える。**`continue-on-error` は、ジョブではなく npm audit の「ステップ」に付ける。** ジョブに付けると、ワークフローは通っても、そのジョブの check run が失敗 (赤い ×) のまま残る。すると、すべての PR の Checks が赤くなり、毎日の整合性チェック (`scripts/lib/consistency-check.mjs`) も、止まっている PR を「赤のまま」に数える (`tests/security-workflow.test.ts` が、`pull_request` で動くワークフローのジョブ単位の `continue-on-error` を検出する)。
-  - **依存関係レビュー**と **CodeQL**: リポジトリが公開の間だけ動く。非公開にすると自動でスキップされる。CodeQL のジョブそのものは止めないが、コードスキャンの結果を知らせる別の check run が付き、新しい重大なアラートが増えた PR では赤くなる。
+  - **依存関係レビュー**と **CodeQL**: リポジトリが公開の間だけ動く。非公開にすると自動でスキップされる。依存関係レビューは、リポジトリの Dependency graph が無効の間 (GitHub が依存の差分を 403 Forbidden で断る) だけ、レビューを飛ばして警告と Summary を出す (すべての PR を赤くしないため)。有効にすれば、次の PR から止める検査として働く。CodeQL のジョブそのものは止めないが、コードスキャンの結果を知らせる別の check run が付き、新しい重大なアラートが増えた PR では赤くなる。
 - gitleaks の誤検知は `.gitleaks.toml` に**値そのもの**を足す (ファイル・ディレクトリ単位では除外しない)。1 行だけなら行末に `gitleaks:allow`。本物のキーが見つかったときは除外せず、そのキーを無効にして発行し直す (履歴から消すだけでは取り消せない)。gitleaks の版と SHA-256 は workflow に固定してある。上げるときはリリースの `checksums.txt` の値に合わせる。
 - **テストに書くダミーの認証値** (`apiKey` / `token` / `secret` / `password` など) は、gitleaks の汎用ルール (generic-api-key) に掛かりやすい。掛かると PR の `security / gitleaks` が失敗するので、ダミーの値の行の末尾に `gitleaks:allow` と書く。ダミーでも、`sk-` や `ghp_` や JWT のような、本物のキーの書式にしない。
 - `.github/dependabot.yml`: npm (ルートの package-lock.json が workspaces をまとめて管理) と GitHub Actions を週 1 回。マイナー・パッチは 1 本の PR にまとめる。Next / React / Expo / React Native は、メジャー更新 (Expo / React Native はマイナー更新も) の PR を出さない。計画して上げる (#1199)。自動承認・自動マージはしない。
