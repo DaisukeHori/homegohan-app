@@ -753,14 +753,14 @@ $$);
      DB の URL が指す本人のファイル (失敗したら削除しない)
 5. auth.users を削除 (auth.admin.deleteUser)
    - public 側のデータは FK の ON DELETE CASCADE / SET NULL で削除・匿名化される
-     (auth.users を指す外部キーに NO ACTION は無い。20261008200400_auth_users_fk_on_delete.sql)
+     (auth.users を指す外部キーに NO ACTION は無い。20261010000100_auth_users_fk_on_delete.sql)
 6. 200 { success: true }
    - クライアントはサインアウトして、ログイン前の画面へ戻る
    - (今後追加) 削除完了メールを送る (#1152、T20)
 ```
 
 手順 4 と 5 は 1 つのトランザクションではなく、別々の呼び出し。手順 4 の各段階は何度流しても結果が変わらないので、
-どこかで失敗したら 500 ACCOUNT_DELETE_FAILED (応答に `request_id` を含める。生のエラー文は返さない) で止める。アカウントは残るので、もう一度実行できる。
+どこかで失敗したら 500 で止める (#1172 の internalError。本文は汎用メッセージと `INTERNAL_ERROR` だけで、生のエラー文・段階・`request_id` は返さない。原因は `app_logs` に残す)。アカウントは残るので、もう一度実行できる。
 
 モバイルの削除画面 (`apps/mobile/app/settings/account.tsx`) へアプリ内から到達できない問題は #1037 で追う。アカウント削除の導線はアプリ内に必須なので、iOS 審査前の必須項目になる (MOBILE_TODO.md 参照)。
 
@@ -773,9 +773,9 @@ $$);
 | 利用者が作ったレシピ (`recipes`) | 非公開は削除、公開は匿名化して残す | 実装済み (#1175)。`recipes.user_id` は `ON DELETE SET NULL` で、`user_id` が NULL の行は RLS (`Users can view public recipes`) で全員に見える。そのまま退会させると非公開のレシピまで公開されるので、RPC `prepare_account_deletion` が本人の非公開レシピを先に消す。公開レシピは `user_id` だけが外れて残る (他の利用者のコレクション・いいね・コメントが付いていることがあるため) |
 | Storage の写真 (食事・冷蔵庫など) | 削除 | 実装済み (#1175)。3 バケットの `<user_id>/` 以下、旧パス (`meals/<user_id>/` など)、本人の行の URL が指す本人のファイル。持ち主がパスから分からない旧ファイル (バケット直下のタイムスタンプ名) は消さない |
 | Stripe の顧客・サブスクリプション | 解約して顧客を削除 | 行っていない (#1175 の範囲外。影響範囲の調査は §19) |
-| 法的保管義務のあるデータ (産業医記録 §11、監査ログ) | 削除せず、匿名化して保持 | 監査ログ (`admin_audit_logs`) は FK の `ON DELETE SET NULL` で操作者 ID が外れて残る。クーポンの償還記録 (`coupon_redemptions`) と紹介報酬 (`referral_rewards`) も、行を残して利用者との紐づけだけを外す (償還記録には匿名化した日時 `anonymized_at` が入る)。7 年保存が必要な範囲は税理士に確認中で、確認が済むまでは「匿名化して残す」。期限を過ぎた記録を消すバッチは、確認が済んでから作る |
+| 法的保管義務のあるデータ (産業医記録 §11、監査ログ) | 削除せず、匿名化して保持 | 監査ログ (`admin_audit_logs`) は FK の `ON DELETE SET NULL` で操作者 ID が外れて残る。クーポンの償還記録 (`coupon_redemptions`) と紹介報酬 (`referral_rewards`) も、行を残して利用者との紐づけだけを外す (償還記録には匿名化した日時 `anonymized_at` が入る)。何年残すか (保存の期限) は未決で、決まるまでは「匿名化して残す」。期限を過ぎた記録を消すバッチは、期限が決まってから作る |
 | 送信ログ中の生メールアドレス (`email_delivery_logs.email`) | 削除または匿名化 | 実装済み (#1175)。RPC `prepare_account_deletion` が `redacted@redacted.invalid` に置き換える (行は残す)。問い合わせ・招待も同様。宛先停止リスト (`email_blacklist`) は、苦情・バウンスのあったアドレスへ再送しないために伏せない。`membership_audit.metadata` の招待先アドレスも伏せない (#1163 の 24 時間の送信上限がこの値を数えており、伏せると退会した人のアドレスへの上限が戻ってしまう。ハッシュに置き換える案を含め、扱いは未決) |
-| 途中で失敗したとき | 半端な状態を残さず、やり直せる | 実装済み (#1175)。後始末 (手順 4。ライセンス席の解放を除く) の失敗は 500 ACCOUNT_DELETE_FAILED で止めて `deleteUser` を呼ばない。外部キー違反で `deleteUser` が失敗する経路は無い (組織のオーナー・家族の代表者は先に 409 で止める) |
+| 途中で失敗したとき | 半端な状態を残さず、やり直せる | 実装済み (#1175)。後始末 (手順 4。ライセンス席の解放を除く) の失敗は 500 (internalError) で止めて `deleteUser` を呼ばない。外部キー違反で `deleteUser` が失敗する経路は無い (組織のオーナー・家族の代表者は先に 409 で止める) |
 
 ### 16.4 `gdpr_deletion_requests` テーブルの扱い
 

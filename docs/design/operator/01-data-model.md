@@ -6,7 +6,7 @@
 
 対象外: `auth.users`（Supabase Auth 管轄）、`dataset_*`（公開マスター）、family 系・org 系テーブル。
 
-> **退会との関係 (#1175)**: この文書の DDL の `REFERENCES auth.users(id)` に `ON DELETE` の指定が無いものは、設計時の記述。実際の定義は `supabase/migrations/20261008200400_auth_users_fk_on_delete.sql` で、本人だけの記録 (`nps_surveys` / `csat_feedbacks` / `experiment_assignments`) は `ON DELETE CASCADE`、サポート・会計の記録 (`support_tickets.user_id` / `support_ticket_messages.sender_id` / `coupon_redemptions.user_id` / `referral_rewards.referrer_id, referred_id` / `gdpr_deletion_requests.user_id`) と運営者・作成者・承認者の列 (`created_by` / `changed_by` / `actor_id` / `assignee_id` / `ack_by` など) は `ON DELETE SET NULL` (列は NULL を許す。`coupon_redemptions` は匿名化の日時 `anonymized_at` を持つ)。`auth.users` を指す外部キーを足すときは、必ず `ON DELETE` を書く (CLAUDE.md の「退会」)。
+> **退会との関係 (#1175)**: この文書の DDL の `REFERENCES auth.users(id)` に `ON DELETE` の指定が無いものは、設計時の記述。実際の定義は `supabase/migrations/20261010000100_auth_users_fk_on_delete.sql` で、本人だけの記録 (`nps_surveys` / `csat_feedbacks` / `experiment_assignments`) は `ON DELETE CASCADE`、サポート・会計の記録 (`support_tickets.user_id` / `support_ticket_messages.sender_id` / `coupon_redemptions.user_id` / `referral_rewards.referrer_id, referred_id` / `gdpr_deletion_requests.user_id`) と運営者・作成者・承認者の列 (`created_by` / `changed_by` / `actor_id` / `assignee_id` / `ack_by` など) は `ON DELETE SET NULL` (列は NULL を許す。`coupon_redemptions` は匿名化の日時 `anonymized_at` を持つ)。`auth.users` を指す外部キーを足すときは、必ず `ON DELETE` を書く (CLAUDE.md の「退会」)。
 
 ## 2. 関連要件
 

@@ -370,7 +370,7 @@ Step 5: org_admin に手順案内
      - 旧設計の「email を deleted+...@example.com に書き換える匿名化」はしない。行ごと削除する
      - public 側は FK の ON DELETE CASCADE / SET NULL で削除・匿名化される (本人だけの記録は削除、サポート・会計の記録は行を残して紐づけを外す)
   → 200 { success: true }。クライアントはサインアウトする
-  → 途中で失敗したら 500 ACCOUNT_DELETE_FAILED (request_id つき)。アカウントは残り、もう一度実行できる
+  → 途中で失敗したら 500 (#1172 の internalError。本文は汎用メッセージと INTERNAL_ERROR だけ)。アカウントは残り、もう一度実行できる
 
 削除後:
   - 取り消し・復旧はできない (画面にも明記している)
@@ -707,7 +707,7 @@ sequenceDiagram
     API-->>App: 200 { success: true }
     App->>App: サインアウトして、ログイン前の画面へ戻る
   end
-  Note over API,DB: 途中で失敗したら 500 ACCOUNT_DELETE_FAILED (アカウントは残り、再実行できる)
+  Note over API,DB: 途中で失敗したら 500 INTERNAL_ERROR (アカウントは残り、再実行できる)
 
   Note over API,DB: 30 日の待機と月次バッチはない (2026-10-08 オーナー判断)
   Note over API,DB: 削除前の確認メール・削除完了メール (T20) と、Stripe の後始末は今後追加
@@ -718,7 +718,7 @@ sequenceDiagram
 | シナリオ | 対処 |
 |---------|------|
 | PITR 復元失敗 | Supabase サポートに即時連絡、Cold Backup 復元に切替 |
-| 退会 API が途中で失敗 | 500 ACCOUNT_DELETE_FAILED (応答の `request_id`) を返し、`auth.users` は消えない。手前の後始末 (メールアドレスを伏せる・Storage の削除) は何度流しても結果が変わらないので、再実行できる。原因は `app_logs` の `request_id` で探す (`function_name = 'lib/account-deletion'`、metadata の `step` が失敗した段階)。`auth.users` を指す NO ACTION の外部キーは無く (#1175)、外部キー違反では失敗しない |
+| 退会 API が途中で失敗 | 500 (#1172 の internalError。本文は汎用メッセージと `INTERNAL_ERROR` だけで、`request_id` は返さない) を返し、`auth.users` は消えない。手前の後始末 (メールアドレスを伏せる・Storage の削除) は何度流しても結果が変わらないので、再実行できる。原因は `app_logs` で探す (`function_name = 'lib/account-deletion'` の error 行。metadata の `step` が失敗した段階。同じ `request_id` で `function_name = 'POST /api/account/delete'` の「内部エラーのため 500 を返しました」の行が並ぶ)。`auth.users` を指す NO ACTION の外部キーは無く (#1175)、外部キー違反では失敗しない |
 | bulk-revoke 途中失敗 | `org_license_assignments` の revoked_at で冪等化 → 再実行可能 |
 | reconcile 不一致 > 100 件 | Slack #incident に escalate + 手動調査 |
 
