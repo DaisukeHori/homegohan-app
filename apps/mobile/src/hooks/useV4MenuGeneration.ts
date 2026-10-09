@@ -146,9 +146,8 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
 
               if (newData.status === "completed") {
                 options.onGenerationComplete?.();
-              } else if (handleStoredAiConsentFailure(newData.error_message, notifyAiConsentRequired)) {
-                // 受け付けたあとに、サーバーが同意の判定で止めた: 同意画面へ案内したので、失敗の表示 (onError) は出さない
-              } else {
+              } else if (!handleStoredAiConsentFailure(newData.error_message, notifyAiConsentRequired)) {
+                // 受け付けたあとにサーバーが同意の判定で止めたもの (同意画面へ案内した) は、失敗として知らせない
                 options.onError?.(
                   newData.error_message || "生成に失敗しました"
                 );
