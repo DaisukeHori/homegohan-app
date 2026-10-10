@@ -93,7 +93,7 @@ HAR にはログイン要求のパスワードやアクセストークンが平�
 
 | ワークフロー | 対象 | テストユーザー |
 |---|---|---|
-| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 と、未ログインで読める公開ページの `public-policy-pages.spec.ts` (利用規約・プライバシーポリシー #1174) を実行 | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
+| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 と、未ログインで読める公開ページの `public-policy-pages.spec.ts` (利用規約・プライバシーポリシー #1174)、規約の再同意ゲートの `legal-consent-gate.spec.ts` (#1174。既定 (強制なし・お知らせなし) のサーバーと、`LEGAL_CONSENT_ENFORCE=on`・`LEGAL_CONSENT_NOTICE=on` でそれぞれ別ポートに起動したサーバーの 3 回)、未同意なら AI へ送らないことと同意画面を確かめる `ai-consent-first-use.spec.ts` (#1154) を実行 | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
 | `.github/workflows/e2e.yml` | 本番 URL。ローカル dev server は起動しない | 本番の `e2e-user-01〜04@homegohan.test`。Secrets `E2E_USER_EMAIL` (= `e2e-user-01@homegohan.test`) / `E2E_USER_PASSWORD` が必要 (未設定ならジョブを最初に止める) |
 
 本番のテストユーザーのパスワードはランダムな値で、Secrets `E2E_USER_PASSWORD` にだけ置く (リポジトリにも `.env.local` の共有にも書かない)。
@@ -107,6 +107,24 @@ CI では `E2E_REQUIRE_LOGIN=1` で、global-setup がログインできなけ�
 また、Playwright のトレースと失敗時のページスナップショット (`error-context`) は入力したパスワードを平文で含むため、
 CI では取らない (`--trace off` / `PLAYWRIGHT_NO_COPY_PROMPT=1`)。HTML レポートも手順名に入力値を含むため、
 artifact には上げず、`tests/e2e/.output/` (失敗時のスクリーンショット・動画・エラー内容) だけを上げる。
+
+## AI の同意 (外国の AI 事業者への提供の同意、#1154)
+
+同意していない利用者のデータは、サーバーが AI へ送る手前で止める (403 `AI_CONSENT_REQUIRED`)。画面は、AI の操作の前に
+同意画面 (`data-testid="ai-consent-modal"`) を出し、「同意しない」(`data-testid="ai-consent-decline"`) なら操作をやめる。
+AI を使う spec が止められないよう、テスト用のアカウントは同意済みにしてある。
+
+- ローカルの `e2e-user-01〜10`: `scripts/create-e2e-accounts.ts` が作るときに記録する (`scripts/lib/e2e-ai-consent.ts`。service role)。
+- `fixtures/fresh-user.ts` のユーザー (`regularUser` / `adminUser` / `tourPendingUser` など): 作るときに記録する
+  (`aiConsentGranted` が既定 true。サインアップの流れの `freshUserPage` は記録しない)。
+- `fixtures/auth.ts` の `authedPage`、`helpers/auth.ts` の `login()`、`global-setup.ts`: ログインのあとに
+  `helpers/ai-consent.ts` の `ensureAiConsentGranted` がアプリの API (`GET` / `POST /api/ai/consent`) で記録する
+  (同意済みなら何もしない)。本番の e2e-user (`e2e.yml`) もこれで同意済みになる。
+- 同意画面そのものを試す spec (`ai-consent-first-use.spec.ts`) は、`test.use({ aiConsentGranted: false })` で同意の行が空の状態から始める。
+- `@playwright/test` の `page` を自分でログインさせる spec で AI を使うなら、ログインのあとに `ensureAiConsentGranted(page, origin)` を呼ぶ。
+- ローカルで `next dev` に向けて実行するときは、`--output=/tmp/pw-out` のように Playwright の出力先 (動画・スクリーンショット) を
+  リポジトリの外にする。出力先がリポジトリの中 (既定の `tests/e2e/.output`) だと、dev server が再コンパイルを繰り返してページの読み込みが
+  止まり、`waitForResponse` などがタイムアウトすることがあった。本番ビルド (`npm run build && npm run start`) では起きない。
 
 ## NPM スクリプト
 

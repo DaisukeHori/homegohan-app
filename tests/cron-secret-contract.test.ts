@@ -10,6 +10,7 @@
  *   2. Edge Functions: requireServiceRole は非同期なので、呼び出しはすべて await 付き
  *      (await を忘れると Promise が真として扱われ、認証エラーの分岐に入ってしまう)
  *   3. Next.js: CRON_SECRET / CRON_SECRET_PREVIOUS は src/lib/cron-auth.ts だけが読む
+ *      (src/lib/env.ts は、npm run check:env が案内するための環境変数の名前の一覧に、この 2 つの名前を書くだけで、値は読まない (#1182))
  *   4. Next.js: src/app/api/cron/ 配下のルートと、vercel.json の crons に載っているパスのルートは、すべて requireCronAuth を await している
  *   5. 共通の照合 (supabase/functions/_shared/cron-secret.ts) は、Deno と Next.js の両方から読めるよう、import も Deno / Node 固有の API も持たない
  *
@@ -27,6 +28,12 @@ const SECRET_ENV_NAMES = new Set(["CRON_SECRET", "CRON_SECRET_PREVIOUS", "SERVIC
 const EDGE_AUTH_FILE = "supabase/functions/_shared/auth.ts";
 const CRON_SECRET_FILE = "supabase/functions/_shared/cron-secret.ts";
 const NEXT_CRON_AUTH_FILE = "src/lib/cron-auth.ts";
+/**
+ * 環境変数の名前の一覧 (#1182)。npm run check:env が、CRON_SECRET が無いと何が起きるか (cron の API が 503 になる) を案内するために、
+ * この 2 つの名前を一覧のキーとして書く。値は読まない (一覧の readOnlyBy で cron-auth.ts だけが読むと明示し、getOptionalEnv では読めない)。
+ */
+const NEXT_ENV_LIST_FILE = "src/lib/env.ts";
+const NEXT_CRON_SECRET_NAMES = new Set(["CRON_SECRET", "CRON_SECRET_PREVIOUS"]);
 
 // ─────────────────────────────────────────────
 // ソースの列挙と解析
@@ -156,12 +163,29 @@ describe("Edge Functions の cron シークレット (#1196)", () => {
 describe("Next.js の cron シークレット (#1196)", () => {
   const nextFiles = [...listSourceFiles("src"), ...listSourceFiles("lib")];
 
-  it("CC-4: CRON_SECRET / CRON_SECRET_PREVIOUS を読むのは src/lib/cron-auth.ts だけ", () => {
+  it("CC-4: CRON_SECRET / CRON_SECRET_PREVIOUS を読むのは src/lib/cron-auth.ts だけ (環境変数の名前の一覧 src/lib/env.ts は名前を書くだけ。CC-4b)", () => {
     expect(nextFiles.length).toBeGreaterThan(100);
-    const uses = secretNameUses(nextFiles, new Set(["CRON_SECRET", "CRON_SECRET_PREVIOUS"]));
+    const uses = secretNameUses(nextFiles, NEXT_CRON_SECRET_NAMES);
     expect(uses.get(NEXT_CRON_AUTH_FILE)?.length ?? 0).toBeGreaterThanOrEqual(2);
-    const others = [...uses.entries()].filter(([file]) => file !== NEXT_CRON_AUTH_FILE);
+    const others = [...uses.entries()].filter(([file]) => file !== NEXT_CRON_AUTH_FILE && file !== NEXT_ENV_LIST_FILE);
     expect(others, "cron のルートは requireCronAuth を呼ぶ。シークレットを自分で比べない").toEqual([]);
+  });
+
+  it("CC-4b: src/lib/env.ts は、この 2 つの名前を一覧のキーに書くだけで、process.env などで値を読まない", () => {
+    const sourceFile = parse(NEXT_ENV_LIST_FILE);
+    const listKeys: string[] = [];
+    const otherUses: string[] = [];
+    visitAll(sourceFile, (node) => {
+      const isNameNode = ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
+      if (!isNameNode || !NEXT_CRON_SECRET_NAMES.has(node.text)) return;
+      // `CRON_SECRET: { ... }` の形 (オブジェクトのキー) だけを許す。process.env.CRON_SECRET・process.env['CRON_SECRET']・
+      // 名前を渡す関数の引数などは、値を読む形なので許さない
+      if (ts.isPropertyAssignment(node.parent) && node.parent.name === node) listKeys.push(node.text);
+      else otherUses.push(locationOf(sourceFile, node));
+    });
+    // 走査が空振りしていないこと (一覧に 2 つの名前が書かれている)
+    expect(listKeys.sort()).toEqual(["CRON_SECRET", "CRON_SECRET_PREVIOUS"]);
+    expect(otherUses, "値を読むのは src/lib/cron-auth.ts だけ。env.ts には名前を一覧のキーとして書く").toEqual([]);
   });
 
   it("CC-5: src/lib/cron-auth.ts は共通の checkCronSecret を使い、node:crypto には頼らない (Edge Runtime のルートからも呼ぶ)", () => {

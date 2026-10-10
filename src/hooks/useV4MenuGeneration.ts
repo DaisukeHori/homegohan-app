@@ -4,10 +4,17 @@ import { useState, useCallback } from "react";
 import type { TargetSlot, MenuGenerationConstraints } from "@/types/domain";
 import { createClient } from "@/lib/supabase/client";
 import type { Tables } from "@homegohan/shared";
+import { AiConsentRequiredError, aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 
 interface UseV4MenuGenerationOptions {
   onGenerationStart?: (requestId: string) => void;
   onGenerationComplete?: () => void;
+  /**
+   * 失敗の通知。受け付けたあとの失敗 (subscribeToProgress) では、リクエストの行に保存された文 (error_message) を渡す。
+   * その文が「同意が無くてサーバーが止めた」もの (T15 / #1154) のときもここに届くので、呼び出し側は
+   * handleStoredAiConsentFailure(error) で見分け、true なら自分のエラー表示を出さない (同意画面が案内する)。
+   * 受け付ける前に止められたとき (403 AI_CONSENT_REQUIRED) は呼ばない (generate が AiConsentRequiredError を投げる)。
+   */
   onError?: (error: string) => void;
 }
 
@@ -29,7 +36,7 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
     setError(null);
 
     try {
-      const response = await fetch("/api/ai/menu/v4/generate", {
+      const response = await aiFetch("/api/ai/menu/v4/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -40,6 +47,11 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
           ultimateMode: params.ultimateMode ?? false,
         }),
       });
+
+      // 同意が必要で止められた (T15 / #1154): 同意画面 (AiConsentRequiredHost) が案内するので、onError (失敗の表示) は呼ばない
+      if (await isAiConsentRequiredResponse(response)) {
+        throw new AiConsentRequiredError();
+      }
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -60,6 +72,10 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
 
       return data;
     } catch (err: any) {
+      if (err instanceof AiConsentRequiredError) {
+        setIsGenerating(false);
+        throw err;
+      }
       const errorMessage = err.message || "生成に失敗しました";
       setError(errorMessage);
       options.onError?.(errorMessage);

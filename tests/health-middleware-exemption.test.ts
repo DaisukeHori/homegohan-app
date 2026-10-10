@@ -11,7 +11,7 @@
  *      ログインへリダイレクトしたり 401/403 で止めたりしない。
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // ── @supabase/ssr モック (lib/supabase/__tests__/middleware.test.ts と同型) ───
@@ -35,6 +35,7 @@ vi.mock('@/lib/feature-flags', () => ({
 
 import { config } from '@/middleware';
 import { updateSession } from '@/lib/supabase/middleware';
+import { stubSupabasePublicEnv } from '../lib/supabase/__tests__/supabase-public-env';
 
 /**
  * Next.js は matcher を path-to-regexp で正規表現に変換する。この matcher は
@@ -87,8 +88,14 @@ describe('src/middleware.ts の matcher (#1181)', () => {
 describe('updateSession — 未ログインの /api/health (#1181)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // updateSession は必須の環境変数 (#1182) が無いと汎用の 500 を返して止まる。Supabase のクライアントはモックなので値はダミー
+    stubSupabasePublicEnv();
     mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
     mockGetUser.mockResolvedValue({ data: { user: null }, error: { message: 'Auth session missing!' } });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('ログインへリダイレクトせず、そのまま route に渡す', async () => {

@@ -9,7 +9,7 @@
  * #1174: 利用規約 (/terms)・プライバシーポリシー (/privacy) は、未ログインでも、
  * ログイン済みのオンボーディング未完了・凍結中でも差し戻さない
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,6 +46,17 @@ vi.mock('@/lib/feature-flags', () => ({
 }));
 
 import { updateSession } from '../middleware';
+import { TEST_SUPABASE_ANON_KEY, TEST_SUPABASE_URL, stubSupabasePublicEnv } from './supabase-public-env';
+
+// updateSession は必須の環境変数 (#1182) が無いと汎用の 500 を返して止まる。
+// このファイルでは Supabase クライアントをモックしているので、値はダミーでよい (テストごとに入れ直す)。
+beforeEach(() => {
+  stubSupabasePublicEnv();
+});
+
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
 
 function apiRequest(path = '/api/pantry', headers?: Record<string, string>) {
   return new NextRequest(new URL(`http://localhost${path}`), { headers });
@@ -628,6 +639,143 @@ describe.each(['/terms', '/privacy'])('updateSession — %s への遷移 (#1174)
 
     expect(res.status).toBe(307);
     expect(res.headers.get('location')).toBe('http://localhost/frozen');
+  });
+});
+
+// #1182: `process.env.X!` では、未設定のとき undefined が Supabase のクライアントに流れ込み、変数名の分からない
+// エラー ("Your project's URL and Key are required...") になっていた。必須の環境変数が無いときは、
+// 認証を素通りさせず (fail-open にしない)、internalError の汎用の 500 で止める。
+// #1172: 応答 (本文・ヘッダ) には変数名を出さない。変数名は db-logger (構造化ログ) にだけ渡す。
+const mockLoggerError = vi.fn();
+vi.mock('@/lib/db-logger', () => ({
+  createLogger: vi.fn(() => ({ error: mockLoggerError, withUser: vi.fn(() => ({ error: mockLoggerError })) })),
+  generateRequestId: vi.fn(() => 'req-test'),
+}));
+
+describe('updateSession — 必須の環境変数 (#1182)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+  });
+
+  it('設定されていれば、その値をそのまま createServerClient に渡す', async () => {
+    await updateSession(apiRequest());
+
+    expect(mockCreateServerClient).toHaveBeenCalledTimes(1);
+    expect(mockCreateServerClient.mock.calls[0][0]).toBe(TEST_SUPABASE_URL);
+    expect(mockCreateServerClient.mock.calls[0][1]).toBe(TEST_SUPABASE_ANON_KEY);
+    expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  describe.each([
+    ['API', apiRequest],
+    ['ページ', () => pageRequest('/home')],
+  ] as const)('%s へのリクエスト', (_kind, makeRequest) => {
+    it.each(['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY'])(
+      '%s が未設定なら、汎用の 500 を返し (本文・ヘッダに変数名なし)、Supabase のクライアントを作らない',
+      async (name) => {
+        vi.stubEnv(name, undefined);
+
+        const res = await updateSession(makeRequest());
+        const text = await res.text();
+
+        expect(res.status).toBe(500);
+        expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+        expect(text).not.toContain(name);
+        expect(JSON.stringify([...res.headers.entries()])).not.toContain(name);
+        // 認証を素通りさせない (リダイレクトでも next() でもない)
+        expect(res.headers.get('location')).toBeNull();
+        expect(res.headers.get('x-middleware-next')).toBeNull();
+        expect(mockCreateServerClient).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  it.each(['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY'])(
+    '%s が未設定なら、変数名を持つ MissingEnvError を db-logger に渡す (値は渡さない)',
+    async (name) => {
+      vi.stubEnv(name, undefined);
+
+      await updateSession(pageRequest('/home'));
+
+      expect(mockLoggerError).toHaveBeenCalledTimes(1);
+      const [, error, metadata] = mockLoggerError.mock.calls[0];
+      expect(error).toMatchObject({ name: 'MissingEnvError', envName: name });
+      expect(metadata).toEqual({ path: '/home' });
+      expect(JSON.stringify(metadata)).not.toContain(TEST_SUPABASE_URL);
+      expect(JSON.stringify(metadata)).not.toContain(TEST_SUPABASE_ANON_KEY);
+    },
+  );
+
+  it.each(['', '   '])('値が %j (空・空白だけ) でも、未設定として扱う', async (blank) => {
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', blank);
+
+    const res = await updateSession(pageRequest('/home'));
+
+    expect(res.status).toBe(500);
+    expect(mockLoggerError.mock.calls[0][1]).toMatchObject({ envName: 'NEXT_PUBLIC_SUPABASE_URL' });
+    expect(mockCreateServerClient).not.toHaveBeenCalled();
+  });
+
+  // 規約の同意ゲート (#1174) と合わせたときの順序。必須の変数の検査は、同意ゲート (user_profiles の読み取り・
+  // 同意画面への 307・お知らせのヘッダー) より前にある。欠けていれば、同意画面へも回さず、
+  // クライアントが送ってきた同意のお知らせのヘッダーも画面へ転送しない (汎用の 500 だけを返す)
+  describe('同意ゲート (#1174) との順序', () => {
+    const PENDING_HEADER = 'x-legal-consent-pending';
+    const NOT_ACCEPTED_PROFILE = {
+      data: {
+        roles: [],
+        onboarding_started_at: '2026-03-01T00:00:00.000Z',
+        onboarding_completed_at: '2026-03-01T01:00:00.000Z',
+        frozen_at: null,
+        unban_at: null,
+        terms_version_accepted: null,
+        privacy_version_accepted: null,
+      },
+      error: null,
+    };
+
+    beforeEach(() => {
+      vi.stubEnv('LEGAL_CONSENT_ENFORCE', 'on');
+      vi.stubEnv('LEGAL_CONSENT_NOTICE', 'on');
+      mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+      mockMaybeSingle.mockResolvedValue(NOT_ACCEPTED_PROFILE);
+    });
+
+    // 同意のフラグを後ろの describe に持ち越さない (Supabase の 2 つはファイル先頭の beforeEach が入れ直す)
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('対照: 変数がそろっていれば、未同意の利用者は同意画面へ回る (この組み立てで同意ゲートが働くことの確認)', async () => {
+      const res = await updateSession(pageRequest('/home'));
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get('location')).toBe('http://localhost/legal-consent?next=%2Fhome');
+      expect(mockCreateServerClient).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY'])(
+      '%s が無ければ、同意画面へ回さず汎用の 500 で止め、送られてきた同意のヘッダーも転送しない',
+      async (name) => {
+        vi.stubEnv(name, undefined);
+
+        const res = await updateSession(pageRequest('/home', { [PENDING_HEADER]: '1' }));
+        const text = await res.text();
+
+        expect(res.status).toBe(500);
+        expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+        expect(text).not.toContain(name);
+        expect(JSON.stringify([...res.headers.entries()])).not.toContain(name);
+        expect(res.headers.get('location')).toBeNull();
+        expect(res.headers.get(`x-middleware-request-${PENDING_HEADER}`)).toBeNull();
+        expect(res.headers.get('x-middleware-override-headers')).toBeNull();
+        expect(mockCreateServerClient).not.toHaveBeenCalled();
+        expect(mockMaybeSingle).not.toHaveBeenCalled();
+        expect(mockLoggerError.mock.calls[0][1]).toMatchObject({ envName: name });
+      },
+    );
   });
 });
 

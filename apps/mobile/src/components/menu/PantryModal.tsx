@@ -46,6 +46,11 @@ export const PantryModal: React.FC<Props> = ({ visible, onClose }) => {
     load();
   }, [visible, load]);
 
+  // この画面が閉じられたら、上に重ねた追加のモーダルも閉じる (次に開いたときに追加のモーダルだけが出ないように)
+  useEffect(() => {
+    if (!visible) setAddVisible(false);
+  }, [visible]);
+
   const handleDelete = useCallback(async (id: string) => {
     Alert.alert('削除', 'この食材を削除しますか？', [
       { text: 'キャンセル', style: 'cancel' },
@@ -138,8 +143,12 @@ export const PantryModal: React.FC<Props> = ({ visible, onClose }) => {
         </SafeAreaView>
       </Modal>
 
+      {/*
+        追加モーダル (この画面の上に重ねる)。この画面が閉じられたら一緒に閉じる (visible && …)。
+        週の画面が同意画面を開く前にモーダルをすべて閉じるとき (T15 / #1154 の closeAllModals)、上に重ねたモーダルが残ると同意画面を隠す
+      */}
       <AddFridgeModal
-        visible={addVisible}
+        visible={visible && addVisible}
         onClose={() => setAddVisible(false)}
         onSuccess={handleAddSuccess}
       />

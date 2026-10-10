@@ -3,7 +3,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mockRpc = vi.fn();
 const mockFetch = vi.fn();
 const mockLogWarn = vi.fn();
+const mockLogError = vi.fn();
 
+// 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
+vi.mock('@/lib/ai/consent-guard', () => import('../../../../tests/helpers/ai-consent-guard-allowed'));
 vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => ({
     rpc: mockRpc,
@@ -16,11 +19,13 @@ vi.mock('@supabase/supabase-js', () => ({
 // 構造化ログ (app_logs への保存) はここでは確かめない。取り直しのときに警告を出すことだけ見る
 vi.mock('@/lib/db-logger', () => ({
   createLogger: () => ({
-    withUser: () => ({ info: vi.fn(), warn: mockLogWarn, error: vi.fn() }),
+    withUser: () => ({ info: vi.fn(), warn: mockLogWarn, error: mockLogError }),
     info: vi.fn(),
     warn: mockLogWarn,
-    error: vi.fn(),
+    error: mockLogError,
   }),
+  // internalError() が使う (#1182)
+  generateRequestId: () => 'req-test',
 }));
 
 const { GET } = await import('@/app/api/cron/process-menu-queue/route');
@@ -239,5 +244,37 @@ describe('GET /api/cron/process-menu-queue (#1196 シークレットの入れ替
     vi.stubEnv('CRON_SECRET_PREVIOUS', 'my-old-cron-secret');
     await GET(makeRequest('Bearer not-a-secret'));
     expect(mockRpc).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------
+// #1182 / #1172: 必須の環境変数が欠けていたら、汎用の 500 で止める。
+//   本文には変数名を出さず、変数名は構造化ログ (db-logger) にだけ渡す。キューには触らない。
+// ---------------------------------------------------------------
+describe('GET /api/cron/process-menu-queue: 必須の環境変数 (#1182)', () => {
+  it.each(['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'])(
+    '%s が未設定なら、汎用の 500 (本文に変数名なし)。変数名は db-logger に渡し、キューには触らない',
+    async (name) => {
+      vi.stubEnv(name, undefined);
+
+      const res = await GET(makeRequest('Bearer my-cron-secret-value'));
+      const text = await res.text();
+
+      expect(res.status).toBe(500);
+      expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+      expect(text).not.toContain(name);
+      expect(mockLogError).toHaveBeenCalledTimes(1);
+      expect(mockLogError.mock.calls[0][1]).toMatchObject({ name: 'MissingEnvError', envName: name });
+      expect(mockRpc).not.toHaveBeenCalled();
+    },
+  );
+
+  it('認証に通らなければ、環境変数が欠けていても 401 (設定の不足を教えない)', async () => {
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', undefined);
+
+    const res = await GET(makeRequest('Bearer wrong-secret'));
+
+    expect(res.status).toBe(401);
+    expect(mockLogError).not.toHaveBeenCalled();
   });
 });

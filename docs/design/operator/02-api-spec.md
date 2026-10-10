@@ -144,12 +144,20 @@ await supabase.from('admin_audit_logs').insert({
 ---
 
 ### PATCH /api/admin/users/{id}
-ユーザー基本情報更新 (admin note のみ更新可)
+管理ノート (admin note) の追加 (#1103)
 
 **リクエスト**:
 ```json
 { "admin_note": "要注意ユーザー、規約違反1回目" }
 ```
+
+**保存先**: `admin_user_notes` に 1 行追加する (`user_id` = 対象、`admin_id` = 操作者、`note` = 前後の空白を除いた `admin_note`)。`user_profiles` に列は持たない (本人の行は本人が全列読めるため、運営の内部メモを置かない)。
+
+**バリデーション**: `admin_note` は前後の空白を除いて 1〜5000 文字。
+
+**レスポンス**: `{ "data": { "success": true, "note_id": "uuid" } }`。対象ユーザーがいない (UUID でない id を含む) ときは 404 `NOT_FOUND`。
+
+**監査ログ**: `admin.user.note_add` (details は `{ note_id }` だけ。本文は入れない)
 
 **権限**: `admin`, `super_admin`
 
@@ -283,6 +291,29 @@ BAN 解除
 ```
 
 `action`: `approve` | `delete_only` | `delete_and_warn` | `delete_and_temp_ban` | `delete_and_perm_ban` | `escalate`
+
+**`delete_*` の意味 (#1101)**: `delete_only` / `delete_and_warn` / `delete_and_temp_ban` / `delete_and_perm_ban` は、通報されたコンテンツ
+(食事 `meals` / レシピ `recipes`) の行を**消さずに隠す**。`hidden_at` / `hidden_by` / `hidden_reason` を書き、RLS により本人以外
+(家族・ほかのユーザー・未ログイン) には見えなくなる (本人には見える)。完全な削除は、保管期間のあとに別のジョブで行う (保管期間とジョブは未定)。
+
+- 実行の順番は「コンテンツを隠す → 判定の保存 → BAN」。隠せなかったときは判定を保存せず (通報は `pending` のまま)、BAN もせずに
+  `500 OP_CONTENT_HIDE_FAILED` を返す。通報が審査待ちのまま残るので、画面を開き直しても審査のフォームから同じ操作をやり直せる
+  (判定を先に保存すると、隠せなかった通報が審査済みになって一覧からもフォームからも消え、違反コンテンツが見えたまま残る)
+- 隠したあとで判定の保存に失敗したときも、BAN をせず `500 INTERNAL_ERROR` を返す (通報は `pending` のまま)。隠すのは冪等
+  (すでに隠れている行は上書きしない。保管期間の起点も延びない) なので、同じ操作をやり直せばよい
+- 通報にコンテンツが紐づかない (レスポンスの `content_id` が null。持ち主が先に消した等) ときは、隠す対象が無いので隠さずに続行する
+- `approve` / `escalate` は何も隠さない。隠した行を元に戻す操作は、まだ無い (必要なときは service_role で `hidden_*` を NULL に戻す)
+- 食事は、家族へのペースト (`paste_meal_to_family`) で作られた複製 (同じ `paste_group_id` の行) のうち、中身 (`photo_url` と `memo`) が
+  通報された行と同じもの (NULL どうしも同じとみなす) もまとめて隠す。ペーストのあとで持ち主が中身を書き換えた行は隠さない
+  (違反していない他人の行を、通報の結果として隠さない)。複製の持ち主には自分の行として見えたまま、ほかの人には見えなくなる。
+  隠した食事 (複製を含む) はペーストの元にできない (`403 MEAL_HIDDEN`)
+- `meals.paste_group_id` は、ログインユーザー・anon が書き換えられない (トリガー `guard_meal_paste_group_id`。書けるのは
+  `paste_meal_to_family` と service_role だけ)。他人の行を自分のまとまりに入れる・まとまりから外す、はできない
+- 監査ログ (`admin_audit_logs.details`) に `content_id` (隠す対象) と `hidden` (隠したか)、この操作で新しく隠した行の ID の一覧 `hidden_ids`、
+  隠せなかったときは `hide_error`、判定を保存したか `status_saved` (保存できなかった理由は `status_error`) を記録する。
+  隠せなかったとき・隠したあとで判定を保存できなかったときも、監査ログ (severity `warn`) を残す
+- 画像ファイル (`photo_url` / `image_url`) そのものは隠さない (公開バケットの URL は、隠す前に見た人なら取得できる)。完全削除のジョブと合わせて別に扱う
+- `hidden_reason` は持ち主も読める列なので、解決メモ (`resolution_note`) は入れず、`moderation:<action>` の識別子を書く
 
 ---
 
