@@ -87,9 +87,11 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 
 ### 値が合っていないとどうなるか
 
-- 値が違う → Edge Function は HTTP 401 を返します。
+- 値が違う → Edge Function は HTTP 401（本文 `{"error":"Unauthorized"}`）を返します。
 - Edge Function 側に `CRON_SECRET`（と `SERVICE_ROLE_SECRET`）が無い → HTTP 503 を返します。
-- pg_cron は pg_net で **非同期に** 呼び出すため、cron ジョブ自体は成功扱いのままです。エラーの表示もなく、カタログ取り込みだけが止まります。
+- pg_cron は pg_net で **非同期に** 呼び出すため、cron ジョブ自体は成功扱いのままです（`cron.job_run_details` は HTTP の結果にかかわらず `succeeded` になります）。エラーの表示もなく、カタログ取り込みだけが止まります。
+
+値とは別に、**関数のゲートウェイの JWT 検証（`verify_jwt`）が有効なまま** だと、値が合っていても関数に届く前に止まります。`app_cron_secret`（`CRON_SECRET`）はランダムな文字列で JWT ではないため、Supabase のゲートウェイが HTTP 401（本文 `{"code":"UNAUTHORIZED_INVALID_JWT_FORMAT", ...}`）を返します。pg_cron から呼ぶ関数は `supabase/config.toml` で `verify_jwt = false` にしてあり（認証は関数の中の `requireServiceRole` が行います。#1406）、GitHub Actions の「Deploy Supabase Functions」がこの設定ごとデプロイします。この 401 が出たら、設定がまだデプロイされていません。Actions の「Deploy Supabase Functions」が成功しているかを確かめ、必要なら手動で実行（Run workflow）し直してください。
 
 直近の呼び出し結果は、Supabase Dashboard の SQL Editor で次のように確かめられます。古い結果は自動で消える（既定では約 6 時間）ので、実行の直後に見てください。
 
@@ -100,7 +102,7 @@ ORDER BY created DESC
 LIMIT 20;
 ```
 
-- `status_code` が **401 / 503** の行がある → 値が合っていません。
+- `status_code` が **401 / 503** の行がある → 値が合っていません。ただし 401 の本文が `UNAUTHORIZED_INVALID_JWT_FORMAT` なら、値ではなくゲートウェイの JWT 検証で止まっています（上を参照）。本文は `content::text` で見られます（下の「比較ランキングの集計が動いているかの確かめ方」のクエリ）。
 - `status_code` が 200 → 認証は通っています。
 - `status_code` が空で `timed_out` が true → 認証は通っています。取り込みに 5 秒以上かかると、pg_net が先に待つのをやめるためです（正常）。
 
@@ -160,7 +162,7 @@ Edge Function は、現行の `CRON_SECRET` に加えて `CRON_SECRET_PREVIOUS`�
 
 - 毎回、daily / weekly / monthly の 3 つの要求が pg_net から並行して出ます。どれも、自分の期間の食事の記録（monthly は 1 か月分）を全件読みます。
 - 日・週・月が切り替わった直後の回（JST 0:05）は、切り替わった種類について直前の期間も 1 回だけ集計し直します（最大 3 つ増えます）。期間の最後の 1 時間（例: 23:05〜23:59）の記録を、その期間の最終の値に入れるためです。
-- 応答を待つ上限は 400 秒です。間隔（1 時間）より十分短いので、前の回と重なりません。直近の結果は `net._http_response`（上の「値が合っていないとどうなるか」のクエリ）で確かめられます。
+- 応答を待つ上限は 400 秒です。間隔（1 時間）より十分短いので、前の回と重なりません。直近の結果は `net._http_response` で確かめられます（下の「比較ランキングの集計が動いているかの確かめ方」）。
 
 利用者が増えて毎時の集計が重くなったら、Supabase Dashboard の SQL Editor で間隔を広げられます（migration は要りません）。例: 3 時間ごと
 
@@ -174,6 +176,52 @@ SELECT cron.alter_job(
 - **UTC 15 時台（= JST 0 時台）の回を必ず含めてください。** 直前の期間の集計し直しは、期間が切り替わってから 1 時間以内（`calculate_segment_stats_request_bodies` の `c_finalize_window`）の回だけが行います。`'5 */3 * * *'` は UTC 0, 3, …, 15, 18, 21 時なので含みます。`'5 */2 * * *'` は含まないので使えません。
 - 間隔を変えたら、モバイルの比較画面の案内（`apps/mobile/app/comparison/index.tsx` の `RANKING_UPDATE_INTERVAL_HOURS`）も同じ時間に直し、次の migration でジョブのスケジュールも揃えてください（`tests/segment-stats-schedule-sync.test.ts` が migration と画面を突き合わせます）。
 - 今の設定は `SELECT jobname, schedule, active FROM cron.job WHERE jobname = 'calculate-segment-stats';` で確かめられます。
+
+### 比較ランキングの集計が動いているかの確かめ方
+
+migration の適用後や、`supabase/config.toml` の `verify_jwt` を変えたデプロイの後に、Supabase Dashboard の SQL Editor で順に確かめます（どれも読み取りだけです）。
+
+1. Vault に `app_cron_secret` がある（値は Edge Function secrets の `CRON_SECRET` と同じにしておく）。
+
+   ```sql
+   SELECT name, updated_at FROM vault.secrets WHERE name = 'app_cron_secret';
+   ```
+
+2. ジョブが登録されている。
+
+   ```sql
+   SELECT jobname, schedule, active FROM cron.job WHERE jobname LIKE 'calculate-segment-stats%';
+   ```
+
+3. 毎時 5 分の回のあと、ジョブが動いた。
+
+   ```sql
+   SELECT status, return_message, start_time FROM cron.job_run_details ORDER BY start_time DESC LIMIT 5;
+   ```
+
+   `succeeded` は「pg_net に要求を積めた」という意味でしかありません。Edge Function が 401 を返していても `succeeded` になります。HTTP の結果は次の 4 で見ます。
+
+4. **HTTP の結果を見る。** 1 回の実行で要求は 3 つ（daily / weekly / monthly）、JST 0:05 の回は最大 6 つ出ます。
+
+   ```sql
+   SELECT status_code, content::text FROM net._http_response ORDER BY created DESC LIMIT 6;
+   ```
+
+   - `status_code` が 200 で、本文が `{"success":true, ...}` → 集計できています。
+   - 401 で、本文が `UNAUTHORIZED_INVALID_JWT_FORMAT` → ゲートウェイの JWT 検証で止まっています。`verify_jwt = false` がまだデプロイされていません（上の「値が合っていないとどうなるか」）。
+   - 401 で、本文が `{"error":"Unauthorized"}` → Vault の `app_cron_secret` と Edge Function secrets の `CRON_SECRET` の値が合っていません。
+   - 503 → Edge Function secrets に `CRON_SECRET` がありません。
+   - 500 → 認証は通り、集計の途中で失敗しています。Supabase Dashboard の Edge Functions → `calculate-segment-stats` → Logs を見てください。
+   - 行がまだ無い → 応答を待っています（上限 400 秒）。少し待ってから見直してください。古い結果は自動で消える（既定では約 6 時間）ので、実行の直後に見てください。
+   - ほかの pg_net の呼び出し（カタログ取り込み）の結果も同じ表に入ります。UTC 3:00〜4:00 の回と重なったら、件数を増やして見分けてください。
+
+5. 集計の結果が入っている。
+
+   ```sql
+   SELECT period_type, max(period_start) AS latest_period, count(*) AS rows
+   FROM public.segment_stats
+   GROUP BY period_type;
+   ```
 
 ### Vercel の `CRON_SECRET` を入れ替えるとき
 
