@@ -45,6 +45,29 @@ function atAliasPlugin() {
   };
 }
 
+// 1 件のテスト (it) とフック (beforeAll など) の時間切れの既定 (ミリ秒)。個別に時間切れを書いたテスト・フックはそちらが優先する。
+// 結合テストは next dev (API ルートを最初のリクエストでコンパイルする) とローカル Supabase を叩くので、機械の負荷で所要が大きく揺れる。
+// 2026-10-10〜11 に M2 で負荷が高いとき (load average 30〜80) に scripts/local-ci.sh を回すと、単独で回せば緑のテストが毎回違うところで
+// 以前の既定の 30 秒を超えて落ちた (実行 9 回の赤のログで時間切れ 24 件。うち 21 件が既定の時間切れのテスト。
+// 緑だった実行でも既定の時間切れのテストの所要は最大 20 秒台まで伸びていた)。その最大の 4 倍ほどの余裕を取る。
+// 時間切れが効くのは遅いときだけで、速く終わるテストの所要は変わらない (止まったテストを見切るまでが長くなるだけ)。
+// 機械に合わせて変えるときは環境変数 (INTEGRATION_TEST_TIMEOUT_MS / INTEGRATION_HOOK_TIMEOUT_MS) で上書きする
+const DEFAULT_INTEGRATION_TEST_TIMEOUT_MS = 120_000;
+const DEFAULT_INTEGRATION_HOOK_TIMEOUT_MS = 120_000;
+const TEST_TIMEOUT_ENV = 'INTEGRATION_TEST_TIMEOUT_MS';
+const HOOK_TIMEOUT_ENV = 'INTEGRATION_HOOK_TIMEOUT_MS';
+
+/** 環境変数の時間切れ (正の整数のミリ秒)。無い・空なら既定。整数でなければ設定の誤りとして止める (黙って既定に戻さない) */
+export function timeoutFromEnv(env: Record<string, string | undefined>, name: string, fallback: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} は正の整数 (ミリ秒) にしてください: ${raw}`);
+  }
+  return value;
+}
+
 export default defineConfig(({ mode }) => {
   // .env.local を明示的に読み込む (prefix '' = 全変数対象)
   const env = loadEnv(mode ?? 'test', process.cwd(), '');
@@ -60,10 +83,12 @@ export default defineConfig(({ mode }) => {
         'homegohan-app/**',
         '.claude/**',
       ],
-      // Integration tests hit real Supabase — allow longer timeouts
-      testTimeout: 30_000,
-      hookTimeout: 30_000,
-      // Run sequentially to avoid auth rate limits and DB conflicts
+      // ローカル Supabase と next dev を叩くので長めに取る (上の DEFAULT_INTEGRATION_*_TIMEOUT_MS)。
+      // 環境変数はシェルのもの (process.env) を .env.local より優先する
+      testTimeout: timeoutFromEnv({ ...env, ...process.env }, TEST_TIMEOUT_ENV, DEFAULT_INTEGRATION_TEST_TIMEOUT_MS),
+      hookTimeout: timeoutFromEnv({ ...env, ...process.env }, HOOK_TIMEOUT_ENV, DEFAULT_INTEGRATION_HOOK_TIMEOUT_MS),
+      // 並列数は 1 (ファイルもテストも 1 本ずつ)。認証のレート制限と DB の取り合いを避けるため。
+      // 負荷の下で落ちるのは並列のせいではない (すでに 1 本ずつ) ので、ここは変えない
       pool: 'forks',
       maxConcurrency: 1,
       maxWorkers: 1,

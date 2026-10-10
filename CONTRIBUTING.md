@@ -87,7 +87,7 @@ bash scripts/local-ci.sh --keep                   # 作業用の worktree を残
 
 - Node は `.nvmrc` の major (22)。違う版だと赤で止まり、入れ方を表示します (`nvm install 22 && nvm use 22` など)。
 - `integration` / `e2e` は Docker が要ります。ローカル Supabase は段ごとに `scripts/supabase-local.sh` で起動・停止します。
-- `integration` / `e2e` の前に、ポート 3000 (`e2e` は 3001・3002 も) とローカル Supabase のポート (54320〜54329) が空いているかを確かめ、塞がっていれば赤で止まります (他のプロセスやコンテナは止めません)。開発用の `npm run dev` やローカル Supabase を止めてから回してください。ポートは枠 0 の値で、枠 1 以上では下の「同時に複数回す (枠)」のとおりずれます。
+- `integration` / `e2e` の前に、ポート 3000 (`e2e` は 3001・3002 も) とローカル Supabase のポート (54320〜54329) が空いているかを確かめます (他のプロセスやコンテナは止めません)。ポートは枠 0 の値で、枠 1 以上では下の「同時に複数回す (枠)」のとおりずれます。枠を取ったときにそのポートを `local-ci.sh` 以外 (開発用の `npm run dev`・手で起動したローカル Supabase・macOS の常駐など) が使っていれば、その枠を外して次の候補の枠を使います。候補の枠のどれもポートを使われていて、ほかの `local-ci.sh` が持っている枠も無い (待っても空く見込みが無い) ときは、待たずに表に `slot:ports` の行 (使用中のポート) を出して赤 (終了コード 1) で止まります。使っているものを止めるか、`LOCAL_CI_SLOTS` に別の枠を足して回し直してください。
 
 **同時に複数回す (枠)**
 
@@ -150,6 +150,7 @@ LOCAL_CI_SLOT=1 bash scripts/local-ci.sh          # 枠 1 だけを使う (空�
 | `LOCAL_CI_SLOT_MEMORY_MIB` | 1 枠の Docker のメモリの目安 (MiB。既定 1536)。空きが少なければ警告 |
 | `LOCAL_CI_PLAYWRIGHT_WITH_DEPS=1` | `playwright install` に `--with-deps` を付ける (Linux で OS の依存も入れる。root 権限が要る) |
 | `LOCAL_CI_TOOLS` | gitleaks の配布物の置き場 (既定 `${XDG_CACHE_HOME:-$HOME/.cache}/homegohan-local-ci`) |
+| `INTEGRATION_TEST_TIMEOUT_MS` / `INTEGRATION_HOOK_TIMEOUT_MS` | 結合テストの 1 件のテスト / フックの時間切れ (ミリ秒。既定はどちらも 120000。`vitest.integration.config.ts`)。`local-ci.sh` もそのまま結合テストに渡す。個別に時間切れを書いたテストはそちらが優先 |
 
 **ローカルでは再現できないもの**: migration を含む PR の Deploy Supabase Migrations の PR ジョブ (本番台帳とのドリフト検知) は本番に接続するため、このスクリプトでは回しません。security.yml の dependency review (依存を変える PR で、high 以上の既知の脆弱性がある版を入れていないか) は GitHub の Dependency graph を使うため回しません。依存を変える PR は CI のこのジョブの緑を待ってからマージします。また CI のランナーは Linux なので、OS に依存する違い (ファイル名の大文字小文字など) は残ります。
 
