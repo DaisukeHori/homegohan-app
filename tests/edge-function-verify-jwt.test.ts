@@ -16,9 +16,10 @@
 //   - verify_jwt = false の関数は、どれも関数のディレクトリがあり、先頭で自前の認証をする
 //     (requireServiceRole / requireAuth / auth.getUser を、本文を読む前・DB に触る前に呼ぶ)
 //   - DB から pg_net (net.http_post など) で呼ばれる関数は、どれも verify_jwt = false。
-//     呼び出しは migration の全文から抜き出す (SQL 関数の本文だけでなく、関数で包まない
-//     cron.schedule('job', '...', $$ SELECT net.http_post(...) $$)、DO ブロック、素の SELECT も)。
-//     別のやり方で数え直した呼び出しの数と突き合わせ、拾えない呼び出し・呼び先が読めない呼び出しがあれば赤にする
+//     呼び出しは DB に入る SQL (supabase/migrations と、本番のスキーマの写し supabase/baseline) の全文から抜き出す
+//     (SQL 関数の本文だけでなく、関数で包まない cron.schedule('job', '...', $$ SELECT net.http_post(...) $$)、
+//     DO ブロック、素の SELECT も)。別のやり方で数え直した呼び出しの数とファイルごとに突き合わせ、
+//     拾えない呼び出し・呼び先が読めない呼び出しがあれば赤にする
 //   - 先頭で requireServiceRole を呼ぶ関数 (CRON_SECRET を受け付ける関数) は、どれも verify_jwt = false
 //   - GitHub Actions のデプロイは、名前を指定しない functions deploy で config.toml を読み (--no-verify-jwt を付けない)、
 //     config.toml を変えただけでも動く
@@ -37,6 +38,8 @@ const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 const CONFIG_TOML = 'supabase/config.toml';
 const FUNCTIONS_DIR = 'supabase/functions';
 const MIGRATIONS_DIR = 'supabase/migrations';
+/** 本番のスキーマの写し (scripts/supabase-local.sh が migration より先に入れる) */
+const BASELINE_DIR = 'supabase/baseline';
 const DEPLOY_WORKFLOW = '.github/workflows/deploy-supabase-functions.yml';
 /** pg_cron が Bearer に付ける Vault の秘密の名前 (JWT ではない) */
 const VAULT_CRON_SECRET_NAME = 'app_cron_secret';
@@ -173,11 +176,13 @@ const SERVICE_ROLE_FUNCTIONS = DEPLOYED_FUNCTIONS.filter((name) =>
 // ---------------------------------------------------------------------------
 
 /**
- * DB から HTTP を送る呼び出し。pg_net の net.http_post / http_get / http_delete (スキーマ名は問わない。
- * extensions.http_post のような同期の http 拡張も同じく数える) と、Database Webhooks の supabase_functions.http_request。
+ * DB から HTTP を送る呼び出し。pg_net の net.http_post / http_get / http_delete (スキーマ名は問わない)、
+ * 同期の http 拡張 (pgsql-http) の http_post / http_get / http_put / http_patch / http_delete / http_head と http(...)、
+ * Database Webhooks の supabase_functions.http_request。
  * 自前で包んだ関数 (my_http_post( のように前に文字が付く名前) は数えない (包んだ関数の本文の中の呼び出しを数える)。
+ * 型の http_request (::http_request) のように後ろが ( でないものは数えない。
  */
-const HTTP_CALL = /\b(?:http_(?:post|get|delete)|http_request)"?\s*\(/gi;
+const HTTP_CALL = /\b(?:http|http_(?:post|get|put|patch|delete|head)|http_request)"?\s*\(/gi;
 /** 呼び出し元の名前に使う、文の先頭の語の数 (CREATE FUNCTION / cron.schedule / DO のどれでもない文のとき) */
 const LABEL_WORDS = 6;
 
@@ -191,7 +196,7 @@ type SqlScan = {
 };
 
 /**
- * migration を、コメントを除いた SQL と、最上位の文の範囲に分ける。
+ * SQL ファイル (migration など) を、コメントを除いた SQL と、最上位の文の範囲に分ける。
  * ドル引用 ($$ ... $$ / $tag$ ... $tag$) の中身は SQL / PL/pgSQL のコードとして読む (中の -- コメントも除く)。
  * ドル引用の中では、閉じる印がほかのどの状態 (' の中・コメントの中) よりも先に効く (PostgreSQL の字句解析と同じ)。
  */
@@ -202,7 +207,8 @@ function scanSql(sql: string): SqlScan {
   };
   const statements: Array<{ start: number; end: number }> = [];
   const dollarTags: string[] = [];
-  let mode: 'code' | 'single' | 'double' | 'line' | 'block' = 'code';
+  // escape: E'...' の文字列 (\ が次の 1 文字を逃がす。E'it\'s' の \' で文字列を閉じない)
+  let mode: 'code' | 'single' | 'escape' | 'double' | 'line' | 'block' = 'code';
   let blockDepth = 0;
   let statementStart = 0;
   let i = 0;
@@ -238,9 +244,10 @@ function scanSql(sql: string): SqlScan {
         blank(i);
         i += 1;
       }
-    } else if (mode === 'single' || mode === 'double') {
-      const quote = mode === 'single' ? "'" : '"';
-      if (ch === quote && sql[i + 1] === quote) i += 2;
+    } else if (mode === 'single' || mode === 'escape' || mode === 'double') {
+      const quote = mode === 'double' ? '"' : "'";
+      if (mode === 'escape' && ch === '\\') i += 2;
+      else if (ch === quote && sql[i + 1] === quote) i += 2;
       else {
         if (ch === quote) mode = 'code';
         i += 1;
@@ -254,7 +261,9 @@ function scanSql(sql: string): SqlScan {
       blank(i + 1);
       i += 2;
     } else if (ch === "'") {
-      mode = 'single';
+      // E'...' / e'...' (直前の E の前が語の文字でない) なら、\ で逃がす文字列
+      const escapeString = /[Ee]/.test(sql[i - 1] ?? '') && !/[A-Za-z0-9_]/.test(sql[i - 2] ?? '');
+      mode = escapeString ? 'escape' : 'single';
       i += 1;
     } else if (ch === '"') {
       mode = 'double';
@@ -297,7 +306,8 @@ function stripSqlCommentsSimply(sql: string): string {
 }
 
 type DbCaller = {
-  migration: string;
+  /** リポジトリからの相対パス (supabase/migrations/... / supabase/baseline/...) */
+  file: string;
   /** 文の始まりの行 (1 から) */
   line: number;
   /** 「関数 public.x」「cron.schedule('job')」「DO ブロック」など */
@@ -335,11 +345,11 @@ function calleesOf(code: string, deployedFunctions: readonly string[]): string[]
 }
 
 /**
- * 1 本の migration の中の、DB から HTTP で呼び出す文と、その呼び先。
+ * 1 本の SQL ファイル (migration など) の中の、DB から HTTP で呼び出す文と、その呼び先。
  * SQL 関数の本文に限らず、最上位の文すべてを見る (関数で包まない cron.schedule('job', '...', $$ SELECT net.http_post(...) $$)、
  * DO ブロック、素の SELECT net.http_post(...) も拾う)。
  */
-function dbCallersOf(migration: string, sql: string, deployedFunctions: readonly string[]): DbCaller[] {
+function dbCallersOf(file: string, sql: string, deployedFunctions: readonly string[]): DbCaller[] {
   const { code, statements } = scanSql(sql);
   const callers: DbCaller[] = [];
   for (const { start, end } of statements) {
@@ -348,7 +358,7 @@ function dbCallersOf(migration: string, sql: string, deployedFunctions: readonly
     if (calls === 0) continue;
     const firstToken = start + (statement.length - statement.trimStart().length);
     callers.push({
-      migration,
+      file,
       line: code.slice(0, firstToken).split('\n').length,
       label: callerLabel(statement),
       code: statement,
@@ -363,16 +373,34 @@ function dbCallersOf(migration: string, sql: string, deployedFunctions: readonly
 const calleesStoppedByGateway = (callees: readonly string[], verifyJwt: ReadonlyMap<string, boolean>) =>
   callees.filter((name) => verifyJwt.get(name) !== false);
 
-/** supabase/migrations の .sql すべて (名前で除外しない。除外した形の migration に書いた呼び出しを見落とさないため) */
-const MIGRATION_FILES = fs
-  .readdirSync(path.join(ROOT, MIGRATIONS_DIR))
-  .filter((file) => file.endsWith('.sql'))
-  .sort();
-const MIGRATION_SQL = new Map(MIGRATION_FILES.map((file) => [file, read(path.join(MIGRATIONS_DIR, file))]));
+/**
+ * 抜き出し (文ごと) が拾えた呼び出しの数と、別のやり方 (stripSqlCommentsSimply) で数え直した数が食い違えば、その数を返す。
+ * 食い違いは、抜き出しが取りこぼした呼び出し (verify_jwt の検査から漏れる呼び出し) があることを意味する。
+ */
+function callCountMismatch(sql: string, callers: readonly DbCaller[]): { collected: number; recounted: number } | null {
+  const collected = callers.reduce((sum, caller) => sum + caller.calls, 0);
+  const recounted = countHttpCalls(stripSqlCommentsSimply(sql));
+  return collected === recounted ? null : { collected, recounted };
+}
 
-const DB_CALLERS = MIGRATION_FILES.flatMap((file) => dbCallersOf(file, MIGRATION_SQL.get(file) ?? '', DEPLOYED_FUNCTIONS));
+/**
+ * DB に入る SQL のファイル (リポジトリからの相対パス)。名前で除外しない (除外した形のファイルに書いた呼び出しを見落とさないため)。
+ *   - supabase/migrations の .sql すべて (.down.sql も)
+ *   - supabase/baseline の .sql すべて (本番のスキーマの写し。ローカルの DB は、これを migration より先に入れる)
+ */
+const SQL_DIRS = [MIGRATIONS_DIR, BASELINE_DIR];
+const SQL_FILES = SQL_DIRS.flatMap((dir) =>
+  fs
+    .readdirSync(path.join(ROOT, dir))
+    .filter((file) => file.endsWith('.sql'))
+    .sort()
+    .map((file) => path.posix.join(dir, file)),
+);
+const SQL_TEXT = new Map(SQL_FILES.map((file) => [file, read(file)]));
+
+const DB_CALLERS = SQL_FILES.flatMap((file) => dbCallersOf(file, SQL_TEXT.get(file) ?? '', DEPLOYED_FUNCTIONS));
 const DB_CALLEES = [...new Set(DB_CALLERS.flatMap((caller) => caller.callees))].sort();
-const callerName = (caller: DbCaller) => `${caller.migration}:${caller.line} ${caller.label}`;
+const callerName = (caller: DbCaller) => `${caller.file}:${caller.line} ${caller.label}`;
 
 // ---------------------------------------------------------------------------
 
@@ -404,11 +432,11 @@ describe('検査の道具が空振りしない', () => {
     expect(DB_CALLEES.some((name) => /^import-.+-catalog$/.test(name))).toBe(true);
   });
 
-  // 以下は合成した migration で、SQL 関数の本文以外に書いた呼び出しも拾えることを確かめる (#1406 のレビューの指摘)
-  const SYNTHETIC_MIGRATION = 'synthetic.sql';
+  // 以下は合成した SQL で、SQL 関数の本文以外に書いた呼び出しも拾えることを確かめる (#1406 のレビューの指摘)
+  const SYNTHETIC_FILE = 'supabase/migrations/synthetic.sql';
   const FUNCTION_URL = (name: string) => `'https://example.supabase.co/functions/v1/${name}'`;
   const BEARER = `'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = '${VAULT_CRON_SECRET_NAME}')`;
-  const callersOf = (sql: string) => dbCallersOf(SYNTHETIC_MIGRATION, sql, DEPLOYED_FUNCTIONS);
+  const callersOf = (sql: string) => dbCallersOf(SYNTHETIC_FILE, sql, DEPLOYED_FUNCTIONS);
 
   it('関数で包まない cron.schedule の中の net.http_post を拾い、呼び先と、ゲートウェイで止まることが分かる', () => {
     // Supabase の文書が標準として示す形。verify_jwt が既定 (true) の関数を呼ぶと、本番では関数に届かない
@@ -470,10 +498,33 @@ describe('検査の道具が空振りしない', () => {
     expect(countHttpCalls(stripSqlCommentsSimply(sql))).toBe(1);
   });
 
-  it('数え直しは抜き出しと別のやり方で数える (抜き出しが取りこぼすと数が合わなくなる)', () => {
+  it('同期の http 拡張 (pgsql-http) の呼び出しも拾い、型の ::http_request は呼び出しとして数えない', () => {
+    const sql = [
+      `SELECT http(('POST', ${FUNCTION_URL('a-fn')}, ARRAY[http_header('Authorization', 'x')], 'application/json', '{}')::http_request);`,
+      `SELECT extensions.http_put(${FUNCTION_URL('b-fn')}, '{}', 'application/json');`,
+    ].join('\n');
+    expect(callersOf(sql).map(({ line, calls, callees }) => ({ line, calls, callees }))).toEqual([
+      { line: 1, calls: 1, callees: ['a-fn'] },
+      { line: 2, calls: 1, callees: ['b-fn'] },
+    ]);
+  });
+
+  it("E'...' の文字列の \\' で文字列の終わりを見失わず、後ろの -- コメントの中の呼び出しを数えない", () => {
+    const sql = [
+      "SELECT E'it\\'s -- not a comment';",
+      `-- SELECT net.http_post(${FUNCTION_URL('commented')});`,
+      `SELECT net.http_post(${FUNCTION_URL('a-fn')});`,
+    ].join('\n');
+    expect(callersOf(sql).map(({ line, callees }) => ({ line, callees }))).toEqual([{ line: 3, callees: ['a-fn'] }]);
+  });
+
+  it('数え直しは抜き出しと別のやり方で数え、抜き出しが呼び出しを取りこぼすと食い違いになる', () => {
+    // 関数で包まない cron.schedule の中の呼び出し 2 つ (#1406 のレビューで、SQL 関数の本文だけを見る抜き出しが取りこぼした形)
     const sql = `SELECT cron.schedule('x', '0 * * * *', $$ SELECT net.http_post(${FUNCTION_URL('a-fn')}); SELECT net.http_get(${FUNCTION_URL('b-fn')}); $$);`;
-    expect(countHttpCalls(stripSqlCommentsSimply(sql))).toBe(2);
-    expect(callersOf(sql).reduce((sum, caller) => sum + caller.calls, 0)).toBe(2);
+    expect(callCountMismatch(sql, callersOf(sql))).toBeNull();
+    // 取りこぼした抜き出し (SQL 関数の本文だけを見ると、この形は 1 つも拾えない) は、数え直しと合わず赤になる
+    const functionBodiesOnly = callersOf(sql).filter((caller) => caller.label.startsWith('関数 '));
+    expect(callCountMismatch(sql, functionBodiesOnly)).toEqual({ collected: 0, recounted: 2 });
   });
 
   it('requireServiceRole で認証する関数を見つけられている (要求を渡すだけの index.ts も、渡し先の関数を見る)', () => {
@@ -494,16 +545,22 @@ describe('verify_jwt = false の関数は、先頭で自前の認証をする', 
 });
 
 describe('JWT でない Bearer で呼ばれる関数は、verify_jwt = false', () => {
-  it('migration の中の DB からの HTTP の呼び出しを、どれも呼び出し元として拾えている (数え直しと一致)', () => {
-    // 抜き出し (文ごと) が取りこぼした呼び出しは、下の verify_jwt の検査から漏れる。別のやり方で数えた数と、migration ごとに突き合わせる
-    const mismatched = MIGRATION_FILES.flatMap((file) => {
-      const collected = DB_CALLERS.filter((caller) => caller.migration === file).reduce((sum, caller) => sum + caller.calls, 0);
-      const recounted = countHttpCalls(stripSqlCommentsSimply(MIGRATION_SQL.get(file) ?? ''));
-      return collected === recounted ? [] : [`${file}: 拾えた ${collected} / 数え直し ${recounted}`];
+  it('DB に入る SQL (migration と本番のスキーマの写し) の HTTP の呼び出しを、どれも呼び出し元として拾えている (数え直しと一致)', () => {
+    // 抜き出し (文ごと) が取りこぼした呼び出しは、下の verify_jwt の検査から漏れる。別のやり方で数えた数と、ファイルごとに突き合わせる
+    const mismatched = SQL_FILES.flatMap((file) => {
+      const mismatch = callCountMismatch(
+        SQL_TEXT.get(file) ?? '',
+        DB_CALLERS.filter((caller) => caller.file === file),
+      );
+      return mismatch === null ? [] : [`${file}: 拾えた ${mismatch.collected} / 数え直し ${mismatch.recounted}`];
     });
     expect(mismatched).toEqual([]);
-    // 空振りしていないこと (今の migration には、SQL 関数 2 つの中に呼び出しがある)
-    expect(DB_CALLERS.length).toBeGreaterThan(0);
+    // 空振りしていないこと (両方のディレクトリを読み、どちらにも呼び出しがある。
+    // migration には SQL 関数 2 つ、本番のスキーマの写しには invoke_catalog_import がある)
+    for (const dir of SQL_DIRS) {
+      expect(SQL_FILES.some((file) => file.startsWith(`${dir}/`)), `${dir} の .sql を読めていない`).toBe(true);
+      expect(DB_CALLERS.some((caller) => caller.file.startsWith(`${dir}/`)), `${dir} の呼び出しを拾えていない`).toBe(true);
+    }
   });
 
   it.each(DB_CALLERS.map((caller) => [callerName(caller), caller] as const))('%s: 呼び先の Edge Function が読める', (_name, caller) => {
