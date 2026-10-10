@@ -129,8 +129,12 @@ Supabase の Auth API はブラウザの通信を差し替えるので、Supabas
   ```
 
 - CI: `e2e-local.yml` が、このテスト用サイトキーを付けてビルドし、`E2E_REQUIRE_TURNSTILE=1` でこの spec を回す。
-  同じビルドで `01-login.spec.ts` も動くので、実際のウィジェットがトークンを出すのを待ってからログインする。
+  同じビルドで `01-login.spec.ts` も動くので、実際のウィジェットがトークンを出すのを待ってからログインし (`E2E_REQUIRE_TURNSTILE=1` ではウィジェットが無ければ失敗)、
+  トークンが `POST /api/auth/login` の本文に付いて届くことも確かめる。こちらは API を差し替えず、本物のサーバーでログインまで通す。
   ローカルの Supabase は CAPTCHA を有効にしない (有効にすると、トークン無しで認証する結合テストが全部止まる)。
+- **ログイン・新規登録・パスワード再設定の画面では `networkidle` を待たない**。ウィジェットが Cloudflare と通信し続けるので成り立たず、
+  テストの時間切れまで待ち続ける。フォームを使うときは `helpers/login-form.ts` の `waitForLoginFormReady` (入力欄・ウィジェットのトークン・
+  押せる送信ボタンを待つ)、画面を開くだけなら `waitForLoadState("load")` を使う。`src/__tests__/config/e2e-auth-page-wait.test.ts` が検査する。
 - テスト用のサイトキーと秘密キー、Supabase で CAPTCHA を有効にする時期は `docs/operations/auth-protection.md`。
   **本番の Supabase の CAPTCHA を有効にすると、本番を対象にした `global-setup.ts` などのログイン (REST) は失敗する**ので、同時に直すこと。
 

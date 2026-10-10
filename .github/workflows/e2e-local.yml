@@ -79,7 +79,7 @@ jobs:
           NEXT_FONT_GOOGLE_MOCKED_RESPONSES: ${{ github.workspace }}/tests/e2e/fixtures/google-fonts-mock.cjs
           # Turnstile (#1165): Cloudflare 公式のテスト用サイトキー (常に成功。表示あり)。NEXT_PUBLIC_* はビルド時に埋め込まれるので、
           # ビルドするこの step に渡す。ログイン・新規登録・パスワード再設定の画面に本物のウィジェットが出て、
-          # 01-login もウィジェットがトークンを出すのを待ってからログインする。
+          # 01-login もウィジェットがトークンを出すのを待ってからログインする (networkidle は待たない。tests/e2e/helpers/login-form.ts)。
           # ローカルの Supabase は CAPTCHA が無効なので、トークンは検証されない (付いて届くことを auth-turnstile.spec.ts が確かめる)。
           # 本番のサイトキーはここに書かない。
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: "1x00000000000000000000AA"

@@ -260,7 +260,8 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
   - 注意: `resetPasswordForEmail` だけは、`captchaToken` を `options` の中ではなく**第 2 引数の直下** (`redirectTo` と同じ階層) に渡す。`options` の中に入れても、Supabase には届かず、黙って無視される。
 - **ログイン失敗のロック**: 単体テスト `tests/auth/login-lock.test.ts` (段の決定表)・`tests/auth/guarded-login.test.ts` (状態 × 操作の表)・`tests/api/auth-login-route.test.ts` (応答の表)・`tests/api/auth-login-lock-clear-route.test.ts`・`tests/auth/turnstile-verify.test.ts`・`tests/auth/login-lock-notification.test.ts`。結合テスト `tests/integration/security/auth-login-lock.test.ts` (ローカルの Supabase で、DB の関数の権限・同時の加算・本物の Auth と組み合わせたロック・再設定のセッションの `amr`)。
 - **e2e** (`tests/e2e/auth-turnstile.spec.ts`): 本物のブラウザ・本物の CSP・本物の Cloudflare の `api.js` と、**Cloudflare のテスト用サイトキー** (`1x00000000000000000000AA`) で、ウィジェットがトークンを出し、新規登録・パスワード再設定では Supabase へのリクエストに `captcha_token` が、ログインでは `POST /api/auth/login` の本文に `captchaToken` が入ることを確かめる。通信はブラウザで差し替えるので、Supabase には繋がない。
-  - CI: `.github/workflows/e2e-local.yml` が、このテスト用サイトキーを付けてアプリをビルドし、この spec と `01-login.spec.ts` を回す。
+  - CI: `.github/workflows/e2e-local.yml` が、このテスト用サイトキーを付けてアプリをビルドし、この spec と `01-login.spec.ts` を回す。`01-login.spec.ts` は通信を差し替えず、ウィジェットがトークンを出すのを待ってから本物のサーバーでログインし、`POST /api/auth/login` の本文に `captchaToken` が付くことを確かめる。
+  - これらの画面では、e2e は `networkidle` を待たない (ウィジェットが通信し続けるため成り立たない)。`tests/e2e/helpers/login-form.ts` の `waitForLoginFormReady` を使う (`src/__tests__/config/e2e-auth-page-wait.test.ts` が検査する)。
   - ローカル: `NEXT_PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA npx playwright test tests/e2e/auth-turnstile.spec.ts` (起動済みの dev サーバーは再利用されるので、キー無しで起動していたら止めてから)。
   - 実行するコマンドに、このテスト用サイトキー (`NEXT_PUBLIC_TURNSTILE_SITE_KEY`) が付いていないとき (CI の `E2E_REQUIRE_TURNSTILE=1` を除く) は、この spec は全部スキップされる。本番のサイトキーを入れたあとの本番向け e2e (手動で回すフルスイート) で、本物のサイトキーに向けて走ってしまわないため。
   - サイトキー無しでビルドされたアプリ (Turnstile は無効) に向けても、全部スキップされる (CI だけは、スキップせずに失敗にする)。
