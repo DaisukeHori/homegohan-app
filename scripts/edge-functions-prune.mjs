@@ -6,6 +6,8 @@
  *
  *   node scripts/edge-functions-prune.mjs --project-ref <ref>            # 既定は dry-run (消さずに、消す予定の関数を出すだけ)
  *   node scripts/edge-functions-prune.mjs --project-ref <ref> --apply    # 実際に消す
+ *   node scripts/edge-functions-prune.mjs --project-ref <ref> --apply --require-latest main
+ *       # origin の main の最新とこのチェックアウトの supabase/functions/ が違えば、何も消さずに終わる (デプロイのワークフローはこれ)
  *
  * 背景: リポジトリから関数のディレクトリを消しても、`supabase functions deploy` は本番の関数を消さない。
  * そのため、ソースの無い旧い関数 (認証なしで呼べるものを含む) が本番に残り続けていた (#1452)。
@@ -17,6 +19,12 @@
  *   - 本番の関数の名前 (slug) に想定外の文字がある (一覧の読み違いを疑う)
  *   - 消す関数の数が上限を超える (上限は MAX_DELETIONS_ENV で上書きできる)
  * 消すのに 1 本でも失敗したら、残りも試したうえで終了コード 1 で終わる。
+ *
+ * 古いチェックアウトで消さない (--require-latest <branch>):
+ *   削除はチェックアウトした版の関数の一覧と、その時点の本番の一覧の差で決まる。古い版のまま走ると (古い実行の再実行・
+ *   並んで走った実行など)、あとの版で足した関数を本番から消してしまう。そこで削除の前に origin の <branch> の最新を取り、
+ *   supabase/functions/ がチェックアウトと違えば何も消さずに終了コード 0 で終わる (関数を変えた新しい版は、その版の
+ *   デプロイのワークフローが走って消す)。最新を取れない・比べられないときは、1 本も消さず終了コード 1 で終わる。
  *
  * ログには、関数の名前と件数だけを出す。supabase CLI の出力 (stdout / stderr) やアクセストークンは出さない。
  */
@@ -74,6 +82,13 @@ export const CLI_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 
 /** 本番の Supabase のプロジェクトの ref として受け付ける形 (小文字の英数字。コマンドの引数に変なものを渡さない) */
 export const PROJECT_REF_PATTERN = /^[a-z0-9]+$/;
+
+/** --require-latest に渡すブランチの名前として受け付ける形 (git の引数に変なものを渡さない) */
+export const BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+/** `git diff --quiet` の終了コード: 0 = 違いが無い、1 = 違いがある (それ以外は git の失敗) */
+export const GIT_DIFF_NO_CHANGES = 0;
+export const GIT_DIFF_HAS_CHANGES = 1;
 
 /** 終了コード */
 export const EXIT_OK = 0;
@@ -230,18 +245,30 @@ export function planPrune({ remoteSlugs, repoFunctions, maxDeletions }) {
 
 /** コマンドラインの引数を読む */
 export function parseArgs(argv) {
-  const options = { apply: false, projectRef: undefined, functionsDir: undefined };
+  const options = { apply: false, projectRef: undefined, functionsDir: undefined, requireLatest: undefined };
+  // 値を取る引数の値が無い (最後の引数だった) ときは止める (値の無い --require-latest で確かめが黙って外れないように)
+  const valueOf = (name, index) => {
+    const value = argv[index];
+    if (value === undefined) throw new PruneError(`${name} の値がありません`);
+    return value;
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--apply') options.apply = true;
-    else if (arg === '--project-ref') options.projectRef = argv[++i];
+    else if (arg === '--project-ref') options.projectRef = valueOf(arg, ++i);
     else if (arg.startsWith('--project-ref=')) options.projectRef = arg.slice('--project-ref='.length);
-    else if (arg === '--functions-dir') options.functionsDir = argv[++i];
+    else if (arg === '--functions-dir') options.functionsDir = valueOf(arg, ++i);
     else if (arg.startsWith('--functions-dir=')) options.functionsDir = arg.slice('--functions-dir='.length);
+    else if (arg === '--require-latest') options.requireLatest = valueOf(arg, ++i);
+    else if (arg.startsWith('--require-latest=')) options.requireLatest = arg.slice('--require-latest='.length);
     else throw new PruneError(`知らない引数があります: ${arg}`);
   }
   if (!options.projectRef || !PROJECT_REF_PATTERN.test(options.projectRef)) {
     throw new PruneError('--project-ref <小文字の英数字> を指定してください');
+  }
+  if (options.functionsDir === '') throw new PruneError('--functions-dir の値が空です');
+  if (options.requireLatest !== undefined && !BRANCH_PATTERN.test(options.requireLatest)) {
+    throw new PruneError('--require-latest <ブランチの名前 (英数字・_・-)> を指定してください');
   }
   return options;
 }
@@ -265,6 +292,62 @@ export function runSupabaseCli(args, { env, timeoutMs }) {
   return { status: result.error ? null : result.status, stdout: result.stdout ?? '' };
 }
 
+/**
+ * git を呼ぶ (対話なし。標準入力は閉じる)。stdout / stderr はログに出さない (呼び出し側は status だけを見る)。
+ *
+ * @param {string[]} args `git` のあとに続く引数
+ * @param {{ cwd: string, env: Record<string, string | undefined>, timeoutMs: number }} options
+ * @returns {{ status: number | null, stdout: string }}
+ */
+export function runGit(args, { cwd, env, timeoutMs }) {
+  const result = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: timeoutMs,
+    maxBuffer: CLI_MAX_BUFFER_BYTES,
+  });
+  return { status: result.error ? null : result.status, stdout: result.stdout ?? '' };
+}
+
+/**
+ * このチェックアウトの関数のディレクトリが、origin の branch の最新と同じかを確かめる。
+ * 同じなら true、違えば false。最新を取れない・比べられないときは PruneError (消さずに止める)。
+ *
+ * @param {string} branch origin のブランチの名前 (BRANCH_PATTERN に合うもの)
+ * @param {string} functionsPath リポジトリの根から見た関数のディレクトリ (/ 区切り)
+ * @param {(args: string[]) => { status: number | null, stdout: string }} git
+ * @returns {boolean}
+ */
+export function functionsMatchLatest(branch, functionsPath, git) {
+  // 浅いチェックアウト (CI の actions/checkout の既定) では最新の 1 版だけを取る。浅くないリポジトリ (手元) で --depth を
+  // 付けると、そのリポジトリが浅くなってしまうので付けない。
+  const shallow = git(['rev-parse', '--is-shallow-repository']);
+  const shallowAnswer = shallow.stdout.trim();
+  if (shallow.status !== 0 || (shallowAnswer !== 'true' && shallowAnswer !== 'false')) {
+    throw new PruneError(`チェックアウトが浅いかどうかを確かめられませんでした (git の終了コード: ${shallow.status ?? '不明'})`);
+  }
+  const depthArgs = shallowAnswer === 'true' ? ['--depth=1'] : [];
+  const fetched = git(['fetch', '--no-tags', ...depthArgs, 'origin', `refs/heads/${branch}`]);
+  if (fetched.status !== 0) {
+    throw new PruneError(`origin の ${branch} の最新を取れませんでした (git の終了コード: ${fetched.status ?? '不明'})`);
+  }
+  const diff = git(['diff', '--quiet', 'HEAD', 'FETCH_HEAD', '--', functionsPath]);
+  if (diff.status === GIT_DIFF_NO_CHANGES) return true;
+  if (diff.status === GIT_DIFF_HAS_CHANGES) return false;
+  throw new PruneError(`origin の ${branch} の最新と関数を比べられませんでした (git の終了コード: ${diff.status ?? '不明'})`);
+}
+
+/** リポジトリの根から見た関数のディレクトリ (/ 区切り)。リポジトリの外なら PruneError */
+export function functionsPathFromRoot(root, functionsDir) {
+  const relative = path.relative(root, path.resolve(functionsDir));
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new PruneError('関数のディレクトリがリポジトリの中にありません (--require-latest で比べられません)');
+  }
+  return relative.split(path.sep).join('/');
+}
+
 /** 本番の関数の slug の一覧を取る (取れなければ PruneError) */
 export function fetchRemoteSlugs(projectRef, run) {
   const result = run(['functions', 'list', '--project-ref', projectRef, '-o', 'json']);
@@ -281,6 +364,7 @@ export function fetchRemoteSlugs(projectRef, run) {
  * @param {{
  *   env?: Record<string, string | undefined>,
  *   run?: (args: string[]) => { status: number | null, stdout: string },
+ *   git?: (args: string[]) => { status: number | null, stdout: string },
  *   listRepo?: (functionsDir: string) => string[],
  *   log?: (line: string) => void,
  *   error?: (line: string) => void,
@@ -307,7 +391,19 @@ export function main(argv, deps = {}) {
     const maxDeletions = resolveMaxDeletions(env);
     const timeoutMs = resolveCliTimeoutMs(env);
     run = deps.run ?? ((args) => runSupabaseCli(args, { env, timeoutMs }));
-    const functionsDir = options.functionsDir ?? path.join(repoRoot(), FUNCTIONS_DIR_RELATIVE);
+    const root = repoRoot();
+    const functionsDir = options.functionsDir ?? path.join(root, FUNCTIONS_DIR_RELATIVE);
+    if (options.requireLatest !== undefined) {
+      const git = deps.git ?? ((args) => runGit(args, { cwd: root, env, timeoutMs }));
+      const functionsPath = functionsPathFromRoot(root, functionsDir);
+      if (!functionsMatchLatest(options.requireLatest, functionsPath, git)) {
+        log(
+          `edge-functions-prune: このチェックアウトの ${functionsPath} は origin の ${options.requireLatest} の最新と違います。` +
+            '古い版で本番の関数を消さないよう、何も消しません (関数を変えた新しい版のデプロイが消します)',
+        );
+        return EXIT_OK;
+      }
+    }
     const repoFunctions = (deps.listRepo ?? listRepoFunctions)(functionsDir);
     const remoteSlugs = fetchRemoteSlugs(options.projectRef, run);
     toDelete = planPrune({ remoteSlugs, repoFunctions, maxDeletions });

@@ -21,10 +21,14 @@ import {
   EXIT_FAILURE,
   EXIT_OK,
   EXIT_USAGE,
+  GIT_DIFF_HAS_CHANGES,
+  GIT_DIFF_NO_CHANGES,
   MAX_DELETIONS_ENV,
   PruneError,
   SUPABASE_CLI_PACKAGE,
   computeFunctionsToDelete,
+  functionsMatchLatest,
+  functionsPathFromRoot,
   listRepoFunctions,
   main,
   parseArgs,
@@ -75,12 +79,34 @@ function fakeCli(options: {
   return { run, calls };
 }
 
-function runMain(argv: string[], deps: { run: (args: string[]) => RunResult; repo: string[]; env?: Record<string, string> }) {
+/**
+ * git の呼び出しを記録して、決めた結果を返す差し替え
+ * (rev-parse = 浅いチェックアウトか / fetch = origin の最新を取る / diff = 関数のディレクトリを比べる)。既定は CI と同じ浅いチェックアウト。
+ */
+function fakeGit(options: { fetch: number | null; diff?: number | null; shallow?: RunResult }) {
+  const calls: string[][] = [];
+  const git = (args: string[]): RunResult => {
+    calls.push(args);
+    if (args[0] === 'rev-parse' && args[1] === '--is-shallow-repository') return options.shallow ?? { status: 0, stdout: 'true\n' };
+    if (args[0] === 'fetch') return { status: options.fetch, stdout: '' };
+    if (args[0] === 'diff') return { status: options.diff === undefined ? GIT_DIFF_NO_CHANGES : options.diff, stdout: '' };
+    throw new Error(`想定外の呼び出し: git ${args.join(' ')}`);
+  };
+  return { git, calls };
+}
+
+function runMain(
+  argv: string[],
+  deps: { run: (args: string[]) => RunResult; repo: string[]; env?: Record<string, string>; git?: (args: string[]) => RunResult },
+) {
   const out: string[] = [];
   const err: string[] = [];
   const code = main(argv, {
     env: deps.env ?? {},
     run: deps.run,
+    git: deps.git ?? ((args: string[]) => {
+      throw new Error(`--require-latest が無いのに git を呼んだ: ${args.join(' ')}`);
+    }),
     listRepo: () => deps.repo,
     log: (line: string) => out.push(line),
     error: (line: string) => err.push(line),
@@ -368,13 +394,106 @@ describe('main: 入口', () => {
   });
 });
 
+describe('--require-latest: 古いチェックアウトでは消さない (並んで走った実行・古い実行の再実行)', () => {
+  const REPO = ['analyze-fridge', 'generate-menu-v5'];
+  const APPLY_LATEST = ['--project-ref', PROJECT_REF, '--apply', '--require-latest', 'main'];
+
+  it('関数のディレクトリが origin の main の最新と同じなら、ふつうに消す (fetch → diff → 一覧 → 削除の順)', () => {
+    const cli = fakeCli({ list: listOf([...REPO, 'old-a']) });
+    const git = fakeGit({ fetch: 0, diff: GIT_DIFF_NO_CHANGES });
+    const result = runMain(APPLY_LATEST, { run: cli.run, repo: REPO, git: git.git });
+    expect(result.code).toBe(EXIT_OK);
+    expect(git.calls).toEqual([
+      ['rev-parse', '--is-shallow-repository'],
+      ['fetch', '--no-tags', '--depth=1', 'origin', 'refs/heads/main'],
+      ['diff', '--quiet', 'HEAD', 'FETCH_HEAD', '--', 'supabase/functions'],
+    ]);
+    expect(cli.calls.map((args) => args.slice(0, 3))).toEqual([
+      ['functions', 'list', '--project-ref'],
+      ['functions', 'delete', 'old-a'],
+    ]);
+  });
+
+  it('あとの版で足した関数 X が本番にあっても、古いチェックアウト (X が無い) の実行は X を消さない', () => {
+    // 古い版 A の実行が削除の手順に来た時点で、あとの版 B (X を足した) のデプロイが本番に X を入れている場面
+    const cli = fakeCli({ list: listOf([...REPO, 'new-x']) });
+    const git = fakeGit({ fetch: 0, diff: GIT_DIFF_HAS_CHANGES });
+    for (const argv of [APPLY_LATEST, ['--project-ref', PROJECT_REF, '--require-latest', 'main']]) {
+      const result = runMain(argv, { run: cli.run, repo: REPO, git: git.git });
+      expect(result.code).toBe(EXIT_OK);
+      expect(result.out.join('\n')).toContain('何も消しません');
+      expect(result.all).not.toContain('new-x');
+    }
+    // 本番の一覧も取らず、1 本も消さない
+    expect(cli.calls).toEqual([]);
+  });
+
+  it.each([
+    { title: 'origin の最新を取れない (fetch の失敗)', fetch: 128, diff: GIT_DIFF_NO_CHANGES },
+    { title: 'git を起動できない・時間切れ (fetch の status が null)', fetch: null, diff: GIT_DIFF_NO_CHANGES },
+    { title: '比べられない (diff の失敗)', fetch: 0, diff: 128 },
+    { title: '比べられない (diff の status が null)', fetch: 0, diff: null },
+    { title: '浅いかどうかを確かめられない (rev-parse の失敗)', fetch: 0, diff: GIT_DIFF_NO_CHANGES, shallow: { status: 128, stdout: '' } },
+    { title: '浅いかどうかの答えが読めない', fetch: 0, diff: GIT_DIFF_NO_CHANGES, shallow: { status: 0, stdout: 'maybe\n' } },
+  ])('$title ときは 1 本も消さずに赤', ({ fetch, diff, shallow }) => {
+    const cli = fakeCli({ list: listOf([...REPO, 'old-a']) });
+    const git = fakeGit({ fetch, diff, shallow });
+    const result = runMain(APPLY_LATEST, { run: cli.run, repo: REPO, git: git.git });
+    expect(result.code).toBe(EXIT_FAILURE);
+    expect(result.err.join('\n')).toContain('1 本も消していません');
+    expect(cli.calls).toEqual([]);
+  });
+
+  it.each([['--require-latest'], ['--require-latest', '../main'], ['--require-latest=main;rm'], ['--require-latest', '-main']])(
+    'ブランチの名前がおかしい (%s) なら、git も CLI も呼ばずに使い方の誤り',
+    (...extra) => {
+      const cli = fakeCli({ list: listOf(REPO) });
+      const git = fakeGit({ fetch: 0 });
+      const result = runMain(['--project-ref', PROJECT_REF, '--apply', ...extra], { run: cli.run, repo: REPO, git: git.git });
+      expect(result.code).toBe(EXIT_USAGE);
+      expect(git.calls).toEqual([]);
+      expect(cli.calls).toEqual([]);
+    },
+  );
+
+  it.each([['--functions-dir'], ['--functions-dir=']])('値の無い・空の %s は使い方の誤り', (arg) => {
+    expect(() => parseArgs(['--project-ref', PROJECT_REF, arg])).toThrow(PruneError);
+    expect(() => parseArgs(['--project-ref'])).toThrow(PruneError);
+  });
+
+  it('--require-latest=main の形でも読む', () => {
+    expect(parseArgs(['--project-ref', PROJECT_REF, '--require-latest=main']).requireLatest).toBe('main');
+    expect(parseArgs(['--project-ref', PROJECT_REF]).requireLatest).toBeUndefined();
+  });
+
+  it('浅くないリポジトリ (手元) では --depth を付けずに取る (リポジトリを浅くしない)', () => {
+    const git = fakeGit({ fetch: 0, diff: GIT_DIFF_NO_CHANGES, shallow: { status: 0, stdout: 'false\n' } });
+    expect(functionsMatchLatest('main', 'supabase/functions', git.git)).toBe(true);
+    expect(git.calls[1]).toEqual(['fetch', '--no-tags', 'origin', 'refs/heads/main']);
+  });
+
+  it('functionsMatchLatest: diff の 0 は同じ・1 は違う', () => {
+    expect(functionsMatchLatest('main', 'supabase/functions', fakeGit({ fetch: 0, diff: GIT_DIFF_NO_CHANGES }).git)).toBe(true);
+    expect(functionsMatchLatest('main', 'supabase/functions', fakeGit({ fetch: 0, diff: GIT_DIFF_HAS_CHANGES }).git)).toBe(false);
+    expect(() => functionsMatchLatest('main', 'supabase/functions', fakeGit({ fetch: 1 }).git)).toThrow(PruneError);
+  });
+
+  it('functionsPathFromRoot: リポジトリの根から見た / 区切りのパス。リポジトリの外や根そのものは止める', () => {
+    const root = path.join(tmpdir(), 'repo-root');
+    expect(functionsPathFromRoot(root, path.join(root, 'supabase', 'functions'))).toBe('supabase/functions');
+    expect(() => functionsPathFromRoot(root, path.join(tmpdir(), 'elsewhere'))).toThrow(PruneError);
+    expect(() => functionsPathFromRoot(root, root)).toThrow(PruneError);
+  });
+});
+
 describe('.github/workflows/deploy-supabase-functions.yml', () => {
   const WORKFLOW = '.github/workflows/deploy-supabase-functions.yml';
   const SCRIPT = 'scripts/edge-functions-prune.mjs';
-  type Step = { name?: string; run?: string; env?: Record<string, string> };
+  type Step = { name?: string; if?: string; run?: string; env?: Record<string, string> };
   const workflow = yaml.load(readFileSync(WORKFLOW, 'utf8')) as {
     on: { push: { branches: string[]; paths: string[] } };
-    jobs: { deploy: { steps: Step[] } };
+    concurrency?: { group?: string; 'cancel-in-progress'?: boolean };
+    jobs: { deploy: { steps: Step[]; concurrency?: unknown } };
   };
   const steps = workflow.jobs.deploy.steps;
   const indexOfStep = (name: string) => steps.findIndex((step) => step.name === name);
@@ -391,6 +510,19 @@ describe('.github/workflows/deploy-supabase-functions.yml', () => {
     expect(prune.run).toMatch(new RegExp(`node ${SCRIPT.replace('.', '\\.')} .*--apply`));
     expect(prune.run).toContain('--project-ref ${{ env.SUPABASE_PROJECT_ID }}');
     expect(prune.env?.SUPABASE_ACCESS_TOKEN).toBe('${{ secrets.SUPABASE_ACCESS_TOKEN }}');
+  });
+
+  it('同じ ref の実行は 1 本ずつ走り、走っている実行は取り消さない (古い版の削除が、あとの版で入った関数を消さないように)', () => {
+    expect(workflow.concurrency?.group).toBe('deploy-supabase-functions-${{ github.ref }}');
+    expect(workflow.concurrency?.['cancel-in-progress']).toBe(false);
+    // ジョブの単位で別の group を付けて、ワークフローの単位の直列化を崩していない
+    expect(workflow.jobs.deploy.concurrency).toBeUndefined();
+  });
+
+  it('削除は main の実行だけで、origin の main の最新と関数が同じときだけ (--require-latest main)', () => {
+    const prune = steps[pruneIndex];
+    expect(prune.if).toBe("github.ref == 'refs/heads/main'");
+    expect(prune.run).toMatch(/--require-latest main(\s|$)/);
   });
 
   it('ワークフローとスクリプトの CLI の版が同じ', () => {
