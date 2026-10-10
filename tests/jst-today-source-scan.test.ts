@@ -236,7 +236,7 @@ const TIMESTAMPTZ_COLUMN_SUFFIX = '_at';
 /**
  * 名前が _at で終わらない timestamptz の列 (規則 G・H)。supabase/migrations で timestamptz と宣言された列の名前から、
  * _at で終わるものと、関数の引数・変数 (p_ / v_ / _ で始まる名前) を除いたもの。
- * migrations と食い違わないことは、下の「timestamptz の列の名前の一覧が migrations と一致する」で確かめる
+ * migrations と食い違わないことは、下の describe('規則 G・H の timestamptz の列の名前') で確かめる
  */
 const TIMESTAMPTZ_COLUMNS_WITHOUT_AT_SUFFIX: ReadonlySet<string> = new Set([
   'cooling_until',
@@ -525,7 +525,9 @@ const LOCAL_TIME_METHODS = new Set([
 
 /**
  * 規則の例外。ファイルごとに、規則と件数と理由を書く。
- * どれも「利用者が見る日付・DB の日付列と比べる日付」ではないもの。
+ * 規則 A〜F・H は、どれも「利用者が見る日付・DB の日付列と比べる日付」ではないもの (または書き込みの変換と対で別に直すもの)。
+ * 規則 G は、暦日ではない時刻 (今からの相対時刻・入口で検査した ISO の日時・カーソル) で絞るものと、
+ * 画面から呼ばれない (期間を送る呼び出し元が無い) API。画面から期間を選べるようにするときは、許可リストから外して直す。
  */
 const ALLOWLIST: ReadonlyArray<{ file: string; rule: Rule; count: number; reason: string }> = [
   {
