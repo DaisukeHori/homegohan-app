@@ -52,6 +52,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Date range must be 14 days or less' }, { status: 400 });
     }
 
+    // Edge Function を呼ぶための接続情報は、DB に書き込む前 (AI 利用回数の記録・リクエストの行の作成より前) に
+    // env-required の getter で取り出す (#1434)。欠けていれば MissingEnvError → 下の catch で汎用の 500。
+    // 書き込んだあとで気づくと、Edge Function を呼べないまま status 'processing' の行が残り続ける
+    // (processing の行を片付ける仕組みは無い)。未ログイン・レート制限超過の呼び出しには設定の不足を教えない
+    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
+
     // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
     // (記録に失敗しても止めない)
     await recordAiUsage(user.id, 'shopping_list');
@@ -80,11 +86,7 @@ export async function POST(request: Request) {
 
     const requestId = requestData.id;
 
-    // Edge Functionを非同期で呼び出し（fire-and-forget）
-    // 接続情報は env-required の getter で取り出す (#1434)。欠けていれば MissingEnvError → 下の catch で汎用の 500
-    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
-
-    // Edge Functionに処理を委譲（レスポンスを待たない）
+    // Edge Functionに処理を委譲（fire-and-forget。レスポンスを待たない）
     fetch(`${supabaseUrl}/functions/v1/regenerate-shopping-list-v2`, {
       method: 'POST',
       headers: {
