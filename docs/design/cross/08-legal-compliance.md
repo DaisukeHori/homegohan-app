@@ -221,25 +221,53 @@ CREATE POLICY "ext_consent_no_delete"
   ON external_data_consents FOR DELETE USING (false);
 ```
 
-> **実装メモ (2026-10、T15 / #1154 / #1133 / #1169。マイグレーション `20261008200300_ai_consent_policy_version.sql`)**
+> **実装メモ (2026-10、T15 / #1154 / #1133 / #1169。マイグレーション `20261010090000_ai_consent_policy_version.sql`)**
 >
-> 上の DDL は設計時のもの。実装では次のとおり変えた。
+> 上の DDL と §4.1・§4.2 は設計時のもの。実装では次のとおり変えた。
 >
-> - **列を足した**: `policy_version text` (同意したときの文面の版。`src/lib/ai/consent-config.ts` の `AI_CONSENT_VERSION`)。
->   文面を改めたら版を上げる。古い版 (または版を記録する前) に同意した人には、もう一度同意を確認する。
+> - **列を足した**: `policy_version text` (同意したときの文面の版。`supabase/functions/_shared/ai-consent.ts` の `AI_CONSENT_VERSION`)。
+>   文面や事業者の一覧を改めたら版を上げる。古い版 (または版を記録する前) に同意した人は「未同意」に戻る。
+> - **事業者は 5 社** (§4.1 の表を置き換える): `xai` / `google` / `openai` / `perplexity` / `aimlapi`。
+>   コードの送信先から数えた、利用者のデータを実際に送っている事業者 (Perplexity は食事の写真の解析の栄養推定、
+>   AI/ML API (AIMLAPI OÜ) は AI 相談・献立の作成で文章を検索用に数値化するのに使う)。`anthropic` は現在使っていないので同意の対象にしない。
+>   `provider` の CHECK に `perplexity` / `aimlapi` を足した。送信先と一覧の食い違いは `tests/ai-consent-provider-inventory.test.ts` が検査する。
 > - **書き込みはサーバーだけ**: 同意・撤回は `POST /api/ai/consent` / `POST /api/ai/consent/revoke` が service role で書く。
 >   IP アドレスは `x-forwarded-for` の先頭の値、User-Agent はリクエストのヘッダーから取る (クライアントの申告は使わない)。
 >   クライアントからの INSERT は閉じた (`ext_consent_self_insert` を削除し、`authenticated` には SELECT だけを残した)。
 >   読めるのは自分の行だけ (`ext_consent_self_read`)。撤回は `revoked_at` を入れる。行は消さない。
-> - **「同意しない」は行にしない**: 有効な行は (user_id, provider) ごとに 1 件の部分ユニーク索引があり、拒否の行があると後の同意が作れなくなる。
->   画面の「あとで」は、ブラウザの localStorage に 24 時間の期限を持つだけで、サーバーには何も記録しない。
-> - **事業者は 3 社**: `xai` / `google` / `openai`。`anthropic` は現在 AI の呼び出しに使っていないので同意の対象にしていない。
->   Perplexity (栄養推定の Edge Function が料理名・食材・量だけを送る) は、弁護士の判断が出るまで対象にしていない
->   (加えるなら `provider` の CHECK の変更が先に要る)。
-> - **強制は未実装 (T18)**: §4.2 の「同意しない場合は AI 機能を使えない」は、まだ入れていない。いまは同意画面で「同意する」「あとで」の
->   どちらを選んでも、利用者が始めた AI の操作は進む。同意の有無で AI の呼び出しを止める処理は別タスクで入れる。
+> - **未同意なら AI へ送らない (§4.2 の「同意しない場合は AI 機能を使えない」)**: 全事業者について現行の版の有効な同意が無い利用者
+>   (一度も同意していない・撤回した・古い版に同意した) のデータは、サーバーが外国の AI 事業者へ送る手前で止める。
+>   判定は `supabase/functions/_shared/ai-consent.ts` (`runAiConsentCheck` / `decideAiConsent`) の 1 か所で、
+>   Next.js は `src/lib/ai/consent-guard.ts`、Edge Functions は `supabase/functions/_shared/ai-consent-guard.ts` から呼ぶ。
+>   止めたときは 403 `{ code: "AI_CONSENT_REQUIRED" }`、同意の状況を読めないときは 503 `{ code: "AI_CONSENT_CHECK_FAILED" }` (送らない。fail-closed)。
+>   API Route だけでなく、利用者の JWT で直接呼べる Edge Function、cron (`/api/cron/process-menu-queue`)、
+>   料理の画像の作成のジョブ (`process-meal-image-jobs`。献立の持ち主で判定) でも止める。送る経路の一覧は
+>   `tests/ai-consent-enforcement.test.ts` にあり、判定を呼び忘れた経路があるとテストが落ちる。未同意なら送らないことは、
+>   `tests/ai-consent-enforcement-routes.test.ts` が API Route ごとに実際に呼んで、`tests/ai-consent-enforcement-edge.test.ts` が
+>   Edge Function ごとに (構文木と、代表の関数は実際のハンドラで) 確かめる。
+>   記録の保存と AI のコメントが一緒になっている API (健康診断・血液検査の保存、ホームの栄養の集計、相談を閉じる) は、
+>   保存・集計はして AI の部分だけを省き、応答の `aiSkipped` で知らせる。画面はそれを読み、AI の分析の代わりに
+>   「記録は保存した。AI の分析は同意すると行える」旨の一文と同意の確認ページへの導線を出す (相談は、要約を作らなかった旨の一文)。
+>   受け付けたあとに止めたとき (キューの献立生成・献立生成の続きの工程・買い物リストの作り直し) は、リクエストの行の失敗の欄
+>   (`weekly_menu_requests.error_message` / `shopping_list_requests.result.error`) に、コードではなく応答の本文と同じ人向けの文を書く
+>   (`aiConsentDeniedStoredMessage`。画面はこの欄をそのまま出すため)。続きの工程を呼ぶ側は、呼んだ先が止めたら再試行せず、
+>   この文を内部の文で上書きしない (`invokeMenuContinuation`、Next.js 側は `generate-menu-v4-retry.ts` / `generate-menu-v5-retry.ts`)。
+>   画面は失敗の文を `handleStoredAiConsentFailure` に通し、「同意が必要です」の文なら同意画面へ案内して、自分のエラー表示は出さない
+>   (書く側は `tests/ai-consent-stored-failure.test.ts`、読む側は `tests/ai-consent-stored-failure-readers.test.ts` が検査する)。
+> - **同意画面**: 押せるのは「同意する」と「同意しない」(Esc も同じ)。AI の操作の前に未同意なら出し、「同意しない」なら操作をやめる。
+>   「同意しない」は行にしない (有効な行は (user_id, provider) ごとに 1 件の部分ユニーク索引があり、拒否の行があると後の同意が作れなくなる)。
+>   次に AI の操作をしたときに、もう一度出す。サーバーに止められたとき (画面の状況が古いなど) は、全画面共通の同意画面
+>   (`src/components/consent/AiConsentRequiredHost.tsx`) が出る。画面を開くと自動で AI に頼む処理 (栄養士のコメントなど) は、
+>   同意画面を出さずに案内の一文だけを出す。アプリ (apps/mobile) は、止められたら同意画面 (`/settings/ai-consent` を WebView で開く) へ案内する。
+>   アプリの同意画面は画面の遷移で開くので、案内の「同意画面を開く」を押した時点で開いているモーダル (シート) が残ると、
+>   同意画面がその下に隠れる。モーダルの上に開いた部品は自分で案内を出さず、開いた側が自分のモーダルも閉じてから案内を出す。
+>   画面そのものを modal で開くもの (ルートの Stack で `presentation: "modal"` の食事の新規作成 `meals/new`) は、iOS では
+>   そこから移った同意画面がその画面の下に入るので、案内の「同意画面を開く」を押したときに自分を閉じてから移る
+>   (規則は `apps/mobile/src/lib/ai-consent.ts` の先頭。入れ子と modal で開く画面は `tests/ai-consent-mobile-modal-nesting.test.ts` が検査する)。
 > - 同意画面の文面は、弁護士の確認が済むまで**仮**。画面は `src/components/consent/AiDataConsentModal.tsx`、
->   確認と撤回のページは `/settings/ai-consent`。
+>   確認と撤回のページは `/settings/ai-consent`。Web の設定 (`/settings` の「データとプライバシー」) とアプリの設定タブに
+>   「AI へのデータ提供の同意」の項目を置き、そこから開く (案内の一文が「設定の「AI へのデータ提供の同意」から」と指す先)。
+>   既存の利用者は全員「未同意」から始まり、AI 機能を使おうとした時点で同意画面が出る。
 
 ---
 
