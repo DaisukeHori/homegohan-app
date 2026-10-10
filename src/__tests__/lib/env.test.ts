@@ -416,7 +416,7 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     }
   });
 
-  it('値を読む場所が決まっている変数 (CRON_SECRET・CRON_SECRET_PREVIOUS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
+  it('値を読む場所が決まっている変数 (CRON_SECRET・CRON_SECRET_PREVIOUS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・OPS_ALERT_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
     const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
 
     expect(sealed.map((entry) => [entry.name, entry.readOnlyBy]).sort()).toEqual([
@@ -425,6 +425,10 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       // #1174 の同意ゲートのフラグ。middleware (Edge Runtime) が lib/legal-consent.ts の isLegalConsentFlagOn で読む
       ['LEGAL_CONSENT_ENFORCE', 'lib/legal-consent.ts'],
       ['LEGAL_CONSENT_NOTICE', 'lib/legal-consent.ts'],
+      // #1157 エラー急増の運用メール。未設定・不正な値の扱い (ログと応答の status) を cron の route 1 か所に置く
+      ['OPS_ALERT_COOLDOWN_MINUTES', 'src/app/api/cron/app-log-alerts/route.ts'],
+      ['OPS_ALERT_EMAIL', 'src/app/api/cron/app-log-alerts/route.ts'],
+      ['OPS_ALERT_ERROR_THRESHOLD', 'src/app/api/cron/app-log-alerts/route.ts'],
     ]);
     for (const entry of sealed) {
       // 任意の変数にだけ付ける。読むファイルは実在する (ファイルを移したのに一覧が古いままにならない)
@@ -444,6 +448,12 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       getOptionalEnv('LEGAL_CONSENT_ENFORCE');
       // @ts-expect-error LEGAL_CONSENT_NOTICE も同じ
       getOptionalEnv('LEGAL_CONSENT_NOTICE');
+      // @ts-expect-error OPS_ALERT_EMAIL の値を読むのは cron の route (src/app/api/cron/app-log-alerts/route.ts) だけ
+      getOptionalEnv('OPS_ALERT_EMAIL');
+      // @ts-expect-error OPS_ALERT_ERROR_THRESHOLD も同じ
+      getOptionalEnv('OPS_ALERT_ERROR_THRESHOLD');
+      // @ts-expect-error OPS_ALERT_COOLDOWN_MINUTES も同じ
+      getOptionalEnv('OPS_ALERT_COOLDOWN_MINUTES');
       getOptionalEnv('RESEND_API_KEY'); // 値を読む場所が決まっていない任意の変数は渡せる
     };
     expect(typeof typeOnly).toBe('function');
