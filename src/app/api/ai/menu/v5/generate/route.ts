@@ -14,6 +14,7 @@ import type {
 import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { recordAiUsage } from '@/lib/plan/entitlements';
 import { addDaysToDate, todayLocal } from '@/lib/date-utils';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
@@ -244,6 +245,13 @@ export async function POST(request: Request) {
     const constraints: MenuGenerationConstraints = isPlainObject(body?.constraints)
       ? (body.constraints as MenuGenerationConstraints)
       : {};
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
+    // (記録に失敗しても止めない)。
+    // ここでキューに積み、AI へ送るのは cron (process-menu-queue) なので、送る側では記録しない。
+    // ただしキューの行 (weekly_menu_requests) は利用者が直接書けるので、この route を通らない行は記録されない
+    // (既知の穴。閉じるには書き込みを service role だけにする。tests/ai-usage-contract.test.ts の USER_WRITABLE_AI_QUEUES)
+    await recordAiUsage(user.id, 'menu_generation');
 
     // バックグラウンドジョブとしてキューに追加し、即座に requestId を返す
     const params = {

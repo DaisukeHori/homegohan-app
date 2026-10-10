@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { getNutrientDefinition, calculateDriPercentage } from '@homegohan/shared';
 import crypto from 'crypto';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { recordAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -219,7 +220,11 @@ export async function POST(request: Request) {
     const aiConsentDenied = await requireAiConsent(supabase, user.id);
     if (aiConsentDenied) return aiConsentDenied;
 
-    // 新規生成または再生成が必要
+    // 新規生成または再生成が必要 (ここから先は AI を呼ぶ)
+    // キャッシュを返す・生成中のステータスを返すだけの経路と、同意が無く止めた経路では AI を呼ばないので、ここまでは記録しない
+    // #1177 AI 利用回数の記録 (記録に失敗しても止めない)
+    await recordAiUsage(user.id, 'nutrition_advice');
+
     // まずpendingステータスでレコードを作成/更新
     const { data: cacheRecord, error: upsertError } = await supabase
       .from('nutrition_feedback_cache')

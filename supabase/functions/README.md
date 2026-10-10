@@ -204,6 +204,8 @@ supabase/functions/
 │   ├── auth.ts             # 認証ヘルパー（requireAuth: ユーザーの JWT、requireServiceRole: cron 用の共有シークレットか service role key。await 必須）
 │   ├── cron-secret.ts      # cron 用シークレットの照合（Next.js の src/lib/cron-auth.ts と共用。import なし・Deno/Node 固有 API なし。入れ替え中は CRON_SECRET_PREVIOUS も受け付ける。手順は ENV_SETUP.md）
 │   ├── cors.ts             # CORS設定（許可したオリジンにだけ CORS ヘッダーを返す。下の「CORS」を参照）
+│   ├── ai-usage-core.ts    # AI 利用回数の記録の共通部分（機能名の一覧・Next.js が付ける「記録済みの印」の署名と検証。Next.js の src/lib/plan/entitlements.ts と共用。import なし・Deno/Node 固有 API なし）
+│   ├── ai-usage.ts         # AI 利用回数の記録（ユーザーの JWT で直接呼ばれたときに記録する。下の「AI 利用回数の記録」を参照）
 │   ├── db-logger.ts        # ログ記録
 │   ├── log-sanitizer.ts    # ログ保存前の秘密情報マスキング・切り詰め（Next.js の src/lib/db-logger.ts と共用。import なし・Deno/Node 固有 API なし）
 │   ├── bulk-query.ts       # 集計バッチ向けの PostgREST の読み書き（失敗を例外にする・1 回の応答の上限 1000 行を超えて全件を取る・.in() の ids の分割）
@@ -274,6 +276,18 @@ CORS はブラウザだけが強制する仕組みです。Next.js の API ル�
 - ブラウザから Edge Function を直接呼ばないでください。権限の確認が要る処理は、Next.js の API ルートで確認してから、サーバーから Edge Function を呼びます（例: 管理者用のコンビニカタログ取り込みは `POST /api/admin/catalog/import` を経由します）。
 - モバイルアプリの WebView が読み込むのは Web アプリ自身（`EXPO_PUBLIC_WEB_URL`）のページなので、そこから呼ぶときの `Origin` も Web アプリのオリジンです。ネイティブ側の `fetch` は `Origin` を付けません。
 - 新しい関数を足すときは、`tests/edge-function-cors.test.ts` が、`Access-Control-Allow-Origin: *`（ワイルドカード）を書き込んでいないか、CORS ヘッダーを `_shared/cors.ts` 以外に直書きしていないか、バッチ専用の関数に CORS を付けていないかを検査します。`requireServiceRole` を使う関数を足したら同じテストの `BATCH_ONLY_SOURCES` に、`_shared/cors.ts` を使う関数を足したら `USER_FACING_SOURCES` に、一覧として足してください。
+
+### AI 利用回数の記録
+
+AI を使う処理は、利用回数を記録します (#1177)。**記録だけで、止めません**（上限と比べて止める処理と上限の値は #1149 / T40 が足します）。記録する先は DB の `record_ai_usage`（`ai_usage_counters`。日付は JST）で、service role だけが実行できます。
+
+- **ユーザーの JWT を確かめる関数**（`requireAuth` / `auth.getUser`）は、確かめた経路で `recordEdgeAiUsage(req, userId, feature)`（`_shared/ai-usage.ts`）を呼びます。Next.js の API ルートを経由せず、ユーザーの JWT で直接呼ばれた場合に、記録がすり抜けないようにするためです（#1153）。
+- **service role / cron で呼ばれる経路では呼びません。** Next.js の API ルートが記録済みです（献立生成・AI 相談・買い物リスト・料理画像）。献立生成のキュー（`weekly_menu_requests`）は、積む時点（`POST /api/ai/menu/v5/generate`）で記録します。
+- **順番は「同意の判定 → 利用回数の記録 → AI への送信」です。** 外国の AI 事業者への提供の同意（#1154。`requireAiConsentForUser` / `checkAiConsent`）が無くて止めた呼び出しは記録しません。JWT を確かめたブロックの中で判定する関数（`knowledge-gpt`）は、判定を通ったあとで `directJwtUserId` に代入します。service role の経路と合流してから判定する関数（`generate-menu-v4` / `v5`・`regenerate-shopping-list-v2`）は、判定のあとの `if (directJwtUserId)` の中で記録します。
+- **既知の穴（記録されない経路）:** キューのテーブル `weekly_menu_requests`（Vercel Cron の `process-menu-queue` が取り出し、`generate-menu-v5` を service role で呼ぶ）と `meal_image_jobs`（`process-meal-image-jobs` が処理する）は、RLS で利用者が自分の行を直接 INSERT / UPDATE できます。API ルートを通らずに PostgREST から積んだ行や、`status` などを書き換えて積み直した行は、どこでも記録されません。取り出す側で記録しても、取り直し（止まったワーカーの続き）と見分ける列も利用者が書けるので、記録の仕方では閉じられません。閉じるには、これらのテーブルへの書き込みを service role だけにします（権限を取り上げる DB の変更なので、別の Issue で行います）。`tests/ai-usage-contract.test.ts` の `USER_WRITABLE_AI_QUEUES` が、この穴が残っていることを migration から確かめていて、閉じると落ちるので、そのときにこの記述も直してください。
+- **Next.js がユーザーの JWT で呼ぶ関数**（写真解析の `analyze-meal-photo` / `analyze-health-photo`、AI 相談のアクション実行が呼ぶ `generate-menu-v4` / `v5`）は、Next.js が `x-hg-ai-usage-recorded` ヘッダー（service role key で署名した印。5 分以内・同じユーザーのときだけ有効）を付けて呼びます。印が合えば、Edge 側では記録しません。印を検証できなければ記録する側に倒します（二重に記録するだけで、AI の利用は止まりません）。
+- **失敗しても止めません。** DB の関数が失敗しても（エラー・応答が 3 秒を超える・この migration が未適用）、`app_logs` に残して先へ進みます。
+- どの関数が記録するかは、同意の判定と同じ一覧（`tests/helpers/ai-consent-enforced-paths.ts` の `ENFORCED_EDGE` / `EXEMPT_EDGE` の `usage` の列）に書きます。`tests/ai-usage-contract.test.ts` が、記録を呼ぶ関数と機能名がこの列と一致すること、ユーザーの JWT を確かめて AI へ送る関数がどれも記録することを検査します。
 
 ### ローカルでのテスト
 

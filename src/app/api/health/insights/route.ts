@@ -3,6 +3,7 @@ import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { generateGeminiJson } from '@/lib/ai/gemini-json';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { recordAiUsage } from '@/lib/plan/entitlements';
 import { clampIntParam } from '@/lib/http-params';
 import { fetchRecentMealDays, formatMealDaysForPrompt } from '@/lib/health-insight-meals';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
@@ -216,6 +217,10 @@ ${formatMealDaysForPrompt(mealDays) || 'データなし'}
 各インサイトの summary は 2〜3 文の本文、recommendations は具体的な行動 (3 件まで) にしてください。
 priority は low / medium / high / critical のいずれかで、医師への相談を勧めるほどの逸脱だけを critical にしてください。
 is_alert は基準値逸脱や急激な変化がある場合のみ true にしてください。`;
+
+  // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
+  // (記録に失敗しても止めない)
+  await recordAiUsage(user.id, 'health_review');
 
   let generatedInsights: GeneratedInsight[] = [];
   try {

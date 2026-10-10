@@ -12,6 +12,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
+import { recordEdgeAiUsage } from "../_shared/ai-usage.ts";
 import {
   buildSearchQueryBase,
   buildUserContextForPrompt,
@@ -2736,6 +2737,9 @@ Deno.serve(async (req: Request) => {
 
   let requestId: string | null = null;
   let userId: string | null = null;
+  // #1177 ユーザー自身の JWT で直接呼ばれたときの利用者 ID (この経路だけ、AI へ送る直前に利用回数を記録する)。
+  // service role の呼び出し (Next.js の API ルート・cron・続きの工程 _continue) は null のまま (呼び出し元が記録済み)
+  let directJwtUserId: string | null = null;
 
   try {
     const body = await req.json().catch(() => ({}));
@@ -2802,6 +2806,8 @@ Deno.serve(async (req: Request) => {
           { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
+
+      directJwtUserId = userData.user.id;
     }
 
     // 献立の生成は、利用者のデータ (好み・アレルギー・健康目標・冷蔵庫の食材など) を外国の AI 事業者へ送る。
@@ -2842,6 +2848,13 @@ Deno.serve(async (req: Request) => {
     }
 
     console.log(`📍 Starting step ${currentStep} for request ${requestId}`);
+    // #1177 AI 利用回数の記録。AI へ送る直前 (所有の確認・同意などの判定のあと、生成を始める前) に、生成 1 回につき 1 回記録する
+    // (究極モードも 1 回)。ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js の API ルート・cron は service role で呼び、
+    // 呼び出し元が記録済み)。Next.js が記録済みの印があれば記録しない。記録に失敗しても止めない
+    if (directJwtUserId) {
+      await recordEdgeAiUsage(req, directJwtUserId, "menu_generation");
+    }
+
     const invocationContext: V4InvocationContext = {
       startedAtMs: Date.now(),
       softBudgetMs: DEFAULT_V4_INVOCATION_SOFT_BUDGET_MS,
