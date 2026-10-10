@@ -15,7 +15,10 @@
 // ここで確かめること (DB もネットワークも使わず、ソースだけを見る):
 //   - verify_jwt = false の関数は、どれも関数のディレクトリがあり、先頭で自前の認証をする
 //     (requireServiceRole / requireAuth / auth.getUser を、本文を読む前・DB に触る前に呼ぶ)
-//   - DB から pg_net (net.http_post) で呼ばれる関数 (migration から抜き出す) は、どれも verify_jwt = false
+//   - DB から pg_net (net.http_post など) で呼ばれる関数は、どれも verify_jwt = false。
+//     呼び出しは migration の全文から抜き出す (SQL 関数の本文だけでなく、関数で包まない
+//     cron.schedule('job', '...', $$ SELECT net.http_post(...) $$)、DO ブロック、素の SELECT も)。
+//     別のやり方で数え直した呼び出しの数と突き合わせ、拾えない呼び出し・呼び先が読めない呼び出しがあれば赤にする
 //   - 先頭で requireServiceRole を呼ぶ関数 (CRON_SECRET を受け付ける関数) は、どれも verify_jwt = false
 //   - GitHub Actions のデプロイは、名前を指定しない functions deploy で config.toml を読み (--no-verify-jwt を付けない)、
 //     config.toml を変えただけでも動く
@@ -160,16 +163,127 @@ const HANDLER_AUTH = new Map<string, HandlerAuth>(
  * 先頭で呼んでいるかは、verify_jwt = false の関数すべてについて別に確かめる。
  */
 const SERVICE_ROLE_FUNCTIONS = DEPLOYED_FUNCTIONS.filter((name) =>
-  /await\s+requireServiceRole\(\s*req\s*\)/.test(HANDLER_AUTH.get(name)?.source ?? ''),
+  // 引数の名前や await の有無を問わずに拾う (狭く拾うと、verify_jwt = false を求める対象から漏れる)。
+  // 先頭で正しく呼んでいるか (await requireServiceRole(req)) は、verify_jwt = false の関数として別に確かめる
+  /\brequireServiceRole\s*\(/.test(HANDLER_AUTH.get(name)?.source ?? ''),
 );
 
 // ---------------------------------------------------------------------------
 // DB (pg_net) から呼ばれる関数
 // ---------------------------------------------------------------------------
 
-/** SQL の -- コメントを除く (' の中の -- は残す) */
-function stripSqlComments(sql: string): string {
+/**
+ * DB から HTTP を送る呼び出し。pg_net の net.http_post / http_get / http_delete (スキーマ名は問わない。
+ * extensions.http_post のような同期の http 拡張も同じく数える) と、Database Webhooks の supabase_functions.http_request。
+ * 自前で包んだ関数 (my_http_post( のように前に文字が付く名前) は数えない (包んだ関数の本文の中の呼び出しを数える)。
+ */
+const HTTP_CALL = /\b(?:http_(?:post|get|delete)|http_request)"?\s*\(/gi;
+/** 呼び出し元の名前に使う、文の先頭の語の数 (CREATE FUNCTION / cron.schedule / DO のどれでもない文のとき) */
+const LABEL_WORDS = 6;
+
+const countHttpCalls = (code: string) => [...code.matchAll(HTTP_CALL)].length;
+
+type SqlScan = {
+  /** コメント (-- と /* *\/) を空白に置き換えた SQL (位置と改行は元のまま) */
+  code: string;
+  /** 最上位の文 (ドル引用・' の外の ; で区切る)。[start, end) */
+  statements: ReadonlyArray<{ start: number; end: number }>;
+};
+
+/**
+ * migration を、コメントを除いた SQL と、最上位の文の範囲に分ける。
+ * ドル引用 ($$ ... $$ / $tag$ ... $tag$) の中身は SQL / PL/pgSQL のコードとして読む (中の -- コメントも除く)。
+ * ドル引用の中では、閉じる印がほかのどの状態 (' の中・コメントの中) よりも先に効く (PostgreSQL の字句解析と同じ)。
+ */
+function scanSql(sql: string): SqlScan {
+  const out = sql.split('');
+  const blank = (i: number) => {
+    if (out[i] !== '\n') out[i] = ' ';
+  };
+  const statements: Array<{ start: number; end: number }> = [];
+  const dollarTags: string[] = [];
+  let mode: 'code' | 'single' | 'double' | 'line' | 'block' = 'code';
+  let blockDepth = 0;
+  let statementStart = 0;
+  let i = 0;
+  while (i < sql.length) {
+    if (dollarTags.length > 0 && sql[i] === '$') {
+      const closing = dollarTags.findLastIndex((tag) => sql.startsWith(tag, i));
+      if (closing >= 0) {
+        const tag = dollarTags[closing];
+        dollarTags.length = closing;
+        mode = 'code';
+        i += tag.length;
+        continue;
+      }
+    }
+    const ch = sql[i];
+    if (mode === 'line') {
+      if (ch === '\n') mode = 'code';
+      else blank(i);
+      i += 1;
+    } else if (mode === 'block') {
+      if (sql.startsWith('/*', i)) {
+        blockDepth += 1;
+        blank(i);
+        blank(i + 1);
+        i += 2;
+      } else if (sql.startsWith('*/', i)) {
+        blockDepth -= 1;
+        blank(i);
+        blank(i + 1);
+        i += 2;
+        if (blockDepth === 0) mode = 'code';
+      } else {
+        blank(i);
+        i += 1;
+      }
+    } else if (mode === 'single' || mode === 'double') {
+      const quote = mode === 'single' ? "'" : '"';
+      if (ch === quote && sql[i + 1] === quote) i += 2;
+      else {
+        if (ch === quote) mode = 'code';
+        i += 1;
+      }
+    } else if (sql.startsWith('--', i)) {
+      mode = 'line';
+    } else if (sql.startsWith('/*', i)) {
+      mode = 'block';
+      blockDepth = 1;
+      blank(i);
+      blank(i + 1);
+      i += 2;
+    } else if (ch === "'") {
+      mode = 'single';
+      i += 1;
+    } else if (ch === '"') {
+      mode = 'double';
+      i += 1;
+    } else if (ch === '$' && !/[A-Za-z0-9_]/.test(sql[i - 1] ?? '')) {
+      const opening = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
+      if (opening) {
+        dollarTags.push(opening[0]);
+        i += opening[0].length;
+      } else i += 1;
+    } else if (ch === ';' && dollarTags.length === 0) {
+      statements.push({ start: statementStart, end: i + 1 });
+      statementStart = i + 1;
+      i += 1;
+    } else {
+      i += 1;
+    }
+  }
+  if (statementStart < sql.length) statements.push({ start: statementStart, end: sql.length });
+  return { code: out.join(''), statements };
+}
+
+/**
+ * scanSql とは別の、単純な数え直し用のコメント除き (行ごとの -- と、/* *\/)。
+ * 抜き出し (scanSql) が呼び出しを取りこぼしていないかを、別のやり方で数えた数と突き合わせるために使う。
+ */
+function stripSqlCommentsSimply(sql: string): string {
   return sql
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .split('\n')
     .map((line) => {
       let inQuote = false;
@@ -182,40 +296,83 @@ function stripSqlComments(sql: string): string {
     .join('\n');
 }
 
-type DbCaller = { migration: string; sqlFunction: string; body: string; callees: string[] };
+type DbCaller = {
+  migration: string;
+  /** 文の始まりの行 (1 から) */
+  line: number;
+  /** 「関数 public.x」「cron.schedule('job')」「DO ブロック」など */
+  label: string;
+  /** コメントを除いた文 */
+  code: string;
+  /** 文の中の HTTP の呼び出しの数 */
+  calls: number;
+  callees: string[];
+};
+
+/** 文の名前。CREATE FUNCTION なら関数名、関数で包まない cron.schedule ならジョブ名、DO ブロックならそう書く */
+function callerLabel(code: string): string {
+  const fn = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([^\s(]+)/i.exec(code);
+  if (fn) return `関数 ${fn[1].replace(/"/g, '')}`;
+  const job = /cron\s*\.\s*schedule\s*\(\s*'([^']*)'/i.exec(code);
+  if (job) return `cron.schedule('${job[1]}')`;
+  if (/^\s*DO\b/i.test(code)) return 'DO ブロック';
+  return code.trim().split(/\s+/).slice(0, LABEL_WORDS).join(' ');
+}
 
 /**
- * migration の中の、net.http_post で Edge Function を呼ぶ SQL 関数と、その呼び先。
- * 呼び先は、本文の '.../functions/v1/<name>' の直書きと、'.../functions/v1/' || 引数 の形なら本文の許可リストの関数名。
+ * 文の中の呼び先。'.../functions/v1/<name>' の直書きと、'.../functions/v1/' || 引数 の形なら、
+ * 文の中に ' で書かれた、配られる関数の名前 (許可リスト)。
  */
-function dbCallers(): DbCaller[] {
-  const callers: DbCaller[] = [];
-  const files = fs
-    .readdirSync(path.join(ROOT, MIGRATIONS_DIR))
-    .filter((file) => file.endsWith('.sql') && !file.endsWith('.down.sql'))
-    .sort();
-  for (const file of files) {
-    const sql = stripSqlComments(read(path.join(MIGRATIONS_DIR, file)));
-    const definitions = sql.matchAll(
-      /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([^\s(]+)\s*\([\s\S]*?\bAS\s+\$([A-Za-z_]*)\$([\s\S]*?)\$\2\$/gi,
-    );
-    for (const [, sqlFunction, , body] of definitions) {
-      if (!/net\.http_post\s*\(/i.test(body)) continue;
-      const callees = new Set<string>();
-      for (const m of body.matchAll(/\/functions\/v1\/([a-z0-9-]+)'/g)) callees.add(m[1]);
-      if (/\/functions\/v1\/'\s*\|\|/.test(body)) {
-        for (const m of body.matchAll(/'([a-z0-9-]+)'/g)) {
-          if (DEPLOYED_FUNCTIONS.includes(m[1])) callees.add(m[1]);
-        }
-      }
-      callers.push({ migration: file, sqlFunction: sqlFunction.replace(/"/g, ''), body, callees: [...callees].sort() });
+function calleesOf(code: string, deployedFunctions: readonly string[]): string[] {
+  const callees = new Set<string>();
+  for (const m of code.matchAll(/\/functions\/v1\/([A-Za-z0-9_-]+)/g)) callees.add(m[1]);
+  if (/\/functions\/v1\/'\s*\|\|/.test(code)) {
+    for (const m of code.matchAll(/'([a-z0-9-]+)'/g)) {
+      if (deployedFunctions.includes(m[1])) callees.add(m[1]);
     }
+  }
+  return [...callees].sort();
+}
+
+/**
+ * 1 本の migration の中の、DB から HTTP で呼び出す文と、その呼び先。
+ * SQL 関数の本文に限らず、最上位の文すべてを見る (関数で包まない cron.schedule('job', '...', $$ SELECT net.http_post(...) $$)、
+ * DO ブロック、素の SELECT net.http_post(...) も拾う)。
+ */
+function dbCallersOf(migration: string, sql: string, deployedFunctions: readonly string[]): DbCaller[] {
+  const { code, statements } = scanSql(sql);
+  const callers: DbCaller[] = [];
+  for (const { start, end } of statements) {
+    const statement = code.slice(start, end);
+    const calls = countHttpCalls(statement);
+    if (calls === 0) continue;
+    const firstToken = start + (statement.length - statement.trimStart().length);
+    callers.push({
+      migration,
+      line: code.slice(0, firstToken).split('\n').length,
+      label: callerLabel(statement),
+      code: statement,
+      calls,
+      callees: calleesOf(statement, deployedFunctions),
+    });
   }
   return callers;
 }
 
-const DB_CALLERS = dbCallers();
+/** ゲートウェイの JWT 検証で止められる呼び先 (verify_jwt = false でない。config.toml に無い名前も含む) */
+const calleesStoppedByGateway = (callees: readonly string[], verifyJwt: ReadonlyMap<string, boolean>) =>
+  callees.filter((name) => verifyJwt.get(name) !== false);
+
+/** supabase/migrations の .sql すべて (名前で除外しない。除外した形の migration に書いた呼び出しを見落とさないため) */
+const MIGRATION_FILES = fs
+  .readdirSync(path.join(ROOT, MIGRATIONS_DIR))
+  .filter((file) => file.endsWith('.sql'))
+  .sort();
+const MIGRATION_SQL = new Map(MIGRATION_FILES.map((file) => [file, read(path.join(MIGRATIONS_DIR, file))]));
+
+const DB_CALLERS = MIGRATION_FILES.flatMap((file) => dbCallersOf(file, MIGRATION_SQL.get(file) ?? '', DEPLOYED_FUNCTIONS));
 const DB_CALLEES = [...new Set(DB_CALLERS.flatMap((caller) => caller.callees))].sort();
+const callerName = (caller: DbCaller) => `${caller.migration}:${caller.line} ${caller.label}`;
 
 // ---------------------------------------------------------------------------
 
@@ -245,9 +402,78 @@ describe('検査の道具が空振りしない', () => {
   it(`DB からの呼び出し先を抜き出せている (${SEGMENT_STATS_FUNCTION} とカタログ取り込みを含む)`, () => {
     expect(DB_CALLEES).toContain(SEGMENT_STATS_FUNCTION);
     expect(DB_CALLEES.some((name) => /^import-.+-catalog$/.test(name))).toBe(true);
-    for (const caller of DB_CALLERS) {
-      expect(caller.callees, `${caller.migration} の ${caller.sqlFunction} の呼び先が取れない`).not.toHaveLength(0);
-    }
+  });
+
+  // 以下は合成した migration で、SQL 関数の本文以外に書いた呼び出しも拾えることを確かめる (#1406 のレビューの指摘)
+  const SYNTHETIC_MIGRATION = 'synthetic.sql';
+  const FUNCTION_URL = (name: string) => `'https://example.supabase.co/functions/v1/${name}'`;
+  const BEARER = `'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = '${VAULT_CRON_SECRET_NAME}')`;
+  const callersOf = (sql: string) => dbCallersOf(SYNTHETIC_MIGRATION, sql, DEPLOYED_FUNCTIONS);
+
+  it('関数で包まない cron.schedule の中の net.http_post を拾い、呼び先と、ゲートウェイで止まることが分かる', () => {
+    // Supabase の文書が標準として示す形。verify_jwt が既定 (true) の関数を呼ぶと、本番では関数に届かない
+    const callee = 'backfill-ingredient-embeddings';
+    expect(VERIFY_JWT.get(callee) ?? true).toBe(true);
+    const sql = [
+      '-- 毎時',
+      `SELECT cron.schedule('x', '0 * * * *', $$ SELECT net.http_post(url := ${FUNCTION_URL(callee)}, headers := jsonb_build_object(${BEARER})); $$);`,
+    ].join('\n');
+    const callers = callersOf(sql);
+    expect(callers.map(({ label, line, calls, callees }) => ({ label, line, calls, callees }))).toEqual([
+      { label: "cron.schedule('x')", line: 2, calls: 1, callees: [callee] },
+    ]);
+    expect(calleesStoppedByGateway(callers[0].callees, VERIFY_JWT)).toEqual([callee]);
+  });
+
+  it('DO ブロック・素の SELECT・ドル引用に名前を付けた形・Database Webhooks の http_request も拾う', () => {
+    const sql = [
+      `DO $do$ BEGIN PERFORM net.http_post(url := ${FUNCTION_URL('a-fn')}, headers := jsonb_build_object(${BEARER})); END $do$;`,
+      `SELECT "net"."http_get"(url := ${FUNCTION_URL('b-fn')});`,
+      `SELECT cron.schedule('c', '5 * * * *', $job$ SELECT net.http_delete(${FUNCTION_URL('c-fn')}); $job$);`,
+      `CREATE TRIGGER t AFTER INSERT ON public.x FOR EACH ROW EXECUTE FUNCTION supabase_functions.http_request(${FUNCTION_URL('d-fn')}, 'POST', '{}', '{}', '1000');`,
+    ].join('\n');
+    expect(callersOf(sql).map(({ label, line, callees }) => ({ label, line, callees }))).toEqual([
+      { label: 'DO ブロック', line: 1, callees: ['a-fn'] },
+      { label: 'SELECT "net"."http_get"(url := \'https://example.supabase.co/functions/v1/b-fn\');', line: 2, callees: ['b-fn'] },
+      { label: "cron.schedule('c')", line: 3, callees: ['c-fn'] },
+      { label: 'CREATE TRIGGER t AFTER INSERT ON', line: 4, callees: ['d-fn'] },
+    ]);
+  });
+
+  it('SQL 関数の本文の呼び出しは関数ごとに拾い、許可リストの関数名も呼び先にする (本文の ; や -- では区切らない)', () => {
+    const allowed = 'import-seven-eleven-catalog';
+    const sql = [
+      'CREATE OR REPLACE FUNCTION public.f(p text) RETURNS bigint LANGUAGE plpgsql AS $$',
+      'DECLARE v bigint; -- 区切りではない ;',
+      `BEGIN IF p NOT IN ('${allowed}') THEN RAISE EXCEPTION 'x;--'; END IF;`,
+      `  SELECT net.http_post(url := 'https://example.supabase.co/functions/v1/' || p, headers := jsonb_build_object(${BEARER})) INTO v;`,
+      '  RETURN v; END; $$;',
+      // ドル引用の文字列の中の ' (it's) で、後ろの文の区切りを見失わない (閉じる $$ が先に効く)
+      "COMMENT ON FUNCTION public.f(text) IS $$it's; not a call$$;",
+      `CREATE FUNCTION public.g() RETURNS void LANGUAGE sql AS $fn$ SELECT net.http_post(${FUNCTION_URL('g-fn')}) $fn$;`,
+    ].join('\n');
+    expect(callersOf(sql).map(({ label, line, callees }) => ({ label, line, callees }))).toEqual([
+      { label: '関数 public.f', line: 1, callees: [allowed] },
+      { label: '関数 public.g', line: 7, callees: ['g-fn'] },
+    ]);
+  });
+
+  it('コメントの中の呼び出しは数えず、呼び先が読めない呼び出しは呼び先なしで残す (下のテストで赤になる)', () => {
+    const sql = [
+      '-- SELECT net.http_post(url := \'https://example.supabase.co/functions/v1/commented\');',
+      '/* SELECT net.http_post(url := \'https://example.supabase.co/functions/v1/block\'); */',
+      "SELECT net.http_post(url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'some_url'));",
+    ].join('\n');
+    expect(callersOf(sql).map(({ line, calls, callees }) => ({ line, calls, callees }))).toEqual([
+      { line: 3, calls: 1, callees: [] },
+    ]);
+    expect(countHttpCalls(stripSqlCommentsSimply(sql))).toBe(1);
+  });
+
+  it('数え直しは抜き出しと別のやり方で数える (抜き出しが取りこぼすと数が合わなくなる)', () => {
+    const sql = `SELECT cron.schedule('x', '0 * * * *', $$ SELECT net.http_post(${FUNCTION_URL('a-fn')}); SELECT net.http_get(${FUNCTION_URL('b-fn')}); $$);`;
+    expect(countHttpCalls(stripSqlCommentsSimply(sql))).toBe(2);
+    expect(callersOf(sql).reduce((sum, caller) => sum + caller.calls, 0)).toBe(2);
   });
 
   it('requireServiceRole で認証する関数を見つけられている (要求を渡すだけの index.ts も、渡し先の関数を見る)', () => {
@@ -268,18 +494,40 @@ describe('verify_jwt = false の関数は、先頭で自前の認証をする', 
 });
 
 describe('JWT でない Bearer で呼ばれる関数は、verify_jwt = false', () => {
-  it.each(DB_CALLERS.map((caller) => [caller.sqlFunction, caller] as const))(
+  it('migration の中の DB からの HTTP の呼び出しを、どれも呼び出し元として拾えている (数え直しと一致)', () => {
+    // 抜き出し (文ごと) が取りこぼした呼び出しは、下の verify_jwt の検査から漏れる。別のやり方で数えた数と、migration ごとに突き合わせる
+    const mismatched = MIGRATION_FILES.flatMap((file) => {
+      const collected = DB_CALLERS.filter((caller) => caller.migration === file).reduce((sum, caller) => sum + caller.calls, 0);
+      const recounted = countHttpCalls(stripSqlCommentsSimply(MIGRATION_SQL.get(file) ?? ''));
+      return collected === recounted ? [] : [`${file}: 拾えた ${collected} / 数え直し ${recounted}`];
+    });
+    expect(mismatched).toEqual([]);
+    // 空振りしていないこと (今の migration には、SQL 関数 2 つの中に呼び出しがある)
+    expect(DB_CALLERS.length).toBeGreaterThan(0);
+  });
+
+  it.each(DB_CALLERS.map((caller) => [callerName(caller), caller] as const))('%s: 呼び先の Edge Function が読める', (_name, caller) => {
+    // URL を変数や Vault から組み立てていて関数名が読めない呼び出しは、verify_jwt を確かめられないので赤にする
+    // ('.../functions/v1/<name>' と直書きするか、'.../functions/v1/' || 引数 なら許可リストを同じ文に書く)
+    expect(caller.callees).not.toHaveLength(0);
+  });
+
+  it.each(DB_CALLERS.map((caller) => [callerName(caller), caller] as const))(
     '%s: Vault の app_cron_secret を Bearer に付けて呼ぶ (JWT ではない)',
     (_name, caller) => {
-      expect(caller.body).toContain(`'${VAULT_CRON_SECRET_NAME}'`);
-      expect(caller.body).toMatch(/'Bearer '\s*\|\|/);
+      expect(caller.code).toContain(`'${VAULT_CRON_SECRET_NAME}'`);
+      expect(caller.code).toMatch(/'Bearer '\s*\|\|/);
     },
   );
 
   it('DB (pg_cron → pg_net) から呼ばれる関数は、どれも verify_jwt = false', () => {
     // 外し忘れると、ゲートウェイが 401 (UNAUTHORIZED_INVALID_JWT_FORMAT) を返し、関数に届かない。
     // cron.job_run_details は succeeded のままなので、ここで止める
-    expect(DB_CALLEES.filter((name) => VERIFY_JWT.get(name) !== false)).toEqual([]);
+    expect(
+      DB_CALLERS.flatMap((caller) =>
+        calleesStoppedByGateway(caller.callees, VERIFY_JWT).map((name) => `${callerName(caller)} → ${name}`),
+      ),
+    ).toEqual([]);
   });
 
   it('DB から呼ばれる関数は、どれも先頭で requireServiceRole を呼ぶ (CRON_SECRET で認証する)', () => {

@@ -77,7 +77,7 @@ Supabase のゲートウェイは、既定で `Authorization: Bearer` が JWT �
 
 `supabase functions deploy`（名前を指定しない全体のデプロイ。GitHub Actions もこの形）は、`supabase/config.toml` の `verify_jwt` を関数ごとに読みます（supabase CLI 2.62.10 の `internal/functions/deploy/deploy.go` の `GetFunctionConfig`。指定が無い関数は `true`）。
 
-`verify_jwt = false` にしてよいのは、先頭で自前の認証（`requireServiceRole` / `requireAuth` / `auth.getUser`）をする関数だけです。`tests/edge-function-verify-jwt.test.ts` が、`config.toml` の一覧と関数の先頭の認証、migration の pg_net の呼び出し先を突き合わせます。
+`verify_jwt = false` にしてよいのは、先頭で自前の認証（`requireServiceRole` / `requireAuth` / `auth.getUser`）をする関数だけです。`tests/edge-function-verify-jwt.test.ts` が、`config.toml` の一覧と関数の先頭の認証、migration の pg_net の呼び出し先を突き合わせます。呼び出しは migration の全文から拾います（SQL 関数の本文だけでなく、関数で包まない `cron.schedule('job', '...', $$ SELECT net.http_post(...) $$)` や `DO` ブロックに書いても拾います）。呼び先の関数名が読めない呼び出し（URL を変数や Vault から組み立てる形）は赤になるので、`'.../functions/v1/<name>'` と直書きするか、`'.../functions/v1/' || 引数` なら同じ文に許可リストを書いてください。
 
 pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘密）で呼ばれる関数:
 
