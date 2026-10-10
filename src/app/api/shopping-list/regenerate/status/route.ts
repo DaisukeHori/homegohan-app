@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { shoppingListRequestResultForResponse } from '@/lib/shopping-list-request-error';
 
 /**
  * 買い物リスト再生成リクエストのステータス確認API
@@ -28,10 +29,13 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Request not found' }, { status: 404 });
   }
 
+  // result.error には、Edge Function (regenerate-shopping-list-v2) が catch で捕まえた例外の文面がそのまま入っている
+  // (DB の生のエラー文・外部の AI の応答の本文)。画面は result.error をそのまま出すので、こちらで書いた文 (同意) だけを
+  // そのまま返し、それ以外は固定の文にする。成功の stats などほかの項目はそのまま返す (#1172)
   return NextResponse.json({
     requestId: data.id,
     status: data.status,
     progress: data.progress,
-    result: data.result,
+    result: shoppingListRequestResultForResponse(data.result),
   });
 }

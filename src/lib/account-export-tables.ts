@@ -14,6 +14,8 @@
  * - 親テーブル経由の子テーブル (planned_meals など) は、親の user_id で絞る。
  */
 
+import { weeklyMenuRequestErrorMessageForResponse } from './weekly-menu-request-error';
+
 export type ExportRow = Record<string, unknown>;
 
 /** 行の絞り込み方 */
@@ -65,6 +67,17 @@ function redactSupportMessageSender(row: ExportRow, ctx: { userId: string }): Ex
   return { ...rest, sender: senderId === ctx.userId ? 'user' : 'support' };
 }
 
+/**
+ * 献立生成のリクエストの失敗の文 (error_message) には、Edge Function が捕まえた例外の文面
+ * (DB の生のエラー文・Edge Function の応答の本文) がそのまま入っていることがある。
+ * 状態の確認の API (GET /api/ai/menu/weekly/status) と同じく、こちらで書いた文 (同意・stale・中止・固定の文) だけを
+ * そのまま出し、それ以外は固定の文にする (#1172)
+ */
+function redactWeeklyMenuRequestErrorMessage(row: ExportRow): ExportRow {
+  if (!('error_message' in row)) return row;
+  return { ...row, error_message: weeklyMenuRequestErrorMessageForResponse(row.error_message) };
+}
+
 /** 出力するテーブル (この順で JSON に出る) */
 export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
   // ── プロフィール・設定 ───────────────────────────────────────────
@@ -105,6 +118,7 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
     columns:
       'id,user_id,start_date,status,prompt,constraints,inventory_image_url,detected_ingredients,' +
       'mode,target_date,target_meal_type,target_meal_id,error_message,created_at,updated_at',
+    transform: redactWeeklyMenuRequestErrorMessage,
   },
   { table: 'pantry_items', scope: self('user_id') },
   { table: 'shopping_lists', scope: self('user_id') },

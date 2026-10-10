@@ -23,6 +23,12 @@ import {
   type ExportSummary,
   type GenerateAccountExportOptions,
 } from '@/lib/account-export';
+import {
+  WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE,
+  WEEKLY_MENU_REQUEST_FAILED_MESSAGE,
+  WEEKLY_MENU_REQUEST_STALE_MESSAGE,
+} from '@/lib/weekly-menu-request-error';
+import { AI_CONSENT_CHECK_FAILED_MESSAGE, AI_CONSENT_REQUIRED_MESSAGE } from '../supabase/functions/_shared/ai-consent';
 import { createFakePostgrest, type FakePostgrestOptions, type FakeRow } from './helpers/fake-postgrest';
 
 const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -358,6 +364,46 @@ describe('generateAccountExport: 秘密・内部の列を出さない', () => {
     expect(json.data.weekly_menu_requests[0]).not.toHaveProperty('result_json');
     expect(json.data.weekly_menu_requests[0]).not.toHaveProperty('worker_id');
     expect(json.data.weekly_menu_requests[0]).not.toHaveProperty('attempt_count');
+  });
+
+  // #1172: 献立生成のリクエストの失敗の文には、Edge Function が捕まえた例外の文面 (DB の生のエラー文・Edge Function の
+  // 応答の本文) が入っていることがある。状態の確認の API と同じく、こちらで書いた文だけをそのまま出し、それ以外は固定の文にする
+  it('献立生成のリクエストの失敗の文: 生のエラー文は出さず固定の文にし、こちらで書いた文 (同意・stale・中止) はそのまま出す', async () => {
+    const RAW_DB = 'duplicate key value violates unique constraint "planned_meals_daily_meal_id_meal_type_key"';
+    const RAW_EDGE = 'V5 returned 500: {"error":"relation \\"planned_meals\\" does not exist"}';
+    const failedRow = (id: string, errorMessage: string | null) => ({
+      id, user_id: A, start_date: '2026-10-01', status: 'failed', prompt: `${id}-prompt`, error_message: errorMessage,
+      created_at: 't', updated_at: 't',
+    });
+    const tables = buildFixture();
+    tables.weekly_menu_requests = [
+      failedRow('w-1', RAW_DB),
+      failedRow('w-2', RAW_EDGE),
+      failedRow('w-3', AI_CONSENT_REQUIRED_MESSAGE),
+      failedRow('w-4', AI_CONSENT_CHECK_FAILED_MESSAGE),
+      failedRow('w-5', WEEKLY_MENU_REQUEST_STALE_MESSAGE),
+      failedRow('w-6', WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE),
+      failedRow('w-7', null),
+    ];
+
+    const { text, json } = await drain(tables, A);
+    const errorMessages = Object.fromEntries(
+      (json.data.weekly_menu_requests as Array<{ id: string; error_message: unknown }>).map((row) => [row.id, row.error_message]),
+    );
+
+    expect(errorMessages).toEqual({
+      'w-1': WEEKLY_MENU_REQUEST_FAILED_MESSAGE,
+      'w-2': WEEKLY_MENU_REQUEST_FAILED_MESSAGE,
+      'w-3': AI_CONSENT_REQUIRED_MESSAGE,
+      'w-4': AI_CONSENT_CHECK_FAILED_MESSAGE,
+      'w-5': WEEKLY_MENU_REQUEST_STALE_MESSAGE,
+      'w-6': WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE,
+      'w-7': null,
+    });
+    expect(text).not.toContain('planned_meals_daily_meal_id_meal_type_key');
+    expect(text).not.toContain('V5 returned 500');
+    // 失敗の文のほかの列はそのまま出す
+    expect(json.data.weekly_menu_requests[0]).toMatchObject({ id: 'w-1', status: 'failed', prompt: 'w-1-prompt' });
   });
 
   it('サポートへの問い合わせ: 運営の内部メモは出さず、返信者の ID は user / support に置き換える', async () => {

@@ -13,7 +13,8 @@
  *   - WEEKLY_MENU_REQUEST_FAILED_MESSAGE: それ以外の失敗の固定の文
  *
  * 書く側 (src/app/api の route と、それが呼ぶ markWeeklyMenuRequestFailed) は weeklyMenuRequestStoredErrorMessage を通して書く。
- * 読む側 (GET /api/ai/menu/weekly/status) は weeklyMenuRequestErrorMessageForResponse を通して返す。
+ * 読む側 (GET /api/ai/menu/weekly/status・アカウントのデータ書き出し (src/lib/account-export-tables.ts)) は
+ * weeklyMenuRequestErrorMessageForResponse を通して返す。
  * 読む側でも絞るのは、この変更より前に書かれた行と、Edge Function (generate-menu-v4 / v5) が自分で書く行
  * (例外の文面をそのまま書いている) にも、生の文が入っているため。
  */
