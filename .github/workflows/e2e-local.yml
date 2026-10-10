@@ -40,14 +40,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -155,7 +155,7 @@ jobs:
           echo "::group::containers"; docker ps -a || true; echo "::endgroup::"
 
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           # HTML レポート (tests/e2e/.report/) は手順名に fill の入力値 (パスワード) を平文で含むため上げない。
           # 失敗時のスクリーンショット・動画・エラー内容 (tests/e2e/.output/) だけを上げる
