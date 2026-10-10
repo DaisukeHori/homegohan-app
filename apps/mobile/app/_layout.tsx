@@ -11,10 +11,11 @@ import { useEffect } from "react";
 import { LogBox } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { ConfigErrorScreen } from "../src/components/ConfigErrorScreen";
 import { ErrorFallback } from "../src/components/ErrorFallback";
+import { resolveSupabaseEnv } from "../src/lib/env";
 import { ensurePushTokenRegistered } from "../src/lib/pushNotifications";
 import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
-import { PostHogProvider } from "../src/providers/PostHogProvider";
 import { ProfileProvider } from "../src/providers/ProfileProvider";
 
 // E2E テスト中に LogBox の自動ポップアップがタップを横取りして失敗するため抑制する
@@ -44,7 +45,7 @@ function PushTokenRegistrar() {
         // 登録済みの印は、トークンを保存できたときだけ付く (権限の拒否などで未登録なら、次の起動でまた試す)
         await ensurePushTokenRegistered(user.id);
       } catch {
-        // silent — 失敗は registerAndSaveExpoPushToken() が PostHog に送る。user can retry via settings toggle
+        // silent — 失敗は registerAndSaveExpoPushToken() が端末のコンソールに出す。user can retry via settings toggle
       }
     })();
   }, [user?.id]);
@@ -67,25 +68,28 @@ export default function RootLayout() {
 
   if (!fontsLoaded) return null;
 
+  // 必須の環境変数 (EXPO_PUBLIC_SUPABASE_*) が入っていないビルドは、Provider を立ち上げずに設定エラーの画面を出す (#1182)。
+  // Supabase を使う Provider が動くと、存在しない接続先に向かって失敗し続け、原因が分からないため。
+  const supabaseEnv = resolveSupabaseEnv();
+  if (!supabaseEnv.ok) return <ConfigErrorScreen missing={supabaseEnv.missing} />;
+
   return (
     <SafeAreaProvider>
-      <PostHogProvider>
-        <AuthProvider>
-          <ProfileProvider>
-            <PushTokenRegistrar />
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="index" />
-              <Stack.Screen name="(public)" />
-              <Stack.Screen name="(auth)" />
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen name="(org)" />
-              <Stack.Screen name="(support)" />
-              <Stack.Screen name="(super-admin)" />
-              <Stack.Screen name="meals/new" options={{ presentation: "modal" }} />
-            </Stack>
-          </ProfileProvider>
-        </AuthProvider>
-      </PostHogProvider>
+      <AuthProvider>
+        <ProfileProvider>
+          <PushTokenRegistrar />
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="(public)" />
+            <Stack.Screen name="(auth)" />
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="(org)" />
+            <Stack.Screen name="(support)" />
+            <Stack.Screen name="(super-admin)" />
+            <Stack.Screen name="meals/new" options={{ presentation: "modal" }} />
+          </Stack>
+        </ProfileProvider>
+      </AuthProvider>
     </SafeAreaProvider>
   );
 }

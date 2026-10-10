@@ -61,8 +61,13 @@ export const UserDetailResponseSchema = z.object({
 
 // ─── ユーザー更新 (admin_note) ─────────────────────────────────────────────────
 
+/** 管理ノート 1 件の最大文字数 (#1103 の前の UserPatchBodySchema と同じ値。長文の貼り付けで表を膨らませない上限) */
+export const ADMIN_NOTE_MAX_LENGTH = 5000;
+
+// #1103 (項目 5): admin_note は admin_user_notes に 1 行追加する (列の上書きではない)。
+// 前後の空白を除いて空になる値は、追加するノートが無いので 400 にする (admin_user_notes.note は NOT NULL)。
 export const UserPatchBodySchema = z.object({
-  admin_note: z.string().max(5000),
+  admin_note: z.string().trim().min(1).max(ADMIN_NOTE_MAX_LENGTH),
 });
 
 export type UserPatchBody = z.infer<typeof UserPatchBodySchema>;

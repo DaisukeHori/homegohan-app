@@ -159,6 +159,7 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 | `revenue_snapshot` | daily 01:00 | 日次収益スナップショット生成 |
 | `dau_snapshot` | daily 01:30 | DAU/WAU/MAU スナップショット |
 | `logical_backup` | daily 02:00 | pg_dump → S3 |
+| `app_log_alerts` (実装済み: #1157) | 15 分おき | `app_logs` の error が 15 分で 20 件を超えたら `OPS_ALERT_EMAIL` へメールで通知 (`/api/cron/app-log-alerts`。設計は 07-audit-monitoring.md §8.3) |
 
 > **2026-10-08 時点の状態**: `vercel.json` に登録されているのは `process-menu-queue` の 1 本だけで、この表の 11 本は実装されていない。
 > 課金・収益に関わるバッチ (`revenue_snapshot`・`stripe_integrity_check`・`grace_period_check` など) は、オーナー判断 (#1125) で**作らない**。

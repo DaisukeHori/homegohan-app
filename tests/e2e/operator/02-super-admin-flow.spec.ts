@@ -58,6 +58,37 @@ async function apiFetch(
   );
 }
 
+/**
+ * service_role で PostgREST を直接呼ぶ (テスト専用のデータの用意と後始末用)。
+ * .env.local の NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY を使う。
+ */
+async function serviceRoleRest(
+  pathAndQuery: string,
+  init: { method: "POST" | "DELETE"; body?: unknown },
+): Promise<void> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error(
+      "[T14] NEXT_PUBLIC_SUPABASE_URL または SUPABASE_SERVICE_ROLE_KEY が未設定です。.env.local を確認してください。",
+    );
+  }
+  const resp = await fetch(`${supabaseUrl}/rest/v1/${pathAndQuery}`, {
+    method: init.method,
+    headers: {
+      "Content-Type": "application/json",
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      Prefer: "return=minimal",
+    },
+    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`[T14] ${init.method} ${pathAndQuery} 失敗 (${resp.status}): ${text.substring(0, 200)}`);
+  }
+}
+
 // ─── テストスイート ───────────────────────────────────────────────────────────
 
 test.describe("operator/super-admin: クーポン作成 → プラン PATCH → flag 操作 happy path", () => {
@@ -204,78 +235,89 @@ test.describe("operator/super-admin: クーポン作成 → プラン PATCH → 
    * T14-S5: super_admin が機能フラグ一覧を取得して flag 操作を行う
    *
    * 操作シーケンス:
-   * 1. GET /api/super-admin/flags でフラグ一覧取得
-   * 2. フラグが存在すれば PATCH /api/super-admin/flags/{key} で enabled を toggle
-   * 3. audit_log に記録されたことを確認
+   * 1. このテスト専用のフラグを service_role で作る
+   * 2. GET /api/super-admin/flags でフラグ一覧を取得し、作ったフラグがある
+   * 3. PATCH /api/super-admin/flags/{key} で enabled を toggle し、元に戻す
+   * 4. audit_log に記録されたことを確認
+   * 5. 作ったフラグを消す
+   *
+   * #1148: 本番のフラグ (maintenance_mode・ai_chat_enabled などの緊急スイッチや、献立生成のエンジン切り替え) は、
+   * 一覧の先頭を切り替える書き方だと、このテストが本番のサイトを一瞬メンテナンス中にしたり AI 相談を止めたりしてしまう
+   * (フラグの値はサーバーが最大 30 秒覚えるため、切り替えの瞬間に読まれた値がしばらく残る)。
+   * そのため、既存のフラグには触らず、このテスト専用のフラグだけを切り替える。
    */
   test("T14-S5: super_admin が機能フラグ一覧を取得し flag を toggle する", async ({ superAdminUser }) => {
     const { page } = superAdminUser;
 
-    // フラグ一覧を取得
-    const { status: flagListStatus, body: flagListBody } = await apiFetch(
-      page,
-      "/api/super-admin/flags",
-    );
-
-    expect(flagListStatus).toBe(200);
-    const flagBody = flagListBody as Record<string, unknown>;
-    expect(flagBody.data).toBeDefined();
-    expect(Array.isArray(flagBody.data)).toBe(true);
-
-    const flags = flagBody.data as Array<Record<string, unknown>>;
-
-    // フラグが存在しない場合は toggle テストをスキップ
-    if (flags.length === 0) {
-      console.log("[T14-S5] 機能フラグが存在しないため toggle テストをスキップ");
-      return;
-    }
-
-    // 最初のフラグを toggle する
-    const targetFlag = flags[0];
-    const targetKey = targetFlag.key as string;
-    const currentEnabled = targetFlag.enabled as boolean;
-
-    const patchResult = await apiFetch(page, `/api/super-admin/flags/${targetKey}`, {
-      method: "PATCH",
-      body: { enabled: !currentEnabled },
+    const targetKey = `e2e_t14s5_${Date.now().toString(36)}`;
+    await serviceRoleRest("feature_flags", {
+      method: "POST",
+      body: { key: targetKey, description: "e2e T14-S5 (自動削除)", enabled: false },
     });
 
-    expect(patchResult.status).toBe(200);
-    const patchBody = patchResult.body as Record<string, unknown>;
-    const updatedFlag = patchBody.data as Record<string, unknown>;
-    expect(updatedFlag.key).toBe(targetKey);
-    expect(updatedFlag.enabled).toBe(!currentEnabled);
-
-    // 元に戻す
-    const restoreResult = await apiFetch(page, `/api/super-admin/flags/${targetKey}`, {
-      method: "PATCH",
-      body: { enabled: currentEnabled },
-    });
-    expect(restoreResult.status).toBe(200);
-
-    // audit_log で flag toggle が記録されていることを確認
-    await page.waitForTimeout(500);
-
-    const auditResult = await apiFetch(
-      page,
-      `/api/super-admin/audit-logs?action_type=feature_flag&per_page=5&page=1`,
-    );
-    expect(auditResult.status).toBe(200);
-    const auditBody = auditResult.body as Record<string, unknown>;
-    const logs = auditBody.data as Array<Record<string, unknown>>;
-
-    if (logs.length > 0) {
-      // flag toggle の audit log エントリが存在することを確認
-      const flagLog = logs.find(
-        (log) =>
-          (log.action_type as string)?.includes("feature_flag") &&
-          log.target_type === "feature_flag",
+    try {
+      // フラグ一覧を取得
+      const { status: flagListStatus, body: flagListBody } = await apiFetch(
+        page,
+        "/api/super-admin/flags",
       );
-      if (flagLog) {
-        expect(flagLog.severity).toBe("info");
-        const details = flagLog.details as Record<string, unknown>;
-        expect(details.key).toBe(targetKey);
+
+      expect(flagListStatus).toBe(200);
+      const flagBody = flagListBody as Record<string, unknown>;
+      expect(flagBody.data).toBeDefined();
+      expect(Array.isArray(flagBody.data)).toBe(true);
+
+      const flags = flagBody.data as Array<Record<string, unknown>>;
+
+      // 作ったフラグが一覧にある
+      const targetFlag = flags.find((flag) => flag.key === targetKey);
+      expect(targetFlag, "作ったフラグが一覧にある").toBeDefined();
+      const currentEnabled = targetFlag!.enabled as boolean;
+
+      const patchResult = await apiFetch(page, `/api/super-admin/flags/${targetKey}`, {
+        method: "PATCH",
+        body: { enabled: !currentEnabled },
+      });
+
+      expect(patchResult.status).toBe(200);
+      const patchBody = patchResult.body as Record<string, unknown>;
+      const updatedFlag = patchBody.data as Record<string, unknown>;
+      expect(updatedFlag.key).toBe(targetKey);
+      expect(updatedFlag.enabled).toBe(!currentEnabled);
+
+      // 元に戻す
+      const restoreResult = await apiFetch(page, `/api/super-admin/flags/${targetKey}`, {
+        method: "PATCH",
+        body: { enabled: currentEnabled },
+      });
+      expect(restoreResult.status).toBe(200);
+
+      // audit_log で flag toggle が記録されていることを確認
+      await page.waitForTimeout(500);
+
+      const auditResult = await apiFetch(
+        page,
+        `/api/super-admin/audit-logs?action_type=feature_flag&per_page=5&page=1`,
+      );
+      expect(auditResult.status).toBe(200);
+      const auditBody = auditResult.body as Record<string, unknown>;
+      const logs = auditBody.data as Array<Record<string, unknown>>;
+
+      if (logs.length > 0) {
+        // flag toggle の audit log エントリが存在することを確認
+        const flagLog = logs.find(
+          (log) =>
+            (log.action_type as string)?.includes("feature_flag") &&
+            log.target_type === "feature_flag",
+        );
+        if (flagLog) {
+          expect(flagLog.severity).toBe("info");
+          const details = flagLog.details as Record<string, unknown>;
+          expect(details.key).toBe(targetKey);
+        }
       }
+    } finally {
+      await serviceRoleRest(`feature_flags?key=eq.${targetKey}`, { method: "DELETE" });
     }
   });
 

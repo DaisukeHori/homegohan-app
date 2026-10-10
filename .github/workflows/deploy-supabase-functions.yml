@@ -6,7 +6,22 @@ on:
       - main
     paths:
       - 'supabase/functions/**'
+      # 関数ごとの verify_jwt (ゲートウェイの JWT 検証) はここに書く。変えただけでもデプロイし直す (#1406)
+      - 'supabase/config.toml'
+      # 削除の手順 (下の「Delete functions not in the repository」) を変えたときも走らせる (#1452)
+      - '.github/workflows/deploy-supabase-functions.yml'
+      - 'scripts/edge-functions-prune.mjs'
   workflow_dispatch: # 手動トリガー可能
+
+# 同じ ref のデプロイ (と、そのあとの削除) は 1 本ずつ走らせる (#1452)。並んで走ると、先に始まった古い版の実行の削除の手順が、
+# あとの版のデプロイで本番に入った関数を「リポジトリに無い」と見て消してしまうため。走っている実行は取り消さない
+# (デプロイのあと削除の前で止めると、その版の削除が抜けるため)。group を ref ごとにするのは deploy-supabase-migrations.yml と同じ理由:
+# GitHub は同じ group で待っている実行を 1 本しか持たず、新しく来た実行が待っている実行を取り消す。group を固定すると、
+# 別の ref からの手動実行が、待っている main の実行を取り消してしまう。別の ref からの手動実行は削除をしない (下の if) ので、
+# main の実行と並んでも本番の関数を消すことはない。
+concurrency:
+  group: deploy-supabase-functions-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -31,9 +46,25 @@ jobs:
         run: |
           npx --yes supabase@2.62.10 --version
 
+      # 名前を指定しない deploy は supabase/config.toml の [functions.<name>] verify_jwt を関数ごとに読む
+      # (CLI 2.62.10 の internal/functions/deploy の GetFunctionConfig)。JWT 検証を外すフラグは全関数に効くので付けない (#1406)。
+      # tests/edge-function-verify-jwt.test.ts がこのファイルをコメントも含めて読むので、そのフラグの名前はここにも書かない
       - name: Deploy all functions
         run: |
           npx --yes supabase@2.62.10 functions deploy --project-ref ${{ env.SUPABASE_PROJECT_ID }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      # 本番にあって supabase/functions/ に無い関数を消す (#1452)。リポジトリから関数を消すと、ここで本番からも消える。
+      # リポジトリの関数が 0 本・本番の一覧が読めない・削除が上限 (EDGE_FUNCTIONS_PRUNE_MAX_DELETIONS) を超える等のときは、
+      # 1 本も消さずに赤で止まる。削除した関数の名前と件数をログに残す。
+      # 消すのは main の実行だけ (別の ref からの手動実行は、その ref に無い main の関数を消してしまうため)。さらに
+      # --require-latest main で、このチェックアウトの supabase/functions/ が origin の main の最新と違えば何も消さない
+      # (古い実行の再実行などで、あとの版で足した関数を消さないため。関数を変えた新しい版は、その版の実行が消す)。
+      - name: Delete functions not in the repository
+        if: github.ref == 'refs/heads/main'
+        run: |
+          node scripts/edge-functions-prune.mjs --apply --require-latest main --project-ref ${{ env.SUPABASE_PROJECT_ID }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 

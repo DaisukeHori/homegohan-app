@@ -3,8 +3,11 @@ import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
-import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
+import { isFeatureEnabled } from '@/lib/feature-flags';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -25,8 +28,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
+    const aiConsentDenied = await requireAiConsent(supabase, user.id);
+    if (aiConsentDenied) return aiConsentDenied;
+
     const rateLimitResult = await checkRateLimit(user.id, 'generation');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+    // 必須の環境変数は、認証とレート制限のあと・DB に書き込む前に確かめる。欠けていれば MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す)。
+    // (未ログインの呼び出しに、設定の不足を教えない。書き込んだあとで気づくと、Edge Function を呼べないまま、
+    //  リクエストの行を作って失敗として記録するだけの無駄な動きになる) (#1182)
+    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
 
     // 2. daily_meal_idを取得
     let targetDayId = dailyMealId;
@@ -94,8 +106,8 @@ export async function POST(request: Request) {
     }
 
     // 5. リクエストを作成
-    const featureFlags = await loadFeatureFlags(supabase);
-    const useV5 = Boolean(featureFlags.menu_generation_v5_wrapped);
+    // #1148: エンジンの切り替えは feature_flags (運営画面で切り替える) を見る
+    const useV5 = await isFeatureEnabled('menu_generation_v5_wrapped', user.id);
     const engine = useV5 ? 'v5' : 'v4';
 
     const { data: requestData, error: insertError } = await supabase
@@ -119,9 +131,6 @@ export async function POST(request: Request) {
     }
 
     // 6. Edge Functionを呼び出し（V5/V4をfeature flagで切り替え）
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
     const generator = useV5 ? callGenerateMenuV5WithRetry : callGenerateMenuV4WithRetry;
     const edgeFunctionPromise = generator({
       supabaseUrl,
@@ -154,8 +163,8 @@ export async function POST(request: Request) {
       mealsCount: targetSlots.length
     });
 
-  } catch (error: any) {
-    console.error("Day Regeneration Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
+    return internalError('POST /api/ai/menu/day/regenerate', error);
   }
 }

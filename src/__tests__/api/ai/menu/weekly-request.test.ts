@@ -72,6 +72,8 @@ const mockSupabase = {
   from: mockFrom,
 };
 
+// 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
+vi.mock('@/lib/ai/consent-guard', () => import('../../../../../tests/helpers/ai-consent-guard-allowed'));
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => mockSupabase),
 }));
@@ -81,19 +83,24 @@ vi.mock('@/lib/rate-limit', () => ({
   rateLimitExceededResponse: vi.fn(),
 }));
 
-vi.mock('@/lib/menu-generation-feature-flags', () => ({
-  loadFeatureFlags: vi.fn(async () => ({ menu_generation_v5_wrapped: false })),
+// #1148: エンジンの切り替えは feature_flags (isFeatureEnabled)。既定は v4 (OFF) で、v5 を確かめるテストだけ ON にする
+const mockIsFeatureEnabled = vi.fn(async (_key: string, _userId?: string) => false);
+vi.mock('@/lib/feature-flags', () => ({
+  isFeatureEnabled: (key: string, userId?: string) => mockIsFeatureEnabled(key, userId),
 }));
 
 vi.mock('@/lib/meal-image-jobs', () => ({
   cancelPendingMealImageJobs: vi.fn(async () => {}),
 }));
 
+// internalError() が使う構造化ログ。変数名がここに渡ることを見る (#1182)
+const mockLoggerError = vi.fn();
 vi.mock('@/lib/db-logger', () => ({
   createLogger: vi.fn(() => ({
     withUser: vi.fn().mockReturnThis(),
-    error: vi.fn(),
+    error: mockLoggerError,
   })),
+  generateRequestId: vi.fn(() => 'req-test'),
 }));
 
 const mockCallGenerateMenuV4WithRetry = vi.fn(async (..._args: any[]): Promise<
@@ -110,8 +117,13 @@ vi.mock('@/lib/generate-menu-v4-retry', () => ({
   markWeeklyMenuRequestFailed: mockMarkWeeklyMenuRequestFailed,
 }));
 
+const mockCallGenerateMenuV5WithRetry = vi.fn(async (..._args: any[]) => ({
+  ok: true as const,
+  attempts: 1,
+  response: new Response(),
+}));
 vi.mock('@/lib/generate-menu-v5-retry', () => ({
-  callGenerateMenuV5WithRetry: vi.fn(async () => ({ ok: true, attempts: 1, response: new Response() })),
+  callGenerateMenuV5WithRetry: mockCallGenerateMenuV5WithRetry,
 }));
 
 const waitUntilPromises: Promise<unknown>[] = [];
@@ -130,6 +142,10 @@ const { POST } = await import('@/app/api/ai/menu/weekly/request/route');
 
 const user = { id: 'user-1' };
 const startDate = '2026-07-06'; // 固定した「今日」= fake timer で使用
+
+// 必須の環境変数 (#1182)。Edge Function の呼び出しはモックなので、値はダミー
+const TEST_SUPABASE_URL = 'https://example.supabase.co';
+const TEST_SERVICE_ROLE_KEY = 'service-role-key-for-test';
 
 const makeRequest = (body: Record<string, unknown>) =>
   new Request('http://localhost/api/ai/menu/weekly/request', {
@@ -157,9 +173,13 @@ const existingLunch = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockIsFeatureEnabled.mockImplementation(async () => false);
   waitUntilPromises.length = 0;
   userDailyMealsQueue.length = 0;
   plannedMealsSelectQueue.length = 0;
+
+  vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', TEST_SUPABASE_URL);
+  vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', TEST_SERVICE_ROLE_KEY);
 
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-07-06T09:00:00+09:00'));
@@ -214,6 +234,48 @@ describe('POST /api/ai/menu/weekly/request', () => {
     const failedArgs = mockMarkWeeklyMenuRequestFailed.mock.calls[0][0];
     expect(failedArgs.requestId).toBe('request-1');
     expect(failedArgs.errorMessage).toContain('rollback: restored=2, skipped=0, failed=0');
+  });
+
+  it('#1148: menu_generation_v5_wrapped が OFF なら v4、ON なら v5 の Edge Function を呼び、mode にも反映する', async () => {
+    // OFF (feature_flags の menu_generation_v5_wrapped = false): v4
+    const offRes = await POST(makeRequest({ startDate }));
+    expect(offRes.status).toBe(200);
+    await flushBackground();
+    expect(mockIsFeatureEnabled).toHaveBeenCalledWith('menu_generation_v5_wrapped', 'user-1');
+    expect(mockCallGenerateMenuV4WithRetry).toHaveBeenCalledTimes(1);
+    expect(mockCallGenerateMenuV5WithRetry).not.toHaveBeenCalled();
+
+    // ON: v5。apikey ヘッダーも付く
+    vi.clearAllMocks();
+    waitUntilPromises.length = 0;
+    userDailyMealsQueue.length = 0;
+    plannedMealsSelectQueue.length = 0;
+    for (let i = 0; i < 7; i++) userDailyMealsQueue.push({ data: null, error: null });
+    mockWeeklyInsertSingle.mockResolvedValue({ data: { id: 'request-2' }, error: null });
+    mockIsFeatureEnabled.mockImplementation(async (key: string) => key === 'menu_generation_v5_wrapped');
+
+    const onRes = await POST(makeRequest({ startDate }));
+    expect(onRes.status).toBe(200);
+    await flushBackground();
+    expect(mockCallGenerateMenuV5WithRetry).toHaveBeenCalledTimes(1);
+    expect(mockCallGenerateMenuV4WithRetry).not.toHaveBeenCalled();
+    expect(mockCallGenerateMenuV5WithRetry.mock.calls[0][0].extraHeaders).toBeDefined();
+  });
+
+  it('Edge Function が同意の判定で止めた (T15 / #1154) ときも復元するが、失敗の文は人向けの文のまま残す (画面が見分けて同意画面へ案内するため)', async () => {
+    const { AI_CONSENT_REQUIRED_MESSAGE, aiConsentReasonOfStoredError } = await import('@/lib/ai/consent-config');
+    mockCallGenerateMenuV4WithRetry.mockResolvedValue({ ok: false, attempts: 1, errorMessage: AI_CONSENT_REQUIRED_MESSAGE });
+    mockRestorePlannedMealsSnapshot.mockResolvedValue({ restored: 2, skipped: 0, failed: 0 });
+
+    const res = await POST(makeRequest({ startDate }));
+    expect(res.status).toBe(200);
+    await flushBackground();
+
+    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
+    expect(mockMarkWeeklyMenuRequestFailed).toHaveBeenCalledTimes(1);
+    const failedArgs = mockMarkWeeklyMenuRequestFailed.mock.calls[0][0];
+    expect(failedArgs.errorMessage).toBe(AI_CONSENT_REQUIRED_MESSAGE);
+    expect(aiConsentReasonOfStoredError(failedArgs.errorMessage)).toBe('consent_required');
   });
 
   it('Edge Function 成功時はロールバックを実行しない', async () => {
@@ -273,4 +335,45 @@ describe('POST /api/ai/menu/weekly/request', () => {
     const insertPayload = mockWeeklyInsertCall.mock.calls[0][0];
     expect(insertPayload.generated_data).toEqual({ snapshot: [existingBreakfast] });
   });
+});
+
+// #1182: 必須の環境変数が欠けているとき、既存の献立を消したり weekly_menu_requests を作ったりする「前」に、
+// 汎用の 500 で止める (本文には変数名を出さず (#1172)、変数名は構造化ログにだけ渡す)。以前は `process.env.X!` を、献立を消してリクエストの行を作った「後」に読んでいたため、
+// 欠けていると undefined の URL への通信になり、(失敗の復元は走るものの) 無駄に献立を消して戻す動きになっていた。
+describe('POST /api/ai/menu/weekly/request — 必須の環境変数 (#1182)', () => {
+  it('設定されていれば、その値をそのまま Edge Function の呼び出しに渡す', async () => {
+    mockCallGenerateMenuV4WithRetry.mockResolvedValue({ ok: true, attempts: 1, response: new Response() });
+
+    const res = await POST(makeRequest({ startDate }));
+    expect(res.status).toBe(200);
+    await flushBackground();
+
+    expect(mockCallGenerateMenuV4WithRetry).toHaveBeenCalledTimes(1);
+    expect(mockCallGenerateMenuV4WithRetry.mock.calls[0][0]).toMatchObject({
+      supabaseUrl: TEST_SUPABASE_URL,
+      serviceRoleKey: TEST_SERVICE_ROLE_KEY,
+    });
+  });
+
+  it.each(['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'])(
+    '%s が未設定なら、献立を消す前・リクエストを作る前に、汎用の 500 で止める (本文に変数名なし・ログに変数名あり)',
+    async (name) => {
+      vi.stubEnv(name, undefined);
+
+      const res = await POST(makeRequest({ startDate }));
+      const text = await res.text();
+
+      expect(res.status).toBe(500);
+      expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+      expect(text).not.toContain(name);
+      expect(mockLoggerError).toHaveBeenCalledTimes(1);
+      expect(mockLoggerError.mock.calls[0][1]).toMatchObject({ name: 'MissingEnvError', envName: name });
+
+      // 何も書き込んでいない・消していない・Edge Function を呼んでいない
+      expect(mockPlannedMealsDeleteEq).not.toHaveBeenCalled();
+      expect(mockWeeklyInsertCall).not.toHaveBeenCalled();
+      expect(mockCallGenerateMenuV4WithRetry).not.toHaveBeenCalled();
+      expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    },
+  );
 });

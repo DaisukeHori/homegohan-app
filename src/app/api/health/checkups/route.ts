@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { sanitizeHealthCheckupPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
+import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { clampIntParam } from '@/lib/http-params';
 
@@ -101,26 +102,34 @@ export async function POST(request: NextRequest) {
     return internalError('POST /api/health/checkups', insertError, { userId: user.id, table: 'health_checkups' });
   }
 
+  // 個別レビュー・経年レビューは、数値を外国の AI 事業者に送って作る。同意が無ければ (判定に失敗した場合も)、
+  // 記録の保存だけを行い、レビューは作らない (T15 / #1154)。応答の aiSkipped で画面に知らせる
+  const aiConsent = await checkUserAiConsent(supabase, user.id);
+
   // 個別レビューを生成
   let individualReview = null;
-  try {
-    individualReview = await generateIndividualReview(checkup);
+  if (aiConsent.allowed) {
+    try {
+      individualReview = await generateIndividualReview(checkup);
 
-    // 個別レビューを保存
-    await supabase
-      .from('health_checkups')
-      .update({ individual_review: individualReview })
-      .eq('id', checkup.id);
-  } catch (err) {
-    console.error('Individual review generation failed:', err);
+      // 個別レビューを保存
+      await supabase
+        .from('health_checkups')
+        .update({ individual_review: individualReview })
+        .eq('id', checkup.id);
+    } catch (err) {
+      console.error('Individual review generation failed:', err);
+    }
   }
 
   // 経年レビューを自動更新
   let longitudinalReview = null;
-  try {
-    longitudinalReview = await updateLongitudinalReview(supabase, user.id);
-  } catch (err) {
-    console.error('Longitudinal review update failed:', err);
+  if (aiConsent.allowed) {
+    try {
+      longitudinalReview = await updateLongitudinalReview(supabase, user.id);
+    } catch (err) {
+      console.error('Longitudinal review update failed:', err);
+    }
   }
 
   return NextResponse.json({
@@ -129,6 +138,7 @@ export async function POST(request: NextRequest) {
       individual_review: individualReview,
     },
     longitudinalReview,
+    ...aiConsentSkippedField(aiConsent),
   });
 }
 

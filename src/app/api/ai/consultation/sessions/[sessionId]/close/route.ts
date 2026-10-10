@@ -2,6 +2,8 @@ import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
+import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
 
 function stripMarkdownCodeBlock(text: string): string {
   let cleaned = text.trim();
@@ -60,6 +62,10 @@ export async function POST(
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  // #1148: AI 相談の緊急停止スイッチ (feature_flags の ai_chat_enabled。通常は ON)。回数の枠を使わせないよう、レート制限より前に見る
+  const unavailable = await aiChatDisabledResponse(user.id);
+  if (unavailable) return unavailable;
+
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
@@ -88,8 +94,12 @@ export async function POST(
 
     let summaryData = null;
 
+    // 要約は会話を外国の AI 事業者に送って作る。同意が無ければ (判定に失敗した場合も) 要約を作らずに閉じる (T15 / #1154)
+    const hasConversation = Boolean(messages && messages.length > 1);
+    const aiConsent = hasConversation ? await checkUserAiConsent(supabase, user.id) : null;
+
     // メッセージがある場合のみ要約を生成
-    if (messages && messages.length > 1) {
+    if (messages && hasConversation && aiConsent?.allowed) {
       const importantMessages = messages.filter((m: any) => m.is_important);
       const conversationText = messages
         .filter((m: any) => m.role !== 'system')
@@ -206,6 +216,7 @@ ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n
     return NextResponse.json({
       success: true,
       summary: summaryData,
+      ...aiConsentSkippedField(aiConsent),
     });
 
   } catch (error: any) {

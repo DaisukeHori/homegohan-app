@@ -1,7 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { runConsultationAction } from '@/lib/ai/consultation-action-executor';
+import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
+import { AI_SENDING_ACTION_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';
+import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 // 指定日付の user_daily_meals を取得または作成するヘルパー関数
 // NOTE: 現状このファイル内では未使用（resolveExistingTargetSlots が同等の処理を担う）。
@@ -41,6 +43,10 @@ export async function POST(
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  // #1148: AI 相談の緊急停止スイッチ (feature_flags の ai_chat_enabled。通常は ON)。回数の枠を使わせないよう、レート制限より前に見る
+  const unavailable = await aiChatDisabledResponse(user.id);
+  if (unavailable) return unavailable;
 
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
@@ -84,6 +90,13 @@ export async function POST(
 
     if (action.status !== 'pending') {
       return NextResponse.json({ error: 'Action already processed' }, { status: 400 });
+    }
+
+    // 献立の生成のアクションは、利用者のデータを外国の AI 事業者へ送る。同意が無ければ送らずに止める
+    // (T15 / #1154。403 AI_CONSENT_REQUIRED)。アクションは pending のまま残すので、同意したあとにもう一度実行できる
+    if (AI_SENDING_ACTION_TYPES.has(action.action_type)) {
+      const aiConsentDenied = await requireAiConsent(supabase, user.id);
+      if (aiConsentDenied) return aiConsentDenied;
     }
 
     // #1047 F2-21: アクション実行の中核ロジックは src/lib/ai/consultation-action-executor.ts

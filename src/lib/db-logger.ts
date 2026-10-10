@@ -1,10 +1,15 @@
 /**
  * DBログヘルパー - Next.js API Routes用
  * ログをapp_logsテーブルに保存する
+ *
+ * error レベルは運用アラートの種になる: 直近 15 分の error が 20 件を超えると、運用のメールに知らされる
+ * (GET /api/cron/app-log-alerts。#1157)。想定内の失敗 (入力の誤りなど) は warn で書き、本物の障害だけを error にする。
  */
 
 import { createClient } from '@supabase/supabase-js';
 import { sanitizeLogEntry, sanitizeMetadata } from '../../supabase/functions/_shared/log-sanitizer';
+// 何も import しないファイル。ここから読んでも、ブラウザ・Edge のバンドルに余計なものは入らない
+import { isMissingEnvError } from './env-required';
 
 // #1044 (F6-20) / #1171: マスキング・切り詰めの実体は Edge Functions と共用の log-sanitizer.ts にある。
 // 従来どおり '@/lib/db-logger' から import できるよう、ここから再エクスポートする
@@ -18,6 +23,27 @@ export {
 } from '../../supabase/functions/_shared/log-sanitizer';
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+/**
+ * 必須の環境変数が欠けていたとき (MissingEnvError)、その変数名を入れる metadata のキー (#1182)。
+ * MissingEnvError の message には変数名を入れない (500 の本文に漏れないように。#1172)。
+ * 例外が error() に渡った経路 (internalError() など) では、構造化ログ (console と app_logs) の metadata のこのキーに
+ * 欠けている変数名が入る。値は記録しない。error() を通らない経路でも、env-required.ts が投げる前に
+ * サーバーのログへ変数名を 1 行出す (MISSING_ENV_SERVER_LOG_PREFIX)。
+ */
+export const MISSING_ENV_NAME_LOG_KEY = 'missing_env_name';
+
+/**
+ * error() に渡されたエラーが MissingEnvError なら、欠けている変数名を metadata に足す。
+ * それ以外のエラーでは metadata をそのまま返す。
+ */
+export function withMissingEnvName(
+  error: unknown,
+  metadata?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (!isMissingEnvError(error)) return metadata;
+  return { ...metadata, [MISSING_ENV_NAME_LOG_KEY]: error.envName };
+}
 
 interface LogEntry {
   level: LogLevel;
@@ -104,9 +130,11 @@ export function createLogger(routeName: string, requestId?: string) {
     debug: (message: string, metadata?: Record<string, unknown>) => log('debug', message, metadata),
     info: (message: string, metadata?: Record<string, unknown>) => log('info', message, metadata),
     warn: (message: string, metadata?: Record<string, unknown>) => log('warn', message, metadata),
-    error: (message: string, error?: Error | unknown, metadata?: Record<string, unknown>) => {
+    error: (message: string, error?: Error | unknown, rawMetadata?: Record<string, unknown>) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const errorStack = error instanceof Error ? error.stack : undefined;
+      // 必須の環境変数が欠けていたなら、その変数名を metadata に残す (#1182)
+      const metadata = withMissingEnvName(error, rawMetadata);
       
       const timestamp = new Date().toISOString();
       console.error(`[${timestamp}] [ERROR] [${routeName}] ${message}`, error, sanitizeMetadata(metadata) || '');
@@ -143,9 +171,11 @@ export function createLogger(routeName: string, requestId?: string) {
         debug: (message: string, metadata?: Record<string, unknown>) => userLog('debug', message, metadata),
         info: (message: string, metadata?: Record<string, unknown>) => userLog('info', message, metadata),
         warn: (message: string, metadata?: Record<string, unknown>) => userLog('warn', message, metadata),
-        error: (message: string, error?: Error | unknown, metadata?: Record<string, unknown>) => {
+        error: (message: string, error?: Error | unknown, rawMetadata?: Record<string, unknown>) => {
           const errorMessage = error instanceof Error ? error.message : String(error);
           const errorStack = error instanceof Error ? error.stack : undefined;
+          // 必須の環境変数が欠けていたなら、その変数名を metadata に残す (#1182)
+          const metadata = withMissingEnvName(error, rawMetadata);
 
           console.error(`[${new Date().toISOString()}] [ERROR] [${routeName}] [user:${userId}] ${message}`, error, sanitizeMetadata(metadata) || '');
 

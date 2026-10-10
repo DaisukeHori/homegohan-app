@@ -1,11 +1,13 @@
 import { createClient } from '@/lib/supabase/server';
-import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
+import { isFeatureEnabled } from '@/lib/feature-flags';
 import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { getSeasonalIngredientsForRange } from '@/lib/seasonal-ingredients';
 import { getEventsForRange } from '@/lib/seasonal-events';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 import type {
   TargetSlot,
   ExistingMenuContext,
@@ -19,6 +21,7 @@ import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { todayLocal } from '@/lib/date-utils';
+import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -118,8 +121,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
+    const aiConsentDenied = await requireAiConsent(supabase, user.id);
+    if (aiConsentDenied) return aiConsentDenied;
+
     const rateLimitResult = await checkRateLimit(user.id, 'generation');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+    // 必須の環境変数は、認証とレート制限のあと・DB に書き込む前に確かめる。欠けていれば MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す)。
+    // (未ログインの呼び出しに、設定の不足を教えない。書き込んだあとで気づくと、Edge Function を呼べないまま、
+    //  リクエストの行を作って失敗として記録するだけの無駄な動きになる) (#1182)
+    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
 
     const targetSlots = body?.resolveExistingMeals
       ? await resolveExistingTargetSlots({
@@ -283,8 +295,8 @@ export async function POST(request: Request) {
       ? rawConstraints as MenuGenerationConstraints 
       : {};
 
-    const featureFlags = await loadFeatureFlags(supabase);
-    const useV5Direct = Boolean(featureFlags.menu_generation_v5_direct);
+    // #1148: エンジンの切り替えは feature_flags (運営画面で切り替える) を見る
+    const useV5Direct = await isFeatureEnabled('menu_generation_v5_direct', user.id);
     const engine = useV5Direct ? 'v5' : 'v4';
 
     // 10. Create request record
@@ -314,9 +326,6 @@ export async function POST(request: Request) {
     }
 
     // 11. Call Edge Function in background
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-    
     const generator = useV5Direct ? callGenerateMenuV5WithRetry : callGenerateMenuV4WithRetry;
     const targetLabel = useV5Direct ? 'generate-menu-v5' : 'generate-menu-v4';
 
@@ -362,9 +371,9 @@ export async function POST(request: Request) {
       totalSlots: targetSlots.length,
     });
 
-  } catch (error: any) {
-    console.error("API Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
+    return internalError('POST /api/ai/menu/v4/generate', error);
   }
 }
 

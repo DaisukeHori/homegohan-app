@@ -30,6 +30,7 @@ import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
 import { test, expect } from "./fixtures/fresh-user";
 import { generateTestPassword } from "./helpers/credentials";
+import { acceptSignupLegalConsent } from "./helpers/signup";
 // Node.js 20 は native WebSocket を持たないため ws パッケージを明示的に指定
 // (Supabase Realtime クライアントが WebSocket を必要とするが、admin API のみ使うため
 //  実際の接続は行われない。transport を渡すことで初期化エラーを回避する)
@@ -297,6 +298,9 @@ test.describe("Bug 4 リグレッション: signup → 確認メール URL ス�
       ).catch(() => {
         console.warn("[test4] React hydration 確認タイムアウト、続行します");
       });
+
+      // #1174: 利用規約・プライバシーポリシーへの同意のチェックを入れるまで、登録ボタンは押せない
+      await acceptSignupLegalConsent(page);
 
       // メールアドレスとパスワードを入力
       await page.locator("#email").fill(uniqueEmail);

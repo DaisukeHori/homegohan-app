@@ -8,7 +8,7 @@
 //
 //   - 「トレーナーと共有」の項目も、「記録ON / 記録OFF」の表示も出ない
 //   - 保存済みの値が true のユーザー (旧画面で ON にしたまま) でも、同じ
-//   - 隣の項目 (エクスポート) は残っている (外しすぎていない。何も描画できていないときに空振りで通らない)
+//   - 隣の項目 (エクスポート・AI へのデータ提供の同意) は残っている (外しすぎていない。何も描画できていないときに空振りで通らない)
 //   - 残った 2 つのスイッチ (通知・自動解析) は、それぞれ自分の項目だけを PATCH する
 //
 // モバイルの設定画面と、保存済みの値を「同意」として読むコードが増えていないことは
@@ -138,7 +138,7 @@ describe('#1144 設定画面 (Web): 「トレーナーと共有」は出ない',
     expect(buttonLabels().some((label) => label.includes('トレーナーと共有'))).toBe(false);
   });
 
-  it('「データとプライバシー」は、データのエクスポート (JSON / CSV) の 2 項目だけ', async () => {
+  it('「データとプライバシー」は、データのエクスポート (JSON / CSV) と AI へのデータ提供の同意 (T15 / #1154) の 3 項目だけ', async () => {
     await renderSettings(true);
 
     const privacy = Array.from(container.querySelectorAll('h2')).find((e) => e.textContent === 'データとプライバシー');
@@ -147,9 +147,12 @@ describe('#1144 設定画面 (Web): 「トレーナーと共有」は出ない',
     const card = privacy!.nextElementSibling;
     expect(card).not.toBeNull();
     const labels = Array.from(card!.querySelectorAll('button')).map((b) => b.textContent ?? '');
-    expect(labels).toHaveLength(2);
+    expect(labels).toHaveLength(3);
     expect(labels[0]).toContain('データをエクスポート');
     expect(labels[1]).toContain('献立をCSVエクスポート');
+    // 外国の AI 事業者への提供の同意の確認・撤回 (共有の機能ではない。押すと /settings/ai-consent へ移る)
+    expect(labels[2]).toContain('AI へのデータ提供の同意');
+    expect(labels[2]).not.toMatch(/共有|トレーナー/);
   });
 
   it('共有に使うスイッチ (role="switch") も無い', async () => {

@@ -8,7 +8,7 @@
 
 | 項目 | 採用状況 | 実態 |
 |------|---------|------|
-| エラー監視 | `app_logs` テーブル + `/super-admin/logs` | Sentry は採用しない。`@sentry/nextjs` は入れていない (§7) |
+| エラー監視 | `app_logs` テーブル + `/super-admin/logs` + エラー急増のメール通知 | Sentry は採用しない。`@sentry/nextjs` は入れていない (§7)。急増したら運用のメールアドレス (`OPS_ALERT_EMAIL`) に 1 通知らせる (§8.3。宛先の設定と、メールの送信ドメインの検証はオーナーの作業) |
 | 性能の計測 | Vercel Speed Insights のみ | `@vercel/speed-insights` を、送る URL から `?` 以降と招待トークンを消す部品 (`SpeedInsightsClient`) 経由で `src/app/layout.tsx` に置く。本番ではすでに有効とみられる (§7.3) |
 | ログ集約 | `app_logs` テーブル | Better Stack (Logtail) は採用しない。`@logtail/node` は入れていない (§8) |
 | Status Page | 設置しない | `status.homegohan.app` は作らない。死活監視用の `/api/health` は実装済み (§9) |
@@ -476,10 +476,11 @@ logger.error('payment_failed を処理できなかった', error, {
 
 下の表は Better Stack で設定する予定だったもので、実現する手段がなくなったため実装されていない。
 代わりが必要になったら、`app_logs` の集計などで改めて設計する (§16)。
+ただし 1 行目 (`error` の急増) だけは、Slack ではなくメールで、`app_logs` の集計から通知する形で実装した (§8.3。しきい値・窓も旧案とは違う)。
 
 | 条件 | アクション |
 |-----|---------|
-| `error` ログが 5 分間に 10 件超 | Slack #incident 通知 |
+| `error` ログが 5 分間に 10 件超 | Slack #incident 通知 (→ §8.3 のメール通知で代替: 15 分間に 20 件超) |
 | `stripe.webhook` の processing_time > 5s | Slack #stripe-alerts |
 | pg_cron ジョブ失敗 | Slack #cron-alerts |
 | API p95 > 1000ms (3 分間継続) | Slack #performance |
@@ -497,7 +498,31 @@ Better Stack は採用しない (上記)。代わりに、`app_logs` (db-logger 
 | 表示 | 文面は保存されたまま表示する。秘密情報のマスクは書き込み時 (`supabase/functions/_shared/log-sanitizer.ts`: #1171 / #1287) |
 | 索引 | `created_at` / `level` / `function_name` / `source` / `user_id`。`request_id` には索引が無く、単独で探すと全行を順に調べる |
 
-しきい値を超えたときの通知 (メールなど) は含まない (§8.1 の旧案は未実装)。Sentry は採用しない (§7)。
+この画面と API は読み取り専用で、通知は含まない。しきい値を超えたときの通知は、別の仕組み (§8.3) が行う。Sentry は採用しない (§7)。
+
+### 8.3 エラー急増のメール通知 (実装済み: #1157)
+
+`app_logs` の `error` が短時間に増えたら、運用のメールアドレスに 1 通知らせる (#1157。オーナーの選択は 2026-10-09 の「推奨案」= ログの閲覧に加え、しきい値はあとで調整する)。
+通知先は、共有の受信箱ができるまでは個人のアドレスでもよい。`infra_alerts` は書かない (インフラ画面は「未接続」のまま: #1180)。
+
+| 項目 | 内容 |
+|-----|------|
+| 起動 | Vercel Cron が 15 分おきに `GET /api/cron/app-log-alerts` を呼ぶ (`vercel.json`)。認証は他の cron と同じ `requireCronAuth` (`CRON_SECRET` の Bearer。旧シークレット `CRON_SECRET_PREVIOUS` の受け付けを含む。#1196) |
+| 宛先 | 環境変数 `OPS_ALERT_EMAIL` (メールアドレス 1 つ)。**未設定なら何もしない** (info ログを 1 行残すだけで、DB にもメールにも触れない)。形が不正なときは warn を残して送らない |
+| 数え方 | DB の `app_log_error_counts(窓 15 分, 上位 10)` が、`level='error'` を `function_name` ごとに数える。返すのは関数名と件数 (と全体の件数) だけで、ログの本文・ユーザー ID は読まない。既存の索引 `idx_app_logs_created_at` で足りる |
+| 判定 | 全体の合計が **20 件を超えた** (21 件以上) とき。関数ごとではなく合計で見る (小さな失敗が広く散らばる障害も拾うため)。既定値は `src/lib/ops-alerts/app-log-error-spike.ts` の定数で、環境変数 `OPS_ALERT_ERROR_THRESHOLD` (1〜100000 の整数) で上書きできる。整数でない・範囲外の値は既定値に戻し、無視した変数の名前だけを warn に残す。窓 (15 分) は `vercel.json` の間隔と結びついているので、環境変数では変えない |
+| 重複の抑止 | 同じアラートは **60 分は送り直さない** (環境変数 `OPS_ALERT_COOLDOWN_MINUTES` (1〜10080 分。`claim_ops_alert` が受け付ける範囲) で上書きできる。不正な値はしきい値と同じ扱い)。表 `ops_alert_state (alert_key PK, last_sent_at)` (service_role のみ) に覚える。「送ってよいか」は `claim_ops_alert` が 1 つの `INSERT ... ON CONFLICT DO UPDATE ... WHERE` で原子的に決める (Vercel Cron は同じ回をまれに 2 回呼ぶ。読んでから書くと 2 通出る)。キーは固定の `app_logs_error_spike` で、関数名など動的な値は入れない |
+| 送れなかったとき | メールは届くことに依存しない。送信の設定が未完了 (`RESEND_API_KEY` なし)・Resend が断った・例外のときは、`release_ops_alert` で取った権利を返し (「送った」と記録したままにしない)、15 分後の次の回でもう一度試す。失敗は `sendEmail` が `app_logs` に error で残し (宛先はマスク)、cron も件数と関数名を warn で残す。応答は 200 のまま (`status: send_failed` / `send_skipped`) |
+| 載せる内容 | 件数・関数名 (多い順に最大 10 件、残りは合計)・`/super-admin/logs` へのリンク・検知した時刻 (日本時間)。**ユーザー ID・メールアドレス・ログの本文は載せない** (送信先の Resend は米国の事業者)。関数名も、UUID・メールアドレス・トークンの書式はマスクし、80 文字までにしてから載せる |
+| 実装 | `src/app/api/cron/app-log-alerts/route.ts`、`src/lib/ops-alerts/app-log-error-spike.ts` (判定・整形)、`src/lib/emails/ops/app-log-error-spike.ts` (文面)、migration `20261010123500_ops_alert_state.sql` |
+| テスト | `src/__tests__/api/cron/app-log-alerts.test.ts` (401・しきい値・重複の抑止・メールの内容・送れなかったとき)、`src/__tests__/lib/ops-alerts/`、`src/__tests__/lib/emails/ops/`、`tests/integration/rls/ops-alert-state.test.ts` (DB の関数。同時に呼んでも権利を取れるのは 1 本だけ) |
+
+限界:
+
+- 窓 (15 分) と cron の間隔が同じなので、窓の境目をまたいで集中した少数の error は、どちらの窓でも届かず見逃すことがある。続く障害は次の窓で届く。
+- 数えるのは `app_logs` に書かれた error だけ。ログを書く前に落ちる障害 (関数ごと落ちる・DB に繋がらない) は数えられない。死活の監視 (§9.1) は別。
+- `error` レベルのログがそのままアラートの種になる。想定内の失敗 (入力の誤りなど) は `warn` で書く。`error` で書き続けると、本物の障害と区別できなくなる。
+- 本番はメールの送信ドメインが未検証で、メールは届かない (`docs/operations/email-domain.md`)。それまでは、送れなかったことが `app_logs` に残るだけ。
 
 ## 9. Status Page (status.homegohan.app) は設置しない
 
@@ -544,7 +569,7 @@ Status Page が無いので、旧案の「Better Stack でインシデントを�
 ```
 Step 1: 検知
   - 自動: severity='critical' の監査ログ (§6.2) → Slack #incident
-    (Better Stack / Sentry のアラートは採用しないため無い。エラー急増の自動検知は未実装で、§8.1 の旧案のまま)
+    (Better Stack / Sentry のアラートは採用しないため無い。`app_logs` の error の急増は、§8.3 のメール通知で検知する。宛先 `OPS_ALERT_EMAIL` を設定した場合のみ。それ以外の自動検知は未実装)
   - 手動: ユーザー報告 → support チケット → admin が確認
 
 Step 2: トリアージ (5 分以内)
@@ -800,7 +825,21 @@ test('BAN action creates audit_log entry visible to super_admin', async ({
 - エラー監視: `app_logs` (`src/lib/db-logger.ts` / `supabase/functions/_shared/db-logger.ts`) と `/super-admin/logs`
 - 性能の計測: Vercel Speed Insights (`@vercel/speed-insights`。`src/app/layout.tsx` から `src/components/SpeedInsightsClient.tsx` 経由で置く)
 
-## 15. プロダクト Analytics イベント (PostHog)
+## 15. プロダクト Analytics イベント (PostHog) 【不採用】
+
+> **【不採用】オーナー判断 (2026-10-08, #1166)**: PostHog による利用状況の計測は採用しない。
+> 本節 (§15.1〜§15.10) は 2026-05-08 時点の旧設計で、**実装の根拠にしない**。経緯の記録として残している。
+>
+> - コードからは、PostHog の SDK (`posthog-js` / `posthog-react-native`)、初期化コード、`PostHogProvider`、CSP の送信先許可、環境変数 (`NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST` / `EXPO_PUBLIC_POSTHOG_KEY` / `EXPO_PUBLIC_POSTHOG_HOST`) の読み取りと設定例を取り除いた。再び import すると `tests/posthog-not-adopted-contract.test.ts` が落ちる。Vercel・EAS に入っている値の削除と、PostHog 側のキーの失効はオーナー作業 (`docs/operations/posthog-dashboard.md` の「後始末」)。
+> - モバイルの ErrorBoundary (#1207) が PostHog へ送っていた `app_error_boundary` (§15.3.1) も、送らなくなった。例外の記録は、コンソールとサーバーログ (`app_logs`) だけ。
+> - モバイルの異常の通知 (#1038 / #1405) も PostHog 専用だったので、送り先をなくした。push token の登録失敗・削除失敗・削除が 0 件
+>   (`push_token_registration_failed` / `push_token_unregister_failed` / `push_token_unregister_no_rows`) と、セッション保管庫の異常 (`secure_session_storage_issue`)。
+>   今は端末のコンソール (`console.warn`) に出すだけで、サーバーログ (`app_logs`) には残らない。残したいときは別に設計する
+>   (セッション保管庫の異常は、アクセストークンを取る `getSession()` がその保管庫を読むので、保管庫の中から API を呼べない)。
+> - `packages/handson-tour-shared/src/analytics.ts` の `fireAnalytics` は残してあるが、送り先 (adapter) を誰も注入していないので何も送らない。イベント名・プロパティの定義 (§15.3〜§15.4) は、将来計測を足すときの出発点として残す。
+> - §15.6 の KPI 集計と §15.8 のダッシュボード公開は PostHog 前提のため実施しない。運用手順 `docs/operations/posthog-dashboard.md` も同じく不採用。
+> - `cookie_consents` テーブルは残す (migration は変えない)。同意バナーの扱い (cross/08 §12〜§13) は、この判断とは別に決める。
+> - 利用状況の数字が必要になったときは、先に「何を・どこへ・どの同意で」送るかを決め直してから設計する。PostHog を戻す場合は、オーナーの判断を取り直す。
 
 ### 15.1 配信基盤の確定 (2026-05-08)
 
@@ -850,20 +889,25 @@ family/09 が新規追加するイベント。
 
 数えるとハンズオン固有 8 + Web Vitals 3 = 11 イベント、family/09 設計書では「10 イベント種類」と表記される(Web Vitals 3 種を「performance」で 1 グループ扱い)。本表では明示的に 11 行を canonical 化。
 
-#### 15.3.1 アプリ共通のイベント (ハンズオン以外)
+#### 15.3.1 アプリ共通のイベント (ハンズオン以外) 【送らなくなった (#1166)】
+
+> **【送らなくなった】** モバイルの ErrorBoundary (#1207) は、当初この節のイベント `app_error_boundary` を PostHog へ送っていた。
+> PostHog を採用しない判断 (#1166) に合わせて、`apps/mobile/src/lib/error-report.ts` から PostHog への送信をやめた。今は PostHog へ何も送らない。
+> 画面の描画中の例外の記録として残っているのは、**コンソール (`console.error`) とサーバーログ (`POST /api/log` → `app_logs`) だけ**。
+> 下の表と項目は、送っていたときの定義の記録で、実装の根拠にしない。
 
 | event_name | カテゴリ | 発火タイミング | 主要プロパティ |
 |---|---|---|---|
-| `app_error_boundary` | error | モバイルの ErrorBoundary が、画面の描画中の例外を受けた (#1207) | `boundary`, `platform`, `error_name?`, `error_fingerprint?` |
+| `app_error_boundary` (送らない) | error | モバイルの ErrorBoundary が、画面の描画中の例外を受けた (#1207) | `boundary`, `platform`, `error_name?`, `error_fingerprint?` |
 
-`app_error_boundary` は、§15.7 に従い **例外の文面 (`message`) もスタックも送らない**。PostHog は外部の計測サービスで、イベントがユーザー ID に紐づくうえ、§15.7 の PII フィルタはキー名しか見ず値の中身は除かないため。送るのは次の項目だけ。
+送っていたときは、§15.7 に従い **例外の文面 (`message`) もスタックも送らなかった**。PostHog は外部の計測サービスで、イベントがユーザー ID に紐づくうえ、§15.7 の PII フィルタはキー名しか見ず値の中身は除かないため。送っていたのは次の項目だけ。
 
 - `boundary`: どの境界か (例: `root` / `tabs` / `org`)。画面遷移のパスではない
 - `platform`: OS
-- `error_name`: 例外の種類。`/^[A-Za-z0-9_$.]{1,64}$/` に合う識別子 (`TypeError` など) のときだけ付く
+- `error_name`: 例外の種類。`/^[A-Za-z0-9_$.]{1,64}$/` に合う識別子 (`TypeError` など) のときだけ付いた
 - `error_fingerprint`: 種類と文面から作る指紋 (32 bit FNV-1a の 16 進 8 桁)。元に戻せず、同じ例外を数えるためだけに使う
 
-PostHog で件数を見つけたら、同じ指紋を `app_logs` の `metadata.fingerprint` で引くと、生の文面 (300 文字に切り詰め済み) とスタックが見つかる。これらは `POST /api/log` の metadata にだけ残り、サーバー側 (`sanitizeLogEntry`) で秘密情報をマスクして保存される (ログイン前の画面の例外は、`/api/log` が 401 で断るので残らない)。実装は `apps/mobile/src/lib/error-report.ts`。
+今も残っているサーバーログ (`app_logs`) の `metadata` には、`app` (`mobile`) / `boundary` / `platform` / `name` / `message` (300 文字に切り詰め済み) / `stack` (1500 文字に切り詰め済み) / `fingerprint` が入る。`fingerprint` は上の `error_fingerprint` と同じ計算で、`app_logs` の上で同じ例外をまとめて数えるために使う。これらはサーバー側 (`sanitizeLogEntry`) で秘密情報をマスクして保存される (ログイン前の画面の例外は、`/api/log` が 401 で断るので残らない)。実装は `apps/mobile/src/lib/error-report.ts`。`apps/mobile/__tests__/lib/error-report.test.ts` が、送り先がサーバーログだけであることを確かめる。
 
 ### 15.4 共通プロパティ (全イベント)
 
@@ -947,5 +991,6 @@ cross/08-legal-compliance §13 に従い、`cookie_consents` テーブルで「�
 - 監査ログの 1 年後コールドストレージ移行: S3 Glacier への転送ジョブは別途実装 (Phase 3)
 - PagerDuty 連携 (要件 §5.10.2 の将来): 現在は Slack のみ対応。PagerDuty は組織 Enterprise 契約時に検討
 - `audit_logs_archive` テーブルへの移動でインデックスが再作成されるため、large scale 時のパフォーマンス確認が必要
-- エラー急増・Stripe webhook の遅延・pg_cron の失敗・API p95 悪化の自動通知 (§8.1 の旧案): Better Stack を採用しないため未実装。`app_logs` の集計で代替するか、自動通知を持たない運用にするかを決める (#1179)
+- エラー急増の自動通知 (§8.1 の旧案の 1 行目): `app_logs` の集計とメールで実装した (§8.3。#1157)。残る作業はオーナーのもの: `OPS_ALERT_EMAIL` の決定と設定、本番のメール送信の有効化 (Resend の送信ドメインの検証。`docs/operations/email-domain.md`)
+- Stripe webhook の遅延・pg_cron の失敗・API p95 悪化の自動通知 (§8.1 の旧案の残り): Better Stack を採用しないため未実装。`app_logs` の集計で代替するか、自動通知を持たない運用にするかを決める (#1179)
 - Speed Insights の計測データ (ページの URL を含む) を Vercel へ送ることの表示 (§7.3): 記載が要るかは弁護士の確認 (T30) を待って決める。本番はすでに有効とみられ、デプロイした時点から送られる。送る URL からは `?` 以降・`#` 以降・招待トークンを消してある (`beforeSend`)。デプロイ後に、実際の送信内容で確かめる (#1179)

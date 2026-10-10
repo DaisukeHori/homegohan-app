@@ -2,10 +2,14 @@ import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
-import { runConsultationAction } from '@/lib/ai/consultation-action-executor';
+import { AI_ALLOWED_MEAL_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';
 import { CANONICAL_GOAL_TYPES, describeGoalRangesForPrompt } from '@/lib/health-goal-types';
+import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 // #1047 F2-21: アクション自動実行を self-fetch
 // (`${NEXT_PUBLIC_APP_URL}/api/ai/consultation/actions/.../execute`) 経由で行うと、
@@ -654,7 +658,7 @@ ${importantMessagesInfo}
 - generate_single_meal: AIが栄養計算付きで1食を生成（推奨）
   params: {
     date: "YYYY-MM-DD",
-    mealType: "breakfast|lunch|dinner|snack",
+    mealType: "${AI_ALLOWED_MEAL_TYPES.join('|')}",
     specificDish?: "希望の料理名（例: 肉じゃが、カレー）",
     recipeId?: "uuid",              // レシピDB検索結果のUUID（search_recipesで取得）
     recipeExternalId?: "external_id", // レシピDBの外部ID（search_recipesで取得）
@@ -665,6 +669,7 @@ ${importantMessagesInfo}
   }
   ※ このアクションはAIが正確な栄養計算を行い、一汁三菜の献立を生成します
   ※ recipeId/recipeExternalIdを指定すると、レシピDBの正確な栄養データを使用します
+  ※ mealType の意味: ${AI_ALLOWED_MEAL_TYPES.map((type) => `${type}=${mealTypeLabels[type]}`).join(' / ')}（夜食・おやつもこのアクションで生成できます）
 
 - generate_day_menu: 1日分の献立を一括作成 (params: { date: "YYYY-MM-DD", ultimateMode?: true })
 - generate_week_menu: 1週間分の献立を一括作成 (params: { startDate: "YYYY-MM-DD", ultimateMode?: true })
@@ -967,10 +972,22 @@ export async function POST(
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  // #1148: AI 相談の緊急停止スイッチ (feature_flags の ai_chat_enabled。通常は ON)。回数の枠を使わせないよう、レート制限より前に見る
+  const unavailable = await aiChatDisabledResponse(user.id);
+  if (unavailable) return unavailable;
+
+  // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
+  const aiConsentDenied = await requireAiConsent(supabase, user.id);
+  if (aiConsentDenied) return aiConsentDenied;
+
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
+    // 必須の環境変数は、ユーザーのメッセージを保存する前に確かめる。欠けていれば MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す)
+    // (保存したあとで気づくと、メッセージだけが残って AI の返答が付かない) (#1182)
+    const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
+
     const openai = getFastLLMClient();
     // セッション所有者確認
     const { data: session } = await supabase
@@ -1029,9 +1046,7 @@ export async function POST(
     const url = new URL(request.url);
     const useStreaming = url.searchParams.get('stream') === 'true';
 
-    // knowledge-gpt（ナレッジベース付きAI）で応答生成
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    // knowledge-gpt（ナレッジベース付きAI）で応答生成 (接続情報は上で取得済み)
 
     // ストリーミングモード
     if (useStreaming) {
@@ -1423,8 +1438,8 @@ JSONで回答してください：
       actionResult,
     });
 
-  } catch (error: any) {
-    console.error('Message error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
+    return internalError('POST /api/ai/consultation/sessions/[sessionId]/messages', error, { userId: user.id });
   }
 }

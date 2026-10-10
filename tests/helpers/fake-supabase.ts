@@ -31,6 +31,7 @@ export function createQueryBuilder(result: FakeQueryResult) {
     limit: vi.fn(() => builder),
     range: vi.fn(() => builder),
     is: vi.fn(() => builder),
+    in: vi.fn(() => builder),
     update: vi.fn(() => builder),
     insert: vi.fn(() => builder),
     delete: vi.fn(() => builder),

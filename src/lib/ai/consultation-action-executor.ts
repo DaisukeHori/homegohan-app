@@ -17,7 +17,7 @@ import {
 import { updateHealthStreak } from '@/lib/health-streaks';
 import { todayLocal } from '@/lib/date-utils';
 import { invokeGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
-import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
+import { isFeatureEnabled } from '@/lib/feature-flags';
 import type { MealImageJobSeed } from '@/lib/meal-image';
 import {
   buildDishImagePayload,
@@ -34,14 +34,18 @@ import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
 
-// #1048 F2-23: AI 生成アクションが扱う meal_type は朝・昼・夕・おやつの 4 値に限る
-// (システムプロンプトも夜食 'midnight_snack' は提示しない)。AI の出力は信頼できないため、
-// 実行時にもホワイトリストで防御する。
-// 当初は「planned_meals.meal_type には 4 値の CHECK (#221) があり、'midnight_snack' で 500 になる」
-// という理由だったが、その CHECK は本番に存在しなかった (#1205)。#1205 で足した
-// DB のトリガー (trg_planned_meals_validate_values) は 'midnight_snack' を含む 5 値で、ここの制限は DB の制約ではなく
-// AI 経路の仕様として残している。
-const AI_ALLOWED_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
+// #1048 F2-23 / #1103: AI 生成アクション (generate_single_meal) が扱う meal_type。
+// 朝食・昼食・夕食・おやつ・夜食 (midnight_snack) の 5 値。UI・献立生成の Edge Function
+// (supabase/functions/_shared/meal-generator.ts の ALLOWED_MEAL_TYPES)・DB の検査
+// (planned_meals: trg_planned_meals_validate_values、meals: trg_meals_validate_meal_type) と同じ値。
+// AI の出力は信頼できないため、実行時にもホワイトリストで防御する。
+// 以前は夜食を除く 4 値だった。理由は「planned_meals.meal_type には 4 値の CHECK (#221) があり、
+// 'midnight_snack' を入れると 500 になる」だったが、その CHECK は本番に存在しなかった (#1205)。
+// #1103 (項目 9) で夜食を正式な食事区分とし、DB の検査とこの許可リストを 5 値にそろえた。
+// システムプロンプト (api/ai/consultation/sessions/[sessionId]/messages/route.ts) の mealType もこの配列から作る。
+// 値を足す・減らすときは DB のトリガーと PLANNED_MEAL_TYPES (src/lib/planned-meal-validation.ts) も合わせる
+// (tests/consultation-meal-type-actions.test.ts が PLANNED_MEAL_TYPES と同じであることを確かめる)。
+export const AI_ALLOWED_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'] as const;
 
 // ==================== mass assignment 対策: サニタイザ ====================
 // AIが生成した action_params は信頼できない入力（プロンプトインジェクションの
@@ -210,6 +214,17 @@ function sanitizeShoppingItemUpdate(input: unknown): { data: PlainRecord; errors
   return { data, errors };
 }
 
+/**
+ * 実行すると、利用者のデータを外国の AI 事業者へ送るアクション (献立の生成。Edge Function generate-menu-v4 / v5 を呼ぶ)。
+ * 実行の API は、これらの前に同意を確かめる (T15 / #1154。同意が無ければ 403 AI_CONSENT_REQUIRED で、アクションは pending のまま残す)。
+ * Edge Function の側でも同じ判定で止まる。
+ */
+export const AI_SENDING_ACTION_TYPES: ReadonlySet<string> = new Set([
+  'generate_day_menu',
+  'generate_week_menu',
+  'generate_single_meal',
+]);
+
 export interface ConsultationActionRow {
   id: string;
   action_type: string;
@@ -232,9 +247,8 @@ export async function runConsultationAction(
   let result: any = null;
   let success = false;
 
-  // V5フラグ判定
-  const featureFlags = await loadFeatureFlags(supabase);
-  const useV5 = Boolean(featureFlags.menu_generation_v5_wrapped);
+  // V5フラグ判定 (#1148: feature_flags。運営画面で切り替える)
+  const useV5 = await isFeatureEnabled('menu_generation_v5_wrapped', user.id);
   const engineLabel = useV5 ? 'generate-menu-v5' : 'generate-menu-v4';
 
   // アクションタイプに応じて実行
@@ -437,9 +451,9 @@ export async function runConsultationAction(
         break;
       }
 
-      // #1048 F2-23: AI 経路で扱わない mealType(例: 'midnight_snack')を拒否する。
-      // プロンプトからは既に除去済みだが、AI 出力は信頼できないため
-      // 実行時にも二重で防御する。
+      // #1048 F2-23 / #1103: 許可リスト (AI_ALLOWED_MEAL_TYPES。夜食 midnight_snack を含む 5 値) にない
+      // mealType を拒否する。プロンプトには同じリストから作った値だけを提示しているが、
+      // AI 出力は信頼できないため実行時にも二重で防御する。
       if (!AI_ALLOWED_MEAL_TYPES.includes(mealType)) {
         result = { error: `mealType は ${AI_ALLOWED_MEAL_TYPES.join('/')} のいずれかである必要があります` };
         break;

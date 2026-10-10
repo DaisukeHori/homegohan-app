@@ -9,7 +9,20 @@ node_modules/
 .vercel/
 /src/
 /public/
-/supabase/
+
+# supabase/ はアプリのビルドに不要だが、アプリが import するファイルだけは残す
+# (apps/mobile/src/lib/ai-consent.ts → supabase/functions/_shared/ai-consent.ts。#1154)。
+# 親のディレクトリを除外すると下のファイルを否定で戻せないので、段ごとに「中身を除外 → 次の段だけ戻す」と書く。
+# 否定の規則 (!) のディレクトリには末尾の / を付けない。EAS (eas-cli) はディレクトリを末尾の / なしの名前で
+# 照合するので、`!/supabase/functions/` と書くとディレクトリに当たらず、`/supabase/*` で除外されたままになる。
+# アプリが supabase/ の別のファイルを import するようになったら、最後の段に否定の行を足す
+# (足し忘れは tests/mobile-easignore-bundle-inputs.test.ts が落とす)。
+/supabase/*
+!/supabase/functions
+/supabase/functions/*
+!/supabase/functions/_shared
+/supabase/functions/_shared/*
+!/supabase/functions/_shared/ai-consent.ts
 
 # テスト / playwright
 tests/
