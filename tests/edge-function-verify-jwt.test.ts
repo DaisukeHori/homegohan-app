@@ -13,6 +13,10 @@
 // (ゲートウェイの検証を外したのに関数の中でも確かめないと、誰でも呼べてしまう)。
 //
 // ここで確かめること (DB もネットワークも使わず、ソースだけを見る):
+//   - supabase/config.toml の verify_jwt を読み飛ばさない。このリポジトリでは [functions.<name>] の見出しの下に
+//     verify_jwt = true / false の行で書き、TOML として正しいほかの書き方 ([functions] の下のインラインテーブル、
+//     最上位の functions.<name>.verify_jwt、[remotes.*] での上書き、大文字の VERIFY_JWT など) は例外にする。
+//     読めた数は、全文の verify_jwt の出現数と突き合わせる
 //   - verify_jwt = false の関数は、どれも関数のディレクトリがあり、先頭で自前の認証をする
 //     (requireServiceRole / requireAuth / auth.getUser を、本文を読む前・DB に触る前に呼ぶ)
 //   - DB から pg_net (net.http_post など) で呼ばれる関数は、どれも verify_jwt = false。
@@ -20,9 +24,10 @@
 //     (SQL 関数の本文だけでなく、関数で包まない cron.schedule('job', '...', $$ SELECT net.http_post(...) $$)、
 //     DO ブロック、素の SELECT も)。別のやり方で数え直した呼び出しの数とファイルごとに突き合わせ、
 //     拾えない呼び出し・呼び先が読めない呼び出しがあれば赤にする
-//   - 先頭で requireServiceRole を呼ぶ関数 (CRON_SECRET を受け付ける関数) は、どれも verify_jwt = false
+//   - CRON_SECRET を受け付ける関数 (requireServiceRole / checkCronSecret を呼ぶか、'CRON_SECRET' を読む関数。
+//     index.ts の全体と、そこから相対パスの import でたどれるモジュールから拾う) は、どれも verify_jwt = false
 //   - GitHub Actions のデプロイは、名前を指定しない functions deploy で config.toml を読み (--no-verify-jwt を付けない)、
-//     config.toml を変えただけでも動く
+//     verify_jwt を環境変数 (SUPABASE_FUNCTIONS_*) で上書きせず、config.toml を変えただけでも動く
 //
 // supabase CLI 2.62.10 の functions deploy は、名前を指定しないとき supabase/functions/*/index.ts の全関数を配り、
 // 関数ごとの verify_jwt を config.toml の [functions.<name>] から読む (--no-verify-jwt を付けたときだけ、全関数でそれが優先)。
@@ -51,34 +56,178 @@ const SEGMENT_STATS_FUNCTION = 'calculate-segment-stats';
 // ---------------------------------------------------------------------------
 
 /**
+ * supabase CLI 2.62.10 の [functions.<name>] に書けるキー (pkg/config/config.go の function 型の toml タグ)。
+ * CLI は viper で読むのでキーの大文字小文字を区別しない (VERIFY_JWT も verify_jwt として効く)。
+ * ここに無いキー (大文字を含む書き方・綴りの違い) は、読み飛ばさずに例外にする。
+ */
+const FUNCTION_CONFIG_KEYS: ReadonlySet<string> = new Set(['enabled', 'verify_jwt', 'import_map', 'entrypoint', 'static_files']);
+/**
+ * config.toml に書く関数名。CLI の関数名の規則は ^[A-Za-z][A-Za-z0-9_-]*$ だが、CLI は viper でキーを小文字にして読むので、
+ * 大文字を含む名前は、ここで読む名前と CLI が読む名前が食い違う。小文字の名前だけを読み、ほかは例外にする
+ */
+const FUNCTION_NAME = /^[a-z][a-z0-9_-]*$/;
+const isFunctionsKeyPart = (part: string) => part.toLowerCase() === 'functions';
+
+/**
+ * TOML の 1 行 (または複数行の値の続きの 1 行) を、' と " の文字列を飛ばしながら読み、
+ * # のコメントの手前まで (content)、文字列の中身を除いたコード (code)、閉じていない [ { の数 (depth) を返す。
+ * 複数行の文字列 (""" と ''') は読まずに例外にする (中に [functions.x] のような行を書けてしまうため)。
+ */
+function scanTomlLine(text: string, depthIn: number, where: string): { content: string; code: string; depth: number } {
+  let depth = depthIn;
+  let code = '';
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (text.startsWith('"""', i) || text.startsWith("'''", i)) {
+      throw new Error(`${where}: 複数行の文字列 (""" / ''') は読まない (中の行を見出しやキーと見分けられない)`);
+    }
+    if (ch === '#') return { content: text.slice(0, i), code, depth };
+    if (ch === '"' || ch === "'") {
+      let j = i + 1;
+      // " の文字列だけ \ が次の 1 文字を逃がす (' の文字列は逃がさない)
+      while (j < text.length && text[j] !== ch) j += ch === '"' && text[j] === '\\' ? 2 : 1;
+      if (j >= text.length) throw new Error(`${where}: 文字列が行の中で閉じていない`);
+      code += `${ch}${ch}`;
+      i = j + 1;
+      continue;
+    }
+    if (ch === '[' || ch === '{') depth += 1;
+    else if (ch === ']' || ch === '}') depth -= 1;
+    code += ch;
+    i += 1;
+  }
+  return { content: text, code, depth };
+}
+
+/**
+ * ドット付きのキー (a.b / a."b" / a.'b' / 前後の空白つき) を部分に分ける。読めなければ null。
+ * " のキーの中の \ (エスケープ) は読まない (null)。
+ */
+function parseTomlKey(text: string): string[] | null {
+  const part = /\s*(?:([A-Za-z0-9_-]+)|"([^"\\]*)"|'([^']*)')\s*/y;
+  const parts: string[] = [];
+  let i = 0;
+  for (;;) {
+    part.lastIndex = i;
+    const m = part.exec(text);
+    if (m === null) return null;
+    parts.push(m[1] ?? m[2] ?? m[3]);
+    i = part.lastIndex;
+    if (i === text.length) return parts;
+    if (text[i] !== '.') return null;
+    i += 1;
+  }
+}
+
+/** key = value の行を、文字列の外の最初の = で分ける。= が無ければ null */
+function splitTomlKeyValue(line: string): { key: string; value: string } | null {
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"' || ch === "'") {
+      const close = line.indexOf(ch, i + 1);
+      if (close < 0) return null;
+      i = close;
+    } else if (ch === '=') {
+      return { key: line.slice(0, i), value: line.slice(i + 1).trim() };
+    }
+  }
+  return null;
+}
+
+/**
+ * 数え直し用: # から行末を除いた全文に verify_jwt が何回出るか (大文字小文字を問わない)。
+ * functionVerifyJwt が [functions.<name>] の中で読んだ verify_jwt の数と突き合わせ、読み飛ばした書き方を見つける。
+ */
+const countVerifyJwtMentions = (toml: string) =>
+  toml
+    .split('\n')
+    .map((line) => line.replace(/#.*$/, ''))
+    .join('\n')
+    .match(/verify_jwt/gi)?.length ?? 0;
+
+/**
  * config.toml の [functions.<name>] ごとの verify_jwt を読む (指定が無ければ CLI の既定値 true)。
- * このリポジトリの config.toml は単純な形なので、行ごとに読む。読めない行が [functions.*] の中にあれば例外にする
- * (読み飛ばして緑にしない)。
+ *
+ * 読み飛ばして緑にしないよう、次のどれかに当たれば例外にする (このリポジトリでは
+ * 「[functions.<name>] の見出しの下に verify_jwt = true / false の行」の形でだけ書く):
+ *   - 見出しやキーの行として読めない行
+ *   - functions を含む見出しで、[functions.<name>] でないもの
+ *     ([functions] / [functions.<name>.<sub>] / [[functions.<name>]] / [remotes.<x>.functions.<name>] など)。
+ *     名前を引用符で囲んだ [functions."<name>"] と、空白を挟んだ [ functions . <name> ] は、同じ名前として読む
+ *   - functions を部分に含むキー (どの表の中でも。最上位の functions.<name>.verify_jwt = false や、
+ *     [functions] の下の <name> = { ... } のもとになる書き方)
+ *   - 値の中 (文字列の外) に functions か verify_jwt が出る行 (インラインテーブルで書いた設定)
+ *   - [functions.<name>] の中の、CLI の関数の設定に無いキー (VERIFY_JWT のような大文字の書き方も)・同じキーの 2 回目
+ *   - verify_jwt の値が true / false でない
+ *   - 複数行の文字列 (""" / ''')
+ *   - 全文の verify_jwt の出現数 (# のコメントを除く) と、[functions.<name>] の中で読んだ数が合わない
  */
 function functionVerifyJwt(toml: string): Map<string, boolean> {
   const result = new Map<string, boolean>();
-  let current: string | null = null;
-  for (const rawLine of toml.split('\n')) {
-    const line = rawLine.replace(/#.*$/, '').trim();
+  let table: { kind: 'function'; name: string; keys: Set<string> } | { kind: 'other' } = { kind: 'other' };
+  /** 複数行の値 (配列) の中なら、閉じていない [ { の数 */
+  let depth = 0;
+  let verifyJwtRead = 0;
+  for (const [index, rawLine] of toml.split('\n').entries()) {
+    const where = `${CONFIG_TOML}:${index + 1}`;
+    const scanned = scanTomlLine(rawLine, depth, where);
+    const line = scanned.content.trim();
+    if (depth > 0) {
+      // 複数行の値の続き。値の中には functions / verify_jwt を書かせない
+      if (/functions|verify_jwt/i.test(scanned.code)) throw new Error(`${where}: 値の中の functions / verify_jwt は読まない: ${rawLine}`);
+      depth = scanned.depth;
+      continue;
+    }
     if (line === '') continue;
-    const section = /^\[([^\]]+)\]$/.exec(line);
-    if (section) {
-      const fn = /^functions\.([a-z0-9-]+)$/.exec(section[1]);
-      current = fn ? fn[1] : null;
-      if (current !== null) {
-        if (result.has(current)) throw new Error(`${CONFIG_TOML}: [functions.${current}] が 2 回ある`);
-        result.set(current, true);
+
+    if (line.startsWith('[')) {
+      const header = /^\[\[(.*)\]\]$/.exec(line) ?? /^\[(.*)\]$/.exec(line);
+      const key = header === null ? null : parseTomlKey(header[1]);
+      if (key === null) throw new Error(`${where}: 表の見出しを読めない: ${rawLine}`);
+      const arrayOfTables = line.startsWith('[[');
+      if (!arrayOfTables && key.length === 2 && isFunctionsKeyPart(key[0])) {
+        const name = key[1];
+        if (!FUNCTION_NAME.test(name)) throw new Error(`${where}: 関数名 ${JSON.stringify(name)} は ${FUNCTION_NAME} に合わない`);
+        if (result.has(name)) throw new Error(`${where}: [functions.${name}] が 2 回ある`);
+        result.set(name, true);
+        table = { kind: 'function', name, keys: new Set() };
+      } else if (key.some(isFunctionsKeyPart)) {
+        throw new Error(`${where}: functions を含む見出しは [functions.<name>] の形でだけ読む: ${rawLine}`);
+      } else {
+        table = { kind: 'other' };
       }
       continue;
     }
-    if (current === null) continue;
-    const kv = /^([a-z_]+)\s*=\s*(.+)$/.exec(line);
-    if (!kv) throw new Error(`${CONFIG_TOML}: [functions.${current}] の中の行を読めない: ${rawLine}`);
-    if (kv[1] !== 'verify_jwt') continue;
-    if (kv[2] !== 'true' && kv[2] !== 'false') {
-      throw new Error(`${CONFIG_TOML}: [functions.${current}] の verify_jwt が true / false でない: ${kv[2]}`);
+
+    const kv = splitTomlKeyValue(line);
+    const key = kv === null ? null : parseTomlKey(kv.key);
+    if (kv === null || key === null) throw new Error(`${where}: 行を読めない: ${rawLine}`);
+    if (key.some(isFunctionsKeyPart)) throw new Error(`${where}: functions を含むキーは読まない ([functions.<name>] の見出しで書く): ${rawLine}`);
+    const valueCode = scanTomlLine(kv.value, 0, where).code;
+    if (/functions|verify_jwt/i.test(valueCode)) throw new Error(`${where}: 値の中の functions / verify_jwt は読まない: ${rawLine}`);
+    depth = scanned.depth;
+
+    if (table.kind !== 'function') continue;
+    const [name] = key;
+    if (key.length !== 1 || !FUNCTION_CONFIG_KEYS.has(name)) {
+      throw new Error(`${where}: [functions.${table.name}] の中の ${JSON.stringify(key.join('.'))} は関数の設定のキーでない: ${rawLine}`);
     }
-    result.set(current, kv[2] === 'true');
+    if (table.keys.has(name)) throw new Error(`${where}: [functions.${table.name}] の ${name} が 2 回ある`);
+    table.keys.add(name);
+    if (name !== 'verify_jwt') continue;
+    if (kv.value !== 'true' && kv.value !== 'false') {
+      throw new Error(`${where}: [functions.${table.name}] の verify_jwt が true / false でない: ${kv.value}`);
+    }
+    result.set(table.name, kv.value === 'true');
+    verifyJwtRead += 1;
+  }
+  if (depth !== 0) throw new Error(`${CONFIG_TOML}: 値の [ { が閉じていない`);
+  const mentioned = countVerifyJwtMentions(toml);
+  if (mentioned !== verifyJwtRead) {
+    throw new Error(
+      `${CONFIG_TOML}: verify_jwt が ${mentioned} 回書かれているのに、[functions.<name>] の中で読めたのは ${verifyJwtRead} 回 (読み飛ばした書き方がある)`,
+    );
   }
   return result;
 }
@@ -161,14 +310,54 @@ const HANDLER_AUTH = new Map<string, HandlerAuth>(
   }),
 );
 
+/** 先頭で自前の認証をしない (関数のディレクトリが無い名前も含む) */
+const lacksLeadingAuth = (name: string) => (HANDLER_AUTH.get(name)?.kind ?? null) === null;
+
+/** verify_jwt = false なのに、先頭で自前の認証をしない関数 (ゲートウェイの検証を外したのに、誰でも呼べてしまう関数) */
+const noVerifyJwtWithoutLeadingAuth = (verifyJwt: ReadonlyMap<string, boolean>) =>
+  [...verifyJwt].filter(([name, verify]) => !verify && lacksLeadingAuth(name)).map(([name]) => name).sort();
+
 /**
- * requireServiceRole で認証する関数 = CRON_SECRET (JWT ではない) を受け付ける関数。
- * 先頭で呼んでいるかは、verify_jwt = false の関数すべてについて別に確かめる。
+ * CRON_SECRET (JWT ではない) を受け付ける印: requireServiceRole か、その中で照合する checkCronSecret
+ * (_shared/cron-secret.ts) の呼び出し、または環境変数の名前 'CRON_SECRET' の直書き
+ */
+const CRON_SECRET_ACCEPTANCE = /\brequireServiceRole\s*\(|\bcheckCronSecret\s*\(|['"`]CRON_SECRET['"`]/;
+
+/** CRON_SECRET を照合する側の定義 (この中の呼び出しや名前は、関数が受け付ける印にしない) */
+const CRON_SECRET_DEFINITIONS = ['_shared/auth.ts', '_shared/cron-secret.ts'].map((file) => path.posix.join(FUNCTIONS_DIR, file));
+
+/** 相対パスの import / export ... from / 動的 import( の行き先 */
+const RELATIVE_IMPORT = /(?:\bfrom|\bimport)\s*\(?\s*["'](\.{1,2}\/[^"']+)["']/g;
+
+/** entry (リポジトリからの相対パス) と、そこから相対パスの import でたどれるモジュールすべて */
+function relativeModulesOf(entry: string): string[] {
+  const seen = new Set<string>();
+  const queue = [entry];
+  for (let file = queue.pop(); file !== undefined; file = queue.pop()) {
+    if (seen.has(file)) continue;
+    seen.add(file);
+    for (const m of stripTsComments(read(file)).matchAll(RELATIVE_IMPORT)) {
+      queue.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), m[1])));
+    }
+  }
+  return [...seen].sort();
+}
+
+/** コメントを除いたソースのどれかに、CRON_SECRET を受け付ける印がある */
+const acceptsCronSecret = (sources: readonly string[]) => sources.some((source) => CRON_SECRET_ACCEPTANCE.test(source));
+
+/**
+ * CRON_SECRET (JWT ではない) を受け付ける関数。index.ts の全体 (Deno.serve( より前に定義した handler も) と、
+ * そこから相対パスの import でたどれるモジュールすべて (定義側の CRON_SECRET_DEFINITIONS を除く) から探す
+ * (狭く拾うと、verify_jwt = false を求める対象から漏れる)。引数の名前や await の有無も問わない。
+ * 先頭で正しく呼んでいるか (await requireServiceRole(req)) は、verify_jwt = false の関数として別に確かめる。
  */
 const SERVICE_ROLE_FUNCTIONS = DEPLOYED_FUNCTIONS.filter((name) =>
-  // 引数の名前や await の有無を問わずに拾う (狭く拾うと、verify_jwt = false を求める対象から漏れる)。
-  // 先頭で正しく呼んでいるか (await requireServiceRole(req)) は、verify_jwt = false の関数として別に確かめる
-  /\brequireServiceRole\s*\(/.test(HANDLER_AUTH.get(name)?.source ?? ''),
+  acceptsCronSecret(
+    relativeModulesOf(path.posix.join(FUNCTIONS_DIR, name, 'index.ts'))
+      .filter((file) => !CRON_SECRET_DEFINITIONS.includes(file))
+      .map((file) => stripTsComments(read(file))),
+  ),
 );
 
 // ---------------------------------------------------------------------------
@@ -385,7 +574,8 @@ function callCountMismatch(sql: string, callers: readonly DbCaller[]): { collect
 
 /**
  * DB に入る SQL のファイル (リポジトリからの相対パス)。名前で除外しない (除外した形のファイルに書いた呼び出しを見落とさないため)。
- *   - supabase/migrations の .sql すべて (.down.sql も)
+ *   - supabase/migrations の .sql すべて (戻しの .down.sql は supabase/rollbacks に置く。本番へは直接流さず、
+ *     その内容を新しい migration として supabase/migrations に足して入れるので、ここで拾える)
  *   - supabase/baseline の .sql すべて (本番のスキーマの写し。ローカルの DB は、これを migration より先に入れる)
  */
 const SQL_DIRS = [MIGRATIONS_DIR, BASELINE_DIR];
@@ -425,6 +615,73 @@ describe('検査の道具が空振りしない', () => {
       ]),
     );
     expect(() => functionVerifyJwt('[functions.a]\nverify_jwt = no\n')).toThrow();
+  });
+
+  // 以下は TOML として正しい別の書き方の verify_jwt を、読み飛ばして緑にしないことの確かめ (#1406 R2 のレビューの指摘)。
+  // supabase CLI はどれも同じ関数の設定として読む。読めない書き方は例外にし、読める書き方は同じ名前として読む
+  describe('config.toml の別の書き方の verify_jwt を読み飛ばさない', () => {
+    /** 先頭で自前の認証をしない、配られる関数 (verify_jwt = false にすると下の検査で赤になるはずの関数) */
+    const withoutAuth = DEPLOYED_FUNCTIONS.filter(lacksLeadingAuth);
+    const target = withoutAuth[0];
+
+    it('先頭で自前の認証をしない関数がある (下の確かめの前提)', () => {
+      expect(target).toBeDefined();
+    });
+
+    it.each([
+      ['引用符で囲んだ名前 [functions."<name>"]', (name: string) => `[functions."${name}"]\nverify_jwt = false\n`],
+      ["' で囲んだ名前 [functions.'<name>']", (name: string) => `[functions.'${name}']\nverify_jwt = false\n`],
+      ['空白を挟んだ見出し [ functions . <name> ]', (name: string) => `[ functions . ${name} ]\nverify_jwt = false\n`],
+      ['引用符で囲んだキー "verify_jwt"', (name: string) => `[functions.${name}]\n"verify_jwt" = false\n`],
+      ['見出しの後ろのコメント', (name: string) => `[functions.${name}] # x\nverify_jwt = false # y\n`],
+    ])('%s は同じ名前の verify_jwt = false として読み、先頭の認証が無ければ赤になる', (_form, toml) => {
+      const verifyJwt = functionVerifyJwt(toml(target));
+      expect(verifyJwt).toEqual(new Map([[target, false]]));
+      expect(noVerifyJwtWithoutLeadingAuth(verifyJwt)).toEqual([target]);
+    });
+
+    it.each([
+      ['[functions] の下のインラインテーブル', (name: string) => `[functions]\n${name} = { verify_jwt = false }\n`],
+      ['最上位のドット付きのキー', (name: string) => `functions.${name}.verify_jwt = false\n`],
+      ['最上位のインラインテーブル', (name: string) => `functions = { ${name} = { verify_jwt = false } }\n`],
+      ['ほかの表の中のドット付きのキー', (name: string) => `[remotes.prod]\nfunctions.${name}.verify_jwt = false\n`],
+      ['[remotes.*] の中の [functions.<name>]', (name: string) => `[remotes.prod.functions.${name}]\nverify_jwt = false\n`],
+      ['ほかの表の値のインラインテーブル', (name: string) => `[remotes]\nprod = { functions = { ${name} = { verify_jwt = false } } }\n`],
+      ['関数の下の表 [functions.<name>.<sub>]', (name: string) => `[functions.${name}.sub]\nverify_jwt = false\n`],
+      ['表の配列 [[functions.<name>]]', (name: string) => `[[functions.${name}]]\nverify_jwt = false\n`],
+      ['大文字のキー VERIFY_JWT (CLI は大文字小文字を区別しない)', (name: string) => `[functions.${name}]\nVERIFY_JWT = false\n`],
+      ['大文字の関数名', (name: string) => `[functions.${name.toUpperCase()}]\nverify_jwt = false\n`],
+      ['同じ関数の見出しの 2 回目 (引用符の有無で書き分け)', (name: string) => `[functions.${name}]\n[functions."${name}"]\nverify_jwt = false\n`],
+      ['verify_jwt の 2 回目', (name: string) => `[functions.${name}]\nverify_jwt = true\nverify_jwt = false\n`],
+      [
+        '複数行の文字列の中に書いた見出し',
+        (name: string) => `[functions.${name}]\nimport_map = """\n[functions.${SEGMENT_STATS_FUNCTION}]\nverify_jwt = false\n"""\n`,
+      ],
+      ['複数行の配列の中に書いた設定', (name: string) => `[remotes.prod]\nx = [\n  { functions = { ${name} = { verify_jwt = false } } },\n]\n`],
+      ['読めない行', (name: string) => `[functions.${name}]\nverify_jwt false\n`],
+    ])('%s は例外にする', (_form, toml) => {
+      expect(() => functionVerifyJwt(toml(target))).toThrow();
+    });
+
+    it('複数行の配列 (static_files) と、ほかの表の複数行の配列は読み、その後ろの verify_jwt も読む', () => {
+      const toml = [
+        '[db]',
+        'schemas = [',
+        '  "public", # [functions.x]',
+        ']',
+        '[functions.a_b]',
+        'static_files = [',
+        '  "./functions/a_b/*.html",',
+        ']',
+        'verify_jwt = false',
+      ].join('\n');
+      expect(functionVerifyJwt(toml)).toEqual(new Map([['a_b', false]]));
+    });
+
+    it('数え直し: # のコメントの外の verify_jwt の数を数える (読み飛ばした書き方は、読めた数と合わず例外になる)', () => {
+      expect(countVerifyJwtMentions('# verify_jwt\n[functions.a]\nverify_jwt = false # verify_jwt\n')).toBe(1);
+      expect(countVerifyJwtMentions('[remotes]\nprod = { functions = { a = { VERIFY_JWT = false } } }\n')).toBe(1);
+    });
   });
 
   it(`DB からの呼び出し先を抜き出せている (${SEGMENT_STATS_FUNCTION} とカタログ取り込みを含む)`, () => {
@@ -531,6 +788,36 @@ describe('検査の道具が空振りしない', () => {
     expect(SERVICE_ROLE_FUNCTIONS).toContain(SEGMENT_STATS_FUNCTION);
     expect(SERVICE_ROLE_FUNCTIONS).toContain('import-seven-eleven-catalog');
   });
+
+  it('CRON_SECRET を受け付ける関数は、Deno.serve( より前に定義した handler の中の呼び出しも拾う (#1406 R2 の同型の掃除)', () => {
+    const index = (body: string) =>
+      stripTsComments(`async function handler(req: Request) {\n  ${body}\n  return new Response('ok');\n}\nDeno.serve(handler);\n`);
+    for (const body of [
+      'const authErr = await requireServiceRole(req);',
+      "const check = await checkCronSecret(req.headers.get('Authorization'), { current: Deno.env.get('CRON_SECRET') });",
+      'const secret = Deno.env.get("CRON_SECRET");',
+    ]) {
+      const code = index(body);
+      // handler の本体は Deno.serve( より前にあるので、Deno.serve( 以降だけを見ると拾えない
+      expect(acceptsCronSecret([code.slice(code.indexOf('Deno.serve('))])).toBe(false);
+      expect(acceptsCronSecret([code])).toBe(true);
+    }
+    // コメントの中だけの CRON_SECRET は数えない
+    expect(acceptsCronSecret([index("// Deno.env.get('CRON_SECRET'); await requireServiceRole(req)")])).toBe(false);
+  });
+
+  it('CRON_SECRET を受け付けるかは、index.ts から相対パスの import でたどれるモジュールも見る (照合する側の定義は除く)', () => {
+    const modules = relativeModulesOf(path.posix.join(FUNCTIONS_DIR, 'import-seven-eleven-catalog', 'index.ts'));
+    expect(modules).toContain(path.posix.join(FUNCTIONS_DIR, '_shared/catalog/import-runner.ts'));
+    // requireAuth だけを使う関数も _shared/auth.ts (requireServiceRole の定義) を import するので、定義は印にしない
+    const [authModule] = CRON_SECRET_DEFINITIONS;
+    const importsAuthOnly = DEPLOYED_FUNCTIONS.filter(
+      (name) =>
+        relativeModulesOf(path.posix.join(FUNCTIONS_DIR, name, 'index.ts')).includes(authModule) &&
+        !SERVICE_ROLE_FUNCTIONS.includes(name),
+    );
+    expect(importsAuthOnly.length).toBeGreaterThan(0);
+  });
 });
 
 describe('verify_jwt = false の関数は、先頭で自前の認証をする', () => {
@@ -540,7 +827,11 @@ describe('verify_jwt = false の関数は、先頭で自前の認証をする', 
   });
 
   it.each(NO_VERIFY_JWT)('%s: 本文を読む・DB に触る前に、requireServiceRole / requireAuth / auth.getUser を呼ぶ', (name) => {
-    expect(HANDLER_AUTH.get(name)?.kind ?? null, `${name} はゲートウェイの検証を外しているのに、先頭で認証していない`).not.toBeNull();
+    expect(lacksLeadingAuth(name), `${name} はゲートウェイの検証を外しているのに、先頭で認証していない`).toBe(false);
+  });
+
+  it('verify_jwt = false なのに先頭で自前の認証をしない関数は無い (上の合成した config.toml の確かめと同じ判定)', () => {
+    expect(noVerifyJwtWithoutLeadingAuth(VERIFY_JWT)).toEqual([]);
   });
 });
 
@@ -593,7 +884,7 @@ describe('JWT でない Bearer で呼ばれる関数は、verify_jwt = false', (
     ).toEqual([]);
   });
 
-  it('requireServiceRole で認証する関数 (CRON_SECRET を受け付ける) は、どれも verify_jwt = false', () => {
+  it('CRON_SECRET を受け付ける関数 (requireServiceRole / checkCronSecret / CRON_SECRET) は、どれも verify_jwt = false', () => {
     // verify_jwt が有効なままだと、CRON_SECRET で呼んだときだけゲートウェイで止まり、関数の中の受け付け方と食い違う
     expect(SERVICE_ROLE_FUNCTIONS.filter((name) => VERIFY_JWT.get(name) !== false)).toEqual([]);
   });
@@ -616,6 +907,14 @@ describe('デプロイが config.toml の verify_jwt を反映する', () => {
     // 残る引数は --project-ref <ref> だけ (関数名を指定すると、それ以外の関数の verify_jwt が反映されない)
     expect(args).toMatch(/^--project-ref\s+(?:\$\{\{[^}]*\}\}|\S+)$/);
     expect(workflow).not.toMatch(/--no-verify-jwt/);
+  });
+
+  it('config.toml の verify_jwt を環境変数で上書きしない', () => {
+    // CLI は config.toml を viper で読み、SUPABASE_ + キーの . を _ にした環境変数 (SUPABASE_FUNCTIONS_<NAME>_VERIFY_JWT) で
+    // 上書きする (pkg/config/config.go の loadFromFile)。.env ファイル (SUPABASE_ENV で選ぶものも) からも読むが、
+    // .env* は .gitignore で除いてあり (.env.example は CLI が読まない)、Actions のチェックアウトには無い。
+    // 残る経路はワークフローの env なので、ここで止める
+    expect(workflow).not.toMatch(/SUPABASE_FUNCTIONS|SUPABASE_ENV\b/i);
   });
 
   it('config.toml を変えただけでも、main への push でデプロイが動く', () => {

@@ -77,6 +77,8 @@ Supabase のゲートウェイは、既定で `Authorization: Bearer` が JWT �
 
 `supabase functions deploy`（名前を指定しない全体のデプロイ。GitHub Actions もこの形）は、`supabase/config.toml` の `verify_jwt` を関数ごとに読みます（supabase CLI 2.62.10 の `internal/functions/deploy/deploy.go` の `GetFunctionConfig`。指定が無い関数は `true`）。
 
+`config.toml` には、`[functions.<name>]` の見出しの下に `verify_jwt = false` の行で書きます。TOML として正しいほかの書き方（`[functions]` の下の `<name> = { verify_jwt = false }`、最上位の `functions.<name>.verify_jwt = false`、`[remotes.*]` での上書き、大文字の `VERIFY_JWT` など）も CLI は読みますが、テストが読み飛ばさないよう例外にします。`verify_jwt` を環境変数（`SUPABASE_FUNCTIONS_<NAME>_VERIFY_JWT`）で上書きすることもしません（CLI はこれも読むので、デプロイのワークフローに書くとテストが赤にします）。
+
 `verify_jwt = false` にしてよいのは、先頭で自前の認証（`requireServiceRole` / `requireAuth` / `auth.getUser`）をする関数だけです。`tests/edge-function-verify-jwt.test.ts` が、`config.toml` の一覧と関数の先頭の認証、DB からの HTTP の呼び出し先（pg_net の `net.http_post` など）を突き合わせます。呼び出しは、DB に入る SQL（`supabase/migrations` と、本番のスキーマの写し `supabase/baseline`）の全文から拾います（SQL 関数の本文だけでなく、関数で包まない `cron.schedule('job', '...', $$ SELECT net.http_post(...) $$)` や `DO` ブロックに書いても拾います。拾えた数は別のやり方で数え直した数とファイルごとに突き合わせ、合わなければ赤になります）。呼び先の関数名が読めない呼び出し（URL を変数や Vault から組み立てる形）は赤になるので、`'.../functions/v1/<name>'` と直書きするか、`'.../functions/v1/' || 引数` なら同じ文に許可リストを書いてください。
 
 pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘密）で呼ばれる関数:
@@ -94,7 +96,7 @@ pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘
 | `process-meal-image-jobs` | `_shared/meal-image-jobs.ts`（献立生成の関数から） | service role key | service role key の完全一致 | 既定（`true`）。同上 |
 | `regenerate-shopping-list-v2` | `POST /api/shopping-list/regenerate` | service role key / 利用者の JWT | service role key の完全一致、または `requireAuth` | 既定（`true`）。同上 |
 
-既定（`true`）のままの関数は、service role key（JWT）か利用者の JWT しか受け付けないため、ゲートウェイの検証を通ります。`CRON_SECRET` のような JWT でない秘密を受け付ける関数（`requireServiceRole` を使う関数）を足したら、`config.toml` にも `verify_jwt = false` を足してください（足し忘れはテストが赤にします）。
+既定（`true`）のままの関数は、service role key（JWT）か利用者の JWT しか受け付けないため、ゲートウェイの検証を通ります。`CRON_SECRET` のような JWT でない秘密を受け付ける関数（`requireServiceRole` か `checkCronSecret` を呼ぶ関数、`CRON_SECRET` を読む関数。`index.ts` から相対パスで import するモジュールの中で呼ぶものも含みます）を足したら、`config.toml` にも `verify_jwt = false` を足してください（足し忘れはテストが赤にします）。
 
 ## 関数一覧
 
