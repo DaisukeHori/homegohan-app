@@ -18,6 +18,8 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
+import { getSupabaseServiceConfig, isMissingEnvError } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 
 // supabase/functions/regenerate-embeddings/index.ts の TABLE_CONFIGS と一致させる。
@@ -61,10 +63,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-    if (!supabaseUrl || !serviceRoleKey) {
+    // 接続情報は env-required の getter で取り出す (#1434。空白だけの値も欠けているとみなす。
+    // 欠けている変数名は getter がサーバーのログに残す)
+    let service: { url: string; serviceRoleKey: string };
+    try {
+      service = getSupabaseServiceConfig();
+    } catch (envErr) {
+      if (!isMissingEnvError(envErr)) throw envErr;
       // 判定不能 (Edge Function 呼び出し不可) な場合は成功を偽装せず、
       // 明示的にサービス利用不可を返す (fail-closed)。
       return NextResponse.json(
@@ -78,7 +83,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const edgeFnUrl = `${supabaseUrl}/functions/v1/regenerate-embeddings`;
+    const edgeFnUrl = `${service.url}/functions/v1/regenerate-embeddings`;
 
     let edgeRes: Response;
     try {
@@ -86,7 +91,7 @@ export async function POST(request: NextRequest) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${serviceRoleKey}`,
+          Authorization: `Bearer ${service.serviceRoleKey}`,
         },
         body: JSON.stringify({
           table,
@@ -141,7 +146,7 @@ export async function POST(request: NextRequest) {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    // 本文は汎用メッセージだけにし、元のエラーは構造化ログに残す (#1172)
+    return internalError('POST /api/super-admin/embeddings/regenerate', err, {}, { shape: 'nested' });
   }
 }

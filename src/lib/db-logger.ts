@@ -9,7 +9,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { sanitizeLogEntry, sanitizeMetadata } from '../../supabase/functions/_shared/log-sanitizer';
 // 何も import しないファイル。ここから読んでも、ブラウザ・Edge のバンドルに余計なものは入らない
-import { isMissingEnvError } from './env-required';
+import { getSupabaseServiceConfig, isMissingEnvError } from './env-required';
 
 // #1044 (F6-20) / #1171: マスキング・切り詰めの実体は Edge Functions と共用の log-sanitizer.ts にある。
 // 従来どおり '@/lib/db-logger' から import できるよう、ここから再エクスポートする
@@ -57,17 +57,22 @@ interface LogEntry {
   request_id?: string;
 }
 
-// Supabase クライアント（service_role）
+/**
+ * Supabase クライアント（service_role）。接続情報が欠けていれば null (ログは console にだけ残り、app_logs には書かない)。
+ * 接続情報は env-required の getter で取り出す (#1434。空白だけの値も欠けているとみなす)。
+ * 欠けている変数名は getter がサーバーのログに 1 行残す (MISSING_ENV_SERVER_LOG_PREFIX)。
+ * ログを書く処理なので、ここでは例外を投げない (MissingEnvError 以外の失敗は saveLog の catch が受ける)。
+ */
 function getSupabaseClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  
-  if (!supabaseUrl || !supabaseServiceKey) {
-    console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
-    return null;
+  let config: { url: string; serviceRoleKey: string };
+  try {
+    config = getSupabaseServiceConfig();
+  } catch (error) {
+    if (isMissingEnvError(error)) return null;
+    throw error;
   }
-  
-  return createClient(supabaseUrl, supabaseServiceKey);
+
+  return createClient(config.url, config.serviceRoleKey);
 }
 
 /**

@@ -55,6 +55,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { PriceChangeSchema } from '@/lib/super-admin/plans-schemas';
 
 type RouteContext = { params: { id: string } };
@@ -139,7 +140,10 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     const stripeSyncExpected = Boolean(process.env.STRIPE_SECRET_KEY && plan.stripe_product_id);
 
     if (stripeSyncExpected) {
-      const edgeFnUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/stripe-price-sync`;
+      // #1434: 必須の接続情報は env-required の getter で取り出す (以前は `${process.env.X}` を直接埋め込み、
+      // 欠けていると `undefined/functions/v1/...` へ通信していた)。欠けていれば MissingEnvError → 下の catch で 500
+      const service = getSupabaseServiceConfig();
+      const edgeFnUrl = `${service.url}/functions/v1/stripe-price-sync`;
       let edgeRes: Response;
       try {
         // Edge Function stripe-price-sync を呼ぶ (operator/04-plan-management.md §3.3 準拠)。
@@ -148,7 +152,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+            Authorization: `Bearer ${service.serviceRoleKey}`,
           },
           body: JSON.stringify({
             plan_id: params.id,
@@ -316,7 +320,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     if (updateErr) {
       console.error('[super-admin/price-change POST]', updateErr);
       return NextResponse.json(
-        { error: { code: 'OP_DB_ERROR', message: updateErr.message } },
+        // DB の生のエラー文は本文に出さない (#1172)。原因は上の console.error に残る
+        { error: { code: 'OP_DB_ERROR', message: 'プランの更新に失敗しました' } },
         { status: 500 }
       );
     }

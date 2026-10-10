@@ -1,6 +1,6 @@
 // 設定エラーの画面 (#1182)
 //
-// 必須の環境変数 (EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY) が入っていないビルドで、
+// 必須の環境変数 (EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY / EXPO_PUBLIC_API_BASE_URL。#1434) が入っていないビルドで、
 // app/_layout.tsx が Provider を立ち上げる代わりに出す。以前は存在しない接続先 (placeholder) でアプリを起動し続け、
 // ログイン画面が出るのにログインが接続エラーで失敗するだけで、原因が分からなかった。
 //
@@ -9,8 +9,8 @@
 //    useAuth / useProfile / useSafeAreaInsets などの hooks を使わない。
 //  - 出すのは環境変数の「名前」だけ。値は出さない (読まない)。
 //  - 名前を画面に出すのは開発ビルド (__DEV__) だけ。リリースビルド (preview・production) の利用者には、
-//    設定の内部の名前を見せず、案内の文だけを出す。リリースビルドでも、足りない変数名は lib/supabase.ts が
-//    端末のログ (console.error) に残すので、調べる人はそちらで分かる。
+//    設定の内部の名前を見せず、案内の文だけを出す。リリースビルドでも、足りない変数名は app/_layout.tsx
+//    (Supabase の 2 つは lib/supabase.ts も) が端末のログ (console.error) に残すので、調べる人はそちらで分かる。
 //  - 利用者が直せる問題ではない (ビルドを作り直す必要がある) ので、再試行のボタンは出さない。
 
 import { Text, View } from "react-native";

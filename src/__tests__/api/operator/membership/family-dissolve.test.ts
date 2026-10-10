@@ -349,6 +349,9 @@ describe('POST /api/operator/membership/family/[id]/dissolve: RPC のエラー',
 
     expect(res.status).toBe(500);
     expect(json.error.code).toBe('INTERNAL_ERROR');
+    // DB の生のエラー文は本文に出さない (#1172 / #1434)
+    expect(json.error.message).toBe('処理中にエラーが発生しました');
+    expect(JSON.stringify(json)).not.toContain('NOT_OPERATOR');
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     expect(fake.auth.admin.getUserById).not.toHaveBeenCalled();
   });
