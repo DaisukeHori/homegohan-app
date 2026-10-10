@@ -1,4 +1,4 @@
--- migration: 20261008200900_ops_alert_state.sql
+-- migration: 20261010123500_ops_alert_state.sql
 -- #1157: 本番エラーの急増を運用メールに知らせるための DB 側の部品 (表 1 つ + 関数 3 本)
 --
 -- 背景:
@@ -41,7 +41,7 @@
 -- 冪等: CREATE TABLE IF NOT EXISTS / CREATE OR REPLACE FUNCTION / DROP POLICY IF EXISTS → CREATE POLICY / REVOKE・GRANT のため、
 --   2 回続けて適用してもエラーにならない。
 -- 確認: tests/integration/rls/ops-alert-state.test.ts
--- ロールバック: supabase/rollbacks/20261008200900_ops_alert_state.down.sql
+-- ロールバック: supabase/rollbacks/20261010123500_ops_alert_state.down.sql
 
 -- ----------------------------------------------------------------
 -- (1) 表: アラートごとの「最後に送った時刻」

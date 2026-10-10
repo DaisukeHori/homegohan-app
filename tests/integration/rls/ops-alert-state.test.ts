@@ -1,7 +1,7 @@
 /**
  * #1157 運用アラート (エラー急増メール) の DB 側の部品の回帰テスト
  *   public.ops_alert_state / claim_ops_alert / release_ops_alert / app_log_error_counts
- *   (supabase/migrations/20261008200900_ops_alert_state.sql)
+ *   (supabase/migrations/20261010123500_ops_alert_state.sql)
  *
  * 背景: Vercel Cron が 15 分おきに GET /api/cron/app-log-alerts を呼び、直近 15 分の app_logs.level='error' が
  * しきい値を超えていたら、運用のメールアドレスに 1 通知らせる。同じアラートは 60 分以内に送り直さない。

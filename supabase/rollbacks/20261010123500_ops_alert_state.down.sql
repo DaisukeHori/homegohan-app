@@ -1,4 +1,4 @@
--- rollback: 20261008200900_ops_alert_state.sql
+-- rollback: 20261010123500_ops_alert_state.sql
 -- 本番に戻す必要があるときは、この内容を新しい migration として PR 経由で適用する (本番への直接 SQL は禁止。CLAUDE.md)。
 --
 -- 先に Web のデプロイ (GET /api/cron/app-log-alerts と vercel.json の cron) を戻すこと。
