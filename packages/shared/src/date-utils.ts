@@ -95,8 +95,14 @@ export function isCalendarDate(value: unknown): value is string {
  * 現地時刻 (デフォルト Asia/Tokyo) の「月」(1〜12) を返す (#1433)。
  * `new Date().getMonth() + 1` は実行環境 (Vercel / Edge は UTC) のローカル時刻で答えるので、
  * 月初 1 日の JST 00:00〜08:59 は前月になる。旬の食材など「今の月」を JST で決めるときに使う。
+ * Edge Functions 用の同じ関数は supabase/functions/_shared/jst-date.ts の monthJst。
+ *
+ * 不正な Date (Invalid Date) を渡すと RangeError になる (黙って NaN を返さない)。
  */
 export function monthLocal(now: Date = new Date(), timeZone = 'Asia/Tokyo'): number {
+  if (Number.isNaN(now.getTime())) {
+    throw new RangeError('Invalid Date');
+  }
   return Number(formatLocalDate(now, timeZone).slice(5, 7));
 }
 

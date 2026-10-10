@@ -67,12 +67,16 @@ export function nutritionAnalysisRange(period: string, now: Date = new Date()): 
  * 食事を記録した日 (YYYY-MM-DD) の集まりから、JST の今日から過去へ途切れずに続く日数を返す。
  * 今日の記録がまだ無いときは、昨日から数える (以前のルートと同じ数え方)。
  * 例: 今日 = 10/10、記録 = {10/9, 10/8, 10/6} → 2
+ *
+ * 以前のルートは「記録した日の数」回だけ調べていたので、今日の記録が無いと最後の 1 日を調べ損ねていた
+ * (記録 = {10/9, 10/8} で 1 になっていた)。今日の分の 1 回を足して調べる。
  */
 export function consecutiveDayStreak(recordedDays: Iterable<string>, now: Date = new Date()): number {
   const days = new Set(recordedDays);
   const today = jstToday(now);
   let streak = 0;
-  for (let i = 0; i < days.size; i++) {
+  // 今日 (i = 0) に記録が無くても、記録した日の数だけ昨日以前を調べられるように、1 回多く回す
+  for (let i = 0; i <= days.size; i++) {
     if (days.has(addDaysToDate(today, -i))) {
       streak++;
     } else if (i > 0) {
