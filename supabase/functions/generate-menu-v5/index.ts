@@ -63,6 +63,7 @@ import {
   DEFAULT_STEP6_SLOT_BATCH,
   computeMaxFixesForRange,
   countGeneratedTargetSlots,
+  findInvalidTargetSlotDate,
   getSlotKey,
   normalizeTargetSlots,
   sortTargetSlots,
@@ -3530,6 +3531,29 @@ Deno.serve(async (req: Request) => {
           { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
+    }
+
+    // 本文の targetSlots の日付は、YYYY-MM-DD の実在する日付だけを受け付ける (#1433)。
+    // 工程 1 は DB の target_slots が空のとき本文の targetSlots を使い、その日付を addDays (前後 7 日の文脈の期間) に渡すので、
+    // 2026-02-30 や 2026/10/10 が来ると受け付けたあとの裏の処理が RangeError で落ちる。呼び出し元を確かめたあと・AI へ送る前に 400 にする。
+    // リクエストの行は (まだ動いていれば) 失敗にしておく (生成中のまま残さない)
+    const invalidSlotDate = findInvalidTargetSlotDate(body.targetSlots);
+    if (invalidSlotDate) {
+      const { error: persistError } = await supabase
+        .from("weekly_menu_requests")
+        .update({
+          status: "failed",
+          error_message: invalidSlotDate,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId!)
+        .eq("user_id", userId!)
+        .in("status", ["queued", "processing"]);
+      if (persistError) console.error("Failed to persist invalid targetSlots failure:", persistError);
+      return new Response(
+        JSON.stringify({ error: invalidSlotDate }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     // 献立の生成は、利用者のデータ (好み・アレルギー・健康目標・冷蔵庫の食材など) を外国の AI 事業者へ送る。

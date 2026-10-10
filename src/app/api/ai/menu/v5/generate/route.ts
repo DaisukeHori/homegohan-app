@@ -14,7 +14,7 @@ import type {
 import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { addDaysToDate, todayLocal } from '@/lib/date-utils';
+import { addDaysToDate, isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 const VALID_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
@@ -43,8 +43,10 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     const mealType = slotObj['mealType'];
     const plannedMealId = slotObj['plannedMealId'];
 
-    if (!date || typeof date !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) {
-      return { valid: false, slots: [], error: `targetSlots[${i}].date must be YYYY-MM-DD format` };
+    // YYYY-MM-DD の形で、実在する日付だけを通す (#1433)。形だけを見ていると 2026-02-30 のような日付が通り、
+    // 後ろの addDaysToDate (前後 7 日の文脈の期間) が RangeError を投げて 500 になる
+    if (!isCalendarDate(date)) {
+      return { valid: false, slots: [], error: `targetSlots[${i}].date must be YYYY-MM-DD format (an existing calendar date)` };
     }
 
     if (!mealType || typeof mealType !== 'string' || !VALID_MEAL_TYPES.includes(mealType as MealType)) {

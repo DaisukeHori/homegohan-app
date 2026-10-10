@@ -147,6 +147,17 @@ export function calculateJstPreviousPeriod(
 const YMD_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
+ * 値が YYYY-MM-DD の形で、実在する日付か (2026-02-30 などは false) (#1433)。
+ * addDaysToDate に渡す前の入力の確認に使う。packages/shared の isCalendarDate (Next.js 側) と同じ判定
+ * (同じ答えになることは tests/jst-date-shift.test.ts で確かめる)。
+ */
+export function isCalendarDate(value: unknown): value is string {
+  if (typeof value !== "string" || !YMD_PATTERN.test(value)) return false;
+  const [year, month, date] = value.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, date)).toISOString().slice(0, 10) === value;
+}
+
+/**
  * 暦日 (YYYY-MM-DD) から offsetDays 日ずらした暦日を YYYY-MM-DD で返す (#1407)。負の数で過去の日。
  * 例: ("2027-01-01", -30) → "2026-12-02" / ("2028-03-01", -1) → "2028-02-29"
  *
