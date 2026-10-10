@@ -16,7 +16,7 @@
  *   6. #1125 の第 1 段の範囲: オーナーの選択「課金は無料のまま計測」により、課金系の定期処理はこの段では足さない (revenue_snapshots / Stripe / ライセンスに触れない)。
  *      failed_invite_lookups / infra_metrics には書き込む処理が無いので、掃除のジョブは作らない
  *   7. 既存の行を変えない・消さない (UPDATE / DELETE / TRUNCATE を書かない)
- *   8. 設計書 docs/design/operator/08-cron-batches.md に、2 つのジョブが書かれている
+ *   8. 設計書 docs/design/operator/08-cron-batches.md に、2 つのジョブと migration の version が書かれていて、付け直す前の version (20261008200000) が残っていない
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,6 +24,8 @@ import { describe, it, expect } from 'vitest';
 
 const ROOT = path.resolve(__dirname, '..');
 const VERSION = '20261010150000';
+// 付け直す前の version。main の最大より下だったため VERSION へ付け直した (#1125)。設計書や SQL に残っていないことを確かめる
+const STALE_VERSION = '20261008200000';
 const NAME = 'schedule_log_cleanup_and_dau_snapshot';
 const MIGRATION_PATH = path.join(ROOT, 'supabase', 'migrations', `${VERSION}_${NAME}.sql`);
 const ROLLBACK_PATH = path.join(ROOT, 'supabase', 'rollbacks', `${VERSION}_${NAME}.down.sql`);
@@ -224,9 +226,15 @@ describe('#1125 設計書', () => {
       'cleanup_old_logs',
       '15 18 * * *',
       '30 16 * * *',
-      '20261010150000',
+      VERSION,
     ]) {
       expect(doc, `設計書に ${text} が書かれていること`).toContain(text);
+    }
+  });
+
+  it('付け直す前の version (20261008200000) が設計書・migration・rollback に残っていない', () => {
+    for (const file of [DOC_PATH, MIGRATION_PATH, ROLLBACK_PATH]) {
+      expect(fs.readFileSync(file, 'utf-8'), `${path.relative(ROOT, file)} に古い version が残っていないこと`).not.toContain(STALE_VERSION);
     }
   });
 });
