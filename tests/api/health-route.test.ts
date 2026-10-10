@@ -242,9 +242,9 @@ describe('GET /api/health?deep=1 (DB 疎通)', () => {
     expect(mockLoggerError.mock.calls[0][2]).toMatchObject({ reason: 'exception' });
   });
 
-  it('接続設定 (URL / anon キー) が無ければ DB へ行かず 503', async () => {
-    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', '');
-    vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', '');
+  it.each(['', '   '])('接続設定 (URL / anon キー) が %j なら DB へ行かず 503 (空白だけも未設定。#1434)', async (blank) => {
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', blank);
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', blank);
 
     const res = await GET(deepRequest());
 

@@ -13,7 +13,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ConfigErrorScreen } from "../src/components/ConfigErrorScreen";
 import { ErrorFallback } from "../src/components/ErrorFallback";
-import { resolveSupabaseEnv } from "../src/lib/env";
+import { MobileConfigError, resolveRequiredMobileEnv } from "../src/lib/env";
 import { ensurePushTokenRegistered } from "../src/lib/pushNotifications";
 import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
 import { ProfileProvider } from "../src/providers/ProfileProvider";
@@ -60,6 +60,19 @@ export default function RootLayout() {
     NotoSansJP_700Bold,
   });
 
+  // 必須の環境変数 (EXPO_PUBLIC_SUPABASE_* と EXPO_PUBLIC_API_BASE_URL。#1182 / #1434) がそろっているか
+  const requiredEnv = resolveRequiredMobileEnv();
+  const missingEnvMessage = requiredEnv.ok ? null : new MobileConfigError(requiredEnv.missing).message;
+
+  useEffect(() => {
+    if (!missingEnvMessage) return;
+    // 足りない変数名を端末のログに残す (リリースビルドの設定エラーの画面には名前を出さないため)。
+    // Supabase の 2 つは lib/supabase.ts も読み込み時に残すが、EXPO_PUBLIC_API_BASE_URL はここでしか残らない
+    console.error(
+      `${missingEnvMessage} - このビルドには必須の環境変数が入っていません。EAS の環境変数に登録して、ビルドし直してください`,
+    );
+  }, [missingEnvMessage]);
+
   useEffect(() => {
     if (fontsLoaded) {
       SplashScreen.hideAsync();
@@ -68,10 +81,10 @@ export default function RootLayout() {
 
   if (!fontsLoaded) return null;
 
-  // 必須の環境変数 (EXPO_PUBLIC_SUPABASE_*) が入っていないビルドは、Provider を立ち上げずに設定エラーの画面を出す (#1182)。
+  // 必須の環境変数が入っていないビルドは、Provider を立ち上げずに設定エラーの画面を出す (#1182)。
   // Supabase を使う Provider が動くと、存在しない接続先に向かって失敗し続け、原因が分からないため。
-  const supabaseEnv = resolveSupabaseEnv();
-  if (!supabaseEnv.ok) return <ConfigErrorScreen missing={supabaseEnv.missing} />;
+  // EXPO_PUBLIC_API_BASE_URL が無いと、API を呼ぶ画面 (getApiBaseUrl()) が例外で落ちるので、これもゲートに入れる (#1434)
+  if (!requiredEnv.ok) return <ConfigErrorScreen missing={requiredEnv.missing} />;
 
   return (
     <SafeAreaProvider>
