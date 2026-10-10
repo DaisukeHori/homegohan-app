@@ -416,12 +416,14 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     }
   });
 
-  it('値を読む場所が決まっている変数 (CRON_SECRET・CRON_SECRET_PREVIOUS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
+  it('値を読む場所が決まっている変数 (CRON_SECRET・CRON_SECRET_PREVIOUS・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
     const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
 
     expect(sealed.map((entry) => [entry.name, entry.readOnlyBy]).sort()).toEqual([
       ['CRON_SECRET', 'src/lib/cron-auth.ts'],
       ['CRON_SECRET_PREVIOUS', 'src/lib/cron-auth.ts'],
+      // #1148 機能フラグの対象ユーザー数を 1 人ずつ数える上限。正の整数でなければ既定値にする読み方を 1 か所に置く
+      ['FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT', 'src/lib/super-admin/flag-active-users.ts'],
       // #1174 の同意ゲートのフラグ。middleware (Edge Runtime) が lib/legal-consent.ts の isLegalConsentFlagOn で読む
       ['LEGAL_CONSENT_ENFORCE', 'lib/legal-consent.ts'],
       ['LEGAL_CONSENT_NOTICE', 'lib/legal-consent.ts'],

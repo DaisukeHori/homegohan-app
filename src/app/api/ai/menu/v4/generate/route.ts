@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
-import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
+import { isFeatureEnabled } from '@/lib/feature-flags';
 import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { getSeasonalIngredientsForRange } from '@/lib/seasonal-ingredients';
@@ -295,8 +295,8 @@ export async function POST(request: Request) {
       ? rawConstraints as MenuGenerationConstraints 
       : {};
 
-    const featureFlags = await loadFeatureFlags(supabase);
-    const useV5Direct = Boolean(featureFlags.menu_generation_v5_direct);
+    // #1148: エンジンの切り替えは feature_flags (運営画面で切り替える) を見る
+    const useV5Direct = await isFeatureEnabled('menu_generation_v5_direct', user.id);
     const engine = useV5Direct ? 'v5' : 'v4';
 
     // 10. Create request record

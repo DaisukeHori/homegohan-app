@@ -4,10 +4,13 @@
  * operator/02-api-spec.md §7 準拠
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { createLogger } from '@/lib/db-logger';
+import { invalidateFeatureFlag } from '@/lib/feature-flags';
 import { CreateFeatureFlagSchema } from '@/lib/super-admin/flags-schemas';
+import { countActiveUsersForFlags } from '@/lib/super-admin/flag-active-users';
 
 export async function GET() {
   try {
@@ -25,15 +28,27 @@ export async function GET() {
       return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
     }
 
+    // #1148: active_user_count は、アプリの判定 (evaluateFlag) を全ユーザーに実行して数える。
+    // requireRole(['super_admin']) を通したあとだけ、サービスロールで user_profiles の判定に要る列を読む
+    // (RLS で本人の行しか見えないため)。返すのは人数だけで、ユーザーの情報は返さない。
+    // 数えられなかったとき (ユーザーが多すぎる・読み出しの失敗) は null にして、フラグの一覧そのものは返す
+    let activeUserCounts = new Map<string, number | null>();
+    try {
+      activeUserCounts = await countActiveUsersForFlags(getSupabaseAdmin(), data ?? []);
+    } catch (countError) {
+      createLogger('api/super-admin/flags').withUser(user.id).error(
+        'フラグごとの対象ユーザー数の集計に失敗しました',
+        countError,
+      );
+    }
+
     const flags = (data ?? []).map((flag) => ({
       key: flag.key,
       description: flag.description ?? '',
       enabled: flag.enabled,
       rollout_strategy: flag.rollout_strategy,
       constraints: flag.constraints,
-      // TODO: 実ユーザー数の算出はスコープ外 (#1029)。rollout/constraints を
-      // user_profiles に対して実際に集計する仕組みは別 Issue で対応する。
-      active_user_count: 0,
+      active_user_count: activeUserCounts.get(flag.key) ?? null,
       updated_at: flag.updated_at,
     }));
 
@@ -124,6 +139,10 @@ export async function POST(request: NextRequest) {
       details: { key, description, enabled, rollout_strategy, constraints, action: 'create' },
       severity: 'info',
     });
+
+    // #1148: この API を処理したインスタンスの、API route 側が覚えている「行が無い」状態を忘れる。
+    // 他のインスタンスとミドルウェア (Edge。メモリは別) には、最大 30 秒で反映される
+    invalidateFeatureFlag(key);
 
     return NextResponse.json({ data: created }, { status: 201 });
   } catch (err) {

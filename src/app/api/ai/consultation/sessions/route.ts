@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 
 // セッション一覧取得
 export async function GET(request: Request) {
@@ -52,6 +53,10 @@ export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  // #1148: AI 相談の緊急停止スイッチ (feature_flags の ai_chat_enabled。通常は ON)
+  const unavailable = await aiChatDisabledResponse(user.id);
+  if (unavailable) return unavailable;
 
   try {
     const body = await request.json();

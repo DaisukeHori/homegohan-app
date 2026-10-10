@@ -22,7 +22,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MEAL_ORDER } from '@homegohan/shared';
 
 // 献立生成の呼び出しに関係しない重い依存は差し替える (import 時の副作用を避ける)
-vi.mock('@/lib/menu-generation-feature-flags', () => ({ loadFeatureFlags: vi.fn(async () => ({})) }));
+// 機能フラグ (#1148): AI 相談の緊急停止スイッチ (ai_chat_enabled) は ON のまま、献立のエンジンは v4 にする
+vi.mock('@/lib/feature-flags', () => ({ isFeatureEnabled: vi.fn(async (key: string) => key === 'ai_chat_enabled') }));
 vi.mock('@/lib/generate-menu-v4-retry', () => ({
   // 本物と同じく、渡された invoke を呼ぶ (Edge Function への呼び出しの中身を確かめるため)
   invokeGenerateMenuV4WithRetry: vi.fn(async ({ invoke }: { invoke: () => Promise<unknown> }) => {
