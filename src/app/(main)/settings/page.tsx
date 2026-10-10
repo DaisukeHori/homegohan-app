@@ -9,6 +9,7 @@ import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storag
 import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { requestNotificationPermission } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
+import { AI_CONSENT_SETTINGS_ENTRY_TITLE, AI_CONSENT_SETTINGS_PATH } from "@/lib/ai/consent-config";
 
 type WeekStartDay = 'sunday' | 'monday';
 
@@ -423,13 +424,30 @@ export default function SettingsPage() {
                type="button"
                onClick={handleExportCsv}
                disabled={exportingCsv}
-               className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+               className="w-full flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
              >
                <div className="flex items-center gap-3">
                  <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600" aria-hidden="true">📋</div>
                  <div className="text-left">
                    <span className="font-bold text-gray-700">{exportingCsv ? 'エクスポート中…' : '献立をCSVエクスポート'}</span>
                    <p className="text-xs text-gray-400">Excel・スプレッドシートで開ける CSV 形式</p>
+                 </div>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
+             {/* 外国の AI 事業者への提供の同意の確認・撤回 (T15 / #1154)。AI のコメントの案内の一文が「設定の「…」から」と指す先 */}
+             <button
+               type="button"
+               onClick={() => router.push(AI_CONSENT_SETTINGS_PATH)}
+               data-testid="settings-ai-consent-link"
+               className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-500" aria-hidden="true">🤖</div>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">{AI_CONSENT_SETTINGS_ENTRY_TITLE}</span>
+                   <p className="text-xs text-gray-400">日本国外の AI 事業者への提供の確認・撤回</p>
                  </div>
                </div>
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>

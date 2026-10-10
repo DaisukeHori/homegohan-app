@@ -1,3 +1,5 @@
+import { aiConsentDeniedStoredMessageOfResponse } from '../../supabase/functions/_shared/ai-consent';
+
 const DEFAULT_TIMEOUT_MS = 90_000;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_BASE_DELAY_MS = 1_500;
@@ -113,26 +115,41 @@ function parseStatusFromMessage(message: string): number | undefined {
   return Number.isFinite(status) ? status : undefined;
 }
 
-async function extractInvokeFailure(error: unknown): Promise<{ status?: number; detail: string }> {
+async function extractInvokeFailure(
+  error: unknown,
+): Promise<{ status?: number; detail: string; aiConsentDeniedMessage: string | null }> {
   const invokeError = (error ?? {}) as InvokeErrorLike;
   const baseMessage = compactAndTruncate(
     invokeError.message || toErrorMessage(error) || 'unknown invoke error'
   );
   const status = invokeError.context?.status || invokeError.status || parseStatusFromMessage(baseMessage);
 
-  let contextText = '';
+  let rawContextText = '';
   if (invokeError.context?.text) {
-    contextText = compactAndTruncate(await invokeError.context.text().catch(() => ''));
+    rawContextText = await invokeError.context.text().catch(() => '');
   }
+  const contextText = compactAndTruncate(rawContextText);
+  // Edge Function が同意の判定で止めたか (本文は詰める前のものを読む。T15 / #1154)
+  const aiConsentDeniedMessage = aiConsentDeniedStoredMessageOfResponse(status, rawContextText);
 
   if (status != null) {
     const detail = contextText
       ? `status ${status}, body=${contextText}`
       : `status ${status}, error=${baseMessage}`;
-    return { status, detail };
+    return { status, detail, aiConsentDeniedMessage };
   }
 
-  return { detail: contextText ? `${baseMessage}, body=${contextText}` : baseMessage };
+  return { detail: contextText ? `${baseMessage}, body=${contextText}` : baseMessage, aiConsentDeniedMessage };
+}
+
+/**
+ * Edge Function が同意の判定で止めたとき (403 AI_CONSENT_REQUIRED / 503 AI_CONSENT_CHECK_FAILED。T15 / #1154) の結果。
+ * Edge Function はリクエストの行をもう失敗にし、error_message に人向けの文を書いている。
+ * 再試行はしない (再試行で判定が通ると、失敗にした行のまま生成が進む)。errorMessage は Edge Function が書いた文と同じにする
+ * (呼び出し元は markWeeklyMenuRequestFailed で errorMessage を書くので、内部の文 (状態コードや応答の本文) で上書きしない)。
+ */
+function aiConsentDeniedResult(attempt: number, status: number | undefined, message: string) {
+  return { ok: false as const, attempts: attempt, status, errorMessage: message };
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -179,6 +196,10 @@ export async function callGenerateMenuV4WithRetry(params: GenerateMenuV4CallPara
       }
 
       const responseText = await response.text().catch(() => '');
+      const aiConsentDeniedMessage = aiConsentDeniedStoredMessageOfResponse(response.status, responseText);
+      if (aiConsentDeniedMessage) {
+        return aiConsentDeniedResult(attempt, response.status, aiConsentDeniedMessage);
+      }
       const compactText = compactAndTruncate(responseText);
       const detail = compactText
         ? `status ${response.status}, body=${compactText}`
@@ -241,7 +262,10 @@ export async function invokeGenerateMenuV4WithRetry<T>(params: {
         return { ok: true, attempts: attempt, data };
       }
 
-      const { status, detail } = await extractInvokeFailure(error);
+      const { status, detail, aiConsentDeniedMessage } = await extractInvokeFailure(error);
+      if (aiConsentDeniedMessage) {
+        return aiConsentDeniedResult(attempt, status, aiConsentDeniedMessage);
+      }
       const retryable = status != null ? shouldRetryStatus(status) : isRetryableErrorMessage(detail);
       lastFailure = { attempt, status, detail, retryable };
 

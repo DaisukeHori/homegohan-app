@@ -12,6 +12,7 @@ import { supabase } from "../../src/lib/supabase";
 import { getApi } from "../../src/lib/api";
 import { MOCK_PHOTO_RESPONSE } from "@homegohan/handson-tour-shared";
 import { registerTourTarget, unregisterTourTarget } from "../../src/handson-tour/useTourOverlayLogic";
+import { handleAiConsentRequiredError, useLeaveModalRouteBeforeConsentScreen } from "../../src/lib/ai-consent";
 
 // Inlined from lib/meal-image to avoid importing server-side code
 interface MealImageDish { name?: string | null; image_url?: string | null; image_source?: string | null; image_status?: string | null; image_generated_at?: string | null; [key: string]: any; }
@@ -194,6 +195,9 @@ export default function MealNewPage() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ source?: string; sandbox?: string }>();
   const isSandboxMode = params.source === "handson_tour" && params.sandbox === "true";
+  // この画面はルートの Stack で presentation: "modal" として開く (app/_layout.tsx)。iOS では、ここから push した同意画面が
+  // この画面の下に隠れるので、「同意が必要です」の案内の「同意画面を開く」を押したら、この画面を閉じてから移る (T15 / #1154)
+  const leaveBeforeConsentScreen = useLeaveModalRouteBeforeConsentScreen();
 
   // Sandbox Tour Spotlight target refs
   const cameraButtonRef = useRef<View>(null);
@@ -384,6 +388,9 @@ export default function MealNewPage() {
       setNutrition(data.nutrition || {});
       setStep("result");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す。
+      // 案内の「同意画面を開く」では、この画面 (modal) を閉じてから移る (閉じないと同意画面がこの画面の下に隠れる)
+      if (handleAiConsentRequiredError(e, { beforeOpenConsentScreen: leaveBeforeConsentScreen })) { setStep("capture"); return; }
       Alert.alert("解析失敗", e?.message ?? "解析に失敗しました。"); setStep("capture");
     } finally { setIsAnalyzing(false); }
   }
@@ -397,6 +404,9 @@ export default function MealNewPage() {
       setFridgeSummary(data.summary || ""); setFridgeSuggestions(data.suggestions || []);
       setStep("fridge-result");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す。
+      // 案内の「同意画面を開く」では、この画面 (modal) を閉じてから移る (閉じないと同意画面がこの画面の下に隠れる)
+      if (handleAiConsentRequiredError(e, { beforeOpenConsentScreen: leaveBeforeConsentScreen })) { setStep("capture"); return; }
       Alert.alert("解析失敗", e?.message ?? "冷蔵庫の解析に失敗しました。"); setStep("capture");
     } finally { setIsAnalyzing(false); }
   }
@@ -411,6 +421,9 @@ export default function MealNewPage() {
       setHealthNotes(data.notes || ""); setHealthModelUsed(data.modelUsed || "");
       setStep("health-result");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す。
+      // 案内の「同意画面を開く」では、この画面 (modal) を閉じてから移る (閉じないと同意画面がこの画面の下に隠れる)
+      if (handleAiConsentRequiredError(e, { beforeOpenConsentScreen: leaveBeforeConsentScreen })) { setStep("capture"); return; }
       Alert.alert("解析失敗", e?.message ?? "健康診断結果の解析に失敗しました。"); setStep("capture");
     } finally { setIsAnalyzing(false); }
   }
@@ -429,6 +442,9 @@ export default function MealNewPage() {
       } catch { /* ignore */ }
       setStep("weight-result");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す。
+      // 案内の「同意画面を開く」では、この画面 (modal) を閉じてから移る (閉じないと同意画面がこの画面の下に隠れる)
+      if (handleAiConsentRequiredError(e, { beforeOpenConsentScreen: leaveBeforeConsentScreen })) { setStep("capture"); return; }
       Alert.alert("解析失敗", e?.message ?? "体重計の読み取りに失敗しました。"); setStep("capture");
     } finally { setIsAnalyzing(false); }
   }
@@ -462,6 +478,9 @@ export default function MealNewPage() {
         await analyzeResolvedMode(resolvedType, data.mealAnalysis);
       } catch (e: any) {
         setIsAnalyzing(false);
+        // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す。
+        // 案内の「同意画面を開く」では、この画面 (modal) を閉じてから移る (閉じないと同意画面がこの画面の下に隠れる)
+        if (handleAiConsentRequiredError(e, { beforeOpenConsentScreen: leaveBeforeConsentScreen })) { setStep("capture"); return; }
         Alert.alert("判別失敗", e?.message ?? "写真の判別に失敗しました。"); setStep("capture");
       }
     } else {
