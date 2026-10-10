@@ -330,45 +330,33 @@ CREATE POLICY "terms_no_delete"
   ON terms_acceptances FOR DELETE USING (false);
 ```
 
-### 7.2 変更時の再同意フロー
+### 7.2 変更時の再同意フロー (実装済み: #1174)
 
-```typescript
-// src/lib/terms/check-acceptance.ts
+「いま有効な版」と、利用者ごとの「同意済みの版」の食い違いを見て、再同意を求める。判定は、リクエストごとに `terms_acceptances` を数えるのではなく、すでに毎回読んでいる `user_profiles` の行の列で行う (クエリを増やさない)。`terms_acceptances` は、いつ・どの版に・どの IP と端末から同意したかの証跡として残す。
 
-/**
- * 最新バージョンの利用規約・プライバシーポリシーへの同意を確認する。
- * 未同意の場合は再同意モーダルを表示すべき旨のフラグを返す。
- */
-export async function checkTermsAcceptance(userId: string): Promise<{
-  needsReAcceptance: boolean;
-  pendingDocuments: Array<{ type: string; version: string }>;
-}> {
-  const CURRENT_VERSIONS = {
-    terms_of_service: 'v2026.1',
-    privacy_policy: 'v2026.1',
-  };
+| 部品 | 場所 | 役割 |
+|---|---|---|
+| いま有効な版・施行日 | `packages/shared/src/legal-versions.ts` の `LEGAL_DOCUMENTS` | `{ terms_of_service, privacy_policy }` それぞれの `{ version, effectiveDate }`。`/terms`・`/privacy` の版・施行日の表示、同意の記録、ゲートが同じ値を見る。内容が変わる改定は `version` を上げる (上げると全員に再同意を求める)。版の形式は英数字・`.`・`_`・`-` の 1〜20 文字 (`terms_acceptances.document_version` が varchar(20) のため) |
+| 同意済みの版 | `user_profiles.terms_version_accepted` / `privacy_version_accepted` / `legal_accepted_at` | NULL = 未同意。特権列ガード (`guard_user_profiles_privileged` と `_on_insert`) の対象で、本人は直接書き換えられない |
+| 同意の記録 | DB 関数 `accept_legal_documents(p_terms_version, p_privacy_version, p_ip, p_user_agent)` (SECURITY DEFINER、authenticated のみ) | `auth.uid()` 本人の行だけを書く。`user_profiles` の 3 列を更新し (行が無ければ既定値で作る)、`terms_acceptances` に文書ごとに 1 行足す (同じ版は重複して足さない)。UPDATE / DELETE は RLS で禁止のまま |
+| 記録の API | `POST /api/legal/accept` | body の版がいま有効な版と一致するときだけ関数を呼ぶ (違えば 409)。IP・user_agent は、body ではなくサーバーが受け取ったリクエストから取る |
+| ゲート | `lib/supabase/middleware.ts` (判定は `lib/legal-consent.ts`) | 同意済みの版が `LEGAL_DOCUMENTS` と違う、サインイン中の利用者を、環境変数 `LEGAL_CONSENT_ENFORCE=on` のときだけ `/legal-consent?next=<元のパス>` へ回す。強制していない間は、環境変数 `LEGAL_CONSENT_NOTICE=on` のときだけ `(main)` の画面の上に「同意のお願い」のお知らせ (同意画面へのリンク) を出し、誰も止めない。どちらも未設定 (既定) なら何も出さず、誰も止めない。2 つのフラグの値の読み方は共通 (`isLegalConsentFlagOn`。`on` のときだけ有効、大文字小文字と前後の空白は区別しない)。どちらもサーバー側 (middleware) だけで読み、お知らせを出すかは `(main)` の layout から props で画面へ渡す |
+| 同意画面 | `src/app/legal-consent/` | 必須チェック 2 つ (利用規約・プライバシーポリシー。それぞれ全文へのリンクつき。`required` と `aria-required="true"`。フォームは `noValidate` で、送れるかどうかは両方のチェックで「同意して続ける」が押せるようになるかで決まる)。「同意しない」はログアウトして、データ削除の依頼先 (お問い合わせ) を案内する |
+| サインアップ | `src/app/(auth)/signup/page.tsx` | 「続行することで同意したものとみなされます」をやめ、必須チェックボックスにした (チェックするまで Google 登録も登録ボタンも押せない)。このチェックは同意の記録を残さない。記録が残るのは同意画面で同意したときだけで、登録後に同意画面へ回すのは `LEGAL_CONSENT_ENFORCE=on` のときだけ (Google 登録・メール確認を経る登録・アプリの WebView から始めた登録のどれも、同じ middleware を通る)。既定ではお知らせも出さないので、登録後に同意画面を開かない限り記録は残らない |
 
-  const supabase = createServerClient();
-  const { data } = await supabase
-    .from('terms_acceptances')
-    .select('document_type, document_version')
-    .eq('user_id', userId)
-    .in('document_type', Object.keys(CURRENT_VERSIONS));
-
-  const pending = Object.entries(CURRENT_VERSIONS)
-    .filter(([type, version]) =>
-      !data?.some(a => a.document_type === type && a.document_version === version)
-    )
-    .map(([type, version]) => ({ type, version }));
-
-  return { needsReAcceptance: pending.length > 0, pendingDocuments: pending };
-}
-```
+ゲートの対象外のパス: `/terms` `/privacy` `/legal` `/legal-consent` `/contact` `/frozen` `/auth/*` (ネイティブ認証ブリッジを含む) `/api/*` `/handson-tour` と静的ファイル。リダイレクトは画面の取得 (GET / HEAD) だけに掛ける。凍結の判定のあと、初期設定の差し戻しの前に見る。
 
 **重要変更時の対応**:
-- 全ユーザーへ 30 日前メール通知 (Resend 一斉送信)
-- アプリ内強制再同意モーダル (ダッシュボードアクセス時にインターセプト)
-- 旧バージョンを `docs/legal/archive/v{version}/` に永久保管
+- 版・施行日・同意文言は弁護士の確認を経て決める (オーナー判断。T30)。`LEGAL_DOCUMENTS` の値を書き換えて出す
+- 強制 (`LEGAL_CONSENT_ENFORCE=on`) を始める日はオーナーが決める。始める前に、お知らせだけの期間 (`LEGAL_CONSENT_NOTICE=on`) を置くかどうかも決める。お知らせも既定では出ない
+  - 2026-10-10 のオーナー判断で、本番は `LEGAL_CONSENT_ENFORCE=on` にした (版・施行日は仮置きのまま。お知らせだけの期間は置いていない)。ゲートが掛かるのは Web の画面の取得だけで、モバイルのネイティブの画面と `/api/*` は対象外 (#1442)
+- 全ユーザーへ 30 日前メール通知 (Resend 一斉送信): **未実装**。本番のメール配信は、送信ドメインの検証が済むまで動かない
+- アプリ内強制再同意: 上のゲート (ダッシュボードアクセス時にインターセプト) として実装済み。効くのは `LEGAL_CONSENT_ENFORCE=on` のときだけ (既定は off)
+- 旧バージョンを `docs/legal/archive/v{version}/` に永久保管: 改定のたびに手で行う
+
+**既知の残課題**:
+- `terms_acceptances` の本人による直接 INSERT (RLS `terms_self_insert`) は開いたまま。直接入れた行は端末情報を偽れるので、証跡として確かなのは `accept_legal_documents` が書いた行。閉じるのは、未成年・AI の同意 (`parental_consent` / `external_data_provision`) の書き込みが関数経由になってから
+- アプリ (Expo) のネイティブのサインアップ画面には、まだ同意のチェックが無い (ゲートは WebView 側で効く)
 
 ---
 
@@ -737,8 +725,8 @@ $$);
 | ログイン制限・警告バナー | 設けない (待機期間がないため) |
 | 遅延削除バッチ | 作らない。旧設計の pg_cron `execute_gdpr_deletions` と `/api/cron/gdpr-delete` は設計から外す |
 | 削除要求の記録 (`gdpr_deletion_requests`) | 退会フローでは使わない (§16.4) |
-| 削除前の確認メール・削除完了メール | 追加する (#1152、作業計画 T20)。現行実装はまだ送らない。確認の方式 (通知のみか、メール内リンクでの最終確認か) は T20 で決める。どちらの方式でも 30 日の待機は設けない |
-| 削除処理の堅牢化 | 追加する (#1175、作業計画 T11)。範囲は §16.3 |
+| 削除前の確認メール・削除完了メール | 退会が成功したときに、削除完了メールを本人へ 1 通だけ送る (#1152。実装は `src/lib/account-deletion-notification.ts`、文面は `src/lib/emails/account/account-deleted.ts`)。削除前の確認メール (退会の受付時のメール) は送らない。30 日の待機は設けない |
+| 削除処理の堅牢化 | 追加した (#1175、作業計画 T11)。範囲は §16.3 |
 
 背景 (#1130): 旧設計の遅延削除バッチは実装されないままで、削除要求を記録しても実行されずに残りうる設計だった。実際の退会は最初から即時削除として動いている。
 
@@ -752,37 +740,47 @@ $$);
    - モバイル: 確認アラートで「削除」を選ぶ
 2. クライアント: POST /api/account/delete { confirm: true }
    - 認証済みセッションが必須 (未認証は 401、confirm がなければ 400)
-   - (今後追加) 削除前に確認メールを送る (#1152、T20)
 3. 削除をブロックする条件 (409):
    - 組織の owner → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
      (先に owner を譲渡するか、組織を解散する)
    - 家族グループの代表者 → ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE
      (先に代表者を譲渡するか、家族グループを解散する)
-4. 削除前の後始末 (service_role):
-   - FK で消えない参照の解消: ai_content_logs の削除、invited_by / created_by 等の NULL 化
+4. 削除前の後始末 (service_role。実装は src/lib/account-deletion.ts。どの手順もやり直しても同じ結果になる):
+   - 生のメールアドレスを残す記録を伏せ、本人の非公開レシピを消す: RPC prepare_account_deletion
+     (メール配信ログ・問い合わせ・組織/家族の招待・家族の昇格リクエスト。pending の招待は revoked にする。失敗したら削除しない)
    - ライセンス席の解放: RPC release_user_membership (失敗しても削除は続ける)
+   - Storage のファイル削除: meal_photos / fridge-images / health-checkups の `<user_id>/` 以下、旧パス、
+     DB の URL が指す本人のファイル (失敗したら削除しない)
 5. auth.users を削除 (auth.admin.deleteUser)
    - public 側のデータは FK の ON DELETE CASCADE / SET NULL で削除・匿名化される
-6. 200 { success: true }
+     (auth.users を指す外部キーに NO ACTION は無い。20261010000100_auth_users_fk_on_delete.sql)
+6. 削除完了メールを本人へ 1 通送る (#1152。src/lib/account-deletion-notification.ts)
+   - 宛先は auth.users の登録アドレス。手順 3 の後・手順 4 の前に service_role の getUserById で控え、メモリ上だけで使う
+     (app_logs・email_delivery_logs には生のアドレスを残さない。送信の失敗の記録は sendEmail がマスクした宛先で残す)
+   - 送るのは手順 5 が実際に削除したときだけ。409・500・すでに消えていたユーザーのやり直し (deleteUser が 404) では送らない
+   - 本文は退会日時 (日本時間) と問い合わせ先 (site-config の getSupportEmail)。送信元は site-config の getEmailFrom
+   - best-effort: 送信の失敗・時間切れ (待つのは最長 5 秒) でも応答は 200 のまま。失敗は app_logs に残す (user_id を付けない)
+7. 200 { success: true }
    - クライアントはサインアウトして、ログイン前の画面へ戻る
-   - (今後追加) 削除完了メールを送る (#1152、T20)
 ```
 
-手順 4 と 5 は 1 つのトランザクションではなく、別々の呼び出し。途中で失敗したときの扱いは §16.3 のとおり堅牢化 (T11) で直す。
+手順 4 と 5 は 1 つのトランザクションではなく、別々の呼び出し。手順 4 の各段階は何度流しても結果が変わらないので、
+どこかで失敗したら 500 で止める (#1172 の internalError。本文は汎用メッセージと `INTERNAL_ERROR` だけで、生のエラー文・段階・`request_id` は返さない。原因は `app_logs` に残す)。アカウントは残るので、もう一度実行できる。
 
 モバイルの削除画面 (`apps/mobile/app/settings/account.tsx`) へアプリ内から到達できない問題は #1037 で追う。アカウント削除の導線はアプリ内に必須なので、iOS 審査前の必須項目になる (MOBILE_TODO.md 参照)。
 
 ### 16.3 削除の範囲と現行実装
 
-| 対象 | 正式仕様 | 現行実装 (2026-10-08) |
+| 対象 | 正式仕様 | 現行実装 (2026-10-10) |
 |------|---------|----------------------|
 | アカウント (`auth.users`) と、FK でぶら下がる個人データ (食事・献立・健康記録・家族メンバー情報など) | 物理削除 (匿名化ではなく削除) | 実装済み (`auth.admin.deleteUser` と FK の CASCADE / SET NULL) |
-| FK で消えない参照 (`invited_by` / `created_by` など) | NULL 化してから削除 | 一部のみ。`account/delete/route.ts` に列挙したテーブルだけで、`support_tickets` など `ON DELETE` 句のないテーブルは未対応 (#1175) |
-| Storage の写真 (食事・冷蔵庫など) | 削除 | 行っていない (T11) |
-| Stripe の顧客・サブスクリプション | 解約して顧客を削除 | 行っていない (T11。影響範囲の調査は §19) |
-| 法的保管義務のあるデータ (産業医記録 §11、監査ログ) | 削除せず、匿名化して保持 | 監査ログ (`admin_audit_logs`) は FK の `ON DELETE SET NULL` で操作者 ID が外れて残る。ほかの法定保管データは未確認で、棚卸しは T11 |
-| 送信ログ中の生メールアドレス (`email_delivery_logs.email`) | 削除または匿名化 | 行っていない (#1175、T11) |
-| 途中で失敗したとき | 半端な状態を残さず、やり直せる | 後始末と削除は別々の呼び出し。FK 違反で `deleteUser` が失敗すると 500 になる (#1175、T11) |
+| FK で消えない参照 (`invited_by` / `created_by` など) | FK の ON DELETE で処理 | 実装済み (#1175)。`auth.users` を指す NO ACTION の外部キーは 0 本。本人だけの記録 (`nps_surveys` / `csat_feedbacks` / `experiment_assignments` / `ai_content_logs`) は CASCADE、サポート・会計の記録 (`support_tickets` / `support_ticket_messages` / `coupon_redemptions` / `referral_rewards` / `gdpr_deletion_requests` / `email_delivery_logs`) と運営者・作成者・承認者の参照は行を残して SET NULL。テストが NO ACTION の再発を止める |
+| 利用者が作ったレシピ (`recipes`) | 非公開は削除、公開は匿名化して残す | 実装済み (#1175)。`recipes.user_id` は `ON DELETE SET NULL` で、`user_id` が NULL の行は RLS (`Users can view public recipes`) で全員に見える。そのまま退会させると非公開のレシピまで公開されるので、RPC `prepare_account_deletion` が本人の非公開レシピを先に消す。公開レシピは `user_id` だけが外れて残る (他の利用者のコレクション・いいね・コメントが付いていることがあるため) |
+| Storage の写真 (食事・冷蔵庫など) | 削除 | 実装済み (#1175)。3 バケットの `<user_id>/` 以下、旧パス (`meals/<user_id>/` など)、本人の行の URL が指す本人のファイル。持ち主がパスから分からない旧ファイル (バケット直下のタイムスタンプ名) は消さない |
+| Stripe の顧客・サブスクリプション | 解約して顧客を削除 | 行っていない (#1175 の範囲外。影響範囲の調査は §19) |
+| 法的保管義務のあるデータ (産業医記録 §11、監査ログ) | 削除せず、匿名化して保持 | 監査ログ (`admin_audit_logs`) は FK の `ON DELETE SET NULL` で操作者 ID が外れて残る。クーポンの償還記録 (`coupon_redemptions`) と紹介報酬 (`referral_rewards`) も、行を残して利用者との紐づけだけを外す (償還記録には匿名化した日時 `anonymized_at` が入る)。何年残すか (保存の期限) は未決で、決まるまでは「匿名化して残す」。期限を過ぎた記録を消すバッチは、期限が決まってから作る |
+| 送信ログ中の生メールアドレス (`email_delivery_logs.email`) | 削除または匿名化 | 実装済み (#1175)。RPC `prepare_account_deletion` が `redacted@redacted.invalid` に置き換える (行は残す)。問い合わせ・招待も同様。宛先停止リスト (`email_blacklist`) は、苦情・バウンスのあったアドレスへ再送しないために伏せない。`membership_audit.metadata` の招待先アドレスも伏せない (#1163 の 24 時間の送信上限がこの値を数えており、伏せると退会した人のアドレスへの上限が戻ってしまう。ハッシュに置き換える案を含め、扱いは未決) |
+| 途中で失敗したとき | 半端な状態を残さず、やり直せる | 実装済み (#1175)。後始末 (手順 4。ライセンス席の解放を除く) の失敗は 500 (internalError) で止めて `deleteUser` を呼ばない。外部キー違反で `deleteUser` が失敗する経路は無い (組織のオーナー・家族の代表者は先に 409 で止める) |
 
 ### 16.4 `gdpr_deletion_requests` テーブルの扱い
 
@@ -790,7 +788,7 @@ DDL は **operator/01-data-model.md §3.21** を参照 (テーブル定義とし
 
 - `cooling_until` (INSERT 時に `NOW() + 30 days`) と `cancelled_at` は、待機期間を前提にした列。正式仕様では使わない。
 - 退会時にこのテーブルへ行を作らない。削除の実行記録を何で残すかは §19 の未解決事項。
-- テーブルを廃止するか、別の用途にするかは未決 (§19)。現状は super-admin の exports API (`/api/super-admin/exports`) がエクスポート依頼の記録先として流用している。
+- テーブルを廃止するか、別の用途にするかは未決 (§19)。super-admin の exports API (`/api/super-admin/exports`) は、以前はエクスポート依頼の記録先として流用していたが、#1126 で止めた。現状は全メソッドが 501 (`OP_NOT_SUPPORTED`) を返し、このテーブルには触れない (operator/02-api-spec.md §16)。
 
 ### 16.5 運営による代理削除
 
@@ -817,7 +815,7 @@ DDL は **operator/01-data-model.md §3.21** を参照 (テーブル定義とし
 | 既存 `/account/billing` (未実装) | 新規 | 特商法対応のチェックボックス含む Checkout フロー実装 |
 | `terms_acceptances` (未作成) | 新規 | migration で作成 |
 | Cookie バナー (未実装) | 新規 | `/app/layout.tsx` に `<CookieConsentBanner>` 追加 |
-| 退会フロー (`POST /api/account/delete`) | 維持 | 即時削除が正式仕様 (§16、2026-10-08 オーナー判断 #1130)。確認メール・完了メール (#1152、T20) と堅牢化 (#1175、T11) を追加する |
+| 退会フロー (`POST /api/account/delete`) | 維持 | 即時削除が正式仕様 (§16、2026-10-08 オーナー判断 #1130)。削除完了メール (#1152) は追加済み (§16.2 の手順 6。削除前の確認メールは送らない)。堅牢化 (#1175、T11) は追加済み (§16.3) |
 
 ---
 
@@ -828,8 +826,8 @@ DDL は **operator/01-data-model.md §3.21** を参照 (テーブル定義とし
 | 運営側適格請求書発行事業者番号 (T番号) の取得状況確認 | TODO | 法人向け機能リリース前 |
 | 弁護士レビュー: 特商法表示内容・利用規約 §X の医療免責文言 | TODO | Phase 1 リリース前 |
 | GPG 鍵を使った署名者の体制 (誰が鍵を管理するか) | TODO | バックアップ実装前 |
-| 退会 (即時削除) 時の Stripe 顧客・サブスクリプションの扱いの調査 | TODO | operator/05-stripe-integration.md で確認 (作業計画 T11) |
-| 削除の実行記録 (誰がいつ消したか) を何で残すか。旧設計は `gdpr_deletion_requests` (永久保管) と `admin_audit_logs` (severity='critical') に残していた | TODO | 作業計画 T11 と合わせて決定 |
-| `gdpr_deletion_requests` テーブルの廃止・用途変更 (退会フローでは使わない。§16.4) | TODO | 作業計画 T11 と合わせて決定 |
+| 退会 (即時削除) 時の Stripe 顧客・サブスクリプションの扱いの調査 | TODO | operator/05-stripe-integration.md で確認 (#1175 の PR の範囲外。別タスク) |
+| 削除の実行記録 (誰がいつ消したか) を何で残すか。旧設計は `gdpr_deletion_requests` (永久保管) と `admin_audit_logs` (severity='critical') に残していた | TODO | #1175 の PR では、`app_logs` に成功のログ (`account deleted`。`request_id` つき。user_id もメールアドレスも載せない) を残すだけ。恒久的な記録を何で残すかは未決 |
+| `gdpr_deletion_requests` テーブルの廃止・用途変更 (退会フローでは使わない。§16.4) | TODO | #1175 の PR では、外部キーを `ON DELETE SET NULL` にしただけ (退会すると `user_id` が外れて行は残る)。廃止・用途変更は未決 |
 | CloudSign API 連携の詳細設計 (法人電子締結) | TODO | operator/05-stripe-integration.md で定義 |
 | 旧バージョン利用規約の `docs/legal/archive/` 保管場所設定 | TODO | 初版リリース前 |

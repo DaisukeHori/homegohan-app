@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
@@ -28,6 +30,11 @@ export async function POST(request: Request) {
 
     const rateLimitResult = await checkRateLimit(user.id, 'generation');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+    // 必須の環境変数は、認証とレート制限のあと・DB に書き込む前に確かめる。欠けていれば MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す)。
+    // (未ログインの呼び出しに、設定の不足を教えない。書き込んだあとで気づくと、Edge Function を呼べないまま、
+    //  リクエストの行を作って失敗として記録するだけの無駄な動きになる) (#1182)
+    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
 
     // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
     const quota = await consumeAiQuota(user.id, 'menu_generation');
@@ -124,9 +131,6 @@ export async function POST(request: Request) {
     }
 
     // 6. Edge Functionを呼び出し（V5/V4をfeature flagで切り替え）
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
     const generator = useV5 ? callGenerateMenuV5WithRetry : callGenerateMenuV4WithRetry;
     const edgeFunctionPromise = generator({
       supabaseUrl,
@@ -159,8 +163,8 @@ export async function POST(request: Request) {
       mealsCount: targetSlots.length
     });
 
-  } catch (error: any) {
-    console.error("Day Regeneration Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
+    return internalError('POST /api/ai/menu/day/regenerate', error);
   }
 }

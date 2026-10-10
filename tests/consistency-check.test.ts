@@ -600,7 +600,7 @@ const workflow = yaml.load(workflowText) as {
 describe('daily-consistency-check.yml', () => {
   it('毎日の schedule と手動実行だけで動く (push・PR では動かない)', () => {
     expect(Object.keys(workflow.on).sort()).toEqual(['schedule', 'workflow_dispatch']);
-    expect(workflow.on.schedule).toEqual([{ cron: '17 0 * * *' }]);
+    expect(workflow.on.schedule).toEqual([{ cron: '43 21 * * *' }]);
   });
 
   it('権限は読み取りと Issue の書き込みだけ', () => {

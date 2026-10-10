@@ -5,6 +5,11 @@
  *
  * Roles: super_admin only
  * Auth boundary: 403 (admin), 401 (no auth), 400 (invalid query)
+ *
+ * インフラ監視 (infra_alerts / infra_metrics) は、書き込む処理 (監視データの収集) がまだ無く、本番では常に空 (#1180)。
+ * 画面は空を「問題なし」ではなく「未接続」と表示する。アラート API は、環境変数 (SENTRY_DSN / BETTER_STACK_TOKEN) の
+ * 有無から作っていた Sentry / Better Stack の接続状態 (external_sources) を返さない
+ * (どちらもリポジトリのどこにも使われておらず、環境変数があっても接続されていないため)。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
@@ -88,13 +93,14 @@ describe('GET /api/super-admin/infra/alerts', () => {
     const body = res.body as {
       data: unknown[];
       meta: { total: number; page: number; per_page: number };
-      external_sources: Array<{ source: string; available: boolean }>;
+      external_sources?: unknown;
     };
     expect(Array.isArray(body.data)).toBe(true);
     expect(body.meta).toHaveProperty('total');
     expect(body.meta).toHaveProperty('page');
     expect(body.meta).toHaveProperty('per_page');
-    expect(Array.isArray(body.external_sources)).toBe(true);
+    // Sentry / Better Stack の接続状態は返さない
+    expect(body.external_sources).toBeUndefined();
   });
 
   it('200 with resolved filter', async () => {

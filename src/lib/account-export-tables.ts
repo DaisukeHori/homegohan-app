@@ -89,7 +89,9 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
 
   // ── 食事・献立 ──────────────────────────────────────────────────
   // meals は RLS で家族の行も返る。必ず user_id で絞る
-  { table: 'meals', scope: self('user_id') },
+  // hidden_by (#1101: 運営が隠したときの、操作した運営ユーザーの ID) は他人の識別子なので出力しない。
+  // 隠した日時 (hidden_at) と理由 (hidden_reason: 'moderation:<action>' の識別子) は本人に関わる記録なので出力する
+  { table: 'meals', scope: self('user_id'), omit: ['hidden_by'] },
   { table: 'meal_ai_feedbacks', scope: viaParent('meals', 'meal_id') },
   { table: 'meal_nutrition_estimates', scope: viaParent('meals', 'meal_id') },
   { table: 'user_daily_meals', scope: self('user_id') },
@@ -110,7 +112,8 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
 
   // ── レシピ ──────────────────────────────────────────────────────
   // recipes / recipe_collections は RLS で他人の公開行・システムのレシピ (user_id IS NULL) も返る
-  { table: 'recipes', scope: self('user_id') },
+  // hidden_by は meals と同じ理由で出力しない (#1101)
+  { table: 'recipes', scope: self('user_id'), omit: ['hidden_by'] },
   { table: 'recipe_collections', scope: self('user_id') },
   {
     table: 'recipe_collection_items',

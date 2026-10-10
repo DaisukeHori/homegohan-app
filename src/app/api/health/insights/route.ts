@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { generateGeminiJson } from '@/lib/ai/gemini-json';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
 import { clampIntParam } from '@/lib/http-params';
 import { fetchRecentMealDays, formatMealDaysForPrompt } from '@/lib/health-insight-meals';
+import {
+  buildHealthInsightRows,
+  calculateHealthInsightPeriod,
+  GENERATED_INSIGHT_TYPES,
+  HEALTH_INSIGHT_PRIORITIES,
+  MAX_INSIGHT_RECOMMENDATIONS,
+  type GeneratedInsight,
+} from '@/lib/health-insight-rows';
 
 type UserLogger = ReturnType<ReturnType<typeof createLogger>['withUser']>;
 
@@ -111,6 +119,12 @@ export async function POST(request: NextRequest) {
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
+  // 分析する期間 (JST の暦日)。health_records はこの期間で絞り、保存する行の analysis_date / period_start /
+  // period_end / period_type にも同じ値を入れる (#1432。Edge Function generate-health-insights と同じ組み立て)。
+  // 日付をまたいでも絞り込みと保存の日付が食い違わないよう、時刻は 1 回だけ取る。
+  const now = new Date();
+  const period = calculateHealthInsightPeriod(now);
+
   // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
   const quota = await consumeAiQuota(user.id, 'health_review');
   if (!quota.allowed) return aiQuotaExceededResponse(quota);
@@ -122,6 +136,8 @@ export async function POST(request: NextRequest) {
       .from('health_records')
       .select('record_date,weight,body_fat_percentage,systolic_bp,diastolic_bp,sleep_hours,step_count')
       .eq('user_id', user.id)
+      .gte('record_date', period.periodStart)
+      .lte('record_date', period.periodEnd)
       .order('record_date', { ascending: false })
       .limit(30),
     supabase
@@ -170,13 +186,15 @@ export async function POST(request: NextRequest) {
         type: 'array',
         items: {
           type: 'object',
-          required: ['title', 'content', 'insight_type', 'is_alert'],
+          // health_insights の列 (summary / recommendations / priority) に合わせる (#1432)
+          required: ['title', 'summary', 'insight_type', 'is_alert', 'priority'],
           properties: {
             title: { type: 'string' },
-            content: { type: 'string' },
-            insight_type: { type: 'string', enum: ['nutrition', 'activity', 'sleep', 'checkup', 'trend', 'goal'] },
+            summary: { type: 'string' },
+            insight_type: { type: 'string', enum: [...GENERATED_INSIGHT_TYPES] },
             is_alert: { type: 'boolean' },
-            priority: { type: ['number', 'null'] },
+            priority: { type: 'string', enum: [...HEALTH_INSIGHT_PRIORITIES] },
+            recommendations: { type: 'array', items: { type: 'string' }, maxItems: MAX_INSIGHT_RECOMMENDATIONS },
           },
         },
       },
@@ -185,7 +203,7 @@ export async function POST(request: NextRequest) {
 
   const prompt = `あなたは栄養士・健康アドバイザーです。以下のデータを分析し、ユーザーへの健康インサイトを3〜5件生成してください。
 
-## 最近の健康記録（新→旧）
+## 最近の健康記録（${period.periodStart}〜${period.periodEnd}、新→旧）
 ${records.slice(0, 10).map((r: any) => `- ${r.record_date}: 体重${r.weight ?? '-'}kg, 血圧${r.systolic_bp ?? '-'}/${r.diastolic_bp ?? '-'}, 睡眠${r.sleep_hours ?? '-'}h, 歩数${r.step_count ?? '-'}`).join('\n') || 'データなし'}
 
 ## 健康診断（最新）
@@ -195,11 +213,13 @@ ${checkups.slice(0, 2).map((c: any) => `- ${c.checkup_date}: HbA1c${c.hba1c ?? '
 ${formatMealDaysForPrompt(mealDays) || 'データなし'}
 
 インサイトは日本語で、具体的かつ行動に繋がるものにしてください。
+各インサイトの summary は 2〜3 文の本文、recommendations は具体的な行動 (3 件まで) にしてください。
+priority は low / medium / high / critical のいずれかで、医師への相談を勧めるほどの逸脱だけを critical にしてください。
 is_alert は基準値逸脱や急激な変化がある場合のみ true にしてください。`;
 
-  let generatedInsights: any[] = [];
+  let generatedInsights: GeneratedInsight[] = [];
   try {
-    const { data } = await generateGeminiJson<{ insights: any[] }>({
+    const { data } = await generateGeminiJson<{ insights?: GeneratedInsight[] }>({
       prompt,
       schema: insightSchema,
       temperature: 0.3,
@@ -216,31 +236,30 @@ is_alert は基準値逸脱や急激な変化がある場合のみ true にし�
     return NextResponse.json({ error: 'AIによるインサイト生成に失敗しました' }, { status: 500 });
   }
 
-  if (generatedInsights.length === 0) {
+  // 現行の health_insights の列に合わせて組み立てる (#1432)。本文が空のものは保存しない
+  const rows = buildHealthInsightRows(user.id, Array.isArray(generatedInsights) ? generatedInsights : [], now);
+  if (rows.length === 0) {
     return NextResponse.json({ error: 'インサイトを生成できませんでした' }, { status: 500 });
   }
 
-  // DB に挿入
-  const rows = generatedInsights.map((ins: any) => ({
-    user_id: user.id,
-    title: String(ins.title ?? '').slice(0, 200),
-    content: String(ins.content ?? ''),
-    insight_type: ['nutrition', 'activity', 'sleep', 'checkup', 'trend', 'goal'].includes(ins.insight_type)
-      ? ins.insight_type
-      : 'trend',
-    is_alert: Boolean(ins.is_alert),
-    priority: typeof ins.priority === 'number' ? ins.priority : null,
-    is_read: false,
-    is_dismissed: false,
-  }));
-
-  const { data: inserted, error: insertError } = await supabase
-    .from('health_insights')
-    .insert(rows)
-    .select();
-
-  if (insertError) {
-    logQueryError(userLogger, 'Health insights insert failed', 'health_insights', insertError);
+  // health_insights には利用者向けの INSERT ポリシーが無い (SELECT / UPDATE だけ。supabase/baseline/prod_schema.sql)。
+  // 利用者のセッションのクライアントで insert すると RLS で必ず拒否される。
+  // そこで、本人確認 (getUser) と回数制限を通ったあとで、service_role のクライアントで保存する。
+  // user_id は必ずセッションの user.id (buildHealthInsightRows が入れる) で、リクエストからは受け取らない。
+  let inserted: unknown[] | null = null;
+  try {
+    const { data, error: insertError } = await getSupabaseAdmin()
+      .from('health_insights')
+      .insert(rows)
+      .select();
+    if (insertError) {
+      logQueryError(userLogger, 'Health insights insert failed', 'health_insights', insertError);
+      return NextResponse.json({ error: 'インサイトの保存に失敗しました' }, { status: 500 });
+    }
+    inserted = data;
+  } catch (err) {
+    // getSupabaseAdmin() の環境変数欠落など。生のエラー文は返さない (#1172)
+    userLogger.error('Health insights insert threw', err, { query: 'health_insights' });
     return NextResponse.json({ error: 'インサイトの保存に失敗しました' }, { status: 500 });
   }
 

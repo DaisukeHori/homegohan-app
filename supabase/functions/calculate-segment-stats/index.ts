@@ -2,7 +2,14 @@ import { createClient } from "@supabase/supabase-js";
 import { requireServiceRole } from '../_shared/auth.ts';
 import { chunkArray, embeddedOne, fetchAllRows, throwIfError } from '../_shared/bulk-query.ts';
 import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
-import { calculateJstPeriod, formatJstDate, jstDayRangeToTimestamps } from '../_shared/jst-date.ts';
+import {
+  JST_CALENDAR_PERIOD_TYPES,
+  calculateJstPeriod,
+  calculateJstPreviousPeriod,
+  formatJstDate,
+  isJstCalendarPeriodType,
+  jstDayRangeToTimestamps,
+} from '../_shared/jst-date.ts';
 
 const supabaseAdmin = createClient(
   Deno.env.get('SUPABASE_URL') ?? '',
@@ -47,9 +54,25 @@ Deno.serve(async (req) => {
   const logger = createLogger('calculate-segment-stats', requestId);
 
   try {
-    const { periodType = 'weekly', forceRecalc = false } = await req.json().catch(() => ({}));
+    const { periodType = 'weekly', forceRecalc = false, previousPeriod = false } = await req.json().catch(() => ({}));
 
-    logger.info(`Starting segment stats calculation for period: ${periodType}`);
+    // previousPeriod: true は、今の期間ではなく 1 つ前の期間を集計し直す (#1406)。
+    // 1 時間ごとの定期実行 (public.invoke_calculate_segment_stats) が、期間が切り替わった直後の回にだけ付ける。
+    // 期間の最後の 1 時間の記録を、その期間の最終の値に入れるため。それより前の期間は指定できない (埋め戻しはしない)
+    if (typeof previousPeriod !== 'boolean') {
+      return new Response(JSON.stringify({ error: 'previousPeriod must be a boolean' }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 400,
+      });
+    }
+    if (previousPeriod && !isJstCalendarPeriodType(periodType)) {
+      return new Response(
+        JSON.stringify({ error: `previousPeriod is only supported for ${JST_CALENDAR_PERIOD_TYPES.join(' / ')}` }),
+        { headers: { 'Content-Type': 'application/json' }, status: 400 },
+      );
+    }
+
+    logger.info(`Starting segment stats calculation for period: ${periodType}${previousPeriod ? " (previous period)" : ""}`);
 
     // 1. メトリクス定義を取得
     const { data: metrics, error: metricsError } = await supabaseAdmin
@@ -68,7 +91,10 @@ Deno.serve(async (req) => {
     throwIfError('segment_definitions の取得', segmentsError);
 
     // 3. 期間を計算 (JST の暦。Deno の実行環境は UTC なので、new Date() のローカル時刻では求めない #1211)
-    const { periodStart, periodEnd } = calculateJstPeriod(periodType);
+    //    previousPeriod のときは、今の期間の 1 つ前 (#1406)
+    const { periodStart, periodEnd } = previousPeriod
+      ? calculateJstPreviousPeriod(periodType)
+      : calculateJstPeriod(periodType);
     logger.info(`Period (JST): ${periodStart} to ${periodEnd}`);
 
     // 4. 全ユーザーのメトリクスを計算
@@ -91,6 +117,7 @@ Deno.serve(async (req) => {
       processedUsers: userMetricsMap.size,
       processedSegments: segments!.length,
       periodType,
+      previousPeriod,
       periodStart,
       periodEnd
     }), {

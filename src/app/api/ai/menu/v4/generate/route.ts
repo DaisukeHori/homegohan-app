@@ -6,6 +6,8 @@ import { getSeasonalIngredientsForRange } from '@/lib/seasonal-ingredients';
 import { getEventsForRange } from '@/lib/seasonal-events';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 import type {
   TargetSlot,
   ExistingMenuContext,
@@ -121,6 +123,11 @@ export async function POST(request: Request) {
 
     const rateLimitResult = await checkRateLimit(user.id, 'generation');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+    // 必須の環境変数は、認証とレート制限のあと・DB に書き込む前に確かめる。欠けていれば MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す)。
+    // (未ログインの呼び出しに、設定の不足を教えない。書き込んだあとで気づくと、Edge Function を呼べないまま、
+    //  リクエストの行を作って失敗として記録するだけの無駄な動きになる) (#1182)
+    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
 
     // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
     const quota = await consumeAiQuota(user.id, 'menu_generation');
@@ -319,9 +326,6 @@ export async function POST(request: Request) {
     }
 
     // 11. Call Edge Function in background
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-    
     const generator = useV5Direct ? callGenerateMenuV5WithRetry : callGenerateMenuV4WithRetry;
     const targetLabel = useV5Direct ? 'generate-menu-v5' : 'generate-menu-v4';
 
@@ -367,9 +371,9 @@ export async function POST(request: Request) {
       totalSlots: targetSlots.length,
     });
 
-  } catch (error: any) {
-    console.error("API Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
+    return internalError('POST /api/ai/menu/v4/generate', error);
   }
 }
 

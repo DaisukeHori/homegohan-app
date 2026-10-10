@@ -20,20 +20,23 @@ describe('next.config.mjs headers (#1044)', () => {
     vi.unstubAllEnvs();
   });
 
-  it('F6-09: connect-src にデフォルトの PostHog ホストを含む', async () => {
+  // #1166: 利用状況の計測 (PostHog) はやめた。CSP が PostHog への送信を許していると、
+  // 後から SDK を入れ直したときに黙って送信できてしまうので、許可の復活を止める。
+  it('#1166: connect-src に PostHog のホストを含まない', async () => {
     const config = await loadNextConfig();
     const { csp } = await getSecurityHeaders(config);
 
     expect(csp).toContain('connect-src');
-    expect(csp).toContain('https://us.i.posthog.com');
+    expect(csp.toLowerCase()).not.toContain('posthog');
   });
 
-  it('F6-09: NEXT_PUBLIC_POSTHOG_HOST が設定されている場合はそのホストを使う', async () => {
+  it('#1166: NEXT_PUBLIC_POSTHOG_HOST が環境に残っていても、そのホストを CSP に出さない', async () => {
     vi.stubEnv('NEXT_PUBLIC_POSTHOG_HOST', 'https://eu.i.posthog.com');
     const config = await loadNextConfig();
     const { csp } = await getSecurityHeaders(config);
 
-    expect(csp).toContain('https://eu.i.posthog.com');
+    expect(csp).not.toContain('eu.i.posthog.com');
+    expect(csp.toLowerCase()).not.toContain('posthog');
   });
 
   it('F6-09: 既存の許可済みドメイン (supabase/vercel) は壊れていない', async () => {
@@ -60,7 +63,7 @@ describe('next.config.mjs headers (#1044)', () => {
       "img-src 'self' data: blob: *.supabase.co images.unsplash.com;",
     );
     expect(csp).toContain(
-      "connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co https://us.i.posthog.com https://us-assets.i.posthog.com;",
+      "connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co;",
     );
   });
 

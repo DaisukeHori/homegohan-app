@@ -63,6 +63,95 @@ EXPO_PUBLIC_API_BASE_URL=http://localhost:3000
 
 ## ローカルテスト実走手順
 
+### ローカル CI — PR の検査をまとめて回す (`scripts/local-ci.sh`)
+
+GitHub Actions の PR 検査のうち、本番に触れない 4 本と security.yml の gitleaks (シークレットの検査) を、CI と同じ条件でローカルで回し、件数で緑 / 赤を判定します。
+
+| 段 | CI 上の正本 | 中身 |
+|---|---|---|
+| `secrets` | `.github/workflows/security.yml` の `gitleaks` ジョブ | 同じ版・同じ SHA-256 の gitleaks で、`--base` から HEAD までのコミット (PR で増えるコミット) を `.gitleaks.toml` で検査する (`--redact`。値はログに出さない)。配布物は初回だけ GitHub から取得し、`LOCAL_CI_TOOLS` に置いて毎回 SHA-256 を確かめる |
+| `unit` | `.github/workflows/ci.yml` | `npm run typecheck` → `npm run lint` → `npm test` (vitest) |
+| `mobile` | `.github/workflows/mobile-test.yml` | `apps/mobile` の jest (`--ci --coverage`) → `packages/core` の vitest |
+| `integration` | `.github/workflows/security-regression.yml` | ローカル Supabase + `next dev` に対する結合テスト 2 本 (2 本目の運営コンソールは 1 本目が落ちても回す) |
+| `e2e` | `.github/workflows/e2e-local.yml` | ローカル Supabase + 本番ビルド (`next build` / `next start`) に対する Playwright。規約の同意ゲート (#1174) は、同じビルドを既定 (3000)・`LEGAL_CONSENT_ENFORCE=on` (3001)・`LEGAL_CONSENT_NOTICE=on` (3002) の 3 つのサーバーで確かめる |
+
+```bash
+bash scripts/local-ci.sh                          # 5 段すべて (origin/main を取り込んだ状態で検査)
+bash scripts/local-ci.sh --only secrets,unit,mobile  # Docker を使わない 3 段だけ
+bash scripts/local-ci.sh --base origin/main       # 取り込む基準を指定 (既定 origin/main)
+bash scripts/local-ci.sh --no-merge               # マージせず HEAD そのもの (main の上で回すとき)
+bash scripts/local-ci.sh --keep                   # 作業用の worktree を残す (調べるとき)
+```
+
+**前提**
+
+- Node は `.nvmrc` の major (22)。違う版だと赤で止まり、入れ方を表示します (`nvm install 22 && nvm use 22` など)。
+- `integration` / `e2e` は Docker が要ります。ローカル Supabase は段ごとに `scripts/supabase-local.sh` で起動・停止します。
+- `integration` / `e2e` の前に、ポート 3000 (`e2e` は 3001・3002 も) とローカル Supabase のポート (54320〜54329) が空いているかを確かめ、塞がっていれば赤で止まります (他のプロセスやコンテナは止めません)。開発用の `npm run dev` やローカル Supabase を止めてから回してください。ポートは枠 0 の値で、枠 1 以上では下の「同時に複数回す (枠)」のとおりずれます。
+
+**同時に複数回す (枠)**
+
+`integration` / `e2e` はローカル Supabase と Next を立てるため、そのままでは同じ機械で 1 本ずつしか回せません。**枠 (slot)** ごとにコンテナ名 (`project_id`) と全ポートをずらし、空いている枠を取った `local-ci.sh` から順に回します。
+
+```bash
+LOCAL_CI_SLOTS='0 1' bash scripts/local-ci.sh     # 枠 0 と 1 を使ってよい (2 本まで同時に回る。3 本目は空くまで待つ)
+LOCAL_CI_SLOT=1 bash scripts/local-ci.sh          # 枠 1 だけを使う (空くまで待つ)
+```
+
+| 枠 | `project_id` (コンテナ・ボリューム名の元) | ローカル Supabase のポート | Next のポート (既定 / 同意の強制あり / お知らせあり) |
+|---|---|---|---|
+| 0 (既定。CI と同じ) | `homegohan-local` | 54320〜54329 (CLI の既定: API 54321・DB 54322 など) | 3000 / 3001 / 3002 |
+| n (1〜9) | `homegohan-local-s<n>` | 0 の値 + n × 100 (例: 枠 1 は API 54421・DB 54422) | 0 の値 + n × 10 (例: 枠 1 は 3010 / 3011 / 3012) |
+
+- 値の表の正本は `scripts/lib/local-ci-slot.sh` です (`bash scripts/lib/local-ci-slot.sh 1` で枠 1 の値を表示)。`tests/local-ci-slot.test.ts` が、枠 0 が今までの値のままであることと、枠どうしで重ならないことを確かめます。
+- CI の yml は `scripts/supabase-local.sh` を枠を指定せずに呼ぶので、枠 0 (今までと同じ `config.toml`) で動きます。
+- 手で `LOCAL_CI_SLOT=1 bash scripts/supabase-local.sh start` のようにも使えます。作業ディレクトリは枠ごとに分かれます (枠 0 は今までどおり `.supabase-local/`、枠 n は `.supabase-local-s<n>/`)。`stop` / `status` / `env` は組み立て直さずにその枠の作業ディレクトリを使うので、**起動したときと同じ `LOCAL_CI_SLOT` を付けて**打ちます (作業ディレクトリの `config.toml` が別の枠のものなら、何もせずに止まります)。手で使うときは枠のロックを取らないので、同時に回る `local-ci.sh` の `LOCAL_CI_SLOTS` に入っていない枠を使ってください。
+- 枠は `integration` / `e2e` の直前に取り、終わったら (Ctrl-C や途中の失敗でも) 外します。`secrets` / `unit` / `mobile` だけなら取りません。ロックは `LOCAL_CI_LOCK_DIR` (既定 `${TMPDIR:-/tmp}/homegohan-local-ci-locks`) の下の `slot-<n>/` で、持ち主の pid と開始時刻を `owner` に書きます。持ち主が生きているか確かめられないとき (`ps` が動かないなど) は生きているとみなします。持ち主のプロセスが死んでいれば次の実行が回収し、**回収したときに限り**、その枠に残ったコンテナ・ボリュームも片付けます (枠 1 以上だけ。枠 0 は枠を使わない作業と共有しているので止めません)。回収していない (空いていた) 枠に、その枠の `project_id` のコンテナやボリュームがあれば (ロックを取らずに手で起動したスタックなど)、消さずに `integration:setup` / `e2e:setup` を赤にして止まります。
+- 持ち主の死んだロックの回収と、自分のロックを外すことは、見張り (`slot-<n>.reclaim`。持ち主の pid と開始時刻を書いたファイル) を取った 1 本だけが行います (同時に始めた 2 本が同じ死んだロックを回収しても、枠を持つのは 1 本だけ)。見張りは一瞬 (数十ミリ秒) しか持ちません。シグナル (Ctrl-C の INT・TERM・端末を閉じたときの HUP) で止めたときは、どの時点で止めても見張りを外してから終わります (見張りを作ってから記録するまで・消してから記録を消すまでのあいだに届いたシグナルは、その区間を出てから終了に使います)。外す機会の無い終わり方 (`kill -9`・電源断など) で回収かロックを外す途中に終わったときだけ、持ち主の死んだ見張りが残ります。それは 2 本が同時に回収に入らないよう自動では消さず、表示で知らせます (そのあいだ、その枠に持ち主の死んだロックがあっても回収できないので、ほかの枠を使うか、待ちの時間切れになります)。ほかに `local-ci.sh` が動いていないことを確かめてから、表示されたパスを `rm -rf` で消してください。
+- 空いている枠が無ければ `LOCAL_CI_SLOT_WAIT_SECONDS` (既定 5400 秒 = 90 分) まで 10 秒おきに待ちます。過ぎたら表に `slot:wait` の行 (「待ちの時間切れ」) を出し、**終了コード 3** で終わります (検査の失敗の 1 とは別。ほかの段が赤なら 1)。
+- 片付けは自分の枠のものだけです (`supabase-local.sh stop` はその枠の作業ディレクトリの `project_id` のコンテナ・ボリュームだけを消し、Next は自分が起動したプロセスだけを止める)。
+- テストやヘルパーでアプリ・ローカル Supabase の URL を決めるときは、`local-ci.sh` が枠の値を入れる環境変数 (integration はアプリの `INTEGRATION_BASE_URL`、e2e は `PLAYWRIGHT_BASE_URL` か Playwright の `baseURL`、Supabase は `scripts/supabase-local.sh env` が書く `NEXT_PUBLIC_SUPABASE_URL` / `SUPABASE_URL`) を最初に読み、ポート付きの `http://localhost:3000` などは `??` / `||` の右 (変数が無いときの既定値) にだけ書きます。決め打ちすると、枠 1 以上で回したときに枠 0 のサーバー (別の実行のもの) に繋がります。`tests/local-ci-slot-consumers.test.ts` が、e2e・integration のテストとヘルパー (Playwright の設定・Maestro のスクリプトを含む) と `scripts/` のシェルを検査します。
+- `scripts/baseline/drift_report.sh` も `LOCAL_CI_SLOT` の枠の DB に繋ぎ、結果の既定の置き場もその枠の作業ディレクトリ (`.supabase-local-s<n>/drift`) にします。スタックを起動したときと同じ `LOCAL_CI_SLOT` を付けて打ちます。
+- 同じ HEAD を同時に回すと結果の置き場 (既定は HEAD の sha ごと) が重なるので、既定のときは `<sha>.<pid>` に替えます。`LOCAL_CI_ARTIFACTS` を指定したときは、使用中なら止まります (実行ごとに別の場所を指定してください)。
+
+**資源の目安**: 1 枠でローカル Supabase 一式 (studio などを除く 8 コンテナ) が Docker のメモリを約 1 GiB 使います (2026-10-10 の実測。`LOCAL_CI_SLOT_MEMORY_MIB` の既定 1536 MiB は余裕を足した値)。Next のサーバーと Playwright は Docker の外 (ホスト) で動き、`e2e` の `next build` はホストの CPU とメモリを多く使います。枠を取る前に Docker の空きメモリがこの目安より少なければ警告します (止めません)。Docker Desktop の VM のメモリが 8 GiB 程度なら 2〜3 枠が目安です。
+
+**外側のロックとの関係 (移行期間)**: 枠を使わずに既定のポート (枠 0 と同じ) で動く作業が、別のロック (例: Workflow の `mkdir` のロック) で 1 本ずつに並んでいる場合は、`LOCAL_CI_LEGACY_LOCK` にそのパスを渡します。枠 0 を使う前に、そのパスが無いことも確かめます (あれば枠 0 は使用中として扱い、ほかの枠か空くのを待ちます)。既定は空 (確かめない) です。すべての作業が枠で回るようになれば要りません。
+
+**CI と揃えている条件** (ずれると「ローカルは緑・CI は赤」になる)
+
+- 検査するのは **コミット済みの HEAD に `--base` をマージした状態** (CI の `pull_request` が PR と main のマージコミットを検査するのと同じ)。未コミットの変更は検査に入りません (警告を出して続けます)。衝突したら赤で止まります。
+- 毎回 **まっさらな git worktree** を作り、`npm ci` をやり直します (使い回すと `.next/types` など CI に無い生成物まで型検査してしまうため)。終わったら worktree は消します。
+- `TZ=UTC` (CI のランナーは UTC)・`CI=true`・`LANG=C.UTF-8`・`NODE_OPTIONS` なし (ヒープを盛ると CI のメモリ不足を隠すため)。
+- 親シェルの環境変数は持ち込みません (`PATH`・`HOME`・Docker / プロキシの設定など、動かすのに要るものだけを残す)。シェルに入っている本番の接続先などは混ざりません (新しい worktree には `.env.local` もありません)。`SUPABASE_ACCESS_TOKEN` などは最初に外します。
+- コマンド・対象パス・環境変数は 4 つの yml と security.yml の gitleaks ジョブから写しています。yml を変えてスクリプトを直し忘れると、`tests/local-ci-workflow-sync.test.ts` が PR の `npm test` で落ちます。照合は yml ごとに対応する段の関数 (`stage_unit` など) の中だけで行い、yml のコマンドがスクリプトの 1 つのコマンドの先頭に同じ引数の並びで現れるか (後ろに足してよいのは結果を JSON で出す引数だけ)、作業ディレクトリ・環境変数 (ステップ / ジョブ / ワークフロー) が同じかまで比べます。テストが知らないアクション・キー・`if` の条件が yml に増えたときも落ちるので、スクリプトに写したうえでテストの対応表に理由を付けて足してください。gitleaks は、版・SHA-256 (linux_x64)・引数・検査する範囲・効きうる環境変数を照合します。
+- PR で動くワークフローはすべて、写した段 (`WORKFLOW_STAGES` / `JOB_STAGES`) か、理由つきの除外 (`EXCLUDED_WORKFLOWS`) に入っていなければなりません。ジョブ単位で写した security.yml は、ジョブごとに段か除外 (`EXCLUDED_JOBS`) に入っていなければなりません。PR で動くワークフロー・ジョブを足して、どちらにも入れないと `npm test` が落ちます。
+
+**結果の読み方**
+
+- 判定は終了コードだけでなく、各ツールの JSON (vitest / jest / Playwright / ESLint) の件数で行います。失敗が 1 件でもある、結果の JSON が無い・壊れている、収集されたファイルが 0、のどれかで赤です。
+- 収集漏れの偽の緑を防ぐため、各段で「収集されるはずのファイル」をツール自身に数えさせ (`vitest list --filesOnly` / `jest --listTests` / `playwright test --list`)、結果のファイルと突き合わせます。食い違えば赤です。
+- `it.fails` (既知の不具合) は、期待どおり失敗すれば passed、直って通ってしまうと failed として数えられます (vitest の JSON の扱いのまま)。
+- 最後に段ごとの表 (passed / failed / skipped / 収集ファイル / 秒) と、**PR 本文に貼る Markdown** (検査した HEAD と `--base` の sha・マージ状態・TZ・Node の版・各段の件数) を出します。どれかが赤なら終了コード 1 です。
+- JSON とログは worktree の外 (`${TMPDIR:-/tmp}/homegohan-local-ci-artifacts/<HEAD の短い sha>/`) に残ります。赤の段はログの末尾も表示します。
+
+| 環境変数 | 意味 |
+|---|---|
+| `LOCAL_CI_WORKDIR` | 作業用 worktree の親 (既定 `${TMPDIR:-/tmp}/homegohan-local-ci`) |
+| `LOCAL_CI_ARTIFACTS` | JSON とログの置き場 (既定は上記) |
+| `LOCAL_CI_FETCH=0` | `--base` (`origin/...`) を fetch しない |
+| `LOCAL_CI_SUPABASE_PORTS` | 空きを確かめるローカル Supabase のポート (空白区切り。既定は枠の値) |
+| `LOCAL_CI_SLOTS` | 使ってよい枠 (空白区切り。既定 `0`)。例: `'0 1'` |
+| `LOCAL_CI_SLOT` | この枠だけを使う (`LOCAL_CI_SLOTS` より優先) |
+| `LOCAL_CI_LOCK_DIR` | 枠のロックの置き場 (既定 `${TMPDIR:-/tmp}/homegohan-local-ci-locks`) |
+| `LOCAL_CI_SLOT_WAIT_SECONDS` | 枠の空きを待つ上限の秒数 (既定 5400)。過ぎたら終了コード 3 |
+| `LOCAL_CI_LEGACY_LOCK` | 枠 0 を使う前に、無いことを確かめるパス (外側のロック。既定は空) |
+| `LOCAL_CI_SLOT_MEMORY_MIB` | 1 枠の Docker のメモリの目安 (MiB。既定 1536)。空きが少なければ警告 |
+| `LOCAL_CI_PLAYWRIGHT_WITH_DEPS=1` | `playwright install` に `--with-deps` を付ける (Linux で OS の依存も入れる。root 権限が要る) |
+| `LOCAL_CI_TOOLS` | gitleaks の配布物の置き場 (既定 `${XDG_CACHE_HOME:-$HOME/.cache}/homegohan-local-ci`) |
+
+**ローカルでは再現できないもの**: migration を含む PR の Deploy Supabase Migrations の PR ジョブ (本番台帳とのドリフト検知) は本番に接続するため、このスクリプトでは回しません。security.yml の dependency review (依存を変える PR で、high 以上の既知の脆弱性がある版を入れていないか) は GitHub の Dependency graph を使うため回しません。依存を変える PR は CI のこのジョブの緑を待ってからマージします。また CI のランナーは Linux なので、OS に依存する違い (ファイル名の大文字小文字など) は残ります。
+
 ### 型チェック / Lint
 
 ```bash
@@ -103,7 +192,8 @@ npx vitest run --config vitest.integration.config.ts tests/integration/rls tests
 - `supabase start` / `supabase db reset` をリポジトリの `supabase/` に対して直接実行しないでください。必ず `scripts/supabase-local.sh` を経由します (理由は [CLAUDE.md](./CLAUDE.md) の「ローカル / CI の Supabase」)。
   migration を追加・変更したら `bash scripts/supabase-local.sh reset` で作り直します。
 - テストは自分で作ったデータを後片付けしますが、途中で中断するとローカル DB にデータが残ることがあります。そのときは `bash scripts/supabase-local.sh reset` で戻します。
-- CI では `.github/workflows/security-regression.yml` が同じ手順で `tests/integration/rls`・`tests/integration/security`・`tests/integration/operator/admin-*` (運営コンソール API) を実行します。
+- CI では `.github/workflows/security-regression.yml` が同じ手順で `tests/integration/rls`・`tests/integration/security`・`tests/integration/handson-tour`・`tests/integration/operator` (運営コンソール API。`admin-*` / `auth-boundary` / `super-admin-*`) を実行します。
+  実行するファイルは vitest に渡すパスの文字列 (部分一致) で選んでいるため、新しい結合テストを足すときは、ファイル名を既存の指定に合わせてください。どの指定にも当たらないファイルは CI で動かないので、`tests/integration-ci-coverage.test.ts` が検出して落ちます。
 - 失敗が既知の不具合によるテストは `it.fails` で書いてあります (`[既知の不具合]` と題名に付く)。不具合を直したら、そのテストの `.fails` を外してください。
 
 ### Playwright — E2E テスト (Web)

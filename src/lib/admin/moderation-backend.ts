@@ -4,6 +4,8 @@
  * #1041 (F4-04) 修正: 実在しない `moderation_items` テーブル参照を廃止し、
  * 実在する `moderation_flags` (food/meal 用) / `recipe_flags` (recipe 用) に統一する。
  * `ai_content` タイプはバックエンドテーブルが存在しないため未サポート (要 migration)。
+ * ai_content を指定された API は、空の一覧や 404 ではなく 501 (OP_NOT_SUPPORTED) を返し、
+ * 画面は「AIコンテンツ（未対応）」と明示する (#1128。オーナー判断 2026-10-08)。
  *
  * 重要: BAN 対象ユーザー (`user_id`) は各フラグテーブル自身の `user_id` /
  * `reporter_id` ではなく、フラグが指す **コンテンツの所有者** (meals.user_id /
@@ -18,6 +20,11 @@
  * は admin/super_admin のみのため、content_moderator が呼ぶと 0 件/0 行更新に
  * なる。呼び出し側 (route) は **requireRole 等の authz を通した後** に
  * `getSupabaseAdmin()` (service-role) を渡すこと。
+ *
+ * #1101: 違反コンテンツの「削除」は、行を消さずに `hidden_at` を入れて「隠す」
+ * (`hideModeratedContent`)。隠した行は RLS により本人以外には見えず、保管期間のあとに
+ * 完全削除する (削除ジョブは別の作業)。注意: service-role で `meals` / `recipes` を読むコードは
+ * RLS を通らないので、他のユーザーに見せる一覧を作るなら `hidden_at IS NULL` で絞ること。
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -30,9 +37,19 @@ export function isModerationBacked(type: ModerationType): type is ModerationBack
   return type === 'food' || type === 'recipe';
 }
 
+/** バックエンドの無いタイプ (ai_content) を指定された API の 501 の本文 (#1128) */
+export const AI_CONTENT_NOT_SUPPORTED_MESSAGE =
+  'AIコンテンツの審査は準備中（未対応）です。審査できるのは、食事画像とレシピの通報だけです。';
+
 export interface NormalizedModerationItem {
+  /** 通報 (moderation_flags.id / recipe_flags.id) の ID。コンテンツ本体の ID は `content_id` */
   id: string;
   type: ModerationBackedType;
+  /**
+   * 通報されたコンテンツ本体の ID (meals.id / recipes.id)。`hideModeratedContent` の対象。
+   * 通報にコンテンツが紐づいていない (meal_id / recipe_id が NULL) ときは null
+   */
+  content_id: string | null;
   content_url: string | null;
   reporter_count: number;
   /** コンテンツ所有者 (BAN 対象)。所有者取得に失敗した場合は null */
@@ -52,6 +69,7 @@ function normalizeFoodRow(row: RawRow): NormalizedModerationItem {
   return {
     id: row.id as string,
     type: 'food',
+    content_id: (row.meal_id as string | null) ?? null,
     content_url: meal?.photo_url ?? null,
     // moderation_flags は 1 通報 = 1 行のため、集約は行わず 1 件として扱う
     reporter_count: 1,
@@ -70,6 +88,7 @@ function normalizeRecipeRow(row: RawRow): NormalizedModerationItem {
   return {
     id: row.id as string,
     type: 'recipe',
+    content_id: (row.recipe_id as string | null) ?? null,
     // #1041 round-2 (G) 修正: recipes.image_url が実在する (database.types.ts) ため、
     // 常に null 固定にせず実データを反映する。
     content_url: recipe?.image_url ?? null,
@@ -206,4 +225,117 @@ export async function resolveModerationItem(
     })
     .eq('id', id);
   if (error) throw error;
+}
+
+/**
+ * 通報されたコンテンツ本体のテーブル (food = 食事 meals / recipe = レシピ recipes)。
+ * タイプを足したら、ここで型エラーになる (対応するテーブルを決めずに、別のテーブルの行を隠さないため)
+ */
+function contentTable(type: ModerationBackedType): 'meals' | 'recipes' {
+  switch (type) {
+    case 'food':
+      return 'meals';
+    case 'recipe':
+      return 'recipes';
+    default: {
+      const unsupported: never = type;
+      throw new Error(`hideModeratedContent: 対応していないタイプです (${String(unsupported)})`);
+    }
+  }
+}
+
+export interface HideModeratedContentParams {
+  /** `hidden_by` に記録する運営ユーザー (操作した人) */
+  hiddenBy: string;
+  /**
+   * `hidden_reason` に記録する理由。この列はコンテンツの持ち主も読めるので、運営の自由記述
+   * (解決メモ) は入れず、`moderation:<action>` のような短い識別子にする。
+   * 解決メモは監査ログ (admin_audit_logs) と moderation_flags.resolution_note に残る。
+   */
+  reason: string;
+}
+
+/**
+ * 食事の「中身」の列 (#1101)。家族へのペースト (paste_meal_to_family) が元の行から複製する列のうち、
+ * 通報の対象になるもの (写真とメモ。eaten_at / meal_type は日時と区分で、中身ではない)。
+ * ペーストの複製をまとめて隠すときは、この列が通報された行と同じ値の行だけを対象にする。
+ */
+type MealContent = { photo_url: string | null; memo: string | null };
+
+/** 2 つの食事の中身 (写真とメモ) が同じか。NULL どうしも同じとみなす (SQL の IS NOT DISTINCT FROM と同じ) */
+function isSameMealContent(a: MealContent, b: MealContent): boolean {
+  return a.photo_url === b.photo_url && a.memo === b.memo;
+}
+
+/**
+ * 通報されたコンテンツ (meals / recipes の行) を「隠す」(#1101)。行は消さない。
+ *
+ * `hidden_at` を入れると、RLS により本人以外 (家族・他のログインユーザー・未ログイン) には
+ * 見えなくなる (本人には見える)。完全な削除は保管期間のあとに別のジョブで行う。
+ * `hidden_*` を書き換えられるのは service-role だけ (DB のトリガー guard_hidden_content_columns)
+ * なので、`supabase` には、認可 (requireRole) を通したあとの `getSupabaseAdmin()` を渡すこと。
+ *
+ * - 食事 (food) は、家族へのペースト (paste_meal_to_family) で同じ写真・メモの行が家族のメンバーの
+ *   持ち物として複製されている。通報された行だけを隠すと、同じ中身の複製が家族に見えたまま残るので、
+ *   同じ `paste_group_id` の行のうち、**中身 (写真とメモ) が通報された行と同じもの**をまとめて隠す。
+ *   複製の持ち主には、自分の行として見えたまま (本人には見える、の規則どおり)。隠した行は、ペーストの元にできない (DB の関数が拒否する)
+ * - 同じ `paste_group_id` でも、中身が違う行は隠さない。ペーストのあとで持ち主が自分の行 (元の行・複製) の
+ *   写真やメモを書き換えられるので、`paste_group_id` が同じでも、通報された中身と同じとは限らない
+ *   (書き換えた複製が通報されたとき、元の持ち主の、違反していない元の行まで隠さないため)。
+ *   `paste_group_id` 自体は、ログインユーザーが書き換えられない (DB のトリガー guard_meal_paste_group_id。
+ *   書けるのはペーストの関数だけ) ので、他人の行を自分の行と同じまとまりに入れることもできない
+ * - 同じまとまりの行を読んでから、隠す行を ID で更新する (2 回に分ける。メモは長くなりうるので、URL の絞り込みに入れない)。
+ *   読んだあとの、ほんの短い間に持ち主が中身を書き換えた行は、読んだときの中身で判断する
+ * - すでに隠れている行は上書きしない (`hidden_at IS NULL` の行だけ更新する)。保管期間は
+ *   最初に隠した日時から数える。同じコンテンツへの 2 件目の通報を処理しても、起点は延びない
+ * - 行がもう無い (持ち主が先に消した) ときも、何も更新せずに成功する。隠す対象が無いだけで、失敗ではない
+ * - DB エラー時は例外を throw する。呼び出し側で「隠せなかった」と明示し、成功を装わないこと
+ *
+ * @returns この呼び出しで新しく隠した行の ID (すでに隠れていた行・無かった行は含まない)
+ */
+export async function hideModeratedContent(
+  supabase: SupabaseClient<any>,
+  type: ModerationBackedType,
+  contentId: string,
+  params: HideModeratedContentParams,
+): Promise<string[]> {
+  const table = contentTable(type);
+  // 隠す行の ID。既定は通報された行だけ。食事でペーストの複製があれば、同じ paste_group_id で中身が同じ行すべて
+  let targetIds: string[] = [contentId];
+  if (table === 'meals') {
+    const { data: source, error: sourceError } = await supabase
+      .from('meals')
+      .select('paste_group_id, photo_url, memo')
+      .eq('id', contentId)
+      .maybeSingle();
+    if (sourceError) throw sourceError;
+    if (!source) return []; // 行がもう無い。隠す対象が無いだけで、失敗ではない
+    const flagged = source as MealContent & { paste_group_id: string | null };
+    if (flagged.paste_group_id) {
+      const { data: groupRows, error: groupError } = await supabase
+        .from('meals')
+        .select('id, photo_url, memo')
+        .eq('paste_group_id', flagged.paste_group_id)
+        .is('hidden_at', null);
+      if (groupError) throw groupError;
+      targetIds = ((groupRows ?? []) as Array<MealContent & { id: string }>)
+        .filter((row) => row.id === contentId || isSameMealContent(row, flagged))
+        .map((row) => row.id);
+      // まとまりの中に、まだ隠れていない同じ中身の行が無い (通報された行もすでに隠れている)
+      if (targetIds.length === 0) return [];
+    }
+  }
+
+  const { data, error } = await supabase
+    .from(table)
+    .update({
+      hidden_at: new Date().toISOString(),
+      hidden_by: params.hiddenBy,
+      hidden_reason: params.reason,
+    })
+    .in('id', targetIds)
+    .is('hidden_at', null)
+    .select('id'); // 隠した行の ID を返す (監査ログに残し、運営が戻すときの手がかりにする)
+  if (error) throw error;
+  return ((data ?? []) as Array<{ id: string }>).map((row) => row.id);
 }

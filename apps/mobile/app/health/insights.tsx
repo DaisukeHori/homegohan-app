@@ -10,7 +10,8 @@ import { getApi } from "../../src/lib/api";
 type Insight = {
   id: string;
   title: string;
-  content: string;
+  /** 本文。health_insights の列は summary (content という列は無い。#1432) */
+  summary: string;
   is_read: boolean;
   is_alert: boolean;
   created_at: string;
@@ -186,7 +187,7 @@ export default function HealthInsightsPage() {
                       )}
                     </View>
                   </View>
-                  <Text style={styles.insightContent} numberOfLines={3}>{i.content}</Text>
+                  <Text style={styles.insightContent} numberOfLines={3}>{i.summary}</Text>
                   <View style={styles.insightFooter}>
                     {i.analysis_date ? (
                       <Text style={styles.insightDate}>{formatDate(i.analysis_date)}の分析</Text>
@@ -236,7 +237,7 @@ export default function HealthInsightsPage() {
                   )}
                 </View>
 
-                <Text style={styles.modalContent}>{selectedInsight.content}</Text>
+                <Text style={styles.modalContent}>{selectedInsight.summary}</Text>
 
                 {selectedInsight.recommendations && selectedInsight.recommendations.length > 0 && (
                   <View style={styles.recommendationsBlock}>

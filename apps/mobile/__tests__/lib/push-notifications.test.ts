@@ -29,10 +29,6 @@ jest.mock('expo-notifications', () => ({
   AndroidImportance: { DEFAULT: 3 },
 }));
 
-jest.mock('../../src/lib/posthog', () => ({
-  captureEvent: jest.fn(),
-}));
-
 jest.mock('expo-device', () => ({
   __esModule: true,
   isDevice: true,
@@ -48,7 +44,6 @@ jest.mock('react-native', () => ({
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
-import { captureEvent } from '../../src/lib/posthog';
 import { supabase } from '../../src/lib/supabase';
 import {
   PUSH_TOKEN_REGISTERED_KEY_PREFIX,
@@ -66,7 +61,17 @@ const mockGetPermissionsAsync = Notifications.getPermissionsAsync as jest.Mock;
 const mockRequestPermissionsAsync = Notifications.requestPermissionsAsync as jest.Mock;
 const mockGetExpoPushTokenAsync = Notifications.getExpoPushTokenAsync as jest.Mock;
 const mockSetNotificationChannelAsync = Notifications.setNotificationChannelAsync as jest.Mock;
-const mockCaptureEvent = captureEvent as jest.Mock;
+
+// 登録・削除の異常は、端末のコンソール (console.warn) にだけ出す。PostHog などの外部には送らない (#1166)
+let warnSpy: jest.SpyInstance;
+
+/** console.warn に出された「[pushNotifications] <イベント名>」の異常。イベント名と詳細を返す */
+function loggedPushIssues(): Array<{ event: string; details: unknown }> {
+  const prefix = '[pushNotifications] ';
+  return warnSpy.mock.calls
+    .filter(([label]) => typeof label === 'string' && label.startsWith(prefix))
+    .map(([label, details]) => ({ event: (label as string).slice(prefix.length), details }));
+}
 
 /** upsert モックを作り直して from に設定するヘルパー */
 function setupUpsert(returnValue: { error: Error | null }) {
@@ -77,6 +82,7 @@ function setupUpsert(returnValue: { error: Error | null }) {
 
 beforeEach(async () => {
   jest.clearAllMocks();
+  warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
   await AsyncStorage.clear();
 
   // project ID の出どころを毎回まっさらにする
@@ -106,6 +112,10 @@ beforeEach(async () => {
 
   // デフォルト: upsert 成功
   setupUpsert({ error: null });
+});
+
+afterEach(() => {
+  warnSpy.mockRestore();
 });
 
 describe('registerAndSaveExpoPushToken — 権限拒否', () => {
@@ -321,17 +331,17 @@ describe('registerAndSaveExpoPushToken — project ID の受け渡し (#1038 F7-
 });
 
 describe('registerAndSaveExpoPushToken — 失敗の観測 (#1038 F7-09)', () => {
-  it('getExpoPushTokenAsync が失敗したら、例外を再スローしつつ PostHog に送る (トークンやユーザー ID は載せない)', async () => {
+  it('getExpoPushTokenAsync が失敗したら、例外を再スローしつつ端末のコンソールに出す (トークンやユーザー ID は載せない)', async () => {
     process.env.EXPO_PUBLIC_EAS_PROJECT_ID = '$EXPO_PUBLIC_EAS_PROJECT_ID';
     const failure = Object.assign(new Error('Invalid uuid for projectId'), { name: 'CodedError' });
     mockGetExpoPushTokenAsync.mockRejectedValue(failure);
 
     await expect(registerAndSaveExpoPushToken()).rejects.toThrow('Invalid uuid for projectId');
 
-    expect(mockCaptureEvent).toHaveBeenCalledTimes(1);
-    const [eventName, props] = mockCaptureEvent.mock.calls[0];
-    expect(eventName).toBe('push_token_registration_failed');
-    expect(props).toEqual({
+    const issues = loggedPushIssues();
+    expect(issues).toHaveLength(1);
+    expect(issues[0].event).toBe('push_token_registration_failed');
+    expect(issues[0].details).toEqual({
       stage: 'get_token',
       platform: 'ios',
       error_name: 'CodedError',
@@ -339,26 +349,32 @@ describe('registerAndSaveExpoPushToken — 失敗の観測 (#1038 F7-09)', () =>
       project_id_source: 'none',
       rejected_project_id_sources: 'env',
     });
-    expect(JSON.stringify(props)).not.toContain('user-123');
+    expect(JSON.stringify(issues)).not.toContain('user-123');
   });
 
-  it('DB への保存が失敗したときも PostHog に送って再スローする', async () => {
+  it('DB への保存が失敗したときも端末のコンソールに出して再スローする (取得済みのトークンの値やユーザー ID は載せない)', async () => {
     setupUpsert({ error: Object.assign(new Error('permission denied'), { name: 'PostgrestError' }) });
 
     await expect(registerAndSaveExpoPushToken()).rejects.toThrow('permission denied');
 
-    expect(mockCaptureEvent).toHaveBeenCalledWith(
-      'push_token_registration_failed',
-      expect.objectContaining({ stage: 'save_token', error_name: 'PostgrestError' }),
-    );
+    const issues = loggedPushIssues();
+    expect(issues).toEqual([
+      {
+        event: 'push_token_registration_failed',
+        details: expect.objectContaining({ stage: 'save_token', error_name: 'PostgrestError' }),
+      },
+    ]);
+    // この時点で取得済みのトークンの値 (ExponentPushToken[test-token]) とユーザー ID は、出力に含まれない
+    expect(JSON.stringify(issues)).not.toContain('ExponentPushToken');
+    expect(JSON.stringify(issues)).not.toContain('user-123');
     // 保存に失敗したトークンは控えない
     expect(await AsyncStorage.getItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`)).toBeNull();
   });
 
-  it('成功したときは PostHog に何も送らず、登録した値をユーザー別に控える', async () => {
+  it('成功したときは何も出さず、登録した値をユーザー別に控える', async () => {
     await registerAndSaveExpoPushToken();
 
-    expect(mockCaptureEvent).not.toHaveBeenCalled();
+    expect(loggedPushIssues()).toEqual([]);
     expect(await AsyncStorage.getItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`)).toBe('ExponentPushToken[test-token]');
   });
 });
@@ -425,34 +441,39 @@ describe('unregisterExpoPushToken — #1038 F7-10', () => {
     expect(setHeader).not.toHaveBeenCalled();
   });
 
-  it('DELETE は通ったが消えた行が 0 件だったら (RLS に弾かれた・行が既に無い。エラーにならない)、no_rows を返して PostHog に送る', async () => {
+  it('DELETE は通ったが消えた行が 0 件だったら (RLS に弾かれた・行が既に無い。エラーにならない)、no_rows を返して端末のコンソールに出す', async () => {
     await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`, 'ExponentPushToken[this-device]');
     setupDelete({ error: null, count: 0 });
 
     const result = await unregisterExpoPushToken('user-123', { accessToken: 'saved-access-token' });
 
     expect(result).toBe('no_rows');
-    // トークンの値やユーザー ID は載せない
-    expect(mockCaptureEvent).toHaveBeenCalledWith('push_token_unregister_no_rows', {
-      platform: 'ios',
-      token_source: 'stored',
-      explicit_access_token: true,
-    });
-    expect(mockCaptureEvent).not.toHaveBeenCalledWith('push_token_unregister_failed', expect.anything());
+    // no_rows の 1 件だけ (push_token_unregister_failed は出ない)。トークンの値やユーザー ID は載せない
+    const issues = loggedPushIssues();
+    expect(issues).toEqual([
+      {
+        event: 'push_token_unregister_no_rows',
+        details: { platform: 'ios', token_source: 'stored', explicit_access_token: true },
+      },
+    ]);
+    expect(JSON.stringify(issues)).not.toContain('ExponentPushToken');
+    expect(JSON.stringify(issues)).not.toContain('user-123');
+    expect(JSON.stringify(issues)).not.toContain('saved-access-token');
   });
 
-  it('0 件のとき、取り直したトークンで削除したのか (token_source: refetched) と、アクセストークンを渡さなかったことも区別して送る', async () => {
+  it('0 件のとき、取り直したトークンで削除したのか (token_source: refetched) と、アクセストークンを渡さなかったことも区別して出す', async () => {
     setExpoConfig({ eas: { projectId: APP_JSON_PROJECT_ID } });
     mockGetExpoPushTokenAsync.mockResolvedValue({ data: 'ExponentPushToken[refetched]' });
     setupDelete({ error: null, count: 0 });
 
     expect(await unregisterExpoPushToken('user-123')).toBe('no_rows');
 
-    expect(mockCaptureEvent).toHaveBeenCalledWith('push_token_unregister_no_rows', {
-      platform: 'ios',
-      token_source: 'refetched',
-      explicit_access_token: false,
-    });
+    expect(loggedPushIssues()).toEqual([
+      {
+        event: 'push_token_unregister_no_rows',
+        details: { platform: 'ios', token_source: 'refetched', explicit_access_token: false },
+      },
+    ]);
   });
 
   it.each([
@@ -460,12 +481,12 @@ describe('unregisterExpoPushToken — #1038 F7-10', () => {
     ['2 件', 2],
     ['件数が返らない (undefined)', undefined],
     ['件数が返らない (null)', null],
-  ])('消えた行が %s のときは deleted (0 件と断定できないものを、異常として送らない)', async (_label, count) => {
+  ])('消えた行が %s のときは deleted (0 件と断定できないものを、異常として出さない)', async (_label, count) => {
     await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`, 'ExponentPushToken[this-device]');
     setupDelete({ error: null, count });
 
     expect(await unregisterExpoPushToken('user-123')).toBe('deleted');
-    expect(mockCaptureEvent).not.toHaveBeenCalled();
+    expect(loggedPushIssues()).toEqual([]);
   });
 
   it('userId が無ければ何もしない', async () => {
@@ -501,17 +522,21 @@ describe('unregisterExpoPushToken — #1038 F7-10', () => {
     expect(mockFrom).not.toHaveBeenCalled();
   });
 
-  it('DB の削除が失敗したら failed を返し、PostHog に送る (例外は投げない)', async () => {
+  it('DB の削除が失敗したら failed を返し、端末のコンソールに出す (例外は投げない)', async () => {
     await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`, 'ExponentPushToken[this-device]');
     setupDelete({ error: { name: 'PostgrestError', code: '42501', message: 'permission denied' } });
 
     await expect(unregisterExpoPushToken('user-123')).resolves.toBe('failed');
 
-    expect(mockCaptureEvent).toHaveBeenCalledWith('push_token_unregister_failed', {
-      platform: 'ios',
-      error_name: 'PostgrestError',
-      error_code: '42501',
-    });
+    const issues = loggedPushIssues();
+    expect(issues).toEqual([
+      {
+        event: 'push_token_unregister_failed',
+        details: { platform: 'ios', error_name: 'PostgrestError', error_code: '42501' },
+      },
+    ]);
+    expect(JSON.stringify(issues)).not.toContain('ExponentPushToken');
+    expect(JSON.stringify(issues)).not.toContain('user-123');
   });
 
   it('通信が返ってこなくても、待ち時間の上限で failed を返して先へ進める', async () => {
