@@ -24,7 +24,7 @@
  *      取りこぼしていない (集め方が壊れて空振りしていないことの番兵)
  *   4. 2 の判定が、除外の規則を足したときに実際に赤になる (判定が空振りしていないことの番兵)
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -36,11 +36,17 @@ const MOBILE_DIR = path.join(ROOT, 'apps/mobile');
 const EASIGNORE_PATH = path.join(ROOT, '.easignore');
 /** EAS がバンドルの入口として読むソースの置き場 (expo-router の app/ と、その下で使う src/)。 */
 const MOBILE_ENTRY_DIRS = ['apps/mobile/app', 'apps/mobile/src'];
-const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx'];
-/** Metro が拡張子なしの import を解決するときに試す拡張子 (ソース + JSON)。 */
+const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
+/** Metro (Expo の既定) が拡張子なしの import を解決するときに試す拡張子 (ソース + JSON)。 */
 const RESOLVE_EXTENSIONS = [...SOURCE_EXTENSIONS, '.json'];
-/** Metro が拡張子の前に試すプラットフォームの接尾辞 ('' は接尾辞なし)。 */
-const PLATFORM_SUFFIXES = ['.ios', '.android', '.native', ''];
+/**
+ * Metro が拡張子の前に試すプラットフォームの接尾辞。iOS は .ios → .native → なし、Android は .android → .native → なしの順。
+ * どちらのビルドも EAS で行うので、両方の解決先を辿る。
+ */
+const PLATFORM_RESOLUTION_ORDERS = [
+  ['.ios', '.native', ''],
+  ['.android', '.native', ''],
+];
 /** ワークスペースのパッケージの置き場 (ルートの package.json の workspaces と同じ)。 */
 const WORKSPACE_PACKAGE_DIRS = ['packages', 'apps'];
 
@@ -76,7 +82,9 @@ function listSourceFiles(dirAbs: string): string[] {
 /** 構文木から、モジュールの指定子 (import / export from / require / import()) を全部集める。`import type` も含める (先頭のコメント参照)。 */
 function collectSpecifiers(abs: string): string[] {
   const text = fs.readFileSync(abs, 'utf8');
-  const kind = abs.endsWith('.tsx') || abs.endsWith('.jsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  // .ts は型の断言 (<T>x) があるので TSX として読まない。JS は JSX を含みうるので JSX として読む (Expo は .js の JSX も通す)
+  const ext = path.extname(abs);
+  const kind = ext === '.ts' ? ts.ScriptKind.TS : ext === '.tsx' ? ts.ScriptKind.TSX : ts.ScriptKind.JSX;
   const sf = ts.createSourceFile(abs, text, ts.ScriptTarget.Latest, true, kind);
   const specs: string[] = [];
   const visit = (node: ts.Node): void => {
@@ -104,24 +112,28 @@ function collectSpecifiers(abs: string): string[] {
   return specs;
 }
 
-/** Metro と同じ順で、パス (拡張子なしのこともある) をファイルに解決する。見つからなければ null。 */
-function resolveFilePath(baseAbs: string): string | null {
-  if (fs.existsSync(baseAbs) && fs.statSync(baseAbs).isFile()) return baseAbs;
-  for (const platform of PLATFORM_SUFFIXES) {
-    for (const ext of RESOLVE_EXTENSIONS) {
-      const candidate = baseAbs + platform + ext;
-      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
-    }
+function isFile(abs: string): boolean {
+  return fs.existsSync(abs) && fs.statSync(abs).isFile();
+}
+
+/**
+ * Metro と同じ順で、パス (拡張子なしのこともある) をファイルに解決する。iOS と Android で解決先が違いうるので、両方の解決先を返す。
+ * 見つからなければ空の配列。
+ */
+function resolveFilePaths(baseAbs: string): string[] {
+  if (isFile(baseAbs)) return [baseAbs];
+  const found = new Set<string>();
+  for (const order of PLATFORM_RESOLUTION_ORDERS) {
+    const hit = order.flatMap((platform) => RESOLVE_EXTENSIONS.map((ext) => baseAbs + platform + ext)).find(isFile);
+    if (hit) found.add(hit);
   }
+  if (found.size > 0) return [...found];
   if (fs.existsSync(baseAbs) && fs.statSync(baseAbs).isDirectory()) {
-    const pkgJson = path.join(baseAbs, 'package.json');
-    if (fs.existsSync(pkgJson)) {
-      const entry = packageEntry(baseAbs);
-      if (entry) return resolveFilePath(entry);
-    }
-    return resolveFilePath(path.join(baseAbs, 'index'));
+    const entry = fs.existsSync(path.join(baseAbs, 'package.json')) ? packageEntry(baseAbs) : null;
+    if (entry) return resolveFilePaths(entry);
+    return resolveFilePaths(path.join(baseAbs, 'index'));
   }
-  return null;
+  return [];
 }
 
 function packageEntry(pkgDirAbs: string): string | null {
@@ -174,23 +186,26 @@ function loadWorkspacePackages(): Map<string, string> {
   return map;
 }
 
-type Resolution = { kind: 'file'; abs: string } | { kind: 'external' } | { kind: 'unresolved' };
+type Resolution = { kind: 'files'; abs: string[] } | { kind: 'external' } | { kind: 'unresolved' };
+
+function toResolution(abs: string[]): Resolution {
+  return abs.length > 0 ? { kind: 'files', abs } : { kind: 'unresolved' };
+}
 
 function makeResolver(aliases: PathAlias[], workspace: Map<string, string>) {
+  // tsconfig の paths は、長い (具体的な) 別名を先に当てる
+  const sorted = [...aliases].sort((a, b) => b.prefix.length - a.prefix.length);
   return (fromAbs: string, specifier: string): Resolution => {
     if (specifier.startsWith('./') || specifier.startsWith('../') || specifier === '.' || specifier === '..') {
-      const abs = resolveFilePath(path.resolve(path.dirname(fromAbs), specifier));
-      return abs ? { kind: 'file', abs } : { kind: 'unresolved' };
+      return toResolution(resolveFilePaths(path.resolve(path.dirname(fromAbs), specifier)));
     }
-    // tsconfig の paths は、長い (具体的な) 別名を先に当てる
-    const sorted = [...aliases].sort((a, b) => b.prefix.length - a.prefix.length);
     for (const alias of sorted) {
       const matches = alias.wildcard ? specifier.startsWith(alias.prefix) : specifier === alias.prefix;
       if (!matches) continue;
       const rest = alias.wildcard ? specifier.slice(alias.prefix.length) : '';
       for (const target of alias.targets) {
-        const abs = resolveFilePath(alias.wildcard ? target.replace('*', rest) : target);
-        if (abs) return { kind: 'file', abs };
+        const abs = resolveFilePaths(alias.wildcard ? target.replace('*', rest) : target);
+        if (abs.length > 0) return { kind: 'files', abs };
       }
       return { kind: 'unresolved' };
     }
@@ -199,8 +214,7 @@ function makeResolver(aliases: PathAlias[], workspace: Map<string, string>) {
     const pkgDir = workspace.get(pkgName);
     if (pkgDir) {
       const subpath = specifier.slice(pkgName.length);
-      const abs = resolveFilePath(subpath ? path.join(pkgDir, subpath) : pkgDir);
-      return abs ? { kind: 'file', abs } : { kind: 'unresolved' };
+      return toResolution(resolveFilePaths(subpath ? path.join(pkgDir, subpath) : pkgDir));
     }
     return { kind: 'external' };
   };
@@ -215,14 +229,15 @@ function collectMobileBundleInputs(): Closure {
   const unresolved: Edge[] = [];
   const queue: string[] = MOBILE_ENTRY_DIRS.flatMap((d) => listSourceFiles(path.join(ROOT, d)));
   while (queue.length > 0) {
-    const abs = queue.pop() as string;
+    const abs = queue.pop();
+    if (abs === undefined) break;
     const r = rel(abs);
     if (files.has(r)) continue;
     files.add(r);
     if (!SOURCE_EXTENSIONS.includes(path.extname(abs)) || abs.endsWith('.d.ts')) continue;
     for (const specifier of collectSpecifiers(abs)) {
       const res = resolve(abs, specifier);
-      if (res.kind === 'file') queue.push(res.abs);
+      if (res.kind === 'files') queue.push(...res.abs);
       else if (res.kind === 'unresolved') unresolved.push({ from: r, specifier });
     }
   }
@@ -239,6 +254,8 @@ function pathsAskedByEasCopy(relPath: string): string[] {
  * .easignore の規則で EAS のアーカイブから落ちるファイルを返す。
  * 規則を info/exclude に置いた、ファイルの無い一時の git リポジトリで `git check-ignore --no-index --stdin` に問う。
  * 利用者の git の設定 (グローバルの除外ファイルなど) と、外から渡された GIT_DIR などは効かせない。
+ * 大文字と小文字は区別しない (eas-cli が使う ignore パッケージの既定。区別しないほうが除外が広く、検査として厳しい側)。
+ * パスは NUL 区切りで渡し・受け取る (日本語などを含むパスを git が引用符で囲んで返すと、照合がずれるため)。
  */
 function filesDroppedByEasignore(easignoreText: string, relPaths: string[]): string[] {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mobile-easignore-'));
@@ -249,24 +266,24 @@ function filesDroppedByEasignore(easignoreText: string, relPaths: string[]): str
     }
     env.GIT_CONFIG_GLOBAL = os.devNull;
     env.GIT_CONFIG_NOSYSTEM = '1';
+    // この一時のリポジトリでの git の実行にだけ効く設定 (環境変数で渡す。どの設定ファイルも書き換えない)
+    env.GIT_CONFIG_COUNT = '1';
+    env.GIT_CONFIG_KEY_0 = 'core.ignoreCase';
+    env.GIT_CONFIG_VALUE_0 = 'true';
     execFileSync('git', ['init', '--quiet'], { cwd: tmp, env });
     fs.writeFileSync(path.join(tmp, '.git', 'info', 'exclude'), easignoreText);
     const asked = [...new Set(relPaths.flatMap(pathsAskedByEasCopy))];
-    let stdout = '';
-    try {
-      stdout = execFileSync('git', ['check-ignore', '--no-index', '--stdin'], {
-        cwd: tmp,
-        env,
-        input: asked.join('\n') + '\n',
-        encoding: 'utf8',
-      });
-    } catch (e) {
-      // 終了コード 1 = どれも除外されない。それ以外は本当の失敗
-      const err = e as { status?: number; stdout?: string };
-      if (err.status !== 1) throw e;
-      stdout = err.stdout ?? '';
+    const r = spawnSync('git', ['check-ignore', '--no-index', '--stdin', '-z'], {
+      cwd: tmp,
+      env,
+      input: asked.map((p) => `${p}\0`).join(''),
+      encoding: 'utf8',
+    });
+    // 終了コード 0 = どれかが除外される / 1 = どれも除外されない。それ以外は照合そのものの失敗
+    if (r.status !== 0 && r.status !== 1) {
+      throw new Error(`git check-ignore が失敗した (status=${String(r.status)}): ${r.stderr}`);
     }
-    const ignored = new Set(stdout.split('\n').filter((l) => l.length > 0));
+    const ignored = new Set(r.stdout.split('\0').filter((l) => l.length > 0));
     return relPaths.filter((p) => pathsAskedByEasCopy(p).some((q) => ignored.has(q)));
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -309,6 +326,8 @@ describe('apps/mobile のバンドルが読むファイルが .easignore で除�
       ['ルートの types/ を除外する', '/types/', 'types/domain.ts'],
       ['ルートの lib/ を除外する', '/lib/', 'lib/slot-builder.ts'],
       ['packages/shared を除外する', '/packages/shared/', 'packages/shared/src/index.ts'],
+      // eas-cli の ignore パッケージは大文字と小文字を区別しない
+      ['大文字で書いた /Types/ も除外とみなす', '/Types/', 'types/domain.ts'],
     ])('%s', (_label, extraRule, expectedDropped) => {
       const dropped = filesDroppedByEasignore(`${easignore}\n${extraRule}\n`, outside);
       expect(dropped).toContain(expectedDropped);
