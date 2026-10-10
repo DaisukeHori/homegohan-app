@@ -29,11 +29,19 @@ const mockCheckRateLimit = vi.fn();
 const mockRateLimitExceededResponse = vi.fn();
 const mockGenerateGeminiJson = vi.fn();
 
+// 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
+vi.mock('@/lib/ai/consent-guard', () => import('./helpers/ai-consent-guard-allowed'));
+
+const mockGetSupabaseAdmin = vi.fn();
+
+// 利用者のセッションのクライアント (createClient) と、保存に使う service_role のクライアント (getSupabaseAdmin) は
+// 同じ偽の DB (mockFrom) を引く。どちらのクライアントで発行したかは mockGetSupabaseAdmin の呼び出しで確かめる。
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => ({
     auth: { getUser: mockGetUser },
     from: mockFrom,
   })),
+  getSupabaseAdmin: () => mockGetSupabaseAdmin(),
 }));
 
 vi.mock('@/lib/rate-limit', () => ({
@@ -164,7 +172,16 @@ const MEAL_DAYS = [
 
 const GENERATED = {
   data: {
-    insights: [{ title: '睡眠', content: '睡眠を確保しましょう', insight_type: 'sleep', is_alert: false, priority: 1 }],
+    insights: [
+      {
+        title: '睡眠',
+        summary: '睡眠を確保しましょう',
+        insight_type: 'sleep',
+        is_alert: false,
+        priority: 'high',
+        recommendations: ['23 時までに寝る'],
+      },
+    ],
   },
 };
 
@@ -187,6 +204,7 @@ beforeEach(() => {
   queues = {};
   recorded = [];
   installSupabaseMock();
+  mockGetSupabaseAdmin.mockImplementation(() => ({ from: mockFrom }));
   mockGetUser.mockResolvedValue({ data: { user }, error: null });
   mockCheckRateLimit.mockResolvedValue({ success: true });
   // JST の 2026-10-08 05:30。UTC ではまだ 10-07 なので、「今日」が JST 基準であることも確かめられる
@@ -343,7 +361,83 @@ describe('POST /api/health/insights', () => {
     const insert = queryOf('health_insights');
     const rows = argsOf(insert, 'insert')[0][0] as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ user_id: user.id, insight_type: 'sleep', is_read: false, is_dismissed: false });
+    // #1432: 現行の health_insights の列で保存する (content 列は無い・priority は text・日付と期間は NOT NULL)。
+    // 日付は JST の暦日 (UTC ではまだ 10-07)。期間は JST の今日から 30 日さかのぼる
+    expect(rows[0]).toEqual({
+      user_id: user.id,
+      analysis_date: '2026-10-08',
+      period_start: '2026-09-08',
+      period_end: '2026-10-08',
+      period_type: 'monthly',
+      insight_type: 'sleep',
+      title: '睡眠',
+      summary: '睡眠を確保しましょう',
+      recommendations: ['23 時までに寝る'],
+      priority: 'high',
+      is_alert: false,
+      is_read: false,
+      is_dismissed: false,
+    });
+    expect(rows[0]).not.toHaveProperty('content');
+  });
+
+  it('#1432: health_insights には利用者向けの INSERT ポリシーが無いので、保存は service_role のクライアントで行う', async () => {
+    setupHappyPath();
+
+    const res = await POST(postRequest());
+    expect(res.status).toBe(200);
+
+    // 本人確認と入力の取得は利用者のセッションで行い、保存だけ service_role で行う
+    expect(mockGetSupabaseAdmin).toHaveBeenCalledTimes(1);
+    const insertQueries = recorded.filter((r) => r.calls.some((c) => c.method === 'insert'));
+    expect(insertQueries.map((r) => r.table)).toEqual(['health_insights']);
+  });
+
+  it('#1432: health_records は保存する期間 (JST の暦日) で絞る', async () => {
+    setupHappyPath();
+
+    const res = await POST(postRequest());
+    expect(res.status).toBe(200);
+
+    const records = queryOf('health_records');
+    expect(argsOf(records, 'gte')).toEqual([['record_date', '2026-09-08']]);
+    expect(argsOf(records, 'lte')).toEqual([['record_date', '2026-10-08']]);
+    // プロンプトにも同じ期間を書く
+    expect(promptSentToLlm()).toContain('2026-09-08〜2026-10-08');
+  });
+
+  it('#1432: 本文 (summary) が空のインサイトしか返らなければ、保存せずに 500', async () => {
+    setupHappyPath();
+    mockGenerateGeminiJson.mockResolvedValue({
+      data: { insights: [{ title: '空', summary: '   ', insight_type: 'sleep', is_alert: false, priority: 'low' }] },
+    });
+
+    const res = await POST(postRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(json.error).toBe('インサイトを生成できませんでした');
+    expect(tablesQueried()).not.toContain('health_insights');
+  });
+
+  it('#1432: service_role のクライアントを作れない (環境変数の欠落など) ときは 500。記録を残し、生のエラー文を返さない', async () => {
+    setupHappyPath();
+    const rawMessage = 'Missing env SUPABASE_SERVICE_ROLE_KEY at /var/task/secret-path';
+    mockGetSupabaseAdmin.mockImplementation(() => {
+      throw new Error(rawMessage);
+    });
+
+    const res = await POST(postRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(json).toEqual({ error: 'インサイトの保存に失敗しました' });
+    expect(JSON.stringify(json)).not.toContain(rawMessage);
+    expect(mockLogError).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ message: rawMessage }),
+      expect.objectContaining({ query: 'health_insights' }),
+    );
   });
 
   it('保存に失敗したら 500。記録を残し、生のエラー文を返さない', async () => {

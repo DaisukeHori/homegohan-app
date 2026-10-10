@@ -9,6 +9,7 @@ import {
   fetchDatasetEmbeddings,
 } from "../../../shared/dataset-embedding.mjs";
 import { addScaled, emptyTotals, hasSugarData } from "./nutrition-totals.ts";
+import { aiConsentDeniedResponse, checkAiConsent } from "../_shared/ai-consent-guard.ts";
 
 // service_role key 専用 (ブラウザからは呼ばれない) なので CORS は付けない (#1167)。
 
@@ -395,6 +396,14 @@ Deno.serve(async (req) => {
 
   if (!name || !baseRecipeExternalId) {
     return jsonResponse({ error: "name and base_recipe_external_id are required" }, 400);
+  }
+
+  // 利用者のための派生レシピ (user_id あり) は、その利用者の依頼 (名前・メモ) を外国の AI 事業者へ送る。
+  // 同意が無ければ (判定に失敗した場合も) 送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+  // user_id の無い呼び出しは、データセットのレシピだけから作る運営の処理で、利用者のデータを含まない
+  if (userId !== null) {
+    const aiConsent = await checkAiConsent(supabaseAdmin, userId);
+    if (!aiConsent.allowed) return aiConsentDeniedResponse(aiConsent);
   }
 
   // LLMトークン使用量計測

@@ -1,6 +1,7 @@
 // POST /api/org/owner-transfer/propose
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { getSupabaseUrl } from '@/lib/env-required';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure } from '@/lib/emails/send-result';
@@ -111,8 +112,9 @@ export async function POST(request: Request) {
   if (serviceKey) {
     try {
       const { createClient: createAdminClient } = await import('@supabase/supabase-js');
+      // 未設定なら MissingEnvError。下の catch が警告に残して、メールだけを諦める (提案の作成は成功のまま)
       const adminSupabase = createAdminClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        getSupabaseUrl(),
         serviceKey,
         { auth: { autoRefreshToken: false, persistSession: false } },
       );

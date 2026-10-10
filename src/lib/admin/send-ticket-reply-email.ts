@@ -29,7 +29,8 @@ export interface ReplyEmailLogger {
 }
 
 export interface SendTicketReplyEmailParams {
-  ticket: { id: string; user_id: string; subject: string };
+  /** user_id は NULL になりうる: 起票した利用者が退会すると、チケットは残って user_id だけが外れる (#1175) */
+  ticket: { id: string; user_id: string | null; subject: string };
   /** 今回投稿した顧客向けメッセージの ID と本文 (過去のメッセージや内部メモは読まない) */
   messageId: string;
   messageBody: string;
@@ -53,6 +54,12 @@ function resolveReplyTo(logger: ReplyEmailLogger): string | undefined {
 async function deliverTicketReplyEmail(params: SendTicketReplyEmailParams): Promise<ReplyEmailOutcome> {
   const { ticket, messageId, messageBody, logger } = params;
   const logMeta = { ticket_id: ticket.id, message_id: messageId };
+
+  // 0) 起票した利用者が退会している (user_id が外れている) 場合は、宛先が無い
+  if (!ticket.user_id) {
+    logger.warn('support ticket reply email: the ticket owner has left (no user_id)', logMeta);
+    return { status: 'failed', reason: 'no_recipient' };
+  }
 
   // 1) 宛先 (顧客本人のメールアドレス) を auth.users から取得する
   let admin: ReturnType<typeof getSupabaseAdmin>;

@@ -9,7 +9,7 @@
  * - 全食事が完食済みの場合は Edge Function を呼ばずスキップを返すこと
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockGetUser = vi.fn();
 const mockUserDailyMealsSingle = vi.fn();
@@ -52,6 +52,8 @@ const mockSupabase = {
   from: mockFrom,
 };
 
+// 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
+vi.mock('@/lib/ai/consent-guard', () => import('../../../../../tests/helpers/ai-consent-guard-allowed'));
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => mockSupabase),
 }));
@@ -82,6 +84,16 @@ vi.mock('@/lib/generate-menu-v5-retry', () => ({
 }));
 
 const waitUntilPromises: Promise<unknown>[] = [];
+// internalError() が使う構造化ログ。変数名がここに渡ることを見る (#1182)。app_logs には書かせない
+const mockLoggerError = vi.fn();
+vi.mock('@/lib/db-logger', () => ({
+  createLogger: vi.fn(() => ({
+    withUser: vi.fn().mockReturnThis(),
+    error: mockLoggerError,
+  })),
+  generateRequestId: vi.fn(() => 'req-test'),
+}));
+
 vi.mock('@vercel/functions', () => ({
   waitUntil: vi.fn((p: Promise<unknown>) => {
     waitUntilPromises.push(p);
@@ -105,12 +117,22 @@ const flushBackground = async () => {
   await Promise.all(waitUntilPromises);
 };
 
+// 必須の環境変数 (#1182)。Edge Function の呼び出しはモックなので、値はダミー
+const TEST_SUPABASE_URL = 'https://example.supabase.co';
+const TEST_SERVICE_ROLE_KEY = 'service-role-key-for-test';
+
 beforeEach(() => {
   vi.clearAllMocks();
   waitUntilPromises.length = 0;
+  vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', TEST_SUPABASE_URL);
+  vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', TEST_SERVICE_ROLE_KEY);
   mockGetUser.mockResolvedValue({ data: { user }, error: null });
   mockUserDailyMealsSingle.mockResolvedValue({ data: { id: dailyMealId, day_date: dayDate }, error: null });
   mockWeeklyInsertSingle.mockResolvedValue({ data: { id: 'request-1' }, error: null });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe('POST /api/ai/menu/day/regenerate', () => {
@@ -197,4 +219,46 @@ describe('POST /api/ai/menu/day/regenerate', () => {
     expect(payload.targetSlots.map((s: any) => s.mealType).sort()).toEqual(['breakfast', 'dinner', 'lunch']);
     await flushBackground();
   });
+});
+
+// #1182: 必須の環境変数が欠けているとき、weekly_menu_requests を作る「前」に、汎用の 500 で止める。
+// 本文には変数名を出さず (#1172)、変数名は構造化ログ (db-logger) にだけ渡す。
+// 以前は `process.env.X!` を行を作った「後」に読んでいたため、欠けていると undefined の URL を呼びに行っていた。
+describe('POST /api/ai/menu/day/regenerate — 必須の環境変数 (#1182)', () => {
+  beforeEach(() => {
+    mockPlannedMealsEq.mockResolvedValue({
+      data: [{ id: 'meal-b', meal_type: 'breakfast', is_completed: false }],
+      error: null,
+    });
+  });
+
+  it('設定されていれば、その値をそのまま Edge Function の呼び出しに渡す', async () => {
+    const res = await POST(makeRequest({ dailyMealId }));
+    expect(res.status).toBe(200);
+    await flushBackground();
+
+    expect(mockCallGenerateMenuV4WithRetry).toHaveBeenCalledTimes(1);
+    expect(mockCallGenerateMenuV4WithRetry.mock.calls[0][0]).toMatchObject({
+      supabaseUrl: TEST_SUPABASE_URL,
+      serviceRoleKey: TEST_SERVICE_ROLE_KEY,
+    });
+  });
+
+  it.each(['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'])(
+    '%s が未設定なら、リクエストを作る前に、汎用の 500 で止める (本文に変数名なし・ログに変数名あり)',
+    async (name) => {
+      vi.stubEnv(name, undefined);
+
+      const res = await POST(makeRequest({ dailyMealId }));
+      const text = await res.text();
+
+      expect(res.status).toBe(500);
+      expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+      expect(text).not.toContain(name);
+      expect(mockLoggerError).toHaveBeenCalledTimes(1);
+      expect(mockLoggerError.mock.calls[0][1]).toMatchObject({ name: 'MissingEnvError', envName: name });
+      expect(mockWeeklyInsertSingle).not.toHaveBeenCalled();
+      expect(mockCallGenerateMenuV4WithRetry).not.toHaveBeenCalled();
+    },
+  );
 });

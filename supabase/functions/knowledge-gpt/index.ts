@@ -13,6 +13,7 @@ import {
   DATASET_EMBEDDING_DIMENSIONS,
   fetchSingleDatasetEmbedding,
 } from "../../../shared/dataset-embedding.mjs";
+import { requireAiConsentForUser } from "../_shared/ai-consent-guard.ts";
 
 console.log("Knowledge-GPT Function loaded (Fallback Mode)")
 
@@ -413,6 +414,12 @@ Deno.serve(async (req) => {
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
+
+      // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+      // 利用者の JWT で直接呼ばれた場合。service role での呼び出しは、AI 相談の API
+      // (src/app/api/ai/consultation/sessions/[sessionId]/messages) が送る前に同じ判定で止めている
+      const aiConsentDenied = await requireAiConsentForUser(user.id, corsHeaders);
+      if (aiConsentDenied) return aiConsentDenied;
     }
 
     const body: ChatCompletionRequest = await req.json().catch(() => ({ messages: [] }));

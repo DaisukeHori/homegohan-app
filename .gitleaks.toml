@@ -1,0 +1,57 @@
+# gitleaks の設定 (.github/workflows/security.yml の「gitleaks」ジョブが使う) (#1156)
+#
+# gitleaks の既定のルール (AWS・Stripe・GitHub・OpenAI などのキー、秘密鍵、JWT、汎用の API キーなど) を
+# そのまま使い、「本物の秘密ではない」と確かめた誤検知だけを下で除外する。
+#
+# 誤検知を足すときの決まり:
+#   - 値そのものか、公開してよい値の形を、できるだけ狭く書く。ファイルやディレクトリごとは除外しない。
+#     tests/e2e にデバッグ用アカウントの認証情報が残った事故 (#1114) のような漏れを、見逃さないため。
+#   - その 1 行だけの例外なら、行の末尾 (コメントでよい) に gitleaks:allow と書く方法もある。
+#   - 本物のキー・パスワードが見つかったときは、ここに足さない。そのキーを無効にして、新しく発行し直す
+#     (履歴から消すだけでは、公開されたあとの値は取り消せない)。
+#
+# 検査の対象は、PR の新しいコミットと main への push だけ (過去の履歴は見ない)。
+# 履歴に残っている過去の指摘は、この設定では扱わない。
+title = "homegohan"
+
+[extend]
+useDefault = true
+
+# Supabase の anon key (role が anon の JWT)。
+# モバイルアプリや Web のクライアントに埋め込んで配る前提の公開用のキーで、秘密ではない。
+# supabase/functions/README.md と、動作確認用のスクリプト 2 本に載っている。
+# 照合するのは JWT の先頭部分 (ヘッダ + ペイロードの "iss":"supabase","ref":"flmeolcfutuwwbjmzyoz","role":"anon" まで)。
+# role が service_role のキーはペイロードが途中から変わるので、この除外には当たらず、これまでどおり検知される。
+[[allowlists]]
+description = "Supabase anon key (公開用のキー)。service_role は除外しない"
+regexes = [
+  '''^eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsbWVvbGNmdXR1d3diam16eW96Iiwicm9sZSI6ImFub24i''',
+]
+
+# テストや画面の定義にあるダミーの値で、gitleaks の汎用ルール (generic-api-key) が誤って拾ったもの。
+# 値を 1 つずつ確かめた (どれも本物ではない)。値が完全に一致したときだけ除外する。
+#   abcdef0123456789 (の繰り返し)      テスト用のダミーのトークン
+#   abc123def456                       ログのマスク処理のテスト用の文字列
+#   WrongPass2026x                     「間違ったパスワード」を試すテストの値
+#   it-1306-cron-secret                結合テスト用のダミーの Cron 認証値
+#   5-1-analyzing-or-result            スクリーンショットのファイル名
+#   vitamin_b12_ug                     栄養素の項目名 (key: "vitamin_b12_ug" の形が API キーに見えた)
+#   dummy-api-key-for-test-0123456789  メール送信のテスト (send.test.ts) の、ログに出ないことを確かめるための目印のダミー
+#   v1.MR5OBK2qk3lA9wxkmjm0YRkd0tg9FdcYT5CqvW9_pw9nE0j
+#                                      モバイルのセッション保存のテスト (secure-session-storage.test.ts) の、作り物の refresh_token
+#   3f9a1c0be77d4c2a9b1e5d6f7a8b9c0d   Speed Insights の URL 消去のテスト (speed-insights-scrub-1179.test.ts) の、招待トークンの形の
+#                                      作り物 (64 桁を 2 つに分けて書いた前半。gitleaks は前半だけを拾う)
+[[allowlists]]
+description = "テスト用のダミーの値と栄養素の項目名 (generic-api-key の誤検知)"
+targetRules = ["generic-api-key"]
+regexes = [
+  '''^(?:abcdef0123456789)+$''',
+  '''^abc123def456$''',
+  '''^WrongPass2026x$''',
+  '''^it-1306-cron-secret$''',
+  '''^5-1-analyzing-or-result$''',
+  '''^vitamin_b12_ug$''',
+  '''^dummy-api-key-for-test-0123456789$''',
+  '''^v1\.MR5OBK2qk3lA9wxkmjm0YRkd0tg9FdcYT5CqvW9_pw9nE0j$''',
+  '''^3f9a1c0be77d4c2a9b1e5d6f7a8b9c0d$''',
+]

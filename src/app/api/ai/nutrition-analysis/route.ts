@@ -3,7 +3,10 @@ import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { SUGAR_APP_DEFAULT } from '@homegohan/core';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiConsentSkippedField, checkUserAiConsent, requireAiConsent } from '@/lib/ai/consent-guard';
 
 // 栄養目標が未設定のときの既定値（g/日）。
 // 糖質は「炭水化物 − 食物繊維」で計算しているので、目標も同じ定義（炭水化物の目標 − 食物繊維の目標）で導く (#1146)。
@@ -223,7 +226,13 @@ export async function GET(request: Request) {
     let advice: string | null = null;
     let suggestion: any = null;
 
-    if (includeAdvice || includeSuggestion) {
+    // 外国の AI 事業者への提供の同意が無ければ (判定に失敗した場合も)、AI へ送らない (T15 / #1154)。
+    // この GET はホームを開くと自動で呼ばれ、AI を使わない集計 (analysis) も返すので、403 で全体を止めずに
+    // AI の部分 (advice / suggestion) だけを省き、aiSkipped (AI_CONSENT_REQUIRED など) で画面に知らせる。
+    const aiRequested = includeAdvice || includeSuggestion;
+    const aiConsent = aiRequested ? await checkUserAiConsent(supabase, user.id) : null;
+
+    if (aiRequested && aiConsent?.allowed) {
       const healthConditions = profile?.health_conditions || [];
       const medications = profile?.medications || [];
       const nutritionGoal = profile?.nutrition_goal || 'maintain';
@@ -330,6 +339,7 @@ JSON形式で出力してください：
       },
       advice,
       suggestion,
+      ...aiConsentSkippedField(aiConsent),
       profile: {
         nutritionGoal: profile?.nutrition_goal,
         healthConditions: profile?.health_conditions,
@@ -351,6 +361,10 @@ export async function POST(request: Request) {
   if (userError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
+  const aiConsentDenied = await requireAiConsent(supabase, user.id);
+  if (aiConsentDenied) return aiConsentDenied;
 
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
@@ -388,8 +402,8 @@ export async function POST(request: Request) {
     }
 
     // generate-menu-v4を呼び出す（同期呼び出し）
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    // 必須の環境変数が欠けていれば、リクエストの行を作る前に MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す) (#1182)
+    const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
 
     // リクエストを作成
     const targetSlots = [{ date: targetDate, mealType: targetMealType, plannedMealId: meal.id }];
@@ -454,8 +468,8 @@ export async function POST(request: Request) {
       result,
     });
 
-  } catch (error: any) {
-    console.error('Meal update error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
+    return internalError('POST /api/ai/nutrition-analysis', error);
   }
 }

@@ -524,6 +524,8 @@ const mocks = vi.hoisted(() => ({
 
 // supabase-js の偽物: upsert (generate-hint) だけ答える。
 // aggregate-org-stats は停止中 (#1325) で DB を読まないので、組織の一覧を返す必要はない
+// 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-edge.test.ts が実際のハンドラと構文木で確かめる
+vi.mock('../supabase/functions/_shared/ai-consent-guard.ts', () => import('./helpers/edge-ai-consent-guard-allowed'));
 vi.mock("@supabase/supabase-js", () => ({
   createClient: () => ({
     from: (table: string) => ({

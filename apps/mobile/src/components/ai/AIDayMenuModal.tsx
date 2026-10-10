@@ -21,13 +21,19 @@ import { useV4MenuGeneration } from "../../hooks/useV4MenuGeneration";
 interface Props {
   visible: boolean;
   onClose: () => void;
+  /**
+   * 作成が「同意が必要です」で止められたときに呼ぶ (T15 / #1154)。このモーダルは自分を閉じてから呼ぶ。
+   * 呼ばれた側 (このモーダルを開いた画面・シート) が、自分も同意画面を隠さないように閉じてから、同意画面への案内を出す
+   * (このモーダルだけを閉じて案内を出すと、下に開いたままのシートが、案内から開いた同意画面を隠す。src/lib/ai-consent.ts の規則)
+   */
+  onAiConsentRequired: () => void;
 }
 
 // ============================================================
 // Component
 // ============================================================
 
-export const AIDayMenuModal: React.FC<Props> = ({ visible, onClose }) => {
+export const AIDayMenuModal: React.FC<Props> = ({ visible, onClose, onAiConsentRequired }) => {
   // 今日の日付をデフォルト
   const today = new Date().toISOString().slice(0, 10);
   const [selectedDate, setSelectedDate] = useState(today);
@@ -40,6 +46,11 @@ export const AIDayMenuModal: React.FC<Props> = ({ visible, onClose }) => {
         "1日分の献立を生成しています。しばらくお待ちください。"
       );
       onClose();
+    },
+    // 同意が必要で止められた (T15 / #1154): このモーダルを閉じてから、開いた側に知らせる (案内は開いた側が出す)
+    onAiConsentRequired: () => {
+      onClose();
+      onAiConsentRequired();
     },
     onError: (err) => {
       Alert.alert("エラー", err ?? "献立の生成に失敗しました。");
@@ -71,13 +82,18 @@ export const AIDayMenuModal: React.FC<Props> = ({ visible, onClose }) => {
       mealType,
     }));
 
-    await generate({
-      targetSlots,
-      constraints: {},
-      note: "",
-      ultimateMode: false,
-      resolveExistingMeals: false,
-    });
+    try {
+      await generate({
+        targetSlots,
+        constraints: {},
+        note: "",
+        ultimateMode: false,
+        resolveExistingMeals: false,
+      });
+    } catch {
+      // 失敗はフックの onError が表示済み (ボタンの onPress から呼ばれるので、ここで止めないと未処理の reject になる)。
+      // 同意が必要で止められたときは、フックが例外にせず onAiConsentRequired を呼ぶ
+    }
   }
 
   return (

@@ -5,11 +5,6 @@ import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
 const isDev = process.env.NODE_ENV === 'development';
-// #1044 (F6-09): CSP の connect-src に許可する PostHog のホストは、アプリが実際に送信するホストと合わせる。
-// #1197: 送信側の既定は packages/shared の POSTHOG_DEFAULT_HOST (src/lib/posthog.ts とモバイルが import する)。
-// この .mjs は TypeScript を import できないので、同じ値のリテラルを残している。
-// src/__tests__/config/posthog-default-host.test.ts が一致を検査するので、ホストを変えるときは両方を直す。
-const posthogHost = process.env.NEXT_PUBLIC_POSTHOG_HOST ?? 'https://us.i.posthog.com';
 // ローカルの Supabase (scripts/supabase-local.sh の http://127.0.0.1:54321 など) にブラウザから接続できるよう、
 // NEXT_PUBLIC_SUPABASE_URL が *.supabase.co 以外のときだけ、その origin (と Realtime 用の ws / wss) を CSP に加える。
 // 本番 (*.supabase.co) の CSP は変わらない。
@@ -77,9 +72,9 @@ const nextConfig = {
               "frame-src 'self' https://challenges.cloudflare.com",
               "style-src 'self' 'unsafe-inline'",
               `img-src 'self' data: blob: *.supabase.co images.unsplash.com${supabaseImgSrc}`,
-              // #1044 (F6-09): PostHog の capture/identify 送信先を許可 (未設定だと全ブロックされていた)
-              // #1044 round-2: session replay 等で使う PostHog アセットホストも予防的に許可
-              `connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co ${posthogHost} https://us-assets.i.posthog.com${supabaseConnectSrc}`,
+              // #1166: 利用状況の計測 (PostHog) はやめたので、PostHog の送信先は許可しない
+              // (環境変数 NEXT_PUBLIC_POSTHOG_HOST が残っていても CSP には出ない。src/__tests__/config/next-config-headers.test.ts が検査する)
+              `connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co${supabaseConnectSrc}`,
               "frame-ancestors 'none'",
               "font-src 'self'",
               "object-src 'none'",

@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { getNutrientDefinition, calculateDriPercentage } from '@homegohan/shared';
 import crypto from 'crypto';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
@@ -212,6 +213,11 @@ export async function POST(request: Request) {
         });
       }
     }
+
+    // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+    // 作成済みのコメント (キャッシュ) を返すだけなら AI へは送らないので、上で返している
+    const aiConsentDenied = await requireAiConsent(supabase, user.id);
+    if (aiConsentDenied) return aiConsentDenied;
 
     // 新規生成または再生成が必要
     // まずpendingステータスでレコードを作成/更新

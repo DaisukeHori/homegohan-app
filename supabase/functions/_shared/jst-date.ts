@@ -8,6 +8,7 @@
  * 「今日」や「ある時刻が属する日」を求めるときは、このファイルの関数を使う。
  *
  * 週・月・日の集計期間 (calculateJstPeriod) も同じ理由で JST の暦で求める (#1211)。
+ * 「今日から N 日さかのぼる」期間 (calculateJstLookbackPeriod / addDaysToDate) も同じ (#1407)。
  * new Date().getDay() / getDate() / getMonth() はどれも実行環境 (UTC) のローカル時刻で答えるので、
  * 月曜の JST 00:00〜08:59 (UTC ではまだ日曜) は週の開始日が 1 週間前の月曜になっていた。
  *
@@ -91,6 +92,92 @@ export function calculateJstPeriod(
     default:
       return { periodStart: dayOf(-7), periodEnd: dayOf(0) };
   }
+}
+
+/** 暦で区切る期間の種類 (日・月曜始まりの週・月)。「直前の期間」が 1 つに決まるのは、この 3 つだけ */
+export const JST_CALENDAR_PERIOD_TYPES = ['daily', 'weekly', 'monthly'] as const;
+export type JstCalendarPeriodType = (typeof JST_CALENDAR_PERIOD_TYPES)[number];
+
+export function isJstCalendarPeriodType(periodType: unknown): periodType is JstCalendarPeriodType {
+  return typeof periodType === 'string' && (JST_CALENDAR_PERIOD_TYPES as readonly string[]).includes(periodType);
+}
+
+/** 期間の開始日の JST 0 時から、この分だけ前の時刻を「直前の期間の最後の瞬間」とする (Date の最小単位の 1 ミリ秒) */
+const LAST_MOMENT_BEFORE_MS = 1;
+
+/**
+ * now が属する期間 (calculateJstPeriod) の、1 つ前の期間の開始日と終了日を JST の暦で返す (#1406)。
+ *   - daily   : JST の昨日
+ *   - weekly  : JST の先週の月曜日から日曜日まで
+ *   - monthly : JST の先月の 1 日から末日まで
+ * 例: (weekly, JST 月曜 2026-10-12 0:05) → { periodStart: "2026-10-05", periodEnd: "2026-10-11" }
+ *
+ * 1 時間ごとの定期実行は、期間の最後の 1 時間 (例: 日曜 23:05〜23:59) の記録を、その期間の集計に入れられない
+ * (次の回はもう次の期間を集計する)。期間が切り替わった直後の回が、この関数で直前の期間を 1 回だけ集計し直す。
+ * 今の期間の開始日の JST 0 時の 1 ミリ秒前 (= 直前の期間の最後の瞬間) が属する期間を、calculateJstPeriod で求める。
+ *
+ * all_time などの暦で区切らない種類には「直前の期間」が無いので RangeError。不正な Date (Invalid Date) も RangeError。
+ */
+export function calculateJstPreviousPeriod(
+  periodType: string,
+  now: Date = new Date(),
+): { periodStart: string; periodEnd: string } {
+  if (!isJstCalendarPeriodType(periodType)) {
+    throw new RangeError(`No previous period for periodType: ${periodType}`);
+  }
+  const { periodStart } = calculateJstPeriod(periodType, now);
+  // "YYYY-MM-DDT00:00:00Z" から 9 時間引いた時刻が、その日の JST 0 時
+  const currentStartMs = Date.parse(`${periodStart}T00:00:00Z`) - JST_OFFSET_MS;
+  return calculateJstPeriod(periodType, new Date(currentStartMs - LAST_MOMENT_BEFORE_MS));
+}
+
+/** YYYY-MM-DD の形 (ゼロ埋め) */
+const YMD_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * 暦日 (YYYY-MM-DD) から offsetDays 日ずらした暦日を YYYY-MM-DD で返す (#1407)。負の数で過去の日。
+ * 例: ("2027-01-01", -30) → "2026-12-02" / ("2028-03-01", -1) → "2028-02-29"
+ *
+ * 暦の計算だけをする (時刻もタイムゾーンも持たない) ので、formatJstDate で求めた JST の暦日を渡せば、
+ * 結果も JST の暦日になる。月末・年末・うるう日の繰り上がり・繰り下がりは Date.UTC が処理する。
+ * 実行環境のタイムゾーンやサマータイムに左右されない (Date#setDate / getDate はローカル時刻なので使わない)。
+ *
+ * 形の違う日付・存在しない日付 (2026-02-30 など)・整数でない日数を渡すと RangeError になる (変な日付を黙って返さない)。
+ */
+export function addDaysToDate(day: string, offsetDays: number): string {
+  if (!YMD_PATTERN.test(day)) {
+    throw new RangeError(`Invalid date (expected YYYY-MM-DD): ${day}`);
+  }
+  if (!Number.isInteger(offsetDays)) {
+    throw new RangeError(`offsetDays must be an integer: ${offsetDays}`);
+  }
+  const [year, month, date] = day.split('-').map(Number);
+  // 存在しない日付 (2026-02-30 → 3/2 に繰り上がる) は、0 日ずらしても元の文字列に戻らないので弾く
+  if (new Date(Date.UTC(year, month - 1, date)).toISOString().slice(0, 10) !== day) {
+    throw new RangeError(`Invalid date (no such day): ${day}`);
+  }
+  return new Date(Date.UTC(year, month - 1, date + offsetDays)).toISOString().slice(0, 10);
+}
+
+/**
+ * now が属する JST の暦日 (今日) を終了日、その lookbackDays 日前を開始日とする期間 (どちらの日も含む。YYYY-MM-DD) を返す (#1407)。
+ * 例: (7, JST 2026-07-13 03:00) → { periodStart: "2026-07-06", periodEnd: "2026-07-13" }
+ *
+ * calculateJstPeriod (週は月曜始まり・月は 1 日始まりの暦の区切り) と違い、「今日からさかのぼって N 日」の期間。
+ * 健康インサイトの生成 (generate-health-insights) が、日付の列 (health_records.record_date) を
+ * `record_date >= periodStart AND record_date <= periodEnd` で絞るのに使う。
+ *
+ * 不正な Date (Invalid Date)・負の数や整数でない日数を渡すと RangeError になる。
+ */
+export function calculateJstLookbackPeriod(
+  lookbackDays: number,
+  now: Date = new Date(),
+): { periodStart: string; periodEnd: string } {
+  if (!Number.isInteger(lookbackDays) || lookbackDays < 0) {
+    throw new RangeError(`lookbackDays must be a non-negative integer: ${lookbackDays}`);
+  }
+  const periodEnd = formatJstDate(now);
+  return { periodStart: addDaysToDate(periodEnd, -lookbackDays), periodEnd };
 }
 
 /**

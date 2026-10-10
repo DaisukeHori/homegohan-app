@@ -1,0 +1,82 @@
+# Dependabot の設定 (#1156)
+#
+# 依存パッケージ (npm) と GitHub Actions の更新を、週 1 回 (月曜の朝 7 時 JST) に PR で知らせる。
+#   - PR は人が CI を確認してから手動でマージする。自動承認・自動マージはしない
+#     (tests/no-auto-merge-workflow.test.ts が、その仕組みが戻ってこないことを検査する)。
+#   - 同時に開く PR の数を絞って、待ちの列が長くならないようにする (open-pull-requests-limit)。
+#     セキュリティ更新 (脆弱性が見つかったときの PR) は、この上限の対象外で、別に出る。
+#   - Dependabot の PR には Actions のシークレットが渡されない。シークレットを使うジョブは
+#     `if: github.actor != 'dependabot[bot]'` で外してある (tests/security-workflow.test.ts が検査する)。
+#
+# 事前の設定 (リポジトリの Settings > Code security): Dependabot alerts と Dependabot security updates を有効にする。
+# これはこのファイルでは設定できない。
+
+version: 2
+
+updates:
+  # --- npm: Web アプリ・モバイルアプリ (apps/mobile)・packages/* ---
+  # ルートの package-lock.json が workspaces (apps/* と packages/*) をまとめて管理しているので、ディレクトリは "/" だけでよい
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # マイナー更新とパッチ更新は、1 本の PR にまとめる
+      npm-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # --- 計画して上げるもの (メジャー更新の PR は出さない) ---
+      # Next.js 14 の critical (RCE など) は、npm audit が示す直し方が Next 16 系へのメジャー更新。Next / React / @types/react は
+      # 互いの版をそろえて上げる必要があるため、Dependabot には上げさせない (Next 15 / React 19 前提の API を持ち込まない方針は #1199)。
+      - dependency-name: "next"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint-config-next"
+        update-types: ["version-update:semver-major"]
+      # react / react-dom / react-test-renderer: Web は React 18 (18.3.1)。モバイルは react-native に入っているレンダラーと
+      # 「完全に同じ版」(いまは 19.0.0) でないと動かない。どの更新も、react-native と一緒に計画して上げる
+      - dependency-name: "react"
+      - dependency-name: "react-dom"
+      - dependency-name: "react-test-renderer"
+      # 型の版は、動いている React の版にそろえる (CLAUDE.md「Web アプリは Next 14 + React 18」)。パッチ更新だけ許す
+      - dependency-name: "@types/react*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+      # --- モバイル: Expo SDK と React Native ---
+      # React Native (0.x) はマイナー更新でも壊れる。Expo SDK の各パッケージ (expo*, jest-expo) と
+      # react-native* / @react-native* は、SDK ごとに合う版が決まっていて、apps/mobile/package.json でそろえてある。
+      # SDK を上げるときにまとめて上げるので、マイナー更新とメジャー更新の PR は出さない。パッチ更新だけ許す
+      - dependency-name: "expo*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "jest-expo"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "react-native*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "@react-native*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  # --- GitHub Actions (.github/workflows/*.yml) ---
+  # 更新は 1 本の PR にまとめる (ほとんどが major タグ v4 → v5 のような更新で、別々に出すと PR が増えるため)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

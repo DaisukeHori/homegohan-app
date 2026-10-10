@@ -112,6 +112,9 @@ export const MembershipErrorCode = {
   SEAT_LIMIT_EXCEEDED:        'SEAT_LIMIT_EXCEEDED',
   MEMBER_LIMIT_EXCEEDED:      'MEMBER_LIMIT_EXCEEDED',
 
+  // モデレーション (#1101)
+  MEAL_HIDDEN:                'MEAL_HIDDEN',   // 運営が隠した食事は paste_meal_to_family の元にできない (403)
+
   // 内部
   RPC_FAILED:                 'RPC_FAILED',
   EMAIL_SEND_FAILED:          'EMAIL_SEND_FAILED',
@@ -986,6 +989,10 @@ ALTER TABLE meals
 -- 同一ペーストグループの全レコードに対して bulk update 可能にする index
 CREATE INDEX IF NOT EXISTS idx_meals_paste_group ON meals(paste_group_id) WHERE paste_group_id IS NOT NULL;
 
+-- #1101 (migration 20261009000500): paste_group_id は authenticated / anon が書き換えられない
+-- (トリガー guard_meal_paste_group_id。INSERT で NULL 以外・UPDATE で値を変える と 42501 CANNOT_MODIFY_PRIVILEGED_COLUMN)。
+-- 書けるのは paste_meal_to_family (SECURITY DEFINER) と service_role だけ。運営のモデレーションがこのまとまりで複製を隠すため
+
 -- meals の閲覧 RLS — 自分 + 家族 (share_meals=TRUE のメンバ) の meals を見る
 CREATE OR REPLACE FUNCTION public.can_view_user_meals(p_target_user_id UUID)
 RETURNS BOOLEAN
@@ -1040,6 +1047,11 @@ BEGIN
   SELECT * INTO v_source FROM meals WHERE id = p_source_meal_id;
   IF v_source.user_id <> auth.uid() THEN
     RAISE EXCEPTION 'NOT_MEAL_OWNER' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- #1101: 運営が隠した食事 (hidden_at IS NOT NULL) は貼り付けの元にできない (migration 20261009000500)
+  IF v_source.hidden_at IS NOT NULL THEN
+    RAISE EXCEPTION 'MEAL_HIDDEN' USING ERRCODE = 'P0001';
   END IF;
 
   SELECT family_id INTO v_caller_family_id FROM user_profiles WHERE id = auth.uid();
