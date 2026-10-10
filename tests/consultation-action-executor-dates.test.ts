@@ -6,6 +6,9 @@
  * (DB の date 型は日付として読むが YYYY-MM-DD ではない) がそのまま target_slots と Edge Function の本文に入り、
  * 献立生成 (generate-menu-v4 / v5) の工程 1 が日付を前後にずらすところ (addDays) で RangeError になっていた。
  * generate_week_menu の startDate と同じく、DB にも Edge Function にも触れずに断る。
+ *
+ * 受け付けた日付のリクエストの行 (weekly_menu_requests) は、AI のキューなので service role のクライアント
+ * (getAiQueueWriter) で積む (#1465。利用者のクライアントでは権限で拒まれる)。ここでは作り物に替えて、行がそちらに届くことも見る。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -29,6 +32,10 @@ vi.mock('@/lib/v4-target-slots', () => ({
 vi.mock('@/lib/rate-limit', () => ({ checkRateLimit: vi.fn() }));
 vi.mock('@/lib/db-logger', () => ({ createLogger: () => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }) }));
 vi.mock('@/lib/health-streaks', () => ({ updateHealthStreak: vi.fn() }));
+// 献立生成のリクエストの行 (weekly_menu_requests) は service role のクライアント (getAiQueueWriter) で書く (#1465)。
+// 利用者のクライアントとは別の作り物にして、INSERT がそちらに届き、利用者のクライアントでは書かないことを見る
+const queue = vi.hoisted(() => ({ db: null as unknown }));
+vi.mock('@/lib/ai/ai-queue-writer', () => ({ getAiQueueWriter: () => queue.db }));
 
 import { runConsultationAction } from '@/lib/ai/consultation-action-executor';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
@@ -87,18 +94,34 @@ const ACTIONS = [
   { actionType: 'generate_single_meal', params: (date: unknown) => ({ date, mealType: 'lunch' }) },
 ] as const;
 
+/** service role のクライアント (AI のキューへ書く。#1465) */
+let queueDb: ReturnType<typeof makeSupabase>;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  queueDb = makeSupabase();
+  queue.db = queueDb;
 });
 
+/** リクエストの行は service role のクライアントで 1 行だけ積み、利用者のクライアントでは書かない (#1465) */
+function expectRequestRowOnQueueSide(db: ReturnType<typeof makeSupabase>, startDate: string) {
+  expect(db.requestInserts).toEqual([]);
+  expect(db.from).not.toHaveBeenCalledWith('weekly_menu_requests');
+  expect(queueDb.requestInserts).toHaveLength(1);
+  expect(queueDb.requestInserts[0]).toMatchObject({ user_id: USER.id, start_date: startDate, status: 'processing' });
+  // 家族の人数 (user_profiles) は利用者のクライアントで読む。service role のクライアントで読まない
+  expect(queueDb.from).not.toHaveBeenCalledWith('user_profiles');
+}
+
 describe.each(ACTIONS)('$actionType: date は実在する日付だけ (#1433)', ({ actionType, params }) => {
-  it.each(INVALID_DATES)('date=%s は、DB にも Edge Function にも触れずに断る', async (date) => {
+  it.each(INVALID_DATES)('date=%s は、DB (利用者・キューの service role のどちらのクライアントも) にも Edge Function にも触れずに断る', async (date) => {
     const db = makeSupabase();
     const out = await run(db, actionType, params(date));
     expect(out.success).toBe(false);
     expect(out.result).toEqual({ error: 'date must be in YYYY-MM-DD format' });
     expect(resolveExistingTargetSlots).not.toHaveBeenCalled();
     expect(db.from).not.toHaveBeenCalled();
+    expect(queueDb.from).not.toHaveBeenCalled();
     expect(db.functions.invoke).not.toHaveBeenCalled();
   });
 
@@ -106,6 +129,7 @@ describe.each(ACTIONS)('$actionType: date は実在する日付だけ (#1433)', 
     const db = makeSupabase();
     const out = await run(db, actionType, params('2028-02-29'));
     expect(out.success).toBe(true);
+    expectRequestRowOnQueueSide(db, '2028-02-29');
     expect(db.functions.invoke).toHaveBeenCalledTimes(1);
     const body = (db.functions.invoke.mock.calls[0] as unknown[])[1] as { body: { targetSlots: Array<{ date: string }> } };
     const dates = body.body.targetSlots.map((slot) => slot.date);
@@ -115,13 +139,14 @@ describe.each(ACTIONS)('$actionType: date は実在する日付だけ (#1433)', 
 });
 
 describe('generate_week_menu: startDate は実在する日付で、受け付ける範囲 (0101-01-02〜9998-12-30) の中だけ (#1433)', () => {
-  it.each(INVALID_DATES)('startDate=%s は、DB にも Edge Function にも触れずに断る', async (startDate) => {
+  it.each(INVALID_DATES)('startDate=%s は、DB (利用者・キューの service role のどちらのクライアントも) にも Edge Function にも触れずに断る', async (startDate) => {
     const db = makeSupabase();
     const out = await run(db, 'generate_week_menu', { startDate });
     expect(out.success).toBe(false);
     expect(out.result).toEqual({ error: 'startDate must be in YYYY-MM-DD format' });
     expect(resolveExistingTargetSlots).not.toHaveBeenCalled();
     expect(db.from).not.toHaveBeenCalled();
+    expect(queueDb.from).not.toHaveBeenCalled();
     expect(db.functions.invoke).not.toHaveBeenCalled();
   });
 
@@ -129,6 +154,8 @@ describe('generate_week_menu: startDate は実在する日付で、受け付け�
     const db = makeSupabase();
     const out = await run(db, 'generate_week_menu', { startDate: '9998-12-30' });
     expect(out.success).toBe(true);
+    expectRequestRowOnQueueSide(db, '9998-12-30');
+    expect(db.functions.invoke).toHaveBeenCalledTimes(1);
     const body = (db.functions.invoke.mock.calls[0] as unknown[])[1] as { body: { targetSlots: Array<{ date: string }> } };
     expect([...new Set(body.body.targetSlots.map((slot) => slot.date))]).toEqual([
       '9998-12-30',
