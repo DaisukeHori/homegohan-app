@@ -16,7 +16,7 @@
  *   6. #1125 の第 1 段の範囲: オーナーの選択「課金は無料のまま計測」により、課金系の定期処理はこの段では足さない (revenue_snapshots / Stripe / ライセンスに触れない)。
  *      failed_invite_lookups / infra_metrics には書き込む処理が無いので、掃除のジョブは作らない
  *   7. 既存の行を変えない・消さない (UPDATE / DELETE / TRUNCATE を書かない)
- *   8. 設計書 docs/design/operator/08-cron-batches.md に、2 つのジョブと migration の version が書かれていて、付け直す前の version (20261008200000) が残っていない
+ *   8. 設計書 docs/design/operator/08-cron-batches.md に、2 つのジョブと migration の version が書かれていて、付け直す前の version (20261008200000) が設計書・SQL・DB のテストに残っていない
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,12 +24,13 @@ import { describe, it, expect } from 'vitest';
 
 const ROOT = path.resolve(__dirname, '..');
 const VERSION = '20261010150000';
-// 付け直す前の version。main の最大より下だったため VERSION へ付け直した (#1125)。設計書や SQL に残っていないことを確かめる
+// 付け直す前の version。main の最大より下だったため VERSION へ付け直した (#1125)。設計書・SQL・DB のテストに残っていないことを確かめる
 const STALE_VERSION = '20261008200000';
 const NAME = 'schedule_log_cleanup_and_dau_snapshot';
 const MIGRATION_PATH = path.join(ROOT, 'supabase', 'migrations', `${VERSION}_${NAME}.sql`);
 const ROLLBACK_PATH = path.join(ROOT, 'supabase', 'rollbacks', `${VERSION}_${NAME}.down.sql`);
 const DOC_PATH = path.join(ROOT, 'docs', 'design', 'operator', '08-cron-batches.md');
+const INTEGRATION_TEST_PATH = path.join(ROOT, 'tests', 'integration', 'security', 'log-cleanup-and-dau-snapshot.test.ts');
 
 const migration = fs.readFileSync(MIGRATION_PATH, 'utf-8');
 
@@ -232,9 +233,10 @@ describe('#1125 設計書', () => {
     }
   });
 
-  it('付け直す前の version (20261008200000) が設計書・migration・rollback に残っていない', () => {
-    for (const file of [DOC_PATH, MIGRATION_PATH, ROLLBACK_PATH]) {
-      expect(fs.readFileSync(file, 'utf-8'), `${path.relative(ROOT, file)} に古い version が残っていないこと`).not.toContain(STALE_VERSION);
-    }
+  it('付け直す前の version (20261008200000) が設計書・migration・rollback・DB のテストに残っていない', () => {
+    const files = [DOC_PATH, MIGRATION_PATH, ROLLBACK_PATH, INTEGRATION_TEST_PATH];
+    // 失敗時に本文全体を出さないよう、残っているファイルの一覧で比べる
+    const stale = files.filter((file) => fs.readFileSync(file, 'utf-8').includes(STALE_VERSION)).map((file) => path.relative(ROOT, file));
+    expect(stale, '古い version が残っているファイル').toEqual([]);
   });
 });
