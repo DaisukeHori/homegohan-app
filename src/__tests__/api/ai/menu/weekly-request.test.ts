@@ -139,6 +139,7 @@ vi.mock('@/lib/planned-meals-snapshot', () => ({
 }));
 
 const { POST } = await import('@/app/api/ai/menu/weekly/request/route');
+const { createLogger } = await import('@/lib/db-logger');
 
 const user = { id: 'user-1' };
 const startDate = '2026-07-06'; // 固定した「今日」= fake timer で使用
@@ -368,6 +369,8 @@ describe('POST /api/ai/menu/weekly/request — 必須の環境変数 (#1182)', (
       expect(text).not.toContain(name);
       expect(mockLoggerError).toHaveBeenCalledTimes(1);
       expect(mockLoggerError.mock.calls[0][1]).toMatchObject({ name: 'MissingEnvError', envName: name });
+      // 構造化ログの function_name は、ほかの route と同じ「METHOD /path」の形 (#1434)
+      expect(vi.mocked(createLogger)).toHaveBeenCalledWith('POST /api/ai/menu/weekly/request', expect.any(String));
 
       // 何も書き込んでいない・消していない・Edge Function を呼んでいない
       expect(mockPlannedMealsDeleteEq).not.toHaveBeenCalled();

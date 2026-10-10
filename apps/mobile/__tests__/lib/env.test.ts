@@ -11,10 +11,17 @@
 import fs from 'fs';
 import path from 'path';
 
-import { MobileConfigError, REQUIRED_MOBILE_ENV_NAMES, resolveSupabaseEnv } from '../../src/lib/env';
+import {
+  MobileConfigError,
+  REQUIRED_MOBILE_ENV_NAMES,
+  resolveApiBaseUrl,
+  resolveRequiredMobileEnv,
+  resolveSupabaseEnv,
+} from '../../src/lib/env';
 
 const URL_VALUE = 'https://abcdefgh.supabase.co';
 const KEY_VALUE = 'anon-key-value-secret-looking';
+const API_BASE_VALUE = 'https://api.example.com';
 
 describe('resolveSupabaseEnv', () => {
   // process.env は差し替えず、同じオブジェクトを書き換えて戻す。
@@ -85,8 +92,69 @@ describe('resolveSupabaseEnv', () => {
     expect(JSON.stringify(resolveSupabaseEnv())).not.toContain(KEY_VALUE);
   });
 
-  it('必須の環境変数の名前は 2 つ', () => {
-    expect([...REQUIRED_MOBILE_ENV_NAMES]).toEqual(['EXPO_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_SUPABASE_ANON_KEY']);
+  it('必須の環境変数の名前は 3 つ (Supabase の 2 つと API の基点。#1434)', () => {
+    expect([...REQUIRED_MOBILE_ENV_NAMES]).toEqual([
+      'EXPO_PUBLIC_SUPABASE_URL',
+      'EXPO_PUBLIC_SUPABASE_ANON_KEY',
+      'EXPO_PUBLIC_API_BASE_URL',
+    ]);
+  });
+});
+
+describe('resolveApiBaseUrl / resolveRequiredMobileEnv (#1434)', () => {
+  const saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const name of REQUIRED_MOBILE_ENV_NAMES) saved[name] = process.env[name];
+    process.env.EXPO_PUBLIC_SUPABASE_URL = URL_VALUE;
+    process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = KEY_VALUE;
+    process.env.EXPO_PUBLIC_API_BASE_URL = API_BASE_VALUE;
+  });
+
+  afterEach(() => {
+    for (const name of REQUIRED_MOBILE_ENV_NAMES) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
+  });
+
+  it('API の基点があれば、加工せずそのまま返す', () => {
+    process.env.EXPO_PUBLIC_API_BASE_URL = ` ${API_BASE_VALUE} `;
+
+    expect(resolveApiBaseUrl()).toBe(` ${API_BASE_VALUE} `);
+  });
+
+  it.each([undefined, '', ' ', '\t\n'])('API の基点が %j (未設定・空・空白だけ) なら undefined', (value) => {
+    if (value === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;
+    else process.env.EXPO_PUBLIC_API_BASE_URL = value;
+
+    expect(resolveApiBaseUrl()).toBeUndefined();
+  });
+
+  it('3 つともあれば ok', () => {
+    expect(resolveRequiredMobileEnv()).toEqual({ ok: true });
+  });
+
+  it('API の基点だけが無ければ、EXPO_PUBLIC_API_BASE_URL だけを足りないものとして返す', () => {
+    delete process.env.EXPO_PUBLIC_API_BASE_URL;
+
+    expect(resolveRequiredMobileEnv()).toEqual({ ok: false, missing: ['EXPO_PUBLIC_API_BASE_URL'] });
+  });
+
+  it('3 つとも無ければ、REQUIRED_MOBILE_ENV_NAMES の順で全部返す', () => {
+    delete process.env.EXPO_PUBLIC_SUPABASE_URL;
+    process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = ' ';
+    process.env.EXPO_PUBLIC_API_BASE_URL = '';
+
+    expect(resolveRequiredMobileEnv()).toEqual({ ok: false, missing: [...REQUIRED_MOBILE_ENV_NAMES] });
+  });
+
+  it('足りないものを返すとき、設定されている変数の値は含めない', () => {
+    delete process.env.EXPO_PUBLIC_API_BASE_URL;
+
+    const text = JSON.stringify(resolveRequiredMobileEnv());
+    expect(text).not.toContain(URL_VALUE);
+    expect(text).not.toContain(KEY_VALUE);
   });
 });
 
@@ -111,6 +179,7 @@ describe('ソースの確認', () => {
   it('Metro がビルド時に値へ置き換えられるよう、process.env.EXPO_PUBLIC_X と名前を直接書いて読んでいる', () => {
     expect(source).toContain('process.env.EXPO_PUBLIC_SUPABASE_URL');
     expect(source).toContain('process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY');
+    expect(source).toContain('process.env.EXPO_PUBLIC_API_BASE_URL');
     // process.env[name] のように名前を変数にすると、リリースビルドでは置き換わらず常に undefined になる
     expect(source).not.toMatch(/process\.env\s*\[/);
   });

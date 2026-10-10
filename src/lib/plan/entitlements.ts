@@ -37,6 +37,7 @@
 
 import { createLogger } from '@/lib/db-logger';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { getEdgeFunctionServiceRoleKey, isMissingEnvError } from '@/lib/env-required';
 import {
   AI_USAGE_RECORDED_HEADER,
   AI_USAGE_TIMEOUT_MS,
@@ -122,9 +123,15 @@ export async function recordAiUsage(userId: string, feature: AiFeature, options:
  */
 export async function aiUsageRecordedHeaders(userId: string, now: number = Date.now()): Promise<Record<string, string>> {
   // Edge Function 側 (_shared/ai-usage.ts) は SERVICE_ROLE_JWT と SUPABASE_SERVICE_ROLE_KEY のどちらでも検証する。
-  // Next.js の triggerMealImageJobProcessing と同じ優先順位で選ぶ
-  const secret = process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!secret || !userId) return {};
+  // Next.js の triggerMealImageJobProcessing と同じ優先順位 (env-required の getEdgeFunctionServiceRoleKey。#1434) で選ぶ
+  if (!userId) return {};
+  let secret: string;
+  try {
+    secret = getEdgeFunctionServiceRoleKey();
+  } catch (error) {
+    if (isMissingEnvError(error)) return {};
+    throw error;
+  }
   try {
     return { [AI_USAGE_RECORDED_HEADER]: await signAiUsageRecorded(secret, userId, now) };
   } catch {

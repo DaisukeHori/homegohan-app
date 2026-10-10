@@ -64,7 +64,7 @@ jest.mock('react-native-safe-area-context', () => ({
 
 // process.env は差し替えず、同じオブジェクトを書き換えて戻す。jest-expo では `process.env.EXPO_PUBLIC_X` が
 // expo/virtual/env 経由の参照に置き換わり、そこは読み込み時の process.env を握り続けるため
-const ENV_NAMES = ['EXPO_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_SUPABASE_ANON_KEY'] as const;
+const ENV_NAMES = ['EXPO_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_SUPABASE_ANON_KEY', 'EXPO_PUBLIC_API_BASE_URL'] as const;
 const ORIGINAL_ENV: Record<string, string | undefined> = {};
 
 function renderRootLayout() {
@@ -89,6 +89,7 @@ describe('RootLayout — 必須の環境変数 (#1182)', () => {
   it('環境変数がそろっていれば、従来どおり Provider と Stack を立ち上げる', () => {
     process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://abcdefgh.supabase.co';
     process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'anon-key-value';
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.com';
 
     const { getByTestId, queryByTestId } = renderRootLayout();
 
@@ -100,6 +101,7 @@ describe('RootLayout — 必須の環境変数 (#1182)', () => {
   it('両方無ければ、Provider を立ち上げず、設定エラーの画面を出す (開発ビルドは足りない変数名も出す)', () => {
     delete process.env.EXPO_PUBLIC_SUPABASE_URL;
     delete process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.com';
 
     const { getByTestId, getByText, queryByTestId } = renderRootLayout();
 
@@ -115,11 +117,13 @@ describe('RootLayout — 必須の環境変数 (#1182)', () => {
   it('片方だけ無ければ、その変数名だけを出す', () => {
     process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://abcdefgh.supabase.co';
     process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = '';
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.com';
 
     const { getByText, queryByText, queryByTestId } = renderRootLayout();
 
     expect(getByText('EXPO_PUBLIC_SUPABASE_ANON_KEY')).toBeTruthy();
     expect(queryByText('EXPO_PUBLIC_SUPABASE_URL')).toBeNull();
+    expect(queryByText('EXPO_PUBLIC_API_BASE_URL')).toBeNull();
     expect(queryByTestId('stack')).toBeNull();
     expect(mockAuthProviderRendered).not.toHaveBeenCalled();
   });
@@ -141,6 +145,46 @@ describe('RootLayout — 必須の環境変数 (#1182)', () => {
       expect(mockAuthProviderRendered).not.toHaveBeenCalled();
     } finally {
       globalWithDev.__DEV__ = originalDev;
+    }
+  });
+
+  it.each(['', '   ', undefined])(
+    'EXPO_PUBLIC_API_BASE_URL が %j なら、Supabase がそろっていても設定エラーの画面を出し、端末のログに変数名を残す (#1434)',
+    (value) => {
+      process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://abcdefgh.supabase.co';
+      process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'anon-key-value';
+      if (value === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;
+      else process.env.EXPO_PUBLIC_API_BASE_URL = value;
+      const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const { getByTestId, getByText, queryByText, queryByTestId } = renderRootLayout();
+
+        expect(getByTestId('config-error-screen')).toBeTruthy();
+        expect(getByText('EXPO_PUBLIC_API_BASE_URL')).toBeTruthy();
+        expect(queryByText('EXPO_PUBLIC_SUPABASE_URL')).toBeNull();
+        expect(queryByTestId('stack')).toBeNull();
+        expect(mockAuthProviderRendered).not.toHaveBeenCalled();
+        // リリースビルドの画面には名前を出さないので、端末のログに残す
+        expect(consoleError.mock.calls.map((call) => String(call[0]))).toContainEqual(
+          expect.stringContaining('[mobile] Missing env: EXPO_PUBLIC_API_BASE_URL'),
+        );
+      } finally {
+        consoleError.mockRestore();
+      }
+    },
+  );
+
+  it('環境変数がそろっていれば、端末のログに設定エラーを残さない', () => {
+    process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://abcdefgh.supabase.co';
+    process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'anon-key-value';
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.com';
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      renderRootLayout();
+
+      expect(consoleError.mock.calls.map((call) => String(call[0])).join('\n')).not.toContain('[mobile] Missing env');
+    } finally {
+      consoleError.mockRestore();
     }
   });
 });

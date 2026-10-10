@@ -410,7 +410,8 @@ describe('POST /api/operator/membership/org/[id]/transfer: 通知メールの宛
     expect(mocks.logError).toHaveBeenCalledTimes(1);
     expect(mocks.logError).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ message: 'Supabase service role env missing' }),
+      // 接続情報は env-required の getter で取り出す (#1434)。変数名は envName にだけ入り、message は固定の文
+      expect.objectContaining({ name: 'MissingEnvError', envName: 'SUPABASE_SERVICE_ROLE_KEY' }),
       { organization_id: ORG_ID, to_user_id: NEW_OWNER_ID },
     );
   });

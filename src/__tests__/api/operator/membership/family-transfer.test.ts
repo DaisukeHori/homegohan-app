@@ -416,7 +416,8 @@ describe('POST /api/operator/membership/family/[id]/transfer: 通知メールの
     expect(mocks.logError).toHaveBeenCalledTimes(1);
     expect(mocks.logError).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ message: 'Supabase service role env missing' }),
+      // 接続情報は env-required の getter で取り出す (#1434)。変数名は envName にだけ入り、message は固定の文
+      expect.objectContaining({ name: 'MissingEnvError', envName: 'SUPABASE_SERVICE_ROLE_KEY' }),
       { family_id: FAMILY_ID, to_user_id: NEW_REP_ID },
     );
   });

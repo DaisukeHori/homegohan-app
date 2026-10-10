@@ -2,7 +2,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { formatLocalDate } from '@/lib/date-utils';
 import { NextResponse } from 'next/server';
-import { getSupabaseUrl } from '@/lib/env-required';
+import { getSupabaseServiceConfig, isMissingEnvError } from '@/lib/env-required';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure } from '@/lib/emails/send-result';
@@ -117,16 +117,21 @@ export async function POST(request: Request) {
     .eq('id', body.organization_id)
     .single();
 
-  // service_role なしでは auth.users のメールアドレスは取得できないため
-  // 環境変数 SUPABASE_SERVICE_ROLE_KEY がある場合のみ管理者 API でメール取得
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (serviceKey) {
+  // service_role なしでは auth.users のメールアドレスは取得できないため、管理者 API でメールを取得する。
+  // 接続情報は env-required の getter で取り出す (#1434。空白だけの値も欠けているとみなす)
+  let service: { url: string; serviceRoleKey: string } | null = null;
+  try {
+    service = getSupabaseServiceConfig();
+  } catch (envErr) {
+    if (!isMissingEnvError(envErr)) throw envErr;
+    // 欠けている変数名は getter がサーバーのログに残している。メールだけを諦める (提案の作成は成功のまま)
+  }
+  if (service) {
     try {
       const { createClient: createAdminClient } = await import('@supabase/supabase-js');
-      // 未設定なら MissingEnvError。下の catch が警告に残して、メールだけを諦める (提案の作成は成功のまま)
       const adminSupabase = createAdminClient(
-        getSupabaseUrl(),
-        serviceKey,
+        service.url,
+        service.serviceRoleKey,
         { auth: { autoRefreshToken: false, persistSession: false } },
       );
       const { data: toUserData } = await adminSupabase.auth.admin.getUserById(body.to_user_id);
@@ -151,7 +156,7 @@ export async function POST(request: Request) {
       console.warn('[api/org/owner-transfer/propose] メール送信失敗:', emailErr);
     }
   } else {
-    console.info('[api/org/owner-transfer/propose] SUPABASE_SERVICE_ROLE_KEY 未設定のためメール送信スキップ', {
+    console.info('[api/org/owner-transfer/propose] Supabase の service_role の接続情報が無いためメール送信スキップ', {
       proposalId,
       acceptUrl,
     });

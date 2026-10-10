@@ -8,18 +8,21 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
+import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 
 export const dynamic = 'force-dynamic';
 
+const ROUTE_NAME = 'GET /api/operator/membership/org/[id]/candidates';
+
+/**
+ * 通知・候補の取得に使う service_role のクライアント。接続情報は env-required の getter で取り出す (#1434)。
+ * 欠けていれば MissingEnvError (message は固定の文で、変数名はサーバーのログにだけ残る)。
+ */
 function getServiceRoleClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) {
-    throw new Error('Supabase service role env missing');
-  }
-  return createSupabaseClient(url, key, {
+  const { url, serviceRoleKey } = getSupabaseServiceConfig();
+  return createSupabaseClient(url, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 }
@@ -28,7 +31,7 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  const logger = createLogger('GET /api/operator/membership/org/[id]/candidates', generateRequestId());
+  const logger = createLogger(ROUTE_NAME, generateRequestId());
   try {
     const { userId: operatorId } = await requireSuperAdmin();
     const { id: orgId } = params;
@@ -43,7 +46,7 @@ export async function GET(
       .order('last_login_at', { ascending: false, nullsFirst: false });
 
     if (error) {
-      return internalError('GET /api/operator/membership/org/[id]/candidates', error, { userId: operatorId }, { shape: 'nested' });
+      return internalError(ROUTE_NAME, error, { userId: operatorId }, { shape: 'nested' });
     }
 
     // auth.users からメールアドレスを取得する。listUsers() は page / perPage を渡さないと先頭 50 件しか返さず、
@@ -68,6 +71,7 @@ export async function GET(
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    return internalError('GET /api/operator/membership/org/[id]/candidates', err, {}, { shape: 'nested' });
+    // 本文は汎用メッセージだけにし、元のエラーは構造化ログに残す (#1172)
+    return internalError(ROUTE_NAME, err, {}, { shape: 'nested' });
   }
 }
