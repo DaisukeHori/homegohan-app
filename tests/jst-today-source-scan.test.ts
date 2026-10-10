@@ -244,6 +244,7 @@ const TIMESTAMPTZ_COLUMNS_WITHOUT_AT_SUFFIX: ReadonlySet<string> = new Set([
   'current_period_start',
   'last_profile_update',
   'leased_until',
+  'locked_until',
   'ocr_extraction_timestamp',
   'owner_last_sign_in',
   'past_due_since',
