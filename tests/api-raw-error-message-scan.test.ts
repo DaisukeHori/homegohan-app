@@ -40,7 +40,7 @@
  *   - 関数が返したエラーの文面 (`const text = describe(err); { error: text }`)
  *   - 宣言の後で代入した変数 (`let message; message = error.message`)・宣言の見えない変数・MAX_RESOLVE_DEPTH 段より深い変数
  *   - エラーらしくない名前の値 (`catch (reason)` / `const failure = (await q).error; failure.message`)
- *   - オブジェクトや配列に入れてから取り出したもの (`const ctx = { m: error.message }; { error: ctx.m }`)
+ *   - 宣言の後でオブジェクトや配列に足したもの (`const list = []; list.push(error.message); { errors: list }`)
  *   - 文面を取り出す別の書き方 (`err.toString()` / `err.stack` / `err.cause` / `Object.assign({}, err)`)
  *   - 外の応答の JSON の `error` 以外のプロパティ (`data.message` / `data.detail`)、`.json()` を経ずに読んだ外の応答 (`await res.text()`)
  *   - 外の応答の JSON をまるごと返すもの (`{ result: edgeData }` / `NextResponse.json(edgeData)`。成功の応答の中に失敗の文が入ることがある。
@@ -604,6 +604,22 @@ describe('API の応答の本文に生のエラー文を入れない (#1172): �
     ['本文より後ろの宣言', `const a = () => NextResponse.json({ error: message }, { status: 500 }); const message = error.message;`],
     ['内側のスコープで固定の文に宣言し直した変数', `const message = error.message; function two() { const message = '固定'; return NextResponse.json({ error: message }, { status: 500 }); }`],
   ])('数えない: %s', (_label, source) => {
+    expect(count(source)).toBe(0);
+  });
+
+  // 冒頭の「この検査の限界」の例が、実際に捕まえない書き方であることを固定する (説明と動作がずれないように)。
+  // ここに並ぶ書き方は route に書かない。捕まえるように直したら、この表と冒頭の一覧から外す
+  it.each([
+    ['別の関数に渡して本文にする', `function fail(m: string) { return NextResponse.json({ error: m }, { status: 500 }); } fail(error.message);`],
+    ['関数が返したエラーの文面', `try {} catch (err) { const text = describe(err); return NextResponse.json({ error: text }, { status: 500 }); }`],
+    ['宣言の後で代入した変数', `let message; message = error.message; return NextResponse.json({ error: message }, { status: 500 });`],
+    ['エラーらしくない名前', `try {} catch (reason) { return NextResponse.json({ error: reason.message }, { status: 500 }); }`],
+    ['宣言の後で配列に足したもの', `const list = []; list.push(error.message); return NextResponse.json({ errors: list }, { status: 500 });`],
+    ['err.toString() / err.stack', `try {} catch (err) { return NextResponse.json({ error: err.toString(), stack: err.stack }, { status: 500 }); }`],
+    ['外の応答の JSON の error 以外', `const data = await res.json(); return NextResponse.json({ error: data.message }, { status: 502 });`],
+    ['外の応答の JSON をまるごと', `const edgeData = await edgeRes.json(); return NextResponse.json({ ok: true, result: edgeData });`],
+    ['同期の関数の結果は 4xx で数えない', `try {} catch (err) { const r = toResult(err); return NextResponse.json({ error: r.error.message }, { status: 400 }); }`],
+  ])('この検査の限界 (捕まえない): %s', (_label, source) => {
     expect(count(source)).toBe(0);
   });
 
