@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useHomeData } from "@/hooks/useHomeData";
 import { AiSkippedNotice } from "@/components/consent/AiSkippedNotice";
 import { Icons } from "@/components/icons";
+import { OrgChallengeEntry } from "@/components/org-challenges/OrgChallengeEntry";
 import { todayLocal, parseLocalDate } from "@/lib/date-utils";
 import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
 import { 
@@ -1103,6 +1104,10 @@ export default function HomePage() {
                 )}
               </motion.div>
             </Link>
+
+            {/* 組織チャレンジ (#1132)。組織に所属している人にだけ、入り口の部品を出す
+                (所属していない人は、API を呼ばない)。部品の中でも、見られるチャレンジがあるときだけ表示する */}
+            {user?.organizationId && <OrgChallengeEntry />}
 
             {/* 今週のベスト */}
             {bestMealThisWeek && bestMealThisWeek.imageUrl && (

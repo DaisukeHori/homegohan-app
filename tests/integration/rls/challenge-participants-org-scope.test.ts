@@ -11,8 +11,9 @@
  * 期待する認可 (修正後。設計: docs/design/org/09-rls-policies.md の participants):
  *   - INSERT: 本人 (user_id = auth.uid()) が、自分の所属組織のチャレンジに、進捗 0・順位なしで参加する場合だけ
  *   - UPDATE: 利用者からは更新させない (ポリシー無し)。進捗・順位の更新は service_role のバッチだけ
- *   - SELECT: 変更なし (チャレンジの組織のメンバーだけが見える)
- *   - DELETE: 変更なし (ポリシー無し。暗黙 DENY)
+ *   - SELECT: 本人の行だけ (#1132 で、同じ組織の全員が読めた状態から絞った。順位は参加者どうしだけ・管理者には集計だけ)
+ *   - DELETE: 本人の行だけ (#1132 で追加。参加は任意なので、いつでもやめられる)
+ *     この 2 つの詳しい確認は tests/integration/rls/org-challenge-progress.test.ts
  *
  * PostgREST を supabase-js で直接叩いて検証する (アプリ層のガードを経由しない経路が攻撃面のため)。
  *
@@ -276,8 +277,9 @@ describe('#1238 UPDATE: 利用者からは更新できない (service_role だ�
     expect(data![0].rank).toBe(3);
   });
 
-  it('S-10: 参加の取り消し (DELETE) のポリシーは無いまま (変更なし)', async () => {
-    const { data, error } = await asUser(a2.jwt)
+  it('S-10: 他人の参加行は消せない (DELETE は本人の行だけ。#1132)', async () => {
+    // a1 は同じ組織 A のメンバー。a2 の参加行は消せない (エラーにはならず 0 件)
+    const { data, error } = await asUser(a1.jwt)
       .from('organization_challenge_participants')
       .delete()
       .eq('challenge_id', challengeA)
@@ -292,14 +294,22 @@ describe('#1238 UPDATE: 利用者からは更新できない (service_role だ�
 // ================================================================
 // SELECT (変更なしの確認)
 // ================================================================
-describe('#1238 SELECT: 閲覧範囲は変わらない', () => {
-  it('S-11: 自分の組織のチャレンジの参加者は見える', async () => {
+describe('#1238 SELECT: 自分の参加行だけ見える (#1132 で、同じ組織の全員が読める状態から絞った)', () => {
+  it('S-11: 自分の参加行は見える。同じ組織の他の参加者の行は見えない', async () => {
     const { data, error } = await asUser(b1.jwt)
       .from('organization_challenge_participants')
       .select('user_id')
       .eq('challenge_id', challengeB);
     expect(error).toBeNull();
-    expect((data ?? []).map((r) => r.user_id)).toContain(b1.id);
+    expect((data ?? []).map((r) => r.user_id)).toEqual([b1.id]);
+
+    // 組織 A のチャレンジには a1 (S-2 で参加) と a2 (service_role が用意) がいる。a1 に見えるのは自分の行だけ
+    const mine = await asUser(a1.jwt)
+      .from('organization_challenge_participants')
+      .select('user_id')
+      .eq('challenge_id', challengeA);
+    expect(mine.error).toBeNull();
+    expect((mine.data ?? []).map((r) => r.user_id)).toEqual([a1.id]);
   });
 
   it('S-12: 他の組織のチャレンジの参加者は見えない', async () => {

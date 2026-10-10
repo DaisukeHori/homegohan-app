@@ -447,6 +447,12 @@ CREATE POLICY "participants_update" ON org_challenge_participants
   FOR UPDATE USING (auth.role() = 'service_role');
 ```
 
+> **実装との違い (#1132, 2026-10-08)**: 実装のテーブルは `organization_challenge_participants` (既存)。オーナー判断により、
+> **管理者にも参加者個人の行は見せない** (管理者には集計だけ)。SELECT は本人の行だけ、DELETE も本人の行だけ (参加は任意でいつでもやめられる)、
+> INSERT は #1238 のポリシー (本人・自分の組織のチャレンジ・進捗 0・順位なし)、UPDATE のポリシーは無い。
+> 順位表と集計は、DB の関数 (`get_org_challenge_ranking` / `get_org_challenge_aggregates`。service_role のみ) を API が認可のあとに呼んで返す。
+> 詳細は `07-challenge.md` §15。
+
 ## 15. hr_webhook_events / hr_revoke_jobs
 
 ```sql
