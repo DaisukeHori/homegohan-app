@@ -70,7 +70,7 @@
     "eslint-config-next": "^14.2.3",
     "tailwindcss": "^4.1.17",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.16",
+    "vitest": "^5.0.3",
     "ws": "^8.20.0"
   },
   "overrides": {
