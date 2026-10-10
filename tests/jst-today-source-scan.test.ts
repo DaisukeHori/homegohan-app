@@ -19,6 +19,10 @@
 //           実行環境のタイムゾーンで日付が変わる)。同じファイルで `const d = new Date(y, m, d)` と作った変数の toISOString も数える
 //   規則 E: 同じファイルでローカル時刻の setter (setDate / setMonth / setFullYear / setHours) を当てた変数を、
 //           toISOString して日付 (先頭 10 文字 / split('T')[0]) にする (例: `d.setDate(d.getDate() - 7); d.toISOString().slice(0, 10)`)
+//   規則 F: 文字列 (リテラル・テンプレート) に 'T23:59:59' を含む。日付の文字列に足して「その日の終わり」の時刻を作る書き方
+//           (例: `.lte('created_at', to + 'T23:59:59Z')`) は、UTC の 23:59:59 = JST の翌日 8:59:59 になり、
+//           JST の暦日の期間に翌日の朝の行が混ざる。timestamptz の列を JST の暦日で絞るときは
+//           src/lib/jst-day-ranges.ts の jstDayRangeTimestamps / jstOptionalDayRangeTimestamps (JST 0 時の時刻・.gte と .lt) を使う
 // 例外は下の許可リストに、ファイルと件数と理由を書く (件数は「これ以上増やさない」上限ではなく、ちょうどの件数。直したら減らす)。
 //
 // 走査の限界 (構文だけを見るので、次は検出しない。レビューで見る):
@@ -77,7 +81,7 @@ function listProductionSources(): string[] {
   return files.sort();
 }
 
-type Rule = 'A' | 'B' | 'C' | 'D' | 'E';
+type Rule = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 
 interface Finding {
   rule: Rule;
@@ -137,6 +141,12 @@ const DATE_PART_LENGTH = 10;
 
 /** ローカル時刻の年・月・日から Date を作るときの引数の最小の数 (`new Date(y, m)` から。1 つだと時刻の値か文字列) */
 const LOCAL_COMPONENT_MIN_ARGS = 2;
+
+/**
+ * 規則 F で探す「その日の終わり」の時刻の書き方。日付の文字列に足すと、UTC の 23:59:59 (= JST の翌日 8:59:59) か、
+ * オフセットを書かなければ DB (UTC) の 23:59:59 として読まれる
+ */
+const END_OF_DAY_TIME_SUFFIX = 'T23:59:59';
 
 /** ローカル時刻を動かす Date の setter (規則 E) */
 const LOCAL_TIME_SETTERS = new Set(['setDate', 'setMonth', 'setFullYear', 'setHours']);
@@ -252,6 +262,13 @@ function scanSource(file: string, source: string): Finding[] {
         push('C', node);
       }
     }
+    // 規則 F: 'T23:59:59' を含む文字列 (リテラル・テンプレートの各部分。コメントは構文木に無いので見ない)
+    if (
+      (ts.isStringLiteralLike(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) &&
+      node.text.includes(END_OF_DAY_TIME_SUFFIX)
+    ) {
+      push('F', node);
+    }
     ts.forEachChild(node, visit);
   };
   visit(sf);
@@ -357,6 +374,11 @@ describe('走査そのもの', () => {
     // 規則 E: ローカル時刻の setter を当てた変数を toISOString して日付にする
     ['const d = new Date();\nd.setDate(d.getDate() - 7);\nconst s = d.toISOString().slice(0, 10);', 'E'],
     ['const d = new Date(base);\nd.setMonth(d.getMonth() + 1);\nconst s = d.toISOString().split("T")[0];', 'E'],
+    // 規則 F: 日付の文字列に足して「その日の終わり」の時刻を作る (#1433 の監査ログ 2 ルートの書き方)
+    ["if (to) query = query.lte('created_at', to + 'T23:59:59Z');", 'F'],
+    ['const end = `${to}T23:59:59.999Z`;', 'F'],
+    ['const end = `${to}T23:59:59`;', 'F'],
+    ['const end = to + "T23:59:59+09:00";', 'F'],
   ] as const)('検出する: %s', (code, rule) => {
     expect(scanSource('src/example.ts', code).map((f) => f.rule)).toEqual([rule]);
   });
@@ -371,6 +393,8 @@ describe('走査そのもの', () => {
     'const ts = new Date(Date.UTC(y, m - 1, 1)).toISOString().slice(0, 10);', // Date.UTC は引数 1 つ (暦の計算)
     'const d = new Date(Date.now()); d.setUTCDate(d.getUTCDate() - 7); const s = d.toISOString().slice(0, 10);', // UTC の setter
     'const d = new Date(); d.setDate(d.getDate() + 30); const at = d.toISOString();', // 時刻 (timestamptz) のまま使う
+    "// .lte('created_at', to + 'T23:59:59Z')", // コメントの中の 'T23:59:59' は見ない
+    "const { toTimestampExclusive } = jstOptionalDayRangeTimestamps(from, to); q = q.lt('created_at', toTimestampExclusive);",
   ])('検出しない: %s', (code) => {
     expect(scanSource('src/example.ts', code)).toEqual([]);
   });
@@ -384,14 +408,15 @@ describe('走査そのもの', () => {
 });
 
 describe('「今日」を UTC の暦日・ローカル時刻で決める書き方が本番コードに無い (#1433)', () => {
-  it('許可リストにないファイルに、規則 A / B / C / D / E の書き方が無い', () => {
+  it('許可リストにないファイルに、規則 A / B / C / D / E / F の書き方が無い', () => {
     const unexpected = findings.filter((f) => !ALLOWLIST.some((entry) => entry.file === f.file && entry.rule === f.rule));
     const message = unexpected
       .map(
         (f) =>
           `${f.file}:${f.line} [規則 ${f.rule}] ${f.text}\n` +
           '  → Edge Functions は supabase/functions/_shared/jst-date.ts (todayJst / addDaysToDate / monthJst)、' +
-          'Web / Mobile は packages/shared (todayLocal / formatLocalDate / addDaysToDate / monthLocal) か src/lib/jst-day-ranges.ts を使う',
+          'Web / Mobile は packages/shared (todayLocal / formatLocalDate / addDaysToDate / monthLocal) か src/lib/jst-day-ranges.ts を使う。' +
+          'timestamptz の列を日付で絞るときは jstDayRangeTimestamps / jstOptionalDayRangeTimestamps (.gte と .lt)',
       )
       .join('\n');
     expect(unexpected, message).toEqual([]);
@@ -434,6 +459,8 @@ const REQUIRED_CALLS: Record<string, string[]> = {
   'src/app/api/performance/checkins/route.ts': ['jstToday', 'jstDayOffset'],
   'src/app/api/performance/plans/route.ts': ['jstToday'],
   'src/app/api/super-admin/llm/usage/route.ts': ['llmUsageRange', 'jstDayRangeTimestamps', 'jstDayOfTimestamp'],
+  'src/app/api/super-admin/audit-logs/route.ts': ['jstOptionalDayRangeTimestamps'],
+  'src/app/api/operator/membership/audit/route.ts': ['jstOptionalDayRangeTimestamps'],
   'src/app/api/admin/finance/dashboard/route.ts': ['jstMonthBoundaries'],
   'src/app/api/menu-plans/add/route.ts': ['jstDayOffset'],
   'src/app/api/admin/finance/revenue/route.ts': ['jstDayOffset'],

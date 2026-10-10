@@ -11,7 +11,8 @@
 // どちらも実行環境のタイムゾーンに左右されない。Edge Functions 側の同じ考え方の関数は
 // supabase/functions/_shared/jst-date.ts (todayJst / addDaysToDate / calculateJstLookbackPeriod)。
 // timestamptz の列 (created_at など) を JST の暦日で絞るときは、日付の文字列をそのまま渡さず (DB は UTC の 0 時 = JST 9 時と読む)、
-// jstDayRangeTimestamps で JST 0 時の時刻にしてから渡す。timestamptz の値を JST の暦日にまとめるときは jstDayOfTimestamp を使う。
+// jstDayRangeTimestamps (開始日・終了日のどちらかが空欄になりうるときは jstOptionalDayRangeTimestamps) で JST 0 時の時刻にしてから渡す
+// (終了日を 'T23:59:59Z' で閉じる書き方も UTC の 23:59:59 = JST の翌日 8:59:59 になるので使わない。tests/jst-today-source-scan.test.ts の規則 F)。timestamptz の値を JST の暦日にまとめるときは jstDayOfTimestamp を使う。
 // 境界 (JST 0:00 ちょうど・8:59:59・月初・月末・年末) と、実行環境のタイムゾーンを変えても結果が同じことは
 // tests/jst-day-ranges.test.ts で確かめる。
 
@@ -69,6 +70,27 @@ export function jstDayRangeTimestamps(
   return {
     fromTimestamp: jstDayStartTimestamp(fromDate),
     toTimestampExclusive: jstDayStartTimestamp(addDaysToDate(toDate, 1)),
+  };
+}
+
+/**
+ * jstDayRangeTimestamps の、開始日・終了日のどちらか (または両方) が無い版。画面の期間の入力が空欄のときに使う
+ * (監査ログの GET /api/super-admin/audit-logs・GET /api/operator/membership/audit)。
+ *   - fromTimestamp        : fromDate の JST 0 時 (`.gte` で使う)。fromDate が無ければ undefined (下限なし)
+ *   - toTimestampExclusive : toDate の翌日の JST 0 時 (`.lt` で使う)。toDate が無ければ undefined (上限なし)
+ * 例: (undefined, "2026-10-10") → { fromTimestamp: undefined, toTimestampExclusive: "2026-10-10T15:00:00.000Z" }
+ *
+ * 終了日を `toDate + 'T23:59:59Z'` (UTC の 23:59:59) で閉じると、JST では翌日の 8:59:59 までの行が入り、
+ * 開始日を日付の文字列のまま渡すと JST の 0:00〜8:59 の行が落ちる。どちらも JST 0 時の時刻にして避ける。
+ * 形の違う日付・存在しない日付は RangeError (入口を src/lib/calendar-date-schema.ts の CalendarDateSchema にしておけば来ない)。
+ */
+export function jstOptionalDayRangeTimestamps(
+  fromDate: string | undefined,
+  toDate: string | undefined,
+): { fromTimestamp: string | undefined; toTimestampExclusive: string | undefined } {
+  return {
+    fromTimestamp: fromDate === undefined ? undefined : jstDayStartTimestamp(fromDate),
+    toTimestampExclusive: toDate === undefined ? undefined : jstDayStartTimestamp(addDaysToDate(toDate, 1)),
   };
 }
 

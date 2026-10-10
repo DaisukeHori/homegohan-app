@@ -12,6 +12,8 @@
 //     / GET /api/admin/finance/revenue (30 日前)                    → jstDayOffset
 //   - GET  /api/meals・/api/performance/*・health/checkups・health/blood-tests の「今日」 → jstToday
 //   - GET  /api/super-admin/llm/usage (created_at の範囲・日次の系列) → jstDayRangeTimestamps / jstDayOfTimestamp
+//   - GET  /api/super-admin/audit-logs・/api/operator/membership/audit (created_at の範囲。開始日・終了日は空欄もある)
+//                                                                  → jstOptionalDayRangeTimestamps
 //   - GET  /api/admin/finance/dashboard (今月・先月)              → jstMonthBoundaries
 //   - モバイルの健康グラフ (app/health/graphs.tsx)                   → healthGraphFetchStartDate / healthGraphDateSlots
 //   - 献立生成の旬の食材・行事 (lib/seasonal-ingredients.ts / lib/seasonal-events.ts)
@@ -29,6 +31,7 @@ import {
   jstDayOfTimestamp,
   jstDayRangeTimestamps,
   jstMonthBoundaries,
+  jstOptionalDayRangeTimestamps,
   jstToday,
   llmUsageRange,
   NUTRITION_ANALYSIS_MONTH_DAYS,
@@ -230,6 +233,55 @@ describe('jstDayRangeTimestamps: JST の暦日の範囲 → timestamptz と比�
   it('形の違う日付・存在しない日付は RangeError', () => {
     expect(() => jstDayRangeTimestamps('2026-02-30', '2026-03-01')).toThrow(RangeError);
     expect(() => jstDayRangeTimestamps('2026-03-01', '2026/03/02')).toThrow(RangeError);
+  });
+});
+
+describe('jstOptionalDayRangeTimestamps: 開始日・終了日のどちらかが空欄でもよい版 (監査ログの期間)', () => {
+  it.each([
+    // [開始日, 終了日, 開始日の JST 0 時, 終了日の翌日の JST 0 時]
+    ['2026-10-10', '2026-10-10', '2026-10-09T15:00:00.000Z', '2026-10-10T15:00:00.000Z'],
+    ['2026-10-10', undefined, '2026-10-09T15:00:00.000Z', undefined], // 開始日だけ (上限なし)
+    [undefined, '2026-10-10', undefined, '2026-10-10T15:00:00.000Z'], // 終了日だけ (下限なし)
+    [undefined, undefined, undefined, undefined], // どちらも空欄 (絞らない)
+    [undefined, '2026-10-31', undefined, '2026-10-31T15:00:00.000Z'], // 月末だけ (翌日は月初)
+    ['2026-11-01', undefined, '2026-10-31T15:00:00.000Z', undefined], // 月初だけ (開始は前月の UTC)
+    [undefined, '2026-12-31', undefined, '2026-12-31T15:00:00.000Z'], // 年末だけ (翌日は年始)
+    ['2027-01-01', undefined, '2026-12-31T15:00:00.000Z', undefined], // 年始だけ (開始は前年の UTC)
+  ])('%s 〜 %s → [%s, %s)', (fromDate, toDate, fromTimestamp, toTimestampExclusive) => {
+    for (const { tz, value } of inEachTimeZone(() => jstOptionalDayRangeTimestamps(fromDate, toDate))) {
+      expect(value, tz).toEqual({ fromTimestamp, toTimestampExclusive });
+    }
+  });
+
+  it('両方あるときは jstDayRangeTimestamps と同じ時刻', () => {
+    for (const [fromDate, toDate] of [
+      ['2026-10-09', '2026-10-10'],
+      ['2026-12-31', '2027-01-01'],
+      ['2028-02-28', '2028-02-29'],
+    ] as const) {
+      expect(jstOptionalDayRangeTimestamps(fromDate, toDate)).toEqual(jstDayRangeTimestamps(fromDate, toDate));
+    }
+  });
+
+  it('終了日だけのとき、終了日の JST 23:59:59.999 は入り、翌日の JST 0:00・8:59:59 は入らない (UTC の 23:59:59 で閉じると入っていた)', () => {
+    const { toTimestampExclusive } = jstOptionalDayRangeTimestamps(undefined, '2026-10-10');
+    const before = (at: string) => Date.parse(at) < Date.parse(toTimestampExclusive!);
+    expect(before('2026-10-10T14:59:59.999Z')).toBe(true); // JST 10/10 23:59:59.999
+    expect(before('2026-10-10T15:00:00.000Z')).toBe(false); // JST 10/11 0:00
+    expect(before('2026-10-10T23:59:59.000Z')).toBe(false); // JST 10/11 8:59:59 (以前の 'T23:59:59Z' では入っていた)
+  });
+
+  it('開始日だけのとき、開始日の JST 0:00 ちょうど・8:59:59 は入り、前日の JST 23:59:59.999 は入らない', () => {
+    const { fromTimestamp } = jstOptionalDayRangeTimestamps('2026-10-10', undefined);
+    const after = (at: string) => Date.parse(at) >= Date.parse(fromTimestamp!);
+    expect(after('2026-10-09T14:59:59.999Z')).toBe(false); // JST 10/9 23:59:59.999
+    expect(after('2026-10-09T15:00:00.000Z')).toBe(true); // JST 10/10 0:00 (日付の文字列のまま絞ると落ちていた)
+    expect(after('2026-10-09T23:59:59.000Z')).toBe(true); // JST 10/10 8:59:59 (同上)
+  });
+
+  it('形の違う日付・存在しない日付は RangeError (片方だけ渡したときも)', () => {
+    expect(() => jstOptionalDayRangeTimestamps('2026-02-30', undefined)).toThrow(RangeError);
+    expect(() => jstOptionalDayRangeTimestamps(undefined, '2026/03/02')).toThrow(RangeError);
   });
 });
 
