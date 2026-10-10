@@ -80,7 +80,8 @@ export function jstDayRangeTimestamps(
 /**
  * jstDayRangeTimestamps の、開始日・終了日のどちらか (または両方) が無い版。画面の期間の入力が空欄のときに使う
  * (監査ログの GET /api/super-admin/audit-logs・GET /api/operator/membership/audit、
- *  NPS / CSAT の GET /api/admin/finance/nps、CSV の書き出しの POST /api/admin/finance/exports)。
+ *  NPS / CSAT の GET /api/admin/finance/nps、CSV の書き出しの POST /api/admin/finance/exports、
+ *  ユーザー一覧の登録日の GET /api/admin/users)。
  *   - fromTimestamp        : fromDate の JST 0 時 (`.gte` で使う)。fromDate が無ければ undefined (下限なし)
  *   - toTimestampExclusive : toDate の翌日の JST 0 時 (`.lt` で使う)。toDate が無ければ undefined (上限なし)
  * 例: (undefined, "2026-10-10") → { fromTimestamp: undefined, toTimestampExclusive: "2026-10-10T15:00:00.000Z" }

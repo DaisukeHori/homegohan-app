@@ -592,15 +592,6 @@ const ALLOWLIST: ReadonlyArray<{ file: string; rule: Rule; count: number; reason
   },
   // ---- 規則 G: timestamptz の列を、画面で選んだ JST の暦日ではない値で絞る箇所 (ルートごとに件数と理由) ----
   {
-    file: 'src/app/api/admin/users/route.ts',
-    rule: 'G',
-    count: 3,
-    reason:
-      'registered_from / registered_to (created_at) と last_login_before (last_login_at)。画面 (src/app/admin/users/page.tsx) は q / status / ' +
-      'page / per_page しか送らず、この 3 つを送る呼び出し元が無い (値の形も operator/02-api-spec.md §4 で日付と決まっていない)。' +
-      '画面で期間を選べるようにするときに、CalendarDateSchema と jstOptionalDayRangeTimestamps で直す',
-  },
-  {
     file: 'src/app/api/admin/finance/invoices/route.ts',
     rule: 'G',
     count: 2,
