@@ -771,7 +771,7 @@ $$);
 
 ### 16.3 削除の範囲と現行実装
 
-| 対象 | 正式仕様 | 現行実装 (2026-10-08) |
+| 対象 | 正式仕様 | 現行実装 (2026-10-10) |
 |------|---------|----------------------|
 | アカウント (`auth.users`) と、FK でぶら下がる個人データ (食事・献立・健康記録・家族メンバー情報など) | 物理削除 (匿名化ではなく削除) | 実装済み (`auth.admin.deleteUser` と FK の CASCADE / SET NULL) |
 | FK で消えない参照 (`invited_by` / `created_by` など) | FK の ON DELETE で処理 | 実装済み (#1175)。`auth.users` を指す NO ACTION の外部キーは 0 本。本人だけの記録 (`nps_surveys` / `csat_feedbacks` / `experiment_assignments` / `ai_content_logs`) は CASCADE、サポート・会計の記録 (`support_tickets` / `support_ticket_messages` / `coupon_redemptions` / `referral_rewards` / `gdpr_deletion_requests` / `email_delivery_logs`) と運営者・作成者・承認者の参照は行を残して SET NULL。テストが NO ACTION の再発を止める |
