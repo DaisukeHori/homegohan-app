@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
 
 const mockRpc = vi.fn();
 const mockFetch = vi.fn();
@@ -187,14 +188,21 @@ describe('GET /api/cron/process-menu-queue: 取り直した行は続きから再
     expect(mockLogWarn.mock.calls[0][1]).toMatchObject({ requestId: 'req-1', attemptCount: 2, currentStep: 4 });
   });
 
-  it('C-8: Edge Function がエラーを返したら 500 を返す (従来どおり)', async () => {
+  it('C-8: Edge Function がエラーを返したら 500 を返す。本文に例外の文面を出さず、構造化ログに残す (#1172)', async () => {
     mockFetch.mockImplementation(async () => new Response('boom', { status: 500 }));
 
     const { res } = await dispatch(claimedRow({ attempt_count: 2, current_step: 4 }));
 
     expect(res.status).toBe(500);
-    const json = await res.json();
-    expect(json.failed).toBe('req-1');
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
+    expect(text).not.toContain('boom');
+    // 元の例外は構造化ログにだけ残る (本文にはその文面が 1 文字も出ない)
+    expect(mockLogError).toHaveBeenCalledTimes(1);
+    const loggedError = mockLogError.mock.calls[0][1] as Error;
+    expect(loggedError).toBeInstanceOf(Error);
+    expect(loggedError.message).not.toBe('');
+    expect(text).not.toContain(loggedError.message);
   });
 });
 

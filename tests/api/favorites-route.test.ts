@@ -18,6 +18,7 @@
  *   - offset が件数より先 (PostgREST が 416 を返す) ときも 500 にせず、空のページと本当の total を返す
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
 
 // ── モック (vi.hoisted: vi.mock のファクトリから参照するため) ────────────────────
 const mocks = vi.hoisted(() => ({
@@ -245,7 +246,7 @@ describe('GET /api/favorites: 件数より先の offset (416)', () => {
     expect(mocks.userError).toHaveBeenCalledTimes(1);
   });
 
-  it('416 以外のエラーは、これまでどおり 500 とメッセージを返す (件数の取り直しはしない)', async () => {
+  it('416 以外のエラーは、これまでどおり 500 を返す (件数の取り直しはしない。DB の生のエラー文は本文に出さない。#1172)', async () => {
     const builder = setupFavoritesQuery({
       data: null,
       error: { code: '42501', message: 'permission denied for table recipe_likes' },
@@ -256,9 +257,12 @@ describe('GET /api/favorites: 件数より先の offset (416)', () => {
     const { res, json } = await callGet();
 
     expect(res.status).toBe(500);
-    expect(json).toEqual({ error: 'permission denied for table recipe_likes' });
+    expect(json).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
     expect(builder.range).toHaveBeenCalledTimes(1);
+    // 元のエラー (テーブル名入りの生の文) は、構造化ログにだけ残る
     expect(mocks.userError).toHaveBeenCalledTimes(1);
+    expect(mocks.userError.mock.calls[0][1]).toBeInstanceOf(Error);
+    expect((mocks.userError.mock.calls[0][1] as Error).message).toBe('permission denied for table recipe_likes');
   });
 });
 

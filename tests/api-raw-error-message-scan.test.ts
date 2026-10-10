@@ -1,44 +1,52 @@
 // @vitest-environment node
 /**
- * #1172 API の JSON 本文に、DB の生のエラー文 (error.message) を入れていないことのソース走査 (ratchet) テスト
+ * #1172 API の応答の本文に、DB の生のエラー文 (message / details / hint) や例外の文面を入れていないことのソース走査テスト
  *
  * 問題:
  *   route が `NextResponse.json({ error: error.message }, { status: 500 })` と書くと、DB (Supabase / PostgREST) が返した
- *   生のエラー文 (テーブル名・列名・制約名・接続先) がそのままブラウザ・モバイルに返る。攻撃の手がかりになる。
+ *   生のエラー文 (テーブル名・列名・制約名・接続先。UNIQUE 違反なら衝突した値) がそのままブラウザ・モバイルに返る。
+ *   攻撃の手がかりになり、個人情報が出ることもある。
  *   CLAUDE.md の方針は「500 の本文は汎用メッセージだけにし、詳細は構造化ログに残す」。
  *   共通ヘルパー internalError() (src/lib/api/errors.ts) がこの 2 つを一度に行う。
  *
- * このテストは「ratchet (歯止め)」:
- *   既に生のエラー文を返している route が多数あるため (段階的に直している)、現在の違反を ALLOWLIST に
- *   「ファイル → 件数」で明示し、そこから増やさない・減らしたらリストも減らす、を強制する。
- *     1. 許可リストに無いファイル、または許可より多い件数 -> 失敗 (新しい違反。internalError() を使う)
- *     2. 許可リストより少ない件数 (0 件を含む) -> 失敗 (直したのでリストを更新する。0 件になった行は消す)
- *     3. 許可リストのファイルが存在しない -> 失敗 (消す)
- *   「直したら必ずリストが縮む」ので、リストが空になれば #1172 は完了。
+ * 経緯:
+ *   第 1 段 (#1398) で internalError() と、このテストを「許可リスト (既存の違反の件数) から増やさない」歯止めとして入れた。
+ *   第 2 段で src/app/api の残りを全部直し、許可リストを空にした。いまは「1 件でもあれば失敗」。
  *
  * 何を違反として数えるか (TypeScript の構文木で解析するので、コメントや文字列の中は見ない):
- *   `NextResponse.json(body, init)` / `Response.json(body, init)` の本文 (body) に、エラー由来の `.message` が入っているもの。
- *   1 回の呼び出しを 1 件と数える (本文に何か所入っていても 1 件)。
- *     - 直接: `{ error: error.message }` / `{ error: err.message }` / `{ message: insertError.message }` /
- *             `{ error: { code: 'X', message: result.error.message } }` / `error?.message ?? 'x'` / `'失敗: ' + e.message`
- *     - 変数経由: `const message = error instanceof Error ? error.message : 'Unknown error'` のあと `{ error: message }`
- *             (同じ関数の中で、本文より前に宣言された const / let を最大 3 段までたどる。`const { message } = error` も同じ)
- *   「エラー由来」の判定は名前で行う: `e` / `err` / `error` / `exception` / `ex`、または `Error` / `Err` で終わる名前
+ *   応答の本文に、エラー由来の値が入っているもの。1 回の応答を 1 件と数える (本文に何か所入っていても 1 件)。
+ *   応答の本文 =
+ *     - `NextResponse.json(body, init)` / `Response.json(body, init)` の body
+ *     - ストリーム (SSE) や `new Response(...)` に流す `JSON.stringify(body)` の body
+ *       (`controller.enqueue(...)` / `writer.write(...)` / `new Response(...)` / `new NextResponse(...)` の引数の中にあるもの)
+ *   エラー由来の値 =
+ *     - `.message` / `.details` / `.hint` (PostgREST のエラーの 3 つの文面):
+ *       `error.message` / `err?.details` / `(e as Error).message` / `result.error.hint` / `error['message']`
+ *     - `String(error)` / `JSON.stringify(error)`
+ *     - エラーのオブジェクトそのもの (`{ error }` / `{ error: insertError }` / `[err]`)。JSON にすると message / details / hint が出る。
+ *       名前だけでは文字列の変数と区別できないので、catch で受けた変数と、await の結果から取り出した `error`
+ *       (`const { error } = await supabase...` / `const { error: rpcError } = await ...`) に限る
+ *     - 上のどれかを入れた変数 (`const message = error instanceof Error ? error.message : '...'` のあと `{ error: message }`)。
+ *       同じ関数の中で、本文より前に宣言された const / let を最大 3 段までたどる。`const { message } = error` も同じ
+ *   「エラー」の判定は名前で行う: `e` / `err` / `error` / `exception` / `ex`、または `Error` / `Err` で終わる名前
  *   (`insertError` / `rpcError` / `uploadError`)、または `.error` / `.xxxError` のプロパティ (`result.error` / `parsed.error`)。
  *
  * 数えないもの:
- *   - ステータスが 4xx だと分かる応答 (リテラルの 400〜499、`code === 'X' ? 403 : 400` のような分岐でも全て 4xx)。
+ *   - ステータスが 4xx だと分かる応答で、エラーが DB の結果ではないもの。
  *     AuthError / ForbiddenError の文面 (401 / 403) や zod の検証メッセージ (400) のように、こちらが書いた文面を返す経路のため。
- *   - ステータスを変数で渡している (`{ status }`) など、4xx と分からないものは「違反」として数える (安全側)。
- *   - 4xx であっても DB のエラー文をそのまま返すのは良くないが、このテストでは見ない (レビューで見る)。
+ *     ステータスは、リテラル (400〜499)・その分岐 (`a ? 403 : 400`)・それを入れた const (`const status = a ? 404 : 422`) から読む。
+ *   - ただし DB の結果 (await の結果から取り出した error。`const { error } = await supabase...` / `const r = await ...; r.error`)
+ *     の文面は、4xx でも違反として数える (DB の生のエラー文は、ステータスに関わらず利用者に見せない)。
+ *   - ステータスが分からない応答 (`{ status: mapped }` など) は「違反」として数える (安全側)。
  *
  * 見ないもの (検出できない書き方。レビューで見る):
- *   `String(error)` / `JSON.stringify(error)` / `{ error }` (エラーのオブジェクトごと) / 別の関数に message を渡して
- *   その中で JSON にする / 後から代入する `let message; message = error.message` / `error['message']`。
+ *   別の関数に message を渡して、その中で JSON にする / 後から代入する `let message; message = error.message` /
+ *   エラーらしくない名前の変数 (`catch (reason)` の外で `const reason = ...` など) / DB に保存した文面をあとで返す。
  *
- * 直し方: route では `return internalError('GET /api/xxx', error, { userId: user.id, table: 'xxx' })`
+ * 直し方: route では `return internalError('GET /api/xxx', error, { userId: user.id })`
  *   (src/lib/api/errors.ts)。本文は汎用メッセージだけになり、元のエラーは構造化ログ (app_logs) に残る。
  *   運営 API のように `error.message` を読むクライアントには `{ shape: 'nested' }` を渡す。
+ *   4xx で利用者に理由を伝えたいときは、こちらで決めた固定の文を返す (DB の文面を加工して返さない)。
  *
  * 走査の対象は src/app/api 配下の全ファイル (テストを除く)。
  */
@@ -49,122 +57,6 @@ import { describe, expect, it } from 'vitest';
 
 const ROOT = path.resolve(__dirname, '..');
 const SCAN_ROOT = 'src/app/api';
-
-/**
- * 生のエラー文を JSON 本文に入れている現在の違反: ファイル -> 件数 (#1172 の後続の段で直すもの)。
- * 直したら件数を減らし、0 件になったら行を消す。足してはいけない (新しい違反は internalError() で書く)。
- *
- * 名前で判定しているため、中には DB のエラーではなく、こちらが投げた独自のエラー (例: InvalidVariantsError,
- * ImpersonationError) の文面を返しているだけのものも混ざる。後続の段で 1 件ずつ見て、
- * 直す (internalError() に替える) か、固定の文面にして件数を減らす。
- */
-const ALLOWLIST: Record<string, number> = {
-  'src/app/api/admin/sales/leads/[id]/activities/route.ts': 2,
-  'src/app/api/admin/sales/leads/route.ts': 2,
-  'src/app/api/admin/support/tickets/[id]/messages/route.ts': 2,
-  'src/app/api/admin/support/tickets/route.ts': 2,
-  'src/app/api/ai/analyze-fridge/route.ts': 1,
-  'src/app/api/ai/analyze-health-checkup/route.ts': 1,
-  'src/app/api/ai/analyze-meal-photo/route.ts': 1,
-  'src/app/api/ai/analyze-weight-scale/route.ts': 1,
-  'src/app/api/ai/classify-photo/route.ts': 1,
-  'src/app/api/ai/consultation/actions/[actionId]/execute/route.ts': 2,
-  'src/app/api/ai/consultation/important-messages/route.ts': 1,
-  'src/app/api/ai/consultation/sessions/[sessionId]/close/route.ts': 1,
-  'src/app/api/ai/consultation/sessions/[sessionId]/messages/[messageId]/important/route.ts': 1,
-  'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts': 1,
-  'src/app/api/ai/consultation/sessions/route.ts': 2,
-  'src/app/api/ai/image/generate/route.ts': 2,
-  'src/app/api/ai/menu/day/regenerate/route.ts': 1,
-  'src/app/api/ai/menu/meal/generate/route.ts': 1,
-  'src/app/api/ai/menu/meal/pending/route.ts': 1,
-  'src/app/api/ai/menu/meal/regenerate/route.ts': 1,
-  'src/app/api/ai/menu/v4/generate/route.ts': 1,
-  'src/app/api/ai/menu/v5/generate/route.ts': 3,
-  'src/app/api/ai/menu/weekly/cleanup/route.ts': 3,
-  'src/app/api/ai/menu/weekly/pending/route.ts': 1,
-  'src/app/api/ai/menu/weekly/status/route.ts': 2,
-  'src/app/api/ai/nutrition-analysis/route.ts': 1,
-  'src/app/api/ai/nutrition/feedback/route.ts': 2,
-  'src/app/api/ai/nutrition/route.ts': 4,
-  'src/app/api/auth/session-sync/route.ts': 1,
-  'src/app/api/badges/route.ts': 1,
-  'src/app/api/catalog/products/[id]/route.ts': 1,
-  'src/app/api/catalog/products/route.ts': 1,
-  'src/app/api/comparison/rankings/route.ts': 1,
-  'src/app/api/cron/process-menu-queue/route.ts': 2,
-  'src/app/api/e2e/reset-onboarding/route.ts': 2,
-  'src/app/api/experiments/[key]/assignment/route.ts': 1,
-  'src/app/api/export/meals/route.ts': 1,
-  'src/app/api/favorites/route.ts': 1,
-  'src/app/api/handson-tour/complete/route.ts': 1,
-  'src/app/api/meal-plans/add-from-photo/route.ts': 1,
-  'src/app/api/meal-plans/meals/[id]/route.ts': 2,
-  'src/app/api/meal-plans/meals/reorder/route.ts': 1,
-  'src/app/api/meal-plans/meals/route.ts': 1,
-  'src/app/api/meal-plans/route.ts': 2,
-  'src/app/api/meals/[id]/route.ts': 6,
-  'src/app/api/meals/route.ts': 3,
-  'src/app/api/menu-plans/add/route.ts': 2,
-  'src/app/api/notification-preferences/route.ts': 2,
-  'src/app/api/nutrition-targets/calculate/route.ts': 1,
-  'src/app/api/nutrition/targets/route.ts': 2,
-  'src/app/api/onboarding/complete/route.ts': 4,
-  'src/app/api/onboarding/progress/route.ts': 2,
-  'src/app/api/onboarding/status/route.ts': 4,
-  'src/app/api/operator/membership/audit/route.ts': 2,
-  'src/app/api/operator/membership/families/inactive/route.ts': 2,
-  'src/app/api/operator/membership/family/[id]/candidates/route.ts': 2,
-  'src/app/api/operator/membership/family/[id]/dissolve/route.ts': 2,
-  'src/app/api/operator/membership/family/[id]/transfer/route.ts': 1,
-  'src/app/api/operator/membership/org/[id]/candidates/route.ts': 2,
-  'src/app/api/operator/membership/org/[id]/dissolve/route.ts': 2,
-  'src/app/api/operator/membership/org/[id]/transfer/route.ts': 1,
-  'src/app/api/operator/membership/orgs/inactive/route.ts': 2,
-  'src/app/api/org/invites/[id]/accept/route.ts': 1,
-  'src/app/api/org/invites/[id]/reject/route.ts': 1,
-  'src/app/api/org/invites/[id]/revoke/route.ts': 1,
-  'src/app/api/org/leave/route.ts': 1,
-  'src/app/api/org/members/[user_id]/remove/route.ts': 1,
-  'src/app/api/org/owner-transfer/[id]/decline/route.ts': 1,
-  'src/app/api/org/owner-transfer/propose/route.ts': 1,
-  'src/app/api/pantry/[id]/route.ts': 3,
-  'src/app/api/pantry/from-photo/route.ts': 1,
-  'src/app/api/pantry/route.ts': 2,
-  'src/app/api/performance/analyze/route.ts': 4,
-  'src/app/api/performance/checkins/route.ts': 6,
-  'src/app/api/performance/plans/route.ts': 6,
-  'src/app/api/performance/sports/route.ts': 2,
-  'src/app/api/recipes/[id]/comments/route.ts': 2,
-  'src/app/api/recipes/[id]/like/route.ts': 2,
-  'src/app/api/recipes/[id]/route.ts': 3,
-  'src/app/api/recipes/route.ts': 1,
-  'src/app/api/shopping-list/[id]/route.ts': 2,
-  'src/app/api/shopping-list/regenerate/route.ts': 1,
-  'src/app/api/shopping-list/route.ts': 3,
-  'src/app/api/super-admin/admins/route.ts': 2,
-  'src/app/api/super-admin/audit-logs/route.ts': 2,
-  'src/app/api/super-admin/coupons/[id]/apply/route.ts': 1,
-  'src/app/api/super-admin/coupons/[id]/redemptions/route.ts': 1,
-  'src/app/api/super-admin/coupons/[id]/route.ts': 2,
-  'src/app/api/super-admin/coupons/route.ts': 2,
-  'src/app/api/super-admin/db-stats/route.ts': 1,
-  'src/app/api/super-admin/embeddings/regenerate/route.ts': 1,
-  'src/app/api/super-admin/experiments/[id]/results/route.ts': 2,
-  'src/app/api/super-admin/experiments/[id]/route.ts': 4,
-  'src/app/api/super-admin/experiments/route.ts': 4,
-  'src/app/api/super-admin/feature-packages/[id]/route.ts': 2,
-  'src/app/api/super-admin/feature-packages/route.ts': 2,
-  'src/app/api/super-admin/flags/[key]/route.ts': 4,
-  'src/app/api/super-admin/flags/route.ts': 4,
-  'src/app/api/super-admin/infra/alerts/route.ts': 2,
-  'src/app/api/super-admin/infra/metrics/route.ts': 2,
-  'src/app/api/super-admin/llm/quotas/route.ts': 1,
-  'src/app/api/super-admin/plans/[id]/price-change/route.ts': 1,
-  'src/app/api/super-admin/plans/[id]/route.ts': 2,
-  'src/app/api/super-admin/plans/route.ts': 2,
-  'src/app/api/super-admin/settings/route.ts': 2,
-};
 
 // ─────────────────────────────────────────────
 // ソース解析
@@ -177,6 +69,10 @@ interface Finding {
 const JSON_RESPONSE_OBJECTS = new Set(['NextResponse', 'Response']);
 /** エラーを受ける変数の名前: e / err / error / exception / ex、または Error / Err で終わる名前 */
 const ERROR_NAME = /^(?:e|err|error|exception|ex)$|(?:Error|Err)$/;
+/** PostgREST のエラーが文面を持つプロパティ (例外の Error も message を持つ) */
+const RAW_TEXT_PROPERTIES = new Set(['message', 'details', 'hint']);
+/** ストリームに書く・応答を作る呼び出し (この引数の中の JSON.stringify(...) は応答の本文) */
+const STREAM_WRITE_METHODS = new Set(['enqueue', 'write']);
 /** 変数をたどる段数の上限 (const a = e.message; const b = a; ... の連鎖) */
 const MAX_RESOLVE_DEPTH = 3;
 
@@ -203,9 +99,20 @@ function isErrorLike(expr: ts.Expression): boolean {
   return false;
 }
 
-/** `error.message` / `err?.message` / `(e as Error).message` / `result.error.message` */
-function isRawMessageAccess(node: ts.Node): boolean {
-  return ts.isPropertyAccessExpression(node) && node.name.text === 'message' && isErrorLike(node.expression);
+/** `error.message` / `err?.details` / `result.error.hint` / `error['message']` なら、そのエラーの式を返す */
+function rawTextAccessBase(node: ts.Node): ts.Expression | undefined {
+  if (ts.isPropertyAccessExpression(node) && RAW_TEXT_PROPERTIES.has(node.name.text) && isErrorLike(node.expression)) {
+    return node.expression;
+  }
+  if (
+    ts.isElementAccessExpression(node) &&
+    ts.isStringLiteralLike(node.argumentExpression) &&
+    RAW_TEXT_PROPERTIES.has(node.argumentExpression.text) &&
+    isErrorLike(node.expression)
+  ) {
+    return node.expression;
+  }
+  return undefined;
 }
 
 /** 識別子が「値としての参照」か。プロパティ名・オブジェクトリテラルのキー・宣言の名前は参照ではない */
@@ -227,61 +134,200 @@ function statementsOf(node: ts.Node): readonly ts.Statement[] | undefined {
   return undefined;
 }
 
+/** 変数の宣言。分割代入なら、取り出したプロパティの名前 (`{ error: rpcError }` なら 'error') も持つ */
+interface Declaration {
+  initializer: ts.Expression | undefined;
+  /** 分割代入 `{ a: b } = x` で取り出したプロパティの名前。配列の分割代入なら '[]'。ふつうの宣言なら undefined */
+  bindingProperty?: string;
+  /** catch (e) の e */
+  isCatchVariable?: boolean;
+}
+
 /**
- * 識別子が、直前までに宣言された変数で、その値が生のエラー文由来か。
- * いちばん内側のスコープで最初に見つかった宣言で決める (外側の同名の変数は影になる)。
+ * 識別子の、直前までに見える宣言。いちばん内側のスコープで最初に見つかったもので決める (外側の同名の変数は影になる)。
+ * catch 節の変数も見る。
  */
-function identifierHoldsRawMessage(id: ts.Identifier, depth: number): boolean {
+function findDeclaration(id: ts.Identifier): Declaration | undefined {
   for (let scope: ts.Node | undefined = id.parent; scope; scope = scope.parent) {
+    if (ts.isCatchClause(scope)) {
+      const variable = scope.variableDeclaration;
+      if (variable && ts.isIdentifier(variable.name) && variable.name.text === id.text) {
+        return { initializer: undefined, isCatchVariable: true };
+      }
+      continue;
+    }
     const statements = statementsOf(scope);
     if (!statements) continue;
 
-    let decided: boolean | undefined;
+    let decided: Declaration | undefined;
     for (const statement of statements) {
       if (statement.end > id.getStart()) break;
       if (!ts.isVariableStatement(statement)) continue;
 
       for (const declaration of statement.declarationList.declarations) {
-        if (ts.isIdentifier(declaration.name) && declaration.name.text === id.text) {
-          decided = declaration.initializer ? expressionHasRawMessage(declaration.initializer, depth) : false;
-        } else if (ts.isObjectBindingPattern(declaration.name) && declaration.initializer) {
-          // const { message } = error / const { message: msg } = err
-          for (const element of declaration.name.elements) {
-            if (!ts.isIdentifier(element.name) || element.name.text !== id.text) continue;
-            const property = element.propertyName ?? element.name;
-            const propertyName = ts.isIdentifier(property) || ts.isStringLiteral(property) ? property.text : '';
-            decided = propertyName === 'message' && isErrorLike(declaration.initializer);
-          }
+        const { name, initializer } = declaration;
+        if (ts.isIdentifier(name) && name.text === id.text) {
+          decided = { initializer };
+        } else if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+          const found = findInBindingPattern(name, id.text);
+          if (found !== undefined) decided = { initializer, bindingProperty: found };
         }
       }
     }
-    if (decided !== undefined) return decided;
+    if (decided) return decided;
+  }
+  return undefined;
+}
+
+/** 分割代入の中から名前を探し、取り出したプロパティの名前を返す (入れ子は外側のプロパティ名)。無ければ undefined */
+function findInBindingPattern(pattern: ts.BindingPattern, name: string): string | undefined {
+  for (const element of pattern.elements) {
+    if (ts.isOmittedExpression(element)) continue;
+    const property = ts.isObjectBindingPattern(pattern)
+      ? (() => {
+          const key = element.propertyName ?? element.name;
+          return ts.isIdentifier(key) || ts.isStringLiteral(key) ? key.text : '';
+        })()
+      : '[]';
+    if (ts.isIdentifier(element.name)) {
+      if (element.name.text === name) return property;
+    } else if (findInBindingPattern(element.name, name) !== undefined) {
+      return property;
+    }
+  }
+  return undefined;
+}
+
+/** await の結果か (`await supabase.from(...)` / `await Promise.all([...])`) */
+function isAwaited(expr: ts.Expression | undefined): boolean {
+  return !!expr && ts.isAwaitExpression(unwrap(expr));
+}
+
+/**
+ * DB などの結果 (await の結果) から取り出したエラーか。
+ *   `const { error } = await supabase...` の error / `const { error: rpcError } = await ...` の rpcError /
+ *   `const result = await ...; result.error` / `const [a] = await Promise.all(...); a.error`
+ */
+function isAwaitedResultError(expr: ts.Expression): boolean {
+  const inner = unwrap(expr);
+  if (ts.isIdentifier(inner)) {
+    const declaration = findDeclaration(inner);
+    return !!declaration && declaration.bindingProperty !== undefined && isAwaited(declaration.initializer);
+  }
+  if (ts.isPropertyAccessExpression(inner)) {
+    let root: ts.Expression = unwrap(inner.expression);
+    while (ts.isPropertyAccessExpression(root)) root = unwrap(root.expression);
+    if (!ts.isIdentifier(root)) return false;
+    const declaration = findDeclaration(root);
+    return !!declaration && isAwaited(declaration.initializer);
   }
   return false;
 }
 
-/** 式の中に、生のエラー文 (直接、または変数経由) が入っているか */
-function expressionHasRawMessage(root: ts.Node, depth = 0): boolean {
-  let found = false;
+/** エラーのオブジェクトそのものが入る値か (catch の変数・await の結果から取り出した error) */
+function isRawErrorObject(id: ts.Identifier): boolean {
+  if (!ERROR_NAME.test(id.text)) return false;
+  const declaration = findDeclaration(id);
+  if (!declaration) return false;
+  if (declaration.isCatchVariable) return true;
+  return declaration.bindingProperty !== undefined && isAwaited(declaration.initializer);
+}
+
+/** 値として本文に「そのまま」出る位置か (`{ error }` / `{ error: x }` / `[x]` / `...x` / `${x}`) */
+function isEmittedAsValue(node: ts.Expression): boolean {
+  let current: ts.Node = node;
+  while (current.parent && (ts.isParenthesizedExpression(current.parent) || ts.isAsExpression(current.parent) || ts.isNonNullExpression(current.parent))) {
+    current = current.parent;
+  }
+  const parent = current.parent;
+  if (!parent) return false;
+  if (ts.isShorthandPropertyAssignment(parent)) return true;
+  if (ts.isPropertyAssignment(parent)) return parent.initializer === current;
+  if (ts.isArrayLiteralExpression(parent) || ts.isSpreadElement(parent) || ts.isSpreadAssignment(parent)) return true;
+  if (ts.isTemplateSpan(parent)) return true;
+  if (ts.isBinaryExpression(parent)) {
+    // `'失敗: ' + error` / `error ?? 'x'` / `error || 'x'`
+    const operator = parent.operatorToken.kind;
+    return (
+      operator === ts.SyntaxKind.PlusToken ||
+      operator === ts.SyntaxKind.QuestionQuestionToken ||
+      operator === ts.SyntaxKind.BarBarToken
+    );
+  }
+  if (ts.isConditionalExpression(parent)) return parent.whenTrue === current || parent.whenFalse === current;
+  return false;
+}
+
+/** `String(x)` / `JSON.stringify(x)` の x か */
+function isStringifiedArgument(node: ts.Expression): ts.CallExpression | undefined {
+  const parent = node.parent;
+  if (!parent || !ts.isCallExpression(parent) || parent.arguments[0] !== node) return undefined;
+  const callee = parent.expression;
+  if (ts.isIdentifier(callee) && callee.text === 'String') return parent;
+  if (
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    callee.expression.text === 'JSON' &&
+    callee.name.text === 'stringify'
+  ) {
+    return parent;
+  }
+  return undefined;
+}
+
+/** 本文の中で見つかったエラー由来の値 */
+interface RawSource {
+  /** エラーの式 (`error` / `result.error`) */
+  base: ts.Expression;
+}
+
+/**
+ * 識別子が、直前までに宣言された変数で、その値がエラー由来か。
+ * いちばん内側のスコープで最初に見つかった宣言で決める (外側の同名の変数は影になる)。
+ */
+function identifierRawSources(id: ts.Identifier, depth: number): RawSource[] {
+  const declaration = findDeclaration(id);
+  if (!declaration || declaration.isCatchVariable) return [];
+  if (declaration.bindingProperty !== undefined) {
+    // const { message } = error / const { details: d } = err
+    const { initializer } = declaration;
+    if (initializer && RAW_TEXT_PROPERTIES.has(declaration.bindingProperty) && isErrorLike(initializer)) {
+      return [{ base: unwrap(initializer) }];
+    }
+    return [];
+  }
+  return declaration.initializer ? rawSourcesOf(declaration.initializer, depth) : [];
+}
+
+/** 式の中の、エラー由来の値 (直接、または変数経由) */
+function rawSourcesOf(root: ts.Node, depth = 0): RawSource[] {
+  const sources: RawSource[] = [];
   const visit = (node: ts.Node): void => {
-    if (found || ts.isTypeNode(node)) return;
-    if (isRawMessageAccess(node)) {
-      found = true;
+    if (ts.isTypeNode(node)) return;
+    const base = rawTextAccessBase(node);
+    if (base) {
+      sources.push({ base: unwrap(base) });
       return;
     }
-    if (
-      ts.isIdentifier(node) &&
-      depth < MAX_RESOLVE_DEPTH &&
-      isValueReference(node) &&
-      identifierHoldsRawMessage(node, depth + 1)
-    ) {
-      found = true;
+    if (ts.isIdentifier(node) && isValueReference(node)) {
+      // String(err) / JSON.stringify(error) は、宣言が見えなくても名前で判定する (エラーを文字列にする書き方のため)
+      if ((ERROR_NAME.test(node.text) && isStringifiedArgument(node)) || (isRawErrorObject(node) && isEmittedAsValue(node))) {
+        sources.push({ base: node });
+        return;
+      }
+      if (!ERROR_NAME.test(node.text) && depth < MAX_RESOLVE_DEPTH) {
+        sources.push(...identifierRawSources(node, depth + 1));
+      }
+    }
+    if (ts.isPropertyAccessExpression(node) && isErrorLike(node) && isStringifiedArgument(node)) {
+      // String(result.error) / JSON.stringify(insertError)
+      sources.push({ base: node });
       return;
     }
     ts.forEachChild(node, visit);
   };
   visit(root);
-  return found;
+  return sources;
 }
 
 function isJsonResponseCall(node: ts.Node): node is ts.CallExpression {
@@ -294,14 +340,54 @@ function isJsonResponseCall(node: ts.Node): node is ts.CallExpression {
   );
 }
 
-/** 数値リテラル、またはその分岐 (`a ? 403 : 400`)。分からなければ null */
-function numericValues(expr: ts.Expression): number[] | null {
+/** `JSON.stringify(x)` が、ストリームへの書き込み・new Response(...) の引数の中にあるか */
+function isStreamedJsonStringify(node: ts.Node): node is ts.CallExpression {
+  if (
+    !ts.isCallExpression(node) ||
+    !ts.isPropertyAccessExpression(node.expression) ||
+    !ts.isIdentifier(node.expression.expression) ||
+    node.expression.expression.text !== 'JSON' ||
+    node.expression.name.text !== 'stringify'
+  ) {
+    return false;
+  }
+  for (let current: ts.Node | undefined = node.parent; current && !ts.isStatement(current); current = current.parent) {
+    if (
+      ts.isCallExpression(current) &&
+      ts.isPropertyAccessExpression(current.expression) &&
+      STREAM_WRITE_METHODS.has(current.expression.name.text)
+    ) {
+      return true;
+    }
+    if (
+      ts.isNewExpression(current) &&
+      ts.isIdentifier(current.expression) &&
+      JSON_RESPONSE_OBJECTS.has(current.expression.text)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 数値リテラル、その分岐 (`a ? 403 : 400`)、それを入れた const (`const status = a ? 404 : 422`)。分からなければ null */
+function numericValues(expr: ts.Expression, depth = 0): number[] | null {
   const inner = unwrap(expr);
   if (ts.isNumericLiteral(inner)) return [Number(inner.text)];
   if (ts.isConditionalExpression(inner)) {
-    const whenTrue = numericValues(inner.whenTrue);
-    const whenFalse = numericValues(inner.whenFalse);
+    const whenTrue = numericValues(inner.whenTrue, depth);
+    const whenFalse = numericValues(inner.whenFalse, depth);
     return whenTrue && whenFalse ? [...whenTrue, ...whenFalse] : null;
+  }
+  if (ts.isIdentifier(inner) && depth < MAX_RESOLVE_DEPTH) {
+    const declaration = findDeclaration(inner);
+    if (declaration && declaration.bindingProperty === undefined && declaration.initializer) {
+      const statement = declaration.initializer.parent?.parent;
+      // let は後から書き換えられるので読まない (const だけ)
+      if (statement && ts.isVariableDeclarationList(statement) && statement.flags & ts.NodeFlags.Const) {
+        return numericValues(declaration.initializer, depth + 1);
+      }
+    }
   }
   return null;
 }
@@ -317,7 +403,7 @@ function resolveStatuses(init: ts.Expression | undefined): number[] | null {
     if (ts.isSpreadAssignment(property)) {
       hasSpread = true;
     } else if (ts.isShorthandPropertyAssignment(property) && property.name.text === 'status') {
-      return null;
+      return numericValues(property.name);
     } else if (
       ts.isPropertyAssignment(property) &&
       (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
@@ -334,23 +420,45 @@ function isClientErrorOnly(statuses: number[] | null): boolean {
   return statuses !== null && statuses.length > 0 && statuses.every((status) => status >= 400 && status < 500);
 }
 
-/** ソースの中で、生のエラー文を JSON 本文に入れている応答 (NextResponse.json など) を探す */
+/** 応答の本文と、取りうるステータス (分からなければ null) */
+interface ResponseBody {
+  call: ts.Node;
+  body: ts.Expression;
+  statuses: number[] | null;
+}
+
+function responseBodiesOf(sf: ts.SourceFile): ResponseBody[] {
+  const bodies: ResponseBody[] = [];
+  const visit = (node: ts.Node): void => {
+    if (isJsonResponseCall(node)) {
+      const [body, init] = node.arguments;
+      if (body) bodies.push({ call: node, body, statuses: resolveStatuses(init) });
+    } else if (isStreamedJsonStringify(node)) {
+      const [body] = node.arguments;
+      // ストリームの途中に流す文面は、ステータスで区別できない
+      if (body) bodies.push({ call: node, body, statuses: null });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return bodies;
+}
+
+/** ソースの中で、エラー由来の値を本文に入れている応答 (NextResponse.json など) を探す */
 function findRawErrorMessageResponses(source: string, fileName = 'route.ts'): Finding[] {
   const kind = fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, kind);
   const findings: Finding[] = [];
 
-  const visit = (node: ts.Node): void => {
-    if (isJsonResponseCall(node)) {
-      const [body, init] = node.arguments;
-      if (body && expressionHasRawMessage(body) && !isClientErrorOnly(resolveStatuses(init))) {
-        const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
-        findings.push({ line: line + 1, text: node.getText(sf).replace(/\s+/g, ' ').slice(0, 140) });
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sf);
+  for (const { call, body, statuses } of responseBodiesOf(sf)) {
+    const sources = rawSourcesOf(body);
+    if (sources.length === 0) continue;
+    // 4xx で返してよいのは、こちらが書いた文面 (AuthError・zod など) だけ。DB の結果のエラー文は 4xx でも出さない
+    const fromDb = sources.some((source) => isAwaitedResultError(source.base));
+    if (isClientErrorOnly(statuses) && !fromDb) continue;
+    const { line } = sf.getLineAndCharacterOfPosition(call.getStart(sf));
+    findings.push({ line: line + 1, text: call.getText(sf).replace(/\s+/g, ' ').slice(0, 140) });
+  }
 
   return findings;
 }
@@ -371,89 +479,54 @@ function collectSourceFiles(dir: string): string[] {
 
 /** ファイル (リポジトリ直下からの相対パス) -> 違反 */
 const scanned = new Map<string, Finding[]>();
+/** 走査した応答の本文の数 (走査が空振りしていないことの確認に使う) */
+let responseBodyCount = 0;
 for (const file of collectSourceFiles(path.join(ROOT, SCAN_ROOT)).sort()) {
   const relative = path.relative(ROOT, file).split(path.sep).join('/');
-  scanned.set(relative, findRawErrorMessageResponses(fs.readFileSync(file, 'utf-8'), relative));
+  const source = fs.readFileSync(file, 'utf-8');
+  scanned.set(relative, findRawErrorMessageResponses(source, relative));
+  const kind = relative.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  responseBodyCount += responseBodiesOf(ts.createSourceFile(relative, source, ts.ScriptTarget.Latest, true, kind)).length;
 }
 
 const describeFindings = (findings: Finding[]) => findings.map((f) => `    L${f.line}: ${f.text}`).join('\n');
-const totalFindings = [...scanned.values()].reduce((sum, findings) => sum + findings.length, 0);
+
+/** 走査が壊れていないことの目安: route のファイル数と、応答の本文の数の下限 */
+const MIN_SCANNED_FILES = 150;
+const MIN_RESPONSE_BODIES = 1000;
 
 // ─────────────────────────────────────────────
 // リポジトリのソースに対する contract
 // ─────────────────────────────────────────────
-describe('API の JSON 本文に生のエラー文を入れない (#1172): src/app/api のソース', () => {
-  it('走査が機能している: 多数の route を読み、既知の違反 (直接・変数経由) を検出している', () => {
-    // 走査が壊れて何も見つけられなくなったときに、下の contract が空振りで通ってしまわないようにする
-    expect(scanned.size).toBeGreaterThan(150);
-    expect(totalFindings).toBeGreaterThan(50);
-
-    // 直接 (`{ error: error.message }`)。#1172 の後続の段で直すまでは残っている
-    expect(scanned.get('src/app/api/meals/route.ts')?.length ?? 0).toBeGreaterThan(0);
-    // 変数経由 (`const message = error instanceof Error ? error.message : ...` のあと `{ error: message }`)
-    expect(scanned.get('src/app/api/nutrition/targets/route.ts')?.length ?? 0).toBeGreaterThan(0);
+describe('API の応答の本文に生のエラー文を入れない (#1172): src/app/api のソース', () => {
+  it('走査が機能している: 多数の route と応答を読んでいる', () => {
+    // 走査が壊れて何も読めなくなったときに、下の contract が空振りで通ってしまわないようにする
+    expect(scanned.size).toBeGreaterThan(MIN_SCANNED_FILES);
+    expect(responseBodyCount).toBeGreaterThan(MIN_RESPONSE_BODIES);
+    // 直した route も走査の対象に入っている
+    expect(scanned.has('src/app/api/meals/route.ts')).toBe(true);
+    expect(scanned.has('src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts')).toBe(true);
   });
 
-  it('許可リストに無い違反が増えていない (新しい route は internalError() で 500 を返す)', () => {
-    const unexpected: string[] = [];
+  it('どの route も、応答の本文に DB の生のエラー文・例外の文面を入れていない (500 は internalError() で返す)', () => {
+    const violations: string[] = [];
     for (const [file, findings] of scanned) {
-      const allowed = ALLOWLIST[file] ?? 0;
-      if (findings.length > allowed) {
-        unexpected.push(`${file}: ${findings.length} 件 (許可リストでは ${allowed} 件)\n${describeFindings(findings)}`);
-      }
+      if (findings.length > 0) violations.push(`${file}: ${findings.length} 件\n${describeFindings(findings)}`);
     }
 
     expect(
-      unexpected,
-      'JSON 本文に error.message を入れないこと。500 は internalError(routeName, error, ctx) ' +
-        "(src/lib/api/errors.ts) で返す (運営 API は { shape: 'nested' })。" +
-        'どうしても直せない既存の違反だけ、ALLOWLIST の件数を直すこと:\n' +
-        unexpected.join('\n'),
+      violations,
+      '応答の本文に error.message / details / hint や例外の文面を入れないこと。500 は internalError(routeName, error, ctx) ' +
+        "(src/lib/api/errors.ts) で返す (運営 API は { shape: 'nested' })。4xx で理由を伝えるときは固定の文を返す:\n" +
+        violations.join('\n'),
     ).toEqual([]);
-  });
-
-  it('許可リストが古くなっていない (直したらリストの件数を減らし、0 件になったら行を消す)', () => {
-    const stale: string[] = [];
-    for (const [file, allowed] of Object.entries(ALLOWLIST)) {
-      const findings = scanned.get(file);
-      if (!findings) {
-        stale.push(`${file}: ファイルが無い。許可リストから消すこと`);
-      } else if (findings.length < allowed) {
-        stale.push(
-          findings.length === 0
-            ? `${file}: もう違反が無い。許可リストの行を消すこと`
-            : `${file}: 違反は ${findings.length} 件に減った。許可リストを ${findings.length} にすること (今は ${allowed})`,
-        );
-      }
-    }
-
-    expect(stale, '直したので、ALLOWLIST を実際の件数に合わせて縮めること:\n' + stale.join('\n')).toEqual([]);
-  });
-
-  it('許可リストの件数は 1 以上の整数', () => {
-    for (const [file, allowed] of Object.entries(ALLOWLIST)) {
-      expect(Number.isInteger(allowed) && allowed >= 1, `${file}: ${allowed}`).toBe(true);
-    }
-  });
-
-  it('#1172 第 1 段で直した /api/health/** と /api/profile は、違反が無く、許可リストにも載っていない', () => {
-    const stageOne = [...scanned.keys()].filter(
-      (file) => file.startsWith('src/app/api/health/') || file === 'src/app/api/profile/route.ts',
-    );
-
-    expect(stageOne).toContain('src/app/api/health/goals/route.ts');
-    expect(stageOne).toContain('src/app/api/profile/route.ts');
-    for (const file of stageOne) {
-      expect(scanned.get(file), `${file} に生のエラー文を返す箇所が残っている`).toEqual([]);
-      expect(ALLOWLIST[file], `${file} は直したので許可リストに載せない`).toBeUndefined();
-    }
   });
 });
 
 // ─────────────────────────────────────────────
 // 走査ロジック自体の確認 (合成ソースで検出できること / 誤検出しないこと)
 // ─────────────────────────────────────────────
-describe('API の JSON 本文に生のエラー文を入れない (#1172): ソース解析のロジック', () => {
+describe('API の応答の本文に生のエラー文を入れない (#1172): ソース解析のロジック', () => {
   const count = (source: string) => findRawErrorMessageResponses(source).length;
 
   describe('検出する', () => {
@@ -474,8 +547,13 @@ describe('API の JSON 本文に生のエラー文を入れない (#1172): ソ�
       ['テンプレート文字列', 'return NextResponse.json({ error: `failed: ${error.message}` }, { status: 500 });'],
       ['型アサーション越し', `return NextResponse.json({ error: (error as Error).message }, { status: 500 });`],
       ['非 null アサーション越し', `return NextResponse.json({ error: error!.message }, { status: 500 });`],
+      ["error['message'] (要素アクセス)", `return NextResponse.json({ error: error['message'] }, { status: 500 });`],
       ['details にだけ入れた場合', `return NextResponse.json({ error: '失敗', details: error.message }, { status: 500 });`],
+      ['PostgREST の details', `return NextResponse.json({ error: '失敗', details: error.details }, { status: 500 });`],
+      ['PostgREST の hint', `return NextResponse.json({ error: '失敗', hint: insertError?.hint }, { status: 500 });`],
       ['配列の中', `return NextResponse.json({ errors: [error.message] }, { status: 500 });`],
+      ['String(error)', `return NextResponse.json({ error: String(err) }, { status: 500 });`],
+      ['JSON.stringify(result.error)', `return NextResponse.json({ error: JSON.stringify(result.error) }, { status: 500 });`],
       ['Response.json (NextResponse でない)', `return Response.json({ error: claimError.message }, { status: 500 });`],
       ['ステータスの指定が無い (200 で返る)', `return NextResponse.json({ ok: false, error: error.message });`],
       ['ステータスが 5xx の別の値', `return NextResponse.json({ error: error.message }, { status: 503 });`],
@@ -536,6 +614,12 @@ describe('API の JSON 本文に生のエラー文を入れない (#1172): ソ�
           return NextResponse.json({ error: msg }, { status: 500 });`,
       ],
       [
+        '分割代入 const { hint } = error',
+        `
+          const { hint } = error;
+          return NextResponse.json({ error: '失敗', hint }, { status: 500 });`,
+      ],
+      [
         'result.error から取り出した変数',
         `
           const detail = result.error.message;
@@ -555,8 +639,84 @@ describe('API の JSON 本文に生のエラー文を入れない (#1172): ソ�
       expect(count(source)).toBe(1);
     });
 
+    it.each([
+      [
+        'catch で受けた例外のオブジェクトごと { error }',
+        `
+          try {} catch (error) {
+            return NextResponse.json({ error }, { status: 500 });
+          }`,
+      ],
+      [
+        'catch で受けた例外のオブジェクトごと { error: err }',
+        `
+          try {} catch (err) {
+            return NextResponse.json({ ok: false, error: err });
+          }`,
+      ],
+      [
+        'await の結果から取り出した error ごと',
+        `
+          const { data, error } = await supabase.from('t').select();
+          if (error) return NextResponse.json({ error }, { status: 500 });`,
+      ],
+      [
+        'await の結果から取り出した別名の error ごと',
+        `
+          const { error: rpcError } = await supabase.rpc('f');
+          if (rpcError) return NextResponse.json({ error: rpcError }, { status: 500 });`,
+      ],
+    ])('エラーのオブジェクトごと: %s', (_label, source) => {
+      expect(count(source)).toBe(1);
+    });
+
+    it.each([
+      [
+        '400 で DB の結果の error.message を返す',
+        `
+          const { error } = await supabase.from('t').insert(row);
+          if (error) return NextResponse.json({ error: error.message }, { status: 400 });`,
+      ],
+      [
+        '403 / 400 の分岐で RPC の結果のエラー文を返す',
+        `
+          const { data, error: rpcError } = await supabase.rpc('f');
+          if (rpcError) return NextResponse.json({ error: { code, message: rpcError.message } }, { status: code === 'FORBIDDEN' ? 403 : 400 });`,
+      ],
+      [
+        'await の結果の .error.message を 404 で返す',
+        `
+          const result = await supabase.from('t').select().single();
+          if (result.error) return NextResponse.json({ error: result.error.message }, { status: 404 });`,
+      ],
+      [
+        'Promise.all の結果の .error.message を 409 で返す',
+        `
+          const [a, b] = await Promise.all([q1, q2]);
+          if (a.error) return NextResponse.json({ error: a.error.details }, { status: 409 });`,
+      ],
+    ])('DB の結果のエラー文は 4xx でも検出する: %s', (_label, source) => {
+      expect(count(source)).toBe(1);
+    });
+
+    it.each([
+      [
+        'SSE: controller.enqueue に流す JSON.stringify({ error: error.message })',
+        'controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: error.message })}\\n\\n`));',
+      ],
+      [
+        'SSE: 応答の途中の大きなオブジェクトの中の error',
+        'controller.enqueue(encoder.encode(`data: ${JSON.stringify({ aiMessage: { id }, error: e.message })}\\n\\n`));',
+      ],
+      ['writer.write に流す', `await writer.write(encoder.encode(JSON.stringify({ error: err.message })));`],
+      ['new Response(JSON.stringify(...))', `return new Response(JSON.stringify({ error: error.message }), { status: 500 });`],
+      ['new NextResponse(JSON.stringify(...))', `return new NextResponse(JSON.stringify({ details: error.details }));`],
+    ])('ストリーム・new Response: %s', (_label, source) => {
+      expect(count(source)).toBe(1);
+    });
+
     it('1 回の応答に生のエラー文が何か所入っていても 1 件。応答ごとに数える', () => {
-      expect(count(`return NextResponse.json({ error: error.message, details: error.message }, { status: 500 });`)).toBe(1);
+      expect(count(`return NextResponse.json({ error: error.message, details: error.details }, { status: 500 });`)).toBe(1);
       expect(
         count(`
           if (a) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -587,13 +747,25 @@ describe('API の JSON 本文に生のエラー文を入れない (#1172): ソ�
   describe('検出しない', () => {
     it.each([
       ['4xx (400): こちらが書いた検証メッセージ', `return NextResponse.json({ error: parseResult.error.message }, { status: 400 });`],
+      [
+        '4xx (400): zod の safeParse の結果 (await ではない)',
+        `const parseResult = schema.safeParse(body); return NextResponse.json({ error: parseResult.error.message }, { status: 400 });`,
+      ],
       ['401: AuthError の文面', `return NextResponse.json({ error: { code: 'AUTH', message: err.message } }, { status: 401 });`],
       ['403: ForbiddenError の文面', `return NextResponse.json({ error: { code: 'PERM', message: err.message } }, { status: 403 });`],
+      [
+        '401: catch で受けた AuthError の文面',
+        `try {} catch (err) { if (err instanceof AuthError) return NextResponse.json({ error: { code: 'X', message: err.message } }, { status: 401 }); }`,
+      ],
       ['422', `return NextResponse.json({ error: e.message }, { status: 422 });`],
       ['4xx の分岐 (全て 4xx)', `return NextResponse.json({ error: rpcError.message }, { status: code === 'X' ? 403 : 400 });`],
       ['ネストした 4xx の分岐', `return NextResponse.json({ error: error.message }, { status: a ? 400 : b ? 403 : 404 });`],
       ['括弧・as 越しの 4xx', `return NextResponse.json({ error: error.message }, { status: (400 as number) });`],
       ['文字列のキー "status" の 4xx', `return NextResponse.json({ error: error.message }, { 'status': 400 });`],
+      [
+        '4xx を入れた const のステータス ({ status })',
+        `try {} catch (err) { const status = err.code === 'X' ? 404 : 422; return NextResponse.json({ error: { code: err.code, message: err.message } }, { status }); }`,
+      ],
     ])('%s', (_label, source) => {
       expect(count(source)).toBe(0);
     });
@@ -612,6 +784,26 @@ describe('API の JSON 本文に生のエラー文を入れない (#1172): ソ�
       ['JSON を返さない呼び出し', `const edge = await edgeResponse.json(); return NextResponse.redirect(error.message);`],
       ['NextResponse 以外の .json()', `return res.json({ error: error.message }, { status: 500 });`],
       ['本文が無い', `return NextResponse.json();`],
+      [
+        '同期の関数の結果から取り出した error (検証の文字列)',
+        `const { valid, error: slotsError } = validateTargetSlots(raw); return NextResponse.json({ error: slotsError }, { status: 400 });`,
+      ],
+      [
+        'エラーの有無だけを使う (値は固定の文)',
+        `try {} catch (error) { return NextResponse.json({ error: error instanceof AuthError ? 'Unauthorized' : '失敗' }, { status: 500 }); }`,
+      ],
+      [
+        'await の結果のエラーを条件にだけ使う',
+        `const { error } = await supabase.from('t').select(); return NextResponse.json({ ok: !error });`,
+      ],
+      [
+        'ログ用の JSON.stringify (ストリーム・応答ではない)',
+        `console.error(JSON.stringify({ error: error.message })); return NextResponse.json({ error: 'failed' }, { status: 500 });`,
+      ],
+      [
+        'SSE に固定の文を流す',
+        "controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE })}\\n\\n`));",
+      ],
     ])('%s', (_label, source) => {
       expect(count(source)).toBe(0);
     });
@@ -654,7 +846,7 @@ describe('API の JSON 本文に生のエラー文を入れない (#1172): ソ�
       ).toBe(0);
     });
 
-    it('分割代入: エラーでないものの message / message 以外のプロパティ', () => {
+    it('分割代入: エラーでないものの message / message・details・hint 以外のプロパティ', () => {
       expect(count(`const { message } = result; return NextResponse.json({ error: message }, { status: 500 });`)).toBe(0);
       expect(count(`const { code } = error; return NextResponse.json({ error: code }, { status: 500 });`)).toBe(0);
     });
@@ -671,24 +863,30 @@ describe('API の JSON 本文に生のエラー文を入れない (#1172): ソ�
         `),
       ).toBe(0);
     });
+
+    it('let のステータスは読まない (後から書き換えられるため、分からないものとして数える)', () => {
+      expect(
+        count(`try {} catch (err) { let status = 400; status = 500; return NextResponse.json({ error: err.message }, { status }); }`),
+      ).toBe(1);
+    });
   });
 
   describe('部品', () => {
-    it('resolveStatuses: 指定なしは 200、リテラルと分岐は全ての値、分からないものは null', () => {
-      const statusesOf = (source: string) => {
-        const sf = ts.createSourceFile('x.ts', `f(${source})`, ts.ScriptTarget.Latest, true);
-        const call = (sf.statements[0] as ts.ExpressionStatement).expression as ts.CallExpression;
-        return resolveStatuses(call.arguments[0]);
-      };
+    const parseExpression = (source: string) => {
+      const sf = ts.createSourceFile('x.ts', `f(${source})`, ts.ScriptTarget.Latest, true);
+      const call = (sf.statements[0] as ts.ExpressionStatement).expression as ts.CallExpression;
+      return call.arguments[0];
+    };
 
+    it('resolveStatuses: 指定なしは 200、リテラルと分岐は全ての値、分からないものは null', () => {
       expect(resolveStatuses(undefined)).toEqual([200]);
-      expect(statusesOf('{ status: 500 }')).toEqual([500]);
-      expect(statusesOf('{ status: a ? 403 : 400 }')).toEqual([403, 400]);
-      expect(statusesOf('{ headers: {} }')).toEqual([200]);
-      expect(statusesOf('{ status }')).toBeNull();
-      expect(statusesOf('{ status: code }')).toBeNull();
-      expect(statusesOf('{ status: a ? 400 : code }')).toBeNull();
-      expect(statusesOf('init')).toBeNull();
+      expect(resolveStatuses(parseExpression('{ status: 500 }'))).toEqual([500]);
+      expect(resolveStatuses(parseExpression('{ status: a ? 403 : 400 }'))).toEqual([403, 400]);
+      expect(resolveStatuses(parseExpression('{ headers: {} }'))).toEqual([200]);
+      expect(resolveStatuses(parseExpression('{ status }'))).toBeNull();
+      expect(resolveStatuses(parseExpression('{ status: code }'))).toBeNull();
+      expect(resolveStatuses(parseExpression('{ status: a ? 400 : code }'))).toBeNull();
+      expect(resolveStatuses(parseExpression('init'))).toBeNull();
     });
 
     it('isClientErrorOnly: 全て 400〜499 のときだけ true', () => {

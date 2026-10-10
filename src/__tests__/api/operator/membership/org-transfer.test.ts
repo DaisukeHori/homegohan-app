@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EmailSendError } from '@/lib/emails/send-result';
 import { NextRequest } from 'next/server';
+import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createFakeServiceRole, leadingUsers, valueUnder, type FakeServiceRole } from './fake-service-role';
 
@@ -466,19 +467,36 @@ describe('POST /api/operator/membership/org/[id]/transfer: 登録ユーザーが
 
 describe('POST /api/operator/membership/org/[id]/transfer: RPC のエラー', () => {
   it.each([
-    ['TARGET_NOT_IN_ORG', 'TARGET_NOT_IN_ORG', 400],
-    ['NOT_OPERATOR', 'FORBIDDEN', 403],
-    ['connection to server was lost', 'INTERNAL_ERROR', 400],
-  ])('RPC が %s で失敗: %s (%i) を返し、通知メールは送らない', async (message, code, status) => {
+    ['TARGET_NOT_IN_ORG', 'TARGET_NOT_IN_ORG', 400, '譲渡先のユーザーはこの組織に所属していません'],
+    ['NOT_OPERATOR', 'FORBIDDEN', 403, '権限がありません'],
+  ])('RPC が %s で失敗: %s (%i) と固定の文を返し、通知メールは送らない', async (message, code, status, fixedMessage) => {
     mocks.rpc.mockResolvedValue({ data: null, error: { message, code: 'P0001' } });
 
     const res = await call();
     const json = await res.json();
 
     expect(res.status).toBe(status);
-    expect(json.error.code).toBe(code);
+    // RPC の文面ではなく、こちらで決めた文を返す (#1172)
+    expect(json).toEqual({ error: { code, message: fixedMessage } });
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     expect(mocks.logError).not.toHaveBeenCalled();
+  });
+
+  it('RPC が分からないエラー (接続の切断など) で失敗: 汎用の 500 を返し、生のエラー文は構造化ログにだけ残す (#1172)', async () => {
+    const rawMessage = 'connection to server was lost (secret_host_xyz)';
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: rawMessage, code: '08006' } });
+
+    const res = await call();
+    const text = await res.text();
+
+    // 以前は 400 + 生の文面を返していた
+    expect(res.status).toBe(500);
+    expect(JSON.parse(text)).toEqual({ error: { code: INTERNAL_ERROR_CODE, message: INTERNAL_ERROR_MESSAGE } });
+    expect(text).not.toContain('secret_host_xyz');
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(mocks.withUser).toHaveBeenCalledWith(OPERATOR_ID);
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+    expect((mocks.logError.mock.calls[0][1] as Error).message).toBe(rawMessage);
   });
 
   it('存在しない組織: 事前取得を失敗扱いにせず、RPC のエラー (TARGET_NOT_IN_ORG) をそのまま返す', async () => {

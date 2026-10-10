@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
 import { createFakeServiceRole, leadingUsers, type FakeServiceRole } from '../operator/membership/fake-service-role';
 
 // POST /api/org/leave の脱退通知メール (#1160)。
@@ -212,18 +213,34 @@ describe('POST /api/org/leave: 脱退の通知メール (#1160)', () => {
     ['IS_ORG_OWNER', 409, 'IS_ORG_OWNER'],
     ['NOT_IN_ORG', 403, 'NOT_IN_ORG'],
     ['NOT_AUTHENTICATED', 401, 'NOT_AUTHENTICATED'],
-    ['connection to server was lost', 500, 'UNKNOWN'],
-  ])('RPC が「%s」で失敗: %i と今までの形式を返し、メールは送らず、宛先の検索もしない', async (message, status, code) => {
+  ])('RPC が「%s」で失敗: %i とコード、固定の文を返し、メールは送らず、宛先の検索もしない', async (message, status, code) => {
     mocks.rpc.mockResolvedValue({ data: null, error: { message, code: 'P0001' } });
 
     const res = await call();
     const json = await res.json();
 
     expect(res.status).toBe(status);
-    expect(json).toEqual({ error: { code, message } });
+    // RPC の文面ではなく、こちらで決めた文を返す (#1172)。画面はコードで出し分けるか、この文を出す
+    expect(json).toEqual({ error: { code, message: '組織からの脱退に失敗しました' } });
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     expect(fake.auth.admin.getUserById).not.toHaveBeenCalled();
     expect(mocks.logError).not.toHaveBeenCalled();
+  });
+
+  it('RPC が分からないエラー (接続の切断など) で失敗: 汎用の 500 を返し、生のエラー文は構造化ログにだけ残す (#1172)', async () => {
+    const rawMessage = 'connection to server was lost (secret_host_xyz)';
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: rawMessage, code: '08006' } });
+
+    const res = await call();
+    const text = await res.text();
+
+    expect(res.status).toBe(500);
+    expect(JSON.parse(text)).toEqual({ error: { code: INTERNAL_ERROR_CODE, message: INTERNAL_ERROR_MESSAGE } });
+    expect(text).not.toContain('secret_host_xyz');
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(fake.auth.admin.getUserById).not.toHaveBeenCalled();
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+    expect((mocks.logError.mock.calls[0][1] as Error).message).toBe(rawMessage);
   });
 
   it('どの組織にも所属していない (RPC は NOT_IN_ORG): 403 を返し、メールは送らず、警告も出さない', async () => {

@@ -15,6 +15,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
 
 const mockGetUser = vi.fn();
 
@@ -118,7 +119,8 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
     const json = await res.json();
 
     expect(res.status).toBe(500);
-    expect(json.error).toBe('update failed');
+    // DB の生のエラー文は本文に出さない (#1172)
+    expect(json).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
     expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
   });
 
