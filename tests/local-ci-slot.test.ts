@@ -74,6 +74,37 @@ const SUPABASE_PORT_VARS = [
 const NEXT_PORT_VARS = ["SLOT_APP_PORT", "SLOT_ENFORCED_APP_PORT", "SLOT_NOTICE_APP_PORT"];
 const SINGLE_PORT_VARS = [...SUPABASE_PORT_VARS, "SLOT_INSPECTOR_PORT", ...NEXT_PORT_VARS];
 
+/**
+ * Apple が文書にしている、Apple のソフトウェアが使う TCP のポート (1024〜49151 の行。UDP だけの行は除く)。
+ * 出典: 「TCP and UDP ports used by Apple software products」 https://support.apple.com/en-us/103229 (2026-10-11 に確認)。
+ * macOS が既定で待ち受けるもの (3031 の Remote Apple Events = eppc は launchd が持つ、5000 / 7000 は AirPlay レシーバー、
+ * 3283 は Apple Remote Desktop など) を含む。2026-10-10 に M2 で 3031 を launchd が LISTEN していて、枠 3 の e2e
+ * (当時の Next のポートは 3030〜3032) が毎回「使用中のポート 3031」で赤になった。
+ * 表のうち 49152〜65535 (動的に割り当てるポートの範囲。AirPlay・機器のペアリングなどが一時的に使う) は入れない
+ * (ローカル Supabase の CLI の既定 54320〜54329 = 枠 0 がこの範囲にあり、避けようがない)
+ */
+const APPLE_TCP_PORT_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [2197, 2197], // mnp-exchange (Push 通知)
+  [3031, 3031], // eppc (Remote Apple Events)
+  [3283, 3283], // net-assistant (Apple Remote Desktop)
+  [3284, 3285], // Classroom
+  [3689, 3689], // daap (iTunes の共有・AirPlay)
+  [3690, 3690], // svn (Xcode Server)
+  [5000, 5000], // AirPlay
+  [5100, 5100], // カメラ・スキャナーの共有
+  [5223, 5223], // Push 通知・iCloud・FaceTime など
+  [5228, 5228], // Spotlight の候補・Siri
+  [5297, 5297], // メッセージ (ローカルの通信)
+  [5900, 5900], // rfb (画面共有・Apple Remote Desktop)
+  [6000, 6000], // AirPlay
+  [7000, 7000], // AirPlay
+  [8000, 8999], // Web サービス・iTunes Radio
+  [9100, 9100], // ネットワークプリンターへの印刷
+  [9418, 9418], // git (Xcode Server)
+  [42000, 42999], // iTunes Radio
+];
+const isAppleTcpPort = (port: number) => APPLE_TCP_PORT_RANGES.some(([lo, hi]) => port >= lo && port <= hi);
+
 /** 特権ポートと、TCP のポート番号の上限 */
 const MIN_UNPRIVILEGED_PORT = 1024;
 const MAX_PORT = 65535;
@@ -176,6 +207,26 @@ describe("scripts/lib/local-ci-slot.sh の枠ごとの値", () => {
         expect(block.has(Number(values.get(v))), `枠 ${slot} の ${v}=${values.get(v)} が範囲に無い`).toBe(true);
       }
     }
+  });
+
+  it("枠 1 以上の Next のポートは 3100 + 枠 × 10 からの 3 つ (枠 0 の 3000〜3002 とは別の帯)", () => {
+    expect([1, 3, max].map((slot) => NEXT_PORT_VARS.map((v) => all[slot].values.get(v)))).toEqual([
+      ["3110", "3111", "3112"],
+      ["3130", "3131", "3132"],
+      [String(3100 + max * 10), String(3100 + max * 10 + 1), String(3100 + max * 10 + 2)],
+    ]);
+  });
+
+  it("Next のポートと Supabase のポートの範囲は、Apple が文書にしている macOS の既定のポート (3031 の Remote Apple Events など) と重ならない", () => {
+    expect(isAppleTcpPort(3031), "表の読み方の確かめ (枠 3 を赤にしていたポート)").toBe(true);
+    for (const { slot, values } of all) {
+      const block = (values.get("SLOT_SUPABASE_PORTS") ?? "").split(" ").filter(Boolean).map(Number);
+      for (const port of [...NEXT_PORT_VARS.map((v) => Number(values.get(v))), ...block]) {
+        expect(isAppleTcpPort(port), `枠 ${slot} のポート ${port}`).toBe(false);
+      }
+    }
+    // inspector_port (枠 0 は CLI の既定 8083) は表の 8000〜8999 (Apple の Web サービスへの外向きの接続) に入るが、
+    // supabase start では開かない (functions serve --inspect のときだけ) ので、空きを確かめる範囲にも入れていない
   });
 
   it("Supabase のポートの範囲 (SLOT_SUPABASE_PORTS) は、どれも名前の付いた CLI のポートで、そのすべてを config.toml でずらす (範囲だけ確かめて、ずらし忘れるポートが無い)", () => {
@@ -389,6 +440,7 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
     "release_lock",
     "legacy_lock_held",
     "apply_slot",
+    "slot_busy_ports",
     "acquire_slot",
     "slot_stack_exists",
     "clear_slot_leftovers",
@@ -435,14 +487,20 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
     ].join("\n"),
     "now() { date +%s; }",
     'record() { echo "RECORD $*"; }',
-    'run_in() { echo "RUN_IN ${*:3}"; }',
+    // stop-leftover で残ったスタックを片付けたら、FAKE_BUSY_UNTIL_CLEARED を消す (そのスタックが持っていたポートが空く)
+    'run_in() { echo "RUN_IN ${*:3}"; if [ -n "${FAKE_BUSY_UNTIL_CLEARED:-}" ]; then command rm -f "$FAKE_BUSY_UNTIL_CLEARED"; fi; }',
     // 枠の project_id のラベルで絞った一覧を、FAKE_CONTAINERS / FAKE_VOLUMES の中身で返す
     'docker() { case "$1" in ps) printf "%s" "${FAKE_CONTAINERS:-}" ;; volume) printf "%s" "${FAKE_VOLUMES:-}" ;; esac; }',
     "check_docker_memory() { :; }",
+    // ポートの空きの確かめ: FAKE_BUSY_PORTS (空白区切り) に入っているポートだけを使用中とみなす。
+    // FAKE_BUSY_UNTIL_CLEARED のファイルがある間は、FAKE_BUSY_PORTS_BEFORE_CLEAR のポートも使用中 (残ったスタックが持つポート)
+    'port_busy() { case " ${FAKE_BUSY_PORTS:-} " in *" $1 "*) return 0 ;; esac; if [ -n "${FAKE_BUSY_UNTIL_CLEARED:-}" ] && [ -e "$FAKE_BUSY_UNTIL_CLEARED" ]; then case " ${FAKE_BUSY_PORTS_BEFORE_CLEAR:-} " in *" $1 "*) return 0 ;; esac; fi; return 1; }',
+    // 回す段 (HARNESS_STAGES。既定は integration と e2e の両方)
+    'want() { case ",${HARNESS_STAGES:-integration,e2e}," in *",$1,"*) return 0 ;; esac; return 1; }',
     // cleanup が呼ぶ片付け (枠のスタックと Next は動かしていないので何もしない)
     "stop_server() { :; }",
     "stop_supabase() { :; }",
-    'LOCK_OWNER_GRACE_SEC=60; GUARD_POLL_SEC=1; SLOT_POLL_SEC=1; SLOT_WAIT_SECONDS=0; LEGACY_LOCK=""',
+    'LOCK_OWNER_GRACE_SEC=60; GUARD_POLL_SEC=1; SLOT_POLL_SEC=1; SLOT_WAIT_SECONDS="${HARNESS_SLOT_WAIT_SECONDS:-0}"; LEGACY_LOCK=""',
     `GUARD_DROP_TRIES=${constant("GUARD_DROP_TRIES")}; EXIT_SIGINT=${constant("EXIT_SIGINT")}; EXIT_SIGTERM=${constant("EXIT_SIGTERM")}; EXIT_SIGHUP=${constant("EXIT_SIGHUP")}`,
     'HEAD_SHA=test; ART="$HARNESS_TMP"; WT="$HARNESS_TMP"; APP_HOST_URL="http://localhost"; ENV_SLOT=""',
     'SLOT=""; SLOT_LOCK=""; SLOT_RECLAIMED=0; LOCK_RECLAIMED=0; GUARD_HELD=""; STALE_GUARDS_WARNED=""',
@@ -459,11 +517,10 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
     fs.writeFileSync(file, [...prelude, ...body, ""].join("\n"));
     return file;
   };
-  // 枠を取り、残ったスタックを片付ける / 確かめてから、ロックを外す (local-ci.sh の本体と同じ順)
+  // 枠を取り (回収したときの片付けは acquire_slot の中)、残ったスタックを確かめてから、ロックを外す (local-ci.sh の本体と同じ順)
   const harness = writeHarness("harness.sh", [
-    'acquire_slot || { echo "ACQUIRE_FAILED"; exit 0; }',
-    'echo "SLOT=$SLOT RECLAIMED=$SLOT_RECLAIMED"',
-    "clear_slot_leftovers",
+    'acquire_slot; rc=$?; if [ "$rc" -ne 0 ]; then echo "ACQUIRE_FAILED rc=$rc note=$SLOT_BUSY_NOTE"; exit 0; fi',
+    'echo "SLOT=$SLOT RECLAIMED=$SLOT_RECLAIMED APP_PORT=$APP_PORT"',
     'if check_slot_stack integration; then echo "STACK_OK"; else echo "STACK_RED"; fi',
     'release_lock "$SLOT_LOCK"',
   ]);
@@ -640,6 +697,87 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
     expect(r.out).not.toContain("RUN_IN");
     expect(r.out).not.toContain("RECORD");
     expect(r.out).toContain("STACK_OK");
+  });
+
+  /** 候補の枠 (空白区切り) と、使用中のポート・回す段・持ち主の決まったロックを決めて、ハーネスを回す */
+  const runSlots = (opts: { candidates: string; busy?: number[]; stages?: string; owners?: Record<string, string>; env?: Record<string, string> }) => {
+    const lockDir = newLockDir();
+    for (const [slot, owner] of Object.entries(opts.owners ?? {})) placeLock(path.join(lockDir, `slot-${slot}`), owner);
+    const env: NodeJS.ProcessEnv = {
+      ...baseEnv(),
+      LOCK_DIR: lockDir,
+      SLOT_CANDIDATES: opts.candidates,
+      FAKE_BUSY_PORTS: (opts.busy ?? []).join(" "),
+      ...(opts.stages === undefined ? {} : { HARNESS_STAGES: opts.stages }),
+      ...opts.env,
+    };
+    // 待ってしまう誤り (待ちの上限を長くしたとき) でテストが止まらないよう、上限で打ち切る (打ち切ると status が null になり赤)
+    const r = spawnSync("bash", [harness], { cwd: tmp, env, encoding: "utf8", timeout: RACE_TIMEOUT_MS });
+    return { status: r.status, out: r.stdout, err: r.stderr, lockDir };
+  };
+  // 待ちの上限を長くしたとき (待たずに返ることを確かめる。これだけ待つと vitest の 1 件の時間切れより長い)
+  const LONG_SLOT_WAIT_SEC = 600;
+  const portOf = (slot: string, name: string) => Number(slotValues(slot).get(name));
+  const locksLeft = (lockDir: string) => fs.readdirSync(lockDir).filter((name) => name.startsWith("slot-"));
+
+  it("取れた枠のポートを local-ci.sh 以外が使っていれば、その枠を外して次の候補の枠を使う (赤で止めない)", () => {
+    const busy = portOf("3", "SLOT_ENFORCED_APP_PORT");
+    const r = runSlots({ candidates: "3 1", busy: [busy] });
+    expect(r.status, r.err).toBe(0);
+    expect(r.out).toContain(`SLOT=1 RECLAIMED=0 APP_PORT=${portOf("1", "SLOT_APP_PORT")}`);
+    expect(r.err).toContain(`枠 3 のポート (${busy}) を local-ci.sh 以外が使っている`);
+    expect(r.out).not.toContain("RECORD");
+    // 外した枠 3 のロックも、使い終わった枠 1 のロックも残らない
+    expect(locksLeft(r.lockDir)).toEqual([]);
+  });
+
+  it("どの候補の枠もポートを local-ci.sh 以外に使われていれば、待たずに 2 で返し、使用中のポートを知らせる (ロックは残さない)", () => {
+    const b3 = portOf("3", "SLOT_APP_PORT");
+    const b1 = portOf("1", "SLOT_API_PORT");
+    // 待ちの上限を長くしても待たない (ほかの local-ci.sh が持っている枠が無いので、待っても空く見込みが無い)
+    const started = Date.now();
+    const r = runSlots({ candidates: "3 1", busy: [b3, b1], env: { HARNESS_SLOT_WAIT_SECONDS: String(LONG_SLOT_WAIT_SEC) } });
+    expect(r.status, r.err).toBe(0);
+    expect(Date.now() - started, "待たずに返る").toBeLessThan(LONG_SLOT_WAIT_SEC * 1000);
+    expect(r.out).toContain(`ACQUIRE_FAILED rc=2 note=枠 3:${b3} / 枠 1:${b1}`);
+    expect(locksLeft(r.lockDir)).toEqual([]);
+  });
+
+  it("ポートを使われている枠のほかに、生きている local-ci.sh が持つ枠があれば、空くのを待つ (時間切れは 1。使用中のポートも知らせる)", () => {
+    const b3 = portOf("3", "SLOT_NOTICE_APP_PORT");
+    const r = runSlots({ candidates: "1 3", busy: [b3], owners: { "1": liveOwner() } });
+    expect(r.status, r.err).toBe(0);
+    expect(r.out).toContain(`ACQUIRE_FAILED rc=1 note=枠 3:${b3}`);
+    // 生きている持ち主のロックはそのまま。外した枠 3 のロックは残らない
+    expect(locksLeft(r.lockDir)).toEqual(["slot-1"]);
+  });
+
+  it("e2e を回さないときは、e2e だけが使うポート (2 つ目・3 つ目のサーバー) が使用中でも、その枠を使う", () => {
+    const enforced = portOf("3", "SLOT_ENFORCED_APP_PORT");
+    const notice = portOf("3", "SLOT_NOTICE_APP_PORT");
+    const integ = runSlots({ candidates: "3", busy: [enforced, notice], stages: "integration" });
+    expect(integ.out, integ.err).toContain("SLOT=3 RECLAIMED=0");
+    const e2e = runSlots({ candidates: "3", busy: [notice], stages: "e2e" });
+    expect(e2e.out, e2e.err).toContain(`ACQUIRE_FAILED rc=2 note=枠 3:${notice}`);
+  });
+
+  it("持ち主の死んだロックを回収したときは、残ったスタックを片付けてからポートを確かめる (残ったスタックのポートで枠を外さない)", () => {
+    const lockDir = newLockDir();
+    placeLock(path.join(lockDir, "slot-1"), DEAD_OWNER);
+    const leftover = path.join(tmp, `leftover-${caseNo}`);
+    fs.writeFileSync(leftover, "");
+    const env: NodeJS.ProcessEnv = {
+      ...baseEnv(),
+      LOCK_DIR: lockDir,
+      SLOT_CANDIDATES: "1",
+      FAKE_CONTAINERS: "c0ffee",
+      FAKE_BUSY_UNTIL_CLEARED: leftover,
+      FAKE_BUSY_PORTS_BEFORE_CLEAR: String(portOf("1", "SLOT_API_PORT")),
+    };
+    const r = spawnSync("bash", [harness], { cwd: tmp, env, encoding: "utf8" });
+    expect(r.stdout, r.stderr).toContain("RUN_IN bash scripts/supabase-local.sh stop-leftover");
+    expect(r.stdout, r.stderr).toContain("SLOT=1 RECLAIMED=1");
+    expect(r.stdout).not.toContain("ACQUIRE_FAILED");
   });
 
   it("枠 0 は、回収したときも残りがあるときも片付けず、赤にもしない (枠を使わない作業と共有している)", () => {

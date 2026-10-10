@@ -101,9 +101,10 @@ LOCAL_CI_SLOT=1 bash scripts/local-ci.sh          # 枠 1 だけを使う (空�
 | 枠 | `project_id` (コンテナ・ボリューム名の元) | ローカル Supabase のポート | Next のポート (既定 / 同意の強制あり / お知らせあり) |
 |---|---|---|---|
 | 0 (既定。CI と同じ) | `homegohan-local` | 54320〜54329 (CLI の既定: API 54321・DB 54322 など) | 3000 / 3001 / 3002 |
-| n (1〜9) | `homegohan-local-s<n>` | 0 の値 + n × 100 (例: 枠 1 は API 54421・DB 54422) | 0 の値 + n × 10 (例: 枠 1 は 3010 / 3011 / 3012) |
+| n (1〜9) | `homegohan-local-s<n>` | 0 の値 + n × 100 (例: 枠 1 は API 54421・DB 54422) | 3100 + n × 10 からの 3 つ (例: 枠 1 は 3110 / 3111 / 3112、枠 3 は 3130 / 3131 / 3132) |
 
-- 値の表の正本は `scripts/lib/local-ci-slot.sh` です (`bash scripts/lib/local-ci-slot.sh 1` で枠 1 の値を表示)。`tests/local-ci-slot.test.ts` が、枠 0 が今までの値のままであることと、枠どうしで重ならないことを確かめます。
+- 値の表の正本は `scripts/lib/local-ci-slot.sh` です (`bash scripts/lib/local-ci-slot.sh 1` で枠 1 の値を表示)。`tests/local-ci-slot.test.ts` が、枠 0 が今までの値のままであることと、枠どうしで重ならないこと、macOS が既定で使うポート (Apple の [TCP and UDP ports used by Apple software products](https://support.apple.com/en-us/103229) の表) と重ならないことを確かめます。
+- 枠 1 以上の Next のポートを枠 0 (3000 台の頭) と別の帯 (3100 台) に置くのは、macOS の既定のポートを避けるためです。以前の「0 の値 + n × 10」では枠 3 の 2 つ目が 3031 になり、Remote Apple Events (eppc) の待ち受け (launchd が持つ) と重なって、枠 3 の `e2e` が毎回「使用中のポート 3031」で赤になっていました。
 - CI の yml は `scripts/supabase-local.sh` を枠を指定せずに呼ぶので、枠 0 (今までと同じ `config.toml`) で動きます。
 - 手で `LOCAL_CI_SLOT=1 bash scripts/supabase-local.sh start` のようにも使えます。作業ディレクトリは枠ごとに分かれます (枠 0 は今までどおり `.supabase-local/`、枠 n は `.supabase-local-s<n>/`)。`stop` / `status` / `env` は組み立て直さずにその枠の作業ディレクトリを使うので、**起動したときと同じ `LOCAL_CI_SLOT` を付けて**打ちます (作業ディレクトリの `config.toml` が別の枠のものなら、何もせずに止まります)。手で使うときは枠のロックを取らないので、同時に回る `local-ci.sh` の `LOCAL_CI_SLOTS` に入っていない枠を使ってください。
 - 枠は `integration` / `e2e` の直前に取り、終わったら (Ctrl-C や途中の失敗でも) 外します。`secrets` / `unit` / `mobile` だけなら取りません。ロックは `LOCAL_CI_LOCK_DIR` (既定 `${TMPDIR:-/tmp}/homegohan-local-ci-locks`) の下の `slot-<n>/` で、持ち主の pid と開始時刻を `owner` に書きます。持ち主が生きているか確かめられないとき (`ps` が動かないなど) は生きているとみなします。持ち主のプロセスが死んでいれば次の実行が回収し、**回収したときに限り**、その枠に残ったコンテナ・ボリュームも片付けます (枠 1 以上だけ。枠 0 は枠を使わない作業と共有しているので止めません)。回収していない (空いていた) 枠に、その枠の `project_id` のコンテナやボリュームがあれば (ロックを取らずに手で起動したスタックなど)、消さずに `integration:setup` / `e2e:setup` を赤にして止まります。

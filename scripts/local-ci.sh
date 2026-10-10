@@ -808,15 +808,36 @@ check_docker_memory() {
   fi
 }
 
-# acquire_slot: 空いている枠を取る。取れたら 0、待ちの時間切れなら 1
+# slot_busy_ports: いま apply_slot した枠で、回す段 (integration / e2e) が使うポートのうち、使用中のものを空白区切りで出す
+# (check_ports と同じポート: アプリの既定のポート・e2e の 2 つ目と 3 つ目・ローカル Supabase のポート)
+slot_busy_ports() {
+  local p busy="" extra=""
+  if want e2e; then extra="$ENFORCED_APP_PORT $NOTICE_APP_PORT"; fi
+  for p in $APP_PORT $extra $SUPABASE_PORTS; do
+    if port_busy "$p"; then busy="$busy${busy:+ }$p"; fi
+  done
+  printf '%s' "$busy"
+}
+
+# acquire_slot: 空いている枠を取る。取れたら 0、待ちの時間切れなら 1、
+# どの候補の枠も local-ci.sh 以外 (macOS の常駐・手で起動したサーバーなど) にポートを使われていて、待っても空く見込みが無ければ 2
+# (そのとき SLOT_BUSY_NOTE に「枠 <n>: <使用中のポート>」を入れる)。
+# ロックを取れた枠は、そのポートが空いているかをここで確かめ、使用中なら外して次の枠へ回る (赤で止めない)。
+# 枠どうしでポートは重ならず (tests/local-ci-slot.test.ts)、この枠のロックは自分が持っているので、使用中のポートの持ち主は
+# 別の枠の local-ci.sh ではない。持ち主の死んだロックを回収したときは、残ったスタックを片付けてから確かめる
+# (片付ける前に確かめると、死んだ実行が残したコンテナのポートを使用中とみなしてしまう)
+SLOT_BUSY_NOTE=""
 acquire_slot() {
-  local s deadline waited=0
+  local s deadline waited=0 held_elsewhere busy note warned=""
   mkdir -p "$LOCK_DIR" || { say "枠のロックの置き場を作れません: $LOCK_DIR"; return 1; }
   check_docker_memory
   deadline="$(($(now) + SLOT_WAIT_SECONDS))"
   while :; do
+    # held_elsewhere: この周に、別の local-ci.sh (か外側のロック) が持っていて取れなかった枠があったか (あれば、空くのを待つ意味がある)
+    held_elsewhere=0
+    note=""
     for s in $SLOT_CANDIDATES; do
-      if [ "$s" -eq 0 ] && legacy_lock_held; then continue; fi
+      if [ "$s" -eq 0 ] && legacy_lock_held; then held_elsewhere=1; continue; fi
       # 取ってから SLOT_LOCK に入れ終えるまでのシグナルは後回しにする (そこで終わると、cleanup の知らないロックが残る)
       defer_signals
       if try_lock "$LOCK_DIR/slot-$s"; then
@@ -824,20 +845,48 @@ acquire_slot() {
         SLOT_RECLAIMED="$LOCK_RECLAIMED"
       fi
       resume_signals
-      [ -n "$SLOT_LOCK" ] || continue
+      if [ -z "$SLOT_LOCK" ]; then held_elsewhere=1; continue; fi
       # 外側のロックは別の作業が mkdir するので、取ったあとにもう一度確かめる
       # (外してから SLOT_LOCK を空にするまでに終わっても、cleanup の release_lock は持ち主がこの実行のロックしか外さない)
       if [ "$s" -eq 0 ] && legacy_lock_held; then
         release_lock "$SLOT_LOCK"
         SLOT_LOCK=""
         SLOT_RECLAIMED=0
+        held_elsewhere=1
         continue
       fi
       apply_slot "$s"
+      # 持ち主の死んだロックを回収したときだけ片付ける (回収していなければ何もしない。残っていれば段の前で赤になる)
+      clear_slot_leftovers
+      busy="$(slot_busy_ports)"
+      if [ -n "$busy" ]; then
+        # 同じ枠の同じ知らせは 1 回だけ出す (待っているあいだ SLOT_POLL_SEC ごとに確かめ直す)
+        case " $warned " in
+          *" $s:$busy "*) ;;
+          *)
+            say "枠 $s のポート ($busy) を local-ci.sh 以外が使っているので、この枠を外して次の枠を探します (macOS の常駐・手で起動したサーバーなど。止めずにおきます)"
+            warned="$warned $s:$busy"
+            ;;
+        esac
+        note="$note${note:+ / }枠 $s:$busy"
+        release_lock "$SLOT_LOCK"
+        SLOT_LOCK=""
+        SLOT_RECLAIMED=0
+        SLOT=""
+        continue
+      fi
       say "枠 $s を取りました (project_id $SLOT_PROJECT_ID / Supabase API $SLOT_API_PORT / Next ${APP_PORT}・${ENFORCED_APP_PORT}・${NOTICE_APP_PORT}。ロック $SLOT_LOCK)"
       return 0
     done
-    if [ "$(now)" -ge "$deadline" ]; then return 1; fi
+    if [ "$held_elsewhere" = 0 ]; then
+      # どの候補も、ほかの local-ci.sh が持っているのではなく、ポートを使われていて取れなかった。待っても空く見込みが無い
+      SLOT_BUSY_NOTE="$note"
+      return 2
+    fi
+    if [ "$(now)" -ge "$deadline" ]; then
+      SLOT_BUSY_NOTE="$note"
+      return 1
+    fi
     if [ "$waited" = 0 ]; then
       say "空いている枠がありません (候補: $SLOT_CANDIDATES / ロック: $LOCK_DIR${LEGACY_LOCK:+ / 外側のロック: $LEGACY_LOCK})。最大 $SLOT_WAIT_SECONDS 秒待ちます"
       waited=1
@@ -1507,14 +1556,20 @@ if want mobile; then say "== mobile (mobile-test.yml)"; stage_mobile; fi
 # Docker を使う段 (integration / e2e) の前に枠を取る。secrets / unit / mobile だけなら取らない
 if want integration || want e2e; then
   say "== 枠 (候補: $SLOT_CANDIDATES)"
-  if acquire_slot; then
-    # 持ち主の死んだロックを回収したときだけ片付ける (回収していなければ何もしない。残っていれば段の前で赤になる)
-    clear_slot_leftovers
-  else
-    SLOT_TIMED_OUT=1
-    record slot:wait RED - - - - - "$SLOT_WAIT_SECONDS" "待ちの時間切れ: $SLOT_WAIT_SECONDS 秒待っても枠 ($SLOT_CANDIDATES) が空かなかった。integration / e2e は回していない (検査の失敗ではない。ロック: $LOCK_DIR${LEGACY_LOCK:+ / 外側のロック: $LEGACY_LOCK})"
-    finish
-  fi
+  # 持ち主の死んだロックを回収したときの片付けは acquire_slot の中で行う (ポートの空きを確かめる前に片付けるため)
+  acquire_slot
+  case $? in
+    0) ;;
+    2)
+      record slot:ports RED - - - - - 0 "使用中のポート (${SLOT_BUSY_NOTE}): 候補の枠 ($SLOT_CANDIDATES) のどれも、local-ci.sh 以外のプロセスやコンテナにポートを使われている。integration / e2e は回していない (止めずに赤で終える。使っているプロセスやコンテナを確かめて止めるか、LOCAL_CI_SLOTS に別の枠を足して再実行する)"
+      finish
+      ;;
+    *)
+      SLOT_TIMED_OUT=1
+      record slot:wait RED - - - - - "$SLOT_WAIT_SECONDS" "待ちの時間切れ: $SLOT_WAIT_SECONDS 秒待っても枠 ($SLOT_CANDIDATES) が空かなかった。integration / e2e は回していない (検査の失敗ではない。ロック: $LOCK_DIR${LEGACY_LOCK:+ / 外側のロック: $LEGACY_LOCK}${SLOT_BUSY_NOTE:+ / local-ci.sh 以外が使っていたポート: $SLOT_BUSY_NOTE})"
+      finish
+      ;;
+  esac
 fi
 if want integration; then say "== integration (security-regression.yml)"; stage_integration; fi
 if want e2e; then say "== e2e (e2e-local.yml)"; stage_e2e; fi
