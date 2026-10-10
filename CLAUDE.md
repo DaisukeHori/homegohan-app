@@ -88,6 +88,16 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 
 `src/lib/rate-limit.ts` に集約する (#1197)。新しい制限は `RateLimitCategory` にカテゴリを足し、`checkRateLimit(key, category)` で判定する。route ごとに Upstash / in-memory の制限を自前で作らない (`tests/rate-limit-single-implementation.test.ts` が `@upstash/ratelimit` を使うファイルを検査する)。key は認証で確定した ID を使い、ログイン前の公開 API (お問い合わせ) だけクライアント IP を使う。
 
+### 機能フラグ
+
+機能の ON/OFF は `feature_flags` テーブル (運営画面 `/super-admin/flags` で切り替える) に置き、判定は `src/lib/feature-flags.ts` の `isFeatureEnabled(key, userId?)` を使う (#1148)。route や画面ごとに `feature_flags` / `system_settings` を自分で読まない (`tests/feature-flags-single-source.test.ts` が検査する)。以前の `system_settings` の `feature_flags` は、ログイン中のユーザー自身の権限で読んでいたため、admin 以外には値が届かなかった。
+
+- 新しいフラグは、`FEATURE_FLAG_DEFAULTS` に「行が無い・読めないときの値」を足し、migration で `feature_flags` に行を作る (`ON CONFLICT (key) DO NOTHING`)。既定値は**止めない側**にする。クライアントに見せるフラグだけ `CLIENT_FEATURE_FLAG_KEYS` (`GET /api/feature-flags`) に足す。
+- `isFeatureEnabled` は例外を投げない。行が無い・読み出しに失敗・待ちきれないときは既定値で答え、失敗は構造化ログに残す。値はサーバーのメモリに 30 秒覚えるので、切り替えの反映に最大 30 秒かかる (ミドルウェアは Edge、API route は Node で、メモリは別)。
+- `ai_chat_enabled` は AI 相談の緊急停止スイッチ。通常は ON のまま使う。利用者の同意の有無で AI への送信を止めるのはこのスイッチではなく、同意の判定 (`requireAiConsent` / `checkUserAiConsent`、下の「外国の AI 事業者への提供の同意」の節) が担う (スイッチが ON でも、未同意なら送らない)。AI 相談の API を足すときは、認証のあと・レート制限の前に `aiChatDisabledResponse` (`src/lib/ai/ai-chat-gate.ts`) を呼ぶ。`maintenance_mode` はメンテナンスモード (admin / super_admin は通す。ミドルウェアが判定する)。
+- 運営画面や E2E で既存のフラグを切り替えるテストは、本番の緊急スイッチを一瞬でも動かしてしまう。テストは専用のフラグを作って切り替え、終わったら消す。
+- 「ロール認可」の節の「service_role で読むときは対象を絞る条件を付ける」の例外が 1 か所ある。運営画面の一覧が返す `active_user_count` (`src/lib/super-admin/flag-active-users.ts`) は、`requireRole(['super_admin'])` を通したあとに、サービスロールで `user_profiles` の全行を読んで人数を数える。集計なので絞り込みは付けられない。読むのは判定に要る 5 列 (id / roles / organization_id / plan_key_cached / created_at) だけで、返すのは人数だけ (メール・名前は読まない・返さない)。ユーザーが増えて重くなったら、DB 側で数える RPC に置き換える。
+
 ### 利用状況の計測 (PostHog は使わない)
 
 PostHog による利用状況の計測は採用しない (オーナー判断 2026-10-08、#1166)。Web・モバイルとも SDK を取り除いてあるので、PostHog の import・依存・環境変数・CSP の許可先を足さない (`tests/posthog-not-adopted-contract.test.ts` が検査する)。画面の例外などの記録は、サーバーログ (`app_logs`) に残す (下の「エラー境界」を参照)。

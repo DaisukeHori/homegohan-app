@@ -18,6 +18,8 @@ import { aiSummarySkippedNote } from "@/lib/ai/consent-config";
 import { todayLocal, parseLocalDate, formatLocalDate } from "@/lib/date-utils";
 // AI 応答を HTML にして dangerouslySetInnerHTML へ渡すときは、必ずこの関数を通す (#1169)
 import { parseMarkdown } from "@/lib/markdown-lite";
+// AI 相談の緊急停止中 (503 + AI_CHAT_DISABLED) にサーバーが返すやさしい文面を、そのまま画面に出す (#1148)
+import { readAiChatUnavailableMessage } from "@/lib/ai/ai-chat-unavailable";
 
 const colors = {
   primary: '#E07A5F',
@@ -404,6 +406,18 @@ export default function AIChatBubble() {
           content: 'こんにちは！🍳 ほめゴハンのAIアドバイザーです。\n\n食事や栄養のことで気になることがあれば、何でも聞いてくださいね。献立の提案や、買い物リストの作成もお手伝いできますよ！',
           createdAt: new Date().toISOString(),
         }]);
+      } else {
+        // #1148: AI 相談の緊急停止中は、サーバーのやさしい文面を出す (入力しても送れないので、セッションは作らない)
+        const unavailableMessage = await readAiChatUnavailableMessage(res);
+        if (unavailableMessage) {
+          setCurrentSessionId(null);
+          setMessages([{
+            id: 'unavailable',
+            role: 'assistant',
+            content: unavailableMessage,
+            createdAt: new Date().toISOString(),
+          }]);
+        }
       }
     } catch (e) {
       console.error('Failed to create session:', e);
@@ -475,6 +489,16 @@ export default function AIChatBubble() {
       }
 
       if (!res.ok) {
+        // #1148: AI 相談の緊急停止中は、サーバーのやさしい文面を AI の吹き出しに出す
+        const unavailableMessage = await readAiChatUnavailableMessage(res);
+        if (unavailableMessage) {
+          setMessages(prev => prev.map(m =>
+            m.id === tempAiMsgId
+              ? { ...m, content: unavailableMessage, isStreaming: false }
+              : m
+          ));
+          return;
+        }
         throw new Error(`HTTP error: ${res.status}`);
       }
 
@@ -1113,7 +1137,15 @@ export default function AIChatBubble() {
                                 undoOptimisticMessages();
                                 return;
                               }
-                              if (!res.ok) throw new Error(`HTTP error: ${res.status}`);
+                              if (!res.ok) {
+                                // #1148: AI 相談の緊急停止中は、サーバーのやさしい文面を出す
+                                const unavailableMessage = await readAiChatUnavailableMessage(res);
+                                if (unavailableMessage) {
+                                  setMessages(prev => prev.map(m => m.id === tempAiMsgId ? { ...m, content: unavailableMessage, isStreaming: false } : m));
+                                  return;
+                                }
+                                throw new Error(`HTTP error: ${res.status}`);
+                              }
                               const reader = res.body?.getReader();
                               if (!reader) throw new Error('No reader available');
                               const decoder = new TextDecoder();
