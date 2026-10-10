@@ -55,7 +55,7 @@ main へ push → GitHub Actions → Supabase Functions デプロイ
 
 ワークフロー: `.github/workflows/deploy-supabase-functions.yml`
 
-**リポジトリから関数を消すと、次のデプロイで本番からも消えます。** デプロイのあとに `scripts/edge-functions-prune.mjs` が、本番にあってこのディレクトリに無い関数 (`_` で始まらず `index.ts` を持つディレクトリが関数) を削除します (#1452)。リポジトリの関数が 0 本・削除が上限 (`EDGE_FUNCTIONS_PRUNE_MAX_DELETIONS`、既定 20 本) を超えるなどのときは 1 本も消さずにワークフローが赤になります。消すのは main の実行で、関数のディレクトリが main の最新と同じときだけです (別のブランチからの手動実行や古い実行の再実行では消しません)。手元で何が消えるかだけ見るには `node scripts/edge-functions-prune.mjs --project-ref <ref>` (既定は dry-run)。
+**リポジトリから関数を消すと、次のデプロイで本番からも消えます。** デプロイのあとに `scripts/edge-functions-prune.mjs` が、本番にあってこのディレクトリに無い関数 (`_` で始まらず `index.ts` を持つディレクトリが関数) を削除します (#1452)。リポジトリの関数が 0 本・削除が上限 (`EDGE_FUNCTIONS_PRUNE_MAX_DELETIONS`、既定 20 本) を超えるなどのときは 1 本も消さずにワークフローが赤になります。消すのは main の実行で、関数のディレクトリが main の最新と同じときだけです (別のブランチからの手動実行や古い実行の再実行では消しません)。手元から `supabase functions deploy <name>` で入れた関数や、別のブランチからの手動実行で入れた関数も、main の `supabase/functions/` に無ければ次の main のデプロイで消えます。本番に残したい関数は、必ず main にディレクトリを置きます。手元で何が消えるかだけ見るには `node scripts/edge-functions-prune.mjs --project-ref <ref>` (既定は dry-run)。
 
 この README を含む `supabase/functions/**` 配下の更新は、自動デプロイのトリガー対象です。
 
@@ -138,7 +138,7 @@ supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
    - `tests/embedding-contracts.test.ts` は、`generate-menu-v4/index.ts` を `fs.readFileSync` で読んで、`search_menu_examples` の引数名を確かめています。ファイルを消すと失敗するので、読む対象を `generate-menu-v5/index.ts` に替えます（v5 も同じ RPC を同じ引数名で呼んでいます）。
    - `scripts/smoke-generate-menu-v4.mjs` は、デプロイ済みの `generate-menu-v4` を HTTP で直接呼ぶ、手動のスモークスクリプトです（CI や `package.json` からは呼ばれていません）。v5 向けに直すか、削除します。
    - 共通部品を別の場所へ移した場合は、それを import している `tests/v4-supabase-functions.test.ts`・`tests/reference-menu-utils.test.ts`・`tests/context-utils.test.ts`・`tests/embedding-contracts.test.ts` の import 先も直します。
-4. リポジトリからディレクトリを消しても、本番にデプロイ済みの `generate-menu-v4` は消えません。`deploy-supabase-functions.yml` は、関数をデプロイする（`supabase functions deploy`）だけで、削除はしないためです。本番から外すには、呼び出し元が残っていないことを確認したうえで、別に `supabase functions delete generate-menu-v4 --project-ref flmeolcfutuwwbjmzyoz` を実行します。
+4. リポジトリからディレクトリを消して main にマージすると、そのデプロイ（`deploy-supabase-functions.yml` の削除の手順、`scripts/edge-functions-prune.mjs`）が本番の `generate-menu-v4` も削除します（#1452）。別に `supabase functions delete` を実行する必要はありません。その代わり、ディレクトリを消す PR は、手順 1〜3 で呼び出し元をすべて解消してから出します（マージした時点で本番から消えるため）。
 
 #### フラグの値の決まり方（注意）
 
