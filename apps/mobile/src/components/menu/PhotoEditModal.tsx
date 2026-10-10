@@ -17,7 +17,7 @@ import {
 
 import { getApi } from "../../lib/api";
 import { colors, radius, shadows, spacing } from "../../theme";
-import { isAiConsentRequiredError, promptAiConsentRequired } from "../../lib/ai-consent";
+import { isAiConsentRequiredError } from "../../lib/ai-consent";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -29,11 +29,17 @@ interface Props {
   visible: boolean;
   onClose: () => void;
   onResult: (analysis: MealAnalysis) => void;
+  /**
+   * 解析が「同意が必要です」で止められたときに呼ぶ (T15 / #1154)。この画面 (モーダル) は自分を閉じてから呼ぶ。
+   * 呼ばれた側 (この画面を開いたモーダル) が、自分も同意画面を隠さないようにしてから、同意画面への案内を出す
+   * (この画面だけを閉じて案内を出すと、下に開いたままの手動編集のモーダルが、案内から開いた同意画面を隠す。src/lib/ai-consent.ts の規則)
+   */
+  onAiConsentRequired: () => void;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function PhotoEditModal({ visible, onClose, onResult }: Props) {
+export function PhotoEditModal({ visible, onClose, onResult, onAiConsentRequired }: Props) {
   const [photos, setPhotos] = useState<string[]>([]); // base64
   const [analyzing, setAnalyzing] = useState(false);
 
@@ -93,11 +99,10 @@ export function PhotoEditModal({ visible, onClose, onResult }: Props) {
       onResult(data);
       handleClose();
     } catch (e: any) {
-      // 同意が必要で止められた (T15 / #1154): この画面 (モーダル) を閉じてから、同意画面への案内を出す
-      // (閉じないと、案内から開いた同意画面がモーダルの下に隠れる)
+      // 同意が必要で止められた (T15 / #1154): この画面 (モーダル) を閉じてから、開いた側に知らせる (案内は開いた側が出す)
       if (isAiConsentRequiredError(e)) {
         handleClose();
-        promptAiConsentRequired();
+        onAiConsentRequired();
         return;
       }
       Alert.alert("解析エラー", "写真の解析に失敗しました");

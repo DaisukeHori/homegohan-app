@@ -628,14 +628,36 @@ export default function WeeklyMenuPage() {
   const [pendingIsUltimate, setPendingIsUltimate] = useState(false);
   const [showV4Modal, setShowV4Modal] = useState(false);
 
-  // 同意が必要で止められたとき (T15 / #1154) の案内。開いているモーダルを閉じてから出す
-  // (閉じないと、案内から開いた同意画面がモーダルの下に隠れる)。生成を受け付ける前に止められたとき (useV4MenuGeneration) と、
-  // 受け付けたあとにサーバーが止めたとき (下の Realtime / ポーリングで「同意が必要です」の文の失敗を受けたとき) の両方で使う
+  // この画面のモーダルをすべて閉じる。同意画面を開く前に使う (下の promptAiConsentAfterClosingModals)。
+  // モーダルを足したら、ここにも足す (足さないと、同意画面がそのモーダルの下に隠れる。improve-wiring.test.ts が
+  // この画面の全モーダルの visible とここを突き合わせる)
+  const closeAllModals = () => {
+    setShowV4Modal(false);
+    setShowImproveMealModal(false);
+    setShowNutritionDetailModal(false);
+    setActiveModal(null);
+    setShowServingsModal(false);
+    setDeleteTargetMeal(null);
+    setAddMealSlotVisible(false);
+    setAddMealModalVisible(false);
+    setRecipeModalMeal(null);
+    setShowRegenerateModal(false);
+    setSelectedMealForRegen(null);
+    setShowManualEditModal(false);
+    setManualEditTargetMeal(null);
+  };
+
+  // 同意が必要で止められたとき (T15 / #1154) の案内。生成を受け付ける前に止められたとき (useV4MenuGeneration) と、
+  // 受け付けたあとにサーバーが止めたとき (下の Realtime / ポーリングで「同意が必要です」の文の失敗を受けたとき) の両方で使う。
+  //   - 生成を始めたモーダル (V4 生成・献立の改善・栄養分析の詳細) は、案内の前に閉じる
+  //   - 受け付けたあとに止められたときは、利用者が待つ間にほかのモーダル (栄養分析・手動編集など) を開いていることがある。
+  //     「同意画面を開く」を押したときに、この画面のモーダルをすべて閉じる (閉じないと、同意画面がモーダルの下に隠れる)。
+  //     案内の前には閉じない (「閉じる」を選んだときに、手動編集の途中の内容などを捨てない)
   const promptAiConsentAfterClosingModals = () => {
     setShowV4Modal(false);
     setShowImproveMealModal(false);
     setShowNutritionDetailModal(false);
-    promptAiConsentRequired();
+    promptAiConsentRequired({ beforeOpenConsentScreen: closeAllModals });
   };
 
   const { generate: v4Generate } = useV4MenuGeneration({
@@ -2307,6 +2329,7 @@ export default function WeeklyMenuPage() {
         selectedDate={selectedDate}
         advice={improveAdvice}
         onSubmit={handleImprove}
+        onAiConsentRequired={promptAiConsentAfterClosingModals}
       />
 
       {/* 栄養分析詳細モーダル (段階 3: フルスクリーン) */}

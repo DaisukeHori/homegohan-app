@@ -15,6 +15,14 @@
  * 失敗にする。失敗を表示する場所は、その文を handleStoredAiConsentFailure に渡し、true なら自分のエラー表示を出さずに終える。
  *
  * 案内の「同意画面を開く」は、アプリの同意画面 (/settings/ai-consent。Web の同じページを WebView で開く) へ移る。
+ * 同意画面は画面の遷移 (router.push) で開くので、RN の Modal が開いたままだと、同意画面はそのモーダルの下に隠れる。
+ * 案内を出す側は、「同意画面を開く」を押した時点でモーダルが 1 枚も開いていないようにする:
+ *   - 案内を出す前に閉じる (閉じても失うものが無いモーダル)。または
+ *   - promptAiConsentRequired({ beforeOpenConsentScreen }) で、「同意画面を開く」を押したときに閉じる
+ *     (案内の前に閉じると編集中の内容を捨ててしまうモーダル。「閉じる」を押したときは閉じない)
+ * モーダルの上に開く子のモーダル (1日献立の作成・写真の解析・献立の改善) は自分で案内を出さない。自分を閉じてから、
+ * 開いた側から受け取った onAiConsentRequired を呼ぶ。開いた側が自分 (と、その下のモーダル) を上の規則で閉じて案内を出す
+ * (子が自分だけを閉じて案内を出すと、下に開いたままの親のモーダルが同意画面を隠す)。
  * 画面を開くと自動で AI に送る処理 (栄養士のコメントなど) は handleAiConsentRequiredError を使わず、
  * isAiConsentRequiredError で見分けて、案内の一文 (AI_CONSENT_AUTOMATIC_LOCKED_NOTE) だけを出す (勝手に案内を出さない)。
  */
@@ -92,14 +100,30 @@ export async function isAiConsentRequiredResponse(res: Response): Promise<boolea
   }
 }
 
+/** 「同意が必要です」の案内の出し方 */
+export interface PromptAiConsentOptions {
+  /**
+   * 「同意画面を開く」を押したときに、同意画面へ移る前に呼ぶ。案内の下に開いたままのモーダルを、ここで閉じる
+   * (閉じないと、同意画面がモーダルの下に隠れる)。「閉じる」を押したときは呼ばない (編集中の内容を捨てない)
+   */
+  beforeOpenConsentScreen?: () => void;
+}
+
 /** 「同意が必要です」の案内を出す (同意画面へ移るボタン付き)。短い間に何度呼ばれても 1 回だけ出す */
-export function promptAiConsentRequired(): void {
+export function promptAiConsentRequired(options: PromptAiConsentOptions = {}): void {
   const now = Date.now();
   if (now - lastPromptAt < PROMPT_DEDUP_MS) return;
   lastPromptAt = now;
+  const { beforeOpenConsentScreen } = options;
   Alert.alert("同意が必要です", AI_CONSENT_REQUIRED_MESSAGE, [
     { text: "閉じる", style: "cancel" },
-    { text: "同意画面を開く", onPress: () => router.push(AI_CONSENT_SCREEN_PATH) },
+    {
+      text: "同意画面を開く",
+      onPress: () => {
+        beforeOpenConsentScreen?.();
+        router.push(AI_CONSENT_SCREEN_PATH);
+      },
+    },
   ]);
 }
 

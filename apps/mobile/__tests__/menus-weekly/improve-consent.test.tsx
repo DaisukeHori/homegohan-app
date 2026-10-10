@@ -9,7 +9,9 @@
  *   - 「エラー」の Alert は出ない・画面全体の失敗の表示 (onError) も出ない
  *   - 改善モーダル (と栄養分析の詳細) は閉じる (閉じないと、案内から開いた同意画面がモーダルの下に隠れる)
  * を、改善モーダルの 2 つの置き場 (週の画面・栄養分析の詳細) の両方で確かめる。
- * あわせて、改善モーダルに渡した onSubmit が同意の例外で reject した場合も、失敗を出さずに閉じて案内することを確かめる。
+ * あわせて、改善モーダルに渡した onSubmit が同意の例外で reject した場合も、失敗を出さずに閉じて、開いた側に知らせる
+ * (onAiConsentRequired) ことを確かめる。案内は開いた側が出す: 栄養分析の詳細の中に置いた改善モーダルが自分だけを閉じて
+ * 案内を出すと、下に開いたままの栄養分析の詳細が、案内から開いた同意画面を隠す (R4 の指摘と同じ型)。
  * (週の画面の配線そのもの = handleImprove と onAiConsentRequired のつながりは improve-wiring.test.ts がソースで固定する)
  */
 
@@ -87,6 +89,7 @@ function WeeklyLikeScreen({ where }: { where: 'weekly' | 'detail' }) {
         onClose={() => setShowImprove(false)}
         selectedDate={TODAY}
         onSubmit={handleImprove}
+        onAiConsentRequired={promptAiConsentAfterClosingModals}
       />
       <NutritionDetailModal
         visible={showDetail}
@@ -162,17 +165,55 @@ describe('献立を改善が「同意が必要です」で止められたとき'
 });
 
 describe('ImproveMealModal: onSubmit が「同意が必要です」で reject したとき', () => {
-  it('「改善に失敗しました」を出さず、モーダルを閉じてから案内を出す', async () => {
+  it('「改善に失敗しました」も案内も自分では出さず、モーダルを閉じてから開いた側に知らせる', async () => {
     const onClose = jest.fn();
+    const onAiConsentRequired = jest.fn();
     const onSubmit = jest.fn().mockRejectedValue(CONSENT_ERROR());
     const { getByTestId } = render(
-      <ImproveMealModal visible onClose={onClose} selectedDate={TODAY} onSubmit={onSubmit} />,
+      <ImproveMealModal
+        visible
+        onClose={onClose}
+        selectedDate={TODAY}
+        onSubmit={onSubmit}
+        onAiConsentRequired={onAiConsentRequired}
+      />,
     );
 
     fireEvent.press(getByTestId('improve-meal-submit'));
 
-    await waitFor(() => expect(alertTitles()).toEqual(['同意が必要です']));
+    await waitFor(() => expect(onAiConsentRequired).toHaveBeenCalledTimes(1));
     expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose.mock.invocationCallOrder[0]).toBeLessThan(onAiConsentRequired.mock.invocationCallOrder[0]);
+    expect(alertTitles()).toEqual([]);
+  });
+
+  it('栄養分析の詳細の中の改善モーダル: 栄養分析の詳細も閉じてから案内を出す (詳細が同意画面を隠さない)', async () => {
+    const onCloseDetail = jest.fn();
+    const onImprove = jest.fn().mockRejectedValue(CONSENT_ERROR());
+    const { getByTestId, queryByTestId } = render(
+      <NutritionDetailModal
+        visible
+        onClose={onCloseDetail}
+        date={TODAY}
+        dateLabel="10/8"
+        totals={{}}
+        mealCount={3}
+        radarKeys={[]}
+        onRadarKeysSaved={jest.fn()}
+        onImprove={onImprove}
+      />,
+    );
+
+    fireEvent.press(getByTestId('nutrition-detail-improve-btn'));
+    fireEvent.press(getByTestId('improve-meal-submit'));
+
+    await waitFor(() => expect(alertTitles()).toEqual(['同意が必要です']));
+    expect(alertMock).toHaveBeenCalledWith('同意が必要です', AI_CONSENT_REQUIRED_MESSAGE, expect.any(Array));
+    // 栄養分析の詳細を閉じたあとに案内を出す
+    expect(onCloseDetail).toHaveBeenCalledTimes(1);
+    expect(onCloseDetail.mock.invocationCallOrder[0]).toBeLessThan(alertMock.mock.invocationCallOrder[0]);
+    // 改善モーダルも閉じている。「エラー」は出さない
+    await waitFor(() => expect(queryByTestId('improve-meal-modal')).toBeNull());
     expect(alertTitles()).not.toContain('エラー');
   });
 });

@@ -10,6 +10,9 @@
  *    - aiSkipped が無い (要約するほどの会話が無かった) ときは、一文を出さない。
  * 2. メッセージを送って「同意が必要です」(403 AI_CONSENT_REQUIRED) で止められたとき
  *    - エラーの Alert は出さず、シートを閉じてから同意画面への案内を出し、入力を戻す。
+ * 3. シートの上に開く「1日献立変更」(AIDayMenuModal) の作成が「同意が必要です」で止められたとき
+ *    - 1日献立のモーダルだけでなく、シートも閉じてから案内を出す (シートが開いたままだと、案内から開いた同意画面が
+ *      シートの下に隠れる。R4 の指摘)。「エラー」の Alert は出さない。
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
@@ -43,8 +46,9 @@ jest.mock('expo-linear-gradient', () => ({
 }));
 
 import React from 'react';
+import { router } from 'expo-router';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
-import { resetAiConsentPromptForTests } from '../../src/lib/ai-consent';
+import { AI_CONSENT_SCREEN_PATH, resetAiConsentPromptForTests } from '../../src/lib/ai-consent';
 import {
   AI_CONSENT_CHECK_FAILED_CODE,
   AI_CONSENT_REQUIRED_CODE,
@@ -172,5 +176,44 @@ describe('AIAdvisorSheet — メッセージの送信が「同意が必要です
       `http://localhost:3000/api/ai/consultation/sessions/${OLD_SESSION.id}/messages?stream=true`,
       expect.objectContaining({ method: 'POST' }),
     );
+  });
+});
+
+describe('AIAdvisorSheet — 1日献立の作成が「同意が必要です」で止められたとき', () => {
+  const V4_GENERATE_PATH = '/api/ai/menu/v4/generate';
+  const DAY_MENU_TITLE = '1日献立を作成';
+
+  type AlertButton = { text?: string; onPress?: () => void };
+
+  it('1日献立のモーダルとシートの両方を閉じてから案内を出し、「エラー」は出さない。「同意画面を開く」で同意画面へ移る', async () => {
+    const onClose = jest.fn();
+    await openSheet(onClose);
+    mockPost.mockImplementation(async (path: string) => {
+      if (path === V4_GENERATE_PATH) throw new Error(`HTTP 403 Forbidden: ${CONSENT_BODY}`);
+      if (path === '/api/ai/consultation/sessions') return { success: true, session: { id: NEW_SESSION_ID } };
+      throw new Error(`unexpected POST ${path}`);
+    });
+
+    // メッセージは何も送らずに「1日献立変更」を押す (未同意の利用者が 1 回の操作で着く経路)
+    fireEvent.press(screen.getByTestId('ai-day-menu-btn'));
+    expect(screen.getByText(DAY_MENU_TITLE)).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByText('作成する'));
+    });
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('同意が必要です', AI_CONSENT_REQUIRED_MESSAGE, expect.any(Array)), WAIT);
+    expect(mockPost).toHaveBeenCalledWith(V4_GENERATE_PATH, expect.anything());
+    // シートを閉じたあとに案内を出す (先に出すと、案内から開いた同意画面がシートの下に隠れる)
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose.mock.invocationCallOrder[0]).toBeLessThan(alertSpy.mock.invocationCallOrder[0]);
+    // 1日献立のモーダルも閉じている
+    await waitFor(() => expect(screen.queryByText(DAY_MENU_TITLE)).toBeNull(), WAIT);
+    // 「エラー」の Alert は出さない
+    expect(alertSpy.mock.calls.map((c) => c[0])).toEqual(['同意が必要です']);
+
+    // 案内の「同意画面を開く」で同意画面へ移る
+    const buttons = alertSpy.mock.calls[0][2] as AlertButton[];
+    buttons.find((b) => b.text === '同意画面を開く')?.onPress?.();
+    expect(router.push).toHaveBeenCalledWith(AI_CONSENT_SCREEN_PATH);
   });
 });

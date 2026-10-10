@@ -151,6 +151,15 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
   const scrollRef = useRef<ScrollView>(null);
 
+  // 同意が必要で止められたとき (T15 / #1154) の案内。シートの上の 1日献立のモーダルと、このシート (モーダル) を閉じてから出す
+  // (閉じないと、案内から開いた同意画面がモーダルの下に隠れる)。シートは閉じても外されない (AIFloatingFab が置いたまま) ので、
+  // 会話と入力は残る。案内の前に閉じてよい。メッセージの送信と、1日献立の作成 (AIDayMenuModal が自分を閉じてから呼ぶ) の両方で使う
+  function closeSheetAndPromptAiConsent() {
+    setDayMenuModalVisible(false);
+    onClose();
+    promptAiConsentRequired();
+  }
+
   // 起動時セッション一覧取得
   useEffect(() => {
     if (!visible) return;
@@ -477,12 +486,11 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     } catch (e: any) {
       setStreamingContent(null);
       // 同意が必要で止められた (T15 / #1154): 送らなかったので、メッセージを消して入力を戻す。
-      // このシート (モーダル) を閉じてから同意画面への案内を出す (閉じないと、同意画面がモーダルの下に隠れる)
+      // このシート (モーダル) を閉じてから同意画面への案内を出す (closeSheetAndPromptAiConsent)
       if (isAiConsentRequiredError(e)) {
         setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
         setInputText(trimmed);
-        onClose();
-        promptAiConsentRequired();
+        closeSheetAndPromptAiConsent();
         return;
       }
       if (e?.name === "AbortError") {
@@ -715,10 +723,14 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* 1日献立モーダル */}
+      {/*
+        1日献立モーダル。同意が必要で止められたら、このシートも閉じてから案内を出す (シートが同意画面を隠さないように)。
+        シートが閉じられたら一緒に閉じる (visible && …。シートの上に重ねたモーダルだけが残らないように)
+      */}
       <AIDayMenuModal
-        visible={dayMenuModalVisible}
+        visible={visible && dayMenuModalVisible}
         onClose={() => setDayMenuModalVisible(false)}
+        onAiConsentRequired={closeSheetAndPromptAiConsent}
       />
     </>
   );
