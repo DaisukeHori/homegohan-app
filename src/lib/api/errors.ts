@@ -25,8 +25,8 @@
  *       docs/design/cross/04-api-conventions.md §5.2 の形。
  *
  * 4xx の検証メッセージ (こちらが書いた文面) はこの関数の対象外。そのまま返してよい。
- * このヘルパーを使わずに JSON 本文へ error.message を入れている route は、
- * tests/api-raw-error-message-scan.test.ts の許可リストに載っている。直したらリストから外す。
+ * 応答の本文にエラーの message / details / hint を入れていないことは、tests/api-raw-error-message-scan.test.ts が
+ * src/app/api の全 route を走査して確かめる (1 件でもあれば失敗する)。
  */
 import { NextResponse } from 'next/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';

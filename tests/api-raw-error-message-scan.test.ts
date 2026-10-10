@@ -444,13 +444,20 @@ function responseBodiesOf(sf: ts.SourceFile): ResponseBody[] {
   return bodies;
 }
 
+function parseSource(source: string, fileName: string): ts.SourceFile {
+  const kind = fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  return ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, kind);
+}
+
 /** ソースの中で、エラー由来の値を本文に入れている応答 (NextResponse.json など) を探す */
 function findRawErrorMessageResponses(source: string, fileName = 'route.ts'): Finding[] {
-  const kind = fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
-  const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, kind);
+  return findingsOf(parseSource(source, fileName));
+}
+
+function findingsOf(sf: ts.SourceFile, bodies: ResponseBody[] = responseBodiesOf(sf)): Finding[] {
   const findings: Finding[] = [];
 
-  for (const { call, body, statuses } of responseBodiesOf(sf)) {
+  for (const { call, body, statuses } of bodies) {
     const sources = rawSourcesOf(body);
     if (sources.length === 0) continue;
     // 4xx で返してよいのは、こちらが書いた文面 (AuthError・zod など) だけ。DB の結果のエラー文は 4xx でも出さない
@@ -483,10 +490,10 @@ const scanned = new Map<string, Finding[]>();
 let responseBodyCount = 0;
 for (const file of collectSourceFiles(path.join(ROOT, SCAN_ROOT)).sort()) {
   const relative = path.relative(ROOT, file).split(path.sep).join('/');
-  const source = fs.readFileSync(file, 'utf-8');
-  scanned.set(relative, findRawErrorMessageResponses(source, relative));
-  const kind = relative.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
-  responseBodyCount += responseBodiesOf(ts.createSourceFile(relative, source, ts.ScriptTarget.Latest, true, kind)).length;
+  const sf = parseSource(fs.readFileSync(file, 'utf-8'), relative);
+  const bodies = responseBodiesOf(sf);
+  scanned.set(relative, findingsOf(sf, bodies));
+  responseBodyCount += bodies.length;
 }
 
 const describeFindings = (findings: Finding[]) => findings.map((f) => `    L${f.line}: ${f.text}`).join('\n');
