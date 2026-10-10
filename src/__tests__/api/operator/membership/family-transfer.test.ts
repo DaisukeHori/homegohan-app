@@ -415,7 +415,8 @@ describe('POST /api/operator/membership/family/[id]/transfer: 通知メールの
     expect(mocks.logError).toHaveBeenCalledTimes(1);
     expect(mocks.logError).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ message: 'Supabase service role env missing' }),
+      // 接続情報は env-required の getter で取り出す (#1434)。変数名は envName にだけ入り、message は固定の文
+      expect.objectContaining({ name: 'MissingEnvError', envName: 'SUPABASE_SERVICE_ROLE_KEY' }),
       { family_id: FAMILY_ID, to_user_id: NEW_REP_ID },
     );
   });
@@ -476,7 +477,6 @@ describe('POST /api/operator/membership/family/[id]/transfer: RPC のエラー',
   it.each([
     ['TARGET_NOT_IN_FAMILY', 'TARGET_NOT_IN_FAMILY', 400],
     ['NOT_OPERATOR', 'FORBIDDEN', 403],
-    ['connection to server was lost', 'INTERNAL_ERROR', 400],
   ])('RPC が %s で失敗: %s (%i) を返し、通知メールは送らない', async (message, code, status) => {
     mocks.rpc.mockResolvedValue({ data: null, error: { message, code: 'P0001' } });
 
@@ -487,6 +487,21 @@ describe('POST /api/operator/membership/family/[id]/transfer: RPC のエラー',
     expect(json.error.code).toBe(code);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     expect(mocks.logError).not.toHaveBeenCalled();
+  });
+
+  it('RPC が想定外のエラーで失敗: DB の生のエラー文を本文に出さず、汎用の 500 にして構造化ログへ残す (#1172 / #1434)', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'connection to server was lost', code: '08006' } });
+
+    const res = await call();
+    const text = await res.text();
+
+    expect(res.status).toBe(500);
+    expect(JSON.parse(text)).toEqual({ error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました' } });
+    expect(text).not.toContain('connection to server was lost');
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(mocks.withUser).toHaveBeenCalledWith(OPERATOR_ID);
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+    expect(mocks.logError.mock.calls[0][1]).toMatchObject({ message: 'connection to server was lost' });
   });
 
   it('存在しない家族: 事前取得を失敗扱いにせず、RPC のエラー (TARGET_NOT_IN_FAMILY) をそのまま返す', async () => {

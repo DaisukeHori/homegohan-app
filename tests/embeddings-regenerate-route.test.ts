@@ -53,6 +53,20 @@ describe('POST /api/super-admin/embeddings/regenerate (#1041 F4-12)', () => {
     expect(json.error.code).toBe('OP_EMBEDDING_JOB_UNAVAILABLE');
   });
 
+  it('Supabase 接続情報が空白だけでも未設定として 503 を返し、Edge Function を呼ばない (#1434)', async () => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = '   ';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-role-key';
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    const res = await POST(postRequest({ table: 'dataset_ingredients' }));
+
+    expect(res.status).toBe(503);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('OP_EMBEDDING_JOB_UNAVAILABLE');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
   it('Edge Function 呼び出し失敗時は偽成功にせず 502 を返す', async () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example.supabase.co';
     process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-role-key';

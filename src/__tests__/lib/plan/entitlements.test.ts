@@ -194,6 +194,22 @@ describe('aiUsageRecordedHeaders: 記録済みの印 (Next.js -> Edge Function)'
     expect(first).not.toBe(later);
   });
 
+  it('SERVICE_ROLE_JWT が空白だけなら、設定されていないものとして SUPABASE_SERVICE_ROLE_KEY で署名する (#1434)', async () => {
+    vi.stubEnv('SERVICE_ROLE_JWT', '   ');
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-role-key-for-test');
+
+    const value = (await aiUsageRecordedHeaders(USER_ID))[AI_USAGE_RECORDED_HEADER];
+
+    expect(await verifyAiUsageRecorded(value, USER_ID, ['service-role-key-for-test'])).toBe(true);
+  });
+
+  it('鍵が空白だけでも、鍵が無い環境として印を付けない (#1434)', async () => {
+    vi.stubEnv('SERVICE_ROLE_JWT', '');
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', '   ');
+
+    expect(await aiUsageRecordedHeaders(USER_ID)).toEqual({});
+  });
+
   it('鍵が無い環境・ユーザー ID が空のときは、印を付けない (空のヘッダー。Edge Function が記録するだけ)', async () => {
     vi.stubEnv('SERVICE_ROLE_JWT', '');
     vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', '');
