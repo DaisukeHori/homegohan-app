@@ -11,12 +11,21 @@
  *   - nps 以外 (revenue / invoices / subscriptions) は、finance も今までどおり書き出せる。
  *   - 入口の認可 (未認証は 401、support や一般ユーザーは 403) は変えない。
  *
+ * #1433: 期間 (from / to。画面の日付の入力。どちらの日も含む) を JST の暦日で絞る。
+ *   invoices (received_at)・subscriptions (created_at)・nps (sent_at) は timestamptz の列なので、以前のように日付の文字列を
+ *   そのまま .gte / .lte に渡さず (DB は UTC の 0 時 = JST 9 時と読み、開始日の JST 0:00〜8:59 の行と、
+ *   終了日の JST 9:00 以降の行が落ちていた)、開始日の JST 0 時以上 (.gte)・終了日の翌日の JST 0 時未満 (.lt) で絞る。
+ *   revenue (revenue_snapshots.date) は date 型の列 (暦日そのもの) なので、日付のまま .gte / .lte。
+ *   本文の形が違う (存在しない日付・時刻つきの期間・知らない種別) ときは 400 (DB を読まず、監査ログも作らない)。
+ *
  * Supabase クライアントはモック。route 全体の結果は tests/integration/operator/admin-finance-detail.test.ts で、
  * 実 DB を使って検証する。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { AuthError, ForbiddenError } from '../src/lib/auth/errors';
+import { TEST_TIME_ZONES, withTimeZoneAsync } from './helpers/time-zones';
+import { JST_1010_BOUNDARY_TIMES, satisfiesRangeFilters, type RangeFilter } from './helpers/timestamptz';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // モック
@@ -285,8 +294,11 @@ describe('POST /api/admin/finance/exports — NPS の書き出しは admin / sup
     const chains = chainsOf('nps_surveys');
     expect(chains).toHaveLength(1);
     expect(callsOf(chains[0], 'select')).toEqual([['id, user_id, score, comment, plan_key, sent_at, responded_at']]);
-    expect(callsOf(chains[0], 'gte')).toEqual([['sent_at', '2026-03-01']]);
-    expect(callsOf(chains[0], 'lte')).toEqual([['sent_at', '2026-03-31']]);
+    // 送信日 (sent_at。timestamptz) は、開始日 3/1 の JST 0 時以上・終了日 3/31 の翌日の JST 0 時未満 (#1433)
+    expect(callsOf(chains[0], 'gte')).toEqual([['sent_at', '2026-02-28T15:00:00.000Z']]);
+    expect(callsOf(chains[0], 'lt')).toEqual([['sent_at', '2026-03-31T15:00:00.000Z']]);
+    expect(callsOf(chains[0], 'lte')).toEqual([]);
+    // 監査ログには、画面で選んだ日付をそのまま残す
     expect(auditInserts()).toEqual([
       expect.objectContaining({
         actor_id: ACTOR_ID,
@@ -344,5 +356,118 @@ describe('POST /api/admin/finance/exports — nps 以外の種別は、finance �
     const res = await POST(postRequest({ export_type: exportType }));
     expect(res.status).toBe(200);
     expect((await res.text()).split('\n')[0]).toBe(header);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// POST: 期間は JST の暦日 (#1433)
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** timestamptz の列で期間を絞る種別 (route が読むテーブルと、期間の列) */
+const TIMESTAMPTZ_PERIOD_TYPES = [
+  { exportType: 'invoices', table: 'stripe_webhook_events', column: 'received_at' },
+  { exportType: 'subscriptions', table: 'personal_subscriptions', column: 'created_at' },
+  { exportType: 'nps', table: 'nps_surveys', column: 'sent_at' },
+] as const;
+
+/** テーブルの問い合わせに付いた、列 column の範囲の絞り込み */
+function rangeFiltersOf(table: string, column: string): RangeFilter[] {
+  return chainsOf(table).flatMap((chain) =>
+    chain.calls
+      .filter((c) => ['gte', 'gt', 'lte', 'lt'].includes(c.method) && c.args[0] === column)
+      .map((c) => ({ method: c.method as RangeFilter['method'], value: String(c.args[1]) })),
+  );
+}
+
+describe.each(TIMESTAMPTZ_PERIOD_TYPES)('POST /api/admin/finance/exports — $exportType の期間 ($column) は JST の暦日 (#1433)', ({ exportType, table, column }) => {
+  it.each(TEST_TIME_ZONES)(
+    'TZ=%s でも、from=to=10/10 は JST 10/10 0:00 〜 23:59:59.999999 の行だけ (JST 0:00 ちょうど・8:59:59 は入り、翌日の 0:00 は入らない)',
+    async (tz) => {
+      const res = await withTimeZoneAsync(tz, () => POST(postRequest({ export_type: exportType, from: '2026-10-10', to: '2026-10-10' })));
+      expect(res.status).toBe(200);
+      const filters = rangeFiltersOf(table, column);
+      expect(filters).toEqual([
+        { method: 'gte', value: '2026-10-09T15:00:00.000Z' },
+        { method: 'lt', value: '2026-10-10T15:00:00.000Z' },
+      ]);
+      // 実際に残る行 (timestamptz と同じくマイクロ秒の精度で比べる)
+      expect(JST_1010_BOUNDARY_TIMES.filter((row) => satisfiesRangeFilters(row.at, filters)).map((row) => row.id)).toEqual(
+        JST_1010_BOUNDARY_TIMES.filter((row) => row.inJst1010).map((row) => row.id),
+      );
+    },
+  );
+
+  it('以前の書き方 (日付の文字列をそのまま .gte / .lte) では、JST 10/10 の 9:00 ちょうどの行しか残らなかった (直した不具合)', () => {
+    const legacy: RangeFilter[] = [
+      { method: 'gte', value: '2026-10-10T00:00:00Z' }, // DB は '2026-10-10' を UTC の 0 時と読む
+      { method: 'lte', value: '2026-10-10T00:00:00Z' },
+    ];
+    expect(JST_1010_BOUNDARY_TIMES.filter((row) => satisfiesRangeFilters(row.at, legacy)).map((row) => row.id)).toEqual([
+      'jst-10-10-09:00',
+    ]);
+  });
+
+  it.each([
+    ['開始日だけ', { from: '2026-10-10' }, [{ method: 'gte', value: '2026-10-09T15:00:00.000Z' }]],
+    ['終了日だけ', { to: '2026-10-10' }, [{ method: 'lt', value: '2026-10-10T15:00:00.000Z' }]],
+    [
+      '月末をまたぐ (10/31 〜 11/1)',
+      { from: '2026-10-31', to: '2026-11-01' },
+      [
+        { method: 'gte', value: '2026-10-30T15:00:00.000Z' },
+        { method: 'lt', value: '2026-11-01T15:00:00.000Z' },
+      ],
+    ],
+    [
+      '年末をまたぐ (12/31 〜 1/1)',
+      { from: '2026-12-31', to: '2027-01-01' },
+      [
+        { method: 'gte', value: '2026-12-30T15:00:00.000Z' },
+        { method: 'lt', value: '2027-01-01T15:00:00.000Z' },
+      ],
+    ],
+    ['期間なし', {}, []],
+    ['空欄 (空文字) は「指定なし」', { from: '', to: '' }, []],
+  ] as const)('%s', async (_label, period, expected) => {
+    const res = await POST(postRequest({ export_type: exportType, ...period }));
+    expect(res.status).toBe(200);
+    expect(rangeFiltersOf(table, column)).toEqual(expected);
+  });
+});
+
+describe('POST /api/admin/finance/exports — revenue (date 型の列) は日付のまま両端を含めて絞る', () => {
+  it('from / to をそのまま .gte / .lte に渡す (暦日そのものの列なので、時刻に直さない)', async () => {
+    const res = await POST(postRequest({ export_type: 'revenue', from: '2026-10-10', to: '2026-10-10' }));
+    expect(res.status).toBe(200);
+    const chains = chainsOf('revenue_snapshots');
+    expect(chains).toHaveLength(1);
+    expect(callsOf(chains[0], 'gte')).toEqual([['date', '2026-10-10']]);
+    expect(callsOf(chains[0], 'lte')).toEqual([['date', '2026-10-10']]);
+    expect(callsOf(chains[0], 'lt')).toEqual([]);
+  });
+});
+
+describe('POST /api/admin/finance/exports — 本文の形が違うときは 400 (#1433)', () => {
+  it.each([
+    ['存在しない日付', { export_type: 'invoices', from: '2026-02-30' }],
+    ['形の違う日付', { export_type: 'subscriptions', to: '2026/10/10' }],
+    ['時刻つきの期間 (日付だけを受ける)', { export_type: 'nps', to: '2026-03-31T23:59:59Z' }],
+    ['日付でない文字列', { export_type: 'revenue', from: 'garbage' }],
+    ['知らない種別', { export_type: 'INVALID_TYPE' }],
+    ['種別なし', {}],
+  ])('%s は 400 (VALIDATION_ERROR)。DB を読まず、監査ログも作らない', async (_label, body) => {
+    const res = await POST(postRequest(body));
+    expect(res.status).toBe(400);
+    expect(res.headers.get('Content-Disposition')).toBeNull();
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('VALIDATION_ERROR');
+    expect(mocks.chains).toHaveLength(0);
+    expect(auditInserts()).toEqual([]);
+  });
+
+  it('400 より先に入口の認可を確かめる (一般ユーザーは、本文の形が違っても 403)', async () => {
+    actAs('user');
+    const res = await POST(postRequest({ export_type: 'nps', from: '2026-02-30' }));
+    expect(res.status).toBe(403);
+    expect(mocks.chains).toHaveLength(0);
   });
 });

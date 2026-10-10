@@ -7,8 +7,13 @@
  * PostgREST が 42703 で失敗し、この API は常に 500 になっていた (#1306)。
  * 画面が読むレスポンスの項目名 (cost_usd など) は変えず、値は estimated_cost_usd から作る。
  * 列の有無は tests/integration/security/select-columns-exist.test.ts で本番スキーマと突き合わせる。
+ *
+ * 期間 (開始日・終了日) と日次の系列は JST の暦日で決める (#1433)。created_at は timestamptz なので、
+ * 日付の文字列をそのまま渡さず (DB は UTC の 0 時 = JST 9 時と読み、JST の 0:00〜8:59 の行が前日に入る)、
+ * JST 0 時の時刻にしてから絞る。日次の系列も created_at を JST の暦日にまとめる。
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { jstDayOfTimestamp, jstDayRangeTimestamps, llmUsageRange } from '@/lib/jst-day-ranges';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
@@ -46,17 +51,10 @@ export async function GET(request: NextRequest) {
 
     const { period, from, to, model, function: functionName, provider } = parsed.data;
 
-    // 期間の計算
-    let fromDate: string;
-    const toDate = to ?? new Date().toISOString().slice(0, 10);
-    if (period === 'custom' && from) {
-      fromDate = from;
-    } else {
-      const days = period === '1d' ? 1 : period === '7d' ? 7 : 30;
-      const d = new Date();
-      d.setDate(d.getDate() - days);
-      fromDate = d.toISOString().slice(0, 10);
-    }
+    // 期間の計算 (開始日・終了日の既定は JST の暦日。#1433)
+    const { fromDate, toDate } = llmUsageRange({ period, from, to });
+    // created_at (timestamptz) と比べる時刻。開始日の JST 0 時から、終了日の翌日の JST 0 時の手前まで
+    const { fromTimestamp, toTimestampExclusive } = jstDayRangeTimestamps(fromDate, toDate);
 
     let query = supabase
       .from('llm_usage_logs')
@@ -64,8 +62,8 @@ export async function GET(request: NextRequest) {
       // Edge Function は LLM 呼び出しごとの行に加えて、1 回の実行ごとの合計行 (is_summary = true, model = 'mixed') を
       // 入れる。合計行まで足すとトークン・コスト・リクエスト数が二重に数えられるため、呼び出しごとの行だけを集計する。
       .eq('is_summary', false)
-      .gte('created_at', fromDate)
-      .lte('created_at', toDate + 'T23:59:59Z');
+      .gte('created_at', fromTimestamp)
+      .lt('created_at', toTimestampExclusive);
 
     if (model) query = query.eq('model', model);
     if (functionName) query = query.eq('function_name', functionName);
@@ -141,12 +139,12 @@ export async function GET(request: NextRequest) {
         is_anomaly: stats.requests > 5000,
       }));
 
-    // 日次時系列
+    // 日次時系列 (JST の暦日ごと。created_at.slice(0, 10) は UTC の暦日になるので使わない)
     const dateMap = new Map<string, { cost_usd: number; requests: number }>();
     for (const r of rows) {
       // created_at は期間の条件で絞っているので null の行は来ないが、列の定義上は null を取りうる
-      const date = (r.created_at ?? '').slice(0, 10);
-      if (!date) continue;
+      if (!r.created_at) continue;
+      const date = jstDayOfTimestamp(r.created_at);
       const cur = dateMap.get(date) ?? { cost_usd: 0, requests: 0 };
       dateMap.set(date, { cost_usd: cur.cost_usd + costOf(r), requests: cur.requests + 1 });
     }

@@ -19,6 +19,7 @@ import { renderOrgInviteNewEmail } from '@/lib/emails/membership/org-invite-new'
 import type { InviteEmailVars } from '@/lib/emails/membership/templates';
 import { checkInviteEmailLimits, inviteThrottleFailureFromRpcError } from '@/lib/membership/invite-throttle';
 import { buildOrgInviteUrl } from '@/lib/membership/urls';
+import { jstDayOfTimestamp } from '@/lib/jst-day-ranges';
 
 export type OrgInviteRole = 'admin' | 'member';
 
@@ -135,18 +136,20 @@ export async function createOrgInviteWithEmail(params: CreateOrgInviteParams): P
   });
   const isExistingUser = (inviteDetails as Record<string, unknown> | null)?.is_existing_user === true;
 
-  const emailVars: InviteEmailVars = {
-    display_name: displayName ?? null,
-    email_address: email,
-    inviter_name: inviter.nickname ?? inviter.email?.split('@')[0] ?? '招待者',
-    scope_name: orgData?.name ?? '組織',
-    invite_url: inviteUrl,
-    expires_at: inviteRow.expires_at.substring(0, 10), // 'YYYY-MM-DD'
-    custom_message: customMessage ?? null,
-  };
-
   // Resend 送信 (失敗時は warn のみ — 招待 row は残す)
   try {
+    const emailVars: InviteEmailVars = {
+      display_name: displayName ?? null,
+      email_address: email,
+      inviter_name: inviter.nickname ?? inviter.email?.split('@')[0] ?? '招待者',
+      scope_name: orgData?.name ?? '組織',
+      invite_url: inviteUrl,
+      // 'YYYY-MM-DD'。期限の時刻 (timestamptz) が属する JST の暦日 (#1433)。
+      // expires_at.substring(0, 10) は UTC の暦日になり、期限が JST 0:00〜8:59 のとき 1 日早い日付を書いていた。
+      // 読めない時刻なら RangeError になり、下の catch でメールだけ諦める (作った招待は残す)
+      expires_at: jstDayOfTimestamp(inviteRow.expires_at),
+      custom_message: customMessage ?? null,
+    };
     const envelope = isExistingUser ? renderOrgInviteExistingEmail(emailVars) : renderOrgInviteNewEmail(emailVars);
     const sent = await sendEmail(envelope);
     // sendEmail は配信の失敗で例外を投げず、結果で返す。失敗も下の catch で、他の失敗と同じように警告に残す
