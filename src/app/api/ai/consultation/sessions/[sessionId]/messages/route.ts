@@ -12,6 +12,13 @@ import { AI_ALLOWED_MEAL_TYPES, runConsultationAction } from '@/lib/ai/consultat
 import { CANONICAL_GOAL_TYPES, describeGoalRangesForPrompt } from '@/lib/health-goal-types';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
+/**
+ * AI に渡す日付 (過去の相談の日・重要なメッセージの日・今日) を書くタイムゾーン (#1433)。
+ * サーバー (Vercel) のタイムゾーンは UTC なので、指定しない toLocaleDateString は UTC の暦日になり、
+ * JST 0:00〜8:59 の出来事が前日の日付で AI に伝わっていた
+ */
+const PROMPT_DATE_TIME_ZONE = 'Asia/Tokyo';
+
 // #1047 F2-21: アクション自動実行を self-fetch
 // (`${NEXT_PUBLIC_APP_URL}/api/ai/consultation/actions/.../execute`) 経由で行うと、
 // serverless 環境で NEXT_PUBLIC_APP_URL 未設定時に localhost へ fetch してしまい
@@ -504,7 +511,7 @@ ${pastSessions.map((s: any) => {
   const keyFacts = s.context_snapshot?.key_facts || [];
   const userInsights = s.context_snapshot?.user_insights || [];
   return `
-■ ${s.title}（${s.summary_generated_at ? new Date(s.summary_generated_at).toLocaleDateString('ja-JP') : '日付不明'}）
+■ ${s.title}（${s.summary_generated_at ? new Date(s.summary_generated_at).toLocaleDateString('ja-JP', { timeZone: PROMPT_DATE_TIME_ZONE }) : '日付不明'}）
   概要: ${s.summary || '要約なし'}
   トピック: ${(s.key_topics || []).join(', ') || 'なし'}
   ${keyFacts.length > 0 ? `重要な事実:
@@ -517,7 +524,7 @@ ${keyFacts.map((f: any) => `    - [${f.category}] ${f.date ? f.date + ': ' : ''}
   const importantMessagesInfo = importantMessages && importantMessages.length > 0 ? `
 【⭐ ユーザーが重要とマークした過去の会話（最新20件）】
 ${importantMessages.map((m: any) => {
-  const date = new Date(m.created_at).toLocaleDateString('ja-JP');
+  const date = new Date(m.created_at).toLocaleDateString('ja-JP', { timeZone: PROMPT_DATE_TIME_ZONE });
   const role = m.role === 'user' ? 'ユーザー' : 'AI';
   const reason = m.importance_reason ? ` (理由: ${m.importance_reason})` : '';
   const category = m.metadata?.category ? ` [${m.metadata.category}]` : '';
@@ -538,7 +545,7 @@ ${importantMessages.map((m: any) => {
     month: 'long',
     day: 'numeric',
     weekday: 'long',
-    timeZone: 'Asia/Tokyo',
+    timeZone: PROMPT_DATE_TIME_ZONE,
   });
 
   // 明日の日付（JST基準）

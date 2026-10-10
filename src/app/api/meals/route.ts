@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { jstToday } from '@/lib/jst-day-ranges';
 import { NextResponse } from 'next/server';
 import { buildCatalogSelectionUpdate } from '../../../lib/catalog-products';
 import {
@@ -28,8 +29,8 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const date = searchParams.get('date');
 
-    // 日付が指定されていない場合は今日
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    // 日付が指定されていない場合は今日 (JST の暦日。#1433)
+    const targetDate = date || jstToday();
 
     // user_daily_mealsとplanned_mealsをJOINして取得
     const { data: dailyMeal, error: dayError } = await supabase

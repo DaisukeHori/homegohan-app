@@ -15,7 +15,7 @@ import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { recordAiUsage } from '@/lib/plan/entitlements';
-import { todayLocal } from '@/lib/date-utils';
+import { addDaysToDate, todayLocal } from '@/lib/date-utils';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 const VALID_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
@@ -83,10 +83,9 @@ function toOptionalInt(value: unknown): number | null {
   return null;
 }
 
+// 暦日 (YYYY-MM-DD) を days 日ずらす (#1433。v4 のルートと同じ関数にそろえる)
 function addDays(dateStr: string, days: number): string {
-  const date = new Date(`${dateStr}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
+  return addDaysToDate(dateStr, days);
 }
 
 export const maxDuration = 30;

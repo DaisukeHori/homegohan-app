@@ -14,6 +14,13 @@
  *   finance は入口で 403 になり、DB には何も問い合わせない。admin / super_admin は今までどおり 200。
  *   RLS (csat_access / nps_select_admin) は変えていない。
  *
+ * #1433: 期間 (from / to。画面の日付の入力。どちらの日も含む) を JST の暦日で絞る。
+ *   以前は日付の文字列をそのまま sent_at / created_at (timestamptz) の .gte / .lte と関数の p_from / p_to に渡していて、
+ *   DB は UTC の 0 時 (= JST 9 時) と読むので、開始日の JST 0:00〜8:59 の行が落ち、終了日は JST 9:00 で打ち切られていた。
+ *   - 一覧: 開始日の JST 0 時以上 (.gte)・終了日の翌日の JST 0 時未満 (.lt)
+ *   - 集計の関数 (両端を含む `>= p_from AND <= p_to`): p_from = 開始日の JST 0 時、p_to = 終了日の翌日の JST 0 時の 1 マイクロ秒前
+ *   - 存在しない日付・時刻つきの値は 400 (DB に問い合わせない)。空文字は今までどおり「指定なし」
+ *
  * Supabase クライアントはモック。関数の中身 (SQL) と RLS は
  * tests/integration/rls/csat-nps-summary-rpc.test.ts、route 全体の結果は
  * tests/integration/security/admin-finance-nps-route.test.ts で、実 DB を使って検証する。
@@ -22,6 +29,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { AuthError, ForbiddenError } from '../src/lib/auth/errors';
 import { legacyCsatSummary, legacyNpsSummary } from './helpers/legacy-nps-summary';
+import { TEST_TIME_ZONES, withTimeZoneAsync } from './helpers/time-zones';
+import { JST_1010_BOUNDARY_TIMES, microsOf, satisfiesRangeFilters, type RangeFilter } from './helpers/timestamptz';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // モック
@@ -309,15 +318,19 @@ describe('GET /api/admin/finance/nps — レスポンス', () => {
 // ═════════════════════════════════════════════════════════════════════════════
 
 describe('GET /api/admin/finance/nps — DB への問い合わせ', () => {
-  it('期間とプランを DB の関数に渡す (NPS はプランも、CSAT は期間だけ)', async () => {
+  it('期間 (JST の暦日の時刻) とプランを DB の関数に渡す (NPS はプランも、CSAT は期間だけ) (#1433)', async () => {
     await GET(req('?from=2026-03-01&to=2026-03-31&plan_key=pro'));
     expect(mocks.rpc).toHaveBeenCalledTimes(2);
+    // 開始日 3/1 の JST 0 時 = 2/28 15:00 (UTC)、終了日 3/31 の最後の瞬間 = 4/1 の JST 0 時の 1 マイクロ秒前
     expect(mocks.rpc).toHaveBeenCalledWith('get_nps_summary', {
-      p_from: '2026-03-01',
-      p_to: '2026-03-31',
+      p_from: '2026-02-28T15:00:00.000Z',
+      p_to: '2026-03-31T14:59:59.999999Z',
       p_plan_key: 'pro',
     });
-    expect(mocks.rpc).toHaveBeenCalledWith('get_csat_summary', { p_from: '2026-03-01', p_to: '2026-03-31' });
+    expect(mocks.rpc).toHaveBeenCalledWith('get_csat_summary', {
+      p_from: '2026-02-28T15:00:00.000Z',
+      p_to: '2026-03-31T14:59:59.999999Z',
+    });
   });
 
   it('指定が無いときは NULL (= 絞らない) を渡す', async () => {
@@ -333,33 +346,37 @@ describe('GET /api/admin/finance/nps — DB への問い合わせ', () => {
     // 一覧にも絞り込みは付かない
     for (const chain of mocks.chains) {
       expect(callsOf(chain, 'gte')).toEqual([]);
+      expect(callsOf(chain, 'lt')).toEqual([]);
       expect(callsOf(chain, 'lte')).toEqual([]);
       expect(callsOf(chain, 'eq')).toEqual([]);
     }
   });
 
-  it('NPS の一覧: 回答済みだけ・送信日の期間・プランで絞り、回答日の新しい順に 10 件だけ取る', async () => {
+  it('NPS の一覧: 回答済みだけ・送信日の期間 (JST の暦日)・プランで絞り、回答日の新しい順に 10 件だけ取る', async () => {
     await GET(req('?from=2026-03-01&to=2026-03-31&plan_key=pro'));
     const chains = chainsOf('nps_surveys');
     expect(chains).toHaveLength(1);
     const chain = chains[0];
     expect(callsOf(chain, 'select')).toEqual([['id, score, comment, plan_key, responded_at']]);
     expect(callsOf(chain, 'not')).toEqual([['responded_at', 'is', null]]);
-    expect(callsOf(chain, 'gte')).toEqual([['sent_at', '2026-03-01']]);
-    expect(callsOf(chain, 'lte')).toEqual([['sent_at', '2026-03-31']]);
+    // 開始日 3/1 の JST 0 時以上・終了日 3/31 の翌日 (4/1) の JST 0 時未満 (#1433)
+    expect(callsOf(chain, 'gte')).toEqual([['sent_at', '2026-02-28T15:00:00.000Z']]);
+    expect(callsOf(chain, 'lt')).toEqual([['sent_at', '2026-03-31T15:00:00.000Z']]);
+    expect(callsOf(chain, 'lte')).toEqual([]);
     expect(callsOf(chain, 'eq')).toEqual([['plan_key', 'pro']]);
     expect(callsOf(chain, 'order')).toEqual([['responded_at', { ascending: false }]]);
     expect(callsOf(chain, 'limit')).toEqual([[10]]);
   });
 
-  it('CSAT の一覧: 作成日の期間で絞り (プランでは絞らない)、作成日の新しい順に 10 件だけ取る', async () => {
+  it('CSAT の一覧: 作成日の期間 (JST の暦日) で絞り (プランでは絞らない)、作成日の新しい順に 10 件だけ取る', async () => {
     await GET(req('?from=2026-03-01&to=2026-03-31&plan_key=pro'));
     const chains = chainsOf('csat_feedbacks');
     expect(chains).toHaveLength(1);
     const chain = chains[0];
     expect(callsOf(chain, 'select')).toEqual([['id, score, comment, ticket_id, created_at']]);
-    expect(callsOf(chain, 'gte')).toEqual([['created_at', '2026-03-01']]);
-    expect(callsOf(chain, 'lte')).toEqual([['created_at', '2026-03-31']]);
+    expect(callsOf(chain, 'gte')).toEqual([['created_at', '2026-02-28T15:00:00.000Z']]);
+    expect(callsOf(chain, 'lt')).toEqual([['created_at', '2026-03-31T15:00:00.000Z']]);
+    expect(callsOf(chain, 'lte')).toEqual([]);
     expect(callsOf(chain, 'eq')).toEqual([]);
     expect(callsOf(chain, 'order')).toEqual([['created_at', { ascending: false }]]);
     expect(callsOf(chain, 'limit')).toEqual([[10]]);
@@ -371,6 +388,138 @@ describe('GET /api/admin/finance/nps — DB への問い合わせ', () => {
     for (const chain of mocks.chains) {
       expect(callsOf(chain, 'limit')).toEqual([[10]]);
     }
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 期間は JST の暦日 (#1433)
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** 一覧の問い合わせ (from(table) のチェーン) に付いた、列 column の範囲の絞り込み */
+function rangeFiltersOf(table: string, column: string): RangeFilter[] {
+  return chainsOf(table).flatMap((chain) =>
+    chain.calls
+      .filter((c) => ['gte', 'gt', 'lte', 'lt'].includes(c.method) && c.args[0] === column)
+      .map((c) => ({ method: c.method as RangeFilter['method'], value: String(c.args[1]) })),
+  );
+}
+
+/** DB の関数の期間の条件 (`列 >= coalesce(p_from, -infinity) AND 列 <= coalesce(p_to, infinity)`) を、範囲の絞り込みの形にする */
+function rpcRangeFilters(name: 'get_nps_summary' | 'get_csat_summary'): RangeFilter[] {
+  const call = mocks.rpc.mock.calls.find((c) => c[0] === name);
+  expect(call, `${name} が呼ばれていない`).toBeDefined();
+  const args = call![1] as { p_from: string | null; p_to: string | null };
+  const filters: RangeFilter[] = [];
+  if (args.p_from !== null) filters.push({ method: 'gte', value: args.p_from });
+  if (args.p_to !== null) filters.push({ method: 'lte', value: args.p_to });
+  return filters;
+}
+
+/** 境界の時刻のうち、絞り込みで残るもの (id) */
+function idsKeptBy(filters: readonly RangeFilter[]): string[] {
+  return JST_1010_BOUNDARY_TIMES.filter((row) => satisfiesRangeFilters(row.at, filters)).map((row) => row.id);
+}
+
+const JST_1010_IDS = JST_1010_BOUNDARY_TIMES.filter((row) => row.inJst1010).map((row) => row.id);
+
+describe('GET /api/admin/finance/nps — 期間は JST の暦日 (#1433)', () => {
+  it.each(TEST_TIME_ZONES)(
+    'TZ=%s でも、from=to=10/10 は一覧・集計とも JST 10/10 0:00 〜 23:59:59.999999 の行だけ (JST 0:00 ちょうど・8:59:59 は入り、翌日の 0:00 は入らない)',
+    async (tz) => {
+      const res = await withTimeZoneAsync(tz, () => GET(req('?from=2026-10-10&to=2026-10-10')));
+      expect(res.status).toBe(200);
+
+      // 一覧 (自分で組み立てる問い合わせ): .gte と .lt
+      expect(rangeFiltersOf('nps_surveys', 'sent_at')).toEqual([
+        { method: 'gte', value: '2026-10-09T15:00:00.000Z' },
+        { method: 'lt', value: '2026-10-10T15:00:00.000Z' },
+      ]);
+      expect(rangeFiltersOf('csat_feedbacks', 'created_at')).toEqual([
+        { method: 'gte', value: '2026-10-09T15:00:00.000Z' },
+        { method: 'lt', value: '2026-10-10T15:00:00.000Z' },
+      ]);
+      // 集計の関数 (両端を含む): 終了日の最後の瞬間 (翌日の JST 0 時の 1 マイクロ秒前)
+      expect(rpcRangeFilters('get_nps_summary')).toEqual([
+        { method: 'gte', value: '2026-10-09T15:00:00.000Z' },
+        { method: 'lte', value: '2026-10-10T14:59:59.999999Z' },
+      ]);
+      expect(rpcRangeFilters('get_csat_summary')).toEqual(rpcRangeFilters('get_nps_summary'));
+
+      // 実際に残る行 (timestamptz と同じくマイクロ秒の精度で比べる)。一覧と集計で同じ行を数える
+      for (const filters of [
+        rangeFiltersOf('nps_surveys', 'sent_at'),
+        rangeFiltersOf('csat_feedbacks', 'created_at'),
+        rpcRangeFilters('get_nps_summary'),
+        rpcRangeFilters('get_csat_summary'),
+      ]) {
+        expect(idsKeptBy(filters)).toEqual(JST_1010_IDS);
+      }
+    },
+  );
+
+  it('以前の書き方 (日付の文字列をそのまま .gte / .lte と関数に渡す) では、JST 10/10 0:00〜8:59 と 9:00 以降の行が落ちていた (直した不具合)', () => {
+    const legacy: RangeFilter[] = [
+      { method: 'gte', value: '2026-10-10T00:00:00Z' }, // DB は '2026-10-10' を UTC の 0 時と読む
+      { method: 'lte', value: '2026-10-10T00:00:00Z' },
+    ];
+    expect(idsKeptBy(legacy)).toEqual(['jst-10-10-09:00']);
+  });
+
+  it('from だけ: 開始日の JST 0 時以上 (上限なし)。関数の p_to は NULL', async () => {
+    await GET(req('?from=2026-10-10'));
+    expect(rangeFiltersOf('nps_surveys', 'sent_at')).toEqual([{ method: 'gte', value: '2026-10-09T15:00:00.000Z' }]);
+    expect(rangeFiltersOf('csat_feedbacks', 'created_at')).toEqual([{ method: 'gte', value: '2026-10-09T15:00:00.000Z' }]);
+    expect(mocks.rpc).toHaveBeenCalledWith('get_nps_summary', {
+      p_from: '2026-10-09T15:00:00.000Z',
+      p_to: null,
+      p_plan_key: null,
+    });
+    expect(mocks.rpc).toHaveBeenCalledWith('get_csat_summary', { p_from: '2026-10-09T15:00:00.000Z', p_to: null });
+  });
+
+  it('to だけ: 終了日の翌日の JST 0 時未満 (下限なし)。関数の p_from は NULL、p_to は終了日の最後の瞬間', async () => {
+    await GET(req('?to=2026-10-10'));
+    expect(rangeFiltersOf('nps_surveys', 'sent_at')).toEqual([{ method: 'lt', value: '2026-10-10T15:00:00.000Z' }]);
+    expect(rangeFiltersOf('csat_feedbacks', 'created_at')).toEqual([{ method: 'lt', value: '2026-10-10T15:00:00.000Z' }]);
+    expect(mocks.rpc).toHaveBeenCalledWith('get_nps_summary', {
+      p_from: null,
+      p_to: '2026-10-10T14:59:59.999999Z',
+      p_plan_key: null,
+    });
+    expect(mocks.rpc).toHaveBeenCalledWith('get_csat_summary', { p_from: null, p_to: '2026-10-10T14:59:59.999999Z' });
+  });
+
+  it.each([
+    ['月末をまたぐ (10/31 〜 11/1)', '?from=2026-10-31&to=2026-11-01', '2026-10-30T15:00:00.000Z', '2026-11-01T15:00:00.000Z', '2026-11-01T14:59:59.999999Z'],
+    ['年末をまたぐ (12/31 〜 1/1)', '?from=2026-12-31&to=2027-01-01', '2026-12-30T15:00:00.000Z', '2027-01-01T15:00:00.000Z', '2027-01-01T14:59:59.999999Z'],
+    ['うるう日 (2/29 だけ)', '?from=2028-02-29&to=2028-02-29', '2028-02-28T15:00:00.000Z', '2028-02-29T15:00:00.000Z', '2028-02-29T14:59:59.999999Z'],
+  ])('%s: 開始日の JST 0 時 〜 終了日の翌日の JST 0 時 (関数には、その 1 マイクロ秒前)', async (_label, query, from, toExclusive, toInclusive) => {
+    await GET(req(query));
+    expect(rangeFiltersOf('nps_surveys', 'sent_at')).toEqual([
+      { method: 'gte', value: from },
+      { method: 'lt', value: toExclusive },
+    ]);
+    expect(mocks.rpc).toHaveBeenCalledWith('get_csat_summary', { p_from: from, p_to: toInclusive });
+    expect(microsOf(toExclusive) - microsOf(toInclusive)).toBe(1n);
+  });
+
+  it.each(['?from=2026-02-30', '?to=2026-13-01', '?from=2026/10/10', '?to=garbage', '?to=2026-03-31T23:59:59Z', '?from=not-a-date'])(
+    '存在しない日付・形の違う日付・時刻つきの値 (%s) は 400。DB には問い合わせない',
+    async (query) => {
+      const res = await GET(req(query));
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe('VALIDATION_ERROR');
+      expect(mocks.rpc).not.toHaveBeenCalled();
+      expect(mocks.chains).toHaveLength(0);
+      expect(mocks.loggerError).not.toHaveBeenCalled();
+    },
+  );
+
+  it('400 より先に認可を確かめる (財務ロールは、期間の形が違っても 403)', async () => {
+    mocks.requireRole.mockRejectedValue(new ForbiddenError('PERM_DENIED', 'Requires one of: admin, super_admin'));
+    const res = await GET(req('?from=2026-02-30'));
+    expect(res.status).toBe(403);
+    expect(mocks.rpc).not.toHaveBeenCalled();
   });
 });
 

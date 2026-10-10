@@ -325,11 +325,13 @@ interface ServingsConfig {
   };
 }
 
-// 日付から曜日を取得 (monday, tuesday, ...)
+// 日付 (YYYY-MM-DD の暦日) から曜日を取得 (monday, tuesday, ...)
+// new Date("YYYY-MM-DD") は UTC の 0 時になるので、曜日も UTC で読む (#1433)。
+// getDay() (実行環境のローカル時刻) だと、UTC より西のタイムゾーンでは前日の曜日になる。
 function getDayOfWeek(dateStr: string): string {
   const date = new Date(dateStr);
   const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  return days[date.getDay()];
+  return days[date.getUTCDay()];
 }
 
 // servingsConfigから人数を取得

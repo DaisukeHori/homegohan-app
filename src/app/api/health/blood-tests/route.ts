@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { jstToday } from '@/lib/jst-day-ranges';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { sanitizeBloodTestPayload } from '@/lib/health-payloads';
@@ -264,7 +265,8 @@ eGFR: ${r.egfr ?? '-'} mL/min/1.73m²
     .from('blood_test_longitudinal_reviews')
     .upsert({
       user_id: userId,
-      review_date: new Date().toISOString().split('T')[0],
+      // レビューの日付は JST の今日 (#1433)
+      review_date: jstToday(),
       blood_test_ids: bloodTestIds,
       trend_analysis: {
         overallAssessment: reviewData.overallAssessment,

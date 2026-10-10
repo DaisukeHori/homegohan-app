@@ -3,14 +3,17 @@
  * operator/06-ai-llm.md §4 + operator/02-api-spec.md §8 準拠
  */
 import { z } from 'zod';
+// 期間の開始日・終了日 (YYYY-MM-DD の実在する日付)。使用量の API は JST 0 時の時刻に直して絞る (#1433) ので、
+// 存在しない日付は入口で 400 にする (通すと時刻に直すところで例外になり 500 になる)
+import { CalendarDateSchema } from '@/lib/calendar-date-schema';
 
 export const LLMProvider = ['gemini', 'xai', 'anthropic', 'openai'] as const;
 export type LLMProvider = typeof LLMProvider[number];
 
 export const LLMUsageQuerySchema = z.object({
   period: z.enum(['1d', '7d', '30d', 'custom']).default('7d'),
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  from: CalendarDateSchema.optional(),
+  to: CalendarDateSchema.optional(),
   model: z.string().optional(),
   function: z.string().optional(),
   provider: z.enum(LLMProvider).optional(),
