@@ -1,7 +1,7 @@
 // lib/seasonal-events.ts
 // 年間行事・イベントデータ（V4献立生成エンジン用）
 
-import { addDaysToDate, formatLocalDate } from '@homegohan/shared';
+import { addDaysToDate, formatLocalDate, isCalendarDate } from '@homegohan/shared';
 
 export interface SeasonalEvent {
   name: string;
@@ -298,6 +298,8 @@ export function getEventsForRange(startDate: Date | string, endDate: Date | stri
   const end = toCalendarDay(endDate);
 
   const eventSet = new Map<string, SeasonalEvent>();
+  // 日付が不正なときは、以前 (Invalid Date の比較は常に false) と同じく 0 件にする
+  if (!isCalendarDate(start) || !isCalendarDate(end)) return [];
 
   // YYYY-MM-DD は文字列の大小が日付の前後と一致する。日は暦の計算 (addDaysToDate) で 1 日ずつ進める
   for (let current = start; current <= end; current = addDaysToDate(current, 1)) {

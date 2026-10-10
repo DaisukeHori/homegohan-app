@@ -229,6 +229,11 @@ describe('旬の食材・行事 (lib/seasonal-*): 暦日の文字列は、どの
       expect(value, tz).toContain('七草がゆ');
     }
   });
+
+  it('getEventsForRange に不正な日付を渡すと 0 件 (以前と同じく例外にしない)', () => {
+    expect(getEventsForRange('', '2026-01-07')).toEqual([]);
+    expect(getEventsForRange('2026-01-01', 'not-a-date')).toEqual([]);
+  });
 });
 
 describe('献立生成のスロット (lib/slot-builder.ts): 日付の範囲は暦の計算で作る', () => {
