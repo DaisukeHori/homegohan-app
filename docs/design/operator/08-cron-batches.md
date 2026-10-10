@@ -12,11 +12,11 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 
 ## 3. ジョブ一覧
 
-### 3.0 実装状況 (2026-10-08 更新)
+### 3.0 実装状況 (2026-10-10 更新)
 
-§3.1 以降の表と各節は、設計時の計画であり、**ほとんどは実装されていない**。§4 の pg_cron 用の関数 (`process_license_expire()` など 7 本) は本番に無く (`supabase/baseline/catalog/catalog_functions.csv`)、`vercel.json` に登録されている Vercel Cron は `process-menu-queue` の 1 本だけである。
-2026-10-08 のオーナー判断 (#1125) で、**課金・収益に関わる定期処理 (収益スナップショット・Stripe Webhook など) は作らない**と決めた。
-いま、このリポジトリの migration が pg_cron に登録しているジョブは次の 2 つ (migration `20261008200000_schedule_log_cleanup_and_dau_snapshot.sql`)。
+§3.1 以降の表と各節は、設計時の計画であり、**ほとんどは実装されていない**。§4 の pg_cron 用の関数 (`process_license_expire()` など 7 本) は本番に無く (`supabase/baseline/catalog/catalog_functions.csv`)、`vercel.json` に登録されている Vercel Cron は `process-menu-queue` と `app-log-alerts` (§3.2 の `app_log_alerts`。#1157) の 2 本である。
+Stripe Webhook・収益スナップショット・ライセンス系のバッチは、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
+いま、このリポジトリの migration が pg_cron に登録しているジョブは 3 つある。この節で扱うのは、#1125 の第 1 段で足した次の 2 つ (migration `20261010150000_schedule_log_cleanup_and_dau_snapshot.sql`)。残りの 1 つ `calculate-segment-stats` は、下の箇条書きの「そのほか」に書く。
 
 | ジョブ名 | 実行時刻 | 実行する SQL | 内容 |
 |---------|---------|-------------|------|
@@ -25,9 +25,10 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 
 - pg_cron は UTC で時刻を解釈する (`cron.timezone` = GMT)。JST は UTC + 9 時間。
 - 2 つとも所有者 `postgres` として動く。2 つの関数の `EXECUTE` は `service_role` だけに付けてあり、`anon` / `authenticated` は呼べない。
-- migration は同じ処理を呼ぶ既存のジョブ (名前は問わない) と同じ名前のジョブを先に登録解除してから登録するので、何度流しても 2 つだけになる。登録解除できるのは `postgres` が作ったジョブだけ (§3.0.3)。
-- ロールバック: `supabase/rollbacks/20261008200000_schedule_log_cleanup_and_dau_snapshot.down.sql` (ジョブの登録解除・関数の削除・`cleanup_old_logs()` の権限とコメントの復元)。消えたログと、migration が登録解除した既存のジョブ (定義を保存していない) は戻らない。集計した行は消さない。
-- そのほか、過去の migration で登録されたジョブ (`catalog-import-*` の 5 本、`handson-tour-sandbox-cleanup`) がある。これらは #1116 でベースラインに統合され、いまの migration には登録の SQL が無い。本番で動いているかは `cron.job` で確認する。
+- migration は同じ処理を呼ぶ既存のジョブ (名前は問わない) と同じ名前のジョブを先に登録解除してから登録するので、何度流しても、この 2 つの処理を呼ぶジョブは 2 つだけになる。登録解除できるのは `postgres` が作ったジョブだけ (§3.0.3)。
+- ロールバック: `supabase/rollbacks/20261010150000_schedule_log_cleanup_and_dau_snapshot.down.sql` (ジョブの登録解除・関数の削除・`cleanup_old_logs()` の権限とコメントの復元)。消えたログと、migration が登録解除した既存のジョブ (定義を保存していない) は戻らない。集計した行は消さない。
+- そのほか、migration `20261009100000_schedule_calculate_segment_stats.sql` (#1406) が、ジョブ `calculate-segment-stats` を毎時 5 分 (`5 * * * *` UTC。JST も毎時 5 分) に登録している。比較ランキングの集計 (Edge Function `calculate-segment-stats`) を、`public.invoke_calculate_segment_stats()` から HTTP (`net.http_post`) で呼ぶ。詳しくはその migration の冒頭のコメント。
+- 過去の migration で登録されたジョブ (`catalog-import-*` の 5 本、`handson-tour-sandbox-cleanup`) もある。これらは #1116 でベースラインに統合され、いまの migration には登録の SQL が無い。本番で動いているかは `cron.job` で確認する。
 
 #### 3.0.1 `snapshot-daily-active-users` — アクティブ利用者 (DAU / WAU / MAU) の数え方
 
@@ -68,7 +69,7 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 - **最初の実行 (migration を本番に適用したあとの、次の 03:15 JST) で、30 日より古い行がまとめて消える。** 以降は毎日、その日に 30 日を超えた分が消える。
 - `app_logs` を 30 日より長く残したいときは、先にジョブを止めて (下記)、保存期間を決め直す。
 - 権限: `PUBLIC` / `anon` / `authenticated` から `EXECUTE` を外した (本番では、これらにも付いていた)。ジョブは所有者 `postgres` として動くので影響しない。
-- `meal_nutrition_debug_logs` / `llm_usage_logs` の保存期間は、この PR の対象外 (必要ならオーナー判断のうえで別の PR)。`failed_invite_lookups` と `infra_metrics` は書き込む処理が無い (表が常に空) ため、掃除のジョブは作らない。
+- `meal_nutrition_debug_logs` / `llm_usage_logs` の保存期間は、この PR の対象外 (必要ならオーナー判断のうえで別の PR)。`failed_invite_lookups` と `infra_metrics` は書き込む処理が無い (表が常に空) ため、この段では掃除のジョブを足さない。
 
 #### 3.0.3 確認・手動実行・停止
 
@@ -139,10 +140,10 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 | `stripe_event_stuck_check` | daily 05:00 UTC | Stripe webhook の processing 状態スタック検出 |
 | `failed_invite_lookups_cleanup` | daily 05:30 UTC | 7 日超の failed_invite_lookups 削除 |
 
-> **2026-10-08 時点の状態**: 上の 9 本は、どれも migration で登録していない (§4 の関数 7 本は本番に無い)。
-> `infra_metrics_cleanup` と `failed_invite_lookups_cleanup` は、それぞれの表に書き込む処理がまだ無く (表が常に空)、消す対象が無いため作らない。
-> `stripe_event_stuck_check` は、Stripe Webhook を作らない (#1125) ため作らない。
-> いま動いているのは、この表に無い `cleanup-old-app-logs` と `snapshot-daily-active-users` (§3.0)。
+> **2026-10-10 時点の状態**: 上の 9 本は、どれも migration で登録していない (§4 の関数 7 本は本番に無い)。
+> `infra_metrics_cleanup` と `failed_invite_lookups_cleanup` は、それぞれの表に書き込む処理がまだ無く (表が常に空)、消す対象が無いため、この段では足さない。
+> `stripe_event_stuck_check` (Stripe Webhook) と、ライセンス系の `license_expire_batch`・`license_used_count_reconcile` は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
+> migration が pg_cron に登録しているのは、この表に無い `cleanup-old-app-logs`・`snapshot-daily-active-users`・`calculate-segment-stats` の 3 つ (§3.0)。
 
 ### 3.2 Vercel Cron ジョブ (HTTP)
 
@@ -161,8 +162,8 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 | `logical_backup` | daily 02:00 | pg_dump → S3 |
 | `app_log_alerts` (実装済み: #1157) | 15 分おき | `app_logs` の error が 15 分で 20 件を超えたら `OPS_ALERT_EMAIL` へメールで通知 (`/api/cron/app-log-alerts`。設計は 07-audit-monitoring.md §8.3) |
 
-> **2026-10-08 時点の状態**: `vercel.json` に登録されているのは `process-menu-queue` の 1 本だけで、この表の 11 本は実装されていない。
-> 課金・収益に関わるバッチ (`revenue_snapshot`・`stripe_integrity_check`・`grace_period_check` など) は、オーナー判断 (#1125) で**作らない**。
+> **2026-10-10 時点の状態**: `vercel.json` に登録されている Vercel Cron は `process-menu-queue` と `app-log-alerts` (この表の `app_log_alerts`。#1157) の 2 本。この表のほかの 11 本は、Vercel Cron としては実装されていない。
+> 課金・収益に関わるバッチ (`revenue_snapshot`・`stripe_integrity_check`・`grace_period_check` など) は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
 > `dau_snapshot` は、Vercel Cron ではなく pg_cron のジョブ `snapshot-daily-active-users` として実装した (§3.0)。時刻は同じ 01:30 JST。
 > それ以外の行は未実装のまま (作るときは別の PR)。
 
@@ -464,8 +465,8 @@ $$ LANGUAGE plpgsql;
 
 ## 5. Vercel Cron ジョブ詳細
 
-> **2026-10-08 時点**: §5 は設計時の計画である。`vercel.json` にあるのは `process-menu-queue` だけで、`/api/cron/dau-snapshot` と `/api/cron/revenue-snapshot` は作っていない。
-> `revenue_snapshot` (§5.8) は作らない (オーナー判断 #1125)。DAU / WAU / MAU の日次集計は、pg_cron のジョブ `snapshot-daily-active-users` として動いている (§3.0)。
+> **2026-10-10 時点**: §5 は設計時の計画である。`vercel.json` にあるのは `process-menu-queue` と `app-log-alerts` だけで、`/api/cron/dau-snapshot` と `/api/cron/revenue-snapshot` は作っていない。
+> `revenue_snapshot` (§5.8) は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。DAU / WAU / MAU の日次集計は、pg_cron のジョブ `snapshot-daily-active-users` として実装した (§3.0)。
 
 ### 5.1 vercel.json 設定
 
@@ -903,5 +904,5 @@ sequenceDiagram
 ## 12. 未解決事項
 
 - `family_archive_purge_batch` の dry-run モード実装方法 → `?dry_run=true` クエリパラメータで制御する予定
-- `revenue_snapshot` の `calculate_daily_mrr` RPC: Stripe データと DB の差異をどう調整するか → stripe reconcile 後に実行するよう依存順序を設定 (2026-10-08: オーナー判断 #1125 で `revenue_snapshot` 自体を作らないことにしたため、この論点は保留。作る場合は新しい判断が要る)
+- `revenue_snapshot` の `calculate_daily_mrr` RPC: Stripe データと DB の差異をどう調整するか → stripe reconcile 後に実行するよう依存順序を設定 (`revenue_snapshot` は、オーナーの選択「課金は無料のまま計測」により、#1125 の第 1 段では足さない (#1125 の残り)。この論点は、`revenue_snapshot` を足すときまで保留)
 - pg_cron の失敗ログ長期保管: `cron.job_run_details` は Supabase が自動でクリアするため、重要な失敗は `admin_audit_logs` に都度 INSERT する設計で対応
