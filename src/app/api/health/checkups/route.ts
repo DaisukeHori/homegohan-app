@@ -6,6 +6,7 @@ import { sanitizeHealthCheckupPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { recordAiUsage } from '@/lib/plan/entitlements';
 import { clampIntParam } from '@/lib/http-params';
 
 // 健康診断一覧を取得
@@ -107,9 +108,15 @@ export async function POST(request: NextRequest) {
   // 記録の保存だけを行い、レビューは作らない (T15 / #1154)。応答の aiSkipped で画面に知らせる
   const aiConsent = await checkUserAiConsent(supabase, user.id);
 
-  // 個別レビューを生成
   let individualReview = null;
+  let longitudinalReview = null;
   if (aiConsent.allowed) {
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・健康診断の保存・同意の判定のあと) に、操作 1 回につき 1 回記録する
+    // (個別レビューと経年レビューの 2 回 AI を呼ぶが、操作としては 1 回)。同意が無く AI へ送らないときは記録しない。
+    // 記録に失敗しても止めない
+    await recordAiUsage(user.id, 'health_review');
+
+    // 個別レビューを生成
     try {
       individualReview = await generateIndividualReview(checkup);
 
@@ -121,11 +128,8 @@ export async function POST(request: NextRequest) {
     } catch (err) {
       console.error('Individual review generation failed:', err);
     }
-  }
 
-  // 経年レビューを自動更新
-  let longitudinalReview = null;
-  if (aiConsent.allowed) {
+    // 経年レビューを自動更新
     try {
       longitudinalReview = await updateLongitudinalReview(supabase, user.id);
     } catch (err) {

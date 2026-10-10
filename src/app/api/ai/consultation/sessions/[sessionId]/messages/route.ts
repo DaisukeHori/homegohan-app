@@ -5,6 +5,7 @@ import OpenAI from 'openai';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { recordAiUsage } from '@/lib/plan/entitlements';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
 import { AI_ALLOWED_MEAL_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';
@@ -1013,6 +1014,10 @@ export async function POST(
     if (!userMessage) {
       return NextResponse.json({ error: 'メッセージを入力してください' }, { status: 400 });
     }
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
+    // (記録に失敗しても止めない)
+    await recordAiUsage(user.id, 'consultation');
 
     // ユーザーメッセージを保存
     const { data: savedUserMessage, error: userMsgError } = await supabase

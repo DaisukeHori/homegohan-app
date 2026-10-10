@@ -27,6 +27,7 @@ import {
   AI_CONSENT_VERSION,
 } from '../supabase/functions/_shared/ai-consent';
 import { ENFORCED_ROUTES } from './helpers/ai-consent-enforced-paths';
+import type { HttpMethod } from './helpers/ai-reach';
 
 const USER = '11111111-1111-4111-8111-111111111111';
 const SESSION_ID = '22222222-2222-4222-8222-222222222222';
@@ -57,6 +58,8 @@ const h = vi.hoisted(() => {
     rpc: {} as Record<string, unknown>,
     /** 書き込み (insert / update / upsert / delete) の記録 */
     writes: [] as Array<{ table: string; op: string; payload: unknown }>,
+    /** 呼んだ rpc の名前 (AI 利用回数の記録 record_ai_usage を確かめるため。#1177) */
+    rpcCalls: [] as string[],
   };
   const fastLLMCreate = vi.fn(async () => ({
     choices: [{ message: { content: '{"summary":"要約","title":"t","praiseComment":"p","advice":"a","nutritionTip":"n"}' } }],
@@ -81,6 +84,8 @@ const h = vi.hoisted(() => {
   const runConsultationAction = vi.fn(async () => ({ success: true, result: {} }));
   /** global fetch のうち、AI 事業者・Edge Function へ送ったもの */
   const aiFetch = vi.fn();
+  /** rpc を呼んだ印 (呼んだ順番を、AI へ送る口と比べるため。#1177 の「記録 → 送信」) */
+  const rpcMark = vi.fn((_name: string) => undefined);
   return {
     state,
     fastLLMCreate,
@@ -92,6 +97,7 @@ const h = vi.hoisted(() => {
     callV5,
     runConsultationAction,
     aiFetch,
+    rpcMark,
   };
 });
 
@@ -155,7 +161,11 @@ function makeSupabase() {
       getSession: async () => ({ data: { session: { access_token: 'token' } }, error: null }),
     },
     from: (table: string) => makeQuery(table),
-    rpc: async (name: string) => ({ data: h.state.rpc[name] ?? null, error: null }),
+    rpc: async (name: string) => {
+      h.state.rpcCalls.push(name);
+      h.rpcMark(name);
+      return { data: h.state.rpc[name] ?? null, error: null };
+    },
     storage: {
       from: () => ({
         upload: async () => ({ data: { path: 'p' }, error: null }),
@@ -270,6 +280,8 @@ type CaseKind = 'reject' | 'skip' | 'pass';
 interface RouteCase {
   /** 表の行の名前 */
   name: string;
+  /** 呼ぶハンドラ */
+  method: HttpMethod;
   /** ENFORCED_ROUTES のキー */
   file: string;
   kind: CaseKind;
@@ -285,6 +297,7 @@ interface RouteCase {
 const ROUTE_CASES: RouteCase[] = [
   {
     name: 'analyze-fridge (冷蔵庫の写真)',
+    method: 'POST',
     file: 'src/app/api/ai/analyze-fridge/route.ts',
     kind: 'reject',
     call: async () => (await import('@/app/api/ai/analyze-fridge/route')).POST(
@@ -293,6 +306,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'analyze-health-checkup (健康診断の写真)',
+    method: 'POST',
     file: 'src/app/api/ai/analyze-health-checkup/route.ts',
     kind: 'reject',
     call: async () => (await import('@/app/api/ai/analyze-health-checkup/route')).POST(
@@ -301,6 +315,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'analyze-meal-photo (食事の写真 → Edge Function)',
+    method: 'POST',
     file: 'src/app/api/ai/analyze-meal-photo/route.ts',
     kind: 'reject',
     call: async () => (await import('@/app/api/ai/analyze-meal-photo/route')).POST(
@@ -309,6 +324,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'analyze-weight-scale (体重計の写真 → Edge Function)',
+    method: 'POST',
     file: 'src/app/api/ai/analyze-weight-scale/route.ts',
     kind: 'reject',
     call: async () => (await import('@/app/api/ai/analyze-weight-scale/route')).POST(
@@ -317,6 +333,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'classify-photo (写真の種類の判別)',
+    method: 'POST',
     file: 'src/app/api/ai/classify-photo/route.ts',
     kind: 'reject',
     call: async () => (await import('@/app/api/ai/classify-photo/route')).POST(
@@ -325,6 +342,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'image/generate (料理の画像の作成)',
+    method: 'POST',
     file: 'src/app/api/ai/image/generate/route.ts',
     kind: 'reject',
     setup: () => {
@@ -336,6 +354,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'nutrition: imageUrl (写真の URL から栄養の推定)',
+    method: 'POST',
     file: 'src/app/api/ai/nutrition/route.ts',
     kind: 'reject',
     setup: () => {
@@ -347,6 +366,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'nutrition: nutritionData (数値の保存。AI へ送らない)',
+    method: 'POST',
     file: 'src/app/api/ai/nutrition/route.ts',
     kind: 'pass',
     setup: () => {
@@ -362,6 +382,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'nutrition-analysis GET (ホームの栄養の集計 + AI のアドバイス)',
+    method: 'GET',
     file: 'src/app/api/ai/nutrition-analysis/route.ts',
     kind: 'skip',
     setup: () => {
@@ -377,6 +398,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'nutrition-analysis POST (献立の変更 → generate-menu-v4)',
+    method: 'POST',
     file: 'src/app/api/ai/nutrition-analysis/route.ts',
     kind: 'reject',
     call: async () => (await import('@/app/api/ai/nutrition-analysis/route')).POST(
@@ -385,6 +407,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'nutrition/feedback: 新しく作る (OpenAI)',
+    method: 'POST',
     file: 'src/app/api/ai/nutrition/feedback/route.ts',
     kind: 'reject',
     setup: () => {
@@ -396,6 +419,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'nutrition/feedback: 作成中のコメントの状態を返すだけ (AI へ送らない)',
+    method: 'POST',
     file: 'src/app/api/ai/nutrition/feedback/route.ts',
     kind: 'pass',
     setup: () => {
@@ -407,6 +431,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'consultation messages (AI 相談)',
+    method: 'POST',
     file: 'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts',
     kind: 'reject',
     setup: () => {
@@ -422,6 +447,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'consultation summarize (相談の要約)',
+    method: 'POST',
     file: 'src/app/api/ai/consultation/sessions/[sessionId]/summarize/route.ts',
     kind: 'reject',
     setup: () => {
@@ -438,6 +464,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'consultation close (相談を閉じる。要約だけ省く)',
+    method: 'POST',
     file: 'src/app/api/ai/consultation/sessions/[sessionId]/close/route.ts',
     kind: 'skip',
     setup: () => {
@@ -455,6 +482,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'consultation execute: generate_day_menu (献立の生成のアクション)',
+    method: 'POST',
     file: 'src/app/api/ai/consultation/actions/[actionId]/execute/route.ts',
     kind: 'reject',
     setup: () => {
@@ -474,6 +502,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'consultation execute: update_meal (AI へ送らないアクション)',
+    method: 'POST',
     file: 'src/app/api/ai/consultation/actions/[actionId]/execute/route.ts',
     kind: 'pass',
     setup: () => {
@@ -493,6 +522,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'menu/day/regenerate (1 日の献立の作り直し)',
+    method: 'POST',
     file: 'src/app/api/ai/menu/day/regenerate/route.ts',
     kind: 'reject',
     setup: () => {
@@ -504,6 +534,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'menu/meal/generate (1 食の献立の作成)',
+    method: 'POST',
     file: 'src/app/api/ai/menu/meal/generate/route.ts',
     kind: 'reject',
     setup: () => {
@@ -515,6 +546,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'menu/meal/regenerate (1 食の献立の作り直し)',
+    method: 'POST',
     file: 'src/app/api/ai/menu/meal/regenerate/route.ts',
     kind: 'reject',
     setup: () => {
@@ -532,6 +564,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'menu/v4/generate (献立の作成 V4)',
+    method: 'POST',
     file: 'src/app/api/ai/menu/v4/generate/route.ts',
     kind: 'reject',
     call: async () => (await import('@/app/api/ai/menu/v4/generate/route')).POST(
@@ -540,6 +573,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'menu/v5/generate (献立の作成 V5。キューに積む)',
+    method: 'POST',
     file: 'src/app/api/ai/menu/v5/generate/route.ts',
     kind: 'reject',
     // この route は AI へ送らず、キュー (weekly_menu_requests) に積むだけ (積んだ行は cron が Edge Function へ渡す)。
@@ -551,6 +585,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'menu/weekly/request (週間献立の作成)',
+    method: 'POST',
     file: 'src/app/api/ai/menu/weekly/request/route.ts',
     kind: 'reject',
     call: async () => (await import('@/app/api/ai/menu/weekly/request/route')).POST(
@@ -559,6 +594,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'health/checkups POST (健康診断の保存 + AI のレビュー)',
+    method: 'POST',
     file: 'src/app/api/health/checkups/route.ts',
     kind: 'skip',
     setup: () => {
@@ -571,6 +607,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'health/blood-tests POST (血液検査の保存 + AI のレビュー)',
+    method: 'POST',
     file: 'src/app/api/health/blood-tests/route.ts',
     kind: 'skip',
     setup: () => {
@@ -583,6 +620,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'health/insights POST (健康のインサイト)',
+    method: 'POST',
     file: 'src/app/api/health/insights/route.ts',
     kind: 'reject',
     setup: () => {
@@ -597,6 +635,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'shopping-list/regenerate (買い物リストの作成 → Edge Function)',
+    method: 'POST',
     file: 'src/app/api/shopping-list/regenerate/route.ts',
     kind: 'reject',
     call: async () => (await import('@/app/api/shopping-list/regenerate/route')).POST(
@@ -605,6 +644,7 @@ const ROUTE_CASES: RouteCase[] = [
   },
   {
     name: 'cron/process-menu-queue (キューの献立の作成 → Edge Function)',
+    method: 'GET',
     file: 'src/app/api/cron/process-menu-queue/route.ts',
     kind: 'skip',
     setup: () => {
@@ -642,6 +682,7 @@ beforeEach(() => {
   h.state.single = {};
   h.state.rpc = {};
   h.state.writes = [];
+  h.state.rpcCalls = [];
   for (const fn of [
     h.fastLLMCreate,
     h.getFastLLMClient,
@@ -652,6 +693,7 @@ beforeEach(() => {
     h.callV5,
     h.runConsultationAction,
     h.aiFetch,
+    h.rpcMark,
   ]) {
     fn.mockClear();
   }
@@ -660,18 +702,56 @@ beforeEach(() => {
   vi.stubEnv('OPENAI_API_KEY', 'test-openai-key');
 });
 
-describe('表の網羅: 送る手前で判定する API Route は、すべて表に行がある', () => {
-  it('ENFORCED_ROUTES の全件に、少なくとも 1 行ある (表に行の無い経路を足すと落ちる)', () => {
-    const covered = new Set(ROUTE_CASES.map((c) => c.file));
-    expect(Object.keys(ENFORCED_ROUTES).filter((file) => !covered.has(file))).toEqual([]);
+describe('表の網羅: 送る手前で判定する API Route は、AI へ送るハンドラごとに表に行がある', () => {
+  it('ENFORCED_ROUTES の AI へ送るハンドラ (一覧の usage が noAi でないもの) の全件に、少なくとも 1 行ある (表に行の無いハンドラを足すと落ちる)', () => {
+    const covered = new Set(ROUTE_CASES.map((c) => `${c.method} ${c.file}`));
+    const required = Object.entries(ENFORCED_ROUTES).flatMap(([file, entry]) =>
+      Object.entries(entry.handlers)
+        .filter(([, usage]) => usage && !('noAi' in usage))
+        .map(([method]) => `${method} ${file}`),
+    );
+    expect(required.filter((key) => !covered.has(key))).toEqual([]);
   });
 
-  it('表の行は、すべて ENFORCED_ROUTES にある経路を指す', () => {
-    expect(ROUTE_CASES.map((c) => c.file).filter((file) => !(file in ENFORCED_ROUTES))).toEqual([]);
+  it('表の行は、すべて ENFORCED_ROUTES にあるハンドラを指す', () => {
+    expect(ROUTE_CASES.filter((c) => !ENFORCED_ROUTES[c.file]?.handlers[c.method]).map((c) => `${c.method} ${c.file}`)).toEqual([]);
   });
 });
 
 const sendsOf = (c: RouteCase) => (c.sends ? c.sends() : aiSendCount());
+
+/** AI の利用回数を記録した回数 (record_ai_usage の rpc。#1177) */
+const usageRecords = () => h.state.rpcCalls.filter((name) => name === 'record_ai_usage').length;
+
+/**
+ * 同意済みのとき、このハンドラが記録する回数 (#1177。一覧 tests/helpers/ai-consent-enforced-paths.ts の usage の列から決める)。
+ * record なら 1 回の操作で 1 回。recordedBy (ライブラリ・キューに積む route が記録する) なら、このハンドラ自身は 0 回
+ */
+const expectedRecords = (c: RouteCase) => {
+  const usage = ENFORCED_ROUTES[c.file]?.handlers[c.method];
+  return usage && 'record' in usage ? 1 : 0;
+};
+
+/**
+ * 利用回数の記録 (record_ai_usage の rpc) が、AI へ送る口 (全部) のどれよりも先に呼ばれたか (#1177: 記録 → 送信の順)。
+ * 順番は、ソースの文字ではなく、実際に route を動かして呼ばれた順番で確かめる (ここが Next.js の順番の検査の本体)
+ */
+function recordedBeforeEverySend(): { ok: boolean; detail: string } {
+  const recordOrders = h.rpcMark.mock.calls.flatMap(([name], i) => (name === 'record_ai_usage' ? [h.rpcMark.mock.invocationCallOrder[i]] : []));
+  const senders = {
+    fastLLM: h.fastLLMCreate,
+    gemini: h.generateGeminiJson,
+    genai: h.genaiGenerateContent,
+    functionsInvoke: h.functionsInvoke,
+    generateMenuV4: h.callV4,
+    generateMenuV5: h.callV5,
+    fetch: h.aiFetch,
+  };
+  const sendOrders = Object.entries(senders).flatMap(([label, fn]) => fn.mock.invocationCallOrder.map((order) => ({ label, order })));
+  const firstRecord = Math.min(...recordOrders);
+  const early = sendOrders.filter((send) => send.order < firstRecord).map((send) => send.label);
+  return { ok: recordOrders.length > 0 && early.length === 0, detail: `記録する前に送った口: ${early.join(', ') || 'なし'} / 記録した回数: ${recordOrders.length}` };
+}
 
 async function run(c: RouteCase, mode: ConsentMode): Promise<Response> {
   h.state.consentMode = mode;
@@ -690,12 +770,19 @@ describe.each(ROUTE_CASES.filter((c) => c.kind === 'reject'))('止める経路: 
     const expected = EXPECTED_DENIAL[mode as Exclude<ConsentMode, 'granted'>];
     expect(res.status).toBe(expected.status);
     expect((await bodyOf(res)).code).toBe(expected.code);
+    // #1177: 同意が無くて止めた操作は、AI の利用回数に記録しない (同意の判定 → 記録 → 送信の順)
+    expect(usageRecords(), h.state.rpcCalls.join(', ')).toBe(0);
   });
 
-  it('同意済み: AI へ送る (この行の 0 回が空振りでないことの確かめ)', async () => {
+  it('同意済み: AI へ送る (この行の 0 回が空振りでないことの確かめ)。AI の利用回数は 1 回の操作で 1 回だけ、AI へ送るより前に記録する', async () => {
     const res = await run(c, 'granted');
     expect(res.status).not.toBe(403);
     expect(sendsOf(c), JSON.stringify(aiSendBreakdown())).toBeGreaterThanOrEqual(1);
+    expect(usageRecords(), h.state.rpcCalls.join(', ')).toBe(expectedRecords(c));
+    if (expectedRecords(c) > 0) {
+      const order = recordedBeforeEverySend();
+      expect(order.ok, order.detail).toBe(true);
+    }
   });
 });
 
@@ -711,14 +798,21 @@ describe.each(ROUTE_CASES.filter((c) => c.kind === 'skip'))('AI の部分だけ�
     if (c.savedWrite) {
       expect(h.state.writes.some((w) => w.table === c.savedWrite?.table && w.op === c.savedWrite?.op), JSON.stringify(h.state.writes)).toBe(true);
     }
+    // #1177: AI の部分を省いた操作は、AI の利用回数に記録しない (保存・集計だけでは記録しない)
+    expect(usageRecords(), h.state.rpcCalls.join(', ')).toBe(0);
   });
 
-  it('同意済み: AI へ送り、aiSkipped は付かない', async () => {
+  it('同意済み: AI へ送り、aiSkipped は付かない。AI の利用回数は 1 回の操作で 1 回だけ、AI へ送るより前に記録する', async () => {
     const res = await run(c, 'granted');
     expect(sendsOf(c), JSON.stringify(aiSendBreakdown())).toBeGreaterThanOrEqual(1);
     const body = await bodyOf(res);
     expect(body.aiSkipped).toBeUndefined();
     expect(body.skipped).toBeUndefined();
+    expect(usageRecords(), h.state.rpcCalls.join(', ')).toBe(expectedRecords(c));
+    if (expectedRecords(c) > 0) {
+      const order = recordedBeforeEverySend();
+      expect(order.ok, order.detail).toBe(true);
+    }
   });
 });
 
@@ -733,6 +827,8 @@ describe.each(ROUTE_CASES.filter((c) => c.kind === 'pass'))('同意と関係な�
     if (c.savedWrite) {
       expect(h.state.writes.some((w) => w.table === c.savedWrite?.table && w.op === c.savedWrite?.op)).toBe(true);
     }
+    // #1177: AI へ送らない操作は、AI の利用回数に記録しない
+    expect(usageRecords(), h.state.rpcCalls.join(', ')).toBe(0);
   });
 });
 
