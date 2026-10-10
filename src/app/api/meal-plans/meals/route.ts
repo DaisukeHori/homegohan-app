@@ -7,6 +7,8 @@ import {
   triggerMealImageJobProcessing,
 } from '../../../../lib/meal-image-jobs';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { recordAiUsage } from '@/lib/plan/entitlements';
+import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { createLogger } from '@/lib/db-logger';
 import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
 
@@ -137,6 +139,16 @@ export async function POST(request: Request) {
       try {
         const rl = await checkRateLimit(user.id, 'image');
         imageAllowed = rl.success;
+        if (imageAllowed) {
+          // 同意が無ければ (判定に失敗した場合も)、画像の生成ジョブを処理する Edge Function (process-meal-image-jobs) が
+          // AI へ送らずに止める (T15 / #1154)。AI へ送らない操作は記録しない (同意の判定 → 利用回数の記録 → AI への送信の順)。
+          // ジョブを積むかどうかは、同意の有無では変えない (止めるのは処理する側)
+          const imageConsent = await checkUserAiConsent(supabase, user.id);
+          if (imageConsent.allowed) {
+            // #1177 AI 利用回数の記録 (操作 1 回で 1 回。積む画像のジョブの数によらない。記録に失敗しても止めない)
+            await recordAiUsage(user.id, 'image_generation');
+          }
+        }
       } catch (rlError) {
         createLogger('api/meal-plans/meals').warn('Image rate-limit check failed; skipping image generation', {
           userId: user.id,

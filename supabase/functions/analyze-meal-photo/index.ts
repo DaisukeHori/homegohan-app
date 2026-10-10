@@ -11,6 +11,7 @@ import { cancelPendingMealImageJobs } from '../_shared/meal-image-jobs.ts'
 import { buildPhotoOverwriteNutrition } from '../_shared/meal-photo-update.ts'
 import { createLogger } from '../_shared/db-logger.ts'
 import { getCorsHeaders } from '../_shared/cors.ts'
+import { recordEdgeAiUsage } from '../_shared/ai-usage.ts'
 import { requireAiConsentForUser } from '../_shared/ai-consent-guard.ts'
 
 console.log("Analyze Meal Photo Function v2 loaded")
@@ -72,6 +73,10 @@ Deno.serve(async (req) => {
         status: 400,
       })
     }
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に記録する。
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ記録する (Next.js が記録済みの印があれば記録しない。失敗しても止めない)
+    await recordEdgeAiUsage(req, user.id, 'photo_analysis')
 
     // mealId が無い場合: 同期的に解析して結果を返す
     if (!mealId) {

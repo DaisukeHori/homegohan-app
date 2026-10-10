@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { findCatalogCandidatesForDishes } from '../../../../lib/catalog-products';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiUsageRecordedHeaders, recordAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 interface ImageInput {
@@ -69,6 +70,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Image is required' }, { status: 400 });
     }
 
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
+    // (記録に失敗しても止めない)
+    await recordAiUsage(user.id, 'photo_analysis');
+
     // #121: タイムアウト後の DB 書き込み防止
     // mealId がある非同期モードでは invokedAt を Edge Function に渡す。
     // Edge Function 側はDB更新前に planned_meals.photo_analyzed_at と比較し、
@@ -84,6 +89,9 @@ export async function POST(request: Request) {
         userId: user.id,
         invokedAt: mealId ? invokedAt : undefined,
       },
+      // #1177 Edge Function はユーザーの JWT で呼ばれたときに利用回数を記録する。この API ルートが記録済みなので、
+      // 二重に記録しないよう、署名つきの印を付ける
+      headers: await aiUsageRecordedHeaders(user.id),
     });
 
     const timeoutPromise = new Promise<never>((_, reject) =>

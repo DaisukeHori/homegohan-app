@@ -10,6 +10,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 const mocks = vi.hoisted(() => ({
   requireAuth: vi.fn(),
+  recordEdgeAiUsage: vi.fn(),
   createCompletion: vi.fn(),
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -20,6 +21,11 @@ vi.mock("../supabase/functions/_shared/auth.ts", () => ({ requireAuth: mocks.req
 vi.mock("../supabase/functions/_shared/db-logger.ts", () => ({
   createLogger: () => ({ withUser: () => mocks.logger }),
   generateRequestId: () => "req_test",
+}));
+// #1177: AI 利用回数の記録。DB を呼ぶ recordEdgeAiUsage だけを差し替える (recordEdgeAiUsage 自体の挙動は tests/ai-usage-edge.test.ts)
+vi.mock("../supabase/functions/_shared/ai-usage.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../supabase/functions/_shared/ai-usage.ts")>()),
+  recordEdgeAiUsage: mocks.recordEdgeAiUsage,
 }));
 vi.mock("../supabase/functions/_shared/fast-llm.ts", () => ({
   createFastLLMClient: () => ({ chat: { completions: { create: mocks.createCompletion } } }),
@@ -46,6 +52,8 @@ afterAll(() => {
 beforeEach(() => {
   mocks.requireAuth.mockReset();
   mocks.requireAuth.mockResolvedValue({ userId: "user-1" });
+  mocks.recordEdgeAiUsage.mockReset();
+  mocks.recordEdgeAiUsage.mockResolvedValue(undefined);
   mocks.createCompletion.mockReset();
   mocks.createCompletion.mockResolvedValue({
     choices: [{ message: { content: JSON.stringify({ ingredients: ["卵", "牛乳"], expiringSoon: ["牛乳"] }) } }],
@@ -256,5 +264,31 @@ describe("analyze-fridge の CORS (#1167)", () => {
     const denied = await call({ imageUrl: SUPABASE_URL }, undefined, OTHER_SITE);
     expect(denied.status).toBe(401);
     expect(denied.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+});
+
+// #1177: AI 利用回数の記録。ユーザーの JWT で直接呼ばれたときに記録する (Next.js が記録済みの呼び出しは、印があれば記録しない)
+describe("analyze-fridge の AI 利用回数の記録 (#1177)", () => {
+  it("AH-15: JWT の認証に成功したら、受け取った req とユーザー ID で記録する。Vision API を呼ぶ前に記録する", async () => {
+    const res = await call({ imageUrl: SUPABASE_URL });
+
+    expect(res.status).toBe(200);
+    expect(mocks.recordEdgeAiUsage).toHaveBeenCalledTimes(1);
+    const [req, userId, feature] = mocks.recordEdgeAiUsage.mock.calls[0];
+    expect(req).toBeInstanceOf(Request);
+    expect(userId).toBe("user-1");
+    expect(feature).toBe("photo_analysis");
+    expect(mocks.recordEdgeAiUsage.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.createCompletion.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("AH-16: 認証に失敗したら記録しない", async () => {
+    mocks.requireAuth.mockResolvedValue(new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 }));
+
+    const res = await call({ imageUrl: SUPABASE_URL });
+
+    expect(res.status).toBe(401);
+    expect(mocks.recordEdgeAiUsage).not.toHaveBeenCalled();
   });
 });
