@@ -96,6 +96,9 @@ function makeAdmin(world: World): AccountDeletionAdmin {
     storage,
     auth: {
       admin: {
+        // 退会の完了メール (#1152) の宛先。メールの送り分けは tests/account-deletion-email.test.ts で確かめるので、
+        // ここではアドレスを持たないユーザーにして送らない (呼び出しの順番 world.calls にも載せない)
+        getUserById: async () => ({ data: { user: { id: USER, email: null } }, error: null }),
         deleteUser: async () => {
           world.calls.push('auth.deleteUser');
           return { data: null, error: world.deleteUser.error ?? null };

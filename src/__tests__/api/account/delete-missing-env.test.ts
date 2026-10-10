@@ -36,6 +36,8 @@ vi.mock('@/lib/supabase/server', async (importOriginal) => {
 
 // service_role のクライアント (getSupabaseAdmin の中の createClient)。DB には触れない
 const mockDeleteUser = vi.fn();
+// 退会の完了メール (#1152) の宛先を、削除の前に引く
+const mockGetUserById = vi.fn();
 const mockRpc = vi.fn();
 const mockAdminFrom = vi.fn();
 // Storage の掃除 (src/lib/account-deletion-storage.ts)。本人のフォルダは空 (一覧が空なら remove は呼ばれない)
@@ -46,11 +48,18 @@ const mockCreateAdminClient = vi.fn((_url: string, _key: string, _options: unkno
   from: mockAdminFrom,
   rpc: mockRpc,
   storage: { from: mockStorageFrom },
-  auth: { admin: { deleteUser: mockDeleteUser } },
+  auth: { admin: { deleteUser: mockDeleteUser, getUserById: mockGetUserById } },
 }));
 vi.mock('@supabase/supabase-js', () => ({
   createClient: (url: string, key: string, options: unknown) => mockCreateAdminClient(url, key, options),
 }));
+
+// 退会の完了メール (#1152) の送信。Resend には送らない
+const mockSendEmail = vi.fn();
+vi.mock('@/lib/emails/send', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/emails/send')>();
+  return { ...actual, sendEmail: (...args: unknown[]) => mockSendEmail(...args) };
+});
 
 // internalError() が使う構造化ログ。変数名・元のエラーがここに渡ることを見る
 const mockLoggerError = vi.fn();
@@ -72,6 +81,7 @@ import { POST } from '@/app/api/account/delete/route';
 import { MISSING_ENV_SERVER_LOG_PREFIX } from '@/lib/env-required';
 
 const USER_ID = '00000000-0000-4000-8000-0000000000aa';
+const USER_EMAIL = 'leaving-user@example.com';
 const URL_VALUE = 'https://account-delete-test.supabase.co';
 const SERVICE_VALUE = 'service-role-value-must-not-leak';
 const REQUIRED_NAMES = ['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'] as const;
@@ -113,6 +123,8 @@ beforeEach(() => {
   mockAdminFrom.mockImplementation(() => emptyQuery());
   mockRpc.mockResolvedValue({ error: null });
   mockDeleteUser.mockResolvedValue({ error: null });
+  mockGetUserById.mockResolvedValue({ data: { user: { id: USER_ID, email: USER_EMAIL } }, error: null });
+  mockSendEmail.mockResolvedValue({ ok: true, id: 'email-1', attempts: 1, skipped: false, error: null });
   mockStorageList.mockResolvedValue({ data: [], error: null });
   mockStorageRemove.mockResolvedValue({ data: [], error: null });
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -193,6 +205,8 @@ describe('POST /api/account/delete — 設定がそろっているとき', () =>
     }
     // 削除前のログは利用者に紐づける (user_id)
     expect(mockWithUser).toHaveBeenCalledWith(USER_ID);
+    // 退会が失敗したので、完了メール (#1152) は送らない
+    expect(mockSendEmail).not.toHaveBeenCalled();
   });
 
   it('成功すれば 200 { success: true }。service_role のクライアントは共通の getSupabaseAdmin が環境変数の値で作る', async () => {
@@ -212,5 +226,8 @@ describe('POST /api/account/delete — 設定がそろっているとき', () =>
     // Storage の URL の読み出しも含めて、どの段階も警告なしで通る
     expect(mockLoggerWarn).not.toHaveBeenCalled();
     expect(mockLoggerInfo).toHaveBeenCalledWith('account deleted', expect.objectContaining({ request_id: 'req-test' }));
+    // 退会の完了メール (#1152) を、削除の前に引いた本人のアドレスへ 1 通送る
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendEmail.mock.calls[0][0]).toMatchObject({ to: USER_EMAIL, template: 'account_deleted' });
   });
 });

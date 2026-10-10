@@ -724,7 +724,7 @@ $$);
 | ログイン制限・警告バナー | 設けない (待機期間がないため) |
 | 遅延削除バッチ | 作らない。旧設計の pg_cron `execute_gdpr_deletions` と `/api/cron/gdpr-delete` は設計から外す |
 | 削除要求の記録 (`gdpr_deletion_requests`) | 退会フローでは使わない (§16.4) |
-| 削除前の確認メール・削除完了メール | 追加する (#1152、作業計画 T20)。現行実装はまだ送らない。確認の方式 (通知のみか、メール内リンクでの最終確認か) は T20 で決める。どちらの方式でも 30 日の待機は設けない |
+| 削除前の確認メール・削除完了メール | 退会が成功したときに、削除完了メールを本人へ 1 通だけ送る (#1152。実装は `src/lib/account-deletion-notification.ts`、文面は `src/lib/emails/account/account-deleted.ts`)。削除前の確認メール (退会の受付時のメール) は送らない。30 日の待機は設けない |
 | 削除処理の堅牢化 | 追加した (#1175、作業計画 T11)。範囲は §16.3 |
 
 背景 (#1130): 旧設計の遅延削除バッチは実装されないままで、削除要求を記録しても実行されずに残りうる設計だった。実際の退会は最初から即時削除として動いている。
@@ -739,7 +739,6 @@ $$);
    - モバイル: 確認アラートで「削除」を選ぶ
 2. クライアント: POST /api/account/delete { confirm: true }
    - 認証済みセッションが必須 (未認証は 401、confirm がなければ 400)
-   - (今後追加) 削除前に確認メールを送る (#1152、T20)
 3. 削除をブロックする条件 (409):
    - 組織の owner → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
      (先に owner を譲渡するか、組織を解散する)
@@ -754,9 +753,14 @@ $$);
 5. auth.users を削除 (auth.admin.deleteUser)
    - public 側のデータは FK の ON DELETE CASCADE / SET NULL で削除・匿名化される
      (auth.users を指す外部キーに NO ACTION は無い。20261010000100_auth_users_fk_on_delete.sql)
-6. 200 { success: true }
+6. 削除完了メールを本人へ 1 通送る (#1152。src/lib/account-deletion-notification.ts)
+   - 宛先は auth.users の登録アドレス。手順 3 の後・手順 4 の前に service_role の getUserById で控え、メモリ上だけで使う
+     (app_logs・email_delivery_logs には生のアドレスを残さない。送信の失敗の記録は sendEmail がマスクした宛先で残す)
+   - 送るのは手順 5 が実際に削除したときだけ。409・500・すでに消えていたユーザーのやり直し (deleteUser が 404) では送らない
+   - 本文は退会日時 (日本時間) と問い合わせ先 (site-config の getSupportEmail)。送信元は site-config の getEmailFrom
+   - best-effort: 送信の失敗・時間切れ (待つのは最長 5 秒) でも応答は 200 のまま。失敗は app_logs に残す (user_id を付けない)
+7. 200 { success: true }
    - クライアントはサインアウトして、ログイン前の画面へ戻る
-   - (今後追加) 削除完了メールを送る (#1152、T20)
 ```
 
 手順 4 と 5 は 1 つのトランザクションではなく、別々の呼び出し。手順 4 の各段階は何度流しても結果が変わらないので、
@@ -810,7 +814,7 @@ DDL は **operator/01-data-model.md §3.21** を参照 (テーブル定義とし
 | 既存 `/account/billing` (未実装) | 新規 | 特商法対応のチェックボックス含む Checkout フロー実装 |
 | `terms_acceptances` (未作成) | 新規 | migration で作成 |
 | Cookie バナー (未実装) | 新規 | `/app/layout.tsx` に `<CookieConsentBanner>` 追加 |
-| 退会フロー (`POST /api/account/delete`) | 維持 | 即時削除が正式仕様 (§16、2026-10-08 オーナー判断 #1130)。確認メール・完了メール (#1152、T20) を追加する。堅牢化 (#1175、T11) は追加済み (§16.3) |
+| 退会フロー (`POST /api/account/delete`) | 維持 | 即時削除が正式仕様 (§16、2026-10-08 オーナー判断 #1130)。削除完了メール (#1152) は追加済み (§16.2 の手順 6。削除前の確認メールは送らない)。堅牢化 (#1175、T11) は追加済み (§16.3) |
 
 ---
 

@@ -378,7 +378,6 @@ Step 5: org_admin に手順案内
   - org_health_access_logs など、ほかの法定保管データの扱いは未確認。棚卸しが必要 (作業計画 T11)
 
 まだ無いもの (追加予定):
-  - 削除前の確認メールと削除完了メール (#1152、作業計画 T20)
   - Stripe の顧客/サブスクリプションの後始末 (影響範囲の調査は cross/08-legal-compliance.md §19)
 ```
 
@@ -740,7 +739,7 @@ sequenceDiagram
 
 ## 17. 未解決事項
 
-- 削除完了の通知: 削除完了メールは作業計画 T20 (#1152) で追加する。旧設計の「削除完了証明書 PDF」を別に出すかは未決 (出す場合の生成方法: pdf-lib / Puppeteer / Vercel Edge は Phase 2 で決定)
+- 削除完了の通知: 削除完了メールは追加済み (#1152。cross/08-legal-compliance.md §16.2 の手順 6)。旧設計の「削除完了証明書 PDF」を別に出すかは未決 (出す場合の生成方法: pdf-lib / Puppeteer / Vercel Edge は Phase 2 で決定)
 - `logical_backup` cron (`pg_dump → S3`): S3 接続情報と IAM 権限の設定は本番環境構築時に確定
 - EU GDPR の 1 ヶ月以内回答 SLA: 退会は即時削除 (cooling period なし) のため、アプリからの削除で遅れは出ない。サポート経由の依頼は受付から 1 ヶ月以内に完了させる (§9.2)。EU 規制との整合性の法務確認は引き続き必要
 - 退会の実行記録: 旧設計は `gdpr_deletion_requests` (永久保管) と admin_audit_logs (severity='critical') に残していたが、現行実装はどちらにも記録しない。何で残すかは作業計画 T11 と合わせて決める (cross/08-legal-compliance.md §19)
