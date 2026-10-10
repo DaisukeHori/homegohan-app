@@ -12,6 +12,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
 import { CouponUpdateSchema } from '@/lib/super-admin/coupons-schemas';
+import { internalError } from '@/lib/api/errors';
 
 type RouteContext = { params: { id: string } };
 
@@ -100,11 +101,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       .single();
 
     if (error) {
-      console.error('[super-admin/coupons/[id] PATCH]', error);
-      return NextResponse.json(
-        { error: { code: 'OP_DB_ERROR', message: error.message } },
-        { status: 500 }
-      );
+      return internalError('PATCH /api/super-admin/coupons/[id]', error, { userId: user.id }, { shape: 'nested' });
     }
 
     // 監査ログ記録
@@ -167,11 +164,7 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
       .eq('id', params.id);
 
     if (deleteErr) {
-      console.error('[super-admin/coupons/[id] DELETE]', deleteErr);
-      return NextResponse.json(
-        { error: { code: 'OP_DB_ERROR', message: deleteErr.message } },
-        { status: 500 }
-      );
+      return internalError('DELETE /api/super-admin/coupons/[id]', deleteErr, { userId: user.id }, { shape: 'nested' });
     }
 
     // 監査ログ記録

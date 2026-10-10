@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
+import { internalError } from '@/lib/api/errors';
 
 // セッション一覧取得
 export async function GET(request: Request) {
@@ -32,7 +33,7 @@ export async function GET(request: Request) {
 
   const { data, error } = await query.limit(50);
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return internalError('GET /api/ai/consultation/sessions', error, { userId: user.id });
 
   const sessions = (data || []).map((s: any) => ({
     id: s.id,
@@ -163,8 +164,7 @@ export async function POST(request: Request) {
     });
 
   } catch (error: any) {
-    console.error('Session creation error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/consultation/sessions', error, { userId: user.id });
   }
 }
 

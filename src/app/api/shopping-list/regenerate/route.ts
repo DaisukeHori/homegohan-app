@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 /**
  * 買い物リスト再生成API（日付ベースモデル）
@@ -104,7 +105,6 @@ export async function POST(request: Request) {
       message: '再生成を開始しました',
     });
   } catch (error: any) {
-    console.error('Regenerate shopping list error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/shopping-list/regenerate', error, { userId: user.id });
   }
 }

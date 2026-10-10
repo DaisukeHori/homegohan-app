@@ -1,7 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
-import { createLogger, generateRequestId } from '@/lib/db-logger'
+import { generateRequestId } from '@/lib/db-logger'
 import { NextResponse } from 'next/server'
 import { OnboardingAnswersSchema } from '@/schemas/onboarding'
+import { internalError } from '@/lib/api/errors'
 
 // #1045 (F6-12): ニックネームは HTML エスケープせず raw のまま保存する。
 // 画面表示は必ず React の JSX テキストノード経由 (dangerouslySetInnerHTML は不使用) のため
@@ -15,7 +16,6 @@ function normalizeNickname(value: unknown): string {
 // オンボーディング進捗保存API (OB-API-01)
 export async function POST(request: Request) {
   const requestId = generateRequestId()
-  const logger = createLogger('POST /api/onboarding/progress', requestId)
   try {
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -212,8 +212,7 @@ export async function POST(request: Request) {
       .single()
 
     if (error) {
-      logger.error('Onboarding progress save error', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return internalError('POST /api/onboarding/progress', error, { userId: user.id, requestId })
     }
 
     return NextResponse.json({
@@ -221,7 +220,6 @@ export async function POST(request: Request) {
       progress: data.onboarding_progress,
     })
   } catch (error: any) {
-    logger.error('API Error', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return internalError('POST /api/onboarding/progress', error, { requestId })
   }
 }

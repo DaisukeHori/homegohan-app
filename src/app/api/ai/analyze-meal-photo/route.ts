@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { findCatalogCandidatesForDishes } from '../../../../lib/catalog-products';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 interface ImageInput {
   base64: string;
@@ -147,7 +148,6 @@ export async function POST(request: Request) {
         { status: 504 },
       );
     }
-    console.error('Analyze Meal Photo Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/analyze-meal-photo', error, { userId: user.id });
   }
 }

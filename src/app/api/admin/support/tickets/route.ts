@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { ticketListQuerySchema, createTicketSchema } from '@/lib/admin/support-schemas';
+import { internalError } from '@/lib/api/errors';
 
 export async function GET(request: NextRequest) {
   try {
@@ -64,10 +65,7 @@ export async function GET(request: NextRequest) {
     const { data, error, count } = await query;
 
     if (error) {
-      return NextResponse.json(
-        { error: { code: 'DB_ERROR', message: error.message } },
-        { status: 500 },
-      );
+      return internalError('GET /api/admin/support/tickets', error, { userId: currentUser.id }, { shape: 'nested' });
     }
 
     return NextResponse.json({
@@ -119,10 +117,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (ticketError || !ticket) {
-      return NextResponse.json(
-        { error: { code: 'DB_ERROR', message: ticketError?.message ?? 'Failed to create ticket' } },
-        { status: 500 },
-      );
+      return internalError('POST /api/admin/support/tickets', ticketError, { userId: currentUser.id }, { shape: 'nested' });
     }
 
     // 最初のメッセージを作成 (運営側が起票したため is_internal = false)

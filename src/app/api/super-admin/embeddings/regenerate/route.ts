@@ -19,6 +19,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { internalError } from '@/lib/api/errors';
 
 // supabase/functions/regenerate-embeddings/index.ts の TABLE_CONFIGS と一致させる。
 // (embedding 列を実際に持つテーブルのみ。dataset_menu_sets は content_embedding、
@@ -141,7 +142,6 @@ export async function POST(request: NextRequest) {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('POST /api/super-admin/embeddings/regenerate', err, {}, { shape: 'nested' });
   }
 }

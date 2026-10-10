@@ -9,6 +9,7 @@ import type {
   MetricDefinition,
   SegmentDefinition,
 } from '@/types/comparison';
+import { internalError } from '@/lib/api/errors';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -126,8 +127,7 @@ export async function GET(request: Request) {
     return NextResponse.json(response);
 
   } catch (error: any) {
-    console.error('Comparison API error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/comparison/rankings', error);
   }
 }
 

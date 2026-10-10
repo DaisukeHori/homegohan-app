@@ -8,6 +8,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
+import { internalError } from '@/lib/api/errors';
 
 export async function POST(
   _req: Request,
@@ -42,11 +43,12 @@ export async function POST(
   const { error } = await supabase.rpc('revoke_org_invite', { p_invite_id: id });
 
   if (error) {
+    // RPC の生のエラー文は本文に出さない (#1172)。分かるコードは固定の文で返し、分からないものは汎用の 500 にして構造化ログに残す
     const { code, status } = mapPgErrorToHttp(error.message);
-    return NextResponse.json(
-      { error: { code, message: error.message } },
-      { status },
-    );
+    if (status >= 500) {
+      return internalError('POST /api/org/invites/[id]/revoke', error, {}, { shape: 'nested' });
+    }
+    return NextResponse.json({ error: { code, message: '招待の取り消しに失敗しました' } }, { status });
   }
 
   return NextResponse.json({ ok: true });

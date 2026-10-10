@@ -4,6 +4,7 @@ import type { DailyMeal, PlannedMeal, ShoppingListItem } from '@/types/domain';
 import { toDailyMeal, toPlannedMeal, toShoppingListItem } from '@/lib/converter';
 import type { Tables } from '@homegohan/shared';
 import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
+import { internalError } from '@/lib/api/errors';
 
 /**
  * Get meals for a date range (日付ベースモデル対応)
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
       .maybeSingle();
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return internalError('GET /api/meal-plans', error, { userId: user.id });
     }
 
     if (!data) {
@@ -73,7 +74,7 @@ export async function GET(request: Request) {
     .order('day_date', { ascending: true });
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/meal-plans', error, { userId: user.id });
   }
 
   const dailyMeals = (data || []).map((day: any) => ({

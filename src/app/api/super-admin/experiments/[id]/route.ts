@@ -9,6 +9,7 @@ import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { UpdateExperimentSchema } from '@/lib/super-admin/experiments-schemas';
+import { internalError } from '@/lib/api/errors';
 
 type Params = { params: { id: string } };
 
@@ -35,8 +36,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('GET /api/super-admin/experiments/[id]', err, {}, { shape: 'nested' });
   }
 }
 
@@ -83,8 +83,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('PATCH /api/super-admin/experiments/[id]', err, {}, { shape: 'nested' });
   }
 }
 
@@ -116,7 +115,7 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
 
     const { error } = await supabase.from('experiments').delete().eq('id', params.id);
     if (error) {
-      return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
+      return internalError('DELETE /api/super-admin/experiments/[id]', error, { userId: user.id }, { shape: 'nested' });
     }
 
     // 監査ログ
@@ -137,7 +136,6 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('DELETE /api/super-admin/experiments/[id]', err, {}, { shape: 'nested' });
   }
 }

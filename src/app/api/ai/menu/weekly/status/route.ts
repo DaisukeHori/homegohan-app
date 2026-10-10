@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
+import { internalError } from '@/lib/api/errors';
 
 // #1203: stale 判定時の復元（スナップショットの書き戻し）が打ち切られないよう、実行時間の上限を明示する。
 export const maxDuration = 60; // Vercel Pro: 60s OK
@@ -100,8 +101,7 @@ export async function GET(request: Request) {
     });
 
   } catch (error: any) {
-    console.error('Status check error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/ai/menu/weekly/status', error, { userId: user.id, requestId });
   }
 }
 
@@ -157,7 +157,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ status: 'failed', cancelled: true });
   } catch (error: any) {
-    console.error('Cancel request error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/menu/weekly/status', error, { userId: user.id, requestId });
   }
 }

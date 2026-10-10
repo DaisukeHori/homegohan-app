@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { internalError } from '@/lib/api/errors';
 
 /**
  * like_count を共通で再集計するヘルパー。
@@ -72,8 +73,7 @@ export async function POST(
     return NextResponse.json({ success: true, liked: true, likeCount });
 
   } catch (error: any) {
-    console.error('Like error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/recipes/[id]/like', error, { userId: user.id });
   }
 }
 
@@ -100,8 +100,7 @@ export async function DELETE(
     return NextResponse.json({ success: true, liked: false, likeCount });
 
   } catch (error: any) {
-    console.error('Unlike error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('DELETE /api/recipes/[id]/like', error, { userId: user.id });
   }
 }
 

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 
 const ADMIN_ROLES = ['admin', 'super_admin', 'org_admin', 'org_industrial_doctor'] as const;
 
@@ -52,11 +53,7 @@ export async function POST() {
       .rpc('complete_handson_tour');
 
     if (rpcError) {
-      console.error('complete_handson_tour RPC error:', rpcError);
-      return NextResponse.json(
-        { error: { code: 'internal_error', message: 'サーバーエラーが発生しました', details: rpcError.message } },
-        { status: 500 },
-      );
+      return internalError('POST /api/handson-tour/complete', rpcError, { userId: user.id }, { shape: 'nested' });
     }
 
     return NextResponse.json(result);

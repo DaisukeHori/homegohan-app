@@ -56,6 +56,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { PriceChangeSchema } from '@/lib/super-admin/plans-schemas';
+import { internalError } from '@/lib/api/errors';
 
 type RouteContext = { params: { id: string } };
 
@@ -314,11 +315,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       .eq('id', params.id);
 
     if (updateErr) {
-      console.error('[super-admin/price-change POST]', updateErr);
-      return NextResponse.json(
-        { error: { code: 'OP_DB_ERROR', message: updateErr.message } },
-        { status: 500 }
-      );
+      return internalError('POST /api/super-admin/plans/[id]/price-change', updateErr, { userId: user.id }, { shape: 'nested' });
     }
 
     // 監査ログ記録 (severity='warn' — 課金影響操作)

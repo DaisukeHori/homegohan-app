@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getCatalogProductById } from "@/lib/catalog-products";
+import { internalError } from '@/lib/api/errors';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -32,7 +33,6 @@ export async function GET(
 
     return NextResponse.json({ product });
   } catch (error: any) {
-    console.error("Catalog product detail failed:", error);
-    return NextResponse.json({ error: error.message ?? "Unknown error" }, { status: 500 });
+    return internalError('GET /api/catalog/products/[id]', error);
   }
 }

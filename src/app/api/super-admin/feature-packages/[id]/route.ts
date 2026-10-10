@@ -12,6 +12,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
 import { FeaturePackageUpdateSchema } from '@/lib/super-admin/feature-packages-schemas';
+import { internalError } from '@/lib/api/errors';
 
 type RouteContext = { params: { id: string } };
 
@@ -84,11 +85,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           { status: 404 }
         );
       }
-      console.error('[super-admin/feature-packages/[id] PATCH]', error);
-      return NextResponse.json(
-        { error: { code: 'OP_DB_ERROR', message: error.message } },
-        { status: 500 }
-      );
+      return internalError('PATCH /api/super-admin/feature-packages/[id]', error, { userId: user.id }, { shape: 'nested' });
     }
 
     // 監査ログ記録
@@ -150,11 +147,7 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
           { status: 409 }
         );
       }
-      console.error('[super-admin/feature-packages/[id] DELETE]', deleteErr);
-      return NextResponse.json(
-        { error: { code: 'OP_DB_ERROR', message: deleteErr.message } },
-        { status: 500 }
-      );
+      return internalError('DELETE /api/super-admin/feature-packages/[id]', deleteErr, { userId: user.id }, { shape: 'nested' });
     }
 
     // 監査ログ記録

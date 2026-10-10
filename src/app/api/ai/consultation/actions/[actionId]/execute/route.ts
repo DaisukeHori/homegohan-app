@@ -4,6 +4,7 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { AI_SENDING_ACTION_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 // 指定日付の user_daily_meals を取得または作成するヘルパー関数
 // NOTE: 現状このファイル内では未使用（resolveExistingTargetSlots が同等の処理を担う）。
@@ -126,8 +127,7 @@ export async function POST(
     });
 
   } catch (error: any) {
-    console.error('Action execution error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/consultation/actions/[actionId]/execute', error, { userId: user.id });
   }
 }
 
@@ -191,7 +191,6 @@ export async function DELETE(
     return NextResponse.json({ success: true });
 
   } catch (error: any) {
-    console.error('Action rejection error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('DELETE /api/ai/consultation/actions/[actionId]/execute', error, { userId: user.id });
   }
 }

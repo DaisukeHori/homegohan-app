@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { notifyMemberLeft, readOrganizationNoticeOfMember } from '@/lib/membership/exit-notification';
+import { internalError } from '@/lib/api/errors';
 
 export async function POST() {
   const logger = createLogger('POST /api/org/leave', generateRequestId());
@@ -23,8 +24,12 @@ export async function POST() {
 
   const { error: rpcError } = await supabase.rpc('leave_org');
   if (rpcError) {
+    // RPC の生のエラー文は本文に出さない (#1172)。分かるコードは固定の文で返し、分からないものは汎用の 500 にして構造化ログに残す
     const { code, status } = mapPgErrorToHttp(rpcError.message);
-    return NextResponse.json({ error: { code, message: rpcError.message } }, { status });
+    if (status >= 500) {
+      return internalError('POST /api/org/leave', rpcError, { userId: user.id }, { shape: 'nested' });
+    }
+    return NextResponse.json({ error: { code, message: '組織からの脱退に失敗しました' } }, { status });
   }
 
   // オーナーへの通知メール (best-effort)。脱退はすでに完了しているので、失敗しても応答は変えない (#1160)

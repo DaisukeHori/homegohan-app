@@ -4,6 +4,7 @@ import { GoogleGenAI, createUserContent } from '@google/genai';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { userScopedStoragePath } from '@/lib/storage-paths';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 interface ReferenceImageInput {
   base64: string;
@@ -29,18 +30,11 @@ function normalizeReferenceImages(raw: unknown): ReferenceImageInput[] {
     .filter((image): image is ReferenceImageInput => image !== null);
 }
 
-function getQuotaErrorMessage(rawError: string): string {
-  try {
-    const parsed = JSON.parse(rawError);
-    if (parsed.error?.message) {
-      return parsed.error.message;
-    }
-  } catch {
-    // ignore JSON parse failure
-  }
-
-  return '画像生成のクォータが超過しました。しばらく待ってから再度お試しください。';
-}
+/**
+ * 画像生成の回数の上限 (Gemini の 429) に当たったときの文面。
+ * Gemini が返した生のエラー文は本文に出さない (#1172。サーバーのログにだけ残す)
+ */
+const QUOTA_EXCEEDED_MESSAGE = '画像生成のクォータが超過しました。しばらく待ってから再度お試しください。';
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -119,7 +113,7 @@ export async function POST(request: Request) {
       const rawMessage = typeof genError?.message === 'string' ? genError.message : '';
       if (status === 429 || rawMessage.includes('429')) {
         return NextResponse.json({
-          error: getQuotaErrorMessage(rawMessage),
+          error: QUOTA_EXCEEDED_MESSAGE,
           code: 'QUOTA_EXCEEDED',
           suggestion: 'Google AI Studioで Nano Banana 2 のクォータを確認してください: https://ai.google.dev/gemini-api/docs/image-generation',
         }, { status: 429 });
@@ -142,45 +136,9 @@ export async function POST(request: Request) {
       });
 
     if (uploadError) {
-      console.error('Upload error:', uploadError);
-
-      const errorMessage = uploadError.message || String(uploadError);
-      const errorStatus = uploadError.status;
-
-      if (
-        errorMessage.includes('Bucket not found') ||
-        errorMessage.includes('not found') ||
-        errorMessage.includes('does not exist') ||
-        errorStatus === 404
-      ) {
-        return NextResponse.json({
-          error: `Storage bucket '${bucketName}' not found.`,
-          code: 'BUCKET_NOT_FOUND',
-          details: errorMessage,
-          suggestion: `1. Go to Supabase Dashboard → Storage\n2. Verify bucket '${bucketName}' exists and is Public\n3. Check bucket name spelling (case-sensitive)`,
-        }, { status: 404 });
-      }
-
-      if (
-        errorMessage.includes('permission') ||
-        errorMessage.includes('policy') ||
-        errorMessage.includes('RLS') ||
-        errorMessage.includes('new row violates') ||
-        errorStatus === 403
-      ) {
-        return NextResponse.json({
-          error: `Permission denied for Storage bucket '${bucketName}'.`,
-          code: 'PERMISSION_DENIED',
-          details: errorMessage,
-          suggestion: `Set up Storage RLS policies:\n1. Go to Supabase Dashboard → Storage → ${bucketName}\n2. Click "Policies" tab\n3. Create policy:\n   - Policy name: "Allow authenticated users to upload"\n   - Allowed operation: INSERT\n   - Target roles: authenticated\n   - USING expression: auth.role() = 'authenticated'\n   - WITH CHECK expression: auth.role() = 'authenticated'`,
-        }, { status: 403 });
-      }
-
-      return NextResponse.json({
-        error: `Failed to upload image: ${errorMessage}`,
-        code: 'UPLOAD_ERROR',
-        details: errorMessage,
-      }, { status: 500 });
+      // バケットが無い・Storage のポリシーで弾かれた、はどちらもサーバー側の設定の問題。
+      // 生のエラー文・バケット名・設定の手順は本文に出さず (#1172)、構造化ログにだけ残す
+      return internalError('POST /api/ai/image/generate', uploadError, { userId: user.id });
     }
 
     const { data: { publicUrl } } = supabase.storage
@@ -194,7 +152,6 @@ export async function POST(request: Request) {
       text: textResponse.trim(),
     });
   } catch (error: any) {
-    console.error('Image Gen Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/image/generate', error);
   }
 }

@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { clampIntParam } from '@/lib/http-params';
 import { NextResponse } from 'next/server';
+import { internalError } from '@/lib/api/errors';
 
 /**
  * GET /api/favorites
@@ -99,7 +100,6 @@ export async function GET(request: Request) {
 
     throw lastError ?? new Error('Failed to query recipe_likes');
   } catch (error: any) {
-    userLogger.error('Favorites fetch error', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/favorites', error, { userId: user.id, requestId });
   }
 }

@@ -166,7 +166,7 @@ export async function POST(request: Request) {
         .eq('user_daily_meals.user_id', user.id);
 
       if (plannedMealsError) {
-        return NextResponse.json({ error: plannedMealsError.message }, { status: 500 });
+        return internalError('POST /api/ai/menu/v4/generate', plannedMealsError, { userId: user.id });
       }
 
       const foundIds = new Set((plannedMeals || []).map((m: any) => m.id));

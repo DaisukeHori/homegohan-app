@@ -20,6 +20,7 @@ import {
   totalPlanSubscribers,
   type PlanSubscriberCounts,
 } from '@/lib/super-admin/plan-subscribers';
+import { internalError } from '@/lib/api/errors';
 
 type RouteContext = { params: { id: string } };
 
@@ -233,11 +234,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       .single();
 
     if (updateErr) {
-      console.error('[super-admin/plans/[id] PATCH]', updateErr);
-      return NextResponse.json(
-        { error: { code: 'OP_DB_ERROR', message: updateErr.message } },
-        { status: 500 }
-      );
+      return internalError('PATCH /api/super-admin/plans/[id]', updateErr, { userId: user.id }, { shape: 'nested' });
     }
 
     // 監査ログ記録
@@ -300,11 +297,7 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
       .eq('id', params.id);
 
     if (deleteErr) {
-      console.error('[super-admin/plans/[id] DELETE]', deleteErr);
-      return NextResponse.json(
-        { error: { code: 'OP_DB_ERROR', message: deleteErr.message } },
-        { status: 500 }
-      );
+      return internalError('DELETE /api/super-admin/plans/[id]', deleteErr, { userId: user.id }, { shape: 'nested' });
     }
 
     // 監査ログ記録

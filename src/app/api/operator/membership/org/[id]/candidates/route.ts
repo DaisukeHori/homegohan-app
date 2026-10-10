@@ -9,6 +9,7 @@ import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
+import { internalError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,10 +43,7 @@ export async function GET(
       .order('last_login_at', { ascending: false, nullsFirst: false });
 
     if (error) {
-      return NextResponse.json(
-        { error: { code: 'INTERNAL_ERROR', message: error.message } },
-        { status: 500 },
-      );
+      return internalError('GET /api/operator/membership/org/[id]/candidates', error, {}, { shape: 'nested' });
     }
 
     // auth.users からメールアドレスを取得する。listUsers() は page / perPage を渡さないと先頭 50 件しか返さず、
@@ -70,7 +68,6 @@ export async function GET(
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('GET /api/operator/membership/org/[id]/candidates', err, {}, { shape: 'nested' });
   }
 }

@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { internalError } from '@/lib/api/errors';
 
 // 単一食事の生成中リクエストがあるか確認
 export async function GET(request: Request) {
@@ -102,7 +103,6 @@ export async function GET(request: Request) {
     return NextResponse.json({ hasPending: false, requests: [] });
 
   } catch (error: any) {
-    console.error('Pending meal check error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/ai/menu/meal/pending', error, { userId: user.id });
   }
 }

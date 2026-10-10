@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 
 // data_share_enabled (旧「トレーナーと共有」) について (#1144):
 //   Web とアプリの設定画面からは、この項目を外した。トレーナーなどに共有する機能は無く、この値を読んで何かをするコードも無い。
@@ -34,7 +35,7 @@ export async function GET(_request: NextRequest) {
     .maybeSingle();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/notification-preferences', error, { userId: user.id });
   }
 
   const settings = data
@@ -92,7 +93,7 @@ export async function PATCH(request: NextRequest) {
     .single();
 
   if (result.error) {
-    return NextResponse.json({ error: result.error.message }, { status: 500 });
+    return internalError('PATCH /api/notification-preferences', result.error, { userId: user.id });
   }
 
   const settings = {

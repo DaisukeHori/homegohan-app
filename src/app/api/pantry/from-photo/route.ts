@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import type { Tables } from '@homegohan/shared';
 import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
+import { internalError } from '@/lib/api/errors';
 
 /**
  * 冷蔵庫写真解析結果をpantry_itemsに保存
@@ -269,7 +270,6 @@ export async function POST(request: Request) {
     });
 
   } catch (error: any) {
-    console.error("Pantry Save Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/pantry/from-photo', error, { userId: user.id });
   }
 }

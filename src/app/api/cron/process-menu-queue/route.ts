@@ -35,7 +35,7 @@ export async function GET(req: Request) {
 
   const { data: claimed, error: claimError } = await supabase.rpc('claim_menu_request', { p_worker_id: workerId });
   if (claimError) {
-    return Response.json({ error: claimError.message }, { status: 500 });
+    return internalError('GET /api/cron/process-menu-queue', claimError);
   }
   if (!claimed || !claimed.id) {
     return Response.json({ idle: true });
@@ -124,9 +124,7 @@ export async function GET(req: Request) {
       .eq('id', claimed.id)
       .eq('worker_id', workerId)
       .in('status', ['queued', 'processing']); // 既に completed/failed の場合は上書きしない
-    return Response.json(
-      { failed: claimed.id, error: err instanceof Error ? err.message : String(err) },
-      { status: 500 },
-    );
+    // 本文に例外の文面を返さない (#1172)。どの行が失敗したかは、構造化ログの request_id (= 行の id) で追える
+    return internalError('GET /api/cron/process-menu-queue', err, { userId: claimed.user_id, requestId: claimed.id });
   }
 }

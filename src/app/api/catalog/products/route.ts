@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { searchCatalogProducts } from "@/lib/catalog-products";
+import { internalError } from '@/lib/api/errors';
 
 const DEFAULT_LIMIT = 8;
 const MAX_LIMIT = 20;
@@ -32,7 +33,6 @@ export async function GET(request: Request) {
     const products = await searchCatalogProducts(supabase, query, { limit });
     return NextResponse.json({ products });
   } catch (error: any) {
-    console.error("Catalog product search failed:", error);
-    return NextResponse.json({ error: error.message ?? "Unknown error" }, { status: 500 });
+    return internalError('GET /api/catalog/products', error);
   }
 }

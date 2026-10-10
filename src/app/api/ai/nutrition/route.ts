@@ -12,6 +12,7 @@ import {
   type PlannedMealNutrientValues,
 } from '@/lib/planned-meal-validation';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 /**
  * 献立の栄養情報を更新
@@ -82,7 +83,7 @@ export async function POST(request: Request) {
         .eq('id', plannedMealId);
 
       if (updateError) {
-        return NextResponse.json({ error: updateError.message }, { status: 500 });
+        return internalError('POST /api/ai/nutrition', updateError, { userId: user.id });
       }
 
       return NextResponse.json({ success: true, nutritionData });
@@ -183,21 +184,19 @@ export async function POST(request: Request) {
           .eq('id', plannedMealId);
 
         if (updateError) {
-          return NextResponse.json({ error: updateError.message }, { status: 500 });
+          return internalError('POST /api/ai/nutrition', updateError, { userId: user.id });
         }
 
         return NextResponse.json({ success: true, nutritionData: result });
 
       } catch (aiError: any) {
-        console.error('AI Analysis Error:', aiError);
-        return NextResponse.json({ error: 'AI analysis failed: ' + aiError.message }, { status: 500 });
+        return internalError('POST /api/ai/nutrition', aiError, { userId: user.id });
       }
     }
 
     return NextResponse.json({ error: 'Either nutritionData or imageUrl is required' }, { status: 400 });
 
   } catch (error: any) {
-    console.error('Nutrition API Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/nutrition', error);
   }
 }

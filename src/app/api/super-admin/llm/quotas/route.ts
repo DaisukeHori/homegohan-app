@@ -20,6 +20,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { respondNotSupported } from '@/lib/admin/not-supported';
 import { LLM_QUOTA_UPDATE_NOT_SUPPORTED_MESSAGE, LLM_QUOTAS_NOT_ENFORCED_NOTE } from '@/lib/super-admin/llm-schemas';
+import { internalError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,8 +49,7 @@ export async function GET() {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('GET /api/super-admin/llm/quotas', err, {}, { shape: 'nested' });
   }
 }
 

@@ -9,6 +9,7 @@ import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
+import { internalError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,10 +44,7 @@ export async function GET(
       .order('joined_at', { ascending: true });
 
     if (error) {
-      return NextResponse.json(
-        { error: { code: 'INTERNAL_ERROR', message: error.message } },
-        { status: 500 },
-      );
+      return internalError('GET /api/operator/membership/family/[id]/candidates', error, {}, { shape: 'nested' });
     }
 
     // adult / representative はアカウントを持つが、念のため NULL は除く (.in() に null を渡すと uuid として解釈できず失敗する)
@@ -86,7 +84,6 @@ export async function GET(
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('GET /api/operator/membership/family/[id]/candidates', err, {}, { shape: 'nested' });
   }
 }

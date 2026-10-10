@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { internalError } from '@/lib/api/errors';
 
 // レシピ詳細取得
 export async function GET(
@@ -36,7 +37,7 @@ export async function GET(
     .eq('id', params.id)
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return internalError('GET /api/recipes/[id]', error, { userId: user?.id });
   if (!data) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   // 非公開レシピは作成者のみ閲覧可能
@@ -136,8 +137,7 @@ export async function PUT(
     return NextResponse.json({ success: true, recipe: data });
 
   } catch (error: any) {
-    console.error('Recipe update error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('PUT /api/recipes/[id]', error, { userId: user.id });
   }
 }
 
@@ -172,7 +172,6 @@ export async function DELETE(
     return NextResponse.json({ success: true });
 
   } catch (error: any) {
-    console.error('Recipe delete error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('DELETE /api/recipes/[id]', error, { userId: user.id });
   }
 }

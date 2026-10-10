@@ -347,8 +347,7 @@ JSON形式で出力してください：
     });
 
   } catch (error: any) {
-    console.error('Nutrition analysis error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/ai/nutrition-analysis', error, { userId: user.id });
   }
 }
 

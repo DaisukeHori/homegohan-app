@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { clampIntParam } from '@/lib/http-params';
+import { internalError } from '@/lib/api/errors';
 
 // ユーザーの全重要メッセージを取得
 export async function GET(request: Request) {
@@ -50,8 +51,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ importantMessages });
 
   } catch (error: any) {
-    console.error('Important messages fetch error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/ai/consultation/important-messages', error, { userId: user.id });
   }
 }
 

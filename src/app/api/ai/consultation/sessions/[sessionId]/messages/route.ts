@@ -3,7 +3,8 @@ import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
-import { internalError } from '@/lib/api/errors';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE, internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
@@ -94,7 +95,7 @@ export async function GET(
     .eq('session_id', params.sessionId)
     .order('created_at', { ascending: true });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return internalError('GET /api/ai/consultation/sessions/[sessionId]/messages', error, { userId: user.id });
 
   const messages = (data || [])
     .filter((m: any) => !m.metadata?.isSystemPrompt)
@@ -1202,7 +1203,9 @@ export async function POST(
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(finalData)}\n\n`));
 
           } catch (error: any) {
-            console.error('Streaming error:', error);
+            createLogger('POST /api/ai/consultation/sessions/[sessionId]/messages', generateRequestId())
+              .withUser(user.id)
+              .error('相談の応答の生成中にエラーが発生しました', error, { session_id: params.sessionId });
             // エラー時でも必ずassistantメッセージをDBに書き込んでユーザーに通知する
             const errorContent = 'すみません、応答の生成中にエラーが発生しました。しばらく待ってから再度お試しください。';
             try {
@@ -1230,11 +1233,15 @@ export async function POST(
                 },
                 actionExecuted: false,
                 actionResult: null,
-                error: error.message,
+                // 本文 (SSE) に生のエラー文を出さない (#1172)。画面は error の有無だけを見る。詳細は上のログに残す
+                error: INTERNAL_ERROR_MESSAGE,
+                code: INTERNAL_ERROR_CODE,
               })}\n\n`));
             } catch (dbError) {
               console.error('Failed to write error message to DB:', dbError);
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: error.message })}\n\n`));
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE })}\n\n`),
+              );
             }
           } finally {
             controller.close();

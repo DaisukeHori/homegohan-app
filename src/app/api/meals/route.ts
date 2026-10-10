@@ -9,6 +9,7 @@ import {
 import { checkRateLimit } from '@/lib/rate-limit';
 import { createLogger } from '@/lib/db-logger';
 import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
+import { internalError } from '@/lib/api/errors';
 
 /**
  * 食事一覧取得（日付ベースモデル: user_daily_meals → planned_meals）
@@ -45,7 +46,7 @@ export async function GET(request: Request) {
       .maybeSingle();
 
     if (dayError) {
-      return NextResponse.json({ error: dayError.message }, { status: 500 });
+      return internalError('GET /api/meals', dayError, { userId: user.id });
     }
 
     if (!dailyMeal) {
@@ -60,8 +61,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ meals });
 
   } catch (error: any) {
-    console.error('Error fetching meals:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/meals', error);
   }
 }
 
@@ -230,7 +230,6 @@ export async function POST(request: Request) {
     });
 
   } catch (error: any) {
-    console.error('Error creating meal:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/meals', error);
   }
 }

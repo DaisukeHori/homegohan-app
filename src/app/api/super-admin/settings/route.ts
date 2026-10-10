@@ -7,16 +7,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 
-function handleError(err: unknown) {
+function handleError(method: 'GET' | 'PUT', err: unknown) {
   if (err instanceof AuthError) {
     return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
   }
   if (err instanceof ForbiddenError) {
     return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
   }
-  const message = err instanceof Error ? err.message : 'Unknown error';
-  return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+  return internalError(`${method} /api/super-admin/settings`, err, {}, { shape: 'nested' });
 }
 
 export async function GET() {
@@ -36,7 +36,7 @@ export async function GET() {
 
     return NextResponse.json({ settings: data ?? [] });
   } catch (err) {
-    return handleError(err);
+    return handleError('GET', err);
   }
 }
 
@@ -64,11 +64,11 @@ export async function PUT(request: NextRequest) {
       .upsert({ key: key.trim(), value, updated_by: actor.id, updated_at: new Date().toISOString() });
 
     if (error) {
-      return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
+      return internalError('PUT /api/super-admin/settings', error, { userId: actor.id }, { shape: 'nested' });
     }
 
     return NextResponse.json({ success: true, key: key.trim() });
   } catch (err) {
-    return handleError(err);
+    return handleError('PUT', err);
   }
 }

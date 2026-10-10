@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { internalError } from '@/lib/api/errors'
 
 export async function POST() {
   try {
@@ -53,7 +54,6 @@ export async function POST() {
       },
     )
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return internalError('POST /api/auth/session-sync', error)
   }
 }

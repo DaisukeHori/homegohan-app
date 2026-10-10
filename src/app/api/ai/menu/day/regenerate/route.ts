@@ -76,7 +76,7 @@ export async function POST(request: Request) {
       .eq('daily_meal_id', targetDayId);
 
     if (mealsError) {
-      return NextResponse.json({ error: mealsError.message }, { status: 500 });
+      return internalError('POST /api/ai/menu/day/regenerate', mealsError, { userId: user.id });
     }
 
     // 4. target_slotsを生成（その日の全食事）

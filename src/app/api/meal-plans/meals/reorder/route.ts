@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { internalError } from '@/lib/api/errors';
 
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
 
@@ -133,8 +134,7 @@ export async function POST(request: Request) {
     });
 
   } catch (error: any) {
-    console.error('Reorder error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/meal-plans/meals/reorder', error, { userId: user.id });
   }
 }
 

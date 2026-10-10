@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { AuditLogQuerySchema } from '@/lib/super-admin/audit-logs-schemas';
+import { internalError } from '@/lib/api/errors';
 
 export async function GET(request: NextRequest) {
   try {
@@ -42,7 +43,7 @@ export async function GET(request: NextRequest) {
     const { data, error, count } = await query;
 
     if (error) {
-      return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
+      return internalError('GET /api/super-admin/audit-logs', error, {}, { shape: 'nested' });
     }
 
     // CSV エクスポートモード
@@ -83,7 +84,6 @@ export async function GET(request: NextRequest) {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('GET /api/super-admin/audit-logs', err, {}, { shape: 'nested' });
   }
 }

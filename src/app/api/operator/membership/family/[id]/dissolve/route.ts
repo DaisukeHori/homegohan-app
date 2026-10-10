@@ -14,6 +14,7 @@ import { sendEmail } from '@/lib/emails/send';
 import { emailFailureReasons } from '@/lib/emails/send-result';
 import { renderForceDissolveEmail } from '@/lib/emails/membership/operator-force-dissolve';
 import { z } from 'zod';
+import { internalError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,10 +73,7 @@ export async function POST(
     });
 
     if (rpcError) {
-      return NextResponse.json(
-        { error: { code: 'INTERNAL_ERROR', message: rpcError.message } },
-        { status: 500 },
-      );
+      return internalError('POST /api/operator/membership/family/[id]/dissolve', rpcError, {}, { shape: 'nested' });
     }
 
     // 通知メール (best-effort)。解散はすでに完了しているので、失敗しても 200 を返し、ログに残す。
@@ -144,7 +142,6 @@ export async function POST(
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('POST /api/operator/membership/family/[id]/dissolve', err, {}, { shape: 'nested' });
   }
 }

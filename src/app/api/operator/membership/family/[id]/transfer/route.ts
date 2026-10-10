@@ -14,6 +14,7 @@ import { sendEmail } from '@/lib/emails/send';
 import { emailFailureReasons } from '@/lib/emails/send-result';
 import { renderForceTransferEmail } from '@/lib/emails/membership/operator-force-transfer';
 import { z } from 'zod';
+import { internalError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -80,12 +81,17 @@ export async function POST(
     });
 
     if (rpcError) {
-      const code = rpcError.message.includes('TARGET_NOT_IN_FAMILY')
-        ? 'TARGET_NOT_IN_FAMILY'
-        : rpcError.message.includes('NOT_OPERATOR')
-          ? 'FORBIDDEN'
-          : 'INTERNAL_ERROR';
-      return NextResponse.json({ error: { code, message: rpcError.message } }, { status: code === 'FORBIDDEN' ? 403 : 400 });
+      // RPC の生のエラー文は本文に出さない (#1172)。分かるものは固定の文、それ以外は汎用の 500 にして構造化ログに残す
+      if (rpcError.message.includes('TARGET_NOT_IN_FAMILY')) {
+        return NextResponse.json(
+          { error: { code: 'TARGET_NOT_IN_FAMILY', message: '譲渡先のユーザーはこの家族グループに所属していません' } },
+          { status: 400 },
+        );
+      }
+      if (rpcError.message.includes('NOT_OPERATOR')) {
+        return NextResponse.json({ error: { code: 'FORBIDDEN', message: '権限がありません' } }, { status: 403 });
+      }
+      return internalError('POST /api/operator/membership/family/[id]/transfer', rpcError, { userId: operatorId }, { shape: 'nested' });
     }
 
     // 通知メール (best-effort)。譲渡はすでに完了しているので、失敗しても 200 を返し、ログに残す。
@@ -186,7 +192,6 @@ export async function POST(
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('POST /api/operator/membership/family/[id]/transfer', err, {}, { shape: 'nested' });
   }
 }

@@ -16,6 +16,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 interface ImageInput {
   base64: string;
@@ -393,7 +394,6 @@ export async function POST(request: Request) {
       }
     }
 
-    console.error('Photo Classification Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/classify-photo', error, { userId: user.id });
   }
 }

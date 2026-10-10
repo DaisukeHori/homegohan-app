@@ -9,6 +9,7 @@ import {
   sanitizeAiNutrient,
   validatePlannedMealInput,
 } from "@/lib/planned-meal-validation";
+import { internalError } from '@/lib/api/errors';
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -172,7 +173,6 @@ export async function POST(request: Request) {
     });
     
   } catch (error: any) {
-    console.error('Add from photo API error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/meal-plans/add-from-photo', error);
   }
 }

@@ -14,6 +14,7 @@ import {
   CouponCreateSchema,
   CouponsQuerySchema,
 } from '@/lib/super-admin/coupons-schemas';
+import { internalError } from '@/lib/api/errors';
 
 export async function GET(request: NextRequest) {
   try {
@@ -50,11 +51,7 @@ export async function GET(request: NextRequest) {
     const { data, error, count } = await query;
 
     if (error) {
-      console.error('[super-admin/coupons GET]', error);
-      return NextResponse.json(
-        { error: { code: 'OP_DB_ERROR', message: error.message } },
-        { status: 500 }
-      );
+      return internalError('GET /api/super-admin/coupons', error, {}, { shape: 'nested' });
     }
 
     return NextResponse.json({
@@ -119,11 +116,7 @@ export async function POST(request: NextRequest) {
           { status: 409 }
         );
       }
-      console.error('[super-admin/coupons POST]', error);
-      return NextResponse.json(
-        { error: { code: 'OP_DB_ERROR', message: error.message } },
-        { status: 500 }
-      );
+      return internalError('POST /api/super-admin/coupons', error, { userId: user.id }, { shape: 'nested' });
     }
 
     // 監査ログ記録 (クーポン作成は課金影響 → severity='warn')

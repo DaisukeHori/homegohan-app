@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 function stripMarkdownCodeBlock(text: string): string {
   let cleaned = text.trim();
@@ -220,7 +221,6 @@ ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n
     });
 
   } catch (error: any) {
-    console.error('Session close error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/consultation/sessions/[sessionId]/close', error, { userId: user.id });
   }
 }

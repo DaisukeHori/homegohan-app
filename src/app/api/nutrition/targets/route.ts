@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { calculateNutritionTargets } from '@homegohan/core';
 import { buildNutritionCalculatorInput } from '@/lib/build-nutrition-input';
+import { internalError } from '@/lib/api/errors';
 
 /**
  * 栄養目標の取得・更新API
@@ -117,9 +118,7 @@ export async function GET() {
     });
 
   } catch (error: unknown) {
-    console.error('Failed to fetch nutrition targets:', error);
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalError('GET /api/nutrition/targets', error, { userId: user.id });
   }
 }
 
@@ -182,8 +181,6 @@ export async function PUT(request: Request) {
     return NextResponse.json({ success: true, targets: data });
 
   } catch (error: unknown) {
-    console.error('Failed to update nutrition targets:', error);
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalError('PUT /api/nutrition/targets', error, { userId: user.id });
   }
 }

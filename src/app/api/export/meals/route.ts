@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import type { Tables } from '@homegohan/shared';
+import { internalError } from '@/lib/api/errors';
 
 /**
  * #133 CSV エクスポート
@@ -72,7 +73,7 @@ export async function GET(request: Request) {
 
   const { data: days, error } = await query;
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/export/meals', error, { userId: user.id });
   }
 
   // CSV 組み立て

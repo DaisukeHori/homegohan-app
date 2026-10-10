@@ -97,8 +97,7 @@ export async function POST(request: Request) {
       .single();
 
     if (insertError || !requestData?.id) {
-      console.error('Failed to create request record:', insertError);
-      return NextResponse.json({ error: insertError?.message || 'Failed to create request' }, { status: 500 });
+      return internalError('POST /api/ai/menu/meal/generate', insertError, { userId: user.id });
     }
 
     console.log(`📝 Request created for ${dayDate} ${mealType}, requestId: ${requestData?.id}`);

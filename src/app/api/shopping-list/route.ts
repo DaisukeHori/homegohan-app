@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { toShoppingListItem, toShoppingList } from '@/lib/converter';
+import { internalError } from '@/lib/api/errors';
 
 /**
  * 買い物リスト取得API（日付ベースモデル: shopping_lists → shopping_list_items）
@@ -53,7 +54,7 @@ export async function GET(request: Request) {
       });
     }
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/shopping-list', error, { userId: user.id });
   }
 }
 
@@ -99,7 +100,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ item: toShoppingListItem(data) });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/shopping-list', error, { userId: user.id });
   }
 }
 
@@ -128,6 +129,6 @@ export async function DELETE(request: Request) {
 
     return NextResponse.json({ success: true, deletedCount: itemIds.length });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('DELETE /api/shopping-list', error, { userId: user.id });
   }
 }
