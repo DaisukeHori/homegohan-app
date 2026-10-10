@@ -7,7 +7,7 @@
  * - 有効になるのは、秘密キー TURNSTILE_SECRET_KEY とサイトキー NEXT_PUBLIC_TURNSTILE_SITE_KEY の両方が設定されているときだけ。
  *   どちらかが無ければ「無効」で、トークンを確かめずに通す。
  *   - 秘密キーが無いとき: src/lib/env.ts の getOptionalEnv が、サーバーのプロセスごとに 1 回だけ警告のログを出す
- *     (サーバーが起動してから最初にここを通ったとき)。
+ *     (サーバーが起動してから最初のログインの要求で。POST /api/auth/login が isTurnstileVerificationEnabled を最初に呼ぶ)。
  *   - サイトキーが無いのに秘密キーだけあるとき: 画面にウィジェットが出ず、トークンを取る手段が無い。
  *     確かめると 3 回失敗した人が二度とログインできなくなるので、無効として扱い、プロセスごとに 1 回だけ警告のログを出す。
  * - Cloudflare に届かない・応答が壊れているときは 'unavailable' (呼び出し側は通さない)。
@@ -68,7 +68,12 @@ function getActiveSecretKey(): string | null {
   return secret;
 }
 
-/** Turnstile の確認が有効か (キーが両方そろっているか) */
+/**
+ * Turnstile の確認が有効か (キーが両方そろっているか)。
+ * 無効なら、その旨の警告のログを、サーバーのプロセスごとに 1 回だけ出す (getOptionalEnv と、組になっていないときの警告)。
+ * POST /api/auth/login が、リクエストのたびに最初に呼ぶ (サーバーが起動してから最初のログインの要求で 1 回だけログが出る)。
+ * ビルド時 (route の読み込み) には呼ばない (ビルドの途中で app_logs へ書こうとしないため)。
+ */
 export function isTurnstileVerificationEnabled(): boolean {
   return getActiveSecretKey() !== null;
 }

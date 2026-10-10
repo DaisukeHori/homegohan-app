@@ -32,7 +32,11 @@ import { performGuardedLogin, type GuardedLoginResult } from '@/lib/auth/guarded
 import { type LoginLockRpcClient } from '@/lib/auth/login-lock';
 import { sendLoginLockNotice } from '@/lib/auth/login-lock-notification';
 import { CAPTCHA_FAILED_MESSAGE } from '@/lib/auth/turnstile';
-import { TURNSTILE_TOKEN_MAX_LENGTH, verifyTurnstileToken } from '@/lib/auth/turnstile-verify';
+import {
+  TURNSTILE_TOKEN_MAX_LENGTH,
+  isTurnstileVerificationEnabled,
+  verifyTurnstileToken,
+} from '@/lib/auth/turnstile-verify';
 import { createLogger } from '@/lib/db-logger';
 import { checkRateLimit, getRetryAfterSec, type RateLimitResult } from '@/lib/rate-limit';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
@@ -131,6 +135,10 @@ function toResponse(result: GuardedLoginResult) {
 }
 
 export async function POST(request: NextRequest) {
+  // ボットの確認が無効 (キーが未設定) なら、その旨をサーバーのプロセスごとに 1 回だけログに出す (起動後の最初のログインの要求で)。
+  // 確かめるのは 3 回以上失敗したメールアドレスだけなので、ここで呼ばないと、無効のまま気づかれないことがある
+  isTurnstileVerificationEnabled();
+
   if (isCrossOrigin(request)) {
     return json({ error: '許可されていないリクエストです。', code: 'FORBIDDEN_ORIGIN' }, 403);
   }

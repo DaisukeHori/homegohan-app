@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   waitUntil: vi.fn(),
   sendLoginLockNotice: vi.fn(),
   verifyTurnstileToken: vi.fn(),
+  isTurnstileVerificationEnabled: vi.fn(() => false),
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
@@ -35,7 +36,11 @@ vi.mock('@/lib/auth/login-lock-notification', () => ({ sendLoginLockNotice: mock
 
 vi.mock('@/lib/auth/turnstile-verify', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/auth/turnstile-verify')>();
-  return { ...actual, verifyTurnstileToken: mocks.verifyTurnstileToken };
+  return {
+    ...actual,
+    verifyTurnstileToken: mocks.verifyTurnstileToken,
+    isTurnstileVerificationEnabled: mocks.isTurnstileVerificationEnabled,
+  };
 });
 
 vi.mock('@/lib/db-logger', () => ({
@@ -244,6 +249,15 @@ describe('IP アドレスごとの回数制限 (設計 §3.2: 10 回/分)', () =
     const res = await post();
     expect(res.status).toBe(500);
     expect(mocks.signInWithPassword).not.toHaveBeenCalled();
+  });
+});
+
+describe('ボットの確認が無効なことのログ', () => {
+  it('リクエストのたびに、最初に確認の有効・無効を見る (無効ならプロセスで 1 回だけログが出る。3 回失敗していなくても)', async () => {
+    await post();
+    await post(undefined, { origin: 'https://evil.example' });
+    expect(mocks.isTurnstileVerificationEnabled).toHaveBeenCalledTimes(2);
+    expect(mocks.verifyTurnstileToken).not.toHaveBeenCalled();
   });
 });
 
