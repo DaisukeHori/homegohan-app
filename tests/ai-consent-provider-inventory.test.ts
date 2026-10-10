@@ -41,6 +41,8 @@ const NON_AI_HOSTS: Record<string, string> = {
   'api.stripe.com': '決済 (Stripe)',
   'dashboard.stripe.com': '決済 (Stripe) の管理画面へのリンク',
   'api.resend.com': 'メールの送信 (Resend)',
+  'challenges.cloudflare.com':
+    'ボット対策 (Cloudflare Turnstile。#1165)。画面のウィジェットの api.js と、サーバーでのトークンの確認 (siteverify)。送るのはトークンと IP アドレスだけで、利用者のデータは送らない',
   'eu.i.posthog.com': '利用状況の計測の残り (#1166 で外した設定の値)',
   'esm.sh': 'Edge Functions のモジュールの取得',
   'holidays-jp.github.io': '祝日の一覧 (公開情報)',

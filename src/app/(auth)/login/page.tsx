@@ -5,8 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/auth/PasswordInput";
+import { TurnstileWidget, useTurnstile } from "@/components/auth/TurnstileWidget";
 import { createClient } from "@/lib/supabase/client";
 import { getSafeRedirectPath } from "@/lib/auth/safe-redirect";
+import { loginErrorMessage, requestLogin } from "@/lib/auth/login-request";
 import { notifyNativeSessionExpired } from "@/lib/native-auth-bridge";
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -38,6 +40,8 @@ function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
+  // #1165: bot 対策 (Cloudflare Turnstile)。サイトキーが未設定なら無効で、今までどおりに動く
+  const captcha = useTurnstile();
 
   // #1057 (UX1-01): invite/[token]/page.tsx が付与する `redirect` も `next` と同様に扱う
   const rawRedirectParam = searchParams.get('next') ?? searchParams.get('redirect');
@@ -106,43 +110,28 @@ function LoginContent() {
       return;
     }
 
+    // #1165: トークンは 1 回しか使えない。取り出した時点で、ウィジェットが次のトークンを取り直す。
+    // Turnstile が有効なのにトークンが無いとき (Enter キーなどでボタンを通らずに送られた場合) は送らない
+    const captchaToken = captcha.takeToken();
+    if (captcha.enabled && !captchaToken) {
+      setError('ボットではないことの確認が終わるまで、少しお待ちください。');
+      return;
+    }
+
     setIsLoading(true);
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      // #1165: ログインはサーバー (POST /api/auth/login) を通す。サーバーが IP アドレスごとの回数制限・
+      // 連続失敗のロック (設計 docs/design/cross/01-auth-session.md §8)・ボットの確認を行い、成功ならセッションの Cookie を付ける
+      const outcome = await requestLogin({ email, password, captchaToken });
 
-      if (error) {
-        // エラーコードに応じたメッセージ
-        const isRateLimit =
-          error.code === 'over_email_send_rate_limit' ||
-          error.code === 'over_request_rate_limit' ||
-          error.status === 429 ||
-          error.message.includes('over_email_send_rate_limit') ||
-          error.message.includes('For security purposes') ||
-          error.message.includes('too many requests');
-        const isInvalidCredentials =
-          error.code === 'invalid_credentials' ||
-          error.message.includes('Invalid login credentials');
-        const isEmailNotConfirmed =
-          error.code === 'email_not_confirmed' ||
-          error.message.includes('Email not confirmed');
-
-        if (isRateLimit || isInvalidCredentials) {
+      if (!outcome.ok) {
+        if (outcome.code === 'AUTH_INVALID_CREDENTIALS' || outcome.code === 'RATE_LIMITED') {
           // #287: rate limit または認証失敗 → 最終失敗時刻を記録
           localStorage.setItem(rateLimitKey, String(Date.now()));
-          if (isRateLimit) {
-            setError('しばらくしてから再度お試しください。');
-          } else {
-            setError('メールアドレスまたはパスワードが正しくありません。');
-          }
-        } else if (isEmailNotConfirmed) {
-          setError('メールアドレスが確認されていません。確認メールをご確認ください。');
-        } else {
-          setError('ログインに失敗しました。入力内容をご確認ください。');
         }
+        // CAPTCHA の拒否 (AUTH_CAPTCHA_FAILED) はパスワードの間違いではないので、クールダウンは付けない (ウィジェットは取り直し済み)
+        setError(loginErrorMessage(outcome));
         return;
       }
 
@@ -287,9 +276,10 @@ function LoginContent() {
               className="py-6 rounded-xl border-gray-200 focus:ring-2 focus:ring-[#FF8A65]/20 focus:border-[#FF8A65] transition-all"
             />
           </div>
+          <TurnstileWidget {...captcha.widgetProps} action="login" />
           <Button
             type="submit"
-            disabled={isLoading}
+            disabled={isLoading || !captcha.ready}
             className="w-full py-6 rounded-full bg-[#333] hover:bg-black text-white font-bold shadow-lg hover:shadow-xl transition-all duration-300"
           >
             {isLoading ? 'ログイン中...' : 'ログイン'}

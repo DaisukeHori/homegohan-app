@@ -3,6 +3,8 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EmailEnvelopeSchema, type EmailEnvelope } from '@/lib/emails/envelope';
 import { renderAccountDeletedEmail } from '@/lib/emails/account/account-deleted';
+import { renderLoginLockAdminEmail } from '@/lib/emails/account/login-lock-admin';
+import { renderLoginLockedEmail } from '@/lib/emails/account/login-locked';
 import type { InviteEmailVars } from '@/lib/emails/membership/templates';
 import { renderFamilyInviteEmail } from '@/lib/emails/membership/family-invite';
 import { renderFamilyInviteExistingEmail } from '@/lib/emails/membership/family-invite-existing';
@@ -60,6 +62,26 @@ const TEMPLATES: TemplateCase[] = [
     name: 'account-deleted',
     render: () => renderAccountDeletedEmail({ to_email: 'taro@example.com', deleted_at: new Date('2026-10-09T15:05:00.000Z') }),
     mentionsSupport: true,
+  },
+  {
+    file: 'account/login-locked',
+    name: 'login-locked',
+    render: () =>
+      renderLoginLockedEmail({ to_email: 'taro@example.com', failure_count: 10, locked_until: new Date('2026-10-10T05:05:00.000Z') }),
+    mentionsSupport: true,
+  },
+  {
+    file: 'account/login-lock-admin',
+    name: 'login-lock-admin',
+    render: () =>
+      renderLoginLockAdminEmail({
+        to_email: 'admin@example.com',
+        user_id: '00000000-0000-4000-8000-000000000001',
+        masked_email: 't***@example.com',
+        failure_count: 20,
+        locked_until: new Date('2026-10-11T04:05:00.000Z'),
+      }),
+    mentionsSupport: false,
   },
   { file: 'membership/family-invite', name: 'family-invite', render: () => renderFamilyInviteEmail(inviteVars), mentionsSupport: true },
   { file: 'membership/family-invite-existing', name: 'family-invite-existing', render: () => renderFamilyInviteExistingEmail(inviteVars), mentionsSupport: true },
