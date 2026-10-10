@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { isCalendarDate, sundayWeekRange } from '@/lib/jst-day-ranges';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
+import { WEEKLY_MENU_REQUEST_STALE_MESSAGE } from '@/lib/weekly-menu-request-error';
 
 // 単一食事の生成中リクエストがあるか確認
 export async function GET(request: Request) {
@@ -67,7 +68,7 @@ export async function GET(request: Request) {
           .from('weekly_menu_requests')
           .update({
             status: 'failed',
-            error_message: 'stale_request_timeout',
+            error_message: WEEKLY_MENU_REQUEST_STALE_MESSAGE,
             updated_at: new Date().toISOString(),
           })
           .in('id', staleIds)

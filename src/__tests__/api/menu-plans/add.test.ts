@@ -26,6 +26,8 @@ vi.mock('@/lib/badges/awardBadge', () => ({
 }));
 
 const { POST } = await import('@/app/api/menu-plans/add/route');
+const { INTERNAL_ERROR_MESSAGE } = await import('@/lib/api/errors');
+const { WEEKLY_MENU_REQUEST_FAILED_MESSAGE } = await import('@/lib/weekly-menu-request-error');
 
 const USER = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' };
 const OBTAINED_AT = '2026-10-08T03:00:00.000Z';
@@ -132,5 +134,43 @@ describe('POST /api/menu-plans/add の badge_awarded', () => {
       'planner badge award failed (non-fatal):',
       expect.objectContaining({ code: '42703' }),
     );
+  });
+});
+
+// #1172: weekly_menus の作成に失敗したときの補償で、リクエストの行を失敗にする。
+// 行の error_message は GET /api/ai/menu/weekly/status を通って画面に出るので、DB の生のエラー文 (テーブル名・制約名・列名) を書かない
+describe('POST /api/menu-plans/add: weekly_menus の作成に失敗したとき (#1172)', () => {
+  const DB_ERROR = {
+    code: '23503',
+    message: 'insert or update on table "weekly_menus" violates foreign key constraint "weekly_menus_request_id_fkey"',
+  };
+
+  it('リクエストの行には固定の文を書き、応答は汎用の 500 (どちらにも DB の生のエラー文を出さない)', async () => {
+    const requestUpdates: Array<Record<string, unknown>> = [];
+    mockSessionFrom.mockImplementation((table: string) => {
+      if (table !== 'weekly_menu_requests') throw new Error(`想定外のテーブル (session): ${table}`);
+      return {
+        insert: () => ({ select: () => ({ single: async () => ({ data: { id: 'req-1' }, error: null }) }) }),
+        update: (values: Record<string, unknown>) => {
+          requestUpdates.push(values);
+          return { eq: async () => ({ error: null }) };
+        },
+      };
+    });
+    mockAdminFrom.mockImplementation(() => ({
+      insert: () => ({ select: () => ({ single: async () => ({ data: null, error: DB_ERROR }) }) }),
+    }));
+
+    const res = await POST(postRequest());
+    const text = await res.text();
+
+    expect(res.status).toBe(500);
+    expect(JSON.parse(text).error.message).toBe(INTERNAL_ERROR_MESSAGE);
+    expect(text).not.toContain('weekly_menus');
+    expect(requestUpdates).toEqual([
+      expect.objectContaining({ status: 'failed', error_message: WEEKLY_MENU_REQUEST_FAILED_MESSAGE }),
+    ]);
+    expect(String(requestUpdates[0].error_message)).not.toContain('weekly_menus');
+    expect(mockAwardBadge).not.toHaveBeenCalled();
   });
 });

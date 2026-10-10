@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
 import { internalError } from '@/lib/api/errors';
+import { WEEKLY_MENU_REQUEST_STALE_MESSAGE } from '@/lib/weekly-menu-request-error';
 
 // #1203: stale 判定時の復元（スナップショットの書き戻し）が打ち切られないよう、実行時間の上限を明示する。
 export const maxDuration = 60; // Vercel Pro: 60s OK
@@ -62,7 +63,7 @@ export async function GET(request: Request) {
           .from('weekly_menu_requests')
           .update({
             status: 'failed',
-            error_message: 'stale_request_timeout',
+            error_message: WEEKLY_MENU_REQUEST_STALE_MESSAGE,
             updated_at: new Date().toISOString(),
           })
           .eq('id', pendingRequest.id)

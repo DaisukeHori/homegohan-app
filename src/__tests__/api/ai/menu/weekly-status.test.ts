@@ -56,6 +56,8 @@ vi.mock('@/lib/planned-meals-snapshot', async (importOriginal) => {
 });
 
 const { GET, maxDuration } = await import('@/app/api/ai/menu/weekly/status/route');
+const { AI_CONSENT_REQUIRED_MESSAGE, AI_CONSENT_CHECK_FAILED_MESSAGE } = await import('../../../../../supabase/functions/_shared/ai-consent');
+const { WEEKLY_MENU_REQUEST_FAILED_MESSAGE } = await import('@/lib/weekly-menu-request-error');
 
 const user = { id: 'user-1' };
 
@@ -194,5 +196,69 @@ describe('GET /api/ai/menu/weekly/status', () => {
 
   it('stale 判定時の復元が打ち切られないよう maxDuration を明示している (#1203)', () => {
     expect(maxDuration).toBe(60);
+  });
+});
+
+// #1172: 行の error_message には、この変更より前に書かれた行や Edge Function が自分で書いた行の、
+// 生のエラー文 (DB・例外・Edge Function の応答の本文) が入っていることがある。画面はこの応答の文をそのまま出すので、
+// こちらで書いた文 (同意・stale・中止) だけをそのまま返し、それ以外は固定の文にする
+describe('GET /api/ai/menu/weekly/status: 失敗の文 (#1172)', () => {
+  function failedRow(errorMessage: string | null) {
+    return {
+      id: 'req-1',
+      status: 'failed',
+      error_message: errorMessage,
+      updated_at: new Date().toISOString(),
+      mode: 'v4',
+      start_date: '2026-07-06',
+      target_meal_id: null,
+      progress: null,
+    };
+  }
+
+  it.each([
+    ['DB (PostgREST) の生のエラー文', 'new row violates row-level security policy for table "weekly_menus"'],
+    [
+      'Next.js が書いていた Edge Function の失敗の文 (状態コードと本文)',
+      'generate-menu-v4 failed after 3/3 attempts: status 500, body={"error":"relation \\"planned_meals\\" does not exist"}',
+    ],
+    ['cron が書いていた Edge Function の失敗の文', 'V5 returned 500: {"error":"duplicate key value violates unique constraint"}'],
+    ['Edge Function が自分で書く例外の文面', 'TypeError: Cannot read properties of undefined (reading \'dishes\')'],
+  ])('%s は返さず、固定の文を返す (errorMessage / error_message の両方)', async (_label, stored) => {
+    selectResultQueue.push({ data: failedRow(stored), error: null });
+
+    const res = await GET(makeRequest('req-1'));
+    const text = await res.text();
+    const json = JSON.parse(text);
+
+    expect(res.status).toBe(200);
+    expect(json.status).toBe('failed');
+    expect(json.errorMessage).toBe(WEEKLY_MENU_REQUEST_FAILED_MESSAGE);
+    expect(json.error_message).toBe(WEEKLY_MENU_REQUEST_FAILED_MESSAGE);
+    expect(text).not.toContain(stored);
+  });
+
+  it.each([
+    ['同意が無くて止めた文', AI_CONSENT_REQUIRED_MESSAGE],
+    ['同意の状況を読めなくて止めた文', AI_CONSENT_CHECK_FAILED_MESSAGE],
+    ['進まなくなった行の文', 'stale_request_timeout'],
+    ['中止の文', '中止しました'],
+    ['固定の文', WEEKLY_MENU_REQUEST_FAILED_MESSAGE],
+  ])('こちらで書いた文 (%s) は、画面が見分けられるようそのまま返す', async (_label, stored) => {
+    selectResultQueue.push({ data: failedRow(stored), error: null });
+
+    const json = await (await GET(makeRequest('req-1'))).json();
+
+    expect(json.errorMessage).toBe(stored);
+    expect(json.error_message).toBe(stored);
+  });
+
+  it('error_message が空 (null) なら null のまま返す (画面は自分の既定の文を出す)', async () => {
+    selectResultQueue.push({ data: failedRow(null), error: null });
+
+    const json = await (await GET(makeRequest('req-1'))).json();
+
+    expect(json.errorMessage).toBeNull();
+    expect(json.error_message).toBeNull();
   });
 });

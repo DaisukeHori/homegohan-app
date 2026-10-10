@@ -183,7 +183,7 @@ pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘
 #### 名前が紛らわしいもの
 
 - `POST /api/ai/menu/v4/generate`: URL は v4 ですが、`menu_generation_v5_direct` が ON の間は v5 を呼びます。
-- `src/lib/generate-menu-v4-retry.ts` の `invokeGenerateMenuV4WithRetry`: 名前は v4 ですが、中身は汎用のリトライ関数です（`consultation-action-executor.ts` では v5 の呼び出しにも使います）。そのため v5 の呼び出しが失敗しても、エラーメッセージは `generate-menu-v4 failed after ...` と出ます。
+- `src/lib/generate-menu-v4-retry.ts` の `invokeGenerateMenuV4WithRetry`: 名前は v4 ですが、中身は汎用のリトライ関数です（`consultation-action-executor.ts` では v5 の呼び出しにも使います）。そのため v5 の呼び出しが失敗しても、構造化ログ（`app_logs`。function_name は `markWeeklyMenuRequestFailed`）に残る原因の文は `generate-menu-v4 failed after ...` と出ます（リクエストの行の `error_message` には固定の文が入り、画面にこの文は出ません。#1172）。
 - `_shared/v4-fast-llm.ts` / `_shared/v4-nutrition-adapter.ts`: 名前は v4 ですが、v5 も使う共通部品です。
 
 #### 呼び出し元を再確認するには

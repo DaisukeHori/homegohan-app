@@ -1,10 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
+import { WEEKLY_MENU_REQUEST_FAILED_MESSAGE } from '@/lib/weekly-menu-request-error';
+import {
+  AI_CONSENT_CHECK_FAILED_CODE,
+  AI_CONSENT_CHECK_FAILED_MESSAGE,
+  AI_CONSENT_CHECK_FAILED_STATUS,
+  AI_CONSENT_REQUIRED_CODE,
+  AI_CONSENT_REQUIRED_MESSAGE,
+  AI_CONSENT_REQUIRED_STATUS,
+} from '../../../../supabase/functions/_shared/ai-consent';
 
 const mockRpc = vi.fn();
 const mockFetch = vi.fn();
 const mockLogWarn = vi.fn();
 const mockLogError = vi.fn();
+// weekly_menu_requests への update に渡した値 (失敗にしたときの error_message を見る)
+const mockUpdateValues = vi.fn();
 
 // 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
 vi.mock('@/lib/ai/consent-guard', () => import('../../../../tests/helpers/ai-consent-guard-allowed'));
@@ -12,7 +23,10 @@ vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => ({
     rpc: mockRpc,
     from: () => ({
-      update: () => ({ eq: () => ({ eq: () => ({ in: vi.fn() }) }) }),
+      update: (values: Record<string, unknown>) => {
+        mockUpdateValues(values);
+        return { eq: () => ({ eq: () => ({ in: vi.fn() }) }) };
+      },
     }),
   })),
 }));
@@ -203,6 +217,34 @@ describe('GET /api/cron/process-menu-queue: 取り直した行は続きから再
     expect(loggedError).toBeInstanceOf(Error);
     expect(loggedError.message).not.toBe('');
     expect(text).not.toContain(loggedError.message);
+  });
+
+  it('C-9: Edge Function がエラーを返したら、行の error_message には固定の文を書く (状態コード・応答の本文を書かない。#1172)', async () => {
+    const edgeBody = JSON.stringify({ error: 'relation "planned_meals" does not exist' });
+    mockFetch.mockImplementation(async () => new Response(edgeBody, { status: 500 }));
+
+    await dispatch(claimedRow());
+
+    expect(mockUpdateValues).toHaveBeenCalledTimes(1);
+    const written = mockUpdateValues.mock.calls[0][0] as Record<string, unknown>;
+    expect(written).toMatchObject({ status: 'failed', error_message: WEEKLY_MENU_REQUEST_FAILED_MESSAGE });
+    expect(String(written.error_message)).not.toContain('planned_meals');
+    expect(String(written.error_message)).not.toContain('500');
+    // 原因 (状態コードと本文) は構造化ログにだけ残る
+    const loggedError = mockLogError.mock.calls[0][1] as Error;
+    expect(loggedError.message).toContain('planned_meals');
+  });
+
+  it.each([
+    ['未同意 (403)', AI_CONSENT_REQUIRED_STATUS, AI_CONSENT_REQUIRED_CODE, AI_CONSENT_REQUIRED_MESSAGE],
+    ['判定を読めない (503)', AI_CONSENT_CHECK_FAILED_STATUS, AI_CONSENT_CHECK_FAILED_CODE, AI_CONSENT_CHECK_FAILED_MESSAGE],
+  ] as const)('C-10: Edge Function が同意の判定で止めた (%s) ら、行には画面が見分ける人向けの文をそのまま書く', async (_label, status, code, message) => {
+    mockFetch.mockImplementation(async () => new Response(JSON.stringify({ error: message, code }), { status }));
+
+    await dispatch(claimedRow());
+
+    expect(mockUpdateValues).toHaveBeenCalledTimes(1);
+    expect(mockUpdateValues.mock.calls[0][0]).toMatchObject({ status: 'failed', error_message: message });
   });
 });
 

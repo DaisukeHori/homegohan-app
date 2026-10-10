@@ -282,8 +282,9 @@ export async function POST(request: Request) {
           console.log(
             `🔁 Restored meals after generation failure: restored=${restoreResult.restored} skipped=${restoreResult.skipped} failed=${restoreResult.failed}`,
           );
+          // 復元の件数は、原因の文に足して markWeeklyMenuRequestFailed の構造化ログに残す (行には固定の文が入る。#1172)。
           // Edge Function が同意の判定で止めたときの文 (T15 / #1154) は、画面がこの文を見分けて同意画面へ案内するので、
-          // 復元の件数を足さずにそのまま残す (件数はこのログに残っている)
+          // 件数を足さずにそのまま残す (足すと固定の文に置き換わる。件数は上のログに残っている)
           if (aiConsentReasonOfStoredError(result.errorMessage) === null) {
             errorMessage = `${result.errorMessage} (rollback: restored=${restoreResult.restored}, skipped=${restoreResult.skipped}, failed=${restoreResult.failed})`;
           }
