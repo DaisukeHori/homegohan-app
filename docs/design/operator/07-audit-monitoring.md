@@ -502,7 +502,7 @@ Better Stack は採用しない (上記)。代わりに、`app_logs` (db-logger 
 
 ### 8.3 エラー急増のメール通知 (実装済み: #1157)
 
-`app_logs` の `error` が短時間に増えたら、運用のメールアドレスに 1 通知らせる (オーナー判断 2026-10-08, #1157)。
+`app_logs` の `error` が短時間に増えたら、運用のメールアドレスに 1 通知らせる (#1157。オーナーの選択は 2026-10-09 の「推奨案」= ログの閲覧に加え、しきい値はあとで調整する)。
 通知先は、共有の受信箱ができるまでは個人のアドレスでもよい。`infra_alerts` は書かない (インフラ画面は「未接続」のまま: #1180)。
 
 | 項目 | 内容 |
@@ -510,11 +510,11 @@ Better Stack は採用しない (上記)。代わりに、`app_logs` (db-logger 
 | 起動 | Vercel Cron が 15 分おきに `GET /api/cron/app-log-alerts` を呼ぶ (`vercel.json`)。認証は他の cron と同じ `requireCronAuth` (`CRON_SECRET` の Bearer。旧シークレット `CRON_SECRET_PREVIOUS` の受け付けを含む。#1196) |
 | 宛先 | 環境変数 `OPS_ALERT_EMAIL` (メールアドレス 1 つ)。**未設定なら何もしない** (info ログを 1 行残すだけで、DB にもメールにも触れない)。形が不正なときは warn を残して送らない |
 | 数え方 | DB の `app_log_error_counts(窓 15 分, 上位 10)` が、`level='error'` を `function_name` ごとに数える。返すのは関数名と件数 (と全体の件数) だけで、ログの本文・ユーザー ID は読まない。既存の索引 `idx_app_logs_created_at` で足りる |
-| 判定 | 全体の合計が **20 件を超えた** (21 件以上) とき。関数ごとではなく合計で見る (小さな失敗が広く散らばる障害も拾うため)。定数は `src/lib/ops-alerts/app-log-error-spike.ts` |
-| 重複の抑止 | 同じアラートは **60 分は送り直さない**。表 `ops_alert_state (alert_key PK, last_sent_at)` (service_role のみ) に覚える。「送ってよいか」は `claim_ops_alert` が 1 つの `INSERT ... ON CONFLICT DO UPDATE ... WHERE` で原子的に決める (Vercel Cron は同じ回をまれに 2 回呼ぶ。読んでから書くと 2 通出る)。キーは固定の `app_logs_error_spike` で、関数名など動的な値は入れない |
+| 判定 | 全体の合計が **20 件を超えた** (21 件以上) とき。関数ごとではなく合計で見る (小さな失敗が広く散らばる障害も拾うため)。既定値は `src/lib/ops-alerts/app-log-error-spike.ts` の定数で、環境変数 `OPS_ALERT_ERROR_THRESHOLD` (1〜100000 の整数) で上書きできる。整数でない・範囲外の値は既定値に戻し、無視した変数の名前だけを warn に残す。窓 (15 分) は `vercel.json` の間隔と結びついているので、環境変数では変えない |
+| 重複の抑止 | 同じアラートは **60 分は送り直さない** (環境変数 `OPS_ALERT_COOLDOWN_MINUTES` (1〜10080 分。`claim_ops_alert` が受け付ける範囲) で上書きできる。不正な値はしきい値と同じ扱い)。表 `ops_alert_state (alert_key PK, last_sent_at)` (service_role のみ) に覚える。「送ってよいか」は `claim_ops_alert` が 1 つの `INSERT ... ON CONFLICT DO UPDATE ... WHERE` で原子的に決める (Vercel Cron は同じ回をまれに 2 回呼ぶ。読んでから書くと 2 通出る)。キーは固定の `app_logs_error_spike` で、関数名など動的な値は入れない |
 | 送れなかったとき | メールは届くことに依存しない。送信の設定が未完了 (`RESEND_API_KEY` なし)・Resend が断った・例外のときは、`release_ops_alert` で取った権利を返し (「送った」と記録したままにしない)、15 分後の次の回でもう一度試す。失敗は `sendEmail` が `app_logs` に error で残し (宛先はマスク)、cron も件数と関数名を warn で残す。応答は 200 のまま (`status: send_failed` / `send_skipped`) |
 | 載せる内容 | 件数・関数名 (多い順に最大 10 件、残りは合計)・`/super-admin/logs` へのリンク・検知した時刻 (日本時間)。**ユーザー ID・メールアドレス・ログの本文は載せない** (送信先の Resend は米国の事業者)。関数名も、UUID・メールアドレス・トークンの書式はマスクし、80 文字までにしてから載せる |
-| 実装 | `src/app/api/cron/app-log-alerts/route.ts`、`src/lib/ops-alerts/app-log-error-spike.ts` (判定・整形)、`src/lib/emails/ops/app-log-error-spike.ts` (文面)、migration `20261008200900_ops_alert_state.sql` |
+| 実装 | `src/app/api/cron/app-log-alerts/route.ts`、`src/lib/ops-alerts/app-log-error-spike.ts` (判定・整形)、`src/lib/emails/ops/app-log-error-spike.ts` (文面)、migration `20261010123500_ops_alert_state.sql` |
 | テスト | `src/__tests__/api/cron/app-log-alerts.test.ts` (401・しきい値・重複の抑止・メールの内容・送れなかったとき)、`src/__tests__/lib/ops-alerts/`、`src/__tests__/lib/emails/ops/`、`tests/integration/rls/ops-alert-state.test.ts` (DB の関数。同時に呼んでも権利を取れるのは 1 本だけ) |
 
 限界:
