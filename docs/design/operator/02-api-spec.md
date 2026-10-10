@@ -75,9 +75,9 @@ await supabase.from('admin_audit_logs').insert({
 | `plan` | string | plan_key でフィルタ |
 | `role` | string | ロールでフィルタ |
 | `status` | `active\|banned\|deleted` | ステータス |
-| `registered_from` | date | 登録日 FROM |
-| `registered_to` | date | 登録日 TO |
-| `last_login_before` | date | 最終ログイン日 |
+| `registered_from` | date | 登録日 FROM (JST の暦日。その日の JST 0 時以上。実在しない日付・受け付ける範囲 (0101-01-02〜9998-12-30) の外の日付は 400) |
+| `registered_to` | date | 登録日 TO (JST の暦日。その日を含む = 翌日の JST 0 時未満。実在しない日付・受け付ける範囲 (0101-01-02〜9998-12-30) の外の日付は 400) |
+| `last_login_before` | date | 最終ログイン日がこの日より前 (JST の暦日。その日の JST 0 時より前。未ログインは含まない。実在しない日付・受け付ける範囲 (0101-01-02〜9998-12-30) の外の日付は 400) |
 | `sort` | string | `registered_at\|last_login\|meal_count` |
 | `order` | `asc\|desc` | ソート方向 |
 | `page` | int | ページ番号 (default: 1) |
