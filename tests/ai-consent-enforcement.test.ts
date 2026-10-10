@@ -226,7 +226,7 @@ const EXEMPT_ROUTES: Record<string, string> = {
   'src/app/api/meals/[id]/route.ts': '画像のジョブを積むだけ。送るのは process-meal-image-jobs (判定あり)',
   'src/app/api/meals/route.ts': '画像のジョブを積むだけ。送るのは process-meal-image-jobs (判定あり)',
   // #1165 ログイン。import を辿ると環境変数の一覧 (src/lib/env.ts。AI の送信先の名前を説明に書いている) に届くだけで、
-  // 送る先は Supabase Auth・Cloudflare Turnstile の確認の API・メール (Resend) だけ
+  // 送る先は Supabase Auth と Cloudflare Turnstile の確認の API だけ (ロックの通知のメールは外した)
   'src/app/api/auth/login/route.ts': 'ログイン (メールアドレスとパスワード)。AI へは送らない (env.ts の一覧に届くだけ)',
 };
 
