@@ -14,13 +14,13 @@
     "test:e2e:smoke": "maestro test maestro/smoke.yaml"
   },
   "dependencies": {
-    "@expo-google-fonts/noto-sans-jp": "^0.4.3",
+    "@expo-google-fonts/noto-sans-jp": "^0.4.4",
     "@homegohan/core": "*",
     "@homegohan/handson-tour-shared": "*",
     "@homegohan/shared": "*",
     "@react-native-async-storage/async-storage": "2.1.2",
     "@react-native-masked-view/masked-view": "^0.3.2",
-    "@react-native-community/slider": "4.5.5",
+    "@react-native-community/slider": "4.5.7",
     "@supabase/supabase-js": "^2.78.0",
     "expo": "~53.0.0",
     "expo-constants": "~17.1.8",
@@ -39,17 +39,17 @@
     "expo-splash-screen": "~0.30.10",
     "expo-updates": "~0.28.18",
     "expo-web-browser": "~15.0.0",
-    "lucide-react-native": "^1.14.0",
+    "lucide-react-native": "^1.52.0",
     "react": "19.0.0",
-    "react-native": "0.79.6",
+    "react-native": "0.79.7",
     "react-native-reanimated": "^3.17.5",
-    "react-native-safe-area-context": "5.4.0",
+    "react-native-safe-area-context": "5.4.1",
     "react-native-screens": "~4.11.1",
     "react-native-svg": "15.11.2",
     "react-native-url-polyfill": "^2.0.0",
     "react-native-web": "^0.20.0",
     "react-native-webview": "13.13.5",
-    "zod": "^4.1.13"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@testing-library/jest-native": "^5.4.3",
