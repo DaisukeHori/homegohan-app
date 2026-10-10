@@ -223,7 +223,7 @@ Vercel Dashboard → Settings → Environment Variables で `CRON_SECRET` の値
 - 同じ通知は **60 分は送り直さない**（`OPS_ALERT_COOLDOWN_MINUTES` で上書きできる）（DB の `ops_alert_state` で覚える。メールを送れなかったときは「送った」と記録せず、15 分後の次の回でもう一度試す）。
 - メールに載るのは、件数・関数名・運用ログ画面（`/super-admin/logs`）へのリンクだけです。ユーザー ID・メールアドレス・ログの本文は載せません（送信先の Resend は米国の事業者のため）。
 - **メールが実際に届くには、メールの送信元ドメインを Resend で検証し、`RESEND_API_KEY` と `EMAIL_FROM` を設定する必要があります**（手順は [`docs/operations/email-domain.md`](docs/operations/email-domain.md)）。それまでは、送れなかったことが `app_logs`（`function_name = 'email'` の error と、`cron/app-log-alerts` の warn）に残るだけで、アプリの動きには影響しません。
-- 応答（JSON）の `status` は、`disabled`（宛先が未設定）・`invalid_config`（宛先の形が不正）・`below_threshold`（しきい値以下）・`deduped`（60 分以内に送信済み）・`sent`（送信した）・`send_skipped` / `send_failed`（送れなかった）のどれかです。cron が動いているかは、Vercel の Cron Jobs の画面（HTTP ステータス）で確かめられます。`app_logs`（`/super-admin/logs` で `function_name` に `cron/app-log-alerts` を指定）に残るのは、宛先が未設定・形が不正・通知した・通知できなかった回だけです（しきい値以下の回と、60 分以内の回は何も残しません）。
+- 応答（JSON）の `status` は、`disabled`（宛先が未設定）・`invalid_config`（宛先の形が不正）・`below_threshold`（しきい値以下）・`deduped`（60 分以内に送信済み）・`sent`（送信した）・`send_skipped` / `send_failed`（送れなかった）のどれかです。cron が動いているかは、Vercel の Cron Jobs の画面（HTTP ステータス）で確かめられます。`app_logs`（`/super-admin/logs` で `function_name` に `cron/app-log-alerts` を指定）に残るのは、宛先が未設定・形が不正・通知した・通知できなかった回と、しきい値・クールダウンの環境変数の値が不正だった回 (warn。変数名だけ) です（しきい値以下の回と、60 分以内の回は何も残しません）。
 - 認証は他の cron と同じ `CRON_SECRET`（上の「Cron の共有シークレットの保管場所とローテーション」）。手で呼ぶ場合は `Authorization: Bearer <CRON_SECRET>` を付けます（値はコマンドの履歴やチャットに残さないこと）。しきい値を超えているときに手で呼ぶと、本物の通知メールが 1 通出て、60 分の抑止が始まります。
 
 ---
