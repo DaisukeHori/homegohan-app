@@ -16,6 +16,7 @@ import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
 import { generateTestPassword } from "../helpers/credentials";
 import { grantE2eAiConsent } from "../../../scripts/lib/e2e-ai-consent";
+import { acceptLegalConsentIfShown } from "../helpers/legal-consent";
 
 // Node.js 20 は native WebSocket を持たないため ws パッケージを明示的に指定。
 // Supabase Realtime クライアントが WebSocket を必要とするが admin API のみ使うため
@@ -340,6 +341,7 @@ type FreshUserFixtures = {
   /**
    * signup UI フロー検証用。
    * admin.generateLink で signup トークンを取得し /auth/callback 経由で確認済みにする。
+   * 初回の作成なので /auth/callback が規約の同意画面を通す (#1435)。同意画面では同意してから渡す。
    * use(page) 時点でログイン済み + /auth/verify か /onboarding に遷移した状態。
    */
   freshUserPage: Page;
@@ -448,15 +450,23 @@ export const test = base.extend<FreshUserFixtures>({
       const callbackUrl = `${appBaseURL}/auth/callback?token_hash=${hashedToken}&type=signup`;
       await page.goto(callbackUrl);
 
-      // 3. onboarding または /auth/verify に遷移するまで待機
+      // 3. onboarding または /auth/verify に遷移するまで待機。
+      //    初回の作成は /auth/callback が必ず規約の同意画面 (/legal-consent) を通す (#1435。LEGAL_CONSENT_ENFORCE に依らない)。
+      //    同意画面に着いたら同意して、元の遷移先 (初期設定の入口) へ進める
+      // 遷移の待ち時間の上限 (従来の値。開発サーバーの初回コンパイルを含めて足りる長さ)
+      const callbackLandingTimeoutMs = 20_000;
+      const isSignedInLanding = (url: URL) =>
+        url.pathname.startsWith("/onboarding") ||
+        url.pathname.startsWith("/auth/verify") ||
+        url.pathname.startsWith("/home") ||
+        url.pathname === "/";
       await page.waitForURL(
-        (url) =>
-          url.pathname.startsWith("/onboarding") ||
-          url.pathname.startsWith("/auth/verify") ||
-          url.pathname.startsWith("/home") ||
-          url.pathname === "/",
-        { timeout: 20_000 },
+        (url) => isSignedInLanding(url) || url.pathname.startsWith("/legal-consent"),
+        { timeout: callbackLandingTimeoutMs },
       );
+      if (await acceptLegalConsentIfShown(page)) {
+        await page.waitForURL(isSignedInLanding, { timeout: callbackLandingTimeoutMs });
+      }
 
       await use(page);
     } finally {

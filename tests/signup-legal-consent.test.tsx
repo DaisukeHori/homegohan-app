@@ -8,8 +8,9 @@
  *   - チェックの文面から、利用規約 (/terms)・プライバシーポリシー (/privacy) を開ける
  *   - 押せないボタンを何らかの方法で動かされても、登録の処理 (signUp / signInWithOAuth) は呼ばない
  *
- * このチェックは同意の記録 (版・日時) を残さない。記録は同意画面 /legal-consent で同意したときだけ残り、
- * 登録後に同意画面へ回すのは同意ゲートを強制 (LEGAL_CONSENT_ENFORCE=on) にしたときだけ (既定では回さない)。
+ * このチェックは同意の記録 (版・日時) を残さない。記録は同意画面 /legal-consent で同意したときだけ残る。
+ * 登録 (Google 登録・メール確認) のあとは、/auth/callback が LEGAL_CONSENT_ENFORCE の値に関わらず同意画面へ回す
+ * (#1435。tests/auth-callback-legal-consent.test.ts)。
  */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';

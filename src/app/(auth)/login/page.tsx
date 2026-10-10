@@ -219,6 +219,15 @@ function LoginContent() {
            </svg>
            {isLoading ? '処理中...' : 'Googleで続ける'}
         </Button>
+        {/* #1435: 「Googleで続ける」は、初めての人には新しいアカウントを作る。初回は /auth/callback が必ず同意画面
+            (/legal-consent) を通す (みなし同意はしない。#1174)。ここではその流れを先に知らせ、文面へのリンクを出す */}
+        <p data-testid="login-google-legal-note" className="text-center text-xs text-gray-500">
+          はじめての方は、続けたあとに
+          <Link href="/terms" className="font-bold text-orange-700 underline underline-offset-2">利用規約</Link>
+          と
+          <Link href="/privacy" className="font-bold text-orange-700 underline underline-offset-2">プライバシーポリシー</Link>
+          への同意の画面が出ます。
+        </p>
 
         <div className="relative">
           <div className="absolute inset-0 flex items-center">
