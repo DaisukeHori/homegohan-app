@@ -415,7 +415,13 @@ describe('GET /api/super-admin/llm/usage: 入力・認可・エラー', () => {
   });
 
   it('存在しない日付 (from=2026-02-30 / to=2026-13-01) は 400。DB には触れない (JST 0 時の時刻に直す前に入口で弾く)', async () => {
-    for (const query of ['?period=custom&from=2026-02-30', '?period=custom&from=2026-10-01&to=2026-13-01']) {
+    for (const query of [
+      '?period=custom&from=2026-02-30',
+      '?period=custom&from=2026-10-01&to=2026-13-01',
+      // 実在するが受け付ける範囲 (0101-01-02〜9998-12-30) の外。翌日の JST 0 時を求められず、通すと 500 になる
+      '?period=custom&from=2026-10-01&to=9999-12-31',
+      '?period=7d&to=9999-12-31',
+    ]) {
       const res = await GET(request(query));
       expect(res.status, query).toBe(400);
       expect((await res.json()).error.code, query).toBe('VALIDATION_ERROR');

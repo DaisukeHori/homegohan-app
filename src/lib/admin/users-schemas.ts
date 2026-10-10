@@ -15,7 +15,8 @@ export const UsersSearchSchema = z.object({
   role: z.string().optional(),
   status: z.enum(['active', 'banned', 'deleted']).optional(),
   // #1433: 登録日・最終ログイン日は operator/02-api-spec.md §4 で date (YYYY-MM-DD)。JST の暦日として扱う。
-  // 実在しない日付 (2026-02-30 など) は DB に触れる前に 400。空文字は「指定なし」。
+  // 実在しない日付 (2026-02-30 など) と、受け付ける範囲 (CALENDAR_DATE_MIN〜CALENDAR_DATE_MAX。9999-12-31 などの端は
+  // 翌日の JST 0 時を求められないので外す) の外の日付は、DB に触れる前に 400。空文字は「指定なし」。
   // timestamptz の列 (created_at / last_login_at) と比べるときは、route で JST 0 時の時刻に直す
   // (registered_from / registered_to は jstOptionalDayRangeTimestamps、last_login_before は jstDayStartTimestamp)。
   registered_from: OptionalCalendarDateSchema,

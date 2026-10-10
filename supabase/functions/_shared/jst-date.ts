@@ -146,15 +146,65 @@ export function calculateJstPreviousPeriod(
 /** YYYY-MM-DD の形 (ゼロ埋め) */
 const YMD_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+/** 年・月 (0 始まり)・日 → YYYY-MM-DD (UTC の暦。日や月が範囲を超えた分の繰り上がり・繰り下がりは Date.UTC が処理する) */
+function utcYmd(year: number, monthIndex: number, date: number): string {
+  return new Date(Date.UTC(year, monthIndex, date)).toISOString().slice(0, 10);
+}
+
 /**
- * 値が YYYY-MM-DD の形で、実在する日付か (2026-02-30 などは false) (#1433)。
- * addDaysToDate に渡す前の入力の確認に使う。packages/shared の isCalendarDate (Next.js 側) と同じ判定
- * (同じ答えになることは tests/jst-date-shift.test.ts で確かめる)。
+ * 暦の計算 (addDaysToDate) が受け取れて、結果として返せる YYYY-MM-DD か (#1433)。
+ * YYYY-MM-DD の形で、Date.UTC で作り直すと同じ文字列に戻るもの = 実在する日付で、年が 100〜9999 のもの。
+ * Date.UTC は 0〜99 年を 1900 年代に読み替え、toISOString は 10000 年以降を "+010000-01-01" と書くので、その外の日付は戻らない。
  */
-export function isCalendarDate(value: unknown): value is string {
+function isRepresentableYmd(value: unknown): value is string {
   if (typeof value !== "string" || !YMD_PATTERN.test(value)) return false;
   const [year, month, date] = value.split("-").map(Number);
-  return new Date(Date.UTC(year, month - 1, date)).toISOString().slice(0, 10) === value;
+  return utcYmd(year, month - 1, date) === value;
+}
+
+/**
+ * YYYY-MM-DD を offsetDays 日ずらした日付を、範囲を確かめずに YYYY-MM-DD で返す (addDaysToDate と範囲の定数の中身)。
+ * 結果が暦の計算で扱える範囲の外に出ると、YYYY-MM-DD でない文字列 ("+010000-01" など) になるか、Date が不正になって RangeError になる。
+ */
+function shiftYmdUnchecked(day: string, offsetDays: number): string {
+  const [year, month, date] = day.split("-").map(Number);
+  return utcYmd(year, month - 1, date + offsetDays);
+}
+
+/** 暦の計算が扱える最初の日 (Date.UTC が年をそのまま読む 100 年の 1 月 1 日) */
+const REPRESENTABLE_FIRST_DAY = "0100-01-01";
+/** 暦の計算が扱える最後の日 (toISOString が 4 桁の年で書く 9999 年の 12 月 31 日) */
+const REPRESENTABLE_LAST_DAY = "9999-12-31";
+
+/**
+ * 外から受け取った日付 (isCalendarDate を通った日付) を、後ろの処理が前後にずらしても YYYY-MM-DD で表せるように取っておく余白の日数 (#1433)。
+ * 献立生成 (generate-menu-v4 / v5) は本文の targetSlots の日付から前後 7 日の文脈の期間を求める。それより十分広く、1 年 (うるう年の日数) を取る。
+ * packages/shared/src/date-utils.ts (Next.js 側) と同じ値 (同じ答えになることは tests/jst-date-shift.test.ts で確かめる)。
+ */
+export const CALENDAR_DATE_SHIFT_MARGIN_DAYS = 366;
+
+/** isCalendarDate が受け付ける最初の日 (暦の計算が扱える最初の日から、余白の日数だけ後の日 = "0101-01-02") */
+export const CALENDAR_DATE_MIN = shiftYmdUnchecked(REPRESENTABLE_FIRST_DAY, CALENDAR_DATE_SHIFT_MARGIN_DAYS);
+/** isCalendarDate が受け付ける最後の日 (暦の計算が扱える最後の日から、余白の日数だけ前の日 = "9998-12-30") */
+export const CALENDAR_DATE_MAX = shiftYmdUnchecked(REPRESENTABLE_LAST_DAY, -CALENDAR_DATE_SHIFT_MARGIN_DAYS);
+
+/**
+ * 入力の日付が正しくないときの 400 の文で使う、受け付ける日付の説明 (英語。API の error の文に埋める)。
+ * packages/shared/src/date-utils.ts の CALENDAR_DATE_REQUIREMENT (Next.js 側) と同じ文 (tests/jst-date-shift.test.ts で確かめる)。
+ */
+export const CALENDAR_DATE_REQUIREMENT =
+  `YYYY-MM-DD format (an existing calendar date from ${CALENDAR_DATE_MIN} to ${CALENDAR_DATE_MAX})`;
+
+/**
+ * 値が YYYY-MM-DD の形で、実在する日付で、CALENDAR_DATE_MIN (0101-01-02) 〜 CALENDAR_DATE_MAX (9998-12-30) の中にあるか (#1433)。
+ * 2026-02-30 などの存在しない日付は false。外から受け取った日付を addDaysToDate に渡す前の入力の確認に使う。
+ * 範囲の端に前後 CALENDAR_DATE_SHIFT_MARGIN_DAYS 日の余白を取っているので、通った日付から前後 7 日の文脈の期間を求めても、
+ * 暦の計算で扱える範囲 (0100-01-01〜9999-12-31) の外に出ない。
+ * packages/shared の isCalendarDate (Next.js 側) と同じ判定 (同じ答えになることは tests/jst-date-shift.test.ts で確かめる)。
+ */
+export function isCalendarDate(value: unknown): value is string {
+  // 4 桁の年の YYYY-MM-DD どうしは、文字列の大小が日付の前後と同じ
+  return isRepresentableYmd(value) && value >= CALENDAR_DATE_MIN && value <= CALENDAR_DATE_MAX;
 }
 
 /**
@@ -166,6 +216,8 @@ export function isCalendarDate(value: unknown): value is string {
  * 実行環境のタイムゾーンやサマータイムに左右されない (Date#setDate / getDate はローカル時刻なので使わない)。
  *
  * 形の違う日付・存在しない日付 (2026-02-30 など)・整数でない日数を渡すと RangeError になる (変な日付を黙って返さない)。
+ * ずらした結果が暦の計算で扱える範囲 (0100-01-01〜9999-12-31) の外に出るときも RangeError
+ * (9999-12-31 の翌日を "+010000-01" という YYYY-MM-DD でない文字列で返さない。#1433)。
  */
 export function addDaysToDate(day: string, offsetDays: number): string {
   if (!YMD_PATTERN.test(day)) {
@@ -174,12 +226,24 @@ export function addDaysToDate(day: string, offsetDays: number): string {
   if (!Number.isInteger(offsetDays)) {
     throw new RangeError(`offsetDays must be an integer: ${offsetDays}`);
   }
-  const [year, month, date] = day.split('-').map(Number);
   // 存在しない日付 (2026-02-30 → 3/2 に繰り上がる) は、0 日ずらしても元の文字列に戻らないので弾く
-  if (new Date(Date.UTC(year, month - 1, date)).toISOString().slice(0, 10) !== day) {
+  if (!isRepresentableYmd(day)) {
     throw new RangeError(`Invalid date (no such day): ${day}`);
   }
-  return new Date(Date.UTC(year, month - 1, date + offsetDays)).toISOString().slice(0, 10);
+  const outOfRange = () =>
+    new RangeError(`Date out of range (${REPRESENTABLE_FIRST_DAY} to ${REPRESENTABLE_LAST_DAY}): ${day} + ${offsetDays} days`);
+  let result: string;
+  try {
+    result = shiftYmdUnchecked(day, offsetDays);
+  } catch {
+    // Date で表せないほど大きくずらした (toISOString が Invalid time value の RangeError を投げる)
+    throw outOfRange();
+  }
+  // 10000 年以降 ("+010000-01" など)・100 年より前は、YYYY-MM-DD の文字列として返さない
+  if (!isRepresentableYmd(result)) {
+    throw outOfRange();
+  }
+  return result;
 }
 
 /**

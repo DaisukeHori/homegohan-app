@@ -126,7 +126,7 @@ export async function POST(request: Request) {
     if (!startDate) {
       return NextResponse.json({ error: 'startDate is required' }, { status: 400 });
     }
-    // 日付は暦の計算 (addDaysToDate) でずらすので、YYYY-MM-DD の実在する日付だけを受け付ける (#1433)
+    // 日付は暦の計算 (addDaysToDate) でずらすので、YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433)
     if (typeof startDate !== 'string' || !isCalendarDate(startDate)) {
       return NextResponse.json({ error: 'startDate must be YYYY-MM-DD' }, { status: 400 });
     }

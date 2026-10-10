@@ -2811,7 +2811,7 @@ Deno.serve(async (req: Request) => {
       directJwtUserId = userData.user.id;
     }
 
-    // 本文の targetSlots の日付は、YYYY-MM-DD の実在する日付だけを受け付ける (#1433)。
+    // 本文の targetSlots の日付は、YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433)。
     // 工程 1 は DB の target_slots が空のとき本文の targetSlots を使い、その日付を addDays (前後 7 日の文脈の期間) に渡すので、
     // 2026-02-30 や 2026/10/10 が来ると受け付けたあとの裏の処理が RangeError で落ちる。呼び出し元を確かめたあと・AI へ送る前に 400 にする。
     // リクエストの行は (まだ動いていれば) 失敗にしておく (生成中のまま残さない)

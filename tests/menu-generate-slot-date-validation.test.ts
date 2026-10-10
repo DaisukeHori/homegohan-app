@@ -7,6 +7,9 @@
  * 献立生成の Edge Function (generate-menu-v4 / v5) の工程 1 も、DB の target_slots が空のときは本文の targetSlots の日付を
  * addDays に渡すので、2026/10/10 のような値 (DB の date 型は日付として読むが、YYYY-MM-DD ではない) が届くと裏の処理が落ちていた。
  *
+ * 実在する日付でも、受け付ける範囲 (0101-01-02〜9998-12-30。isCalendarDate) の外は同じく 400 にする
+ * (9999-12-31 などの端の日付は、前後 7 日の文脈の期間を求めると暦の計算で扱える範囲の外に出るので)。
+ *
  * ここでは
  *   - Next.js の 4 本 (v4 / v5 の generate・1 食の generate・栄養分析の献立変更の POST) が、DB に触れる前・Edge Function を呼ぶ前に 400 にすること
  *   - Edge Function の入口の判定 (findInvalidTargetSlotDate / isCalendarDate) と、それをハンドラが AI へ送る前に呼んでいること
@@ -62,7 +65,16 @@ const INVALID_DATES = [
   '2026/10/10', // DB の date 型は日付として読むが、YYYY-MM-DD ではない
   '20261010',
   '2026-10-10T00:00:00Z',
+  // 実在するが、受け付ける範囲 (0101-01-02〜9998-12-30) の外の日付。通すと前後 7 日の文脈の期間を求めるところで
+  // 暦の計算で扱える範囲 (0100-01-01〜9999-12-31) の外に出る (以前は 9999-12-31 + 7 日が "+010000-01" という文字列で DB の条件に渡っていた)
+  '9999-12-31',
+  '9998-12-31', // 受け付ける最後の日 (9998-12-30) の翌日
+  '0100-01-01',
+  '0101-01-01', // 受け付ける最初の日 (0101-01-02) の前日
 ] as const;
+
+/** 400 の文の「受け付ける日付」の説明 (手で書いた期待値。CALENDAR_DATE_REQUIREMENT と同じ文) */
+const DATE_REQUIREMENT = 'YYYY-MM-DD format (an existing calendar date from 0101-01-02 to 9998-12-30)';
 
 function jsonRequest(body: unknown): Request {
   return new Request('http://localhost/api/test', {
@@ -97,7 +109,7 @@ describe.each([
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
-      error: 'targetSlots[1].date must be YYYY-MM-DD format (an existing calendar date)',
+      error: `targetSlots[1].date must be ${DATE_REQUIREMENT}`,
     });
     expect(h.getUser).not.toHaveBeenCalled();
     expect(h.from).not.toHaveBeenCalled();
@@ -113,6 +125,8 @@ describe.each([
           { date: '2028-02-29', mealType: 'breakfast' },
           { date: '2026-10-31', mealType: 'lunch' },
           { date: '2026-12-31', mealType: 'dinner' },
+          { date: '9998-12-30', mealType: 'dinner' }, // 受け付ける最後の日 (前後 7 日の文脈の期間も扱える範囲の中)
+          { date: '0101-01-02', mealType: 'dinner' }, // 受け付ける最初の日
         ],
       }),
     );
@@ -126,7 +140,7 @@ describe('POST /api/ai/menu/meal/generate: dayDate は実在する日付だけ (
   it.each(INVALID_DATES)('dayDate=%s は、DB・認証に触れる前に 400', async (dayDate) => {
     const res = await postMealGenerate(jsonRequest({ dayDate, mealType: 'lunch' }));
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'dayDate must be YYYY-MM-DD format (an existing calendar date)' });
+    expect(await res.json()).toEqual({ error: `dayDate must be ${DATE_REQUIREMENT}` });
     expect(h.getUser).not.toHaveBeenCalled();
     expect(h.from).not.toHaveBeenCalled();
     expect(h.callV4).not.toHaveBeenCalled();
@@ -146,7 +160,7 @@ describe('POST /api/ai/nutrition-analysis (献立変更の実行): targetDate �
       jsonRequest({ targetDate, targetMealType: 'dinner', prompt: '野菜を増やして' }),
     );
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'targetDate must be YYYY-MM-DD format (an existing calendar date)' });
+    expect(await res.json()).toEqual({ error: `targetDate must be ${DATE_REQUIREMENT}` });
     expect(h.from).not.toHaveBeenCalled();
     expect(h.callV4).not.toHaveBeenCalled();
   });
@@ -184,6 +198,8 @@ describe('Edge Function (generate-menu-v4 / v5) の入口の判定 findInvalidTa
         { date: '2028-02-29', mealType: 'breakfast' },
         { date: '2026-10-31', mealType: 'lunch' },
         { date: '2026-12-31', mealType: 'dinner' },
+        { date: '9998-12-30', mealType: 'dinner' }, // 受け付ける最後の日
+        { date: '0101-01-02', mealType: 'dinner' }, // 受け付ける最初の日
       ]),
     ).toBeNull();
     expect(findInvalidTargetSlotDate([])).toBeNull();
@@ -196,22 +212,33 @@ describe('Edge Function (generate-menu-v4 / v5) の入口の判定 findInvalidTa
         { date: '2026-10-11', mealType: 'breakfast' },
         { date, mealType: 'lunch' },
       ]),
-    ).toBe('targetSlots[2].date must be YYYY-MM-DD format (an existing calendar date)');
+    ).toBe(`targetSlots[2].date must be ${DATE_REQUIREMENT}`);
   });
 
   it('date が文字列でない・要素がオブジェクトでないときも文を返す', () => {
     expect(findInvalidTargetSlotDate([{ date: 20261010, mealType: 'lunch' }])).toBe(
-      'targetSlots[0].date must be YYYY-MM-DD format (an existing calendar date)',
+      `targetSlots[0].date must be ${DATE_REQUIREMENT}`,
     );
     expect(findInvalidTargetSlotDate([{ mealType: 'lunch' }])).toBe(
-      'targetSlots[0].date must be YYYY-MM-DD format (an existing calendar date)',
+      `targetSlots[0].date must be ${DATE_REQUIREMENT}`,
     );
     expect(findInvalidTargetSlotDate([null])).toBe('targetSlots[0] is not an object');
     expect(findInvalidTargetSlotDate(['2026-10-10'])).toBe('targetSlots[0] is not an object');
   });
 
   it('Edge Function の isCalendarDate は、Next.js 側 (packages/shared) の isCalendarDate と同じ答え', () => {
-    const samples = [...INVALID_DATES, '2026-10-10', '2028-02-29', '2026-12-31', '2027-01-01', '', ' 2026-10-10', 'yesterday'];
+    const samples = [
+      ...INVALID_DATES,
+      '2026-10-10',
+      '2028-02-29',
+      '2026-12-31',
+      '2027-01-01',
+      '9998-12-30',
+      '0101-01-02',
+      '',
+      ' 2026-10-10',
+      'yesterday',
+    ];
     for (const value of samples) {
       expect(isCalendarDateEdge(value), value).toBe(isCalendarDateNext(value));
     }

@@ -270,7 +270,7 @@ export async function runConsultationAction(
         break;
       }
 
-      // 日付は YYYY-MM-DD の実在する日付だけを受け付ける (#1433。generate_week_menu の startDate と同じ確認)。
+      // 日付は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433。generate_week_menu の startDate と同じ確認)。
       // AI が 2026/10/10 などを返すと、献立生成 (Edge Function) が日付を前後にずらすところで RangeError になる
       if (!isCalendarDate(date)) {
         result = { error: 'date must be in YYYY-MM-DD format' };
@@ -370,7 +370,7 @@ export async function runConsultationAction(
         result = { error: 'startDate は必須です' };
         break;
       }
-      // 日付は暦の計算 (addDaysToDate) でずらすので、YYYY-MM-DD の実在する日付だけを受け付ける (#1433)
+      // 日付は暦の計算 (addDaysToDate) でずらすので、YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433)
       if (typeof startDate !== 'string' || !isCalendarDate(startDate)) {
         result = { error: 'startDate must be in YYYY-MM-DD format' };
         break;
@@ -484,7 +484,7 @@ export async function runConsultationAction(
         break;
       }
 
-      // 日付は YYYY-MM-DD の実在する日付だけを受け付ける (#1433。generate_week_menu の startDate と同じ確認)
+      // 日付は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433。generate_week_menu の startDate と同じ確認)
       if (!isCalendarDate(date)) {
         result = { error: 'date must be in YYYY-MM-DD format' };
         break;

@@ -7,7 +7,7 @@ import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { recordAiUsage } from '@/lib/plan/entitlements';
-import { isCalendarDate, nutritionAnalysisRange } from '@/lib/jst-day-ranges';
+import { CALENDAR_DATE_REQUIREMENT, isCalendarDate, nutritionAnalysisRange } from '@/lib/jst-day-ranges';
 import { aiConsentSkippedField, checkUserAiConsent, requireAiConsent } from '@/lib/ai/consent-guard';
 
 // 栄養目標が未設定のときの既定値（g/日）。
@@ -365,10 +365,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    // targetDate は YYYY-MM-DD の実在する日付だけを受け付ける (#1433)。DB の date 型は 2026/10/10 なども日付として読むが、
+    // targetDate は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433)。DB の date 型は 2026/10/10 なども日付として読むが、
     // そのまま target_slots に入ると、献立生成 (Edge Function) が日付を前後にずらすところで RangeError になる
     if (!isCalendarDate(targetDate)) {
-      return NextResponse.json({ error: 'targetDate must be YYYY-MM-DD format (an existing calendar date)' }, { status: 400 });
+      return NextResponse.json({ error: `targetDate must be ${CALENDAR_DATE_REQUIREMENT}` }, { status: 400 });
     }
 
     // 該当日付の user_daily_meals を取得（日付ベースモデル）

@@ -64,8 +64,23 @@ function run(db: ReturnType<typeof makeSupabase>, actionType: string, params: Re
   });
 }
 
-/** 実在しない日付・YYYY-MM-DD ではない日付 */
-const INVALID_DATES = ['2026-02-30', '2027-02-29', '2026-13-01', '2026/10/10', '20261010', '2026-10-10T00:00:00Z', 20261010];
+/**
+ * 実在しない日付・YYYY-MM-DD ではない日付と、実在するが受け付ける範囲 (0101-01-02〜9998-12-30) の外の日付
+ * (端の日付は、献立生成が前後 7 日の文脈の期間を求めると暦の計算で扱える範囲の外に出る)
+ */
+const INVALID_DATES = [
+  '2026-02-30',
+  '2027-02-29',
+  '2026-13-01',
+  '2026/10/10',
+  '20261010',
+  '2026-10-10T00:00:00Z',
+  20261010,
+  '9999-12-31',
+  '9998-12-31',
+  '0100-01-01',
+  '0101-01-01',
+];
 
 const ACTIONS = [
   { actionType: 'generate_day_menu', params: (date: unknown) => ({ date }) },
@@ -96,5 +111,33 @@ describe.each(ACTIONS)('$actionType: date は実在する日付だけ (#1433)', 
     const dates = body.body.targetSlots.map((slot) => slot.date);
     expect(dates.length).toBeGreaterThan(0);
     expect(new Set(dates)).toEqual(new Set(['2028-02-29']));
+  });
+});
+
+describe('generate_week_menu: startDate は実在する日付で、受け付ける範囲 (0101-01-02〜9998-12-30) の中だけ (#1433)', () => {
+  it.each(INVALID_DATES)('startDate=%s は、DB にも Edge Function にも触れずに断る', async (startDate) => {
+    const db = makeSupabase();
+    const out = await run(db, 'generate_week_menu', { startDate });
+    expect(out.success).toBe(false);
+    expect(out.result).toEqual({ error: 'startDate must be in YYYY-MM-DD format' });
+    expect(resolveExistingTargetSlots).not.toHaveBeenCalled();
+    expect(db.from).not.toHaveBeenCalled();
+    expect(db.functions.invoke).not.toHaveBeenCalled();
+  });
+
+  it('受け付ける最後の日 (9998-12-30) から始まる週は、年をまたいだ 7 日分のスロットを作る (暦の計算で扱える範囲の中)', async () => {
+    const db = makeSupabase();
+    const out = await run(db, 'generate_week_menu', { startDate: '9998-12-30' });
+    expect(out.success).toBe(true);
+    const body = (db.functions.invoke.mock.calls[0] as unknown[])[1] as { body: { targetSlots: Array<{ date: string }> } };
+    expect([...new Set(body.body.targetSlots.map((slot) => slot.date))]).toEqual([
+      '9998-12-30',
+      '9998-12-31',
+      '9999-01-01',
+      '9999-01-02',
+      '9999-01-03',
+      '9999-01-04',
+      '9999-01-05',
+    ]);
   });
 });
