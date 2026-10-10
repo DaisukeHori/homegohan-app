@@ -1,7 +1,7 @@
 /**
  * #1177 (T26) プランの判定 (get_effective_plan) と、AI の利用回数の記録 (record_ai_usage) のテスト
  *
- * 20261010110000_ai_usage_foundation.sql が足すもの:
+ * 20261010140000_ai_usage_foundation.sql が足すもの:
  *   - ai_usage_counters(user_id, usage_date (JST), feature, count)  PK(user_id, usage_date, feature)
  *   - get_effective_plan(p_user_id) -> text    個人の契約 -> 家族 -> 組織 -> 'free'
  *   - record_ai_usage(p_user_id, p_feature) -> void   原子的に +1 するだけ (上限と比べて止める処理は #1149 / T40 が足す)

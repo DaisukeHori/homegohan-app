@@ -1,4 +1,4 @@
--- migration: 20261010110000_ai_usage_foundation.sql
+-- migration: 20261010140000_ai_usage_foundation.sql
 -- #1177 (T26): プランの判定と、AI の利用回数の記録の仕組みを作る (全員無制限のまま、記録だけ)
 --
 -- 背景:
@@ -53,7 +53,7 @@
 -- 冪等: CREATE TABLE IF NOT EXISTS、CREATE OR REPLACE FUNCTION、ENABLE ROW LEVEL SECURITY、REVOKE / GRANT / COMMENT。
 --   2 回続けて適用してもエラーにならず、結果も変わらない。
 -- 確認: tests/integration/rls/ai-usage-rpc.test.ts
--- ロールバック: supabase/rollbacks/20261010110000_ai_usage_foundation.down.sql
+-- ロールバック: supabase/rollbacks/20261010140000_ai_usage_foundation.down.sql
 --   (テーブルを消すと、それまでの記録も消える。ロールバックの先頭のコメントを参照)
 
 -- ----------------------------------------------------------------
