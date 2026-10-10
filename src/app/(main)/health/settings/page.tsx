@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { todayLocal } from "@/lib/date-utils";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -393,7 +394,7 @@ export default function HealthSettingsPage() {
                   ...preferences, 
                   vacation_until: e.target.value || null 
                 })}
-                min={new Date().toISOString().split('T')[0]}
+                min={todayLocal()}
                 className="w-full p-3 rounded-lg"
                 style={{ backgroundColor: colors.bg, color: colors.text }}
               />

@@ -1,5 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
+import { jstDayOffset } from '@/lib/jst-day-ranges';
 import { NextResponse } from 'next/server';
+
+/** 新しいセッションの文脈に入れる、最近の食事の日数 (JST の今日から何日前までか) */
+const RECENT_MEAL_DAYS = 7;
 
 // セッション一覧取得
 export async function GET(request: Request) {
@@ -64,8 +68,8 @@ export async function POST(request: Request) {
       .single();
 
     // 最近の食事データ（日付ベースモデル）
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    // 7 日前は JST の暦日で求める (#1433。day_date は JST の暦日)
+    const sevenDaysAgo = jstDayOffset(-RECENT_MEAL_DAYS);
     const { data: recentMeals } = await supabase
       .from('planned_meals')
       .select(`
@@ -77,7 +81,7 @@ export async function POST(request: Request) {
         user_daily_meals!inner(day_date, user_id)
       `)
       .eq('user_daily_meals.user_id', user.id)
-      .gte('user_daily_meals.day_date', sevenDaysAgo.toISOString().split('T')[0])
+      .gte('user_daily_meals.day_date', sevenDaysAgo)
       .limit(30);
 
     // 健康記録

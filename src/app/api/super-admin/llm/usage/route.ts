@@ -9,6 +9,7 @@
  * 列の有無は tests/integration/security/select-columns-exist.test.ts で本番スキーマと突き合わせる。
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { llmUsageRange } from '@/lib/jst-day-ranges';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
@@ -46,17 +47,8 @@ export async function GET(request: NextRequest) {
 
     const { period, from, to, model, function: functionName, provider } = parsed.data;
 
-    // 期間の計算
-    let fromDate: string;
-    const toDate = to ?? new Date().toISOString().slice(0, 10);
-    if (period === 'custom' && from) {
-      fromDate = from;
-    } else {
-      const days = period === '1d' ? 1 : period === '7d' ? 7 : 30;
-      const d = new Date();
-      d.setDate(d.getDate() - days);
-      fromDate = d.toISOString().slice(0, 10);
-    }
+    // 期間の計算 (開始日・終了日の既定は JST の暦日。#1433)
+    const { fromDate, toDate } = llmUsageRange({ period, from, to });
 
     let query = supabase
       .from('llm_usage_logs')

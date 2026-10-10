@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useCallback, useMemo, useEffect } from "react";
+import { addDaysToDate } from "@/lib/date-utils";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Sparkles, Calendar, Target, RefreshCw,
@@ -33,6 +34,19 @@ type GenerateMode = 'empty' | 'ai_only' | 'selected' | 'range' | 'single_day';
 // NOTE: v4_include_existing is intentionally NOT persisted – it is a
 // destructive flag that must default to false every time the modal opens.
 const STORAGE_KEY_RANGE_DAYS = 'v4_range_days';
+
+/** 「1日だけ」モードで選べる日付の上限 (今日から何日先まで)。画面の説明「今日から1ヶ月先まで」と同じ */
+const SINGLE_DAY_MAX_DAYS_AHEAD = 30;
+
+/**
+ * 端末の暦での今日 (YYYY-MM-DD)。このモーダルの「今日」(選べる日付の下限) は以前から端末のローカル時刻で決めている。
+ * 「1日だけ」の初期値も同じ今日にそろえる (#1433。以前の初期値は toISOString の UTC の暦日で、JST の 0:00〜8:59 は前日になり、
+ * 下限 (今日) より前の日付が選ばれた状態で開いていた)。
+ */
+function getDeviceTodayStr(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
 
 // ============================================
 // Sandbox types (family/09 §07 §6.2)
@@ -361,20 +375,14 @@ function V4GenerateModalNormal({
   const [includeExisting, setIncludeExisting] = useState(false);
 
   // Single day mode state
-  const [singleDayDate, setSingleDayDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [singleDayDate, setSingleDayDate] = useState(() => getDeviceTodayStr());
   
   // 今日の日付を取得（他のhooksより先に定義）
-  const todayStr = useMemo(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  }, []);
+  const todayStr = useMemo(() => getDeviceTodayStr(), []);
 
-  // Helper: 日付を加算
-  const addDays = useCallback((dateStr: string, days: number): string => {
-    const date = new Date(dateStr);
-    date.setDate(date.getDate() + days);
-    return date.toISOString().split('T')[0];
-  }, []);
+  // Helper: 日付を加算 (暦の計算だけで行う。#1433。以前の new Date(dateStr) + setDate (ローカル時刻) + toISOString (UTC) は、
+  // 端末のタイムゾーンや夏時間で結果が変わった)
+  const addDays = useCallback((dateStr: string, days: number): string => addDaysToDate(dateStr, days), []);
 
   // Helper: 日付の差（日数）を計算
   const daysBetween = useCallback((startStr: string, endStr: string): number => {
@@ -731,11 +739,7 @@ function V4GenerateModalNormal({
                       type="date"
                       value={singleDayDate}
                       min={todayStr}
-                      max={(() => {
-                        const maxDate = new Date();
-                        maxDate.setDate(maxDate.getDate() + 30);
-                        return maxDate.toISOString().split('T')[0];
-                      })()}
+                      max={addDaysToDate(todayStr, SINGLE_DAY_MAX_DAYS_AHEAD)}
                       onChange={(e) => setSingleDayDate(e.target.value < todayStr ? todayStr : e.target.value)}
                       className="w-full p-3 rounded-lg border text-center"
                       style={{ borderColor: colors.border, fontSize: 16 }}
