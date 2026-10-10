@@ -73,7 +73,7 @@ export async function POST(
     });
 
     if (rpcError) {
-      return internalError('POST /api/operator/membership/family/[id]/dissolve', rpcError, {}, { shape: 'nested' });
+      return internalError('POST /api/operator/membership/family/[id]/dissolve', rpcError, { userId: operatorId }, { shape: 'nested' });
     }
 
     // 通知メール (best-effort)。解散はすでに完了しているので、失敗しても 200 を返し、ログに残す。

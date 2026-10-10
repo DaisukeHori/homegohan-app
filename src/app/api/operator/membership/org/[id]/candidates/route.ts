@@ -43,7 +43,7 @@ export async function GET(
       .order('last_login_at', { ascending: false, nullsFirst: false });
 
     if (error) {
-      return internalError('GET /api/operator/membership/org/[id]/candidates', error, {}, { shape: 'nested' });
+      return internalError('GET /api/operator/membership/org/[id]/candidates', error, { userId: operatorId }, { shape: 'nested' });
     }
 
     // auth.users からメールアドレスを取得する。listUsers() は page / perPage を渡さないと先頭 50 件しか返さず、

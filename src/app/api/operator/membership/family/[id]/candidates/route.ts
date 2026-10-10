@@ -44,7 +44,7 @@ export async function GET(
       .order('joined_at', { ascending: true });
 
     if (error) {
-      return internalError('GET /api/operator/membership/family/[id]/candidates', error, {}, { shape: 'nested' });
+      return internalError('GET /api/operator/membership/family/[id]/candidates', error, { userId: operatorId }, { shape: 'nested' });
     }
 
     // adult / representative はアカウントを持つが、念のため NULL は除く (.in() に null を渡すと uuid として解釈できず失敗する)
