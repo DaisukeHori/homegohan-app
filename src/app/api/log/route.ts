@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { sanitizeLogEntry } from '@/lib/db-logger';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
 
 // #1044 (F6-20): level は enum に限定、message は上限文字数を設ける
 const ALLOWED_LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
@@ -41,14 +42,9 @@ export async function POST(request: NextRequest) {
     }
     const userId = user.id;
 
-    // service_roleでログを保存
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-    if (!supabaseUrl || !supabaseServiceKey) {
-      return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
-    }
-
+    // service_roleでログを保存。接続情報は env-required の getter で取り出す (#1434)。
+    // 欠けていれば MissingEnvError (変数名はサーバーのログにだけ残る) → 下の catch で固定の文の 500
+    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
     const supabaseAdmin = createSupabaseClient(supabaseUrl, supabaseServiceKey);
 
     // 秘密情報マスキング + サイズ切り詰め (F6-20)。message もクライアントが自由に書ける文字列なので、

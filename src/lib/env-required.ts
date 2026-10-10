@@ -126,3 +126,17 @@ export function getSupabasePublicConfig(): { url: string; anonKey: string } {
 export function getSupabaseServiceConfig(): { url: string; serviceRoleKey: string } {
   return { url: getSupabaseUrl(), serviceRoleKey: getSupabaseServiceRoleKey() };
 }
+
+/**
+ * サーバー専用: Edge Function を service_role の鍵で呼ぶとき (Authorization・署名) の鍵。
+ * 古い別名 SERVICE_ROLE_JWT (任意。src/lib/env.ts の一覧にある) が設定されていればそちらを、
+ * 無ければ (未設定・空・空白だけ) 必須の SUPABASE_SERVICE_ROLE_KEY を返す。
+ * (Edge Function の側も、SERVICE_ROLE_JWT を先に読む・どちらの鍵でも受け付ける作りになっている。例: supabase/functions/regenerate-embeddings)
+ * どちらも無ければ、getSupabaseServiceRoleKey() と同じく MissingEnvError (envName は SUPABASE_SERVICE_ROLE_KEY)。
+ * 優先順位を呼ぶ場所ごとに書かないよう、ここに 1 つだけ置く (lib/meal-image-jobs.ts と src/lib/plan/entitlements.ts が使う)。
+ */
+export function getEdgeFunctionServiceRoleKey(): string {
+  const legacy = process.env.SERVICE_ROLE_JWT;
+  if (legacy !== undefined && legacy.trim() !== '') return legacy;
+  return getSupabaseServiceRoleKey();
+}

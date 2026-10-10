@@ -3,6 +3,10 @@ import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { recordAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
+
+const ROUTE_NAME = 'POST /api/shopping-list/regenerate';
 
 /**
  * 買い物リスト再生成API（日付ベースモデル）
@@ -77,12 +81,8 @@ export async function POST(request: Request) {
     const requestId = requestData.id;
 
     // Edge Functionを非同期で呼び出し（fire-and-forget）
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-    if (!supabaseUrl || !supabaseServiceKey) {
-      throw new Error('Missing Supabase configuration');
-    }
+    // 接続情報は env-required の getter で取り出す (#1434)。欠けていれば MissingEnvError → 下の catch で汎用の 500
+    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
 
     // Edge Functionに処理を委譲（レスポンスを待たない）
     fetch(`${supabaseUrl}/functions/v1/regenerate-shopping-list-v2`, {
@@ -108,8 +108,8 @@ export async function POST(request: Request) {
       requestId,
       message: '再生成を開始しました',
     });
-  } catch (error: any) {
-    console.error('Regenerate shopping list error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    // 本文は汎用メッセージだけにし、元のエラーは構造化ログに残す (#1172)
+    return internalError(ROUTE_NAME, error, { userId: user.id });
   }
 }

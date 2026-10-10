@@ -16,8 +16,22 @@
  *      'Supabase admin env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)' を投げ、本文に返していた
  *   6. Web の本番コードが名前を書いて読む環境変数は、すべて src/lib/env.ts の一覧にある (Node.js・Next.js が入れる NODE_ENV・NEXT_RUNTIME を除く)。
  *      値を読む場所が決まっている変数 (一覧の readOnlyBy) は、そのファイルだけが読む
+ *   7. 必須の変数 (Supabase の接続情報) を、テンプレートリテラルに直接埋め込まない (#1434)。
+ *      以前 price-change が `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/...` と書き、欠けていると
+ *      `undefined/functions/v1/...` へ通信していた (1 の非 null アサーションの検査はこれをすり抜けていた)
+ *   8. 必須の変数を名前で読むのは src/lib/env-required.ts だけ (#1434)。ほかの場所は getter を使う
+ *      (自前で読んで `!url` と判定すると、空白だけの値を通し、独自の文面になる)
  *
  * 走査は TypeScript の構文木で行うので、コメントや文字列の中の `process.env.X!` には反応しない。
+ *
+ * 限界 (このテストは見張りであって、証明ではない。すり抜ける書き方はレビューで見る):
+ *  - 名前を変数にした読み取り (`process.env[name]`)・`const env = process.env; env.X` のような別名経由は、
+ *    どの変数を読んでいるか決まらないので、6〜8 のどれにも引っかからない。
+ *  - 7 はテンプレートの `${...}` の中に process.env の読み取りが直接書かれているものだけを見る。
+ *    いったん変数に入れてから埋め込む (`const u = process.env.X; `${u}/...``)・文字列の + 連結・
+ *    `String(process.env.X)` を経由する、などは 7 では捕まらない (必須の変数なら 8 が、読む場所の側で捕まえる)。
+ *  - 走査の対象は PRODUCTION_ROOTS (src・lib・components・apps/mobile・packages/*\/src) の .ts / .tsx だけ。
+ *    scripts/*.mjs・supabase/functions (Deno)・next.config.mjs などは見ない。
  */
 
 import fs from 'node:fs';
@@ -95,6 +109,33 @@ function findEnvReads(source: string, fileName = 'file.ts'): EnvRead[] {
   };
   visit(sf);
   return reads;
+}
+
+/**
+ * テンプレートリテラルの `${...}` の中で、names のどれかを名前で直接読んでいる行 (1 始まり)。
+ * `${process.env.X}` / `${process.env['X']}` / `${process.env.X ?? ''}` のように、`${...}` の式の中に読み取りがあれば拾う。
+ * いったん変数に入れてから埋め込むもの・文字列の + 連結は拾わない (冒頭の「限界」)。
+ */
+function findEnvReadsInTemplates(source: string, names: readonly string[], fileName = 'file.ts'): number[] {
+  const sf = parse(source, fileName);
+  const lines = new Set<number>();
+  const lineOf = (node: ts.Node) => sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+  const isNamedRead = (node: ts.Node): boolean =>
+    (ts.isPropertyAccessExpression(node) && isProcessEnv(node.expression) && names.includes(node.name.text)) ||
+    (ts.isElementAccessExpression(node) &&
+      isProcessEnv(node.expression) &&
+      ts.isStringLiteralLike(node.argumentExpression) &&
+      names.includes(node.argumentExpression.text));
+  const scanSpan = (node: ts.Node): void => {
+    if (isNamedRead(node)) lines.add(lineOf(node));
+    ts.forEachChild(node, scanSpan);
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isTemplateExpression(node)) node.templateSpans.forEach((span) => scanSpan(span.expression));
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return [...lines].sort((a, b) => a - b);
 }
 
 /** 呼び出し先の名前 (`Foo` / `a.b`)。それ以外の形は null */
@@ -243,6 +284,22 @@ describe('走査の仕組みの確認 (検出が空振りしないこと)', () =
     ]);
   });
 
+  it('テンプレートリテラルに直接埋め込んだ必須の変数の読み取りを見つけ、ほかの書き方・任意の変数は見つけない (#1434)', () => {
+    const source = [
+      'const a = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/x`;', // 1
+      "const b = { Authorization: `Bearer ${process.env['SUPABASE_SERVICE_ROLE_KEY']}` };", // 2: 添字
+      "const c = `x ${y} ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''}`;", // 3: 2 つ目の ${} の中・?? つき
+      'const d = `${process.env.NEXT_PUBLIC_APP_URL}/path`;', // 4: 任意の変数 (対象外)
+      'const e = "${process.env.NEXT_PUBLIC_SUPABASE_URL}";', // 5: ふつうの文字列
+      '// `${process.env.SUPABASE_SERVICE_ROLE_KEY}`', // 6: コメント
+      'const u = process.env.NEXT_PUBLIC_SUPABASE_URL; const f = `${u}/x`;', // 7: 変数経由 (限界。8 が捕まえる)
+      'const g = `${getSupabaseUrl()}/functions/v1/x`;', // 8: getter
+      'const h = `${fn(process.env.SUPABASE_SERVICE_ROLE_KEY)}`;', // 9: ${} の中の式の奥
+    ].join('\n');
+
+    expect(findEnvReadsInTemplates(source, REQUIRED_ENV_NAMES)).toEqual([1, 2, 3, 9]);
+  });
+
   it('例外・応答の文字列に書かれた必須の変数名を見つけ、ログ・コメント・変数の読み取りは見つけない', () => {
     const source = [
       "throw new Error('env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)');", // 1
@@ -311,6 +368,38 @@ describe('本番コードに `process.env.X!` を書かない (#1182)', () => {
     // (service_role のクライアントは lib/supabase/server.ts の getSupabaseAdmin()) を使う。
     // 欠けていれば MissingEnvError (message は固定の文) になり、変数名はサーバーのログにだけ残る
     expect(offenders).toEqual([]);
+  }, 30_000);
+
+  it('必須の変数を、テンプレートリテラルに直接埋め込んでいない (`undefined/functions/v1/...` になりうる。#1434)', () => {
+    const offenders = files.flatMap((file) => {
+      const source = fs.readFileSync(file, 'utf-8');
+      // 構文木の解析は重いので、必須の変数名を含まないファイルは読み飛ばす
+      if (!REQUIRED_ENV_NAMES.some((name) => source.includes(name))) return [];
+      return findEnvReadsInTemplates(source, REQUIRED_ENV_NAMES, file).map((line) => `${path.relative(ROOT, file)}:${line}`);
+    });
+
+    // 失敗したら、src/lib/env-required.ts の getSupabaseServiceConfig() などで取り出してから埋め込む
+    // (欠けていれば MissingEnvError を投げ、変数名はサーバーのログに残る)
+    expect(offenders).toEqual([]);
+  }, 30_000);
+
+  it('必須の変数を名前で読むのは src/lib/env-required.ts だけ (ほかの場所は getter を使う。#1434)', () => {
+    const readers = files.flatMap((file) => {
+      const source = fs.readFileSync(file, 'utf-8');
+      // 構文木の解析は重いので、必須の変数名を含まないファイルは読み飛ばす
+      if (!REQUIRED_ENV_NAMES.some((name) => source.includes(name))) return [];
+      return findEnvReads(source, file)
+        .filter((read) => (REQUIRED_ENV_NAMES as readonly string[]).includes(read.name))
+        .map((read) => `${path.relative(ROOT, file)}:${read.line} ${read.name}`);
+    });
+    const outside = readers.filter((reader) => !reader.startsWith('src/lib/env-required.ts:'));
+
+    // 走査が空振りしていないこと: env-required.ts が 3 つとも読んでいる
+    expect(readers.filter((reader) => reader.startsWith('src/lib/env-required.ts:'))).toHaveLength(REQUIRED_ENV_NAMES.length);
+    // 失敗したら、`process.env.X` と `!url` の自前の判定をやめ、src/lib/env-required.ts の getter
+    // (getSupabaseUrl() / getSupabaseServiceConfig() など) を使う。欠けていてよい場所 (ログ・死活監視など) では
+    // isMissingEnvError() で受けて縮退する
+    expect(outside).toEqual([]);
   }, 30_000);
 });
 

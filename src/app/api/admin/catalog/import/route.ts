@@ -12,6 +12,7 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { z } from 'zod';
+import { getSupabaseServiceConfig, isMissingEnvError } from '@/lib/env-required';
 
 export const dynamic = 'force-dynamic';
 
@@ -78,24 +79,26 @@ export async function POST(request: Request) {
   const { sourceCode } = parseResult.data;
   const functionName = SOURCE_CODE_TO_FUNCTION[sourceCode];
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !serviceKey) {
-    console.error('[api/admin/catalog/import] Missing Supabase env vars');
+  // 接続情報は env-required の getter で取り出す (#1434。空白だけの値も欠けているとみなす)。
+  // 欠けている変数名は getter がサーバーのログに残すので、本文には固定の文だけを返す
+  let service: { url: string; serviceRoleKey: string };
+  try {
+    service = getSupabaseServiceConfig();
+  } catch (err) {
+    if (!isMissingEnvError(err)) throw err;
     return NextResponse.json(
       { error: 'INTERNAL_ERROR', message: 'サーバー設定エラー' },
       { status: 500 },
     );
   }
 
-  const edgeFunctionUrl = `${supabaseUrl}/functions/v1/${functionName}`;
+  const edgeFunctionUrl = `${service.url}/functions/v1/${functionName}`;
 
   try {
     const edgeResponse = await fetch(edgeFunctionUrl, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${serviceKey}`,
+        Authorization: `Bearer ${service.serviceRoleKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ sourceCode }),
