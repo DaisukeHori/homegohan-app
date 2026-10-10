@@ -12,6 +12,7 @@ import {
   validatePlannedMealInput,
   type PlannedMealNutrientValues,
 } from '@/lib/planned-meal-validation';
+import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 /**
  * 献立の栄養情報を更新
@@ -90,7 +91,12 @@ export async function POST(request: Request) {
 
     // 4. 画像URLが提供された場合はAI解析を実行
     if (imageUrl) {
-      // nutritionData を直接渡す経路 (上) は AI を呼ばないので、数えるのは AI で解析するここだけ
+      // 写真の URL を外国の AI 事業者へ送って栄養を推定する。同意が無ければ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+      // 栄養の数値をそのまま渡す保存 (上の nutritionData) は AI へ送らないので止めない
+      const aiConsentDenied = await requireAiConsent(supabase, user.id);
+      if (aiConsentDenied) return aiConsentDenied;
+
+      // nutritionData を直接渡す経路 (上) と、同意が無く止めた経路は AI を呼ばないので、数えるのは AI で解析するここだけ
       // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
       const quota = await consumeAiQuota(user.id, 'photo_analysis');
       if (!quota.allowed) return aiQuotaExceededResponse(quota);

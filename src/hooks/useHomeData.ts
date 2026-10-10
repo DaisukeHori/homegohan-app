@@ -6,6 +6,8 @@ import { resolveDisplayName } from "@/lib/user-display";
 import { formatLocalDate } from "@homegohan/shared";
 import type { Tables } from "@homegohan/shared";
 import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
+import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
+import { aiSkippedReasonOf, type AiSkippedReason } from "@/lib/ai/consent-config";
 
 // 今日の献立データ
 interface TodayMealPlan {
@@ -109,6 +111,8 @@ export const useHomeData = () => {
     advice: string | null;
     suggestion: any | null;
     comparison: Record<string, { actual: number; target: number; percentage: number; status: string }>;
+    /** 同意が無くて (または同意の状況を読めなくて) サーバーが AI のアドバイスを省いた理由 (応答の aiSkipped。T15 / #1154) */
+    aiSkipped: AiSkippedReason | null;
     loading: boolean;
   }>({
     score: 0,
@@ -116,6 +120,7 @@ export const useHomeData = () => {
     advice: null,
     suggestion: null,
     comparison: {},
+    aiSkipped: null,
     loading: false,
   });
 
@@ -673,6 +678,7 @@ export const useHomeData = () => {
             advice: data.advice || null,
             suggestion: data.suggestion || null,
             comparison: data.analysis.comparison || {},
+            aiSkipped: aiSkippedReasonOf(data),
             loading: false,
           });
           
@@ -842,7 +848,7 @@ export const useHomeData = () => {
       
       setSuggestion('献立を変更中...');
       
-      const response = await fetch('/api/ai/nutrition-analysis', {
+      const response = await aiFetch('/api/ai/nutrition-analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -852,6 +858,12 @@ export const useHomeData = () => {
         }),
       });
       
+      // 同意が必要で止められた (T15 / #1154): 同意画面 (AiConsentRequiredHost) が案内するので、失敗の表示は出さない
+      if (await isAiConsentRequiredResponse(response)) {
+        setSuggestion(null);
+        return;
+      }
+
       if (response.ok) {
         // 成功したらデータを再取得
         await fetchHomeData();

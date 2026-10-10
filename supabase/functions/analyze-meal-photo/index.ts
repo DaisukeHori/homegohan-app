@@ -12,6 +12,7 @@ import { buildPhotoOverwriteNutrition } from '../_shared/meal-photo-update.ts'
 import { createLogger } from '../_shared/db-logger.ts'
 import { getCorsHeaders } from '../_shared/cors.ts'
 import { aiQuotaExceededResponse, consumeEdgeAiQuota } from '../_shared/quota.ts'
+import { requireAiConsentForUser } from '../_shared/ai-consent-guard.ts'
 
 console.log("Analyze Meal Photo Function v2 loaded")
 
@@ -45,6 +46,11 @@ Deno.serve(async (req) => {
         status: 401,
       })
     }
+
+    // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+    // この関数は利用者の JWT で直接呼べるので、Next.js の API Route とは別にここでも止める
+    const aiConsentDenied = await requireAiConsentForUser(user.id, corsHeaders)
+    if (aiConsentDenied) return aiConsentDenied
 
     const body = await req.json()
     const { images, imageBase64, mimeType, mealId, mealType, prefetchedGeminiResult } = body as {

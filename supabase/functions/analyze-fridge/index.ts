@@ -4,6 +4,7 @@ import { requireAuth } from '../_shared/auth.ts';
 import { aiQuotaExceededResponse, consumeEdgeAiQuota } from '../_shared/quota.ts';
 import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
 import { validateAnalyzeFridgeRequest } from './validate-request.ts';
+import { requireAiConsentForUser } from '../_shared/ai-consent-guard.ts';
 
 const openai = createFastLLMClient();
 
@@ -24,6 +25,11 @@ Deno.serve(async (req) => {
     });
   }
   const { userId } = authResult;
+
+  // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+  // この関数は利用者の JWT で直接呼べるので、Next.js の API Route とは別にここでも止める
+  const aiConsentDenied = await requireAiConsentForUser(userId, corsHeaders);
+  if (aiConsentDenied) return aiConsentDenied;
 
   const requestId = generateRequestId();
   const logger = createLogger('analyze-fridge', requestId).withUser(userId);

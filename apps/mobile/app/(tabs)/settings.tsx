@@ -13,6 +13,7 @@ import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing, radius, shadows } from "../../src/theme";
 import { signOutWithCleanup } from "../../src/lib/signOut";
+import { AI_CONSENT_SCREEN_PATH, AI_CONSENT_SETTINGS_ENTRY_TITLE } from "../../src/lib/ai-consent";
 
 type WeekStartDay = "sunday" | "monday";
 
@@ -352,6 +353,15 @@ export default function SettingsTab() {
               testID="settings-export-csv-row"
               onPress={handleExportCsv}
               right={exportingCsv ? <Text style={{ fontSize: 12, color: "#6B7280" }}>処理中…</Text> : undefined}
+            />
+            {/* 外国の AI 事業者への提供の同意の確認・撤回 (T15 / #1154)。AI のコメントの案内の一文が「設定の「…」から」と指す先 */}
+            <SettingRow
+              icon="🤖"
+              iconBg="#EEF2FF"
+              title={AI_CONSENT_SETTINGS_ENTRY_TITLE}
+              subtitle="日本国外の AI 事業者への提供の確認・撤回"
+              testID="settings-ai-consent-row"
+              onPress={() => router.push(AI_CONSENT_SCREEN_PATH)}
               last
             />
             {/* #1144: 「トレーナーと共有」の項目は外した。トレーナーなどに共有する機能が無いのに、項目だけが画面にあったため。

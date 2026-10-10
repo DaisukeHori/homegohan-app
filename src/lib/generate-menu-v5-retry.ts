@@ -1,3 +1,5 @@
+import { aiConsentDeniedStoredMessageOfResponse } from '../../supabase/functions/_shared/ai-consent';
+
 const DEFAULT_TIMEOUT_MS = 90_000;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_BASE_DELAY_MS = 1_500;
@@ -129,6 +131,14 @@ export async function callGenerateMenuV5WithRetry(params: GenerateMenuV5CallPara
       }
 
       const responseText = await response.text().catch(() => "");
+      // Edge Function が同意の判定で止めた (403 AI_CONSENT_REQUIRED / 503 AI_CONSENT_CHECK_FAILED。T15 / #1154)。
+      // Edge Function はリクエストの行をもう失敗にし、error_message に人向けの文を書いている。再試行はせず
+      // (再試行で判定が通ると、失敗にした行のまま生成が進む)、errorMessage はその文と同じにする
+      // (呼び出し元は markWeeklyMenuRequestFailed で errorMessage を書くので、内部の文で上書きしない)
+      const aiConsentDeniedMessage = aiConsentDeniedStoredMessageOfResponse(response.status, responseText);
+      if (aiConsentDeniedMessage) {
+        return { ok: false, attempts: attempt, status: response.status, errorMessage: aiConsentDeniedMessage };
+      }
       const detail = responseText
         ? `status ${response.status}, body=${compactAndTruncate(responseText)}`
         : `status ${response.status}`;

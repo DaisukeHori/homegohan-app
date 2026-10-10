@@ -216,6 +216,17 @@ function sanitizeShoppingItemUpdate(input: unknown): { data: PlainRecord; errors
 }
 
 /**
+ * 実行すると、利用者のデータを外国の AI 事業者へ送るアクション (献立の生成。Edge Function generate-menu-v4 / v5 を呼ぶ)。
+ * 実行の API は、これらの前に同意を確かめる (T15 / #1154。同意が無ければ 403 AI_CONSENT_REQUIRED で、アクションは pending のまま残す)。
+ * Edge Function の側でも同じ判定で止まる。
+ */
+export const AI_SENDING_ACTION_TYPES: ReadonlySet<string> = new Set([
+  'generate_day_menu',
+  'generate_week_menu',
+  'generate_single_meal',
+]);
+
+/**
  * #1177 献立を生成するアクション (generate_day_menu / generate_week_menu / generate_single_meal) の AI 利用回数の記録。
  * AI へ送る直前 (引数の検証のあと・生成のリクエストの行を作る前) に、生成 1 回につき 1 回数える。究極モードも 1 回。
  * AI 相談の会話そのもの (consultation) は呼び出し元の route が数える。生成は別の AI の呼び出しなので、ここで別に数える。

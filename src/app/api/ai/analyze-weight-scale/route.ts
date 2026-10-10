@@ -3,6 +3,7 @@ import { extractWeightScaleResult } from '../../../../lib/ai/image-recognition';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiQuotaCountedHeaders, aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
+import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -10,6 +11,10 @@ export async function POST(request: Request) {
   if (userError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
+  const aiConsentDenied = await requireAiConsent(supabase, user.id);
+  if (aiConsentDenied) return aiConsentDenied;
 
   const rateLimitResult = await checkRateLimit(user.id, 'analysis');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);

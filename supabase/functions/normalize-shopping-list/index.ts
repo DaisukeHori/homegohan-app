@@ -17,6 +17,7 @@ import { fetchWithRetry } from "../_shared/network-retry.ts";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { requireAuth } from "../_shared/auth.ts";
 import { aiQuotaExceededResponse, consumeEdgeAiQuota } from "../_shared/quota.ts";
+import { requireAiConsentForUser } from "../_shared/ai-consent-guard.ts";
 
 // 過大入力によるLLMコスト濫用/DoS防止のための上限
 const MAX_INGREDIENTS = 500;
@@ -288,6 +289,11 @@ Deno.serve(async (req: Request) => {
   // ブラウザからの呼び出し（functions.invoke）でも CORS エラーにならないよう withCors で付け直す。
   const authResult = await requireAuth(req);
   if (authResult instanceof Response) return withCors(authResult, req);
+
+  // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+  // この関数は利用者の JWT で直接呼べるので、ここで止める
+  const aiConsentDenied = await requireAiConsentForUser(authResult.userId, corsHeaders);
+  if (aiConsentDenied) return aiConsentDenied;
 
   const requestId = generateRequestId();
   const executionId = generateExecutionId();

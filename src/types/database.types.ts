@@ -2176,6 +2176,7 @@ export type Database = {
           consented_at: string
           id: string
           ip_address: unknown
+          policy_version: string | null
           provider: string
           revoked_at: string | null
           user_agent: string | null
@@ -2186,6 +2187,7 @@ export type Database = {
           consented_at?: string
           id?: string
           ip_address?: unknown
+          policy_version?: string | null
           provider: string
           revoked_at?: string | null
           user_agent?: string | null
@@ -2196,6 +2198,7 @@ export type Database = {
           consented_at?: string
           id?: string
           ip_address?: unknown
+          policy_version?: string | null
           provider?: string
           revoked_at?: string | null
           user_agent?: string | null

@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { sanitizeBloodTestPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
+import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { consumeAiQuota } from '@/lib/plan/entitlements';
 import { clampIntParam } from '@/lib/http-params';
@@ -81,14 +82,23 @@ export async function POST(request: NextRequest) {
     return internalError('POST /api/health/blood-tests', error, { userId: user.id, table: 'blood_test_results' });
   }
 
-  // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・結果の保存のあと) に、操作 1 回につき 1 回数える
-  // (個別レビューと経年レビューの 2 回 AI を呼ぶが、操作としては 1 回)。いまは全プラン無制限なので止まらない。記録に失敗しても止めない。
+  // 個別レビュー・経年レビューは、数値を外国の AI 事業者に送って作る。同意が無ければ (判定に失敗した場合も)、
+  // 記録の保存だけを行い、レビューは作らない (T15 / #1154)。応答の aiSkipped で画面に知らせる
+  const aiConsent = await checkUserAiConsent(supabase, user.id);
+
+  // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・結果の保存・同意の判定のあと) に、操作 1 回につき 1 回数える
+  // (個別レビューと経年レビューの 2 回 AI を呼ぶが、操作としては 1 回)。同意が無く AI へ送らないときは数えない。
+  // いまは全プラン無制限なので止まらない。記録に失敗しても止めない。
   // 上限を超えたとき (いまは起きない) は、AI のレビューだけを見送る (結果の保存は済んでいるので、429 にはしない)
-  const quota = await consumeAiQuota(user.id, 'health_review');
+  let sendToAi = false;
+  if (aiConsent.allowed) {
+    const quota = await consumeAiQuota(user.id, 'health_review');
+    sendToAi = quota.allowed;
+  }
 
   let aiReview = null;
   let longitudinalReview = null;
-  if (quota.allowed) {
+  if (sendToAi) {
     // 個別 AI レビューを生成
     try {
       aiReview = await generateBloodTestReview(data);
@@ -115,6 +125,7 @@ export async function POST(request: NextRequest) {
       ai_review: aiReview,
     },
     longitudinalReview,
+    ...aiConsentSkippedField(aiConsent),
   });
 }
 

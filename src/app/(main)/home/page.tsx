@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import { useHomeData } from "@/hooks/useHomeData";
+import { AiSkippedNotice } from "@/components/consent/AiSkippedNotice";
 import { Icons } from "@/components/icons";
 import { todayLocal, parseLocalDate } from "@/lib/date-utils";
 import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
@@ -393,6 +394,16 @@ export default function HomePage() {
                 </div>
               )}
             </motion.div>
+          )}
+
+          {/* 同意が無くて AI のアドバイスを省いたとき (T15 / #1154): 同意画面は出さず、案内の一文とリンクだけ */}
+          {nutritionAnalysis?.aiSkipped && (
+            <AiSkippedNotice
+              reason={nutritionAnalysis.aiSkipped}
+              variant="automatic"
+              className="mb-4 rounded-2xl p-4 border border-gray-100 bg-white"
+              style={{ color: colors.textMuted }}
+            />
           )}
 
           {/* お知らせ */}

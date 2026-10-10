@@ -3,6 +3,7 @@ import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
+import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
 
 function stripMarkdownCodeBlock(text: string): string {
   let cleaned = text.trim();
@@ -89,8 +90,12 @@ export async function POST(
 
     let summaryData = null;
 
+    // 要約は会話を外国の AI 事業者に送って作る。同意が無ければ (判定に失敗した場合も) 要約を作らずに閉じる (T15 / #1154)
+    const hasConversation = Boolean(messages && messages.length > 1);
+    const aiConsent = hasConversation ? await checkUserAiConsent(supabase, user.id) : null;
+
     // メッセージがある場合のみ要約を生成
-    if (messages && messages.length > 1) {
+    if (messages && hasConversation && aiConsent?.allowed) {
       const importantMessages = messages.filter((m: any) => m.is_important);
       const conversationText = messages
         .filter((m: any) => m.role !== 'system')
@@ -212,6 +217,7 @@ ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n
     return NextResponse.json({
       success: true,
       summary: summaryData,
+      ...aiConsentSkippedField(aiConsent),
     });
 
   } catch (error: any) {
