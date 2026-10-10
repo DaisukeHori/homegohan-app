@@ -23,7 +23,7 @@ import { createLogger } from '@/lib/db-logger';
  * リクエストの body / URL に載っていて未検証の ID (family_id, member_id など) を key にしてはならない。
  * 他テナントの ID を指定するだけで、その枠を使い切らせることができてしまうため。
  * key にするのは、認証で確定した user.id か、プロフィールなどサーバー側で検証済みの ID だけ。
- * 例外はログイン前の公開 API (contact)。認証済みの ID が無いので、プロキシが付けるクライアント IP
+ * 例外はログイン前の公開 API (contact・auth-login)。認証済みの ID が無いので、プロキシが付けるクライアント IP
  * (x-forwarded-for の先頭、無ければ x-real-ip) を key にする。Vercel 上ではプラットフォームが付け直した値を
  * 使う前提で、ヘッダーを自由に付けられる環境では偽装できるため、IP 単位の制限はベストエフォートである。
  *
@@ -51,7 +51,8 @@ export type RateLimitCategory =
   | 'contact'
   | 'export'
   | 'upload'
-  | 'ai-consent';
+  | 'ai-consent'
+  | 'auth-login';
 
 /** 1 つの制限ルール。name は Upstash の prefix / in-memory の名前空間に使う (既存キーを変えないこと) */
 interface RateRule {
@@ -99,6 +100,9 @@ const DAY_SEC = 24 * 60 * 60;
 //   同意と撤回を繰り返して行を増やされないようにする (同意の記録は行を残す)。
 //   正しい使い方では 1 人が生涯に数回しか呼ばない。再送・ダブルクリックを含めても 1 分 10 回、1 日 50 回あれば足りる。
 //   撤回 (POST /api/ai/consent/revoke) は行を増やさない (既存の行に revoked_at を入れるだけ) ので、制限しない
+// - auth-login: Web のメールアドレス + パスワードのログイン (#1165。POST /api/auth/login)。ログイン前なので key はクライアント IP。
+//   設計 docs/design/cross/01-auth-session.md §3.2 の「10/min/IP」。同じ IP から多くのメールアドレスを試す攻撃 (クレデンシャル
+//   スタッフィング) を抑える。メールアドレスごとの連続失敗のロックは別 (src/lib/auth/login-lock.ts、DB に記録)
 const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   generation: [{ name: 'generation', max: 5, windowSec: MINUTE_SEC }],
   analysis: [{ name: 'analysis', max: 10, windowSec: MINUTE_SEC }],
@@ -137,6 +141,7 @@ const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
     { name: 'ai-consent', max: 10, windowSec: MINUTE_SEC },
     { name: 'ai-consent-daily', max: 50, windowSec: DAY_SEC },
   ],
+  'auth-login': [{ name: 'auth-login', max: 10, windowSec: MINUTE_SEC }],
 };
 
 export interface RateLimitResult {
@@ -286,7 +291,7 @@ async function checkSingleLimit(rule: RateRule, key: string): Promise<RateLimitR
  * すべて通った場合は先頭ルールの結果を返す。
  *
  * 呼び出し側は認証（user 確定）直後、他の処理を行う前に呼び出すこと。
- * key にはサーバー側で検証済みの ID だけを渡す。ログイン前の公開 API (contact) だけは
+ * key にはサーバー側で検証済みの ID だけを渡す。ログイン前の公開 API (contact・auth-login) だけは
  * クライアント IP を渡す（ファイル先頭の「key の信頼性」を参照）。
  */
 export async function checkRateLimit(

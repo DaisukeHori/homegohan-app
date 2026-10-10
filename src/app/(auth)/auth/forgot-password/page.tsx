@@ -3,7 +3,9 @@
 import { useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
+import { TurnstileWidget, useTurnstile } from "@/components/auth/TurnstileWidget";
 import { createClient } from "@/lib/supabase/client";
+import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "@/lib/auth/turnstile";
 import { ArrowLeft, Mail, CheckCircle2, AlertCircle } from "lucide-react";
 
 export default function ForgotPasswordPage() {
@@ -11,19 +13,34 @@ export default function ForgotPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // #1165: bot 対策 (Cloudflare Turnstile)。サイトキーが未設定なら無効で、今までどおりに動く
+  const captcha = useTurnstile();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError(null);
+
+    // #1165: トークンは 1 回しか使えない。取り出した時点で、ウィジェットが次のトークンを取り直す。
+    // Turnstile が有効なのにトークンが無いとき (Enter キーなどでボタンを通らずに送られた場合) は送らない
+    const captchaToken = captcha.takeToken();
+    if (captcha.enabled && !captchaToken) {
+      setError("ボットではないことの確認が終わるまで、少しお待ちください。");
+      return;
+    }
+
+    setLoading(true);
 
     const supabase = createClient();
     // #288: 大文字メールを正規化して既存アカウントとの混同を防ぐ
     const normalizedEmail = email.trim().toLowerCase();
 
     try {
+      // resetPasswordForEmail は他の認証 API と違い、captchaToken を options の中ではなく、
+      // 第 2 引数の直下 (redirectTo と同じ階層) に渡す。options に入れても Supabase には届かない。
+      // Turnstile が無効のときは captchaToken を付けない (今までのリクエストと同じ)
       const { error: resetError } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
         redirectTo: `${window.location.origin}/auth/reset-password`,
+        ...(captchaToken ? { captchaToken } : {}),
       });
 
       if (resetError) {
@@ -33,7 +50,8 @@ export default function ForgotPasswordPage() {
       setSuccess(true);
     } catch (err: any) {
       console.error("Password reset error:", err);
-      setError(err.message || "パスワードリセットに失敗しました");
+      // #1165: 英語の生のエラー文は出さない (ウィジェットは取り直し済み)
+      setError(isCaptchaFailure(err) ? CAPTCHA_FAILED_MESSAGE : err.message || "パスワードリセットに失敗しました");
     } finally {
       setLoading(false);
     }
@@ -132,6 +150,8 @@ export default function ForgotPasswordPage() {
                     />
                   </div>
 
+                  <TurnstileWidget {...captcha.widgetProps} action="password-reset" />
+
                   {error && (
                     <motion.div
                       initial={{ opacity: 0, y: -10 }}
@@ -145,7 +165,7 @@ export default function ForgotPasswordPage() {
 
                   <button
                     type="submit"
-                    disabled={loading || !email}
+                    disabled={loading || !email || !captcha.ready}
                     className="w-full py-4 rounded-xl font-bold text-white bg-[#E07A5F] hover:bg-[#D16A4F] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     {loading ? (
