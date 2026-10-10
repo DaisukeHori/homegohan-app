@@ -94,6 +94,11 @@ vi.mock('@/lib/rate-limit', () => ({
   checkRateLimit: vi.fn(async () => ({ success: true })),
   rateLimitExceededResponse: vi.fn(),
 }));
+// #1177: AI 利用回数の記録 (DB を呼ぶ境目)。本物は、DB に繋げないと「記録できなかった」ログを 1 件足す (そのまま先へ進む) ので、
+// 「元のエラーが構造化ログに 1 回だけ残る」の数え方が変わる。この関数の挙動は src/__tests__/lib/plan/entitlements.test.ts
+vi.mock('@/lib/plan/entitlements', () => ({
+  recordAiUsage: vi.fn(async () => undefined),
+}));
 
 import * as streaks from '@/app/api/health/streaks/route';
 import * as goals from '@/app/api/health/goals/route';

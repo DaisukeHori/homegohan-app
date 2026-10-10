@@ -51,6 +51,10 @@ export async function POST(
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
+  // #1177 AI 利用回数は、ここ (アクションの実行) では記録しない。AI を使うアクション (献立の生成・料理画像) だけを、
+  // runConsultationAction (src/lib/ai/consultation-action-executor.ts) が AI へ送る直前に記録する
+  // (献立の削除・買い物リストの操作など、AI を使わないアクションは記録しない)
+
   try {
     // actionIdはメッセージIDまたはアクションログIDの可能性がある
     let { data: action, error: actionError } = await supabase

@@ -6,6 +6,7 @@ import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { recordAiUsage } from '@/lib/plan/entitlements';
 import { nutritionAnalysisRange } from '@/lib/jst-day-ranges';
 import { aiConsentSkippedField, checkUserAiConsent, requireAiConsent } from '@/lib/ai/consent-guard';
 
@@ -281,6 +282,10 @@ JSON形式で出力してください：
 ` : ''}
 `;
 
+      // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
+      // (記録に失敗しても止めない)
+      await recordAiUsage(user.id, 'nutrition_advice');
+
       const completion = await getFastLLMClient().chat.completions.create({
         model: getFastLLMModel(),
         messages: [{ role: 'user', content: prompt }],
@@ -387,6 +392,10 @@ export async function POST(request: Request) {
     // generate-menu-v4を呼び出す（同期呼び出し）
     // 必須の環境変数が欠けていれば、リクエストの行を作る前に MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す) (#1182)
     const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
+    // (記録に失敗しても止めない)
+    await recordAiUsage(user.id, 'menu_generation');
 
     // リクエストを作成
     const targetSlots = [{ date: targetDate, mealType: targetMealType, plannedMealId: meal.id }];
