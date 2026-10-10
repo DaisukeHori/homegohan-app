@@ -1,7 +1,7 @@
 /**
  * GET /api/cron/app-log-alerts — 本番エラーの急増を運用メールに知らせる (Vercel Cron。15 分おき。#1157)
  *
- * app_logs の level='error' を、直近 15 分ぶん function_name ごとに数える。合計が 20 件を超えていたら、
+ * app_logs の level='error' を、直近 15 分ぶん function_name ごとに数える。合計がしきい値 (既定 20 件) を超えていたら、
  * 環境変数 OPS_ALERT_EMAIL のアドレスに 1 通だけメールを送る。しきい値などの定数と、メールに載せる内容の決め方は
  * src/lib/ops-alerts/app-log-error-spike.ts、文面は src/lib/emails/ops/app-log-error-spike.ts。
  *
@@ -9,11 +9,13 @@
  *   定数時間の比較と、入れ替え中の旧シークレット CRON_SECRET_PREVIOUS の受け付けは共通ヘルパーが行う)。
  * - OPS_ALERT_EMAIL が未設定なら、何もしない (info ログを 1 行残すだけ。DB にも触れない)。
  *   形がメールアドレスでないときも、送らずに warn ログを残す。
- * - 同じアラートは 60 分は送り直さない。「送ってよいか」は DB の claim_ops_alert が原子的に決める
+ * - しきい値とクールダウンは、環境変数 OPS_ALERT_ERROR_THRESHOLD / OPS_ALERT_COOLDOWN_MINUTES で上書きできる
+ *   (どちらも任意。不正な値は既定値に戻し、どの変数を無視したかを warn で残す)。窓 (15 分) は vercel.json の間隔と結びつくので変えない。
+ * - 同じアラートはクールダウン (既定 60 分) の間は送り直さない。「送ってよいか」は DB の claim_ops_alert が原子的に決める
  *   (Vercel Cron はまれに同じ回を 2 回呼ぶ。読んでから書く作りだと 2 通届く)。
  *   メールを送れなかったとき (送信の設定が未完了・Resend が断った・例外) は、release_ops_alert で権利を返す。
- *   送れていないのに「送った」と記録したままだと、設定が直ったあとも 60 分は通知が来ないため。
- *   権利を取ったあとで関数ごと止められた (時間切れ・デプロイの切り替えなど) ときだけは返せず、次の通知が最大 60 分遅れる (まれ)。
+ *   送れていないのに「送った」と記録したままだと、設定が直ったあともクールダウンの間は通知が来ないため。
+ *   権利を取ったあとで関数ごと止められた (時間切れ・デプロイの切り替えなど) ときだけは返せず、次の通知が最大でクールダウンの分だけ遅れる (まれ)。
  * - メールが届くことには依存しない。本番はまだ送信ドメインが未検証で、メールは届かない。送れなかったときは
  *   sendEmail が app_logs に記録し (error)、この route も件数と関数名を warn で残す。応答は 200 のままにする
  *   (数える処理自体は正常に動いている。送れなかったかどうかは応答の status で分かる)。
@@ -36,14 +38,13 @@ import { EmailEnvelopeSchema } from '@/lib/emails/envelope';
 import { renderAppLogErrorSpikeEmail } from '@/lib/emails/ops/app-log-error-spike';
 import { getSiteUrl } from '@/lib/site-config';
 import {
-  APP_LOG_ALERT_COOLDOWN_MINUTES,
-  APP_LOG_ALERT_ERROR_THRESHOLD,
   APP_LOG_ALERT_KEY,
   APP_LOG_ALERT_MAX_FUNCTIONS,
   APP_LOG_ALERT_WINDOW_MINUTES,
   SUPER_ADMIN_LOGS_PATH,
   exceedsErrorThreshold,
   parseErrorCountRows,
+  resolveAppLogAlertSettings,
   summarizeErrorCounts,
 } from '@/lib/ops-alerts/app-log-error-spike';
 
@@ -73,19 +74,25 @@ type Logger = ReturnType<typeof createLogger>;
 
 /**
  * 取った「送る権利」を返す。失敗しても例外にしない (すでに「送れなかった」という本題を抱えているため)。
- * 返せなかったときは、次の通知が最大 APP_LOG_ALERT_COOLDOWN_MINUTES 分遅れるだけ。
+ * 返せなかったときは、次の通知が最大でクールダウン (cooldownMinutes) 分遅れるだけ。
  */
-async function releaseClaim(supabase: AdminClient, claimedAt: string, logger: Logger): Promise<void> {
+async function releaseClaim(
+  supabase: AdminClient,
+  claimedAt: string,
+  cooldownMinutes: number,
+  logger: Logger,
+): Promise<void> {
+  const message = `送る権利を返せませんでした。次の通知が最大 ${cooldownMinutes} 分遅れることがあります`;
   try {
     const { error } = await supabase.rpc('release_ops_alert', {
       p_alert_key: APP_LOG_ALERT_KEY,
       p_claimed_at: claimedAt,
     });
     if (error) {
-      logger.warn('送る権利を返せませんでした。次の通知が最大 60 分遅れることがあります', { pg_code: error.code });
+      logger.warn(message, { pg_code: error.code });
     }
   } catch (err) {
-    logger.warn('送る権利を返せませんでした。次の通知が最大 60 分遅れることがあります', {
+    logger.warn(message, {
       error_name: err instanceof Error ? err.name : typeof err,
     });
   }
@@ -109,6 +116,18 @@ async function checkAppLogErrors(): Promise<NextResponse> {
     return NextResponse.json({ status: 'invalid_config' });
   }
 
+  // しきい値とクールダウン。運用で変えるときは環境変数で上書きする (未設定なら既定の 20 件・60 分)。
+  // 値が不正なら既定値に戻して進め (通知は止めない)、どの変数を無視したかだけを warn で残す (値は出さない)
+  const settings = resolveAppLogAlertSettings({
+    errorThreshold: process.env.OPS_ALERT_ERROR_THRESHOLD,
+    cooldownMinutes: process.env.OPS_ALERT_COOLDOWN_MINUTES,
+  });
+  if (settings.ignored.length > 0) {
+    logger.warn('しきい値・クールダウンの環境変数の値が正しくないため、既定値を使います', {
+      ignored_env: settings.ignored,
+    });
+  }
+
   try {
     const supabase = getSupabaseAdmin();
 
@@ -123,18 +142,18 @@ async function checkAppLogErrors(): Promise<NextResponse> {
     const summary = summarizeErrorCounts(parseErrorCountRows(counted.data));
     const counts = {
       total: summary.total,
-      threshold: APP_LOG_ALERT_ERROR_THRESHOLD,
+      threshold: settings.errorThreshold,
       window_minutes: APP_LOG_ALERT_WINDOW_MINUTES,
     };
 
-    if (!exceedsErrorThreshold(summary.total)) {
+    if (!exceedsErrorThreshold(summary.total, settings.errorThreshold)) {
       return NextResponse.json({ status: 'below_threshold', ...counts });
     }
 
-    // 2. 送る権利を取る。クールダウン中 (直近 60 分に送った) なら NULL で、送らない
+    // 2. 送る権利を取る。クールダウン中 (直近 cooldownMinutes 分に送った。既定 60 分) なら NULL で、送らない
     const claimed = await supabase.rpc('claim_ops_alert', {
       p_alert_key: APP_LOG_ALERT_KEY,
-      p_cooldown_minutes: APP_LOG_ALERT_COOLDOWN_MINUTES,
+      p_cooldown_minutes: settings.cooldownMinutes,
     });
     if (claimed.error) {
       return internalError(ROUTE_NAME, claimed.error, { requestId, rpc: 'claim_ops_alert' });
@@ -146,15 +165,15 @@ async function checkAppLogErrors(): Promise<NextResponse> {
 
     // 3. メールを作って送る。件数と関数名だけを載せる。
     // 権利を取ったあとの例外 (文面を作る・送る) はここで受け、必ず権利を返してから扱う
-    // (sendEmail は配信の失敗で例外を投げない作りだが、想定外の例外でも 60 分の沈黙を残さない)
+    // (sendEmail は配信の失敗で例外を投げない作りだが、想定外の例外でもクールダウンの沈黙を残さない)
     let sent: { readonly result: SendEmailResult } | { readonly thrown: unknown };
     try {
       const envelope = renderAppLogErrorSpikeEmail({
         to_email: recipient.data,
         total: summary.total,
         window_minutes: APP_LOG_ALERT_WINDOW_MINUTES,
-        threshold: APP_LOG_ALERT_ERROR_THRESHOLD,
-        cooldown_minutes: APP_LOG_ALERT_COOLDOWN_MINUTES,
+        threshold: settings.errorThreshold,
+        cooldown_minutes: settings.cooldownMinutes,
         functions: summary.functions,
         other_count: summary.otherCount,
         logs_url: `${getSiteUrl()}${SUPER_ADMIN_LOGS_PATH}`,
@@ -173,7 +192,7 @@ async function checkAppLogErrors(): Promise<NextResponse> {
     };
 
     if ('thrown' in sent) {
-      await releaseClaim(supabase, claimedAt, logger);
+      await releaseClaim(supabase, claimedAt, settings.cooldownMinutes, logger);
       return internalError(ROUTE_NAME, sent.thrown, { requestId, stage: 'send_email', ...alertMeta });
     }
 
@@ -185,7 +204,7 @@ async function checkAppLogErrors(): Promise<NextResponse> {
 
     // 送れなかった、または送らなかった (送信の設定が未完了)。権利を返して、15 分後の次の回でもう一度試せるようにする。
     // 失敗そのものの記録 (宛先をマスクした error) は sendEmail が済ませている
-    await releaseClaim(supabase, claimedAt, logger);
+    await releaseClaim(supabase, claimedAt, settings.cooldownMinutes, logger);
     logger.warn(
       result.skipped
         ? 'エラー急増を検知しましたが、メールの送信設定が未完了のため通知を送っていません'

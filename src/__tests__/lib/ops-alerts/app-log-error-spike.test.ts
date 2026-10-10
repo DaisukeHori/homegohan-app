@@ -7,8 +7,13 @@ import {
   APP_LOG_ALERT_WINDOW_MINUTES,
   NO_FUNCTION_NAME_LABEL,
   SUPER_ADMIN_LOGS_PATH,
+  APP_LOG_ALERT_COOLDOWN_MINUTES_MAX,
+  APP_LOG_ALERT_COOLDOWN_MINUTES_MIN,
+  APP_LOG_ALERT_ERROR_THRESHOLD_MAX,
+  APP_LOG_ALERT_ERROR_THRESHOLD_MIN,
   exceedsErrorThreshold,
   parseErrorCountRows,
+  resolveAppLogAlertSettings,
   sanitizeFunctionNameForAlert,
   summarizeErrorCounts,
   type ErrorCountRow,
@@ -276,5 +281,89 @@ describe('parseErrorCountRows (#1157)', () => {
     } catch (err) {
       expect(String((err as Error).message)).not.toContain('secret-looking-name');
     }
+  });
+});
+
+describe('resolveAppLogAlertSettings (#1157)', () => {
+  const none = { errorThreshold: undefined, cooldownMinutes: undefined };
+
+  it('R-1: 未設定なら既定値 (20 件・60 分)。無視した変数は無い', () => {
+    expect(resolveAppLogAlertSettings(none)).toEqual({ errorThreshold: 20, cooldownMinutes: 60, ignored: [] });
+  });
+
+  it('R-2: 空・空白だけも未設定と同じ', () => {
+    expect(resolveAppLogAlertSettings({ errorThreshold: '', cooldownMinutes: ' \t ' })).toEqual({
+      errorThreshold: 20,
+      cooldownMinutes: 60,
+      ignored: [],
+    });
+  });
+
+  it('R-3: 10 進の整数なら、前後の空白を除いて使う', () => {
+    expect(resolveAppLogAlertSettings({ errorThreshold: ' 50 ', cooldownMinutes: '120' })).toEqual({
+      errorThreshold: 50,
+      cooldownMinutes: 120,
+      ignored: [],
+    });
+  });
+
+  it('R-4: 範囲の端は受け付ける (しきい値 1〜100000・クールダウン 1〜10080 分)', () => {
+    expect(APP_LOG_ALERT_ERROR_THRESHOLD_MIN).toBe(1);
+    expect(APP_LOG_ALERT_ERROR_THRESHOLD_MAX).toBe(100_000);
+    // claim_ops_alert が受け付ける範囲 (1 分〜7 日) と同じ
+    expect(APP_LOG_ALERT_COOLDOWN_MINUTES_MIN).toBe(1);
+    expect(APP_LOG_ALERT_COOLDOWN_MINUTES_MAX).toBe(10080);
+    expect(resolveAppLogAlertSettings({ errorThreshold: '1', cooldownMinutes: '1' })).toEqual({
+      errorThreshold: 1,
+      cooldownMinutes: 1,
+      ignored: [],
+    });
+    expect(resolveAppLogAlertSettings({ errorThreshold: '100000', cooldownMinutes: '10080' })).toEqual({
+      errorThreshold: 100_000,
+      cooldownMinutes: 10080,
+      ignored: [],
+    });
+  });
+
+  it('R-5: 範囲外・整数でない値は既定値に戻し、その変数の名前を ignored に入れる', () => {
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ['0', '0'],
+      ['100001', '10081'],
+      ['-1', '-60'],
+      ['+5', '+5'],
+      ['2.5', '1.5'],
+      ['1e3', '6e1'],
+      ['0x10', '0x3c'],
+      ['abc', 'soon'],
+      ['20件', '60分'],
+      ['9999999999999999', '9999999999999999'],
+    ];
+    for (const [threshold, cooldown] of cases) {
+      expect(resolveAppLogAlertSettings({ errorThreshold: threshold, cooldownMinutes: cooldown }), threshold).toEqual({
+        errorThreshold: 20,
+        cooldownMinutes: 60,
+        ignored: ['OPS_ALERT_ERROR_THRESHOLD', 'OPS_ALERT_COOLDOWN_MINUTES'],
+      });
+    }
+  });
+
+  it('R-6: 片方だけ不正なら、その片方だけを既定値に戻す', () => {
+    expect(resolveAppLogAlertSettings({ errorThreshold: 'x', cooldownMinutes: '30' })).toEqual({
+      errorThreshold: 20,
+      cooldownMinutes: 30,
+      ignored: ['OPS_ALERT_ERROR_THRESHOLD'],
+    });
+    expect(resolveAppLogAlertSettings({ errorThreshold: '40', cooldownMinutes: '0' })).toEqual({
+      errorThreshold: 40,
+      cooldownMinutes: 60,
+      ignored: ['OPS_ALERT_COOLDOWN_MINUTES'],
+    });
+  });
+
+  it('R-7: 既定値そのものが受け付ける範囲に収まっている', () => {
+    expect(APP_LOG_ALERT_ERROR_THRESHOLD).toBeGreaterThanOrEqual(APP_LOG_ALERT_ERROR_THRESHOLD_MIN);
+    expect(APP_LOG_ALERT_ERROR_THRESHOLD).toBeLessThanOrEqual(APP_LOG_ALERT_ERROR_THRESHOLD_MAX);
+    expect(APP_LOG_ALERT_COOLDOWN_MINUTES).toBeGreaterThanOrEqual(APP_LOG_ALERT_COOLDOWN_MINUTES_MIN);
+    expect(APP_LOG_ALERT_COOLDOWN_MINUTES).toBeLessThanOrEqual(APP_LOG_ALERT_COOLDOWN_MINUTES_MAX);
   });
 });

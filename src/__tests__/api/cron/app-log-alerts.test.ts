@@ -138,6 +138,9 @@ beforeEach(() => {
   vi.stubEnv('CRON_SECRET', SECRET);
   vi.stubEnv('CRON_SECRET_PREVIOUS', undefined);
   vi.stubEnv('OPS_ALERT_EMAIL', OPS_EMAIL);
+  // しきい値・クールダウンの上書きは、既定では無し (実行環境に設定があっても、既定値で確かめる)
+  vi.stubEnv('OPS_ALERT_ERROR_THRESHOLD', undefined);
+  vi.stubEnv('OPS_ALERT_COOLDOWN_MINUTES', undefined);
   vi.stubEnv('NEXT_PUBLIC_APP_URL', SITE_URL);
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
   consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -430,6 +433,129 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
     await GET(authed());
 
     expect(rpcCalls('release_ops_alert')).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------
+// しきい値・クールダウンの上書き (環境変数)
+// ---------------------------------------------------------------
+describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環境変数で変える (#1157)', () => {
+  it('E-1: OPS_ALERT_ERROR_THRESHOLD でしきい値を変える (50 なら 50 件は通知せず、51 件から通知する)。応答にも新しい値が出る', async () => {
+    vi.stubEnv('OPS_ALERT_ERROR_THRESHOLD', '50');
+
+    setScenario({ counts: { data: rowsOf(50), error: null } });
+    const atThreshold = await GET(authed());
+    await expect(atThreshold.json()).resolves.toEqual({
+      status: 'below_threshold',
+      total: 50,
+      threshold: 50,
+      window_minutes: 15,
+    });
+    expect(rpcCalls('claim_ops_alert')).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+
+    setScenario({ counts: { data: rowsOf(51), error: null } });
+    const over = await GET(authed());
+    await expect(over.json()).resolves.toEqual({ status: 'sent', total: 51, threshold: 50, window_minutes: 15 });
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    // メールの文面のしきい値も、上書きした値になる
+    expect(mocks.sendEmail.mock.calls[0][0].text as string).toContain('15 分で 50 件を超えると');
+    // 正しい値なら warn は残さない
+    expect(mocks.logWarn).not.toHaveBeenCalled();
+  });
+
+  it('E-2: しきい値を下げると、既定では通知しない件数でも通知する (5 なら 6 件で通知)', async () => {
+    vi.stubEnv('OPS_ALERT_ERROR_THRESHOLD', ' 5 ');
+    setScenario({ counts: { data: rowsOf(6), error: null } });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 6, threshold: 5, window_minutes: 15 });
+  });
+
+  it('E-3: OPS_ALERT_COOLDOWN_MINUTES で、権利を取るときのクールダウンを変える。メールの文面も同じ値', async () => {
+    vi.stubEnv('OPS_ALERT_COOLDOWN_MINUTES', '120');
+
+    await GET(authed());
+
+    expect(rpcCalls('claim_ops_alert')).toEqual([
+      ['claim_ops_alert', { p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 120 }],
+    ]);
+    expect(mocks.sendEmail.mock.calls[0][0].text as string).toContain('同じ通知は 120 分以内には送り直しません');
+  });
+
+  it('E-4: 不正な値 (整数でない・範囲外) は既定値 (20 件・60 分) に戻して通知を続け、変数名だけを warn に残す (値は出さない)', async () => {
+    const invalid: ReadonlyArray<readonly [string, string]> = [
+      ['abc', 'x'],
+      ['0', '0'],
+      ['-5', '-1'],
+      ['2.5', '1.5'],
+      ['1e3', '1e2'],
+      ['100001', '10081'],
+    ];
+    for (const [threshold, cooldown] of invalid) {
+      vi.clearAllMocks();
+      vi.stubEnv('OPS_ALERT_ERROR_THRESHOLD', threshold);
+      vi.stubEnv('OPS_ALERT_COOLDOWN_MINUTES', cooldown);
+      setScenario({ counts: { data: rowsOf(21), error: null } });
+
+      const res = await GET(authed());
+
+      await expect(res.json(), threshold).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15 });
+      expect(rpcCalls('claim_ops_alert'), cooldown).toEqual([
+        ['claim_ops_alert', { p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 60 }],
+      ]);
+      expect(mocks.logWarn, threshold).toHaveBeenCalledTimes(1);
+      const [message, meta] = mocks.logWarn.mock.calls[0];
+      expect(message).toContain('既定値を使います');
+      expect(meta).toEqual({ ignored_env: ['OPS_ALERT_ERROR_THRESHOLD', 'OPS_ALERT_COOLDOWN_MINUTES'] });
+      expect(JSON.stringify(mocks.logWarn.mock.calls)).not.toContain(`"${threshold}"`);
+    }
+  });
+
+  it('E-5: 片方だけ不正なら、その変数だけを既定値に戻す (もう片方の上書きは効く)', async () => {
+    vi.stubEnv('OPS_ALERT_ERROR_THRESHOLD', '30');
+    vi.stubEnv('OPS_ALERT_COOLDOWN_MINUTES', 'soon');
+    setScenario({ counts: { data: rowsOf(31), error: null } });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 31, threshold: 30, window_minutes: 15 });
+    expect(rpcCalls('claim_ops_alert')[0][1]).toEqual({ p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 60 });
+    expect(mocks.logWarn.mock.calls[0][1]).toEqual({ ignored_env: ['OPS_ALERT_COOLDOWN_MINUTES'] });
+  });
+
+  it('E-6: 空・空白だけは未設定と同じ (既定値。warn も残さない)', async () => {
+    vi.stubEnv('OPS_ALERT_ERROR_THRESHOLD', '');
+    vi.stubEnv('OPS_ALERT_COOLDOWN_MINUTES', '   ');
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15 });
+    expect(rpcCalls('claim_ops_alert')[0][1]).toEqual({ p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 60 });
+    expect(mocks.logWarn).not.toHaveBeenCalled();
+  });
+
+  it('E-7: 権利を返せなかったときの warn は、上書きしたクールダウンの分数を書く', async () => {
+    vi.stubEnv('OPS_ALERT_COOLDOWN_MINUTES', '90');
+    mocks.sendEmail.mockResolvedValue(failedResult);
+    setScenario({ release: { data: null, error: { code: '57014', message: 'timeout' } } });
+
+    await GET(authed());
+
+    const warnMessages = mocks.logWarn.mock.calls.map(([message]) => String(message));
+    expect(warnMessages).toContain('送る権利を返せませんでした。次の通知が最大 90 分遅れることがあります');
+  });
+
+  it('E-8: 宛先 (OPS_ALERT_EMAIL) が未設定なら、しきい値の値が不正でも warn を増やさない (何もしない回は静かに終わる)', async () => {
+    vi.stubEnv('OPS_ALERT_EMAIL', undefined);
+    vi.stubEnv('OPS_ALERT_ERROR_THRESHOLD', 'abc');
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toEqual({ status: 'disabled' });
+    expect(mocks.logWarn).not.toHaveBeenCalled();
+    expect(mocks.rpc).not.toHaveBeenCalled();
   });
 });
 

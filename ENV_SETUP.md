@@ -216,9 +216,11 @@ Vercel Dashboard → Settings → Environment Variables で `CRON_SECRET` の値
 | 環境変数 | 例 | 役割 | 未設定のときの動き |
 |---|---|---|---|
 | `OPS_ALERT_EMAIL` | `ops@example.com` | 通知メールの宛先。**メールアドレスを 1 つだけ**書く（`名前 <アドレス>` の形や、カンマ区切りの複数は不可）。共有の受信箱ができるまでは、個人のアドレスでよい | 通知しない。cron は動くが、`app_logs` に info ログを 1 行残すだけで、DB にもメールにも触れない |
+| `OPS_ALERT_ERROR_THRESHOLD`（任意） | `50` | しきい値。直近 15 分の `error` が**この件数を超えたら**通知する。1〜100000 の整数 | 既定の 20 件。整数でない・範囲外の値も既定値に戻し、`cron/app-log-alerts` の warn ログに変数名だけを残す |
+| `OPS_ALERT_COOLDOWN_MINUTES`（任意） | `120` | 同じ通知を送り直さない時間（分）。1〜10080 の整数 | 既定の 60 分。不正な値は既定値に戻す（しきい値と同じ） |
 
-- 通知する条件: 直近 15 分の `error` が **20 件を超えた**とき（21 件から）。しきい値は `src/lib/ops-alerts/app-log-error-spike.ts` の定数。
-- 同じ通知は **60 分は送り直さない**（DB の `ops_alert_state` で覚える。メールを送れなかったときは「送った」と記録せず、15 分後の次の回でもう一度試す）。
+- 通知する条件: 直近 15 分の `error` が **20 件を超えた**とき（21 件から）。既定値は `src/lib/ops-alerts/app-log-error-spike.ts` の定数で、`OPS_ALERT_ERROR_THRESHOLD` で上書きできる。窓（15 分）は `vercel.json` の cron の間隔と同じにしてあるので、環境変数では変えない。
+- 同じ通知は **60 分は送り直さない**（`OPS_ALERT_COOLDOWN_MINUTES` で上書きできる）（DB の `ops_alert_state` で覚える。メールを送れなかったときは「送った」と記録せず、15 分後の次の回でもう一度試す）。
 - メールに載るのは、件数・関数名・運用ログ画面（`/super-admin/logs`）へのリンクだけです。ユーザー ID・メールアドレス・ログの本文は載せません（送信先の Resend は米国の事業者のため）。
 - **メールが実際に届くには、メールの送信元ドメインを Resend で検証し、`RESEND_API_KEY` と `EMAIL_FROM` を設定する必要があります**（手順は [`docs/operations/email-domain.md`](docs/operations/email-domain.md)）。それまでは、送れなかったことが `app_logs`（`function_name = 'email'` の error と、`cron/app-log-alerts` の warn）に残るだけで、アプリの動きには影響しません。
 - 応答（JSON）の `status` は、`disabled`（宛先が未設定）・`invalid_config`（宛先の形が不正）・`below_threshold`（しきい値以下）・`deduped`（60 分以内に送信済み）・`sent`（送信した）・`send_skipped` / `send_failed`（送れなかった）のどれかです。cron が動いているかは、Vercel の Cron Jobs の画面（HTTP ステータス）で確かめられます。`app_logs`（`/super-admin/logs` で `function_name` に `cron/app-log-alerts` を指定）に残るのは、宛先が未設定・形が不正・通知した・通知できなかった回だけです（しきい値以下の回と、60 分以内の回は何も残しません）。
