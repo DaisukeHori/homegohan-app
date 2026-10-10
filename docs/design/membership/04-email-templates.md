@@ -421,8 +421,8 @@ test('Template A renders valid envelope', () => {
 | 子供メンバーの昇格の案内 | `src/lib/emails/membership/family-promote.ts` |
 | お問い合わせの受付、サポートチケットへの返信 | `src/app/api/contact/route.ts`、`src/app/api/admin/support/tickets/[id]/messages/route.ts` |
 
-Supabase Auth のメール (サインアップ確認・パスワード再設定・マジックリンク) と、アカウント削除の確認メール・完了メール (#1152) も transactional として扱い、配信停止の対象にしない。
-配信停止を認めると、招待や譲渡の承諾、削除前の確認が届かなくなるため。
+Supabase Auth のメール (サインアップ確認・パスワード再設定・マジックリンク) と、アカウント削除の完了メール (#1152。`src/lib/emails/account/account-deleted.ts`) も transactional として扱い、配信停止の対象にしない。
+配信停止を認めると、招待や譲渡の承諾、退会の完了の通知が届かなくなるため。
 
 Gmail / Yahoo の一括送信者ガイドライン (2024) も、ワンクリック配信停止を求めるのはマーケティング・購読メールで、transactional は対象外としている。
 そのため、現時点では、これらのメールに配信停止の導線を付けない。

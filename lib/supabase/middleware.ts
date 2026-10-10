@@ -2,6 +2,17 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { isAuthFlowPath, isPolicyPath, resolveOnboardingRedirect } from '@/lib/onboarding-routing'
 import { isAccountFrozen } from '@/lib/auth/frozen'
+import {
+  LEGAL_CONSENT_PATH,
+  LEGAL_CONSENT_PENDING_HEADER,
+  buildLegalConsentNext,
+  isLegalConsentEnforced,
+  isLegalConsentNoticeEnabled,
+  resolveLegalConsent,
+} from '@/lib/legal-consent'
+// Edge Runtime (middleware) で動くので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
+import { getSupabasePublicConfig } from '@/lib/env-required'
+import { internalError } from '@/lib/api/errors'
 
 // #1030 (round-4 Warning fix): Authorization ヘッダーが Supabase JWT (dot 区切り
 // 3 セグメント) の Bearer トークンかどうかを軽量に判定する。CRON_SECRET のような
@@ -13,11 +24,71 @@ function isJwtBearerHeader(authHeader: string | null): boolean {
   return match[1].split('.').length === 3
 }
 
+// #1174: 同意ゲート (利用規約・プライバシーポリシーの再同意) のために user_profiles から読む列。
+// 同意済みの版の列 (migration 20261008200700) がまだ無い DB では、この select が 42703 (undefined_column) で失敗する。
+// Vercel への Web のデプロイと Supabase への migration のデプロイは別々に走るので、Web が先に出る短い時間があり得る。
+// その間も profileError 扱いにすると、全員の凍結判定とオンボーディングの差し戻しが一斉に止まってしまう (#348 の fail-open)。
+// そこで、同意済みの版の列を除いた select でやり直し、同意ゲートだけを素通りさせる。
+const PROFILE_COLUMNS = 'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at'
+const PROFILE_COLUMNS_WITH_LEGAL = `${PROFILE_COLUMNS}, terms_version_accepted, privacy_version_accepted`
+const PG_UNDEFINED_COLUMN = '42703'
+
+interface MiddlewareProfile {
+  roles?: string[] | null
+  onboarding_started_at?: string | null
+  onboarding_completed_at?: string | null
+  frozen_at?: string | null
+  unban_at?: string | null
+  terms_version_accepted?: string | null
+  privacy_version_accepted?: string | null
+}
+
+async function fetchMiddlewareProfile(supabase: ReturnType<typeof createServerClient>, userId: string) {
+  const first = await supabase.from('user_profiles').select(PROFILE_COLUMNS_WITH_LEGAL).eq('id', userId).maybeSingle()
+  if (first.error?.code === PG_UNDEFINED_COLUMN) {
+    const legacy = await supabase.from('user_profiles').select(PROFILE_COLUMNS).eq('id', userId).maybeSingle()
+    return {
+      profile: legacy.data as MiddlewareProfile | null,
+      profileError: legacy.error,
+      legalColumnsAvailable: false,
+    }
+  }
+  return {
+    profile: first.data as MiddlewareProfile | null,
+    profileError: first.error,
+    legalColumnsAvailable: true,
+  }
+}
+
+/**
+ * 「同意のお願い」のお知らせを出すよう、サーバー側の画面 (layout) へヘッダーを渡す。
+ * NextResponse.next({ request }) は作った時点のリクエストヘッダーを転送するので、ヘッダーを足したら作り直し、
+ * それまでに溜めたセッション Cookie を引き継ぐ。お知らせが出せないだけで、ページの表示は止めない。
+ */
+function withLegalConsentPendingHeader(request: NextRequest, current: NextResponse): NextResponse {
+  try {
+    request.headers.set(LEGAL_CONSENT_PENDING_HEADER, '1')
+    const next = NextResponse.next({ request })
+    for (const cookie of current.cookies.getAll()) next.cookies.set(cookie)
+    return next
+  } catch {
+    return current
+  }
+}
+
 export async function updateSession(request: NextRequest) {
   // APIルートの場合は、セッション更新のみ行い、リダイレクトはしない
   // これにより、不要な getUser() 呼び出しを減らす
   const isApiRoute = request.nextUrl.pathname.startsWith('/api/')
-  
+
+  // #1174: 「同意のお願い」を出すかどうかのヘッダーは、下で middleware が付けたものだけを画面に渡す。
+  // クライアントが同じ名前のヘッダーを送ってきても、転送しない。
+  try {
+    request.headers.delete(LEGAL_CONSENT_PENDING_HEADER)
+  } catch {
+    // ヘッダーを書き換えられない環境でも、認証の処理は止めない
+  }
+
   // レスポンスを作成（クッキーを蓄積するために1つのインスタンスを使い回す）
   let supabaseResponse = NextResponse.next({
     request,
@@ -40,9 +111,19 @@ export async function updateSession(request: NextRequest) {
   const rawAuthHeader = request.headers.get('authorization')
   const authHeader = isJwtBearerHeader(rawAuthHeader) ? rawAuthHeader : null
 
+  // #1182: 必須の環境変数 (Supabase の URL・anon キー) が欠けていたら、認証を素通りさせず (fail-open にしない)、
+  // 汎用の 500 で止める。本文には変数名を出さず (#1172)、変数名はサーバーのログ (env-required の 1 行と、
+  // internalError → db-logger の構造化ログ) にだけ残す。
+  let supabaseConfig: { url: string; anonKey: string }
+  try {
+    supabaseConfig = getSupabasePublicConfig()
+  } catch (error) {
+    return internalError('middleware updateSession', error, { path: request.nextUrl.pathname })
+  }
+
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseConfig.url,
+    supabaseConfig.anonKey,
     {
       global: authHeader ? { headers: { Authorization: authHeader } } : undefined,
       cookies: {
@@ -182,15 +263,11 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (user) {
-    // user_profiles からオンボーディング状態・凍結状態を取得
+    // user_profiles からオンボーディング状態・凍結状態・同意済みの版 (#1174) を取得
     // #348: error を必ず捕捉し、DB 参照失敗時はリダイレクト判定をスキップする
     // (RLS 拒否・カラム不在・ネットワーク障害などで data=null になった場合に
     //  not_started 扱いで /onboarding/welcome へ飛ばしてしまうバグを防ぐ)
-    const { data: profile, error: profileError } = await supabase
-      .from('user_profiles')
-      .select('roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at')
-      .eq('id', user.id)
-      .maybeSingle()
+    const { profile, profileError, legalColumnsAvailable } = await fetchMiddlewareProfile(supabase, user.id)
 
     if (!profileError) {
       // #1030: frozen_at がセットされ (かつ一時 BAN が未解除の) アカウントは
@@ -227,6 +304,39 @@ export async function updateSession(request: NextRequest) {
           return NextResponse.redirect(url)
         }
         return supabaseResponse
+      }
+
+      // #1174: 利用規約・プライバシーポリシーの同意ゲート。
+      // 同意済みの版が packages/shared の LEGAL_DOCUMENTS と食い違う (未同意・古い版に同意) サインイン中の利用者を、
+      //   - LEGAL_CONSENT_ENFORCE=on のとき: 同意画面 /legal-consent へ回す (戻り先は next)
+      //   - LEGAL_CONSENT_NOTICE=on のとき (強制していない間): 通す。画面の上に「同意のお願い」のお知らせを出すだけ
+      //   - どちらも on でない (既定): 何もしない。お知らせも出さず、誰も止めない
+      // /api/* はこの分岐の手前 (上の isApiRoute) で返っているので対象外。ほかの対象外 (規約・同意画面・認証の途中・
+      // 問い合わせ・凍結・ハンズオンツアー・静的ファイル) は lib/legal-consent.ts の isLegalConsentExemptPath。
+      // リダイレクトは画面の取得 (GET / HEAD) にだけ掛ける (POST を 307 で同意画面へ回しても、受け取れず失敗するだけのため)。
+      // オンボーディングの差し戻し (下) より先に見る: 同意の前に初期設定 (健康情報の入力) へ進ませない。
+      // 同意済みの版の列がまだ無い DB (legalColumnsAvailable = false) では素通りさせる。
+      if (legalColumnsAvailable) {
+        const legalDecision = resolveLegalConsent({
+          pathname: request.nextUrl.pathname,
+          accepted: profile,
+          enforce: isLegalConsentEnforced(),
+          notice: isLegalConsentNoticeEnabled(),
+        })
+
+        if (legalDecision === 'redirect' && (request.method === 'GET' || request.method === 'HEAD')) {
+          const url = request.nextUrl.clone()
+          url.pathname = LEGAL_CONSENT_PATH
+          url.search = `?next=${encodeURIComponent(buildLegalConsentNext(request.nextUrl.pathname, request.nextUrl.search))}`
+          const redirect = NextResponse.redirect(url)
+          // 作り直した直後のセッション Cookie (トークンの更新) を失わないよう、リダイレクトにも引き継ぐ
+          for (const cookie of supabaseResponse.cookies.getAll()) redirect.cookies.set(cookie)
+          return redirect
+        }
+
+        if (legalDecision === 'banner') {
+          supabaseResponse = withLegalConsentPendingHeader(request, supabaseResponse)
+        }
       }
 
       const redirectPath = resolveOnboardingRedirect({

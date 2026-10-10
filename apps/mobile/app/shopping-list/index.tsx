@@ -15,6 +15,7 @@ import { getApi, getApiBaseUrl } from "../../src/lib/api";
 import { getActiveShoppingListId } from "../../src/lib/mealPlan";
 import { supabase } from "../../src/lib/supabase";
 import { colors, radius, spacing } from "../../src/theme";
+import { handleAiConsentRequiredError, handleStoredAiConsentFailure } from "../../src/lib/ai-consent";
 
 type QuantityVariant = {
   display: string;
@@ -384,6 +385,8 @@ export default function ShoppingListPage() {
         const handleFailed = (errorMsg: string) => {
           cleanupRegenSubscription();
           setIsRegenerating(false);
+          // サーバーが受け付けたあとに同意の判定で止めた (未同意。T15 / #1154): 案内を出したので、失敗の表示は出さない
+          if (handleStoredAiConsentFailure(errorMsg)) return;
           Alert.alert("再生成失敗", errorMsg);
         };
 
@@ -451,6 +454,8 @@ export default function ShoppingListPage() {
       setIsRegenerating(false);
     } catch (e: any) {
       setIsRegenerating(false);
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、ここのエラー表示は出さない
+      if (handleAiConsentRequiredError(e)) return;
       Alert.alert("再生成失敗", e?.message ?? "再生成に失敗しました。");
     }
   }

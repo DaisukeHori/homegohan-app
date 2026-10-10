@@ -10,6 +10,8 @@ import {
   extractInlineImageBase64,
   GeneratedContentPart,
 } from "./utils.ts";
+import { checkAiConsent, type AiConsentDecision } from "../_shared/ai-consent-guard.ts";
+import { aiConsentDeniedPayload } from "../_shared/ai-consent.ts";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const STORAGE_BUCKET = "fridge-images";
@@ -30,6 +32,8 @@ const aiClient = new GoogleGenAI({ apiKey: GOOGLE_AI_KEY });
 
 interface MealImageJobRow {
   id: string;
+  /** 献立の持ち主。外国の AI 事業者への提供の同意の判定に使う (T15 / #1154) */
+  user_id: string | null;
   planned_meal_id: string;
   dish_index: number;
   subject_hash: string | null;
@@ -90,8 +94,10 @@ Deno.serve(async (req) => {
 
 async function processJobs(jobs: MealImageJobRow[]): Promise<ProcessResponse[]> {
   const results: ProcessResponse[] = [];
+  // 同じ利用者のジョブが続くことが多いので、1 回の実行の中では同意の判定を使い回す
+  const consentByUser = new Map<string, Promise<AiConsentDecision>>();
   for (const job of jobs) {
-    const outcome = await processJob(job);
+    const outcome = await processJob(job, consentByUser);
     results.push(outcome);
   }
   return results;
@@ -100,7 +106,7 @@ async function processJobs(jobs: MealImageJobRow[]): Promise<ProcessResponse[]> 
 async function fetchPendingJobs(plannedMealId: string | undefined, limit: number): Promise<MealImageJobRow[]> {
   const query = supabase
     .from("meal_image_jobs")
-    .select("id, planned_meal_id, dish_index, subject_hash, prompt, model, reference_image_urls, attempt_count")
+    .select("id, user_id, planned_meal_id, dish_index, subject_hash, prompt, model, reference_image_urls, attempt_count")
     .eq("status", "pending")
     .order("priority", { ascending: false })
     .order("created_at", { ascending: true })
@@ -118,7 +124,10 @@ async function fetchPendingJobs(plannedMealId: string | undefined, limit: number
   return data ?? [];
 }
 
-async function processJob(job: MealImageJobRow): Promise<ProcessResponse> {
+async function processJob(
+  job: MealImageJobRow,
+  consentByUser: Map<string, Promise<AiConsentDecision>>,
+): Promise<ProcessResponse> {
   const now = new Date().toISOString();
   const lockToken = crypto.randomUUID();
   const leasedUntil = new Date(Date.now() + 2 * 60_000).toISOString();
@@ -142,6 +151,24 @@ async function processJob(job: MealImageJobRow): Promise<ProcessResponse> {
 
   const nextAttempt = (locked.attempt_count ?? 0) + 1;
   const jobRow: MealImageJobRow = locked;
+
+  // 料理の画像の作成は、献立の料理名などを外国の AI 事業者 (Google) へ送る。
+  // 献立の持ち主の同意が無ければ (判定に失敗した場合・持ち主が分からない場合も)、送らずにジョブを取り消す (T15 / #1154。fail-closed)
+  const ownerId = typeof jobRow.user_id === "string" ? jobRow.user_id : "";
+  let consent = consentByUser.get(ownerId);
+  if (!consent) {
+    consent = checkAiConsent(supabase, ownerId);
+    consentByUser.set(ownerId, consent);
+  }
+  const decision = await consent;
+  if (!decision.allowed) {
+    const reason = aiConsentDeniedPayload(decision).body.code;
+    const finalized = await finalizeJob(jobRow.id, lockToken, "cancelled", nextAttempt, reason);
+    if (finalized) {
+      await markDishFailure(jobRow, reason);
+    }
+    return { jobId: jobRow.id, status: "cancelled", message: reason };
+  }
 
   try {
     const { data: meal } = await supabase

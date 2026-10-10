@@ -29,6 +29,7 @@ import { getApi, getApiBaseUrl } from "../../lib/api";
 import { supabase } from "../../lib/supabase";
 import { colors, radius, shadows, spacing } from "../../theme";
 import { AIDayMenuModal } from "./AIDayMenuModal";
+import { aiSummarySkippedNote, isAiConsentRequiredError, promptAiConsentRequired } from "../../lib/ai-consent";
 
 // ============================================================
 // Types
@@ -149,6 +150,15 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   const [isClosingSession, setIsClosingSession] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
+
+  // 同意が必要で止められたとき (T15 / #1154) の案内。シートの上の 1日献立のモーダルと、このシート (モーダル) を閉じてから出す
+  // (閉じないと、案内から開いた同意画面がモーダルの下に隠れる)。シートは閉じても外されない (AIFloatingFab が置いたまま) ので、
+  // 会話と入力は残る。案内の前に閉じてよい。メッセージの送信と、1日献立の作成 (AIDayMenuModal が自分を閉じてから呼ぶ) の両方で使う
+  function closeSheetAndPromptAiConsent() {
+    setDayMenuModalVisible(false);
+    onClose();
+    promptAiConsentRequired();
+  }
 
   // 起動時セッション一覧取得
   useEffect(() => {
@@ -276,6 +286,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       );
       if (res.ok) {
         const data = await res.json();
+        // 先に新しいセッションを作る。createNewSession は成功すると messages を [WELCOME_MESSAGE] に置き換えるので、
+        // 要約 (または要約を省いた旨の一文) をその前に足すと、作成を待つ間しか出ずに消えてしまう (Web の AIChatBubble と同じ順)
+        await createNewSession();
         if (data.summary) {
           setMessages((prev) => [
             ...prev,
@@ -286,8 +299,21 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
               createdAt: new Date().toISOString(),
             },
           ]);
+        } else {
+          // 同意が無くて (または同意の状況を読めなくて) サーバーが要約 (AI) を省いた (T15 / #1154): その旨を一言だけ出す
+          const skippedNote = aiSummarySkippedNote(data);
+          if (skippedNote) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `summary-skipped-${Date.now()}`,
+                role: "assistant",
+                content: skippedNote,
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+          }
         }
-        await createNewSession();
       } else if (res.status === 400) {
         // Already closed: UI を最新に合わせる
         Alert.alert("情報", "このセッションは既にアーカイブ済みです。");
@@ -459,6 +485,14 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       }
     } catch (e: any) {
       setStreamingContent(null);
+      // 同意が必要で止められた (T15 / #1154): 送らなかったので、メッセージを消して入力を戻す。
+      // このシート (モーダル) を閉じてから同意画面への案内を出す (closeSheetAndPromptAiConsent)
+      if (isAiConsentRequiredError(e)) {
+        setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
+        setInputText(trimmed);
+        closeSheetAndPromptAiConsent();
+        return;
+      }
       if (e?.name === "AbortError") {
         Alert.alert(
           "タイムアウト",
@@ -689,10 +723,14 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* 1日献立モーダル */}
+      {/*
+        1日献立モーダル。同意が必要で止められたら、このシートも閉じてから案内を出す (シートが同意画面を隠さないように)。
+        シートが閉じられたら一緒に閉じる (visible && …。シートの上に重ねたモーダルだけが残らないように)
+      */}
       <AIDayMenuModal
-        visible={dayMenuModalVisible}
+        visible={visible && dayMenuModalVisible}
         onClose={() => setDayMenuModalVisible(false)}
+        onAiConsentRequired={closeSheetAndPromptAiConsent}
       />
     </>
   );

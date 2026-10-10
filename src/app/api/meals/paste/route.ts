@@ -68,6 +68,13 @@ export async function POST(request: Request) {
         { status: 403 },
       );
     }
+    // #1101: 運営が隠した食事は貼り付けられない (隠した内容を家族に見せ直させない)。持ち主の確認 (NOT_MEAL_OWNER) のあとに DB が判定する
+    if (rpcError.message?.includes(MembershipErrorCode.MEAL_HIDDEN)) {
+      return NextResponse.json(
+        { error: { code: MembershipErrorCode.MEAL_HIDDEN, message: 'この食事は運営により非表示になっているため、ペーストできません' } },
+        { status: 403 },
+      );
+    }
     if (rpcError.message?.includes('NOT_IN_FAMILY')) {
       return NextResponse.json(
         { error: { code: MembershipErrorCode.NOT_IN_FAMILY, message: '家族グループに所属していません' } },

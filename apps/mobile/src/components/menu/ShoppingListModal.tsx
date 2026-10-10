@@ -103,6 +103,11 @@ export const ShoppingListModal: React.FC<Props> = ({
     }
   }, [visible, load]);
 
+  // この画面が閉じられたら、上に重ねた追加のモーダルも閉じる (次に開いたときに追加のモーダルだけが出ないように)
+  useEffect(() => {
+    if (!visible) setAddModalVisible(false);
+  }, [visible]);
+
   // チェック切替 (楽観的更新)
   const handleToggleCheck = useCallback(async (id: string, next: boolean) => {
     // 楽観的に更新
@@ -340,9 +345,12 @@ export const ShoppingListModal: React.FC<Props> = ({
         </SafeAreaView>
       </Modal>
 
-      {/* 追加モーダル (ShoppingListModal の上にスタック) */}
+      {/*
+        追加モーダル (ShoppingListModal の上にスタック)。この画面が閉じられたら一緒に閉じる (visible && …)。
+        週の画面が同意画面を開く前にモーダルをすべて閉じるとき (T15 / #1154 の closeAllModals)、上に重ねたモーダルが残ると同意画面を隠す
+      */}
       <AddShoppingModal
-        visible={addModalVisible}
+        visible={visible && addModalVisible}
         onClose={() => setAddModalVisible(false)}
         onAdded={() => {
           setAddModalVisible(false);
