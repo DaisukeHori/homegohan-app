@@ -8,6 +8,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   ACTIVE_USER_COUNT_SCAN_LIMIT,
+  activeUserCountScanLimit,
   countActiveUsersForFlags,
 } from '@/lib/super-admin/flag-active-users';
 import type { FeatureFlagRecord } from '@/lib/super-admin/evaluate-flag';
@@ -164,5 +165,40 @@ describe('countActiveUsersForFlags', () => {
     const counts = await countActiveUsersForFlags(reader, [flag('a', { enabled: false })]);
     expect(counts.get('a')).toBe(0);
     expect(select).not.toHaveBeenCalled();
+  });
+});
+
+describe('activeUserCountScanLimit (FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT)', () => {
+  it('未設定・空・正の整数でない値は既定の上限', () => {
+    for (const value of [undefined, '', '  ', '0', '-5', '1.5', 'abc', '1e400']) {
+      expect(activeUserCountScanLimit(value), String(value)).toBe(ACTIVE_USER_COUNT_SCAN_LIMIT);
+    }
+  });
+
+  it('正の整数ならその値', () => {
+    expect(activeUserCountScanLimit('5')).toBe(5);
+    expect(activeUserCountScanLimit(' 30000 ')).toBe(30_000);
+  });
+
+  it('環境変数で上限を下げると、それを超えるユーザー数では、条件つきのフラグを数えない (条件の無いフラグは総数)', async () => {
+    vi.stubEnv('FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT', '5');
+    try {
+      const { reader, rangeCalls } = makeReader(userRows(6));
+      const counts = await countActiveUsersForFlags(reader, [
+        flag('everyone'),
+        flag('admins', { rollout_strategy: { type: 'role', roles: ['admin'] } }),
+      ]);
+      expect(counts.get('everyone')).toBe(6);
+      expect(counts.get('admins')).toBeNull();
+      expect(rangeCalls).toEqual([]);
+
+      const within = makeReader(userRows(5, (i) => ({ roles: i === 0 ? ['admin'] : ['user'] })));
+      const withinCounts = await countActiveUsersForFlags(within.reader, [
+        flag('admins', { rollout_strategy: { type: 'role', roles: ['admin'] } }),
+      ]);
+      expect(withinCounts.get('admins')).toBe(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

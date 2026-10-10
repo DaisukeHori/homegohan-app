@@ -9,7 +9,7 @@
  *   - enabled = false のフラグ: 0 (ユーザーを読まない)
  *   - 全員が対象で条件も無いフラグ (rollout が all または未設定、constraints なし): ユーザー総数 (件数だけを読む)
  *   - それ以外 (percentage / plan / role / org、条件あり): user_profiles の判定に要る列だけを読んで 1 人ずつ判定する
- *     ユーザーが SCAN_LIMIT 人を超えるときは、読み込みに時間がかかりすぎるので数えず null を返す (画面側は「算出できない」扱い)
+ *     ユーザーが上限 (activeUserCountScanLimit。既定 ACTIVE_USER_COUNT_SCAN_LIMIT) 人を超えるときは、読み込みに時間がかかりすぎるので数えず null を返す (画面側は「算出できない」扱い)
  *
  * 読むのは user_profiles の id / roles / organization_id / plan_key_cached / created_at だけ (メール・名前などは読まない)。
  * 呼び出し側は、super_admin の認可を通したあとに、サービスロールのクライアントを渡すこと
@@ -18,8 +18,23 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { evaluateFlag, type FeatureFlagRecord, type UserFlagContext } from './evaluate-flag';
 
-/** これより多いユーザーは、1 人ずつ判定しない (運営画面の表示のために、数万件を毎回読まない) */
+/**
+ * これより多いユーザーは、1 人ずつ判定しない (運営画面の表示のために、数万件を毎回読まない) ときの既定の上限。
+ * 運用で変えるときは、環境変数 FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT (正の整数) で上書きする
+ */
 export const ACTIVE_USER_COUNT_SCAN_LIMIT = 20_000;
+
+/**
+ * 1 人ずつ判定するユーザー数の上限。環境変数 FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT が正の整数ならその値、
+ * 未設定・正の整数でない (空・0・負・小数・数字でない) ときは ACTIVE_USER_COUNT_SCAN_LIMIT
+ */
+export function activeUserCountScanLimit(
+  value: string | undefined = process.env.FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT,
+): number {
+  if (value === undefined || value.trim() === '') return ACTIVE_USER_COUNT_SCAN_LIMIT;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : ACTIVE_USER_COUNT_SCAN_LIMIT;
+}
 /** PostgREST の 1 回の取得件数の上限 (既定の max-rows) に合わせる */
 const PAGE_SIZE = 1_000;
 
@@ -49,7 +64,7 @@ async function countAllUsers(reader: Reader): Promise<number> {
   return count ?? 0;
 }
 
-async function loadAllUserContexts(reader: Reader): Promise<UserFlagContext[]> {
+async function loadAllUserContexts(reader: Reader, scanLimit: number): Promise<UserFlagContext[]> {
   const contexts: UserFlagContext[] = [];
 
   for (let from = 0; ; from += PAGE_SIZE) {
@@ -82,7 +97,7 @@ async function loadAllUserContexts(reader: Reader): Promise<UserFlagContext[]> {
 
     if (rows.length < PAGE_SIZE) break;
     // 読み込みの途中で増えた分まで追いかけない。上限を超えたら打ち切る (呼び出し側は null を返す)
-    if (contexts.length > ACTIVE_USER_COUNT_SCAN_LIMIT) break;
+    if (contexts.length > scanLimit) break;
   }
 
   return contexts;
@@ -113,13 +128,14 @@ export async function countActiveUsersForFlags(
   }
   if (needsEvaluation.length === 0) return counts;
 
-  if (total > ACTIVE_USER_COUNT_SCAN_LIMIT) {
+  const scanLimit = activeUserCountScanLimit();
+  if (total > scanLimit) {
     for (const flag of needsEvaluation) counts.set(flag.key, null);
     return counts;
   }
 
-  const users = await loadAllUserContexts(reader);
-  if (users.length > ACTIVE_USER_COUNT_SCAN_LIMIT) {
+  const users = await loadAllUserContexts(reader, scanLimit);
+  if (users.length > scanLimit) {
     // 件数を数えたあとに、上限を超えるほど増えた
     for (const flag of needsEvaluation) counts.set(flag.key, null);
     return counts;
