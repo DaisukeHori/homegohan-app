@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'supabase/functions/**'
+      # 関数ごとの verify_jwt (ゲートウェイの JWT 検証) はここに書く。変えただけでもデプロイし直す (#1406)
+      - 'supabase/config.toml'
   workflow_dispatch: # 手動トリガー可能
 
 env:
@@ -31,6 +33,8 @@ jobs:
         run: |
           npx --yes supabase@2.62.10 --version
 
+      # 名前を指定しない deploy は supabase/config.toml の [functions.<name>] verify_jwt を関数ごとに読む
+      # (CLI 2.62.10 の internal/functions/deploy の GetFunctionConfig)。--no-verify-jwt は全関数に効くので付けない (#1406)
       - name: Deploy all functions
         run: |
           npx --yes supabase@2.62.10 functions deploy --project-ref ${{ env.SUPABASE_PROJECT_ID }}
