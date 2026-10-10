@@ -28,6 +28,11 @@ vi.mock('@supabase/ssr', () => ({
   createServerClient: (...args: unknown[]) => mockCreateServerClient(...args),
 }));
 
+// #1148: メンテナンスモードのフラグ。ここではメンテナンス OFF の前提で、DB を読みに行かせない
+vi.mock('@/lib/feature-flags', () => ({
+  isFeatureEnabled: vi.fn(async () => false),
+}));
+
 import { config } from '@/middleware';
 import { updateSession } from '@/lib/supabase/middleware';
 import { stubSupabasePublicEnv } from '../lib/supabase/__tests__/supabase-public-env';

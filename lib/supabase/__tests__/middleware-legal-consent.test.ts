@@ -395,7 +395,7 @@ describe('updateSession — 規約の再同意ゲート (#1174): 強制 (LEGAL_C
   });
 
   it.each(['/api/pantry', '/api/legal/accept', '/api/account/export'])(
-    '★API (%s) は、未同意でも回さない。API の分岐は user_profiles の凍結の列だけを読む',
+    '★API (%s) は、未同意でも回さない。API の分岐は user_profiles の凍結の列とロール (メンテナンスモードの判定 #1148) だけを読み、同意済みの版の列は読まない',
     async (path) => {
       mockMaybeSingle.mockResolvedValue({ data: { frozen_at: null, unban_at: null }, error: null });
 
@@ -404,7 +404,7 @@ describe('updateSession — 規約の再同意ゲート (#1174): 強制 (LEGAL_C
       expect(res.status).toBe(200);
       expect(res.headers.get('location')).toBeNull();
       expect(mockSelect).toHaveBeenCalledTimes(1);
-      expect(mockSelect).toHaveBeenCalledWith('frozen_at, unban_at');
+      expect(mockSelect).toHaveBeenCalledWith('roles, frozen_at, unban_at');
     },
   );
 

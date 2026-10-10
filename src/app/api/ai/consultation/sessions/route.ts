@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { jstDayOffset } from '@/lib/jst-day-ranges';
 import { NextResponse } from 'next/server';
+import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 
 /** 新しいセッションの文脈に入れる、最近の食事の日数 (JST の今日から何日前までか) */
 const RECENT_MEAL_DAYS = 7;
@@ -56,6 +57,10 @@ export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  // #1148: AI 相談の緊急停止スイッチ (feature_flags の ai_chat_enabled。通常は ON)
+  const unavailable = await aiChatDisabledResponse(user.id);
+  if (unavailable) return unavailable;
 
   try {
     const body = await request.json();

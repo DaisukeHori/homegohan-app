@@ -36,8 +36,9 @@ vi.mock('@/lib/rate-limit', () => ({
   rateLimitExceededResponse: vi.fn(() => new Response(JSON.stringify({ error: 'rate limited' }), { status: 429 })),
 }));
 
-vi.mock('@/lib/menu-generation-feature-flags', () => ({
-  loadFeatureFlags: vi.fn(async () => ({ menu_generation_v5_wrapped: false })),
+// 機能フラグ (#1148) は v4 を使う側に固定する (エンジンの切り替えは engine-feature-flags.test.ts が見る)
+vi.mock('@/lib/feature-flags', () => ({
+  isFeatureEnabled: vi.fn(async () => false),
 }));
 
 vi.mock('@/lib/meal-image-jobs', () => ({

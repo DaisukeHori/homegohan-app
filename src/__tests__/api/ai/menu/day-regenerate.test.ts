@@ -63,8 +63,10 @@ vi.mock('@/lib/rate-limit', () => ({
   rateLimitExceededResponse: vi.fn(),
 }));
 
-vi.mock('@/lib/menu-generation-feature-flags', () => ({
-  loadFeatureFlags: vi.fn(async () => ({ menu_generation_v5_wrapped: false })),
+// #1148: エンジンの切り替えは feature_flags (isFeatureEnabled)。既定は v4 (OFF) で、v5 を確かめるテストだけ ON にする
+const mockIsFeatureEnabled = vi.fn(async (_key: string, _userId?: string) => false);
+vi.mock('@/lib/feature-flags', () => ({
+  isFeatureEnabled: (key: string, userId?: string) => mockIsFeatureEnabled(key, userId),
 }));
 
 const mockCallGenerateMenuV4WithRetry = vi.fn(async (..._args: any[]) => ({
@@ -79,8 +81,13 @@ vi.mock('@/lib/generate-menu-v4-retry', () => ({
   markWeeklyMenuRequestFailed: mockMarkWeeklyMenuRequestFailed,
 }));
 
+const mockCallGenerateMenuV5WithRetry = vi.fn(async (..._args: any[]) => ({
+  ok: true,
+  attempts: 1,
+  response: new Response(),
+}));
 vi.mock('@/lib/generate-menu-v5-retry', () => ({
-  callGenerateMenuV5WithRetry: vi.fn(async () => ({ ok: true, attempts: 1, response: new Response() })),
+  callGenerateMenuV5WithRetry: mockCallGenerateMenuV5WithRetry,
 }));
 
 const waitUntilPromises: Promise<unknown>[] = [];
@@ -123,6 +130,7 @@ const TEST_SERVICE_ROLE_KEY = 'service-role-key-for-test';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockIsFeatureEnabled.mockImplementation(async () => false);
   waitUntilPromises.length = 0;
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', TEST_SUPABASE_URL);
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', TEST_SERVICE_ROLE_KEY);
@@ -155,6 +163,39 @@ describe('POST /api/ai/menu/day/regenerate', () => {
     const payload = mockCallGenerateMenuV4WithRetry.mock.calls[0][0].payload;
     expect(payload.targetSlots.map((s: any) => s.mealType).sort()).toEqual(['breakfast', 'dinner', 'lunch']);
     await flushBackground();
+  });
+
+  it('#1148: menu_generation_v5_wrapped が OFF なら v4、ON なら v5 の Edge Function を呼ぶ', async () => {
+    mockPlannedMealsEq.mockResolvedValue({
+      data: [{ id: 'meal-b', meal_type: 'breakfast', is_completed: false }],
+      error: null,
+    });
+
+    // OFF: v4
+    const offRes = await POST(makeRequest({ dailyMealId }));
+    expect(offRes.status).toBe(200);
+    await flushBackground();
+    expect(mockIsFeatureEnabled).toHaveBeenCalledWith('menu_generation_v5_wrapped', 'user-1');
+    expect(mockCallGenerateMenuV4WithRetry).toHaveBeenCalledTimes(1);
+    expect(mockCallGenerateMenuV5WithRetry).not.toHaveBeenCalled();
+
+    // ON: v5
+    vi.clearAllMocks();
+    waitUntilPromises.length = 0;
+    mockGetUser.mockResolvedValue({ data: { user }, error: null });
+    mockUserDailyMealsSingle.mockResolvedValue({ data: { id: dailyMealId, day_date: dayDate }, error: null });
+    mockPlannedMealsEq.mockResolvedValue({
+      data: [{ id: 'meal-b', meal_type: 'breakfast', is_completed: false }],
+      error: null,
+    });
+    mockWeeklyInsertSingle.mockResolvedValue({ data: { id: 'request-2' }, error: null });
+    mockIsFeatureEnabled.mockImplementation(async (key: string) => key === 'menu_generation_v5_wrapped');
+
+    const onRes = await POST(makeRequest({ dailyMealId }));
+    expect(onRes.status).toBe(200);
+    await flushBackground();
+    expect(mockCallGenerateMenuV5WithRetry).toHaveBeenCalledTimes(1);
+    expect(mockCallGenerateMenuV4WithRetry).not.toHaveBeenCalled();
   });
 
   it('完食済みの朝食は除外され、上書き対象から外れる (includeCompleted未指定)', async () => {

@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { invalidateFeatureFlag } from '@/lib/feature-flags';
 import { UpdateFeatureFlagSchema } from '@/lib/super-admin/flags-schemas';
 
 type Params = { params: { key: string } };
@@ -55,6 +56,10 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       details: { key: flagKey, changes: parsed.data },
       severity: 'info',
     });
+
+    // #1148: この API を処理したインスタンスの、API route 側のフラグのメモリを新しくする。
+    // 他のインスタンスとミドルウェア (Edge。メモリは別) には、最大 30 秒で反映される
+    invalidateFeatureFlag(flagKey);
 
     return NextResponse.json({ data: updated });
   } catch (err) {
@@ -113,6 +118,10 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
       details: { key: flagKey, action: 'delete' },
       severity: 'warn',
     });
+
+    // #1148: この API を処理したインスタンスの、API route 側のフラグのメモリを新しくする。
+    // 他のインスタンスとミドルウェア (Edge。メモリは別) には、最大 30 秒で反映される
+    invalidateFeatureFlag(flagKey);
 
     return NextResponse.json({ data: { key: flagKey, deleted: true } });
   } catch (err) {
