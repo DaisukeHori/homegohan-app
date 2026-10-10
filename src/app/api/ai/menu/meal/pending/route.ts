@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { isCalendarDate, sundayWeekRange } from '@/lib/jst-day-ranges';
 import { NextResponse } from 'next/server';
 
@@ -62,7 +63,9 @@ export async function GET(request: Request) {
 
       if (staleIds.length > 0) {
         // stale リクエストを failed に更新
-        const { error: staleError } = await supabase
+        // weekly_menu_requests は利用者 (authenticated) から書けない (#1465)。本人の行に絞って service role で書く
+        const queueDb = getAiQueueWriter();
+        const { error: staleError } = await queueDb
           .from('weekly_menu_requests')
           .update({
             status: 'failed',

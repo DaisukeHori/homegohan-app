@@ -21,9 +21,9 @@
  * - 記録する単位は「ユーザーの 1 回の操作 = 1」。究極モード (ultimateMode) も 1 と記録する。
  * - どの入口が記録するかの一覧は tests/helpers/ai-consent-enforced-paths.ts (同意の判定と同じ一覧の usage の列)。
  *   入口を足したら、その一覧と tests/ai-consent-enforcement-routes.test.ts の表に行を足す。
- * - 既知の穴: キューのテーブル (weekly_menu_requests / meal_image_jobs) は利用者が直接書けるので、
- *   API ルートを通らずに積んだ行を service role の処理が AI へ送ると、どこでも記録されない。
- *   閉じるには書き込みを service role だけにする (別の Issue。tests/ai-usage-contract.test.ts の USER_WRITABLE_AI_QUEUES)。
+ * - キューのテーブル (weekly_menu_requests / meal_image_jobs) は、service role の処理が AI へ送る。利用者 (authenticated) からは
+ *   書けない (#1465) ので、行を積むのは記録を通った API ルートだけ (src/lib/ai/ai-queue-writer.ts の getAiQueueWriter で書く)。
+ *   tests/ai-usage-contract.test.ts の AI_QUEUE_TABLES が、利用者から書けないことを migration から確かめる。
  *
  * 【失敗しても止めない】
  * record_ai_usage が失敗したとき (DB エラー・接続できない・migration が未適用・応答が遅いなど) は、ログに残して先へ進む。

@@ -31,6 +31,7 @@ import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { aiUsageRecordedHeaders, recordAiUsage } from '@/lib/plan/entitlements';
 import { checkUserAiConsent } from '@/lib/ai/consent-guard';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { createLogger } from '@/lib/db-logger';
 import { PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
 import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
@@ -284,10 +285,12 @@ export async function runConsultationAction(
       // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・生成のリクエストの行を
       // 作る前。記録に失敗しても止めない)。AI 相談の会話そのもの (consultation) は呼び出し元の route が記録する。
       // 生成は別の AI の呼び出しなので、ここで別に記録する。同意の判定は呼び出し元の route がアクションの実行の前に済ませる
+      // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (記録の前に作る)
+      const queueDb = getAiQueueWriter();
       await recordAiUsage(user.id, 'menu_generation');
 
       // リクエストを記録
-      const { data: requestData, error: requestError } = await supabase
+      const { data: requestData, error: requestError } = await queueDb
         .from('weekly_menu_requests')
         .insert({
           user_id: user.id,
@@ -344,7 +347,7 @@ export async function runConsultationAction(
       if (!invokeResult.ok) {
         console.error(`Failed to invoke ${engineLabel}:`, invokeResult.errorMessage);
         await markWeeklyMenuRequestFailed({
-          supabase,
+          supabase: queueDb,
           requestId: requestData.id,
           errorMessage: invokeResult.errorMessage,
         });
@@ -387,10 +390,12 @@ export async function runConsultationAction(
       // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・生成のリクエストの行を
       // 作る前。記録に失敗しても止めない)。AI 相談の会話そのもの (consultation) は呼び出し元の route が記録する。
       // 生成は別の AI の呼び出しなので、ここで別に記録する。同意の判定は呼び出し元の route がアクションの実行の前に済ませる
+      // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (記録の前に作る)
+      const queueDb = getAiQueueWriter();
       await recordAiUsage(user.id, 'menu_generation');
 
       // リクエストを記録
-      const { data: requestData, error: requestError } = await supabase
+      const { data: requestData, error: requestError } = await queueDb
         .from('weekly_menu_requests')
         .insert({
           user_id: user.id,
@@ -447,7 +452,7 @@ export async function runConsultationAction(
       if (!invokeResult.ok) {
         console.error(`Failed to invoke ${engineLabel}:`, invokeResult.errorMessage);
         await markWeeklyMenuRequestFailed({
-          supabase,
+          supabase: queueDb,
           requestId: requestData.id,
           errorMessage: invokeResult.errorMessage,
         });
@@ -494,10 +499,12 @@ export async function runConsultationAction(
       // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・生成のリクエストの行を
       // 作る前。記録に失敗しても止めない)。AI 相談の会話そのもの (consultation) は呼び出し元の route が記録する。
       // 生成は別の AI の呼び出しなので、ここで別に記録する。同意の判定は呼び出し元の route がアクションの実行の前に済ませる
+      // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (記録の前に作る)
+      const queueDb = getAiQueueWriter();
       await recordAiUsage(user.id, 'menu_generation');
 
       // 1. weekly_menu_requests に記録
-      const { data: requestData, error: requestError } = await supabase
+      const { data: requestData, error: requestError } = await queueDb
         .from('weekly_menu_requests')
         .insert({
           user_id: user.id,
@@ -565,7 +572,7 @@ export async function runConsultationAction(
       if (!invokeResult.ok) {
         console.error('Failed to invoke generate-menu-v4:', invokeResult.errorMessage);
         await markWeeklyMenuRequestFailed({
-          supabase,
+          supabase: queueDb,
           requestId: requestData.id,
           errorMessage: invokeResult.errorMessage,
         });
@@ -705,8 +712,10 @@ export async function runConsultationAction(
         }
 
         if (imageAllowed) {
+          // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。service role で積む
+          const queueDb = getAiQueueWriter();
           await enqueueMealImageJobs({
-            supabase,
+            supabase: queueDb,
             plannedMealId: mealId,
             userId: user.id,
             triggerSource,
@@ -750,8 +759,11 @@ export async function runConsultationAction(
         break;
       }
 
+      // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。本人の献立であることを確かめたので、service role で取り消す
+      const queueDb = getAiQueueWriter();
       await cancelPendingMealImageJobs({
-        supabase,
+        supabase: queueDb,
+        userId: user.id,
         plannedMealId: mealId,
         reason: 'meal deleted',
       });

@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
 import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
 
@@ -47,7 +48,9 @@ export async function GET(request: Request) {
       && updatedAt < staleBefore;
     if (isStale) {
       // stale リクエストを failed に更新
-      const { error: staleError } = await supabase
+      // weekly_menu_requests は利用者 (authenticated) から書けない (#1465)。本人の行に絞って service role で書く
+      const queueDb = getAiQueueWriter();
+      const { error: staleError } = await queueDb
         .from('weekly_menu_requests')
         .update({
           status: 'failed',
@@ -143,7 +146,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ status: existing.status, cancelled: false });
     }
 
-    const { error: updateError } = await supabase
+    // weekly_menu_requests は利用者 (authenticated) から書けない (#1465)。本人の行に絞って service role で書く
+    const queueDb = getAiQueueWriter();
+    const { error: updateError } = await queueDb
       .from('weekly_menu_requests')
       .update({
         status: 'failed',

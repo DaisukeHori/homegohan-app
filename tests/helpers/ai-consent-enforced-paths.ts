@@ -168,7 +168,7 @@ export const ENFORCED_ROUTES: Record<string, AiRouteEntry> = {
       GET: {
         recordedBy:
           'Vercel Cron が、キューに積まれた献立生成を service role で実行する。POST /api/ai/menu/v5/generate が積む時点で記録済み (ここで記録すると二重になる)。' +
-          'ただし weekly_menu_requests は利用者が直接書けるので、route を通らずに積んだ行・積み直した行は記録されない (既知の穴。USER_WRITABLE_AI_QUEUES)',
+          'weekly_menu_requests は利用者 (authenticated) から書けない (#1465。AI_QUEUE_TABLES) ので、キューの行は記録を通った route だけが積む',
       },
     },
   },
@@ -283,7 +283,7 @@ export const ENFORCED_EDGE: Record<string, AiEdgeEntry> = {
     usage: {
       recordedBy:
         '料理画像の生成ジョブの実行。献立の保存・更新の route (image_generation) と、献立生成 (menu_generation の一部) が積んだジョブを、service role で処理する。' +
-        'meal_image_jobs は利用者が直接書けるので、route を通らずに積んだジョブは記録されない (既知の穴。USER_WRITABLE_AI_QUEUES)',
+        'meal_image_jobs は利用者 (authenticated) から書けない (#1465。AI_QUEUE_TABLES) ので、ジョブは記録を通った route と献立生成だけが積む',
     },
   },
   'regenerate-shopping-list-v2': {
