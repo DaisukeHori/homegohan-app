@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACCOUNT_EXPORT_TABLES,
+  EXPORT_STORED_FAILURE_MESSAGE,
   type ExportTableSpec,
 } from '@/lib/account-export-tables';
 import {
@@ -404,6 +405,80 @@ describe('generateAccountExport: 秘密・内部の列を出さない', () => {
     expect(text).not.toContain('V5 returned 500');
     // 失敗の文のほかの列はそのまま出す
     expect(json.data.weekly_menu_requests[0]).toMatchObject({ id: 'w-1', status: 'failed', prompt: 'w-1-prompt' });
+  });
+
+  // #1172: #1172 の前の runConsultationAction は、DB 操作の失敗の生のエラー文を result.error に入れ、execute / messages の route が
+  // それを ai_action_logs.result に保存していた。その行が残っているので、書き出しでは空でない error を固定の文にする
+  it('AI 相談のアクションの記録: 結果の失敗の文 (result.error) は固定の文にし、成功の結果・null はそのまま出す', async () => {
+    const RAW_DB = 'duplicate key value violates unique constraint "pantry_items_pkey"';
+    const RAW_PREFIXED = '食事の取得に失敗: relation "planned_meals" does not exist';
+    const RAW_DETAILS = 'Key (user_id, name)=(raw-details-1172) already exists.';
+    const RAW_STRING = 'insert or update on table "health_goals" violates foreign key constraint "health_goals_user_id_fkey"';
+    const log = (id: string, status: string, result: unknown) => ({
+      id, session_id: 'cs-a', message_id: `${id}-msg`, action_type: 'add_pantry_item', action_params: { name: `${id}-param` },
+      status, result, executed_at: 't', created_at: 't',
+    });
+    const tables = buildFixture();
+    tables.ai_consultation_sessions = [
+      { id: 'cs-a', user_id: A, title: 'A-session' },
+      { id: 'cs-b', user_id: B, title: 'B-secret-session' },
+    ];
+    tables.ai_action_logs = [
+      log('l-1', 'failed', { error: RAW_DB }),
+      log('l-2', 'failed', { error: RAW_PREFIXED }),
+      log('l-3', 'failed', { error: { message: RAW_DB, details: RAW_DETAILS } }),
+      log('l-4', 'failed', { error: '権限がありません' }),
+      log('l-5', 'executed', { itemId: 'pi-1', created: true }),
+      log('l-6', 'pending', null),
+      log('l-7', 'failed', RAW_STRING),
+      { ...log('l-b', 'failed', { error: 'B-secret-error' }), session_id: 'cs-b' },
+    ];
+
+    const { text, json } = await drain(tables, A);
+    const results = Object.fromEntries(
+      (json.data.ai_action_logs as Array<{ id: string; result: unknown }>).map((row) => [row.id, row.result]),
+    );
+
+    expect(results).toEqual({
+      'l-1': { error: EXPORT_STORED_FAILURE_MESSAGE },
+      'l-2': { error: EXPORT_STORED_FAILURE_MESSAGE },
+      'l-3': { error: EXPORT_STORED_FAILURE_MESSAGE },
+      // いまの書き手の文 (こちらで書いた文) も、画面が見分ける文ではないので固定の文にする
+      'l-4': { error: EXPORT_STORED_FAILURE_MESSAGE },
+      // 成功の結果はそのまま
+      'l-5': { itemId: 'pi-1', created: true },
+      'l-6': null,
+      // オブジェクトでない結果 (書き手は書かない) は中身を確かめずに null
+      'l-7': null,
+    });
+    expect(text).not.toContain('pantry_items_pkey');
+    expect(text).not.toContain('relation "planned_meals"');
+    expect(text).not.toContain('raw-details-1172');
+    expect(text).not.toContain('health_goals_user_id_fkey');
+    expect(text).not.toContain('B-secret-error');
+    // 結果のほかの列はそのまま出す
+    expect(json.data.ai_action_logs[0]).toMatchObject({
+      id: 'l-1', session_id: 'cs-a', status: 'failed', action_type: 'add_pantry_item', action_params: { name: 'l-1-param' },
+    });
+  });
+
+  it('レシピのリクエストの失敗の文 (recipe_requests.error_message): 空でなければ固定の文にし、ほかの列はそのまま出す', async () => {
+    const RAW_DB = 'permission denied for table recipe_requests_raw_1172';
+    const tables = buildFixture();
+    tables.recipe_requests = [
+      { id: 'rq-1', user_id: A, status: 'failed', prompt: 'rq-1-prompt', result_text: null, error_message: RAW_DB },
+      { id: 'rq-2', user_id: A, status: 'completed', prompt: 'rq-2-prompt', result_text: 'rq-2-result', error_message: null },
+      { id: 'rq-3', user_id: A, status: 'failed', prompt: 'rq-3-prompt', result_text: null, error_message: '' },
+    ];
+
+    const { text, json } = await drain(tables, A);
+
+    expect(json.data.recipe_requests).toEqual([
+      { id: 'rq-1', user_id: A, status: 'failed', prompt: 'rq-1-prompt', result_text: null, error_message: EXPORT_STORED_FAILURE_MESSAGE },
+      { id: 'rq-2', user_id: A, status: 'completed', prompt: 'rq-2-prompt', result_text: 'rq-2-result', error_message: null },
+      { id: 'rq-3', user_id: A, status: 'failed', prompt: 'rq-3-prompt', result_text: null, error_message: '' },
+    ]);
+    expect(text).not.toContain('recipe_requests_raw_1172');
   });
 
   it('サポートへの問い合わせ: 運営の内部メモは出さず、返信者の ID は user / support に置き換える', async () => {

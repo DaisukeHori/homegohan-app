@@ -243,6 +243,8 @@ const ACTION_EXECUTOR_LOG_NAME = 'lib/ai/consultation-action-executor';
  * (POST /api/ai/consultation/actions/[actionId]/execute の { result } / messages route の SSE と JSON の actionResult)。
  * ai_action_logs.result にも保存される。そのため result.error には DB の生のエラー文 (テーブル名・列名・制約名・衝突した値) を入れず、
  * 固定の文を入れる。元のエラーはここでログにだけ残す。
+ * 保存された result を読むのはアカウントのデータ書き出しで、この変更より前に保存された行 (生のエラー文が入っている) があるため、
+ * そちらでも result.error を固定の文にしている (src/lib/account-export-tables.ts の aiActionLogResultForExport)。
  */
 function logActionDbFailure(
   user: { id: string },

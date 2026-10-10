@@ -48,9 +48,11 @@
  *   - 同期の関数の結果に、捕まえた例外の文面を入れて返すもの ((b) とみなして 4xx では数えない)
  *   - 絞り込んだ後で変数に別の値を代入し直すもの。逆に `if (!(err instanceof AuthError)) return ...` の後の早期 return による
  *     絞り込みは見ないので、その後ろで 4xx に文面を入れると数える (安全側)
- *   - DB に保存した文面を後で読んで返すもの (Edge Function が書く失敗の文の列は、route が絞ってから返す:
+ *   - DB に保存した文面を後で読んで返すもの (Edge Function や以前のコードが書いた失敗の文の列は、route が絞ってから返す:
  *     weekly_menu_requests.error_message は src/lib/weekly-menu-request-error.ts、
- *     shopping_list_requests.result.error は src/lib/shopping-list-request-error.ts を通す)
+ *     shopping_list_requests.result.error は src/lib/shopping-list-request-error.ts を通す。
+ *     アカウントのデータ書き出し (GET /api/account/export) は src/lib/account-export-tables.ts の transform で絞り、
+ *     tests/account-export-tables.test.ts が失敗の文が入りうる名前の列を見張る)
  *   - src/app/api の外 (src/lib) で作った本文・結果。src/lib のヘルパーが結果に入れる文は tests/lib-raw-error-message-scan.test.ts が見る
  *
  * 直し方: route では `return internalError('GET /api/xxx', error, { userId: user.id })` (src/lib/api/errors.ts)。
