@@ -311,6 +311,6 @@ export async function POST(request: Request) {
 
   } catch (error: unknown) {
     // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
-    return internalError('api/ai/menu/weekly/request', error, { userId: _userId, startDate: _startDate });
+    return internalError('POST /api/ai/menu/weekly/request', error, { userId: _userId, startDate: _startDate });
   }
 }

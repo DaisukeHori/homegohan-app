@@ -22,27 +22,39 @@ npm run check:env -- --strict                      # 任意の変数の「値の
 | **任意** | メール（`RESEND_API_KEY`）・レート制限（`UPSTASH_REDIS_REST_*`）・課金（`STRIPE_SECRET_KEY`）・AI（`GOOGLE_AI_STUDIO_API_KEY`・`XAI_API_KEY`・`OPENAI_API_KEY`）・`CRON_SECRET`・モバイル認証ブリッジのスイッチ（`NATIVE_BRIDGE_*`）・規約の再同意のスイッチ（`LEGAL_CONSENT_*`）など | アプリは動きますが、その機能が使えなくなったり弱くなったりします。コマンドは「未設定です。…が起きます」と表示するだけです |
 
 - 任意の変数が足りないことで、本番を止めてはいけません。任意の変数を読む共通の関数（`getOptionalEnv()`。`src/lib/env.ts`）は、変数が無いときに例外を投げず、`undefined` を返して、プロセスごとに 1 回だけ警告をログに残します。メール送信・レート制限・Stripe・AI など、いまは各機能が `process.env` を直接読んでいる箇所が残っていて、ほかの作業と重ならないところから順にこの関数へ置き換えていきます。
-- 下の「必須の環境変数」に載っている `CRON_SECRET` は、「cron（定期処理）を動かすには必要」という意味です。`check:env` では任意に分類しています（無くてもアプリ本体は動き、cron の API が 503 を返すだけのため）。
+- 下の「必須の環境変数」は `src/lib/env.ts` の必須（`required: true`）と同じ 3 つだけです。`CRON_SECRET`・Google AI（Gemini）・OpenAI は、その下の「機能ごとに要る環境変数」に分けてあります。`check:env` ではどれも任意です（無くてもアプリ本体は動き、cron の API が 503 を返す・その AI の機能が使えない、になるだけのため）。本番では、使う機能の分を設定してください。
 - `check:env` は **CI には組み込んでいません**（CI にはシークレットが無く、必須の変数がそろわないため）。デプロイ前や環境を作り直したときに、手元で実行してください。
 - 新しい環境変数を足すときは、`src/lib/env.ts` の一覧に足し（必須にするのは、無いとアプリが動かないものだけ）、`.env.example` にも書いてください（`tests/env-source-scan.test.ts` が、Web のコードが読む変数が一覧に無いとき・一覧の変数が `.env.example` に無いときに失敗します）。コードで `process.env.X!` と書くのは禁止です。
-- モバイルアプリ（`apps/mobile`）の変数は別です。下の「モバイル（Expo）での環境変数」を見てください。`EXPO_PUBLIC_SUPABASE_URL` と `EXPO_PUBLIC_SUPABASE_ANON_KEY` が無いビルドは、開発中は起動時にエラーを出し、リリースビルドでは「アプリの設定が不足しています」という画面を出します（接続先の無いままログイン画面を出し続けません）。
+- モバイルアプリ（`apps/mobile`）の変数は別です。下の「モバイル（Expo）での環境変数」を見てください。`EXPO_PUBLIC_SUPABASE_URL`・`EXPO_PUBLIC_SUPABASE_ANON_KEY`・`EXPO_PUBLIC_API_BASE_URL` のどれかが無いビルドは、開発中は起動時のエラーか設定エラーの画面になり、リリースビルドでは「アプリの設定が不足しています」という画面を出します（接続先の無いままログイン画面を出し続けません）。
 
 ## 📋 必要な環境変数一覧
 
 ### 必須の環境変数
+
+`src/lib/env.ts` で必須にしている変数です（`npm run check:env` は、1 つでも無いと終了コード 1）。無いとアプリが動きません（上の表）。
 
 1. **Supabase関連**
    - `NEXT_PUBLIC_SUPABASE_URL` - SupabaseプロジェクトのURL
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY` - Supabaseの匿名キー
    - `SUPABASE_SERVICE_ROLE_KEY` - Supabaseのサービスロールキー（サーバーサイドのみ）
 
-2. **Cron / スケジューラ関連**（3 か所に別々に保管する。役割と値を合わせる必要があるかは「Cron の共有シークレットの保管場所とローテーション」を参照）
+### 機能ごとに要る環境変数（`check:env` では任意）
+
+無くてもアプリは動きますが、その機能が動きません（`src/lib/env.ts` では任意。`npm run check:env` は「未設定です。…」と表示するだけです）。本番では設定してください。
+
+1. **Cron / スケジューラ関連**（3 か所に別々に保管する。役割と値を合わせる必要があるかは「Cron の共有シークレットの保管場所とローテーション」を参照）
    - `CRON_SECRET` - Vercel Cron からのリクエストを認証するシークレット（未設定の場合、cron エンドポイントは 503 を返す）
      - Vercel Dashboard → Settings → Environment Variables に設定
      - ランダムな英数字 32 文字以上を推奨
    - `CRON_SECRET` (Supabase Edge Function secrets) - pg_cron などから Edge Function を呼び出すときに受け取る側が確かめるシークレット。Vault の `app_cron_secret` と同じ値にする（別名 `SERVICE_ROLE_SECRET` は、`CRON_SECRET` が無いときだけ使われる）
    - `app_cron_secret` (Supabase Vault) - pg_cron から Edge Function を呼び出す際の Bearer トークン
    - `CRON_SECRET_PREVIOUS` - シークレットを入れ替える間だけ設定する旧い値。普段は設定しない（Vercel と Edge Function secrets のどちらにも置ける）
+
+2. **Google AI (Gemini) 関連**（無いと、Gemini を使う機能 (写真の解析・画像生成など) が使えない）
+   - `GOOGLE_AI_STUDIO_API_KEY` または `GOOGLE_GEN_AI_API_KEY` - Google AI APIキー
+
+3. **OpenAI関連**（既存機能用。無いと、栄養フィードバック (`/api/ai/nutrition/feedback`) が使えない）
+   - `OPENAI_API_KEY` - OpenAI APIキー
 
 ### Catalog cron secret (Supabase Vault)
 
@@ -62,12 +74,6 @@ SELECT name FROM vault.secrets WHERE name = 'app_cron_secret';
 ```
 
 値を入れ替えるとき（ローテーション）の手順は、次の「Cron の共有シークレットの保管場所とローテーション」を参照。
-
-4. **Google AI (Gemini) 関連**
-   - `GOOGLE_AI_STUDIO_API_KEY` または `GOOGLE_GEN_AI_API_KEY` - Google AI APIキー
-
-5. **OpenAI関連**（既存機能用）
-   - `OPENAI_API_KEY` - OpenAI APIキー
 
 ---
 
@@ -283,14 +289,14 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 ### 必須（モバイル）
 - `EXPO_PUBLIC_SUPABASE_URL`
 - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+- `EXPO_PUBLIC_API_BASE_URL` - Next.js API（BFF）の基点（例: `https://homegohan.com`）。献立・買い物リスト・AI などの画面が呼ぶ（#1434 で必須に分類した。無いと、その画面が `[mobile] Missing env: EXPO_PUBLIC_API_BASE_URL` の例外で落ちていた）
 
-この 2 つはビルドのときに埋め込まれます（EAS Build なら、EAS の環境変数に登録しておく）。入っていないビルドは、次のように動きます（#1182。以前は `https://placeholder.supabase.co` という存在しない接続先でクライアントを作り、ログインなどが原因の分かりにくいエラーで失敗し続けていました）。
+この 3 つはビルドのときに埋め込まれます（EAS Build なら、EAS の環境変数に登録しておく）。一覧は `apps/mobile/src/lib/env.ts` の `REQUIRED_MOBILE_ENV_NAMES` です。入っていないビルドは、次のように動きます（#1182。以前は `https://placeholder.supabase.co` という存在しない接続先でクライアントを作り、ログインなどが原因の分かりにくいエラーで失敗し続けていました）。空・空白だけの値も、未設定として扱います。
 
-- 開発中（`npx expo start`・development ビルド）: アプリの起動時に、足りない変数名を書いたエラー（`[mobile] Missing env: EXPO_PUBLIC_SUPABASE_URL, …`）で止まります。
+- 開発中（`npx expo start`・development ビルド）: Supabase の 2 つが無ければ、アプリの起動時に、足りない変数名を書いたエラー（`[mobile] Missing env: EXPO_PUBLIC_SUPABASE_URL, …`）で止まります。`EXPO_PUBLIC_API_BASE_URL` だけが無ければ、「アプリの設定が不足しています」の画面に足りない変数名を出します。
 - リリースビルド（preview・production）: クラッシュはさせず、「アプリの設定が不足しています」の画面を出し、足りない変数名を端末のログ（`console.error`）に残します。画面には変数名を出しません（開発ビルドでは画面にも出します）。このビルドは配布せず、環境変数を直して作り直してください。
 
 ### オプション（モバイル）
-- `EXPO_PUBLIC_API_BASE_URL` - Next.js API（BFF）を叩く場合（例: `https://homegohan.com`）
 - `EXPO_PUBLIC_APP_ENV` - `development | preview | production`
 - `EXPO_PUBLIC_WEB_URL` - WebView が開く Web のオリジン（未設定なら `https://homegohan-app.vercel.app`）。設定画面の「利用規約」「プライバシーポリシー」も、このオリジンの `/terms` `/privacy` を開く
 - `EXPO_PUBLIC_SUPPORT_EMAIL` - 設定画面・プロフィール画面の「お問い合わせ」の宛先（未設定なら従来のアドレス。`apps/mobile/src/lib/siteConfig.ts`）
@@ -397,20 +403,20 @@ touch .env.local
 `.env.local` ファイルに以下の内容を記述してください：
 
 ```env
-# Supabase
+# 必須: Supabase
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 
-# Cron Secret (Vercel Cron 認証用)
+# 任意 (cron を動かすとき): Cron Secret (Vercel Cron 認証用)
 CRON_SECRET=your_cron_secret_here
 
-# Google AI (Gemini)
+# 任意 (Gemini を使う機能): Google AI (Gemini)
 GOOGLE_AI_STUDIO_API_KEY=your_google_ai_api_key
 # または
 GOOGLE_GEN_AI_API_KEY=your_google_ai_api_key
 
-# OpenAI
+# 任意 (栄養フィードバック): OpenAI
 OPENAI_API_KEY=your_openai_api_key
 
 # オプション: 画像生成モデル（デフォルト: gemini-3-pro-image-preview）

@@ -534,6 +534,40 @@ describe('.env.example と check:env の導線 (#1182)', () => {
     expect(readRepoFile('.env.example')).toContain('npm run check:env');
   });
 
+  /** ENV_SETUP.md の `### <heading>` の節の本文 (次の ### / ## の見出しの手前まで) */
+  function envSetupSection(heading: string): string {
+    const doc = readRepoFile('ENV_SETUP.md');
+    const start = doc.indexOf(`\n### ${heading}\n`);
+    expect(start, `ENV_SETUP.md に「### ${heading}」の節が無い`).toBeGreaterThanOrEqual(0);
+    const body = doc.slice(start + heading.length + '\n### \n'.length);
+    const end = body.search(/\n#{2,3} /);
+    return end === -1 ? body : body.slice(0, end);
+  }
+
+  it('ENV_SETUP.md の「必須の環境変数」の節に書いた変数は、src/lib/env.ts の必須の変数とちょうど一致する (#1434)', () => {
+    const section = envSetupSection('必須の環境変数');
+    const documented = [...new Set([...section.matchAll(/`([A-Z][A-Z0-9_]+)`/g)].map((match) => match[1]))].sort();
+    const required = ENV_VARS.filter((entry) => entry.required)
+      .map((entry) => entry.name)
+      .sort();
+
+    // 走査が空振りしていないこと: 必須の変数がある
+    expect(required.length).toBeGreaterThan(0);
+    // 失敗したら、ENV_SETUP.md の節を src/lib/env.ts の一覧 (required: true) に合わせる。
+    // 任意の変数 (CRON_SECRET・AI のキーなど) は「機能ごとに要る環境変数」の節に書く
+    expect(documented).toEqual(required);
+  });
+
+  it.each(['必須の環境変数', '機能ごとに要る環境変数（`check:env` では任意）'])(
+    'ENV_SETUP.md の「%s」の節の番号は 1 から飛ばずに振ってある (#1434)',
+    (heading) => {
+      const numbers = [...envSetupSection(heading).matchAll(/^(\d+)\. \*\*/gm)].map((match) => Number(match[1]));
+
+      expect(numbers.length).toBeGreaterThan(0);
+      expect(numbers).toEqual(numbers.map((_, index) => index + 1));
+    },
+  );
+
   it('ENV_SETUP.md と CLAUDE.md が、欠けた変数名の出るサーバーのログの行を、コードと同じ文で案内している', () => {
     expect(readRepoFile('ENV_SETUP.md')).toContain(MISSING_ENV_SERVER_LOG_PREFIX);
     expect(readRepoFile('CLAUDE.md')).toContain(MISSING_ENV_SERVER_LOG_PREFIX);

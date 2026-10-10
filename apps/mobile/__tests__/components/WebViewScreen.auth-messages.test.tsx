@@ -67,6 +67,7 @@ jest.mock('expo-sharing', () => ({
 const mockGetSession = jest.fn();
 const mockGetUser = jest.fn();
 jest.mock('../../src/lib/supabase', () => ({
+  SUPABASE_AUTH_STORAGE_KEY: 'sb-abcdef1234-auth-token',
   supabase: {
     auth: {
       getSession: (...args: unknown[]) => mockGetSession(...args),

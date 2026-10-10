@@ -1,13 +1,19 @@
 import { createHttpClient, type HttpClient, type HttpRequestOptions } from "@homegohan/core";
 
 import { NETWORK_ERROR_MESSAGES } from "./api-error";
+import { MobileConfigError, resolveApiBaseUrl } from "./env";
 import { supabase } from "./supabase";
 
 let _api: HttpClient | null = null;
 
+/**
+ * Next.js の API (BFF) の基点。未設定・空・空白だけなら、変数名を書いた MobileConfigError
+ * (`[mobile] Missing env: EXPO_PUBLIC_API_BASE_URL`) を投げる。
+ * 無いビルドは、app/_layout.tsx のゲートが設定エラーの画面を出すので、ふつうはここまで来ない (#1434)。
+ */
 export function getApiBaseUrl(): string {
-  const value = process.env.EXPO_PUBLIC_API_BASE_URL;
-  if (!value) throw new Error(`[mobile] Missing env: EXPO_PUBLIC_API_BASE_URL`);
+  const value = resolveApiBaseUrl();
+  if (value === undefined) throw new MobileConfigError(["EXPO_PUBLIC_API_BASE_URL"]);
   return value;
 }
 
