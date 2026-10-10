@@ -90,13 +90,13 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 
 ### AI の利用回数の記録
 
-`src/lib/plan/entitlements.ts` に集約する (#1177)。AI を使う API ルートは、AI 事業者へ送る直前 (認証・`checkRateLimit`・入力の検証などの判定をすべて通ったあと) に、ユーザーの 1 回の操作につき 1 回 `consumeAiQuota(user.id, feature)` を呼び、`!quota.allowed` なら `aiQuotaExceededResponse(quota)` (429。`AI_DAILY_LIMIT` / `AI_MONTHLY_LIMIT`。レート制限の `RATE_LIMITED` とは別) を返す。AI を実際に呼ばない経路 (キャッシュを返すだけなど) では呼ばない。いまは全プランの上限が NULL (無制限) なので止まらず、回数を数えるだけ。DB の関数が失敗しても記録して許可する (記録は best-effort。記録の失敗で AI の機能を止めない)。プランは `get_effective_plan` (個人の契約 -> 家族 -> 組織 -> `free`)、上限は `ai_plan_limits`、回数は `ai_usage_counters` (JST の日付)。
+`src/lib/plan/entitlements.ts` に集約する (#1177)。AI を使う API ルートは、AI 事業者へ送る直前 (認証・同意の判定・`checkRateLimit`・入力の検証などの判定をすべて通ったあと) に、ユーザーの 1 回の操作につき 1 回 `await recordAiUsage(user.id, feature)` を呼ぶ。AI を実際に呼ばない経路 (キャッシュを返すだけなど) では呼ばない。**記録だけで、止めない** (上限と比べて止める処理・上限の値・拒否したときの応答は #1149 / T40 が入口ごとに設計して足す)。DB の関数 (`record_ai_usage`。`ai_usage_counters` に JST の日付で +1) が失敗してもログに残して先へ進む (記録の失敗で AI の機能を止めない)。プランの判定は `get_effective_plan` (個人の契約 -> 家族 -> 組織 -> `free`)。
 
-- 順番は「同意の判定 (`requireAiConsent` / `checkUserAiConsent`、Edge は `requireAiConsentForUser` / `checkAiConsent`。#1154) → `consumeAiQuota` → AI への送信」。同意が無くて止めた操作は数えない。
-- Edge Function は、ユーザーの JWT を確かめた経路で `consumeEdgeAiQuota` (`supabase/functions/_shared/quota.ts`) を呼ぶ。service role / cron の経路では呼ばない (Next.js が数え済み)。
-- 既知の穴: キューのテーブル (`weekly_menu_requests` / `meal_image_jobs`) は利用者が直接書けるので、API ルートを通らずに積んだ行は数えられない。閉じるには書き込みを service role だけにする (別の Issue。`tests/ai-quota-contract.test.ts` の `USER_WRITABLE_AI_QUEUES` が、穴が残っていることを migration から確かめる)。
-- Next.js が Edge Function を**ユーザーの JWT で**呼ぶとき (`supabase.functions.invoke`) は、`headers: await aiQuotaCountedHeaders(user.id)` を付ける (署名つきの印。付けないと Edge 側でも数えて二重になる)。
-- `tests/ai-quota-contract.test.ts` が、AI を呼ぶ route / Edge Function の数え忘れ・結果を捨てる呼び出し・印の付け忘れ・同意の判定 → 記録 → 送信の順番を検査する (route は `src/app` 全体から集める。api の外も含む)。新しい AI の route を足してこのテストが落ちたら、`consumeAiQuota` を呼んで一覧 (`AI_QUOTA_ROUTES`) に足す。
+- 順番は「同意の判定 (`requireAiConsent` / `checkUserAiConsent`、Edge は `requireAiConsentForUser` / `checkAiConsent`。#1154) → `recordAiUsage` → AI への送信」。同意が無くて止めた操作は記録しない。
+- Edge Function は、ユーザーの JWT を確かめた経路で `recordEdgeAiUsage` (`supabase/functions/_shared/ai-usage.ts`) を呼ぶ。service role / cron の経路では呼ばない (Next.js が記録済み)。
+- Next.js が Edge Function を**ユーザーの JWT で**呼ぶとき (`supabase.functions.invoke`) は、`headers: await aiUsageRecordedHeaders(user.id)` を付ける (署名つきの印。付けないと Edge 側でも記録して二重になる)。
+- どの入口が記録するかは、同意の判定と同じ一覧 `tests/helpers/ai-consent-enforced-paths.ts` の `usage` の列に書く (入口の一覧は 1 つ)。新しい AI の入口を足したら、その一覧に行を足し、`tests/ai-consent-enforcement-routes.test.ts` の表に実際に呼ぶ行を足す (同意の判定 → 記録 → 送信の順は、この表が実際に route を呼んで確かめる)。`tests/ai-usage-contract.test.ts` は、記録を呼ぶファイル・機能名・公開ハンドラの一覧が `usage` の列と一致することを検査する。
+- 既知の穴: キューのテーブル (`weekly_menu_requests` / `meal_image_jobs`) は利用者が直接書けるので、API ルートを通らずに積んだ行は記録されない。閉じるには書き込みを service role だけにする (別の Issue。`tests/ai-usage-contract.test.ts` の `USER_WRITABLE_AI_QUEUES` が、穴が残っていることを migration から確かめる)。
 
 ### 利用状況の計測 (PostHog は使わない)
 

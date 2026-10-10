@@ -13,8 +13,7 @@ import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from 
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
 import { requireAuth } from "../_shared/auth.ts";
-import { aiQuotaExceededResponse, consumeEdgeAiQuota } from "../_shared/quota.ts";
-import { aiQuotaErrorBody } from "../_shared/ai-quota-core.ts";
+import { recordEdgeAiUsage } from "../_shared/ai-usage.ts";
 import { getCorsHeaders, withCors } from "../_shared/cors.ts";
 import { aggregateIngredientOccurrences, InputIngredient } from "../_shared/shopping-list-aggregation.ts";
 import { verifyRequestOwnership } from "../_shared/request-ownership.ts";
@@ -605,8 +604,8 @@ Deno.serve(async (req: Request) => {
     const isTrustedInternalCall = serviceRoleKey.length > 0 && accessToken === serviceRoleKey;
 
     let userId: string;
-    // #1177 ユーザー自身の JWT で直接呼ばれたときの利用者 ID (この経路だけ、AI へ送る直前に利用回数を数える)。
-    // service role (Next.js の POST /api/shopping-list/regenerate) の呼び出しは null のまま (Next.js が数え済み)
+    // #1177 ユーザー自身の JWT で直接呼ばれたときの利用者 ID (この経路だけ、AI へ送る直前に利用回数を記録する)。
+    // service role (Next.js の POST /api/shopping-list/regenerate) の呼び出しは null のまま (Next.js が記録済み)
     let directJwtUserId: string | null = null;
 
     if (isTrustedInternalCall) {
@@ -696,15 +695,10 @@ Deno.serve(async (req: Request) => {
       return aiConsentDeniedResponse(aiConsent, corsHeaders);
     }
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・所有の確認・同意の判定のあと) に数える (未同意で止めた呼び出しは数えない)。
-    // ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js が数え済みの印があれば数えない。失敗しても止めない)。
-    // 上限を超えたとき (いまは全プラン無制限なので起きない) は、リクエストの行を失敗にして止める (画面の進み具合の確認が止まったままにならないように)
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・所有の確認・同意の判定のあと) に記録する (未同意で止めた呼び出しは記録しない)。
+    // ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js が記録済みの印があれば記録しない。失敗しても止めない)
     if (directJwtUserId) {
-      const quota = await consumeEdgeAiQuota(req, directJwtUserId, "shopping_list");
-      if (!quota.allowed) {
-        await markFailed(supabase, requestId, userId, aiQuotaErrorBody(quota).body.error);
-        return aiQuotaExceededResponse(quota, corsHeaders);
-      }
+      await recordEdgeAiUsage(req, directJwtUserId, "shopping_list");
     }
 
     // 非同期で処理開始（即座にレスポンス返す。レスポンス後も処理が打ち切られないようwaitUntilに委ねる）

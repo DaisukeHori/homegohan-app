@@ -9,7 +9,7 @@ import { internalError } from '@/lib/api/errors';
 import { createLogger } from '@/lib/db-logger';
 import type { Tables } from '@homegohan/shared';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
+import { recordAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 // Vercel Proプランでは最大300秒まで延長可能
@@ -74,10 +74,9 @@ export async function POST(request: Request) {
 
     console.log(`📝 Regenerating meal: ${mealId}`);
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える
-    // (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
-    const quota = await consumeAiQuota(user.id, 'menu_generation');
-    if (!quota.allowed) return aiQuotaExceededResponse(quota);
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
+    // (記録に失敗しても止めない)
+    await recordAiUsage(user.id, 'menu_generation');
 
     // 3. リクエストをDBに保存（ステータス追跡用）
     // is_generating フラグは使用しない（ポーリングで状態を監視）

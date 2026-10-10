@@ -6,7 +6,7 @@ import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
+import { recordAiUsage } from '@/lib/plan/entitlements';
 import { aiConsentSkippedField, checkUserAiConsent, requireAiConsent } from '@/lib/ai/consent-guard';
 
 // 栄養目標が未設定のときの既定値（g/日）。
@@ -299,10 +299,9 @@ JSON形式で出力してください：
 ` : ''}
 `;
 
-      // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える
-      // (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
-      const quota = await consumeAiQuota(user.id, 'nutrition_advice');
-      if (!quota.allowed) return aiQuotaExceededResponse(quota);
+      // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
+      // (記録に失敗しても止めない)
+      await recordAiUsage(user.id, 'nutrition_advice');
 
       const completion = await getFastLLMClient().chat.completions.create({
         model: getFastLLMModel(),
@@ -411,10 +410,9 @@ export async function POST(request: Request) {
     // 必須の環境変数が欠けていれば、リクエストの行を作る前に MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す) (#1182)
     const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える
-    // (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
-    const quota = await consumeAiQuota(user.id, 'menu_generation');
-    if (!quota.allowed) return aiQuotaExceededResponse(quota);
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
+    // (記録に失敗しても止めない)
+    await recordAiUsage(user.id, 'menu_generation');
 
     // リクエストを作成
     const targetSlots = [{ date: targetDate, mealType: targetMealType, plannedMealId: meal.id }];

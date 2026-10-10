@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { getNutrientDefinition, calculateDriPercentage } from '@homegohan/shared';
 import crypto from 'crypto';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
+import { recordAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -221,10 +221,9 @@ export async function POST(request: Request) {
     if (aiConsentDenied) return aiConsentDenied;
 
     // 新規生成または再生成が必要 (ここから先は AI を呼ぶ)
-    // キャッシュを返す・生成中のステータスを返すだけの経路と、同意が無く止めた経路では AI を呼ばないので、ここまでは数えない
-    // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
-    const quota = await consumeAiQuota(user.id, 'nutrition_advice');
-    if (!quota.allowed) return aiQuotaExceededResponse(quota);
+    // キャッシュを返す・生成中のステータスを返すだけの経路と、同意が無く止めた経路では AI を呼ばないので、ここまでは記録しない
+    // #1177 AI 利用回数の記録 (記録に失敗しても止めない)
+    await recordAiUsage(user.id, 'nutrition_advice');
 
     // まずpendingステータスでレコードを作成/更新
     const { data: cacheRecord, error: upsertError } = await supabase

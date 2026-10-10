@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server';
 import { buildPhotoDishList } from '../../../../lib/meal-image';
 import { cancelPendingMealImageJobs } from '../../../../lib/meal-image-jobs';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
+import { recordAiUsage } from '@/lib/plan/entitlements';
 import {
   PLANNED_MEAL_NUTRIENT_FIELDS,
   plannedMealValidationErrorBody,
@@ -96,10 +96,9 @@ export async function POST(request: Request) {
       const aiConsentDenied = await requireAiConsent(supabase, user.id);
       if (aiConsentDenied) return aiConsentDenied;
 
-      // nutritionData を直接渡す経路 (上) と、同意が無く止めた経路は AI を呼ばないので、数えるのは AI で解析するここだけ
-      // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
-      const quota = await consumeAiQuota(user.id, 'photo_analysis');
-      if (!quota.allowed) return aiQuotaExceededResponse(quota);
+      // nutritionData を直接渡す経路 (上) と、同意が無く止めた経路は AI を呼ばないので、記録するのは AI で解析するここだけ
+      // #1177 AI 利用回数の記録 (記録に失敗しても止めない)
+      await recordAiUsage(user.id, 'photo_analysis');
 
       const prompt = `
         この食事の写真を栄養士の視点で分析し、以下のJSON形式で出力してください。

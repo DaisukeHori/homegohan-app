@@ -10,7 +10,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { getCorsHeaders } from "../_shared/cors.ts";
 import { requireAuth } from "../_shared/auth.ts";
-import { aiQuotaExceededResponse, consumeEdgeAiQuota } from "../_shared/quota.ts";
+import { recordEdgeAiUsage } from "../_shared/ai-usage.ts";
 import { createLogger, generateRequestId } from "../_shared/db-logger.ts";
 import { createFastLLMClient, getFastLLMModel } from "../_shared/fast-llm.ts";
 import { requireAiConsentForUser } from "../_shared/ai-consent-guard.ts";
@@ -90,10 +90,9 @@ Deno.serve(async (req) => {
 ヒントはポジティブなトーンで、具体的で実践しやすい内容にしてください。
 JSON形式で {"hint": "..."} のみ出力してください。`;
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
-    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (Next.js が数え済みの印があれば数えない。失敗しても止めない)
-    const quota = await consumeEdgeAiQuota(req, userId, "nutrition_advice");
-    if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に記録する。
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ記録する (Next.js が記録済みの印があれば記録しない。失敗しても止めない)
+    await recordEdgeAiUsage(req, userId, "nutrition_advice");
 
     const response = await openai.chat.completions.create({
       model: getFastLLMModel(),

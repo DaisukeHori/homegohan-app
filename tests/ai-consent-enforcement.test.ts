@@ -6,8 +6,9 @@
  *    - 一度も同意していない・撤回した・古い版に同意した・1 社でも欠けている → not_consented (403 AI_CONSENT_REQUIRED)
  *    - 読み取りに失敗した・応答の形が違う・userId が空・例外 → check_failed (503 AI_CONSENT_CHECK_FAILED)。送らない
  *    - 応答の本文に内部の詳細 (テーブル名・DB のエラー文) を出さない (#1172)
- * 2. 送る経路の一覧 (棚卸し): AI へ送るコードに届く API Route・Edge Function・cron は、すべて判定を呼ぶか、
- *    利用者のデータを送らない理由つきで除外されている。新しく経路を足して判定を呼び忘れると、このテストが落ちる
+ * 2. 送る経路の一覧 (棚卸し): AI へ送るコードに届く route ハンドラ (src/app 全体)・Edge Function・cron は、すべて判定を呼ぶか、
+ *    利用者のデータを送らない理由つきで除外されている。新しく経路を足して判定を呼び忘れると、このテストが落ちる。
+ *    一覧 (tests/helpers/ai-consent-enforced-paths.ts) と検出器 (tests/helpers/ai-reach.ts) は、AI の利用回数の記録 (#1177) と共用する
  * 3. 実際の route (analyze-fridge) で、本人の有効な行を読んで判定すること (判定は差し替えない)。
  *    送る手前で判定する全経路を実際に呼ぶ検査は tests/ai-consent-enforcement-routes.test.ts (API Route) と
  *    tests/ai-consent-enforcement-edge.test.ts (Edge Functions) にある。ここの棚卸しは「判定を import して呼んでいる」までしか見ない
@@ -17,7 +18,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ENFORCED_EDGE, ENFORCED_ROUTES } from './helpers/ai-consent-enforced-paths';
+import { ENFORCED_EDGE, ENFORCED_ROUTES, EXEMPT_EDGE, EXEMPT_ROUTES, QUEUE_ONLY_ROUTES } from './helpers/ai-consent-enforced-paths';
+import { AI_LEAF_PATTERN, ROOT, listEdgeFunctions, listFiles, listRouteFiles, reachesAi, rel, stripComments } from './helpers/ai-reach';
 import {
   AI_CONSENT_CHECK_FAILED_CODE,
   AI_CONSENT_CHECK_FAILED_STATUS,
@@ -33,7 +35,6 @@ import {
   runAiConsentCheck,
 } from '../supabase/functions/_shared/ai-consent';
 
-const ROOT = path.resolve(__dirname, '..');
 const USER = '11111111-1111-4111-8111-111111111111';
 
 function grantedRows(version: string | null = AI_CONSENT_VERSION) {
@@ -143,110 +144,19 @@ describe('判定の本体: decideAiConsent / runAiConsentCheck', () => {
 // 2. 送る経路の一覧 (棚卸し)
 // ─────────────────────────────────────────────
 
-/** ファイルの import (相対パスと @/ ) を辿って、AI へ送るコードに届くかを調べる */
-const AI_LEAF_PATTERN =
-  /api\.openai\.com|generativelanguage\.googleapis\.com|api\.x\.ai|api\.perplexity\.ai|api\.aimlapi\.com|@google\/genai|from ['"]openai['"]|functions\/v1\/|functions\.invoke\(|dataset-embedding\.mjs|getFastLLM|createFastLLMClient|callV4FastLLM|generateGeminiJson/;
-
-function readIfExists(file: string): string | null {
-  try {
-    return fs.readFileSync(file, 'utf8');
-  } catch {
-    return null;
-  }
-}
-
-function resolveImport(from: string, spec: string): string | null {
-  let base: string | null = null;
-  if (spec.startsWith('@/')) {
-    for (const prefix of ['src', '.']) {
-      const candidate = path.join(ROOT, prefix, spec.slice(2));
-      for (const ext of ['', '.ts', '.tsx', '/index.ts', '/index.tsx', '.mjs']) {
-        if (fs.existsSync(candidate + ext) && fs.statSync(candidate + ext).isFile()) return candidate + ext;
-      }
-    }
-    return null;
-  }
-  if (spec.startsWith('.')) base = path.resolve(path.dirname(from), spec);
-  if (!base) return null;
-  for (const ext of ['', '.ts', '.tsx', '/index.ts', '/index.tsx', '.mjs']) {
-    if (fs.existsSync(base + ext) && fs.statSync(base + ext).isFile()) return base + ext;
-  }
-  return null;
-}
-
-/** コメントを外す (コメントに書いた送信先の説明で、送っていないファイルを送るものと数えないため。https:// の // は残す) */
-function stripComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
-}
-
-function reachesAi(file: string, seen = new Set<string>()): boolean {
-  if (seen.has(file)) return false;
-  seen.add(file);
-  const raw = readIfExists(file);
-  if (raw === null) return false;
-  const text = stripComments(raw);
-  if (AI_LEAF_PATTERN.test(text)) return true;
-  for (const match of text.matchAll(/(?:from|import\()\s*['"]([^'"]+)['"]/g)) {
-    const resolved = resolveImport(file, match[1]);
-    if (resolved && reachesAi(resolved, seen)) return true;
-  }
-  return false;
-}
-
-function listRouteFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...listRouteFiles(full));
-    else if (entry.name === 'route.ts') out.push(full);
-  }
-  return out;
-}
-
-const rel = (file: string) => path.relative(ROOT, file).split(path.sep).join('/');
-
 /**
- * 自分では AI へ送らず、キュー (weekly_menu_requests) に積むだけの route。積んだ行は cron (process-menu-queue) が
- * Edge Function generate-menu-v5 に渡して AI へ送る。積む前にも判定する (未同意なら積まない) ので ENFORCED_ROUTES に載せるが、
- * import を辿っても AI へ送るコードには届かない
+ * route ハンドラ以外のファイル (ページ・レイアウト・サーバーアクション・middleware) で、AI に届くものの全数と理由。
+ * ここに無いのに AI に届くファイルができたら、一覧に載っていない入口 (サーバーアクションなど) の疑い
  */
-const QUEUE_ONLY_ROUTES = new Set(['src/app/api/ai/menu/v5/generate/route.ts']);
-
-/** AI へ送るコードに届くが、利用者のデータを送らない API Route → 理由 */
-const EXEMPT_ROUTES: Record<string, string> = {
-  'src/app/api/admin/catalog/import/route.ts': 'コンビニ商品のカタログの取り込み (運営)。利用者のデータを含まない',
-  'src/app/api/super-admin/embeddings/regenerate/route.ts': 'レシピ・食材のデータセットの数値化 (運営)。利用者のデータを含まない',
-  'src/app/api/super-admin/plans/[id]/price-change/route.ts': 'Stripe の価格の同期 (Edge Function stripe-price-sync)。AI へは送らない',
-  'src/app/api/comparison/trigger/route.ts': '集計 (Edge Function calculate-segment-stats)。AI へは送らない',
-  // 料理の画像の作成のジョブを積む (と、処理の Edge Function を起こす) だけの route。AI (Google) へ送るのは
-  // Edge Function process-meal-image-jobs で、ジョブごとに献立の持ち主の同意を判定し、未同意なら取り消す (ENFORCED_EDGE)
-  'src/app/api/meal-plans/add-from-photo/route.ts': '画像のジョブを取り消すだけ。送るのは process-meal-image-jobs (判定あり)',
-  'src/app/api/meal-plans/meals/[id]/route.ts': '画像のジョブを積むだけ。送るのは process-meal-image-jobs (判定あり)',
-  'src/app/api/meal-plans/meals/route.ts': '画像のジョブを積むだけ。送るのは process-meal-image-jobs (判定あり)',
-  'src/app/api/meals/[id]/route.ts': '画像のジョブを積むだけ。送るのは process-meal-image-jobs (判定あり)',
-  'src/app/api/meals/route.ts': '画像のジョブを積むだけ。送るのは process-meal-image-jobs (判定あり)',
-};
-
-/** AI へ送るコードに届くが、利用者のデータを送らない Edge Function → 理由 */
-const EXEMPT_EDGE: Record<string, string> = {
-  'import-convenience-catalog': 'コンビニ商品のカタログ (公開情報) の取り込み',
-  'import-familymart-catalog': '同上',
-  'import-lawson-catalog': '同上',
-  'import-ministop-catalog': '同上',
-  'import-natural-lawson-catalog': '同上',
-  'import-seven-eleven-catalog': '同上',
-  'regenerate-embeddings': 'レシピ・食材のデータセットの数値化 (運営)',
-  'backfill-ingredient-embeddings': '食材のデータセットの数値化 (運営)',
-  'stripe-price-sync': 'Stripe の価格の同期。AI へは送らない',
-};
+const NON_ROUTE_FILES_REACHING_AI: Record<string, string> = {};
 
 const GUARD_CALL_PATTERN = /\b(requireAiConsent|checkUserAiConsent|requireAiConsentForUser|checkAiConsent)\(/;
 
 describe('送る経路の一覧 (棚卸し)', () => {
-  const routeFiles = listRouteFiles(path.join(ROOT, 'src/app/api'));
-  const reaching = routeFiles.filter((file) => reachesAi(file)).map(rel).sort();
+  const routeFiles = listRouteFiles();
+  const reaching = routeFiles.filter((file) => reachesAi(path.join(ROOT, file)));
 
-  it('AI へ送るコードに届く API Route は、すべて判定を呼ぶか、理由つきで除外されている', () => {
+  it('AI へ送るコードに届く route ハンドラ (src/app 全体。api の外も含む) は、すべて判定を呼ぶか、理由つきで除外されている', () => {
     const unlisted = reaching.filter((file) => !(file in ENFORCED_ROUTES) && !(file in EXEMPT_ROUTES));
     expect(unlisted, '判定を呼ぶ (src/lib/ai/consent-guard.ts) か、利用者のデータを送らない理由を EXEMPT_ROUTES に書くこと').toEqual([]);
   });
@@ -268,12 +178,19 @@ describe('送る経路の一覧 (棚卸し)', () => {
     }
   });
 
-  const functionsDir = path.join(ROOT, 'supabase/functions');
-  const edgeFunctions = fs
-    .readdirSync(functionsDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && !e.name.startsWith('_') && fs.existsSync(path.join(functionsDir, e.name, 'index.ts')))
-    .map((e) => e.name);
-  const reachingEdge = edgeFunctions.filter((name) => reachesAi(path.join(functionsDir, name, 'index.ts'))).sort();
+  it('route ハンドラ以外のファイル (ページ・レイアウト・サーバーアクション・middleware) は、AI へ送るコードに届かない', () => {
+    const others = [
+      ...listFiles(path.join(ROOT, 'src/app'), (name) => /\.(ts|tsx)$/.test(name) && !/^route\.tsx?$/.test(name)),
+      ...['src/middleware.ts', 'middleware.ts'].map((file) => path.join(ROOT, file)).filter((file) => fs.existsSync(file)),
+    ]
+      .filter((file) => reachesAi(file))
+      .map(rel)
+      .sort();
+    expect(others).toEqual(Object.keys(NON_ROUTE_FILES_REACHING_AI).sort());
+  });
+
+  const edgeFunctions = listEdgeFunctions();
+  const reachingEdge = edgeFunctions.filter((name) => reachesAi(path.join(ROOT, 'supabase/functions', name, 'index.ts')));
 
   it('AI へ送るコードに届く Edge Function は、すべて判定を呼ぶか、理由つきで除外されている', () => {
     const unlisted = reachingEdge.filter((name) => !(name in ENFORCED_EDGE) && !(name in EXEMPT_EDGE));
@@ -281,7 +198,7 @@ describe('送る経路の一覧 (棚卸し)', () => {
   });
 
   it.each(Object.keys(ENFORCED_EDGE))('Edge Function %s は判定を import して呼んでいる (送る手前で止めることは ai-consent-enforcement-edge.test.ts)', (name) => {
-    const text = fs.readFileSync(path.join(functionsDir, name, 'index.ts'), 'utf8');
+    const text = fs.readFileSync(path.join(ROOT, 'supabase/functions', name, 'index.ts'), 'utf8');
     expect(text).toMatch(/from ['"]\.\.\/_shared\/ai-consent-guard\.ts['"]/);
     expect(text).toMatch(GUARD_CALL_PATTERN);
   });
@@ -300,6 +217,24 @@ describe('送る経路の一覧 (棚卸し)', () => {
     for (const cron of vercel.crons ?? []) {
       const file = `src/app${cron.path}/route.ts`;
       if (reaching.includes(file)) expect(ENFORCED_ROUTES, file).toHaveProperty([file]);
+    }
+  });
+
+  it('検出器の確かめ: 提供元の URL・SDK・API キーの環境変数・Edge Function の呼び出しを AI の印とし、コメントの中は拾わない', () => {
+    for (const text of [
+      "fetch('https://api.openai.com/v1/chat/completions')",
+      "import { GoogleGenAI } from '@google/genai';",
+      "import OpenAI from 'openai';",
+      "import OpenAI from 'npm:openai@4';",
+      "import Anthropic from '@anthropic-ai/sdk';",
+      'const key = process.env.XAI_API_KEY;',
+      "const key = Deno.env.get('GEMINI_API_KEY');",
+      "await supabase.functions.invoke('generate-menu-v5', {});",
+    ]) {
+      expect(AI_LEAF_PATTERN.test(stripComments(text)), text).toBe(true);
+    }
+    for (const text of ["// fetch('https://api.openai.com/v1')", '/* process.env.OPENAI_API_KEY */', "const url = '/api/ai/menu';"]) {
+      expect(AI_LEAF_PATTERN.test(stripComments(text)), text).toBe(false);
     }
   });
 });

@@ -106,8 +106,7 @@ import {
   wasRequestUpdated,
 } from "./request-finalize.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
-import { aiQuotaExceededResponse, consumeEdgeAiQuota } from "../_shared/quota.ts";
-import { aiQuotaErrorBody } from "../_shared/ai-quota-core.ts";
+import { recordEdgeAiUsage } from "../_shared/ai-usage.ts";
 import { aiConsentDeniedResponse, checkAiConsent, invokeMenuContinuation } from "../_shared/ai-consent-guard.ts";
 import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
 
@@ -3465,8 +3464,8 @@ Deno.serve(async (req: Request) => {
 
   let requestId: string | null = null;
   let userId: string | null = null;
-  // #1177 ユーザー自身の JWT で直接呼ばれたときの利用者 ID (この経路だけ、AI へ送る直前に利用回数を数える)。
-  // service role の呼び出し (Next.js の API ルート・cron・続きの工程 _continue) は null のまま (呼び出し元が数え済み)
+  // #1177 ユーザー自身の JWT で直接呼ばれたときの利用者 ID (この経路だけ、AI へ送る直前に利用回数を記録する)。
+  // service role の呼び出し (Next.js の API ルート・cron・続きの工程 _continue) は null のまま (呼び出し元が記録済み)
   let directJwtUserId: string | null = null;
 
   try {
@@ -3573,26 +3572,11 @@ Deno.serve(async (req: Request) => {
       currentStep = reqData?.current_step ?? 1;
     }
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (所有の確認・同意などの判定のあと、生成を始める前) に、生成 1 回につき 1 回数える
+    // #1177 AI 利用回数の記録。AI へ送る直前 (所有の確認・同意などの判定のあと、生成を始める前) に、生成 1 回につき 1 回記録する
     // (究極モードも 1 回)。ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js の API ルート・cron は service role で呼び、
-    // 呼び出し元が数え済み)。Next.js が数え済みの印があれば数えない。記録に失敗しても止めない。
-    // 上限を超えたとき (いまは全プラン無制限なので起きない) は、リクエストの行を失敗にして止める
+    // 呼び出し元が記録済み)。Next.js が記録済みの印があれば記録しない。記録に失敗しても止めない
     if (directJwtUserId) {
-      const quota = await consumeEdgeAiQuota(req, directJwtUserId, "menu_generation");
-      if (!quota.allowed) {
-        const { error: persistError } = await supabase
-          .from("weekly_menu_requests")
-          .update({
-            status: "failed",
-            error_message: aiQuotaErrorBody(quota).body.error,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", requestId)
-          .eq("user_id", directJwtUserId)
-          .in("status", ["queued", "processing"]);
-        if (persistError) console.error("Failed to persist AI quota failure:", persistError);
-        return aiQuotaExceededResponse(quota, corsHeaders);
-      }
+      await recordEdgeAiUsage(req, directJwtUserId, "menu_generation");
     }
 
     const invocationContext: V5InvocationContext = {

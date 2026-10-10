@@ -6,7 +6,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { getCorsHeaders } from '../_shared/cors.ts'
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
-import { aiQuotaExceededResponse, consumeEdgeAiQuota } from "../_shared/quota.ts";
+import { recordEdgeAiUsage } from "../_shared/ai-usage.ts";
 import OpenAI from "openai";
 import { createFastLLMClient, getFastLLMModel } from "../_shared/fast-llm.ts";
 import {
@@ -402,8 +402,8 @@ Deno.serve(async (req) => {
     // サービスロールキーかどうかを確認（署名検証されないJWTペイロードのroleは信用せず、完全一致のみで判定）
     const isServiceRole = serviceRoleKey.length > 0 && token === serviceRoleKey;
 
-    // #1177 ユーザー自身の JWT で直接呼ばれたときの利用者 ID (この経路だけ、AI へ送る直前に利用回数を数える)。
-    // service role (Next.js の AI 相談 API) の呼び出しは null のまま (Next.js が数え済み)
+    // #1177 ユーザー自身の JWT で直接呼ばれたときの利用者 ID (この経路だけ、AI へ送る直前に利用回数を記録する)。
+    // service role (Next.js の AI 相談 API) の呼び出しは null のまま (Next.js が記録済み)
     let directJwtUserId: string | null = null;
 
     if (!isServiceRole) {
@@ -426,7 +426,7 @@ Deno.serve(async (req) => {
       const aiConsentDenied = await requireAiConsentForUser(user.id, corsHeaders);
       if (aiConsentDenied) return aiConsentDenied;
 
-      // 同意の判定を通った利用者だけを数える対象にする (未同意で止めた呼び出しは数えない)
+      // 同意の判定を通った利用者だけを記録する対象にする (未同意で止めた呼び出しは記録しない)
       directJwtUserId = user.id;
     }
 
@@ -446,11 +446,10 @@ Deno.serve(async (req) => {
     console.log("Messages count:", body.messages.length);
     console.log("Mode:", mode, "Streaming:", isStreaming);
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
-    // ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js が数え済みの印があれば数えない。失敗しても止めない)
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に記録する。
+    // ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js が記録済みの印があれば記録しない。失敗しても止めない)
     if (directJwtUserId) {
-      const quota = await consumeEdgeAiQuota(req, directJwtUserId, "consultation");
-      if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
+      await recordEdgeAiUsage(req, directJwtUserId, "consultation");
     }
 
     // LLMトークン使用量計測

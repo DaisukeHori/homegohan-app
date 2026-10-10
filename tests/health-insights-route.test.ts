@@ -27,8 +27,7 @@ const mockGetUser = vi.fn();
 const mockFrom = vi.fn();
 const mockCheckRateLimit = vi.fn();
 const mockRateLimitExceededResponse = vi.fn();
-const mockConsumeAiQuota = vi.fn();
-const mockAiQuotaExceededResponse = vi.fn();
+const mockRecordAiUsage = vi.fn();
 const mockGenerateGeminiJson = vi.fn();
 
 // 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
@@ -51,10 +50,9 @@ vi.mock('@/lib/rate-limit', () => ({
   rateLimitExceededResponse: (...args: unknown[]) => mockRateLimitExceededResponse(...args),
 }));
 
-// #1177: AI 利用回数の記録 (DB を呼ぶ境目)。consumeAiQuota 自体の挙動は src/__tests__/lib/plan/entitlements.test.ts
+// #1177: AI 利用回数の記録 (DB を呼ぶ境目)。recordAiUsage 自体の挙動は src/__tests__/lib/plan/entitlements.test.ts
 vi.mock('@/lib/plan/entitlements', () => ({
-  consumeAiQuota: (...args: unknown[]) => mockConsumeAiQuota(...args),
-  aiQuotaExceededResponse: (...args: unknown[]) => mockAiQuotaExceededResponse(...args),
+  recordAiUsage: (...args: unknown[]) => mockRecordAiUsage(...args),
 }));
 
 vi.mock('@/lib/ai/gemini-json', () => ({
@@ -215,7 +213,7 @@ beforeEach(() => {
   mockGetSupabaseAdmin.mockImplementation(() => ({ from: mockFrom }));
   mockGetUser.mockResolvedValue({ data: { user }, error: null });
   mockCheckRateLimit.mockResolvedValue({ success: true });
-  mockConsumeAiQuota.mockResolvedValue({ allowed: true, remaining: null });
+  mockRecordAiUsage.mockResolvedValue(undefined);
   // JST の 2026-10-08 05:30。UTC ではまだ 10-07 なので、「今日」が JST 基準であることも確かめられる
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-10-07T20:30:00Z'));
@@ -247,39 +245,24 @@ describe('POST /api/health/insights', () => {
     expect(res.status).toBe(429);
     expect(mockFrom).not.toHaveBeenCalled();
     expect(mockGenerateGeminiJson).not.toHaveBeenCalled();
-    // レート制限で止まった要求は、AI の利用回数に数えない
-    expect(mockConsumeAiQuota).not.toHaveBeenCalled();
+    // レート制限で止まった要求は、AI の利用回数に記録しない
+    expect(mockRecordAiUsage).not.toHaveBeenCalled();
   });
 
-  it('#1177: レート制限を通ったら、認証で確定したユーザー ID で AI の利用回数を数える (health_review)', async () => {
+  it('#1177: レート制限を通ったら、認証で確定したユーザー ID で AI の利用回数を記録する (health_review)', async () => {
     setupHappyPath();
 
     const res = await POST(postRequest());
 
     expect(res.status).toBe(200);
-    expect(mockConsumeAiQuota).toHaveBeenCalledTimes(1);
-    expect(mockConsumeAiQuota).toHaveBeenCalledWith(user.id, 'health_review');
-    // 回数制限のあとに数え、AI を呼ぶ前に数える
-    expect(mockCheckRateLimit.mock.invocationCallOrder[0]).toBeLessThan(mockConsumeAiQuota.mock.invocationCallOrder[0]);
-    expect(mockConsumeAiQuota.mock.invocationCallOrder[0]).toBeLessThan(mockGenerateGeminiJson.mock.invocationCallOrder[0]);
+    expect(mockRecordAiUsage).toHaveBeenCalledTimes(1);
+    expect(mockRecordAiUsage).toHaveBeenCalledWith(user.id, 'health_review');
+    // レート制限のあとに記録し、AI を呼ぶ前に記録する
+    expect(mockCheckRateLimit.mock.invocationCallOrder[0]).toBeLessThan(mockRecordAiUsage.mock.invocationCallOrder[0]);
+    expect(mockRecordAiUsage.mock.invocationCallOrder[0]).toBeLessThan(mockGenerateGeminiJson.mock.invocationCallOrder[0]);
   });
 
-  it('#1177: 利用回数の上限を超えていたら (いまは通らない)、LLM にも保存にも触れずにその応答 (429) を返す', async () => {
-    // 数えるのは AI へ送る直前 (分析に使うデータを読んだあと) なので、読み取りは済んでいる
-    setupHappyPath();
-    const denied = { allowed: false, remaining: 0, limitKind: 'daily' as const, limit: 3 };
-    mockConsumeAiQuota.mockResolvedValue(denied);
-    mockAiQuotaExceededResponse.mockReturnValue(new Response('{}', { status: 429 }));
-
-    const res = await POST(postRequest());
-
-    expect(res.status).toBe(429);
-    expect(mockAiQuotaExceededResponse).toHaveBeenCalledWith(denied);
-    expect(mockGenerateGeminiJson).not.toHaveBeenCalled();
-    expect(recorded.filter((r) => r.calls.some((c) => c.method === 'insert'))).toEqual([]);
-  });
-
-  it('#1177: 分析に使うデータが無くて AI を呼ばずに 400 を返すときは、数えない', async () => {
+  it('#1177: 分析に使うデータが無くて AI を呼ばずに 400 を返すときは、記録しない', async () => {
     setTable('health_records', [{ data: [], error: null }]);
     setTable('health_checkups', [{ data: [], error: null }]);
     setTable('user_daily_meals', [{ data: [], error: null }]);
@@ -287,7 +270,7 @@ describe('POST /api/health/insights', () => {
     const res = await POST(postRequest());
 
     expect(res.status).toBe(400);
-    expect(mockConsumeAiQuota).not.toHaveBeenCalled();
+    expect(mockRecordAiUsage).not.toHaveBeenCalled();
     expect(mockGenerateGeminiJson).not.toHaveBeenCalled();
   });
 

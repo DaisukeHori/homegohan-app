@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { extractWeightScaleResult } from '../../../../lib/ai/image-recognition';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { aiQuotaCountedHeaders, aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
+import { aiUsageRecordedHeaders, recordAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 export async function POST(request: Request) {
@@ -27,10 +27,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Image is required' }, { status: 400 });
     }
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える
-    // (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
-    const quota = await consumeAiQuota(user.id, 'photo_analysis');
-    if (!quota.allowed) return aiQuotaExceededResponse(quota);
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
+    // (記録に失敗しても止めない)
+    await recordAiUsage(user.id, 'photo_analysis');
 
     // Edge Function を呼び出し（25秒タイムアウト）
     const formData = new FormData();
@@ -42,9 +41,9 @@ export async function POST(request: Request) {
 
     const invokePromise = supabase.functions.invoke('analyze-health-photo', {
       body: formData,
-      // #1177 Edge Function はユーザーの JWT で呼ばれたときに回数を数える。この API ルートが数え済みなので、
-      // 二重に数えないよう、署名つきの印を付ける
-      headers: await aiQuotaCountedHeaders(user.id),
+      // #1177 Edge Function はユーザーの JWT で呼ばれたときに利用回数を記録する。この API ルートが記録済みなので、
+      // 二重に記録しないよう、署名つきの印を付ける
+      headers: await aiUsageRecordedHeaders(user.id),
     });
 
     const timeoutPromise = new Promise<never>((_, reject) =>

@@ -27,7 +27,7 @@ import {
 } from '@/lib/meal-image-jobs';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit } from '@/lib/rate-limit';
-import { aiQuotaCountedHeaders, aiQuotaErrorBody, consumeAiQuota, type AiQuotaErrorBody } from '@/lib/plan/entitlements';
+import { aiUsageRecordedHeaders, recordAiUsage } from '@/lib/plan/entitlements';
 import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { createLogger } from '@/lib/db-logger';
 import { PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
@@ -227,20 +227,6 @@ export const AI_SENDING_ACTION_TYPES: ReadonlySet<string> = new Set([
   'generate_single_meal',
 ]);
 
-/**
- * #1177 献立を生成するアクション (generate_day_menu / generate_week_menu / generate_single_meal) の AI 利用回数の記録。
- * AI へ送る直前 (引数の検証のあと・生成のリクエストの行を作る前) に、生成 1 回につき 1 回数える。究極モードも 1 回。
- * AI 相談の会話そのもの (consultation) は呼び出し元の route が数える。生成は別の AI の呼び出しなので、ここで別に数える。
- * AI を使わないアクション (献立の削除・買い物リストの操作など) は数えない。
- * 上限を超えたとき (いまは全プラン無制限なので起きない) は、生成せずに理由を結果に書く。記録に失敗しても止めない。
- */
-async function countMenuGenerationAction(userId: string): Promise<AiQuotaErrorBody | null> {
-  const quota = await consumeAiQuota(userId, 'menu_generation');
-  if (quota.allowed) return null;
-  // 429 の本文と同じ形 ({ error, code: AI_DAILY_LIMIT | AI_MONTHLY_LIMIT, ... }) を結果に書く
-  return aiQuotaErrorBody(quota).body;
-}
-
 export interface ConsultationActionRow {
   id: string;
   action_type: string;
@@ -291,12 +277,10 @@ export async function runConsultationAction(
         ],
       });
 
-      // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。AI へ送る直前。記録に失敗しても止めない)
-      const quotaDenied = await countMenuGenerationAction(user.id);
-      if (quotaDenied) {
-        result = quotaDenied;
-        break;
-      }
+      // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・生成のリクエストの行を
+      // 作る前。記録に失敗しても止めない)。AI 相談の会話そのもの (consultation) は呼び出し元の route が記録する。
+      // 生成は別の AI の呼び出しなので、ここで別に記録する。同意の判定は呼び出し元の route がアクションの実行の前に済ませる
+      await recordAiUsage(user.id, 'menu_generation');
 
       // リクエストを記録
       const { data: requestData, error: requestError } = await supabase
@@ -347,9 +331,9 @@ export async function runConsultationAction(
             familySize: profile?.family_size || 1,
             ultimateMode: ultimateMode ?? false,
           },
-          // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに回数を数える。
-          // このアクションは呼び出し元の API ルートが数え済みなので、二重に数えないよう、署名つきの印を付ける
-          headers: await aiQuotaCountedHeaders(user.id),
+          // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに利用回数を記録する。
+          // この生成は上 (recordAiUsage) で記録済みなので、二重に記録しないよう、署名つきの印を付ける
+          headers: await aiUsageRecordedHeaders(user.id),
         }),
       });
 
@@ -393,12 +377,10 @@ export async function runConsultationAction(
         targetSlots: baseTargetSlots,
       });
 
-      // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。AI へ送る直前。記録に失敗しても止めない)
-      const quotaDenied = await countMenuGenerationAction(user.id);
-      if (quotaDenied) {
-        result = quotaDenied;
-        break;
-      }
+      // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・生成のリクエストの行を
+      // 作る前。記録に失敗しても止めない)。AI 相談の会話そのもの (consultation) は呼び出し元の route が記録する。
+      // 生成は別の AI の呼び出しなので、ここで別に記録する。同意の判定は呼び出し元の route がアクションの実行の前に済ませる
+      await recordAiUsage(user.id, 'menu_generation');
 
       // リクエストを記録
       const { data: requestData, error: requestError } = await supabase
@@ -449,9 +431,9 @@ export async function runConsultationAction(
             familySize: profile?.family_size || 1,
             ultimateMode: ultimateMode ?? false,
           },
-          // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに回数を数える。
-          // このアクションは呼び出し元の API ルートが数え済みなので、二重に数えないよう、署名つきの印を付ける
-          headers: await aiQuotaCountedHeaders(user.id),
+          // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに利用回数を記録する。
+          // この生成は上 (recordAiUsage) で記録済みなので、二重に記録しないよう、署名つきの印を付ける
+          headers: await aiUsageRecordedHeaders(user.id),
         }),
       });
 
@@ -502,12 +484,10 @@ export async function runConsultationAction(
         targetSlots: [{ date, mealType }],
       });
 
-      // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。AI へ送る直前。記録に失敗しても止めない)
-      const quotaDenied = await countMenuGenerationAction(user.id);
-      if (quotaDenied) {
-        result = quotaDenied;
-        break;
-      }
+      // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・生成のリクエストの行を
+      // 作る前。記録に失敗しても止めない)。AI 相談の会話そのもの (consultation) は呼び出し元の route が記録する。
+      // 生成は別の AI の呼び出しなので、ここで別に記録する。同意の判定は呼び出し元の route がアクションの実行の前に済ませる
+      await recordAiUsage(user.id, 'menu_generation');
 
       // 1. weekly_menu_requests に記録
       const { data: requestData, error: requestError } = await supabase
@@ -569,9 +549,9 @@ export async function runConsultationAction(
             familySize,
             ultimateMode: ultimateMode ?? false,
           },
-          // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに回数を数える。
-          // このアクションは呼び出し元の API ルートが数え済みなので、二重に数えないよう、署名つきの印を付ける
-          headers: await aiQuotaCountedHeaders(user.id),
+          // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに利用回数を記録する。
+          // この生成は上 (recordAiUsage) で記録済みなので、二重に記録しないよう、署名つきの印を付ける
+          headers: await aiUsageRecordedHeaders(user.id),
         }),
       });
 
@@ -697,12 +677,12 @@ export async function runConsultationAction(
           imageAllowed = rl.success;
           if (imageAllowed) {
             // 同意が無ければ (判定に失敗した場合も)、画像の生成ジョブを処理する Edge Function (process-meal-image-jobs) が
-            // AI へ送らずに止める (T15 / #1154)。AI へ送らない操作は数えない (同意の判定 → 利用回数の記録 → AI への送信の順)。
+            // AI へ送らずに止める (T15 / #1154)。AI へ送らない操作は記録しない (同意の判定 → 利用回数の記録 → AI への送信の順)。
             // ジョブを積むかどうかは、同意の有無では変えない (止めるのは処理する側)
             const imageConsent = await checkUserAiConsent(supabase, user.id);
             if (imageConsent.allowed) {
-              // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない)。上限を超えたときは画像生成だけを見送る
-              imageAllowed = (await consumeAiQuota(user.id, 'image_generation')).allowed;
+              // #1177 AI 利用回数の記録 (操作 1 回で 1 回。積む画像のジョブの数によらない。記録に失敗しても止めない)
+              await recordAiUsage(user.id, 'image_generation');
             }
           }
         } catch (rlError) {

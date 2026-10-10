@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
+import { recordAiUsage } from '@/lib/plan/entitlements';
 import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
 
 function stripMarkdownCodeBlock(text: string): string {
@@ -137,10 +137,9 @@ ${importantMessages.length > 0 ? `
 ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n')}
 ` : ''}`;
 
-      // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える
-      // (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
-      const quota = await consumeAiQuota(user.id, 'consultation');
-      if (!quota.allowed) return aiQuotaExceededResponse(quota);
+      // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
+      // (記録に失敗しても止めない)
+      await recordAiUsage(user.id, 'consultation');
 
       try {
         const MAX_ATTEMPTS = 2;

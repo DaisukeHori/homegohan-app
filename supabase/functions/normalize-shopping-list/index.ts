@@ -16,7 +16,7 @@ import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from 
 import { fetchWithRetry } from "../_shared/network-retry.ts";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { requireAuth } from "../_shared/auth.ts";
-import { aiQuotaExceededResponse, consumeEdgeAiQuota } from "../_shared/quota.ts";
+import { recordEdgeAiUsage } from "../_shared/ai-usage.ts";
 import { requireAiConsentForUser } from "../_shared/ai-consent-guard.ts";
 
 // 過大入力によるLLMコスト濫用/DoS防止のための上限
@@ -349,10 +349,9 @@ Deno.serve(async (req: Request) => {
     // 入力名のセットを作成（バリデーション用）
     const inputNames = new Set(ingredients.map((ing) => ing.name));
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
-    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (Next.js が数え済みの印があれば数えない。失敗しても止めない)
-    const quota = await consumeEdgeAiQuota(req, authResult.userId, "shopping_list");
-    if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に記録する。
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ記録する (Next.js が記録済みの印があれば記録しない。失敗しても止めない)
+    await recordEdgeAiUsage(req, authResult.userId, "shopping_list");
 
     // LLM呼び出し（トークン使用量計測付き）
     const rawItems = await withOpenAIUsageContext({

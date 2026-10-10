@@ -8,7 +8,7 @@ import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
 import { cancelPendingMealImageJobs } from '../../../../../../lib/meal-image-jobs';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
+import { recordAiUsage } from '@/lib/plan/entitlements';
 import { restorePlannedMealsSnapshot, type PlannedMealSnapshotRow } from '@/lib/planned-meals-snapshot';
 import { todayLocal } from '@/lib/date-utils';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
@@ -146,10 +146,9 @@ export async function POST(request: Request) {
     //  献立を消して戻すだけの無駄な動きになる) (#1182)
     const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
 
-    // #1177 AI 利用回数の記録。AI へ送る処理の始まり (既存の献立を消す前。消したあとで止めると献立が消えたままになる) に、
-    // 操作 1 回につき 1 回数える。究極モードも 1 回 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
-    const quota = await consumeAiQuota(user.id, 'menu_generation');
-    if (!quota.allowed) return aiQuotaExceededResponse(quota);
+    // #1177 AI 利用回数の記録。AI へ送る処理の始まり (入力の検証・同意などの判定のあと、既存の献立を消して生成を始める前) に、
+    // 操作 1 回につき 1 回記録する。究極モードも 1 回 (記録に失敗しても止めない)
+    await recordAiUsage(user.id, 'menu_generation');
 
     // 2. 今日以降の日付の既存食事を削除（Edge Functionが新規INSERTするため）
     const todayStr = todayLocal();

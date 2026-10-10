@@ -9,9 +9,10 @@
  *
  * 1. 構文木の検査 (全件): 判定の呼び出しの結果で「止めて返す」if があり、その if より前に AI へ送る呼び出しが無い。
  *    判定を呼ぶだけで結果を無視する・送ったあとで判定する・条件を反転する (if (!denied) / if (x.allowed) return) と落ちる。
- * 2. 実際のハンドラ (代表の 3 本: analyze-fridge = xAI、analyze-health-photo = Google、generate-hint = xAI):
- *    Deno.serve に渡された関数へ要求を流し、同意の状況ごとに AI のクライアントの呼び出し回数を数える。
- *    判定 (_shared/ai-consent-guard.ts / _shared/ai-consent.ts) は差し替えず、Supabase のクライアントだけを作り物にする。
+ * 2. 実際のハンドラ (代表の 6 本。AI の送り口の形と、利用回数の記録の形 (#1177) が違うものを選ぶ):
+ *    Deno.serve に渡された関数へ要求を流し、同意の状況ごとに AI へ送った回数と、利用回数の記録 (recordEdgeAiUsage) の回数・順番を見る。
+ *    判定 (_shared/ai-consent-guard.ts / _shared/ai-consent.ts) は差し替えず、Supabase のクライアントと AI の送り口だけを作り物にする。
+ *    記録は「同意の判定 → 記録 → 送信」の順 (#1177)。順番はソースの文字ではなく、呼ばれた順番で確かめる。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,6 +26,7 @@ import {
   AI_CONSENT_VERSION,
 } from '../supabase/functions/_shared/ai-consent';
 import { ENFORCED_EDGE } from './helpers/ai-consent-enforced-paths';
+import { removeMutants, writeMutant } from './helpers/mutant-module';
 
 // Edge Runtime の型宣言だけの import (node_modules に無い)。中身は無いので空のモジュールにする
 vi.mock("@supabase/functions-js/edge-runtime.d.ts", () => ({}));
@@ -212,10 +214,36 @@ const e = vi.hoisted(() => ({
   consentMode: 'none' as 'none' | 'outdated' | 'failed' | 'granted',
   fastLLMCreate: vi.fn(async () => ({ choices: [{ message: { content: '{"hint":"野菜を足しましょう","ingredients":["卵"]}' } }] })),
   generateGeminiJson: vi.fn(async () => ({ data: { weight: 60 }, model: 'test-model', rawText: '{}' })),
-  // #1177: AI 利用回数の記録 (DB を呼ぶ境目だけを差し替える。429 の応答を作る関数は本物)
-  consumeEdgeAiQuota: vi.fn(async () => ({ allowed: true, remaining: null })),
+  analyzeWithEvidence: vi.fn(async () => ({ dishes: [], totalCalories: 0 })),
+  /** global fetch のうち、AI 事業者へ送ったもの */
+  aiFetch: vi.fn((_url: string) => undefined),
+  // #1177: AI 利用回数の記録 (DB を呼ぶ境目だけを差し替える)
+  recordEdgeAiUsage: vi.fn(async (_req: Request, _userId: string, _feature: string) => undefined),
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+
+/** AI 事業者の宛先 (global fetch で数える) */
+const AI_URL_PATTERN = /api\.openai\.com|generativelanguage\.googleapis\.com|api\.x\.ai|api\.perplexity\.ai|api\.aimlapi\.com/;
+
+/** AI へ送る口の全部 (どれか 1 つでも、記録より先に呼ばれたら順番の誤り) */
+const SENDERS = { fastLLM: e.fastLLMCreate, gemini: e.generateGeminiJson, nutritionPipeline: e.analyzeWithEvidence, fetch: e.aiFetch };
+
+function aiSendCount(): number {
+  return Object.values(SENDERS).reduce((sum, fn) => sum + fn.mock.calls.length, 0);
+}
+
+/** 記録 (recordEdgeAiUsage) が、AI へ送る口のどれよりも先に呼ばれたか (#1177: 同意の判定 → 記録 → 送信) */
+function recordedBeforeEverySend(): { ok: boolean; detail: string } {
+  const recordOrders = e.recordEdgeAiUsage.mock.invocationCallOrder;
+  const firstRecord = Math.min(...recordOrders);
+  const early = Object.entries(SENDERS).flatMap(([label, fn]) =>
+    fn.mock.invocationCallOrder.filter((order) => order < firstRecord).map(() => label),
+  );
+  return {
+    ok: recordOrders.length > 0 && early.length === 0,
+    detail: `記録する前に送った口: ${early.join(', ') || 'なし'} / 記録した回数: ${recordOrders.length}`,
+  };
+}
 
 function consentResult(): { data: unknown; error: unknown } {
   switch (e.consentMode) {
@@ -250,6 +278,13 @@ vi.mock('@supabase/supabase-js', async (importOriginal) => ({
   createClient: () => ({
     auth: { getUser: async () => ({ data: { user: { id: USER } }, error: null }) },
     from: (table: string) => fakeQuery(table),
+    rpc: async () => ({ data: [], error: null }),
+    storage: {
+      from: () => ({
+        upload: async () => ({ data: { path: 'p' }, error: null }),
+        getPublicUrl: () => ({ data: { publicUrl: 'https://storage.example.test/p.jpg' } }),
+      }),
+    },
   }),
 }));
 vi.mock('../supabase/functions/_shared/auth.ts', () => ({ requireAuth: vi.fn(async () => ({ userId: USER })) }));
@@ -260,36 +295,49 @@ vi.mock('../supabase/functions/_shared/db-logger.ts', () => ({
 vi.mock('../supabase/functions/_shared/fast-llm.ts', () => ({
   createFastLLMClient: () => ({ chat: { completions: { create: e.fastLLMCreate } } }),
   getFastLLMModel: () => 'test-model',
+  getFastLLMApiKey: () => 'test-key',
+  getFastLLMBaseUrl: () => 'https://api.x.ai/v1',
+  getFastLLMChatCompletionsUrl: () => 'https://api.x.ai/v1/chat/completions',
+  getFastLLMFetchHeaders: () => ({ 'Content-Type': 'application/json' }),
 }));
 vi.mock('../supabase/functions/_shared/gemini-json.ts', () => ({ generateGeminiJson: e.generateGeminiJson }));
-vi.mock('../supabase/functions/_shared/quota.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../supabase/functions/_shared/quota.ts')>()),
-  consumeEdgeAiQuota: e.consumeEdgeAiQuota,
+vi.mock('../supabase/functions/_shared/nutrition-pipeline.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../supabase/functions/_shared/nutrition-pipeline.ts')>()),
+  analyzeWithEvidence: e.analyzeWithEvidence,
+}));
+// LLM の使用量計測 (fetch を包んで DB へ書く) は、中身をそのまま実行するだけにする
+vi.mock('../supabase/functions/_shared/llm-usage.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../supabase/functions/_shared/llm-usage.ts')>()),
+  withOpenAIUsageContext: async <T,>(_ctx: unknown, fn: () => Promise<T>) => fn(),
+  generateExecutionId: () => 'exec_test',
+}));
+vi.mock('../supabase/functions/_shared/ai-usage.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../supabase/functions/_shared/ai-usage.ts')>()),
+  recordEdgeAiUsage: e.recordEdgeAiUsage,
 }));
 
 type Handler = (req: Request) => Promise<Response>;
 const handlers: Record<string, Handler> = {};
 const ORIGIN = 'https://homegohan.app';
 
-const EDGE_CASES: Array<{
-  name: string;
-  load: () => Promise<unknown>;
-  request: () => Request;
-  sends: () => number;
-  /** AI へ送る口 (数えたあとで呼ばれることを確かめる。#1177) */
-  sender: { mock: { invocationCallOrder: number[] } };
-}> = [
+const userRequest = (name: string, body: BodyInit, contentType: string | null = 'application/json') =>
+  new Request(`http://localhost/functions/v1/${name}`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer user-token', Origin: ORIGIN, ...(contentType ? { 'Content-Type': contentType } : {}) },
+    body,
+  });
+
+/**
+ * 実際のハンドラを呼ぶ代表の関数。AI の送り口の形 (OpenAI 互換のクライアント・Gemini・栄養の解析・fetch) と、
+ * 記録の形 (JWT を確かめた直後のブロック / directJwtUserId の if) の両方を含むように選ぶ。
+ * どれも「未同意なら送らず記録しない・同意済みなら 1 回記録してから送る」を、呼ばれた順番で確かめる
+ */
+const EDGE_CASES: Array<{ name: string; load: () => Promise<unknown>; request: () => Request }> = [
   {
     name: 'analyze-fridge',
     load: () => import('../supabase/functions/analyze-fridge/index.ts'),
     request: () =>
-      new Request('http://localhost/functions/v1/analyze-fridge', {
-        method: 'POST',
-        headers: { Authorization: 'Bearer user-token', 'Content-Type': 'application/json', Origin: ORIGIN },
-        body: JSON.stringify({ imageUrl: 'https://project.supabase.co/storage/v1/object/public/fridge-images/u1/fridge.jpg' }),
-      }),
-    sends: () => e.fastLLMCreate.mock.calls.length,
-    sender: e.fastLLMCreate,
+      userRequest('analyze-fridge', JSON.stringify({ imageUrl: 'https://project.supabase.co/storage/v1/object/public/fridge-images/u1/fridge.jpg' })),
   },
   {
     name: 'analyze-health-photo',
@@ -298,74 +346,76 @@ const EDGE_CASES: Array<{
       const form = new FormData();
       form.append('image_base64', 'aGVsbG8=');
       form.append('device_type', 'weight_scale');
-      return new Request('http://localhost/functions/v1/analyze-health-photo', {
-        method: 'POST',
-        headers: { Authorization: 'Bearer user-token', Origin: ORIGIN },
-        body: form,
-      });
+      return userRequest('analyze-health-photo', form, null);
     },
-    sends: () => e.generateGeminiJson.mock.calls.length,
-    sender: e.generateGeminiJson,
+  },
+  {
+    name: 'analyze-meal-photo',
+    load: () => import('../supabase/functions/analyze-meal-photo/index.ts'),
+    request: () => userRequest('analyze-meal-photo', JSON.stringify({ imageBase64: 'aGVsbG8=', mimeType: 'image/jpeg' })),
   },
   {
     name: 'generate-hint',
     load: () => import('../supabase/functions/generate-hint/index.ts'),
-    request: () =>
-      new Request('http://localhost/functions/v1/generate-hint', {
-        method: 'POST',
-        headers: { Authorization: 'Bearer user-token', 'Content-Type': 'application/json', Origin: ORIGIN },
-        body: JSON.stringify({ cookRate: 50, avgCal: 1800 }),
-      }),
-    sends: () => e.fastLLMCreate.mock.calls.length,
-    sender: e.fastLLMCreate,
+    request: () => userRequest('generate-hint', JSON.stringify({ cookRate: 50, avgCal: 1800 })),
+  },
+  {
+    // fetch (fetchWithRetry) で送る形。AI へ送る処理は同じファイルのヘルパー関数 (callOpenAI) の中にある
+    name: 'normalize-shopping-list',
+    load: () => import('../supabase/functions/normalize-shopping-list/index.ts'),
+    request: () => userRequest('normalize-shopping-list', JSON.stringify({ ingredients: [{ name: '卵', amount: '2個', count: 1 }] })),
+  },
+  {
+    // JWT を確かめたブロックで directJwtUserId に代入し、あとの if (directJwtUserId) の中で記録する形
+    name: 'knowledge-gpt',
+    load: () => import('../supabase/functions/knowledge-gpt/index.ts'),
+    request: () => userRequest('knowledge-gpt', JSON.stringify({ messages: [{ role: 'user', content: '夕食の相談' }] })),
   },
 ];
-
-/** knowledge-gpt (AI 相談の Edge Function)。JWT を確かめたブロックで同意を判定してから、数える対象の利用者を決める形 (#1177) */
-const KNOWLEDGE_GPT = {
-  load: () => import('../supabase/functions/knowledge-gpt/index.ts'),
-  request: () =>
-    new Request('http://localhost/functions/v1/knowledge-gpt', {
-      method: 'POST',
-      headers: { Authorization: 'Bearer user-token', 'Content-Type': 'application/json', Origin: ORIGIN },
-      body: JSON.stringify({ messages: [{ role: 'user', content: '夕食の相談' }] }),
-    }),
-};
 
 const ENV: Record<string, string> = {
   SUPABASE_URL: 'https://project.supabase.test',
   SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
   SUPABASE_ANON_KEY: 'anon-key',
+  XAI_API_KEY: 'test-xai-key',
+  DATASET_EMBEDDING_API_KEY: 'test-embedding-key',
 };
 
-beforeAll(async () => {
-  for (const c of EDGE_CASES) {
-    vi.stubGlobal('Deno', {
-      serve: (fn: Handler) => {
-        handlers[c.name] = fn;
-      },
-      env: { get: (key: string) => ENV[key] },
-    });
-    await c.load();
-  }
+async function loadHandler(name: string, load: () => Promise<unknown>): Promise<void> {
   vi.stubGlobal('Deno', {
     serve: (fn: Handler) => {
-      handlers['knowledge-gpt'] = fn;
+      handlers[name] = fn;
     },
     env: { get: (key: string) => ENV[key] },
   });
-  await KNOWLEDGE_GPT.load();
+  await load();
+}
+
+beforeAll(async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (AI_URL_PATTERN.test(url)) e.aiFetch(url);
+      return new Response(JSON.stringify({ choices: [{ message: { content: '{"items":[]}' } }], data: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }),
+  );
+  for (const c of EDGE_CASES) await loadHandler(c.name, c.load);
+  const fetchStub = globalThis.fetch;
   vi.stubGlobal('Deno', { serve: () => undefined, env: { get: (key: string) => ENV[key] } });
+  vi.stubGlobal('fetch', fetchStub);
 });
 
 afterAll(() => {
   vi.unstubAllGlobals();
+  removeMutants();
 });
 
 beforeEach(() => {
-  e.fastLLMCreate.mockClear();
-  e.generateGeminiJson.mockClear();
-  e.consumeEdgeAiQuota.mockClear();
+  for (const fn of [...Object.values(SENDERS), e.recordEdgeAiUsage]) fn.mockClear();
 });
 
 const DENIED: Array<[ConsentMode, number, string]> = [
@@ -375,42 +425,49 @@ const DENIED: Array<[ConsentMode, number, string]> = [
 ];
 
 describe.each(EDGE_CASES)('Edge Function $name (実際のハンドラ)', (c) => {
-  it.each(DENIED)('同意が %s: AI のクライアントを 1 回も呼ばず、%i を返す', async (mode, status, code) => {
+  it.each(DENIED)('同意が %s: AI へ 1 回も送らず、%i を返す。記録もしない', async (mode, status, code) => {
     e.consentMode = mode;
     const res = await handlers[c.name](c.request());
-    expect(c.sends()).toBe(0);
+    expect(aiSendCount()).toBe(0);
     expect(res.status).toBe(status);
     await expect(res.json()).resolves.toMatchObject({ code });
     // ブラウザから読めるよう、許可したオリジンには CORS ヘッダーを付けたまま止める
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN);
-    // #1177: 同意が無くて止めた呼び出しは、AI の利用回数に数えない (同意の判定 → 記録 → 送信の順)
-    expect(e.consumeEdgeAiQuota).not.toHaveBeenCalled();
+    // #1177: 同意が無くて止めた呼び出しは、AI の利用回数に記録しない (同意の判定 → 記録 → 送信の順)
+    expect(e.recordEdgeAiUsage).not.toHaveBeenCalled();
   });
 
-  it('同意済み: AI のクライアントを呼ぶ (上の 0 回が空振りでないことの確かめ)。数えるのは 1 回で、AI へ送る前', async () => {
+  it('同意済み: AI へ送る (上の 0 回が空振りでないことの確かめ)。記録は 1 回で、JWT の利用者と一覧の機能名で、AI へ送るより前', async () => {
     e.consentMode = 'granted';
     await handlers[c.name](c.request());
-    expect(c.sends()).toBeGreaterThanOrEqual(1);
-    expect(e.consumeEdgeAiQuota).toHaveBeenCalledTimes(1);
-    expect(e.consumeEdgeAiQuota.mock.calls[0][1]).toBe(USER);
-    expect(e.consumeEdgeAiQuota.mock.invocationCallOrder[0]).toBeLessThan(c.sender.mock.invocationCallOrder[0]);
+    expect(aiSendCount()).toBeGreaterThanOrEqual(1);
+    expect(e.recordEdgeAiUsage).toHaveBeenCalledTimes(1);
+    const [req, userId, feature] = e.recordEdgeAiUsage.mock.calls[0];
+    expect(req).toBeInstanceOf(Request);
+    expect(userId).toBe(USER);
+    const usage = ENFORCED_EDGE[c.name].usage;
+    expect('record' in usage ? usage.record : []).toContain(feature);
+    const order = recordedBeforeEverySend();
+    expect(order.ok, order.detail).toBe(true);
   });
 });
 
-describe('Edge Function knowledge-gpt (実際のハンドラ): 同意の判定 → 利用回数の記録 (#1177)', () => {
-  it.each(DENIED)('同意が %s: 数えずに %i を返す', async (mode, status, code) => {
-    e.consentMode = mode;
-    const res = await handlers['knowledge-gpt'](KNOWLEDGE_GPT.request());
-    expect(res.status).toBe(status);
-    await expect(res.json()).resolves.toMatchObject({ code });
-    expect(e.consumeEdgeAiQuota).not.toHaveBeenCalled();
-  });
-
-  it('同意済み: ユーザーの JWT で直接呼ばれたので、その利用者で 1 回数える (上の 0 回が空振りでないことの確かめ)', async () => {
+describe('回帰 (R3 指摘 1・4): Edge Function で、記録を AI へ送ったあとへ動かすと、上の順番の検査が落ちる', () => {
+  it('normalize-shopping-list の記録を、AI への送信 (callOpenAI) のあとへ動かした写しでは、記録より先に送っている', async () => {
+    const recordLine = /\n(\s*)await recordEdgeAiUsage\(req, authResult\.userId, "shopping_list"\);\n/;
+    const mutant = writeMutant('supabase/functions/normalize-shopping-list/index.ts', (source) => {
+      const match = source.match(recordLine);
+      if (!match) return source;
+      const without = source.replace(recordLine, '\n');
+      return without.replace(
+        /(\n\s*const rawItems = await withOpenAIUsageContext\([\s\S]*?\n\s*\}\);\n)/,
+        `$1${match[1]}await recordEdgeAiUsage(req, authResult.userId, "shopping_list");\n`,
+      );
+    });
+    await loadHandler('normalize-shopping-list:mutant', () => import(/* @vite-ignore */ mutant));
     e.consentMode = 'granted';
-    await handlers['knowledge-gpt'](KNOWLEDGE_GPT.request());
-    expect(e.consumeEdgeAiQuota).toHaveBeenCalledTimes(1);
-    expect(e.consumeEdgeAiQuota.mock.calls[0][1]).toBe(USER);
-    expect(e.consumeEdgeAiQuota.mock.calls[0][2]).toBe('consultation');
+    await handlers['normalize-shopping-list:mutant'](userRequest('normalize-shopping-list', JSON.stringify({ ingredients: [{ name: '卵', count: 1 }] })));
+    expect(e.recordEdgeAiUsage).toHaveBeenCalledTimes(1);
+    expect(recordedBeforeEverySend().ok).toBe(false);
   });
 });
