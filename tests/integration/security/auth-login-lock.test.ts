@@ -10,8 +10,9 @@
  *   L-5: auth_login_account_user_id は、登録済みのアドレスなら user_id、無ければ NULL
  *   L-6: 本物の Supabase Auth と組み合わせた流れ (src/lib/auth/guarded-login.ts):
  *        5 回のパスワード違いでロック → ロック中は正しいパスワードでも断る (Supabase を呼ばない) → 記録を消すと入れる
- *   L-7: パスワードの再設定のメールのリンクで作ったセッションの JWT の amr に recovery があり、パスワードのログインには無い
- *        (POST /api/auth/login-lock/clear が、再設定のセッションだけにロックを外させる根拠)
+ *   L-7: パスワードの再設定のメールのリンク (token_hash を verifyOtp) で作ったセッションの JWT の amr は otp で、
+ *        パスワードのログインは password だけ (POST /api/auth/login-lock/clear が、メールのリンクのセッションだけに
+ *        ロックを外させる根拠。route の EMAIL_LINK_AMR_METHODS = recovery / otp / magiclink)
  *
  * 実行:
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -216,6 +217,9 @@ describe('L-6 本物の Supabase Auth と組み合わせた流れ', () => {
   });
 });
 
+/** POST /api/auth/login-lock/clear (src/app/api/auth/login-lock/clear/route.ts) が、ロックを外してよいとみなす amr */
+const EMAIL_LINK_AMR_METHODS = ['recovery', 'otp', 'magiclink'];
+
 describe('L-7 再設定のセッションの amr', () => {
   function amrMethods(claims: Record<string, unknown> | undefined): string[] {
     const amr = claims?.amr;
@@ -225,7 +229,7 @@ describe('L-7 再設定のセッションの amr', () => {
     );
   }
 
-  it('再設定のメールのリンク (recovery) で作ったセッションには recovery があり、パスワードのログインには無い', async () => {
+  it('再設定のメールのリンクで作ったセッションはメールのリンクの印 (otp) を持ち、パスワードのログインは持たない', async () => {
     const user = await createUser('recovery');
 
     const { data: link, error: linkError } = await srAdmin.auth.admin.generateLink({ type: 'recovery', email: user.email });
@@ -237,7 +241,10 @@ describe('L-7 再設定のセッションの amr', () => {
     });
     if (verifyError || !verified.session) throw new Error(`verifyOtp 失敗: ${verifyError?.message}`);
     const recoveryClaims = await recoveryClient.auth.getClaims(verified.session.access_token);
-    expect(amrMethods(recoveryClaims.data?.claims as Record<string, unknown> | undefined)).toContain('recovery');
+    const recoveryMethods = amrMethods(recoveryClaims.data?.claims as Record<string, unknown> | undefined);
+    // GoTrue は token_hash の verifyOtp で作ったセッションに otp を付ける (PKCE で受けたときは recovery)
+    expect(recoveryMethods).toContain('otp');
+    expect(recoveryMethods.some((m) => EMAIL_LINK_AMR_METHODS.includes(m))).toBe(true);
 
     const passwordClient = client(anonKey);
     const { data: signedIn, error: signInError } = await passwordClient.auth.signInWithPassword({
@@ -248,6 +255,6 @@ describe('L-7 再設定のセッションの amr', () => {
     const passwordClaims = await passwordClient.auth.getClaims(signedIn.session.access_token);
     const methods = amrMethods(passwordClaims.data?.claims as Record<string, unknown> | undefined);
     expect(methods).toContain('password');
-    expect(methods).not.toContain('recovery');
+    expect(methods.some((m) => EMAIL_LINK_AMR_METHODS.includes(m))).toBe(false);
   });
 });

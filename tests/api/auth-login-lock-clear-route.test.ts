@@ -6,8 +6,8 @@
  * | セッション                                   | 応答 | 記録                       |
  * |----------------------------------------------|------|----------------------------|
  * | 無い                                         | 401  | 触らない                   |
- * | ふつうのログイン (amr に recovery が無い)    | 403  | 触らない                   |
- * | 再設定のメールのリンク (amr に recovery)     | 200  | 登録アドレスの記録を消す   |
+ * | パスワード・Google のログイン (amr に password / oauth だけ) | 403 | 触らない          |
+ * | メールのリンク (amr に recovery / otp / magiclink)          | 200 | 登録アドレスの記録を消す |
  * | 再設定のセッションだが記録を消せない         | 500  | (失敗)                     |
  *
  * amr は { method } の配列 (Supabase Auth の現行の形) と、文字列の配列の両方を受け付ける。
@@ -59,8 +59,13 @@ describe('POST /api/auth/login-lock/clear', () => {
     expect(store.row(EMAIL)?.failure_count).toBe(12);
   });
 
-  it('ふつうのログインのセッション (password) では 403 で、外さない', async () => {
-    session([{ method: 'password', timestamp: 1 }]);
+  it.each([
+    ['password', [{ method: 'password', timestamp: 1 }]],
+    ['oauth (Google)', [{ method: 'oauth', timestamp: 1 }]],
+    ['totp を足しても password のまま', [{ method: 'totp', timestamp: 2 }, { method: 'password', timestamp: 1 }]],
+    ['amr が無い', undefined],
+  ])('メールのリンクではないセッション (%s) では 403 で、外さない', async (_label, amr) => {
+    session(amr);
     const res = await POST();
     expect(res.status).toBe(403);
     expect(mocks.adminRpc).not.toHaveBeenCalled();
@@ -68,9 +73,11 @@ describe('POST /api/auth/login-lock/clear', () => {
   });
 
   it.each([
-    ['{ method } の配列', [{ method: 'recovery', timestamp: 1 }]],
+    ['recovery ({ method } の配列。PKCE)', [{ method: 'recovery', timestamp: 1 }]],
+    ['otp ({ method } の配列。token_hash の verifyOtp)', [{ method: 'otp', timestamp: 1 }]],
+    ['magiclink', [{ method: 'magiclink', timestamp: 1 }]],
     ['文字列の配列', ['recovery']],
-  ])('再設定のメールのリンクのセッション (%s) なら、登録アドレスの記録を消して 200', async (_label, amr) => {
+  ])('メールのリンクのセッション (%s) なら、登録アドレスの記録を消して 200', async (_label, amr) => {
     session(amr);
     const res = await POST();
     expect(res.status).toBe(200);

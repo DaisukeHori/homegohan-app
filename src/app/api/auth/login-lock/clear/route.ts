@@ -5,8 +5,8 @@
  * パスワードの再設定の画面 (src/app/(auth)/auth/reset-password/page.tsx) が、パスワードを更新できた直後
  * (全端末のログアウトの前) に呼ぶ。
  *
- * - 呼べるのは、再設定のメールのリンクから作られたセッション (JWT の amr に recovery がある) だけ。
- *   ふつうのログインのセッションでは外さない (403)。外せるのは、そのセッションのアカウントの登録メールアドレスの記録だけ。
+ * - 呼べるのは、メールのリンク (再設定のメールなど) から作られたセッション (JWT の amr に recovery / otp / magiclink がある) だけ。
+ *   パスワードや Google のログインのセッションでは外さない (403)。外せるのは、そのセッションのアカウントの登録メールアドレスの記録だけ。
  * - 本文は無い。応答は 200 { ok: true } / 401 (未ログイン) / 403 (再設定のセッションではない) / 500。
  * - 失敗しても、パスワードの再設定そのものは済んでいる。ロックは期限が来れば外れる。
  */
@@ -20,20 +20,30 @@ export const dynamic = 'force-dynamic';
 
 const ROUTE_NAME = 'POST /api/auth/login-lock/clear';
 
-/** 再設定のメールのリンクから作られたセッションの、JWT の amr の値 (Supabase Auth の決まり) */
-const RECOVERY_AMR_METHOD = 'recovery';
+/**
+ * メールのリンクから作られたセッションの、JWT の amr の値 (Supabase Auth の決まり)。
+ *   - recovery: 再設定のメールのリンクを PKCE (exchangeCodeForSession) で受けたとき
+ *   - otp: メールのリンクの token_hash を verifyOtp で受けたとき (再設定のリンクもこれになる。
+ *          tests/integration/security/auth-login-lock.test.ts の L-7 で確かめている)
+ *   - magiclink: マジックリンク
+ * どれも「そのメールアドレスの受信箱を持っている」ことの証明になる。パスワードのログイン (password) や
+ * Google ログイン (oauth) のセッションでは外さない。
+ */
+const EMAIL_LINK_AMR_METHODS: ReadonlySet<string> = new Set(['recovery', 'otp', 'magiclink']);
 
 const NO_STORE = { 'Cache-Control': 'private, no-store' } as const;
 
-/** JWT の amr (認証の方法の記録)。{ method } の配列か、文字列の配列 */
-function hasRecoveryAmr(amr: unknown): boolean {
+/** JWT の amr (認証の方法の記録。{ method } の配列か、文字列の配列) に、メールのリンクから作られた印があるか */
+function hasEmailLinkAmr(amr: unknown): boolean {
   if (!Array.isArray(amr)) return false;
   return amr.some((entry: unknown) => {
-    if (typeof entry === 'string') return entry === RECOVERY_AMR_METHOD;
-    if (typeof entry === 'object' && entry !== null && 'method' in entry) {
-      return (entry as { method: unknown }).method === RECOVERY_AMR_METHOD;
-    }
-    return false;
+    const method =
+      typeof entry === 'string'
+        ? entry
+        : typeof entry === 'object' && entry !== null && 'method' in entry
+          ? (entry as { method: unknown }).method
+          : null;
+    return typeof method === 'string' && EMAIL_LINK_AMR_METHODS.has(method);
   });
 }
 
@@ -44,7 +54,7 @@ export async function POST() {
   if (!claims) {
     return NextResponse.json({ error: 'ログインが必要です。', code: 'UNAUTHORIZED' }, { status: 401, headers: NO_STORE });
   }
-  if (!hasRecoveryAmr(claims.amr)) {
+  if (!hasEmailLinkAmr(claims.amr)) {
     return NextResponse.json(
       { error: 'パスワードの再設定のあとでだけ使えます。', code: 'FORBIDDEN' },
       { status: 403, headers: NO_STORE },
