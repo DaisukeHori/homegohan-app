@@ -126,6 +126,24 @@ function auditInsertPayload(fake: ReturnType<typeof createFakeSupabase>) {
   return builder.insert.mock.calls[0]?.[0] as { severity: string; details: Record<string, unknown> };
 }
 
+/** #1172: DB が返す生のエラー文の目印。応答の本文に出てはいけない */
+const BAN_DB_ERROR_SENTINEL = 'permission denied for table user_profiles (sentinel-ban-1172)';
+
+/** BAN の失敗を確かめる通報の行 (コンテンツ ID は無く、隠す処理は走らない。所有者は owner-x) */
+function banFlagRowWithoutContent() {
+  return {
+    id: 'flag-1',
+    status: 'pending',
+    reason: null,
+    resolution_note: null,
+    resolved_by: null,
+    resolved_at: null,
+    created_at: '2026-01-01T00:00:00Z',
+    user_id: 'reporter-x',
+    meals: { user_id: 'owner-x', photo_url: null },
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockRequireRole.mockResolvedValue(adminActor);
@@ -359,7 +377,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
       ],
       user_profiles: [
         { data: { id: 'owner-x', roles: ['user'] }, error: null },
-        { data: null, error: { message: 'update failed' } }, // frozen_at 更新失敗
+        { data: null, error: { message: BAN_DB_ERROR_SENTINEL, code: '42501' } }, // frozen_at 更新失敗
       ],
       admin_audit_logs: [{ data: null, error: null }],
     });
@@ -368,10 +386,58 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
       params: { type: 'food', id: 'flag-1' },
     });
 
-    expect(res.status).not.toBe(200);
-    const json = (await res.json()) as { error: { code: string }; data: { ban_applied: boolean } };
+    expect(res.status).toBe(500);
+    const raw = await res.text();
+    const json = JSON.parse(raw) as { error: { code: string; message: string }; data: { ban_applied: boolean } };
     expect(json.error.code).toBe('OP_BAN_FAILED');
     expect(json.data.ban_applied).toBe(false);
+    // #1172: DB の生のエラー文は本文に出さない (固定の文だけ)
+    expect(raw).not.toContain(BAN_DB_ERROR_SENTINEL);
+    expect(json.error.message).toBe('BAN の適用に失敗しました (モデレーション判定自体は保存されています)');
+    // 元のエラーは監査ログ (ban_error) と構造化ログにだけ残る
+    expect(auditInsertPayload(fakeSupabase).details.ban_error).toBe(BAN_DB_ERROR_SENTINEL);
+    expect(mockLoggerError).toHaveBeenCalledTimes(1);
+    expect(mockLoggerError.mock.calls[0][1]).toMatchObject({ message: BAN_DB_ERROR_SENTINEL });
+  });
+
+  it('#1172: BAN 対象の読み取り (user_profiles の select) が失敗したときも、500 の本文に DB の生のエラー文を出さない', async () => {
+    fakeSupabase = createFakeSupabase({
+      moderation_flags: [{ data: banFlagRowWithoutContent(), error: null }, { data: null, error: null }],
+      user_profiles: [{ data: null, error: { message: BAN_DB_ERROR_SENTINEL } }],
+      admin_audit_logs: [{ data: null, error: null }],
+    });
+
+    const res = await POST(postRequest({ action: 'delete_and_temp_ban', ban_duration_days: 7 }), {
+      params: { type: 'food', id: 'flag-1' },
+    });
+
+    expect(res.status).toBe(500);
+    const raw = await res.text();
+    expect(raw).not.toContain(BAN_DB_ERROR_SENTINEL);
+    expect(JSON.parse(raw).error).toEqual({
+      code: 'OP_BAN_FAILED',
+      message: 'BAN の適用に失敗しました (モデレーション判定自体は保存されています)',
+    });
+    expect(auditInsertPayload(fakeSupabase).details.ban_error).toBe(BAN_DB_ERROR_SENTINEL);
+    expect(mockLoggerError).toHaveBeenCalledTimes(1);
+  });
+
+  it('#1172: super_admin を BAN しようとしたときは、こちらが書いた理由の文をそのまま本文に出す (DB の失敗ではないので構造化ログには出さない)', async () => {
+    fakeSupabase = createFakeSupabase({
+      moderation_flags: [{ data: banFlagRowWithoutContent(), error: null }, { data: null, error: null }],
+      user_profiles: [{ data: { id: 'owner-x', roles: ['user', 'super_admin'] }, error: null }],
+      admin_audit_logs: [{ data: null, error: null }],
+    });
+
+    const res = await POST(postRequest({ action: 'delete_and_temp_ban', ban_duration_days: 7 }), {
+      params: { type: 'food', id: 'flag-1' },
+    });
+
+    expect(res.status).toBe(500);
+    const json = (await res.json()) as { error: { code: string; message: string } };
+    expect(json.error).toEqual({ code: 'OP_BAN_FAILED', message: 'super_admin ユーザーを BAN することはできません' });
+    expect(auditInsertPayload(fakeSupabase).details.ban_error).toBe('super_admin ユーザーを BAN することはできません');
+    expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
   it('ban_duration_days なしで delete_and_temp_ban は 400', async () => {

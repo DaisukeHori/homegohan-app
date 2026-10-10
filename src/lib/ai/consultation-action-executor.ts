@@ -28,6 +28,7 @@ import {
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { createLogger } from '@/lib/db-logger';
+import { errorCodeOf, toLoggableError } from '@/lib/api/errors';
 import { PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
 import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
 
@@ -224,6 +225,34 @@ export const AI_SENDING_ACTION_TYPES: ReadonlySet<string> = new Set([
   'generate_week_menu',
   'generate_single_meal',
 ]);
+
+/** 構造化ログ (app_logs) の function_name。アクションの DB 操作の失敗はここに残す */
+const ACTION_EXECUTOR_LOG_NAME = 'lib/ai/consultation-action-executor';
+
+/**
+ * アクションの DB 操作の失敗を構造化ログに残す (#1172)。
+ *
+ * runConsultationAction の result は、そのまま応答の本文に入る
+ * (POST /api/ai/consultation/actions/[actionId]/execute の { result } / messages route の SSE と JSON の actionResult)。
+ * ai_action_logs.result にも保存される。そのため result.error には DB の生のエラー文 (テーブル名・列名・制約名・衝突した値) を入れず、
+ * 固定の文を入れる。元のエラーはここでログにだけ残す。
+ */
+function logActionDbFailure(
+  user: { id: string },
+  action: Pick<ConsultationActionRow, 'id' | 'action_type'>,
+  operation: string,
+  dbError: unknown,
+): void {
+  const errorCode = errorCodeOf(dbError);
+  createLogger(ACTION_EXECUTOR_LOG_NAME)
+    .withUser(user.id)
+    .error('AI 相談のアクションの DB 操作に失敗しました', toLoggableError(dbError), {
+      action_id: action.id,
+      action_type: action.action_type,
+      operation,
+      ...(errorCode ? { error_code: errorCode } : {}),
+    });
+}
 
 export interface ConsultationActionRow {
   id: string;
@@ -566,8 +595,8 @@ export async function runConsultationAction(
         .maybeSingle();
 
       if (mealFetchError) {
-        console.error('Failed to fetch meal for update:', mealFetchError);
-        result = { error: `食事の取得に失敗: ${mealFetchError.message}` };
+        logActionDbFailure(user, action, 'planned_meals.select', mealFetchError);
+        result = { error: '食事の取得に失敗しました' };
         break;
       }
 
@@ -634,8 +663,8 @@ export async function runConsultationAction(
         .single();
 
       if (updateError) {
-        console.error('Failed to update meal:', updateError);
-        result = { error: `更新に失敗: ${updateError.message}` };
+        logActionDbFailure(user, action, 'planned_meals.update', updateError);
+        result = { error: '食事の更新に失敗しました' };
         break;
       }
 
@@ -922,8 +951,8 @@ export async function runConsultationAction(
       success = !insertError;
       result = { itemId: newItem?.id, created: success };
       if (insertError) {
-        console.error('add_pantry_item error:', insertError);
-        result = { error: insertError.message };
+        logActionDbFailure(user, action, 'pantry_items.insert', insertError);
+        result = { error: '冷蔵庫の食材の追加に失敗しました' };
       }
       break;
     }
@@ -965,8 +994,8 @@ export async function runConsultationAction(
       success = !updateError;
       result = { itemId, updated: success };
       if (updateError) {
-        console.error('update_pantry_item error:', updateError);
-        result = { error: updateError.message };
+        logActionDbFailure(user, action, 'pantry_items.update', updateError);
+        result = { error: '冷蔵庫の食材の更新に失敗しました' };
       }
       break;
     }
@@ -997,8 +1026,8 @@ export async function runConsultationAction(
       success = !deleteError;
       result = { itemId, deleted: success };
       if (deleteError) {
-        console.error('delete_pantry_item error:', deleteError);
-        result = { error: deleteError.message };
+        logActionDbFailure(user, action, 'pantry_items.delete', deleteError);
+        result = { error: '冷蔵庫の食材の削除に失敗しました' };
       }
       break;
     }
@@ -1159,8 +1188,8 @@ export async function runConsultationAction(
         .single();
       success = !insertError;
       if (insertError) {
-        console.error('set_health_goal error:', insertError);
-        result = { error: insertError.message };
+        logActionDbFailure(user, action, 'health_goals.insert', insertError);
+        result = { error: '健康目標の保存に失敗しました' };
       } else {
         result = { goalId: newGoal?.id, created: success };
       }
@@ -1281,8 +1310,8 @@ export async function runConsultationAction(
         }, { onConflict: 'user_id,record_date' });
       success = !upsertError;
       if (upsertError) {
-        console.error('add_health_record error:', upsertError);
-        result = { error: upsertError.message };
+        logActionDbFailure(user, action, 'health_records.upsert', upsertError);
+        result = { error: '健康記録の保存に失敗しました' };
       } else {
         // #1048 F2-08: update_health_record 同様、streak・user_profiles も同期する
         await updateHealthStreak(supabase, user.id, recordDate);

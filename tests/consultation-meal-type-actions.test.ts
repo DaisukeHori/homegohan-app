@@ -45,7 +45,10 @@ vi.mock('@/lib/v4-target-slots', () => ({
   ),
 }));
 vi.mock('@/lib/rate-limit', () => ({ checkRateLimit: vi.fn() }));
-vi.mock('@/lib/db-logger', () => ({ createLogger: () => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }) }));
+vi.mock('@/lib/db-logger', () => {
+  const logger = { warn: vi.fn(), error: vi.fn(), info: vi.fn(), withUser: () => logger };
+  return { createLogger: () => logger };
+});
 vi.mock('@/lib/health-streaks', () => ({ updateHealthStreak: vi.fn() }));
 
 import { AI_ALLOWED_MEAL_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';

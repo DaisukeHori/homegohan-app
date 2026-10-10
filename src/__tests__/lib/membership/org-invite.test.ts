@@ -18,12 +18,15 @@ vi.mock('@/lib/membership/invite-throttle', async (importOriginal) => ({
 
 // 構造化ログのモック (DB の上限の超過は createLogger(...).withUser(userId).warn(...) で記録される)
 const mockLogWarn = vi.fn();
-const mockWithUser = vi.fn(() => ({
+const mockLogError = vi.fn();
+const mockWithUser = vi.fn((_userId: string) => ({
   debug: vi.fn(),
   info: vi.fn(),
   warn: mockLogWarn,
-  error: vi.fn(),
+  error: mockLogError,
 }));
+/** orgInviteFailureResponse に渡す構造化ログの文脈 */
+const LOG_CONTEXT = { routeName: 'POST /api/org/invites', userId: 'inviter-user-1172' };
 
 vi.mock('@/lib/db-logger', () => ({
   createLogger: vi.fn(() => ({
@@ -233,7 +236,7 @@ describe('createOrgInviteWithEmail: DB の 24 時間上限 (#1163)', () => {
   it('失敗は orgInviteFailureResponse で Retry-After 付きの 429 になる (POST /api/org/invites と /api/org/members 共通)', async () => {
     mockRpc.mockImplementation(async () => dbRateLimited());
 
-    const res = orgInviteFailureResponse((await create()) as never);
+    const res = orgInviteFailureResponse((await create()) as never, LOG_CONTEXT);
     const json = await res.json();
 
     expect(res.status).toBe(429);
@@ -246,7 +249,13 @@ describe('createOrgInviteWithEmail: DB の 24 時間上限 (#1163)', () => {
 
     const result = await create();
 
-    expect(result).toEqual({ ok: false, status: 409, code: 'SEAT_LIMIT_EXCEEDED', message: 'SEAT_LIMIT_EXCEEDED' });
+    // #1172: message は RPC の生のエラー文ではなく、コードごとの固定の文
+    expect(result).toEqual({
+      ok: false,
+      status: 409,
+      code: 'SEAT_LIMIT_EXCEEDED',
+      message: '組織のライセンス数の上限に達しているため、招待できません',
+    });
     expect(mockLogWarn).not.toHaveBeenCalled();
   });
 });
@@ -287,7 +296,56 @@ describe('createOrgInviteWithEmail: 既存の挙動', () => {
       role: 'member',
     });
 
-    expect(result).toEqual({ ok: false, status: 403, code: 'NOT_ORG_ADMIN', message: 'NOT_ORG_ADMIN' });
+    expect(result).toEqual({
+      ok: false,
+      status: 403,
+      code: 'NOT_ORG_ADMIN',
+      message: '招待できるのは組織のオーナーと管理者だけです',
+    });
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it('#1172: 4xx のコードでも、RPC の生のエラー文 (コード以外の文面) は message に入れない', async () => {
+    const raw = 'ERROR: NOT_ORG_ADMIN (sentinel-org-invite-4xx-1172) CONTEXT: PL/pgSQL function create_org_invite line 14';
+    mockRpc.mockImplementation(async () => ({ data: null, error: { message: raw, code: 'P0001' } }));
+
+    const result = await createOrgInviteWithEmail({
+      supabase: makeSupabase(),
+      inviter,
+      organizationId,
+      email: 'taro@example.com',
+      role: 'member',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      status: 403,
+      code: 'NOT_ORG_ADMIN',
+      message: '招待できるのは組織のオーナーと管理者だけです',
+    });
+    expect(JSON.stringify(result)).not.toContain('sentinel-org-invite-4xx-1172');
+  });
+
+  it('#1172: コードに当たらない RPC のエラー (500) は、固定の文と、元のエラーを internalCause に持たせて返す', async () => {
+    const rpcError = { message: 'relation "organization_invites" does not exist (sentinel-org-invite-500-1172)', code: '42P01' };
+    mockRpc.mockImplementation(async () => ({ data: null, error: rpcError }));
+
+    const result = await createOrgInviteWithEmail({
+      supabase: makeSupabase(),
+      inviter,
+      organizationId,
+      email: 'taro@example.com',
+      role: 'member',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      status: 500,
+      code: 'UNKNOWN',
+      message: '処理中にエラーが発生しました',
+      internalCause: rpcError,
+    });
+    expect((result as { message: string }).message).not.toContain('sentinel-org-invite-500-1172');
     expect(mockSendEmail).not.toHaveBeenCalled();
   });
 
@@ -310,13 +368,16 @@ describe('createOrgInviteWithEmail: 既存の挙動', () => {
 
 describe('orgInviteFailureResponse', () => {
   it('429: Retry-After ヘッダーと error.retryAfter を付ける', async () => {
-    const res = orgInviteFailureResponse({
-      ok: false,
-      status: 429,
-      code: 'RATE_LIMITED',
-      message: '本日の送信上限に達しました。しばらく時間をおいてからお試しください。',
-      retryAfterSec: 3600,
-    });
+    const res = orgInviteFailureResponse(
+      {
+        ok: false,
+        status: 429,
+        code: 'RATE_LIMITED',
+        message: '本日の送信上限に達しました。しばらく時間をおいてからお試しください。',
+        retryAfterSec: 3600,
+      },
+      LOG_CONTEXT,
+    );
     const json = await res.json();
 
     expect(res.status).toBe(429);
@@ -331,12 +392,31 @@ describe('orgInviteFailureResponse', () => {
   });
 
   it('429 以外: 従来どおり { error: { code, message } } だけで、Retry-After は付けない', async () => {
-    const res = orgInviteFailureResponse({ ok: false, status: 403, code: 'NOT_ORG_ADMIN', message: 'NOT_ORG_ADMIN' });
+    const res = orgInviteFailureResponse(
+      { ok: false, status: 403, code: 'NOT_ORG_ADMIN', message: '招待できるのは組織のオーナーと管理者だけです' },
+      LOG_CONTEXT,
+    );
     const json = await res.json();
 
     expect(res.status).toBe(403);
     expect(res.headers.get('Retry-After')).toBeNull();
-    expect(json).toEqual({ error: { code: 'NOT_ORG_ADMIN', message: 'NOT_ORG_ADMIN' } });
+    expect(json).toEqual({ error: { code: 'NOT_ORG_ADMIN', message: '招待できるのは組織のオーナーと管理者だけです' } });
+  });
+
+  it('#1172: internalCause があるときは、汎用の 500 (nested) を返し、元のエラーを構造化ログにだけ残す', async () => {
+    const rpcError = { message: 'sentinel-org-invite-response-1172', code: '42P01' };
+    const res = orgInviteFailureResponse(
+      { ok: false, status: 500, code: 'UNKNOWN', message: '処理中にエラーが発生しました', internalCause: rpcError },
+      LOG_CONTEXT,
+    );
+    const raw = await res.text();
+
+    expect(res.status).toBe(500);
+    expect(raw).not.toContain('sentinel-org-invite-response-1172');
+    expect(JSON.parse(raw)).toEqual({ error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました' } });
+    expect(mockWithUser).toHaveBeenCalledWith(LOG_CONTEXT.userId);
+    expect(mockLogError).toHaveBeenCalledTimes(1);
+    expect((mockLogError.mock.calls[0] as unknown[])[1]).toMatchObject({ message: 'sentinel-org-invite-response-1172' });
   });
 });
 

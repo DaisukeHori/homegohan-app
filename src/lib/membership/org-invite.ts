@@ -12,6 +12,7 @@ import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ZodError } from 'zod';
 import { ErrorStatusMap, MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
+import { INTERNAL_ERROR_MESSAGE, internalError } from '@/lib/api/errors';
 import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure } from '@/lib/emails/send-result';
 import { renderOrgInviteExistingEmail } from '@/lib/emails/membership/org-invite-existing';
@@ -49,10 +50,35 @@ export type CreateOrgInviteFailure = {
   ok: false;
   status: number;
   code: string;
+  /** 利用者に見せてよい文 (こちらが書いた固定の文)。RPC の生のエラー文は入れない (#1172) */
   message: string;
   /** 送信回数の上限 (429) のときだけ付く。何秒後に再試行できるか */
   retryAfterSec?: number;
+  /**
+   * 原因が分からない RPC の失敗 (500) のときだけ付く、RPC が返した元のエラー (#1172)。
+   * orgInviteFailureResponse はこれを構造化ログにだけ残し、本文は汎用の 500 (internalError) にする
+   */
+  internalCause?: unknown;
 };
+
+/** orgInviteFailureResponse が構造化ログに付ける文脈 */
+export interface OrgInviteFailureLogContext {
+  /** 構造化ログの function_name (例: 'POST /api/org/invites') */
+  routeName: string;
+  /** 認証で確定した招待者の user.id (本文には出ない) */
+  userId: string;
+}
+
+/**
+ * create_org_invite RPC が返したエラーコードごとの、利用者に見せる文 (#1172)。
+ * RPC の生のエラー文 (DB のエラー文) は本文に出さない。ここに無い 4xx のコードは ORG_INVITE_FAILED_MESSAGE にする
+ */
+const ORG_INVITE_RPC_ERROR_MESSAGES: Partial<Record<string, string>> = {
+  [MembershipErrorCode.NOT_ORG_ADMIN]: '招待できるのは組織のオーナーと管理者だけです',
+  [MembershipErrorCode.SEAT_LIMIT_EXCEEDED]: '組織のライセンス数の上限に達しているため、招待できません',
+};
+/** 招待を作れなかったときの、コードに合う文が無いときの文 */
+const ORG_INVITE_FAILED_MESSAGE = '招待の作成に失敗しました';
 
 export type CreateOrgInviteResult = { ok: true; invite: OrgInviteSummary } | CreateOrgInviteFailure;
 
@@ -110,11 +136,16 @@ export async function createOrgInviteWithEmail(params: CreateOrgInviteParams): P
         retryAfterSec: dbThrottle.retryAfterSec,
       };
     }
+    // #1172: RPC の生のエラー文は本文に出さない。分かるコードはコードごとの固定の文で返し、
+    // 分からないもの (500) は元のエラーを internalCause に持たせて、orgInviteFailureResponse が汎用の 500 にする
     const { code, status } = mapPgErrorToHttp(rpcError.message);
-    return { ok: false, status, code, message: rpcError.message };
+    if (status >= 500) {
+      return { ok: false, status, code, message: INTERNAL_ERROR_MESSAGE, internalCause: rpcError };
+    }
+    return { ok: false, status, code, message: ORG_INVITE_RPC_ERROR_MESSAGES[code] ?? ORG_INVITE_FAILED_MESSAGE };
   }
   if (!invite) {
-    return { ok: false, status: 500, code: 'RPC_FAILED', message: '招待の作成に失敗しました' };
+    return { ok: false, status: 500, code: 'RPC_FAILED', message: ORG_INVITE_FAILED_MESSAGE };
   }
 
   const inviteRow = invite as InviteRow;
@@ -171,8 +202,12 @@ export async function createOrgInviteWithEmail(params: CreateOrgInviteParams): P
 /**
  * createOrgInviteWithEmail の失敗を HTTP レスポンスにする (POST /api/org/invites と POST /api/org/members で共通)。
  * 送信回数の上限 (429) のときだけ Retry-After ヘッダーと error.retryAfter を付ける。
+ * 原因が分からない RPC の失敗 (internalCause がある) は、元のエラーを構造化ログに残して汎用の 500 を返す (#1172)。
  */
-export function orgInviteFailureResponse(failure: CreateOrgInviteFailure): NextResponse {
+export function orgInviteFailureResponse(failure: CreateOrgInviteFailure, log: OrgInviteFailureLogContext): NextResponse {
+  if (failure.internalCause !== undefined) {
+    return internalError(log.routeName, failure.internalCause, { userId: log.userId }, { shape: 'nested' });
+  }
   const hasRetryAfter = failure.retryAfterSec !== undefined;
   return NextResponse.json(
     {

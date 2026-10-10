@@ -96,7 +96,7 @@ export async function POST(request: Request) {
     displayName: nickname,
   });
   if (!result.ok) {
-    return orgInviteFailureResponse(result);
+    return orgInviteFailureResponse(result, { routeName: 'POST /api/org/members', userId: actor.id });
   }
 
   return NextResponse.json({ ok: true, invite: result.invite }, { status: 201 });

@@ -80,7 +80,7 @@ import {
   resolveModerationItem,
 } from '@/lib/admin/moderation-backend';
 import { notSupportedResponse } from '@/lib/admin/not-supported';
-import { applyUserBan } from '@/lib/admin/user-ban';
+import { applyUserBan, BAN_INTERNAL_ERROR_MESSAGE } from '@/lib/admin/user-ban';
 
 export const dynamic = 'force-dynamic';
 
@@ -420,7 +420,10 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   // BAN を適用する (#1041 round-2 D: 'banned' roles 追加は管理画面に反映されない
   // 偽成功だった)。
   let banApplied: boolean | null = null;
+  /** 監査ログ (ban_error) に残す、BAN できなかった理由。DB の失敗なら元のエラー文 (応答の本文には出さない) */
   let banErrorMessage: string | null = null;
+  /** 応答の本文に出してよい、BAN を断った理由 (こちらが書いた文)。DB の失敗のときは null のまま */
+  let banRuleRejectionMessage: string | null = null;
   let banUnbanAt: string | null = null;
   // #1041 round-3 (W2): BAN を要求したのにコンテンツ所有者が特定できない
   // (削除済み等で null) 場合、従来は黙ってスキップし 200 { ban_applied: null }
@@ -444,8 +447,23 @@ async function handleResolve(request: Request, params: { type: string; id: strin
     banApplied = banResult.success;
     banUnbanAt = banResult.unbanAt;
     if (!banResult.success) {
-      banErrorMessage = banResult.error ?? 'BAN の適用に失敗しました';
-      console.error('[api/admin/moderation/[type]/[id]] BAN failed:', banErrorMessage);
+      if (banResult.kind === 'not_found' || banResult.kind === 'super_admin') {
+        // 対象が見つからない / super_admin は BAN できない。こちらが書いた文なので、そのまま本文にも出す
+        banErrorMessage = banResult.error ?? BAN_INTERNAL_ERROR_MESSAGE;
+        banRuleRejectionMessage = banErrorMessage;
+      } else {
+        // #1172: DB の読み書きの失敗 (kind: 'internal')。元のエラーは構造化ログと監査ログ (ban_error。hide_error / status_error と
+        // 同じ扱い) にだけ残し、応答の本文には固定の文を返す (下の OP_BAN_FAILED)。理由の種類が分からない失敗も、安全側でこちらに倒す
+        const cause = banResult.cause ?? banResult.error;
+        banErrorMessage = describeError(cause);
+        createLogger('POST /api/admin/moderation/[type]/[id]', generateRequestId())
+          .withUser(actor.id)
+          .error('BAN を適用できませんでした', cause, {
+            moderation_type: type,
+            flag_id: id,
+            content_user_id: contentUserId,
+          });
+      }
     }
   }
 
@@ -490,7 +508,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
       {
         error: {
           code: 'OP_BAN_FAILED',
-          message: banErrorMessage ?? 'BAN の適用に失敗しました (モデレーション判定自体は保存されています)',
+          message: banRuleRejectionMessage ?? `${BAN_INTERNAL_ERROR_MESSAGE} (モデレーション判定自体は保存されています)`,
         },
         data: { status: newStatus, ban_applied: false },
       },

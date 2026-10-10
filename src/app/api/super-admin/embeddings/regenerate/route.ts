@@ -13,6 +13,7 @@
  *    持つテーブル) に合わせて修正する。
  *  - Edge Function 未設定 (env 不足) の場合は 503 を返す (安全側の失敗)。
  *  - Edge Function 呼び出しが失敗した場合は 502 を返す (偽成功にしない)。
+ *    #1172: 502 の本文は固定の文 + HTTP ステータスだけ。Edge Function が返した error の文は構造化ログにだけ残す。
  *  - 成功時は Edge Function の実際の処理結果 (processed / hasMore 等) を
  *    そのまま返す。
  */
@@ -20,6 +21,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { internalError } from '@/lib/api/errors';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+
+/** 構造化ログ (app_logs) の function_name */
+const ROUTE_NAME = 'POST /api/super-admin/embeddings/regenerate';
 
 // supabase/functions/regenerate-embeddings/index.ts の TABLE_CONFIGS と一致させる。
 // (embedding 列を実際に持つテーブルのみ。dataset_menu_sets は content_embedding、
@@ -40,7 +45,7 @@ interface EdgeFunctionResult {
 
 export async function POST(request: NextRequest) {
   try {
-    await requireRole(['super_admin']);
+    const actor = await requireRole(['super_admin']);
 
     let body: unknown;
     try {
@@ -97,7 +102,9 @@ export async function POST(request: NextRequest) {
         }),
       });
     } catch (fetchErr) {
-      console.error('[super-admin/embeddings/regenerate] Edge Function fetch failed:', fetchErr);
+      createLogger(ROUTE_NAME, generateRequestId())
+        .withUser(actor.id)
+        .error('埋め込み再生成の Edge Function を呼び出せませんでした', fetchErr, { table });
       return NextResponse.json(
         {
           error: {
@@ -112,12 +119,19 @@ export async function POST(request: NextRequest) {
     const edgeData = (await edgeRes.json().catch(() => ({}))) as EdgeFunctionResult;
 
     if (!edgeRes.ok || edgeData.error) {
-      console.error('[super-admin/embeddings/regenerate] Edge Function returned error:', edgeData.error ?? edgeRes.status);
+      // #1172: Edge Function の error は、DB の取得エラーを包んだ生の文 (`Fetch error: <PostgREST のエラー文>`) のことがある
+      // (supabase/functions/regenerate-embeddings/index.ts)。構造化ログにだけ残し、本文は固定の文 + HTTP ステータスにする
+      createLogger(ROUTE_NAME, generateRequestId())
+        .withUser(actor.id)
+        .error('埋め込み再生成の Edge Function が失敗を返しました', new Error(edgeData.error ?? `HTTP ${edgeRes.status}`), {
+          table,
+          edge_status: edgeRes.status,
+        });
       return NextResponse.json(
         {
           error: {
             code: 'OP_EMBEDDING_JOB_FAILED',
-            message: edgeData.error ?? `埋め込み再生成ジョブが失敗しました (HTTP ${edgeRes.status})`,
+            message: `埋め込み再生成ジョブが失敗しました (HTTP ${edgeRes.status})`,
           },
         },
         { status: 502 },
@@ -142,6 +156,6 @@ export async function POST(request: NextRequest) {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    return internalError('POST /api/super-admin/embeddings/regenerate', err, {}, { shape: 'nested' });
+    return internalError(ROUTE_NAME, err, {}, { shape: 'nested' });
   }
 }

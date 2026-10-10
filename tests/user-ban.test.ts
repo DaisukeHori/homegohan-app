@@ -11,9 +11,10 @@
  *  - permanent BAN は unbanAt が null であること
  *  - DB エラー時は success:false を返すこと (例外にせず、呼び出し側で
  *    success:true を返させないための contract)
+ *  - #1172: DB エラー時の error は固定の文 (kind: 'internal')。DB の生のエラー文は cause にだけ入る
  */
 import { describe, expect, it, vi } from 'vitest';
-import { applyUserBan } from '@/lib/admin/user-ban';
+import { applyUserBan, BAN_INTERNAL_ERROR_MESSAGE } from '@/lib/admin/user-ban';
 
 interface FakeProfile {
   id: string;
@@ -112,6 +113,9 @@ describe('applyUserBan (#1041 round-2 D)', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/super_admin/);
+    // こちらで決めた規則で断ったもの (DB の失敗ではない)。cause は付かない
+    expect(result.kind).toBe('super_admin');
+    expect(result.cause).toBeUndefined();
     expect(supabase.updateCalls).toHaveLength(0);
   });
 
@@ -126,6 +130,8 @@ describe('applyUserBan (#1041 round-2 D)', () => {
     });
 
     expect(result.success).toBe(false);
+    expect(result.kind).toBe('not_found');
+    expect(result.error).toBe('BAN 対象ユーザーが見つかりません');
     expect(supabase.updateCalls).toHaveLength(0);
   });
 
@@ -143,7 +149,11 @@ describe('applyUserBan (#1041 round-2 D)', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe('connection reset');
+    // #1172: error は固定の文 (呼び出し側が応答の本文に入れても DB の生のエラー文が漏れない)。元のエラーは cause にだけ入る
+    expect(result.error).toBe(BAN_INTERNAL_ERROR_MESSAGE);
+    expect(result.error).not.toContain('connection reset');
+    expect(result.kind).toBe('internal');
+    expect(result.cause).toEqual({ message: 'connection reset' });
   });
 
   it('frozen_at 更新エラー時は例外にせず success:false を返す (呼び出し側が success:true を返さないための contract)', async () => {
@@ -161,6 +171,10 @@ describe('applyUserBan (#1041 round-2 D)', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe('update failed');
+    // #1172: error は固定の文。元のエラーは cause にだけ入る
+    expect(result.error).toBe(BAN_INTERNAL_ERROR_MESSAGE);
+    expect(result.error).not.toContain('update failed');
+    expect(result.kind).toBe('internal');
+    expect(result.cause).toEqual({ message: 'update failed' });
   });
 });

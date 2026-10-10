@@ -28,6 +28,9 @@
  *       (`const { error } = await supabase...` / `const { error: rpcError } = await ...`) に限る
  *     - 上のどれかを入れた変数 (`const message = error instanceof Error ? error.message : '...'` のあと `{ error: message }`)。
  *       同じ関数の中で、本文より前に宣言された const / let を最大 3 段までたどる。`const { message } = error` も同じ
+ *     - 外 (Edge Function・外部 API) の応答の JSON の `error` (`const edgeData = await edgeRes.json(); { message: edgeData.error }`)。
+ *       Edge Function は DB のエラー文を包んで返すことがある (regenerate-embeddings の `Fetch error: <PostgREST のエラー文>`)。
+ *       利用者の要求の本文 (`await request.json()` / `await req.json()`) は数えない
  *   「エラー」の判定は名前で行う: `e` / `err` / `error` / `exception` / `ex`、または `Error` / `Err` で終わる名前
  *   (`insertError` / `rpcError` / `uploadError`)、または `.error` / `.xxxError` のプロパティ (`result.error` / `parsed.error`)。
  *
@@ -42,6 +45,8 @@
  * 見ないもの (検出できない書き方。レビューで見る):
  *   別の関数に message を渡して、その中で JSON にする / 後から代入する `let message; message = error.message` /
  *   エラーらしくない名前の変数 (`catch (reason)` の外で `const reason = ...` など) / DB に保存した文面をあとで返す。
+ *   src/lib のヘルパーが結果に入れて返す文 (route は `result.error` をそのまま本文に入れる) は、
+ *   tests/lib-raw-error-message-scan.test.ts が src/lib の側で見る (ヘルパーが DB の生のエラー文を結果に入れていたら失敗する)。
  *
  * 直し方: route では `return internalError('GET /api/xxx', error, { userId: user.id })`
  *   (src/lib/api/errors.ts)。本文は汎用メッセージだけになり、元のエラーは構造化ログ (app_logs) に残る。
@@ -75,6 +80,10 @@ const RAW_TEXT_PROPERTIES = new Set(['message', 'details', 'hint']);
 const STREAM_WRITE_METHODS = new Set(['enqueue', 'write']);
 /** 変数をたどる段数の上限 (const a = e.message; const b = a; ... の連鎖) */
 const MAX_RESOLVE_DEPTH = 3;
+/** 外の応答の JSON のうち、相手が書いたエラー文が入るプロパティ */
+const UPSTREAM_ERROR_PROPERTY = 'error';
+/** 利用者からの要求 (route の引数) の名前。`await request.json()` は外の応答ではない */
+const OWN_REQUEST_NAMES = new Set(['request', 'req']);
 
 /** 括弧・非 null アサーション・型アサーションを外す */
 function unwrap(expr: ts.Expression): ts.Expression {
@@ -275,6 +284,32 @@ function isStringifiedArgument(node: ts.Expression): ts.CallExpression | undefin
   return undefined;
 }
 
+/** 式の中に、外の応答の本文を読む `x.json()` (引数なし。利用者の要求・NextResponse / Response を除く) があるか */
+function containsUpstreamJsonCall(node: ts.Node): boolean {
+  if (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === 'json' &&
+    node.arguments.length === 0
+  ) {
+    const receiver = unwrap(node.expression.expression);
+    const isOwnRequestOrResponseClass =
+      ts.isIdentifier(receiver) && (OWN_REQUEST_NAMES.has(receiver.text) || JSON_RESPONSE_OBJECTS.has(receiver.text));
+    if (!isOwnRequestOrResponseClass) return true;
+  }
+  if (ts.isFunctionLike(node)) return false;
+  return ts.forEachChild(node, (child) => (containsUpstreamJsonCall(child) ? true : undefined)) ?? false;
+}
+
+/** `edgeData.error` の edgeData のように、外の応答の JSON を入れた変数か (`const edgeData = await edgeRes.json()`) */
+function isUpstreamJsonValue(expr: ts.Expression): boolean {
+  const inner = unwrap(expr);
+  if (!ts.isIdentifier(inner)) return false;
+  const declaration = findDeclaration(inner);
+  if (!declaration?.initializer || declaration.bindingProperty !== undefined) return false;
+  return containsUpstreamJsonCall(declaration.initializer);
+}
+
 /** 本文の中で見つかったエラー由来の値 */
 interface RawSource {
   /** エラーの式 (`error` / `result.error`) */
@@ -321,6 +356,16 @@ function rawSourcesOf(root: ts.Node, depth = 0): RawSource[] {
     }
     if (ts.isPropertyAccessExpression(node) && isErrorLike(node) && isStringifiedArgument(node)) {
       // String(result.error) / JSON.stringify(insertError)
+      sources.push({ base: node });
+      return;
+    }
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      node.name.text === UPSTREAM_ERROR_PROPERTY &&
+      isUpstreamJsonValue(node.expression) &&
+      isEmittedAsValue(node)
+    ) {
+      // 外の応答の JSON の error (`{ message: edgeData.error ?? '...' }`)。相手が書いた文で、DB のエラー文を包んでいることがある
       sources.push({ base: node });
       return;
     }
@@ -708,6 +753,31 @@ describe('API の応答の本文に生のエラー文を入れない (#1172): �
 
     it.each([
       [
+        'Edge Function の応答の error ?? 既定値 を 502 で返す',
+        `
+          const edgeData = (await edgeRes.json().catch(() => ({}))) as EdgeFunctionResult;
+          if (!edgeRes.ok || edgeData.error) {
+            return NextResponse.json({ error: { code: 'X', message: edgeData.error ?? 'failed' } }, { status: 502 });
+          }`,
+      ],
+      [
+        '外部 API の応答の error をそのまま返す',
+        `
+          const payload = await upstream.json();
+          return NextResponse.json({ ok: false, error: payload.error });`,
+      ],
+      [
+        '外の応答の error は 4xx でも検出する (相手が書いた文で、こちらの固定の文ではない)',
+        `
+          const json = await res.json();
+          return NextResponse.json({ error: json.error }, { status: 400 });`,
+      ],
+    ])('外の応答の JSON の error: %s', (_label, source) => {
+      expect(count(source)).toBe(1);
+    });
+
+    it.each([
+      [
         'SSE: controller.enqueue に流す JSON.stringify({ error: error.message })',
         'controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: error.message })}\\n\\n`));',
       ],
@@ -810,6 +880,23 @@ describe('API の応答の本文に生のエラー文を入れない (#1172): �
       [
         'SSE に固定の文を流す',
         "controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE })}\\n\\n`));",
+      ],
+      [
+        '外の応答の error を条件とログにだけ使い、本文は固定の文',
+        `
+          const edgeData = await edgeRes.json();
+          if (edgeData.error) {
+            logger.error('failed', new Error(edgeData.error));
+            return NextResponse.json({ error: { code: 'X', message: \`失敗しました (HTTP \${edgeRes.status})\` } }, { status: 502 });
+          }`,
+      ],
+      [
+        '外の応答の error 以外の値 (成功の message) を返す',
+        `const edgeData = await edgeRes.json(); return NextResponse.json({ ok: true, message: edgeData.message ?? '完了' });`,
+      ],
+      [
+        '利用者の要求の本文 (await request.json()) の error',
+        `const body = await request.json(); return NextResponse.json({ echo: body.error }, { status: 400 });`,
       ],
     ])('%s', (_label, source) => {
       expect(count(source)).toBe(0);

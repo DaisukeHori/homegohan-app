@@ -359,6 +359,38 @@ describe('POST /api/org/members: 既存の挙動 (退行確認)', () => {
 
     expect(res.status).toBe(409);
     expect(json.error.code).toBe('SEAT_LIMIT_EXCEEDED');
+    // #1172: 本文の文は RPC の生のエラー文ではなく、コードごとの固定の文
+    expect(json.error.message).toBe('組織のライセンス数の上限に達しているため、招待できません');
     expect(res.headers.get('Retry-After')).toBeNull();
+  });
+});
+
+describe('POST /api/org/members: RPC の生のエラー文を本文に出さない (#1172)', () => {
+  const SENTINEL = 'permission denied for table organization_invites (sentinel-org-members-route-1172)';
+
+  it('コードに当たらない RPC のエラー: 汎用の 500 (nested) を返し、元のエラーは構造化ログにだけ残す', async () => {
+    mockRpc.mockImplementation(async () => ({ data: null, error: { message: SENTINEL, code: '42501' } }));
+
+    const res = await POST(postRequest({ email: inviteeEmail }));
+    const raw = await res.text();
+
+    expect(res.status).toBe(500);
+    expect(raw).not.toContain(SENTINEL);
+    expect(JSON.parse(raw)).toEqual({ error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました' } });
+    expect(mockLogError).toHaveBeenCalledTimes(1);
+    expect((mockLogError.mock.calls[0] as unknown[])[1]).toMatchObject({ message: SENTINEL });
+  });
+
+  it('コードに当たる RPC のエラー (4xx) でも、エラー文のコード以外の部分は本文に出さない', async () => {
+    mockRpc.mockImplementation(async () => ({ data: null, error: { message: `NOT_ORG_ADMIN ${SENTINEL}`, code: 'P0001' } }));
+
+    const res = await POST(postRequest({ email: inviteeEmail }));
+    const raw = await res.text();
+
+    expect(res.status).toBe(403);
+    expect(raw).not.toContain(SENTINEL);
+    expect(JSON.parse(raw)).toEqual({
+      error: { code: 'NOT_ORG_ADMIN', message: '招待できるのは組織のオーナーと管理者だけです' },
+    });
   });
 });
