@@ -16,12 +16,22 @@
  * 集計が黙って切り詰められた。関数は SECURITY INVOKER なので、行レベルセキュリティ (RLS) は
  * これまでどおりログインユーザーの権限で効く (誰が何を見られるかは変えていない)。
  * レスポンスの形と、平均・NPS スコア・回答率の丸めは以前と同じ (src/lib/admin/nps-summary.ts)。
+ *
+ * #1433: 期間 (from / to。画面の日付の入力。どちらの日も含む) は JST の暦日で絞る。sent_at / created_at は timestamptz なので、
+ * 日付の文字列をそのまま渡すと DB は UTC の 0 時 (= JST 9 時) と読み、開始日の JST 0:00〜8:59 の行が落ち、
+ * 終了日は JST 9:00 で打ち切られてその日のほとんどが落ちていた。
+ *   - 直近の一覧 (自分で組み立てる問い合わせ): 開始日の JST 0 時以上 (.gte)、終了日の翌日の JST 0 時未満 (.lt)
+ *   - 集計 (DB の関数。条件は両端を含む `>= p_from AND <= p_to`): p_from に開始日の JST 0 時、
+ *     p_to に終了日の最後の瞬間 (翌日の JST 0 時の 1 マイクロ秒前) を渡す。timestamptz の精度は 1 マイクロ秒なので、
+ *     一覧の .lt と同じ行を選ぶ (関数は変えない。migration は無い)
+ * 存在しない日付・時刻つきの値は 400 (DB に問い合わせない)。空文字は今までどおり「指定なし」。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { NpsQuerySchema } from '@/lib/admin/finance-schemas';
+import { jstDayEndInclusiveTimestamp, jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
 import {
   CsatSummaryRowSchema,
   NpsSummaryRowSchema,
@@ -44,16 +54,31 @@ export async function GET(request: NextRequest) {
     const supabase = await createClient();
 
     const { searchParams } = new URL(request.url);
-    const query = NpsQuerySchema.parse({
+    const parsed = NpsQuerySchema.safeParse({
       from: searchParams.get('from') ?? undefined,
       to: searchParams.get('to') ?? undefined,
       plan_key: searchParams.get('plan_key') ?? undefined,
     });
+    // 存在しない日付・時刻つきの値などは 400。JST 0 時の時刻に直す前に入口で弾く (DB には問い合わせない) (#1433)
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: { code: 'VALIDATION_ERROR', message: '入力値が不正です', details: parsed.error.flatten() } },
+        { status: 400 },
+      );
+    }
+    const query = parsed.data;
 
-    // 空文字は「指定なし」として扱う (以前の `if (query.from)` と同じ)。DB の関数には NULL (= 絞らない) で渡す
-    const from = query.from || null;
-    const to = query.to || null;
+    // 空文字は「指定なし」として扱う (以前の `if (query.from)` と同じ。from / to はスキーマが undefined にする)。
+    // DB の関数には NULL (= 絞らない) で渡す
+    const from = query.from ?? null;
+    const to = query.to ?? null;
     const planKey = query.plan_key || null;
+
+    // 期間を JST の暦日の時刻にする (#1433): 開始日の JST 0 時 (以上)・終了日の翌日の JST 0 時 (未満)
+    const { fromTimestamp, toTimestampExclusive } = jstOptionalDayRangeTimestamps(query.from, query.to);
+    // 集計の関数は両端を含む (`<= p_to`) ので、終了日の最後の瞬間 (翌日の JST 0 時の 1 マイクロ秒前) を渡す
+    const rpcFrom = fromTimestamp ?? null;
+    const rpcTo = query.to === undefined ? null : jstDayEndInclusiveTimestamp(query.to);
 
     // 直近の一覧。期間・プランの絞り込みは集計 (関数) と同じ条件にし、新しい順に RECENT_LIMIT 件だけ取る
     // NPS: 期間は送信日 (sent_at)。回答済み (responded_at あり) だけ。並びは回答日の新しい順
@@ -61,22 +86,22 @@ export async function GET(request: NextRequest) {
       .from('nps_surveys')
       .select('id, score, comment, plan_key, responded_at')
       .not('responded_at', 'is', null);
-    if (from) npsRecent = npsRecent.gte('sent_at', from);
-    if (to) npsRecent = npsRecent.lte('sent_at', to);
+    if (fromTimestamp) npsRecent = npsRecent.gte('sent_at', fromTimestamp);
+    if (toTimestampExclusive) npsRecent = npsRecent.lt('sent_at', toTimestampExclusive);
     if (planKey) npsRecent = npsRecent.eq('plan_key', planKey);
 
     // CSAT: 期間は作成日 (created_at)。プランの列は無い
     let csatRecent = supabase
       .from('csat_feedbacks')
       .select('id, score, comment, ticket_id, created_at');
-    if (from) csatRecent = csatRecent.gte('created_at', from);
-    if (to) csatRecent = csatRecent.lte('created_at', to);
+    if (fromTimestamp) csatRecent = csatRecent.gte('created_at', fromTimestamp);
+    if (toTimestampExclusive) csatRecent = csatRecent.lt('created_at', toTimestampExclusive);
 
     // 4 つの問い合わせは互いに独立なので並列に流す
     const [npsSummaryRes, npsRecentRes, csatSummaryRes, csatRecentRes] = await Promise.all([
-      supabase.rpc('get_nps_summary', { p_from: from, p_to: to, p_plan_key: planKey }),
+      supabase.rpc('get_nps_summary', { p_from: rpcFrom, p_to: rpcTo, p_plan_key: planKey }),
       npsRecent.order('responded_at', { ascending: false }).limit(RECENT_LIMIT),
-      supabase.rpc('get_csat_summary', { p_from: from, p_to: to }),
+      supabase.rpc('get_csat_summary', { p_from: rpcFrom, p_to: rpcTo }),
       csatRecent.order('created_at', { ascending: false }).limit(RECENT_LIMIT),
     ]);
 

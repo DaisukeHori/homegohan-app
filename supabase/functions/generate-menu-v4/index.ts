@@ -107,6 +107,7 @@ import {
   type TargetSlot as SharedTargetSlot,
 } from "../_shared/save-meal.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
+import { addDaysToDate, monthJst, todayJst } from "../_shared/jst-date.ts";
 import { aiConsentDeniedResponse, checkAiConsent, invokeMenuContinuation } from "../_shared/ai-consent-guard.ts";
 import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
 
@@ -137,14 +138,15 @@ function shouldEmitProgressUpdate(processedCount: number, totalCount: number, in
   return processedCount === 1 || processedCount === totalCount || processedCount % interval === 0;
 }
 
+// 日付の計算は JST の暦日で行う (#1433)。Edge Function の時計は UTC なので、
+// new Date().toISOString().slice(0, 10) だと JST 0:00〜8:59 に「今日」が前日になり、
+// 賞味期限の判定 (pantry_items.expiration_date >= 今日) と過去の献立の判定 (isPast) が 1 日ずれていた。
 function addDays(dateStr: string, days: number): string {
-  const date = new Date(dateStr);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
+  return addDaysToDate(dateStr, days);
 }
 
 function getTodayStr(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayJst();
 }
 
 // =========================================================
@@ -1016,7 +1018,7 @@ async function executeStep1_Generate(
 
   const seasonalContext: SeasonalContext =
     (generatedData.seasonalContext ?? body?.seasonalContext) ??
-    { month: new Date().getMonth() + 1, seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
+    { month: monthJst(), seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
 
   let existingMenus: ExistingMenuContext[] = (generatedData.existingMenus ?? body?.existingMenus ?? []) as any[];
   let fridgeItems: FridgeItemContext[] = (generatedData.fridgeItems ?? body?.fridgeItems ?? []) as any[];
@@ -1519,7 +1521,7 @@ async function executeStep2_Review(
   const fridgeItems: FridgeItemContext[] = (generatedData.fridgeItems ?? []) as any[];
   const seasonalContext: SeasonalContext =
     generatedData.seasonalContext ??
-    { month: new Date().getMonth() + 1, seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
+    { month: monthJst(), seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
   const userProfile = generatedData.userProfile ?? {};
   const constraints = generatedData.constraints ?? {};
   const note: string | null = generatedData.note ?? null;
@@ -2351,7 +2353,7 @@ async function executeStep5_RegenerateWithAdvice(
 
   const existingMenus = generatedData.existingMenus ?? [];
   const fridgeItems = generatedData.fridgeItems ?? [];
-  const seasonalContext = generatedData.seasonalContext ?? { month: new Date().getMonth() + 1, seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
+  const seasonalContext = generatedData.seasonalContext ?? { month: monthJst(), seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
   const userProfile = generatedData.userProfile ?? {};
   const constraints = generatedData.constraints ?? {};
   const note = generatedData.note ?? null;
