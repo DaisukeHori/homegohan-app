@@ -12,7 +12,7 @@
  *     AI_QUOTA_EXEMPT (数えない。理由つき) / AI_QUEUE_ROUTES (キューに積むだけ。積む時点で数える)
  *   - 数えるライブラリ: NON_ROUTE_CALLERS
  *   - Edge Functions: EDGE_FUNCTIONS (user-jwt = 数える / service-ai = 数えない。呼び出し元つき / no-ai)
- *   - 定期実行: CRON_ENTRYPOINTS (vercel.json の crons と、migration の pg_cron が呼ぶ Edge Function)
+ *   - 定期実行: CRON_ENTRYPOINTS (vercel.json の crons と、migration の pg_cron / pg_net が呼ぶ Edge Function)
  *   - どの route からも届かない AI のファイル: AI_SINK_FILES_NOT_REACHED_BY_ROUTES
  *
  * 【Next.js】
@@ -23,12 +23,14 @@
  *   5. consumeAiQuota を呼ぶ場所の全数 = 数える route と決めたライブラリ (数える場所が散らばって二重に数えない)
  *   6. Edge Function をユーザーの JWT で呼ぶ処理の全数は一覧どおりで、どれも数え済みの印 (aiQuotaCountedHeaders) を付ける
  * 【Edge Functions】
- *   7. Edge Function の全数・AI に届く関数の全数・ユーザーの JWT を確かめる関数の全数が、EDGE_FUNCTIONS と一致する
+ *   7. Edge Function の全数・AI に届く関数の全数・ユーザーの JWT を確かめる関数の全数が、EDGE_FUNCTIONS と一致する。
+ *      数えない関数 (service-ai) は service role でしか呼べない (ユーザーの JWT で直接呼んで、数えずに AI を使えない)
  *   8. ユーザーの JWT を確かめる関数は、JWT を確かめた経路でだけ数える (service role / cron の経路では数えない)。
  *      AI へ送る直前で数えるため、service role の経路と合流する関数は、確かめたブロックで directJwtUserId に代入し、
  *      あとで if (directJwtUserId) の中で数える
  * 【定期実行】
- *   9. 定期実行の入口の全数が CRON_ENTRYPOINTS と一致し、どれも数えない
+ *   9. 定期実行の入口の全数が CRON_ENTRYPOINTS と一致し、どれも数えない。DB の関数が名前を連結して
+ *      Edge Function を呼ぶ入口 (pg_net) も含め、呼び得る関数を migration の許可リストと突き合わせる
  * 【定義】
  *  10. 機能名は DB の CHECK (migration) と同じ形式。すべての機能がどこかで使われている
  *
@@ -1023,6 +1025,40 @@ describe('AI 利用回数の記録 (#1177): Edge Functions', () => {
       const features = sortedUnique(a!.consumeCalls.map((c) => c.feature as string));
       expect(features, `${name} の機能が一覧と違う`).toEqual([...expectedFeatures].sort());
     });
+  });
+
+  it('service-ai の関数は、service role (または cron のシークレット) でしか呼べない (ユーザーの JWT で直接呼んで、数えずに AI を使えない)', () => {
+    // 認証の書き方: 共通の requireServiceRole(req)、または service role key との完全一致の比較
+    const SERVICE_ONLY_GUARD = /requireServiceRole\(|[!=]==\s*(?:SERVICE_ROLE_KEY|SUPABASE_SERVICE_KEY|SUPABASE_SERVICE_ROLE_KEY)\b/;
+    const unguarded: string[] = [];
+    for (const [name, entry] of Object.entries(EDGE_FUNCTIONS)) {
+      if (entry.kind !== 'service-ai') continue;
+      // index.ts から相対 import でたどれるファイル (共通の取り込み処理 _shared/catalog/import-runner.ts など) のどこかにあればよい
+      const seen = new Set<string>();
+      const stack = [`${EDGE_ROOT}/${name}/index.ts`];
+      let guarded = false;
+      while (stack.length > 0 && !guarded) {
+        const file = stack.pop()!;
+        if (seen.has(file)) continue;
+        seen.add(file);
+        const full = path.join(ROOT, file);
+        if (!fs.existsSync(full) || !fs.statSync(full).isFile()) continue;
+        const source = fs.readFileSync(full, 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+        if (SERVICE_ONLY_GUARD.test(source)) guarded = true;
+        for (const specifier of edgeFileAnalysis(file)?.imports ?? []) {
+          if (specifier.startsWith('.') && !specifier.endsWith('/auth.ts')) {
+            stack.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)));
+          }
+        }
+      }
+      if (!guarded) unguarded.push(name);
+    }
+    expect(
+      unguarded,
+      'service-ai の関数が service role の確認をしていない (ユーザーが直接呼ぶと、利用回数を数えずに AI を使えてしまう)。' +
+        'requireServiceRole を使うか、ユーザーの JWT で呼べるなら user-jwt にして consumeEdgeAiQuota で数えること: ' +
+        unguarded.join(', '),
+    ).toEqual([]);
   });
 
   it('JWT を確かめない (service role / cron 専用の) Edge Function は、consumeEdgeAiQuota を呼ばない', () => {
