@@ -3,6 +3,7 @@
  * operator/02-api-spec.md §9, §20 準拠
  */
 import { z } from 'zod';
+import { OptionalCalendarDateSchema } from '@/lib/calendar-date-schema';
 import { REFUND_AMOUNT_MAX, REFUND_REASON_MAX_LENGTH } from './refund';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -153,8 +154,10 @@ export const CsatSummarySchema = z.object({
 export type CsatSummary = z.infer<typeof CsatSummarySchema>;
 
 export const NpsQuerySchema = z.object({
-  from: z.string().optional(),
-  to: z.string().optional(),
+  // 期間の開始日・終了日 (どちらの日も含む。JST の暦日)。画面 (admin/finance/nps) の日付の入力。
+  // 空文字は「指定なし」。存在しない日付・時刻つきの値は 400 (#1433。route が JST 0 時の時刻に直して絞る)
+  from: OptionalCalendarDateSchema,
+  to: OptionalCalendarDateSchema,
   plan_key: z.string().optional(),
 });
 
@@ -166,8 +169,10 @@ export type NpsQuery = z.infer<typeof NpsQuerySchema>;
 
 export const ExportRequestSchema = z.object({
   export_type: z.enum(['revenue', 'invoices', 'subscriptions', 'nps']),
-  from: z.string().optional(),
-  to: z.string().optional(),
+  // 期間の開始日・終了日 (どちらの日も含む。JST の暦日)。画面 (admin/finance/exports) の日付の入力。
+  // 空文字は「指定なし」。存在しない日付・時刻つきの値は 400 (#1433。route が timestamptz の列は JST 0 時の時刻に直して絞る)
+  from: OptionalCalendarDateSchema,
+  to: OptionalCalendarDateSchema,
   format: z.literal('csv').default('csv'),
 });
 

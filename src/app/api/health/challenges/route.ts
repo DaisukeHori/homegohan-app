@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { challengePeriod } from '@/lib/jst-day-ranges';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 
@@ -59,9 +60,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid template' }, { status: 400 });
   }
 
-  const startDate = new Date();
-  const endDate = new Date();
-  endDate.setDate(endDate.getDate() + template.duration_days);
+  // 開始日は JST の今日、終了日はその duration_days 日後 (#1433)
+  const { startDate, endDate } = challengePeriod(template.duration_days);
 
   const { data, error } = await supabase
     .from('health_challenges')
@@ -70,8 +70,8 @@ export async function POST(request: NextRequest) {
       challenge_type: template.type,
       title: template.title,
       description: template.description,
-      start_date: startDate.toISOString().split('T')[0],
-      end_date: endDate.toISOString().split('T')[0],
+      start_date: startDate,
+      end_date: endDate,
       target_metric: template.metric,
       target_value: custom_target || template.default_target,
       target_unit: template.unit,

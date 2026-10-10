@@ -7,6 +7,8 @@
 // 直接関数呼び出しする（self-fetch を撤廃）。
 
 import type { TargetSlot } from '@/types/domain';
+import { addDaysToDate } from '@/lib/date-utils';
+import { isCalendarDate } from '@/lib/jst-day-ranges';
 import {
   RECORD_DATE_PATTERN,
   sanitizeHealthGoalCreate,
@@ -33,6 +35,9 @@ import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
 
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
+
+/** generate_week_menu で作る日数 (startDate から 1 週間) */
+const WEEK_MENU_DAYS = 7;
 
 // #1048 F2-23 / #1103: AI 生成アクション (generate_single_meal) が扱う meal_type。
 // 朝食・昼食・夕食・おやつ・夜食 (midnight_snack) の 5 値。UI・献立生成の Edge Function
@@ -348,14 +353,17 @@ export async function runConsultationAction(
         result = { error: 'startDate は必須です' };
         break;
       }
+      // 日付は暦の計算 (addDaysToDate) でずらすので、YYYY-MM-DD の実在する日付だけを受け付ける (#1433)
+      if (typeof startDate !== 'string' || !isCalendarDate(startDate)) {
+        result = { error: 'startDate must be in YYYY-MM-DD format' };
+        break;
+      }
 
-      // 1週間分のスロットを生成
+      // 1週間分のスロットを生成 (日付は暦の計算で進める。#1433。以前の new Date(startDate) + setDate (ローカル時刻)
+      // + toISOString (UTC) は、実行環境のタイムゾーンで結果が変わった)
       const baseTargetSlots: TargetSlot[] = [];
-      const start = new Date(startDate);
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(start);
-        d.setDate(start.getDate() + i);
-        const dateStr = d.toISOString().split('T')[0];
+      for (let i = 0; i < WEEK_MENU_DAYS; i++) {
+        const dateStr = addDaysToDate(startDate, i);
         baseTargetSlots.push({ date: dateStr, mealType: 'breakfast' });
         baseTargetSlots.push({ date: dateStr, mealType: 'lunch' });
         baseTargetSlots.push({ date: dateStr, mealType: 'dinner' });

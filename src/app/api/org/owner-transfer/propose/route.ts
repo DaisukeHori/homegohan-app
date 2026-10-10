@@ -1,5 +1,6 @@
 // POST /api/org/owner-transfer/propose
 import { createClient } from '@/lib/supabase/server';
+import { formatLocalDate } from '@/lib/date-utils';
 import { NextResponse } from 'next/server';
 import { getSupabaseUrl } from '@/lib/env-required';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
@@ -13,6 +14,11 @@ import {
   inviteThrottleResponse,
 } from '@/lib/membership/invite-throttle';
 import { z } from 'zod';
+
+/** メールに書く有効期限 (提案から何日後か)。以前と同じ 7 日 */
+const OWNER_TRANSFER_EMAIL_EXPIRY_DAYS = 7;
+/** 1 日のミリ秒 */
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const BodySchema = z.object({
   organization_id: z.string().uuid(),
@@ -128,7 +134,8 @@ export async function POST(request: Request) {
           from_name: fromName,
           org_name: orgData?.name ?? '組織',
           accept_url: acceptUrl,
-          expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
+          // メールに書く有効期限の日付は JST の暦日 (#1433。UTC の暦日だと JST 0:00〜8:59 の提案で 1 日前の日付になる)
+          expires_at: formatLocalDate(new Date(Date.now() + OWNER_TRANSFER_EMAIL_EXPIRY_DAYS * MS_PER_DAY)),
           reason: body.reason,
         });
         const sent = await sendEmail(envelope);

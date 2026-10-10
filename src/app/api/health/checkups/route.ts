@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { jstToday } from '@/lib/jst-day-ranges';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { sanitizeHealthCheckupPayload } from '@/lib/health-payloads';
@@ -291,7 +292,8 @@ LDL: ${c.ldl_cholesterol ?? '-'} mg/dL
     .from('health_checkup_longitudinal_reviews')
     .upsert({
       user_id: userId,
-      review_date: new Date().toISOString().split('T')[0],
+      // レビューの日付は JST の今日 (#1433)
+      review_date: jstToday(),
       checkup_ids: checkupIds,
       trend_analysis: {
         overallAssessment: reviewData.overallAssessment,

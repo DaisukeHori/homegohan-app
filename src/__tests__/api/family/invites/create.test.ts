@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EmailSendError } from '@/lib/emails/send-result';
 import type { RateLimitCategory, RateLimitResult } from '@/lib/rate-limit';
+import { TEST_TIME_ZONES, withTimeZoneAsync } from '../../../../../tests/helpers/time-zones';
 
 // POST /api/family/invites の招待メール送信回数制限 (#1163)
 
@@ -505,6 +506,65 @@ describe('POST /api/family/invites: 既存の挙動 (退行確認)', () => {
 
     expect(res.status).toBe(201);
     expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+// #1433: 招待メールの「このリンクは YYYY-MM-DD まで有効です」の日付は、期限の時刻 (expires_at。timestamptz) が属する JST の暦日。
+// 以前は expires_at.slice(0, 10) (UTC の暦日) で、期限が JST 0:00〜8:59 のとき 1 日早い日付を書いていた
+// (例: JST 10/10 05:00 に作った 7 日間の招待は JST 10/17 05:00 まで有効なのに、メールには 10/16 と書いた)。
+describe('POST /api/family/invites: 招待メールの期限の日付は JST の暦日 (#1433)', () => {
+  /** 送った招待メールの本文 (text) */
+  const sentText = () => {
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    return String((mockSendEmail.mock.calls[0][0] as { text: string }).text);
+  };
+
+  const withExpiresAt = (expiresAt: string) => {
+    mockRpc.mockImplementation(async (fn: string) => {
+      if (fn === 'create_family_invite') return { data: { ...inviteRow, expires_at: expiresAt }, error: null };
+      if (fn === 'get_invite_details') return { data: { is_existing_user: false, invitee_display_name: null }, error: null };
+      throw new Error(`unexpected rpc: ${fn}`);
+    });
+  };
+
+  it.each([
+    // [期限の時刻 (PostgREST が返す timestamptz の形), メールに書く日付, 以前の slice(0, 10)]
+    ['2026-10-16T15:00:00+00:00', '2026-10-17', '2026-10-16'], // JST 10/17 0:00 ちょうど
+    ['2026-10-16T23:59:59+00:00', '2026-10-17', '2026-10-16'], // JST 10/17 8:59:59
+    ['2026-10-17T14:59:59+00:00', '2026-10-17', '2026-10-17'], // JST 10/17 23:59:59
+    ['2026-10-31T15:00:00+00:00', '2026-11-01', '2026-10-31'], // 月初 (JST 11/1 0:00)
+    ['2026-12-31T15:00:00+00:00', '2027-01-01', '2026-12-31'], // 年始 (JST 1/1 0:00)
+  ])('期限 %s → メールは「%s まで有効」(以前は %s)。実行環境のタイムゾーンによらない', async (expiresAt, expected, legacy) => {
+    for (const tz of TEST_TIME_ZONES) {
+      mockSendEmail.mockClear();
+      withExpiresAt(expiresAt);
+      const res = await withTimeZoneAsync(tz, () => POST(postRequest(validBody)));
+      expect(res.status, tz).toBe(201);
+      const text = sentText();
+      expect(text, tz).toContain(`このリンクは ${expected} まで有効です。`);
+      if (legacy !== expected) expect(text, tz).not.toContain(`このリンクは ${legacy} まで有効です。`);
+    }
+  });
+
+  it('既存ユーザー向けのメールも同じ日付 (JST の暦日)', async () => {
+    mockRpc.mockImplementation(async (fn: string) => {
+      if (fn === 'create_family_invite') return { data: { ...inviteRow, expires_at: '2026-10-16T15:00:00+00:00' }, error: null };
+      if (fn === 'get_invite_details') return { data: { is_existing_user: true, invitee_display_name: '太郎' }, error: null };
+      throw new Error(`unexpected rpc: ${fn}`);
+    });
+    const res = await POST(postRequest(validBody));
+    expect(res.status).toBe(201);
+    expect(sentText()).toContain('このリンクは 2026-10-17 まで有効です。');
+  });
+
+  it('期限の時刻が読めない値なら、メールだけ送らず警告に残し、201 を返す (作った招待は残す)', async () => {
+    withExpiresAt('not-a-time');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await POST(postRequest(validBody));
+    expect(res.status).toBe(201);
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('email send failed'), expect.any(RangeError));
     warn.mockRestore();
   });
 });

@@ -5,6 +5,7 @@
  * 権限: admin, super_admin, finance
  */
 import { NextResponse } from 'next/server';
+import { jstMonthBoundaries } from '@/lib/jst-day-ranges';
 import { requireRole } from '@/lib/auth/helpers';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
@@ -16,17 +17,11 @@ export async function GET() {
     const user = await requireRole(['admin', 'super_admin', 'finance']);
     const supabase = await createClient();
 
-    // 最新スナップショット (今月と先月) を revenue_snapshots から取得
-    const today = new Date();
-    const thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1)
-      .toISOString()
-      .slice(0, 10);
-    const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1)
-      .toISOString()
-      .slice(0, 10);
-    const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0)
-      .toISOString()
-      .slice(0, 10);
+    // 最新スナップショット (今月と先月) を revenue_snapshots から取得。
+    // revenue_snapshots.date は JST の暦日なので、今月・先月も JST の暦で決める (#1433)。
+    // 以前はローカル時刻の年・月で作った 0 時を toISOString (UTC) で日付に戻していたので、実行環境のタイムゾーンで結果が変わった
+    // (Vercel (UTC) では月初の JST 0:00〜8:59 に今月・先月が 1 か月前にずれ、JST の開発機では毎日 1 日前にずれた)
+    const { thisMonthStart, lastMonthStart, lastMonthEnd } = jstMonthBoundaries();
 
     // 今月の最新スナップショット
     const { data: currentSnap } = await supabase

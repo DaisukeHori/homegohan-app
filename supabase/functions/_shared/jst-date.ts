@@ -48,6 +48,18 @@ export function todayJst(now: Date = new Date()): string {
 }
 
 /**
+ * now が属する JST の「月」(1〜12) を返す (#1433)。
+ * `new Date().getMonth() + 1` は実行環境 (Edge は UTC) のローカル時刻で答えるので、
+ * 月初 1 日の JST 00:00〜08:59 は前月になる。旬の食材 (seasonalContext.month) など「今の月」を JST で決めるときに使う。
+ * Web / Mobile 側の同等の関数は packages/shared の monthLocal。
+ *
+ * 不正な Date (Invalid Date) を渡すと RangeError になる。
+ */
+export function monthJst(now: Date = new Date()): number {
+  return Number(formatJstDate(now).slice(5, 7));
+}
+
+/**
  * 集計期間 (segment_stats / user_metrics / user_segment_rankings の period_type) の、
  * now が属する期間の開始日と終了日 (どちらも YYYY-MM-DD で、その日を含む) を JST の暦で返す (#1211)。
  *

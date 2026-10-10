@@ -38,7 +38,7 @@ export function pgError(code: string, message: string, details: string | null = 
 
 type Row = Record<string, unknown>;
 type Operation = 'select' | 'insert' | 'update';
-type FilterKind = 'eq' | 'is' | 'gte' | 'lte';
+type FilterKind = 'eq' | 'is' | 'gte' | 'lte' | 'lt';
 export type Result = { data: unknown; error: PgError | null };
 
 interface Filter {
@@ -59,6 +59,7 @@ export interface FakeQuery extends PromiseLike<Result> {
   is(column: string, value: unknown): FakeQuery;
   gte(column: string, value: unknown): FakeQuery;
   lte(column: string, value: unknown): FakeQuery;
+  lt(column: string, value: unknown): FakeQuery;
   order(column: string, options?: { ascending?: boolean }): FakeQuery;
   limit(count: number): FakeQuery;
   single(): FakeQuery;
@@ -102,11 +103,13 @@ function matches(row: Row, filter: Filter): boolean {
     case 'is':
       return filter.value === null ? actual === null || actual === undefined : actual === filter.value;
     case 'gte':
-    case 'lte': {
+    case 'lte':
+    case 'lt': {
       const a = comparable(actual);
       const b = comparable(filter.value);
       if (a === null || b === null || typeof a !== typeof b) return false;
-      return filter.kind === 'gte' ? a >= b : a <= b;
+      if (filter.kind === 'gte') return a >= b;
+      return filter.kind === 'lte' ? a <= b : a < b;
     }
   }
 }
@@ -214,6 +217,10 @@ export function createSchemaCheckedDb(seed: Record<string, Row[]>): SchemaChecke
     }
     lte(column: string, value: unknown) {
       this.filters.push({ kind: 'lte', column, value });
+      return this;
+    }
+    lt(column: string, value: unknown) {
+      this.filters.push({ kind: 'lt', column, value });
       return this;
     }
     order(column: string, options?: { ascending?: boolean }) {

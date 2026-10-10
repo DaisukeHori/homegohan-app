@@ -1,6 +1,8 @@
 // lib/seasonal-ingredients.ts
 // 月ごとの旬の食材データ（V4献立生成エンジン用）
 
+import { formatLocalDate } from '@homegohan/shared';
+
 export interface SeasonalIngredients {
   vegetables: string[];
   fish: string[];
@@ -90,9 +92,32 @@ export function getSeasonalIngredients(month: number): SeasonalIngredients {
  * @returns その月の旬の食材
  */
 export function getSeasonalIngredientsForDate(date: Date | string): SeasonalIngredients {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  const month = d.getMonth() + 1; // JavaScript月は0-indexed
-  return getSeasonalIngredients(month);
+  return getSeasonalIngredients(monthOfCalendarDay(toCalendarDay(date)));
+}
+
+/** 1 年の月の数 */
+const MONTHS_PER_YEAR = 12;
+
+/**
+ * 日付を暦日 (YYYY-MM-DD) にする (#1433)。
+ *   - 文字列 (YYYY-MM-DD。後ろに時刻が付いていても先頭の 10 文字) はそのまま暦日として扱う
+ *   - Date は、その時刻が属する JST の暦日にする
+ * 以前は new Date("YYYY-MM-DD") (UTC の 0 時) の月を getMonth (実行環境のローカル時刻) で読み、
+ * 範囲を setMonth (ローカル時刻) で進めていたので、実行環境のタイムゾーンで結果が変わった
+ * (1/31 から setMonth で 1 か月進めると 3/3 になり、2 月を飛ばすこともあった)。
+ */
+function toCalendarDay(date: Date | string): string {
+  return typeof date === 'string' ? date.slice(0, 10) : formatLocalDate(date);
+}
+
+/** 暦日 (YYYY-MM-DD) の年 */
+function yearOfCalendarDay(day: string): number {
+  return Number(day.slice(0, 4));
+}
+
+/** 暦日 (YYYY-MM-DD) の月 (1〜12) */
+function monthOfCalendarDay(day: string): number {
+  return Number(day.slice(5, 7));
 }
 
 /**
@@ -102,18 +127,18 @@ export function getSeasonalIngredientsForDate(date: Date | string): SeasonalIngr
  * @returns 期間中に旬となる食材（重複排除済み）
  */
 export function getSeasonalIngredientsForRange(startDate: Date | string, endDate: Date | string): SeasonalIngredients {
-  const start = typeof startDate === 'string' ? new Date(startDate) : startDate;
-  const end = typeof endDate === 'string' ? new Date(endDate) : endDate;
-  
+  const start = toCalendarDay(startDate);
+  const end = toCalendarDay(endDate);
+
   const months = new Set<number>();
-  const current = new Date(start);
-  
-  while (current <= end) {
-    months.add(current.getMonth() + 1);
-    current.setMonth(current.getMonth() + 1);
+  // 開始日の月から終了日の月まで、月を 1 つずつ進める (年は月の通し番号で比べる)
+  const monthIndexOf = (day: string) => yearOfCalendarDay(day) * MONTHS_PER_YEAR + (monthOfCalendarDay(day) - 1);
+  const endIndex = monthIndexOf(end);
+  for (let index = monthIndexOf(start); index <= endIndex; index++) {
+    months.add((index % MONTHS_PER_YEAR) + 1);
   }
-  // 終了日の月も含める
-  months.add(end.getMonth() + 1);
+  // 終了日の月も含める (開始日が終了日より後のときも、終了日の月だけは入る。以前と同じ)
+  months.add(monthOfCalendarDay(end));
   
   const result: SeasonalIngredients = {
     vegetables: [],

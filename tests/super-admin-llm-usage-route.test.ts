@@ -17,6 +17,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { TEST_TIME_ZONES } from './helpers/time-zones';
 import {
   createSchemaCheckedDb,
   pgError,
@@ -53,7 +54,7 @@ import { GET } from '../src/app/api/super-admin/llm/usage/route';
 const ADMIN_ID = '00000000-0000-4000-8000-0000000000a1';
 const USER_A = '00000000-0000-4000-8000-0000000000b1';
 const USER_B = '00000000-0000-4000-8000-0000000000b2';
-/** 2026-10-08 (UTC)。期間の計算 (today / 7 日前) がこの日付を基準にする */
+/** JST 2026-10-08 14:00 (UTC 05:00)。期間の計算 (JST の今日 / 7 日前) がこの日付を基準にする */
 const NOW = '2026-10-08T05:00:00.000Z';
 
 /** llm_usage_logs の 1 行。既定は「gpt-5-mini を 1 回呼んだ」行 (is_summary = false) */
@@ -304,22 +305,103 @@ describe('GET /api/super-admin/llm/usage: 絞り込み', () => {
     expect(byFunction.data.total_requests).toBe(2);
   });
 
-  it('期間: 1d は昨日から、custom は from / to の範囲だけを集計する', async () => {
+  it('期間: 1d は昨日から、custom は from / to の範囲だけを集計する (どちらも JST の暦日。#1433)', async () => {
     setup([
-      usage({ created_at: '2026-09-30T23:00:00.000Z' }),
-      usage({ created_at: '2026-10-02T00:00:00.000Z' }),
-      usage({ created_at: '2026-10-05T23:59:00.000Z' }),
-      usage({ created_at: '2026-10-06T00:00:00.000Z' }),
-      usage({ created_at: '2026-10-08T01:00:00.000Z' }),
+      usage({ created_at: '2026-10-01T14:59:59.999Z', function_name: 'jst-10-01-23:59' }),
+      usage({ created_at: '2026-10-01T15:00:00.000Z', function_name: 'jst-10-02-00:00' }),
+      // JST 10/2 8:59:59。日付の文字列のまま絞ると UTC の 10/1 (= 範囲の外) に見えて落ちていた
+      usage({ created_at: '2026-10-01T23:59:59.000Z', function_name: 'jst-10-02-08:59' }),
+      usage({ created_at: '2026-10-05T14:59:59.000Z', function_name: 'jst-10-05-23:59' }),
+      usage({ created_at: '2026-10-05T15:00:00.000Z', function_name: 'jst-10-06-00:00' }),
+      // JST 10/6 8:59。終了日を 'T23:59:59Z' (UTC) で閉じると、JST では翌日のこの行まで入っていた
+      usage({ created_at: '2026-10-05T23:59:00.000Z', function_name: 'jst-10-06-08:59' }),
+      usage({ created_at: '2026-10-06T14:59:59.000Z', function_name: 'jst-10-06-23:59' }),
+      usage({ created_at: '2026-10-06T15:00:00.000Z', function_name: 'jst-10-07-00:00' }),
+      usage({ created_at: '2026-10-08T01:00:00.000Z', function_name: 'jst-10-08-10:00' }),
     ]);
+    const functionsOf = (data: { by_function: Array<{ function: string }> }) =>
+      data.by_function.map((f) => f.function).sort();
 
     const custom = await (await GET(request('?period=custom&from=2026-10-02&to=2026-10-05'))).json();
     expect(custom.data.period).toEqual({ from: '2026-10-02', to: '2026-10-05' });
-    expect(custom.data.total_requests).toBe(2);
+    expect(functionsOf(custom.data)).toEqual(['jst-10-02-00:00', 'jst-10-02-08:59', 'jst-10-05-23:59']);
 
     const oneDay = await (await GET(request('?period=1d'))).json();
     expect(oneDay.data.period).toEqual({ from: '2026-10-07', to: '2026-10-08' });
-    expect(oneDay.data.total_requests).toBe(1);
+    expect(functionsOf(oneDay.data)).toEqual(['jst-10-07-00:00', 'jst-10-08-10:00']);
+  });
+
+  it('期間の条件は JST 0 時の時刻で渡す (開始日の JST 0 時以上・終了日の翌日の JST 0 時未満)', async () => {
+    await GET(request('?period=custom&from=2026-10-02&to=2026-10-05'));
+
+    const select = db.calls.find((c) => c.op === 'select')!;
+    expect(select.filters.filter((f) => f.column === 'created_at')).toEqual([
+      { kind: 'gte', column: 'created_at', value: '2026-10-01T15:00:00.000Z' },
+      { kind: 'lt', column: 'created_at', value: '2026-10-05T15:00:00.000Z' },
+    ]);
+  });
+});
+
+/**
+ * JST 0:00 ちょうどと 8:59:59 (UTC ではまだ前日) に period=1d を開いたとき。どちらも JST の今日は 10/10、開始日は 10/9。
+ * 以前は開始日を UTC の暦日 (10/8 または 10/9) のまま timestamptz と比べていたので、JST 8:59:59 には
+ * 開始日 10/9 の JST 0:00〜8:59 の行が落ち、「1 日」の範囲が 15 時間になっていた。
+ */
+describe.each([
+  { label: 'JST 10/10 0:00 ちょうど', now: '2026-10-09T15:00:00.000Z' },
+  { label: 'JST 10/10 8:59:59', now: '2026-10-09T23:59:59.000Z' },
+])('GET /api/super-admin/llm/usage: 境界 ($label)', ({ now }) => {
+  it.each(TEST_TIME_ZONES)('TZ=%s でも、条件は 10/9 の JST 0 時から 10/11 の JST 0 時の手前まで。10/9 の JST 0:00〜8:59 の行を数える', async (tz) => {
+    const savedTz = process.env.TZ;
+    process.env.TZ = tz;
+    try {
+      vi.setSystemTime(new Date(now));
+      setup([
+        usage({ created_at: '2026-10-08T14:59:59.999Z', function_name: 'jst-10-08-23:59' }),
+        usage({ created_at: '2026-10-08T15:00:00.000Z', function_name: 'jst-10-09-00:00', estimated_cost_usd: 0.1 }),
+        usage({ created_at: '2026-10-08T23:59:59.000Z', function_name: 'jst-10-09-08:59', estimated_cost_usd: 0.2 }),
+        usage({ created_at: now, function_name: 'now', estimated_cost_usd: 0.4 }),
+      ]);
+
+      const { data } = await (await GET(request('?period=1d'))).json();
+
+      expect(data.period).toEqual({ from: '2026-10-09', to: '2026-10-10' });
+      const select = db.calls.find((c) => c.op === 'select')!;
+      expect(select.filters.filter((f) => f.column === 'created_at')).toEqual([
+        { kind: 'gte', column: 'created_at', value: '2026-10-08T15:00:00.000Z' },
+        { kind: 'lt', column: 'created_at', value: '2026-10-10T15:00:00.000Z' },
+      ]);
+      expect(data.by_function.map((f: { function: string }) => f.function).sort()).toEqual(
+        ['jst-10-09-00:00', 'jst-10-09-08:59', 'now'].sort(),
+      );
+      // 日次の系列も JST の暦日でまとめる (UTC の暦日だと 10/8 と 10/9 に分かれる)
+      expect(data.timeseries).toEqual([
+        { date: '2026-10-09', cost_usd: 0.1 + 0.2, requests: 2 },
+        { date: '2026-10-10', cost_usd: 0.4, requests: 1 },
+      ]);
+    } finally {
+      if (savedTz === undefined) delete process.env.TZ;
+      else process.env.TZ = savedTz;
+    }
+  });
+});
+
+describe('GET /api/super-admin/llm/usage: 日次の系列', () => {
+  it('created_at を JST の暦日でまとめる (JST 0:00〜8:59 の行を UTC の前日に入れない)', async () => {
+    setup([
+      usage({ created_at: '2026-10-06T14:59:59.000Z', estimated_cost_usd: 0.1 }), // JST 10/6 23:59:59
+      usage({ created_at: '2026-10-06T15:00:00.000Z', estimated_cost_usd: 0.2 }), // JST 10/7 0:00
+      usage({ created_at: '2026-10-07T14:59:59.000Z', estimated_cost_usd: 0.4 }), // JST 10/7 23:59:59
+      usage({ created_at: '2026-10-07T16:00:00.000Z', estimated_cost_usd: 0.8 }), // JST 10/8 1:00
+    ]);
+
+    const { data } = await (await GET(request('?period=7d'))).json();
+
+    expect(data.timeseries).toEqual([
+      { date: '2026-10-06', cost_usd: 0.1, requests: 1 },
+      { date: '2026-10-07', cost_usd: 0.2 + 0.4, requests: 2 },
+      { date: '2026-10-08', cost_usd: 0.8, requests: 1 },
+    ]);
   });
 });
 
@@ -330,6 +412,16 @@ describe('GET /api/super-admin/llm/usage: 入力・認可・エラー', () => {
     expect(res.status).toBe(400);
     expect((await res.json()).error.code).toBe('VALIDATION_ERROR');
     expect(db.calls).toHaveLength(0);
+  });
+
+  it('存在しない日付 (from=2026-02-30 / to=2026-13-01) は 400。DB には触れない (JST 0 時の時刻に直す前に入口で弾く)', async () => {
+    for (const query of ['?period=custom&from=2026-02-30', '?period=custom&from=2026-10-01&to=2026-13-01']) {
+      const res = await GET(request(query));
+      expect(res.status, query).toBe(400);
+      expect((await res.json()).error.code, query).toBe('VALIDATION_ERROR');
+    }
+    expect(db.calls).toHaveLength(0);
+    expect(logError).not.toHaveBeenCalled();
   });
 
   it('DB のエラーは 500 で返し、原因と検索条件を記録する (エラー文は画面に出さない)', async () => {
