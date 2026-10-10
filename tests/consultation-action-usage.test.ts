@@ -30,7 +30,8 @@ vi.mock('@/lib/plan/entitlements', () => ({
   aiUsageRecordedHeaders: m.aiUsageRecordedHeaders,
 }));
 vi.mock('@/lib/ai/consent-guard', () => ({ checkUserAiConsent: m.checkUserAiConsent }));
-vi.mock('@/lib/menu-generation-feature-flags', () => ({ loadFeatureFlags: vi.fn(async () => ({})) }));
+// 献立のエンジンは v4 (menu_generation_v5_wrapped は OFF)
+vi.mock('@/lib/feature-flags', () => ({ isFeatureEnabled: vi.fn(async (key: string) => key === 'ai_chat_enabled') }));
 vi.mock('@/lib/generate-menu-v4-retry', () => ({
   // 本物と同じく、渡された invoke を呼ぶ (Edge Function への呼び出しの順番を確かめるため)
   invokeGenerateMenuV4WithRetry: vi.fn(async ({ invoke }: { invoke: () => Promise<unknown> }) => {

@@ -39,6 +39,12 @@ vi.mock('@supabase/ssr', () => ({
   createServerClient: (...args: unknown[]) => mockCreateServerClient(...args),
 }));
 
+// #1148: メンテナンスモード (maintenance_mode) のフラグ。このファイルのテストはメンテナンス OFF の前提で、
+// DB を読みに行かせない (メンテナンス中の挙動は middleware-maintenance.test.ts)
+vi.mock('@/lib/feature-flags', () => ({
+  isFeatureEnabled: vi.fn(async () => false),
+}));
+
 import { updateSession } from '../middleware';
 import { TEST_SUPABASE_ANON_KEY, TEST_SUPABASE_URL, stubSupabasePublicEnv } from './supabase-public-env';
 

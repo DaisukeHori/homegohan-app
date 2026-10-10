@@ -55,6 +55,8 @@ main へ push → GitHub Actions → Supabase Functions デプロイ
 
 ワークフロー: `.github/workflows/deploy-supabase-functions.yml`
 
+**リポジトリから関数を消すと、次のデプロイで本番からも消えます。** デプロイのあとに `scripts/edge-functions-prune.mjs` が、本番にあってこのディレクトリに無い関数 (`_` で始まらず `index.ts` を持つディレクトリが関数) を削除します (#1452)。リポジトリの関数が 0 本・削除が上限 (`EDGE_FUNCTIONS_PRUNE_MAX_DELETIONS`、既定 20 本) を超えるなどのときは 1 本も消さずにワークフローが赤になります。消すのは main の実行で、関数のディレクトリが main の最新と同じときだけです (別のブランチからの手動実行や古い実行の再実行では消しません)。手元から `supabase functions deploy <name>` で入れた関数や、別のブランチからの手動実行で入れた関数も、main の `supabase/functions/` に無ければ次の main のデプロイで消えます。本番に残したい関数は、必ず main にディレクトリを置きます。手元で何が消えるかだけ見るには `node scripts/edge-functions-prune.mjs --project-ref <ref>` (既定は dry-run)。
+
 この README を含む `supabase/functions/**` 配下の更新は、自動デプロイのトリガー対象です。
 
 ### 手動デプロイ
@@ -104,7 +106,7 @@ supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
 2026-10-07 時点の `main` の実コードで確認した内容です。
 
 - **本番主系は `generate-menu-v5`** です。`generate-menu-v4` は `@deprecated` ですが、**まだ削除できません**（理由は後述）。
-- 多くの API は、v4 と v5 のどちらを呼ぶかを feature flag で決めます（フラグに関係なく固定のものは下の表を参照）。フラグは `menu_generation_v5_wrapped` と `menu_generation_v5_direct` の 2 つで、コード上の既定値はどちらも `true`（ON ＝ v5）です（`src/lib/menu-generation-feature-flags.ts` の `DEFAULT_FEATURE_FLAGS`）。
+- 多くの API は、v4 と v5 のどちらを呼ぶかを feature flag で決めます（フラグに関係なく固定のものは下の表を参照）。フラグは `menu_generation_v5_wrapped` と `menu_generation_v5_direct` の 2 つで、フラグの行が無い・読めないときの値（コード上の既定値）はどちらも `true`（ON ＝ v5）です（`src/lib/feature-flags.ts` の `FEATURE_FLAG_DEFAULTS`）。フラグの値は `feature_flags` テーブルにあり、運営画面（`/super-admin/flags`）で切り替えます（#1148）。
 - どちらのエンジンで動いたかは、通常は `weekly_menu_requests.mode`（`v5` / `v4`）で分かります。ただし `/api/ai/menu/` 配下の `weekly/request`・`meal/generate`・`meal/regenerate` は、まず `weekly` / `single` / `regenerate` で行を作り、そのあとで `v5` / `v4` に書き換えます。書き換え（UPDATE）の成否はコード上で確認していないため、失敗した行は元の値のまま残ります。
 
 #### 呼び出し元とエンジンの対応
@@ -136,13 +138,18 @@ supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
    - `tests/embedding-contracts.test.ts` は、`generate-menu-v4/index.ts` を `fs.readFileSync` で読んで、`search_menu_examples` の引数名を確かめています。ファイルを消すと失敗するので、読む対象を `generate-menu-v5/index.ts` に替えます（v5 も同じ RPC を同じ引数名で呼んでいます）。
    - `scripts/smoke-generate-menu-v4.mjs` は、デプロイ済みの `generate-menu-v4` を HTTP で直接呼ぶ、手動のスモークスクリプトです（CI や `package.json` からは呼ばれていません）。v5 向けに直すか、削除します。
    - 共通部品を別の場所へ移した場合は、それを import している `tests/v4-supabase-functions.test.ts`・`tests/reference-menu-utils.test.ts`・`tests/context-utils.test.ts`・`tests/embedding-contracts.test.ts` の import 先も直します。
-4. リポジトリからディレクトリを消しても、本番にデプロイ済みの `generate-menu-v4` は消えません。`deploy-supabase-functions.yml` は、関数をデプロイする（`supabase functions deploy`）だけで、削除はしないためです。本番から外すには、呼び出し元が残っていないことを確認したうえで、別に `supabase functions delete generate-menu-v4 --project-ref flmeolcfutuwwbjmzyoz` を実行します。
+4. リポジトリからディレクトリを消して main にマージすると、そのデプロイ（`deploy-supabase-functions.yml` の削除の手順、`scripts/edge-functions-prune.mjs`）が本番の `generate-menu-v4` も削除します（#1452）。別に `supabase functions delete` を実行する必要はありません。その代わり、ディレクトリを消す PR は、手順 1〜3 で呼び出し元をすべて解消してから出します（マージした時点で本番から消えるため）。
 
-#### フラグの値の決まり方（注意）
+#### フラグの値の決まり方
 
-- `loadFeatureFlags()` は、`system_settings` の `key = 'feature_flags'` の行を読み、コード上の既定値に DB の値を上書きして使います。行が読めないときは既定値のままです。値は `PUT /api/super-admin/settings`（super_admin 限定）で書き換えられます。
-- 上の API ルートは、**ログインしているユーザー自身のセッション**でこの行を読みます。`system_settings` を SELECT できるのは `admin` / `super_admin` だけです（RLS。本番スキーマのスナップショット `supabase/baseline/prod_schema.sql` の `Admins can view system settings`）。そのため**一般ユーザーの操作では DB の値は読めず、常に既定値（ON ＝ v5）になります**。
-- 結果として、DB 上でフラグを OFF にしても、v4 に切り替わるのは admin / super_admin 自身の操作だけです。一般ユーザー全員を v4 に戻す手段としては、現状は使えません。
+- 機能フラグは `feature_flags` テーブルに一本化しました（#1148）。判定は `src/lib/feature-flags.ts` の `isFeatureEnabled(key, userId)` を使います。値は運営画面（`/super-admin/flags`）または `PATCH /api/super-admin/flags/[key]`（super_admin 限定）で切り替えます。
+- 以前は `system_settings` の `key = 'feature_flags'` の行を、ログインしているユーザー自身のセッションで読んでいました。`system_settings` を SELECT できるのは `admin` / `super_admin` だけ（RLS）なので、**一般ユーザーの操作では値が読めず、いつも既定値（ON ＝ v5）でした**。今は `feature_flags` をサーバー側（service_role）で読むので、**切り替えは全ユーザーに効きます**。一般ユーザー全員を v4 に戻したいときは、`menu_generation_v5_wrapped` / `menu_generation_v5_direct` を OFF にします。
+- 旧い `system_settings` の `feature_flags` の行は、読まれなくなりました（消してはいません）。migration `20261010120000_unify_feature_flags_seed.sql` が、その中の `menu_generation_v5_*` の true / false を `feature_flags` に引き継ぎました。
+- フラグの値はサーバーのメモリに最大 30 秒覚えます。切り替えてから全員に反映されるまで最大 30 秒かかります。
+- フラグの行が無い・読めない・読み出しに時間がかかりすぎたときは、止めない側の既定値で動きます（`ai_chat_enabled` = ON、`maintenance_mode` = OFF、`menu_generation_v5_*` = ON）。読み出しの失敗は構造化ログ（`app_logs`）に残ります。
+- ほかに、同じ仕組みで次の 2 つのフラグがあります。
+  - `ai_chat_enabled`: AI 相談の緊急停止スイッチ。OFF のとき `/api/ai/consultation/**` の AI を呼ぶ API（新しい相談・メッセージ送信・要約・相談の終了・提案された操作の実行）が 503 とやさしい文面を返します。通常は ON のままにします。
+  - `maintenance_mode`: ON のとき、ミドルウェアが運営（admin / super_admin）以外にメンテナンス中の画面（API は 503）を出します。
 
 #### 名前が紛らわしいもの
 

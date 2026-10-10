@@ -227,9 +227,10 @@ vi.mock('@/lib/generate-menu-v5-retry', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/generate-menu-v5-retry')>()),
   callGenerateMenuV5WithRetry: h.callV5,
 }));
-vi.mock('@/lib/menu-generation-feature-flags', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/menu-generation-feature-flags')>()),
-  loadFeatureFlags: vi.fn(async () => ({})),
+// 機能フラグ (#1148): AI 相談の緊急停止スイッチ (ai_chat_enabled) は ON のまま、献立のエンジンは v4 にする
+vi.mock('@/lib/feature-flags', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/feature-flags')>()),
+  isFeatureEnabled: vi.fn(async (key: string) => key === 'ai_chat_enabled'),
 }));
 vi.mock('@vercel/functions', () => ({
   waitUntil: (promise: Promise<unknown>) => {

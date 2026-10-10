@@ -11,7 +11,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // 目標の処理に関係しない重い依存は差し替える (import 時の副作用を避ける)
-vi.mock('@/lib/menu-generation-feature-flags', () => ({ loadFeatureFlags: vi.fn(async () => ({})) }));
+vi.mock('@/lib/feature-flags', () => ({ isFeatureEnabled: vi.fn(async () => false) }));
 vi.mock('@/lib/generate-menu-v4-retry', () => ({
   invokeGenerateMenuV4WithRetry: vi.fn(),
   markWeeklyMenuRequestFailed: vi.fn(),
