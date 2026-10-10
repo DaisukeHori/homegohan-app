@@ -92,9 +92,11 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 
 `src/lib/plan/entitlements.ts` に集約する (#1177)。AI を使う API ルートは、AI 事業者へ送る直前 (認証・`checkRateLimit`・入力の検証などの判定をすべて通ったあと) に、ユーザーの 1 回の操作につき 1 回 `consumeAiQuota(user.id, feature)` を呼び、`!quota.allowed` なら `aiQuotaExceededResponse(quota)` (429。`AI_DAILY_LIMIT` / `AI_MONTHLY_LIMIT`。レート制限の `RATE_LIMITED` とは別) を返す。AI を実際に呼ばない経路 (キャッシュを返すだけなど) では呼ばない。いまは全プランの上限が NULL (無制限) なので止まらず、回数を数えるだけ。DB の関数が失敗しても記録して許可する (記録は best-effort。記録の失敗で AI の機能を止めない)。プランは `get_effective_plan` (個人の契約 -> 家族 -> 組織 -> `free`)、上限は `ai_plan_limits`、回数は `ai_usage_counters` (JST の日付)。
 
+- 順番は「同意の判定 (`requireAiConsent` / `checkUserAiConsent`、Edge は `requireAiConsentForUser` / `checkAiConsent`。#1154) → `consumeAiQuota` → AI への送信」。同意が無くて止めた操作は数えない。
 - Edge Function は、ユーザーの JWT を確かめた経路で `consumeEdgeAiQuota` (`supabase/functions/_shared/quota.ts`) を呼ぶ。service role / cron の経路では呼ばない (Next.js が数え済み)。
+- 既知の穴: キューのテーブル (`weekly_menu_requests` / `meal_image_jobs`) は利用者が直接書けるので、API ルートを通らずに積んだ行は数えられない。閉じるには書き込みを service role だけにする (別の Issue。`tests/ai-quota-contract.test.ts` の `USER_WRITABLE_AI_QUEUES` が、穴が残っていることを migration から確かめる)。
 - Next.js が Edge Function を**ユーザーの JWT で**呼ぶとき (`supabase.functions.invoke`) は、`headers: await aiQuotaCountedHeaders(user.id)` を付ける (署名つきの印。付けないと Edge 側でも数えて二重になる)。
-- `tests/ai-quota-contract.test.ts` が、AI を呼ぶ route / Edge Function の数え忘れ・結果を捨てる呼び出し・印の付け忘れを検査する。新しい AI の route を足してこのテストが落ちたら、`consumeAiQuota` を呼んで一覧 (`AI_QUOTA_ROUTES`) に足す。
+- `tests/ai-quota-contract.test.ts` が、AI を呼ぶ route / Edge Function の数え忘れ・結果を捨てる呼び出し・印の付け忘れ・同意の判定 → 記録 → 送信の順番を検査する (route は `src/app` 全体から集める。api の外も含む)。新しい AI の route を足してこのテストが落ちたら、`consumeAiQuota` を呼んで一覧 (`AI_QUOTA_ROUTES`) に足す。
 
 ### 利用状況の計測 (PostHog は使わない)
 

@@ -28,6 +28,7 @@ import {
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { aiQuotaCountedHeaders, aiQuotaErrorBody, consumeAiQuota, type AiQuotaErrorBody } from '@/lib/plan/entitlements';
+import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { createLogger } from '@/lib/db-logger';
 import { PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
 import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
@@ -695,8 +696,14 @@ export async function runConsultationAction(
           const rl = await checkRateLimit(user.id, 'image');
           imageAllowed = rl.success;
           if (imageAllowed) {
-            // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない)。上限を超えたときは画像生成だけを見送る
-            imageAllowed = (await consumeAiQuota(user.id, 'image_generation')).allowed;
+            // 同意が無ければ (判定に失敗した場合も)、画像の生成ジョブを処理する Edge Function (process-meal-image-jobs) が
+            // AI へ送らずに止める (T15 / #1154)。AI へ送らない操作は数えない (同意の判定 → 利用回数の記録 → AI への送信の順)。
+            // ジョブを積むかどうかは、同意の有無では変えない (止めるのは処理する側)
+            const imageConsent = await checkUserAiConsent(supabase, user.id);
+            if (imageConsent.allowed) {
+              // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない)。上限を超えたときは画像生成だけを見送る
+              imageAllowed = (await consumeAiQuota(user.id, 'image_generation')).allowed;
+            }
           }
         } catch (rlError) {
           createLogger('api/ai/consultation/actions/execute').warn(

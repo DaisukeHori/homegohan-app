@@ -212,6 +212,8 @@ const e = vi.hoisted(() => ({
   consentMode: 'none' as 'none' | 'outdated' | 'failed' | 'granted',
   fastLLMCreate: vi.fn(async () => ({ choices: [{ message: { content: '{"hint":"野菜を足しましょう","ingredients":["卵"]}' } }] })),
   generateGeminiJson: vi.fn(async () => ({ data: { weight: 60 }, model: 'test-model', rawText: '{}' })),
+  // #1177: AI 利用回数の記録 (DB を呼ぶ境目だけを差し替える。429 の応答を作る関数は本物)
+  consumeEdgeAiQuota: vi.fn(async () => ({ allowed: true, remaining: null })),
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
@@ -260,12 +262,23 @@ vi.mock('../supabase/functions/_shared/fast-llm.ts', () => ({
   getFastLLMModel: () => 'test-model',
 }));
 vi.mock('../supabase/functions/_shared/gemini-json.ts', () => ({ generateGeminiJson: e.generateGeminiJson }));
+vi.mock('../supabase/functions/_shared/quota.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../supabase/functions/_shared/quota.ts')>()),
+  consumeEdgeAiQuota: e.consumeEdgeAiQuota,
+}));
 
 type Handler = (req: Request) => Promise<Response>;
 const handlers: Record<string, Handler> = {};
 const ORIGIN = 'https://homegohan.app';
 
-const EDGE_CASES: Array<{ name: string; load: () => Promise<unknown>; request: () => Request; sends: () => number }> = [
+const EDGE_CASES: Array<{
+  name: string;
+  load: () => Promise<unknown>;
+  request: () => Request;
+  sends: () => number;
+  /** AI へ送る口 (数えたあとで呼ばれることを確かめる。#1177) */
+  sender: { mock: { invocationCallOrder: number[] } };
+}> = [
   {
     name: 'analyze-fridge',
     load: () => import('../supabase/functions/analyze-fridge/index.ts'),
@@ -276,6 +289,7 @@ const EDGE_CASES: Array<{ name: string; load: () => Promise<unknown>; request: (
         body: JSON.stringify({ imageUrl: 'https://project.supabase.co/storage/v1/object/public/fridge-images/u1/fridge.jpg' }),
       }),
     sends: () => e.fastLLMCreate.mock.calls.length,
+    sender: e.fastLLMCreate,
   },
   {
     name: 'analyze-health-photo',
@@ -291,6 +305,7 @@ const EDGE_CASES: Array<{ name: string; load: () => Promise<unknown>; request: (
       });
     },
     sends: () => e.generateGeminiJson.mock.calls.length,
+    sender: e.generateGeminiJson,
   },
   {
     name: 'generate-hint',
@@ -302,8 +317,20 @@ const EDGE_CASES: Array<{ name: string; load: () => Promise<unknown>; request: (
         body: JSON.stringify({ cookRate: 50, avgCal: 1800 }),
       }),
     sends: () => e.fastLLMCreate.mock.calls.length,
+    sender: e.fastLLMCreate,
   },
 ];
+
+/** knowledge-gpt (AI 相談の Edge Function)。JWT を確かめたブロックで同意を判定してから、数える対象の利用者を決める形 (#1177) */
+const KNOWLEDGE_GPT = {
+  load: () => import('../supabase/functions/knowledge-gpt/index.ts'),
+  request: () =>
+    new Request('http://localhost/functions/v1/knowledge-gpt', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer user-token', 'Content-Type': 'application/json', Origin: ORIGIN },
+      body: JSON.stringify({ messages: [{ role: 'user', content: '夕食の相談' }] }),
+    }),
+};
 
 const ENV: Record<string, string> = {
   SUPABASE_URL: 'https://project.supabase.test',
@@ -321,6 +348,13 @@ beforeAll(async () => {
     });
     await c.load();
   }
+  vi.stubGlobal('Deno', {
+    serve: (fn: Handler) => {
+      handlers['knowledge-gpt'] = fn;
+    },
+    env: { get: (key: string) => ENV[key] },
+  });
+  await KNOWLEDGE_GPT.load();
   vi.stubGlobal('Deno', { serve: () => undefined, env: { get: (key: string) => ENV[key] } });
 });
 
@@ -331,6 +365,7 @@ afterAll(() => {
 beforeEach(() => {
   e.fastLLMCreate.mockClear();
   e.generateGeminiJson.mockClear();
+  e.consumeEdgeAiQuota.mockClear();
 });
 
 const DENIED: Array<[ConsentMode, number, string]> = [
@@ -348,11 +383,34 @@ describe.each(EDGE_CASES)('Edge Function $name (実際のハンドラ)', (c) => 
     await expect(res.json()).resolves.toMatchObject({ code });
     // ブラウザから読めるよう、許可したオリジンには CORS ヘッダーを付けたまま止める
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN);
+    // #1177: 同意が無くて止めた呼び出しは、AI の利用回数に数えない (同意の判定 → 記録 → 送信の順)
+    expect(e.consumeEdgeAiQuota).not.toHaveBeenCalled();
   });
 
-  it('同意済み: AI のクライアントを呼ぶ (上の 0 回が空振りでないことの確かめ)', async () => {
+  it('同意済み: AI のクライアントを呼ぶ (上の 0 回が空振りでないことの確かめ)。数えるのは 1 回で、AI へ送る前', async () => {
     e.consentMode = 'granted';
     await handlers[c.name](c.request());
     expect(c.sends()).toBeGreaterThanOrEqual(1);
+    expect(e.consumeEdgeAiQuota).toHaveBeenCalledTimes(1);
+    expect(e.consumeEdgeAiQuota.mock.calls[0][1]).toBe(USER);
+    expect(e.consumeEdgeAiQuota.mock.invocationCallOrder[0]).toBeLessThan(c.sender.mock.invocationCallOrder[0]);
+  });
+});
+
+describe('Edge Function knowledge-gpt (実際のハンドラ): 同意の判定 → 利用回数の記録 (#1177)', () => {
+  it.each(DENIED)('同意が %s: 数えずに %i を返す', async (mode, status, code) => {
+    e.consentMode = mode;
+    const res = await handlers['knowledge-gpt'](KNOWLEDGE_GPT.request());
+    expect(res.status).toBe(status);
+    await expect(res.json()).resolves.toMatchObject({ code });
+    expect(e.consumeEdgeAiQuota).not.toHaveBeenCalled();
+  });
+
+  it('同意済み: ユーザーの JWT で直接呼ばれたので、その利用者で 1 回数える (上の 0 回が空振りでないことの確かめ)', async () => {
+    e.consentMode = 'granted';
+    await handlers['knowledge-gpt'](KNOWLEDGE_GPT.request());
+    expect(e.consumeEdgeAiQuota).toHaveBeenCalledTimes(1);
+    expect(e.consumeEdgeAiQuota.mock.calls[0][1]).toBe(USER);
+    expect(e.consumeEdgeAiQuota.mock.calls[0][2]).toBe('consultation');
   });
 });

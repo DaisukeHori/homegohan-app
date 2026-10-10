@@ -247,10 +247,12 @@ AI を使う処理は、プランの上限と比べるために、利用回数�
 
 - **ユーザーの JWT を確かめる関数**（`requireAuth` / `auth.getUser`）は、確かめたのと同じブロックの中で `consumeEdgeAiQuota(req, userId, feature)`（`_shared/quota.ts`）を呼びます。Next.js の API ルートを経由せず、ユーザーの JWT で直接呼ばれた場合に、回数がすり抜けないようにするためです（#1153）。
 - **service role / cron で呼ばれる経路では呼びません。** Next.js の API ルートが数え済みです（献立生成・AI 相談・買い物リスト・料理画像）。献立生成のキュー（`weekly_menu_requests`）は、積む時点（`POST /api/ai/menu/v5/generate`）で数えます。
+- **順番は「同意の判定 → 利用回数の記録 → AI への送信」です。** 外国の AI 事業者への提供の同意（#1154。`requireAiConsentForUser` / `checkAiConsent`）が無くて止めた呼び出しは数えません。ユーザーの JWT で呼ばれた経路でも、同意の判定のあとで数えます（JWT を確かめたブロックの中で判定する関数（`knowledge-gpt`）は、判定を通ったあとで `directJwtUserId` に代入します。service role の経路と合流してから判定する関数（`generate-menu-v4` / `v5`・`regenerate-shopping-list-v2`）は、判定のあとの `if (directJwtUserId)` の中で数えます）。
+- **既知の穴（数えられない経路）:** キューのテーブル `weekly_menu_requests`（Vercel Cron の `process-menu-queue` が取り出し、`generate-menu-v5` を service role で呼ぶ）と `meal_image_jobs`（`process-meal-image-jobs` が処理する）は、RLS で利用者が自分の行を直接 INSERT / UPDATE できます。API ルートを通らずに PostgREST から積んだ行や、`status` などを書き換えて積み直した行は、どこでも数えられません。取り出す側で数えても、取り直し（止まったワーカーの続き）と見分ける列も利用者が書けるので、数え方では閉じられません。閉じるには、これらのテーブルへの書き込みを service role だけにします（権限を取り上げる DB の変更なので、別の Issue で行います）。`tests/ai-quota-contract.test.ts` の `USER_WRITABLE_AI_QUEUES` が、この穴が残っていることを migration から確かめていて、閉じると落ちるので、そのときにこの記述も直してください。
 - **Next.js がユーザーの JWT で呼ぶ関数**（写真解析の `analyze-meal-photo` / `analyze-health-photo`、AI 相談のアクション実行が呼ぶ `generate-menu-v4` / `v5`）は、Next.js が `x-hg-ai-quota-counted` ヘッダー（service role key で署名した印。5 分以内・同じユーザーのときだけ有効）を付けて呼びます。印が合えば、Edge 側では数えません。印を検証できなければ数える側に倒します（二重に数えるだけで、AI の利用は止まりません）。
 - **失敗しても止めません。** DB の関数が失敗しても（エラー・応答が 3 秒を超える・この migration が未適用）、`app_logs` に記録して許可します。記録は best-effort で、記録の失敗で AI の機能そのものを止めません。
 - 上限を超えたときの 429 は `{ code: 'AI_DAILY_LIMIT' | 'AI_MONTHLY_LIMIT' }`（`aiQuotaExceededResponse`）。レート制限の 429（`RATE_LIMITED`）とは別です。
-- `tests/ai-quota-contract.test.ts` が、ユーザーの JWT を確かめる関数に数え忘れが無いこと（新しい関数を足したときも）を検査します。
+- `tests/ai-quota-contract.test.ts` が、ユーザーの JWT を確かめる関数に数え忘れが無いこと（新しい関数を足したときも）と、数える前に同意を判定していることを検査します。
 
 ### ローカルでのテスト
 

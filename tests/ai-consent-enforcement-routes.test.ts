@@ -57,6 +57,8 @@ const h = vi.hoisted(() => {
     rpc: {} as Record<string, unknown>,
     /** 書き込み (insert / update / upsert / delete) の記録 */
     writes: [] as Array<{ table: string; op: string; payload: unknown }>,
+    /** 呼んだ rpc の名前 (AI 利用回数の記録 consume_ai_quota を数えるため。#1177) */
+    rpcCalls: [] as string[],
   };
   const fastLLMCreate = vi.fn(async () => ({
     choices: [{ message: { content: '{"summary":"要約","title":"t","praiseComment":"p","advice":"a","nutritionTip":"n"}' } }],
@@ -155,7 +157,10 @@ function makeSupabase() {
       getSession: async () => ({ data: { session: { access_token: 'token' } }, error: null }),
     },
     from: (table: string) => makeQuery(table),
-    rpc: async (name: string) => ({ data: h.state.rpc[name] ?? null, error: null }),
+    rpc: async (name: string) => {
+      h.state.rpcCalls.push(name);
+      return { data: h.state.rpc[name] ?? null, error: null };
+    },
     storage: {
       from: () => ({
         upload: async () => ({ data: { path: 'p' }, error: null }),
@@ -279,6 +284,11 @@ interface RouteCase {
   sends?: () => number;
   /** kind: 'skip' のとき、止めても行われる保存・集計の書き込み (表と操作) */
   savedWrite?: { table: string; op: string };
+  /**
+   * 同意済みのとき、この route 自身が AI の利用回数を数えないなら、その理由 (#1177)。
+   * 既定 (省略) は「同意済みなら 1 回の操作で 1 回だけ数える」
+   */
+  notCountedHere?: string;
 }
 
 const ROUTE_CASES: RouteCase[] = [
@@ -466,6 +476,7 @@ const ROUTE_CASES: RouteCase[] = [
       };
     },
     sends: () => h.runConsultationAction.mock.calls.length,
+    notCountedHere: 'AI を使うアクションは runConsultationAction (ライブラリ) が数える。このテストでは runConsultationAction を差し替えている',
     call: async () => (await import('@/app/api/ai/consultation/actions/[actionId]/execute/route')).POST(
       json('http://localhost/api/ai/consultation/actions/action-1/execute', {}),
       { params: { actionId: 'action-1' } },
@@ -614,6 +625,7 @@ const ROUTE_CASES: RouteCase[] = [
     ),
     // cron は止めた行を失敗にして 200 { skipped, code } を返す (Vercel の cron を赤くしない)
     savedWrite: { table: 'weekly_menu_requests', op: 'update' },
+    notCountedHere: 'キューに積む route (POST /api/ai/menu/v5/generate) が数え済み (AI_QUOTA_EXEMPT)',
   },
 ];
 
@@ -641,6 +653,7 @@ beforeEach(() => {
   h.state.single = {};
   h.state.rpc = {};
   h.state.writes = [];
+  h.state.rpcCalls = [];
   for (const fn of [
     h.fastLLMCreate,
     h.getFastLLMClient,
@@ -672,6 +685,9 @@ describe('表の網羅: 送る手前で判定する API Route は、すべて表
 
 const sendsOf = (c: RouteCase) => (c.sends ? c.sends() : aiSendCount());
 
+/** AI の利用回数を数えた回数 (consume_ai_quota の rpc。#1177) */
+const quotaCounts = () => h.state.rpcCalls.filter((name) => name === 'consume_ai_quota').length;
+
 async function run(c: RouteCase, mode: ConsentMode): Promise<Response> {
   h.state.consentMode = mode;
   c.setup?.();
@@ -689,12 +705,15 @@ describe.each(ROUTE_CASES.filter((c) => c.kind === 'reject'))('止める経路: 
     const expected = EXPECTED_DENIAL[mode as Exclude<ConsentMode, 'granted'>];
     expect(res.status).toBe(expected.status);
     expect((await bodyOf(res)).code).toBe(expected.code);
+    // #1177: 同意が無くて止めた操作は、AI の利用回数に数えない (同意の判定 → 記録 → 送信の順)
+    expect(quotaCounts(), h.state.rpcCalls.join(', ')).toBe(0);
   });
 
-  it('同意済み: AI へ送る (この行の 0 回が空振りでないことの確かめ)', async () => {
+  it('同意済み: AI へ送る (この行の 0 回が空振りでないことの確かめ)。AI の利用回数は 1 回の操作で 1 回だけ数える', async () => {
     const res = await run(c, 'granted');
     expect(res.status).not.toBe(403);
     expect(sendsOf(c), JSON.stringify(aiSendBreakdown())).toBeGreaterThanOrEqual(1);
+    expect(quotaCounts(), h.state.rpcCalls.join(', ')).toBe(c.notCountedHere ? 0 : 1);
   });
 });
 
@@ -710,14 +729,17 @@ describe.each(ROUTE_CASES.filter((c) => c.kind === 'skip'))('AI の部分だけ�
     if (c.savedWrite) {
       expect(h.state.writes.some((w) => w.table === c.savedWrite?.table && w.op === c.savedWrite?.op), JSON.stringify(h.state.writes)).toBe(true);
     }
+    // #1177: AI の部分を省いた操作は、AI の利用回数に数えない (保存・集計だけでは数えない)
+    expect(quotaCounts(), h.state.rpcCalls.join(', ')).toBe(0);
   });
 
-  it('同意済み: AI へ送り、aiSkipped は付かない', async () => {
+  it('同意済み: AI へ送り、aiSkipped は付かない。AI の利用回数は 1 回の操作で 1 回だけ数える', async () => {
     const res = await run(c, 'granted');
     expect(sendsOf(c), JSON.stringify(aiSendBreakdown())).toBeGreaterThanOrEqual(1);
     const body = await bodyOf(res);
     expect(body.aiSkipped).toBeUndefined();
     expect(body.skipped).toBeUndefined();
+    expect(quotaCounts(), h.state.rpcCalls.join(', ')).toBe(c.notCountedHere ? 0 : 1);
   });
 });
 
@@ -732,6 +754,8 @@ describe.each(ROUTE_CASES.filter((c) => c.kind === 'pass'))('同意と関係な�
     if (c.savedWrite) {
       expect(h.state.writes.some((w) => w.table === c.savedWrite?.table && w.op === c.savedWrite?.op)).toBe(true);
     }
+    // #1177: AI へ送らない操作は、AI の利用回数に数えない
+    expect(quotaCounts(), h.state.rpcCalls.join(', ')).toBe(0);
   });
 });
 

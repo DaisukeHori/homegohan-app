@@ -14,6 +14,8 @@
  *   - Edge Functions: EDGE_FUNCTIONS (user-jwt = 数える / service-ai = 数えない。呼び出し元つき / no-ai)
  *   - 定期実行: CRON_ENTRYPOINTS (vercel.json の crons と、migration の pg_cron / pg_net が呼ぶ Edge Function)
  *   - どの route からも届かない AI のファイル: AI_SINK_FILES_NOT_REACHED_BY_ROUTES
+ *   - src/app/api の外の route ハンドラ: NON_API_ROUTE_HANDLERS (route ハンドラは src/app 全体から集める)
+ *   - 既知の穴 (利用者が直接書けるキューから AI へ送る経路。数えられない): USER_WRITABLE_AI_QUEUES
  *
  * 【Next.js】
  *   1. 素朴な文字の検出で AI の印があるファイルは、構文木の走査でも見つかる (走査が壊れていないことの突き合わせ)
@@ -22,12 +24,14 @@
  *   4. AI のレート制限 (analysis / generation / image) を通る場所の全数 = 数える場所。同じ関数の中のあとで数える
  *   5. consumeAiQuota を呼ぶ場所の全数 = 数える route と決めたライブラリ (数える場所が散らばって二重に数えない)
  *   6. Edge Function をユーザーの JWT で呼ぶ処理の全数は一覧どおりで、どれも数え済みの印 (aiQuotaCountedHeaders) を付ける
+ *   6a. 順番: 同意の判定 (T15 / #1154) → 利用回数の記録 → AI への送信。数える前に、同じ関数の中で同意を判定している
+ *       (呼び出し元が判定するものは CONSENT_CHECKED_BY_CALLERS)。数える前に、同じ経路で AI へ送っていない
  * 【Edge Functions】
  *   7. Edge Function の全数・AI に届く関数の全数・ユーザーの JWT を確かめる関数の全数が、EDGE_FUNCTIONS と一致する。
  *      数えない関数 (service-ai) は service role でしか呼べない (ユーザーの JWT で直接呼んで、数えずに AI を使えない)
  *   8. ユーザーの JWT を確かめる関数は、JWT を確かめた経路でだけ数える (service role / cron の経路では数えない)。
  *      AI へ送る直前で数えるため、service role の経路と合流する関数は、確かめたブロックで directJwtUserId に代入し、
- *      あとで if (directJwtUserId) の中で数える
+ *      あとで if (directJwtUserId) の中で数える。どちらの形でも、数える前に同じ経路で同意を判定している
  * 【定期実行】
  *   9. 定期実行の入口の全数が CRON_ENTRYPOINTS と一致し、どれも数えない。DB の関数が名前を連結して
  *      Edge Function を呼ぶ入口 (pg_net) も含め、呼び得る関数を migration の許可リストと突き合わせる
@@ -63,7 +67,8 @@ const AI_QUOTA_ROUTES: Record<string, readonly Feature[]> = {
   'src/app/api/ai/consultation/sessions/[sessionId]/close/route.ts': ['consultation'],
   'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts': ['consultation'],
   'src/app/api/ai/consultation/sessions/[sessionId]/summarize/route.ts': ['consultation'],
-  // 献立生成 (v5 のキューは、利用者の操作を積む時点で数える。実行する cron は数えない: AI_QUOTA_EXEMPT)
+  // 献立生成 (v5 のキューは、利用者の操作を積む時点で数える。実行する cron は数えない: AI_QUOTA_EXEMPT。
+  // キューの行は利用者が直接書けるので、route を通らずに積んだ行は数えられない既知の穴がある: USER_WRITABLE_AI_QUEUES)
   'src/app/api/ai/menu/day/regenerate/route.ts': ['menu_generation'],
   'src/app/api/ai/menu/meal/generate/route.ts': ['menu_generation'],
   'src/app/api/ai/menu/meal/regenerate/route.ts': ['menu_generation'],
@@ -113,7 +118,8 @@ const ROUTES_COUNTED_IN_LIBRARY: Record<string, { library: string; reason: strin
 /** AI の SDK / URL / Edge Function に届くが、利用者の AI 利用としては数えない route と理由 */
 const AI_QUOTA_EXEMPT: Record<string, string> = {
   'src/app/api/cron/process-menu-queue/route.ts':
-    'Vercel Cron が、キューに積まれた献立生成 (POST /api/ai/menu/v5/generate) を service role で実行する。利用者の操作は、積む時点 (POST /api/ai/menu/v5/generate) で数え済み。ここで数えると二重になる',
+    'Vercel Cron が、キューに積まれた献立生成を service role で実行する。POST /api/ai/menu/v5/generate で積んだ行は、積む時点で数え済み (ここで数えると二重になる)。' +
+    'ただし weekly_menu_requests は利用者が直接書けるので、route を通らずに積んだ行・積み直した行は数えられない (既知の穴。USER_WRITABLE_AI_QUEUES)',
   'src/app/api/admin/catalog/import/route.ts':
     '運営 (admin / super_admin) 専用のコンビニ商品カタログの取り込み。Edge Function が Firecrawl / LLM を使うが、利用者の AI 利用ではない',
   'src/app/api/super-admin/embeddings/regenerate/route.ts':
@@ -165,7 +171,8 @@ const EDGE_FUNCTIONS: Record<string, EdgeFunctionEntry> = {
   'process-meal-image-jobs': {
     kind: 'service-ai',
     callers:
-      '料理画像の生成ジョブの実行。献立の保存・更新の route (image_generation として数え済み) と、献立生成 (menu_generation の一部) が積んだジョブを、service role で処理する',
+      '料理画像の生成ジョブの実行。献立の保存・更新の route (image_generation として数え済み) と、献立生成 (menu_generation の一部) が積んだジョブを、service role で処理する。' +
+      'meal_image_jobs は利用者が直接書けるので、route を通らずに積んだジョブは数えられない (既知の穴。USER_WRITABLE_AI_QUEUES)',
   },
   'regenerate-embeddings': {
     kind: 'service-ai',
@@ -185,15 +192,105 @@ const EDGE_USER_JWT_FUNCTIONS: Record<string, readonly Feature[]> = Object.fromE
 
 /**
  * 定期実行 (Vercel Cron の vercel.json / pg_cron の migration) が呼ぶ入口の全数。走査の結果と完全に一致すること。
- * どれも service role / cron のシークレットで呼ぶので、AI を使うものは数えない (利用者の操作は、積んだ時点で数え済み)。
+ * どれも service role / cron のシークレットで呼ぶので、AI を使うものは数えない (利用者の操作は、積んだ時点で数え済み。
+ * 利用者が直接書けるキューの行は数えられない既知の穴がある: USER_WRITABLE_AI_QUEUES)。
  */
 const CRON_ENTRYPOINTS: Record<string, string> = {
-  'vercel:/api/cron/process-menu-queue': 'キューに積まれた献立生成を実行する (積む時点の POST /api/ai/menu/v5/generate で数え済み。route は AI_QUOTA_EXEMPT)',
+  'vercel:/api/cron/process-menu-queue':
+    'キューに積まれた献立生成を実行する (POST /api/ai/menu/v5/generate で積んだ行は、積む時点で数え済み。route は AI_QUOTA_EXEMPT。' +
+    '利用者が直接書いた行は数えられない既知の穴: USER_WRITABLE_AI_QUEUES)',
   'pg_cron:calculate-segment-stats': 'セグメント統計の集計 (AI を使わない)',
   // DB の関数が、名前を引数で受け取って Edge Function を呼ぶもの (pg_cron のジョブ・運営の手動実行から呼ばれ得る)
   'pg_net:invoke_catalog_import':
     'コンビニ商品カタログの取り込み (import-*-catalog の 5 つに限る。どれも service-ai)。cron のシークレットで呼ぶ運営の処理で、利用者の AI 利用ではない',
 };
+
+/**
+ * 既知の穴: 利用者が自分の権限 (authenticated) で行を書けるキューのうち、service role の処理が AI へ送るもの。
+ * 通常の操作は、行を積む route で数える (献立生成 = POST /api/ai/menu/v5/generate、料理画像 = 献立の保存・更新の route)。
+ * ところが行は RLS で本人が直接 INSERT / UPDATE できる (Supabase の PostgREST に anon key と本人の JWT で書ける) ので、
+ * route を通らずに積んだ行・積み直した行 (status / attempt_count / current_step / generated_data を書き換える) は、どこでも数えられない。
+ * 取り出す側で数えても、取り直し (止まったワーカーの続き) と見分ける列も利用者が書けるので、数え方では閉じられない。
+ * 閉じるには、書き込みを service role だけにする (RLS / 権限を取り上げる変更。route の書き込みも service role に移す)。
+ * これは既存の権限を取り上げる DB の変更なので、この Issue (#1177) では行わず、別の Issue にする。
+ * 閉じたら (下のテストが落ちたら)、この一覧から消し、AI_QUOTA_EXEMPT・CRON_ENTRYPOINTS・EDGE_FUNCTIONS の説明と
+ * supabase/functions/README.md の「既知の穴」を直すこと。
+ */
+const USER_WRITABLE_AI_QUEUES: Record<string, { worker: string; note: string }> = {
+  weekly_menu_requests: {
+    worker: 'src/app/api/cron/process-menu-queue/route.ts',
+    note: 'queued の行を Vercel Cron が取り出し、行の generated_data と user_id で generate-menu-v5 を service role で呼ぶ (Edge Function は service role の経路では数えない)',
+  },
+  meal_image_jobs: {
+    worker: 'supabase/functions/process-meal-image-jobs/index.ts',
+    note: 'pending のジョブを、献立の保存・更新の route が呼ぶたびに処理する (行の prompt で画像を生成する。service-ai で数えない)',
+  },
+};
+
+/**
+ * migration を順に読み、authenticated がそのテーブルに INSERT / UPDATE できるか (権限と、許可のポリシーの両方があるか)。
+ * ポリシーの条件 (USING / WITH CHECK) は評価しない (条件つきでも、その操作を許すポリシーがあれば書けるとみなす)
+ */
+function authenticatedCanWrite(table: string, sqlFiles?: Array<{ name: string; sql: string }>): { insert: boolean; update: boolean } {
+  const files =
+    sqlFiles ??
+    fs
+      .readdirSync(path.join(ROOT, 'supabase/migrations'))
+      .filter((name) => name.endsWith('.sql') && !name.endsWith('.down.sql'))
+      .sort()
+      .map((name) => ({ name, sql: fs.readFileSync(path.join(ROOT, 'supabase/migrations', name), 'utf-8') }));
+  const ALL_PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'];
+  // 名前の続きが英数字・_ のもの (例: weekly_menu_requests_archive) は別のテーブルなので、後ろを区切る
+  const tableRef = `(?:"?public"?\\.)?"?${table}"?(?![A-Za-z0-9_])`;
+  const rolesOf = (text: string) => text.split(',').map((role) => role.trim().replace(/"/g, '').toLowerCase());
+  const privilegesOf = (text: string) =>
+    /^ALL(\s+PRIVILEGES)?$/i.test(text.trim()) ? ALL_PRIVILEGES : text.split(',').map((p) => p.trim().toUpperCase());
+  const privileges = new Set<string>();
+  const policies = new Map<string, { command: string; roles: string[] }>();
+  for (const { sql: raw } of files) {
+    const sql = raw.replace(/--.*$/gm, '');
+    const statements: Array<{ index: number; apply: () => void }> = [];
+    for (const m of sql.matchAll(new RegExp(`GRANT\\s+([A-Z ,]+?)\\s+ON\\s+(?:TABLE\\s+)?${tableRef}\\s+TO\\s+([^;]+);`, 'gi'))) {
+      statements.push({
+        index: m.index!,
+        apply: () => {
+          if (rolesOf(m[2]).includes('authenticated')) for (const p of privilegesOf(m[1])) privileges.add(p);
+        },
+      });
+    }
+    for (const m of sql.matchAll(new RegExp(`REVOKE\\s+([A-Z ,]+?)\\s+ON\\s+(?:TABLE\\s+)?${tableRef}\\s+FROM\\s+([^;]+);`, 'gi'))) {
+      statements.push({
+        index: m.index!,
+        apply: () => {
+          if (rolesOf(m[2]).some((role) => role === 'authenticated' || role === 'public')) {
+            for (const p of privilegesOf(m[1])) privileges.delete(p);
+          }
+        },
+      });
+    }
+    for (const m of sql.matchAll(new RegExp(`CREATE\\s+POLICY\\s+"([^"]+)"\\s+ON\\s+${tableRef}([^;]*);`, 'gi'))) {
+      statements.push({
+        index: m.index!,
+        apply: () => {
+          const rest = m[2];
+          if (/AS\s+RESTRICTIVE/i.test(rest)) return;
+          const command = rest.match(/\bFOR\s+(ALL|SELECT|INSERT|UPDATE|DELETE)\b/i)?.[1].toUpperCase() ?? 'ALL';
+          const to = rest.match(/\bTO\s+(.+?)(?:\s+USING\b|\s+WITH\s+CHECK\b|$)/i)?.[1];
+          policies.set(m[1], { command, roles: to ? rolesOf(to) : ['public'] });
+        },
+      });
+    }
+    for (const m of sql.matchAll(new RegExp(`DROP\\s+POLICY\\s+(?:IF\\s+EXISTS\\s+)?"([^"]+)"\\s+ON\\s+${tableRef}\\s*;`, 'gi'))) {
+      statements.push({ index: m.index!, apply: () => policies.delete(m[1]) });
+    }
+    for (const statement of statements.sort((x, y) => x.index - y.index)) statement.apply();
+  }
+  const allows = (command: string) =>
+    [...policies.values()].some(
+      (policy) => (policy.command === command || policy.command === 'ALL') && policy.roles.some((r) => r === 'authenticated' || r === 'public'),
+    );
+  return { insert: privileges.has('INSERT') && allows('INSERT'), update: privileges.has('UPDATE') && allows('UPDATE') };
+}
 
 /** pg_net の入口 (DB の関数) が呼び得る Edge Function。どれも user-jwt ではないこと */
 const PG_NET_CALLEES: Record<string, readonly string[]> = {
@@ -229,6 +326,9 @@ const AI_ENV_KEYS = new Set([
 ]);
 
 const ENTITLEMENTS_MODULE = '@/lib/plan/entitlements';
+/** 外国の AI 事業者への提供の同意の判定 (T15 / #1154)。Next.js の API ルートが、AI へ送る手前で呼ぶ */
+const CONSENT_GUARD_MODULE = '@/lib/ai/consent-guard';
+const CONSENT_GUARD_FUNCTIONS = new Set(['requireAiConsent', 'checkUserAiConsent']);
 
 // ─────────────────────────────────────────────
 // ソース解析
@@ -247,6 +347,8 @@ interface ConsumeCall {
   /** 戻り値の allowed を読んでいるか */
   allowedRead: boolean;
   fn: Span | null;
+  /** 数える処理が通る範囲: switch の case の中ならその case、そうでなければ関数 (別の case の処理は同じ経路ではない) */
+  scope: Span | null;
 }
 
 interface RateLimitCall {
@@ -261,12 +363,34 @@ interface InvokeCall {
   optionsText: string;
 }
 
+interface ConsentCall {
+  pos: number;
+  fn: Span | null;
+}
+
+interface ImportedCall {
+  pos: number;
+  /** 呼んだ名前 (import した名前。X.y(...) なら X) */
+  name: string;
+  /** その名前を import したモジュールの指定 */
+  specifier: string;
+  fn: Span | null;
+}
+
 interface FileAnalysis {
   imports: string[];
   /** AI を直接呼ぶ印 (SDK / 提供元の URL / API キーの環境変数 / Edge Function の呼び出し) */
   sinks: string[];
+  /** ファイルの中で AI へ送る印が現れる位置 (提供元の URL・Edge Function の呼び出しと URL。API キーを読むだけ・import は含めない) */
+  sinkSites: Array<{ pos: number; fn: Span | null }>;
   importsEntitlementsQuota: boolean;
   consumeCalls: ConsumeCall[];
+  /** 同意の判定 (requireAiConsent / checkUserAiConsent。@/lib/ai/consent-guard から import したもの) の呼び出し */
+  consentCalls: ConsentCall[];
+  /** import した名前の呼び出し (AI に届くモジュールの関数を、数える前に呼んでいないかを見るため) */
+  importedCalls: ImportedCall[];
+  /** 名前で呼んだ関数 (f(...)) の呼び出し。同じファイルの関数も含む */
+  namedCalls: Array<{ pos: number; name: string; fn: Span | null }>;
   rateLimitCalls: RateLimitCall[];
   invokeCalls: InvokeCall[];
 }
@@ -287,6 +411,17 @@ function enclosingFunction(node: ts.Node, sf: ts.SourceFile): Span | null {
 }
 
 const within = (inner: number, span: Span | null) => !!span && inner >= span.start && inner < span.end;
+
+/** 呼び出しが通る範囲: 最も内側の switch の case (関数の中にあるもの)、無ければ関数 */
+function enclosingScope(node: ts.Node, sf: ts.SourceFile): Span | null {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isCaseClause(current) || ts.isDefaultClause(current)) return { start: current.getStart(sf), end: current.getEnd() };
+    if (isFunctionLike(current)) return { start: current.getStart(sf), end: current.getEnd() };
+    current = current.parent;
+  }
+  return null;
+}
 
 function stringValue(node: ts.Node | undefined): string | null {
   return node && ts.isStringLiteralLike(node) ? node.text : null;
@@ -330,23 +465,57 @@ function analyzeSource(source: string, fileName = 'file.ts'): FileAnalysis {
   const analysis: FileAnalysis = {
     imports: [],
     sinks: [],
+    sinkSites: [],
     importsEntitlementsQuota: false,
     consumeCalls: [],
+    consentCalls: [],
+    importedCalls: [],
+    namedCalls: [],
     rateLimitCalls: [],
     invokeCalls: [],
   };
   // consumeAiQuota を別名で import している場合に備えて、ローカル名を集める
   const consumeLocalNames = new Set<string>(['consumeAiQuota']);
+  // 同意の判定のローカル名 (@/lib/ai/consent-guard から import したものだけ)
+  const consentLocalNames = new Set<string>();
+  // import した名前 -> モジュールの指定 (既定の import・名前つき・名前空間のどれも)
+  const importedNames = new Map<string, string>();
+  for (const statement of sf.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const clause = statement.importClause;
+    if (!clause || clause.isTypeOnly) continue;
+    const specifier = statement.moduleSpecifier.text;
+    if (clause.name) importedNames.set(clause.name.text, specifier);
+    const bindings = clause.namedBindings;
+    if (bindings && ts.isNamespaceImport(bindings)) importedNames.set(bindings.name.text, specifier);
+    if (bindings && ts.isNamedImports(bindings)) {
+      for (const element of bindings.elements) {
+        if (element.isTypeOnly) continue;
+        importedNames.set(element.name.text, specifier);
+        if (specifier === CONSENT_GUARD_MODULE && CONSENT_GUARD_FUNCTIONS.has((element.propertyName ?? element.name).text)) {
+          consentLocalNames.add(element.name.text);
+        }
+      }
+    }
+  }
+  /** X(...) / X.y.z(...) の X (import した名前なら) */
+  const importedRoot = (callee: ts.Expression): string | null => {
+    let current: ts.Expression = callee;
+    while (ts.isPropertyAccessExpression(current)) current = current.expression;
+    return ts.isIdentifier(current) && importedNames.has(current.text) ? current.text : null;
+  };
   // 文字列リテラルで初期化した const (例: const EDGE_FUNCTION_NAME = 'calculate-segment-stats')。
   // Edge Function の名前を定数で書いた呼び出し・URL を、名前まで読み取るため
   const stringConsts = collectStringConsts(sf);
   const resolveString = (node: ts.Node | undefined): string | null =>
     stringValue(node) ?? (node && ts.isIdentifier(node) ? stringConsts.get(node.text) ?? null : null);
 
-  const addEdgeSink = (name: string | null) => {
+  const addEdgeSink = (name: string | null, node?: ts.Node) => {
     if (name && NON_AI_EDGE_FUNCTIONS.has(name)) return;
     analysis.sinks.push(`edge:${name ?? '?'}`);
+    if (node) analysis.sinkSites.push({ pos: node.getStart(sf), fn: enclosingFunction(node, sf) });
   };
+  const addSinkSite = (node: ts.Node) => analysis.sinkSites.push({ pos: node.getStart(sf), fn: enclosingFunction(node, sf) });
 
   const visit = (node: ts.Node): void => {
     if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
@@ -384,11 +553,23 @@ function analyzeSource(source: string, fileName = 'file.ts'): FileAnalysis {
           feature: stringValue(node.arguments[1]),
           ...describeResultUse(node, sf),
           fn: enclosingFunction(node, sf),
+          scope: enclosingScope(node, sf),
         });
       }
 
       if (ts.isIdentifier(callee) && callee.text === 'checkRateLimit') {
         analysis.rateLimitCalls.push({ pos, category: stringValue(node.arguments[1]), fn: enclosingFunction(node, sf) });
+      }
+
+      if (ts.isIdentifier(callee) && consentLocalNames.has(callee.text)) {
+        analysis.consentCalls.push({ pos, fn: enclosingFunction(node, sf) });
+      }
+
+      if (ts.isIdentifier(callee)) analysis.namedCalls.push({ pos, name: callee.text, fn: enclosingFunction(node, sf) });
+
+      const root = importedRoot(callee);
+      if (root) {
+        analysis.importedCalls.push({ pos, name: root, specifier: importedNames.get(root)!, fn: enclosingFunction(node, sf) });
       }
 
       // supabase.functions.invoke('name', { ... })
@@ -399,7 +580,7 @@ function analyzeSource(source: string, fileName = 'file.ts'): FileAnalysis {
         callee.expression.name.text === 'functions'
       ) {
         const name = resolveString(node.arguments[0]);
-        addEdgeSink(name);
+        addEdgeSink(name, node);
         if (!(name && NON_AI_EDGE_FUNCTIONS.has(name))) {
           analysis.invokeCalls.push({ name, optionsText: node.arguments[1] ? node.arguments[1].getText(sf) : '' });
         }
@@ -409,16 +590,26 @@ function analyzeSource(source: string, fileName = 'file.ts'): FileAnalysis {
     // fetch(`${url}/functions/v1/<name>`) など
     if (ts.isStringLiteralLike(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       const url = edgeFunctionNameFromUrl(node.text);
-      if (url.found) addEdgeSink(url.name);
-      for (const host of AI_HOSTS) if (node.text.includes(host)) analysis.sinks.push(`host:${host}`);
+      if (url.found) addEdgeSink(url.name, node);
+      for (const host of AI_HOSTS) {
+        if (node.text.includes(host)) {
+          analysis.sinks.push(`host:${host}`);
+          addSinkSite(node);
+        }
+      }
     }
     if (ts.isTemplateExpression(node)) {
       const text =
         node.head.text +
         node.templateSpans.map((span) => `${resolveString(span.expression) ?? '${}'}${span.literal.text}`).join('');
       const url = edgeFunctionNameFromUrl(text);
-      if (url.found) addEdgeSink(url.name);
-      for (const host of AI_HOSTS) if (text.includes(host)) analysis.sinks.push(`host:${host}`);
+      if (url.found) addEdgeSink(url.name, node);
+      for (const host of AI_HOSTS) {
+        if (text.includes(host)) {
+          analysis.sinks.push(`host:${host}`);
+          addSinkSite(node);
+        }
+      }
     }
 
     // Deno.env.get('OPENAI_API_KEY') など (Edge Functions)
@@ -570,7 +761,12 @@ function aiSinkFilesReachedFrom(file: string, stack = new Set<string>()): string
   return result;
 }
 
-const routeFiles = [...analyses.keys()].filter((file) => /^src\/app\/api\/.+\/route\.ts$/.test(file)).sort();
+/**
+ * Next.js の route ハンドラ (route.ts / route.tsx)。src/app/api の外 (例: src/app/(auth)/auth/callback/route.ts) に置いても
+ * HTTP の入口になるので、src/app 全体から集める (api の下だけを見ると、外に置いた AI の入口の数え忘れを見逃す)
+ */
+const isRouteHandlerFile = (file: string) => /^src\/app\/(?:.+\/)?route\.tsx?$/.test(file);
+const routeFiles = [...analyses.keys()].filter(isRouteHandlerFile).sort();
 const aiRoutes = routeFiles.filter((file) => aiSinkFilesReachedFrom(file).length > 0);
 
 const AI_FEATURE_SET = new Set<string>(AI_FEATURES);
@@ -585,7 +781,9 @@ const AI_FEATURE_SET = new Set<string>(AI_FEATURES);
 const AI_QUEUE_ROUTES: Record<string, { sender: string; reason: string }> = {
   'src/app/api/ai/menu/v5/generate/route.ts': {
     sender: 'src/app/api/cron/process-menu-queue/route.ts',
-    reason: '献立生成をキュー (weekly_menu_requests の queued) に積むだけ。AI へ送るのは Vercel Cron の process-menu-queue (service role)',
+    reason:
+      '献立生成をキュー (weekly_menu_requests の queued) に積むだけ。AI へ送るのは Vercel Cron の process-menu-queue (service role)。' +
+      'キューの行は利用者が直接書けるので、この route を通らない行は数えられない (既知の穴。USER_WRITABLE_AI_QUEUES)',
   },
 };
 
@@ -610,6 +808,33 @@ const USER_JWT_INVOKES: Record<string, readonly string[]> = {
   'src/lib/ai/consultation-action-executor.ts': ['?', '?', '?'],
 };
 
+/**
+ * src/app/api の外にある route ハンドラのうち、AI に届かないものの全数と、それぞれが何をするか。
+ * (AI に届く route は、api の中でも外でも、上の全数の突き合わせで AI_QUOTA_ROUTES / AI_QUOTA_EXEMPT への分類を求められる)
+ */
+const NON_API_ROUTE_HANDLERS: Record<string, string> = {
+  'src/app/(auth)/auth/callback/route.ts': 'ログインの戻り先 (Supabase Auth のコードの引き換え)。AI を呼ばない',
+  'src/app/(auth)/auth/native-bridge/route.ts': 'ネイティブアプリのセッションを WebView の Cookie に引き継ぐ。AI を呼ばない',
+  'src/app/handson-tour/replay/route.ts': 'ハンズオンツアーをもう一度見るための Cookie を発行する。AI を呼ばない',
+};
+
+/**
+ * 数える関数のうち、同意の判定 (T15 / #1154) を呼び出し元の route が済ませてから呼ばれるもの。
+ * 呼び出し元 (callers: route -> 数える関数に届く呼び出しの名前) は、その呼び出しより前に、同じ関数の中で同意を判定すること
+ */
+const CONSENT_CHECKED_BY_CALLERS: Record<string, { features: readonly Feature[]; callers: Record<string, string>; reason: string }> = {
+  'src/lib/ai/consultation-action-executor.ts': {
+    features: ['menu_generation'],
+    callers: {
+      'src/app/api/ai/consultation/actions/[actionId]/execute/route.ts': 'runConsultationAction',
+      'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts': 'executeAndFinalizeAction',
+    },
+    reason:
+      '献立の生成のアクション (AI_SENDING_ACTION_TYPES) は、実行の API (execute) がアクションを実行する前に、' +
+      '会話の中の自動実行 (messages) が POST の最初に、同意を判定する。数える関数 (countMenuGenerationAction) はそのあとで呼ばれる',
+  },
+};
+
 const sortedUnique = (values: Iterable<string>) => [...new Set(values)].sort();
 
 /** コメントを除いた本文に、AI の印が文字として現れるか (構文木の走査とは別の、素朴な検出。走査が壊れていないかの突き合わせに使う) */
@@ -621,6 +846,62 @@ function hasRawAiMarker(source: string): boolean {
     [...AI_ENV_KEYS].some((key) => new RegExp(`process\\.env\\.${key}\\b`).test(stripped)) ||
     AI_PACKAGES.some((pkg) => new RegExp(`from\\s+['"]${escape(pkg)}(['"]|/)`).test(stripped))
   );
+}
+
+/**
+ * 数える前に呼んでよい、AI に届くモジュールの関数 (ファイル -> import した名前 -> 理由)。
+ * AI に届くモジュールから import しているが、呼んでも AI へは送らないもの
+ */
+const AI_MODULE_CALLS_BEFORE_COUNT: Record<string, Record<string, string>> = {
+  'src/app/api/ai/analyze-fridge/route.ts': {
+    fetchImageAsBase64: '利用者がアップロードした写真を、自分のストレージから読み込むだけ (AI へは送らない。送るのは数えたあと)',
+  },
+  'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts': {
+    getFastLLMClient: 'AI のクライアントを作るだけ (送るのは、数えたあとの chat.completions.create)',
+  },
+};
+for (const file of ['src/app/api/meals/route.ts', 'src/app/api/meals/[id]/route.ts', 'src/app/api/meal-plans/meals/route.ts', 'src/app/api/meal-plans/meals/[id]/route.ts', 'src/lib/ai/consultation-action-executor.ts']) {
+  AI_MODULE_CALLS_BEFORE_COUNT[file] = {
+    buildDishImagePayload: '料理画像の生成ジョブの中身 (プロンプト・参照画像) を組み立てるだけ。AI へ送るのは、数えたあとに積んだジョブを処理する Edge Function',
+  };
+}
+
+/** consumeAiQuota の前に、同じ関数の中で同意を判定しているか (判定を含む関数の中で、判定のあとに数える) */
+function consumeCoveredByConsent(a: FileAnalysis, call: ConsumeCall): boolean {
+  return a.consentCalls.some((c) => c.pos < call.pos && (c.fn === null || within(call.pos, c.fn)));
+}
+
+/**
+ * AI 相談のアクションの実行 (consultation-action-executor.ts) から、
+ * 実行の API が同意を判定するアクション (AI_SENDING_ACTION_TYPES の new Set([...]) の中身) と、
+ * 献立の生成として数えるアクション (countMenuGenerationAction を呼ぶ case の値) を取り出す
+ */
+function consultationActionTypes(source: string): { sendingTypes: string[]; countedTypes: string[] } {
+  const sf = ts.createSourceFile('consultation-action-executor.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const sendingTypes: string[] = [];
+  const countedTypes: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === 'AI_SENDING_ACTION_TYPES' &&
+      node.initializer &&
+      ts.isNewExpression(node.initializer)
+    ) {
+      const list = node.initializer.arguments?.[0];
+      if (list && ts.isArrayLiteralExpression(list)) {
+        for (const element of list.elements) if (ts.isStringLiteralLike(element)) sendingTypes.push(element.text);
+      }
+    }
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'countMenuGenerationAction') {
+      let current: ts.Node | undefined = node.parent;
+      while (current && !ts.isCaseClause(current)) current = current.parent;
+      countedTypes.push(current && ts.isCaseClause(current) && ts.isStringLiteralLike(current.expression) ? current.expression.text : '?');
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return { sendingTypes: sortedUnique(sendingTypes), countedTypes: sortedUnique(countedTypes) };
 }
 
 describe('AI 利用回数の記録 (#1177): Next.js の API ルート', () => {
@@ -677,10 +958,103 @@ describe('AI 利用回数の記録 (#1177): Next.js の API ルート', () => {
 
   it('API ルート以外 (ページ・レイアウト・サーバーアクション・middleware) は、AI を呼ぶファイルを import しない', () => {
     const nonRouteEntrypoints = [...analyses.keys()].filter(
-      (file) => (file.startsWith('src/app/') && !/\/route\.ts$/.test(file)) || /^src\/middleware\.tsx?$/.test(file),
+      (file) => (file.startsWith('src/app/') && !isRouteHandlerFile(file)) || /^src\/middleware\.tsx?$/.test(file),
     );
     const offenders = nonRouteEntrypoints.filter((file) => aiSinkFilesReachedFrom(file).length > 0);
     expect(offenders, 'AI は API ルートから呼び、そこで利用回数を数えること: ' + offenders.join(', ')).toEqual([]);
+  });
+
+  it('route ハンドラは src/app 全体から集める: src/app/api の外の route ハンドラのうち AI に届かないものの全数は一覧 (NON_API_ROUTE_HANDLERS) どおり', () => {
+    const nonApi = routeFiles.filter((file) => !file.startsWith('src/app/api/'));
+    // 走査が api の外を見ていなければ、ここが空になる (実在する api の外の route を見落としている)
+    expect(nonApi.length, 'src/app/api の外の route ハンドラを 1 つも見つけていない (走査の範囲が狭い)').toBeGreaterThan(0);
+    expect(
+      nonApi.filter((file) => !aiRoutes.includes(file)),
+      'src/app/api の外の route ハンドラが増えた・減った: AI に届かないなら NON_API_ROUTE_HANDLERS に足す (届くなら数えて AI_QUOTA_ROUTES に足す)',
+    ).toEqual(Object.keys(NON_API_ROUTE_HANDLERS).sort());
+    for (const [file, note] of Object.entries(NON_API_ROUTE_HANDLERS)) expect(note.trim().length, file).toBeGreaterThan(5);
+  });
+
+  it('数える場所では、同じ関数の中で先に同意を判定している (同意の判定 → 利用回数の記録。同意していない人の操作は数えない)', () => {
+    const violations: string[] = [];
+    for (const file of sortedUnique([...Object.keys(AI_QUOTA_ROUTES), ...Object.keys(NON_ROUTE_CALLERS)])) {
+      const a = analyses.get(file)!;
+      const byCallers = CONSENT_CHECKED_BY_CALLERS[file];
+      for (const call of a.consumeCalls) {
+        if (byCallers && call.feature !== null && (byCallers.features as readonly string[]).includes(call.feature)) continue;
+        if (!consumeCoveredByConsent(a, call)) violations.push(`${file} (${call.feature})`);
+      }
+    }
+    expect(
+      violations,
+      '利用回数を数える前に、同じ関数の中で同意を判定すること (requireAiConsent / checkUserAiConsent。' +
+        '同意していない人の操作は AI へ送らないので数えない。呼び出し元が判定するなら CONSENT_CHECKED_BY_CALLERS に書く): ' +
+        violations.join(', '),
+    ).toEqual([]);
+  });
+
+  describe('同意の判定を呼び出し元が済ませる数える関数 (CONSENT_CHECKED_BY_CALLERS): 呼び出し元の全数が一覧どおりで、数える関数に届く呼び出しより前に同意を判定している', () => {
+    it.each(Object.entries(CONSENT_CHECKED_BY_CALLERS))('%s', (library, { callers, reason }) => {
+      expect(reason.trim().length, '理由を書くこと').toBeGreaterThan(10);
+      const importers = routeFiles.filter((route) =>
+        analyses.get(route)!.imports.some((specifier) => resolveImport(route, specifier) === library),
+      );
+      expect(importers, `${library} を import する route が増えた・減った: CONSENT_CHECKED_BY_CALLERS の callers を直すこと`).toEqual(
+        Object.keys(callers).sort(),
+      );
+      for (const [route, sendingCall] of Object.entries(callers)) {
+        const a = analyses.get(route)!;
+        const sends = a.namedCalls.filter((c) => c.name === sendingCall);
+        expect(sends.length, `${route}: ${sendingCall} の呼び出しが無い`).toBeGreaterThan(0);
+        for (const send of sends) {
+          expect(
+            a.consentCalls.some((c) => c.pos < send.pos && (c.fn === null || within(send.pos, c.fn))),
+            `${route}: ${sendingCall} を呼ぶ前に、同じ関数の中で同意を判定すること`,
+          ).toBe(true);
+        }
+      }
+    });
+  });
+
+  it('ライブラリが数える献立の生成のアクションは、実行の API が同意を判定するアクション (AI_SENDING_ACTION_TYPES) と同じ', () => {
+    const file = 'src/lib/ai/consultation-action-executor.ts';
+    const { sendingTypes, countedTypes } = consultationActionTypes(fs.readFileSync(path.join(ROOT, file), 'utf-8'));
+    expect(countedTypes.length, '献立の生成のアクションで数えていない').toBeGreaterThan(0);
+    expect(countedTypes, '数えるアクションと、同意を判定するアクションが食い違っている').toEqual(sendingTypes);
+  });
+
+  it('数える場所より前に、同じ関数の中で AI へ送っていない (利用回数の記録 → AI への送信)', () => {
+    const violations: string[] = [];
+    for (const file of sortedUnique([...Object.keys(AI_QUOTA_ROUTES), ...Object.keys(NON_ROUTE_CALLERS)])) {
+      const a = analyses.get(file)!;
+      const allowed = AI_MODULE_CALLS_BEFORE_COUNT[file] ?? {};
+      for (const call of a.consumeCalls) {
+        if (!call.scope) continue;
+        for (const site of a.sinkSites) {
+          if (site.pos < call.pos && within(site.pos, call.scope)) violations.push(`${file}: AI へ送る印 (URL・Edge Function の呼び出し) が数える前にある`);
+        }
+        for (const imported of a.importedCalls) {
+          if (imported.pos >= call.pos || !within(imported.pos, call.scope) || imported.name in allowed) continue;
+          const resolved = resolveImport(file, imported.specifier);
+          if (resolved && aiSinkFilesReachedFrom(resolved).length > 0) {
+            violations.push(`${file}: ${imported.name} (${imported.specifier}) を数える前に呼んでいる`);
+          }
+        }
+      }
+    }
+    expect(
+      sortedUnique(violations),
+      'AI に届く関数は、利用回数を数えたあとで呼ぶこと (AI へ送らない関数なら、理由を書いて AI_MODULE_CALLS_BEFORE_COUNT に足す)',
+    ).toEqual([]);
+    for (const [file, names] of Object.entries(AI_MODULE_CALLS_BEFORE_COUNT)) {
+      for (const [name, reason] of Object.entries(names)) {
+        expect(reason.trim().length, `${file} ${name}: 理由を書くこと`).toBeGreaterThan(10);
+        expect(
+          analyses.get(file)?.importedCalls.some((c) => c.name === name),
+          `${file} は ${name} をもう呼んでいない: AI_MODULE_CALLS_BEFORE_COUNT から消すこと`,
+        ).toBe(true);
+      }
+    }
   });
 
   describe('AI_QUOTA_ROUTES の route は consumeAiQuota を呼び、結果を使っている', () => {
@@ -812,14 +1186,19 @@ interface EdgeAnalysis {
   }>;
   /** directJwtUserId = ... の代入の位置 (宣言の初期値 null は含めない) */
   directJwtAssignments: number[];
+  /** 同意の判定 (requireAiConsentForUser / checkAiConsent。T15 / #1154) の呼び出しの位置と、それを含む最も内側のブロック */
+  consentCalls: Array<{ pos: number; block: Span | null }>;
 }
+
+/** Edge Functions の同意の判定 (supabase/functions/_shared/ai-consent-guard.ts) */
+const EDGE_CONSENT_FUNCTIONS = new Set(['requireAiConsentForUser', 'checkAiConsent']);
 
 /** JWT で直接呼ばれたときだけ数えるための変数名 (JWT を確かめたブロックの中でだけ代入し、AI へ送る直前に if で数える) */
 const DIRECT_JWT_USER_ID = 'directJwtUserId';
 
 function analyzeEdgeSource(source: string, fileName = 'index.ts'): EdgeAnalysis {
   const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const analysis: EdgeAnalysis = { authCalls: [], consumeCalls: [], directJwtAssignments: [] };
+  const analysis: EdgeAnalysis = { authCalls: [], consumeCalls: [], directJwtAssignments: [], consentCalls: [] };
 
   const nearestBlock = (node: ts.Node): Span | null => {
     let current: ts.Node | undefined = node.parent;
@@ -860,6 +1239,7 @@ function analyzeEdgeSource(source: string, fileName = 'index.ts'): EdgeAnalysis 
         ts.isPropertyAccessExpression(callee.expression) &&
         callee.expression.name.text === 'auth';
       if (isRequireAuth || isGetUser) analysis.authCalls.push({ pos, block: nearestBlock(node) });
+      if (ts.isIdentifier(callee) && EDGE_CONSENT_FUNCTIONS.has(callee.text)) analysis.consentCalls.push({ pos, block: nearestBlock(node) });
 
       if (ts.isIdentifier(callee) && callee.text === 'consumeEdgeAiQuota') {
         const { allowedRead } = describeResultUse(node, sf);
@@ -885,6 +1265,24 @@ function analyzeEdgeSource(source: string, fileName = 'index.ts'): EdgeAnalysis 
   };
   visit(sf);
   return analysis;
+}
+
+/**
+ * consumeEdgeAiQuota の呼び出しの前に、同じ経路で同意を判定しているか。次のどちらか:
+ *  (a) 同意の判定のあと、それを含むブロックの中で数える
+ *  (b) if (directJwtUserId) の中で数えるとき、同意の判定のあと、それを含むブロックの中で directJwtUserId に代入している
+ *      (JWT を確かめたブロックの中で判定してから、数える対象の利用者を決める)
+ */
+function edgeConsumeCoveredByConsent(a: EdgeAnalysis, call: EdgeAnalysis['consumeCalls'][number]): boolean {
+  const inBlock = (pos: number, block: Span | null) => !!block && pos >= block.start && pos < block.end;
+  return a.consentCalls.some(
+    (consent) =>
+      (consent.pos < call.pos && inBlock(call.pos, consent.block)) ||
+      (call.guardedByDirectJwt &&
+        call.userIdArgument === DIRECT_JWT_USER_ID &&
+        a.directJwtAssignments.length > 0 &&
+        a.directJwtAssignments.every((assignment) => consent.pos < assignment && inBlock(assignment, consent.block))),
+  );
 }
 
 const EDGE_ROOT = 'supabase/functions';
@@ -1027,6 +1425,16 @@ describe('AI 利用回数の記録 (#1177): Edge Functions', () => {
     });
   });
 
+  describe('数える前に同意を判定している (同意の判定 → 利用回数の記録。同意していない人の操作は数えない)', () => {
+    it.each(Object.keys(EDGE_USER_JWT_FUNCTIONS))('%s', (name) => {
+      const a = edgeAnalyses.get(name)!;
+      expect(a.consentCalls.length, `${name} が同意を判定していない (requireAiConsentForUser / checkAiConsent)`).toBeGreaterThan(0);
+      for (const call of a.consumeCalls) {
+        expect(edgeConsumeCoveredByConsent(a, call), `${name}: consumeEdgeAiQuota の前に、同じ経路で同意を判定すること`).toBe(true);
+      }
+    });
+  });
+
   it('service-ai の関数は、service role (または cron のシークレット) でしか呼べない (ユーザーの JWT で直接呼んで、数えずに AI を使えない)', () => {
     // 認証の書き方: 共通の requireServiceRole(req)、または service role key との完全一致の比較
     const SERVICE_ONLY_GUARD = /requireServiceRole\(|[!=]==\s*(?:SERVICE_ROLE_KEY|SUPABASE_SERVICE_KEY|SUPABASE_SERVICE_ROLE_KEY)\b/;
@@ -1117,6 +1525,65 @@ describe('AI 利用回数の記録 (#1177): 定期実行 (cron) の入口', () =
         expect(EDGE_FUNCTIONS[name].kind, `${name} は service role で呼ばれるので user-jwt ではない`).not.toBe('user-jwt');
       }
     }
+  });
+});
+
+describe('AI 利用回数の記録 (#1177): 既知の穴 (利用者が書けるキューから AI へ送る経路)', () => {
+  it.each(Object.entries(USER_WRITABLE_AI_QUEUES))('%s は、まだ利用者 (authenticated) が書ける。閉じたらこの一覧と説明を直す', (table, { worker, note }) => {
+    expect(note.trim().length).toBeGreaterThan(10);
+    expect(fs.existsSync(path.join(ROOT, worker)), `${worker} が無い`).toBe(true);
+    const writable = authenticatedCanWrite(table);
+    expect(
+      writable.insert || writable.update,
+      `${table} は利用者から書けなくなった (穴が閉じた)。USER_WRITABLE_AI_QUEUES から消し、AI_QUOTA_EXEMPT・CRON_ENTRYPOINTS・EDGE_FUNCTIONS の説明と ` +
+        'supabase/functions/README.md の「既知の穴」を、事実 (取り出す側で数えなくてよい理由) に合わせて直すこと',
+    ).toBe(true);
+  });
+
+  it('数えない一覧の説明が、既知の穴を隠していない (キューを取り出して AI へ送る側の説明に、直接書ける行は数えられないことを書く)', () => {
+    expect(AI_QUOTA_EXEMPT['src/app/api/cron/process-menu-queue/route.ts']).toContain('weekly_menu_requests');
+    expect(AI_QUOTA_EXEMPT['src/app/api/cron/process-menu-queue/route.ts']).toContain('USER_WRITABLE_AI_QUEUES');
+    expect(CRON_ENTRYPOINTS['vercel:/api/cron/process-menu-queue']).toContain('USER_WRITABLE_AI_QUEUES');
+    const imageWorker = EDGE_FUNCTIONS['process-meal-image-jobs'];
+    expect(imageWorker.kind === 'service-ai' ? imageWorker.callers : '').toContain('USER_WRITABLE_AI_QUEUES');
+    const readme = fs.readFileSync(path.join(ROOT, 'supabase/functions/README.md'), 'utf-8');
+    for (const table of Object.keys(USER_WRITABLE_AI_QUEUES)) expect(readme, `README.md に ${table} の既知の穴が書かれていない`).toContain(table);
+    expect(readme).toContain('既知の穴');
+  });
+
+  it('migration の読み取り: 権限とポリシーの両方があるときだけ書けるとみなし、REVOKE・DROP POLICY で閉じる', () => {
+    const base = {
+      name: '1.sql',
+      sql: `
+        CREATE POLICY "own_all" ON "public"."q" USING (("auth"."uid"() = "user_id"));
+        GRANT INSERT, SELECT, UPDATE ON TABLE public."q" TO "authenticated";
+      `,
+    };
+    expect(authenticatedCanWrite('q', [base])).toEqual({ insert: true, update: true });
+    // 権限を取り上げる
+    expect(authenticatedCanWrite('q', [base, { name: '2.sql', sql: 'REVOKE INSERT, UPDATE ON TABLE public.q FROM authenticated;' }])).toEqual({
+      insert: false,
+      update: false,
+    });
+    // 許可のポリシーを消す (SELECT だけのポリシーでは書けない)
+    expect(
+      authenticatedCanWrite('q', [
+        base,
+        { name: '2.sql', sql: 'DROP POLICY IF EXISTS "own_all" ON public.q; CREATE POLICY "own_read" ON public.q FOR SELECT USING (true);' },
+      ]),
+    ).toEqual({ insert: false, update: false });
+    // 名前が前方一致する別のテーブル (q_archive) の権限・ポリシーは、q のものとして読まない
+    expect(
+      authenticatedCanWrite('q', [
+        { name: '1.sql', sql: 'CREATE POLICY "a" ON public.q_archive USING (true);\nGRANT ALL ON TABLE public.q_archive TO authenticated;' },
+      ]),
+    ).toEqual({ insert: false, update: false });
+    // service_role にだけ付けたポリシーは、authenticated の許可にしない。コメントの中の GRANT は読まない
+    expect(
+      authenticatedCanWrite('q', [
+        { name: '1.sql', sql: '-- GRANT ALL ON TABLE public.q TO authenticated;\nCREATE POLICY "svc" ON public.q FOR ALL TO service_role USING (true);\nGRANT ALL ON TABLE public.q TO authenticated;' },
+      ]),
+    ).toEqual({ insert: false, update: false });
   });
 });
 
@@ -1333,5 +1800,160 @@ describe('AI 利用回数の記録 (#1177): ソース解析のロジック', () 
     const call = a.consumeCalls[0];
     expect(call.pos > auth.pos).toBe(false); // JWT を確かめる前
     expect(auth.block && call.pos >= auth.block.start && call.pos < auth.block.end).toBe(false);
+  });
+
+  it('route ハンドラは src/app 全体 (api の外・route.tsx を含む) から集める。ページ・レイアウトは route ハンドラにしない', () => {
+    expect(isRouteHandlerFile('src/app/api/ai/analyze-fridge/route.ts')).toBe(true);
+    expect(isRouteHandlerFile('src/app/(auth)/auth/callback/route.ts')).toBe(true);
+    expect(isRouteHandlerFile('src/app/feed/route.tsx')).toBe(true);
+    expect(isRouteHandlerFile('src/app/route.ts')).toBe(true);
+    expect(isRouteHandlerFile('src/app/(main)/home/page.tsx')).toBe(false);
+    expect(isRouteHandlerFile('src/app/layout.tsx')).toBe(false);
+    expect(isRouteHandlerFile('src/lib/route.ts')).toBe(false);
+    // api の外に AI を呼ぶ route を置くと、AI の印のある route ハンドラとして見つかる (全数の突き合わせで、数えるか分類を求められる)
+    const file = 'src/app/(main)/ai-shortcut/route.ts';
+    const a = analyzeSource(`import OpenAI from 'openai'; export async function POST() { return new OpenAI(); }`, file);
+    expect(isRouteHandlerFile(file) && a.sinks.length > 0).toBe(true);
+  });
+
+  it('同意の判定 (@/lib/ai/consent-guard の requireAiConsent / checkUserAiConsent) の呼び出しと、数える前に判定しているかを読み取る', () => {
+    const ordered = analyzeSource(`
+      import { requireAiConsent } from '@/lib/ai/consent-guard';
+      import { consumeAiQuota } from '@/lib/plan/entitlements';
+      export async function POST() {
+        const denied = await requireAiConsent(supabase, user.id);
+        if (denied) return denied;
+        const quota = await consumeAiQuota(user.id, 'photo_analysis');
+        if (!quota.allowed) return null;
+      }
+    `);
+    expect(ordered.consentCalls).toHaveLength(1);
+    expect(consumeCoveredByConsent(ordered, ordered.consumeCalls[0])).toBe(true);
+
+    // 数えてから同意を判定する (同意していない人の操作を数えてしまう)
+    const reversed = analyzeSource(`
+      import { checkUserAiConsent as consentOf } from '@/lib/ai/consent-guard';
+      import { consumeAiQuota } from '@/lib/plan/entitlements';
+      export async function POST() {
+        const quota = await consumeAiQuota(user.id, 'health_review');
+        const consent = await consentOf(supabase, user.id);
+        if (consent.allowed && quota.allowed) send();
+      }
+    `);
+    expect(reversed.consentCalls).toHaveLength(1);
+    expect(consumeCoveredByConsent(reversed, reversed.consumeCalls[0])).toBe(false);
+
+    // 別の関数での判定・別のモジュールの同名関数は、判定に数えない
+    const otherFunction = analyzeSource(`
+      import { requireAiConsent } from '@/lib/ai/consent-guard';
+      import { consumeAiQuota } from '@/lib/plan/entitlements';
+      export async function GET() { await requireAiConsent(supabase, user.id); }
+      export async function POST() { const q = await consumeAiQuota(user.id, 'consultation'); if (!q.allowed) return null; }
+    `);
+    expect(consumeCoveredByConsent(otherFunction, otherFunction.consumeCalls[0])).toBe(false);
+    const otherModule = analyzeSource(`
+      import { requireAiConsent } from '@/lib/somewhere-else';
+      export async function POST() { await requireAiConsent(supabase, user.id); }
+    `);
+    expect(otherModule.consentCalls).toEqual([]);
+  });
+
+  it('数える前の送信: Edge Function の呼び出し・提供元の URL の位置と、import した関数の呼び出しを読み取る。switch の別の case は同じ経路にしない', () => {
+    const a = analyzeSource(`
+      import { consumeAiQuota } from '@/lib/plan/entitlements';
+      import { generateReview } from '@/lib/ai/review';
+      import * as helpers from './helpers';
+      export async function run(action) {
+        switch (action.type) {
+          case 'generate': {
+            await supabase.functions.invoke('generate-menu-v5', { body: {} });
+            break;
+          }
+          case 'review': {
+            const early = await generateReview();
+            helpers.prepare();
+            const q = await consumeAiQuota(user.id, 'health_review');
+            if (!q.allowed) return null;
+            await fetch('https://api.openai.com/v1/chat/completions');
+            break;
+          }
+        }
+      }
+    `);
+    const call = a.consumeCalls[0];
+    expect(call.scope).not.toBeNull();
+    // 別の case の Edge Function の呼び出しは、数える経路の前の送信にしない
+    expect(a.sinkSites.filter((site) => site.pos < call.pos && within(site.pos, call.scope))).toEqual([]);
+    // 数えたあとの送信は、前の送信にしない (位置が後ろ)
+    expect(a.sinkSites.some((site) => site.pos > call.pos && within(site.pos, call.scope))).toBe(true);
+    // 同じ case の中で数える前に呼んだ import の関数 (名前と、import 元)
+    const before = a.importedCalls.filter((c) => c.pos < call.pos && within(c.pos, call.scope)).map((c) => `${c.name}:${c.specifier}`);
+    expect(before).toEqual(['generateReview:@/lib/ai/review', 'helpers:./helpers']);
+    // API キーを読むだけ (クライアントを作るだけ) は、送信の位置にしない
+    expect(analyzeSource(`export function f() { const key = process.env.OPENAI_API_KEY; }`).sinkSites).toEqual([]);
+  });
+
+  it('AI 相談のアクション: 同意を判定するアクション (AI_SENDING_ACTION_TYPES) と、献立の生成として数えるアクションを取り出す', () => {
+    const types = consultationActionTypes(`
+      export const AI_SENDING_ACTION_TYPES: ReadonlySet<string> = new Set(['generate_day_menu', 'generate_single_meal']);
+      async function run(action) {
+        switch (action.action_type) {
+          case 'generate_day_menu': { await countMenuGenerationAction(user.id); break; }
+          case 'generate_week_menu': { await countMenuGenerationAction(user.id); break; }
+          case 'delete_meal': { break; }
+        }
+      }
+    `);
+    expect(types.sendingTypes).toEqual(['generate_day_menu', 'generate_single_meal']);
+    expect(types.countedTypes).toEqual(['generate_day_menu', 'generate_week_menu']);
+  });
+
+  it('Edge Function: 数える前に、同じ経路で同意を判定しているか (判定のブロックの中であと / 判定のあとに directJwtUserId に代入)', () => {
+    const deferred = analyzeEdgeSource(`
+      Deno.serve(async (req) => {
+        let directJwtUserId: string | null = null;
+        if (!isServiceRole) {
+          const { data: { user } } = await supabaseAuth.auth.getUser();
+          const denied = await requireAiConsentForUser(user.id, corsHeaders);
+          if (denied) return denied;
+          directJwtUserId = user.id;
+        }
+        if (directJwtUserId) {
+          const quota = await consumeEdgeAiQuota(req, directJwtUserId, 'consultation');
+          if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
+        }
+      });
+    `);
+    expect(deferred.consentCalls).toHaveLength(1);
+    expect(edgeConsumeCoveredByConsent(deferred, deferred.consumeCalls[0])).toBe(true);
+
+    // 判定より前に directJwtUserId を決めていて、数える場所も判定のブロックの外 (未同意でも数えてしまう)
+    const assignedFirst = analyzeEdgeSource(`
+      Deno.serve(async (req) => {
+        let directJwtUserId: string | null = null;
+        if (!isServiceRole) {
+          const { data: { user } } = await supabaseAuth.auth.getUser();
+          directJwtUserId = user.id;
+          const denied = await requireAiConsentForUser(user.id, corsHeaders);
+          if (denied) return denied;
+        }
+        if (directJwtUserId) {
+          const quota = await consumeEdgeAiQuota(req, directJwtUserId, 'consultation');
+          if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
+        }
+      });
+    `);
+    expect(edgeConsumeCoveredByConsent(assignedFirst, assignedFirst.consumeCalls[0])).toBe(false);
+
+    // 数えてから同意を判定する
+    const countedFirst = analyzeEdgeSource(`
+      Deno.serve(async (req) => {
+        const authResult = await requireAuth(req);
+        const quota = await consumeEdgeAiQuota(req, authResult.userId, 'photo_analysis');
+        const consent = await checkAiConsent(supabase, authResult.userId);
+        if (!quota.allowed || !consent.allowed) return null;
+      });
+    `);
+    expect(edgeConsumeCoveredByConsent(countedFirst, countedFirst.consumeCalls[0])).toBe(false);
   });
 });

@@ -248,7 +248,10 @@ export async function POST(request: Request) {
       : {};
 
     // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える
-    // (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
+    // (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)。
+    // ここでキューに積み、AI へ送るのは cron (process-menu-queue) なので、送る側では数えない。
+    // ただしキューの行 (weekly_menu_requests) は利用者が直接書けるので、この route を通らない行は数えられない
+    // (既知の穴。閉じるには書き込みを service role だけにする。tests/ai-quota-contract.test.ts の USER_WRITABLE_AI_QUEUES)
     const quota = await consumeAiQuota(user.id, 'menu_generation');
     if (!quota.allowed) return aiQuotaExceededResponse(quota);
 

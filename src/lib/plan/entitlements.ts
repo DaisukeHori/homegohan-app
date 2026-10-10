@@ -6,10 +6,14 @@
  * いまは ai_plan_limits が全プラン NULL (無制限) なので、consumeAiQuota は必ず許可し、回数を増やすだけ。
  * 上限を超えたときの 429 (AI_DAILY_LIMIT / AI_MONTHLY_LIMIT) は、いまは通らない。
  *
- * 【使い方】AI を使う API ルートは、AI 事業者へ送る直前 (認証・checkRateLimit・入力の検証などの判定をすべて通ったあと) に、
- * 1 回の操作につき 1 回呼ぶ。送る前に処理が止まる経路 (入力の誤り・権限なし・キャッシュを返すだけ) では数えない。
- * AI の同意の判定 (#1154) が入るときも、その判定はこの呼び出しより前に置く (同意していない人の操作は数えない)。
+ * 【使い方】AI を使う API ルートは、AI 事業者へ送る直前 (認証・外国の AI 事業者への提供の同意の判定・checkRateLimit・
+ * 入力の検証などの判定をすべて通ったあと) に、1 回の操作につき 1 回呼ぶ。送る前に処理が止まる経路
+ * (入力の誤り・権限なし・同意が無い・キャッシュを返すだけ) では数えない。
+ * 順番は「同意の判定 (requireAiConsent / checkUserAiConsent。src/lib/ai/consent-guard.ts、#1154) → この記録 → AI への送信」。
+ * 同意していない人の操作は AI へ送らないので数えない。
  *
+ *   const aiConsentDenied = await requireAiConsent(supabase, user.id);
+ *   if (aiConsentDenied) return aiConsentDenied;
  *   const rateLimitResult = await checkRateLimit(user.id, 'analysis');
  *   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
  *   const quota = await consumeAiQuota(user.id, 'photo_analysis');
@@ -22,6 +26,9 @@
  *   実際の上限 (T40) を決めるときに決める。
  * - AI を実際に呼ばない経路 (キャッシュを返すだけ・AI を使わない入力) では、呼ばない。
  *   呼ぶ場所を変えるときは tests/ai-quota-contract.test.ts の一覧と期待を合わせる。
+ * - 既知の穴: キューのテーブル (weekly_menu_requests / meal_image_jobs) は利用者が直接書けるので、
+ *   API ルートを通らずに積んだ行を service role の処理が AI へ送ると、どこでも数えられない。
+ *   閉じるには書き込みを service role だけにする (別の Issue。tests/ai-quota-contract.test.ts の USER_WRITABLE_AI_QUEUES)。
  *
  * 【失敗しても止めない (fail-open)】
  * consume_ai_quota が失敗したとき (DB エラー・接続できない・migration が未適用・応答が遅いなど) は、
