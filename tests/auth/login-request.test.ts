@@ -4,10 +4,11 @@
  * - 送る本文: { email, password } に、トークンがあるときだけ captchaToken を足す
  * - 応答の読み取り: 200 { ok: true } だけを成功とし、それ以外は code / 文言 / retryAfter を取り出す。
  *   知らない code・JSON でない応答は UNKNOWN
- * - 文言: サーバーの文言を基本にし、ロックには残り時間 (分・時間、切り上げ) を足す
+ * - 文言: サーバーの文言を基本にし、無ければ code ごとの既定の文言。ロックはしないので、ロックの code・残り時間の文言は無い
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { formatRetryAfter, loginErrorMessage, requestLogin } from '@/lib/auth/login-request';
+import * as loginRequest from '@/lib/auth/login-request';
+import { loginErrorMessage, requestLogin } from '@/lib/auth/login-request';
 
 const fetchMock = vi.fn();
 
@@ -45,14 +46,23 @@ describe('requestLogin', () => {
     });
   });
 
-  it('423 のロックは code・文言・retryAfter を取り出す', async () => {
-    reply(423, { error: 'ロック中です', code: 'AUTH_ACCOUNT_LOCKED', retryAfter: 3600 });
+  it('429 の回数制限は code・文言・retryAfter を取り出す', async () => {
+    reply(429, { error: 'しばらくしてから再度お試しください。', code: 'RATE_LIMITED', retryAfter: 30 });
     expect(await requestLogin({ email: 'a@example.com', password: 'pw', captchaToken: null })).toEqual({
       ok: false,
-      code: 'AUTH_ACCOUNT_LOCKED',
-      message: 'ロック中です',
-      retryAfterSec: 3600,
+      code: 'RATE_LIMITED',
+      message: 'しばらくしてから再度お試しください。',
+      retryAfterSec: 30,
     });
+  });
+
+  it('ロックの code (AUTH_ACCOUNT_LOCKED) は知らない code として UNKNOWN にする (ロックはしないので、サーバーは返さない)', async () => {
+    reply(423, { error: 'ロック中です', code: 'AUTH_ACCOUNT_LOCKED', retryAfter: 3600 });
+    const outcome = await requestLogin({ email: 'a@example.com', password: 'pw', captchaToken: null });
+    expect(outcome).toEqual({ ok: false, code: 'UNKNOWN', message: 'ロック中です', retryAfterSec: 3600 });
+    if (outcome.ok) throw new Error('unreachable');
+    // 残り時間の文言を足さない
+    expect(loginErrorMessage(outcome)).toBe('ロック中です');
   });
 
   it('200 でも ok: true でなければ成功にしない。知らない code・JSON でない応答は UNKNOWN', async () => {
@@ -80,27 +90,18 @@ describe('requestLogin', () => {
   });
 });
 
-describe('formatRetryAfter / loginErrorMessage', () => {
-  it.each([
-    [1, '約 1 分'],
-    [60, '約 1 分'],
-    [61, '約 2 分'],
-    [900, '約 15 分'],
-    [3540, '約 59 分'],
-    [3600, '約 1 時間'],
-    [3601, '約 2 時間'],
-    [86400, '約 24 時間'],
-  ])('%i 秒 → %s', (sec, expected) => {
-    expect(formatRetryAfter(sec)).toBe(expected);
-  });
-
-  it('ロックは残り時間を足す。サーバーの文言が無ければ code ごとの既定の文言', () => {
-    expect(
-      loginErrorMessage({ ok: false, code: 'AUTH_ACCOUNT_LOCKED', message: 'ロック中です。', retryAfterSec: 900 }),
-    ).toBe('ロック中です。 (あと約 15 分)');
+describe('loginErrorMessage', () => {
+  it('サーバーの文言をそのまま使い、無ければ code ごとの既定の文言', () => {
+    expect(loginErrorMessage({ ok: false, code: 'RATE_LIMITED', message: 'しばらく待って。', retryAfterSec: 900 })).toBe(
+      'しばらく待って。',
+    );
     expect(loginErrorMessage({ ok: false, code: 'AUTH_INVALID_CREDENTIALS', message: null, retryAfterSec: null })).toBe(
       'メールアドレスまたはパスワードが正しくありません。',
     );
     expect(loginErrorMessage({ ok: false, code: 'UNKNOWN', message: null, retryAfterSec: null })).toContain('ログインに失敗しました');
+  });
+
+  it('ロックの残り時間を作る部品 (formatRetryAfter) を持たない', () => {
+    expect(Object.keys(loginRequest)).not.toContain('formatRetryAfter');
   });
 });

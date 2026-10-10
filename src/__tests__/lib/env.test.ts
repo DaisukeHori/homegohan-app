@@ -416,10 +416,12 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     }
   });
 
-  it('値を読む場所が決まっている変数 (CRON_SECRET・CRON_SECRET_PREVIOUS・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・OPS_ALERT_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
+  it('値を読む場所が決まっている変数 (AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・OPS_ALERT_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
     const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
 
     expect(sealed.map((entry) => [entry.name, entry.readOnlyBy]).sort()).toEqual([
+      // #1165 ログインの連続失敗の回数を 0 に戻すまでの時間。不正な値の扱い (既定値に戻して warn) をログインの route 1 か所に置く
+      ['AUTH_LOGIN_FAILURE_RESET_MINUTES', 'src/app/api/auth/login/route.ts'],
       ['CRON_SECRET', 'src/lib/cron-auth.ts'],
       ['CRON_SECRET_PREVIOUS', 'src/lib/cron-auth.ts'],
       // #1148 機能フラグの対象ユーザー数を 1 人ずつ数える上限。正の整数でなければ既定値にする読み方を 1 か所に置く
@@ -456,6 +458,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       getOptionalEnv('OPS_ALERT_ERROR_THRESHOLD');
       // @ts-expect-error OPS_ALERT_COOLDOWN_MINUTES も同じ
       getOptionalEnv('OPS_ALERT_COOLDOWN_MINUTES');
+      // @ts-expect-error AUTH_LOGIN_FAILURE_RESET_MINUTES の値を読むのはログインの route (src/app/api/auth/login/route.ts) だけ
+      getOptionalEnv('AUTH_LOGIN_FAILURE_RESET_MINUTES');
       getOptionalEnv('RESEND_API_KEY'); // 値を読む場所が決まっていない任意の変数は渡せる
     };
     expect(typeof typeOnly).toBe('function');

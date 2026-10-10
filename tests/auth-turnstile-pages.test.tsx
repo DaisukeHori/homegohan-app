@@ -345,17 +345,17 @@ describe('ログイン (/login)', () => {
     });
   });
 
-  describe('ログイン失敗のロック (設計 §8)', () => {
+  describe('ログインに続けて失敗したとき (ロックはしない)', () => {
     beforeEach(() => {
       vi.stubEnv('NEXT_PUBLIC_TURNSTILE_SITE_KEY', '');
     });
 
-    it('ロック中 (423) は、残り時間と再設定の案内を出し、ログイン後の画面へ進まない', async () => {
+    it('続けて失敗していても (401・captchaRequired)、パスワード違いの文言だけを出し、ロックや残り時間の案内は出さない', async () => {
       mocks.fetch.mockImplementation(async () =>
-        loginResponse(423, {
-          error: 'ログインに続けて失敗したため、しばらくログインできません。パスワードを再設定すると、すぐにログインできます。',
-          code: 'AUTH_ACCOUNT_LOCKED',
-          retryAfter: 900,
+        loginResponse(401, {
+          error: 'メールアドレスまたはパスワードが正しくありません。',
+          code: 'AUTH_INVALID_CREDENTIALS',
+          captchaRequired: true,
         }),
       );
       await renderPage(LoginPage);
@@ -363,9 +363,10 @@ describe('ログイン (/login)', () => {
 
       await submit();
 
-      expect(alertText()).toContain('しばらくログインできません');
-      expect(alertText()).toContain('パスワードを再設定すると');
-      expect(alertText()).toContain('あと約 15 分');
+      expect(alertText()).toContain('メールアドレスまたはパスワードが正しくありません。');
+      expect(alertText()).not.toContain('しばらくログインできません');
+      expect(alertText()).not.toContain('パスワードを再設定すると');
+      expect(alertText()).not.toMatch(/あと約/);
       expect(mocks.getUser).not.toHaveBeenCalled();
       expect(mocks.push).not.toHaveBeenCalled();
     });

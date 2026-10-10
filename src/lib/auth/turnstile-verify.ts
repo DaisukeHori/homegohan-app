@@ -1,15 +1,15 @@
 /**
  * Cloudflare Turnstile のトークンを、サーバーで確かめる (#1165)。サーバー専用。
  *
- * POST /api/auth/login が、ログインに 3 回続けて失敗したメールアドレス (src/lib/auth/login-lock.ts の
- * CAPTCHA_REQUIRED_FAILURE_COUNT) の次のログインで呼ぶ。
+ * POST /api/auth/login が、ログインに 3 回続けて失敗したメールアドレス (src/lib/auth/login-failures.ts の
+ * CAPTCHA_REQUIRED_FAILURE_COUNT) の次のログインで呼ぶ。ログインに続けて失敗しても、アカウントはロックしない。
  *
  * - 有効になるのは、秘密キー TURNSTILE_SECRET_KEY とサイトキー NEXT_PUBLIC_TURNSTILE_SITE_KEY の両方が設定されているときだけ。
  *   どちらかが無ければ「無効」で、トークンを確かめずに通す。
  *   - 秘密キーが無いとき: src/lib/env.ts の getOptionalEnv が、サーバーのプロセスごとに 1 回だけ警告のログを出す
  *     (サーバーが起動してから最初のログインの要求で。POST /api/auth/login が isTurnstileVerificationEnabled を最初に呼ぶ)。
  *   - サイトキーが無いのに秘密キーだけあるとき: 画面にウィジェットが出ず、トークンを取る手段が無い。
- *     確かめると 3 回失敗した人が二度とログインできなくなるので、無効として扱い、プロセスごとに 1 回だけ警告のログを出す。
+ *     確かめると 3 回失敗した人が、回数が 0 に戻るまで (成功するか、時間が経つまで) ログインできなくなるので、無効として扱い、プロセスごとに 1 回だけ警告のログを出す。
  * - Cloudflare に届かない・応答が壊れているときは 'unavailable' (呼び出し側は通さない)。
  * - トークンは 1 回しか使えない。ここで確かめたトークンは、Supabase へは渡さない (渡すと使用済みで断られる)。
  */
