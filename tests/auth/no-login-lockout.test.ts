@@ -228,34 +228,8 @@ const LOCK_AFFIRMING_DOC_PATTERNS: readonly RegExp[] = [
  * 直しを当てたら、ここが実際と合わなくなってテストが赤になる → 当てたファイルの項をここから消す (残すと、同じ文が戻ってきても見逃すため)。
  * 項を増やすのは禁止 (新しくロックを前提にした文を書かない)。
  */
-const PENDING_DOC_LINES: Readonly<Record<string, readonly string[]>> = {
-  'docs/design/cross/01-auth-session.md': [
-    'Next->>Redis: incr failed_login:{userId}',
-    'Note over Next: 5回→15分ロック、10回→1h+メール、20回→24h+admin通知',
-    '## 8. ログイン失敗ロック',
-    '| 5 回 | 15 分アカウントロック |',
-    '| 10 回 | 1 時間ロック + 本人へメール通知 |',
-    '| 20 回 | 24 時間ロック + 管理者 Slack 通知 |',
-    'ロック中は正しいパスワードでも拒否。メール経由のリセットのみ解除可能。',
-    'カウンターは Upstash Redis に `failed_login:{userId}` キーで管理し、ロック解除後にリセット。',
-    '## 15. シーケンス: CAPTCHA + ロック統合フロー',
-    'Client->>Redis: GET failed_login_count:{userId}',
-    'Next->>Redis: INCR failed_login_count:{userId}',
-    'Next->>Redis: SET lock:{userId} EX 900',
-    'Next->>Redis: SET lock:{userId} EX 3600',
-    'Next->>Redis: SET lock:{userId} EX 86400',
-    'Next->>Redis: DEL failed_login_count:{userId}',
-    '| Integration | ログイン失敗ロック、セッション同時 5 端末上限 | Vitest + Supabase Local |',
-  ],
-  'docs/design/cross/04-api-conventions.md': ['| `AUTH_ACCOUNT_LOCKED` | アカウントロック中 | 403 |'],
-  'docs/requirements/03-operator-admin.md': [
-    '### 17.5 ログイン失敗・アカウントロック',
-    '- 5 回連続失敗 → 15 分アカウントロック',
-    '- 10 回連続失敗 → 1 時間ロック + 本人へメール通知',
-    '- 20 回連続失敗 → 24 時間ロック + 管理者通知',
-    '- ロック中は正しいパスワードでも拒否、メール経由のリセットのみ可',
-  ],
-};
+// 設計書・要件書の直し (design-doc.patch・requirements-doc.patch) はオーケストレーターが適用済み。ロックを前提にした行は残っていない
+const PENDING_DOC_LINES: Readonly<Record<string, readonly string[]>> = {};
 
 function listDocFiles(dir: string): string[] {
   const abs = path.join(ROOT, dir);
