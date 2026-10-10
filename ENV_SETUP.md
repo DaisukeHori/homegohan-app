@@ -79,7 +79,7 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 
 | 保管場所 | 名前 | 役割 | 他と値を合わせる必要 |
 |---|---|---|---|
-| Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue`（`vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
+| Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue` と `/api/cron/app-log-alerts`（どちらも `vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
 | Supabase の Edge Function secrets | `CRON_SECRET`（別名 `SERVICE_ROLE_SECRET`。`CRON_SECRET` が無いときだけ代わりに使われます） | **受ける側**。`supabase/functions/_shared/auth.ts` の `requireServiceRole` が、次の Edge Function でこの値と照らし合わせます: コンビニカタログ取り込み 5 本（`import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog`）、`aggregate-org-stats`（停止中。認証だけ行い 410 を返します。#1325）、`calculate-segment-stats`、`regenerate-embeddings`、`stripe-price-sync`（最後の 2 本は service role key でも呼べます） | Vault の `app_cron_secret` と **同じ値にする** |
 | Supabase Vault | `app_cron_secret` | **送る側**。pg_cron が定期実行する次の関数がこの値を読み、`Authorization: Bearer ...` に付けて Edge Function を呼びます: `public.invoke_catalog_import()`（コンビニカタログ取り込みの Edge Function 5 本。登録時のスケジュールは、毎日 UTC 3:00〜4:00 に 15 分おき）、`public.invoke_calculate_segment_stats()`（比較ランキングの集計 `calculate-segment-stats` を daily / weekly / monthly の 3 回。期間が切り替わった直後の回は直前の期間の分も。ジョブ `calculate-segment-stats`、1 時間ごと（毎時 5 分）。#1406） | Edge Function secrets の `CRON_SECRET` と **同じ値にする** |
 
@@ -87,9 +87,11 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 
 ### 値が合っていないとどうなるか
 
-- 値が違う → Edge Function は HTTP 401 を返します。
+- 値が違う → Edge Function は HTTP 401（本文 `{"error":"Unauthorized"}`）を返します。
 - Edge Function 側に `CRON_SECRET`（と `SERVICE_ROLE_SECRET`）が無い → HTTP 503 を返します。
-- pg_cron は pg_net で **非同期に** 呼び出すため、cron ジョブ自体は成功扱いのままです。エラーの表示もなく、カタログ取り込みだけが止まります。
+- pg_cron は pg_net で **非同期に** 呼び出すため、cron ジョブ自体は成功扱いのままです（`cron.job_run_details` は HTTP の結果にかかわらず `succeeded` になります）。エラーの表示もなく、カタログ取り込みだけが止まります。
+
+値とは別に、**関数のゲートウェイの JWT 検証（`verify_jwt`）が有効なまま** だと、値が合っていても関数に届く前に止まります。`app_cron_secret`（`CRON_SECRET`）はランダムな文字列で JWT ではないため、Supabase のゲートウェイが HTTP 401（本文 `{"code":"UNAUTHORIZED_INVALID_JWT_FORMAT", ...}`）を返します。pg_cron から呼ぶ関数は `supabase/config.toml` で `verify_jwt = false` にしてあり（認証は関数の中の `requireServiceRole` が行います。#1406）、GitHub Actions の「Deploy Supabase Functions」がこの設定ごとデプロイします。この 401 が出たら、設定がまだデプロイされていません。Actions の「Deploy Supabase Functions」が成功しているかを確かめ、必要なら手動で実行（Run workflow）し直してください。
 
 直近の呼び出し結果は、Supabase Dashboard の SQL Editor で次のように確かめられます。古い結果は自動で消える（既定では約 6 時間）ので、実行の直後に見てください。
 
@@ -100,7 +102,7 @@ ORDER BY created DESC
 LIMIT 20;
 ```
 
-- `status_code` が **401 / 503** の行がある → 値が合っていません。
+- `status_code` が **401 / 503** の行がある → 値が合っていません。ただし 401 の本文が `UNAUTHORIZED_INVALID_JWT_FORMAT` なら、値ではなくゲートウェイの JWT 検証で止まっています（上を参照）。本文は `content::text` で見られます（下の「比較ランキングの集計が動いているかの確かめ方」のクエリ）。
 - `status_code` が 200 → 認証は通っています。
 - `status_code` が空で `timed_out` が true → 認証は通っています。取り込みに 5 秒以上かかると、pg_net が先に待つのをやめるためです（正常）。
 
@@ -160,7 +162,7 @@ Edge Function は、現行の `CRON_SECRET` に加えて `CRON_SECRET_PREVIOUS`�
 
 - 毎回、daily / weekly / monthly の 3 つの要求が pg_net から並行して出ます。どれも、自分の期間の食事の記録（monthly は 1 か月分）を全件読みます。
 - 日・週・月が切り替わった直後の回（JST 0:05）は、切り替わった種類について直前の期間も 1 回だけ集計し直します（最大 3 つ増えます）。期間の最後の 1 時間（例: 23:05〜23:59）の記録を、その期間の最終の値に入れるためです。
-- 応答を待つ上限は 400 秒です。間隔（1 時間）より十分短いので、前の回と重なりません。直近の結果は `net._http_response`（上の「値が合っていないとどうなるか」のクエリ）で確かめられます。
+- 応答を待つ上限は 400 秒です。間隔（1 時間）より十分短いので、前の回と重なりません。直近の結果は `net._http_response` で確かめられます（下の「比較ランキングの集計が動いているかの確かめ方」）。
 
 利用者が増えて毎時の集計が重くなったら、Supabase Dashboard の SQL Editor で間隔を広げられます（migration は要りません）。例: 3 時間ごと
 
@@ -174,6 +176,52 @@ SELECT cron.alter_job(
 - **UTC 15 時台（= JST 0 時台）の回を必ず含めてください。** 直前の期間の集計し直しは、期間が切り替わってから 1 時間以内（`calculate_segment_stats_request_bodies` の `c_finalize_window`）の回だけが行います。`'5 */3 * * *'` は UTC 0, 3, …, 15, 18, 21 時なので含みます。`'5 */2 * * *'` は含まないので使えません。
 - 間隔を変えたら、モバイルの比較画面の案内（`apps/mobile/app/comparison/index.tsx` の `RANKING_UPDATE_INTERVAL_HOURS`）も同じ時間に直し、次の migration でジョブのスケジュールも揃えてください（`tests/segment-stats-schedule-sync.test.ts` が migration と画面を突き合わせます）。
 - 今の設定は `SELECT jobname, schedule, active FROM cron.job WHERE jobname = 'calculate-segment-stats';` で確かめられます。
+
+### 比較ランキングの集計が動いているかの確かめ方
+
+migration の適用後や、`supabase/config.toml` の `verify_jwt` を変えたデプロイの後に、Supabase Dashboard の SQL Editor で順に確かめます（どれも読み取りだけです）。
+
+1. Vault に `app_cron_secret` がある（値は Edge Function secrets の `CRON_SECRET` と同じにしておく）。
+
+   ```sql
+   SELECT name, updated_at FROM vault.secrets WHERE name = 'app_cron_secret';
+   ```
+
+2. ジョブが登録されている。
+
+   ```sql
+   SELECT jobname, schedule, active FROM cron.job WHERE jobname LIKE 'calculate-segment-stats%';
+   ```
+
+3. 毎時 5 分の回のあと、ジョブが動いた。
+
+   ```sql
+   SELECT status, return_message, start_time FROM cron.job_run_details ORDER BY start_time DESC LIMIT 5;
+   ```
+
+   `succeeded` は「pg_net に要求を積めた」という意味でしかありません。Edge Function が 401 を返していても `succeeded` になります。HTTP の結果は次の 4 で見ます。
+
+4. **HTTP の結果を見る。** 1 回の実行で要求は 3 つ（daily / weekly / monthly）、JST 0:05 の回は最大 6 つ出ます。
+
+   ```sql
+   SELECT status_code, content::text FROM net._http_response ORDER BY created DESC LIMIT 6;
+   ```
+
+   - `status_code` が 200 で、本文が `{"success":true, ...}` → 集計できています。
+   - 401 で、本文が `UNAUTHORIZED_INVALID_JWT_FORMAT` → ゲートウェイの JWT 検証で止まっています。`verify_jwt = false` がまだデプロイされていません（上の「値が合っていないとどうなるか」）。
+   - 401 で、本文が `{"error":"Unauthorized"}` → Vault の `app_cron_secret` と Edge Function secrets の `CRON_SECRET` の値が合っていません。
+   - 503 → Edge Function secrets に `CRON_SECRET` がありません。
+   - 500 → 認証は通り、集計の途中で失敗しています。Supabase Dashboard の Edge Functions → `calculate-segment-stats` → Logs を見てください。
+   - 行がまだ無い → 応答を待っています（上限 400 秒）。少し待ってから見直してください。古い結果は自動で消える（既定では約 6 時間）ので、実行の直後に見てください。
+   - ほかの pg_net の呼び出し（カタログ取り込み）の結果も同じ表に入ります。UTC 3:00〜4:00 の回と重なったら、件数を増やして見分けてください。
+
+5. 集計の結果が入っている。
+
+   ```sql
+   SELECT period_type, max(period_start) AS latest_period, count(*) AS rows
+   FROM public.segment_stats
+   GROUP BY period_type;
+   ```
 
 ### Vercel の `CRON_SECRET` を入れ替えるとき
 
@@ -206,6 +254,25 @@ Vercel Dashboard → Settings → Environment Variables で `CRON_SECRET` の値
 - メールが届かなくても、招待・お問い合わせ・サポート返信の処理は成功します（失敗は `app_logs` / 関数ログに残ります）。
 - `https://homegohan-app.vercel.app` は、配布済みのアプリのビルドが WebView で開くため、古いビルドが使われなくなるまで止めない・リダイレクトしないでください。
 - 送信用の DNS（Resend の DKIM・Return-Path・DMARC）が見えているかは、`node scripts/check-email-dns.mjs` で確かめられます（DNS を引くだけで、何も書き換えません）。
+
+---
+
+## 🚨 エラー急増の運用メール（`OPS_ALERT_EMAIL`）
+
+アプリのエラーログ（`app_logs` の `level = 'error'`）が急に増えたときに、運用の担当者へ 1 通だけメールで知らせます（#1157）。Vercel Cron が 15 分おきに `GET /api/cron/app-log-alerts` を呼び、直近 15 分の件数を数えます。
+
+| 環境変数 | 例 | 役割 | 未設定のときの動き |
+|---|---|---|---|
+| `OPS_ALERT_EMAIL` | `ops@example.com` | 通知メールの宛先。**メールアドレスを 1 つだけ**書く（`名前 <アドレス>` の形や、カンマ区切りの複数は不可）。共有の受信箱ができるまでは、個人のアドレスでよい | 通知しない。cron は動くが、`app_logs` に info ログを 1 行残すだけで、DB にもメールにも触れない |
+| `OPS_ALERT_ERROR_THRESHOLD`（任意） | `50` | しきい値。直近 15 分の `error` が**この件数を超えたら**通知する。1〜100000 の整数 | 既定の 20 件。整数でない・範囲外の値も既定値に戻し、`cron/app-log-alerts` の warn ログに変数名だけを残す |
+| `OPS_ALERT_COOLDOWN_MINUTES`（任意） | `120` | 同じ通知を送り直さない時間（分）。1〜10080 の整数 | 既定の 60 分。不正な値は既定値に戻す（しきい値と同じ） |
+
+- 通知する条件: 直近 15 分の `error` が **20 件を超えた**とき（21 件から）。既定値は `src/lib/ops-alerts/app-log-error-spike.ts` の定数で、`OPS_ALERT_ERROR_THRESHOLD` で上書きできる。窓（15 分）は `vercel.json` の cron の間隔と同じにしてあるので、環境変数では変えない。
+- 同じ通知は **60 分は送り直さない**（`OPS_ALERT_COOLDOWN_MINUTES` で上書きできる）（DB の `ops_alert_state` で覚える。メールを送れなかったときは「送った」と記録せず、15 分後の次の回でもう一度試す）。
+- メールに載るのは、件数・関数名・運用ログ画面（`/super-admin/logs`）へのリンクだけです。ユーザー ID・メールアドレス・ログの本文は載せません（送信先の Resend は米国の事業者のため）。
+- **メールが実際に届くには、メールの送信元ドメインを Resend で検証し、`RESEND_API_KEY` と `EMAIL_FROM` を設定する必要があります**（手順は [`docs/operations/email-domain.md`](docs/operations/email-domain.md)）。それまでは、送れなかったことが `app_logs`（`function_name = 'email'` の error と、`cron/app-log-alerts` の warn）に残るだけで、アプリの動きには影響しません。
+- 応答（JSON）の `status` は、`disabled`（宛先が未設定）・`invalid_config`（宛先の形が不正）・`below_threshold`（しきい値以下）・`deduped`（60 分以内に送信済み）・`sent`（送信した）・`send_skipped` / `send_failed`（送れなかった）のどれかです。cron が動いているかは、Vercel の Cron Jobs の画面（HTTP ステータス）で確かめられます。`app_logs`（`/super-admin/logs` で `function_name` に `cron/app-log-alerts` を指定）に残るのは、宛先が未設定・形が不正・通知した・通知できなかった回と、しきい値・クールダウンの環境変数の値が不正だった回 (warn。変数名だけ) です（しきい値以下の回と、60 分以内の回は何も残しません）。
+- 認証は他の cron と同じ `CRON_SECRET`（上の「Cron の共有シークレットの保管場所とローテーション」）。手で呼ぶ場合は `Authorization: Bearer <CRON_SECRET>` を付けます（値はコマンドの履歴やチャットに残さないこと）。しきい値を超えているときに手で呼ぶと、本物の通知メールが 1 通出て、60 分の抑止が始まります。
 
 ---
 
@@ -255,6 +322,22 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 3. Vercel Dashboard → Settings → Environment Variables に、この 2 つの名前のまま追加する（Environment は Production）。Marketplace 連携で自動追加される変数名はこのアプリが読む名前と異なる場合があるので、上の 2 つの名前で入っているかを確認する
 4. 再デプロイする（環境変数は再デプロイで反映される）
 5. 反映の確認: Vercel の関数ログに `[rate-limit] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN が未設定です` という警告が出ていなければ、Upstash が使われている
+
+### 任意の環境変数: ログイン・登録・パスワード再設定の bot 対策（Cloudflare Turnstile、#1165）
+
+- `NEXT_PUBLIC_TURNSTILE_SITE_KEY` - Cloudflare Turnstile のサイトキー（Web。Vercel の環境変数）
+- `EXPO_PUBLIC_TURNSTILE_SITE_KEY` - 同じサイトキー（モバイル。EAS の環境変数）
+- `TURNSTILE_SECRET_KEY` - Turnstile の秘密キー（Web のサーバー専用。Vercel の環境変数。`NEXT_PUBLIC_` を付けない）。任意
+
+どちらもサイトキーは公開してよい値です。秘密キーは公開しません。秘密キーは、**Vercel の `TURNSTILE_SECRET_KEY` か Supabase のダッシュボードの、どちらか一方だけ**に入れます（トークンは 1 回しか使えないため、両方で確かめると 2 回目が断られます）。
+
+- `TURNSTILE_SECRET_KEY` を入れると、Web のログインで続けて 3 回以上失敗したメールアドレスの次のログインから、このアプリのサーバー（`POST /api/auth/login`）がトークンを確かめます。**未設定（またはサイトキーが未設定）なら確かめずに通し**、サーバーの起動後に最初にログインを処理したとき、その旨のログが 1 回だけ出ます。
+- ログイン失敗のロック（5 回で 15 分など。設計 `docs/design/cross/01-auth-session.md` §8）は、キーの有無に関係なく働きます。
+
+- **未設定なら Turnstile は出ず、今までどおりに動きます**（ローカル開発・テストは未設定でよい）。
+- 設定すると、ログイン・新規登録・パスワード再設定の画面にウィジェットが出て、確認が終わるまで送信ボタンが押せなくなります。
+- ビルド時に埋め込まれるので、変えたら再デプロイ（モバイルは新しいビルド）が要ります。
+- Web に入れただけでは、Supabase の Auth API を直接呼ぶ攻撃は止まりません。Supabase 側で CAPTCHA を有効にする時期と手順、現在の設定値の記録は [docs/operations/auth-protection.md](docs/operations/auth-protection.md) を参照してください（有効にするのは、モバイルの新しいビルドを配って古いビルドが使われなくなってから）。
 
 ### 任意の環境変数: Edge Function の CORS（`ALLOWED_ORIGINS`）
 

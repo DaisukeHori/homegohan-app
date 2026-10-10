@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'supabase/functions/**'
+      # 関数ごとの verify_jwt (ゲートウェイの JWT 検証) はここに書く。変えただけでもデプロイし直す (#1406)
+      - 'supabase/config.toml'
       # 削除の手順 (下の「Delete functions not in the repository」) を変えたときも走らせる (#1452)
       - '.github/workflows/deploy-supabase-functions.yml'
       - 'scripts/edge-functions-prune.mjs'
@@ -44,6 +46,9 @@ jobs:
         run: |
           npx --yes supabase@2.62.10 --version
 
+      # 名前を指定しない deploy は supabase/config.toml の [functions.<name>] verify_jwt を関数ごとに読む
+      # (CLI 2.62.10 の internal/functions/deploy の GetFunctionConfig)。JWT 検証を外すフラグは全関数に効くので付けない (#1406)。
+      # tests/edge-function-verify-jwt.test.ts がこのファイルをコメントも含めて読むので、そのフラグの名前はここにも書かない
       - name: Deploy all functions
         run: |
           npx --yes supabase@2.62.10 functions deploy --project-ref ${{ env.SUPABASE_PROJECT_ID }}

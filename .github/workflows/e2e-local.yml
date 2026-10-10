@@ -77,6 +77,12 @@ jobs:
           # TypeError で落ちてビルドが失敗していた。e2e はフォントの見た目に依存しないので、モックで代替フォント表示にする。
           # 詳細は tests/e2e/fixtures/google-fonts-mock.cjs。本番 (Vercel) のビルドには関係しない。
           NEXT_FONT_GOOGLE_MOCKED_RESPONSES: ${{ github.workspace }}/tests/e2e/fixtures/google-fonts-mock.cjs
+          # Turnstile (#1165): Cloudflare 公式のテスト用サイトキー (常に成功。表示あり)。NEXT_PUBLIC_* はビルド時に埋め込まれるので、
+          # ビルドするこの step に渡す。ログイン・新規登録・パスワード再設定の画面に本物のウィジェットが出て、
+          # 01-login もウィジェットがトークンを出すのを待ってからログインする (networkidle は待たない。tests/e2e/helpers/login-form.ts)。
+          # ローカルの Supabase は CAPTCHA が無効なので、トークンは検証されない (付いて届くことを auth-turnstile.spec.ts が確かめる)。
+          # 本番のサイトキーはここに書かない。
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: "1x00000000000000000000AA"
         run: |
           npm run build
           nohup npm run start > /tmp/next-start.log 2>&1 &
@@ -88,18 +94,22 @@ jobs:
 
       # public-policy-pages は未ログインで動く (AI も使わない)。利用規約・プライバシーポリシーが
       # ログイン画面へ飛ばされず読めること (#1174) を、PR のコードの本番ビルドで確かめる。
-      - name: Run Playwright tests (MVP, AI を使わないもの + 未ログインで読める公開ページ)
+      # auth-turnstile は、Turnstile のウィジェットが本物のブラウザ・本物の CSP で動くことを確かめる (#1165)。
+      - name: Run Playwright tests (MVP, AI を使わないもの + 未ログインで読める公開ページ + Turnstile)
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:3000
           E2E_USER_EMAIL: e2e-user-01@homegohan.test
           E2E_REQUIRE_LOGIN: "1"
           PLAYWRIGHT_NO_COPY_PROMPT: "1"
+          # Turnstile の spec は、サイトキー無しでビルドされたアプリではスキップする。ここでは必ず動かす (#1165)
+          E2E_REQUIRE_TURNSTILE: "1"
         run: >
           npx playwright test --trace off
           tests/e2e/01-login.spec.ts
           tests/e2e/04-menu-page.spec.ts
           tests/e2e/05-shopping-list.spec.ts
           tests/e2e/public-policy-pages.spec.ts
+          tests/e2e/auth-turnstile.spec.ts
           tests/e2e/ai-consent-first-use.spec.ts
           tests/e2e/legal-consent-gate.spec.ts
 

@@ -57,7 +57,7 @@ main へ push → GitHub Actions → Supabase Functions デプロイ
 
 **リポジトリから関数を消すと、次のデプロイで本番からも消えます。** デプロイのあとに `scripts/edge-functions-prune.mjs` が、本番にあってこのディレクトリに無い関数 (`_` で始まらず `index.ts` を持つディレクトリが関数) を削除します (#1452)。リポジトリの関数が 0 本・削除が上限 (`EDGE_FUNCTIONS_PRUNE_MAX_DELETIONS`、既定 20 本) を超えるなどのときは 1 本も消さずにワークフローが赤になります。消すのは main の実行で、関数のディレクトリが main の最新と同じときだけです (別のブランチからの手動実行や古い実行の再実行では消しません)。手元から `supabase functions deploy <name>` で入れた関数や、別のブランチからの手動実行で入れた関数も、main の `supabase/functions/` に無ければ次の main のデプロイで消えます。本番に残したい関数は、必ず main にディレクトリを置きます。手元で何が消えるかだけ見るには `node scripts/edge-functions-prune.mjs --project-ref <ref>` (既定は dry-run)。
 
-この README を含む `supabase/functions/**` 配下の更新は、自動デプロイのトリガー対象です。
+この README を含む `supabase/functions/**` 配下の更新は、自動デプロイのトリガー対象です。`supabase/config.toml`（関数ごとの `verify_jwt`）を変えただけの push も対象です（#1406）。
 
 ### 手動デプロイ
 
@@ -70,6 +70,35 @@ supabase functions deploy --project-ref flmeolcfutuwwbjmzyoz
 # 特定の関数のみデプロイ
 supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
 ```
+
+`--no-verify-jwt` は付けません。付けると、指定したすべての関数でゲートウェイの JWT 検証が外れます。関数ごとの設定は `supabase/config.toml` から読まれます（下の「ゲートウェイの JWT 検証（verify_jwt）」）。
+
+### ゲートウェイの JWT 検証（verify_jwt）
+
+Supabase のゲートウェイは、既定で `Authorization: Bearer` が JWT かどうかを確かめ、JWT でなければ関数に届く前に HTTP 401（`UNAUTHORIZED_INVALID_JWT_FORMAT`）を返します。pg_cron が送る `app_cron_secret`（Edge Function 側の `CRON_SECRET`）はランダムな文字列で JWT ではないので、pg_cron から呼ぶ関数はゲートウェイの検証を外し（`supabase/config.toml` の `[functions.<name>]` に `verify_jwt = false`）、認証を関数の先頭の `requireServiceRole`（`_shared/auth.ts`）に任せます（#1406）。
+
+`supabase functions deploy`（名前を指定しない全体のデプロイ。GitHub Actions もこの形）は、`supabase/config.toml` の `verify_jwt` を関数ごとに読みます（supabase CLI 2.62.10 の `internal/functions/deploy/deploy.go` の `GetFunctionConfig`。指定が無い関数は `true`）。
+
+`config.toml` には、空行・行全体のコメント・`[functions.<name>]` の見出し・その下の `verify_jwt = true` / `verify_jwt = false` の行だけを書きます（ほかの行が 1 行でもあるとテストが赤になります。ほかの表が要るようになったら、その行が `verify_jwt` に触れないことを確かめてから、テストの許す形を広げてください）。`verify_jwt` を環境変数（`SUPABASE_FUNCTIONS_<NAME>_VERIFY_JWT`）で上書きすることもしません（CLI はこれも読むので、デプロイのワークフローに書くとテストが赤にします）。
+
+`verify_jwt = false` にしてよいのは、先頭で自前の認証（`requireServiceRole` / `requireAuth` / `auth.getUser`）をする関数だけです。`tests/edge-function-verify-jwt.test.ts` が、`config.toml` の一覧と関数の先頭の認証、DB からの HTTP の呼び出し先（pg_net の `net.http_post` など）を突き合わせます。DB からの呼び出し先は、SQL を読んで推し量らず、テストの `DB_HTTP_CALL_SITES` に SQL のファイルごとに宣言してあります（いまは `public.invoke_catalog_import` と `public.invoke_calculate_segment_stats` を定義するファイル）。テストは、DB に入る SQL（`supabase/migrations` と、本番のスキーマの写し `supabase/baseline`）の生の文字列で、HTTP の呼び出しらしい箇所（`net.http_post(` などの呼び出しと、URL の `/functions/v1/`。コメントや文字列の中も数えます）をファイルごとに数え、宣言の数と合わなければ赤にします。DB から Edge Function を呼ぶ migration を足すと、どう書いても（Vault の `project_url` に `/functions/v1/<name>` を足す形でも）赤になるので、呼び先と数を `DB_HTTP_CALL_SITES` に宣言し、呼び先の関数を `verify_jwt = false`（先頭で `requireServiceRole`）にしてください。宣言した呼び先がそのファイルに書かれていないときや、宣言したファイルに `'app_cron_secret'` と `'Bearer '` が無いときも赤になります（呼び出しでない箇所が当たったときは、宣言で数を合わせず、書き方を変えてください）。
+
+pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘密）で呼ばれる関数:
+
+| 関数 | 呼び出し元 | 送る Bearer | 関数の中の認証 | `verify_jwt` |
+|---|---|---|---|---|
+| `calculate-segment-stats` | pg_cron のジョブ `calculate-segment-stats`（`public.invoke_calculate_segment_stats()`）/ `POST /api/comparison/trigger` | Vault の `app_cron_secret`（JWT でない）/ service role key | `requireServiceRole` | `false` |
+| `import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog` | pg_cron（`public.invoke_catalog_import()`）/ `POST /api/admin/catalog/import` | Vault の `app_cron_secret`（JWT でない）/ service role key | `requireServiceRole`（`_shared/catalog/import-runner.ts`） | `false` |
+| `import-convenience-catalog` | リポジトリ内に無い（上と同じ取り込み処理） | — | `requireServiceRole`（同上） | `false` |
+| `aggregate-org-stats` | リポジトリ内に無い（停止中 #1325。本番に古い pg_cron のジョブが残っていれば `app_cron_secret`） | （`app_cron_secret`） | `requireServiceRole`（そのあと 410） | `false` |
+| `regenerate-embeddings` | `POST /api/super-admin/embeddings/regenerate` | service role key（`CRON_SECRET` でも可） | service role key の完全一致、または `requireServiceRole` | `false` |
+| `stripe-price-sync` | `POST /api/super-admin/plans/[id]/price-change` | service role key（`CRON_SECRET` でも可） | service role key の完全一致、または `requireServiceRole` | `false` |
+| `knowledge-gpt` | 相談 AI の API（`/api/ai/consultation/sessions/[sessionId]/messages`） | service role key / 利用者の JWT | service role key の完全一致、または `auth.getUser` | `false`（以前から） |
+| `generate-menu-v5` / `generate-menu-v4` | 献立生成の API・`/api/cron/process-menu-queue`・関数自身の続きの呼び出し | service role key / 利用者の JWT | 関数の中で service role key の完全一致、または `auth.getUser` | 既定（`true`）。JWT しか受け付けないので変えない |
+| `process-meal-image-jobs` | `_shared/meal-image-jobs.ts`（献立生成の関数から） | service role key | service role key の完全一致 | 既定（`true`）。同上 |
+| `regenerate-shopping-list-v2` | `POST /api/shopping-list/regenerate` | service role key / 利用者の JWT | service role key の完全一致、または `requireAuth` | 既定（`true`）。同上 |
+
+既定（`true`）のままの関数は、service role key（JWT）か利用者の JWT しか受け付けないため、ゲートウェイの検証を通ります。`CRON_SECRET` のような JWT でない秘密を受け付ける関数（`requireServiceRole` か `checkCronSecret` を呼ぶ関数、`CRON_SECRET` を読む関数。`index.ts` から相対パスで import するモジュールの中で呼ぶものも含みます）を足したら、`config.toml` にも `verify_jwt = false` を足してください（足し忘れはテストが赤にします）。
 
 ## 関数一覧
 
