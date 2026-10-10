@@ -47,7 +47,8 @@ const INSIGHTS_PATH = '/api/health/insights';
 const INSIGHT = {
   id: 'insight-1',
   title: '睡眠が短めです',
-  content: 'この 1 週間は平均の睡眠が短めです。',
+  // 本文の列は summary (health_insights に content 列は無い。#1432)
+  summary: 'この 1 週間は平均の睡眠が短めです。',
   is_read: true,
   is_alert: false,
   created_at: '2026-10-08T00:00:00.000Z',
@@ -65,7 +66,7 @@ function alertTitles(): string[] {
 
 /** インサイトの詳細 (モーダル) が開いているか。本文は一覧のカードにも出るので、モーダルが開くと 2 つになる */
 function detailOpen(): boolean {
-  return screen.getAllByText(INSIGHT.content).length === 2;
+  return screen.getAllByText(INSIGHT.summary).length === 2;
 }
 
 function consentButton(text: string): AlertButton | undefined {
