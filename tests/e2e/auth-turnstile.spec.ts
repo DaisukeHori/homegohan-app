@@ -19,12 +19,15 @@
  *   サイトキー無しで動いているアプリ (Turnstile は無効) では、これも全部スキップする。
  *   ただし E2E_REQUIRE_TURNSTILE=1 のときは、スキップせずに失敗にする (キーが渡っていないのに緑になるのを防ぐ)。
  *
- * Supabase の Auth API はブラウザの通信を差し替える (page.route) ので、Supabase にも、実在のユーザーにも繋がない。
- * ここで確かめるのは「ウィジェットが出したトークンが、Supabase へのリクエストの gotrue_meta_security.captcha_token に入ること」まで。
+ * Supabase の Auth API (新規登録・パスワード再設定) とログインの API (POST /api/auth/login) はブラウザの通信を差し替える (page.route) ので、
+ * Supabase にも、実在のユーザーにも繋がない。
+ * ここで確かめるのは「ウィジェットが出したトークンが、Supabase へのリクエストの gotrue_meta_security.captcha_token
+ * (ログインは POST /api/auth/login の本文の captchaToken) に入ること」まで。
  * ローカルの Supabase は CAPTCHA が無効なので、トークンの検証 (Cloudflare への問い合わせ) は、どの環境でもここでは行わない。
  */
 import { test, expect, type Page, type Request } from "@playwright/test";
 import { generateTestPassword } from "./helpers/credentials";
+import { acceptSignupLegalConsent } from "./helpers/signup";
 
 const REQUIRE_TURNSTILE = process.env.E2E_REQUIRE_TURNSTILE === "1";
 
@@ -130,12 +133,22 @@ async function expectNoCloudflareCspViolations(page: Page) {
 }
 
 test.describe("Turnstile (Cloudflare のテスト用サイトキー)", () => {
-  test("ログイン: 実際のウィジェットがトークンを出すまで送信できず、出たら Supabase へ captcha_token を付けて送る", async ({
+  test("ログイン: 実際のウィジェットがトークンを出すまで送信できず、出たら POST /api/auth/login の本文に captchaToken を付けて送る", async ({
     page,
   }) => {
-    const requests = await interceptAuth(page, /\/auth\/v1\/token\?grant_type=password/, {
-      status: 400,
-      body: { code: 400, error_code: "invalid_credentials", msg: "Invalid login credentials" },
+    // #1165: ログインはブラウザから Supabase を直接呼ばず、サーバーの POST /api/auth/login を通す
+    const requests: Array<{ captchaToken?: string }> = [];
+    await page.route(/\/api\/auth\/login$/, async (route) => {
+      requests.push(route.request().postDataJSON() as { captchaToken?: string });
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "メールアドレスまたはパスワードが正しくありません。",
+          code: "AUTH_INVALID_CREDENTIALS",
+          captchaRequired: false,
+        }),
+      });
     });
     await openWithWidget(page, "/login");
 
@@ -149,7 +162,7 @@ test.describe("Turnstile (Cloudflare のテスト用サイトキー)", () => {
     await submit.click();
 
     await expect.poll(() => requests.length, { timeout: 10_000 }).toBe(1);
-    expect(requests[0].gotrue_meta_security?.captcha_token).toMatch(/\S{10,}/);
+    expect(requests[0].captchaToken).toMatch(/\S{10,}/);
     await expect(page.getByText("メールアドレスまたはパスワードが正しくありません。")).toBeVisible();
     await expectNoCloudflareCspViolations(page);
   });
@@ -168,6 +181,8 @@ test.describe("Turnstile (Cloudflare のテスト用サイトキー)", () => {
     const submit = page.locator("form button[type=submit]");
 
     await waitUntilTokenReady(page);
+    // #1174: 規約に同意するまで、登録のボタンは押せない (トークンが出た後で同意し、押せるようになるまで待つ)
+    await acceptSignupLegalConsent(page);
     await expect(submit).toBeEnabled();
     await submit.click();
 
