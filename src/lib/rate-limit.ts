@@ -51,7 +51,8 @@ export type RateLimitCategory =
   | 'contact'
   | 'export'
   | 'upload'
-  | 'ai-consent';
+  | 'ai-consent'
+  | 'auth-login';
 
 /** 1 つの制限ルール。name は Upstash の prefix / in-memory の名前空間に使う (既存キーを変えないこと) */
 interface RateRule {
@@ -99,6 +100,9 @@ const DAY_SEC = 24 * 60 * 60;
 //   同意と撤回を繰り返して行を増やされないようにする (同意の記録は行を残す)。
 //   正しい使い方では 1 人が生涯に数回しか呼ばない。再送・ダブルクリックを含めても 1 分 10 回、1 日 50 回あれば足りる。
 //   撤回 (POST /api/ai/consent/revoke) は行を増やさない (既存の行に revoked_at を入れるだけ) ので、制限しない
+// - auth-login: Web のメールアドレス + パスワードのログイン (#1165。POST /api/auth/login)。ログイン前なので key はクライアント IP。
+//   設計 docs/design/cross/01-auth-session.md §3.2 の「10/min/IP」。同じ IP から多くのメールアドレスを試す攻撃 (クレデンシャル
+//   スタッフィング) を抑える。メールアドレスごとの連続失敗のロックは別 (src/lib/auth/login-lock.ts、DB に記録)
 const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   generation: [{ name: 'generation', max: 5, windowSec: MINUTE_SEC }],
   analysis: [{ name: 'analysis', max: 10, windowSec: MINUTE_SEC }],
@@ -137,6 +141,7 @@ const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
     { name: 'ai-consent', max: 10, windowSec: MINUTE_SEC },
     { name: 'ai-consent-daily', max: 50, windowSec: DAY_SEC },
   ],
+  'auth-login': [{ name: 'auth-login', max: 10, windowSec: MINUTE_SEC }],
 };
 
 export interface RateLimitResult {

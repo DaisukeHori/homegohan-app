@@ -27,7 +27,7 @@ import {
   useImperativeHandle,
   useRef,
   useState,
-  type RefObject,
+  type Ref,
 } from 'react';
 import { getTurnstileApi, getTurnstileSiteKey, loadTurnstileApi } from '@/lib/auth/turnstile';
 
@@ -220,7 +220,8 @@ export interface TurnstileControl {
   takeToken: () => string | null;
   /** <TurnstileWidget {...widgetProps} action="..." /> と書いて渡す */
   widgetProps: {
-    ref: RefObject<TurnstileWidgetHandle | null>;
+    // React 18 / 19 の型のどちらでも、forwardRef の部品の ref に渡せる形 (Ref<T>) にする
+    ref: Ref<TurnstileWidgetHandle>;
     onTokenChange: (token: string | null) => void;
   };
 }
