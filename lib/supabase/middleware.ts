@@ -3,6 +3,13 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { isAuthFlowPath, isPolicyPath, resolveOnboardingRedirect } from '@/lib/onboarding-routing'
 import { isAccountFrozen } from '@/lib/auth/frozen'
 import {
+  isMaintenanceExemptPath,
+  isMaintenanceFlagOn,
+  isOperatorRoles,
+  maintenanceApiResponse,
+  maintenancePageResponse,
+} from '@/lib/maintenance-mode'
+import {
   LEGAL_CONSENT_PATH,
   LEGAL_CONSENT_PENDING_HEADER,
   buildLegalConsentNext,
@@ -22,6 +29,15 @@ function isJwtBearerHeader(authHeader: string | null): boolean {
   const match = authHeader.match(/^Bearer\s+(.+)$/i)
   if (!match) return false
   return match[1].split('.').length === 3
+}
+
+// #1148: メンテナンス中の応答を返すとき、この呼び出しで更新されたセッションの Cookie (トークンの更新) も引き継ぐ。
+// 別の応答に差し替えると、更新したトークンがブラウザに届かず、使い捨ての更新トークンが失われてログアウトされることがあるため
+function withSessionCookies(from: NextResponse, to: NextResponse): NextResponse {
+  for (const cookie of from.cookies.getAll()) {
+    to.cookies.set(cookie)
+  }
+  return to
 }
 
 // #1174: 同意ゲート (利用規約・プライバシーポリシーの再同意) のために user_profiles から読む列。
@@ -80,6 +96,8 @@ export async function updateSession(request: NextRequest) {
   // APIルートの場合は、セッション更新のみ行い、リダイレクトはしない
   // これにより、不要な getUser() 呼び出しを減らす
   const isApiRoute = request.nextUrl.pathname.startsWith('/api/')
+  // #1148: メンテナンスモード (feature_flags の maintenance_mode)。このパスは、メンテナンス中でも止めない
+  const maintenanceExempt = isMaintenanceExemptPath(request.nextUrl.pathname)
 
   // #1174: 「同意のお願い」を出すかどうかのヘッダーは、下で middleware が付けたものだけを画面に渡す。
   // クライアントが同じ名前のヘッダーを送ってきても、転送しない。
@@ -175,17 +193,22 @@ export async function updateSession(request: NextRequest) {
     // 認証・プロフィール取得自体に失敗した場合は各 route 側のチェックに委ねる
     // (#348 と同様、一時的な DB/ネットワーク障害で全 API を誤って止めないための
     // fail-open。frozen かどうか確定できた場合のみブロックする)。
+    // #1148: メンテナンスモードの判定にも、ここで読んだユーザー ID とロールを使う (運営ロールは通す)
+    let apiUserId: string | undefined
+    let apiRoles: string[] | null = null
     try {
       const { data: { user: apiUser }, error: apiUserError } = await supabase.auth.getUser()
 
       if (!apiUserError && apiUser) {
+        apiUserId = apiUser.id
         const { data: apiProfile, error: apiProfileError } = await supabase
           .from('user_profiles')
-          .select('frozen_at, unban_at')
+          .select('roles, frozen_at, unban_at')
           .eq('id', apiUser.id)
           .maybeSingle()
 
         if (!apiProfileError) {
+          apiRoles = Array.isArray(apiProfile?.roles) ? apiProfile.roles : []
           const apiFrozen = isAccountFrozen({
             frozenAt: apiProfile?.frozen_at ?? null,
             unbanAt: apiProfile?.unban_at ?? null,
@@ -201,6 +224,14 @@ export async function updateSession(request: NextRequest) {
       }
     } catch {
       // 認証基盤の一時障害時は各 route 側の getUser()/requireUser() チェックに委ねる
+    }
+
+    // #1148: メンテナンスモード (feature_flags の maintenance_mode)。運営ロール (admin / super_admin) 以外の API 呼び出しを
+    // 503 で止める。止めないパスは isMaintenanceExemptPath (死活監視・cron・認証・フラグの取得)。
+    // フラグが読めないとき・行が無いときは止めない (isMaintenanceFlagOn は例外を投げず、OFF として答える)。
+    // ロールを確かめられなかった (プロフィールを読めなかった) ときは、運営かどうか分からないので、運営ではない人として扱う
+    if (!maintenanceExempt && !isOperatorRoles(apiRoles) && (await isMaintenanceFlagOn(apiUserId, apiRoles))) {
+      return withSessionCookies(supabaseResponse, maintenanceApiResponse())
     }
 
     return supabaseResponse
@@ -254,6 +285,13 @@ export async function updateSession(request: NextRequest) {
       request.nextUrl.pathname.startsWith(path + '/'),
   )
 
+  // #1148: メンテナンスモード (未ログインの人)。ログイン画面へ回さず、メンテナンス中の画面を出す
+  // (ログイン画面そのもの・/auth/*・利用規約・プライバシーポリシーは isMaintenanceExemptPath で通す)。
+  // ログイン済みの人は、ロールを読んでから下で判定する (運営ロールは通す)
+  if (!user && !maintenanceExempt && (await isMaintenanceFlagOn())) {
+    return withSessionCookies(supabaseResponse, maintenancePageResponse())
+  }
+
   if (!user && !isPublicPath) {
     const url = request.nextUrl.clone()
     const next = request.nextUrl.pathname + (request.nextUrl.search ?? '')
@@ -268,6 +306,17 @@ export async function updateSession(request: NextRequest) {
     // (RLS 拒否・カラム不在・ネットワーク障害などで data=null になった場合に
     //  not_started 扱いで /onboarding/welcome へ飛ばしてしまうバグを防ぐ)
     const { profile, profileError, legalColumnsAvailable } = await fetchMiddlewareProfile(supabase, user.id)
+
+    // #1148: メンテナンスモード (ログイン済みの人)。運営ロール (admin / super_admin) は通し、それ以外は、
+    // オンボーディングや凍結の差し戻しより先に、メンテナンス中の画面を出す。
+    // プロフィールを読めなかった (ロールが分からない) ときは、運営かどうか確かめられないので、運営ではない人として扱う
+    if (
+      !maintenanceExempt &&
+      !isOperatorRoles(profileError ? null : profile?.roles) &&
+      (await isMaintenanceFlagOn(user.id, profileError ? null : profile?.roles))
+    ) {
+      return withSessionCookies(supabaseResponse, maintenancePageResponse())
+    }
 
     if (!profileError) {
       // #1030: frozen_at がセットされ (かつ一時 BAN が未解除の) アカウントは

@@ -7,9 +7,13 @@
  *
  * evaluateFlag は DB I/O を含まない純粋関数にしてある (ユニットテストで
  * percentage/plan/role/org の全ロールアウトパターンを検証するため)。
- * fetchAndEvaluateFlag が DB からの読み出し (service_role 経由、RLS バイパス) を担う。
+ * fetchFlagRecord が DB からの読み出し (service_role 経由、RLS バイパス) を担う。
  * feature_flags テーブルの RLS は super_admin 限定のため、一般ユーザーからのフラグ
- * 判定は必ずこの fetchAndEvaluateFlag 経由 (service_role) で行う。
+ * 判定は必ずこの経由 (service_role) で行う。
+ *
+ * アプリの機能の ON/OFF の判定 (献立生成のエンジン切り替え・AI 相談の緊急停止・メンテナンスモードなど) は、
+ * このファイルを直接呼ばず src/lib/feature-flags.ts の isFeatureEnabled を使う (#1148)。
+ * 行が無い・読めないときの既定値、メモリのキャッシュ、読み出しの待ち時間の上限は、そちらが持つ。
  */
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import type { RolloutStrategy, FeatureFlagConstraints } from './flags-schemas';
@@ -95,17 +99,39 @@ export function evaluateFlag(flag: FeatureFlagRecord | null, ctx: UserFlagContex
 }
 
 /**
- * feature_flags テーブルから key を取得し evaluateFlag で判定する。
+ * feature_flags テーブルから key の行を 1 行取得する。行が無ければ null。
  * service_role (getSupabaseAdmin) で RLS をバイパスする — feature_flags は
  * super_admin 限定 RLS のため、一般ユーザーのセッションクライアントでは SELECT できない。
+ * 読み出しに失敗したときは例外を投げる (null にはしない)。
+ * 「行が無い」と「読めなかった」を呼び出し側が区別できるようにするため (#1148)。
+ * 失敗しても動き続けたい呼び出し側は、このファイルではなく src/lib/feature-flags.ts の isFeatureEnabled を使う。
+ *
+ * 読むのはフラグの行 (全ユーザー共通の設定) を key で 1 行だけ。ミドルウェアのように認可の前に呼ばれても、
+ * ユーザーの情報は読まない。
  */
-export async function fetchAndEvaluateFlag(key: string, ctx: UserFlagContext): Promise<boolean> {
+export async function fetchFlagRecord(key: string): Promise<FeatureFlagRecord | null> {
   const supabase = getSupabaseAdmin();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('feature_flags')
     .select('key, enabled, rollout_strategy, constraints')
     .eq('key', key)
     .maybeSingle();
 
-  return evaluateFlag(data as FeatureFlagRecord | null, ctx);
+  if (error) {
+    // supabase-js のエラーは Error ではなく { message, code, ... } の素のオブジェクトなので、Error に包んで投げる
+    // (呼び出し側のログに、メッセージとスタックが残るようにする)
+    throw new Error(`feature_flags の読み出しに失敗しました: ${error.message} (code: ${error.code ?? 'unknown'})`);
+  }
+
+  return (data as FeatureFlagRecord | null) ?? null;
+}
+
+/**
+ * feature_flags テーブルから key を取得し evaluateFlag で判定する。
+ * 行が無いときは無効 (fail-closed。evaluateFlag の規則どおり)。読み出しに失敗したときは例外を投げる。
+ * アプリの機能の ON/OFF の判定には、これではなく isFeatureEnabled (src/lib/feature-flags.ts) を使う
+ * (行が無い・読めないときの既定値、メモリのキャッシュ、読み出しの待ち時間の上限をそちらが持つ)。
+ */
+export async function fetchAndEvaluateFlag(key: string, ctx: UserFlagContext): Promise<boolean> {
+  return evaluateFlag(await fetchFlagRecord(key), ctx);
 }

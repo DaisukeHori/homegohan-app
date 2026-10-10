@@ -232,6 +232,14 @@ export const SERVER_ENV_VARS = {
     whenMissing: 'お知らせを出さない (既定)',
     readOnlyBy: 'lib/legal-consent.ts',
   },
+  FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT: {
+    required: false,
+    description:
+      '運営の機能フラグ一覧 (GET /api/super-admin/flags) で、段階公開・条件つきのフラグの対象ユーザー数を 1 人ずつ数える上限 (正の整数) (#1148)',
+    whenMissing: '上限は 20,000 人。超えると、そのフラグの対象ユーザー数は null (画面では「—」)',
+    // 読み方 (正の整数でなければ既定値) を 1 か所に置く
+    readOnlyBy: 'src/lib/super-admin/flag-active-users.ts',
+  },
   SERVICE_ROLE_JWT: {
     required: false,
     description: 'SUPABASE_SERVICE_ROLE_KEY の古い別名。画像生成ジョブがこちらを先に読む',

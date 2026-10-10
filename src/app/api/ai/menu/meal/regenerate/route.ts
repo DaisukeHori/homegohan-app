@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
-import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
+import { isFeatureEnabled } from '@/lib/feature-flags';
 import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
@@ -100,8 +100,8 @@ export async function POST(request: Request) {
     const targetSlots = [{ date: dayDate, mealType, plannedMealId: mealId }];
 
     // target_slotsをリクエストに保存
-    const featureFlags = await loadFeatureFlags(supabase);
-    const useV5Wrapped = Boolean(featureFlags.menu_generation_v5_wrapped);
+    // #1148: エンジンの切り替えは feature_flags (運営画面で切り替える) を見る
+    const useV5Wrapped = await isFeatureEnabled('menu_generation_v5_wrapped', user.id);
     const engine = useV5Wrapped ? 'v5' : 'v4';
 
     await supabase
