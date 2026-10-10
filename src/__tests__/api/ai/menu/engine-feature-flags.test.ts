@@ -11,7 +11,7 @@
  * 以前は system_settings を、ログイン中のユーザー自身の権限で読んでいたため、admin / super_admin 以外は
  * 値が読めず、いつも v5 だった。今は feature_flags をサーバー側 (isFeatureEnabled) で読むので、全ユーザーに効く。
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   isFeatureEnabled: vi.fn(),
@@ -47,6 +47,8 @@ function fakeFrom(table: string) {
   return proxy;
 }
 
+// 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が見る
+vi.mock('@/lib/ai/consent-guard', () => import('../../../../../tests/helpers/ai-consent-guard-allowed'));
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => ({
     auth: { getUser: h.getUser },
@@ -84,6 +86,7 @@ vi.mock('@/lib/db-logger', () => ({
     error: vi.fn(),
     withUser: vi.fn(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() })),
   })),
+  generateRequestId: vi.fn(() => 'req-test'),
 }));
 
 vi.mock('@vercel/functions', () => ({
@@ -181,6 +184,9 @@ function writtenMode(testCase: RouteCase): unknown {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // route は Supabase の URL・サービスロールのキーが無いと汎用の 500 で止まる (#1182)。DB はモックなので値はダミー
+  vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://example.supabase.co');
+  vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-role-key-for-test');
   h.writes.length = 0;
   h.waitUntil.length = 0;
   h.getUser.mockResolvedValue({ data: { user: USER }, error: null });
@@ -188,6 +194,10 @@ beforeEach(() => {
   h.generateV5.mockResolvedValue({ ok: true, attempts: 1, response: new Response() });
   h.results = { ...DEFAULT_RESULTS };
   enableOnly();
+});
+
+afterAll(() => {
+  vi.unstubAllEnvs();
 });
 
 describe.each(CASES)('$name のエンジン切り替え (#1148)', (testCase) => {

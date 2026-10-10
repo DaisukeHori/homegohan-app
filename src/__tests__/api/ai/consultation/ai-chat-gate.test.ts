@@ -14,7 +14,7 @@
  * 過去の相談の閲覧 (GET)・提案の却下 (DELETE) は、AI を呼ばないので止めない。
  * 認証が先 (未ログインは、フラグが OFF でも 401)。
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   getUser: vi.fn(),
@@ -25,6 +25,8 @@ const h = vi.hoisted(() => ({
   runConsultationAction: vi.fn(),
 }));
 
+// 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が見る
+vi.mock('@/lib/ai/consent-guard', () => import('../../../../../tests/helpers/ai-consent-guard-allowed'));
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => ({
     auth: { getUser: h.getUser },
@@ -116,6 +118,9 @@ function post(url: string): Request {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // route は Supabase の URL・サービスロールのキーが無いと汎用の 500 で止まる (#1182)。DB はモックなので値はダミー
+  vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://example.supabase.co');
+  vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-role-key-for-test');
   h.getUser.mockResolvedValue({ data: { user: USER }, error: null });
   h.checkRateLimit.mockResolvedValue({ success: true, limit: 5, remaining: 4, reset: Date.now() + 60_000 });
   h.getFastLLMClient.mockReturnValue({});
@@ -123,6 +128,10 @@ beforeEach(() => {
   h.from.mockImplementation(() => {
     throw new Error(SENTINEL);
   });
+});
+
+afterAll(() => {
+  vi.unstubAllEnvs();
 });
 
 describe.each(GATED)('$name', (route) => {

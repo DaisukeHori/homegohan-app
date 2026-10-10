@@ -84,12 +84,9 @@ describe('#1148 1. 旧の読み込み処理は無い', () => {
 });
 
 describe('#1148 2. system_settings からフラグを読まない', () => {
-  it('system_settings を読む・書くソースは、システム設定の API とアカウント削除だけ', () => {
+  it('system_settings を読む・書くソースは、システム設定の API だけ', () => {
     const readers = sourcesMatching(/from\(\s*['"`]system_settings['"`]\s*\)/).sort();
-    expect(readers).toEqual([
-      'src/app/api/account/delete/route.ts',
-      'src/app/api/super-admin/settings/route.ts',
-    ]);
+    expect(readers).toEqual(['src/app/api/super-admin/settings/route.ts']);
   });
 });
 

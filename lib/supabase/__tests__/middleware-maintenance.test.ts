@@ -10,7 +10,7 @@
  *   (画像などの静的ファイルは、ミドルウェアの matcher が外していて、ここには届かない。拡張子で通す処理は無い)
  * フラグの読み出しの失敗は fail-open (止めない)。
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -43,6 +43,7 @@ vi.mock('@/lib/feature-flags', () => ({
 }));
 
 import { updateSession } from '../middleware';
+import { stubSupabasePublicEnv } from './supabase-public-env';
 
 function apiRequest(path: string) {
   return new NextRequest(new URL(`http://localhost${path}`));
@@ -68,6 +69,8 @@ function profile(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // updateSession は Supabase の URL・anon キーが無いと汎用の 500 で止まる (#1182)。Supabase のクライアントはモックなので値はダミー
+  stubSupabasePublicEnv();
   mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
   mockIsFeatureEnabled.mockReset();
   mockIsFeatureEnabled.mockResolvedValue(true); // メンテナンス ON
@@ -76,6 +79,10 @@ beforeEach(() => {
 afterEach(() => {
   mockIsFeatureEnabled.mockReset();
   mockIsFeatureEnabled.mockResolvedValue(true);
+});
+
+afterAll(() => {
+  vi.unstubAllEnvs();
 });
 
 describe('updateSession — メンテナンスモード: API (/api/*) (#1148)', () => {
