@@ -27,8 +27,8 @@
  * 4xx の検証メッセージ (こちらが書いた文面) はこの関数の対象外。そのまま返してよい。
  * ただし catch で受けた例外の文面は、4xx でも本文に入れない (try の中で throw した DB のエラーが届くため)。
  * 入れてよいのは `err instanceof AuthError` / `ForbiddenError` など、文面をこちらで書いている例外のクラスに絞り込んだ分岐の中だけ。
- * 応答の本文にエラーの message / details / hint を入れていないことは、tests/api-raw-error-message-scan.test.ts が
- * src/app/api の全 route を走査して確かめる (1 件でもあれば失敗する)。
+ * 応答の本文にエラーの message / details / hint を入れていないかは、tests/api-raw-error-message-scan.test.ts が
+ * src/app/api の全 route を走査して見張る (1 件でもあれば失敗する。よくある書き方の見張りで、網羅はしない)。
  * route が本文に入れる値を作る src/lib のヘルパー (結果の error / message を返すもの) も、DB の生のエラー文を返さない。
  * DB の失敗は固定の文にし、元のエラーは構造化ログ (または internalError に渡す cause) にだけ残す。
  * これは tests/lib-raw-error-message-scan.test.ts が src/lib を走査して確かめる。

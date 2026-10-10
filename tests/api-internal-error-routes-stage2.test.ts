@@ -12,8 +12,8 @@
  *   4xx で理由を伝える route は、こちらで決めた固定の文を返す。
  *
  * 置き換えた箇所は多いので、ここでは代表の route と、手で直した形 (RPC のコードの振り分け・運営 API の入れ子の形・
- * 内部の関数の結果) を確かめる。全 route の本文に生のエラー文が無いことは、ソースの走査
- * (tests/api-raw-error-message-scan.test.ts) が確かめる。
+ * 内部の関数の結果) を確かめる。全 route の本文に生のエラー文を入れていないかは、ソースの走査
+ * (tests/api-raw-error-message-scan.test.ts。よくある書き方の見張り) が見る。
  *
  * Supabase には接続しない (createClient をモック)。構造化ログもモックなので app_logs へは書かない。
  */

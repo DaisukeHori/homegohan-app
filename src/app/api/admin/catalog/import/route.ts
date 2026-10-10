@@ -37,6 +37,57 @@ const ImportBodySchema = z.object({
   sourceCode: z.enum(VALID_SOURCE_CODES),
 });
 
+/**
+ * Edge Function (supabase/functions/_shared/catalog/import-runner.ts) の成功の応答のうち、本文に返してよい部分 (#1172)。
+ * 成功 (200) の応答でも stats.productErrors[].error には商品ごとの失敗の文が入り、DB の upsert の失敗なら
+ * PostgREST の生のエラー文 (テーブル名・列名・制約名) になる。本文には件数だけを返し、
+ * 失敗の中身は catalog_import_runs.error_log と Edge Function のログで見る。
+ */
+const EdgeImportResultSchema = z.object({
+  importRunId: z.string().nullable().optional(),
+  dryRun: z.boolean().optional(),
+  categoryCode: z.string().nullable().optional(),
+  stats: z
+    .object({
+      pagesTotal: z.number().optional(),
+      productsSeen: z.number().optional(),
+      productsInserted: z.number().optional(),
+      productsUpdated: z.number().optional(),
+      productsUnchanged: z.number().optional(),
+      productsDiscontinued: z.number().optional(),
+      productErrors: z.array(z.unknown()).optional(),
+    })
+    .optional(),
+});
+
+interface CatalogImportSummary {
+  importRunId: string | null;
+  dryRun: boolean;
+  categoryCode: string | null;
+  stats: {
+    pagesTotal?: number;
+    productsSeen?: number;
+    productsInserted?: number;
+    productsUpdated?: number;
+    productsUnchanged?: number;
+    productsDiscontinued?: number;
+    /** 失敗した商品の数 (失敗の文そのものは返さない) */
+    productErrorCount: number;
+  };
+}
+
+function summarizeImportResult(edgeData: unknown): CatalogImportSummary {
+  const parsed = EdgeImportResultSchema.safeParse(edgeData);
+  const data = parsed.success ? parsed.data : {};
+  const { productErrors, ...counts } = data.stats ?? {};
+  return {
+    importRunId: data.importRunId ?? null,
+    dryRun: data.dryRun ?? false,
+    categoryCode: data.categoryCode ?? null,
+    stats: { ...counts, productErrorCount: productErrors?.length ?? 0 },
+  };
+}
+
 export async function POST(request: Request) {
   let actor;
   try {
@@ -110,7 +161,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const edgeData = await edgeResponse.json().catch(() => ({}));
+    const edgeData: unknown = await edgeResponse.json().catch(() => ({}));
 
     // 監査ログ (Edge Function 呼び出し成功後)
     const { createClient } = await import('@/lib/supabase/server');
@@ -124,7 +175,8 @@ export async function POST(request: Request) {
       ip_address: request.headers.get('x-forwarded-for'),
     });
 
-    return NextResponse.json({ ok: true, sourceCode, result: edgeData });
+    // 商品ごとの失敗の文 (DB の生のエラー文を含みうる) は返さず、件数にまとめる (#1172)
+    return NextResponse.json({ ok: true, sourceCode, result: summarizeImportResult(edgeData) });
   } catch (err) {
     console.error('[api/admin/catalog/import] fetch error:', err);
     return NextResponse.json(
