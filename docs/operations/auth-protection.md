@@ -1,7 +1,8 @@
 # ログイン・登録の守り — Supabase Auth の設定値と Cloudflare Turnstile (bot 対策)
 
 > 作成: 2026-10-08 / 関連: Issue #1165 / オーナー判断: 2026-10-08 (決定キー 1165)
-> 更新: 2026-10-10 — ログイン失敗のロック (設計 `docs/design/cross/01-auth-session.md` §8) と、Web のログインのサーバー経由化 (`POST /api/auth/login`) を追加 (§1・§2.1・§4〜§8)
+> 更新: 2026-10-10 — Web のログインのサーバー経由化 (`POST /api/auth/login`) と、ログイン失敗の回数によるボットの確認を追加 (§1・§2.1・§4〜§8)
+> 更新: 2026-10-10 — ログイン失敗のロック (5 回で 15 分など) をやめた。失敗が続いたらボットの確認を求めるだけにした (§1・§2・§2.1・§5・§7・§8)
 >
 > この文書は 2 つのことを 1 か所にまとめる。
 > 1. **いまの Supabase Auth の設定値の記録** (レート制限・攻撃対策)。「**オーナー記入**」と書いた欄は、Supabase のダッシュボードで見える現在の値を、オーナーが書き込む。
@@ -14,7 +15,8 @@
 | 項目 | 決定 |
 |---|---|
 | bot 対策の方式 | Cloudflare Turnstile (**Managed** モード)。ログイン・新規登録・パスワード再設定の 3 画面 |
-| ログイン失敗のロック | 設計 `docs/design/cross/01-auth-session.md` §8 の表のとおり: **3 回 → ボットの確認 / 5 回 → 15 分 / 10 回 → 1 時間 + 本人へメール / 20 回 → 24 時間 + 運営へ通知**。Web のログイン (`POST /api/auth/login`) で働く。ロック中は正しいパスワードでも断り、期限より早く外せるのはメールからのパスワードの再設定だけ (§2.1) |
+| アカウントのロックアウト | しない (オーナーの選択 2026-10-10。他人のメールアドレスで失敗を繰り返すだけで本人を締め出せるため。失敗が続いたらボットの確認を求める) |
+| ログインに続けて失敗したとき | 同じメールアドレスで **続けて 3 回以上** 失敗したら、次のログインからボットの確認 (Turnstile) を求める (§2.1)。Web のログイン (`POST /api/auth/login`) で働く。何回失敗しても、正しいパスワードならログインできる |
 | いまのクールダウン | **残す**。ログインに失敗すると、同じメールアドレスでは 30 秒待つ (画面側の仕組み。Web は localStorage、アプリは AsyncStorage) |
 | 入れる順番 | **Web が先、モバイルは次のビルド** |
 | Supabase で CAPTCHA を有効にする時期 | **モバイルの新しいビルドを配って、古いビルドが使われなくなってから** (§6)。オーナーが決める |
@@ -40,31 +42,29 @@ Supabase の CAPTCHA を有効にすると、ログイン・登録・パスワ�
 | Supabase のレート制限 (§3.1) | Supabase (サーバー) | IP アドレスごと・ユーザーごとの回数超過 | 多数の IP を使う攻撃 |
 | Supabase の攻撃対策 (§3.2) | Supabase (サーバー) | 漏れたことのあるパスワードの利用、弱いパスワード | — |
 | IP アドレスごとの回数制限 (10 回/分) | このアプリのサーバー (`POST /api/auth/login`) | 1 つの IP から多くのメールアドレス・パスワードを試すこと | 多数の IP を使う攻撃、Supabase の API を直接呼ぶ攻撃、モバイルのアプリ (§2.1) |
-| ログイン失敗のロック (§2.1) | このアプリのサーバー (`POST /api/auth/login`) + DB | 同じメールアドレスへのパスワードの総当たり (端末・IP をまたいでも数える) | Supabase の API を直接呼ぶ攻撃、モバイルのアプリ (§2.1) |
+| 続けて失敗したメールアドレスでのボットの確認 (§2.1) | このアプリのサーバー (`POST /api/auth/login`) + DB | 同じメールアドレスへのパスワードの総当たりを、bot で続けること (端末・IP をまたいでも数える。`TURNSTILE_SECRET_KEY` があるとき) | 人の手による試行、Supabase の API を直接呼ぶ攻撃、モバイルのアプリ (§2.1) |
 
-### 2.1 ログイン失敗のロック (Web)
+### 2.1 ログインに続けて失敗したとき (Web)
+
+**アカウントはロックしない**。他人のメールアドレスで失敗を繰り返すだけで、本人を締め出せてしまうため (§1)。失敗が続いたら、ボットの確認を求めるだけにする。
 
 Web のログイン画面は、ブラウザから Supabase を直接呼ばず、このアプリのサーバーの `POST /api/auth/login` を通す。サーバーは次の順で処理する (`src/lib/auth/guarded-login.ts`)。
 
 1. IP アドレスごとの回数制限 (10 回/分。`src/lib/rate-limit.ts` の `auth-login`)。超えたら 429。
-2. ロック中なら、パスワードを確かめずに 423 で断る (正しいパスワードでも)。
-3. 続けて 3 回以上失敗しているメールアドレスなら、ボットの確認のトークンを Cloudflare に問い合わせて確かめる (`TURNSTILE_SECRET_KEY` があるとき。§5)。
-4. Supabase でパスワードを確かめる。違えば回数を 1 増やし、次の表の段に届いたらロックする。成功したら回数を 0 に戻す。
+2. 続けて 3 回以上失敗しているメールアドレスなら、ボットの確認のトークンを Cloudflare に問い合わせて確かめる (`TURNSTILE_SECRET_KEY` があるとき。§5)。トークンが無い・偽物なら 400 で断る (パスワードは確かめない・回数は増やさない)。
+3. Supabase でパスワードを確かめる。違えば回数を 1 増やして 401。合っていればログインでき、回数を 0 に戻す。
 
-| 続けて失敗した回数 | ロック | 知らせる相手 |
-|---|---|---|
-| 3 回 | (ロックしない) 次からボットの確認を求める | — |
-| 5〜9 回 | 失敗のたびに 15 分 | — |
-| 10〜19 回 | 失敗のたびに 1 時間 | 10 回目に、本人の登録アドレスへメール (アカウントがあるときだけ) |
-| 20 回以降 | 失敗のたびに 24 時間 | 20 回目に、運営へ通知 (`ADMIN_NOTIFICATION_EMAIL` へのメールと、ログ `app_logs` の warn) |
+| 続けて失敗した回数 | すること |
+|---|---|
+| 0〜2 回 | なし |
+| 3 回以上 | 次のログインから、ボットの確認を求める (キーがあるとき)。何回失敗しても、ロックはしない |
 
-- 回数は**メールアドレスごと** (小文字・前後の空白なし)。端末・ブラウザ・IP をまたいで数える。記録は DB の `auth_login_failures` (メールアドレスは SHA-256 のハッシュだけ。`supabase/migrations/20261010130000_auth_login_failures.sql`)。
-- 登録されていないメールアドレスも同じように数えてロックする (応答からアカウントの有無が分からないように)。
-- 回数が 0 に戻るのは、ログインに成功したときと、パスワードの再設定を済ませたときだけ (時間では戻らない)。
-- **期限より早く外す方法は、本人がメールのリンクからパスワードを再設定することだけ**。再設定の画面が、新しいパスワードを保存した直後に `POST /api/auth/login-lock/clear` を呼ぶ (メールのリンクから作ったセッション (JWT の amr に recovery・otp・magiclink のどれかがあるもの) でだけ外せる。パスワードや Google のログインのセッションでは外せない)。
-- ロックの画面の文言は「ログインに続けて失敗したため、しばらくログインできません。パスワードを再設定すると、すぐにログインできます。(あと約 N 分)」。
-- **このロックが働かないもの**: モバイルのアプリのログイン (アプリはまだ Supabase を直接呼ぶ)、Supabase の Auth API を直接呼ぶ攻撃 (URL と anon key は公開されている)、Google ログイン。直接呼ぶ攻撃は、Supabase の CAPTCHA (§6 手順 5) とレート制限 (§3.1) で止める。
-- 他人のメールアドレスで失敗を繰り返すと、その人を最長 24 時間ログインできなくできてしまう。本人は、いつでもパスワードの再設定ですぐに外せる。
+- 回数は**メールアドレスごと** (小文字・前後の空白なし)。端末・ブラウザ・IP をまたいで数える。記録は DB の `auth_login_failures` (メールアドレスは SHA-256 のハッシュだけ。`supabase/migrations/20261010130000_auth_login_failures.sql`)。数え方の関数は `supabase/migrations/20261010160000_auth_login_failure_window.sql`。
+- 登録されていないメールアドレスも同じように数える (応答からアカウントの有無が分からないように)。
+- 回数が 0 に戻るのは、**ログインに成功したとき**と、**最後の失敗から 24 時間** (環境変数 `AUTH_LOGIN_FAILURE_RESET_MINUTES` で分単位に変えられる。1〜10080) が経ったとき。パスワードの再設定では戻さない (戻す必要が無い。再設定のあとのログインに成功すれば戻る)。
+- ロックをしないので、ロック中の応答 (423)・ロックの残り時間の案内・ロックの通知のメール (本人・運営)・ロックを外す API は無い。
+- **ボットの確認が働かないもの**: モバイルのアプリのログイン (アプリはまだ Supabase を直接呼ぶ)、Supabase の Auth API を直接呼ぶ攻撃 (URL と anon key は公開されている)、Google ログイン。直接呼ぶ攻撃は、Supabase の CAPTCHA (§6 手順 5) とレート制限 (§3.1) で止める。
+- DB には、ロックがあったころの列 (`auth_login_failures.locked_until`) と関数 (`auth_login_lock_status`・`auth_login_record_failure`・`auth_login_apply_lock`・`auth_login_account_user_id`) が残っている。アプリからは呼ばない。消すかどうかは別に決める (関数・列の削除になるため)。
 
 ---
 
@@ -150,7 +150,7 @@ Cloudflare Turnstile のキーは 2 つある。
 | **秘密キー** (secret key) | 次の 2 か所の**どちらか一方だけ**に入れる。(1) Vercel のサーバー用の環境変数 `TURNSTILE_SECRET_KEY` (§6 手順 2 の 5。Web のログインで、続けて 3 回以上失敗したメールアドレスのトークンをこのアプリのサーバーが確かめる)。(2) Supabase のダッシュボード (§6 手順 5。すべてのリクエストのトークンを Supabase が確かめる) | **公開しない**。コード・Issue・PR・チャットに書かない。`NEXT_PUBLIC_` を付けた変数には入れない |
 
 - **どちらのサイトキーも未設定なら、Turnstile は出ない**。画面は今までどおりに動き、トークンも送らない。ローカル開発・テストは未設定のままでよい。
-- **`TURNSTILE_SECRET_KEY` (またはサイトキー) が未設定なら、このアプリのサーバーはトークンを確かめずに通す**。サーバーの起動後、最初にログインを処理したときに、その旨のログ (`app_logs` の warn) が 1 回だけ出る。ロック (§2.1) は、キーの有無に関係なく働く。
+- **`TURNSTILE_SECRET_KEY` (またはサイトキー) が未設定なら、このアプリのサーバーはトークンを確かめずに通す**。サーバーの起動後、最初にログインを処理したときに、その旨のログ (`app_logs` の warn) が 1 回だけ出る。ログインに続けて失敗しても、キーの有無に関係なく、アカウントはロックしない (§2.1)。
 - **秘密キーを (1) と (2) の両方に入れない**。トークンは 1 回しか使えないので、このアプリのサーバーが確かめたトークンは Supabase へ渡さない。Supabase の CAPTCHA が有効だと、そのログインは「トークンが無い」として断られる。Supabase で有効にするときは、先に `TURNSTILE_SECRET_KEY` を消す (§6 手順 5)。
 - 設定すると、3 画面にウィジェットが出て、**確認が終わるまで送信ボタンが押せなくなる**。
 - どちらもビルド時に埋め込まれる。変えたら、Web は再デプロイ、モバイルは新しいビルドが要る。
@@ -246,10 +246,9 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
 | Supabase の CAPTCHA を有効にしたら、ログインできなくなった | Supabase ダッシュボードで **CAPTCHA protection を無効**にして保存する | すぐ |
 | Web のウィジェットが動かず、ログインできない | Vercel の `NEXT_PUBLIC_TURNSTILE_SITE_KEY` を**削除**して再デプロイする。画面から Turnstile が消え、トークンも送らなくなる (今までどおり)。Supabase の CAPTCHA が有効なら、先にそちらを無効にする | 再デプロイ後 |
 | モバイルのウィジェットが動かず、ログインできない | Supabase の CAPTCHA を無効にする (サーバー側で止める)。アプリのキーを外すには、キー無しの新しいビルドが要る | Supabase は即時。アプリは次のビルド |
-| ロックのせいで本人がログインできない | 本人にパスワードの再設定をしてもらう (再設定を済ませるとすぐに外れる)。期限 (最長 24 時間) でも外れる | 再設定の直後 |
-| ボットの確認 (このアプリのサーバー側) が誤って断る | Vercel の `TURNSTILE_SECRET_KEY` を削除して再デプロイする (確かめずに通すようになる。ロックは残る) | 再デプロイ後 |
+| ボットの確認 (このアプリのサーバー側) が誤って断る | Vercel の `TURNSTILE_SECRET_KEY` を削除して再デプロイする (確かめずに通すようになる) | 再デプロイ後 |
 
-この変更 (コード) 自体を戻す必要がある場合は、PR を revert する。ログイン失敗のロックの DB (`auth_login_failures` と関数) は、**Web のデプロイを戻したあとで** `supabase/rollbacks/20261010130000_auth_login_failures.down.sql` の内容を新しい migration として入れて消す (先に消すと、`POST /api/auth/login` がロックを判定できず、ログインできなくなる)。
+この変更 (コード) 自体を戻す必要がある場合は、PR を revert する。ログイン失敗の回数の DB (`auth_login_failures` と関数) は、**Web のデプロイを戻したあとで** `supabase/rollbacks/20261010160000_auth_login_failure_window.down.sql`・`supabase/rollbacks/20261010130000_auth_login_failures.down.sql` の順に、その内容を新しい migration として入れて消す (先に消すと、`POST /api/auth/login` が回数を読めず 500 になり、ログインできなくなる)。
 
 ---
 
@@ -258,7 +257,7 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
 - **ローカルの Supabase は CAPTCHA を有効にしない** (`supabase/config.toml` に `[auth.captcha]` を書かない)。結合テスト・e2e・開発は、トークン無しで `signInWithPassword` / `signUp` を呼ぶため。`src/__tests__/config/turnstile-config.test.ts` が、有効にされていないことを検査する。
 - **単体テスト** (`tests/auth-turnstile-widget.test.tsx`、`tests/auth-turnstile-pages.test.tsx`): ウィジェットの動き、3 画面が Supabase の**正しい場所**にトークンを付けること、「トークンが無い間は送信ボタンが押せない」こと。モバイルは `apps/mobile/__tests__/`。
   - 注意: `resetPasswordForEmail` だけは、`captchaToken` を `options` の中ではなく**第 2 引数の直下** (`redirectTo` と同じ階層) に渡す。`options` の中に入れても、Supabase には届かず、黙って無視される。
-- **ログイン失敗のロック**: 単体テスト `tests/auth/login-lock.test.ts` (段の決定表)・`tests/auth/guarded-login.test.ts` (状態 × 操作の表)・`tests/api/auth-login-route.test.ts` (応答の表)・`tests/api/auth-login-lock-clear-route.test.ts`・`tests/auth/turnstile-verify.test.ts`・`tests/auth/login-lock-notification.test.ts`。結合テスト `tests/integration/security/auth-login-lock.test.ts` (ローカルの Supabase で、DB の関数の権限・同時の加算・本物の Auth と組み合わせたロック・再設定のセッションの `amr`)。
+- **ログインに続けて失敗したとき (ロックしない)**: 単体テスト `tests/auth/login-failures.test.ts` (回数 → ボットの確認の決定表・時間で戻る・環境変数)・`tests/auth/guarded-login.test.ts` (状態 × 操作の表。何回失敗しても正しいパスワードならログインできる)・`tests/api/auth-login-route.test.ts` (応答の表。何回失敗しても 423 にならない)・`tests/auth/turnstile-verify.test.ts`。回帰テスト `tests/auth/no-login-lockout.test.ts` (ロックの応答・ロックの DB の関数・ロックを外す API がコードに戻ってきたら失敗する。AI の送る先の一覧のログインの項に外したメール (Resend) が書かれていたり、文書にロックを前提にした文が書かれていたりしても失敗する)。結合テスト `tests/integration/security/auth-login-lock.test.ts` (ローカルの Supabase で、DB の関数の権限・同時の加算・時間で戻る・本物の Auth と組み合わせて 25 回失敗してもロックしないこと)。
 - **e2e** (`tests/e2e/auth-turnstile.spec.ts`): 本物のブラウザ・本物の CSP・本物の Cloudflare の `api.js` と、**Cloudflare のテスト用サイトキー** (`1x00000000000000000000AA`) で、ウィジェットがトークンを出し、新規登録・パスワード再設定では Supabase へのリクエストに `captcha_token` が、ログインでは `POST /api/auth/login` の本文に `captchaToken` が入ることを確かめる。通信はブラウザで差し替えるので、Supabase には繋がない。
   - CI: `.github/workflows/e2e-local.yml` が、このテスト用サイトキーを付けてアプリをビルドし、この spec と `01-login.spec.ts` を回す。`01-login.spec.ts` は通信を差し替えず、ウィジェットがトークンを出すのを待ってから本物のサーバーでログインし、`POST /api/auth/login` の本文に `captchaToken` が付くことを確かめる。
   - これらの画面では、e2e は `networkidle` を待たない (ウィジェットが通信し続けるため成り立たない)。`tests/e2e/helpers/login-form.ts` の `waitForLoginFormReady` を使う (`src/__tests__/config/e2e-auth-page-wait.test.ts` が検査する)。

@@ -27,11 +27,6 @@ function buildPhotoDishList(dishes: MealImageDish[], imageUrl: string | null): M
   }));
 }
 
-// Inlined from lib/meal-image-jobs
-async function cancelPendingMealImageJobs({ supabase: sb, plannedMealId, reason }: { supabase: any; plannedMealId: string; reason: string }) {
-  await sb.from("meal_image_jobs").update({ status: "cancelled", cancelled_reason: reason }).eq("planned_meal_id", plannedMealId).in("status", ["pending", "processing"]);
-}
-
 // ─── Catalog types ───────────────────────────────────
 interface CatalogProductSummary {
   id: string;
@@ -629,12 +624,8 @@ export default function MealNewPage() {
         dailyMealId = newDay.id;
       }
 
-      const { data: existingMeals, error: existingMealsError } = await supabase.from("planned_meals").select("id").eq("daily_meal_id", dailyMealId).eq("meal_type", selectedMealType);
-      if (existingMealsError) throw existingMealsError;
-
-      if (Array.isArray(existingMeals) && existingMeals.length > 0) {
-        await Promise.all(existingMeals.map((meal) => cancelPendingMealImageJobs({ supabase, plannedMealId: meal.id, reason: "photo overwrite" }).catch(() => {})));
-      }
+      // 上書きする献立の画像のジョブ (meal_image_jobs) は、端末から書かない (#1465。利用者から書けない表)。
+      // 献立を消すと、外部キー (ON DELETE CASCADE) でジョブの行も消える
       await supabase.from("planned_meals").delete().eq("daily_meal_id", dailyMealId).eq("meal_type", selectedMealType);
 
       const baseDishPayloads = (analyzedDishes ?? []).map((d) => ({

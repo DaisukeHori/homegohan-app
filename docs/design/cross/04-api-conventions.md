@@ -97,7 +97,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `AUTH_2FA_REQUIRED` | 2FA 認証が必要 | 401 |
 | `AUTH_2FA_INVALID` | 2FA コードが無効 | 401 |
 | `AUTH_SESSION_REVOKED` | セッション無効化済み | 401 |
-| `AUTH_ACCOUNT_LOCKED` | アカウントロック中 | 403 |
+| `AUTH_ACCOUNT_LOCKED` | **使わない (#1165)**: ログインに続けて失敗してもアカウントはロックしない (01-auth-session.md §8)。欠番。別の意味に再利用しない | - |
 | `AUTH_PROFILE_NOT_FOUND` | user_profiles が見つからない | 403 |
 | `AUTH_IMPERSONATION_DENIED` | **廃止 (#1124)**: impersonate は提供しないため使わない (欠番。別の意味に再利用しない) | - |
 

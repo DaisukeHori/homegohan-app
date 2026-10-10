@@ -32,7 +32,8 @@ const mockWeeklyInsertSingle = vi.fn();
 const mockWeeklyInsertCall = vi.fn((..._args: any[]) => ({
   select: () => ({ single: mockWeeklyInsertSingle }),
 }));
-const mockWeeklyUpdateEq = vi.fn(() => Promise.resolve({ data: null, error: null }));
+const mockWeeklyUpdateUserEq = vi.fn((..._args: any[]) => Promise.resolve({ data: null, error: null }));
+const mockWeeklyUpdateEq = vi.fn((..._args: any[]) => ({ eq: mockWeeklyUpdateUserEq }));
 
 const mockFrom = vi.fn((table: string) => {
   if (table === 'user_daily_meals') {
@@ -56,14 +57,7 @@ const mockFrom = vi.fn((table: string) => {
       }),
     };
   }
-  if (table === 'weekly_menu_requests') {
-    return {
-      insert: mockWeeklyInsertCall,
-      update: () => ({
-        eq: mockWeeklyUpdateEq,
-      }),
-    };
-  }
+  // weekly_menu_requests は利用者のクライアントでは書かない (#1465)。service role のクライアント (mockAdminFrom) で書く
   throw new Error(`Unexpected table in test: ${table}`);
 });
 
@@ -72,10 +66,25 @@ const mockSupabase = {
   from: mockFrom,
 };
 
+const mockAdminFrom = vi.fn((table: string) => {
+  if (table === 'weekly_menu_requests') {
+    return {
+      insert: mockWeeklyInsertCall,
+      update: () => ({
+        eq: mockWeeklyUpdateEq,
+      }),
+    };
+  }
+  throw new Error(`Unexpected table in test (admin): ${table}`);
+});
+const mockAdminClient = { from: mockAdminFrom };
+
 // 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
 vi.mock('@/lib/ai/consent-guard', () => import('../../../../../tests/helpers/ai-consent-guard-allowed'));
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => mockSupabase),
+  // AI のキューへの書き込みは service role のクライアント (getAiQueueWriter → getSupabaseAdmin) で行う (#1465)
+  getSupabaseAdmin: vi.fn(() => mockAdminClient),
 }));
 
 vi.mock('@/lib/rate-limit', () => ({
@@ -235,6 +244,16 @@ describe('POST /api/ai/menu/weekly/request', () => {
     const failedArgs = mockMarkWeeklyMenuRequestFailed.mock.calls[0][0];
     expect(failedArgs.requestId).toBe('request-1');
     expect(failedArgs.errorMessage).toContain('rollback: restored=2, skipped=0, failed=0');
+    // 失敗の記録も service role のクライアントで書く (#1465)
+    expect(failedArgs.supabase).toBe(mockAdminClient);
+    // 上書きする献立の画像のジョブの取り消しも、service role で本人の行に絞って行う
+    const { cancelPendingMealImageJobs } = await import('@/lib/meal-image-jobs');
+    expect(vi.mocked(cancelPendingMealImageJobs)).toHaveBeenCalledWith(
+      expect.objectContaining({ supabase: mockAdminClient, userId: 'user-1', plannedMealId: existingBreakfast.id }),
+    );
+    // target_slots・mode の更新は、本人の行に絞って書く
+    expect(mockWeeklyUpdateEq).toHaveBeenCalledWith('id', 'request-1');
+    expect(mockWeeklyUpdateUserEq).toHaveBeenCalledWith('user_id', 'user-1');
   });
 
   it('#1148: menu_generation_v5_wrapped が OFF なら v4、ON なら v5 の Edge Function を呼び、mode にも反映する', async () => {

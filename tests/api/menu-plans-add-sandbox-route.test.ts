@@ -57,25 +57,25 @@ import { POST } from '../../src/app/api/menu-plans/add/route';
 
 // ── ヘルパー ─────────────────────────────────────────────────────────────────
 
-/** menu-plans/add が利用者セッションで行う weekly_menu_requests の操作の結果 */
-const sessionTables: FakeSandboxDbOptions['tables'] = {
-  weekly_menu_requests: ({ op }) =>
-    op === 'insert' ? { data: { id: 'req-1' }, error: null } : { data: null, error: null },
-};
-
 function setup(options: Omit<FakeSandboxDbOptions, 'userId' | 'tables'> = {}) {
+  // 利用者セッションは、認証と sandbox 適格性の判定 (user_profiles・RPC) だけに使う。
+  // weekly_menu_requests は利用者から書けない (#1465) ので、この route は利用者セッションでは何も書かない
   const db = createFakeSandboxDb({
     userId: USER_ID,
     profile: eligibleProfile(USER_ID),
     ...options,
-    tables: sessionTables,
+    tables: {},
   });
   currentClient = db.client;
 
-  // weekly_menus への INSERT だけは service_role で行う
+  // weekly_menu_requests (コンテナ用のリクエストの行) と weekly_menus への書き込みは service_role で行う
   const admin = createFakeSandboxDb({
     userId: USER_ID,
-    tables: { weekly_menus: () => ({ data: { id: 'menu-1' }, error: null }) },
+    tables: {
+      weekly_menu_requests: ({ op }) =>
+        op === 'insert' ? { data: { id: 'req-1' }, error: null } : { data: null, error: null },
+      weekly_menus: () => ({ data: { id: 'menu-1' }, error: null }),
+    },
   });
   currentAdminClient = admin.client;
 
@@ -130,7 +130,8 @@ describe('POST /api/menu-plans/add の sandbox 適格性チェック (共通ヘ�
     expect(status).toBe(200);
     expect(json).toMatchObject({ success: true, menu_id: 'menu-1' });
     expect(db.state.profileFilters).toEqual([['id', USER_ID]]);
-    expect(db.state.writes.some((w) => w.table === 'weekly_menu_requests' && w.op === 'insert')).toBe(true);
+    expect(db.admin.state.writes.some((w) => w.table === 'weekly_menu_requests' && w.op === 'insert')).toBe(true);
+    expect(db.state.writes).toEqual([]);
   });
 
   it.each([

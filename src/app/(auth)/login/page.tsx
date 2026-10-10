@@ -121,8 +121,8 @@ function LoginContent() {
     setIsLoading(true);
 
     try {
-      // #1165: ログインはサーバー (POST /api/auth/login) を通す。サーバーが IP アドレスごとの回数制限・
-      // 連続失敗のロック (設計 docs/design/cross/01-auth-session.md §8)・ボットの確認を行い、成功ならセッションの Cookie を付ける
+      // #1165: ログインはサーバー (POST /api/auth/login) を通す。サーバーが IP アドレスごとの回数制限と、
+      // 続けて失敗しているメールアドレスでのボットの確認を行い (ロックはしない)、成功ならセッションの Cookie を付ける
       const outcome = await requestLogin({ email, password, captchaToken });
 
       if (!outcome.ok) {
@@ -219,6 +219,15 @@ function LoginContent() {
            </svg>
            {isLoading ? '処理中...' : 'Googleで続ける'}
         </Button>
+        {/* #1435: 「Googleで続ける」は、初めての人には新しいアカウントを作る。初回は /auth/callback が必ず同意画面
+            (/legal-consent) を通す (みなし同意はしない。#1174)。ここではその流れを先に知らせ、文面へのリンクを出す */}
+        <p data-testid="login-google-legal-note" className="text-center text-xs text-gray-500">
+          はじめての方は、続けたあとに
+          <Link href="/terms" className="font-bold text-orange-700 underline underline-offset-2">利用規約</Link>
+          と
+          <Link href="/privacy" className="font-bold text-orange-700 underline underline-offset-2">プライバシーポリシー</Link>
+          への同意の画面が出ます。
+        </p>
 
         <div className="relative">
           <div className="absolute inset-0 flex items-center">

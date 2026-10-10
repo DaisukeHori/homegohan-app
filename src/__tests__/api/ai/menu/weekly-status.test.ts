@@ -30,9 +30,10 @@ const mockUpdateEq2 = vi.fn(() => Promise.resolve(updateEqQueue.shift() ?? { err
 const mockUpdateEq1 = vi.fn(() => ({ eq: mockUpdateEq2 }));
 const mockUpdate = vi.fn(() => ({ eq: mockUpdateEq1 }));
 
+// 利用者のクライアントは weekly_menu_requests を読むだけ (#1465: 利用者からは書けない)
 const mockFrom = vi.fn((table: string) => {
   if (table === 'weekly_menu_requests') {
-    return { select: mockSelect, update: mockUpdate };
+    return { select: mockSelect };
   }
   throw new Error(`Unexpected table in test: ${table}`);
 });
@@ -42,8 +43,17 @@ const mockSupabase = {
   from: mockFrom,
 };
 
+// AI のキューへの書き込みは service role のクライアント (getAiQueueWriter → getSupabaseAdmin) で行う (#1465)
+const mockAdminFrom = vi.fn((table: string) => {
+  if (table === 'weekly_menu_requests') {
+    return { update: mockUpdate };
+  }
+  throw new Error(`Unexpected table in test (admin): ${table}`);
+});
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => mockSupabase),
+  getSupabaseAdmin: vi.fn(() => ({ from: mockAdminFrom })),
 }));
 
 const mockRestorePlannedMealsSnapshot = vi.fn(async (..._args: any[]) => ({ restored: 0, skipped: 0, failed: 0 }));
@@ -153,10 +163,13 @@ describe('GET /api/ai/menu/weekly/status', () => {
     expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
     expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledWith(mockSupabase, [snapshotRow]);
 
-    // stale リクエストを failed に更新する呼び出しが行われていること
+    // stale リクエストを failed に更新する呼び出しが行われていること (service role で、本人の行に絞って)
     expect(mockUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'failed', error_message: 'stale_request_timeout' }),
     );
+    expect(mockAdminFrom).toHaveBeenCalledWith('weekly_menu_requests');
+    expect(mockUpdateEq1).toHaveBeenCalledWith('id', 'req-1');
+    expect(mockUpdateEq2).toHaveBeenCalledWith('user_id', user.id);
 
     // stale 判定成立時のみ generated_data 専用の二次クエリが発行されること
     expect(mockSelect).toHaveBeenCalledTimes(2);

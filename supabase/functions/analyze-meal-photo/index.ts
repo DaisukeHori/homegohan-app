@@ -226,8 +226,15 @@ async function analyzeMealPhotoBackgroundTask({
     
     // planned_mealsを更新（全栄養素）
     try {
+      // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。ユーザーの JWT のクライアントでは取り消せないので、
+      // 本人 (JWT で確かめた userId) の行に絞って service role で取り消す
+      const queueDb = createClient(
+        Deno.env.get('SUPABASE_URL') ?? '',
+        Deno.env.get('SERVICE_ROLE_JWT') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+      )
       await cancelPendingMealImageJobs({
-        supabase,
+        supabase: queueDb,
+        userId,
         plannedMealId: mealId,
         reason: 'photo overwrite',
       })

@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { isFeatureEnabled } from '@/lib/feature-flags';
 import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
@@ -49,6 +50,8 @@ export async function POST(request: Request) {
     // (未ログインの呼び出しに、設定の不足を教えない。書き込んだあとで気づくと、Edge Function を呼べないまま、
     //  リクエストの行を作って失敗として記録するだけの無駄な動きになる) (#1182)
     const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
+    // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。本人の確認・同意のあとで、service role で書く
+    const queueDb = getAiQueueWriter();
 
     // 2. user_daily_meals を取得または作成（日付ベースモデル）
     let { data: dailyMeal, error: dailyMealError } = await supabase
@@ -93,7 +96,7 @@ export async function POST(request: Request) {
     await recordAiUsage(user.id, 'menu_generation');
 
     // 3. リクエストをDBに保存（ステータス追跡用）
-    const { data: requestData, error: insertError } = await supabase
+    const { data: requestData, error: insertError } = await queueDb
       .from('weekly_menu_requests')
       .insert({
         user_id: user.id,
@@ -119,14 +122,15 @@ export async function POST(request: Request) {
     const useV5Wrapped = await isFeatureEnabled('menu_generation_v5_wrapped', user.id);
     const engine = useV5Wrapped ? 'v5' : 'v4';
 
-    await supabase
+    await queueDb
       .from('weekly_menu_requests')
       .update({
         target_slots: targetSlots,
         mode: engine,
         current_step: 1,
       })
-      .eq('id', requestData.id);
+      .eq('id', requestData.id)
+      .eq('user_id', user.id);
 
     // 5. Edge Function generate-menu-v4 を非同期で呼び出し
     const generator = useV5Wrapped ? callGenerateMenuV5WithRetry : callGenerateMenuV4WithRetry;
@@ -151,7 +155,7 @@ export async function POST(request: Request) {
       if (!result.ok) {
         console.error('❌ Edge Function error:', result.errorMessage);
         await markWeeklyMenuRequestFailed({
-          supabase,
+          supabase: queueDb,
           requestId: requestData.id,
           errorMessage: result.errorMessage,
         });

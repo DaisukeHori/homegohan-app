@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { jstDayOffset } from '@/lib/jst-day-ranges';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { awardBadge } from '@/lib/badges/awardBadge';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { checkSandboxEligibility } from '@/lib/handson-tour/sandbox-eligibility';
 import type { Database, Json } from '@/types/database.types';
 import { internalError } from '@/lib/api/errors';
@@ -66,7 +67,9 @@ export async function POST(request: Request) {
       status: 'pending',
     };
 
-    const { data: requestRow, error: requestError } = await supabase
+    // weekly_menu_requests は利用者 (authenticated) から書けない (#1465)。本人の確認は済んでいるので、service role で書く
+    const queueDb = getAiQueueWriter();
+    const { data: requestRow, error: requestError } = await queueDb
       .from('weekly_menu_requests')
       .insert(requestInsert)
       .select('id')
@@ -97,7 +100,7 @@ export async function POST(request: Request) {
     if (insertError) {
       console.error('weekly_menus insert error:', insertError);
       // 補償: 対応する献立を作れなかった request を 'pending' のまま孤児にしない
-      const { error: failCompensationError } = await supabase
+      const { error: failCompensationError } = await queueDb
         .from('weekly_menu_requests')
         .update({
           status: 'failed',
@@ -105,7 +108,8 @@ export async function POST(request: Request) {
           error_message: WEEKLY_MENU_REQUEST_FAILED_MESSAGE,
           updated_at: new Date().toISOString(),
         })
-        .eq('id', requestRow.id);
+        .eq('id', requestRow.id)
+        .eq('user_id', user.id);
       if (failCompensationError) {
         console.error('weekly_menu_requests failed-compensation update error:', failCompensationError);
       }
@@ -113,10 +117,11 @@ export async function POST(request: Request) {
     }
 
     // weekly_menus insert 成功 → request を completed に確定(非致命: 失敗しても主処理は成功のまま)
-    const { error: completeError } = await supabase
+    const { error: completeError } = await queueDb
       .from('weekly_menu_requests')
       .update({ status: 'completed', updated_at: new Date().toISOString() })
-      .eq('id', requestRow.id);
+      .eq('id', requestRow.id)
+      .eq('user_id', user.id);
     if (completeError) {
       console.error('weekly_menu_requests completion update failed (non-fatal):', completeError);
     }

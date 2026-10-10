@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { buildPhotoDishList } from '../../../../lib/meal-image';
@@ -155,8 +156,11 @@ export async function POST(request: Request) {
           : [];
         const photoDishes = buildPhotoDishList(baseDishes, imageUrl);
 
+        // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。本人の行に絞って service role で取り消す
+        const queueDb = getAiQueueWriter();
         await cancelPendingMealImageJobs({
-          supabase,
+          supabase: queueDb,
+          userId: user.id,
           plannedMealId,
           reason: 'nutrition photo overwrite',
         });

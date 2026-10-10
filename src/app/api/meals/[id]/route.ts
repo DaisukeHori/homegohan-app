@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
 import {
   buildCatalogSelectionUpdate,
@@ -224,8 +225,10 @@ export async function PATCH(
       }
 
       if (imageAllowed) {
+        // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。service role で積む
+        const queueDb = getAiQueueWriter();
         await enqueueMealImageJobs({
-          supabase,
+          supabase: queueDb,
           plannedMealId: data.id,
           userId: user.id,
           triggerSource,
@@ -281,8 +284,11 @@ export async function DELETE(
       return NextResponse.json({ error: 'Not found or unauthorized' }, { status: 404 });
     }
 
+    // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。本人の行に絞って service role で取り消す
+    const queueDb = getAiQueueWriter();
     await cancelPendingMealImageJobs({
-      supabase,
+      supabase: queueDb,
+      userId: user.id,
       plannedMealId: params.id,
       reason: 'meal deleted',
     });

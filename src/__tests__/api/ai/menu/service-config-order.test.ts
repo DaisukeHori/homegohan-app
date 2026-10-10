@@ -29,6 +29,8 @@ const mockCallGenerateMenuV4WithRetry = vi.fn();
 vi.mock('@/lib/ai/consent-guard', () => import('../../../../../tests/helpers/ai-consent-guard-allowed'));
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => ({ auth: { getUser: mockGetUser }, from: mockFrom })),
+  // AI のキューへ書く service role のクライアント (getAiQueueWriter。#1465)。触れたら同じく記録して失敗する
+  getSupabaseAdmin: vi.fn(() => ({ from: mockFrom })),
 }));
 
 vi.mock('@/lib/rate-limit', () => ({

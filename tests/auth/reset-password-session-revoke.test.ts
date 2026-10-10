@@ -10,8 +10,9 @@
  *   - 更新に成功したら、端末のユーザー別データを消し (CLAUDE.md: signOut より前)、
  *     signOut({ scope: 'global' }) で全セッションを失効させ、他タブへ SIGNED_OUT を知らせてから成功画面を出す。
  *
- * #1165: パスワードを更新できたら、全端末のログアウトの前に POST /api/auth/login-lock/clear を呼び、
- *   ログイン失敗のロックを外す (設計 §8「メール経由のリセットのみ解除可能」)。失敗しても再設定は成功のまま。
+ * #1165: ログインに続けて失敗しても、アカウントはロックしない (docs/operations/auth-protection.md §1)。
+ *   外すロックが無いので、再設定の画面はロックを外す API (以前の POST /api/auth/login-lock/clear) を呼ばない。
+ *   fetch を見張り、どの API も呼ばないことを確かめる。
  *
  * カバレッジ:
  *   1. 成功: updateUser → clearUserScopedLocalStorage → signOut({ scope: 'global' }) → broadcastSignOut の順。
@@ -195,36 +196,21 @@ describe('#1188 パスワード再設定の成功時', () => {
     expect(mocks.signOut).toHaveBeenCalledWith({ scope: 'global' });
 
     // CLAUDE.md: signOut より前にストレージを消す。他タブへの通知は signOut の後
-    // #1165: ロックを外すのは、このリンクのセッションがまだあるうち (signOut の前)
+    // #1165: ロックは無いので、ロックを外す API は呼ばない (fetch の呼び出しが calls に入らない)
     expect(mocks.calls).toEqual([
       'updateUser',
-      'fetch:POST /api/auth/login-lock/clear',
       'clearUserScopedLocalStorage',
       'signOut:global',
       'broadcastSignOut',
     ]);
   });
 
-  it('#1165 ロックを外す API が失敗しても (500・通信の失敗)、再設定は成功のまま全端末をログアウトする', async () => {
-    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    mocks.fetch.mockImplementationOnce(async () => new Response('{}', { status: 500 }));
+  it('#1165 ロックが無いので、再設定を済ませてもロックを外す API (/api/auth/login-lock/clear) を呼ばない', async () => {
     await renderPage();
     await fillAndSubmit(NEW_PASSWORD, NEW_PASSWORD);
     expect(text()).toContain('パスワードを更新しました');
     expect(mocks.signOut).toHaveBeenCalledWith({ scope: 'global' });
-
-    await React.act(async () => {
-      root.unmount();
-    });
-    root = createRoot(container);
-    mocks.fetch.mockImplementationOnce(async () => {
-      throw new TypeError('Failed to fetch');
-    });
-    await renderPage();
-    await fillAndSubmit(NEW_PASSWORD, NEW_PASSWORD);
-    expect(text()).toContain('パスワードを更新しました');
-    expect(mocks.signOut).toHaveBeenCalledTimes(2);
-    expect(consoleWarn).toHaveBeenCalledTimes(2);
+    expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
   it('成功画面に、全端末からログアウトしたことと新しいパスワードで入り直すことを出す (注意書きは出さない)', async () => {
@@ -281,7 +267,7 @@ describe('#1188 パスワードを更新できなかったとき', () => {
     expect(mocks.signOut).not.toHaveBeenCalled();
     expect(mocks.clearUserScopedLocalStorage).not.toHaveBeenCalled();
     expect(mocks.broadcastSignOut).not.toHaveBeenCalled();
-    // パスワードを更新できていないので、ロックも外さない (#1165)
+    // どの API も呼ばない (#1165: ロックを外す API は無い)
     expect(mocks.calls).toEqual(['updateUser']);
     expect(mocks.fetch).not.toHaveBeenCalled();
 
@@ -328,7 +314,7 @@ describe('#1188 パスワードは更新できたが、全端末のログアウ�
     expect(mocks.updateUser).toHaveBeenCalledTimes(1);
     // サインアウトできていないので、他タブを /login へ飛ばさない
     expect(mocks.broadcastSignOut).not.toHaveBeenCalled();
-    expect(mocks.calls).toEqual(['updateUser', 'fetch:POST /api/auth/login-lock/clear', 'clearUserScopedLocalStorage', 'signOut:global']);
+    expect(mocks.calls).toEqual(['updateUser', 'clearUserScopedLocalStorage', 'signOut:global']);
     expect(consoleError).toHaveBeenCalled();
   });
 

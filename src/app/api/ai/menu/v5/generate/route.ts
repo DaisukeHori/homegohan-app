@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
 import { getSeasonalIngredientsForRange } from '@/lib/seasonal-ingredients';
 import { getEventsForRange } from '@/lib/seasonal-events';
@@ -248,11 +249,15 @@ export async function POST(request: Request) {
       ? (body.constraints as MenuGenerationConstraints)
       : {};
 
+    // キューへ書くクライアント (service role)。必須の環境変数が欠けていれば MissingEnvError で汎用の 500 にする。
+    // 記録の前に作る (欠けていて積めないのに、記録だけが残らないように)
+    const queueDb = getAiQueueWriter();
+
     // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
     // (記録に失敗しても止めない)。
     // ここでキューに積み、AI へ送るのは cron (process-menu-queue) なので、送る側では記録しない。
-    // ただしキューの行 (weekly_menu_requests) は利用者が直接書けるので、この route を通らない行は記録されない
-    // (既知の穴。閉じるには書き込みを service role だけにする。tests/ai-usage-contract.test.ts の USER_WRITABLE_AI_QUEUES)
+    // キューの行 (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465) ので、キューに積めるのは
+    // この記録を通った route だけ (service role で書く)
     await recordAiUsage(user.id, 'menu_generation');
 
     // バックグラウンドジョブとしてキューに追加し、即座に requestId を返す
@@ -270,7 +275,7 @@ export async function POST(request: Request) {
       ultimateMode: Boolean(body?.ultimateMode),
     };
 
-    const { data: requestData, error: insertError } = await supabase
+    const { data: requestData, error: insertError } = await queueDb
       .from('weekly_menu_requests')
       .insert({
         user_id: user.id,
@@ -296,10 +301,11 @@ export async function POST(request: Request) {
     }
 
     // generated_data に requestId を埋め込む
-    await supabase
+    await queueDb
       .from('weekly_menu_requests')
       .update({ generated_data: { ...params, requestId: requestData.id } })
-      .eq('id', requestData.id);
+      .eq('id', requestData.id)
+      .eq('user_id', user.id);
 
     return NextResponse.json(
       {

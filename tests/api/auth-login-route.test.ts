@@ -5,21 +5,20 @@
  *   - 別のサイトからの POST は 403 (ログインの CSRF)。Origin が無いもの・同じサイトは通す
  *   - IP アドレスごとの回数制限 (10 回/分、設計 §3.2)。超えたら 429 + Retry-After で、パスワードを確かめない。判定できなければ 500
  *   - 本文の検証 (400)。メールアドレスは小文字・前後の空白なしにそろえて Supabase へ渡す
- *   - ロック (設計 §8): 5 回目の失敗の応答から 423 + Retry-After。ロック中は正しいパスワードでも 423 で、Supabase を呼ばない
+ *   - ロックしない (docs/operations/auth-protection.md §1): 何回失敗しても 423 は返さず 401。何回失敗した後でも、正しいパスワードなら 200。
+ *     応答はアカウントの有無で変わらない
  *   - ボットの確認: 3 回以上失敗しているときだけ確かめる。偽物は 400、Cloudflare に届かなければ 503
+ *   - 回数を 0 に戻すまでの時間: 環境変数 AUTH_LOGIN_FAILURE_RESET_MINUTES (未設定・不正なら 1440 分。不正ならプロセスで 1 回 warn)
  *   - Supabase のエラーの対応 (403 / 429 / 500)。500 の本文に Supabase の生のエラー文を出さない
- *   - 10 回目の失敗で、通知を応答の後ろ (waitUntil) へ回す。応答はアカウントの有無で変わらない
- * ロックの記録は DB の関数と同じ規則で動く偽物 (tests/helpers/fake-login-lock-store.ts)。
+ * 失敗の回数の記録は DB の関数と同じ規則で動く偽物 (tests/helpers/fake-login-failure-store.ts)。
  */
 import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createFakeLoginLockStore, type FakeLoginLockStore } from '../helpers/fake-login-lock-store';
+import { createFakeLoginFailureStore, type FakeLoginFailureStore } from '../helpers/fake-login-failure-store';
 
 const mocks = vi.hoisted(() => ({
   signInWithPassword: vi.fn(),
   adminRpc: vi.fn(),
-  waitUntil: vi.fn(),
-  sendLoginLockNotice: vi.fn(),
   verifyTurnstileToken: vi.fn(),
   isTurnstileVerificationEnabled: vi.fn(() => false),
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -29,10 +28,6 @@ vi.mock('@/lib/supabase/server', () => ({
   createClient: () => ({ auth: { signInWithPassword: mocks.signInWithPassword } }),
   getSupabaseAdmin: () => ({ rpc: mocks.adminRpc }),
 }));
-
-vi.mock('@vercel/functions', () => ({ waitUntil: mocks.waitUntil }));
-
-vi.mock('@/lib/auth/login-lock-notification', () => ({ sendLoginLockNotice: mocks.sendLoginLockNotice }));
 
 vi.mock('@/lib/auth/turnstile-verify', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/auth/turnstile-verify')>();
@@ -62,7 +57,7 @@ const EMAIL = 'user@example.com';
 const PASSWORD = 'Passw0rdSecret';
 const INVALID = { code: 'invalid_credentials', status: 400, message: 'Invalid login credentials' };
 
-let store: FakeLoginLockStore;
+let store: FakeLoginFailureStore;
 let ipCounter = 0;
 /** テストごとに別の IP アドレス (in-memory の回数制限がテストをまたがないように) */
 let ip = '';
@@ -82,11 +77,11 @@ async function post(body: unknown = { email: EMAIL, password: PASSWORD }, header
 
 beforeEach(() => {
   vi.clearAllMocks();
-  store = createFakeLoginLockStore();
+  vi.unstubAllEnvs();
+  store = createFakeLoginFailureStore();
   mocks.adminRpc.mockImplementation((fn: string, args: Record<string, unknown>) => store.client.rpc(fn, args));
   mocks.signInWithPassword.mockResolvedValue({ data: {}, error: null });
   mocks.verifyTurnstileToken.mockResolvedValue({ status: 'disabled' });
-  mocks.sendLoginLockNotice.mockResolvedValue(undefined);
   ipCounter += 1;
   ip = `198.51.100.${ipCounter}`;
 });
@@ -109,73 +104,95 @@ describe('成功', () => {
   });
 
   it('成功したら失敗の記録を消す', async () => {
-    store.rows.set(EMAIL, { failure_count: 4, locked_until: null });
+    store.setFailures(EMAIL, 4);
     expect((await post()).status).toBe(200);
     expect(store.row(EMAIL)).toBeUndefined();
   });
 });
 
-describe('パスワード違いとロック (設計 §8)', () => {
+describe('パスワード違い (ロックしない)', () => {
   beforeEach(() => {
     mocks.signInWithPassword.mockResolvedValue({ data: {}, error: INVALID });
   });
 
-  it('1〜4 回目は 401 AUTH_INVALID_CREDENTIALS。5 回目の応答から 423 AUTH_ACCOUNT_LOCKED + Retry-After (15 分)', async () => {
-    for (let i = 1; i <= 4; i += 1) {
-      const res = await post();
+  it('何回続けて失敗しても 401 AUTH_INVALID_CREDENTIALS (423 にならない・Retry-After を付けない)。3 回目から captchaRequired', async () => {
+    // IP ごとの回数制限 (10 回/分) に掛からないよう、IP を変えながら 25 回
+    for (let i = 1; i <= 25; i += 1) {
+      const res = await post(undefined, { 'x-forwarded-for': `203.0.113.${i}` });
       expect(res.status).toBe(401);
       expect(res.body).toEqual({
         error: 'メールアドレスまたはパスワードが正しくありません。',
         code: 'AUTH_INVALID_CREDENTIALS',
         captchaRequired: i >= 3,
       });
+      expect(res.headers.get('retry-after')).toBeNull();
     }
-    const fifth = await post();
-    expect(fifth.status).toBe(423);
-    expect(fifth.body.code).toBe('AUTH_ACCOUNT_LOCKED');
-    expect(fifth.body.retryAfter).toBe(900);
-    expect(fifth.headers.get('retry-after')).toBe('900');
-    expect(String(fifth.body.error)).toContain('パスワードを再設定すると');
+    expect(mocks.signInWithPassword).toHaveBeenCalledTimes(25);
+    expect(store.row(EMAIL)?.failure_count).toBe(25);
   });
 
-  it('ロック中は、正しいパスワードでも 423 で、Supabase を呼ばず、回数も増やさない', async () => {
-    const lockedUntil = new Date(Date.now() + 600_000).toISOString();
-    store.rows.set(EMAIL, { failure_count: 5, locked_until: lockedUntil });
+  it('20 回以上失敗した後でも、正しいパスワードなら 200 (Supabase でパスワードを確かめる) で、回数は 0 に戻る', async () => {
+    store.setFailures(EMAIL, 20);
     mocks.signInWithPassword.mockResolvedValue({ data: {}, error: null });
 
     const res = await post();
 
-    expect(res.status).toBe(423);
-    expect(res.body.code).toBe('AUTH_ACCOUNT_LOCKED');
-    expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(590);
-    expect(mocks.signInWithPassword).not.toHaveBeenCalled();
-    expect(store.row(EMAIL)).toEqual({ failure_count: 5, locked_until: lockedUntil });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(mocks.signInWithPassword).toHaveBeenCalledTimes(1);
+    expect(store.row(EMAIL)).toBeUndefined();
   });
 
-  it('10 回目の失敗で、通知を応答の後ろ (waitUntil) へ回す。応答はアカウントの有無で変わらない', async () => {
-    store.accounts.set(EMAIL, '00000000-0000-4000-8000-000000000001');
-    store.rows.set(EMAIL, { failure_count: 9, locked_until: null });
-    store.rows.set('nobody@example.com', { failure_count: 9, locked_until: null });
+  it('応答はアカウントの有無で変わらない (登録されていないメールアドレスも同じように数える)', async () => {
+    store.setFailures(EMAIL, 9);
+    store.setFailures('nobody@example.com', 9);
 
     const existing = await post();
     const missing = await post({ email: 'nobody@example.com', password: PASSWORD });
 
-    expect(existing.status).toBe(423);
-    expect(missing.status).toBe(423);
-    expect(Object.keys(existing.body).sort()).toEqual(Object.keys(missing.body).sort());
-    expect(existing.body.code).toBe(missing.body.code);
-    expect(existing.body.error).toBe(missing.body.error);
-    expect(mocks.waitUntil).toHaveBeenCalledTimes(2);
-    expect(mocks.sendLoginLockNotice).toHaveBeenCalledTimes(2);
-    expect(mocks.sendLoginLockNotice.mock.calls[0][1]).toEqual(
-      expect.objectContaining({ email: EMAIL, notice: 'account-owner', failureCount: 10 }),
+    expect(existing.status).toBe(401);
+    expect(missing.status).toBe(401);
+    expect(existing.body).toEqual(missing.body);
+    expect(store.row('nobody@example.com')?.failure_count).toBe(10);
+  });
+});
+
+describe('回数を 0 に戻すまでの時間 (AUTH_LOGIN_FAILURE_RESET_MINUTES)', () => {
+  const resetArgs = () =>
+    store.calls.filter((c) => c.fn === 'auth_login_failure_count').map((c) => c.args.p_reset_after_minutes);
+
+  it('未設定なら 1440 分 (24 時間) を DB の関数へ渡す', async () => {
+    vi.stubEnv('AUTH_LOGIN_FAILURE_RESET_MINUTES', '');
+    await post();
+    expect(resetArgs()).toEqual([1440]);
+  });
+
+  it('設定すれば、その分数を渡す', async () => {
+    vi.stubEnv('AUTH_LOGIN_FAILURE_RESET_MINUTES', '60');
+    await post();
+    expect(resetArgs()).toEqual([60]);
+  });
+
+  it('不正な値なら既定の 1440 分に戻し (ログインは止めない)、変数名だけを warn で残す (値は出さない)', async () => {
+    vi.stubEnv('AUTH_LOGIN_FAILURE_RESET_MINUTES', '0');
+    const res = await post();
+    expect(res.status).toBe(200);
+    expect(resetArgs()).toEqual([1440]);
+    const warned = mocks.logger.warn.mock.calls.filter((call) =>
+      JSON.stringify(call).includes('AUTH_LOGIN_FAILURE_RESET_MINUTES'),
     );
+    // プロセスごとに 1 回だけ (このファイルでは、この it が最初の不正な値)
+    expect(warned).toHaveLength(1);
+    await post();
+    expect(
+      mocks.logger.warn.mock.calls.filter((call) => JSON.stringify(call).includes('AUTH_LOGIN_FAILURE_RESET_MINUTES')),
+    ).toHaveLength(1);
   });
 });
 
 describe('ボットの確認 (3 回以上失敗しているとき)', () => {
   beforeEach(() => {
-    store.rows.set(EMAIL, { failure_count: 3, locked_until: null });
+    store.setFailures(EMAIL, 3);
   });
 
   it('偽物のトークンは 400 AUTH_CAPTCHA_FAILED (パスワードを確かめない)', async () => {
@@ -221,8 +238,8 @@ describe('Supabase のエラー', () => {
     expect(store.row(EMAIL)).toBeUndefined();
   });
 
-  it('ロックの記録を読めなければ 500 (判定できないので通さない・Supabase を呼ばない)', async () => {
-    store.failNext('auth_login_lock_status');
+  it('失敗の回数を読めなければ 500 (ボットの確認を求めるか判定できないので通さない・Supabase を呼ばない)', async () => {
+    store.failNext('auth_login_failure_count');
     const res = await post();
     expect(res.status).toBe(500);
     expect(res.body.code).toBe('INTERNAL_ERROR');

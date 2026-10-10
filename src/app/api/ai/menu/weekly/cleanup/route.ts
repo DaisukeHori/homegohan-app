@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
 import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
 import { internalError } from '@/lib/api/errors';
@@ -37,10 +38,13 @@ export async function POST() {
 
   // スタックしているリクエストをfailedに更新
   const stuckIds = stuckRequests.map(r => r.id);
-  const { error: updateError } = await supabase
+  // weekly_menu_requests は利用者 (authenticated) から書けない (#1465)。本人の行に絞って service role で書く
+  const queueDb = getAiQueueWriter();
+  const { error: updateError } = await queueDb
     .from('weekly_menu_requests')
     .update({ status: 'failed', updated_at: new Date().toISOString() })
-    .in('id', stuckIds);
+    .in('id', stuckIds)
+    .eq('user_id', user.id);
 
   if (updateError) {
     return internalError('POST /api/ai/menu/weekly/cleanup', updateError, { userId: user.id });

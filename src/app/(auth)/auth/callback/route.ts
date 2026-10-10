@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { getSafeRedirectPath } from '@/lib/auth/safe-redirect'
+import { resolveFirstSignInDestination } from '@/lib/legal-consent'
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url)
@@ -123,7 +124,7 @@ export async function GET(request: Request) {
     // maybeSingle() を使用（行がない場合もエラーにならない）
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
-      .select('roles, nickname, onboarding_started_at, onboarding_completed_at')
+      .select('roles, nickname, onboarding_started_at, onboarding_completed_at, terms_version_accepted, privacy_version_accepted')
       .eq('id', user.id)
       .maybeSingle()
 
@@ -139,9 +140,10 @@ export async function GET(request: Request) {
     }
 
     const roles = profile?.roles || []
+    const isAdmin = roles.includes('admin') || roles.includes('super_admin')
 
     // 管理者の場合は強制的に管理画面へ(query の next より優先)
-    if (roles.includes('admin') || roles.includes('super_admin')) {
+    if (isAdmin) {
       next = '/admin'
     }
     // #1057 (UX1-01 round-2): 招待リンク等クエリ由来の安全な遷移先が明示されている場合は、
@@ -165,6 +167,15 @@ export async function GET(request: Request) {
     // 未開始またはプロファイルなし → 初回ウェルカムへ
     else {
       next = '/onboarding/welcome'
+    }
+
+    // #1435: 初回の作成 (サインアップ画面の Google 登録・メール確認・ログイン画面の「Googleで続ける」で初めて入った人) は、
+    // LEGAL_CONSENT_ENFORCE の値に関わらず、必ず同意画面を通す (同意の記録が残るのは同意画面だけ)。
+    // 戻り先は上で決めた遷移先。判定は lib/legal-consent.ts の resolveFirstSignInDestination。
+    // 管理者は従来どおり管理画面へ。プロフィールを読めなかったときは判定できないので回さない
+    // (同意ゲートの強制 (LEGAL_CONSENT_ENFORCE=on) が middleware で掛かる)。
+    if (!isAdmin && !profileError) {
+      next = resolveFirstSignInDestination({ next, profile })
     }
   } else if (!authSuccess) {
     // 認証も失敗し、既存ユーザーもいない場合

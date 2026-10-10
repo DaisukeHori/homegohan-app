@@ -26,12 +26,14 @@ const mockSelectEq = vi.fn(() => ({ in: mockSelectIn }));
 const mockSelect = vi.fn(() => ({ eq: mockSelectEq }));
 
 const updateResultQueue: Array<{ error: any }> = [];
-const mockUpdateIn = vi.fn(() => Promise.resolve(updateResultQueue.shift() ?? { error: null }));
+const mockUpdateUserEq = vi.fn((..._args: any[]) => Promise.resolve(updateResultQueue.shift() ?? { error: null }));
+const mockUpdateIn = vi.fn((..._args: any[]) => ({ eq: mockUpdateUserEq }));
 const mockUpdate = vi.fn(() => ({ in: mockUpdateIn }));
 
+// 利用者のクライアントは weekly_menu_requests を読むだけ (#1465: 利用者からは書けない)
 const mockFrom = vi.fn((table: string) => {
   if (table === 'weekly_menu_requests') {
-    return { select: mockSelect, update: mockUpdate };
+    return { select: mockSelect };
   }
   throw new Error(`Unexpected table in test: ${table}`);
 });
@@ -41,8 +43,17 @@ const mockSupabase = {
   from: mockFrom,
 };
 
+// AI のキューへの書き込みは service role のクライアント (getAiQueueWriter → getSupabaseAdmin) で行う (#1465)
+const mockAdminFrom = vi.fn((table: string) => {
+  if (table === 'weekly_menu_requests') {
+    return { update: mockUpdate };
+  }
+  throw new Error(`Unexpected table in test (admin): ${table}`);
+});
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => mockSupabase),
+  getSupabaseAdmin: vi.fn(() => ({ from: mockAdminFrom })),
 }));
 
 const mockRestorePlannedMealsSnapshot = vi.fn(async (..._args: any[]) => ({ restored: 0, skipped: 0, failed: 0 }));
@@ -104,8 +115,10 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
     expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
     expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledWith(mockSupabase, [snapshotRowA]);
 
-    // failed への一括更新が呼ばれていること
+    // failed への一括更新が呼ばれていること (service role で、本人の行に絞って。#1465)
+    expect(mockAdminFrom).toHaveBeenCalledWith('weekly_menu_requests');
     expect(mockUpdateIn).toHaveBeenCalledWith('id', ['req-1', 'req-2']);
+    expect(mockUpdateUserEq).toHaveBeenCalledWith('user_id', user.id);
   });
 
   it('failed への更新自体が失敗した場合は復元を呼ばず 500 を返す', async () => {

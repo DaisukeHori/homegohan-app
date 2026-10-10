@@ -43,16 +43,6 @@ async function signOutEverywhere(supabase: ReturnType<typeof createClient>): Pro
   }
 }
 
-/** POST /api/auth/login-lock/clear (#1165)。例外は投げない */
-async function clearLoginLockAfterReset(): Promise<void> {
-  try {
-    const response = await fetch("/api/auth/login-lock/clear", { method: "POST", credentials: "same-origin" });
-    if (!response.ok) console.warn("Login lock clear after password reset failed:", response.status);
-  } catch (err) {
-    console.warn("Login lock clear after password reset failed:", err);
-  }
-}
-
 export default function ResetPasswordPage() {
   const router = useRouter();
   const [password, setPassword] = useState("");
@@ -104,11 +94,6 @@ export default function ResetPasswordPage() {
       if (updateError) {
         throw updateError;
       }
-
-      // #1165: ログインに続けて失敗してロックされていても、再設定を済ませたらすぐにログインできるようにする
-      // (設計 docs/design/cross/01-auth-session.md §8 「メール経由のリセットのみ解除可能」)。
-      // 全端末のログアウトより前に呼ぶ (このリンクのセッションで呼ぶ API のため)。失敗してもロックは期限で外れるので、再設定は成功のまま
-      await clearLoginLockAfterReset();
 
       // #1188: 更新できたら、この端末も含めて全端末をログアウトし、新しいパスワードで入り直してもらう
       const signedOut = await signOutEverywhere(supabase);
