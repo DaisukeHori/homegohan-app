@@ -54,8 +54,10 @@ export {
   AI_QUOTA_COUNTED_HEADER,
   AI_QUOTA_ERROR_CODES,
   AI_QUOTA_TIMEOUT_MS,
+  aiQuotaErrorBody,
   parseAiQuotaResult,
   type AiFeature,
+  type AiQuotaErrorBody,
   type AiQuotaLimitKind,
   type AiQuotaResult,
 } from '../../../supabase/functions/_shared/ai-quota-core';

@@ -46,11 +46,6 @@ Deno.serve(async (req) => {
       })
     }
 
-    // #1177 AI 利用回数の記録。Next.js (POST /api/ai/analyze-meal-photo) は数え済みの印を付けて呼ぶので、
-    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (失敗しても止めない)
-    const quota = await consumeEdgeAiQuota(req, user.id, 'photo_analysis')
-    if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders)
-
     const body = await req.json()
     const { images, imageBase64, mimeType, mealId, mealType, prefetchedGeminiResult } = body as {
       images?: ImageInput[];
@@ -72,6 +67,11 @@ Deno.serve(async (req) => {
         status: 400,
       })
     }
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (Next.js が数え済みの印があれば数えない。失敗しても止めない)
+    const quota = await consumeEdgeAiQuota(req, user.id, 'photo_analysis')
+    if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders)
 
     // mealId が無い場合: 同期的に解析して結果を返す
     if (!mealId) {

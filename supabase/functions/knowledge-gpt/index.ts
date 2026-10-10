@@ -401,6 +401,10 @@ Deno.serve(async (req) => {
     // サービスロールキーかどうかを確認（署名検証されないJWTペイロードのroleは信用せず、完全一致のみで判定）
     const isServiceRole = serviceRoleKey.length > 0 && token === serviceRoleKey;
 
+    // #1177 ユーザー自身の JWT で直接呼ばれたときの利用者 ID (この経路だけ、AI へ送る直前に利用回数を数える)。
+    // service role (Next.js の AI 相談 API) の呼び出しは null のまま (Next.js が数え済み)
+    let directJwtUserId: string | null = null;
+
     if (!isServiceRole) {
       const supabaseAuth = createClient(
         Deno.env.get("SUPABASE_URL") ?? "",
@@ -415,10 +419,7 @@ Deno.serve(async (req) => {
         );
       }
 
-      // #1177 AI 利用回数の記録。service role (Next.js の AI 相談 API) は Next.js が数え済みなので、
-      // ユーザー自身の JWT で直接呼ばれた場合だけ数える (失敗しても止めない)
-      const quota = await consumeEdgeAiQuota(req, user.id, "consultation");
-      if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
+      directJwtUserId = user.id;
     }
 
     const body: ChatCompletionRequest = await req.json().catch(() => ({ messages: [] }));
@@ -436,6 +437,13 @@ Deno.serve(async (req) => {
     console.log("Knowledge-GPT received request");
     console.log("Messages count:", body.messages.length);
     console.log("Mode:", mode, "Streaming:", isStreaming);
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
+    // ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js が数え済みの印があれば数えない。失敗しても止めない)
+    if (directJwtUserId) {
+      const quota = await consumeEdgeAiQuota(req, directJwtUserId, "consultation");
+      if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
+    }
 
     // LLMトークン使用量計測
     const executionId = generateExecutionId();

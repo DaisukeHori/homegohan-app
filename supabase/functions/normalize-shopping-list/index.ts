@@ -289,10 +289,6 @@ Deno.serve(async (req: Request) => {
   const authResult = await requireAuth(req);
   if (authResult instanceof Response) return withCors(authResult, req);
 
-  // #1177 AI 利用回数の記録。Next.js を経由せず JWT で直接呼ばれた場合だけ数える (失敗しても止めない)
-  const quota = await consumeEdgeAiQuota(req, authResult.userId, "shopping_list");
-  if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
-
   const requestId = generateRequestId();
   const executionId = generateExecutionId();
   const logger = createLogger("normalize-shopping-list", requestId);
@@ -346,6 +342,11 @@ Deno.serve(async (req: Request) => {
 
     // 入力名のセットを作成（バリデーション用）
     const inputNames = new Set(ingredients.map((ing) => ing.name));
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (Next.js が数え済みの印があれば数えない。失敗しても止めない)
+    const quota = await consumeEdgeAiQuota(req, authResult.userId, "shopping_list");
+    if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
 
     // LLM呼び出し（トークン使用量計測付き）
     const rawItems = await withOpenAIUsageContext({

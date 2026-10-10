@@ -44,10 +44,6 @@ Deno.serve(async (req) => {
   }
   const { userId } = authResult;
 
-  // #1177 AI 利用回数の記録。Next.js を経由せず JWT で直接呼ばれた場合だけ数える (失敗しても止めない)
-  const quota = await consumeEdgeAiQuota(req, userId, "nutrition_advice");
-  if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
-
   const requestId = generateRequestId();
   const logger = createLogger("generate-hint", requestId).withUser(userId);
 
@@ -87,6 +83,11 @@ Deno.serve(async (req) => {
 
 ヒントはポジティブなトーンで、具体的で実践しやすい内容にしてください。
 JSON形式で {"hint": "..."} のみ出力してください。`;
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (Next.js が数え済みの印があれば数えない。失敗しても止めない)
+    const quota = await consumeEdgeAiQuota(req, userId, "nutrition_advice");
+    if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
 
     const response = await openai.chat.completions.create({
       model: getFastLLMModel(),

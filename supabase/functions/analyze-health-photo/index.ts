@@ -110,11 +110,6 @@ Deno.serve(async (req) => {
       );
     }
 
-    // #1177 AI 利用回数の記録。Next.js (POST /api/ai/analyze-weight-scale) は数え済みの印を付けて呼ぶので、
-    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (失敗しても止めない)
-    const quota = await consumeEdgeAiQuota(req, user.id, "photo_analysis");
-    if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
-
     const formData = await req.formData();
     const imageFile = formData.get("image") as File | null;
     const imageBase64 = formData.get("image_base64") as string | null;
@@ -137,6 +132,11 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (Next.js が数え済みの印があれば数えない。失敗しても止めない)
+    const quota = await consumeEdgeAiQuota(req, user.id, "photo_analysis");
+    if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
 
     const { data, model, rawText } = await generateGeminiJson<AnalysisResult>({
       prompt: buildAnalysisPrompt(deviceType),

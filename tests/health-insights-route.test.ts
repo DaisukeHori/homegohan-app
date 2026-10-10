@@ -261,7 +261,9 @@ describe('POST /api/health/insights', () => {
     expect(mockConsumeAiQuota.mock.invocationCallOrder[0]).toBeLessThan(mockGenerateGeminiJson.mock.invocationCallOrder[0]);
   });
 
-  it('#1177: 利用回数の上限を超えていたら (いまは通らない)、DB にも LLM にも触れずにその応答 (429) を返す', async () => {
+  it('#1177: 利用回数の上限を超えていたら (いまは通らない)、LLM にも保存にも触れずにその応答 (429) を返す', async () => {
+    // 数えるのは AI へ送る直前 (分析に使うデータを読んだあと) なので、読み取りは済んでいる
+    setupHappyPath();
     const denied = { allowed: false, remaining: 0, limitKind: 'daily' as const, limit: 3 };
     mockConsumeAiQuota.mockResolvedValue(denied);
     mockAiQuotaExceededResponse.mockReturnValue(new Response('{}', { status: 429 }));
@@ -270,7 +272,19 @@ describe('POST /api/health/insights', () => {
 
     expect(res.status).toBe(429);
     expect(mockAiQuotaExceededResponse).toHaveBeenCalledWith(denied);
-    expect(mockFrom).not.toHaveBeenCalled();
+    expect(mockGenerateGeminiJson).not.toHaveBeenCalled();
+    expect(recorded.filter((r) => r.calls.some((c) => c.method === 'insert'))).toEqual([]);
+  });
+
+  it('#1177: 分析に使うデータが無くて AI を呼ばずに 400 を返すときは、数えない', async () => {
+    setTable('health_records', [{ data: [], error: null }]);
+    setTable('health_checkups', [{ data: [], error: null }]);
+    setTable('user_daily_meals', [{ data: [], error: null }]);
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(400);
+    expect(mockConsumeAiQuota).not.toHaveBeenCalled();
     expect(mockGenerateGeminiJson).not.toHaveBeenCalled();
   });
 

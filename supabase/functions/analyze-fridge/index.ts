@@ -25,10 +25,6 @@ Deno.serve(async (req) => {
   }
   const { userId } = authResult;
 
-  // #1177 AI 利用回数の記録。Next.js を経由せず JWT で直接呼ばれた場合だけ数える (失敗しても止めない)
-  const quota = await consumeEdgeAiQuota(req, userId, 'photo_analysis');
-  if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
-
   const requestId = generateRequestId();
   const logger = createLogger('analyze-fridge', requestId).withUser(userId);
 
@@ -58,6 +54,11 @@ Deno.serve(async (req) => {
 
     // 署名付き URL の token がログに残らないよう、URL 全体ではなくホストと長さだけ記録する
     logger.info('Analyzing fridge image', { imageHost: host, imageUrlLength: imageUrl.length });
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (Next.js が数え済みの印があれば数えない。失敗しても止めない)
+    const quota = await consumeEdgeAiQuota(req, userId, 'photo_analysis');
+    if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
 
     // Vision API
     const response = await openai.chat.completions.create({

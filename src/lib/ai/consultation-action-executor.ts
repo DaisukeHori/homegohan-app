@@ -27,7 +27,7 @@ import {
 } from '@/lib/meal-image-jobs';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit } from '@/lib/rate-limit';
-import { AI_QUOTA_ERROR_CODES, aiQuotaCountedHeaders, consumeAiQuota } from '@/lib/plan/entitlements';
+import { aiQuotaCountedHeaders, aiQuotaErrorBody, consumeAiQuota, type AiQuotaErrorBody } from '@/lib/plan/entitlements';
 import { createLogger } from '@/lib/db-logger';
 import { PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
 import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
@@ -222,13 +222,11 @@ function sanitizeShoppingItemUpdate(input: unknown): { data: PlainRecord; errors
  * AI を使わないアクション (献立の削除・買い物リストの操作など) は数えない。
  * 上限を超えたとき (いまは全プラン無制限なので起きない) は、生成せずに理由を結果に書く。記録に失敗しても止めない。
  */
-async function countMenuGenerationAction(userId: string): Promise<{ error: string; code: string } | null> {
+async function countMenuGenerationAction(userId: string): Promise<AiQuotaErrorBody | null> {
   const quota = await consumeAiQuota(userId, 'menu_generation');
   if (quota.allowed) return null;
-  return {
-    error: 'AI の利用回数の上限に達しました。時間をおいてから、もう一度お試しください',
-    code: AI_QUOTA_ERROR_CODES[quota.limitKind ?? 'daily'],
-  };
+  // 429 の本文と同じ形 ({ error, code: AI_DAILY_LIMIT | AI_MONTHLY_LIMIT, ... }) を結果に書く
+  return aiQuotaErrorBody(quota).body;
 }
 
 export interface ConsultationActionRow {

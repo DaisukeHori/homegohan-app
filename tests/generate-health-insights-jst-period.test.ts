@@ -24,6 +24,7 @@ const h = vi.hoisted(() => ({
   serve: null as null | ((req: Request) => Promise<Response>),
   client: null as null | { from: (table: string) => unknown },
   errors: [] as Array<{ message: string; error: unknown }>,
+  quotaCalls: [] as Array<{ userId: string; feature: string }>,
 }));
 
 // Edge Runtime の型宣言だけの import (node_modules に無い)。中身は無いので空のモジュールにする
@@ -53,6 +54,16 @@ vi.mock("../supabase/functions/_shared/db-logger.ts", () => ({
     return logger;
   },
   generateRequestId: () => "req_test",
+}));
+
+// #1177: AI 利用回数の記録。DB を呼ぶ consumeEdgeAiQuota だけを差し替えて (許可)、呼ばれた引数を記録する。
+// 429 の応答を作る関数は本物を使う (consumeEdgeAiQuota 自体の挙動は tests/ai-quota-edge.test.ts)
+vi.mock("../supabase/functions/_shared/quota.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../supabase/functions/_shared/quota.ts")>()),
+  consumeEdgeAiQuota: async (_req: Request, userId: string, feature: string) => {
+    h.quotaCalls.push({ userId, feature });
+    return { allowed: true, remaining: null };
+  },
 }));
 
 // LLM の使用量計測 (fetch を包んで DB へ書く) は、ここでは中身をそのまま実行するだけにする
@@ -92,6 +103,7 @@ const fetchMock = vi.fn(async () => new Response("unavailable", { status: 503 })
 
 beforeEach(() => {
   h.errors.length = 0;
+  h.quotaCalls.length = 0;
   h.client = null;
   fetchMock.mockClear();
   // AI の総合分析は外へ出さない (失敗扱い → その 1 件だけ作られない)
@@ -179,6 +191,8 @@ describe("generate-health-insights: 期間と保存する日付は JST の暦日
     const { status, json } = await invoke(periodType === undefined ? {} : { period_type: periodType });
     expect(status).toBe(200);
     expect(h.errors).toEqual([]);
+    // JWT で直接呼ばれたので、AI へ送る前に 1 回だけ数える (#1177)
+    expect(h.quotaCalls).toEqual([{ userId: USER_ID, feature: "health_review" }]);
 
     // health_records は JST の暦日の期間で絞る (両端を含む)
     const [recordsQuery] = queriesOf(queries, "health_records");

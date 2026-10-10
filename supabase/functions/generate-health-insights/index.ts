@@ -86,10 +86,6 @@ Deno.serve(async (req) => {
     }
     _userId = user.id;
 
-    // #1177 AI 利用回数の記録。Next.js を経由せず JWT で直接呼ばれた場合だけ数える (失敗しても止めない)
-    const quota = await consumeEdgeAiQuota(req, user.id, "health_review");
-    if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
-
     const body = await req.json();
     const periodType = body.period_type || 'weekly'; // 'daily', 'weekly', 'monthly'
     _periodType = periodType;
@@ -139,6 +135,11 @@ Deno.serve(async (req) => {
       .select('*')
       .eq('user_id', user.id)
       .eq('status', 'active');
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (Next.js が数え済みの印があれば数えない。失敗しても止めない)
+    const quota = await consumeEdgeAiQuota(req, user.id, "health_review");
+    if (!quota.allowed) return aiQuotaExceededResponse(quota, corsHeaders);
 
     // 分析を実行（LLMトークン使用量計測付き）
     const executionId = generateExecutionId();

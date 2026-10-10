@@ -1,7 +1,7 @@
 /**
  * #1177 (T26) プランの判定 (get_effective_plan) と、AI の利用回数の記録 (consume_ai_quota) のテスト
  *
- * 20261008200200_ai_quota_foundation.sql が足すもの:
+ * 20261010110000_ai_quota_foundation.sql が足すもの:
  *   - ai_plan_limits(plan_key PK, daily_limit, monthly_limit)  プランごとの上限。NULL = 無制限。いまは全プラン NULL
  *   - ai_usage_counters(user_id, usage_date (JST), feature, count)  PK(user_id, usage_date, feature)
  *   - get_effective_plan(p_user_id) -> text    個人の契約 -> 家族 -> 組織 -> 'free'
