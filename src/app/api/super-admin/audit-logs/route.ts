@@ -2,8 +2,13 @@
  * GET /api/super-admin/audit-logs  — 監査ログ閲覧
  * operator/07-audit-monitoring.md §3-4 準拠
  * SELECT は super_admin のみ (admin が自分の操作を消せない設計)
+ *
+ * 期間 (from / to。画面の日付の入力。どちらの日も含む) は JST の暦日で絞る (#1433)。created_at は timestamptz なので、
+ * 日付の文字列をそのまま渡さず (DB は UTC の 0 時 = JST 9 時と読み、JST の 0:00〜8:59 の行が落ちる)、
+ * 終了日も 'T23:59:59Z' (UTC。JST では翌日の 8:59:59) で閉じず、JST 0 時の時刻にしてから .gte / .lt で絞る。
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
@@ -37,8 +42,10 @@ export async function GET(request: NextRequest) {
     if (target_id) query = query.eq('target_id', target_id);
     if (action_type) query = query.ilike('action_type', `%${action_type}%`);
     if (severity) query = query.eq('severity', severity);
-    if (from) query = query.gte('created_at', from);
-    if (to) query = query.lte('created_at', to + 'T23:59:59Z');
+    // 開始日の JST 0 時から、終了日の翌日の JST 0 時の手前まで (#1433)
+    const { fromTimestamp, toTimestampExclusive } = jstOptionalDayRangeTimestamps(from, to);
+    if (fromTimestamp) query = query.gte('created_at', fromTimestamp);
+    if (toTimestampExclusive) query = query.lt('created_at', toTimestampExclusive);
 
     const { data, error, count } = await query;
 

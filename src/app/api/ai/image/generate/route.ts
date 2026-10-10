@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { GoogleGenAI, createUserContent } from '@google/genai';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { recordAiUsage } from '@/lib/plan/entitlements';
 import { userScopedStoragePath } from '@/lib/storage-paths';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
@@ -68,6 +69,10 @@ export async function POST(request: Request) {
 
     const enhancedPrompt = `Create a delicious, appetizing, professional food photography shot of ${prompt}. Natural lighting, high resolution, minimalist plating, Japanese cuisine style.`;
     const referenceImages = normalizeReferenceImages(images);
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
+    // (記録に失敗しても止めない)
+    await recordAiUsage(user.id, 'image_generation');
 
     let imageBase64 = '';
     let textResponse = '';

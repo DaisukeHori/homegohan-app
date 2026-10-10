@@ -7,6 +7,8 @@
 // 直接関数呼び出しする（self-fetch を撤廃）。
 
 import type { TargetSlot } from '@/types/domain';
+import { addDaysToDate } from '@/lib/date-utils';
+import { isCalendarDate } from '@/lib/jst-day-ranges';
 import {
   RECORD_DATE_PATTERN,
   sanitizeHealthGoalCreate,
@@ -27,6 +29,8 @@ import {
 } from '@/lib/meal-image-jobs';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { aiUsageRecordedHeaders, recordAiUsage } from '@/lib/plan/entitlements';
+import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { createLogger } from '@/lib/db-logger';
 import { errorCodeOf, toLoggableError } from '@/lib/api/errors';
 import { PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
@@ -34,6 +38,9 @@ import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
 
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
+
+/** generate_week_menu で作る日数 (startDate から 1 週間) */
+const WEEK_MENU_DAYS = 7;
 
 // #1048 F2-23 / #1103: AI 生成アクション (generate_single_meal) が扱う meal_type。
 // 朝食・昼食・夕食・おやつ・夜食 (midnight_snack) の 5 値。UI・献立生成の Edge Function
@@ -303,6 +310,11 @@ export async function runConsultationAction(
         ],
       });
 
+      // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・生成のリクエストの行を
+      // 作る前。記録に失敗しても止めない)。AI 相談の会話そのもの (consultation) は呼び出し元の route が記録する。
+      // 生成は別の AI の呼び出しなので、ここで別に記録する。同意の判定は呼び出し元の route がアクションの実行の前に済ませる
+      await recordAiUsage(user.id, 'menu_generation');
+
       // リクエストを記録
       const { data: requestData, error: requestError } = await supabase
         .from('weekly_menu_requests')
@@ -339,7 +351,7 @@ export async function runConsultationAction(
         .single();
 
       const invokeResult = await invokeGenerateMenuV4WithRetry({
-        invoke: () => supabase.functions.invoke(engineLabel, {
+        invoke: async () => supabase.functions.invoke(engineLabel, {
           body: {
             userId: user.id,
             requestId: requestData.id,
@@ -352,6 +364,9 @@ export async function runConsultationAction(
             familySize: profile?.family_size || 1,
             ultimateMode: ultimateMode ?? false,
           },
+          // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに利用回数を記録する。
+          // この生成は上 (recordAiUsage) で記録済みなので、二重に記録しないよう、署名つきの印を付ける
+          headers: await aiUsageRecordedHeaders(user.id),
         }),
       });
 
@@ -377,14 +392,17 @@ export async function runConsultationAction(
         result = { error: 'startDate は必須です' };
         break;
       }
+      // 日付は暦の計算 (addDaysToDate) でずらすので、YYYY-MM-DD の実在する日付だけを受け付ける (#1433)
+      if (typeof startDate !== 'string' || !isCalendarDate(startDate)) {
+        result = { error: 'startDate must be in YYYY-MM-DD format' };
+        break;
+      }
 
-      // 1週間分のスロットを生成
+      // 1週間分のスロットを生成 (日付は暦の計算で進める。#1433。以前の new Date(startDate) + setDate (ローカル時刻)
+      // + toISOString (UTC) は、実行環境のタイムゾーンで結果が変わった)
       const baseTargetSlots: TargetSlot[] = [];
-      const start = new Date(startDate);
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(start);
-        d.setDate(start.getDate() + i);
-        const dateStr = d.toISOString().split('T')[0];
+      for (let i = 0; i < WEEK_MENU_DAYS; i++) {
+        const dateStr = addDaysToDate(startDate, i);
         baseTargetSlots.push({ date: dateStr, mealType: 'breakfast' });
         baseTargetSlots.push({ date: dateStr, mealType: 'lunch' });
         baseTargetSlots.push({ date: dateStr, mealType: 'dinner' });
@@ -394,6 +412,11 @@ export async function runConsultationAction(
         userId: user.id,
         targetSlots: baseTargetSlots,
       });
+
+      // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・生成のリクエストの行を
+      // 作る前。記録に失敗しても止めない)。AI 相談の会話そのもの (consultation) は呼び出し元の route が記録する。
+      // 生成は別の AI の呼び出しなので、ここで別に記録する。同意の判定は呼び出し元の route がアクションの実行の前に済ませる
+      await recordAiUsage(user.id, 'menu_generation');
 
       // リクエストを記録
       const { data: requestData, error: requestError } = await supabase
@@ -431,7 +454,7 @@ export async function runConsultationAction(
         .single();
 
       const invokeResult = await invokeGenerateMenuV4WithRetry({
-        invoke: () => supabase.functions.invoke(engineLabel, {
+        invoke: async () => supabase.functions.invoke(engineLabel, {
           body: {
             userId: user.id,
             requestId: requestData.id,
@@ -444,6 +467,9 @@ export async function runConsultationAction(
             familySize: profile?.family_size || 1,
             ultimateMode: ultimateMode ?? false,
           },
+          // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに利用回数を記録する。
+          // この生成は上 (recordAiUsage) で記録済みなので、二重に記録しないよう、署名つきの印を付ける
+          headers: await aiUsageRecordedHeaders(user.id),
         }),
       });
 
@@ -494,6 +520,11 @@ export async function runConsultationAction(
         targetSlots: [{ date, mealType }],
       });
 
+      // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・生成のリクエストの行を
+      // 作る前。記録に失敗しても止めない)。AI 相談の会話そのもの (consultation) は呼び出し元の route が記録する。
+      // 生成は別の AI の呼び出しなので、ここで別に記録する。同意の判定は呼び出し元の route がアクションの実行の前に済ませる
+      await recordAiUsage(user.id, 'menu_generation');
+
       // 1. weekly_menu_requests に記録
       const { data: requestData, error: requestError } = await supabase
         .from('weekly_menu_requests')
@@ -534,7 +565,7 @@ export async function runConsultationAction(
 
       // 3. Edge Functionを呼び出し
       const invokeResult = await invokeGenerateMenuV4WithRetry({
-        invoke: () => supabase.functions.invoke(engineLabel, {
+        invoke: async () => supabase.functions.invoke(engineLabel, {
           body: {
             userId: user.id,
             requestId: requestData.id,
@@ -554,6 +585,9 @@ export async function runConsultationAction(
             familySize,
             ultimateMode: ultimateMode ?? false,
           },
+          // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに利用回数を記録する。
+          // この生成は上 (recordAiUsage) で記録済みなので、二重に記録しないよう、署名つきの印を付ける
+          headers: await aiUsageRecordedHeaders(user.id),
         }),
       });
 
@@ -677,6 +711,16 @@ export async function runConsultationAction(
         try {
           const rl = await checkRateLimit(user.id, 'image');
           imageAllowed = rl.success;
+          if (imageAllowed) {
+            // 同意が無ければ (判定に失敗した場合も)、画像の生成ジョブを処理する Edge Function (process-meal-image-jobs) が
+            // AI へ送らずに止める (T15 / #1154)。AI へ送らない操作は記録しない (同意の判定 → 利用回数の記録 → AI への送信の順)。
+            // ジョブを積むかどうかは、同意の有無では変えない (止めるのは処理する側)
+            const imageConsent = await checkUserAiConsent(supabase, user.id);
+            if (imageConsent.allowed) {
+              // #1177 AI 利用回数の記録 (操作 1 回で 1 回。積む画像のジョブの数によらない。記録に失敗しても止めない)
+              await recordAiUsage(user.id, 'image_generation');
+            }
+          }
         } catch (rlError) {
           createLogger('api/ai/consultation/actions/execute').warn(
             'Image rate-limit check failed; skipping image generation',

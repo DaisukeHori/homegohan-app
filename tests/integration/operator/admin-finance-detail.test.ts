@@ -9,9 +9,10 @@
  * 権限: finance / admin / super_admin。ほかのロール (support など) と一般ユーザーは 403、未認証は 401。
  * ただし NPS / CSAT の集計 (GET nps) と NPS の書き出し (POST exports の export_type=nps) は admin / super_admin だけ。
  * finance は 403 (#1311。財務ロールを NPS / CSAT から外した)。書き出せる種別の一覧 (GET exports) にも、finance には nps を出さない。
- * 入力エラーは 400 を期待する (AC の「422 相当」)。ただし現状の finance ルートは、Zod の例外・不正な日時・
+ * 入力エラーは 400 を期待する (AC の「422 相当」)。ただし現状の finance ルートは、JSON として読めない本文・不正な日時・
  * 最終ページより先のページ指定を握っておらず、500 になる (reconciliation は検証自体が無い) 箇所がある。
  * その箇所は `[既知の不具合]` の it.fails で固定してある。
+ * (#1433 で、exports の本文と nps の期間は入口で検査して 400 を返すようになった。期間は JST の暦日の日付 YYYY-MM-DD)
  *
  * テストデータは service_role で直接 seed する (本番や共有 DB の既存行には依存しない)。
  * 集計系 (nps / revenue / reconciliation) は、他の行と混ざらないよう専用の plan_key / 日付 / 期間で絞る。
@@ -50,6 +51,8 @@ const CUSTOMER_ID = `cus_t849_${TS}`;
 const INVOICE_NUMBER = `T849-${TS}`;
 const NPS_PLAN_KEY = `t849-${TS}`;
 const NPS_SENT_AT = '2026-05-01T00:00:00Z';
+// 期間 (from / to) は画面と同じ日付 (YYYY-MM-DD。JST の暦日。どちらの日も含む)。NPS_SENT_AT (UTC 5/1 0:00) は JST 5/1 9:00 (#1433)
+const NPS_SENT_DATE = '2026-05-01';
 // 実運用の日次スナップショットと衝突しない過去日。期間フィルタの両端を確かめるため、前後の日にも行を置く
 const SNAPSHOT_BEFORE = '2001-02-02';
 const SNAPSHOT_DATE = '2001-02-03';
@@ -437,8 +440,8 @@ describe('POST /api/admin/finance/exports', () => {
   it('200 nps export is filtered by from/to and contains the seeded survey rows', async () => {
     const res = await apiCall('POST', '/api/admin/finance/exports', adminUser.jwt, {
       export_type: 'nps',
-      from: NPS_SENT_AT,
-      to: NPS_SENT_AT,
+      from: NPS_SENT_DATE,
+      to: NPS_SENT_DATE,
     });
     expect(res.status).toBe(200);
     const rows = csvLines(res.body).filter((line) => line.includes(NPS_PLAN_KEY));
@@ -449,8 +452,8 @@ describe('POST /api/admin/finance/exports', () => {
   it('403 for finance role on the nps export - returns an error instead of a CSV, and leaves no audit log (#1311)', async () => {
     const res = await apiCall('POST', '/api/admin/finance/exports', financeUser.jwt, {
       export_type: 'nps',
-      from: NPS_SENT_AT,
-      to: NPS_SENT_AT,
+      from: NPS_SENT_DATE,
+      to: NPS_SENT_DATE,
     });
     expectError(res, 403, 'OP_PERMISSION_DENIED');
     expect(res.headers['content-type']).toContain('application/json');
@@ -475,8 +478,8 @@ describe('POST /api/admin/finance/exports', () => {
 
     const res = await apiCall('POST', '/api/admin/finance/exports', adminFinanceUser.jwt, {
       export_type: 'nps',
-      from: NPS_SENT_AT,
-      to: NPS_SENT_AT,
+      from: NPS_SENT_DATE,
+      to: NPS_SENT_DATE,
     });
     expect(res.status, `応答本文: ${JSON.stringify(res.body)}`).toBe(200);
     expect(csvLines(res.body).filter((line) => line.includes(NPS_PLAN_KEY))).toHaveLength(4);
@@ -505,20 +508,29 @@ describe('POST /api/admin/finance/exports', () => {
     expect(log!.details).toMatchObject({ export_type: 'subscriptions' });
   });
 
-  // 既知の不具合: ExportRequestSchema.parse() の ZodError を握っておらず、汎用の catch で 500 になる。
-  // (以前のテストは [400, 422, 500] を許容していて、この不具合を隠していた) 直ったら `.fails` を外すこと。
-  it.fails('[既知の不具合] 400 for invalid export_type (現状は 500 INTERNAL_ERROR)', async () => {
+  // #1433 で本文を safeParse し、形の違う本文は 400 (VALIDATION_ERROR) を返すようになった
+  // (以前は ExportRequestSchema.parse() の ZodError を握っておらず、汎用の catch で 500 になっていた)
+  it('400 for invalid export_type (VALIDATION_ERROR)', async () => {
     const res = await apiCall('POST', '/api/admin/finance/exports', financeUser.jwt, {
       export_type: 'INVALID_TYPE',
     });
-    expect(res.status).toBe(400);
+    expectError(res, 400, 'VALIDATION_ERROR');
   });
 
-  it.fails('[既知の不具合] 400 for missing export_type (現状は 500 INTERNAL_ERROR)', async () => {
+  it('400 for missing export_type (VALIDATION_ERROR)', async () => {
     const res = await apiCall('POST', '/api/admin/finance/exports', financeUser.jwt, {});
-    expect(res.status).toBe(400);
+    expectError(res, 400, 'VALIDATION_ERROR');
   });
 
+  it('400 for a period with a time or a non-existent date - from / to take JST calendar dates only (#1433)', async () => {
+    for (const period of [{ from: NPS_SENT_AT }, { to: '2026-02-30' }]) {
+      const res = await apiCall('POST', '/api/admin/finance/exports', adminUser.jwt, { export_type: 'nps', ...period });
+      expectError(res, 400, 'VALIDATION_ERROR');
+    }
+  });
+
+  // 既知の不具合: request.json() の失敗 (JSON として読めない本文) を握っておらず、汎用の catch で 500 になる。
+  // (以前のテストは [400, 422, 500] を許容していて、この不具合を隠していた) 直ったら `.fails` を外すこと。
   it.fails('[既知の不具合] 400 for malformed JSON body (現状は 500 INTERNAL_ERROR)', async () => {
     const res = await apiCallRaw(
       'POST',
@@ -649,9 +661,10 @@ describe('GET /api/admin/finance/nps', () => {
   });
 
   it('200 from/to narrows by sent_at (a period before the surveys yields zero)', async () => {
+    // to=4/30 は JST 4/30 の終わりまで (= 4/30 14:59:59.999999 UTC)。JST 5/1 9:00 に送った分は入らない (#1433)
     const res = await apiCall(
       'GET',
-      `/api/admin/finance/nps?plan_key=${encodeURIComponent(NPS_PLAN_KEY)}&to=2026-04-30T00:00:00Z`,
+      `/api/admin/finance/nps?plan_key=${encodeURIComponent(NPS_PLAN_KEY)}&to=2026-04-30`,
       adminUser.jwt,
     );
     expect(res.status).toBe(200);
@@ -674,11 +687,21 @@ describe('GET /api/admin/finance/nps', () => {
     expect((res.body as NpsBody).data.nps.total_responses).toBe(0);
   });
 
-  // 既知の不具合: from / to を日時として検証せず DB にそのまま渡すため、不正な値は DB エラーの 500 になる。
-  // 400 (VALIDATION_ERROR) を返すのが期待。直ったら `.fails` を外すこと。
-  it.fails('[既知の不具合] 400 for an invalid from date (現状は 500 INTERNAL_ERROR)', async () => {
+  // #1433 で from / to を日付 (YYYY-MM-DD の実在する日付) として入口で検査するようになり、不正な値は 400 になった
+  // (以前は検査せず DB にそのまま渡し、DB エラーの 500 になっていた)
+  it('400 for an invalid from date (VALIDATION_ERROR)', async () => {
     const res = await apiCall('GET', '/api/admin/finance/nps?from=not-a-date', adminUser.jwt);
-    expect(res.status).toBe(400);
+    expectError(res, 400, 'VALIDATION_ERROR');
+  });
+
+  it('200 from/to of the same day covers the whole JST day (the survey sent at JST 9:00 on that day is counted)', async () => {
+    const res = await apiCall(
+      'GET',
+      `/api/admin/finance/nps?plan_key=${encodeURIComponent(NPS_PLAN_KEY)}&from=${NPS_SENT_DATE}&to=${NPS_SENT_DATE}`,
+      adminUser.jwt,
+    );
+    expect(res.status).toBe(200);
+    expect((res.body as NpsBody).data.nps).toMatchObject({ total_responses: 3, nps_score: 33.3 });
   });
 
   it('403 for general user', async () => {

@@ -106,6 +106,8 @@ import {
   wasRequestUpdated,
 } from "./request-finalize.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
+import { recordEdgeAiUsage } from "../_shared/ai-usage.ts";
+import { addDaysToDate, monthJst, todayJst } from "../_shared/jst-date.ts";
 import { aiConsentDeniedResponse, checkAiConsent, invokeMenuContinuation } from "../_shared/ai-consent-guard.ts";
 import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
 
@@ -256,14 +258,15 @@ function scheduleBackgroundTask(label: string, task: () => Promise<void>): void 
   void promise;
 }
 
+// 日付の計算は JST の暦日で行う (#1433)。Edge Function の時計は UTC なので、
+// new Date().toISOString().slice(0, 10) だと JST 0:00〜8:59 に「今日」が前日になり、
+// 賞味期限の判定 (pantry_items.expiration_date >= 今日) と過去の献立の判定 (isPast) が 1 日ずれていた。
 function addDays(dateStr: string, days: number): string {
-  const date = new Date(`${dateStr}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
+  return addDaysToDate(dateStr, days);
 }
 
 function getTodayStr(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayJst();
 }
 
 function mealTypeToJa(mealType: MealType): string {
@@ -1035,7 +1038,7 @@ async function searchMenuCandidates(
     // プールからランダムサンプリング: 必要数を各 mealType ごとにランダム抽出
     const allTemplatesRaw = dedupeTemplatesByContent(buildTemplateCatalog(mergedRows as unknown as DatasetMenuSetRaw[]));
     // 季節外れのテンプレートを除外（クリスマス料理が4月に出るなど）
-    const currentMonth = month ?? new Date().getMonth() + 1;
+    const currentMonth = month ?? monthJst();
     const allTemplates = allTemplatesRaw.filter((t) => isSeasonallyAppropriate(t, currentMonth));
     const sampledTemplates: MenuTemplate[] = [];
     for (const mealType of requestedMealTypes) {
@@ -1825,7 +1828,7 @@ async function executeStep1_Generate(
   let userProfile = generatedData.userProfile ?? body?.userProfile ?? {};
   const seasonalContext: SeasonalContext =
     (generatedData.seasonalContext ?? body?.seasonalContext) ??
-    { month: new Date().getMonth() + 1, seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
+    { month: monthJst(), seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
   const constraintsRaw = generatedData.constraints ?? body?.constraints ?? reqRow.constraints ?? {};
 
   const hasUserProfile = userProfile && typeof userProfile === "object" && Object.keys(userProfile).length > 0;
@@ -2378,7 +2381,7 @@ async function executeStep2_Review(
   const generatedMeals: Record<string, GeneratedMeal> = (generatedData.generatedMeals ?? {}) as any;
   const existingMenus: ExistingMenuContext[] = (generatedData.existingMenus ?? []) as any[];
   const fridgeItems: FridgeItemContext[] = (generatedData.fridgeItems ?? []) as any[];
-  const seasonalContext = generatedData.seasonalContext ?? { month: new Date().getMonth() + 1, seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
+  const seasonalContext = generatedData.seasonalContext ?? { month: monthJst(), seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
   const constraints = generatedData.constraints ?? {};
   const note = generatedData.note ?? null;
   const userContext = generatedData.userContext;
@@ -3108,7 +3111,7 @@ async function executeStep5_RegenerateWithAdvice(
   const existingMenus = (generatedData.existingMenus ?? []) as ExistingMenuContext[];
   const fridgeItems = (generatedData.fridgeItems ?? []) as FridgeItemContext[];
   const seasonalContext: SeasonalContext = (generatedData.seasonalContext as any) ??
-    { month: new Date().getMonth() + 1, seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
+    { month: monthJst(), seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
   const constraints = generatedData.constraints ?? {};
   const note = generatedData.note ?? null;
   const userContext = generatedData.userContext;
@@ -3463,6 +3466,9 @@ Deno.serve(async (req: Request) => {
 
   let requestId: string | null = null;
   let userId: string | null = null;
+  // #1177 ユーザー自身の JWT で直接呼ばれたときの利用者 ID (この経路だけ、AI へ送る直前に利用回数を記録する)。
+  // service role の呼び出し (Next.js の API ルート・cron・続きの工程 _continue) は null のまま (呼び出し元が記録済み)
+  let directJwtUserId: string | null = null;
 
   try {
     const body = await req.json().catch(() => ({}));
@@ -3528,6 +3534,8 @@ Deno.serve(async (req: Request) => {
           { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
+
+      directJwtUserId = userData.user.id;
     }
 
     // 献立の生成は、利用者のデータ (好み・アレルギー・健康目標・冷蔵庫の食材など) を外国の AI 事業者へ送る。
@@ -3564,6 +3572,13 @@ Deno.serve(async (req: Request) => {
         null,
       );
       currentStep = reqData?.current_step ?? 1;
+    }
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (所有の確認・同意などの判定のあと、生成を始める前) に、生成 1 回につき 1 回記録する
+    // (究極モードも 1 回)。ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js の API ルート・cron は service role で呼び、
+    // 呼び出し元が記録済み)。Next.js が記録済みの印があれば記録しない。記録に失敗しても止めない
+    if (directJwtUserId) {
+      await recordEdgeAiUsage(req, directJwtUserId, "menu_generation");
     }
 
     const invocationContext: V5InvocationContext = {

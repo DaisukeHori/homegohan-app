@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { jstDayOffset } from '@/lib/jst-day-ranges';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { awardBadge } from '@/lib/badges/awardBadge';
 import { checkSandboxEligibility } from '@/lib/handson-tour/sandbox-eligibility';
@@ -43,10 +44,13 @@ export async function POST(request: Request) {
     const { sandbox: _sandbox, source: _bodySource, ...menuContent } = body as Record<string, unknown>;
     const content = { ...menuContent, source } as Json;
 
-    const offsetDays = typeof body.date_offset_days === 'number' ? body.date_offset_days : 0;
-    const startDate = new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .slice(0, 10);
+    // 開始日は JST の今日から date_offset_days 日後の暦日 (#1433。UTC の暦日だと JST の 0:00〜8:59 に 1 日前になる)。
+    // 日数は暦の計算で足すので整数にする (小数は切り捨て)
+    const offsetDays =
+      typeof body.date_offset_days === 'number' && Number.isFinite(body.date_offset_days)
+        ? Math.trunc(body.date_offset_days)
+        : 0;
+    const startDate = jstDayOffset(offsetDays);
 
     // weekly_menus.request_id は weekly_menu_requests への NOT NULL FK。
     // ここでの追加は AI 生成フローを経ない単発追加なので、コンテナ用にリクエストを

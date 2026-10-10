@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { jstToday } from '@/lib/jst-day-ranges';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { sanitizeBloodTestPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { recordAiUsage } from '@/lib/plan/entitlements';
 import { clampIntParam } from '@/lib/http-params';
 
 // 血液検査結果一覧の取得（+ 経年レビュー）
@@ -85,9 +87,15 @@ export async function POST(request: NextRequest) {
   // 記録の保存だけを行い、レビューは作らない (T15 / #1154)。応答の aiSkipped で画面に知らせる
   const aiConsent = await checkUserAiConsent(supabase, user.id);
 
-  // 個別 AI レビューを生成
   let aiReview = null;
+  let longitudinalReview = null;
   if (aiConsent.allowed) {
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・結果の保存・同意の判定のあと) に、操作 1 回につき 1 回記録する
+    // (個別レビューと経年レビューの 2 回 AI を呼ぶが、操作としては 1 回)。同意が無く AI へ送らないときは記録しない。
+    // 記録に失敗しても止めない
+    await recordAiUsage(user.id, 'health_review');
+
+    // 個別 AI レビューを生成
     try {
       aiReview = await generateBloodTestReview(data);
 
@@ -98,11 +106,8 @@ export async function POST(request: NextRequest) {
     } catch (err) {
       console.error('Blood test AI review generation failed:', err);
     }
-  }
 
-  // 経年レビューを自動更新
-  let longitudinalReview = null;
-  if (aiConsent.allowed) {
+    // 経年レビューを自動更新
     try {
       longitudinalReview = await updateBloodTestLongitudinalReview(supabase, user.id);
     } catch (err) {
@@ -260,7 +265,8 @@ eGFR: ${r.egfr ?? '-'} mL/min/1.73m²
     .from('blood_test_longitudinal_reviews')
     .upsert({
       user_id: userId,
-      review_date: new Date().toISOString().split('T')[0],
+      // レビューの日付は JST の今日 (#1433)
+      review_date: jstToday(),
       blood_test_ids: bloodTestIds,
       trend_analysis: {
         overallAssessment: reviewData.overallAssessment,

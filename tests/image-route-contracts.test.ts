@@ -37,6 +37,15 @@ vi.mock('next/headers', () => ({
   cookies: vi.fn(() => undefined),
 }));
 
+// #1177: AI 利用回数の記録 (DB を呼ぶ境目)。recordAiUsage 自体の挙動は src/__tests__/lib/plan/entitlements.test.ts
+const mockRecordAiUsage = vi.fn();
+const mockAiUsageRecordedHeaders = vi.fn();
+vi.mock('@/lib/plan/entitlements', () => ({
+  recordAiUsage: (...args: unknown[]) => mockRecordAiUsage(...args),
+  aiUsageRecordedHeaders: (...args: unknown[]) => mockAiUsageRecordedHeaders(...args),
+}));
+const RECORDED_HEADERS = { 'x-hg-ai-usage-recorded': 'test-marker' };
+
 vi.mock('@google/genai', () => ({
   GoogleGenAI: class {
     models = {
@@ -53,6 +62,10 @@ describe('image route contracts', () => {
     selectChainData = [];
     selectChainError = null;
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockRecordAiUsage.mockReset();
+    mockRecordAiUsage.mockResolvedValue(undefined);
+    mockAiUsageRecordedHeaders.mockReset();
+    mockAiUsageRecordedHeaders.mockResolvedValue(RECORDED_HEADERS);
     mockInvoke.mockReset();
     mockUpload.mockResolvedValue({ error: null });
     mockGetPublicUrl.mockReturnValue({ data: { publicUrl: 'https://example.com/generated.png' } });
@@ -127,6 +140,13 @@ describe('image route contracts', () => {
     }));
 
     expect(response.status).toBe(200);
+    // #1177 この API ルートが 1 回と記録し、Edge Function が二重に記録しないよう、記録済みの印を付けて呼ぶ
+    expect(mockRecordAiUsage).toHaveBeenCalledTimes(1);
+    expect(mockRecordAiUsage).toHaveBeenCalledWith('user-1', 'photo_analysis');
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'analyze-health-photo',
+      expect.objectContaining({ headers: RECORDED_HEADERS }),
+    );
     await expect(response.json()).resolves.toEqual({
       weight: 65.2,
       bodyFat: 18.4,
@@ -161,7 +181,13 @@ describe('image route contracts', () => {
         mealType: 'dinner',
         userId: 'user-1',
       },
+      // #1177 Edge Function が二重に記録しないよう、記録済みの印を付けて呼ぶ
+      headers: RECORDED_HEADERS,
     });
+    expect(mockAiUsageRecordedHeaders).toHaveBeenCalledWith('user-1');
+    // #1177 この API ルートが、認証で確定したユーザーの AI 利用を 1 回と記録する
+    expect(mockRecordAiUsage).toHaveBeenCalledTimes(1);
+    expect(mockRecordAiUsage).toHaveBeenCalledWith('user-1', 'photo_analysis');
     await expect(response.json()).resolves.toEqual({
       dishes: [{ name: 'カレー', role: 'main', cal: 620 }],
       totalCalories: 620,
@@ -211,6 +237,7 @@ describe('image route contracts', () => {
         prefetchedGeminiResult,
         userId: 'user-1',
       },
+      headers: RECORDED_HEADERS,
     });
     await expect(response.json()).resolves.toEqual({
       dishes: [{ name: '親子丼', role: 'main', cal: 640 }],
@@ -747,6 +774,7 @@ describe('image route contracts', () => {
         mealId: 'meal-123',
         invokedAt: expect.any(String),
       }),
+      headers: RECORDED_HEADERS,
     });
 
     // invokedAt が正しい時刻範囲内であることを確認

@@ -10,6 +10,7 @@
  * - 「全部作り直す」→ buildAllFutureSlots()
  */
 
+import { addDaysToDate, isCalendarDate } from '@homegohan/shared';
 import type { TargetSlot, MealType, PlannedMeal } from '@/types/domain';
 
 // 日付ベースモデル対応: MealPlanDay と DailyMeal の両方と互換性のある最小インターフェース
@@ -21,35 +22,26 @@ export interface MealDay {
 // 基本の食事タイプ（V4.0ではこの3つを主要対象）
 export const BASE_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner'];
 
-// 日付を YYYY-MM-DD 形式で返す
-function formatDate(date: Date): string {
-  return date.toISOString().split('T')[0];
-}
-
 // 今日の日付文字列
 function getTodayStr(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
-// 日付を加算
+// 暦日 (YYYY-MM-DD) を加算する。暦の計算だけで行い、実行環境のタイムゾーンに左右されない (#1433。
+// 以前の new Date(dateStr) + setDate (ローカル時刻) + toISOString (UTC) は、端末のタイムゾーンや夏時間で結果が変わった)
 function addDays(dateStr: string, days: number): string {
-  const date = new Date(dateStr);
-  date.setDate(date.getDate() + days);
-  return formatDate(date);
+  return addDaysToDate(dateStr, days);
 }
 
-// 日付範囲を生成
+// 日付範囲を生成 (開始日から終了日まで。どちらの日も含む。YYYY-MM-DD は文字列の大小が日付の前後と一致する)
 function generateDateRange(startDate: string, endDate: string): string[] {
   const dates: string[] = [];
-  let current = new Date(startDate);
-  const end = new Date(endDate);
-  
-  while (current <= end) {
-    dates.push(formatDate(current));
-    current.setDate(current.getDate() + 1);
+  // 日付の入力が空・不正なときは、以前 (Invalid Date の比較は常に false) と同じく 0 日にする
+  if (!isCalendarDate(startDate) || !isCalendarDate(endDate)) return dates;
+  for (let current = startDate; current <= endDate; current = addDaysToDate(current, 1)) {
+    dates.push(current);
   }
-  
   return dates;
 }
 

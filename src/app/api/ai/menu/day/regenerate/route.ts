@@ -7,6 +7,7 @@ import { isFeatureEnabled } from '@/lib/feature-flags';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { recordAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 // Vercel Proプランでは最大300秒まで延長可能
@@ -104,6 +105,10 @@ export async function POST(request: Request) {
         mealsCount: 0,
       });
     }
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
+    // (記録に失敗しても止めない)
+    await recordAiUsage(user.id, 'menu_generation');
 
     // 5. リクエストを作成
     // #1148: エンジンの切り替えは feature_flags (運営画面で切り替える) を見る

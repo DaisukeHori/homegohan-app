@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { jstToday } from '@/lib/jst-day-ranges';
 import { NextResponse } from 'next/server';
 import { buildCatalogSelectionUpdate } from '../../../lib/catalog-products';
 import {
@@ -7,6 +8,8 @@ import {
   triggerMealImageJobProcessing,
 } from '../../../lib/meal-image-jobs';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { recordAiUsage } from '@/lib/plan/entitlements';
+import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { createLogger } from '@/lib/db-logger';
 import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
 import { internalError } from '@/lib/api/errors';
@@ -27,8 +30,8 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const date = searchParams.get('date');
 
-    // 日付が指定されていない場合は今日
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    // 日付が指定されていない場合は今日 (JST の暦日。#1433)
+    const targetDate = date || jstToday();
 
     // user_daily_mealsとplanned_mealsをJOINして取得
     const { data: dailyMeal, error: dayError } = await supabase
@@ -192,6 +195,16 @@ export async function POST(request: Request) {
       try {
         const rl = await checkRateLimit(user.id, 'image');
         imageAllowed = rl.success;
+        if (imageAllowed) {
+          // 同意が無ければ (判定に失敗した場合も)、画像の生成ジョブを処理する Edge Function (process-meal-image-jobs) が
+          // AI へ送らずに止める (T15 / #1154)。AI へ送らない操作は記録しない (同意の判定 → 利用回数の記録 → AI への送信の順)。
+          // ジョブを積むかどうかは、同意の有無では変えない (止めるのは処理する側)
+          const imageConsent = await checkUserAiConsent(supabase, user.id);
+          if (imageConsent.allowed) {
+            // #1177 AI 利用回数の記録 (操作 1 回で 1 回。積む画像のジョブの数によらない。記録に失敗しても止めない)
+            await recordAiUsage(user.id, 'image_generation');
+          }
+        }
       } catch (rlError) {
         createLogger('api/meals').warn('Image rate-limit check failed; skipping image generation', {
           userId: user.id,

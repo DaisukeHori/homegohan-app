@@ -20,7 +20,8 @@ import type { Tables } from '@homegohan/shared';
 import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { todayLocal } from '@/lib/date-utils';
+import { recordAiUsage } from '@/lib/plan/entitlements';
+import { addDaysToDate, todayLocal } from '@/lib/date-utils';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 // Vercel Proプランでは最大300秒まで延長可能
@@ -281,7 +282,8 @@ export async function POST(request: Request) {
     // 8. Build seasonal context
     const seasonalIngredients = getSeasonalIngredientsForRange(startDate, endDate);
     const seasonalEvents = getEventsForRange(startDate, endDate);
-    const month = new Date(startDate).getMonth() + 1;
+    // startDate は YYYY-MM-DD の暦日。new Date(startDate) は UTC の 0 時なので、月も UTC で読む (#1433。getMonth はローカル時刻で、実行環境のタイムゾーンで変わる)
+    const month = new Date(startDate).getUTCMonth() + 1;
     
     const seasonalContext: SeasonalContext = {
       month,
@@ -298,6 +300,10 @@ export async function POST(request: Request) {
     // #1148: エンジンの切り替えは feature_flags (運営画面で切り替える) を見る
     const useV5Direct = await isFeatureEnabled('menu_generation_v5_direct', user.id);
     const engine = useV5Direct ? 'v5' : 'v4';
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
+    // (記録に失敗しても止めない)
+    await recordAiUsage(user.id, 'menu_generation');
 
     // 10. Create request record
     const { data: requestData, error: insertError } = await supabase
@@ -379,8 +385,8 @@ export async function POST(request: Request) {
 
 // ===== Helper Functions =====
 
+// 暦日 (YYYY-MM-DD) を days 日ずらす。暦の計算だけで行い、実行環境のタイムゾーンに左右されない (#1433。
+// 以前の new Date(dateStr) + setDate (ローカル時刻) + toISOString (UTC) は、実行環境のタイムゾーンで結果が変わった)
 function addDays(dateStr: string, days: number): string {
-  const date = new Date(dateStr);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().split('T')[0];
+  return addDaysToDate(dateStr, days);
 }

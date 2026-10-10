@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { jstToday } from '@/lib/jst-day-ranges'
 import { NextRequest, NextResponse } from 'next/server'
 import { toPerformancePlan, fromPerformancePlan, toUserProfile, toPerformanceProfile } from '@/lib/converter'
 import {
@@ -135,7 +136,8 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const rawDate = searchParams.get('date')
-    const date = rawDate && RECORD_DATE_PATTERN.test(rawDate) ? rawDate : new Date().toISOString().split('T')[0]
+    // 日付の指定が無ければ JST の今日 (#1433)
+    const date = rawDate && RECORD_DATE_PATTERN.test(rawDate) ? rawDate : jstToday()
 
     const run = await runAnalysis(supabase, user.id, date)
     if (!run.ok) {
@@ -191,7 +193,8 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json().catch(() => ({}))
     const rawDate = typeof body?.date === 'string' ? body.date : null
-    const date = rawDate && RECORD_DATE_PATTERN.test(rawDate) ? rawDate : new Date().toISOString().split('T')[0]
+    // 日付の指定が無ければ JST の今日 (#1433)
+    const date = rawDate && RECORD_DATE_PATTERN.test(rawDate) ? rawDate : jstToday()
 
     const rawApplyTop = body?.applyTop
     const applyTop =
@@ -236,7 +239,8 @@ export async function POST(request: NextRequest) {
     }
 
     // 4. 既存のactive planをsupersededに
-    const today = new Date().toISOString().split('T')[0]
+    // 置き換えた計画の終了日は JST の今日 (#1433)
+    const today = jstToday()
     await supabase
       .from('performance_plans')
       .update({

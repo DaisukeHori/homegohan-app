@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { isCalendarDate, sundayWeekRange } from '@/lib/jst-day-ranges';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 
@@ -21,15 +22,11 @@ export async function GET(request: Request) {
     let endDate: string | null = null;
     
     if (weekStartDate) {
-      const start = new Date(weekStartDate);
-      const dayOfWeek = start.getDay();
-      const weekStart = new Date(start);
-      weekStart.setDate(weekStart.getDate() - dayOfWeek);
-      const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekEnd.getDate() + 6);
-      
-      startDate = weekStart.toISOString().split('T')[0];
-      endDate = weekEnd.toISOString().split('T')[0];
+      // 日曜日から土曜日までの週を、暦の計算だけで求める (#1433。実行環境のタイムゾーンに左右されない)
+      if (!isCalendarDate(weekStartDate)) {
+        return NextResponse.json({ error: 'date must be YYYY-MM-DD' }, { status: 400 });
+      }
+      ({ startDate, endDate } = sundayWeekRange(weekStartDate));
     }
 
     // pending または processing の単一食事リクエストを確認

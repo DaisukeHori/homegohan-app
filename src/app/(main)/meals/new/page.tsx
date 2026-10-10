@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { todayLocal } from "@/lib/date-utils";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveClassifyPhotoType } from "@/lib/ai/image-recognition";
 import { logToServer } from "@/lib/db-logger";
@@ -1045,7 +1046,7 @@ export default function MealCaptureModal() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          checkup_date: healthData.checkupDate || new Date().toISOString().split('T')[0],
+          checkup_date: healthData.checkupDate || todayLocal(),
           facility_name: healthData.facilityName,
           height: healthData.height,
           weight: healthData.weight,

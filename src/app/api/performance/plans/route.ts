@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { jstToday } from '@/lib/jst-day-ranges'
 import { NextRequest, NextResponse } from 'next/server'
 import { toPerformancePlan, fromPerformancePlan } from '@/lib/converter'
 import { internalError } from '@/lib/api/errors'
@@ -87,7 +88,8 @@ export async function POST(request: NextRequest) {
       .from('performance_plans')
       .update({
         status: 'superseded',
-        end_date: startDate || new Date().toISOString().split('T')[0],
+        // 開始日の指定が無ければ JST の今日 (#1433)
+        end_date: startDate || jstToday(),
         updated_at: new Date().toISOString(),
       })
       .eq('user_id', user.id)
@@ -101,7 +103,7 @@ export async function POST(request: NextRequest) {
     // 2. 新しい計画を作成
     const dbData = fromPerformancePlan({
       userId: user.id,
-      startDate: startDate || new Date().toISOString().split('T')[0],
+      startDate: startDate || jstToday(),
       endDate: endDate || undefined,
       status: 'active',
       adjustmentType,

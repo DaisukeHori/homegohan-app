@@ -1,9 +1,13 @@
 import { createClient } from '@/lib/supabase/server'
+import { jstDayOffset, jstToday } from '@/lib/jst-day-ranges'
 import { NextRequest, NextResponse } from 'next/server'
 import { toPerformanceCheckin, fromPerformanceCheckin, toCheckinAverages } from '@/lib/converter'
 import { RECORD_DATE_PATTERN } from '@/lib/health-payloads'
 import { sanitizePerformanceCheckinPayload } from '@/lib/performance-payloads'
 import { internalError } from '@/lib/api/errors'
+
+/** 期間の指定が無いときに返す、直近の日数 (JST の今日から何日前までか) */
+const DEFAULT_CHECKIN_LOOKBACK_DAYS = 30
 
 /**
  * GET /api/performance/checkins
@@ -31,7 +35,8 @@ export async function GET(request: NextRequest) {
 
     // 7日移動平均を取得
     if (averages) {
-      const targetDate = date || new Date().toISOString().split('T')[0]
+      // 日付の指定が無ければ JST の今日 (#1433)
+      const targetDate = date || jstToday()
       const { data, error } = await supabase.rpc('get_7d_checkin_averages', {
         p_user_id: user.id,
         p_date: targetDate,
@@ -83,9 +88,8 @@ export async function GET(request: NextRequest) {
 
     // デフォルトは直近30日
     if (!startDate && !endDate) {
-      const thirtyDaysAgo = new Date()
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
-      query = query.gte('checkin_date', thirtyDaysAgo.toISOString().split('T')[0])
+      // 30 日前は JST の暦日で求める (#1433。checkin_date は JST の暦日)
+      query = query.gte('checkin_date', jstDayOffset(-DEFAULT_CHECKIN_LOOKBACK_DAYS))
     }
 
     const { data, error } = await query.limit(100)
