@@ -259,13 +259,14 @@ if (exitCode !== 0 && reasons.length === 0) reasons.push(`終了コード ${exit
 emit(passed, failed, skipped, actual.length, expected ? expected.size : undefined);
 '
 
-# ポートが使われているか (終了コード 0 = 使用中)。接続できる、または待ち受けられないなら使用中とみなす
+# ポートが使われているか。引数のポートのうち使用中のものを空白区切りで出し、1 つでもあれば終了コード 0。
+# 接続できる、または待ち受けられないなら使用中とみなす (node の起動は 1 回で、ポートは 1 つずつ確かめる)
 # shellcheck disable=SC2016
 PORT_PROBE_JS='
 const net = require("net");
-const port = Number(process.argv[1]);
+const ports = process.argv.slice(1).map(Number);
 const PROBE_TIMEOUT_MS = 1000;
-function tryConnect(host) {
+function tryConnect(host, port) {
   return new Promise((resolve) => {
     const s = net.connect({ host, port });
     const done = (v) => { s.destroy(); resolve(v); };
@@ -274,7 +275,7 @@ function tryConnect(host) {
     s.once("error", () => done(false));
   });
 }
-function tryListen() {
+function tryListen(port) {
   return new Promise((resolve) => {
     const srv = net.createServer();
     srv.once("error", (e) => resolve(e.code === "EADDRINUSE"));
@@ -282,8 +283,12 @@ function tryListen() {
   });
 }
 (async () => {
-  const busy = (await tryConnect("127.0.0.1")) || (await tryConnect("::1")) || (await tryListen());
-  process.exit(busy ? 0 : 1);
+  const busy = [];
+  for (const port of ports) {
+    if ((await tryConnect("127.0.0.1", port)) || (await tryConnect("::1", port)) || (await tryListen(port))) busy.push(port);
+  }
+  process.stdout.write(busy.join(" "));
+  process.exit(busy.length > 0 ? 0 : 1);
 })();
 '
 
@@ -371,7 +376,9 @@ record_parsed() {
 
 parse() { node -e "$PARSE_JS" "$@"; }
 
-port_busy() { node -e "$PORT_PROBE_JS" "$1"; }
+port_busy() { node -e "$PORT_PROBE_JS" "$1" >/dev/null; }
+# busy_ports <ポート...>: 使用中のポートを空白区切りで出す (無ければ空)
+busy_ports() { node -e "$PORT_PROBE_JS" "$@"; }
 
 sha256_of() { node -e "$SHA256_JS" "$1"; }
 
@@ -817,12 +824,10 @@ check_docker_memory() {
 # slot_busy_ports: いま apply_slot した枠で、回す段 (integration / e2e) が使うポートのうち、使用中のものを空白区切りで出す
 # (check_ports と同じポート: アプリの既定のポート・e2e の 2 つ目と 3 つ目・ローカル Supabase のポート)
 slot_busy_ports() {
-  local p busy="" extra=""
+  local extra=""
   if want e2e; then extra="$ENFORCED_APP_PORT $NOTICE_APP_PORT"; fi
-  for p in $APP_PORT $extra $SUPABASE_PORTS; do
-    if port_busy "$p"; then busy="$busy${busy:+ }$p"; fi
-  done
-  printf '%s' "$busy"
+  # shellcheck disable=SC2086  # ポートの一覧は空白で分けて渡す
+  busy_ports $APP_PORT $extra $SUPABASE_PORTS || true
 }
 
 # acquire_slot: 空いている枠を取る。取れたら 0、待ちの時間切れなら 1、

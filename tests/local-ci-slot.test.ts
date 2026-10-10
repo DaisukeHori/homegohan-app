@@ -21,6 +21,7 @@
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -494,7 +495,12 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
     "check_docker_memory() { :; }",
     // ポートの空きの確かめ: FAKE_BUSY_PORTS (空白区切り) に入っているポートだけを使用中とみなす。
     // FAKE_BUSY_UNTIL_CLEARED のファイルがある間は、FAKE_BUSY_PORTS_BEFORE_CLEAR のポートも使用中 (残ったスタックが持つポート)
-    'port_busy() { case " ${FAKE_BUSY_PORTS:-} " in *" $1 "*) return 0 ;; esac; if [ -n "${FAKE_BUSY_UNTIL_CLEARED:-}" ] && [ -e "$FAKE_BUSY_UNTIL_CLEARED" ]; then case " ${FAKE_BUSY_PORTS_BEFORE_CLEAR:-} " in *" $1 "*) return 0 ;; esac; fi; return 1; }',
+    [
+      'busy_ports() { local p out=""; for p; do',
+      '  case " ${FAKE_BUSY_PORTS:-} " in *" $p "*) out="$out${out:+ }$p"; continue ;; esac',
+      '  if [ -n "${FAKE_BUSY_UNTIL_CLEARED:-}" ] && [ -e "$FAKE_BUSY_UNTIL_CLEARED" ]; then case " ${FAKE_BUSY_PORTS_BEFORE_CLEAR:-} " in *" $p "*) out="$out${out:+ }$p" ;; esac; fi',
+      'done; printf "%s" "$out"; [ -n "$out" ]; }',
+    ].join("\n"),
     // 回す段 (HARNESS_STAGES。既定は integration と e2e の両方)
     'want() { case ",${HARNESS_STAGES:-integration,e2e}," in *",$1,"*) return 0 ;; esac; return 1; }',
     // cleanup が呼ぶ片付け (枠のスタックと Next は動かしていないので何もしない)
@@ -778,6 +784,40 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
     expect(r.stdout, r.stderr).toContain("RUN_IN bash scripts/supabase-local.sh stop-leftover");
     expect(r.stdout, r.stderr).toContain("SLOT=1 RECLAIMED=1");
     expect(r.stdout).not.toContain("ACQUIRE_FAILED");
+  });
+
+  it("ポートの確かめ (PORT_PROBE_JS) は、待ち受けているポートだけを使用中として出し、1 つも無ければ終了コード 1", async () => {
+    const lines = scriptLines;
+    const start = lines.findIndex((line) => line === "PORT_PROBE_JS='");
+    const end = lines.findIndex((line, i) => i > start && line === "'");
+    expect(start, "PORT_PROBE_JS が無い").toBeGreaterThanOrEqual(0);
+    const code = lines.slice(start + 1, end).join("\n");
+    // 空いているポートを OS に選ばせて待ち受け、もう 1 つは選ばせてすぐ閉じる (閉じたポートは空いている)
+    const listen = () =>
+      new Promise<net.Server>((resolve) => {
+        const srv = net.createServer();
+        srv.listen(0, "127.0.0.1", () => resolve(srv));
+      });
+    const held = await listen();
+    const freed = await listen();
+    const heldPort = (held.address() as net.AddressInfo).port;
+    const freePort = (freed.address() as net.AddressInfo).port;
+    await new Promise((r) => freed.close(r));
+    const probe = (ports: number[]) =>
+      new Promise<{ code: number | null; out: string }>((resolve) => {
+        const child = spawn("node", ["-e", code, ...ports.map(String)], { stdio: ["ignore", "pipe", "ignore"] });
+        let out = "";
+        child.stdout.on("data", (d: Buffer) => {
+          out += d.toString("utf8");
+        });
+        child.on("exit", (exitCode) => resolve({ code: exitCode, out }));
+      });
+    try {
+      expect(await probe([freePort, heldPort])).toEqual({ code: 0, out: String(heldPort) });
+      expect(await probe([freePort])).toEqual({ code: 1, out: "" });
+    } finally {
+      await new Promise((r) => held.close(r));
+    }
   });
 
   it("枠 0 は、回収したときも残りがあるときも片付けず、赤にもしない (枠を使わない作業と共有している)", () => {
