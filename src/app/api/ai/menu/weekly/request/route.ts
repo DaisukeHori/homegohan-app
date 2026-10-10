@@ -127,7 +127,7 @@ export async function POST(request: Request) {
     if (!startDate) {
       return NextResponse.json({ error: 'startDate is required' }, { status: 400 });
     }
-    // 日付は暦の計算 (addDaysToDate) でずらすので、YYYY-MM-DD の実在する日付だけを受け付ける (#1433)
+    // 日付は暦の計算 (addDaysToDate) でずらすので、YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433)
     if (typeof startDate !== 'string' || !isCalendarDate(startDate)) {
       return NextResponse.json({ error: 'startDate must be YYYY-MM-DD' }, { status: 400 });
     }
@@ -316,6 +316,6 @@ export async function POST(request: Request) {
 
   } catch (error: unknown) {
     // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
-    return internalError('api/ai/menu/weekly/request', error, { userId: _userId, startDate: _startDate });
+    return internalError('POST /api/ai/menu/weekly/request', error, { userId: _userId, startDate: _startDate });
   }
 }

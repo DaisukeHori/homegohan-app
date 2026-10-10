@@ -3,7 +3,7 @@
 // #1433: 「今日」・期間・月を JST の暦日で決めるための共通の関数の単体テスト。
 //
 // - Web / Mobile 用 (packages/shared → src/lib/date-utils.ts): addDaysToDate / isCalendarDate / monthLocal / jstDayStartTimestamp
-// - Edge Functions 用 (supabase/functions/_shared/jst-date.ts): addDaysToDate / monthJst / jstDayRangeToTimestamps
+// - Edge Functions 用 (supabase/functions/_shared/jst-date.ts): addDaysToDate / isCalendarDate / monthJst / jstDayRangeToTimestamps
 //
 // 境界 (JST 0:00 ちょうど・8:59:59・月初・月末・年末) と、実行環境のタイムゾーン (process.env.TZ) を変えても
 // 結果が同じことを確かめる。2 つの実装が同じ結果を返すこと (パリティ) も確かめる。
@@ -13,6 +13,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   addDaysToDate,
+  CALENDAR_DATE_MAX,
+  CALENDAR_DATE_MIN,
+  CALENDAR_DATE_REQUIREMENT,
+  CALENDAR_DATE_SHIFT_MARGIN_DAYS,
   formatLocalDate,
   isCalendarDate,
   jstDayStartTimestamp,
@@ -20,7 +24,12 @@ import {
 } from '../src/lib/date-utils';
 import {
   addDaysToDate as addDaysToDateEdge,
+  CALENDAR_DATE_MAX as CALENDAR_DATE_MAX_EDGE,
+  CALENDAR_DATE_MIN as CALENDAR_DATE_MIN_EDGE,
+  CALENDAR_DATE_REQUIREMENT as CALENDAR_DATE_REQUIREMENT_EDGE,
+  CALENDAR_DATE_SHIFT_MARGIN_DAYS as CALENDAR_DATE_SHIFT_MARGIN_DAYS_EDGE,
   formatJstDate,
+  isCalendarDate as isCalendarDateEdge,
   jstDayRangeToTimestamps,
   monthJst,
 } from '../supabase/functions/_shared/jst-date.ts';
@@ -91,17 +100,73 @@ describe('addDaysToDate: 暦日を N 日ずらす (Web / Mobile と Edge で同�
   });
 });
 
-describe('isCalendarDate: YYYY-MM-DD の実在する日付か', () => {
+describe('isCalendarDate: YYYY-MM-DD の実在する日付で、受け付ける範囲の中か (Web / Mobile と Edge で同じ答え)', () => {
   it('実在する日付だけ true', () => {
-    expect(isCalendarDate('2026-10-10')).toBe(true);
-    expect(isCalendarDate('2028-02-29')).toBe(true);
-    expect(isCalendarDate('2027-02-29')).toBe(false);
-    expect(isCalendarDate('2026-02-30')).toBe(false);
-    expect(isCalendarDate('2026-13-01')).toBe(false);
-    expect(isCalendarDate('2026-10-10T00:00:00Z')).toBe(false);
-    expect(isCalendarDate('')).toBe(false);
-    expect(isCalendarDate(undefined)).toBe(false);
-    expect(isCalendarDate(20261010)).toBe(false);
+    for (const fn of [isCalendarDate, isCalendarDateEdge]) {
+      expect(fn('2026-10-10')).toBe(true);
+      expect(fn('2028-02-29')).toBe(true);
+      expect(fn('2027-02-29')).toBe(false);
+      expect(fn('2026-02-30')).toBe(false);
+      expect(fn('2026-13-01')).toBe(false);
+      expect(fn('2026-10-10T00:00:00Z')).toBe(false);
+      expect(fn('')).toBe(false);
+      expect(fn(undefined)).toBe(false);
+      expect(fn(20261010)).toBe(false);
+    }
+  });
+
+  it('受け付ける範囲は 0101-01-02〜9998-12-30 (暦の計算で扱える 0100-01-01〜9999-12-31 から、前後 366 日の余白を取った範囲)', () => {
+    // 期待値は Python の datetime (先発グレゴリオ暦) で引いた固定値: date(100,1,1) + 366 日 / date(9999,12,31) - 366 日
+    expect([CALENDAR_DATE_MIN, CALENDAR_DATE_MAX, CALENDAR_DATE_SHIFT_MARGIN_DAYS]).toEqual(['0101-01-02', '9998-12-30', 366]);
+    expect([CALENDAR_DATE_MIN_EDGE, CALENDAR_DATE_MAX_EDGE, CALENDAR_DATE_SHIFT_MARGIN_DAYS_EDGE]).toEqual([
+      '0101-01-02',
+      '9998-12-30',
+      366,
+    ]);
+    for (const fn of [isCalendarDate, isCalendarDateEdge]) {
+      expect(fn('0101-01-02')).toBe(true);
+      expect(fn('9998-12-30')).toBe(true);
+      expect(fn('0101-01-01')).toBe(false); // 最初の日の前日
+      expect(fn('9998-12-31')).toBe(false); // 最後の日の翌日
+      expect(fn('9999-12-31')).toBe(false); // 実在するが、翌日を YYYY-MM-DD で表せない (以前は通って、翌日を求めるところで 500)
+      expect(fn('0100-01-01')).toBe(false);
+      expect(fn('0099-12-31')).toBe(false); // Date.UTC が 1999 年と読む
+      expect(fn('0000-01-01')).toBe(false);
+    }
+  });
+
+  it('400 の文の説明も Web / Mobile と Edge で同じ', () => {
+    expect(CALENDAR_DATE_REQUIREMENT).toBe('YYYY-MM-DD format (an existing calendar date from 0101-01-02 to 9998-12-30)');
+    expect(CALENDAR_DATE_REQUIREMENT_EDGE).toBe(CALENDAR_DATE_REQUIREMENT);
+  });
+
+  it('受け付けた日付は、前後に余白の日数 (366 日) ずらしても、暦の計算で扱える範囲に収まる (それを超えると RangeError)', () => {
+    for (const fn of [addDaysToDate, addDaysToDateEdge]) {
+      expect(fn(CALENDAR_DATE_MAX, CALENDAR_DATE_SHIFT_MARGIN_DAYS)).toBe('9999-12-31');
+      expect(fn(CALENDAR_DATE_MIN, -CALENDAR_DATE_SHIFT_MARGIN_DAYS)).toBe('0100-01-01');
+      expect(() => fn(CALENDAR_DATE_MAX, CALENDAR_DATE_SHIFT_MARGIN_DAYS + 1)).toThrow(RangeError);
+      expect(() => fn(CALENDAR_DATE_MIN, -(CALENDAR_DATE_SHIFT_MARGIN_DAYS + 1))).toThrow(RangeError);
+    }
+  });
+});
+
+describe('addDaysToDate: 結果が暦の計算で扱える範囲 (0100-01-01〜9999-12-31) の外に出るときは RangeError (#1433)', () => {
+  it.each([
+    ['9999-12-31', 1], // 以前は "+010000-01" (YYYY-MM-DD でない文字列) を返し、jstDayStartTimestamp などが後で落ちていた
+    ['9999-12-25', 7],
+    ['0100-01-01', -1], // 以前は "0099-12-31" を返し、それを受けた addDaysToDate が「存在しない日」で落ちていた
+    ['2026-10-10', 3_000_000], // 10000 年を超える
+    ['2026-10-10', 1e12], // Date で表せない (toISOString の Invalid time value)
+  ])('(%s, %d) は RangeError (Web / Mobile と Edge で同じ)', (day, n) => {
+    expect(() => addDaysToDate(day, n)).toThrow(RangeError);
+    expect(() => addDaysToDateEdge(day, n)).toThrow(RangeError);
+  });
+
+  it('範囲の端の日そのものには届く (9999-12-30 + 1・0100-01-02 - 1)', () => {
+    for (const fn of [addDaysToDate, addDaysToDateEdge]) {
+      expect(fn('9999-12-30', 1)).toBe('9999-12-31');
+      expect(fn('0100-01-02', -1)).toBe('0100-01-01');
+    }
   });
 });
 

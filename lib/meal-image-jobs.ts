@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { getEdgeFunctionServiceRoleKey, getSupabaseUrl, isMissingEnvError } from '@/lib/env-required';
 import {
   DEFAULT_MEAL_IMAGE_MODEL,
   buildDishImagePrompt,
@@ -174,10 +175,15 @@ export async function triggerMealImageJobProcessing(params: {
   plannedMealId?: string;
   limit?: number;
 }) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !serviceRoleKey) {
+  // 接続情報は env-required の getter で取り出す (#1434。空白だけの値も欠けているとみなす)。
+  // 鍵は SERVICE_ROLE_JWT (古い別名) を先に読む。欠けている変数名は getter がサーバーのログに残す
+  let supabaseUrl: string;
+  let serviceRoleKey: string;
+  try {
+    supabaseUrl = getSupabaseUrl();
+    serviceRoleKey = getEdgeFunctionServiceRoleKey();
+  } catch (error) {
+    if (!isMissingEnvError(error)) throw error;
     console.warn('Skipping meal image worker trigger: missing Supabase env');
     return;
   }

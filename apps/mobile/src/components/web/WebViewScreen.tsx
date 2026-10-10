@@ -7,13 +7,10 @@ import { getDownloadFailureNotice, handleWebViewDownload } from '../../lib/webVi
 import { getWebBaseUrl } from '../../lib/webBaseUrl';
 import { colors } from '../../theme/colors';
 import { useWebAuthMessages } from '../../lib/webViewAuthMessages';
-import { supabase } from '../../lib/supabase';
+import { SUPABASE_AUTH_STORAGE_KEY, supabase } from '../../lib/supabase';
 
 // download の送信元の確認 (webViewDownload.ts) と同じ値から決める (既定値を 2 か所に持たない)
 const WEB_BASE_URL = getWebBaseUrl();
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
-// "https://abc123.supabase.co" → "abc123"
-const PROJECT_REF = SUPABASE_URL.replace('https://', '').split('.')[0];
 
 interface Props {
   path: string;  // 例 '/home', '/menus/weekly'
@@ -157,8 +154,10 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
         setUri(bridgeUrl);
 
         // localStorage 注入: クライアント Supabase JS SDK が参照するキーに session を書き込む
-        // SSR middleware は Cookie で動作するが、クライアント側 SDK は localStorage を参照するため両方設定が必要
-        const storageKey = `sb-${PROJECT_REF}-auth-token`;
+        // SSR middleware は Cookie で動作するが、クライアント側 SDK は localStorage を参照するため両方設定が必要。
+        // キーは lib/supabase.ts のセッションの保存キーと同じ値 (sb-<プロジェクト ref>-auth-token) を使う (#1434)。
+        // 以前はここで EXPO_PUBLIC_SUPABASE_URL を '' にフォールバックして読み、未設定だと sb--auth-token になっていた
+        const storageKey = SUPABASE_AUTH_STORAGE_KEY;
         const sessionPayload = JSON.stringify({
           access_token: session.access_token,
           refresh_token: session.refresh_token,

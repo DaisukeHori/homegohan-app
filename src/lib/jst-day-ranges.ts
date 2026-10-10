@@ -22,14 +22,16 @@
 
 import {
   addDaysToDate,
+  CALENDAR_DATE_REQUIREMENT,
   calculatePeriodLocal,
   formatLocalDate,
   isCalendarDate,
   jstDayStartTimestamp,
 } from '@/lib/date-utils';
 
-// 入力の確認 (YYYY-MM-DD の実在する日付か) は、ルートからここ経由でも使えるようにする
-export { isCalendarDate };
+// 入力の確認 (YYYY-MM-DD の実在する日付で、前後 1 年の余白つきの範囲の中か) と、正しくないときの 400 の文に埋める説明は、
+// ルートからここ経由でも使えるようにする
+export { CALENDAR_DATE_REQUIREMENT, isCalendarDate };
 
 /** 暦日を決めるタイムゾーン。DB の日付列は JST の暦日 */
 const JST_TIME_ZONE = 'Asia/Tokyo';
@@ -65,7 +67,8 @@ export function jstDayOfTimestamp(timestamp: string): string {
  *
  * 日付の文字列を timestamptz の列にそのまま渡すと、DB (UTC) の 0 時 = JST 9 時として読まれ、
  * JST の 0:00〜8:59 の行が範囲の外 (前日) に入る。
- * 形の違う日付・存在しない日付は RangeError。
+ * 形の違う日付・存在しない日付・終了日の翌日が暦の計算で扱える範囲 (〜9999-12-31) の外に出る日付は RangeError
+ * (外から受け取った日付は isCalendarDate で確かめてから渡せば来ない)。
  */
 export function jstDayRangeTimestamps(
   fromDate: string,
@@ -80,14 +83,16 @@ export function jstDayRangeTimestamps(
 /**
  * jstDayRangeTimestamps の、開始日・終了日のどちらか (または両方) が無い版。画面の期間の入力が空欄のときに使う
  * (監査ログの GET /api/super-admin/audit-logs・GET /api/operator/membership/audit、
- *  NPS / CSAT の GET /api/admin/finance/nps、CSV の書き出しの POST /api/admin/finance/exports)。
+ *  NPS / CSAT の GET /api/admin/finance/nps、CSV の書き出しの POST /api/admin/finance/exports、
+ *  ユーザー一覧の登録日の GET /api/admin/users)。
  *   - fromTimestamp        : fromDate の JST 0 時 (`.gte` で使う)。fromDate が無ければ undefined (下限なし)
  *   - toTimestampExclusive : toDate の翌日の JST 0 時 (`.lt` で使う)。toDate が無ければ undefined (上限なし)
  * 例: (undefined, "2026-10-10") → { fromTimestamp: undefined, toTimestampExclusive: "2026-10-10T15:00:00.000Z" }
  *
  * 終了日を `toDate + 'T23:59:59Z'` (UTC の 23:59:59) で閉じると、JST では翌日の 8:59:59 までの行が入り、
  * 開始日を日付の文字列のまま渡すと JST の 0:00〜8:59 の行が落ちる。どちらも JST 0 時の時刻にして避ける。
- * 形の違う日付・存在しない日付は RangeError (入口を src/lib/calendar-date-schema.ts の CalendarDateSchema にしておけば来ない)。
+ * 形の違う日付・存在しない日付・終了日の翌日が暦の計算で扱える範囲 (〜9999-12-31) の外に出る日付は RangeError
+ * (入口を src/lib/calendar-date-schema.ts の CalendarDateSchema (isCalendarDate) にしておけば来ない)。
  */
 export function jstOptionalDayRangeTimestamps(
   fromDate: string | undefined,
@@ -118,7 +123,8 @@ const LAST_MICROSECOND_DIGITS = '999';
  * toTimestampExclusive) と同じ行を選ぶ (DB の関数を書き換える migration なしで、終了日の JST の 1 日をまるごと入れられる)。
  * 問い合わせを自分で組み立てられるとき (.lt を使えるとき) は jstDayRangeTimestamps / jstOptionalDayRangeTimestamps を使う。
  * Date はミリ秒までしか持たないので、1 ミリ秒前の時刻 (".999Z") にマイクロ秒の 3 桁を文字列で足して作る。
- * 形の違う日付・存在しない日付は RangeError。
+ * 形の違う日付・存在しない日付・翌日が暦の計算で扱える範囲 (〜9999-12-31) の外に出る日付は RangeError
+ * (外から受け取った日付は isCalendarDate で確かめてから渡せば来ない)。
  */
 export function jstDayEndInclusiveTimestamp(toDate: string): string {
   const nextDayStartMs = Date.parse(jstDayStartTimestamp(addDaysToDate(toDate, 1)));
@@ -218,7 +224,8 @@ const SUNDAY = 0;
  * (以前は new Date(day) (UTC の 0 時) の曜日を getDay (ローカル時刻) で読んでいたので、UTC より西では前日の曜日になっていた)。
  * 例: "2026-10-14" (水) → { startDate: "2026-10-11", endDate: "2026-10-17" }
  *
- * 形の違う日付・存在しない日付は RangeError。
+ * 形の違う日付・存在しない日付・週の端が暦の計算で扱える範囲 (0100-01-01〜9999-12-31) の外に出る日付は RangeError
+ * (外から受け取った日付は isCalendarDate で確かめてから渡せば来ない)。
  */
 export function sundayWeekRange(day: string): { startDate: string; endDate: string } {
   // 存在しない日付・形の違う日付は addDaysToDate が RangeError にする

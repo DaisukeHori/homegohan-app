@@ -30,6 +30,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   challengePeriod,
   consecutiveDayStreak,
+  isCalendarDate,
   jstDayOffset,
   jstDayEndInclusiveTimestamp,
   jstDayOfTimestamp,
@@ -473,5 +474,41 @@ describe('献立生成のスロット (lib/slot-builder.ts): 日付の範囲は�
 
   it('日付の入力が空のときは 0 件 (以前と同じく例外にしない)', () => {
     expect(buildEmptySlots({ mealPlanDays: [], startDate: '2026-10-10', endDate: '' })).toEqual([]);
+  });
+});
+
+describe('isCalendarDate を通った日付は、期間の関数で RangeError にならない (受け付ける範囲の端。#1433)', () => {
+  // 受け付ける範囲は 0101-01-02〜9998-12-30 (暦の計算で扱える 0100-01-01〜9999-12-31 から、前後 366 日の余白を取った範囲)。
+  // 期待値は Python の datetime (先発グレゴリオ暦) で引いた固定値
+  it('受け付ける最初の日・最後の日は isCalendarDate を通り、その外側の隣の日は通らない', () => {
+    expect(isCalendarDate('0101-01-02')).toBe(true);
+    expect(isCalendarDate('9998-12-30')).toBe(true);
+    expect(isCalendarDate('0101-01-01')).toBe(false);
+    expect(isCalendarDate('9998-12-31')).toBe(false);
+    expect(isCalendarDate('9999-12-31')).toBe(false);
+    expect(isCalendarDate('0100-01-01')).toBe(false);
+  });
+
+  it('jstDayRangeTimestamps / jstOptionalDayRangeTimestamps / jstDayEndInclusiveTimestamp は、端の日付でも時刻にできる', () => {
+    expect(jstDayRangeTimestamps('0101-01-02', '9998-12-30')).toEqual({
+      fromTimestamp: '0101-01-01T15:00:00.000Z',
+      toTimestampExclusive: '9998-12-30T15:00:00.000Z',
+    });
+    expect(jstOptionalDayRangeTimestamps('0101-01-02', '9998-12-30')).toEqual({
+      fromTimestamp: '0101-01-01T15:00:00.000Z',
+      toTimestampExclusive: '9998-12-30T15:00:00.000Z',
+    });
+    expect(jstDayEndInclusiveTimestamp('9998-12-30')).toBe('9998-12-30T14:59:59.999999Z');
+  });
+
+  it('sundayWeekRange は、端の日付を含む週を返す (9998-12-30 は水曜・0101-01-02 は日曜)', () => {
+    expect(sundayWeekRange('9998-12-30')).toEqual({ startDate: '9998-12-27', endDate: '9999-01-02' });
+    expect(sundayWeekRange('0101-01-02')).toEqual({ startDate: '0101-01-02', endDate: '0101-01-08' });
+  });
+
+  it('範囲の外の 9999-12-31 は、翌日が暦の計算で扱える範囲の外なので RangeError (入口の isCalendarDate で 400 にする理由)', () => {
+    expect(() => jstOptionalDayRangeTimestamps(undefined, '9999-12-31')).toThrow(RangeError);
+    expect(() => jstDayRangeTimestamps('2026-10-10', '9999-12-31')).toThrow(RangeError);
+    expect(() => jstDayEndInclusiveTimestamp('9999-12-31')).toThrow(RangeError);
   });
 });

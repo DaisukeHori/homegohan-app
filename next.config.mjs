@@ -20,11 +20,21 @@ const supabaseLocalOrigins = (() => {
 const supabaseImgSrc = supabaseLocalOrigins ? ` ${supabaseLocalOrigins.http}` : '';
 const supabaseConnectSrc = supabaseLocalOrigins ? ` ${supabaseLocalOrigins.http} ${supabaseLocalOrigins.ws}` : '';
 
+/**
+ * 空・空白だけの値は未設定として扱う (#1434)。src/lib/env.ts (normalizeEnvSource・getOptionalEnv) と
+ * npm run check:env と同じ扱い。.env.example は `NEXT_PUBLIC_APP_VERSION=` のように空で書いてあり、
+ * `??` だけだと空のまま設定画面に出ていた。値があるときは加工せずにそのまま返す。
+ */
+function envValueOrUndefined(value) {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   env: {
-    NEXT_PUBLIC_APP_VERSION: process.env.NEXT_PUBLIC_APP_VERSION ?? `v${pkg.version}`,
-    NEXT_PUBLIC_BUILD_DATE: process.env.NEXT_PUBLIC_BUILD_DATE ?? new Date().toISOString().slice(0, 10).replace(/-/g, ''),
+    NEXT_PUBLIC_APP_VERSION: envValueOrUndefined(process.env.NEXT_PUBLIC_APP_VERSION) ?? `v${pkg.version}`,
+    NEXT_PUBLIC_BUILD_DATE:
+      envValueOrUndefined(process.env.NEXT_PUBLIC_BUILD_DATE) ?? new Date().toISOString().slice(0, 10).replace(/-/g, ''),
   },
   async headers() {
     return [
