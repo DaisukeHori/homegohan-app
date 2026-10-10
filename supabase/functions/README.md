@@ -142,7 +142,7 @@ supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
 
 - 機能フラグは `feature_flags` テーブルに一本化しました（#1148）。判定は `src/lib/feature-flags.ts` の `isFeatureEnabled(key, userId)` を使います。値は運営画面（`/super-admin/flags`）または `PATCH /api/super-admin/flags/[key]`（super_admin 限定）で切り替えます。
 - 以前は `system_settings` の `key = 'feature_flags'` の行を、ログインしているユーザー自身のセッションで読んでいました。`system_settings` を SELECT できるのは `admin` / `super_admin` だけ（RLS）なので、**一般ユーザーの操作では値が読めず、いつも既定値（ON ＝ v5）でした**。今は `feature_flags` をサーバー側（service_role）で読むので、**切り替えは全ユーザーに効きます**。一般ユーザー全員を v4 に戻したいときは、`menu_generation_v5_wrapped` / `menu_generation_v5_direct` を OFF にします。
-- 旧い `system_settings` の `feature_flags` の行は、読まれなくなりました（消してはいません）。migration `20261008200100_unify_feature_flags_seed.sql` が、その中の `menu_generation_v5_*` の true / false を `feature_flags` に引き継ぎました。
+- 旧い `system_settings` の `feature_flags` の行は、読まれなくなりました（消してはいません）。migration `20261010120000_unify_feature_flags_seed.sql` が、その中の `menu_generation_v5_*` の true / false を `feature_flags` に引き継ぎました。
 - フラグの値はサーバーのメモリに最大 30 秒覚えます。切り替えてから全員に反映されるまで最大 30 秒かかります。
 - フラグの行が無い・読めない・読み出しに時間がかかりすぎたときは、止めない側の既定値で動きます（`ai_chat_enabled` = ON、`maintenance_mode` = OFF、`menu_generation_v5_*` = ON）。読み出しの失敗は構造化ログ（`app_logs`）に残ります。
 - ほかに、同じ仕組みで次の 2 つのフラグがあります。

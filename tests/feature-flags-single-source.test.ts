@@ -232,15 +232,15 @@ describe('#1148 6. ミドルウェアは maintenance_mode を見る', () => {
 
 describe('#1148 7. migration', () => {
   it('feature_flags に最初の行を入れる migration と、その rollback が対になっている', () => {
-    const migrations = fs.readdirSync(path.join(ROOT, 'supabase/migrations')).filter((f) => f.startsWith('20261008200100_'));
-    const rollbacks = fs.readdirSync(path.join(ROOT, 'supabase/rollbacks')).filter((f) => f.startsWith('20261008200100_'));
-    expect(migrations).toEqual(['20261008200100_unify_feature_flags_seed.sql']);
-    expect(rollbacks).toEqual(['20261008200100_unify_feature_flags_seed.down.sql']);
+    const migrations = fs.readdirSync(path.join(ROOT, 'supabase/migrations')).filter((f) => f.startsWith('20261010120000_'));
+    const rollbacks = fs.readdirSync(path.join(ROOT, 'supabase/rollbacks')).filter((f) => f.startsWith('20261010120000_'));
+    expect(migrations).toEqual(['20261010120000_unify_feature_flags_seed.sql']);
+    expect(rollbacks).toEqual(['20261010120000_unify_feature_flags_seed.down.sql']);
   });
 
   it('migration と rollback が、同じ 4 つのフラグと、同じ description を書いている', () => {
-    const migration = read('supabase/migrations/20261008200100_unify_feature_flags_seed.sql');
-    const rollback = read('supabase/rollbacks/20261008200100_unify_feature_flags_seed.down.sql');
+    const migration = read('supabase/migrations/20261010120000_unify_feature_flags_seed.sql');
+    const rollback = read('supabase/rollbacks/20261010120000_unify_feature_flags_seed.down.sql');
     const keys = ['ai_chat_enabled', 'maintenance_mode', 'menu_generation_v5_wrapped', 'menu_generation_v5_direct'];
     for (const key of keys) {
       expect(migration).toContain(`'${key}'`);
