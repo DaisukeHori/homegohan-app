@@ -12,6 +12,7 @@
  *   - GET  /api/ai/menu/meal/pending?date= (日曜始まりの週 = date ± 6)
  *   - POST /api/ai/menu/weekly/request (startDate から 7 日 + 献立生成の文脈の前後 7 日)
  */
+import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
@@ -52,7 +53,7 @@ beforeEach(() => {
 
 describe('GET /api/health/records/[date]: 範囲の外の日付は 400 (前日を求める前に弾く)', () => {
   it.each(OUT_OF_RANGE_DATES)('date=%s は 400 で、DB に触れない', async (date) => {
-    const res = await getHealthRecord(new Request(`http://localhost/api/health/records/${date}`) as never, {
+    const res = await getHealthRecord(new NextRequest(`http://localhost/api/health/records/${date}`), {
       params: Promise.resolve({ date }),
     });
     expect(res.status).toBe(400);
