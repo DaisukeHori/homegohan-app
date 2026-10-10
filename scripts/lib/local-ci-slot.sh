@@ -11,6 +11,7 @@
 #   source scripts/lib/local-ci-slot.sh
 #   local_ci_slot_valid <枠>      0 から LCS_SLOT_MAX までの整数なら真
 #   local_ci_slot_apply <枠>      SLOT_* の変数 (下の LCS_SLOT_VARS) を決める
+#   local_ci_slot_work_dir <枠>   scripts/supabase-local.sh の作業ディレクトリ (リポジトリの直下からの相対パス) を出す
 #   bash scripts/lib/local-ci-slot.sh <枠>   SLOT_*=値 を 1 行ずつ出す (tests/local-ci-slot.test.ts が値の表を検査する)
 # =====================================================================
 
@@ -24,6 +25,8 @@ readonly LCS_NEXT_PORT_STRIDE=10
 
 # 枠 0 の project_id (scripts/supabase-local.sh が今まで使ってきた名前)
 readonly LCS_PROJECT_ID_BASE="homegohan-local"
+# 枠 0 の scripts/supabase-local.sh の作業ディレクトリ (今まで使ってきた場所。枠 n は <これ>-s<n>)
+readonly LCS_WORK_DIR_BASE=".supabase-local"
 
 # Supabase CLI 2.62.10 の既定のポート (`npx supabase@2.62.10 init` が生成する config.toml の値と、生成する config.toml には
 # 書かれない既定 ([analytics] vector_port))。CLI のポートの設定は、CLI の本体の設定の型の toml タグ
@@ -85,6 +88,18 @@ local_ci_slot_apply() {
   SLOT_APP_PORT="$((LCS_APP_PORT_BASE + np))"
   SLOT_ENFORCED_APP_PORT="$((LCS_ENFORCED_APP_PORT_BASE + np))"
   SLOT_NOTICE_APP_PORT="$((LCS_NOTICE_APP_PORT_BASE + np))"
+}
+
+# scripts/supabase-local.sh の作業ディレクトリ (リポジトリの直下からの相対パス)。枠 0 は今までと同じ .supabase-local、
+# 枠 n は .supabase-local-s<n> (枠ごとに分ける理由は scripts/supabase-local.sh)。
+# scripts/baseline/drift_report.sh も、枠の結果の既定の置き場をここに作る
+local_ci_slot_work_dir() {
+  local slot="$((10#$1))"
+  if [ "$slot" -eq 0 ]; then
+    echo "$LCS_WORK_DIR_BASE"
+  else
+    echo "$LCS_WORK_DIR_BASE-s$slot"
+  fi
 }
 
 # 直接実行したとき: 枠の値を SLOT_*=値 で出す

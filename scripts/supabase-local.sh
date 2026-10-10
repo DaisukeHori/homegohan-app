@@ -63,11 +63,7 @@ PROJECT_ID="$SLOT_PROJECT_ID"
 # 作業ディレクトリは枠ごとに分ける。枠 0 は今までと同じ .supabase-local/ (CI の生成物を変えない)、枠 n は .supabase-local-s<n>/。
 # 共有すると、同じチェックアウトで 2 つの枠を使ったときに config.toml・migrations・.temp を互いに書き換え、prepare をしない
 # stop / status / env が「最後に組み立てた枠」の config.toml を読んで、指定した枠と別の枠のスタックを止めたり接続先を書いたりする
-if [ "$SLOT" -eq 0 ]; then
-  WORK="$ROOT/.supabase-local"
-else
-  WORK="$ROOT/.supabase-local-s$SLOT"
-fi
+WORK="$ROOT/$(local_ci_slot_work_dir "$SLOT")"
 if [ -z "${SUPABASE_CLI:-}" ]; then
   # 同じ版の supabase が入っていればそれを使い、無ければ CI と同じく npx で実行する
   # (CLI は実行ディレクトリの supabase/.temp/cli-latest を書き換えるため、リポジトリ外で版を確認する)
