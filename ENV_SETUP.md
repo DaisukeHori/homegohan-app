@@ -79,7 +79,7 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 
 | 保管場所 | 名前 | 役割 | 他と値を合わせる必要 |
 |---|---|---|---|
-| Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue`（`vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
+| Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue` と `/api/cron/app-log-alerts`（どちらも `vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
 | Supabase の Edge Function secrets | `CRON_SECRET`（別名 `SERVICE_ROLE_SECRET`。`CRON_SECRET` が無いときだけ代わりに使われます） | **受ける側**。`supabase/functions/_shared/auth.ts` の `requireServiceRole` が、次の Edge Function でこの値と照らし合わせます: コンビニカタログ取り込み 5 本（`import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog`）、`aggregate-org-stats`（停止中。認証だけ行い 410 を返します。#1325）、`calculate-segment-stats`、`regenerate-embeddings`、`stripe-price-sync`（最後の 2 本は service role key でも呼べます） | Vault の `app_cron_secret` と **同じ値にする** |
 | Supabase Vault | `app_cron_secret` | **送る側**。pg_cron が定期実行する次の関数がこの値を読み、`Authorization: Bearer ...` に付けて Edge Function を呼びます: `public.invoke_catalog_import()`（コンビニカタログ取り込みの Edge Function 5 本。登録時のスケジュールは、毎日 UTC 3:00〜4:00 に 15 分おき）、`public.invoke_calculate_segment_stats()`（比較ランキングの集計 `calculate-segment-stats` を daily / weekly / monthly の 3 回。期間が切り替わった直後の回は直前の期間の分も。ジョブ `calculate-segment-stats`、1 時間ごと（毎時 5 分）。#1406） | Edge Function secrets の `CRON_SECRET` と **同じ値にする** |
 
@@ -257,6 +257,25 @@ Vercel Dashboard → Settings → Environment Variables で `CRON_SECRET` の値
 
 ---
 
+## 🚨 エラー急増の運用メール（`OPS_ALERT_EMAIL`）
+
+アプリのエラーログ（`app_logs` の `level = 'error'`）が急に増えたときに、運用の担当者へ 1 通だけメールで知らせます（#1157）。Vercel Cron が 15 分おきに `GET /api/cron/app-log-alerts` を呼び、直近 15 分の件数を数えます。
+
+| 環境変数 | 例 | 役割 | 未設定のときの動き |
+|---|---|---|---|
+| `OPS_ALERT_EMAIL` | `ops@example.com` | 通知メールの宛先。**メールアドレスを 1 つだけ**書く（`名前 <アドレス>` の形や、カンマ区切りの複数は不可）。共有の受信箱ができるまでは、個人のアドレスでよい | 通知しない。cron は動くが、`app_logs` に info ログを 1 行残すだけで、DB にもメールにも触れない |
+| `OPS_ALERT_ERROR_THRESHOLD`（任意） | `50` | しきい値。直近 15 分の `error` が**この件数を超えたら**通知する。1〜100000 の整数 | 既定の 20 件。整数でない・範囲外の値も既定値に戻し、`cron/app-log-alerts` の warn ログに変数名だけを残す |
+| `OPS_ALERT_COOLDOWN_MINUTES`（任意） | `120` | 同じ通知を送り直さない時間（分）。1〜10080 の整数 | 既定の 60 分。不正な値は既定値に戻す（しきい値と同じ） |
+
+- 通知する条件: 直近 15 分の `error` が **20 件を超えた**とき（21 件から）。既定値は `src/lib/ops-alerts/app-log-error-spike.ts` の定数で、`OPS_ALERT_ERROR_THRESHOLD` で上書きできる。窓（15 分）は `vercel.json` の cron の間隔と同じにしてあるので、環境変数では変えない。
+- 同じ通知は **60 分は送り直さない**（`OPS_ALERT_COOLDOWN_MINUTES` で上書きできる）（DB の `ops_alert_state` で覚える。メールを送れなかったときは「送った」と記録せず、15 分後の次の回でもう一度試す）。
+- メールに載るのは、件数・関数名・運用ログ画面（`/super-admin/logs`）へのリンクだけです。ユーザー ID・メールアドレス・ログの本文は載せません（送信先の Resend は米国の事業者のため）。
+- **メールが実際に届くには、メールの送信元ドメインを Resend で検証し、`RESEND_API_KEY` と `EMAIL_FROM` を設定する必要があります**（手順は [`docs/operations/email-domain.md`](docs/operations/email-domain.md)）。それまでは、送れなかったことが `app_logs`（`function_name = 'email'` の error と、`cron/app-log-alerts` の warn）に残るだけで、アプリの動きには影響しません。
+- 応答（JSON）の `status` は、`disabled`（宛先が未設定）・`invalid_config`（宛先の形が不正）・`below_threshold`（しきい値以下）・`deduped`（60 分以内に送信済み）・`sent`（送信した）・`send_skipped` / `send_failed`（送れなかった）のどれかです。cron が動いているかは、Vercel の Cron Jobs の画面（HTTP ステータス）で確かめられます。`app_logs`（`/super-admin/logs` で `function_name` に `cron/app-log-alerts` を指定）に残るのは、宛先が未設定・形が不正・通知した・通知できなかった回と、しきい値・クールダウンの環境変数の値が不正だった回 (warn。変数名だけ) です（しきい値以下の回と、60 分以内の回は何も残しません）。
+- 認証は他の cron と同じ `CRON_SECRET`（上の「Cron の共有シークレットの保管場所とローテーション」）。手で呼ぶ場合は `Authorization: Bearer <CRON_SECRET>` を付けます（値はコマンドの履歴やチャットに残さないこと）。しきい値を超えているときに手で呼ぶと、本物の通知メールが 1 通出て、60 分の抑止が始まります。
+
+---
+
 ## 📱 モバイル（Expo）での環境変数
 
 Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込まれます（=秘密情報は入れない）。
@@ -303,6 +322,22 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 3. Vercel Dashboard → Settings → Environment Variables に、この 2 つの名前のまま追加する（Environment は Production）。Marketplace 連携で自動追加される変数名はこのアプリが読む名前と異なる場合があるので、上の 2 つの名前で入っているかを確認する
 4. 再デプロイする（環境変数は再デプロイで反映される）
 5. 反映の確認: Vercel の関数ログに `[rate-limit] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN が未設定です` という警告が出ていなければ、Upstash が使われている
+
+### 任意の環境変数: ログイン・登録・パスワード再設定の bot 対策（Cloudflare Turnstile、#1165）
+
+- `NEXT_PUBLIC_TURNSTILE_SITE_KEY` - Cloudflare Turnstile のサイトキー（Web。Vercel の環境変数）
+- `EXPO_PUBLIC_TURNSTILE_SITE_KEY` - 同じサイトキー（モバイル。EAS の環境変数）
+- `TURNSTILE_SECRET_KEY` - Turnstile の秘密キー（Web のサーバー専用。Vercel の環境変数。`NEXT_PUBLIC_` を付けない）。任意
+
+どちらもサイトキーは公開してよい値です。秘密キーは公開しません。秘密キーは、**Vercel の `TURNSTILE_SECRET_KEY` か Supabase のダッシュボードの、どちらか一方だけ**に入れます（トークンは 1 回しか使えないため、両方で確かめると 2 回目が断られます）。
+
+- `TURNSTILE_SECRET_KEY` を入れると、Web のログインで続けて 3 回以上失敗したメールアドレスの次のログインから、このアプリのサーバー（`POST /api/auth/login`）がトークンを確かめます。**未設定（またはサイトキーが未設定）なら確かめずに通し**、サーバーの起動後に最初にログインを処理したとき、その旨のログが 1 回だけ出ます。
+- ログイン失敗のロック（5 回で 15 分など。設計 `docs/design/cross/01-auth-session.md` §8）は、キーの有無に関係なく働きます。
+
+- **未設定なら Turnstile は出ず、今までどおりに動きます**（ローカル開発・テストは未設定でよい）。
+- 設定すると、ログイン・新規登録・パスワード再設定の画面にウィジェットが出て、確認が終わるまで送信ボタンが押せなくなります。
+- ビルド時に埋め込まれるので、変えたら再デプロイ（モバイルは新しいビルド）が要ります。
+- Web に入れただけでは、Supabase の Auth API を直接呼ぶ攻撃は止まりません。Supabase 側で CAPTCHA を有効にする時期と手順、現在の設定値の記録は [docs/operations/auth-protection.md](docs/operations/auth-protection.md) を参照してください（有効にするのは、モバイルの新しいビルドを配って古いビルドが使われなくなってから）。
 
 ### 任意の環境変数: Edge Function の CORS（`ALLOWED_ORIGINS`）
 

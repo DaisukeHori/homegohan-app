@@ -41,6 +41,7 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 | `revenue_snapshot` | daily 01:00 | 日次収益スナップショット生成 |
 | `dau_snapshot` | daily 01:30 | DAU/WAU/MAU スナップショット |
 | `logical_backup` | daily 02:00 | pg_dump → S3 |
+| `app_log_alerts` (実装済み: #1157) | 15 分おき | `app_logs` の error が 15 分で 20 件を超えたら `OPS_ALERT_EMAIL` へメールで通知 (`/api/cron/app-log-alerts`。設計は 07-audit-monitoring.md §8.3) |
 
 ---
 

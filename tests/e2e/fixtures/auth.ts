@@ -4,6 +4,7 @@ import { config as dotenvConfig } from "dotenv";
 import * as path from "path";
 import { requireExistingUserPassword } from "../helpers/credentials";
 import { appOrigin, ensureAiConsentGranted } from "../helpers/ai-consent";
+import { waitForLoginFormReady } from "../helpers/login-form";
 import {
   refreshSupabaseSession,
   getStorageStatePath,
@@ -454,7 +455,7 @@ async function doLogin(page: Page, baseURL: string, workerIndex: number): Promis
   for (let attempt = 1; attempt <= MAX_UI_RETRIES; attempt++) {
     try {
       await page.goto(`${baseURL}/login`);
-      await page.waitForLoadState("networkidle");
+      await waitForLoginFormReady(page);
       // #1057 (UX1-16 round-2): キーがメールアドレス単位 (`auth_last_fail_ts:<email>`) に
       // 変わったため prefix 一致で全て削除する
       await page.evaluate(() => {

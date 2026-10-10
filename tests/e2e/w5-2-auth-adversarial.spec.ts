@@ -22,6 +22,7 @@
 
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 import { E2E_USER } from "./fixtures/auth";
+import { waitForLoginFormReady } from "./helpers/login-form";
 
 // ─── 定数 ────────────────────────────────────────────────────────────────────
 
@@ -143,7 +144,7 @@ test.describe("A. ログイン UI の嫌がらせ", () => {
    */
   test("A-1: 空フォームでログインボタンを連打してもページがクラッシュしない", async ({ page }) => {
     await page.goto(`${BASE_URL}/login`);
-    await page.waitForLoadState("networkidle");
+    await waitForLoginFormReady(page);
 
     const submitBtn = page.locator('button[type="submit"]').first();
 
@@ -175,7 +176,7 @@ test.describe("A. ログイン UI の嫌がらせ", () => {
         .filter((k) => k.startsWith('auth_last_fail_ts'))
         .forEach((k) => localStorage.removeItem(k));
     });
-    await page.waitForLoadState("networkidle");
+    await waitForLoginFormReady(page);
 
     await page.locator("#email").fill("nonexistent-user-xyz@example.com");
     await page.locator("#password").fill("WrongPassword123!");
@@ -194,7 +195,7 @@ test.describe("A. ログイン UI の嫌がらせ", () => {
    */
   test("A-3: メールフィールドへの XSS 入力でスクリプトが実行されない", async ({ page }) => {
     await page.goto(`${BASE_URL}/login`);
-    await page.waitForLoadState("networkidle");
+    await waitForLoginFormReady(page);
 
     let alertFired = false;
     page.on("dialog", async (dialog) => {
@@ -236,7 +237,7 @@ test.describe("A. ログイン UI の嫌がらせ", () => {
         .filter((k) => k.startsWith('auth_last_fail_ts'))
         .forEach((k) => localStorage.removeItem(k));
     });
-    await page.waitForLoadState("networkidle");
+    await waitForLoginFormReady(page);
 
     // メールを大文字に変換して入力
     const upperEmail = E2E_USER.email.toUpperCase();
@@ -271,7 +272,7 @@ test.describe("A. ログイン UI の嫌がらせ", () => {
         .filter((k) => k.startsWith('auth_last_fail_ts'))
         .forEach((k) => localStorage.removeItem(k));
     });
-    await page.waitForLoadState("networkidle");
+    await waitForLoginFormReady(page);
 
     await page.locator("#email").fill(E2E_USER.email);
     await page.locator("#password").fill(E2E_USER.password);
@@ -307,7 +308,7 @@ test.describe("A. ログイン UI の嫌がらせ", () => {
     });
     // ?next= パラメータ付き URL に移動（rate limit キーは既にクリア済み）
     await page.goto(`${BASE_URL}/login?next=https://evil.example.com`);
-    await page.waitForLoadState("networkidle");
+    await waitForLoginFormReady(page);
 
     await page.locator("#email").fill(E2E_USER.email);
     await page.locator("#password").fill(E2E_USER.password);
@@ -373,7 +374,7 @@ test.describe("B. 未認証アクセス / リダイレクト", () => {
   test("B-10: /login は未認証でアクセスできる", async ({ page }) => {
     await clearSession(page);
     await page.goto(`${BASE_URL}/login`);
-    await page.waitForLoadState("networkidle");
+    await waitForLoginFormReady(page);
     // /login ページのままであること (リダイレクトされない)
     expect(page.url()).toContain("/login");
     // ログインフォームが表示されていること
@@ -505,7 +506,7 @@ test.describe("C. セッション改ざん / Cookie", () => {
     await loginWithClear(page);
 
     await page.goto(`${BASE_URL}/login`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load"); // networkidle は待たない (ログイン画面の Turnstile が通信し続ける。helpers/login-form.ts)
 
     // 500 エラーページが出ていないこと
     const title = await page.title();
@@ -661,7 +662,7 @@ test.describe("E. session-sync API", () => {
   test("E-22: 未認証で session-sync に POST すると 401 を返す", async ({ page }) => {
     await clearSession(page);
     await page.goto(`${BASE_URL}/login`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load"); // networkidle は待たない (ログイン画面の Turnstile が通信し続ける。helpers/login-form.ts)
 
     const result = await apiFetch(page, "/api/auth/session-sync", { method: "POST" });
     expect(result.status).toBe(401);
@@ -724,7 +725,7 @@ test.describe("F. API 保護 (認証なし直叩き)", () => {
   test("F-26: 未認証で /api/profile に GET すると 401 を返す", async ({ page }) => {
     await clearSession(page);
     await page.goto(`${BASE_URL}/login`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load"); // networkidle は待たない (ログイン画面の Turnstile が通信し続ける。helpers/login-form.ts)
 
     const result = await apiFetch(page, "/api/profile");
     expect([401, 403]).toContain(result.status);
@@ -736,7 +737,7 @@ test.describe("F. API 保護 (認証なし直叩き)", () => {
   test("F-27: 未認証で /api/meals に GET すると 401 を返す", async ({ page }) => {
     await clearSession(page);
     await page.goto(`${BASE_URL}/login`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load"); // networkidle は待たない (ログイン画面の Turnstile が通信し続ける。helpers/login-form.ts)
 
     const result = await apiFetch(page, "/api/meals");
     expect([401, 403]).toContain(result.status);
@@ -748,7 +749,7 @@ test.describe("F. API 保護 (認証なし直叩き)", () => {
   test("F-28: 未認証で /api/meal-plans に GET すると 401 を返す", async ({ page }) => {
     await clearSession(page);
     await page.goto(`${BASE_URL}/login`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load"); // networkidle は待たない (ログイン画面の Turnstile が通信し続ける。helpers/login-form.ts)
 
     const result = await apiFetch(page, "/api/meal-plans");
     expect([401, 403]).toContain(result.status);
@@ -760,7 +761,7 @@ test.describe("F. API 保護 (認証なし直叩き)", () => {
   test("F-29: 未認証で /api/badges に GET すると 401 を返す", async ({ page }) => {
     await clearSession(page);
     await page.goto(`${BASE_URL}/login`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load"); // networkidle は待たない (ログイン画面の Turnstile が通信し続ける。helpers/login-form.ts)
 
     const result = await apiFetch(page, "/api/badges");
     expect([401, 403]).toContain(result.status);
