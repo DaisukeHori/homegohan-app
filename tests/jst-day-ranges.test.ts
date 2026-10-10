@@ -13,7 +13,10 @@
 //   - GET  /api/meals・/api/performance/*・health/checkups・health/blood-tests の「今日」 → jstToday
 //   - GET  /api/super-admin/llm/usage (created_at の範囲・日次の系列) → jstDayRangeTimestamps / jstDayOfTimestamp
 //   - GET  /api/super-admin/audit-logs・/api/operator/membership/audit (created_at の範囲。開始日・終了日は空欄もある)
+//     / GET /api/admin/finance/nps の一覧・POST /api/admin/finance/exports (invoices / subscriptions / nps)
 //                                                                  → jstOptionalDayRangeTimestamps
+//   - GET  /api/admin/finance/nps の集計 (両端を含む DB の関数に渡す終了日)  → jstDayEndInclusiveTimestamp
+//   - 家族・組織の招待メールの期限の日付 (expires_at)                → jstDayOfTimestamp
 //   - GET  /api/admin/finance/dashboard (今月・先月)              → jstMonthBoundaries
 //   - モバイルの健康グラフ (app/health/graphs.tsx)                   → healthGraphFetchStartDate / healthGraphDateSlots
 //   - 献立生成の旬の食材・行事 (lib/seasonal-ingredients.ts / lib/seasonal-events.ts)
@@ -28,6 +31,7 @@ import {
   challengePeriod,
   consecutiveDayStreak,
   jstDayOffset,
+  jstDayEndInclusiveTimestamp,
   jstDayOfTimestamp,
   jstDayRangeTimestamps,
   jstMonthBoundaries,
@@ -48,6 +52,7 @@ import {
 import { getEventsForDate, getEventsForRange } from '../lib/seasonal-events';
 import { buildEmptySlots } from '../lib/slot-builder';
 import { TEST_TIME_ZONES, inEachTimeZone, localOffsetMinutesOn20260101, withTimeZone } from './helpers/time-zones';
+import { microsOf } from './helpers/timestamptz';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -282,6 +287,70 @@ describe('jstOptionalDayRangeTimestamps: 開始日・終了日のどちらかが
   it('形の違う日付・存在しない日付は RangeError (片方だけ渡したときも)', () => {
     expect(() => jstOptionalDayRangeTimestamps('2026-02-30', undefined)).toThrow(RangeError);
     expect(() => jstOptionalDayRangeTimestamps(undefined, '2026/03/02')).toThrow(RangeError);
+  });
+});
+
+describe('jstDayEndInclusiveTimestamp: 終了日の最後の瞬間 (両端を含む DB の関数に渡す p_to)', () => {
+  it.each([
+    // [終了日, 翌日の JST 0 時の 1 マイクロ秒前]
+    ['2026-10-10', '2026-10-10T14:59:59.999999Z'],
+    ['2026-10-31', '2026-10-31T14:59:59.999999Z'], // 月末 (翌日は月初)
+    ['2026-11-01', '2026-11-01T14:59:59.999999Z'], // 月初
+    ['2026-12-31', '2026-12-31T14:59:59.999999Z'], // 年末 (翌日は年始)
+    ['2027-01-01', '2027-01-01T14:59:59.999999Z'], // 年始
+    ['2028-02-29', '2028-02-29T14:59:59.999999Z'], // うるう日
+  ])('%s → %s (どのタイムゾーンでも同じ)', (toDate, expected) => {
+    for (const { tz, value } of inEachTimeZone(() => jstDayEndInclusiveTimestamp(toDate))) {
+      expect(value, tz).toBe(expected);
+    }
+  });
+
+  it('翌日の JST 0 時 (jstDayRangeTimestamps の toTimestampExclusive) のちょうど 1 マイクロ秒前', () => {
+    for (const toDate of ['2026-10-10', '2026-12-31', '2028-02-29']) {
+      const { toTimestampExclusive } = jstDayRangeTimestamps(toDate, toDate);
+      expect(microsOf(toTimestampExclusive) - microsOf(jstDayEndInclusiveTimestamp(toDate)), toDate).toBe(1n);
+    }
+  });
+
+  it('`<= この時刻` は `< 翌日の JST 0 時` と同じ行を選ぶ (timestamptz の精度 = 1 マイクロ秒で比べる)', () => {
+    const end = microsOf(jstDayEndInclusiveTimestamp('2026-10-10'));
+    const { toTimestampExclusive } = jstDayRangeTimestamps('2026-10-10', '2026-10-10');
+    const exclusive = microsOf(toTimestampExclusive);
+    const rows = [
+      '2026-10-09T15:00:00Z', // JST 10/10 0:00
+      '2026-10-09T23:59:59Z', // JST 10/10 8:59:59
+      '2026-10-10T00:00:00Z', // JST 10/10 9:00 (以前の、日付の文字列のまま `<= '2026-10-10'` の上端)
+      '2026-10-10T14:59:59.999Z', // JST 10/10 23:59:59.999
+      '2026-10-10T14:59:59.999999Z', // JST 10/10 23:59:59.999999 (その日の最後の値)
+      '2026-10-10T15:00:00Z', // JST 10/11 0:00
+      '2026-10-10T15:00:00.000001Z', // JST 10/11 0:00 の 1 マイクロ秒後
+      '2026-10-10T23:59:59Z', // JST 10/11 8:59:59
+    ];
+    const inclusive = rows.filter((at) => microsOf(at) <= end);
+    expect(inclusive).toEqual(rows.filter((at) => microsOf(at) < exclusive));
+    expect(inclusive).toEqual(rows.slice(0, 5));
+  });
+
+  it('形の違う日付・存在しない日付は RangeError', () => {
+    expect(() => jstDayEndInclusiveTimestamp('2026-02-30')).toThrow(RangeError);
+    expect(() => jstDayEndInclusiveTimestamp('2026/10/10')).toThrow(RangeError);
+    expect(() => jstDayEndInclusiveTimestamp('2026-10-10T00:00:00Z')).toThrow(RangeError);
+  });
+});
+
+describe('jstDayOfTimestamp: 招待メールの期限 (expires_at) の境界', () => {
+  it.each([
+    // [期限の時刻 (DB から読んだ timestamptz の値), メールに書く JST の暦日]
+    ['2026-10-16T15:00:00+00:00', '2026-10-17'], // JST 10/17 0:00 ちょうど (slice(0, 10) では 10/16)
+    ['2026-10-16T23:59:59+00:00', '2026-10-17'], // JST 10/17 8:59:59 (slice(0, 10) では 10/16)
+    ['2026-10-17T14:59:59.999999+00:00', '2026-10-17'], // JST 10/17 23:59:59.999999
+    ['2026-10-17T15:00:00+00:00', '2026-10-18'], // JST 10/18 0:00
+    ['2026-10-31T15:00:00+00:00', '2026-11-01'], // 月初 (JST 11/1 0:00。slice(0, 10) では 10/31)
+    ['2026-12-31T15:00:00+00:00', '2027-01-01'], // 年始 (JST 1/1 0:00。slice(0, 10) では前年の 12/31)
+  ])('%s → %s (どのタイムゾーンでも同じ)', (expiresAt, expected) => {
+    for (const { tz, value } of inEachTimeZone(() => jstDayOfTimestamp(expiresAt))) {
+      expect(value, tz).toBe(expected);
+    }
   });
 });
 

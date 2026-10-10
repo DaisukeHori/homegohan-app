@@ -11,3 +11,13 @@ import { isCalendarDate } from '@/lib/date-utils';
 export const CalendarDateSchema = z.string().refine(isCalendarDate, {
   message: 'YYYY-MM-DD の実在する日付を指定してください',
 });
+
+/**
+ * 空欄 (空文字) を「指定なし」(undefined) として受ける CalendarDateSchema の省略可能版。
+ * 画面の日付の入力が空のまま届きうる API (GET /api/admin/finance/nps の ?from=&to= など) で、
+ * 以前の `z.string().optional()` + `if (from)` と同じく、空文字は「その側を絞らない」にする。空でない値は実在する日付だけを通す。
+ */
+export const OptionalCalendarDateSchema = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  CalendarDateSchema.optional(),
+);

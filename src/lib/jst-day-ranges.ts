@@ -12,7 +12,11 @@
 // supabase/functions/_shared/jst-date.ts (todayJst / addDaysToDate / calculateJstLookbackPeriod)。
 // timestamptz の列 (created_at など) を JST の暦日で絞るときは、日付の文字列をそのまま渡さず (DB は UTC の 0 時 = JST 9 時と読む)、
 // jstDayRangeTimestamps (開始日・終了日のどちらかが空欄になりうるときは jstOptionalDayRangeTimestamps) で JST 0 時の時刻にしてから渡す
-// (終了日を 'T23:59:59Z' で閉じる書き方も UTC の 23:59:59 = JST の翌日 8:59:59 になるので使わない。tests/jst-today-source-scan.test.ts の規則 F)。timestamptz の値を JST の暦日にまとめるときは jstDayOfTimestamp を使う。
+// (終了日を 'T23:59:59Z' で閉じる書き方も UTC の 23:59:59 = JST の翌日 8:59:59 になるので使わない。tests/jst-today-source-scan.test.ts の規則 F)。
+// 両端を含む (`<=`) 条件しか書けない DB の関数 (RPC) に終了日を渡すときは jstDayEndInclusiveTimestamp を使う。
+// timestamptz の列を .gte / .gt / .lte / .lt で絞る呼び出しは、ここの関数の戻り値を渡しているか (でなければ理由つきの許可リストにあるか) を
+// tests/jst-today-source-scan.test.ts の規則 G が数える。
+// timestamptz の値を JST の暦日にまとめるときは jstDayOfTimestamp を使う (`expires_at.slice(0, 10)` などは UTC の暦日になる。同じテストの規則 H)。
 // 境界 (JST 0:00 ちょうど・8:59:59・月初・月末・年末) と、実行環境のタイムゾーンを変えても結果が同じことは
 // tests/jst-day-ranges.test.ts で確かめる。
 
@@ -75,7 +79,8 @@ export function jstDayRangeTimestamps(
 
 /**
  * jstDayRangeTimestamps の、開始日・終了日のどちらか (または両方) が無い版。画面の期間の入力が空欄のときに使う
- * (監査ログの GET /api/super-admin/audit-logs・GET /api/operator/membership/audit)。
+ * (監査ログの GET /api/super-admin/audit-logs・GET /api/operator/membership/audit、
+ *  NPS / CSAT の GET /api/admin/finance/nps、CSV の書き出しの POST /api/admin/finance/exports)。
  *   - fromTimestamp        : fromDate の JST 0 時 (`.gte` で使う)。fromDate が無ければ undefined (下限なし)
  *   - toTimestampExclusive : toDate の翌日の JST 0 時 (`.lt` で使う)。toDate が無ければ undefined (上限なし)
  * 例: (undefined, "2026-10-10") → { fromTimestamp: undefined, toTimestampExclusive: "2026-10-10T15:00:00.000Z" }
@@ -92,6 +97,34 @@ export function jstOptionalDayRangeTimestamps(
     fromTimestamp: fromDate === undefined ? undefined : jstDayStartTimestamp(fromDate),
     toTimestampExclusive: toDate === undefined ? undefined : jstDayStartTimestamp(addDaysToDate(toDate, 1)),
   };
+}
+
+/** Date (JavaScript) の時刻の最小単位 (1 ミリ秒) */
+const DATE_RESOLUTION_MS = 1;
+
+/**
+ * 1 ミリ秒の中の最後の 1 マイクロ秒を表す、ミリ秒の 3 桁に続けるマイクロ秒の 3 桁。
+ * timestamptz (PostgreSQL) の時刻の精度は 1 マイクロ秒 (小数点以下 6 桁) なので、".999" + "999" = ".999999" 秒が、
+ * 次の秒の直前の最後の値になる
+ */
+const LAST_MICROSECOND_DIGITS = '999';
+
+/**
+ * JST の暦日 toDate の最後の瞬間 (翌日の JST 0 時の 1 マイクロ秒前) を、timestamptz と比べる ISO 8601 (UTC) の時刻にする。
+ * 例: "2026-10-10" → "2026-10-10T14:59:59.999999Z" (JST 10/10 23:59:59.999999)
+ *
+ * 両端を含む条件 (`列 <= p_to`) で絞る DB の関数 (get_nps_summary / get_csat_summary) に、終了日を渡すときだけ使う。
+ * timestamptz の精度は 1 マイクロ秒なので、`列 <= この時刻` は `列 < 翌日の JST 0 時` (jstDayRangeTimestamps の
+ * toTimestampExclusive) と同じ行を選ぶ (DB の関数を書き換える migration なしで、終了日の JST の 1 日をまるごと入れられる)。
+ * 問い合わせを自分で組み立てられるとき (.lt を使えるとき) は jstDayRangeTimestamps / jstOptionalDayRangeTimestamps を使う。
+ * Date はミリ秒までしか持たないので、1 ミリ秒前の時刻 (".999Z") にマイクロ秒の 3 桁を文字列で足して作る。
+ * 形の違う日付・存在しない日付は RangeError。
+ */
+export function jstDayEndInclusiveTimestamp(toDate: string): string {
+  const nextDayStartMs = Date.parse(jstDayStartTimestamp(addDaysToDate(toDate, 1)));
+  // 翌日の JST 0 時はちょうどの秒なので、1 ミリ秒前は必ず "...:59.999Z" になる。その 999 ミリ秒の中の最後の 1 マイクロ秒にする
+  const lastMillisecond = new Date(nextDayStartMs - DATE_RESOLUTION_MS).toISOString();
+  return lastMillisecond.replace(/Z$/, `${LAST_MICROSECOND_DIGITS}Z`);
 }
 
 /**

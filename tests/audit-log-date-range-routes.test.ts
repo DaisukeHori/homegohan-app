@@ -12,7 +12,7 @@
  * (条件の値と、その条件で実際に残る行の両方を確かめる)。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { TEST_TIME_ZONES } from './helpers/time-zones';
+import { TEST_TIME_ZONES, withTimeZoneAsync } from './helpers/time-zones';
 
 type Row = { id: string; created_at: string };
 type FilterKind = 'eq' | 'gte' | 'lt' | 'lte' | 'ilike';
@@ -148,18 +148,6 @@ beforeEach(() => {
   fake = createFakeSupabase({ admin_audit_logs: BOUNDARY_ROWS, membership_audit: BOUNDARY_ROWS });
   state.supabase = fake.supabase;
 });
-
-/** process.env.TZ を tz にして fn (非同期) を最後まで待ち、元に戻す (withTimeZone は同期の関数用なので、await の途中で戻ってしまう) */
-async function withTimeZoneAsync<T>(tz: string, fn: () => Promise<T>): Promise<T> {
-  const saved = process.env.TZ;
-  process.env.TZ = tz;
-  try {
-    return await fn();
-  } finally {
-    if (saved === undefined) delete process.env.TZ;
-    else process.env.TZ = saved;
-  }
-}
 
 describe.each(ROUTES)('$name: 期間は JST の暦日 (#1433)', ({ table, call }) => {
   const idsOf = async (query: string) => {

@@ -37,6 +37,24 @@ export function withTimeZone<T>(tz: string, fn: () => T): T {
   }
 }
 
+/**
+ * process.env.TZ を tz にして fn (非同期) を最後まで待ち、終わったら元に戻す
+ * (withTimeZone は同期の関数用なので、await の途中で元に戻ってしまう。API ルートを呼ぶテストはこちらを使う)
+ */
+export async function withTimeZoneAsync<T>(tz: string, fn: () => Promise<T>): Promise<T> {
+  const saved = process.env.TZ;
+  process.env.TZ = tz;
+  try {
+    return await fn();
+  } finally {
+    if (saved === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = saved;
+    }
+  }
+}
+
 /** TEST_TIME_ZONES のそれぞれで fn を呼び、タイムゾーンごとの結果を返す */
 export function inEachTimeZone<T>(fn: (tz: TestTimeZone) => T): Array<{ tz: TestTimeZone; value: T }> {
   return TEST_TIME_ZONES.map((tz) => ({ tz, value: withTimeZone(tz, () => fn(tz)) }));
