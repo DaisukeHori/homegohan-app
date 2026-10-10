@@ -11,6 +11,8 @@
 //   - GET  /api/ai/consultation/sessions (7 日前) / GET /api/performance/checkins (30 日前)
 //     / GET /api/admin/finance/revenue (30 日前)                    → jstDayOffset
 //   - GET  /api/meals・/api/performance/*・health/checkups・health/blood-tests の「今日」 → jstToday
+//   - GET  /api/super-admin/llm/usage (created_at の範囲・日次の系列) → jstDayRangeTimestamps / jstDayOfTimestamp
+//   - GET  /api/admin/finance/dashboard (今月・先月)              → jstMonthBoundaries
 //   - モバイルの健康グラフ (app/health/graphs.tsx)                   → healthGraphFetchStartDate / healthGraphDateSlots
 //   - 献立生成の旬の食材・行事 (lib/seasonal-ingredients.ts / lib/seasonal-events.ts)
 //   - 献立生成モーダルのスロット (lib/slot-builder.ts の日付の範囲)
@@ -24,6 +26,9 @@ import {
   challengePeriod,
   consecutiveDayStreak,
   jstDayOffset,
+  jstDayOfTimestamp,
+  jstDayRangeTimestamps,
+  jstMonthBoundaries,
   jstToday,
   llmUsageRange,
   NUTRITION_ANALYSIS_MONTH_DAYS,
@@ -48,17 +53,18 @@ afterEach(() => {
 /**
  * 境界の時刻 (UTC の ISO 表記) と、その時刻の JST の暦日から数えた日付。
  *   today: JST の今日 / d1: 1 日前 / d2: 2 日前 / d6: 6 日前 / d7: 7 日前 / d29: 29 日前 / d30: 30 日前 / p7: 7 日後
+ *   mStart: JST の今月の月初 / pmStart: 先月の月初 / pmEnd: 先月の末日
  */
 const BOUNDARIES = [
-  { label: 'JST 0:00 ちょうど', at: '2026-10-09T15:00:00.000Z', today: '2026-10-10', d1: '2026-10-09', d2: '2026-10-08', d6: '2026-10-04', d7: '2026-10-03', d29: '2026-09-11', d30: '2026-09-10', p7: '2026-10-17' },
-  { label: 'JST 8:59:59', at: '2026-10-09T23:59:59.000Z', today: '2026-10-10', d1: '2026-10-09', d2: '2026-10-08', d6: '2026-10-04', d7: '2026-10-03', d29: '2026-09-11', d30: '2026-09-10', p7: '2026-10-17' },
-  { label: 'JST 0:00 の 1 ミリ秒前', at: '2026-10-09T14:59:59.999Z', today: '2026-10-09', d1: '2026-10-08', d2: '2026-10-07', d6: '2026-10-03', d7: '2026-10-02', d29: '2026-09-10', d30: '2026-09-09', p7: '2026-10-16' },
-  { label: '月初 (JST 11/1 0:00)', at: '2026-10-31T15:00:00.000Z', today: '2026-11-01', d1: '2026-10-31', d2: '2026-10-30', d6: '2026-10-26', d7: '2026-10-25', d29: '2026-10-03', d30: '2026-10-02', p7: '2026-11-08' },
-  { label: '月初 (JST 11/1 8:59:59)', at: '2026-10-31T23:59:59.000Z', today: '2026-11-01', d1: '2026-10-31', d2: '2026-10-30', d6: '2026-10-26', d7: '2026-10-25', d29: '2026-10-03', d30: '2026-10-02', p7: '2026-11-08' },
-  { label: '月末 (JST 10/31 23:59:59)', at: '2026-10-31T14:59:59.000Z', today: '2026-10-31', d1: '2026-10-30', d2: '2026-10-29', d6: '2026-10-25', d7: '2026-10-24', d29: '2026-10-02', d30: '2026-10-01', p7: '2026-11-07' },
-  { label: '年末 (JST 12/31 23:59:59)', at: '2026-12-31T14:59:59.000Z', today: '2026-12-31', d1: '2026-12-30', d2: '2026-12-29', d6: '2026-12-25', d7: '2026-12-24', d29: '2026-12-02', d30: '2026-12-01', p7: '2027-01-07' },
-  { label: '年始 (JST 1/1 0:00)', at: '2026-12-31T15:00:00.000Z', today: '2027-01-01', d1: '2026-12-31', d2: '2026-12-30', d6: '2026-12-26', d7: '2026-12-25', d29: '2026-12-03', d30: '2026-12-02', p7: '2027-01-08' },
-  { label: '年始 (JST 1/1 8:59:59)', at: '2026-12-31T23:59:59.000Z', today: '2027-01-01', d1: '2026-12-31', d2: '2026-12-30', d6: '2026-12-26', d7: '2026-12-25', d29: '2026-12-03', d30: '2026-12-02', p7: '2027-01-08' },
+  { label: 'JST 0:00 ちょうど', at: '2026-10-09T15:00:00.000Z', today: '2026-10-10', d1: '2026-10-09', d2: '2026-10-08', d6: '2026-10-04', d7: '2026-10-03', d29: '2026-09-11', d30: '2026-09-10', p7: '2026-10-17', mStart: '2026-10-01', pmStart: '2026-09-01', pmEnd: '2026-09-30' },
+  { label: 'JST 8:59:59', at: '2026-10-09T23:59:59.000Z', today: '2026-10-10', d1: '2026-10-09', d2: '2026-10-08', d6: '2026-10-04', d7: '2026-10-03', d29: '2026-09-11', d30: '2026-09-10', p7: '2026-10-17', mStart: '2026-10-01', pmStart: '2026-09-01', pmEnd: '2026-09-30' },
+  { label: 'JST 0:00 の 1 ミリ秒前', at: '2026-10-09T14:59:59.999Z', today: '2026-10-09', d1: '2026-10-08', d2: '2026-10-07', d6: '2026-10-03', d7: '2026-10-02', d29: '2026-09-10', d30: '2026-09-09', p7: '2026-10-16', mStart: '2026-10-01', pmStart: '2026-09-01', pmEnd: '2026-09-30' },
+  { label: '月初 (JST 11/1 0:00)', at: '2026-10-31T15:00:00.000Z', today: '2026-11-01', d1: '2026-10-31', d2: '2026-10-30', d6: '2026-10-26', d7: '2026-10-25', d29: '2026-10-03', d30: '2026-10-02', p7: '2026-11-08', mStart: '2026-11-01', pmStart: '2026-10-01', pmEnd: '2026-10-31' },
+  { label: '月初 (JST 11/1 8:59:59)', at: '2026-10-31T23:59:59.000Z', today: '2026-11-01', d1: '2026-10-31', d2: '2026-10-30', d6: '2026-10-26', d7: '2026-10-25', d29: '2026-10-03', d30: '2026-10-02', p7: '2026-11-08', mStart: '2026-11-01', pmStart: '2026-10-01', pmEnd: '2026-10-31' },
+  { label: '月末 (JST 10/31 23:59:59)', at: '2026-10-31T14:59:59.000Z', today: '2026-10-31', d1: '2026-10-30', d2: '2026-10-29', d6: '2026-10-25', d7: '2026-10-24', d29: '2026-10-02', d30: '2026-10-01', p7: '2026-11-07', mStart: '2026-10-01', pmStart: '2026-09-01', pmEnd: '2026-09-30' },
+  { label: '年末 (JST 12/31 23:59:59)', at: '2026-12-31T14:59:59.000Z', today: '2026-12-31', d1: '2026-12-30', d2: '2026-12-29', d6: '2026-12-25', d7: '2026-12-24', d29: '2026-12-02', d30: '2026-12-01', p7: '2027-01-07', mStart: '2026-12-01', pmStart: '2026-11-01', pmEnd: '2026-11-30' },
+  { label: '年始 (JST 1/1 0:00)', at: '2026-12-31T15:00:00.000Z', today: '2027-01-01', d1: '2026-12-31', d2: '2026-12-30', d6: '2026-12-26', d7: '2026-12-25', d29: '2026-12-03', d30: '2026-12-02', p7: '2027-01-08', mStart: '2027-01-01', pmStart: '2026-12-01', pmEnd: '2026-12-31' },
+  { label: '年始 (JST 1/1 8:59:59)', at: '2026-12-31T23:59:59.000Z', today: '2027-01-01', d1: '2026-12-31', d2: '2026-12-30', d6: '2026-12-26', d7: '2026-12-25', d29: '2026-12-03', d30: '2026-12-02', p7: '2027-01-08', mStart: '2027-01-01', pmStart: '2026-12-01', pmEnd: '2026-12-31' },
 ] as const;
 
 type Boundary = (typeof BOUNDARIES)[number];
@@ -135,6 +141,20 @@ describe.each(BOUNDARIES)('$label', (b) => {
     );
   });
 
+  it('jstMonthBoundaries: 今月の月初・先月の月初・先月の末日 (JST の暦)', () => {
+    expectSameInEveryTimeZone(b, (now) => jstMonthBoundaries(now), {
+      thisMonthStart: b.mStart,
+      lastMonthStart: b.pmStart,
+      lastMonthEnd: b.pmEnd,
+    });
+  });
+
+  it('jstDayOfTimestamp: 時刻 (timestamptz の値) が属する JST の暦日', () => {
+    expectSameInEveryTimeZone(b, () => jstDayOfTimestamp(b.at), b.today);
+    // DB (PostgREST) が返す +00:00 の表記でも同じ
+    expectSameInEveryTimeZone(b, () => jstDayOfTimestamp(b.at.replace('.000Z', '+00:00')), b.today);
+  });
+
   it('健康グラフ (モバイル): 取得の開始日 = 30 日前、横軸 = JST の今日を最後の日とする 7 日', () => {
     expectSameInEveryTimeZone(b, (now) => healthGraphFetchStartDate(30, now), b.d30);
     expectSameInEveryTimeZone(b, (now) => {
@@ -146,6 +166,77 @@ describe.each(BOUNDARIES)('$label', (b) => {
   it('旬の食材 (Date を渡したとき): その時刻の JST の月', () => {
     const jstMonth = Number(b.today.slice(5, 7));
     expectSameInEveryTimeZone(b, (now) => getSeasonalIngredientsForDate(now), getSeasonalIngredients(jstMonth));
+  });
+});
+
+describe('jstMonthBoundaries: 以前の書き方との違い', () => {
+  it('以前の書き方 (ローカル時刻の年・月の 0 時を toISOString) は、実行環境のタイムゾーンで結果が変わっていた (直した不具合)', () => {
+    const at = new Date('2026-10-31T18:00:00.000Z'); // JST 11/1 3:00
+    const legacy = () => new Date(at.getFullYear(), at.getMonth(), 1).toISOString().slice(0, 10);
+    expect(withTimeZone('UTC', legacy)).toBe('2026-10-01');
+    expect(withTimeZone('Asia/Tokyo', legacy)).toBe('2026-10-31');
+    expect(withTimeZone('UTC', () => jstMonthBoundaries(at).thisMonthStart)).toBe('2026-11-01');
+    expect(withTimeZone('Asia/Tokyo', () => jstMonthBoundaries(at).thisMonthStart)).toBe('2026-11-01');
+  });
+
+  it('前月がうるう年の 2 月・31 日の月・30 日の月の末日', () => {
+    for (const { tz, value } of inEachTimeZone(() => [
+      jstMonthBoundaries(new Date('2028-02-29T15:00:00.000Z')), // JST 2028/3/1 0:00
+      jstMonthBoundaries(new Date('2027-02-28T15:00:00.000Z')), // JST 2027/3/1 0:00
+      jstMonthBoundaries(new Date('2026-07-31T15:00:00.000Z')), // JST 2026/8/1 0:00
+    ])) {
+      expect(value, tz).toEqual([
+        { thisMonthStart: '2028-03-01', lastMonthStart: '2028-02-01', lastMonthEnd: '2028-02-29' },
+        { thisMonthStart: '2027-03-01', lastMonthStart: '2027-02-01', lastMonthEnd: '2027-02-28' },
+        { thisMonthStart: '2026-08-01', lastMonthStart: '2026-07-01', lastMonthEnd: '2026-07-31' },
+      ]);
+    }
+  });
+
+  it('引数を省略すると現在時刻 (fake timers の時刻) の JST の暦', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-12-31T15:00:00.000Z')); // JST 2027/1/1 0:00
+    for (const { tz, value } of inEachTimeZone(() => jstMonthBoundaries())) {
+      expect(value, tz).toEqual({ thisMonthStart: '2027-01-01', lastMonthStart: '2026-12-01', lastMonthEnd: '2026-12-31' });
+    }
+  });
+});
+
+describe('jstDayRangeTimestamps: JST の暦日の範囲 → timestamptz と比べる時刻の範囲', () => {
+  it.each([
+    // [開始日, 終了日, 開始日の JST 0 時, 終了日の翌日の JST 0 時]
+    ['2026-10-09', '2026-10-10', '2026-10-08T15:00:00.000Z', '2026-10-10T15:00:00.000Z'],
+    ['2026-10-31', '2026-10-31', '2026-10-30T15:00:00.000Z', '2026-10-31T15:00:00.000Z'], // 月末 (翌日は月初)
+    ['2026-11-01', '2026-11-01', '2026-10-31T15:00:00.000Z', '2026-11-01T15:00:00.000Z'], // 月初 (開始は前月の UTC)
+    ['2026-12-31', '2026-12-31', '2026-12-30T15:00:00.000Z', '2026-12-31T15:00:00.000Z'], // 年末 (翌日は年始)
+    ['2027-01-01', '2027-01-01', '2026-12-31T15:00:00.000Z', '2027-01-01T15:00:00.000Z'], // 年始 (開始は前年の UTC)
+    ['2028-02-28', '2028-02-29', '2028-02-27T15:00:00.000Z', '2028-02-29T15:00:00.000Z'], // うるう日
+  ])('%s 〜 %s → [%s, %s)', (fromDate, toDate, fromTimestamp, toTimestampExclusive) => {
+    for (const { tz, value } of inEachTimeZone(() => jstDayRangeTimestamps(fromDate, toDate))) {
+      expect(value, tz).toEqual({ fromTimestamp, toTimestampExclusive });
+    }
+  });
+
+  it('範囲の端: 開始日の JST 0:00 ちょうど・8:59:59 は入り、終了日の翌日の JST 0:00 は入らない', () => {
+    const { fromTimestamp, toTimestampExclusive } = jstDayRangeTimestamps('2026-10-09', '2026-10-10');
+    const inRange = (at: string) => Date.parse(at) >= Date.parse(fromTimestamp) && Date.parse(at) < Date.parse(toTimestampExclusive);
+    expect(inRange('2026-10-08T14:59:59.999Z')).toBe(false); // JST 10/8 23:59:59.999
+    expect(inRange('2026-10-08T15:00:00.000Z')).toBe(true); // JST 10/9 0:00
+    expect(inRange('2026-10-08T23:59:59.000Z')).toBe(true); // JST 10/9 8:59:59 (日付の文字列のまま絞ると落ちていた)
+    expect(inRange('2026-10-10T14:59:59.999Z')).toBe(true); // JST 10/10 23:59:59.999
+    expect(inRange('2026-10-10T15:00:00.000Z')).toBe(false); // JST 10/11 0:00
+  });
+
+  it('形の違う日付・存在しない日付は RangeError', () => {
+    expect(() => jstDayRangeTimestamps('2026-02-30', '2026-03-01')).toThrow(RangeError);
+    expect(() => jstDayRangeTimestamps('2026-03-01', '2026/03/02')).toThrow(RangeError);
+  });
+});
+
+describe('jstDayOfTimestamp: 読めない時刻', () => {
+  it('時刻として読めない文字列は RangeError (黙って変な日付を返さない)', () => {
+    expect(() => jstDayOfTimestamp('not-a-time')).toThrow(RangeError);
+    expect(() => jstDayOfTimestamp('')).toThrow(RangeError);
   });
 });
 

@@ -14,7 +14,17 @@
 //           split('T')[0] で日付にする
 //   規則 B: 今の時刻 (`new Date()`) の月・日・曜日・年をローカル時刻で読む (`new Date().getMonth()` など)
 //   規則 C: supabase/functions の中で、ローカル時刻の Date のメソッド (getDate / setDate / getDay / getMonth など) を使う
+//   規則 D: ローカル時刻の年・月・日から作った Date (`new Date(y, m, d)` のように引数が 2 つ以上) を toISOString する
+//           (例: `new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10)`。ローカル時刻の 0 時を UTC に戻すので、
+//           実行環境のタイムゾーンで日付が変わる)。同じファイルで `const d = new Date(y, m, d)` と作った変数の toISOString も数える
+//   規則 E: 同じファイルでローカル時刻の setter (setDate / setMonth / setFullYear / setHours) を当てた変数を、
+//           toISOString して日付 (先頭 10 文字 / split('T')[0]) にする (例: `d.setDate(d.getDate() - 7); d.toISOString().slice(0, 10)`)
 // 例外は下の許可リストに、ファイルと件数と理由を書く (件数は「これ以上増やさない」上限ではなく、ちょうどの件数。直したら減らす)。
+//
+// 走査の限界 (構文だけを見るので、次は検出しない。レビューで見る):
+//   - 変数の追跡はファイルの中で名前が同じものだけ (スコープは区別しない)。別の関数・別のファイルに渡した Date は追わない
+//   - 規則 E は setter を当てた変数だけ。ローカル時刻の getter で読んだ値を自前で組み立てて文字列にする書き方
+//     (`${d.getFullYear()}-${d.getMonth() + 1}-...`) は、Web / Mobile の画面では利用者の端末の暦日として正しい使い方もあるので数えない
 //
 // 加えて、#1433 で直した箇所が JST の関数を使い続けていること (呼び出しが消えていないこと) も確かめる。
 
@@ -67,7 +77,7 @@ function listProductionSources(): string[] {
   return files.sort();
 }
 
-type Rule = 'A' | 'B' | 'C';
+type Rule = 'A' | 'B' | 'C' | 'D' | 'E';
 
 interface Finding {
   rule: Rule;
@@ -125,6 +135,74 @@ function isNumericLiteral(node: ts.Expression | undefined, value: number): boole
 /** 先頭 10 文字 (YYYY-MM-DD) を取り出す呼び出しの数 */
 const DATE_PART_LENGTH = 10;
 
+/** ローカル時刻の年・月・日から Date を作るときの引数の最小の数 (`new Date(y, m)` から。1 つだと時刻の値か文字列) */
+const LOCAL_COMPONENT_MIN_ARGS = 2;
+
+/** ローカル時刻を動かす Date の setter (規則 E) */
+const LOCAL_TIME_SETTERS = new Set(['setDate', 'setMonth', 'setFullYear', 'setHours']);
+
+/**
+ * node が「toISOString した文字列から日付を取り出す式」なら、toISOString の receiver を返す。
+ *   - <receiver>.toISOString().slice(0, 10) / substring(0, 10) / substr(0, 10)
+ *   - <receiver>.toISOString().split('T')[0]
+ */
+function datePartOfIsoReceiver(node: ts.Node): ts.Expression | null {
+  if (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    ['slice', 'substring', 'substr'].includes(node.expression.name.text) &&
+    isNumericLiteral(node.arguments[0], 0) &&
+    isNumericLiteral(node.arguments[1], DATE_PART_LENGTH)
+  ) {
+    return toIsoStringReceiver(node.expression.expression);
+  }
+  if (ts.isElementAccessExpression(node) && isNumericLiteral(node.argumentExpression, 0)) {
+    const call = skipParens(node.expression);
+    if (
+      ts.isCallExpression(call) &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      call.expression.name.text === 'split' &&
+      call.arguments.length === 1 &&
+      ts.isStringLiteralLike(call.arguments[0]) &&
+      call.arguments[0].text === 'T'
+    ) {
+      return toIsoStringReceiver(call.expression.expression);
+    }
+  }
+  return null;
+}
+
+/** `new Date(a, b, ...)` (ローカル時刻の年・月・日から作る Date) か */
+function isLocalComponentDate(node: ts.Expression): boolean {
+  const expr = skipParens(node);
+  return (
+    ts.isNewExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === 'Date' &&
+    (expr.arguments?.length ?? 0) >= LOCAL_COMPONENT_MIN_ARGS
+  );
+}
+
+/** ファイルの中で、規則 D・E が追う変数の名前を集める */
+function collectTrackedDateNames(sf: ts.SourceFile): { localComponent: Set<string>; locallyMutated: Set<string> } {
+  const localComponent = new Set<string>();
+  const locallyMutated = new Set<string>();
+  const visit = (node: ts.Node) => {
+    // const d = new Date(y, m, d)
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && isLocalComponentDate(node.initializer)) {
+      localComponent.add(node.name.text);
+    }
+    // d.setDate(...) など
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && LOCAL_TIME_SETTERS.has(node.expression.name.text)) {
+      const target = skipParens(node.expression.expression);
+      if (ts.isIdentifier(target)) locallyMutated.add(target.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return { localComponent, locallyMutated };
+}
+
 /** 本番コード 1 ファイルの検出結果 */
 function scanSource(file: string, source: string): Finding[] {
   const kind = file.endsWith('.tsx') || file.endsWith('.jsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
@@ -141,31 +219,26 @@ function scanSource(file: string, source: string): Finding[] {
     });
   };
 
+  const tracked = collectTrackedDateNames(sf);
+
   const visit = (node: ts.Node) => {
-    // 規則 A-1: <now>.toISOString().slice(0, 10) / substring(0, 10) / substr(0, 10)
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ['slice', 'substring', 'substr'].includes(node.expression.name.text) &&
-      isNumericLiteral(node.arguments[0], 0) &&
-      isNumericLiteral(node.arguments[1], DATE_PART_LENGTH)
-    ) {
-      const receiver = toIsoStringReceiver(node.expression.expression);
-      if (receiver && isNowDate(receiver)) push('A', node);
+    // 規則 A: <now>.toISOString().slice(0, 10) / substring(0, 10) / substr(0, 10) / split('T')[0]
+    const datePartReceiver = datePartOfIsoReceiver(node);
+    if (datePartReceiver && isNowDate(datePartReceiver)) push('A', node);
+    // 規則 E: ローカル時刻の setter を当てた変数を toISOString して日付にする
+    if (datePartReceiver) {
+      const receiver = skipParens(datePartReceiver);
+      if (ts.isIdentifier(receiver) && tracked.locallyMutated.has(receiver.text)) push('E', node);
     }
-    // 規則 A-2: <now>.toISOString().split('T')[0]
-    if (ts.isElementAccessExpression(node) && isNumericLiteral(node.argumentExpression, 0)) {
-      const call = skipParens(node.expression);
-      if (
-        ts.isCallExpression(call) &&
-        ts.isPropertyAccessExpression(call.expression) &&
-        call.expression.name.text === 'split' &&
-        call.arguments.length === 1 &&
-        ts.isStringLiteralLike(call.arguments[0]) &&
-        call.arguments[0].text === 'T'
-      ) {
-        const receiver = toIsoStringReceiver(call.expression.expression);
-        if (receiver && isNowDate(receiver)) push('A', node);
+    // 規則 D: ローカル時刻の年・月・日から作った Date (と、それで初期化した変数) の toISOString
+    // (括弧で囲んだ式を二重に数えないよう、呼び出しそのものだけを見る)
+    if (ts.isCallExpression(node)) {
+      const isoReceiver = toIsoStringReceiver(node);
+      if (isoReceiver) {
+        const receiver = skipParens(isoReceiver);
+        if (isLocalComponentDate(receiver) || (ts.isIdentifier(receiver) && tracked.localComponent.has(receiver.text))) {
+          push('D', node);
+        }
       }
     }
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
@@ -276,6 +349,14 @@ describe('走査そのもの', () => {
     ['const t = (new Date()).toISOString().slice(0, 10);', 'A'],
     ['const t = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);', 'A'],
     ['const m = new Date().getMonth() + 1;', 'B'],
+    // 規則 D: ローカル時刻の年・月・日から作った Date の toISOString (#1433 の finance/dashboard の書き方。複数行のチェーンでも)
+    ['const s = new Date(today.getFullYear(), today.getMonth(), 1)\n  .toISOString()\n  .slice(0, 10);', 'D'],
+    ['const s = new Date(y, m - 1, 0).toISOString();', 'D'],
+    ['const s = (new Date(y, m, 1).toISOString()).slice(0, 10);', 'D'],
+    ['const d = new Date(y, m, 1);\nconst s = d.toISOString().split("T")[0];', 'D'],
+    // 規則 E: ローカル時刻の setter を当てた変数を toISOString して日付にする
+    ['const d = new Date();\nd.setDate(d.getDate() - 7);\nconst s = d.toISOString().slice(0, 10);', 'E'],
+    ['const d = new Date(base);\nd.setMonth(d.getMonth() + 1);\nconst s = d.toISOString().split("T")[0];', 'E'],
   ] as const)('検出する: %s', (code, rule) => {
     expect(scanSource('src/example.ts', code).map((f) => f.rule)).toEqual([rule]);
   });
@@ -287,6 +368,9 @@ describe('走査そのもの', () => {
     'const ts = new Date().toISOString();', // 時刻 (timestamptz) はそのまま使ってよい
     '// const t = new Date().toISOString().slice(0, 10);', // コメントは見ない
     "const s = 'new Date().toISOString().slice(0, 10)';", // 文字列は見ない
+    'const ts = new Date(Date.UTC(y, m - 1, 1)).toISOString().slice(0, 10);', // Date.UTC は引数 1 つ (暦の計算)
+    'const d = new Date(Date.now()); d.setUTCDate(d.getUTCDate() - 7); const s = d.toISOString().slice(0, 10);', // UTC の setter
+    'const d = new Date(); d.setDate(d.getDate() + 30); const at = d.toISOString();', // 時刻 (timestamptz) のまま使う
   ])('検出しない: %s', (code) => {
     expect(scanSource('src/example.ts', code)).toEqual([]);
   });
@@ -300,7 +384,7 @@ describe('走査そのもの', () => {
 });
 
 describe('「今日」を UTC の暦日・ローカル時刻で決める書き方が本番コードに無い (#1433)', () => {
-  it('許可リストにないファイルに、規則 A / B / C の書き方が無い', () => {
+  it('許可リストにないファイルに、規則 A / B / C / D / E の書き方が無い', () => {
     const unexpected = findings.filter((f) => !ALLOWLIST.some((entry) => entry.file === f.file && entry.rule === f.rule));
     const message = unexpected
       .map(
@@ -349,7 +433,8 @@ const REQUIRED_CALLS: Record<string, string[]> = {
   'src/app/api/performance/analyze/route.ts': ['jstToday'],
   'src/app/api/performance/checkins/route.ts': ['jstToday', 'jstDayOffset'],
   'src/app/api/performance/plans/route.ts': ['jstToday'],
-  'src/app/api/super-admin/llm/usage/route.ts': ['llmUsageRange'],
+  'src/app/api/super-admin/llm/usage/route.ts': ['llmUsageRange', 'jstDayRangeTimestamps', 'jstDayOfTimestamp'],
+  'src/app/api/admin/finance/dashboard/route.ts': ['jstMonthBoundaries'],
   'src/app/api/menu-plans/add/route.ts': ['jstDayOffset'],
   'src/app/api/admin/finance/revenue/route.ts': ['jstDayOffset'],
   'src/app/api/org/owner-transfer/propose/route.ts': ['formatLocalDate'],
