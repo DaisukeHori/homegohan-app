@@ -4,7 +4,8 @@
  *   - getApi() が投げるエラー ("HTTP 403 Forbidden: {...}") と、fetch を直接使う画面のエラー ("HTTP 403: {...}") の両方を見分ける
  *   - ほかの 403・503 (判定に失敗)・通信エラーは見分けない (それぞれの画面のエラー表示に任せる)
  *   - 案内は「同意画面を開く」で /settings/ai-consent へ移る。短い間に何度呼ばれても 1 回だけ出す
- *   - beforeOpenConsentScreen を渡すと、「同意画面を開く」を押したときに、移る前に呼ぶ (下に開いたままのモーダルを閉じるため)
+ *   - beforeOpenConsentScreen を渡すと、「同意画面を開く」を押したときに、移る前に呼ぶ (下に開いたままのモーダルを閉じるため)。
+ *     handleAiConsentRequiredError にも同じものを渡せる (modal で開く画面が、自分を閉じてから移るため)
  */
 import { Alert } from "react-native";
 
@@ -114,6 +115,27 @@ describe("handleAiConsentRequiredError / promptAiConsentRequired", () => {
     expect(mockPush).toHaveBeenCalledWith(AI_CONSENT_SCREEN_PATH);
     // モーダルを閉じてから移る (移ってから閉じると、移る瞬間に同意画面がモーダルの下に入る)
     expect(beforeOpenConsentScreen.mock.invocationCallOrder[0]).toBeLessThan(mockPush.mock.invocationCallOrder[0]);
+  });
+
+  it("handleAiConsentRequiredError も案内の出し方 (beforeOpenConsentScreen) を受け取り、「同意画面を開く」で移る前に呼ぶ (modal で開く画面 meals/new のため)", () => {
+    const beforeOpenConsentScreen = jest.fn();
+    expect(handleAiConsentRequiredError(new Error(`HTTP 403 Forbidden: ${body}`), { beforeOpenConsentScreen })).toBe(true);
+    expect(beforeOpenConsentScreen).not.toHaveBeenCalled();
+    const [, , buttons] = (Alert.alert as jest.Mock).mock.calls[0] as [
+      string,
+      string,
+      Array<{ text: string; onPress?: () => void }>,
+    ];
+    buttons.find((b) => b.text === "同意画面を開く")!.onPress!();
+    expect(beforeOpenConsentScreen).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith(AI_CONSENT_SCREEN_PATH);
+    expect(beforeOpenConsentScreen.mock.invocationCallOrder[0]).toBeLessThan(mockPush.mock.invocationCallOrder[0]);
+    // 同意が必要でない失敗では、案内も出さず、渡した関数も呼ばない
+    jest.clearAllMocks();
+    resetAiConsentPromptForTests();
+    expect(handleAiConsentRequiredError(new Error("通信できません"), { beforeOpenConsentScreen })).toBe(false);
+    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(beforeOpenConsentScreen).not.toHaveBeenCalled();
   });
 });
 

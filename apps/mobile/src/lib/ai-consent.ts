@@ -23,11 +23,18 @@
  * モーダルの上に開く子のモーダル (1日献立の作成・写真の解析・献立の改善) は自分で案内を出さない。自分を閉じてから、
  * 開いた側から受け取った onAiConsentRequired を呼ぶ。開いた側が自分 (と、その下のモーダル) を上の規則で閉じて案内を出す
  * (子が自分だけを閉じて案内を出すと、下に開いたままの親のモーダルが同意画面を隠す)。
+ * 画面そのものがモーダルのこともある: ルートの Stack で presentation: "modal" として開く画面 (apps/mobile/app/_layout.tsx の
+ * meals/new)。iOS のネイティブのスタックは、modal の画面のあとに push した画面を modal の下 (push の積み重ね) に入れるので、
+ * その画面から同意画面へ移ると、同意画面が modal の画面の下に隠れる。modal で開く画面は、案内に
+ * { beforeOpenConsentScreen: useLeaveModalRouteBeforeConsentScreen() の戻り値 } を渡し、「同意画面を開く」を押したときに
+ * 自分を閉じてから移る (handleAiConsentRequiredError(e, options) / promptAiConsentRequired(options))。
+ * modal で開く画面の一覧と、そこで出す案内がこの形であることは tests/ai-consent-mobile-modal-nesting.test.ts が検査する。
  * 画面を開くと自動で AI に送る処理 (栄養士のコメントなど) は handleAiConsentRequiredError を使わず、
  * isAiConsentRequiredError で見分けて、案内の一文 (AI_CONSENT_AUTOMATIC_LOCKED_NOTE) だけを出す (勝手に案内を出さない)。
  */
+import { useCallback } from "react";
 import { Alert } from "react-native";
-import { router } from "expo-router";
+import { router, useNavigation } from "expo-router";
 
 import {
   AI_CONSENT_AUTOMATIC_LOCKED_NOTE,
@@ -127,11 +134,30 @@ export function promptAiConsentRequired(options: PromptAiConsentOptions = {}): v
   ]);
 }
 
-/** API の失敗が「同意が必要です」なら案内を出して true を返す。呼び出し側は true なら自分のエラー表示を省く */
-export function handleAiConsentRequiredError(error: unknown): boolean {
+/**
+ * API の失敗が「同意が必要です」なら案内を出して true を返す。呼び出し側は true なら自分のエラー表示を省く。
+ * options は案内の出し方 (promptAiConsentRequired と同じ)。modal で開く画面は beforeOpenConsentScreen を渡す (先頭の説明)
+ */
+export function handleAiConsentRequiredError(error: unknown, options: PromptAiConsentOptions = {}): boolean {
   if (!isAiConsentRequiredError(error)) return false;
-  promptAiConsentRequired();
+  promptAiConsentRequired(options);
   return true;
+}
+
+/**
+ * ルートの Stack で presentation: "modal" として開く画面 (meals/new) が、案内の beforeOpenConsentScreen に渡す関数を返す。
+ * 「同意画面を開く」を押したときに、その画面を閉じる (閉じてから同意画面へ移るので、同意画面が modal の画面の下に隠れない)。
+ * 閉じるのは、その画面がいまの一番上 (フォーカスがある) で、戻る先があるときだけ:
+ *   - 一番上でない: 案内が出る前に利用者が画面を閉じた (解析を待つ間に下へスワイプした) など。このとき router.back() は
+ *     別の画面を閉じてしまう
+ *   - 戻る先が無い: その画面がスタックの先頭 (リンクから直接開いた)。先頭の画面は modal の指定でも push として積まれるので、
+ *     同意画面はその上に出る (閉じなくてよい)
+ */
+export function useLeaveModalRouteBeforeConsentScreen(): () => void {
+  const navigation = useNavigation();
+  return useCallback(() => {
+    if (navigation.isFocused() && router.canGoBack()) router.back();
+  }, [navigation]);
 }
 
 /**

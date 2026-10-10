@@ -22,8 +22,13 @@
  *      (closeAllModals) が、閉じるのは週の画面が持つモーダルだけなので、その上に重ねたモーダルが残ると同意画面を隠す
  *   4. 走査が空振りしていない (いまの入れ子の組と、自分で案内を出す部品を見つけている)
  *   5. 検査そのものが、R4 の不具合の形を見つける
+ *   6. 画面そのものがモーダルのとき: Stack.Screen の presentation が card 以外 (modal など) の画面は、iOS では、
+ *      そこから push した同意画面がその画面の下に隠れる (R5 の指摘: 食事の新規作成 meals/new)。その画面のファイルの中で出す案内は
+ *      すべて、beforeOpenConsentScreen に useLeaveModalRouteBeforeConsentScreen() の戻り値 (画面を閉じる関数) を渡す。
+ *      自分で案内を出す部品・フックを、その画面に置かない (置くと、その部品は画面を閉じずに案内を出す)
  * 挙動 (シート・モーダルを閉じてから案内を出す) は、apps/mobile/__tests__ の advisor-sheet-consent・manual-edit-photo-consent・
- * improve-consent の jest のテストが、重ねたモーダルが親と一緒に閉じることは stacked-modals-close-with-parent が確かめる。
+ * improve-consent の jest のテストが、重ねたモーダルが親と一緒に閉じることは stacked-modals-close-with-parent が、
+ * modal で開く画面 (meals/new) が自分を閉じてから同意画面へ移ることは meals/new-consent が確かめる。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,6 +43,16 @@ const PROMPTERS = ['promptAiConsentRequired', 'handleAiConsentRequiredError', 'h
 
 /** onAiConsentRequired を渡さないと、自分で案内を出すフック (apps/mobile/src/hooks/useV4MenuGeneration.ts) */
 const HOOKS_PROMPTING_BY_DEFAULT = ['useV4MenuGeneration'];
+
+/**
+ * 同意画面のパス (apps/mobile/src/lib/ai-consent.ts の AI_CONSENT_SCREEN_PATH)。案内を通さずに同意画面へ直接移る部品
+ * (AI の分析を省いた旨の表示 AiSkippedNotice の「同意画面を開く」など) も、モーダルの中に置くと同意画面を隠すので、
+ * 「自分で案内を出す」と同じに数える
+ */
+const CONSENT_SCREEN_PATH_CONSTANT = 'AI_CONSENT_SCREEN_PATH';
+const CONSENT_SCREEN_PATH = '/settings/ai-consent';
+/** 画面を移る router のメソッド (expo-router の router.push / navigate / replace) */
+const ROUTER_MOVES = ['push', 'navigate', 'replace'];
 
 const MODAL_TAG = 'Modal';
 
@@ -124,6 +139,25 @@ function calleeName(node: ts.CallExpression): string | null {
   return ts.isIdentifier(node.expression) ? node.expression.text : null;
 }
 
+function isConsentScreenTarget(expr: ts.Expression | undefined): boolean {
+  if (!expr) return false;
+  const e = unparen(expr);
+  return isIdentifierNamed(e, CONSENT_SCREEN_PATH_CONSTANT) || (ts.isStringLiteralLike(e) && e.text === CONSENT_SCREEN_PATH);
+}
+
+/** 同意画面へ直接移る: router.push(AI_CONSENT_SCREEN_PATH) など、または <Link href={AI_CONSENT_SCREEN_PATH}> */
+function opensConsentScreenDirectly(node: ts.Node): boolean {
+  if (ts.isCallExpression(node)) {
+    return ts.isPropertyAccessExpression(node.expression) && ROUTER_MOVES.includes(node.expression.name.text) && isConsentScreenTarget(node.arguments[0]);
+  }
+  if (ts.isJsxAttribute(node) && node.name.getText() === 'href' && node.initializer) {
+    const init = node.initializer;
+    if (ts.isStringLiteral(init)) return init.text === CONSENT_SCREEN_PATH;
+    return ts.isJsxExpression(init) && isConsentScreenTarget(init.expression);
+  }
+  return false;
+}
+
 /** useV4MenuGeneration(...) の呼び出しが、onAiConsentRequired を渡していない (= フックが自分で案内を出す) か */
 function hookPromptsByDefault(call: ts.CallExpression): boolean {
   const arg = call.arguments[0];
@@ -152,7 +186,7 @@ interface ComponentInfo {
   modalVisibleFromProp: boolean;
   children: Set<string>;
   childElements: ChildElement[];
-  /** 自分で案内を出す (直接の呼び出し。フック経由は下で足す) */
+  /** 自分で案内を出す、または同意画面へ直接移る (直接の呼び出し。フック経由は下で足す) */
   promptsDirectly: boolean;
   /** 呼んでいるフック (use で始まる関数) */
   hooks: Set<string>;
@@ -188,6 +222,7 @@ function collectComponents(files: Array<{ file: string; text: string }>): Compon
             visibleFollowsParent: followsParentVisible(visibleAttribute(node as ts.JsxOpeningElement | ts.JsxSelfClosingElement)),
           });
         }
+        if (opensConsentScreenDirectly(node)) info.promptsDirectly = true;
         if (ts.isCallExpression(node)) {
           const callee = calleeName(node);
           if (!callee) return;
@@ -263,7 +298,8 @@ describe('モーダルの上に開く部品は、「同意が必要です」の�
       expect.arrayContaining(['AIAdvisorSheet → AIDayMenuModal', 'ManualEditModal → PhotoEditModal', 'NutritionDetailModal → ImproveMealModal']),
     );
     const prompting = promptingNames(components);
-    for (const name of ['AIAdvisorSheet', 'ManualEditModal', 'NutritionDetailModal', 'RegenerateMealModal', 'useHomeData']) {
+    // AiSkippedNotice は案内を通さずに同意画面へ直接移る (router.push(AI_CONSENT_SCREEN_PATH))
+    for (const name of ['AIAdvisorSheet', 'ManualEditModal', 'NutritionDetailModal', 'RegenerateMealModal', 'useHomeData', 'AiSkippedNotice']) {
       expect(prompting.has(name), name).toBe(true);
     }
   });
@@ -338,5 +374,357 @@ describe('モーダルの上に開く部品は、「同意が必要です」の�
       function useThing() { return () => handleAiConsentRequiredError(new Error('x')); }
     `);
     expect(nestedPrompters(viaHook)).toEqual(['example.tsx: Parent → Child']);
+    // 案内を通さずに同意画面へ直接移る子 (AiSkippedNotice の形・<Link href>) も見つける
+    const direct = example(`
+      function Parent() { return (<><Modal visible /><Notice /><Linker /></>); }
+      function Notice() { return <Button onPress={() => router.push(AI_CONSENT_SCREEN_PATH)} />; }
+      function Linker() { return <Link href="/settings/ai-consent" />; }
+    `);
+    expect(nestedPrompters(direct)).toEqual(['example.tsx: Parent → Linker', 'example.tsx: Parent → Notice']);
+  });
+});
+
+// ─────────────────────────────────────────────
+// 6. 画面そのものがモーダル (Stack.Screen の presentation が card 以外) のとき
+// ─────────────────────────────────────────────
+
+const APP_DIR = 'apps/mobile/app';
+
+/**
+ * ネイティブのスタックで push として積む presentation (指定しないときも card)。これ以外 (modal / fullScreenModal / formSheet /
+ * transparentModal / containedModal など) は、iOS の react-native-screens が modal として重ねる。そのあとに push した画面は
+ * modal の下 (push の積み重ね) に入る (node_modules/react-native-screens/ios/RNSScreenStack.mm の updateContainer)
+ */
+const PUSH_PRESENTATIONS = ['card'];
+
+/** modal で開く画面が、案内の beforeOpenConsentScreen に渡す関数を作るフック (apps/mobile/src/lib/ai-consent.ts) */
+const LEAVE_MODAL_ROUTE_HOOK = 'useLeaveModalRouteBeforeConsentScreen';
+
+const STACK_SCREEN_TAG = 'Stack.Screen';
+const STACK_TAG = 'Stack';
+const LAYOUT_FILE = /(^|\/)_layout\.tsx?$/;
+const ROUTE_FILE_SUFFIXES = ['.tsx', '.ts', '/index.tsx', '/index.ts'];
+
+/** modal で開く画面 1 つ (どのレイアウトの、どの名前の画面か) */
+interface ModalRoute {
+  /** presentation を指定したファイル */
+  declaredIn: string;
+  /** Stack.Screen の name (画面のファイルの中で自分に指定したときは null) */
+  name: string | null;
+  presentation: string;
+  /** その画面のファイル (グループのレイアウトなら、その下の全ファイル) */
+  files: string[];
+}
+
+function jsxTagText(node: ts.Node): string | null {
+  if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) return node.tagName.getText();
+  return null;
+}
+
+function jsxAttribute(node: ts.JsxOpeningElement | ts.JsxSelfClosingElement, name: string): ts.JsxAttribute | undefined {
+  return node.attributes.properties.find((p): p is ts.JsxAttribute => ts.isJsxAttribute(p) && p.name.getText() === name);
+}
+
+/** 属性の値が文字列ならその文字列 (name="x" / name={"x"})。それ以外は null */
+function stringAttribute(attr: ts.JsxAttribute | undefined): string | null {
+  const init = attr?.initializer;
+  if (!init) return null;
+  if (ts.isStringLiteral(init)) return init.text;
+  if (ts.isJsxExpression(init) && init.expression && ts.isStringLiteralLike(init.expression)) return init.expression.text;
+  return null;
+}
+
+function propertyNamed(obj: ts.ObjectLiteralExpression, name: string): ts.ObjectLiteralElementLike | undefined {
+  return obj.properties.find((p) => p.name !== undefined && ts.isIdentifier(p.name) && p.name.text === name);
+}
+
+/**
+ * options={{ presentation: "…" }} / screenOptions={{ … }} から presentation を読む。
+ * 指定なしは card。読めない形 (変数・関数・文字列でない値) は null (検査が見落とさないよう、呼び出し側で失敗にする)
+ */
+function presentationOf(attr: ts.JsxAttribute | undefined): string | null {
+  if (!attr) return 'card';
+  const init = attr.initializer;
+  if (!init || !ts.isJsxExpression(init) || !init.expression) return null;
+  const expr = unparen(init.expression);
+  if (!ts.isObjectLiteralExpression(expr)) return null;
+  const prop = propertyNamed(expr, 'presentation');
+  // { ...共通の設定 } は中に presentation があるかを読めない
+  if (!prop) return expr.properties.some(ts.isSpreadAssignment) ? null : 'card';
+  if (ts.isPropertyAssignment(prop) && ts.isStringLiteralLike(prop.initializer)) return prop.initializer.text;
+  return null;
+}
+
+/** 画面の名前 → ファイル。グループ (そのフォルダに _layout がある) なら、その下の全ファイル */
+function routeFiles(dir: string, name: string, exists: (file: string) => boolean, listUnder: (dir: string) => string[]): string[] {
+  const base = `${dir}/${name}`;
+  if (exists(`${base}/_layout.tsx`) || exists(`${base}/_layout.ts`)) return listUnder(base);
+  return ROUTE_FILE_SUFFIXES.map((suffix) => `${base}${suffix}`).filter(exists);
+}
+
+function collectModalRoutes(
+  files: Array<{ file: string; text: string }>,
+  exists: (file: string) => boolean,
+  listUnder: (dir: string) => string[],
+): { routes: ModalRoute[]; unreadable: string[] } {
+  const routes: ModalRoute[] = [];
+  const unreadable: string[] = [];
+  for (const { file, text } of files) {
+    const sf = parseText(file, text);
+    const isLayout = LAYOUT_FILE.test(file);
+    const dir = path.posix.dirname(file);
+    walk(sf, (node) => {
+      const tag = jsxTagText(node);
+      if (tag !== STACK_SCREEN_TAG && tag !== STACK_TAG) return;
+      const element = node as ts.JsxOpeningElement | ts.JsxSelfClosingElement;
+      const attrName = tag === STACK_TAG ? 'screenOptions' : 'options';
+      const presentation = presentationOf(jsxAttribute(element, attrName));
+      const where = `${file}: <${tag} ${attrName}>`;
+      if (presentation === null) {
+        unreadable.push(`${where} の presentation を読めない`);
+        return;
+      }
+      if (PUSH_PRESENTATIONS.includes(presentation)) return;
+      if (tag === STACK_TAG) {
+        // 画面すべてを modal で開く書き方。この検査は画面ごとの指定 (Stack.Screen) だけを読むので、広げてから使うこと
+        unreadable.push(`${where} で全画面を ${presentation} にしている (検査が未対応)`);
+        return;
+      }
+      const name = stringAttribute(jsxAttribute(element, 'name'));
+      if (!isLayout) {
+        // 画面のファイルの中で自分に指定した (<Stack.Screen options={{ presentation }} />)
+        routes.push({ declaredIn: file, name, presentation, files: [file] });
+        return;
+      }
+      if (name === null) {
+        unreadable.push(`${where} の name を読めない`);
+        return;
+      }
+      const targets = routeFiles(dir, name, exists, listUnder);
+      if (targets.length === 0) unreadable.push(`${where}: ${name} の画面のファイルが見つからない`);
+      routes.push({ declaredIn: file, name, presentation, files: targets });
+    });
+  }
+  return { routes, unreadable: unreadable.sort() };
+}
+
+/** node を含む、名前のあるいちばん内側の関数の名前 (function f / const f = () => / const f = function) */
+function ownerName(node: ts.Node): string {
+  for (let cur: ts.Node | undefined = node.parent; cur; cur = cur.parent) {
+    if (ts.isFunctionDeclaration(cur) && cur.name) return cur.name.text;
+    if ((ts.isArrowFunction(cur) || ts.isFunctionExpression(cur)) && ts.isVariableDeclaration(cur.parent) && ts.isIdentifier(cur.parent.name)) {
+      return cur.parent.name.text;
+    }
+  }
+  return '(ファイル直下)';
+}
+
+/**
+ * modal で開く画面のファイルの中の、案内を出す場所を調べる。
+ *   - checked: 調べた案内の呼び出し (ファイル::それを含む関数の名前::呼んだ関数)
+ *   - violations: 画面を閉じずに案内を出す場所
+ * 「画面を閉じる」= beforeOpenConsentScreen の値が、useLeaveModalRouteBeforeConsentScreen() の戻り値を入れた変数か、それを呼ぶ関数
+ */
+function modalRoutePromptViolations(file: string, text: string, prompting: Set<string>): { checked: string[]; violations: string[] } {
+  const sf = parseText(file, text);
+  const leaveFns = new Set<string>();
+  walk(sf, (node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer) &&
+      calleeName(node.initializer) === LEAVE_MODAL_ROUTE_HOOK
+    ) {
+      leaveFns.add(node.name.text);
+    }
+  });
+  const callsLeave = (body: ts.Node): boolean => {
+    let found = false;
+    walk(body, (n) => {
+      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && leaveFns.has(n.expression.text)) found = true;
+    });
+    return found;
+  };
+  const leaves = (expr: ts.Expression): boolean => {
+    const e = unparen(expr);
+    if (ts.isIdentifier(e)) return leaveFns.has(e.text);
+    if (ts.isArrowFunction(e) || ts.isFunctionExpression(e)) return callsLeave(e.body);
+    return false;
+  };
+  const hasLeaveOption = (arg: ts.Expression | undefined): boolean => {
+    if (!arg) return false;
+    const e = unparen(arg);
+    if (!ts.isObjectLiteralExpression(e)) return false;
+    const prop = propertyNamed(e, 'beforeOpenConsentScreen');
+    if (!prop) return false;
+    if (ts.isShorthandPropertyAssignment(prop)) return leaveFns.has(prop.name.text);
+    if (ts.isPropertyAssignment(prop)) return leaves(prop.initializer);
+    if (ts.isMethodDeclaration(prop)) return prop.body !== undefined && callsLeave(prop.body);
+    return false;
+  };
+
+  const checked: string[] = [];
+  const violations: string[] = [];
+  walk(sf, (node) => {
+    const line = sf.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+    const tag = jsxTagName(node);
+    if (tag && /^[A-Z]/.test(tag) && prompting.has(tag)) {
+      violations.push(`${file}:${line} <${tag}> (自分で案内を出す部品)`);
+    }
+    if (opensConsentScreenDirectly(node)) {
+      // 案内を通さずに移ると、画面を閉じる機会が無い。案内 (beforeOpenConsentScreen で画面を閉じる) を使う
+      violations.push(`${file}:${line} 同意画面へ直接移る`);
+      return;
+    }
+    if (!ts.isCallExpression(node)) return;
+    const callee = calleeName(node);
+    if (!callee) return;
+    if (HOOKS_PROMPTING_BY_DEFAULT.includes(callee)) {
+      if (hookPromptsByDefault(node)) violations.push(`${file}:${line} ${callee} (onAiConsentRequired を渡していない)`);
+      return;
+    }
+    if (/^use[A-Z]/.test(callee) && prompting.has(callee)) {
+      violations.push(`${file}:${line} ${callee} (自分で案内を出すフック)`);
+      return;
+    }
+    if (!PROMPTERS.includes(callee)) return;
+    checked.push(`${file}::${ownerName(node)}::${callee}`);
+    let ok: boolean;
+    if (callee === 'promptAiConsentRequired') ok = hasLeaveOption(node.arguments[0]);
+    else if (callee === 'handleAiConsentRequiredError') ok = hasLeaveOption(node.arguments[1]);
+    else {
+      // handleStoredAiConsentFailure(stored, prompt): 既定 (promptAiConsentRequired そのもの) では画面を閉じない。
+      // 渡した prompt の中の promptAiConsentRequired の呼び出しは、それ自体をこの検査が見る
+      const prompt = node.arguments[1];
+      ok = prompt !== undefined && !isIdentifierNamed(prompt, 'promptAiConsentRequired');
+    }
+    if (!ok) violations.push(`${file}:${line} ${callee} (beforeOpenConsentScreen で画面を閉じていない)`);
+  });
+  return { checked: checked.sort(), violations: violations.sort() };
+}
+
+function mobileModalRoutes(): { routes: ModalRoute[]; unreadable: string[] } {
+  const appFiles = listSources(APP_DIR).map((file) => ({ file, text: fs.readFileSync(path.join(ROOT, file), 'utf8') }));
+  return collectModalRoutes(
+    appFiles,
+    (file) => fs.existsSync(path.join(ROOT, file)),
+    (dir) => listSources(dir),
+  );
+}
+
+describe('画面そのものが modal (Stack.Screen の presentation が card 以外) なら、その画面で出す案内は画面を閉じてから同意画面へ移る', () => {
+  const components = mobileComponents();
+  const prompting = promptingNames(components);
+  const { routes, unreadable } = mobileModalRoutes();
+
+  it('走査が空振りしていない: 食事の新規作成 (meals/new) を modal で開く画面として見つけ、5 つの解析の経路の案内を調べている', () => {
+    expect(unreadable).toEqual([]);
+    const mealsNew = routes.find((r) => r.name === 'meals/new');
+    expect(mealsNew).toEqual({
+      declaredIn: 'apps/mobile/app/_layout.tsx',
+      name: 'meals/new',
+      presentation: 'modal',
+      files: ['apps/mobile/app/meals/new.tsx'],
+    });
+    const file = 'apps/mobile/app/meals/new.tsx';
+    const { checked } = modalRoutePromptViolations(file, fs.readFileSync(path.join(ROOT, file), 'utf8'), prompting);
+    expect(checked).toEqual(
+      expect.arrayContaining(
+        ['analyzeByMode', 'analyzeFridge', 'analyzeHealthCheckup', 'analyzeMealPhoto', 'analyzeWeightScale'].map(
+          (fn) => `${file}::${fn}::handleAiConsentRequiredError`,
+        ),
+      ),
+    );
+  });
+
+  it('modal で開く画面のファイルの中で、画面を閉じずに案内を出す場所が無い', () => {
+    const violations = routes.flatMap((route) =>
+      route.files.flatMap((file) => modalRoutePromptViolations(file, fs.readFileSync(path.join(ROOT, file), 'utf8'), prompting).violations),
+    );
+    expect(violations).toEqual([]);
+  });
+
+  it('検査そのものの確かめ: レイアウトの presentation を読み、card・指定なし以外を modal の画面として数える。読めない形は失敗にする', () => {
+    const layout = `
+      export default function Layout() {
+        return (
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="card" options={{ presentation: "card" }} />
+            <Stack.Screen name="sheet" options={{ presentation: "formSheet" }} />
+            <Stack.Screen name="group" options={{ presentation: "fullScreenModal" }} />
+            <Stack.Screen name="fn" options={() => ({ presentation: "modal" })} />
+            <Stack.Screen name="spread" options={{ ...modalOptions }} />
+          </Stack>
+        );
+      }
+    `;
+    const page = `export default function Page() { return <Stack.Screen options={{ presentation: "modal" }} />; }`;
+    const all = `export default function Layout() { return <Stack screenOptions={{ presentation: "modal" }} />; }`;
+    const existing = new Set(['app/sheet.tsx', 'app/group/_layout.tsx', 'app/fn.tsx']);
+    const { routes: found, unreadable: bad } = collectModalRoutes(
+      [
+        { file: 'app/_layout.tsx', text: layout },
+        { file: 'app/self.tsx', text: page },
+        { file: 'app/all/_layout.tsx', text: all },
+      ],
+      (file) => existing.has(file),
+      (dir) => (dir === 'app/group' ? ['app/group/_layout.tsx', 'app/group/a.tsx'] : []),
+    );
+    expect(found).toEqual([
+      { declaredIn: 'app/_layout.tsx', name: 'sheet', presentation: 'formSheet', files: ['app/sheet.tsx'] },
+      { declaredIn: 'app/_layout.tsx', name: 'group', presentation: 'fullScreenModal', files: ['app/group/_layout.tsx', 'app/group/a.tsx'] },
+      { declaredIn: 'app/self.tsx', name: null, presentation: 'modal', files: ['app/self.tsx'] },
+    ]);
+    expect(bad).toEqual([
+      'app/_layout.tsx: <Stack.Screen options> の presentation を読めない',
+      'app/_layout.tsx: <Stack.Screen options> の presentation を読めない',
+      'app/all/_layout.tsx: <Stack screenOptions> で全画面を modal にしている (検査が未対応)',
+    ]);
+  });
+
+  it('検査そのものの確かめ: R5 の不具合の形 (modal の画面が画面を閉じずに案内を出す) を見つけ、閉じる形は通す', () => {
+    const check = (text: string, promptingNamesInExample: string[] = []) =>
+      modalRoutePromptViolations('route.tsx', text, new Set(promptingNamesInExample)).violations;
+    // R5 の形: 案内に何も渡さない
+    expect(check(`export default function Page() { async function f() { try {} catch (e) { if (handleAiConsentRequiredError(e)) return; } } }`)).toEqual([
+      'route.tsx:1 handleAiConsentRequiredError (beforeOpenConsentScreen で画面を閉じていない)',
+    ]);
+    // 渡しても、画面を閉じない関数なら通さない
+    expect(
+      check(`export default function Page() { promptAiConsentRequired({ beforeOpenConsentScreen: () => {} }); handleStoredAiConsentFailure(x); handleStoredAiConsentFailure(x, promptAiConsentRequired); }`),
+    ).toEqual([
+      'route.tsx:1 handleStoredAiConsentFailure (beforeOpenConsentScreen で画面を閉じていない)',
+      'route.tsx:1 handleStoredAiConsentFailure (beforeOpenConsentScreen で画面を閉じていない)',
+      'route.tsx:1 promptAiConsentRequired (beforeOpenConsentScreen で画面を閉じていない)',
+    ]);
+    // 直した形: useLeaveModalRouteBeforeConsentScreen() の戻り値 (そのまま・省略記法・それを呼ぶ関数) を渡す
+    expect(
+      check(`
+        export default function Page() {
+          const leave = useLeaveModalRouteBeforeConsentScreen();
+          const beforeOpenConsentScreen = useLeaveModalRouteBeforeConsentScreen();
+          handleAiConsentRequiredError(e, { beforeOpenConsentScreen: leave });
+          promptAiConsentRequired({ beforeOpenConsentScreen });
+          handleStoredAiConsentFailure(x, () => promptAiConsentRequired({ beforeOpenConsentScreen: () => { setOpen(false); leave(); } }));
+        }
+      `),
+    ).toEqual([]);
+    // 案内を通さずに同意画面へ直接移る (画面を閉じる機会が無い)
+    expect(
+      check(`export default function Page() { const go = () => router.push(AI_CONSENT_SCREEN_PATH); return <Link href="/settings/ai-consent" />; }`),
+    ).toEqual(['route.tsx:1 同意画面へ直接移る', 'route.tsx:1 同意画面へ直接移る']);
+    // 自分で案内を出す部品・フックを置く、onAiConsentRequired を渡さずに生成のフックを使う
+    expect(
+      check(
+        `export default function Page() { useThing(); useV4MenuGeneration({}); return <Sheet />; }`,
+        ['Sheet', 'useThing'],
+      ),
+    ).toEqual([
+      'route.tsx:1 <Sheet> (自分で案内を出す部品)',
+      'route.tsx:1 useThing (自分で案内を出すフック)',
+      'route.tsx:1 useV4MenuGeneration (onAiConsentRequired を渡していない)',
+    ]);
   });
 });
