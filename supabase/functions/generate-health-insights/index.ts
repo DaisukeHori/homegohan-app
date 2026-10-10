@@ -47,6 +47,9 @@ function lookbackDaysOf(periodType: string): number {
   return MONTHLY_LOOKBACK_DAYS;
 }
 
+/** 500 の本文に返す汎用の文言。内部のエラー文は返さない (#1172) */
+const GENERIC_ERROR_MESSAGE = "ヘルスインサイトの生成に失敗しました";
+
 Deno.serve(async (req) => {
   // 許可したオリジンにだけ CORS ヘッダーを付ける (#1167)
   const corsHeaders = getCorsHeaders(req);
@@ -191,8 +194,10 @@ Deno.serve(async (req) => {
       error,
       { periodType: _periodType },
     );
+    // 生のエラー文 (テーブル名・列名・制約名や外部 API の応答を含み得る) はクライアントに返さない (#1172 / #1432)。
+    // 原因は上の構造化ログ (app_logs) に残っている。
     return new Response(
-      JSON.stringify({ error: error.message || "Internal server error" }),
+      JSON.stringify({ error: GENERIC_ERROR_MESSAGE }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
