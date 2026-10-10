@@ -25,6 +25,8 @@
  *       docs/design/cross/04-api-conventions.md §5.2 の形。
  *
  * 4xx の検証メッセージ (こちらが書いた文面) はこの関数の対象外。そのまま返してよい。
+ * ただし catch で受けた例外の文面は、4xx でも本文に入れない (try の中で throw した DB のエラーが届くため)。
+ * 入れてよいのは `err instanceof AuthError` / `ForbiddenError` など、文面をこちらで書いている例外のクラスに絞り込んだ分岐の中だけ。
  * 応答の本文にエラーの message / details / hint を入れていないことは、tests/api-raw-error-message-scan.test.ts が
  * src/app/api の全 route を走査して確かめる (1 件でもあれば失敗する)。
  * route が本文に入れる値を作る src/lib のヘルパー (結果の error / message を返すもの) も、DB の生のエラー文を返さない。

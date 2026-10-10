@@ -35,15 +35,29 @@
  *   (`insertError` / `rpcError` / `uploadError`)、または `.error` / `.xxxError` のプロパティ (`result.error` / `parsed.error`)。
  *
  * 数えないもの:
- *   - ステータスが 4xx だと分かる応答で、エラーが DB の結果ではないもの。
- *     AuthError / ForbiddenError の文面 (401 / 403) や zod の検証メッセージ (400) のように、こちらが書いた文面を返す経路のため。
+ *   - ステータスが 4xx だと分かる応答で、本文に入れたエラーの文面が全て「こちらが書いた文面」と分かるもの。
+ *     4xx でも、DB の生のエラー文や、何が入っているか分からない例外の文面は利用者に見せない。
+ *     「こちらが書いた文面」と分かるのは、次の 2 つだけ:
+ *       (1) 文面をこちらで書いている例外のクラス (TRUSTED_ERROR_CLASSES: AuthError / ForbiddenError / ZodError /
+ *           CouponApplyError) で `err instanceof AuthError` と絞り込んだ if / 三項演算子 / && の中で読んだもの
+ *           (`if (err instanceof AuthError) return NextResponse.json({ error: { code: err.code, message: err.message } }, { status: 401 })`)。
+ *           `||` は全ての項が、`&&` はどれか 1 つの項がこの形のときに絞り込みとみなす。
+ *           関数の境界はまたがない。`if (!(err instanceof AuthError)) return ...` のあとの早期 return による絞り込みは見ない (数える)
+ *       (2) 同期の関数の結果から取り出したもの (`const parsed = schema.safeParse(body); parsed.error.message` /
+ *           `const { error: slotsError } = validateTargetSlots(raw)`)。zod などの検証の文面
  *     ステータスは、リテラル (400〜499)・その分岐 (`a ? 403 : 400`)・それを入れた const (`const status = a ? 404 : 422`) から読む。
- *   - ただし DB の結果 (await の結果から取り出した error。`const { error } = await supabase...` / `const r = await ...; r.error`)
- *     の文面は、4xx でも違反として数える (DB の生のエラー文は、ステータスに関わらず利用者に見せない)。
+ *   - 逆に、4xx でも数えるもの:
+ *     - catch で受けた変数 (と、それをたどった値)。try の中で `if (error) throw error` すると、DB の生のエラーがそのまま届く。
+ *       `error instanceof Error` は絞り込みとみなさない (DB のエラーも Error のことがある)
+ *     - await の結果 (DB・外の API・Edge Function の応答) から取り出したもの
+ *       (`const { error } = await supabase...` / `const r = await ...; r.error` / `const { error } = r` の r が await の結果)
+ *     - 関数の引数 (`.catch((err) => ...)` / `function toResponse(error)`)・宣言の見えない名前・`let error;` のあとで代入したもの
  *   - ステータスが分からない応答 (`{ status: mapped }` など) は「違反」として数える (安全側)。
  *
  * 見ないもの (検出できない書き方。レビューで見る):
  *   別の関数に message を渡して、その中で JSON にする / 後から代入する `let message; message = error.message` /
+ *   同期の関数が、受け取った例外の文面をそのまま結果に入れて返す (`const r = describe(err); r.error`) /
+ *   絞り込んだあとで catch の変数に別の値を代入し直す /
  *   エラーらしくない名前の変数 (`catch (reason)` の外で `const reason = ...` など) / DB に保存した文面をあとで返す。
  *   src/lib のヘルパーが結果に入れて返す文 (route は `result.error` をそのまま本文に入れる) は、
  *   tests/lib-raw-error-message-scan.test.ts が src/lib の側で見る (ヘルパーが DB の生のエラー文を結果に入れていたら失敗する)。
@@ -84,6 +98,15 @@ const MAX_RESOLVE_DEPTH = 3;
 const UPSTREAM_ERROR_PROPERTY = 'error';
 /** 利用者からの要求 (route の引数) の名前。`await request.json()` は外の応答ではない */
 const OWN_REQUEST_NAMES = new Set(['request', 'req']);
+/**
+ * 文面をこちらで書いている例外のクラス。`err instanceof <これ>` で絞り込んだ分岐の中なら、err.message を 4xx で返してよい。
+ *   AuthError / ForbiddenError: src/lib/auth/errors.ts。文面は code か、投げる側が渡した固定の文 (src/lib/auth/helpers.ts)
+ *   ZodError: zod の検証の文面 (利用者の入力の誤り)
+ *   CouponApplyError: src/lib/plan/coupon.ts の toCouponApplyError が、業務エラーの表 (BUSINESS_ERRORS) の固定の文だけで作る
+ * ここに足すのは、文面に DB の生のエラー文が入りえないことを、そのクラスを作る箇所を全部読んで確かめたものだけ。
+ * `Error` は足さない (PostgREST のエラーを throw したものも、Error として届くことがある)。
+ */
+const TRUSTED_ERROR_CLASSES = new Set(['AuthError', 'ForbiddenError', 'ZodError', 'CouponApplyError']);
 
 /** 括弧・非 null アサーション・型アサーションを外す */
 function unwrap(expr: ts.Expression): ts.Expression {
@@ -212,23 +235,83 @@ function isAwaited(expr: ts.Expression | undefined): boolean {
   return !!expr && ts.isAwaitExpression(unwrap(expr));
 }
 
+/** `a.b.c` / `a['b']` の a。たどれなければ (`getError().message` など) undefined */
+function rootIdentifier(expr: ts.Expression): ts.Identifier | undefined {
+  let current = unwrap(expr);
+  while (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) current = unwrap(current.expression);
+  return ts.isIdentifier(current) ? current : undefined;
+}
+
+/** await の結果か、そのプロパティか (`await x` / `(await x).error` / `(await x)['data']`) */
+function isAwaitedValue(expr: ts.Expression): boolean {
+  let current = unwrap(expr);
+  while (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) current = unwrap(current.expression);
+  return ts.isAwaitExpression(current);
+}
+
 /**
- * DB などの結果 (await の結果) から取り出したエラーか。
- *   `const { error } = await supabase...` の error / `const { error: rpcError } = await ...` の rpcError /
- *   `const result = await ...; result.error` / `const [a] = await Promise.all(...); a.error`
+ * エラーの式の出どころ。
+ *   'local'   : 同期の関数の結果から取り出したもの (`const parsed = schema.safeParse(body); parsed.error` /
+ *               `const { error: slotsError } = validateTargetSlots(raw)`)。検証の文面で、こちら (または zod) が書いたもの
+ *   'awaited' : await の結果 (DB・外の API・Edge Function の応答) から取り出したもの (`const { error } = await supabase...` /
+ *               `const result = await ...; result.error` / `const [a] = await Promise.all(...); a.error`)
+ *   'unknown' : catch で受けた変数・関数の引数・宣言の見えない名前・`let error;` のあとで代入したもの・
+ *               それ以外の式で作ったもの (`const err = e instanceof Error ? e : ...`)。何が入っているか分からない
+ * `const { error } = result` / `const err = e` のように別の変数から取り出したものは、元の変数の出どころをたどる。
  */
-function isAwaitedResultError(expr: ts.Expression): boolean {
-  const inner = unwrap(expr);
-  if (ts.isIdentifier(inner)) {
-    const declaration = findDeclaration(inner);
-    return !!declaration && declaration.bindingProperty !== undefined && isAwaited(declaration.initializer);
+type ErrorOrigin = 'local' | 'awaited' | 'unknown';
+
+function errorOrigin(expr: ts.Expression, depth = 0): ErrorOrigin {
+  const root = rootIdentifier(expr);
+  if (!root) return 'unknown';
+  const declaration = findDeclaration(root);
+  if (!declaration || declaration.isCatchVariable || !declaration.initializer) return 'unknown';
+  if (isAwaitedValue(declaration.initializer)) return 'awaited';
+  const initializer = unwrap(declaration.initializer);
+  if (ts.isIdentifier(initializer) || ts.isPropertyAccessExpression(initializer) || ts.isElementAccessExpression(initializer)) {
+    return depth < MAX_RESOLVE_DEPTH ? errorOrigin(initializer, depth + 1) : 'unknown';
   }
-  if (ts.isPropertyAccessExpression(inner)) {
-    let root: ts.Expression = unwrap(inner.expression);
-    while (ts.isPropertyAccessExpression(root)) root = unwrap(root.expression);
-    if (!ts.isIdentifier(root)) return false;
-    const declaration = findDeclaration(root);
-    return !!declaration && isAwaited(declaration.initializer);
+  if (ts.isCallExpression(initializer)) return 'local';
+  return 'unknown';
+}
+
+/** 条件が、target を TRUSTED_ERROR_CLASSES に絞り込むか (`target instanceof AuthError` / `||` は全ての項 / `&&` はどれかの項) */
+function narrowsToTrustedClass(condition: ts.Expression, target: string): boolean {
+  const inner = unwrap(condition);
+  if (!ts.isBinaryExpression(inner)) return false;
+  switch (inner.operatorToken.kind) {
+    case ts.SyntaxKind.InstanceOfKeyword:
+      return (
+        unwrap(inner.left).getText() === target && ts.isIdentifier(inner.right) && TRUSTED_ERROR_CLASSES.has(inner.right.text)
+      );
+    case ts.SyntaxKind.BarBarToken:
+      return narrowsToTrustedClass(inner.left, target) && narrowsToTrustedClass(inner.right, target);
+    case ts.SyntaxKind.AmpersandAmpersandToken:
+      return narrowsToTrustedClass(inner.left, target) || narrowsToTrustedClass(inner.right, target);
+    default:
+      return false;
+  }
+}
+
+/**
+ * at (エラーの文面を読んだ位置) が、base を TRUSTED_ERROR_CLASSES に絞り込んだ分岐の中か。
+ * if の then / 三項演算子の真の側 / `&&` の右辺だけを見る。関数の境界はまたがない。
+ */
+function isNarrowedToTrustedClass(at: ts.Node, base: ts.Expression): boolean {
+  const target = unwrap(base).getText();
+  let child: ts.Node = at;
+  for (let parent = at.parent; parent; child = parent, parent = parent.parent) {
+    if (ts.isConditionalExpression(parent) && parent.whenTrue === child && narrowsToTrustedClass(parent.condition, target)) return true;
+    if (ts.isIfStatement(parent) && parent.thenStatement === child && narrowsToTrustedClass(parent.expression, target)) return true;
+    if (
+      ts.isBinaryExpression(parent) &&
+      parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
+      parent.right === child &&
+      narrowsToTrustedClass(parent.left, target)
+    ) {
+      return true;
+    }
+    if (ts.isFunctionLike(parent)) return false;
   }
   return false;
 }
@@ -314,6 +397,18 @@ function isUpstreamJsonValue(expr: ts.Expression): boolean {
 interface RawSource {
   /** エラーの式 (`error` / `result.error`) */
   base: ts.Expression;
+  /** その文面を読んだ位置 (`error.message` / `String(err)` / 分割代入の右辺)。絞り込みの判定に使う */
+  at: ts.Node;
+}
+
+/**
+ * 4xx の本文に入れてよい、こちらが書いた文面か。
+ * await の結果 (DB など) は常に不可。それ以外は、同期の関数の結果か、TRUSTED_ERROR_CLASSES に絞り込んだ分岐の中で読んだものだけ。
+ */
+function isOwnWording(source: RawSource): boolean {
+  const origin = errorOrigin(source.base);
+  if (origin === 'awaited') return false;
+  return origin === 'local' || isNarrowedToTrustedClass(source.at, source.base);
 }
 
 /**
@@ -327,7 +422,7 @@ function identifierRawSources(id: ts.Identifier, depth: number): RawSource[] {
     // const { message } = error / const { details: d } = err
     const { initializer } = declaration;
     if (initializer && RAW_TEXT_PROPERTIES.has(declaration.bindingProperty) && isErrorLike(initializer)) {
-      return [{ base: unwrap(initializer) }];
+      return [{ base: unwrap(initializer), at: initializer }];
     }
     return [];
   }
@@ -341,13 +436,13 @@ function rawSourcesOf(root: ts.Node, depth = 0): RawSource[] {
     if (ts.isTypeNode(node)) return;
     const base = rawTextAccessBase(node);
     if (base) {
-      sources.push({ base: unwrap(base) });
+      sources.push({ base: unwrap(base), at: node });
       return;
     }
     if (ts.isIdentifier(node) && isValueReference(node)) {
       // String(err) / JSON.stringify(error) は、宣言が見えなくても名前で判定する (エラーを文字列にする書き方のため)
       if ((ERROR_NAME.test(node.text) && isStringifiedArgument(node)) || (isRawErrorObject(node) && isEmittedAsValue(node))) {
-        sources.push({ base: node });
+        sources.push({ base: node, at: node });
         return;
       }
       if (!ERROR_NAME.test(node.text) && depth < MAX_RESOLVE_DEPTH) {
@@ -356,7 +451,7 @@ function rawSourcesOf(root: ts.Node, depth = 0): RawSource[] {
     }
     if (ts.isPropertyAccessExpression(node) && isErrorLike(node) && isStringifiedArgument(node)) {
       // String(result.error) / JSON.stringify(insertError)
-      sources.push({ base: node });
+      sources.push({ base: node, at: node });
       return;
     }
     if (
@@ -366,7 +461,7 @@ function rawSourcesOf(root: ts.Node, depth = 0): RawSource[] {
       isEmittedAsValue(node)
     ) {
       // 外の応答の JSON の error (`{ message: edgeData.error ?? '...' }`)。相手が書いた文で、DB のエラー文を包んでいることがある
-      sources.push({ base: node });
+      sources.push({ base: node, at: node });
       return;
     }
     ts.forEachChild(node, visit);
@@ -505,9 +600,9 @@ function findingsOf(sf: ts.SourceFile, bodies: ResponseBody[] = responseBodiesOf
   for (const { call, body, statuses } of bodies) {
     const sources = rawSourcesOf(body);
     if (sources.length === 0) continue;
-    // 4xx で返してよいのは、こちらが書いた文面 (AuthError・zod など) だけ。DB の結果のエラー文は 4xx でも出さない
-    const fromDb = sources.some((source) => isAwaitedResultError(source.base));
-    if (isClientErrorOnly(statuses) && !fromDb) continue;
+    // 4xx で返してよいのは、こちらが書いた文面 (AuthError で絞り込んだ分岐・zod の検証など) だけ。
+    // catch の変数・DB の結果・関数の引数のエラー文は、4xx でも出さない
+    if (isClientErrorOnly(statuses) && sources.every(isOwnWording)) continue;
     const { line } = sf.getLineAndCharacterOfPosition(call.getStart(sf));
     findings.push({ line: line + 1, text: call.getText(sf).replace(/\s+/g, ' ').slice(0, 140) });
   }
@@ -580,6 +675,8 @@ describe('API の応答の本文に生のエラー文を入れない (#1172): sr
 // ─────────────────────────────────────────────
 describe('API の応答の本文に生のエラー文を入れない (#1172): ソース解析のロジック', () => {
   const count = (source: string) => findRawErrorMessageResponses(source).length;
+  /** 同期の検証の結果 (4xx なら本文に入れてよい出どころ)。ステータスの読み方だけを確かめる fixture の前置き */
+  const VALIDATION = 'const parsed = schema.safeParse(body);';
 
   describe('検出する', () => {
     it.each([
@@ -607,15 +704,25 @@ describe('API の応答の本文に生のエラー文を入れない (#1172): �
       ['String(error)', `return NextResponse.json({ error: String(err) }, { status: 500 });`],
       ['JSON.stringify(result.error)', `return NextResponse.json({ error: JSON.stringify(result.error) }, { status: 500 });`],
       ['Response.json (NextResponse でない)', `return Response.json({ error: claimError.message }, { status: 500 });`],
-      ['ステータスの指定が無い (200 で返る)', `return NextResponse.json({ ok: false, error: error.message });`],
-      ['ステータスが 5xx の別の値', `return NextResponse.json({ error: error.message }, { status: 503 });`],
-      ['ステータスが変数 ({ status })', `return NextResponse.json({ error: error.message }, { status });`],
-      ['ステータスが変数 (status: code)', `return NextResponse.json({ error: error.message }, { status: code });`],
-      ['ステータスの一部が 4xx でない分岐', `return NextResponse.json({ error: error.message }, { status: ok ? 400 : 500 });`],
-      ['init がオブジェクトでない', `return NextResponse.json({ error: error.message }, init);`],
-      ['init が spread を含む', `return NextResponse.json({ error: error.message }, { ...init });`],
-      ['init に headers だけ (200 で返る)', `return NextResponse.json({ error: error.message }, { headers: {} });`],
     ])('%s', (_label, source) => {
+      expect(count(source)).toBe(1);
+    });
+
+    // 4xx なら数えない出どころ (同期の検証の結果) で書き、ステータスが 4xx と分からないことだけが理由で数えることを確かめる
+    it.each([
+      ['ステータスの指定が無い (200 で返る)', `${VALIDATION} return NextResponse.json({ ok: false, error: parsed.error.message });`],
+      ['ステータスが 5xx の別の値', `${VALIDATION} return NextResponse.json({ error: parsed.error.message }, { status: 503 });`],
+      ['ステータスが変数 ({ status })', `${VALIDATION} return NextResponse.json({ error: parsed.error.message }, { status });`],
+      ['ステータスが変数 (status: code)', `${VALIDATION} return NextResponse.json({ error: parsed.error.message }, { status: code });`],
+      ['ステータスの一部が 4xx でない分岐', `${VALIDATION} return NextResponse.json({ error: parsed.error.message }, { status: ok ? 400 : 500 });`],
+      ['init がオブジェクトでない', `${VALIDATION} return NextResponse.json({ error: parsed.error.message }, init);`],
+      ['init が spread を含む', `${VALIDATION} return NextResponse.json({ error: parsed.error.message }, { ...init });`],
+      ['init に headers だけ (200 で返る)', `${VALIDATION} return NextResponse.json({ error: parsed.error.message }, { headers: {} });`],
+      [
+        'let のステータス (後から書き換えられるため読まない)',
+        `${VALIDATION} let status = 400; status = 500; return NextResponse.json({ error: parsed.error.message }, { status });`,
+      ],
+    ])('ステータスが 4xx と分からない: %s', (_label, source) => {
       expect(count(source)).toBe(1);
     });
 
@@ -747,7 +854,124 @@ describe('API の応答の本文に生のエラー文を入れない (#1172): �
           const [a, b] = await Promise.all([q1, q2]);
           if (a.error) return NextResponse.json({ error: a.error.details }, { status: 409 });`,
       ],
+      [
+        'await の結果を入れた変数から、あとで分割代入した error を 400 で返す',
+        `
+          const result = await supabase.from('t').insert(row);
+          const { error } = result;
+          if (error) return NextResponse.json({ error: error.message }, { status: 400 });`,
+      ],
+      [
+        '(await ...).error を入れた変数を 400 で返す',
+        `
+          const insertError = (await supabase.from('t').insert(row)).error;
+          if (insertError) return NextResponse.json({ error: insertError.message }, { status: 400 });`,
+      ],
     ])('DB の結果のエラー文は 4xx でも検出する: %s', (_label, source) => {
+      expect(count(source)).toBe(1);
+    });
+
+    it.each([
+      [
+        'try の中で throw した DB のエラーを、catch で受けて 400 で返す',
+        `
+          try {
+            const { error } = await supabase.from('t').update(row).eq('id', id);
+            if (error) throw error;
+          } catch (error: any) {
+            return NextResponse.json({ error: error.message }, { status: 400 });
+          }`,
+      ],
+      [
+        'catch で受けた例外の details を、409 / 400 の分岐 (const のステータス) で返す',
+        `
+          try {
+            const { error } = await supabase.from('t').insert(row);
+            if (error) throw error;
+          } catch (error: any) {
+            const status = error?.code === '23505' ? 409 : 400;
+            return NextResponse.json({ error: error.details ?? 'x' }, { status });
+          }`,
+      ],
+      [
+        'catch で受けた例外の文面を変数に入れて 400 で返す (instanceof Error は絞り込みとみなさない)',
+        `
+          try {} catch (err) {
+            const message = err instanceof Error ? err.message : '失敗しました';
+            return NextResponse.json({ error: message }, { status: 400 });
+          }`,
+      ],
+      [
+        'catch の変数を別名にしてから 422 で返す',
+        `
+          try {} catch (e) {
+            const err = e;
+            return NextResponse.json({ error: err.message }, { status: 422 });
+          }`,
+      ],
+      [
+        'catch で受けた例外のオブジェクトごと 400 で返す',
+        `
+          try {} catch (error) {
+            return NextResponse.json({ error }, { status: 400 });
+          }`,
+      ],
+      [
+        'instanceof AuthError の分岐の外で読んだ文面 (分岐の後ろ)',
+        `
+          try {} catch (err) {
+            if (err instanceof AuthError) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return NextResponse.json({ error: err.message }, { status: 403 });
+          }`,
+      ],
+      [
+        'instanceof AuthError の else 側で読んだ文面',
+        `
+          try {} catch (err) {
+            return NextResponse.json({ error: err instanceof AuthError ? 'Unauthorized' : err.message }, { status: 401 });
+          }`,
+      ],
+      [
+        '|| の片方だけが文面を書くクラス',
+        `
+          try {} catch (err) {
+            if (err instanceof AuthError || err instanceof Error) return NextResponse.json({ error: err.message }, { status: 401 });
+          }`,
+      ],
+      [
+        '別の変数を絞り込んだ分岐の中で読んだ文面',
+        `
+          try {} catch (err) {
+            if (other instanceof AuthError) return NextResponse.json({ error: err.message }, { status: 401 });
+          }`,
+      ],
+      [
+        '絞り込みは関数の境界をまたがない',
+        `
+          try {} catch (err) {
+            if (err instanceof AuthError) {
+              return later(() => NextResponse.json({ error: err.message }, { status: 401 }));
+            }
+          }`,
+      ],
+      [
+        '.catch((err) => ...) の引数の文面を 400 で返す',
+        `return run().catch((err) => NextResponse.json({ error: err.message }, { status: 400 }));`,
+      ],
+      [
+        '関数の引数の error を 400 で返す',
+        `function toResponse(error: unknown) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }); }`,
+      ],
+      ['宣言の見えない err の文面を 401 で返す (絞り込みが無い)', `return NextResponse.json({ error: { code: 'AUTH', message: err.message } }, { status: 401 });`],
+      ['宣言の見えない rpcError の文面を 4xx の分岐で返す', `return NextResponse.json({ error: rpcError.message }, { status: code === 'X' ? 403 : 400 });`],
+      [
+        'let で宣言して、あとで代入したエラー',
+        `
+          let error;
+          error = await save();
+          return NextResponse.json({ error: error.message }, { status: 400 });`,
+      ],
+    ])('catch の変数・引数など何が入っているか分からないエラーの文面は 4xx でも検出する: %s', (_label, source) => {
       expect(count(source)).toBe(1);
     });
 
@@ -823,28 +1047,99 @@ describe('API の応答の本文に生のエラー文を入れない (#1172): �
 
   describe('検出しない', () => {
     it.each([
-      ['4xx (400): こちらが書いた検証メッセージ', `return NextResponse.json({ error: parseResult.error.message }, { status: 400 });`],
-      [
-        '4xx (400): zod の safeParse の結果 (await ではない)',
-        `const parseResult = schema.safeParse(body); return NextResponse.json({ error: parseResult.error.message }, { status: 400 });`,
-      ],
-      ['401: AuthError の文面', `return NextResponse.json({ error: { code: 'AUTH', message: err.message } }, { status: 401 });`],
-      ['403: ForbiddenError の文面', `return NextResponse.json({ error: { code: 'PERM', message: err.message } }, { status: 403 });`],
-      [
-        '401: catch で受けた AuthError の文面',
-        `try {} catch (err) { if (err instanceof AuthError) return NextResponse.json({ error: { code: 'X', message: err.message } }, { status: 401 }); }`,
-      ],
-      ['422', `return NextResponse.json({ error: e.message }, { status: 422 });`],
-      ['4xx の分岐 (全て 4xx)', `return NextResponse.json({ error: rpcError.message }, { status: code === 'X' ? 403 : 400 });`],
-      ['ネストした 4xx の分岐', `return NextResponse.json({ error: error.message }, { status: a ? 400 : b ? 403 : 404 });`],
-      ['括弧・as 越しの 4xx', `return NextResponse.json({ error: error.message }, { status: (400 as number) });`],
-      ['文字列のキー "status" の 4xx', `return NextResponse.json({ error: error.message }, { 'status': 400 });`],
+      ['4xx (400): zod の safeParse の結果 (await ではない)', `${VALIDATION} return NextResponse.json({ error: parsed.error.message }, { status: 400 });`],
+      ['422', `${VALIDATION} return NextResponse.json({ error: parsed.error.message }, { status: 422 });`],
+      ['4xx の分岐 (全て 4xx)', `${VALIDATION} return NextResponse.json({ error: parsed.error.message }, { status: code === 'X' ? 403 : 400 });`],
+      ['ネストした 4xx の分岐', `${VALIDATION} return NextResponse.json({ error: parsed.error.message }, { status: a ? 400 : b ? 403 : 404 });`],
+      ['括弧・as 越しの 4xx', `${VALIDATION} return NextResponse.json({ error: parsed.error.message }, { status: (400 as number) });`],
+      ['文字列のキー "status" の 4xx', `${VALIDATION} return NextResponse.json({ error: parsed.error.message }, { 'status': 400 });`],
       [
         '4xx を入れた const のステータス ({ status })',
-        `try {} catch (err) { const status = err.code === 'X' ? 404 : 422; return NextResponse.json({ error: { code: err.code, message: err.message } }, { status }); }`,
+        `${VALIDATION} const status = parsed.error.issues.length > 1 ? 404 : 422; return NextResponse.json({ error: parsed.error.message }, { status });`,
       ],
-    ])('%s', (_label, source) => {
+      [
+        '同期の関数の結果を入れた変数から取り出した error (別名・分割代入)',
+        `const check = validate(body); const { error: checkError } = check; return NextResponse.json({ error: checkError.message }, { status: 400 });`,
+      ],
+    ])('同期の検証の結果の文面を 4xx で返す: %s', (_label, source) => {
       expect(count(source)).toBe(0);
+    });
+
+    it.each([
+      [
+        '401: catch で受けた AuthError の文面 (if で絞り込む。運営 API の sales / support / finance の形)',
+        `
+          try {} catch (err) {
+            if (err instanceof AuthError) {
+              return NextResponse.json({ error: { code: err.code, message: err.message } }, { status: 401 });
+            }
+            if (err instanceof ForbiddenError) {
+              return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: err.message } }, { status: 403 });
+            }
+            return internalError('GET /api/admin/x', err, {}, { shape: 'nested' });
+          }`,
+      ],
+      [
+        '401: 1 行の if で絞り込む',
+        `try {} catch (err) { if (err instanceof AuthError) return NextResponse.json({ error: { code: 'X', message: err.message } }, { status: 401 }); }`,
+      ],
+      [
+        '三項演算子で絞り込む',
+        `try {} catch (err) { return NextResponse.json({ error: err instanceof ForbiddenError ? err.message : '失敗しました' }, { status: 403 }); }`,
+      ],
+      [
+        '|| で 2 つのクラスに絞り込み、ステータスも分岐する',
+        `
+          try {} catch (err) {
+            if (err instanceof AuthError || err instanceof ForbiddenError) {
+              return NextResponse.json({ error: { code: err.code, message: err.message } }, { status: err instanceof AuthError ? 401 : 403 });
+            }
+          }`,
+      ],
+      [
+        '&& の片方の項で絞り込む',
+        `try {} catch (err) { if (shouldExpose && err instanceof AuthError) return NextResponse.json({ error: err.message }, { status: 401 }); }`,
+      ],
+      [
+        '&& の右辺で読んだ文面',
+        `try {} catch (err) { return NextResponse.json({ error: (err instanceof ZodError && err.message) || '入力が正しくありません' }, { status: 400 }); }`,
+      ],
+      [
+        '絞り込んだ分岐の中で変数に入れてから返す',
+        `
+          try {} catch (err) {
+            if (err instanceof AuthError) {
+              const message = err.message;
+              return NextResponse.json({ error: message }, { status: 401 });
+            }
+          }`,
+      ],
+      [
+        'CouponApplyError (業務エラーの表の固定の文) に絞り込み、4xx を入れた const のステータスで返す',
+        `
+          try {} catch (err) {
+            if (err instanceof CouponApplyError) {
+              const status = err.code === 'OP_COUPON_NOT_FOUND' ? 404 : 422;
+              return NextResponse.json({ error: { code: err.code, message: err.message } }, { status });
+            }
+            throw err;
+          }`,
+      ],
+    ])('文面をこちらで書いている例外のクラスに絞り込んだ分岐の中の文面を 4xx で返す: %s', (_label, source) => {
+      expect(count(source)).toBe(0);
+    });
+
+    it('絞り込んでいても 5xx・ステータスが分からない応答は数える', () => {
+      expect(count(`try {} catch (err) { if (err instanceof AuthError) return NextResponse.json({ error: err.message }, { status: 500 }); }`)).toBe(1);
+      expect(count(`try {} catch (err) { if (err instanceof AuthError) return NextResponse.json({ error: err.message }, { status }); }`)).toBe(1);
+    });
+
+    it('絞り込んでいても、await の結果 (DB) のエラー文は 4xx でも数える', () => {
+      expect(
+        count(`
+          const { error } = await supabase.from('t').select();
+          if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: 401 });`),
+      ).toBe(1);
     });
 
     it.each([
@@ -956,12 +1251,6 @@ describe('API の応答の本文に生のエラー文を入れない (#1172): �
           return NextResponse.json({ error: e2 }, { status: 500 });
         `),
       ).toBe(0);
-    });
-
-    it('let のステータスは読まない (後から書き換えられるため、分からないものとして数える)', () => {
-      expect(
-        count(`try {} catch (err) { let status = 400; status = 500; return NextResponse.json({ error: err.message }, { status }); }`),
-      ).toBe(1);
     });
   });
 
