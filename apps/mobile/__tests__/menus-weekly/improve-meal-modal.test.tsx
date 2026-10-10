@@ -32,16 +32,18 @@ const alertMock = Alert.alert as jest.Mock;
 function renderModal(props: Partial<React.ComponentProps<typeof ImproveMealModal>> = {}) {
   const onClose = jest.fn();
   const onSubmit = jest.fn().mockResolvedValue(undefined);
+  const onAiConsentRequired = jest.fn();
   const utils = render(
     <ImproveMealModal
       visible
       onClose={onClose}
       selectedDate="2026-10-08"
       onSubmit={onSubmit}
+      onAiConsentRequired={onAiConsentRequired}
       {...props}
     />,
   );
-  return { ...utils, onClose, onSubmit };
+  return { ...utils, onClose, onSubmit, onAiConsentRequired };
 }
 
 beforeEach(() => {

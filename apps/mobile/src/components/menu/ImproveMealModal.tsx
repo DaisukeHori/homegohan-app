@@ -12,6 +12,7 @@ import {
 
 import { MEAL_LABELS } from '@homegohan/shared';
 
+import { isAiConsentRequiredError } from '../../lib/ai-consent';
 import {
   IMPROVE_MEAL_TYPES,
   isImproveMealRejectedError,
@@ -36,13 +37,22 @@ interface Props {
    * リクエストが受け付けられるまで待ち、成功したらモーダルを閉じる。
    * 失敗 (reject) したらエラーを表示し、モーダルは開いたままにして再試行できるようにする。
    * 利用者に見せたい理由があるときは ImproveMealRejectedError を投げる。
+   * 「同意が必要です」(403 AI_CONSENT_REQUIRED。T15 / #1154) で reject したら、失敗は表示せず、モーダルを閉じてから
+   * onAiConsentRequired を呼ぶ (週の画面の onSubmit は、同意で止められても reject しない。案内は生成のフックが出す)。
    */
   onSubmit: (request: ImproveMealRequest) => Promise<void>;
+  /**
+   * onSubmit が「同意が必要です」で reject したときに呼ぶ (T15 / #1154)。このモーダルは自分を閉じてから呼ぶ。
+   * 呼ばれた側 (このモーダルを開いた画面・モーダル) が、自分も同意画面を隠さないように閉じてから、同意画面への案内を出す
+   * (このモーダルだけを閉じて案内を出すと、下に開いたままの栄養分析の詳細が、案内から開いた同意画面を隠す。
+   * src/lib/ai-consent.ts の規則)
+   */
+  onAiConsentRequired: () => void;
   /** 画面に表示中の AI栄養士の提案。あれば onSubmit にそのまま渡し、生成の要望として使われる */
   advice?: string | null;
 }
 
-export const ImproveMealModal: React.FC<Props> = ({ visible, onClose, selectedDate, onSubmit, advice }) => {
+export const ImproveMealModal: React.FC<Props> = ({ visible, onClose, selectedDate, onSubmit, onAiConsentRequired, advice }) => {
   const [selectedMeals, setSelectedMeals] = useState<MealType[]>(['breakfast', 'lunch', 'dinner']);
   const [improveNextDay, setImproveNextDay] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -73,6 +83,12 @@ export const ImproveMealModal: React.FC<Props> = ({ visible, onClose, selectedDa
       });
       onClose();
     } catch (e) {
+      if (isAiConsentRequiredError(e)) {
+        // 同意が必要で止められた: 「改善に失敗しました」は出さない。モーダルを閉じてから、開いた側に知らせる (案内は開いた側が出す)
+        onClose();
+        onAiConsentRequired();
+        return;
+      }
       if (isImproveMealRejectedError(e)) {
         // 生成中・過去の日付など、利用者に見せたい理由がある失敗
         Alert.alert('エラー', e.message);

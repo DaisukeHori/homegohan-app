@@ -7,6 +7,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { todayLocal } from "@/lib/date-utils";
 import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
+import { useAiConsent } from "@/hooks/useAiConsent";
+import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
+import { aiSkippedReasonOf, type AiSkippedReason } from "@/lib/ai/consent-config";
+import { AiSkippedNotice } from "@/components/consent/AiSkippedNotice";
 import {
   Camera, Upload, X, ChevronDown, ChevronUp, Loader2,
   CheckCircle2, AlertTriangle, Sparkles, ArrowLeft, Activity,
@@ -110,6 +114,8 @@ export default function NewHealthCheckupPage() {
   const [analyzing, setAnalyzing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedCheckup, setSavedCheckup] = useState<any>(null);
+  // 同意が無くて (または同意の状況を読めなくて) サーバーが AI の分析を省いた理由 (応答の aiSkipped。T15 / #1154)
+  const [aiSkipped, setAiSkipped] = useState<AiSkippedReason | null>(null);
   const [error, setError] = useState<string | null>(null);
   // #1055 UX3-10: OCR失敗を無告知にせず、confirm画面でバナー表示する
   // #1055 (wave-3b): OCR API が 200 を返しても抽出項目が0件の場合は
@@ -118,6 +124,10 @@ export default function NewHealthCheckupPage() {
   const [ocrFilledCount, setOcrFilledCount] = useState(0);
   // #1055 UX3-11: upload/confirm から離脱する際、入力済みデータがあれば確認する
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。健診結果の画像の読み取り (OCR) と、保存時の AI コメントの作成の前に、
+  // 未同意なら出す。「同意しない」なら AI に送る処理をしない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)
+  const { ensureAiConsent, consentModal } = useAiConsent();
 
   const supabase = createClient();
 
@@ -152,6 +162,12 @@ export default function NewHealthCheckupPage() {
     setError(null);
 
     try {
+      // 同意していなければ同意画面を出す。「同意しない」なら画像を AI に送らず、手入力へ進む
+      if ((await ensureAiConsent()) === "declined") {
+        setStep('confirm');
+        return;
+      }
+
       // 1. ファイルをBase64に変換 (画像・PDF 共通)
       const base64 = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -165,7 +181,7 @@ export default function NewHealthCheckupPage() {
 
       // 2. OCR API を呼んで検査値を抽出 (画像・PDF 共通)
       const mimeType = imageFile.type || 'image/jpeg';
-      const ocrRes = await fetch('/api/ai/analyze-health-checkup', {
+      const ocrRes = await aiFetch('/api/ai/analyze-health-checkup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -173,6 +189,12 @@ export default function NewHealthCheckupPage() {
           mimeType,
         }),
       });
+
+      if (await isAiConsentRequiredResponse(ocrRes)) {
+        // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内する。読み取りはせず、手入力へ進む
+        setStep('confirm');
+        return;
+      }
 
       if (ocrRes.ok) {
         const ocrData = await ocrRes.json();
@@ -268,6 +290,11 @@ export default function NewHealthCheckupPage() {
     setError(null);
 
     try {
+      // 保存すると、数値を AI に送って個別レビューを作る。画像を使わず手入力した人も、ここで同意の確認を受ける。
+      // 「同意しない」でも保存はする (サーバーは同意が無ければレビューを作らずに保存だけし、応答の aiSkipped で知らせる。
+      // review の画面は、そのときレビューの代わりに同意の案内 (AiSkippedNotice) を出す)
+      await ensureAiConsent();
+
       // フォームデータを数値に変換
       const numericFields = [
         'height', 'weight', 'bmi', 'waist_circumference',
@@ -305,6 +332,7 @@ export default function NewHealthCheckupPage() {
 
       const data = await res.json();
       setSavedCheckup(data.checkup);
+      setAiSkipped(aiSkippedReasonOf(data));
       setStep('review');
 
     } catch (err: any) {
@@ -778,6 +806,13 @@ export default function NewHealthCheckupPage() {
                   </div>
                 )}
               </>
+            ) : aiSkipped ? (
+              <AiSkippedNotice
+                reason={aiSkipped}
+                variant="saved"
+                className="p-4 rounded-xl text-center"
+                style={{ backgroundColor: colors.card, color: colors.textMuted }}
+              />
             ) : (
               <div className="p-4 rounded-xl text-center" style={{ backgroundColor: colors.card }}>
                 <p className="text-sm" style={{ color: colors.textMuted }}>
@@ -839,6 +874,9 @@ export default function NewHealthCheckupPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。未同意なら出る */}
+      {consentModal}
     </div>
   );
 }

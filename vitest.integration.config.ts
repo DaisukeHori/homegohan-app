@@ -17,16 +17,39 @@
 import { defineConfig } from 'vitest/config';
 import { loadEnv } from 'vite';
 import path from 'node:path';
+import fs from 'node:fs';
+
+// tsconfig.json の paths (`@/*` → `./src/*` と `./*`) と同じ解決をする。vitest.config.ts と同じ作り。
+// `@` を src だけに向けると、ルート直下の lib/ (lib/supabase/server.ts など) を import するアプリのモジュールを、
+// 結合テストから読めない (T15: 同意を記録するモジュールを実 DB に対してテストするために揃えた)。
+// Vite の alias は 1 つのキーに複数の行き先を持てないので、src → ルートの順に探す resolver にしている。
+function atAliasPlugin() {
+  const root = __dirname;
+  return {
+    name: 'at-alias',
+    resolveId(id: string) {
+      if (!id.startsWith('@/')) return undefined;
+      const rel = id.slice(2); // "@/" を外す
+      for (const base of ['src', '.']) {
+        for (const ext of ['', '.ts', '.tsx', '.js', '.jsx']) {
+          const candidate = path.join(root, base, rel + ext);
+          if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+        }
+        for (const ext of ['.ts', '.tsx', '.js', '.jsx']) {
+          const candidate = path.join(root, base, rel, 'index' + ext);
+          if (fs.existsSync(candidate)) return candidate;
+        }
+      }
+      return undefined;
+    },
+  };
+}
 
 export default defineConfig(({ mode }) => {
   // .env.local を明示的に読み込む (prefix '' = 全変数対象)
   const env = loadEnv(mode ?? 'test', process.cwd(), '');
   return {
-    resolve: {
-      alias: {
-        '@': path.resolve(__dirname, './src'),
-      },
-    },
+    plugins: [atAliasPlugin()],
     test: {
       include: ['tests/integration/**/*.test.ts'],
       exclude: [

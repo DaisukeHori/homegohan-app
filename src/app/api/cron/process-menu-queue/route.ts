@@ -1,6 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 import { requireCronAuth } from '@/lib/cron-auth';
 import { createLogger } from '@/lib/db-logger';
+import {
+  aiConsentDeniedPayload,
+  aiConsentDeniedStoredMessage,
+  aiConsentDeniedStoredMessageOfResponse,
+  checkUserAiConsent,
+} from '@/lib/ai/consent-guard';
 // runtime = 'edge' のルートなので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
@@ -33,6 +39,30 @@ export async function GET(req: Request) {
   }
   if (!claimed || !claimed.id) {
     return Response.json({ idle: true });
+  }
+
+  // 献立の生成は、利用者のデータ (好み・アレルギー・健康目標など) を外国の AI 事業者へ送る。
+  // キューに積まれたあとに同意を撤回した利用者 (または判定に失敗した場合) は、送らずに失敗にする (T15 / #1154。fail-closed)。
+  // 判定に使う user_id は、利用者が書き換えられる generated_data ではなく、行の user_id。
+  // error_message は画面がそのまま出すので、コードではなく人向けの文を書く (画面はこの文を見分けて同意画面へ案内する)
+  const aiConsent = await checkUserAiConsent(supabase, claimed.user_id);
+  if (!aiConsent.allowed) {
+    const { body } = aiConsentDeniedPayload(aiConsent);
+    createLogger('cron/process-menu-queue', claimed.id).withUser(claimed.user_id).warn(
+      '外国の AI 事業者への提供の同意が無いため、献立生成リクエストを送らずに失敗にしました',
+      { requestId: claimed.id, code: body.code },
+    );
+    await supabase
+      .from('weekly_menu_requests')
+      .update({
+        status: 'failed',
+        error_message: aiConsentDeniedStoredMessage(aiConsent),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', claimed.id)
+      .eq('worker_id', workerId)
+      .in('status', ['queued', 'processing']);
+    return Response.json({ skipped: claimed.id, code: body.code });
   }
 
   try {
@@ -69,7 +99,11 @@ export async function GET(req: Request) {
     });
 
     if (!v5Res.ok) {
-      throw new Error(`V5 returned ${v5Res.status}: ${await v5Res.text().catch(() => '')}`);
+      const v5Text = await v5Res.text().catch(() => '');
+      // Edge Function が同意の判定で止めた (T15 / #1154。ここでの判定のあとに撤回された・Edge Function 側で読めなかった)。
+      // 行は Edge Function が人向けの文で失敗にしている。その書き込みが失敗していても、下の catch が内部の文 (状態コードと本文) を
+      // error_message に書かないよう、同じ人向けの文にする
+      throw new Error(aiConsentDeniedStoredMessageOfResponse(v5Res.status, v5Text) ?? `V5 returned ${v5Res.status}: ${v5Text}`);
     }
 
     // Edge Function は自身で status を completed / failed に更新するため、

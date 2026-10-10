@@ -703,13 +703,14 @@ sequenceDiagram
     API->>DB: RPC release_user_membership (ライセンス席の解放)
     API->>DB: Storage のファイルを削除
     API->>DB: auth.admin.deleteUser (public 側は FK の CASCADE / SET NULL)
+    API->>API: 削除完了メールを本人へ 1 通送る (#1152。送信に失敗しても 200)
     API-->>App: 200 { success: true }
     App->>App: サインアウトして、ログイン前の画面へ戻る
   end
   Note over API,DB: 途中で失敗したら 500 INTERNAL_ERROR (アカウントは残り、再実行できる)
 
   Note over API,DB: 30 日の待機と月次バッチはない (2026-10-08 オーナー判断)
-  Note over API,DB: 削除前の確認メール・削除完了メール (T20) と、Stripe の後始末は今後追加
+  Note over API,DB: 削除前の確認メールは送らない (2026-10-09 オーナー判断)。Stripe の後始末は今後追加 (#1447)
 ```
 
 ## 14. エラーハンドリング
@@ -742,5 +743,5 @@ sequenceDiagram
 - 削除完了の通知: 削除完了メールは追加済み (#1152。cross/08-legal-compliance.md §16.2 の手順 6)。旧設計の「削除完了証明書 PDF」を別に出すかは未決 (出す場合の生成方法: pdf-lib / Puppeteer / Vercel Edge は Phase 2 で決定)
 - `logical_backup` cron (`pg_dump → S3`): S3 接続情報と IAM 権限の設定は本番環境構築時に確定
 - EU GDPR の 1 ヶ月以内回答 SLA: 退会は即時削除 (cooling period なし) のため、アプリからの削除で遅れは出ない。サポート経由の依頼は受付から 1 ヶ月以内に完了させる (§9.2)。EU 規制との整合性の法務確認は引き続き必要
-- 退会の実行記録: 旧設計は `gdpr_deletion_requests` (永久保管) と admin_audit_logs (severity='critical') に残していたが、現行実装はどちらにも記録しない。何で残すかは作業計画 T11 と合わせて決める (cross/08-legal-compliance.md §19)
+- 退会の実行記録: 旧設計は `gdpr_deletion_requests` (永久保管) と admin_audit_logs (severity='critical') に残していたが、現行実装はどちらにも記録しない。何で残すかは未決 (cross/08-legal-compliance.md §19・#1447)
 - ランサムウェア対応での「新しい Supabase プロジェクト」への DNS 切替: Vercel の環境変数変更とドメイン設定変更の手順を別途ドキュメント化が必要

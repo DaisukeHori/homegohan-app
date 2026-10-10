@@ -6,6 +6,7 @@ import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "rea
 import { Button, Card, ChipSelector, EmptyState, LoadingState, PageHeader, StatCard, StatusBadge } from "../../src/components/ui";
 import { colors, spacing } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
+import { isAiConsentRequiredError, promptAiConsentRequired } from "../../src/lib/ai-consent";
 
 type Insight = {
   id: string;
@@ -75,6 +76,13 @@ export default function HealthInsightsPage() {
       await api.post(`/api/health/insights`, {});
       await load();
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出し、ここのエラー表示は出さない。
+      // 生成を待つ間にインサイトの詳細 (モーダル) を開いていることがあるので、案内の「同意画面を開く」を押したときに閉じる
+      // (閉じないと、同意画面がモーダルの下に隠れる。「閉じる」を選んだときは詳細を開いたままにする)
+      if (isAiConsentRequiredError(e)) {
+        promptAiConsentRequired({ beforeOpenConsentScreen: () => setSelectedInsight(null) });
+        return;
+      }
       Alert.alert("生成失敗", e?.message ?? "インサイト生成に失敗しました。");
     } finally {
       setIsGenerating(false);

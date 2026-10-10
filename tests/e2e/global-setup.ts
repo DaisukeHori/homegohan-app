@@ -24,6 +24,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { getExistingUserPassword } from "./helpers/credentials";
 import { acceptLegalConsentIfShown } from "./helpers/legal-consent";
+import { ensureAiConsentGranted } from "./helpers/ai-consent";
 import { seedClassifyFixtures } from "./setup/seed-classify-fixtures";
 
 /** backward compat: 既存コードが参照するエクスポート (user-01 のパスを返す) */
@@ -308,6 +309,11 @@ async function setupUserSession(
           await page.waitForURL("**/home", { timeout: 60_000 });
         }
       }
+
+      // 外国の AI 事業者への提供の同意 (T15 / #1154)。未同意の利用者のデータは、サーバーが AI へ送る手前で止める
+      // (403 AI_CONSENT_REQUIRED) ので、AI を使う spec が止められないよう記録しておく。同意は DB に残る。
+      // すでに現行の版に同意していれば何もしない
+      await ensureAiConsentGranted(page, baseURL);
 
       // storageState を atomic write (tmp path -> rename) で保存
       const storageStateTmpPath = `${storageStatePath}.tmp.${process.pid}`;

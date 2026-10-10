@@ -7,6 +7,8 @@ name: e2e-local
 # - テストユーザー (e2e-user-01〜10@homegohan.test) は実行ごとにローカルの DB に作る。
 #   パスワードは実行ごとにランダムに作り、ログには出さない (マスクする)。
 # - AI を使う 02-meal-photo / 03-ai-advisor は、AI の API キーを持たないため対象外。
+#   ai-consent-first-use (外国の AI 事業者への提供の同意、#1154) は、AI に届く場面ではブラウザの通信を差し替え、未同意の場面ではサーバーが
+#   AI を呼ぶ前に 403 で止めるので、AI の API キーが無くても動く。対象に入れる。
 # - 規約・プライバシーポリシーの再同意ゲート (#1174。legal-consent-gate.spec.ts) は、既定 (3000。強制なし・お知らせなし)、
 #   強制あり (3001。LEGAL_CONSENT_ENFORCE=on)、お知らせあり (3002。LEGAL_CONSENT_NOTICE=on) の 3 つのサーバーで確かめる
 #   (後ろの手順を参照)。
@@ -98,6 +100,7 @@ jobs:
           tests/e2e/04-menu-page.spec.ts
           tests/e2e/05-shopping-list.spec.ts
           tests/e2e/public-policy-pages.spec.ts
+          tests/e2e/ai-consent-first-use.spec.ts
           tests/e2e/legal-consent-gate.spec.ts
 
       # 規約・プライバシーポリシーの再同意ゲート (#1174) の「強制あり」(LEGAL_CONSENT_ENFORCE=on) の挙動は、

@@ -8,6 +8,7 @@ import { createLogger } from '@/lib/db-logger';
  * #1163 招待メール・参加リクエストなど「ユーザー操作で外部へメールが出る API」の送信回数制限にも使う
  * #1197 ログイン前でも送れる公開フォーム (お問い合わせ) の IP 単位の制限にも使う
  * #1164 ファイルアップロード (POST /api/upload) のユーザー単位の回数制限にも使う
+ * #1154 外国の AI 事業者への提供の同意を記録する API (POST /api/ai/consent) の連打防止にも使う
  *
  * 元は src/app/api/contact/route.ts の Upstash Ratelimit 実装を汎用化したもの。
  * `key` + カテゴリ単位でレート制限を判定する。
@@ -49,7 +50,8 @@ export type RateLimitCategory =
   | 'transfer-propose'
   | 'contact'
   | 'export'
-  | 'upload';
+  | 'upload'
+  | 'ai-consent';
 
 /** 1 つの制限ルール。name は Upstash の prefix / in-memory の名前空間に使う (既存キーを変えないこと) */
 interface RateRule {
@@ -93,6 +95,10 @@ const DAY_SEC = 24 * 60 * 60;
 //   (src/app/(main)/meals/new/page.tsx) だけで、1 回の保存につき 1 ファイル。
 //   分あたり 10 回・直近 24 時間で 100 回は、その実際の使い方を十分に上回る値。
 //   同じユーザーが 10MB のファイルを連打して Storage の容量と転送量を使い切るのを防ぐ
+// - ai-consent: 外国の AI 事業者への提供の同意を記録する API (POST /api/ai/consent, key = user.id)。
+//   同意と撤回を繰り返して行を増やされないようにする (同意の記録は行を残す)。
+//   正しい使い方では 1 人が生涯に数回しか呼ばない。再送・ダブルクリックを含めても 1 分 10 回、1 日 50 回あれば足りる。
+//   撤回 (POST /api/ai/consent/revoke) は行を増やさない (既存の行に revoked_at を入れるだけ) ので、制限しない
 const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   generation: [{ name: 'generation', max: 5, windowSec: MINUTE_SEC }],
   analysis: [{ name: 'analysis', max: 10, windowSec: MINUTE_SEC }],
@@ -126,6 +132,10 @@ const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   upload: [
     { name: 'upload', max: 10, windowSec: MINUTE_SEC },
     { name: 'upload-daily', max: 100, windowSec: DAY_SEC },
+  ],
+  'ai-consent': [
+    { name: 'ai-consent', max: 10, windowSec: MINUTE_SEC },
+    { name: 'ai-consent-daily', max: 50, windowSec: DAY_SEC },
   ],
 };
 

@@ -5,6 +5,7 @@ import { generateGeminiJson } from '@/lib/ai/gemini-json';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { clampIntParam } from '@/lib/http-params';
 import { fetchRecentMealDays, formatMealDaysForPrompt } from '@/lib/health-insight-meals';
+import { requireAiConsent } from '@/lib/ai/consent-guard';
 import {
   buildHealthInsightRows,
   calculateHealthInsightPeriod,
@@ -113,6 +114,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const userLogger = logger.withUser(user.id);
+
+  // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
+  const aiConsentDenied = await requireAiConsent(supabase, user.id);
+  if (aiConsentDenied) return aiConsentDenied;
 
   // #1022 LLM でインサイトを生成するため generation カテゴリで制限する
   const rateLimitResult = await checkRateLimit(user.id, 'generation');

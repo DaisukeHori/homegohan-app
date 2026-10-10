@@ -6,6 +6,8 @@
  *  1. 検査日が空のとき Alert を出して API を呼ばない (必須フィールド検証)
  *  2. 検査日を入力して保存ボタンを押すと /api/health/checkups に POST が呼ばれる
  *  3. API 成功後に review ステップへ遷移する (AI分析結果テキストが表示される)
+ *  6〜8. 同意が無くてサーバーが AI の分析を省いた (aiSkipped) とき、「AI分析を実行できませんでした」ではなく
+ *     同意が必要な旨と同意画面へのボタンを出す (T15 / #1154)
  */
 
 import React from 'react';
@@ -24,8 +26,11 @@ jest.mock('../../src/lib/api', () => ({
   }),
 }));
 
+const mockRouterPush = jest.fn();
 jest.mock('expo-router', () => ({
   useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
+  // AI の分析を省いたときの案内 (AiSkippedNotice) の「同意画面を開く」が使う
+  router: { push: (...args: unknown[]) => mockRouterPush(...args) },
 }));
 
 jest.mock('react-native-safe-area-context', () => ({
@@ -73,6 +78,10 @@ jest.mock('../../src/components/ui', () => {
 });
 
 import NewCheckupPage from '../../app/health/checkups/new';
+import {
+  AI_CONSENT_CHECK_FAILED_SKIPPED_NOTE,
+  AI_CONSENT_SKIPPED_NOTE,
+} from '../../src/lib/ai-consent';
 
 const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
 
@@ -181,5 +190,61 @@ describe('NewCheckupPage — checkup-form', () => {
     await waitFor(() => {
       expect(alertSpy).toHaveBeenCalledWith('保存失敗', 'サーバーエラー');
     });
+  });
+  it('6. 同意が無くて AI の分析を省いた (aiSkipped: AI_CONSENT_REQUIRED): 同意が必要な旨と同意画面へのボタンを出す', async () => {
+    mockPost.mockResolvedValueOnce({
+      checkup: { id: 'c-6', individual_review: null },
+      aiSkipped: 'AI_CONSENT_REQUIRED',
+    });
+
+    render(<NewCheckupPage />);
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('save-button'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(AI_CONSENT_SKIPPED_NOTE)).toBeTruthy();
+    });
+    // 事実と違う「実行できませんでした」は出さない
+    expect(screen.queryByText('AI分析を実行できませんでした')).toBeNull();
+
+    fireEvent.press(screen.getByText('同意画面を開く'));
+    expect(mockRouterPush).toHaveBeenCalledWith('/settings/ai-consent');
+  });
+
+  it('7. 同意の状況を読めなくて AI の分析を省いた (aiSkipped: AI_CONSENT_CHECK_FAILED): 「一時的に」の一文だけ', async () => {
+    mockPost.mockResolvedValueOnce({
+      checkup: { id: 'c-7', individual_review: null },
+      aiSkipped: 'AI_CONSENT_CHECK_FAILED',
+    });
+
+    render(<NewCheckupPage />);
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('save-button'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(AI_CONSENT_CHECK_FAILED_SKIPPED_NOTE)).toBeTruthy();
+    });
+    expect(screen.queryByText('同意画面を開く')).toBeNull();
+  });
+
+  it('8. aiSkipped が無くレビューも無い (AI の失敗): 従来どおり「AI分析を実行できませんでした」', async () => {
+    mockPost.mockResolvedValueOnce({
+      checkup: { id: 'c-8', individual_review: null },
+    });
+
+    render(<NewCheckupPage />);
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('save-button'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('AI分析を実行できませんでした')).toBeTruthy();
+    });
+    expect(screen.queryByText('同意画面を開く')).toBeNull();
   });
 });

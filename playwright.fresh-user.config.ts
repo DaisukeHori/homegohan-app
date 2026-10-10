@@ -40,7 +40,7 @@ export default defineConfig({
     ? undefined
     : {
         command: "npm run dev",
-        url: "http://localhost:3000",
+        url: baseURL,
         reuseExistingServer: true,
         timeout: 120_000,
       },
