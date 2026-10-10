@@ -41,6 +41,8 @@ regexes = [
 #                                      モバイルのセッション保存のテスト (secure-session-storage.test.ts) の、作り物の refresh_token
 #   3f9a1c0be77d4c2a9b1e5d6f7a8b9c0d   Speed Insights の URL 消去のテスト (speed-insights-scrub-1179.test.ts) の、招待トークンの形の
 #                                      作り物 (64 桁を 2 つに分けて書いた前半。gitleaks は前半だけを拾う)
+#   dummy-cron-secret-0123456789abcdef エラー急増の通知の cron のテスト (src/__tests__/api/cron/app-log-alerts.test.ts) の、
+#                                      Cron の認証値のダミー (#1157)
 [[allowlists]]
 description = "テスト用のダミーの値と栄養素の項目名 (generic-api-key の誤検知)"
 targetRules = ["generic-api-key"]
@@ -54,4 +56,5 @@ regexes = [
   '''^dummy-api-key-for-test-0123456789$''',
   '''^v1\.MR5OBK2qk3lA9wxkmjm0YRkd0tg9FdcYT5CqvW9_pw9nE0j$''',
   '''^3f9a1c0be77d4c2a9b1e5d6f7a8b9c0d$''',
+  '''^dummy-cron-secret-0123456789abcdef$''',
 ]
