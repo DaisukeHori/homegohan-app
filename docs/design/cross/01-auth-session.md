@@ -49,12 +49,11 @@ sequenceDiagram
         Redis-->>Next: 429
         Next-->>Client: RATE_LIMIT_EXCEEDED
     end
-    Note over Next: 3回失敗後 Cloudflare Turnstile 必須
+    Note over Next: 3回失敗後 Cloudflare Turnstile 必須 (ロックはしない。§8)
     Next->>Supabase: signInWithPassword(email, password)
     alt 失敗
         Supabase-->>Next: invalid credentials
-        Next->>Redis: incr failed_login:{userId}
-        Note over Next: 5回→15分ロック、10回→1h+メール、20回→24h+admin通知
+        Next->>Next: 連続失敗の回数 +1 (DB。最後の失敗から一定時間で 0 に戻る)
         Next-->>Client: AUTH_INVALID_CREDENTIALS
     end
     Supabase-->>Next: session (access_token, refresh_token)
@@ -235,18 +234,20 @@ export async function checkPasswordBreached(password: string): Promise<boolean> 
 
 ---
 
-## 8. ログイン失敗ロック
+## 8. ログイン失敗時の扱い (アカウントはロックしない)
 
-| 失敗回数 | アクション |
+アカウントのロックアウトはしない (オーナーの選択 2026-10-10。他人のメールアドレスで失敗を繰り返すだけで本人を締め出せるため。失敗が続いたらボットの確認を求める)。
+
+| 連続失敗の回数 | アクション |
 |---------|---------|
-| 3 回 | Cloudflare Turnstile CAPTCHA 表示 |
-| 5 回 | 15 分アカウントロック |
-| 10 回 | 1 時間ロック + 本人へメール通知 |
-| 20 回 | 24 時間ロック + 管理者 Slack 通知 |
+| 0〜2 回 | なし |
+| 3 回以上 | Cloudflare Turnstile のトークンをサーバーで確かめる (キーが設定されているとき)。何回失敗してもロックはしない |
 
-ロック中は正しいパスワードでも拒否。メール経由のリセットのみ解除可能。
-
-カウンターは Upstash Redis に `failed_login:{userId}` キーで管理し、ロック解除後にリセット。
+- 何回失敗していても、正しいパスワード (と、求めたときはボットの確認) があればログインできる。ロック中の応答・ロックの通知 (本人へのメール・管理者への通知)・ロックの解除の手続きは無い。
+- 回数はメールアドレス (小文字・前後の空白なし) ごとに DB (`auth_login_failures`。メールアドレスは SHA-256 のハッシュだけ) で数える。登録されていないメールアドレスも同じように数える。
+- 回数が 0 に戻るのは、ログインに成功したときと、最後の失敗から一定の時間 (既定 24 時間。環境変数 `AUTH_LOGIN_FAILURE_RESET_MINUTES`) が経ったとき。
+- IP アドレスごとの回数制限 (§3.2 の 10/min/IP) は残す。
+- 実装: `src/lib/auth/guarded-login.ts`・`src/lib/auth/login-failures.ts`・`supabase/migrations/20261010160000_auth_login_failure_window.sql`。運用: `docs/operations/auth-protection.md` §2.1。
 
 ---
 
@@ -517,7 +518,7 @@ export class PermError extends Error {
 
 ---
 
-## 15. シーケンス: CAPTCHA + ロック統合フロー
+## 15. シーケンス: CAPTCHA + 失敗回数の統合フロー (ロックはしない)
 
 ```mermaid
 sequenceDiagram
@@ -525,34 +526,22 @@ sequenceDiagram
     participant Client
     participant Turnstile as Cloudflare Turnstile
     participant Next
-    participant Redis
+    participant DB
 
-    User->>Client: ログインフォーム送信
-    Client->>Redis: GET failed_login_count:{userId}
-    alt count >= 3
-        Client->>Turnstile: renderWidget()
-        Turnstile-->>Client: token
-        Client->>Next: POST /api/auth/login {email, pw, cf_token}
+    User->>Client: ログインフォーム送信 (サイトキーがあれば毎回トークンを付ける)
+    Client->>Next: POST /api/auth/login {email, pw, captchaToken?}
+    Next->>DB: 連続失敗の回数 (最後の失敗から一定時間が経っていれば 0)
+    alt count >= 3 かつ秘密キーあり
         Next->>Turnstile: siteverify
         Turnstile-->>Next: success/fail
-    else count < 3
-        Client->>Next: POST /api/auth/login {email, pw}
+        Note over Next: fail → 400 AUTH_CAPTCHA_FAILED (パスワードは確かめない)
     end
-    Next->>Next: validatePassword
+    Next->>Next: signInWithPassword
     alt 失敗
-        Next->>Redis: INCR failed_login_count:{userId}
-        alt count = 5
-            Next->>Redis: SET lock:{userId} EX 900
-        else count = 10
-            Next->>Redis: SET lock:{userId} EX 3600
-            Next->>Next: sendLockEmail(userId)
-        else count = 20
-            Next->>Redis: SET lock:{userId} EX 86400
-            Next->>Next: notifyAdminSlack(userId)
-        end
+        Next->>DB: 回数 +1 (最後の失敗から一定時間が経っていれば 1 から)
         Next-->>Client: 401 AUTH_INVALID_CREDENTIALS
     else 成功
-        Next->>Redis: DEL failed_login_count:{userId}
+        Next->>DB: 回数を消す
         Next-->>Client: 200 + session
     end
 ```
@@ -564,7 +553,7 @@ sequenceDiagram
 | テスト種別 | 対象 | ツール |
 |---------|------|------|
 | Unit | `requireRole`, `requireOrgRole`, `resolveOrganizationId`, HIBP チェック | Vitest |
-| Integration | ログイン失敗ロック、セッション同時 5 端末上限 | Vitest + Supabase Local |
+| Integration | ログイン失敗の回数 (何回失敗してもロックしない・時間で戻る)、セッション同時 5 端末上限 | Vitest + Supabase Local |
 | E2E | 正常ログイン → MFA → ダッシュボード到達、パスワードリセット全フロー | Playwright |
 | Security | CAPTCHA バイパス試行、enumeration 対策、Cookie 属性 | Playwright + 手動 |
 
