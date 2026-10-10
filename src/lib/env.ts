@@ -124,6 +124,27 @@ export const SERVER_ENV_VARS = {
     description: 'お問い合わせが届いたときに、運営へ知らせるメールの宛先',
     whenMissing: 'お問い合わせは保存されるが、運営への通知メールは送られない',
   },
+  OPS_ALERT_EMAIL: {
+    required: false,
+    description:
+      'エラー急増の運用メールの宛先 (#1157)。app_logs の error が 15 分で 20 件を超えたら、GET /api/cron/app-log-alerts がこのアドレス 1 つへ知らせる',
+    whenMissing: 'エラーが急増しても通知しない (cron は動くが、info ログを 1 行残すだけ)',
+    // 未設定・形の誤りのときの扱い (info / warn のログと応答の status) を、cron の route 1 か所に置いている
+    readOnlyBy: 'src/app/api/cron/app-log-alerts/route.ts',
+  },
+  OPS_ALERT_ERROR_THRESHOLD: {
+    required: false,
+    description:
+      'エラー急増の運用メールのしきい値 (#1157)。直近 15 分の error がこの件数を超えたら通知する。1〜100000 の整数',
+    whenMissing: '既定の 20 件を使う (不正な値のときも既定値に戻し、warn ログを残す)',
+    readOnlyBy: 'src/app/api/cron/app-log-alerts/route.ts',
+  },
+  OPS_ALERT_COOLDOWN_MINUTES: {
+    required: false,
+    description: 'エラー急増の運用メールを、送ったあと送り直さない時間 (分。#1157)。1〜10080 の整数',
+    whenMissing: '既定の 60 分を使う (不正な値のときも既定値に戻し、warn ログを残す)',
+    readOnlyBy: 'src/app/api/cron/app-log-alerts/route.ts',
+  },
   SUPPORT_REPLY_TO: {
     required: false,
     description: 'サポート返信メールの返信先アドレス',
