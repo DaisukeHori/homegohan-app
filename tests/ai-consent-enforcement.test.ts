@@ -178,6 +178,12 @@ describe('送る経路の一覧 (棚卸し)', () => {
     }
   });
 
+  it('ログイン (#1165) は、環境変数の一覧 (src/lib/env.ts) を通ってだけ AI へ送るコードに届く (除外の理由のとおり。env.ts を辿らなければ届かない)', () => {
+    const login = path.join(ROOT, 'src/app/api/auth/login/route.ts');
+    expect(reaching).toContain('src/app/api/auth/login/route.ts');
+    expect(reachesAi(login, new Set([path.join(ROOT, 'src/lib/env.ts')]))).toBe(false);
+  });
+
   it('route ハンドラ以外のファイル (ページ・レイアウト・サーバーアクション・middleware) は、AI へ送るコードに届かない', () => {
     const others = [
       ...listFiles(path.join(ROOT, 'src/app'), (name) => /\.(ts|tsx)$/.test(name) && !/^route\.tsx?$/.test(name)),

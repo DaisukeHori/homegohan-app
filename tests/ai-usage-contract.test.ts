@@ -224,6 +224,8 @@ describe('AI 利用回数の記録 (#1177): Edge Functions', () => {
 /** 定期実行 (vercel.json の crons / migration の pg_cron・pg_net) の入口の全数。どれも service role / cron のシークレットで呼ぶので記録しない */
 const CRON_ENTRYPOINTS: Record<string, string> = {
   'vercel:/api/cron/process-menu-queue': 'キューに積まれた献立生成を実行する (積む時点で記録済み。利用者が直接書いた行は記録されない既知の穴: USER_WRITABLE_AI_QUEUES)',
+  // #1157 本番のエラーの急増 (app_logs の件数) を運用メールで知らせる。import は cron の認証・ログ・Supabase・メールだけ
+  'vercel:/api/cron/app-log-alerts': 'アプリのエラーの急増を運用メールで知らせる (AI を使わない)',
   'pg_cron:calculate-segment-stats': 'セグメント統計の集計 (AI を使わない)',
   // DB の関数が、名前を引数で受け取って Edge Function を呼ぶもの。呼び得る関数は PG_NET_CALLEES
   'pg_net:invoke_catalog_import': 'コンビニ商品カタログの取り込み (運営の処理で、利用者の AI 利用ではない)',
@@ -303,6 +305,16 @@ describe('AI 利用回数の記録 (#1177): 定期実行 (cron) の入口', () =
         expect(recordedFeatures(ALL_EDGE[name]?.usage), `${name} は service role で呼ばれるので記録しない`).toEqual([]);
       }
     }
+  });
+
+  it('Vercel Cron の route のうち、AI の入口の一覧 (ENFORCED_ROUTES / EXEMPT_ROUTES) に無いものは、AI へ送るコードに届かない (記録が要らないことの裏付け)', () => {
+    const vercelCronRoutes = Object.keys(CRON_ENTRYPOINTS)
+      .filter((entry) => entry.startsWith('vercel:'))
+      .map((entry) => `src/app${entry.slice('vercel:'.length)}/route.ts`);
+    // 一覧に無い cron が 1 本以上あること (app-log-alerts など)。0 本だとこのテストは何も確かめない
+    const unlisted = vercelCronRoutes.filter((file) => !(file in ALL_ROUTES));
+    expect(unlisted).toContain('src/app/api/cron/app-log-alerts/route.ts');
+    expect(unlisted.filter((file) => reachesAi(path.join(ROOT, file)))).toEqual([]);
   });
 });
 
