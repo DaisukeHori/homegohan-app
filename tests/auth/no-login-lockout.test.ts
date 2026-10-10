@@ -8,11 +8,17 @@
  *
  * 判定はコメントを除いたコードで行う (説明のコメントに「423」「ロック」と書くのは構わない)。
  * コメントの除去は TypeScript のパーサーで行う (文字列の中の // などを誤って消さないように)。
+ *
+ * あわせて、ロックを外したことが周りの記述に行き渡っているかも見る:
+ *   - AI の送る先の一覧 (tests/helpers/ai-consent-enforced-paths.ts) のログインの route の説明に、外したメール (Resend) が残っていない
+ *   - 文書 (docs・ルートの *.md・apps/mobile の *.md) に、ロックがあることを前提にした文が残っていない
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { EXEMPT_ROUTES } from '../helpers/ai-consent-enforced-paths';
+import { resolveImport, stripComments as stripCommentsForReach } from '../helpers/ai-reach';
 
 const ROOT = path.resolve(__dirname, '../..');
 
@@ -132,5 +138,183 @@ describe('検査そのものが、ロックのコードを見つける (検出�
 
   it('ログインの API 以外の 423 (別の意味の数値) は見ない', () => {
     expect(findLockoutCode('other.ts', 'export const width = 423;', false)).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────
+// AI の送る先の一覧の、ログインの route の説明
+// ─────────────────────────────────────────────
+
+/** ログインの API の route */
+const LOGIN_ROUTE = 'src/app/api/auth/login/route.ts';
+
+/** AI の一覧の定義のファイル (ログインの route の項の上のコメントも読む) */
+const AI_PATHS_FILE = 'tests/helpers/ai-consent-enforced-paths.ts';
+
+/** メールを送るコードの印 (Resend の SDK の import・API の URL・API キーの読み取り) */
+const MAIL_LEAF_PATTERN = /from\s+['"]resend['"]|api\.resend\.com|process\.env\.RESEND_API_KEY/;
+
+/** ファイルから import (相対パスと @/) をたどって届くファイルのうち、メールを送るもの */
+function mailSendersReachedFrom(file: string, seen = new Set<string>()): string[] {
+  if (seen.has(file) || !fs.existsSync(file)) return [];
+  seen.add(file);
+  const text = stripCommentsForReach(fs.readFileSync(file, 'utf8'));
+  const found = MAIL_LEAF_PATTERN.test(text) ? [path.relative(ROOT, file)] : [];
+  for (const match of text.matchAll(/(?:from|import\()\s*['"]([^'"]+)['"]/g)) {
+    const resolved = resolveImport(file, match[1]);
+    if (resolved) found.push(...mailSendersReachedFrom(resolved, seen));
+  }
+  return found;
+}
+
+/** 一覧の定義のファイルで、指定の項 ('<route>': {) のすぐ上に続く // コメントの行 */
+function commentLinesAbove(source: string, key: string): string[] {
+  const lines = source.split('\n');
+  const at = lines.findIndex((line) => line.trim().startsWith(`'${key}': {`));
+  if (at < 0) return [];
+  const out: string[] = [];
+  for (let i = at - 1; i >= 0 && lines[i].trim().startsWith('//'); i--) out.unshift(lines[i].trim());
+  return out;
+}
+
+describe('AI の送る先の一覧の、ログインの route の説明が実際の送る先と合っている (ロックの通知のメールは外した)', () => {
+  it('ログインの route から import をたどっても、メールを送るコードに届かない', () => {
+    expect(mailSendersReachedFrom(path.join(ROOT, LOGIN_ROUTE))).toEqual([]);
+  });
+
+  it('一覧の項 (説明の文・ハンドラの説明・項の上のコメント) に、送る先としてメール (Resend) を書いていない', () => {
+    const entry = EXEMPT_ROUTES[LOGIN_ROUTE];
+    expect(entry, `${LOGIN_ROUTE} が ${AI_PATHS_FILE} の EXEMPT_ROUTES に無い`).toBeDefined();
+    const comments = commentLinesAbove(fs.readFileSync(path.join(ROOT, AI_PATHS_FILE), 'utf8'), LOGIN_ROUTE);
+    expect(comments.length, '項の上の説明のコメントが見つからない').toBeGreaterThan(0);
+    const texts = [entry.consent, JSON.stringify(entry.handlers), ...comments];
+    expect(texts.filter((text) => /Resend/.test(text))).toEqual([]);
+  });
+
+  it('検出力: メールを送るコードの印と、項の上のコメントの読み取り', () => {
+    expect(MAIL_LEAF_PATTERN.test(`import { Resend } from 'resend';`)).toBe(true);
+    expect(MAIL_LEAF_PATTERN.test(`await fetch('https://api.resend.com/emails', init);`)).toBe(true);
+    expect(MAIL_LEAF_PATTERN.test('const key = process.env.RESEND_API_KEY;')).toBe(true);
+    expect(MAIL_LEAF_PATTERN.test(stripCommentsForReach(`// 以前は Resend (from 'resend') で送っていた\nexport const a = 1;`))).toBe(false);
+    const source = `  // 1 行目\n  // 2 行目\n  'a/route.ts': {\n    consent: 'x',\n  },`;
+    expect(commentLinesAbove(source, 'a/route.ts')).toEqual(['// 1 行目', '// 2 行目']);
+  });
+});
+
+// ─────────────────────────────────────────────
+// 文書に、ロックを前提にした文が残っていない
+// ─────────────────────────────────────────────
+
+/** 文書を探す場所 (ディレクトリは再帰。node_modules などは除く) と、ルートの *.md */
+const DOC_DIRS = ['docs', 'apps/mobile'];
+const DOC_EXT = /\.md$/;
+
+/** ロックがあることを前提にした文 (ロックの段・ロック中の扱い・ロックの解除・Redis のロックのキー・ロックの見出し) */
+const LOCK_AFFIRMING_DOC_PATTERNS: readonly RegExp[] = [
+  /\d+\s*分(?:アカウント)?ロック/,
+  /\d+\s*時間ロック/,
+  /アカウントロック(?![^\n]*しない)/,
+  /ロック中は正しいパスワードでも/,
+  /リセットのみ解除可能/,
+  /ロック解除後にリセット/,
+  /ログイン失敗(?:・アカウント)?ロック/,
+  /ロック統合フロー/,
+  /failed_login(?:_count)?:\{userId\}/,
+  /\block:\{userId\}/,
+];
+
+/**
+ * 設計書・要件書の直しは、この枝ではなく別に当てる (設計書は実装の枝で書き換えないため)。当てるまでの残りの行を、ファイルごとに全数で固定する。
+ * 直しを当てたら、ここが実際と合わなくなってテストが赤になる → 当てたファイルの項をここから消す (残すと、同じ文が戻ってきても見逃すため)。
+ * 項を増やすのは禁止 (新しくロックを前提にした文を書かない)。
+ */
+const PENDING_DOC_LINES: Readonly<Record<string, readonly string[]>> = {
+  'docs/design/cross/01-auth-session.md': [
+    'Next->>Redis: incr failed_login:{userId}',
+    'Note over Next: 5回→15分ロック、10回→1h+メール、20回→24h+admin通知',
+    '## 8. ログイン失敗ロック',
+    '| 5 回 | 15 分アカウントロック |',
+    '| 10 回 | 1 時間ロック + 本人へメール通知 |',
+    '| 20 回 | 24 時間ロック + 管理者 Slack 通知 |',
+    'ロック中は正しいパスワードでも拒否。メール経由のリセットのみ解除可能。',
+    'カウンターは Upstash Redis に `failed_login:{userId}` キーで管理し、ロック解除後にリセット。',
+    '## 15. シーケンス: CAPTCHA + ロック統合フロー',
+    'Client->>Redis: GET failed_login_count:{userId}',
+    'Next->>Redis: INCR failed_login_count:{userId}',
+    'Next->>Redis: SET lock:{userId} EX 900',
+    'Next->>Redis: SET lock:{userId} EX 3600',
+    'Next->>Redis: SET lock:{userId} EX 86400',
+    'Next->>Redis: DEL failed_login_count:{userId}',
+    '| Integration | ログイン失敗ロック、セッション同時 5 端末上限 | Vitest + Supabase Local |',
+  ],
+  'docs/design/cross/04-api-conventions.md': ['| `AUTH_ACCOUNT_LOCKED` | アカウントロック中 | 403 |'],
+  'docs/requirements/03-operator-admin.md': [
+    '### 17.5 ログイン失敗・アカウントロック',
+    '- 5 回連続失敗 → 15 分アカウントロック',
+    '- 10 回連続失敗 → 1 時間ロック + 本人へメール通知',
+    '- 20 回連続失敗 → 24 時間ロック + 管理者通知',
+    '- ロック中は正しいパスワードでも拒否、メール経由のリセットのみ可',
+  ],
+};
+
+function listDocFiles(dir: string): string[] {
+  const abs = path.join(ROOT, dir);
+  if (!fs.existsSync(abs)) return [];
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(abs, { withFileTypes: true })) {
+    if (SKIP_DIR.has(entry.name)) continue;
+    const rel = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...listDocFiles(rel));
+    else if (DOC_EXT.test(entry.name)) out.push(rel);
+  }
+  return out;
+}
+
+/** 文書の中の、ロックを前提にした行 (前後の空白を除いた行の本文) */
+function findLockAffirmingLines(text: string): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => LOCK_AFFIRMING_DOC_PATTERNS.some((pattern) => pattern.test(line)));
+}
+
+describe('文書に、ロックを前提にした文が残っていない', () => {
+  const rootDocs = fs
+    .readdirSync(ROOT, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && DOC_EXT.test(entry.name))
+    .map((entry) => entry.name);
+  const docFiles = [...rootDocs, ...DOC_DIRS.flatMap(listDocFiles)];
+
+  it('走査の対象に、運用の文書・設計書・要件書が入っている', () => {
+    expect(docFiles).toContain(path.join('docs/operations/auth-protection.md'));
+    for (const file of Object.keys(PENDING_DOC_LINES)) expect(docFiles).toContain(path.join(file));
+  });
+
+  it('ロックを前提にした行は、直しを当てる前の設計書・要件書の残り (PENDING_DOC_LINES) だけで、それと全数で一致する', () => {
+    const found: Record<string, string[]> = {};
+    for (const file of docFiles) {
+      const lines = findLockAffirmingLines(fs.readFileSync(path.join(ROOT, file), 'utf8'));
+      if (lines.length > 0) found[file.split(path.sep).join('/')] = lines;
+    }
+    expect(found).toEqual(PENDING_DOC_LINES);
+  });
+
+  it('検出力: ロックの段・ロック中の扱いを見つけ、「ロックしない」の文は見つけない', () => {
+    expect(findLockAffirmingLines('| 5 回 | 15 分アカウントロック |\nロック中は正しいパスワードでも拒否。')).toEqual([
+      '| 5 回 | 15 分アカウントロック |',
+      'ロック中は正しいパスワードでも拒否。',
+    ]);
+    expect(findLockAffirmingLines('- 5 回連続失敗 → 15分ロック')).toEqual(['- 5 回連続失敗 → 15分ロック']);
+    expect(
+      findLockAffirmingLines(
+        [
+          '| アカウントのロックアウト | しない (オーナーの選択 2026-10-10) |',
+          '## 8. ログイン失敗時の扱い (アカウントはロックしない)',
+          '| 3 回以上 | Turnstile のトークンを確かめる。何回失敗してもロックはしない |',
+          '> 更新: ログイン失敗のロック (5 回で 15 分など) をやめた',
+          '| `AUTH_ACCOUNT_LOCKED` | **使わない (#1165)**: アカウントロックはしない | - |',
+        ].join('\n'),
+      ),
+    ).toEqual([]);
   });
 });
