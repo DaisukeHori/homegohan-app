@@ -11,6 +11,8 @@ import { UsersSearchSchema } from '@/lib/admin/users-schemas';
 import { canViewUserEmail, fetchUserEmails, findUserIdsByEmail } from '@/lib/admin/user-emails';
 import { buildUserSearchFilter } from '@/lib/admin/users-search';
 import { isAccountFrozen } from '@/lib/auth/frozen';
+import { jstDayStartTimestamp } from '@/lib/date-utils';
+import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
 
 export const dynamic = 'force-dynamic';
 
@@ -112,17 +114,21 @@ export async function GET(request: Request) {
     );
   }
 
-  // 登録日フィルタ
-  if (params.registered_from) {
-    query = query.gte('created_at', params.registered_from);
+  // 登録日フィルタ (#1433): 登録日 FROM の JST 0 時以上、登録日 TO の翌日の JST 0 時未満。
+  // 日付の文字列をそのまま created_at (timestamptz) と比べると UTC の 0 時 = JST 9 時と読まれ、
+  // JST の 0:00〜8:59 に登録したユーザーが FROM の日から落ち、TO の日の 0:00 より後がまるごと落ちる。
+  const { fromTimestamp: registeredFrom, toTimestampExclusive: registeredToExclusive } =
+    jstOptionalDayRangeTimestamps(params.registered_from, params.registered_to);
+  if (registeredFrom) {
+    query = query.gte('created_at', registeredFrom);
   }
-  if (params.registered_to) {
-    query = query.lte('created_at', params.registered_to);
+  if (registeredToExclusive) {
+    query = query.lt('created_at', registeredToExclusive);
   }
 
-  // 最終ログイン
+  // 最終ログイン (#1433): 「最終ログイン日がこの日より前」= その日の JST 0 時より前 (その日にログインした人は含めない)。
   if (params.last_login_before) {
-    query = query.lte('last_login_at', params.last_login_before);
+    query = query.lt('last_login_at', jstDayStartTimestamp(params.last_login_before));
   }
 
   // ソート

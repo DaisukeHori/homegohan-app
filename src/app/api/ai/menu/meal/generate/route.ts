@@ -10,6 +10,7 @@ import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { recordAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { CALENDAR_DATE_REQUIREMENT, isCalendarDate } from '@/lib/date-utils';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -23,6 +24,12 @@ export async function POST(request: Request) {
 
     if (!dayDate || !mealType) {
       return NextResponse.json({ error: 'dayDate and mealType are required' }, { status: 400 });
+    }
+
+    // dayDate は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433)。DB の date 型は 2026/10/10 なども日付として読むが、
+    // そのまま target_slots に入ると、献立生成 (Edge Function) が日付を前後にずらすところで RangeError になる
+    if (!isCalendarDate(dayDate)) {
+      return NextResponse.json({ error: `dayDate must be ${CALENDAR_DATE_REQUIREMENT}` }, { status: 400 });
     }
 
     // 1. ユーザー認証

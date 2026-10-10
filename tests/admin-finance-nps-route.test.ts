@@ -503,7 +503,17 @@ describe('GET /api/admin/finance/nps — 期間は JST の暦日 (#1433)', () =>
     expect(microsOf(toExclusive) - microsOf(toInclusive)).toBe(1n);
   });
 
-  it.each(['?from=2026-02-30', '?to=2026-13-01', '?from=2026/10/10', '?to=garbage', '?to=2026-03-31T23:59:59Z', '?from=not-a-date'])(
+  it.each([
+    '?from=2026-02-30',
+    '?to=2026-13-01',
+    '?from=2026/10/10',
+    '?to=garbage',
+    '?to=2026-03-31T23:59:59Z',
+    '?from=not-a-date',
+    // 実在するが受け付ける範囲 (0101-01-02〜9998-12-30) の外。翌日の JST 0 時を求められず、通すと 500 になる (#1433)
+    '?to=9999-12-31',
+    '?from=0100-01-01',
+  ])(
     '存在しない日付・形の違う日付・時刻つきの値 (%s) は 400。DB には問い合わせない',
     async (query) => {
       const res = await GET(req(query));
