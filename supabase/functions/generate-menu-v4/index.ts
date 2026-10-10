@@ -73,7 +73,6 @@ import {
   fetchSingleDatasetEmbedding,
 } from "../../../shared/dataset-embedding.mjs";
 import {
-  fetchWithRetry,
   isRetryableError,
   withRetry,
   withTimeout,
@@ -109,6 +108,8 @@ import {
 } from "../_shared/save-meal.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
 import { addDaysToDate, monthJst, todayJst } from "../_shared/jst-date.ts";
+import { aiConsentDeniedResponse, checkAiConsent, invokeMenuContinuation } from "../_shared/ai-consent-guard.ts";
+import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
 
 console.log("Generate Menu V4 Function loaded (Slot-based generation)");
 
@@ -249,7 +250,9 @@ async function triggerNextStep(
   }
 
   const url = `${supabaseUrl}/functions/v1/generate-menu-v4`;
-  const res = await fetchWithRetry(url, {
+  // 続きの工程が同意の判定で止めたら (T15 / #1154)、再試行も例外もしない。行は続きの工程が失敗にし、人向けの文を書いている
+  // (投げると、この工程の catch が error_message を内部の文で上書きする)
+  const triggered = await invokeMenuContinuation(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -267,7 +270,7 @@ async function triggerNextStep(
     timeoutMs: 10000,
   });
 
-  console.log(`✅ Next step triggered: ${res.status}`);
+  console.log(triggered ? "✅ Next step triggered" : "⛔ Next step stopped by AI consent check");
 }
 
 // =========================================================
@@ -2104,9 +2107,9 @@ async function executeStep3_Complete(
       2,
     );
 
-    // V5 の generate-menu-v5 を呼び戻す
+    // V5 の generate-menu-v5 を呼び戻す (同意の判定で止められたら、再試行も例外もしない。triggerNextStep と同じ)
     const v5Url = `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/generate-menu-v5`;
-    await fetchWithRetry(v5Url, {
+    await invokeMenuContinuation(v5Url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -2799,6 +2802,28 @@ Deno.serve(async (req: Request) => {
           { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
+    }
+
+    // 献立の生成は、利用者のデータ (好み・アレルギー・健康目標・冷蔵庫の食材など) を外国の AI 事業者へ送る。
+    // 同意が無ければ (判定に失敗した場合も)、送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+    // 利用者の JWT で直接呼ばれた場合・Next.js / cron から service role で呼ばれた場合・続きの工程 (_continue) のどれもここを通る
+    // (続きの工程でも確かめるので、生成の途中で撤回すると次の工程から止まる)。リクエストの行は失敗にしておく。
+    // error_message は画面がそのまま出すので、コードではなく人向けの文を書く (画面はこの文を見分けて同意画面へ案内する)。
+    // 続きの工程を呼んだ側 (前の工程) は invokeMenuContinuation で呼ぶので、この文を内部の文で上書きしない
+    const aiConsent = await checkAiConsent(supabase, userId);
+    if (!aiConsent.allowed) {
+      const { error: persistError } = await supabase
+        .from("weekly_menu_requests")
+        .update({
+          status: "failed",
+          error_message: aiConsentDeniedStoredMessage(aiConsent),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId!)
+        .eq("user_id", userId!)
+        .in("status", ["queued", "processing"]);
+      if (persistError) console.error("Failed to persist AI consent failure:", persistError);
+      return aiConsentDeniedResponse(aiConsent, corsHeaders);
     }
 
     // 現在のステップを取得

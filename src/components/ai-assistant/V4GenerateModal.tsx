@@ -23,6 +23,7 @@ import {
   MOCK_MENU_RESPONSE,
 } from "@homegohan/handson-tour-shared";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
+import { useAiConsent } from "@/hooks/useAiConsent";
 
 // ============================================
 // Types
@@ -469,6 +470,10 @@ function V4GenerateModalNormal({
   // ローカルの送信中状態（即座にフィードバックを与えるため）
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。未同意なら生成の直前に出す。
+  // 「同意しない」なら生成しない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)
+  const { ensureAiConsent, consentModal } = useAiConsent();
+
   // UX2-04: 既存献立を上書きする破壊的な生成（「既存の献立も作り直す」/ 1日献立変更 /
   // AI献立だけ変更 等、plannedMealId 付きスロットを含む生成）の前に対象件数付きで確認する。
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
@@ -554,6 +559,11 @@ function V4GenerateModalNormal({
     setIsSubmitting(true);
 
     try {
+      // 「同意しない」なら生成を依頼しない (好み・アレルギーなどを AI に送らない)
+      if ((await ensureAiConsent()) === "declined") {
+        setIsSubmitting(false);
+        return;
+      }
       await onGenerate({
         targetSlots: slots,
         constraints,
@@ -615,7 +625,7 @@ function V4GenerateModalNormal({
     onClose();
   };
 
-  if (!isOpen) return null;
+  if (!isOpen) return <>{consentModal}</>;
 
   // Mode selection buttons
   const modes = [
@@ -912,6 +922,9 @@ function V4GenerateModalNormal({
         onConfirm={handleConfirmOverwrite}
       />
     )}
+
+    {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。未同意なら出る */}
+    {consentModal}
     </>
   );
 }

@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { sanitizeBloodTestPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
+import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { clampIntParam } from '@/lib/http-params';
 
@@ -81,25 +82,33 @@ export async function POST(request: NextRequest) {
     return internalError('POST /api/health/blood-tests', error, { userId: user.id, table: 'blood_test_results' });
   }
 
+  // 個別レビュー・経年レビューは、数値を外国の AI 事業者に送って作る。同意が無ければ (判定に失敗した場合も)、
+  // 記録の保存だけを行い、レビューは作らない (T15 / #1154)。応答の aiSkipped で画面に知らせる
+  const aiConsent = await checkUserAiConsent(supabase, user.id);
+
   // 個別 AI レビューを生成
   let aiReview = null;
-  try {
-    aiReview = await generateBloodTestReview(data);
+  if (aiConsent.allowed) {
+    try {
+      aiReview = await generateBloodTestReview(data);
 
-    await supabase
-      .from('blood_test_results')
-      .update({ ai_review: aiReview })
-      .eq('id', data.id);
-  } catch (err) {
-    console.error('Blood test AI review generation failed:', err);
+      await supabase
+        .from('blood_test_results')
+        .update({ ai_review: aiReview })
+        .eq('id', data.id);
+    } catch (err) {
+      console.error('Blood test AI review generation failed:', err);
+    }
   }
 
   // 経年レビューを自動更新
   let longitudinalReview = null;
-  try {
-    longitudinalReview = await updateBloodTestLongitudinalReview(supabase, user.id);
-  } catch (err) {
-    console.error('Blood test longitudinal review update failed:', err);
+  if (aiConsent.allowed) {
+    try {
+      longitudinalReview = await updateBloodTestLongitudinalReview(supabase, user.id);
+    } catch (err) {
+      console.error('Blood test longitudinal review update failed:', err);
+    }
   }
 
   return NextResponse.json({
@@ -108,6 +117,7 @@ export async function POST(request: NextRequest) {
       ai_review: aiReview,
     },
     longitudinalReview,
+    ...aiConsentSkippedField(aiConsent),
   });
 }
 

@@ -9,6 +9,7 @@
 import type { Page } from "@playwright/test";
 import { requireExistingUserPassword } from "./credentials";
 import { acceptLegalConsentIfShown } from "./legal-consent";
+import { ensureAiConsentGranted } from "./ai-consent";
 
 const LOGIN_TIMEOUT_MS = 90_000;
 const HYDRATION_TIMEOUT_MS = 15_000;
@@ -100,4 +101,9 @@ export async function login(
     await page.goto("/home");
     await page.waitForURL("**/home", { timeout: 60_000 });
   }
+
+  // 外国の AI 事業者への提供の同意 (T15 / #1154)。未同意の利用者のデータは、サーバーが AI へ送る手前で止める
+  // (403 AI_CONSENT_REQUIRED) ので、AI を使う spec (02-meal-photo / 03-ai-advisor など) が止められないよう記録する。
+  // すでに現行の版に同意していれば何もしない
+  await ensureAiConsentGranted(page, new URL(page.url()).origin);
 }

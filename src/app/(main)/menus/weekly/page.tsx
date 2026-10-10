@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo, useReducer } 
 import {
   weekViewReducer, initialWeekViewState,
   modalReducer, initialModalState,
-  aiGenerationReducer, initialAiGenerationState,
+  aiGenerationReducer, initialAiGenerationState, useAiConsentGenerationFailure,
   nutritionReducer, initialNutritionState,
   recipeReducer, initialRecipeState,
   uiFlagReducer, initialUiFlagState,
@@ -54,6 +54,9 @@ import { StatsModal } from "./_components/modals/StatsModal";
 import { ServingsModal } from "./_components/modals/ServingsModal";
 import { AddMealSlotModal } from "./_components/modals/AddMealSlotModal";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
+import { useAiConsent } from "@/hooks/useAiConsent";
+import { AiConsentRequiredError, aiFetch, handleStoredAiConsentFailure, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
+import { AI_CONSENT_COPY } from "@/lib/ai/consent-config";
 import { AiMealModal } from "./_components/modals/AiMealModal";
 import { RegenerateMealModal } from "./_components/modals/RegenerateMealModal";
 import { ImageGenerateModal } from "./_components/modals/ImageGenerateModal";
@@ -644,6 +647,11 @@ export default function WeeklyMenuPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。写真の解析・献立の生成・再生成・改善など、
+  // 利用者が AI にデータを送る操作の直前に、未同意なら出す。「同意しない」なら操作をやめる (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)。
+  // V4GenerateModal (V4 生成) は、コンポーネントの中で同じ確認をする
+  const { ensureAiConsent, consentModal } = useAiConsent();
+
   // ハンズオンツアー sandbox モード: ?tour=1 クエリで V4GenerateModal を sandbox モードで開く
   const tourMode = searchParams.get('tour') === '1';
 
@@ -849,7 +857,9 @@ export default function WeeklyMenuPage() {
     }
   }, [aiGen.generationProgress]);
 
-  const generationFailedError = aiGen.generationFailedError;
+  // T15 (#1154): 生成の失敗の文が「同意が無くてサーバーが止めた」ものなら、同意画面を出して失敗をクリアし、失敗パネルには出さない
+  // (失敗を出す経路 = onError・復元・Realtime・ポーリングはどれも GEN_FAIL でここに入るので、ここ 1 か所で見分ける)
+  const generationFailedError = useAiConsentGenerationFailure(aiGen.generationFailedError, dispatchAiGen);
   const generationFailedRequestId = aiGen.generationFailedRequestId;
   // F1b-02: error/requestId は必ず単一 GEN_FAIL dispatch でセット・単一 GEN_FAILED_CLEAR で解除する。
   // 個別 setter は二重 dispatch (片方が null で上書き) を招くため廃止し、呼び出し元で直接 dispatch する。
@@ -1557,6 +1567,8 @@ export default function WeeklyMenuPage() {
       }
     } catch (error) {
       // Error already handled in hook
+      // 同意が必要で止められた (T15 / #1154): 同意画面 (AiConsentRequiredHost) が案内するので、生成の画面を閉じる
+      if (error instanceof AiConsentRequiredError) setShowV4Modal(false);
     }
   };
 
@@ -2603,6 +2615,15 @@ export default function WeeklyMenuPage() {
       // 応答を待つ間にアンマウント/モーダルが閉じられた/別の取得が始まった場合は、
       // 購読を張らず state も触らずに終わる (#1206)
       if (!request.isCurrent()) return;
+
+      // 同意が無いため AI に送らなかった (403 AI_CONSENT_REQUIRED。T15 / #1154)。
+      // 栄養の詳細を開くと自動で頼む処理なので、同意画面は出さず、案内の一文だけを出す
+      if (await isAiConsentRequiredResponse(res)) {
+        if (!request.isCurrent()) return;
+        setNutritionFeedback(AI_CONSENT_COPY.automaticLockedNote);
+        setIsLoadingFeedback(false);
+        return;
+      }
       
       if (res.ok) {
         const data = await res.json();
@@ -2904,15 +2925,19 @@ export default function WeeklyMenuPage() {
   const handleFridgePhotoSelected = async (file: File) => {
     setIsAnalyzingFridgePhoto(true);
     try {
+      // 「同意しない」なら写真を AI に送らない
+      if ((await ensureAiConsent()) === "declined") return;
       const arrayBuffer = await file.arrayBuffer();
       const base64 = btoa(
         new Uint8Array(arrayBuffer).reduce((acc, byte) => acc + String.fromCharCode(byte), "")
       );
-      const analyzeRes = await fetch('/api/ai/analyze-fridge', {
+      const analyzeRes = await aiFetch('/api/ai/analyze-fridge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64: base64, mimeType: file.type || 'image/jpeg' }),
       });
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さない
+      if (await isAiConsentRequiredResponse(analyzeRes)) return;
       if (!analyzeRes.ok) {
         const data = await analyzeRes.json().catch(() => ({}));
         throw new Error(data.error || '解析に失敗しました');
@@ -3062,6 +3087,18 @@ export default function WeeklyMenuPage() {
     // タイムアウト処理（2分で強制終了）
     const TIMEOUT_MS = 120000;
     const startTime = Date.now();
+
+    // T15 (#1154): 失敗の文 (result.error) が「同意が無くてサーバーが止めた」ものなら、同意画面を出し、
+    // 失敗の表示は出さずに進み具合を閉じて true を返す (Realtime・ポーリングのどちらで失敗を受けても通る)
+    const closeShoppingListIfAiConsentRequired = (stored: string | undefined): boolean => {
+      if (!handleStoredAiConsentFailure(stored)) return false;
+      setIsRegeneratingShoppingList(false);
+      setShoppingListProgress(null);
+      setShoppingListRequestId(null);
+      localStorage.removeItem('shoppingListRegenerating');
+      cleanupShoppingListSubscription();
+      return true;
+    };
     
     // ポーリングも並行開始（Realtimeのバックアップ）
     const poll = async () => {
@@ -3114,6 +3151,7 @@ export default function WeeklyMenuPage() {
           cleanupShoppingListSubscription();
         } else if (data.status === 'failed') {
           console.log('❌ Shopping list regeneration failed (polling)');
+          if (closeShoppingListIfAiConsentRequired(data.result?.error)) return;
           const errorMsg = data.result?.error || '再生成に失敗しました';
           setShoppingListProgress({ phase: 'failed', message: errorMsg, percentage: 0 });
           // 5秒後に自動で閉じる
@@ -3194,6 +3232,7 @@ export default function WeeklyMenuPage() {
             cleanupShoppingListSubscription();
           } else if (newData.status === 'failed') {
             console.log('❌ Shopping list regeneration failed (realtime)');
+            if (closeShoppingListIfAiConsentRequired(newData.result?.error)) return;
             const errorMsg = newData.result?.error || '再生成に失敗しました';
             setShoppingListProgress({ phase: 'failed', message: errorMsg, percentage: 0 });
             // 5秒後に自動で閉じる
@@ -3318,6 +3357,8 @@ export default function WeeklyMenuPage() {
       setActiveModal(null);
       return;
     }
+    // 買い物リストの作成は、献立の料理名・食材を AI に送って整理する。未同意なら同意画面を出し、「同意しない」なら作らない
+    if ((await ensureAiConsent()) === "declined") return;
     setIsRegeneratingShoppingList(true);
     setShoppingListProgress({ phase: 'starting', message: '開始中...', percentage: 0 });
 
@@ -3343,7 +3384,7 @@ export default function WeeklyMenuPage() {
     }
     
     try {
-      const res = await fetch(`/api/shopping-list/regenerate`, {
+      const res = await aiFetch(`/api/shopping-list/regenerate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -3352,6 +3393,13 @@ export default function WeeklyMenuPage() {
           mealTypes: dateRange.mealTypes,
         })
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーの画面は出さない
+      if (await isAiConsentRequiredResponse(res)) {
+        setIsRegeneratingShoppingList(false);
+        setShoppingListProgress(null);
+        return;
+      }
       
       if (res.ok) {
         const { requestId } = await res.json();
@@ -3509,6 +3557,8 @@ export default function WeeklyMenuPage() {
 
   // Generate weekly menu with AI
   const handleGenerateWeekly = async () => {
+    // 「同意しない」なら献立の生成を依頼しない (好み・アレルギーなどを AI に送らない)
+    if ((await ensureAiConsent()) === "declined") return;
     const weekStartDate = formatLocalDate(weekStart);
     setIsGenerating(true);
     setActiveModal(null); // モーダルを閉じて一覧画面に戻る
@@ -3522,7 +3572,7 @@ export default function WeeklyMenuPage() {
         healthy: selectedConditions.includes('ヘルシーに'),
       };
 
-      const response = await fetch("/api/ai/menu/weekly/request", {
+      const response = await aiFetch("/api/ai/menu/weekly/request", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -3531,6 +3581,11 @@ export default function WeeklyMenuPage() {
           preferences,
         }),
       });
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さない
+      if (await isAiConsentRequiredResponse(response)) {
+        setIsGenerating(false);
+        return;
+      }
       if (!response.ok) throw new Error("生成リクエストに失敗しました");
       
       const { requestId } = await response.json();
@@ -3567,6 +3622,9 @@ export default function WeeklyMenuPage() {
     const { addMealKey, addMealDayIndex, selectedConditions, aiChatInput } = useFormDraftStore.getState();
     if (!addMealKey) return;
 
+    // 「同意しない」なら生成を依頼しない
+    if ((await ensureAiConsent()) === "declined") return;
+
     const dayDate = weekDates[addMealDayIndex]?.dateStr;
 
     // 生成開始前の該当食事タイプの数を記録
@@ -3585,7 +3643,7 @@ export default function WeeklyMenuPage() {
         if (c === 'ヘルシーに') preferences.healthy = true;
       });
       
-      const res = await fetch('/api/ai/menu/meal/generate', {
+      const res = await aiFetch('/api/ai/menu/meal/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -3595,6 +3653,12 @@ export default function WeeklyMenuPage() {
           note: aiChatInput
         })
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さない
+      if (await isAiConsentRequiredResponse(res)) {
+        setGeneratingMeal(null);
+        return;
+      }
 
       if (res.ok) {
         const { requestId } = await res.json();
@@ -3732,6 +3796,9 @@ export default function WeeklyMenuPage() {
   // Regenerate meal with AI
   const handleRegenerateMeal = async () => {
     if (!regeneratingMeal || !currentPlan) return;
+
+    // 「同意しない」なら再生成を依頼しない
+    if ((await ensureAiConsent()) === "declined") return;
     
     setIsRegenerating(true);
     setRegeneratingMealId(regeneratingMeal.id);
@@ -3758,7 +3825,7 @@ export default function WeeklyMenuPage() {
         return;
       }
       
-      const res = await fetch('/api/ai/menu/meal/regenerate', {
+      const res = await aiFetch('/api/ai/menu/meal/regenerate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -3769,6 +3836,13 @@ export default function WeeklyMenuPage() {
           note: aiChatInput
         })
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さない
+      if (await isAiConsentRequiredResponse(res)) {
+        setIsRegenerating(false);
+        setRegeneratingMealId(null);
+        return;
+      }
       
       if (res.ok) {
         const { requestId } = await res.json();
@@ -3870,6 +3944,8 @@ export default function WeeklyMenuPage() {
         console.log('❌ Regeneration failed');
         setIsRegenerating(false);
         setRegeneratingMealId(null);
+        // T15 (#1154): サーバーが同意の判定で止めた (未同意) なら同意画面を出し、失敗のモーダルは出さない
+        if (handleStoredAiConsentFailure(errorMessage)) return;
         // #1050 round-2 (UX2-02残): alert() ではなく完了モーダル(type:'error')に集約。
         // ここは Realtime/ポーリングで非同期に検知した失敗で、対象の regeneratingMeal は
         // 初回リクエスト成功時点で既にクリア済みのため、直前の呼び出しをそのまま安全に
@@ -4207,6 +4283,11 @@ export default function WeeklyMenuPage() {
     setIsAnalyzingPhoto(true);
 
     try {
+      // 「同意しない」なら写真を AI に送らない
+      if ((await ensureAiConsent()) === "declined") {
+        setIsAnalyzingPhoto(false);
+        return;
+      }
       // 複数枚の写真をBase64に変換して送信
       const imageDataArray = await Promise.all(photoFiles.map(async (file) => {
         return new Promise<{ base64: string; mimeType: string }>((resolve) => {
@@ -4222,7 +4303,7 @@ export default function WeeklyMenuPage() {
         });
       }));
       
-      const res = await fetch('/api/ai/analyze-meal-photo', {
+      const res = await aiFetch('/api/ai/analyze-meal-photo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4231,6 +4312,12 @@ export default function WeeklyMenuPage() {
           mealType: photoEditMeal.mealType,
         })
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さない (写真は残す)
+      if (await isAiConsentRequiredResponse(res)) {
+        setIsAnalyzingPhoto(false);
+        return;
+      }
       
       if (res.ok) {
         setActiveModal(null);
@@ -4345,6 +4432,9 @@ export default function WeeklyMenuPage() {
     setIsGeneratingMealImage(true);
 
     try {
+      // 説明文と参考画像を Google の画像生成に送る前に、未同意なら同意画面を出す (「同意しない」なら生成しない)
+      if ((await ensureAiConsent()) === "declined") return;
+
       const referenceImages = await Promise.all(
         imageReferenceFiles.map(async (file) => new Promise<{ base64: string; mimeType: string }>((resolve) => {
           const reader = new FileReader();
@@ -4359,7 +4449,7 @@ export default function WeeklyMenuPage() {
         }))
       );
 
-      const generateResponse = await fetch('/api/ai/image/generate', {
+      const generateResponse = await aiFetch('/api/ai/image/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4367,6 +4457,8 @@ export default function WeeklyMenuPage() {
           images: referenceImages,
         }),
       });
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さない
+      if (await isAiConsentRequiredResponse(generateResponse)) return;
 
       const generatePayload = await generateResponse.json();
       if (!generateResponse.ok) {
@@ -4446,6 +4538,9 @@ export default function WeeklyMenuPage() {
       return;
     }
 
+    // 「同意しない」なら改善を依頼しない
+    if ((await ensureAiConsent()) === "declined") return;
+
     setIsImprovingMeal(true);
 
     try {
@@ -4469,7 +4564,7 @@ export default function WeeklyMenuPage() {
         mealType,
       }));
 
-      const requestRes = await fetch('/api/ai/menu/v4/generate', {
+      const requestRes = await aiFetch('/api/ai/menu/v4/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4479,6 +4574,12 @@ export default function WeeklyMenuPage() {
           constraints: {},
         }),
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さない
+      if (await isAiConsentRequiredResponse(requestRes)) {
+        setIsImprovingMeal(false);
+        return;
+      }
 
       if (!requestRes.ok) {
         const errorData = await requestRes.json().catch(() => ({}));
@@ -4532,6 +4633,8 @@ export default function WeeklyMenuPage() {
           setGenerationProgress(null);
 
           if (status === 'failed') {
+            // T15 (#1154): サーバーが同意の判定で止めた (未同意) なら同意画面を出し、失敗のモーダルは出さない
+            if (handleStoredAiConsentFailure(errorMessage)) return;
             // #1050 round-2 (UX2-02残): alert() ではなく完了モーダル(type:'error')に集約。
             // improveMealTargets/improveNextDay/selectedDayIndex はこの非同期失敗検知時点でも
             // クリアされていないため、改善対象選択モーダルを再度開けばそのままリトライできる。
@@ -6500,6 +6603,9 @@ export default function WeeklyMenuPage() {
         }}
         onImprove={handleImprove}
       />
+
+      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。未同意なら出る */}
+      {consentModal}
     </div>
   );
 }

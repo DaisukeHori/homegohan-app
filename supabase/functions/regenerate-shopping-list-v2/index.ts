@@ -17,6 +17,8 @@ import { getCorsHeaders, withCors } from "../_shared/cors.ts";
 import { aggregateIngredientOccurrences, InputIngredient } from "../_shared/shopping-list-aggregation.ts";
 import { verifyRequestOwnership } from "../_shared/request-ownership.ts";
 import { replaceActiveShoppingList } from "../_shared/shopping-list-replace.ts";
+import { aiConsentDeniedResponse, checkAiConsent } from "../_shared/ai-consent-guard.ts";
+import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
 
 // CORS ヘッダーは許可したオリジン (ALLOWED_ORIGINS) にだけ、リクエストごとに getCorsHeaders(req) で作る (#1167)。
 // 認証ヘルパー（_shared/auth.ts）が返す Response には CORS ヘッダーが付与されていないため、
@@ -678,6 +680,16 @@ Deno.serve(async (req: Request) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
+    }
+
+    // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+    // 利用者の JWT で直接呼ばれた場合も、Next.js (src/app/api/shopping-list/regenerate) から呼ばれた場合も、ここで止める。
+    // リクエストの行は失敗にしておく (画面の進み具合の確認が止まったままにならないように)。
+    // result.error は画面がそのまま出すので、コードではなく人向けの文を書く (画面はこの文を見分けて同意画面へ案内する)
+    const aiConsent = await checkAiConsent(supabase, userId);
+    if (!aiConsent.allowed) {
+      await markFailed(supabase, requestId, userId, aiConsentDeniedStoredMessage(aiConsent));
+      return aiConsentDeniedResponse(aiConsent, corsHeaders);
     }
 
     // 非同期で処理開始（即座にレスポンス返す。レスポンス後も処理が打ち切られないようwaitUntilに委ねる）

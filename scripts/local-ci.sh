@@ -140,7 +140,7 @@ INTEG1_ARGS=(--config vitest.integration.config.ts --passWithNoTests tests/integ
 # security-regression.yml の 2 本目 (運営コンソール。--passWithNoTests は付けない)
 INTEG2_ARGS=(--config vitest.integration.config.ts tests/integration/operator/admin- tests/integration/operator/auth-boundary tests/integration/operator/super-admin-)
 # e2e-local.yml の Playwright
-PW_ARGS=(--trace off tests/e2e/01-login.spec.ts tests/e2e/04-menu-page.spec.ts tests/e2e/05-shopping-list.spec.ts tests/e2e/public-policy-pages.spec.ts tests/e2e/legal-consent-gate.spec.ts)
+PW_ARGS=(--trace off tests/e2e/01-login.spec.ts tests/e2e/04-menu-page.spec.ts tests/e2e/05-shopping-list.spec.ts tests/e2e/public-policy-pages.spec.ts tests/e2e/ai-consent-first-use.spec.ts tests/e2e/legal-consent-gate.spec.ts)
 # e2e-local.yml の Playwright (2 つ目・3 つ目のサーバーに対して。規約の同意ゲートだけ)
 PW_CONSENT_ARGS=(--trace off tests/e2e/legal-consent-gate.spec.ts)
 

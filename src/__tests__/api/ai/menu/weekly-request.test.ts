@@ -72,6 +72,8 @@ const mockSupabase = {
   from: mockFrom,
 };
 
+// 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
+vi.mock('@/lib/ai/consent-guard', () => import('../../../../../tests/helpers/ai-consent-guard-allowed'));
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => mockSupabase),
 }));
@@ -224,6 +226,22 @@ describe('POST /api/ai/menu/weekly/request', () => {
     const failedArgs = mockMarkWeeklyMenuRequestFailed.mock.calls[0][0];
     expect(failedArgs.requestId).toBe('request-1');
     expect(failedArgs.errorMessage).toContain('rollback: restored=2, skipped=0, failed=0');
+  });
+
+  it('Edge Function が同意の判定で止めた (T15 / #1154) ときも復元するが、失敗の文は人向けの文のまま残す (画面が見分けて同意画面へ案内するため)', async () => {
+    const { AI_CONSENT_REQUIRED_MESSAGE, aiConsentReasonOfStoredError } = await import('@/lib/ai/consent-config');
+    mockCallGenerateMenuV4WithRetry.mockResolvedValue({ ok: false, attempts: 1, errorMessage: AI_CONSENT_REQUIRED_MESSAGE });
+    mockRestorePlannedMealsSnapshot.mockResolvedValue({ restored: 2, skipped: 0, failed: 0 });
+
+    const res = await POST(makeRequest({ startDate }));
+    expect(res.status).toBe(200);
+    await flushBackground();
+
+    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
+    expect(mockMarkWeeklyMenuRequestFailed).toHaveBeenCalledTimes(1);
+    const failedArgs = mockMarkWeeklyMenuRequestFailed.mock.calls[0][0];
+    expect(failedArgs.errorMessage).toBe(AI_CONSENT_REQUIRED_MESSAGE);
+    expect(aiConsentReasonOfStoredError(failedArgs.errorMessage)).toBe('consent_required');
   });
 
   it('Edge Function 成功時はロールバックを実行しない', async () => {
