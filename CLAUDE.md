@@ -96,7 +96,7 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 - Edge Function は、ユーザーの JWT を確かめた経路で `recordEdgeAiUsage` (`supabase/functions/_shared/ai-usage.ts`) を呼ぶ。service role / cron の経路では呼ばない (Next.js が記録済み)。
 - Next.js が Edge Function を**ユーザーの JWT で**呼ぶとき (`supabase.functions.invoke`) は、`headers: await aiUsageRecordedHeaders(user.id)` を付ける (署名つきの印。付けないと Edge 側でも記録して二重になる)。
 - どの入口が記録するかは、同意の判定と同じ一覧 `tests/helpers/ai-consent-enforced-paths.ts` の `usage` の列に書く (入口の一覧は 1 つ)。新しい AI の入口を足したら、その一覧に行を足し、`tests/ai-consent-enforcement-routes.test.ts` の表に実際に呼ぶ行を足す (同意の判定 → 記録 → 送信の順は、この表が実際に route を呼んで確かめる)。`tests/ai-usage-contract.test.ts` は、記録を呼ぶファイル・機能名・公開ハンドラの一覧が `usage` の列と一致することを検査する。
-- 既知の穴: キューのテーブル (`weekly_menu_requests` / `meal_image_jobs`) は利用者が直接書けるので、API ルートを通らずに積んだ行は記録されない。閉じるには書き込みを service role だけにする (別の Issue。`tests/ai-usage-contract.test.ts` の `USER_WRITABLE_AI_QUEUES` が、穴が残っていることを migration から確かめる)。
+- キューのテーブル (`weekly_menu_requests` / `meal_image_jobs`) は、service role の処理 (cron の `process-menu-queue`・Edge Function の `process-meal-image-jobs`) が AI へ送る。利用者 (authenticated) からは読むだけで、書けない (#1465。INSERT / UPDATE / DELETE の権限とポリシーを外した)。行を積む・書き換えるのは、本人の確認と記録を通った API ルートだけで、`src/lib/ai/ai-queue-writer.ts` の `getAiQueueWriter()` (service role) を変数名 `queueDb` で受けて書く (RLS が効かないので、UPDATE は `.eq('user_id', user.id)` で本人の行に絞る)。画面・モバイルからこの 2 つの表へ書かない。`tests/ai-usage-contract.test.ts` (migration から、利用者が書けないこと) と `tests/ai-queue-writes-contract.test.ts` (ソースから、書き込みが `queueDb` からだけであること)、`tests/integration/rls/ai-queue-writes.test.ts` (実 DB) が確かめる。
 
 ### 機能フラグ
 

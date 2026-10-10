@@ -35,15 +35,7 @@ const mockFrom = vi.fn((table: string) => {
       }),
     };
   }
-  if (table === 'weekly_menu_requests') {
-    return {
-      insert: () => ({
-        select: () => ({
-          single: mockWeeklyInsertSingle,
-        }),
-      }),
-    };
-  }
+  // weekly_menu_requests は利用者のクライアントでは書かない (#1465)。service role のクライアント (mockAdminFrom) で書く
   throw new Error(`Unexpected table in test: ${table}`);
 });
 
@@ -52,10 +44,24 @@ const mockSupabase = {
   from: mockFrom,
 };
 
+const mockWeeklyInsert = vi.fn((..._args: any[]) => ({
+  select: () => ({
+    single: mockWeeklyInsertSingle,
+  }),
+}));
+const mockAdminFrom = vi.fn((table: string) => {
+  if (table === 'weekly_menu_requests') {
+    return { insert: mockWeeklyInsert };
+  }
+  throw new Error(`Unexpected table in test (admin): ${table}`);
+});
+
 // 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
 vi.mock('@/lib/ai/consent-guard', () => import('../../../../../tests/helpers/ai-consent-guard-allowed'));
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => mockSupabase),
+  // AI のキューへの書き込みは service role のクライアント (getAiQueueWriter → getSupabaseAdmin) で行う (#1465)
+  getSupabaseAdmin: vi.fn(() => ({ from: mockAdminFrom })),
 }));
 
 vi.mock('@/lib/rate-limit', () => ({
@@ -159,6 +165,9 @@ describe('POST /api/ai/menu/day/regenerate', () => {
 
     expect(res.status).toBe(200);
     expect(json.mealsCount).toBe(3);
+    // リクエストの行は service role のクライアントで、本人の user_id で積む (#1465)
+    expect(mockAdminFrom).toHaveBeenCalledWith('weekly_menu_requests');
+    expect(mockWeeklyInsert.mock.calls[0][0]).toMatchObject({ user_id: user.id });
     expect(mockCallGenerateMenuV4WithRetry).toHaveBeenCalledTimes(1);
     const payload = mockCallGenerateMenuV4WithRetry.mock.calls[0][0].payload;
     expect(payload.targetSlots.map((s: any) => s.mealType).sort()).toEqual(['breakfast', 'dinner', 'lunch']);

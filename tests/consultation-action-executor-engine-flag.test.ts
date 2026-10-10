@@ -32,12 +32,15 @@ vi.mock('@/lib/meal-image-jobs', () => ({
 vi.mock('@/lib/rate-limit', () => ({ checkRateLimit: vi.fn() }));
 vi.mock('@/lib/db-logger', () => ({ createLogger: () => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn(), withUser: vi.fn() }) }));
 vi.mock('@/lib/health-streaks', () => ({ updateHealthStreak: vi.fn() }));
+// 献立生成のリクエストの行 (weekly_menu_requests) は service role のクライアント (getAiQueueWriter) で書く (#1465)
+const queue = vi.hoisted(() => ({ db: null as unknown }));
+vi.mock('@/lib/ai/ai-queue-writer', () => ({ getAiQueueWriter: () => queue.db }));
 
 import { runConsultationAction, type ConsultationActionRow } from '@/lib/ai/consultation-action-executor';
 
 const USER = { id: 'user-1' };
 
-function makeSupabase() {
+function makeClient() {
   const inserts: Array<Record<string, unknown>> = [];
   const invoke = vi.fn(async (_name: string, _options: unknown) => ({ data: null, error: null }));
 
@@ -70,6 +73,14 @@ function makeSupabase() {
   return { supabase, inserts, invoke };
 }
 
+/** 利用者のクライアントと、AI のキューへ書く service role のクライアント (#1465)。inserts は service role 側に届いた行 */
+function makeSupabase() {
+  const user = makeClient();
+  const queueClient = makeClient();
+  queue.db = queueClient.supabase;
+  return { supabase: user.supabase, invoke: user.invoke, inserts: queueClient.inserts, userInserts: user.inserts };
+}
+
 function generateDayMenuAction(): ConsultationActionRow {
   return {
     id: 'action-1',
@@ -91,11 +102,14 @@ beforeEach(() => {
 describe('runConsultationAction: generate_day_menu のエンジン切り替え (#1148)', () => {
   it('menu_generation_v5_wrapped が ON なら generate-menu-v5 を呼び、リクエスト行の mode は v5', async () => {
     h.isFeatureEnabled.mockImplementation(async (key: string) => key === 'menu_generation_v5_wrapped');
-    const { supabase, inserts, invoke } = makeSupabase();
+    const { supabase, inserts, invoke, userInserts } = makeSupabase();
 
     const outcome = await runConsultationAction(supabase, USER, generateDayMenuAction());
 
     expect(outcome.success).toBe(true);
+    // リクエストの行は service role のクライアントで積む (利用者のクライアントでは書かない)
+    expect(inserts).toHaveLength(1);
+    expect(userInserts).toEqual([]);
     expect(h.isFeatureEnabled).toHaveBeenCalledWith('menu_generation_v5_wrapped', USER.id);
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(invoke.mock.calls[0][0]).toBe('generate-menu-v5');

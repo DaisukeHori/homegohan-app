@@ -30,6 +30,9 @@ vi.mock('@/lib/plan/entitlements', () => ({
   aiUsageRecordedHeaders: m.aiUsageRecordedHeaders,
 }));
 vi.mock('@/lib/ai/consent-guard', () => ({ checkUserAiConsent: m.checkUserAiConsent }));
+// AI のキューへは service role のクライアント (getAiQueueWriter) で書く (#1465)。利用者のクライアントとは別の作り物にする
+const queue = vi.hoisted(() => ({ db: null as unknown }));
+vi.mock('@/lib/ai/ai-queue-writer', () => ({ getAiQueueWriter: () => queue.db }));
 // 献立のエンジンは v4 (menu_generation_v5_wrapped は OFF)
 vi.mock('@/lib/feature-flags', () => ({ isFeatureEnabled: vi.fn(async (key: string) => key === 'ai_chat_enabled') }));
 vi.mock('@/lib/generate-menu-v4-retry', () => ({
@@ -113,6 +116,7 @@ async function runUpdateMeal(run: Run) {
 beforeEach(() => {
   vi.clearAllMocks();
   m.checkUserAiConsent.mockResolvedValue({ allowed: true });
+  queue.db = makeSupabase();
 });
 
 afterAll(() => {
@@ -140,6 +144,8 @@ describe('update_meal の料理画像: 同意の判定 → 記録 → 画像の�
     expect(m.recordAiUsage).toHaveBeenCalledWith(USER.id, 'image_generation');
     expect(m.checkUserAiConsent.mock.invocationCallOrder[0]).toBeLessThan(m.recordAiUsage.mock.invocationCallOrder[0]);
     expect(m.recordAiUsage.mock.invocationCallOrder[0]).toBeLessThan(m.enqueueMealImageJobs.mock.invocationCallOrder[0]);
+    // ジョブは service role のクライアントで積む (利用者のクライアントでは権限で拒まれる。#1465)
+    expect((m.enqueueMealImageJobs.mock.calls[0] as unknown as [{ supabase: unknown }])[0].supabase).toBe(queue.db);
   });
 
   it.each([

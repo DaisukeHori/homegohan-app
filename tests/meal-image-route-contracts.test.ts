@@ -9,11 +9,15 @@ vi.mock('../src/lib/meal-image-jobs', () => ({
   triggerMealImageJobProcessing: vi.fn(),
 }));
 
+// 画像のジョブ (meal_image_jobs) は service role のクライアント (getAiQueueWriter → getSupabaseAdmin) で積む (#1465)。
+// 利用者のクライアントとは別の作り物にして、enqueueMealImageJobs に渡るのがこちらであることを見る
+const mockQueueClient = { from: vi.fn() };
 vi.mock('@/lib/supabase/server', () => ({
   createClient: () => ({
     auth: { getUser: mockGetUser },
     from: mockFrom,
   }),
+  getSupabaseAdmin: () => mockQueueClient,
 }));
 
 // #1022: 画像生成ジョブの同期トリガーには image カテゴリのレート制限が挿入されているが、
@@ -133,6 +137,7 @@ describe('meal image route contracts', () => {
     );
     expect(vi.mocked(enqueueMealImageJobs)).toHaveBeenCalledWith(
       expect.objectContaining({
+        supabase: mockQueueClient,
         plannedMealId: 'meal-1',
         jobSeeds: payload.jobs,
         requestId: 'req-1',
@@ -192,6 +197,7 @@ describe('meal image route contracts', () => {
     );
     expect(vi.mocked(enqueueMealImageJobs)).toHaveBeenCalledWith(
       expect.objectContaining({
+        supabase: mockQueueClient,
         plannedMealId: 'meal-2',
         jobSeeds: payload.jobs,
         requestId: 'req-2',

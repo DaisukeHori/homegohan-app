@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { isFeatureEnabled } from '@/lib/feature-flags';
 import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
@@ -135,6 +136,8 @@ export async function POST(request: Request) {
     // (未ログインの呼び出しに、設定の不足を教えない。書き込んだあとで気づくと、Edge Function を呼べないまま、
     //  リクエストの行を作って失敗として記録するだけの無駄な動きになる) (#1182)
     const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
+    // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。本人の確認・同意のあとで、service role で書く
+    const queueDb = getAiQueueWriter();
 
     const targetSlots = body?.resolveExistingMeals
       ? await resolveExistingTargetSlots({
@@ -308,7 +311,7 @@ export async function POST(request: Request) {
     await recordAiUsage(user.id, 'menu_generation');
 
     // 10. Create request record
-    const { data: requestData, error: insertError } = await supabase
+    const { data: requestData, error: insertError } = await queueDb
       .from('weekly_menu_requests')
       .insert({
         user_id: user.id,
@@ -359,7 +362,7 @@ export async function POST(request: Request) {
       if (!result.ok) {
         console.error('❌ Edge Function error:', result.errorMessage);
         await markWeeklyMenuRequestFailed({
-          supabase,
+          supabase: queueDb,
           requestId: requestData.id,
           errorMessage: result.errorMessage,
         });

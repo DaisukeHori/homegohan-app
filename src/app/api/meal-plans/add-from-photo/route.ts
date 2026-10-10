@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getAiQueueWriter } from "@/lib/ai/ai-queue-writer";
 import { checkSandboxEligibility } from "@/lib/handson-tour/sandbox-eligibility";
 import { buildCatalogSelectionUpdate } from "../../../../lib/catalog-products";
 import { buildPhotoDishList } from "../../../../lib/meal-image";
@@ -96,9 +97,11 @@ export async function POST(request: Request) {
     }
 
     if (Array.isArray(existingMeals) && existingMeals.length > 0) {
+      // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。本人の行に絞って service role で取り消す
+      const queueDb = getAiQueueWriter();
       await Promise.all(
         existingMeals.map((meal) =>
-          cancelPendingMealImageJobs({ supabase, plannedMealId: meal.id, reason: 'photo overwrite' }).catch(
+          cancelPendingMealImageJobs({ supabase: queueDb, userId: user.id, plannedMealId: meal.id, reason: 'photo overwrite' }).catch(
             (cancelError) => {
               console.warn('Failed to cancel meal image jobs for overwritten photo:', cancelError);
             },

@@ -102,6 +102,10 @@ export async function buildDishImagePayload(
 }
 
 interface EnqueueJobsParams {
+  /**
+   * service role のクライアント (getAiQueueWriter())。meal_image_jobs は利用者 (authenticated) から書けない (#1465)。
+   * 利用者のセッションのクライアントを渡すと、書き込みが権限で拒まれる
+   */
   supabase: SupabaseClient;
   plannedMealId: string;
   userId: string;
@@ -142,8 +146,14 @@ export async function enqueueMealImageJobs(params: EnqueueJobsParams) {
     });
 }
 
+/**
+ * 献立の待ち・処理中の画像のジョブを取り消す。
+ * supabase は service role のクライアント (getAiQueueWriter())。meal_image_jobs は利用者 (authenticated) から書けない (#1465)。
+ * RLS が効かないので、userId (認証済みの本人) の行に絞る
+ */
 export async function cancelPendingMealImageJobs(params: {
   supabase: SupabaseClient;
+  userId: string;
   plannedMealId: string;
   reason?: string;
 }) {
@@ -157,6 +167,7 @@ export async function cancelPendingMealImageJobs(params: {
       updated_at: new Date().toISOString(),
     })
     .eq('planned_meal_id', params.plannedMealId)
+    .eq('user_id', params.userId)
     .in('status', ['pending', 'processing']);
 }
 

@@ -1,6 +1,7 @@
 import { buildMealImageIdempotencyKey, type MealImageJobSeed } from "./meal-image.ts";
 
 export interface EnqueueMealImageJobsParams {
+  /** service role のクライアント。meal_image_jobs は利用者 (authenticated) から書けない (#1465) */
   supabase: any;
   plannedMealId: string;
   userId: string;
@@ -45,8 +46,14 @@ export async function enqueueMealImageJobs(params: EnqueueMealImageJobsParams): 
     .upsert(rows, { onConflict: "idempotency_key", ignoreDuplicates: true });
 }
 
+/**
+ * 献立の待ち・処理中の画像のジョブを取り消す。
+ * supabase は service role のクライアント。meal_image_jobs は利用者 (authenticated) から書けない (#1465)。
+ * RLS が効かないので、userId (本人) の行に絞る
+ */
 export async function cancelPendingMealImageJobs(params: {
   supabase: any;
+  userId: string;
   plannedMealId: string;
   reason?: string;
 }): Promise<void> {
@@ -60,6 +67,7 @@ export async function cancelPendingMealImageJobs(params: {
       updated_at: new Date().toISOString(),
     })
     .eq("planned_meal_id", params.plannedMealId)
+    .eq("user_id", params.userId)
     .in("status", ["pending", "processing"]);
 }
 

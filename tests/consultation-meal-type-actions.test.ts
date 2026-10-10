@@ -47,6 +47,10 @@ vi.mock('@/lib/v4-target-slots', () => ({
 vi.mock('@/lib/rate-limit', () => ({ checkRateLimit: vi.fn() }));
 vi.mock('@/lib/db-logger', () => ({ createLogger: () => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }) }));
 vi.mock('@/lib/health-streaks', () => ({ updateHealthStreak: vi.fn() }));
+// 献立生成のリクエストの行 (weekly_menu_requests) は service role のクライアント (getAiQueueWriter) で書く (#1465)。
+// 利用者のクライアントとは別の作り物にして、INSERT がそちらに届くことを見る
+const queue = vi.hoisted(() => ({ db: null as unknown }));
+vi.mock('@/lib/ai/ai-queue-writer', () => ({ getAiQueueWriter: () => queue.db }));
 
 import { AI_ALLOWED_MEAL_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';
 import { invokeGenerateMenuV4WithRetry } from '@/lib/generate-menu-v4-retry';
@@ -84,6 +88,9 @@ function makeSupabase(): FakeDb {
   return { from, functions: { invoke: vi.fn(async () => ({ data: {}, error: null })) }, requestInserts };
 }
 
+/** service role のクライアント (AI のキューへ書く。#1465) */
+let queueDb: FakeDb;
+
 function generateSingleMeal(db: FakeDb, params: Record<string, unknown>) {
   return runConsultationAction(db, USER, {
     id: 'action-1',
@@ -95,6 +102,8 @@ function generateSingleMeal(db: FakeDb, params: Record<string, unknown>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  queueDb = makeSupabase();
+  queue.db = queueDb;
 });
 
 describe('AI_ALLOWED_MEAL_TYPES (#1103)', () => {
@@ -121,9 +130,10 @@ describe('generate_single_meal: mealType の許可 (#1103)', () => {
       expect(out.success).toBe(true);
       expect(out.result).toMatchObject({ requestId: 'request-1', status: 'processing' });
 
-      // weekly_menu_requests の target_slots (Edge Function が読む)
-      expect(db.requestInserts).toHaveLength(1);
-      expect(db.requestInserts[0]).toMatchObject({
+      // weekly_menu_requests の target_slots (Edge Function が読む)。service role のクライアントで積み、利用者のクライアントでは書かない
+      expect(db.requestInserts).toHaveLength(0);
+      expect(queueDb.requestInserts).toHaveLength(1);
+      expect(queueDb.requestInserts[0]).toMatchObject({
         user_id: USER.id,
         start_date: DATE,
         status: 'processing',
@@ -179,6 +189,7 @@ describe('generate_single_meal: mealType の許可 (#1103)', () => {
       error: 'mealType は breakfast/lunch/dinner/snack/midnight_snack のいずれかである必要があります',
     });
     expect(db.from).not.toHaveBeenCalled();
+    expect(queueDb.from).not.toHaveBeenCalled();
     expect(resolveExistingTargetSlots).not.toHaveBeenCalled();
     expect(invokeGenerateMenuV4WithRetry).not.toHaveBeenCalled();
     expect(db.functions.invoke).not.toHaveBeenCalled();
@@ -196,6 +207,7 @@ describe('generate_single_meal: mealType の許可 (#1103)', () => {
     expect(out.success).toBe(false);
     expect(out.result).toEqual({ error: 'date と mealType は必須です' });
     expect(db.from).not.toHaveBeenCalled();
+    expect(queueDb.from).not.toHaveBeenCalled();
   });
 });
 

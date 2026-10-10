@@ -205,6 +205,9 @@ vi.mock('@/lib/supabase/server', () => ({
       })),
     },
   })),
+  // AI のキュー (weekly_menu_requests / meal_image_jobs) へ書く service role のクライアント (getAiQueueWriter。#1465)。
+  // このテストはレート制限の検証が目的なので、利用者のクライアントと同じ表の作り物 (mockFrom) を使う
+  getSupabaseAdmin: vi.fn(() => ({ from: mockFrom })),
 }));
 
 vi.mock('@google/genai', () => ({

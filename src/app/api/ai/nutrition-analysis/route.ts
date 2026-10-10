@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { SUGAR_APP_DEFAULT } from '@homegohan/core';
@@ -398,6 +399,8 @@ export async function POST(request: Request) {
     // generate-menu-v4を呼び出す（同期呼び出し）
     // 必須の環境変数が欠けていれば、リクエストの行を作る前に MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す) (#1182)
     const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
+    // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。本人の確認・同意のあとで、service role で書く
+    const queueDb = getAiQueueWriter();
 
     // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
     // (記録に失敗しても止めない)
@@ -405,7 +408,7 @@ export async function POST(request: Request) {
 
     // リクエストを作成
     const targetSlots = [{ date: targetDate, mealType: targetMealType, plannedMealId: meal.id }];
-    const { data: requestData, error: requestError } = await supabase
+    const { data: requestData, error: requestError } = await queueDb
       .from('weekly_menu_requests')
       .insert({
         user_id: user.id,
@@ -442,7 +445,7 @@ export async function POST(request: Request) {
     if (!regenerateResult.ok) {
       console.error('Regenerate error:', regenerateResult.errorMessage);
       await markWeeklyMenuRequestFailed({
-        supabase,
+        supabase: queueDb,
         requestId: requestData.id,
         errorMessage: regenerateResult.errorMessage,
       });

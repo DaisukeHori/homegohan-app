@@ -12,7 +12,7 @@
  *      記録しない AI の関数は、service role (または cron のシークレット) でしか呼べない
  *   5. Next.js が Edge Function を呼ぶときは、記録済みの印 (aiUsageRecordedHeaders) を付ける (二重に記録しない)
  *   6. 定期実行 (vercel.json の crons・migration の pg_cron / pg_net) は記録しない
- *   7. 既知の穴: 利用者が直接書けるキューから AI へ送る経路は記録されない (閉じたら落ちる)
+ *   7. AI のキュー (weekly_menu_requests / meal_image_jobs) は、利用者 (authenticated) から書けない (#1465。書けるようになったら落ちる)
  *   8. 機能名は DB の形式どおりで、どれもどこかで使われている
  *
  * 「同意の判定 → 記録 → AI への送信」の順は、ここ (ソースの文字) では見ない。実際にハンドラを動かして、呼ばれた順で確かめる
@@ -33,6 +33,7 @@ import {
   type AiUsage,
 } from './helpers/ai-consent-enforced-paths';
 import { ROOT, exportedHandlers, listEdgeFunctions, listFiles, reachesAi, rel, stripComments } from './helpers/ai-reach';
+import { AI_QUEUE_TABLES, type AiQueueTable } from '../src/lib/ai/ai-queue-tables';
 
 const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 const sorted = (values: Iterable<string>) => [...new Set(values)].sort();
@@ -223,7 +224,7 @@ describe('AI 利用回数の記録 (#1177): Edge Functions', () => {
 
 /** 定期実行 (vercel.json の crons / migration の pg_cron・pg_net) の入口の全数。どれも service role / cron のシークレットで呼ぶので記録しない */
 const CRON_ENTRYPOINTS: Record<string, string> = {
-  'vercel:/api/cron/process-menu-queue': 'キューに積まれた献立生成を実行する (積む時点で記録済み。利用者が直接書いた行は記録されない既知の穴: USER_WRITABLE_AI_QUEUES)',
+  'vercel:/api/cron/process-menu-queue': 'キューに積まれた献立生成を実行する (積む時点で記録済み。キューは利用者から書けない: AI_QUEUE_TABLES / #1465)',
   // #1157 本番のエラーの急増 (app_logs の件数) を運用メールで知らせる。import は cron の認証・ログ・Supabase・メールだけ
   'vercel:/api/cron/app-log-alerts': 'アプリのエラーの急増を運用メールで知らせる (AI を使わない)',
   'pg_cron:calculate-segment-stats': 'セグメント統計の集計 (AI を使わない)',
@@ -319,19 +320,19 @@ describe('AI 利用回数の記録 (#1177): 定期実行 (cron) の入口', () =
 });
 
 // ─────────────────────────────────────────────
-// 7. 既知の穴
+// 7. AI のキュー (#1465)
 // ─────────────────────────────────────────────
 
 /**
- * 既知の穴: 利用者が自分の権限 (authenticated) で行を書けるキューのうち、service role の処理が AI へ送るもの。
+ * AI のキュー: 行を積むと、service role の処理が AI へ送る表 (#1465)。
  * 通常の操作は、行を積む route で記録する (献立生成 = POST /api/ai/menu/v5/generate、料理画像 = 献立の保存・更新の route)。
- * ところが行は RLS で本人が直接 INSERT / UPDATE できるので、route を通らずに積んだ行・積み直した行は、どこでも記録されない。
- * 取り出す側で記録しても、取り直し (止まったワーカーの続き) と見分ける列も利用者が書けるので、記録の仕方では閉じられない。
- * 閉じるには、書き込みを service role だけにする (既存の権限を取り上げる DB の変更なので、この Issue では行わず、別の Issue にする)。
- * 閉じたら (下のテストが落ちたら)、この一覧から消し、一覧 (tests/helpers/ai-consent-enforced-paths.ts) の説明と
- * supabase/functions/README.md の「既知の穴」を直すこと。
+ * 利用者 (authenticated) がこれらの表に直接書けると、route を通らずに積んだ行・積み直した行がどこでも記録されず、
+ * 上限 (T40 #1149) もすり抜けられる。取り出す側で記録しても、取り直し (止まったワーカーの続き) と見分ける列も
+ * 利用者が書けるので、記録の仕方では閉じられない。そのため、書き込みは service role だけにした
+ * (migration 20261011010000_ai_queue_service_role_writes.sql。route は src/lib/ai/ai-queue-writer.ts の getAiQueueWriter で書く)。
+ * 表の一覧は src/lib/ai/ai-queue-tables.ts の AI_QUEUE_TABLES と同じ (下のテストが突き合わせる)。
  */
-const USER_WRITABLE_AI_QUEUES: Record<string, { worker: string; note: string }> = {
+const AI_QUEUES: Record<AiQueueTable, { worker: string; note: string }> = {
   weekly_menu_requests: {
     worker: 'src/app/api/cron/process-menu-queue/route.ts',
     note: 'queued の行を Vercel Cron が取り出し、行の generated_data と user_id で generate-menu-v5 を service role で呼ぶ (Edge Function は service role の経路では記録しない)',
@@ -343,10 +344,19 @@ const USER_WRITABLE_AI_QUEUES: Record<string, { worker: string; note: string }> 
 };
 
 /**
- * migration を順に読み、authenticated がそのテーブルに INSERT / UPDATE できるか (権限と、許可のポリシーの両方があるか)。
+ * 既知の穴: AI のキューのうち、まだ利用者 (authenticated) が書けるもの。#1465 で 2 つとも閉じたので空。
+ * 書き込みのポリシーや権限を足して穴が戻ると、下のテストが落ちる (この一覧に足して通すのではなく、穴を閉じること)。
+ */
+const USER_WRITABLE_AI_QUEUES: ReadonlySet<AiQueueTable> = new Set<AiQueueTable>();
+
+/**
+ * migration を順に読み、authenticated がそのテーブルに INSERT / UPDATE / DELETE できるか (権限と、許可のポリシーの両方があるか)。
  * ポリシーの条件 (USING / WITH CHECK) は評価しない (条件つきでも、その操作を許すポリシーがあれば書けるとみなす)
  */
-function authenticatedCanWrite(table: string, sqlFiles: Array<{ name: string; sql: string }> = migrationSqls()): { insert: boolean; update: boolean } {
+function authenticatedCanWrite(
+  table: string,
+  sqlFiles: Array<{ name: string; sql: string }> = migrationSqls(),
+): { insert: boolean; update: boolean; delete: boolean } {
   const ALL_PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'];
   // 名前の続きが英数字・_ のもの (例: weekly_menu_requests_archive) は別のテーブルなので、後ろを区切る
   const tableRef = `(?:"?public"?\\.)?"?${table}"?(?![A-Za-z0-9_])`;
@@ -397,28 +407,49 @@ function authenticatedCanWrite(table: string, sqlFiles: Array<{ name: string; sq
     [...policies.values()].some(
       (policy) => (policy.command === command || policy.command === 'ALL') && policy.roles.some((r) => r === 'authenticated' || r === 'public'),
     );
-  return { insert: privileges.has('INSERT') && allows('INSERT'), update: privileges.has('UPDATE') && allows('UPDATE') };
+  return {
+    insert: privileges.has('INSERT') && allows('INSERT'),
+    update: privileges.has('UPDATE') && allows('UPDATE'),
+    delete: privileges.has('DELETE') && allows('DELETE'),
+  };
 }
 
-describe('AI 利用回数の記録 (#1177): 既知の穴 (利用者が書けるキューから AI へ送る経路)', () => {
-  it.each(Object.entries(USER_WRITABLE_AI_QUEUES))('%s は、まだ利用者 (authenticated) が書ける。閉じたらこの一覧と説明を直す', (table, { worker, note }) => {
+describe('AI 利用回数の記録 (#1177 / #1465): AI のキューは利用者から書けない', () => {
+  it('AI のキューの一覧は、src/lib/ai/ai-queue-tables.ts の AI_QUEUE_TABLES と同じ', () => {
+    expect(sorted(Object.keys(AI_QUEUES))).toEqual(sorted(AI_QUEUE_TABLES));
+  });
+
+  it('既知の穴 (USER_WRITABLE_AI_QUEUES) は空 (#1465 で閉じた)', () => {
+    expect([...USER_WRITABLE_AI_QUEUES]).toEqual([]);
+  });
+
+  it.each(Object.entries(AI_QUEUES))('%s は、利用者 (authenticated) が INSERT / UPDATE / DELETE できない (migration から)', (table, { worker, note }) => {
     expect(note.trim().length).toBeGreaterThan(10);
     expect(fs.existsSync(path.join(ROOT, worker)), `${worker} が無い`).toBe(true);
     const writable = authenticatedCanWrite(table);
+    const canWrite = writable.insert || writable.update || writable.delete;
     expect(
-      writable.insert || writable.update,
-      `${table} は利用者から書けなくなった (穴が閉じた)。USER_WRITABLE_AI_QUEUES から消し、一覧の説明と supabase/functions/README.md の「既知の穴」を直すこと`,
-    ).toBe(true);
+      canWrite,
+      canWrite
+        ? `${table} に利用者 (authenticated) の書き込みの権限とポリシーが戻った (${JSON.stringify(writable)})。` +
+            'route を通らずに積んだ行は AI の利用回数の記録 (#1177) と上限 (T40) をすり抜けるので、書き込みは service role だけにすること (#1465)'
+        : `${table} は USER_WRITABLE_AI_QUEUES にあるのに、利用者から書けない。一覧から消すこと`,
+    ).toBe(USER_WRITABLE_AI_QUEUES.has(table as AiQueueTable));
   });
 
-  it('記録しない側の説明が、既知の穴を隠していない (キューを取り出して AI へ送る側の説明に、直接書ける行は記録されないことを書く)', () => {
+  it('キューを取り出して AI へ送る側の説明と README は、キューが利用者から書けない (#1465) ことを書いている', () => {
     const cron = ENFORCED_ROUTES['src/app/api/cron/process-menu-queue/route.ts'].handlers.GET;
-    expect(cron && 'recordedBy' in cron ? cron.recordedBy : '').toContain('USER_WRITABLE_AI_QUEUES');
+    expect(cron && 'recordedBy' in cron ? cron.recordedBy : '').toContain('AI_QUEUE_TABLES');
     const imageWorker = ENFORCED_EDGE['process-meal-image-jobs'].usage;
-    expect('recordedBy' in imageWorker ? imageWorker.recordedBy : '').toContain('USER_WRITABLE_AI_QUEUES');
+    expect('recordedBy' in imageWorker ? imageWorker.recordedBy : '').toContain('AI_QUEUE_TABLES');
     const readme = read('supabase/functions/README.md');
-    for (const table of Object.keys(USER_WRITABLE_AI_QUEUES)) expect(readme, `README.md に ${table} の既知の穴が書かれていない`).toContain(table);
-    expect(readme).toContain('既知の穴');
+    for (const table of Object.keys(AI_QUEUES)) expect(readme, `README.md に ${table} が書かれていない`).toContain(table);
+    expect(readme).toContain('#1465');
+    for (const doc of ['supabase/functions/README.md', 'CLAUDE.md', 'src/lib/plan/entitlements.ts']) {
+      expect(read(doc), `${doc} に、閉じた穴の古い説明 (USER_WRITABLE_AI_QUEUES が穴を確かめる) が残っている`).not.toMatch(
+        /USER_WRITABLE_AI_QUEUES/,
+      );
+    }
   });
 
   it('migration の読み取り: 権限とポリシーの両方があるときだけ書けるとみなし、REVOKE・DROP POLICY で閉じる', () => {
@@ -429,27 +460,38 @@ describe('AI 利用回数の記録 (#1177): 既知の穴 (利用者が書ける�
         GRANT INSERT, SELECT, UPDATE ON TABLE public."q" TO "authenticated";
       `,
     };
-    expect(authenticatedCanWrite('q', [base])).toEqual({ insert: true, update: true });
+    expect(authenticatedCanWrite('q', [base])).toEqual({ insert: true, update: true, delete: false });
+    expect(
+      authenticatedCanWrite('q', [{ name: '1.sql', sql: `${base.sql}\nGRANT DELETE ON TABLE public.q TO authenticated;` }]),
+    ).toEqual({ insert: true, update: true, delete: true });
     expect(authenticatedCanWrite('q', [base, { name: '2.sql', sql: 'REVOKE INSERT, UPDATE ON TABLE public.q FROM authenticated;' }])).toEqual({
       insert: false,
       update: false,
+      delete: false,
     });
+    // 本番の形 (ALL を付けたあと、REVOKE で書き込みだけを外す。複数のロールを並べる)
+    expect(
+      authenticatedCanWrite('q', [
+        { name: '1.sql', sql: 'CREATE POLICY "own" ON public.q USING (true);\nGRANT ALL ON TABLE public.q TO anon, authenticated;' },
+        { name: '2.sql', sql: 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE public.q FROM anon, authenticated;' },
+      ]),
+    ).toEqual({ insert: false, update: false, delete: false });
     expect(
       authenticatedCanWrite('q', [
         base,
         { name: '2.sql', sql: 'DROP POLICY IF EXISTS "own_all" ON public.q; CREATE POLICY "own_read" ON public.q FOR SELECT USING (true);' },
       ]),
-    ).toEqual({ insert: false, update: false });
+    ).toEqual({ insert: false, update: false, delete: false });
     expect(
       authenticatedCanWrite('q', [
         { name: '1.sql', sql: 'CREATE POLICY "a" ON public.q_archive USING (true);\nGRANT ALL ON TABLE public.q_archive TO authenticated;' },
       ]),
-    ).toEqual({ insert: false, update: false });
+    ).toEqual({ insert: false, update: false, delete: false });
     expect(
       authenticatedCanWrite('q', [
         { name: '1.sql', sql: '-- GRANT ALL ON TABLE public.q TO authenticated;\nCREATE POLICY "svc" ON public.q FOR ALL TO service_role USING (true);\nGRANT ALL ON TABLE public.q TO authenticated;' },
       ]),
-    ).toEqual({ insert: false, update: false });
+    ).toEqual({ insert: false, update: false, delete: false });
   });
 });
 
