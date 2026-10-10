@@ -31,6 +31,12 @@ function userRows(count: number, overrides: (i: number) => Partial<UserRow> = ()
   }));
 }
 
+/** user_profiles の select のあとに呼ばれる部分 (並べ替えと、ページ送り) */
+interface FakeQuery {
+  order: () => FakeQuery;
+  range: (from: number, to: number) => Promise<{ data: UserRow[] | null; error: { message: string; code?: string } | null }>;
+}
+
 /** 件数 (head) と、ページ送り (range) を再現する reader */
 function makeReader(
   users: UserRow[],
@@ -43,7 +49,7 @@ function makeReader(
         options.countError ? { count: null, error: options.countError } : { count: users.length, error: null },
       );
     }
-    const builder: any = {
+    const builder: FakeQuery = {
       order: () => builder,
       range: async (from: number, to: number) => {
         rangeCalls.push([from, to]);
@@ -55,7 +61,8 @@ function makeReader(
     };
     return builder;
   });
-  const reader = { from: vi.fn((_table: string) => ({ select })) } as any;
+  // 作り物の Supabase は、countActiveUsersForFlags が使う from → select → order → range だけを持つ
+  const reader = { from: vi.fn((_table: string) => ({ select })) } as unknown as Parameters<typeof countActiveUsersForFlags>[0];
   return { reader, select, rangeCalls };
 }
 

@@ -160,6 +160,18 @@ async function apiFetch(
 /**
  * 認証なしで API を fetch する (Cookie なし)
  */
+/** GET /api/super-admin/flags の本文から、フラグの行 (key と enabled) を取り出す。data が配列でなければ null */
+function flagRowsOf(body: unknown): Array<{ key: string; enabled: boolean }> | null {
+  if (typeof body !== "object" || body === null || !("data" in body) || !Array.isArray(body.data)) return null;
+  const rows: unknown[] = body.data;
+  return rows.flatMap((row) =>
+    typeof row === "object" && row !== null && "key" in row && "enabled" in row &&
+    typeof row.key === "string" && typeof row.enabled === "boolean"
+      ? [{ key: row.key, enabled: row.enabled }]
+      : [],
+  );
+}
+
 async function apiFetchUnauthenticated(
   page: Page,
   path: string,
@@ -921,8 +933,9 @@ test("[super-admin][adversarial] H-34b: Feature flags PATCH → super_admin で�
     // 再取得して、更新が反映されていることを確認
     const getResult = await apiFetch(page, "/api/super-admin/flags");
     expect(getResult.status).toBe(200);
-    const flags: Array<{ key: string; enabled: boolean }> = (getResult.body as any)?.data ?? [];
-    expect(flags.find((flag) => flag.key === flagKey)?.enabled).toBe(true);
+    const flags = flagRowsOf(getResult.body);
+    expect(flags).not.toBeNull();
+    expect(flags?.find((flag) => flag.key === flagKey)?.enabled).toBe(true);
   } finally {
     await serviceRoleRest(`feature_flags?key=eq.${flagKey}`, { method: "DELETE" });
   }
@@ -1005,9 +1018,9 @@ test("[super-admin][adversarial] I-37: Feature flag 連打切替 → DB 整合",
     // 最終状態を確認 (偶数回切り替えたので、最初の OFF に戻っている)
     const finalResult = await apiFetch(page, "/api/super-admin/flags");
     expect(finalResult.status).toBe(200);
-    const flags: Array<{ key: string; enabled: boolean }> = (finalResult.body as any)?.data ?? [];
-    expect(Array.isArray(flags)).toBe(true);
-    expect(flags.find((flag) => flag.key === flagKey)?.enabled).toBe(false);
+    const flags = flagRowsOf(finalResult.body);
+    expect(flags).not.toBeNull();
+    expect(flags?.find((flag) => flag.key === flagKey)?.enabled).toBe(false);
   } finally {
     await serviceRoleRest(`feature_flags?key=eq.${flagKey}`, { method: "DELETE" });
   }
