@@ -6,7 +6,7 @@ import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
-import { runConsultationAction } from '@/lib/ai/consultation-action-executor';
+import { AI_ALLOWED_MEAL_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';
 import { CANONICAL_GOAL_TYPES, describeGoalRangesForPrompt } from '@/lib/health-goal-types';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
@@ -657,7 +657,7 @@ ${importantMessagesInfo}
 - generate_single_meal: AIが栄養計算付きで1食を生成（推奨）
   params: {
     date: "YYYY-MM-DD",
-    mealType: "breakfast|lunch|dinner|snack",
+    mealType: "${AI_ALLOWED_MEAL_TYPES.join('|')}",
     specificDish?: "希望の料理名（例: 肉じゃが、カレー）",
     recipeId?: "uuid",              // レシピDB検索結果のUUID（search_recipesで取得）
     recipeExternalId?: "external_id", // レシピDBの外部ID（search_recipesで取得）
@@ -668,6 +668,7 @@ ${importantMessagesInfo}
   }
   ※ このアクションはAIが正確な栄養計算を行い、一汁三菜の献立を生成します
   ※ recipeId/recipeExternalIdを指定すると、レシピDBの正確な栄養データを使用します
+  ※ mealType の意味: ${AI_ALLOWED_MEAL_TYPES.map((type) => `${type}=${mealTypeLabels[type]}`).join(' / ')}（夜食・おやつもこのアクションで生成できます）
 
 - generate_day_menu: 1日分の献立を一括作成 (params: { date: "YYYY-MM-DD", ultimateMode?: true })
 - generate_week_menu: 1週間分の献立を一括作成 (params: { startDate: "YYYY-MM-DD", ultimateMode?: true })

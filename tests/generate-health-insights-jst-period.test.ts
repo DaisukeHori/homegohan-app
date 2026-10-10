@@ -243,3 +243,27 @@ describe("generate-health-insights: 期間と保存する日付は JST の暦日
     }
   });
 });
+
+describe("generate-health-insights: 500 の本文に内部のエラー文を返さない (#1172 / #1432)", () => {
+  it("health_records の取得に失敗したら 500。本文は汎用の文言で、生のエラー文は構造化ログにだけ残す", async () => {
+    setNow("2026-07-13T00:00:00.000Z");
+    const rawMessage = 'column health_records.secret_col does not exist (relation "public.health_records")';
+    const recording = createRecordingSupabase((query: RecordedQuery) => {
+      if (query.table === "health_records") return { data: null, error: { message: rawMessage, code: "42703" } };
+      throw new Error(`unexpected table: ${query.table}`);
+    });
+    h.client = recording.client;
+
+    const { status, json } = await invoke({ period_type: "weekly" });
+
+    expect(status).toBe(500);
+    expect(json).toEqual({ error: "ヘルスインサイトの生成に失敗しました" });
+    expect(JSON.stringify(json)).not.toContain(rawMessage);
+    expect(JSON.stringify(json)).not.toContain("health_records");
+    // 原因は構造化ログに残る
+    expect(h.errors).toHaveLength(1);
+    expect(String((h.errors[0].error as Error).message)).toContain(rawMessage);
+    // 何も保存しない
+    expect(queriesOf(recording.queries, "health_insights")).toEqual([]);
+  });
+});
