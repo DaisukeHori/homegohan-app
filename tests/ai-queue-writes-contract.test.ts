@@ -44,6 +44,19 @@ const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 
 const TABLE_ALTERNATION = AI_QUEUE_TABLES.join('|');
 
+/** ファイルの中身 (読むのは 1 回だけ。走査を速くするため、表の名前・queueDb・キューの関数の名前を含むファイルだけを詳しく見る) */
+const sourceCache = new Map<string, string>();
+const sourceOf = (file: string) => {
+  let source = sourceCache.get(file);
+  if (source === undefined) {
+    source = read(file);
+    sourceCache.set(file, source);
+  }
+  return source;
+};
+const mentionsQueue = (file: string) => AI_QUEUE_TABLES.some((table) => sourceOf(file).includes(table));
+const mentionsQueueDb = (file: string) => sourceOf(file).includes('queueDb');
+
 interface QueueWrite {
   receiver: string;
   table: string;
@@ -67,6 +80,7 @@ function dynamicFromOfQueue(source: string): boolean {
 }
 
 const QUEUE_HELPERS = ['enqueueMealImageJobs', 'cancelPendingMealImageJobs', 'markWeeklyMenuRequestFailed'] as const;
+const mentionsHelper = (file: string) => QUEUE_HELPERS.some((helper) => sourceOf(file).includes(helper));
 
 /** キューの関数の呼び出し (引数の括弧の中の文字)。定義 (function 名) と import は除く */
 function findHelperCalls(source: string): Array<{ helper: string; args: string }> {
@@ -112,21 +126,20 @@ describe('AI のキューへの書き込みは service role だけ (#1465)', () 
     expect(appFiles).toContain('lib/meal-image-jobs.ts');
     expect(appFiles.some((file) => file.includes('node_modules'))).toBe(false);
     // 書き込みは 1 つ以上見つかる (検出の正規表現が壊れていない)
-    expect(appFiles.flatMap((file) => findQueueWrites(read(file))).length).toBeGreaterThan(10);
+    expect(appFiles.filter(mentionsQueue).flatMap((file) => findQueueWrites(sourceOf(file))).length).toBeGreaterThan(10);
   });
 
   it('画面 (use client)・モバイルは、2 つの表に書かない (読むのはよい)', () => {
     const offenders = appFiles
-      .filter((file) => isMobile(file) || isClientComponent(read(file)))
-      .flatMap((file) => findQueueWrites(read(file)).map((w) => `${file}: ${w.receiver}.from('${w.table}').${w.op}`));
+      .filter((file) => mentionsQueue(file) && (isMobile(file) || isClientComponent(sourceOf(file))))
+      .flatMap((file) => findQueueWrites(sourceOf(file)).map((w) => `${file}: ${w.receiver}.from('${w.table}').${w.op}`));
     expect(offenders, '画面・モバイルからは API ルートを呼ぶこと (route が service role で書く)').toEqual([]);
   });
 
   it('サーバーのコードの書き込みの受け手は queueDb か、決まった service role のクライアントだけ', () => {
     const offenders: string[] = [];
-    for (const file of appFiles) {
-      const source = read(file);
-      for (const write of findQueueWrites(source)) {
+    for (const file of appFiles.filter(mentionsQueue)) {
+      for (const write of findQueueWrites(sourceOf(file))) {
         if (write.receiver === 'queueDb') continue;
         const allowed = ALLOWED_RECEIVERS[file];
         if (allowed && allowed.receiver === write.receiver) continue;
@@ -141,19 +154,19 @@ describe('AI のキューへの書き込みは service role だけ (#1465)', () 
 
   it('決まった受け手のファイルは、いまも service role のクライアントを受け取る形のまま', () => {
     for (const [file, { serviceRoleEvidence }] of Object.entries(ALLOWED_RECEIVERS)) {
-      expect(read(file), file).toMatch(serviceRoleEvidence);
+      expect(sourceOf(file), file).toMatch(serviceRoleEvidence);
     }
   });
 
   it('表の名前を変数やテンプレートで書いて、2 つの表に書いていない', () => {
-    expect(appFiles.filter((file) => dynamicFromOfQueue(read(file)))).toEqual([]);
+    expect(appFiles.filter((file) => mentionsQueue(file) && dynamicFromOfQueue(sourceOf(file)))).toEqual([]);
   });
 
   it('queueDb は getAiQueueWriter() だけから作る', () => {
     const offenders: string[] = [];
-    for (const file of appFiles) {
-      const text = stripComments(read(file));
-      for (const match of text.matchAll(/\bqueueDb\s*(?::[^=]+)?=\s*([^;\n]+)/g)) {
+    for (const file of appFiles.filter(mentionsQueueDb)) {
+      const text = stripComments(sourceOf(file));
+      for (const match of text.matchAll(/\bqueueDb\s*(?::[^=;\n]+)?=\s*([^;\n]+)/g)) {
         if (match[1].trim() !== 'getAiQueueWriter()') offenders.push(`${file}: queueDb = ${match[1].trim()}`);
       }
       if (findQueueWrites(text).some((w) => w.receiver === 'queueDb') && !/\bconst queueDb = getAiQueueWriter\(\)/.test(text)) {
@@ -166,8 +179,8 @@ describe('AI のキューへの書き込みは service role だけ (#1465)', () 
   it('キューの関数の呼び出しは、supabase に queueDb を渡す。取り消しは userId で本人の行に絞る', () => {
     const offenders: string[] = [];
     let calls = 0;
-    for (const file of appFiles) {
-      for (const { helper, args } of findHelperCalls(read(file))) {
+    for (const file of appFiles.filter(mentionsHelper)) {
+      for (const { helper, args } of findHelperCalls(sourceOf(file))) {
         calls += 1;
         if (!/\bsupabase:\s*queueDb\b/.test(args)) offenders.push(`${file}: ${helper} の supabase が queueDb でない`);
         if (helper === 'cancelPendingMealImageJobs' && !/\buserId\s*[:,}]/.test(args)) offenders.push(`${file}: ${helper} に userId が無い`);
@@ -179,9 +192,8 @@ describe('AI のキューへの書き込みは service role だけ (#1465)', () 
 
   it('Edge Function: 取り消し (cancelPendingMealImageJobs) は userId で本人の行に絞り、ユーザーの JWT の関数は service role の鍵で作ったクライアントで書く', () => {
     const offenders: string[] = [];
-    for (const file of edgeFiles) {
-      const source = read(file);
-      for (const { helper, args } of findHelperCalls(source)) {
+    for (const file of edgeFiles.filter(mentionsHelper)) {
+      for (const { helper, args } of findHelperCalls(sourceOf(file))) {
         if (helper === 'cancelPendingMealImageJobs' && !/\buserId\s*[:,}]/.test(args)) offenders.push(`${file}: ${helper} に userId が無い`);
       }
     }

@@ -29,13 +29,15 @@ describe("meal image photo contracts", () => {
 
   it("cancels pending image jobs when a photo overwrite happens", async () => {
     const inFn = vi.fn().mockResolvedValue({ data: null, error: null });
-    const eqFn = vi.fn(() => ({ in: inFn }));
+    const eqUserFn = vi.fn(() => ({ in: inFn }));
+    const eqFn = vi.fn(() => ({ eq: eqUserFn }));
     const updateFn = vi.fn(() => ({ eq: eqFn }));
     const fromFn = vi.fn(() => ({ update: updateFn }));
     const supabase = { from: fromFn };
 
     await cancelPendingMealImageJobs({
       supabase,
+      userId: "user-1",
       plannedMealId: "meal-1",
       reason: "photo overwrite",
     });
@@ -49,6 +51,8 @@ describe("meal image photo contracts", () => {
       }),
     );
     expect(eqFn).toHaveBeenCalledWith("planned_meal_id", "meal-1");
+    // service role のクライアントで書くので RLS が効かない。本人の行に絞る (#1465)
+    expect(eqUserFn).toHaveBeenCalledWith("user_id", "user-1");
     expect(inFn).toHaveBeenCalledWith("status", ["pending", "processing"]);
   });
 });

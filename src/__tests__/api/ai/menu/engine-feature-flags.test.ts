@@ -19,12 +19,15 @@ const h = vi.hoisted(() => ({
   generateV5: vi.fn(),
   getUser: vi.fn(),
   results: {} as Record<string, unknown>,
-  writes: [] as Array<{ table: string; op: string; payload: any }>,
+  writes: [] as Array<{ table: string; op: string; payload: any; client: 'user' | 'service' }>,
   waitUntil: [] as Promise<unknown>[],
 }));
 
-/** どのメソッドを呼んでも自分自身を返し、await すると表ごとの結果になる。insert / update の中身は記録する */
-function fakeFrom(table: string) {
+/**
+ * どのメソッドを呼んでも自分自身を返し、await すると表ごとの結果になる。insert / update の中身は記録する。
+ * client は、利用者のクライアント (user) か、AI のキューへ書く service role のクライアント (service。#1465) か
+ */
+function fakeFrom(table: string, client: 'user' | 'service' = 'user') {
   const result = h.results[table] ?? { data: [], error: null };
   const proxy: any = new Proxy(() => undefined, {
     get(_target, prop) {
@@ -34,7 +37,7 @@ function fakeFrom(table: string) {
       }
       if (prop === 'insert' || prop === 'update') {
         return (payload: unknown) => {
-          h.writes.push({ table, op: String(prop), payload });
+          h.writes.push({ table, op: String(prop), payload, client });
           return proxy;
         };
       }
@@ -54,6 +57,8 @@ vi.mock('@/lib/supabase/server', () => ({
     auth: { getUser: h.getUser },
     from: (table: string) => fakeFrom(table),
   })),
+  // AI のキューへの書き込みは service role のクライアント (getAiQueueWriter → getSupabaseAdmin) で行う (#1465)
+  getSupabaseAdmin: vi.fn(() => ({ from: (table: string) => fakeFrom(table, 'service') })),
 }));
 
 vi.mock('@/lib/feature-flags', () => ({
@@ -214,6 +219,10 @@ describe.each(CASES)('$name のエンジン切り替え (#1148)', (testCase) => 
     expect(h.generateV5).toHaveBeenCalledTimes(1);
     expect(h.generateV4).not.toHaveBeenCalled();
     expect(writtenMode(testCase)).toBe('v5');
+    // weekly_menu_requests へは service role のクライアントだけが書く (#1465)
+    const queueWrites = h.writes.filter((w) => w.table === 'weekly_menu_requests');
+    expect(queueWrites.length).toBeGreaterThan(0);
+    expect(queueWrites.every((w) => w.client === 'service')).toBe(true);
   });
 
   it('フラグが OFF なら v4 の Edge Function を呼び、リクエスト行の mode も v4 になる', async () => {

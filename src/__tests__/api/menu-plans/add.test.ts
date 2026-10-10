@@ -44,17 +44,20 @@ beforeEach(() => {
 
   mockGetUser.mockResolvedValue({ data: { user: USER }, error: null });
 
-  // セッション client: weekly_menu_requests の作成 (insert→select→single) と完了への更新 (update→eq)
+  // セッション client: この route では DB に書かない (weekly_menu_requests は利用者から書けない。#1465)
   mockSessionFrom.mockImplementation((table: string) => {
-    if (table !== 'weekly_menu_requests') throw new Error(`想定外のテーブル (session): ${table}`);
-    return {
-      insert: () => ({ select: () => ({ single: async () => ({ data: { id: 'req-1' }, error: null }) }) }),
-      update: () => ({ eq: async () => ({ error: null }) }),
-    };
+    throw new Error(`想定外のテーブル (session): ${table}`);
   });
 
-  // service role の client: weekly_menus の作成 (insert→select→single)
+  // service role の client: weekly_menu_requests の作成 (insert→select→single) と完了への更新 (update→eq→eq)、
+  // weekly_menus の作成 (insert→select→single)
   mockAdminFrom.mockImplementation((table: string) => {
+    if (table === 'weekly_menu_requests') {
+      return {
+        insert: () => ({ select: () => ({ single: async () => ({ data: { id: 'req-1' }, error: null }) }) }),
+        update: () => ({ eq: () => ({ eq: async () => ({ error: null }) }) }),
+      };
+    }
     if (table !== 'weekly_menus') throw new Error(`想定外のテーブル (admin): ${table}`);
     return {
       insert: () => ({ select: () => ({ single: async () => ({ data: { id: 'menu-1' }, error: null }) }) }),

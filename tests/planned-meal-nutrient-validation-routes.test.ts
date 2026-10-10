@@ -54,8 +54,12 @@ const supabaseClient = {
   from: mockFrom,
 };
 
+// 画像のジョブ (meal_image_jobs) の取り消し・積み込みは service role のクライアント (getAiQueueWriter) で行う (#1465)。
+// キューの関数は差し替えているので、クライアントは中身の無い作り物でよい
+const queueClient = { from: vi.fn() };
 vi.mock('@/lib/supabase/server', () => ({
   createClient: () => supabaseClient,
+  getSupabaseAdmin: () => queueClient,
 }));
 
 import { buildDishImagePayload } from '../lib/meal-image-jobs';

@@ -28,6 +28,7 @@ import {
 } from '../supabase/functions/_shared/ai-consent';
 import { ENFORCED_ROUTES } from './helpers/ai-consent-enforced-paths';
 import type { HttpMethod } from './helpers/ai-reach';
+import { AI_QUEUE_TABLES } from '../src/lib/ai/ai-queue-tables';
 
 const USER = '11111111-1111-4111-8111-111111111111';
 const SESSION_ID = '22222222-2222-4222-8222-222222222222';
@@ -46,6 +47,8 @@ const EXPECTED_DENIAL: Record<Exclude<ConsentMode, 'granted'>, { status: number;
 };
 
 type Row = Record<string, unknown>;
+/** 書き込みに使ったクライアント (makeSupabase を参照) */
+type SupabaseClientKind = 'user' | 'service' | 'supabase-js';
 
 const h = vi.hoisted(() => {
   const state = {
@@ -57,7 +60,7 @@ const h = vi.hoisted(() => {
     /** rpc の結果 */
     rpc: {} as Record<string, unknown>,
     /** 書き込み (insert / update / upsert / delete) の記録 */
-    writes: [] as Array<{ table: string; op: string; payload: unknown }>,
+    writes: [] as Array<{ table: string; op: string; payload: unknown; client: SupabaseClientKind }>,
     /** 呼んだ rpc の名前 (AI 利用回数の記録 record_ai_usage を確かめるため。#1177) */
     rpcCalls: [] as string[],
   };
@@ -101,6 +104,11 @@ const h = vi.hoisted(() => {
   };
 });
 
+/** AI のキュー (weekly_menu_requests / meal_image_jobs) へ、利用者のクライアントで書いたもの (#1465。あってはならない) */
+function userClientQueueWrites() {
+  return h.state.writes.filter((w) => w.client === 'user' && (AI_QUEUE_TABLES as readonly string[]).includes(w.table));
+}
+
 /** AI 事業者・Edge Function の宛先 (global fetch で数える) */
 const AI_URL_PATTERN = /api\.openai\.com|generativelanguage\.googleapis\.com|api\.x\.ai|api\.perplexity\.ai|api\.aimlapi\.com|\/functions\/v1\//;
 
@@ -120,7 +128,7 @@ function consentResult(): { data: unknown; error: unknown } {
 const DEFAULT_SINGLE_ROW: Row = { id: 'row-1', user_id: USER, status: 'active', day_date: TODAY };
 
 /** Supabase のクエリの作り物。どのメソッドを繋いでも同じ作り物を返し、await / single() で表ごとの結果を返す */
-function makeQuery(table: string): unknown {
+function makeQuery(table: string, client: SupabaseClientKind): unknown {
   const listResult = () =>
     table === AI_CONSENT_TABLE ? consentResult() : { data: h.state.rows[table] ?? [], error: null, count: (h.state.rows[table] ?? []).length };
   // 書き込みのあとの .select().single() は、書いた行を返す (読み取りの single の設定とは別)
@@ -141,7 +149,7 @@ function makeQuery(table: string): unknown {
         if (prop === 'single' || prop === 'maybeSingle') return () => Promise.resolve(singleResult());
         if (prop === 'insert' || prop === 'update' || prop === 'upsert' || prop === 'delete') {
           return (payload: unknown) => {
-            h.state.writes.push({ table, op: String(prop), payload });
+            h.state.writes.push({ table, op: String(prop), payload, client });
             const first = Array.isArray(payload) ? payload[0] : payload;
             written = { ...DEFAULT_SINGLE_ROW, ...(first && typeof first === 'object' ? (first as Row) : {}) };
             return builder;
@@ -154,13 +162,18 @@ function makeQuery(table: string): unknown {
   return builder;
 }
 
-function makeSupabase() {
+/**
+ * user: 利用者のセッションのクライアント (@/lib/supabase/server の createClient)。
+ * service: service role のクライアント (getSupabaseAdmin。AI のキューへ書く getAiQueueWriter もこれ。#1465)。
+ * supabase-js: @supabase/supabase-js の createClient を直接呼んだもの (cron など)
+ */
+function makeSupabase(client: SupabaseClientKind = 'user') {
   return {
     auth: {
       getUser: async () => ({ data: { user: { id: USER, email: 'user@example.test' } }, error: null }),
       getSession: async () => ({ data: { session: { access_token: 'token' } }, error: null }),
     },
-    from: (table: string) => makeQuery(table),
+    from: (table: string) => makeQuery(table, client),
     rpc: async (name: string) => {
       h.state.rpcCalls.push(name);
       h.rpcMark(name);
@@ -180,12 +193,12 @@ function makeSupabase() {
 }
 
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: vi.fn(async () => makeSupabase()),
-  getSupabaseAdmin: vi.fn(() => makeSupabase()),
+  createClient: vi.fn(async () => makeSupabase('user')),
+  getSupabaseAdmin: vi.fn(() => makeSupabase('service')),
 }));
 vi.mock('@supabase/supabase-js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@supabase/supabase-js')>()),
-  createClient: vi.fn(() => makeSupabase()),
+  createClient: vi.fn(() => makeSupabase('supabase-js')),
 }));
 vi.mock('@/lib/rate-limit', () => ({
   checkRateLimit: vi.fn(async () => ({ success: true })),
@@ -778,6 +791,8 @@ describe.each(ROUTE_CASES.filter((c) => c.kind === 'reject'))('止める経路: 
     const res = await run(c, 'granted');
     expect(res.status).not.toBe(403);
     expect(sendsOf(c), JSON.stringify(aiSendBreakdown())).toBeGreaterThanOrEqual(1);
+    // AI のキュー (weekly_menu_requests / meal_image_jobs) へは、利用者のクライアントで書かない (#1465。利用者からは書けない)
+    expect(userClientQueueWrites(), JSON.stringify(userClientQueueWrites())).toEqual([]);
     expect(usageRecords(), h.state.rpcCalls.join(', ')).toBe(expectedRecords(c));
     if (expectedRecords(c) > 0) {
       const order = recordedBeforeEverySend();
