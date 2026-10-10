@@ -453,6 +453,9 @@ describe('POST /api/admin/finance/exports — 本文の形が違うときは 400
     ['形の違う日付', { export_type: 'subscriptions', to: '2026/10/10' }],
     ['時刻つきの期間 (日付だけを受ける)', { export_type: 'nps', to: '2026-03-31T23:59:59Z' }],
     ['日付でない文字列', { export_type: 'revenue', from: 'garbage' }],
+    // 実在するが受け付ける範囲 (0101-01-02〜9998-12-30) の外。翌日の JST 0 時を求められず、通すと 500 になる
+    ['受け付ける範囲の外の終了日', { export_type: 'invoices', to: '9999-12-31' }],
+    ['受け付ける範囲の外の開始日', { export_type: 'nps', from: '0100-01-01' }],
     ['知らない種別', { export_type: 'INVALID_TYPE' }],
     ['種別なし', {}],
   ])('%s は 400 (VALIDATION_ERROR)。DB を読まず、監査ログも作らない', async (_label, body) => {

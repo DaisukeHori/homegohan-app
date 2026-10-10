@@ -1,3 +1,5 @@
+import { CALENDAR_DATE_REQUIREMENT, isCalendarDate } from "../_shared/jst-date.ts";
+
 export type MealType = "breakfast" | "lunch" | "dinner" | "snack" | "midnight_snack";
 
 export type TargetSlot = {
@@ -112,6 +114,29 @@ export type SaveIssue = {
 
 export function getSlotKey(date: string, mealType: MealType): string {
   return `${date}:${mealType}`;
+}
+
+/**
+ * 呼び出しの本文の targetSlots (配列のとき) の各要素が、date に YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) を持つかを確かめる (#1433)。
+ * 正しくない要素があれば、その位置を言う文 (Next.js の /api/ai/menu/v4・v5/generate の 400 の文と同じ形) を返し、無ければ null。
+ * targetSlots が配列でないとき (本文に無く、DB の target_slots を使うとき) は null。
+ *
+ * 工程 1 は DB の target_slots が空のとき本文の targetSlots を使い、その日付を addDaysToDate (前後 7 日の文脈の期間) に渡す。
+ * 2026-02-30 や 2026/10/10 のような値が来ると、そこで RangeError になり、受け付けたあとの裏の処理で失敗する。
+ * そうならないよう、ハンドラの入口 (呼び出し元の確認のあと) で 400 にするのに使う。
+ */
+export function findInvalidTargetSlotDate(bodySlots: unknown): string | null {
+  if (!Array.isArray(bodySlots)) return null;
+  for (let i = 0; i < bodySlots.length; i++) {
+    const slot = bodySlots[i];
+    if (!slot || typeof slot !== "object") {
+      return `targetSlots[${i}] is not an object`;
+    }
+    if (!isCalendarDate((slot as Record<string, unknown>).date)) {
+      return `targetSlots[${i}].date must be ${CALENDAR_DATE_REQUIREMENT}`;
+    }
+  }
+  return null;
 }
 
 export function normalizeTargetSlots(dbSlots: any[]): TargetSlot[] {
