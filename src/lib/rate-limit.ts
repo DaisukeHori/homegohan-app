@@ -102,7 +102,7 @@ const DAY_SEC = 24 * 60 * 60;
 //   撤回 (POST /api/ai/consent/revoke) は行を増やさない (既存の行に revoked_at を入れるだけ) ので、制限しない
 // - auth-login: Web のメールアドレス + パスワードのログイン (#1165。POST /api/auth/login)。ログイン前なので key はクライアント IP。
 //   設計 docs/design/cross/01-auth-session.md §3.2 の「10/min/IP」。同じ IP から多くのメールアドレスを試す攻撃 (クレデンシャル
-//   スタッフィング) を抑える。メールアドレスごとの連続失敗のロックは別 (src/lib/auth/login-lock.ts、DB に記録)
+//   スタッフィング) を抑える。メールアドレスごとの連続失敗の回数 (ボットの確認を求めるかどうか。ロックはしない) は別 (src/lib/auth/login-failures.ts、DB に記録)
 const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   generation: [{ name: 'generation', max: 5, windowSec: MINUTE_SEC }],
   analysis: [{ name: 'analysis', max: 10, windowSec: MINUTE_SEC }],

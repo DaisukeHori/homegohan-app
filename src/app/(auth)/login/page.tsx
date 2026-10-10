@@ -121,8 +121,8 @@ function LoginContent() {
     setIsLoading(true);
 
     try {
-      // #1165: ログインはサーバー (POST /api/auth/login) を通す。サーバーが IP アドレスごとの回数制限・
-      // 連続失敗のロック (設計 docs/design/cross/01-auth-session.md §8)・ボットの確認を行い、成功ならセッションの Cookie を付ける
+      // #1165: ログインはサーバー (POST /api/auth/login) を通す。サーバーが IP アドレスごとの回数制限と、
+      // 続けて失敗しているメールアドレスでのボットの確認を行い (ロックはしない)、成功ならセッションの Cookie を付ける
       const outcome = await requestLogin({ email, password, captchaToken });
 
       if (!outcome.ok) {

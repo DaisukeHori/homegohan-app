@@ -296,7 +296,16 @@ export const SERVER_ENV_VARS = {
       'サーバー (POST /api/auth/login) がボットの確認のトークンを Cloudflare に問い合わせて確かめる (#1165)。' +
       'NEXT_PUBLIC_TURNSTILE_SITE_KEY と組で設定する',
     whenMissing:
-      'ボットの確認のトークンを確かめずに通す (Turnstile の確認は無効)。失敗の回数による 15 分〜24 時間のロックは、設定に関係なく働く',
+      'ボットの確認のトークンを確かめずに通す (Turnstile の確認は無効)。ログインに続けて失敗しても、アカウントはロックしない (設定に関係なく)',
+  },
+  AUTH_LOGIN_FAILURE_RESET_MINUTES: {
+    required: false,
+    description:
+      'ログインの連続失敗の回数を 0 に戻すまでの、最後の失敗からの時間 (分。#1165)。回数が 3 回以上のメールアドレスでは、' +
+      'ボットの確認 (Turnstile) を求める (ロックはしない)。1〜10080 の整数',
+    whenMissing: '既定の 1440 分 (24 時間) を使う (不正な値のときも既定値に戻し、warn ログを残す)',
+    // 解釈 (範囲・不正な値の扱い) は src/lib/auth/login-failures.ts の resolveLoginFailureResetMinutes。値を読むのは route だけ
+    readOnlyBy: 'src/app/api/auth/login/route.ts',
   },
 } as const satisfies Record<string, EnvVarSpec>;
 

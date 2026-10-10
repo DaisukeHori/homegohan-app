@@ -2,10 +2,12 @@
  * POST /api/auth/login — Web のメールアドレス + パスワードのログイン (#1165)
  *
  * 以前は、ログイン画面がブラウザから Supabase Auth (signInWithPassword) を直接呼んでいて、
- * サーバーが失敗の回数を数える場所が無かった。ここを通すことで、設計 docs/design/cross/01-auth-session.md の
- *   - §3.2 IP アドレスごとの回数制限 (10 回/分。src/lib/rate-limit.ts の auth-login)
- *   - §8   ログイン失敗のロック (3 回 → ボットの確認、5 回 → 15 分、10 回 → 1 時間 + 本人へメール、20 回 → 24 時間 + 運営へ通知)
+ * サーバーが失敗の回数を数える場所が無かった。ここを通すことで、
+ *   - IP アドレスごとの回数制限 (10 回/分。src/lib/rate-limit.ts の auth-login。設計 docs/design/cross/01-auth-session.md §3.2)
+ *   - メールアドレスごとの連続失敗の回数による、ボットの確認 (3 回以上で Turnstile のトークンを確かめる)
  * をサーバーで行う。中身は src/lib/auth/guarded-login.ts。
+ * ログインに続けて失敗しても、アカウントはロックしない (docs/operations/auth-protection.md §1)。
+ * 何回失敗していても、正しいパスワード (と、求めたときはボットの確認) があればログインできる。
  *
  * リクエスト: { email, password, captchaToken? } (JSON)
  * 応答 (本文は { error: 利用者向けの文言, code, ... }。Cache-Control: no-store):
@@ -15,22 +17,25 @@
  *   401 AUTH_INVALID_CREDENTIALS { captchaRequired }  メールアドレスかパスワードが違う
  *   403 AUTH_EMAIL_NOT_CONFIRMED                      メールアドレスの確認が済んでいない
  *   403 FORBIDDEN_ORIGIN                              別のサイトから送られた (ログインの CSRF を防ぐ)
- *   423 AUTH_ACCOUNT_LOCKED { retryAfter }            ロック中 (Retry-After ヘッダーも付ける)
  *   429 RATE_LIMITED { retryAfter }                   回数制限 (この API の IP ごとの制限、または Supabase Auth の制限)
  *   503 AUTH_CAPTCHA_UNAVAILABLE                      ボットの確認の API に届かない
- *   500 INTERNAL_ERROR                                ロックの記録を読み書きできない (判定できないので通さない) など
+ *   500 INTERNAL_ERROR                                失敗の回数を読み書きできない (ボットの確認を求めるか判定できないので通さない) など
  *
- * 応答の内容は、アカウントが存在するかどうかで変えない (存在しないメールアドレスも同じように数えてロックする)。
- * 通知 (10 回・20 回) は応答を返したあとで送る (waitUntil)。応答の時間からアカウントの有無が分からないように。
+ * 応答の内容は、アカウントが存在するかどうかで変えない (存在しないメールアドレスも同じように数える)。
+ *
+ * 環境変数 AUTH_LOGIN_FAILURE_RESET_MINUTES: 連続失敗の回数を 0 に戻すまでの、最後の失敗からの時間 (分)。
+ * 値を読むのはこのファイルだけ (src/lib/env.ts の readOnlyBy)。解釈は src/lib/auth/login-failures.ts の resolveLoginFailureResetMinutes。
  */
-import { waitUntil } from '@vercel/functions';
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { extractClientIp } from '@/lib/admin/audit';
 import { internalError } from '@/lib/api/errors';
 import { performGuardedLogin, type GuardedLoginResult } from '@/lib/auth/guarded-login';
-import { type LoginLockRpcClient } from '@/lib/auth/login-lock';
-import { sendLoginLockNotice } from '@/lib/auth/login-lock-notification';
+import {
+  LOGIN_FAILURE_RESET_ENV_NAME,
+  resolveLoginFailureResetMinutes,
+  type LoginFailureRpcClient,
+} from '@/lib/auth/login-failures';
 import { CAPTCHA_FAILED_MESSAGE } from '@/lib/auth/turnstile';
 import {
   TURNSTILE_TOKEN_MAX_LENGTH,
@@ -64,9 +69,22 @@ const EmailSchema = z.email();
 const NO_STORE = { 'Cache-Control': 'private, no-store' } as const;
 
 const INVALID_CREDENTIALS_MESSAGE = 'メールアドレスまたはパスワードが正しくありません。';
-const ACCOUNT_LOCKED_MESSAGE =
-  'ログインに続けて失敗したため、しばらくログインできません。パスワードを再設定すると、すぐにログインできます。';
 const RATE_LIMITED_MESSAGE = 'しばらくしてから再度お試しください。';
+
+/** AUTH_LOGIN_FAILURE_RESET_MINUTES の値が不正なことを、プロセスごとに 1 回だけログに出したか */
+let resetMinutesWarned = false;
+
+/** 連続失敗の回数を 0 に戻すまでの時間 (分)。不正な値は既定値に戻し、変数名だけを warn で残す (値は出さない) */
+function loginFailureResetMinutes(): number {
+  const setting = resolveLoginFailureResetMinutes(process.env.AUTH_LOGIN_FAILURE_RESET_MINUTES);
+  if (setting.ignored && !resetMinutesWarned) {
+    resetMinutesWarned = true;
+    createLogger('auth/login-failures').warn('環境変数の値が正しくないため、既定値を使います', {
+      ignored_env: [LOGIN_FAILURE_RESET_ENV_NAME],
+    });
+  }
+  return setting.minutes;
+}
 
 function json(body: Record<string, unknown>, status: number, headers: Record<string, string> = {}) {
   return NextResponse.json(body, { status, headers: { ...NO_STORE, ...headers } });
@@ -98,12 +116,6 @@ function toResponse(result: GuardedLoginResult) {
   switch (result.kind) {
     case 'signed-in':
       return json({ ok: true }, 200);
-    case 'locked':
-      return json(
-        { error: ACCOUNT_LOCKED_MESSAGE, code: 'AUTH_ACCOUNT_LOCKED', retryAfter: result.retryAfterSec },
-        423,
-        { 'Retry-After': String(result.retryAfterSec) },
-      );
     case 'invalid-credentials':
       return json(
         { error: INVALID_CREDENTIALS_MESSAGE, code: 'AUTH_INVALID_CREDENTIALS', captchaRequired: result.captchaRequired },
@@ -172,14 +184,15 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return internalError(ROUTE_NAME, error, { stage: 'admin-client' });
   }
-  const lockStore: LoginLockRpcClient = { rpc: (fn, args) => admin.rpc(fn, args) };
+  const failureStore: LoginFailureRpcClient = { rpc: (fn, args) => admin.rpc(fn, args) };
   const supabase = createClient();
 
   try {
     const result = await performGuardedLogin(
       { email, password: parsedBody.data.password, captchaToken: parsedBody.data.captchaToken },
       {
-        lockStore,
+        failureStore,
+        resetAfterMinutes: loginFailureResetMinutes(),
         signIn: async ({ email: signInEmail, password, captchaToken }) => {
           const { error } = await supabase.auth.signInWithPassword({
             email: signInEmail,
@@ -189,17 +202,9 @@ export async function POST(request: NextRequest) {
           return { error: error ? { code: error.code, status: error.status, message: error.message } : null };
         },
         verifyCaptcha: (token) => verifyTurnstileToken(token, clientIp),
-        notify: (input) => {
-          waitUntil(
-            sendLoginLockNotice(lockStore, input).catch((error: unknown) => {
-              createLogger('auth/login-lock').error('ロックの通知の処理が失敗しました', error);
-            }),
-          );
-        },
         onClearFailed: (error) => {
-          createLogger('auth/login-lock').error('ログインに成功したが、失敗の記録を消せませんでした', error);
+          createLogger('auth/login-failures').error('ログインに成功したが、失敗の記録を消せませんでした', error);
         },
-        now: () => new Date(),
       },
     );
     return toResponse(result);
