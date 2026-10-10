@@ -30,10 +30,6 @@ export async function POST(request: Request) {
   const rateLimitResult = await checkRateLimit(user.id, 'analysis');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
-  // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
-  const quota = await consumeAiQuota(user.id, 'photo_analysis');
-  if (!quota.allowed) return aiQuotaExceededResponse(quota);
-
   try {
     const body = await request.json();
     // inventoryImageUrl は imageUrl の別名として受け付ける (App / WEB 統一)
@@ -52,6 +48,11 @@ export async function POST(request: Request) {
     if (images.length === 0) {
       return NextResponse.json({ error: 'Image URL or Base64 is required' }, { status: 400 });
     }
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える
+    // (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
+    const quota = await consumeAiQuota(user.id, 'photo_analysis');
+    if (!quota.allowed) return aiQuotaExceededResponse(quota);
 
     const { data, model } = await generateGeminiJson<FridgeAnalysisResult>({
       prompt: buildPrompt(images.length),

@@ -4,7 +4,7 @@ import { internalError } from '@/lib/api/errors';
 import { sanitizeBloodTestPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
+import { consumeAiQuota } from '@/lib/plan/entitlements';
 import { clampIntParam } from '@/lib/http-params';
 
 // 血液検査結果一覧の取得（+ 経年レビュー）
@@ -57,10 +57,6 @@ export async function POST(request: NextRequest) {
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
-  // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
-  const quota = await consumeAiQuota(user.id, 'health_review');
-  if (!quota.allowed) return aiQuotaExceededResponse(quota);
-
   const body = await request.json().catch(() => null);
   const { data: resultData, errors } = sanitizeBloodTestPayload(body);
 
@@ -85,25 +81,32 @@ export async function POST(request: NextRequest) {
     return internalError('POST /api/health/blood-tests', error, { userId: user.id, table: 'blood_test_results' });
   }
 
-  // 個別 AI レビューを生成
+  // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・結果の保存のあと) に、操作 1 回につき 1 回数える
+  // (個別レビューと経年レビューの 2 回 AI を呼ぶが、操作としては 1 回)。いまは全プラン無制限なので止まらない。記録に失敗しても止めない。
+  // 上限を超えたとき (いまは起きない) は、AI のレビューだけを見送る (結果の保存は済んでいるので、429 にはしない)
+  const quota = await consumeAiQuota(user.id, 'health_review');
+
   let aiReview = null;
-  try {
-    aiReview = await generateBloodTestReview(data);
-
-    await supabase
-      .from('blood_test_results')
-      .update({ ai_review: aiReview })
-      .eq('id', data.id);
-  } catch (err) {
-    console.error('Blood test AI review generation failed:', err);
-  }
-
-  // 経年レビューを自動更新
   let longitudinalReview = null;
-  try {
-    longitudinalReview = await updateBloodTestLongitudinalReview(supabase, user.id);
-  } catch (err) {
-    console.error('Blood test longitudinal review update failed:', err);
+  if (quota.allowed) {
+    // 個別 AI レビューを生成
+    try {
+      aiReview = await generateBloodTestReview(data);
+
+      await supabase
+        .from('blood_test_results')
+        .update({ ai_review: aiReview })
+        .eq('id', data.id);
+    } catch (err) {
+      console.error('Blood test AI review generation failed:', err);
+    }
+
+    // 経年レビューを自動更新
+    try {
+      longitudinalReview = await updateBloodTestLongitudinalReview(supabase, user.id);
+    } catch (err) {
+      console.error('Blood test longitudinal review update failed:', err);
+    }
   }
 
   return NextResponse.json({

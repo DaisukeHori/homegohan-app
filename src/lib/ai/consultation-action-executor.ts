@@ -27,7 +27,7 @@ import {
 } from '@/lib/meal-image-jobs';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit } from '@/lib/rate-limit';
-import { aiQuotaCountedHeaders, consumeAiQuota } from '@/lib/plan/entitlements';
+import { AI_QUOTA_ERROR_CODES, aiQuotaCountedHeaders, consumeAiQuota } from '@/lib/plan/entitlements';
 import { createLogger } from '@/lib/db-logger';
 import { PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
 import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
@@ -215,6 +215,22 @@ function sanitizeShoppingItemUpdate(input: unknown): { data: PlainRecord; errors
   return { data, errors };
 }
 
+/**
+ * #1177 献立を生成するアクション (generate_day_menu / generate_week_menu / generate_single_meal) の AI 利用回数の記録。
+ * AI へ送る直前 (引数の検証のあと・生成のリクエストの行を作る前) に、生成 1 回につき 1 回数える。究極モードも 1 回。
+ * AI 相談の会話そのもの (consultation) は呼び出し元の route が数える。生成は別の AI の呼び出しなので、ここで別に数える。
+ * AI を使わないアクション (献立の削除・買い物リストの操作など) は数えない。
+ * 上限を超えたとき (いまは全プラン無制限なので起きない) は、生成せずに理由を結果に書く。記録に失敗しても止めない。
+ */
+async function countMenuGenerationAction(userId: string): Promise<{ error: string; code: string } | null> {
+  const quota = await consumeAiQuota(userId, 'menu_generation');
+  if (quota.allowed) return null;
+  return {
+    error: 'AI の利用回数の上限に達しました。時間をおいてから、もう一度お試しください',
+    code: AI_QUOTA_ERROR_CODES[quota.limitKind ?? 'daily'],
+  };
+}
+
 export interface ConsultationActionRow {
   id: string;
   action_type: string;
@@ -264,6 +280,13 @@ export async function runConsultationAction(
           { date, mealType: 'dinner' },
         ],
       });
+
+      // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。AI へ送る直前。記録に失敗しても止めない)
+      const quotaDenied = await countMenuGenerationAction(user.id);
+      if (quotaDenied) {
+        result = quotaDenied;
+        break;
+      }
 
       // リクエストを記録
       const { data: requestData, error: requestError } = await supabase
@@ -359,6 +382,13 @@ export async function runConsultationAction(
         userId: user.id,
         targetSlots: baseTargetSlots,
       });
+
+      // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。AI へ送る直前。記録に失敗しても止めない)
+      const quotaDenied = await countMenuGenerationAction(user.id);
+      if (quotaDenied) {
+        result = quotaDenied;
+        break;
+      }
 
       // リクエストを記録
       const { data: requestData, error: requestError } = await supabase
@@ -461,6 +491,13 @@ export async function runConsultationAction(
         userId: user.id,
         targetSlots: [{ date, mealType }],
       });
+
+      // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。AI へ送る直前。記録に失敗しても止めない)
+      const quotaDenied = await countMenuGenerationAction(user.id);
+      if (quotaDenied) {
+        result = quotaDenied;
+        break;
+      }
 
       // 1. weekly_menu_requests に記録
       const { data: requestData, error: requestError } = await supabase

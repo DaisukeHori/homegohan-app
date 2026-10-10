@@ -60,10 +60,6 @@ export async function POST(request: Request) {
     const rateLimitResult = await checkRateLimit(user.id, 'image');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
-    // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
-    const quota = await consumeAiQuota(user.id, 'image_generation');
-    if (!quota.allowed) return aiQuotaExceededResponse(quota);
-
     const apiKey = process.env.GOOGLE_AI_STUDIO_API_KEY || process.env.GOOGLE_GEN_AI_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ error: 'Google AI API Key is missing' }, { status: 500 });
@@ -74,6 +70,11 @@ export async function POST(request: Request) {
 
     const enhancedPrompt = `Create a delicious, appetizing, professional food photography shot of ${prompt}. Natural lighting, high resolution, minimalist plating, Japanese cuisine style.`;
     const referenceImages = normalizeReferenceImages(images);
+
+    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える
+    // (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
+    const quota = await consumeAiQuota(user.id, 'image_generation');
+    if (!quota.allowed) return aiQuotaExceededResponse(quota);
 
     let imageBase64 = '';
     let textResponse = '';

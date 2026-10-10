@@ -140,7 +140,8 @@ export async function POST(request: Request) {
     //  献立を消して戻すだけの無駄な動きになる) (#1182)
     const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
 
-    // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
+    // #1177 AI 利用回数の記録。AI へ送る処理の始まり (既存の献立を消す前。消したあとで止めると献立が消えたままになる) に、
+    // 操作 1 回につき 1 回数える。究極モードも 1 回 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
     const quota = await consumeAiQuota(user.id, 'menu_generation');
     if (!quota.allowed) return aiQuotaExceededResponse(quota);
 

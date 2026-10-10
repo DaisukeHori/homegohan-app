@@ -1,7 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { aiQuotaExceededResponse, consumeAiQuota } from '@/lib/plan/entitlements';
 import { runConsultationAction } from '@/lib/ai/consultation-action-executor';
 
 // 指定日付の user_daily_meals を取得または作成するヘルパー関数
@@ -46,9 +45,9 @@ export async function POST(
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
-  // #1177 AI 利用回数の記録 (いまは全プラン無制限なので止まらない。記録に失敗しても止めない)
-  const quota = await consumeAiQuota(user.id, 'consultation');
-  if (!quota.allowed) return aiQuotaExceededResponse(quota);
+  // #1177 AI 利用回数は、ここ (アクションの実行) では数えない。AI を使うアクション (献立の生成・料理画像) だけを、
+  // runConsultationAction (src/lib/ai/consultation-action-executor.ts) が AI へ送る直前に数える
+  // (献立の削除・買い物リストの操作など、AI を使わないアクションは数えない)
 
   try {
     // actionIdはメッセージIDまたはアクションログIDの可能性がある
