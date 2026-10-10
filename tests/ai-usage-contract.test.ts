@@ -111,9 +111,9 @@ describe('AI 利用回数の記録 (#1177): Next.js', () => {
       for (const [method, usage] of Object.entries(entry.handlers)) {
         if (!usage || 'noAi' in usage || 'notRecorded' in usage) continue;
         if (file in ENFORCED_ROUTES) continue; // ROUTE_CASES の網羅は tests/ai-consent-enforcement-routes.test.ts 自身が確かめる
+        // 表の行の名前は「メソッド + ファイル (拡張子なし)」 (例: 'POST src/app/api/meals/route')
         const testFile = RUNTIME_TESTS_ELSEWHERE[file];
-        const modulePath = file.replace(/^src\//, '').replace(/\.ts$/, '');
-        if (!testFile || !read(testFile).includes(modulePath) || !read(testFile).includes(method)) missing.push(`${method} ${file}`);
+        if (!testFile || !read(testFile).includes(`'${method} ${file.replace(/\.ts$/, '')}'`)) missing.push(`${method} ${file}`);
       }
     }
     for (const file of Object.keys(LIBRARY_RECORDERS)) {
@@ -121,7 +121,8 @@ describe('AI 利用回数の記録 (#1177): Next.js', () => {
       if (!testFile || !read(testFile).includes(file.replace(/^src\//, '@/').replace(/\.ts$/, ''))) missing.push(file);
     }
     expect(missing).toEqual([]);
-    expect(routesTable).toContain('ENFORCED_ROUTES');
+    // 同意を判定する route のハンドラは、tests/ai-consent-enforcement-routes.test.ts の表 (ROUTE_CASES) が同じ一覧から網羅を確かめる
+    expect(routesTable).toMatch(/import \{ ENFORCED_ROUTES \} from '\.\/helpers\/ai-consent-enforced-paths'/);
   });
 
   it('Edge Function を呼ぶ処理 (supabase.functions.invoke) は、どれも記録済みの印 (aiUsageRecordedHeaders) を付ける', () => {
