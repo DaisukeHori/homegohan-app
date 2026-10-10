@@ -150,19 +150,22 @@ describe('POST /api/menu-plans/add: weekly_menus の作成に失敗したとき 
 
   it('リクエストの行には固定の文を書き、応答は汎用の 500 (どちらにも DB の生のエラー文を出さない)', async () => {
     const requestUpdates: Array<Record<string, unknown>> = [];
-    mockSessionFrom.mockImplementation((table: string) => {
-      if (table !== 'weekly_menu_requests') throw new Error(`想定外のテーブル (session): ${table}`);
+    // weekly_menu_requests も weekly_menus も service role の client で書く (#1465)。weekly_menus の作成だけを失敗させる
+    mockAdminFrom.mockImplementation((table: string) => {
+      if (table === 'weekly_menu_requests') {
+        return {
+          insert: () => ({ select: () => ({ single: async () => ({ data: { id: 'req-1' }, error: null }) }) }),
+          update: (values: Record<string, unknown>) => {
+            requestUpdates.push(values);
+            return { eq: () => ({ eq: async () => ({ error: null }) }) };
+          },
+        };
+      }
+      if (table !== 'weekly_menus') throw new Error(`想定外のテーブル (admin): ${table}`);
       return {
-        insert: () => ({ select: () => ({ single: async () => ({ data: { id: 'req-1' }, error: null }) }) }),
-        update: (values: Record<string, unknown>) => {
-          requestUpdates.push(values);
-          return { eq: async () => ({ error: null }) };
-        },
+        insert: () => ({ select: () => ({ single: async () => ({ data: null, error: DB_ERROR }) }) }),
       };
     });
-    mockAdminFrom.mockImplementation(() => ({
-      insert: () => ({ select: () => ({ single: async () => ({ data: null, error: DB_ERROR }) }) }),
-    }));
 
     const res = await POST(postRequest());
     const text = await res.text();
