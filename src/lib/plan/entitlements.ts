@@ -26,6 +26,8 @@
  *   実際の上限 (T40) を決めるときに決める。
  * - AI を実際に呼ばない経路 (キャッシュを返すだけ・AI を使わない入力) では、呼ばない。
  *   呼ぶ場所を変えるときは tests/ai-quota-contract.test.ts の一覧と期待を合わせる。
+ * - 数えるのは公開ハンドラ (GET / POST / PUT ...) ごと。AI を使う route にハンドラを足したら、そのハンドラの中で呼ぶ
+ *   (AI を使わないハンドラなら、tests/ai-quota-contract.test.ts の ROUTE_HANDLERS_WITHOUT_AI に理由を書く)。
  * - 既知の穴: キューのテーブル (weekly_menu_requests / meal_image_jobs) は利用者が直接書けるので、
  *   API ルートを通らずに積んだ行を service role の処理が AI へ送ると、どこでも数えられない。
  *   閉じるには書き込みを service role だけにする (別の Issue。tests/ai-quota-contract.test.ts の USER_WRITABLE_AI_QUEUES)。

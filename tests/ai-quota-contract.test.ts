@@ -15,17 +15,23 @@
  *   - 定期実行: CRON_ENTRYPOINTS (vercel.json の crons と、migration の pg_cron / pg_net が呼ぶ Edge Function)
  *   - どの route からも届かない AI のファイル: AI_SINK_FILES_NOT_REACHED_BY_ROUTES
  *   - src/app/api の外の route ハンドラ: NON_API_ROUTE_HANDLERS (route ハンドラは src/app 全体から集める)
+ *   - 数える route の公開ハンドラのうち、AI に届かず数えないもの: ROUTE_HANDLERS_WITHOUT_AI (ファイル -> メソッド -> 理由)
  *   - 既知の穴 (利用者が直接書けるキューから AI へ送る経路。数えられない): USER_WRITABLE_AI_QUEUES
  *
  * 【Next.js】
  *   1. 素朴な文字の検出で AI の印があるファイルは、構文木の走査でも見つかる (走査が壊れていないことの突き合わせ)
  *   2. AI に届く route の全数 = 一覧 (数える・ライブラリが数える・数えない)。ページ・サーバーアクションは AI を import しない
  *   3. 数える route は consumeAiQuota を呼び、結果の allowed を使う (捨てない)。機能は一覧どおりで AI_FEATURES にある名前
+ *   3a. 照合の単位は公開ハンドラ (GET / POST / PUT ...): 数える route のどのハンドラも、ハンドラの中で (同じファイルの関数を経由してよい)
+ *       数えるか、ROUTE_HANDLERS_WITHOUT_AI に載っていて AI に届かない。ハンドラの全数も一覧と一致する
+ *       (ファイル単位だと、すでに数えている route に数えない AI のハンドラを足しても見逃す)
  *   4. AI のレート制限 (analysis / generation / image) を通る場所の全数 = 数える場所。同じ関数の中のあとで数える
  *   5. consumeAiQuota を呼ぶ場所の全数 = 数える route と決めたライブラリ (数える場所が散らばって二重に数えない)
  *   6. Edge Function をユーザーの JWT で呼ぶ処理の全数は一覧どおりで、どれも数え済みの印 (aiQuotaCountedHeaders) を付ける
  *   6a. 順番: 同意の判定 (T15 / #1154) → 利用回数の記録 → AI への送信。数える前に、同じ関数の中で同意を判定している
  *       (呼び出し元が判定するものは CONSENT_CHECKED_BY_CALLERS)。数える前に、同じ経路で AI へ送っていない
+ *       (AI に届くかは、同じファイルのヘルパー関数の本文と、import した関数の export した宣言の本文まで再帰的にたどって決める。
+ *        実際に route を動かして呼ばれた順番を確かめるのは tests/ai-consent-enforcement-routes.test.ts)
  * 【Edge Functions】
  *   7. Edge Function の全数・AI に届く関数の全数・ユーザーの JWT を確かめる関数の全数が、EDGE_FUNCTIONS と一致する。
  *      数えない関数 (service-ai) は service role でしか呼べない (ユーザーの JWT で直接呼んで、数えずに AI を使えない)
@@ -108,9 +114,11 @@ const NON_ROUTE_CALLERS: Record<string, { features: readonly Feature[]; reason: 
  * 自分では consumeAiQuota を呼ばず、import しているライブラリ (NON_ROUTE_CALLERS) が AI へ送る直前に数える route。
  * (AI を使うかどうかが、route ではなくライブラリの分岐で決まるため)
  */
-const ROUTES_COUNTED_IN_LIBRARY: Record<string, { library: string; reason: string }> = {
+const ROUTES_COUNTED_IN_LIBRARY: Record<string, { library: string; entry: string; reason: string }> = {
   'src/app/api/ai/consultation/actions/[actionId]/execute/route.ts': {
     library: 'src/lib/ai/consultation-action-executor.ts',
+    // ハンドラがこの名前に届けば、ライブラリが数える (ハンドラ単位の検査で使う)
+    entry: 'runConsultationAction',
     reason: 'アクションの種類によって AI を使うかが決まる。AI を使うアクションだけを runConsultationAction が数える',
   },
 };
@@ -393,6 +401,97 @@ interface FileAnalysis {
   namedCalls: Array<{ pos: number; name: string; fn: Span | null }>;
   rateLimitCalls: RateLimitCall[];
   invokeCalls: InvokeCall[];
+  /** import した名前 (型だけの import は除く) -> モジュールの指定 */
+  importedNames: Map<string, string>;
+  /** import した名前 -> 元の名前 (既定の import は 'default'、名前空間の import は '*') */
+  importedOriginals: Map<string, string>;
+  /**
+   * export した名前 -> 中身。local = 同じファイルの宣言の名前 / span = 名前の無い既定の export の範囲 /
+   * from = 別のモジュールからの再 export
+   */
+  exports: Map<string, { kind: 'local'; name: string } | { kind: 'span'; span: Span } | { kind: 'from'; specifier: string; name: string }>;
+  /** export * from '...' のモジュールの指定 */
+  starExports: string[];
+  /** ファイル直下の宣言 (関数・変数・クラス) の名前 -> 宣言の範囲 */
+  topLevel: Map<string, Span[]>;
+  /**
+   * 識別子の参照 (呼び出しに限らない。コールバックとして渡す・変数に入れるものも含む)。
+   * 宣言の名前・プロパティ名 (x.name の name)・import の指定・型の中は除く。
+   * chained: 呼んだ結果をそのまま続けて使っている (X().y / new X().y。クライアントを作ってすぐ送る書き方)
+   */
+  refs: Array<{ pos: number; name: string; chained: boolean }>;
+  /** 公開した HTTP のハンドラ (export async function GET など)。span が null は中身を読めない (別のモジュールからの再 export) */
+  handlers: Array<{ method: string; span: Span | null }>;
+}
+
+/** Next.js の route ハンドラとして公開できる名前 */
+const HTTP_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
+
+/** AI の SDK のパッケージの指定か (Edge Functions の npm: / esm.sh の指定も、パッケージ名で比べる) */
+function isAiPackageSpecifier(specifier: string): boolean {
+  const bare = specifier.replace(/^npm:/, '').replace(/^https:\/\/esm\.sh\//, '');
+  const name = bare.startsWith('@') ? bare.split('/').slice(0, 2).join('/') : bare.split('/')[0];
+  const pkgName = name.replace(/(.)@[^/]*$/, '$1');
+  const subpath = bare.slice(name.length);
+  return AI_PACKAGES.some((pkg) => pkgName === pkg || `${pkgName}${subpath}`.startsWith(`${pkg}/`));
+}
+
+/** 識別子が、値としての参照か (宣言の名前・プロパティ名・import / export の指定・ラベルではない) */
+function isValueReference(node: ts.Identifier): boolean {
+  const parent = node.parent;
+  if (!parent) return false;
+  if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false;
+  if (ts.isQualifiedName(parent)) return false;
+  if (
+    (ts.isPropertyAssignment(parent) ||
+      ts.isPropertyDeclaration(parent) ||
+      ts.isPropertySignature(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isMethodSignature(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent) ||
+      ts.isEnumMember(parent)) &&
+    parent.name === node
+  ) {
+    return false;
+  }
+  if (
+    (ts.isVariableDeclaration(parent) ||
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isParameter(parent) ||
+      ts.isTypeAliasDeclaration(parent) ||
+      ts.isInterfaceDeclaration(parent) ||
+      ts.isEnumDeclaration(parent) ||
+      ts.isTypeParameterDeclaration(parent)) &&
+    parent.name === node
+  ) {
+    return false;
+  }
+  if (ts.isBindingElement(parent) && (parent.name === node || parent.propertyName === node)) return false;
+  if (
+    ts.isImportSpecifier(parent) ||
+    ts.isImportClause(parent) ||
+    ts.isNamespaceImport(parent) ||
+    ts.isImportEqualsDeclaration(parent) ||
+    ts.isExportSpecifier(parent)
+  ) {
+    return false;
+  }
+  if (ts.isLabeledStatement(parent) || ts.isBreakOrContinueStatement(parent)) return false;
+  if (ts.isJsxAttribute(parent)) return false;
+  return true;
+}
+
+const hasExportModifier = (node: ts.Node) =>
+  ts.canHaveModifiers(node) && !!ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+
+/** 束縛のパターン ({ a, b: [c] } など) に現れる名前 */
+function bindingNames(name: ts.BindingName): string[] {
+  if (ts.isIdentifier(name)) return [name.text];
+  return name.elements.flatMap((element) => (ts.isBindingElement(element) ? bindingNames(element.name) : []));
 }
 
 const isFunctionLike = (node: ts.Node): node is ts.FunctionLikeDeclaration =>
@@ -473,25 +572,39 @@ function analyzeSource(source: string, fileName = 'file.ts'): FileAnalysis {
     namedCalls: [],
     rateLimitCalls: [],
     invokeCalls: [],
+    importedNames: new Map(),
+    importedOriginals: new Map(),
+    exports: new Map(),
+    starExports: [],
+    topLevel: new Map(),
+    refs: [],
+    handlers: [],
   };
   // consumeAiQuota を別名で import している場合に備えて、ローカル名を集める
   const consumeLocalNames = new Set<string>(['consumeAiQuota']);
   // 同意の判定のローカル名 (@/lib/ai/consent-guard から import したものだけ)
   const consentLocalNames = new Set<string>();
   // import した名前 -> モジュールの指定 (既定の import・名前つき・名前空間のどれも)
-  const importedNames = new Map<string, string>();
+  const importedNames = analysis.importedNames;
   for (const statement of sf.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
     const clause = statement.importClause;
     if (!clause || clause.isTypeOnly) continue;
     const specifier = statement.moduleSpecifier.text;
-    if (clause.name) importedNames.set(clause.name.text, specifier);
+    if (clause.name) {
+      importedNames.set(clause.name.text, specifier);
+      analysis.importedOriginals.set(clause.name.text, 'default');
+    }
     const bindings = clause.namedBindings;
-    if (bindings && ts.isNamespaceImport(bindings)) importedNames.set(bindings.name.text, specifier);
+    if (bindings && ts.isNamespaceImport(bindings)) {
+      importedNames.set(bindings.name.text, specifier);
+      analysis.importedOriginals.set(bindings.name.text, '*');
+    }
     if (bindings && ts.isNamedImports(bindings)) {
       for (const element of bindings.elements) {
         if (element.isTypeOnly) continue;
         importedNames.set(element.name.text, specifier);
+        analysis.importedOriginals.set(element.name.text, (element.propertyName ?? element.name).text);
         if (specifier === CONSENT_GUARD_MODULE && CONSENT_GUARD_FUNCTIONS.has((element.propertyName ?? element.name).text)) {
           consentLocalNames.add(element.name.text);
         }
@@ -640,12 +753,85 @@ function analyzeSource(source: string, fileName = 'file.ts'): FileAnalysis {
 
   for (const specifier of analysis.imports) {
     // Edge Functions の npm: / esm.sh の指定 (例: npm:openai@6.9.1) も、パッケージ名で比べる
-    const bare = specifier.replace(/^npm:/, '').replace(/^https:\/\/esm\.sh\//, '');
-    const name = bare.startsWith('@') ? bare.split('/').slice(0, 2).join('/') : bare.split('/')[0];
-    const pkgName = name.replace(/(.)@[^/]*$/, '$1');
-    const subpath = bare.slice(name.length);
-    if (AI_PACKAGES.some((pkg) => pkgName === pkg || `${pkgName}${subpath}`.startsWith(`${pkg}/`))) analysis.sinks.push(`pkg:${specifier}`);
+    if (isAiPackageSpecifier(specifier)) analysis.sinks.push(`pkg:${specifier}`);
   }
+
+  // ファイル直下の宣言と、公開した HTTP のハンドラ
+  const spanOf = (node: ts.Node): Span => ({ start: node.getStart(sf), end: node.getEnd() });
+  const addTopLevel = (name: string, node: ts.Node) => {
+    const spans = analysis.topLevel.get(name) ?? [];
+    spans.push(spanOf(node));
+    analysis.topLevel.set(name, spans);
+  };
+  const isDefaultExport = (node: ts.Node) =>
+    ts.canHaveModifiers(node) && !!ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
+  for (const statement of sf.statements) {
+    if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
+      if (statement.name) addTopLevel(statement.name.text, statement);
+      if (hasExportModifier(statement)) {
+        if (isDefaultExport(statement)) {
+          analysis.exports.set('default', statement.name ? { kind: 'local', name: statement.name.text } : { kind: 'span', span: spanOf(statement) });
+        } else if (statement.name) {
+          analysis.exports.set(statement.name.text, { kind: 'local', name: statement.name.text });
+        }
+      }
+      if (ts.isFunctionDeclaration(statement) && statement.name && hasExportModifier(statement) && HTTP_METHODS.has(statement.name.text)) {
+        analysis.handlers.push({ method: statement.name.text, span: spanOf(statement) });
+      }
+    }
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        for (const name of bindingNames(declaration.name)) {
+          addTopLevel(name, declaration);
+          if (hasExportModifier(statement)) analysis.exports.set(name, { kind: 'local', name });
+          if (hasExportModifier(statement) && HTTP_METHODS.has(name)) analysis.handlers.push({ method: name, span: spanOf(declaration) });
+        }
+      }
+    }
+    // export default <式>
+    if (ts.isExportAssignment(statement)) {
+      analysis.exports.set(
+        'default',
+        ts.isIdentifier(statement.expression) ? { kind: 'local', name: statement.expression.text } : { kind: 'span', span: spanOf(statement) },
+      );
+    }
+  }
+  // export { a as b } / export { a } from './x' / export * from './x'。
+  // route の公開ハンドラ: export { handler as POST } は同じファイルの宣言を読み、別のモジュールからの再 export は中身を読めない (span: null)
+  for (const statement of sf.statements) {
+    if (!ts.isExportDeclaration(statement) || statement.isTypeOnly) continue;
+    const from = statement.moduleSpecifier && ts.isStringLiteral(statement.moduleSpecifier) ? statement.moduleSpecifier.text : null;
+    if (!statement.exportClause) {
+      if (from) analysis.starExports.push(from);
+      analysis.handlers.push({ method: '*', span: null });
+      continue;
+    }
+    if (!ts.isNamedExports(statement.exportClause)) continue;
+    for (const element of statement.exportClause.elements) {
+      if (element.isTypeOnly) continue;
+      const local = (element.propertyName ?? element.name).text;
+      analysis.exports.set(element.name.text, from ? { kind: 'from', specifier: from, name: local } : { kind: 'local', name: local });
+      if (!HTTP_METHODS.has(element.name.text)) continue;
+      analysis.handlers.push({ method: element.name.text, span: from ? null : analysis.topLevel.get(local)?.[0] ?? null });
+    }
+  }
+
+  // 識別子の参照 (型の中・import の宣言は除く)
+  const collectRefs = (node: ts.Node): void => {
+    if (ts.isTypeNode(node) || ts.isImportDeclaration(node) || ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) return;
+    if (ts.isIdentifier(node) && isValueReference(node)) {
+      const parent = node.parent;
+      const chained =
+        (ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
+        parent.expression === node &&
+        !!parent.parent &&
+        (ts.isPropertyAccessExpression(parent.parent) || ts.isElementAccessExpression(parent.parent)) &&
+        parent.parent.expression === parent;
+      analysis.refs.push({ pos: node.getStart(sf), name: node.text, chained });
+    }
+    ts.forEachChild(node, collectRefs);
+  };
+  collectRefs(sf);
   return analysis;
 }
 
@@ -762,6 +948,117 @@ function aiSinkFilesReachedFrom(file: string, stack = new Set<string>()): string
 }
 
 /**
+ * モジュールが export した名前が、AI へ送るところに届くか。export した宣言の本文を (同じファイルの宣言・import を再帰的に) たどる。
+ * 中身を読めないもの (export に無い名前・export * の先が分からない) は、モジュール全体が AI に届くかで決める (送る側に倒す)
+ */
+function exportReachesAi(file: string, exportName: string, stack: Set<string>): boolean {
+  const found = findExport(file, exportName);
+  if (!found) return aiSinkFilesReachedFrom(file).length > 0;
+  const { file: owner, entry } = found;
+  const a = analyses.get(owner)!;
+  if (entry.kind === 'local') return localReachesAi(owner, a, entry.name, stack);
+  if (entry.kind === 'span') return spanReachesAi(owner, a, entry.span, stack);
+  return importReachesAi(owner, entry.specifier, entry.name, stack);
+}
+
+/** export した名前の持ち主 (export * from '...' の先もたどる)。見つからなければ null */
+function findExport(
+  file: string,
+  exportName: string,
+  seen: Set<string> = new Set(),
+): { file: string; entry: FileAnalysis['exports'] extends Map<string, infer E> ? E : never } | null {
+  const a = analyses.get(file);
+  if (!a || seen.has(file)) return null;
+  seen.add(file);
+  const entry = a.exports.get(exportName);
+  if (entry) return { file, entry };
+  if (exportName === 'default') return null;
+  for (const specifier of a.starExports) {
+    const resolved = resolveImport(file, specifier);
+    const found = resolved ? findExport(resolved, exportName, seen) : null;
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * import した名前が AI に届くか。AI の SDK のパッケージなら届く。名前空間の import (import * as X) はモジュール全体で、
+ * 名前つき・既定の import は、そのモジュールが export した宣言の本文で決める (同じモジュールの AI を使わない関数を、AI に届くとしない)
+ */
+function importReachesAi(file: string, specifier: string, original: string, stack: Set<string>): boolean {
+  if (isAiPackageSpecifier(specifier)) return true;
+  const resolved = resolveImport(file, specifier);
+  if (!resolved) return false;
+  if (original === '*') return aiSinkFilesReachedFrom(resolved).length > 0;
+  return exportReachesAi(resolved, original, stack);
+}
+
+/** 同じファイルの宣言 (関数・変数・クラス) の本文が AI に届くか */
+const localReachMemo = new Map<string, boolean>();
+function localReachesAi(file: string, a: FileAnalysis, name: string, stack: Set<string>): boolean {
+  const key = `${file}#${name}`;
+  const memo = localReachMemo.get(key);
+  if (memo !== undefined) return memo;
+  const spans = a.topLevel.get(name);
+  if (!spans || stack.has(key)) return false;
+  stack.add(key);
+  const reached = spans.some((span) => spanReachesAi(file, a, span, stack));
+  stack.delete(key);
+  // 循環の途中 (stack が空でない) で「届かない」と出た結果は、循環を切った仮の値なので覚えない
+  if (reached || stack.size === 0) localReachMemo.set(key, reached);
+  return reached;
+}
+
+/**
+ * 名前の参照が、AI へ送るところに届くか。import した名前は export した宣言の本文まで、同じファイルの宣言はその本文を、
+ * 再帰的にたどる (ヘルパー関数を経由して送るものも見つける)。解析は合成のソース (テスト用) にも使うので、ファイルの解析を引数で受け取る
+ */
+function refReachesAi(file: string, a: FileAnalysis, name: string, stack: Set<string> = new Set()): boolean {
+  const specifier = a.importedNames.get(name);
+  if (specifier !== undefined) return importReachesAi(file, specifier, a.importedOriginals.get(name) ?? '*', stack);
+  if (analyses.get(file) !== a) {
+    // 合成のソース (変異を入れた写し) は、覚えた結果 (元のファイルのもの) を使わない
+    const spans = a.topLevel.get(name);
+    const key = `${file}#${name}`;
+    if (!spans || stack.has(key)) return false;
+    stack.add(key);
+    const reached = spans.some((span) => spanReachesAi(file, a, span, stack));
+    stack.delete(key);
+    return reached;
+  }
+  return localReachesAi(file, a, name, stack);
+}
+
+/** 範囲 (ハンドラ・関数) の中から、AI へ送るところに届くか (URL・Edge Function の呼び出しの位置、または AI に届く名前の参照) */
+function spanReachesAi(file: string, a: FileAnalysis, span: Span, stack: Set<string> = new Set()): boolean {
+  if (a.sinkSites.some((site) => within(site.pos, span))) return true;
+  return a.refs.some((ref) => within(ref.pos, span) && refReachesAi(file, a, ref.name, stack));
+}
+
+/**
+ * 範囲 (ハンドラ) の中から、利用回数を数える呼び出しに届くか。consumeAiQuota の呼び出しが範囲の中にあるか、
+ * 範囲の中で参照する同じファイルの宣言の本文に (再帰的に) あるか。countingImports に挙げた import の名前 (数えるライブラリの入口) の参照も数える
+ */
+function spanReachesConsume(
+  a: FileAnalysis,
+  span: Span,
+  countingImports: readonly string[] = [],
+  stack: Set<string> = new Set(),
+): boolean {
+  if (a.consumeCalls.some((call) => within(call.pos, span))) return true;
+  return a.refs.some((ref) => {
+    if (!within(ref.pos, span)) return false;
+    if (countingImports.includes(ref.name) && a.importedNames.has(ref.name)) return true;
+    const spans = a.topLevel.get(ref.name);
+    if (!spans || a.importedNames.has(ref.name) || stack.has(ref.name)) return false;
+    stack.add(ref.name);
+    const reached = spans.some((inner) => spanReachesConsume(a, inner, countingImports, stack));
+    stack.delete(ref.name);
+    return reached;
+  });
+}
+
+/**
  * Next.js の route ハンドラ (route.ts / route.tsx)。src/app/api の外 (例: src/app/(auth)/auth/callback/route.ts) に置いても
  * HTTP の入口になるので、src/app 全体から集める (api の下だけを見ると、外に置いた AI の入口の数え忘れを見逃す)
  */
@@ -849,21 +1146,119 @@ function hasRawAiMarker(source: string): boolean {
 }
 
 /**
- * 数える前に呼んでよい、AI に届くモジュールの関数 (ファイル -> import した名前 -> 理由)。
- * AI に届くモジュールから import しているが、呼んでも AI へは送らないもの
+ * 数える前に使ってよい、AI に届く import の名前 (ファイル -> import した名前 -> 理由)。
+ * AI のクライアントを作るだけで、送るのは数えたあとのもの。走査が AI に届くとみなす名前だけを載せる
+ * (import した関数は、export した宣言の本文まで読むので、同じモジュールの AI を使わない関数 (写真の読み込み・ジョブの組み立て) は載せなくてよい)
  */
 const AI_MODULE_CALLS_BEFORE_COUNT: Record<string, Record<string, string>> = {
-  'src/app/api/ai/analyze-fridge/route.ts': {
-    fetchImageAsBase64: '利用者がアップロードした写真を、自分のストレージから読み込むだけ (AI へは送らない。送るのは数えたあと)',
-  },
   'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts': {
     getFastLLMClient: 'AI のクライアントを作るだけ (送るのは、数えたあとの chat.completions.create)',
   },
+  'src/app/api/ai/image/generate/route.ts': {
+    GoogleGenAI: 'AI のクライアントを作るだけ (new GoogleGenAI)。送るのは、数えたあとの ai.models.generateContent',
+  },
 };
-for (const file of ['src/app/api/meals/route.ts', 'src/app/api/meals/[id]/route.ts', 'src/app/api/meal-plans/meals/route.ts', 'src/app/api/meal-plans/meals/[id]/route.ts', 'src/lib/ai/consultation-action-executor.ts']) {
-  AI_MODULE_CALLS_BEFORE_COUNT[file] = {
-    buildDishImagePayload: '料理画像の生成ジョブの中身 (プロンプト・参照画像) を組み立てるだけ。AI へ送るのは、数えたあとに積んだジョブを処理する Edge Function',
-  };
+
+/**
+ * 数える route の公開ハンドラのうち、AI に届かず数えないものの全数 (ファイル -> メソッド -> 理由)。
+ * 数える route の公開ハンドラは、どれもハンドラの中で数えるか、ここに載っていること。ここに載せたハンドラは AI に届かないこと。
+ * (照合の単位をファイルにすると、すでに数えている route に、数えない AI のハンドラを足しても見逃す)
+ */
+const ROUTE_HANDLERS_WITHOUT_AI: Record<string, Record<string, string>> = {
+  'src/app/api/ai/consultation/actions/[actionId]/execute/route.ts': {
+    DELETE: 'アクションの却下。ai_action_logs の状態を書き換えるだけで、AI を呼ばない',
+  },
+  'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts': {
+    GET: '会話のメッセージの一覧を DB から読むだけ。AI を呼ばない (AI へ送るのは POST)',
+  },
+  'src/app/api/ai/nutrition/feedback/route.ts': {
+    GET: '生成済みのフィードバック (nutrition_feedback_cache) を DB から読むだけ。AI を呼ばない (生成は POST)',
+  },
+  'src/app/api/health/blood-tests/route.ts': {
+    GET: '血液検査の結果と経年レビューを DB から読むだけ。AI を呼ばない (AI のレビューは POST)',
+  },
+  'src/app/api/health/checkups/route.ts': {
+    GET: '健康診断の結果と経年レビューを DB から読むだけ。AI を呼ばない (AI のレビューは POST)',
+  },
+  'src/app/api/health/insights/route.ts': {
+    GET: '健康インサイトの一覧と未読数・アラート数を DB から読むだけ。AI を呼ばない (生成は POST)',
+  },
+  'src/app/api/meal-plans/meals/[id]/route.ts': {
+    DELETE: '献立の削除。未処理の料理画像の生成ジョブを取り消す (cancelPendingMealImageJobs は DB を書き換えるだけ) が、AI を呼ばない',
+  },
+  'src/app/api/meals/route.ts': {
+    GET: 'その日の献立を DB から読むだけ。AI を呼ばない (料理画像の生成は POST)',
+  },
+  'src/app/api/meals/[id]/route.ts': {
+    GET: '献立を 1 件 DB から読むだけ。AI を呼ばない',
+    DELETE: '献立の削除。未処理の料理画像の生成ジョブを取り消す (cancelPendingMealImageJobs は DB を書き換えるだけ) が、AI を呼ばない',
+  },
+};
+
+/**
+ * 数える場所 (consumeAiQuota の呼び出し) より前に、同じ経路 (同じ関数、switch の中なら同じ case) で AI へ送っていないか。
+ * 送る印 (URL・Edge Function の呼び出し) の位置と、AI に届く名前の参照 (import した関数、同じファイルのヘルパー関数を再帰的に) を見る。
+ * AI_MODULE_CALLS_BEFORE_COUNT に理由つきで載せた import の名前 (クライアントを作るだけのもの) は、数える前に直接使ってよい。
+ * ただし作ったクライアントでそのまま送る書き方 (getFastLLMClient().chat.completions.create(...)) と、
+ * ヘルパー関数の本文の中での使用 (再帰的にたどる先) には、この許可を当てない
+ */
+function sendBeforeCountViolations(file: string, a: FileAnalysis): string[] {
+  const allowed = AI_MODULE_CALLS_BEFORE_COUNT[file] ?? {};
+  const violations: string[] = [];
+  for (const call of a.consumeCalls) {
+    if (!call.scope) continue;
+    const before = (pos: number) => pos < call.pos && within(pos, call.scope);
+    for (const site of a.sinkSites) {
+      if (before(site.pos)) violations.push(`${file}: AI へ送る印 (URL・Edge Function の呼び出し) が数える前にある`);
+    }
+    for (const ref of a.refs) {
+      // 載せた名前でも、作ったクライアントでそのまま送る書き方 (getFastLLMClient().chat.completions.create(...)) は送信とみなす
+      if (!before(ref.pos) || (Object.hasOwn(allowed, ref.name) && !ref.chained)) continue;
+      if (refReachesAi(file, a, ref.name)) violations.push(`${file}: ${ref.name} (AI へ送るところに届く) を数える前に使っている`);
+    }
+  }
+  return violations;
+}
+
+/**
+ * 数える route の公開ハンドラの検査。どのハンドラも、ハンドラの中で (同じファイルの関数を経由してよい) 数えるか、
+ * ROUTE_HANDLERS_WITHOUT_AI に載っていて AI に届かないこと。一覧に載っているのに無いハンドラ・数えるハンドラは古い載せ方
+ */
+function handlerViolations(file: string, a: FileAnalysis): string[] {
+  const listed = ROUTE_HANDLERS_WITHOUT_AI[file] ?? {};
+  const violations: string[] = [];
+  // ライブラリが数える route は、ライブラリの入口 (entry) をそのライブラリから import して使うハンドラを、数えるハンドラとする
+  const library = ROUTES_COUNTED_IN_LIBRARY[file];
+  const countingImports: string[] = [];
+  if (library) {
+    const specifier = a.importedNames.get(library.entry);
+    if (specifier !== undefined && resolveImport(file, specifier) === library.library) countingImports.push(library.entry);
+    else violations.push(`${file}: ${library.entry} を ${library.library} から import していない`);
+  }
+  if (a.handlers.length === 0) violations.push(`${file}: 公開ハンドラが見つからない (走査が壊れている)`);
+  for (const handler of a.handlers) {
+    const isListed = Object.hasOwn(listed, handler.method);
+    if (!handler.span) {
+      violations.push(`${file} ${handler.method}: 別のモジュールから再 export したハンドラは中身を読めない (この route の中で定義すること)`);
+      continue;
+    }
+    const counts = spanReachesConsume(a, handler.span, countingImports);
+    if (counts && isListed) violations.push(`${file} ${handler.method}: 数えるようになった (ROUTE_HANDLERS_WITHOUT_AI から消すこと)`);
+    if (!counts && !isListed) {
+      violations.push(
+        spanReachesAi(file, a, handler.span)
+          ? `${file} ${handler.method}: AI に届くのに、このハンドラでは数えていない`
+          : `${file} ${handler.method}: 数えないハンドラが増えた (AI に届かないなら、理由を書いて ROUTE_HANDLERS_WITHOUT_AI に足す)`,
+      );
+    }
+    if (!counts && isListed && spanReachesAi(file, a, handler.span)) {
+      violations.push(`${file} ${handler.method}: AI に届かないハンドラの一覧にあるのに、AI に届く (数えること)`);
+    }
+  }
+  for (const method of Object.keys(listed)) {
+    if (!a.handlers.some((handler) => handler.method === method)) violations.push(`${file} ${method}: もう無いハンドラ (ROUTE_HANDLERS_WITHOUT_AI から消すこと)`);
+  }
+  return violations;
 }
 
 /** consumeAiQuota の前に、同じ関数の中で同意を判定しているか (判定を含む関数の中で、判定のあとに数える) */
@@ -1023,37 +1418,45 @@ describe('AI 利用回数の記録 (#1177): Next.js の API ルート', () => {
     expect(countedTypes, '数えるアクションと、同意を判定するアクションが食い違っている').toEqual(sendingTypes);
   });
 
-  it('数える場所より前に、同じ関数の中で AI へ送っていない (利用回数の記録 → AI への送信)', () => {
-    const violations: string[] = [];
-    for (const file of sortedUnique([...Object.keys(AI_QUOTA_ROUTES), ...Object.keys(NON_ROUTE_CALLERS)])) {
-      const a = analyses.get(file)!;
-      const allowed = AI_MODULE_CALLS_BEFORE_COUNT[file] ?? {};
-      for (const call of a.consumeCalls) {
-        if (!call.scope) continue;
-        for (const site of a.sinkSites) {
-          if (site.pos < call.pos && within(site.pos, call.scope)) violations.push(`${file}: AI へ送る印 (URL・Edge Function の呼び出し) が数える前にある`);
-        }
-        for (const imported of a.importedCalls) {
-          if (imported.pos >= call.pos || !within(imported.pos, call.scope) || imported.name in allowed) continue;
-          const resolved = resolveImport(file, imported.specifier);
-          if (resolved && aiSinkFilesReachedFrom(resolved).length > 0) {
-            violations.push(`${file}: ${imported.name} (${imported.specifier}) を数える前に呼んでいる`);
-          }
-        }
-      }
-    }
+  it('数える場所より前に、同じ経路で AI へ送っていない (利用回数の記録 → AI への送信)。同じファイルのヘルパー関数を経由する送信もたどる', () => {
+    const violations = sortedUnique(
+      sortedUnique([...Object.keys(AI_QUOTA_ROUTES), ...Object.keys(NON_ROUTE_CALLERS)]).flatMap((file) =>
+        sendBeforeCountViolations(file, analyses.get(file)!),
+      ),
+    );
     expect(
-      sortedUnique(violations),
-      'AI に届く関数は、利用回数を数えたあとで呼ぶこと (AI へ送らない関数なら、理由を書いて AI_MODULE_CALLS_BEFORE_COUNT に足す)',
+      violations,
+      'AI に届く関数 (同じファイルのヘルパー関数を含む) は、利用回数を数えたあとで呼ぶこと ' +
+        '(import した関数で、AI へ送らないものなら、理由を書いて AI_MODULE_CALLS_BEFORE_COUNT に足す)',
     ).toEqual([]);
     for (const [file, names] of Object.entries(AI_MODULE_CALLS_BEFORE_COUNT)) {
       for (const [name, reason] of Object.entries(names)) {
         expect(reason.trim().length, `${file} ${name}: 理由を書くこと`).toBeGreaterThan(10);
+        const a = analyses.get(file)!;
         expect(
-          analyses.get(file)?.importedCalls.some((c) => c.name === name),
-          `${file} は ${name} をもう呼んでいない: AI_MODULE_CALLS_BEFORE_COUNT から消すこと`,
+          a.importedNames.has(name) && a.refs.some((ref) => ref.name === name),
+          `${file} は ${name} をもう使っていない: AI_MODULE_CALLS_BEFORE_COUNT から消すこと`,
         ).toBe(true);
+        // AI に届かない関数を載せておくと、一覧が「見逃してよい名前」の置き場になる。載せるのは、走査が AI に届くとみなすものだけ
+        expect(refReachesAi(file, a, name), `${file} ${name} は AI に届かない (載せなくても検査を通る): AI_MODULE_CALLS_BEFORE_COUNT から消すこと`).toBe(true);
       }
+    }
+  });
+
+  it('AI に届く route の公開ハンドラ (GET / POST / PUT ...) は、どれも数えるか、AI に届かないハンドラの一覧 (ROUTE_HANDLERS_WITHOUT_AI) にある。ハンドラの全数は一覧と一致する', () => {
+    const violations = sortedUnique(
+      sortedUnique([...Object.keys(AI_QUOTA_ROUTES), ...Object.keys(ROUTES_COUNTED_IN_LIBRARY)]).flatMap((file) =>
+        handlerViolations(file, analyses.get(file)!),
+      ),
+    );
+    expect(
+      violations,
+      '数える route に足したハンドラは、そのハンドラの中 (同じファイルの関数を経由してよい) で consumeAiQuota を呼ぶこと。' +
+        'AI に届かないハンドラなら、理由を書いて ROUTE_HANDLERS_WITHOUT_AI に足す',
+    ).toEqual([]);
+    for (const [file, methods] of Object.entries(ROUTE_HANDLERS_WITHOUT_AI)) {
+      expect(file in AI_QUOTA_ROUTES || file in ROUTES_COUNTED_IN_LIBRARY, `${file} は数える route ではない: 一覧から消すこと`).toBe(true);
+      for (const [method, reason] of Object.entries(methods)) expect(reason.trim().length, `${file} ${method}: 理由を書くこと`).toBeGreaterThan(10);
     }
   });
 
@@ -1079,12 +1482,18 @@ describe('AI 利用回数の記録 (#1177): Next.js の API ルート', () => {
   });
 
   describe('ライブラリが数える route (ROUTES_COUNTED_IN_LIBRARY) は、自分では数えず、数えるライブラリを import している', () => {
-    it.each(Object.entries(ROUTES_COUNTED_IN_LIBRARY))('%s', (file, { library, reason }) => {
+    it.each(Object.entries(ROUTES_COUNTED_IN_LIBRARY))('%s', (file, { library, entry, reason }) => {
       expect(reason.trim().length, '理由を書くこと').toBeGreaterThan(10);
       expect(analyses.get(file)?.consumeCalls.length, `${file} は自分で数えている: AI_QUOTA_ROUTES に移すこと`).toBe(0);
       expect(library in NON_ROUTE_CALLERS, `${library} は NON_ROUTE_CALLERS (数えるライブラリ) に載せること`).toBe(true);
       const imported = analyses.get(file)!.imports.map((specifier) => resolveImport(file, specifier));
       expect(imported, `${file} は ${library} を import すること`).toContain(library);
+      // 入口 (entry) は、ライブラリが export した関数で、その本文 (同じファイルの関数を経由してよい) で数える
+      const found = findExport(library, entry);
+      expect(found?.entry.kind, `${library} が ${entry} を export していない`).toBe('local');
+      const owner = analyses.get(found!.file)!;
+      const spans = found!.entry.kind === 'local' ? owner.topLevel.get(found!.entry.name) ?? [] : [];
+      expect(spans.some((span) => spanReachesConsume(owner, span)), `${library} の ${entry} が consumeAiQuota に届かない`).toBe(true);
     });
   });
 
@@ -1891,6 +2300,150 @@ describe('AI 利用回数の記録 (#1177): ソース解析のロジック', () 
     expect(before).toEqual(['generateReview:@/lib/ai/review', 'helpers:./helpers']);
     // API キーを読むだけ (クライアントを作るだけ) は、送信の位置にしない
     expect(analyzeSource(`export function f() { const key = process.env.OPENAI_API_KEY; }`).sinkSites).toEqual([]);
+  });
+
+  it('回帰 (R2 指摘 2): 同じファイルのヘルパー関数を経由して、数える前に AI へ送ると落ちる (実際の route に変異を入れて確かめる)', () => {
+    const file = 'src/app/api/health/blood-tests/route.ts';
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf-8');
+    // 変異を入れない実物は通る (この回帰テストが空振りしていないことの確かめ)
+    expect(sendBeforeCountViolations(file, analyzeSource(source, file))).toEqual([]);
+    // 同意の判定のあと、記録の前に、AI のレビュー (ヘルパー関数の中で getFastLLMClient().chat.completions.create) を呼ぶ
+    const anchor = 'if (aiConsent.allowed) {';
+    expect(source.split(anchor).length - 1, `${file} に ${anchor} が 1 つだけあること (変異の場所)`).toBe(1);
+    const mutated = source.replace(anchor, `${anchor}\n    await generateBloodTestReview(data);`);
+    expect(sendBeforeCountViolations(file, analyzeSource(mutated, file))).toEqual([
+      `${file}: generateBloodTestReview (AI へ送るところに届く) を数える前に使っている`,
+    ]);
+  });
+
+  it('数える前の送信: ヘルパー関数を何段たどっても見つける。数えたあとの呼び出し・AI に届かないヘルパーは送信にしない', () => {
+    const file = 'src/app/api/synthetic/route.ts';
+    const make = (body: string) =>
+      analyzeSource(
+        `
+        import { consumeAiQuota } from '@/lib/plan/entitlements';
+        const SYSTEM_PROMPT = 'あなたは栄養士です';
+        async function send(text: string) { return fetch('https://api.openai.com/v1/chat/completions', { body: text }); }
+        async function review(text: string) { return send(SYSTEM_PROMPT + text); }
+        function format(text: string) { return SYSTEM_PROMPT + text; }
+        const helpers = { review };
+        export async function POST() {
+          ${body}
+        }
+      `,
+        file,
+      );
+    const counted = "const q = await consumeAiQuota(user.id, 'health_review'); if (!q.allowed) return null;";
+    expect(sendBeforeCountViolations(file, make(`const t = format('x'); ${counted} await review(t);`))).toEqual([]);
+    expect(sendBeforeCountViolations(file, make(`await review('x'); ${counted}`))).toEqual([
+      `${file}: review (AI へ送るところに届く) を数える前に使っている`,
+    ]);
+    // オブジェクトに入れたヘルパー (helpers.review) も、宣言の本文から届く
+    expect(sendBeforeCountViolations(file, make(`await helpers.review('x'); ${counted}`))).toEqual([
+      `${file}: helpers (AI へ送るところに届く) を数える前に使っている`,
+    ]);
+  });
+
+  it('数える前に使ってよい名前 (AI_MODULE_CALLS_BEFORE_COUNT) でも、作ったクライアントでそのまま送る書き方は送信とみなす', () => {
+    const file = 'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts';
+    const make = (body: string) =>
+      analyzeSource(
+        `
+        import { consumeAiQuota } from '@/lib/plan/entitlements';
+        import { getFastLLMClient } from '@/lib/ai/fast-llm';
+        export async function POST() {
+          ${body}
+          const q = await consumeAiQuota(user.id, 'consultation');
+          if (!q.allowed) return null;
+        }
+      `,
+        file,
+      );
+    expect(sendBeforeCountViolations(file, make('const client = getFastLLMClient();'))).toEqual([]);
+    expect(sendBeforeCountViolations(file, make("await getFastLLMClient().chat.completions.create({ model: 'm', messages: [] });"))).toEqual([
+      `${file}: getFastLLMClient (AI へ送るところに届く) を数える前に使っている`,
+    ]);
+  });
+
+  it('import した関数は、export した宣言の本文で AI に届くかを決める (同じモジュールの AI を使わない関数は届かない。export * の先もたどる)', () => {
+    const file = 'src/app/api/synthetic/route.ts';
+    const a = analyzeSource(
+      `
+      import { cancelPendingMealImageJobs, triggerMealImageJobProcessing } from '@/lib/meal-image-jobs';
+      import { getFastLLMClient } from '@/lib/ai/fast-llm';
+      import OpenAI from 'openai';
+    `,
+      file,
+    );
+    // src/lib/meal-image-jobs.ts は export * from '../../lib/meal-image-jobs'。取り消しは DB だけ、起動は Edge Function を呼ぶ
+    expect(refReachesAi(file, a, 'cancelPendingMealImageJobs')).toBe(false);
+    expect(refReachesAi(file, a, 'triggerMealImageJobProcessing')).toBe(true);
+    expect(refReachesAi(file, a, 'getFastLLMClient')).toBe(true);
+    expect(refReachesAi(file, a, 'OpenAI')).toBe(true);
+  });
+
+  it('回帰 (R2 指摘 1): すでに数えている route に、数えない AI のハンドラを足すと落ちる (実際の route に変異を入れて確かめる)', () => {
+    const file = 'src/app/api/health/blood-tests/route.ts';
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf-8');
+    // 変異を入れない実物は通る
+    expect(handlerViolations(file, analyzeSource(source, file))).toEqual([]);
+    // 数えずに AI へ送る PUT を足す (R2 の指摘の変異そのもの)
+    const withAiPut = `${source}
+export async function PUT(request: NextRequest) {
+  const completion = await getFastLLMClient().chat.completions.create({ model: getFastLLMModel(), messages: [] });
+  return NextResponse.json({ completion });
+}
+`;
+    expect(handlerViolations(file, analyzeSource(withAiPut, file))).toEqual([`${file} PUT: AI に届くのに、このハンドラでは数えていない`]);
+    // 同じファイルのヘルパー関数を経由して AI へ送る PUT も同じ
+    const viaHelper = `${source}
+export async function PUT(request: NextRequest) {
+  return NextResponse.json({ review: await generateBloodTestReview(await request.json()) });
+}
+`;
+    expect(handlerViolations(file, analyzeSource(viaHelper, file))).toEqual([`${file} PUT: AI に届くのに、このハンドラでは数えていない`]);
+    // AI に届かないハンドラでも、一覧に無ければ落ちる (ハンドラの数の変化)
+    const withPlainPut = `${source}
+export async function PUT() {
+  return NextResponse.json({ ok: true });
+}
+`;
+    expect(handlerViolations(file, analyzeSource(withPlainPut, file))).toEqual([
+      `${file} PUT: 数えないハンドラが増えた (AI に届かないなら、理由を書いて ROUTE_HANDLERS_WITHOUT_AI に足す)`,
+    ]);
+    // 一覧に載っている GET が AI に届くようになったら落ちる
+    const getAnchor = 'export async function GET(request: NextRequest) {';
+    expect(source.split(getAnchor).length - 1, `${file} に ${getAnchor} が 1 つだけあること (変異の場所)`).toBe(1);
+    const aiInGet = source.replace(getAnchor, `${getAnchor}\n  await generateBloodTestReview({});`);
+    expect(handlerViolations(file, analyzeSource(aiInGet, file))).toEqual([
+      `${file} GET: AI に届かないハンドラの一覧にあるのに、AI に届く (数えること)`,
+    ]);
+  });
+
+  it('公開ハンドラの読み取り: export async function / export const / export { x as POST } / 別のモジュールからの再 export', () => {
+    const a = analyzeSource(
+      `
+      import { consumeAiQuota } from '@/lib/plan/entitlements';
+      async function handle() { const q = await consumeAiQuota(user.id, 'consultation'); if (!q.allowed) return null; }
+      async function plain() { return null; }
+      export async function GET() { return plain(); }
+      export const POST = async () => handle();
+      export { plain as PATCH };
+      export { DELETE } from './other';
+    `,
+      'src/app/api/synthetic/route.ts',
+    );
+    expect(a.handlers.map((h) => [h.method, h.span !== null])).toEqual([
+      ['GET', true],
+      ['POST', true],
+      ['PATCH', true],
+      ['DELETE', false],
+    ]);
+    const post = a.handlers.find((h) => h.method === 'POST')!;
+    const get = a.handlers.find((h) => h.method === 'GET')!;
+    // ハンドラから同じファイルの関数を経由して数えるものは、数えるハンドラ
+    expect(spanReachesConsume(a, post.span!)).toBe(true);
+    expect(spanReachesConsume(a, get.span!)).toBe(false);
   });
 
   it('AI 相談のアクション: 同意を判定するアクション (AI_SENDING_ACTION_TYPES) と、献立の生成として数えるアクションを取り出す', () => {

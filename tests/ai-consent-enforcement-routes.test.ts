@@ -83,6 +83,8 @@ const h = vi.hoisted(() => {
   const runConsultationAction = vi.fn(async () => ({ success: true, result: {} }));
   /** global fetch のうち、AI 事業者・Edge Function へ送ったもの */
   const aiFetch = vi.fn();
+  /** rpc を呼んだ印 (呼んだ順番を、AI へ送る口と比べるため。#1177 の「記録 → 送信」) */
+  const rpcMark = vi.fn((_name: string) => undefined);
   return {
     state,
     fastLLMCreate,
@@ -94,6 +96,7 @@ const h = vi.hoisted(() => {
     callV5,
     runConsultationAction,
     aiFetch,
+    rpcMark,
   };
 });
 
@@ -159,6 +162,7 @@ function makeSupabase() {
     from: (table: string) => makeQuery(table),
     rpc: async (name: string) => {
       h.state.rpcCalls.push(name);
+      h.rpcMark(name);
       return { data: h.state.rpc[name] ?? null, error: null };
     },
     storage: {
@@ -664,6 +668,7 @@ beforeEach(() => {
     h.callV5,
     h.runConsultationAction,
     h.aiFetch,
+    h.rpcMark,
   ]) {
     fn.mockClear();
   }
@@ -688,6 +693,27 @@ const sendsOf = (c: RouteCase) => (c.sends ? c.sends() : aiSendCount());
 /** AI の利用回数を数えた回数 (consume_ai_quota の rpc。#1177) */
 const quotaCounts = () => h.state.rpcCalls.filter((name) => name === 'consume_ai_quota').length;
 
+/**
+ * 利用回数の記録 (consume_ai_quota の rpc) が、AI へ送る口 (全部) のどれよりも先に呼ばれたか (#1177: 記録 → 送信の順)。
+ * 契約テスト (tests/ai-quota-contract.test.ts) の静的な検査と別に、実際に route を動かして呼ばれた順番で確かめる
+ */
+function quotaCountedBeforeEverySend(): { ok: boolean; detail: string } {
+  const quotaOrders = h.rpcMark.mock.calls.flatMap(([name], i) => (name === 'consume_ai_quota' ? [h.rpcMark.mock.invocationCallOrder[i]] : []));
+  const senders = {
+    fastLLM: h.fastLLMCreate,
+    gemini: h.generateGeminiJson,
+    genai: h.genaiGenerateContent,
+    functionsInvoke: h.functionsInvoke,
+    generateMenuV4: h.callV4,
+    generateMenuV5: h.callV5,
+    fetch: h.aiFetch,
+  };
+  const sendOrders = Object.entries(senders).flatMap(([label, fn]) => fn.mock.invocationCallOrder.map((order) => ({ label, order })));
+  const firstQuota = Math.min(...quotaOrders);
+  const early = sendOrders.filter((send) => send.order < firstQuota).map((send) => send.label);
+  return { ok: quotaOrders.length > 0 && early.length === 0, detail: `数える前に送った口: ${early.join(', ') || 'なし'} / 数えた回数: ${quotaOrders.length}` };
+}
+
 async function run(c: RouteCase, mode: ConsentMode): Promise<Response> {
   h.state.consentMode = mode;
   c.setup?.();
@@ -709,11 +735,15 @@ describe.each(ROUTE_CASES.filter((c) => c.kind === 'reject'))('止める経路: 
     expect(quotaCounts(), h.state.rpcCalls.join(', ')).toBe(0);
   });
 
-  it('同意済み: AI へ送る (この行の 0 回が空振りでないことの確かめ)。AI の利用回数は 1 回の操作で 1 回だけ数える', async () => {
+  it('同意済み: AI へ送る (この行の 0 回が空振りでないことの確かめ)。AI の利用回数は 1 回の操作で 1 回だけ、AI へ送るより前に数える', async () => {
     const res = await run(c, 'granted');
     expect(res.status).not.toBe(403);
     expect(sendsOf(c), JSON.stringify(aiSendBreakdown())).toBeGreaterThanOrEqual(1);
     expect(quotaCounts(), h.state.rpcCalls.join(', ')).toBe(c.notCountedHere ? 0 : 1);
+    if (!c.notCountedHere) {
+      const order = quotaCountedBeforeEverySend();
+      expect(order.ok, order.detail).toBe(true);
+    }
   });
 });
 
@@ -733,13 +763,17 @@ describe.each(ROUTE_CASES.filter((c) => c.kind === 'skip'))('AI の部分だけ�
     expect(quotaCounts(), h.state.rpcCalls.join(', ')).toBe(0);
   });
 
-  it('同意済み: AI へ送り、aiSkipped は付かない。AI の利用回数は 1 回の操作で 1 回だけ数える', async () => {
+  it('同意済み: AI へ送り、aiSkipped は付かない。AI の利用回数は 1 回の操作で 1 回だけ、AI へ送るより前に数える', async () => {
     const res = await run(c, 'granted');
     expect(sendsOf(c), JSON.stringify(aiSendBreakdown())).toBeGreaterThanOrEqual(1);
     const body = await bodyOf(res);
     expect(body.aiSkipped).toBeUndefined();
     expect(body.skipped).toBeUndefined();
     expect(quotaCounts(), h.state.rpcCalls.join(', ')).toBe(c.notCountedHere ? 0 : 1);
+    if (!c.notCountedHere) {
+      const order = quotaCountedBeforeEverySend();
+      expect(order.ok, order.detail).toBe(true);
+    }
   });
 });
 
