@@ -32,15 +32,25 @@
  *   - uses のアクション・ジョブやステップのキー・ステップの if は、知っているもの (理由つきの対応表) だけを受け付ける。
  *     知らないものが出てきたら赤にする (読み飛ばして緑にしない)。
  *   - スクリプトのコメント (# 以降) は読まない (コメントに書いただけで通ることを防ぐ)。
+ *   - 枠 (slot) で変わる値 (apply_slot の代入。ポートと URL) は、枠 0 の値に置き換えて照合する。CI は枠を指定しない (= 枠 0) ので、
+ *     枠 0 の値が yml と同じでなければならない。枠 0 の値は scripts/lib/local-ci-slot.sh を実際に実行して得る (文字列で推測しない)。
+ *     置き換えられない代入 (知らない変数を使うもの) は展開しない (= yml の値と一致せず赤になる)。
  */
 
 import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = process.cwd();
 const SCRIPT = "scripts/local-ci.sh";
 const NVMRC = ".nvmrc";
+/** 枠 (slot) ごとの値を決めるスクリプト (`bash <これ> <枠>` で SLOT_*=値 を出す) */
+const SLOT_LIB = "scripts/lib/local-ci-slot.sh";
+/** スクリプトで、枠の値を段が使う変数に入れる関数 */
+const SLOT_FUNCTION = "apply_slot";
+/** CI が使う枠 (yml は枠を指定しない。supabase-local.sh / local-ci.sh の既定) */
+const CI_SLOT = "0";
 
 /** ワークフローと、それを写したスクリプトの段 (関数) */
 const WORKFLOW_STAGES = {
@@ -631,6 +641,50 @@ interface ParsedScript {
   constants: Map<string, string>;
 }
 
+/** 枠 0 の SLOT_* の値 (scripts/lib/local-ci-slot.sh を実行して得る) */
+let slotZeroCache: Map<string, string> | undefined;
+function slotZeroValues(): Map<string, string> {
+  if (slotZeroCache) return slotZeroCache;
+  const out = execFileSync("bash", [SLOT_LIB, CI_SLOT], { cwd: ROOT, encoding: "utf8" });
+  const values = new Map<string, string>();
+  for (const line of out.split("\n")) {
+    const m = /^(SLOT_[A-Z0-9_]+)=(.*)$/.exec(line);
+    if (m) values.set(m[1], m[2]);
+  }
+  if (values.size === 0) throw new Error(`${SLOT_LIB} ${CI_SLOT} が値を出さない`);
+  slotZeroCache = values;
+  return values;
+}
+
+/**
+ * apply_slot の `NAME="..."` の代入を、枠 0 の値に置き換えた定数にする。
+ * 右辺に使えるのは定数 (readonly) と、枠 0 の SLOT_* と、先に置き換えた代入だけ。それ以外を含む代入は展開しない。
+ */
+function slotConstants(lines: string[], constants: Map<string, string>): Map<string, string> {
+  const result = new Map<string, string>();
+  const start = lines.findIndex((line) => new RegExp(`^${SLOT_FUNCTION}\\(\\)\\s*\\{\\s*$`).test(line));
+  if (start < 0) return result;
+  const known = new Map<string, string>([...constants, ...slotZeroValues()]);
+  for (let k = start + 1; k < lines.length && !/^\}\s*$/.test(lines[k]); k += 1) {
+    const a = /^\s*([A-Z][A-Z0-9_]*)="([^"`\\]*)"\s*$/.exec(lines[k]);
+    if (!a) continue;
+    let unknown = false;
+    const value = a[2].replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (whole, braced?: string, bare?: string) => {
+      const name = braced ?? bare ?? "";
+      const v = known.get(name);
+      if (v === undefined) {
+        unknown = true;
+        return whole;
+      }
+      return v;
+    });
+    if (unknown || value.includes("$")) continue;
+    result.set(a[1], value);
+    known.set(a[1], value);
+  }
+  return result;
+}
+
 /**
  * スクリプトを関数ごとに分ける。コメントと、複数行の '...' (埋め込みの JavaScript) を除き、
  * 行の継続をつなぎ、配列 (NAME=(...)) と定数 (readonly NAME="値") を展開する。
@@ -660,6 +714,7 @@ function parseScript(scriptText: string): ParsedScript {
     if (m) constants.set(m[1], m[2] ?? m[3] ?? m[4] ?? "");
     kept.push(line);
   }
+  for (const [name, value] of slotConstants(kept, constants)) constants.set(name, value);
   let code = kept.join("\n");
   for (const [name, value] of arrays) {
     code = code.replace(new RegExp(`"?\\$\\{${name}\\[@\\]\\}"?`, "g"), value);
@@ -1316,6 +1371,11 @@ describe("検査ロジック自体 (ワークフローやスクリプトを変�
       [".github/workflows/security-regression.yml", " tests/integration/handson-tour)", ")"],
       // 段の関数の名前を変える (照合する範囲が無くなる)
       [".github/workflows/mobile-test.yml", "stage_mobile() {", "stage_mobile_renamed() {"],
+      // 枠 0 のアプリの URL を、CI と違うポートにする (枠の値は枠 0 で照合する)
+      [".github/workflows/e2e-local.yml", 'APP_ORIGIN="$APP_HOST_URL:$SLOT_APP_PORT"', 'APP_ORIGIN="$APP_HOST_URL:$SLOT_NOTICE_APP_PORT"'],
+      [".github/workflows/e2e-local.yml", 'ENFORCED_APP_PORT="$SLOT_ENFORCED_APP_PORT"', 'ENFORCED_APP_PORT="$SLOT_APP_PORT"'],
+      // 枠の値を、枠 0 の値に置き換えられない形にする (照合で満たしたことにしない)
+      [".github/workflows/security-regression.yml", 'APP_ORIGIN="$APP_HOST_URL:$SLOT_APP_PORT"', 'APP_ORIGIN="$APP_HOST_URL:$SOME_PORT"'],
     ];
     for (const [workflow, from, to] of mutations) {
       expect(scriptText, `写しを作る元の文字列が見つからない: ${from}`).toContain(from);
