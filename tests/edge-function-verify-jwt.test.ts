@@ -13,17 +13,18 @@
 // (ゲートウェイの検証を外したのに関数の中でも確かめないと、誰でも呼べてしまう)。
 //
 // ここで確かめること (DB もネットワークも使わず、ソースだけを見る):
-//   - supabase/config.toml の verify_jwt を読み飛ばさない。このリポジトリでは [functions.<name>] の見出しの下に
-//     verify_jwt = true / false の行で書き、TOML として正しいほかの書き方 ([functions] の下のインラインテーブル、
-//     最上位の functions.<name>.verify_jwt、[remotes.*] での上書き、大文字の VERIFY_JWT など) は例外にする。
-//     読めた数は、全文の verify_jwt の出現数と突き合わせる
+//   - supabase/config.toml は、許した形の行 (空行・行全体のコメント・[functions.<name>] の見出し・その中の
+//     verify_jwt = true / false) だけで書かれている。ほかの行が 1 行でもあれば例外にする
+//     (TOML として正しい別の書き方 — インラインテーブル・引用符で囲んだキー・ドット付きのキー・[remotes.*] での上書き・
+//     大文字の VERIFY_JWT など — を、書き方ごとに見つけて拒否するのではなく、許した形のほかは読まない)
 //   - verify_jwt = false の関数は、どれも関数のディレクトリがあり、先頭で自前の認証をする
 //     (requireServiceRole / requireAuth / auth.getUser を、本文を読む前・DB に触る前に呼ぶ)
 //   - DB から pg_net (net.http_post など) で呼ばれる関数は、どれも verify_jwt = false。
 //     呼び出しは DB に入る SQL (supabase/migrations と、本番のスキーマの写し supabase/baseline) の全文から抜き出す
 //     (SQL 関数の本文だけでなく、関数で包まない cron.schedule('job', '...', $$ SELECT net.http_post(...) $$)、
-//     DO ブロック、素の SELECT も)。別のやり方で数え直した呼び出しの数とファイルごとに突き合わせ、
-//     拾えない呼び出し・呼び先が読めない呼び出しがあれば赤にする
+//     DO ブロック、素の SELECT も)。抜き出した数は、別のやり方で数え直した数とファイルごとに突き合わせる。
+//     呼び先は呼び出し 1 件ごとに、URL の引数を許した形 (直書きの URL・許可リストで絞った引数を足した URL・
+//     そのどちらかを 1 回だけ代入した変数) で読み、読めない呼び出しが 1 件でもあれば赤にする
 //   - CRON_SECRET を受け付ける関数 (requireServiceRole / checkCronSecret を呼ぶか、'CRON_SECRET' を読む関数。
 //     index.ts の全体と、そこから相対パスの import でたどれるモジュールから拾う) は、どれも verify_jwt = false
 //   - GitHub Actions のデプロイは、名前を指定しない functions deploy で config.toml を読み (--no-verify-jwt を付けない)、
@@ -35,6 +36,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = path.resolve(__dirname, '..');
@@ -55,178 +57,42 @@ const SEGMENT_STATS_FUNCTION = 'calculate-segment-stats';
 // supabase/config.toml の [functions.<name>] verify_jwt
 // ---------------------------------------------------------------------------
 
-/**
- * supabase CLI 2.62.10 の [functions.<name>] に書けるキー (pkg/config/config.go の function 型の toml タグ)。
- * CLI は viper で読むのでキーの大文字小文字を区別しない (VERIFY_JWT も verify_jwt として効く)。
- * ここに無いキー (大文字を含む書き方・綴りの違い) は、読み飛ばさずに例外にする。
+/*
+ * config.toml に書いてよい行 (許した形。行ごとの完全一致で、どれにも当たらない行が 1 行でもあれば例外にする)。
+ *   - 空行と、行全体のコメント (空白のあと # で始まる行)
+ *   - 関数の表の見出し [functions.<name>] (<name> は小文字・数字・_ -。同じ名前の 2 回目は例外)
+ *   - その表の中の verify_jwt = true / verify_jwt = false (表ごとに 1 回。見出しより前は例外)
+ * 引用符・{ } ・ほかの見出し・ほかのキー・行末のコメントを含む行はどれにも当たらないので、TOML として正しい別の書き方で
+ * 書いた verify_jwt (インラインテーブル・引用符で囲んだキー・ドット付きのキー・[remotes.*] での上書き・複数行の文字列・
+ * 大文字の VERIFY_JWT) は、どれも読み飛ばされずに例外になる。複数行の値も、開く行が許した形に当たらないので始まらない。
+ * ほかの表やキーが要るようになったら (例えば [auth.email])、ここが赤になる。そのときは、その行が関数の verify_jwt に
+ * 触れないことを確かめてから、この許した形を広げる。
  */
-const FUNCTION_CONFIG_KEYS: ReadonlySet<string> = new Set(['enabled', 'verify_jwt', 'import_map', 'entrypoint', 'static_files']);
-/**
- * config.toml に書く関数名。CLI の関数名の規則は ^[A-Za-z][A-Za-z0-9_-]*$ だが、CLI は viper でキーを小文字にして読むので、
- * 大文字を含む名前は、ここで読む名前と CLI が読む名前が食い違う。小文字の名前だけを読み、ほかは例外にする
- */
-const FUNCTION_NAME = /^[a-z][a-z0-9_-]*$/;
-const isFunctionsKeyPart = (part: string) => part.toLowerCase() === 'functions';
+const TOML_BLANK_OR_COMMENT_LINE = /^[ \t]*(?:#.*)?$/;
+const TOML_FUNCTION_HEADER_LINE = /^\[functions\.([a-z][a-z0-9_-]*)\]$/;
+const TOML_VERIFY_JWT_LINE = /^verify_jwt = (true|false)$/;
 
-/**
- * TOML の 1 行 (または複数行の値の続きの 1 行) を、' と " の文字列を飛ばしながら読み、
- * # のコメントの手前まで (content)、文字列の中身を除いたコード (code)、閉じていない [ { の数 (depth) を返す。
- * 複数行の文字列 (""" と ''') は読まずに例外にする (中に [functions.x] のような行を書けてしまうため)。
- */
-function scanTomlLine(text: string, depthIn: number, where: string): { content: string; code: string; depth: number } {
-  let depth = depthIn;
-  let code = '';
-  let i = 0;
-  while (i < text.length) {
-    const ch = text[i];
-    if (text.startsWith('"""', i) || text.startsWith("'''", i)) {
-      throw new Error(`${where}: 複数行の文字列 (""" / ''') は読まない (中の行を見出しやキーと見分けられない)`);
-    }
-    if (ch === '#') return { content: text.slice(0, i), code, depth };
-    if (ch === '"' || ch === "'") {
-      let j = i + 1;
-      // " の文字列だけ \ が次の 1 文字を逃がす (' の文字列は逃がさない)
-      while (j < text.length && text[j] !== ch) j += ch === '"' && text[j] === '\\' ? 2 : 1;
-      if (j >= text.length) throw new Error(`${where}: 文字列が行の中で閉じていない`);
-      code += `${ch}${ch}`;
-      i = j + 1;
-      continue;
-    }
-    if (ch === '[' || ch === '{') depth += 1;
-    else if (ch === ']' || ch === '}') depth -= 1;
-    code += ch;
-    i += 1;
-  }
-  return { content: text, code, depth };
-}
-
-/**
- * ドット付きのキー (a.b / a."b" / a.'b' / 前後の空白つき) を部分に分ける。読めなければ null。
- * " のキーの中の \ (エスケープ) は読まない (null)。
- */
-function parseTomlKey(text: string): string[] | null {
-  const part = /\s*(?:([A-Za-z0-9_-]+)|"([^"\\]*)"|'([^']*)')\s*/y;
-  const parts: string[] = [];
-  let i = 0;
-  for (;;) {
-    part.lastIndex = i;
-    const m = part.exec(text);
-    if (m === null) return null;
-    parts.push(m[1] ?? m[2] ?? m[3]);
-    i = part.lastIndex;
-    if (i === text.length) return parts;
-    if (text[i] !== '.') return null;
-    i += 1;
-  }
-}
-
-/** key = value の行を、文字列の外の最初の = で分ける。= が無ければ null */
-function splitTomlKeyValue(line: string): { key: string; value: string } | null {
-  for (let i = 0; i < line.length; i += 1) {
-    const ch = line[i];
-    if (ch === '"' || ch === "'") {
-      const close = line.indexOf(ch, i + 1);
-      if (close < 0) return null;
-      i = close;
-    } else if (ch === '=') {
-      return { key: line.slice(0, i), value: line.slice(i + 1).trim() };
-    }
-  }
-  return null;
-}
-
-/**
- * 数え直し用: # から行末を除いた全文に verify_jwt が何回出るか (大文字小文字を問わない)。
- * functionVerifyJwt が [functions.<name>] の中で読んだ verify_jwt の数と突き合わせ、読み飛ばした書き方を見つける。
- */
-const countVerifyJwtMentions = (toml: string) =>
-  toml
-    .split('\n')
-    .map((line) => line.replace(/#.*$/, ''))
-    .join('\n')
-    .match(/verify_jwt/gi)?.length ?? 0;
-
-/**
- * config.toml の [functions.<name>] ごとの verify_jwt を読む (指定が無ければ CLI の既定値 true)。
- *
- * 読み飛ばして緑にしないよう、次のどれかに当たれば例外にする (このリポジトリでは
- * 「[functions.<name>] の見出しの下に verify_jwt = true / false の行」の形でだけ書く):
- *   - 見出しやキーの行として読めない行
- *   - functions を含む見出しで、[functions.<name>] でないもの
- *     ([functions] / [functions.<name>.<sub>] / [[functions.<name>]] / [remotes.<x>.functions.<name>] など)。
- *     名前を引用符で囲んだ [functions."<name>"] と、空白を挟んだ [ functions . <name> ] は、同じ名前として読む
- *   - functions を部分に含むキー (どの表の中でも。最上位の functions.<name>.verify_jwt = false や、
- *     [functions] の下の <name> = { ... } のもとになる書き方)
- *   - 値の中 (文字列の外) に functions か verify_jwt が出る行 (インラインテーブルで書いた設定)
- *   - [functions.<name>] の中の、CLI の関数の設定に無いキー (VERIFY_JWT のような大文字の書き方も)・同じキーの 2 回目
- *   - verify_jwt の値が true / false でない
- *   - 複数行の文字列 (""" / ''')
- *   - 全文の verify_jwt の出現数 (# のコメントを除く) と、[functions.<name>] の中で読んだ数が合わない
- */
+/** config.toml の [functions.<name>] ごとの verify_jwt (指定が無ければ CLI の既定値 true)。許した形でない行があれば例外 */
 function functionVerifyJwt(toml: string): Map<string, boolean> {
   const result = new Map<string, boolean>();
-  let table: { kind: 'function'; name: string; keys: Set<string> } | { kind: 'other' } = { kind: 'other' };
-  /** 複数行の値 (配列) の中なら、閉じていない [ { の数 */
-  let depth = 0;
-  let verifyJwtRead = 0;
-  for (const [index, rawLine] of toml.split('\n').entries()) {
-    const where = `${CONFIG_TOML}:${index + 1}`;
-    const scanned = scanTomlLine(rawLine, depth, where);
-    const line = scanned.content.trim();
-    if (depth > 0) {
-      // 複数行の値の続き。値の中には functions / verify_jwt を書かせない
-      if (/functions|verify_jwt/i.test(scanned.code)) throw new Error(`${where}: 値の中の functions / verify_jwt は読まない: ${rawLine}`);
-      depth = scanned.depth;
+  /** いま読んでいる [functions.<name>] と、その中の verify_jwt を読んだか */
+  let table: { name: string; verifyJwtRead: boolean } | null = null;
+  for (const [index, line] of toml.split('\n').entries()) {
+    if (TOML_BLANK_OR_COMMENT_LINE.test(line)) continue;
+    const header = TOML_FUNCTION_HEADER_LINE.exec(line);
+    if (header !== null && !result.has(header[1])) {
+      result.set(header[1], true);
+      table = { name: header[1], verifyJwtRead: false };
       continue;
     }
-    if (line === '') continue;
-
-    if (line.startsWith('[')) {
-      const header = /^\[\[(.*)\]\]$/.exec(line) ?? /^\[(.*)\]$/.exec(line);
-      const key = header === null ? null : parseTomlKey(header[1]);
-      if (key === null) throw new Error(`${where}: 表の見出しを読めない: ${rawLine}`);
-      const arrayOfTables = line.startsWith('[[');
-      if (!arrayOfTables && key.length === 2 && isFunctionsKeyPart(key[0])) {
-        const name = key[1];
-        if (!FUNCTION_NAME.test(name)) throw new Error(`${where}: 関数名 ${JSON.stringify(name)} は ${FUNCTION_NAME} に合わない`);
-        if (result.has(name)) throw new Error(`${where}: [functions.${name}] が 2 回ある`);
-        result.set(name, true);
-        table = { kind: 'function', name, keys: new Set() };
-      } else if (key.some(isFunctionsKeyPart)) {
-        throw new Error(`${where}: functions を含む見出しは [functions.<name>] の形でだけ読む: ${rawLine}`);
-      } else {
-        table = { kind: 'other' };
-      }
+    const verifyJwt = TOML_VERIFY_JWT_LINE.exec(line);
+    if (verifyJwt !== null && table !== null && !table.verifyJwtRead) {
+      result.set(table.name, verifyJwt[1] === 'true');
+      table.verifyJwtRead = true;
       continue;
     }
-
-    const kv = splitTomlKeyValue(line);
-    const key = kv === null ? null : parseTomlKey(kv.key);
-    if (kv === null || key === null) throw new Error(`${where}: 行を読めない: ${rawLine}`);
-    if (key.some(isFunctionsKeyPart)) throw new Error(`${where}: functions を含むキーは読まない ([functions.<name>] の見出しで書く): ${rawLine}`);
-    const valueCode = scanTomlLine(kv.value, 0, where).code;
-    if (/functions|verify_jwt/i.test(valueCode)) throw new Error(`${where}: 値の中の functions / verify_jwt は読まない: ${rawLine}`);
-    depth = scanned.depth;
-
-    if (table.kind !== 'function') continue;
-    const [name] = key;
-    if (key.length !== 1 || !FUNCTION_CONFIG_KEYS.has(name)) {
-      throw new Error(`${where}: [functions.${table.name}] の中の ${JSON.stringify(key.join('.'))} は関数の設定のキーでない: ${rawLine}`);
-    }
-    if (table.keys.has(name)) throw new Error(`${where}: [functions.${table.name}] の ${name} が 2 回ある`);
-    table.keys.add(name);
-    if (name !== 'verify_jwt') continue;
-    if (kv.value !== 'true' && kv.value !== 'false') {
-      throw new Error(`${where}: [functions.${table.name}] の verify_jwt が true / false でない: ${kv.value}`);
-    }
-    result.set(table.name, kv.value === 'true');
-    verifyJwtRead += 1;
-  }
-  if (depth !== 0) throw new Error(`${CONFIG_TOML}: 値の [ { が閉じていない`);
-  const mentioned = countVerifyJwtMentions(toml);
-  if (mentioned !== verifyJwtRead) {
     throw new Error(
-      `${CONFIG_TOML}: verify_jwt が ${mentioned} 回書かれているのに、[functions.<name>] の中で読めたのは ${verifyJwtRead} 回 (読み飛ばした書き方がある)`,
+      `${CONFIG_TOML}:${index + 1}: 許した形 (空行・行全体のコメント・[functions.<name>] の 1 回目・その中の 1 回目の verify_jwt = true / false) でない行: ${JSON.stringify(line)}`,
     );
   }
   return result;
@@ -246,9 +112,20 @@ const DEPLOYED_FUNCTIONS = fs
 // 関数の先頭の認証
 // ---------------------------------------------------------------------------
 
-/** TS のコメント (/* *\/ と //) を除く。URL の // (直前が :) は残す */
+const TS_PRINTER = ts.createPrinter({ removeComments: true });
+const strippedTsSources = new Map<string, string>();
+
+/**
+ * TS のコメントを除いたソース。TypeScript の構文解析で読んで印字し直す
+ * (文字列・正規表現・テンプレートの中の // や /* をコメントと取り違えて、後ろのコードを隠さない。#1406 R3 の同型の掃除)。
+ * 印字し直すので、空白や引用符の種類は元と変わる (下の正規表現は、どちらでも当たるように書く)。
+ */
 function stripTsComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+  const cached = strippedTsSources.get(source);
+  if (cached !== undefined) return cached;
+  const stripped = TS_PRINTER.printFile(ts.createSourceFile('source.ts', source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS));
+  strippedTsSources.set(source, stripped);
+  return stripped;
 }
 
 /** 自前の認証の呼び出し (どれかを本文を読む前に呼べば、先頭で認証しているとみなす) */
@@ -372,14 +249,48 @@ const SERVICE_ROLE_FUNCTIONS = DEPLOYED_FUNCTIONS.filter((name) =>
  * 型の http_request (::http_request) のように後ろが ( でないものは数えない。
  */
 const HTTP_CALL = /\b(?:http|http_(?:post|get|put|patch|delete|head)|http_request)"?\s*\(/gi;
+/** pgsql-http の http(...)。要求を行 ('POST', url, ...)::http_request で渡すので、URL は行の 2 番目 */
+const GENERIC_HTTP_CALL = /^http"?\s*\($/i;
 /** 呼び出し元の名前に使う、文の先頭の語の数 (CREATE FUNCTION / cron.schedule / DO のどれでもない文のとき) */
 const LABEL_WORDS = 6;
 
 const countHttpCalls = (code: string) => [...code.matchAll(HTTP_CALL)].length;
 
+/*
+ * 呼び出しの URL の引数として読む形 (引数の式全体との完全一致。どれにも当たらなければ、その呼び出しの呼び先は読めない = 赤)。
+ *   - 直書きの URL '<https://ホスト>/functions/v1/<name>' (<name> の後ろに / ? # からの続きがあってもよい)
+ *   - '<https://ホスト>/functions/v1/' || <引数>: 呼び先は、同じ文で前もって <引数> を絞る許可リスト (allowlistOf)
+ *   - 変数 1 つ: 同じ文の中で、上の 2 つのどちらかを 1 回だけ代入した変数 (variableUrlCallees)
+ * 文字列を足し合わせる・Vault や表から読む・変数から変数へ渡す、などのほかの形は読まない (書き方ごとに見つけて拒否するのではなく、
+ * 許した形のほかは読まない)。読めない呼び出しが要るようになったら、ここが赤になる。そのときは許した形を意識して広げる。
+ */
+const URL_LITERAL = /^'https?:\/\/[^/'?#\s]+\/functions\/v1\/([A-Za-z0-9_-]+)(?:[/?#][^'\s]*)?'$/;
+const URL_PREFIX_CONCAT = /^'https?:\/\/[^/'?#\s]+\/functions\/v1\/'\s*\|\|\s*([A-Za-z_][A-Za-z0-9_]*)$/;
+const SQL_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** 名前付きの引数 (name := 値 / name => 値) の、名前から := / => と後ろの空白まで */
+const NAMED_ARGUMENT = /^"?([A-Za-z_][A-Za-z0-9_]*)"?\s*(?::=|=>)\s*/;
+/** URL を渡す引数の名前 (pg_net は url、pgsql-http は uri) */
+const URL_ARGUMENT_NAME = /^(?:url|uri)$/i;
+/** 許可リストの 1 項目 (' で囲んだ関数名だけ) */
+const ALLOWLIST_ITEM = /^'([A-Za-z0-9_-]+)'$/;
+/** 許可リストで絞った引数の、値を読むだけの出現の前: '...' || <引数> */
+const CONCAT_OPERAND_BEFORE = /'[^']*'\s*\|\|\s*$/;
+/** 同じく、RAISE EXCEPTION '...', a, <引数> (例外で止まる) */
+const RAISE_ARGUMENT_BEFORE = /\bRAISE\s+EXCEPTION\s+'[^']*'\s*(?:,\s*"?[A-Za-z_][A-Za-z0-9_]*"?\s*)*,\s*$/i;
+/** 関数の引数の宣言 f(<引数> text, ...) の、引数の前 */
+const PARAMETER_BEFORE = /[(,]\s*$/;
+/** 許可リスト IF <引数> NOT IN (...) THEN RAISE EXCEPTION の、引数の前と、( ) の後ろ */
+const GUARD_BEFORE = /\bIF\s+$/i;
+const GUARD_AFTER = /^\s*THEN\s+RAISE\s+EXCEPTION\b/i;
+
 type SqlScan = {
   /** コメント (-- と /* *\/) を空白に置き換えた SQL (位置と改行は元のまま) */
   code: string;
+  /**
+   * code の、' の文字列の中身も空白に置き換えたもの (位置は code と同じ)。括弧・, ・; ・識別子を、
+   * 文字列の中のものと取り違えずに探すために使う ("..." で囲んだ識別子は、そのまま残す)
+   */
+  bare: string;
   /** 最上位の文 (ドル引用・' の外の ; で区切る)。[start, end) */
   statements: ReadonlyArray<{ start: number; end: number }>;
 };
@@ -391,8 +302,16 @@ type SqlScan = {
  */
 function scanSql(sql: string): SqlScan {
   const out = sql.split('');
+  const bare = sql.split('');
   const blank = (i: number) => {
-    if (out[i] !== '\n') out[i] = ' ';
+    if (out[i] !== '\n') {
+      out[i] = ' ';
+      bare[i] = ' ';
+    }
+  };
+  /** 文字列の中身を bare からだけ消す */
+  const hide = (i: number) => {
+    if (i < bare.length && bare[i] !== '\n') bare[i] = ' ';
   };
   const statements: Array<{ start: number; end: number }> = [];
   const dollarTags: string[] = [];
@@ -435,10 +354,17 @@ function scanSql(sql: string): SqlScan {
       }
     } else if (mode === 'single' || mode === 'escape' || mode === 'double') {
       const quote = mode === 'double' ? '"' : "'";
-      if (mode === 'escape' && ch === '\\') i += 2;
-      else if (ch === quote && sql[i + 1] === quote) i += 2;
-      else {
+      // ' の文字列の中身は bare から消す ("..." の識別子は残す)
+      const isString = mode !== 'double';
+      if ((mode === 'escape' && ch === '\\') || (ch === quote && sql[i + 1] === quote)) {
+        if (isString) {
+          hide(i);
+          hide(i + 1);
+        }
+        i += 2;
+      } else {
         if (ch === quote) mode = 'code';
+        else if (isString) hide(i);
         i += 1;
       }
     } else if (sql.startsWith('--', i)) {
@@ -472,7 +398,7 @@ function scanSql(sql: string): SqlScan {
     }
   }
   if (statementStart < sql.length) statements.push({ start: statementStart, end: sql.length });
-  return { code: out.join(''), statements };
+  return { code: out.join(''), bare: bare.join(''), statements };
 }
 
 /**
@@ -494,6 +420,152 @@ function stripSqlCommentsSimply(sql: string): string {
     .join('\n');
 }
 
+/** 最上位の文 1 つ (scanSql の code と bare の同じ範囲) */
+type SqlStatement = { code: string; bare: string };
+/** 式 1 つ (文の中の始まりの位置と、前後の空白を除いた式) */
+type SqlExpression = { at: number; expr: string };
+
+/** open の ( から対応する ) までの、最上位の , で区切った引数と、閉じる ) の位置。閉じなければ null */
+function argumentsOf({ code, bare }: SqlStatement, open: number): { args: SqlExpression[]; close: number } | null {
+  const args: SqlExpression[] = [];
+  const push = (start: number, end: number) => {
+    const text = code.slice(start, end);
+    args.push({ at: start + (text.length - text.trimStart().length), expr: text.trim() });
+  };
+  let depth = 0;
+  let start = open + 1;
+  for (let i = open + 1; i < bare.length; i += 1) {
+    const ch = bare[i];
+    if (ch === '(' || ch === '[') depth += 1;
+    else if ((ch === ')' || ch === ']') && depth > 0) depth -= 1;
+    else if (ch === ']') return null;
+    else if (ch === ')') {
+      push(start, i);
+      return { args, close: i };
+    } else if (ch === ',' && depth === 0) {
+      push(start, i);
+      start = i + 1;
+    }
+  }
+  return null;
+}
+
+/** 識別子の出現 (大文字小文字・前後の " を問わず広めに拾う。許した形のほかの出現が 1 つでもあれば、その識別子は読まない) */
+const identOccurrences = (bare: string, ident: string) =>
+  [...bare.matchAll(new RegExp(`(?<![A-Za-z0-9_$])"?${ident}"?(?![A-Za-z0-9_$])`, 'gi'))].map((m) => m.index);
+
+/** at より前の、同じ PL/pgSQL の文の部分 (直前の ; の後ろから at まで) */
+const partBefore = (bare: string, at: number) => bare.slice(bare.lastIndexOf(';', at - 1) + 1, at);
+
+/**
+ * '<https://ホスト>/functions/v1/' || <ident> の <ident> を絞る許可リスト (use は、その URL の中の <ident> の位置)。
+ * 次をすべて満たすときだけ、その一覧を返す (ほかは null):
+ *   - 同じ文に IF <ident> NOT IN ('a', 'b', ...) THEN RAISE EXCEPTION がちょうど 1 つあり、use より前にある
+ *     (IN (...) THEN RAISE は拒否リストなので当たらない)
+ *   - <ident> のほかの出現は、値を読むだけの形 ('...' || <ident>、RAISE EXCEPTION '...', <ident>) と、
+ *     関数の引数の宣言 (<ident> text) だけ (:= や INTO や FOR で書き換えられる形が 1 つでもあれば、絞った値と言えない)
+ */
+function allowlistOf(statement: SqlStatement, ident: string, use: number): string[] | null {
+  const { bare } = statement;
+  let guard: { at: number; names: string[] } | null = null;
+  for (const at of identOccurrences(bare, ident)) {
+    const before = partBefore(bare, at);
+    const head = bare.slice(at);
+    if (CONCAT_OPERAND_BEFORE.test(before) || RAISE_ARGUMENT_BEFORE.test(before)) continue;
+    if (PARAMETER_BEFORE.test(before) && new RegExp(`^"?${ident}"?\\s+"?text"?\\s*[,)]`, 'i').test(head)) continue;
+    const guardHead = new RegExp(`^${ident}\\s+NOT\\s+IN\\s*\\(`, 'i').exec(head);
+    if (guard !== null || guardHead === null || !GUARD_BEFORE.test(before)) return null;
+    const list = argumentsOf(statement, at + guardHead[0].length - 1);
+    if (list === null || !GUARD_AFTER.test(bare.slice(list.close + 1))) return null;
+    const names = list.args.flatMap(({ expr }) => {
+      const item = ALLOWLIST_ITEM.exec(expr);
+      return item === null ? [] : [item[1]];
+    });
+    // 関数名でない項目 (変数・式) が 1 つでもあれば、絞った値と言えない
+    if (names.length !== list.args.length) return null;
+    guard = { at, names };
+  }
+  return guard !== null && guard.at < use ? [...guard.names].sort() : null;
+}
+
+/**
+ * URL の引数が変数 1 つ (ident) のときの呼び先。同じ文の中で、その変数に直書きの URL か、
+ * '<https://ホスト>/functions/v1/' || <許可リストで絞った引数> をちょうど 1 回だけ代入し (宣言の := か、本文の :=)、
+ * ほかの出現が、値の無い宣言 (<ident> text;) と呼び出しの URL の引数 (urlVariableUses) だけのとき。ほかは null
+ */
+function variableUrlCallees(statement: SqlStatement, ident: string, urlVariableUses: ReadonlySet<number>): string[] | null {
+  const { code, bare } = statement;
+  let declarations = 0;
+  const definitions: SqlExpression[] = [];
+  for (const at of identOccurrences(bare, ident)) {
+    if (urlVariableUses.has(at)) continue;
+    const head = bare.slice(at);
+    if (new RegExp(`^${ident}\\s+text\\s*;`, 'i').test(head)) {
+      declarations += 1;
+      continue;
+    }
+    const assign = new RegExp(`^${ident}\\s+(?:CONSTANT\\s+)?text\\s*:=|^${ident}\\s*:=`, 'i').exec(head);
+    const end = bare.indexOf(';', at);
+    if (assign === null || end < 0) return null;
+    const text = code.slice(at + assign[0].length, end);
+    definitions.push({ at: at + assign[0].length + (text.length - text.trimStart().length), expr: text.trim() });
+  }
+  if (declarations > 1 || definitions.length !== 1) return null;
+  const [definition] = definitions;
+  const literal = URL_LITERAL.exec(definition.expr);
+  if (literal !== null) return [literal[1]];
+  const concat = URL_PREFIX_CONCAT.exec(definition.expr);
+  return concat === null ? null : allowlistOf(statement, concat[1], definition.at + definition.expr.length - concat[1].length);
+}
+
+/**
+ * 呼び出し (HTTP_CALL に当たった位置) の URL の引数。名前付きの url / uri があればそれ、無ければ最初の引数
+ * (pgsql-http の http(...) は、行の 2 番目)。読めなければ null (文字列の中に書いた呼び出しも)
+ */
+function urlArgumentOf(statement: SqlStatement, call: RegExpExecArray): SqlExpression | null {
+  const { code, bare } = statement;
+  const open = call.index + call[0].length - 1;
+  // 文字列の中に書いた呼び出し (EXECUTE 'SELECT net.http_post(...)' など) は、引数を読まない
+  if (bare.slice(call.index, open + 1) !== code.slice(call.index, open + 1)) return null;
+  let args = argumentsOf(statement, open)?.args ?? null;
+  if (args !== null && GENERIC_HTTP_CALL.test(call[0])) {
+    const [request] = args;
+    const row = request !== undefined && bare[request.at] === '(' ? argumentsOf(statement, request.at) : null;
+    args = row === null ? null : row.args.slice(1);
+  }
+  if (args === null || args.length === 0) return null;
+  const named = args.flatMap((arg) => {
+    const m = NAMED_ARGUMENT.exec(arg.expr);
+    return m !== null && URL_ARGUMENT_NAME.test(m[1]) ? [{ at: arg.at + m[0].length, expr: arg.expr.slice(m[0].length) }] : [];
+  });
+  if (named.length > 0) return named.length === 1 ? named[0] : null;
+  return NAMED_ARGUMENT.test(args[0].expr) ? null : args[0];
+}
+
+/** URL の引数から読んだ呼び先。許した形 (URL_LITERAL / URL_PREFIX_CONCAT / 変数 1 つ) でなければ null */
+function urlCallees(statement: SqlStatement, url: SqlExpression, urlVariableUses: ReadonlySet<number>): string[] | null {
+  const literal = URL_LITERAL.exec(url.expr);
+  if (literal !== null) return [literal[1]];
+  const concat = URL_PREFIX_CONCAT.exec(url.expr);
+  if (concat !== null) return allowlistOf(statement, concat[1], url.at + url.expr.length - concat[1].length);
+  return SQL_IDENT.test(url.expr) ? variableUrlCallees(statement, url.expr, urlVariableUses) : null;
+}
+
+/** 文の中の HTTP の呼び出しごとの、文の中の位置と呼び先 (読めなければ null) */
+function httpCallsOf(statement: SqlStatement): Array<{ at: number; callees: string[] | null }> {
+  const calls = [...statement.code.matchAll(HTTP_CALL)].map((call) => ({ at: call.index, url: urlArgumentOf(statement, call) }));
+  /** URL の引数が変数 1 つの呼び出しの、その変数の位置 (変数のほかの出現と見分ける) */
+  const urlVariableUses = new Set(calls.flatMap(({ url }) => (url !== null && SQL_IDENT.test(url.expr) ? [url.at] : [])));
+  return calls.map(({ at, url }) => ({ at, callees: url === null ? null : urlCallees(statement, url, urlVariableUses) }));
+}
+
+type DbCall = {
+  /** 呼び出しの行 (1 から) */
+  line: number;
+  /** 呼び先の Edge Function。URL の引数を許した形で読めなければ null (下のテストで赤にする) */
+  callees: string[] | null;
+};
+
 type DbCaller = {
   /** リポジトリからの相対パス (supabase/migrations/... / supabase/baseline/...) */
   file: string;
@@ -503,9 +575,8 @@ type DbCaller = {
   label: string;
   /** コメントを除いた文 */
   code: string;
-  /** 文の中の HTTP の呼び出しの数 */
-  calls: number;
-  callees: string[];
+  /** 文の中の HTTP の呼び出し (1 件ごと) */
+  calls: DbCall[];
 };
 
 /** 文の名前。CREATE FUNCTION なら関数名、関数で包まない cron.schedule ならジョブ名、DO ブロックならそう書く */
@@ -519,40 +590,25 @@ function callerLabel(code: string): string {
 }
 
 /**
- * 文の中の呼び先。'.../functions/v1/<name>' の直書きと、'.../functions/v1/' || 引数 の形なら、
- * 文の中に ' で書かれた、配られる関数の名前 (許可リスト)。
- */
-function calleesOf(code: string, deployedFunctions: readonly string[]): string[] {
-  const callees = new Set<string>();
-  for (const m of code.matchAll(/\/functions\/v1\/([A-Za-z0-9_-]+)/g)) callees.add(m[1]);
-  if (/\/functions\/v1\/'\s*\|\|/.test(code)) {
-    for (const m of code.matchAll(/'([a-z0-9-]+)'/g)) {
-      if (deployedFunctions.includes(m[1])) callees.add(m[1]);
-    }
-  }
-  return [...callees].sort();
-}
-
-/**
- * 1 本の SQL ファイル (migration など) の中の、DB から HTTP で呼び出す文と、その呼び先。
+ * 1 本の SQL ファイル (migration など) の中の、DB から HTTP で呼び出す文と、呼び出し 1 件ごとの呼び先。
  * SQL 関数の本文に限らず、最上位の文すべてを見る (関数で包まない cron.schedule('job', '...', $$ SELECT net.http_post(...) $$)、
  * DO ブロック、素の SELECT net.http_post(...) も拾う)。
  */
-function dbCallersOf(file: string, sql: string, deployedFunctions: readonly string[]): DbCaller[] {
-  const { code, statements } = scanSql(sql);
+function dbCallersOf(file: string, sql: string): DbCaller[] {
+  const { code, bare, statements } = scanSql(sql);
+  const lineAt = (at: number) => code.slice(0, at).split('\n').length;
   const callers: DbCaller[] = [];
   for (const { start, end } of statements) {
-    const statement = code.slice(start, end);
-    const calls = countHttpCalls(statement);
-    if (calls === 0) continue;
-    const firstToken = start + (statement.length - statement.trimStart().length);
+    const statement = { code: code.slice(start, end), bare: bare.slice(start, end) };
+    const calls = httpCallsOf(statement);
+    if (calls.length === 0) continue;
+    const firstToken = start + (statement.code.length - statement.code.trimStart().length);
     callers.push({
       file,
-      line: code.slice(0, firstToken).split('\n').length,
-      label: callerLabel(statement),
-      code: statement,
-      calls,
-      callees: calleesOf(statement, deployedFunctions),
+      line: lineAt(firstToken),
+      label: callerLabel(statement.code),
+      code: statement.code,
+      calls: calls.map(({ at, callees }) => ({ line: lineAt(start + at), callees })),
     });
   }
   return callers;
@@ -567,7 +623,7 @@ const calleesStoppedByGateway = (callees: readonly string[], verifyJwt: Readonly
  * 食い違いは、抜き出しが取りこぼした呼び出し (verify_jwt の検査から漏れる呼び出し) があることを意味する。
  */
 function callCountMismatch(sql: string, callers: readonly DbCaller[]): { collected: number; recounted: number } | null {
-  const collected = callers.reduce((sum, caller) => sum + caller.calls, 0);
+  const collected = callers.reduce((sum, caller) => sum + caller.calls.length, 0);
   const recounted = countHttpCalls(stripSqlCommentsSimply(sql));
   return collected === recounted ? null : { collected, recounted };
 }
@@ -588,9 +644,46 @@ const SQL_FILES = SQL_DIRS.flatMap((dir) =>
 );
 const SQL_TEXT = new Map(SQL_FILES.map((file) => [file, read(file)]));
 
-const DB_CALLERS = SQL_FILES.flatMap((file) => dbCallersOf(file, SQL_TEXT.get(file) ?? '', DEPLOYED_FUNCTIONS));
-const DB_CALLEES = [...new Set(DB_CALLERS.flatMap((caller) => caller.callees))].sort();
+const DB_CALLERS = SQL_FILES.flatMap((file) => dbCallersOf(file, SQL_TEXT.get(file) ?? ''));
+const DB_CALLEES = [...new Set(DB_CALLERS.flatMap((caller) => caller.calls.flatMap((call) => call.callees ?? [])))].sort();
 const callerName = (caller: DbCaller) => `${caller.file}:${caller.line} ${caller.label}`;
+
+// ---------------------------------------------------------------------------
+// デプロイのワークフロー
+// ---------------------------------------------------------------------------
+
+/** 名前を指定しない (全関数の) functions deploy の行 (許した形。引数は --project-ref だけ) */
+const DEPLOY_ALL_LINE =
+  /^npx --yes supabase@\d+\.\d+\.\d+ functions deploy --project-ref (?:\$\{\{ env\.SUPABASE_PROJECT_ID \}\}|[a-z0-9]+)$/;
+
+/**
+ * デプロイのワークフローが、config.toml の verify_jwt をそのまま関数ごとに反映しない理由 (無ければ空)。
+ * コメントも含めた全文を見る (# の手前で切ると、文字列の中の # の後ろに書いたフラグや環境変数を見落とす。#1406 R3 の同型の掃除)。
+ * そのため、ワークフローのコメントにも --no-verify-jwt や SUPABASE_FUNCTIONS を書かない。
+ */
+function deployWorkflowProblems(yaml: string): string[] {
+  const problems: string[] = [];
+  const deployLines = yaml
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /\bfunctions\s+deploy\b/.test(line));
+  // 関数名を指定すると、それ以外の関数の verify_jwt が反映されない
+  if (deployLines.length !== 1) problems.push(`functions deploy の行が ${deployLines.length} 行ある (名前を指定しない 1 行だけにする)`);
+  for (const line of deployLines.filter((deployLine) => !DEPLOY_ALL_LINE.test(deployLine))) {
+    problems.push(`名前を指定しない形 (引数は --project-ref だけ) でない functions deploy: ${line}`);
+  }
+  if (/--no-verify-jwt/.test(yaml)) problems.push('--no-verify-jwt がある (全関数のゲートウェイの JWT 検証を外す)');
+  // CLI は config.toml を viper で読み、SUPABASE_ + キーの . を _ にした環境変数 (SUPABASE_FUNCTIONS_<NAME>_VERIFY_JWT) で
+  // 上書きする (pkg/config/config.go の loadFromFile)。.env ファイル (SUPABASE_ENV で選ぶものも) からも読むが、
+  // .env* は .gitignore で除いてあり (.env.example は CLI が読まない)、Actions のチェックアウトには無い。
+  // 残る経路はワークフローの env なので、ここで止める
+  if (/SUPABASE_FUNCTIONS|SUPABASE_ENV\b/i.test(yaml)) problems.push('verify_jwt を環境変数 (SUPABASE_FUNCTIONS_* / SUPABASE_ENV) で上書きしている');
+  const paths = [...yaml.matchAll(/^\s*-\s*'([^']+)'\s*$/gm)].map((m) => m[1]);
+  for (const required of ['supabase/functions/**', CONFIG_TOML]) {
+    if (!paths.includes(required)) problems.push(`push の paths に ${required} が無い (変えただけでデプロイが動かない)`);
+  }
+  return problems;
+}
 
 // ---------------------------------------------------------------------------
 
@@ -606,20 +699,36 @@ describe('検査の道具が空振りしない', () => {
     expect(leadingAuth(stripTsComments('Deno.serve(async (req) => {\n// await requireServiceRole(req)\n await req.json(); })'))).toBeNull();
   });
 
-  it('config.toml の読み取り: [functions.*] があり、既定値 (指定なし) は true として扱う', () => {
-    expect(VERIFY_JWT.size).toBeGreaterThan(0);
-    expect(functionVerifyJwt('[functions.a]\nimport_map = "x"\n[functions.b]\nverify_jwt = false\n')).toEqual(
-      new Map([
-        ['a', true],
-        ['b', false],
-      ]),
-    );
-    expect(() => functionVerifyJwt('[functions.a]\nverify_jwt = no\n')).toThrow();
+  it('TS のコメントは構文解析で除き、文字列の中の /* や // で後ろのコードを隠さない (#1406 R3 の同型の掃除)', () => {
+    // 文字列の中の /* から後ろの本当のコメントの */ までを除くと、認証より前に本文を読む処理が隠れ、先頭で認証していると見なしてしまう
+    const readsBodyFirst = [
+      'Deno.serve(async (req) => {',
+      "  const glob = 'assets/*';",
+      '  const body = await req.json();',
+      '  /* ここから認証 */',
+      '  await requireServiceRole(req);',
+      '});',
+    ].join('\n');
+    expect(leadingAuth(stripTsComments(readsBodyFirst))).toBeNull();
+    // 同じく、requireServiceRole の呼び出しが隠れると、CRON_SECRET を受け付ける関数から漏れる (verify_jwt = false を求めなくなる)
+    expect(acceptsCronSecret([stripTsComments('const glob = "assets/*";\nawait requireServiceRole(req);\n/* x */\n')])).toBe(true);
+    expect(stripTsComments('const u = "a//b"; await req.json();')).toContain('req.json()');
+    // コメントの中だけの呼び出しは数えない
+    expect(acceptsCronSecret([stripTsComments('/* await requireServiceRole(req) */\n// checkCronSecret(x)\nconst a = 1;\n')])).toBe(false);
   });
 
-  // 以下は TOML として正しい別の書き方の verify_jwt を、読み飛ばして緑にしないことの確かめ (#1406 R2 のレビューの指摘)。
-  // supabase CLI はどれも同じ関数の設定として読む。読めない書き方は例外にし、読める書き方は同じ名前として読む
-  describe('config.toml の別の書き方の verify_jwt を読み飛ばさない', () => {
+  it('config.toml の読み取り: [functions.*] があり、既定値 (指定なし) は true として扱う', () => {
+    expect(VERIFY_JWT.size).toBeGreaterThan(0);
+    expect(functionVerifyJwt('# c\n\n[functions.a]\n  # d\n[functions.b_c]\nverify_jwt = false\n')).toEqual(
+      new Map([
+        ['a', true],
+        ['b_c', false],
+      ]),
+    );
+  });
+
+  // config.toml は許した形の行だけを読む (#1406 R2・R3 のレビューの指摘。TOML として正しい別の書き方の verify_jwt を読み飛ばして緑にしない)
+  describe('config.toml の許した形でない行は、1 行でも例外にする', () => {
     /** 先頭で自前の認証をしない、配られる関数 (verify_jwt = false にすると下の検査で赤になるはずの関数) */
     const withoutAuth = DEPLOYED_FUNCTIONS.filter(lacksLeadingAuth);
     const target = withoutAuth[0];
@@ -628,19 +737,20 @@ describe('検査の道具が空振りしない', () => {
       expect(target).toBeDefined();
     });
 
-    it.each([
-      ['引用符で囲んだ名前 [functions."<name>"]', (name: string) => `[functions."${name}"]\nverify_jwt = false\n`],
-      ["' で囲んだ名前 [functions.'<name>']", (name: string) => `[functions.'${name}']\nverify_jwt = false\n`],
-      ['空白を挟んだ見出し [ functions . <name> ]', (name: string) => `[ functions . ${name} ]\nverify_jwt = false\n`],
-      ['引用符で囲んだキー "verify_jwt"', (name: string) => `[functions.${name}]\n"verify_jwt" = false\n`],
-      ['見出しの後ろのコメント', (name: string) => `[functions.${name}] # x\nverify_jwt = false # y\n`],
-    ])('%s は同じ名前の verify_jwt = false として読み、先頭の認証が無ければ赤になる', (_form, toml) => {
-      const verifyJwt = functionVerifyJwt(toml(target));
+    it('許した形の verify_jwt = false は読み、先頭の認証が無ければ赤になる', () => {
+      const verifyJwt = functionVerifyJwt(`[functions.${target}]\nverify_jwt = false\n`);
       expect(verifyJwt).toEqual(new Map([[target, false]]));
       expect(noVerifyJwtWithoutLeadingAuth(verifyJwt)).toEqual([target]);
     });
 
+    it('R3 のレビューの変異: 実物の config.toml の末尾に、# を含む文字列の後ろの引用符付きのキーで verify_jwt を書くと例外になる', () => {
+      const appended = `[remotes]\nprod = { a = "#", "functions" = { "${target}" = { "verify_jwt" = false } } }\n`;
+      expect(() => functionVerifyJwt(read(CONFIG_TOML))).not.toThrow();
+      expect(() => functionVerifyJwt(`${read(CONFIG_TOML)}\n${appended}`)).toThrow(/許した形/);
+    });
+
     it.each([
+      // R2 のレビューで見つかった、CLI が関数の設定として読む別の書き方
       ['[functions] の下のインラインテーブル', (name: string) => `[functions]\n${name} = { verify_jwt = false }\n`],
       ['最上位のドット付きのキー', (name: string) => `functions.${name}.verify_jwt = false\n`],
       ['最上位のインラインテーブル', (name: string) => `functions = { ${name} = { verify_jwt = false } }\n`],
@@ -651,7 +761,7 @@ describe('検査の道具が空振りしない', () => {
       ['表の配列 [[functions.<name>]]', (name: string) => `[[functions.${name}]]\nverify_jwt = false\n`],
       ['大文字のキー VERIFY_JWT (CLI は大文字小文字を区別しない)', (name: string) => `[functions.${name}]\nVERIFY_JWT = false\n`],
       ['大文字の関数名', (name: string) => `[functions.${name.toUpperCase()}]\nverify_jwt = false\n`],
-      ['同じ関数の見出しの 2 回目 (引用符の有無で書き分け)', (name: string) => `[functions.${name}]\n[functions."${name}"]\nverify_jwt = false\n`],
+      ['同じ関数の見出しの 2 回目', (name: string) => `[functions.${name}]\nverify_jwt = true\n[functions.${name}]\nverify_jwt = false\n`],
       ['verify_jwt の 2 回目', (name: string) => `[functions.${name}]\nverify_jwt = true\nverify_jwt = false\n`],
       [
         '複数行の文字列の中に書いた見出し',
@@ -659,28 +769,23 @@ describe('検査の道具が空振りしない', () => {
       ],
       ['複数行の配列の中に書いた設定', (name: string) => `[remotes.prod]\nx = [\n  { functions = { ${name} = { verify_jwt = false } } },\n]\n`],
       ['読めない行', (name: string) => `[functions.${name}]\nverify_jwt false\n`],
+      // R2 では同じ名前として読んでいた書き方 (許した形でないので、いまは例外)
+      ['引用符で囲んだ名前 [functions."<name>"]', (name: string) => `[functions."${name}"]\nverify_jwt = false\n`],
+      ["' で囲んだ名前 [functions.'<name>']", (name: string) => `[functions.'${name}']\nverify_jwt = false\n`],
+      ['空白を挟んだ見出し [ functions . <name> ]', (name: string) => `[ functions . ${name} ]\nverify_jwt = false\n`],
+      ['引用符で囲んだキー "verify_jwt"', (name: string) => `[functions.${name}]\n"verify_jwt" = false\n`],
+      ['見出しの後ろのコメント', (name: string) => `[functions.${name}] # x\nverify_jwt = false\n`],
+      ['verify_jwt の後ろのコメント', (name: string) => `[functions.${name}]\nverify_jwt = false # y\n`],
+      // 許した形からのずれ
+      ['行頭の空白', (name: string) => `[functions.${name}]\n  verify_jwt = false\n`],
+      ['= の前後の空白が無い', (name: string) => `[functions.${name}]\nverify_jwt=false\n`],
+      ['値の大文字', (name: string) => `[functions.${name}]\nverify_jwt = False\n`],
+      ['見出しより前の verify_jwt', (name: string) => `verify_jwt = false\n[functions.${name}]\n`],
+      ['関数の表のほかのキー', (name: string) => `[functions.${name}]\nenabled = true\n`],
+      ['ほかの表', () => `[auth.email]\ndouble_confirm_changes = false\n`],
+      ['CRLF の改行', (name: string) => `[functions.${name}]\r\nverify_jwt = false\r\n`],
     ])('%s は例外にする', (_form, toml) => {
-      expect(() => functionVerifyJwt(toml(target))).toThrow();
-    });
-
-    it('複数行の配列 (static_files) と、ほかの表の複数行の配列は読み、その後ろの verify_jwt も読む', () => {
-      const toml = [
-        '[db]',
-        'schemas = [',
-        '  "public", # [functions.x]',
-        ']',
-        '[functions.a_b]',
-        'static_files = [',
-        '  "./functions/a_b/*.html",',
-        ']',
-        'verify_jwt = false',
-      ].join('\n');
-      expect(functionVerifyJwt(toml)).toEqual(new Map([['a_b', false]]));
-    });
-
-    it('数え直し: # のコメントの外の verify_jwt の数を数える (読み飛ばした書き方は、読めた数と合わず例外になる)', () => {
-      expect(countVerifyJwtMentions('# verify_jwt\n[functions.a]\nverify_jwt = false # verify_jwt\n')).toBe(1);
-      expect(countVerifyJwtMentions('[remotes]\nprod = { functions = { a = { VERIFY_JWT = false } } }\n')).toBe(1);
+      expect(() => functionVerifyJwt(toml(target))).toThrow(/許した形/);
     });
   });
 
@@ -689,11 +794,29 @@ describe('検査の道具が空振りしない', () => {
     expect(DB_CALLEES.some((name) => /^import-.+-catalog$/.test(name))).toBe(true);
   });
 
+  it('実物の呼び出し元は、呼び出しごとに呼び先を読めている (許可リストの引数・定数の URL)', () => {
+    const callsOfFunction = (name: string) =>
+      DB_CALLERS.filter((caller) => caller.label === `関数 ${name}`).flatMap((caller) => caller.calls.map((call) => call.callees));
+    expect(callsOfFunction('public.invoke_calculate_segment_stats')).toEqual([[SEGMENT_STATS_FUNCTION]]);
+    // migration と本番のスキーマの写しの 2 か所。どちらも IF p_function_name NOT IN (...) THEN RAISE EXCEPTION で絞った 5 本
+    const catalog = [
+      'import-familymart-catalog',
+      'import-lawson-catalog',
+      'import-ministop-catalog',
+      'import-natural-lawson-catalog',
+      'import-seven-eleven-catalog',
+    ];
+    expect(callsOfFunction('public.invoke_catalog_import')).toEqual([catalog, catalog]);
+  });
+
   // 以下は合成した SQL で、SQL 関数の本文以外に書いた呼び出しも拾えることを確かめる (#1406 のレビューの指摘)
   const SYNTHETIC_FILE = 'supabase/migrations/synthetic.sql';
   const FUNCTION_URL = (name: string) => `'https://example.supabase.co/functions/v1/${name}'`;
+  const URL_PREFIX = `'https://example.supabase.co/functions/v1/'`;
   const BEARER = `'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = '${VAULT_CRON_SECRET_NAME}')`;
-  const callersOf = (sql: string) => dbCallersOf(SYNTHETIC_FILE, sql, DEPLOYED_FUNCTIONS);
+  const callersOf = (sql: string) => dbCallersOf(SYNTHETIC_FILE, sql);
+  /** 合成した SQL の、呼び出し 1 件ごとの呼び先 (読めなければ null) */
+  const calleesPerCall = (sql: string) => callersOf(sql).flatMap((caller) => caller.calls.map((call) => call.callees));
 
   it('関数で包まない cron.schedule の中の net.http_post を拾い、呼び先と、ゲートウェイで止まることが分かる', () => {
     // Supabase の文書が標準として示す形。verify_jwt が既定 (true) の関数を呼ぶと、本番では関数に届かない
@@ -704,10 +827,10 @@ describe('検査の道具が空振りしない', () => {
       `SELECT cron.schedule('x', '0 * * * *', $$ SELECT net.http_post(url := ${FUNCTION_URL(callee)}, headers := jsonb_build_object(${BEARER})); $$);`,
     ].join('\n');
     const callers = callersOf(sql);
-    expect(callers.map(({ label, line, calls, callees }) => ({ label, line, calls, callees }))).toEqual([
-      { label: "cron.schedule('x')", line: 2, calls: 1, callees: [callee] },
+    expect(callers.map(({ label, line, calls }) => ({ label, line, calls }))).toEqual([
+      { label: "cron.schedule('x')", line: 2, calls: [{ line: 2, callees: [callee] }] },
     ]);
-    expect(calleesStoppedByGateway(callers[0].callees, VERIFY_JWT)).toEqual([callee]);
+    expect(calleesStoppedByGateway(callers[0].calls[0].callees ?? [], VERIFY_JWT)).toEqual([callee]);
   });
 
   it('DO ブロック・素の SELECT・ドル引用に名前を付けた形・Database Webhooks の http_request も拾う', () => {
@@ -717,11 +840,11 @@ describe('検査の道具が空振りしない', () => {
       `SELECT cron.schedule('c', '5 * * * *', $job$ SELECT net.http_delete(${FUNCTION_URL('c-fn')}); $job$);`,
       `CREATE TRIGGER t AFTER INSERT ON public.x FOR EACH ROW EXECUTE FUNCTION supabase_functions.http_request(${FUNCTION_URL('d-fn')}, 'POST', '{}', '{}', '1000');`,
     ].join('\n');
-    expect(callersOf(sql).map(({ label, line, callees }) => ({ label, line, callees }))).toEqual([
-      { label: 'DO ブロック', line: 1, callees: ['a-fn'] },
-      { label: 'SELECT "net"."http_get"(url := \'https://example.supabase.co/functions/v1/b-fn\');', line: 2, callees: ['b-fn'] },
-      { label: "cron.schedule('c')", line: 3, callees: ['c-fn'] },
-      { label: 'CREATE TRIGGER t AFTER INSERT ON', line: 4, callees: ['d-fn'] },
+    expect(callersOf(sql).map(({ label, line, calls }) => ({ label, line, callees: calls.map((call) => call.callees) }))).toEqual([
+      { label: 'DO ブロック', line: 1, callees: [['a-fn']] },
+      { label: 'SELECT "net"."http_get"(url := \'https://example.supabase.co/functions/v1/b-fn\');', line: 2, callees: [['b-fn']] },
+      { label: "cron.schedule('c')", line: 3, callees: [['c-fn']] },
+      { label: 'CREATE TRIGGER t AFTER INSERT ON', line: 4, callees: [['d-fn']] },
     ]);
   });
 
@@ -731,15 +854,15 @@ describe('検査の道具が空振りしない', () => {
       'CREATE OR REPLACE FUNCTION public.f(p text) RETURNS bigint LANGUAGE plpgsql AS $$',
       'DECLARE v bigint; -- 区切りではない ;',
       `BEGIN IF p NOT IN ('${allowed}') THEN RAISE EXCEPTION 'x;--'; END IF;`,
-      `  SELECT net.http_post(url := 'https://example.supabase.co/functions/v1/' || p, headers := jsonb_build_object(${BEARER})) INTO v;`,
+      `  SELECT net.http_post(url := ${URL_PREFIX} || p, headers := jsonb_build_object(${BEARER})) INTO v;`,
       '  RETURN v; END; $$;',
       // ドル引用の文字列の中の ' (it's) で、後ろの文の区切りを見失わない (閉じる $$ が先に効く)
       "COMMENT ON FUNCTION public.f(text) IS $$it's; not a call$$;",
       `CREATE FUNCTION public.g() RETURNS void LANGUAGE sql AS $fn$ SELECT net.http_post(${FUNCTION_URL('g-fn')}) $fn$;`,
     ].join('\n');
-    expect(callersOf(sql).map(({ label, line, callees }) => ({ label, line, callees }))).toEqual([
-      { label: '関数 public.f', line: 1, callees: [allowed] },
-      { label: '関数 public.g', line: 7, callees: ['g-fn'] },
+    expect(callersOf(sql).map(({ label, line, calls }) => ({ label, line, calls }))).toEqual([
+      { label: '関数 public.f', line: 1, calls: [{ line: 4, callees: [allowed] }] },
+      { label: '関数 public.g', line: 7, calls: [{ line: 7, callees: ['g-fn'] }] },
     ]);
   });
 
@@ -749,9 +872,7 @@ describe('検査の道具が空振りしない', () => {
       '/* SELECT net.http_post(url := \'https://example.supabase.co/functions/v1/block\'); */',
       "SELECT net.http_post(url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'some_url'));",
     ].join('\n');
-    expect(callersOf(sql).map(({ line, calls, callees }) => ({ line, calls, callees }))).toEqual([
-      { line: 3, calls: 1, callees: [] },
-    ]);
+    expect(callersOf(sql).map(({ line, calls }) => ({ line, calls }))).toEqual([{ line: 3, calls: [{ line: 3, callees: null }] }]);
     expect(countHttpCalls(stripSqlCommentsSimply(sql))).toBe(1);
   });
 
@@ -760,10 +881,7 @@ describe('検査の道具が空振りしない', () => {
       `SELECT http(('POST', ${FUNCTION_URL('a-fn')}, ARRAY[http_header('Authorization', 'x')], 'application/json', '{}')::http_request);`,
       `SELECT extensions.http_put(${FUNCTION_URL('b-fn')}, '{}', 'application/json');`,
     ].join('\n');
-    expect(callersOf(sql).map(({ line, calls, callees }) => ({ line, calls, callees }))).toEqual([
-      { line: 1, calls: 1, callees: ['a-fn'] },
-      { line: 2, calls: 1, callees: ['b-fn'] },
-    ]);
+    expect(calleesPerCall(sql)).toEqual([['a-fn'], ['b-fn']]);
   });
 
   it("E'...' の文字列の \\' で文字列の終わりを見失わず、後ろの -- コメントの中の呼び出しを数えない", () => {
@@ -772,7 +890,7 @@ describe('検査の道具が空振りしない', () => {
       `-- SELECT net.http_post(${FUNCTION_URL('commented')});`,
       `SELECT net.http_post(${FUNCTION_URL('a-fn')});`,
     ].join('\n');
-    expect(callersOf(sql).map(({ line, callees }) => ({ line, callees }))).toEqual([{ line: 3, callees: ['a-fn'] }]);
+    expect(callersOf(sql).map(({ line, calls }) => ({ line, calls }))).toEqual([{ line: 3, calls: [{ line: 3, callees: ['a-fn'] }] }]);
   });
 
   it('数え直しは抜き出しと別のやり方で数え、抜き出しが呼び出しを取りこぼすと食い違いになる', () => {
@@ -782,6 +900,73 @@ describe('検査の道具が空振りしない', () => {
     // 取りこぼした抜き出し (SQL 関数の本文だけを見ると、この形は 1 つも拾えない) は、数え直しと合わず赤になる
     const functionBodiesOnly = callersOf(sql).filter((caller) => caller.label.startsWith('関数 '));
     expect(callCountMismatch(sql, functionBodiesOnly)).toEqual({ collected: 0, recounted: 2 });
+  });
+
+  // 呼び先は文ごとにまとめず、呼び出し 1 件ごとに URL の引数から読む (#1406 R3 のレビューの指摘。
+  // 文ごとにまとめると、呼び先が読める呼び出しと読めない呼び出しが同じ関数にあるとき、読めない方が検査から漏れる)
+  describe('呼び先は呼び出し 1 件ごとに、URL の引数を許した形で読む', () => {
+    const plpgsql = (params: string, body: readonly string[]) =>
+      [`CREATE OR REPLACE FUNCTION public.f(${params}) RETURNS void LANGUAGE plpgsql AS $$`, ...body, '$$;'].join('\n');
+    const post = (url: string) => `  PERFORM net.http_post(url := ${url}, headers := jsonb_build_object(${BEARER}));`;
+
+    it('R3 のレビューの変異: 直書きの呼び出しと、文字列を足し合わせた呼び出しが同じ関数にあれば、後ろの呼び出しは読めない', () => {
+      const sql = plpgsql('', [
+        'BEGIN',
+        post(FUNCTION_URL(SEGMENT_STATS_FUNCTION)),
+        post(`${URL_PREFIX} || 'backfill-ingredient' || '-embeddings'`),
+        'END;',
+      ]);
+      expect(callersOf(sql).map(({ calls }) => calls)).toEqual([
+        [
+          { line: 3, callees: [SEGMENT_STATS_FUNCTION] },
+          { line: 4, callees: null },
+        ],
+      ]);
+    });
+
+    it('定数の URL・許可リストで絞った引数を足した変数・後ろに書いた名前付きの url は読む', () => {
+      const sql = plpgsql('p text', [
+        'DECLARE',
+        `  c_url CONSTANT text := ${FUNCTION_URL('a-fn')};`,
+        '  v_url text;',
+        'BEGIN',
+        "  IF p NOT IN ('c-fn', 'b-fn') THEN RAISE EXCEPTION 'not allowed: %', p; END IF;",
+        `  v_url := ${URL_PREFIX} || p;`,
+        post('c_url'),
+        post('v_url'),
+        `  PERFORM net.http_post(body := '{}'::jsonb, url := ${FUNCTION_URL('d-fn')});`,
+        'END;',
+      ]);
+      expect(calleesPerCall(sql)).toEqual([['a-fn'], ['b-fn', 'c-fn'], ['d-fn']]);
+    });
+
+    it.each([
+      ['表から引いた名前を足す (FOR の変数の列)', plpgsql('', ['DECLARE r record;', 'BEGIN', '  FOR r IN SELECT name FROM public.t LOOP', post(`${URL_PREFIX} || r.name`), '  END LOOP;', 'END;'])],
+      ['表から引いた名前を足す (FOR の変数)', plpgsql('', ['DECLARE v_name text;', 'BEGIN', '  FOR v_name IN SELECT name FROM public.t LOOP', post(`${URL_PREFIX} || v_name`), '  END LOOP;', 'END;'])],
+      [
+        '使わない変数に URL を書き、呼び出しは Vault の URL',
+        plpgsql('', [`DECLARE v_unused text := ${FUNCTION_URL('a-fn')};`, 'BEGIN', post("(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'u')"), 'END;']),
+      ],
+      [
+        '変数に 2 回代入する',
+        plpgsql('', [`DECLARE v_url text := ${FUNCTION_URL('a-fn')};`, 'BEGIN', "  v_url := (SELECT url FROM public.t LIMIT 1);", post('v_url'), 'END;']),
+      ],
+      ['変数に INTO で入れる', plpgsql('', [`DECLARE v_url text := ${FUNCTION_URL('a-fn')};`, 'BEGIN', '  SELECT url INTO v_url FROM public.t;', post('v_url'), 'END;'])],
+      ['変数から変数へ渡す', plpgsql('', [`DECLARE a text := ${FUNCTION_URL('a-fn')}; v_url text;`, 'BEGIN', '  v_url := a;', post('v_url'), 'END;'])],
+      ['許可リストが無い引数', plpgsql('p text', ['BEGIN', post(`${URL_PREFIX} || p`), 'END;'])],
+      [
+        '許可リストの後で引数を書き換える',
+        plpgsql('p text', ['BEGIN', "  IF p NOT IN ('a-fn') THEN RAISE EXCEPTION 'x'; END IF;", "  p := 'backfill-ingredient-embeddings';", post(`${URL_PREFIX} || p`), 'END;']),
+      ],
+      ['拒否リスト (IN (...) THEN RAISE)', plpgsql('p text', ['BEGIN', "  IF p IN ('a-fn') THEN RAISE EXCEPTION 'x'; END IF;", post(`${URL_PREFIX} || p`), 'END;'])],
+      ['呼び出しより後ろの許可リスト', plpgsql('p text', ['BEGIN', post(`${URL_PREFIX} || p`), "  IF p NOT IN ('a-fn') THEN RAISE EXCEPTION 'x'; END IF;", 'END;'])],
+      ['関数名でない項目のある許可リスト', plpgsql('p text, q text', ['BEGIN', "  IF p NOT IN ('a-fn', q) THEN RAISE EXCEPTION 'x'; END IF;", post(`${URL_PREFIX} || p`), 'END;'])],
+      ['許可リストを外れても止めない', plpgsql('p text', ['BEGIN', "  IF p NOT IN ('a-fn') THEN RETURN; END IF;", post(`${URL_PREFIX} || p`), 'END;'])],
+      ['文字列の中に書いた呼び出し (EXECUTE)', "DO $$ BEGIN EXECUTE 'SELECT net.http_post(url := ''https://example.supabase.co/functions/v1/a-fn'')'; END $$;"],
+      ['URL を表から読む素の SELECT', 'SELECT net.http_post(url := t.url) FROM public.t;'],
+    ])('%s は読めない (null)', (_form, sql) => {
+      expect(calleesPerCall(sql)).toEqual([null]);
+    });
   });
 
   it('requireServiceRole で認証する関数を見つけられている (要求を渡すだけの index.ts も、渡し先の関数を見る)', () => {
@@ -854,26 +1039,39 @@ describe('JWT でない Bearer で呼ばれる関数は、verify_jwt = false', (
     }
   });
 
-  it.each(DB_CALLERS.map((caller) => [callerName(caller), caller] as const))('%s: 呼び先の Edge Function が読める', (_name, caller) => {
-    // URL を変数や Vault から組み立てていて関数名が読めない呼び出しは、verify_jwt を確かめられないので赤にする
-    // ('.../functions/v1/<name>' と直書きするか、'.../functions/v1/' || 引数 なら許可リストを同じ文に書く)
-    expect(caller.callees).not.toHaveLength(0);
-  });
+  it.each(DB_CALLERS.map((caller) => [callerName(caller), caller] as const))(
+    '%s: どの呼び出しも、呼び先の Edge Function が読める',
+    (_name, caller) => {
+      // URL を Vault や表から読む・文字列を足し合わせる・許可リストで絞らない引数を足す・変数を書き換える呼び出しは、
+      // verify_jwt を確かめられないので赤にする ('.../functions/v1/<name>' と直書きするか、'.../functions/v1/' || 引数 なら、
+      // 同じ文で前もって IF 引数 NOT IN ('a', ...) THEN RAISE EXCEPTION で絞る。そのどちらかを 1 回だけ代入した変数でもよい)
+      expect(caller.calls.filter((call) => call.callees === null).map((call) => `${caller.file}:${call.line}`)).toEqual([]);
+    },
+  );
 
   it.each(DB_CALLERS.map((caller) => [callerName(caller), caller] as const))(
     '%s: Vault の app_cron_secret を Bearer に付けて呼ぶ (JWT ではない)',
     (_name, caller) => {
+      // 呼び出しの前提 (JWT でない Bearer で呼ぶ) の確かめ。下の verify_jwt = false の検査は、Bearer にかかわらず
+      // DB から呼ぶすべての呼び先に掛かる (ここが緩くても、verify_jwt の検査から漏れる呼び先は無い)
       expect(caller.code).toContain(`'${VAULT_CRON_SECRET_NAME}'`);
       expect(caller.code).toMatch(/'Bearer '\s*\|\|/);
     },
   );
+
+  it('DB から呼ばれる関数は、どれも配られる関数 (supabase/functions/<name>/index.ts) である', () => {
+    // 許可リストに配っていない名前があると、その呼び出しは本番で 404 になる
+    expect(DB_CALLEES.filter((name) => !DEPLOYED_FUNCTIONS.includes(name))).toEqual([]);
+  });
 
   it('DB (pg_cron → pg_net) から呼ばれる関数は、どれも verify_jwt = false', () => {
     // 外し忘れると、ゲートウェイが 401 (UNAUTHORIZED_INVALID_JWT_FORMAT) を返し、関数に届かない。
     // cron.job_run_details は succeeded のままなので、ここで止める
     expect(
       DB_CALLERS.flatMap((caller) =>
-        calleesStoppedByGateway(caller.callees, VERIFY_JWT).map((name) => `${callerName(caller)} → ${name}`),
+        caller.calls.flatMap((call) =>
+          calleesStoppedByGateway(call.callees ?? [], VERIFY_JWT).map((name) => `${caller.file}:${call.line} ${caller.label} → ${name}`),
+        ),
       ),
     ).toEqual([]);
   });
@@ -891,35 +1089,29 @@ describe('JWT でない Bearer で呼ばれる関数は、verify_jwt = false', (
 });
 
 describe('デプロイが config.toml の verify_jwt を反映する', () => {
-  // YAML のコメント (# 以降) は読まない (コメントに書いただけで通る・落ちることを防ぐ)
-  const workflow = read(DEPLOY_WORKFLOW)
-    .split('\n')
-    .map((line) => line.replace(/(^|\s)#.*$/, ''))
-    .join('\n');
-  const runLines = workflow
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => /supabase@[\d.]+\s+functions\s+deploy\b/.test(line));
-
-  it('functions deploy は名前を指定せず (全関数)、--no-verify-jwt を付けない', () => {
-    expect(runLines).toHaveLength(1);
-    const args = runLines[0].replace(/^.*functions\s+deploy\b/, '').trim();
-    // 残る引数は --project-ref <ref> だけ (関数名を指定すると、それ以外の関数の verify_jwt が反映されない)
-    expect(args).toMatch(/^--project-ref\s+(?:\$\{\{[^}]*\}\}|\S+)$/);
-    expect(workflow).not.toMatch(/--no-verify-jwt/);
+  it('functions deploy は名前を指定せず (全関数)、--no-verify-jwt を付けず、環境変数で上書きせず、config.toml を変えただけでも動く', () => {
+    expect(deployWorkflowProblems(read(DEPLOY_WORKFLOW))).toEqual([]);
   });
 
-  it('config.toml の verify_jwt を環境変数で上書きしない', () => {
-    // CLI は config.toml を viper で読み、SUPABASE_ + キーの . を _ にした環境変数 (SUPABASE_FUNCTIONS_<NAME>_VERIFY_JWT) で
-    // 上書きする (pkg/config/config.go の loadFromFile)。.env ファイル (SUPABASE_ENV で選ぶものも) からも読むが、
-    // .env* は .gitignore で除いてあり (.env.example は CLI が読まない)、Actions のチェックアウトには無い。
-    // 残る経路はワークフローの env なので、ここで止める
-    expect(workflow).not.toMatch(/SUPABASE_FUNCTIONS|SUPABASE_ENV\b/i);
-  });
-
-  it('config.toml を変えただけでも、main への push でデプロイが動く', () => {
-    const paths = [...workflow.matchAll(/^\s*-\s*'([^']+)'\s*$/gm)].map((m) => m[1]);
-    expect(paths).toContain('supabase/functions/**');
-    expect(paths).toContain(CONFIG_TOML);
+  const deployLine = 'npx --yes supabase@2.62.10 functions deploy --project-ref ${{ env.SUPABASE_PROJECT_ID }}';
+  it.each([
+    ['関数名を指定する', (yaml: string) => yaml.replace(deployLine, deployLine.replace('deploy', `deploy ${SEGMENT_STATS_FUNCTION}`))],
+    ['--no-verify-jwt を付ける', (yaml: string) => yaml.replace(deployLine, `${deployLine} --no-verify-jwt`)],
+    // 文字列の中の # の後ろに書いたもの (YAML のコメントとして読み飛ばすと見落とす。#1406 R3 の同型の掃除)
+    [
+      '文字列の中の # の後ろで、ほかの関数を --no-verify-jwt で配る',
+      (yaml: string) => yaml.replace(deployLine, `${deployLine}\n          echo " #" && npx --yes supabase@2.62.10 functions deploy x --no-verify-jwt`),
+    ],
+    [
+      '文字列の中の # の後ろで、verify_jwt を環境変数で上書きする',
+      (yaml: string) => yaml.replace(deployLine, `echo " #"; export SUPABASE_FUNCTIONS_X_VERIFY_JWT=false\n          ${deployLine}`),
+    ],
+    ['config.toml を push の paths から外す', (yaml: string) => yaml.replace(`      - '${CONFIG_TOML}'\n`, '')],
+  ])('%s と、問題として見つける', (_form, mutate) => {
+    const yaml = read(DEPLOY_WORKFLOW);
+    expect(yaml).toContain(deployLine);
+    const mutated = mutate(yaml);
+    expect(mutated).not.toBe(yaml);
+    expect(deployWorkflowProblems(mutated)).not.toEqual([]);
   });
 });

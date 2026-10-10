@@ -20,7 +20,8 @@ verify_jwt = false
 # GitHub Actions の「Deploy Supabase Functions」(supabase CLI 2.62.10 の、名前を指定しない functions deploy) は
 # この設定を読んで、関数ごとに verify_jwt を設定する (--no-verify-jwt を付けると全関数に効くので付けない)。
 # tests/edge-function-verify-jwt.test.ts が、ここの一覧と、関数の先頭の認証と、pg_cron の呼び出し先を突き合わせる。
-# 書き方は [functions.<name>] の見出しの下に verify_jwt = false の行だけにする (ほかの書き方はテストが例外にする)。
+# このファイルには、空行・行全体のコメント・[functions.<name>] の見出し・その下の verify_jwt = true / false の行だけを書く
+# (行末のコメントも含め、ほかの行が 1 行でもあるとテストが赤になる。ほかの表が要るときは、テストの許す形を広げる)。
 # ---------------------------------------------------------------------------
 
 # pg_cron のジョブ calculate-segment-stats (public.invoke_calculate_segment_stats) と、POST /api/comparison/trigger

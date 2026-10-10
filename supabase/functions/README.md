@@ -77,9 +77,9 @@ Supabase のゲートウェイは、既定で `Authorization: Bearer` が JWT �
 
 `supabase functions deploy`（名前を指定しない全体のデプロイ。GitHub Actions もこの形）は、`supabase/config.toml` の `verify_jwt` を関数ごとに読みます（supabase CLI 2.62.10 の `internal/functions/deploy/deploy.go` の `GetFunctionConfig`。指定が無い関数は `true`）。
 
-`config.toml` には、`[functions.<name>]` の見出しの下に `verify_jwt = false` の行で書きます。TOML として正しいほかの書き方（`[functions]` の下の `<name> = { verify_jwt = false }`、最上位の `functions.<name>.verify_jwt = false`、`[remotes.*]` での上書き、大文字の `VERIFY_JWT` など）も CLI は読みますが、テストが読み飛ばさないよう例外にします。`verify_jwt` を環境変数（`SUPABASE_FUNCTIONS_<NAME>_VERIFY_JWT`）で上書きすることもしません（CLI はこれも読むので、デプロイのワークフローに書くとテストが赤にします）。
+`config.toml` には、空行・行全体のコメント・`[functions.<name>]` の見出し・その下の `verify_jwt = true` / `verify_jwt = false` の行だけを書きます（ほかの行が 1 行でもあるとテストが赤になります。ほかの表が要るようになったら、その行が `verify_jwt` に触れないことを確かめてから、テストの許す形を広げてください）。`verify_jwt` を環境変数（`SUPABASE_FUNCTIONS_<NAME>_VERIFY_JWT`）で上書きすることもしません（CLI はこれも読むので、デプロイのワークフローに書くとテストが赤にします）。
 
-`verify_jwt = false` にしてよいのは、先頭で自前の認証（`requireServiceRole` / `requireAuth` / `auth.getUser`）をする関数だけです。`tests/edge-function-verify-jwt.test.ts` が、`config.toml` の一覧と関数の先頭の認証、DB からの HTTP の呼び出し先（pg_net の `net.http_post` など）を突き合わせます。呼び出しは、DB に入る SQL（`supabase/migrations` と、本番のスキーマの写し `supabase/baseline`）の全文から拾います（SQL 関数の本文だけでなく、関数で包まない `cron.schedule('job', '...', $$ SELECT net.http_post(...) $$)` や `DO` ブロックに書いても拾います。拾えた数は別のやり方で数え直した数とファイルごとに突き合わせ、合わなければ赤になります）。呼び先の関数名が読めない呼び出し（URL を変数や Vault から組み立てる形）は赤になるので、`'.../functions/v1/<name>'` と直書きするか、`'.../functions/v1/' || 引数` なら同じ文に許可リストを書いてください。
+`verify_jwt = false` にしてよいのは、先頭で自前の認証（`requireServiceRole` / `requireAuth` / `auth.getUser`）をする関数だけです。`tests/edge-function-verify-jwt.test.ts` が、`config.toml` の一覧と関数の先頭の認証、DB からの HTTP の呼び出し先（pg_net の `net.http_post` など）を突き合わせます。呼び出しは、DB に入る SQL（`supabase/migrations` と、本番のスキーマの写し `supabase/baseline`）の全文から拾います（SQL 関数の本文だけでなく、関数で包まない `cron.schedule('job', '...', $$ SELECT net.http_post(...) $$)` や `DO` ブロックに書いても拾います。拾えた数は別のやり方で数え直した数とファイルごとに突き合わせ、合わなければ赤になります）。呼び先は呼び出し 1 件ごとに URL の引数から読み、次のどれでもない呼び出しは赤になります: `'https://<ホスト>/functions/v1/<name>'` の直書き、`'https://<ホスト>/functions/v1/' || 引数`（同じ文で前もって `IF 引数 NOT IN ('a', ...) THEN RAISE EXCEPTION` で絞り、ほかで書き換えない）、そのどちらかを 1 回だけ代入した変数（URL を Vault や表から読む・文字列を足し合わせる形は読みません）。
 
 pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘密）で呼ばれる関数:
 

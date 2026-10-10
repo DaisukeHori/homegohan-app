@@ -34,7 +34,8 @@ jobs:
           npx --yes supabase@2.62.10 --version
 
       # 名前を指定しない deploy は supabase/config.toml の [functions.<name>] verify_jwt を関数ごとに読む
-      # (CLI 2.62.10 の internal/functions/deploy の GetFunctionConfig)。--no-verify-jwt は全関数に効くので付けない (#1406)
+      # (CLI 2.62.10 の internal/functions/deploy の GetFunctionConfig)。JWT 検証を外すフラグは全関数に効くので付けない (#1406)。
+      # tests/edge-function-verify-jwt.test.ts がこのファイルをコメントも含めて読むので、そのフラグの名前はここにも書かない
       - name: Deploy all functions
         run: |
           npx --yes supabase@2.62.10 functions deploy --project-ref ${{ env.SUPABASE_PROJECT_ID }}
