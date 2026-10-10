@@ -12,7 +12,7 @@
  * それとは別の値の「古い版」の組み合わせで確かめる。
  * middleware 全体を通した確認は lib/supabase/__tests__/middleware.test.ts。
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LEGAL_DOCUMENTS } from '@homegohan/shared';
 import {
   LEGAL_CONSENT_PATH,
@@ -130,30 +130,26 @@ describe('isLegalConsentFlagOn (2 つのフラグで共有する読み方)', () 
 });
 
 describe('isLegalConsentNoticeEnabled (LEGAL_CONSENT_NOTICE)', () => {
+  // 環境変数は vi.stubEnv で入れ、vi.unstubAllEnvs で元に戻す (#1435。process.env の直接の書き換え・delete はしない)
+  afterEach(() => vi.unstubAllEnvs());
+
   it('引数を省略すると環境変数 LEGAL_CONSENT_NOTICE を読む (未設定なら無効 = お知らせを出さない)', () => {
-    const original = process.env.LEGAL_CONSENT_NOTICE;
-    const originalEnforce = process.env.LEGAL_CONSENT_ENFORCE;
-    try {
-      delete process.env.LEGAL_CONSENT_NOTICE;
-      expect(isLegalConsentNoticeEnabled()).toBe(false);
-      process.env.LEGAL_CONSENT_NOTICE = 'on';
-      expect(isLegalConsentNoticeEnabled()).toBe(true);
-      process.env.LEGAL_CONSENT_NOTICE = 'off';
-      expect(isLegalConsentNoticeEnabled()).toBe(false);
-      // 強制のフラグは見ない (別の環境変数)
-      delete process.env.LEGAL_CONSENT_NOTICE;
-      process.env.LEGAL_CONSENT_ENFORCE = 'on';
-      expect(isLegalConsentNoticeEnabled()).toBe(false);
-    } finally {
-      if (original === undefined) delete process.env.LEGAL_CONSENT_NOTICE;
-      else process.env.LEGAL_CONSENT_NOTICE = original;
-      if (originalEnforce === undefined) delete process.env.LEGAL_CONSENT_ENFORCE;
-      else process.env.LEGAL_CONSENT_ENFORCE = originalEnforce;
-    }
+    vi.stubEnv('LEGAL_CONSENT_NOTICE', undefined);
+    expect(isLegalConsentNoticeEnabled()).toBe(false);
+    vi.stubEnv('LEGAL_CONSENT_NOTICE', 'on');
+    expect(isLegalConsentNoticeEnabled()).toBe(true);
+    vi.stubEnv('LEGAL_CONSENT_NOTICE', 'off');
+    expect(isLegalConsentNoticeEnabled()).toBe(false);
+    // 強制のフラグは見ない (別の環境変数)
+    vi.stubEnv('LEGAL_CONSENT_NOTICE', undefined);
+    vi.stubEnv('LEGAL_CONSENT_ENFORCE', 'on');
+    expect(isLegalConsentNoticeEnabled()).toBe(false);
   });
 });
 
 describe('isLegalConsentEnforced (LEGAL_CONSENT_ENFORCE)', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it.each(['on', 'ON', 'On', ' on ', 'on\n'])('%j は有効', (value) => {
     expect(isLegalConsentEnforced(value)).toBe(true);
   });
@@ -166,18 +162,12 @@ describe('isLegalConsentEnforced (LEGAL_CONSENT_ENFORCE)', () => {
   );
 
   it('引数を省略すると環境変数 LEGAL_CONSENT_ENFORCE を読む (未設定なら無効)', () => {
-    const original = process.env.LEGAL_CONSENT_ENFORCE;
-    try {
-      delete process.env.LEGAL_CONSENT_ENFORCE;
-      expect(isLegalConsentEnforced()).toBe(false);
-      process.env.LEGAL_CONSENT_ENFORCE = 'on';
-      expect(isLegalConsentEnforced()).toBe(true);
-      process.env.LEGAL_CONSENT_ENFORCE = 'off';
-      expect(isLegalConsentEnforced()).toBe(false);
-    } finally {
-      if (original === undefined) delete process.env.LEGAL_CONSENT_ENFORCE;
-      else process.env.LEGAL_CONSENT_ENFORCE = original;
-    }
+    vi.stubEnv('LEGAL_CONSENT_ENFORCE', undefined);
+    expect(isLegalConsentEnforced()).toBe(false);
+    vi.stubEnv('LEGAL_CONSENT_ENFORCE', 'on');
+    expect(isLegalConsentEnforced()).toBe(true);
+    vi.stubEnv('LEGAL_CONSENT_ENFORCE', 'off');
+    expect(isLegalConsentEnforced()).toBe(false);
   });
 });
 

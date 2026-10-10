@@ -138,6 +138,47 @@ export function buildLegalConsentPath(pathname: string, search: string): string 
 }
 
 /**
+ * 初めてサインインした (アカウントを作ったばかりの) 人を、同意画面へ通すかどうかの入力 (#1435)。
+ * /auth/callback が、すでに読んでいる user_profiles の行 (無ければ null) と、決めた遷移先を渡す。
+ */
+export interface FirstSignInLegalConsentInput {
+  /** /auth/callback が決めた遷移先 (同一オリジンの相対パス。クエリを含むことがある) */
+  next: string;
+  /** user_profiles の行。新規登録の直後は行が無い (null) */
+  profile:
+    | (AcceptedLegalVersions & {
+        onboarding_started_at?: string | null;
+        onboarding_completed_at?: string | null;
+      })
+    | null
+    | undefined;
+}
+
+/**
+ * 初回の作成 (新規登録・ログイン画面の「Googleで続ける」で初めて入った人) を、必ず同意画面に通す (#1435)。
+ *
+ * サインアップ画面の同意のチェックは登録のボタンを押せるようにするだけで、同意の記録は同意画面 /legal-consent で
+ * 同意したときだけ残る。ログイン画面の「Googleで続ける」は、初めての人には新しいアカウントを作るが、そのチェックを通らない。
+ * そこで /auth/callback で「初期設定をまだ始めていない (新しいアカウント) のに、いま有効な版に同意していない」と
+ * 分かった人は、LEGAL_CONSENT_ENFORCE の値に関わらず同意画面へ回す (戻り先 = 本来の遷移先)。
+ * 「続けると同意したものとみなします」というみなし同意は #1174 でやめたので、ログイン画面には出さない。
+ *
+ * 初期設定を始めた (または終えた) 人は対象外 (既存の利用者を止めるかは、これまでどおり LEGAL_CONSENT_ENFORCE が決める)。
+ * 遷移先が同意ゲートの対象外のパス (/auth/* ・/terms など。isLegalConsentExemptPath) なら回さない。
+ * 同意画面へ回すときは同意画面のパス (?next=<遷移先>) を、回さないときは next をそのまま返す。
+ */
+export function resolveFirstSignInDestination(input: FirstSignInLegalConsentInput): string {
+  const { next, profile } = input;
+  const isNewAccount = !profile?.onboarding_started_at && !profile?.onboarding_completed_at;
+  if (!isNewAccount) return next;
+  const pathname = next.split(/[?#]/)[0];
+  // 強制したときと同じ判定 (同意済み・対象外のパスなら none) を使う。お知らせのフラグはここでは見ない
+  const decision = resolveLegalConsent({ pathname, accepted: profile, enforce: true, notice: false });
+  if (decision !== 'redirect') return next;
+  return `${LEGAL_CONSENT_PATH}?next=${encodeURIComponent(next)}`;
+}
+
+/**
  * 同意画面の next パラメータを、安全な戻り先にする。
  * - 同一オリジンの相対パスだけ (open redirect 対策。getSafeRedirectPath)
  * - 同意画面自身 (戻っても同じ画面に着くだけ) と API (画面ではない) は /home にする

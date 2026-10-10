@@ -108,10 +108,9 @@ function setUp(enforce: string | undefined, notice: string | undefined = undefin
   vi.unstubAllEnvs();
   // updateSession は Supabase の URL・anon キーが無いと汎用の 500 で止まる (#1182)。unstubAllEnvs で消えるので入れ直す
   stubSupabasePublicEnv();
-  if (enforce !== undefined) vi.stubEnv('LEGAL_CONSENT_ENFORCE', enforce);
-  else delete process.env.LEGAL_CONSENT_ENFORCE;
-  if (notice !== undefined) vi.stubEnv('LEGAL_CONSENT_NOTICE', notice);
-  else delete process.env.LEGAL_CONSENT_NOTICE;
+  // 未設定 (undefined) も vi.stubEnv で作る (#1435。delete process.env.X は vi.unstubAllEnvs で元に戻らない)
+  vi.stubEnv('LEGAL_CONSENT_ENFORCE', enforce);
+  vi.stubEnv('LEGAL_CONSENT_NOTICE', notice);
   mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
   mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
 }

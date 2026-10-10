@@ -118,10 +118,9 @@ function setFlags(notice: NoticeKey, enforce: EnforceKey) {
   vi.unstubAllEnvs();
   // updateSession は Supabase の URL・anon キーが無いと汎用の 500 で止まる (#1182)。unstubAllEnvs で消えるので入れ直す
   stubSupabasePublicEnv();
-  delete process.env.LEGAL_CONSENT_NOTICE;
-  delete process.env.LEGAL_CONSENT_ENFORCE;
-  const noticeValue = NOTICE_VALUES[notice];
-  if (noticeValue !== undefined) vi.stubEnv('LEGAL_CONSENT_NOTICE', noticeValue);
+  // 未設定は vi.stubEnv(name, undefined) で作る (#1435。delete process.env.X は使わない。
+  // delete は vi.unstubAllEnvs で元に戻らず、テストを動かした環境の値を消したままにする)
+  vi.stubEnv('LEGAL_CONSENT_NOTICE', NOTICE_VALUES[notice]);
   vi.stubEnv('LEGAL_CONSENT_ENFORCE', ENFORCE_VALUES[enforce]);
 }
 

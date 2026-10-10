@@ -22,6 +22,10 @@
  *   設定すること (この spec は、このプロセスの値を見て、どの検証をするかを決める)。
  *   値の読み方 (on のときだけ有効。大文字小文字と前後の空白は区別しない) は lib/legal-consent.ts の isLegalConsentFlagOn と同じ。
  *
+ * #1435: 初回の作成 (新規登録・ログイン画面の「Googleで続ける」で初めて入った人) は、/auth/callback が
+ *   フラグに関わらず同意画面へ回す (lib/legal-consent.ts の resolveFirstSignInDestination)。
+ *   お知らせのリンクの戻り先は、middleware の強制の経路と同じく、いまのクエリも残す。
+ *
  * テストユーザーは admin API で作り、終わったら削除する (user_profiles・terms_acceptances も連動して消える)。
  * 既存の共通ユーザー (e2e-user-01〜) は使わない: 同意済みかどうかを、テストごとに自分で決めたいため。
  */
@@ -29,6 +33,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cleanupFreshUser, createFreshUser, injectSession } from "./fixtures/fresh-user";
 import { acceptLegalConsentIfShown } from "./helpers/legal-consent";
+import { generateTestPassword } from "./helpers/credentials";
 import { LEGAL_DOCUMENTS } from "../../packages/shared/src/legal-versions";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -230,6 +235,42 @@ test.describe("サインアップ画面の明示的な同意 (#1174)", () => {
     await page.goto("/signup");
     await page.locator("label[for='agree-legal']").getByRole("link", { name: "プライバシーポリシー", exact: true }).click();
     await expect(page).toHaveURL(/\/privacy$/, { timeout: NAVIGATION_TIMEOUT });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 初回の作成: /auth/callback が必ず同意画面を通す (強制の有無に関わらない。#1435)
+// ─────────────────────────────────────────────────────────────────────────────
+test.describe("初回の作成は、必ず同意画面を通る (#1435)", () => {
+  test.setTimeout(180_000);
+
+  test("★メール確認 (/auth/callback?token_hash=...) で初めて入った人は、フラグに関わらず同意画面へ回り、同意すると初期設定へ進む。同意が記録される", async ({ page, baseURL }) => {
+    const appBaseURL = baseURL ?? process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
+    const email = `e2e-legal-first-${Date.now()}-${Math.floor(Math.random() * 100000)}@homegohan.test`;
+    // ログイン画面の「Googleで続ける」(OAuth) は E2E で再現できないので、同じ /auth/callback を通るメール確認の経路で確かめる
+    const { data, error } = await admin.auth.admin.generateLink({
+      type: "signup",
+      email,
+      password: generateTestPassword(),
+      options: { redirectTo: `${appBaseURL}/auth/callback` },
+    });
+    expect(error).toBeNull();
+    const userId = data.user?.id;
+    const hashedToken = data.properties?.hashed_token;
+    expect(userId).toBeTruthy();
+    expect(hashedToken).toBeTruthy();
+    createdUserIds.push(userId!);
+
+    await page.goto(`/auth/callback?token_hash=${hashedToken}&type=signup`);
+    await expect(page).toHaveURL(/\/legal-consent\?next=%2Fonboarding%2Fwelcome$/, { timeout: NAVIGATION_TIMEOUT });
+    expect(await readProfile(userId!)).toBeNull();
+
+    await acceptOnConsentPage(page);
+    await page.waitForURL((url) => url.pathname === "/onboarding/welcome", URL_CHANGE);
+
+    const profile = await readProfile(userId!);
+    expect(profile).toMatchObject({ terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY });
+    expect(profile?.legal_accepted_at).not.toBeNull();
   });
 });
 
@@ -494,6 +535,19 @@ test.describe("再同意ゲート: 強制なし・お知らせあり (LEGAL_CONS
       terms_version_accepted: CURRENT_TERMS,
       privacy_version_accepted: CURRENT_PRIVACY,
     });
+  });
+
+  test("お知らせのリンクは、いまのクエリも戻り先 (next) に残す (#1435)", async ({ page }) => {
+    await signInAsNewUser(page, { profile: true });
+
+    await page.goto("/home?from=e2e");
+    await expect(banner(page)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+    await expect(banner(page).getByRole("link", { name: "確認して同意する" })).toHaveAttribute(
+      "href",
+      "/legal-consent?next=%2Fhome%3Ffrom%3De2e",
+      // クエリはハイドレーションのあとに読まれることがある (Suspense)。読めるまで待つ
+      { timeout: HYDRATION_TIMEOUT },
+    );
   });
 
   test("同意済みのユーザーには、お知らせを出さない", async ({ page }) => {

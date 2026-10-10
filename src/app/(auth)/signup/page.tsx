@@ -22,10 +22,11 @@ function SignupContent() {
   // #1174: 利用規約・プライバシーポリシーへの明示的な同意 (チェックするまで、どの登録方法のボタンも押せない)。
   // 「続行することで同意したものとみなされる」というみなし同意をやめた。
   // このチェックは登録のボタンを押せるようにするだけで、同意の記録 (版・日時) は残さない。記録は同意画面
-  // /legal-consent で同意したとき (POST /api/legal/accept) だけ残る。登録後に同意画面へ回すのは、同意ゲート
-  // (lib/supabase/middleware.ts) を強制にしたとき (環境変数 LEGAL_CONSENT_ENFORCE=on) だけで、既定では回さない。
-  // 既定ではお知らせも出さない (お知らせは LEGAL_CONSENT_NOTICE=on のときだけ)。
-  // 強制にすれば、Google 登録・メール確認を経る登録・アプリ (WebView) から始めた登録のどれでも、同じゲートを通る。
+  // /legal-consent で同意したとき (POST /api/legal/accept) だけ残る。登録 (Google 登録・メール確認) のあとは、
+  // /auth/callback が、初期設定を始めていない未同意の人を、LEGAL_CONSENT_ENFORCE の値に関わらず同意画面へ回す (#1435)。
+  // ログイン画面の「Googleで続ける」で初めて入った人も、同じ /auth/callback を通る。
+  // 初期設定を始めたあとの人を止めるかは、これまでどおり同意ゲート (lib/supabase/middleware.ts) の
+  // 強制 (環境変数 LEGAL_CONSENT_ENFORCE=on) で決まり、アプリ (WebView) から始めた登録もそのゲートを通る。
   const [agreedToLegal, setAgreedToLegal] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
