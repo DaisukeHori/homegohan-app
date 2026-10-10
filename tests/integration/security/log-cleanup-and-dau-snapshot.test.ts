@@ -1,7 +1,7 @@
 /**
  * #1125 / #1157 古いログの定期削除 (cleanup-old-app-logs) と、日次のアクティブ利用者の集計 (snapshot-daily-active-users) の回帰テスト
  *
- * migration 20261008200000_schedule_log_cleanup_and_dau_snapshot.sql が、次を行う。
+ * migration 20261010150000_schedule_log_cleanup_and_dau_snapshot.sql が、次を行う。
  *   - pg_cron のジョブ cleanup-old-app-logs (毎日 03:15 JST = 18:15 UTC) が public.cleanup_old_logs() (app_logs の 30 日より古い行を削除) を呼ぶ
  *   - public.snapshot_daily_active_users(p_date) が、JST の日付 p_date の DAU / WAU / MAU を daily_active_users に upsert する。
  *     pg_cron のジョブ snapshot-daily-active-users (毎日 01:30 JST = 16:30 UTC) が前日 (JST) の分を呼ぶ。
@@ -60,7 +60,7 @@ if (!url || !anonKey || !serviceKey) {
 }
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
-const VERSION = '20261008200000';
+const VERSION = '20261010150000';
 const NAME = 'schedule_log_cleanup_and_dau_snapshot';
 const MIGRATION_SQL = fs.readFileSync(path.join(REPO_ROOT, `supabase/migrations/${VERSION}_${NAME}.sql`), 'utf8');
 const ROLLBACK_SQL = fs.readFileSync(path.join(REPO_ROOT, `supabase/rollbacks/${VERSION}_${NAME}.down.sql`), 'utf8');

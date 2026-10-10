@@ -1,5 +1,5 @@
 /**
- * #1125 / #1157 古いログの定期削除と日次のアクティブ利用者の集計 (migration 20261008200000) のソース走査 contract テスト (DB には接続しない)
+ * #1125 / #1157 古いログの定期削除と日次のアクティブ利用者の集計 (migration 20261010150000) のソース走査 contract テスト (DB には接続しない)
  *
  * 実際の動き (JST の境界・権限・ジョブの登録) は tests/integration/security/log-cleanup-and-dau-snapshot.test.ts で確かめる。
  * ここでは、DB を立てなくても CI の通常のテストで止められる「書き方の取り決め」を固定する。
@@ -13,7 +13,7 @@
  *   3. 2 つの関数の EXECUTE は service_role だけ (PUBLIC / anon / authenticated から外す)
  *   4. ジョブ 2 つの名前・時刻 (UTC) ・command が決めたとおり。時刻は JST で 03:15 と 01:30 になる
  *   5. pg_cron が無い DB では登録を飛ばす (cron.job の存在を確かめてから触る)。実行ログ (RAISE) に command を載せない
- *   6. オーナー判断 (#1125): 課金系の定期処理は作らない (revenue_snapshots / Stripe / ライセンスに触れない)。
+ *   6. #1125 の第 1 段の範囲: オーナーの選択「課金は無料のまま計測」により、課金系の定期処理はこの段では足さない (revenue_snapshots / Stripe / ライセンスに触れない)。
  *      failed_invite_lookups / infra_metrics には書き込む処理が無いので、掃除のジョブは作らない
  *   7. 既存の行を変えない・消さない (UPDATE / DELETE / TRUNCATE を書かない)
  *   8. 設計書 docs/design/operator/08-cron-batches.md に、2 つのジョブが書かれている
@@ -23,7 +23,7 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 
 const ROOT = path.resolve(__dirname, '..');
-const VERSION = '20261008200000';
+const VERSION = '20261010150000';
 const NAME = 'schedule_log_cleanup_and_dau_snapshot';
 const MIGRATION_PATH = path.join(ROOT, 'supabase', 'migrations', `${VERSION}_${NAME}.sql`);
 const ROLLBACK_PATH = path.join(ROOT, 'supabase', 'rollbacks', `${VERSION}_${NAME}.down.sql`);
@@ -194,7 +194,7 @@ describe('#1157 pg_cron のジョブ', () => {
   });
 });
 
-describe('#1125 オーナー判断: 作らないもの・触らないもの', () => {
+describe('#1125 第 1 段の範囲: この段で足さないもの・触らないもの', () => {
   it('課金系の定期処理 (収益スナップショット・Stripe・ライセンス) には触れない', () => {
     expect(code).not.toMatch(/revenue_snapshots|stripe|personal_subscriptions|org_license|subscription_plans|license_expire/i);
   });
@@ -224,7 +224,7 @@ describe('#1125 設計書', () => {
       'cleanup_old_logs',
       '15 18 * * *',
       '30 16 * * *',
-      '20261008200000',
+      '20261010150000',
     ]) {
       expect(doc, `設計書に ${text} が書かれていること`).toContain(text);
     }

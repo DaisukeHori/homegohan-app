@@ -1,4 +1,4 @@
--- migration: 20261008200000_schedule_log_cleanup_and_dau_snapshot.sql
+-- migration: 20261010150000_schedule_log_cleanup_and_dau_snapshot.sql
 -- #1125 / #1157: 古いログの定期削除と、日次のアクティブ利用者 (DAU / WAU / MAU) の集計を pg_cron で動かす
 --
 -- 背景:
@@ -11,7 +11,8 @@
 --   (2) 管理画面の財務ダッシュボードの MAU カードは、daily_active_users の最新行を読む
 --       (src/app/api/admin/finance/dashboard/route.ts。plan_type = 'all' かつ plan_key = '' の行)。
 --       この表に書き込む処理が無く、MAU は常に 0 だった (#1125)。
---   オーナー判断 (2026-10-08, #1125): 課金系の定期処理 (収益スナップショット・Stripe Webhook・ライセンス期限切れなど) は作らない。
+--   範囲: #1125 の第 1 段。オーナーの選択「課金は無料のまま計測」により、課金系の定期処理 (収益スナップショット・Stripe Webhook・ライセンス期限切れなど) は
+--   この段では足さない (#1125 の残りとして扱う)。
 --   この migration は、上の 2 つ (ログの削除と、MAU の元データ) だけを動かす。revenue_snapshots には触れない。
 --
 -- 変更:
@@ -80,7 +81,7 @@
 --
 -- 冪等: CREATE OR REPLACE FUNCTION / REVOKE / GRANT / COMMENT は何度流しても同じ結果になる。ジョブは、流すたびに登録解除して登録し直す (jobid は変わる)。
 -- 適用順: migration は version 順にマージする。コードの変更は無い (財務ダッシュボードは、行があれば MAU を出し、無ければ 0 を出す)。
--- ロールバック: supabase/rollbacks/20261008200000_schedule_log_cleanup_and_dau_snapshot.down.sql
+-- ロールバック: supabase/rollbacks/20261010150000_schedule_log_cleanup_and_dau_snapshot.down.sql
 --   (この migration が登録解除した、本番に手作業で作られていた既存のジョブは、定義を保存しないので戻らない。rollback の冒頭を参照)
 -- 確認: tests/integration/security/log-cleanup-and-dau-snapshot.test.ts / tests/log-cleanup-dau-snapshot-contract.test.ts
 

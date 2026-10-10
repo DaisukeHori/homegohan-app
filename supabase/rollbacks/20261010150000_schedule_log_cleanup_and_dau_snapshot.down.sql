@@ -1,4 +1,4 @@
--- rollback: 20261008200000_schedule_log_cleanup_and_dau_snapshot.sql
+-- rollback: 20261010150000_schedule_log_cleanup_and_dau_snapshot.sql
 -- 次の 3 つを元に戻す (#1125 / #1157)。
 --   1. pg_cron のジョブ 2 つ (cleanup-old-app-logs / snapshot-daily-active-users) を登録解除する
 --   2. public.snapshot_daily_active_users(date) を削除する
