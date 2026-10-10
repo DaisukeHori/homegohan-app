@@ -13,7 +13,8 @@
  *   4. 献立生成の API 5 本と AI 相談のアクション実行は、isFeatureEnabled で正しいフラグを見る
  *      (v4/generate だけ menu_generation_v5_direct、ほかは menu_generation_v5_wrapped)
  *   5. AI 相談の緊急停止スイッチ (ai_chat_enabled): 止めるのは決めた 5 つの POST だけ。認証のあと・レート制限の前に呼ぶ。
- *      GET・DELETE・重要マークなど AI を呼ばない API は止めない
+ *      GET・DELETE・重要マークなど AI を呼ばない API は止めない。スイッチは同意の判定 (#1154) の代わりではなく、
+ *      AI へ送る route は同意の判定も呼ぶ。説明の文 (CLAUDE.md・migration・ai-chat-gate.ts) もそう書く
  *   6. ミドルウェアは maintenance_mode を見る
  *
  * 振る舞いそのものの確認は、それぞれの単体テスト・結合テストにある。ここは「別の読み方が増えていないか」の安全網。
@@ -22,6 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { ENFORCED_ROUTES } from './helpers/ai-consent-enforced-paths';
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -213,6 +215,38 @@ describe('#1148 5. AI 相談の緊急停止スイッチ (ai_chat_enabled)', () =
         if (gatedMethods.includes(handler.name)) continue;
         expect(handler.gatePos, `${file} ${handler.name} は止めない`).toBeNull();
       }
+    }
+  });
+
+  it('スイッチは同意の判定の代わりではない: 止める POST のうち AI へ送るもの (同意の一覧に載る route) は、同意の判定も呼ぶ', () => {
+    const gatedAndSending = Object.keys(GATED).filter((file) => file in ENFORCED_ROUTES);
+    // 相談の開始 (sessions/route.ts) は AI へ送らないので同意の一覧に無い。残りの 4 本が対象
+    expect(gatedAndSending).toHaveLength(Object.keys(GATED).length - 1);
+    for (const file of gatedAndSending) {
+      expect(code(file), `${file}: 同意の判定`).toMatch(/\b(requireAiConsent|checkUserAiConsent)\(/);
+    }
+    // スイッチの部品は同意を判定しない (同意の判定は consent-guard の 1 か所に置く)
+    expect(code('src/lib/ai/ai-chat-gate.ts')).not.toMatch(/requireAiConsent|checkUserAiConsent|consent-guard/);
+  });
+
+  it('スイッチの説明は、同意の有無による停止を同意の判定に任せると書き、「送信を止めない」とは書かない', () => {
+    const claudeMdLine = read('CLAUDE.md')
+      .split('\n')
+      .find((line) => line.includes('`ai_chat_enabled` は AI 相談の緊急停止スイッチ'));
+    const migrationLine = read('supabase/migrations/20261010120000_unify_feature_flags_seed.sql')
+      .split('\n')
+      .find((line) => /^--\s+ai_chat_enabled\s+ON 固定/.test(line));
+    const gateHeader = read('src/lib/ai/ai-chat-gate.ts').split('*/')[0];
+    const texts: Record<string, string | undefined> = {
+      'CLAUDE.md の機能フラグの節': claudeMdLine,
+      'migration の ai_chat_enabled の行': migrationLine,
+      'ai-chat-gate.ts の冒頭の説明': gateHeader,
+    };
+    for (const [where, text] of Object.entries(texts)) {
+      expect(text, `${where} が見つからない`).toBeDefined();
+      expect(text, `${where}: 同意の判定を指す`).toContain('requireAiConsent');
+      expect(text, `${where}: 送信を止めないとは書かない`).not.toMatch(/送信(は|を)止めない|送信を止める(機能|ため)/);
+      expect(text, `${where}: 帰属の文を書かない`).not.toContain('オーナー判断');
     }
   });
 });

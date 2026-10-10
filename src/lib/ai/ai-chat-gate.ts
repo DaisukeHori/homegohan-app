@@ -2,8 +2,9 @@
  * AI 相談 (/api/ai/consultation/**) の緊急停止スイッチ (#1148)
  *
  * feature_flags の ai_chat_enabled が OFF のとき、AI 相談の API は 503 とやさしい文面を返す。
- * これは「緊急に止めたいとき」だけの非常ボタンで、通常は ON のまま。AI への送信を止める機能として使うものではない
- * (オーナー判断: 海外の AI 事業者へのデータ送信は止めない)。そのため:
+ * これは「緊急に止めたいとき」だけの非常ボタンで、通常は ON のまま。利用者の同意の有無で AI への送信を止めるのは
+ * このスイッチではなく、同意の判定 requireAiConsent / checkUserAiConsent (src/lib/ai/consent-guard.ts、#1154) が担う
+ * (このスイッチが ON でも、未同意の利用者のデータは AI へ送らない)。そのため:
  *   - 既定値は ON。フラグの行が無い・読み出しに失敗した・待ちきれなかったときも ON として動く
  *     (src/lib/feature-flags.ts の FEATURE_FLAG_DEFAULTS。読み出しの失敗は構造化ログに残る)
  *   - OFF にできるのは、運営 (super_admin) が運営画面 /super-admin/flags で明示的に切り替えたときだけ

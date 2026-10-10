@@ -21,7 +21,7 @@
 --   key                         enabled の初期値
 --   menu_generation_v5_wrapped  旧 system_settings の値 (JSON の true / false のときだけ引き継ぐ。無ければ ON)
 --   menu_generation_v5_direct   同上
---   ai_chat_enabled             ON 固定 (緊急停止スイッチ。通常は ON のまま。AI への送信を止めるためのものではない)
+--   ai_chat_enabled             ON 固定 (緊急停止スイッチ。通常は ON のまま。同意の有無による送信の停止は requireAiConsent (#1154) が担う)
 --   maintenance_mode            OFF 固定
 --
 --   引き継ぎのルール (本番の挙動をデプロイで変えないため):
