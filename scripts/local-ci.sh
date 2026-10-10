@@ -140,7 +140,7 @@ INTEG1_ARGS=(--config vitest.integration.config.ts --passWithNoTests tests/integ
 # security-regression.yml の 2 本目 (運営コンソール。--passWithNoTests は付けない)
 INTEG2_ARGS=(--config vitest.integration.config.ts tests/integration/operator/admin- tests/integration/operator/auth-boundary tests/integration/operator/super-admin-)
 # e2e-local.yml の Playwright
-PW_ARGS=(--trace off tests/e2e/01-login.spec.ts tests/e2e/04-menu-page.spec.ts tests/e2e/05-shopping-list.spec.ts tests/e2e/public-policy-pages.spec.ts tests/e2e/ai-consent-first-use.spec.ts tests/e2e/legal-consent-gate.spec.ts)
+PW_ARGS=(--trace off tests/e2e/01-login.spec.ts tests/e2e/04-menu-page.spec.ts tests/e2e/05-shopping-list.spec.ts tests/e2e/public-policy-pages.spec.ts tests/e2e/auth-turnstile.spec.ts tests/e2e/ai-consent-first-use.spec.ts tests/e2e/legal-consent-gate.spec.ts)
 # e2e-local.yml の Playwright (2 つ目・3 つ目のサーバーに対して。規約の同意ゲートだけ)
 PW_CONSENT_ARGS=(--trace off tests/e2e/legal-consent-gate.spec.ts)
 
@@ -1150,17 +1150,18 @@ stage_e2e() {
   fi
   record e2e:setup GREEN - - - - - "$(($(now) - t0))" "-"
 
-  # 本番ビルド (next/font/google はモックのフォントで代替。yml と同じ)
+  # 本番ビルド (next/font/google はモックのフォントで代替。yml と同じ)。
+  # Turnstile は Cloudflare 公式のテスト用サイトキー (常に成功) で有効にする (#1165。yml と同じ。ビルド時に埋め込まれる)
   log="$ART/e2e-build.log"
   t0=$(now)
   say "e2e: npm run build"
-  if ! run_in "$WT" "$log" env NEXT_FONT_GOOGLE_MOCKED_RESPONSES="$WT/tests/e2e/fixtures/google-fonts-mock.cjs" npm run build; then
+  if ! run_in "$WT" "$log" env NEXT_FONT_GOOGLE_MOCKED_RESPONSES="$WT/tests/e2e/fixtures/google-fonts-mock.cjs" NEXT_PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA npm run build; then
     record e2e:build RED - - - - - "$(($(now) - t0))" "$(tail_hint "npm run build が失敗" "$log")"
     stop_supabase
     return 0
   fi
   log="$ART/e2e-next-start.log"
-  ( ci_env && cd "$WT" && export PORT="$APP_PORT" && exec nohup npm run start ) >"$log" 2>&1 &
+  ( ci_env && cd "$WT" && export PORT="$APP_PORT" && exec nohup env NEXT_PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA npm run start ) >"$log" 2>&1 &
   SERVER_PID=$!
   if ! wait_app "$START_WAIT_TRIES" "$log"; then
     record e2e:build RED - - - - - "$(($(now) - t0))" "$(tail_hint "next start が $APP_ORIGIN/login に応答しない" "$log")"
@@ -1175,9 +1176,9 @@ stage_e2e() {
   t0=$(now)
   # shellcheck disable=SC2030,SC2031
   ( export E2E_USER_PASSWORD="$e2e_password"; ENV_EXTRA="E2E_USER_PASSWORD"
-    run_in "$WT" "$log" env PLAYWRIGHT_BASE_URL="$APP_ORIGIN" E2E_USER_EMAIL=e2e-user-01@homegohan.test E2E_REQUIRE_LOGIN=1 PLAYWRIGHT_NO_COPY_PROMPT=1 \
+    run_in "$WT" "$log" env PLAYWRIGHT_BASE_URL="$APP_ORIGIN" E2E_USER_EMAIL=e2e-user-01@homegohan.test E2E_REQUIRE_LOGIN=1 PLAYWRIGHT_NO_COPY_PROMPT=1 E2E_REQUIRE_TURNSTILE=1 \
       PLAYWRIGHT_JSON_OUTPUT_NAME="$ART/e2e-playwright-list.json" npx playwright test --list "${PW_ARGS[@]}" --reporter=json
-    run_in "$WT" "$log" env PLAYWRIGHT_BASE_URL="$APP_ORIGIN" E2E_USER_EMAIL=e2e-user-01@homegohan.test E2E_REQUIRE_LOGIN=1 PLAYWRIGHT_NO_COPY_PROMPT=1 \
+    run_in "$WT" "$log" env PLAYWRIGHT_BASE_URL="$APP_ORIGIN" E2E_USER_EMAIL=e2e-user-01@homegohan.test E2E_REQUIRE_LOGIN=1 PLAYWRIGHT_NO_COPY_PROMPT=1 E2E_REQUIRE_TURNSTILE=1 \
       PLAYWRIGHT_JSON_OUTPUT_NAME="$ART/e2e-playwright.json" npx playwright test "${PW_ARGS[@]}" --reporter=list,json )
   rc=$?
   line=$(parse playwright "$ART/e2e-playwright.json" "$ART/e2e-playwright-list.json" "$rc")

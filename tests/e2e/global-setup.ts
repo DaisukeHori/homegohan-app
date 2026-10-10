@@ -25,6 +25,7 @@ import * as path from "path";
 import { getExistingUserPassword } from "./helpers/credentials";
 import { acceptLegalConsentIfShown } from "./helpers/legal-consent";
 import { ensureAiConsentGranted } from "./helpers/ai-consent";
+import { waitForLoginFormReady } from "./helpers/login-form";
 import { seedClassifyFixtures } from "./setup/seed-classify-fixtures";
 
 /** backward compat: 既存コードが参照するエクスポート (user-01 のパスを返す) */
@@ -266,7 +267,7 @@ async function setupUserSession(
       if (!sessionInjected) {
         console.log(`[global-setup] UI ログインにフォールバック (${email}, attempt ${attempt})`);
         await page.goto(`${baseURL}/login`);
-        await page.waitForLoadState("networkidle");
+        await waitForLoginFormReady(page);
         // #1057 (UX1-16 round-2): キーがメールアドレス単位 (`auth_last_fail_ts:<email>`) に
         // 変わったため prefix 一致で全て削除する
         await page.evaluate(() => {

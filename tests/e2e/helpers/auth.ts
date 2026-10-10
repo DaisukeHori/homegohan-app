@@ -10,6 +10,7 @@ import type { Page } from "@playwright/test";
 import { requireExistingUserPassword } from "./credentials";
 import { acceptLegalConsentIfShown } from "./legal-consent";
 import { ensureAiConsentGranted } from "./ai-consent";
+import { waitForLoginFormReady } from "./login-form";
 
 const LOGIN_TIMEOUT_MS = 90_000;
 const HYDRATION_TIMEOUT_MS = 15_000;
@@ -52,8 +53,9 @@ export async function login(
   const _password = password ?? requireExistingUserPassword();
 
   await page.goto("/login");
-  // networkidle でネットワーク落ち着きを待つ
-  await page.waitForLoadState("networkidle");
+  // フォームが出て、(Turnstile が有効なら) トークンが出て、送信ボタンが押せるまで待つ。
+  // networkidle は待たない (ウィジェットが通信し続けるので成り立たない。helpers/login-form.ts)
+  await waitForLoginFormReady(page);
   // client-side rate limit key をクリアして「しばらく待って」エラーを回避
   // #1057 (UX1-16 round-2): キーがメールアドレス単位 (`auth_last_fail_ts:<email>`) に
   // 変わったため prefix 一致で全て削除する

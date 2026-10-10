@@ -101,6 +101,13 @@ export const PUBLIC_ENV_VARS = {
     description: '画面に出すビルド日 (YYYYMMDD)',
     whenMissing: 'next.config.mjs がビルド時の日付を入れる',
   },
+  NEXT_PUBLIC_TURNSTILE_SITE_KEY: {
+    required: false,
+    description:
+      'Cloudflare Turnstile (bot 対策) のサイトキー (公開してよい値)。ログイン・新規登録・パスワード再設定の画面にウィジェットを出す (#1165)。' +
+      'ビルド時に埋め込まれるので、変えたら再デプロイする',
+    whenMissing: 'Turnstile を出さない (今までどおり)。ログインの失敗が 3 回を超えても、ボットの確認は求めない',
+  },
 } as const satisfies Record<`NEXT_PUBLIC_${string}`, EnvVarSpec>;
 
 /** サーバー専用。ブラウザには出さない */
@@ -281,6 +288,15 @@ export const SERVER_ENV_VARS = {
     required: false,
     description: 'デプロイ環境の名前 (production / preview / development)。Vercel が自動で入れる (サーバー側)',
     whenMissing: '本番かどうかを NEXT_PUBLIC_VERCEL_ENV だけで判断する (src/lib/site-config.ts)',
+  },
+  TURNSTILE_SECRET_KEY: {
+    required: false,
+    description:
+      'Cloudflare Turnstile の秘密キー。ログインに 3 回続けて失敗したメールアドレスで次にログインするとき、' +
+      'サーバー (POST /api/auth/login) がボットの確認のトークンを Cloudflare に問い合わせて確かめる (#1165)。' +
+      'NEXT_PUBLIC_TURNSTILE_SITE_KEY と組で設定する',
+    whenMissing:
+      'ボットの確認のトークンを確かめずに通す (Turnstile の確認は無効)。失敗の回数による 15 分〜24 時間のロックは、設定に関係なく働く',
   },
 } as const satisfies Record<string, EnvVarSpec>;
 
