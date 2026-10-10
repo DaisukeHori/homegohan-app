@@ -188,6 +188,9 @@ export async function POST(request: NextRequest) {
             }),
           );
         },
+        onClearFailed: (error) => {
+          createLogger('auth/login-lock').error('ログインに成功したが、失敗の記録を消せませんでした', error);
+        },
         now: () => new Date(),
       },
     );

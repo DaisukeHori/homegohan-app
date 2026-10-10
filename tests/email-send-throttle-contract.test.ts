@@ -68,6 +68,14 @@ const EXEMPT_EMAIL_SENDERS: Record<string, string> = {
     '宛先は、除名された本人、または脱退先の家族の代表者 / 組織のオーナーの auth.users 上の登録アドレス (resolveAuthEmails) に固定で、' +
     '利用者はアドレスを指定できない。宛先になるのは本人の同意 (招待の承諾) でメンバーになった人と、その所属先の責任者だけなので、' +
     '任意のアドレスへ送り付けることはできない',
+  // #1165 ログイン失敗のロックの通知。送る入口は POST /api/auth/login だけで、送信はこのモジュールだけが行う
+  'src/lib/auth/login-lock-notification.ts':
+    'ログインの連続失敗がちょうど 10 回目 (本人へ) / 20 回目 (運営へ) に届いた 1 回だけ送る (src/lib/auth/login-lock.ts の noticeFor)。' +
+    '本人への宛先は、入力されたメールアドレスで登録されているアカウントがあるとき (auth_login_account_user_id) だけで、' +
+    'アカウントの無いアドレスには送らない。回数はログインの成功・パスワードの再設定でしか 0 に戻らないので、' +
+    '同じアドレスへ 2 通目を送らせるには、その間に本人がログインするか再設定する必要がある。' +
+    'POST /api/auth/login には IP 単位の制限 (共通ヘルパー src/lib/rate-limit.ts の auth-login カテゴリ、10 回/分) もある。' +
+    '運営への宛先は環境変数 ADMIN_NOTIFICATION_EMAIL の固定アドレス',
   // #1152 退会の完了メール。送る入口は POST /api/account/delete (deleteAccount) だが、送信はこのモジュールだけが行う
   'src/lib/account-deletion-notification.ts':
     '退会 (deleteAccount) で auth.admin.deleteUser が実際にアカウントを削除した直後に、1 回だけ送る ' +

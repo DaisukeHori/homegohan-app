@@ -23,7 +23,7 @@ import { createLogger } from '@/lib/db-logger';
  * リクエストの body / URL に載っていて未検証の ID (family_id, member_id など) を key にしてはならない。
  * 他テナントの ID を指定するだけで、その枠を使い切らせることができてしまうため。
  * key にするのは、認証で確定した user.id か、プロフィールなどサーバー側で検証済みの ID だけ。
- * 例外はログイン前の公開 API (contact)。認証済みの ID が無いので、プロキシが付けるクライアント IP
+ * 例外はログイン前の公開 API (contact・auth-login)。認証済みの ID が無いので、プロキシが付けるクライアント IP
  * (x-forwarded-for の先頭、無ければ x-real-ip) を key にする。Vercel 上ではプラットフォームが付け直した値を
  * 使う前提で、ヘッダーを自由に付けられる環境では偽装できるため、IP 単位の制限はベストエフォートである。
  *
@@ -291,7 +291,7 @@ async function checkSingleLimit(rule: RateRule, key: string): Promise<RateLimitR
  * すべて通った場合は先頭ルールの結果を返す。
  *
  * 呼び出し側は認証（user 確定）直後、他の処理を行う前に呼び出すこと。
- * key にはサーバー側で検証済みの ID だけを渡す。ログイン前の公開 API (contact) だけは
+ * key にはサーバー側で検証済みの ID だけを渡す。ログイン前の公開 API (contact・auth-login) だけは
  * クライアント IP を渡す（ファイル先頭の「key の信頼性」を参照）。
  */
 export async function checkRateLimit(

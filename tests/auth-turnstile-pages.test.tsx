@@ -3,11 +3,14 @@
  * (src/app/(auth)/login, signup, auth/forgot-password の各 page.tsx)
  *
  * 確かめること (3 画面とも):
- *   - サイトキー未設定 (Turnstile 無効): 何も足さない。送信ボタンは押せて、Supabase へは
- *     今までと同じ引数 (captchaToken も options も付けない) で呼ぶ
+ *   - サイトキー未設定 (Turnstile 無効): 何も足さない。送信ボタンは押せて、
+ *     今までと同じ引数 (captchaToken も options も付けない) で送る
+ *   - ログインは、ブラウザから Supabase を直接呼ばず、サーバーの POST /api/auth/login へ送る
+ *     (ロック・回数制限・ボットの確認をサーバーで行うため。本文は { email, password, captchaToken? })
  *   - サイトキーあり: トークンが無い間は送信ボタンが無効 (「トークン無し → 送信ボタン無効」)
- *   - トークンは、Supabase の正しい場所に付けて渡す
- *       signInWithPassword / signUp : options.captchaToken
+ *   - トークンは、正しい場所に付けて渡す
+ *       ログイン (POST /api/auth/login) : 本文の captchaToken
+ *       signUp                          : options.captchaToken
  *       resetPasswordForEmail       : 第 2 引数の直下の captchaToken (options の中に入れても Supabase には届かない)
  *   - 送信したらトークンを捨ててウィジェットを取り直し、新しいトークンが届くまで送信できない (トークンは 1 回しか使えない)
  *   - 入力の検証 (パスワード強度) やクールダウンで弾いたときは、使っていないトークンを捨てない
@@ -26,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   push: vi.fn(),
   refresh: vi.fn(),
   signInWithPassword: vi.fn(),
+  fetch: vi.fn(),
   signUp: vi.fn(),
   resetPasswordForEmail: vi.fn(),
   signInWithOAuth: vi.fn(),
@@ -158,6 +162,20 @@ async function submit() {
 
 const tokenOf = (call: unknown[]) => JSON.stringify(call);
 
+/** POST /api/auth/login の応答 */
+function loginResponse(status: number, body: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+/** ログインの API へ送った本文 (呼ばれた順) */
+function loginRequests(): Array<{ url: string; method: string; body: Record<string, unknown> }> {
+  return mocks.fetch.mock.calls.map(([url, init]: [string, RequestInit]) => ({
+    url,
+    method: String(init?.method),
+    body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+  }));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
@@ -165,6 +183,8 @@ beforeEach(() => {
   mocks.signUp.mockResolvedValue({ data: { user: { identities: [{}] }, session: null }, error: null });
   mocks.resetPasswordForEmail.mockResolvedValue({ data: {}, error: null });
   mocks.getUser.mockResolvedValue({ data: { user: null } });
+  mocks.fetch.mockImplementation(async () => loginResponse(200, { ok: true }));
+  vi.stubGlobal('fetch', mocks.fetch);
   installFakeTurnstile();
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -179,6 +199,7 @@ afterEach(async () => {
   container.remove();
   delete (window as unknown as { turnstile?: unknown }).turnstile;
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -189,12 +210,28 @@ describe('ログイン (/login)', () => {
     typeInto('#password', PASSWORD);
   }
 
+  it('ブラウザから Supabase の signInWithPassword を直接呼ばず、POST /api/auth/login へ送る (#1165)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_TURNSTILE_SITE_KEY', '');
+    await renderPage(LoginPage);
+    await fillAndReady();
+
+    await submit();
+
+    expect(mocks.signInWithPassword).not.toHaveBeenCalled();
+    const requests = loginRequests();
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe('/api/auth/login');
+    expect(requests[0].method).toBe('POST');
+    // 成功したら、今までどおりセッションのユーザーを見て行き先を決める
+    expect(mocks.getUser).toHaveBeenCalledTimes(1);
+  });
+
   describe('Turnstile 無効 (サイトキー未設定)', () => {
     beforeEach(() => {
       vi.stubEnv('NEXT_PUBLIC_TURNSTILE_SITE_KEY', '');
     });
 
-    it('ウィジェットを出さず、送信ボタンは押せて、signInWithPassword へ今までと同じ引数 (options なし) で渡す', async () => {
+    it('ウィジェットを出さず、送信ボタンは押せて、captchaToken を付けずに送る', async () => {
       await renderPage(LoginPage);
       expect(container.querySelector('[data-testid="turnstile"]')).toBeNull();
       expect(submitButton().disabled).toBe(false);
@@ -202,11 +239,11 @@ describe('ログイン (/login)', () => {
 
       await submit();
 
-      expect(mocks.signInWithPassword).toHaveBeenCalledTimes(1);
-      const [credentials] = mocks.signInWithPassword.mock.calls[0];
-      expect(credentials).toEqual({ email: EMAIL, password: PASSWORD });
-      // options というキー自体が無いこと (undefined を入れただけではない)
-      expect(Object.keys(credentials)).toEqual(['email', 'password']);
+      const requests = loginRequests();
+      expect(requests).toHaveLength(1);
+      expect(requests[0].body).toEqual({ email: EMAIL, password: PASSWORD });
+      // captchaToken というキー自体が無いこと (undefined を入れただけではない)
+      expect(Object.keys(requests[0].body)).toEqual(['email', 'password']);
       expect(turnstileApi.render).not.toHaveBeenCalled();
     });
   });
@@ -216,17 +253,17 @@ describe('ログイン (/login)', () => {
       vi.stubEnv('NEXT_PUBLIC_TURNSTILE_SITE_KEY', SITE_KEY);
     });
 
-    it('トークンが無い間は送信ボタンが無効で、押しても Supabase を呼ばない', async () => {
+    it('トークンが無い間は送信ボタンが無効で、押しても送らない', async () => {
       await renderPage(LoginPage);
       await fillAndReady();
 
       expect(renders).toHaveLength(1);
       expect(submitButton().disabled).toBe(true);
       await submit();
-      expect(mocks.signInWithPassword).not.toHaveBeenCalled();
+      expect(mocks.fetch).not.toHaveBeenCalled();
     });
 
-    it('トークンが届くと送信できて、options.captchaToken に付けて渡す。送信後はトークンを捨てて取り直す', async () => {
+    it('トークンが届くと送信できて、本文の captchaToken に付けて送る。送信後はトークンを捨てて取り直す', async () => {
       await renderPage(LoginPage);
       await fillAndReady();
       await emitToken('tok-login-1');
@@ -234,12 +271,9 @@ describe('ログイン (/login)', () => {
 
       await submit();
 
-      expect(mocks.signInWithPassword).toHaveBeenCalledTimes(1);
-      expect(mocks.signInWithPassword).toHaveBeenCalledWith({
-        email: EMAIL,
-        password: PASSWORD,
-        options: { captchaToken: 'tok-login-1' },
-      });
+      const requests = loginRequests();
+      expect(requests).toHaveLength(1);
+      expect(requests[0].body).toEqual({ email: EMAIL, password: PASSWORD, captchaToken: 'tok-login-1' });
       // トークンは 1 回しか使えない: ウィジェットを取り直し、新しいトークンが届くまで送信できない
       expect(turnstileApi.reset).toHaveBeenCalledWith('widget-1');
       expect(submitButton().disabled).toBe(true);
@@ -247,7 +281,7 @@ describe('ログイン (/login)', () => {
       expect(submitButton().disabled).toBe(false);
     });
 
-    it('Enter キーなどでボタンを通らずに submit されても、トークンが無ければ Supabase を呼ばない', async () => {
+    it('Enter キーなどでボタンを通らずに submit されても、トークンが無ければ送らない', async () => {
       await renderPage(LoginPage);
       await fillAndReady();
 
@@ -255,12 +289,14 @@ describe('ログイン (/login)', () => {
         container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
       });
 
-      expect(mocks.signInWithPassword).not.toHaveBeenCalled();
+      expect(mocks.fetch).not.toHaveBeenCalled();
       expect(alertText()).toContain('ボットではないことの確認が終わるまで');
     });
 
-    it('Supabase が CAPTCHA の確認を断ったら日本語の文言を出し、パスワード違いのクールダウン (30 秒) は付けない', async () => {
-      mocks.signInWithPassword.mockResolvedValue({ data: {}, error: CAPTCHA_ERROR });
+    it('サーバーが CAPTCHA の確認を断ったら日本語の文言を出し、パスワード違いのクールダウン (30 秒) は付けない', async () => {
+      mocks.fetch.mockImplementation(async () =>
+        loginResponse(400, { error: CAPTCHA_FAILED_MESSAGE, code: 'AUTH_CAPTCHA_FAILED' }),
+      );
       await renderPage(LoginPage);
       await fillAndReady();
       await emitToken('tok-login-1');
@@ -268,16 +304,19 @@ describe('ログイン (/login)', () => {
       await submit();
 
       expect(alertText()).toContain(CAPTCHA_FAILED_MESSAGE);
-      expect(text()).not.toContain('captcha verification process failed');
       expect(window.localStorage.length).toBe(0);
       expect(turnstileApi.reset).toHaveBeenCalledTimes(1);
+      expect(mocks.getUser).not.toHaveBeenCalled();
     });
 
     it('パスワード違いは今までどおりの文言とクールダウンで、トークンは使い切りとして捨てる', async () => {
-      mocks.signInWithPassword.mockResolvedValue({
-        data: {},
-        error: { code: 'invalid_credentials', status: 400, message: 'Invalid login credentials' },
-      });
+      mocks.fetch.mockImplementation(async () =>
+        loginResponse(401, {
+          error: 'メールアドレスまたはパスワードが正しくありません。',
+          code: 'AUTH_INVALID_CREDENTIALS',
+          captchaRequired: false,
+        }),
+      );
       await renderPage(LoginPage);
       await fillAndReady();
       await emitToken('tok-login-1');
@@ -288,6 +327,7 @@ describe('ログイン (/login)', () => {
       expect(window.localStorage.getItem(`auth_last_fail_ts:${EMAIL}`)).toBeTruthy();
       expect(turnstileApi.reset).toHaveBeenCalledTimes(1);
       expect(submitButton().disabled).toBe(true);
+      expect(mocks.push).not.toHaveBeenCalled();
     });
 
     it('クールダウン中は送信せず、使っていないトークンは捨てない (ウィジェットを取り直さない)', async () => {
@@ -298,19 +338,80 @@ describe('ログイン (/login)', () => {
 
       await submit();
 
-      expect(mocks.signInWithPassword).not.toHaveBeenCalled();
+      expect(mocks.fetch).not.toHaveBeenCalled();
       expect(alertText()).toContain('しばらくしてから再度お試しください');
       expect(turnstileApi.reset).not.toHaveBeenCalled();
       expect(submitButton().disabled).toBe(false);
+    });
+  });
+
+  describe('ログイン失敗のロック (設計 §8)', () => {
+    beforeEach(() => {
+      vi.stubEnv('NEXT_PUBLIC_TURNSTILE_SITE_KEY', '');
+    });
+
+    it('ロック中 (423) は、残り時間と再設定の案内を出し、ログイン後の画面へ進まない', async () => {
+      mocks.fetch.mockImplementation(async () =>
+        loginResponse(423, {
+          error: 'ログインに続けて失敗したため、しばらくログインできません。パスワードを再設定すると、すぐにログインできます。',
+          code: 'AUTH_ACCOUNT_LOCKED',
+          retryAfter: 900,
+        }),
+      );
+      await renderPage(LoginPage);
+      await fillAndReady();
+
+      await submit();
+
+      expect(alertText()).toContain('しばらくログインできません');
+      expect(alertText()).toContain('パスワードを再設定すると');
+      expect(alertText()).toContain('あと約 15 分');
+      expect(mocks.getUser).not.toHaveBeenCalled();
+      expect(mocks.push).not.toHaveBeenCalled();
+    });
+
+    it('サーバーの回数制限 (429) はクールダウンを付けて「しばらくしてから」を出す', async () => {
+      mocks.fetch.mockImplementation(async () =>
+        loginResponse(429, { error: 'しばらくしてから再度お試しください。', code: 'RATE_LIMITED', retryAfter: 30 }),
+      );
+      await renderPage(LoginPage);
+      await fillAndReady();
+
+      await submit();
+
+      expect(alertText()).toContain('しばらくしてから再度お試しください。');
+      expect(window.localStorage.getItem(`auth_last_fail_ts:${EMAIL}`)).toBeTruthy();
+    });
+
+    it('通信に失敗したら「予期せぬエラー」を出す', async () => {
+      mocks.fetch.mockImplementation(async () => {
+        throw new TypeError('Failed to fetch');
+      });
+      await renderPage(LoginPage);
+      await fillAndReady();
+
+      await submit();
+
+      expect(alertText()).toContain('予期せぬエラーが発生しました');
+      expect(window.localStorage.length).toBe(0);
     });
   });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
 describe('新規登録 (/signup)', () => {
-  function fill(password = PASSWORD) {
+  /** 入力し、規約に同意する (#1174: 同意するまで登録のボタンは押せない) */
+  async function fill(password = PASSWORD) {
     typeInto('#email', EMAIL);
     typeInto('#password', password);
+    const agree = container.querySelector('#agree-legal') as HTMLInputElement;
+    expect(agree, '規約の同意のチェックボックスが見つからない').toBeTruthy();
+    if (!agree.checked) {
+      await act(async () => {
+        agree.click();
+      });
+    }
+    expect(agree.checked).toBe(true);
   }
 
   describe('Turnstile 無効 (サイトキー未設定)', () => {
@@ -321,8 +422,10 @@ describe('新規登録 (/signup)', () => {
     it('ウィジェットを出さず、signUp へ今までと同じ引数 (options は emailRedirectTo だけ) で渡す', async () => {
       await renderPage(SignupPage);
       expect(container.querySelector('[data-testid="turnstile"]')).toBeNull();
+      // 規約に同意するまでは押せない (#1174)。同意すれば、トークンを待たずに押せる
+      expect(submitButton().disabled).toBe(true);
+      await fill();
       expect(submitButton().disabled).toBe(false);
-      fill();
 
       await submit();
 
@@ -341,7 +444,7 @@ describe('新規登録 (/signup)', () => {
 
     it('トークンが無い間は送信ボタンが無効で、押しても Supabase を呼ばない', async () => {
       await renderPage(SignupPage);
-      fill();
+      await fill();
 
       expect(renders).toHaveLength(1);
       expect(submitButton().disabled).toBe(true);
@@ -351,7 +454,7 @@ describe('新規登録 (/signup)', () => {
 
     it('トークンが届くと、options.captchaToken (emailRedirectTo と同じ階層) に付けて渡し、送信後はトークンを取り直す', async () => {
       await renderPage(SignupPage);
-      fill();
+      await fill();
       await emitToken('tok-signup-1');
       expect(submitButton().disabled).toBe(false);
 
@@ -368,7 +471,7 @@ describe('新規登録 (/signup)', () => {
 
     it('パスワードの強度で弾いたときは、使っていないトークンを捨てない', async () => {
       await renderPage(SignupPage);
-      fill('short');
+      await fill('short');
       await emitToken('tok-signup-1');
 
       await submit();
@@ -381,7 +484,7 @@ describe('新規登録 (/signup)', () => {
     it('Supabase が CAPTCHA の確認を断ったら、英語の生のエラー文ではなく日本語の文言を出す', async () => {
       mocks.signUp.mockResolvedValue({ data: { user: null, session: null }, error: CAPTCHA_ERROR });
       await renderPage(SignupPage);
-      fill();
+      await fill();
       await emitToken('tok-signup-1');
 
       await submit();
@@ -393,7 +496,7 @@ describe('新規登録 (/signup)', () => {
 
     it('登録できたら確認メール画面へ進む (Turnstile を入れても流れは変わらない)', async () => {
       await renderPage(SignupPage);
-      fill();
+      await fill();
       await emitToken('tok-signup-1');
 
       await submit();

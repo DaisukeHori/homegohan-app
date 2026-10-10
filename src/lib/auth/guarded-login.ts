@@ -47,6 +47,8 @@ export interface GuardedLoginDeps {
   verifyCaptcha(token: string | undefined): Promise<TurnstileVerifyResult>;
   /** 段にちょうど届いたときの通知 (待たずに後ろで動かしてよい) */
   notify(input: { email: string; notice: LoginLockNotice; failureCount: number; lockedUntil: Date }): void;
+  /** ログインに成功したのに、失敗の記録を消せなかったとき (ログに残す) */
+  onClearFailed(error: unknown): void;
   now(): Date;
 }
 
@@ -109,7 +111,15 @@ export async function performGuardedLogin(input: GuardedLoginInput, deps: Guarde
   });
 
   if (!error) {
-    if (before.failureCount > 0) await clearLoginFailures(deps.lockStore, input.email);
+    if (before.failureCount > 0) {
+      // セッションはもう作られている (Cookie を付けた)。記録を消せなくてもログインは成功のまま返す
+      // (500 にすると、ログインできているのに「失敗」と見える)。残った回数は次の成功・再設定で消える
+      try {
+        await clearLoginFailures(deps.lockStore, input.email);
+      } catch (clearError) {
+        deps.onClearFailed(clearError);
+      }
+    }
     return { kind: 'signed-in' };
   }
 
