@@ -1,14 +1,13 @@
 /**
  * Supabase Edge Functions smoke tests
  *
- * 対象 function (7 個):
+ * 対象 function (6 個):
  *   1. generate-hint           — requireAuth (Supabase JWT)
  *   2. analyze-fridge          — requireAuth (Supabase JWT)
- *   3. generate-health-insights — Authorization header → 401
- *   4. analyze-meal-photo      — Authorization header → 401
- *   5. knowledge-gpt           — Authorization header → 401, GET → 405
- *   6. normalize-shopping-list — 認証なし、ingredients 配列必須
- *   7. regenerate-shopping-list-v2 — 認証なし(内部 service role)、必須フィールド → 400
+ *   3. analyze-meal-photo      — Authorization header → 401
+ *   4. knowledge-gpt           — Authorization header → 401, GET → 405
+ *   5. normalize-shopping-list — 認証なし、ingredients 配列必須
+ *   6. regenerate-shopping-list-v2 — 認証なし(内部 service role)、必須フィールド → 400
  *
  * 実行前提:
  *   SUPABASE_INTEGRATION_TEST=1
@@ -174,25 +173,7 @@ if (!shouldRunIntegration()) {
   });
 
   // ---------------------------------------------------------------------------
-  // 3. generate-health-insights
-  // ---------------------------------------------------------------------------
-  describe('generate-health-insights', () => {
-    it('未認証 → 401', async () => {
-      const res = await invoke('generate-health-insights', { body: {} });
-      expect([401, 403]).toContain(res.status);
-    });
-
-    it('不正トークン → 401', async () => {
-      const res = await invoke('generate-health-insights', {
-        body: {},
-        authToken: 'bad_token_here',
-      });
-      expect([401, 403]).toContain(res.status);
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // 4. analyze-meal-photo
+  // 3. analyze-meal-photo
   // ---------------------------------------------------------------------------
   describe('analyze-meal-photo', () => {
     it('未認証 → 401', async () => {
@@ -210,7 +191,7 @@ if (!shouldRunIntegration()) {
   });
 
   // ---------------------------------------------------------------------------
-  // 5. knowledge-gpt
+  // 4. knowledge-gpt
   // ---------------------------------------------------------------------------
   describe('knowledge-gpt', () => {
     it('未認証 → 401', async () => {
@@ -228,7 +209,7 @@ if (!shouldRunIntegration()) {
   });
 
   // ---------------------------------------------------------------------------
-  // 6. normalize-shopping-list
+  // 5. normalize-shopping-list
   //    config.toml に verify_jwt 設定なし = デフォルト true (JWT ゲートウェイ認証)
   //    → 未認証リクエストはゲートウェイが 401 を返す
   // ---------------------------------------------------------------------------
@@ -261,7 +242,7 @@ if (!shouldRunIntegration()) {
   });
 
   // ---------------------------------------------------------------------------
-  // 7. regenerate-shopping-list-v2
+  // 6. regenerate-shopping-list-v2
   //    config.toml に verify_jwt 設定なし = デフォルト true (JWT ゲートウェイ認証)
   //    → 未認証リクエストはゲートウェイが 401 を返す
   // ---------------------------------------------------------------------------

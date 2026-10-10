@@ -725,12 +725,10 @@ describe("配線の契約: ロガーはサニタイザを通してから app_log
     expect(offenders).toEqual([]);
   });
 
-  it("generate-menu-v5 / generate-health-insights: userId が無いときはユーザーなしのロガーで記録する", () => {
+  it("generate-menu-v5: userId が無いときはユーザーなしのロガーで記録する", () => {
     // (userId ? logger.withUser(userId) : logger).error(...) の形。変数名が変わっても通る
     const menu = code("supabase/functions/generate-menu-v5/index.ts");
     const menuMatches = menu.match(/\(userId \? (\w+)\.withUser\(userId\) : \1\)\.error\(/g) ?? [];
     expect(menuMatches).toHaveLength(2);
-    const insights = code("supabase/functions/generate-health-insights/index.ts");
-    expect(insights).toMatch(/\(_userId \? (\w+)\.withUser\(_userId\) : \1\)\.error\(/);
   });
 });

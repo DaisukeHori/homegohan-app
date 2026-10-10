@@ -259,7 +259,6 @@ const USER_FACING_SOURCES = [
   "supabase/functions/analyze-fridge/index.ts",
   "supabase/functions/analyze-health-photo/index.ts",
   "supabase/functions/analyze-meal-photo/index.ts",
-  "supabase/functions/generate-health-insights/index.ts",
   "supabase/functions/generate-hint/index.ts",
   "supabase/functions/generate-menu-v4/index.ts",
   "supabase/functions/generate-menu-v5/index.ts",

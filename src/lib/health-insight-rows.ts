@@ -4,12 +4,14 @@
 // low / medium / high / critical) を入れ、NOT NULL で既定値の無い analysis_date / period_start / period_end /
 // period_type / summary を入れていなかった。insert は必ず失敗し、画面の「AIインサイトを生成」は常に 500 になっていた。
 //
-// 列の形は Edge Function generate-health-insights (supabase/functions/generate-health-insights/index.ts) の保存と揃える:
-//   - analysis_date / period_start / period_end は JST の暦日 (YYYY-MM-DD)。#1407 で Edge Function を JST 化したのと同じ考え方
-//   - 期間は「JST の今日を終了日に、そこから N 日さかのぼった日を開始日」とする (calculateJstLookbackPeriod と同じ結果)
+// 列の形:
+//   - analysis_date / period_start / period_end は JST の暦日 (YYYY-MM-DD)。#1407 で日付を JST にそろえたのと同じ考え方
+//   - 期間は「JST の今日を終了日に、そこから N 日さかのぼった日を開始日」とする
 //   - 本文は summary、優先度は low / medium / high / critical の文字列、おすすめは recommendations (text[])
-// Edge Function の _shared は Deno 用で Next.js からは import しないので、Web 側の JST の関数 (packages/shared の
-// formatLocalDate) を使い、同じ結果になることを tests/health-insight-rows.test.ts で確かめる。
+// 暦日は Web 側の JST の関数 (packages/shared の formatLocalDate) で求め、境界 (JST 0:00〜8:59・年末・うるう日) を
+// tests/health-insight-rows.test.ts で確かめる。
+// 以前は Edge Function generate-health-insights も同じ形の行を組み立てていたが、どこからも呼ばれていなかったので
+// #1440 で削除した。健康インサイトを書き込むのはこのファイルを使う POST /api/health/insights だけ。
 //
 // 行の型は src/types/database.types.ts の health_insights の Insert 型にしている。存在しない列を書いたり、
 // NOT NULL の列を書き忘れたりすると、型検査 (npm run typecheck) で止まる。
@@ -24,16 +26,17 @@ const JST_TIME_ZONE = 'Asia/Tokyo';
 
 /**
  * 分析する期間の、終了日 (JST の今日) から開始日までさかのぼる日数。期間は開始日と終了日の両方を含む。
- * Edge Function generate-health-insights の monthly (MONTHLY_LOOKBACK_DAYS) と同じ 30 日。
+ * 30 日 (period_type は monthly)。
  */
 export const HEALTH_INSIGHT_LOOKBACK_DAYS = 30;
 
-/** 上の期間を表す period_type。Edge Function で 30 日さかのぼる期間は monthly */
+/** 上の期間 (30 日さかのぼる) を表す period_type */
 export const HEALTH_INSIGHT_PERIOD_TYPE = 'monthly';
 
 /** LLM に作らせる insight_type。これ以外が返ってきたら FALLBACK_INSIGHT_TYPE にする */
 export const GENERATED_INSIGHT_TYPES = ['nutrition', 'activity', 'sleep', 'checkup', 'trend', 'goal'] as const;
-const FALLBACK_INSIGHT_TYPE = 'trend';
+export type GeneratedInsightType = (typeof GENERATED_INSIGHT_TYPES)[number];
+const FALLBACK_INSIGHT_TYPE: GeneratedInsightType = 'trend';
 
 /** health_insights.priority の CHECK 制約 (health_insights_priority_check) が許す値 */
 export const HEALTH_INSIGHT_PRIORITIES = ['low', 'medium', 'high', 'critical'] as const;
@@ -54,7 +57,7 @@ const YMD_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * 暦日 (YYYY-MM-DD) から offsetDays 日ずらした暦日を返す。暦の計算だけを UTC の関数で行うので、
- * 実行環境のタイムゾーンやサマータイムに左右されない (Edge Function 側の addDaysToDate と同じ考え方)。
+ * 実行環境のタイムゾーンやサマータイムに左右されない (Edge Functions 側の _shared/jst-date.ts の addDaysToDate と同じ考え方)。
  */
 function shiftDay(day: string, offsetDays: number): string {
   if (!YMD_PATTERN.test(day)) {
@@ -96,7 +99,8 @@ export interface GeneratedInsight {
   recommendations?: unknown;
 }
 
-function isGeneratedInsightType(value: unknown): value is (typeof GENERATED_INSIGHT_TYPES)[number] {
+/** 保存する insight_type の一覧 (GENERATED_INSIGHT_TYPES) にある値か。画面のアイコンの引き当てにも使う (#1440) */
+export function isGeneratedInsightType(value: unknown): value is GeneratedInsightType {
   return typeof value === 'string' && (GENERATED_INSIGHT_TYPES as readonly string[]).includes(value);
 }
 

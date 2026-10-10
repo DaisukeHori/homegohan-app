@@ -9,7 +9,7 @@
 //
 // 暦日は packages/shared の formatLocalDate (Asia/Tokyo) で求め、日数のずらしは addDaysToDate (暦の計算だけ) で行う。
 // どちらも実行環境のタイムゾーンに左右されない。Edge Functions 側の同じ考え方の関数は
-// supabase/functions/_shared/jst-date.ts (todayJst / addDaysToDate / calculateJstLookbackPeriod)。
+// supabase/functions/_shared/jst-date.ts (todayJst / addDaysToDate)。
 // timestamptz の列 (created_at など) を JST の暦日で絞るときは、日付の文字列をそのまま渡さず (DB は UTC の 0 時 = JST 9 時と読む)、
 // jstDayRangeTimestamps (開始日・終了日のどちらかが空欄になりうるときは jstOptionalDayRangeTimestamps) で JST 0 時の時刻にしてから渡す
 // (終了日を 'T23:59:59Z' で閉じる書き方も UTC の 23:59:59 = JST の翌日 8:59:59 になるので使わない。tests/jst-today-source-scan.test.ts の規則 F)。

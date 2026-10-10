@@ -8,7 +8,6 @@ const migratedTargets = [
   "supabase/functions/analyze-fridge/index.ts",
   "supabase/functions/normalize-shopping-list/index.ts",
   "supabase/functions/regenerate-shopping-list-v2/index.ts",
-  "supabase/functions/generate-health-insights/index.ts",
   "supabase/functions/create-derived-recipe/index.ts",
   "supabase/functions/knowledge-gpt/index.ts",
   "supabase/functions/_shared/catalog-llm.ts",
