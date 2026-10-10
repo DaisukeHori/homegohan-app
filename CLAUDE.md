@@ -90,7 +90,7 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 
 ### AI の利用回数の記録
 
-`src/lib/plan/entitlements.ts` に集約する (#1177)。AI を使う API ルートは、認証と `checkRateLimit` の直後に、ユーザーの 1 回の操作につき 1 回 `consumeAiQuota(user.id, feature)` を呼び、`!quota.allowed` なら `aiQuotaExceededResponse(quota)` (429。`AI_DAILY_LIMIT` / `AI_MONTHLY_LIMIT`。レート制限の `RATE_LIMITED` とは別) を返す。AI を実際に呼ばない経路 (キャッシュを返すだけなど) では呼ばない。いまは全プランの上限が NULL (無制限) なので止まらず、回数を数えるだけ。DB の関数が失敗しても記録して許可する (止めない。海外の AI へ送る処理は止めない、というオーナー方針)。プランは `get_effective_plan` (個人の契約 -> 家族 -> 組織 -> `free`)、上限は `ai_plan_limits`、回数は `ai_usage_counters` (JST の日付)。
+`src/lib/plan/entitlements.ts` に集約する (#1177)。AI を使う API ルートは、AI 事業者へ送る直前 (認証・`checkRateLimit`・入力の検証などの判定をすべて通ったあと) に、ユーザーの 1 回の操作につき 1 回 `consumeAiQuota(user.id, feature)` を呼び、`!quota.allowed` なら `aiQuotaExceededResponse(quota)` (429。`AI_DAILY_LIMIT` / `AI_MONTHLY_LIMIT`。レート制限の `RATE_LIMITED` とは別) を返す。AI を実際に呼ばない経路 (キャッシュを返すだけなど) では呼ばない。いまは全プランの上限が NULL (無制限) なので止まらず、回数を数えるだけ。DB の関数が失敗しても記録して許可する (記録は best-effort。記録の失敗で AI の機能を止めない)。プランは `get_effective_plan` (個人の契約 -> 家族 -> 組織 -> `free`)、上限は `ai_plan_limits`、回数は `ai_usage_counters` (JST の日付)。
 
 - Edge Function は、ユーザーの JWT を確かめた経路で `consumeEdgeAiQuota` (`supabase/functions/_shared/quota.ts`) を呼ぶ。service role / cron の経路では呼ばない (Next.js が数え済み)。
 - Next.js が Edge Function を**ユーザーの JWT で**呼ぶとき (`supabase.functions.invoke`) は、`headers: await aiQuotaCountedHeaders(user.id)` を付ける (署名つきの印。付けないと Edge 側でも数えて二重になる)。

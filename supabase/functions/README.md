@@ -248,7 +248,7 @@ AI を使う処理は、プランの上限と比べるために、利用回数�
 - **ユーザーの JWT を確かめる関数**（`requireAuth` / `auth.getUser`）は、確かめたのと同じブロックの中で `consumeEdgeAiQuota(req, userId, feature)`（`_shared/quota.ts`）を呼びます。Next.js の API ルートを経由せず、ユーザーの JWT で直接呼ばれた場合に、回数がすり抜けないようにするためです（#1153）。
 - **service role / cron で呼ばれる経路では呼びません。** Next.js の API ルートが数え済みです（献立生成・AI 相談・買い物リスト・料理画像）。献立生成のキュー（`weekly_menu_requests`）は、積む時点（`POST /api/ai/menu/v5/generate`）で数えます。
 - **Next.js がユーザーの JWT で呼ぶ関数**（写真解析の `analyze-meal-photo` / `analyze-health-photo`、AI 相談のアクション実行が呼ぶ `generate-menu-v4` / `v5`）は、Next.js が `x-hg-ai-quota-counted` ヘッダー（service role key で署名した印。5 分以内・同じユーザーのときだけ有効）を付けて呼びます。印が合えば、Edge 側では数えません。印を検証できなければ数える側に倒します（二重に数えるだけで、AI の利用は止まりません）。
-- **失敗しても止めません。** DB の関数が失敗しても（エラー・応答が 3 秒を超える・この migration が未適用）、`app_logs` に記録して許可します。海外の AI へ送る処理を止めない、というオーナーの方針（2026-10-08）です。
+- **失敗しても止めません。** DB の関数が失敗しても（エラー・応答が 3 秒を超える・この migration が未適用）、`app_logs` に記録して許可します。記録は best-effort で、記録の失敗で AI の機能そのものを止めません。
 - 上限を超えたときの 429 は `{ code: 'AI_DAILY_LIMIT' | 'AI_MONTHLY_LIMIT' }`（`aiQuotaExceededResponse`）。レート制限の 429（`RATE_LIMITED`）とは別です。
 - `tests/ai-quota-contract.test.ts` が、ユーザーの JWT を確かめる関数に数え忘れが無いこと（新しい関数を足したときも）を検査します。
 

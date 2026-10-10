@@ -188,6 +188,20 @@ const EDGE_USER_JWT_FUNCTIONS: Record<string, readonly Feature[]> = Object.fromE
 const CRON_ENTRYPOINTS: Record<string, string> = {
   'vercel:/api/cron/process-menu-queue': 'キューに積まれた献立生成を実行する (積む時点の POST /api/ai/menu/v5/generate で数え済み。route は AI_QUOTA_EXEMPT)',
   'pg_cron:calculate-segment-stats': 'セグメント統計の集計 (AI を使わない)',
+  // DB の関数が、名前を引数で受け取って Edge Function を呼ぶもの (pg_cron のジョブ・運営の手動実行から呼ばれ得る)
+  'pg_net:invoke_catalog_import':
+    'コンビニ商品カタログの取り込み (import-*-catalog の 5 つに限る。どれも service-ai)。cron のシークレットで呼ぶ運営の処理で、利用者の AI 利用ではない',
+};
+
+/** pg_net の入口 (DB の関数) が呼び得る Edge Function。どれも user-jwt ではないこと */
+const PG_NET_CALLEES: Record<string, readonly string[]> = {
+  'pg_net:invoke_catalog_import': [
+    'import-seven-eleven-catalog',
+    'import-familymart-catalog',
+    'import-lawson-catalog',
+    'import-natural-lawson-catalog',
+    'import-ministop-catalog',
+  ],
 };
 
 const RATE_LIMIT_AI_CATEGORIES = new Set(['analysis', 'generation', 'image']);
@@ -928,6 +942,13 @@ function scanCronEntrypoints(): string[] {
     if (!name.endsWith('.sql') || name.endsWith('.down.sql')) continue;
     const sql = fs.readFileSync(path.join(migrationsDir, name), 'utf-8').replace(/--.*$/gm, '');
     for (const match of sql.matchAll(/functions\/v1\/([a-z0-9-]+)/g)) entries.add(`pg_cron:${match[1]}`);
+    // 名前を文字列の連結で決める呼び出し ('.../functions/v1/' || p_function_name) は、名前が読めないので、
+    // それを含む DB の関数の名前で一覧と突き合わせる (呼ばれ得る Edge Function は、CRON_ENTRYPOINTS の説明に書く)
+    for (const match of sql.matchAll(/functions\/v1\/'\s*\|\|/g)) {
+      const before = sql.slice(0, match.index);
+      const fnNames = [...before.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+"?public"?\."?([a-z0-9_]+)"?/gi)];
+      entries.add(`pg_net:${fnNames.length > 0 ? fnNames[fnNames.length - 1][1] : '?'}`);
+    }
   }
   return [...entries].sort();
 }
@@ -1012,7 +1033,29 @@ describe('AI 利用回数の記録 (#1177): Edge Functions', () => {
   });
 });
 
+/** DB の関数 (migration の CREATE FUNCTION) の本文のうち、呼び先の許可リスト (NOT IN (...)) にある名前。最後の定義を正とする */
+function pgNetAllowedCallees(sqlFunctionName: string): string[] {
+  let latest: string[] = [];
+  const migrationsDir = path.join(ROOT, 'supabase/migrations');
+  for (const name of fs.readdirSync(migrationsDir).sort()) {
+    if (!name.endsWith('.sql') || name.endsWith('.down.sql')) continue;
+    const sql = fs.readFileSync(path.join(migrationsDir, name), 'utf-8').replace(/--.*$/gm, '');
+    const pattern = new RegExp(`CREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+"?public"?\\."?${sqlFunctionName}"?[\\s\\S]*?\\$\\$([\\s\\S]*?)\\$\\$`, 'gi');
+    for (const match of sql.matchAll(pattern)) {
+      const allowList = match[1].match(/NOT\s+IN\s*\(([^)]*)\)/i);
+      latest = allowList ? [...allowList[1].matchAll(/'([a-z0-9-]+)'/g)].map((m) => m[1]) : ['?'];
+    }
+  }
+  return latest.sort();
+}
+
 describe('AI 利用回数の記録 (#1177): 定期実行 (cron) の入口', () => {
+  it('pg_net の入口 (DB の関数) が呼び得る Edge Function は、migration の許可リストと一致する', () => {
+    for (const [entry, callees] of Object.entries(PG_NET_CALLEES)) {
+      expect(pgNetAllowedCallees(entry.slice('pg_net:'.length)), entry).toEqual([...callees].sort());
+    }
+  });
+
   it('定期実行の入口の全数は CRON_ENTRYPOINTS の一覧どおり', () => {
     expect(scanCronEntrypoints()).toEqual(Object.keys(CRON_ENTRYPOINTS).sort());
   });
@@ -1025,6 +1068,13 @@ describe('AI 利用回数の記録 (#1177): 定期実行 (cron) の入口', () =
         expect(analyses.has(file), `${file} が無い`).toBe(true);
         if (aiRoutes.includes(file)) expect(file in AI_QUOTA_EXEMPT, `${file} は AI_QUOTA_EXEMPT に載せること`).toBe(true);
         expect(analyses.get(file)!.consumeCalls.length, `${file} は数えない`).toBe(0);
+      } else if (entry.startsWith('pg_net:')) {
+        const callees = PG_NET_CALLEES[entry];
+        expect(callees, `${entry}: 呼び得る Edge Function を PG_NET_CALLEES に書くこと`).toBeDefined();
+        for (const name of callees) {
+          expect(EDGE_FUNCTIONS[name], `${name} が EDGE_FUNCTIONS に無い`).toBeDefined();
+          expect(EDGE_FUNCTIONS[name].kind, `${name} は cron のシークレットで呼ばれるので user-jwt ではない`).not.toBe('user-jwt');
+        }
       } else {
         const name = entry.slice('pg_cron:'.length);
         expect(EDGE_FUNCTIONS[name], `${name} が EDGE_FUNCTIONS に無い`).toBeDefined();
