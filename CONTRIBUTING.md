@@ -87,7 +87,7 @@ bash scripts/local-ci.sh --keep                   # 作業用の worktree を残
 
 - Node は `.nvmrc` の major (22)。違う版だと赤で止まり、入れ方を表示します (`nvm install 22 && nvm use 22` など)。
 - `integration` / `e2e` は Docker が要ります。ローカル Supabase は段ごとに `scripts/supabase-local.sh` で起動・停止します。
-- `integration` / `e2e` の前に、ポート 3000 (`e2e` は 3001・3002 も) とローカル Supabase のポート (54320〜54329) が空いているかを確かめ、塞がっていれば赤で止まります (他のプロセスやコンテナは止めません)。開発用の `npm run dev` やローカル Supabase を止めてから回してください。ポートは枠 0 の値で、枠 1 以上では下の「同時に複数回す (枠)」のとおりずれます。
+- `integration` / `e2e` の前に、ポート 3000 (`e2e` は 3001・3002 も) とローカル Supabase のポート (54320〜54329) が空いているかを確かめます (他のプロセスやコンテナは止めません)。ポートは枠 0 の値で、枠 1 以上では下の「同時に複数回す (枠)」のとおりずれます。枠を取ったときにそのポートを `local-ci.sh` 以外 (開発用の `npm run dev`・手で起動したローカル Supabase・macOS の常駐など) が使っていれば、その枠を外して次の候補の枠を使います。候補の枠のどれもポートを使われていて、ほかの `local-ci.sh` が持っている枠も無い (待っても空く見込みが無い) ときは、待たずに表に `slot:ports` の行 (使用中のポート) を出して赤 (終了コード 1) で止まります。使っているものを止めるか、`LOCAL_CI_SLOTS` に別の枠を足して回し直してください。
 
 **同時に複数回す (枠)**
 
@@ -101,9 +101,10 @@ LOCAL_CI_SLOT=1 bash scripts/local-ci.sh          # 枠 1 だけを使う (空�
 | 枠 | `project_id` (コンテナ・ボリューム名の元) | ローカル Supabase のポート | Next のポート (既定 / 同意の強制あり / お知らせあり) |
 |---|---|---|---|
 | 0 (既定。CI と同じ) | `homegohan-local` | 54320〜54329 (CLI の既定: API 54321・DB 54322 など) | 3000 / 3001 / 3002 |
-| n (1〜9) | `homegohan-local-s<n>` | 0 の値 + n × 100 (例: 枠 1 は API 54421・DB 54422) | 0 の値 + n × 10 (例: 枠 1 は 3010 / 3011 / 3012) |
+| n (1〜9) | `homegohan-local-s<n>` | 0 の値 + n × 100 (例: 枠 1 は API 54421・DB 54422) | 3100 + n × 10 からの 3 つ (例: 枠 1 は 3110 / 3111 / 3112、枠 3 は 3130 / 3131 / 3132) |
 
-- 値の表の正本は `scripts/lib/local-ci-slot.sh` です (`bash scripts/lib/local-ci-slot.sh 1` で枠 1 の値を表示)。`tests/local-ci-slot.test.ts` が、枠 0 が今までの値のままであることと、枠どうしで重ならないことを確かめます。
+- 値の表の正本は `scripts/lib/local-ci-slot.sh` です (`bash scripts/lib/local-ci-slot.sh 1` で枠 1 の値を表示)。`tests/local-ci-slot.test.ts` が、枠 0 が今までの値のままであることと、枠どうしで重ならないこと、macOS が既定で使うポート (Apple の [TCP and UDP ports used by Apple software products](https://support.apple.com/en-us/103229) の表) と重ならないことを確かめます。
+- 枠 1 以上の Next のポートを枠 0 (3000 台の頭) と別の帯 (3100 台) に置くのは、macOS の既定のポートを避けるためです。以前の「0 の値 + n × 10」では枠 3 の 2 つ目が 3031 になり、Remote Apple Events (eppc) の待ち受け (launchd が持つ) と重なって、枠 3 の `e2e` が毎回「使用中のポート 3031」で赤になっていました。
 - CI の yml は `scripts/supabase-local.sh` を枠を指定せずに呼ぶので、枠 0 (今までと同じ `config.toml`) で動きます。
 - 手で `LOCAL_CI_SLOT=1 bash scripts/supabase-local.sh start` のようにも使えます。作業ディレクトリは枠ごとに分かれます (枠 0 は今までどおり `.supabase-local/`、枠 n は `.supabase-local-s<n>/`)。`stop` / `status` / `env` は組み立て直さずにその枠の作業ディレクトリを使うので、**起動したときと同じ `LOCAL_CI_SLOT` を付けて**打ちます (作業ディレクトリの `config.toml` が別の枠のものなら、何もせずに止まります)。手で使うときは枠のロックを取らないので、同時に回る `local-ci.sh` の `LOCAL_CI_SLOTS` に入っていない枠を使ってください。
 - 枠は `integration` / `e2e` の直前に取り、終わったら (Ctrl-C や途中の失敗でも) 外します。`secrets` / `unit` / `mobile` だけなら取りません。ロックは `LOCAL_CI_LOCK_DIR` (既定 `${TMPDIR:-/tmp}/homegohan-local-ci-locks`) の下の `slot-<n>/` で、持ち主の pid と開始時刻を `owner` に書きます。持ち主が生きているか確かめられないとき (`ps` が動かないなど) は生きているとみなします。持ち主のプロセスが死んでいれば次の実行が回収し、**回収したときに限り**、その枠に残ったコンテナ・ボリュームも片付けます (枠 1 以上だけ。枠 0 は枠を使わない作業と共有しているので止めません)。回収していない (空いていた) 枠に、その枠の `project_id` のコンテナやボリュームがあれば (ロックを取らずに手で起動したスタックなど)、消さずに `integration:setup` / `e2e:setup` を赤にして止まります。
@@ -149,6 +150,8 @@ LOCAL_CI_SLOT=1 bash scripts/local-ci.sh          # 枠 1 だけを使う (空�
 | `LOCAL_CI_SLOT_MEMORY_MIB` | 1 枠の Docker のメモリの目安 (MiB。既定 1536)。空きが少なければ警告 |
 | `LOCAL_CI_PLAYWRIGHT_WITH_DEPS=1` | `playwright install` に `--with-deps` を付ける (Linux で OS の依存も入れる。root 権限が要る) |
 | `LOCAL_CI_TOOLS` | gitleaks の配布物の置き場 (既定 `${XDG_CACHE_HOME:-$HOME/.cache}/homegohan-local-ci`) |
+| `INTEGRATION_TEST_TIMEOUT_MS` / `INTEGRATION_HOOK_TIMEOUT_MS` | 結合テストの 1 件のテスト / フックの時間切れ (ミリ秒。既定はどちらも 120000。`vitest.integration.config.ts`)。`local-ci.sh` もそのまま結合テストに渡す。個別に時間切れを書いたテストはそちらが優先 |
+| `INTEGRATION_AUTH_RETRY_ATTEMPTS` / `INTEGRATION_AUTH_RETRY_BASE_DELAY_MS` | 結合テストがローカル Supabase の認証 (`/auth/v1`) のゲートウェイの一時的な失敗 (502 / 503 / 504・接続の失敗) をやり直すときの、1 回の呼び出しで送る回数 (既定 5) と最初の間隔 (ミリ秒。既定 2000。以後は倍にして 16000 で止める)。`tests/integration/helpers/auth-transient-retry.ts`。`local-ci.sh` もそのまま結合テストに渡す |
 
 **ローカルでは再現できないもの**: migration を含む PR の Deploy Supabase Migrations の PR ジョブ (本番台帳とのドリフト検知) は本番に接続するため、このスクリプトでは回しません。security.yml の dependency review (依存を変える PR で、high 以上の既知の脆弱性がある版を入れていないか) は GitHub の Dependency graph を使うため回しません。依存を変える PR は CI のこのジョブの緑を待ってからマージします。また CI のランナーは Linux なので、OS に依存する違い (ファイル名の大文字小文字など) は残ります。
 
@@ -191,6 +194,7 @@ npx vitest run --config vitest.integration.config.ts tests/integration/rls tests
 - dev サーバを別のポートで起動したときは `INTEGRATION_BASE_URL=http://localhost:3001` を付けて実行します。
 - `supabase start` / `supabase db reset` をリポジトリの `supabase/` に対して直接実行しないでください。必ず `scripts/supabase-local.sh` を経由します (理由は [CLAUDE.md](./CLAUDE.md) の「ローカル / CI の Supabase」)。
   migration を追加・変更したら `bash scripts/supabase-local.sh reset` で作り直します。
+- 結合テストのプロセスは、ローカル Supabase の認証 (`/auth/v1`) への要求がゲートウェイの一時的な失敗 (502 / 503 / 504・接続の失敗) になったときだけ、間を空けてやり直します (`tests/integration/setup.ts` が `tests/integration/helpers/auth-transient-retry.ts` を取り付ける)。負荷が高い機械で、beforeAll のユーザー作成・サインインが `{}` というメッセージのエラーで落ちたためです。アプリ (`next dev`) への要求・認証以外 (REST など)・認証の判定 (400 / 422 / 429 など) はやり直さず、やり尽くしたら最後の失敗をそのまま返します。
 - テストは自分で作ったデータを後片付けしますが、途中で中断するとローカル DB にデータが残ることがあります。そのときは `bash scripts/supabase-local.sh reset` で戻します。
 - CI では `.github/workflows/security-regression.yml` が同じ手順で `tests/integration/rls`・`tests/integration/security`・`tests/integration/handson-tour`・`tests/integration/operator` (運営コンソール API。`admin-*` / `auth-boundary` / `super-admin-*`) を実行します。
   実行するファイルは vitest に渡すパスの文字列 (部分一致) で選んでいるため、新しい結合テストを足すときは、ファイル名を既存の指定に合わせてください。どの指定にも当たらないファイルは CI で動かないので、`tests/integration-ci-coverage.test.ts` が検出して落ちます。

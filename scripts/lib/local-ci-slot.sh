@@ -4,7 +4,8 @@
 # =====================================================================
 # 同じ機械で local-ci.sh を同時に複数回すため、ローカル Supabase と Next のポート・コンテナ名を枠ごとにずらす。
 #   - 枠 0 は今までと同じ値 (CI の .github/workflows/* は枠を指定しないので枠 0 になる。生成物も変えない)
-#   - 枠 n (1 以上) は、Supabase のポートを n × LCS_SUPABASE_PORT_STRIDE、Next のポートを n × LCS_NEXT_PORT_STRIDE ずらし、
+#   - 枠 n (1 以上) は、Supabase のポートを n × LCS_SUPABASE_PORT_STRIDE ずらし、Next のポートを枠 0 と別の帯
+#     (LCS_SLOT_APP_PORT_BAND_BASE + n × LCS_NEXT_PORT_STRIDE から 3 つ) に置き、
 #     project_id (コンテナ・ボリューム・ネットワークの名前の元) に -s<n> を付ける
 #
 # 使い方:
@@ -22,6 +23,14 @@ readonly LCS_SLOT_MAX=9
 readonly LCS_SUPABASE_PORT_STRIDE=100
 # 枠ごとに Next のポートをずらす幅。1 枠で 3 つ (既定 / 同意の強制あり / お知らせあり) 使うので、10 ずつずらす
 readonly LCS_NEXT_PORT_STRIDE=10
+# 枠 1 以上の Next のポートの帯の起点。枠 n の 3 つは LCS_SLOT_APP_PORT_BAND_BASE + n × LCS_NEXT_PORT_STRIDE + (0 / 1 / 2)
+# (枠 1 は 3110〜3112、枠 9 は 3190〜3192)。枠 0 (3000〜3002。CI と同じ) はこの帯を使わない。
+# 以前は枠 0 の値 + n × 10 (3010〜3092) で、枠 3 の 2 つ目が 3031 になっていた。3031 は macOS が既定で開く
+# Remote Apple Events (eppc) のポートで、2026-10-10 に M2 では launchd (pid 1) が LISTEN しており、枠 3 の e2e が毎回
+# 「使用中のポート 3031」で赤になった。Apple が文書にしている既定のポート (「TCP and UDP ports used by Apple software products」
+# https://support.apple.com/en-us/103229) の 3000 台は 3031 (eppc)・3283 (Apple Remote Desktop)・3284 / 3285 (Classroom)・
+# 3689 (DAAP)・3690 (svn) で、この帯 (3110〜3192) はどれとも重ならない (tests/local-ci-slot.test.ts がその表と突き合わせる)
+readonly LCS_SLOT_APP_PORT_BAND_BASE=3100
 
 # 枠 0 の project_id (scripts/supabase-local.sh が今まで使ってきた名前)
 readonly LCS_PROJECT_ID_BASE="homegohan-local"
@@ -61,7 +70,9 @@ local_ci_slot_valid() {
 
 local_ci_slot_apply() {
   local slot="$((10#$1))"
-  local sp="$((slot * LCS_SUPABASE_PORT_STRIDE))" np="$((slot * LCS_NEXT_PORT_STRIDE))"
+  local sp="$((slot * LCS_SUPABASE_PORT_STRIDE))" app_base="$LCS_APP_PORT_BASE"
+  # 枠 1 以上の Next は別の帯に置く (枠 0 の 3 つのポートの並び (既定 / 強制あり / お知らせあり) はそのまま保つ)
+  if [ "$slot" -ne 0 ]; then app_base="$((LCS_SLOT_APP_PORT_BAND_BASE + slot * LCS_NEXT_PORT_STRIDE))"; fi
   if [ "$slot" -eq 0 ]; then
     SLOT_PROJECT_ID="$LCS_PROJECT_ID_BASE"
   else
@@ -85,9 +96,9 @@ local_ci_slot_apply() {
     ports="$ports${ports:+ }$p"
   done
   SLOT_SUPABASE_PORTS="$ports"
-  SLOT_APP_PORT="$((LCS_APP_PORT_BASE + np))"
-  SLOT_ENFORCED_APP_PORT="$((LCS_ENFORCED_APP_PORT_BASE + np))"
-  SLOT_NOTICE_APP_PORT="$((LCS_NOTICE_APP_PORT_BASE + np))"
+  SLOT_APP_PORT="$app_base"
+  SLOT_ENFORCED_APP_PORT="$((app_base + LCS_ENFORCED_APP_PORT_BASE - LCS_APP_PORT_BASE))"
+  SLOT_NOTICE_APP_PORT="$((app_base + LCS_NOTICE_APP_PORT_BASE - LCS_APP_PORT_BASE))"
 }
 
 # scripts/supabase-local.sh の作業ディレクトリ (リポジトリの直下からの相対パス)。枠 0 は今までと同じ .supabase-local、
