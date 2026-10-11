@@ -9,7 +9,7 @@ import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
 import { cancelPendingMealImageJobs } from '../../../../../../lib/meal-image-jobs';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { recordAiUsage } from '@/lib/plan/entitlements';
+import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { restorePlannedMealsSnapshot, type PlannedMealSnapshotRow } from '@/lib/planned-meals-snapshot';
 import { addDaysToDate, todayLocal } from '@/lib/date-utils';
 import { isCalendarDate } from '@/lib/jst-day-ranges';
@@ -153,9 +153,11 @@ export async function POST(request: Request) {
     // AI のキュー (weekly_menu_requests / meal_image_jobs) は利用者 (authenticated) から書けない (#1465)。本人の確認・同意のあとで、service role で書く
     const queueDb = getAiQueueWriter();
 
-    // #1177 AI 利用回数の記録。AI へ送る処理の始まり (入力の検証・同意などの判定のあと、既存の献立を消して生成を始める前) に、
-    // 操作 1 回につき 1 回記録する。究極モードも 1 回 (記録に失敗しても止めない)
-    await recordAiUsage(user.id, 'menu_generation');
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る処理の始まり (入力の検証・同意などの判定のあと、既存の献立を消して
+    // 生成を始める前) に、操作 1 回につき 1 回数える。究極モードも 1 回。上限に達していれば、献立を消さずに 429 AI_DAILY_LIMIT
+    // (消したあとで止めると献立が消えたままになるため、消す前に判定する。判定に失敗したときは止めない)
+    const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+    if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
     // 2. 今日以降の日付の既存食事を削除（Edge Functionが新規INSERTするため）
     const todayStr = todayLocal();
@@ -229,6 +231,8 @@ export async function POST(request: Request) {
 
     if (insertError) {
       console.error('Failed to create request record:', insertError);
+      // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
+      await refundAiUsage(user.id, 'menu_generation', aiUsage);
       throw new Error(`Failed to create request: ${insertError.message}`);
     }
 

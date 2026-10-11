@@ -659,7 +659,7 @@ SSO           |      |     |             |           |              |           
   - `ai-consultation` (ストリーミング、トークン多)
   - `generate-week-menu`
   - `generate-day-menu`
-  - `generate-single-meal`
+  - 1 食の献立生成 (Edge Function `generate-menu-v5`。機能フラグが OFF なら `generate-menu-v4`。旧 `generate-single-meal` は #1452 で削除済み)
   - `image/generate` (献立画像生成)
 - ユーザー別 Top 50: 異常使用検知
 - 時系列推移: 時間 / 日別

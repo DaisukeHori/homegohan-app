@@ -5,7 +5,7 @@
  * 
  * 使い方:
  *   node scripts/get-edge-logs.mjs                          # 最新50件のログ
- *   node scripts/get-edge-logs.mjs --function generate-weekly-menu-v2  # 特定の関数のログ
+ *   node scripts/get-edge-logs.mjs --function generate-menu-v5  # 特定の関数のログ (いまある関数名。supabase/functions/ を参照)
  *   node scripts/get-edge-logs.mjs --since 1h               # 過去1時間のログ
  *   node scripts/get-edge-logs.mjs --tail                   # リアルタイムでログをポーリング
  */

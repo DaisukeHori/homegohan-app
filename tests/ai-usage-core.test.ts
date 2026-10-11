@@ -96,16 +96,18 @@ describe('AI_FEATURES: 記録する機能の一覧', () => {
   });
 });
 
-describe('上限と比べて止める部品は持たない (#1149 / T40 が足す)', () => {
-  it('公開するのは、機能の一覧・待つ上限・記録済みの印だけ (429 の本文・DB の戻り値の読み取りは無い)', () => {
+describe('公開するもの (上限の判定の結果・429 の本文は _shared/ai-daily-limit.ts に分けた。#1149)', () => {
+  it('公開するのは、機能の一覧・上限に数えない機能・待つ上限・記録済みの印だけ (署名の部品を持たないモバイルが読むものは別のファイル)', () => {
     expect(Object.keys(core).sort()).toEqual(
       [
         'AI_FEATURES',
+        'AI_UNMETERED_FEATURES',
         'AI_USAGE_MARKER_MAX_AGE_SEC',
         'AI_USAGE_MARKER_MAX_FUTURE_SEC',
         'AI_USAGE_MARKER_VERSION',
         'AI_USAGE_RECORDED_HEADER',
         'AI_USAGE_TIMEOUT_MS',
+        'isMeteredAiFeature',
         'signAiUsageRecorded',
         'verifyAiUsageRecorded',
       ].sort(),

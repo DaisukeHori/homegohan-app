@@ -2,7 +2,7 @@
 //
 // 書き換えた写し (一時ディレクトリのファイル) を import するので node 環境で動かす
 /**
- * #1177 (T26) AI 相談のアクション (src/lib/ai/consultation-action-executor.ts) の AI 利用回数の記録
+ * #1177 (T26) / #1149 (T40) AI 相談のアクション (src/lib/ai/consultation-action-executor.ts) の AI 利用回数の上限の判定と記録
  *
  * 実行の API (execute) と会話の中での自動実行 (messages) は、AI を使うアクションの記録をこのライブラリに任せる
  * (tests/helpers/ai-consent-enforced-paths.ts の LIBRARY_RECORDERS)。ここでは実際に runConsultationAction を動かし、
@@ -14,24 +14,37 @@
  *      未同意・判定の失敗なら記録しない (ジョブを積むかどうかは変えない。止めるのは処理する Edge Function)
  *   3. 回帰 (R3 指摘 5): 記録を Edge Function の呼び出しのあとへ動かした写しでは、1 の順番の検査が落ちる
  *   4. 回帰 (R3 指摘 2): 同意の判定の結果を見ずに記録する写しでは、2 の「未同意なら記録しない」が落ちる
+ *   5. (#1149) 上限に達していたら: 献立の生成は、生成のリクエストの行を作らず・Edge Function を呼ばずに aiDailyLimit を返す
+ *      (execute の route が 429 にする)。update_meal の料理画像は、献立の更新はして、画像のジョブだけ積まない
+ *   6. (#1149) 生成のリクエストの行を作れなかったときは、数えた 1 回を戻す (AI へは何も送っていない)
  */
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { removeMutants, writeMutant } from './helpers/mutant-module';
+import { AI_USAGE_ALLOWED, AI_USAGE_DENIED } from './helpers/ai-usage-mock';
+import { AI_DAILY_LIMIT_CODE, aiDailyLimitMessage, type AiUsageResult } from '../supabase/functions/_shared/ai-daily-limit';
 
 const m = vi.hoisted(() => ({
-  recordAiUsage: vi.fn(async (_userId: string, _feature: string) => undefined),
+  consumeAiUsage: vi.fn(async (_userId: string, _feature: string): Promise<AiUsageResult> => ({
+    allowed: true,
+    metered: true,
+    usageDate: '2026-10-11',
+    limit: 10,
+    used: 1,
+  })),
+  refundAiUsage: vi.fn(async () => undefined),
   aiUsageRecordedHeaders: vi.fn(async (_userId: string) => ({ 'x-hg-ai-usage-recorded': 'test-marker' })),
   checkUserAiConsent: vi.fn(async (_db: unknown, _userId: string) => ({ allowed: true }) as { allowed: boolean; reason?: string }),
   enqueueMealImageJobs: vi.fn(async () => undefined),
 }));
 
 vi.mock('@/lib/plan/entitlements', () => ({
-  recordAiUsage: m.recordAiUsage,
+  consumeAiUsage: m.consumeAiUsage,
+  refundAiUsage: m.refundAiUsage,
   aiUsageRecordedHeaders: m.aiUsageRecordedHeaders,
 }));
 vi.mock('@/lib/ai/consent-guard', () => ({ checkUserAiConsent: m.checkUserAiConsent }));
 // AI のキューへは service role のクライアント (getAiQueueWriter) で書く (#1465)。利用者のクライアントとは別の作り物にする
-const queue = vi.hoisted(() => ({ db: null as unknown }));
+const queue = vi.hoisted(() => ({ db: null as unknown, proxy: null as unknown }));
 vi.mock('@/lib/ai/ai-queue-writer', () => ({ getAiQueueWriter: () => queue.db }));
 // 献立のエンジンは v4 (menu_generation_v5_wrapped は OFF)
 vi.mock('@/lib/feature-flags', () => ({ isFeatureEnabled: vi.fn(async (key: string) => key === 'ai_chat_enabled') }));
@@ -115,6 +128,7 @@ async function runUpdateMeal(run: Run) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  m.consumeAiUsage.mockResolvedValue(AI_USAGE_ALLOWED);
   m.checkUserAiConsent.mockResolvedValue({ allowed: true });
   queue.db = makeSupabase();
 });
@@ -127,10 +141,10 @@ describe('献立の生成のアクション: menu_generation を 1 回、AI へ�
   it.each(MENU_ACTIONS)('$type', async ({ type, params }) => {
     const { db, out } = await runMenu(runConsultationAction, type, params);
     expect(out.success).toBe(true);
-    expect(m.recordAiUsage).toHaveBeenCalledTimes(1);
-    expect(m.recordAiUsage).toHaveBeenCalledWith(USER.id, 'menu_generation');
+    expect(m.consumeAiUsage).toHaveBeenCalledTimes(1);
+    expect(m.consumeAiUsage).toHaveBeenCalledWith(USER.id, 'menu_generation');
     expect(db.functions.invoke).toHaveBeenCalledTimes(1);
-    expect(m.recordAiUsage.mock.invocationCallOrder[0]).toBeLessThan(db.functions.invoke.mock.invocationCallOrder[0]);
+    expect(m.consumeAiUsage.mock.invocationCallOrder[0]).toBeLessThan(db.functions.invoke.mock.invocationCallOrder[0]);
     // Edge Function がユーザーの JWT で記録し直さないよう、記録済みの印を付ける
     expect(db.functions.invoke.mock.calls[0][1].headers).toEqual({ 'x-hg-ai-usage-recorded': 'test-marker' });
   });
@@ -140,10 +154,10 @@ describe('update_meal の料理画像: 同意の判定 → 記録 → 画像の�
   it('同意済み: image_generation を 1 回、同意の判定のあと・ジョブを積む前に記録する', async () => {
     const { out } = await runUpdateMeal(runConsultationAction);
     expect(out.success).toBe(true);
-    expect(m.recordAiUsage).toHaveBeenCalledTimes(1);
-    expect(m.recordAiUsage).toHaveBeenCalledWith(USER.id, 'image_generation');
-    expect(m.checkUserAiConsent.mock.invocationCallOrder[0]).toBeLessThan(m.recordAiUsage.mock.invocationCallOrder[0]);
-    expect(m.recordAiUsage.mock.invocationCallOrder[0]).toBeLessThan(m.enqueueMealImageJobs.mock.invocationCallOrder[0]);
+    expect(m.consumeAiUsage).toHaveBeenCalledTimes(1);
+    expect(m.consumeAiUsage).toHaveBeenCalledWith(USER.id, 'image_generation');
+    expect(m.checkUserAiConsent.mock.invocationCallOrder[0]).toBeLessThan(m.consumeAiUsage.mock.invocationCallOrder[0]);
+    expect(m.consumeAiUsage.mock.invocationCallOrder[0]).toBeLessThan(m.enqueueMealImageJobs.mock.invocationCallOrder[0]);
     // ジョブは service role のクライアントで積む (利用者のクライアントでは権限で拒まれる。#1465)
     expect((m.enqueueMealImageJobs.mock.calls[0] as unknown as [{ supabase: unknown }])[0].supabase).toBe(queue.db);
   });
@@ -155,8 +169,59 @@ describe('update_meal の料理画像: 同意の判定 → 記録 → 画像の�
     m.checkUserAiConsent.mockResolvedValue(decision);
     const { out } = await runUpdateMeal(runConsultationAction);
     expect(out.success).toBe(true);
-    expect(m.recordAiUsage).not.toHaveBeenCalled();
+    expect(m.consumeAiUsage).not.toHaveBeenCalled();
     expect(m.enqueueMealImageJobs).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('(#1149) 上限に達していたら', () => {
+  it.each(MENU_ACTIONS)('$type: リクエストの行を作らず、Edge Function を呼ばず、aiDailyLimit と人向けの文の結果を返す', async ({ type, params }) => {
+    m.consumeAiUsage.mockResolvedValue(AI_USAGE_DENIED);
+    const insert = vi.fn();
+    queue.db = { ...makeSupabase(), from: (table: string) => (table === 'weekly_menu_requests' ? (insert(table), makeSupabase().from(table)) : makeSupabase().from(table)) };
+
+    const { db, out } = await runMenu(runConsultationAction, type, params);
+
+    expect(out.success).toBe(false);
+    expect(out.aiDailyLimit).toEqual(AI_USAGE_DENIED);
+    expect(out.result).toEqual({ error: aiDailyLimitMessage(AI_USAGE_DENIED.limit), code: AI_DAILY_LIMIT_CODE });
+    expect(insert).not.toHaveBeenCalled();
+    expect(db.functions.invoke).not.toHaveBeenCalled();
+    expect(m.refundAiUsage).not.toHaveBeenCalled();
+  });
+
+  it('update_meal: 献立は更新し (success)、画像のジョブだけ積まない。結果の aiSkipped で知らせる (レート制限の印は付けない)', async () => {
+    m.consumeAiUsage.mockResolvedValue(AI_USAGE_DENIED);
+
+    const { out } = await runUpdateMeal(runConsultationAction);
+
+    expect(out.success).toBe(true);
+    expect(out.aiDailyLimit).toBeUndefined();
+    expect(m.consumeAiUsage).toHaveBeenCalledWith(USER.id, 'image_generation');
+    expect(m.enqueueMealImageJobs).not.toHaveBeenCalled();
+    expect(out.result).toMatchObject({ updated: true, aiSkipped: AI_DAILY_LIMIT_CODE });
+    expect(out.result).not.toHaveProperty('imageGenerationThrottled');
+  });
+});
+
+describe('(#1149) 生成のリクエストの行を作れなかったら、数えた 1 回を戻す', () => {
+  it.each(MENU_ACTIONS)('$type', async ({ type, params }) => {
+    const failing = makeSupabase();
+    queue.db = {
+      ...failing,
+      from: (table: string) =>
+        table === 'weekly_menu_requests'
+          ? new Proxy({}, { get: (_t, prop) => (prop === 'single' ? async () => ({ data: null, error: { message: 'insert failed' } }) : () => queue.proxy) })
+          : failing.from(table),
+    };
+    queue.proxy = (queue.db as { from: (t: string) => unknown }).from('weekly_menu_requests');
+
+    const { db, out } = await runMenu(runConsultationAction, type, params);
+
+    expect(out.success).toBe(false);
+    expect(db.functions.invoke).not.toHaveBeenCalled();
+    expect(m.refundAiUsage).toHaveBeenCalledTimes(1);
+    expect(m.refundAiUsage).toHaveBeenCalledWith(USER.id, 'menu_generation', AI_USAGE_ALLOWED);
   });
 });
 
@@ -167,14 +232,19 @@ describe('回帰: 実際のソースを壊した写しで、上の検査が落�
       const end = source.indexOf("case 'generate_week_menu': {");
       const block = source.slice(start, end);
       const moved = block
-        .replace("      await recordAiUsage(user.id, 'menu_generation');\n", '')
-        .replace(/(\n\s*const invokeResult = await invokeGenerateMenuV4WithRetry\(\{[\s\S]*?\n\s*\}\);\n)/, "$1      await recordAiUsage(user.id, 'menu_generation');\n");
-      return source.slice(0, start) + moved + source.slice(end);
+        .replace("      const aiUsage = await consumeAiUsage(user.id, 'menu_generation');\n", "      const aiUsage = AI_USAGE_PLACEHOLDER;\n")
+        .replace(/(\n\s*const invokeResult = await invokeGenerateMenuV4WithRetry\(\{[\s\S]*?\n\s*\}\);\n)/, "$1      await consumeAiUsage(user.id, 'menu_generation');\n");
+      if (moved === block) throw new Error('変異が起きていない');
+      return (
+        source.slice(0, start).replace('let aiDailyLimit: AiUsageDenied | undefined;', "let aiDailyLimit: AiUsageDenied | undefined;\n  const AI_USAGE_PLACEHOLDER = { allowed: true as const, metered: false, usageDate: null, limit: null, used: null };") +
+        moved +
+        source.slice(end)
+      );
     });
     const { runConsultationAction: run } = (await import(/* @vite-ignore */ mutant)) as { runConsultationAction: Run };
     const { db } = await runMenu(run, 'generate_day_menu', { date: '2026-10-10' });
-    expect(m.recordAiUsage).toHaveBeenCalledTimes(1);
-    expect(m.recordAiUsage.mock.invocationCallOrder[0]).toBeGreaterThan(db.functions.invoke.mock.invocationCallOrder[0]);
+    expect(m.consumeAiUsage).toHaveBeenCalledTimes(1);
+    expect(m.consumeAiUsage.mock.invocationCallOrder[0]).toBeGreaterThan(db.functions.invoke.mock.invocationCallOrder[0]);
   });
 
   it('R3 指摘 2: update_meal で同意の判定の結果を見ずに記録すると、未同意でも記録してしまう', async () => {
@@ -184,6 +254,6 @@ describe('回帰: 実際のソースを壊した写しで、上の検査が落�
     const { runConsultationAction: run } = (await import(/* @vite-ignore */ mutant)) as { runConsultationAction: Run };
     m.checkUserAiConsent.mockResolvedValue({ allowed: false, reason: 'not_consented' });
     await runUpdateMeal(run);
-    expect(m.recordAiUsage).toHaveBeenCalledTimes(1);
+    expect(m.consumeAiUsage).toHaveBeenCalledTimes(1);
   });
 });

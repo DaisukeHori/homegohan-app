@@ -9,10 +9,14 @@
  *
  * 1. 構文木の検査 (全件): 判定の呼び出しの結果で「止めて返す」if があり、その if より前に AI へ送る呼び出しが無い。
  *    判定を呼ぶだけで結果を無視する・送ったあとで判定する・条件を反転する (if (!denied) / if (x.allowed) return) と落ちる。
+ *    (#1149) AI の利用回数の上限の判定 (consumeEdgeAiUsage) も同じ形で見る: 数える関数の全部で、結果で止める if
+ *    (if (!x.allowed) return ...) があり、その if より前に AI へ送る呼び出しが無い。
  * 2. 実際のハンドラ (代表の 6 本。AI の送り口の形と、利用回数の記録の形 (#1177) が違うものを選ぶ):
- *    Deno.serve に渡された関数へ要求を流し、同意の状況ごとに AI へ送った回数と、利用回数の記録 (recordEdgeAiUsage) の回数・順番を見る。
+ *    Deno.serve に渡された関数へ要求を流し、同意の状況ごとに AI へ送った回数と、利用回数の判定と記録 (consumeEdgeAiUsage) の回数・順番を見る。
  *    判定 (_shared/ai-consent-guard.ts / _shared/ai-consent.ts) は差し替えず、Supabase のクライアントと AI の送り口だけを作り物にする。
  *    記録は「同意の判定 → 記録 → 送信」の順 (#1177)。順番はソースの文字ではなく、呼ばれた順番で確かめる。
+ *    (#1149) 上限に達していたら、AI へ 1 回も送らずに 429 AI_DAILY_LIMIT を返す (CORS ヘッダーつき)。
+ *    献立生成と買い物リストの直接の JWT の経路 (generate-menu-v4 / v5・regenerate-shopping-list-v2) は tests/ai-usage-direct-jwt-edge.test.ts
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,6 +31,8 @@ import {
 } from '../supabase/functions/_shared/ai-consent';
 import { ENFORCED_EDGE } from './helpers/ai-consent-enforced-paths';
 import { removeMutants, writeMutant } from './helpers/mutant-module';
+import type { AiUsageResult } from '../supabase/functions/_shared/ai-daily-limit';
+import { AI_USAGE_ALLOWED, AI_USAGE_DENIED } from './helpers/ai-usage-mock';
 
 // Edge Runtime の型宣言だけの import (node_modules に無い)。中身は無いので空のモジュールにする
 vi.mock("@supabase/functions-js/edge-runtime.d.ts", () => ({}));
@@ -38,8 +44,10 @@ const FUNCTIONS_DIR = path.join(ROOT, 'supabase/functions');
 // 1. 構文木の検査
 // ─────────────────────────────────────────────
 
-/** 判定の部品 (_shared/ai-consent-guard.ts) の関数 */
-const GUARD_CALLEES = new Set(['requireAiConsentForUser', 'requireAiConsent', 'checkAiConsent']);
+/** 判定の部品 (_shared/ai-consent-guard.ts) の関数と、AI の利用回数の上限の判定 (_shared/ai-usage.ts。#1149) */
+const GUARD_CALLEES = new Set(['requireAiConsentForUser', 'requireAiConsent', 'checkAiConsent', 'consumeEdgeAiUsage']);
+/** 結果の .allowed で止める (if (!x.allowed) return) 形の判定 */
+const ALLOWED_FLAG_GUARDS = new Set(['checkAiConsent', 'consumeEdgeAiUsage']);
 
 /**
  * AI へ送る (または送る処理を始める) 呼び出しの名前。判定の if より前に、同じ関数の中でこれらを呼んではいけない。
@@ -117,7 +125,7 @@ function resultNames(call: ts.CallExpression, fn: ts.Node): Set<string> {
 
 /** if の条件が「判定の結果で止める」形か: requireAiConsent* なら if (denied)、checkAiConsent なら if (!decision.allowed) */
 function isStopCondition(cond: ts.Expression, callee: string, names: Set<string>): boolean {
-  if (callee === 'checkAiConsent') {
+  if (ALLOWED_FLAG_GUARDS.has(callee)) {
     return (
       ts.isPrefixUnaryExpression(cond) &&
       cond.operator === ts.SyntaxKind.ExclamationToken &&
@@ -180,7 +188,10 @@ function analyzeGuards(file: string, text: string = fs.readFileSync(file, 'utf8'
 describe('Edge Functions: 判定の結果で止める if が、送る呼び出しより前にある (構文木)', () => {
   it.each(Object.keys(ENFORCED_EDGE))('%s', (name) => {
     const sites = analyzeGuards(path.join(FUNCTIONS_DIR, name, 'index.ts'));
-    expect(sites.length, '判定を呼んでいない').toBeGreaterThan(0);
+    expect(sites.filter((site) => site.callee !== 'consumeEdgeAiUsage').length, '判定を呼んでいない').toBeGreaterThan(0);
+    // #1149: 一覧で数える (record) 関数は、上限の判定 (consumeEdgeAiUsage) を呼ぶ
+    const usage = ENFORCED_EDGE[name].usage;
+    expect(sites.some((site) => site.callee === 'consumeEdgeAiUsage'), '上限の判定 (consumeEdgeAiUsage) を呼んでいない').toBe('record' in usage);
     for (const site of sites) {
       expect(site.stopLine, `${site.callee} (${site.line} 行目) の結果で止めて返す if が無い`).not.toBeNull();
       expect(site.sendsBefore, `${site.callee} (${site.line} 行目) の判定より前に送っている`).toEqual([]);
@@ -200,6 +211,13 @@ describe('Edge Functions: 判定の結果で止める if が、送る呼び出�
     const ok = check(`Deno.serve(async () => { const c = await checkAiConsent(db, "u"); if (!c.allowed) { return deny(c); } await fetch("x"); });`);
     expect(ok.stopLine).not.toBeNull();
     expect(ok.sendsBefore).toEqual([]);
+    // #1149: 上限の判定も同じ形で見る (結果を無視する・送ったあとで判定する・条件を反転する、を見つける)
+    expect(check(`Deno.serve(async (req) => { const u = await consumeEdgeAiUsage(req, "u", "consultation"); await fetch("https://api.x.ai"); });`).stopLine).toBeNull();
+    expect(check(`Deno.serve(async (req) => { await fetch("https://api.x.ai"); const u = await consumeEdgeAiUsage(req, "u", "consultation"); if (!u.allowed) return x(u); });`).sendsBefore).toEqual(['fetch (1 行目)']);
+    expect(check(`Deno.serve(async (req) => { const u = await consumeEdgeAiUsage(req, "u", "consultation"); if (u.allowed) return x(u); });`).stopLine).toBeNull();
+    const usageOk = check(`Deno.serve(async (req) => { const u = await consumeEdgeAiUsage(req, "u", "consultation"); if (!u.allowed) return x(u); await fetch("x"); });`);
+    expect(usageOk.stopLine).not.toBeNull();
+    expect(usageOk.sendsBefore).toEqual([]);
   });
 });
 
@@ -217,8 +235,14 @@ const e = vi.hoisted(() => ({
   analyzeWithEvidence: vi.fn(async () => ({ dishes: [], totalCalories: 0 })),
   /** global fetch のうち、AI 事業者へ送ったもの */
   aiFetch: vi.fn((_url: string) => undefined),
-  // #1177: AI 利用回数の記録 (DB を呼ぶ境目だけを差し替える)
-  recordEdgeAiUsage: vi.fn(async (_req: Request, _userId: string, _feature: string) => undefined),
+  // #1177 / #1149: AI 利用回数の上限の判定と記録 (DB を呼ぶ境目だけを差し替える。既定は許可)
+  consumeEdgeAiUsage: vi.fn(async (_req: Request, _userId: string, _feature: string): Promise<AiUsageResult> => ({
+    allowed: true,
+    metered: true,
+    usageDate: '2026-10-11',
+    limit: 10,
+    used: 1,
+  })),
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
@@ -232,9 +256,9 @@ function aiSendCount(): number {
   return Object.values(SENDERS).reduce((sum, fn) => sum + fn.mock.calls.length, 0);
 }
 
-/** 記録 (recordEdgeAiUsage) が、AI へ送る口のどれよりも先に呼ばれたか (#1177: 同意の判定 → 記録 → 送信) */
+/** 記録 (consumeEdgeAiUsage) が、AI へ送る口のどれよりも先に呼ばれたか (#1177: 同意の判定 → 記録 → 送信) */
 function recordedBeforeEverySend(): { ok: boolean; detail: string } {
-  const recordOrders = e.recordEdgeAiUsage.mock.invocationCallOrder;
+  const recordOrders = e.consumeEdgeAiUsage.mock.invocationCallOrder;
   const firstRecord = Math.min(...recordOrders);
   const early = Object.entries(SENDERS).flatMap(([label, fn]) =>
     fn.mock.invocationCallOrder.filter((order) => order < firstRecord).map(() => label),
@@ -313,7 +337,7 @@ vi.mock('../supabase/functions/_shared/llm-usage.ts', async (importOriginal) => 
 }));
 vi.mock('../supabase/functions/_shared/ai-usage.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../supabase/functions/_shared/ai-usage.ts')>()),
-  recordEdgeAiUsage: e.recordEdgeAiUsage,
+  consumeEdgeAiUsage: e.consumeEdgeAiUsage,
 }));
 
 type Handler = (req: Request) => Promise<Response>;
@@ -415,7 +439,8 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-  for (const fn of [...Object.values(SENDERS), e.recordEdgeAiUsage]) fn.mockClear();
+  for (const fn of [...Object.values(SENDERS), e.consumeEdgeAiUsage]) fn.mockClear();
+  e.consumeEdgeAiUsage.mockResolvedValue(AI_USAGE_ALLOWED);
 });
 
 const DENIED: Array<[ConsentMode, number, string]> = [
@@ -434,15 +459,15 @@ describe.each(EDGE_CASES)('Edge Function $name (実際のハンドラ)', (c) => 
     // ブラウザから読めるよう、許可したオリジンには CORS ヘッダーを付けたまま止める
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN);
     // #1177: 同意が無くて止めた呼び出しは、AI の利用回数に記録しない (同意の判定 → 記録 → 送信の順)
-    expect(e.recordEdgeAiUsage).not.toHaveBeenCalled();
+    expect(e.consumeEdgeAiUsage).not.toHaveBeenCalled();
   });
 
   it('同意済み: AI へ送る (上の 0 回が空振りでないことの確かめ)。記録は 1 回で、JWT の利用者と一覧の機能名で、AI へ送るより前', async () => {
     e.consentMode = 'granted';
     await handlers[c.name](c.request());
     expect(aiSendCount()).toBeGreaterThanOrEqual(1);
-    expect(e.recordEdgeAiUsage).toHaveBeenCalledTimes(1);
-    const [req, userId, feature] = e.recordEdgeAiUsage.mock.calls[0];
+    expect(e.consumeEdgeAiUsage).toHaveBeenCalledTimes(1);
+    const [req, userId, feature] = e.consumeEdgeAiUsage.mock.calls[0];
     expect(req).toBeInstanceOf(Request);
     expect(userId).toBe(USER);
     const usage = ENFORCED_EDGE[c.name].usage;
@@ -452,22 +477,38 @@ describe.each(EDGE_CASES)('Edge Function $name (実際のハンドラ)', (c) => 
   });
 });
 
+describe.each(EDGE_CASES)('Edge Function $name: 上限に達していたら (#1149)', (c) => {
+  it('AI へ 1 回も送らず、429 AI_DAILY_LIMIT を返す (CORS ヘッダーと Retry-After つき)', async () => {
+    e.consentMode = 'granted';
+    e.consumeEdgeAiUsage.mockResolvedValue(AI_USAGE_DENIED);
+
+    const res = await handlers[c.name](c.request());
+
+    expect(e.consumeEdgeAiUsage).toHaveBeenCalledTimes(1);
+    expect(aiSendCount()).toBe(0);
+    expect(res.status).toBe(429);
+    await expect(res.json()).resolves.toMatchObject({ code: 'AI_DAILY_LIMIT', limit: AI_USAGE_DENIED.limit });
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN);
+    expect(Number(res.headers.get('Retry-After'))).toBeGreaterThan(0);
+  });
+});
+
 describe('回帰 (R3 指摘 1・4): Edge Function で、記録を AI へ送ったあとへ動かすと、上の順番の検査が落ちる', () => {
   it('normalize-shopping-list の記録を、AI への送信 (callOpenAI) のあとへ動かした写しでは、記録より先に送っている', async () => {
-    const recordLine = /\n(\s*)await recordEdgeAiUsage\(req, authResult\.userId, "shopping_list"\);\n/;
+    const recordLines = /\n(\s*)const aiUsage = await consumeEdgeAiUsage\(req, authResult\.userId, "shopping_list"\);\n\s*if \(!aiUsage\.allowed\) return aiDailyLimitEdgeResponse\(aiUsage, corsHeaders\);\n/;
     const mutant = writeMutant('supabase/functions/normalize-shopping-list/index.ts', (source) => {
-      const match = source.match(recordLine);
+      const match = source.match(recordLines);
       if (!match) return source;
-      const without = source.replace(recordLine, '\n');
+      const without = source.replace(recordLines, '\n');
       return without.replace(
         /(\n\s*const rawItems = await withOpenAIUsageContext\([\s\S]*?\n\s*\}\);\n)/,
-        `$1${match[1]}await recordEdgeAiUsage(req, authResult.userId, "shopping_list");\n`,
+        `$1${match[1]}await consumeEdgeAiUsage(req, authResult.userId, "shopping_list");\n`,
       );
     });
     await loadHandler('normalize-shopping-list:mutant', () => import(/* @vite-ignore */ mutant));
     e.consentMode = 'granted';
     await handlers['normalize-shopping-list:mutant'](userRequest('normalize-shopping-list', JSON.stringify({ ingredients: [{ name: '卵', count: 1 }] })));
-    expect(e.recordEdgeAiUsage).toHaveBeenCalledTimes(1);
+    expect(e.consumeEdgeAiUsage).toHaveBeenCalledTimes(1);
     expect(recordedBeforeEverySend().ok).toBe(false);
   });
 });

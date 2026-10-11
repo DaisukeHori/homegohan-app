@@ -38,6 +38,7 @@ import { ImproveMealModal } from './ImproveMealModal';
 import { RadarChart } from './RadarChart';
 import { RadarKeyPicker } from './RadarKeyPicker';
 import { AI_CONSENT_AUTOMATIC_LOCKED_NOTE, isAiConsentRequiredError, promptAiConsentRequired } from '../../lib/ai-consent';
+import { isAiDailyLimitError } from "../../lib/ai-daily-limit";
 
 // ============================================================
 // Types
@@ -165,6 +166,11 @@ export const NutritionDetailModal: React.FC<Props> = ({
         // 同意の案内は出さず、案内の一文だけを出す
         if (isAiConsentRequiredError(e)) {
           setAdviceText(AI_CONSENT_AUTOMATIC_LOCKED_NOTE);
+          setAdviceIsError(false);
+        } else if (isAiDailyLimitError(e)) {
+          // 「再分析」で今日の AI の利用回数の上限に達した (429 AI_DAILY_LIMIT。#1149)。固定の文を出す
+          // (開いたときの自動の取得は上限に数えないので、ここに来るのは「再分析」を押したときだけ)
+          setAdviceText(e.message);
           setAdviceIsError(false);
         }
         setIsLoadingFeedback(false);

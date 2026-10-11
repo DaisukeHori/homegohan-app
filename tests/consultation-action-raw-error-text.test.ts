@@ -84,7 +84,12 @@ function makeSupabase() {
   return {
     auth: { getUser: async () => ({ data: { user: { id: USER, email: 'user@example.test' } }, error: null }) },
     from: (table: string) => makeQuery(table),
-    rpc: async () => ({ data: null, error: null }),
+    // AI の 1 日の利用回数の上限の判定と記録 (#1149): messages の route は AI へ送る前に consume_ai_usage を呼ぶ。
+    // 許可した結果を返す (null を返すと「判定に失敗した」ログが 1 件増え、DB の失敗のログの件数の検査が崩れる)
+    rpc: async (name: string) =>
+      name === 'consume_ai_usage'
+        ? { data: { allowed: true, metered: true, usage_date: '2026-10-11', limit: 10, used: 1 }, error: null }
+        : { data: null, error: null },
   };
 }
 
