@@ -15,6 +15,7 @@ import {
   fetchSingleDatasetEmbedding,
 } from "../../../shared/dataset-embedding.mjs";
 import { requireAiConsentForUser } from "../_shared/ai-consent-guard.ts";
+import { aiChatDisabledResponseForUser } from "../_shared/ai-chat-flag.ts";
 import { missingEnvError } from "../_shared/missing-env.ts";
 
 console.log("Knowledge-GPT Function loaded (Fallback Mode)")
@@ -420,6 +421,13 @@ Deno.serve(async (req) => {
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
+
+      // AI 相談の緊急停止スイッチ (feature_flags の ai_chat_enabled) が OFF なら、AI へ送らずに止める (#1486。503 AI_CHAT_DISABLED)。
+      // Next.js の AI 相談の API (src/lib/ai/ai-chat-gate.ts) と同じ判定。利用者の JWT で直接呼ばれた場合だけ見る
+      // (service role での呼び出しは、AI 相談の API が呼ぶ前に見ている)。止まっている間は同意の判定も利用回数の記録もしない。
+      // 読めないときは止めない (ON。Next.js の isFeatureEnabled と同じ)
+      const aiChatDisabled = await aiChatDisabledResponseForUser(user.id, corsHeaders);
+      if (aiChatDisabled) return aiChatDisabled;
 
       // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
       // 利用者の JWT で直接呼ばれた場合。service role での呼び出しは、AI 相談の API

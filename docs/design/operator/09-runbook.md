@@ -497,7 +497,8 @@ Step 1: 影響確認 (T+0)
 
 Step 2: 一時的な対応 (T+5 min)
   □ API で DB 接続エラーを返す場合: Maintenance Mode を ON
-    → /super-admin/settings → メンテナンスモード ON
+    → /super-admin/flags → maintenance_mode を ON (admin / super_admin 以外は、画面がメンテナンス中の表示、API が 503 MAINTENANCE_MODE になる。
+      反映まで最大 30 秒。/login・/terms・/privacy・/legal・/contact は見られる。operator/02-api-spec.md §7)
   □ status.homegohan.app を Investigating に更新
 
 Step 3: Supabase サポートに連絡 (T+10 min)

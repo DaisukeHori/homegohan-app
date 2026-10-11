@@ -8,6 +8,7 @@ import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text,
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getApi, getApiBaseUrl } from "../../src/lib/api";
+import { errorOfFailedResponse, isStoppedByServerError, stoppedByServerAlertTitleOf } from "../../src/lib/failed-response";
 import { getPrivacyUrl, getSupportMailtoUrl, getTermsUrl } from "../../src/lib/siteConfig";
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
@@ -165,9 +166,8 @@ export default function SettingsTab() {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
+      // メンテナンス中などの 503 は固定の文の例外にする (#1486)
+      if (!res.ok) throw errorOfFailedResponse(res.status, await res.text().catch(() => ""));
       const text = await res.text();
       const today = new Date().toISOString().slice(0, 10);
       const filename = `homegohan-export-${today}.json`;
@@ -187,6 +187,10 @@ export default function SettingsTab() {
       }
     } catch (err) {
       console.error("JSON export error:", err);
+      if (isStoppedByServerError(err)) {
+        Alert.alert(stoppedByServerAlertTitleOf(err), err.message);
+        return;
+      }
       Alert.alert("エラー", "JSONエクスポートに失敗しました。時間をおいて再度お試しください。");
     } finally {
       setExportingJson(false);
@@ -207,9 +211,8 @@ export default function SettingsTab() {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
+      // メンテナンス中などの 503 は固定の文の例外にする (#1486)
+      if (!res.ok) throw errorOfFailedResponse(res.status, await res.text().catch(() => ""));
       const text = await res.text();
       const today = new Date().toISOString().slice(0, 10);
       const filename = `homegohan-meals-${today}.csv`;
@@ -229,6 +232,10 @@ export default function SettingsTab() {
       }
     } catch (err) {
       console.error("CSV export error:", err);
+      if (isStoppedByServerError(err)) {
+        Alert.alert(stoppedByServerAlertTitleOf(err), err.message);
+        return;
+      }
       Alert.alert("エラー", "CSVエクスポートに失敗しました。時間をおいて再度お試しください。");
     } finally {
       setExportingCsv(false);

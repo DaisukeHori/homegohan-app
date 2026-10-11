@@ -70,11 +70,13 @@ import { Pressable } from 'react-native';
 import AiSessionsPage from '../../app/ai/index';
 import AiSessionPage from '../../app/ai/[sessionId]';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
+import { AI_CONSENT_CHECK_FAILED_MESSAGE } from '../../../../supabase/functions/_shared/ai-consent';
 
 /** サーバーとは違う文を入れた本文。画面に出す文は本文の文字列ではなく、code から決めた固定の文であることを確かめる */
 const SERVER_TEXT = 'サーバーが返した別の文';
 const AI_CHAT_DISABLED_BODY = JSON.stringify({ error: SERVER_TEXT, code: AI_CHAT_DISABLED_CODE, retryAfter: 60 });
-const MAINTENANCE_BODY = JSON.stringify({ error: { code: MAINTENANCE_API_CODE, message: SERVER_TEXT } });
+// サーバーのメンテナンス中の 503 の本文 (#1486 から AI 相談の緊急停止と同じ平らな形)
+const MAINTENANCE_BODY = JSON.stringify({ error: SERVER_TEXT, code: MAINTENANCE_API_CODE, retryAfter: 300 });
 
 const CASES = [
   ['AI 相談の緊急停止中', AI_CHAT_DISABLED_BODY, AI_CHAT_DISABLED_MESSAGE],
@@ -165,9 +167,22 @@ describe('相談の画面 (app/ai/[sessionId].tsx)', () => {
     await waitFor(() => expect(screen.getByTestId('ai-chat-error-text').props.children).toBe(expected));
   });
 
-  it('503 でも緊急停止・メンテナンス中でない本文は、これまでどおりの表示 (固定の文に置き換えない)', async () => {
+  it('#1486: 同意の状況を読めなかった 503 (AI_CONSENT_CHECK_FAILED) も、本文の文字列ではなく固定の文を出す', async () => {
     mockClient.get.mockResolvedValue({ messages: [] });
-    const otherBody = JSON.stringify({ error: '同意の状況を確認できませんでした', code: 'AI_CONSENT_CHECK_FAILED' });
+    const consentCheckFailedBody = JSON.stringify({ error: SERVER_TEXT, code: 'AI_CONSENT_CHECK_FAILED' });
+    fetchMock.mockResolvedValueOnce(new Response(consentCheckFailedBody, { status: 503 }));
+    render(<AiSessionPage />);
+    await waitFor(() => expect(screen.getByPlaceholderText('相談内容を入力...')).toBeTruthy());
+
+    await typeAndSend('こんにちは');
+
+    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text').props.children).toBe(AI_CONSENT_CHECK_FAILED_MESSAGE));
+    expect(String(screen.getByTestId('ai-chat-error-text').props.children)).not.toContain('HTTP');
+  });
+
+  it('503 でも緊急停止・メンテナンス中・同意の状況を読めないのどれでもない本文は、これまでどおりの表示 (固定の文に置き換えない)', async () => {
+    mockClient.get.mockResolvedValue({ messages: [] });
+    const otherBody = JSON.stringify({ error: '別の理由で止めました', code: 'SOMETHING_ELSE' });
     fetchMock.mockResolvedValueOnce(new Response(otherBody, { status: 503 }));
     render(<AiSessionPage />);
     await waitFor(() => expect(screen.getByPlaceholderText('相談内容を入力...')).toBeTruthy());
