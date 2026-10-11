@@ -3,10 +3,10 @@ import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
 import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
 import { internalError } from '@/lib/api/errors';
-import { WEEKLY_MENU_REQUEST_STALE_MESSAGE } from '@/lib/weekly-menu-request-error';
 import {
   WEEKLY_MENU_REQUEST_STALE_TARGET_STATUSES,
   isWeeklyMenuRequestStale,
+  markWeeklyMenuRequestStaleIfUnchanged,
 } from '@/lib/weekly-menu-request-stale';
 
 // #1203: 復元（スナップショットの書き戻し）が途中で打ち切られないよう、実行時間の上限を明示する。
@@ -20,7 +20,7 @@ export const maxDuration = 60; // Vercel Pro: 60s OK
  *   - queued は cron (process-menu-queue) の順番待ちで、混んでいると 5 分を超えて待つ。v5/generate は積んだ時点で
  *     AI の 1 回を数える (#1149) ので、順番待ちの行を failed にすると数えた 1 回が成果なしで消えていた。
  *   - 生成中 (processing) の行も、進捗を書き続けていても作成から 5 分で failed になっていた。
- * いまは src/lib/weekly-menu-request-stale.ts の判定 (queued は対象外・生存信号から 20 分。status / pending の route と同じしきい値)
+ * いまは src/lib/weekly-menu-request-stale.ts の判定 (queued は対象外・生存信号から 20 分。status / pending の route と同じ判定)
  * で止まった行だけを failed にする。
  *
  * 【数え戻しはしない】(#1149 の方針: AI へ送る前の失敗は戻す、送ったあとは戻さない)
@@ -30,7 +30,8 @@ export const maxDuration = 60; // Vercel Pro: 60s OK
  * (行には数えた日 (usageDate) も残っていないので、refundAiUsage に渡す材料も無い。AI へ送る前の queued の行は対象外にした)
  *
  * 【読んでから書くまでのあいだに進んだ行は failed にしない】
- * 読んだときの状態・updated_at・worker_acquired_at がそのままの行だけを書き換える (行ごとの比較つきの更新)。
+ * 読んだときの状態・updated_at・worker_acquired_at がそのままの行だけを書き換える (行ごとの比較つきの更新。
+ * src/lib/weekly-menu-request-stale.ts の markWeeklyMenuRequestStaleIfUnchanged。status / pending の route と同じ)。
  * そのあいだに Edge Function が進捗を書いた・cron が取り直した・生成が終わった行は、書き換えずに残す。
  *
  * 【更新が途中の行で失敗しても、failed にできた行の復元は済ませる】
@@ -77,26 +78,19 @@ export async function POST() {
   // 開いたときにやり直せる (応答だけが届かずに書き換わっていた行は救えない。これは 1 本の UPDATE だった以前も同じ)。
   const updateErrors: unknown[] = [];
   for (const stuckRequest of stuckRequests) {
-    let update = queueDb
-      .from('weekly_menu_requests')
-      .update({ status: 'failed', error_message: WEEKLY_MENU_REQUEST_STALE_MESSAGE, updated_at: failedAt })
-      .eq('id', stuckRequest.id)
-      .eq('user_id', user.id)
-      .eq('status', stuckRequest.status);
-    // 読んだときから生存信号が変わっていない行だけを書き換える (NULL は .is で比べる)
-    update = stuckRequest.updated_at === null
-      ? update.is('updated_at', null)
-      : update.eq('updated_at', stuckRequest.updated_at);
-    update = stuckRequest.worker_acquired_at === null
-      ? update.is('worker_acquired_at', null)
-      : update.eq('worker_acquired_at', stuckRequest.worker_acquired_at);
-    const { data: updatedRows, error: updateError } = await update.select('id, generated_data');
+    // 読んだときから状態・生存信号が変わっていない行だけを書き換える (比較つきの更新。#1494・#1507)
+    const { rows: updatedRows, error: updateError } = await markWeeklyMenuRequestStaleIfUnchanged({
+      supabase: queueDb,
+      userId: user.id,
+      row: stuckRequest,
+      failedAt,
+    });
 
     if (updateError) {
       updateErrors.push(updateError);
       continue;
     }
-    cleanedRequests.push(...(updatedRows ?? []));
+    cleanedRequests.push(...updatedRows);
   }
 
   // #1042: waitUntil 消失等で生成コールバックが実行されず stuck になったリクエストについて、
