@@ -12,6 +12,8 @@
  */
 
 import { ACCOUNT_DELETE_API_PATH, ACCOUNT_EXPORT_API_PATH } from '@/lib/auth/frozen';
+// 保存するファイル名は、API が Content-Disposition に付ける名前と同じ関数で作る (UTC の日付。tests/account-export.test.ts が固定)
+import { buildExportFilename } from '@/lib/account-export';
 import { broadcastSignOut, clearUserScopedLocalStorage } from '@/lib/user-storage';
 import { notifyNativeSignOut } from '@/lib/native-auth-bridge';
 
@@ -25,11 +27,6 @@ const SECONDS_PER_MINUTE = 60;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_CONFLICT = 409;
 const HTTP_TOO_MANY_REQUESTS = 429;
-
-/** 書き出しのファイル名 (例: homegohan-export-2026-10-12.json)。設定画面の従来の名前と同じ */
-export function accountExportFilename(now: Date = new Date()): string {
-  return `homegohan-export-${now.toISOString().slice(0, 10)}.json`;
-}
 
 /**
  * 取得した応答をファイルとして保存する (JSON / CSV の書き出しで共通)。
@@ -90,7 +87,7 @@ export async function exportAccountData(options: { isNativeApp: boolean }): Prom
       console.error(`[account export] failed: ${res.status}`);
       return { kind: 'failed' };
     }
-    await saveResponseAsDownload(res, accountExportFilename(), 'application/json', options.isNativeApp);
+    await saveResponseAsDownload(res, buildExportFilename(), 'application/json', options.isNativeApp);
     return { kind: 'saved' };
   } catch (error) {
     console.error('[account export]', error);
