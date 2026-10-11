@@ -15,6 +15,7 @@ import yaml from 'js-yaml';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  CLI_STDERR_HINTS,
   CLI_TIMEOUT_ENV,
   DEFAULT_CLI_TIMEOUT_MS,
   DEFAULT_MAX_DELETIONS,
@@ -26,7 +27,10 @@ import {
   MAX_DELETIONS_ENV,
   PruneError,
   SUPABASE_CLI_PACKAGE,
+  SPAWN_ERROR_HINTS,
   computeFunctionsToDelete,
+  describeCliFailure,
+  formatCliFailure,
   functionsMatchLatest,
   functionsPathFromRoot,
   listRepoFunctions,
@@ -36,6 +40,7 @@ import {
   planPrune,
   resolveCliTimeoutMs,
   resolveMaxDeletions,
+  runSupabaseCli,
 } from '../scripts/edge-functions-prune.mjs';
 
 const PROJECT_REF = 'abcdefghijklmnopqrst';
@@ -60,7 +65,7 @@ const LEGACY_FUNCTIONS_1452 = [
 /** supabase functions list -o json の 1 件 (2.62.10 の API の応答の形に寄せた最小のもの) */
 const fn = (slug: string) => ({ id: `id-${slug}`, slug, name: slug, status: 'ACTIVE', version: 1, verify_jwt: true });
 
-type RunResult = { status: number | null; stdout: string };
+type RunResult = { status: number | null; stdout: string; hints?: string[] };
 
 /** CLI の呼び出しを記録して、決めた結果を返す差し替え */
 function fakeCli(options: {
@@ -173,14 +178,28 @@ describe('listRepoFunctions: リポジトリの関数 = _ や . で始まらず 
     expect(repo).not.toContain('_shared');
     expect(repo).toContain('generate-menu-v5');
     for (const name of LEGACY_FUNCTIONS_1452) expect(repo).not.toContain(name);
-    // #1452 の状態 (本番 = リポジトリの関数 + 旧い 13 本) なら、消すのはちょうど 13 本で、既定の上限に収まる
+    // #1452 の状態 (本番 = リポジトリの関数 + 旧い 13 本) なら、消すのはちょうど 13 本。
+    // 既定の上限 (#1455 で下げた) では止まり、環境変数で上限を一時的に上げたときだけ通る
+    const remoteSlugs = [...repo, ...LEGACY_FUNCTIONS_1452];
+    expect(() => planPrune({ remoteSlugs, repoFunctions: repo, maxDeletions: DEFAULT_MAX_DELETIONS })).toThrow(/上限/);
     const toDelete = planPrune({
-      remoteSlugs: [...repo, ...LEGACY_FUNCTIONS_1452],
+      remoteSlugs,
       repoFunctions: repo,
-      maxDeletions: DEFAULT_MAX_DELETIONS,
+      maxDeletions: resolveMaxDeletions({ [MAX_DELETIONS_ENV]: String(LEGACY_FUNCTIONS_1452.length) }),
     });
     expect(toDelete).toEqual([...LEGACY_FUNCTIONS_1452].sort());
     expect(toDelete).toHaveLength(13);
+  });
+
+  it('supabase/config.toml の [functions.<name>] は、どれもリポジトリの関数 (index.ts を持つ) で、entrypoint を書いていない (#1455)', () => {
+    // config.toml で index.ts 以外の入口を指定した関数は、この判定では関数に数えられず、デプロイの直後に本番から消される。
+    // そうした関数を足したら、ここで赤にして、判定を広げることに気づかせる
+    const repo = listRepoFunctions(path.join(process.cwd(), 'supabase', 'functions'));
+    const configToml = readFileSync(path.join(process.cwd(), 'supabase', 'config.toml'), 'utf8');
+    const configured = [...configToml.matchAll(/^\[functions\.([^\]]+)\]\s*$/gm)].map((m) => m[1]);
+    expect(configured.length).toBeGreaterThan(0);
+    expect(configured.filter((name) => !repo.includes(name))).toEqual([]);
+    expect(configToml).not.toMatch(/^\s*entrypoint\s*=/m);
   });
 });
 
@@ -214,9 +233,15 @@ describe('parseFunctionsListJson: supabase functions list -o json の出力を�
 });
 
 describe('上限の環境変数', () => {
-  it('既定は DEFAULT_MAX_DELETIONS で、#1452 の 13 本を通す', () => {
+  it('既定は DEFAULT_MAX_DELETIONS (5 本) で、#1452 の規模 (13 本) の削除は環境変数で上げないと通さない (#1455)', () => {
     expect(resolveMaxDeletions({})).toBe(DEFAULT_MAX_DELETIONS);
-    expect(DEFAULT_MAX_DELETIONS).toBeGreaterThanOrEqual(LEGACY_FUNCTIONS_1452.length);
+    expect(DEFAULT_MAX_DELETIONS).toBe(5);
+    expect(DEFAULT_MAX_DELETIONS).toBeLessThan(LEGACY_FUNCTIONS_1452.length);
+    // 旧い版の 3 本組 (週・1 食・差し替え) の廃止は 1 回で通す
+    expect(DEFAULT_MAX_DELETIONS).toBeGreaterThanOrEqual(3);
+    // リポジトリの関数の半分より十分に小さい (読み違いでまとめて消すのを止める役になる)
+    const repo = listRepoFunctions(path.join(process.cwd(), 'supabase', 'functions'));
+    expect(DEFAULT_MAX_DELETIONS * 2).toBeLessThan(repo.length);
   });
 
   it('環境変数で上書きできる (0 も可 = 1 本も消させない)', () => {
@@ -533,5 +558,125 @@ describe('.github/workflows/deploy-supabase-functions.yml', () => {
   it('このワークフロー自身と削除のスクリプトを変えたときも main への push で走る', () => {
     expect(workflow.on.push.branches).toEqual(['main']);
     expect(workflow.on.push.paths).toEqual(expect.arrayContaining(['supabase/functions/**', WORKFLOW, SCRIPT]));
+  });
+});
+
+describe('削除・一覧の失敗の手がかり (#1455): stderr の文やトークンは出さず、終了コード・HTTP の状態の数字・決まった文だけ', () => {
+  // 本物のトークンの形 (sbp_...) にはしない (シークレットの検査に引っかからないように)。ログに出ないことだけを見る
+  const TOKEN = 'TEST-ACCESS-TOKEN-VALUE-NOT-REAL';
+  const BODY_MARKER = 'RESPONSE-BODY-MARKER';
+
+  describe('describeCliFailure', () => {
+    it.each([
+      {
+        title: '削除の HTTP の状態 (CLI 2.62.10 の文言) は数字だけ',
+        input: { stderr: `unexpected delete function status 500: {"message":"${BODY_MARKER} ${TOKEN}"}\n` },
+        expected: ['HTTP の状態 500'],
+      },
+      {
+        title: '一覧の HTTP の状態',
+        input: { stderr: `Try rerunning the command with --debug\nunexpected list functions status 401: ${BODY_MARKER}` },
+        expected: ['HTTP の状態 401'],
+      },
+      {
+        title: '本番にその関数が無い (404 の文言)',
+        input: { stderr: 'Function old-a does not exist on the Supabase project.' },
+        expected: [CLI_STDERR_HINTS[0].hint],
+      },
+      {
+        title: 'トークンが無い',
+        input: { stderr: 'Access token not provided. Supply an access token by running supabase login or setting the SUPABASE_ACCESS_TOKEN environment variable.' },
+        expected: [CLI_STDERR_HINTS[1].hint],
+      },
+      { title: 'トークンの形が違う', input: { stderr: `Invalid access token format. ${TOKEN}` }, expected: [CLI_STDERR_HINTS[2].hint] },
+      { title: '時間切れ (シグナルは重ねない)', input: { errorCode: 'ETIMEDOUT', signal: 'SIGTERM' }, expected: [SPAWN_ERROR_HINTS.ETIMEDOUT] },
+      { title: 'npx が無い', input: { errorCode: 'ENOENT' }, expected: [SPAWN_ERROR_HINTS.ENOENT] },
+      { title: '出力が大きすぎる', input: { errorCode: 'ENOBUFS' }, expected: [SPAWN_ERROR_HINTS.ENOBUFS] },
+      { title: '表に無いエラーのコードは名前だけ', input: { errorCode: 'EACCES' }, expected: ['CLI を起動できません (EACCES)'] },
+      { title: 'シグナルで止まった', input: { signal: 'SIGKILL' }, expected: ['シグナル SIGKILL で止まりました'] },
+      { title: '知らない文言の stderr は手がかりなし', input: { stderr: `something failed: ${BODY_MARKER} ${TOKEN}` }, expected: [] },
+      { title: '何も無い', input: {}, expected: [] },
+      { title: 'HTTP の状態の範囲外の数字は出さない', input: { stderr: 'unexpected delete function status 999: x' }, expected: [] },
+      { title: '形の違うエラーのコード・シグナルは出さない', input: { errorCode: `E ${TOKEN}`, signal: `SIG${TOKEN}` }, expected: [] },
+    ])('$title', ({ input, expected }) => {
+      const hints = describeCliFailure(input);
+      expect(hints).toEqual(expected);
+      expect(hints.join('\n')).not.toContain(TOKEN);
+      expect(hints.join('\n')).not.toContain(BODY_MARKER);
+    });
+  });
+
+  it('formatCliFailure: 手がかりがあれば終了コードのあとに付け、無ければ終了コードだけ', () => {
+    expect(formatCliFailure({ status: 1, hints: ['HTTP の状態 500'] })).toBe('supabase CLI の終了コード: 1、手がかり: HTTP の状態 500');
+    expect(formatCliFailure({ status: 1, hints: [] })).toBe('supabase CLI の終了コード: 1');
+    expect(formatCliFailure({ status: null })).toBe('supabase CLI の終了コード: 不明');
+  });
+
+  describe('runSupabaseCli: stderr を手がかりに変え、文は返さない', () => {
+    type SpawnReturn = { status: number | null; stdout?: string; stderr?: string; signal?: string | null; error?: Error };
+    const fakeSpawn = (ret: SpawnReturn) => {
+      const calls: { command: string; args: string[] }[] = [];
+      const spawn = ((command: string, args: string[]) => {
+        calls.push({ command, args });
+        return { pid: 1, output: [], stdout: ret.stdout ?? '', stderr: ret.stderr ?? '', status: ret.status, signal: ret.signal ?? null, error: ret.error };
+      }) as unknown as NonNullable<Parameters<typeof runSupabaseCli>[1]['spawn']>;
+      return { spawn, calls };
+    };
+    const errorWithCode = (code: string) => Object.assign(new Error(`spawnSync npx ${code}`), { code });
+
+    it('失敗: HTTP の状態だけが hints に入り、stderr の文・トークンは戻り値のどこにも無い', () => {
+      const { spawn, calls } = fakeSpawn({ status: 1, stderr: `unexpected delete function status 503: ${BODY_MARKER} ${TOKEN}` });
+      const result = runSupabaseCli(['functions', 'delete', 'old-a'], { env: {}, timeoutMs: 1000, spawn });
+      expect(calls[0]).toEqual({ command: 'npx', args: ['--yes', SUPABASE_CLI_PACKAGE, 'functions', 'delete', 'old-a'] });
+      expect(result).toEqual({ status: 1, stdout: '', hints: ['HTTP の状態 503'] });
+      expect(JSON.stringify(result)).not.toContain(TOKEN);
+      expect(JSON.stringify(result)).not.toContain(BODY_MARKER);
+    });
+
+    it('成功: hints は空 (stderr にお知らせがあっても読まない)', () => {
+      const { spawn } = fakeSpawn({ status: 0, stdout: '[]', stderr: 'unexpected list functions status 500: x' });
+      expect(runSupabaseCli(['functions', 'list'], { env: {}, timeoutMs: 1000, spawn })).toEqual({ status: 0, stdout: '[]', hints: [] });
+    });
+
+    it('時間切れ: status は null、hints は時間切れ', () => {
+      const { spawn } = fakeSpawn({ status: null, signal: 'SIGTERM', error: errorWithCode('ETIMEDOUT') });
+      expect(runSupabaseCli(['functions', 'list'], { env: {}, timeoutMs: 1000, spawn })).toEqual({
+        status: null,
+        stdout: '',
+        hints: [SPAWN_ERROR_HINTS.ETIMEDOUT],
+      });
+    });
+  });
+
+  describe('main: 失敗のログに手がかりが出る', () => {
+    const REPO = ['analyze-fridge', 'generate-menu-v5'];
+
+    it('削除の失敗: 終了コードと HTTP の状態が出て、残りも試す', () => {
+      const calls: string[][] = [];
+      const run = (args: string[]): RunResult => {
+        calls.push(args);
+        if (args[1] === 'list') return listOf([...REPO, 'old-a', 'old-b']);
+        return args[2] === 'old-a' ? { status: 1, stdout: '', hints: ['HTTP の状態 500'] } : { status: 0, stdout: '', hints: [] };
+      };
+      const result = runMain(['--project-ref', PROJECT_REF, '--apply'], { run, repo: REPO });
+      expect(result.code).toBe(EXIT_FAILURE);
+      expect(result.err).toContain('edge-functions-prune: 削除に失敗しました: old-a (supabase CLI の終了コード: 1、手がかり: HTTP の状態 500)');
+      expect(result.out).toContain('edge-functions-prune: 削除しました: old-b');
+    });
+
+    it('一覧の失敗: 手がかりが出て、1 本も消さない', () => {
+      const cli = fakeCli({ list: { status: 1, stdout: '', hints: [CLI_STDERR_HINTS[1].hint] } });
+      const result = runMain(['--project-ref', PROJECT_REF, '--apply'], { run: cli.run, repo: REPO });
+      expect(result.code).toBe(EXIT_FAILURE);
+      expect(result.err.join('\n')).toContain(`本番の関数の一覧を取れませんでした (supabase CLI の終了コード: 1、手がかり: ${CLI_STDERR_HINTS[1].hint})`);
+      expect(result.err.join('\n')).toContain('1 本も消していません');
+      expect(cli.calls.filter((args) => args[1] === 'delete')).toEqual([]);
+    });
+
+    it('手がかりの無い失敗は、これまでどおり終了コードだけ', () => {
+      const cli = fakeCli({ list: listOf([...REPO, 'old-a']), deleteStatus: () => 1 });
+      const result = runMain(['--project-ref', PROJECT_REF, '--apply'], { run: cli.run, repo: REPO });
+      expect(result.err).toContain('edge-functions-prune: 削除に失敗しました: old-a (supabase CLI の終了コード: 1)');
+    });
   });
 });
