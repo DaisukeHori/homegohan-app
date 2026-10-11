@@ -3,7 +3,8 @@ import { NextResponse } from 'next/server';
 import type { DailyMeal, PlannedMeal, ShoppingListItem } from '@/types/domain';
 import { toDailyMeal, toPlannedMeal, toShoppingListItem } from '@/lib/converter';
 import type { Tables } from '@homegohan/shared';
-import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
+import { todayLocal } from '@/lib/date-utils';
+import { mondayWeekRange } from '@/lib/jst-day-ranges';
 import { internalError } from '@/lib/api/errors';
 
 /**
@@ -52,15 +53,13 @@ export async function GET(request: Request) {
     return NextResponse.json({ dailyMeal, meals });
   }
 
-  // 日付範囲指定の場合（デフォルトは今週、JST基準）
-  const today = parseLocalDate(todayLocal());
-  const defaultStart = new Date(today);
-  defaultStart.setDate(today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1));
-  const defaultEnd = new Date(defaultStart);
-  defaultEnd.setDate(defaultStart.getDate() + 6);
+  // 日付範囲指定の場合（デフォルトは今週 = JST の今日を含む月曜〜日曜）。
+  // 週は暦の計算だけで求める (#1463。以前の parseLocalDate + setDate (ローカル時刻) + formatLocalDate (JST) は、
+  // JST より東のタイムゾーンで動くと 1 日前の日付になった)
+  const thisWeek = mondayWeekRange(todayLocal());
 
-  const queryStartDate = startDate || formatLocalDate(defaultStart);
-  const queryEndDate = endDate || formatLocalDate(defaultEnd);
+  const queryStartDate = startDate || thisWeek.startDate;
+  const queryEndDate = endDate || thisWeek.endDate;
 
   const { data, error } = await supabase
     .from('user_daily_meals')

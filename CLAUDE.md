@@ -136,6 +136,11 @@ PostHog による利用状況の計測は採用しない (オーナー判断 202
 - 対象外のパスは `isLegalConsentExemptPath` (`/terms` `/privacy` `/legal` `/legal-consent` `/contact` `/frozen` `/auth/*` `/api/*` `/handson-tour` と静的ファイル)。同意なしで開けないと困る画面 (認証の途中・問い合わせなど) を足すときは、ここと `tests/legal-consent-gate.test.ts` に足す。`/legal-consent` は初期設定の差し戻し (`resolveOnboardingRedirect`) からも除いてある (外すと、初期設定前の新規登録者が同意画面との間で無限にリダイレクトする)。
 - 同意済みの版の 3 列は、特権列ガード (`guard_user_profiles_privileged` と `_on_insert`) の対象。書けるのは `accept_legal_documents` (SECURITY DEFINER。`auth.uid()` 本人の行だけ) だけ。この 2 本のガード関数を `CREATE OR REPLACE` するときは、既存の列を外さず、この 3 列も残す (`tests/integration/security/legal-documents-acceptance.test.ts` が検査する)。
 
+### JST の暦日 (今日・期間・日付のずらし)
+
+DB の日付列は JST の暦日で、Vercel / Edge の実行環境は UTC (#1433・#1463)。サーバーの「今日」・期間・月は `src/lib/jst-day-ranges.ts` (`jstToday` / `jstDayOffset` / `mondayWeekRange` / `sundayWeekRange` / `jstDayRangeTimestamps` など。Edge は `supabase/functions/_shared/jst-date.ts`)、日付のずらしは `addDaysToDate` (`@/lib/date-utils`) で求め、`toISOString().slice(0, 10)`・`parseLocalDate` / `setDate` + `formatLocalDate` のようなローカル時刻・UTC の暦日に頼る書き方をしない。外から受け取った日付は `isCalendarDate` (Zod は `src/lib/calendar-date-schema.ts` の `CalendarDateSchema`) で確かめてから DB や上の関数に渡す (存在しない日付が DB まで届くと 500、範囲の外の日付は `addDaysToDate` が RangeError)。timestamptz の列を日付で絞るときは `jstDayRangeTimestamps` / `jstOptionalDayRangeTimestamps` で JST 0 時の時刻にする。
+`tests/jst-today-source-scan.test.ts` が書き方 (規則 A〜J) を構文木で検査し、直した箇所が JST の関数を呼び続けていることも確かめる (例外は理由つきの許可リストに書く)。
+
 ### 栄養計算入力
 
 `src/lib/build-nutrition-input.ts` に集約。栄養計算に必要な入力オブジェクトを組み立てる際は、このモジュールを経由する。直接構築しない。

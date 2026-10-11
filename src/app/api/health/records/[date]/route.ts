@@ -69,8 +69,9 @@ export async function PUT(
   const { date } = await params;
 
   // #1048 F2-16: 不正な date パラメータは DB 側の型キャストエラー(500)になり得るため
-  // 事前にフォーマット検証して400を返す。
-  if (!RECORD_DATE_PATTERN.test(date)) {
+  // 事前にフォーマット検証して400を返す。存在しない日付 (2026-02-30 など) も、形だけでは通って DB の date 型への変換で
+  // 500 になるので、GET と同じく isCalendarDate で弾く (#1463)
+  if (!RECORD_DATE_PATTERN.test(date) || !isCalendarDate(date)) {
     return NextResponse.json({ error: 'date must be in YYYY-MM-DD format' }, { status: 400 });
   }
 
@@ -124,7 +125,8 @@ export async function DELETE(
 
   const { date } = await params;
 
-  if (!RECORD_DATE_PATTERN.test(date)) {
+  // 存在しない日付は DB の date 型への変換で 500 になるので、GET・PUT と同じく 400 にする (#1463)
+  if (!RECORD_DATE_PATTERN.test(date) || !isCalendarDate(date)) {
     return NextResponse.json({ error: 'date must be in YYYY-MM-DD format' }, { status: 400 });
   }
 
