@@ -13,11 +13,21 @@
  *   B. 上限の境目: 9・10 回目は許可 (used が 9・10)、11 回目は止め (記録しない。回数は 10 のまま)。機能をまたいで合計で数える
  *   C. JST の日の境目: 上限に達した日の 23:59:59.999 (UTC 14:59:59.999) は止め、0:00 (UTC 15:00) は翌日として許可
  *   D. 同時実行: 上限 10 の利用者に同時に 15 本 → 許可はちょうど 10 本、止めは 5 本、回数は 10
- *   E. 上限に数えない機能 (nutrition_advice_auto): 上限に達していても許可し、記録する。合計に入れない
+ *   E. 上限に数えない機能 (nutrition_advice_auto): 上限に達していても (安全弁の内なら) 許可し、記録する。合計に入れない
  *   F. プランごとの上限: 自分の行が無いプランは free の値。行の値 (保存した値) が次の判定から効く。NULL は無制限、0 は 1 回目から止め
  *   G. 数え戻し: 数えた日の回数を 1 減らす。0 より下にしない。別の日・別の機能は変えない
  *   H. クライアント (anon / authenticated) は、関数もテーブルも使えない
  *   I. 引数の検証
+ *
+ * 20261011030000_ai_usage_unmetered_caps_and_grants.sql (是正) が足すもの・変えるもの:
+ *   - ai_unmetered_daily_caps(feature PK, daily_cap)。既定は nutrition_advice_auto = 30・meal_image_auto = 20
+ *   - consume_ai_usage_at の差し替え: 上限に数えない機能も、その機能のその日の回数が安全弁に達していれば記録せずに止める
+ *   - ai_usage_grant_claims と claim_ai_usage_grant(p_user_id, p_grant_id) -> boolean (写真の判別の数え済みの印を 1 回だけ使う)
+ *   J. 自動のアドバイス (nutrition_advice_auto) の安全弁の境目: 安全弁 - 1 回目・ちょうど (安全弁の回目) は許可、超えると止め (記録しない)。
+ *      明示の 10 回とは別に数える (安全弁に達しても押した操作は 10 回使える。10 回に達しても自動は安全弁まで使える)
+ *   K. 料理画像 (meal_image_auto) の安全弁: 既定 20 回。機能ごとに別に数える。行の値が次の判定から効く。行が無ければ 20 (無制限にしない)
+ *   L. 数え済みの印 (claim_ai_usage_grant): 1 回目は true、同じ印の 2 回目・他人が同じ ID を使うのは false。古い記録は消す。
+ *      権限 (service_role だけ・テーブルは RLS 有効でポリシー無し)
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
  *   npx vitest run --config vitest.integration.config.ts tests/integration/rls/ai-daily-limit-rpc.test.ts
@@ -25,6 +35,7 @@
  * 本番には接続しない。free の行の値はほかのテストも前提にするので変えない (プランごとの上限は pro の行で確かめ、終わったら元に戻す)。
  */
 
+import { randomUUID } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
@@ -453,5 +464,218 @@ describe('#1149 I. 引数の検証', () => {
     expect((await srAdmin.rpc('consume_ai_usage', { p_user_id: null, p_feature: 'consultation' })).error?.code).toBe('22023');
     expect((await srAdmin.rpc('refund_ai_usage', { p_user_id: user.userId, p_feature: 'consultation', p_usage_date: null })).error?.code).toBe('22023');
     expect(await counters(user.userId)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------
+// J〜L. 是正 (20261011030000): 上限に数えない機能の安全弁・数え済みの印
+// ---------------------------------------------------------------
+/** migration の既定の安全弁 (_shared/ai-usage-core.ts の AI_UNMETERED_DAILY_CAP_DEFAULTS と同じ) */
+const AUTO_ADVICE_CAP = 30;
+const MEAL_IMAGE_CAP = 20;
+/** ai_unmetered_daily_caps に行が無いときの安全弁 (consume_ai_usage_at の c_unmetered_fallback_cap) */
+const UNMETERED_FALLBACK_CAP = 20;
+/** 行の値が効くことを確かめるときに入れる、小さな安全弁 */
+const SMALL_CAP = 2;
+
+async function capRow(feature: string): Promise<{ feature: string; daily_cap: number } | null> {
+  const { data, error } = await srAdmin.from('ai_unmetered_daily_caps').select('feature, daily_cap').eq('feature', feature).maybeSingle();
+  if (error) throw new Error(`ai_unmetered_daily_caps: ${error.message}`);
+  return data;
+}
+
+async function setCap(feature: string, dailyCap: number | 'none'): Promise<void> {
+  const result =
+    dailyCap === 'none'
+      ? await srAdmin.from('ai_unmetered_daily_caps').delete().eq('feature', feature)
+      : await srAdmin.from('ai_unmetered_daily_caps').upsert({ feature, daily_cap: dailyCap, updated_at: new Date().toISOString() }, { onConflict: 'feature' });
+  if (result.error) throw new Error(`ai_unmetered_daily_caps ${feature}: ${result.error.message}`);
+}
+
+const countOf = async (userId: string, feature: string) => (await counters(userId)).find((r) => r.feature === feature)?.count ?? 0;
+
+describe('#1149 J. 自動のアドバイス (nutrition_advice_auto) の安全弁', () => {
+  it(`既定の行は nutrition_advice_auto = ${AUTO_ADVICE_CAP}・meal_image_auto = ${MEAL_IMAGE_CAP}`, async () => {
+    expect(await capRow('nutrition_advice_auto')).toEqual({ feature: 'nutrition_advice_auto', daily_cap: AUTO_ADVICE_CAP });
+    expect(await capRow('meal_image_auto')).toEqual({ feature: 'meal_image_auto', daily_cap: MEAL_IMAGE_CAP });
+  });
+
+  it(`安全弁 - 1 回目・ちょうど ${AUTO_ADVICE_CAP} 回目は許可、${AUTO_ADVICE_CAP + 1} 回目は止め (記録しない)`, async () => {
+    const user = await createUser('auto-cap');
+    for (let i = 1; i <= AUTO_ADVICE_CAP - 2; i++) expect((await consume(user.userId, 'nutrition_advice_auto')).allowed, `${i} 回目`).toBe(true);
+
+    expect(await consume(user.userId, 'nutrition_advice_auto')).toMatchObject({ allowed: true, metered: false }); // 安全弁 - 1 回目
+    expect(await consume(user.userId, 'nutrition_advice_auto')).toMatchObject({ allowed: true, metered: false }); // ちょうど
+    expect(await countOf(user.userId, 'nutrition_advice_auto')).toBe(AUTO_ADVICE_CAP);
+
+    const over = await consume(user.userId, 'nutrition_advice_auto');
+    expect(over).toMatchObject({ allowed: false, metered: false, limit: AUTO_ADVICE_CAP, used: AUTO_ADVICE_CAP });
+    expect(over.usage_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect((await consume(user.userId, 'nutrition_advice_auto')).allowed).toBe(false);
+    expect(await countOf(user.userId, 'nutrition_advice_auto')).toBe(AUTO_ADVICE_CAP);
+  });
+
+  it('明示の 10 回とは別に数える: 安全弁に達しても押した操作は 10 回使え、10 回に達しても自動は安全弁まで使える', async () => {
+    const autoFirst = await createUser('auto-then-explicit');
+    for (let i = 0; i < AUTO_ADVICE_CAP; i++) await consume(autoFirst.userId, 'nutrition_advice_auto');
+    expect((await consume(autoFirst.userId, 'nutrition_advice_auto')).allowed).toBe(false);
+    for (let i = 1; i <= FREE_LIMIT; i++) {
+      expect(await consume(autoFirst.userId, 'consultation'), `押した操作の ${i} 回目`).toMatchObject({ allowed: true, metered: true, used: i });
+    }
+    expect((await consume(autoFirst.userId, 'consultation')).allowed).toBe(false);
+
+    const explicitFirst = await createUser('explicit-then-auto');
+    for (let i = 0; i < FREE_LIMIT; i++) await consume(explicitFirst.userId, 'menu_generation');
+    expect((await consume(explicitFirst.userId, 'menu_generation')).allowed).toBe(false);
+    for (let i = 1; i <= AUTO_ADVICE_CAP; i++) expect((await consume(explicitFirst.userId, 'nutrition_advice_auto')).allowed, `自動の ${i} 回目`).toBe(true);
+    expect(await consume(explicitFirst.userId, 'nutrition_advice_auto')).toMatchObject({ allowed: false, limit: AUTO_ADVICE_CAP });
+    expect(await countOf(explicitFirst.userId, 'menu_generation')).toBe(FREE_LIMIT);
+  });
+
+  it('JST の 0 時で安全弁も戻る', async () => {
+    const user = await createUser('auto-cap-jst');
+    for (let i = 0; i < AUTO_ADVICE_CAP; i++) await consumeAt(user.userId, 'nutrition_advice_auto', '2026-10-11T00:00:00Z');
+    expect(await consumeAt(user.userId, 'nutrition_advice_auto', '2026-10-11T14:59:59.999Z')).toMatchObject({ allowed: false, usage_date: '2026-10-11' });
+    expect(await consumeAt(user.userId, 'nutrition_advice_auto', '2026-10-11T15:00:00Z')).toMatchObject({ allowed: true, usage_date: '2026-10-12' });
+  });
+
+  it('同時に安全弁より多く来ても、許可はちょうど安全弁の回数', async () => {
+    const user = await createUser('auto-cap-race');
+    const calls = AUTO_ADVICE_CAP + 5;
+    const results = await Promise.all(Array.from({ length: calls }, () => consume(user.userId, 'nutrition_advice_auto')));
+    expect(results.filter((r) => r.allowed)).toHaveLength(AUTO_ADVICE_CAP);
+    expect(await countOf(user.userId, 'nutrition_advice_auto')).toBe(AUTO_ADVICE_CAP);
+  });
+
+  it('数え戻しで安全弁の回数も戻る (送らなかった分)', async () => {
+    const user = await createUser('auto-cap-refund');
+    for (let i = 0; i < AUTO_ADVICE_CAP; i++) await consume(user.userId, 'nutrition_advice_auto');
+    const denied = await consume(user.userId, 'nutrition_advice_auto');
+    expect(denied.allowed).toBe(false);
+    const { data } = await srAdmin.rpc('refund_ai_usage', { p_user_id: user.userId, p_feature: 'nutrition_advice_auto', p_usage_date: denied.usage_date });
+    expect(data).toBe(true);
+    expect((await consume(user.userId, 'nutrition_advice_auto')).allowed).toBe(true);
+  });
+});
+
+describe('#1149 K. 料理画像 (meal_image_auto) の安全弁', () => {
+  let originalMealImageRow: { feature: string; daily_cap: number } | null = null;
+
+  beforeAll(async () => {
+    originalMealImageRow = await capRow('meal_image_auto');
+  });
+
+  afterAll(async () => {
+    await setCap('meal_image_auto', originalMealImageRow ? originalMealImageRow.daily_cap : 'none');
+  });
+
+  it(`既定 ${MEAL_IMAGE_CAP} 回まで許可し、超えると止める。明示の 10 回・自動のアドバイスとは別に数える`, async () => {
+    const user = await createUser('meal-image-cap');
+    for (let i = 1; i <= MEAL_IMAGE_CAP; i++) expect((await consume(user.userId, 'meal_image_auto')).allowed, `${i} 回目`).toBe(true);
+    expect(await consume(user.userId, 'meal_image_auto')).toMatchObject({ allowed: false, metered: false, limit: MEAL_IMAGE_CAP, used: MEAL_IMAGE_CAP });
+    // 料理画像を何枚作っても、押した操作の 10 回と自動のアドバイスは減らない
+    expect(await consume(user.userId, 'photo_analysis')).toMatchObject({ allowed: true, used: 1 });
+    expect((await consume(user.userId, 'nutrition_advice_auto')).allowed).toBe(true);
+    expect(await countOf(user.userId, 'meal_image_auto')).toBe(MEAL_IMAGE_CAP);
+  });
+
+  it('行の値 (運用で変えた値) が次の判定から効く。行が無ければ c_unmetered_fallback_cap (無制限にしない)', async () => {
+    const user = await createUser('meal-image-cap-row');
+    await setCap('meal_image_auto', SMALL_CAP);
+    for (let i = 0; i < SMALL_CAP; i++) expect((await consume(user.userId, 'meal_image_auto')).allowed).toBe(true);
+    expect(await consume(user.userId, 'meal_image_auto')).toMatchObject({ allowed: false, limit: SMALL_CAP, used: SMALL_CAP });
+
+    await setCap('meal_image_auto', 'none');
+    const fallback = await createUser('meal-image-cap-fallback');
+    for (let i = 0; i < UNMETERED_FALLBACK_CAP; i++) expect((await consume(fallback.userId, 'meal_image_auto')).allowed).toBe(true);
+    expect(await consume(fallback.userId, 'meal_image_auto')).toMatchObject({ allowed: false, limit: UNMETERED_FALLBACK_CAP });
+  });
+
+  it('安全弁には負の値・NULL を入れられない (CHECK / NOT NULL)', async () => {
+    expect((await srAdmin.from('ai_unmetered_daily_caps').upsert({ feature: 'meal_image_auto', daily_cap: -1 }, { onConflict: 'feature' })).error?.code).toBe('23514');
+    expect((await srAdmin.from('ai_unmetered_daily_caps').upsert({ feature: 'meal_image_auto', daily_cap: null }, { onConflict: 'feature' })).error?.code).toBe('23502');
+  });
+});
+
+describe('#1149 L. 数え済みの印 (claim_ai_usage_grant)', () => {
+  const claim = async (userId: string, grantId: string) => {
+    const { data, error } = await srAdmin.rpc('claim_ai_usage_grant', { p_user_id: userId, p_grant_id: grantId });
+    if (error) throw new Error(`claim_ai_usage_grant: ${error.code} ${error.message}`);
+    return data;
+  };
+
+  it('はじめての印は true、同じ印の 2 回目は false。他人が同じ ID を使っても false', async () => {
+    const user = await createUser('grant');
+    const other = await createUser('grant-other');
+    const grantId = randomUUID();
+    expect(await claim(user.userId, grantId)).toBe(true);
+    expect(await claim(user.userId, grantId)).toBe(false);
+    expect(await claim(other.userId, grantId)).toBe(false);
+    expect(await claim(user.userId, randomUUID())).toBe(true);
+  });
+
+  it('同時に同じ印を送っても、true は 1 本だけ', async () => {
+    const user = await createUser('grant-race');
+    const grantId = randomUUID();
+    const results = await Promise.all(Array.from({ length: 5 }, () => claim(user.userId, grantId)));
+    expect(results.filter((r) => r === true)).toHaveLength(1);
+  });
+
+  it('同じ利用者の 1 日より古い記録は、次の呼び出しで消す (ほかの利用者の記録は消さない)', async () => {
+    const user = await createUser('grant-cleanup');
+    const other = await createUser('grant-cleanup-other');
+    const oldId = randomUUID();
+    const otherOldId = randomUUID();
+    await pgQuery(`
+      INSERT INTO public.ai_usage_grant_claims (grant_id, user_id, claimed_at) VALUES
+        ('${oldId}'::uuid, '${user.userId}'::uuid, now() - interval '2 days'),
+        ('${otherOldId}'::uuid, '${other.userId}'::uuid, now() - interval '2 days')
+    `);
+    expect(await claim(user.userId, randomUUID())).toBe(true);
+    const left = await pgQuery<{ grant_id: string }>(
+      `SELECT grant_id::text AS grant_id FROM public.ai_usage_grant_claims WHERE grant_id IN ('${oldId}'::uuid, '${otherOldId}'::uuid)`,
+    );
+    expect(left.map((r) => r.grant_id)).toEqual([otherOldId]);
+  });
+
+  it('引数が NULL なら 22023', async () => {
+    const user = await createUser('grant-args');
+    expect((await srAdmin.rpc('claim_ai_usage_grant', { p_user_id: user.userId, p_grant_id: null })).error?.code).toBe('22023');
+    expect((await srAdmin.rpc('claim_ai_usage_grant', { p_user_id: null, p_grant_id: randomUUID() })).error?.code).toBe('22023');
+  });
+
+  it('権限: 2 つの表は RLS 有効・ポリシー無し・service_role だけ。claim_ai_usage_grant は service_role だけ (anon / authenticated は 42501)', async () => {
+    for (const table of ['ai_unmetered_daily_caps', 'ai_usage_grant_claims']) {
+      expect(await pgQuery(`SELECT c.relrowsecurity FROM pg_class AS c WHERE c.oid = 'public.${table}'::regclass`)).toEqual([{ relrowsecurity: true }]);
+      expect((await pgQuery<{ n: number }>(`SELECT count(*)::int AS n FROM pg_policies WHERE schemaname = 'public' AND tablename = '${table}'`))[0].n).toBe(0);
+      const privileges = await pgQuery<{ role: string; priv: string; ok: boolean }>(`
+        SELECT r AS role, p AS priv, has_table_privilege(r, 'public.${table}', p) AS ok
+          FROM unnest(ARRAY['anon', 'authenticated']) AS r, unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) AS p
+      `);
+      for (const row of privileges) expect(row.ok, `${table}: ${row.role} の ${row.priv}`).toBe(false);
+    }
+
+    const rows = await pgQuery<{ prosecdef: boolean; proconfig: string[]; executors: string[] }>(`
+      SELECT p.prosecdef, p.proconfig,
+             coalesce(
+               (SELECT array_agg(g ORDER BY g)
+                  FROM (SELECT DISTINCT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee)::text END AS g
+                          FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) AS a
+                         WHERE a.privilege_type = 'EXECUTE') AS s),
+               '{}') AS executors
+        FROM pg_proc AS p
+       WHERE p.pronamespace = 'public'::regnamespace AND p.proname = 'claim_ai_usage_grant'
+    `);
+    expect(rows).toEqual([{ prosecdef: true, proconfig: ['search_path=""'], executors: ['postgres', 'service_role'] }]);
+
+    const attacker = await createUser('grant-attacker', { withJwt: true });
+    for (const [label, db] of [
+      ['anon', anon()],
+      ['authenticated', asUser(attacker.jwt!)],
+    ] as const) {
+      expect((await db.rpc('claim_ai_usage_grant', { p_user_id: attacker.userId, p_grant_id: randomUUID() })).error?.code, label).toBe('42501');
+      expect((await db.from('ai_unmetered_daily_caps').select('*')).error?.code, `${label}: select caps`).toBe('42501');
+      expect((await db.from('ai_usage_grant_claims').select('*')).error?.code, `${label}: select claims`).toBe('42501');
+    }
   });
 });
