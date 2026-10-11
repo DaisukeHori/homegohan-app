@@ -824,7 +824,11 @@ describe('サーバーログ (POST /api/log) への記録 — ログアウトの
     await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`, 'ExponentPushToken[this-device]');
   });
 
-  it('削除が失敗したら、控えたアクセストークンで認可して /api/log に送る (トークンの値・エラーの本文は送らない)', async () => {
+  // 控えたアクセストークンを渡されるのは、Web から始まったサインアウト・session-expired のときだけ。そのときはサーバー側のセッションが
+  // 先に失効しているので、/api/log (サーバーの getUser() でセッションの存在まで確かめる) は 401 を返し、この記録は app_logs に残らない
+  // (本物のサーバーで tests/integration/security/push-issue-log-after-session-revoked.test.ts が確かめる。経路の通しは
+  // web-view-auth-messages.real-auth.test.ts)。ここで見るのは、送る要求の形 (本文に入れる値・Authorization の明示) だけ
+  it('削除が失敗したら /api/log に送り、控えたアクセストークンがあれば Authorization に明示する (トークンの値・エラーの本文は送らない)', async () => {
     setupDelete({ error: { name: 'PostgrestError', code: '42501', message: SECRET_ERROR_TEXT }, status: 403 });
 
     expect(await unregisterExpoPushToken('user-123', { accessToken: 'saved-access-token' })).toBe('failed');
@@ -847,7 +851,8 @@ describe('サーバーログ (POST /api/log) への記録 — ログアウトの
         explicit_auth_header: true,
       },
     });
-    // サインアウトで端末のセッションが消えても通るよう、控えたトークンを Authorization で明示する
+    // 削除と同じ本人の JWT を Authorization に明示する (端末のセッションのトークンで上書きされない)。
+    // 明示しても、サーバー側のセッションが失効していれば /api/log は 401 を返す (上の注記)
     expect(calls[0].init.headers).toEqual({ Authorization: 'Bearer saved-access-token' });
     expect(calls[0].init.retry).toBe(false);
     // 本文 (サーバーログに残るもの) には、push token・アクセストークン・エラーの本文・ユーザー ID を入れない
@@ -879,7 +884,7 @@ describe('サーバーログ (POST /api/log) への記録 — ログアウトの
     expect(JSON.stringify(mockPost.mock.calls)).not.toContain('ExponentPushToken');
   });
 
-  it('取り直した値で消し、控えたアクセストークンで認可して 0 件なら、push_value_source: refetched と explicit_auth_header: true を送る (キー名に token を含めないので、サーバーでマスクされない)', async () => {
+  it('取り直した値で消し、控えたアクセストークンで認可して 0 件なら、push_value_source: refetched と explicit_auth_header: true を送る (キー名に token を含めないので、サーバーでマスクされない。true の行が /api/log の認証を通るかは上の注記)', async () => {
     await AsyncStorage.removeItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`);
     setExpoConfig({ eas: { projectId: APP_JSON_PROJECT_ID } });
     mockGetExpoPushTokenAsync.mockResolvedValue({ data: 'ExponentPushToken[refetched]' });
@@ -957,7 +962,7 @@ describe('サーバーログ (POST /api/log) への記録 — ログアウトの
     expect(mockPost).not.toHaveBeenCalled();
   });
 
-  it('/api/log の応答を待ってから返る (呼び出し側はこのあとサインアウトするので、セッションが消える前に送り終える)', async () => {
+  it('/api/log の応答を待ってから返る (呼び出し側はこのあとサインアウトするので、端末からのサインアウトではセッションが消える前に送り終える)', async () => {
     setupDelete({ error: null, count: 0 });
     const response = deferred<unknown>();
     mockPost.mockReturnValue(response.promise);

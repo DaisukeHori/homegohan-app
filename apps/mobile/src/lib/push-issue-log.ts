@@ -41,7 +41,13 @@ export const PUSH_ISSUE_SERVER_METADATA_KEYS = [
   "http_status",
   /** 削除に使った push の値を、端末に控えた値から取ったか (stored)、取り直したか (refetched) */
   "push_value_source",
-  /** 削除の DB 呼び出しを、控えたアクセストークン (Authorization の明示) で認可したか */
+  /**
+   * 削除の DB 呼び出しを、控えたアクセストークン (Authorization の明示) で認可したか。
+   * true になるのは Web から始まったサインアウト・session-expired だけで、そのときはサーバー側のセッションがふつうは先に失効している。
+   * /api/log はサーバーの getUser() でセッションの存在まで確かめて 401 を返すので、true の行は app_logs にはほぼ載らない
+   * (Web の signOut() による失効より先に送れたときだけ残りうる)。app_logs で見えるのは、ほぼ端末からのサインアウトの false の行
+   * (詳しくは pushNotifications.ts の unregisterExpoPushToken の説明)
+   */
   "explicit_auth_header",
   /** 消えた行の件数 */
   "deleted_count",

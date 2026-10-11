@@ -93,7 +93,9 @@ export function resolveEasProjectId(): ResolvedEasProjectId {
 
 /**
  * サーバーログ (POST /api/log) への送信を待つ上限 (ミリ秒)。
- * ログアウトの直前の削除の失敗は、サインアウトでセッションが消える前に送り終えたいので、この時間だけ待ってから先へ進む。
+ * ログアウトの直前の削除の失敗は、サインアウトでセッションが消える前に送り終えたいので、この時間だけ待ってから先へ進む
+ * (記録が残るのは端末からのサインアウトのとき。Web から始まったサインアウト・session-expired では、待ってもサーバー側の
+ * セッションがふつうは先に失効していて残らない。理由は unregisterExpoPushToken の説明)。
  * 削除そのものの上限 (UNREGISTER_TIMEOUT_MS = 3 秒) と合わせても、ログアウトが止まるのは最長 5 秒。
  * 送れなかった記録は諦める (ログの欠けより、ログアウトが長く止まるほうが利用者に響く)。
  */
@@ -123,8 +125,13 @@ function reportPushIssue(event: string, details: Record<string, string | number 
  * - 例外を投げない (reject もしない)。送れなくても (オフライン・未ログイン・環境変数なし・サーバーのエラー) 何もしない。
  *   送信の失敗を、ここからまた記録することはない (自分自身を呼び直さない)
  * - PUSH_ISSUE_LOG_TIMEOUT_MS で待つのをやめる。待つかどうかは呼び出し側が決める (登録は待たない。削除は待つ)
- * - accessToken を渡すと、それで認可する (Authorization を明示すると、共通の HTTP クライアントは上書きしない)。
- *   ログアウトの途中で端末のセッションが先に消える場合 (Web からの sign-out) に、控えたトークンで送るため
+ * - accessToken を渡すと、Authorization に明示する (明示すると、共通の HTTP クライアントは端末のセッションのトークンで上書きしない)。
+ *   明示しても、それで記録が残るわけではない。accessToken を渡されるのは Web から始まったサインアウト・session-expired
+ *   (webViewAuthMessages.ts) だけで、そのときはサーバー側のセッションがふつうは先に失効している (Web の signOut() が全端末のセッションを失効させる)。
+ *   /api/log はサーバーで getUser() (GoTrue の GET /user。JWT の session_id のセッションが残っているかまで確かめる) を呼ぶので、
+ *   失効したセッションの JWT では 401 になり、app_logs には残らない。削除の DELETE が同じ JWT で通るのは、PostgREST が
+ *   JWT の署名と期限しか見ないからで、/api/log はそうではない (tests/integration/security/push-issue-log-after-session-revoked.test.ts が
+ *   本物のサーバーで確かめる)。明示は、削除と同じ本人の JWT で送るために残している (害は無い)
  */
 function sendPushIssueToServer(
   event: PushIssueEvent,
@@ -332,6 +339,9 @@ export type UnregisterPushTokenOptions = {
    * そのあとに削除の通信を出すと、セッションが無いので anon キーが付き、RLS で 0 行になる (エラーにならない)。
    * Authorization ヘッダーを明示すれば、supabase-js はそれを上書きしない (fetchWithAuth は、既にあれば付けない)。
    * PostgREST は JWT の署名と期限だけを見て、セッションが失効済みかどうかは見ないので、期限内なら本人の行を消せる。
+   *
+   * サーバーログ (POST /api/log) への送信にも同じトークンを付けるが、/api/log はセッションの失効まで確かめるので、
+   * セッションが失効していれば、そちらは 401 になって記録は残らない (下の unregisterExpoPushToken の説明を参照)。
    */
   accessToken?: string | null;
 };
@@ -347,11 +357,21 @@ export type UnregisterPushTokenOptions = {
  * - RLS (本人の行のみ削除可) のため、サインアウトの「前」に呼ぶこと。
  *   セッションが先に失効してしまう場合 (Web からの sign-out / session-expired) は、控えておいたアクセストークンを options.accessToken で渡す
  * - 例外は投げない。失敗・タイムアウトでもログアウトは止めない
- *   (失敗・タイムアウト・途中の例外は push_token_unregister_failed として、端末のコンソールとサーバーログ (app_logs) に出す。#1413)
+ *   (失敗・タイムアウト・途中の例外は push_token_unregister_failed として、端末のコンソールとサーバーログ (app_logs) に出す。#1413。
+ *   サーバーログに残るのは端末からのサインアウトのときだけ。下の「ただし」を参照)
  * - 消えた行が 0 件のときも、エラーにならない (RLS は弾いた行を黙って除く) ので、件数を数えて端末のコンソールとサーバーログに出す
- *   (push_token_unregister_no_rows)。以前はこれを「削除できた」として扱っており、RLS で素通りしても気づけなかった
+ *   (push_token_unregister_no_rows。サーバーログに残る範囲は上と同じ)。以前はこれを「削除できた」として扱っており、RLS で素通りしても気づけなかった
  * - サーバーログへの送信は、返る前に待つ (上限 PUSH_ISSUE_LOG_TIMEOUT_MS)。呼び出し側はこのあとサインアウトするので、
  *   セッションが消える前に送り終えるため (サインアウトのあとでは /api/log の認証を通らない)
+ * - ただし、この順番で 0 件・失敗の記録を app_logs に残せるのは、端末からのサインアウト (設定・マイページ・パスワード再設定のあと。
+ *   セッションが生きているまま呼ぶ) だけ。Web から始まったサインアウト・session-expired では、端末が記録を送る時点で、サーバー側の
+ *   セッションがふつうは既に失効している (Web の signOut() が全端末のセッションを失効させる。session-expired は getUser() で失効を
+ *   確かめてからログアウトするので必ず。Web からアカウントを削除したあとの sign-out も、ユーザーが消えているので同じ)。
+ *   /api/log はサーバーの getUser() でセッションの存在まで確かめるので、控えたアクセストークン (options.accessToken) を付けて送っても
+ *   401 になり、記録は残らない (端末のコンソールには出る)。端末が送るより前にサーバー側のセッションが消えているので、送る順番では防げない
+ *   (sign-out は Web の signOut() の前に届くので、Web の失効より先に送れたときだけは残りうる)。
+ *   この経路の記録を残すには、/api/log の認証 (サーバー側) を変える必要がある。削除そのものは、PostgREST が JWT の署名と期限しか
+ *   見ないので、控えたトークンで通る
  * - アカウント削除では呼ばなくてよい (auth.users の削除で user_push_tokens が ON DELETE CASCADE で消える)
  */
 export async function unregisterExpoPushToken(
@@ -466,7 +486,9 @@ export async function unregisterExpoPushToken(
   if (outcome.issue) {
     reportPushIssue(outcome.issue.event, outcome.issue.console);
     // サインアウトの直前に呼ばれるので、セッションが消える前にサーバーログへ送り終える (上限 PUSH_ISSUE_LOG_TIMEOUT_MS)。
-    // 呼び出し側 (signOutWithCleanup) は、これを待ってからサインアウトする。控えたアクセストークンがあれば、それで認可する
+    // 呼び出し側 (signOutWithCleanup) は、これを待ってからサインアウトする。控えたアクセストークンがあれば Authorization に明示するが、
+    // それを渡されるのは Web から始まったサインアウト・session-expired で、サーバー側のセッションがふつうは先に失効しているため
+    // /api/log は 401 を返し、記録は残らない (この関数の説明の「ただし」を参照)
     await sendPushIssueToServer(outcome.issue.event, outcome.issue.server, { accessToken: options.accessToken });
   }
   return outcome.result;

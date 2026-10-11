@@ -9,6 +9,9 @@
  * authorization / api_key を含むもの)。以前は削除の 0 件・失敗で token_source / explicit_access_token というキーを送っており、
  * 原因を切り分ける値 (控えたアクセストークンで認可したか・取り直した値で消したか) が app_logs では必ず "***" になっていた。
  * ここでは 3 つのイベントの全 reason・全分岐の本文を本物の sanitizeLogEntry に通し、送った値と残る値が一致することを確かめる。
+ * ここで見るのはマスクだけ。/api/log の認証を通るかどうかは別で、explicit_auth_header が true の行 (Web から始まったサインアウト・
+ * session-expired) は、サーバー側のセッションが先に失効していて /api/log が 401 を返すので、app_logs にはほぼ載らない
+ * (tests/integration/security/push-issue-log-after-session-revoked.test.ts が本物のサーバーで確かめる)。
  */
 
 import { describe, expect, it } from "vitest";
@@ -111,7 +114,9 @@ describe("push token の異常のサーバーログ — sanitizeLogEntry を通�
     expect(Object.values(sanitized.metadata ?? {})).not.toContain(MASKED);
   });
 
-  it("削除の 0 件・失敗で、原因を切り分ける 2 つの値 (push の値の出どころ・Authorization の明示) が app_logs に残る", () => {
+  // マスクされないことだけを見る。explicit_auth_header が true の行が実際に /api/log の認証を通るのは、Web の signOut() による
+  // セッションの失効より先に送れたときだけ (apps/mobile/src/lib/push-issue-log.ts の explicit_auth_header の説明)
+  it("削除の 0 件・失敗で、原因を切り分ける 2 つの値 (push の値の出どころ・Authorization の明示) が sanitizeLogEntry を通ってもマスクされない", () => {
     const body = buildPushIssueLogBody(
       "push_token_unregister_no_rows",
       unregisterNoRowsServerFields({ platform: "ios", pushValueSource: "refetched", explicitAuthHeader: true }),
