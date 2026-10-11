@@ -1,7 +1,7 @@
 import { getCorsHeaders } from '../_shared/cors.ts';
 import { createFastLLMClient, getFastLLMModel } from '../_shared/fast-llm.ts';
 import { requireAuth } from '../_shared/auth.ts';
-import { recordEdgeAiUsage } from '../_shared/ai-usage.ts';
+import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from '../_shared/ai-usage.ts';
 import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
 import { validateAnalyzeFridgeRequest } from './validate-request.ts';
 import { requireAiConsentForUser } from '../_shared/ai-consent-guard.ts';
@@ -61,9 +61,11 @@ Deno.serve(async (req) => {
     // 署名付き URL の token がログに残らないよう、URL 全体ではなくホストと長さだけ記録する
     logger.info('Analyzing fridge image', { imageHost: host, imageUrlLength: imageUrl.length });
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に記録する。
-    // Next.js を経由せず JWT で直接呼ばれた場合だけ記録する (Next.js が記録済みの印があれば記録しない。失敗しても止めない)
-    await recordEdgeAiUsage(req, userId, 'photo_analysis');
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (Next.js が数え済みの印があれば数えない)。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeEdgeAiUsage(req, userId, 'photo_analysis');
+    if (!aiUsage.allowed) return aiDailyLimitEdgeResponse(aiUsage, corsHeaders);
 
     // Vision API
     const response = await openai.chat.completions.create({

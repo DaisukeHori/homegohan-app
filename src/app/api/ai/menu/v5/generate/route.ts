@@ -15,7 +15,7 @@ import type {
 import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { recordAiUsage } from '@/lib/plan/entitlements';
+import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
@@ -250,15 +250,16 @@ export async function POST(request: Request) {
       : {};
 
     // キューへ書くクライアント (service role)。必須の環境変数が欠けていれば MissingEnvError で汎用の 500 にする。
-    // 記録の前に作る (欠けていて積めないのに、記録だけが残らないように)
+    // 数える前に作る (欠けていて積めないのに、回数だけが減らないように)
     const queueDb = getAiQueueWriter();
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
-    // (記録に失敗しても止めない)。
-    // ここでキューに積み、AI へ送るのは cron (process-menu-queue) なので、送る側では記録しない。
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。キューに積む時点 (入力の検証・同意などの判定のあと) で、操作 1 回につき 1 回数える
+    // (究極モードも 1 回)。上限に達していれば、数えずに積まずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)。
+    // ここでキューに積み、AI へ送るのは cron (process-menu-queue) なので、送る側では数えない。
     // キューの行 (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465) ので、キューに積めるのは
-    // この記録を通った route だけ (service role で書く)
-    await recordAiUsage(user.id, 'menu_generation');
+    // この判定を通った route だけ (service role で書く)
+    const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+    if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
     // バックグラウンドジョブとしてキューに追加し、即座に requestId を返す
     const params = {
@@ -297,6 +298,8 @@ export async function POST(request: Request) {
       .single();
 
     if (insertError || !requestData?.id) {
+      // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
+      await refundAiUsage(user.id, 'menu_generation', aiUsage);
       return NextResponse.json({ error: insertError?.message || 'Failed to create request' }, { status: 500 });
     }
 

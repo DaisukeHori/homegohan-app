@@ -12,7 +12,8 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { recordEdgeAiUsage } from "../_shared/ai-usage.ts";
+import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
+import { aiDailyLimitMessage } from "../_shared/ai-usage-core.ts";
 import {
   buildSearchQueryBase,
   buildUserContextForPrompt,
@@ -2872,11 +2873,26 @@ Deno.serve(async (req: Request) => {
     }
 
     console.log(`📍 Starting step ${currentStep} for request ${requestId}`);
-    // #1177 AI 利用回数の記録。AI へ送る直前 (所有の確認・同意などの判定のあと、生成を始める前) に、生成 1 回につき 1 回記録する
-    // (究極モードも 1 回)。ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js の API ルート・cron は service role で呼び、
-    // 呼び出し元が記録済み)。Next.js が記録済みの印があれば記録しない。記録に失敗しても止めない
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (所有の確認・同意などの判定のあと、生成を始める前) に、
+    // 生成 1 回につき 1 回数える (究極モードも 1 回)。ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js の API ルート・cron は
+    // service role で呼び、呼び出し元が数え済み)。Next.js が数え済みの印があれば数えない。判定に失敗したときは止めない。
+    // 上限に達していれば、生成を始めずにリクエストの行を失敗にして (error_message は画面がそのまま出す人向けの文)、429 AI_DAILY_LIMIT
     if (directJwtUserId) {
-      await recordEdgeAiUsage(req, directJwtUserId, "menu_generation");
+      const aiUsage = await consumeEdgeAiUsage(req, directJwtUserId, "menu_generation");
+      if (!aiUsage.allowed) {
+        const { error: persistError } = await supabase
+          .from("weekly_menu_requests")
+          .update({
+            status: "failed",
+            error_message: aiDailyLimitMessage(aiUsage.limit),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", requestId!)
+          .eq("user_id", userId!)
+          .in("status", ["queued", "processing"]);
+        if (persistError) console.error("Failed to persist AI daily limit failure:", persistError);
+        return aiDailyLimitEdgeResponse(aiUsage, corsHeaders);
+      }
     }
 
     const invocationContext: V4InvocationContext = {

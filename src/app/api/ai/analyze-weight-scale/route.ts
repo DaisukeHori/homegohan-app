@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { extractWeightScaleResult } from '../../../../lib/ai/image-recognition';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { aiUsageRecordedHeaders, recordAiUsage } from '@/lib/plan/entitlements';
+import { aiUsageRecordedHeaders, aiDailyLimitResponse, consumeAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 export async function POST(request: Request) {
@@ -27,9 +27,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Image is required' }, { status: 400 });
     }
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
-    // (記録に失敗しても止めない)
-    await recordAiUsage(user.id, 'photo_analysis');
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeAiUsage(user.id, 'photo_analysis');
+    if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
     // Edge Function を呼び出し（25秒タイムアウト）
     const formData = new FormData();

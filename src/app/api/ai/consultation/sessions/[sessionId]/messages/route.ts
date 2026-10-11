@@ -5,7 +5,7 @@ import OpenAI from 'openai';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { recordAiUsage } from '@/lib/plan/entitlements';
+import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
 import { AI_ALLOWED_MEAL_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';
@@ -1015,9 +1015,10 @@ export async function POST(
       return NextResponse.json({ error: 'メッセージを入力してください' }, { status: 400 });
     }
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
-    // (記録に失敗しても止めない)
-    await recordAiUsage(user.id, 'consultation');
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeAiUsage(user.id, 'consultation');
+    if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
     // ユーザーメッセージを保存
     const { data: savedUserMessage, error: userMsgError } = await supabase
@@ -1030,7 +1031,11 @@ export async function POST(
       .select()
       .single();
 
-    if (userMsgError) throw userMsgError;
+    if (userMsgError) {
+      // 相談の文を保存できず、AI へは何も送っていないので、数えた 1 回を戻す (#1149)
+      await refundAiUsage(user.id, 'consultation', aiUsage);
+      throw userMsgError;
+    }
 
     // システムプロンプトを構築（ユーザー情報を含む）
     const systemPrompt = await buildSystemPrompt(supabase, user.id);

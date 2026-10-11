@@ -6,7 +6,7 @@ import { sanitizeHealthCheckupPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { recordAiUsage } from '@/lib/plan/entitlements';
+import { aiDailyLimitSkippedField, consumeAiUsage } from '@/lib/plan/entitlements';
 import { clampIntParam } from '@/lib/http-params';
 
 // 健康診断一覧を取得
@@ -108,14 +108,15 @@ export async function POST(request: NextRequest) {
   // 記録の保存だけを行い、レビューは作らない (T15 / #1154)。応答の aiSkipped で画面に知らせる
   const aiConsent = await checkUserAiConsent(supabase, user.id);
 
+  // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・健康診断の保存・同意の判定のあと) に、操作 1 回につき 1 回数える
+  // (個別レビューと経年レビューの 2 回 AI を呼ぶが、操作としては 1 回)。同意が無く AI へ送らないときは数えない。
+  // 上限に達していれば、記録の保存だけを行い、レビューは作らない (応答の aiSkipped: AI_DAILY_LIMIT で画面に知らせる)。
+  // 判定に失敗したときは止めない
+  const aiUsage = aiConsent.allowed ? await consumeAiUsage(user.id, 'health_review') : null;
+
   let individualReview = null;
   let longitudinalReview = null;
-  if (aiConsent.allowed) {
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・健康診断の保存・同意の判定のあと) に、操作 1 回につき 1 回記録する
-    // (個別レビューと経年レビューの 2 回 AI を呼ぶが、操作としては 1 回)。同意が無く AI へ送らないときは記録しない。
-    // 記録に失敗しても止めない
-    await recordAiUsage(user.id, 'health_review');
-
+  if (aiConsent.allowed && aiUsage?.allowed) {
     // 個別レビューを生成
     try {
       individualReview = await generateIndividualReview(checkup);
@@ -144,6 +145,7 @@ export async function POST(request: NextRequest) {
     },
     longitudinalReview,
     ...aiConsentSkippedField(aiConsent),
+    ...aiDailyLimitSkippedField(aiUsage),
   });
 }
 

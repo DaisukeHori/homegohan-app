@@ -6,7 +6,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { getCorsHeaders } from '../_shared/cors.ts'
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
-import { recordEdgeAiUsage } from "../_shared/ai-usage.ts";
+import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
 import OpenAI from "openai";
 import { createFastLLMClient, getFastLLMModel } from "../_shared/fast-llm.ts";
 import {
@@ -446,10 +446,12 @@ Deno.serve(async (req) => {
     console.log("Messages count:", body.messages.length);
     console.log("Mode:", mode, "Streaming:", isStreaming);
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に記録する。
-    // ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js が記録済みの印があれば記録しない。失敗しても止めない)
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
+    // ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js が数え済みの印があれば数えない。判定に失敗したときは止めない)。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT
     if (directJwtUserId) {
-      await recordEdgeAiUsage(req, directJwtUserId, "consultation");
+      const aiUsage = await consumeEdgeAiUsage(req, directJwtUserId, "consultation");
+      if (!aiUsage.allowed) return aiDailyLimitEdgeResponse(aiUsage, corsHeaders);
     }
 
     // LLMトークン使用量計測

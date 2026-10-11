@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { buildPhotoDishList } from '../../../../lib/meal-image';
 import { cancelPendingMealImageJobs } from '../../../../lib/meal-image-jobs';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { recordAiUsage } from '@/lib/plan/entitlements';
+import { aiDailyLimitResponse, consumeAiUsage } from '@/lib/plan/entitlements';
 import {
   PLANNED_MEAL_NUTRIENT_FIELDS,
   plannedMealValidationErrorBody,
@@ -97,9 +97,10 @@ export async function POST(request: Request) {
       const aiConsentDenied = await requireAiConsent(supabase, user.id);
       if (aiConsentDenied) return aiConsentDenied;
 
-      // nutritionData を直接渡す経路 (上) と、同意が無く止めた経路は AI を呼ばないので、記録するのは AI で解析するここだけ
-      // #1177 AI 利用回数の記録 (記録に失敗しても止めない)
-      await recordAiUsage(user.id, 'photo_analysis');
+      // nutritionData を直接渡す経路 (上) と、同意が無く止めた経路は AI を呼ばないので、数えるのは AI で解析するここだけ
+      // #1149 AI の利用回数の上限の判定と記録 (#1177)。上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+      const aiUsage = await consumeAiUsage(user.id, 'photo_analysis');
+      if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
       const prompt = `
         この食事の写真を栄養士の視点で分析し、以下のJSON形式で出力してください。

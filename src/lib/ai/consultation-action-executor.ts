@@ -29,7 +29,14 @@ import {
 } from '@/lib/meal-image-jobs';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit } from '@/lib/rate-limit';
-import { aiUsageRecordedHeaders, recordAiUsage } from '@/lib/plan/entitlements';
+import {
+  aiUsageRecordedHeaders,
+  consumeAiUsage,
+  refundAiUsage,
+  type AiUsageDenied,
+  type AiUsageResult,
+} from '@/lib/plan/entitlements';
+import { AI_DAILY_LIMIT_CODE, aiDailyLimitMessage } from '../../../supabase/functions/_shared/ai-usage-core';
 import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { createLogger } from '@/lib/db-logger';
@@ -245,6 +252,16 @@ export interface ConsultationActionExecutionResult {
   result: any;
   /** action_type がどのケースにも一致しなかった場合 true（呼び出し元で 400/failed 等に変換する） */
   unknownActionType?: boolean;
+  /**
+   * AI を使うアクション (献立の生成) を、今日の AI の利用回数の上限 (#1149) に達したので実行しなかったとき。
+   * execute の route は 429 AI_DAILY_LIMIT を返し、アクションを pending のまま残す (明日もう一度実行できる)
+   */
+  aiDailyLimit?: AiUsageDenied;
+}
+
+/** 上限 (#1149) に達して生成しなかったときの結果 (ai_action_logs.result と、会話の中の自動実行の結果に残る。人向けの文) */
+function dailyLimitResult(denied: AiUsageDenied): { error: string; code: typeof AI_DAILY_LIMIT_CODE } {
+  return { error: aiDailyLimitMessage(denied.limit), code: AI_DAILY_LIMIT_CODE };
 }
 
 export async function runConsultationAction(
@@ -254,6 +271,7 @@ export async function runConsultationAction(
 ): Promise<ConsultationActionExecutionResult> {
   let result: any = null;
   let success = false;
+  let aiDailyLimit: AiUsageDenied | undefined;
 
   // V5フラグ判定 (#1148: feature_flags。運営画面で切り替える)
   const useV5 = await isFeatureEnabled('menu_generation_v5_wrapped', user.id);
@@ -289,12 +307,19 @@ export async function runConsultationAction(
         ],
       });
 
-      // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・生成のリクエストの行を
-      // 作る前。記録に失敗しても止めない)。AI 相談の会話そのもの (consultation) は呼び出し元の route が記録する。
-      // 生成は別の AI の呼び出しなので、ここで別に記録する。同意の判定は呼び出し元の route がアクションの実行の前に済ませる
-      // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (記録の前に作る)
+      // #1149 AI の利用回数の上限の判定と記録 (#1177。生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・
+      // 生成のリクエストの行を作る前)。AI 相談の会話そのもの (consultation) は呼び出し元の route が数える。
+      // 生成は別の AI の呼び出しなので、ここで別に数える。同意の判定は呼び出し元の route がアクションの実行の前に済ませる。
+      // 上限に達していれば、数えずに生成しない (aiDailyLimit を返す。execute の route は 429、会話の中の自動実行は失敗の結果として残る)。
+      // 判定に失敗したときは止めない
+      // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (数える前に作る)
       const queueDb = getAiQueueWriter();
-      await recordAiUsage(user.id, 'menu_generation');
+      const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+      if (!aiUsage.allowed) {
+        aiDailyLimit = aiUsage;
+        result = dailyLimitResult(aiUsage);
+        break;
+      }
 
       // リクエストを記録
       const { data: requestData, error: requestError } = await queueDb
@@ -320,6 +345,8 @@ export async function runConsultationAction(
 
       if (requestError) {
         console.error('Failed to create request:', requestError);
+        // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
+        await refundAiUsage(user.id, 'menu_generation', aiUsage);
         result = { error: 'リクエストの作成に失敗しました' };
         break;
       }
@@ -346,7 +373,7 @@ export async function runConsultationAction(
             ultimateMode: ultimateMode ?? false,
           },
           // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに利用回数を記録する。
-          // この生成は上 (recordAiUsage) で記録済みなので、二重に記録しないよう、署名つきの印を付ける
+          // この生成は上 (consumeAiUsage) で数え済みなので、二重に数えないよう、署名つきの印を付ける
           headers: await aiUsageRecordedHeaders(user.id),
         }),
       });
@@ -394,12 +421,19 @@ export async function runConsultationAction(
         targetSlots: baseTargetSlots,
       });
 
-      // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・生成のリクエストの行を
-      // 作る前。記録に失敗しても止めない)。AI 相談の会話そのもの (consultation) は呼び出し元の route が記録する。
-      // 生成は別の AI の呼び出しなので、ここで別に記録する。同意の判定は呼び出し元の route がアクションの実行の前に済ませる
-      // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (記録の前に作る)
+      // #1149 AI の利用回数の上限の判定と記録 (#1177。生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・
+      // 生成のリクエストの行を作る前)。AI 相談の会話そのもの (consultation) は呼び出し元の route が数える。
+      // 生成は別の AI の呼び出しなので、ここで別に数える。同意の判定は呼び出し元の route がアクションの実行の前に済ませる。
+      // 上限に達していれば、数えずに生成しない (aiDailyLimit を返す。execute の route は 429、会話の中の自動実行は失敗の結果として残る)。
+      // 判定に失敗したときは止めない
+      // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (数える前に作る)
       const queueDb = getAiQueueWriter();
-      await recordAiUsage(user.id, 'menu_generation');
+      const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+      if (!aiUsage.allowed) {
+        aiDailyLimit = aiUsage;
+        result = dailyLimitResult(aiUsage);
+        break;
+      }
 
       // リクエストを記録
       const { data: requestData, error: requestError } = await queueDb
@@ -425,6 +459,8 @@ export async function runConsultationAction(
 
       if (requestError) {
         console.error('Failed to create request:', requestError);
+        // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
+        await refundAiUsage(user.id, 'menu_generation', aiUsage);
         result = { error: 'リクエストの作成に失敗しました' };
         break;
       }
@@ -451,7 +487,7 @@ export async function runConsultationAction(
             ultimateMode: ultimateMode ?? false,
           },
           // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに利用回数を記録する。
-          // この生成は上 (recordAiUsage) で記録済みなので、二重に記録しないよう、署名つきの印を付ける
+          // この生成は上 (consumeAiUsage) で数え済みなので、二重に数えないよう、署名つきの印を付ける
           headers: await aiUsageRecordedHeaders(user.id),
         }),
       });
@@ -509,12 +545,19 @@ export async function runConsultationAction(
         targetSlots: [{ date, mealType }],
       });
 
-      // #1177 AI 利用回数の記録 (生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・生成のリクエストの行を
-      // 作る前。記録に失敗しても止めない)。AI 相談の会話そのもの (consultation) は呼び出し元の route が記録する。
-      // 生成は別の AI の呼び出しなので、ここで別に記録する。同意の判定は呼び出し元の route がアクションの実行の前に済ませる
-      // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (記録の前に作る)
+      // #1149 AI の利用回数の上限の判定と記録 (#1177。生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・
+      // 生成のリクエストの行を作る前)。AI 相談の会話そのもの (consultation) は呼び出し元の route が数える。
+      // 生成は別の AI の呼び出しなので、ここで別に数える。同意の判定は呼び出し元の route がアクションの実行の前に済ませる。
+      // 上限に達していれば、数えずに生成しない (aiDailyLimit を返す。execute の route は 429、会話の中の自動実行は失敗の結果として残る)。
+      // 判定に失敗したときは止めない
+      // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (数える前に作る)
       const queueDb = getAiQueueWriter();
-      await recordAiUsage(user.id, 'menu_generation');
+      const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+      if (!aiUsage.allowed) {
+        aiDailyLimit = aiUsage;
+        result = dailyLimitResult(aiUsage);
+        break;
+      }
 
       // 1. weekly_menu_requests に記録
       const { data: requestData, error: requestError } = await queueDb
@@ -542,6 +585,8 @@ export async function runConsultationAction(
 
       if (requestError) {
         console.error('Failed to create request:', requestError);
+        // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
+        await refundAiUsage(user.id, 'menu_generation', aiUsage);
         result = { error: 'リクエストの作成に失敗しました' };
         break;
       }
@@ -577,7 +622,7 @@ export async function runConsultationAction(
             ultimateMode: ultimateMode ?? false,
           },
           // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに利用回数を記録する。
-          // この生成は上 (recordAiUsage) で記録済みなので、二重に記録しないよう、署名つきの印を付ける
+          // この生成は上 (consumeAiUsage) で数え済みなので、二重に数えないよう、署名つきの印を付ける
           headers: await aiUsageRecordedHeaders(user.id),
         }),
       });
@@ -694,6 +739,8 @@ export async function runConsultationAction(
       }
 
       let imageGenerationThrottled = false;
+      // #1149 AI の利用回数の上限の判定の結果 (画像を付けない・同意が無い・レート制限で止めたときは判定しないので null)
+      let imageUsage: AiUsageResult | null = null;
       if (jobs.length > 0) {
         // #1022 execute の update_meal も他の4 meal route と同じく image カテゴリで制限する
         // （relayチャットの連打で image の1min/20day上限をバイパスされないようにする）。
@@ -704,12 +751,15 @@ export async function runConsultationAction(
           imageAllowed = rl.success;
           if (imageAllowed) {
             // 同意が無ければ (判定に失敗した場合も)、画像の生成ジョブを処理する Edge Function (process-meal-image-jobs) が
-            // AI へ送らずに止める (T15 / #1154)。AI へ送らない操作は記録しない (同意の判定 → 利用回数の記録 → AI への送信の順)。
+            // AI へ送らずに止める (T15 / #1154)。AI へ送らない操作は数えない (同意の判定 → 上限の判定と記録 → AI への送信の順)。
             // ジョブを積むかどうかは、同意の有無では変えない (止めるのは処理する側)
             const imageConsent = await checkUserAiConsent(supabase, user.id);
             if (imageConsent.allowed) {
-              // #1177 AI 利用回数の記録 (操作 1 回で 1 回。積む画像のジョブの数によらない。記録に失敗しても止めない)
-              await recordAiUsage(user.id, 'image_generation');
+              // #1149 AI の利用回数の上限の判定と記録 (#1177。操作 1 回で 1 回。積む画像のジョブの数によらない)。
+              // 上限に達していれば、画像だけ見送る (ジョブを積まない。献立の更新はそのまま。結果の aiSkipped: AI_DAILY_LIMIT)。
+              // 判定に失敗したときは止めない
+              imageUsage = await consumeAiUsage(user.id, 'image_generation');
+              if (!imageUsage.allowed) imageAllowed = false;
             }
           }
         } catch (rlError) {
@@ -736,7 +786,8 @@ export async function runConsultationAction(
             requestId: action.id,
           });
           await triggerMealImageJobProcessing({ plannedMealId: mealId, limit: jobs.length });
-        } else {
+        } else if (imageUsage?.allowed !== false) {
+          // レート制限で見送った (上限 #1149 で見送ったときは、結果の aiSkipped で知らせる)
           imageGenerationThrottled = true;
           console.warn('[consultation/actions/execute] Image generation skipped due to rate limit', {
             userId: user.id,
@@ -753,6 +804,8 @@ export async function runConsultationAction(
         newDishName: updatedMeal?.dish_name,
         // #1022 (Suggestion): 画像生成がスロットルされた場合のみ additive にフラグを付与する
         ...(imageGenerationThrottled ? { imageGenerationThrottled: true } : {}),
+        // #1149 今日の AI の利用回数の上限に達して、料理画像だけを見送ったとき
+        ...(imageUsage && !imageUsage.allowed ? { aiSkipped: AI_DAILY_LIMIT_CODE } : {}),
       };
       break;
     }
@@ -1446,5 +1499,5 @@ export async function runConsultationAction(
       return { success: false, result: null, unknownActionType: true };
   }
 
-  return { success, result };
+  return { success, result, ...(aiDailyLimit ? { aiDailyLimit } : {}) };
 }

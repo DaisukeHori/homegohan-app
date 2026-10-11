@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { AI_SENDING_ACTION_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';
+import { aiDailyLimitResponse } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 // 指定日付の user_daily_meals を取得または作成するヘルパー関数
@@ -109,6 +110,12 @@ export async function POST(
 
     if (executionResult.unknownActionType) {
       return NextResponse.json({ error: 'Unknown action type' }, { status: 400 });
+    }
+
+    // 今日の AI の利用回数の上限 (#1149) に達して、献立の生成をしなかった。アクションは pending のまま残す
+    // (明日もう一度実行できる。同意が無くて止めたときと同じ扱い)
+    if (executionResult.aiDailyLimit) {
+      return aiDailyLimitResponse(executionResult.aiDailyLimit);
     }
 
     const { success, result } = executionResult;

@@ -13,7 +13,8 @@ import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from 
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
 import { requireAuth } from "../_shared/auth.ts";
-import { recordEdgeAiUsage } from "../_shared/ai-usage.ts";
+import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
+import { aiDailyLimitMessage } from "../_shared/ai-usage-core.ts";
 import { getCorsHeaders, withCors } from "../_shared/cors.ts";
 import { aggregateIngredientOccurrences, InputIngredient } from "../_shared/shopping-list-aggregation.ts";
 import { verifyRequestOwnership } from "../_shared/request-ownership.ts";
@@ -697,10 +698,16 @@ Deno.serve(async (req: Request) => {
       return aiConsentDeniedResponse(aiConsent, corsHeaders);
     }
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・所有の確認・同意の判定のあと) に記録する (未同意で止めた呼び出しは記録しない)。
-    // ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js が記録済みの印があれば記録しない。失敗しても止めない)
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・所有の確認・同意の判定のあと) に数える
+    // (未同意で止めた呼び出しは数えない)。ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js が数え済みの印があれば数えない。
+    // 判定に失敗したときは止めない)。上限に達していれば、作り直しを始めずにリクエストの行を失敗にして
+    // (result.error は画面がそのまま出す人向けの文)、429 AI_DAILY_LIMIT
     if (directJwtUserId) {
-      await recordEdgeAiUsage(req, directJwtUserId, "shopping_list");
+      const aiUsage = await consumeEdgeAiUsage(req, directJwtUserId, "shopping_list");
+      if (!aiUsage.allowed) {
+        await markFailed(supabase, requestId, userId, aiDailyLimitMessage(aiUsage.limit));
+        return aiDailyLimitEdgeResponse(aiUsage, corsHeaders);
+      }
     }
 
     // 非同期で処理開始（即座にレスポンス返す。レスポンス後も処理が打ち切られないようwaitUntilに委ねる）

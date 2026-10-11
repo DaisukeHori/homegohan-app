@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { recordAiUsage } from '@/lib/plan/entitlements';
+import { aiDailyLimitSkippedField, consumeAiUsage } from '@/lib/plan/entitlements';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
 
@@ -99,8 +99,12 @@ export async function POST(
     const hasConversation = Boolean(messages && messages.length > 1);
     const aiConsent = hasConversation ? await checkUserAiConsent(supabase, user.id) : null;
 
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。要約を AI へ送る直前 (同意などの判定のあと) に、操作 1 回につき 1 回数える。
+    // 上限に達していれば、要約を作らずに閉じる (応答の aiSkipped: AI_DAILY_LIMIT で画面に知らせる。判定に失敗したときは止めない)
+    const aiUsage = messages && hasConversation && aiConsent?.allowed ? await consumeAiUsage(user.id, 'consultation') : null;
+
     // メッセージがある場合のみ要約を生成
-    if (messages && hasConversation && aiConsent?.allowed) {
+    if (messages && hasConversation && aiConsent?.allowed && aiUsage?.allowed) {
       const importantMessages = messages.filter((m: any) => m.is_important);
       const conversationText = messages
         .filter((m: any) => m.role !== 'system')
@@ -141,10 +145,6 @@ ${importantMessages.length > 0 ? `
 【ユーザーが重要とマークしたメッセージ】
 ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n')}
 ` : ''}`;
-
-      // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
-      // (記録に失敗しても止めない)
-      await recordAiUsage(user.id, 'consultation');
 
       try {
         const MAX_ATTEMPTS = 2;
@@ -222,6 +222,7 @@ ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n
       success: true,
       summary: summaryData,
       ...aiConsentSkippedField(aiConsent),
+      ...aiDailyLimitSkippedField(aiUsage),
     });
 
   } catch (error: any) {

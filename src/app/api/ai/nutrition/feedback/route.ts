@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { getNutrientDefinition, calculateDriPercentage } from '@homegohan/shared';
 import crypto from 'crypto';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { recordAiUsage } from '@/lib/plan/entitlements';
+import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -221,9 +221,15 @@ export async function POST(request: Request) {
     if (aiConsentDenied) return aiConsentDenied;
 
     // 新規生成または再生成が必要 (ここから先は AI を呼ぶ)
-    // キャッシュを返す・生成中のステータスを返すだけの経路と、同意が無く止めた経路では AI を呼ばないので、ここまでは記録しない
-    // #1177 AI 利用回数の記録 (記録に失敗しても止めない)
-    await recordAiUsage(user.id, 'nutrition_advice');
+    // キャッシュを返す・生成中のステータスを返すだけの経路と、同意が無く止めた経路では AI を呼ばないので、ここまでは数えない
+    // #1149 AI の利用回数の上限の判定と記録 (#1177。判定に失敗したときは止めない):
+    //   - 栄養の詳細を開いたときの自動の取得 (forceRefresh なし) は、利用者が押した操作ではないので上限に数えない
+    //     ('nutrition_advice_auto'。記録だけ。開くだけで今日の回数が減らないように)
+    //   - 「再分析」を押した取得 (forceRefresh) は上限に数え、達していれば数えずに 429 AI_DAILY_LIMIT
+    const aiUsage = forceRefresh
+      ? await consumeAiUsage(user.id, 'nutrition_advice')
+      : await consumeAiUsage(user.id, 'nutrition_advice_auto');
+    if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
     // まずpendingステータスでレコードを作成/更新
     const { data: cacheRecord, error: upsertError } = await supabase
@@ -243,6 +249,8 @@ export async function POST(request: Request) {
 
     if (upsertError) {
       console.error('Failed to create cache record:', upsertError);
+      // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
+      await refundAiUsage(user.id, forceRefresh ? 'nutrition_advice' : 'nutrition_advice_auto', aiUsage);
       return NextResponse.json({ error: 'キャッシュの作成に失敗しました' }, { status: 500 });
     }
 

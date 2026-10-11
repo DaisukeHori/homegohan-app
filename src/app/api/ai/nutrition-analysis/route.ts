@@ -7,7 +7,7 @@ import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { recordAiUsage } from '@/lib/plan/entitlements';
+import { aiDailyLimitResponse, aiDailyLimitSkippedField, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { CALENDAR_DATE_REQUIREMENT, isCalendarDate, nutritionAnalysisRange } from '@/lib/jst-day-ranges';
 import { aiConsentSkippedField, checkUserAiConsent, requireAiConsent } from '@/lib/ai/consent-guard';
 
@@ -217,7 +217,13 @@ export async function GET(request: Request) {
     const aiRequested = includeAdvice || includeSuggestion;
     const aiConsent = aiRequested ? await checkUserAiConsent(supabase, user.id) : null;
 
-    if (aiRequested && aiConsent?.allowed) {
+    // #1149 AI の利用回数の判定と記録 (#1177)。この GET はホームを開くと自動で呼ばれる (利用者が押した操作ではない) ので、
+    // 上限に数えない機能 ('nutrition_advice_auto') で記録だけする (ホームを開くだけで今日の回数が減らないように)。
+    // 上限に数えない機能は DB が止めないので、下の allowed はいつも true。上限に数える機能へ変えたときは、
+    // 止めた場合に AI の部分だけを省いて aiSkipped (AI_DAILY_LIMIT) で知らせる (集計は返す)
+    const aiUsage = aiRequested && aiConsent?.allowed ? await consumeAiUsage(user.id, 'nutrition_advice_auto') : null;
+
+    if (aiRequested && aiConsent?.allowed && aiUsage?.allowed) {
       const healthConditions = profile?.health_conditions || [];
       const medications = profile?.medications || [];
       const nutritionGoal = profile?.nutrition_goal || 'maintain';
@@ -283,10 +289,6 @@ JSON形式で出力してください：
 ` : ''}
 `;
 
-      // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
-      // (記録に失敗しても止めない)
-      await recordAiUsage(user.id, 'nutrition_advice');
-
       const completion = await getFastLLMClient().chat.completions.create({
         model: getFastLLMModel(),
         messages: [{ role: 'user', content: prompt }],
@@ -329,6 +331,7 @@ JSON形式で出力してください：
       advice,
       suggestion,
       ...aiConsentSkippedField(aiConsent),
+      ...aiDailyLimitSkippedField(aiUsage),
       profile: {
         nutritionGoal: profile?.nutrition_goal,
         healthConditions: profile?.health_conditions,
@@ -402,9 +405,10 @@ export async function POST(request: Request) {
     // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。本人の確認・同意のあとで、service role で書く
     const queueDb = getAiQueueWriter();
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
-    // (記録に失敗しても止めない)
-    await recordAiUsage(user.id, 'menu_generation');
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+    if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
     // リクエストを作成
     const targetSlots = [{ date: targetDate, mealType: targetMealType, plannedMealId: meal.id }];
@@ -427,6 +431,8 @@ export async function POST(request: Request) {
 
     if (requestError || !requestData) {
       console.error('Failed to create request:', requestError);
+      // 献立の変更を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
+      await refundAiUsage(user.id, 'menu_generation', aiUsage);
       return NextResponse.json({ error: 'Failed to create request' }, { status: 500 });
     }
 

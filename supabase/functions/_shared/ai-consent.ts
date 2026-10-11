@@ -282,18 +282,27 @@ export function aiConsentSkippedField(decision: AiConsentDecision | null): { aiS
 }
 
 /**
- * 応答の aiSkipped (aiConsentSkippedField が足す欄) を、画面の出し分けの理由に直す (Web・モバイル共用)。
+ * AI の利用回数の上限 (#1149) に達して AI の部分を省いたときの aiSkipped の値。
+ * _shared/ai-usage-core.ts の AI_DAILY_LIMIT_CODE と同じ値 (このファイルは import を持たないので、ここにも置く。
+ * tests/ai-daily-limit-core.test.ts が一致を確かめる)
+ */
+export const AI_SKIPPED_DAILY_LIMIT_CODE = 'AI_DAILY_LIMIT';
+
+/**
+ * 応答の aiSkipped (aiConsentSkippedField / aiDailyLimitSkippedField が足す欄) を、画面の出し分けの理由に直す (Web・モバイル共用)。
  *   - consent_required: 同意が無いので AI の部分を省いた。画面は同意の画面へ案内する
  *   - check_failed    : 同意の状況を読めなかったので AI の部分を省いた。画面は「一時的に」と出す
+ *   - daily_limit     : 今日の AI の利用回数の上限 (#1149) に達したので AI の部分を省いた。画面は「明日 0 時から」と出す
  *   - null            : 省いていない (aiSkipped が無い・知らない値)
  */
-export type AiSkippedReason = 'consent_required' | 'check_failed';
+export type AiSkippedReason = 'consent_required' | 'check_failed' | 'daily_limit';
 
 export function aiSkippedReasonOf(body: unknown): AiSkippedReason | null {
   if (!body || typeof body !== 'object') return null;
   const skipped = (body as { aiSkipped?: unknown }).aiSkipped;
   if (skipped === AI_CONSENT_REQUIRED_CODE) return 'consent_required';
   if (skipped === AI_CONSENT_CHECK_FAILED_CODE) return 'check_failed';
+  if (skipped === AI_SKIPPED_DAILY_LIMIT_CODE) return 'daily_limit';
   return null;
 }
 
@@ -322,11 +331,23 @@ export const AI_CONSENT_SUMMARY_SKIPPED_NOTE =
 /** 同上で、同意の状況を読めなくて要約を省いたときの一文 */
 export const AI_CONSENT_SUMMARY_CHECK_FAILED_NOTE = '相談を終了しました。要約は一時的に作れませんでした。';
 
+/** 記録の保存と AI の分析を一緒にする画面で、AI の利用回数の上限 (#1149) に達して AI の分析を省いたときに出す一文 */
+export const AI_DAILY_LIMIT_SKIPPED_NOTE =
+  '記録は保存しました。今日の AI の利用回数の上限に達したため、AI の分析は行いませんでした。明日 0 時から使えます。';
+
+/** 画面を開くと自動で作る AI のコメントを、上限に達して作らなかったときに出す一文 */
+export const AI_DAILY_LIMIT_AUTOMATIC_NOTE = '今日の AI の利用回数の上限に達しました。AI のコメントは明日 0 時から表示されます。';
+
+/** AI 相談を閉じたとき、上限に達して要約を省いたことを相談の画面に出す一文 */
+export const AI_DAILY_LIMIT_SUMMARY_SKIPPED_NOTE =
+  '相談を終了しました。今日の AI の利用回数の上限に達したため、要約は作りませんでした。明日 0 時から使えます。';
+
 /** AI 相談を閉じた応答の aiSkipped から、相談の画面に出す一文を選ぶ (省いていなければ null) */
 export function aiSummarySkippedNote(body: unknown): string | null {
   const reason = aiSkippedReasonOf(body);
   if (reason === 'consent_required') return AI_CONSENT_SUMMARY_SKIPPED_NOTE;
   if (reason === 'check_failed') return AI_CONSENT_SUMMARY_CHECK_FAILED_NOTE;
+  if (reason === 'daily_limit') return AI_DAILY_LIMIT_SUMMARY_SKIPPED_NOTE;
   return null;
 }
 

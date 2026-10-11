@@ -8,7 +8,7 @@ import {
   triggerMealImageJobProcessing,
 } from '../../../../lib/meal-image-jobs';
 import { checkRateLimit } from '@/lib/rate-limit';
-import { recordAiUsage } from '@/lib/plan/entitlements';
+import { aiDailyLimitSkippedField, consumeAiUsage, type AiUsageResult } from '@/lib/plan/entitlements';
 import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { createLogger } from '@/lib/db-logger';
 import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
@@ -134,6 +134,8 @@ export async function POST(request: Request) {
     if (mealError) throw mealError;
 
     let imageGenerationThrottled = false;
+    // #1149 AI の利用回数の上限の判定の結果 (画像を付けない・同意が無い・レート制限で止めたときは判定しないので null)
+    let imageUsage: AiUsageResult | null = null;
     if (dishImagePayload.jobs.length > 0) {
       // #1022 画像副作用（enqueue + trigger）は献立作成の成否から独立させる（詳細は meals/route.ts 参照）
       let imageAllowed = false;
@@ -146,8 +148,11 @@ export async function POST(request: Request) {
           // ジョブを積むかどうかは、同意の有無では変えない (止めるのは処理する側)
           const imageConsent = await checkUserAiConsent(supabase, user.id);
           if (imageConsent.allowed) {
-            // #1177 AI 利用回数の記録 (操作 1 回で 1 回。積む画像のジョブの数によらない。記録に失敗しても止めない)
-            await recordAiUsage(user.id, 'image_generation');
+            // #1149 AI の利用回数の上限の判定と記録 (#1177。操作 1 回で 1 回。積む画像のジョブの数によらない)。
+            // 上限に達していれば、画像だけ見送る (ジョブを積まない。献立の保存はそのまま。応答の aiSkipped: AI_DAILY_LIMIT)。
+            // 判定に失敗したときは止めない
+            imageUsage = await consumeAiUsage(user.id, 'image_generation');
+            if (!imageUsage.allowed) imageAllowed = false;
           }
         }
       } catch (rlError) {
@@ -174,7 +179,8 @@ export async function POST(request: Request) {
           plannedMealId: newMeal.id,
           limit: dishImagePayload.jobs.length,
         });
-      } else {
+      } else if (imageUsage?.allowed !== false) {
+        // レート制限で見送った (上限 #1149 で見送ったときは、下の aiSkipped で知らせる)
         imageGenerationThrottled = true;
         console.warn('[meal-plans/meals] Image generation skipped due to rate limit', {
           userId: user.id,
@@ -202,6 +208,8 @@ export async function POST(request: Request) {
       },
       // #1022 (Suggestion): 画像生成がスロットルされた場合のみ additive にフラグを付与する
       ...(imageGenerationThrottled ? { imageGenerationThrottled: true } : {}),
+      // #1149 今日の AI の利用回数の上限に達して、料理画像だけを見送ったとき
+      ...aiDailyLimitSkippedField(imageUsage),
     });
   } catch (error: any) {
     console.error('Add meal error:', error);

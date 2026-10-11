@@ -1,38 +1,52 @@
 /**
- * AI 利用回数の記録 - Edge Functions 用 (#1177 / T26)
+ * AI の利用回数の上限 (#1149 / T40) と記録 (#1177 / T26) - Edge Functions 用
  *
- * 【いまの方針】当面は無料のまま計測する。全員無制限のまま、回数を記録するだけ。
- * 上限と比べて止める処理は、この作業では足さない (上限を実際に入れる #1149 / T40 が、拒否したときの扱いと一緒に設計して足す)。
- *
- * 【どこで記録するか】
- * AI を使う処理は、Next.js の API ルートが recordAiUsage (src/lib/plan/entitlements.ts) で 1 回と記録する。
+ * 【どこで数えるか】
+ * AI を使う処理は、Next.js の API ルートが consumeAiUsage (src/lib/plan/entitlements.ts) で 1 回と数える (上限の判定と記録)。
  * この関数は、Next.js を経由せず、ユーザー自身の JWT で Edge Function を直接呼ばれた場合 (#1153) のために、
- * Edge Function 側でも記録する。直接呼ばれても記録されないと、AI の利用回数がすり抜けてしまうため。
+ * Edge Function 側でも数える。直接呼ばれても数えないと、上限をすり抜けてしまうため。
+ * 上限に達していれば記録せずに { allowed: false } を返す。呼び出し側は送らずに 429 (aiDailyLimitEdgeResponse) で止める。
  *
- * 【二重に記録しない】
- *  - service role key (または cron のシークレット) で呼ばれたとき: 記録しない。この関数は、ユーザーの JWT を確かめた
+ * 【二重に数えない】
+ *  - service role key (または cron のシークレット) で呼ばれたとき: 数えない。この関数は、ユーザーの JWT を確かめた
  *    経路 (requireAuth の成功後・auth.getUser の成功後) からだけ呼ぶ。service role の経路では呼ばない。
- *  - Next.js がユーザーの JWT で Edge Function を呼ぶとき (写真解析・AI 相談の献立生成): Next.js が記録済みなので、
- *    署名つきの印 (x-hg-ai-usage-recorded) を付けて呼ぶ。印の署名・有効期間・ユーザーが合えば、ここでは記録しない。
+ *  - Next.js がユーザーの JWT で Edge Function を呼ぶとき (写真解析): Next.js が数え済みなので、
+ *    署名つきの印 (x-hg-ai-usage-recorded) を付けて呼ぶ。印の署名・有効期間・ユーザーが合えば、ここでは数えずに許可する。
  *    仕組みは _shared/ai-usage-core.ts。
  *
- * 【順番】同意の判定 (_shared/ai-consent-guard.ts。#1154) → この記録 → AI への送信。同意が無くて止めた呼び出しは記録しない。
+ * 【順番】同意の判定 (_shared/ai-consent-guard.ts。#1154) → この判定と記録 → AI への送信。同意が無くて止めた呼び出しは数えない。
+ *
+ *   const aiUsage = await consumeEdgeAiUsage(req, userId, "photo_analysis");
+ *   if (!aiUsage.allowed) return aiDailyLimitEdgeResponse(aiUsage, corsHeaders);
  *
  * 【失敗しても止めない】
- * DB の関数が失敗したとき (DB エラー・接続できない・migration が未適用・応答が遅いなど) は、ログに残して先へ進む。
- * 記録は best-effort で、記録の失敗で AI の機能そのものを止めない。
+ * DB の関数が失敗したとき (DB エラー・接続できない・migration が未適用・応答が遅いなど) は、ログに残して許可する。
  */
 
 import { createClient } from "@supabase/supabase-js";
 import {
+  AI_USAGE_NOT_COUNTED,
   AI_USAGE_RECORDED_HEADER,
   AI_USAGE_TIMEOUT_MS,
+  aiDailyLimitPayload,
+  parseConsumeAiUsageResult,
   verifyAiUsageRecorded,
   type AiFeature,
+  type AiUsageAllowed,
+  type AiUsageDenied,
+  type AiUsageResult,
 } from "./ai-usage-core.ts";
 import { createLogger } from "./db-logger.ts";
 
-export { AI_FEATURES, AI_USAGE_RECORDED_HEADER, type AiFeature } from "./ai-usage-core.ts";
+export {
+  AI_DAILY_LIMIT_CODE,
+  AI_FEATURES,
+  AI_USAGE_RECORDED_HEADER,
+  type AiFeature,
+  type AiUsageAllowed,
+  type AiUsageDenied,
+  type AiUsageResult,
+} from "./ai-usage-core.ts";
 
 /** supabase-js の rpc だけを使う最小の形 (テストで差し替えられる) */
 export interface AiUsageRpcClient {
@@ -42,7 +56,7 @@ export interface AiUsageRpcClient {
   ): PromiseLike<{ data: unknown; error: { message?: string; code?: string } | null }>;
 }
 
-export interface RecordEdgeAiUsageOptions {
+export interface ConsumeEdgeAiUsageOptions {
   /** 既定は service_role のクライアント */
   client?: AiUsageRpcClient;
   timeoutMs?: number;
@@ -57,13 +71,13 @@ function toError(value: unknown): Error {
   return new Error(String(value));
 }
 
-async function withTimeout<T>(promise: PromiseLike<T>, timeoutMs: number): Promise<T> {
+async function withTimeout<T>(promise: PromiseLike<T>, timeoutMs: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`record_ai_usage timed out after ${timeoutMs}ms`)), timeoutMs);
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
       }),
     ]);
   } finally {
@@ -85,41 +99,89 @@ function defaultClient(): AiUsageRpcClient {
   }) as unknown as AiUsageRpcClient;
 }
 
+/** ログに残す。ログの保存自体が失敗しても (ここで例外を出さない)、先へ進む */
+function logFailure(userId: string, message: string, error: unknown, context: Record<string, unknown>): void {
+  try {
+    createLogger("ai-usage").withUser(userId).error(message, toError(error), context);
+  } catch {
+    // ログに残せなくても、AI の利用は止めない
+  }
+}
+
 /**
- * ユーザーの JWT を確かめた経路から、AI を 1 回使うことを記録する。AI へ送る直前 (同意の判定のあと) に呼ぶ。
+ * ユーザーの JWT を確かめた経路から、AI の利用を 1 回数える (上限の判定と記録)。AI へ送る直前 (同意の判定のあと) に呼ぶ。
  *
  * @param req    受け取ったリクエスト (記録済みの印のヘッダーを読む)
  * @param userId JWT から確定したユーザー ID (リクエストの本文のユーザー ID は渡さない)
  *
- * 失敗しても例外は投げず、ログに残して戻る (止めない)。
+ * 上限に達していれば、記録せずに { allowed: false } を返す (呼び出し側は送らずに aiDailyLimitEdgeResponse で止める)。
+ * Next.js が数え済みの印があれば、数えずに許可する。DB の関数が失敗したときは、ログに残して許可する。例外は投げない。
  *
  * @example
- * await recordEdgeAiUsage(req, userId, "photo_analysis");
+ * const aiUsage = await consumeEdgeAiUsage(req, userId, "photo_analysis");
+ * if (!aiUsage.allowed) return aiDailyLimitEdgeResponse(aiUsage, corsHeaders);
  */
-export async function recordEdgeAiUsage(
+export async function consumeEdgeAiUsage(
   req: Request,
   userId: string,
   feature: AiFeature,
-  options: RecordEdgeAiUsageOptions = {},
-): Promise<void> {
+  options: ConsumeEdgeAiUsageOptions = {},
+): Promise<AiUsageResult> {
   try {
-    // Next.js が記録済みの呼び出しは記録しない。署名を確かめられなければ記録する側に倒す
-    if (await verifyAiUsageRecorded(req.headers.get(AI_USAGE_RECORDED_HEADER), userId, serviceRoleKeys())) return;
+    // Next.js が数え済みの呼び出しは数えない。署名を確かめられなければ数える側に倒す
+    if (await verifyAiUsageRecorded(req.headers.get(AI_USAGE_RECORDED_HEADER), userId, serviceRoleKeys())) {
+      return AI_USAGE_NOT_COUNTED;
+    }
 
     const client = options.client ?? defaultClient();
-    const { error } = await withTimeout(
-      client.rpc("record_ai_usage", { p_user_id: userId, p_feature: feature }),
+    const { data, error } = await withTimeout(
+      client.rpc("consume_ai_usage", { p_user_id: userId, p_feature: feature }),
       options.timeoutMs ?? AI_USAGE_TIMEOUT_MS,
+      "consume_ai_usage",
+    );
+    if (error) throw toError(error);
+    const result = parseConsumeAiUsageResult(data);
+    if (!result) throw new Error(`consume_ai_usage returned an unexpected value: ${JSON.stringify(data)}`);
+    return result;
+  } catch (error) {
+    logFailure(userId, "AI 利用回数の判定と記録に失敗しました (数えずに許可します)", error, { feature });
+    return AI_USAGE_NOT_COUNTED;
+  }
+}
+
+/**
+ * consumeEdgeAiUsage で数えた 1 回を戻す (数え戻し)。数えたあと、AI へ送る前に処理が失敗して何も送らなかったときだけ呼ぶ。
+ * 数えていない結果では何もしない。失敗しても例外は投げない。
+ */
+export async function refundEdgeAiUsage(
+  userId: string,
+  feature: AiFeature,
+  usage: AiUsageAllowed,
+  options: ConsumeEdgeAiUsageOptions = {},
+): Promise<void> {
+  if (!usage.metered || !usage.usageDate) return;
+  try {
+    const client = options.client ?? defaultClient();
+    const { error } = await withTimeout(
+      client.rpc("refund_ai_usage", { p_user_id: userId, p_feature: feature, p_usage_date: usage.usageDate }),
+      options.timeoutMs ?? AI_USAGE_TIMEOUT_MS,
+      "refund_ai_usage",
     );
     if (error) throw toError(error);
   } catch (error) {
-    // 記録に失敗した理由をログに残す。ログの保存自体が失敗しても (ここで例外を出さない)、先へ進む
-    try {
-      createLogger("ai-usage")
-        .withUser(userId)
-        .error("AI 利用回数の記録に失敗しました (記録せずに続けます)", toError(error), { feature });
-    } catch {
-      // ログに残せなくても、AI の利用は止めない
-    }
+    logFailure(userId, "AI 利用回数の数え戻しに失敗しました", error, { feature, usageDate: usage.usageDate });
   }
+}
+
+/** 上限に達したときの応答 (429 AI_DAILY_LIMIT。Next.js の aiDailyLimitResponse と同じ形)。CORS などのヘッダーを足して返す */
+export function aiDailyLimitEdgeResponse(
+  denied: AiUsageDenied,
+  headers: Record<string, string> = {},
+  nowMs: number = Date.now(),
+): Response {
+  const payload = aiDailyLimitPayload(denied, nowMs);
+  return new Response(JSON.stringify(payload.body), {
+    status: payload.status,
+    headers: { ...headers, ...payload.headers, "Content-Type": "application/json" },
+  });
 }
