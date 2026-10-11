@@ -73,7 +73,8 @@ export function isMealImageSkippedError(value: unknown): boolean {
  * 前回の状態が待ち・更新待ち・失敗 (または未設定) のとき。
  * 写真 (meal_photo)・手で付けた画像 (manual_override)・商品 (catalog) は積まない
  * (写真から作った複数の料理は 'stale' のまま画像を作らないのが今の扱い)。
- * 待ちのジョブがまだ残っているときは、同じ冪等キーで積もうとして積まれない (enqueueMealImageJobs が重複として数えない)
+ * 待ちのジョブがまだ残っているときは、同じ冪等キーで積もうとして積まれない (enqueueMealImageJobs が重複として数えない)。
+ * reconcileDishImages は、これに加えて「AI の画像の料理だと分かる」(isAiImagePipelineDish) ときだけ積み直す
  */
 export function needsImageRetry(dish: MealImageDish): boolean {
   if (dish.image_url) return false;
@@ -104,6 +105,32 @@ export function markDishImagesSkipped<TDish extends MealImageDish>(
     };
     return skipped;
   });
+}
+
+/**
+ * 前回の料理の画像を、AI の画像で置き換えずにそのまま残すか (#1487 の整合ゲート)。
+ *   - image_source が generated_ai 以外 (meal_photo・catalog・manual_override・none): 残す。
+ *     subject_hash の有無・料理の中身の変更によらない (写真や商品の料理は subject_hash を持たない)
+ *   - image_source が未設定でも image_url があれば残す。AI の画像を書くのは画像の処理 (process-meal-image-jobs) だけで、
+ *     そこは必ず image_source: 'generated_ai' を書く。手で付けた画像も buildDishImagePayload が manual_override を書く。
+ *     source の無い画像は、この仕組みの外で付いた画像 (古い写真の記録・商品・外から書いた画像) なので、AI の画像とみなさない。
+ *     URL の形 (保存先のバケット名など) では判定しない (保存先は経路ごとに違い、source だけで漏れなく決まるため)
+ * AI の画像のジョブを積むのは、image_source が generated_ai か未設定 (で画像の無い) 料理だけ
+ */
+export function isPreservedDishImage(dish: MealImageDish): boolean {
+  const source = dish.image_source ?? null;
+  if (source !== null) return source !== 'generated_ai';
+  return !!dish.image_url;
+}
+
+/**
+ * AI の画像の仕組み (reconcileDishImages → 画像の処理) が扱っている料理だと分かるか (#1487 の整合ゲート)。
+ * subject_hash を持つ (reconcileDishImages が書いた) か、image_source が generated_ai のとき。
+ * どちらも無い料理 (端末から直に保存した料理・この仕組みより前の料理) は、料理を変えずに保存し直しても積み直さない
+ * (完了の切り替えのような、料理以外だけを変える保存で、AI の画像を作り始めたり安全弁の 1 回を数えたりしない)
+ */
+export function isAiImagePipelineDish(dish: MealImageDish): boolean {
+  return !!dish.image_subject_hash || dish.image_source === 'generated_ai';
 }
 
 function normalizeWhitespace(value: string): string {
@@ -233,8 +260,12 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
     const previousDish = previousDishes[index];
     const prompt = buildDishImagePrompt(nextDish);
     const subjectHash = await buildDishImageSubjectHash(nextDish, index);
-    const manualOverride = previousDish?.image_source === 'manual_override' && !!previousDish?.image_url;
-    const sameSubject = previousDish?.image_subject_hash === subjectHash;
+    // 前回の料理が subject_hash を持たない (写真・商品の料理、端末から直に保存した料理) ときは、前回の料理の中身から求める (#1487 の整合ゲート)。
+    // 持たないだけで「料理が変わった」とみなすと、完了の切り替えのような保存し直しでも AI の画像のジョブを積んでしまう
+    const previousSubjectHash = previousDish
+      ? previousDish.image_subject_hash ?? await buildDishImageSubjectHash(previousDish, index)
+      : null;
+    const sameSubject = previousSubjectHash === subjectHash;
 
     const reconciledDish: TDish = {
       ...nextDish,
@@ -243,25 +274,45 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
       image_subject_hash: subjectHash,
     };
 
-    // 前回と同じ料理でも、画像がまだ無く待ち・失敗のままなら積み直す (#1487。見送った料理・積めなかった料理を、保存し直すと直す)
-    if (sameSubject && previousDish && !needsImageRetry(previousDish)) {
+    // 写真・商品・手で付けた画像 (と source の無い画像) は、料理の中身を変えても AI の画像で置き換えない (#1487 の整合ゲート)。
+    // ジョブを積まず、前回の画像と状態をそのまま写す。手で付けた画像だけは、料理を変えたら今までどおり 'stale' にする。
+    // subject_hash は付けない (画像の処理は、料理の subject_hash とジョブの subject_hash が同じときだけ書くので、
+    // 付けなければ同じ料理の待ちのジョブが残っていても、この画像を上書きしない)
+    if (previousDish && isPreservedDishImage(previousDish)) {
+      const manualOverrideChanged = previousDish.image_source === 'manual_override' && !!previousDish.image_url && !sameSubject;
+      reconciledDish.image_subject_hash = null;
       reconciledDish.image_url = previousDish.image_url ?? null;
-      reconciledDish.image_source = previousDish.image_source ?? 'generated_ai';
-      reconciledDish.image_status = previousDish.image_status ?? 'pending';
+      reconciledDish.image_source = previousDish.image_source ?? null;
+      reconciledDish.image_status = manualOverrideChanged ? 'stale' : previousDish.image_status ?? null;
       reconciledDish.image_generated_at = previousDish.image_generated_at ?? null;
-      reconciledDish.image_error = previousDish.image_error ?? null;
+      reconciledDish.image_error = manualOverrideChanged ? null : previousDish.image_error ?? null;
       dishes.push(reconciledDish);
       continue;
     }
 
-    if (manualOverride && previousDish) {
-      reconciledDish.image_url = previousDish.image_url ?? null;
-      reconciledDish.image_source = 'manual_override';
-      reconciledDish.image_status = 'stale';
-      reconciledDish.image_generated_at = previousDish.image_generated_at ?? null;
-      reconciledDish.image_error = null;
-      dishes.push(reconciledDish);
-      continue;
+    if (sameSubject && previousDish) {
+      if (!isAiImagePipelineDish(previousDish)) {
+        // AI の画像の料理だと分からない料理 (subject_hash も source も無い) を変えずに保存し直した: 前回のまま写し、積まない。
+        // 状態を 'pending' にすると、処理するジョブが無いので「生成中」のまま残る
+        reconciledDish.image_subject_hash = previousDish.image_subject_hash ?? null;
+        reconciledDish.image_url = previousDish.image_url ?? null;
+        reconciledDish.image_source = previousDish.image_source ?? null;
+        reconciledDish.image_status = previousDish.image_status ?? null;
+        reconciledDish.image_generated_at = previousDish.image_generated_at ?? null;
+        reconciledDish.image_error = previousDish.image_error ?? null;
+        dishes.push(reconciledDish);
+        continue;
+      }
+      // 前回と同じ料理でも、画像がまだ無く待ち・失敗のままなら積み直す (#1487。見送った料理・積めなかった料理を、保存し直すと直す)
+      if (!needsImageRetry(previousDish)) {
+        reconciledDish.image_url = previousDish.image_url ?? null;
+        reconciledDish.image_source = previousDish.image_source ?? 'generated_ai';
+        reconciledDish.image_status = previousDish.image_status ?? 'pending';
+        reconciledDish.image_generated_at = previousDish.image_generated_at ?? null;
+        reconciledDish.image_error = previousDish.image_error ?? null;
+        dishes.push(reconciledDish);
+        continue;
+      }
     }
 
     reconciledDish.image_url = null;

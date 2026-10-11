@@ -76,6 +76,9 @@ export async function buildDishImagePayload(
     if (dishes.length === 1) {
       dishes[0] = {
         ...dishes[0],
+        // 手で付けた画像には subject_hash を付けない (#1487 の整合ゲート。画像の処理は subject_hash が同じ料理にだけ書くので、
+        // 同じ料理の AI の画像のジョブが待ちで残っていても、手で付けた画像を上書きしない)
+        image_subject_hash: null,
         image_url: params.imageUrlOverride,
         image_source: 'manual_override',
         image_status: 'ready',
