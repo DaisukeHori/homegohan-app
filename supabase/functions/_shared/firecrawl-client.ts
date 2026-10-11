@@ -1,3 +1,5 @@
+import { missingEnvError } from "./missing-env.ts";
+
 const DEFAULT_FIRECRAWL_BASE_URL = "https://api.firecrawl.dev/v2";
 
 interface FirecrawlFormat {
@@ -76,7 +78,8 @@ function getFirecrawlConfig() {
   if (authToken) {
     headers[authHeader] = authScheme.trim() ? `${authScheme.trim()} ${authToken}`.trim() : authToken;
   } else if (baseUrl === DEFAULT_FIRECRAWL_BASE_URL) {
-    throw new Error("Missing FIRECRAWL_API_KEY or FIRECRAWL_AUTH_TOKEN");
+    // 変数名は message に入れず、ログにだけ残す (呼び出し元が message を応答の本文や取り込みのエラー記録に入れる。#1467)
+    throw missingEnvError(["FIRECRAWL_API_KEY", "FIRECRAWL_AUTH_TOKEN"]);
   }
 
   return { baseUrl, headers };

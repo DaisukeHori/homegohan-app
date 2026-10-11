@@ -18,7 +18,7 @@ npm run check:env -- --strict                      # 任意の変数の「値の
 
 | 種類 | 変数 | 足りないとき |
 |---|---|---|
-| **必須** | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | アプリが動きません。コードは、使う場面でエラー（`MissingEnvError`）を出し、500 になります。URL か anon キーが無いと、middleware がページと API（`/api/health` を除く）を汎用の 500 で止めます。`SUPABASE_SERVICE_ROLE_KEY` だけが無いと、それを使う API が 500 になります。応答（本文・ヘッダ・エラーページ）には変数名も値も出しません。本文は API によって、汎用の文（「処理中にエラーが発生しました」）・`MissingEnvError` の固定の文（変数名は入りません）・Next.js の既定のエラーのどれかです。どの変数が足りないかは、サーバーのログの `[env] missing required env: <変数名>` の行（どの経路でも出ます）と、`npm run check:env` で分かります。500 を `internalError()` で返す API と middleware では、構造化ログの `missing_env_name` にも残ります（console に出る構造化ログには必ず入ります。`app_logs` に書けるのは URL と `SUPABASE_SERVICE_ROLE_KEY` がそろっているとき、つまり anon キーだけが無いときです）。コマンドは終了コード 1 |
+| **必須** | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | アプリが動きません。コードは、使う場面でエラー（`MissingEnvError`）を出します。状態コードは場面ごとに次のとおりです。URL か anon キーが無いと、middleware がページと API（`/api/health` を除く）を汎用の 500 で止めます。`/api/health` は middleware を通らず、`?deep=1` のときだけ 503（`status: "degraded"`）を返します（`?deep=1` が無ければ DB を見ないので 200 のままです）。`SUPABASE_SERVICE_ROLE_KEY` だけが無いと、それを使う API はほとんどが 500 になります。ただし `POST /api/super-admin/embeddings/regenerate` は 503（`OP_EMBEDDING_JOB_UNAVAILABLE`）を返します。`POST /api/org/owner-transfer/propose` は提案の作成は成功のまま、通知メールだけを送りません。献立の画像生成ワーカーの起動（`lib/meal-image-jobs.ts`）と、AI の利用記録の署名ヘッダー（`src/lib/plan/entitlements.ts`）は、エラーにせずに飛ばします。応答（本文・ヘッダ・エラーページ）には変数名も値も出しません。本文は API によって、汎用の文（「処理中にエラーが発生しました」）・`MissingEnvError` の固定の文（変数名は入りません）・Next.js の既定のエラーのどれかです。どの変数が足りないかは、サーバーのログの `[env] missing required env: <変数名>` の行（どの経路でも出ます）と、`npm run check:env` で分かります。500 を `internalError()` で返す API と middleware では、構造化ログの `missing_env_name` にも残ります（console に出る構造化ログには必ず入ります。`app_logs` に書けるのは URL と `SUPABASE_SERVICE_ROLE_KEY` がそろっているとき、つまり anon キーだけが無いときです）。コマンドは終了コード 1 |
 | **任意** | メール（`RESEND_API_KEY`）・レート制限（`UPSTASH_REDIS_REST_*`）・課金（`STRIPE_SECRET_KEY`）・AI（`GOOGLE_AI_STUDIO_API_KEY`・`XAI_API_KEY`・`OPENAI_API_KEY`）・`CRON_SECRET`・モバイル認証ブリッジのスイッチ（`NATIVE_BRIDGE_*`）・規約の再同意のスイッチ（`LEGAL_CONSENT_*`）など | アプリは動きますが、その機能が使えなくなったり弱くなったりします。コマンドは「未設定です。…が起きます」と表示するだけです |
 
 - 任意の変数が足りないことで、本番を止めてはいけません。任意の変数を読む共通の関数（`getOptionalEnv()`。`src/lib/env.ts`）は、変数が無いときに例外を投げず、`undefined` を返して、プロセスごとに 1 回だけ警告をログに残します。メール送信・レート制限・Stripe・AI など、いまは各機能が `process.env` を直接読んでいる箇所が残っていて、ほかの作業と重ならないところから順にこの関数へ置き換えていきます。
@@ -94,7 +94,8 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 ### 値が合っていないとどうなるか
 
 - 値が違う → Edge Function は HTTP 401（本文 `{"error":"Unauthorized"}`）を返します。
-- Edge Function 側に `CRON_SECRET`（と `SERVICE_ROLE_SECRET`）が無い → HTTP 503 を返します。
+- Edge Function 側に `CRON_SECRET`（と `SERVICE_ROLE_SECRET`）が無い → HTTP 503（本文 `{"error":"Service not configured"}`）を返します。
+- Edge Function 側に、関数が動くのに要る secrets（`SUPABASE_URL`・`SUPABASE_SERVICE_ROLE_KEY`・`STRIPE_SECRET_KEY`・Google AI のキー など）が無い → コンビニカタログ取り込み（`_shared/catalog/import-runner.ts` を使う関数）・`process-meal-image-jobs`・`stripe-price-sync` は HTTP 503（本文 `{"error":"サーバーの設定が不足しています","code":"SERVER_CONFIG_MISSING"}`。カタログ取り込みは `"success":false` も付きます）を返します。どの関数も、応答の本文や例外の文には変数名を出さず、足りない変数名は関数のログ（Supabase Dashboard → Edge Functions → Logs）の `[env] missing required env: <変数名>` の行にだけ残します（#1467）。
 - pg_cron は pg_net で **非同期に** 呼び出すため、cron ジョブ自体は成功扱いのままです（`cron.job_run_details` は HTTP の結果にかかわらず `succeeded` になります）。エラーの表示もなく、カタログ取り込みだけが止まります。
 
 値とは別に、**関数のゲートウェイの JWT 検証（`verify_jwt`）が有効なまま** だと、値が合っていても関数に届く前に止まります。`app_cron_secret`（`CRON_SECRET`）はランダムな文字列で JWT ではないため、Supabase のゲートウェイが HTTP 401（本文 `{"code":"UNAUTHORIZED_INVALID_JWT_FORMAT", ...}`）を返します。pg_cron から呼ぶ関数は `supabase/config.toml` で `verify_jwt = false` にしてあり（認証は関数の中の `requireServiceRole` が行います。#1406）、GitHub Actions の「Deploy Supabase Functions」がこの設定ごとデプロイします。この 401 が出たら、設定がまだデプロイされていません。Actions の「Deploy Supabase Functions」が成功しているかを確かめ、必要なら手動で実行（Run workflow）し直してください。
@@ -108,7 +109,11 @@ ORDER BY created DESC
 LIMIT 20;
 ```
 
-- `status_code` が **401 / 503** の行がある → 値が合っていません。ただし 401 の本文が `UNAUTHORIZED_INVALID_JWT_FORMAT` なら、値ではなくゲートウェイの JWT 検証で止まっています（上を参照）。本文は `content::text` で見られます（下の「比較ランキングの集計が動いているかの確かめ方」のクエリ）。
+- `status_code` が **401** の行がある → 値が合っていません。ただし 401 の本文が `UNAUTHORIZED_INVALID_JWT_FORMAT` なら、値ではなくゲートウェイの JWT 検証で止まっています（上を参照）。
+- `status_code` が **503** の行がある → 値のずれではなく、Edge Function secrets に足りないものがあります。本文で見分けます。
+  - 本文が `{"error":"Service not configured"}` → Edge Function secrets に `CRON_SECRET`（と `SERVICE_ROLE_SECRET`）がありません。
+  - 本文に `"code":"SERVER_CONFIG_MISSING"` がある → 認証は通っています。関数が動くのに要る secrets（`SUPABASE_URL`・`SUPABASE_SERVICE_ROLE_KEY`・`FIRECRAWL_API_KEY` など）が足りません。足りない変数名は、関数のログの `[env] missing required env: <変数名>` の行で確かめてください（上を参照）。
+- 本文は `content::text` で見られます（下の「比較ランキングの集計が動いているかの確かめ方」のクエリ）。
 - `status_code` が 200 → 認証は通っています。
 - `status_code` が空で `timed_out` が true → 認証は通っています。取り込みに 5 秒以上かかると、pg_net が先に待つのをやめるためです（正常）。
 
@@ -216,7 +221,7 @@ migration の適用後や、`supabase/config.toml` の `verify_jwt` を変えた
    - `status_code` が 200 で、本文が `{"success":true, ...}` → 集計できています。
    - 401 で、本文が `UNAUTHORIZED_INVALID_JWT_FORMAT` → ゲートウェイの JWT 検証で止まっています。`verify_jwt = false` がまだデプロイされていません（上の「値が合っていないとどうなるか」）。
    - 401 で、本文が `{"error":"Unauthorized"}` → Vault の `app_cron_secret` と Edge Function secrets の `CRON_SECRET` の値が合っていません。
-   - 503 → Edge Function secrets に `CRON_SECRET` がありません。
+   - 503 で、本文が `{"error":"Service not configured"}` → Edge Function secrets に `CRON_SECRET` がありません（本文に `"code":"SERVER_CONFIG_MISSING"` がある 503 は、同じ表に入るカタログ取り込みの結果です。上の「値が合っていないとどうなるか」）。
    - 500 → 認証は通り、集計の途中で失敗しています。Supabase Dashboard の Edge Functions → `calculate-segment-stats` → Logs を見てください。
    - 行がまだ無い → 応答を待っています（上限 400 秒）。少し待ってから見直してください。古い結果は自動で消える（既定では約 6 時間）ので、実行の直後に見てください。
    - ほかの pg_net の呼び出し（カタログ取り込み）の結果も同じ表に入ります。UTC 3:00〜4:00 の回と重なったら、件数を増やして見分けてください。

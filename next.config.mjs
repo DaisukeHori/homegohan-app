@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { formatBuildDateJst } from './shared/build-date.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
@@ -33,8 +34,8 @@ function envValueOrUndefined(value) {
 const nextConfig = {
   env: {
     NEXT_PUBLIC_APP_VERSION: envValueOrUndefined(process.env.NEXT_PUBLIC_APP_VERSION) ?? `v${pkg.version}`,
-    NEXT_PUBLIC_BUILD_DATE:
-      envValueOrUndefined(process.env.NEXT_PUBLIC_BUILD_DATE) ?? new Date().toISOString().slice(0, 10).replace(/-/g, ''),
+    // 既定値は JST の暦日 (#1467。toISOString の UTC だと JST の 0:00〜8:59 のビルドが前日になる)
+    NEXT_PUBLIC_BUILD_DATE: envValueOrUndefined(process.env.NEXT_PUBLIC_BUILD_DATE) ?? formatBuildDateJst(),
   },
   async headers() {
     return [

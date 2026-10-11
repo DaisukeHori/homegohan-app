@@ -769,6 +769,8 @@ sequenceDiagram
 // tests/integration/family/rls-policies.integration.test.ts
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
+// 接続情報は src/lib の getter で取り出す (`process.env.X!` は使わない。#1182・#1434)
+import { getSupabaseAnonKey, getSupabaseServiceRoleKey, getSupabaseUrl } from '@/lib/env-required';
 import { createTestUser, signInAsUser } from '../../helpers/auth';
 import {
   createFamilyGroupInDB,
@@ -776,8 +778,8 @@ import {
 } from '../../factories';
 
 const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  getSupabaseUrl(),
+  getSupabaseServiceRoleKey(),
 );
 
 describe('family_groups RLS', () => {
@@ -797,8 +799,8 @@ describe('family_groups RLS', () => {
 
   it('owner can SELECT own family_group', async () => {
     const ownerClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${ownerToken}` } } },
     );
     const { data, error } = await ownerClient
@@ -811,8 +813,8 @@ describe('family_groups RLS', () => {
 
   it('returns 0 rows when non-member tries to SELECT family_group', async () => {
     const nonMemberClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${nonMemberToken}` } } },
     );
     const { data, error } = await nonMemberClient
@@ -825,8 +827,8 @@ describe('family_groups RLS', () => {
 
   it('DELETE is denied for all roles on family_groups', async () => {
     const ownerClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${ownerToken}` } } },
     );
     const { error } = await ownerClient
@@ -871,8 +873,8 @@ describe('family_meal_requests RLS (子供代理)', () => {
 
   it('owner can INSERT family_meal_requests for child member', async () => {
     const ownerClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${ownerToken}` } } },
     );
     const { error } = await ownerClient.from('family_meal_requests').insert({
@@ -887,8 +889,8 @@ describe('family_meal_requests RLS (子供代理)', () => {
 
   it('member cannot INSERT family_meal_requests for child member', async () => {
     const memberClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${memberToken}` } } },
     );
     const { error } = await memberClient.from('family_meal_requests').insert({
@@ -918,8 +920,8 @@ describe('meals_family_select RLS', () => {
     // 産業医は family_members に所属しないため、家族の meals を閲覧できない
     const doctorToken = await signInAsUser('doctor@test.local');
     const doctorClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${doctorToken}` } } },
     );
     const { data } = await doctorClient
@@ -934,8 +936,8 @@ describe('family_activity_log RLS (immutable)', () => {
   it('UPDATE is denied for all roles on family_activity_log', async () => {
     const ownerToken = await signInAsUser('owner@test.local');
     const ownerClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${ownerToken}` } } },
     );
     const { error } = await ownerClient
@@ -948,8 +950,8 @@ describe('family_activity_log RLS (immutable)', () => {
   it('DELETE is denied for all roles on family_activity_log', async () => {
     const ownerToken = await signInAsUser('owner@test.local');
     const ownerClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${ownerToken}` } } },
     );
     const { error } = await ownerClient
@@ -969,8 +971,8 @@ describe('プラン制限 RLS', () => {
     const freeUser = await createTestUser('user');
     const freeUserToken = await signInAsUser(freeUser.email);
     const freeClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${freeUserToken}` } } },
     );
     const { error } = await freeClient.from('family_groups').insert({
@@ -985,8 +987,8 @@ describe('プラン制限 RLS', () => {
     const freeUser = await createTestUser('user');
     const freeUserToken = await signInAsUser(freeUser.email);
     const freeClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${freeUserToken}` } } },
     );
     const { error } = await freeClient.from('family_groups').insert({
@@ -1009,8 +1011,8 @@ describe('プラン制限 RLS', () => {
     });
     const proToken = await signInAsUser(proUser.email);
     const proClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${proToken}` } } },
     );
     const { error } = await proClient.from('family_groups').insert({

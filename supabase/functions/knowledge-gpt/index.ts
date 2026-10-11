@@ -15,6 +15,7 @@ import {
   fetchSingleDatasetEmbedding,
 } from "../../../shared/dataset-embedding.mjs";
 import { requireAiConsentForUser } from "../_shared/ai-consent-guard.ts";
+import { missingEnvError } from "../_shared/missing-env.ts";
 
 console.log("Knowledge-GPT Function loaded (Fallback Mode)")
 
@@ -26,7 +27,7 @@ function getOpenAI(): OpenAI {
 // ===== テキスト埋め込み生成 =====
 async function embedText(text: string, dimensions: number = DATASET_EMBEDDING_DIMENSIONS): Promise<number[]> {
   const apiKey = Deno.env.get(DATASET_EMBEDDING_API_KEY_ENV);
-  if (!apiKey) throw new Error(`Missing ${DATASET_EMBEDDING_API_KEY_ENV}`);
+  if (!apiKey) throw missingEnvError([DATASET_EMBEDDING_API_KEY_ENV]);
   const embedding = await fetchSingleDatasetEmbedding(text, { apiKey, inputType: "query" });
   if (!Array.isArray(embedding) || embedding.length !== dimensions) {
     throw new Error("Dataset embedding API returned invalid vector");
