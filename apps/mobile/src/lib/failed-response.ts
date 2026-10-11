@@ -35,6 +35,14 @@ export function stoppedByServerAlertTitleOf(error: StoppedByServerError): string
 }
 
 /**
+ * 画面の 1 行の失敗の表示に出す文。サーバーに止められた (上限・緊急停止・メンテナンス中・同意の状況を読めなかった) なら
+ * その固定の文、それ以外 (ほかの失敗・通信の失敗) は fallback (#1486。英語の「DELETE failed: 503」や生の文字列を出さない)。
+ */
+export function stoppedByServerMessageOr(error: unknown, fallback: string): string {
+  return isStoppedByServerError(error) ? error.message : fallback;
+}
+
+/**
  * 失敗の応答の状態と本文から、投げる Error を作る。
  *   - 429 AI_DAILY_LIMIT: 固定の文の AiDailyLimitError
  *   - 503 AI_CHAT_DISABLED / MAINTENANCE_MODE / AI_CONSENT_CHECK_FAILED: 固定の文の ServiceUnavailableError

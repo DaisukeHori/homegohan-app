@@ -47,10 +47,14 @@ import {
 import { AI_CONSENT_PROVIDERS, AI_CONSENT_TABLE, AI_CONSENT_VERSION } from '../supabase/functions/_shared/ai-consent';
 import type { AiUsageResult } from '../supabase/functions/_shared/ai-daily-limit';
 import { AI_USAGE_ALLOWED } from './helpers/ai-usage-mock';
-import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
+import { resolveHeavyUnitTimeouts } from './helpers/heavy-unit-test-timeout';
 
-// Edge Function の本体を読み込むので、重い機械では既定の時間切れを超えることがある (tests/helpers/heavy-unit-test-timeout.ts。#1488)
-applyHeavyUnitTestTimeout();
+/**
+ * Edge Function の本体を動的に読み込むフック (beforeAll) の時間切れ。負荷の高い機械で、Edge Function の動的 import が
+ * フックの既定の 10 秒を超えたことがある (tests/ai-consent-enforcement-edge.test.ts。#1488)。このファイルはまだ時間切れで
+ * 落ちたことが無いので一覧 (HEAVY_UNIT_TEST_FILES) には入れず、読み込みのフックにだけ同じ値 (環境変数で上書き可) を使う
+ */
+const EDGE_IMPORT_HOOK_TIMEOUT_MS = resolveHeavyUnitTimeouts(process.env).hookTimeout;
 
 const USER = '11111111-1111-4111-8111-111111111111';
 
@@ -297,7 +301,7 @@ beforeAll(async () => {
     env: { get: (key: string) => ENV[key] },
   });
   await import('../supabase/functions/knowledge-gpt/index.ts');
-});
+}, EDGE_IMPORT_HOOK_TIMEOUT_MS);
 
 afterAll(() => {
   vi.unstubAllGlobals();

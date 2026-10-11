@@ -74,7 +74,7 @@ import {
   promptAiConsentRequired,
 } from "../../../src/lib/ai-consent";
 import { isAiDailyLimitError } from "../../../src/lib/ai-daily-limit";
-import { errorOfFailedResponse, isStoppedByServerError } from "../../../src/lib/failed-response";
+import { errorOfFailedResponse, stoppedByServerMessageOr } from "../../../src/lib/failed-response";
 
 type PlannedMealRow = {
   id: string;
@@ -1169,7 +1169,7 @@ export default function WeeklyMenuPage() {
       if (!r.ok) throw errorOfFailedResponse(r.status, await r.text().catch(() => ""));
       await loadData();
     } catch (e: unknown) {
-      setError(isStoppedByServerError(e) ? e.message : "削除に失敗しました。");
+      setError(stoppedByServerMessageOr(e, "削除に失敗しました。"));
     }
   }
 
@@ -1208,7 +1208,7 @@ export default function WeeklyMenuPage() {
           ),
         }))
       );
-      setError(isStoppedByServerError(e) ? e.message : "更新に失敗しました。");
+      setError(stoppedByServerMessageOr(e, "更新に失敗しました。"));
     }
   }
 
