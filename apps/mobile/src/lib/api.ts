@@ -62,6 +62,7 @@ function withRequestPolicy(method: string, path: string, init?: HttpRequestOptio
  * 「今日の AI の利用回数の上限に達しました」(429 AI_DAILY_LIMIT。#1149) で止められたら、生の文字列
  * (`HTTP 429 Too Many Requests: {...}`) の Error を、固定の文の AiDailyLimitError に置き換えて投げ直す
  * (各画面が e.message をそのまま出しても、生の文字列が出ないように。src/lib/ai-daily-limit.ts)。ほかのエラーはそのまま投げる。
+ * getApi() を通らない生の fetch には効かない。そちらは失敗の応答から errorOfFailedAiResponse で Error を作る。
  */
 export async function withFriendlyErrors<T>(request: Promise<T>): Promise<T> {
   try {
