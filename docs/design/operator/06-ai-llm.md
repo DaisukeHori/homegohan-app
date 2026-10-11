@@ -188,42 +188,39 @@ export async function logStreamingUsage(
 
 | 項目 | 内容 |
 |------|------|
-| 数える単位 | 利用者の 1 回の操作を 1 回 (究極モードも 1 回)。全機能の合計 |
+| 数える単位 | 利用者の 1 回の操作を 1 回 (究極モードも 1 回)。全機能の合計。写真の「オート」(判別 `classify-photo` → 解析 `analyze-*`) も 1 回 (§5.2) |
 | 日の区切り | JST の暦日 (0 時に戻る) |
 | 上限の値 | `public.ai_daily_limits(plan_key PK, daily_limit)`。NULL は無制限。既定は `free` = 10 の 1 行だけ |
 | 行の無いプラン | `free` の行の値 (`free` の行も無ければ無制限) |
 | 変更 | 運営画面 `/super-admin/llm/quotas` (GET / PATCH `/api/super-admin/llm/quotas`。super_admin のみ。監査ログ `super_admin.llm_quota.update`) |
-| 上限に数えない機能 | `nutrition_advice_auto` (画面を開くと自動で呼ばれる AI。ホームの栄養のアドバイス・栄養の詳細を開いたときの栄養士のコメント)。記録だけする |
+| 上限に数えない機能 | 画面を開く・保存するだけで呼ばれる AI。`nutrition_advice_auto` (ホームの栄養のアドバイス・栄養の詳細を開いたときの栄養士のコメント) と `meal_image_auto` (料理を保存・更新したときに付ける料理画像。AI 相談の update_meal も同じ)。1 日の上限の合計には入れず、機能ごとの安全弁 (下の行) で止める。利用者が押して画像を作る操作 (`POST /api/ai/image/generate`) は `image_generation` で、上限に数える |
+| 安全弁 (上限に数えない機能) | `public.ai_unmetered_daily_caps(feature PK, daily_cap)`。利用者ごと・1 日 (JST) の、機能ごとの回数。既定は `nutrition_advice_auto` = 30・`meal_image_auto` = 20 (ふつうの使い方では当たらない値)。行の無い機能は 20 (無制限にしない)。値は DB の行で変える (運営画面は無い)。上限に数えない機能を選ぶ材料 (forceRefresh・includeAdvice など) はクライアントが送る値なので、API を直接呼んで上限と無関係に AI を使えないように置く |
 
 ### 5.2 判定の実装
 
 - 判定と記録は DB の `consume_ai_usage(p_user_id, p_feature) -> jsonb` が 1 回の呼び出しで原子的に行う
   (`pg_advisory_xact_lock` で同じ利用者・同じ日を 1 本ずつ判定し、上限に達していれば記録せずに `{ allowed: false, limit, used }`、
-  達していなければ `ai_usage_counters` を +1 して `{ allowed: true, ... }`)。service_role のみ
+  達していなければ `ai_usage_counters` を +1 して `{ allowed: true, ... }`)。service_role のみ。
+  上限に数えない機能は、その機能のその日の回数を安全弁と比べ、達していれば記録せずに `{ allowed: false, metered: false, limit: 安全弁, used }`
 - Next.js: `consumeAiUsage(userId, feature)` (`src/lib/plan/entitlements.ts`) を AI へ送る直前に呼び、`if (!aiUsage.allowed)` で止める。
   Edge Function: ユーザーの JWT で直接呼ばれたときだけ `consumeEdgeAiUsage` (`supabase/functions/_shared/ai-usage.ts`)
 - 順番は「同意の判定 (#1154) → 上限の判定と記録 → AI への送信」
 - 止め方は入口ごと: 利用者が押す操作は 429 `AI_DAILY_LIMIT` (§11)、保存と AI の分析を一緒にする操作は保存だけして `aiSkipped: AI_DAILY_LIMIT`、
-  料理画像の副作用は画像だけ見送る、キューに積む操作は積む時点で判定する
+  料理画像の副作用は画像だけ見送る、キューに積む操作は積む時点で判定する。上限に数えない機能が安全弁で止められたときも同じ止め方
+  (ホームの栄養の集計は AI の部分だけ省く、栄養士のコメントの自動の取得は 429、料理画像は画像だけ見送る)
+- 写真の「オート」: 判別 (`POST /api/ai/classify-photo`) が 1 回数え、数え済みの印 `aiUsageGrant` を応答で返す
+  (`g1.<UNIX 秒>.<印の ID>.<HMAC-SHA256>`。署名の対象は機能名・利用者 ID・発行時刻・印の ID、鍵は service role key、有効は 10 分)。
+  画面は続く解析 (`analyze-meal-photo` / `analyze-fridge` / `analyze-health-checkup` / `analyze-weight-scale`) の本文の `aiUsageGrant` に入れて送る。
+  解析は署名を確かめ、DB の `claim_ai_usage_grant` で印を使用済みにできたときだけ数えない (印は 1 回だけ使える。使用済みの記録は
+  `ai_usage_grant_claims`)。印が無い・偽物・期限切れ・他人の印・使用済みなら数える。判別だけを無料にする形は採らない
+  (判別は `includeMealAnalysis` で解析の結果まで返すので、抜け道になる)
 - 数えたあと、AI へ送る前に DB の処理が失敗したとき (生成のリクエストの行の insert の失敗など) は `refund_ai_usage` で 1 回を戻す。AI へ送ったあとの失敗では戻さない
 - DB の関数が失敗したとき (エラー・未適用・3 秒を超える) は、ログに残して許可する (判定の失敗で AI を止めない)
 
 ### 5.3 異常検知
 
-```typescript
-// src/lib/plan/anomaly.ts
-export async function detectLLMAnomaly(userId: string, dailyCount: number): Promise<void> {
-  // 1 ユーザーが 1 日 5,000 リクエスト超 → アラート
-  if (dailyCount > 5000) {
-    await notifySlack({
-      channel: '#llm-anomaly',
-      message: `⚠️ LLM 異常使用: user_id=${userId}, today=${dailyCount} req`,
-    });
-    // 自動クォータ削減 (1,000 req/日に制限)
-    await redis.set(`llm_quota_override:${userId}`, 1000, { ex: 86400 * 7 });
-  }
-}
-```
+利用者ごとの使い過ぎは、1 日の上限 (§5.1。押した操作) と、上限に数えない機能の安全弁 (§5.1 の `ai_unmetered_daily_caps`) が DB の判定で止める。
+異常な使い方の通知 (Slack など) と、利用者ごとに上限を自動で下げる仕組みは無い (Redis の上書きの鍵も使っていない)。
 
 ## 6. アレルゲン突合フロー (§5.5.7)
 
@@ -547,18 +544,20 @@ sequenceDiagram
   - `detectAllergenHits()`: 各特定原材料のヒット/非ヒット
   - `ProposedRecipeSchema.parse()`: 正常系・異常系
   - `calculateCost()`: モデル別コスト計算
-  - `checkLLMQuota()`: trialing 時の quota 制限
+  - `consumeAiUsage()` / `refundAiUsage()` / 数え済みの印 (`issueAiUsageGrant` / `redeemAiUsageGrant`): `src/__tests__/lib/plan/entitlements.test.ts`
+  - 写真の「オート」が 1 回に数えられること: `tests/ai-usage-photo-auto-grant.test.ts`
 - **Integration** (Supabase Local):
   - `validateAndLoadContext()` の組織 ID 不一致 → 403 確認
   - ストリーミング usage ログの正確な記録
+  - 1 日の上限・安全弁・数え済みの印の DB の関数 (境目・JST の日の境目・同時実行・権限): `tests/integration/rls/ai-daily-limit-rpc.test.ts`
 - **E2E**:
   - アレルゲン突合: 卵アレルギー設定 → 卵を含む提案 → 自動再生成 → 卵なし提案
-  - quota 超過: Redis で daily_count を操作 → 429 確認
+  - 上限: 入口ごとの止め方 (429 / AI の部分だけ省く / 画像だけ見送る) は `tests/ai-consent-enforcement-routes.test.ts` が route を実際に呼んで確かめる
 
 ## 13. 既存実装との関連
 
 - `supabase/functions/_shared/llm-usage.ts`: 既存ファイルに `organization_id` / `family_group_id` 列追加
-- `supabase/functions/knowledge-gpt/`: 既存 — quota チェックを追加するのみ
+- `supabase/functions/knowledge-gpt/`: 既存 — ユーザーの JWT で直接呼ばれたときだけ `consumeEdgeAiUsage` で上限を判定する (service role で呼ぶ AI 相談の経路は、Next.js が数え済み)
 - `supabase/functions/food-recognition/`: 既存 — context guard を追加
 
 ## 14. 未解決事項
