@@ -31,9 +31,6 @@ import { AIDayMenuModal } from '../../src/components/ai/AIDayMenuModal';
 import { resetAiConsentPromptForTests } from '../../src/lib/ai-consent';
 import { AI_CONSENT_REQUIRED_CODE, AI_CONSENT_REQUIRED_MESSAGE } from '../../../../supabase/functions/_shared/ai-consent';
 
-// 最初の描画 (RN の Modal の初回描画) は読み込むモジュールが多く、キャッシュの無い環境では 5 秒の既定を超えることがある
-jest.setTimeout(30000);
-
 const alertMock = Alert.alert as jest.Mock;
 
 beforeEach(() => {

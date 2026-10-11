@@ -66,9 +66,6 @@ import { AI_CONSENT_REQUIRED_CODE, AI_CONSENT_REQUIRED_MESSAGE } from '../../../
 const PHOTO_URI = 'file:///var/mobile/Containers/fridge.jpg';
 const UPLOADED_URL = 'https://storage.example.com/fridge-images/user-1/1700000000000.jpg';
 
-// 非同期の段数が多く、遅い環境 (CI の初回実行など) で既定の 1 秒では足りないことがあるため、長めに待つ
-const WAIT = { timeout: 5000 };
-
 type AlertButton = { text?: string; style?: string; onPress?: () => void };
 
 const alertSpy = jest.spyOn(Alert, 'alert');
@@ -119,10 +116,10 @@ describe('PantryPage — 解析が「同意が必要です」で止められた�
     mockPost.mockRejectedValueOnce(CONSENT_ERROR);
 
     render(<PantryPage />);
-    await waitFor(() => expect(mockGet).toHaveBeenCalled(), WAIT);
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
     await pickPhotoFromLibrary();
 
-    await waitFor(() => expect(consentAlerts()).toHaveLength(1), WAIT);
+    await waitFor(() => expect(consentAlerts()).toHaveLength(1));
     expect(mockPost).toHaveBeenCalledWith('/api/ai/analyze-fridge', { imageUrl: UPLOADED_URL });
     expect(failureAlertCount()).toBe(0);
     const [, message, buttons] = consentAlerts()[0];
@@ -139,10 +136,10 @@ describe('PantryPage — 解析が「同意が必要です」で止められた�
     mockPost.mockRejectedValueOnce(new Error('HTTP 403 Forbidden: {"error":"Forbidden"}'));
 
     render(<PantryPage />);
-    await waitFor(() => expect(mockGet).toHaveBeenCalled(), WAIT);
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
     await pickPhotoFromLibrary();
 
-    await waitFor(() => expect(failureAlertCount()).toBe(1), WAIT);
+    await waitFor(() => expect(failureAlertCount()).toBe(1));
     expect(consentAlerts()).toHaveLength(0);
   });
 });

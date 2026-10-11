@@ -25,9 +25,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import ts from "typescript";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { resolveUnitSlotTestTimeout, testsWithUnexpectedTimeout } from "./helpers/local-ci-slot-test-timeout";
 
 const ROOT = process.cwd();
+
+// 1 件のテストの時間切れを、このファイルだけ延ばす (bash・git を何度も起動するので、負荷の高い機械で vitest の既定の 5 秒を超える。
+// 根拠と環境変数での上書きは tests/helpers/local-ci-slot-test-timeout.ts。#1488)。テストを定義する前に置く
+const SLOT_TEST_TIMEOUT_MS = resolveUnitSlotTestTimeout(process.env);
+vi.setConfig({ testTimeout: SLOT_TEST_TIMEOUT_MS });
 const SLOT_LIB = "scripts/lib/local-ci-slot.sh";
 const SUPABASE_LOCAL = "scripts/supabase-local.sh";
 const DRIFT_REPORT = "scripts/baseline/drift_report.sh";
@@ -502,5 +508,11 @@ describe("scripts/baseline/drift_report.sh は LOCAL_CI_SLOT の枠の DB に繋
       expect(r.docker, `枠 ${slot}`).toBe("");
       expect(fs.existsSync(path.join(keep, "marker")), `枠 ${slot}`).toBe(true);
     }
+  });
+});
+
+describe("このファイルの時間切れ (#1488)", () => {
+  it("どのテストも、このファイルの時間切れ (SLOT_TEST_TIMEOUT_MS) で切れる (全体の既定の 5 秒のまま残っていない)", ({ task }) => {
+    expect(testsWithUnexpectedTimeout(task.file, [SLOT_TEST_TIMEOUT_MS])).toEqual([]);
   });
 });
