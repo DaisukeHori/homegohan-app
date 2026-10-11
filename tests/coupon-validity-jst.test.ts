@@ -19,7 +19,7 @@ import {
   couponValidUntilTimestamp,
   isCouponExpiredAt,
 } from '@/lib/super-admin/coupon-validity';
-import { inEachTimeZone } from './helpers/time-zones';
+import { inEachTimeZone, TEST_TIME_ZONES } from './helpers/time-zones';
 import { microsOf } from './helpers/timestamptz';
 
 /** apply_coupon の有効性の判定 (2. クーポンの有効性) と同じ比べ方 */
@@ -153,8 +153,11 @@ const { PATCH } = await import('@/app/api/super-admin/coupons/[id]/route');
 
 const actor = { id: 'sa-1', email: 'sa@example.com', roles: ['super_admin'], organization_id: null };
 
+/** PATCH が読む保存済みの有効開始日 (既定は 2026-10-10 の JST 0:00 = POST で開始日 2026-10-10 として書いた時刻) */
+const STORED_VALID_FROM = '2026-10-09T15:00:00+00:00';
+
 /** coupons への insert / update と、監査ログへの insert を記録する Supabase クライアントの代わり */
-function fakeSupabase() {
+function fakeSupabase(storedValidFrom: string = STORED_VALID_FROM) {
   const couponInserts: Record<string, unknown>[] = [];
   const couponUpdates: Record<string, unknown>[] = [];
   const auditInserts: Record<string, unknown>[] = [];
@@ -177,7 +180,10 @@ function fakeSupabase() {
           return singleResult({ id: 'coupon-1', ...row });
         },
         select: () => ({
-          eq: () => ({ single: () => Promise.resolve({ data: { id: 'coupon-1', code: 'JST1483' }, error: null }) }),
+          eq: () => ({
+            single: () =>
+              Promise.resolve({ data: { id: 'coupon-1', code: 'JST1483', valid_from: storedValidFrom }, error: null }),
+          }),
         }),
         update: (row: Record<string, unknown>) => {
           couponUpdates.push(row);
@@ -291,5 +297,91 @@ describe('PATCH /api/super-admin/coupons/[id] (#1483 有効期限は JST の暦�
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe('OP_INVALID_INPUT');
     expect(fake.couponUpdates).toHaveLength(0);
+  });
+});
+
+/**
+ * #1510: PATCH は保存済みの有効開始日 (valid_from) と、新しい有効期限 (valid_until) の前後を比べる。
+ * 以前は比べず、開始日より前の期限に変えられた (一度も使えないクーポンになる)。
+ * POST と同じく JST の暦日で比べ、期限の日が開始日より前なら 400 OP_INVALID_INPUT・同じ日は可。valid_until を送らないときは比べない。
+ */
+describe('PATCH /api/super-admin/coupons/[id] (#1510 有効期限と保存済みの有効開始日の前後)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequireRole.mockResolvedValue(actor);
+  });
+
+  async function patch(storedValidFrom: string, body: Record<string, unknown>) {
+    const fake = fakeSupabase(storedValidFrom);
+    mockCreateClient.mockResolvedValue(fake.client);
+    const res = await PATCH(jsonRequest('http://localhost/api/super-admin/coupons/coupon-1', 'PATCH', body), {
+      params: { id: 'coupon-1' },
+    });
+    return { res, fake };
+  }
+
+  it('期限の日が開始日の前日なら 400 OP_INVALID_INPUT (DB にも監査ログにも書かない)', async () => {
+    const { res, fake } = await patch(STORED_VALID_FROM, { valid_until: '2026-10-09' });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string; message: string; details: { path: string[] }[] } };
+    expect(body.error.code).toBe('OP_INVALID_INPUT');
+    expect(body.error.message).toBe('有効終了日は有効開始日と同じ日かそれより後にしてください');
+    expect(body.error.details[0].path).toEqual(['valid_until']);
+    expect(fake.couponUpdates).toHaveLength(0);
+    expect(fake.auditInserts).toHaveLength(0);
+  });
+
+  it('期限の日が開始日と同じ日なら変えられる (その日の 1 日だけ使えるクーポン。POST と同じ)', async () => {
+    const { res, fake } = await patch(STORED_VALID_FROM, { valid_until: '2026-10-10' });
+    expect(res.status).toBe(200);
+    expect(fake.couponUpdates).toEqual([{ valid_until: '2026-10-10T14:59:59.999999Z' }]);
+  });
+
+  it('開始日は UTC の暦日でなく JST の暦日で比べる (開始日の JST 0:00 は UTC では前日の 15:00)', async () => {
+    // 保存済みの valid_from の UTC の暦日は 2026-10-09。UTC で比べると 2026-10-09 の期限が通ってしまう
+    const { res, fake } = await patch('2026-10-09T15:00:00.000Z', { valid_until: '2026-10-09' });
+    expect(res.status).toBe(400);
+    expect(fake.couponUpdates).toHaveLength(0);
+  });
+
+  it('#1483 より前に書いた行 (開始日の UTC 0 時 = JST 9 時) も、入力した開始日の JST の暦日で比べる', async () => {
+    const before = await patch('2026-10-10T00:00:00+00:00', { valid_until: '2026-10-09' });
+    expect(before.res.status).toBe(400);
+    expect(before.fake.couponUpdates).toHaveLength(0);
+
+    const sameDay = await patch('2026-10-10T00:00:00+00:00', { valid_until: '2026-10-10' });
+    expect(sameDay.res.status).toBe(200);
+    expect(sameDay.fake.couponUpdates).toEqual([{ valid_until: '2026-10-10T14:59:59.999999Z' }]);
+  });
+
+  it('valid_until を送らないときは比べない (表示名だけの変更は、開始日に関係なく通る)', async () => {
+    const { res, fake } = await patch('2099-01-01T00:00:00+00:00', { display_name: '名前だけ変える' });
+    expect(res.status).toBe(200);
+    expect(fake.couponUpdates).toEqual([{ display_name: '名前だけ変える' }]);
+  });
+
+  it('実行環境のタイムゾーンに左右されない (どの TZ でも開始日の前日は 400・同じ日は 200)', async () => {
+    const results: { tz: string; before: number; same: number }[] = [];
+    // ルートは await のあとで日付を比べるので、withTimeZone (同期の関数用) でなく、await のあいだも TZ を切り替えたままにする
+    for (const tz of TEST_TIME_ZONES) {
+      const saved = process.env.TZ;
+      process.env.TZ = tz;
+      try {
+        const before = await patch(STORED_VALID_FROM, { valid_until: '2026-10-09' });
+        const same = await patch(STORED_VALID_FROM, { valid_until: '2026-10-10' });
+        results.push({ tz, before: before.res.status, same: same.res.status });
+      } finally {
+        if (saved === undefined) {
+          delete process.env.TZ;
+        } else {
+          process.env.TZ = saved;
+        }
+      }
+    }
+    expect(results).toHaveLength(TEST_TIME_ZONES.length);
+    for (const r of results) {
+      expect(r.before, r.tz).toBe(400);
+      expect(r.same, r.tz).toBe(200);
+    }
   });
 });
