@@ -32,7 +32,7 @@
 | `family-meal-ai-propose` (個別献立 AI 提案) | xAI Grok-4-1-fast-non-reasoning | xAI | latency 最速 | $100 |
 | `family-shared-menu-generate` (共有献立生成) | xAI Grok-4 | xAI | 高品質 (複数制約の最適化) | $150 |
 | `generate-week-menu` (週次献立生成) | xAI Grok-4-1-fast | xAI | バランス型 | $100 |
-| `generate-day-menu` / `generate-single-meal` | xAI Grok-4-1-fast-non-reasoning | xAI | 高速 | $50 |
+| `generate-day-menu` / 1 食の献立生成 (Edge Function `generate-menu-v5`。機能フラグが OFF なら `generate-menu-v4`。旧 `generate-single-meal` は #1452 で削除済み) | xAI Grok-4-1-fast-non-reasoning | xAI | 高速 | $50 |
 | `industrial-doctor-advice` (産業医 AI アドバイス) | claude-3-5-sonnet-20241022 | Anthropic | 健康指導の専門性・安全性 | $80 |
 | `image/generate` (献立画像生成) | Gemini Imagen | Google | コスト・品質バランス | $30 |
 
