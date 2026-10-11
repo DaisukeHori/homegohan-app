@@ -133,7 +133,7 @@ export default function SuperAdminSettingsPage() {
               <Text style={{ fontSize: 12, color: colors.textMuted, flex: 1 }}>{selected?.note ?? READ_ONLY_FALLBACK_NOTE}</Text>
             </View>
           ) : null}
-          <Button onPress={upsert} loading={isSubmitting} disabled={isSubmitting || selectedReadOnly}>
+          <Button testID="super-admin-settings-save" onPress={upsert} loading={isSubmitting} disabled={isSubmitting || selectedReadOnly}>
             {isSubmitting ? "保存中..." : "保存"}
           </Button>
         </View>
