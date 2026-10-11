@@ -62,7 +62,7 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 - 回数は**メールアドレスごと** (小文字・前後の空白なし)。端末・ブラウザ・IP をまたいで数える。記録は DB の `auth_login_failures` (メールアドレスは SHA-256 のハッシュだけ。`supabase/migrations/20261010130000_auth_login_failures.sql`)。数え方の関数は `supabase/migrations/20261010160000_auth_login_failure_window.sql`。
 - 登録されていないメールアドレスも同じように数える (応答からアカウントの有無が分からないように)。
 - 回数が 0 に戻るのは、**ログインに成功したとき**と、**最後の失敗から 24 時間** (環境変数 `AUTH_LOGIN_FAILURE_RESET_MINUTES` で分単位に変えられる。1〜10080) が経ったとき。パスワードの再設定では戻さない (戻す必要が無い。再設定のあとのログインに成功すれば戻る)。
-- 記録の保持期間: 記録の行は、最後の失敗 (`last_failed_at`。無ければ `updated_at`) から **8 日** が経つと、毎日 03:45 JST の pg_cron のジョブ `cleanup-stale-login-failures-and-grant-claims` が消す (`supabase/migrations/20261011040000_schedule_login_failure_and_grant_claim_cleanup.sql`、#1492)。8 日は、回数を 0 に戻すまでの時間の上限 (10080 分 = 7 日) より 1 日長いので、数えている途中の行は消さない (上限より古い行は、どの設定でも回数の判定に使われない)。
+- 記録の保持期間: 記録の行は、最後の失敗 (`last_failed_at`。無ければ `updated_at`) から **8 日** が経つと、毎日 03:45 JST の pg_cron のジョブ `cleanup-stale-login-failures-and-grant-claims` が消す (`supabase/migrations/20261011070000_schedule_login_failure_and_grant_claim_cleanup.sql`、#1492)。8 日は、回数を 0 に戻すまでの時間の上限 (10080 分 = 7 日) より 1 日長いので、数えている途中の行は消さない (上限より古い行は、どの設定でも回数の判定に使われない)。
 - ロックをしないので、ロック中の応答 (423)・ロックの残り時間の案内・ロックの通知のメール (本人・運営)・ロックを外す API は無い。
 - **ボットの確認が働かないもの**: モバイルのアプリのログイン (アプリはまだ Supabase を直接呼ぶ)、Supabase の Auth API を直接呼ぶ攻撃 (URL と anon key は公開されている)、Google ログイン。直接呼ぶ攻撃は、Supabase の CAPTCHA (§6 手順 5) とレート制限 (§3.1) で止める。
 - DB には、ロックがあったころの列 (`auth_login_failures.locked_until`) と関数 (`auth_login_lock_status`・`auth_login_record_failure`・`auth_login_apply_lock`・`auth_login_account_user_id`) が残っている。アプリからは呼ばない。消すかどうかは別に決める (関数・列の削除になるため)。

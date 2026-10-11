@@ -1,7 +1,7 @@
 /**
  * #1492 ログイン失敗の記録 (auth_login_failures) と数え済みの印の使用済みの記録 (ai_usage_grant_claims) の掃除の回帰テスト
  *
- * migration 20261011040000_schedule_login_failure_and_grant_claim_cleanup.sql が、次を行う。
+ * migration 20261011070000_schedule_login_failure_and_grant_claim_cleanup.sql が、次を行う。
  *   - public.cleanup_stale_auth_login_failures(): coalesce(last_failed_at, updated_at) が 8 日より古い行を消す
  *     (8 日 = アプリの上限 LOGIN_FAILURE_RESET_MINUTES_MAX (7 日) + 余裕 1 日)
  *   - public.cleanup_expired_ai_usage_grant_claims(): 利用者を問わず、claimed_at が 1 日より古い行を消す
@@ -53,7 +53,7 @@ if (!url || !anonKey || !serviceKey) {
 }
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
-const VERSION = '20261011040000';
+const VERSION = '20261011070000';
 const NAME = 'schedule_login_failure_and_grant_claim_cleanup';
 const MIGRATION_SQL = fs.readFileSync(path.join(REPO_ROOT, `supabase/migrations/${VERSION}_${NAME}.sql`), 'utf8');
 const ROLLBACK_SQL = fs.readFileSync(path.join(REPO_ROOT, `supabase/rollbacks/${VERSION}_${NAME}.down.sql`), 'utf8');

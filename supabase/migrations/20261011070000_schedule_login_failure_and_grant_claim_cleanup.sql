@@ -1,4 +1,4 @@
--- migration: 20261011040000_schedule_login_failure_and_grant_claim_cleanup.sql
+-- migration: 20261011070000_schedule_login_failure_and_grant_claim_cleanup.sql
 -- #1492: ログイン失敗の記録 (auth_login_failures) と、数え済みの印の使用済みの記録 (ai_usage_grant_claims) の古い行を、毎日消す
 --
 -- 背景 (統合スイープの所見):
@@ -59,7 +59,7 @@
 --
 -- 冪等: CREATE OR REPLACE FUNCTION / REVOKE / GRANT / COMMENT は何度流しても同じ結果になる。ジョブは、流すたびに登録解除して登録し直す (jobid は変わる)。
 -- 適用順: 20261010160000_auth_login_failure_window.sql と 20261011030000_ai_usage_unmetered_caps_and_grants.sql のあと。コードの変更は無い。
--- ロールバック: supabase/rollbacks/20261011040000_schedule_login_failure_and_grant_claim_cleanup.down.sql
+-- ロールバック: supabase/rollbacks/20261011070000_schedule_login_failure_and_grant_claim_cleanup.down.sql
 -- 確認: tests/integration/security/login-failure-grant-claim-cleanup.test.ts / tests/login-failure-grant-claim-cleanup-contract.test.ts
 
 -- ─────────────────────────────────────────────────────────

@@ -1,10 +1,10 @@
 /**
- * #1492 ログイン失敗の記録と数え済みの印の使用済みの記録の掃除 (migration 20261011040000) のソース走査 contract テスト (DB には接続しない)
+ * #1492 ログイン失敗の記録と数え済みの印の使用済みの記録の掃除 (migration 20261011070000) のソース走査 contract テスト (DB には接続しない)
  *
  * 実際の動き (保持期間の内外の行・権限・ジョブの登録) は tests/integration/security/login-failure-grant-claim-cleanup.test.ts で確かめる。
  * ここでは、DB を立てなくても通常のテストで止められる取り決めを固定する。
  *
- *   1. migration と rollback が同じ version / 名前で対になっている
+ *   1. migration と rollback が同じ version / 名前で対になっている。version は付け直したときの main の最大より上で、付け直す前の version が残っていない
  *   2. 保持期間が、アプリ・ほかの migration の値と結び付いている
  *      - auth_login_failures の stale_after は、アプリの上限 LOGIN_FAILURE_RESET_MINUTES_MAX (src/lib/auth/login-failures.ts) より長い
  *        (同じか短いと、環境変数で上限にしたときに、数えている途中の行を消しうる)
@@ -25,12 +25,28 @@ import { AI_USAGE_GRANT_MAX_AGE_SEC } from '../supabase/functions/_shared/ai-usa
 import { ACCOUNT_EXPORT_EXCLUDED } from '../src/lib/account-export-tables';
 
 const ROOT = path.resolve(__dirname, '..');
-const VERSION = '20261011040000';
+const VERSION = '20261011070000';
 const NAME = 'schedule_login_failure_and_grant_claim_cleanup';
 const MIGRATION_PATH = path.join(ROOT, 'supabase', 'migrations', `${VERSION}_${NAME}.sql`);
 const ROLLBACK_PATH = path.join(ROOT, 'supabase', 'rollbacks', `${VERSION}_${NAME}.down.sql`);
 /** claim_ai_usage_grant の c_claim_retention を定義している migration */
-const CLAIM_MIGRATION_PATH = path.join(ROOT, 'supabase', 'migrations', '20261011030000_ai_usage_unmetered_caps_and_grants.sql');
+const CLAIM_MIGRATION_VERSION = '20261011030000';
+const CLAIM_MIGRATION_PATH = path.join(ROOT, 'supabase', 'migrations', `${CLAIM_MIGRATION_VERSION}_ai_usage_unmetered_caps_and_grants.sql`);
+/**
+ * 付け直す前の version。main が 20261011060000 (#1499) まで進み、この version が main の最大以下になったので付け直した
+ * (本番への自動適用は、台帳の最大以下の未適用の migration を止める: .github/workflows/deploy-supabase-migrations.yml)
+ */
+const PREVIOUS_VERSION = '20261011040000';
+/** 付け直したときの origin/main の supabase/migrations の最大 version (この version はこれより上でなければならない) */
+const MAIN_MAX_VERSION_AT_RENUMBER = '20261011060000';
+/** この migration の version を書いているファイル (付け直す前の version が残っていないかを見る。このテスト自身は除く) */
+const FILES_NAMING_VERSION = [
+  `supabase/migrations/${VERSION}_${NAME}.sql`,
+  `supabase/rollbacks/${VERSION}_${NAME}.down.sql`,
+  'tests/integration/security/login-failure-grant-claim-cleanup.test.ts',
+  'docs/operations/auth-protection.md',
+  'docs/design/operator/08-cron-batches.md',
+];
 
 const JOB_NAME = 'cleanup-stale-login-failures-and-grant-claims';
 const JOB_SCHEDULE = '45 18 * * *';
@@ -84,6 +100,25 @@ describe('#1492 migration と rollback のファイル', () => {
     expect(rollback).not.toMatch(/\bTRUNCATE\b/i);
     expect(rollback).not.toMatch(/\bDROP\s+TABLE\b/i);
   });
+
+  it('version は、付け直したときの main の最大より上で、ほかの migration と重ならない。付け直す前の version が残っていない', () => {
+    const versions = fs
+      .readdirSync(path.join(ROOT, 'supabase', 'migrations'))
+      .filter((f) => f.endsWith('.sql'))
+      .map((f) => f.split('_')[0]);
+    expect(versions.filter((v) => v === VERSION), `${VERSION} の migration は 1 本だけ`).toHaveLength(1);
+    // 14 桁の数字どうしなら、文字列の大小は version の大小と同じ
+    expect(VERSION > MAIN_MAX_VERSION_AT_RENUMBER, `${VERSION} は ${MAIN_MAX_VERSION_AT_RENUMBER} より上`).toBe(true);
+    expect(VERSION > CLAIM_MIGRATION_VERSION, `${VERSION} は依存する ${CLAIM_MIGRATION_VERSION} より上`).toBe(true);
+    for (const rel of FILES_NAMING_VERSION) {
+      const text = fs.readFileSync(path.join(ROOT, rel), 'utf-8');
+      expect(text, `${rel} に付け直す前の version ${PREVIOUS_VERSION} が残っていない`).not.toContain(PREVIOUS_VERSION);
+    }
+    for (const dir of ['migrations', 'rollbacks']) {
+      const stale = fs.readdirSync(path.join(ROOT, 'supabase', dir)).filter((f) => f.startsWith(`${PREVIOUS_VERSION}_`));
+      expect(stale, `supabase/${dir} に付け直す前の version のファイルが残っていない`).toEqual([]);
+    }
+  });
 });
 
 describe('#1492 保持期間の突き合わせ', () => {
@@ -99,7 +134,7 @@ describe('#1492 保持期間の突き合わせ', () => {
     const days = intervalDays(fnParts(CLAIM_FN).body, 'claim_retention');
     const claimMigration = stripLineComments(fs.readFileSync(CLAIM_MIGRATION_PATH, 'utf-8'));
     const m = /c_claim_retention\s+CONSTANT\s+INTERVAL\s*:=\s*INTERVAL\s+'(\d+) days?'/.exec(claimMigration);
-    expect(m, '20261011030000 の c_claim_retention が見つからない').not.toBeNull();
+    expect(m, `${CLAIM_MIGRATION_VERSION} の c_claim_retention が見つからない`).not.toBeNull();
     expect(days).toBe(Number((m as RegExpExecArray)[1]));
     expect(days * SECONDS_PER_DAY).toBeGreaterThan(AI_USAGE_GRANT_MAX_AGE_SEC);
   });

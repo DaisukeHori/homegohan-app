@@ -1,4 +1,4 @@
--- rollback: 20261011040000_schedule_login_failure_and_grant_claim_cleanup.sql
+-- rollback: 20261011070000_schedule_login_failure_and_grant_claim_cleanup.sql
 -- 次の 2 つを元に戻す (#1492)。
 --   1. pg_cron のジョブ cleanup-stale-login-failures-and-grant-claims を登録解除する
 --   2. public.cleanup_stale_auth_login_failures() と public.cleanup_expired_ai_usage_grant_claims() を削除する
