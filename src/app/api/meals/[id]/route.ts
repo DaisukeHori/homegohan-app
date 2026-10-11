@@ -5,7 +5,7 @@ import {
   buildCatalogSelectionUpdate,
   clearCatalogSelectionMetadata,
 } from '../../../../lib/catalog-products';
-import { markDishImagesSkipped, type MealImageJobSeed } from '../../../../lib/meal-image';
+import { isCatalogProductMeal, markDishImagesSkipped, type MealImageJobSeed } from '../../../../lib/meal-image';
 import {
   buildDishImagePayload,
   cancelPendingMealImageJobs,
@@ -184,6 +184,8 @@ export async function PATCH(
         imageModel,
         existingCover: existing.image_url ?? null,
         fallbackMealImageUrl: existing.image_url ?? null,
+        // 保存する前の献立で見る (料理を変えると、上で商品とのつながりを外すが、前回の料理は商品の料理のまま。#1487 の整合ゲート)
+        previousMealIsCatalog: isCatalogProductMeal(existing),
       });
       updateData.dishes = reconciledDishes;
       updateData.image_url = mealCoverImageUrl;

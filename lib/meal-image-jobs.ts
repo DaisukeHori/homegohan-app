@@ -23,6 +23,11 @@ interface BuildDishImagePayloadParams {
   imageModel?: string | null;
   existingCover?: string | null;
   fallbackMealImageUrl?: string | null;
+  /**
+   * 保存する前の献立が商品の献立か (isCatalogProductMeal(保存する前の planned_meals の行))。#1487 の整合ゲート。
+   * 前回の料理を読む更新の入口は必ず渡す (商品の献立の、画像の項目の無い古い商品の料理を AI の画像で置き換えないため)
+   */
+  previousMealIsCatalog?: boolean | null;
 }
 
 interface DishImagePayload {
@@ -70,6 +75,7 @@ export async function buildDishImagePayload(
     triggerSource: params.triggerSource,
     model: params.imageModel ?? DEFAULT_MEAL_IMAGE_MODEL,
     fallbackMealImageUrl: params.existingCover ?? params.fallbackMealImageUrl,
+    previousMealIsCatalog: params.previousMealIsCatalog ?? false,
   });
 
   if (params.imageUrlOverride) {
