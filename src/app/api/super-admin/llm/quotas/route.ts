@@ -12,8 +12,9 @@
  *     監査ログには「クォータを変更した」という事実と異なる記録だけが残った。
  *     いまの PATCH は何も保存せず、監査ログも残さず、501 を返す。
  *
- * 注意: この API は、AI プロバイダーへの送信を止めたり制限したりしない
- * (オーナー判断: 海外の AI プロバイダーへのデータ送信は止めない)。クォータを実際に効かせるかどうかは別の判断が要る。
+ * 注意: この API は、AI プロバイダーへの送信を止めたり制限したりしない。外国の AI 事業者へ送ってよいか
+ * (利用者の同意の有無) の判定は、AI へ送る各処理が送る手前で呼ぶ requireAiConsent / checkUserAiConsent
+ * (src/lib/ai/consent-guard.ts。#1154) が担い、未同意なら送らない。クォータを実際に効かせるかどうかは別の判断が要る。
  */
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';

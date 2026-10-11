@@ -2,12 +2,23 @@
  * GET  /api/super-admin/settings — システム設定一覧
  * PUT  /api/super-admin/settings — システム設定更新
  * super_admin ロール必須
+ *
+ * 使われていない key (src/lib/super-admin/retired-settings.ts の RETIRED_SETTING_KEYS) は読み取り専用 (#1457):
+ *   - GET は、各行に read_only (使われていない key なら true) と note (画面に出す説明。ほかは null) を付けて返す
+ *   - PUT は、その key を書き換えず 409 SETTING_READ_ONLY を返す
+ * 行そのものは消さない (本番のデータを消すことになるため)。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import {
+  SETTING_READ_ONLY_CODE,
+  SETTING_READ_ONLY_MESSAGE,
+  SETTING_READ_ONLY_STATUS,
+  retiredSettingNoteOf,
+} from '@/lib/super-admin/retired-settings';
 
 function handleError(method: 'GET' | 'PUT', err: unknown) {
   if (err instanceof AuthError) {
@@ -34,7 +45,11 @@ export async function GET() {
       return NextResponse.json({ settings: [] });
     }
 
-    return NextResponse.json({ settings: data ?? [] });
+    const settings = (data ?? []).map((row) => {
+      const note = retiredSettingNoteOf(row.key);
+      return { ...row, read_only: note !== null, note };
+    });
+    return NextResponse.json({ settings });
   } catch (err) {
     return handleError('GET', err);
   }
@@ -56,6 +71,12 @@ export async function PUT(request: NextRequest) {
     }
     if (value === undefined) {
       return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'value は必須です' } }, { status: 400 });
+    }
+    if (retiredSettingNoteOf(key.trim()) !== null) {
+      return NextResponse.json(
+        { error: { code: SETTING_READ_ONLY_CODE, message: SETTING_READ_ONLY_MESSAGE } },
+        { status: SETTING_READ_ONLY_STATUS },
+      );
     }
 
     const supabase = await createClient();

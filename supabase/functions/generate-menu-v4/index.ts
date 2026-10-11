@@ -9,6 +9,10 @@
  *   `menu_generation_v5_direct` / `menu_generation_v5_wrapped` が OFF の
  *   フォールバックとして残存。utility 層（step-utils / reference-menu-utils / context-utils）
  *   は v5 から直接 import されているため削除不可。
+ *   この 2 つのフラグの置き場は `feature_flags` テーブル (運営画面 /super-admin/flags で切り替える)。
+ *   v4 と v5 のどちらを呼ぶかは、呼び出し元の Next.js の API ルートが src/lib/feature-flags.ts の
+ *   isFeatureEnabled で決める (#1148)。以前の置き場だった `system_settings` の `feature_flags` 行は、
+ *   もう何も読まない。この Edge Function はフラグを読まない。
  */
 
 import { createClient } from "@supabase/supabase-js";

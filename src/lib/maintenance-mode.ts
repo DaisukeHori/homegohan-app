@@ -10,7 +10,8 @@
  *   - 運営ロール (admin / super_admin) のログイン済みユーザー。メンテナンスの作業をするため
  *   - /login と /auth/*。運営がログインし直せるように。ネイティブ認証ブリッジ (/auth/native-bridge) も通る
  *   - /terms と /privacy。利用規約とプライバシーポリシーは、いつでも読めるようにする (ストア審査に出す URL でもある)
- *   - 死活監視 /api/health、cron (/api/cron/*)、認証 API (/api/auth/*)、クライアントが状態を知るための /api/feature-flags
+ *   - 死活監視 /api/health、cron (/api/cron/*)、認証 API (/api/auth/*)、画面が前もって状態を知るための窓口 /api/feature-flags
+ *     (いま呼んでいる画面は無い。画面は、この 503 の応答の code で止められたことを知る。#1457)
  *   - /_next/* (Next の静的ファイル)。ミドルウェアの matcher が外しているが、念のためここでも通す
  *
  * 静的ファイル (画像・manifest・robots・サービスワーカーなど) は、ミドルウェアの matcher (src/middleware.ts) が外していて、

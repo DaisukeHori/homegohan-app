@@ -7,7 +7,8 @@
  *   - 以前の PATCH は、値をどこにも保存せず、監査ログ (super_admin.llm_quota.override) だけを残して、受け取った値を
  *     そのまま返していた。変更できたように見えるが何も変わらず、監査ログにも事実と異なる記録が残った。
  *     いまの PATCH は何も保存せず、監査ログも残さず、501 OP_NOT_SUPPORTED を返す
- * オーナー判断: 海外の AI プロバイダーへのデータ送信は止めない (この API は AI の呼び出しを止めたり制限したりしない)。
+ * この API は AI の呼び出しを止めたり制限したりしない。外国の AI 事業者へ送ってよいか (利用者の同意の有無) の判定は、
+ * AI へ送る各処理が送る手前で呼ぶ requireAiConsent / checkUserAiConsent (src/lib/ai/consent-guard.ts。#1154) が担う。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
