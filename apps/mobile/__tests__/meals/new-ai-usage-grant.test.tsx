@@ -125,6 +125,61 @@ describe('写真の「オート」: 判別の数え済みの印を、続く解�
     expect(postsTo(ANALYZE_PATHS.fridge)[0].aiUsageGrant).toBe(GRANT);
   });
 
+  it('判別できなかった (422): 本文の印を拾い、判別できなかった画面で手で選んだ解析に入れる (Web と同じ。#1487)', async () => {
+    // getApi() の HTTP クライアントは 422 を `HTTP 422 Unprocessable Entity: {本文}` の Error にして投げる
+    const failedBody = {
+      error: 'unknown_type',
+      message: '写真の種類を判定できませんでした。',
+      type: 'unknown',
+      confidence: 0.1,
+      candidates: [{ type: 'fridge', confidence: 0.25 }],
+      aiUsageGrant: GRANT,
+    };
+    mockPost.mockImplementation(async (path: string) => {
+      if (path === '/api/ai/classify-photo') throw new Error(`HTTP 422 Unprocessable Entity: ${JSON.stringify(failedBody)}`);
+      return ANALYZE_RESPONSE;
+    });
+    render(<MealNewPage />);
+    await choosePhotoAndAnalyze('auto');
+    // 「判別失敗」の通知で撮影の画面へ戻らず、種類を選ぶ画面へ進む (候補も出す)
+    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy(), WAIT);
+    expect(screen.getByText('冷蔵庫として解析')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(screen.getByText('体重計として続ける'));
+    });
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS.weight_scale)).toHaveLength(1), WAIT);
+    expect(postsTo(ANALYZE_PATHS.weight_scale)[0].aiUsageGrant).toBe(GRANT);
+  });
+
+  it('判別できなかった (422) が印を返さなかった (数えていない): 種類を選ぶ画面へ進み、解析に印を入れない', async () => {
+    mockPost.mockImplementation(async (path: string) => {
+      if (path === '/api/ai/classify-photo') {
+        throw new Error(`HTTP 422 : ${JSON.stringify({ error: 'unknown_type', type: 'unknown', confidence: 0, candidates: [] })}`);
+      }
+      return ANALYZE_RESPONSE;
+    });
+    render(<MealNewPage />);
+    await choosePhotoAndAnalyze('auto');
+    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy(), WAIT);
+    await act(async () => {
+      fireEvent.press(screen.getByText('冷蔵庫として続ける'));
+    });
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1), WAIT);
+    expect(postsTo(ANALYZE_PATHS.fridge)[0].aiUsageGrant).toBeUndefined();
+  });
+
+  it('判別が 422 以外で失敗した: 今までどおり撮影の画面へ戻り、印は使わない', async () => {
+    mockPost.mockImplementation(async (path: string) => {
+      if (path === '/api/ai/classify-photo') throw new Error(`HTTP 500 Internal Server Error: ${JSON.stringify({ aiUsageGrant: GRANT })}`);
+      return ANALYZE_RESPONSE;
+    });
+    render(<MealNewPage />);
+    await choosePhotoAndAnalyze('auto');
+    await waitFor(() => expect(screen.getByTestId('camera-screen')).toBeTruthy(), WAIT);
+    expect(screen.queryByTestId('meal-classify-failed-view')).toBeNull();
+  });
+
   it('判別が印を返さなかった (数えていない): 解析に印を入れない', async () => {
     mockPost.mockImplementation(async (path: string) => {
       if (path === '/api/ai/classify-photo') return { type: 'fridge', confidence: CONFIDENT, candidates: [] };

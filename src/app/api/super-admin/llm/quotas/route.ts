@@ -5,7 +5,10 @@
  *
  * #1149 (T40): 上限の値は DB の ai_daily_limits に保存し、AI を使う入口の判定 (consume_ai_usage。
  * src/lib/plan/entitlements.ts / supabase/functions/_shared/ai-usage.ts) がその値を読む。保存した値は次の AI の利用から効く。
- *   - 上限は 1 日 (JST の暦日) の、全機能の合計の回数 (画面を開くと自動で呼ばれる AI は数えない)。null は無制限
+ *   - 上限は 1 日 (JST の暦日) の、全機能の合計の回数。null は無制限
+ *   - 上限に数えない機能 (AI_UNMETERED_FEATURES。supabase/functions/_shared/ai-usage-core.ts) は合計に入らない:
+ *     画面を開くと自動で呼ばれるアドバイス (nutrition_advice_auto) と、料理を保存・更新したときに付ける料理画像 (meal_image_auto)。
+ *     これらは機能ごとの 1 日の安全弁 (DB の ai_unmetered_daily_caps) で止まり、この画面の上限では止まらない (#1487)
  *   - 自分の行が無いプランは free の行の値を使う (既定は free = 1 日 10 回。migration 20261011020000_ai_daily_limits.sql)
  *   - 以前の GET はコードに書いた目安を返すだけ、PATCH は保存せずに 501 を返していた (#1149 の本文)
  *
