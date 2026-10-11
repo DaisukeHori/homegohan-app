@@ -181,61 +181,32 @@ export async function logStreamingUsage(
 
 ## 5. プラン別 Quota
 
-### 5.1 日次・月次クォータ一覧 (§5.5.3)
+> #1149 (T40) で実装した形に合わせて書き直した (旧版は Redis の checkLLMQuota と、プランごとの日次・月次の目安の表だった)。
+> 課金は無料のまま計測する段階 (全員 free) なので、月次の上限と試用中の上限は持たない (有料プランの作業 T48 で決める)。
 
-| プラン | 日次上限 | 月次上限 | 試用期間中の上限 |
-|--------|---------|---------|---------------|
-| `free` | 50 req | 1,000 req | - |
-| `pro` | 500 req | 10,000 req | 50 req/日 (= free 相当) |
-| `family_basic` | 800 req | 20,000 req | 100 req/日 |
-| `family_pro` | 1,500 req | 50,000 req | 100 req/日 |
-| `org_starter` | 200/seat | 5,000/seat | - |
-| `org_standard` | 500/seat | 10,000/seat | - |
-| `org_pro` | 1,000/seat | 30,000/seat | - |
-| `org_enterprise` | カスタム | カスタム | - |
+### 5.1 1 日の上限 (DB の ai_daily_limits)
 
-**試用中制限** (`personal_subscriptions.status = 'trialing'`): 本契約の 1/10 程度に制限。7 日 × 50 req/日 = 最大 350 req (コスト流出防止)。
+| 項目 | 内容 |
+|------|------|
+| 数える単位 | 利用者の 1 回の操作を 1 回 (究極モードも 1 回)。全機能の合計 |
+| 日の区切り | JST の暦日 (0 時に戻る) |
+| 上限の値 | `public.ai_daily_limits(plan_key PK, daily_limit)`。NULL は無制限。既定は `free` = 10 の 1 行だけ |
+| 行の無いプラン | `free` の行の値 (`free` の行も無ければ無制限) |
+| 変更 | 運営画面 `/super-admin/llm/quotas` (GET / PATCH `/api/super-admin/llm/quotas`。super_admin のみ。監査ログ `super_admin.llm_quota.update`) |
+| 上限に数えない機能 | `nutrition_advice_auto` (画面を開くと自動で呼ばれる AI。ホームの栄養のアドバイス・栄養の詳細を開いたときの栄養士のコメント)。記録だけする |
 
-### 5.2 Quota チェック実装
+### 5.2 判定の実装
 
-```typescript
-// src/lib/plan/quota.ts
-export async function checkLLMQuota(
-  userId: string,
-  planKey: string,
-  subscriptionStatus: SubscriptionStatus
-): Promise<QuotaCheckResult> {
-  const quotaConfig = getQuotaConfig(planKey, subscriptionStatus);
-  if (!quotaConfig) return { allowed: true }; // フリー制限 (50/日)
-
-  // Redis から今日の使用量を取得 (TTL: 24 時間)
-  const todayKey = `llm_quota:${userId}:${new Date().toISOString().slice(0, 10)}`;
-  const todayUsage = await redis.incr(todayKey);
-  if (todayUsage === 1) await redis.expire(todayKey, 86400); // 初回は TTL セット
-
-  if (todayUsage > quotaConfig.daily_limit) {
-    return { allowed: false, reason: 'OP_QUOTA_EXCEEDED_DAILY', limit: quotaConfig.daily_limit };
-  }
-
-  return { allowed: true, remaining: quotaConfig.daily_limit - todayUsage };
-}
-
-function getQuotaConfig(planKey: string, status: SubscriptionStatus): QuotaConfig | null {
-  // 試用中は試用専用 quota
-  if (status === 'trialing') {
-    const trialQuotas: Record<string, number> = {
-      pro: 50, family_basic: 100, family_pro: 100,
-    };
-    return { daily_limit: trialQuotas[planKey] ?? 50 };
-  }
-
-  const quotas: Record<string, number> = {
-    free: 50, pro: 500, family_basic: 800, family_pro: 1500,
-    org_starter: 200, org_standard: 500, org_pro: 1000,
-  };
-  return { daily_limit: quotas[planKey] ?? 50 };
-}
-```
+- 判定と記録は DB の `consume_ai_usage(p_user_id, p_feature) -> jsonb` が 1 回の呼び出しで原子的に行う
+  (`pg_advisory_xact_lock` で同じ利用者・同じ日を 1 本ずつ判定し、上限に達していれば記録せずに `{ allowed: false, limit, used }`、
+  達していなければ `ai_usage_counters` を +1 して `{ allowed: true, ... }`)。service_role のみ
+- Next.js: `consumeAiUsage(userId, feature)` (`src/lib/plan/entitlements.ts`) を AI へ送る直前に呼び、`if (!aiUsage.allowed)` で止める。
+  Edge Function: ユーザーの JWT で直接呼ばれたときだけ `consumeEdgeAiUsage` (`supabase/functions/_shared/ai-usage.ts`)
+- 順番は「同意の判定 (#1154) → 上限の判定と記録 → AI への送信」
+- 止め方は入口ごと: 利用者が押す操作は 429 `AI_DAILY_LIMIT` (§11)、保存と AI の分析を一緒にする操作は保存だけして `aiSkipped: AI_DAILY_LIMIT`、
+  料理画像の副作用は画像だけ見送る、キューに積む操作は積む時点で判定する
+- 数えたあと、AI へ送る前に DB の処理が失敗したとき (生成のリクエストの行の insert の失敗など) は `refund_ai_usage` で 1 回を戻す。AI へ送ったあとの失敗では戻さない
+- DB の関数が失敗したとき (エラー・未適用・3 秒を超える) は、ログに残して許可する (判定の失敗で AI を止めない)
 
 ### 5.3 異常検知
 
@@ -563,7 +534,7 @@ sequenceDiagram
 
 | エラー | コード | 対処 |
 |-------|--------|------|
-| quota 超過 | `OP_QUOTA_EXCEEDED` | 429 + 「本日の利用上限に達しました」メッセージ |
+| 1 日の上限に達した (#1149) | `AI_DAILY_LIMIT` | 429 + `{ error: 「今日の AI の利用回数の上限 (N 回) に達しました。明日 0 時から使えます。」, code, limit, retryAfter }` + `Retry-After` (次の JST 0 時までの秒数) |
 | アレルゲン 3 回失敗 | `AI_ALLERGY_FALLBACK` | 422 + フロントエンドで手動入力 UI に切替 |
 | context 漏洩試行 | `CONTEXT_GUARD_*` | 403 + 監査ログ記録 |
 | xAI API タイムアウト | `LLM_TIMEOUT` | フォールバックモデルで再試行 |
