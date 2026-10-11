@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { CalendarDateSchema } from '@/lib/calendar-date-schema';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 定数
@@ -31,8 +32,10 @@ export const CouponCreateSchema = z.object({
   discount_value: z.number().positive('0より大きい値を指定してください'),
   applicable_plans: z.array(z.string().uuid()).optional().default([]),
   applicable_to: z.enum(COUPON_APPLICABLE_TO).optional().default('all'),
-  valid_from: z.string().datetime(),
-  valid_until: z.string().datetime(),
+  // #1483: 有効開始日・有効期限は JST の暦日 (YYYY-MM-DD の実在する日付) で受け取る。
+  // DB には src/lib/super-admin/coupon-validity.ts で、開始日の JST 0:00 と期限の日の JST 23:59:59.999999 にして書く
+  valid_from: CalendarDateSchema,
+  valid_until: CalendarDateSchema,
   max_uses: z.number().int().min(1).nullable().optional(),
   per_user_limit: z.number().int().min(1).optional().default(1),
   duration_months: z.number().int().min(1).nullable().optional(),
@@ -45,9 +48,10 @@ export const CouponCreateSchema = z.object({
   return true;
 }, { message: 'パーセント割引は 100% 以下にしてください', path: ['discount_value'] })
   .refine((data) => {
-    // valid_from < valid_until
-    return new Date(data.valid_from) < new Date(data.valid_until);
-  }, { message: '有効開始日は終了日より前にしてください', path: ['valid_until'] });
+    // 開始日 <= 期限の日 (同じ日なら、その日の JST 0:00〜23:59:59 の 1 日だけ使える)。
+    // どちらも CalendarDateSchema を通った YYYY-MM-DD (年は 4 桁) なので、文字列の大小が日付の前後と同じ
+    return data.valid_from <= data.valid_until;
+  }, { message: '有効終了日は有効開始日と同じ日かそれより後にしてください', path: ['valid_until'] });
 
 export type CouponCreateInput = z.infer<typeof CouponCreateSchema>;
 
@@ -55,7 +59,8 @@ export type CouponCreateInput = z.infer<typeof CouponCreateSchema>;
 export const CouponUpdateSchema = z.object({
   display_name: z.string().max(200).nullable().optional(),
   status: z.enum(COUPON_STATUSES).optional(),
-  valid_until: z.string().datetime().optional(),
+  // #1483: 有効期限は JST の暦日で受け取り、その日の JST 23:59:59.999999 にして書く (CouponCreateSchema と同じ)
+  valid_until: CalendarDateSchema.optional(),
   max_uses: z.number().int().min(1).nullable().optional(),
   applicable_plans: z.array(z.string().uuid()).optional(),
   applicable_to: z.enum(COUPON_APPLICABLE_TO).optional(),

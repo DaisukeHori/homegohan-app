@@ -20,6 +20,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { apiCall, apiCallNoAuth } from '../helpers/api';
 import { supabaseAdmin } from '../helpers/supabase';
 import { TestUserPool, dataOf, expectError, randomUuid } from '../helpers/admin-test-utils';
+import { jstDayOffset } from '@/lib/jst-day-ranges';
 import type { TestUser } from '../helpers/users';
 
 const TS = Date.now();
@@ -326,8 +327,9 @@ describe('POST /api/super-admin/coupons: input validation', () => {
     display_name: 'Validation Coupon',
     discount_type: 'percentage',
     discount_value: 10,
-    valid_from: new Date(Date.now() + DAY_MS).toISOString(),
-    valid_until: new Date(Date.now() + 30 * DAY_MS).toISOString(),
+    // #1483: 有効開始日・有効期限は JST の暦日 (YYYY-MM-DD) で送る
+    valid_from: jstDayOffset(1),
+    valid_until: jstDayOffset(30),
   };
 
   it.each<Case>([
@@ -340,7 +342,9 @@ describe('POST /api/super-admin/coupons: input validation', () => {
     ['パーセント割引が 100 を超える', { discount_value: 101 }],
     ['有効開始が有効終了より後', { valid_from: base.valid_until, valid_until: base.valid_from }],
     ['valid_until が無い', { valid_until: undefined }],
-    ['valid_from が日時の形でない', { valid_from: '2026-10-08' }],
+    ['valid_from が日付の形でない (日時)', { valid_from: '2026-10-08T00:00:00Z' }],
+    ['valid_from が存在しない日付', { valid_from: '2026-02-30' }],
+    ['valid_until が存在しない日付', { valid_until: '2026-02-30' }],
     ['max_uses が 0', { max_uses: 0 }],
     ['applicable_to が不正', { applicable_to: 'everyone' }],
   ])('400 OP_INVALID_INPUT: %s', async (_label, override) => {
@@ -397,7 +401,8 @@ describe('PATCH /api/super-admin/coupons/[id]: validation', () => {
   it.each<Case>([
     ['status が不正', { status: 'archived' }],
     ['max_uses が 0', { max_uses: 0 }],
-    ['valid_until が日時の形でない', { valid_until: 'tomorrow' }],
+    ['valid_until が日付の形でない', { valid_until: 'tomorrow' }],
+    ['valid_until が存在しない日付', { valid_until: '2026-02-30' }],
     ['applicable_plans が UUID でない', { applicable_plans: ['not-a-uuid'] }],
     ['applicable_to が不正', { applicable_to: 'everyone' }],
     ['display_name が 200 文字を超える', { display_name: 'x'.repeat(201) }],
