@@ -17,6 +17,12 @@ import {
   sha256Hex,
 } from "../catalog-utils.ts";
 import { getCatalogSourceAdapter } from "./source-adapters.ts";
+import {
+  isMissingEnvError,
+  MISSING_ENV_HTTP_STATUS,
+  missingEnvError,
+  missingEnvResponseBody,
+} from "../missing-env.ts";
 
 export type ImportRequest = {
   sourceCode?: string;
@@ -336,6 +342,10 @@ export async function handleCatalogImportRequest(req: Request, options: HandlerO
     });
   } catch (error) {
     logger.error("Convenience catalog import failed", error);
+    // 必須の環境変数が無いときは、固定の文と code だけを返す (変数名はログにだけ残っている。#1467)
+    if (isMissingEnvError(error)) {
+      return jsonResponse({ success: false, ...missingEnvResponseBody() }, MISSING_ENV_HTTP_STATUS);
+    }
     return jsonResponse(
       { success: false, error: error instanceof Error ? error.message : String(error) },
       500,
@@ -347,7 +357,8 @@ function getSupabaseAdmin() {
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SERVICE_ROLE_JWT") ?? "";
   if (!supabaseUrl || !serviceRole) {
-    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    // 変数名は message に入れず、ログにだけ残す (catch が message を 500 の本文に返していた。#1467)
+    throw missingEnvError(["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]);
   }
   return createClient(supabaseUrl, serviceRole, {
     auth: { persistSession: false, autoRefreshToken: false },

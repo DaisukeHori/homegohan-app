@@ -14,6 +14,7 @@ import { notifyMenuGenerated } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { useAiConsent } from "@/hooks/useAiConsent";
 import { AiConsentRequiredError, aiFetch, handleStoredAiConsentFailure, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
+import { aiDailyLimitMessageOfResponse } from "@/lib/ai/daily-limit-client";
 import { aiSummarySkippedNote } from "@/lib/ai/consent-config";
 import { todayLocal, parseLocalDate, formatLocalDate } from "@/lib/date-utils";
 // AI 応答を HTML にして dangerouslySetInnerHTML へ渡すときは、必ずこの関数を通す (#1169)
@@ -681,6 +682,9 @@ export default function AIChatBubble() {
           detail: { actionType: data.actionType, result: data.result }
         }));
       } else {
+        // 今日の AI の利用回数の上限に達した (429 AI_DAILY_LIMIT。#1149): aiFetch が全画面共通の AiDailyLimitHost に固定の文を
+        // 出させたので、ここでは重ねて出さない (提案は残っているので、明日また実行できる)
+        if (await aiDailyLimitMessageOfResponse(res)) return;
         alert('アクションの実行に失敗しました');
       }
     } catch (e) {

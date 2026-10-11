@@ -4,7 +4,8 @@
  * - consumeAiUsage: DB の consume_ai_usage を 1 回呼んで、上限の判定と記録を受け取る (判定と記録は DB が原子的に行う)。
  *   上限に達していれば { allowed: false, limit, used }。失敗したら (DB エラー・応答が遅い・戻り値の形が違う・service role の設定漏れ)、
  *   例外を投げず、ログに残して許可する (止めない)
- * - refundAiUsage: 数えた 1 回を戻す (数えていない結果では何もしない)
+ * - refundAiUsage: 数えた 1 回を戻す (上限に数えない機能も戻す。DB が記録していない結果では何もしない)
+ * - issueAiUsageGrant / redeemAiUsageGrant: 写真の判別が数えたあとの「数え済みの印」を作る・使う (1 回だけ。#1149)
  * - aiDailyLimitResponse: 429 AI_DAILY_LIMIT の応答 (固定の文・retryAfter・Retry-After)
  * - aiUsageRecordedHeaders: Next.js が Edge Function を呼ぶときに付ける、記録済みの印 (署名)
  * - getEffectivePlan: いま効いているプラン
@@ -37,13 +38,16 @@ import {
   AI_USAGE_RECORDED_HEADER,
   aiDailyLimitResponse,
   aiUsageRecordedHeaders,
+  AI_USAGE_COVERED_BY_GRANT,
   consumeAiUsage,
   getEffectivePlan,
+  issueAiUsageGrant,
+  redeemAiUsageGrant,
   refundAiUsage,
   type AiUsageAllowed,
   type PlanRpcClient,
 } from '@/lib/plan/entitlements';
-import { verifyAiUsageRecorded } from '../../../../supabase/functions/_shared/ai-usage-core';
+import { signAiUsageGrant, verifyAiUsageGrant, verifyAiUsageRecorded } from '../../../../supabase/functions/_shared/ai-usage-core';
 import { AI_USAGE_NOT_COUNTED } from '../../../../supabase/functions/_shared/ai-daily-limit';
 
 const USER_ID = '11111111-2222-3333-4444-555555555555';
@@ -138,7 +142,10 @@ describe('consumeAiUsage: 上限の判定と記録を DB の 1 回の呼び出�
         'AI_DAILY_LIMIT_CODE',
         'AI_DAILY_LIMIT_STATUS',
         'AI_FEATURES',
+        'AI_UNMETERED_DAILY_CAP_DEFAULTS',
         'AI_UNMETERED_FEATURES',
+        'AI_USAGE_COVERED_BY_GRANT',
+        'AI_USAGE_GRANT_MAX_AGE_SEC',
         'AI_USAGE_RECORDED_HEADER',
         'AI_USAGE_TIMEOUT_MS',
         'aiDailyLimitResponse',
@@ -146,6 +153,8 @@ describe('consumeAiUsage: 上限の判定と記録を DB の 1 回の呼び出�
         'aiUsageRecordedHeaders',
         'consumeAiUsage',
         'getEffectivePlan',
+        'issueAiUsageGrant',
+        'redeemAiUsageGrant',
         'refundAiUsage',
       ].sort(),
     );
@@ -241,13 +250,21 @@ describe('refundAiUsage: 数えた 1 回を戻す (#1149)', () => {
     expect(rpc).toHaveBeenCalledWith('refund_ai_usage', { p_user_id: USER_ID, p_feature: 'menu_generation', p_usage_date: TODAY_JST });
   });
 
-  it('数えていない結果 (上限に数えない機能・判定に失敗した・印があった) では、何も呼ばない', async () => {
+  it('DB が記録していない結果 (判定に失敗した・Edge Function で印があった・数え済みの印で数えなかった) では、何も呼ばない', async () => {
     const { rpc, client } = clientReturning({ data: true, error: null });
 
     await refundAiUsage(USER_ID, 'menu_generation', AI_USAGE_NOT_COUNTED, { client });
-    await refundAiUsage(USER_ID, 'nutrition_advice_auto', { ...counted, metered: false }, { client });
+    await refundAiUsage(USER_ID, 'photo_analysis', AI_USAGE_COVERED_BY_GRANT, { client });
 
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('(#1149) 上限に数えない機能も、記録した日で戻す (記録は安全弁の回数に入るので、送らなかった分は戻す)', async () => {
+    const { rpc, client } = clientReturning({ data: true, error: null });
+
+    await refundAiUsage(USER_ID, 'nutrition_advice_auto', { allowed: true, metered: false, usageDate: TODAY_JST, limit: null, used: null }, { client });
+
+    expect(rpc).toHaveBeenCalledWith('refund_ai_usage', { p_user_id: USER_ID, p_feature: 'nutrition_advice_auto', p_usage_date: TODAY_JST });
   });
 
   it('失敗しても例外を投げず、ログに残す', async () => {
@@ -335,6 +352,93 @@ describe('aiUsageRecordedHeaders: 記録済みの印 (Next.js -> Edge Function)'
 
     vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-role-key-for-test');
     expect(await aiUsageRecordedHeaders('')).toEqual({});
+  });
+});
+
+describe('(#1149) 数え済みの印: issueAiUsageGrant / redeemAiUsageGrant (写真の判別 → 解析を 1 回に数える)', () => {
+  const KEY = 'service-role-key-for-test';
+  const NOW = Date.UTC(2026, 9, 11, 3, 0, 0);
+  const counted: AiUsageAllowed = { allowed: true, metered: true, usageDate: TODAY_JST, limit: LIMIT, used: 1 };
+
+  beforeEach(() => {
+    vi.stubEnv('SERVICE_ROLE_JWT', '');
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', KEY);
+  });
+
+  it('上限に数えて許可したときだけ印を作る。印はサーバーの鍵で署名され、このユーザー・この機能でだけ通る。呼ぶたびに別の ID', async () => {
+    const grant = await issueAiUsageGrant(USER_ID, 'photo_analysis', counted, NOW);
+    expect(grant).toEqual(expect.any(String));
+    const verified = await verifyAiUsageGrant(grant, 'photo_analysis', USER_ID, [KEY], NOW);
+    expect(verified?.grantId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await verifyAiUsageGrant(grant, 'photo_analysis', '99999999-2222-3333-4444-555555555555', [KEY], NOW)).toBeNull();
+
+    const another = await issueAiUsageGrant(USER_ID, 'photo_analysis', counted, NOW);
+    expect((await verifyAiUsageGrant(another, 'photo_analysis', USER_ID, [KEY], NOW))?.grantId).not.toBe(verified?.grantId);
+  });
+
+  it('数えていない結果 (止めた・判定に失敗した・上限に数えない機能)・ユーザーが空・鍵が無いときは、印を作らない (null)', async () => {
+    expect(await issueAiUsageGrant(USER_ID, 'photo_analysis', { allowed: false, limit: LIMIT, used: LIMIT, usageDate: TODAY_JST }, NOW)).toBeNull();
+    expect(await issueAiUsageGrant(USER_ID, 'photo_analysis', AI_USAGE_NOT_COUNTED, NOW)).toBeNull();
+    expect(await issueAiUsageGrant(USER_ID, 'photo_analysis', { ...counted, metered: false }, NOW)).toBeNull();
+    expect(await issueAiUsageGrant('', 'photo_analysis', counted, NOW)).toBeNull();
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', '');
+    expect(await issueAiUsageGrant(USER_ID, 'photo_analysis', counted, NOW)).toBeNull();
+  });
+
+  it('本物の印は、DB の claim_ai_usage_grant で印の ID を使用済みにできたときだけ true (数えない)', async () => {
+    const grantId = '0f8fad5b-d9cb-469f-a165-70867728950e';
+    const grant = await signAiUsageGrant(KEY, 'photo_analysis', USER_ID, grantId, NOW);
+    const { rpc, client } = clientReturning({ data: true, error: null });
+
+    expect(await redeemAiUsageGrant(USER_ID, 'photo_analysis', grant, { client, nowMs: NOW })).toBe(true);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith('claim_ai_usage_grant', { p_user_id: USER_ID, p_grant_id: grantId });
+  });
+
+  it('使用済みの印 (DB が false) は false (数える)', async () => {
+    const grant = await signAiUsageGrant(KEY, 'photo_analysis', USER_ID, '0f8fad5b-d9cb-469f-a165-70867728950e', NOW);
+    const { client } = clientReturning({ data: false, error: null });
+
+    expect(await redeemAiUsageGrant(USER_ID, 'photo_analysis', grant, { client, nowMs: NOW })).toBe(false);
+  });
+
+  it('印が無い・偽物・期限切れ・他人の印・別の機能の印は、DB を呼ばずに false (数える)', async () => {
+    const grant = await signAiUsageGrant(KEY, 'photo_analysis', USER_ID, '0f8fad5b-d9cb-469f-a165-70867728950e', NOW);
+    const forged = await signAiUsageGrant('key-the-client-made-up', 'photo_analysis', USER_ID, '0f8fad5b-d9cb-469f-a165-70867728950e', NOW);
+    const { rpc, client } = clientReturning({ data: true, error: null });
+
+    for (const value of [undefined, null, '', 'garbage', 123, forged]) {
+      expect(await redeemAiUsageGrant(USER_ID, 'photo_analysis', value, { client, nowMs: NOW }), String(value)).toBe(false);
+    }
+    expect(await redeemAiUsageGrant(USER_ID, 'photo_analysis', grant, { client, nowMs: NOW + 3_600_000 })).toBe(false);
+    expect(await redeemAiUsageGrant('99999999-2222-3333-4444-555555555555', 'photo_analysis', grant, { client, nowMs: NOW })).toBe(false);
+    expect(await redeemAiUsageGrant(USER_ID, 'consultation', grant, { client, nowMs: NOW })).toBe(false);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('DB のエラー・応答の形の違いは、例外を投げずに false (数える側に倒す)。エラーはログに残す', async () => {
+    const grant = await signAiUsageGrant(KEY, 'photo_analysis', USER_ID, '0f8fad5b-d9cb-469f-a165-70867728950e', NOW);
+
+    const failing = clientReturning({ data: null, error: { code: '42883', message: 'function claim_ai_usage_grant does not exist' } });
+    expect(await redeemAiUsageGrant(USER_ID, 'photo_analysis', grant, { client: failing.client, nowMs: NOW })).toBe(false);
+    expect(mocks.loggerError.mock.calls[0][0]).toContain('数え済みの印を使えません');
+
+    const odd = clientReturning({ data: 'true', error: null });
+    expect(await redeemAiUsageGrant(USER_ID, 'photo_analysis', grant, { client: odd.client, nowMs: NOW })).toBe(false);
+  });
+
+  it('SERVICE_ROLE_JWT で作った印も、SUPABASE_SERVICE_ROLE_KEY で作った印も受け付ける (どちらの鍵で署名したサーバーの印も通す)', async () => {
+    vi.stubEnv('SERVICE_ROLE_JWT', 'jwt-form-of-the-key');
+    const fromJwt = await issueAiUsageGrant(USER_ID, 'photo_analysis', counted, NOW);
+    const fromKey = await signAiUsageGrant(KEY, 'photo_analysis', USER_ID, '0f8fad5b-d9cb-469f-a165-70867728950e', NOW);
+    const { client } = clientReturning({ data: true, error: null });
+
+    expect(await redeemAiUsageGrant(USER_ID, 'photo_analysis', fromJwt, { client, nowMs: NOW })).toBe(true);
+    expect(await redeemAiUsageGrant(USER_ID, 'photo_analysis', fromKey, { client, nowMs: NOW })).toBe(true);
+  });
+
+  it('数え済みの印で数えなかった結果は、許可・数えていない (usageDate が null で、数え戻しの対象にならない)', () => {
+    expect(AI_USAGE_COVERED_BY_GRANT).toEqual({ allowed: true, metered: false, usageDate: null, limit: null, used: null });
   });
 });
 

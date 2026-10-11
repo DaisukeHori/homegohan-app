@@ -8,6 +8,7 @@ export * from './date-utils';
 export * from './nutrition-planner';
 export * from './design-tokens';
 export * from './legal-versions';
+export * from './service-unavailable';
 export type {
   Json,
   Database,

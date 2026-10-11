@@ -366,6 +366,8 @@ BAN 解除
 > 機能フラグの置き場は `feature_flags` テーブルの 1 つに一本化した (#1148)。以前、献立生成のエンジン切り替えだけは
 > `system_settings` の `feature_flags` 行を読んでいた (一般ユーザーには RLS で読めず、いつも既定値だった)。今は
 > アプリのどこでも `src/lib/feature-flags.ts` の `isFeatureEnabled(key, userId)` で判定する。
+> `system_settings` の `feature_flags` 行はもう何も読まない。運営のシステム設定 (`GET / PUT /api/super-admin/settings`) では
+> 読み取り専用で、GET は `read_only: true` と `note` を付け、PUT は 409 `SETTING_READ_ONLY` で断る (#1457。行は消していない)。
 >
 > アプリが読んでいるフラグ (`FEATURE_FLAG_DEFAULTS`)。行が無い・読み出しに失敗したときは「止めない側」の既定値で動く:
 >
@@ -434,7 +436,13 @@ BAN 解除
 フラグ削除 (利用中の場合は `OP_FEATURE_FLAG_IN_USE` で 409)
 
 ### GET /api/feature-flags
-クライアント (Web・モバイル) 向けのフラグ。認証は不要 (未ログインでも答える。メンテナンス中かどうかは、ログイン前の画面でも要る)。
+画面が前もって「AI 相談は使えるか」「メンテナンス中か」を知るための窓口。認証は不要 (未ログインでも答える。メンテナンス中かどうかは、ログイン前の画面でも要る)。
+
+いま、この API を呼んでいる画面 (Web・モバイル) は無い (#1457)。画面は前もって確かめず、止められたときの 503 の応答の code
+(`AI_CHAT_DISABLED` / `MAINTENANCE_MODE`) で緊急停止中・メンテナンス中を知り、本文の文字列ではなく固定の文を出す
+(文と code の置き場は `packages/shared/src/service-unavailable.ts`。Web は `src/lib/ai/ai-chat-unavailable.ts`、モバイルは
+`apps/mobile/src/lib/service-unavailable.ts`)。フラグはサーバーのメモリに最大 30 秒覚えるので、前もって確かめても送る時点の判定とずれることがあり、
+503 の扱いはどのみち要る。この API は、画面で前もって知らせたくなったときの窓口として残してある。
 
 返すのは、クライアントが使うフラグだけの許可リスト (`CLIENT_FEATURE_FLAG_KEYS`: `ai_chat_enabled` / `maintenance_mode`)。
 運営が作った別のフラグの名前は返さない。値は、ログイン中のユーザーにとっての ON/OFF (段階公開があれば、そのユーザーでの判定)。
@@ -503,23 +511,26 @@ LLM 使用量ダッシュボード
 ### POST /api/super-admin/llm-usage/quota-update
 クォータ更新
 
-> **現状 (2026-10, #1149)**: LLM 利用クォータの管理は**準備中 (未対応)**。実装は `/api/super-admin/llm/quotas` にあり、
-> `PATCH` は 501 `OP_NOT_SUPPORTED` を返す (値を保存せず、監査ログも残さない)。`GET` は設計上の目安の値を、
-> `enforced: false` (AI の呼び出しには適用されていない) を添えて返す。AI を呼ぶ処理は、クォータで止まらない
-> (§23 の `OP_QUOTA_EXCEEDED` 429 は未実装)。クォータを AI の呼び出しに効かせる処理は、まだ作っていない (効かせるかどうかは別の判断が要る)。
-> なお、オーナー判断 (2026-10-08) により、海外の AI プロバイダーへのデータ送信を止める変更は入れない。
-> 画面の「クォータ設定」は「クォータ設定（準備中）」の文字だけで、リンクにしない。
+> **現状 (2026-10, #1149)**: プランごとの AI の 1 日の上限 (全機能の合計・JST の暦日) は、`/api/super-admin/llm/quotas` で読み書きする
+> (見出しの `POST /api/super-admin/llm-usage/quota-update` というパスは無い)。保存先は DB の `ai_daily_limits` で、保存した値は次の AI の利用の判定 (`consume_ai_usage`) から効く
+> (詳細は operator/06-ai-llm.md §5)。super_admin のみ。
+>   - `GET`: プランごとの行 (`subscription_plans` と `ai_daily_limits` を合わせたもの)・`default_plan_key` (`free`)・`enforced: true`・`note`
+>   - `PATCH`: 1 つのプランの上限を保存する。保存すると監査ログ `super_admin.llm_quota.update` を残す
+>   - 上限に達した AI の呼び出しは 429 `AI_DAILY_LIMIT` (§23)
+>   - 利用者ごとの上限と月次の上限は無い。上限に数えない機能の安全弁 (`ai_unmetered_daily_caps`) は DB の行で変える (API・画面は無い)
+> AI プロバイダーへ送る前の同意の判定は `requireAiConsent` / `checkUserAiConsent` (`src/lib/ai/consent-guard.ts`、#1154) が担い、同意が無ければ送らない。
 
-**リクエスト**:
+**リクエスト** (`PATCH /api/super-admin/llm/quotas`):
 ```json
 {
-  "target_type": "user",
-  "target_id": "uuid",
-  "daily_limit": 100,
-  "monthly_limit": 2000,
-  "reason": "異常使用検知のため制限"
+  "plan_key": "free",
+  "daily_limit": 10,
+  "reason": "1 日の上限の見直し"
 }
 ```
+- `plan_key`: `subscription_plans` にあるプラン (無ければ 404 `PLAN_NOT_FOUND`)
+- `daily_limit`: 0 以上 10,000 以下の整数。`null` は無制限
+- `reason`: 変更の理由 (監査ログに残す)
 
 ---
 
@@ -1417,7 +1428,7 @@ NPS サーベイ送信 (日次 14:00 JST)
 | `OP_AUDIT_LOG_IMMUTABLE` | 403 | 監査ログ書き換え不可 |
 | `OP_FEATURE_FLAG_IN_USE` | 409 | 削除しようとしたフラグが利用中 |
 | `OP_PACKAGE_IN_USE` | 409 | 削除しようとしたパッケージが利用中 |
-| `OP_QUOTA_EXCEEDED` | 429 | LLM クォータ超過 |
+| `AI_DAILY_LIMIT` | 429 | 今日の AI の利用回数の上限に達した (利用者の AI の呼び出し。本文は `{ error, code, limit, retryAfter }`、`Retry-After` は次の JST 0 時までの秒数。operator/06-ai-llm.md §5) |
 | `OP_RE_AUTH_REQUIRED` | 401 | 再認証必須 |
 | `OP_PLAN_KEY_CONFLICT` | 409 | plan_key 重複 |
 | `OP_PLAN_DEPRECATED` | 422 | deprecated プランへの新規加入不可 |
@@ -1426,7 +1437,7 @@ NPS サーベイ送信 (日次 14:00 JST)
 | `OP_STRIPE_SYNC_FAILED` | 502 | Stripe API 呼び出し失敗 |
 | `OP_COUPON_EXPIRED` | 422 | クーポン期限切れ |
 | `OP_TRIAL_ALREADY_USED` | 422 | 同一プランの試用は 1 回のみ |
-| `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応 (準備中) の機能。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査・LLM クォータの変更) |
+| `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応 (準備中) の機能。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査) |
 
 ## 24. テスト方針
 
@@ -1449,14 +1460,19 @@ import { describe, it, expect } from 'vitest';
 import Stripe from 'stripe';
 import { validateStripeSignature } from '@/lib/operator/stripe-webhook';
 
+// 署名の生成と検証は手元で完結するので、環境変数を読まずにテスト用の固定の値を使う
+// (`process.env.X!` は使わない。#1182・#1434)
+const TEST_STRIPE_SECRET_KEY = 'sk_test_dummy_for_signature_test';
+const TEST_WEBHOOK_SECRET = 'whsec_test_dummy_for_signature_test';
+
 describe('Stripe Webhook 署名検証', () => {
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY_TEST!, {
+  const stripe = new Stripe(TEST_STRIPE_SECRET_KEY, {
     apiVersion: '2024-11-20.acacia',
   });
 
   it('accepts webhook with valid signature', () => {
     const payload = JSON.stringify({ type: 'customer.subscription.created' });
-    const secret = process.env.STRIPE_WEBHOOK_SECRET!;
+    const secret = TEST_WEBHOOK_SECRET;
     const signature = stripe.webhooks.generateTestHeaderString({
       payload,
       secret,
@@ -1466,7 +1482,7 @@ describe('Stripe Webhook 署名検証', () => {
 
   it('rejects webhook with invalid signature', () => {
     const payload = JSON.stringify({ type: 'customer.subscription.created' });
-    const secret = process.env.STRIPE_WEBHOOK_SECRET!;
+    const secret = TEST_WEBHOOK_SECRET;
     expect(() =>
       validateStripeSignature(payload, 'invalid-sig', secret),
     ).toThrow();

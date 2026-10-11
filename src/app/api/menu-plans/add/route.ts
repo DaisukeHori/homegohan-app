@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { jstDayOffset } from '@/lib/jst-day-ranges';
+import { menuPlansAddMaxDateOffsetDays, parseMenuPlanDateOffsetDays } from '@/lib/menu-plan-date-offset';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { awardBadge } from '@/lib/badges/awardBadge';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
@@ -47,12 +48,27 @@ export async function POST(request: Request) {
     const content = { ...menuContent, source } as Json;
 
     // 開始日は JST の今日から date_offset_days 日後の暦日 (#1433。UTC の暦日だと JST の 0:00〜8:59 に 1 日前になる)。
-    // 日数は暦の計算で足すので整数にする (小数は切り捨て)
-    const offsetDays =
-      typeof body.date_offset_days === 'number' && Number.isFinite(body.date_offset_days)
-        ? Math.trunc(body.date_offset_days)
-        : 0;
-    const startDate = jstDayOffset(offsetDays);
+    // 日数は暦の計算で足すので整数にする (小数は切り捨て)。上限 (既定は前後 366 日) を超える値は、開始日を求める
+    // addDaysToDate が RangeError を投げて 500 になっていたので、DB に触れる前に 400 にする (#1463)
+    const maxOffsetDays = menuPlansAddMaxDateOffsetDays();
+    const offsetDays = parseMenuPlanDateOffsetDays(body.date_offset_days, maxOffsetDays);
+    let startDate: string;
+    try {
+      if (offsetDays === null) throw new RangeError('date_offset_days is out of range');
+      startDate = jstDayOffset(offsetDays);
+    } catch (offsetError) {
+      if (!(offsetError instanceof RangeError)) throw offsetError;
+      // 上限の外か、環境変数で上限を大きくしたために開始日が暦の計算で扱える範囲の外に出た
+      return NextResponse.json(
+        {
+          error: {
+            code: 'invalid_date_offset_days',
+            message: `date_offset_days は -${maxOffsetDays}〜${maxOffsetDays} の数で指定してください`,
+          },
+        },
+        { status: 400 },
+      );
+    }
 
     // weekly_menus.request_id は weekly_menu_requests への NOT NULL FK。
     // ここでの追加は AI 生成フローを経ない単発追加なので、コンテナ用にリクエストを

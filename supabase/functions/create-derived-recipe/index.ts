@@ -10,6 +10,7 @@ import {
 } from "../../../shared/dataset-embedding.mjs";
 import { addScaled, emptyTotals, hasSugarData } from "./nutrition-totals.ts";
 import { aiConsentDeniedResponse, checkAiConsent } from "../_shared/ai-consent-guard.ts";
+import { missingEnvError } from "../_shared/missing-env.ts";
 
 // service_role key 専用 (ブラウザからは呼ばれない) なので CORS は付けない (#1167)。
 
@@ -261,7 +262,7 @@ async function withRetry<T>(
 
 async function embedTexts(texts: string[], dimensions = DATASET_EMBEDDING_DIMENSIONS): Promise<number[][]> {
   const apiKey = Deno.env.get(DATASET_EMBEDDING_API_KEY_ENV);
-  if (!apiKey) throw new Error(`Embedding API Key is missing (${DATASET_EMBEDDING_API_KEY_ENV})`);
+  if (!apiKey) throw missingEnvError([DATASET_EMBEDDING_API_KEY_ENV]);
 
   const res = await withRetry(
     async () => await fetchDatasetEmbeddings(texts, { apiKey, inputType: "document" }),

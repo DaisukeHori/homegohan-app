@@ -218,9 +218,10 @@ export async function GET(request: Request) {
     const aiConsent = aiRequested ? await checkUserAiConsent(supabase, user.id) : null;
 
     // #1149 AI の利用回数の判定と記録 (#1177)。この GET はホームを開くと自動で呼ばれる (利用者が押した操作ではない) ので、
-    // 上限に数えない機能 ('nutrition_advice_auto') で記録だけする (ホームを開くだけで今日の回数が減らないように)。
-    // 上限に数えない機能は DB が止めないので、下の allowed はいつも true。上限に数える機能へ変えたときは、
-    // 止めた場合に AI の部分だけを省いて aiSkipped (AI_DAILY_LIMIT) で知らせる (集計は返す)
+    // 上限に数えない機能 ('nutrition_advice_auto') で数える (ホームを開くだけで 1 日の上限 (10 回) が減らないように)。
+    // ただし includeAdvice / includeSuggestion はクライアントが送る値で、API を直接呼べば何度でも AI を呼べるので、
+    // 自動の分だけの安全弁 (DB の ai_unmetered_daily_caps。既定は 1 日 30 回) がある。達していれば DB が止め (allowed: false)、
+    // AI の部分だけを省いて aiSkipped (AI_DAILY_LIMIT) で知らせる (集計は返す)
     const aiUsage = aiRequested && aiConsent?.allowed ? await consumeAiUsage(user.id, 'nutrition_advice_auto') : null;
 
     if (aiRequested && aiConsent?.allowed && aiUsage?.allowed) {
