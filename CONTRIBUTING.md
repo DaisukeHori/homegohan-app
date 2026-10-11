@@ -151,6 +151,7 @@ LOCAL_CI_SLOT=1 bash scripts/local-ci.sh          # 枠 1 だけを使う (空�
 | `LOCAL_CI_PLAYWRIGHT_WITH_DEPS=1` | `playwright install` に `--with-deps` を付ける (Linux で OS の依存も入れる。root 権限が要る) |
 | `LOCAL_CI_TOOLS` | gitleaks の配布物の置き場 (既定 `${XDG_CACHE_HOME:-$HOME/.cache}/homegohan-local-ci`) |
 | `INTEGRATION_TEST_TIMEOUT_MS` / `INTEGRATION_HOOK_TIMEOUT_MS` | 結合テストの 1 件のテスト / フックの時間切れ (ミリ秒。既定はどちらも 120000。`vitest.integration.config.ts`)。`local-ci.sh` もそのまま結合テストに渡す。個別に時間切れを書いたテストはそちらが優先 |
+| `INTEGRATION_AUTH_RETRY_ATTEMPTS` / `INTEGRATION_AUTH_RETRY_BASE_DELAY_MS` | 結合テストがローカル Supabase の認証 (`/auth/v1`) のゲートウェイの一時的な失敗 (502 / 503 / 504・接続の失敗) をやり直すときの、1 回の呼び出しで送る回数 (既定 5) と最初の間隔 (ミリ秒。既定 2000。以後は倍にして 16000 で止める)。`tests/integration/helpers/auth-transient-retry.ts`。`local-ci.sh` もそのまま結合テストに渡す |
 
 **ローカルでは再現できないもの**: migration を含む PR の Deploy Supabase Migrations の PR ジョブ (本番台帳とのドリフト検知) は本番に接続するため、このスクリプトでは回しません。security.yml の dependency review (依存を変える PR で、high 以上の既知の脆弱性がある版を入れていないか) は GitHub の Dependency graph を使うため回しません。依存を変える PR は CI のこのジョブの緑を待ってからマージします。また CI のランナーは Linux なので、OS に依存する違い (ファイル名の大文字小文字など) は残ります。
 
@@ -193,6 +194,7 @@ npx vitest run --config vitest.integration.config.ts tests/integration/rls tests
 - dev サーバを別のポートで起動したときは `INTEGRATION_BASE_URL=http://localhost:3001` を付けて実行します。
 - `supabase start` / `supabase db reset` をリポジトリの `supabase/` に対して直接実行しないでください。必ず `scripts/supabase-local.sh` を経由します (理由は [CLAUDE.md](./CLAUDE.md) の「ローカル / CI の Supabase」)。
   migration を追加・変更したら `bash scripts/supabase-local.sh reset` で作り直します。
+- 結合テストのプロセスは、ローカル Supabase の認証 (`/auth/v1`) への要求がゲートウェイの一時的な失敗 (502 / 503 / 504・接続の失敗) になったときだけ、間を空けてやり直します (`tests/integration/setup.ts` が `tests/integration/helpers/auth-transient-retry.ts` を取り付ける)。負荷が高い機械で、beforeAll のユーザー作成・サインインが `{}` というメッセージのエラーで落ちたためです。アプリ (`next dev`) への要求・認証以外 (REST など)・認証の判定 (400 / 422 / 429 など) はやり直さず、やり尽くしたら最後の失敗をそのまま返します。
 - テストは自分で作ったデータを後片付けしますが、途中で中断するとローカル DB にデータが残ることがあります。そのときは `bash scripts/supabase-local.sh reset` で戻します。
 - CI では `.github/workflows/security-regression.yml` が同じ手順で `tests/integration/rls`・`tests/integration/security`・`tests/integration/handson-tour`・`tests/integration/operator` (運営コンソール API。`admin-*` / `auth-boundary` / `super-admin-*`) を実行します。
   実行するファイルは vitest に渡すパスの文字列 (部分一致) で選んでいるため、新しい結合テストを足すときは、ファイル名を既存の指定に合わせてください。どの指定にも当たらないファイルは CI で動かないので、`tests/integration-ci-coverage.test.ts` が検出して落ちます。

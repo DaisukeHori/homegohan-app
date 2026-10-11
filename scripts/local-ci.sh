@@ -45,6 +45,9 @@
 #   LOCAL_CI_SUPABASE_PORTS        空いていることを確かめるローカル Supabase のポート (空白区切り。既定は枠の値)
 #   INTEGRATION_TEST_TIMEOUT_MS / INTEGRATION_HOOK_TIMEOUT_MS
 #                                  結合テストの時間切れの上書き (vitest.integration.config.ts。既定のままなら CI と同じ)
+#   INTEGRATION_AUTH_RETRY_ATTEMPTS / INTEGRATION_AUTH_RETRY_BASE_DELAY_MS
+#                                  結合テストが認証 (/auth/v1) のゲートウェイの一時的な失敗をやり直す回数と最初の間隔の上書き
+#                                  (tests/integration/helpers/auth-transient-retry.ts。既定のままなら CI と同じ)
 #
 # 枠 (slot): integration / e2e (ローカル Supabase と Next を立てる段) を、同じ機械で複数の local-ci.sh が同時に回せるよう、
 # 枠ごとに project_id (コンテナ名) と全ポートをずらす (値の表は scripts/lib/local-ci-slot.sh。枠 0 は今までと同じ値)。
@@ -150,8 +153,10 @@ PW_CONSENT_ARGS=(--trace off tests/e2e/legal-consent-gate.spec.ts)
 
 # 子プロセスへ持ち込む環境変数 (これ以外は外す。CI のランナーに無いものを持ち込まない)。
 # INTEGRATION_TEST_TIMEOUT_MS / INTEGRATION_HOOK_TIMEOUT_MS は結合テストの時間切れの上書き (vitest.integration.config.ts。
-# 指定しなければ CI と同じ既定のまま。負荷の高い機械で延ばすときに使う)
-readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT INTEGRATION_TEST_TIMEOUT_MS INTEGRATION_HOOK_TIMEOUT_MS"
+# 指定しなければ CI と同じ既定のまま。負荷の高い機械で延ばすときに使う)。
+# INTEGRATION_AUTH_RETRY_ATTEMPTS / INTEGRATION_AUTH_RETRY_BASE_DELAY_MS は、結合テストが認証のゲートウェイの一時的な失敗
+# (502 / 503 / 504・接続の失敗) をやり直す回数と最初の間隔の上書き (tests/integration/helpers/auth-transient-retry.ts)
+readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT INTEGRATION_TEST_TIMEOUT_MS INTEGRATION_HOOK_TIMEOUT_MS INTEGRATION_AUTH_RETRY_ATTEMPTS INTEGRATION_AUTH_RETRY_BASE_DELAY_MS"
 # 段の中だけで追加で持ち込む変数名 (e2e のパスワード)
 ENV_EXTRA=""
 # 枠を取ったあとに持ち込む変数名 (apply_slot が決める。supabase-local.sh が読む枠と、結合テストが叩くアプリの URL)
