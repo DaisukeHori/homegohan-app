@@ -262,7 +262,6 @@ export const ENFORCED_EDGE: Record<string, AiEdgeEntry> = {
     consent: 'service role のみ。user_id があるときだけ判定 (無ければデータセットだけから作る)',
     usage: { notRecorded: '運営が service role key で手動で呼ぶ、派生レシピの作成。アプリの画面・API・cron からは呼ばない (利用者の操作ではない)' },
   },
-  'generate-health-insights': { consent: '利用者の JWT の直後', usage: record('health_review') },
   'generate-hint': { consent: '利用者の JWT の直後', usage: record('nutrition_advice') },
   'generate-menu-v4': {
     consent: '利用者の JWT / service role (Next.js) / 続きの工程のどれでも、userId が決まった直後',

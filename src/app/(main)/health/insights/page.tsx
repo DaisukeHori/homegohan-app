@@ -5,10 +5,11 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Sparkles, AlertTriangle, TrendingUp, TrendingDown,
-  Heart, Moon, Scale, Activity, CheckCircle2, X, ChevronRight,
-  Lightbulb, Bell, BellOff
+  Moon, Scale, Activity, CheckCircle2, X, ChevronRight,
+  Bell, BellOff, Utensils, Stethoscope, Target
 } from 'lucide-react';
 import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
+import { isGeneratedInsightType, type GeneratedInsightType } from '@/lib/health-insight-rows';
 
 const colors = {
   bg: '#FAF9F7',
@@ -42,14 +43,20 @@ interface Insight {
   created_at: string;
 }
 
-const INSIGHT_ICONS: Record<string, typeof Scale> = {
-  weight_trend: Scale,
-  blood_pressure: Heart,
-  sleep_analysis: Moon,
-  activity_analysis: Activity,
-  correlation_analysis: Sparkles,
-  ai_comprehensive: Lightbulb,
+// insight_type ごとのアイコン。種別は POST /api/health/insights が保存するもの (GENERATED_INSIGHT_TYPES) と揃える (#1440)。
+// 種別を足すとここが型検査で赤になる。一覧に無い種別 (古い行など) は Sparkles にする
+const INSIGHT_ICONS: Record<GeneratedInsightType, typeof Scale> = {
+  nutrition: Utensils,
+  activity: Activity,
+  sleep: Moon,
+  checkup: Stethoscope,
+  trend: TrendingUp,
+  goal: Target,
 };
+
+function insightIconOf(insightType: string): typeof Scale {
+  return isGeneratedInsightType(insightType) ? INSIGHT_ICONS[insightType] : Sparkles;
+}
 
 // icon はアイコンの色 (文字ではなく塗りの色。#590)
 const PRIORITY_COLORS: Record<string, { bg: string; icon: string }> = {
@@ -196,7 +203,7 @@ export default function HealthInsightsPage() {
       ) : (
         <div className="px-4 space-y-3">
           {insights.map((insight) => {
-            const Icon = INSIGHT_ICONS[insight.insight_type] || Sparkles;
+            const Icon = insightIconOf(insight.insight_type);
             const priorityStyle = PRIORITY_COLORS[insight.priority] || PRIORITY_COLORS.low;
 
             return (
