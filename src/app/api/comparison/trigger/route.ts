@@ -2,7 +2,7 @@
  * POST /api/comparison/trigger — セグメント統計 (比較ランキング) の集計を手動で走らせる (#1406)
  * 権限: super_admin だけ
  *
- * 集計 (Edge Function calculate-segment-stats) は、全利用者の指標・順位・バッジを作り直す重い処理。
+ * 集計 (Edge Function calculate-segment-stats) は、全利用者の指標・統計・順位を作り直す重い処理。
  * 通常は pg_cron が 1 時間ごと (毎時 5 分) に呼ぶ (supabase/migrations/20261009100000_schedule_calculate_segment_stats.sql)。
  * この API は、運営が定期実行を待たずに作り直したいときのためだけに残す。
  *
@@ -16,6 +16,8 @@
  *   - 関数は service role の鍵で呼ぶ (認可を通したあとだけ使う)
  *   - 関数に渡すのは periodType だけ。関数は、呼んだ時刻 (JST) が属する直近の 1 期間だけを集計する
  *     (本文に期間の開始日などを書いても、関数には渡さない。過去の期間の埋め戻しはしない)
+ *   - 今の期間 (進行中) の集計なので、比較のバッジは判定しない。バッジは、pg_cron が期間の切り替わった直後に
+ *     直前の期間を集計し直す回 (previousPeriod: true) だけが付ける (#1491。暫定の順位で取り消されないバッジを付けないため)
  *   - 500 の本文は汎用メッセージだけ (src/lib/api/errors.ts の internalError)。原因は構造化ログにだけ残す
  *
  * エラー本文の形は運営 API と同じ { error: { code, message } } (docs/design/cross/04-api-conventions.md §5.2)。

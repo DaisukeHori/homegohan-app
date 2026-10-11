@@ -25,9 +25,6 @@ jest.mock('../../src/lib/api', () => ({
 
 import { V4GenerateModal } from '../../src/components/menu/V4GenerateModal';
 
-// 最初の描画 (RN の Modal の初回描画) は読み込むモジュールが多く、キャッシュの無い環境では 5 秒の既定を超えることがある
-jest.setTimeout(30000);
-
 /** 開始日の上限 (今日から何日先まで)。手で書いた期待値 */
 const EXPECTED_START_MAX_DAYS_AHEAD = 30;
 /** 期間の長さの上限 (開始日を含む日数)。手で書いた期待値 */
