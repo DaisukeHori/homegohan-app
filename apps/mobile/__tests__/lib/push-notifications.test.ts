@@ -62,6 +62,7 @@ import {
   resolveEasProjectId,
   unregisterExpoPushToken,
 } from '../../src/lib/pushNotifications';
+import { PUSH_ISSUE_SERVER_METADATA_KEYS } from '../../src/lib/push-issue-log';
 
 // 型キャスト用
 const mockGetUser = supabase.auth.getUser as jest.Mock;
@@ -129,6 +130,12 @@ beforeEach(async () => {
 
 afterEach(() => {
   warnSpy.mockRestore();
+  // どのテストでも、サーバーログに送った metadata のキーは、送ってよいキーの一覧 (push-issue-log.ts) の中だけ。
+  // 一覧の各キーが sanitizeLogEntry にマスクされないこと (キー名に token などを含まないこと) は
+  // tests/push-issue-log-sanitizer.test.ts (vitest) が本物の sanitizeLogEntry で確かめる (#1413)
+  const allowed = new Set<string>(PUSH_ISSUE_SERVER_METADATA_KEYS);
+  const sentKeys = mockPost.mock.calls.flatMap(([, body]) => Object.keys((body as { metadata?: object } | undefined)?.metadata ?? {}));
+  expect(sentKeys.filter((key) => !allowed.has(key))).toEqual([]);
 });
 
 describe('registerAndSaveExpoPushToken — 権限拒否', () => {
@@ -836,8 +843,8 @@ describe('サーバーログ (POST /api/log) への記録 — ログアウトの
         error_name: 'PostgrestError',
         error_code: '42501',
         http_status: 403,
-        token_source: 'stored',
-        explicit_access_token: true,
+        push_value_source: 'stored',
+        explicit_auth_header: true,
       },
     });
     // サインアウトで端末のセッションが消えても通るよう、控えたトークンを Authorization で明示する
@@ -863,13 +870,43 @@ describe('サーバーログ (POST /api/log) への記録 — ログアウトの
       app: 'mobile',
       event: 'push_token_unregister_no_rows',
       platform: 'ios',
-      token_source: 'stored',
-      explicit_access_token: false,
+      push_value_source: 'stored',
+      explicit_auth_header: false,
       deleted_count: 0,
     });
     // アクセストークンを渡されなければ、いまのセッションで認可する (Authorization を明示しない)
     expect(calls[0].init.headers).toBeUndefined();
     expect(JSON.stringify(mockPost.mock.calls)).not.toContain('ExponentPushToken');
+  });
+
+  it('取り直した値で消し、控えたアクセストークンで認可して 0 件なら、push_value_source: refetched と explicit_auth_header: true を送る (キー名に token を含めないので、サーバーでマスクされない)', async () => {
+    await AsyncStorage.removeItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`);
+    setExpoConfig({ eas: { projectId: APP_JSON_PROJECT_ID } });
+    mockGetExpoPushTokenAsync.mockResolvedValue({ data: 'ExponentPushToken[refetched]' });
+    setupDelete({ error: null, count: 0 });
+
+    expect(await unregisterExpoPushToken('user-123', { accessToken: 'saved-access-token' })).toBe('no_rows');
+
+    expect(serverLogCalls().map((c) => c.body.metadata)).toEqual([
+      {
+        app: 'mobile',
+        event: 'push_token_unregister_no_rows',
+        platform: 'ios',
+        push_value_source: 'refetched',
+        explicit_auth_header: true,
+        deleted_count: 0,
+      },
+    ]);
+    // 端末のコンソールのキーは以前のまま (サーバーには送らない)
+    expect(loggedPushIssues()).toEqual([
+      {
+        event: 'push_token_unregister_no_rows',
+        details: { platform: 'ios', token_source: 'refetched', explicit_access_token: true },
+      },
+    ]);
+    const body = JSON.stringify(serverLogCalls()[0].body);
+    expect(body).not.toContain('ExponentPushToken');
+    expect(body).not.toContain('saved-access-token');
   });
 
   it('待ち時間の上限で打ち切ったら、reason: timeout で送る (端末のコンソールにも出す)', async () => {
@@ -882,7 +919,7 @@ describe('サーバーログ (POST /api/log) への記録 — ログアウトの
 
       await expect(pending).resolves.toBe('failed');
       expect(serverLogCalls().map((c) => c.body.metadata)).toEqual([
-        { app: 'mobile', event: 'push_token_unregister_failed', platform: 'ios', reason: 'timeout', explicit_access_token: false },
+        { app: 'mobile', event: 'push_token_unregister_failed', platform: 'ios', reason: 'timeout', explicit_auth_header: false },
       ]);
       expect(loggedPushIssues()).toEqual([
         { event: 'push_token_unregister_failed', details: { platform: 'ios', reason: 'timeout' } },
@@ -906,7 +943,7 @@ describe('サーバーログ (POST /api/log) への記録 — ログアウトの
         platform: 'ios',
         reason: 'exception',
         error_name: 'TypeError',
-        explicit_access_token: false,
+        explicit_auth_header: false,
       },
     ]);
     expect(JSON.stringify(mockPost.mock.calls)).not.toContain('hunter2');

@@ -417,7 +417,9 @@ describe('session-expired だけが届いたとき', () => {
 
 describe('DELETE が行を消せなかったとき', () => {
   it('0 行だった (RLS に弾かれた・行が既に無い。どちらもエラーにならない) ことを、端末のコンソールに出して観測できる。ログアウトは止めない', async () => {
-    // PostHog などの外部には送らない (#1166)。観測できるのは端末のコンソールだけ
+    // PostHog などの外部には送らない (#1166)。サーバーログ (POST /api/log → app_logs) にも送るが (#1413。キー名は push_value_source /
+    // explicit_auth_header)、この試験は API の基点 (EXPO_PUBLIC_API_BASE_URL) を置かないので送られない。ここでは端末のコンソールを見る
+    // (サーバーログへの送信は push-notifications.test.ts が確かめる)
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       server.pushTokenRows = [{ user_id: OTHER_USER_ID, expo_push_token: THIS_DEVICE_TOKEN }];

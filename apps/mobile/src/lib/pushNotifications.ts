@@ -5,6 +5,17 @@ import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
 import { getApi } from "./api";
+import {
+  type PushIssueEvent,
+  type PushIssueServerFields,
+  type PushValueSource,
+  buildPushIssueLogBody,
+  errorIdentifierOf,
+  registrationFailureServerFields,
+  unregisterErrorServerFields,
+  unregisterNoRowsServerFields,
+  unregisterUnfinishedServerFields,
+} from "./push-issue-log";
 import { supabase } from "./supabase";
 
 /**
@@ -80,15 +91,6 @@ export function resolveEasProjectId(): ResolvedEasProjectId {
   return { projectId: undefined, source: "none", rejected };
 }
 
-/** サーバーログ (app_logs) にも残す、push token の登録・削除の異常 (#1413) */
-export type PushIssueEvent =
-  | "push_token_registration_failed"
-  | "push_token_unregister_failed"
-  | "push_token_unregister_no_rows";
-
-/** サーバーログに送る値。どれも決まった値 (列挙・コード・数・真偽) だけにする。トークンの値やエラーの本文は入れない */
-type PushIssueServerFields = Record<string, string | number | boolean>;
-
 /**
  * サーバーログ (POST /api/log) への送信を待つ上限 (ミリ秒)。
  * ログアウトの直前の削除の失敗は、サインアウトでセッションが消える前に送り終えたいので、この時間だけ待ってから先へ進む。
@@ -96,29 +98,6 @@ type PushIssueServerFields = Record<string, string | number | boolean>;
  * 送れなかった記録は諦める (ログの欠けより、ログアウトが長く止まるほうが利用者に響く)。
  */
 export const PUSH_ISSUE_LOG_TIMEOUT_MS = 2000;
-
-/** サーバーログに送る level。どれも利用者の操作は止めていない (握りつぶしている) 異常なので warn */
-const PUSH_ISSUE_LOG_LEVEL = "warn";
-
-/**
- * エラーの名前・コードとして送ってよい形 (英数字と . _ : - だけ、短いもの)。
- * PostgrestError の code (SQLSTATE '42501' や 'PGRST301') や、Expo の CodedError の code ('ERR_...')、
- * エラーの class 名 ('PostgrestError') はこの形に収まる。収まらない値 (文が入った値など) は送らない。
- */
-const ERROR_IDENTIFIER_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
-
-/** この形に収まらない名前・コードの代わりに送る値 */
-const UNKNOWN_ERROR_IDENTIFIER = "unknown";
-
-/** エラーの名前・コードを、送ってよい形に絞る (形が違えば unknown) */
-function errorIdentifierOf(value: unknown): string {
-  return typeof value === "string" && ERROR_IDENTIFIER_PATTERN.test(value) ? value : UNKNOWN_ERROR_IDENTIFIER;
-}
-
-/** HTTP の状態の数字 (整数) なら返す。それ以外は undefined (送らない) */
-function httpStatusOf(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) ? value : undefined;
-}
 
 /**
  * 登録・削除の異常を、端末のコンソールに出す (トークンやユーザー ID は載せない。例外は投げない)。
@@ -138,6 +117,8 @@ function reportPushIssue(event: string, details: Record<string, string | number 
  * 登録・削除の異常を、サーバーログ (POST /api/log → app_logs) に残す (#1413)。
  * エラー境界の記録 (error-report.ts) と同じ経路。サーバー側 (sanitizeLogEntry) も秘密情報をマスクするが、
  * ここでも送る値を決まった値 (イベント名・OS・エラーの種類・件数など) に絞り、トークンの値やエラーの本文は送らない。
+ * 本文は push-issue-log.ts の buildPushIssueLogBody() で組み立てる (送ってよいキーはそこで決めてある。
+ * キー名に token などの語を入れると sanitizeLogEntry が値を "***" にしてしまうため)。
  *
  * - 例外を投げない (reject もしない)。送れなくても (オフライン・未ログイン・環境変数なし・サーバーのエラー) 何もしない。
  *   送信の失敗を、ここからまた記録することはない (自分自身を呼び直さない)
@@ -156,11 +137,7 @@ function sendPushIssueToServer(
       .then(() =>
         getApi().post(
           "/api/log",
-          {
-            level: PUSH_ISSUE_LOG_LEVEL,
-            message: `push token issue: ${event}`,
-            metadata: { app: "mobile", event, ...fields },
-          },
+          buildPushIssueLogBody(event, fields),
           {
             ...(options.accessToken ? { headers: { Authorization: `Bearer ${options.accessToken}` } } : {}),
             timeoutMs: PUSH_ISSUE_LOG_TIMEOUT_MS,
@@ -204,17 +181,19 @@ function reportPushRegistrationFailure(
     rejected_project_id_sources: resolved.rejected.join(",") || "none",
   });
 
-  const status = httpStatusOf(httpStatus);
   // 登録の失敗は、利用者の操作を待たせない (送り終えるのを待たない)
-  void sendPushIssueToServer("push_token_registration_failed", {
-    stage,
-    platform: Platform.OS,
-    error_name: errorIdentifierOf(e?.name),
-    error_code: errorIdentifierOf(e?.code),
-    ...(status === undefined ? {} : { http_status: status }),
-    project_id_source: resolved.source,
-    rejected_project_id_sources: resolved.rejected.join(",") || "none",
-  });
+  void sendPushIssueToServer(
+    "push_token_registration_failed",
+    registrationFailureServerFields({
+      stage,
+      platform: Platform.OS,
+      errorName: e?.name,
+      errorCode: e?.code,
+      httpStatus,
+      projectIdSource: resolved.source,
+      rejectedProjectIdSources: resolved.rejected.join(",") || "none",
+    }),
+  );
 }
 
 /**
@@ -331,9 +310,12 @@ type UnregisterOutcome = {
   result: UnregisterPushTokenResult;
   issue?: {
     event: PushIssueEvent;
-    /** 端末のコンソールに出す値 */
+    /** 端末のコンソールに出す値 (サーバーには送らないので、キー名は以前のまま。token_source など) */
     console: Record<string, string | number | boolean>;
-    /** サーバーログに送る値 (決まった値だけ) */
+    /**
+     * サーバーログに送る値 (決まった値だけ。push-issue-log.ts で組み立てる)。
+     * キー名は sanitizeLogEntry にマスクされない名前 (token_source → push_value_source、explicit_access_token → explicit_auth_header)
+     */
     server: PushIssueServerFields;
   };
 };
@@ -383,7 +365,7 @@ export async function unregisterExpoPushToken(
 
   const work = async (): Promise<UnregisterOutcome> => {
     let token: string | null = null;
-    let tokenSource: "stored" | "refetched" = "stored";
+    let tokenSource: PushValueSource = "stored";
     try {
       token = await AsyncStorage.getItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:${userId}`);
     } catch {
@@ -413,21 +395,19 @@ export async function unregisterExpoPushToken(
     if (error) {
       const errorName = typeof error.name === "string" ? error.name : "PostgrestError";
       const errorCode = typeof error.code === "string" ? error.code : "";
-      const httpStatus = httpStatusOf(status);
       return {
         result: "failed",
         issue: {
           event: "push_token_unregister_failed",
           console: { platform: Platform.OS, error_name: errorName, error_code: errorCode },
-          server: {
+          server: unregisterErrorServerFields({
             platform: Platform.OS,
-            reason: "error",
-            error_name: errorIdentifierOf(errorName),
-            error_code: errorIdentifierOf(errorCode),
-            ...(httpStatus === undefined ? {} : { http_status: httpStatus }),
-            token_source: tokenSource,
-            explicit_access_token: explicitAccessToken,
-          },
+            errorName,
+            errorCode,
+            httpStatus: status,
+            pushValueSource: tokenSource,
+            explicitAuthHeader: explicitAccessToken,
+          }),
         },
       };
     }
@@ -437,12 +417,11 @@ export async function unregisterExpoPushToken(
         issue: {
           event: "push_token_unregister_no_rows",
           console: { platform: Platform.OS, token_source: tokenSource, explicit_access_token: explicitAccessToken },
-          server: {
+          server: unregisterNoRowsServerFields({
             platform: Platform.OS,
-            token_source: tokenSource,
-            explicit_access_token: explicitAccessToken,
-            deleted_count: 0,
-          },
+            pushValueSource: tokenSource,
+            explicitAuthHeader: explicitAccessToken,
+          }),
         },
       };
     }
@@ -451,7 +430,8 @@ export async function unregisterExpoPushToken(
 
   /** 待ち時間の上限を過ぎた・途中で例外が起きたときの記録 (削除できたかどうかは分からない) */
   const unfinished = (reason: "timeout" | "exception", error?: unknown): UnregisterOutcome => {
-    const errorName = errorIdentifierOf((error as { name?: unknown } | null | undefined)?.name);
+    const rawErrorName = (error as { name?: unknown } | null | undefined)?.name;
+    const errorName = errorIdentifierOf(rawErrorName);
     return {
       result: "failed",
       issue: {
@@ -461,12 +441,12 @@ export async function unregisterExpoPushToken(
           reason,
           ...(reason === "exception" ? { error_name: errorName } : {}),
         },
-        server: {
+        server: unregisterUnfinishedServerFields({
           platform: Platform.OS,
           reason,
-          ...(reason === "exception" ? { error_name: errorName } : {}),
-          explicit_access_token: explicitAccessToken,
-        },
+          errorName: rawErrorName,
+          explicitAuthHeader: explicitAccessToken,
+        }),
       },
     };
   };
