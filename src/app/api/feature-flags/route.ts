@@ -13,7 +13,8 @@
  *
  * 返すのは CLIENT_FEATURE_FLAG_KEYS (src/lib/feature-flags.ts) に載せたフラグだけ。運営が作った別のフラグの名前を
  * 一般のユーザーに見せない。値はログイン中のユーザーにとっての ON/OFF (段階公開があれば、そのユーザーでの判定)。
- *   ai_chat_enabled   false のとき AI 相談の API は 503 を返す (緊急停止中)。通常は true
+ *   ai_chat_enabled   false のとき AI 相談の API (と、利用者の JWT で直接呼ぶ Edge Function knowledge-gpt。#1486) は
+ *                     503 を返す (緊急停止中)。通常は true
  *   maintenance_mode  true のとき、このユーザーにはメンテナンス中として見せる。運営 (admin / super_admin) は
  *                     メンテナンス中でも使えるので、フラグが ON でも false で返す
  *

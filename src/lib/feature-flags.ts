@@ -10,6 +10,8 @@
  *   menu_generation_v5_wrapped  献立生成 (週間・1 日・1 食・AI 相談のアクション) のエンジン。ON で v5、OFF で v4
  *   menu_generation_v5_direct   汎用の献立生成 API (/api/ai/menu/v4/generate) のエンジン。ON で v5、OFF で v4
  *   ai_chat_enabled             AI 相談の緊急停止スイッチ。OFF のとき AI 相談の API は 503 を返す。通常は ON のまま
+ *                               (利用者の JWT で直接呼ぶ Edge Function knowledge-gpt は、supabase/functions/_shared/ai-chat-flag.ts で
+ *                               同じ判定をする。#1486。行が無い・読めないときの値はここと同じ ON)
  *   maintenance_mode            ON のとき、ミドルウェアが運営 (admin / super_admin) 以外にメンテナンス中の画面を出す
  *
  * 【止めない側に倒す (fail-open)】
