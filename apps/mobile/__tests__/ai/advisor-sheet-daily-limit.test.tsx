@@ -43,7 +43,6 @@ import React from 'react';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
 import { aiDailyLimitMessage } from '../../src/lib/ai-daily-limit';
 
-const WAIT = { timeout: 5000 };
 const LIMIT = 10;
 const LIMIT_BODY = JSON.stringify({
   error: aiDailyLimitMessage(LIMIT),
@@ -75,7 +74,7 @@ describe('AIAdvisorSheet — 送信が 429 AI_DAILY_LIMIT で止められたと�
   it('Alert に固定の文を出し、生の文字列は出さない。送らなかったメッセージを消して入力を戻し、シートは閉じない', async () => {
     const onClose = jest.fn();
     render(<AIAdvisorSheet visible onClose={onClose} />);
-    await waitFor(() => expect(screen.getByText('野菜を足しましょう')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByText('野菜を足しましょう')).toBeTruthy());
     fetchMock.mockResolvedValueOnce(new Response(LIMIT_BODY, { status: 429 }));
 
     fireEvent.changeText(screen.getByTestId('ai-input'), '今日の献立は?');
@@ -83,7 +82,7 @@ describe('AIAdvisorSheet — 送信が 429 AI_DAILY_LIMIT で止められたと�
       fireEvent.press(screen.getByTestId('ai-send-btn'));
     });
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1), WAIT);
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));
     expect(alertSpy).toHaveBeenCalledWith('エラー', aiDailyLimitMessage(LIMIT));
     const shown = alertSpy.mock.calls[0][1] as string;
     expect(shown).not.toContain('HTTP 429');

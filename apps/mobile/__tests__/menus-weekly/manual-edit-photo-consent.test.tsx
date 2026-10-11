@@ -37,12 +37,6 @@ import { ManualEditModal, type ManualEditMeal } from '../../src/components/menu/
 import { AI_CONSENT_SCREEN_PATH, resetAiConsentPromptForTests } from '../../src/lib/ai-consent';
 import { AI_CONSENT_REQUIRED_CODE, AI_CONSENT_REQUIRED_MESSAGE } from '../../../../supabase/functions/_shared/ai-consent';
 
-// 最初の描画 (RN の Modal の初回描画) は読み込むモジュールが多く、キャッシュの無い環境では 5 秒の既定を超えることがある
-jest.setTimeout(30000);
-
-// 非同期の段数が多く、遅い環境で既定の 1 秒では足りないことがあるため、長めに待つ
-const WAIT = { timeout: 5000 };
-
 const ANALYZE_PATH = '/api/ai/analyze-meal-photo';
 const CONSENT_ERROR = () =>
   new Error(`HTTP 403 Forbidden: ${JSON.stringify({ error: AI_CONSENT_REQUIRED_MESSAGE, code: AI_CONSENT_REQUIRED_CODE })}`);
@@ -84,7 +78,7 @@ async function analyzeFromManualEdit(onClose: () => void) {
   await act(async () => {
     fireEvent.press(screen.getByTestId('photo-edit-gallery-btn'));
   });
-  await waitFor(() => expect(screen.getByTestId('photo-edit-remove-0')).toBeTruthy(), WAIT);
+  await waitFor(() => expect(screen.getByTestId('photo-edit-remove-0')).toBeTruthy());
   await act(async () => {
     fireEvent.press(screen.getByTestId('photo-edit-analyze-btn'));
   });
@@ -96,11 +90,11 @@ describe('手動編集の「写真から入力」が「同意が必要です」�
     const onClose = jest.fn();
     await analyzeFromManualEdit(onClose);
 
-    await waitFor(() => expect(alertTitles()).toEqual(['同意が必要です']), WAIT);
+    await waitFor(() => expect(alertTitles()).toEqual(['同意が必要です']));
     expect(mockPost).toHaveBeenCalledWith(ANALYZE_PATH, expect.anything());
     expect(alertMock).toHaveBeenCalledWith('同意が必要です', AI_CONSENT_REQUIRED_MESSAGE, expect.any(Array));
     // 写真の画面は閉じた
-    await waitFor(() => expect(screen.queryByTestId('photo-edit-modal')).toBeNull(), WAIT);
+    await waitFor(() => expect(screen.queryByTestId('photo-edit-modal')).toBeNull());
     // 手動編集の画面は開いたまま (編集中の内容を捨てない)
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByTestId('manual-edit-modal')).toBeTruthy();
@@ -117,7 +111,7 @@ describe('手動編集の「写真から入力」が「同意が必要です」�
     mockPost.mockRejectedValue(CONSENT_ERROR());
     const onClose = jest.fn();
     await analyzeFromManualEdit(onClose);
-    await waitFor(() => expect(alertTitles()).toEqual(['同意が必要です']), WAIT);
+    await waitFor(() => expect(alertTitles()).toEqual(['同意が必要です']));
 
     consentButtons()
       .find((b) => b.text === '同意画面を開く')
@@ -133,7 +127,7 @@ describe('手動編集の「写真から入力」が「同意が必要です」�
     const onClose = jest.fn();
     await analyzeFromManualEdit(onClose);
 
-    await waitFor(() => expect(alertTitles()).toEqual(['解析エラー']), WAIT);
+    await waitFor(() => expect(alertTitles()).toEqual(['解析エラー']));
     expect(screen.getByTestId('photo-edit-modal')).toBeTruthy();
     expect(onClose).not.toHaveBeenCalled();
   });

@@ -48,7 +48,6 @@ import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../src/lib/supabase';
 import { aiDailyLimitMessage } from '../../src/lib/ai-daily-limit';
 
-const WAIT = { timeout: 5000 };
 const LIMIT = 10;
 const LIMIT_BODY = JSON.stringify({
   error: aiDailyLimitMessage(LIMIT),
@@ -69,7 +68,7 @@ beforeEach(() => {
 describe('AiSessionPage — 送信が 429 AI_DAILY_LIMIT で止められたとき', () => {
   it('固定の文を出し、生の文字列は出さない。送らなかったメッセージを消して入力を戻す', async () => {
     render(<AiSessionPage />);
-    await waitFor(() => expect(screen.getByPlaceholderText(INPUT_PLACEHOLDER)).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByPlaceholderText(INPUT_PLACEHOLDER)).toBeTruthy());
 
     fireEvent.changeText(screen.getByPlaceholderText(INPUT_PLACEHOLDER), '今日の献立は?');
     const pressables = screen.UNSAFE_getAllByType(Pressable);
@@ -77,7 +76,7 @@ describe('AiSessionPage — 送信が 429 AI_DAILY_LIMIT で止められたと�
       fireEvent.press(pressables[pressables.length - 1]);
     });
 
-    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text')).toBeTruthy());
     const shown = screen.getByTestId('ai-chat-error-text').props.children;
     expect(shown).toBe(aiDailyLimitMessage(LIMIT));
     expect(shown).not.toContain('HTTP 429');
@@ -98,14 +97,14 @@ describe('AiSessionPage — 送信が 429 AI_DAILY_LIMIT で止められたと�
       assets: [{ uri: 'file:///photo.jpg', base64: 'aGVsbG8=' }],
     });
     render(<AiSessionPage />);
-    await waitFor(() => expect(screen.getByPlaceholderText(INPUT_PLACEHOLDER)).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByPlaceholderText(INPUT_PLACEHOLDER)).toBeTruthy());
 
     // 入力バーの最後から 2 番目の Pressable が画像の添付 (image-attach.test.tsx と同じ)
     const before = screen.UNSAFE_getAllByType(Pressable);
     await act(async () => {
       fireEvent.press(before[before.length - 2]);
     });
-    await waitFor(() => expect(screen.getByTestId('ai-chat-image-preview')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByTestId('ai-chat-image-preview')).toBeTruthy());
 
     fireEvent.changeText(screen.getByPlaceholderText(INPUT_PLACEHOLDER), 'この料理は?');
     const pressables = screen.UNSAFE_getAllByType(Pressable);
@@ -113,7 +112,7 @@ describe('AiSessionPage — 送信が 429 AI_DAILY_LIMIT で止められたと�
       fireEvent.press(pressables[pressables.length - 1]);
     });
 
-    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text').props.children).toBe(aiDailyLimitMessage(LIMIT)), WAIT);
+    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text').props.children).toBe(aiDailyLimitMessage(LIMIT)));
     expect(screen.getByTestId('ai-chat-image-preview')).toBeTruthy();
     expect(screen.getByPlaceholderText(INPUT_PLACEHOLDER).props.value).toBe('この料理は?');
   });

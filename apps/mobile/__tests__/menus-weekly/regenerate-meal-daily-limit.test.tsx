@@ -34,7 +34,6 @@ import { aiDailyLimitMessage } from '../../src/lib/ai-daily-limit';
 import { resetAiConsentPromptForTests } from '../../src/lib/ai-consent';
 import { AI_CONSENT_REQUIRED_CODE, AI_CONSENT_REQUIRED_MESSAGE } from '../../../../supabase/functions/_shared/ai-consent';
 
-const WAIT = { timeout: 5000 };
 const LIMIT = 10;
 const LIMIT_BODY = JSON.stringify({
   error: aiDailyLimitMessage(LIMIT),
@@ -60,9 +59,9 @@ async function pressSubmit(response: Response, onClose: jest.Mock) {
   await act(async () => {
     fireEvent.press(screen.getByTestId('regenerate-meal-submit'));
   });
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(REGENERATE_URL, expect.objectContaining({ method: 'POST' })), WAIT);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(REGENERATE_URL, expect.objectContaining({ method: 'POST' })));
   // 送信中の表示が戻る (ボタンの文が戻る) まで待つ
-  await waitFor(() => expect(screen.getByText('AIで別の献立に変更')).toBeTruthy(), WAIT);
+  await waitFor(() => expect(screen.getByText('AIで別の献立に変更')).toBeTruthy());
 }
 
 describe('RegenerateMealModal — 作り直しが止められたとき', () => {
@@ -70,7 +69,7 @@ describe('RegenerateMealModal — 作り直しが止められたとき', () => {
     const onClose = jest.fn();
     await pressSubmit(new Response(LIMIT_BODY, { status: 429 }), onClose);
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1), WAIT);
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));
     expect(alertSpy).toHaveBeenCalledWith('エラー', aiDailyLimitMessage(LIMIT));
     expect(alertSpy.mock.calls[0][1]).not.toContain('HTTP 429');
     expect(onClose).not.toHaveBeenCalled();
@@ -92,7 +91,7 @@ describe('RegenerateMealModal — 作り直しが止められたとき', () => {
       onClose,
     );
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('同意が必要です', AI_CONSENT_REQUIRED_MESSAGE, expect.any(Array)), WAIT);
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('同意が必要です', AI_CONSENT_REQUIRED_MESSAGE, expect.any(Array)));
     expect(alertSpy.mock.calls.map((c) => c[0])).toEqual(['同意が必要です']);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
