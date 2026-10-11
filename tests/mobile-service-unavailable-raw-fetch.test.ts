@@ -13,7 +13,8 @@
  *
  * 限界 (見張りであって証明ではない):
  *   - ファイル単位で見る。同じファイルの別の関数が errorOfFailedResponse を呼んでいれば、ある関数が呼んでいなくても通る
- *   - AI 相談 (/api/ai/consultation) 以外の API を生の fetch で呼ぶ場所のメンテナンス中の 503 は見ない
+ *   - AI 相談 (/api/ai/consultation) 以外の API を生の fetch で呼ぶ場所のメンテナンス中の 503 は、このテストでは見ない
+ *     (アプリの API を呼ぶ生の fetch の全部は、tests/ai-daily-limit-mobile-raw-fetch.test.ts の 4 が関数ごとに見る。#1486)
  *
  * コメントは見ない (TypeScript の printer でコメントを除いたソースを調べる)。
  */

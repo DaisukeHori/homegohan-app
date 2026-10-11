@@ -4,12 +4,18 @@
  * feature_flags の maintenance_mode が ON のあいだ、ミドルウェア (lib/supabase/middleware.ts) が、
  * 運営 (admin / super_admin) 以外のリクエストにメンテナンス中の応答を返す。
  *   - ページ: メンテナンス中の HTML (503。Retry-After 付き)
- *   - API:    { error: { code: 'MAINTENANCE_MODE', message } } (503。Retry-After 付き)
+ *   - API:    { error: <固定の文>, code: 'MAINTENANCE_MODE', retryAfter } (503。Retry-After 付き)
+ *             AI 相談の緊急停止 (src/lib/ai/ai-chat-gate.ts) と同じ平らな形。error は文字列なので、
+ *             本文の data.error をそのまま出す Web の画面でも固定の文になる (オブジェクトにすると描画で落ちる。#1486)
  *
  * 通すもの (メンテナンス中でも止めない):
  *   - 運営ロール (admin / super_admin) のログイン済みユーザー。メンテナンスの作業をするため
  *   - /login と /auth/*。運営がログインし直せるように。ネイティブ認証ブリッジ (/auth/native-bridge) も通る
  *   - /terms と /privacy。利用規約とプライバシーポリシーは、いつでも読めるようにする (ストア審査に出す URL でもある)
+ *   - /legal (特定商取引法に基づく表記) と /contact (お問い合わせ) の画面 (#1486)。どちらも未ログインで読める公開の文面で、
+ *     メンテナンス中でも事業者の表記と連絡先を確かめられるようにする。お問い合わせの送信の API (POST /api/contact) は止めたまま
+ *     (メンテナンス中は利用者からの書き込みを受け付けない。送ると 503 の固定の文が出て、画面のメールアドレスは残る)。
+ *     /signup (新規登録) は止める
  *   - 死活監視 /api/health、cron (/api/cron/*)、認証 API (/api/auth/*)、画面が前もって状態を知るための窓口 /api/feature-flags
  *     (いま呼んでいる画面は無い。画面は、この 503 の応答の code で止められたことを知る。#1457)
  *   - /_next/* (Next の静的ファイル)。ミドルウェアの matcher が外しているが、念のためここでも通す
@@ -54,6 +60,13 @@ function isSameOrUnder(pathname: string, prefix: string): boolean {
 }
 
 /**
+ * メンテナンス中でも見られる公開の案内の画面 (#1486)。特定商取引法に基づく表記と、お問い合わせ。
+ * 画面だけを通す (どちらも API を呼ばずに表示できる。お問い合わせの送信の API は止める)。
+ * `/legal-consent` (規約への同意の画面) は似た名前だが別の画面で、通さない (isSameOrUnder が `/legal` の下だけを見る)
+ */
+export const MAINTENANCE_PUBLIC_INFO_PATHS = ['/legal', '/contact'] as const;
+
+/**
  * メンテナンス中でも止めないパスか。
  * pathname は URL の path 部分 (クエリを含まない)。
  */
@@ -62,6 +75,8 @@ export function isMaintenanceExemptPath(pathname: string): boolean {
   if (isSameOrUnder(pathname, '/login') || isSameOrUnder(pathname, '/auth')) return true;
   // 利用規約・プライバシーポリシー
   if (isPolicyPath(pathname)) return true;
+  // 特定商取引法に基づく表記・お問い合わせの画面 (#1486)
+  if (MAINTENANCE_PUBLIC_INFO_PATHS.some((prefix) => isSameOrUnder(pathname, prefix))) return true;
   // Next の静的ファイル (ミドルウェアの matcher が外しているが、念のため)
   if (isSameOrUnder(pathname, '/_next')) return true;
 
@@ -130,10 +145,16 @@ a{color:var(--accent)}
 </html>
 `;
 
-/** メンテナンス中の API の応答 (503 + Retry-After) */
+/**
+ * メンテナンス中の API の応答 (503 + Retry-After)。
+ * 本文は { error: 固定の文, code: 'MAINTENANCE_MODE', retryAfter } (AI 相談の緊急停止の 503 と同じ平らな形。#1486)。
+ * error を文字列にするのは、Web の画面の多くが本文の data.error をそのまま出すため (オブジェクトにすると、
+ * React の描画で落ちる・`[object Object]` が出る)。モバイルは code から固定の文を決める (packages/shared の
+ * serviceUnavailableMessageOfBody)。
+ */
 export function maintenanceApiResponse(): NextResponse {
   return NextResponse.json(
-    { error: { code: MAINTENANCE_API_CODE, message: MAINTENANCE_MESSAGE } },
+    { error: MAINTENANCE_MESSAGE, code: MAINTENANCE_API_CODE, retryAfter: MAINTENANCE_RETRY_AFTER_SECONDS },
     {
       status: SERVICE_UNAVAILABLE_STATUS,
       headers: {

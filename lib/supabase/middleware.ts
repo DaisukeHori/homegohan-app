@@ -286,7 +286,8 @@ export async function updateSession(request: NextRequest) {
   )
 
   // #1148: メンテナンスモード (未ログインの人)。ログイン画面へ回さず、メンテナンス中の画面を出す
-  // (ログイン画面そのもの・/auth/*・利用規約・プライバシーポリシーは isMaintenanceExemptPath で通す)。
+  // (ログイン画面そのもの・/auth/*・利用規約・プライバシーポリシー・特定商取引法に基づく表記・お問い合わせは
+  // isMaintenanceExemptPath で通す。#1486)。
   // ログイン済みの人は、ロールを読んでから下で判定する (運営ロールは通す)
   if (!user && !maintenanceExempt && (await isMaintenanceFlagOn())) {
     return withSessionCookies(supabaseResponse, maintenancePageResponse())

@@ -50,7 +50,8 @@ const HTTP_SERVICE_UNAVAILABLE = 503;
 
 const LIMIT_BODY = JSON.stringify({ error: SERVER_TEXT, code: 'AI_DAILY_LIMIT', limit: LIMIT, retryAfter: 3600 });
 const AI_CHAT_DISABLED_BODY = JSON.stringify({ error: SERVER_TEXT, code: AI_CHAT_DISABLED_CODE, retryAfter: 60 });
-const MAINTENANCE_BODY = JSON.stringify({ error: { code: MAINTENANCE_API_CODE, message: SERVER_TEXT } });
+// サーバーのメンテナンス中の 503 の本文 (#1486 から AI 相談の緊急停止と同じ平らな形)
+const MAINTENANCE_BODY = JSON.stringify({ error: SERVER_TEXT, code: MAINTENANCE_API_CODE, retryAfter: 300 });
 
 /** [ラベル, 状態, 共通クライアントの statusText, 本文, 例外のクラス, 固定の文, Alert の見出し] */
 const STOPPED_CASES = [
@@ -99,10 +100,19 @@ describe('errorOfFailedResponse (生の fetch の失敗の応答)', () => {
     expect(consent.message).toBe(`HTTP 403: ${consentBody}`);
 
     // 503 でも、止めている理由が分からない本文は置き換えない
-    const otherUnavailableBody = JSON.stringify({ error: 'x', code: 'AI_CONSENT_CHECK_FAILED' });
+    const otherUnavailableBody = JSON.stringify({ error: 'x', code: 'SOMETHING_ELSE' });
     const otherUnavailable = errorOfFailedResponse(HTTP_SERVICE_UNAVAILABLE, otherUnavailableBody);
     expect(isStoppedByServerError(otherUnavailable)).toBe(false);
     expect(otherUnavailable.message).toBe(`HTTP 503: ${otherUnavailableBody}`);
+
+    // #1486: 同意の状況を読めなかった 503 (AI_CONSENT_CHECK_FAILED) は、緊急停止・メンテナンス中と同じく固定の文
+    const consentCheckFailed = errorOfFailedResponse(
+      HTTP_SERVICE_UNAVAILABLE,
+      JSON.stringify({ error: SERVER_TEXT, code: 'AI_CONSENT_CHECK_FAILED' }),
+    );
+    expect(isStoppedByServerError(consentCheckFailed)).toBe(true);
+    expect(consentCheckFailed.message).not.toContain('HTTP');
+    expect(consentCheckFailed.message).not.toContain(SERVER_TEXT);
 
     // 上限の本文でも状態が 503 なら、503 の判定 (止めている理由が分からない) だけになる。逆も同じ
     expect(isStoppedByServerError(errorOfFailedResponse(HTTP_SERVICE_UNAVAILABLE, LIMIT_BODY))).toBe(false);
