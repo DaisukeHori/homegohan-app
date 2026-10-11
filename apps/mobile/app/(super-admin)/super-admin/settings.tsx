@@ -8,11 +8,12 @@ import { getApi } from "../../../src/lib/api";
 import { getApiErrorMessage } from "../../../src/lib/api-error";
 import { colors, spacing } from "../../../src/theme";
 
+/** GET /api/super-admin/settings の 1 行 (列の名前はサーバーのまま。src/app/api/super-admin/settings/route.ts。#1486) */
 type SettingRow = {
   key: string;
   value: any;
   description: string | null;
-  updatedAt: string | null;
+  updated_at: string | null;
   /**
    * 使われていない key (サーバーの src/lib/super-admin/retired-settings.ts。例: 旧 feature_flags) なら true (#1457)。
    * 画面は「使われていない」と出し、保存させない (サーバーも PUT を 409 SETTING_READ_ONLY で断る)
@@ -124,7 +125,7 @@ export default function SuperAdminSettingsPage() {
           {selected ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
               <Ionicons name="time-outline" size={14} color={colors.textMuted} />
-              <Text style={{ fontSize: 12, color: colors.textMuted }}>現在の更新日時: {selected.updatedAt ?? "-"}</Text>
+              <Text style={{ fontSize: 12, color: colors.textMuted }}>現在の更新日時: {selected.updated_at ?? "-"}</Text>
             </View>
           ) : null}
           {selectedReadOnly ? (
@@ -176,7 +177,7 @@ export default function SuperAdminSettingsPage() {
                   {s.description ? <Text style={{ fontSize: 13, color: colors.textLight }}>{s.description}</Text> : null}
                   <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
                     <Ionicons name="time-outline" size={12} color={colors.textMuted} />
-                    <Text style={{ fontSize: 12, color: colors.textMuted }}>{s.updatedAt ?? "-"}</Text>
+                    <Text style={{ fontSize: 12, color: colors.textMuted }}>{s.updated_at ?? "-"}</Text>
                   </View>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
