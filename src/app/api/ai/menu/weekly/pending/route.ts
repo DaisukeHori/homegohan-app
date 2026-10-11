@@ -3,6 +3,7 @@ import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
 import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
 import { internalError } from '@/lib/api/errors';
+import { weeklyMenuRequestStaleBefore } from '@/lib/weekly-menu-request-stale';
 import { WEEKLY_MENU_REQUEST_STALE_MESSAGE } from '@/lib/weekly-menu-request-error';
 
 // #1203: stale 判定時の復元（スナップショットの書き戻し）が打ち切られないよう、実行時間の上限を明示する。
@@ -17,8 +18,8 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const date = searchParams.get('date');
   const now = new Date();
-  const staleMinutes = 20;
-  const staleBefore = new Date(now.getTime() - staleMinutes * 60 * 1000);
+  // しきい値は止まった行の判定をするすべての場所で共有する (src/lib/weekly-menu-request-stale.ts。#1494)
+  const staleBefore = weeklyMenuRequestStaleBefore(now.getTime());
 
   if (!date) {
     return NextResponse.json({ error: 'date is required' }, { status: 400 });
