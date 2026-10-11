@@ -35,6 +35,7 @@
  * 判定できないので既定値で答える。
  */
 import { createLogger } from '@/lib/db-logger';
+import { requiredFlagContextFields } from '../../supabase/functions/_shared/feature-flag-eval';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   evaluateFlag,
@@ -196,33 +197,9 @@ async function readFlag(key: string, timeoutMs: number): Promise<FlagReadResult>
 
 type ContextField = keyof FeatureFlagContext;
 
-/** このフラグの判定に、ユーザーのどの属性が要るか (evaluateFlag が見る項目) */
+/** このフラグの判定に、ユーザーのどの属性が要るか (evaluateFlag が見る項目。Edge Functions と共用の判定。#1486) */
 function requiredContextFields(record: FeatureFlagRecord): ContextField[] {
-  const fields = new Set<ContextField>();
-
-  const constraints = record.constraints;
-  if (constraints) {
-    if (typeof constraints.min_user_age_days === 'number') fields.add('accountCreatedAt');
-    if ((constraints.exclude_plans?.length ?? 0) > 0 || (constraints.include_plans?.length ?? 0) > 0) fields.add('planKey');
-    if ((constraints.include_roles?.length ?? 0) > 0) fields.add('roles');
-    if ((constraints.include_org_ids?.length ?? 0) > 0) fields.add('organizationId');
-  }
-
-  switch (record.rollout_strategy?.type) {
-    case 'plan':
-      fields.add('planKey');
-      break;
-    case 'role':
-      fields.add('roles');
-      break;
-    case 'org':
-      fields.add('organizationId');
-      break;
-    default:
-      break;
-  }
-
-  return [...fields];
+  return requiredFlagContextFields(record);
 }
 
 /** userId 本人の属性を user_profiles から読む (その 1 行だけ。userId は認証で確定した ID であること) */

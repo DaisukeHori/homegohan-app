@@ -37,7 +37,10 @@ describe('サーバーの実際の 503 の本文から、画面に出す固定�
   it('メンテナンス中 (ミドルウェアの応答)', async () => {
     const res = maintenanceApiResponse();
     expect(res.status).toBe(SERVICE_UNAVAILABLE_STATUS);
-    expect(serviceUnavailableMessageOfBody(await res.json())).toBe(SHARED_MAINTENANCE_MESSAGE);
+    const body = await res.json();
+    expect(serviceUnavailableMessageOfBody(body)).toBe(SHARED_MAINTENANCE_MESSAGE);
+    // #1486: Web の画面が本文の data.error をそのまま出しても、同じ固定の文になる
+    expect(body.error).toBe(SHARED_MAINTENANCE_MESSAGE);
   });
 
   it('AI 相談の緊急停止 (AI 相談の API のゲートの応答)', async () => {
@@ -52,6 +55,11 @@ describe('serviceUnavailableMessageOfBody', () => {
     expect(serviceUnavailableMessageOfBody({ error: '別の文', code: SHARED_AI_CHAT_DISABLED_CODE })).toBe(
       SHARED_AI_CHAT_DISABLED_MESSAGE,
     );
+    // メンテナンス中の本文は #1486 から平らな形 (サーバーの実際の応答は上の「メンテナンス中 (ミドルウェアの応答)」)
+    expect(serviceUnavailableMessageOfBody({ error: '別の文', code: SHARED_MAINTENANCE_API_CODE, retryAfter: 300 })).toBe(
+      SHARED_MAINTENANCE_MESSAGE,
+    );
+    // #1486 より前の入れ子の形も受ける (配布済みの古いサーバーとの組み合わせ)
     expect(
       serviceUnavailableMessageOfBody({ error: { code: SHARED_MAINTENANCE_API_CODE, message: '別の文' } }),
     ).toBe(SHARED_MAINTENANCE_MESSAGE);
