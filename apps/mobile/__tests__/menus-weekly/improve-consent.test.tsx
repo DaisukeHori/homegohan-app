@@ -50,9 +50,6 @@ import { promptAiConsentRequired, resetAiConsentPromptForTests } from '../../src
 import { submitImprove, type ImproveMealRequest } from '../../src/lib/improve-meal';
 import { AI_CONSENT_REQUIRED_CODE, AI_CONSENT_REQUIRED_MESSAGE } from '../../../../supabase/functions/_shared/ai-consent';
 
-// 最初の描画 (RN の Modal の初回描画) は読み込むモジュールが多く、キャッシュの無い環境では 5 秒の既定を超えることがある
-jest.setTimeout(30000);
-
 const alertMock = Alert.alert as jest.Mock;
 const TODAY = '2026-10-08';
 const V4_GENERATE_PATH = '/api/ai/menu/v4/generate';

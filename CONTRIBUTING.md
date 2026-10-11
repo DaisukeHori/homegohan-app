@@ -152,6 +152,8 @@ LOCAL_CI_SLOT=1 bash scripts/local-ci.sh          # 枠 1 だけを使う (空�
 | `LOCAL_CI_TOOLS` | gitleaks の配布物の置き場 (既定 `${XDG_CACHE_HOME:-$HOME/.cache}/homegohan-local-ci`) |
 | `INTEGRATION_TEST_TIMEOUT_MS` / `INTEGRATION_HOOK_TIMEOUT_MS` | 結合テストの 1 件のテスト / フックの時間切れ (ミリ秒。既定はどちらも 120000。`vitest.integration.config.ts`)。`local-ci.sh` もそのまま結合テストに渡す。個別に時間切れを書いたテストはそちらが優先 |
 | `INTEGRATION_AUTH_RETRY_ATTEMPTS` / `INTEGRATION_AUTH_RETRY_BASE_DELAY_MS` | 結合テストがローカル Supabase の認証 (`/auth/v1`) のゲートウェイの一時的な失敗 (502 / 503 / 504・接続の失敗) をやり直すときの、1 回の呼び出しで送る回数 (既定 5) と最初の間隔 (ミリ秒。既定 2000。以後は倍にして 16000 で止める)。`tests/integration/helpers/auth-transient-retry.ts`。`local-ci.sh` もそのまま結合テストに渡す |
+| `MOBILE_JEST_TEST_TIMEOUT_MS` / `MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS` | `apps/mobile` の Jest の 1 件のテストの時間切れ (ミリ秒。既定 30000) と、RNTL の `waitFor` / `findBy*` の待ちの既定 (ミリ秒。既定 5000。テストの時間切れより小さくする)。`apps/mobile/jest.timeouts.js`。`local-ci.sh` もそのまま mobile の段に渡す。テストのファイルでは `jest.setTimeout` で書き換えない (環境変数の上書きが効かないファイルができるため。検査は `apps/mobile/__tests__/lib/jest-timeouts.test.ts`) |
+| `UNIT_SLOT_TEST_TIMEOUT_MS` | unit の段の `tests/local-ci-slot.test.ts` と `tests/local-ci-slot-consumers.test.ts` (bash・git を何度も起動する) の 1 件のテストの時間切れ (ミリ秒。既定 60000。全体の既定の 5 秒は変えない)。`tests/helpers/local-ci-slot-test-timeout.ts`。`local-ci.sh` もそのまま unit の段に渡す。個別に時間切れを書いたテストはそちらが優先 |
 
 **ローカルでは再現できないもの**: migration を含む PR の Deploy Supabase Migrations の PR ジョブ (本番台帳とのドリフト検知) は本番に接続するため、このスクリプトでは回しません。security.yml の dependency review (依存を変える PR で、high 以上の既知の脆弱性がある版を入れていないか) は GitHub の Dependency graph を使うため回しません。依存を変える PR は CI のこのジョブの緑を待ってからマージします。また CI のランナーは Linux なので、OS に依存する違い (ファイル名の大文字小文字など) は残ります。
 

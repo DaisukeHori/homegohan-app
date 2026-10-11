@@ -24,9 +24,17 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { resolveUnitSlotTestTimeout, testsWithUnexpectedTimeout } from "./helpers/local-ci-slot-test-timeout";
 
 const ROOT = process.cwd();
+
+// 1 件のテストの時間切れを、このファイルだけ延ばす (bash・git を何度も起動するので、負荷の高い機械で vitest の既定の 5 秒を超える。
+// 根拠と環境変数での上書きは tests/helpers/local-ci-slot-test-timeout.ts。#1488)。テストを定義する前に置く
+const SLOT_TEST_TIMEOUT_MS = resolveUnitSlotTestTimeout(process.env);
+vi.setConfig({ testTimeout: SLOT_TEST_TIMEOUT_MS });
+// 同時に走らせる実行どうしの競合を確かめるテストの、個別の時間切れ (と、ハーネスを打ち切る上限)
+const RACE_TIMEOUT_MS = 30_000;
 const SLOT_LIB = "scripts/lib/local-ci-slot.sh";
 const SUPABASE_LOCAL = "scripts/supabase-local.sh";
 const LOCAL_CI = "scripts/local-ci.sh";
@@ -661,7 +669,6 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
   const RELEASE_BLOCKED_MS = 1_500;
   // 持ち主の死んだ見張りとみなす古さ (LOCK_OWNER_GRACE_SEC=60 より古い)
   const STALE_GUARD_AGE_SEC = 120;
-  const RACE_TIMEOUT_MS = 30_000;
 
   it("空いていた枠 1 に、その枠のコンテナが残っていれば、消さずに integration:setup を赤にする", () => {
     const r = runCase({ slot: "1", containers: "c0ffee" });
@@ -1132,4 +1139,10 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
     },
     RACE_TIMEOUT_MS,
   );
+});
+
+describe("このファイルの時間切れ (#1488)", () => {
+  it("時間切れを個別に書いていないテストは、どれもこのファイルの時間切れ (SLOT_TEST_TIMEOUT_MS) で切れる (全体の既定の 5 秒のまま残っていない)", ({ task }) => {
+    expect(testsWithUnexpectedTimeout(task.file, [SLOT_TEST_TIMEOUT_MS, RACE_TIMEOUT_MS])).toEqual([]);
+  });
 });

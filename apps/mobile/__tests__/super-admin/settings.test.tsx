@@ -37,7 +37,6 @@ const SETTINGS_RESPONSE = {
   ],
 };
 
-const WAIT = { timeout: 5000 };
 const alertSpy = Alert.alert as jest.Mock;
 
 beforeEach(() => {
@@ -48,7 +47,7 @@ beforeEach(() => {
 
 async function renderPage() {
   render(<SuperAdminSettingsPage />);
-  await waitFor(() => expect(screen.getByText('support_email')).toBeTruthy(), WAIT);
+  await waitFor(() => expect(screen.getByText('support_email')).toBeTruthy());
 }
 
 describe('システム設定の画面 — 使われていない key (#1457)', () => {
@@ -88,7 +87,7 @@ describe('システム設定の画面 — 使われていない key (#1457)', ()
       '/api/super-admin/settings',
       expect.objectContaining({ key: 'support_email', value: 'support@example.com' }),
     );
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('保存しました', '設定を更新しました。'), WAIT);
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('保存しました', '設定を更新しました。'));
   });
 
   it('保存がサーバーに断られたら (409 SETTING_READ_ONLY)、生の文字列ではなく本文の message を出す', async () => {
@@ -105,6 +104,6 @@ describe('システム設定の画面 — 使われていない key (#1457)', ()
       fireEvent.press(screen.getByTestId('super-admin-settings-save'));
     });
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('保存失敗', message), WAIT);
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('保存失敗', message));
   });
 });

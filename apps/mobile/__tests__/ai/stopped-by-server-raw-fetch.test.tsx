@@ -76,9 +76,6 @@ import { aiDailyLimitMessage } from '../../src/lib/ai-daily-limit';
 import { resetAiConsentPromptForTests } from '../../src/lib/ai-consent';
 import { AI_CONSENT_REQUIRED_CODE, AI_CONSENT_REQUIRED_MESSAGE } from '../../../../supabase/functions/_shared/ai-consent';
 
-// 非同期の段数が多く、遅い環境で既定の 1 秒では足りないことがあるため、長めに待つ
-const WAIT = { timeout: 5000 };
-
 /** サーバーとは違う文を入れた本文。画面に出す文は本文の文字列ではなく、code (と limit) から決めた固定の文であることを確かめる */
 const SERVER_TEXT = 'サーバーが返した別の文';
 /** 上限の回数 (本文の limit)。固定の文はこの値から作る */
@@ -140,7 +137,7 @@ describe('相談の画面 (app/ai/[sessionId].tsx) の送信 (生の fetch)', ()
   async function renderAndSend(text: string) {
     mockClient.get.mockResolvedValue({ messages: [] });
     render(<AiSessionPage />);
-    await waitFor(() => expect(screen.getByPlaceholderText(PLACEHOLDER)).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByPlaceholderText(PLACEHOLDER)).toBeTruthy());
     fireEvent.changeText(screen.getByPlaceholderText(PLACEHOLDER), text);
     const pressables = screen.UNSAFE_getAllByType(Pressable);
     await act(async () => {
@@ -152,7 +149,7 @@ describe('相談の画面 (app/ai/[sessionId].tsx) の送信 (生の fetch)', ()
     fetchMock.mockResolvedValueOnce(new Response(body, { status }));
     await renderAndSend('今日の夕飯は?');
 
-    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text').props.children).toBe(expected), WAIT);
+    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text').props.children).toBe(expected));
     const shown = String(screen.getByTestId('ai-chat-error-text').props.children);
     expect(shown).not.toContain('HTTP');
     expect(shown).not.toContain(SERVER_TEXT);
@@ -165,7 +162,7 @@ describe('相談の画面 (app/ai/[sessionId].tsx) の送信 (生の fetch)', ()
     fetchMock.mockResolvedValueOnce(new Response(CONSENT_BODY, { status: HTTP_FORBIDDEN }));
     await renderAndSend('こんにちは');
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('同意が必要です', AI_CONSENT_REQUIRED_MESSAGE, expect.any(Array)), WAIT);
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('同意が必要です', AI_CONSENT_REQUIRED_MESSAGE, expect.any(Array)));
     expect(screen.queryByTestId('ai-chat-error-text')).toBeNull();
     expect(screen.getByPlaceholderText(PLACEHOLDER).props.value).toBe('こんにちは');
   });
@@ -188,7 +185,7 @@ describe('AI アドバイザーのシート (AIAdvisorSheet) の送信 (生の f
 
   async function openSheetAndSend(text: string) {
     render(<AIAdvisorSheet visible onClose={jest.fn()} />);
-    await waitFor(() => expect(screen.getByText('野菜を足しましょう')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByText('野菜を足しましょう')).toBeTruthy());
     fireEvent.changeText(screen.getByTestId('ai-input'), text);
     await act(async () => {
       fireEvent.press(screen.getByTestId('ai-send-btn'));
@@ -199,7 +196,7 @@ describe('AI アドバイザーのシート (AIAdvisorSheet) の送信 (生の f
     fetchMock.mockResolvedValueOnce(new Response(body, { status }));
     await openSheetAndSend('今日の献立は?');
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(title, expected), WAIT);
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(title, expected));
     expect(alertSpy).toHaveBeenCalledTimes(1);
     const shown = String(alertSpy.mock.calls[0][1]);
     expect(shown).not.toContain('HTTP');

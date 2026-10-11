@@ -11,9 +11,6 @@ import { act, fireEvent, render } from '@testing-library/react-native';
 
 import { AI_CONSENT_SETTINGS_ENTRY_TITLE } from '../../src/lib/ai-consent';
 
-// 設定タブは画面が大きく、初回の描画が重い (logout.test.tsx と同じ上限)
-jest.setTimeout(30_000);
-
 // ---- Mocks ----
 
 const mockRouterPush = jest.fn();
