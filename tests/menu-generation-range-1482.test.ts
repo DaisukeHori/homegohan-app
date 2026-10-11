@@ -33,7 +33,6 @@ import {
   LLM_USAGE_ANOMALY_DAILY_REQUESTS,
   LLM_USAGE_ANOMALY_NOTICE,
 } from '@/lib/super-admin/llm-usage-anomaly';
-import { jstDayOfTimestamp } from '@/lib/jst-day-ranges';
 import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
 
 // 負荷の高い機械で vitest の既定の時間切れ (テスト 5 秒・フック 10 秒) を超えて落ちたことがあるので、このファイルだけ延ばす
@@ -175,14 +174,12 @@ describe('1. 健康の入力の日付の項目 (健康診断の日・目標の�
 });
 
 describe('5. 運営の LLM 使用量: 異常使用は 1 日あたり (JST の暦日) で判定する', () => {
+  // 1 日あたりの回数は DB の関数 llm_usage_summary が JST の暦日ごとに数え、ユーザーごとの最大の日の回数 (max_daily_requests) を返す (#1498)。
+  // 以前は route が読んだ行を数えていたので、ここでも 5,000 行超の行を組み立てていた (全件の実行で時間切れになった)。
+  // 行を数える部分 (JST の日の区切り・期間の合計では判定しないこと・打ち切りが無いこと) は、実 DB の
+  // tests/integration/security/llm-usage-summary.test.ts で確かめる。ここでは、しきい値の境界と user_id の扱いを確かめる
   const USER_A = 'user-a';
   const USER_B = 'user-b';
-
-  /** JST の暦日 day の hour 時 (JST) の行を count 件 */
-  function rowsOn(userId: string | null, day: string, count: number, hourJst = 12) {
-    const createdAt = new Date(`${day}T${String(hourJst).padStart(2, '0')}:00:00+09:00`).toISOString();
-    return Array.from({ length: count }, () => ({ user_id: userId, created_at: createdAt }));
-  }
 
   it('基準は 1 日 5,000 リクエスト (設計書 operator/03-ui-spec.md「1 ユーザー 5,000 req/日超」)、画面の文も同じ値', () => {
     expect(LLM_USAGE_ANOMALY_DAILY_REQUESTS).toBe(5000);
@@ -190,42 +187,26 @@ describe('5. 運営の LLM 使用量: 異常使用は 1 日あたり (JST の暦
     expect(read('src/app/super-admin/llm/page.tsx')).toContain('{LLM_USAGE_ANOMALY_NOTICE}');
   });
 
-  it('同じ JST の 1 日に 5,001 回なら異常、5,000 回ちょうどは異常でない', () => {
-    const anomalous = findLlmUsageAnomalousUsers(
-      [...rowsOn(USER_A, '2026-10-08', 5001), ...rowsOn(USER_B, '2026-10-08', 5000)],
-      jstDayOfTimestamp,
-    );
+  it('1 日の最大が 5,001 回なら異常、5,000 回ちょうどは異常でない', () => {
+    const anomalous = findLlmUsageAnomalousUsers([
+      { user_id: USER_A, max_daily_requests: 5001 },
+      { user_id: USER_B, max_daily_requests: 5000 },
+    ]);
     expect([...anomalous]).toEqual([USER_A]);
   });
 
-  it('期間の合計が 5,000 回を超えても、どの日も 5,000 回以下なら異常でない (以前は期間全体の件数で判定していた)', () => {
-    const anomalous = findLlmUsageAnomalousUsers(
-      [...rowsOn(USER_A, '2026-10-07', 3000), ...rowsOn(USER_A, '2026-10-08', 3000)],
-      jstDayOfTimestamp,
-    );
-    expect(anomalous.size).toBe(0);
+  it('判定に使うのは 1 日あたりの最大の回数 (DB の関数が返す max_daily_requests)。期間の合計では判定しない', () => {
+    // 期間の合計が 5,000 回を超えていても (3,000 回の日が 2 日)、1 日の最大が 3,000 回なら異常でない
+    expect(findLlmUsageAnomalousUsers([{ user_id: USER_A, max_daily_requests: 3000 }]).size).toBe(0);
+    // route は DB の関数に同じ定数をしきい値として渡す (値を 2 か所に書かない)
+    expect(read('src/lib/super-admin/llm-usage-summary.ts')).toContain('p_anomaly_daily_requests: LLM_USAGE_ANOMALY_DAILY_REQUESTS');
   });
 
-  it('日の区切りは JST (UTC では同じ日でも、JST 0 時の前後は別の日に数える)', () => {
-    // JST 10/8 8:00 (UTC 10/7 23:00) と JST 10/8 10:00 (UTC 10/8 01:00) は同じ JST の日
-    const sameJstDay = findLlmUsageAnomalousUsers(
-      [...rowsOn(USER_A, '2026-10-08', 2501, 8), ...rowsOn(USER_A, '2026-10-08', 2500, 10)],
-      jstDayOfTimestamp,
-    );
-    expect([...sameJstDay]).toEqual([USER_A]);
-    // JST 10/7 23:00 と JST 10/8 1:00 (UTC ではどちらも 10/7) は別の JST の日
-    const acrossJstMidnight = findLlmUsageAnomalousUsers(
-      [...rowsOn(USER_A, '2026-10-07', 2501, 23), ...rowsOn(USER_A, '2026-10-08', 2500, 1)],
-      jstDayOfTimestamp,
-    );
-    expect(acrossJstMidnight.size).toBe(0);
-  });
-
-  it('user_id が null の行は "unknown" にまとめ、created_at が null の行は数えない', () => {
-    const anomalous = findLlmUsageAnomalousUsers(
-      [...rowsOn(null, '2026-10-08', 5001), ...Array.from({ length: 5001 }, () => ({ user_id: USER_B, created_at: null }))],
-      jstDayOfTimestamp,
-    );
+  it('user_id が null (user_id の無い行をまとめたもの) は "unknown" にまとめる', () => {
+    const anomalous = findLlmUsageAnomalousUsers([
+      { user_id: null, max_daily_requests: 5001 },
+      { user_id: USER_B, max_daily_requests: 0 },
+    ]);
     expect([...anomalous]).toEqual(['unknown']);
   });
 });
