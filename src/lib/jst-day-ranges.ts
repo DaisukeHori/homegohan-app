@@ -217,6 +217,31 @@ export function consecutiveDayStreak(recordedDays: Iterable<string>, now: Date =
 
 /** 日曜日の曜日番号 (Date#getUTCDay は日曜 0 〜 土曜 6) */
 const SUNDAY = 0;
+/** 月曜日の曜日番号 (Date#getUTCDay は日曜 0 〜 土曜 6) */
+const MONDAY = 1;
+
+/**
+ * 暦日 (YYYY-MM-DD) の曜日を、Date#getDay と同じ番号 (日曜 0 〜 土曜 6) で返す (#1463)。
+ * 暦の計算だけで求めるので、実行環境のタイムゾーンに左右されない
+ * (parseLocalDate (ローカル時刻の 0 時) の getDay は曜日こそ合うが、そこから setDate + formatLocalDate (JST) で日付に戻すと、
+ * JST より東のタイムゾーンでは前日になる)。
+ * 例: "2026-10-14" → 3 (水)
+ *
+ * 形の違う日付・存在しない日付は RangeError (外から受け取った日付は isCalendarDate で確かめてから渡せば来ない)。
+ */
+export function calendarDayOfWeek(day: string): number {
+  // 存在しない日付・形の違う日付は addDaysToDate が RangeError にする
+  addDaysToDate(day, 0);
+  const [year, month, date] = day.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, date)).getUTCDay();
+}
+
+/** day を含む、weekStartDay (曜日番号) 始まりの 7 日間 */
+function weekRangeStartingOn(day: string, weekStartDay: number): { startDate: string; endDate: string } {
+  const sinceWeekStart = (calendarDayOfWeek(day) - weekStartDay + DAYS_PER_WEEK) % DAYS_PER_WEEK;
+  const startDate = addDaysToDate(day, -sinceWeekStart);
+  return { startDate, endDate: addDaysToDate(startDate, DAYS_PER_WEEK - 1) };
+}
 
 /**
  * 暦日 (YYYY-MM-DD) を含む、日曜日から土曜日までの週を返す。
@@ -228,12 +253,19 @@ const SUNDAY = 0;
  * (外から受け取った日付は isCalendarDate で確かめてから渡せば来ない)。
  */
 export function sundayWeekRange(day: string): { startDate: string; endDate: string } {
-  // 存在しない日付・形の違う日付は addDaysToDate が RangeError にする
-  addDaysToDate(day, 0);
-  const [year, month, date] = day.split('-').map(Number);
-  const sinceSunday = (new Date(Date.UTC(year, month - 1, date)).getUTCDay() - SUNDAY + DAYS_PER_WEEK) % DAYS_PER_WEEK;
-  const startDate = addDaysToDate(day, -sinceSunday);
-  return { startDate, endDate: addDaysToDate(startDate, DAYS_PER_WEEK - 1) };
+  return weekRangeStartingOn(day, SUNDAY);
+}
+
+/**
+ * 暦日 (YYYY-MM-DD) を含む、月曜日から日曜日までの週を返す (#1463)。日曜日はその前の月曜日から始まる週に入る。
+ * 献立の一覧の既定の期間 (GET /api/meal-plans)・AI 相談の「来週」(次の月曜日 = この週の月曜日の 7 日後) に使う。
+ * 例: "2026-10-14" (水) → { startDate: "2026-10-12", endDate: "2026-10-18" } / "2026-10-18" (日) → 同じ週
+ *
+ * 形の違う日付・存在しない日付・週の端が暦の計算で扱える範囲 (0100-01-01〜9999-12-31) の外に出る日付は RangeError
+ * (外から受け取った日付は isCalendarDate で確かめてから渡せば来ない)。
+ */
+export function mondayWeekRange(day: string): { startDate: string; endDate: string } {
+  return weekRangeStartingOn(day, MONDAY);
 }
 
 // ---------------------------------------------------------------------------
@@ -253,15 +285,20 @@ export function challengePeriod(durationDays: number, now: Date = new Date()): {
 // LLM の使用量 (GET /api/super-admin/llm/usage) の期間
 // ---------------------------------------------------------------------------
 
-/** 期間の種類ごとの、今日からさかのぼる日数 */
-export const LLM_USAGE_LOOKBACK_DAYS = { '1d': 1, '7d': 7, '30d': 30 } as const;
-export type LlmUsagePeriod = keyof typeof LLM_USAGE_LOOKBACK_DAYS | 'custom';
+/**
+ * 期間の種類ごとの、集計する暦日の数 (JST の今日を含む)。
+ * 運営の画面 (/super-admin/llm と /super-admin/llm/[provider]) のボタンのラベル「今日」「7日」「30日」と同じ日数 (#1463)。
+ * 以前は「今日から N 日前の日から今日まで」(N + 1 暦日) を返していたので、「今日」(1d) が昨日と今日の 2 暦日になっていた
+ */
+export const LLM_USAGE_PERIOD_DAYS = { '1d': 1, '7d': 7, '30d': 30 } as const;
+export type LlmUsagePeriod = keyof typeof LLM_USAGE_PERIOD_DAYS | 'custom';
 
 /**
- * LLM の使用量を集計する期間 (開始日・終了日。YYYY-MM-DD) を返す。
+ * LLM の使用量を集計する期間 (開始日・終了日。どちらの日も含む。YYYY-MM-DD) を返す。
  *   - 終了日: to が指定されていればそれ、無ければ JST の今日
- *   - 開始日: custom で from が指定されていればそれ、それ以外は JST の今日から N 日前 (1d=1・7d=7・30d=30。以前のルートと同じ日数)
- *     (custom で from が無いときは、以前のルートと同じく 30 日前)
+ *   - 開始日: custom で from が指定されていればそれ、それ以外は JST の今日を含む N 日間の最初の日
+ *     (1d = 今日だけ・7d = 6 日前から・30d = 29 日前から。custom で from が無いときは 30d と同じ)
+ * 例: JST 2026-10-10 に 1d → { fromDate: "2026-10-10", toDate: "2026-10-10" } / 7d → { fromDate: "2026-10-04", toDate: "2026-10-10" }
  */
 export function llmUsageRange(
   params: { period: LlmUsagePeriod; from?: string; to?: string },
@@ -271,6 +308,6 @@ export function llmUsageRange(
   if (params.period === 'custom' && params.from) {
     return { fromDate: params.from, toDate };
   }
-  const days = params.period === 'custom' ? LLM_USAGE_LOOKBACK_DAYS['30d'] : LLM_USAGE_LOOKBACK_DAYS[params.period];
-  return { fromDate: jstDayOffset(-days, now), toDate };
+  const days = params.period === 'custom' ? LLM_USAGE_PERIOD_DAYS['30d'] : LLM_USAGE_PERIOD_DAYS[params.period];
+  return { fromDate: jstDayOffset(-(days - 1), now), toDate };
 }

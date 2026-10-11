@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { RECORD_DATE_PATTERN, sanitizeHealthRecordPayload, stripUndefined } from '@/lib/health-payloads';
-import { todayLocal, formatLocalDate } from '@/lib/date-utils';
+import { addDaysToDate, isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { updateHealthStreak } from '@/lib/health-streaks';
 
 const DATE_PATTERN = RECORD_DATE_PATTERN;
@@ -26,7 +26,9 @@ export async function POST(request: NextRequest) {
       ? body.record_date.trim()
       : todayLocal();
 
-  if (!DATE_PATTERN.test(recordDate)) {
+  // 存在しない日付 (2026-02-30 など) は DB の date 型への変換で 500 になり、受け付ける範囲の外の日付は前日を求める
+  // addDaysToDate が RangeError を投げるので、形に加えて isCalendarDate でも確かめる (#1463)
+  if (!DATE_PATTERN.test(recordDate) || !isCalendarDate(recordDate)) {
     return NextResponse.json({ error: 'record_date must be in YYYY-MM-DD format' }, { status: 400 });
   }
 
@@ -94,9 +96,9 @@ export async function POST(request: NextRequest) {
   await updateHealthStreak(supabase, user.id, recordDate);
 
   // 前日との比較データを取得
-  const yesterday = new Date(recordDate);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = formatLocalDate(yesterday);
+  // 前日は暦の計算で求める (#1463。new Date(recordDate) (UTC の 0 時) + setDate (ローカル時刻) + formatLocalDate (JST) は、
+  // 実行環境のタイムゾーンで結果が変わる。UTC より西では 2 日前になっていた)
+  const yesterdayStr = addDaysToDate(recordDate, -1);
 
   const { data: previousRecord } = await supabase
     .from('health_records')

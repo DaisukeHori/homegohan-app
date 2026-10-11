@@ -1,4 +1,4 @@
-import { addDays, formatLocalDate, parseLocalDate } from '@/lib/date-utils';
+import { addDaysToDate } from '@/lib/date-utils';
 import { createLogger } from '@/lib/db-logger';
 
 /**
@@ -112,7 +112,10 @@ export function computeNextStreak(
     return { total_records: totalRecords };
   }
 
-  const yesterdayStr = formatLocalDate(addDays(parseLocalDate(recordDate), -1));
+  // 前日は暦の計算で求める (#1463。parseLocalDate + addDays (ローカル時刻) + formatLocalDate (JST) は、
+  // JST より東のタイムゾーンで動くと 2 日前になり、連続が途切れたと判定していた)。
+  // 形の違う日付・存在しない日付は RangeError (updateHealthStreak が受けて { ok: false } にする)
+  const yesterdayStr = addDaysToDate(recordDate, -1);
 
   let newStreak = streak.current_streak ?? 0;
   let newStreakStart = streak.streak_start_date;

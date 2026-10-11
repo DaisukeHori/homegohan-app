@@ -5,8 +5,15 @@ import { recordAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
+import { addDaysToDate, isCalendarDate } from '@/lib/date-utils';
 
 const ROUTE_NAME = 'POST /api/shopping-list/regenerate';
+
+/**
+ * 買い物リストを作り直す期間の長さの上限 (終了日 − 開始日の日数)。#261 で入れた上限 (2 週間) のまま。
+ * 期間の献立をまとめて AI (Edge Function regenerate-shopping-list-v2) へ送るので、長すぎる期間は受け付けない
+ */
+const MAX_RANGE_DAYS = 14;
 
 /**
  * 買い物リスト再生成API（日付ベースモデル）
@@ -35,21 +42,18 @@ export async function POST(request: Request) {
     }
 
     // #261: 日付フォーマット・範囲 validation
-    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-    if (!DATE_RE.test(startDate) || !DATE_RE.test(endDate)) {
+    // YYYY-MM-DD の実在する日付 (受け付ける範囲の中) だけを通す。以前は new Date で確かめていたので、2026-02-30 が 3/2 に
+    // 繰り上がって通り、リクエストの行 (start_date / end_date は date 型) を作るところで 500 になっていた (#1463)
+    if (!isCalendarDate(startDate) || !isCalendarDate(endDate)) {
       return NextResponse.json({ error: 'startDate and endDate must be in YYYY-MM-DD format' }, { status: 400 });
     }
-    const s = new Date(startDate);
-    const e = new Date(endDate);
-    if (isNaN(s.getTime()) || isNaN(e.getTime())) {
-      return NextResponse.json({ error: 'Invalid date value' }, { status: 400 });
-    }
-    if (s > e) {
+    // 4 桁の年の YYYY-MM-DD どうしは、文字列の大小が日付の前後と同じ
+    if (startDate > endDate) {
       return NextResponse.json({ error: 'startDate must be before or equal to endDate' }, { status: 400 });
     }
-    const diffDays = (e.getTime() - s.getTime()) / 86400000;
-    if (diffDays > 14) {
-      return NextResponse.json({ error: 'Date range must be 14 days or less' }, { status: 400 });
+    // 開始日から MAX_RANGE_DAYS 日後より後の終了日は、期間が長すぎる (日数は暦の計算で数える)
+    if (endDate > addDaysToDate(startDate, MAX_RANGE_DAYS)) {
+      return NextResponse.json({ error: `Date range must be ${MAX_RANGE_DAYS} days or less` }, { status: 400 });
     }
 
     // Edge Function を呼ぶための接続情報は、DB に書き込む前 (AI 利用回数の記録・リクエストの行の作成より前) に
