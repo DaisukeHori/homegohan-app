@@ -6,9 +6,10 @@
  * サーバーとクライアントの両方から import できるよう、このファイルは Next.js のサーバー専用の部品に依存しない。
  */
 
-export const AI_CHAT_DISABLED_CODE = 'AI_CHAT_DISABLED';
-export const AI_CHAT_DISABLED_MESSAGE =
-  'AI相談は現在、一時的にご利用いただけません。しばらくしてから、もう一度お試しください。';
+// 文と code の置き場は packages/shared/src/service-unavailable.ts の 1 つ (モバイルも同じ値を使う。#1457)
+import { AI_CHAT_DISABLED_CODE, AI_CHAT_DISABLED_MESSAGE, SERVICE_UNAVAILABLE_STATUS } from '@homegohan/shared';
+
+export { AI_CHAT_DISABLED_CODE, AI_CHAT_DISABLED_MESSAGE };
 
 /**
  * AI 相談の API が返した 503 の本文から、画面に出す文面を取り出す。
@@ -16,7 +17,7 @@ export const AI_CHAT_DISABLED_MESSAGE =
  * 本文が JSON でない・読めないときも null。例外は投げない。
  */
 export async function readAiChatUnavailableMessage(res: Pick<Response, 'status' | 'json'>): Promise<string | null> {
-  if (res.status !== 503) return null;
+  if (res.status !== SERVICE_UNAVAILABLE_STATUS) return null;
   try {
     const body = (await res.json()) as { code?: unknown; error?: unknown } | null;
     if (body && body.code === AI_CHAT_DISABLED_CODE) {

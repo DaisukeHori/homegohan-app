@@ -9,7 +9,7 @@ import { colors, spacing, radius, shadows } from "../../src/theme";
 import { getApi, getApiBaseUrl } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
 import { handleAiConsentRequiredError } from "../../src/lib/ai-consent";
-import { errorOfFailedAiResponse, isAiDailyLimitError } from "../../src/lib/ai-daily-limit";
+import { errorOfFailedResponse, isStoppedByServerError } from "../../src/lib/failed-response";
 
 type Message = {
   id: string;
@@ -138,8 +138,8 @@ export default function AiSessionPage() {
 
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        // 429 AI_DAILY_LIMIT (#1149) は固定の文の AiDailyLimitError にする (生の本文を画面に出さない)
-        throw errorOfFailedAiResponse(res.status, text);
+        // 429 AI_DAILY_LIMIT (#1149)・503 の緊急停止・メンテナンス中 (#1457) は、固定の文の例外にする (生の本文を画面に出さない)
+        throw errorOfFailedResponse(res.status, text);
       }
 
       if (!res.body) {
@@ -243,8 +243,9 @@ export default function AiSessionPage() {
         setText(trimmed);
         return;
       }
-      // 今日の AI の利用回数の上限に達して止められた (#1149): 送らなかったので、メッセージを消して入力 (と添付の画像) を戻し、固定の文を出す
-      if (isAiDailyLimitError(e)) {
+      // 今日の AI の利用回数の上限 (#1149)・AI 相談の緊急停止中・メンテナンス中 (#1457) で止められた:
+      // 送らなかったので、メッセージを消して入力 (と添付の画像) を戻し、固定の文を出す
+      if (isStoppedByServerError(e)) {
         setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
         setText(trimmed);
         if (imageSnapshot) setAttachedImage(imageSnapshot);

@@ -21,7 +21,7 @@ import { MEAL_LABELS } from "@homegohan/shared";
 import { getApiBaseUrl } from "../../lib/api";
 import { supabase } from "../../lib/supabase";
 import { isAiConsentRequiredResponse, promptAiConsentRequired } from "../../lib/ai-consent";
-import { errorOfFailedAiResponse, isAiDailyLimitError } from "../../lib/ai-daily-limit";
+import { errorOfFailedResponse, isStoppedByServerError, stoppedByServerAlertTitleOf } from "../../lib/failed-response";
 
 // ============================================================
 // Constants
@@ -115,15 +115,16 @@ export const RegenerateMealModal: React.FC<Props> = ({ visible, meal, onClose })
       }
       if (!r.ok) {
         const text = await r.text().catch(() => "");
-        // 429 AI_DAILY_LIMIT (#1149) は固定の文の AiDailyLimitError にする
-        throw errorOfFailedAiResponse(r.status, text);
+        // 429 AI_DAILY_LIMIT (#1149)・503 のメンテナンス中 (#1457) は固定の文の例外にする
+        throw errorOfFailedResponse(r.status, text);
       }
       await setItemWithTTL("singleMealGenerating", { mealId: meal.id }, 2 * 60 * 1000);
       handleClose();
     } catch (e) {
-      // 今日の AI の利用回数の上限に達して止められた (#1149): 固定の文を出す (モーダルは閉じず、条件を選び直さずに済むようにする)
-      if (isAiDailyLimitError(e)) {
-        Alert.alert("エラー", e.message);
+      // 今日の AI の利用回数の上限 (#1149)・メンテナンス中 (#1457) で止められた: 固定の文を出す
+      // (モーダルは閉じず、条件を選び直さずに済むようにする。見出しは、メンテナンス中は「ご利用いただけません」、上限は「エラー」)
+      if (isStoppedByServerError(e)) {
+        Alert.alert(stoppedByServerAlertTitleOf(e), e.message);
         return;
       }
       // ほかのエラー時は submitting をリセットして UI を壊さない

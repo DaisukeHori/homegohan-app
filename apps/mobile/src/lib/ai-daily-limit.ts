@@ -10,7 +10,8 @@
  * 文は本文の error をそのまま使わず、limit から作る (supabase/functions/_shared/ai-daily-limit.ts。Web と共用)。
  *
  * getApi() を通らない生の fetch (ストリーミングで受ける AI 相談の送信・1 食の作り直し) には、getApi() の置き換えが効かない。
- * これらは失敗の応答から errorOfFailedAiResponse で Error を作って投げる (429 AI_DAILY_LIMIT なら AiDailyLimitError)。
+ * これらは失敗の応答から errorOfFailedResponse (src/lib/failed-response.ts) で Error を作って投げる
+ * (429 AI_DAILY_LIMIT なら AiDailyLimitError。503 の緊急停止・メンテナンス中 (#1457) も同じ関数で固定の文にする)。
  * 生の fetch で AI の API を呼ぶ場所が、この関数を通っているかは tests/ai-daily-limit-mobile-raw-fetch.test.ts が見張る。
  */
 import {
@@ -51,15 +52,4 @@ export function aiDailyLimitErrorOf(error: unknown): AiDailyLimitError | null {
   } catch {
     return null;
   }
-}
-
-/**
- * getApi() を通らない生の fetch で、AI の API が失敗の応答を返したときに投げる Error を作る。
- *   - 429 + AI_DAILY_LIMIT: 固定の文の AiDailyLimitError (画面が e.message をそのまま出しても、生の文字列 (JSON) が出ない)
- *   - それ以外: これまでどおり `HTTP <状態>: <本文>` の Error。同意の 403 の見分け (isAiConsentRequiredError /
- *     handleAiConsentRequiredError) はこの形の message を読むので、形を変えない
- */
-export function errorOfFailedAiResponse(status: number, bodyText: string): Error {
-  const raw = new Error(`HTTP ${status}: ${bodyText}`);
-  return aiDailyLimitErrorOf(raw) ?? raw;
 }

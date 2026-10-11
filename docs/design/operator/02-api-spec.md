@@ -366,6 +366,8 @@ BAN 解除
 > 機能フラグの置き場は `feature_flags` テーブルの 1 つに一本化した (#1148)。以前、献立生成のエンジン切り替えだけは
 > `system_settings` の `feature_flags` 行を読んでいた (一般ユーザーには RLS で読めず、いつも既定値だった)。今は
 > アプリのどこでも `src/lib/feature-flags.ts` の `isFeatureEnabled(key, userId)` で判定する。
+> `system_settings` の `feature_flags` 行はもう何も読まない。運営のシステム設定 (`GET / PUT /api/super-admin/settings`) では
+> 読み取り専用で、GET は `read_only: true` と `note` を付け、PUT は 409 `SETTING_READ_ONLY` で断る (#1457。行は消していない)。
 >
 > アプリが読んでいるフラグ (`FEATURE_FLAG_DEFAULTS`)。行が無い・読み出しに失敗したときは「止めない側」の既定値で動く:
 >
@@ -434,7 +436,13 @@ BAN 解除
 フラグ削除 (利用中の場合は `OP_FEATURE_FLAG_IN_USE` で 409)
 
 ### GET /api/feature-flags
-クライアント (Web・モバイル) 向けのフラグ。認証は不要 (未ログインでも答える。メンテナンス中かどうかは、ログイン前の画面でも要る)。
+画面が前もって「AI 相談は使えるか」「メンテナンス中か」を知るための窓口。認証は不要 (未ログインでも答える。メンテナンス中かどうかは、ログイン前の画面でも要る)。
+
+いま、この API を呼んでいる画面 (Web・モバイル) は無い (#1457)。画面は前もって確かめず、止められたときの 503 の応答の code
+(`AI_CHAT_DISABLED` / `MAINTENANCE_MODE`) で緊急停止中・メンテナンス中を知り、本文の文字列ではなく固定の文を出す
+(文と code の置き場は `packages/shared/src/service-unavailable.ts`。Web は `src/lib/ai/ai-chat-unavailable.ts`、モバイルは
+`apps/mobile/src/lib/service-unavailable.ts`)。フラグはサーバーのメモリに最大 30 秒覚えるので、前もって確かめても送る時点の判定とずれることがあり、
+503 の扱いはどのみち要る。この API は、画面で前もって知らせたくなったときの窓口として残してある。
 
 返すのは、クライアントが使うフラグだけの許可リスト (`CLIENT_FEATURE_FLAG_KEYS`: `ai_chat_enabled` / `maintenance_mode`)。
 運営が作った別のフラグの名前は返さない。値は、ログイン中のユーザーにとっての ON/OFF (段階公開があれば、そのユーザーでの判定)。
