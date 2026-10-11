@@ -985,7 +985,7 @@ const REQUIRED_CALLS: Record<string, string[]> = {
   'src/app/(main)/meals/new/page.tsx': ['todayLocal'],
   'src/app/admin/sales/[id]/page.tsx': ['todayLocal'],
   'src/app/super-admin/coupons/new/page.tsx': ['todayLocal'],
-  'src/app/super-admin/coupons/[id]/page.tsx': ['couponValidityDay'],
+  'src/app/super-admin/coupons/[id]/page.tsx': ['couponValidityDay', 'couponValidUntilPatchValue'],
   'src/app/super-admin/coupons/page.tsx': ['couponValidityDay', 'isCouponExpiredAt'],
   'src/app/onboarding/questions/page.tsx': ['todayLocal'],
   'src/components/ai-assistant/V4GenerateModal.tsx': ['addDaysToDate'],

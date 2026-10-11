@@ -8,7 +8,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { couponValidityDay } from '@/lib/super-admin/coupon-validity';
+import { couponValidityDay, couponValidUntilPatchValue } from '@/lib/super-admin/coupon-validity';
 
 type Coupon = {
   id: string;
@@ -113,8 +113,8 @@ export default function CouponDetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           display_name: displayName || null,
-          // JST の暦日 (YYYY-MM-DD) のまま送る。API がその日の JST 23:59:59 の時刻にして書く (#1483)
-          valid_until: validUntil,
+          // JST の暦日 (YYYY-MM-DD) のまま、日付を変えたときだけ送る。API がその日の JST 23:59:59 の時刻にして書く (#1483)
+          valid_until: coupon ? couponValidUntilPatchValue(validUntil, coupon.valid_until) : validUntil,
           max_uses: maxUses ? Number(maxUses) : null,
         }),
       });

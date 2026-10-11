@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   couponValidFromTimestamp,
   couponValidityDay,
+  couponValidUntilPatchValue,
   couponValidUntilTimestamp,
   isCouponExpiredAt,
 } from '@/lib/super-admin/coupon-validity';
@@ -113,6 +114,22 @@ describe('couponValidityDay (DB の時刻 → 画面に出す JST の暦日)', (
   it('書いた時刻を読み、もう一度保存しても期限は変わらない (編集画面の保存の往復)', () => {
     const until = couponValidUntilTimestamp('2026-10-20');
     expect(couponValidUntilTimestamp(couponValidityDay(until))).toBe(until);
+  });
+});
+
+describe('couponValidUntilPatchValue (詳細の画面の保存で送る有効期限)', () => {
+  it('日付を変えていなければ送らない (以前に書いた行・新しい行のどちらも)', () => {
+    expect(couponValidUntilPatchValue('2026-10-20', '2026-10-20T00:00:00+00:00')).toBeUndefined();
+    expect(couponValidUntilPatchValue('2026-10-20', '2026-10-20T14:59:59.999999+00:00')).toBeUndefined();
+  });
+
+  it('日付を変えたら、その日付を送る', () => {
+    expect(couponValidUntilPatchValue('2026-10-21', '2026-10-20T00:00:00+00:00')).toBe('2026-10-21');
+    expect(couponValidUntilPatchValue('2026-10-19', '2026-10-20T14:59:59.999999+00:00')).toBe('2026-10-19');
+  });
+
+  it('編集欄を空にしたら空のまま送る (API が 400 にして、画面に理由を出す)', () => {
+    expect(couponValidUntilPatchValue('', '2026-10-20T14:59:59.999999+00:00')).toBe('');
   });
 });
 

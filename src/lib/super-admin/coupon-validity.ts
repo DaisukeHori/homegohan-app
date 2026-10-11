@@ -52,3 +52,12 @@ export function isCouponExpiredAt(validUntil: string, at: Date): boolean {
   return at.getTime() > Date.parse(validUntil);
 }
 
+/**
+ * 詳細の画面で保存するときに PATCH で送る valid_until (JST の暦日)。編集欄の日付が、いま DB にある期限の JST の暦日と同じなら
+ * undefined (送らない = 期限を変えない)。
+ * 表示名などだけを直したときに、この変更より前に書いた行 (UTC の 0 時 = JST 9 時で切れる時刻) の期限を黙って書き換えないため。
+ * 例: ("2026-10-20", "2026-10-20T00:00:00+00:00") → undefined / ("2026-10-21", 同じ) → "2026-10-21"
+ */
+export function couponValidUntilPatchValue(editedDay: string, storedValidUntil: string): string | undefined {
+  return editedDay === couponValidityDay(storedValidUntil) ? undefined : editedDay;
+}
