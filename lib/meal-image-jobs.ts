@@ -138,7 +138,8 @@ export interface EnqueueMealImageJobsResult {
  */
 const UNIQUE_VIOLATION_CODE = '23505';
 
-const enqueueLogger = createLogger('lib/meal-image-jobs');
+/** ログの名前 (ロガーは使うときに作る。import のときに作ると、ロガーを差し替えるテストの初期化の順に依存する) */
+const ENQUEUE_LOG_NAME = 'lib/meal-image-jobs';
 
 /**
  * 料理画像のジョブを積む (service role)。行ごとに insert し、積めた・重複・失敗を数えて返す。例外は投げない。
@@ -180,13 +181,14 @@ export async function enqueueMealImageJobs(params: EnqueueJobsParams): Promise<E
     })),
   );
 
+  const logger = createLogger(ENQUEUE_LOG_NAME);
   const outcomes = await Promise.all(
     records.map(async (record) => {
       try {
         const { error } = await params.supabase.from('meal_image_jobs').insert(record);
         if (!error) return 'inserted' as const;
         if (error.code === UNIQUE_VIOLATION_CODE) return 'duplicate' as const;
-        enqueueLogger.warn('Failed to enqueue meal image job', {
+        logger.warn('Failed to enqueue meal image job', {
           userId: params.userId,
           plannedMealId: params.plannedMealId,
           dishIndex: record.dish_index,
@@ -195,7 +197,7 @@ export async function enqueueMealImageJobs(params: EnqueueJobsParams): Promise<E
         });
         return 'failed' as const;
       } catch (error) {
-        enqueueLogger.warn('Failed to enqueue meal image job', {
+        logger.warn('Failed to enqueue meal image job', {
           userId: params.userId,
           plannedMealId: params.plannedMealId,
           dishIndex: record.dish_index,
