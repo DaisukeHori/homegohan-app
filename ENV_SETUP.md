@@ -94,7 +94,7 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 ### 値が合っていないとどうなるか
 
 - 値が違う → Edge Function は HTTP 401（本文 `{"error":"Unauthorized"}`）を返します。
-- Edge Function 側に `CRON_SECRET`（と `SERVICE_ROLE_SECRET`）が無い → HTTP 503 を返します。
+- Edge Function 側に `CRON_SECRET`（と `SERVICE_ROLE_SECRET`）が無い → HTTP 503（本文 `{"error":"Service not configured"}`）を返します。
 - Edge Function 側に、関数が動くのに要る secrets（`SUPABASE_URL`・`SUPABASE_SERVICE_ROLE_KEY`・`STRIPE_SECRET_KEY`・Google AI のキー など）が無い → コンビニカタログ取り込み（`_shared/catalog/import-runner.ts` を使う関数）・`process-meal-image-jobs`・`stripe-price-sync` は HTTP 503（本文 `{"error":"サーバーの設定が不足しています","code":"SERVER_CONFIG_MISSING"}`。カタログ取り込みは `"success":false` も付きます）を返します。どの関数も、応答の本文や例外の文には変数名を出さず、足りない変数名は関数のログ（Supabase Dashboard → Edge Functions → Logs）の `[env] missing required env: <変数名>` の行にだけ残します（#1467）。
 - pg_cron は pg_net で **非同期に** 呼び出すため、cron ジョブ自体は成功扱いのままです（`cron.job_run_details` は HTTP の結果にかかわらず `succeeded` になります）。エラーの表示もなく、カタログ取り込みだけが止まります。
 
@@ -109,7 +109,11 @@ ORDER BY created DESC
 LIMIT 20;
 ```
 
-- `status_code` が **401 / 503** の行がある → 値が合っていません。ただし 401 の本文が `UNAUTHORIZED_INVALID_JWT_FORMAT` なら、値ではなくゲートウェイの JWT 検証で止まっています（上を参照）。本文は `content::text` で見られます（下の「比較ランキングの集計が動いているかの確かめ方」のクエリ）。
+- `status_code` が **401** の行がある → 値が合っていません。ただし 401 の本文が `UNAUTHORIZED_INVALID_JWT_FORMAT` なら、値ではなくゲートウェイの JWT 検証で止まっています（上を参照）。
+- `status_code` が **503** の行がある → 値のずれではなく、Edge Function secrets に足りないものがあります。本文で見分けます。
+  - 本文が `{"error":"Service not configured"}` → Edge Function secrets に `CRON_SECRET`（と `SERVICE_ROLE_SECRET`）がありません。
+  - 本文に `"code":"SERVER_CONFIG_MISSING"` がある → 認証は通っています。関数が動くのに要る secrets（`SUPABASE_URL`・`SUPABASE_SERVICE_ROLE_KEY`・`FIRECRAWL_API_KEY` など）が足りません。足りない変数名は、関数のログの `[env] missing required env: <変数名>` の行で確かめてください（上を参照）。
+- 本文は `content::text` で見られます（下の「比較ランキングの集計が動いているかの確かめ方」のクエリ）。
 - `status_code` が 200 → 認証は通っています。
 - `status_code` が空で `timed_out` が true → 認証は通っています。取り込みに 5 秒以上かかると、pg_net が先に待つのをやめるためです（正常）。
 
@@ -217,7 +221,7 @@ migration の適用後や、`supabase/config.toml` の `verify_jwt` を変えた
    - `status_code` が 200 で、本文が `{"success":true, ...}` → 集計できています。
    - 401 で、本文が `UNAUTHORIZED_INVALID_JWT_FORMAT` → ゲートウェイの JWT 検証で止まっています。`verify_jwt = false` がまだデプロイされていません（上の「値が合っていないとどうなるか」）。
    - 401 で、本文が `{"error":"Unauthorized"}` → Vault の `app_cron_secret` と Edge Function secrets の `CRON_SECRET` の値が合っていません。
-   - 503 → Edge Function secrets に `CRON_SECRET` がありません。
+   - 503 で、本文が `{"error":"Service not configured"}` → Edge Function secrets に `CRON_SECRET` がありません（本文に `"code":"SERVER_CONFIG_MISSING"` がある 503 は、同じ表に入るカタログ取り込みの結果です。上の「値が合っていないとどうなるか」）。
    - 500 → 認証は通り、集計の途中で失敗しています。Supabase Dashboard の Edge Functions → `calculate-segment-stats` → Logs を見てください。
    - 行がまだ無い → 応答を待っています（上限 400 秒）。少し待ってから見直してください。古い結果は自動で消える（既定では約 6 時間）ので、実行の直後に見てください。
    - ほかの pg_net の呼び出し（カタログ取り込み）の結果も同じ表に入ります。UTC 3:00〜4:00 の回と重なったら、件数を増やして見分けてください。

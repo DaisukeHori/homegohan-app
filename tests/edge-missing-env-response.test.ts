@@ -484,3 +484,37 @@ describe("Edge Function の例外・応答の文字列に環境変数の名前�
     expect(offenders).toEqual([]);
   });
 });
+
+describe("ENV_SETUP.md の pg_net の結果の見方が、503 の 2 つの本文を見分けている (#1467)", () => {
+  // カタログ取り込み (pg_cron → pg_net) は、必須の secrets が無いと 503 (SERVER_CONFIG_MISSING) を返すようになった。
+  // 以前の手順書は「401 / 503 → 値が合っていません」と書いていて、secrets の不足を CRON_SECRET のずれと読み違えさせていた。
+  const doc = fs.readFileSync(path.join(ROOT, "ENV_SETUP.md"), "utf-8");
+  const authSource = fs.readFileSync(path.join(ROOT, "supabase", "functions", "_shared", "auth.ts"), "utf-8");
+  const CRON_SECRET_MISSING_BODY = '{"error":"Service not configured"}';
+
+  it("CRON_SECRET が無いときの 503 の本文は、auth.ts が実際に返す文のまま書いてある", () => {
+    // 手順書の本文の文字列が実装から離れたら、ここで気づく
+    expect(authSource).toContain('JSON.stringify({ error: "Service not configured" })');
+    expect(doc).toContain(CRON_SECRET_MISSING_BODY);
+  });
+
+  it("secrets が足りないときの 503 の code と、変数名が出るログの行を案内している", () => {
+    expect(doc).toContain(`"code":"${MISSING_ENV_ERROR_CODE}"`);
+    expect(doc).toContain(MISSING_ENV_SERVER_LOG_PREFIX);
+  });
+
+  it("503 を「値が合っていません」(CRON_SECRET のずれ) と案内する行が無い", () => {
+    const offenders = doc.split("\n").filter((line) => line.includes("503") && line.includes("値が合っていません"));
+    // 失敗したら、401 (値のずれ) と 503 (secrets の不足。本文で CRON_SECRET か関数の secrets かを見分ける) を分けて書く
+    expect(offenders).toEqual([]);
+  });
+
+  it("503 を案内する箇条書きは、どちらの 503 かを本文で見分ける書き方になっている", () => {
+    const diagnosisLines = doc.split("\n").filter((line) => /^\s*- (?:`status_code` が )?\**503/.test(line));
+    // net._http_response の見方 (カタログ取り込み) と、比較ランキングの集計の確かめ方の 2 か所
+    expect(diagnosisLines.length).toBeGreaterThanOrEqual(2);
+    for (const line of diagnosisLines) {
+      expect(line.includes("本文"), line).toBe(true);
+    }
+  });
+});
