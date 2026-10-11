@@ -255,6 +255,18 @@ export interface HideModeratedContentParams {
   reason: string;
 }
 
+/** hideModeratedContent の結果 */
+export interface HideModeratedContentResult {
+  /**
+   * 通報されたコンテンツの行があったか。持ち主が先に消していて行が無いときは false
+   * (隠す対象が無いだけで、失敗ではない)。すでに隠れていた行は true (隠れた状態にある)。
+   * 監査ログの hidden は、これが true のときだけ true にする (#1445: 行が無いのに hidden: true と記録していた)
+   */
+  contentFound: boolean;
+  /** この呼び出しで新しく隠した行の ID (すでに隠れていた行・無かった行は含まない) */
+  hiddenIds: string[];
+}
+
 /**
  * 食事の「中身」の列 (#1101)。家族へのペースト (paste_meal_to_family) が元の行から複製する列のうち、
  * 通報の対象になるもの (写真とメモ。eaten_at / meal_type は日時と区分で、中身ではない)。
@@ -291,14 +303,14 @@ function isSameMealContent(a: MealContent, b: MealContent): boolean {
  * - 行がもう無い (持ち主が先に消した) ときも、何も更新せずに成功する。隠す対象が無いだけで、失敗ではない
  * - DB エラー時は例外を throw する。呼び出し側で「隠せなかった」と明示し、成功を装わないこと
  *
- * @returns この呼び出しで新しく隠した行の ID (すでに隠れていた行・無かった行は含まない)
+ * @returns 行があったか (contentFound) と、この呼び出しで新しく隠した行の ID (hiddenIds。すでに隠れていた行・無かった行は含まない)
  */
 export async function hideModeratedContent(
   supabase: SupabaseClient<any>,
   type: ModerationBackedType,
   contentId: string,
   params: HideModeratedContentParams,
-): Promise<string[]> {
+): Promise<HideModeratedContentResult> {
   const table = contentTable(type);
   // 隠す行の ID。既定は通報された行だけ。食事でペーストの複製があれば、同じ paste_group_id で中身が同じ行すべて
   let targetIds: string[] = [contentId];
@@ -309,7 +321,7 @@ export async function hideModeratedContent(
       .eq('id', contentId)
       .maybeSingle();
     if (sourceError) throw sourceError;
-    if (!source) return []; // 行がもう無い。隠す対象が無いだけで、失敗ではない
+    if (!source) return { contentFound: false, hiddenIds: [] }; // 行がもう無い。隠す対象が無いだけで、失敗ではない
     const flagged = source as MealContent & { paste_group_id: string | null };
     if (flagged.paste_group_id) {
       const { data: groupRows, error: groupError } = await supabase
@@ -322,7 +334,7 @@ export async function hideModeratedContent(
         .filter((row) => row.id === contentId || isSameMealContent(row, flagged))
         .map((row) => row.id);
       // まとまりの中に、まだ隠れていない同じ中身の行が無い (通報された行もすでに隠れている)
-      if (targetIds.length === 0) return [];
+      if (targetIds.length === 0) return { contentFound: true, hiddenIds: [] };
     }
   }
 
@@ -337,5 +349,16 @@ export async function hideModeratedContent(
     .is('hidden_at', null)
     .select('id'); // 隠した行の ID を返す (監査ログに残し、運営が戻すときの手がかりにする)
   if (error) throw error;
-  return ((data ?? []) as Array<{ id: string }>).map((row) => row.id);
+  const hiddenIds = ((data ?? []) as Array<{ id: string }>).map((row) => row.id);
+  // 食事は、上で通報された行があることを確かめてある (無ければ先に返している)
+  if (hiddenIds.length > 0 || table === 'meals') return { contentFound: true, hiddenIds };
+
+  // レシピで 1 行も更新しなかった: すでに隠れていたのか、行が無いのかを確かめる (#1445)
+  const { data: existing, error: existingError } = await supabase
+    .from(table)
+    .select('id')
+    .eq('id', contentId)
+    .maybeSingle();
+  if (existingError) throw existingError;
+  return { contentFound: existing !== null, hiddenIds };
 }

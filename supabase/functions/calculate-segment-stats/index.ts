@@ -21,7 +21,8 @@ const UPSERT_CHUNK = 200;
 
 // 指標 total_meals (全期間の食事の記録の件数) のコード。有効な指標にこれがあるときだけ、件数を数える (#1491)
 const TOTAL_MEALS_METRIC_CODE = 'total_meals';
-// 利用者ごとの meals の件数を DB の中で数える関数 (supabase/migrations/20261011060000_count_meals_per_user.sql)。
+// 利用者ごとの meals の件数を DB の中で数える関数 (supabase/migrations/20261011060000_count_meals_per_user.sql。
+// 運営が隠した行を数えないようにしたのは 20261011090000_count_meals_per_user_exclude_hidden.sql #1445)。
 // meals の全行を読んで数えると、記録の件数だけ 1000 行ずつ往復する。これは記録のある利用者 1 人につき 1 行を返す
 const COUNT_MEALS_PER_USER_RPC = 'count_meals_per_user';
 
@@ -253,8 +254,15 @@ async function fetchBulkData(periodStart: string, periodEnd: string, metricCodes
       fetchAllRows<{ user_id: string; current_streak: number | null }>('health_streaks (breakfast) の取得', () =>
         supabaseAdmin.from('health_streaks').select('user_id, current_streak').eq('streak_type', 'breakfast'),
       ),
+      // 運営が隠した食事 (hidden_at が入った行。#1101) は、比較ランキングの集計に数えない (#1445)。
+      // service role は RLS を通らないので、ここで絞る (count_meals_per_user も同じく除く。migration 20261011090000)
       fetchAllRows<{ user_id: string; eaten_at: string }>('meals (期間内) の取得', () =>
-        supabaseAdmin.from('meals').select('user_id, eaten_at').gte('eaten_at', mealsRange.from).lt('eaten_at', mealsRange.before),
+        supabaseAdmin
+          .from('meals')
+          .select('user_id, eaten_at')
+          .gte('eaten_at', mealsRange.from)
+          .lt('eaten_at', mealsRange.before)
+          .is('hidden_at', null),
       ),
       // planned_meals に user_id / 日付の列は無い。所有者と日付は daily_meal_id でつながる user_daily_meals (user_id, day_date) にある
       // (以前の meal_plan_days / meal_plans は date-based model への移行で削除済み。本番にも無い #1306)。

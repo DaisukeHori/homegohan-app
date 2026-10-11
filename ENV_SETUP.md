@@ -172,8 +172,8 @@ Edge Function は、現行の `CRON_SECRET` に加えて `CRON_SECRET_PREVIOUS`�
 比較ランキング（Web の `/comparison`・モバイルの比較画面）の集計 `calculate-segment-stats` は、pg_cron のジョブ `calculate-segment-stats` が **1 時間ごと（毎時 5 分）** に呼びます（migration `20261009100000_schedule_calculate_segment_stats.sql`。#1406）。
 
 - 毎回、daily / weekly / monthly の 3 つの要求が pg_net から並行して出ます。1 つの要求が読むものは次のとおりです（#1491）。
-  - 自分の期間の食事の記録（`meals`。monthly は 1 か月分）と献立（`planned_meals`）を全件。
-  - 指標 `total_meals`（全期間の食事の記録の件数）が有効なら、DB の関数 `count_meals_per_user`（migration `20261011060000_count_meals_per_user.sql`）が数えた、記録のある利用者 1 人につき 1 行の件数。`meals` の全期間の行は読みません。`total_meals` が有効でなければ呼びません。
+  - 自分の期間の食事の記録（`meals`。monthly は 1 か月分）と献立（`planned_meals`）を全件。運営が隠した食事（`hidden_at` が入った行。#1101）は読みません（#1445）。
+  - 指標 `total_meals`（全期間の食事の記録の件数）が有効なら、DB の関数 `count_meals_per_user`（migration `20261011060000_count_meals_per_user.sql`。運営が隠した食事を数えないようにしたのは `20261011090000_count_meals_per_user_exclude_hidden.sql`）が数えた、記録のある利用者 1 人につき 1 行の件数。`meals` の全期間の行は読みません。`total_meals` が有効でなければ呼びません。
   - そのほか、全利用者のプロフィール（`user_profiles`）と継続日数（`health_streaks`）。どれも 1 回の応答が 1000 行を超えると、1000 行ずつ取り直します。
 - 日・週・月が切り替わった直後の回（JST 0:05）は、切り替わった種類について直前の期間も 1 回だけ集計し直します（最大 3 つ増えます）。期間の最後の 1 時間（例: 23:05〜23:59）の記録を、その期間の最終の値に入れるためです。
 - 比較のバッジ（順位・上位 X%・平均超え・改善）は、この直前の期間を集計し直す回だけが判定します（#1491）。毎時の今の期間の回は、指標・統計・ランキングを更新するだけです（期間の途中の暫定の値で、取り消されないバッジを付けないため）。手動の集計（`POST /api/comparison/trigger`）も今の期間を集計するので、バッジは付きません。

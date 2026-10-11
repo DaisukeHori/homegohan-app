@@ -167,8 +167,12 @@ function newDb(overrides: Partial<Db> = {}): Db {
   };
 }
 
-/** meals への問い合わせの eaten_at の絞り込み (gte / gt / lte / lt) を、PostgREST と同じように行へ適用する */
+/**
+ * meals への問い合わせの eaten_at の絞り込み (gte / gt / lte / lt) と、hidden_at の絞り込み (is('hidden_at', null)。#1445) を、
+ * PostgREST と同じように行へ適用する
+ */
 function mealsWithin(rows: Row[], query: RecordedQuery): Row[] {
+  const visibleOnly = argsOf(query, "is").some((args) => args[0] === "hidden_at" && args[1] === null);
   const bound = (method: string): number | undefined => {
     const value = argsOf(query, method).find((args) => args[0] === "eaten_at")?.[1];
     return value === undefined ? undefined : Date.parse(String(value));
@@ -176,14 +180,21 @@ function mealsWithin(rows: Row[], query: RecordedQuery): Row[] {
   const [gte, gt, lte, lt] = [bound("gte"), bound("gt"), bound("lte"), bound("lt")];
   return rows.filter((row) => {
     const at = Date.parse(String(row.eaten_at));
+    if (visibleOnly && row.hidden_at != null) return false;
     return (gte === undefined || at >= gte) && (gt === undefined || at > gt) && (lte === undefined || at <= lte) && (lt === undefined || at < lt);
   });
 }
 
-/** count_meals_per_user の結果 (利用者ごとに 1 行。user_id の順) を、meals の行から作る */
+/**
+ * count_meals_per_user の結果 (利用者ごとに 1 行。user_id の順) を、meals の行から作る。
+ * DB の関数と同じく、運営が隠した行 (hidden_at が入った行) は数えない (migration 20261011090000。#1445)
+ */
 function countMealsPerUser(rows: Row[]): Array<{ user_id: string; meal_count: number }> {
   const counts = new Map<string, number>();
-  for (const row of rows) counts.set(row.user_id, (counts.get(row.user_id) ?? 0) + 1);
+  for (const row of rows) {
+    if (row.hidden_at != null) continue;
+    counts.set(row.user_id, (counts.get(row.user_id) ?? 0) + 1);
+  }
   return [...counts.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([user_id, meal_count]) => ({ user_id, meal_count }));
@@ -1065,10 +1076,39 @@ describe("calculate-segment-stats: 集計期間は JST の暦で決まる (#1211
     expect(argsOf(inPeriod[0], "gte")).toEqual([["eaten_at", "2026-07-12T15:00:00.000Z"]]); // JST 7/13 0:00 (含む)
     expect(argsOf(inPeriod[0], "lt")).toEqual([["eaten_at", "2026-07-19T15:00:00.000Z"]]); // JST 7/20 0:00 (含まない)
     expect(argsOf(inPeriod[0], "lte")).toEqual([]);
+    // 運営が隠した食事は数えない (#1445)
+    expect(argsOf(inPeriod[0], "is")).toEqual([["hidden_at", null]]);
 
     // 7 日間のうち記録した日数の割合 (1 日 → 14%)
     const rate = (no: number) => metricRow(db, no, "m-rec").value;
     expect([1, 2, 3, 4, 5].map(rate)).toEqual([14, 0, 14, 0, 0]);
+  });
+
+  it("運営が隠した食事 (hidden_at が入った行。#1101) は、記録した日数に数えない (#1445)", async () => {
+    setNow("2026-07-12T15:00:00.000Z"); // JST 月曜 7/13 0:00 → 今週は 7/13〜7/19
+    const meal = (no: number, eatenAt: string, hiddenAt: string | null = null) => ({
+      user_id: uid(no),
+      eaten_at: eatenAt,
+      hidden_at: hiddenAt,
+    });
+    const db = newDb({
+      metrics: [{ id: "m-rec", code: "weekly_record_rate", name: "週の記録率", higher_is_better: true, is_active: true }],
+      planned: [],
+      meals: [
+        // u1: 7/13 は見える記録、7/14 は隠した記録 → 1 日
+        meal(1, "2026-07-13T03:00:00+00:00"),
+        meal(1, "2026-07-14T03:00:00+00:00", "2026-07-15T00:00:00+00:00"),
+        // u2: 隠した記録だけ → 0 日
+        meal(2, "2026-07-13T03:00:00+00:00", "2026-07-15T00:00:00+00:00"),
+      ],
+    });
+    install(db);
+
+    const { res } = await call({ periodType: "weekly" });
+
+    expect(res.status).toBe(200);
+    const rate = (no: number) => metricRow(db, no, "m-rec").value;
+    expect([1, 2].map(rate)).toEqual([14, 0]);
   });
 });
 

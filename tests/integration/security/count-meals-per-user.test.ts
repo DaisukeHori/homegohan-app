@@ -8,8 +8,8 @@
  *   全利用者の件数を返すので、service role だけが呼べる。
  *
  * 確かめること (ローカル Supabase の実 DB で):
- *   A. service role は呼べて、利用者ごとに (user_id, meal_count) を 1 行ずつ返す。件数は全期間・全行 (期間で絞らない)。
- *      記録の無い利用者の行は無い
+ *   A. service role は呼べて、利用者ごとに (user_id, meal_count) を 1 行ずつ返す。件数は全期間 (期間で絞らない)。
+ *      記録の無い利用者の行は無い。運営が隠した行は数えない (#1445。migration 20261011090000)
  *   B. user_id の順に並べ、range でページ送りできる (Edge Function の fetchAllRows が上限 1000 行を超えたときに使う)
  *   C. 未ログイン (anon)・ログインユーザー (authenticated) は呼べない (42501)。他人の記録の件数を読めない
  *   D. EXECUTE の権限: PUBLIC / anon / authenticated は無く、service_role だけにある (postgres-meta で読み取りだけ確かめる)
@@ -132,6 +132,38 @@ describe('count_meals_per_user: 利用者ごとの meals の件数 (#1491)', () 
     expect(counts.get(none.id)).toBe(1);
     const { error: deleteError } = await sr.from('meals').delete().eq('user_id', none.id);
     expect(deleteError).toBeNull();
+  });
+
+  it('A3: 運営が隠した食事 (hidden_at が入った行。#1101) は数えない。隠した記録しかない利用者の行は無い (#1445。migration 20261011090000)', async () => {
+    const hiddenAt = '2026-10-10T00:00:00Z';
+    const { data: inserted, error } = await sr
+      .from('meals')
+      .insert([
+        { user_id: one.id, eaten_at: '2026-10-09T03:00:00Z', meal_type: 'lunch' },
+        { user_id: none.id, eaten_at: '2026-10-09T03:00:00Z', meal_type: 'lunch' },
+      ])
+      .select('id');
+    expect(error).toBeNull();
+    const insertedIds = ((inserted ?? []) as Array<{ id: string }>).map((r) => r.id);
+    expect(insertedIds).toHaveLength(2);
+    // 運営と同じく service role で隠す (hidden_* を書けるのは service role だけ。guard_hidden_content_columns)
+    const { error: hideError } = await sr
+      .from('meals')
+      .update({ hidden_at: hiddenAt, hidden_reason: 'moderation:delete_only' })
+      .in('id', insertedIds);
+    expect(hideError).toBeNull();
+
+    try {
+      const counts = await countsOfTestUsers();
+      expect(counts.get(many.id)).toBe(3);
+      // one: 見える 1 件 + 隠した 1 件 → 1
+      expect(counts.get(one.id)).toBe(1);
+      // none: 隠した記録だけ → 行が無い (記録の無い利用者と同じ)
+      expect(counts.has(none.id)).toBe(false);
+    } finally {
+      const { error: deleteError } = await sr.from('meals').delete().in('id', insertedIds);
+      expect(deleteError).toBeNull();
+    }
   });
 
   it('B: user_id の順に並べて range でページ送りでき、ページをつなぐと全件と同じになる (fetchAllRows が使う形)', async () => {

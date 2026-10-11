@@ -272,6 +272,8 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   const insertAuditLog = async (
     outcome: {
       contentHidden: boolean;
+      /** 隠す対象の行があったか (#1445)。隠す操作をしなかった・隠せなかったときは null */
+      contentFound: boolean | null;
       hiddenIds: string[];
       hideError: string | null;
       /** 判定 (通報の status) を保存したか */
@@ -296,8 +298,11 @@ async function handleResolve(request: Request, params: { type: string; id: strin
         content_user_id: contentUserId,
         // #1101: 通報されたコンテンツ本体の ID と、隠したかどうか。delete_* 以外のアクション、
         // コンテンツが紐づかない通報、隠せなかったときは hidden: false (隠せなかった理由は hide_error)
+        // #1445: 行がもう無い (持ち主が先に消した) ときも hidden: false。そのときは content_found: false
+        // (content_found は、隠す操作をして行の有無が分かったときだけ true / false。それ以外は null)
         content_id: contentId,
         hidden: outcome.contentHidden,
+        content_found: outcome.contentFound,
         hidden_ids: outcome.hiddenIds,
         hide_error: outcome.hideError,
         // #1101: 判定を保存したか (隠せなかったときは、判定を保存せずに返す。保存できなかった理由は status_error)
@@ -325,14 +330,20 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   let contentHidden = false;
   // この操作で新しく隠した行の ID (食事はペーストの複製を含む)。運営が戻すときの手がかりとして監査ログに残す
   let hiddenIds: string[] = [];
+  // 隠す対象の行があったか (#1445)。隠す操作をしなかった・隠せなかったときは null
+  let contentFound: boolean | null = null;
   if (hideRequested && contentId !== null) {
     try {
-      hiddenIds = await hideModeratedContent(supabaseAdmin, moderationType, contentId, {
+      const hideResult = await hideModeratedContent(supabaseAdmin, moderationType, contentId, {
         hiddenBy: actor.id,
         // 持ち主も読める列なので、解決メモ (運営の自由記述) は入れない
         reason: `moderation:${action}`,
       });
-      contentHidden = true;
+      hiddenIds = hideResult.hiddenIds;
+      // #1445: 行がもう無い (持ち主が先に消した) ときは、隠したことにしない (監査ログは hidden: false, content_found: false)。
+      // すでに隠れていた行 (同じ操作のやり直し・2 件目の通報) は、隠れた状態にあるので hidden: true (hidden_ids は空)
+      contentFound = hideResult.contentFound;
+      contentHidden = hideResult.contentFound;
     } catch (err) {
       // 監査ログ (admin_audit_logs.details.hide_error) にだけ残す。レスポンスには出さない (固定の文面を返す)
       const hideErrorMessage = describeError(err);
@@ -346,6 +357,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
       await insertAuditLog(
         {
           contentHidden: false,
+          contentFound: null,
           hiddenIds: [],
           hideError: hideErrorMessage,
           statusSaved: false,
@@ -387,6 +399,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
       await insertAuditLog(
         {
           contentHidden,
+          contentFound,
           hiddenIds,
           hideError: null,
           statusSaved: false,
@@ -471,6 +484,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   await insertAuditLog(
     {
       contentHidden,
+      contentFound,
       hiddenIds,
       hideError: null,
       statusSaved: true,
