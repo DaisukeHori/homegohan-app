@@ -322,8 +322,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         await fetchSessions();
       } else {
         const err = await res.json().catch(() => ({}));
-        // AI 相談の緊急停止中・メンテナンス中 (#1457): 本文の文字列ではなく固定の文を出す
-        // (メンテナンス中の本文の error はオブジェクトなので、下の読み方では文にならない)
+        // AI 相談の緊急停止中・メンテナンス中 (#1457)・同意の状況を読めなかった 503 (#1486): 本文の文字列ではなく、
+        // code から決めた固定の文を出す (#1486 より前のサーバーは、メンテナンス中の本文の error がオブジェクトだった)
         const unavailableMessage = serviceUnavailableMessageOf(res.status, err);
         if (unavailableMessage) {
           Alert.alert(SERVICE_UNAVAILABLE_ALERT_TITLE, unavailableMessage);

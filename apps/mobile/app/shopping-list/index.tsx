@@ -12,6 +12,7 @@ import { PageHeader } from "../../src/components/ui/PageHeader";
 import { SectionHeader } from "../../src/components/ui/SectionHeader";
 import { StatusBadge } from "../../src/components/ui/StatusBadge";
 import { getApi, getApiBaseUrl } from "../../src/lib/api";
+import { errorOfFailedResponse, isStoppedByServerError, stoppedByServerAlertTitleOf } from "../../src/lib/failed-response";
 import { getActiveShoppingListId } from "../../src/lib/mealPlan";
 import { supabase } from "../../src/lib/supabase";
 import { colors, radius, spacing } from "../../src/theme";
@@ -272,10 +273,15 @@ export default function ShoppingListPage() {
                 },
                 body: JSON.stringify({ itemIds }),
               });
-              if (!res.ok) throw new Error("全削除に失敗しました");
+              // メンテナンス中などの 503 は固定の文の例外にする (#1486)
+              if (!res.ok) throw errorOfFailedResponse(res.status, await res.text().catch(() => ""));
               setItems([]);
-            } catch (e: any) {
-              Alert.alert("削除失敗", e?.message ?? "全削除に失敗しました。");
+            } catch (e: unknown) {
+              if (isStoppedByServerError(e)) {
+                Alert.alert(stoppedByServerAlertTitleOf(e), e.message);
+              } else {
+                Alert.alert("削除失敗", "全削除に失敗しました。");
+              }
             } finally {
               setIsClearingAll(false);
             }

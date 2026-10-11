@@ -22,6 +22,7 @@ import {
   type PostNutritionIssue,
 } from "../generate-menu-v4/step-utils.ts";
 import {
+  isCatalogProductMeal,
   reconcileDishImages,
   DEFAULT_MEAL_IMAGE_MODEL,
 } from "./meal-image.ts";
@@ -307,7 +308,7 @@ export async function saveMealToDb(
     ? await runSupabaseQuery(
         () => supabase
           .from("planned_meals")
-          .select("id, dishes, image_url, user_daily_meals!inner(user_id)")
+          .select("id, dishes, image_url, catalog_product_id, source_type, user_daily_meals!inner(user_id)")
           .eq("id", targetSlot.plannedMealId)
           .maybeSingle(),
         `planned_meals.lookup:${targetSlot.plannedMealId}`,
@@ -617,6 +618,8 @@ export async function saveMealToDb(
     triggerSource: jobTriggerSource,
     fallbackMealImageUrl: existingMeal?.image_url ?? null,
     model: DEFAULT_MEAL_IMAGE_MODEL,
+    // 商品の献立の古い商品の料理 (画像の項目なし) を、作り直しても AI の画像で置き換えない (#1487 の整合ゲート。写真・商品の料理と同じ扱い)
+    previousMealIsCatalog: isCatalogProductMeal(existingMeal),
   });
   const mergedDishes = dishDetails.map((detail, idx) => ({
     ...detail,

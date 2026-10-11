@@ -16,6 +16,8 @@
  *   POST /api/ai/consultation/sessions/[sessionId]/close       相談の終了 (要約の生成を含む)
  *   POST /api/ai/consultation/actions/[actionId]/execute       AI が提案した操作の実行
  * 過去の相談の閲覧 (GET)・重要マークの付け外し・提案の却下 (DELETE) は、AI を呼ばないので止めない。
+ * 利用者の JWT で直接呼べる Edge Function knowledge-gpt (AI 相談の応答を作る) も、JWT の経路で同じスイッチを見る
+ * (supabase/functions/_shared/ai-chat-flag.ts。判定・文・code・retryAfter はここと同じ。#1486)。
  *
  * 使い方 (認証のあと、レート制限の前に呼ぶ。止まっている間は、利用者の回数の枠を使わせない):
  *   const unavailable = await aiChatDisabledResponse(user.id);

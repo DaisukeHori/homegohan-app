@@ -5,6 +5,7 @@ export {
   buildDishImageSubjectHash,
   buildMealImageIdempotencyKey,
   deriveMealCoverImage,
+  isCatalogProductMeal,
   isMealImageSkippedError,
   markDishImagesSkipped,
   needsImageRetry,

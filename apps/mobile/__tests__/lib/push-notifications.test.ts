@@ -884,6 +884,27 @@ describe('サーバーログ (POST /api/log) への記録 — ログアウトの
     expect(JSON.stringify(mockPost.mock.calls)).not.toContain('ExponentPushToken');
   });
 
+  it('/api/log が回数制限 (429) で断っても、削除の結果をそのまま返し、待ちも長引かず、未処理の失敗も残さない (#1493)', async () => {
+    const tracker = trackUnhandledRejections();
+    try {
+      // 共通の HTTP クライアントが 429 の応答から作る Error と同じ形 (POST は自動でやり直さない)
+      mockPost.mockRejectedValue(
+        new Error('HTTP 429 Too Many Requests: {"error":"リクエストが多すぎます。","code":"RATE_LIMITED","retryAfter":42}'),
+      );
+      setupDelete({ error: null, count: 0 });
+
+      expect(await unregisterExpoPushToken('user-123', { accessToken: 'saved-access-token' })).toBe('no_rows');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // 送ったのは 1 回だけ (記録のために同じ送信を繰り返さない)
+      expect(mockPost).toHaveBeenCalledTimes(1);
+      expect(serverLogCalls()[0].init.retry).toBe(false);
+      expect(tracker.reasons).toEqual([]);
+    } finally {
+      tracker.stop();
+    }
+  });
+
   it('取り直した値で消し、控えたアクセストークンで認可して 0 件なら、push_value_source: refetched と explicit_auth_header: true を送る (キー名に token を含めないので、サーバーでマスクされない。true の行が /api/log の認証を通るかは上の注記)', async () => {
     await AsyncStorage.removeItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`);
     setExpoConfig({ eas: { projectId: APP_JSON_PROJECT_ID } });

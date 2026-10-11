@@ -9,6 +9,7 @@ import { createLogger } from '@/lib/db-logger';
  * #1197 ログイン前でも送れる公開フォーム (お問い合わせ) の IP 単位の制限にも使う
  * #1164 ファイルアップロード (POST /api/upload) のユーザー単位の回数制限にも使う
  * #1154 外国の AI 事業者への提供の同意を記録する API (POST /api/ai/consent) の連打防止にも使う
+ * #1493 ブラウザ・端末からのログを受け取る API (POST /api/log) のユーザー単位の回数制限にも使う
  *
  * 元は src/app/api/contact/route.ts の Upstash Ratelimit 実装を汎用化したもの。
  * `key` + カテゴリ単位でレート制限を判定する。
@@ -52,7 +53,8 @@ export type RateLimitCategory =
   | 'export'
   | 'upload'
   | 'ai-consent'
-  | 'auth-login';
+  | 'auth-login'
+  | 'client-log';
 
 /** 1 つの制限ルール。name は Upstash の prefix / in-memory の名前空間に使う (既存キーを変えないこと) */
 interface RateRule {
@@ -103,6 +105,14 @@ const DAY_SEC = 24 * 60 * 60;
 // - auth-login: Web のメールアドレス + パスワードのログイン (#1165。POST /api/auth/login)。ログイン前なので key はクライアント IP。
 //   設計 docs/design/cross/01-auth-session.md §3.2 の「10/min/IP」。同じ IP から多くのメールアドレスを試す攻撃 (クレデンシャル
 //   スタッフィング) を抑える。メールアドレスごとの連続失敗の回数 (ボットの確認を求めるかどうか。ロックはしない) は別 (src/lib/auth/login-failures.ts、DB に記録)
+// - client-log: ブラウザ・端末からのログを受け取る API (#1493。POST /api/log、key = 認証で確定した user.id)。
+//   ログイン済みなら誰でも app_logs に行を書けるので、1 人が大量に書いて表を膨らませたり、運用のエラー急増メール (#1157) の
+//   クライアント用の通知 (src/lib/ops-alerts/app-log-error-spike.ts の APP_LOG_CLIENT_ALERT_KEY) を鳴らし続けたりできないようにする。
+//   いまの送り手で最も多いのは Web の食事写真の保存 (src/app/(main)/meals/new/page.tsx の logToServer) で、写真 1 枚につき
+//   開始・分類・解析の成功/失敗を合わせて 5 行ほど。1 分に数枚撮っても 30 回には届かない。端末の送り手 (apps/mobile の
+//   error-report.ts のエラー境界・push-issue-log.ts のプッシュ通知の登録失敗) は 1 回の出来事につき 1 行。
+//   直近 24 時間の 1000 回は、写真 200 枚分にあたり、1 日の実際の使い方を十分に上回る。
+//   超えた分は 429 で断る (送り手はどれも失敗を握りつぶすので、画面やサインアウトは止まらない)。
 const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   generation: [{ name: 'generation', max: 5, windowSec: MINUTE_SEC }],
   analysis: [{ name: 'analysis', max: 10, windowSec: MINUTE_SEC }],
@@ -142,6 +152,10 @@ const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
     { name: 'ai-consent-daily', max: 50, windowSec: DAY_SEC },
   ],
   'auth-login': [{ name: 'auth-login', max: 10, windowSec: MINUTE_SEC }],
+  'client-log': [
+    { name: 'client-log', max: 30, windowSec: MINUTE_SEC },
+    { name: 'client-log-daily', max: 1000, windowSec: DAY_SEC },
+  ],
 };
 
 export interface RateLimitResult {
@@ -182,7 +196,7 @@ const redisClient = getRedisClient();
 if (!redisClient) {
   logger.warn(
     '[rate-limit] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN が未設定です。' +
-      'AIエンドポイント・招待メール・お問い合わせフォーム・ファイルアップロードのレート制限は in-memory フォールバックで' +
+      'AIエンドポイント・招待メール・お問い合わせフォーム・ファイルアップロード・クライアントログのレート制限は in-memory フォールバックで' +
       '動作します（サーバーレス環境ではインスタンスごとに独立するため実効性が下がります。' +
       '特に日次上限は成り立ちません）。' +
       '本番環境では必ず Upstash Redis の env を設定してください。',
