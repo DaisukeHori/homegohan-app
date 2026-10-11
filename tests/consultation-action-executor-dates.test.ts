@@ -38,7 +38,9 @@ const queue = vi.hoisted(() => ({ db: null as unknown }));
 vi.mock('@/lib/ai/ai-queue-writer', () => ({ getAiQueueWriter: () => queue.db }));
 
 import { runConsultationAction } from '@/lib/ai/consultation-action-executor';
+import { updateHealthStreak } from '@/lib/health-streaks';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
+import { argsOf, createRecordingSupabase } from './helpers/recording-supabase';
 
 const USER = { id: 'user-1' };
 
@@ -167,4 +169,70 @@ describe('generate_week_menu: startDate は実在する日付で、受け付け�
       '9999-01-05',
     ]);
   });
+});
+
+/**
+ * #1482: 健康記録のアクション (add_health_record / update_health_record) の date も、実在する日付だけを受け付ける。
+ * 以前は add_health_record が形 (正規表現) だけを見ていて 2026-02-30 が通り、update_health_record は何も見ずに
+ * DB の条件 (.eq('record_date', date)) に渡していた。どちらも DB の date 型への変換で失敗する。
+ * HTTP の 400 ではなく、ほかのアクションと同じく action の error で断る。
+ */
+describe.each([
+  // add_health_record は、date が文字列でない・空のときは以前から JST の今日として記録する (数値の 20261010 は今日になる) ので、文字列だけを見る
+  {
+    actionType: 'add_health_record',
+    params: (date: unknown) => ({ date, weight: 60 }),
+    invalidDates: INVALID_DATES.filter((date) => typeof date === 'string'),
+  },
+  { actionType: 'update_health_record', params: (date: unknown) => ({ date, updates: { weight: 60 } }), invalidDates: INVALID_DATES },
+])('$actionType: date は実在する日付だけ (#1482)', ({ actionType, params, invalidDates }) => {
+  it.each(invalidDates)('date=%s は、DB に触れずに action の error で断る', async (date) => {
+    const { client, queries } = createRecordingSupabase(() => ({ data: null, error: null }));
+    const out = await runConsultationAction(client, USER, {
+      id: 'action-1',
+      action_type: actionType,
+      action_params: params(date),
+      ai_consultation_sessions: { user_id: USER.id },
+    });
+    expect(out.success).toBe(false);
+    expect(out.result).toEqual({ error: 'date must be in YYYY-MM-DD format' });
+    expect(queries).toEqual([]);
+    expect(updateHealthStreak).not.toHaveBeenCalled();
+  });
+
+  it('前後に空白のある、うるう年の 2/29 は受け付け、空白を除いた日付で DB に書く', async () => {
+    const { client, queries } = createRecordingSupabase(() => ({ data: null, error: null }));
+    const out = await runConsultationAction(client, USER, {
+      id: 'action-1',
+      action_type: actionType,
+      action_params: params(' 2028-02-29 '),
+      ai_consultation_sessions: { user_id: USER.id },
+    });
+    expect(out.success).toBe(true);
+    const [query] = queries.filter((q) => q.table === 'health_records');
+    if (actionType === 'add_health_record') {
+      expect(argsOf(query, 'upsert')[0][0]).toMatchObject({ user_id: USER.id, record_date: '2028-02-29', weight: 60 });
+      expect(updateHealthStreak).toHaveBeenCalledWith(client, USER.id, '2028-02-29');
+    } else {
+      expect(argsOf(query, 'update')).toEqual([[{ weight: 60 }]]);
+      expect(argsOf(query, 'eq')).toEqual([
+        ['user_id', USER.id],
+        ['record_date', '2028-02-29'],
+      ]);
+    }
+    expect(out.result).toMatchObject({ date: '2028-02-29' });
+  });
+});
+
+it('update_health_record: date が無いときも DB に触れずに断る (#1482。以前は .eq(record_date, undefined) で DB に問い合わせていた)', async () => {
+  const { client, queries } = createRecordingSupabase(() => ({ data: null, error: null }));
+  const out = await runConsultationAction(client, USER, {
+    id: 'action-1',
+    action_type: 'update_health_record',
+    action_params: { updates: { weight: 60 } },
+    ai_consultation_sessions: { user_id: USER.id },
+  });
+  expect(out.success).toBe(false);
+  expect(out.result).toEqual({ error: 'date must be in YYYY-MM-DD format' });
+  expect(queries).toEqual([]);
 });

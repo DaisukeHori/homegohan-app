@@ -4,6 +4,7 @@ import {
   findGoalTypeDef,
   type GoalTypeDef,
 } from '@/lib/health-goal-types';
+import { isCalendarDate } from '@/lib/date-utils';
 
 type ValidationResult<T extends object> = {
   data: Partial<T>;
@@ -178,7 +179,8 @@ function parseNullableString(
 
   const trimmed = value.trim();
   if (!trimmed) return null;
-  if (opts.date && !DATE_PATTERN.test(trimmed)) {
+  // 形だけでなく実在する日付か (isCalendarDate) も見る。2026-02-30 のような日付は DB の date 型への変換で失敗して 500 になる (#1482)
+  if (opts.date && (!DATE_PATTERN.test(trimmed) || !isCalendarDate(trimmed))) {
     errors.push(`${key} must be a date in YYYY-MM-DD format`);
     return undefined;
   }

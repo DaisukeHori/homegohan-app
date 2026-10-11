@@ -117,19 +117,16 @@ describe.each([
     expect(h.callV5).not.toHaveBeenCalled();
   });
 
-  it('うるう年の 2/29・月末・年末の実在する日付は、日付の確認を通る (次の認証へ進む)', async () => {
+  // 1 回の生成の日付の幅は最大 31 日 (#1482。tests/menu-generation-range-1482.test.ts) なので、離れた日付は 1 件ずつ送る
+  it.each([
+    '2028-02-29',
+    '2026-10-31',
+    '2026-12-31',
+    '9998-12-30', // 受け付ける最後の日 (前後 7 日の文脈の期間も扱える範囲の中)
+    '0101-01-02', // 受け付ける最初の日
+  ])('うるう年の 2/29・月末・年末の実在する日付 (%s) は、日付の確認を通る (次の認証へ進む)', async (date) => {
     h.getUser.mockResolvedValue({ data: { user: null }, error: null });
-    const res = await post(
-      jsonRequest({
-        targetSlots: [
-          { date: '2028-02-29', mealType: 'breakfast' },
-          { date: '2026-10-31', mealType: 'lunch' },
-          { date: '2026-12-31', mealType: 'dinner' },
-          { date: '9998-12-30', mealType: 'dinner' }, // 受け付ける最後の日 (前後 7 日の文脈の期間も扱える範囲の中)
-          { date: '0101-01-02', mealType: 'dinner' }, // 受け付ける最初の日
-        ],
-      }),
-    );
+    const res = await post(jsonRequest({ targetSlots: [{ date, mealType: 'dinner' }] }));
     // 日付の確認を通ったので認証まで進み、未ログインの 401 になる
     expect(res.status).toBe(401);
     expect(h.getUser).toHaveBeenCalledTimes(1);
