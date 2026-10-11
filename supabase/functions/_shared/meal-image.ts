@@ -44,6 +44,68 @@ export interface ReconcileDishImagesResult<TDish extends MealImageDish> {
 
 export const DEFAULT_MEAL_IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
 
+/**
+ * 料理画像のジョブを積まずに見送ったときの理由 (#1487)。
+ *   - ai_limit:   料理画像の安全弁 (DB の ai_unmetered_daily_caps の meal_image_auto) に達した (consumeAiUsage が不許可)
+ *   - rate_limit: 画像のレート制限 (checkRateLimit の 'image') に達した、または判定が例外で終わった
+ */
+export type MealImageSkipReason = 'ai_limit' | 'rate_limit';
+
+/**
+ * 見送った料理に書く image_error (#1487)。image_status は既存の 'failed' を使う
+ * (新しい状態を足すと、'failed' 以外を「生成中」と出す画面・型の受け口をすべて直す必要があるため。
+ *  料理画像の処理 (process-meal-image-jobs) も、同意が無くて送らなかったときは 'failed' + 理由を書く)。
+ * 'failed' のまま image_url の無い料理は、同じ料理を保存し直すとジョブを積み直す (reconcileDishImages の needsImageRetry)
+ */
+export const MEAL_IMAGE_SKIPPED_ERRORS: Readonly<Record<MealImageSkipReason, string>> = Object.freeze({
+  ai_limit: 'skipped_ai_limit',
+  rate_limit: 'skipped_rate_limit',
+});
+
+/** image_error が、見送り (MEAL_IMAGE_SKIPPED_ERRORS) を表すか */
+export function isMealImageSkippedError(value: unknown): boolean {
+  return typeof value === 'string' && Object.values(MEAL_IMAGE_SKIPPED_ERRORS).includes(value);
+}
+
+/**
+ * 同じ料理 (subject_hash が同じ) を保存し直したとき、ジョブを積み直すか (#1487)。
+ * 画像がまだ無く (image_url なし)、AI が作る画像 (image_source が generated_ai か未設定) で、
+ * 前回の状態が待ち・更新待ち・失敗 (または未設定) のとき。
+ * 写真 (meal_photo)・手で付けた画像 (manual_override)・商品 (catalog) は積まない
+ * (写真から作った複数の料理は 'stale' のまま画像を作らないのが今の扱い)。
+ * 待ちのジョブがまだ残っているときは、同じ冪等キーで積もうとして積まれない (enqueueMealImageJobs が重複として数えない)
+ */
+export function needsImageRetry(dish: MealImageDish): boolean {
+  if (dish.image_url) return false;
+  const source = dish.image_source ?? null;
+  if (source !== null && source !== 'generated_ai') return false;
+  const status = dish.image_status ?? null;
+  return status === null || status === 'pending' || status === 'stale' || status === 'failed';
+}
+
+/**
+ * ジョブを積まないと決まった料理 (jobs の dishIndex) を、見送りの状態 ('failed' + 理由) にする (#1487)。
+ * 料理を保存する前に呼ぶ ('pending' のまま保存すると、処理するジョブが無いので「生成中」のまま残る)。
+ * 渡した配列は変えず、新しい配列を返す
+ */
+export function markDishImagesSkipped<TDish extends MealImageDish>(
+  dishes: TDish[],
+  jobs: ReadonlyArray<Pick<MealImageJobSeed, 'dishIndex'>>,
+  reason: MealImageSkipReason,
+): TDish[] {
+  const targets = new Set(jobs.map((job) => job.dishIndex));
+  return dishes.map((dish, index) => {
+    if (!targets.has(index)) return dish;
+    const skipped: TDish = {
+      ...dish,
+      image_status: 'failed',
+      image_error: MEAL_IMAGE_SKIPPED_ERRORS[reason],
+      image_generated_at: null,
+    };
+    return skipped;
+  });
+}
+
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
@@ -181,7 +243,8 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
       image_subject_hash: subjectHash,
     };
 
-    if (sameSubject && previousDish) {
+    // 前回と同じ料理でも、画像がまだ無く待ち・失敗のままなら積み直す (#1487。見送った料理・積めなかった料理を、保存し直すと直す)
+    if (sameSubject && previousDish && !needsImageRetry(previousDish)) {
       reconciledDish.image_url = previousDish.image_url ?? null;
       reconciledDish.image_source = previousDish.image_source ?? 'generated_ai';
       reconciledDish.image_status = previousDish.image_status ?? 'pending';
@@ -203,7 +266,8 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
 
     reconciledDish.image_url = null;
     reconciledDish.image_source = 'generated_ai';
-    reconciledDish.image_status = previousDish ? 'stale' : 'pending';
+    // 前回と同じ料理の積み直しは 'pending' (前回の画像は無いので、更新待ちの 'stale' ではない)
+    reconciledDish.image_status = previousDish && !sameSubject ? 'stale' : 'pending';
     reconciledDish.image_generated_at = null;
     reconciledDish.image_error = null;
     dishes.push(reconciledDish);

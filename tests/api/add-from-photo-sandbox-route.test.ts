@@ -25,8 +25,10 @@ import {
 
 const USER_ID = 'user-1';
 
-// db-logger はモックする (app_logs への書き込みを避け、fail-closed 時にログが残ることを確認する)
-const loggerError = vi.fn();
+// db-logger はモックする (app_logs への書き込みを避け、fail-closed 時にログが残ることを確認する)。
+// import のときにロガーを作るモジュール (料理画像のジョブが数え戻しに使う src/lib/plan/entitlements.ts。#1487) があるので、
+// モックの中で使う関数は vi.hoisted で先に作る (ふつうの const だと、モックが呼ばれた時点で初期化前になる)
+const { loggerError } = vi.hoisted(() => ({ loggerError: vi.fn() }));
 vi.mock('@/lib/db-logger', () => ({
   createLogger: () => ({
     debug: vi.fn(),
