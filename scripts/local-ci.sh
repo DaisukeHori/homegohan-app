@@ -43,10 +43,17 @@
 #   LOCAL_CI_ARTIFACTS             JSON とログの置き場 (既定: ${TMPDIR:-/tmp}/homegohan-local-ci-artifacts/<HEAD の短い sha>)
 #   LOCAL_CI_FETCH                 0 にすると --base (origin/...) を fetch しない (既定 1)
 #   LOCAL_CI_SUPABASE_PORTS        空いていることを確かめるローカル Supabase のポート (空白区切り。既定は枠の値)
+#   INTEGRATION_TEST_TIMEOUT_MS / INTEGRATION_HOOK_TIMEOUT_MS
+#                                  結合テストの時間切れの上書き (vitest.integration.config.ts。既定のままなら CI と同じ)
+#   INTEGRATION_AUTH_RETRY_ATTEMPTS / INTEGRATION_AUTH_RETRY_BASE_DELAY_MS
+#                                  結合テストが認証 (/auth/v1) のゲートウェイの一時的な失敗をやり直す回数と最初の間隔の上書き
+#                                  (tests/integration/helpers/auth-transient-retry.ts。既定のままなら CI と同じ)
 #
 # 枠 (slot): integration / e2e (ローカル Supabase と Next を立てる段) を、同じ機械で複数の local-ci.sh が同時に回せるよう、
 # 枠ごとに project_id (コンテナ名) と全ポートをずらす (値の表は scripts/lib/local-ci-slot.sh。枠 0 は今までと同じ値)。
 # Docker を使う段の直前に、空いている枠のロックを mkdir で取り、終わったら (trap で必ず) 外す。secrets / unit / mobile だけなら取らない。
+# 取った枠のポートを local-ci.sh 以外 (macOS の常駐・手で起動したサーバーなど) が使っていれば、その枠を外して次の候補の枠を使う。
+# どの候補もポートを使われていて、ほかの local-ci.sh が持つ枠も無ければ、待たずに slot:ports の赤で終える (acquire_slot)。
 #   LOCAL_CI_SLOTS                 使ってよい枠 (空白区切り。既定 "0")。例: "0 1" なら 2 本まで同時に回せる
 #   LOCAL_CI_SLOT                  この枠だけを使う (LOCAL_CI_SLOTS より優先。空くまで待つ)
 #   LOCAL_CI_LOCK_DIR              枠のロックの置き場 (既定: ${TMPDIR:-/tmp}/homegohan-local-ci-locks)
@@ -144,8 +151,12 @@ PW_ARGS=(--trace off tests/e2e/01-login.spec.ts tests/e2e/04-menu-page.spec.ts t
 # e2e-local.yml の Playwright (2 つ目・3 つ目のサーバーに対して。規約の同意ゲートだけ)
 PW_CONSENT_ARGS=(--trace off tests/e2e/legal-consent-gate.spec.ts)
 
-# 子プロセスへ持ち込む環境変数 (これ以外は外す。CI のランナーに無いものを持ち込まない)
-readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT"
+# 子プロセスへ持ち込む環境変数 (これ以外は外す。CI のランナーに無いものを持ち込まない)。
+# INTEGRATION_TEST_TIMEOUT_MS / INTEGRATION_HOOK_TIMEOUT_MS は結合テストの時間切れの上書き (vitest.integration.config.ts。
+# 指定しなければ CI と同じ既定のまま。負荷の高い機械で延ばすときに使う)。
+# INTEGRATION_AUTH_RETRY_ATTEMPTS / INTEGRATION_AUTH_RETRY_BASE_DELAY_MS は、結合テストが認証のゲートウェイの一時的な失敗
+# (502 / 503 / 504・接続の失敗) をやり直す回数と最初の間隔の上書き (tests/integration/helpers/auth-transient-retry.ts)
+readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT INTEGRATION_TEST_TIMEOUT_MS INTEGRATION_HOOK_TIMEOUT_MS INTEGRATION_AUTH_RETRY_ATTEMPTS INTEGRATION_AUTH_RETRY_BASE_DELAY_MS"
 # 段の中だけで追加で持ち込む変数名 (e2e のパスワード)
 ENV_EXTRA=""
 # 枠を取ったあとに持ち込む変数名 (apply_slot が決める。supabase-local.sh が読む枠と、結合テストが叩くアプリの URL)
@@ -253,13 +264,14 @@ if (exitCode !== 0 && reasons.length === 0) reasons.push(`終了コード ${exit
 emit(passed, failed, skipped, actual.length, expected ? expected.size : undefined);
 '
 
-# ポートが使われているか (終了コード 0 = 使用中)。接続できる、または待ち受けられないなら使用中とみなす
+# ポートが使われているか。引数のポートのうち使用中のものを空白区切りで出し、1 つでもあれば終了コード 0。
+# 接続できる、または待ち受けられないなら使用中とみなす (node の起動は 1 回で、ポートは 1 つずつ確かめる)
 # shellcheck disable=SC2016
 PORT_PROBE_JS='
 const net = require("net");
-const port = Number(process.argv[1]);
+const ports = process.argv.slice(1).map(Number);
 const PROBE_TIMEOUT_MS = 1000;
-function tryConnect(host) {
+function tryConnect(host, port) {
   return new Promise((resolve) => {
     const s = net.connect({ host, port });
     const done = (v) => { s.destroy(); resolve(v); };
@@ -268,7 +280,7 @@ function tryConnect(host) {
     s.once("error", () => done(false));
   });
 }
-function tryListen() {
+function tryListen(port) {
   return new Promise((resolve) => {
     const srv = net.createServer();
     srv.once("error", (e) => resolve(e.code === "EADDRINUSE"));
@@ -276,8 +288,12 @@ function tryListen() {
   });
 }
 (async () => {
-  const busy = (await tryConnect("127.0.0.1")) || (await tryConnect("::1")) || (await tryListen());
-  process.exit(busy ? 0 : 1);
+  const busy = [];
+  for (const port of ports) {
+    if ((await tryConnect("127.0.0.1", port)) || (await tryConnect("::1", port)) || (await tryListen(port))) busy.push(port);
+  }
+  process.stdout.write(busy.join(" "));
+  process.exit(busy.length > 0 ? 0 : 1);
 })();
 '
 
@@ -365,7 +381,9 @@ record_parsed() {
 
 parse() { node -e "$PARSE_JS" "$@"; }
 
-port_busy() { node -e "$PORT_PROBE_JS" "$1"; }
+port_busy() { node -e "$PORT_PROBE_JS" "$1" >/dev/null; }
+# busy_ports <ポート...>: 使用中のポートを空白区切りで出す (無ければ空)
+busy_ports() { node -e "$PORT_PROBE_JS" "$@"; }
 
 sha256_of() { node -e "$SHA256_JS" "$1"; }
 
@@ -808,15 +826,34 @@ check_docker_memory() {
   fi
 }
 
-# acquire_slot: 空いている枠を取る。取れたら 0、待ちの時間切れなら 1
+# slot_busy_ports: いま apply_slot した枠で、回す段 (integration / e2e) が使うポートのうち、使用中のものを空白区切りで出す
+# (check_ports と同じポート: アプリの既定のポート・e2e の 2 つ目と 3 つ目・ローカル Supabase のポート)
+slot_busy_ports() {
+  local extra=""
+  if want e2e; then extra="$ENFORCED_APP_PORT $NOTICE_APP_PORT"; fi
+  # shellcheck disable=SC2086  # ポートの一覧は空白で分けて渡す
+  busy_ports $APP_PORT $extra $SUPABASE_PORTS || true
+}
+
+# acquire_slot: 空いている枠を取る。取れたら 0、待ちの時間切れなら 1、
+# どの候補の枠も local-ci.sh 以外 (macOS の常駐・手で起動したサーバーなど) にポートを使われていて、待っても空く見込みが無ければ 2
+# (そのとき SLOT_BUSY_NOTE に「枠 <n>: <使用中のポート>」を入れる)。
+# ロックを取れた枠は、そのポートが空いているかをここで確かめ、使用中なら外して次の枠へ回る (赤で止めない)。
+# 枠どうしでポートは重ならず (tests/local-ci-slot.test.ts)、この枠のロックは自分が持っているので、使用中のポートの持ち主は
+# 別の枠の local-ci.sh ではない。持ち主の死んだロックを回収したときは、残ったスタックを片付けてから確かめる
+# (片付ける前に確かめると、死んだ実行が残したコンテナのポートを使用中とみなしてしまう)
+SLOT_BUSY_NOTE=""
 acquire_slot() {
-  local s deadline waited=0
+  local s deadline waited=0 held_elsewhere busy note warned=""
   mkdir -p "$LOCK_DIR" || { say "枠のロックの置き場を作れません: $LOCK_DIR"; return 1; }
   check_docker_memory
   deadline="$(($(now) + SLOT_WAIT_SECONDS))"
   while :; do
+    # held_elsewhere: この周に、別の local-ci.sh (か外側のロック) が持っていて取れなかった枠があったか (あれば、空くのを待つ意味がある)
+    held_elsewhere=0
+    note=""
     for s in $SLOT_CANDIDATES; do
-      if [ "$s" -eq 0 ] && legacy_lock_held; then continue; fi
+      if [ "$s" -eq 0 ] && legacy_lock_held; then held_elsewhere=1; continue; fi
       # 取ってから SLOT_LOCK に入れ終えるまでのシグナルは後回しにする (そこで終わると、cleanup の知らないロックが残る)
       defer_signals
       if try_lock "$LOCK_DIR/slot-$s"; then
@@ -824,20 +861,48 @@ acquire_slot() {
         SLOT_RECLAIMED="$LOCK_RECLAIMED"
       fi
       resume_signals
-      [ -n "$SLOT_LOCK" ] || continue
+      if [ -z "$SLOT_LOCK" ]; then held_elsewhere=1; continue; fi
       # 外側のロックは別の作業が mkdir するので、取ったあとにもう一度確かめる
       # (外してから SLOT_LOCK を空にするまでに終わっても、cleanup の release_lock は持ち主がこの実行のロックしか外さない)
       if [ "$s" -eq 0 ] && legacy_lock_held; then
         release_lock "$SLOT_LOCK"
         SLOT_LOCK=""
         SLOT_RECLAIMED=0
+        held_elsewhere=1
         continue
       fi
       apply_slot "$s"
+      # 持ち主の死んだロックを回収したときだけ片付ける (回収していなければ何もしない。残っていれば段の前で赤になる)
+      clear_slot_leftovers
+      busy="$(slot_busy_ports)"
+      if [ -n "$busy" ]; then
+        # 同じ枠の同じ知らせは 1 回だけ出す (待っているあいだ SLOT_POLL_SEC ごとに確かめ直す)
+        case " $warned " in
+          *" $s:$busy "*) ;;
+          *)
+            say "枠 $s のポート ($busy) を local-ci.sh 以外が使っているので、この枠を外して次の枠を探します (macOS の常駐・手で起動したサーバーなど。止めずにおきます)"
+            warned="$warned $s:$busy"
+            ;;
+        esac
+        note="$note${note:+ / }枠 $s:$busy"
+        release_lock "$SLOT_LOCK"
+        SLOT_LOCK=""
+        SLOT_RECLAIMED=0
+        SLOT=""
+        continue
+      fi
       say "枠 $s を取りました (project_id $SLOT_PROJECT_ID / Supabase API $SLOT_API_PORT / Next ${APP_PORT}・${ENFORCED_APP_PORT}・${NOTICE_APP_PORT}。ロック $SLOT_LOCK)"
       return 0
     done
-    if [ "$(now)" -ge "$deadline" ]; then return 1; fi
+    if [ "$held_elsewhere" = 0 ]; then
+      # どの候補も、ほかの local-ci.sh が持っているのではなく、ポートを使われていて取れなかった。待っても空く見込みが無い
+      SLOT_BUSY_NOTE="$note"
+      return 2
+    fi
+    if [ "$(now)" -ge "$deadline" ]; then
+      SLOT_BUSY_NOTE="$note"
+      return 1
+    fi
     if [ "$waited" = 0 ]; then
       say "空いている枠がありません (候補: $SLOT_CANDIDATES / ロック: $LOCK_DIR${LEGACY_LOCK:+ / 外側のロック: $LEGACY_LOCK})。最大 $SLOT_WAIT_SECONDS 秒待ちます"
       waited=1
@@ -1507,14 +1572,20 @@ if want mobile; then say "== mobile (mobile-test.yml)"; stage_mobile; fi
 # Docker を使う段 (integration / e2e) の前に枠を取る。secrets / unit / mobile だけなら取らない
 if want integration || want e2e; then
   say "== 枠 (候補: $SLOT_CANDIDATES)"
-  if acquire_slot; then
-    # 持ち主の死んだロックを回収したときだけ片付ける (回収していなければ何もしない。残っていれば段の前で赤になる)
-    clear_slot_leftovers
-  else
-    SLOT_TIMED_OUT=1
-    record slot:wait RED - - - - - "$SLOT_WAIT_SECONDS" "待ちの時間切れ: $SLOT_WAIT_SECONDS 秒待っても枠 ($SLOT_CANDIDATES) が空かなかった。integration / e2e は回していない (検査の失敗ではない。ロック: $LOCK_DIR${LEGACY_LOCK:+ / 外側のロック: $LEGACY_LOCK})"
-    finish
-  fi
+  # 持ち主の死んだロックを回収したときの片付けは acquire_slot の中で行う (ポートの空きを確かめる前に片付けるため)
+  acquire_slot
+  case $? in
+    0) ;;
+    2)
+      record slot:ports RED - - - - - 0 "使用中のポート (${SLOT_BUSY_NOTE}): 候補の枠 ($SLOT_CANDIDATES) のどれも、local-ci.sh 以外のプロセスやコンテナにポートを使われている。integration / e2e は回していない (止めずに赤で終える。使っているプロセスやコンテナを確かめて止めるか、LOCAL_CI_SLOTS に別の枠を足して再実行する)"
+      finish
+      ;;
+    *)
+      SLOT_TIMED_OUT=1
+      record slot:wait RED - - - - - "$SLOT_WAIT_SECONDS" "待ちの時間切れ: $SLOT_WAIT_SECONDS 秒待っても枠 ($SLOT_CANDIDATES) が空かなかった。integration / e2e は回していない (検査の失敗ではない。ロック: $LOCK_DIR${LEGACY_LOCK:+ / 外側のロック: $LEGACY_LOCK}${SLOT_BUSY_NOTE:+ / local-ci.sh 以外が使っていたポート: $SLOT_BUSY_NOTE})"
+      finish
+      ;;
+  esac
 fi
 if want integration; then say "== integration (security-regression.yml)"; stage_integration; fi
 if want e2e; then say "== e2e (e2e-local.yml)"; stage_e2e; fi
