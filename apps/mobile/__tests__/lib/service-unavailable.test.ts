@@ -1,6 +1,7 @@
 /**
  * service-unavailable.test.ts
  * AI 相談の緊急停止 (503 AI_CHAT_DISABLED)・メンテナンス中 (503 MAINTENANCE_MODE) を、生の文字列ではなく固定の文にする (#1457)
+ * 同意の状況を読めなかった 503 (AI_CONSENT_CHECK_FAILED) も、同じく固定の文にする (#1486)
  *
  * 1. src/lib/service-unavailable.ts: API クライアント・生の fetch が作る `HTTP 503 ...: {...}` の Error から、固定の文の例外を作る
  * 2. src/lib/api-error.ts: getApiErrorMessage も、この 503 には本文の文字列ではなく固定の文を返す
@@ -13,6 +14,10 @@ import {
   MAINTENANCE_API_CODE,
   MAINTENANCE_MESSAGE,
 } from '@homegohan/shared';
+import {
+  AI_CONSENT_CHECK_FAILED_CODE,
+  AI_CONSENT_CHECK_FAILED_MESSAGE,
+} from '../../../../supabase/functions/_shared/ai-consent';
 
 jest.mock('../../src/lib/supabase', () => ({
   supabase: {
@@ -48,7 +53,10 @@ import {
 /** サーバーとは違う文を入れた本文。画面に出す文は本文の文字列ではなく、code から決めた固定の文であることを確かめる */
 const SERVER_TEXT = 'サーバーが返した別の文';
 const AI_CHAT_DISABLED_BODY = JSON.stringify({ error: SERVER_TEXT, code: AI_CHAT_DISABLED_CODE, retryAfter: 60 });
-const MAINTENANCE_BODY = JSON.stringify({ error: { code: MAINTENANCE_API_CODE, message: SERVER_TEXT } });
+// サーバーのメンテナンス中の 503 の本文 (#1486 から AI 相談の緊急停止と同じ平らな形)
+const MAINTENANCE_BODY = JSON.stringify({ error: SERVER_TEXT, code: MAINTENANCE_API_CODE, retryAfter: 300 });
+// 同意の状況を読めなかったときの 503 の本文 (supabase/functions/_shared/ai-consent.ts の aiConsentDeniedPayload と同じ形)
+const CONSENT_CHECK_FAILED_BODY = JSON.stringify({ error: SERVER_TEXT, code: AI_CONSENT_CHECK_FAILED_CODE });
 
 describe('serviceUnavailableErrorOf', () => {
   it.each([
@@ -61,14 +69,31 @@ describe('serviceUnavailableErrorOf', () => {
     expect(result?.message).toBe(AI_CHAT_DISABLED_MESSAGE);
   });
 
-  it('メンテナンス中 ({ error: { code, message } }) は、メンテナンス中の固定の文', () => {
+  it('メンテナンス中 ({ error, code, retryAfter }) は、メンテナンス中の固定の文', () => {
     const result = serviceUnavailableErrorOf(new Error(`HTTP 503 Service Unavailable: ${MAINTENANCE_BODY}`));
     expect(result?.message).toBe(MAINTENANCE_MESSAGE);
     expect(result?.message).not.toContain('HTTP');
   });
 
+  it('#1486 より前のサーバーのメンテナンス中の入れ子の本文 ({ error: { code, message } }) も、メンテナンス中の固定の文', () => {
+    const legacy = JSON.stringify({ error: { code: MAINTENANCE_API_CODE, message: SERVER_TEXT } });
+    expect(serviceUnavailableErrorOf(new Error(`HTTP 503 Service Unavailable: ${legacy}`))?.message).toBe(MAINTENANCE_MESSAGE);
+  });
+
   it.each([
-    ['ほかの code の 503 (同意の状況を読めない)', `HTTP 503 Service Unavailable: ${JSON.stringify({ error: 'x', code: 'AI_CONSENT_CHECK_FAILED' })}`],
+    ['API クライアント (HTTP/1.1)', `HTTP 503 Service Unavailable: ${CONSENT_CHECK_FAILED_BODY}`],
+    ['生の fetch', `HTTP 503: ${CONSENT_CHECK_FAILED_BODY}`],
+  ])('#1486 同意の状況を読めなかった 503 (%s) は、生の文字列ではなく固定の文', (_label, message) => {
+    const result = serviceUnavailableErrorOf(new Error(message));
+    expect(result).toBeInstanceOf(ServiceUnavailableError);
+    expect(result?.message).toBe(AI_CONSENT_CHECK_FAILED_MESSAGE);
+    expect(result?.message).not.toContain('HTTP');
+    expect(result?.message).not.toContain(SERVER_TEXT);
+  });
+
+  it.each([
+    ['ほかの code の 503', `HTTP 503 Service Unavailable: ${JSON.stringify({ error: 'x', code: 'SOMETHING_ELSE' })}`],
+    ['同意の状況を読めない code でも 503 以外', `HTTP 500 Internal Server Error: ${CONSENT_CHECK_FAILED_BODY}`],
     ['code の無い 503', `HTTP 503 Service Unavailable: ${JSON.stringify({ error: 'x' })}`],
     ['JSON でない 503 (ゲートウェイの HTML)', 'HTTP 503 Service Unavailable: <html>busy</html>'],
     ['同じ code でも 503 以外', `HTTP 500 Internal Server Error: ${AI_CHAT_DISABLED_BODY}`],
@@ -97,6 +122,7 @@ describe('errorOfFailedResponse (生の fetch の失敗)', () => {
   it('503 の緊急停止・メンテナンス中は ServiceUnavailableError (固定の文)', () => {
     expect(errorOfFailedResponse(503, AI_CHAT_DISABLED_BODY)).toEqual(new ServiceUnavailableError(AI_CHAT_DISABLED_MESSAGE));
     expect(errorOfFailedResponse(503, MAINTENANCE_BODY).message).toBe(MAINTENANCE_MESSAGE);
+    expect(errorOfFailedResponse(503, CONSENT_CHECK_FAILED_BODY)).toEqual(new ServiceUnavailableError(AI_CONSENT_CHECK_FAILED_MESSAGE));
   });
 
   it('それ以外は、これまでどおり `HTTP <状態>: <本文>` (同意の 403 の見分けが読む形を変えない)', () => {
@@ -109,9 +135,11 @@ describe('errorOfFailedResponse (生の fetch の失敗)', () => {
 });
 
 describe('serviceUnavailableMessageOf (本文を JSON として読んだあと)', () => {
-  it('503 の緊急停止・メンテナンス中だけ固定の文。ほかは null', () => {
+  it('503 の緊急停止・メンテナンス中・同意の状況を読めなかったときだけ固定の文。ほかは null', () => {
     expect(serviceUnavailableMessageOf(503, JSON.parse(MAINTENANCE_BODY))).toBe(MAINTENANCE_MESSAGE);
     expect(serviceUnavailableMessageOf(503, JSON.parse(AI_CHAT_DISABLED_BODY))).toBe(AI_CHAT_DISABLED_MESSAGE);
+    expect(serviceUnavailableMessageOf(503, JSON.parse(CONSENT_CHECK_FAILED_BODY))).toBe(AI_CONSENT_CHECK_FAILED_MESSAGE);
+    expect(serviceUnavailableMessageOf(500, JSON.parse(CONSENT_CHECK_FAILED_BODY))).toBeNull();
     expect(serviceUnavailableMessageOf(500, JSON.parse(MAINTENANCE_BODY))).toBeNull();
     expect(serviceUnavailableMessageOf(503, {})).toBeNull();
     expect(serviceUnavailableMessageOf(503, null)).toBeNull();
@@ -122,6 +150,7 @@ describe('getApiErrorMessage', () => {
   it('503 の緊急停止・メンテナンス中は、本文の文字列ではなく固定の文', () => {
     expect(getApiErrorMessage(new Error(`HTTP 503 Service Unavailable: ${MAINTENANCE_BODY}`), 'fallback')).toBe(MAINTENANCE_MESSAGE);
     expect(getApiErrorMessage(new Error(`HTTP 503: ${AI_CHAT_DISABLED_BODY}`), 'fallback')).toBe(AI_CHAT_DISABLED_MESSAGE);
+    expect(getApiErrorMessage(new Error(`HTTP 503: ${CONSENT_CHECK_FAILED_BODY}`), 'fallback')).toBe(AI_CONSENT_CHECK_FAILED_MESSAGE);
   });
 
   it('ほかのエラーは、これまでどおり本文の message', () => {
@@ -163,6 +192,13 @@ describe('getApi() — 全メソッドが 503 を固定の文の例外に置き�
     const error = await call(freshApi()).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ServiceUnavailableError);
     expect((error as Error).message).toBe(MAINTENANCE_MESSAGE);
+  });
+
+  it('#1486 同意の状況を読めなかった 503 は、固定の文の ServiceUnavailableError (「HTTP 503: {...}」の生の文字列を出さない)', async () => {
+    mockClient.post.mockRejectedValue(new Error(`HTTP 503 Service Unavailable: ${CONSENT_CHECK_FAILED_BODY}`));
+    const error = await freshApi().post('/api/ai/health/insights', {}).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ServiceUnavailableError);
+    expect((error as Error).message).toBe(AI_CONSENT_CHECK_FAILED_MESSAGE);
   });
 
   it('ほかのエラーは、そのまま (同じ例外を) 投げる', async () => {

@@ -13,16 +13,48 @@
  *   D. ジョブの書き込みに失敗・すべて重複: 数えた 1 回を戻す
  *   E. 献立の保存に失敗: 数えた 1 回を戻し、ジョブを積まない
  *   F. (更新の入口) 前回見送った・失敗した・待ちの同じ料理を保存し直す: ジョブを積み直す。画像のある料理は積まない
+ *   G. (#1487 の整合ゲート) 実データの形 (subject_hash の無い写真の料理 = buildPhotoDishList の出力、商品の料理 =
+ *      buildCatalogSelectionUpdate の dishes) を前回にして、完了の切り替え (料理以外だけを変える保存) ではジョブを積まず・
+ *      consumeAiUsage を呼ばず・料理の画像を消さない。料理の中身を変えても写真・商品の画像を AI の画像で置き換えない
+ *   H. (#1487 の整合ゲート) 商品を選んだ保存 (catalogProductId): 料理は商品の料理 (画像は商品の画像) で、AI の画像のジョブを作らない
+ *   I. (#1487 の整合ゲート R1) 商品の献立の古い商品の料理 (origin/main の形: 画像の項目なし。以前の保存し直しで generated_ai に書き換わった形) と、
+ *      写真の複数の料理に料理を足す保存: ジョブを積まず・数えず、献立のカバーは商品・写真の画像のまま
+ *
+ * 献立の行の作り物は、入口が select で名指しした列だけを返す (入口が読まない列 (catalog_product_id など) を読んだことにしない)
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AiUsageResult } from '../supabase/functions/_shared/ai-daily-limit';
-import { buildDishImageSubjectHash, type MealImageDish } from '../supabase/functions/_shared/meal-image';
+import { buildDishImageSubjectHash, buildPhotoDishList, type MealImageDish } from '../supabase/functions/_shared/meal-image';
 import { AI_USAGE_ALLOWED, AI_USAGE_DENIED } from './helpers/ai-usage-mock';
 
 const USER_ID = 'user-1';
 const MEAL_ID = 'meal-1';
 const DAY_ID = 'day-1';
 const CURRY = { name: 'カレー', role: 'main' };
+const PHOTO_URL = 'https://example.com/storage/meal-photos/user-1/photo.jpg';
+const PRODUCT_URL = 'https://example.com/catalog/bento.jpg';
+const CATALOG_PRODUCT_ID = 'catalog-1';
+/** catalog_products の行 (buildCatalogSelectionUpdate が読む) */
+const CATALOG_ROW = {
+  id: CATALOG_PRODUCT_ID,
+  source_id: 'source-1',
+  name: '幕の内弁当',
+  brand_name: 'ブランド',
+  category_code: null,
+  description: null,
+  main_image_url: PRODUCT_URL,
+  canonical_url: 'https://example.com/catalog/bento',
+  price_yen: 500,
+  calories_kcal: 650,
+  protein_g: 20,
+  fat_g: 18,
+  carbs_g: 90,
+  sodium_g: 2.5,
+  fiber_g: 3,
+  sugar_g: 5,
+  availability_status: 'available',
+  catalog_sources: { code: 'store', brand_name: 'ブランド' },
+};
 
 interface DbError {
   code: string;
@@ -38,6 +70,12 @@ const h = vi.hoisted(() => ({
   state: {
     /** 献立 (planned_meals) の今の行 (更新の入口が読む) */
     existingDishes: [] as MealImageDish[],
+    /** 献立の今のカバー画像 (planned_meals.image_url) */
+    existingImageUrl: null as string | null,
+    /** 献立の今の商品 (planned_meals.catalog_product_id) */
+    existingCatalogProductId: null as string | null,
+    /** 献立の今の作り方 (planned_meals.source_type) */
+    existingSourceType: null as string | null,
     /** planned_meals の insert / update の失敗 */
     saveError: null as { code: string; message: string } | null,
     /** meal_image_jobs の insert の結果 */
@@ -52,28 +90,53 @@ const h = vi.hoisted(() => ({
   trigger: vi.fn(async () => undefined),
 }));
 
+/**
+ * select の列の指定 ('id, dishes, user_daily_meals!inner(user_id)' など) の、列 (埋め込みは表の名前) の一覧。'*' や指定なしは null (全部)
+ */
+function selectedColumns(columns: unknown): Set<string> | null {
+  if (typeof columns !== 'string' || columns.trim() === '' || columns.trim() === '*') return null;
+  const names: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const char of columns) {
+    if (char === '(') depth += 1;
+    if (char === ')') depth -= 1;
+    if (char === ',' && depth === 0) {
+      names.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  names.push(current);
+  return new Set(names.map((name) => name.trim().split(/[!(:\s]/)[0]).filter(Boolean));
+}
+
 /** 利用者のクライアントの作り物。どのメソッドを繋いでも同じものを返し、single / maybeSingle / await で表ごとの結果を返す */
 function makeUserDb() {
   const from = (table: string) => {
     let op: Write['op'] | 'select' = 'select';
     let payload: unknown = null;
+    /** 読むときに入口が名指しした列 (null は全部) */
+    let readColumns: Set<string> | null = null;
     const result = (): { data: unknown; error: DbError | null } => {
       if (table === 'user_daily_meals') return { data: { id: DAY_ID }, error: null };
+      if (table === 'catalog_products') return { data: CATALOG_ROW, error: null };
       if (table === 'planned_meals') {
         if (op === 'select') {
-          return {
-            data: {
-              id: MEAL_ID,
-              dish_name: 'カレー',
-              mode: 'cook',
-              catalog_product_id: null,
-              generation_metadata: null,
-              dishes: h.state.existingDishes,
-              image_url: null,
-              user_daily_meals: { user_id: USER_ID },
-            },
-            error: null,
+          const row: Record<string, unknown> = {
+            id: MEAL_ID,
+            dish_name: 'カレー',
+            mode: 'cook',
+            catalog_product_id: h.state.existingCatalogProductId,
+            source_type: h.state.existingSourceType,
+            generation_metadata: null,
+            dishes: h.state.existingDishes,
+            image_url: h.state.existingImageUrl,
+            user_daily_meals: { user_id: USER_ID },
           };
+          const columns = readColumns;
+          return { data: columns ? Object.fromEntries(Object.entries(row).filter(([key]) => columns.has(key))) : row, error: null };
         }
         if (h.state.saveError) return { data: null, error: h.state.saveError };
         return { data: { id: MEAL_ID, daily_meal_id: DAY_ID, ...(payload as Record<string, unknown>) }, error: null };
@@ -82,7 +145,11 @@ function makeUserDb() {
     };
     const builder: Record<string, unknown> = {};
     const chain = () => builder;
-    for (const name of ['select', 'eq', 'in', 'is', 'order', 'limit']) builder[name] = chain;
+    for (const name of ['eq', 'in', 'is', 'order', 'limit']) builder[name] = chain;
+    builder.select = (columns?: unknown) => {
+      if (op === 'select') readColumns = selectedColumns(columns);
+      return builder;
+    };
     for (const name of ['insert', 'update', 'upsert'] as const) {
       builder[name] = (value: unknown) => {
         op = name;
@@ -148,6 +215,7 @@ import { PATCH as mealsPatch } from '../src/app/api/meals/[id]/route';
 import { POST as mealPlansPost } from '../src/app/api/meal-plans/meals/route';
 import { PATCH as mealPlansPatch } from '../src/app/api/meal-plans/meals/[id]/route';
 import { runConsultationAction } from '../src/lib/ai/consultation-action-executor';
+import { buildCatalogSelectionUpdate } from '../lib/catalog-products';
 
 /** 入口を 1 回動かした結果 (応答の本文 / アクションの結果) */
 type Outcome = Record<string, unknown>;
@@ -220,6 +288,9 @@ function savedDishes(): MealImageDish[] {
 beforeEach(() => {
   vi.clearAllMocks();
   h.state.existingDishes = [];
+  h.state.existingImageUrl = null;
+  h.state.existingCatalogProductId = null;
+  h.state.existingSourceType = null;
   h.state.saveError = null;
   h.state.queueError = null;
   h.state.writes = [];
@@ -357,5 +428,273 @@ describe.each(ENTRIES.filter((entry) => entry.updates))('#1487 同じ料理の�
 
     expect(savedDishes()[0]).toMatchObject({ image_status: 'failed', image_error: 'skipped_ai_limit' });
     expect(h.state.queueInserts).toEqual([]);
+  });
+});
+
+/** 更新の入口に、料理以外 (または料理) だけを変える本文を送る */
+interface UpdateEntry {
+  name: string;
+  /** 完了の切り替え (料理以外だけを変える保存) */
+  toggle: () => Promise<Outcome>;
+  /** 料理を送る保存 */
+  withDishes: (dishes: MealImageDish[]) => Promise<Outcome>;
+}
+
+const runConsultation = async (updates: Record<string, unknown>): Promise<Outcome> => {
+  const db = makeUserDb();
+  const out = await runConsultationAction(db as unknown as Parameters<typeof runConsultationAction>[0], { id: USER_ID }, {
+    id: 'action-1',
+    action_type: 'update_meal',
+    action_params: { mealId: MEAL_ID, updates },
+  } as unknown as Parameters<typeof runConsultationAction>[2]);
+  return { status: out.success ? 200 : 500, ...((out.result ?? {}) as Outcome) };
+};
+
+const UPDATE_ENTRIES: UpdateEntry[] = [
+  {
+    name: 'PATCH /api/meals/[id]',
+    toggle: async () => {
+      const res = await mealsPatch(json(`http://localhost/api/meals/${MEAL_ID}`, 'PATCH', { is_completed: true }), { params: { id: MEAL_ID } });
+      return { status: res.status, ...((await res.json()) as Outcome) };
+    },
+    withDishes: async (dishes) => {
+      const res = await mealsPatch(json(`http://localhost/api/meals/${MEAL_ID}`, 'PATCH', { dishes }), { params: { id: MEAL_ID } });
+      return { status: res.status, ...((await res.json()) as Outcome) };
+    },
+  },
+  {
+    name: 'PATCH /api/meal-plans/meals/[id]',
+    toggle: async () => {
+      const res = await mealPlansPatch(json(`http://localhost/api/meal-plans/meals/${MEAL_ID}`, 'PATCH', { isCompleted: true }), { params: { id: MEAL_ID } });
+      return { status: res.status, ...((await res.json()) as Outcome) };
+    },
+    withDishes: async (dishes) => {
+      const res = await mealPlansPatch(json(`http://localhost/api/meal-plans/meals/${MEAL_ID}`, 'PATCH', { dishes }), { params: { id: MEAL_ID } });
+      return { status: res.status, ...((await res.json()) as Outcome) };
+    },
+  },
+  {
+    name: 'AI 相談の update_meal',
+    // AI 相談の update_meal は完了の項目を持たない (完了は complete_meal)。料理以外だけを変える更新としてメモを変える
+    toggle: () => runConsultation({ memo: '少なめに食べた' }),
+    withDishes: (dishes) => runConsultation({ dishes }),
+  },
+];
+
+/** 実データの形の前回の料理と献立のカバー */
+interface MealShape {
+  label: string;
+  build: () => Promise<{ dishes: MealImageDish[]; cover: string | null; catalogProductId: string | null }>;
+  /** 画像の項目の無い古い商品の料理 (保存すると、商品の料理 (image_source: 'catalog') として保存する) */
+  legacyCatalog?: boolean;
+}
+
+/** origin/main の buildCatalogMealFields・端末の保存が作った商品の料理 (画像の項目なし。画像は献立のカバーだけ) */
+const LEGACY_CATALOG_DISH: MealImageDish = { name: '幕の内弁当', role: 'main', calories_kcal: 650, protein_g: 20 };
+
+/** 保存したあとの料理の image_source (古い商品の料理は商品の料理として保存する) */
+const savedSourceOf = (shape: MealShape, dish: MealImageDish) => (shape.legacyCatalog ? 'catalog' : dish.image_source);
+
+const MEAL_SHAPES: MealShape[] = [
+  {
+    label: '写真の料理 (1 つ・buildPhotoDishList の出力)',
+    build: async () => ({ dishes: buildPhotoDishList([{ name: '親子丼', role: 'main' }], PHOTO_URL), cover: PHOTO_URL, catalogProductId: null }),
+  },
+  {
+    label: '写真の料理 (複数・buildPhotoDishList の出力)',
+    build: async () => ({
+      dishes: buildPhotoDishList([{ name: '親子丼', role: 'main' }, { name: '味噌汁', role: 'soup' }], PHOTO_URL),
+      cover: PHOTO_URL,
+      catalogProductId: null,
+    }),
+  },
+  {
+    label: '商品の料理 (buildCatalogSelectionUpdate の dishes)',
+    build: async () => {
+      const { fields } = await buildCatalogSelectionUpdate({
+        supabase: makeUserDb() as unknown as Parameters<typeof buildCatalogSelectionUpdate>[0]['supabase'],
+        catalogProductId: CATALOG_PRODUCT_ID,
+        selectedFrom: 'manual_search',
+      });
+      return { dishes: fields.dishes as MealImageDish[], cover: fields.image_url as string | null, catalogProductId: CATALOG_PRODUCT_ID };
+    },
+  },
+  {
+    label: '商品の料理 (origin/main の形・画像の項目なし)',
+    build: async () => ({ dishes: [{ ...LEGACY_CATALOG_DISH }], cover: PRODUCT_URL, catalogProductId: CATALOG_PRODUCT_ID }),
+    legacyCatalog: true,
+  },
+];
+
+/** planned_meals に保存した最後の行 */
+function savedRow(): Record<string, unknown> {
+  const saves = h.state.writes.filter((w) => w.table === 'planned_meals' && (w.op === 'insert' || w.op === 'update'));
+  return (saves[saves.length - 1]?.payload ?? {}) as Record<string, unknown>;
+}
+
+describe.each(UPDATE_ENTRIES)('#1487 G. 写真・商品の料理を保存し直す: $name', (entry) => {
+  it.each(MEAL_SHAPES)('$label: 完了の切り替えでジョブを積まず、consumeAiUsage を呼ばず、料理の画像を消さない', async (shape) => {
+    const meal = await shape.build();
+    expect(meal.dishes.every((dish) => dish.image_subject_hash === undefined)).toBe(true);
+    h.state.existingDishes = meal.dishes;
+    h.state.existingImageUrl = meal.cover;
+    h.state.existingCatalogProductId = meal.catalogProductId;
+
+    const out = await entry.toggle();
+
+    expect(out.status).toBe(200);
+    expect(h.checkRateLimit).not.toHaveBeenCalled();
+    expect(h.consumeAiUsage).not.toHaveBeenCalled();
+    expect(h.state.queueInserts).toEqual([]);
+    expect(h.trigger).not.toHaveBeenCalled();
+    const row = savedRow();
+    const saved = (row.dishes ?? []) as MealImageDish[];
+    expect(saved).toHaveLength(meal.dishes.length);
+    meal.dishes.forEach((dish, index) => {
+      expect(saved[index]).toMatchObject({
+        image_url: dish.image_url ?? null,
+        image_source: savedSourceOf(shape, dish),
+        image_status: dish.image_status ?? null,
+      });
+    });
+    // 献立のカバーも写真・商品の画像のまま
+    expect(row.image_url).toBe(meal.cover);
+  });
+
+  it.each(MEAL_SHAPES)('$label: 料理の中身を変えても、写真・商品の画像を AI の画像で置き換えない (ジョブを積まない)', async (shape) => {
+    const meal = await shape.build();
+    h.state.existingDishes = meal.dishes;
+    h.state.existingImageUrl = meal.cover;
+    h.state.existingCatalogProductId = meal.catalogProductId;
+
+    // 画面が前回の料理を編集して送る形 (画像の項目がついたまま) と、AI が画像の項目の無い料理を送る形
+    const edited = meal.dishes.map((dish) => ({ ...dish, name: `${String(dish.name)}(大盛り)` }));
+    const bare = meal.dishes.map((_dish, index) => ({ name: `別の料理${index}`, role: 'main' }));
+    for (const next of [edited, bare]) {
+      h.state.writes = [];
+      const out = await entry.withDishes(next);
+
+      expect(out.status).toBe(200);
+      expect(h.consumeAiUsage).not.toHaveBeenCalled();
+      expect(h.state.queueInserts).toEqual([]);
+      const saved = (savedRow().dishes ?? []) as MealImageDish[];
+      meal.dishes.forEach((dish, index) => {
+        expect(saved[index]).toMatchObject({ name: next[index].name, image_url: dish.image_url ?? null, image_source: savedSourceOf(shape, dish) });
+      });
+      // 献立のカバーも写真・商品の画像のまま
+      expect(savedRow().image_url).toBe(meal.cover);
+    }
+  });
+
+  it('料理を足したときは、足した料理だけに AI の画像のジョブを積む (写真の料理は置き換えない)', async () => {
+    h.state.existingDishes = buildPhotoDishList([{ name: '親子丼', role: 'main' }], PHOTO_URL);
+    h.state.existingImageUrl = PHOTO_URL;
+
+    await entry.withDishes([...h.state.existingDishes, { name: '味噌汁', role: 'soup' }]);
+
+    expect(h.consumeAiUsage).toHaveBeenCalledTimes(1);
+    expect(h.state.queueInserts).toHaveLength(1);
+    expect(h.state.queueInserts[0]).toMatchObject({ dish_index: 1 });
+    const saved = savedRow().dishes as MealImageDish[];
+    expect(saved[0]).toMatchObject({ image_url: PHOTO_URL, image_source: 'meal_photo', image_status: 'ready', image_subject_hash: null });
+    expect(saved[1]).toMatchObject({ image_source: 'generated_ai', image_status: 'pending' });
+  });
+});
+
+describe.each(UPDATE_ENTRIES)('#1487 I. 商品の献立の古い商品の料理・写真の複数の料理に足した料理 (整合ゲート R1): $name', (entry) => {
+  /** 以前の reconcileDishImages が、古い商品の料理を「料理が変わった」とみなして書き換えた形 (ジョブは積めず、AI の画像はできていない) */
+  async function rewrittenLegacyCatalogDish(): Promise<MealImageDish> {
+    return {
+      ...LEGACY_CATALOG_DISH,
+      image_subject_hash: await buildDishImageSubjectHash(LEGACY_CATALOG_DISH, 0),
+      image_source: 'generated_ai',
+      image_status: 'stale',
+      image_url: null,
+      image_generated_at: null,
+      image_error: null,
+    };
+  }
+
+  const expectNoImageJob = () => {
+    expect(h.checkRateLimit).not.toHaveBeenCalled();
+    expect(h.consumeAiUsage).not.toHaveBeenCalled();
+    expect(h.state.queueInserts).toEqual([]);
+    expect(h.trigger).not.toHaveBeenCalled();
+  };
+
+  it.each([
+    ['catalog_product_id で分かる', { catalogProductId: CATALOG_PRODUCT_ID, sourceType: 'catalog_product' }],
+    ['source_type だけで分かる', { catalogProductId: null, sourceType: 'catalog_product' }],
+  ])('以前の保存し直しで generated_ai・画像なしに書き換わった商品の料理 (%s): 完了の切り替え・名前の変更で積まず・数えず、商品の料理として保存し、カバーは商品の画像', async (_label, meal) => {
+    for (const run of [() => entry.toggle(), () => entry.withDishes([{ ...LEGACY_CATALOG_DISH, name: '幕の内弁当(大盛り)' }])]) {
+      vi.clearAllMocks();
+      h.state.writes = [];
+      h.state.existingDishes = [await rewrittenLegacyCatalogDish()];
+      h.state.existingImageUrl = PRODUCT_URL;
+      h.state.existingCatalogProductId = meal.catalogProductId;
+      h.state.existingSourceType = meal.sourceType;
+
+      const out = await run();
+
+      expect(out.status).toBe(200);
+      expectNoImageJob();
+      expect((savedRow().dishes as MealImageDish[])[0]).toMatchObject({ image_url: null, image_source: 'catalog', image_status: null, image_subject_hash: null });
+      expect(savedRow().image_url).toBe(PRODUCT_URL);
+    }
+  });
+
+  it('写真の料理 (複数) に料理を足しても、足した料理に積まず・数えず (状態なし)、カバーは写真のまま', async () => {
+    h.state.existingDishes = buildPhotoDishList([{ name: '親子丼', role: 'main' }, { name: '味噌汁', role: 'soup' }], PHOTO_URL);
+    h.state.existingImageUrl = PHOTO_URL;
+
+    const out = await entry.withDishes([...h.state.existingDishes, { name: 'お新香', role: 'side' }]);
+
+    expect(out.status).toBe(200);
+    expectNoImageJob();
+    const saved = savedRow().dishes as MealImageDish[];
+    expect(saved.slice(0, 2).map((dish) => [dish.image_source, dish.image_status, dish.image_url])).toEqual([
+      ['meal_photo', 'stale', null],
+      ['meal_photo', 'stale', null],
+    ]);
+    expect(saved[2]).toMatchObject({ name: 'お新香', image_url: null, image_source: null, image_status: null, image_subject_hash: null });
+    expect(savedRow().image_url).toBe(PHOTO_URL);
+  });
+});
+
+describe('#1487 H. 商品を選んだ保存では AI の画像のジョブを作らない', () => {
+  const expectCatalogDish = (dishes: unknown) => {
+    expect(dishes).toEqual([
+      expect.objectContaining({ name: '幕の内弁当', image_url: PRODUCT_URL, image_source: 'catalog', image_status: 'ready' }),
+    ]);
+    expect((dishes as MealImageDish[])[0]).not.toHaveProperty('image_subject_hash');
+  };
+
+  it.each([
+    ['POST /api/meals', async () => mealsPost(json('http://localhost/api/meals', 'POST', { date: '2026-10-11', mealType: 'lunch', dishName: 'カレー', dishes: [CURRY], catalogProductId: CATALOG_PRODUCT_ID }))],
+    ['POST /api/meal-plans/meals', async () => mealPlansPost(json('http://localhost/api/meal-plans/meals', 'POST', { dayDate: '2026-10-11', mealType: 'lunch', dishName: 'カレー', dishes: [CURRY], catalogProductId: CATALOG_PRODUCT_ID }))],
+  ])('%s: 送られた料理から積まず、数えず、商品の料理で保存する', async (_label, run) => {
+    const res = await run();
+
+    expect(res.status).toBe(200);
+    expect(h.checkRateLimit).not.toHaveBeenCalled();
+    expect(h.consumeAiUsage).not.toHaveBeenCalled();
+    expect(h.state.queueInserts).toEqual([]);
+    expectCatalogDish(savedRow().dishes);
+    expect(savedRow().image_url).toBe(PRODUCT_URL);
+  });
+
+  it.each([
+    ['PATCH /api/meals/[id]', async () => mealsPatch(json(`http://localhost/api/meals/${MEAL_ID}`, 'PATCH', { catalogProductId: CATALOG_PRODUCT_ID }), { params: { id: MEAL_ID } })],
+    ['PATCH /api/meal-plans/meals/[id]', async () => mealPlansPatch(json(`http://localhost/api/meal-plans/meals/${MEAL_ID}`, 'PATCH', { catalogProductId: CATALOG_PRODUCT_ID }), { params: { id: MEAL_ID } })],
+  ])('%s: AI の画像の料理の献立で商品を選んでも、前回の料理の名前を変えたものから積まず、商品の料理で保存する', async (_label, run) => {
+    h.state.existingDishes = [{ ...CURRY, image_subject_hash: await buildDishImageSubjectHash(CURRY, 0), image_source: 'generated_ai', image_status: 'ready', image_url: 'https://example.com/ai.png' }];
+    h.state.existingImageUrl = 'https://example.com/ai.png';
+    const res = await run();
+
+    expect(res.status).toBe(200);
+    expect(h.consumeAiUsage).not.toHaveBeenCalled();
+    expect(h.state.queueInserts).toEqual([]);
+    expectCatalogDish(savedRow().dishes);
+    expect(savedRow().image_url).toBe(PRODUCT_URL);
   });
 });

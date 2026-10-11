@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Supabase (認証チェック用) クライアントのモック
 const mockGetUser = vi.fn();
@@ -15,6 +15,26 @@ vi.mock('@supabase/supabase-js', () => ({
     from: () => ({ insert: mockInsert }),
   })),
 }));
+
+// 回数制限 (#1493)。既定は本物 (Upstash を設定しない in-memory の数え方) をそのまま通し、呼ばれ方を記録する。
+// 実行環境に Upstash の設定があっても外の Redis に繋がないよう、モジュールを読み込む前に外す
+const rateLimitMocks = vi.hoisted(() => {
+  delete process.env.UPSTASH_REDIS_REST_URL;
+  delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  return { checkRateLimit: vi.fn() };
+});
+vi.mock('@/lib/rate-limit', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/rate-limit')>();
+  rateLimitMocks.checkRateLimit.mockImplementation(actual.checkRateLimit);
+  return { ...actual, checkRateLimit: rateLimitMocks.checkRateLimit };
+});
+
+// rate-limit が読み込み時に残す warn (Upstash 未設定) を、app_logs への insert (mockInsert) に流さない
+vi.mock('@/lib/db-logger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/db-logger')>();
+  const quiet = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  return { ...actual, createLogger: () => ({ ...quiet, withUser: () => quiet }) };
+});
 
 const { POST } = await import('@/app/api/log/route');
 
@@ -141,3 +161,85 @@ describe('POST /api/log (#1044 F6-20)', () => {
     expect(mockInsert).not.toHaveBeenCalled();
   });
 });
+
+describe('POST /api/log の利用者ごとの回数制限 (#1493)', () => {
+  /** in-memory の数え方は利用者ごと。テストごとに別の利用者にして、前のテストの回数を持ち越さない */
+  const userOf = (n: number) => ({ id: `b1eebc99-9c0b-4ef8-bb6d-6bb9bd38${String(n).padStart(4, '0')}` });
+  const signInAs = (user: { id: string }) => mockGetUser.mockResolvedValue({ data: { user }, error: null });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('L-1: 認証で確定した user.id と client-log の枠で数える (body の値は key に使わない)', async () => {
+    const user = userOf(1);
+    signInAs(user);
+
+    const res = await POST(makeRequest({ level: 'error', message: 'x', metadata: { user_id: 'someone-else' } }));
+
+    expect(res.status).toBe(200);
+    expect(rateLimitMocks.checkRateLimit).toHaveBeenCalledTimes(1);
+    expect(rateLimitMocks.checkRateLimit).toHaveBeenCalledWith(user.id, 'client-log');
+  });
+
+  it('L-2: 未認証・入力の誤りは、回数を数える前に断る (枠を減らさない)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: new Error('no session') });
+    expect((await POST(makeRequest({ level: 'error', message: 'x' }))).status).toBe(401);
+
+    signInAs(userOf(2));
+    expect((await POST(makeRequest({ level: 'fatal', message: 'x' }))).status).toBe(400);
+
+    expect(rateLimitMocks.checkRateLimit).not.toHaveBeenCalled();
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('L-3: 境界: 同じ利用者は 1 分に 30 回まで保存され、31 回目は 429 (保存しない)。level を問わず同じ枠で数える', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-12T00:00:00Z'));
+    signInAs(userOf(3));
+
+    for (let i = 0; i < 30; i += 1) {
+      const res = await POST(makeRequest({ level: i % 2 === 0 ? 'error' : 'info', message: `m${i}` }));
+      expect(res.status, `${i + 1} 回目`).toBe(200);
+    }
+    expect(mockInsert).toHaveBeenCalledTimes(30);
+
+    const blocked = await POST(makeRequest({ level: 'error', message: 'one too many' }));
+
+    expect(blocked.status).toBe(429);
+    const body = await blocked.json();
+    expect(body).toMatchObject({ code: 'RATE_LIMITED' });
+    expect(body.retryAfter).toBeGreaterThanOrEqual(1);
+    expect(body.retryAfter).toBeLessThanOrEqual(60);
+    expect(blocked.headers.get('Retry-After')).toBe(String(body.retryAfter));
+    // 31 回目は保存していない
+    expect(mockInsert).toHaveBeenCalledTimes(30);
+  });
+
+  it('L-4: 上限に達しても、ほかの利用者は止まらない。60 秒たつと同じ利用者もまた送れる', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-12T01:00:00Z'));
+    const heavy = userOf(4);
+    signInAs(heavy);
+    for (let i = 0; i < 30; i += 1) await POST(makeRequest({ level: 'error', message: 'x' }));
+    expect((await POST(makeRequest({ level: 'error', message: 'x' }))).status).toBe(429);
+
+    signInAs(userOf(5));
+    expect((await POST(makeRequest({ level: 'error', message: 'x' }))).status).toBe(200);
+
+    vi.setSystemTime(new Date('2026-10-12T01:01:01Z'));
+    signInAs(heavy);
+    expect((await POST(makeRequest({ level: 'error', message: 'x' }))).status).toBe(200);
+  });
+
+  it('L-5: 回数を判定できない (Upstash が例外を投げた) ときは保存せず 500 (通さない)', async () => {
+    signInAs(userOf(6));
+    rateLimitMocks.checkRateLimit.mockRejectedValueOnce(new Error('upstash unreachable'));
+
+    const res = await POST(makeRequest({ level: 'error', message: 'x' }));
+
+    expect(res.status).toBe(500);
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+});
+

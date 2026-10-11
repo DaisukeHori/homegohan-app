@@ -53,7 +53,10 @@ export async function POST(request: Request) {
     const imageModel = process.env.GEMINI_IMAGE_MODEL ?? undefined;
     const triggerSource = 'nextjs:meal-plans/meals:POST';
     const requestId = request.headers.get('x-request-id') ?? null;
-    const hasImageManagedDishes = Array.isArray(dishes) && dishes.length > 0;
+    // 商品を選んだとき (catalogProductId) は、料理を商品の料理 (画像は商品の画像。buildCatalogSelectionUpdate の dishes / image_url) で
+    // 保存するので、送られた料理から AI の画像のジョブを作らない (#1487 の整合ゲート。作ると、保存しない料理のために安全弁の 1 回を数え、
+    // ジョブを積んでしまう)
+    const hasImageManagedDishes = !catalogProductId && Array.isArray(dishes) && dishes.length > 0;
     const dishImagePayload = hasImageManagedDishes
       ? await buildDishImagePayload({
           previousDishes: null,

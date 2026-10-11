@@ -5,7 +5,7 @@ import {
   buildCatalogSelectionUpdate,
   clearCatalogSelectionMetadata,
 } from '../../../../../lib/catalog-products';
-import { markDishImagesSkipped, type MealImageJobSeed } from '../../../../../lib/meal-image';
+import { isCatalogProductMeal, markDishImagesSkipped, type MealImageJobSeed } from '../../../../../lib/meal-image';
 import {
   buildDishImagePayload,
   cancelPendingMealImageJobs,
@@ -125,7 +125,12 @@ export async function PATCH(
       (Array.isArray(dishes) && dishes.length > 0);
     let jobs: MealImageJobSeed[] = [];
 
-    if (hasImageManagedDishes) {
+    // 商品を選んだとき (catalogProductId) は、料理と画像を商品のもの (上の buildCatalogSelectionUpdate の dishes / image_url) にし、
+    // 前回の料理から AI の画像のジョブを作らない (#1487 の整合ゲート。前回の料理の名前を商品名に変えたものを料理の変更とみなして、
+    // 商品の料理を AI の画像で置き換えてしまうため)
+    if (catalogProductId) {
+      // 料理と画像は buildCatalogSelectionUpdate の fields で設定済み
+    } else if (hasImageManagedDishes) {
       const { dishes: reconciledDishes, jobs: nextJobs, mealCoverImageUrl } = await buildDishImagePayload({
         previousDishes: existingMeal.dishes ?? null,
         nextDishes: dishes ?? undefined,
@@ -135,6 +140,8 @@ export async function PATCH(
         imageModel,
         existingCover: existingMeal.image_url ?? null,
         fallbackMealImageUrl: existingMeal.image_url ?? null,
+        // 保存する前の献立で見る (料理を変えると、上で商品とのつながりを外すが、前回の料理は商品の料理のまま。#1487 の整合ゲート)
+        previousMealIsCatalog: isCatalogProductMeal(existingMeal),
       });
       updateData.dishes = reconciledDishes;
       updateData.image_url = mealCoverImageUrl;

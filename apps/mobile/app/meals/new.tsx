@@ -14,19 +14,7 @@ import { MOCK_PHOTO_RESPONSE } from "@homegohan/handson-tour-shared";
 import { registerTourTarget, unregisterTourTarget } from "../../src/handson-tour/useTourOverlayLogic";
 import { handleAiConsentRequiredError, useLeaveModalRouteBeforeConsentScreen } from "../../src/lib/ai-consent";
 import { classifyPhotoFailureOf } from "../../src/lib/classify-photo-failure";
-
-// Inlined from lib/meal-image to avoid importing server-side code
-interface MealImageDish { name?: string | null; image_url?: string | null; image_source?: string | null; image_status?: string | null; image_generated_at?: string | null; [key: string]: any; }
-function buildPhotoDishList(dishes: MealImageDish[], imageUrl: string | null): MealImageDish[] {
-  const isSingle = dishes.length <= 1;
-  return dishes.map((dish) => ({
-    ...dish,
-    image_url: isSingle && imageUrl ? imageUrl : null,
-    image_source: "meal_photo",
-    image_status: isSingle ? "ready" : "stale",
-    image_generated_at: new Date().toISOString(),
-  }));
-}
+import { buildPhotoDishList, catalogDishImageFields } from "../../src/lib/meal-dish-images";
 
 // ─── Catalog types ───────────────────────────────────
 interface CatalogProductSummary {
@@ -601,12 +589,16 @@ export default function MealNewPage() {
       const fat = parseFloat(manualFat) || null;
       const carbs = parseFloat(manualCarbs) || null;
 
+      // 商品を選んだときは、料理の画像を商品の画像にする (#1487。image_source: "catalog" の料理は、サーバーで保存し直しても
+      // AI の画像で置き換えない)
+      const catalogImageUrl = selectedCatalogProduct?.imageUrl ?? null;
       const dish = {
         name, role: "main",
         calories_kcal: cal, protein_g: protein, fat_g: fat, carbs_g: carbs,
         sodium_g: selectedCatalogProduct?.sodiumG ?? null,
         fiber_g: selectedCatalogProduct?.fiberG ?? null,
         sugar_g: selectedCatalogProduct?.sugarG ?? null,
+        ...(selectedCatalogProduct ? catalogDishImageFields(catalogImageUrl) : {}),
       };
 
       const { data: newMeal, error: mealError } = await supabase
@@ -621,6 +613,7 @@ export default function MealNewPage() {
           sugar_g: selectedCatalogProduct?.sugarG ?? null,
           catalog_product_id: selectedCatalogProduct?.id ?? null,
           source_type: selectedCatalogProduct ? "catalog_product" : "manual",
+          ...(selectedCatalogProduct ? { image_url: catalogImageUrl } : {}),
           is_completed: false, dishes: [dish], is_simple: true,
         }).select("id").single();
 

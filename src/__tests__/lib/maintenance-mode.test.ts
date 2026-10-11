@@ -14,9 +14,11 @@ vi.mock('@/lib/feature-flags', () => ({
 // @/middleware を import するだけなので、Supabase のクライアントは作らせない
 vi.mock('@supabase/ssr', () => ({ createServerClient: vi.fn() }));
 
+import { serviceUnavailableMessageOfBody } from '@homegohan/shared';
 import { config } from '@/middleware';
 import {
   MAINTENANCE_FLAG_TIMEOUT_MS,
+  MAINTENANCE_MESSAGE,
   MAINTENANCE_RETRY_AFTER_SECONDS,
   isMaintenanceExemptPath,
   isMaintenanceFlagOn,
@@ -63,6 +65,11 @@ describe('isMaintenanceExemptPath', () => {
     '/terms',
     '/terms/',
     '/privacy',
+    // #1486: 特定商取引法に基づく表記・お問い合わせの画面
+    '/legal',
+    '/legal/',
+    '/contact',
+    '/contact/',
     '/_next/static/chunks/main.js',
     '/_next/image',
     '/api/health',
@@ -80,7 +87,12 @@ describe('isMaintenanceExemptPath', () => {
     '/admin',
     '/super-admin',
     '/pricing',
-    '/contact',
+    // #1486: 新規登録は止めたまま。似た名前 (/legal-consent は規約への同意の画面) も通さない
+    '/signup',
+    '/signup/verify',
+    '/legal-consent',
+    '/legalx',
+    '/contactx',
     '/loginx',
     '/authx',
     '/termsx',
@@ -97,6 +109,9 @@ describe('isMaintenanceExemptPath', () => {
     '/api/feature-flagsx',
     '/api/log',
     '/api/contact',
+    // #1486: 画面を通しても、その下の API は通さない (お問い合わせの送信・規約への同意の記録)
+    '/api/legal/accept',
+    '/api/signup',
     '/api/super-admin/flags',
   ])('%s は止める', (path) => {
     expect(isMaintenanceExemptPath(path)).toBe(false);
@@ -190,15 +205,28 @@ describe('isMaintenanceFlagOn', () => {
 });
 
 describe('maintenanceApiResponse', () => {
-  it('503 + { error: { code: MAINTENANCE_MODE, message } }。Retry-After が付き、キャッシュさせない', async () => {
+  it('503 + { error: 固定の文, code: MAINTENANCE_MODE, retryAfter }。Retry-After が付き、キャッシュさせない', async () => {
     const res = maintenanceApiResponse();
 
     expect(res.status).toBe(503);
     expect(res.headers.get('retry-after')).toBe(String(MAINTENANCE_RETRY_AFTER_SECONDS));
     expect(res.headers.get('cache-control')).toBe('private, no-store');
     expect(await res.json()).toEqual({
-      error: { code: 'MAINTENANCE_MODE', message: 'ただいまメンテナンス中です。しばらくしてから、もう一度お試しください。' },
+      error: 'ただいまメンテナンス中です。しばらくしてから、もう一度お試しください。',
+      code: 'MAINTENANCE_MODE',
+      retryAfter: MAINTENANCE_RETRY_AFTER_SECONDS,
     });
+  });
+
+  it('#1486 回帰: 本文の error は文字列 (Web の画面が data.error をそのまま出しても、落ちず・[object Object] にならず固定の文になる)', async () => {
+    const body = await maintenanceApiResponse().json();
+
+    expect(typeof body.error).toBe('string');
+    expect(String(body.error)).not.toContain('[object Object]');
+    // モバイル (packages/shared) も同じ本文から同じ固定の文を読む
+    expect(serviceUnavailableMessageOfBody(body)).toBe(MAINTENANCE_MESSAGE);
+    // AI 相談の緊急停止の 503 と同じ形 (error / code / retryAfter のほかの項目を持たない)
+    expect(Object.keys(body).sort()).toEqual(['code', 'error', 'retryAfter']);
   });
 });
 
