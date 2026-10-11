@@ -24,11 +24,16 @@ import type { HttpMethod } from './ai-reach';
  * | 止め方      | 応答                                                         | 入口                                                         |
  * |-------------|--------------------------------------------------------------|--------------------------------------------------------------|
  * | reject      | 429 AI_DAILY_LIMIT (固定の文・retryAfter = 次の JST 0 時まで)。AI へ送らない・数えない | 利用者が押す操作 (写真の解析・献立の生成・AI 相談・買い物リスト・健康インサイト・画像の作成・栄養士のコメントの「再分析」)。キューに積む入口 (v5・週間献立) は積む前に止める (積まない・週間献立は献立を消さない) |
- * | skipAi      | 200。保存・集計はして、AI の部分だけ省く (aiSkipped: AI_DAILY_LIMIT) | 保存と AI の分析を一緒にする操作 (健康診断・血液検査の保存、相談を閉じる)。ホームの栄養の集計 (下の unmetered の機能なので、実際には止まらない) |
- * | skipImage   | 200。保存・更新はして、料理画像だけ見送る (ジョブを積まない。aiSkipped: AI_DAILY_LIMIT) | 献立の保存・更新が付ける料理画像 (meals / meal-plans の 4 本) |
+ * | skipAi      | 200。保存・集計はして、AI の部分だけ省く (aiSkipped: AI_DAILY_LIMIT) | 保存と AI の分析を一緒にする操作 (健康診断・血液検査の保存、相談を閉じる)。ホームの栄養の集計 (下の unmetered の機能。自動の分だけの安全弁に達したときに止まる) |
+ * | skipImage   | 200。保存・更新はして、料理画像だけ見送る (ジョブを積まない。aiSkipped: AI_DAILY_LIMIT) | 献立の保存・更新が付ける料理画像 (meals / meal-plans の 4 本。下の unmetered の機能 meal_image_auto。料理画像の安全弁に達したときに止まる) |
  *
- * 上限に数えない機能 (AI_UNMETERED_FEATURES = nutrition_advice_auto) は、記録だけして止めない。画面を開くと自動で呼ばれる AI
- * (ホームの栄養のアドバイス・栄養の詳細を開いたときの栄養士のコメント) が使う (開くだけで今日の回数が減らないように)。
+ * 上限に数えない機能 (AI_UNMETERED_FEATURES = nutrition_advice_auto / meal_image_auto) は、1 日の上限 (10 回) の合計に入れず、
+ * その上限に達していても止めない。画面を開く・保存するだけで呼ばれる AI (ホームの栄養のアドバイス・栄養の詳細を開いたときの栄養士のコメント・
+ * 料理を保存したときの料理画像) が使う (開く・記録するだけで今日の回数が減らないように)。そのかわり機能ごとの 1 日の安全弁
+ * (DB の ai_unmetered_daily_caps。既定は自動のアドバイス 30 回・料理画像 20 回) で止める (どの機能名で数えるかの材料はクライアントが送る値なので、
+ * API を直接呼んで上限と無関係に AI を使えないように)。止めたときは上の表の止め方で止める。
+ * 写真の解析 (analyze-*) は、写真の「オート」の判別 (classify-photo) が返した数え済みの印を本文の aiUsageGrant で受けたら数えない
+ * (1 回の操作を 1 回。印は 1 回だけ使える)。usage の列は photo_analysis のまま (印が無ければ数える)。
  * 記録したあと、AI へ送る前に DB の処理が失敗したとき (生成のリクエストの行の insert の失敗など) は、数えた 1 回を戻す (refundAiUsage)。
  */
 export type AiLimitAction = 'reject' | 'skipAi' | 'skipImage';
@@ -127,7 +132,7 @@ export const ENFORCED_ROUTES: Record<string, AiRouteEntry> = {
     handlers: {
       POST: {
         recordedBy:
-          'アクションの種類によって AI を使うかが決まる。AI を使うアクション (献立の生成 3 種 = menu_generation、update_meal が付ける料理画像 = image_generation) だけを、' +
+          'アクションの種類によって AI を使うかが決まる。AI を使うアクション (献立の生成 3 種 = menu_generation、update_meal が付ける料理画像 = meal_image_auto) だけを、' +
           'runConsultationAction (src/lib/ai/consultation-action-executor.ts。LIBRARY_RECORDERS) が AI へ送る直前に記録する',
       },
       DELETE: { noAi: 'アクションの却下。ai_action_logs の状態を書き換えるだけ' },
@@ -226,18 +231,18 @@ export const EXEMPT_ROUTES: Record<string, AiRouteEntry> = {
   'src/app/api/meal-plans/meals/[id]/route.ts': {
     consent: '画像のジョブを積むだけ。送るのは process-meal-image-jobs (判定あり)',
     handlers: {
-      PATCH: record('skipImage', 'image_generation'),
+      PATCH: record('skipImage', 'meal_image_auto'),
       DELETE: { noAi: '献立の削除。未処理の料理画像のジョブを取り消すだけ' },
     },
   },
   'src/app/api/meal-plans/meals/route.ts': {
     consent: '画像のジョブを積むだけ。送るのは process-meal-image-jobs (判定あり)',
-    handlers: { POST: record('skipImage', 'image_generation') },
+    handlers: { POST: record('skipImage', 'meal_image_auto') },
   },
   'src/app/api/meals/[id]/route.ts': {
     consent: '画像のジョブを積むだけ。送るのは process-meal-image-jobs (判定あり)',
     handlers: {
-      PATCH: record('skipImage', 'image_generation'),
+      PATCH: record('skipImage', 'meal_image_auto'),
       GET: { noAi: '献立を 1 件 DB から読むだけ' },
       DELETE: { noAi: '献立の削除。未処理の料理画像のジョブを取り消すだけ' },
     },
@@ -245,7 +250,7 @@ export const EXEMPT_ROUTES: Record<string, AiRouteEntry> = {
   'src/app/api/meals/route.ts': {
     consent: '画像のジョブを積むだけ。送るのは process-meal-image-jobs (判定あり)',
     handlers: {
-      POST: record('skipImage', 'image_generation'),
+      POST: record('skipImage', 'meal_image_auto'),
       GET: { noAi: 'その日の献立を DB から読むだけ' },
     },
   },
@@ -267,9 +272,9 @@ export const QUEUE_ONLY_ROUTES: ReadonlySet<string> = new Set(['src/app/api/ai/m
 /** route 以外で記録を呼ぶファイル (route から呼ばれるライブラリ) と、記録する機能・理由 */
 export const LIBRARY_RECORDERS: Record<string, { record: readonly AiFeature[]; reason: string }> = {
   'src/lib/ai/consultation-action-executor.ts': {
-    record: ['menu_generation', 'image_generation'],
+    record: ['menu_generation', 'meal_image_auto'],
     reason:
-      'AI 相談のアクションのうち AI を使うもの (献立の生成 3 種 = menu_generation、update_meal が付ける料理画像 = image_generation) だけを、AI へ送る直前に数える。' +
+      'AI 相談のアクションのうち AI を使うもの (献立の生成 3 種 = menu_generation、update_meal が付ける料理画像 = meal_image_auto。上限に数えず安全弁で止める) だけを、AI へ送る直前に数える。' +
       'アクションの実行 (execute) と、会話の中での自動実行 (messages) の両方から呼ばれる。' +
       '上限 (#1149) に達したとき: 献立の生成は生成せずに aiDailyLimit を返す (execute の route は 429 でアクションを pending のまま残す)、料理画像は画像だけ見送る',
   },
@@ -303,7 +308,7 @@ export const ENFORCED_EDGE: Record<string, AiEdgeEntry> = {
     consent: 'ジョブごとに、献立の持ち主 (meal_image_jobs.user_id) で判定。未同意なら取り消す',
     usage: {
       recordedBy:
-        '料理画像の生成ジョブの実行。献立の保存・更新の route (image_generation) と、献立生成 (menu_generation の一部) が積んだジョブを、service role で処理する。' +
+        '料理画像の生成ジョブの実行。献立の保存・更新の route (meal_image_auto) と、献立生成 (menu_generation の一部) が積んだジョブを、service role で処理する。' +
         'meal_image_jobs は利用者 (authenticated) から書けない (#1465。AI_QUEUE_TABLES) ので、ジョブは記録を通った route と献立生成だけが積む',
     },
   },

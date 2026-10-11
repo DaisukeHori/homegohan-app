@@ -9,10 +9,13 @@ import { describe, expect, it } from 'vitest';
 import * as core from '../supabase/functions/_shared/ai-usage-core';
 import {
   AI_FEATURES,
+  AI_USAGE_GRANT_MAX_AGE_SEC,
   AI_USAGE_RECORDED_HEADER,
   AI_USAGE_MARKER_MAX_AGE_SEC,
   AI_USAGE_MARKER_MAX_FUTURE_SEC,
+  signAiUsageGrant,
   signAiUsageRecorded,
+  verifyAiUsageGrant,
   verifyAiUsageRecorded,
 } from '../supabase/functions/_shared/ai-usage-core';
 
@@ -89,6 +92,71 @@ describe('記録済みの印: 署名と検証', () => {
   });
 });
 
+describe('(#1149) 数え済みの印 (写真の判別 → 解析を 1 回に数える): 署名と検証', () => {
+  const GRANT_ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
+
+  it('署名した印は、同じ鍵・同じユーザー・同じ機能なら検証を通り、印の ID を返す。形式は g1.<UNIX 秒>.<UUID>.<64 桁の hex>', async () => {
+    const grant = await signAiUsageGrant(SECRET, 'photo_analysis', USER_ID, GRANT_ID, NOW);
+    expect(grant).toMatch(/^g1\.\d+\.[0-9a-f-]{36}\.[0-9a-f]{64}$/);
+    expect(grant.split('.')[1]).toBe(String(Math.floor(NOW / 1000)));
+    expect(await verifyAiUsageGrant(grant, 'photo_analysis', USER_ID, [SECRET], NOW)).toEqual({ grantId: GRANT_ID });
+  });
+
+  it('他人の印・別の鍵・別の機能の印は通らない (画面は鍵を持たないので、自分で印を作れない)', async () => {
+    const grant = await signAiUsageGrant(SECRET, 'photo_analysis', USER_ID, GRANT_ID, NOW);
+    expect(await verifyAiUsageGrant(grant, 'photo_analysis', OTHER_USER_ID, [SECRET], NOW)).toBeNull();
+    expect(await verifyAiUsageGrant(grant, 'photo_analysis', USER_ID, ['another-key'], NOW)).toBeNull();
+    expect(await verifyAiUsageGrant(grant, 'consultation', USER_ID, [SECRET], NOW)).toBeNull();
+    // 記録済みの印 (Edge Function へ渡す印) とは形が違い、互いに通らない
+    const marker = await signAiUsageRecorded(SECRET, USER_ID, NOW);
+    expect(await verifyAiUsageGrant(marker, 'photo_analysis', USER_ID, [SECRET], NOW)).toBeNull();
+    expect(await verifyAiUsageRecorded(grant, USER_ID, [SECRET], NOW)).toBe(false);
+  });
+
+  it('署名の対象は印の ID と発行時刻: ID や時刻や署名を書き換えると通らない', async () => {
+    const grant = await signAiUsageGrant(SECRET, 'photo_analysis', USER_ID, GRANT_ID, NOW);
+    const [version, issuedAt, grantId, signature] = grant.split('.');
+    const otherId = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+    expect(await verifyAiUsageGrant(`${version}.${issuedAt}.${otherId}.${signature}`, 'photo_analysis', USER_ID, [SECRET], NOW)).toBeNull();
+    expect(await verifyAiUsageGrant(`${version}.${Number(issuedAt) + 1}.${grantId}.${signature}`, 'photo_analysis', USER_ID, [SECRET], NOW)).toBeNull();
+    const flipped = signature.slice(0, -1) + (signature.endsWith('0') ? '1' : '0');
+    expect(await verifyAiUsageGrant(`${version}.${issuedAt}.${grantId}.${flipped}`, 'photo_analysis', USER_ID, [SECRET], NOW)).toBeNull();
+  });
+
+  it(`有効期間: 発行から ${AI_USAGE_GRANT_MAX_AGE_SEC} 秒までは通り、それより古い印は通らない。未来すぎる印も通らない`, async () => {
+    const grant = await signAiUsageGrant(SECRET, 'photo_analysis', USER_ID, GRANT_ID, NOW);
+    expect(await verifyAiUsageGrant(grant, 'photo_analysis', USER_ID, [SECRET], NOW + AI_USAGE_GRANT_MAX_AGE_SEC * 1000)).not.toBeNull();
+    expect(await verifyAiUsageGrant(grant, 'photo_analysis', USER_ID, [SECRET], NOW + (AI_USAGE_GRANT_MAX_AGE_SEC + 1) * 1000)).toBeNull();
+    expect(await verifyAiUsageGrant(grant, 'photo_analysis', USER_ID, [SECRET], NOW - AI_USAGE_MARKER_MAX_FUTURE_SEC * 1000)).not.toBeNull();
+    expect(await verifyAiUsageGrant(grant, 'photo_analysis', USER_ID, [SECRET], NOW - (AI_USAGE_MARKER_MAX_FUTURE_SEC + 1) * 1000)).toBeNull();
+  });
+
+  it('形式が違う値・文字列でない値は、例外を投げずに null', async () => {
+    const grant = await signAiUsageGrant(SECRET, 'photo_analysis', USER_ID, GRANT_ID, NOW);
+    const [, issuedAt, grantId, signature] = grant.split('.');
+    for (const bad of [
+      '',
+      null,
+      undefined,
+      42,
+      { grant },
+      [grant],
+      'garbage',
+      `g2.${issuedAt}.${grantId}.${signature}`,
+      `g1.${issuedAt}.${grantId}`,
+      `g1.${issuedAt}.${grantId}.${signature}.extra`,
+      `g1.${issuedAt}.${grantId.toUpperCase()}.${signature}`,
+      `g1.${issuedAt}.not-a-uuid.${signature}`,
+      `g1.${issuedAt}.${grantId}.${signature.toUpperCase()}`,
+      `g1..${grantId}.${signature}`,
+    ]) {
+      expect(await verifyAiUsageGrant(bad, 'photo_analysis', USER_ID, [SECRET], NOW), String(bad)).toBeNull();
+    }
+    expect(await verifyAiUsageGrant(grant, 'photo_analysis', '', [SECRET], NOW)).toBeNull();
+    expect(await verifyAiUsageGrant(grant, 'photo_analysis', USER_ID, [undefined, '', null], NOW)).toBeNull();
+  });
+});
+
 describe('AI_FEATURES: 記録する機能の一覧', () => {
   it('重複が無く、DB の形式 (小文字の英字で始まり、小文字・数字・アンダースコアだけ、64 文字まで) に合う', () => {
     expect(new Set(AI_FEATURES).size).toBe(AI_FEATURES.length);
@@ -97,11 +165,17 @@ describe('AI_FEATURES: 記録する機能の一覧', () => {
 });
 
 describe('公開するもの (上限の判定の結果・429 の本文は _shared/ai-daily-limit.ts に分けた。#1149)', () => {
-  it('公開するのは、機能の一覧・上限に数えない機能・待つ上限・記録済みの印だけ (署名の部品を持たないモバイルが読むものは別のファイル)', () => {
+  it('公開するのは、機能の一覧・上限に数えない機能とその安全弁・待つ上限・記録済みの印・数え済みの印だけ (署名の部品を持たないモバイルが読むものは別のファイル)', () => {
     expect(Object.keys(core).sort()).toEqual(
       [
         'AI_FEATURES',
+        'AI_UNMETERED_DAILY_CAP_DEFAULTS',
+        'AI_UNMETERED_DAILY_CAP_FALLBACK',
         'AI_UNMETERED_FEATURES',
+        'AI_USAGE_GRANT_MAX_AGE_SEC',
+        'AI_USAGE_GRANT_VERSION',
+        'signAiUsageGrant',
+        'verifyAiUsageGrant',
         'AI_USAGE_MARKER_MAX_AGE_SEC',
         'AI_USAGE_MARKER_MAX_FUTURE_SEC',
         'AI_USAGE_MARKER_VERSION',

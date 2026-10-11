@@ -168,8 +168,8 @@ export const NutritionDetailModal: React.FC<Props> = ({
           setAdviceText(AI_CONSENT_AUTOMATIC_LOCKED_NOTE);
           setAdviceIsError(false);
         } else if (isAiDailyLimitError(e)) {
-          // 「再分析」で今日の AI の利用回数の上限に達した (429 AI_DAILY_LIMIT。#1149)。固定の文を出す
-          // (開いたときの自動の取得は上限に数えないので、ここに来るのは「再分析」を押したときだけ)
+          // 今日の AI の利用回数の上限に達した (429 AI_DAILY_LIMIT。#1149)。固定の文を出す
+          // (「再分析」は 1 日の上限 (10 回)。開いたときの自動の取得は上限に数えないが、自動の分だけの安全弁 (既定は 1 日 30 回) でも来る)
           setAdviceText(e.message);
           setAdviceIsError(false);
         }

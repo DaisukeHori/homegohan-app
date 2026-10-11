@@ -8,7 +8,7 @@ import {
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { aiDailyLimitResponse, consumeAiUsage } from '@/lib/plan/entitlements';
+import { aiDailyLimitResponse, consumeAiUsage, AI_USAGE_COVERED_BY_GRANT, redeemAiUsageGrant } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 
@@ -45,8 +45,12 @@ export async function POST(request: Request) {
     }
 
     // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える。
-    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
-    const aiUsage = await consumeAiUsage(user.id, 'photo_analysis');
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)。
+    // 写真の「オート」は、判別 (classify-photo) が 1 回数えて「数え済みの印」を返し、画面がこの本文の aiUsageGrant に入れて送る。
+    // 印が本物で、はじめて使うものなら数えない (1 回の操作を 1 回)。印が無い・偽物・期限切れ・他人の印・使用済みなら数える
+    const aiUsage = (await redeemAiUsageGrant(user.id, 'photo_analysis', body?.aiUsageGrant))
+      ? AI_USAGE_COVERED_BY_GRANT
+      : await consumeAiUsage(user.id, 'photo_analysis');
     if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
     const { data, model } = await generateGeminiJson<HealthCheckupExtractedData>({

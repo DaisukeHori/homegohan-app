@@ -146,7 +146,8 @@ export async function consumeEdgeAiUsage(
 
 /**
  * consumeEdgeAiUsage で数えた 1 回を戻す (数え戻し)。数えたあと、AI へ送る前に処理が失敗して何も送らなかったときだけ呼ぶ。
- * 数えていない結果では何もしない。失敗しても例外は投げない。
+ * 上限に数えない機能も戻す (記録は安全弁の回数に入るので。#1149)。DB が記録していない結果 (usageDate が null) では何もしない。
+ * 失敗しても例外は投げない。
  */
 export async function refundEdgeAiUsage(
   userId: string,
@@ -154,7 +155,7 @@ export async function refundEdgeAiUsage(
   usage: AiUsageAllowed,
   options: ConsumeEdgeAiUsageOptions = {},
 ): Promise<void> {
-  if (!usage.metered || !usage.usageDate) return;
+  if (!usage.usageDate) return;
   try {
     const client = options.client ?? defaultClient();
     const { error } = await withTimeout(

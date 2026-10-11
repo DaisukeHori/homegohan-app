@@ -204,10 +204,11 @@ export async function POST(request: Request) {
           // ジョブを積むかどうかは、同意の有無では変えない (止めるのは処理する側)
           const imageConsent = await checkUserAiConsent(supabase, user.id);
           if (imageConsent.allowed) {
-            // #1149 AI の利用回数の上限の判定と記録 (#1177。操作 1 回で 1 回。積む画像のジョブの数によらない)。
-            // 上限に達していれば、画像だけ見送る (ジョブを積まない。献立の保存はそのまま。応答の aiSkipped: AI_DAILY_LIMIT)。
-            // 判定に失敗したときは止めない
-            imageUsage = await consumeAiUsage(user.id, 'image_generation');
+            // #1149 料理画像は保存の自動の副作用なので、明示の 1 日の上限 (10 回) には数えない ('meal_image_auto'。記録だけ。
+            // 食事を記録するだけで AI 相談や写真の解析が止まらないように)。そのかわり料理画像だけの安全弁 (DB の ai_unmetered_daily_caps。
+            // 既定は 1 日 20 回) があり、達していれば画像だけ見送る (ジョブを積まない。献立の保存はそのまま。応答の aiSkipped: AI_DAILY_LIMIT)。
+            // 操作 1 回で 1 回 (積む画像のジョブの数によらない)。判定に失敗したときは止めない
+            imageUsage = await consumeAiUsage(user.id, 'meal_image_auto');
             if (!imageUsage.allowed) imageAllowed = false;
           }
         }

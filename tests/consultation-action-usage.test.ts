@@ -10,7 +10,8 @@
  *
  *   1. 献立の生成 3 種 (generate_day_menu / generate_week_menu / generate_single_meal): menu_generation を 1 回記録し、
  *      それが Edge Function (generate-menu-v4 / v5。AI へ送る) の呼び出しより前。呼び出しには記録済みの印を付ける (二重に記録しない)
- *   2. update_meal が付ける料理画像: 同意済みなら image_generation を 1 回、画像のジョブを積む前に記録する。
+ *   2. update_meal が付ける料理画像: 同意済みなら meal_image_auto (1 日の上限 10 回に数えず、料理画像の安全弁で止める) を 1 回、
+ *      画像のジョブを積む前に記録する。
  *      未同意・判定の失敗なら記録しない (ジョブを積むかどうかは変えない。止めるのは処理する Edge Function)
  *   3. 回帰 (R3 指摘 5): 記録を Edge Function の呼び出しのあとへ動かした写しでは、1 の順番の検査が落ちる
  *   4. 回帰 (R3 指摘 2): 同意の判定の結果を見ずに記録する写しでは、2 の「未同意なら記録しない」が落ちる
@@ -151,11 +152,11 @@ describe('献立の生成のアクション: menu_generation を 1 回、AI へ�
 });
 
 describe('update_meal の料理画像: 同意の判定 → 記録 → 画像のジョブを積む', () => {
-  it('同意済み: image_generation を 1 回、同意の判定のあと・ジョブを積む前に記録する', async () => {
+  it('同意済み: meal_image_auto を 1 回、同意の判定のあと・ジョブを積む前に記録する', async () => {
     const { out } = await runUpdateMeal(runConsultationAction);
     expect(out.success).toBe(true);
     expect(m.consumeAiUsage).toHaveBeenCalledTimes(1);
-    expect(m.consumeAiUsage).toHaveBeenCalledWith(USER.id, 'image_generation');
+    expect(m.consumeAiUsage).toHaveBeenCalledWith(USER.id, 'meal_image_auto');
     expect(m.checkUserAiConsent.mock.invocationCallOrder[0]).toBeLessThan(m.consumeAiUsage.mock.invocationCallOrder[0]);
     expect(m.consumeAiUsage.mock.invocationCallOrder[0]).toBeLessThan(m.enqueueMealImageJobs.mock.invocationCallOrder[0]);
     // ジョブは service role のクライアントで積む (利用者のクライアントでは権限で拒まれる。#1465)
@@ -190,14 +191,14 @@ describe('(#1149) 上限に達していたら', () => {
     expect(m.refundAiUsage).not.toHaveBeenCalled();
   });
 
-  it('update_meal: 献立は更新し (success)、画像のジョブだけ積まない。結果の aiSkipped で知らせる (レート制限の印は付けない)', async () => {
+  it('update_meal: 料理画像の安全弁に達していたら、献立は更新し (success)、画像のジョブだけ積まない。結果の aiSkipped で知らせる (レート制限の印は付けない)', async () => {
     m.consumeAiUsage.mockResolvedValue(AI_USAGE_DENIED);
 
     const { out } = await runUpdateMeal(runConsultationAction);
 
     expect(out.success).toBe(true);
     expect(out.aiDailyLimit).toBeUndefined();
-    expect(m.consumeAiUsage).toHaveBeenCalledWith(USER.id, 'image_generation');
+    expect(m.consumeAiUsage).toHaveBeenCalledWith(USER.id, 'meal_image_auto');
     expect(m.enqueueMealImageJobs).not.toHaveBeenCalled();
     expect(out.result).toMatchObject({ updated: true, aiSkipped: AI_DAILY_LIMIT_CODE });
     expect(out.result).not.toHaveProperty('imageGenerationThrottled');

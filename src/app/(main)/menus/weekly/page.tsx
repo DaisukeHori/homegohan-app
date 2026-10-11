@@ -2625,8 +2625,8 @@ export default function WeeklyMenuPage() {
         setIsLoadingFeedback(false);
         return;
       }
-      // 「再分析」(forceRefresh) で、今日の AI の利用回数の上限に達した (429 AI_DAILY_LIMIT。#1149)。
-      // 画面を開いたときの自動の取得は上限に数えないので、ここに来るのは「再分析」を押したときだけ
+      // 今日の AI の利用回数の上限に達した (429 AI_DAILY_LIMIT。#1149)。「再分析」(forceRefresh) は 1 日の上限 (10 回) で、
+      // 画面を開いたときの自動の取得は上限に数えないが、自動の分だけの安全弁 (既定は 1 日 30 回) に達したときもここに来る
       const dailyLimitMessage = await aiDailyLimitMessageOfResponse(res);
       if (dailyLimitMessage) {
         if (!request.isCurrent()) return;

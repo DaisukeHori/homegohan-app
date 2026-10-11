@@ -24,9 +24,15 @@
  * - 止め方は入口ごとに決めてある (一覧は tests/helpers/ai-consent-enforced-paths.ts の usage の列と、その上の表):
  *     利用者が押した操作 → 429 AI_DAILY_LIMIT (aiDailyLimitResponse。固定の文・retryAfter = 次の JST 0 時までの秒数)
  *     保存と AI の分析を一緒にする操作 (健康診断・血液検査の保存・相談を閉じる) → 保存だけして AI の部分を省く (aiSkipped: AI_DAILY_LIMIT)
- *     料理画像を付ける副作用 (献立の保存・更新) → 画像だけ見送る
+ *     料理画像を付ける副作用 (献立の保存・更新) → 'meal_image_auto' (上限に数えない。安全弁に達したら画像だけ見送る)
  *     キューに積む操作 (週間献立・献立の生成 v5) → 積む時点で判定する (積んだあとの処理は数えない)
- *     画面を開くと自動で呼ばれる AI (ホームの栄養のアドバイス・栄養士のコメントの自動の取得) → 'nutrition_advice_auto' で記録し、上限に数えない
+ *     画面を開くと自動で呼ばれる AI (ホームの栄養のアドバイス・栄養士のコメントの自動の取得) → 'nutrition_advice_auto' (上限に数えない。
+ *       安全弁に達したら、入口の止め方で止める)
+ *     写真の「オート」(判別 → 解析) → 判別 (classify-photo) で 1 回数え、数え済みの印 (issueAiUsageGrant) を返す。
+ *       続く解析 (analyze-*) は印を使えたら数えない (redeemAiUsageGrant。印は 1 回だけ使える)
+ * - 上限に数えない機能 (AI_UNMETERED_FEATURES。画面を開く・保存するだけで呼ばれる AI) は、1 日の上限 (10 回) に数えないが、
+ *   どの機能名で数えるかの材料はクライアントが送る値なので、機能ごとの 1 日の安全弁 (DB の ai_unmetered_daily_caps。
+ *   既定は AI_UNMETERED_DAILY_CAP_DEFAULTS) を超えたら DB が止める (allowed: false)。止めたあとの扱いは上限と同じ
  * - user.id には、認証で確定した ID だけを渡す (リクエストの本文・URL の未検証の ID は渡さない)。
  *   DB の関数は service_role だけが実行できるので、呼ぶのは必ず認証のあと。
  * - キューのテーブル (weekly_menu_requests / meal_image_jobs) は、service role の処理が AI へ送る。利用者 (authenticated) からは
@@ -50,12 +56,14 @@
 
 import { createLogger } from '@/lib/db-logger';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { getEdgeFunctionServiceRoleKey, isMissingEnvError } from '@/lib/env-required';
+import { getEdgeFunctionServiceRoleKey, getSupabaseServiceRoleKey, isMissingEnvError } from '@/lib/env-required';
 import { NextResponse } from 'next/server';
 import {
   AI_USAGE_RECORDED_HEADER,
   AI_USAGE_TIMEOUT_MS,
+  signAiUsageGrant,
   signAiUsageRecorded,
+  verifyAiUsageGrant,
   type AiFeature,
 } from '../../../supabase/functions/_shared/ai-usage-core';
 import {
@@ -69,7 +77,9 @@ import {
 
 export {
   AI_FEATURES,
+  AI_UNMETERED_DAILY_CAP_DEFAULTS,
   AI_UNMETERED_FEATURES,
+  AI_USAGE_GRANT_MAX_AGE_SEC,
   AI_USAGE_RECORDED_HEADER,
   AI_USAGE_TIMEOUT_MS,
   type AiFeature,
@@ -136,7 +146,7 @@ function logFailure(userId: string, message: string, error: unknown, context: Re
 /**
  * AI の利用を 1 回数える (上限の判定と記録を 1 回で行う)。AI へ送る直前 (同意の判定のあと) に呼ぶ。
  *   - 上限に達していれば、記録せずに { allowed: false, limit, used } を返す。呼び出し側は送らずに止める (aiDailyLimitResponse など)
- *   - 達していなければ 1 を足して { allowed: true, usageDate, ... } を返す (上限に数えない機能は、記録だけして許可)
+ *   - 達していなければ 1 を足して { allowed: true, usageDate, ... } を返す (上限に数えない機能は、安全弁に達していなければ記録して許可)
  *   - DB の関数が失敗したとき (エラー・時間切れ・戻り値の形が違う) は、ログに残して許可する (AI_USAGE_NOT_COUNTED。止めない)
  * 例外は投げない。
  */
@@ -165,7 +175,8 @@ export async function consumeAiUsage(
 /**
  * consumeAiUsage で数えた 1 回を戻す (数え戻し)。数えたあと、AI へ送る前に DB の処理が失敗して何も送らなかったときだけ呼ぶ
  * (生成のリクエストの行の insert の失敗など。AI へ送ったあとの失敗では呼ばない)。
- * 数えていない結果 (上限に数えない機能・判定に失敗した・Edge Function で印があった) では何もしない。
+ * 上限に数えない機能も戻す (記録は安全弁の回数に入るので。#1149)。
+ * DB が記録していない結果 (判定に失敗した・数え済みの印で数えなかった・Edge Function で印があった。usageDate が null) では何もしない。
  * 失敗しても例外は投げず、ログに残して戻る。
  */
 export async function refundAiUsage(
@@ -174,7 +185,7 @@ export async function refundAiUsage(
   usage: AiUsageAllowed,
   options: ConsumeAiUsageOptions = {},
 ): Promise<void> {
-  if (!usage.metered || !usage.usageDate) return;
+  if (!usage.usageDate) return;
   try {
     const client = options.client ?? (getSupabaseAdmin() as unknown as PlanRpcClient);
     const { error } = await withTimeout(
@@ -195,6 +206,88 @@ export async function refundAiUsage(
 export function aiDailyLimitResponse(denied: AiUsageDenied, nowMs: number = Date.now()): NextResponse {
   const { status, headers, body } = aiDailyLimitPayload(denied, nowMs);
   return NextResponse.json(body, { status, headers });
+}
+
+/**
+ * 数え済みの印を使って数えなかったときの結果 (写真の「オート」の判別で数え済みの解析。#1149)。
+ * DB に記録していないので usageDate は null (数え戻しの対象にならない)
+ */
+export const AI_USAGE_COVERED_BY_GRANT: AiUsageAllowed = Object.freeze({
+  allowed: true,
+  metered: false,
+  usageDate: null,
+  limit: null,
+  used: null,
+});
+
+/** 数え済みの印の署名を確かめる鍵の候補 (印を作る鍵は getEdgeFunctionServiceRoleKey。どちらの鍵で作った印も受け付ける) */
+function grantSecrets(): string[] {
+  const secrets: string[] = [];
+  for (const read of [getEdgeFunctionServiceRoleKey, getSupabaseServiceRoleKey]) {
+    try {
+      const secret = read();
+      if (secret && !secrets.includes(secret)) secrets.push(secret);
+    } catch (error) {
+      if (!isMissingEnvError(error)) throw error;
+    }
+  }
+  return secrets;
+}
+
+/**
+ * 数え済みの印を作る (写真の「オート」の判別 → 解析を 1 回に数える。#1149。印の形は _shared/ai-usage-core.ts)。
+ * consumeAiUsage が上限に数えて許可した (allowed かつ metered) ときだけ作る。数えていない (判定に失敗した・上限に数えない機能)
+ * ときは null (印を渡さないので、続く解析は自分で数える)。鍵が無い・署名に失敗したときも null。例外は投げない。
+ * 応答の本文の aiUsageGrant に入れて返し、画面は続く解析の本文の aiUsageGrant にそのまま入れて送る。
+ */
+export async function issueAiUsageGrant(
+  userId: string,
+  feature: AiFeature,
+  usage: AiUsageResult,
+  nowMs: number = Date.now(),
+): Promise<string | null> {
+  if (!userId || !usage.allowed || !usage.metered) return null;
+  try {
+    const secret = getEdgeFunctionServiceRoleKey();
+    return await signAiUsageGrant(secret, feature, userId, crypto.randomUUID(), nowMs);
+  } catch (error) {
+    if (!isMissingEnvError(error)) logFailure(userId, '数え済みの印を作れませんでした (続く解析は数えます)', error, { feature });
+    return null;
+  }
+}
+
+/**
+ * 数え済みの印を使う。署名・期限・ユーザー・機能が合い、DB の claim_ai_usage_grant で印をはじめて使用済みにできたときだけ true
+ * (呼び出し側は数えずに許可する: AI_USAGE_COVERED_BY_GRANT)。それ以外 (印が無い・偽物・期限切れ・他人の印・使用済み・DB の失敗) は
+ * false で、呼び出し側は consumeAiUsage で数える (数える側に倒す)。例外は投げない。
+ *
+ *   const aiUsage = (await redeemAiUsageGrant(user.id, 'photo_analysis', body.aiUsageGrant))
+ *     ? AI_USAGE_COVERED_BY_GRANT
+ *     : await consumeAiUsage(user.id, 'photo_analysis');
+ *   if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
+ */
+export async function redeemAiUsageGrant(
+  userId: string,
+  feature: AiFeature,
+  value: unknown,
+  options: ConsumeAiUsageOptions & { nowMs?: number } = {},
+): Promise<boolean> {
+  if (value === undefined || value === null || value === '') return false;
+  try {
+    const verified = await verifyAiUsageGrant(value, feature, userId, grantSecrets(), options.nowMs ?? Date.now());
+    if (!verified) return false;
+    const client = options.client ?? (getSupabaseAdmin() as unknown as PlanRpcClient);
+    const { data, error } = await withTimeout(
+      client.rpc('claim_ai_usage_grant', { p_user_id: userId, p_grant_id: verified.grantId }),
+      options.timeoutMs ?? AI_USAGE_TIMEOUT_MS,
+      'claim_ai_usage_grant',
+    );
+    if (error) throw toError(error);
+    return data === true;
+  } catch (error) {
+    logFailure(userId, '数え済みの印を使えませんでした (数えます)', error, { feature });
+    return false;
+  }
 }
 
 /**

@@ -1914,7 +1914,7 @@ CREATE TABLE infra_alerts (
 | `OP_TARGET_PROTECTED` | super_admin 等 保護ユーザーへの操作不可 |
 | `OP_AUDIT_LOG_IMMUTABLE` | 監査ログ書き換え不可 |
 | `OP_FEATURE_FLAG_IN_USE` | 削除しようとしたフラグが利用中 |
-| `OP_QUOTA_EXCEEDED` | LLM クォータ超過 |
+| `AI_DAILY_LIMIT` | 今日の AI の利用回数の上限に達した (429。#1149。docs/design/operator/06-ai-llm.md §5) |
 | `OP_RE_AUTH_REQUIRED` | 再認証必須 |
 
 ---
