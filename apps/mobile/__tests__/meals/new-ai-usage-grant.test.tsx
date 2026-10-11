@@ -138,13 +138,13 @@ describe('写真の「オート」: 判別の数え済みの印を、続く解�
     render(<MealNewPage />);
     await choosePhotoAndAnalyze('auto');
     // 「判別失敗」の通知で撮影の画面へ戻らず、種類を選ぶ画面へ進む (候補も出す)
-    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy());
     expect(screen.getByText('冷蔵庫として解析')).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(screen.getByText('体重計として続ける'));
     });
-    await waitFor(() => expect(postsTo(ANALYZE_PATHS.weight_scale)).toHaveLength(1), WAIT);
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS.weight_scale)).toHaveLength(1));
     expect(postsTo(ANALYZE_PATHS.weight_scale)[0].aiUsageGrant).toBe(GRANT);
   });
 
@@ -157,11 +157,11 @@ describe('写真の「オート」: 判別の数え済みの印を、続く解�
     });
     render(<MealNewPage />);
     await choosePhotoAndAnalyze('auto');
-    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy());
     await act(async () => {
       fireEvent.press(screen.getByText('冷蔵庫として続ける'));
     });
-    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1), WAIT);
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1));
     expect(postsTo(ANALYZE_PATHS.fridge)[0].aiUsageGrant).toBeUndefined();
   });
 
@@ -172,7 +172,7 @@ describe('写真の「オート」: 判別の数え済みの印を、続く解�
     });
     render(<MealNewPage />);
     await choosePhotoAndAnalyze('auto');
-    await waitFor(() => expect(screen.getByTestId('camera-screen')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByTestId('camera-screen')).toBeTruthy());
     expect(screen.queryByTestId('meal-classify-failed-view')).toBeNull();
   });
 
