@@ -432,6 +432,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       // #1463 献立の単発追加の date_offset_days の上限。正の整数でなければ既定値にする読み方を 1 か所に置く
       ['MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS', 'src/lib/menu-plan-date-offset.ts'],
       // #1157 エラー急増の運用メール。未設定・不正な値の扱い (ログと応答の status) を cron の route 1 か所に置く
+      // #1493 ブラウザ・端末から届いた error の急増の通知のしきい値 (サーバーとは別に数える)
+      ['OPS_ALERT_CLIENT_ERROR_THRESHOLD', 'src/app/api/cron/app-log-alerts/route.ts'],
       ['OPS_ALERT_COOLDOWN_MINUTES', 'src/app/api/cron/app-log-alerts/route.ts'],
       ['OPS_ALERT_EMAIL', 'src/app/api/cron/app-log-alerts/route.ts'],
       ['OPS_ALERT_ERROR_THRESHOLD', 'src/app/api/cron/app-log-alerts/route.ts'],
@@ -460,6 +462,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       getOptionalEnv('OPS_ALERT_ERROR_THRESHOLD');
       // @ts-expect-error OPS_ALERT_COOLDOWN_MINUTES も同じ
       getOptionalEnv('OPS_ALERT_COOLDOWN_MINUTES');
+      // @ts-expect-error OPS_ALERT_CLIENT_ERROR_THRESHOLD も同じ (#1493)
+      getOptionalEnv('OPS_ALERT_CLIENT_ERROR_THRESHOLD');
       // @ts-expect-error AUTH_LOGIN_FAILURE_RESET_MINUTES の値を読むのはログインの route (src/app/api/auth/login/route.ts) だけ
       getOptionalEnv('AUTH_LOGIN_FAILURE_RESET_MINUTES');
       getOptionalEnv('RESEND_API_KEY'); // 値を読む場所が決まっていない任意の変数は渡せる

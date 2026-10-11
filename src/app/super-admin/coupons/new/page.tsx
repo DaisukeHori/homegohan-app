@@ -9,6 +9,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { todayLocal } from '@/lib/date-utils';
 
 // Stripe 手数料: 3.6% + ¥40 (operator/04-plan-management.md §4.1 §15.12)
 function calcGrossMargin(priceJpy: number, discountPercent: number = 0): number {
@@ -25,7 +26,8 @@ export default function CouponNewPage() {
   const [discountType, setDiscountType] = useState<'fixed' | 'percentage'>('percentage');
   const [discountValue, setDiscountValue] = useState('');
   const [applicableTo, setApplicableTo] = useState<'all' | 'personal' | 'family' | 'org'>('all');
-  const [validFrom, setValidFrom] = useState(new Date().toISOString().slice(0, 10));
+  // 有効開始日の初期値は JST の今日 (#1483。API は JST の暦日を受け取り、その日の JST 0:00 から有効にする)
+  const [validFrom, setValidFrom] = useState(todayLocal());
   const [validUntil, setValidUntil] = useState('');
   const [maxUses, setMaxUses] = useState('');
   const [perUserLimit, setPerUserLimit] = useState('1');
@@ -60,8 +62,9 @@ export default function CouponNewPage() {
           discount_type: discountType,
           discount_value: Number(discountValue),
           applicable_to: applicableTo,
-          valid_from: new Date(validFrom).toISOString(),
-          valid_until: new Date(validUntil).toISOString(),
+          // JST の暦日 (YYYY-MM-DD) のまま送る。API が開始日の JST 0:00・期限の日の JST 23:59:59 の時刻にして書く (#1483)
+          valid_from: validFrom,
+          valid_until: validUntil,
           max_uses: maxUses ? Number(maxUses) : null,
           per_user_limit: Number(perUserLimit),
           duration_months: durationMonths ? Number(durationMonths) : null,

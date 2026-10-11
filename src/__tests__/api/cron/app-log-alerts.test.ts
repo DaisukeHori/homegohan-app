@@ -65,6 +65,10 @@ const OLD_SECRET = 'dummy-old-cron-secret-fedcba9876543210';
 const OPS_EMAIL = 'ops-owner@example.test';
 const SITE_URL = 'https://app.example.test';
 const CLAIMED_AT = '2026-10-09T01:15:00.123456+00:00';
+const CLIENT_CLAIMED_AT = '2026-10-09T01:15:00.654321+00:00';
+
+/** #1493 クライアントの error が無いときの、応答の client (既定のしきい値 100 件) */
+const CLIENT_QUIET = { status: 'below_threshold', total: 0, threshold: 100 } as const;
 
 function makeRequest(authorization?: string) {
   return new Request('http://localhost/api/cron/app-log-alerts', {
@@ -98,6 +102,10 @@ interface Scenario {
   counts: RpcResult;
   claim: RpcResult;
   release: RpcResult;
+  /** #1493 ブラウザ・端末から届いた error の数え方 (app_log_client_error_counts) の応答 */
+  clientCounts: RpcResult;
+  /** #1493 クライアントの通知のキー (app_logs_client_error_spike) で権利を取ったときの応答 */
+  clientClaim: RpcResult;
 }
 
 let scenario: Scenario;
@@ -107,6 +115,9 @@ function setScenario(overrides: Partial<Scenario> = {}) {
     counts: { data: SURGE_ROWS, error: null },
     claim: { data: CLAIMED_AT, error: null },
     release: { data: true, error: null },
+    // クライアントの error は、既定では 1 件も無い (サーバーの判定だけを見るテストに混ざらないように)
+    clientCounts: { data: [], error: null },
+    clientClaim: { data: CLIENT_CLAIMED_AT, error: null },
     ...overrides,
   };
 }
@@ -141,15 +152,19 @@ beforeEach(() => {
   // しきい値・クールダウンの上書きは、既定では無し (実行環境に設定があっても、既定値で確かめる)
   vi.stubEnv('OPS_ALERT_ERROR_THRESHOLD', undefined);
   vi.stubEnv('OPS_ALERT_COOLDOWN_MINUTES', undefined);
+  vi.stubEnv('OPS_ALERT_CLIENT_ERROR_THRESHOLD', undefined);
   vi.stubEnv('NEXT_PUBLIC_APP_URL', SITE_URL);
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
   consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
   setScenario();
   mocks.getSupabaseAdmin.mockReturnValue({ rpc: mocks.rpc, from: mocks.from });
-  mocks.rpc.mockImplementation(async (fn: string) => {
+  mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
     if (fn === 'app_log_error_counts') return scenario.counts;
-    if (fn === 'claim_ops_alert') return scenario.claim;
+    if (fn === 'app_log_client_error_counts') return scenario.clientCounts;
+    if (fn === 'claim_ops_alert') {
+      return args?.p_alert_key === 'app_logs_client_error_spike' ? scenario.clientClaim : scenario.claim;
+    }
     if (fn === 'release_ops_alert') return scenario.release;
     throw new Error(`想定外の RPC: ${fn}`);
   });
@@ -309,7 +324,7 @@ describe('GET /api/cron/app-log-alerts: しきい値 (#1157)', () => {
     const res = await GET(authed());
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 20, threshold: 20, window_minutes: 15 });
+    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 20, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
     expect(rpcCalls('claim_ops_alert')).toHaveLength(0);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     // 何も起きなかった回は、ログを増やさない (15 分おきに積み上がらない)
@@ -322,7 +337,7 @@ describe('GET /api/cron/app-log-alerts: しきい値 (#1157)', () => {
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15 });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
     expect(rpcCalls('claim_ops_alert')).toHaveLength(1);
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
   });
@@ -332,7 +347,7 @@ describe('GET /api/cron/app-log-alerts: しきい値 (#1157)', () => {
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 0, threshold: 20, window_minutes: 15 });
+    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 0, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
@@ -387,7 +402,7 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
     const res = await GET(authed());
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ status: 'deduped', total: 42, threshold: 20, window_minutes: 15 });
+    await expect(res.json()).resolves.toEqual({ status: 'deduped', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     expect(rpcCalls('release_ops_alert')).toHaveLength(0);
   });
@@ -397,6 +412,7 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
     let claims = 0;
     mocks.rpc.mockImplementation(async (fn: string) => {
       if (fn === 'app_log_error_counts') return scenario.counts;
+      if (fn === 'app_log_client_error_counts') return scenario.clientCounts;
       if (fn === 'claim_ops_alert') {
         claims += 1;
         return { data: claims === 1 ? CLAIMED_AT : null, error: null };
@@ -417,6 +433,7 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
     const order: string[] = [];
     mocks.rpc.mockImplementation(async (fn: string) => {
       order.push(fn);
+      if (fn === 'app_log_client_error_counts') return scenario.clientCounts;
       return fn === 'app_log_error_counts' ? scenario.counts : fn === 'claim_ops_alert' ? scenario.claim : scenario.release;
     });
     mocks.sendEmail.mockImplementation(async () => {
@@ -426,7 +443,8 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
 
     await GET(authed());
 
-    expect(order).toEqual(['app_log_error_counts', 'claim_ops_alert', 'sendEmail']);
+    // サーバーの判定 (数える → 権利 → 送る) を済ませてから、クライアントの error を数える (#1493)
+    expect(order).toEqual(['app_log_error_counts', 'claim_ops_alert', 'sendEmail', 'app_log_client_error_counts']);
   });
 
   it('D-5: 送れたときは権利を返さない (60 分の抑止が効く)', async () => {
@@ -450,13 +468,14 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
       total: 50,
       threshold: 50,
       window_minutes: 15,
+      client: CLIENT_QUIET,
     });
     expect(rpcCalls('claim_ops_alert')).toHaveLength(0);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
 
     setScenario({ counts: { data: rowsOf(51), error: null } });
     const over = await GET(authed());
-    await expect(over.json()).resolves.toEqual({ status: 'sent', total: 51, threshold: 50, window_minutes: 15 });
+    await expect(over.json()).resolves.toEqual({ status: 'sent', total: 51, threshold: 50, window_minutes: 15, client: CLIENT_QUIET });
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
     // メールの文面のしきい値も、上書きした値になる
     expect(mocks.sendEmail.mock.calls[0][0].text as string).toContain('15 分で 50 件を超えると');
@@ -470,7 +489,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 6, threshold: 5, window_minutes: 15 });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 6, threshold: 5, window_minutes: 15, client: CLIENT_QUIET });
   });
 
   it('E-3: OPS_ALERT_COOLDOWN_MINUTES で、権利を取るときのクールダウンを変える。メールの文面も同じ値', async () => {
@@ -501,7 +520,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
       const res = await GET(authed());
 
-      await expect(res.json(), threshold).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15 });
+      await expect(res.json(), threshold).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
       expect(rpcCalls('claim_ops_alert'), cooldown).toEqual([
         ['claim_ops_alert', { p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 60 }],
       ]);
@@ -520,7 +539,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 31, threshold: 30, window_minutes: 15 });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 31, threshold: 30, window_minutes: 15, client: CLIENT_QUIET });
     expect(rpcCalls('claim_ops_alert')[0][1]).toEqual({ p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 60 });
     expect(mocks.logWarn.mock.calls[0][1]).toEqual({ ignored_env: ['OPS_ALERT_COOLDOWN_MINUTES'] });
   });
@@ -531,7 +550,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15 });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
     expect(rpcCalls('claim_ops_alert')[0][1]).toEqual({ p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 60 });
     expect(mocks.logWarn).not.toHaveBeenCalled();
   });
@@ -644,7 +663,7 @@ describe('GET /api/cron/app-log-alerts: メールの内容 (#1157)', () => {
   it('M-6: 送れたら info を 1 行残す (件数と関数名・メールの ID だけ。宛先は出さない)', async () => {
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15 });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
     expect(mocks.logInfo).toHaveBeenCalledTimes(1);
     const [, meta] = mocks.logInfo.mock.calls[0];
     expect(meta).toMatchObject({
@@ -672,7 +691,7 @@ describe('GET /api/cron/app-log-alerts: メールが届かなくても壊れな�
     const res = await GET(authed());
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ status: 'send_failed', total: 42, threshold: 20, window_minutes: 15 });
+    await expect(res.json()).resolves.toEqual({ status: 'send_failed', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
     // claim が返した時刻をそのまま渡す (同じ時刻の行だけを消すため)
     expect(rpcCalls('release_ops_alert')).toEqual([
       ['release_ops_alert', { p_alert_key: 'app_logs_error_spike', p_claimed_at: CLAIMED_AT }],
@@ -752,6 +771,7 @@ describe('GET /api/cron/app-log-alerts: メールが届かなくても壊れな�
     mocks.sendEmail.mockResolvedValue(failedResult);
     mocks.rpc.mockImplementation(async (fn: string) => {
       if (fn === 'app_log_error_counts') return scenario.counts;
+      if (fn === 'app_log_client_error_counts') return scenario.clientCounts;
       if (fn === 'claim_ops_alert') return scenario.claim;
       throw new Error('network down');
     });
@@ -830,14 +850,19 @@ describe('GET /api/cron/app-log-alerts: DB の失敗は 500 (汎用メッセー�
 // そのほか
 // ---------------------------------------------------------------
 describe('GET /api/cron/app-log-alerts: そのほか (#1157)', () => {
-  it('O-1: infra_alerts を含め、表を直接読み書きしない (DB への入口は 3 つの RPC だけ)', async () => {
+  it('O-1: infra_alerts を含め、表を直接読み書きしない (DB への入口は 4 つの RPC だけ)', async () => {
     await GET(authed());
     mocks.sendEmail.mockResolvedValue(failedResult);
     await GET(authed());
 
     expect(mocks.from).not.toHaveBeenCalled();
     const used = new Set(mocks.rpc.mock.calls.map(([fn]) => fn));
-    expect([...used].sort()).toEqual(['app_log_error_counts', 'claim_ops_alert', 'release_ops_alert']);
+    expect([...used].sort()).toEqual([
+      'app_log_client_error_counts',
+      'app_log_error_counts',
+      'claim_ops_alert',
+      'release_ops_alert',
+    ]);
   });
 
   it('O-2: vercel.json に 15 分おきで登録されていて、間隔が error を数える窓 (15 分) と同じ', async () => {
@@ -884,5 +909,200 @@ describe('GET /api/cron/app-log-alerts: そのほか (#1157)', () => {
     // (ローカルの dev サーバーで、DB の状態を変えても応答が変わらないことで確認した)。
     expect(routeModule.dynamic).toBe('force-dynamic');
     expect(routeModule.fetchCache).toBe('force-no-store');
+  });
+});
+
+// ---------------------------------------------------------------
+// #1493 ブラウザ・端末から届いた error (source = 'client') は、サーバーの error と別に数えて別に知らせる
+// ---------------------------------------------------------------
+describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別のキー・別のしきい値で数える (#1493)', () => {
+  /** source='client' の error が total 件 (POST /api/log は function_name を書かないので、関数名なしの 1 グループ) */
+  const clientRowsOf = (total: number): CountRow[] =>
+    total === 0 ? [] : [{ function_name: null, error_count: total, total_count: total }];
+
+  const claimKeys = () => rpcCalls('claim_ops_alert').map(([, args]) => (args as { p_alert_key: string }).p_alert_key);
+
+  it('K-1: クライアントの error が 21 件 (サーバーの既定のしきい値を超える数) あっても、サーバーの通知は鳴らない。クライアントの 100 件にも届かない', async () => {
+    // DB はサーバーの数え方 (app_log_error_counts) から source='client' を除く (結合テスト E-1 で確かめる)。サーバーの error は 0 件
+    setScenario({ counts: { data: [], error: null }, clientCounts: { data: clientRowsOf(21), error: null } });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      status: 'below_threshold',
+      total: 0,
+      threshold: 20,
+      window_minutes: 15,
+      client: { status: 'below_threshold', total: 21, threshold: 100 },
+    });
+    expect(rpcCalls('claim_ops_alert')).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    // 2 つとも、同じ窓 (15 分)・同じ上位 10 件で数える
+    expect(rpcCalls('app_log_client_error_counts')).toEqual([
+      ['app_log_client_error_counts', { p_window_minutes: 15, p_limit: 10 }],
+    ]);
+  });
+
+  it('K-2: クライアントの error は 100 件ちょうどでは通知せず、101 件から、クライアント用のキーで権利を取って 1 通送る', async () => {
+    setScenario({ counts: { data: [], error: null }, clientCounts: { data: clientRowsOf(100), error: null } });
+    const atThreshold = await GET(authed());
+    await expect(atThreshold.json()).resolves.toMatchObject({ client: { status: 'below_threshold', total: 100, threshold: 100 } });
+    expect(rpcCalls('claim_ops_alert')).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+
+    setScenario({ counts: { data: [], error: null }, clientCounts: { data: clientRowsOf(101), error: null } });
+    const over = await GET(authed());
+
+    await expect(over.json()).resolves.toEqual({
+      status: 'below_threshold',
+      total: 0,
+      threshold: 20,
+      window_minutes: 15,
+      client: { status: 'sent', total: 101, threshold: 100 },
+    });
+    expect(rpcCalls('claim_ops_alert')).toEqual([
+      ['claim_ops_alert', { p_alert_key: 'app_logs_client_error_spike', p_cooldown_minutes: 60 }],
+    ]);
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    const envelope = mocks.sendEmail.mock.calls[0][0];
+    expect(envelope.to).toBe(OPS_EMAIL);
+    expect(envelope.subject).toBe('【ほめゴハン運用】ブラウザ・端末のエラーが急増しています (直近 15 分で 101 件)');
+    expect(envelope.text).toContain('15 分で 100 件を超えると、この通知を送る設定です。');
+    expect(envelope.text).toContain(' 1. (関数名なし) … 101 件');
+    // 送れたら、クライアントの通知だと分かる info を 1 行残す
+    expect(mocks.logInfo).toHaveBeenCalledTimes(1);
+    const [message, meta] = mocks.logInfo.mock.calls[0];
+    expect(message).toBe('ブラウザ・端末のエラー急増を運用メールに知らせました');
+    expect(meta).toMatchObject({ scope: 'client', total: 101, threshold: 100, email_id: 'email-id-1' });
+  });
+
+  it('K-3: クールダウンを共有しない: サーバーの通知がクールダウン中 (deduped) でも、クライアントの急増は知らせる', async () => {
+    setScenario({
+      claim: { data: null, error: null },
+      clientCounts: { data: clientRowsOf(150), error: null },
+    });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toEqual({
+      status: 'deduped',
+      total: 42,
+      threshold: 20,
+      window_minutes: 15,
+      client: { status: 'sent', total: 150, threshold: 100 },
+    });
+    expect(claimKeys()).toEqual(['app_logs_error_spike', 'app_logs_client_error_spike']);
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    expect(mocks.sendEmail.mock.calls[0][0].subject).toContain('ブラウザ・端末のエラーが急増しています');
+  });
+
+  it('K-4: クールダウンを共有しない: クライアントの通知がクールダウン中 (利用者に鳴らされたあと) でも、サーバーの急増は知らせる', async () => {
+    setScenario({
+      clientCounts: { data: clientRowsOf(400), error: null },
+      clientClaim: { data: null, error: null },
+    });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toEqual({
+      status: 'sent',
+      total: 42,
+      threshold: 20,
+      window_minutes: 15,
+      client: { status: 'deduped', total: 400, threshold: 100 },
+    });
+    expect(claimKeys()).toEqual(['app_logs_error_spike', 'app_logs_client_error_spike']);
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    expect(mocks.sendEmail.mock.calls[0][0].subject).toBe('【ほめゴハン運用】エラーが急増しています (直近 15 分で 42 件)');
+  });
+
+  it('K-5: 両方が急増していれば、サーバー → クライアントの順に 1 通ずつ送る (キーはそれぞれ別)', async () => {
+    setScenario({ clientCounts: { data: clientRowsOf(120), error: null } });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toEqual({
+      status: 'sent',
+      total: 42,
+      threshold: 20,
+      window_minutes: 15,
+      client: { status: 'sent', total: 120, threshold: 100 },
+    });
+    expect(claimKeys()).toEqual(['app_logs_error_spike', 'app_logs_client_error_spike']);
+    expect(mocks.sendEmail.mock.calls.map(([envelope]) => envelope.subject)).toEqual([
+      '【ほめゴハン運用】エラーが急増しています (直近 15 分で 42 件)',
+      '【ほめゴハン運用】ブラウザ・端末のエラーが急増しています (直近 15 分で 120 件)',
+    ]);
+  });
+
+  it('K-6: OPS_ALERT_CLIENT_ERROR_THRESHOLD でクライアントのしきい値だけを変える (サーバーのしきい値は 20 のまま)', async () => {
+    vi.stubEnv('OPS_ALERT_CLIENT_ERROR_THRESHOLD', '30');
+    setScenario({ counts: { data: rowsOf(20), error: null }, clientCounts: { data: clientRowsOf(31), error: null } });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toEqual({
+      status: 'below_threshold',
+      total: 20,
+      threshold: 20,
+      window_minutes: 15,
+      client: { status: 'sent', total: 31, threshold: 30 },
+    });
+    expect(mocks.sendEmail.mock.calls[0][0].text as string).toContain('15 分で 30 件を超えると');
+    expect(mocks.logWarn).not.toHaveBeenCalled();
+  });
+
+  it('K-7: OPS_ALERT_CLIENT_ERROR_THRESHOLD が不正なら既定の 100 件に戻し、変数名だけを warn に残す (値は出さない)', async () => {
+    vi.stubEnv('OPS_ALERT_CLIENT_ERROR_THRESHOLD', 'lots-of-errors');
+    setScenario({ counts: { data: [], error: null }, clientCounts: { data: clientRowsOf(31), error: null } });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toMatchObject({ client: { status: 'below_threshold', total: 31, threshold: 100 } });
+    expect(mocks.logWarn).toHaveBeenCalledTimes(1);
+    const [, meta] = mocks.logWarn.mock.calls[0];
+    expect(meta).toEqual({ ignored_env: ['OPS_ALERT_CLIENT_ERROR_THRESHOLD'] });
+    expect(JSON.stringify(mocks.logWarn.mock.calls)).not.toContain('lots-of-errors');
+  });
+
+  it('K-8: クライアントの通知を送れなかったら、クライアントのキーで取った権利だけを返す (サーバーの抑止は触らない)', async () => {
+    setScenario({ claim: { data: null, error: null }, clientCounts: { data: clientRowsOf(200), error: null } });
+    mocks.sendEmail.mockResolvedValue(failedResult);
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ status: 'deduped', client: { status: 'send_failed', total: 200 } });
+    expect(rpcCalls('release_ops_alert')).toEqual([
+      ['release_ops_alert', { p_alert_key: 'app_logs_client_error_spike', p_claimed_at: CLIENT_CLAIMED_AT }],
+    ]);
+    expect(mocks.logWarn).toHaveBeenCalledTimes(1);
+    const [message, meta] = mocks.logWarn.mock.calls[0];
+    expect(message).toBe('ブラウザ・端末のエラー急増を検知しましたが、通知メールを送れませんでした');
+    expect(meta).toMatchObject({ scope: 'client', total: 200, error_code: 'validation_error' });
+  });
+
+  it('K-9: クライアントを数える RPC が失敗したら 500。サーバーの通知は、その前に送り終えている', async () => {
+    setScenario({ clientCounts: { data: null, error: { code: 'PGRST202', message: 'Could not find the function' } } });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+    // サーバーの急増 (42 件) の通知は届いている
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    expect(mocks.sendEmail.mock.calls[0][0].subject).toBe('【ほめゴハン運用】エラーが急増しています (直近 15 分で 42 件)');
+    expect(claimKeys()).toEqual(['app_logs_error_spike']);
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+  });
+
+  it('K-10: サーバーの判定が 500 で止まったら、クライアントは数えない (応答は 1 つの 500)', async () => {
+    setScenario({ counts: { data: null, error: { code: '42P01', message: 'relation missing' } } });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(500);
+    expect(rpcCalls('app_log_client_error_counts')).toHaveLength(0);
   });
 });

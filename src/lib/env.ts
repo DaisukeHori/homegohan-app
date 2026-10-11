@@ -134,7 +134,7 @@ export const SERVER_ENV_VARS = {
   OPS_ALERT_EMAIL: {
     required: false,
     description:
-      'エラー急増の運用メールの宛先 (#1157)。app_logs の error が 15 分で 20 件を超えたら、GET /api/cron/app-log-alerts がこのアドレス 1 つへ知らせる',
+      'エラー急増の運用メールの宛先 (#1157)。app_logs のサーバーの error が 15 分で 20 件を超えたら (ブラウザ・端末から届いた error は別に数えて 100 件。#1493)、GET /api/cron/app-log-alerts がこのアドレス 1 つへ知らせる',
     whenMissing: 'エラーが急増しても通知しない (cron は動くが、info ログを 1 行残すだけ)',
     // 未設定・形の誤りのときの扱い (info / warn のログと応答の status) を、cron の route 1 か所に置いている
     readOnlyBy: 'src/app/api/cron/app-log-alerts/route.ts',
@@ -142,8 +142,15 @@ export const SERVER_ENV_VARS = {
   OPS_ALERT_ERROR_THRESHOLD: {
     required: false,
     description:
-      'エラー急増の運用メールのしきい値 (#1157)。直近 15 分の error がこの件数を超えたら通知する。1〜100000 の整数',
+      'エラー急増の運用メールのしきい値 (#1157)。直近 15 分のサーバーの error (ブラウザ・端末から届いたものは除く。#1493) がこの件数を超えたら通知する。1〜100000 の整数',
     whenMissing: '既定の 20 件を使う (不正な値のときも既定値に戻し、warn ログを残す)',
+    readOnlyBy: 'src/app/api/cron/app-log-alerts/route.ts',
+  },
+  OPS_ALERT_CLIENT_ERROR_THRESHOLD: {
+    required: false,
+    description:
+      'ブラウザ・端末から届いた error (POST /api/log。source=client) の急増の運用メールのしきい値 (#1493)。直近 15 分のその error がこの件数を超えたら通知する。サーバーの error とは別に数える。1〜100000 の整数',
+    whenMissing: '既定の 100 件を使う (不正な値のときも既定値に戻し、warn ログを残す)',
     readOnlyBy: 'src/app/api/cron/app-log-alerts/route.ts',
   },
   OPS_ALERT_COOLDOWN_MINUTES: {
