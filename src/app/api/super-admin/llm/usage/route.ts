@@ -19,7 +19,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { LLMUsageQuerySchema } from '@/lib/super-admin/llm-schemas';
-import { exceedsLlmUsageAnomalyDailyRequests } from '@/lib/super-admin/llm-usage-anomaly';
+import { findLlmUsageAnomalousUsers, LLM_USAGE_UNKNOWN_USER } from '@/lib/super-admin/llm-usage-anomaly';
 import type { Tables } from '@/types/database.types';
 
 type LlmUsageRow = Pick<
@@ -124,21 +124,14 @@ export async function GET(request: NextRequest) {
 
     // ユーザー別集計 (Top 50)
     const userMap = new Map<string, { requests: number; cost_usd: number }>();
-    // 異常使用の判定は 1 日あたり (JST の暦日ごと) のリクエスト数で行う (#1482。画面の文「1日 5,000 リクエスト超」と設計書のとおり。
-    // 以前は期間全体の件数で判定していて、7 日・30 日では文と食い違っていた)。キーは「ユーザー ID と JST の暦日」
-    const userDailyRequests = new Map<string, number>();
-    const anomalousUsers = new Set<string>();
     for (const r of rows) {
-      const uid = r.user_id ?? 'unknown';
+      const uid = r.user_id ?? LLM_USAGE_UNKNOWN_USER;
       const cur = userMap.get(uid) ?? { requests: 0, cost_usd: 0 };
       userMap.set(uid, { requests: cur.requests + 1, cost_usd: cur.cost_usd + costOf(r) });
-      // created_at は期間の条件で絞っているので null の行は来ないが、列の定義上は null を取りうる
-      if (!r.created_at) continue;
-      const dayKey = `${uid}|${jstDayOfTimestamp(r.created_at)}`;
-      const dailyRequests = (userDailyRequests.get(dayKey) ?? 0) + 1;
-      userDailyRequests.set(dayKey, dailyRequests);
-      if (exceedsLlmUsageAnomalyDailyRequests(dailyRequests)) anomalousUsers.add(uid);
     }
+    // 異常使用は 1 日あたり (JST の暦日ごと) のリクエスト数で判定する (#1482。画面の文「1日 5,000 リクエスト超」と設計書のとおり。
+    // 以前は期間全体の件数で判定していて、7 日・30 日では文と食い違っていた)
+    const anomalousUsers = findLlmUsageAnomalousUsers(rows, jstDayOfTimestamp);
     const topUsers = Array.from(userMap.entries())
       .sort(([, a], [, b]) => b.requests - a.requests)
       .slice(0, 50)

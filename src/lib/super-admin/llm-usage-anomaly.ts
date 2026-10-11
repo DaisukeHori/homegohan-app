@@ -10,9 +10,38 @@
 /** 1 人・JST の 1 日あたりのリクエスト数がこれを超えたら異常 (運営の設計書の値) */
 export const LLM_USAGE_ANOMALY_DAILY_REQUESTS = 5000;
 
-/** 1 日のリクエスト数 dailyRequests が異常の基準を超えるか */
-export function exceedsLlmUsageAnomalyDailyRequests(dailyRequests: number): boolean {
-  return dailyRequests > LLM_USAGE_ANOMALY_DAILY_REQUESTS;
+/** 集計の行のうち、異常の判定に使う列 (llm_usage_logs の user_id / created_at) */
+export interface LlmUsageAnomalyRow {
+  user_id: string | null;
+  created_at: string | null;
+}
+
+/** user_id が null の行をまとめるキー (ユーザー別の集計と同じ) */
+export const LLM_USAGE_UNKNOWN_USER = 'unknown';
+
+/**
+ * 1 日 (dayOf が返す暦日。ルートは JST の暦日 jstDayOfTimestamp を渡す) のリクエスト数が
+ * LLM_USAGE_ANOMALY_DAILY_REQUESTS を超えた日があるユーザーの ID の集まり。
+ * 期間全体の件数では判定しない (7 日・30 日の表示で、1 日あたりは少ないユーザーを異常にしない)。
+ * created_at が null の行は、どの日にも数えない
+ */
+export function findLlmUsageAnomalousUsers(
+  rows: Iterable<LlmUsageAnomalyRow>,
+  dayOf: (createdAt: string) => string,
+): Set<string> {
+  const dailyRequests = new Map<string, Map<string, number>>();
+  const anomalous = new Set<string>();
+  for (const row of rows) {
+    if (!row.created_at) continue;
+    const userId = row.user_id ?? LLM_USAGE_UNKNOWN_USER;
+    const byDay = dailyRequests.get(userId) ?? new Map<string, number>();
+    dailyRequests.set(userId, byDay);
+    const day = dayOf(row.created_at);
+    const count = (byDay.get(day) ?? 0) + 1;
+    byDay.set(day, count);
+    if (count > LLM_USAGE_ANOMALY_DAILY_REQUESTS) anomalous.add(userId);
+  }
+  return anomalous;
 }
 
 /** 画面のバナーの文 */
