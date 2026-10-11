@@ -40,7 +40,13 @@ vi.mock('@/lib/rate-limit', () => ({
   checkRateLimit: vi.fn(async () => ({ success: true })),
   rateLimitExceededResponse: vi.fn(),
 }));
-vi.mock('@/lib/plan/entitlements', () => ({ recordAiUsage: vi.fn(async () => undefined) }));
+// AI の利用回数の上限の判定と記録 (#1149 / #1177)。ここでは常に許可する (判定そのものは src/__tests__/lib/plan/entitlements.test.ts)
+vi.mock('@/lib/plan/entitlements', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/plan/entitlements')>()),
+  consumeAiUsage: vi.fn(async () => ({ allowed: true, metered: false, usageDate: null, limit: null, used: null })),
+  refundAiUsage: vi.fn(async () => undefined),
+  recordAiUsage: vi.fn(async () => undefined),
+}));
 vi.mock('@/lib/env-required', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/env-required')>()),
   getSupabaseServiceConfig: () => ({ url: 'http://supabase.test', serviceRoleKey: 'service-role-key' }),

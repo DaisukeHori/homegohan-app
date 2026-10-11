@@ -35,7 +35,8 @@
 //           JST 0:00〜8:59 の時刻が前日になる。src/lib/jst-day-ranges.ts の jstDayOfTimestamp を使う
 //   規則 I: サーバーのコード (src/app/api・supabase/functions) で、Date を toLocaleDateString / toLocaleTimeString / toLocaleString、
 //           Intl.DateTimeFormat で文字にするのに timeZone を指定しない。実行環境 (UTC) の暦日・時刻になる
-//   規則 J: サーバーのコード (src/app/api・src/lib) で、ローカル時刻で動かした・作った Date を、formatLocalDate (JST) か
+//   規則 J: サーバーのコード (src/app/api・src/lib) と、サーバーと画面が共有する処理 (lib。献立生成の slot-builder・旬の行事など) で、
+//           ローカル時刻で動かした・作った Date を、formatLocalDate (JST) か
 //           toLocaleDateString で暦日の文字列にする (#1463)。対象の Date は、同じファイルでローカル時刻の setter
 //           (setDate / setMonth / setFullYear / setHours) を当てた変数と、packages/shared の parseLocalDate / addDays
 //           (どちらもローカル時刻の Date を返す) の呼び出し・その戻り値を入れた変数。
@@ -293,8 +294,11 @@ const JST_RANGE_FUNCTIONS = new Set(['jstDayRangeTimestamps', 'jstOptionalDayRan
 /** 規則 I を当てる、サーバーで動くコードの場所 (実行環境のタイムゾーンは UTC) */
 const SERVER_ONLY_PREFIXES = ['src/app/api/', 'supabase/functions/'] as const;
 
-/** 規則 J を当てる、サーバーで動くコードの場所 (supabase/functions のローカル時刻のメソッドは、規則 C がまとめて数える) */
-const LOCAL_SHIFTED_DATE_SCAN_PREFIXES = ['src/app/api/', 'src/lib/'] as const;
+/**
+ * 規則 J を当てる場所: サーバーで動くコード (src/app/api・src/lib) と、サーバーと画面が共有する処理 (lib)。
+ * supabase/functions のローカル時刻のメソッドは、規則 C がまとめて数える
+ */
+const LOCAL_SHIFTED_DATE_SCAN_PREFIXES = ['src/app/api/', 'src/lib/', 'lib/'] as const;
 
 /** ローカル時刻の Date を返す packages/shared の関数 (規則 J)。parseLocalDate はローカル時刻の 0 時、addDays はローカル時刻の setDate */
 const LOCAL_DATE_RETURNING_FUNCTIONS = new Set(['parseLocalDate', 'addDays']);
@@ -826,9 +830,10 @@ describe('走査そのもの', () => {
     'const a = formatLocalDate(parseLocalDate(day), "Asia/Tokyo");',
     // health/streaks の週の始まり (toLocaleDateString は timeZone を指定していても、ずれた Date を文字にする)
     "const w = new Date(todayDate);\nw.setDate(w.getDate() - 6);\nconst a = w.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });",
-  ])('サーバーのコード (src/app/api・src/lib) で検出する (規則 J): %s', (code) => {
+  ])('サーバーのコード (src/app/api・src/lib) と共有の処理 (lib) で検出する (規則 J): %s', (code) => {
     expect(scanSource('src/app/api/example/route.ts', code).map((f) => f.rule)).toEqual(['J']);
     expect(scanSource('src/lib/example.ts', code).map((f) => f.rule)).toEqual(['J']);
+    expect(scanSource('lib/example.ts', code).map((f) => f.rule)).toEqual(['J']);
     // 画面のコードは利用者の端末の暦日で書くのが正しい使い方もあるので、規則 J は当てない
     expect(scanSource('src/app/example/page.tsx', code)).toEqual([]);
     expect(scanSource('src/components/Example.tsx', code)).toEqual([]);
