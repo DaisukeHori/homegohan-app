@@ -4,22 +4,24 @@
  *
  * アプリは getApi() (apps/mobile/src/lib/api.ts の withFriendlyErrors) で 429 AI_DAILY_LIMIT を固定の文の
  * AiDailyLimitError に置き換える。生の fetch (ストリーミングで受ける AI 相談の送信など) にはこれが効かないので、
- * 失敗の応答から errorOfFailedAiResponse (apps/mobile/src/lib/ai-daily-limit.ts) で Error を作って投げる決まりにした
+ * 失敗の応答から errorOfFailedResponse (apps/mobile/src/lib/failed-response.ts) で Error を作って投げる決まりにした
  * (R1 の指摘: AI 相談の 2 か所が `HTTP 429: {...JSON...}` をそのまま出し、1 食の作り直しは何も出さなかった)。
+ * errorOfFailedResponse は 503 の緊急停止・メンテナンス中 (#1457) も固定の文にする。AI 相談を生の fetch で呼ぶファイルが
+ * 503 を固定の文にしているかは tests/mobile-service-unavailable-raw-fetch.test.ts が別に見る (このテストは 429 の分類を見る)。
  *
  * このテストが確かめること:
  *   1. apps/mobile の app と src (テストを除く) の生の fetch の呼び出しを構文木で全部集め (コメントは見ない。
  *      同じ名前のローカルの関数 `const fetch = ...` の呼び出しは除く)、含む関数 (名前のある、いちばん内側の関数) ごとに
  *      下の RAW_FETCHES の分類と一致する (足した・消したら、ここで気づく)
  *   2. 分類で呼び先とした route.ts が、429 AI_DAILY_LIMIT を返す (aiDailyLimitResponse を呼ぶ) なら、その関数は
- *      errorOfFailedAiResponse を呼んでいる
+ *      errorOfFailedResponse を呼んでいる
  *   3. 分類の呼び先の URL の終わりの部分が、そのファイルに書かれている (分類が別の API を指したまま古くならない)
  *
  * 限界 (見張りであって証明ではない):
  *   - 呼び先の route は人が分類する。3 はファイルに URL の終わりの部分の文字列があることしか見ないので、
  *     同じファイルが似た URL を別の関数で呼ぶと、取り違えを見逃しうる
  *   - 「429 を返すか」は route.ts の中で aiDailyLimitResponse を呼ぶかで見る。route が別の名前の関数で 429 を返すと見逃す
- *   - errorOfFailedAiResponse を呼んでいることは見るが、その Error を画面がどう出すかは見ない
+ *   - errorOfFailedResponse を呼んでいることは見るが、その Error を画面がどう出すかは見ない
  *     (画面の挙動は jest の apps/mobile/__tests__/ai/chat-daily-limit・ai/advisor-sheet-daily-limit・
  *     menus-weekly/regenerate-meal-daily-limit が確かめる)
  *   - fetch を包んだ自前の関数 (fetch を引数で受け取るなど) を通す呼び出しは数えない
@@ -32,7 +34,7 @@ import { describe, expect, it } from 'vitest';
 const ROOT = path.resolve(__dirname, '..');
 const MOBILE_ROOT = 'apps/mobile';
 const MOBILE_SOURCE_DIRS = ['app', 'src'];
-const LIMIT_ERROR_FACTORY = 'errorOfFailedAiResponse';
+const LIMIT_ERROR_FACTORY = 'errorOfFailedResponse';
 const LIMIT_RESPONSE_BUILDER = 'aiDailyLimitResponse';
 
 /**
@@ -245,7 +247,7 @@ describe('アプリの生の fetch と 429 AI_DAILY_LIMIT (#1149)', () => {
     expect(found).toEqual(Object.keys(RAW_FETCHES).sort());
   });
 
-  it('2. 429 AI_DAILY_LIMIT を返す API を生の fetch で呼ぶ関数は、errorOfFailedAiResponse を呼ぶ', () => {
+  it('2. 429 AI_DAILY_LIMIT を返す API を生の fetch で呼ぶ関数は、errorOfFailedResponse を呼ぶ', () => {
     const limitedKeys = Object.entries(RAW_FETCHES)
       .filter(([, entry]) => entry.returnsDailyLimit)
       .map(([key]) => key);

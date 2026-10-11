@@ -57,9 +57,10 @@ export const FEATURE_FLAG_DEFAULTS = {
 export type KnownFeatureFlagKey = keyof typeof FEATURE_FLAG_DEFAULTS;
 
 /**
- * GET /api/feature-flags がクライアント (Web・モバイル) に返すフラグ。
- * クライアントが実際に使うものだけを許可リストで列挙する (運営が作った別のフラグの名前を一般ユーザーに見せない)。
- * クライアントがフラグを使い始めるときは、ここにも足す。
+ * GET /api/feature-flags が返すフラグ。
+ * 画面に見せてよいものだけを許可リストで列挙する (運営が作った別のフラグの名前を一般ユーザーに見せない)。
+ * いま、この API を呼んでいる画面は無い (画面は 503 の応答の code で止められたことを知る。#1457)。
+ * 画面がフラグを前もって確かめるようにするときは、ここにも足す。
  */
 export const CLIENT_FEATURE_FLAG_KEYS = ['ai_chat_enabled', 'maintenance_mode'] as const satisfies readonly KnownFeatureFlagKey[];
 

@@ -23,7 +23,13 @@ import {
   parseConsumeAiUsageResult,
   secondsUntilNextJstMidnight,
 } from '../supabase/functions/_shared/ai-daily-limit';
-import { AI_FEATURES, AI_UNMETERED_FEATURES, isMeteredAiFeature } from '../supabase/functions/_shared/ai-usage-core';
+import {
+  AI_FEATURES,
+  AI_UNMETERED_DAILY_CAP_DEFAULTS,
+  AI_UNMETERED_DAILY_CAP_FALLBACK,
+  AI_UNMETERED_FEATURES,
+  isMeteredAiFeature,
+} from '../supabase/functions/_shared/ai-usage-core';
 import {
   AI_DAILY_LIMIT_SUMMARY_SKIPPED_NOTE,
   AI_SKIPPED_DAILY_LIMIT_CODE,
@@ -141,11 +147,22 @@ describe('AI の部分を省いた応答 (aiSkipped: AI_DAILY_LIMIT)', () => {
 });
 
 describe('上限に数えない機能', () => {
-  it('上限に数えない機能は、機能の一覧にある名前で、画面を開くと自動で呼ばれる AI の nutrition_advice_auto だけ', () => {
-    expect(AI_UNMETERED_FEATURES).toEqual(['nutrition_advice_auto']);
+  it('上限に数えない機能は、機能の一覧にある名前で、画面を開く・保存するだけで呼ばれる AI の nutrition_advice_auto と meal_image_auto だけ', () => {
+    expect(AI_UNMETERED_FEATURES).toEqual(['nutrition_advice_auto', 'meal_image_auto']);
     for (const feature of AI_UNMETERED_FEATURES) expect(AI_FEATURES).toContain(feature);
     expect(isMeteredAiFeature('nutrition_advice_auto')).toBe(false);
-    // 利用者が押す操作の機能は、どれも上限に数える
-    for (const feature of AI_FEATURES.filter((f) => f !== 'nutrition_advice_auto')) expect(isMeteredAiFeature(feature), feature).toBe(true);
+    expect(isMeteredAiFeature('meal_image_auto')).toBe(false);
+    // 利用者が押す操作の機能は、どれも上限に数える (画像を作る操作 image_generation も。料理画像の副作用だけを meal_image_auto に分けた)
+    for (const feature of AI_FEATURES.filter((f) => !AI_UNMETERED_FEATURES.includes(f))) expect(isMeteredAiFeature(feature), feature).toBe(true);
+    expect(isMeteredAiFeature('image_generation')).toBe(true);
+  });
+
+  it('(#1149) 上限に数えない機能には、どれにも安全弁の既定の回数がある (0 より大きい整数)。行が無いときの値は既定の値のうち小さいほう', () => {
+    expect(Object.keys(AI_UNMETERED_DAILY_CAP_DEFAULTS).sort()).toEqual([...AI_UNMETERED_FEATURES].sort());
+    for (const [feature, cap] of Object.entries(AI_UNMETERED_DAILY_CAP_DEFAULTS)) {
+      expect(Number.isInteger(cap) && cap > 0, feature).toBe(true);
+    }
+    expect(AI_UNMETERED_DAILY_CAP_DEFAULTS).toEqual({ nutrition_advice_auto: 30, meal_image_auto: 20 });
+    expect(AI_UNMETERED_DAILY_CAP_FALLBACK).toBe(Math.min(...Object.values(AI_UNMETERED_DAILY_CAP_DEFAULTS)));
   });
 });

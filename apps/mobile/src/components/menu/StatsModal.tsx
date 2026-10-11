@@ -714,8 +714,8 @@ export const StatsModal: React.FC<StatsModalProps> = ({
         // 同意が無いため AI に送らなかった (403 AI_CONSENT_REQUIRED。T15 / #1154)。開くと自動で頼む処理なので、
         // 同意の案内は出さず、案内の一文だけを出す
         if (isAiConsentRequiredError(e)) setFeedback({ praise: null, advice: AI_CONSENT_AUTOMATIC_LOCKED_NOTE });
-        // 「再分析」で今日の AI の利用回数の上限に達した (429 AI_DAILY_LIMIT。#1149)。固定の文を出す
-        // (開いたときの自動の取得は上限に数えないので、ここに来るのは「再分析」を押したときだけ)
+        // 今日の AI の利用回数の上限に達した (429 AI_DAILY_LIMIT。#1149)。固定の文を出す
+        // (「再分析」は 1 日の上限 (10 回)。開いたときの自動の取得は上限に数えないが、自動の分だけの安全弁 (既定は 1 日 30 回) でも来る)
         else if (isAiDailyLimitError(e)) setFeedback({ praise: null, advice: e.message });
         setIsLoadingFeedback(false);
       }

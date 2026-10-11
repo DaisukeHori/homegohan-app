@@ -15,7 +15,7 @@ import {
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { aiDailyLimitResponse, consumeAiUsage } from '@/lib/plan/entitlements';
+import { aiDailyLimitResponse, consumeAiUsage, issueAiUsageGrant } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 
@@ -261,6 +261,9 @@ export async function POST(request: Request) {
   const rateLimitResult = await checkRateLimit(user.id, 'analysis');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
+  // #1149 数えたあとに返す「数え済みの印」(続く解析 analyze-* の本文の aiUsageGrant に入れると、解析は数えない)。数えるまでは空
+  let aiUsageGrantField: { aiUsageGrant?: string } = {};
+
   try {
     const startedAt = Date.now();
     const body = await request.json();
@@ -294,6 +297,10 @@ export async function POST(request: Request) {
     // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
     const aiUsage = await consumeAiUsage(user.id, 'photo_analysis');
     if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
+    // 写真の「オート」は、この判別に続けて解析 (analyze-*) を呼ぶ。利用者の 1 回の操作を 1 回と数えるため、ここで数えた印を返し、
+    // 続く解析はその印を使って数えない (印は 1 回だけ使える。偽の印・期限切れ・他人の印は数える)。数えていなければ印は返さない
+    const aiUsageGrant = await issueAiUsageGrant(user.id, 'photo_analysis', aiUsage);
+    if (aiUsageGrant) aiUsageGrantField = { aiUsageGrant };
 
     const classifyStartedAt = Date.now();
     const { result: initialResult, model } = await requestClassificationWithRetry(images);
@@ -313,7 +320,7 @@ export async function POST(request: Request) {
         confidence: initialResult.confidence,
         candidates: [{ type: initialResult.type, confidence: initialResult.confidence }],
       });
-      return NextResponse.json({ ...lowConfResult, modelUsed: model });
+      return NextResponse.json({ ...lowConfResult, modelUsed: model, ...aiUsageGrantField });
     }
 
     let result: ClassifyPhotoResult | ClassifyPhotoWithMealAnalysisResult = initialResult;
@@ -361,6 +368,7 @@ export async function POST(request: Request) {
           message: '写真の種類を判定できませんでした。食事・冷蔵庫・健診結果・体重計のいずれかが鮮明に写った写真を撮り直してください。',
           ...result,
           modelUsed: model,
+          ...aiUsageGrantField,
         },
         { status: 422 },
       );
@@ -369,6 +377,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ...result,
       modelUsed: model,
+      ...aiUsageGrantField,
     });
   } catch (error: any) {
     const isTimeout = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
@@ -396,6 +405,7 @@ export async function POST(request: Request) {
           ...recovered,
           modelUsed: CLASSIFY_MODEL,
           recovered: true,
+          ...aiUsageGrantField,
         });
       }
     }

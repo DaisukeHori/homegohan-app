@@ -1,8 +1,15 @@
 /**
- * GET /api/feature-flags — クライアント (Web・モバイル) 向けの機能フラグ (#1148)
+ * GET /api/feature-flags — 画面が前もって状態を知るための機能フラグの窓口 (#1148)
  *
- * 画面が「今、AI 相談は使えるか」「メンテナンス中か」を知るための窓口。ログインしていなくても答える
+ * 「今、AI 相談は使えるか」「メンテナンス中か」を答える。ログインしていなくても答える
  * (メンテナンス中かどうかは、ログイン前の画面でも要るため)。
+ *
+ * いま、この API を呼んでいる画面 (Web・モバイル) は無い (#1457)。画面は前もって確かめず、止められたときの
+ * 503 の応答の code (AI_CHAT_DISABLED / MAINTENANCE_MODE) で緊急停止中・メンテナンス中を知り、固定の文を出す
+ * (Web: src/lib/ai/ai-chat-unavailable.ts、モバイル: apps/mobile/src/lib/service-unavailable.ts。文と code の置き場は
+ * packages/shared/src/service-unavailable.ts)。フラグはサーバーのメモリに最大 30 秒覚えるので、前もって確かめても
+ * 送る時点の判定とずれることがあり、503 の扱いはどのみち要る。この API は、画面で前もって知らせたくなったときの
+ * 窓口として残してある。
  *
  * 返すのは CLIENT_FEATURE_FLAG_KEYS (src/lib/feature-flags.ts) に載せたフラグだけ。運営が作った別のフラグの名前を
  * 一般のユーザーに見せない。値はログイン中のユーザーにとっての ON/OFF (段階公開があれば、そのユーザーでの判定)。

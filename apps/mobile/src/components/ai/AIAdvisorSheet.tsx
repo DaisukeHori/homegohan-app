@@ -30,7 +30,8 @@ import { supabase } from "../../lib/supabase";
 import { colors, radius, shadows, spacing } from "../../theme";
 import { AIDayMenuModal } from "./AIDayMenuModal";
 import { aiSummarySkippedNote, isAiConsentRequiredError, promptAiConsentRequired } from "../../lib/ai-consent";
-import { errorOfFailedAiResponse, isAiDailyLimitError } from "../../lib/ai-daily-limit";
+import { errorOfFailedResponse, isStoppedByServerError, stoppedByServerAlertTitleOf } from "../../lib/failed-response";
+import { SERVICE_UNAVAILABLE_ALERT_TITLE, serviceUnavailableMessageOf } from "../../lib/service-unavailable";
 
 // ============================================================
 // Types
@@ -321,6 +322,13 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         await fetchSessions();
       } else {
         const err = await res.json().catch(() => ({}));
+        // AI 相談の緊急停止中・メンテナンス中 (#1457): 本文の文字列ではなく固定の文を出す
+        // (メンテナンス中の本文の error はオブジェクトなので、下の読み方では文にならない)
+        const unavailableMessage = serviceUnavailableMessageOf(res.status, err);
+        if (unavailableMessage) {
+          Alert.alert(SERVICE_UNAVAILABLE_ALERT_TITLE, unavailableMessage);
+          return;
+        }
         Alert.alert(
           "エラー",
           (err as any)?.message ||
@@ -393,8 +401,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
       if (!res.ok) {
         const errText = await res.text().catch(() => "");
-        // 429 AI_DAILY_LIMIT (#1149) は固定の文の AiDailyLimitError にする (生の本文を画面に出さない)
-        throw errorOfFailedAiResponse(res.status, errText);
+        // 429 AI_DAILY_LIMIT (#1149)・503 の緊急停止・メンテナンス中 (#1457) は、固定の文の例外にする (生の本文を画面に出さない)
+        throw errorOfFailedResponse(res.status, errText);
       }
 
       if (!res.body) {
@@ -495,11 +503,13 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         closeSheetAndPromptAiConsent();
         return;
       }
-      // 今日の AI の利用回数の上限に達して止められた (#1149): 送らなかったので、メッセージを消して入力を戻し、固定の文を出す
-      if (isAiDailyLimitError(e)) {
+      // 今日の AI の利用回数の上限 (#1149)・AI 相談の緊急停止中・メンテナンス中 (#1457) で止められた:
+      // 送らなかったので、メッセージを消して入力を戻し、固定の文を出す
+      // (見出しは、緊急停止・メンテナンス中は「ご利用いただけません」、上限は「エラー」)
+      if (isStoppedByServerError(e)) {
         setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
         setInputText(trimmed);
-        Alert.alert("エラー", e.message);
+        Alert.alert(stoppedByServerAlertTitleOf(e), e.message);
         return;
       }
       if (e?.name === "AbortError") {

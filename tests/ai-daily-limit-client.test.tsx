@@ -5,8 +5,11 @@
  *     本文は clone して読むので、呼び出し側はあとで本文を読める。レート制限の 429 (RATE_LIMITED) やほかの状態では null
  *   - aiFetch: 429 AI_DAILY_LIMIT を受けたら AI_DAILY_LIMIT_EVENT (detail は文) を出す。同意の 403 は従来どおり同意の案内だけ
  *   - AiDailyLimitHost: イベントを受けたら文を role="alert" で出す。「閉じる」で消える。少しの間で消える
+ *   - (見張り) AI 相談のアクションの実行は、上限の 429 なら固定の文に alert を重ねない
  */
 import { act, createElement } from 'react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -140,5 +143,23 @@ describe('AiDailyLimitHost', () => {
       window.dispatchEvent(new CustomEvent(AI_DAILY_LIMIT_EVENT, { detail: { html: '<b>x</b>' } }));
     });
     expect(notice()).toBeNull();
+  });
+});
+
+describe('(#1149) AI 相談のアクションの実行が上限で止められたとき、固定の文に alert を重ねない (src/components/AIChatBubble.tsx)', () => {
+  // 画面全体を描くには依存が多いので、実行の関数 (executeAction) の失敗の分岐を、ソースの並びで確かめる (見張り)
+  const source = readFileSync(join(process.cwd(), 'src/components/AIChatBubble.tsx'), 'utf8');
+  const start = source.indexOf('const executeAction = async');
+  const body = source.slice(start, source.indexOf('const rejectAction = async', start));
+
+  it('失敗の alert より前に、上限の応答 (aiDailyLimitMessageOfResponse) なら何も出さずに戻る', () => {
+    expect(start).toBeGreaterThan(-1);
+    const alertAt = body.indexOf("alert('アクションの実行に失敗しました')");
+    const limitAt = body.search(/if \(await aiDailyLimitMessageOfResponse\(res\)\) return;/);
+    expect(alertAt).toBeGreaterThan(-1);
+    expect(limitAt).toBeGreaterThan(-1);
+    expect(limitAt).toBeLessThan(alertAt);
+    // 実行の呼び出しは aiFetch (上限の 429 なら AiDailyLimitHost が固定の文を出す)
+    expect(body).toMatch(/await aiFetch\(`\/api\/ai\/consultation\/actions\/\$\{messageId\}\/execute`/);
   });
 });
