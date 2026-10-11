@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useCallback, useMemo, useEffect } from "react";
-import { addDaysToDate, isCalendarDate } from "@/lib/date-utils";
+import { addDaysToDate } from "@/lib/date-utils";
+import { menuGenerationRangeEndMax, menuGenerationRangeStartMax } from "@homegohan/shared";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Sparkles, Calendar, Target, RefreshCw,
@@ -40,29 +41,17 @@ const STORAGE_KEY_RANGE_DAYS = 'v4_range_days';
 const SINGLE_DAY_MAX_DAYS_AHEAD = 30;
 
 /**
- * 「期間を指定」モードの開始日の上限 (今日から何日先まで)。「1日だけ」と同じ 1 ヶ月先まで (#1463)。
- * 以前は上限が無く、遠い未来の日付を選ぶと、端末の slot-builder とサーバーの行事の検索 (getEventsForRange) が 1 日ずつ大量に回った
+ * 「期間を指定」の開始日の上限 (今日から 1 ヶ月先 = MENU_GENERATION_RANGE_START_MAX_DAYS_AHEAD 日先。#1463)。
+ * 以前は上限が無く、遠い未来の日付を選ぶと、端末の slot-builder とサーバーの行事の検索 (getEventsForRange) が 1 日ずつ大量に回った。
+ * 上限の値はモバイルの画面・サーバー (POST /api/ai/menu/v4/generate・/v5/generate) と共有する (@homegohan/shared の menu-generation-range。#1482)
  */
-const RANGE_START_MAX_DAYS_AHEAD = SINGLE_DAY_MAX_DAYS_AHEAD;
+export const generateRangeStartMax: (today: string) => string = menuGenerationRangeStartMax;
 
 /**
- * 「期間を指定」モードで選べる期間の長さ (開始日を含む日数)。画面の説明「最大31日」と同じ (#1463)。
- * 終了日の上限は、開始日からこの日数の最後の日 (開始日 + 30 日)
- */
-const RANGE_MAX_DAYS = 31;
-
-/** 「期間を指定」の開始日の上限 (今日から RANGE_START_MAX_DAYS_AHEAD 日先) */
-export function generateRangeStartMax(today: string): string {
-  return addDaysToDate(today, RANGE_START_MAX_DAYS_AHEAD);
-}
-
-/**
- * 「期間を指定」の終了日の上限 (開始日を含む RANGE_MAX_DAYS 日の最後の日)。
+ * 「期間を指定」の終了日の上限 (開始日を含む MENU_GENERATION_RANGE_MAX_DAYS 日 = 画面の説明「最大31日」の最後の日)。
  * 開始日が日付でない (空欄など) ときは上限を付けない (undefined)
  */
-export function generateRangeEndMax(start: string): string | undefined {
-  return isCalendarDate(start) ? addDaysToDate(start, RANGE_MAX_DAYS - 1) : undefined;
-}
+export const generateRangeEndMax: (start: string) => string | undefined = menuGenerationRangeEndMax;
 
 /** 日付 value を下限 min・上限 max (無ければ上限なし) に収める。YYYY-MM-DD どうしは文字列の大小が日付の前後と同じ */
 function clampDay(value: string, min: string, max: string | undefined): string {
@@ -463,8 +452,8 @@ function V4GenerateModalNormal({
     }
   }, [isOpen]);
 
-  // 期間の入力欄の上限 (#1463)。開始日は今日から RANGE_START_MAX_DAYS_AHEAD 日先まで、
-  // 終了日は開始日を含む RANGE_MAX_DAYS 日の最後の日まで
+  // 期間の入力欄の上限 (#1463)。開始日は今日から MENU_GENERATION_RANGE_START_MAX_DAYS_AHEAD 日先まで、
+  // 終了日は開始日を含む MENU_GENERATION_RANGE_MAX_DAYS 日の最後の日まで
   const rangeStartMax = useMemo(() => generateRangeStartMax(todayStr), [todayStr]);
   const rangeEndMax = generateRangeEndMax(rangeStart);
 

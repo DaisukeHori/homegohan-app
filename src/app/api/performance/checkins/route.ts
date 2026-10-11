@@ -1,8 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
-import { jstDayOffset, jstToday } from '@/lib/jst-day-ranges'
+import { CALENDAR_DATE_REQUIREMENT, isCalendarDate, jstDayOffset, jstToday } from '@/lib/jst-day-ranges'
 import { NextRequest, NextResponse } from 'next/server'
 import { toPerformanceCheckin, fromPerformanceCheckin, toCheckinAverages } from '@/lib/converter'
-import { RECORD_DATE_PATTERN } from '@/lib/health-payloads'
 import { sanitizePerformanceCheckinPayload } from '@/lib/performance-payloads'
 import { internalError } from '@/lib/api/errors'
 
@@ -32,6 +31,15 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
     const averages = searchParams.get('averages') === 'true'
+
+    // 日付は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲の中) だけを受け付ける (#1482)。
+    // 形を見ずに渡すと、2026-02-30 のような日付が DB の date 型への変換 (RPC の p_date を含む) で失敗して 500 になる。
+    // 空欄 (?date=) は以前どおり「指定なし」として扱う
+    for (const [name, value] of [['date', date], ['startDate', startDate], ['endDate', endDate]] as const) {
+      if (value && !isCalendarDate(value)) {
+        return NextResponse.json({ error: `${name} must be ${CALENDAR_DATE_REQUIREMENT}` }, { status: 400 })
+      }
+    }
 
     // 7日移動平均を取得
     if (averages) {
@@ -123,7 +131,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { checkinDate, ...checkinData } = body
 
-    if (typeof checkinDate !== 'string' || !RECORD_DATE_PATTERN.test(checkinDate.trim())) {
+    // 形だけを見ていると、2026-02-30 のような存在しない日付が通り、DB の date 型への変換で 500 になる (#1482)
+    const trimmedCheckinDate = typeof checkinDate === 'string' ? checkinDate.trim() : ''
+    if (!isCalendarDate(trimmedCheckinDate)) {
       return NextResponse.json({ error: 'checkinDate must be in YYYY-MM-DD format' }, { status: 400 })
     }
 
@@ -137,7 +147,7 @@ export async function POST(request: NextRequest) {
     // DBフォーマットに変換
     const dbData = fromPerformanceCheckin({
       userId: user.id,
-      checkinDate: checkinDate.trim(),
+      checkinDate: trimmedCheckinDate,
       ...safeCheckinData,
     })
 
