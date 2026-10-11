@@ -16,6 +16,9 @@
  *   - app_log_error_counts: 窓の中の level='error' だけを function_name ごとに数える (warn / info と、窓の外は数えない)。
  *       多い順に limit 行まで返し、どの行にも全体の件数 total_count が付く。返す列は function_name / error_count / total_count だけで、
  *       ログの本文・ユーザー ID は読み出さない。窓・limit が範囲外なら 22023
+ *   - #1493 (20261011080000): app_log_error_counts はサーバーが書いた error (source <> 'client') だけを数える。
+ *       ブラウザ・端末から POST /api/log で届いた error (source = 'client') は app_log_client_error_counts が別に数える
+ *       (利用者が書いた error で、サーバーの障害の通知を鳴らしたり止めたりできないように)
  *
  * 共有の DB には他のテストや開発サーバーのログも入っているので、自分が入れた行は専用の function_name と request_id の目印で
  * 識別し、他の行との合計は下限だけを確かめる。ログの行は終了時に目印で削除する。
@@ -87,6 +90,10 @@ const LOG_MARK = `rls-1157-ops-alert-${TS}`;
 const FN_A = `rls-1157-fn-a-${TS}`;
 const FN_B = `rls-1157-fn-b-${TS}`;
 const FN_C = `rls-1157-fn-c-${TS}`;
+/** #1493 source='client' で入れる行の目印 (POST /api/log は function_name を書かないが、識別のためにここでは付ける) */
+const FN_CLIENT = `rls-1493-client-${TS}`;
+/** #1493 source='edge-function' で入れる行の目印 (サーバーの error は source を問わず数える) */
+const FN_EDGE = `rls-1493-edge-${TS}`;
 
 const MIN = 60 * 1000;
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
@@ -107,6 +114,13 @@ async function release(alertKey: string, claimedAt: string, who: SupabaseClient 
 
 async function counts(windowMinutes?: number | null, limit?: number | null, who: SupabaseClient = srAdmin) {
   return who.rpc('app_log_error_counts', {
+    ...(windowMinutes === undefined ? {} : { p_window_minutes: windowMinutes }),
+    ...(limit === undefined ? {} : { p_limit: limit }),
+  });
+}
+
+async function clientCounts(windowMinutes?: number | null, limit?: number | null, who: SupabaseClient = srAdmin) {
+  return who.rpc('app_log_client_error_counts', {
     ...(windowMinutes === undefined ? {} : { p_window_minutes: windowMinutes }),
     ...(limit === undefined ? {} : { p_limit: limit }),
   });
@@ -159,10 +173,12 @@ async function seedLog(row: {
   level: 'debug' | 'info' | 'warn' | 'error';
   function_name: string | null;
   created_at: string;
+  /** 既定は api-route (サーバーのログ)。'client' は POST /api/log で届いたログ (#1493) */
+  source?: 'api-route' | 'edge-function' | 'client';
 }) {
   const { error } = await srAdmin.from('app_logs').insert({
     level: row.level,
-    source: 'api-route',
+    source: row.source ?? 'api-route',
     function_name: row.function_name,
     message: 'rls-1157 ops alert seed',
     request_id: LOG_MARK,
@@ -194,7 +210,7 @@ afterAll(async () => {
 // ================================================================
 // A. 権限: service_role だけ
 // ================================================================
-describe('ops_alert_state と 3 本の関数は service_role だけが使える', () => {
+describe('ops_alert_state と 4 本の関数は service_role だけが使える', () => {
   it('A-1: anon は表を読み書きできない (42501)', async () => {
     const a = anon();
     expectPermissionDenied(await a.from('ops_alert_state').select('alert_key'));
@@ -214,11 +230,13 @@ describe('ops_alert_state と 3 本の関数は service_role だけが使える'
     expect(await stateRow(key('anon-insert'))).toBeNull();
   });
 
-  it('A-3: anon / authenticated は 3 本の関数も呼べない (42501)', async () => {
+  it('A-3: anon / authenticated は 4 本の関数も呼べない (42501)', async () => {
     for (const who of [anon(), client(anonKey, userJwt)]) {
       expectPermissionDenied(await claim(key('rpc-denied'), 60, who));
       expectPermissionDenied(await release(key('rpc-denied'), ago(0), who));
       expectPermissionDenied(await counts(15, 10, who));
+      // #1493 クライアントの error を数える関数も同じ
+      expectPermissionDenied(await clientCounts(15, 10, who));
     }
     // 権限エラーで claim が実行されていないこと
     expect(await stateRow(key('rpc-denied'))).toBeNull();
@@ -275,10 +293,11 @@ describe('ops_alert_state と 3 本の関数は service_role だけが使える'
              (SELECT c FROM unnest(p.proconfig) c WHERE c LIKE 'search_path=%') AS search_path
         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
        WHERE n.nspname = 'public'
-         AND p.proname IN ('claim_ops_alert', 'release_ops_alert', 'app_log_error_counts')
+         AND p.proname IN ('claim_ops_alert', 'release_ops_alert', 'app_log_error_counts', 'app_log_client_error_counts')
        ORDER BY 1
     `);
     expect(fns.map((f) => f.sig)).toEqual([
+      'app_log_client_error_counts(integer,integer)',
       'app_log_error_counts(integer,integer)',
       'claim_ops_alert(text,integer)',
       'release_ops_alert(text,timestamp with time zone)',
@@ -539,5 +558,101 @@ describe('app_log_error_counts', () => {
     for (const bad of [0, -1, 101, null]) {
       expect((await counts(15, bad)).error?.code, `limit ${String(bad)}`).toBe('22023');
     }
+  });
+});
+
+// ================================================================
+// E. #1493: サーバーの error と、ブラウザ・端末から届いた error (source = 'client') を別々に数える
+// ================================================================
+describe('#1493 app_log_error_counts は source = client を数えず、app_log_client_error_counts が別に数える', () => {
+  beforeAll(async () => {
+    // 窓 (15 分) の中: ブラウザ・端末から届いた error 21 件 (サーバーの既定のしきい値 20 を超える数)
+    for (let i = 0; i < 21; i += 1) {
+      await seedLog({ level: 'error', function_name: FN_CLIENT, created_at: ago(4 * MIN), source: 'client' });
+    }
+    // 数えないもの: クライアントの warn 3 件と、窓の外 (20 分前) のクライアントの error 2 件
+    for (let i = 0; i < 3; i += 1) {
+      await seedLog({ level: 'warn', function_name: FN_CLIENT, created_at: ago(4 * MIN), source: 'client' });
+    }
+    for (let i = 0; i < 2; i += 1) {
+      await seedLog({ level: 'error', function_name: FN_CLIENT, created_at: ago(20 * MIN), source: 'client' });
+    }
+    // サーバーの error: Edge Function のもの 2 件 (api-route 以外の source もサーバーとして数える)
+    for (let i = 0; i < 2; i += 1) {
+      await seedLog({ level: 'error', function_name: FN_EDGE, created_at: ago(4 * MIN), source: 'edge-function' });
+    }
+  }, 60_000);
+
+  it('E-1: source = client の error が 21 件あっても、app_log_error_counts (サーバーの通知の数え方) には 1 件も入らない', async () => {
+    const { data, error } = await counts(15, 100);
+    expect(error).toBeNull();
+    const rows = asCountRows(data);
+
+    expect(byName(rows, FN_CLIENT)).toBeUndefined();
+    // サーバーの error は source を問わず数える (api-route だけでなく edge-function も)
+    expect(byName(rows, FN_EDGE)?.error_count).toBe(2);
+    // 全体の件数にもクライアントの分は入らない: 全グループを返したとき、件数の合計と total_count が一致する
+    if (rows.length > 0 && rows.length < 100) {
+      expect(rows.reduce((sum, r) => sum + r.error_count, 0)).toBe(rows[0].total_count);
+    }
+  });
+
+  it('E-2: app_log_client_error_counts は source = client の error だけを数える (warn と窓の外は数えない)', async () => {
+    const { data, error } = await clientCounts(15, 100);
+    expect(error).toBeNull();
+    const rows = asCountRows(data);
+
+    expect(byName(rows, FN_CLIENT)?.error_count).toBe(21);
+    // サーバーの error (D. の FN_A / FN_B と、E. の FN_EDGE) は数えない
+    expect(byName(rows, FN_A)).toBeUndefined();
+    expect(byName(rows, FN_B)).toBeUndefined();
+    expect(byName(rows, FN_EDGE)).toBeUndefined();
+    // 自分が入れた 21 件は少なくとも全体に含まれる。どの行にも同じ total_count が付く
+    expect(rows[0].total_count).toBeGreaterThanOrEqual(21);
+    expect(new Set(rows.map((r) => r.total_count)).size).toBe(1);
+  });
+
+  it('E-3: 窓を 60 分にすると、20 分前のクライアントの error も数える', async () => {
+    const rows = asCountRows((await clientCounts(60, 100)).data);
+
+    expect(byName(rows, FN_CLIENT)?.error_count).toBe(23);
+  });
+
+  it('E-4: 返す列は function_name / error_count / total_count だけで、件数は数値。引数を省くと既定 (15 分・10 行)', async () => {
+    const { data, error } = await clientCounts(15, 5);
+    expect(error).toBeNull();
+    const rows = asCountRows(data);
+
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(Object.keys(row).sort()).toEqual(['error_count', 'function_name', 'total_count']);
+      expect(typeof row.error_count).toBe('number');
+      expect(typeof row.total_count).toBe('number');
+    }
+    const defaults = await clientCounts();
+    expect(defaults.error).toBeNull();
+    expect(asCountRows(defaults.data).length).toBeLessThanOrEqual(10);
+  });
+
+  it('E-5: 窓・limit が範囲外なら 22023 (app_log_error_counts と同じ範囲)', async () => {
+    for (const bad of [0, -5, 1441, null]) {
+      expect((await clientCounts(bad, 10)).error?.code, `窓 ${String(bad)}`).toBe('22023');
+    }
+    for (const bad of [0, -1, 101, null]) {
+      expect((await clientCounts(15, bad)).error?.code, `limit ${String(bad)}`).toBe('22023');
+    }
+  });
+
+  it('E-6: クライアントの通知のキーで権利を取っても、サーバーの通知のキーは取れる (クールダウンを共有しない)', async () => {
+    // 本物のキー (app_logs_error_spike など) は共有の DB で cron と取り合うので、同じ形の別名で確かめる
+    const serverKey = key('e6-app_logs_error_spike');
+    const clientKey = key('e6-app_logs_client_error_spike');
+
+    const clientClaim = await claim(clientKey, 60);
+    expect(typeof clientClaim.data).toBe('string');
+    const serverClaim = await claim(serverKey, 60);
+    expect(typeof serverClaim.data).toBe('string');
+    // クライアントの側はクールダウン中のまま
+    expect((await claim(clientKey, 60)).data).toBeNull();
   });
 });
