@@ -3,6 +3,7 @@ import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
 import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
 import { internalError } from '@/lib/api/errors';
+import { weeklyMenuRequestStaleBefore } from '@/lib/weekly-menu-request-stale';
 import {
   WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE,
   WEEKLY_MENU_REQUEST_STALE_MESSAGE,
@@ -21,8 +22,8 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const requestId = searchParams.get('requestId');
   const now = new Date();
-  const staleMinutes = 20;
-  const staleBefore = new Date(now.getTime() - staleMinutes * 60 * 1000);
+  // しきい値は止まった行の判定をするすべての場所で共有する (src/lib/weekly-menu-request-stale.ts。#1494)
+  const staleBefore = weeklyMenuRequestStaleBefore(now.getTime());
 
   if (!requestId) {
     return NextResponse.json({ error: 'requestId is required' }, { status: 400 });
