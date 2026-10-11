@@ -213,20 +213,24 @@ export function withAuthTransientRetry(baseFetch: FetchFn, options: AuthRetryOpt
   };
 }
 
-/** 差し替え済みの target (同じ target に 2 回差し替えない) */
-const installedTargets = new WeakSet<object>();
+/**
+ * 差し替えた fetch に付ける印。グローバルのシンボルにするのは、テストのファイルごとにこのモジュールが評価し直されても
+ * (同じプロセスで setupFiles が何度も走っても) 印を読めるようにするため。二重に包むと、やり直しの回数が掛け算になる
+ */
+const INSTALLED_MARK = Symbol.for('homegohan.integration.authTransientRetry');
 
 type FetchHolder = { fetch: FetchFn };
 
 /**
  * target.fetch (既定は globalThis) を、認証の一時的な失敗をやり直すものに差し替える。tests/integration/setup.ts から呼ぶ。
- * 同じ target に 2 回呼んでも 1 回だけ差し替える。Supabase の URL が環境変数に無ければ何もしない。差し替えたら true
+ * すでに差し替えてあれば何もしない。Supabase の URL が環境変数に無ければ何もしない。差し替えたら true
  */
 export function installAuthTransientRetry(env: Record<string, string | undefined>, target: FetchHolder = globalThis): boolean {
-  if (installedTargets.has(target)) return false;
+  if (Reflect.get(target.fetch, INSTALLED_MARK) === true) return false;
   const options = authRetryOptionsFromEnv(env);
   if (!options) return false;
-  target.fetch = withAuthTransientRetry(target.fetch.bind(target), options);
-  installedTargets.add(target);
+  const wrapped = withAuthTransientRetry(target.fetch.bind(target), options);
+  Object.defineProperty(wrapped, INSTALLED_MARK, { value: true });
+  target.fetch = wrapped;
   return true;
 }

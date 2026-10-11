@@ -270,7 +270,7 @@ describe("設定と取り付け", () => {
     expect(fake.calls).toHaveLength(1);
   });
 
-  it("installAuthTransientRetry は 1 回だけ差し替え、URL が無ければ差し替えない", async () => {
+  it("installAuthTransientRetry は 1 回だけ差し替え (モジュールを読み直しても)、URL が無ければ差し替えない", async () => {
     const fake = scriptedFetch([gateway(502), json(200, user)]);
     const target = { fetch: fake.fn };
     expect(installAuthTransientRetry({}, target)).toBe(false);
@@ -279,6 +279,11 @@ describe("設定と取り付け", () => {
     const wrapped = target.fetch;
     expect(wrapped).not.toBe(fake.fn);
     expect(installAuthTransientRetry({ NEXT_PUBLIC_SUPABASE_URL: SUPABASE_URL }, target)).toBe(false);
+    expect(target.fetch).toBe(wrapped);
+    // モジュールが評価し直されても (テストのファイルごとに setupFiles が走っても)、差し替え済みの fetch は包み直さない
+    vi.resetModules();
+    const reloaded = await import("./integration/helpers/auth-transient-retry");
+    expect(reloaded.installAuthTransientRetry({ NEXT_PUBLIC_SUPABASE_URL: SUPABASE_URL }, target)).toBe(false);
     expect(target.fetch).toBe(wrapped);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const res = await target.fetch(`${AUTH_BASE}user`);
