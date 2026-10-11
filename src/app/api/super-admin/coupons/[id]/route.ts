@@ -13,6 +13,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
 import { CouponUpdateSchema } from '@/lib/super-admin/coupons-schemas';
 import { internalError } from '@/lib/api/errors';
+import { couponValidUntilTimestamp } from '@/lib/super-admin/coupon-validity';
 
 type RouteContext = { params: { id: string } };
 
@@ -67,7 +68,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     if (input.display_name !== undefined) updateData.display_name = input.display_name;
     if (input.status !== undefined) updateData.status = input.status;
-    if (input.valid_until !== undefined) updateData.valid_until = input.valid_until;
+    // #1483: 画面で選んだ JST の暦日を、その日の JST 23:59:59.999999 の時刻にして書く
+    if (input.valid_until !== undefined) updateData.valid_until = couponValidUntilTimestamp(input.valid_until);
     if (input.max_uses !== undefined) updateData.max_uses = input.max_uses;
     if (input.applicable_plans !== undefined) updateData.applicable_plans = input.applicable_plans;
     if (input.applicable_to !== undefined) updateData.applicable_to = input.applicable_to;
