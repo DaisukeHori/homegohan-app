@@ -30,16 +30,13 @@
   - **v2（dataset/データセット駆動）**: pgvector＋データセットDBを根拠に **ID選定→DB確定値を `planned_meals` に反映**する方式
   - **v3（LLMクリエイティブ + 3ステップ分割）**: LLMが料理名・材料・手順を直接生成し、栄養は `dataset_ingredients` のベクトル検索で計算。**3ステップ分割アーキテクチャ**（生成→レビュー・修正→完了処理）でタイムアウトを回避。全体俯瞰レビュー・修正フェーズを含む。
 
-**対応表（主要Edge Function）**
-- `generate-weekly-menu`: 互換入口（現在は **v3の処理に委譲**して旧クライアントも動かす）
-- `generate-weekly-menu-v3`: **v3**（LLMクリエイティブ + 3ステップ分割）← 現在の推奨
-- `generate-single-meal`: v1（legacy/旧方式）
-- `generate-single-meal-v3`: **v3**（LLMクリエイティブ + 3ステップ分割）
-- `regenerate-meal-direct`: v1（legacy/旧方式）
-- `regenerate-meal-direct-v3`: **v3**（LLMクリエイティブ + 3ステップ分割）
+**いまの献立生成の Edge Function**
+- `generate-menu-v5`: 献立生成 (週・1 日・1 食・差し替え) の既定のエンジン
+- `generate-menu-v4`: 機能フラグ (`menu_generation_v5_wrapped` / `menu_generation_v5_direct`。`src/lib/feature-flags.ts`) を OFF にしたときのエンジン
 
-> **注**: v2関数は互換性のため残していますが、新規開発はv3を使用してください。
-> **全てのv3関数は3ステップ分割アーキテクチャを採用しています。**
+API (`src/app/api/ai/menu/**`) がフラグを見て v5 / v4 のどちらを呼ぶかを決めます (`POST /api/ai/nutrition-analysis` だけは今もフラグに関係なく v4)。呼び出し関係の詳細は `supabase/functions/README.md` の「献立生成 v4 と v5 の使い分け」と 8.7 を参照してください。
+
+> **注**: v1〜v3 の関数 (`generate-weekly-menu` / `generate-single-meal` / `regenerate-meal-direct` とその `-v2` / `-v3`、`regenerate-meal` / `regenerate-day`) は、リポジトリからも本番からも削除済みです (#1452)。この文書の下のほうに残る v1〜v3 の節は、旧い方式の記録です。
 
 ### 主要機能
 - 📸 **食事写真分析**: 写真からAIが料理を認識し、栄養素を推定
@@ -106,9 +103,7 @@
 ### 3.1 OpenAI GPT-5-mini
 
 **使用箇所:**
-- `generate-weekly-menu` Edge Function
-- `generate-single-meal` Edge Function
-- `regenerate-meal-direct` Edge Function
+- (旧) `generate-weekly-menu` / `generate-single-meal` / `regenerate-meal-direct` Edge Function — #1452 で削除済み。いまの献立生成は `generate-menu-v5` (機能フラグで `generate-menu-v4`) で、使うモデルは各関数の実装を正とする
 - `/api/ai/hint` API
 
 **プロンプト戦略:**
@@ -408,7 +403,7 @@ CREATE TABLE app_logs (
 SELECT * FROM app_logs WHERE level = 'error' ORDER BY created_at DESC LIMIT 20;
 
 -- 特定の関数のログ
-SELECT * FROM app_logs WHERE function_name = 'generate-weekly-menu-v2' ORDER BY created_at DESC LIMIT 50;
+SELECT * FROM app_logs WHERE function_name = 'generate-menu-v5' ORDER BY created_at DESC LIMIT 50;
 
 -- 今日のログ
 SELECT * FROM app_logs WHERE created_at >= CURRENT_DATE ORDER BY created_at DESC;
@@ -745,7 +740,9 @@ AI分析結果一覧
 
 ## 7. Supabase Edge Functions
 
-### 7.1 `generate-weekly-menu`
+> **注**: 7.1 `generate-weekly-menu`・7.2 `generate-single-meal`・7.2.1 `regenerate-meal-direct`・7.7 `generate-weekly-menu` (健康記録統合版) は、#1452 で削除した旧関数の記録です。いまの献立生成は `generate-menu-v5` (機能フラグ `menu_generation_v5_wrapped` / `menu_generation_v5_direct` が OFF なら `generate-menu-v4`) が担います (8.7 汎用献立生成エンジン)。
+
+### 7.1 `generate-weekly-menu` (旧・削除済み)
 
 **トリガー:** `/api/ai/menu/weekly/request` からの呼び出し
 
@@ -781,7 +778,7 @@ if (goals.includes('lose_weight')) TDEE -= 500
 if (goals.includes('build_muscle')) TDEE += 300
 ```
 
-### 7.2 `generate-single-meal`
+### 7.2 `generate-single-meal` (旧・削除済み)
 
 **トリガー:** `/api/ai/menu/meal/generate` からの呼び出し
 
@@ -804,7 +801,7 @@ const mealCalorieRatio = {
 }
 ```
 
-### 7.2.1 `regenerate-meal-direct`（献立差し替え）
+### 7.2.1 `regenerate-meal-direct`（献立差し替え。旧・削除済み）
 
 **トリガー:** `/api/ai/menu/meal/regenerate`、`/api/ai/menu/day/regenerate`、`/api/ai/nutrition-analysis` 等
 
@@ -1015,7 +1012,7 @@ Step 5: DB更新
 
 ---
 
-### 7.7 `generate-weekly-menu` (健康記録統合版)
+### 7.7 `generate-weekly-menu` (健康記録統合版。旧・削除済み)
 
 **トリガー:** `/api/ai/menu/weekly/request` からの呼び出し
 
@@ -1525,6 +1522,8 @@ CREATE INDEX IF NOT EXISTS idx_planned_meals_source_type ON planned_meals(source
 - これは `EdgeRuntime.waitUntil()` の制限を超えるため、**3ステップ分割方式**を採用
 
 #### 8.5.9 v3: 3ステップ分割アーキテクチャ（タイムアウト回避）
+
+> **注**: この節の v2 / v3 の関数 (`generate-weekly-menu-v2` / `-v3` など) は #1452 で削除済みです。旧い方式の記録として残しています。
 
 週間献立生成は処理時間が長い（LLM呼び出し多数）ため、単一のバックグラウンドタスクでは`EdgeRuntime.waitUntil()`のタイムアウトを超過する。
 v3ではこの問題を解決するため、以下の設計を採用。

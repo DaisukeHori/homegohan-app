@@ -26,7 +26,16 @@
  *   supabase/functions/ がチェックアウトと違えば何も消さずに終了コード 0 で終わる (関数を変えた新しい版は、その版の
  *   デプロイのワークフローが走って消す)。最新を取れない・比べられないときは、1 本も消さず終了コード 1 で終わる。
  *
- * ログには、関数の名前と件数だけを出す。supabase CLI の出力 (stdout / stderr) やアクセストークンは出さない。
+ * リポジトリの関数の判定 (listRepoFunctions):
+ *   supabase/functions/ の直下で、名前が _ や . で始まらず、index.ts を持つディレクトリを関数とみなす。
+ *   supabase/config.toml の [functions.<name>] の entrypoint で index.ts 以外の入口 (例: main.ts) を指定した関数は、
+ *   この判定では関数に数えられず、デプロイの直後にこの手順で本番から消される。そうした関数を足すときは、先に
+ *   この判定 (FUNCTION_ENTRYPOINT) を config.toml の entrypoint も読む形に広げる。いまは config.toml に entrypoint を
+ *   書くと tests/edge-function-verify-jwt.test.ts が赤になり、config.toml にある関数が index.ts を持たないと
+ *   tests/edge-functions-prune.test.ts が赤になるので、気づかずに足すことはない。
+ *
+ * ログには、関数の名前と件数、それと失敗の手がかり (終了コード・HTTP の状態の数字・決まった文言の分類) だけを出す。
+ * supabase CLI の出力 (stdout / stderr) の文やアクセストークンは出さない (stderr は分類にだけ使い、文はログに流さない)。
  */
 
 import { spawnSync } from 'node:child_process';
@@ -59,13 +68,15 @@ export const SLUG_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
 export const MAX_DELETIONS_ENV = 'EDGE_FUNCTIONS_PRUNE_MAX_DELETIONS';
 
 /**
- * 1 回のデプロイで消してよい関数の数の上限 (既定)。
- * 根拠: #1452 で本番に残っていた旧い関数は 13 本で、初回はこれを 1 回で消す。リポジトリの関数は 23 本 (2026-10-10 時点) あり、
- * 上限をリポジトリ全体より小さくしておけば、読み違いで本番の関数をまとめて消すことを防げる。
- * 13 本に少し余裕を持たせた 20 本にする。これを超える削除が本当に必要なら、ワークフローの env で
- * EDGE_FUNCTIONS_PRUNE_MAX_DELETIONS を一時的に上げる (理由を PR に書く)。
+ * 1 回のデプロイで消してよい関数の数の上限 (既定)。割合ではなく本数で決める (#1455)。
+ * 役目: 読み違い (一覧の形の変化・チェックアウトの欠け・関数の判定の漏れ) で本番の関数をまとめて消すのを止める。
+ * ふだんの削除は、1 つの PR で関数を 1〜3 本 (旧い版の 3 本組: 週・1 食・差し替え) 廃止するくらいなので、それを通して
+ * 少し余裕を持たせた 5 本にする。割合 (本番やリポジトリの関数の数に対する比) にしないのは、関数の判定を読み違えたときは
+ * 比べる側の数そのものが狂い、止まるべきところで止まらなくなるため。
+ * #1452 の初回の 13 本のような大きな片付けは、ワークフローの env で EDGE_FUNCTIONS_PRUNE_MAX_DELETIONS を
+ * 一時的に上げて通す (理由を PR に書き、終わったら戻す)。
  */
-export const DEFAULT_MAX_DELETIONS = 20;
+export const DEFAULT_MAX_DELETIONS = 5;
 
 /** supabase CLI の 1 回の呼び出しの時間の上限を上書きする環境変数 */
 export const CLI_TIMEOUT_ENV = 'EDGE_FUNCTIONS_PRUNE_CLI_TIMEOUT_MS';
@@ -274,22 +285,94 @@ export function parseArgs(argv) {
 }
 
 /**
+ * supabase CLI の stderr から読む HTTP の状態の数字 (CLI 2.62.10 の文言
+ * "unexpected delete function status %d: <応答の本文>" / "unexpected list functions status %d: <応答の本文>")。
+ * ログに出すのは数字だけで、うしろの応答の本文は出さない。
+ */
+export const CLI_HTTP_STATUS_PATTERN = /unexpected (?:delete function|list functions) status (\d{3})\b/;
+
+/** HTTP の状態として受け付ける範囲 (この外の数字は読み違いとみなして出さない) */
+export const HTTP_STATUS_MIN = 100;
+export const HTTP_STATUS_MAX = 599;
+
+/**
+ * supabase CLI の stderr の決まった文言 (CLI 2.62.10) と、ログに出す手がかり。文言に当たったら、手がかりの決まった文だけを出す
+ * (stderr の文そのものは出さない)。
+ */
+export const CLI_STDERR_HINTS = [
+  { pattern: /does not exist on the Supabase project/, hint: '本番にその関数がありません (HTTP 404)' },
+  { pattern: /Access token not provided/, hint: 'アクセストークンがありません (SUPABASE_ACCESS_TOKEN)' },
+  { pattern: /Invalid access token format/, hint: 'アクセストークンの形が違います' },
+];
+
+/** CLI を起動したときのエラー (spawnSync の error.code) と、ログに出す手がかり */
+export const SPAWN_ERROR_HINTS = {
+  ETIMEDOUT: `時間切れ (${CLI_TIMEOUT_ENV} で上限を変えられます)`,
+  ENOENT: 'CLI を起動できません (npx が見つかりません)',
+  ENOBUFS: 'CLI の出力が受け取れる大きさを超えました',
+};
+
+/** ログに出してよいエラーのコード・シグナルの名前の形 (英大文字と数字だけ。ほかの文字を含むものは出さない) */
+const SAFE_ERROR_CODE_PATTERN = /^E[A-Z0-9]+$/;
+const SAFE_SIGNAL_PATTERN = /^SIG[A-Z0-9]+$/;
+
+/**
+ * CLI の失敗の手がかりを作る (#1455)。stderr の文・トークンは返さず、決まった文・HTTP の状態の数字・
+ * エラーのコード・シグナルの名前だけを返す。手がかりが無ければ空の配列。
+ *
+ * @param {{ stderr?: string | null, errorCode?: string | null, signal?: string | null }} input
+ * @returns {string[]}
+ */
+export function describeCliFailure({ stderr, errorCode, signal }) {
+  const hints = [];
+  if (typeof errorCode === 'string' && SAFE_ERROR_CODE_PATTERN.test(errorCode)) {
+    hints.push(Object.hasOwn(SPAWN_ERROR_HINTS, errorCode) ? SPAWN_ERROR_HINTS[errorCode] : `CLI を起動できません (${errorCode})`);
+  }
+  // 時間切れのときは signal (SIGTERM) も付くが、時間切れの手がかりで足りるので重ねない
+  if (errorCode !== 'ETIMEDOUT' && typeof signal === 'string' && SAFE_SIGNAL_PATTERN.test(signal)) {
+    hints.push(`シグナル ${signal} で止まりました`);
+  }
+  const text = typeof stderr === 'string' ? stderr : '';
+  const httpMatch = CLI_HTTP_STATUS_PATTERN.exec(text);
+  if (httpMatch) {
+    const httpStatus = Number(httpMatch[1]);
+    if (httpStatus >= HTTP_STATUS_MIN && httpStatus <= HTTP_STATUS_MAX) hints.push(`HTTP の状態 ${httpStatus}`);
+  }
+  for (const { pattern, hint } of CLI_STDERR_HINTS) {
+    if (pattern.test(text)) hints.push(hint);
+  }
+  return hints;
+}
+
+/** 失敗のログの括弧の中: 終了コードと、あれば手がかり */
+export function formatCliFailure(result) {
+  const hints = Array.isArray(result.hints) && result.hints.length > 0 ? `、手がかり: ${result.hints.join('・')}` : '';
+  return `supabase CLI の終了コード: ${result.status ?? '不明'}${hints}`;
+}
+
+/**
  * supabase CLI を呼ぶ (対話なし。標準入力は閉じる)。
- * 戻り値の stdout / stderr はログに出さない (呼び出し側は status だけを見る。一覧は stdout を JSON として読む)。
+ * stdout / stderr の文はログに出さない (呼び出し側は status と hints だけを見る。一覧は stdout を JSON として読む)。
+ * stderr はここで describeCliFailure にかけて手がかりに変え、文そのものは戻り値に含めない。
  *
  * @param {string[]} args `supabase` のあとに続く引数
- * @param {{ env: Record<string, string | undefined>, timeoutMs: number }} options
- * @returns {{ status: number | null, stdout: string }}
+ * @param {{ env: Record<string, string | undefined>, timeoutMs: number, spawn?: typeof spawnSync }} options
+ * @returns {{ status: number | null, stdout: string, hints: string[] }}
  */
-export function runSupabaseCli(args, { env, timeoutMs }) {
-  const result = spawnSync('npx', ['--yes', SUPABASE_CLI_PACKAGE, ...args], {
+export function runSupabaseCli(args, { env, timeoutMs, spawn = spawnSync }) {
+  const result = spawn('npx', ['--yes', SUPABASE_CLI_PACKAGE, ...args], {
     encoding: 'utf8',
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: timeoutMs,
     maxBuffer: CLI_MAX_BUFFER_BYTES,
   });
-  return { status: result.error ? null : result.status, stdout: result.stdout ?? '' };
+  const status = result.error ? null : result.status;
+  const hints =
+    status === 0
+      ? []
+      : describeCliFailure({ stderr: result.stderr, errorCode: result.error?.code, signal: result.signal });
+  return { status, stdout: result.stdout ?? '', hints };
 }
 
 /**
@@ -352,7 +435,7 @@ export function functionsPathFromRoot(root, functionsDir) {
 export function fetchRemoteSlugs(projectRef, run) {
   const result = run(['functions', 'list', '--project-ref', projectRef, '-o', 'json']);
   if (result.status !== 0) {
-    throw new PruneError(`本番の関数の一覧を取れませんでした (supabase CLI の終了コード: ${result.status ?? '不明'})`);
+    throw new PruneError(`本番の関数の一覧を取れませんでした (${formatCliFailure(result)})`);
   }
   return parseFunctionsListJson(result.stdout);
 }
@@ -363,7 +446,7 @@ export function fetchRemoteSlugs(projectRef, run) {
  * @param {string[]} argv
  * @param {{
  *   env?: Record<string, string | undefined>,
- *   run?: (args: string[]) => { status: number | null, stdout: string },
+ *   run?: (args: string[]) => { status: number | null, stdout: string, hints?: string[] },
  *   git?: (args: string[]) => { status: number | null, stdout: string },
  *   listRepo?: (functionsDir: string) => string[],
  *   log?: (line: string) => void,
@@ -433,7 +516,7 @@ export function main(argv, deps = {}) {
       log(`edge-functions-prune: 削除しました: ${slug}`);
     } else {
       failed.push(slug);
-      error(`edge-functions-prune: 削除に失敗しました: ${slug} (supabase CLI の終了コード: ${result.status ?? '不明'})`);
+      error(`edge-functions-prune: 削除に失敗しました: ${slug} (${formatCliFailure(result)})`);
     }
   }
   log(`edge-functions-prune: 削除 ${toDelete.length - failed.length} 本 / 失敗 ${failed.length} 本`);

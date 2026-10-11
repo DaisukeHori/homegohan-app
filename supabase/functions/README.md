@@ -55,7 +55,9 @@ main へ push → GitHub Actions → Supabase Functions デプロイ
 
 ワークフロー: `.github/workflows/deploy-supabase-functions.yml`
 
-**リポジトリから関数を消すと、次のデプロイで本番からも消えます。** デプロイのあとに `scripts/edge-functions-prune.mjs` が、本番にあってこのディレクトリに無い関数 (`_` で始まらず `index.ts` を持つディレクトリが関数) を削除します (#1452)。リポジトリの関数が 0 本・削除が上限 (`EDGE_FUNCTIONS_PRUNE_MAX_DELETIONS`、既定 20 本) を超えるなどのときは 1 本も消さずにワークフローが赤になります。消すのは main の実行で、関数のディレクトリが main の最新と同じときだけです (別のブランチからの手動実行や古い実行の再実行では消しません)。手元から `supabase functions deploy <name>` で入れた関数や、別のブランチからの手動実行で入れた関数も、main の `supabase/functions/` に無ければ次の main のデプロイで消えます。本番に残したい関数は、必ず main にディレクトリを置きます。手元で何が消えるかだけ見るには `node scripts/edge-functions-prune.mjs --project-ref <ref>` (既定は dry-run)。
+**リポジトリから関数を消すと、次のデプロイで本番からも消えます。** デプロイのあとに `scripts/edge-functions-prune.mjs` が、本番にあってこのディレクトリに無い関数 (`_` で始まらず `index.ts` を持つディレクトリが関数) を削除します (#1452)。リポジトリの関数が 0 本・削除が上限 (`EDGE_FUNCTIONS_PRUNE_MAX_DELETIONS`、既定 5 本。読み違いでまとめて消すのを止めるための値で、6 本以上をまとめて消すときはワークフローの env で一時的に上げる) を超えるなどのときは 1 本も消さずにワークフローが赤になります。削除に失敗したときのログには、supabase CLI の終了コードと、分かる範囲の手がかり (HTTP の状態の数字・時間切れ・トークンが無いなど決まった文) だけが出ます。CLI の出力の文はトークン漏れを防ぐため出しません (#1455)。消すのは main の実行で、関数のディレクトリが main の最新と同じときだけです (別のブランチからの手動実行や古い実行の再実行では消しません)。手元から `supabase functions deploy <name>` で入れた関数や、別のブランチからの手動実行で入れた関数も、main の `supabase/functions/` に無ければ次の main のデプロイで消えます。本番に残したい関数は、必ず main にディレクトリを置きます。手元で何が消えるかだけ見るには `node scripts/edge-functions-prune.mjs --project-ref <ref>` (既定は dry-run)。
+
+**関数の判定は「`index.ts` を持つディレクトリ」です。** `supabase/config.toml` の `[functions.<name>]` に `entrypoint` を書いて `index.ts` 以外の入口 (例: `main.ts`) にした関数は、関数に数えられず、デプロイの直後に本番から消されます。そうした関数を足すときは、先に `scripts/edge-functions-prune.mjs` の判定を `config.toml` の `entrypoint` も読む形に広げてください (いまは `config.toml` に `entrypoint` を書くと `tests/edge-function-verify-jwt.test.ts` が、`config.toml` にある関数が `index.ts` を持たないと `tests/edge-functions-prune.test.ts` が赤になります)。
 
 この README を含む `supabase/functions/**` 配下の更新は、自動デプロイのトリガー対象です。`supabase/config.toml`（関数ごとの `verify_jwt`）を変えただけの push も対象です（#1406）。
 
