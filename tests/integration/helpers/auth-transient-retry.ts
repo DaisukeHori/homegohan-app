@@ -104,6 +104,15 @@ function isResendableBody(body: RequestInit['body']): boolean {
   return body === undefined || body === null || typeof body === 'string';
 }
 
+/** 捨てる応答の本文を読み捨てる (負荷が高いときに、読まれない本文で接続を握り続けないように) */
+async function discardBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // 読み捨てに失敗しても、やり直しには関係しない
+  }
+}
+
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -194,6 +203,7 @@ export function withAuthTransientRetry(baseFetch: FetchFn, options: AuthRetryOpt
       if (AUTH_TRANSIENT_STATUSES.includes(response.status)) {
         if (isLast || init?.signal?.aborted) return response;
         sawTransient = true;
+        await discardBody(response);
         const delay = authRetryDelayMs(options.baseDelayMs, attempt);
         warn(`[auth-transient-retry] ${label}: ゲートウェイの失敗 ${response.status}。${attempt}/${options.attempts} 回目。${delay}ms 後にやり直す`);
         await sleep(delay);
