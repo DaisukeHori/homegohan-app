@@ -7,7 +7,7 @@
  *
  * - stuck リクエストが無い場合は復元を呼ばないこと
  * - stuck リクエストのうち snapshot を持つものだけ復元し、結果を集計して response に含めること
- * - failed への更新自体が失敗した場合は復元を呼ばず 500 を返すこと
+ * - failed への更新自体が失敗した場合は (その行の) 復元を呼ばず 500 を返すこと
  *
  * #1203: 復元が打ち切られないよう maxDuration を明示していること、および
  * 複数の stuck リクエストの復元を直列に実行すること
@@ -19,6 +19,8 @@
  * - processing の行は、作成時刻ではなく生存信号 (GREATEST(worker_acquired_at, updated_at)・無ければ updated_at) から
  *   WEEKLY_MENU_REQUEST_STALE_MINUTES (20 分) 進まなかった行だけを failed にする
  * - 読んでから書くまでに進んだ行 (生存信号・状態が変わった行) は書き換えない (比較つきの更新)
+ * - 行ごとの更新が途中の行で失敗しても抜けずに残りの行へ進み、failed にできた行の復元を済ませてから 500 を返す
+ *   (途中で抜けると、failed にした行は以後どの route にも拾われず、消した献立が戻らない)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -395,6 +397,56 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
       expect(json.message).toBe('No stuck requests found');
       expect(json.cleaned).toBe(0);
       expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('#1494 R1: 行ごとの更新が途中の行で失敗したとき', () => {
+    const snapshotOf = (mealId: string) => [{ id: mealId, daily_meal_id: `day-${mealId}`, meal_type: 'dinner' }];
+
+    it('1 件目を failed にできて 2 件目の更新が失敗したら、1 件目の復元を済ませてから 500 を返す', async () => {
+      fetchResultQueue.push({ data: [stuckProcessing('req-1'), stuckProcessing('req-2')], error: null });
+      // req-1 は failed にでき、スナップショットを持つ
+      updateResultQueue.push({ data: [{ id: 'req-1', generated_data: { snapshot: snapshotOf('meal-1') } }], error: null });
+      // req-2 の更新は一時的な DB のエラー
+      updateResultQueue.push({ data: null, error: { message: 'temporary failure' } });
+      mockRestorePlannedMealsSnapshot.mockResolvedValueOnce({ restored: 1, skipped: 0, failed: 0 });
+
+      const res = await POST();
+      const json = await res.json();
+
+      // failed にした req-1 の献立は、このときに戻す (以後どの route も failed の行を拾わないため)
+      expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
+      expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledWith(mockSupabase, snapshotOf('meal-1'));
+      // 更新の失敗は 500 で知らせる (DB の生のエラー文は本文に出さない。#1172)
+      expect(res.status).toBe(500);
+      expect(json).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
+      expect(updateCalls.map((call) => filterOf(call, 'id')[0]?.[2])).toEqual(['req-1', 'req-2']);
+    });
+
+    it('1 件目の更新が失敗しても抜けずに 2 件目を更新し、failed にできた 2 件目の復元を済ませてから 500 を返す', async () => {
+      fetchResultQueue.push({ data: [stuckProcessing('req-1'), stuckProcessing('req-2')], error: null });
+      updateResultQueue.push({ data: null, error: { message: 'temporary failure' } });
+      updateResultQueue.push({ data: [{ id: 'req-2', generated_data: { snapshot: snapshotOf('meal-2') } }], error: null });
+
+      const res = await POST();
+
+      expect(updateCalls.map((call) => filterOf(call, 'id')[0]?.[2])).toEqual(['req-1', 'req-2']);
+      // 更新に失敗した req-1 (書き換わっていない) は復元せず、failed にできた req-2 だけを復元する
+      expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
+      expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledWith(mockSupabase, snapshotOf('meal-2'));
+      expect(res.status).toBe(500);
+    });
+
+    it('どの行の更新も失敗したときは復元を呼ばず 500 を返す', async () => {
+      fetchResultQueue.push({ data: [stuckProcessing('req-1'), stuckProcessing('req-2')], error: null });
+      updateResultQueue.push({ data: null, error: { message: 'temporary failure' } });
+      updateResultQueue.push({ data: null, error: { message: 'temporary failure' } });
+
+      const res = await POST();
+
+      expect(updateCalls).toHaveLength(2);
+      expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+      expect(res.status).toBe(500);
     });
   });
 });

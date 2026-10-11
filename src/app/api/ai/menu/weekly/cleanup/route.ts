@@ -32,6 +32,10 @@ export const maxDuration = 60; // Vercel Pro: 60s OK
  * 【読んでから書くまでのあいだに進んだ行は failed にしない】
  * 読んだときの状態・updated_at・worker_acquired_at がそのままの行だけを書き換える (行ごとの比較つきの更新)。
  * そのあいだに Edge Function が進捗を書いた・cron が取り直した・生成が終わった行は、書き換えずに残す。
+ *
+ * 【更新が途中の行で失敗しても、failed にできた行の復元は済ませる】
+ * 行ごとの更新なので、1 行目は failed にできて 2 行目の更新だけが失敗することがある。そのときも途中で 500 を返して
+ * 抜けず、残りの行の更新と、failed にできた行のスナップショットの復元 (#1042) を済ませてから 500 を返す。
  */
 export async function POST() {
   const supabase = await createClient();
@@ -66,6 +70,12 @@ export async function POST() {
   const queueDb = getAiQueueWriter();
   const failedAt = new Date(nowMs).toISOString();
   const cleanedRequests: Array<{ id: string; generated_data: unknown }> = [];
+  // 更新に失敗した行のエラー。1 行の更新が失敗しても途中で抜けずに残りの行へ進み、failed にできた行の復元を
+  // 済ませてから 500 を返す。途中で抜けると、それまでに failed にした行の復元 (#1042) が行われない。failed の行は
+  // cleanup・status・pending のどれにも二度と拾われないので、生成の Step2 で消した献立が戻らなくなる。
+  // DB が更新を拒んだ行は (1 つの UPDATE 文なので) 書き換わっておらず pending / processing のままなので、次に週間ページを
+  // 開いたときにやり直せる (応答だけが届かずに書き換わっていた行は救えない。これは 1 本の UPDATE だった以前も同じ)。
+  const updateErrors: unknown[] = [];
   for (const stuckRequest of stuckRequests) {
     let update = queueDb
       .from('weekly_menu_requests')
@@ -83,7 +93,8 @@ export async function POST() {
     const { data: updatedRows, error: updateError } = await update.select('id, generated_data');
 
     if (updateError) {
-      return internalError('POST /api/ai/menu/weekly/cleanup', updateError, { userId: user.id });
+      updateErrors.push(updateError);
+      continue;
     }
     cleanedRequests.push(...(updatedRows ?? []));
   }
@@ -110,6 +121,17 @@ export async function POST() {
   }
 
   const cleanedIds = cleanedRequests.map((r) => r.id);
+  if (updateErrors.length > 0) {
+    // 復元を済ませたうえで、更新に失敗した行があったことを 500 で返す (ログには最初のエラーと件数を残す)
+    return internalError('POST /api/ai/menu/weekly/cleanup', updateErrors[0], {
+      userId: user.id,
+      failedUpdates: updateErrors.length,
+      cleaned: cleanedIds.length,
+      restoredMeals,
+      skippedMeals,
+      failedMeals,
+    });
+  }
   return NextResponse.json({
     message: cleanedIds.length > 0 ? 'Cleaned up stuck requests' : 'No stuck requests found',
     cleaned: cleanedIds.length,
