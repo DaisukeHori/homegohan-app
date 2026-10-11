@@ -22,7 +22,8 @@
  * 一覧 (tests/helpers/ai-consent-enforced-paths.ts) の onLimit どおりに止める:
  *   - reject : 429 AI_DAILY_LIMIT (固定の文・retryAfter)。AI へ 1 回も送らず、キューにも積まない
  *   - skipAi : 200。保存・集計はして、AI の部分だけ省く (aiSkipped: AI_DAILY_LIMIT)
- * 画面を開くと自動で呼ばれる行 (unmetered) は、上限に数えない機能 (nutrition_advice_auto) で数えることを確かめる (DB は止めない)。
+ * 画面を開くと自動で呼ばれる行 (unmetered) は、上限に数えない機能 (nutrition_advice_auto) で数えることを確かめる。1 日の上限では止まらないが、
+ * 自動の分だけの安全弁 (DB の ai_unmetered_daily_caps) に達したと DB が返したら、入口の止め方 (AI の部分だけ省く・429) で止める。
  * 生成のリクエストの行を作れなかった行 (refundOnInsertFailure) は、AI へ送らずに数えた 1 回を戻す (refund_ai_usage)。
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -326,7 +327,7 @@ interface RouteCase {
   /** kind: 'skip' のとき、止めても行われる保存・集計の書き込み (表と操作) */
   savedWrite?: { table: string; op: string };
   /**
-   * 画面を開くと自動で呼ばれる経路 (#1149)。上限に数えない機能 (nutrition_advice_auto) で数える (DB はこの機能では止めない)
+   * 画面を開くと自動で呼ばれる経路 (#1149)。上限に数えない機能 (nutrition_advice_auto) で数える (1 日の上限では止まらず、安全弁で止まる)
    */
   unmetered?: true;
   /** 数えたあとに insert する、生成のリクエストの行の表。insert が失敗したら、AI へ送らずに数えた 1 回を戻す (#1149) */
@@ -458,6 +459,8 @@ const ROUTE_CASES: RouteCase[] = [
       json('http://localhost/api/ai/nutrition/feedback', { date: TODAY, nutrition: { caloriesKcal: 1800 }, mealCount: 3 }),
     ),
     unmetered: true,
+    // 上限に数えない機能も、記録は安全弁の回数に入るので、送らなかった分は戻す (#1149)
+    refundOnInsertFailure: { table: 'nutrition_feedback_cache', feature: 'nutrition_advice_auto' },
   },
   {
     name: 'nutrition/feedback: 「再分析」(forceRefresh。OpenAI)',
@@ -977,6 +980,29 @@ describe.each(ROUTE_CASES.filter((c) => c.unmetered))('画面を開くと自動�
     expect(consumedFeatures()).toEqual(['nutrition_advice_auto']);
     expect(isMeteredAiFeature('nutrition_advice_auto')).toBe(false);
     expect(sendsOf(c), JSON.stringify(aiSendBreakdown())).toBeGreaterThanOrEqual(1);
+  });
+});
+
+/** DB の consume_ai_usage の戻り値: 上限に数えない機能の安全弁に達している (#1149。記録していない) */
+const CONSUME_UNMETERED_CAPPED_ROW = { allowed: false, metered: false, plan: null, limit: 30, used: 30, usage_date: '2026-10-11' };
+
+describe.each(ROUTE_CASES.filter((c) => c.unmetered))('画面を開くと自動で呼ばれる経路が安全弁に達したら (#1149): $name', (c) => {
+  it('一覧の onLimit どおりに止める (AI の部分だけ省く / 429)。AI へ 1 回も送らない', async () => {
+    h.state.rpc.consume_ai_usage = CONSUME_UNMETERED_CAPPED_ROW;
+    const res = await run(c, 'granted');
+    const body = await bodyOf(res);
+
+    expect(consumedFeatures()).toEqual(['nutrition_advice_auto']);
+    expect(aiSendCount(), JSON.stringify(aiSendBreakdown())).toBe(0);
+    const onLimit = usageOf(c)!.onLimit;
+    if (onLimit === 'reject') {
+      expect(res.status).toBe(429);
+      expect(body).toMatchObject({ code: 'AI_DAILY_LIMIT', limit: CONSUME_UNMETERED_CAPPED_ROW.limit });
+    } else {
+      expect(onLimit).toBe('skipAi');
+      expect(res.status).toBe(200);
+      expect(body.aiSkipped).toBe('AI_DAILY_LIMIT');
+    }
   });
 });
 
