@@ -10,7 +10,6 @@ import type { TargetSlot } from '@/types/domain';
 import { addDaysToDate } from '@/lib/date-utils';
 import { isCalendarDate } from '@/lib/jst-day-ranges';
 import {
-  RECORD_DATE_PATTERN,
   sanitizeHealthGoalCreate,
   sanitizeHealthGoalUpdate,
   sanitizeHealthRecordPayload,
@@ -1390,7 +1389,9 @@ export async function runConsultationAction(
               overallCondition, moodScore, stressLevel, stepCount, dailyNote, notes } = action.action_params;
 
       const recordDate = typeof date === 'string' && date.trim() ? date.trim() : todayLocal();
-      if (!RECORD_DATE_PATTERN.test(recordDate)) {
+      // 形だけを見ていると 2026-02-30 のような存在しない日付が通り、DB の date 型への変換で失敗する (#1482)。
+      // 実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける
+      if (!isCalendarDate(recordDate)) {
         result = { error: 'date must be in YYYY-MM-DD format' };
         break;
       }
@@ -1455,7 +1456,14 @@ export async function runConsultationAction(
     }
 
     case 'update_health_record': {
-      const { date, updates } = action.action_params;
+      const { date: rawDate, updates } = action.action_params;
+      // 日付を確かめずに渡すと、AI が返した 2026-02-30 や 2026/10/10 などが DB の date 型への変換で失敗する (#1482)。
+      // add_health_record と同じく、前後の空白を除いた実在する日付 (isCalendarDate の範囲の中) だけを受け付ける
+      const date = typeof rawDate === 'string' ? rawDate.trim() : '';
+      if (!isCalendarDate(date)) {
+        result = { error: 'date must be in YYYY-MM-DD format' };
+        break;
+      }
       const { data: safeUpdates, errors } = sanitizeHealthRecordPayload(updates, {
         acceptLegacyNotes: true,
       });

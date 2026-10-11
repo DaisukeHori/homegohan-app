@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { jstToday } from '@/lib/jst-day-ranges'
+import { isCalendarDate, jstToday } from '@/lib/jst-day-ranges'
 import { NextRequest, NextResponse } from 'next/server'
 import { toPerformancePlan, fromPerformancePlan, toUserProfile, toPerformanceProfile } from '@/lib/converter'
 import {
@@ -9,7 +9,6 @@ import {
   type CheckinAverages as CoreCheckinAverages,
 } from '@homegohan/core'
 import type { NutritionGoal } from '@homegohan/core'
-import { RECORD_DATE_PATTERN } from '@/lib/health-payloads'
 import { internalError } from '@/lib/api/errors'
 
 type SupabaseLike = Awaited<ReturnType<typeof createClient>>
@@ -136,8 +135,9 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const rawDate = searchParams.get('date')
-    // 日付の指定が無ければ JST の今日 (#1433)
-    const date = rawDate && RECORD_DATE_PATTERN.test(rawDate) ? rawDate : jstToday()
+    // 日付の指定が無ければ JST の今日 (#1433)。日付でない値は以前から今日に読み替えている。
+    // 存在しない日付 (2026-02-30 など) も形だけでは通って DB の date 型への変換で 500 になるので、isCalendarDate で見て今日に読み替える (#1482)
+    const date = rawDate && isCalendarDate(rawDate) ? rawDate : jstToday()
 
     const run = await runAnalysis(supabase, user.id, date)
     if (!run.ok) {
@@ -193,8 +193,9 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json().catch(() => ({}))
     const rawDate = typeof body?.date === 'string' ? body.date : null
-    // 日付の指定が無ければ JST の今日 (#1433)
-    const date = rawDate && RECORD_DATE_PATTERN.test(rawDate) ? rawDate : jstToday()
+    // 日付の指定が無ければ JST の今日 (#1433)。日付でない値は以前から今日に読み替えている。
+    // 存在しない日付 (2026-02-30 など) も形だけでは通って DB の date 型への変換で 500 になるので、isCalendarDate で見て今日に読み替える (#1482)
+    const date = rawDate && isCalendarDate(rawDate) ? rawDate : jstToday()
 
     const rawApplyTop = body?.applyTop
     const applyTop =
