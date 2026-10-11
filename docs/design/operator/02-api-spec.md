@@ -1240,8 +1240,8 @@ deprecated → private にロールバック (緊急用)
   "discount_type": "percentage",
   "discount_value": 20,
   "applicable_to": "org",
-  "valid_from": "2026-05-01T00:00:00Z",
-  "valid_until": "2026-12-31T23:59:59Z",
+  "valid_from": "2026-05-01",
+  "valid_until": "2026-12-31",
   "max_uses": 100,
   "per_user_limit": 1,
   "duration_months": 3
@@ -1249,6 +1249,8 @@ deprecated → private にロールバック (緊急用)
 ```
 
 **バリデーション**:
+- `valid_from` / `valid_until` は JST の暦日 (YYYY-MM-DD の実在する日付。存在しない日付は 400 `OP_INVALID_INPUT`)。`valid_from <= valid_until` (同じ日は可)
+- DB には開始日の JST 0:00・期限の日の JST 23:59:59.999999 の時刻にして書く (#1483。`apply_coupon` の `now() > valid_until` は端を含むので、期限の日の終わりまで使える)。PATCH の `valid_until` も同じ
 - 0 円や 1 円となるクーポン (100% OFF + monthly_price <= 1 円) は警告表示
 - `gross_margin_preview_jpy` を計算して返す
 
