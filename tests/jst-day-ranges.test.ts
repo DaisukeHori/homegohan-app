@@ -8,6 +8,7 @@
 //   - POST /api/health/challenges (開始日・終了日)                → challengePeriod
 //   - GET  /api/super-admin/llm/usage (期間)                      → llmUsageRange
 //   - GET  /api/ai/menu/meal/pending (日曜始まりの週)              → sundayWeekRange
+//   - GET  /api/meal-plans (既定の今週)・AI 相談の「来週」(月曜始まりの週。#1463) → mondayWeekRange / calendarDayOfWeek
 //   - GET  /api/ai/consultation/sessions (7 日前) / GET /api/performance/checkins (30 日前)
 //     / GET /api/admin/finance/revenue (30 日前)                    → jstDayOffset
 //   - GET  /api/meals・/api/performance/*・health/checkups・health/blood-tests の「今日」 → jstToday
@@ -39,8 +40,11 @@ import {
   jstOptionalDayRangeTimestamps,
   jstToday,
   llmUsageRange,
+  LLM_USAGE_PERIOD_DAYS,
   NUTRITION_ANALYSIS_MONTH_DAYS,
   NUTRITION_ANALYSIS_WEEK_DAYS,
+  calendarDayOfWeek,
+  mondayWeekRange,
   nutritionAnalysisRange,
   sundayWeekRange,
 } from '../src/lib/jst-day-ranges';
@@ -136,12 +140,13 @@ describe.each(BOUNDARIES)('$label', (b) => {
     expectSameInEveryTimeZone(b, (now) => challengePeriod(7, now), { startDate: b.today, endDate: b.p7 });
   });
 
-  it('llmUsageRange: 終了日の既定は JST の今日、開始日は 1 / 7 / 30 日前', () => {
-    expectSameInEveryTimeZone(b, (now) => llmUsageRange({ period: '1d' }, now), { fromDate: b.d1, toDate: b.today });
-    expectSameInEveryTimeZone(b, (now) => llmUsageRange({ period: '7d' }, now), { fromDate: b.d7, toDate: b.today });
-    expectSameInEveryTimeZone(b, (now) => llmUsageRange({ period: '30d' }, now), { fromDate: b.d30, toDate: b.today });
-    // custom で from が無いときは、以前のルートと同じく 30 日前
-    expectSameInEveryTimeZone(b, (now) => llmUsageRange({ period: 'custom' }, now), { fromDate: b.d30, toDate: b.today });
+  it('llmUsageRange: 終了日の既定は JST の今日、開始日は今日を含む 1 / 7 / 30 日間の最初の日 (#1463。画面のラベル「今日」「7日」「30日」)', () => {
+    // 1d は今日だけ (以前は昨日と今日の 2 暦日で、画面のラベル「今日」と合わなかった)
+    expectSameInEveryTimeZone(b, (now) => llmUsageRange({ period: '1d' }, now), { fromDate: b.today, toDate: b.today });
+    expectSameInEveryTimeZone(b, (now) => llmUsageRange({ period: '7d' }, now), { fromDate: b.d6, toDate: b.today });
+    expectSameInEveryTimeZone(b, (now) => llmUsageRange({ period: '30d' }, now), { fromDate: b.d29, toDate: b.today });
+    // custom で from が無いときは 30d と同じ
+    expectSameInEveryTimeZone(b, (now) => llmUsageRange({ period: 'custom' }, now), { fromDate: b.d29, toDate: b.today });
     // 指定された from / to はそのまま
     expectSameInEveryTimeZone(
       b,
@@ -398,6 +403,51 @@ describe('sundayWeekRange: 日曜から土曜までの週 (暦の計算だけ・
   it('形の違う日付・存在しない日付は RangeError', () => {
     expect(() => sundayWeekRange('2026-02-30')).toThrow(RangeError);
     expect(() => sundayWeekRange('2026/10/11')).toThrow(RangeError);
+  });
+});
+
+describe('mondayWeekRange / calendarDayOfWeek: 月曜から日曜までの週・暦日の曜日 (#1463。暦の計算だけ・どのタイムゾーンでも同じ)', () => {
+  const CASES: Array<[string, number, string, string]> = [
+    ['2026-10-14', 3, '2026-10-12', '2026-10-18'], // 水
+    ['2026-10-12', 1, '2026-10-12', '2026-10-18'], // 月 (週の最初の日)
+    ['2026-10-18', 0, '2026-10-12', '2026-10-18'], // 日 (前の月曜から始まる週の最後の日)
+    ['2026-12-31', 4, '2026-12-28', '2027-01-03'], // 年をまたぐ週
+    ['2027-01-03', 0, '2026-12-28', '2027-01-03'],
+    ['2028-02-29', 2, '2028-02-28', '2028-03-05'], // うるう日
+    ['2026-03-08', 0, '2026-03-02', '2026-03-08'], // 米国の夏時間の開始日
+    ['2026-11-01', 0, '2026-10-26', '2026-11-01'], // 米国の夏時間の終了日
+  ];
+
+  it.each(CASES)('%s は曜日 %i、週は %s 〜 %s', (day, dayOfWeek, startDate, endDate) => {
+    for (const { tz, value } of inEachTimeZone(() => [calendarDayOfWeek(day), mondayWeekRange(day)])) {
+      expect(value, tz).toEqual([dayOfWeek, { startDate, endDate }]);
+    }
+  });
+
+  it('以前の書き方 (parseLocalDate + setDate + formatLocalDate) は、JST より東のタイムゾーンで 1 日前の日付になっていた (直した不具合)', () => {
+    // GET /api/meal-plans の既定の今週の月曜日の、以前の求め方 (2026-10-14 (水) → 本来は 10/12)
+    const previousWay = (today: string): string => {
+      const [y, m, d] = today.split('-').map(Number);
+      const local = new Date(y, m - 1, d); // parseLocalDate
+      local.setDate(local.getDate() - local.getDay() + (local.getDay() === 0 ? -6 : 1));
+      return local.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }); // formatLocalDate
+    };
+    expect(withTimeZone('Asia/Tokyo', () => previousWay('2026-10-14'))).toBe('2026-10-12');
+    // UTC+14 のローカル時刻の 0 時は、JST では前日の 19 時
+    expect(withTimeZone('Pacific/Kiritimati', () => previousWay('2026-10-14'))).toBe('2026-10-11');
+    expect(withTimeZone('Pacific/Kiritimati', () => mondayWeekRange('2026-10-14').startDate)).toBe('2026-10-12');
+  });
+
+  it('形の違う日付・存在しない日付は RangeError', () => {
+    expect(() => calendarDayOfWeek('2026-02-30')).toThrow(RangeError);
+    expect(() => mondayWeekRange('2026-02-30')).toThrow(RangeError);
+    expect(() => mondayWeekRange('2026/10/12')).toThrow(RangeError);
+  });
+});
+
+describe('LLM の使用量の期間の日数 (#1463)', () => {
+  it('画面のボタンのラベル (今日 / 7日 / 30日) と同じ日数', () => {
+    expect(LLM_USAGE_PERIOD_DAYS).toEqual({ '1d': 1, '7d': 7, '30d': 30 });
   });
 });
 

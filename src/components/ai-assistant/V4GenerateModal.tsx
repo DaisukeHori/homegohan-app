@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useCallback, useMemo, useEffect } from "react";
-import { addDaysToDate } from "@/lib/date-utils";
+import { addDaysToDate, isCalendarDate } from "@/lib/date-utils";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Sparkles, Calendar, Target, RefreshCw,
@@ -38,6 +38,37 @@ const STORAGE_KEY_RANGE_DAYS = 'v4_range_days';
 
 /** 「1日だけ」モードで選べる日付の上限 (今日から何日先まで)。画面の説明「今日から1ヶ月先まで」と同じ */
 const SINGLE_DAY_MAX_DAYS_AHEAD = 30;
+
+/**
+ * 「期間を指定」モードの開始日の上限 (今日から何日先まで)。「1日だけ」と同じ 1 ヶ月先まで (#1463)。
+ * 以前は上限が無く、遠い未来の日付を選ぶと、端末の slot-builder とサーバーの行事の検索 (getEventsForRange) が 1 日ずつ大量に回った
+ */
+const RANGE_START_MAX_DAYS_AHEAD = SINGLE_DAY_MAX_DAYS_AHEAD;
+
+/**
+ * 「期間を指定」モードで選べる期間の長さ (開始日を含む日数)。画面の説明「最大31日」と同じ (#1463)。
+ * 終了日の上限は、開始日からこの日数の最後の日 (開始日 + 30 日)
+ */
+const RANGE_MAX_DAYS = 31;
+
+/** 「期間を指定」の開始日の上限 (今日から RANGE_START_MAX_DAYS_AHEAD 日先) */
+export function generateRangeStartMax(today: string): string {
+  return addDaysToDate(today, RANGE_START_MAX_DAYS_AHEAD);
+}
+
+/**
+ * 「期間を指定」の終了日の上限 (開始日を含む RANGE_MAX_DAYS 日の最後の日)。
+ * 開始日が日付でない (空欄など) ときは上限を付けない (undefined)
+ */
+export function generateRangeEndMax(start: string): string | undefined {
+  return isCalendarDate(start) ? addDaysToDate(start, RANGE_MAX_DAYS - 1) : undefined;
+}
+
+/** 日付 value を下限 min・上限 max (無ければ上限なし) に収める。YYYY-MM-DD どうしは文字列の大小が日付の前後と同じ */
+function clampDay(value: string, min: string, max: string | undefined): string {
+  if (value < min) return min;
+  return max !== undefined && value > max ? max : value;
+}
 
 /**
  * 端末の暦での今日 (YYYY-MM-DD)。このモーダルの「今日」(選べる日付の下限) は以前から端末のローカル時刻で決めている。
@@ -399,9 +430,9 @@ function V4GenerateModalNormal({
     if (savedRangeDays) {
       try {
         const { startDays, endDays } = JSON.parse(savedRangeDays);
-        // 今日を基準に日付を計算
-        const newStart = addDays(todayStr, startDays);
-        const newEnd = addDays(todayStr, endDays);
+        // 今日を基準に日付を計算し、選べる範囲 (開始日は今日〜1ヶ月先・期間は最大31日) に収める (#1463)
+        const newStart = clampDay(addDays(todayStr, startDays), todayStr, generateRangeStartMax(todayStr));
+        const newEnd = clampDay(addDays(todayStr, endDays), newStart, generateRangeEndMax(newStart));
         setRangeStart(newStart);
         setRangeEnd(newEnd);
         return;
@@ -432,20 +463,26 @@ function V4GenerateModalNormal({
     }
   }, [isOpen]);
 
-  // rangeStart/rangeEndのsetterをラップして、過去日付の場合は今日に調整
-  // 開始日が終了日より後になった場合は終了日を開始日に合わせる
+  // 期間の入力欄の上限 (#1463)。開始日は今日から RANGE_START_MAX_DAYS_AHEAD 日先まで、
+  // 終了日は開始日を含む RANGE_MAX_DAYS 日の最後の日まで
+  const rangeStartMax = useMemo(() => generateRangeStartMax(todayStr), [todayStr]);
+  const rangeEndMax = generateRangeEndMax(rangeStart);
+
+  // rangeStart/rangeEndのsetterをラップして、過去日付の場合は今日に、上限より先の日付は上限に調整
+  // (入力欄の max は日付の選択だけを制限し、キーボードで打った日付は通るため)
+  // 開始日が終了日より後になった場合は終了日を開始日に合わせ、終了日が期間の上限を超えたら上限に縮める
   const handleSetRangeStart = useCallback((value: string) => {
-    const adjusted = value < todayStr ? todayStr : value;
+    const adjusted = clampDay(value, todayStr, rangeStartMax);
     setRangeStart(adjusted);
-    // 開始日が終了日より後になった場合、終了日を開始日に合わせる
-    if (adjusted > rangeEnd) {
-      setRangeEnd(adjusted);
+    const nextEnd = clampDay(rangeEnd, adjusted, generateRangeEndMax(adjusted));
+    if (nextEnd !== rangeEnd) {
+      setRangeEnd(nextEnd);
     }
-  }, [todayStr, rangeEnd]);
+  }, [todayStr, rangeEnd, rangeStartMax]);
 
   // 終了日が開始日より前になった場合は開始日を終了日に合わせる
   const handleSetRangeEnd = useCallback((value: string) => {
-    const adjusted = value < todayStr ? todayStr : value;
+    const adjusted = clampDay(value, todayStr, generateRangeEndMax(rangeStart));
     setRangeEnd(adjusted);
     // 終了日が開始日より前になった場合、開始日を終了日に合わせる
     if (adjusted < rangeStart) {
@@ -771,6 +808,7 @@ function V4GenerateModalNormal({
                           type="date"
                           value={rangeStart}
                           min={todayStr}
+                          max={rangeStartMax}
                           onChange={(e) => handleSetRangeStart(e.target.value)}
                           className="w-full p-2 rounded-lg border mt-1"
                           style={{ borderColor: colors.border }}
@@ -782,6 +820,7 @@ function V4GenerateModalNormal({
                           type="date"
                           value={rangeEnd}
                           min={todayStr}
+                          max={rangeEndMax}
                           onChange={(e) => handleSetRangeEnd(e.target.value)}
                           className="w-full p-2 rounded-lg border mt-1"
                           style={{ borderColor: colors.border }}
