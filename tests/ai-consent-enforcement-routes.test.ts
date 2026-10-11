@@ -17,6 +17,13 @@
  *   - granted  : 全事業者について現行の版に同意している                        → AI へ送る (1 回以上)
  * 保存・集計と AI を兼ねる API (kind: 'skip') は、止めずに保存・集計だけをして、応答の aiSkipped で知らせる。
  * 同意と関係なく AI へ送らない分岐 (kind: 'pass') は、同意の状況に関わらず進み、AI へは送らない。
+ *
+ * AI の利用回数の上限 (#1149) も、同じ表で確かめる。同意済みで、DB の consume_ai_usage が「上限に達している」を返したとき、
+ * 一覧 (tests/helpers/ai-consent-enforced-paths.ts) の onLimit どおりに止める:
+ *   - reject : 429 AI_DAILY_LIMIT (固定の文・retryAfter)。AI へ 1 回も送らず、キューにも積まない
+ *   - skipAi : 200。保存・集計はして、AI の部分だけ省く (aiSkipped: AI_DAILY_LIMIT)
+ * 画面を開くと自動で呼ばれる行 (unmetered) は、上限に数えない機能 (nutrition_advice_auto) で数えることを確かめる (DB は止めない)。
+ * 生成のリクエストの行を作れなかった行 (refundOnInsertFailure) は、AI へ送らずに数えた 1 回を戻す (refund_ai_usage)。
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -29,8 +36,13 @@ import {
 import { ENFORCED_ROUTES } from './helpers/ai-consent-enforced-paths';
 import type { HttpMethod } from './helpers/ai-reach';
 import { AI_QUEUE_TABLES } from '../src/lib/ai/ai-queue-tables';
+import { aiDailyLimitMessage } from '../supabase/functions/_shared/ai-daily-limit';
+import { isMeteredAiFeature } from '../supabase/functions/_shared/ai-usage-core';
 
 const USER = '11111111-1111-4111-8111-111111111111';
+/** DB の consume_ai_usage の戻り値 (#1149): 許可 / 上限に達している */
+const CONSUME_ALLOWED_ROW = { allowed: true, metered: true, plan: 'free', limit: 10, used: 1, usage_date: '2026-10-11' };
+const CONSUME_DENIED_ROW = { allowed: false, metered: true, plan: 'free', limit: 10, used: 10, usage_date: '2026-10-11' };
 const SESSION_ID = '22222222-2222-4222-8222-222222222222';
 const MEAL_ID = '33333333-3333-4333-8333-333333333333';
 const TODAY = new Date().toISOString().split('T')[0];
@@ -61,8 +73,12 @@ const h = vi.hoisted(() => {
     rpc: {} as Record<string, unknown>,
     /** 書き込み (insert / update / upsert / delete) の記録 */
     writes: [] as Array<{ table: string; op: string; payload: unknown; client: SupabaseClientKind }>,
-    /** 呼んだ rpc の名前 (AI 利用回数の記録 record_ai_usage を確かめるため。#1177) */
+    /** 呼んだ rpc の名前 (AI 利用回数の判定と記録 consume_ai_usage を確かめるため。#1177 / #1149) */
     rpcCalls: [] as string[],
+    /** 呼んだ rpc の引数 (名前と同じ順) */
+    rpcArgs: [] as Array<Record<string, unknown>>,
+    /** insert を失敗させる表 (#1149 の数え戻しを確かめるため) */
+    failInsert: new Set<string>(),
   };
   const fastLLMCreate = vi.fn(async () => ({
     choices: [{ message: { content: '{"summary":"要約","title":"t","praiseComment":"p","advice":"a","nutritionTip":"n"}' } }],
@@ -133,8 +149,10 @@ function makeQuery(table: string, client: SupabaseClientKind): unknown {
     table === AI_CONSENT_TABLE ? consentResult() : { data: h.state.rows[table] ?? [], error: null, count: (h.state.rows[table] ?? []).length };
   // 書き込みのあとの .select().single() は、書いた行を返す (読み取りの single の設定とは別)
   let written: Row | null = null;
+  let insertFailed = false;
   const singleResult = () => {
     if (table === AI_CONSENT_TABLE) return consentResult();
+    if (insertFailed) return { data: null, error: { message: 'insert failed', code: '23514' } };
     if (written) return { data: written, error: null };
     const row = table in h.state.single ? h.state.single[table] : DEFAULT_SINGLE_ROW;
     return { data: row, error: row ? null : { message: 'not found', code: 'PGRST116' } };
@@ -150,6 +168,7 @@ function makeQuery(table: string, client: SupabaseClientKind): unknown {
         if (prop === 'insert' || prop === 'update' || prop === 'upsert' || prop === 'delete') {
           return (payload: unknown) => {
             h.state.writes.push({ table, op: String(prop), payload, client });
+            if ((prop === 'insert' || prop === 'upsert') && h.state.failInsert.has(table)) insertFailed = true;
             const first = Array.isArray(payload) ? payload[0] : payload;
             written = { ...DEFAULT_SINGLE_ROW, ...(first && typeof first === 'object' ? (first as Row) : {}) };
             return builder;
@@ -174,8 +193,9 @@ function makeSupabase(client: SupabaseClientKind = 'user') {
       getSession: async () => ({ data: { session: { access_token: 'token' } }, error: null }),
     },
     from: (table: string) => makeQuery(table, client),
-    rpc: async (name: string) => {
+    rpc: async (name: string, args: Record<string, unknown> = {}) => {
       h.state.rpcCalls.push(name);
+      h.state.rpcArgs.push(args);
       h.rpcMark(name);
       return { data: h.state.rpc[name] ?? null, error: null };
     },
@@ -305,6 +325,12 @@ interface RouteCase {
   sends?: () => number;
   /** kind: 'skip' のとき、止めても行われる保存・集計の書き込み (表と操作) */
   savedWrite?: { table: string; op: string };
+  /**
+   * 画面を開くと自動で呼ばれる経路 (#1149)。上限に数えない機能 (nutrition_advice_auto) で数える (DB はこの機能では止めない)
+   */
+  unmetered?: true;
+  /** 数えたあとに insert する、生成のリクエストの行の表。insert が失敗したら、AI へ送らずに数えた 1 回を戻す (#1149) */
+  refundOnInsertFailure?: { table: string; feature: string };
 }
 
 const ROUTE_CASES: RouteCase[] = [
@@ -408,18 +434,20 @@ const ROUTE_CASES: RouteCase[] = [
     call: async () => (await import('@/app/api/ai/nutrition-analysis/route')).GET(
       new Request('http://localhost/api/ai/nutrition-analysis?period=today&includeAdvice=true&includeSuggestion=true'),
     ),
+    unmetered: true,
   },
   {
     name: 'nutrition-analysis POST (献立の変更 → generate-menu-v4)',
     method: 'POST',
     file: 'src/app/api/ai/nutrition-analysis/route.ts',
     kind: 'reject',
+    refundOnInsertFailure: { table: 'weekly_menu_requests', feature: 'menu_generation' },
     call: async () => (await import('@/app/api/ai/nutrition-analysis/route')).POST(
       json('http://localhost/api/ai/nutrition-analysis', { targetDate: TODAY, targetMealType: 'dinner', prompt: '野菜を増やす' }),
     ),
   },
   {
-    name: 'nutrition/feedback: 新しく作る (OpenAI)',
+    name: 'nutrition/feedback: 新しく作る (OpenAI。栄養の詳細を開いたときの自動の取得)',
     method: 'POST',
     file: 'src/app/api/ai/nutrition/feedback/route.ts',
     kind: 'reject',
@@ -429,6 +457,17 @@ const ROUTE_CASES: RouteCase[] = [
     call: async () => (await import('@/app/api/ai/nutrition/feedback/route')).POST(
       json('http://localhost/api/ai/nutrition/feedback', { date: TODAY, nutrition: { caloriesKcal: 1800 }, mealCount: 3 }),
     ),
+    unmetered: true,
+  },
+  {
+    name: 'nutrition/feedback: 「再分析」(forceRefresh。OpenAI)',
+    method: 'POST',
+    file: 'src/app/api/ai/nutrition/feedback/route.ts',
+    kind: 'reject',
+    call: async () => (await import('@/app/api/ai/nutrition/feedback/route')).POST(
+      json('http://localhost/api/ai/nutrition/feedback', { date: TODAY, nutrition: { caloriesKcal: 1800 }, mealCount: 3, forceRefresh: true }),
+    ),
+    refundOnInsertFailure: { table: 'nutrition_feedback_cache', feature: 'nutrition_advice' },
   },
   {
     name: 'nutrition/feedback: 作成中のコメントの状態を返すだけ (AI へ送らない)',
@@ -453,6 +492,7 @@ const ROUTE_CASES: RouteCase[] = [
     // 相談の本体 (1,400 行) を作り物の DB で最後まで流すと、送る前に別の理由で止まりうる。
     // 判定のすぐあとで AI のクライアントを作るので、それを「送る口を開けた」回数として数える
     sends: () => h.getFastLLMClient.mock.calls.length + aiSendCount(),
+    refundOnInsertFailure: { table: 'ai_consultation_messages', feature: 'consultation' },
     call: async () => (await import('@/app/api/ai/consultation/sessions/[sessionId]/messages/route')).POST(
       json(`http://localhost/api/ai/consultation/sessions/${SESSION_ID}/messages`, { message: 'こんにちは' }),
       { params: { sessionId: SESSION_ID } },
@@ -538,6 +578,7 @@ const ROUTE_CASES: RouteCase[] = [
     method: 'POST',
     file: 'src/app/api/ai/menu/day/regenerate/route.ts',
     kind: 'reject',
+    refundOnInsertFailure: { table: 'weekly_menu_requests', feature: 'menu_generation' },
     setup: () => {
       h.state.single.user_daily_meals = { id: 'day-1', day_date: TODAY };
     },
@@ -550,6 +591,7 @@ const ROUTE_CASES: RouteCase[] = [
     method: 'POST',
     file: 'src/app/api/ai/menu/meal/generate/route.ts',
     kind: 'reject',
+    refundOnInsertFailure: { table: 'weekly_menu_requests', feature: 'menu_generation' },
     setup: () => {
       h.state.single.user_daily_meals = { id: 'day-1', day_date: TODAY };
     },
@@ -562,6 +604,7 @@ const ROUTE_CASES: RouteCase[] = [
     method: 'POST',
     file: 'src/app/api/ai/menu/meal/regenerate/route.ts',
     kind: 'reject',
+    refundOnInsertFailure: { table: 'weekly_menu_requests', feature: 'menu_generation' },
     setup: () => {
       h.state.single.planned_meals = {
         id: MEAL_ID,
@@ -580,6 +623,7 @@ const ROUTE_CASES: RouteCase[] = [
     method: 'POST',
     file: 'src/app/api/ai/menu/v4/generate/route.ts',
     kind: 'reject',
+    refundOnInsertFailure: { table: 'weekly_menu_requests', feature: 'menu_generation' },
     call: async () => (await import('@/app/api/ai/menu/v4/generate/route')).POST(
       json('http://localhost/api/ai/menu/v4/generate', { targetSlots: [{ date: TODAY, mealType: 'dinner' }] }),
     ),
@@ -589,6 +633,7 @@ const ROUTE_CASES: RouteCase[] = [
     method: 'POST',
     file: 'src/app/api/ai/menu/v5/generate/route.ts',
     kind: 'reject',
+    refundOnInsertFailure: { table: 'weekly_menu_requests', feature: 'menu_generation' },
     // この route は AI へ送らず、キュー (weekly_menu_requests) に積むだけ (積んだ行は cron が Edge Function へ渡す)。
     // 未同意なら積まないことを、キューへの書き込みの回数で確かめる
     sends: () => h.state.writes.filter((w) => w.table === 'weekly_menu_requests' && w.op === 'insert').length + aiSendCount(),
@@ -601,6 +646,7 @@ const ROUTE_CASES: RouteCase[] = [
     method: 'POST',
     file: 'src/app/api/ai/menu/weekly/request/route.ts',
     kind: 'reject',
+    refundOnInsertFailure: { table: 'weekly_menu_requests', feature: 'menu_generation' },
     call: async () => (await import('@/app/api/ai/menu/weekly/request/route')).POST(
       json('http://localhost/api/ai/menu/weekly/request', { startDate: TODAY }),
     ),
@@ -651,6 +697,7 @@ const ROUTE_CASES: RouteCase[] = [
     method: 'POST',
     file: 'src/app/api/shopping-list/regenerate/route.ts',
     kind: 'reject',
+    refundOnInsertFailure: { table: 'shopping_list_requests', feature: 'shopping_list' },
     call: async () => (await import('@/app/api/shopping-list/regenerate/route')).POST(
       json('http://localhost/api/shopping-list/regenerate', { startDate: TODAY, endDate: TODAY }),
     ),
@@ -693,9 +740,12 @@ afterAll(() => {
 beforeEach(() => {
   h.state.rows = {};
   h.state.single = {};
-  h.state.rpc = {};
+  // AI の利用回数の判定 (#1149) は、既定で「許可 (上限に数えて 1 回目)」を返す
+  h.state.rpc = { consume_ai_usage: CONSUME_ALLOWED_ROW };
   h.state.writes = [];
   h.state.rpcCalls = [];
+  h.state.rpcArgs = [];
+  h.state.failInsert = new Set();
   for (const fn of [
     h.fastLLMCreate,
     h.getFastLLMClient,
@@ -733,8 +783,11 @@ describe('表の網羅: 送る手前で判定する API Route は、AI へ送る
 
 const sendsOf = (c: RouteCase) => (c.sends ? c.sends() : aiSendCount());
 
-/** AI の利用回数を記録した回数 (record_ai_usage の rpc。#1177) */
-const usageRecords = () => h.state.rpcCalls.filter((name) => name === 'record_ai_usage').length;
+/** AI の利用回数の判定と記録をした回数 (consume_ai_usage の rpc。#1177 / #1149) */
+const usageRecords = () => h.state.rpcCalls.filter((name) => name === 'consume_ai_usage').length;
+/** consume_ai_usage に渡した機能名 */
+const consumedFeatures = () =>
+  h.state.rpcCalls.flatMap((name, i) => (name === 'consume_ai_usage' ? [String(h.state.rpcArgs[i]?.p_feature)] : []));
 
 /**
  * 同意済みのとき、このハンドラが記録する回数 (#1177。一覧 tests/helpers/ai-consent-enforced-paths.ts の usage の列から決める)。
@@ -746,11 +799,11 @@ const expectedRecords = (c: RouteCase) => {
 };
 
 /**
- * 利用回数の記録 (record_ai_usage の rpc) が、AI へ送る口 (全部) のどれよりも先に呼ばれたか (#1177: 記録 → 送信の順)。
+ * 利用回数の判定と記録 (consume_ai_usage の rpc) が、AI へ送る口 (全部) のどれよりも先に呼ばれたか (#1177: 記録 → 送信の順)。
  * 順番は、ソースの文字ではなく、実際に route を動かして呼ばれた順番で確かめる (ここが Next.js の順番の検査の本体)
  */
 function recordedBeforeEverySend(): { ok: boolean; detail: string } {
-  const recordOrders = h.rpcMark.mock.calls.flatMap(([name], i) => (name === 'record_ai_usage' ? [h.rpcMark.mock.invocationCallOrder[i]] : []));
+  const recordOrders = h.rpcMark.mock.calls.flatMap(([name], i) => (name === 'consume_ai_usage' ? [h.rpcMark.mock.invocationCallOrder[i]] : []));
   const senders = {
     fastLLM: h.fastLLMCreate,
     gemini: h.generateGeminiJson,
@@ -861,5 +914,124 @@ describe('consultation execute: AI へ送らないアクションは、未同意
     const res = await POST(json('http://localhost/api/ai/consultation/actions/action-2/execute', {}), { params: { actionId: 'action-2' } });
     expect(res.status).toBe(200);
     expect(h.runConsultationAction).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─────────────────────────────────────────────
+// #1149 AI の利用回数の上限
+// ─────────────────────────────────────────────
+
+/** 一覧の usage (record のときだけ) */
+const usageOf = (c: RouteCase) => {
+  const usage = ENFORCED_ROUTES[c.file]?.handlers[c.method];
+  return usage && 'record' in usage ? usage : null;
+};
+const LIMIT_CASES = ROUTE_CASES.filter((c) => c.kind !== 'pass' && usageOf(c) && !c.unmetered);
+
+describe('表の網羅 (#1149): 数える (record) ハンドラは、どれも上限の行がある', () => {
+  it('ENFORCED_ROUTES の record のハンドラ (上限に数える機能があるもの) の全件に、上限で止める行がある', () => {
+    const covered = new Set(LIMIT_CASES.map((c) => `${c.method} ${c.file}`));
+    const required = Object.entries(ENFORCED_ROUTES).flatMap(([file, entry]) =>
+      Object.entries(entry.handlers)
+        .filter(([, usage]) => usage && 'record' in usage && usage.record.some((f) => isMeteredAiFeature(f)))
+        .map(([method]) => `${method} ${file}`),
+    );
+    expect(required.filter((key) => !covered.has(key))).toEqual([]);
+  });
+});
+
+describe.each(LIMIT_CASES)('上限に達していたら (#1149): $name', (c) => {
+  it('一覧の onLimit どおりに止める。AI へ 1 回も送らない', async () => {
+    h.state.rpc.consume_ai_usage = CONSUME_DENIED_ROW;
+    const res = await run(c, 'granted');
+    const body = await bodyOf(res);
+
+    expect(usageRecords(), h.state.rpcCalls.join(', ')).toBe(1);
+    // AI の送り口は 1 回も呼ばない (表の sends は、行によっては「送る口を開けた」(クライアントを作った) も数えるので、ここでは送り口だけを数える。
+    // キューに積む行は、下の「キューに積まない」で見る)
+    expect(aiSendCount(), JSON.stringify(aiSendBreakdown())).toBe(0);
+    expect(h.state.rpcCalls).not.toContain('refund_ai_usage');
+    const onLimit = usageOf(c)!.onLimit;
+    if (onLimit === 'reject') {
+      expect(res.status).toBe(429);
+      expect(body).toMatchObject({ code: 'AI_DAILY_LIMIT', limit: CONSUME_DENIED_ROW.limit, error: aiDailyLimitMessage(CONSUME_DENIED_ROW.limit) });
+      expect(Number(res.headers.get('Retry-After'))).toBeGreaterThan(0);
+      expect(body.retryAfter).toBe(Number(res.headers.get('Retry-After')));
+      // キューに積まない (積んだあとの処理は数えないので、積む前に止める)
+      expect(h.state.writes.filter((w) => (AI_QUEUE_TABLES as readonly string[]).includes(w.table) && w.op === 'insert')).toEqual([]);
+    } else {
+      expect(onLimit).toBe('skipAi');
+      expect(res.status).toBe(200);
+      expect(body.aiSkipped).toBe('AI_DAILY_LIMIT');
+      if (c.savedWrite) {
+        expect(h.state.writes.some((w) => w.table === c.savedWrite?.table && w.op === c.savedWrite?.op), JSON.stringify(h.state.writes)).toBe(true);
+      }
+    }
+  });
+});
+
+describe.each(ROUTE_CASES.filter((c) => c.unmetered))('画面を開くと自動で呼ばれる経路 (#1149): $name', (c) => {
+  it('上限に数えない機能 (nutrition_advice_auto) で 1 回数え、AI へ送る (開くだけで今日の回数が減らない)', async () => {
+    const res = await run(c, 'granted');
+    expect(res.status).toBe(200);
+    expect(consumedFeatures()).toEqual(['nutrition_advice_auto']);
+    expect(isMeteredAiFeature('nutrition_advice_auto')).toBe(false);
+    expect(sendsOf(c), JSON.stringify(aiSendBreakdown())).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe.each(ROUTE_CASES.filter((c) => c.refundOnInsertFailure))('生成のリクエストの行を作れなかったら (#1149): $name', (c) => {
+  it('AI へ送らず、数えた 1 回を、数えた日で戻す (refund_ai_usage)', async () => {
+    const { table, feature } = c.refundOnInsertFailure!;
+    h.state.failInsert.add(table);
+    const res = await run(c, 'granted');
+
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    // AI の送り口は 1 回も呼ばない (失敗した insert も書き込みとして残るので、表の sends ではなく送り口だけを数える)
+    expect(aiSendCount(), JSON.stringify(aiSendBreakdown())).toBe(0);
+    expect(consumedFeatures()).toEqual([feature]);
+    const refunds = h.state.rpcCalls.flatMap((name, i) => (name === 'refund_ai_usage' ? [h.state.rpcArgs[i]] : []));
+    expect(refunds).toEqual([{ p_user_id: USER, p_feature: feature, p_usage_date: CONSUME_ALLOWED_ROW.usage_date }]);
+  });
+});
+
+describe('consultation execute (#1149): 献立の生成のアクションが上限で止まったら', () => {
+  it('429 AI_DAILY_LIMIT を返し、アクションを pending のまま残す (ai_action_logs を書き換えない)', async () => {
+    h.state.consentMode = 'granted';
+    h.state.single.ai_action_logs = {
+      id: 'action-1',
+      action_type: 'generate_day_menu',
+      action_params: { date: TODAY },
+      status: 'pending',
+      ai_consultation_sessions: { user_id: USER },
+    };
+    const denied = { allowed: false as const, limit: 10, used: 10, usageDate: '2026-10-11' };
+    h.runConsultationAction.mockResolvedValueOnce({
+      success: false,
+      result: { error: aiDailyLimitMessage(10), code: 'AI_DAILY_LIMIT' },
+      aiDailyLimit: denied,
+    } as never);
+    const { POST } = await import('@/app/api/ai/consultation/actions/[actionId]/execute/route');
+    const res = await POST(json('http://localhost/api/ai/consultation/actions/action-1/execute', {}), { params: { actionId: 'action-1' } });
+
+    expect(res.status).toBe(429);
+    expect(await bodyOf(res)).toMatchObject({ code: 'AI_DAILY_LIMIT', limit: 10 });
+    expect(h.state.writes.filter((w) => w.table === 'ai_action_logs')).toEqual([]);
+  });
+});
+
+describe('究極モード (#1149): 1 回の操作は 1 回と数える', () => {
+  it.each([
+    ['menu/v5/generate', async () => (await import('@/app/api/ai/menu/v5/generate/route')).POST(
+      json('http://localhost/api/ai/menu/v5/generate', { targetSlots: [{ date: TODAY, mealType: 'dinner' }], ultimateMode: true }),
+    )],
+    ['menu/weekly/request', async () => (await import('@/app/api/ai/menu/weekly/request/route')).POST(
+      json('http://localhost/api/ai/menu/weekly/request', { startDate: TODAY, ultimateMode: true }),
+    )],
+  ] as const)('%s: ultimateMode でも consume_ai_usage は 1 回 (menu_generation)', async (_label, call) => {
+    h.state.consentMode = 'granted';
+    const res = await call();
+    expect(res.status).toBeLessThan(400);
+    expect(consumedFeatures()).toEqual(['menu_generation']);
   });
 });

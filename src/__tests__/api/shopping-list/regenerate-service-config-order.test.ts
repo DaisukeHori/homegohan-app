@@ -14,12 +14,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AI_USAGE_ALLOWED } from '../../../../tests/helpers/ai-usage-mock';
 
 const mockGetUser = vi.fn();
 const mockInsert = vi.fn();
 const mockFrom = vi.fn((_table: string) => ({ insert: mockInsert }));
 const mockCheckRateLimit = vi.fn();
-const mockRecordAiUsage = vi.fn(async (_userId: string, _feature: string) => {});
+const mockConsumeAiUsage = vi.fn(async (_userId: string, _feature: string) => AI_USAGE_ALLOWED);
 const mockFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{}', { status: 200 }));
 
 // 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
@@ -33,8 +34,10 @@ vi.mock('@/lib/rate-limit', () => ({
   rateLimitExceededResponse: vi.fn(() => new Response(JSON.stringify({ error: 'rate limited' }), { status: 429 })),
 }));
 
-vi.mock('@/lib/plan/entitlements', () => ({
-  recordAiUsage: (userId: string, feature: string) => mockRecordAiUsage(userId, feature),
+vi.mock('@/lib/plan/entitlements', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/plan/entitlements')>()),
+  consumeAiUsage: (userId: string, feature: string) => mockConsumeAiUsage(userId, feature),
+  refundAiUsage: vi.fn(async () => undefined),
 }));
 
 // internalError() が使う構造化ログ。変数名がここに渡ることを見る
@@ -101,7 +104,7 @@ describe('POST /api/shopping-list/regenerate — 必須の環境変数を取り�
     expect(text).not.toContain(name);
     expect(mockCheckRateLimit).not.toHaveBeenCalled();
     expect(mockFrom).not.toHaveBeenCalled();
-    expect(mockRecordAiUsage).not.toHaveBeenCalled();
+    expect(mockConsumeAiUsage).not.toHaveBeenCalled();
   });
 
   it('必須の環境変数が未設定でも、レート制限を超えていれば 429 を返す (DB に触れない)', async () => {
@@ -113,7 +116,7 @@ describe('POST /api/shopping-list/regenerate — 必須の環境変数を取り�
 
     expect(response.status).toBe(429);
     expect(mockFrom).not.toHaveBeenCalled();
-    expect(mockRecordAiUsage).not.toHaveBeenCalled();
+    expect(mockConsumeAiUsage).not.toHaveBeenCalled();
   });
 
   it.each(MISSING_CASES)(
@@ -134,7 +137,7 @@ describe('POST /api/shopping-list/regenerate — 必須の環境変数を取り�
       expect(mockLoggerError.mock.calls[0][1]).toMatchObject({ name: 'MissingEnvError', envName: name });
       expect(mockCheckRateLimit).toHaveBeenCalledWith('user-1', 'generation');
       // DB に何も書かない (processing のまま残る行を作らない)
-      expect(mockRecordAiUsage).not.toHaveBeenCalled();
+      expect(mockConsumeAiUsage).not.toHaveBeenCalled();
       expect(mockFrom).not.toHaveBeenCalled();
       expect(mockInsert).not.toHaveBeenCalled();
       expect(mockFetch).not.toHaveBeenCalled();
@@ -150,7 +153,7 @@ describe('POST /api/shopping-list/regenerate — 必須の環境変数を取り�
     expect(response.status).toBe(200);
     expect(json).toEqual({ requestId: REQUEST_ID, message: '再生成を開始しました' });
     expect(mockLoggerError).not.toHaveBeenCalled();
-    expect(mockRecordAiUsage).toHaveBeenCalledWith('user-1', 'shopping_list');
+    expect(mockConsumeAiUsage).toHaveBeenCalledWith('user-1', 'shopping_list');
     expect(mockFrom).toHaveBeenCalledWith('shopping_list_requests');
     expect(mockInsert).toHaveBeenCalledTimes(1);
     expect(mockInsert.mock.calls[0][0]).toMatchObject({ user_id: 'user-1', status: 'processing' });

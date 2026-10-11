@@ -9,6 +9,7 @@ import { colors, spacing, radius, shadows } from "../../src/theme";
 import { getApi, getApiBaseUrl } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
 import { handleAiConsentRequiredError } from "../../src/lib/ai-consent";
+import { errorOfFailedAiResponse, isAiDailyLimitError } from "../../src/lib/ai-daily-limit";
 
 type Message = {
   id: string;
@@ -137,7 +138,8 @@ export default function AiSessionPage() {
 
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        throw new Error(`HTTP ${res.status}: ${text}`);
+        // 429 AI_DAILY_LIMIT (#1149) は固定の文の AiDailyLimitError にする (生の本文を画面に出さない)
+        throw errorOfFailedAiResponse(res.status, text);
       }
 
       if (!res.body) {
@@ -239,6 +241,14 @@ export default function AiSessionPage() {
       if (handleAiConsentRequiredError(e)) {
         setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
         setText(trimmed);
+        return;
+      }
+      // 今日の AI の利用回数の上限に達して止められた (#1149): 送らなかったので、メッセージを消して入力 (と添付の画像) を戻し、固定の文を出す
+      if (isAiDailyLimitError(e)) {
+        setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
+        setText(trimmed);
+        if (imageSnapshot) setAttachedImage(imageSnapshot);
+        setError(e.message);
         return;
       }
       if (e?.name === "AbortError") {

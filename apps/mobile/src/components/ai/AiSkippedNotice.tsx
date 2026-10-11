@@ -5,6 +5,7 @@
  * AI の分析を省いたことを応答の aiSkipped で知らせる。画面は aiSkippedReasonOf(応答) をここへ渡す。
  *   - consent_required: 同意が必要な旨の一文と、同意画面を開くボタン
  *   - check_failed    : 「一時的に行えませんでした」の一文
+ *   - daily_limit     : 今日の AI の利用回数の上限 (#1149) に達したので省いた旨と、「明日 0 時から」の一文
  *   - null            : 省いていないのに分析が無い (AI の失敗)。従来どおり「AI分析を実行できませんでした」
  */
 import { router } from "expo-router";
@@ -14,6 +15,7 @@ import {
   AI_CONSENT_CHECK_FAILED_SKIPPED_NOTE,
   AI_CONSENT_SCREEN_PATH,
   AI_CONSENT_SKIPPED_NOTE,
+  AI_DAILY_LIMIT_SKIPPED_NOTE,
   type AiSkippedReason,
 } from "../../lib/ai-consent";
 import { colors, radius, spacing } from "../../theme";
@@ -31,7 +33,9 @@ export function AiSkippedNotice({ reason }: { reason: AiSkippedReason | null }) 
       ? AI_CONSENT_SKIPPED_NOTE
       : reason === "check_failed"
         ? AI_CONSENT_CHECK_FAILED_SKIPPED_NOTE
-        : AI_REVIEW_FAILED_NOTE;
+        : reason === "daily_limit"
+          ? AI_DAILY_LIMIT_SKIPPED_NOTE
+          : AI_REVIEW_FAILED_NOTE;
   return (
     <View style={styles.card} testID="ai-skipped-notice">
       <Text style={styles.text}>{text}</Text>

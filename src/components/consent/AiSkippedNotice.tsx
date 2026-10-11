@@ -7,6 +7,7 @@
 // aiConsentSkippedField)。画面は aiSkippedReasonOf(応答) をここへ渡す。
 //   - consent_required: 同意が必要な旨の一文と、同意の確認ページ (/settings/ai-consent) へのリンク
 //   - check_failed    : 「一時的に行えませんでした」の一文
+//   - daily_limit     : 今日の AI の利用回数の上限 (#1149) に達したので省いた旨と、「明日 0 時から」の一文
 // 文面は 2 種類: 保存の画面 (variant="saved") と、画面を開くと自動で作る AI のコメント (variant="automatic")。
 
 import type { CSSProperties } from "react";
@@ -17,6 +18,8 @@ import {
   AI_CONSENT_CHECK_FAILED_SKIPPED_NOTE,
   AI_CONSENT_SETTINGS_PATH,
   AI_CONSENT_SKIPPED_NOTE,
+  AI_DAILY_LIMIT_AUTOMATIC_NOTE,
+  AI_DAILY_LIMIT_SKIPPED_NOTE,
   type AiSkippedReason,
 } from "@/lib/ai/consent-config";
 
@@ -26,6 +29,9 @@ export const AI_CONSENT_OPEN_LINK_LABEL = "同意の内容を確認する";
 export function aiSkippedNoteText(reason: AiSkippedReason, variant: "saved" | "automatic"): string {
   if (reason === "consent_required") {
     return variant === "saved" ? AI_CONSENT_SKIPPED_NOTE : AI_CONSENT_AUTOMATIC_LOCKED_NOTE;
+  }
+  if (reason === "daily_limit") {
+    return variant === "saved" ? AI_DAILY_LIMIT_SKIPPED_NOTE : AI_DAILY_LIMIT_AUTOMATIC_NOTE;
   }
   return variant === "saved" ? AI_CONSENT_CHECK_FAILED_SKIPPED_NOTE : AI_CONSENT_CHECK_FAILED_MESSAGE;
 }

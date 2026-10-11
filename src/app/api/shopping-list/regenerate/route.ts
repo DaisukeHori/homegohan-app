@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { recordAiUsage } from '@/lib/plan/entitlements';
+import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
@@ -58,9 +58,10 @@ export async function POST(request: Request) {
     // (processing の行を片付ける仕組みは無い)。未ログイン・レート制限超過の呼び出しには設定の不足を教えない
     const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
-    // (記録に失敗しても止めない)
-    await recordAiUsage(user.id, 'shopping_list');
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeAiUsage(user.id, 'shopping_list');
+    if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
     // リクエストレコードを作成（日付ベースモデル対応）
     const { data: requestData, error: insertError } = await supabase
@@ -81,6 +82,8 @@ export async function POST(request: Request) {
 
     if (insertError) {
       console.error('Failed to create request record:', insertError);
+      // 作り直しを始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
+      await refundAiUsage(user.id, 'shopping_list', aiUsage);
       throw new Error(`Failed to create request: ${insertError.message}`);
     }
 

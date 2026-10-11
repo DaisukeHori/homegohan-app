@@ -2,6 +2,7 @@ import { Sparkles, X } from "lucide-react-native";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -20,6 +21,7 @@ import { MEAL_LABELS } from "@homegohan/shared";
 import { getApiBaseUrl } from "../../lib/api";
 import { supabase } from "../../lib/supabase";
 import { isAiConsentRequiredResponse, promptAiConsentRequired } from "../../lib/ai-consent";
+import { errorOfFailedAiResponse, isAiDailyLimitError } from "../../lib/ai-daily-limit";
 
 // ============================================================
 // Constants
@@ -111,11 +113,20 @@ export const RegenerateMealModal: React.FC<Props> = ({ visible, meal, onClose })
         promptAiConsentRequired();
         return;
       }
-      if (!r.ok) throw new Error("regenerate failed");
+      if (!r.ok) {
+        const text = await r.text().catch(() => "");
+        // 429 AI_DAILY_LIMIT (#1149) は固定の文の AiDailyLimitError にする
+        throw errorOfFailedAiResponse(r.status, text);
+      }
       await setItemWithTTL("singleMealGenerating", { mealId: meal.id }, 2 * 60 * 1000);
       handleClose();
-    } catch (_e) {
-      // エラー時は submitting をリセットして UI を壊さない
+    } catch (e) {
+      // 今日の AI の利用回数の上限に達して止められた (#1149): 固定の文を出す (モーダルは閉じず、条件を選び直さずに済むようにする)
+      if (isAiDailyLimitError(e)) {
+        Alert.alert("エラー", e.message);
+        return;
+      }
+      // ほかのエラー時は submitting をリセットして UI を壊さない
     } finally {
       setSubmitting(false);
     }

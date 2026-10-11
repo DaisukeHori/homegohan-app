@@ -30,6 +30,7 @@ import { supabase } from "../../lib/supabase";
 import { colors, radius, shadows, spacing } from "../../theme";
 import { AIDayMenuModal } from "./AIDayMenuModal";
 import { aiSummarySkippedNote, isAiConsentRequiredError, promptAiConsentRequired } from "../../lib/ai-consent";
+import { errorOfFailedAiResponse, isAiDailyLimitError } from "../../lib/ai-daily-limit";
 
 // ============================================================
 // Types
@@ -392,7 +393,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
       if (!res.ok) {
         const errText = await res.text().catch(() => "");
-        throw new Error(`HTTP ${res.status}: ${errText}`);
+        // 429 AI_DAILY_LIMIT (#1149) は固定の文の AiDailyLimitError にする (生の本文を画面に出さない)
+        throw errorOfFailedAiResponse(res.status, errText);
       }
 
       if (!res.body) {
@@ -491,6 +493,13 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
         setInputText(trimmed);
         closeSheetAndPromptAiConsent();
+        return;
+      }
+      // 今日の AI の利用回数の上限に達して止められた (#1149): 送らなかったので、メッセージを消して入力を戻し、固定の文を出す
+      if (isAiDailyLimitError(e)) {
+        setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
+        setInputText(trimmed);
+        Alert.alert("エラー", e.message);
         return;
       }
       if (e?.name === "AbortError") {
