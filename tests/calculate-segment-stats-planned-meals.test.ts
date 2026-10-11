@@ -28,6 +28,7 @@ import {
   firstMethodOf,
   pageOf,
   queriesOf,
+  rpcTable,
   type QueryOutcome,
   type RecordedQuery,
 } from "./helpers/recording-supabase";
@@ -38,12 +39,15 @@ const uid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0"
 
 const h = vi.hoisted(() => ({
   serve: null as null | ((req: Request) => Promise<Response>),
-  client: null as null | { from: (table: string) => unknown },
+  client: null as null | { from: (table: string) => unknown; rpc: (fn: string, args?: unknown) => unknown },
   errors: [] as Array<{ message: string; error: unknown }>,
 }));
 
 vi.mock("@supabase/supabase-js", () => ({
-  createClient: () => ({ from: (table: string) => h.client!.from(table) }),
+  createClient: () => ({
+    from: (table: string) => h.client!.from(table),
+    rpc: (fn: string, args?: unknown) => h.client!.rpc(fn, args),
+  }),
 }));
 
 // ロガーは app_logs へ書き込むので差し替える (https://esm.sh の import も避けられる)
@@ -99,6 +103,10 @@ const METRICS = [
   { id: "m-nut", code: "nutrition_score", name: "栄養スコア", higher_is_better: true, is_active: true },
 ];
 const SEGMENT = { id: "s-all", code: "all", name: "全ユーザー", axes: {}, level: 0, is_active: true };
+/** 全期間の食事の記録の件数。有効なときだけ、利用者ごとの件数を DB の関数 count_meals_per_user で数える (#1491) */
+const TOTAL_MEALS_METRIC = { id: "m-total", code: "total_meals", name: "総食事数", higher_is_better: true, is_active: true };
+/** 利用者ごとの meals の件数を数える DB の関数 (supabase/migrations/20261011060000_count_meals_per_user.sql) */
+const COUNT_MEALS_RPC = "count_meals_per_user";
 
 interface PlannedRow {
   meal_type: string;
@@ -172,6 +180,15 @@ function mealsWithin(rows: Row[], query: RecordedQuery): Row[] {
   });
 }
 
+/** count_meals_per_user の結果 (利用者ごとに 1 行。user_id の順) を、meals の行から作る */
+function countMealsPerUser(rows: Row[]): Array<{ user_id: string; meal_count: number }> {
+  const counts = new Map<string, number>();
+  for (const row of rows) counts.set(row.user_id, (counts.get(row.user_id) ?? 0) + 1);
+  return [...counts.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([user_id, meal_count]) => ({ user_id, meal_count }));
+}
+
 /** upsert の第 1 引数 (行、または行の配列) を、行の配列にして返す */
 function upsertedRows(query: RecordedQuery): Row[] {
   const arg = argsOf(query, "upsert")[0][0];
@@ -200,6 +217,9 @@ function install(db: Db) {
         return { data: pageOf(db.planned, query) };
       case "badges":
         return { data: db.badges };
+      case rpcTable(COUNT_MEALS_RPC):
+        // DB の関数と同じく、meals の全行 (期間・is_sandbox で絞らない) を user_id でまとめた件数。並びは user_id の順
+        return { data: pageOf(countMealsPerUser(db.meals ?? []), query) };
 
       case "user_metrics": {
         if (firstMethodOf(query) === "upsert") {
@@ -261,6 +281,12 @@ async function call(body: Record<string, unknown> = { periodType: "weekly" }, he
   );
   return { res, json: await res.json() };
 }
+
+/**
+ * 確定した期間を集計する呼び出し (期間が切り替わった直後の JST 0 時台に、pg_cron が直前の期間について送る本文)。
+ * バッジを判定するのは、この呼び出しだけ (#1491)。バッジの判定を確かめるテストはこれで呼ぶ
+ */
+const FINALIZED = { periodType: "weekly", previousPeriod: true } as const;
 
 /** 保存された user_metrics から、(ユーザー番号, 指標の id) の行を引く */
 function metricRow(db: Db, userNo: number, metricId: string): Row {
@@ -415,7 +441,8 @@ describe("calculate-segment-stats: 失敗を成功に見せない (#1306)", () =
     ["health_streaks (meal_record)", (q) => q.table === "health_streaks" && eqValue(q, "streak_type") === "meal_record", "health_streaks (meal_record) の取得"],
     ["health_streaks (breakfast)", (q) => q.table === "health_streaks" && eqValue(q, "streak_type") === "breakfast", "health_streaks (breakfast) の取得"],
     ["meals (期間内)", (q) => q.table === "meals" && argsOf(q, "gte").length > 0, "meals (期間内) の取得"],
-    ["meals (全期間)", (q) => q.table === "meals" && argsOf(q, "gte").length === 0, "meals (全期間) の取得"],
+    // total_meals の件数 (#1491: meals の全行は読まず、DB の関数で利用者ごとに数える。下の it.each は total_meals を有効にして呼ぶ)
+    ["meals の利用者ごとの件数", (q) => q.table === rpcTable(COUNT_MEALS_RPC), `meals の利用者ごとの件数 (${COUNT_MEALS_RPC}) の取得`],
     ["user_profiles", (q) => q.table === "user_profiles", "user_profiles の取得"],
     ["user_metrics (前期間)", (q) => q.table === "user_metrics" && firstMethodOf(q) === "select", "user_metrics (前期間) の取得"],
     ["metric_definitions", (q) => q.table === "metric_definitions", "metric_definitions の取得"],
@@ -423,7 +450,7 @@ describe("calculate-segment-stats: 失敗を成功に見せない (#1306)", () =
   ];
 
   it.each(readFailures)("%s の取得に失敗したら、0 の指標を保存せず、ログに残して 500 で返す", async (_name, matches, label) => {
-    const db = newDb({ fail: (q) => (matches(q) ? boom : undefined) });
+    const db = newDb({ metrics: [...METRICS, TOTAL_MEALS_METRIC], fail: (q) => (matches(q) ? boom : undefined) });
     const { queries } = install(db);
 
     const { res, json } = await call();
@@ -523,12 +550,12 @@ describe("calculate-segment-stats: ランキングの順位・平均比 (#1306)"
     // 朝食実行率は 100 が 3 人 (u1〜u3)・0 が 2 人 (u4, u5)。野菜 4.0 と栄養 80 は 2 人 (u1, u2) が同じ値
     const forward = newDb({ badges: ALL_BADGES });
     install(forward);
-    await call();
+    await call(FINALIZED);
 
     // 利用者の取得順と食事の並びを逆にしても、順位もバッジも同じ
     const reversed = newDb({ badges: ALL_BADGES, profiles: [...forward.profiles].reverse(), planned: [...forward.planned].reverse() });
     install(reversed);
-    await call();
+    await call(FINALIZED);
 
     expect(summarize(reversed)).toEqual(summarize(forward));
 
@@ -559,7 +586,7 @@ describe("calculate-segment-stats: ランキングの順位・平均比 (#1306)"
     const db = newDb({ planned: [] }); // 食事の予定が無い → 全指標が全員 0 で、平均も 0
     install(db);
 
-    await call();
+    await call(FINALIZED);
 
     expect(db.saved.user_segment_rankings).toHaveLength(20);
     for (const row of db.saved.user_segment_rankings) {
@@ -574,7 +601,7 @@ describe("calculate-segment-stats: 差の無い指標・実績の無い利用者
     const db = newDb({ planned: [], badges: ALL_BADGES });
     const { queries } = install(db);
 
-    const { res } = await call();
+    const { res } = await call(FINALIZED);
 
     expect(res.status).toBe(200);
     // 修正前は、全員に『平均超え』、取得順の先頭の 1 人に『1 位』『上位 25%』などが付いた
@@ -599,7 +626,7 @@ describe("calculate-segment-stats: 差の無い指標・実績の無い利用者
     });
     install(db);
 
-    const { res } = await call();
+    const { res } = await call(FINALIZED);
 
     expect(res.status).toBe(200);
     expect(db.saved.user_segment_rankings).toHaveLength(10);
@@ -611,7 +638,7 @@ describe("calculate-segment-stats: 差の無い指標・実績の無い利用者
     const db = newDb({ planned: [1, 2, 3, 4, 5].map((n) => pm(n, "breakfast", true, 3)), badges: ALL_BADGES });
     install(db);
 
-    await call();
+    await call(FINALIZED);
 
     // 全員が同率 1 位 (自分より下の人はいないので百分位 0)、平均比は 0%。
     // 「1 位」「3 位以内」の条件は形の上では満たすが、差が無いので付けない
@@ -626,7 +653,7 @@ describe("calculate-segment-stats: 差の無い指標・実績の無い利用者
     const db = newDb({ planned: [pm(1, "breakfast", true, 5)], badges: ALL_BADGES });
     install(db);
 
-    await call();
+    await call(FINALIZED);
 
     expect(rankingOf(db, "m-exec", 1)).toEqual([1, 80, 400]);
     expect(rankingOf(db, "m-exec", 2)).toEqual([2, 0, -100]);
@@ -649,7 +676,7 @@ describe("calculate-segment-stats: 差の無い指標・実績の無い利用者
     const db = newDb({ planned: [1, 2, 3, 4, 5].map((n) => pm(n, "breakfast", true, n)), badges: ALL_BADGES });
     install(db);
 
-    await call();
+    await call(FINALIZED);
 
     expect(rankingOf(db, "m-veg", 3)).toEqual([3, 40, 0]);
     expect(awardedByCode(db)).toEqual({
@@ -682,7 +709,7 @@ describe("calculate-segment-stats: 差の無い指標・実績の無い利用者
     );
     install(db);
 
-    const { res } = await call();
+    const { res } = await call(FINALIZED);
 
     expect(res.status).toBe(200);
     expect(db.saved.user_badges).toEqual([]);
@@ -699,7 +726,7 @@ describe("calculate-segment-stats: 差の無い指標・実績の無い利用者
     });
     install(db);
 
-    await call();
+    await call(FINALIZED);
 
     // 低い順に 1 位〜5 位。平均比は値そのままの割合 (平均より低いと負)
     expect([1, 2, 3, 4, 5].map((n) => rankingOf(db, "m-veg", n))).toEqual([[1, 80, -100], [2, 60, -29], [3, 40, 7], [4, 20, 43], [5, 0, 79]]);
@@ -722,7 +749,7 @@ describe("calculate-segment-stats: バッジの付与 (#1306)", () => {
   it("badges は condition_json->>type (text) で絞る。`->` (jsonb) だと eq.segment_rank が json として解釈されて 22P02 になる", async () => {
     const { queries } = install(newDb());
 
-    await call();
+    await call(FINALIZED);
 
     const filter = argsOf(queriesOf(queries, "badges")[0], "or")[0][0] as string;
     for (const type of ["segment_rank", "segment_percentile", "segment_vs_avg", "improvement"]) {
@@ -735,7 +762,7 @@ describe("calculate-segment-stats: バッジの付与 (#1306)", () => {
     const db = newDb({ badges: [BADGES.rank1] });
     install(db);
 
-    const { res, json } = await call();
+    const { res, json } = await call(FINALIZED);
 
     expect(res.status).toBe(200);
     // 1 位は、メニュー実行率が u1、朝食実行率が u1〜u3、野菜スコア・栄養スコアが u1・u2。取得順に左右されない
@@ -762,7 +789,7 @@ describe("calculate-segment-stats: バッジの付与 (#1306)", () => {
     });
     install(db);
 
-    await call();
+    await call(FINALIZED);
 
     expect(awardedByCode(db)).toEqual({ improved_10: [1, 3] });
     const message = (no: number) => db.saved.user_badges.find((a) => a.user_id === uid(no))?.message;
@@ -777,7 +804,7 @@ describe("calculate-segment-stats: バッジの付与 (#1306)", () => {
     });
     install(db);
 
-    const { res, json } = await call();
+    const { res, json } = await call(FINALIZED);
 
     expect(res.status).toBe(500);
     expect(json.error).toContain("badges の取得");
@@ -793,7 +820,7 @@ describe("calculate-segment-stats: バッジの付与 (#1306)", () => {
     });
     install(db);
 
-    const { res, json } = await call();
+    const { res, json } = await call(FINALIZED);
 
     expect(res.status).toBe(500);
     expect(json.error).toContain("user_badges の保存");
@@ -807,7 +834,7 @@ describe("calculate-segment-stats: バッジの付与 (#1306)", () => {
     });
     install(db);
 
-    const { res, json } = await call();
+    const { res, json } = await call(FINALIZED);
 
     expect(res.status).toBe(500);
     expect(json.error).toContain("user_segment_rankings の取得");
@@ -819,7 +846,7 @@ describe("calculate-segment-stats: まとめて保存する (往復を減らす)
     const db = newDb({ badges: ALL_BADGES, prevMetrics: [{ user_id: uid(1), metric_id: "m-exec", value: 50 }] });
     const { queries } = install(db);
 
-    await call();
+    await call(FINALIZED);
 
     const rankingUpserts = queriesOf(queries, "user_segment_rankings").filter((q) => firstMethodOf(q) === "upsert");
     expect(rankingUpserts.map((q) => upsertedRows(q).length)).toEqual([5, 5, 5, 5]); // 1 セグメント × 4 指標、各 5 人
@@ -842,7 +869,7 @@ describe("calculate-segment-stats: まとめて保存する (往復を減らす)
     const db = newDb({ profiles: profilesOf(205), planned: [] });
     const { queries } = install(db);
 
-    const { res } = await call();
+    const { res } = await call(FINALIZED);
 
     expect(res.status).toBe(200);
     const sizes = queriesOf(queries, "user_segment_rankings")
@@ -861,7 +888,7 @@ describe("calculate-segment-stats: まとめて保存する (往復を減らす)
     });
     const { queries } = install(db);
 
-    const { res } = await call();
+    const { res } = await call(FINALIZED);
 
     expect(res.status).toBe(200);
     // 前半の 115 人にはそれぞれ 6 種類 (1 位・3 位以内・平均超え 3 種・朝食チャンピオン。メニュー実行率と朝食実行率は
@@ -1031,7 +1058,8 @@ describe("calculate-segment-stats: 集計期間は JST の暦で決まる (#1211
     expect(res.status).toBe(200);
     expect(json).toMatchObject({ periodStart: "2026-07-13", periodEnd: "2026-07-19" });
 
-    // 期間内の meals の問い合わせ (全期間の件数を数える問い合わせは eaten_at で絞らない)
+    // 期間内の meals の問い合わせ (meals への問い合わせはこれだけ。total_meals の件数は DB の関数で数える #1491)
+    expect(queriesOf(queries, "meals")).toHaveLength(1);
     const inPeriod = queriesOf(queries, "meals").filter((q) => argsOf(q, "gte").length > 0);
     expect(inPeriod).toHaveLength(1);
     expect(argsOf(inPeriod[0], "gte")).toEqual([["eaten_at", "2026-07-12T15:00:00.000Z"]]); // JST 7/13 0:00 (含む)
@@ -1198,5 +1226,233 @@ describe("calculate-segment-stats: previousPeriod: true は、今の期間の 1 
     expect(db.saved.user_metrics).toHaveLength(0);
     expect(db.saved.segment_stats).toHaveLength(0);
     expect(db.saved.user_segment_rankings).toHaveLength(0);
+  });
+});
+
+// ── バッジは確定した期間を集計する回だけ判定する (#1491) ─────────────────────────────
+//
+// #1406 で集計を 1 時間ごとにした。今の期間を集計する毎時の回 (previousPeriod: false) の値は期間の途中の暫定の値で、
+// 期間の始まりはほとんどの人が 0 のまま。そこで記録した 1 人が 1 位・平均超えになり、取り消されないバッジ
+// (user_badges は ignoreDuplicates) が付いていた。バッジを判定するのは、期間が切り替わった直後の回 (JST 0 時台) が
+// previousPeriod: true で直前の期間を集計し直すときだけにする。今の期間の回は、指標・統計・ランキングの更新だけ。
+
+describe("calculate-segment-stats: バッジは確定した期間を集計する回 (previousPeriod: true) だけ判定する (#1491)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // JST 月曜 2026-10-12 0:05 (UTC 日曜 2026-10-11 15:05)。日・週が切り替わった直後の回。今の期間はまだ始まったばかり
+  const PERIOD_JUST_STARTED_AT = "2026-10-11T15:05:00.000Z";
+  // JST 月曜 2026-10-12 9:05。期間の途中の毎時の回
+  const MID_PERIOD_AT = "2026-10-12T00:05:00.000Z";
+
+  /** u1 だけが朝食を 1 回記録し、ほかの 4 人はまだ何も記録していない (全員 0 の中に 1 人だけ記録がある) */
+  const onlyOneRecorded = () => newDb({ planned: [pm(1, "breakfast", true, 5)], badges: ALL_BADGES });
+
+  // [呼び方, 時刻, 本文, 認証ヘッダー]
+  const inProgressCalls: Array<[string, string, Record<string, unknown>, Record<string, string>]> = [];
+  for (const periodType of ["daily", "weekly", "monthly"]) {
+    inProgressCalls.push(
+      [`${periodType}・期間が始まった直後の毎時の回`, PERIOD_JUST_STARTED_AT, { periodType }, { authorization: `Bearer ${CRON_SECRET}` }],
+      [`${periodType}・期間の途中の毎時の回 (previousPeriod: false)`, MID_PERIOD_AT, { periodType, previousPeriod: false }, { authorization: `Bearer ${CRON_SECRET}` }],
+      [`${periodType}・手動実行 (trigger API。service role の鍵・本文は periodType だけ)`, MID_PERIOD_AT, { periodType }, { authorization: "Bearer test-service-role" }],
+    );
+  }
+  inProgressCalls.push(["all_time (直前の期間が無い)", MID_PERIOD_AT, { periodType: "all_time" }, { authorization: `Bearer ${CRON_SECRET}` }]);
+
+  it.each(inProgressCalls)("%s: ランキングは更新するが、badges を読まず user_badges に書かない", async (_label, now, body, headers) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(now));
+    const db = onlyOneRecorded();
+    const { queries } = install(db);
+
+    const { res, json } = await call(body, headers);
+
+    expect(res.status).toBe(200);
+    expect(json).toMatchObject({ success: true, previousPeriod: false, badgesJudged: false });
+    // 指標・統計・ランキングは今の期間で作られる。u1 は暫定の 1 位 (ほかの 4 人は 0 で同率 2 位)
+    expect(db.saved.user_metrics.length).toBeGreaterThan(0);
+    expect(db.saved.segment_stats.length).toBeGreaterThan(0);
+    expect(rankingOf(db, "m-exec", 1)).toEqual([1, 80, 400]);
+    expect(rankingOf(db, "m-exec", 2)).toEqual([2, 0, -100]);
+    for (const row of db.saved.user_segment_rankings) {
+      expect(row.period_start).toBe(json.periodStart);
+    }
+    // 修正前は、この時点で u1 に『1 位』『上位 25%』『平均超え』『朝食チャンピオン』などが付き、期間の終わりに順位が下がっても残った
+    expect(queriesOf(queries, "badges")).toEqual([]);
+    expect(queriesOf(queries, "user_badges")).toEqual([]);
+    expect(db.saved.user_badges).toEqual([]);
+  });
+
+  it("確定した期間の回 (previousPeriod: true) は、今までどおりバッジを判定し、付与の記録にその期間を残す", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(PERIOD_JUST_STARTED_AT));
+    const db = onlyOneRecorded();
+    const { queries } = install(db);
+
+    const { res, json } = await call({ periodType: "weekly", previousPeriod: true });
+
+    expect(res.status).toBe(200);
+    // 直前の週 (JST 10/5〜10/11) を集計し直した回
+    expect(json).toMatchObject({ success: true, previousPeriod: true, badgesJudged: true, periodStart: "2026-10-05", periodEnd: "2026-10-11" });
+    expect(queriesOf(queries, "badges")).toHaveLength(1);
+    // 確定した値で、記録のある u1 が 1 位。判定の規則は以前と同じ (0 の 4 人には付かない)
+    expect(awardedByCode(db)).toEqual({
+      segment_rank_1: [1],
+      segment_rank_top3: [1],
+      segment_top_25: [1],
+      segment_above_avg: [1],
+      segment_above_avg_20: [1],
+      segment_above_avg_50: [1],
+      breakfast_champion: [1],
+      veggie_champion: [1],
+    });
+    for (const award of db.saved.user_badges) {
+      expect(award.context_json).toMatchObject({ period_type: "weekly", period_start: "2026-10-05" });
+    }
+  });
+
+  it.each(["daily", "weekly", "monthly"])("%s: 期間の途中の暫定の 1 位には付かず、確定した期間の値の 1 位にだけ付く", async (periodType) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+
+    // 期間の途中 (毎時の回): u5 だけが記録している → u5 が暫定の 1 位。バッジは付かない
+    vi.setSystemTime(new Date(MID_PERIOD_AT));
+    const midway = newDb({ planned: [pm(5, "breakfast", true, 5)], badges: [BADGES.rank1, BADGES.breakfastChampion] });
+    install(midway);
+    const first = await call({ periodType });
+    expect(first.res.status).toBe(200);
+    expect(rankingOf(midway, "m-bf", 5)[0]).toBe(1);
+    expect(midway.saved.user_badges).toEqual([]);
+
+    // 期間が切り替わった直後の回 (previousPeriod: true): 期間の終わりまでに全員が記録し、確定の値では u1 が 1 位、u5 は最下位
+    vi.setSystemTime(new Date(PERIOD_JUST_STARTED_AT));
+    const finalized = newDb({ badges: [BADGES.rank1, BADGES.breakfastChampion] });
+    install(finalized);
+    const second = await call({ periodType, previousPeriod: true });
+    expect(second.res.status).toBe(200);
+    expect(second.json).toMatchObject({ previousPeriod: true, badgesJudged: true });
+    expect(rankingOf(finalized, "m-bf", 5)[0]).toBe(4);
+    // 1 位のバッジは確定の値の 1 位 (u1〜u3。朝食実行率は 3 人が同率) だけ。暫定の 1 位だった u5 には付かない
+    expect(awardedByCode(finalized)).toEqual({ segment_rank_1: [1, 2, 3], breakfast_champion: [1, 2, 3] });
+  });
+
+  it("改善のバッジも、今の期間の暫定の値では判定しない (確定した期間の回だけ、前の期間と比べて付ける)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(MID_PERIOD_AT));
+    // u1 は前の期間のメニュー実行率が 50 → 今は 100 (+100%)
+    const prevMetrics = [{ user_id: uid(1), metric_id: "m-exec", value: 50 }];
+
+    const inProgress = newDb({ badges: [BADGES.improved10], prevMetrics });
+    const { queries } = install(inProgress);
+    const current = await call({ periodType: "weekly" });
+    expect(current.res.status).toBe(200);
+    // 変化率は今の期間の指標として保存する (比較画面が表示に使う) が、改善のバッジは付けない
+    expect(metricRow(inProgress, 1, "m-exec")).toMatchObject({ previous_value: 50, change_rate: 100 });
+    expect(queriesOf(queries, "user_badges")).toEqual([]);
+
+    const finalized = newDb({ badges: [BADGES.improved10], prevMetrics });
+    install(finalized);
+    const closed = await call({ periodType: "weekly", previousPeriod: true });
+    expect(closed.res.status).toBe(200);
+    expect(awardedByCode(finalized)).toEqual({ improved_10: [1] });
+  });
+});
+
+// ── total_meals は、DB の関数で利用者ごとに数えた件数だけを受け取る (#1491) ──────────────────
+//
+// 以前は total_meals のために、毎回 meals の全行 (全期間・全利用者) を 1000 行ずつ読んで、関数の中で数えていた。
+// 今は、total_meals が有効な指標のときだけ DB の関数 count_meals_per_user を呼ぶ (返るのは記録のある利用者 1 人につき 1 行)。
+
+describe("calculate-segment-stats: total_meals の件数は DB の関数 count_meals_per_user で数える (#1491)", () => {
+  const meal = (no: number, eatenAt: string, isSandbox = false) => ({ user_id: uid(no), eaten_at: eatenAt, is_sandbox: isSandbox });
+
+  it("total_meals が有効でなければ、件数を数えない (count_meals_per_user も、meals の全期間の読み込みも無い)", async () => {
+    const db = newDb({ meals: [meal(1, "2025-01-01T00:00:00Z")] });
+    const { queries } = install(db);
+
+    const { res } = await call();
+
+    expect(res.status).toBe(200);
+    expect(queriesOf(queries, rpcTable(COUNT_MEALS_RPC))).toEqual([]);
+    // meals への問い合わせは、期間内 (eaten_at で絞る) の 1 つだけ
+    const meals = queriesOf(queries, "meals");
+    expect(meals).toHaveLength(1);
+    expect(argsOf(meals[0], "gte")).toHaveLength(1);
+    expect(argsOf(meals[0], "lt")).toHaveLength(1);
+  });
+
+  it("total_meals が有効なら、count_meals_per_user を 1 回だけ呼び、全期間の件数を利用者ごとに保存する。meals の全行は読まない", async () => {
+    const db = newDb({
+      metrics: [TOTAL_MEALS_METRIC],
+      planned: [],
+      meals: [
+        // u1: 期間の外 (昔) の記録も数える → 3 件
+        meal(1, "2024-02-01T00:00:00Z"),
+        meal(1, "2026-10-08T00:00:00Z"),
+        meal(1, "2026-10-09T00:00:00Z"),
+        // u2: 1 件
+        meal(2, "2025-06-01T00:00:00Z"),
+      ],
+    });
+    const { queries } = install(db);
+
+    const { res } = await call();
+
+    expect(res.status).toBe(200);
+    const rpc = queriesOf(queries, rpcTable(COUNT_MEALS_RPC));
+    expect(rpc).toHaveLength(1);
+    // 引数なしで呼ぶ (全利用者分)。件数が上限未満なら order / range は足さない
+    expect(argsOf(rpc[0], "rpc")).toEqual([[COUNT_MEALS_RPC]]);
+    expect(argsOf(rpc[0], "range")).toEqual([]);
+    // meals への問い合わせは、期間内の 1 つだけ (全期間の読み込みは無い)
+    const meals = queriesOf(queries, "meals");
+    expect(meals).toHaveLength(1);
+    expect(argsOf(meals[0], "gte")).toHaveLength(1);
+    // 記録の無い u3〜u5 は 0
+    expect([1, 2, 3, 4, 5].map((no) => metricRow(db, no, "m-total").value)).toEqual([3, 1, 0, 0, 0]);
+  });
+
+  it("件数 (bigint) が文字列で返っても数値として保存する", async () => {
+    const db = newDb({ metrics: [TOTAL_MEALS_METRIC], planned: [] });
+    const recording = createRecordingSupabase((query) => {
+      if (query.table === rpcTable(COUNT_MEALS_RPC)) {
+        return { data: [{ user_id: uid(1), meal_count: "12" }, { user_id: uid(2), meal_count: "3" }] };
+      }
+      return { data: null };
+    });
+    // count_meals_per_user だけ差し替え、ほかは通常の偽の DB で答える
+    const base = install(db);
+    h.client = {
+      from: (table: string) => base.client.from(table),
+      rpc: (fn: string, args?: unknown) => recording.client.rpc(fn, args),
+    };
+
+    const { res } = await call();
+
+    expect(res.status).toBe(200);
+    expect([1, 2, 3].map((no) => metricRow(db, no, "m-total").value)).toEqual([12, 3, 0]);
+  });
+
+  it("記録のある利用者が API の上限 (1000 行) を超えたら、user_id の順でページ送りして全員の件数を取る", async () => {
+    const userCount = 1205;
+    const db = newDb({
+      metrics: [TOTAL_MEALS_METRIC],
+      planned: [],
+      profiles: profilesOf(userCount),
+      // 最後の利用者だけ 2 件、ほかは 1 件
+      meals: [...Array.from({ length: userCount }, (_, i) => meal(i + 1, "2025-01-01T00:00:00Z")), meal(userCount, "2025-01-02T00:00:00Z")],
+    });
+    const { queries } = install(db);
+
+    const { res } = await call();
+
+    expect(res.status).toBe(200);
+    const rpc = queriesOf(queries, rpcTable(COUNT_MEALS_RPC));
+    // 1 回目はそのまま (1000 行で打ち切られる) → user_id の順 + range のページ送り 3 回 (1000, 205, 空)
+    expect(rpc).toHaveLength(4);
+    expect(rpc.slice(1).map((q) => argsOf(q, "order")[0])).toEqual([["user_id"], ["user_id"], ["user_id"]]);
+    expect(rpc.slice(1).map((q) => argsOf(q, "range")[0])).toEqual([[0, 999], [1000, 1999], [1205, 2204]]);
+    expect(metricRow(db, 1, "m-total").value).toBe(1);
+    expect(metricRow(db, userCount, "m-total").value).toBe(2);
   });
 });
