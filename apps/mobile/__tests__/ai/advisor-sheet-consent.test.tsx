@@ -57,6 +57,9 @@ import {
   AI_CONSENT_SUMMARY_SKIPPED_NOTE,
 } from '../../../../supabase/functions/_shared/ai-consent';
 
+// 非同期の段数が多く、遅い環境で既定の 1 秒では足りないことがあるため、長めに待つ
+const WAIT = { timeout: 5000 };
+
 const OLD_SESSION = { id: 'session-old', title: 'AI相談', messageCount: 2, status: 'active' };
 const NEW_SESSION_ID = 'session-new';
 const OLD_MESSAGES = [
@@ -92,7 +95,7 @@ beforeEach(() => {
 /** シートを開き、前の相談 (OLD_SESSION) が読み込まれるまで待つ */
 async function openSheet(onClose: () => void = jest.fn()) {
   render(<AIAdvisorSheet visible onClose={onClose} />);
-  await waitFor(() => expect(screen.getByText('野菜を足しましょう')).toBeTruthy());
+  await waitFor(() => expect(screen.getByText('野菜を足しましょう')).toBeTruthy(), WAIT);
 }
 
 /** 相談を閉じる (アーカイブ) ボタンを押し、新しいセッションの作成が終わるまで待つ */
@@ -101,9 +104,9 @@ async function archive(body: Record<string, unknown>) {
   await act(async () => {
     fireEvent.press(screen.getByTestId('ai-archive-btn'));
   });
-  await waitFor(() => expect(mockPost).toHaveBeenCalledWith('/api/ai/consultation/sessions', { title: 'AI相談' }));
+  await waitFor(() => expect(mockPost).toHaveBeenCalledWith('/api/ai/consultation/sessions', { title: 'AI相談' }), WAIT);
   // 新しいセッションに移った (前の相談のメッセージは消えた)
-  await waitFor(() => expect(screen.queryByText('野菜を足しましょう')).toBeNull());
+  await waitFor(() => expect(screen.queryByText('野菜を足しましょう')).toBeNull(), WAIT);
   expect(fetchMock).toHaveBeenCalledWith(
     `http://localhost:3000/api/ai/consultation/sessions/${OLD_SESSION.id}/close`,
     expect.objectContaining({ method: 'POST' }),
@@ -115,7 +118,7 @@ describe('AIAdvisorSheet — 相談を閉じたとき (要約・要約を省い�
     await openSheet();
     await archive({ success: true, summary: null, aiSkipped: AI_CONSENT_REQUIRED_CODE });
 
-    await waitFor(() => expect(screen.getByText(AI_CONSENT_SUMMARY_SKIPPED_NOTE)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(AI_CONSENT_SUMMARY_SKIPPED_NOTE)).toBeTruthy(), WAIT);
     expect(screen.queryByText(AI_CONSENT_SUMMARY_CHECK_FAILED_NOTE)).toBeNull();
     // 新しいセッションの最初のあいさつも出ている (置き換えのあとに足した)
     expect(screen.getByText(new RegExp(WELCOME_FRAGMENT))).toBeTruthy();
@@ -127,7 +130,7 @@ describe('AIAdvisorSheet — 相談を閉じたとき (要約・要約を省い�
     await openSheet();
     await archive({ success: true, summary: null, aiSkipped: AI_CONSENT_CHECK_FAILED_CODE });
 
-    await waitFor(() => expect(screen.getByText(AI_CONSENT_SUMMARY_CHECK_FAILED_NOTE)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(AI_CONSENT_SUMMARY_CHECK_FAILED_NOTE)).toBeTruthy(), WAIT);
     expect(screen.queryByText(AI_CONSENT_SUMMARY_SKIPPED_NOTE)).toBeNull();
     expect(alertSpy).not.toHaveBeenCalled();
   });
@@ -136,7 +139,7 @@ describe('AIAdvisorSheet — 相談を閉じたとき (要約・要約を省い�
     await openSheet();
     await archive({ success: true, summary: null });
 
-    await waitFor(() => expect(screen.getByText(new RegExp(WELCOME_FRAGMENT))).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(new RegExp(WELCOME_FRAGMENT))).toBeTruthy(), WAIT);
     expect(screen.queryByText(AI_CONSENT_SUMMARY_SKIPPED_NOTE)).toBeNull();
     expect(screen.queryByText(AI_CONSENT_SUMMARY_CHECK_FAILED_NOTE)).toBeNull();
   });
@@ -145,7 +148,7 @@ describe('AIAdvisorSheet — 相談を閉じたとき (要約・要約を省い�
     await openSheet();
     await archive({ success: true, summary: { summary: '野菜を増やす方針になりました' } });
 
-    await waitFor(() => expect(screen.getByText(/野菜を増やす方針になりました/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/野菜を増やす方針になりました/)).toBeTruthy(), WAIT);
     expect(screen.queryByText(AI_CONSENT_SUMMARY_SKIPPED_NOTE)).toBeNull();
   });
 });
@@ -161,7 +164,7 @@ describe('AIAdvisorSheet — メッセージの送信が「同意が必要です
       fireEvent.press(screen.getByTestId('ai-send-btn'));
     });
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('同意が必要です', AI_CONSENT_REQUIRED_MESSAGE, expect.any(Array)));
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('同意が必要です', AI_CONSENT_REQUIRED_MESSAGE, expect.any(Array)), WAIT);
     expect(onClose).toHaveBeenCalledTimes(1);
     // シートを閉じたあとに案内を出す (先に出すと、案内から開いた同意画面がシートの下に隠れる)
     expect(onClose.mock.invocationCallOrder[0]).toBeLessThan(alertSpy.mock.invocationCallOrder[0]);
@@ -198,13 +201,13 @@ describe('AIAdvisorSheet — 1日献立の作成が「同意が必要です」�
       fireEvent.press(screen.getByText('作成する'));
     });
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('同意が必要です', AI_CONSENT_REQUIRED_MESSAGE, expect.any(Array)));
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('同意が必要です', AI_CONSENT_REQUIRED_MESSAGE, expect.any(Array)), WAIT);
     expect(mockPost).toHaveBeenCalledWith(V4_GENERATE_PATH, expect.anything());
     // シートを閉じたあとに案内を出す (先に出すと、案内から開いた同意画面がシートの下に隠れる)
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onClose.mock.invocationCallOrder[0]).toBeLessThan(alertSpy.mock.invocationCallOrder[0]);
     // 1日献立のモーダルも閉じている
-    await waitFor(() => expect(screen.queryByText(DAY_MENU_TITLE)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(DAY_MENU_TITLE)).toBeNull(), WAIT);
     // 「エラー」の Alert は出さない
     expect(alertSpy.mock.calls.map((c) => c[0])).toEqual(['同意が必要です']);
 

@@ -38,6 +38,12 @@ import { ManualEditModal, type ManualEditMeal } from '../../src/components/menu/
 import { PantryModal } from '../../src/components/menu/PantryModal';
 import { ShoppingListModal } from '../../src/components/menu/ShoppingListModal';
 
+// 最初の描画 (RN の Modal の初回描画) は読み込むモジュールが多く、キャッシュの無い環境では 5 秒の既定を超えることがある
+jest.setTimeout(30000);
+
+// 非同期の段数が多く、遅い環境で既定の 1 秒では足りないことがあるため、長めに待つ
+const WAIT = { timeout: 5000 };
+
 const MEAL: ManualEditMeal = {
   id: 'meal-1',
   dish_name: '焼き魚定食',
@@ -55,7 +61,7 @@ describe('上に重ねたモーダルは、下のモーダルが閉じられた�
   it('買い物リスト → 追加', async () => {
     const props = { onClose: jest.fn(), onOpenAdd: jest.fn(), onOpenRange: jest.fn(), onOpenServings: jest.fn() };
     const { rerender } = render(<ShoppingListModal visible {...props} />);
-    await waitFor(() => expect(mockGet).toHaveBeenCalledWith('/api/shopping-list'));
+    await waitFor(() => expect(mockGet).toHaveBeenCalledWith('/api/shopping-list'), WAIT);
     await act(async () => {
       fireEvent.press(screen.getByTestId('shopping-list-add-btn'));
     });
@@ -67,14 +73,14 @@ describe('上に重ねたモーダルは、下のモーダルが閉じられた�
 
     // 次に開いたときに、追加のモーダルだけが出てこない
     rerender(<ShoppingListModal visible {...props} />);
-    await waitFor(() => expect(screen.getByTestId('shopping-list-modal')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('shopping-list-modal')).toBeTruthy(), WAIT);
     expect(screen.queryByTestId('add-shopping-modal')).toBeNull();
   });
 
   it('冷蔵庫 → 追加', async () => {
     const onClose = jest.fn();
     const { rerender } = render(<PantryModal visible onClose={onClose} />);
-    await waitFor(() => expect(mockGet).toHaveBeenCalledWith('/api/pantry'));
+    await waitFor(() => expect(mockGet).toHaveBeenCalledWith('/api/pantry'), WAIT);
     await act(async () => {
       fireEvent.press(screen.getByTestId('pantry-add-btn'));
     });
@@ -85,7 +91,7 @@ describe('上に重ねたモーダルは、下のモーダルが閉じられた�
     expect(screen.queryByTestId('add-fridge-modal')).toBeNull();
 
     rerender(<PantryModal visible onClose={onClose} />);
-    await waitFor(() => expect(screen.getByTestId('pantry-modal')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('pantry-modal')).toBeTruthy(), WAIT);
     expect(screen.queryByTestId('add-fridge-modal')).toBeNull();
   });
 

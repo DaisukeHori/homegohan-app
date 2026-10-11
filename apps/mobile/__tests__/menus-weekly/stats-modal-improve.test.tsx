@@ -37,6 +37,9 @@ jest.mock('../../src/components/menu/BarChart', () => ({ BarChart: () => null })
 import { StatsModal, type StatsModalProps } from '../../src/components/menu/StatsModal';
 import { FEEDBACK_ERROR_MESSAGE } from '../../src/lib/nutrition-feedback-watch';
 
+// 最初の描画は読み込むモジュールが多く、キャッシュの無い CI や負荷の高い環境では 5 秒の既定を超えることがある
+jest.setTimeout(30000);
+
 const ADVICE = 'たんぱく質を増やしましょう';
 const PRAISE = '野菜をよく食べています';
 

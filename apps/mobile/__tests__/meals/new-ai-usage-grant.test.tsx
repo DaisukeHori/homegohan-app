@@ -52,6 +52,10 @@ jest.mock('../../src/lib/supabase', () => ({
 
 import MealNewPage from '../../app/meals/new';
 
+// 最初の描画は読み込むモジュールが多く、キャッシュの無い環境では 5 秒の既定を超えることがある
+jest.setTimeout(30000);
+const WAIT = { timeout: 5000 };
+
 /** 判別が返す数え済みの印 (中身はサーバーが確かめる。画面はそのまま送るだけ) */
 const GRANT = 'g1.1760000000.0f8fad5b-d9cb-469f-a165-70867728950e.' + 'a'.repeat(64);
 /** 判別の確からしさ (画面が判別できたとみなす値より上 / 下) */
@@ -79,7 +83,7 @@ async function choosePhotoAndAnalyze(mode: 'auto' | Kind) {
   await act(async () => {
     fireEvent.press(screen.getByTestId('camera-gallery-button'));
   });
-  await waitFor(() => expect(screen.getByText('選択した写真 (1枚)')).toBeTruthy());
+  await waitFor(() => expect(screen.getByText('選択した写真 (1枚)')).toBeTruthy(), WAIT);
   await act(async () => {
     fireEvent.press(screen.getByText(mode === 'auto' ? 'AIが判別して解析' : 'AIで解析する'));
   });
@@ -100,7 +104,7 @@ describe('写真の「オート」: 判別の数え済みの印を、続く解�
     render(<MealNewPage />);
     await choosePhotoAndAnalyze('auto');
 
-    await waitFor(() => expect(postsTo(ANALYZE_PATHS[kind])).toHaveLength(1));
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS[kind])).toHaveLength(1), WAIT);
     expect(postsTo(ANALYZE_PATHS[kind])[0].aiUsageGrant).toBe(GRANT);
     if (kind === 'meal') expect(postsTo(ANALYZE_PATHS.meal)[0].prefetchedGeminiResult).toEqual(mealAnalysis);
   });
@@ -112,12 +116,12 @@ describe('写真の「オート」: 判別の数え済みの印を、続く解�
     });
     render(<MealNewPage />);
     await choosePhotoAndAnalyze('auto');
-    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy(), WAIT);
 
     await act(async () => {
       fireEvent.press(screen.getByText('冷蔵庫として続ける'));
     });
-    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1));
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1), WAIT);
     expect(postsTo(ANALYZE_PATHS.fridge)[0].aiUsageGrant).toBe(GRANT);
   });
 
@@ -128,7 +132,7 @@ describe('写真の「オート」: 判別の数え済みの印を、続く解�
     });
     render(<MealNewPage />);
     await choosePhotoAndAnalyze('auto');
-    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1));
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1), WAIT);
     expect(postsTo(ANALYZE_PATHS.fridge)[0].aiUsageGrant).toBeUndefined();
   });
 
@@ -136,7 +140,7 @@ describe('写真の「オート」: 判別の数え済みの印を、続く解�
     mockPost.mockResolvedValue(ANALYZE_RESPONSE);
     render(<MealNewPage />);
     await choosePhotoAndAnalyze(kind);
-    await waitFor(() => expect(postsTo(ANALYZE_PATHS[kind])).toHaveLength(1));
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS[kind])).toHaveLength(1), WAIT);
     expect(postsTo(ANALYZE_PATHS[kind])[0].aiUsageGrant).toBeUndefined();
     expect(postsTo('/api/ai/classify-photo')).toHaveLength(0);
   });
@@ -149,19 +153,19 @@ describe('写真の「オート」: 判別の数え済みの印を、続く解�
     });
     render(<MealNewPage />);
     await choosePhotoAndAnalyze('auto');
-    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy(), WAIT);
     await act(async () => {
       fireEvent.press(screen.getByText('冷蔵庫として続ける'));
     });
-    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1));
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1), WAIT);
     expect(postsTo(ANALYZE_PATHS.fridge)[0].aiUsageGrant).toBe(GRANT);
 
     // 解析に失敗して撮影の画面へ戻った (種類は冷蔵庫のまま)。もう一度押した解析は新しい操作なので、使った印を付けない (サーバーが数える)
-    await waitFor(() => expect(screen.getByTestId('camera-screen')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('camera-screen')).toBeTruthy(), WAIT);
     await act(async () => {
       fireEvent.press(screen.getByText('AIで解析する'));
     });
-    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(2));
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(2), WAIT);
     expect(postsTo(ANALYZE_PATHS.fridge)[1].aiUsageGrant).toBeUndefined();
   });
 });

@@ -1,11 +1,4 @@
 import '@testing-library/jest-native/extend-expect';
-// pure から読む (index から読むと、RNTL を使わないテストにも後片付けのフックを足すため。設定は index と同じものを共有する)
-import { configure } from '@testing-library/react-native/pure';
-
-import { resolveMobileJestTimeouts } from './jest.timeouts';
-
-// RNTL の waitFor / findBy* の待ちの既定。RNTL の既定の 1 秒は負荷の高い機械で足りない (根拠と環境変数での上書きは jest.timeouts.js)
-configure({ asyncUtilTimeout: resolveMobileJestTimeouts(process.env).asyncUtilTimeout });
 
 // Mock AsyncStorage globally for all tests
 jest.mock('@react-native-async-storage/async-storage', () =>

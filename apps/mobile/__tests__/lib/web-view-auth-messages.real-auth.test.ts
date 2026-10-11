@@ -28,6 +28,9 @@ process.env.EXPO_PUBLIC_SUPABASE_URL = SUPABASE_URL;
 process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = ANON_KEY;
 process.env.EXPO_PUBLIC_WEB_URL = 'https://homegohan-app.vercel.app';
 
+// 本物の supabase-js を何度も読み込み直すので、キャッシュが冷えた CI でも 5 秒の既定を超えないよう広げる
+jest.setTimeout(30_000);
+
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({}),
   useNavigation: () => ({}),

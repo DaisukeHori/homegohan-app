@@ -36,6 +36,9 @@ jest.mock('../../src/components/menu/RadarKeyPicker', () => ({ RadarKeyPicker: (
 import { NutritionDetailModal } from '../../src/components/menu/NutritionDetailModal';
 import { FEEDBACK_ERROR_MESSAGE } from '../../src/lib/nutrition-feedback-watch';
 
+// 最初の描画は読み込むモジュールが多く、キャッシュの無い CI や負荷の高い環境では 5 秒の既定を超えることがある
+jest.setTimeout(30000);
+
 const ADVICE = 'たんぱく質を増やしましょう';
 
 function renderDetail(props: Partial<React.ComponentProps<typeof NutritionDetailModal>> = {}) {

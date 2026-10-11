@@ -37,6 +37,12 @@ import HealthInsightsPage from '../../app/health/insights';
 import { AI_CONSENT_SCREEN_PATH, resetAiConsentPromptForTests } from '../../src/lib/ai-consent';
 import { AI_CONSENT_REQUIRED_CODE, AI_CONSENT_REQUIRED_MESSAGE } from '../../../../supabase/functions/_shared/ai-consent';
 
+// 最初の描画は読み込むモジュールが多く、キャッシュの無い環境では 5 秒の既定を超えることがある
+jest.setTimeout(30000);
+
+// 非同期の段数が多く、遅い環境で既定の 1 秒では足りないことがあるため、長めに待つ
+const WAIT = { timeout: 5000 };
+
 const INSIGHTS_PATH = '/api/health/insights';
 const INSIGHT = {
   id: 'insight-1',
@@ -86,7 +92,7 @@ async function openDetailWhileGeneratingThenStop() {
       }),
   );
   render(<HealthInsightsPage />);
-  await waitFor(() => expect(screen.getByTestId(`health-insights-item-${INSIGHT.id}`)).toBeTruthy());
+  await waitFor(() => expect(screen.getByTestId(`health-insights-item-${INSIGHT.id}`)).toBeTruthy(), WAIT);
 
   await act(async () => {
     fireEvent.press(screen.getByText('AIインサイトを生成'));
@@ -99,7 +105,7 @@ async function openDetailWhileGeneratingThenStop() {
   await act(async () => {
     rejectGenerate(CONSENT_ERROR());
   });
-  await waitFor(() => expect(alertTitles()).toEqual(['同意が必要です']));
+  await waitFor(() => expect(alertTitles()).toEqual(['同意が必要です']), WAIT);
 }
 
 describe('インサイトの生成が「同意が必要です」で止められたとき', () => {
