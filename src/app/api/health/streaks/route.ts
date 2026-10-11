@@ -53,7 +53,8 @@ export async function GET(request: NextRequest) {
   if (streak?.last_activity_date) {
     // #266: JST の今日を使用して UTC ズレを防ぐ
     // 最後に記録した日が昨日より前 (2 日以上経過) なら、連続が途切れている。日付 (YYYY-MM-DD) どうしを比べるので、
-    // 実行環境のタイムゾーン・夏時間に左右されない (#1463。以前は new Date + setHours (ローカル時刻) の差を日数にしていた)
+    // 実行環境のタイムゾーン・夏時間に左右されない (#1463。以前は new Date + setHours (ローカル時刻) の差をミリ秒で割って日数にしていたので、
+    // 夏時間の切り替えをまたぐと 1 時間足りず、UTC より西の実行環境では 2 日空いても「1 日」と数えて連続が続いていた)
     const yesterdayStr = addDaysToDate(todayLocal(), -1);
     if (streak.last_activity_date < yesterdayStr) {
       currentStreak = {
@@ -80,8 +81,8 @@ export async function GET(request: NextRequest) {
 
   // 週間の記録状況を取得
   // #266: JST の今日を基準に週間開始日 (今日を含む 7 日間の最初の日) を計算する。
-  // 暦の計算だけで求める (#1463。new Date(今日) + setDate (ローカル時刻) + toLocaleDateString (JST) は、
-  // JST より東のタイムゾーンで動くと 1 日前になった)
+  // 暦の計算だけで求める (#1463。以前の new Date(今日) (UTC の 0 時) + setDate (ローカル時刻) + toLocaleDateString (JST) は、
+  // 結果こそ合っていたが、ローカル時刻の setDate と、UTC の 0 時 = JST の 9 時という余裕に頼る書き方だった)
   const weekStartStr = addDaysToDate(todayLocal(), -(WEEKLY_RECORD_DAYS - 1));
 
   const { data: weeklyRecords } = await supabase

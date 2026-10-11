@@ -35,6 +35,16 @@
 //           JST 0:00〜8:59 の時刻が前日になる。src/lib/jst-day-ranges.ts の jstDayOfTimestamp を使う
 //   規則 I: サーバーのコード (src/app/api・supabase/functions) で、Date を toLocaleDateString / toLocaleTimeString / toLocaleString、
 //           Intl.DateTimeFormat で文字にするのに timeZone を指定しない。実行環境 (UTC) の暦日・時刻になる
+//   規則 J: サーバーのコード (src/app/api・src/lib) で、ローカル時刻で動かした・作った Date を、formatLocalDate (JST) か
+//           toLocaleDateString で暦日の文字列にする (#1463)。対象の Date は、同じファイルでローカル時刻の setter
+//           (setDate / setMonth / setFullYear / setHours) を当てた変数と、packages/shared の parseLocalDate / addDays
+//           (どちらもローカル時刻の Date を返す) の呼び出し・その戻り値を入れた変数。
+//           例: `const d = parseLocalDate(day); d.setDate(d.getDate() - 1); formatLocalDate(d)` /
+//               `formatLocalDate(addDays(parseLocalDate(day), -1))`。ローカル時刻の 0 時は、JST より東のタイムゾーンでは JST の
+//           前日になり、夏時間のある実行環境では setDate が 1 時間ずれるので、実行環境のタイムゾーンで結果が変わる
+//           (Vercel は UTC なので、いまの本番では正しいが、開発機や別の実行環境では 1 日ずれる)。
+//           日付のずらしは addDaysToDate、曜日・週は src/lib/jst-day-ranges.ts の calendarDayOfWeek / mondayWeekRange /
+//           sundayWeekRange、今日からのずらしは jstDayOffset を使う
 // 例外は下の許可リストに、ファイルと件数と理由を書く (件数は「これ以上増やさない」上限ではなく、ちょうどの件数。直したら減らす)。
 //
 // 走査の限界 (構文だけを見るので、次は検出しない。レビューで見る):
@@ -46,6 +56,10 @@
 //   - 規則 G の「JST の暦日から作った時刻」は、その関数の呼び出しそのものか、同じファイルでその戻り値を入れた変数 (分割代入を含む) だけ
 //   - 規則 H は、列の名前のプロパティ (`x.expires_at`) を直接切り出す形だけ。別の名前の変数に入れてから切り出す形は追わない
 //   - 規則 I の options が変数 (オブジェクトのリテラルでない) のときは、timeZone があるか分からないので数えない
+//   - 規則 J は、暦日の文字列にする関数 (formatLocalDate / toLocaleDateString) に、対象の Date を直接渡す (呼ぶ) 形だけ。
+//     別の名前の変数に移してから (`const e = new Date(d)`) 文字にする形・自前で年月日を組み立てる形・別の関数に渡す形は追わない。
+//     ローカル時刻の getter で曜日を読んで日数を計算する形 (`d.getDay()` から週の始まりを求める) も、文字にする箇所でしか捕まえない。
+//     画面のコード (src/app のページ・src/components・apps/mobile) は利用者の端末の暦日で書くのが正しい使い方もあるので、規則 J は当てない
 //
 // 加えて、#1433 で直した箇所が JST の関数を使い続けていること (呼び出しが消えていないこと) も確かめる。
 
@@ -98,7 +112,7 @@ function listProductionSources(): string[] {
   return files.sort();
 }
 
-type Rule = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I';
+type Rule = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J';
 
 interface Finding {
   rule: Rule;
@@ -279,6 +293,37 @@ const JST_RANGE_FUNCTIONS = new Set(['jstDayRangeTimestamps', 'jstOptionalDayRan
 /** 規則 I を当てる、サーバーで動くコードの場所 (実行環境のタイムゾーンは UTC) */
 const SERVER_ONLY_PREFIXES = ['src/app/api/', 'supabase/functions/'] as const;
 
+/** 規則 J を当てる、サーバーで動くコードの場所 (supabase/functions のローカル時刻のメソッドは、規則 C がまとめて数える) */
+const LOCAL_SHIFTED_DATE_SCAN_PREFIXES = ['src/app/api/', 'src/lib/'] as const;
+
+/** ローカル時刻の Date を返す packages/shared の関数 (規則 J)。parseLocalDate はローカル時刻の 0 時、addDays はローカル時刻の setDate */
+const LOCAL_DATE_RETURNING_FUNCTIONS = new Set(['parseLocalDate', 'addDays']);
+
+/** Date を暦日の文字列 (YYYY-MM-DD) にする関数 (規則 J)。formatLocalDate は第 1 引数の Date を、既定で JST の暦日にする */
+const CALENDAR_DAY_FORMAT_FUNCTIONS = new Set(['formatLocalDate']);
+
+/** ファイルの中で、parseLocalDate / addDays の戻り値を入れた変数の名前を集める (規則 J) */
+function collectLocalDateNames(sf: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const fn = calleeName(node.initializer);
+      if (fn && LOCAL_DATE_RETURNING_FUNCTIONS.has(fn)) names.add(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return names;
+}
+
+/** 規則 J: 式がローカル時刻で動かした・作った Date か (setter を当てた変数・parseLocalDate / addDays の呼び出しと、その戻り値を入れた変数) */
+function isLocallyShiftedDate(node: ts.Expression, locallyMutated: Set<string>, localDateNames: Set<string>): boolean {
+  const expr = skipParensAndNonNull(node);
+  if (ts.isIdentifier(expr)) return locallyMutated.has(expr.text) || localDateNames.has(expr.text);
+  const fn = calleeName(expr);
+  return fn !== null && LOCAL_DATE_RETURNING_FUNCTIONS.has(fn);
+}
+
 /** Date を文字にするメソッドのうち、Date にしか無いもの (規則 I)。toLocaleString は数値にもあるので、new Date(...) に当てたときだけ数える */
 const DATE_ONLY_LOCALE_METHODS = new Set(['toLocaleDateString', 'toLocaleTimeString']);
 
@@ -433,6 +478,8 @@ function scanSource(file: string, source: string): Finding[] {
 
   const tracked = collectTrackedDateNames(sf);
   const jstTimestampNames = collectJstTimestampNames(sf);
+  const isLocalShiftScanned = LOCAL_SHIFTED_DATE_SCAN_PREFIXES.some((prefix) => file.startsWith(prefix));
+  const localDateNames = collectLocalDateNames(sf);
 
   const visit = (node: ts.Node) => {
     // 規則 A: <now>.toISOString().slice(0, 10) / substring(0, 10) / substr(0, 10) / split('T')[0]
@@ -483,6 +530,21 @@ function scanSource(file: string, source: string): Finding[] {
         (method === 'toLocaleString' && ts.isNewExpression(receiver) && ts.isIdentifier(receiver.expression) && receiver.expression.text === 'Date');
       if (isServerOnly && isDateLocaleCall && !hasTimeZoneOption(node.arguments[1])) {
         push('I', node);
+      }
+      // 規則 J: ローカル時刻で動かした・作った Date の toLocaleDateString (サーバーのコード)
+      if (isLocalShiftScanned && method === 'toLocaleDateString' && isLocallyShiftedDate(receiver, tracked.locallyMutated, localDateNames)) {
+        push('J', node);
+      }
+    }
+    // 規則 J: ローカル時刻で動かした・作った Date を formatLocalDate で暦日にする (サーバーのコード)
+    if (isLocalShiftScanned && ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const [dateArg] = node.arguments;
+      if (
+        CALENDAR_DAY_FORMAT_FUNCTIONS.has(node.expression.text) &&
+        dateArg &&
+        isLocallyShiftedDate(dateArg, tracked.locallyMutated, localDateNames)
+      ) {
+        push('J', node);
       }
     }
     // 規則 I: サーバーのコードで、timeZone を指定しない Intl.DateTimeFormat
@@ -751,6 +813,39 @@ describe('走査そのもの', () => {
     expect(scanSource('src/example.ts', code)).toEqual([]);
   });
 
+  it.each([
+    // #1463 で直した書き方 (meal-plans の既定の週・health/records/quick の前日・AI 相談の明日と来週・pantry の賞味期限)
+    'const today = parseLocalDate(todayLocal());\nconst s = new Date(today);\ns.setDate(today.getDate() - today.getDay() + 1);\nconst a = formatLocalDate(s);',
+    'const y = new Date(recordDate);\ny.setDate(y.getDate() - 1);\nconst a = formatLocalDate(y);',
+    'const t = parseLocalDate(today);\nt.setDate(t.getDate() + 1);\nconst a = formatLocalDate(t);',
+    // health-streaks の前日・health/records/history の N 日前 (addDays はローカル時刻の setDate)
+    'const a = formatLocalDate(addDays(parseLocalDate(recordDate), -1));',
+    'const a = formatLocalDate(addDays(new Date(), -7));',
+    // parseLocalDate の戻り値 (ローカル時刻の 0 時) を、そのまま JST の暦日にする
+    'const d = parseLocalDate(day);\nconst a = formatLocalDate(d);',
+    'const a = formatLocalDate(parseLocalDate(day), "Asia/Tokyo");',
+    // health/streaks の週の始まり (toLocaleDateString は timeZone を指定していても、ずれた Date を文字にする)
+    "const w = new Date(todayDate);\nw.setDate(w.getDate() - 6);\nconst a = w.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });",
+  ])('サーバーのコード (src/app/api・src/lib) で検出する (規則 J): %s', (code) => {
+    expect(scanSource('src/app/api/example/route.ts', code).map((f) => f.rule)).toEqual(['J']);
+    expect(scanSource('src/lib/example.ts', code).map((f) => f.rule)).toEqual(['J']);
+    // 画面のコードは利用者の端末の暦日で書くのが正しい使い方もあるので、規則 J は当てない
+    expect(scanSource('src/app/example/page.tsx', code)).toEqual([]);
+    expect(scanSource('src/components/Example.tsx', code)).toEqual([]);
+  });
+
+  it.each([
+    'const a = addDaysToDate(recordDate, -1);',
+    'const a = formatLocalDate(new Date());', // 今の時刻の JST の暦日 (todayLocal と同じ)
+    'const a = formatLocalDate(now);', // 動かしていない Date
+    'const d = new Date(); d.setDate(d.getDate() + 30); const at = d.toISOString();', // 時刻 (timestamptz) のまま使う
+    'const d = new Date(); d.setUTCDate(d.getUTCDate() - 1); const a = formatLocalDate(d);', // UTC の setter
+    'const a = jstDayOffset(-7);',
+    'const { startDate } = mondayWeekRange(todayLocal());',
+  ])('サーバーのコードでも検出しない (規則 J): %s', (code) => {
+    expect(scanSource('src/app/api/example/route.ts', code)).toEqual([]);
+  });
+
   it('Edge Functions のローカル時刻のメソッドを検出する (規則 C)。Edge 以外では検出しない', () => {
     const code = 'const d = new Date(day); d.setDate(d.getDate() + 1);';
     expect(scanSource('supabase/functions/example/index.ts', code).map((f) => f.rule)).toEqual(['C', 'C']);
@@ -811,7 +906,7 @@ describe('規則 G・H の timestamptz の列の名前', () => {
 });
 
 describe('「今日」を UTC の暦日・ローカル時刻で決める書き方が本番コードに無い (#1433)', () => {
-  it('許可リストにないファイルに、規則 A / B / C / D / E / F / G / H / I の書き方が無い', () => {
+  it('許可リストにないファイルに、規則 A / B / C / D / E / F / G / H / I / J の書き方が無い', () => {
     const unexpected = findings.filter((f) => !ALLOWLIST.some((entry) => entry.file === f.file && entry.rule === f.rule));
     const message = unexpected
       .map(
@@ -821,7 +916,9 @@ describe('「今日」を UTC の暦日・ローカル時刻で決める書き�
           'Web / Mobile は packages/shared (todayLocal / formatLocalDate / addDaysToDate / monthLocal) か src/lib/jst-day-ranges.ts を使う。' +
           'timestamptz の列を日付で絞るときは jstDayRangeTimestamps / jstOptionalDayRangeTimestamps (.gte と .lt。' +
           '両端を含む DB の関数には jstDayEndInclusiveTimestamp)、timestamptz の値を日付にするときは jstDayOfTimestamp、' +
-          'サーバーで Date を文字にするときは timeZone: \'Asia/Tokyo\' を指定する。暦日ではない時刻 (今からの相対時刻など) で絞るなら、理由を許可リストに書く',
+          'サーバーで Date を文字にするときは timeZone: \'Asia/Tokyo\' を指定する。' +
+          'サーバーで暦日をずらすときは parseLocalDate / setDate / addDays + formatLocalDate ではなく addDaysToDate・jstDayOffset・' +
+          'mondayWeekRange / sundayWeekRange / calendarDayOfWeek を使う (規則 J)。暦日ではない時刻 (今からの相対時刻など) で絞るなら、理由を許可リストに書く',
       )
       .join('\n');
     expect(unexpected, message).toEqual([]);
@@ -837,7 +934,7 @@ describe('「今日」を UTC の暦日・ローカル時刻で決める書き�
 });
 
 /**
- * #1433 で直した箇所が、JST の関数を呼び続けていること。
+ * #1433・#1463 で直した箇所が、JST の関数を呼び続けていること。
  * 規則 A〜C は「悪い書き方」を見るが、別の悪い書き方 (例えば自前の UTC+9 の計算) に置き換わっても気づけないので、
  * 直した箇所ごとに、使うべき関数の呼び出しが残っていることを確かめる。
  */
@@ -860,6 +957,17 @@ const REQUIRED_CALLS: Record<string, string[]> = {
   'src/app/api/health/checkups/route.ts': ['jstToday'],
   'src/app/api/health/blood-tests/route.ts': ['jstToday'],
   'src/app/api/health/records/[date]/route.ts': ['addDaysToDate', 'isCalendarDate'],
+  // #1463: 存在しない日付を 400 にする入口・実行環境のタイムゾーンに依存しない日付のずらし
+  'src/app/api/health/records/route.ts': ['isCalendarDate'],
+  'src/app/api/health/records/quick/route.ts': ['addDaysToDate', 'isCalendarDate'],
+  'src/app/api/health/records/history/route.ts': ['jstDayOffset'],
+  'src/app/api/health/streaks/route.ts': ['addDaysToDate'],
+  'src/lib/health-streaks.ts': ['addDaysToDate'],
+  'src/app/api/export/meals/route.ts': ['isCalendarDate'],
+  'src/app/api/shopping-list/regenerate/route.ts': ['isCalendarDate', 'addDaysToDate'],
+  'src/app/api/meal-plans/route.ts': ['mondayWeekRange'],
+  'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts': ['addDaysToDate', 'mondayWeekRange'],
+  'src/app/api/pantry/from-photo/route.ts': ['addDaysToDate'],
   'src/app/api/performance/analyze/route.ts': ['jstToday'],
   'src/app/api/performance/checkins/route.ts': ['jstToday', 'jstDayOffset'],
   'src/app/api/performance/plans/route.ts': ['jstToday'],
@@ -871,7 +979,7 @@ const REQUIRED_CALLS: Record<string, string[]> = {
   'src/app/api/admin/finance/exports/route.ts': ['jstOptionalDayRangeTimestamps'],
   'src/app/api/family/invites/route.ts': ['jstDayOfTimestamp'],
   'src/lib/membership/org-invite.ts': ['jstDayOfTimestamp'],
-  'src/app/api/menu-plans/add/route.ts': ['jstDayOffset'],
+  'src/app/api/menu-plans/add/route.ts': ['jstDayOffset', 'parseMenuPlanDateOffsetDays'],
   'src/app/api/admin/finance/revenue/route.ts': ['jstDayOffset'],
   'src/app/api/org/owner-transfer/propose/route.ts': ['formatLocalDate'],
   'src/lib/ai/consultation-action-executor.ts': ['addDaysToDate', 'isCalendarDate'],
@@ -910,7 +1018,7 @@ function calledNames(file: string): Set<string> {
   return names;
 }
 
-describe('#1433 で直した箇所が JST の関数を使い続けている', () => {
+describe('#1433・#1463 で直した箇所が JST の関数を使い続けている', () => {
   it.each(Object.entries(REQUIRED_CALLS))('%s', (file, required) => {
     const names = calledNames(file);
     for (const name of required) {

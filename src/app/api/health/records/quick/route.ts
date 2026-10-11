@@ -96,8 +96,8 @@ export async function POST(request: NextRequest) {
   await updateHealthStreak(supabase, user.id, recordDate);
 
   // 前日との比較データを取得
-  // 前日は暦の計算で求める (#1463。new Date(recordDate) (UTC の 0 時) + setDate (ローカル時刻) + formatLocalDate (JST) は、
-  // 実行環境のタイムゾーンで結果が変わる。UTC より西では 2 日前になっていた)
+  // 前日は暦の計算で求める (#1463。以前の new Date(recordDate) (UTC の 0 時) + setDate (ローカル時刻) + formatLocalDate (JST) は、
+  // 結果こそ合っていたが、実行環境のローカル時刻の setDate と、UTC の 0 時 = JST の 9 時という余裕に頼る書き方だった)
   const yesterdayStr = addDaysToDate(recordDate, -1);
 
   const { data: previousRecord } = await supabase
