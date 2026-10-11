@@ -1647,7 +1647,7 @@ export default function WeeklyMenuPage() {
         const targetDate = formatLocalDate(weekStart);
         console.log('🔍 checkPendingRequests called with targetDate:', targetDate);
         
-        // 0. まずスタックしたリクエストを自動クリーンアップ（5分以上前のprocessing/pending）
+        // 0. まずスタックしたリクエストを自動クリーンアップ（生存信号から 20 分進んでいない processing/pending。queued は cron の順番待ちなので触らない。#1494）
         try {
           const cleanupRes = await fetch('/api/ai/menu/weekly/cleanup', { method: 'POST' });
           if (cleanupRes.ok) {

@@ -699,12 +699,6 @@ const ALLOWLIST: ReadonlyArray<{ file: string; rule: Rule; count: number; reason
     count: 1,
     reason: '最近の AI セッション数の 30 日前の今の時刻 (今からの相対時刻)。暦日ではない',
   },
-  {
-    file: 'src/app/api/ai/menu/weekly/cleanup/route.ts',
-    rule: 'G',
-    count: 1,
-    reason: '止まった生成の判定に使う 5 分前の時刻 (今からの相対時刻)。暦日ではない',
-  },
 ];
 
 const sources = listProductionSources();
