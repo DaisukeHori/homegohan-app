@@ -28,6 +28,11 @@ import {
 import { aiDailyLimitMessage, type AiUsageResult } from '../supabase/functions/_shared/ai-daily-limit';
 import { ENFORCED_EDGE } from './helpers/ai-consent-enforced-paths';
 import { AI_USAGE_ALLOWED, AI_USAGE_DENIED } from './helpers/ai-usage-mock';
+import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
+
+// 負荷の高い機械で vitest の既定の時間切れ (テスト 5 秒・フック 10 秒) を超えて落ちたことがあるので、このファイルだけ延ばす
+// (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1488)。テストとフックを定義する前に置く
+applyHeavyUnitTestTimeout();
 
 // Edge Runtime の型宣言だけの import (node_modules に無い)。中身は無いので空のモジュールにする
 vi.mock('@supabase/functions-js/edge-runtime.d.ts', () => ({}));

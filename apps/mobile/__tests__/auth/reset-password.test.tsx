@@ -14,9 +14,6 @@ import React from 'react';
 import { Alert } from 'react-native';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 
-// 最初のケースは初回の描画で重く、CPU の取り合いになる環境 (CI の並列実行など) では 5 秒の既定に近づく。上限を広げておく
-jest.setTimeout(30_000);
-
 // ---- Mocks ----
 
 const mockGetSession = jest.fn();

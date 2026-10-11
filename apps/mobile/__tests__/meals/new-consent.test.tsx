@@ -60,12 +60,6 @@ import MealNewPage from '../../app/meals/new';
 import { AI_CONSENT_SCREEN_PATH, resetAiConsentPromptForTests } from '../../src/lib/ai-consent';
 import { AI_CONSENT_REQUIRED_CODE, AI_CONSENT_REQUIRED_MESSAGE } from '../../../../supabase/functions/_shared/ai-consent';
 
-// 最初の描画は読み込むモジュールが多く、キャッシュの無い環境では 5 秒の既定を超えることがある
-jest.setTimeout(30000);
-
-// 非同期の段数が多く、遅い環境で既定の 1 秒では足りないことがあるため、長めに待つ
-const WAIT = { timeout: 5000 };
-
 /** 撮影の種類 (モード選択のボタン) → 写真を送って止められる API */
 const ANALYZE_PATHS = {
   auto: '/api/ai/classify-photo',
@@ -117,12 +111,12 @@ async function analyzeAndStopAtConsent(mode: Mode) {
   await act(async () => {
     fireEvent.press(screen.getByTestId('camera-gallery-button'));
   });
-  await waitFor(() => expect(screen.getByText('選択した写真 (1枚)')).toBeTruthy(), WAIT);
+  await waitFor(() => expect(screen.getByText('選択した写真 (1枚)')).toBeTruthy());
 
   await act(async () => {
     fireEvent.press(screen.getByText(mode === 'auto' ? 'AIが判別して解析' : 'AIで解析する'));
   });
-  await waitFor(() => expect(alertTitles()).toEqual(['同意が必要です']), WAIT);
+  await waitFor(() => expect(alertTitles()).toEqual(['同意が必要です']));
   expect(mockPost).toHaveBeenCalledWith(ANALYZE_PATHS[mode], expect.any(Object));
   expect(alertMock).toHaveBeenCalledWith('同意が必要です', AI_CONSENT_REQUIRED_MESSAGE, expect.any(Array));
   // 撮影の画面へ戻っている (解析中のまま止まらない)

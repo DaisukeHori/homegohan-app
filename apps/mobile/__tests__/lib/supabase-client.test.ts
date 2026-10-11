@@ -10,10 +10,6 @@
 process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://abcdefgh.supabase.co';
 process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'anon-key-for-tests';
 
-// このテストは各ケースで jest.resetModules() して、supabase.ts と supabase-js を読み直す。
-// キャッシュが冷えた CI でも、ケースごとの 5 秒の既定を超えないように上限を広げる
-jest.setTimeout(30_000);
-
 type SecureStoreMock = { __reset: () => void; __store: Map<string, string> };
 
 /**

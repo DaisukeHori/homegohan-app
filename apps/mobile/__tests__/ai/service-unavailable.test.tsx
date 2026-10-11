@@ -71,9 +71,6 @@ import AiSessionsPage from '../../app/ai/index';
 import AiSessionPage from '../../app/ai/[sessionId]';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
 
-// 非同期の段数が多く、遅い環境で既定の 1 秒では足りないことがあるため、長めに待つ
-const WAIT = { timeout: 5000 };
-
 /** サーバーとは違う文を入れた本文。画面に出す文は本文の文字列ではなく、code から決めた固定の文であることを確かめる */
 const SERVER_TEXT = 'サーバーが返した別の文';
 const AI_CHAT_DISABLED_BODY = JSON.stringify({ error: SERVER_TEXT, code: AI_CHAT_DISABLED_CODE, retryAfter: 60 });
@@ -112,7 +109,7 @@ describe('相談の一覧 (app/ai/index.tsx)', () => {
     mockClient.get.mockRejectedValue(clientError503(body));
     render(<AiSessionsPage />);
 
-    await waitFor(() => expect(screen.getByTestId('ai-sessions-error-text')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByTestId('ai-sessions-error-text')).toBeTruthy());
     const text = screen.getByTestId('ai-sessions-error-text').props.children;
     expect(text).toBe(expected);
     expect(String(text)).not.toContain('HTTP');
@@ -123,13 +120,13 @@ describe('相談の一覧 (app/ai/index.tsx)', () => {
     mockClient.get.mockResolvedValue({ sessions: [] });
     mockClient.post.mockRejectedValue(clientError503(body));
     render(<AiSessionsPage />);
-    await waitFor(() => expect(screen.getByTestId('ai-sessions-empty')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByTestId('ai-sessions-empty')).toBeTruthy());
 
     await act(async () => {
       fireEvent.press(screen.getByTestId('ai-new-session-button'));
     });
 
-    await waitFor(() => expect(screen.getByTestId('ai-sessions-error-text').props.children).toBe(expected), WAIT);
+    await waitFor(() => expect(screen.getByTestId('ai-sessions-error-text').props.children).toBe(expected));
   });
 });
 
@@ -146,11 +143,11 @@ describe('相談の画面 (app/ai/[sessionId].tsx)', () => {
     mockClient.get.mockResolvedValue({ messages: [] });
     fetchMock.mockResolvedValueOnce(new Response(body, { status: 503 }));
     render(<AiSessionPage />);
-    await waitFor(() => expect(screen.getByPlaceholderText('相談内容を入力...')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByPlaceholderText('相談内容を入力...')).toBeTruthy());
 
     await typeAndSend('今日の夕飯は?');
 
-    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text').props.children).toBe(expected), WAIT);
+    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text').props.children).toBe(expected));
     expect(String(screen.getByTestId('ai-chat-error-text').props.children)).not.toContain('HTTP');
     // 送らなかったメッセージは消え、入力が戻る
     expect(screen.queryByText('今日の夕飯は?')).toBeNull();
@@ -165,7 +162,7 @@ describe('相談の画面 (app/ai/[sessionId].tsx)', () => {
     mockClient.get.mockRejectedValue(clientError503(body));
     render(<AiSessionPage />);
 
-    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text').props.children).toBe(expected), WAIT);
+    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text').props.children).toBe(expected));
   });
 
   it('503 でも緊急停止・メンテナンス中でない本文は、これまでどおりの表示 (固定の文に置き換えない)', async () => {
@@ -173,11 +170,11 @@ describe('相談の画面 (app/ai/[sessionId].tsx)', () => {
     const otherBody = JSON.stringify({ error: '同意の状況を確認できませんでした', code: 'AI_CONSENT_CHECK_FAILED' });
     fetchMock.mockResolvedValueOnce(new Response(otherBody, { status: 503 }));
     render(<AiSessionPage />);
-    await waitFor(() => expect(screen.getByPlaceholderText('相談内容を入力...')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByPlaceholderText('相談内容を入力...')).toBeTruthy());
 
     await typeAndSend('こんにちは');
 
-    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text')).toBeTruthy());
     const text = screen.getByTestId('ai-chat-error-text').props.children;
     expect(text).not.toBe(AI_CHAT_DISABLED_MESSAGE);
     expect(text).not.toBe(MAINTENANCE_MESSAGE);
@@ -201,7 +198,7 @@ describe('AI アドバイザーのシート (AIAdvisorSheet)', () => {
 
   async function openSheet() {
     render(<AIAdvisorSheet visible onClose={jest.fn()} />);
-    await waitFor(() => expect(screen.getByText('野菜を足しましょう')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByText('野菜を足しましょう')).toBeTruthy());
   }
 
   it.each(CASES)('%s: 送信 (生の fetch) が 503 なら、固定の文の Alert を出し、入力を戻す', async (_label, body, expected) => {
@@ -213,7 +210,7 @@ describe('AI アドバイザーのシート (AIAdvisorSheet)', () => {
       fireEvent.press(screen.getByTestId('ai-send-btn'));
     });
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('ご利用いただけません', expected), WAIT);
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('ご利用いただけません', expected));
     // 「エラー」の Alert (生の文字列) は出さない
     expect(alertSpy.mock.calls.map((c) => c[0])).toEqual(['ご利用いただけません']);
     expect(screen.getByTestId('ai-input').props.value).toBe('今日の献立は?');
@@ -227,7 +224,7 @@ describe('AI アドバイザーのシート (AIAdvisorSheet)', () => {
       fireEvent.press(screen.getByTestId('ai-archive-btn'));
     });
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('ご利用いただけません', expected), WAIT);
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('ご利用いただけません', expected));
     expect(alertSpy.mock.calls.map((c) => c[0])).toEqual(['ご利用いただけません']);
     expect(fetchMock).toHaveBeenCalledWith(
       `http://localhost:3000/api/ai/consultation/sessions/${OLD_SESSION.id}/close`,

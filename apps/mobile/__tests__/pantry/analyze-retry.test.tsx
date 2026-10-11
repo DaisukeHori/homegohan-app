@@ -74,9 +74,6 @@ const ANALYSIS_RESULT = {
   suggestions: ['トマトサラダ'],
 };
 
-// 非同期の段数が多く、遅い環境 (CI の初回実行など) で既定の 1 秒では足りないことがあるため、長めに待つ
-const WAIT = { timeout: 5000 };
-
 type AlertButton = { text?: string; style?: string; onPress?: () => void };
 
 const alertSpy = jest.spyOn(Alert, 'alert');
@@ -131,10 +128,10 @@ describe('PantryPage — 解析失敗の「もう一度試す」', () => {
     mockPost.mockRejectedValueOnce(new Error(OFFLINE_MESSAGE)).mockResolvedValueOnce(ANALYSIS_RESULT);
 
     render(<PantryPage />);
-    await waitFor(() => expect(mockGet).toHaveBeenCalled(), WAIT);
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
     await pickPhotoFromLibrary();
 
-    await waitFor(() => expect(failureAlertCount()).toBe(1), WAIT);
+    await waitFor(() => expect(failureAlertCount()).toBe(1));
     const failure = lastFailureAlert()!;
     // 通信できないときは、その文面がそのまま出る
     expect(failure.message).toBe(OFFLINE_MESSAGE);
@@ -148,7 +145,7 @@ describe('PantryPage — 解析失敗の「もう一度試す」', () => {
     });
 
     // 同じ写真 (同じ URL) をもう一度解析する
-    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(2), WAIT);
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(2));
     expect(mockPost).toHaveBeenNthCalledWith(1, '/api/ai/analyze-fridge', { imageUrl: UPLOADED_URL });
     expect(mockPost).toHaveBeenNthCalledWith(2, '/api/ai/analyze-fridge', { imageUrl: UPLOADED_URL });
     // 撮り直し (写真の選択) も、同じ写真の再アップロードもしない
@@ -159,7 +156,7 @@ describe('PantryPage — 解析失敗の「もう一度試す」', () => {
     expect(mockUploadFridgePhoto).toHaveBeenCalledWith(PHOTO_URI, 'user-1');
 
     // 2 回目で成功したので、結果が表示され、新しい失敗のアラートは出ない
-    await waitFor(() => expect(screen.getByText('トマトが写っています')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByText('トマトが写っています')).toBeTruthy());
     expect(screen.getByText('トマト')).toBeTruthy();
     expect(failureAlertCount()).toBe(1);
   });
@@ -171,19 +168,19 @@ describe('PantryPage — 解析失敗の「もう一度試す」', () => {
       .mockResolvedValueOnce(ANALYSIS_RESULT);
 
     render(<PantryPage />);
-    await waitFor(() => expect(mockGet).toHaveBeenCalled(), WAIT);
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
     await pickPhotoFromLibrary();
 
-    await waitFor(() => expect(failureAlertCount()).toBe(1), WAIT);
+    await waitFor(() => expect(failureAlertCount()).toBe(1));
     await act(async () => {
       buttonOf('もう一度試す').onPress?.();
     });
-    await waitFor(() => expect(failureAlertCount()).toBe(2), WAIT);
+    await waitFor(() => expect(failureAlertCount()).toBe(2));
     await act(async () => {
       buttonOf('もう一度試す').onPress?.();
     });
 
-    await waitFor(() => expect(screen.getByText('トマトが写っています')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByText('トマトが写っています')).toBeTruthy());
     expect(mockPost).toHaveBeenCalledTimes(3);
     expect(mockUploadFridgePhoto).toHaveBeenCalledTimes(1);
     expect(ImagePicker.launchImageLibraryAsync).toHaveBeenCalledTimes(1);
@@ -196,10 +193,10 @@ describe('PantryPage — 解析失敗の「もう一度試す」', () => {
     mockPost.mockResolvedValueOnce(ANALYSIS_RESULT);
 
     render(<PantryPage />);
-    await waitFor(() => expect(mockGet).toHaveBeenCalled(), WAIT);
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
     await pickPhotoFromLibrary();
 
-    await waitFor(() => expect(failureAlertCount()).toBe(1), WAIT);
+    await waitFor(() => expect(failureAlertCount()).toBe(1));
     expect(lastFailureAlert()!.message).toBe('Network request failed');
     // アップロードで止まったので、解析にはまだ進んでいない
     expect(mockPost).not.toHaveBeenCalled();
@@ -208,22 +205,22 @@ describe('PantryPage — 解析失敗の「もう一度試す」', () => {
       buttonOf('もう一度試す').onPress?.();
     });
 
-    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1), WAIT);
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
     expect(mockUploadFridgePhoto).toHaveBeenCalledTimes(2);
     expect(mockUploadFridgePhoto).toHaveBeenNthCalledWith(2, PHOTO_URI, 'user-1');
     expect(mockPost).toHaveBeenCalledWith('/api/ai/analyze-fridge', { imageUrl: UPLOADED_URL });
     expect(ImagePicker.launchImageLibraryAsync).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.getByText('トマトが写っています')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByText('トマトが写っています')).toBeTruthy());
   });
 
   it('「閉じる」を押しても、解析をやり直さない', async () => {
     mockPost.mockRejectedValueOnce(new Error(OFFLINE_MESSAGE));
 
     render(<PantryPage />);
-    await waitFor(() => expect(mockGet).toHaveBeenCalled(), WAIT);
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
     await pickPhotoFromLibrary();
 
-    await waitFor(() => expect(failureAlertCount()).toBe(1), WAIT);
+    await waitFor(() => expect(failureAlertCount()).toBe(1));
     await act(async () => {
       buttonOf('閉じる').onPress?.();
     });
@@ -237,9 +234,9 @@ describe('PantryPage — 解析失敗の「もう一度試す」', () => {
     mockPost.mockRejectedValueOnce(new Error(OFFLINE_MESSAGE)).mockResolvedValueOnce(ANALYSIS_RESULT);
 
     render(<PantryPage />);
-    await waitFor(() => expect(mockGet).toHaveBeenCalled(), WAIT);
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
     await pickPhotoFromLibrary();
-    await waitFor(() => expect(failureAlertCount()).toBe(1), WAIT);
+    await waitFor(() => expect(failureAlertCount()).toBe(1));
 
     expect(screen.getByLabelText('選択した冷蔵庫の写真')).toBeTruthy();
     // 解析中の表示は終わっている (ボタンが押せる)
@@ -247,7 +244,7 @@ describe('PantryPage — 解析失敗の「もう一度試す」', () => {
 
     // アラートを閉じて、自分で別の写真を選び直す: 写真の選択からやり直す
     await pickPhotoFromLibrary();
-    await waitFor(() => expect(screen.getByText('トマトが写っています')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByText('トマトが写っています')).toBeTruthy());
     expect(ImagePicker.launchImageLibraryAsync).toHaveBeenCalledTimes(2);
     expect(mockUploadFridgePhoto).toHaveBeenCalledTimes(2);
   });
@@ -266,15 +263,15 @@ describe('PantryPage — 解析失敗の「もう一度試す」', () => {
     mockPost.mockRejectedValueOnce(new Error(OFFLINE_MESSAGE)).mockResolvedValueOnce(ANALYSIS_RESULT);
 
     render(<PantryPage />);
-    await waitFor(() => expect(mockGet).toHaveBeenCalled(), WAIT);
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
     await pickPhotoFromLibrary();
-    await waitFor(() => expect(failureAlertCount()).toBe(1), WAIT);
+    await waitFor(() => expect(failureAlertCount()).toBe(1));
 
     await act(async () => {
       buttonOf('もう一度試す').onPress?.();
     });
 
-    await waitFor(() => expect(screen.getByText('トマトが写っています')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByText('トマトが写っています')).toBeTruthy());
     expect(ImagePicker.launchCameraAsync).toHaveBeenCalledTimes(1);
     expect(ImagePicker.requestCameraPermissionsAsync).toHaveBeenCalledTimes(1);
     expect(mockUploadFridgePhoto).toHaveBeenCalledTimes(1);
