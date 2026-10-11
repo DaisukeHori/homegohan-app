@@ -31,7 +31,11 @@ function readServiceConfig(): { url: string; serviceKey: string } | null {
   const url = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceKey = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   if (!url || !serviceKey) {
-    logMissingEnv(["SUPABASE_URL", "SERVICE_ROLE_JWT", "SUPABASE_SERVICE_ROLE_KEY"]);
+    // 足りないものだけを名前で残す (鍵は別名のどちらかがあればよいので、両方の名前を出す)
+    logMissingEnv([
+      ...(url ? [] : ["SUPABASE_URL"]),
+      ...(serviceKey ? [] : ["SERVICE_ROLE_JWT", "SUPABASE_SERVICE_ROLE_KEY"]),
+    ]);
     return null;
   }
   return { url, serviceKey };

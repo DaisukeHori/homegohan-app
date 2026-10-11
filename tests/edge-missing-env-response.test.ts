@@ -252,6 +252,15 @@ describe("process-meal-image-jobs: 環境変数をリクエストの中で確か
     expect(loggedLines()).toContain(`${MISSING_ENV_SERVER_LOG_PREFIX} SUPABASE_URL / SERVICE_ROLE_JWT / SUPABASE_SERVICE_ROLE_KEY`);
   });
 
+  it("ログには足りない変数の名前だけを残す (URL だけが無ければ URL だけ)", async () => {
+    h.env = { SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY };
+
+    const res = await handler(post(URL_, { auth: `Bearer ${SERVICE_ROLE_KEY}` }));
+
+    expect(res.status).toBe(503);
+    expect(loggedLines()).toEqual([`${MISSING_ENV_SERVER_LOG_PREFIX} SUPABASE_URL`]);
+  });
+
   it("Google AI のキーが無いと、認証の後に 503 (固定の文と code) を返す。認証に通らなければ従来どおり 401", async () => {
     h.env = { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY };
 
