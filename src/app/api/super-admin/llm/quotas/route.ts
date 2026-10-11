@@ -1,62 +1,168 @@
 /**
- * GET   /api/super-admin/llm/quotas  — クォータ一覧 (設計上の目安。実際の AI 呼び出しには適用されない)
- * PATCH /api/super-admin/llm/quotas  — クォータ変更 (準備中・未対応。501 OP_NOT_SUPPORTED)
- * operator/02-api-spec.md §8 準拠
+ * GET   /api/super-admin/llm/quotas  — AI の 1 日の利用回数の上限 (プランごと) の一覧
+ * PATCH /api/super-admin/llm/quotas  — プランの 1 日の上限を保存する
+ * operator/02-api-spec.md §8
  *
- * #1149: LLM 利用クォータの管理は準備中 (未対応)。オーナー判断 (2026-10-08) で、作るまでは「準備中」と明示する。
- *   - GET が返すのはコードに直接書いた目安の値で、DB には保存されていない。AI を呼ぶ処理 (献立生成・相談・
- *     栄養計算など) はこの値を見ていないため、どの AI 機能も、この値では止まらない。
- *     それが分かるよう、応答に `enforced: false` を付ける。
- *   - 以前の PATCH は、値をどこにも保存せず、監査ログ (super_admin.llm_quota.override) だけを残して
- *     受け取った値をそのまま返していた。変更できたように見えるが、実際には何も変わらず、
- *     監査ログには「クォータを変更した」という事実と異なる記録だけが残った。
- *     いまの PATCH は何も保存せず、監査ログも残さず、501 を返す。
+ * #1149 (T40): 上限の値は DB の ai_daily_limits に保存し、AI を使う入口の判定 (consume_ai_usage。
+ * src/lib/plan/entitlements.ts / supabase/functions/_shared/ai-usage.ts) がその値を読む。保存した値は次の AI の利用から効く。
+ *   - 上限は 1 日 (JST の暦日) の、全機能の合計の回数 (画面を開くと自動で呼ばれる AI は数えない)。null は無制限
+ *   - 自分の行が無いプランは free の行の値を使う (既定は free = 1 日 10 回。migration 20261011020000_ai_daily_limits.sql)
+ *   - 以前の GET はコードに書いた目安を返すだけ、PATCH は保存せずに 501 を返していた (#1149 の本文)
  *
- * 注意: この API は、AI プロバイダーへの送信を止めたり制限したりしない
- * (オーナー判断: 海外の AI プロバイダーへのデータ送信は止めない)。クォータを実際に効かせるかどうかは別の判断が要る。
+ * 権限: super_admin だけ。ai_daily_limits はクライアントのポリシーが無い (service_role だけが読み書きする) ので、
+ * requireRole(['super_admin']) を通したあとで service_role のクライアントを使う。
+ * 監査ログ (admin_audit_logs) は、ログインした本人の権限のクライアントで書く (RLS の audit_logs_insert_admins)。
  */
 import { NextResponse } from 'next/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { respondNotSupported } from '@/lib/admin/not-supported';
-import { LLM_QUOTA_UPDATE_NOT_SUPPORTED_MESSAGE, LLM_QUOTAS_NOT_ENFORCED_NOTE } from '@/lib/super-admin/llm-schemas';
+import { internalError } from '@/lib/api/errors';
+import { recordAdminAudit } from '@/lib/admin/audit';
+import {
+  AI_DAILY_LIMIT_DEFAULT_PLAN_KEY,
+  LLM_QUOTAS_ENFORCED_NOTE,
+  UpdateAiDailyLimitSchema,
+} from '@/lib/super-admin/llm-schemas';
+import {
+  LLM_QUOTA_AUDIT_ACTION,
+  buildAiDailyLimitRows,
+  type AiDailyLimitRecord,
+  type SubscriptionPlanRecord,
+} from '@/lib/super-admin/ai-daily-limits';
 
 export const dynamic = 'force-dynamic';
+
+const GET_ROUTE = 'GET /api/super-admin/llm/quotas';
+const PATCH_ROUTE = 'PATCH /api/super-admin/llm/quotas';
+
+function authErrorResponse(err: unknown): NextResponse | null {
+  if (err instanceof AuthError) {
+    return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
+  }
+  if (err instanceof ForbiddenError) {
+    return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
+  }
+  return null;
+}
 
 export async function GET() {
   try {
     await requireRole(['super_admin']);
-
-    // デフォルトクォータ設定を返す (per operator/06-ai-llm.md §5.1)
-    // 設計上の目安であり、DB には保存されておらず、AI の呼び出しにも適用されない (enforced: false)
-    const defaultQuotas = [
-      { plan_key: 'free', daily_limit: 50, monthly_limit: 1000 },
-      { plan_key: 'pro', daily_limit: 500, monthly_limit: 10000 },
-      { plan_key: 'family_basic', daily_limit: 800, monthly_limit: 20000 },
-      { plan_key: 'family_pro', daily_limit: 1500, monthly_limit: 50000 },
-      { plan_key: 'org_starter', daily_limit: 200, monthly_limit: 5000 },
-      { plan_key: 'org_standard', daily_limit: 500, monthly_limit: 10000 },
-      { plan_key: 'org_pro', daily_limit: 1000, monthly_limit: 30000 },
-      { plan_key: 'org_enterprise', daily_limit: null, monthly_limit: null },
-    ];
-
-    return NextResponse.json({ data: defaultQuotas, enforced: false, note: LLM_QUOTAS_NOT_ENFORCED_NOTE });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
+    return authErrorResponse(err) ?? internalError(GET_ROUTE, err, {}, { shape: 'nested' });
+  }
+
+  try {
+    const admin = getSupabaseAdmin();
+    const [plansResult, limitsResult] = await Promise.all([
+      admin
+        .from('subscription_plans')
+        .select('plan_key, display_name, plan_type')
+        .order('display_order', { ascending: true })
+        .order('plan_key', { ascending: true }),
+      admin.from('ai_daily_limits').select('plan_key, daily_limit, updated_at').order('plan_key', { ascending: true }),
+    ]);
+    if (plansResult.error) {
+      return internalError(GET_ROUTE, plansResult.error, { table: 'subscription_plans' }, { shape: 'nested' });
     }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
+    if (limitsResult.error) {
+      return internalError(GET_ROUTE, limitsResult.error, { table: 'ai_daily_limits' }, { shape: 'nested' });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+
+    return NextResponse.json({
+      data: buildAiDailyLimitRows(
+        (plansResult.data ?? []) as SubscriptionPlanRecord[],
+        (limitsResult.data ?? []) as AiDailyLimitRecord[],
+      ),
+      default_plan_key: AI_DAILY_LIMIT_DEFAULT_PLAN_KEY,
+      enforced: true,
+      note: LLM_QUOTAS_ENFORCED_NOTE,
+    });
+  } catch (err) {
+    return internalError(GET_ROUTE, err, {}, { shape: 'nested' });
   }
 }
 
-export async function PATCH() {
-  return respondNotSupported({
-    routeName: 'PATCH /api/super-admin/llm/quotas',
-    roles: ['super_admin'],
-    message: LLM_QUOTA_UPDATE_NOT_SUPPORTED_MESSAGE,
-  });
+export async function PATCH(request: Request) {
+  let actorId: string;
+  try {
+    actorId = (await requireRole(['super_admin'])).id;
+  } catch (err) {
+    return authErrorResponse(err) ?? internalError(PATCH_ROUTE, err, {}, { shape: 'nested' });
+  }
+
+  const body: unknown = await request.json().catch(() => null);
+  const parsed = UpdateAiDailyLimitSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: { code: 'VALIDATION_ERROR', message: '入力値が不正です', details: parsed.error.flatten() } },
+      { status: 400 },
+    );
+  }
+  const { plan_key: planKey, daily_limit: dailyLimit, reason } = parsed.data;
+
+  try {
+    const admin = getSupabaseAdmin();
+
+    // 実在するプランだけを保存する (打ち間違えたキーの行を作らない)
+    const { data: plan, error: planError } = await admin
+      .from('subscription_plans')
+      .select('plan_key')
+      .eq('plan_key', planKey)
+      .maybeSingle();
+    if (planError) {
+      return internalError(PATCH_ROUTE, planError, { userId: actorId, table: 'subscription_plans' }, { shape: 'nested' });
+    }
+    if (!plan) {
+      return NextResponse.json({ error: { code: 'PLAN_NOT_FOUND', message: '指定したプランはありません' } }, { status: 404 });
+    }
+
+    const { data: before, error: beforeError } = await admin
+      .from('ai_daily_limits')
+      .select('daily_limit')
+      .eq('plan_key', planKey)
+      .maybeSingle();
+    if (beforeError) {
+      return internalError(PATCH_ROUTE, beforeError, { userId: actorId, table: 'ai_daily_limits' }, { shape: 'nested' });
+    }
+
+    const { data: saved, error: saveError } = await admin
+      .from('ai_daily_limits')
+      .upsert(
+        { plan_key: planKey, daily_limit: dailyLimit, updated_by: actorId, updated_at: new Date().toISOString() },
+        { onConflict: 'plan_key' },
+      )
+      .select('plan_key, daily_limit, updated_at')
+      .single();
+    if (saveError || !saved) {
+      return internalError(
+        PATCH_ROUTE,
+        saveError ?? new Error('ai_daily_limits upsert returned no row'),
+        { userId: actorId, table: 'ai_daily_limits' },
+        { shape: 'nested' },
+      );
+    }
+
+    // 監査ログ (ログインした本人の権限で書く。記録に失敗しても保存は取り消さない: recordAdminAudit は fail-open)
+    await recordAdminAudit({
+      supabase: await createClient(),
+      actorId,
+      actionType: LLM_QUOTA_AUDIT_ACTION,
+      targetType: 'ai_daily_limit',
+      details: {
+        plan_key: planKey,
+        before: before ? { daily_limit: before.daily_limit } : null,
+        after: { daily_limit: dailyLimit },
+        reason,
+      },
+      severity: 'warn',
+      request,
+      routeName: PATCH_ROUTE,
+    });
+
+    return NextResponse.json({ data: saved });
+  } catch (err) {
+    return internalError(PATCH_ROUTE, err, { userId: actorId }, { shape: 'nested' });
+  }
 }

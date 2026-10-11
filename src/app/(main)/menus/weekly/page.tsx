@@ -56,6 +56,7 @@ import { AddMealSlotModal } from "./_components/modals/AddMealSlotModal";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 import { useAiConsent } from "@/hooks/useAiConsent";
 import { AiConsentRequiredError, aiFetch, handleStoredAiConsentFailure, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
+import { aiDailyLimitMessageOfResponse } from "@/lib/ai/daily-limit-client";
 import { AI_CONSENT_COPY } from "@/lib/ai/consent-config";
 import { AiMealModal } from "./_components/modals/AiMealModal";
 import { RegenerateMealModal } from "./_components/modals/RegenerateMealModal";
@@ -2621,6 +2622,15 @@ export default function WeeklyMenuPage() {
       if (await isAiConsentRequiredResponse(res)) {
         if (!request.isCurrent()) return;
         setNutritionFeedback(AI_CONSENT_COPY.automaticLockedNote);
+        setIsLoadingFeedback(false);
+        return;
+      }
+      // 「再分析」(forceRefresh) で、今日の AI の利用回数の上限に達した (429 AI_DAILY_LIMIT。#1149)。
+      // 画面を開いたときの自動の取得は上限に数えないので、ここに来るのは「再分析」を押したときだけ
+      const dailyLimitMessage = await aiDailyLimitMessageOfResponse(res);
+      if (dailyLimitMessage) {
+        if (!request.isCurrent()) return;
+        setNutritionFeedback(dailyLimitMessage);
         setIsLoadingFeedback(false);
         return;
       }

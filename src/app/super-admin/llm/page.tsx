@@ -161,9 +161,11 @@ export default function LLMUsagePage() {
             <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold text-white">ユーザー別使用量 Top 50</h2>
-                {/* クォータ管理は準備中 (未対応)。リンク先の /super-admin/llm/quotas は
-                    プロバイダー別の詳細画面 ([provider]) に解決され「不明なプロバイダー」になるため、リンクにしない (#1149) */}
-                <span className="text-slate-400 text-sm">クォータ設定（準備中）</span>
+                {/* AI の 1 日の利用回数の上限 (プランごと) の画面 (#1149)。/super-admin/llm/quotas は
+                    固定のパスの画面 (quotas/page.tsx) なので、プロバイダー別の詳細画面 ([provider]) より先に解決される */}
+                <Link href="/super-admin/llm/quotas" className="text-purple-400 text-sm hover:text-purple-300">
+                  AI の利用上限 →
+                </Link>
               </div>
               <table className="w-full">
                 <thead>

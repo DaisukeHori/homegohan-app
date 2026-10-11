@@ -1,5 +1,6 @@
 import { createHttpClient, type HttpClient, type HttpRequestOptions } from "@homegohan/core";
 
+import { aiDailyLimitErrorOf } from "./ai-daily-limit";
 import { NETWORK_ERROR_MESSAGES } from "./api-error";
 import { MobileConfigError, resolveApiBaseUrl } from "./env";
 import { supabase } from "./supabase";
@@ -57,6 +58,19 @@ function withRequestPolicy(method: string, path: string, init?: HttpRequestOptio
   return { ...init, timeoutMs: init?.timeoutMs ?? SLOW_API_TIMEOUT_MS, retry: init?.retry ?? false };
 }
 
+/**
+ * 「今日の AI の利用回数の上限に達しました」(429 AI_DAILY_LIMIT。#1149) で止められたら、生の文字列
+ * (`HTTP 429 Too Many Requests: {...}`) の Error を、固定の文の AiDailyLimitError に置き換えて投げ直す
+ * (各画面が e.message をそのまま出しても、生の文字列が出ないように。src/lib/ai-daily-limit.ts)。ほかのエラーはそのまま投げる。
+ */
+export async function withFriendlyErrors<T>(request: Promise<T>): Promise<T> {
+  try {
+    return await request;
+  } catch (error) {
+    throw aiDailyLimitErrorOf(error) ?? error;
+  }
+}
+
 function createApi(): HttpClient {
   const client = createHttpClient({
     baseUrl: getApiBaseUrl(),
@@ -68,14 +82,16 @@ function createApi(): HttpClient {
     },
   });
   return {
-    get: <T>(path: string, init?: HttpRequestOptions) => client.get<T>(path, withRequestPolicy("GET", path, init)),
+    get: <T>(path: string, init?: HttpRequestOptions) =>
+      withFriendlyErrors(client.get<T>(path, withRequestPolicy("GET", path, init))),
     post: <T>(path: string, body?: unknown, init?: HttpRequestOptions) =>
-      client.post<T>(path, body, withRequestPolicy("POST", path, init)),
+      withFriendlyErrors(client.post<T>(path, body, withRequestPolicy("POST", path, init))),
     put: <T>(path: string, body?: unknown, init?: HttpRequestOptions) =>
-      client.put<T>(path, body, withRequestPolicy("PUT", path, init)),
+      withFriendlyErrors(client.put<T>(path, body, withRequestPolicy("PUT", path, init))),
     patch: <T>(path: string, body?: unknown, init?: HttpRequestOptions) =>
-      client.patch<T>(path, body, withRequestPolicy("PATCH", path, init)),
-    del: <T>(path: string, init?: HttpRequestOptions) => client.del<T>(path, withRequestPolicy("DELETE", path, init)),
+      withFriendlyErrors(client.patch<T>(path, body, withRequestPolicy("PATCH", path, init))),
+    del: <T>(path: string, init?: HttpRequestOptions) =>
+      withFriendlyErrors(client.del<T>(path, withRequestPolicy("DELETE", path, init))),
   };
 }
 

@@ -15,6 +15,7 @@ import { NativeAppTabRouter } from "@/components/native-app/NativeAppTabRouter";
 import { LegalConsentBanner } from "@/components/legal/LegalConsentBanner";
 import { NativeSessionWatcher } from "@/components/native-app/NativeSessionWatcher";
 import { AiConsentRequiredHost } from "@/components/consent/AiConsentRequiredHost";
+import { AiDailyLimitHost } from "@/components/consent/AiDailyLimitHost";
 
 // ロール別の管理メニュー
 const ADMIN_MENU_ITEMS: Record<string, { href: string; label: string; icon: string; color: string }> = {
@@ -303,6 +304,8 @@ export default function MainLayout({
         <AIChatBubble />
         {/* 外国の AI 事業者への提供の同意: AI の API に「同意が必要です」で止められたときに同意画面を出す (T15 / #1154) */}
         <AiConsentRequiredHost />
+        {/* AI の 1 日の利用回数の上限: AI の API に「今日の上限に達しました」で止められたときに固定の文を出す (#1149) */}
+        <AiDailyLimitHost />
       </main>
 
       {/* モバイル用ボトムナビゲーション (Floating) — isNativeApp 時は非表示 */}

@@ -3,13 +3,14 @@
  * 外国の AI 事業者への提供の同意の判定 (T15 / #1154) と、AI の利用回数の記録 (#1177) が、同じ一覧を使う。
  *
  *   - consent : 同意の判定の場所 (ENFORCED_*) / 判定しない理由 (EXEMPT_*)
- *   - usage   : 利用回数の記録の扱い (下の AiUsage)。route は公開ハンドラ (GET / POST ...) ごと
+ *   - usage   : 利用回数の上限の判定と記録の扱い (下の AiUsage。#1177 / #1149)。route は公開ハンドラ (GET / POST ...) ごと
  *
  * 使うテスト:
  *   - tests/ai-consent-enforcement.test.ts        : 棚卸し (AI に届く入口は、すべてこの一覧にある。検出器は tests/helpers/ai-reach.ts)
- *   - tests/ai-consent-enforcement-routes.test.ts : ENFORCED_ROUTES の各ハンドラを実際に呼び、同意の判定 → 記録 → 送信の順を確かめる
- *   - tests/ai-consent-enforcement-edge.test.ts   : ENFORCED_EDGE の各関数で、判定の結果で止める if が送る呼び出しより前にあること
- *                                                   (構文木。代表の関数は実際のハンドラも呼び、記録 → 送信の順も確かめる)
+ *   - tests/ai-consent-enforcement-routes.test.ts : ENFORCED_ROUTES の各ハンドラを実際に呼び、同意の判定 → 上限の判定と記録 → 送信の順と、
+ *                                                   上限に達したときの止め方 (usage の onLimit) を確かめる
+ *   - tests/ai-consent-enforcement-edge.test.ts   : ENFORCED_EDGE の各関数で、同意の判定と上限の判定の結果で止める if が送る呼び出しより前に
+ *                                                   あること (構文木。代表の関数は実際のハンドラも呼び、数える → 送信の順と上限で止めることも確かめる)
  *   - tests/ai-usage-contract.test.ts             : usage の列と、記録を呼ぶ場所・機能名・公開ハンドラの全数が一致すること
  * 新しく API Route を足したら、ここに載せ、tests/ai-consent-enforcement-routes.test.ts の表にも行を足す
  * (表に行の無い AI のハンドラがあると、そのテストが落ちる)。
@@ -17,10 +18,28 @@
 import type { AiFeature } from '../../supabase/functions/_shared/ai-usage-core';
 import type { HttpMethod } from './ai-reach';
 
-/** 利用回数の記録 (#1177) の扱い */
+/**
+ * 上限 (#1149。1 日 10 回・全機能の合計) に達したときの止め方。入口ごとに決める。
+ *
+ * | 止め方      | 応答                                                         | 入口                                                         |
+ * |-------------|--------------------------------------------------------------|--------------------------------------------------------------|
+ * | reject      | 429 AI_DAILY_LIMIT (固定の文・retryAfter = 次の JST 0 時まで)。AI へ送らない・数えない | 利用者が押す操作 (写真の解析・献立の生成・AI 相談・買い物リスト・健康インサイト・画像の作成・栄養士のコメントの「再分析」)。キューに積む入口 (v5・週間献立) は積む前に止める (積まない・週間献立は献立を消さない) |
+ * | skipAi      | 200。保存・集計はして、AI の部分だけ省く (aiSkipped: AI_DAILY_LIMIT) | 保存と AI の分析を一緒にする操作 (健康診断・血液検査の保存、相談を閉じる)。ホームの栄養の集計 (下の unmetered の機能なので、実際には止まらない) |
+ * | skipImage   | 200。保存・更新はして、料理画像だけ見送る (ジョブを積まない。aiSkipped: AI_DAILY_LIMIT) | 献立の保存・更新が付ける料理画像 (meals / meal-plans の 4 本) |
+ *
+ * 上限に数えない機能 (AI_UNMETERED_FEATURES = nutrition_advice_auto) は、記録だけして止めない。画面を開くと自動で呼ばれる AI
+ * (ホームの栄養のアドバイス・栄養の詳細を開いたときの栄養士のコメント) が使う (開くだけで今日の回数が減らないように)。
+ * 記録したあと、AI へ送る前に DB の処理が失敗したとき (生成のリクエストの行の insert の失敗など) は、数えた 1 回を戻す (refundAiUsage)。
+ */
+export type AiLimitAction = 'reject' | 'skipAi' | 'skipImage';
+
+/** 利用回数の上限の判定と記録 (#1177 / #1149) の扱い */
 export type AiUsage =
-  /** ここ (このハンドラ・この関数) が AI へ送る直前に記録する (recordAiUsage / recordEdgeAiUsage)。値は記録する機能名 */
-  | { record: readonly AiFeature[] }
+  /**
+   * ここ (このハンドラ・この関数) が AI へ送る直前に、上限の判定と記録をする (consumeAiUsage / consumeEdgeAiUsage)。
+   * record は数える機能名、onLimit は上限に達したときの止め方 (上の表)
+   */
+  | { record: readonly AiFeature[]; onLimit: AiLimitAction }
   /** AI へ送るが、記録は別の場所が行う (どこが・なぜ) */
   | { recordedBy: string }
   /** AI へ送るが、利用者の AI の利用ではないので記録しない (運営の処理など。理由) */
@@ -40,66 +59,68 @@ export interface AiEdgeEntry {
   usage: AiUsage;
 }
 
-const record = (...features: AiFeature[]): AiUsage => ({ record: features });
+const record = (onLimit: AiLimitAction, ...features: AiFeature[]): AiUsage => ({ record: features, onLimit });
 
 /** Next.js の API Route で、送る手前で判定を呼ぶもの */
 export const ENFORCED_ROUTES: Record<string, AiRouteEntry> = {
   'src/app/api/ai/analyze-fridge/route.ts': {
     consent: '冷蔵庫の写真 (Google)。認証の直後に 403',
-    handlers: { POST: record('photo_analysis') },
+    handlers: { POST: record('reject', 'photo_analysis') },
   },
   'src/app/api/ai/analyze-health-checkup/route.ts': {
     consent: '健康診断の写真 (Google)。認証の直後に 403',
-    handlers: { POST: record('photo_analysis') },
+    handlers: { POST: record('reject', 'photo_analysis') },
   },
   'src/app/api/ai/analyze-meal-photo/route.ts': {
     consent: '食事の写真 (Edge Function analyze-meal-photo。Google / Perplexity)。認証の直後に 403',
-    handlers: { POST: record('photo_analysis') },
+    handlers: { POST: record('reject', 'photo_analysis') },
   },
   'src/app/api/ai/analyze-weight-scale/route.ts': {
     consent: '体重計の写真 (Edge Function analyze-health-photo。Google)。認証の直後に 403',
-    handlers: { POST: record('photo_analysis') },
+    handlers: { POST: record('reject', 'photo_analysis') },
   },
   'src/app/api/ai/classify-photo/route.ts': {
     consent: '写真の種類の判別 (Google)。認証の直後に 403',
-    handlers: { POST: record('photo_analysis') },
+    handlers: { POST: record('reject', 'photo_analysis') },
   },
   'src/app/api/ai/image/generate/route.ts': {
     consent: '料理の画像の作成 (Google)。認証の直後に 403',
-    handlers: { POST: record('image_generation') },
+    handlers: { POST: record('reject', 'image_generation') },
   },
   'src/app/api/ai/nutrition/route.ts': {
     consent: '写真の URL から栄養の推定 (xAI)。imageUrl のときだけ 403 (数値の保存は送らない)',
     // 画像 URL から AI で栄養を解析するときだけ記録する (nutritionData を直接渡す経路は AI を呼ばない)
-    handlers: { POST: record('photo_analysis') },
+    handlers: { POST: record('reject', 'photo_analysis') },
   },
   'src/app/api/ai/nutrition-analysis/route.ts': {
     consent: 'GET は AI の部分だけ省いて aiSkipped。POST (献立の変更) は 403',
-    // GET はアドバイス・提案を付けるとき (AI を呼ぶとき) だけ、POST は AI が提案した献立変更の実行
-    handlers: { GET: record('nutrition_advice'), POST: record('menu_generation') },
+    // GET はアドバイス・提案を付けるとき (AI を呼ぶとき) だけ、POST は AI が提案した献立変更の実行。
+    // GET はホームを開くと自動で呼ばれるので、上限に数えない機能 (nutrition_advice_auto) で記録だけする (#1149)
+    handlers: { GET: record('skipAi', 'nutrition_advice_auto'), POST: record('reject', 'menu_generation') },
   },
   'src/app/api/ai/nutrition/feedback/route.ts': {
     consent: '栄養士のコメント (OpenAI)。作成済みのコメントを返すとき以外は 403',
     handlers: {
-      // キャッシュを返すだけの経路では記録しない (キャッシュが無く、生成を始めるときだけ)
-      POST: record('nutrition_advice'),
+      // キャッシュを返すだけの経路では数えない (キャッシュが無く、生成を始めるときだけ)。
+      // 栄養の詳細を開いたときの自動の取得は上限に数えない (nutrition_advice_auto)、「再分析」(forceRefresh) は数える (#1149)
+      POST: record('reject', 'nutrition_advice', 'nutrition_advice_auto'),
       GET: { noAi: '生成済みのフィードバック (nutrition_feedback_cache) を DB から読むだけ' },
     },
   },
   'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts': {
     consent: 'AI 相談 (xAI / knowledge-gpt)。認証の直後に 403',
     handlers: {
-      POST: record('consultation'),
+      POST: record('reject', 'consultation'),
       GET: { noAi: '会話のメッセージの一覧を DB から読むだけ' },
     },
   },
   'src/app/api/ai/consultation/sessions/[sessionId]/summarize/route.ts': {
     consent: '相談の要約 (xAI)。認証の直後に 403',
-    handlers: { POST: record('consultation') },
+    handlers: { POST: record('reject', 'consultation') },
   },
   'src/app/api/ai/consultation/sessions/[sessionId]/close/route.ts': {
     consent: '相談を閉じる。要約 (xAI) だけを省いて閉じる (aiSkipped)',
-    handlers: { POST: record('consultation') },
+    handlers: { POST: record('skipAi', 'consultation') },
   },
   'src/app/api/ai/consultation/actions/[actionId]/execute/route.ts': {
     consent: '献立の生成のアクションだけ 403 (AI_SENDING_ACTION_TYPES)',
@@ -114,53 +135,53 @@ export const ENFORCED_ROUTES: Record<string, AiRouteEntry> = {
   },
   'src/app/api/ai/menu/day/regenerate/route.ts': {
     consent: '献立の生成 (Edge Function generate-menu-v4 / v5)。認証の直後に 403',
-    handlers: { POST: record('menu_generation') },
+    handlers: { POST: record('reject', 'menu_generation') },
   },
   'src/app/api/ai/menu/meal/generate/route.ts': {
     consent: '献立の生成。認証の直後に 403',
-    handlers: { POST: record('menu_generation') },
+    handlers: { POST: record('reject', 'menu_generation') },
   },
   'src/app/api/ai/menu/meal/regenerate/route.ts': {
     consent: '献立の再生成。認証の直後に 403',
-    handlers: { POST: record('menu_generation') },
+    handlers: { POST: record('reject', 'menu_generation') },
   },
   'src/app/api/ai/menu/v4/generate/route.ts': {
     consent: '献立の生成。認証の直後に 403',
-    handlers: { POST: record('menu_generation') },
+    handlers: { POST: record('reject', 'menu_generation') },
   },
   'src/app/api/ai/menu/v5/generate/route.ts': {
     consent: '献立の生成 (キューに積む。cron の側でも止める)。認証の直後に 403',
     // 利用者の操作を積む時点で記録する。送る側 (cron/process-menu-queue) は記録しない
-    handlers: { POST: record('menu_generation') },
+    handlers: { POST: record('reject', 'menu_generation') },
   },
   'src/app/api/ai/menu/weekly/request/route.ts': {
     consent: '週間献立の生成。認証の直後に 403',
-    handlers: { POST: record('menu_generation') },
+    handlers: { POST: record('reject', 'menu_generation') },
   },
   'src/app/api/health/blood-tests/route.ts': {
     consent: '血液検査のレビュー (xAI)。保存はして、レビューだけ省く (aiSkipped)',
     handlers: {
-      POST: record('health_review'),
+      POST: record('skipAi', 'health_review'),
       GET: { noAi: '血液検査の結果と経年レビューを DB から読むだけ' },
     },
   },
   'src/app/api/health/checkups/route.ts': {
     consent: '健康診断のレビュー (xAI)。保存はして、レビューだけ省く (aiSkipped)',
     handlers: {
-      POST: record('health_review'),
+      POST: record('skipAi', 'health_review'),
       GET: { noAi: '健康診断の結果と経年レビューを DB から読むだけ' },
     },
   },
   'src/app/api/health/insights/route.ts': {
     consent: '健康のインサイト (Google)。POST は認証の直後に 403',
     handlers: {
-      POST: record('health_review'),
+      POST: record('reject', 'health_review'),
       GET: { noAi: '健康インサイトの一覧と未読数・アラート数を DB から読むだけ' },
     },
   },
   'src/app/api/shopping-list/regenerate/route.ts': {
     consent: '買い物リストの作成 (Edge Function regenerate-shopping-list-v2。xAI)。認証の直後に 403',
-    handlers: { POST: record('shopping_list') },
+    handlers: { POST: record('reject', 'shopping_list') },
   },
   'src/app/api/cron/process-menu-queue/route.ts': {
     consent: 'cron: キューの行の user_id で判定し、未同意なら Edge Function を呼ばずに失敗にする',
@@ -205,18 +226,18 @@ export const EXEMPT_ROUTES: Record<string, AiRouteEntry> = {
   'src/app/api/meal-plans/meals/[id]/route.ts': {
     consent: '画像のジョブを積むだけ。送るのは process-meal-image-jobs (判定あり)',
     handlers: {
-      PATCH: record('image_generation'),
+      PATCH: record('skipImage', 'image_generation'),
       DELETE: { noAi: '献立の削除。未処理の料理画像のジョブを取り消すだけ' },
     },
   },
   'src/app/api/meal-plans/meals/route.ts': {
     consent: '画像のジョブを積むだけ。送るのは process-meal-image-jobs (判定あり)',
-    handlers: { POST: record('image_generation') },
+    handlers: { POST: record('skipImage', 'image_generation') },
   },
   'src/app/api/meals/[id]/route.ts': {
     consent: '画像のジョブを積むだけ。送るのは process-meal-image-jobs (判定あり)',
     handlers: {
-      PATCH: record('image_generation'),
+      PATCH: record('skipImage', 'image_generation'),
       GET: { noAi: '献立を 1 件 DB から読むだけ' },
       DELETE: { noAi: '献立の削除。未処理の料理画像のジョブを取り消すだけ' },
     },
@@ -224,7 +245,7 @@ export const EXEMPT_ROUTES: Record<string, AiRouteEntry> = {
   'src/app/api/meals/route.ts': {
     consent: '画像のジョブを積むだけ。送るのは process-meal-image-jobs (判定あり)',
     handlers: {
-      POST: record('image_generation'),
+      POST: record('skipImage', 'image_generation'),
       GET: { noAi: 'その日の献立を DB から読むだけ' },
     },
   },
@@ -248,36 +269,37 @@ export const LIBRARY_RECORDERS: Record<string, { record: readonly AiFeature[]; r
   'src/lib/ai/consultation-action-executor.ts': {
     record: ['menu_generation', 'image_generation'],
     reason:
-      'AI 相談のアクションのうち AI を使うもの (献立の生成 3 種 = menu_generation、update_meal が付ける料理画像 = image_generation) だけを、AI へ送る直前に記録する。' +
-      'アクションの実行 (execute) と、会話の中での自動実行 (messages) の両方から呼ばれる',
+      'AI 相談のアクションのうち AI を使うもの (献立の生成 3 種 = menu_generation、update_meal が付ける料理画像 = image_generation) だけを、AI へ送る直前に数える。' +
+      'アクションの実行 (execute) と、会話の中での自動実行 (messages) の両方から呼ばれる。' +
+      '上限 (#1149) に達したとき: 献立の生成は生成せずに aiDailyLimit を返す (execute の route は 429 でアクションを pending のまま残す)、料理画像は画像だけ見送る',
   },
 };
 
 /** Edge Function で、送る手前で判定を呼ぶもの */
 export const ENFORCED_EDGE: Record<string, AiEdgeEntry> = {
-  'analyze-fridge': { consent: '利用者の JWT (requireAuth) の直後', usage: record('photo_analysis') },
-  'analyze-health-photo': { consent: '利用者の JWT の直後', usage: record('photo_analysis') },
-  'analyze-meal-photo': { consent: '利用者の JWT の直後 (栄養推定で Perplexity にも送る)', usage: record('photo_analysis') },
+  'analyze-fridge': { consent: '利用者の JWT (requireAuth) の直後', usage: record('reject', 'photo_analysis') },
+  'analyze-health-photo': { consent: '利用者の JWT の直後', usage: record('reject', 'photo_analysis') },
+  'analyze-meal-photo': { consent: '利用者の JWT の直後 (栄養推定で Perplexity にも送る)', usage: record('reject', 'photo_analysis') },
   'create-derived-recipe': {
     consent: 'service role のみ。user_id があるときだけ判定 (無ければデータセットだけから作る)',
     usage: { notRecorded: '運営が service role key で手動で呼ぶ、派生レシピの作成。アプリの画面・API・cron からは呼ばない (利用者の操作ではない)' },
   },
-  'generate-health-insights': { consent: '利用者の JWT の直後', usage: record('health_review') },
-  'generate-hint': { consent: '利用者の JWT の直後', usage: record('nutrition_advice') },
+  'generate-health-insights': { consent: '利用者の JWT の直後', usage: record('reject', 'health_review') },
+  'generate-hint': { consent: '利用者の JWT の直後', usage: record('reject', 'nutrition_advice') },
   'generate-menu-v4': {
     consent: '利用者の JWT / service role (Next.js) / 続きの工程のどれでも、userId が決まった直後',
     // ユーザーの JWT で直接呼ばれたときだけ記録する (service role の経路は呼び出し元が記録済み)
-    usage: record('menu_generation'),
+    usage: record('reject', 'menu_generation'),
   },
   'generate-menu-v5': {
     consent: '利用者の JWT / service role (Next.js・cron) / 続きの工程のどれでも、userId が決まった直後',
-    usage: record('menu_generation'),
+    usage: record('reject', 'menu_generation'),
   },
   'knowledge-gpt': {
     consent: '利用者の JWT のとき。service role の呼び出しは AI 相談の API が判定してから呼ぶ',
-    usage: record('consultation'),
+    usage: record('reject', 'consultation'),
   },
-  'normalize-shopping-list': { consent: '利用者の JWT の直後', usage: record('shopping_list') },
+  'normalize-shopping-list': { consent: '利用者の JWT の直後', usage: record('reject', 'shopping_list') },
   'process-meal-image-jobs': {
     consent: 'ジョブごとに、献立の持ち主 (meal_image_jobs.user_id) で判定。未同意なら取り消す',
     usage: {
@@ -288,7 +310,7 @@ export const ENFORCED_EDGE: Record<string, AiEdgeEntry> = {
   },
   'regenerate-shopping-list-v2': {
     consent: '利用者の JWT / service role のどちらでも、userId が決まった直後',
-    usage: record('shopping_list'),
+    usage: record('reject', 'shopping_list'),
   },
 };
 

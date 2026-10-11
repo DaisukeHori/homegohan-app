@@ -13,7 +13,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
-import { aiDailyLimitMessage } from "../_shared/ai-usage-core.ts";
+import { aiDailyLimitMessage } from "../_shared/ai-daily-limit.ts";
 import {
   buildSearchQueryBase,
   buildUserContextForPrompt,

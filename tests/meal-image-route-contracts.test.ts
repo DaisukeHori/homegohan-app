@@ -33,8 +33,10 @@ vi.mock('@/lib/rate-limit', () => ({
 vi.mock('@/lib/ai/consent-guard', () => ({
   checkUserAiConsent: vi.fn(),
 }));
-vi.mock('@/lib/plan/entitlements', () => ({
-  recordAiUsage: vi.fn(),
+// #1149: 止めたときの欄 (aiDailyLimitSkippedField) は本物を使う
+vi.mock('@/lib/plan/entitlements', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/plan/entitlements')>()),
+  consumeAiUsage: vi.fn(),
 }));
 
 import {
@@ -44,7 +46,8 @@ import {
 } from '../src/lib/meal-image-jobs';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { checkUserAiConsent } from '@/lib/ai/consent-guard';
-import { recordAiUsage } from '@/lib/plan/entitlements';
+import { consumeAiUsage } from '@/lib/plan/entitlements';
+import { AI_USAGE_ALLOWED, AI_USAGE_DENIED } from './helpers/ai-usage-mock';
 import { PATCH as mealPlansPatch } from '../src/app/api/meal-plans/meals/[id]/route';
 import { POST as mealPlansPost } from '../src/app/api/meal-plans/meals/route';
 import { POST as mealsPost } from '../src/app/api/meals/route';
@@ -79,7 +82,7 @@ describe('meal image route contracts', () => {
       reset: Date.now() + 60_000,
     });
     vi.mocked(checkUserAiConsent).mockResolvedValue({ allowed: true });
-    vi.mocked(recordAiUsage).mockResolvedValue(undefined);
+    vi.mocked(consumeAiUsage).mockResolvedValue(AI_USAGE_ALLOWED);
   });
 
   it('meal-plans PATCH reconciles dishes and enqueues jobs', async () => {
@@ -276,7 +279,7 @@ describe.each(IMAGE_ROUTE_CASES)('料理画像の生成の AI 利用回数の記
     vi.resetAllMocks();
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
     vi.mocked(checkRateLimit).mockResolvedValue({ success: true, limit: 1, remaining: 0, reset: Date.now() + 60_000 });
-    vi.mocked(recordAiUsage).mockResolvedValue(undefined);
+    vi.mocked(consumeAiUsage).mockResolvedValue(AI_USAGE_ALLOWED);
     vi.mocked(buildDishImagePayload).mockResolvedValue(dishPayloadStub());
     mockFrom.mockImplementation((table: string) => anyQuery(table));
   });
@@ -285,10 +288,10 @@ describe.each(IMAGE_ROUTE_CASES)('料理画像の生成の AI 利用回数の記
     vi.mocked(checkUserAiConsent).mockResolvedValue({ allowed: true });
     const response = await call();
     expect(response.status).toBe(200);
-    expect(vi.mocked(recordAiUsage)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(recordAiUsage)).toHaveBeenCalledWith('user-1', 'image_generation');
-    expect(vi.mocked(checkUserAiConsent).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(recordAiUsage).mock.invocationCallOrder[0]);
-    expect(vi.mocked(recordAiUsage).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(enqueueMealImageJobs).mock.invocationCallOrder[0]);
+    expect(vi.mocked(consumeAiUsage)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(consumeAiUsage)).toHaveBeenCalledWith('user-1', 'image_generation');
+    expect(vi.mocked(checkUserAiConsent).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(consumeAiUsage).mock.invocationCallOrder[0]);
+    expect(vi.mocked(consumeAiUsage).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(enqueueMealImageJobs).mock.invocationCallOrder[0]);
     expect(vi.mocked(enqueueMealImageJobs)).toHaveBeenCalledTimes(1);
   });
 
@@ -299,8 +302,22 @@ describe.each(IMAGE_ROUTE_CASES)('料理画像の生成の AI 利用回数の記
     vi.mocked(checkUserAiConsent).mockResolvedValue(decision);
     const response = await call();
     expect(response.status).toBe(200);
-    expect(vi.mocked(recordAiUsage)).not.toHaveBeenCalled();
+    expect(vi.mocked(consumeAiUsage)).not.toHaveBeenCalled();
     expect(vi.mocked(enqueueMealImageJobs)).toHaveBeenCalledTimes(1);
+  });
+
+  it('(#1149) 今日の AI の利用回数の上限に達していたら、献立の保存はして (200)、画像のジョブだけ積まない。aiSkipped で知らせる', async () => {
+    vi.mocked(checkUserAiConsent).mockResolvedValue({ allowed: true });
+    vi.mocked(consumeAiUsage).mockResolvedValue(AI_USAGE_DENIED);
+    const response = await call();
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.aiSkipped).toBe('AI_DAILY_LIMIT');
+    // レート制限で見送ったときの印とは分ける
+    expect(body.imageGenerationThrottled).toBeUndefined();
+    expect(vi.mocked(consumeAiUsage)).toHaveBeenCalledWith('user-1', 'image_generation');
+    expect(vi.mocked(enqueueMealImageJobs)).not.toHaveBeenCalled();
+    expect(vi.mocked(triggerMealImageJobProcessing)).not.toHaveBeenCalled();
   });
 
   it('画像のレート制限で画像を見送ったときは、同意も判定せず、記録もしない', async () => {
@@ -308,7 +325,7 @@ describe.each(IMAGE_ROUTE_CASES)('料理画像の生成の AI 利用回数の記
     const response = await call();
     expect(response.status).toBe(200);
     expect(vi.mocked(checkUserAiConsent)).not.toHaveBeenCalled();
-    expect(vi.mocked(recordAiUsage)).not.toHaveBeenCalled();
+    expect(vi.mocked(consumeAiUsage)).not.toHaveBeenCalled();
     expect(vi.mocked(enqueueMealImageJobs)).not.toHaveBeenCalled();
   });
 });

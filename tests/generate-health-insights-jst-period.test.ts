@@ -24,7 +24,7 @@ const h = vi.hoisted(() => ({
   serve: null as null | ((req: Request) => Promise<Response>),
   client: null as null | { from: (table: string) => unknown },
   errors: [] as Array<{ message: string; error: unknown }>,
-  recordEdgeAiUsage: vi.fn(async (_req: Request, _userId: string, _feature: string) => undefined),
+  consumeEdgeAiUsage: vi.fn(async (_req: Request, _userId: string, _feature: string) => ({ allowed: true as const, metered: true, usageDate: "2026-10-11", limit: 10, used: 1 })),
 }));
 
 // Edge Runtime の型宣言だけの import (node_modules に無い)。中身は無いので空のモジュールにする
@@ -58,11 +58,11 @@ vi.mock("../supabase/functions/_shared/db-logger.ts", () => ({
   generateRequestId: () => "req_test",
 }));
 
-// #1177: AI 利用回数の記録。DB を呼ぶ recordEdgeAiUsage だけを差し替えて、呼ばれた引数と順番を見る
-// (recordEdgeAiUsage 自体の挙動は tests/ai-usage-edge.test.ts)
+// #1177 / #1149: AI 利用回数の上限の判定と記録。DB を呼ぶ consumeEdgeAiUsage だけを差し替えて、呼ばれた引数と順番を見る
+// (consumeEdgeAiUsage 自体の挙動は tests/ai-usage-edge.test.ts)
 vi.mock("../supabase/functions/_shared/ai-usage.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../supabase/functions/_shared/ai-usage.ts")>()),
-  recordEdgeAiUsage: h.recordEdgeAiUsage,
+  consumeEdgeAiUsage: h.consumeEdgeAiUsage,
 }));
 
 // LLM の使用量計測 (fetch を包んで DB へ書く) は、ここでは中身をそのまま実行するだけにする
@@ -102,7 +102,7 @@ const fetchMock = vi.fn(async () => new Response("unavailable", { status: 503 })
 
 beforeEach(() => {
   h.errors.length = 0;
-  h.recordEdgeAiUsage.mockClear();
+  h.consumeEdgeAiUsage.mockClear();
   h.client = null;
   fetchMock.mockClear();
   // AI の総合分析は外へ出さない (失敗扱い → その 1 件だけ作られない)
@@ -191,10 +191,10 @@ describe("generate-health-insights: 期間と保存する日付は JST の暦日
     expect(status).toBe(200);
     expect(h.errors).toEqual([]);
     // JWT で直接呼ばれたので、AI へ送る前に 1 回だけ記録する (#1177。順番は呼ばれた順で見る)
-    expect(h.recordEdgeAiUsage).toHaveBeenCalledTimes(1);
-    expect(h.recordEdgeAiUsage.mock.calls[0].slice(1)).toEqual([USER_ID, "health_review"]);
+    expect(h.consumeEdgeAiUsage).toHaveBeenCalledTimes(1);
+    expect(h.consumeEdgeAiUsage.mock.calls[0].slice(1)).toEqual([USER_ID, "health_review"]);
     expect(fetchMock.mock.calls.length, "AI へ送っていない (順番の確かめが空振りになる)").toBeGreaterThanOrEqual(1);
-    expect(h.recordEdgeAiUsage.mock.invocationCallOrder[0]).toBeLessThan(Math.min(...fetchMock.mock.invocationCallOrder));
+    expect(h.consumeEdgeAiUsage.mock.invocationCallOrder[0]).toBeLessThan(Math.min(...fetchMock.mock.invocationCallOrder));
 
     // health_records は JST の暦日の期間で絞る (両端を含む)
     const [recordsQuery] = queriesOf(queries, "health_records");

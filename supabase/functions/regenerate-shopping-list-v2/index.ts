@@ -14,7 +14,7 @@ import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usag
 import { createLogger } from "../_shared/db-logger.ts";
 import { requireAuth } from "../_shared/auth.ts";
 import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
-import { aiDailyLimitMessage } from "../_shared/ai-usage-core.ts";
+import { aiDailyLimitMessage } from "../_shared/ai-daily-limit.ts";
 import { getCorsHeaders, withCors } from "../_shared/cors.ts";
 import { aggregateIngredientOccurrences, InputIngredient } from "../_shared/shopping-list-aggregation.ts";
 import { verifyRequestOwnership } from "../_shared/request-ownership.ts";

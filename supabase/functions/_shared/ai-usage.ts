@@ -25,28 +25,23 @@
 
 import { createClient } from "@supabase/supabase-js";
 import {
-  AI_USAGE_NOT_COUNTED,
   AI_USAGE_RECORDED_HEADER,
   AI_USAGE_TIMEOUT_MS,
-  aiDailyLimitPayload,
-  parseConsumeAiUsageResult,
   verifyAiUsageRecorded,
   type AiFeature,
+} from "./ai-usage-core.ts";
+import {
+  AI_USAGE_NOT_COUNTED,
+  aiDailyLimitPayload,
+  parseConsumeAiUsageResult,
   type AiUsageAllowed,
   type AiUsageDenied,
   type AiUsageResult,
-} from "./ai-usage-core.ts";
+} from "./ai-daily-limit.ts";
 import { createLogger } from "./db-logger.ts";
 
-export {
-  AI_DAILY_LIMIT_CODE,
-  AI_FEATURES,
-  AI_USAGE_RECORDED_HEADER,
-  type AiFeature,
-  type AiUsageAllowed,
-  type AiUsageDenied,
-  type AiUsageResult,
-} from "./ai-usage-core.ts";
+export { AI_FEATURES, AI_USAGE_RECORDED_HEADER, type AiFeature } from "./ai-usage-core.ts";
+export { AI_DAILY_LIMIT_CODE, type AiUsageAllowed, type AiUsageDenied, type AiUsageResult } from "./ai-daily-limit.ts";
 
 /** supabase-js の rpc だけを使う最小の形 (テストで差し替えられる) */
 export interface AiUsageRpcClient {

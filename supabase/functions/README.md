@@ -204,8 +204,9 @@ supabase/functions/
 │   ├── auth.ts             # 認証ヘルパー（requireAuth: ユーザーの JWT、requireServiceRole: cron 用の共有シークレットか service role key。await 必須）
 │   ├── cron-secret.ts      # cron 用シークレットの照合（Next.js の src/lib/cron-auth.ts と共用。import なし・Deno/Node 固有 API なし。入れ替え中は CRON_SECRET_PREVIOUS も受け付ける。手順は ENV_SETUP.md）
 │   ├── cors.ts             # CORS設定（許可したオリジンにだけ CORS ヘッダーを返す。下の「CORS」を参照）
-│   ├── ai-usage-core.ts    # AI 利用回数の記録の共通部分（機能名の一覧・Next.js が付ける「記録済みの印」の署名と検証。Next.js の src/lib/plan/entitlements.ts と共用。import なし・Deno/Node 固有 API なし）
-│   ├── ai-usage.ts         # AI 利用回数の記録（ユーザーの JWT で直接呼ばれたときに記録する。下の「AI 利用回数の記録」を参照）
+│   ├── ai-usage-core.ts    # AI 利用回数の共通部分（機能名の一覧・上限に数えない機能・Next.js が付ける「記録済みの印」の署名と検証。Next.js の src/lib/plan/entitlements.ts と共用。import なし・Deno/Node 固有 API なし）
+│   ├── ai-daily-limit.ts   # AI の 1 日の上限の共通部分（判定の結果の読み取り・429 AI_DAILY_LIMIT の形と文面。Next.js・Web・モバイルと共用。import なし・crypto なし）
+│   ├── ai-usage.ts         # AI の利用回数の上限の判定と記録（ユーザーの JWT で直接呼ばれたときに数える。下の「AI 利用回数の上限と記録」を参照）
 │   ├── db-logger.ts        # ログ記録
 │   ├── log-sanitizer.ts    # ログ保存前の秘密情報マスキング・切り詰め（Next.js の src/lib/db-logger.ts と共用。import なし・Deno/Node 固有 API なし）
 │   ├── bulk-query.ts       # 集計バッチ向けの PostgREST の読み書き（失敗を例外にする・1 回の応答の上限 1000 行を超えて全件を取る・.in() の ids の分割）
@@ -277,17 +278,17 @@ CORS はブラウザだけが強制する仕組みです。Next.js の API ル�
 - モバイルアプリの WebView が読み込むのは Web アプリ自身（`EXPO_PUBLIC_WEB_URL`）のページなので、そこから呼ぶときの `Origin` も Web アプリのオリジンです。ネイティブ側の `fetch` は `Origin` を付けません。
 - 新しい関数を足すときは、`tests/edge-function-cors.test.ts` が、`Access-Control-Allow-Origin: *`（ワイルドカード）を書き込んでいないか、CORS ヘッダーを `_shared/cors.ts` 以外に直書きしていないか、バッチ専用の関数に CORS を付けていないかを検査します。`requireServiceRole` を使う関数を足したら同じテストの `BATCH_ONLY_SOURCES` に、`_shared/cors.ts` を使う関数を足したら `USER_FACING_SOURCES` に、一覧として足してください。
 
-### AI 利用回数の記録
+### AI 利用回数の上限と記録
 
-AI を使う処理は、利用回数を記録します (#1177)。**記録だけで、止めません**（上限と比べて止める処理と上限の値は #1149 / T40 が足します）。記録する先は DB の `record_ai_usage`（`ai_usage_counters`。日付は JST）で、service role だけが実行できます。
+AI を使う処理は、利用回数を数え、1 日の上限を超えたら止めます (#1177 / #1149)。上限はプランごとの DB の `ai_daily_limits`（既定は free = 1 日 10 回。全機能の合計・JST の暦日・究極モードも 1 回）。判定と記録は DB の `consume_ai_usage` が 1 回の呼び出しで原子的に行い（上限に達していれば記録せずに `{ allowed: false }`、達していなければ +1）、service role だけが実行できます。
 
-- **ユーザーの JWT を確かめる関数**（`requireAuth` / `auth.getUser`）は、確かめた経路で `recordEdgeAiUsage(req, userId, feature)`（`_shared/ai-usage.ts`）を呼びます。Next.js の API ルートを経由せず、ユーザーの JWT で直接呼ばれた場合に、記録がすり抜けないようにするためです（#1153）。
-- **service role / cron で呼ばれる経路では呼びません。** Next.js の API ルートが記録済みです（献立生成・AI 相談・買い物リスト・料理画像）。献立生成のキュー（`weekly_menu_requests`）は、積む時点（`POST /api/ai/menu/v5/generate`）で記録します。
-- **順番は「同意の判定 → 利用回数の記録 → AI への送信」です。** 外国の AI 事業者への提供の同意（#1154。`requireAiConsentForUser` / `checkAiConsent`）が無くて止めた呼び出しは記録しません。JWT を確かめたブロックの中で判定する関数（`knowledge-gpt`）は、判定を通ったあとで `directJwtUserId` に代入します。service role の経路と合流してから判定する関数（`generate-menu-v4` / `v5`・`regenerate-shopping-list-v2`）は、判定のあとの `if (directJwtUserId)` の中で記録します。
+- **ユーザーの JWT を確かめる関数**（`requireAuth` / `auth.getUser`）は、確かめた経路で `const aiUsage = await consumeEdgeAiUsage(req, userId, feature)`（`_shared/ai-usage.ts`）を呼び、`if (!aiUsage.allowed) return aiDailyLimitEdgeResponse(aiUsage, corsHeaders)` で止めます（429 `AI_DAILY_LIMIT`。本文と文面は `_shared/ai-daily-limit.ts`）。Next.js の API ルートを経由せず、ユーザーの JWT で直接呼ばれた場合に、上限がすり抜けないようにするためです（#1153）。リクエストの行を持つ関数（`generate-menu-v4` / `v5`・`regenerate-shopping-list-v2`）は、止めるときに行を失敗にし、画面がそのまま出す人向けの文を書きます。
+- **service role / cron で呼ばれる経路では呼びません。** Next.js の API ルートが数え済みです（献立生成・AI 相談・買い物リスト・料理画像）。献立生成のキュー（`weekly_menu_requests`）は、積む時点（`POST /api/ai/menu/v5/generate`）で数えます。
+- **順番は「同意の判定 → 上限の判定と記録 → AI への送信」です。** 外国の AI 事業者への提供の同意（#1154。`requireAiConsentForUser` / `checkAiConsent`）が無くて止めた呼び出しは数えません。JWT を確かめたブロックの中で判定する関数（`knowledge-gpt`）は、判定を通ったあとで `directJwtUserId` に代入します。service role の経路と合流してから判定する関数（`generate-menu-v4` / `v5`・`regenerate-shopping-list-v2`）は、判定のあとの `if (directJwtUserId)` の中で数えます。
 - **キューのテーブルは、利用者から書けません（#1465）。** `weekly_menu_requests`（Vercel Cron の `process-menu-queue` が取り出し、`generate-menu-v5` を service role で呼ぶ）と `meal_image_jobs`（`process-meal-image-jobs` が処理する）は、利用者（authenticated）からは自分の行を読む（SELECT）だけで、INSERT / UPDATE / DELETE はできません（migration `20261011010000_ai_queue_service_role_writes.sql` で、書き込みのポリシーと権限を外しました）。そのため、キューに行を積めるのは、記録を通った API ルート（service role で書く）と、service role で動く関数だけです。取り出す側（cron・`process-meal-image-jobs`）では記録しません。Edge Function がキューに書くときも service role のクライアントを使います（ユーザーの JWT のクライアントでは権限で拒まれます。例: `analyze-meal-photo` が写真で上書きする献立の画像のジョブを取り消すとき）。`tests/ai-usage-contract.test.ts` の `AI_QUEUE_TABLES` が、利用者から書けないことを migration から確かめていて、書き込みのポリシーや権限を足すと落ちます。
-- **Next.js がユーザーの JWT で呼ぶ関数**（写真解析の `analyze-meal-photo` / `analyze-health-photo`、AI 相談のアクション実行が呼ぶ `generate-menu-v4` / `v5`）は、Next.js が `x-hg-ai-usage-recorded` ヘッダー（service role key で署名した印。5 分以内・同じユーザーのときだけ有効）を付けて呼びます。印が合えば、Edge 側では記録しません。印を検証できなければ記録する側に倒します（二重に記録するだけで、AI の利用は止まりません）。
-- **失敗しても止めません。** DB の関数が失敗しても（エラー・応答が 3 秒を超える・この migration が未適用）、`app_logs` に残して先へ進みます。
-- どの関数が記録するかは、同意の判定と同じ一覧（`tests/helpers/ai-consent-enforced-paths.ts` の `ENFORCED_EDGE` / `EXEMPT_EDGE` の `usage` の列）に書きます。`tests/ai-usage-contract.test.ts` が、記録を呼ぶ関数と機能名がこの列と一致すること、ユーザーの JWT を確かめて AI へ送る関数がどれも記録することを検査します。
+- **Next.js がユーザーの JWT で呼ぶ関数**（写真解析の `analyze-meal-photo` / `analyze-health-photo`、AI 相談のアクション実行が呼ぶ `generate-menu-v4` / `v5`）は、Next.js が `x-hg-ai-usage-recorded` ヘッダー（service role key で署名した印。5 分以内・同じユーザーのときだけ有効）を付けて呼びます。印が合えば、Edge 側では数えずに許可します。印を検証できなければ数える側に倒します（二重に数えるだけで、上限を超えて使えることはありません）。
+- **失敗しても止めません。** DB の関数が失敗しても（エラー・応答が 3 秒を超える・migration が未適用）、`app_logs` に残して許可します（上限が効かないだけで、AI の利用は止まりません）。
+- どの関数が記録するかは、同意の判定と同じ一覧（`tests/helpers/ai-consent-enforced-paths.ts` の `ENFORCED_EDGE` / `EXEMPT_EDGE` の `usage` の列）に書きます。`tests/ai-usage-contract.test.ts` が、数える関数と機能名がこの列と一致すること、ユーザーの JWT を確かめて AI へ送る関数がどれも数えることを検査し、`tests/ai-consent-enforcement-edge.test.ts` が、判定の結果で止める if が AI へ送る呼び出しより前にあることを構文木で検査します。
 
 ### ローカルでのテスト
 

@@ -5,11 +5,13 @@
  *   - データエクスポート: 依頼フォームがあり、受け付けるが、ファイルは作られない (一覧は本人の GDPR 削除要求の表を代用)
  *   - LLM 使用量: 「クォータ設定 →」のリンク先 (/super-admin/llm/quotas) は存在せず、プロバイダー別の詳細画面に
  *     解決されて「不明なプロバイダー」になる。クォータは AI の呼び出しにも適用されていない
+ *     → #1149 で AI の 1 日の利用上限の画面 (/super-admin/llm/quotas) を作り、保存した値が AI の利用の判定に効くようにした。
+ *       いまは「AI の利用上限 →」のリンクを出す (画面そのものは tests/super-admin-llm-quotas-page.test.tsx)
  *   - インフラ監視: アラート・メトリクスを書き込む処理が無いのに、空の一覧で「✅ 未解決のアラートはありません」と出る。
  *     Sentry / Better Stack の「接続状態」は環境変数の有無だけで、実際にはつながっていない
  * ここでは、ページを実際に描画して、次を確かめる。
  *   - エクスポート: 「準備中（未対応）」だけが出る。依頼フォーム・ボタン・通信が無い
- *   - LLM 使用量: 「クォータ設定（準備中）」がリンクではなく文字で出る
+ *   - LLM 使用量: 「クォータ設定（準備中）」は出さず、AI の利用上限の画面 (/super-admin/llm/quotas) へのリンクを出す (#1149)
  *   - インフラ監視: 空のとき「未接続: 監視データの収集は設定されていません」と Vercel / Supabase のダッシュボードへの
  *     リンクが出る。「問題なし」に見える表示と、Sentry / Better Stack の接続状態は出ない
  *
@@ -135,21 +137,19 @@ describe('/super-admin/llm (LLM 使用量)', () => {
     period: { from: '2026-10-01', to: '2026-10-08' },
   };
 
-  it('「クォータ設定（準備中）」を、リンクではなく文字で出す', async () => {
+  it('#1149: 「クォータ設定（準備中）」ではなく、AI の利用上限の画面 (/super-admin/llm/quotas) へのリンクを出す', async () => {
     responses.push(['/api/super-admin/llm/usage', { data: usage }]);
 
     await render(<LLMUsagePage />);
 
     expect(text()).toContain('ユーザー別使用量 Top 50');
-    const label = Array.from(container.querySelectorAll('span')).find((el) => el.textContent === 'クォータ設定（準備中）');
-    expect(label, '「クォータ設定（準備中）」が文字で出ていない').toBeDefined();
-    expect(label!.closest('a')).toBeNull();
-    // 存在しない画面 (プロバイダー別の詳細に解決されて「不明なプロバイダー」になる) へのリンクが無い
-    expect(container.querySelector('a[href*="quotas"]')).toBeNull();
-    expect(text()).not.toContain('クォータ設定 →');
+    expect(text()).not.toContain('クォータ設定（準備中）');
+    const link = container.querySelector('a[href="/super-admin/llm/quotas"]');
+    expect(link, 'AI の利用上限の画面へのリンクが無い').not.toBeNull();
+    expect(link!.textContent).toContain('AI の利用上限');
   });
 
-  it('クォータ管理があるように読める説明を出さない。プロバイダー別の画面へのリンクは残る', async () => {
+  it('プロバイダー別の画面へのリンクは残る (上限の画面へのリンクを足しても、ほかの導線は変えない)', async () => {
     responses.push(['/api/super-admin/llm/usage', { data: usage }]);
 
     await render(<LLMUsagePage />);

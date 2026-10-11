@@ -53,31 +53,35 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { getEdgeFunctionServiceRoleKey, isMissingEnvError } from '@/lib/env-required';
 import { NextResponse } from 'next/server';
 import {
-  AI_USAGE_NOT_COUNTED,
   AI_USAGE_RECORDED_HEADER,
   AI_USAGE_TIMEOUT_MS,
-  aiDailyLimitPayload,
-  parseConsumeAiUsageResult,
   signAiUsageRecorded,
   type AiFeature,
+} from '../../../supabase/functions/_shared/ai-usage-core';
+import {
+  AI_USAGE_NOT_COUNTED,
+  aiDailyLimitPayload,
+  parseConsumeAiUsageResult,
   type AiUsageAllowed,
   type AiUsageDenied,
   type AiUsageResult,
-} from '../../../supabase/functions/_shared/ai-usage-core';
+} from '../../../supabase/functions/_shared/ai-daily-limit';
 
 export {
-  AI_DAILY_LIMIT_CODE,
-  AI_DAILY_LIMIT_STATUS,
   AI_FEATURES,
   AI_UNMETERED_FEATURES,
   AI_USAGE_RECORDED_HEADER,
   AI_USAGE_TIMEOUT_MS,
-  aiDailyLimitSkippedField,
   type AiFeature,
+} from '../../../supabase/functions/_shared/ai-usage-core';
+export {
+  AI_DAILY_LIMIT_CODE,
+  AI_DAILY_LIMIT_STATUS,
+  aiDailyLimitSkippedField,
   type AiUsageAllowed,
   type AiUsageDenied,
   type AiUsageResult,
-} from '../../../supabase/functions/_shared/ai-usage-core';
+} from '../../../supabase/functions/_shared/ai-daily-limit';
 
 interface RpcError {
   message?: string;

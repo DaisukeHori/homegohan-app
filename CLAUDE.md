@@ -88,14 +88,17 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 
 `src/lib/rate-limit.ts` に集約する (#1197)。新しい制限は `RateLimitCategory` にカテゴリを足し、`checkRateLimit(key, category)` で判定する。route ごとに Upstash / in-memory の制限を自前で作らない (`tests/rate-limit-single-implementation.test.ts` が `@upstash/ratelimit` を使うファイルを検査する)。key は認証で確定した ID を使い、ログイン前の公開 API (お問い合わせ) だけクライアント IP を使う。
 
-### AI の利用回数の記録
+### AI の利用回数の上限と記録
 
-`src/lib/plan/entitlements.ts` に集約する (#1177)。AI を使う API ルートは、AI 事業者へ送る直前 (認証・同意の判定・`checkRateLimit`・入力の検証などの判定をすべて通ったあと) に、ユーザーの 1 回の操作につき 1 回 `await recordAiUsage(user.id, feature)` を呼ぶ。AI を実際に呼ばない経路 (キャッシュを返すだけなど) では呼ばない。**記録だけで、止めない** (上限と比べて止める処理・上限の値・拒否したときの応答は #1149 / T40 が入口ごとに設計して足す)。DB の関数 (`record_ai_usage`。`ai_usage_counters` に JST の日付で +1) が失敗してもログに残して先へ進む (記録の失敗で AI の機能を止めない)。プランの判定は `get_effective_plan` (個人の契約 -> 家族 -> 組織 -> `free`)。
+`src/lib/plan/entitlements.ts` に集約する (#1177 / #1149)。AI の利用は 1 日 (JST の暦日) の全機能の合計の回数で数え、プランごとの上限 (DB の `ai_daily_limits`。既定は free = 1 日 10 回、究極モードも 1 回。自分の行が無いプランは free の値。運営画面 `/super-admin/llm/quotas` から保存) を超えたら止める。AI を使う API ルートは、AI 事業者へ送る直前 (認証・同意の判定・`checkRateLimit`・入力の検証などの判定をすべて通ったあと) に、ユーザーの 1 回の操作につき 1 回 `const aiUsage = await consumeAiUsage(user.id, feature)` を呼び、`if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage)` で止める。判定と記録は DB の `consume_ai_usage` が 1 回の呼び出しで原子的に行う (上限に達していれば記録せずに止め、達していなければ +1。同じ利用者・同じ日は 1 本ずつ判定する)。記録の DB 関数 (`record_ai_usage`) を入口から直接呼ばない。AI を実際に呼ばない経路 (キャッシュを返すだけなど) では呼ばない。DB の関数が失敗したときはログに残して許可する (判定の失敗で AI の機能を止めない)。プランの判定は `get_effective_plan` (個人の契約 -> 家族 -> 組織 -> `free`)。
 
-- 順番は「同意の判定 (`requireAiConsent` / `checkUserAiConsent`、Edge は `requireAiConsentForUser` / `checkAiConsent`。#1154) → `recordAiUsage` → AI への送信」。同意が無くて止めた操作は記録しない。
-- Edge Function は、ユーザーの JWT を確かめた経路で `recordEdgeAiUsage` (`supabase/functions/_shared/ai-usage.ts`) を呼ぶ。service role / cron の経路では呼ばない (Next.js が記録済み)。
-- Next.js が Edge Function を**ユーザーの JWT で**呼ぶとき (`supabase.functions.invoke`) は、`headers: await aiUsageRecordedHeaders(user.id)` を付ける (署名つきの印。付けないと Edge 側でも記録して二重になる)。
-- どの入口が記録するかは、同意の判定と同じ一覧 `tests/helpers/ai-consent-enforced-paths.ts` の `usage` の列に書く (入口の一覧は 1 つ)。新しい AI の入口を足したら、その一覧に行を足し、`tests/ai-consent-enforcement-routes.test.ts` の表に実際に呼ぶ行を足す (同意の判定 → 記録 → 送信の順は、この表が実際に route を呼んで確かめる)。`tests/ai-usage-contract.test.ts` は、記録を呼ぶファイル・機能名・公開ハンドラの一覧が `usage` の列と一致することを検査する。
+- 止め方は入口ごとに決める (`tests/helpers/ai-consent-enforced-paths.ts` の一覧の上の表): 利用者が押した操作は 429 `AI_DAILY_LIMIT` (固定の文・`retryAfter` = 次の JST 0 時までの秒数)、保存と AI の分析を一緒にする操作 (健康診断・血液検査・相談を閉じる) は保存だけして `aiSkipped: AI_DAILY_LIMIT`、料理画像の副作用は画像だけ見送る、キューに積む操作は積む時点で判定する。画面を開くと自動で呼ばれる AI (ホームの栄養のアドバイス・栄養士のコメントの自動の取得) は `nutrition_advice_auto` で記録だけして上限に数えない (`AI_UNMETERED_FEATURES`)。
+- 数えたあと、AI へ送る前に DB の処理が失敗して何も送らなかったとき (生成のリクエストの行の insert の失敗など) は `refundAiUsage(user.id, feature, aiUsage)` で 1 回を戻す。AI へ送ったあとの失敗では戻さない。
+- 順番は「同意の判定 (`requireAiConsent` / `checkUserAiConsent`、Edge は `requireAiConsentForUser` / `checkAiConsent`。#1154) → `consumeAiUsage` → AI への送信」。同意が無くて止めた操作は数えない。
+- Edge Function は、ユーザーの JWT を確かめた経路で `consumeEdgeAiUsage` (`supabase/functions/_shared/ai-usage.ts`) を呼び、上限なら `aiDailyLimitEdgeResponse` で止める。service role / cron の経路では呼ばない (Next.js が数え済み)。
+- 画面: Web は `aiFetch` が 429 `AI_DAILY_LIMIT` を見つけると全画面共通の `AiDailyLimitHost` が固定の文を出す。モバイルは `getApi()` がこの Error を固定の文の `AiDailyLimitError` に置き換える (生の文字列を出さない)。文は `supabase/functions/_shared/ai-daily-limit.ts` (Web・モバイル・Edge 共用)。
+- Next.js が Edge Function を**ユーザーの JWT で**呼ぶとき (`supabase.functions.invoke`) は、`headers: await aiUsageRecordedHeaders(user.id)` を付ける (署名つきの印。付けないと Edge 側でも数えて二重になる)。
+- どの入口が記録するかは、同意の判定と同じ一覧 `tests/helpers/ai-consent-enforced-paths.ts` の `usage` の列に書く (入口の一覧は 1 つ)。新しい AI の入口を足したら、その一覧に行を足し、`tests/ai-consent-enforcement-routes.test.ts` の表に実際に呼ぶ行を足す (同意の判定 → 上限の判定と記録 → 送信の順と、上限に達したときに送らないことは、この表が実際に route を呼んで確かめる)。`tests/ai-usage-contract.test.ts` は、`consumeAiUsage` を呼ぶファイル・機能名・結果を見ていること・公開ハンドラの一覧が `usage` の列と一致することを検査する。
 - キューのテーブル (`weekly_menu_requests` / `meal_image_jobs`) は、service role の処理 (cron の `process-menu-queue`・Edge Function の `process-meal-image-jobs`) が AI へ送る。利用者 (authenticated) からは読むだけで、書けない (#1465。INSERT / UPDATE / DELETE の権限とポリシーを外した)。行を積む・書き換えるのは、本人の確認と記録を通った API ルートだけで、`src/lib/ai/ai-queue-writer.ts` の `getAiQueueWriter()` (service role) を変数名 `queueDb` で受けて書く (RLS が効かないので、UPDATE は `.eq('user_id', user.id)` で本人の行に絞る)。画面・モバイルからこの 2 つの表へ書かない。`tests/ai-usage-contract.test.ts` (migration から、利用者が書けないこと) と `tests/ai-queue-writes-contract.test.ts` (ソースから、書き込みが `queueDb` からだけであること)、`tests/integration/rls/ai-queue-writes.test.ts` (実 DB) が確かめる。
 
 ### 機能フラグ

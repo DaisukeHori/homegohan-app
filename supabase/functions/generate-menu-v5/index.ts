@@ -108,7 +108,7 @@ import {
 } from "./request-finalize.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
 import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
-import { aiDailyLimitMessage } from "../_shared/ai-usage-core.ts";
+import { aiDailyLimitMessage } from "../_shared/ai-daily-limit.ts";
 import { addDaysToDate, monthJst, todayJst } from "../_shared/jst-date.ts";
 import { aiConsentDeniedResponse, checkAiConsent, invokeMenuContinuation } from "../_shared/ai-consent-guard.ts";
 import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";

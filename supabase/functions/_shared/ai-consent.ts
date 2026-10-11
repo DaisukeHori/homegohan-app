@@ -283,7 +283,7 @@ export function aiConsentSkippedField(decision: AiConsentDecision | null): { aiS
 
 /**
  * AI の利用回数の上限 (#1149) に達して AI の部分を省いたときの aiSkipped の値。
- * _shared/ai-usage-core.ts の AI_DAILY_LIMIT_CODE と同じ値 (このファイルは import を持たないので、ここにも置く。
+ * _shared/ai-daily-limit.ts の AI_DAILY_LIMIT_CODE と同じ値 (このファイルは import を持たないので、ここにも置く。
  * tests/ai-daily-limit-core.test.ts が一致を確かめる)
  */
 export const AI_SKIPPED_DAILY_LIMIT_CODE = 'AI_DAILY_LIMIT';

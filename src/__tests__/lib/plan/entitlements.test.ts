@@ -1,8 +1,11 @@
 /**
- * #1177 (T26) src/lib/plan/entitlements.ts の単体テスト
+ * #1177 (T26) / #1149 (T40) src/lib/plan/entitlements.ts の単体テスト
  *
- * - recordAiUsage: DB の record_ai_usage を呼んで記録するだけ (止める判定はしない。#1149 / T40 が足す)。失敗したら
- *   (DB エラー・応答が遅い・service role の設定漏れ)、例外を投げず、ログに残して戻る (止めない)
+ * - consumeAiUsage: DB の consume_ai_usage を 1 回呼んで、上限の判定と記録を受け取る (判定と記録は DB が原子的に行う)。
+ *   上限に達していれば { allowed: false, limit, used }。失敗したら (DB エラー・応答が遅い・戻り値の形が違う・service role の設定漏れ)、
+ *   例外を投げず、ログに残して許可する (止めない)
+ * - refundAiUsage: 数えた 1 回を戻す (数えていない結果では何もしない)
+ * - aiDailyLimitResponse: 429 AI_DAILY_LIMIT の応答 (固定の文・retryAfter・Retry-After)
  * - aiUsageRecordedHeaders: Next.js が Edge Function を呼ぶときに付ける、記録済みの印 (署名)
  * - getEffectivePlan: いま効いているプラン
  */
@@ -29,16 +32,23 @@ vi.mock('@/lib/supabase/server', () => ({
 
 import * as entitlements from '@/lib/plan/entitlements';
 import {
+  AI_DAILY_LIMIT_CODE,
   AI_FEATURES,
   AI_USAGE_RECORDED_HEADER,
+  aiDailyLimitResponse,
   aiUsageRecordedHeaders,
+  consumeAiUsage,
   getEffectivePlan,
-  recordAiUsage,
+  refundAiUsage,
+  type AiUsageAllowed,
   type PlanRpcClient,
 } from '@/lib/plan/entitlements';
 import { verifyAiUsageRecorded } from '../../../../supabase/functions/_shared/ai-usage-core';
+import { AI_USAGE_NOT_COUNTED } from '../../../../supabase/functions/_shared/ai-daily-limit';
 
 const USER_ID = '11111111-2222-3333-4444-555555555555';
+const TODAY_JST = '2026-10-11';
+const LIMIT = 10;
 
 type RpcResult = { data: unknown; error: { message?: string; code?: string } | null };
 
@@ -48,6 +58,11 @@ function clientReturning(result: RpcResult | (() => PromiseLike<RpcResult>)) {
   );
   return { rpc, client: { rpc } as PlanRpcClient };
 }
+
+/** DB の consume_ai_usage の戻り値 (許可) */
+const allowedRow = (used: number) => ({ allowed: true, metered: true, plan: 'free', limit: LIMIT, used, usage_date: TODAY_JST });
+/** DB の consume_ai_usage の戻り値 (止め) */
+const deniedRow = { allowed: false, metered: true, plan: 'free', limit: LIMIT, used: LIMIT, usage_date: TODAY_JST };
 
 beforeEach(() => {
   mocks.loggerError.mockReset();
@@ -60,53 +75,108 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('recordAiUsage: 記録する (止めない)', () => {
-  it('record_ai_usage を、ユーザー ID と機能名で 1 回呼ぶ。戻り値は無い (呼び出し側は結果で分岐しない)', async () => {
-    const { rpc, client } = clientReturning({ data: null, error: null });
+describe('consumeAiUsage: 上限の判定と記録を DB の 1 回の呼び出しで受け取る', () => {
+  it('consume_ai_usage を、ユーザー ID と機能名で 1 回呼び、許可の結果 (数えた日・上限・数えたあとの回数) を返す', async () => {
+    const { rpc, client } = clientReturning({ data: allowedRow(3), error: null });
 
-    await expect(recordAiUsage(USER_ID, 'photo_analysis', { client })).resolves.toBeUndefined();
+    const result = await consumeAiUsage(USER_ID, 'photo_analysis', { client });
 
     expect(rpc).toHaveBeenCalledTimes(1);
-    expect(rpc).toHaveBeenCalledWith('record_ai_usage', { p_user_id: USER_ID, p_feature: 'photo_analysis' });
+    expect(rpc).toHaveBeenCalledWith('consume_ai_usage', { p_user_id: USER_ID, p_feature: 'photo_analysis' });
+    expect(result).toEqual({ allowed: true, metered: true, usageDate: TODAY_JST, limit: LIMIT, used: 3 });
     expect(mocks.loggerError).not.toHaveBeenCalled();
   });
 
+  it('上限に達していれば { allowed: false, limit, used, usageDate } を返す (記録していない)', async () => {
+    const { client } = clientReturning({ data: deniedRow, error: null });
+
+    expect(await consumeAiUsage(USER_ID, 'menu_generation', { client })).toEqual({
+      allowed: false,
+      limit: LIMIT,
+      used: LIMIT,
+      usageDate: TODAY_JST,
+    });
+  });
+
+  it('無制限のプラン (limit が null) と、上限に数えない機能 (metered: false) も許可として読む', async () => {
+    const unlimited = clientReturning({ data: { ...allowedRow(25), limit: null }, error: null });
+    expect(await consumeAiUsage(USER_ID, 'consultation', { client: unlimited.client })).toMatchObject({ allowed: true, limit: null, used: 25 });
+
+    const unmetered = clientReturning({
+      data: { allowed: true, metered: false, plan: null, limit: null, used: null, usage_date: TODAY_JST },
+      error: null,
+    });
+    expect(await consumeAiUsage(USER_ID, 'nutrition_advice_auto', { client: unmetered.client })).toEqual({
+      allowed: true,
+      metered: false,
+      usageDate: TODAY_JST,
+      limit: null,
+      used: null,
+    });
+  });
+
   it('client を渡さなければ service_role のクライアント (getSupabaseAdmin) を使う', async () => {
-    const { rpc, client } = clientReturning({ data: null, error: null });
+    const { rpc, client } = clientReturning({ data: allowedRow(1), error: null });
     mocks.getSupabaseAdmin.mockReturnValue(client);
 
-    await recordAiUsage(USER_ID, 'menu_generation');
+    await consumeAiUsage(USER_ID, 'menu_generation');
 
     expect(mocks.getSupabaseAdmin).toHaveBeenCalledTimes(1);
-    expect(rpc).toHaveBeenCalledWith('record_ai_usage', { p_user_id: USER_ID, p_feature: 'menu_generation' });
+    expect(rpc).toHaveBeenCalledWith('consume_ai_usage', { p_user_id: USER_ID, p_feature: 'menu_generation' });
   });
 
   it('機能名はすべて AI_FEATURES にある名前をそのまま渡す', async () => {
-    const { rpc, client } = clientReturning({ data: null, error: null });
-    for (const feature of AI_FEATURES) await recordAiUsage(USER_ID, feature, { client });
+    const { rpc, client } = clientReturning({ data: allowedRow(1), error: null });
+    for (const feature of AI_FEATURES) await consumeAiUsage(USER_ID, feature, { client });
 
     expect(rpc.mock.calls.map((call) => call[1].p_feature)).toEqual([...AI_FEATURES]);
   });
 
-  it('上限と比べて止める部品 (429 の応答・上限の読み取り) は公開しない (止める処理は #1149 / T40 が足す)', () => {
+  it('公開するのは判定・数え戻し・429 の応答・印・プランの部品だけ (記録だけの関数 recordAiUsage は無い: 入口は必ず判定を通す)', () => {
     expect(Object.keys(entitlements).sort()).toEqual(
-      ['AI_FEATURES', 'AI_USAGE_RECORDED_HEADER', 'AI_USAGE_TIMEOUT_MS', 'aiUsageRecordedHeaders', 'getEffectivePlan', 'recordAiUsage'].sort(),
+      [
+        'AI_DAILY_LIMIT_CODE',
+        'AI_DAILY_LIMIT_STATUS',
+        'AI_FEATURES',
+        'AI_UNMETERED_FEATURES',
+        'AI_USAGE_RECORDED_HEADER',
+        'AI_USAGE_TIMEOUT_MS',
+        'aiDailyLimitResponse',
+        'aiDailyLimitSkippedField',
+        'aiUsageRecordedHeaders',
+        'consumeAiUsage',
+        'getEffectivePlan',
+        'refundAiUsage',
+      ].sort(),
     );
   });
 });
 
-describe('recordAiUsage: 失敗しても止めない', () => {
-  it('DB のエラーが返っても、例外を投げず、ユーザー ID と機能つきでログに残す', async () => {
+describe('consumeAiUsage: 失敗しても止めない (許可する)', () => {
+  it('DB のエラーが返っても、例外を投げず、ユーザー ID と機能つきでログに残して、数えずに許可する', async () => {
     const { client } = clientReturning({ data: null, error: { code: 'PGRST202', message: 'Could not find the function' } });
 
-    await expect(recordAiUsage(USER_ID, 'photo_analysis', { client })).resolves.toBeUndefined();
+    await expect(consumeAiUsage(USER_ID, 'photo_analysis', { client })).resolves.toEqual(AI_USAGE_NOT_COUNTED);
 
     expect(mocks.withUser).toHaveBeenCalledWith(USER_ID);
     expect(mocks.loggerError).toHaveBeenCalledTimes(1);
     const [message, error, metadata] = mocks.loggerError.mock.calls[0];
-    expect(message).toContain('記録に失敗');
+    expect(message).toContain('判定と記録に失敗');
     expect((error as Error).message).toContain('PGRST202');
     expect(metadata).toEqual({ feature: 'photo_analysis' });
+  });
+
+  it.each([
+    ['null', null],
+    ['allowed が無い', { usage_date: TODAY_JST }],
+    ['日付が無い', { allowed: false, limit: LIMIT, used: LIMIT }],
+    ['止めなのに上限の回数が無い', { allowed: false, usage_date: TODAY_JST, used: LIMIT }],
+    ['配列', [allowedRow(1)]],
+  ])('戻り値の形が違う (%s) ときは、ログに残して許可する (止める根拠にしない)', async (_label, data) => {
+    const { client } = clientReturning({ data, error: null });
+
+    expect(await consumeAiUsage(USER_ID, 'photo_analysis', { client })).toEqual(AI_USAGE_NOT_COUNTED);
+    expect((mocks.loggerError.mock.calls[0][1] as Error).message).toContain('unexpected value');
   });
 
   it('ログの保存自体が失敗しても (ロガーが例外を投げても)、例外を出さない', async () => {
@@ -115,15 +185,15 @@ describe('recordAiUsage: 失敗しても止めない', () => {
     });
     const { client } = clientReturning({ data: null, error: { code: 'PGRST202', message: 'boom' } });
 
-    await expect(recordAiUsage(USER_ID, 'photo_analysis', { client })).resolves.toBeUndefined();
+    await expect(consumeAiUsage(USER_ID, 'photo_analysis', { client })).resolves.toEqual(AI_USAGE_NOT_COUNTED);
   });
 
   it('rpc が例外を投げても (同期・非同期のどちらも)、例外を出さない', async () => {
     const syncThrow = { rpc: vi.fn(() => { throw new Error('boom'); }) } as unknown as PlanRpcClient;
     const asyncReject = { rpc: vi.fn(() => Promise.reject(new Error('network down'))) } as unknown as PlanRpcClient;
 
-    await expect(recordAiUsage(USER_ID, 'consultation', { client: syncThrow })).resolves.toBeUndefined();
-    await expect(recordAiUsage(USER_ID, 'consultation', { client: asyncReject })).resolves.toBeUndefined();
+    await expect(consumeAiUsage(USER_ID, 'consultation', { client: syncThrow })).resolves.toEqual(AI_USAGE_NOT_COUNTED);
+    await expect(consumeAiUsage(USER_ID, 'consultation', { client: asyncReject })).resolves.toEqual(AI_USAGE_NOT_COUNTED);
     expect(mocks.loggerError).toHaveBeenCalledTimes(2);
   });
 
@@ -132,30 +202,77 @@ describe('recordAiUsage: 失敗しても止めない', () => {
       throw new Error('Supabase admin env is missing');
     });
 
-    await expect(recordAiUsage(USER_ID, 'menu_generation')).resolves.toBeUndefined();
+    await expect(consumeAiUsage(USER_ID, 'menu_generation')).resolves.toEqual(AI_USAGE_NOT_COUNTED);
     expect(mocks.loggerError).toHaveBeenCalledTimes(1);
     expect((mocks.loggerError.mock.calls[0][1] as Error).message).toContain('env is missing');
   });
 
-  it('応答が遅いときは、待ち続けずに先へ進む (AI の応答を遅らせない)', async () => {
+  it('応答が遅いときは、待ち続けずに許可する (AI の応答を遅らせない)', async () => {
     const never = () => new Promise<RpcResult>(() => {});
     const { client } = clientReturning(never);
     const TIMEOUT_FOR_TEST_MS = 30;
 
     const startedAt = Date.now();
-    await recordAiUsage(USER_ID, 'photo_analysis', { client, timeoutMs: TIMEOUT_FOR_TEST_MS });
+    expect(await consumeAiUsage(USER_ID, 'photo_analysis', { client, timeoutMs: TIMEOUT_FOR_TEST_MS })).toEqual(AI_USAGE_NOT_COUNTED);
 
     expect(Date.now() - startedAt).toBeLessThan(2000);
-    expect((mocks.loggerError.mock.calls[0][1] as Error).message).toContain('timed out');
+    expect((mocks.loggerError.mock.calls[0][1] as Error).message).toContain('consume_ai_usage timed out');
   });
 
   it('タイマーを残さない (正常に返った場合も、タイムアウトの待ちを残さない)', async () => {
     vi.useFakeTimers();
-    const { client } = clientReturning({ data: null, error: null });
+    const { client } = clientReturning({ data: allowedRow(1), error: null });
 
-    await recordAiUsage(USER_ID, 'consultation', { client });
+    await consumeAiUsage(USER_ID, 'consultation', { client });
 
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('refundAiUsage: 数えた 1 回を戻す (#1149)', () => {
+  const counted: AiUsageAllowed = { allowed: true, metered: true, usageDate: TODAY_JST, limit: LIMIT, used: 4 };
+
+  it('数えた結果なら、refund_ai_usage を数えた日で呼ぶ (日をまたいでも、数えた日の回数を戻す)', async () => {
+    const { rpc, client } = clientReturning({ data: true, error: null });
+
+    await refundAiUsage(USER_ID, 'menu_generation', counted, { client });
+
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith('refund_ai_usage', { p_user_id: USER_ID, p_feature: 'menu_generation', p_usage_date: TODAY_JST });
+  });
+
+  it('数えていない結果 (上限に数えない機能・判定に失敗した・印があった) では、何も呼ばない', async () => {
+    const { rpc, client } = clientReturning({ data: true, error: null });
+
+    await refundAiUsage(USER_ID, 'menu_generation', AI_USAGE_NOT_COUNTED, { client });
+    await refundAiUsage(USER_ID, 'nutrition_advice_auto', { ...counted, metered: false }, { client });
+
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('失敗しても例外を投げず、ログに残す', async () => {
+    const { client } = clientReturning({ data: null, error: { code: '42501', message: 'denied' } });
+
+    await expect(refundAiUsage(USER_ID, 'menu_generation', counted, { client })).resolves.toBeUndefined();
+    expect(mocks.loggerError.mock.calls[0][0]).toContain('数え戻しに失敗');
+    expect(mocks.loggerError.mock.calls[0][2]).toEqual({ feature: 'menu_generation', usageDate: TODAY_JST });
+  });
+});
+
+describe('aiDailyLimitResponse: 上限に達したときの応答 (#1149)', () => {
+  it('429 と固定の文・コード・上限の回数・次の JST 0 時までの秒数 (本文と Retry-After)', async () => {
+    // JST 2026-10-11 23:59:30 (= UTC 14:59:30) → 次の JST 0 時まで 30 秒
+    const now = Date.UTC(2026, 9, 11, 14, 59, 30);
+    const res = aiDailyLimitResponse({ allowed: false, limit: LIMIT, used: LIMIT, usageDate: TODAY_JST }, now);
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('30');
+    expect(await res.json()).toEqual({
+      error: '今日の AI の利用回数の上限 (10 回) に達しました。明日 0 時から使えます。',
+      code: AI_DAILY_LIMIT_CODE,
+      limit: LIMIT,
+      retryAfter: 30,
+    });
   });
 });
 

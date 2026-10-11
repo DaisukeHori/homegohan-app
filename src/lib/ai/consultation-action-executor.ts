@@ -36,7 +36,7 @@ import {
   type AiUsageDenied,
   type AiUsageResult,
 } from '@/lib/plan/entitlements';
-import { AI_DAILY_LIMIT_CODE, aiDailyLimitMessage } from '../../../supabase/functions/_shared/ai-usage-core';
+import { AI_DAILY_LIMIT_CODE, aiDailyLimitMessage } from '../../../supabase/functions/_shared/ai-daily-limit';
 import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { createLogger } from '@/lib/db-logger';
