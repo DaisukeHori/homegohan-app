@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { leadListQuerySchema, createLeadSchema } from '@/lib/admin/sales-schemas';
+import { internalError } from '@/lib/api/errors';
 
 export async function GET(request: NextRequest) {
   try {
@@ -64,10 +65,7 @@ export async function GET(request: NextRequest) {
     const { data, error, count } = await query;
 
     if (error) {
-      return NextResponse.json(
-        { error: { code: 'DB_ERROR', message: error.message } },
-        { status: 500 },
-      );
+      return internalError('GET /api/admin/sales/leads', error, { userId: currentUser.id }, { shape: 'nested' });
     }
 
     return NextResponse.json({
@@ -125,10 +123,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error || !lead) {
-      return NextResponse.json(
-        { error: { code: 'DB_ERROR', message: error?.message ?? 'Failed to create lead' } },
-        { status: 500 },
-      );
+      return internalError('POST /api/admin/sales/leads', error, { userId: currentUser.id }, { shape: 'nested' });
     }
 
     // 監査ログ

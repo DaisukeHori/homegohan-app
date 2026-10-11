@@ -120,7 +120,7 @@ export async function POST(request: Request) {
     customMessage: custom_message,
   });
   if (!result.ok) {
-    return orgInviteFailureResponse(result);
+    return orgInviteFailureResponse(result, { routeName: 'POST /api/org/invites', userId: user.id });
   }
 
   return NextResponse.json({ ok: true, invite: result.invite });

@@ -14,6 +14,7 @@ import {
   inviteThrottleResponse,
 } from '@/lib/membership/invite-throttle';
 import { z } from 'zod';
+import { internalError } from '@/lib/api/errors';
 
 /** メールに書く有効期限 (提案から何日後か)。以前と同じ 7 日 */
 const OWNER_TRANSFER_EMAIL_EXPIRY_DAYS = 7;
@@ -84,8 +85,12 @@ export async function POST(request: Request) {
     if (dbThrottle) {
       return inviteThrottleResponse(dbThrottle);
     }
+    // RPC の生のエラー文は本文に出さない (#1172)。分かるコードは固定の文で返し、分からないものは汎用の 500 にして構造化ログに残す
     const { code, status } = mapPgErrorToHttp(rpcError.message);
-    return NextResponse.json({ error: { code, message: rpcError.message } }, { status });
+    if (status >= 500) {
+      return internalError('POST /api/org/owner-transfer/propose', rpcError, { userId: user.id }, { shape: 'nested' });
+    }
+    return NextResponse.json({ error: { code, message: '譲渡の提案に失敗しました' } }, { status });
   }
 
   if (!proposalId) {

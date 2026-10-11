@@ -10,6 +10,7 @@ import {
 // runtime = 'edge' のルートなので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
+import { weeklyMenuRequestStoredErrorMessage } from '@/lib/weekly-menu-request-error';
 
 export const runtime = 'edge';
 export const maxDuration = 60; // Vercel Pro: 60s OK
@@ -35,7 +36,7 @@ export async function GET(req: Request) {
 
   const { data: claimed, error: claimError } = await supabase.rpc('claim_menu_request', { p_worker_id: workerId });
   if (claimError) {
-    return Response.json({ error: claimError.message }, { status: 500 });
+    return internalError('GET /api/cron/process-menu-queue', claimError);
   }
   if (!claimed || !claimed.id) {
     return Response.json({ idle: true });
@@ -101,8 +102,9 @@ export async function GET(req: Request) {
     if (!v5Res.ok) {
       const v5Text = await v5Res.text().catch(() => '');
       // Edge Function が同意の判定で止めた (T15 / #1154。ここでの判定のあとに撤回された・Edge Function 側で読めなかった)。
-      // 行は Edge Function が人向けの文で失敗にしている。その書き込みが失敗していても、下の catch が内部の文 (状態コードと本文) を
-      // error_message に書かないよう、同じ人向けの文にする
+      // 行は Edge Function が人向けの文で失敗にしている。その書き込みが失敗していても、下の catch が同じ人向けの文を
+      // error_message に書けるよう (画面はこの文を見分けて同意画面へ案内する)、例外の文面を同じ人向けの文にする。
+      // それ以外 (状態コードと本文) は、下の catch が行には固定の文を書き、構造化ログにだけ残す
       throw new Error(aiConsentDeniedStoredMessageOfResponse(v5Res.status, v5Text) ?? `V5 returned ${v5Res.status}: ${v5Text}`);
     }
 
@@ -118,15 +120,15 @@ export async function GET(req: Request) {
       .from('weekly_menu_requests')
       .update({
         status: 'failed',
-        error_message: err instanceof Error ? err.message : String(err),
+        // 例外の文面 (Edge Function の状態コード・応答の本文など) は画面に出るこの欄に書かず、固定の文にする。
+        // 同意の判定で止めたときの人向けの文だけはそのまま書く。原因は下の internalError が構造化ログに残す (#1172)
+        error_message: weeklyMenuRequestStoredErrorMessage(err instanceof Error ? err.message : String(err)),
         updated_at: new Date().toISOString(),
       })
       .eq('id', claimed.id)
       .eq('worker_id', workerId)
       .in('status', ['queued', 'processing']); // 既に completed/failed の場合は上書きしない
-    return Response.json(
-      { failed: claimed.id, error: err instanceof Error ? err.message : String(err) },
-      { status: 500 },
-    );
+    // 本文に例外の文面を返さない (#1172)。どの行が失敗したかは、構造化ログの request_id (= 行の id) で追える
+    return internalError('GET /api/cron/process-menu-queue', err, { userId: claimed.user_id, requestId: claimed.id });
   }
 }

@@ -5,6 +5,8 @@ import { awardBadge } from '@/lib/badges/awardBadge';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { checkSandboxEligibility } from '@/lib/handson-tour/sandbox-eligibility';
 import type { Database, Json } from '@/types/database.types';
+import { internalError } from '@/lib/api/errors';
+import { WEEKLY_MENU_REQUEST_FAILED_MESSAGE } from '@/lib/weekly-menu-request-error';
 
 type WeeklyMenuRequestInsert = Database['public']['Tables']['weekly_menu_requests']['Insert'];
 type WeeklyMenuInsert = Database['public']['Tables']['weekly_menus']['Insert'];
@@ -74,11 +76,7 @@ export async function POST(request: Request) {
       .single();
 
     if (requestError || !requestRow) {
-      console.error('weekly_menu_requests insert error:', requestError);
-      return NextResponse.json(
-        { error: { code: 'internal_error', message: 'サーバーエラーが発生しました', details: requestError?.message } },
-        { status: 500 },
-      );
+      return internalError('POST /api/menu-plans/add', requestError, { userId: user.id }, { shape: 'nested' });
     }
 
     const insertData: WeeklyMenuInsert = {
@@ -106,7 +104,8 @@ export async function POST(request: Request) {
         .from('weekly_menu_requests')
         .update({
           status: 'failed',
-          error_message: insertError.message,
+          // DB の生のエラー文は画面に出るこの欄に書かない。原因は下の internalError が構造化ログに残す (#1172)
+          error_message: WEEKLY_MENU_REQUEST_FAILED_MESSAGE,
           updated_at: new Date().toISOString(),
         })
         .eq('id', requestRow.id)
@@ -114,10 +113,7 @@ export async function POST(request: Request) {
       if (failCompensationError) {
         console.error('weekly_menu_requests failed-compensation update error:', failCompensationError);
       }
-      return NextResponse.json(
-        { error: { code: 'internal_error', message: 'サーバーエラーが発生しました', details: insertError.message } },
-        { status: 500 },
-      );
+      return internalError('POST /api/menu-plans/add', insertError, { userId: user.id }, { shape: 'nested' });
     }
 
     // weekly_menus insert 成功 → request を completed に確定(非致命: 失敗しても主処理は成功のまま)

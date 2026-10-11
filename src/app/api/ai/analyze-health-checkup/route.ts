@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { recordAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 function buildPrompt(): string {
   return `この健康診断結果の画像から、読み取れる検査値を抽出してください。
@@ -82,7 +83,6 @@ export async function POST(request: Request) {
         { status: 504 },
       );
     }
-    console.error('Health Checkup Analysis Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/analyze-health-checkup', error, { userId: user.id });
   }
 }

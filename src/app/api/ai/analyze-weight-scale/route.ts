@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiUsageRecordedHeaders, recordAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -79,7 +80,6 @@ export async function POST(request: Request) {
         { status: 504 },
       );
     }
-    console.error('Weight scale analysis error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/analyze-weight-scale', error, { userId: user.id });
   }
 }

@@ -10,6 +10,7 @@ import {
 } from '@homegohan/core'
 import type { NutritionGoal } from '@homegohan/core'
 import { RECORD_DATE_PATTERN } from '@/lib/health-payloads'
+import { internalError } from '@/lib/api/errors'
 
 type SupabaseLike = Awaited<ReturnType<typeof createClient>>
 
@@ -23,7 +24,9 @@ type AnalysisRunResult =
       nextAction: ReturnType<typeof analyzeCheckinLoop>['nextAction']
       currentTargets: { calories: number; protein: number; fat: number; carbs: number }
     }
-  | { ok: false; status: number; error: string }
+  | { ok: false; kind: 'client'; status: number; error: string }
+  // DB のエラーなど。生のエラー文は本文に出さず、route が internalError() で汎用の 500 にする (#1172)
+  | { ok: false; kind: 'internal'; cause: unknown }
 
 /**
  * #1048 F2-18: GET/POST 双方で同じ「プロフィール→栄養目標→7日平均→分析」の
@@ -39,7 +42,7 @@ async function runAnalysis(supabase: SupabaseLike, userId: string, date: string)
     .single()
 
   if (profileError || !profileData) {
-    return { ok: false, status: 404, error: 'Profile not found' }
+    return { ok: false, kind: 'client', status: 404, error: 'Profile not found' }
   }
 
   // 2. 現在の栄養目標を取得
@@ -50,7 +53,7 @@ async function runAnalysis(supabase: SupabaseLike, userId: string, date: string)
     .single()
 
   if (targetsError || !targetsData) {
-    return { ok: false, status: 404, error: 'Nutrition targets not found' }
+    return { ok: false, kind: 'client', status: 404, error: 'Nutrition targets not found' }
   }
 
   const currentTargets = {
@@ -67,8 +70,7 @@ async function runAnalysis(supabase: SupabaseLike, userId: string, date: string)
   })
 
   if (avgError) {
-    console.error('Checkin averages error:', avgError)
-    return { ok: false, status: 500, error: avgError.message }
+    return { ok: false, kind: 'internal', cause: avgError }
   }
 
   const rawAvg = avgData?.[0] || null
@@ -139,6 +141,9 @@ export async function GET(request: NextRequest) {
 
     const run = await runAnalysis(supabase, user.id, date)
     if (!run.ok) {
+      if (run.kind === 'internal') {
+        return internalError('GET /api/performance/analyze', run.cause, { userId: user.id })
+      }
       return NextResponse.json({ error: run.error }, { status: run.status })
     }
 
@@ -162,8 +167,7 @@ export async function GET(request: NextRequest) {
       date,
     })
   } catch (error: any) {
-    console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return internalError('GET /api/performance/analyze', error)
   }
 }
 
@@ -201,6 +205,9 @@ export async function POST(request: NextRequest) {
     // 1. サーバー側で分析を再計算する（クライアント入力の recommendations は使用しない）
     const run = await runAnalysis(supabase, user.id, date)
     if (!run.ok) {
+      if (run.kind === 'internal') {
+        return internalError('POST /api/performance/analyze', run.cause, { userId: user.id })
+      }
       return NextResponse.json({ error: run.error }, { status: run.status })
     }
     if (!run.eligible || run.recommendations.length === 0) {
@@ -227,8 +234,7 @@ export async function POST(request: NextRequest) {
         .eq('user_id', user.id)
 
       if (updateError) {
-        console.error('Nutrition targets update error:', updateError)
-        return NextResponse.json({ error: updateError.message }, { status: 500 })
+        return internalError('POST /api/performance/analyze', updateError, { userId: user.id })
       }
     }
 
@@ -275,8 +281,7 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (planError) {
-      console.error('Plan create error:', planError)
-      return NextResponse.json({ error: planError.message }, { status: 500 })
+      return internalError('POST /api/performance/analyze', planError, { userId: user.id })
     }
 
     return NextResponse.json({
@@ -291,7 +296,6 @@ export async function POST(request: NextRequest) {
       plan: toPerformancePlan(planResult),
     })
   } catch (error: any) {
-    console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return internalError('POST /api/performance/analyze', error)
   }
 }

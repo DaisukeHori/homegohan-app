@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { internalError } from '@/lib/api/errors'
 
 /**
  * E2E テスト用: オンボーディング状態リセットAPI
@@ -34,11 +35,11 @@ export async function POST() {
       .eq('id', user.id)
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return internalError('POST /api/e2e/reset-onboarding', error, { userId: user.id })
     }
 
     return NextResponse.json({ ok: true })
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? 'Unknown error' }, { status: 500 })
+    return internalError('POST /api/e2e/reset-onboarding', e)
   }
 }

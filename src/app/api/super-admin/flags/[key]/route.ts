@@ -9,6 +9,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { invalidateFeatureFlag } from '@/lib/feature-flags';
 import { UpdateFeatureFlagSchema } from '@/lib/super-admin/flags-schemas';
+import { internalError } from '@/lib/api/errors';
 
 type Params = { params: { key: string } };
 
@@ -45,7 +46,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
           { status: 404 },
         );
       }
-      return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
+      return internalError('PATCH /api/super-admin/flags/[key]', error, { userId: user.id }, { shape: 'nested' });
     }
 
     // 監査ログ
@@ -69,8 +70,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('PATCH /api/super-admin/flags/[key]', err, {}, { shape: 'nested' });
   }
 }
 
@@ -107,7 +107,7 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
       .eq('key', flagKey);
 
     if (deleteError) {
-      return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: deleteError.message } }, { status: 500 });
+      return internalError('DELETE /api/super-admin/flags/[key]', deleteError, { userId: user.id }, { shape: 'nested' });
     }
 
     // 監査ログ
@@ -131,7 +131,6 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('DELETE /api/super-admin/flags/[key]', err, {}, { shape: 'nested' });
   }
 }

@@ -21,6 +21,16 @@ export function aiConsentSkippedField(decision: AiConsentDecision | null) {
   return core.aiConsentSkippedField(decision);
 }
 
+// 行に書く人向けの文と、応答から止めたかを見分ける部品は、判定そのものではないので本物を使う
+// (差し替えた先に無いと、呼んだ route が例外になり、別の経路を通ったまま緑になる)
+export function aiConsentDeniedStoredMessage(decision: Extract<AiConsentDecision, { allowed: false }>) {
+  return core.aiConsentDeniedStoredMessage(decision);
+}
+
+export function aiConsentDeniedStoredMessageOfResponse(status: number | null | undefined, bodyText: unknown) {
+  return core.aiConsentDeniedStoredMessageOfResponse(status, bodyText);
+}
+
 // vi.fn にしない: テストの beforeEach の vi.resetAllMocks() で中身が消えて undefined を返すようになるため
 export async function checkUserAiConsent(): Promise<AiConsentDecision> {
   return { allowed: true };

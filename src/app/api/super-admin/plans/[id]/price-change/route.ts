@@ -57,6 +57,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { PriceChangeSchema } from '@/lib/super-admin/plans-schemas';
+import { internalError } from '@/lib/api/errors';
 
 type RouteContext = { params: { id: string } };
 

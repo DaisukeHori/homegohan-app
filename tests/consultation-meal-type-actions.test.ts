@@ -45,7 +45,10 @@ vi.mock('@/lib/v4-target-slots', () => ({
   ),
 }));
 vi.mock('@/lib/rate-limit', () => ({ checkRateLimit: vi.fn() }));
-vi.mock('@/lib/db-logger', () => ({ createLogger: () => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }) }));
+vi.mock('@/lib/db-logger', () => {
+  const logger = { warn: vi.fn(), error: vi.fn(), info: vi.fn(), withUser: () => logger };
+  return { createLogger: () => logger };
+});
 vi.mock('@/lib/health-streaks', () => ({ updateHealthStreak: vi.fn() }));
 // 献立生成のリクエストの行 (weekly_menu_requests) は service role のクライアント (getAiQueueWriter) で書く (#1465)。
 // 利用者のクライアントとは別の作り物にして、INSERT がそちらに届くことを見る

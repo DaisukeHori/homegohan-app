@@ -3,6 +3,7 @@ import { consecutiveDayStreak } from '@/lib/jst-day-ranges';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { isAwardableBadgeCode } from '@/lib/badges/awardable';
 import { NextResponse } from 'next/server';
+import { internalError } from '@/lib/api/errors';
 
 export async function GET(request: Request) {
   const supabase = await createClient();
@@ -207,7 +208,6 @@ export async function GET(request: Request) {
     });
 
   } catch (error: any) {
-    logger.error('Badge API error', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/badges', error);
   }
 }

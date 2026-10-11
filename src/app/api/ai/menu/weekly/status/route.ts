@@ -2,6 +2,12 @@ import { createClient } from '@/lib/supabase/server';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
 import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
+import { internalError } from '@/lib/api/errors';
+import {
+  WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE,
+  WEEKLY_MENU_REQUEST_STALE_MESSAGE,
+  weeklyMenuRequestErrorMessageForResponse,
+} from '@/lib/weekly-menu-request-error';
 
 // #1203: stale 判定時の復元（スナップショットの書き戻し）が打ち切られないよう、実行時間の上限を明示する。
 export const maxDuration = 60; // Vercel Pro: 60s OK
@@ -54,7 +60,7 @@ export async function GET(request: Request) {
         .from('weekly_menu_requests')
         .update({
           status: 'failed',
-          error_message: 'stale_request_timeout',
+          error_message: WEEKLY_MENU_REQUEST_STALE_MESSAGE,
           updated_at: new Date().toISOString(),
         })
         .eq('id', requestId)
@@ -88,23 +94,26 @@ export async function GET(request: Request) {
 
       return NextResponse.json({
         status: 'failed',
-        errorMessage: 'stale_request_timeout',
+        errorMessage: WEEKLY_MENU_REQUEST_STALE_MESSAGE,
         updatedAt: new Date().toISOString(),
         ...(restoreResult ? { restore: restoreResult } : {}),
       });
     }
 
+    // error_message には、この変更より前に書かれた行や Edge Function が自分で書いた行の、生のエラー文
+    // (DB・例外・Edge Function の応答の本文) が入っていることがある。こちらで書いた文 (同意・stale・中止) だけを
+    // そのまま返し、それ以外は固定の文にする (#1172)
+    const errorMessage = weeklyMenuRequestErrorMessageForResponse(request.error_message);
     return NextResponse.json({
       status: request.status,
-      errorMessage: request.error_message,
-      error_message: request.error_message,
+      errorMessage,
+      error_message: errorMessage,
       updatedAt: request.updated_at,
       progress: request.progress,
     });
 
   } catch (error: any) {
-    console.error('Status check error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/ai/menu/weekly/status', error, { userId: user.id, requestId });
   }
 }
 
@@ -152,7 +161,7 @@ export async function POST(request: Request) {
       .from('weekly_menu_requests')
       .update({
         status: 'failed',
-        error_message: '中止しました',
+        error_message: WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE,
         updated_at: new Date().toISOString(),
       })
       .eq('id', requestId)
@@ -162,7 +171,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ status: 'failed', cancelled: true });
   } catch (error: any) {
-    console.error('Cancel request error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/menu/weekly/status', error, { userId: user.id, requestId });
   }
 }
