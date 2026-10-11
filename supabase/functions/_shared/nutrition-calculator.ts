@@ -12,6 +12,7 @@ import {
 } from "../../../shared/dataset-embedding.mjs";
 import { fetchWithRetry, isRetryableError, withRetry, withTimeout } from "./network-retry.ts";
 import { calcSugarG } from "./nutrition-sugar.ts";
+import { missingEnvError } from "./missing-env.ts";
 
 function readDenoEnv(name: string): string | undefined {
   const denoLike = (globalThis as typeof globalThis & {
@@ -23,7 +24,8 @@ function readDenoEnv(name: string): string | undefined {
 function getLocalFastLLMApiKey(): string {
   const apiKey = String(readDenoEnv("XAI_API_KEY") ?? "").trim();
   if (!apiKey) {
-    throw new Error("Missing XAI_API_KEY");
+    // 変数名は message に入れず、ログにだけ残す (呼び出し元が message を応答の本文や記録に入れうる。#1467)
+    throw missingEnvError(["XAI_API_KEY"]);
   }
   return apiKey;
 }
@@ -498,7 +500,7 @@ ${candidateList}
 // Embedding API を呼び出す
 export async function embedTexts(texts: string[], dimensions = DATASET_EMBEDDING_DIMENSIONS): Promise<number[][]> {
   const apiKey = readDenoEnv(DATASET_EMBEDDING_API_KEY_ENV);
-  if (!apiKey) throw new Error(`Embedding API Key is missing (${DATASET_EMBEDDING_API_KEY_ENV})`);
+  if (!apiKey) throw missingEnvError([DATASET_EMBEDDING_API_KEY_ENV]);
   const embeddings = await withRetry(async () => {
     return await fetchDatasetEmbeddings(texts, {
       apiKey,

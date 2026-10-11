@@ -12,23 +12,46 @@ import {
 } from "./utils.ts";
 import { checkAiConsent, type AiConsentDecision } from "../_shared/ai-consent-guard.ts";
 import { aiConsentDeniedPayload } from "../_shared/ai-consent.ts";
+import { logMissingEnv, MISSING_ENV_HTTP_STATUS, missingEnvResponseBody } from "../_shared/missing-env.ts";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const STORAGE_BUCKET = "fridge-images";
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const SUPABASE_SERVICE_KEY = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-const GOOGLE_AI_KEY = Deno.env.get("GOOGLE_AI_STUDIO_API_KEY") ?? Deno.env.get("GOOGLE_GEN_AI_API_KEY") ?? "";
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-  throw new Error("Missing SUPABASE_URL or service role key");
+/**
+ * 環境変数は、モジュールの読み込み時ではなくリクエストの処理の中で確かめる (#1467)。
+ * 以前は読み込み時に変数名入りの例外を投げており、関数が起動できないうえ、呼び出し元には実行環境の既定の
+ * エラーしか返らなかった。いまは欠けていればログに変数名を残し、本文は固定の文と code の 503 を返す。
+ * クライアントは最初のリクエストで作り、以後は使い回す (以前の読み込み時の生成と同じく 1 インスタンス 1 個)。
+ */
+let supabase: ReturnType<typeof createClient>;
+let aiClient: GoogleGenAI;
+let initialized = false;
+
+function readServiceConfig(): { url: string; serviceKey: string } | null {
+  const url = Deno.env.get("SUPABASE_URL") ?? "";
+  const serviceKey = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  if (!url || !serviceKey) {
+    logMissingEnv(["SUPABASE_URL", "SERVICE_ROLE_JWT", "SUPABASE_SERVICE_ROLE_KEY"]);
+    return null;
+  }
+  return { url, serviceKey };
 }
 
-if (!GOOGLE_AI_KEY) {
-  throw new Error("Missing Google AI key for image generation");
+function readGoogleAiKey(): string | null {
+  const key = Deno.env.get("GOOGLE_AI_STUDIO_API_KEY") ?? Deno.env.get("GOOGLE_GEN_AI_API_KEY") ?? "";
+  if (!key) {
+    logMissingEnv(["GOOGLE_AI_STUDIO_API_KEY", "GOOGLE_GEN_AI_API_KEY"]);
+    return null;
+  }
+  return key;
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-const aiClient = new GoogleGenAI({ apiKey: GOOGLE_AI_KEY });
+function missingEnvResponse(): Response {
+  return new Response(JSON.stringify(missingEnvResponseBody()), {
+    status: MISSING_ENV_HTTP_STATUS,
+    headers: JSON_HEADERS,
+  });
+}
 
 interface MealImageJobRow {
   id: string;
@@ -54,12 +77,26 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: "POST only" }), { status: 405, headers: JSON_HEADERS });
   }
 
+  // 認証に service role key を使うので、接続情報は認証より先に確かめる。鍵が空のまま比べると、
+  // Authorization の無い要求 (空文字) と一致して通ってしまう
+  const serviceConfig = readServiceConfig();
+  if (!serviceConfig) return missingEnvResponse();
+
   const authHeader = req.headers.get("Authorization") ?? "";
   const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
   const apiKey = req.headers.get("apikey")?.trim() ?? "";
-  const isInternalCaller = bearerToken === SUPABASE_SERVICE_KEY || apiKey === SUPABASE_SERVICE_KEY;
+  const isInternalCaller = bearerToken === serviceConfig.serviceKey || apiKey === serviceConfig.serviceKey;
   if (!isInternalCaller) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: JSON_HEADERS });
+  }
+
+  const googleAiKey = readGoogleAiKey();
+  if (!googleAiKey) return missingEnvResponse();
+
+  if (!initialized) {
+    supabase = createClient(serviceConfig.url, serviceConfig.serviceKey);
+    aiClient = new GoogleGenAI({ apiKey: googleAiKey });
+    initialized = true;
   }
 
   const body = await req.json().catch(() => ({}));

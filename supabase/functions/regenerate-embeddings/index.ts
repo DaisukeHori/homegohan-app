@@ -9,6 +9,7 @@ import {
   isDatasetEmbeddingConfig,
 } from "../../../shared/dataset-embedding.mjs";
 import { requireServiceRole } from "../_shared/auth.ts";
+import { missingEnvError } from "../_shared/missing-env.ts";
 
 /**
  * 埋め込みベクトル再生成 Edge Function
@@ -53,7 +54,7 @@ const TABLE_CONFIGS: Record<string, TableConfig> = {
 
 async function embedBatch(texts: string[], model: string, dimensions: number): Promise<number[][]> {
   if (!DATASET_EMBEDDING_API_KEY) {
-    throw new Error(`Missing ${DATASET_EMBEDDING_API_KEY_ENV}`);
+    throw missingEnvError([DATASET_EMBEDDING_API_KEY_ENV]);
   }
   if (!isDatasetEmbeddingConfig(model, dimensions)) {
     throw new Error(`Invalid embedding config. Use ${DATASET_EMBEDDING_MODEL} with ${DATASET_EMBEDDING_DIMENSIONS} dimensions.`);
