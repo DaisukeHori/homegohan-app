@@ -19,7 +19,7 @@ import { updateHealthStreak } from '@/lib/health-streaks';
 import { todayLocal } from '@/lib/date-utils';
 import { invokeGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { isFeatureEnabled } from '@/lib/feature-flags';
-import { markDishImagesSkipped, type MealImageJobSeed } from '@/lib/meal-image';
+import { isCatalogProductMeal, markDishImagesSkipped, type MealImageJobSeed } from '@/lib/meal-image';
 import {
   buildDishImagePayload,
   cancelPendingMealImageJobs,
@@ -689,7 +689,7 @@ export async function runConsultationAction(
       // セキュリティ: 自分の献立のみ更新可能 (user_daily_meals JOIN 経由でユーザー確認)
       const { data: meal, error: mealFetchError } = await supabase
         .from('planned_meals')
-        .select('id, dish_name, dishes, image_url, user_daily_meals!inner(user_id)')
+        .select('id, dish_name, dishes, image_url, catalog_product_id, source_type, user_daily_meals!inner(user_id)')
         .eq('id', mealId)
         .eq('user_daily_meals.user_id', user.id)
         .maybeSingle();
@@ -747,6 +747,8 @@ export async function runConsultationAction(
           imageModel: process.env.GEMINI_IMAGE_MODEL ?? undefined,
           existingCover: meal.image_url ?? null,
           fallbackMealImageUrl: meal.image_url ?? null,
+          // 商品の献立 (update_meal は商品とのつながりを外さない) の古い商品の料理を、AI の画像で置き換えない (#1487 の整合ゲート)
+          previousMealIsCatalog: isCatalogProductMeal(meal),
         });
         updateData.dishes = reconciledDishes;
         updateData.image_url = mealCoverImageUrl;
