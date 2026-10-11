@@ -268,6 +268,14 @@ export const SERVER_ENV_VARS = {
     // 読み方 (正の整数でなければ既定値) を 1 か所に置く
     readOnlyBy: 'src/lib/super-admin/flag-active-users.ts',
   },
+  MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS: {
+    required: false,
+    description:
+      '献立の単発追加 (POST /api/menu-plans/add) の date_offset_days (開始日を今日から何日ずらすか) の上限 (絶対値。正の整数) (#1463)',
+    whenMissing: '上限は 366 日 (前後 1 年)。超える値は 400',
+    // 読み方 (正の整数でなければ既定値) を 1 か所に置く
+    readOnlyBy: 'src/lib/menu-plan-date-offset.ts',
+  },
   SERVICE_ROLE_JWT: {
     required: false,
     description: 'SUPABASE_SERVICE_ROLE_KEY の古い別名。画像生成ジョブがこちらを先に読む',

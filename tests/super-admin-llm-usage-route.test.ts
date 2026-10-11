@@ -204,7 +204,8 @@ describe('GET /api/super-admin/llm/usage: 集計', () => {
     });
     expect(data.timeseries).toEqual([{ date: '2026-10-08', cost_usd: 0.5, requests: 1 }]);
     expect(data.anomalies).toEqual([]);
-    expect(data.period).toEqual({ from: '2026-10-01', to: '2026-10-08' });
+    // 7d は JST の今日 (10/8) を含む 7 日間 (#1463)
+    expect(data.period).toEqual({ from: '2026-10-02', to: '2026-10-08' });
   });
 
   it('コストやトークンが null の行 (単価表に無いモデルなど) は 0 として足す。NaN にしない', async () => {
@@ -305,7 +306,7 @@ describe('GET /api/super-admin/llm/usage: 絞り込み', () => {
     expect(byFunction.data.total_requests).toBe(2);
   });
 
-  it('期間: 1d は昨日から、custom は from / to の範囲だけを集計する (どちらも JST の暦日。#1433)', async () => {
+  it('期間: 1d は JST の今日だけ (#1463)、custom は from / to の範囲だけを集計する (どちらも JST の暦日。#1433)', async () => {
     setup([
       usage({ created_at: '2026-10-01T14:59:59.999Z', function_name: 'jst-10-01-23:59' }),
       usage({ created_at: '2026-10-01T15:00:00.000Z', function_name: 'jst-10-02-00:00' }),
@@ -317,6 +318,9 @@ describe('GET /api/super-admin/llm/usage: 絞り込み', () => {
       usage({ created_at: '2026-10-05T23:59:00.000Z', function_name: 'jst-10-06-08:59' }),
       usage({ created_at: '2026-10-06T14:59:59.000Z', function_name: 'jst-10-06-23:59' }),
       usage({ created_at: '2026-10-06T15:00:00.000Z', function_name: 'jst-10-07-00:00' }),
+      // JST 10/7 23:59:59 (昨日)。以前の 1d は昨日から数えていたので、この行も「今日」に入っていた
+      usage({ created_at: '2026-10-07T14:59:59.000Z', function_name: 'jst-10-07-23:59' }),
+      usage({ created_at: '2026-10-07T15:00:00.000Z', function_name: 'jst-10-08-00:00' }),
       usage({ created_at: '2026-10-08T01:00:00.000Z', function_name: 'jst-10-08-10:00' }),
     ]);
     const functionsOf = (data: { by_function: Array<{ function: string }> }) =>
@@ -327,8 +331,8 @@ describe('GET /api/super-admin/llm/usage: 絞り込み', () => {
     expect(functionsOf(custom.data)).toEqual(['jst-10-02-00:00', 'jst-10-02-08:59', 'jst-10-05-23:59']);
 
     const oneDay = await (await GET(request('?period=1d'))).json();
-    expect(oneDay.data.period).toEqual({ from: '2026-10-07', to: '2026-10-08' });
-    expect(functionsOf(oneDay.data)).toEqual(['jst-10-07-00:00', 'jst-10-08-10:00']);
+    expect(oneDay.data.period).toEqual({ from: '2026-10-08', to: '2026-10-08' });
+    expect(functionsOf(oneDay.data)).toEqual(['jst-10-08-00:00', 'jst-10-08-10:00']);
   });
 
   it('期間の条件は JST 0 時の時刻で渡す (開始日の JST 0 時以上・終了日の翌日の JST 0 時未満)', async () => {
@@ -343,42 +347,39 @@ describe('GET /api/super-admin/llm/usage: 絞り込み', () => {
 });
 
 /**
- * JST 0:00 ちょうどと 8:59:59 (UTC ではまだ前日) に period=1d を開いたとき。どちらも JST の今日は 10/10、開始日は 10/9。
- * 以前は開始日を UTC の暦日 (10/8 または 10/9) のまま timestamptz と比べていたので、JST 8:59:59 には
- * 開始日 10/9 の JST 0:00〜8:59 の行が落ち、「1 日」の範囲が 15 時間になっていた。
+ * JST 0:00 ちょうどと 8:59:59 (UTC ではまだ前日) に period=1d を開いたとき。どちらも JST の今日は 10/10 で、期間は 10/10 だけ (#1463)。
+ * #1433 より前は開始日を UTC の暦日のまま timestamptz と比べていたので、JST 8:59:59 には開始日の JST 0:00〜8:59 の行が落ちていた。
+ * #1463 より前は、1d が昨日 (10/9) から今日までの 2 暦日になっていた (画面のラベルは「今日」)。
  */
 describe.each([
   { label: 'JST 10/10 0:00 ちょうど', now: '2026-10-09T15:00:00.000Z' },
   { label: 'JST 10/10 8:59:59', now: '2026-10-09T23:59:59.000Z' },
 ])('GET /api/super-admin/llm/usage: 境界 ($label)', ({ now }) => {
-  it.each(TEST_TIME_ZONES)('TZ=%s でも、条件は 10/9 の JST 0 時から 10/11 の JST 0 時の手前まで。10/9 の JST 0:00〜8:59 の行を数える', async (tz) => {
+  it.each(TEST_TIME_ZONES)('TZ=%s でも、条件は 10/10 の JST 0 時から 10/11 の JST 0 時の手前まで。10/10 の JST 0:00〜8:59 の行を数え、昨日の行は数えない', async (tz) => {
     const savedTz = process.env.TZ;
     process.env.TZ = tz;
     try {
       vi.setSystemTime(new Date(now));
       setup([
-        usage({ created_at: '2026-10-08T14:59:59.999Z', function_name: 'jst-10-08-23:59' }),
-        usage({ created_at: '2026-10-08T15:00:00.000Z', function_name: 'jst-10-09-00:00', estimated_cost_usd: 0.1 }),
-        usage({ created_at: '2026-10-08T23:59:59.000Z', function_name: 'jst-10-09-08:59', estimated_cost_usd: 0.2 }),
-        usage({ created_at: now, function_name: 'now', estimated_cost_usd: 0.4 }),
+        usage({ created_at: '2026-10-08T15:00:00.000Z', function_name: 'jst-10-09-00:00' }),
+        usage({ created_at: '2026-10-09T14:59:59.999Z', function_name: 'jst-10-09-23:59' }),
+        usage({ created_at: '2026-10-09T15:00:00.000Z', function_name: 'jst-10-10-00:00', estimated_cost_usd: 0.1 }),
+        usage({ created_at: '2026-10-09T23:59:59.000Z', function_name: 'jst-10-10-08:59', estimated_cost_usd: 0.2 }),
       ]);
 
       const { data } = await (await GET(request('?period=1d'))).json();
 
-      expect(data.period).toEqual({ from: '2026-10-09', to: '2026-10-10' });
+      expect(data.period).toEqual({ from: '2026-10-10', to: '2026-10-10' });
       const select = db.calls.find((c) => c.op === 'select')!;
       expect(select.filters.filter((f) => f.column === 'created_at')).toEqual([
-        { kind: 'gte', column: 'created_at', value: '2026-10-08T15:00:00.000Z' },
+        { kind: 'gte', column: 'created_at', value: '2026-10-09T15:00:00.000Z' },
         { kind: 'lt', column: 'created_at', value: '2026-10-10T15:00:00.000Z' },
       ]);
       expect(data.by_function.map((f: { function: string }) => f.function).sort()).toEqual(
-        ['jst-10-09-00:00', 'jst-10-09-08:59', 'now'].sort(),
+        ['jst-10-10-00:00', 'jst-10-10-08:59'].sort(),
       );
-      // 日次の系列も JST の暦日でまとめる (UTC の暦日だと 10/8 と 10/9 に分かれる)
-      expect(data.timeseries).toEqual([
-        { date: '2026-10-09', cost_usd: 0.1 + 0.2, requests: 2 },
-        { date: '2026-10-10', cost_usd: 0.4, requests: 1 },
-      ]);
+      // 日次の系列も JST の暦日でまとめる (UTC の暦日だと 10/9 に入る)
+      expect(data.timeseries).toEqual([{ date: '2026-10-10', cost_usd: 0.1 + 0.2, requests: 2 }]);
     } finally {
       if (savedTz === undefined) delete process.env.TZ;
       else process.env.TZ = savedTz;
@@ -446,7 +447,7 @@ describe('GET /api/super-admin/llm/usage: 入力・認可・エラー', () => {
       expect.objectContaining({
         pg_code: '42703',
         period: '7d',
-        from: '2026-10-01',
+        from: '2026-10-02', // 7d は JST の今日 (10/8) を含む 7 日間 (#1463)
         to: '2026-10-08',
         model: 'gpt-5-mini',
       }),

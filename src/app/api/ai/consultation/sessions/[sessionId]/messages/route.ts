@@ -8,7 +8,8 @@ import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE, internalError } from '@/li
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
-import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
+import { addDaysToDate, todayLocal } from '@/lib/date-utils';
+import { mondayWeekRange } from '@/lib/jst-day-ranges';
 import { AI_ALLOWED_MEAL_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';
 import { CANONICAL_GOAL_TYPES, describeGoalRangesForPrompt } from '@/lib/health-goal-types';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
@@ -19,6 +20,13 @@ import { requireAiConsent } from '@/lib/ai/consent-guard';
  * JST 0:00〜8:59 の出来事が前日の日付で AI に伝わっていた
  */
 const PROMPT_DATE_TIME_ZONE = 'Asia/Tokyo';
+
+/** AI 相談のシステムプロンプトに入れる「今後の献立」の範囲 (明日から、今日の何日後までか) */
+const UPCOMING_MEALS_DAYS = 7;
+/** AI 相談のシステムプロンプトに入れる「最近の食事・健康記録」の日数 (今日の何日前から) */
+const RECENT_MEALS_DAYS = 14;
+/** 1 週間の日数 (来週の月曜日 = 今週の月曜日の 1 週間後) */
+const DAYS_PER_WEEK = 7;
 
 // #1047 F2-21: アクション自動実行を self-fetch
 // (`${NEXT_PUBLIC_APP_URL}/api/ai/consultation/actions/.../execute`) 経由で行うと、
@@ -122,12 +130,11 @@ export async function GET(
 
 // ユーザーの詳細情報を取得してシステムプロンプトを構築
 async function buildSystemPrompt(supabase: any, userId: string): Promise<string> {
-  // 日付計算を先に行う（JST基準）
+  // 日付計算を先に行う（JST基準）。ずらしは暦の計算だけで行う (#1463。parseLocalDate + setDate (ローカル時刻) +
+  // formatLocalDate (JST) は、JST より東のタイムゾーンで動くと 1 日前の日付になった)
   const today = todayLocal();
-  const oneWeekLater = parseLocalDate(today);
-  oneWeekLater.setDate(oneWeekLater.getDate() + 7);
-  const fourteenDaysAgo = parseLocalDate(today);
-  fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+  const oneWeekLaterStr = addDaysToDate(today, UPCOMING_MEALS_DAYS);
+  const fourteenDaysAgoStr = addDaysToDate(today, -RECENT_MEALS_DAYS);
 
   // ===== 並列クエリ実行（レイテンシー改善） =====
   const [
@@ -158,7 +165,7 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
       user_daily_meals!inner(day_date, user_id)
     `).eq('user_daily_meals.user_id', userId)
       .gt('user_daily_meals.day_date', today)
-      .lte('user_daily_meals.day_date', formatLocalDate(oneWeekLater))
+      .lte('user_daily_meals.day_date', oneWeekLaterStr)
       .limit(30),
 
     // 4. 過去14日の食事
@@ -166,14 +173,14 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
       id, meal_type, dish_name, dishes, calories_kcal, protein_g, fat_g, carbs_g, is_completed, mode,
       user_daily_meals!inner(day_date, user_id)
     `).eq('user_daily_meals.user_id', userId)
-      .gte('user_daily_meals.day_date', formatLocalDate(fourteenDaysAgo))
+      .gte('user_daily_meals.day_date', fourteenDaysAgoStr)
       .lt('user_daily_meals.day_date', today)
       .limit(50),
 
     // 5. 健康記録（過去14日）
     supabase.from('health_records').select('*')
       .eq('user_id', userId)
-      .gte('record_date', formatLocalDate(fourteenDaysAgo))
+      .gte('record_date', fourteenDaysAgoStr)
       .order('record_date', { ascending: false })
       .limit(14),
 
@@ -549,17 +556,11 @@ ${importantMessages.map((m: any) => {
     timeZone: PROMPT_DATE_TIME_ZONE,
   });
 
-  // 明日の日付（JST基準）
-  const tomorrow = parseLocalDate(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = formatLocalDate(tomorrow);
+  // 明日の日付（JST基準。暦の計算だけで求める。#1463）
+  const tomorrowStr = addDaysToDate(today, 1);
 
-  // 来週月曜日の日付（JST基準）
-  const weekStart = parseLocalDate(today);
-  const dayOfWeek = weekStart.getDay(); // 0=日, 1=月, ..., 6=土
-  const daysUntilNextMonday = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
-  weekStart.setDate(weekStart.getDate() + daysUntilNextMonday);
-  const weekStartStr = formatLocalDate(weekStart);
+  // 来週月曜日の日付（JST基準）= 今日を含む月曜始まりの週の、次の週の月曜日 (日曜日なら明日)。暦の計算だけで求める (#1463)
+  const weekStartStr = addDaysToDate(mondayWeekRange(today).startDate, DAYS_PER_WEEK);
 
   // 現在時刻に基づく食事の解釈ルール
   let mealInterpretation = '';

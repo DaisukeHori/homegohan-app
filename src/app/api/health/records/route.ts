@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { RECORD_DATE_PATTERN, sanitizeHealthRecordPayload } from '@/lib/health-payloads';
-import { todayLocal } from '@/lib/date-utils';
+import { isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { updateHealthStreak } from '@/lib/health-streaks';
 import { clampIntParam } from '@/lib/http-params';
 
@@ -67,7 +67,8 @@ export async function POST(request: NextRequest) {
   }
 
   // #256: record_date フォーマット検証（YYYY-MM-DD のみ許可）
-  if (!RECORD_DATE_PATTERN.test(record_date.trim())) {
+  // 存在しない日付 (2026-02-30 など) も、形だけでは通って DB の date 型への変換で 500 になるので isCalendarDate で弾く (#1463)
+  if (!RECORD_DATE_PATTERN.test(record_date.trim()) || !isCalendarDate(record_date.trim())) {
     return NextResponse.json({ error: 'record_date must be in YYYY-MM-DD format' }, { status: 400 });
   }
 
