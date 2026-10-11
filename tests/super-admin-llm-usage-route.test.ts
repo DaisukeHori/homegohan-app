@@ -447,7 +447,7 @@ describe('GET /api/super-admin/llm/usage: 入力・認可・エラー', () => {
       expect.objectContaining({
         pg_code: '42703',
         period: '7d',
-        from: '2026-10-01',
+        from: '2026-10-02', // 7d は JST の今日 (10/8) を含む 7 日間 (#1463)
         to: '2026-10-08',
         model: 'gpt-5-mini',
       }),
