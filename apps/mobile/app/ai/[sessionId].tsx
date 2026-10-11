@@ -9,6 +9,7 @@ import { colors, spacing, radius, shadows } from "../../src/theme";
 import { getApi, getApiBaseUrl } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
 import { handleAiConsentRequiredError } from "../../src/lib/ai-consent";
+import { errorOfFailedResponse, isServiceUnavailableError } from "../../src/lib/service-unavailable";
 
 type Message = {
   id: string;
@@ -137,7 +138,8 @@ export default function AiSessionPage() {
 
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        throw new Error(`HTTP ${res.status}: ${text}`);
+        // AI 相談の緊急停止・メンテナンス中の 503 (#1457) は、固定の文の ServiceUnavailableError にする (生の本文を画面に出さない)
+        throw errorOfFailedResponse(res.status, text);
       }
 
       if (!res.body) {
@@ -239,6 +241,14 @@ export default function AiSessionPage() {
       if (handleAiConsentRequiredError(e)) {
         setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
         setText(trimmed);
+        return;
+      }
+      // AI 相談の緊急停止中・メンテナンス中で止められた (#1457): 送らなかったので、メッセージを消して入力 (と添付の画像) を戻し、固定の文を出す
+      if (isServiceUnavailableError(e)) {
+        setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
+        setText(trimmed);
+        if (imageSnapshot) setAttachedImage(imageSnapshot);
+        setError(e.message);
         return;
       }
       if (e?.name === "AbortError") {

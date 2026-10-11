@@ -30,6 +30,7 @@ import { supabase } from "../../lib/supabase";
 import { colors, radius, shadows, spacing } from "../../theme";
 import { AIDayMenuModal } from "./AIDayMenuModal";
 import { aiSummarySkippedNote, isAiConsentRequiredError, promptAiConsentRequired } from "../../lib/ai-consent";
+import { errorOfFailedResponse, isServiceUnavailableError, serviceUnavailableMessageOf } from "../../lib/service-unavailable";
 
 // ============================================================
 // Types
@@ -320,6 +321,13 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         await fetchSessions();
       } else {
         const err = await res.json().catch(() => ({}));
+        // AI 相談の緊急停止中・メンテナンス中 (#1457): 本文の文字列ではなく固定の文を出す
+        // (メンテナンス中の本文の error はオブジェクトなので、下の読み方では文にならない)
+        const unavailableMessage = serviceUnavailableMessageOf(res.status, err);
+        if (unavailableMessage) {
+          Alert.alert("ご利用いただけません", unavailableMessage);
+          return;
+        }
         Alert.alert(
           "エラー",
           (err as any)?.message ||
@@ -392,7 +400,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
       if (!res.ok) {
         const errText = await res.text().catch(() => "");
-        throw new Error(`HTTP ${res.status}: ${errText}`);
+        // AI 相談の緊急停止・メンテナンス中の 503 (#1457) は、固定の文の ServiceUnavailableError にする (生の本文を画面に出さない)
+        throw errorOfFailedResponse(res.status, errText);
       }
 
       if (!res.body) {
@@ -491,6 +500,13 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
         setInputText(trimmed);
         closeSheetAndPromptAiConsent();
+        return;
+      }
+      // AI 相談の緊急停止中・メンテナンス中で止められた (#1457): 送らなかったので、メッセージを消して入力を戻し、固定の文を出す
+      if (isServiceUnavailableError(e)) {
+        setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
+        setInputText(trimmed);
+        Alert.alert("ご利用いただけません", e.message);
         return;
       }
       if (e?.name === "AbortError") {

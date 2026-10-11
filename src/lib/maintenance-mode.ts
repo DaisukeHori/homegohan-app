@@ -29,10 +29,11 @@
 import { NextResponse } from 'next/server';
 import { isFeatureEnabled } from '@/lib/feature-flags';
 import { isPolicyPath } from '@/lib/onboarding-routing';
+import { MAINTENANCE_API_CODE, MAINTENANCE_MESSAGE, SERVICE_UNAVAILABLE_STATUS } from '@homegohan/shared';
 
 export const MAINTENANCE_FLAG_KEY = 'maintenance_mode';
-export const MAINTENANCE_API_CODE = 'MAINTENANCE_MODE';
-export const MAINTENANCE_MESSAGE = 'ただいまメンテナンス中です。しばらくしてから、もう一度お試しください。';
+// code と文の置き場は packages/shared/src/service-unavailable.ts の 1 つ (モバイルも同じ値で、503 の本文の代わりに固定の文を出す。#1457)
+export { MAINTENANCE_API_CODE, MAINTENANCE_MESSAGE };
 /** クライアントに「このくらいあとで試して」と伝える目安 (秒)。メンテナンスがいつ終わるかは分からないので長めにする */
 export const MAINTENANCE_RETRY_AFTER_SECONDS = 300;
 /** ミドルウェアがフラグの読み出しを待つ上限 (ms)。超えたらメンテナンスなしとして通す */
@@ -133,7 +134,7 @@ export function maintenanceApiResponse(): NextResponse {
   return NextResponse.json(
     { error: { code: MAINTENANCE_API_CODE, message: MAINTENANCE_MESSAGE } },
     {
-      status: 503,
+      status: SERVICE_UNAVAILABLE_STATUS,
       headers: {
         'Retry-After': String(MAINTENANCE_RETRY_AFTER_SECONDS),
         'Cache-Control': NO_STORE,
@@ -149,7 +150,7 @@ export function maintenanceApiResponse(): NextResponse {
  */
 export function maintenancePageResponse(): NextResponse {
   return new NextResponse(MAINTENANCE_PAGE_HTML, {
-    status: 503,
+    status: SERVICE_UNAVAILABLE_STATUS,
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Retry-After': String(MAINTENANCE_RETRY_AFTER_SECONDS),
