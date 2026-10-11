@@ -2,8 +2,10 @@
  * 負荷の高い機械で、vitest の既定の時間切れ (1 件のテスト 5 秒・フック 10 秒) を超えたことがある単体テストのファイルの時間切れ (#1488)。
  *
  * 根拠 (2026-10-11 に、それまでの local-ci の unit 段の結果 JSON 274 本 (この Issue の実走を含む) を集計した):
- *   - 下の HEAVY_UNIT_TEST_FILES の 19 本は、アサーションの失敗ではなく時間切れだけで落ちたことがある
- *     (テストの 5 秒: 15 本・計 60 回 / フックの 10 秒: 4 本・計 11 回。流し直すか M1 で流すと緑)。
+ *   - 下の HEAVY_UNIT_TEST_FILES の 18 本は、アサーションの失敗ではなく、vitest の既定の時間切れだけで落ちたことがある
+ *     (テストの 5 秒: 15 本・計 60 回 / フックの 10 秒: 3 本・計 10 回。流し直すか M1 で流すと緑)。
+ *     tests/eslint-react19-guard.test.ts は入れない: 落ちたのは 1 回だけで、ファイル自身が beforeAll に付けた 120 秒の
+ *     時間切れだった (テストの所要は最大 618ms)。個別の時間切れはこの延長より優先されるので、一覧に入れても効かない。
  *     中身は、数千行のデータの集計・1,500 通りのでたらめな入力・TypeScript の構文木によるリポジトリの走査・
  *     Edge Function の動的 import・画面の描画など、CPU を使うもの。
  *   - M2 の 1 分負荷が 112 のときの 1 件の所要は、M1 で流したときの最大 36 倍だった
@@ -47,7 +49,6 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/ai-consent-stored-failure.test.ts",
   "tests/ai-rate-limit-contracts.test.ts",
   "tests/ai-usage-direct-jwt-edge.test.ts",
-  "tests/eslint-react19-guard.test.ts",
   "tests/markdown-lite.test.ts",
   "tests/menu-generation-range-1482.test.ts",
   "tests/recipes-route.test.ts",
