@@ -15,8 +15,9 @@
  *   6. 定期実行 (vercel.json の crons・migration の pg_cron / pg_net) は記録しない
  *   7. AI のキュー (weekly_menu_requests / meal_image_jobs) は、利用者 (authenticated) から書けない (#1465。書けるようになったら落ちる)
  *   8. 機能名は DB の形式どおりで、どれもどこかで使われている
- *   9. (#1149) 上限に数えない機能・既定のプランは migration の consume_ai_usage_at と同じ。上限に達したときの止め方 (onLimit) は一覧に必ずある。
- *      記録・判定・数え戻しの DB 関数 (record_ai_usage / consume_ai_usage / refund_ai_usage) を直接呼ぶのは、
+ *   9. (#1149) 上限に数えない機能・既定のプランは migration の consume_ai_usage_at と同じ。上限に数えない機能の安全弁の既定の値は
+ *      migration の ai_unmetered_daily_caps の既定の行と同じ。上限に達したときの止め方 (onLimit) は一覧に必ずある。
+ *      記録・判定・数え戻し・数え済みの印の DB 関数 (record_ai_usage / consume_ai_usage / refund_ai_usage / claim_ai_usage_grant) を直接呼ぶのは、
  *      src/lib/plan/entitlements.ts と supabase/functions/_shared/ai-usage.ts だけ
  *
  * 【このテストの限界 (見張り)】ソースの文字と構文木で見るので、次は見つけられない (実際に動かすテストが受け持つ):
@@ -47,7 +48,11 @@ import {
 } from './helpers/ai-consent-enforced-paths';
 import { ROOT, exportedHandlers, listEdgeFunctions, listFiles, reachesAi, rel, stripComments } from './helpers/ai-reach';
 import { AI_QUEUE_TABLES, type AiQueueTable } from '../src/lib/ai/ai-queue-tables';
-import { AI_UNMETERED_FEATURES } from '../supabase/functions/_shared/ai-usage-core';
+import {
+  AI_UNMETERED_DAILY_CAP_DEFAULTS,
+  AI_UNMETERED_DAILY_CAP_FALLBACK,
+  AI_UNMETERED_FEATURES,
+} from '../supabase/functions/_shared/ai-usage-core';
 import { AI_DAILY_LIMIT_DEFAULT_PLAN_KEY } from '../src/lib/super-admin/llm-schemas';
 import ts from 'typescript';
 
@@ -599,6 +604,28 @@ describe('AI 利用回数の記録 (#1177): 機能名の定義', () => {
     expect(body.match(/c_default_plan\s+CONSTANT\s+TEXT\s*:=\s*'([a-z0-9_]+)'/i)?.[1]).toBe(AI_DAILY_LIMIT_DEFAULT_PLAN_KEY);
   });
 
+  it('(#1149) 上限に数えない機能の安全弁の既定の値は、migration の既定の行 (ai_unmetered_daily_caps) と、行が無いときの値 (c_unmetered_fallback_cap) と同じ', () => {
+    // 既定の行: 最後に ai_unmetered_daily_caps へ入れた migration の VALUES
+    const seeds = migrationSqls()
+      .map(({ sql }) => sql.replace(/--.*$/gm, '').match(/INSERT\s+INTO\s+public\.ai_unmetered_daily_caps\s*\(\s*feature\s*,\s*daily_cap\s*\)\s*VALUES\s*([\s\S]*?)ON\s+CONFLICT/i)?.[1])
+      .filter((values): values is string => Boolean(values));
+    expect(seeds.length, 'ai_unmetered_daily_caps の既定の行が見つからない').toBeGreaterThan(0);
+    const seeded = Object.fromEntries(
+      [...seeds[seeds.length - 1].matchAll(/\(\s*'([a-z0-9_]+)'\s*,\s*(\d+)\s*\)/g)].map((m) => [m[1], Number(m[2])]),
+    );
+    expect(seeded).toEqual({ ...AI_UNMETERED_DAILY_CAP_DEFAULTS });
+    // 既定の値は上限に数えない機能のすべてにある (無い機能は fallback になってしまう)
+    expect(Object.keys(AI_UNMETERED_DAILY_CAP_DEFAULTS).sort()).toEqual([...AI_UNMETERED_FEATURES].sort());
+
+    const definitions = migrationSqls()
+      .map(({ sql }) => sql.match(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.consume_ai_usage_at\([\s\S]*?\$\$([\s\S]*?)\$\$/i)?.[1])
+      .filter((body): body is string => Boolean(body));
+    const body = definitions[definitions.length - 1];
+    expect(Number(body.match(/c_unmetered_fallback_cap\s+CONSTANT\s+INTEGER\s*:=\s*(\d+)/i)?.[1])).toBe(AI_UNMETERED_DAILY_CAP_FALLBACK);
+    // 行が無いときも無制限にしない (安全弁を外さない)。既定の値のうち小さいほう
+    expect(AI_UNMETERED_DAILY_CAP_FALLBACK).toBe(Math.min(...Object.values(AI_UNMETERED_DAILY_CAP_DEFAULTS)));
+  });
+
   it('(#1149) 一覧の記録する入口には、上限に達したときの止め方 (onLimit) がある。画像だけ見送るのは料理画像の入口だけ', () => {
     const entries = [
       ...Object.entries(ALL_ROUTES).flatMap(([file, entry]) => Object.entries(entry.handlers).map(([method, usage]) => [`${method} ${file}`, usage] as const)),
@@ -607,7 +634,8 @@ describe('AI 利用回数の記録 (#1177): 機能名の定義', () => {
     for (const [label, usage] of entries) {
       if (!usage || !('record' in usage)) continue;
       expect(['reject', 'skipAi', 'skipImage'], label).toContain(usage.onLimit);
-      if (usage.onLimit === 'skipImage') expect([...usage.record], label).toEqual(['image_generation']);
+      // 料理画像の副作用は、1 日の上限 (10 回) に数えない meal_image_auto で数える (安全弁で画像だけ見送る。#1149)
+      if (usage.onLimit === 'skipImage') expect([...usage.record], label).toEqual(['meal_image_auto']);
     }
     // Edge Function は、どれも 429 で止める (保存と AI を一緒にする関数は無い)
     for (const [name, entry] of Object.entries(ALL_EDGE)) {
@@ -623,7 +651,7 @@ describe('AI 利用回数の記録 (#1177): 機能名の定義', () => {
     ]
       .map(rel)
       .filter((file) => !file.startsWith('src/__tests__/'));
-    const callers = files.filter((file) => /rpc\(\s*['"](?:record_ai_usage|consume_ai_usage|refund_ai_usage)['"]/.test(stripComments(read(file))));
+    const callers = files.filter((file) => /rpc\(\s*['"](?:record_ai_usage|consume_ai_usage|refund_ai_usage|claim_ai_usage_grant)['"]/.test(stripComments(read(file))));
     expect(callers.sort()).toEqual(['src/lib/plan/entitlements.ts', 'supabase/functions/_shared/ai-usage.ts']);
   });
 

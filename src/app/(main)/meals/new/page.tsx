@@ -272,6 +272,15 @@ export default function MealCaptureModal() {
   const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  // #1149 写真の「オート」の判別 (classify-photo) が数えたあとに返す「数え済みの印」。続く解析 (analyze-*) の本文に 1 回だけ付けて送り、
+  // 解析を数えないようにする (1 回の操作を 1 回)。判別できずに種類を手で選んだときも、その判別の続きとして使う。
+  // 新しい操作 (analyzeByMode) の始めに捨てる。印はサーバーで 1 回しか使えず、期限もある (偽の印や古い印はサーバーが数える)
+  const aiUsageGrantRef = useRef<string | null>(null);
+  const takeAiUsageGrant = (): string | undefined => {
+    const grant = aiUsageGrantRef.current;
+    aiUsageGrantRef.current = null;
+    return grant ?? undefined;
+  };
 
   // #1141: ?mode=weight_scale などが指定されていれば、モード選択を飛ばしてその種類の撮影ステップから始める。
   // 使うのは初回表示の値だけ (useState の初期値)。画面を使っている途中で URL が変わっても、
@@ -548,6 +557,7 @@ export default function MealCaptureModal() {
           images: imageDataArray,
           mealType: selectedMealType,
           prefetchedGeminiResult,
+          aiUsageGrant: takeAiUsageGrant(),
         }),
       });
       
@@ -647,6 +657,7 @@ export default function MealCaptureModal() {
 
       if (res.ok) {
         const data = await res.json();
+        aiUsageGrantRef.current = typeof data.aiUsageGrant === 'string' ? data.aiUsageGrant : null;
         void logToServer('info', 'photo classification succeeded', {
           photoCount: files.length,
           photoMode,
@@ -673,6 +684,14 @@ export default function MealCaptureModal() {
       }
 
       const errorText = await res.text();
+      // 判別できなかった (422) ときも、数えた印が返る。種類を手で選んで解析するときに使う
+      try {
+        const errorBody: unknown = JSON.parse(errorText);
+        const grant = errorBody && typeof errorBody === 'object' ? (errorBody as { aiUsageGrant?: unknown }).aiUsageGrant : undefined;
+        if (typeof grant === 'string') aiUsageGrantRef.current = grant;
+      } catch {
+        // JSON でない本文 (印は無い)
+      }
       console.error('Classification request failed:', res.status, errorText);
       void logToServer('warn', 'photo classification failed', {
         photoCount: files.length,
@@ -716,7 +735,7 @@ export default function MealCaptureModal() {
       const res = await aiFetch('/api/ai/analyze-fridge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: base64, mimeType }),
+        body: JSON.stringify({ imageBase64: base64, mimeType, aiUsageGrant: takeAiUsageGrant() }),
       });
 
       // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さずに種類の選択へ戻す (写真は残す)
@@ -760,7 +779,7 @@ export default function MealCaptureModal() {
       const res = await aiFetch('/api/ai/analyze-health-checkup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: base64, mimeType }),
+        body: JSON.stringify({ imageBase64: base64, mimeType, aiUsageGrant: takeAiUsageGrant() }),
       });
 
       // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さずに種類の選択へ戻す (写真は残す)
@@ -822,7 +841,7 @@ export default function MealCaptureModal() {
       const res = await aiFetch('/api/ai/analyze-weight-scale', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64, mimeType }),
+        body: JSON.stringify({ image: base64, mimeType, aiUsageGrant: takeAiUsageGrant() }),
       });
 
       // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さずに種類の選択へ戻す (写真は残す)
@@ -931,6 +950,8 @@ export default function MealCaptureModal() {
 
     let targetMode: ClassifyResult = photoMode as ClassifyResult;
     let classification: ClassificationResponse | undefined;
+    // 新しい操作: 前の判別の印は使わない (この操作の判別が数えたら、新しい印が入る)
+    aiUsageGrantRef.current = null;
     void logToServer('info', 'photo flow started', {
       photoMode,
       photoCount: photoFiles.length,

@@ -199,6 +199,15 @@ export default function MealNewPage() {
   const resultDishNameRef = useRef<View>(null);
   const resultCaloriesRef = useRef<View>(null);
   const saveButtonRef = useRef<View>(null);
+  // #1149 写真の「オート」の判別 (classify-photo) が数えたあとに返す「数え済みの印」。続く解析 (analyze-*) の本文に 1 回だけ付けて送り、
+  // 解析を数えないようにする (1 回の操作を 1 回)。判別できずに種類を手で選んだときも、その判別の続きとして使う。
+  // 新しい操作 (analyzeByMode) の始めに捨てる。印はサーバーで 1 回しか使えず、期限もある (偽の印や古い印はサーバーが数える)
+  const aiUsageGrantRef = useRef<string | null>(null);
+  const takeAiUsageGrant = (): string | undefined => {
+    const grant = aiUsageGrantRef.current;
+    aiUsageGrantRef.current = null;
+    return grant ?? undefined;
+  };
 
   // Tour target 登録 (sandbox モード時のみ)
   useEffect(() => {
@@ -373,7 +382,7 @@ export default function MealNewPage() {
     setStep("analyzing"); setIsAnalyzing(true);
     try {
       const api = getApi();
-      const data = await api.post<any>("/api/ai/analyze-meal-photo", { images: images(), mealType: selectedMealType, prefetchedGeminiResult: mealAnalysis });
+      const data = await api.post<any>("/api/ai/analyze-meal-photo", { images: images(), mealType: selectedMealType, prefetchedGeminiResult: mealAnalysis, aiUsageGrant: takeAiUsageGrant() });
       setAnalyzedDishes(data.dishes || []);
       setTotalCalories(data.totalCalories || 0); setTotalProtein(data.totalProtein || 0);
       setTotalCarbs(data.totalCarbs || 0); setTotalFat(data.totalFat || 0);
@@ -394,7 +403,7 @@ export default function MealNewPage() {
     setStep("analyzing"); setIsAnalyzing(true);
     try {
       const api = getApi();
-      const data = await api.post<any>("/api/ai/analyze-fridge", { images: images() });
+      const data = await api.post<any>("/api/ai/analyze-fridge", { images: images(), aiUsageGrant: takeAiUsageGrant() });
       setFridgeIngredients(data.detailedIngredients || []);
       setFridgeSummary(data.summary || ""); setFridgeSuggestions(data.suggestions || []);
       setStep("fridge-result");
@@ -411,7 +420,7 @@ export default function MealNewPage() {
     setStep("analyzing"); setIsAnalyzing(true);
     try {
       const api = getApi();
-      const data = await api.post<any>("/api/ai/analyze-health-checkup", { imageBase64: photos[0].base64, mimeType: photos[0].mimeType });
+      const data = await api.post<any>("/api/ai/analyze-health-checkup", { imageBase64: photos[0].base64, mimeType: photos[0].mimeType, aiUsageGrant: takeAiUsageGrant() });
       setHealthData(data.extractedData || {}); setHealthConfidence(data.confidence || 0);
       setHealthNotes(data.notes || ""); setHealthModelUsed(data.modelUsed || "");
       setStep("health-result");
@@ -428,7 +437,7 @@ export default function MealNewPage() {
     setStep("analyzing"); setIsAnalyzing(true);
     try {
       const api = getApi();
-      const data = await api.post<any>("/api/ai/analyze-weight-scale", { image: photos[0].base64, mimeType: photos[0].mimeType });
+      const data = await api.post<any>("/api/ai/analyze-weight-scale", { image: photos[0].base64, mimeType: photos[0].mimeType, aiUsageGrant: takeAiUsageGrant() });
       setWeightData(data);
       // Fetch history for comparison
       try {
@@ -455,6 +464,8 @@ export default function MealNewPage() {
 
   async function analyzeByMode() {
     if (photos.length === 0) return;
+    // 新しい操作: 前の判別の印は使わない (この操作の判別が数えたら、新しい印が入る)
+    aiUsageGrantRef.current = null;
 
     if (photoMode === "auto") {
       setStep("analyzing"); setIsAnalyzing(true);
@@ -464,6 +475,7 @@ export default function MealNewPage() {
           images: images(), includeMealAnalysis: true, mealType: selectedMealType,
         });
         setIsAnalyzing(false);
+        aiUsageGrantRef.current = typeof data.aiUsageGrant === "string" ? data.aiUsageGrant : null;
         setDetectedType(data.type); setDetectedConfidence(data.confidence);
         setClassificationCandidates(Array.isArray(data.candidates) ? data.candidates : []);
 

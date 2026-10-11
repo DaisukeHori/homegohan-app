@@ -48,6 +48,7 @@ import { checkRateLimit } from '@/lib/rate-limit';
 import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { consumeAiUsage } from '@/lib/plan/entitlements';
 import { AI_USAGE_ALLOWED, AI_USAGE_DENIED } from './helpers/ai-usage-mock';
+import { isMeteredAiFeature } from '../supabase/functions/_shared/ai-usage-core';
 import { PATCH as mealPlansPatch } from '../src/app/api/meal-plans/meals/[id]/route';
 import { POST as mealPlansPost } from '../src/app/api/meal-plans/meals/route';
 import { POST as mealsPost } from '../src/app/api/meals/route';
@@ -233,7 +234,7 @@ function anyQuery(table: string): unknown {
 }
 
 /**
- * 料理画像のジョブを積む route の公開ハンドラ (tests/helpers/ai-consent-enforced-paths.ts で image_generation を記録するもの)。
+ * 料理画像のジョブを積む route の公開ハンドラ (tests/helpers/ai-consent-enforced-paths.ts で meal_image_auto を記録するもの)。
  * 同意の判定 (T15 / #1154) はしない (ジョブを処理する Edge Function が判定する) ので、同意の表 (ai-consent-enforcement-routes) の外で確かめる
  */
 const IMAGE_ROUTE_CASES: Array<{ name: string; call: () => Promise<Response> }> = [
@@ -284,12 +285,15 @@ describe.each(IMAGE_ROUTE_CASES)('料理画像の生成の AI 利用回数の記
     mockFrom.mockImplementation((table: string) => anyQuery(table));
   });
 
-  it('同意済みなら、同意を判定したあとで image_generation を 1 回記録し、ジョブを積む (記録はジョブを積むより前)', async () => {
+  it('同意済みなら、同意を判定したあとで meal_image_auto (1 日の上限 10 回に数えない料理画像) を 1 回記録し、ジョブを積む (記録はジョブを積むより前)', async () => {
     vi.mocked(checkUserAiConsent).mockResolvedValue({ allowed: true });
     const response = await call();
     expect(response.status).toBe(200);
     expect(vi.mocked(consumeAiUsage)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(consumeAiUsage)).toHaveBeenCalledWith('user-1', 'image_generation');
+    expect(vi.mocked(consumeAiUsage)).toHaveBeenCalledWith('user-1', 'meal_image_auto');
+    // 料理画像は保存の自動の副作用なので、利用者が押した操作 (image_generation) として数えない (#1149。食事の記録だけで 10 回に近づかない)
+    expect(vi.mocked(consumeAiUsage)).not.toHaveBeenCalledWith('user-1', 'image_generation');
+    expect(isMeteredAiFeature('meal_image_auto')).toBe(false);
     expect(vi.mocked(checkUserAiConsent).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(consumeAiUsage).mock.invocationCallOrder[0]);
     expect(vi.mocked(consumeAiUsage).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(enqueueMealImageJobs).mock.invocationCallOrder[0]);
     expect(vi.mocked(enqueueMealImageJobs)).toHaveBeenCalledTimes(1);
@@ -306,7 +310,7 @@ describe.each(IMAGE_ROUTE_CASES)('料理画像の生成の AI 利用回数の記
     expect(vi.mocked(enqueueMealImageJobs)).toHaveBeenCalledTimes(1);
   });
 
-  it('(#1149) 今日の AI の利用回数の上限に達していたら、献立の保存はして (200)、画像のジョブだけ積まない。aiSkipped で知らせる', async () => {
+  it('(#1149) 料理画像の安全弁 (DB の ai_unmetered_daily_caps) に達していたら、献立の保存はして (200)、画像のジョブだけ積まない。aiSkipped で知らせる', async () => {
     vi.mocked(checkUserAiConsent).mockResolvedValue({ allowed: true });
     vi.mocked(consumeAiUsage).mockResolvedValue(AI_USAGE_DENIED);
     const response = await call();
@@ -315,7 +319,7 @@ describe.each(IMAGE_ROUTE_CASES)('料理画像の生成の AI 利用回数の記
     expect(body.aiSkipped).toBe('AI_DAILY_LIMIT');
     // レート制限で見送ったときの印とは分ける
     expect(body.imageGenerationThrottled).toBeUndefined();
-    expect(vi.mocked(consumeAiUsage)).toHaveBeenCalledWith('user-1', 'image_generation');
+    expect(vi.mocked(consumeAiUsage)).toHaveBeenCalledWith('user-1', 'meal_image_auto');
     expect(vi.mocked(enqueueMealImageJobs)).not.toHaveBeenCalled();
     expect(vi.mocked(triggerMealImageJobProcessing)).not.toHaveBeenCalled();
   });
