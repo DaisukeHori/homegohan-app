@@ -89,7 +89,9 @@ Deno.serve(async (req) => {
   const authHeader = req.headers.get("Authorization") ?? "";
   const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
   const apiKey = req.headers.get("apikey")?.trim() ?? "";
-  const isInternalCaller = bearerToken === serviceConfig.serviceKey || apiKey === serviceConfig.serviceKey;
+  // 名前は以前のモジュール定数と同じにしておく (tests/ai-usage-contract.test.ts が service role の照合をこの名前で見つける)
+  const SUPABASE_SERVICE_KEY = serviceConfig.serviceKey;
+  const isInternalCaller = bearerToken === SUPABASE_SERVICE_KEY || apiKey === SUPABASE_SERVICE_KEY;
   if (!isInternalCaller) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: JSON_HEADERS });
   }
