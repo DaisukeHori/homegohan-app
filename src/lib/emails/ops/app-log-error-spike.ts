@@ -6,11 +6,16 @@
 // 載せない (送信先の Resend は米国の事業者。個人情報を国外へ出さない)。関数名もここで念のためもう一度マスクする
 // (sanitizeFunctionNameForAlert。ID やメールアドレスを含む名前が渡されても、そのままは載らない)。
 // 利用者向けではない運用メールなので、署名 (emailSignature) は付けない。
+//
+// #1493: サーバーが書いた error (scope: 'server') と、ブラウザ・端末から POST /api/log で届いた error (scope: 'client') は
+// 別々に数えて別々に知らせる。件名と本文の最初の段落で、どちらの通知かを書き分ける (template の名前は同じ)。
 import type { EmailEnvelope } from '../envelope';
 import { getEmailFrom } from '@/lib/site-config';
-import { sanitizeFunctionNameForAlert } from '@/lib/ops-alerts/app-log-error-spike';
+import { sanitizeFunctionNameForAlert, type AppLogAlertScope } from '@/lib/ops-alerts/app-log-error-spike';
 
 export interface AppLogErrorSpikeEmailVars {
+  /** どちらの通知か。server = サーバーが書いた error、client = ブラウザ・端末から届いた error (#1493) */
+  scope: AppLogAlertScope;
   /** 宛先 (環境変数 OPS_ALERT_EMAIL) */
   to_email: string;
   /** 窓の中の error の全体の件数 */
@@ -46,10 +51,28 @@ function formatCount(n: number): string {
   return n.toLocaleString('ja-JP');
 }
 
+/** 通知の種類ごとの、件名の言い方と、本文の最初の段落で数えたものの説明 */
+const SCOPE_WORDING: Readonly<Record<AppLogAlertScope, { readonly subject: string; readonly counted: string; readonly note: string }>> = {
+  server: {
+    subject: 'エラーが急増しています',
+    counted: 'サーバーのエラーログ (app_logs の level=error。ブラウザ・端末から届いたものは除く)',
+    note: 'ブラウザ・端末から届いたエラーは、この通知とは別に数えています。',
+  },
+  client: {
+    subject: 'ブラウザ・端末のエラーが急増しています',
+    counted: 'ブラウザ・端末から届いたエラーログ (app_logs の source=client、level=error)',
+    note:
+      'サーバーの障害の通知とは別に数えています。1 人の利用者の端末から続けて届いていることもあります\n' +
+      '(運用ログ画面で、ソースを client に絞って確認できます)。',
+  },
+};
+
 /**
- * subject: 「【ほめゴハン運用】エラーが急増しています (直近 15 分で 42 件)」
+ * subject: 「【ほめゴハン運用】エラーが急増しています (直近 15 分で 42 件)」(scope: 'server')
+ *          「【ほめゴハン運用】ブラウザ・端末のエラーが急増しています (直近 15 分で 120 件)」(scope: 'client')
  */
 export function renderAppLogErrorSpikeEmail(vars: AppLogErrorSpikeEmailVars): EmailEnvelope {
+  const wording = SCOPE_WORDING[vars.scope];
   const functionLines = vars.functions.map(
     (f, index) => `${String(index + 1).padStart(2, ' ')}. ${sanitizeFunctionNameForAlert(f.name)} … ${formatCount(f.count)} 件`,
   );
@@ -61,11 +84,12 @@ export function renderAppLogErrorSpikeEmail(vars: AppLogErrorSpikeEmailVars): Em
     template: 'ops_app_log_error_spike',
     to: vars.to_email,
     from: getEmailFrom(),
-    subject: `【ほめゴハン運用】エラーが急増しています (直近 ${vars.window_minutes} 分で ${formatCount(vars.total)} 件)`,
+    subject: `【ほめゴハン運用】${wording.subject} (直近 ${vars.window_minutes} 分で ${formatCount(vars.total)} 件)`,
     text: `ほめゴハンの運用アラートです。
 
-アプリのエラーログ (app_logs の level=error) が、直近 ${vars.window_minutes} 分で ${formatCount(vars.total)} 件ありました。
+${wording.counted} が、直近 ${vars.window_minutes} 分で ${formatCount(vars.total)} 件ありました。
 ${vars.window_minutes} 分で ${formatCount(vars.threshold)} 件を超えると、この通知を送る設定です。
+${wording.note}
 
 ▼ 関数名ごとの件数 (多い順)
 ${functionLines.join('\n')}

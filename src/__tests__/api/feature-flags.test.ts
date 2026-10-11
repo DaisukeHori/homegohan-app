@@ -2,12 +2,14 @@
 /**
  * src/__tests__/api/feature-flags.test.ts
  *
- * #1148 GET /api/feature-flags (クライアント向けの機能フラグ)
+ * #1148 GET /api/feature-flags (画面に見せてよい機能フラグの窓口。いま、この API を呼んでいる画面は無い。#1457)
  *
  * - ログインしていなくても答える (メンテナンス中かどうかは、ログイン前の画面でも要る)
- * - 返すのは許可リスト (ai_chat_enabled / maintenance_mode) だけ。運営が作った別のフラグの名前を見せない
+ * - 返すのは画面に見せてよいフラグの許可リスト (CLIENT_FEATURE_FLAG_KEYS: ai_chat_enabled / maintenance_mode) だけ。
+ *   運営が作った別のフラグの名前を見せない
  * - 値はログイン中のユーザーにとっての ON/OFF。ユーザー本人の属性 (roles・組織・プラン・作成日) を判定に渡す
- * - 運営 (admin / super_admin) には、メンテナンス中でも maintenance_mode = false (クライアントが画面を閉じない)
+ * - 運営 (admin / super_admin) には、メンテナンス中でも maintenance_mode = false (運営はメンテナンス中も使えるため。
+ *   画面がこの API で前もって確かめるようにしたときに、運営にメンテナンス中と見せない)
  * - 認証基盤の不調・プロフィールの読み出しの失敗では、止めずに答える
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -122,7 +124,7 @@ describe('GET /api/feature-flags', () => {
   });
 
   it.each([['admin'], ['super_admin']])(
-    '%s には、メンテナンス中でも maintenance_mode = false を返す (クライアントがメンテナンス中の画面を出さない)',
+    '%s には、メンテナンス中でも maintenance_mode = false を返す (運営はメンテナンス中も使える)',
     async (role) => {
       h.getUser.mockResolvedValue({ data: { user: { id: 'op-1' } }, error: null });
       h.profile.mockResolvedValue({

@@ -81,7 +81,7 @@ describe('RegenerateMealModal — 作り直しが止められたとき', () => {
 
   it('503 MAINTENANCE_MODE: Alert に固定の文を出す。生の文字列は出さず、モーダルを閉じず、生成中の印も保存しない', async () => {
     const onClose = jest.fn();
-    const body = JSON.stringify({ error: { code: MAINTENANCE_API_CODE, message: 'サーバーが返した別の文' } });
+    const body = JSON.stringify({ error: 'サーバーが返した別の文', code: MAINTENANCE_API_CODE, retryAfter: 300 });
     await pressSubmit(new Response(body, { status: 503 }), onClose);
 
     await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));

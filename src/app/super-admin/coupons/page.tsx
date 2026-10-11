@@ -12,6 +12,7 @@ import Link from 'next/link';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { adminFetch } from '@/lib/admin/fetch';
+import { couponValidityDay, isCouponExpiredAt } from '@/lib/super-admin/coupon-validity';
 
 type Coupon = {
   id: string;
@@ -110,7 +111,7 @@ export default async function CouponsPage() {
           <tbody className="divide-y divide-slate-100">
             {coupons.map((coupon) => {
               const statusInfo = STATUS_LABELS[coupon.status] ?? { label: coupon.status, color: 'bg-slate-100 text-slate-500' };
-              const isExpired = new Date(coupon.valid_until) < new Date();
+              const isExpired = isCouponExpiredAt(coupon.valid_until, new Date());
               return (
                 <tr key={coupon.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-4 py-3">
@@ -125,7 +126,7 @@ export default async function CouponsPage() {
                   <td className="px-4 py-3 text-slate-600">{coupon.applicable_to}</td>
                   <td className="px-4 py-3">
                     <span className={isExpired ? 'text-red-500' : 'text-slate-600'}>
-                      {new Date(coupon.valid_until).toLocaleDateString('ja-JP')}
+                      {couponValidityDay(coupon.valid_until)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-center text-slate-700">

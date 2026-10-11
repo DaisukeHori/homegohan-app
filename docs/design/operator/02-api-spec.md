@@ -368,6 +368,8 @@ BAN 解除
 > アプリのどこでも `src/lib/feature-flags.ts` の `isFeatureEnabled(key, userId)` で判定する。
 > `system_settings` の `feature_flags` 行はもう何も読まない。運営のシステム設定 (`GET / PUT /api/super-admin/settings`) では
 > 読み取り専用で、GET は `read_only: true` と `note` を付け、PUT は 409 `SETTING_READ_ONLY` で断る (#1457。行は消していない)。
+> GET の各行は `key` / `value` / `description` / `updated_at` (DB の列の名前のまま) と `read_only` / `note`。PUT は `description` を
+> 省略でき、送れば保存する (空の文字列は `null`。#1486)。
 >
 > アプリが読んでいるフラグ (`FEATURE_FLAG_DEFAULTS`)。行が無い・読み出しに失敗したときは「止めない側」の既定値で動く:
 >
@@ -375,8 +377,8 @@ BAN 解除
 > |-----|------|------------------------------|
 > | `menu_generation_v5_wrapped` | 献立生成 (週間・1 日・1 食・AI 相談のアクション) のエンジン。ON で v5、OFF で v4 | ON |
 > | `menu_generation_v5_direct` | 汎用の献立生成 API (`/api/ai/menu/v4/generate`) のエンジン | ON |
-> | `ai_chat_enabled` | AI 相談の緊急停止スイッチ。OFF のとき AI を呼ぶ API (`/api/ai/consultation/**` の POST) が 503 + やさしい文面。通常は ON のまま | ON |
-> | `maintenance_mode` | ON のとき、ミドルウェアが admin / super_admin 以外にメンテナンス中の画面 (API は 503 `MAINTENANCE_MODE`) を出す | OFF |
+> | `ai_chat_enabled` | AI 相談の緊急停止スイッチ。OFF のとき AI を呼ぶ API (`/api/ai/consultation/**` の POST) と、利用者の JWT で直接呼ばれた Edge Function `knowledge-gpt` が 503 + やさしい文面。通常は ON のまま | ON |
+> | `maintenance_mode` | ON のとき、ミドルウェアが admin / super_admin 以外にメンテナンス中の画面 (API は 503 `MAINTENANCE_MODE`) を出す。切り替えは運営画面 `/super-admin/flags` | OFF |
 >
 > フラグの値はサーバーのメモリに最大 30 秒覚えるため、PATCH で切り替えてから全員に反映されるまで最大 30 秒かかる
 > (下の PATCH の「即座に」は、この遅れを除いた意味)。ミドルウェア (Edge) と API route (Node) は別々にメモリを持つ。
@@ -444,7 +446,7 @@ BAN 解除
 `apps/mobile/src/lib/service-unavailable.ts`)。フラグはサーバーのメモリに最大 30 秒覚えるので、前もって確かめても送る時点の判定とずれることがあり、
 503 の扱いはどのみち要る。この API は、画面で前もって知らせたくなったときの窓口として残してある。
 
-返すのは、クライアントが使うフラグだけの許可リスト (`CLIENT_FEATURE_FLAG_KEYS`: `ai_chat_enabled` / `maintenance_mode`)。
+返すのは、画面に見せてよいフラグだけの許可リスト (`CLIENT_FEATURE_FLAG_KEYS`: `ai_chat_enabled` / `maintenance_mode`)。
 運営が作った別のフラグの名前は返さない。値は、ログイン中のユーザーにとっての ON/OFF (段階公開があれば、そのユーザーでの判定)。
 運営 (admin / super_admin) には、メンテナンス中でも `maintenance_mode: false` を返す (運営はメンテナンス中も使えるため)。
 メンテナンス中でも、この API は止まらない。`Cache-Control: private, no-store`。
@@ -454,10 +456,18 @@ BAN 解除
 ### メンテナンスモード (`maintenance_mode` が ON のとき)
 ミドルウェア (`lib/supabase/middleware.ts`) が、admin / super_admin 以外に次を返す。
 - ページ: 503 の HTML (「ただいまメンテナンス中です」。`Retry-After: 300`。ログイン画面へは回さない)
-- API: 503 `{ "error": { "code": "MAINTENANCE_MODE", "message": "..." } }` (`Retry-After: 300`)
+- API: 503 `{ "error": "<固定の文>", "code": "MAINTENANCE_MODE", "retryAfter": 300 }` (`Retry-After: 300`)。
+  AI 相談の緊急停止の 503 と同じ平らな形。`error` は文字列で、本文の `error` をそのまま出す画面でも固定の文になる (#1486。
+  それより前は `{ "error": { "code": "MAINTENANCE_MODE", "message": "..." } }` の入れ子で、Web の画面が描画で落ちた)。
+  文と code の置き場は `packages/shared/src/service-unavailable.ts` (読む側の `serviceUnavailableMessageOfBody` は以前の入れ子の形も受ける)
 
 止めないもの: 運営ロール、`/login`・`/auth/*` (運営がログインし直せるように)、`/terms`・`/privacy`、
+`/legal` (特定商取引法に基づく表記)・`/contact` (お問い合わせ) の画面 (#1486。未ログインでも読める公開の文面。
+その画面の下の API は止める: お問い合わせの送信 `POST /api/contact` は 503 で、画面には固定の文が出る。画面に出ているメールアドレスは使える)、
 `/api/health` (死活監視)、`/api/auth/*`、`/api/cron/*`、`/api/feature-flags`、`/_next/*`。
+`/signup` (新規登録) は止める。
+`/legal`・`/contact` を通すのはメンテナンスの判定だけで、ほかの差し戻し (初期設定の途中の人を `/onboarding/*` へ、凍結中の人を
+`/frozen` へ。凍結中でも `/contact` は通る) はメンテナンス中でないときと同じに掛かり、差し戻した先はメンテナンス中の画面になる。
 画像・manifest・robots・サービスワーカーなどの静的ファイルは、ミドルウェアの `matcher` (`src/middleware.ts`) が外していて、そもそもミドルウェアが走らない。
 拡張子で通す処理は持たないので、動的なページのパスは、末尾が `.json` や `.txt` に見えても (`/meals/abc.json` など) 止める。
 フラグを読めない・行が無いときは止めない (OFF 扱い)。
@@ -465,6 +475,9 @@ BAN 解除
 ### AI 相談の緊急停止 (`ai_chat_enabled` が OFF のとき)
 `POST /api/ai/consultation/sessions`・`/sessions/{id}/messages`・`/sessions/{id}/summarize`・`/sessions/{id}/close`・
 `/actions/{id}/execute` が 503 `{ "error": "<やさしい文面>", "code": "AI_CHAT_DISABLED", "retryAfter": 60 }` を返す。
+利用者の JWT で直接呼べる Edge Function `knowledge-gpt` (#1153) も、JWT の経路で認証の直後・同意の判定の前にスイッチを見て、
+OFF なら同じ 503 を返す (#1486。`supabase/functions/_shared/ai-chat-flag.ts`。判定は Next.js と共用で、段階公開・条件も同じに効く。
+読めない・行が無いときは ON)。service role の経路 (AI 相談の API が呼ぶもの) は、呼び出し元がスイッチを見たあとなので見ない。
 過去の相談の閲覧 (GET)・提案の却下 (DELETE)・重要マークは止めない。通常は ON のままにする非常ボタン。
 利用者の同意の有無で AI への送信を止めるのはこのスイッチではなく、同意の判定 (`requireAiConsent` / `checkUserAiConsent`、#1154) が担う
 (スイッチが ON でも、未同意なら AI へ送らない)。
@@ -1240,8 +1253,8 @@ deprecated → private にロールバック (緊急用)
   "discount_type": "percentage",
   "discount_value": 20,
   "applicable_to": "org",
-  "valid_from": "2026-05-01T00:00:00Z",
-  "valid_until": "2026-12-31T23:59:59Z",
+  "valid_from": "2026-05-01",
+  "valid_until": "2026-12-31",
   "max_uses": 100,
   "per_user_limit": 1,
   "duration_months": 3
@@ -1249,6 +1262,8 @@ deprecated → private にロールバック (緊急用)
 ```
 
 **バリデーション**:
+- `valid_from` / `valid_until` は JST の暦日 (YYYY-MM-DD の実在する日付。存在しない日付は 400 `OP_INVALID_INPUT`)。`valid_from <= valid_until` (同じ日は可)
+- DB には開始日の JST 0:00・期限の日の JST 23:59:59.999999 の時刻にして書く (#1483。`apply_coupon` の `now() > valid_until` は端を含むので、期限の日の終わりまで使える)。PATCH の `valid_until` も同じ
 - 0 円や 1 円となるクーポン (100% OFF + monthly_price <= 1 円) は警告表示
 - `gross_margin_preview_jpy` を計算して返す
 
@@ -1427,6 +1442,8 @@ NPS サーベイ送信 (日次 14:00 JST)
 | `OP_TARGET_PROTECTED` | 403 | 保護ユーザーへの操作不可 (super_admin BAN 等) |
 | `OP_AUDIT_LOG_IMMUTABLE` | 403 | 監査ログ書き換え不可 |
 | `OP_FEATURE_FLAG_IN_USE` | 409 | 削除しようとしたフラグが利用中 |
+| `PLAN_NOT_FOUND` | 404 | AI の利用上限の保存 (`PATCH /api/super-admin/llm/quotas`) で、`plan_key` のプランが `subscription_plans` に無い (§8) |
+| `SETTING_READ_ONLY` | 409 | システム設定の保存 (`PUT /api/super-admin/settings`) で、使われていない key (旧 `feature_flags` 行) を書き換えようとした (§7。#1457) |
 | `OP_PACKAGE_IN_USE` | 409 | 削除しようとしたパッケージが利用中 |
 | `AI_DAILY_LIMIT` | 429 | 今日の AI の利用回数の上限に達した (利用者の AI の呼び出し。本文は `{ error, code, limit, retryAfter }`、`Retry-After` は次の JST 0 時までの秒数。operator/06-ai-llm.md §5) |
 | `OP_RE_AUTH_REQUIRED` | 401 | 再認証必須 |

@@ -104,7 +104,7 @@ const CASES = [
   [
     'メンテナンス中 (503 MAINTENANCE_MODE)',
     HTTP_SERVICE_UNAVAILABLE,
-    JSON.stringify({ error: { code: MAINTENANCE_API_CODE, message: SERVER_TEXT } }),
+    JSON.stringify({ error: SERVER_TEXT, code: MAINTENANCE_API_CODE, retryAfter: 300 }),
     MAINTENANCE_MESSAGE,
     'ご利用いただけません',
   ],

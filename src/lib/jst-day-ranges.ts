@@ -118,7 +118,9 @@ const LAST_MICROSECOND_DIGITS = '999';
  * JST の暦日 toDate の最後の瞬間 (翌日の JST 0 時の 1 マイクロ秒前) を、timestamptz と比べる ISO 8601 (UTC) の時刻にする。
  * 例: "2026-10-10" → "2026-10-10T14:59:59.999999Z" (JST 10/10 23:59:59.999999)
  *
- * 両端を含む条件 (`列 <= p_to`) で絞る DB の関数 (get_nps_summary / get_csat_summary) に、終了日を渡すときだけ使う。
+ * 両端を含む条件 (`列 <= p_to`) で絞る DB の関数 (get_nps_summary / get_csat_summary) に終了日を渡すときと、
+ * 両端を含めて比べる列 (クーポンの valid_until。DB の関数 apply_coupon が `now() > valid_until` を期限切れにする。
+ * src/lib/super-admin/coupon-validity.ts) に、期限の日の終わりを書くときだけ使う (#1483)。
  * timestamptz の精度は 1 マイクロ秒なので、`列 <= この時刻` は `列 < 翌日の JST 0 時` (jstDayRangeTimestamps の
  * toTimestampExclusive) と同じ行を選ぶ (DB の関数を書き換える migration なしで、終了日の JST の 1 日をまるごと入れられる)。
  * 問い合わせを自分で組み立てられるとき (.lt を使えるとき) は jstDayRangeTimestamps / jstOptionalDayRangeTimestamps を使う。

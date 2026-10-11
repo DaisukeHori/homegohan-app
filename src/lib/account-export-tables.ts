@@ -286,7 +286,7 @@ export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
   ai_usage_counters:
     'AI 利用回数の内部台帳 (プランの利用制限のための記録。本人が読める RLS ポリシーが無く、service_role だけが読み書きする)',
   ai_usage_grant_claims:
-    'AI 利用回数の「数え済みの印」の使用済みの記録 (写真の判別 → 解析を 1 回に数えるための内部の照合用。乱数の ID と時刻だけで、1 日で消す。service_role だけが読み書きする)',
+    'AI 利用回数の「数え済みの印」の使用済みの記録 (写真の判別 → 解析を 1 回に数えるための内部の照合用。乱数の ID と時刻だけ。1 日より古い記録は、毎日 03:45 JST の pg_cron のジョブ cleanup-stale-login-failures-and-grant-claims が利用者を問わず消すので、残るのは長くて 2 日弱。service_role だけが読み書きする)',
   email_delivery_logs: 'メール配信の運用ログ',
   meal_nutrition_debug_logs: '栄養計算のデバッグログ',
   meal_image_jobs: '画像生成ジョブのキュー (処理状態・リース情報などの内部データ)',

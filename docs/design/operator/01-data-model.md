@@ -248,8 +248,8 @@ CREATE TABLE coupons (
   applicable_plans  UUID[] NOT NULL DEFAULT '{}',
   applicable_to     VARCHAR(20) NOT NULL DEFAULT 'all'
     CHECK (applicable_to IN ('all', 'personal', 'family', 'org')),
-  valid_from        TIMESTAMPTZ NOT NULL,
-  valid_until       TIMESTAMPTZ NOT NULL,
+  valid_from        TIMESTAMPTZ NOT NULL,  -- 開始日の JST 0:00 (#1483)
+  valid_until       TIMESTAMPTZ NOT NULL,  -- 期限の日の JST 23:59:59.999999 (#1483。端を含めて有効)
   max_uses          INT,
   uses_count        INT NOT NULL DEFAULT 0,
   per_user_limit    INT NOT NULL DEFAULT 1,

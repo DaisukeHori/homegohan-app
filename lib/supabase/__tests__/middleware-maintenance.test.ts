@@ -4,8 +4,9 @@
  * feature_flags の maintenance_mode が ON のあいだ、運営 (admin / super_admin) 以外には
  * メンテナンス中の応答を返す。
  *   - ページ: 503 の HTML (Retry-After 付き。ログイン画面へ回さない)
- *   - API:    503 の JSON { error: { code: 'MAINTENANCE_MODE', message } }
+ *   - API:    503 の JSON { error: <固定の文>, code: 'MAINTENANCE_MODE', retryAfter } (#1486 で AI 相談の緊急停止と同じ平らな形に)
  * 止めないもの: 運営ロール / ログイン・認証 (/login・/auth/*) / 利用規約・プライバシーポリシー /
+ *   特定商取引法に基づく表記・お問い合わせの画面 (/legal・/contact。#1486。API は止める) /
  *   死活監視 (/api/health)・cron・認証 API・フラグの取得 (/api/feature-flags) / /_next
  *   (画像などの静的ファイルは、ミドルウェアの matcher が外していて、ここには届かない。拡張子で通す処理は無い)
  * フラグの読み出しの失敗は fail-open (止めない)。
@@ -96,8 +97,11 @@ describe('updateSession — メンテナンスモード: API (/api/*) (#1148)', 
     expect(res.headers.get('retry-after')).toBe('300');
     expect(res.headers.get('cache-control')).toBe('private, no-store');
     const body = await res.json();
-    expect(body.error.code).toBe('MAINTENANCE_MODE');
-    expect(body.error.message).toContain('メンテナンス中');
+    expect(body.code).toBe('MAINTENANCE_MODE');
+    // #1486: error は文字列 (Web の画面が data.error をそのまま出しても落ちない)
+    expect(typeof body.error).toBe('string');
+    expect(body.error).toContain('メンテナンス中');
+    expect(body.retryAfter).toBe(300);
   });
 
   it('フラグは maintenance_mode を、そのユーザーの ID とロールで、短い待ち時間の上限つきで読む', async () => {
@@ -193,6 +197,20 @@ describe('updateSession — メンテナンスモード: API (/api/*) (#1148)', 
     const res = await updateSession(apiRequest(path));
     expect(res.status).toBe(503);
   });
+
+  it.each(['/api/contact', '/api/legal/accept'])(
+    '#1486: 画面 (/contact・/legal) を通しても、%s は止める (メンテナンス中は利用者からの書き込みを受け付けない)',
+    async (path) => {
+      mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+      const res = await updateSession(apiRequest(path));
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body.code).toBe('MAINTENANCE_MODE');
+      // お問い合わせの画面は本文の error をそのまま出すので、固定の文になる
+      expect(typeof body.error).toBe('string');
+    },
+  );
 
   it('静的ファイルの拡張子を API の末尾に付けても、メンテナンス中の応答を返す (動的な API ルートを通り抜けさせない)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
@@ -304,6 +322,9 @@ describe('updateSession — メンテナンスモード: ページ (#1148)', () 
     '/auth/callback',
     '/terms',
     '/privacy',
+    // #1486: 特定商取引法に基づく表記・お問い合わせ
+    '/legal',
+    '/contact',
     '/_next/static/chunks/main.js',
   ])('%s はメンテナンス中でも止めない (未ログイン。フラグも読まない)', async (path) => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
@@ -321,6 +342,29 @@ describe('updateSession — メンテナンスモード: ページ (#1148)', () 
     const res = await updateSession(pageRequest('/auth/native-bridge'));
     expect(res.status).not.toBe(503);
   });
+
+  it.each(['/legal', '/contact'])(
+    '#1486: ログイン中の一般ユーザーが %s を開いても止めない (事業者の表記と連絡先は、メンテナンス中も確かめられる)',
+    async (path) => {
+      mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+      mockMaybeSingle.mockResolvedValue(profile());
+
+      const res = await updateSession(pageRequest(path));
+      expect(res.status).toBe(200);
+      expect(res.headers.get('location')).toBeNull();
+      expect(mockIsFeatureEnabled).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['/signup', '/legal-consent', '/legalx', '/contactx'])(
+    '#1486: %s は止める (新規登録は止めたまま。似た名前のパスも通さない。未ログイン)',
+    async (path) => {
+      mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+      const res = await updateSession(pageRequest(path));
+      expect(res.status).toBe(503);
+    },
+  );
 
   it.each(['/loginx', '/authx', '/termsx', '/privacyx', '/_nextx/static'])(
     '%s のような似たパスは止める (前方一致の取りこぼし防止)',

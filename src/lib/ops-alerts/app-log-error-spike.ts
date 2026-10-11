@@ -6,12 +6,18 @@
  *
  * 仕組み:
  *   1. Vercel Cron が 15 分おきに route を呼ぶ (vercel.json)。
- *   2. DB の app_log_error_counts で、直近 APP_LOG_ALERT_WINDOW_MINUTES 分の app_logs.level='error' を function_name ごとに数える。
+ *   2. DB の app_log_error_counts で、直近 APP_LOG_ALERT_WINDOW_MINUTES 分の app_logs.level='error' のうち、
+ *      サーバーが書いたもの (source <> 'client') を function_name ごとに数える。
  *   3. 合計がしきい値 (既定 APP_LOG_ALERT_ERROR_THRESHOLD = 20) を超えていたら (= 21 件以上)、運用のメールアドレス (OPS_ALERT_EMAIL) に 1 通送る。
  *   4. 同じアラートはクールダウン (既定 APP_LOG_ALERT_COOLDOWN_MINUTES = 60) 分は送り直さない
  *      (DB の ops_alert_state。claim_ops_alert / release_ops_alert)。
- *   しきい値とクールダウンは、環境変数 OPS_ALERT_ERROR_THRESHOLD / OPS_ALERT_COOLDOWN_MINUTES で上書きできる
- *   (route が読んで resolveAppLogAlertSettings に渡す。不正な値は既定値に戻し、warn を残す)。
+ *   5. ブラウザ・端末から POST /api/log で届いた error (source = 'client') は、別の関数 app_log_client_error_counts で数え、
+ *      別のキー (APP_LOG_CLIENT_ALERT_KEY) と、より高いしきい値 (既定 APP_LOG_CLIENT_ALERT_ERROR_THRESHOLD = 100) で同じように知らせる (#1493)。
+ *      /api/log はログイン済みなら誰でも書けるので、サーバーと同じ数え方・同じキーにすると、利用者が error を書くだけで
+ *      サーバーの障害の通知を鳴らせ、そのクールダウンで本物の障害の通知を止められてしまう。キーを分けたので、クールダウンも共有しない。
+ *   しきい値とクールダウンは、環境変数 OPS_ALERT_ERROR_THRESHOLD / OPS_ALERT_CLIENT_ERROR_THRESHOLD / OPS_ALERT_COOLDOWN_MINUTES で
+ *   上書きできる (route が読んで resolveAppLogAlertSettings に渡す。不正な値は既定値に戻し、warn を残す)。
+ *   クールダウンの分数は 2 つの通知で同じ値を使う (キーは別なので、片方を送っても、もう片方の抑止は始まらない)。
  *
  * メールに載せるのは「件数」と「関数名」と「運用ログ画面へのリンク」だけ。ユーザー ID・メールアドレス・ログの本文は載せない
  * (送信先の Resend は米国の事業者。個人情報を国外へ出さない)。関数名はログを書くコードが決める固定の名前 (例: `GET /api/org/settings`) だが、
@@ -24,14 +30,41 @@
  *     死活の監視 (/api/health) は別の仕組み (設計書 operator/07-audit-monitoring.md §9)。
  *   - error レベルのログは、そのままアラートの種になる。想定内の失敗 (入力の誤りなど) を error で書き続けると、
  *     本物の障害と区別できなくなる。想定内のものは warn で書く。
+ *   - クライアントの通知は、利用者 1 人でも鳴らせる (/api/log の回数制限 'client-log' は 1 分 30 回なので、15 分で
+ *     しきい値の 100 件を超えられる)。そのクールダウンで止められるのもクライアントの通知だけで、サーバーの障害の通知には響かない。
  */
 
 import { maskSecretsInText } from '../../../supabase/functions/_shared/log-sanitizer';
 
 // ── 定数 ──────────────────────────────────────────────────────────────────
 
-/** ops_alert_state のキー。このアラートの種類を表す固定の名前 (ユーザー・関数名などの値は入れない) */
+/**
+ * ops_alert_state のキー。このアラートの種類を表す固定の名前 (ユーザー・関数名などの値は入れない)。
+ * サーバーが書いた error (source <> 'client') の急増の通知に使う
+ */
 export const APP_LOG_ALERT_KEY = 'app_logs_error_spike';
+
+/**
+ * ブラウザ・端末から届いた error (source = 'client') の急増の通知のキー (#1493)。
+ * サーバーの通知 (APP_LOG_ALERT_KEY) と別のキーにして、クールダウンを共有しない
+ * (利用者が鳴らしたクライアントの通知の抑止で、サーバーの障害の通知が止まらないように)
+ */
+export const APP_LOG_CLIENT_ALERT_KEY = 'app_logs_client_error_spike';
+
+/** 通知の種類。server = サーバーが書いた error、client = ブラウザ・端末から POST /api/log で届いた error */
+export type AppLogAlertScope = 'server' | 'client';
+
+/** 通知の種類ごとの、数える DB の関数の名前 */
+export const APP_LOG_ALERT_COUNT_RPC: Readonly<Record<AppLogAlertScope, 'app_log_error_counts' | 'app_log_client_error_counts'>> = {
+  server: 'app_log_error_counts',
+  client: 'app_log_client_error_counts',
+};
+
+/** 通知の種類ごとの、ops_alert_state のキー */
+export const APP_LOG_ALERT_KEYS: Readonly<Record<AppLogAlertScope, string>> = {
+  server: APP_LOG_ALERT_KEY,
+  client: APP_LOG_CLIENT_ALERT_KEY,
+};
 
 /**
  * error を数える窓 (分)。cron の間隔 (vercel.json で 15 分おき) と同じにする。
@@ -47,16 +80,28 @@ export const APP_LOG_ALERT_WINDOW_MINUTES = 15;
 export const APP_LOG_ALERT_ERROR_THRESHOLD = 20;
 
 /**
+ * ブラウザ・端末から届いた error (source = 'client') の窓の中の合計が、この件数を超えたら通知する (既定値。#1493)。
+ * サーバーの 20 件より高くする。クライアントの error には、利用者の端末や回線の都合 (圏外・古いブラウザ・拡張機能) の失敗も混ざり、
+ * 1 つの不具合でも開いた画面の数だけ届くため。また、利用者 1 人が /api/log の回数制限 ('client-log': 1 分 30 回) の中で
+ * 送れる量では、1 分ほどでは届かない値にする (30 × 3 = 90 < 100)。
+ * 運用で変えるときは環境変数 OPS_ALERT_CLIENT_ERROR_THRESHOLD で上書きする (resolveAppLogAlertSettings)。
+ */
+export const APP_LOG_CLIENT_ALERT_ERROR_THRESHOLD = 100;
+
+/**
  * 同じアラートを送り直さない時間 (分) (既定値)。
  * 運用で変えるときは環境変数 OPS_ALERT_COOLDOWN_MINUTES で上書きする (resolveAppLogAlertSettings)。
  */
 export const APP_LOG_ALERT_COOLDOWN_MINUTES = 60;
 
-/** OPS_ALERT_ERROR_THRESHOLD で受け付ける最小値。0 だと error が 1 件でも通知になり、急増の通知でなくなるため 1 から */
+/**
+ * OPS_ALERT_ERROR_THRESHOLD / OPS_ALERT_CLIENT_ERROR_THRESHOLD で受け付ける最小値。
+ * 0 だと error が 1 件でも通知になり、急増の通知でなくなるため 1 から
+ */
 export const APP_LOG_ALERT_ERROR_THRESHOLD_MIN = 1;
 
 /**
- * OPS_ALERT_ERROR_THRESHOLD で受け付ける最大値。15 分でこれだけの error が出ていれば規模を問わず障害なので、
+ * OPS_ALERT_ERROR_THRESHOLD / OPS_ALERT_CLIENT_ERROR_THRESHOLD で受け付ける最大値。15 分でこれだけの error が出ていれば規模を問わず障害なので、
  * これより大きい値は打ち間違いとみなして既定値に戻す (通知を止めたいときは OPS_ALERT_EMAIL を消す)
  */
 export const APP_LOG_ALERT_ERROR_THRESHOLD_MAX = 100_000;
@@ -131,7 +176,7 @@ export function sanitizeFunctionNameForAlert(name: string | null | undefined): s
 
 // ── DB の応答の読み取り ───────────────────────────────────────────────────
 
-/** app_log_error_counts (DB の関数) が返す 1 行 */
+/** app_log_error_counts / app_log_client_error_counts (DB の関数) が返す 1 行 */
 export interface ErrorCountRow {
   /** NULL は function_name の無いログ */
   function_name: string | null;
@@ -141,35 +186,36 @@ export interface ErrorCountRow {
   total_count: number;
 }
 
-function toCount(value: unknown, field: string): number {
+function toCount(value: unknown, field: string, rpcName: string): number {
   // PostgREST は bigint を JSON の数値で返す。設定によっては文字列で来ることがあるので、数字だけの文字列も受ける
   const n = typeof value === 'number' ? value : typeof value === 'string' && /^\d{1,15}$/.test(value) ? Number(value) : NaN;
   if (!Number.isSafeInteger(n) || n < 0) {
-    throw new Error(`app_log_error_counts の応答の ${field} が 0 以上の整数ではありません`);
+    throw new Error(`${rpcName} の応答の ${field} が 0 以上の整数ではありません`);
   }
   return n;
 }
 
 /**
- * app_log_error_counts の応答 (supabase-js の data) を検証して、型付きの行にする。
+ * app_log_error_counts / app_log_client_error_counts の応答 (supabase-js の data) を検証して、型付きの行にする。
  * 形が想定と違うときは例外にする (黙って 0 件として扱うと、アラートが静かに止まるため)。
+ * rpcName は、例外の文に書く関数の名前 (どちらの関数の応答がおかしかったかを分かるようにする)。
  */
-export function parseErrorCountRows(data: unknown): ErrorCountRow[] {
+export function parseErrorCountRows(data: unknown, rpcName: string = APP_LOG_ALERT_COUNT_RPC.server): ErrorCountRow[] {
   if (!Array.isArray(data)) {
-    throw new Error('app_log_error_counts の応答が配列ではありません');
+    throw new Error(`${rpcName} の応答が配列ではありません`);
   }
   return data.map((row: unknown) => {
     if (row === null || typeof row !== 'object') {
-      throw new Error('app_log_error_counts の応答の行がオブジェクトではありません');
+      throw new Error(`${rpcName} の応答の行がオブジェクトではありません`);
     }
     const { function_name: functionName, error_count: errorCount, total_count: totalCount } = row as Record<string, unknown>;
     if (functionName !== null && functionName !== undefined && typeof functionName !== 'string') {
-      throw new Error('app_log_error_counts の応答の function_name が文字列ではありません');
+      throw new Error(`${rpcName} の応答の function_name が文字列ではありません`);
     }
     return {
       function_name: functionName ?? null,
-      error_count: toCount(errorCount, 'error_count'),
-      total_count: toCount(totalCount, 'total_count'),
+      error_count: toCount(errorCount, 'error_count', rpcName),
+      total_count: toCount(totalCount, 'total_count', rpcName),
     };
   });
 }
@@ -229,18 +275,25 @@ export function exceedsErrorThreshold(total: number, threshold: number = APP_LOG
 // ── 運用で変える値 (環境変数での上書き) ───────────────────────────────────
 
 /** 上書きに使う環境変数の名前 (値を読むのは route だけ。ここは渡された文字列を検証するだけ) */
-export type AppLogAlertSettingEnvName = 'OPS_ALERT_ERROR_THRESHOLD' | 'OPS_ALERT_COOLDOWN_MINUTES';
+export type AppLogAlertSettingEnvName =
+  | 'OPS_ALERT_ERROR_THRESHOLD'
+  | 'OPS_ALERT_CLIENT_ERROR_THRESHOLD'
+  | 'OPS_ALERT_COOLDOWN_MINUTES';
 
 /** 環境変数から読んだ、上書きの元の文字列 (未設定は undefined) */
 export interface AppLogAlertSettingSources {
   readonly errorThreshold: string | undefined;
+  /** OPS_ALERT_CLIENT_ERROR_THRESHOLD (#1493) */
+  readonly clientErrorThreshold: string | undefined;
   readonly cooldownMinutes: string | undefined;
 }
 
 export interface AppLogAlertSettings {
-  /** しきい値 (この件数を超えたら通知する) */
+  /** サーバーの error のしきい値 (この件数を超えたら通知する) */
   readonly errorThreshold: number;
-  /** 同じ通知を送り直さない時間 (分) */
+  /** ブラウザ・端末から届いた error のしきい値 (この件数を超えたら通知する。#1493) */
+  readonly clientErrorThreshold: number;
+  /** 同じ通知を送り直さない時間 (分)。2 つの通知で同じ値を使う (キーは別) */
   readonly cooldownMinutes: number;
   /** 値が不正で、既定値に戻した環境変数の名前 (ログで知らせる用。値そのものは返さない) */
   readonly ignored: readonly AppLogAlertSettingEnvName[];
@@ -268,14 +321,21 @@ function resolveIntegerSetting(
 }
 
 /**
- * しきい値とクールダウンを決める。環境変数 OPS_ALERT_ERROR_THRESHOLD / OPS_ALERT_COOLDOWN_MINUTES があればそれを使い、
- * 無ければ既定値 (APP_LOG_ALERT_ERROR_THRESHOLD / APP_LOG_ALERT_COOLDOWN_MINUTES)。
+ * しきい値とクールダウンを決める。環境変数 OPS_ALERT_ERROR_THRESHOLD / OPS_ALERT_CLIENT_ERROR_THRESHOLD /
+ * OPS_ALERT_COOLDOWN_MINUTES があればそれを使い、無ければ既定値
+ * (APP_LOG_ALERT_ERROR_THRESHOLD / APP_LOG_CLIENT_ALERT_ERROR_THRESHOLD / APP_LOG_ALERT_COOLDOWN_MINUTES)。
  * 窓 (APP_LOG_ALERT_WINDOW_MINUTES) は vercel.json の間隔と結びついているので、ここでは変えない。
  */
 export function resolveAppLogAlertSettings(sources: AppLogAlertSettingSources): AppLogAlertSettings {
   const threshold = resolveIntegerSetting(
     sources.errorThreshold,
     APP_LOG_ALERT_ERROR_THRESHOLD,
+    APP_LOG_ALERT_ERROR_THRESHOLD_MIN,
+    APP_LOG_ALERT_ERROR_THRESHOLD_MAX,
+  );
+  const clientThreshold = resolveIntegerSetting(
+    sources.clientErrorThreshold,
+    APP_LOG_CLIENT_ALERT_ERROR_THRESHOLD,
     APP_LOG_ALERT_ERROR_THRESHOLD_MIN,
     APP_LOG_ALERT_ERROR_THRESHOLD_MAX,
   );
@@ -287,6 +347,12 @@ export function resolveAppLogAlertSettings(sources: AppLogAlertSettingSources): 
   );
   const ignored: AppLogAlertSettingEnvName[] = [];
   if (threshold.ignored) ignored.push('OPS_ALERT_ERROR_THRESHOLD');
+  if (clientThreshold.ignored) ignored.push('OPS_ALERT_CLIENT_ERROR_THRESHOLD');
   if (cooldown.ignored) ignored.push('OPS_ALERT_COOLDOWN_MINUTES');
-  return { errorThreshold: threshold.value, cooldownMinutes: cooldown.value, ignored };
+  return {
+    errorThreshold: threshold.value,
+    clientErrorThreshold: clientThreshold.value,
+    cooldownMinutes: cooldown.value,
+    ignored,
+  };
 }

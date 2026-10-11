@@ -37,7 +37,12 @@ jest.mock('@homegohan/core', () => ({
 import { getApi } from '../../src/lib/api';
 import { isAiConsentRequiredError } from '../../src/lib/ai-consent';
 import { AiDailyLimitError, aiDailyLimitMessage } from '../../src/lib/ai-daily-limit';
-import { errorOfFailedResponse, isStoppedByServerError, stoppedByServerAlertTitleOf } from '../../src/lib/failed-response';
+import {
+  errorOfFailedResponse,
+  isStoppedByServerError,
+  stoppedByServerAlertTitleOf,
+  stoppedByServerMessageOr,
+} from '../../src/lib/failed-response';
 import { ServiceUnavailableError } from '../../src/lib/service-unavailable';
 
 /** サーバーとは違う文を入れた本文。画面に出す文は本文の文字列ではなく、code (と limit) から決めた固定の文であることを確かめる */
@@ -50,7 +55,8 @@ const HTTP_SERVICE_UNAVAILABLE = 503;
 
 const LIMIT_BODY = JSON.stringify({ error: SERVER_TEXT, code: 'AI_DAILY_LIMIT', limit: LIMIT, retryAfter: 3600 });
 const AI_CHAT_DISABLED_BODY = JSON.stringify({ error: SERVER_TEXT, code: AI_CHAT_DISABLED_CODE, retryAfter: 60 });
-const MAINTENANCE_BODY = JSON.stringify({ error: { code: MAINTENANCE_API_CODE, message: SERVER_TEXT } });
+// サーバーのメンテナンス中の 503 の本文 (#1486 から AI 相談の緊急停止と同じ平らな形)
+const MAINTENANCE_BODY = JSON.stringify({ error: SERVER_TEXT, code: MAINTENANCE_API_CODE, retryAfter: 300 });
 
 /** [ラベル, 状態, 共通クライアントの statusText, 本文, 例外のクラス, 固定の文, Alert の見出し] */
 const STOPPED_CASES = [
@@ -99,10 +105,19 @@ describe('errorOfFailedResponse (生の fetch の失敗の応答)', () => {
     expect(consent.message).toBe(`HTTP 403: ${consentBody}`);
 
     // 503 でも、止めている理由が分からない本文は置き換えない
-    const otherUnavailableBody = JSON.stringify({ error: 'x', code: 'AI_CONSENT_CHECK_FAILED' });
+    const otherUnavailableBody = JSON.stringify({ error: 'x', code: 'SOMETHING_ELSE' });
     const otherUnavailable = errorOfFailedResponse(HTTP_SERVICE_UNAVAILABLE, otherUnavailableBody);
     expect(isStoppedByServerError(otherUnavailable)).toBe(false);
     expect(otherUnavailable.message).toBe(`HTTP 503: ${otherUnavailableBody}`);
+
+    // #1486: 同意の状況を読めなかった 503 (AI_CONSENT_CHECK_FAILED) は、緊急停止・メンテナンス中と同じく固定の文
+    const consentCheckFailed = errorOfFailedResponse(
+      HTTP_SERVICE_UNAVAILABLE,
+      JSON.stringify({ error: SERVER_TEXT, code: 'AI_CONSENT_CHECK_FAILED' }),
+    );
+    expect(isStoppedByServerError(consentCheckFailed)).toBe(true);
+    expect(consentCheckFailed.message).not.toContain('HTTP');
+    expect(consentCheckFailed.message).not.toContain(SERVER_TEXT);
 
     // 上限の本文でも状態が 503 なら、503 の判定 (止めている理由が分からない) だけになる。逆も同じ
     expect(isStoppedByServerError(errorOfFailedResponse(HTTP_SERVICE_UNAVAILABLE, LIMIT_BODY))).toBe(false);
@@ -159,5 +174,36 @@ describe('getApi() — 全メソッドが、上限と緊急停止・メンテナ
     const original = new Error(`HTTP 403 Forbidden: ${JSON.stringify({ error: 'x', code: 'AI_CONSENT_REQUIRED' })}`);
     mockClient.post.mockRejectedValue(original);
     await expect(call('post')).rejects.toBe(original);
+  });
+});
+
+describe('stoppedByServerMessageOr (#1486: 週の献立の削除・完了の切り替えの失敗の表示)', () => {
+  // 週の画面 (app/menus/weekly/index.tsx の deleteMeal / toggleMealCompletion) は、失敗の応答を errorOfFailedResponse で
+  // 例外にして、catch でこの関数に通す。以前は英語の「DELETE failed: 503」「PATCH failed: 503」がそのまま出ていた
+  const FALLBACK = '削除に失敗しました。';
+
+  it('メンテナンス中の 503 は、メンテナンス中の固定の文 (英語・本文の文字列を出さない)', () => {
+    const shown = stoppedByServerMessageOr(errorOfFailedResponse(HTTP_SERVICE_UNAVAILABLE, MAINTENANCE_BODY), FALLBACK);
+    expect(shown).toBe(MAINTENANCE_MESSAGE);
+    expect(shown).not.toMatch(/failed|HTTP|503/);
+  });
+
+  it('同意の状況を読めなかった 503・上限の 429 も、それぞれの固定の文', () => {
+    const consent = stoppedByServerMessageOr(
+      errorOfFailedResponse(HTTP_SERVICE_UNAVAILABLE, JSON.stringify({ error: SERVER_TEXT, code: 'AI_CONSENT_CHECK_FAILED' })),
+      FALLBACK,
+    );
+    expect(consent).not.toBe(FALLBACK);
+    expect(consent).not.toContain(SERVER_TEXT);
+    expect(stoppedByServerMessageOr(errorOfFailedResponse(HTTP_TOO_MANY_REQUESTS, LIMIT_BODY), FALLBACK)).toBe(
+      aiDailyLimitMessage(LIMIT),
+    );
+  });
+
+  it('ほかの失敗 (404・500・通信の失敗) は、画面の既定の文 (生の文字列を出さない)', () => {
+    expect(stoppedByServerMessageOr(errorOfFailedResponse(404, JSON.stringify({ error: SERVER_TEXT })), FALLBACK)).toBe(FALLBACK);
+    expect(stoppedByServerMessageOr(errorOfFailedResponse(500, ''), FALLBACK)).toBe(FALLBACK);
+    expect(stoppedByServerMessageOr(new TypeError('Network request failed'), FALLBACK)).toBe(FALLBACK);
+    expect(stoppedByServerMessageOr(null, FALLBACK)).toBe(FALLBACK);
   });
 });

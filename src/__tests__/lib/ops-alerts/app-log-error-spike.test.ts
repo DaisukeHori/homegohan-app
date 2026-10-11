@@ -11,6 +11,7 @@ import {
   APP_LOG_ALERT_COOLDOWN_MINUTES_MIN,
   APP_LOG_ALERT_ERROR_THRESHOLD_MAX,
   APP_LOG_ALERT_ERROR_THRESHOLD_MIN,
+  APP_LOG_CLIENT_ALERT_ERROR_THRESHOLD,
   exceedsErrorThreshold,
   parseErrorCountRows,
   resolveAppLogAlertSettings,
@@ -282,26 +283,38 @@ describe('parseErrorCountRows (#1157)', () => {
       expect(String((err as Error).message)).not.toContain('secret-looking-name');
     }
   });
+
+  it('P-6 (#1493): 例外の文面には、どちらの関数の応答かを書く (既定は app_log_error_counts)', () => {
+    expect(() => parseErrorCountRows('oops')).toThrow('app_log_error_counts の応答が配列ではありません');
+    expect(() => parseErrorCountRows('oops', 'app_log_client_error_counts')).toThrow(
+      'app_log_client_error_counts の応答が配列ではありません',
+    );
+    expect(() =>
+      parseErrorCountRows([{ function_name: null, error_count: -1, total_count: 1 }], 'app_log_client_error_counts'),
+    ).toThrow('app_log_client_error_counts の応答の error_count が 0 以上の整数ではありません');
+  });
 });
 
 describe('resolveAppLogAlertSettings (#1157)', () => {
-  const none = { errorThreshold: undefined, cooldownMinutes: undefined };
+  const none = { errorThreshold: undefined, clientErrorThreshold: undefined, cooldownMinutes: undefined };
 
   it('R-1: 未設定なら既定値 (20 件・60 分)。無視した変数は無い', () => {
-    expect(resolveAppLogAlertSettings(none)).toEqual({ errorThreshold: 20, cooldownMinutes: 60, ignored: [] });
+    expect(resolveAppLogAlertSettings(none)).toEqual({ errorThreshold: 20, clientErrorThreshold: 100, cooldownMinutes: 60, ignored: [] });
   });
 
   it('R-2: 空・空白だけも未設定と同じ', () => {
-    expect(resolveAppLogAlertSettings({ errorThreshold: '', cooldownMinutes: ' \t ' })).toEqual({
+    expect(resolveAppLogAlertSettings({ errorThreshold: '', clientErrorThreshold: undefined, cooldownMinutes: ' \t ' })).toEqual({
       errorThreshold: 20,
+      clientErrorThreshold: 100,
       cooldownMinutes: 60,
       ignored: [],
     });
   });
 
   it('R-3: 10 進の整数なら、前後の空白を除いて使う', () => {
-    expect(resolveAppLogAlertSettings({ errorThreshold: ' 50 ', cooldownMinutes: '120' })).toEqual({
+    expect(resolveAppLogAlertSettings({ errorThreshold: ' 50 ', clientErrorThreshold: undefined, cooldownMinutes: '120' })).toEqual({
       errorThreshold: 50,
+      clientErrorThreshold: 100,
       cooldownMinutes: 120,
       ignored: [],
     });
@@ -313,13 +326,15 @@ describe('resolveAppLogAlertSettings (#1157)', () => {
     // claim_ops_alert が受け付ける範囲 (1 分〜7 日) と同じ
     expect(APP_LOG_ALERT_COOLDOWN_MINUTES_MIN).toBe(1);
     expect(APP_LOG_ALERT_COOLDOWN_MINUTES_MAX).toBe(10080);
-    expect(resolveAppLogAlertSettings({ errorThreshold: '1', cooldownMinutes: '1' })).toEqual({
+    expect(resolveAppLogAlertSettings({ errorThreshold: '1', clientErrorThreshold: undefined, cooldownMinutes: '1' })).toEqual({
       errorThreshold: 1,
+      clientErrorThreshold: 100,
       cooldownMinutes: 1,
       ignored: [],
     });
-    expect(resolveAppLogAlertSettings({ errorThreshold: '100000', cooldownMinutes: '10080' })).toEqual({
+    expect(resolveAppLogAlertSettings({ errorThreshold: '100000', clientErrorThreshold: undefined, cooldownMinutes: '10080' })).toEqual({
       errorThreshold: 100_000,
+      clientErrorThreshold: 100,
       cooldownMinutes: 10080,
       ignored: [],
     });
@@ -339,8 +354,9 @@ describe('resolveAppLogAlertSettings (#1157)', () => {
       ['9999999999999999', '9999999999999999'],
     ];
     for (const [threshold, cooldown] of cases) {
-      expect(resolveAppLogAlertSettings({ errorThreshold: threshold, cooldownMinutes: cooldown }), threshold).toEqual({
+      expect(resolveAppLogAlertSettings({ errorThreshold: threshold, clientErrorThreshold: undefined, cooldownMinutes: cooldown }), threshold).toEqual({
         errorThreshold: 20,
+        clientErrorThreshold: 100,
         cooldownMinutes: 60,
         ignored: ['OPS_ALERT_ERROR_THRESHOLD', 'OPS_ALERT_COOLDOWN_MINUTES'],
       });
@@ -348,13 +364,15 @@ describe('resolveAppLogAlertSettings (#1157)', () => {
   });
 
   it('R-6: 片方だけ不正なら、その片方だけを既定値に戻す', () => {
-    expect(resolveAppLogAlertSettings({ errorThreshold: 'x', cooldownMinutes: '30' })).toEqual({
+    expect(resolveAppLogAlertSettings({ errorThreshold: 'x', clientErrorThreshold: undefined, cooldownMinutes: '30' })).toEqual({
       errorThreshold: 20,
+      clientErrorThreshold: 100,
       cooldownMinutes: 30,
       ignored: ['OPS_ALERT_ERROR_THRESHOLD'],
     });
-    expect(resolveAppLogAlertSettings({ errorThreshold: '40', cooldownMinutes: '0' })).toEqual({
+    expect(resolveAppLogAlertSettings({ errorThreshold: '40', clientErrorThreshold: undefined, cooldownMinutes: '0' })).toEqual({
       errorThreshold: 40,
+      clientErrorThreshold: 100,
       cooldownMinutes: 60,
       ignored: ['OPS_ALERT_COOLDOWN_MINUTES'],
     });
@@ -363,7 +381,40 @@ describe('resolveAppLogAlertSettings (#1157)', () => {
   it('R-7: 既定値そのものが受け付ける範囲に収まっている', () => {
     expect(APP_LOG_ALERT_ERROR_THRESHOLD).toBeGreaterThanOrEqual(APP_LOG_ALERT_ERROR_THRESHOLD_MIN);
     expect(APP_LOG_ALERT_ERROR_THRESHOLD).toBeLessThanOrEqual(APP_LOG_ALERT_ERROR_THRESHOLD_MAX);
+    expect(APP_LOG_CLIENT_ALERT_ERROR_THRESHOLD).toBeGreaterThanOrEqual(APP_LOG_ALERT_ERROR_THRESHOLD_MIN);
+    expect(APP_LOG_CLIENT_ALERT_ERROR_THRESHOLD).toBeLessThanOrEqual(APP_LOG_ALERT_ERROR_THRESHOLD_MAX);
     expect(APP_LOG_ALERT_COOLDOWN_MINUTES).toBeGreaterThanOrEqual(APP_LOG_ALERT_COOLDOWN_MINUTES_MIN);
     expect(APP_LOG_ALERT_COOLDOWN_MINUTES).toBeLessThanOrEqual(APP_LOG_ALERT_COOLDOWN_MINUTES_MAX);
+  });
+  it('R-8 (#1493): クライアントのしきい値 OPS_ALERT_CLIENT_ERROR_THRESHOLD は、サーバーのしきい値とは別に決まる (既定 100 件)', () => {
+    expect(APP_LOG_CLIENT_ALERT_ERROR_THRESHOLD).toBe(100);
+    // サーバーより高い (クライアントの error は端末の都合の失敗も混ざり、1 つの不具合でも画面の数だけ届くため)
+    expect(APP_LOG_CLIENT_ALERT_ERROR_THRESHOLD).toBeGreaterThan(APP_LOG_ALERT_ERROR_THRESHOLD);
+    expect(resolveAppLogAlertSettings({ errorThreshold: '30', clientErrorThreshold: ' 250 ', cooldownMinutes: undefined })).toEqual({
+      errorThreshold: 30,
+      clientErrorThreshold: 250,
+      cooldownMinutes: 60,
+      ignored: [],
+    });
+    // 範囲の端 (1〜100000) は受け付ける
+    expect(resolveAppLogAlertSettings({ ...none, clientErrorThreshold: '1' }).clientErrorThreshold).toBe(1);
+    expect(resolveAppLogAlertSettings({ ...none, clientErrorThreshold: '100000' }).clientErrorThreshold).toBe(100_000);
+  });
+
+  it('R-9 (#1493): クライアントのしきい値だけが不正なら、それだけを既定値 (100) に戻し、その変数の名前を ignored に入れる', () => {
+    for (const bad of ['0', '100001', '-1', '2.5', 'abc', '1e3']) {
+      expect(resolveAppLogAlertSettings({ errorThreshold: '30', clientErrorThreshold: bad, cooldownMinutes: '90' }), bad).toEqual({
+        errorThreshold: 30,
+        clientErrorThreshold: 100,
+        cooldownMinutes: 90,
+        ignored: ['OPS_ALERT_CLIENT_ERROR_THRESHOLD'],
+      });
+    }
+    // 3 つとも不正なら、3 つとも名前が並ぶ
+    expect(resolveAppLogAlertSettings({ errorThreshold: 'x', clientErrorThreshold: 'y', cooldownMinutes: 'z' }).ignored).toEqual([
+      'OPS_ALERT_ERROR_THRESHOLD',
+      'OPS_ALERT_CLIENT_ERROR_THRESHOLD',
+      'OPS_ALERT_COOLDOWN_MINUTES',
+    ]);
   });
 });

@@ -7,6 +7,9 @@
  *   - GET は、各行に read_only (使われていない key なら true) と note (画面に出す説明。ほかは null) を付けて返す
  *   - PUT は、その key を書き換えず 409 SETTING_READ_ONLY を返す
  * 行そのものは消さない (本番のデータを消すことになるため)。
+ *
+ * 列の名前は DB のまま (snake_case) で返す: key / value / description / updated_at (#1486。モバイルの画面もこの名前で読む)。
+ * PUT の description は省略可。送られたら保存する (文字列は前後の空白を除き、空なら null。null は説明を消す)。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
@@ -37,7 +40,7 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from('system_settings')
-      .select('key, value, updated_at')
+      .select('key, value, description, updated_at')
       .order('key', { ascending: true });
 
     if (error) {
@@ -65,12 +68,18 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'リクエストボディが不正です' } }, { status: 400 });
     }
 
-    const { key, value } = (body as Record<string, unknown>) ?? {};
+    const { key, value, description } = (body as Record<string, unknown>) ?? {};
     if (!key || typeof key !== 'string' || key.trim() === '') {
       return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'key は必須です' } }, { status: 400 });
     }
     if (value === undefined) {
       return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'value は必須です' } }, { status: 400 });
+    }
+    if (description !== undefined && description !== null && typeof description !== 'string') {
+      return NextResponse.json(
+        { error: { code: 'VALIDATION_ERROR', message: 'description は文字列か null にしてください' } },
+        { status: 400 },
+      );
     }
     if (retiredSettingNoteOf(key.trim()) !== null) {
       return NextResponse.json(
@@ -82,7 +91,14 @@ export async function PUT(request: NextRequest) {
     const supabase = await createClient();
     const { error } = await supabase
       .from('system_settings')
-      .upsert({ key: key.trim(), value, updated_by: actor.id, updated_at: new Date().toISOString() });
+      .upsert({
+        key: key.trim(),
+        value,
+        // description は送られたときだけ書く (省略なら、いまの説明を残す)
+        ...(description === undefined ? {} : { description: typeof description === 'string' ? description.trim() || null : null }),
+        updated_by: actor.id,
+        updated_at: new Date().toISOString(),
+      });
 
     if (error) {
       return internalError('PUT /api/super-admin/settings', error, { userId: actor.id }, { shape: 'nested' });
