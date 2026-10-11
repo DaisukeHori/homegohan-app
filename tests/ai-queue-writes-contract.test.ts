@@ -9,7 +9,8 @@
  *   1. 画面 ('use client' のファイル)・モバイル (apps/mobile) は、2 つの表に書かない
  *   2. サーバーのコードの書き込み (.from('<表>').insert / update / upsert / delete) の受け手は、
  *      queueDb (= getAiQueueWriter()) か、service role のクライアントを受け取る決まった箇所 (ALLOWED_RECEIVERS) だけ
- *   3. キューの関数 (enqueueMealImageJobs / cancelPendingMealImageJobs / markWeeklyMenuRequestFailed) の呼び出しは、
+ *   3. キューの関数 (enqueueMealImageJobs / cancelPendingMealImageJobs / markWeeklyMenuRequestFailed /
+ *      markWeeklyMenuRequestStaleIfUnchanged) の呼び出しは、
  *      supabase に queueDb を渡す。取り消し (cancelPendingMealImageJobs) は userId で本人の行に絞る
  *   4. queueDb は getAiQueueWriter() だけから作る (Edge Function は service role の鍵で作る)
  */
@@ -79,7 +80,12 @@ function dynamicFromOfQueue(source: string): boolean {
   return new RegExp(`\\.from\\(\\s*\`[^\`]*(${TABLE_ALTERNATION})`).test(text);
 }
 
-const QUEUE_HELPERS = ['enqueueMealImageJobs', 'cancelPendingMealImageJobs', 'markWeeklyMenuRequestFailed'] as const;
+const QUEUE_HELPERS = [
+  'enqueueMealImageJobs',
+  'cancelPendingMealImageJobs',
+  'markWeeklyMenuRequestFailed',
+  'markWeeklyMenuRequestStaleIfUnchanged',
+] as const;
 const mentionsHelper = (file: string) => QUEUE_HELPERS.some((helper) => sourceOf(file).includes(helper));
 
 /** キューの関数の呼び出し (引数の括弧の中の文字)。定義 (function 名) と import は除く */
@@ -109,6 +115,11 @@ const ALLOWED_RECEIVERS: Record<string, { receiver: string; serviceRoleEvidence:
   // キューの関数の本体。呼び出し側が queueDb を渡すことは、下の「キューの関数の呼び出し」が確かめる
   'lib/meal-image-jobs.ts': { receiver: 'params.supabase', serviceRoleEvidence: /export async function cancelPendingMealImageJobs/ },
   'src/lib/generate-menu-v4-retry.ts': { receiver: 'params.supabase', serviceRoleEvidence: /export async function markWeeklyMenuRequestFailed/ },
+  // 止まった行を failed にする比較つきの更新 (#1507。weekly/status・weekly/pending・meal/pending・weekly/cleanup が呼ぶ)
+  'src/lib/weekly-menu-request-stale.ts': {
+    receiver: 'params.supabase',
+    serviceRoleEvidence: /export async function markWeeklyMenuRequestStaleIfUnchanged/,
+  },
   // Vercel Cron。service role の鍵でクライアントを作る
   'src/app/api/cron/process-menu-queue/route.ts': {
     receiver: 'supabase',
