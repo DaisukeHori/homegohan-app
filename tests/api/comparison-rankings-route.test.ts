@@ -23,6 +23,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MetricDefinition, SegmentDefinition } from '@/types/comparison';
 import { calculateJstPeriod } from '../../supabase/functions/_shared/jst-date.ts';
+import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
 
 // ── supabase/server モック ────────────────────────────────────────────────────
 
@@ -559,15 +560,22 @@ describe('GET /api/comparison/rankings: エラー処理 (従来どおり)', () =
     expect(json.userMetrics).toEqual(userMetricRows);
   });
 
-  it('クエリが例外を投げたら、ログに出して 500 と error メッセージを返す', async () => {
+  it('クエリが例外を投げたら、ログに出して 500 と汎用メッセージを返す (例外の文面は本文に出さない。#1172)', async () => {
     const failure = new Error('connection reset');
     givenResults({ user_metrics: { rejectWith: failure } });
 
     const res = await GET(makeRequest());
+    const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: 'connection reset' });
-    expect(errorSpy).toHaveBeenCalledWith('Comparison API error:', failure);
+    expect(JSON.parse(text)).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
+    expect(text).not.toContain('connection reset');
+    // 元の例外は、route の名前でサーバーのログに残る (internalError() → db-logger)
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[GET /api/comparison/rankings]'),
+      failure,
+      expect.anything(),
+    );
   });
 
   it('複数のクエリが例外を投げても 500 を 1 回返すだけで、未処理の rejection を残さない', async () => {
@@ -580,7 +588,7 @@ describe('GET /api/comparison/rankings: エラー処理 (従来どおり)', () =
     const json = await res.json();
 
     expect(res.status).toBe(500);
-    expect(['stats failed', 'badges failed']).toContain(json.error);
+    expect(json).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
 
     // 2 つ目の reject が未処理のまま残らないこと (残ると Vitest が unhandled rejection として失敗にする)。
     // テストが終わる前に、残りのタイマーを消化させておく。

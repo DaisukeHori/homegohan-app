@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { toShoppingListItem } from '@/lib/converter';
+import { internalError } from '@/lib/api/errors';
 
 export async function PATCH(
   request: Request,
@@ -56,7 +57,7 @@ export async function PATCH(
 
     return NextResponse.json({ success: true, item: toShoppingListItem(data) });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('PATCH /api/shopping-list/[id]', error, { userId: user.id });
   }
 }
 
@@ -73,7 +74,7 @@ export async function DELETE(
     .delete()
     .eq('id', params.id);
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return internalError('DELETE /api/shopping-list/[id]', error, { userId: user.id });
 
   return NextResponse.json({ success: true });
 }

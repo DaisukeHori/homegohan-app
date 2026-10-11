@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createActivitySchema } from '@/lib/admin/sales-schemas';
+import { internalError } from '@/lib/api/errors';
 
 type RouteContext = { params: { id: string } };
 
@@ -25,10 +26,7 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
       .order('created_at', { ascending: false });
 
     if (error) {
-      return NextResponse.json(
-        { error: { code: 'DB_ERROR', message: error.message } },
-        { status: 500 },
-      );
+      return internalError('GET /api/admin/sales/leads/[id]/activities', error, {}, { shape: 'nested' });
     }
 
     return NextResponse.json({ data: data ?? [] });
@@ -95,10 +93,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       .single();
 
     if (activityError || !activity) {
-      return NextResponse.json(
-        { error: { code: 'DB_ERROR', message: activityError?.message ?? 'Failed to create activity' } },
-        { status: 500 },
-      );
+      return internalError('POST /api/admin/sales/leads/[id]/activities', activityError, { userId: currentUser.id }, { shape: 'nested' });
     }
 
     // リードの updated_at を更新

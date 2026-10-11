@@ -3,7 +3,6 @@ import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
 import { getSeasonalIngredientsForRange } from '@/lib/seasonal-ingredients';
 import { getEventsForRange } from '@/lib/seasonal-events';
-import { createLogger } from '@/lib/db-logger';
 import type {
   TargetSlot,
   ExistingMenuContext,
@@ -18,6 +17,7 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 const VALID_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
 
@@ -147,7 +147,7 @@ export async function POST(request: Request) {
         .eq('user_daily_meals.user_id', user.id);
 
       if (plannedMealsError) {
-        return NextResponse.json({ error: plannedMealsError.message }, { status: 500 });
+        return internalError('POST /api/ai/menu/v5/generate', plannedMealsError, { userId: user.id });
       }
 
       const foundIds = new Set((plannedMeals || []).map((meal) => meal.id));
@@ -300,7 +300,7 @@ export async function POST(request: Request) {
     if (insertError || !requestData?.id) {
       // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
       await refundAiUsage(user.id, 'menu_generation', aiUsage);
-      return NextResponse.json({ error: insertError?.message || 'Failed to create request' }, { status: 500 });
+      return internalError('POST /api/ai/menu/v5/generate', insertError, { userId: user.id });
     }
 
     // generated_data に requestId を埋め込む
@@ -320,11 +320,6 @@ export async function POST(request: Request) {
       { status: 202 },
     );
   } catch (error: any) {
-    console.error('V5 API error', error);
-    const logger = _userId
-      ? createLogger('api/ai/menu/v5/generate').withUser(_userId)
-      : createLogger('api/ai/menu/v5/generate');
-    logger.error('V5 献立生成でエラーが発生しました', error);
-    return NextResponse.json({ error: error.message || 'Unknown error' }, { status: 500 });
+    return internalError('POST /api/ai/menu/v5/generate', error, { userId: _userId });
   }
 }

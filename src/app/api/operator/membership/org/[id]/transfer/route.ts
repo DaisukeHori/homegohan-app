@@ -86,14 +86,17 @@ export async function POST(
     });
 
     if (rpcError) {
-      const code = rpcError.message.includes('TARGET_NOT_IN_ORG')
-        ? 'TARGET_NOT_IN_ORG'
-        : rpcError.message.includes('NOT_OPERATOR')
-          ? 'FORBIDDEN'
-          : 'INTERNAL_ERROR';
-      // 想定外の失敗 (DB の障害など) は、生のエラー文を本文に出さず、構造化ログに残して 500 にする (#1172)
-      if (code === 'INTERNAL_ERROR') return internalError(ROUTE_NAME, rpcError, { userId: operatorId }, { shape: 'nested' });
-      return NextResponse.json({ error: { code, message: rpcError.message } }, { status: code === 'FORBIDDEN' ? 403 : 400 });
+      // RPC の生のエラー文は本文に出さない (#1172)。分かるものは固定の文、それ以外は汎用の 500 にして構造化ログに残す
+      if (rpcError.message.includes('TARGET_NOT_IN_ORG')) {
+        return NextResponse.json(
+          { error: { code: 'TARGET_NOT_IN_ORG', message: '譲渡先のユーザーはこの組織に所属していません' } },
+          { status: 400 },
+        );
+      }
+      if (rpcError.message.includes('NOT_OPERATOR')) {
+        return NextResponse.json({ error: { code: 'FORBIDDEN', message: '権限がありません' } }, { status: 403 });
+      }
+      return internalError(ROUTE_NAME, rpcError, { userId: operatorId }, { shape: 'nested' });
     }
 
     // 通知メール (best-effort)。譲渡はすでに完了しているので、失敗しても 200 を返し、ログに残す。

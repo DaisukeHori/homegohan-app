@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
 import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
+import { internalError } from '@/lib/api/errors';
 
 // #1203: 復元（スナップショットの書き戻し）が途中で打ち切られないよう、実行時間の上限を明示する。
 // 復元は 1 リクエストあたり DB 2 往復前後だが、failed 確定後に復元へ入る順序のため余裕を持たせる。
@@ -28,7 +29,7 @@ export async function POST() {
     .lt('created_at', fiveMinutesAgo);
 
   if (fetchError) {
-    return NextResponse.json({ error: fetchError.message }, { status: 500 });
+    return internalError('POST /api/ai/menu/weekly/cleanup', fetchError, { userId: user.id });
   }
 
   if (!stuckRequests || stuckRequests.length === 0) {
@@ -46,7 +47,7 @@ export async function POST() {
     .eq('user_id', user.id);
 
   if (updateError) {
-    return NextResponse.json({ error: updateError.message }, { status: 500 });
+    return internalError('POST /api/ai/menu/weekly/cleanup', updateError, { userId: user.id });
   }
 
   // #1042: waitUntil 消失等で生成コールバックが実行されず stuck になったリクエストについて、
@@ -97,7 +98,7 @@ export async function GET() {
     .limit(10);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/ai/menu/weekly/cleanup', error, { userId: user.id });
   }
 
   return NextResponse.json({ 

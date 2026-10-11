@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { calculateNutritionTargets } from '@homegohan/core'
 import { buildNutritionCalculatorInput } from '@/lib/build-nutrition-input'
 import { getHandsonTourStatusInternal } from '@/lib/handson-tour/getStatus'
+import { internalError } from '@/lib/api/errors'
 
 /**
  * オンボーディング完了API (OB-API-02)
@@ -32,8 +33,7 @@ export async function POST() {
       .maybeSingle()
 
     if (fetchError) {
-      console.error('Profile fetch error:', fetchError)
-      return NextResponse.json({ error: fetchError.message }, { status: 500 })
+      return internalError('POST /api/onboarding/complete', fetchError, { userId: user.id })
     }
 
     let profile = fetchedProfile
@@ -54,11 +54,7 @@ export async function POST() {
         .single()
 
       if (upsertError || !upsertedProfile) {
-        console.error('Profile upsert error:', upsertError)
-        return NextResponse.json(
-          { error: upsertError?.message ?? 'Failed to initialize profile' },
-          { status: 500 },
-        )
+        return internalError('POST /api/onboarding/complete', upsertError, { userId: user.id })
       }
 
       profile = upsertedProfile
@@ -135,8 +131,7 @@ export async function POST() {
       .eq('id', user.id)
 
     if (updateError) {
-      console.error('Onboarding complete error:', updateError)
-      return NextResponse.json({ error: updateError.message }, { status: 500 })
+      return internalError('POST /api/onboarding/complete', updateError, { userId: user.id })
     }
 
     // 栄養目標を計算・保存（共通モジュール使用）
@@ -190,8 +185,6 @@ export async function POST() {
 
     return NextResponse.json({ success: true, next_route: nextRoute })
   } catch (error: unknown) {
-    console.error('API Error:', error)
-    const message = error instanceof Error ? error.message : 'Unknown error'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return internalError('POST /api/onboarding/complete', error)
   }
 }

@@ -17,6 +17,7 @@ import { aiDailyLimitSkippedField, consumeAiUsage, type AiUsageResult } from '@/
 import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { createLogger } from '@/lib/db-logger';
 import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
+import { internalError } from '@/lib/api/errors';
 
 /**
  * 特定の食事を取得（planned_mealsベース）
@@ -48,7 +49,7 @@ export async function GET(
       .single();
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return internalError('GET /api/meals/[id]', error, { userId: user.id });
     }
 
     if (!data) {
@@ -57,7 +58,7 @@ export async function GET(
 
     return NextResponse.json(data);
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/meals/[id]', error);
   }
 }
 
@@ -194,7 +195,7 @@ export async function PATCH(
       .single();
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return internalError('PATCH /api/meals/[id]', error, { userId: user.id, requestId: requestId ?? undefined });
     }
 
     let imageGenerationThrottled = false;
@@ -260,7 +261,7 @@ export async function PATCH(
       },
     );
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('PATCH /api/meals/[id]', error);
   }
 }
 
@@ -309,11 +310,11 @@ export async function DELETE(
       .eq('id', params.id);
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return internalError('DELETE /api/meals/[id]', error, { userId: user.id });
     }
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('DELETE /api/meals/[id]', error);
   }
 }

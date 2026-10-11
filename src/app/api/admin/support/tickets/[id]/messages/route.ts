@@ -19,6 +19,7 @@ import { recordAdminAudit } from '@/lib/admin/audit';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { sendTicketReplyEmail } from '@/lib/admin/send-ticket-reply-email';
 import type { ReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
+import { internalError } from '@/lib/api/errors';
 
 type RouteContext = { params: { id: string } };
 
@@ -43,10 +44,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
 
     const { data, error } = await query;
     if (error) {
-      return NextResponse.json(
-        { error: { code: 'DB_ERROR', message: error.message } },
-        { status: 500 },
-      );
+      return internalError('GET /api/admin/support/tickets/[id]/messages', error, { userId: currentUser.id }, { shape: 'nested' });
     }
 
     const messages = data ?? [];
@@ -163,10 +161,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       .single();
 
     if (msgError || !message) {
-      return NextResponse.json(
-        { error: { code: 'DB_ERROR', message: msgError?.message ?? 'Failed to create message' } },
-        { status: 500 },
-      );
+      return internalError('POST /api/admin/support/tickets/[id]/messages', msgError, { userId: currentUser.id }, { shape: 'nested' });
     }
 
     // 内部メモ (is_internal=true) は顧客に見せないため、メールにしない (email は応答に含めない)

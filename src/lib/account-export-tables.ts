@@ -14,6 +14,8 @@
  * - 親テーブル経由の子テーブル (planned_meals など) は、親の user_id で絞る。
  */
 
+import { weeklyMenuRequestErrorMessageForResponse } from './weekly-menu-request-error';
+
 export type ExportRow = Record<string, unknown>;
 
 /** 行の絞り込み方 */
@@ -65,6 +67,61 @@ function redactSupportMessageSender(row: ExportRow, ctx: { userId: string }): Ex
   return { ...rest, sender: senderId === ctx.userId ? 'user' : 'support' };
 }
 
+/**
+ * 献立生成のリクエストの失敗の文 (error_message) には、Edge Function が捕まえた例外の文面
+ * (DB の生のエラー文・Edge Function の応答の本文) がそのまま入っていることがある。
+ * 状態の確認の API (GET /api/ai/menu/weekly/status) と同じく、こちらで書いた文 (同意・stale・中止・固定の文) だけを
+ * そのまま出し、それ以外は固定の文にする (#1172)
+ */
+function redactWeeklyMenuRequestErrorMessage(row: ExportRow): ExportRow {
+  if (!('error_message' in row)) return row;
+  return { ...row, error_message: weeklyMenuRequestErrorMessageForResponse(row.error_message) };
+}
+
+/**
+ * 書き出しで、保存された失敗の文の代わりに出す固定の文 (#1172)。
+ * 画面が見分ける文 (同意の文など) を持たない列 (ai_action_logs.result.error・recipe_requests.error_message) に使う
+ */
+export const EXPORT_STORED_FAILURE_MESSAGE = '処理に失敗しました';
+
+/** 保存された失敗の文を、書き出しに入れるときの値。空 (null・undefined・空文字) はそのまま、それ以外は固定の文 */
+function storedFailureTextForExport(stored: unknown): unknown {
+  if (stored === null || stored === undefined || stored === '') return stored;
+  return EXPORT_STORED_FAILURE_MESSAGE;
+}
+
+/**
+ * AI 相談のアクションの記録の結果 (ai_action_logs.result) を、書き出しに入れるときの形 (#1172)。
+ *
+ * 結果は runConsultationAction (src/lib/ai/consultation-action-executor.ts) が作り、execute / messages の route が保存する。
+ * #1172 の前は、DB 操作の失敗の生のエラー文 (テーブル名・列名・制約名・衝突した値) を result.error にそのまま入れていて、
+ * その行が残っている。いまの書き手が入れる文はこちらで書いた文だが、画面が見分ける文は無いので、
+ * 空でない error はすべて固定の文にする (前の行と見分けない)。
+ *   - null・undefined は null
+ *   - オブジェクトでない値 (文字列・数・配列。書き手は書かない) は、中身を確かめずに null
+ *   - オブジェクトは、error だけを固定の文にし、ほかの項目 (成功の itemId / created など) はそのまま
+ */
+function aiActionLogResultForExport(result: unknown): Record<string, unknown> | null {
+  if (result === null || result === undefined || typeof result !== 'object' || Array.isArray(result)) return null;
+  const record = result as Record<string, unknown>;
+  if (!('error' in record)) return record;
+  return { ...record, error: storedFailureTextForExport(record.error) };
+}
+
+function redactAiActionLogResult(row: ExportRow): ExportRow {
+  if (!('result' in row)) return row;
+  return { ...row, result: aiActionLogResultForExport(row.result) };
+}
+
+/**
+ * レシピのリクエストの失敗の文 (recipe_requests.error_message)。このリポジトリには書き手が無いが、
+ * 列は失敗の文を入れるためのもので、中身を確かめられないので、空でなければ固定の文にする (#1172)
+ */
+function redactRecipeRequestErrorMessage(row: ExportRow): ExportRow {
+  if (!('error_message' in row)) return row;
+  return { ...row, error_message: storedFailureTextForExport(row.error_message) };
+}
+
 /** 出力するテーブル (この順で JSON に出る) */
 export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
   // ── プロフィール・設定 ───────────────────────────────────────────
@@ -105,6 +162,7 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
     columns:
       'id,user_id,start_date,status,prompt,constraints,inventory_image_url,detected_ingredients,' +
       'mode,target_date,target_meal_type,target_meal_id,error_message,created_at,updated_at',
+    transform: redactWeeklyMenuRequestErrorMessage,
   },
   { table: 'pantry_items', scope: self('user_id') },
   { table: 'shopping_lists', scope: self('user_id') },
@@ -124,7 +182,7 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
   { table: 'recipe_likes', scope: self('user_id'), orderBy: ['user_id', 'recipe_id'] },
   { table: 'recipe_comments', scope: self('user_id') },
   { table: 'recipe_flags', scope: self('reporter_id'), omit: ['reviewed_by'] },
-  { table: 'recipe_requests', scope: self('user_id') },
+  { table: 'recipe_requests', scope: self('user_id'), transform: redactRecipeRequestErrorMessage },
 
   // ── 健康 ────────────────────────────────────────────────────────
   { table: 'health_records', scope: self('user_id') },
@@ -148,7 +206,12 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
     // 会話は時系列で読めるように。id は同時刻の行の順序を安定させる (ページングのため)
     orderBy: ['created_at', 'id'],
   },
-  { table: 'ai_action_logs', scope: viaParent('ai_consultation_sessions', 'session_id') },
+  {
+    table: 'ai_action_logs',
+    scope: viaParent('ai_consultation_sessions', 'session_id'),
+    // 結果 (result) の失敗の文 (error) には、#1172 の前に書かれた DB の生のエラー文が入っていることがある
+    transform: redactAiActionLogResult,
+  },
 
   // ── バッジ・チャレンジ ──────────────────────────────────────────
   {

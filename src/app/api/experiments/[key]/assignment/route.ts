@@ -29,6 +29,7 @@ import {
   InvalidVariantsError,
   getOrAssignVariant,
 } from '@/lib/experiments/assignment';
+import { internalError } from '@/lib/api/errors';
 
 type Params = { params: { key: string } };
 
@@ -104,11 +105,7 @@ export async function GET(_request: Request, { params }: Params) {
       });
     }
     if (err instanceof InvalidVariantsError) {
-      console.error('[api/experiments/[key]/assignment] invalid variants:', err.message);
-      return NextResponse.json(
-        { error: { code: 'OP_EXPERIMENT_INVALID_VARIANTS', message: err.message } },
-        { status: 500 },
-      );
+      return internalError('GET /api/experiments/[key]/assignment', err, { userId }, { shape: 'nested' });
     }
     console.error(
       '[api/experiments/[key]/assignment] assignment error:',

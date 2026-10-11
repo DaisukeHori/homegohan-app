@@ -101,10 +101,9 @@ export async function POST(request: Request) {
       .single();
 
     if (insertError || !requestData?.id) {
-      console.error('Failed to create request record:', insertError);
       // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
       await refundAiUsage(user.id, 'menu_generation', aiUsage);
-      return NextResponse.json({ error: insertError?.message || 'Failed to create request' }, { status: 500 });
+      return internalError('POST /api/ai/menu/meal/regenerate', insertError, { userId: user.id });
     }
 
     // 4. target_slotsを生成（再生成用: plannedMealId付き）

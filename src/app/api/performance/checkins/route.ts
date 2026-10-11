@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { toPerformanceCheckin, fromPerformanceCheckin, toCheckinAverages } from '@/lib/converter'
 import { RECORD_DATE_PATTERN } from '@/lib/health-payloads'
 import { sanitizePerformanceCheckinPayload } from '@/lib/performance-payloads'
+import { internalError } from '@/lib/api/errors'
 
 /** 期間の指定が無いときに返す、直近の日数 (JST の今日から何日前までか) */
 const DEFAULT_CHECKIN_LOOKBACK_DAYS = 30
@@ -42,8 +43,7 @@ export async function GET(request: NextRequest) {
       })
 
       if (error) {
-        console.error('Checkin averages error:', error)
-        return NextResponse.json({ error: error.message }, { status: 500 })
+        return internalError('GET /api/performance/checkins', error, { userId: user.id })
       }
 
       // RPC returns a single row
@@ -64,8 +64,7 @@ export async function GET(request: NextRequest) {
         .maybeSingle()
 
       if (error) {
-        console.error('Checkin fetch error:', error)
-        return NextResponse.json({ error: error.message }, { status: 500 })
+        return internalError('GET /api/performance/checkins', error, { userId: user.id })
       }
 
       return NextResponse.json({
@@ -96,16 +95,14 @@ export async function GET(request: NextRequest) {
     const { data, error } = await query.limit(100)
 
     if (error) {
-      console.error('Checkins fetch error:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return internalError('GET /api/performance/checkins', error, { userId: user.id })
     }
 
     return NextResponse.json({
       checkins: data.map(toPerformanceCheckin),
     })
   } catch (error: any) {
-    console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return internalError('GET /api/performance/checkins', error)
   }
 }
 
@@ -154,8 +151,7 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (error) {
-      console.error('Checkin upsert error:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return internalError('POST /api/performance/checkins', error, { userId: user.id })
     }
 
     // 体重が更新された場合、user_profiles.weightも更新
@@ -174,7 +170,6 @@ export async function POST(request: NextRequest) {
       checkin: toPerformanceCheckin(data),
     })
   } catch (error: any) {
-    console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return internalError('POST /api/performance/checkins', error)
   }
 }

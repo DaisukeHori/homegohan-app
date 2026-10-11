@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
@@ -310,8 +311,7 @@ export async function POST(request: Request) {
       cacheId
     });
   } catch (error: any) {
-    console.error('Nutrition feedback error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/nutrition/feedback', error);
   }
 }
 
@@ -380,7 +380,6 @@ export async function GET(request: Request) {
       cacheId: data.id
     });
   } catch (error: any) {
-    console.error('Nutrition feedback GET error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/ai/nutrition/feedback', error);
   }
 }

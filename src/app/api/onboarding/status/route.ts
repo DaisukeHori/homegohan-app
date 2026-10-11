@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { internalError } from '@/lib/api/errors'
 
 // オンボーディング状態取得API (OB-API-03)
 export async function GET() {
@@ -18,7 +19,7 @@ export async function GET() {
       .maybeSingle()
 
     if (fetchError) {
-      return NextResponse.json({ error: fetchError.message }, { status: 500 })
+      return internalError('GET /api/onboarding/status', fetchError, { userId: user.id })
     }
 
     // 状態判定
@@ -48,8 +49,7 @@ export async function GET() {
 
     return NextResponse.json(response)
   } catch (error: any) {
-    console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return internalError('GET /api/onboarding/status', error)
   }
 }
 
@@ -74,12 +74,11 @@ export async function DELETE() {
       .eq('id', user.id)
 
     if (updateError) {
-      return NextResponse.json({ error: updateError.message }, { status: 500 })
+      return internalError('DELETE /api/onboarding/status', updateError, { userId: user.id })
     }
 
     return NextResponse.json({ success: true })
   } catch (error: any) {
-    console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return internalError('DELETE /api/onboarding/status', error)
   }
 }

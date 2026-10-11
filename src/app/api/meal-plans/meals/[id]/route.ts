@@ -17,6 +17,7 @@ import { aiDailyLimitSkippedField, consumeAiUsage, type AiUsageResult } from '@/
 import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { createLogger } from '@/lib/db-logger';
 import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
+import { internalError } from '@/lib/api/errors';
 
 export async function PATCH(
   request: Request,
@@ -213,7 +214,7 @@ export async function PATCH(
       ...aiDailyLimitSkippedField(imageUsage),
     });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('PATCH /api/meal-plans/meals/[id]', error, { userId: user.id });
   }
 }
 
@@ -244,6 +245,6 @@ export async function DELETE(
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('DELETE /api/meal-plans/meals/[id]', error, { userId: user.id });
   }
 }

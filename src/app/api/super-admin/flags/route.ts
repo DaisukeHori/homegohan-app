@@ -11,6 +11,7 @@ import { createLogger } from '@/lib/db-logger';
 import { invalidateFeatureFlag } from '@/lib/feature-flags';
 import { CreateFeatureFlagSchema } from '@/lib/super-admin/flags-schemas';
 import { countActiveUsersForFlags } from '@/lib/super-admin/flag-active-users';
+import { internalError } from '@/lib/api/errors';
 
 export async function GET() {
   try {
@@ -25,7 +26,7 @@ export async function GET() {
       .order('created_at', { ascending: true });
 
     if (error) {
-      return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
+      return internalError('GET /api/super-admin/flags', error, { userId: user.id }, { shape: 'nested' });
     }
 
     // #1148: active_user_count は、アプリの判定 (evaluateFlag) を全ユーザーに実行して数える。
@@ -63,8 +64,7 @@ export async function GET() {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('GET /api/super-admin/flags', err, {}, { shape: 'nested' });
   }
 }
 
@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
           { status: 409 },
         );
       }
-      return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: insertError.message } }, { status: 500 });
+      return internalError('POST /api/super-admin/flags', insertError, { userId: user.id }, { shape: 'nested' });
     }
 
     // feature_packages に新しいフラグキーを追加 (basic パッケージへ append)。
@@ -152,7 +152,6 @@ export async function POST(request: NextRequest) {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('POST /api/super-admin/flags', err, {}, { shape: 'nested' });
   }
 }
