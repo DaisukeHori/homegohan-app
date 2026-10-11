@@ -1,13 +1,18 @@
 export {
   DEFAULT_MEAL_IMAGE_MODEL,
+  MEAL_IMAGE_SKIPPED_ERRORS,
   buildDishImagePrompt,
   buildDishImageSubjectHash,
   buildMealImageIdempotencyKey,
   deriveMealCoverImage,
+  isMealImageSkippedError,
+  markDishImagesSkipped,
+  needsImageRetry,
   reconcileDishImages,
   buildPhotoDishList,
   type MealImageDish,
   type MealImageJobSeed,
+  type MealImageSkipReason,
   type ReconcileDishImagesParams,
   type ReconcileDishImagesResult,
 } from '../supabase/functions/_shared/meal-image';

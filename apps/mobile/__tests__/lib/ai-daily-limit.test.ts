@@ -27,7 +27,12 @@ jest.mock('@homegohan/core', () => ({
   })),
 }));
 
-import { AiDailyLimitError, aiDailyLimitErrorOf, isAiDailyLimitError } from '../../src/lib/ai-daily-limit';
+import {
+  AI_AUTO_SAFETY_CAP_MESSAGE,
+  AiDailyLimitError,
+  aiDailyLimitErrorOf,
+  isAiDailyLimitError,
+} from '../../src/lib/ai-daily-limit';
 import { errorOfFailedResponse } from '../../src/lib/failed-response';
 import { isAiConsentRequiredError } from '../../src/lib/ai-consent';
 import { getApiErrorMessage } from '../../src/lib/api-error';
@@ -138,5 +143,29 @@ describe('getApi(): 上限の Error を固定の文に置き換えて投げ直�
     const { api, inner } = loadApi();
     inner.post.mockResolvedValue({ ok: true });
     await expect(api.post('/api/ai/x', {})).resolves.toEqual({ ok: true });
+  });
+});
+
+describe('#1487 上限に数えない機能の安全弁で止められた (栄養士のコメントの自動の取得)', () => {
+  const safetyCapError = () =>
+    new Error(
+      `HTTP 429 Too Many Requests: ${JSON.stringify({
+        error: '本文の文',
+        code: 'AI_DAILY_LIMIT',
+        safetyCap: true,
+        retryAfter: 3600,
+      })}`,
+    );
+
+  it('回数を出さない固定の文 (Web と同じ定数) にする', () => {
+    const error = aiDailyLimitErrorOf(safetyCapError());
+    expect(isAiDailyLimitError(error)).toBe(true);
+    expect(error?.message).toBe(AI_AUTO_SAFETY_CAP_MESSAGE);
+    expect(error?.message).not.toMatch(/\d+ 回/);
+    expect(getApiErrorMessage(error, 'fallback')).toBe(AI_AUTO_SAFETY_CAP_MESSAGE);
+  });
+
+  it('古い形 (safetyCap が無く limit がある) は、今までどおり回数つきの文', () => {
+    expect(aiDailyLimitErrorOf(limitError())?.message).toBe(LIMIT_MESSAGE);
   });
 });

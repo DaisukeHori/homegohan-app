@@ -3,6 +3,7 @@ import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { isCalendarDate, sundayWeekRange } from '@/lib/jst-day-ranges';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
+import { weeklyMenuRequestStaleBefore } from '@/lib/weekly-menu-request-stale';
 import { WEEKLY_MENU_REQUEST_STALE_MESSAGE } from '@/lib/weekly-menu-request-error';
 
 // 単一食事の生成中リクエストがあるか確認
@@ -15,8 +16,8 @@ export async function GET(request: Request) {
   const weekStartDate = searchParams.get('date'); // 週の開始日
   const mealType = searchParams.get('mealType');
   const now = new Date();
-  const staleMinutes = 20;
-  const staleBefore = new Date(now.getTime() - staleMinutes * 60 * 1000);
+  // しきい値は止まった行の判定をするすべての場所で共有する (src/lib/weekly-menu-request-stale.ts。#1494)
+  const staleBefore = weeklyMenuRequestStaleBefore(now.getTime());
 
   try {
     // 週の日付範囲を計算

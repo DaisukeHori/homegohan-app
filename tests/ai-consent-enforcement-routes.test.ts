@@ -37,7 +37,11 @@ import {
 import { ENFORCED_ROUTES } from './helpers/ai-consent-enforced-paths';
 import type { HttpMethod } from './helpers/ai-reach';
 import { AI_QUEUE_TABLES } from '../src/lib/ai/ai-queue-tables';
-import { aiDailyLimitMessage } from '../supabase/functions/_shared/ai-daily-limit';
+import {
+  AI_AUTO_SAFETY_CAP_MESSAGE,
+  aiDailyLimitMessage,
+  aiDailyLimitMessageOfBody,
+} from '../supabase/functions/_shared/ai-daily-limit';
 import { isMeteredAiFeature } from '../supabase/functions/_shared/ai-usage-core';
 import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
 
@@ -1002,7 +1006,12 @@ describe.each(ROUTE_CASES.filter((c) => c.unmetered))('画面を開くと自動�
     const onLimit = usageOf(c)!.onLimit;
     if (onLimit === 'reject') {
       expect(res.status).toBe(429);
-      expect(body).toMatchObject({ code: 'AI_DAILY_LIMIT', limit: CONSUME_UNMETERED_CAPPED_ROW.limit });
+      // 安全弁の回数 (30) は明示の上限 (10 回) と別のもの。回数を出さない固定の文にし、本文に limit を入れない (#1487)
+      expect(body).toMatchObject({ code: 'AI_DAILY_LIMIT', safetyCap: true, error: AI_AUTO_SAFETY_CAP_MESSAGE });
+      expect(body).not.toHaveProperty('limit');
+      expect(String(body.error)).not.toContain(String(CONSUME_UNMETERED_CAPPED_ROW.limit));
+      // Web・モバイルが本文から作る文も同じ固定の文 (aiDailyLimitMessageOfBody は両方が使う)
+      expect(aiDailyLimitMessageOfBody(body)).toBe(AI_AUTO_SAFETY_CAP_MESSAGE);
     } else {
       expect(onLimit).toBe('skipAi');
       expect(res.status).toBe(200);

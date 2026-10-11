@@ -42,10 +42,15 @@ export const UpdateAiDailyLimitSchema = z.object({
 /** 行の無いプランが使う上限のプラン (DB の consume_ai_usage_at の c_default_plan と同じ) */
 export const AI_DAILY_LIMIT_DEFAULT_PLAN_KEY = 'free';
 
-/** GET /api/super-admin/llm/quotas の `note` (#1149)。値は AI の利用の判定に使われている */
+/**
+ * GET /api/super-admin/llm/quotas の `note` (#1149)。値は AI の利用の判定に使われている。
+ * 上限に数えない機能 (AI_UNMETERED_FEATURES: 画面を開いたときの自動のアドバイス・料理を保存したときの料理画像) は、
+ * この上限の合計に入らず、機能ごとの安全弁 (DB の ai_unmetered_daily_caps) で止まる (#1487)
+ */
 export const LLM_QUOTAS_ENFORCED_NOTE =
   'AI の 1 日の利用回数の上限です（全機能の合計・日本時間の 0 時に戻ります）。値を保存すると、次の AI の利用から効きます。' +
-  '自分の行が無いプランは free の値を使います。空欄（無制限）にすると、そのプランは上限なしになります。';
+  '自分の行が無いプランは free の値を使います。空欄（無制限）にすると、そのプランは上限なしになります。' +
+  '画面を開いたときの自動のアドバイスと、料理を保存したときの料理画像は、この上限に数えません（機能ごとの 1 日の安全弁で止まります）。';
 
 export type LLMUsageQuery = z.infer<typeof LLMUsageQuerySchema>;
 export type UpdateAiDailyLimitInput = z.infer<typeof UpdateAiDailyLimitSchema>;
