@@ -52,10 +52,6 @@ jest.mock('../../src/lib/supabase', () => ({
 
 import MealNewPage from '../../app/meals/new';
 
-// 最初の描画は読み込むモジュールが多く、キャッシュの無い環境では 5 秒の既定を超えることがある
-jest.setTimeout(30000);
-const WAIT = { timeout: 5000 };
-
 /** 判別が返す数え済みの印 (中身はサーバーが確かめる。画面はそのまま送るだけ) */
 const GRANT = 'g1.1760000000.0f8fad5b-d9cb-469f-a165-70867728950e.' + 'a'.repeat(64);
 /** 判別の確からしさ (画面が判別できたとみなす値より上 / 下) */
@@ -83,7 +79,7 @@ async function choosePhotoAndAnalyze(mode: 'auto' | Kind) {
   await act(async () => {
     fireEvent.press(screen.getByTestId('camera-gallery-button'));
   });
-  await waitFor(() => expect(screen.getByText('選択した写真 (1枚)')).toBeTruthy(), WAIT);
+  await waitFor(() => expect(screen.getByText('選択した写真 (1枚)')).toBeTruthy());
   await act(async () => {
     fireEvent.press(screen.getByText(mode === 'auto' ? 'AIが判別して解析' : 'AIで解析する'));
   });
@@ -104,7 +100,7 @@ describe('写真の「オート」: 判別の数え済みの印を、続く解�
     render(<MealNewPage />);
     await choosePhotoAndAnalyze('auto');
 
-    await waitFor(() => expect(postsTo(ANALYZE_PATHS[kind])).toHaveLength(1), WAIT);
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS[kind])).toHaveLength(1));
     expect(postsTo(ANALYZE_PATHS[kind])[0].aiUsageGrant).toBe(GRANT);
     if (kind === 'meal') expect(postsTo(ANALYZE_PATHS.meal)[0].prefetchedGeminiResult).toEqual(mealAnalysis);
   });
@@ -116,13 +112,68 @@ describe('写真の「オート」: 判別の数え済みの印を、続く解�
     });
     render(<MealNewPage />);
     await choosePhotoAndAnalyze('auto');
-    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy());
 
     await act(async () => {
       fireEvent.press(screen.getByText('冷蔵庫として続ける'));
     });
-    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1), WAIT);
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1));
     expect(postsTo(ANALYZE_PATHS.fridge)[0].aiUsageGrant).toBe(GRANT);
+  });
+
+  it('判別できなかった (422): 本文の印を拾い、判別できなかった画面で手で選んだ解析に入れる (Web と同じ。#1487)', async () => {
+    // getApi() の HTTP クライアントは 422 を `HTTP 422 Unprocessable Entity: {本文}` の Error にして投げる
+    const failedBody = {
+      error: 'unknown_type',
+      message: '写真の種類を判定できませんでした。',
+      type: 'unknown',
+      confidence: 0.1,
+      candidates: [{ type: 'fridge', confidence: 0.25 }],
+      aiUsageGrant: GRANT,
+    };
+    mockPost.mockImplementation(async (path: string) => {
+      if (path === '/api/ai/classify-photo') throw new Error(`HTTP 422 Unprocessable Entity: ${JSON.stringify(failedBody)}`);
+      return ANALYZE_RESPONSE;
+    });
+    render(<MealNewPage />);
+    await choosePhotoAndAnalyze('auto');
+    // 「判別失敗」の通知で撮影の画面へ戻らず、種類を選ぶ画面へ進む (候補も出す)
+    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy());
+    expect(screen.getByText('冷蔵庫として解析')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(screen.getByText('体重計として続ける'));
+    });
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS.weight_scale)).toHaveLength(1));
+    expect(postsTo(ANALYZE_PATHS.weight_scale)[0].aiUsageGrant).toBe(GRANT);
+  });
+
+  it('判別できなかった (422) が印を返さなかった (数えていない): 種類を選ぶ画面へ進み、解析に印を入れない', async () => {
+    mockPost.mockImplementation(async (path: string) => {
+      if (path === '/api/ai/classify-photo') {
+        throw new Error(`HTTP 422 : ${JSON.stringify({ error: 'unknown_type', type: 'unknown', confidence: 0, candidates: [] })}`);
+      }
+      return ANALYZE_RESPONSE;
+    });
+    render(<MealNewPage />);
+    await choosePhotoAndAnalyze('auto');
+    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(screen.getByText('冷蔵庫として続ける'));
+    });
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1));
+    expect(postsTo(ANALYZE_PATHS.fridge)[0].aiUsageGrant).toBeUndefined();
+  });
+
+  it('判別が 422 以外で失敗した: 今までどおり撮影の画面へ戻り、印は使わない', async () => {
+    mockPost.mockImplementation(async (path: string) => {
+      if (path === '/api/ai/classify-photo') throw new Error(`HTTP 500 Internal Server Error: ${JSON.stringify({ aiUsageGrant: GRANT })}`);
+      return ANALYZE_RESPONSE;
+    });
+    render(<MealNewPage />);
+    await choosePhotoAndAnalyze('auto');
+    await waitFor(() => expect(screen.getByTestId('camera-screen')).toBeTruthy());
+    expect(screen.queryByTestId('meal-classify-failed-view')).toBeNull();
   });
 
   it('判別が印を返さなかった (数えていない): 解析に印を入れない', async () => {
@@ -132,7 +183,7 @@ describe('写真の「オート」: 判別の数え済みの印を、続く解�
     });
     render(<MealNewPage />);
     await choosePhotoAndAnalyze('auto');
-    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1), WAIT);
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1));
     expect(postsTo(ANALYZE_PATHS.fridge)[0].aiUsageGrant).toBeUndefined();
   });
 
@@ -140,7 +191,7 @@ describe('写真の「オート」: 判別の数え済みの印を、続く解�
     mockPost.mockResolvedValue(ANALYZE_RESPONSE);
     render(<MealNewPage />);
     await choosePhotoAndAnalyze(kind);
-    await waitFor(() => expect(postsTo(ANALYZE_PATHS[kind])).toHaveLength(1), WAIT);
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS[kind])).toHaveLength(1));
     expect(postsTo(ANALYZE_PATHS[kind])[0].aiUsageGrant).toBeUndefined();
     expect(postsTo('/api/ai/classify-photo')).toHaveLength(0);
   });
@@ -153,19 +204,19 @@ describe('写真の「オート」: 判別の数え済みの印を、続く解�
     });
     render(<MealNewPage />);
     await choosePhotoAndAnalyze('auto');
-    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByTestId('meal-classify-failed-view')).toBeTruthy());
     await act(async () => {
       fireEvent.press(screen.getByText('冷蔵庫として続ける'));
     });
-    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1), WAIT);
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(1));
     expect(postsTo(ANALYZE_PATHS.fridge)[0].aiUsageGrant).toBe(GRANT);
 
     // 解析に失敗して撮影の画面へ戻った (種類は冷蔵庫のまま)。もう一度押した解析は新しい操作なので、使った印を付けない (サーバーが数える)
-    await waitFor(() => expect(screen.getByTestId('camera-screen')).toBeTruthy(), WAIT);
+    await waitFor(() => expect(screen.getByTestId('camera-screen')).toBeTruthy());
     await act(async () => {
       fireEvent.press(screen.getByText('AIで解析する'));
     });
-    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(2), WAIT);
+    await waitFor(() => expect(postsTo(ANALYZE_PATHS.fridge)).toHaveLength(2));
     expect(postsTo(ANALYZE_PATHS.fridge)[1].aiUsageGrant).toBeUndefined();
   });
 });

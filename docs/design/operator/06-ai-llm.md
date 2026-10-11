@@ -208,6 +208,13 @@ export async function logStreamingUsage(
 - 止め方は入口ごと: 利用者が押す操作は 429 `AI_DAILY_LIMIT` (§11)、保存と AI の分析を一緒にする操作は保存だけして `aiSkipped: AI_DAILY_LIMIT`、
   料理画像の副作用は画像だけ見送る、キューに積む操作は積む時点で判定する。上限に数えない機能が安全弁で止められたときも同じ止め方
   (ホームの栄養の集計は AI の部分だけ省く、栄養士のコメントの自動の取得は 429、料理画像は画像だけ見送る)
+- 料理画像 (#1487): 見送るかどうか (レート制限・同意・上限の判定) は、料理 (`planned_meals.dishes`) を保存する前に決める。
+  見送るなら、ジョブを積む料理を `image_status: 'failed'` + `image_error` (`skipped_ai_limit` = 安全弁 / `skipped_rate_limit` = レート制限・判定の例外)
+  にしてから保存する ('pending' のまま保存すると、処理するジョブが無いので「生成中」のまま残る)。同じ料理 (subject_hash が同じ) でも、
+  画像が無く待ち・更新待ち・失敗のまま (AI の画像) なら、保存し直したときにジョブを積み直す。
+  ジョブは行ごとの insert で積む (冪等キーの一意な索引は待ち・処理中だけの部分索引なので、`ON CONFLICT (idempotency_key)` の upsert は使えない)。
+  同じ料理のジョブが待ち・処理中なら一意制約の違反 (23505) を重複として数え、1 行も積めなかったとき (重複・書き込みの失敗) は数えた 1 回を戻す。
+  献立の保存に失敗したときも戻す
 - 写真の「オート」: 判別 (`POST /api/ai/classify-photo`) が 1 回数え、数え済みの印 `aiUsageGrant` を応答で返す
   (`g1.<UNIX 秒>.<印の ID>.<HMAC-SHA256>`。署名の対象は機能名・利用者 ID・発行時刻・印の ID、鍵は service role key、有効は 10 分)。
   画面は続く解析 (`analyze-meal-photo` / `analyze-fridge` / `analyze-health-checkup` / `analyze-weight-scale`) の本文の `aiUsageGrant` に入れて送る。
@@ -532,6 +539,7 @@ sequenceDiagram
 | エラー | コード | 対処 |
 |-------|--------|------|
 | 1 日の上限に達した (#1149) | `AI_DAILY_LIMIT` | 429 + `{ error: 「今日の AI の利用回数の上限 (N 回) に達しました。明日 0 時から使えます。」, code, limit, retryAfter }` + `Retry-After` (次の JST 0 時までの秒数) |
+| 上限に数えない機能の安全弁に達した (#1487。栄養士のコメントの自動の取得) | `AI_DAILY_LIMIT` | 429 + `{ error: 「今日はこれ以上、自動のコメントを作れません。明日また表示されます。」, code, safetyCap: true, retryAfter }` + `Retry-After`。回数 (limit) は出さない (安全弁の回数は明示の上限と別のもので、数字が食い違って見えるため)。文は `AI_AUTO_SAFETY_CAP_MESSAGE` (Web・モバイル共用) |
 | アレルゲン 3 回失敗 | `AI_ALLERGY_FALLBACK` | 422 + フロントエンドで手動入力 UI に切替 |
 | context 漏洩試行 | `CONTEXT_GUARD_*` | 403 + 監査ログ記録 |
 | xAI API タイムアウト | `LLM_TIMEOUT` | フォールバックモデルで再試行 |

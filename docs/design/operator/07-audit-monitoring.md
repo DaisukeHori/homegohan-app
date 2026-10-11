@@ -832,10 +832,12 @@ test('BAN action creates audit_log entry visible to super_admin', async ({
 >
 > - コードからは、PostHog の SDK (`posthog-js` / `posthog-react-native`)、初期化コード、`PostHogProvider`、CSP の送信先許可、環境変数 (`NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST` / `EXPO_PUBLIC_POSTHOG_KEY` / `EXPO_PUBLIC_POSTHOG_HOST`) の読み取りと設定例を取り除いた。再び import すると `tests/posthog-not-adopted-contract.test.ts` が落ちる。Vercel・EAS に入っている値の削除と、PostHog 側のキーの失効はオーナー作業 (`docs/operations/posthog-dashboard.md` の「後始末」)。
 > - モバイルの ErrorBoundary (#1207) が PostHog へ送っていた `app_error_boundary` (§15.3.1) も、送らなくなった。例外の記録は、コンソールとサーバーログ (`app_logs`) だけ。
-> - モバイルの異常の通知 (#1038 / #1405) も PostHog 専用だったので、送り先をなくした。push token の登録失敗・削除失敗・削除が 0 件
->   (`push_token_registration_failed` / `push_token_unregister_failed` / `push_token_unregister_no_rows`) と、セッション保管庫の異常 (`secure_session_storage_issue`)。
->   今は端末のコンソール (`console.warn`) に出すだけで、サーバーログ (`app_logs`) には残らない。残したいときは別に設計する
->   (セッション保管庫の異常は、アクセストークンを取る `getSession()` がその保管庫を読むので、保管庫の中から API を呼べない)。
+> - モバイルの異常の通知 (#1038 / #1405) も PostHog 専用だったので、PostHog への送信はやめた。push token の登録失敗・削除失敗・削除が 0 件
+>   (`push_token_registration_failed` / `push_token_unregister_failed` / `push_token_unregister_no_rows`) は、端末のコンソール (`console.warn`) に加えて、
+>   エラー境界の記録と同じ `POST /api/log` でサーバーログ (`app_logs`) に残す (#1413。送るのは決まった値だけで、トークンの値・エラーの本文は送らない。詳細は `mobile/05-auth-session.md` §5)。
+>   ただし、Web から始まったサインアウト・`session-expired` のときの削除の失敗・0 件は、サーバー側のセッションが先に失効していて `/api/log` が `401` を返すので、`app_logs` には残らない (端末のコンソールだけ)。
+>   セッション保管庫の異常 (`secure_session_storage_issue`) は端末のコンソールだけ
+>   (アクセストークンを取る `getSession()` がその保管庫を読むので、保管庫の中から API を呼べない)。
 > - `packages/handson-tour-shared/src/analytics.ts` の `fireAnalytics` は残してあるが、送り先 (adapter) を誰も注入していないので何も送らない。イベント名・プロパティの定義 (§15.3〜§15.4) は、将来計測を足すときの出発点として残す。
 > - §15.6 の KPI 集計と §15.8 のダッシュボード公開は PostHog 前提のため実施しない。運用手順 `docs/operations/posthog-dashboard.md` も同じく不採用。
 > - `cookie_consents` テーブルは残す (migration は変えない)。同意バナーの扱い (cross/08 §12〜§13) は、この判断とは別に決める。

@@ -19,7 +19,7 @@ import { updateHealthStreak } from '@/lib/health-streaks';
 import { todayLocal } from '@/lib/date-utils';
 import { invokeGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { isFeatureEnabled } from '@/lib/feature-flags';
-import type { MealImageJobSeed } from '@/lib/meal-image';
+import { markDishImagesSkipped, type MealImageJobSeed } from '@/lib/meal-image';
 import {
   buildDishImagePayload,
   cancelPendingMealImageJobs,
@@ -755,34 +755,24 @@ export async function runConsultationAction(
         updateData.image_url = safeMealUpdates.image_url;
       }
 
-      const { data: updatedMeal, error: updateError } = await supabase
-        .from('planned_meals')
-        .update(updateData)
-        .eq('id', mealId)
-        .select('id, dish_name, calories_kcal, dishes')
-        .single();
-
-      if (updateError) {
-        logActionDbFailure(user, action, 'planned_meals.update', updateError);
-        result = { error: '食事の更新に失敗しました' };
-        break;
-      }
-
+      // 料理画像のジョブを積むかを、料理 (dishes) を保存する前に決める (#1487)。
+      // 見送るなら、対象の料理を見送りの状態 ('failed' + 理由) にしてから保存する
+      // ('pending' のまま保存すると、処理するジョブが無いので「料理画像を生成中です」のまま残る)
       let imageGenerationThrottled = false;
       // #1149 AI の利用回数の上限の判定の結果 (画像を付けない・同意が無い・レート制限で止めたときは判定しないので null)
       let imageUsage: AiUsageResult | null = null;
+      let imageAllowed = false;
       if (jobs.length > 0) {
         // #1022 execute の update_meal も他の4 meal route と同じく image カテゴリで制限する
         // （relayチャットの連打で image の1min/20day上限をバイパスされないようにする）。
         // 画像副作用（enqueue + trigger）は update_meal 本体の成否から独立させる（詳細は meals/route.ts 参照）。
-        let imageAllowed = false;
         try {
           const rl = await checkRateLimit(user.id, 'image');
           imageAllowed = rl.success;
           if (imageAllowed) {
             // 同意が無ければ (判定に失敗した場合も)、画像の生成ジョブを処理する Edge Function (process-meal-image-jobs) が
-            // AI へ送らずに止める (T15 / #1154)。AI へ送らない操作は数えない (同意の判定 → 上限の判定と記録 → AI への送信の順)。
-            // ジョブを積むかどうかは、同意の有無では変えない (止めるのは処理する側)
+            // AI へ送らずに止める (T15 / #1154。料理は 'failed' + 同意の理由になる)。AI へ送らない操作は数えない
+            // (同意の判定 → 上限の判定と記録 → AI への送信の順)。ジョブを積むかどうかは、同意の有無では変えない (止めるのは処理する側)
             const imageConsent = await checkUserAiConsent(supabase, user.id);
             if (imageConsent.allowed) {
               // #1149 料理画像は更新の自動の副作用なので、明示の 1 日の上限 (10 回) には数えない ('meal_image_auto'。記録だけ。
@@ -805,26 +795,50 @@ export async function runConsultationAction(
           imageAllowed = false;
         }
 
-        if (imageAllowed) {
-          // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。service role で積む
-          const queueDb = getAiQueueWriter();
-          await enqueueMealImageJobs({
-            supabase: queueDb,
-            plannedMealId: mealId,
-            userId: user.id,
-            triggerSource,
-            jobSeeds: jobs,
-            requestId: action.id,
-          });
-          await triggerMealImageJobProcessing({ plannedMealId: mealId, limit: jobs.length });
-        } else if (imageUsage?.allowed !== false) {
-          // レート制限で見送った (上限 #1149 で見送ったときは、結果の aiSkipped で知らせる)
-          imageGenerationThrottled = true;
-          console.warn('[consultation/actions/execute] Image generation skipped due to rate limit', {
-            userId: user.id,
-            plannedMealId: mealId,
-          });
+        if (!imageAllowed) {
+          const skipReason = imageUsage?.allowed === false ? 'ai_limit' : 'rate_limit';
+          if (skipReason === 'rate_limit') {
+            // レート制限で見送った (上限 #1149 で見送ったときは、結果の aiSkipped で知らせる)
+            imageGenerationThrottled = true;
+            console.warn('[consultation/actions/execute] Image generation skipped due to rate limit', {
+              userId: user.id,
+              plannedMealId: mealId,
+            });
+          }
+          updateData.dishes = markDishImagesSkipped(updateData.dishes, jobs, skipReason);
+          jobs = [];
         }
+      }
+
+      const { data: updatedMeal, error: updateError } = await supabase
+        .from('planned_meals')
+        .update(updateData)
+        .eq('id', mealId)
+        .select('id, dish_name, calories_kcal, dishes')
+        .single();
+
+      if (updateError) {
+        logActionDbFailure(user, action, 'planned_meals.update', updateError);
+        // 料理画像の 1 回を数えたあと、献立を更新できなかった (AI へは何も送っていない) ので数え戻す (#1149 の数え戻し)
+        if (imageUsage?.allowed) await refundAiUsage(user.id, 'meal_image_auto', imageUsage);
+        result = { error: '食事の更新に失敗しました' };
+        break;
+      }
+
+      if (imageAllowed && jobs.length > 0) {
+        // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。service role で積む。
+        // 1 行も積めなかったとき (重複・書き込みの失敗) は、enqueueMealImageJobs が数えた 1 回を戻す (#1487)
+        const queueDb = getAiQueueWriter();
+        await enqueueMealImageJobs({
+          supabase: queueDb,
+          plannedMealId: mealId,
+          userId: user.id,
+          triggerSource,
+          jobSeeds: jobs,
+          requestId: action.id,
+          usage: imageUsage,
+        });
+        await triggerMealImageJobProcessing({ plannedMealId: mealId, limit: jobs.length });
       }
 
       console.log('Meal updated successfully:', updatedMeal);
