@@ -249,6 +249,21 @@ describe('V4GenerateModal (モバイル): 日付の欄は確定したときに�
     expect(end()).toBe(addDaysToDate(today, 2 + EXPECTED_RANGE_MAX_DAYS - 1));
   });
 
+  it('欄を離れずに押したとき、打った欄だけを確定する (終了日より後の開始日を打つと、終了日を開始日に合わせる。開始日を引き戻さない)', async () => {
+    const { type, getByTestId, start, end, today, onGenerate } = renderModal();
+    await waitForRestore();
+    // 終了日は既定の今日 + 6 日のまま、開始日に今日 + 20 日を打って、欄を離れずに押す
+    expect(end()).toBe(addDaysToDate(today, 6));
+    type('v4-range-start', addDaysToDate(today, 20));
+    fireEvent.press(getByTestId('v4-submit-btn'));
+
+    await waitFor(() => expect(onGenerate).toHaveBeenCalledTimes(1));
+    const dates = [...new Set(onGenerate.mock.calls[0][0].targetSlots.map((slot: { date: string }) => slot.date))];
+    expect(dates).toEqual([addDaysToDate(today, 20)]);
+    expect(start()).toBe(addDaysToDate(today, 20));
+    expect(end()).toBe(addDaysToDate(today, 20));
+  });
+
   it('打っている途中の値は保存しない (保存するのは確定した期間だけ)', async () => {
     const { type, enter, today } = renderModal();
     await waitForRestore();

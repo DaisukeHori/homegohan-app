@@ -587,7 +587,10 @@ function V4GenerateModalNormal({
     let range: GenerateRange = { start: rangeStart, end: rangeEnd };
     let singleDay = singleDayDate;
     if (selectedMode === "range") {
-      range = commitRangeEndInput(rangeEndText, commitRangeStartInput(rangeStartText, range, todayStr), todayStr);
+      // 打ち直した欄だけを確定する (打っていない欄まで確定し直すと、開始日を確定して縮めた終了日が、
+      // 終了日の欄に残る前の値で戻され、開始日まで引き戻される)
+      if (rangeStartText !== rangeStart) range = commitRangeStartInput(rangeStartText, range, todayStr);
+      if (rangeEndText !== rangeEnd) range = commitRangeEndInput(rangeEndText, range, todayStr);
       applyRange(range);
     } else if (selectedMode === "single_day") {
       singleDay = commitSingleDayInput(singleDayText, singleDayDate, todayStr);
