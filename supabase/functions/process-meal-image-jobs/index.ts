@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { GoogleGenAI, createUserContent } from "@google/genai";
 import {
   DEFAULT_MEAL_IMAGE_MODEL,
@@ -23,7 +23,7 @@ const STORAGE_BUCKET = "fridge-images";
  * エラーしか返らなかった。いまは欠けていればログに変数名を残し、本文は固定の文と code の 503 を返す。
  * クライアントは最初のリクエストで作り、以後は使い回す (以前の読み込み時の生成と同じく 1 インスタンス 1 個)。
  */
-let supabase: ReturnType<typeof createClient>;
+let supabase: SupabaseClient;
 let aiClient: GoogleGenAI;
 let initialized = false;
 
