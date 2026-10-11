@@ -10,10 +10,14 @@
  * サーバーから応答を受け取れなかったとき (圏外・機内モード・待ち時間切れ) は、createHttpClient が
  * HttpNetworkError (kind: 'offline' | 'timeout') を投げる。このときは「通信できません」と案内する文面を返す。
  *
+ * AI 相談の緊急停止・メンテナンス中の 503 は、本文の文字列ではなく、code から決めた固定の文を返す (#1457)。
+ *
  * 取り出せないとき (JSON 以外の本文など) は、Error の message、それも無ければ fallback を返す。
  */
 
 import { isHttpNetworkError, type HttpNetworkErrorKind } from "@homegohan/core";
+
+import { serviceUnavailableErrorOf } from "./service-unavailable";
 
 /**
  * 通信できなかったときに、画面に出す文面。
@@ -44,6 +48,9 @@ function messageFromBody(body: unknown): string | null {
 
 export function getApiErrorMessage(error: unknown, fallback: string): string {
   if (isHttpNetworkError(error)) return NETWORK_ERROR_MESSAGES[error.kind];
+  // AI 相談の緊急停止・メンテナンス中の 503 は、本文の文字列ではなく固定の文 (#1457。src/lib/service-unavailable.ts)
+  const unavailable = serviceUnavailableErrorOf(error);
+  if (unavailable) return unavailable.message;
 
   const raw = nonEmptyString(typeof error === "string" ? error : (error as { message?: unknown } | null | undefined)?.message);
   if (!raw) return fallback;

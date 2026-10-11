@@ -3,6 +3,7 @@ import { createHttpClient, type HttpClient, type HttpRequestOptions } from "@hom
 import { aiDailyLimitErrorOf } from "./ai-daily-limit";
 import { NETWORK_ERROR_MESSAGES } from "./api-error";
 import { MobileConfigError, resolveApiBaseUrl } from "./env";
+import { serviceUnavailableErrorOf } from "./service-unavailable";
 import { supabase } from "./supabase";
 
 let _api: HttpClient | null = null;
@@ -59,16 +60,20 @@ function withRequestPolicy(method: string, path: string, init?: HttpRequestOptio
 }
 
 /**
- * 「今日の AI の利用回数の上限に達しました」(429 AI_DAILY_LIMIT。#1149) で止められたら、生の文字列
- * (`HTTP 429 Too Many Requests: {...}`) の Error を、固定の文の AiDailyLimitError に置き換えて投げ直す
- * (各画面が e.message をそのまま出しても、生の文字列が出ないように。src/lib/ai-daily-limit.ts)。ほかのエラーはそのまま投げる。
- * getApi() を通らない生の fetch には効かない。そちらは失敗の応答から errorOfFailedAiResponse で Error を作る。
+ * サーバーに止められた応答を、生の文字列の Error から固定の文の例外に置き換えて投げ直す
+ * (各画面が e.message をそのまま出しても、生の文字列 (`HTTP 429 Too Many Requests: {...}` など) が出ないように)。
+ *   - 「今日の AI の利用回数の上限に達しました」(429 AI_DAILY_LIMIT。#1149): AiDailyLimitError (src/lib/ai-daily-limit.ts)
+ *   - AI 相談の緊急停止・メンテナンス中 (503 AI_CHAT_DISABLED / MAINTENANCE_MODE。#1457): ServiceUnavailableError
+ *     (src/lib/service-unavailable.ts)
+ * ほかのエラーはそのまま投げる。
+ * getApi() を通らない生の fetch には効かない。そちらは失敗の応答から errorOfFailedResponse (src/lib/failed-response.ts。
+ * 同じ 2 つの判定) で Error を作る。
  */
 export async function withFriendlyErrors<T>(request: Promise<T>): Promise<T> {
   try {
     return await request;
   } catch (error) {
-    throw aiDailyLimitErrorOf(error) ?? error;
+    throw aiDailyLimitErrorOf(error) ?? serviceUnavailableErrorOf(error) ?? error;
   }
 }
 

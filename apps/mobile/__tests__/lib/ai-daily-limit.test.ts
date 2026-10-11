@@ -7,7 +7,7 @@
  *   - getApi(): どのメソッドでも、この Error を AiDailyLimitError に置き換えて投げ直す (各画面が e.message をそのまま出しても固定の文になる)。
  *     ほかのエラー (同意の 403・通信できない) はそのまま投げる (同意の案内などの見分けを変えない)
  *   - getApiErrorMessage(e) も固定の文を返す
- *   - errorOfFailedAiResponse: getApi() を通らない生の fetch (ストリーミングの AI 相談・1 食の作り直し) の失敗の応答から投げる Error。
+ *   - errorOfFailedResponse (src/lib/failed-response.ts): getApi() を通らない生の fetch (ストリーミングの AI 相談・1 食の作り直し) の失敗の応答から投げる Error。
  *     429 + AI_DAILY_LIMIT は AiDailyLimitError、ほかは `HTTP <状態>: <本文>` のまま (同意の 403 の見分けが読む形を変えない)
  *     (画面ごとの挙動は __tests__/ai/chat-daily-limit・ai/advisor-sheet-daily-limit・menus-weekly/regenerate-meal-daily-limit)
  */
@@ -27,7 +27,8 @@ jest.mock('@homegohan/core', () => ({
   })),
 }));
 
-import { AiDailyLimitError, aiDailyLimitErrorOf, errorOfFailedAiResponse, isAiDailyLimitError } from '../../src/lib/ai-daily-limit';
+import { AiDailyLimitError, aiDailyLimitErrorOf, isAiDailyLimitError } from '../../src/lib/ai-daily-limit';
+import { errorOfFailedResponse } from '../../src/lib/failed-response';
 import { isAiConsentRequiredError } from '../../src/lib/ai-consent';
 import { getApiErrorMessage } from '../../src/lib/api-error';
 
@@ -65,25 +66,25 @@ describe('aiDailyLimitErrorOf', () => {
   });
 });
 
-describe('errorOfFailedAiResponse (生の fetch の失敗の応答)', () => {
+describe('errorOfFailedResponse (生の fetch の失敗の応答)', () => {
   it('429 + AI_DAILY_LIMIT: 固定の文の AiDailyLimitError (生の本文を含まない)', () => {
     const body = JSON.stringify({ error: '本文の文', code: 'AI_DAILY_LIMIT', limit: 10, retryAfter: 3600 });
-    const error = errorOfFailedAiResponse(429, body);
+    const error = errorOfFailedResponse(429, body);
     expect(isAiDailyLimitError(error)).toBe(true);
     expect(error.message).toBe(LIMIT_MESSAGE);
     expect(error.message).not.toContain('HTTP 429');
   });
 
   it('ほかの応答 (レート制限の 429・同意の 403・500) は `HTTP <状態>: <本文>` のまま。同意の 403 は見分けられる', () => {
-    const rateLimited = errorOfFailedAiResponse(429, JSON.stringify({ code: 'RATE_LIMITED' }));
+    const rateLimited = errorOfFailedResponse(429, JSON.stringify({ code: 'RATE_LIMITED' }));
     expect(isAiDailyLimitError(rateLimited)).toBe(false);
     expect(rateLimited.message).toBe('HTTP 429: {"code":"RATE_LIMITED"}');
 
-    const consent = errorOfFailedAiResponse(403, JSON.stringify({ error: '同意が必要です', code: 'AI_CONSENT_REQUIRED' }));
+    const consent = errorOfFailedResponse(403, JSON.stringify({ error: '同意が必要です', code: 'AI_CONSENT_REQUIRED' }));
     expect(isAiDailyLimitError(consent)).toBe(false);
     expect(isAiConsentRequiredError(consent)).toBe(true);
 
-    const server = errorOfFailedAiResponse(500, '');
+    const server = errorOfFailedResponse(500, '');
     expect(server.message).toBe('HTTP 500: ');
     expect(isAiDailyLimitError(server)).toBe(false);
   });
