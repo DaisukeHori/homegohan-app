@@ -117,6 +117,7 @@ import { getCorsHeaders } from "../_shared/cors.ts";
 import { addDaysToDate, monthJst, todayJst } from "../_shared/jst-date.ts";
 import { aiConsentDeniedResponse, checkAiConsent, invokeMenuContinuation } from "../_shared/ai-consent-guard.ts";
 import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
+import { missingEnvError } from "../_shared/missing-env.ts";
 
 console.log("Generate Menu V4 Function loaded (Slot-based generation)");
 
@@ -286,7 +287,7 @@ async function triggerNextStep(
 
 async function embedText(text: string, dimensions = DATASET_EMBEDDING_DIMENSIONS): Promise<number[]> {
   const apiKey = Deno.env.get(DATASET_EMBEDDING_API_KEY_ENV) ?? "";
-  if (!apiKey) throw new Error(`Missing ${DATASET_EMBEDDING_API_KEY_ENV}`);
+  if (!apiKey) throw missingEnvError([DATASET_EMBEDDING_API_KEY_ENV]);
   const embedding = await withRetry(
     async () => await fetchSingleDatasetEmbedding(text, { apiKey, inputType: "query" }),
     { retries: 3, label: "embedText" },

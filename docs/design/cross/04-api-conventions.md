@@ -430,6 +430,19 @@ docs/api/
 
 ```typescript
 // src/lib/webhook/verify.ts
+import { getOptionalEnv } from '@/lib/env';
+
+/**
+ * Webhook の署名の秘密を取り出す。`process.env.X!` とは書かない (#1182・#1434)。
+ * 秘密は src/lib/env.ts の一覧に任意の変数として足し、getOptionalEnv で読む。
+ * 無ければ署名を確かめられないので、受け付けずに失敗させる (fail-closed)。
+ * message に変数名を入れない (500 の本文に出うるため。変数名は getOptionalEnv が警告のログに残す)。
+ */
+function requireWebhookSecret(name: 'STRIPE_WEBHOOK_SECRET' | 'RESEND_WEBHOOK_SECRET'): string {
+  const secret = getOptionalEnv(name);
+  if (!secret) throw new Error('Webhook の署名の設定がありません');
+  return secret;
+}
 
 export async function verifyStripeWebhook(
   body: string,
@@ -438,7 +451,7 @@ export async function verifyStripeWebhook(
   return stripe.webhooks.constructEventAsync(
     body,
     signature,
-    process.env.STRIPE_WEBHOOK_SECRET!,
+    requireWebhookSecret('STRIPE_WEBHOOK_SECRET'),
   );
 }
 
@@ -447,7 +460,7 @@ export function verifyResendWebhook(
   signature: string,
 ): boolean {
   const expected = crypto
-    .createHmac('sha256', process.env.RESEND_WEBHOOK_SECRET!)
+    .createHmac('sha256', requireWebhookSecret('RESEND_WEBHOOK_SECRET'))
     .update(body)
     .digest('hex');
   return crypto.timingSafeEqual(

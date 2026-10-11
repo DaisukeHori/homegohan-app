@@ -1460,14 +1460,19 @@ import { describe, it, expect } from 'vitest';
 import Stripe from 'stripe';
 import { validateStripeSignature } from '@/lib/operator/stripe-webhook';
 
+// 署名の生成と検証は手元で完結するので、環境変数を読まずにテスト用の固定の値を使う
+// (`process.env.X!` は使わない。#1182・#1434)
+const TEST_STRIPE_SECRET_KEY = 'sk_test_dummy_for_signature_test';
+const TEST_WEBHOOK_SECRET = 'whsec_test_dummy_for_signature_test';
+
 describe('Stripe Webhook 署名検証', () => {
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY_TEST!, {
+  const stripe = new Stripe(TEST_STRIPE_SECRET_KEY, {
     apiVersion: '2024-11-20.acacia',
   });
 
   it('accepts webhook with valid signature', () => {
     const payload = JSON.stringify({ type: 'customer.subscription.created' });
-    const secret = process.env.STRIPE_WEBHOOK_SECRET!;
+    const secret = TEST_WEBHOOK_SECRET;
     const signature = stripe.webhooks.generateTestHeaderString({
       payload,
       secret,
@@ -1477,7 +1482,7 @@ describe('Stripe Webhook 署名検証', () => {
 
   it('rejects webhook with invalid signature', () => {
     const payload = JSON.stringify({ type: 'customer.subscription.created' });
-    const secret = process.env.STRIPE_WEBHOOK_SECRET!;
+    const secret = TEST_WEBHOOK_SECRET;
     expect(() =>
       validateStripeSignature(payload, 'invalid-sig', secret),
     ).toThrow();
