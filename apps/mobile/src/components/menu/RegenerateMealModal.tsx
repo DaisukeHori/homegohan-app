@@ -2,6 +2,7 @@ import { Sparkles, X } from "lucide-react-native";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -20,6 +21,7 @@ import { MEAL_LABELS } from "@homegohan/shared";
 import { getApiBaseUrl } from "../../lib/api";
 import { supabase } from "../../lib/supabase";
 import { isAiConsentRequiredResponse, promptAiConsentRequired } from "../../lib/ai-consent";
+import { errorOfFailedResponse, isStoppedByServerError, stoppedByServerAlertTitleOf } from "../../lib/failed-response";
 
 // ============================================================
 // Constants
@@ -111,11 +113,21 @@ export const RegenerateMealModal: React.FC<Props> = ({ visible, meal, onClose })
         promptAiConsentRequired();
         return;
       }
-      if (!r.ok) throw new Error("regenerate failed");
+      if (!r.ok) {
+        const text = await r.text().catch(() => "");
+        // 429 AI_DAILY_LIMIT (#1149)・503 のメンテナンス中 (#1457) は固定の文の例外にする
+        throw errorOfFailedResponse(r.status, text);
+      }
       await setItemWithTTL("singleMealGenerating", { mealId: meal.id }, 2 * 60 * 1000);
       handleClose();
-    } catch (_e) {
-      // エラー時は submitting をリセットして UI を壊さない
+    } catch (e) {
+      // 今日の AI の利用回数の上限 (#1149)・メンテナンス中 (#1457) で止められた: 固定の文を出す
+      // (モーダルは閉じず、条件を選び直さずに済むようにする。見出しは、メンテナンス中は「ご利用いただけません」、上限は「エラー」)
+      if (isStoppedByServerError(e)) {
+        Alert.alert(stoppedByServerAlertTitleOf(e), e.message);
+        return;
+      }
+      // ほかのエラー時は submitting をリセットして UI を壊さない
     } finally {
       setSubmitting(false);
     }

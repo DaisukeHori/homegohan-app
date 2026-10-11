@@ -1,11 +1,12 @@
 /**
- * #1177 (T26) AI 利用回数の記録 (recordAiUsage / recordEdgeAiUsage) の contract テスト
+ * #1177 (T26) / #1149 (T40) AI 利用回数の上限の判定と記録 (consumeAiUsage / consumeEdgeAiUsage) の contract テスト
  *
  * AI 事業者へ送る入口の一覧は 1 つだけ (tests/helpers/ai-consent-enforced-paths.ts。外国の AI 事業者への提供の同意の判定 #1154 と共用)。
  * 入口の棚卸し (AI に届く入口は、すべて一覧にある) は tests/ai-consent-enforcement.test.ts が、同じ検出器 (tests/helpers/ai-reach.ts) で行う。
  * このテストは、一覧の usage の列 (記録の扱い) と、ソースの実際が一致することだけを確かめる。
  *
- *   1. 記録を呼ぶファイルの全数・機能名 = 一覧の usage の列 (record) と LIBRARY_RECORDERS
+ *   1. 判定と記録 (consumeAiUsage) を呼ぶファイルの全数・機能名 = 一覧の usage の列 (record) と LIBRARY_RECORDERS。
+ *      呼んだ結果は、どれも変数で受けて .allowed を読む (結果を捨てて上限で止めない書き方を落とす)
  *   2. 一覧の route の公開ハンドラ (GET / POST ...) の全数 = 一覧の handlers (ハンドラを足したら、記録の扱いを決めて一覧に足す)
  *   3. 記録する route のハンドラは、どれも実際に呼ぶ表 (tests/ai-consent-enforcement-routes.test.ts など) に行がある
  *   4. Edge Function: 記録を呼ぶ関数の全数・機能名 = 一覧。ユーザーの JWT を確かめて AI へ送る関数は、どれも記録する。
@@ -14,6 +15,18 @@
  *   6. 定期実行 (vercel.json の crons・migration の pg_cron / pg_net) は記録しない
  *   7. AI のキュー (weekly_menu_requests / meal_image_jobs) は、利用者 (authenticated) から書けない (#1465。書けるようになったら落ちる)
  *   8. 機能名は DB の形式どおりで、どれもどこかで使われている
+ *   9. (#1149) 上限に数えない機能・既定のプランは migration の consume_ai_usage_at と同じ。上限に達したときの止め方 (onLimit) は一覧に必ずある。
+ *      記録・判定・数え戻しの DB 関数 (record_ai_usage / consume_ai_usage / refund_ai_usage) を直接呼ぶのは、
+ *      src/lib/plan/entitlements.ts と supabase/functions/_shared/ai-usage.ts だけ
+ *
+ * 【このテストの限界 (見張り)】ソースの文字と構文木で見るので、次は見つけられない (実際に動かすテストが受け持つ):
+ *   - .allowed を読んでいても、その結果で止めていない (if の中身が空・条件が逆)。→ tests/ai-consent-enforcement-routes.test.ts が、
+ *     上限に達した結果を返して、AI へ送らないこと・止め方 (429 / 保存だけ / 画像だけ見送る) を実際に route を呼んで確かめる。
+ *     Edge Function は tests/ai-consent-enforcement-edge.test.ts が、止める if が送る呼び出しより前にあることを構文木で確かめる
+ *   - AI のクライアント (OpenAI / Gemini / fetch) を、判定を通らずに直接呼ぶ新しい入口。→ AI へ届く入口の棚卸し
+ *     (tests/ai-consent-enforcement.test.ts。検出器は tests/helpers/ai-reach.ts) が、一覧に無い入口を落とす。
+ *     AI のクライアントの直接の呼び出しを lint で禁じることはしない (送り口がライブラリ・Edge Function に 30 か所以上あり、
+ *     送り口の側で禁じると、判定を通ったあとの正しい呼び出しまで止まる。入口の棚卸しのほうが確実なため)
  *
  * 「同意の判定 → 記録 → AI への送信」の順は、ここ (ソースの文字) では見ない。実際にハンドラを動かして、呼ばれた順で確かめる
  * (Next.js: tests/ai-consent-enforcement-routes.test.ts の表・tests/meal-image-route-contracts.test.ts・
@@ -34,6 +47,9 @@ import {
 } from './helpers/ai-consent-enforced-paths';
 import { ROOT, exportedHandlers, listEdgeFunctions, listFiles, reachesAi, rel, stripComments } from './helpers/ai-reach';
 import { AI_QUEUE_TABLES, type AiQueueTable } from '../src/lib/ai/ai-queue-tables';
+import { AI_UNMETERED_FEATURES } from '../supabase/functions/_shared/ai-usage-core';
+import { AI_DAILY_LIMIT_DEFAULT_PLAN_KEY } from '../src/lib/super-admin/llm-schemas';
+import ts from 'typescript';
 
 const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 const sorted = (values: Iterable<string>) => [...new Set(values)].sort();
@@ -42,15 +58,63 @@ const recordedFeatures = (usage: AiUsage | undefined) => (usage && 'record' in u
 const ALL_ROUTES: Record<string, AiRouteEntry> = { ...ENFORCED_ROUTES, ...EXEMPT_ROUTES };
 const ALL_EDGE = { ...ENFORCED_EDGE, ...EXEMPT_EDGE };
 
-/** 記録の関数の呼び出し (コメントを除いた本文で数える)。第 2 引数 (機能名) は文字列で書く */
-function recordCalls(source: string, fn: 'recordAiUsage' | 'recordEdgeAiUsage'): { total: number; features: string[] } {
+/** 判定と記録の関数の呼び出し (コメントを除いた本文で数える)。第 2 引数 (機能名) は文字列で書く */
+function recordCalls(source: string, fn: 'consumeAiUsage' | 'consumeEdgeAiUsage'): { total: number; features: string[] } {
   const text = stripComments(source);
   const total = [...text.matchAll(new RegExp(`\\b${fn}\\(`, 'g'))].length;
   const literal =
-    fn === 'recordAiUsage'
-      ? /\brecordAiUsage\(\s*[\w.]+\s*,\s*['"]([a-z_]+)['"]\s*\)/g
-      : /\brecordEdgeAiUsage\(\s*\w+\s*,\s*[\w.]+\s*,\s*['"]([a-z_]+)['"]\s*\)/g;
+    fn === 'consumeAiUsage'
+      ? /\bconsumeAiUsage\(\s*[\w.]+\s*,\s*['"]([a-z_]+)['"]\s*\)/g
+      : /\bconsumeEdgeAiUsage\(\s*\w+\s*,\s*[\w.]+\s*,\s*['"]([a-z_]+)['"]\s*\)/g;
   return { total, features: [...text.matchAll(literal)].map((m) => m[1]) };
+}
+
+/**
+ * 判定と記録の呼び出しのうち、結果を見ていないもの (#1149)。
+ * 呼び出しの結果を変数で受け (const x = await f(...) / x = await f(...) / 三項演算子の枝の中)、同じ関数の中の呼び出しより後で
+ * x.allowed (x?.allowed) を読んでいれば「見ている」とする。結果を捨てる・別の名前を読む書き方を返す (行番号)
+ */
+function unguardedConsumeCalls(file: string, source: string, fn: 'consumeAiUsage' | 'consumeEdgeAiUsage'): string[] {
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, file.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const missing: string[] = [];
+  const enclosingFunction = (node: ts.Node): ts.Node => {
+    let current: ts.Node | undefined = node.parent;
+    while (current && !ts.isFunctionLike(current)) current = current.parent;
+    return current ?? sf;
+  };
+  const resultName = (call: ts.CallExpression): string | null => {
+    let node: ts.Node = call.parent;
+    while (ts.isAwaitExpression(node) || ts.isParenthesizedExpression(node) || ts.isConditionalExpression(node)) node = node.parent;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) return node.name.text;
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(node.left)) return node.left.text;
+    return null;
+  };
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === fn) {
+      const name = resultName(node);
+      const line = sf.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+      let read = false;
+      const findRead = (n: ts.Node) => {
+        if (read) return;
+        if (
+          ts.isPropertyAccessExpression(n) &&
+          n.name.text === 'allowed' &&
+          ts.isIdentifier(n.expression) &&
+          n.expression.text === name &&
+          n.getStart() > node.getStart()
+        ) {
+          read = true;
+          return;
+        }
+        ts.forEachChild(n, findRead);
+      };
+      if (name) findRead(enclosingFunction(node));
+      if (!read) missing.push(`${file}:${line}`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return missing;
 }
 
 /** 記録する route のハンドラのうち、実際に呼ぶ表が tests/ai-consent-enforcement-routes.test.ts の外にあるもの */
@@ -77,7 +141,7 @@ describe('AI 利用回数の記録 (#1177): Next.js', () => {
     .map(rel)
     .filter((file) => !file.startsWith('src/__tests__/') && file !== 'src/lib/plan/entitlements.ts');
   const recorders = new Map(
-    sourceFiles.map((file) => [file, recordCalls(read(file), 'recordAiUsage')] as const).filter(([, calls]) => calls.total > 0),
+    sourceFiles.map((file) => [file, recordCalls(read(file), 'consumeAiUsage')] as const).filter(([, calls]) => calls.total > 0),
   );
 
   it('記録を呼ぶファイルの全数 = 一覧で record のハンドラがある route + LIBRARY_RECORDERS', () => {
@@ -98,7 +162,13 @@ describe('AI 利用回数の記録 (#1177): Next.js', () => {
         ? LIBRARY_RECORDERS[file].record
         : Object.values(ALL_ROUTES[file].handlers).flatMap((usage) => recordedFeatures(usage));
     expect(sorted(calls.features)).toEqual(sorted(expected));
-    if (calls.total > 0) expect(read(file)).toMatch(/import \{[^}]*\brecordAiUsage\b[^}]*\} from '@\/lib\/plan\/entitlements'/);
+    if (calls.total > 0) expect(read(file)).toMatch(/import \{[^}]*\bconsumeAiUsage\b[^}]*\} from '@\/lib\/plan\/entitlements'/);
+  });
+
+  it('(#1149) 判定と記録 (consumeAiUsage) の結果は、どの呼び出しも変数で受けて .allowed を読む (結果を捨てて上限で止めない書き方が無い)', () => {
+    const missing = [...recorders.keys()].flatMap((file) => unguardedConsumeCalls(file, read(file), 'consumeAiUsage'));
+    expect(recorders.size, '走査が呼び出しを見つけていない').toBeGreaterThan(0);
+    expect(missing, 'const aiUsage = await consumeAiUsage(...); if (!aiUsage.allowed) ... の形で、結果で止めること').toEqual([]);
   });
 
   it.each(Object.keys(ALL_ROUTES))('%s: 公開ハンドラの全数 = 一覧の handlers (ハンドラを足したら、記録の扱いを決めて一覧に足す)', (file) => {
@@ -184,7 +254,7 @@ describe('AI 利用回数の記録 (#1177): Edge Functions', () => {
   it('記録を呼ぶ関数の全数 = 一覧で record の関数。機能名も一覧どおり', () => {
     const actual = Object.fromEntries(
       edgeFunctions
-        .map((name) => [name, recordCalls(index(name), 'recordEdgeAiUsage')] as const)
+        .map((name) => [name, recordCalls(index(name), 'consumeEdgeAiUsage')] as const)
         .filter(([, calls]) => calls.total > 0)
         .map(([name, calls]) => {
           expect(calls.features.length, `${name}: 機能名を文字列で書いていない呼び出しがある`).toBe(calls.total);
@@ -197,6 +267,11 @@ describe('AI 利用回数の記録 (#1177): Edge Functions', () => {
         .map(([name, entry]) => [name, sorted(recordedFeatures(entry.usage))]),
     );
     expect(actual).toEqual(expected);
+    // (#1149) 結果は、どの呼び出しも変数で受けて .allowed を読む
+    const missing = Object.keys(actual).flatMap((name) =>
+      unguardedConsumeCalls(`supabase/functions/${name}/index.ts`, index(name), 'consumeEdgeAiUsage'),
+    );
+    expect(missing).toEqual([]);
   });
 
   it('ユーザーの JWT を確かめて AI へ送る関数は、どれも記録する (一覧で record)。記録する関数は、どれもユーザーの JWT を確かめる', () => {
@@ -214,7 +289,7 @@ describe('AI 利用回数の記録 (#1177): Edge Functions', () => {
       .filter(([, entry]) => 'notRecorded' in entry.usage || 'recordedBy' in entry.usage)
       .map(([name]) => name)
       .filter((name) => !edgeSourcesMatch(name, SERVICE_ONLY_GUARD));
-    expect(unguarded, 'requireServiceRole を使うか、ユーザーの JWT で呼べるなら recordEdgeAiUsage で記録すること').toEqual([]);
+    expect(unguarded, 'requireServiceRole を使うか、ユーザーの JWT で呼べるなら consumeEdgeAiUsage で数えること').toEqual([]);
   });
 });
 
@@ -296,7 +371,7 @@ describe('AI 利用回数の記録 (#1177): 定期実行 (cron) の入口', () =
         const file = `src/app${entry.slice('vercel:'.length)}/route.ts`;
         expect(fs.existsSync(path.join(ROOT, file)), file).toBe(true);
         for (const usage of Object.values(ALL_ROUTES[file]?.handlers ?? {})) expect(recordedFeatures(usage), file).toEqual([]);
-        expect(recordCalls(read(file), 'recordAiUsage').total, file).toBe(0);
+        expect(recordCalls(read(file), 'consumeAiUsage').total, file).toBe(0);
         continue;
       }
       const callees = entry.startsWith('pg_net:') ? PG_NET_CALLEES[entry] : [entry.slice('pg_cron:'.length)];
@@ -512,6 +587,46 @@ describe('AI 利用回数の記録 (#1177): 機能名の定義', () => {
     expect(new Set(AI_FEATURES).size).toBe(AI_FEATURES.length);
   });
 
+  it('(#1149) 上限に数えない機能と既定のプランは、migration の consume_ai_usage_at (最後の定義) と同じ', () => {
+    const definitions = migrationSqls()
+      .map(({ sql }) => sql.match(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.consume_ai_usage_at\([\s\S]*?\$\$([\s\S]*?)\$\$/i)?.[1])
+      .filter((body): body is string => Boolean(body));
+    expect(definitions.length, 'consume_ai_usage_at の定義が見つからない').toBeGreaterThan(0);
+    const body = definitions[definitions.length - 1];
+    const unmetered = body.match(/c_unmetered\s+CONSTANT\s+TEXT\[\]\s*:=\s*ARRAY\[([^\]]*)\]/i)?.[1];
+    expect(unmetered, 'c_unmetered が見つからない').toBeDefined();
+    expect([...unmetered!.matchAll(/'([a-z0-9_]+)'/g)].map((m) => m[1]).sort()).toEqual([...AI_UNMETERED_FEATURES].sort());
+    expect(body.match(/c_default_plan\s+CONSTANT\s+TEXT\s*:=\s*'([a-z0-9_]+)'/i)?.[1]).toBe(AI_DAILY_LIMIT_DEFAULT_PLAN_KEY);
+  });
+
+  it('(#1149) 一覧の記録する入口には、上限に達したときの止め方 (onLimit) がある。画像だけ見送るのは料理画像の入口だけ', () => {
+    const entries = [
+      ...Object.entries(ALL_ROUTES).flatMap(([file, entry]) => Object.entries(entry.handlers).map(([method, usage]) => [`${method} ${file}`, usage] as const)),
+      ...Object.entries(ALL_EDGE).map(([name, entry]) => [name, entry.usage] as const),
+    ];
+    for (const [label, usage] of entries) {
+      if (!usage || !('record' in usage)) continue;
+      expect(['reject', 'skipAi', 'skipImage'], label).toContain(usage.onLimit);
+      if (usage.onLimit === 'skipImage') expect([...usage.record], label).toEqual(['image_generation']);
+    }
+    // Edge Function は、どれも 429 で止める (保存と AI を一緒にする関数は無い)
+    for (const [name, entry] of Object.entries(ALL_EDGE)) {
+      if ('record' in entry.usage) expect(entry.usage.onLimit, name).toBe('reject');
+    }
+  });
+
+  it('(#1149) 記録・判定・数え戻しの DB 関数を直接呼ぶのは、判定の部品 (entitlements.ts / _shared/ai-usage.ts) だけ', () => {
+    const files = [
+      ...listFiles(path.join(ROOT, 'src'), (name) => /\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name)),
+      ...listFiles(path.join(ROOT, 'supabase/functions'), (name) => /\.ts$/.test(name)),
+      ...['lib', 'shared'].flatMap((dir) => (fs.existsSync(path.join(ROOT, dir)) ? listFiles(path.join(ROOT, dir), (name) => /\.(ts|tsx|mjs)$/.test(name)) : [])),
+    ]
+      .map(rel)
+      .filter((file) => !file.startsWith('src/__tests__/'));
+    const callers = files.filter((file) => /rpc\(\s*['"](?:record_ai_usage|consume_ai_usage|refund_ai_usage)['"]/.test(stripComments(read(file))));
+    expect(callers.sort()).toEqual(['src/lib/plan/entitlements.ts', 'supabase/functions/_shared/ai-usage.ts']);
+  });
+
   it('すべての機能が、どこか (route・ライブラリ・Edge Function) で使われている', () => {
     const used = new Set<string>([
       ...Object.values(ALL_ROUTES).flatMap((entry) => Object.values(entry.handlers).flatMap((usage) => recordedFeatures(usage))),
@@ -541,15 +656,26 @@ describe('AI 利用回数の記録 (#1177): 検査そのものの確かめ', () 
     }
   });
 
-  it('記録の呼び出しの読み取り: 機能名を文字列で書いた呼び出しだけを数え、コメントの中は数えない', () => {
-    expect(recordCalls("await recordAiUsage(user.id, 'consultation');\n// recordAiUsage(user.id, 'x')", 'recordAiUsage')).toEqual({
+  it('判定と記録の呼び出しの読み取り: 機能名を文字列で書いた呼び出しだけを数え、コメントの中は数えない', () => {
+    expect(recordCalls("await consumeAiUsage(user.id, 'consultation');\n// consumeAiUsage(user.id, 'x')", 'consumeAiUsage')).toEqual({
       total: 1,
       features: ['consultation'],
     });
-    expect(recordCalls('await recordAiUsage(user.id, feature);', 'recordAiUsage')).toEqual({ total: 1, features: [] });
-    expect(recordCalls('await recordEdgeAiUsage(req, directJwtUserId, "menu_generation");', 'recordEdgeAiUsage')).toEqual({
+    expect(recordCalls('await consumeAiUsage(user.id, feature);', 'consumeAiUsage')).toEqual({ total: 1, features: [] });
+    expect(recordCalls('await consumeEdgeAiUsage(req, directJwtUserId, "menu_generation");', 'consumeEdgeAiUsage')).toEqual({
       total: 1,
       features: ['menu_generation'],
     });
+  });
+
+  it('(#1149) 結果を見ていない呼び出しを見つける: 捨てる・別の名前を読む・呼ぶ前に読む、は落ちる。三項演算子・あとからの代入は通る', () => {
+    const check = (body: string) => unguardedConsumeCalls('x.ts', `async function h() {\n${body}\n}`, 'consumeAiUsage');
+    expect(check("await consumeAiUsage(u, 'consultation');\nawait send();")).toEqual(['x.ts:2']);
+    expect(check("const a = await consumeAiUsage(u, 'consultation');\nif (!b.allowed) return;")).toEqual(['x.ts:2']);
+    expect(check("let a = null;\nif (a?.allowed) {}\na = await consumeAiUsage(u, 'consultation');")).toEqual(['x.ts:4']);
+    expect(check("const a = await consumeAiUsage(u, 'consultation');\nif (!a.allowed) return deny(a);")).toEqual([]);
+    expect(check("const a = f ? await consumeAiUsage(u, 'nutrition_advice') : await consumeAiUsage(u, 'nutrition_advice_auto');\nif (!a.allowed) return;")).toEqual([]);
+    expect(check("let a = null;\na = await consumeAiUsage(u, 'image_generation');\nif (!a.allowed) skip();")).toEqual([]);
+    expect(check("const a = ok ? await consumeAiUsage(u, 'health_review') : null;\nif (a?.allowed) send();")).toEqual([]);
   });
 });

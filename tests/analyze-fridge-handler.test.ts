@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { AI_USAGE_ALLOWED, AI_USAGE_DENIED } from "./helpers/ai-usage-mock";
 
 // #1227: analyze-fridge Edge Function は imageUrl の型も形式も確かめずに外部の Vision API へ渡していた。
 // 文字列でない値 (数値など) が来ると、ログ出力用の imageUrl.slice(0, 80) で TypeError になって 500 を返し、
@@ -10,7 +11,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 const mocks = vi.hoisted(() => ({
   requireAuth: vi.fn(),
-  recordEdgeAiUsage: vi.fn(),
+  consumeEdgeAiUsage: vi.fn(),
   createCompletion: vi.fn(),
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -22,10 +23,10 @@ vi.mock("../supabase/functions/_shared/db-logger.ts", () => ({
   createLogger: () => ({ withUser: () => mocks.logger }),
   generateRequestId: () => "req_test",
 }));
-// #1177: AI 利用回数の記録。DB を呼ぶ recordEdgeAiUsage だけを差し替える (recordEdgeAiUsage 自体の挙動は tests/ai-usage-edge.test.ts)
+// #1177 / #1149: AI 利用回数の上限の判定と記録。DB を呼ぶ consumeEdgeAiUsage だけを差し替える (consumeEdgeAiUsage 自体の挙動は tests/ai-usage-edge.test.ts)
 vi.mock("../supabase/functions/_shared/ai-usage.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../supabase/functions/_shared/ai-usage.ts")>()),
-  recordEdgeAiUsage: mocks.recordEdgeAiUsage,
+  consumeEdgeAiUsage: mocks.consumeEdgeAiUsage,
 }));
 vi.mock("../supabase/functions/_shared/fast-llm.ts", () => ({
   createFastLLMClient: () => ({ chat: { completions: { create: mocks.createCompletion } } }),
@@ -52,8 +53,8 @@ afterAll(() => {
 beforeEach(() => {
   mocks.requireAuth.mockReset();
   mocks.requireAuth.mockResolvedValue({ userId: "user-1" });
-  mocks.recordEdgeAiUsage.mockReset();
-  mocks.recordEdgeAiUsage.mockResolvedValue(undefined);
+  mocks.consumeEdgeAiUsage.mockReset();
+  mocks.consumeEdgeAiUsage.mockResolvedValue(AI_USAGE_ALLOWED);
   mocks.createCompletion.mockReset();
   mocks.createCompletion.mockResolvedValue({
     choices: [{ message: { content: JSON.stringify({ ingredients: ["卵", "牛乳"], expiringSoon: ["牛乳"] }) } }],
@@ -273,14 +274,25 @@ describe("analyze-fridge の AI 利用回数の記録 (#1177)", () => {
     const res = await call({ imageUrl: SUPABASE_URL });
 
     expect(res.status).toBe(200);
-    expect(mocks.recordEdgeAiUsage).toHaveBeenCalledTimes(1);
-    const [req, userId, feature] = mocks.recordEdgeAiUsage.mock.calls[0];
+    expect(mocks.consumeEdgeAiUsage).toHaveBeenCalledTimes(1);
+    const [req, userId, feature] = mocks.consumeEdgeAiUsage.mock.calls[0];
     expect(req).toBeInstanceOf(Request);
     expect(userId).toBe("user-1");
     expect(feature).toBe("photo_analysis");
-    expect(mocks.recordEdgeAiUsage.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(mocks.consumeEdgeAiUsage.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.createCompletion.mock.invocationCallOrder[0],
     );
+  });
+
+  it("#1149: 今日の AI の利用回数の上限に達していたら、Vision API を呼ばずに 429 AI_DAILY_LIMIT (CORS ヘッダーつき)", async () => {
+    mocks.consumeEdgeAiUsage.mockResolvedValue(AI_USAGE_DENIED);
+
+    const res = await call({ imageUrl: SUPABASE_URL });
+
+    expect(res.status).toBe(429);
+    await expect(res.json()).resolves.toMatchObject({ code: "AI_DAILY_LIMIT", limit: AI_USAGE_DENIED.limit });
+    expect(res.headers.get("Retry-After")).toMatch(/^\d+$/);
+    expect(mocks.createCompletion).not.toHaveBeenCalled();
   });
 
   it("AH-16: 認証に失敗したら記録しない", async () => {
@@ -289,6 +301,6 @@ describe("analyze-fridge の AI 利用回数の記録 (#1177)", () => {
     const res = await call({ imageUrl: SUPABASE_URL });
 
     expect(res.status).toBe(401);
-    expect(mocks.recordEdgeAiUsage).not.toHaveBeenCalled();
+    expect(mocks.consumeEdgeAiUsage).not.toHaveBeenCalled();
   });
 });

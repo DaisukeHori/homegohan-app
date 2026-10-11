@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { recordAiUsage } from '@/lib/plan/entitlements';
+import { aiDailyLimitResponse, consumeAiUsage } from '@/lib/plan/entitlements';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
@@ -171,9 +171,10 @@ ${importantMessages.length > 0 ? `
 ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n')}
 ` : ''}`;
 
-    // #1177 AI 利用回数の記録。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回記録する
-    // (記録に失敗しても止めない)
-    await recordAiUsage(user.id, 'consultation');
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeAiUsage(user.id, 'consultation');
+    if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
     const MAX_ATTEMPTS = 3;
     let summaryData: any | null = null;

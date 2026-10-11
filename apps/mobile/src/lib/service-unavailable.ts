@@ -8,8 +8,9 @@
  *
  * - getApi() (src/lib/api.ts) は、この Error を ServiceUnavailableError (message が固定の文) に置き換えて投げ直す。
  *   そのため、各画面の `setError(e.message)` や `Alert.alert("エラー", e.message)` は、そのまま固定の文を出す。
- * - getApi() を通らない生の fetch (ストリーミングで受ける AI 相談の送信) は、失敗の応答から errorOfFailedResponse で
- *   Error を作って投げる (503 の止めている理由が分かれば ServiceUnavailableError)。
+ * - getApi() を通らない生の fetch (ストリーミングで受ける AI 相談の送信) は、失敗の応答から errorOfFailedResponse
+ *   (src/lib/failed-response.ts。429 AI_DAILY_LIMIT の判定と共用) で Error を作って投げる
+ *   (503 の止めている理由が分かれば ServiceUnavailableError)。
  *   生の fetch で AI 相談の送信をする場所がこの関数を通っているかは、tests/mobile-service-unavailable-raw-fetch.test.ts が見張る。
  *
  * 文はサーバーの本文の文字列を使わず、code から決めた固定の文にする (packages/shared/src/service-unavailable.ts。Web と共用)。
@@ -19,6 +20,9 @@ import { SERVICE_UNAVAILABLE_STATUS, serviceUnavailableMessageOfBody } from "@ho
 // "HTTP 503 Service Unavailable: {...}" / HTTP/2 で statusText が空の "HTTP 503 : {...}" / 生の fetch の "HTTP 503: {...}"
 // (api-error.ts と同じ形)
 const HTTP_ERROR_PATTERN = /^HTTP (\d{3})[^:]*:\s*([\s\S]+)$/;
+
+/** 緊急停止・メンテナンス中で止められたことを Alert で出すときの見出し */
+export const SERVICE_UNAVAILABLE_ALERT_TITLE = "ご利用いただけません";
 
 /** AI 相談の緊急停止・メンテナンス中で止められたことを表す例外。message は画面にそのまま出せる固定の文 */
 export class ServiceUnavailableError extends Error {
@@ -56,15 +60,4 @@ export function serviceUnavailableErrorOf(error: unknown): ServiceUnavailableErr
  */
 export function serviceUnavailableMessageOf(status: number, body: unknown): string | null {
   return status === SERVICE_UNAVAILABLE_STATUS ? serviceUnavailableMessageOfBody(body) : null;
-}
-
-/**
- * getApi() を通らない生の fetch で、API が失敗の応答を返したときに投げる Error を作る。
- *   - 503 の AI 相談の緊急停止・メンテナンス中: 固定の文の ServiceUnavailableError
- *   - それ以外: これまでどおり `HTTP <状態>: <本文>` の Error。同意の 403 の見分け (isAiConsentRequiredError /
- *     handleAiConsentRequiredError) はこの形の message を読むので、形を変えない
- */
-export function errorOfFailedResponse(status: number, bodyText: string): Error {
-  const raw = new Error(`HTTP ${status}: ${bodyText}`);
-  return serviceUnavailableErrorOf(raw) ?? raw;
 }

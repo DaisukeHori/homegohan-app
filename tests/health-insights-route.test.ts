@@ -21,13 +21,16 @@
  * 実 DB に対する確認は tests/integration/security/health-insights-meals.test.ts。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AI_USAGE_ALLOWED, AI_USAGE_DENIED } from './helpers/ai-usage-mock';
+import { aiDailyLimitMessage } from '../supabase/functions/_shared/ai-daily-limit';
 import { NextRequest } from 'next/server';
 
 const mockGetUser = vi.fn();
 const mockFrom = vi.fn();
 const mockCheckRateLimit = vi.fn();
 const mockRateLimitExceededResponse = vi.fn();
-const mockRecordAiUsage = vi.fn();
+const mockConsumeAiUsage = vi.fn();
+const mockRefundAiUsage = vi.fn();
 const mockGenerateGeminiJson = vi.fn();
 
 // 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
@@ -50,9 +53,12 @@ vi.mock('@/lib/rate-limit', () => ({
   rateLimitExceededResponse: (...args: unknown[]) => mockRateLimitExceededResponse(...args),
 }));
 
-// #1177: AI 利用回数の記録 (DB を呼ぶ境目)。recordAiUsage 自体の挙動は src/__tests__/lib/plan/entitlements.test.ts
-vi.mock('@/lib/plan/entitlements', () => ({
-  recordAiUsage: (...args: unknown[]) => mockRecordAiUsage(...args),
+// #1177 / #1149: AI 利用回数の上限の判定と記録 (DB を呼ぶ境目)。consumeAiUsage 自体の挙動は src/__tests__/lib/plan/entitlements.test.ts。
+// 止めたときの応答 (aiDailyLimitResponse) は本物を使う
+vi.mock('@/lib/plan/entitlements', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/plan/entitlements')>()),
+  consumeAiUsage: (...args: unknown[]) => mockConsumeAiUsage(...args),
+  refundAiUsage: (...args: unknown[]) => mockRefundAiUsage(...args),
 }));
 
 vi.mock('@/lib/ai/gemini-json', () => ({
@@ -213,7 +219,8 @@ beforeEach(() => {
   mockGetSupabaseAdmin.mockImplementation(() => ({ from: mockFrom }));
   mockGetUser.mockResolvedValue({ data: { user }, error: null });
   mockCheckRateLimit.mockResolvedValue({ success: true });
-  mockRecordAiUsage.mockResolvedValue(undefined);
+  mockConsumeAiUsage.mockResolvedValue(AI_USAGE_ALLOWED);
+  mockRefundAiUsage.mockResolvedValue(undefined);
   // JST の 2026-10-08 05:30。UTC ではまだ 10-07 なので、「今日」が JST 基準であることも確かめられる
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-10-07T20:30:00Z'));
@@ -246,7 +253,7 @@ describe('POST /api/health/insights', () => {
     expect(mockFrom).not.toHaveBeenCalled();
     expect(mockGenerateGeminiJson).not.toHaveBeenCalled();
     // レート制限で止まった要求は、AI の利用回数に記録しない
-    expect(mockRecordAiUsage).not.toHaveBeenCalled();
+    expect(mockConsumeAiUsage).not.toHaveBeenCalled();
   });
 
   it('#1177: レート制限を通ったら、認証で確定したユーザー ID で AI の利用回数を記録する (health_review)', async () => {
@@ -255,11 +262,23 @@ describe('POST /api/health/insights', () => {
     const res = await POST(postRequest());
 
     expect(res.status).toBe(200);
-    expect(mockRecordAiUsage).toHaveBeenCalledTimes(1);
-    expect(mockRecordAiUsage).toHaveBeenCalledWith(user.id, 'health_review');
+    expect(mockConsumeAiUsage).toHaveBeenCalledTimes(1);
+    expect(mockConsumeAiUsage).toHaveBeenCalledWith(user.id, 'health_review');
     // レート制限のあとに記録し、AI を呼ぶ前に記録する
-    expect(mockCheckRateLimit.mock.invocationCallOrder[0]).toBeLessThan(mockRecordAiUsage.mock.invocationCallOrder[0]);
-    expect(mockRecordAiUsage.mock.invocationCallOrder[0]).toBeLessThan(mockGenerateGeminiJson.mock.invocationCallOrder[0]);
+    expect(mockCheckRateLimit.mock.invocationCallOrder[0]).toBeLessThan(mockConsumeAiUsage.mock.invocationCallOrder[0]);
+    expect(mockConsumeAiUsage.mock.invocationCallOrder[0]).toBeLessThan(mockGenerateGeminiJson.mock.invocationCallOrder[0]);
+  });
+
+  it('#1149: 今日の AI の利用回数の上限に達していたら、AI を呼ばず・保存もせずに 429 AI_DAILY_LIMIT を返す', async () => {
+    setupHappyPath();
+    mockConsumeAiUsage.mockResolvedValue(AI_USAGE_DENIED);
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({ code: 'AI_DAILY_LIMIT', limit: AI_USAGE_DENIED.limit, error: aiDailyLimitMessage(AI_USAGE_DENIED.limit) });
+    expect(mockGenerateGeminiJson).not.toHaveBeenCalled();
+    expect(recorded.filter((w) => w.table === 'health_insights')).toEqual([]);
   });
 
   it('#1177: 分析に使うデータが無くて AI を呼ばずに 400 を返すときは、記録しない', async () => {
@@ -270,7 +289,7 @@ describe('POST /api/health/insights', () => {
     const res = await POST(postRequest());
 
     expect(res.status).toBe(400);
-    expect(mockRecordAiUsage).not.toHaveBeenCalled();
+    expect(mockConsumeAiUsage).not.toHaveBeenCalled();
     expect(mockGenerateGeminiJson).not.toHaveBeenCalled();
   });
 

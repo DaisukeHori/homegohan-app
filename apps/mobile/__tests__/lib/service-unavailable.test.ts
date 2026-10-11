@@ -37,9 +37,9 @@ jest.mock('@homegohan/core', () => ({
 
 import { getApi } from '../../src/lib/api';
 import { getApiErrorMessage } from '../../src/lib/api-error';
+import { errorOfFailedResponse } from '../../src/lib/failed-response';
 import {
   ServiceUnavailableError,
-  errorOfFailedResponse,
   isServiceUnavailableError,
   serviceUnavailableErrorOf,
   serviceUnavailableMessageOf,

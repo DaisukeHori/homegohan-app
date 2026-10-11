@@ -4,9 +4,16 @@
  * getApi() (apps/mobile/src/lib/api.ts) は、AI 相談の緊急停止 (503 AI_CHAT_DISABLED)・メンテナンス中 (503 MAINTENANCE_MODE) の
  * Error を、固定の文の ServiceUnavailableError に置き換えて投げ直す。getApi() を通らない生の fetch には、この置き換えが効かない。
  * 生の fetch で AI 相談 (/api/ai/consultation) を呼ぶファイルは、失敗の応答を次のどちらかで読む:
- *   - errorOfFailedResponse(status, 本文) で例外を作る (`HTTP <状態>: <本文>` の Error を自分で作らない)
+ *   - errorOfFailedResponse(status, 本文) (apps/mobile/src/lib/failed-response.ts) で例外を作る
+ *     (`HTTP <状態>: <本文>` の Error を自分で作らない。429 AI_DAILY_LIMIT (#1149) も同じ関数で固定の文になる)
  *   - 本文を JSON で読んだあとなら serviceUnavailableMessageOf(status, 本文)
  * 挙動 (固定の文を出す・入力を戻す) は apps/mobile/__tests__/ai/service-unavailable.test.tsx が確かめる。
+ * 生の fetch の呼び出しを関数ごとに分類し、429 を返す呼び先を呼ぶ関数が errorOfFailedResponse を通すかは
+ * tests/ai-daily-limit-mobile-raw-fetch.test.ts が見る (このテストは AI 相談を呼ぶファイルの 503 を見る)。
+ *
+ * 限界 (見張りであって証明ではない):
+ *   - ファイル単位で見る。同じファイルの別の関数が errorOfFailedResponse を呼んでいれば、ある関数が呼んでいなくても通る
+ *   - AI 相談 (/api/ai/consultation) 以外の API を生の fetch で呼ぶ場所のメンテナンス中の 503 は見ない
  *
  * コメントは見ない (TypeScript の printer でコメントを除いたソースを調べる)。
  */
@@ -22,7 +29,7 @@ const AI_CONSULTATION_PATH = '/api/ai/consultation';
 /** 生の fetch で AI 相談を呼ぶファイル (リポジトリのルートからの相対パス)。足した・消したら、ここで気づく */
 const RAW_FETCH_FILES = ['apps/mobile/app/ai/[sessionId].tsx', 'apps/mobile/src/components/ai/AIAdvisorSheet.tsx'];
 
-/** 失敗の応答を 503 の固定の文にする関数 (apps/mobile/src/lib/service-unavailable.ts) */
+/** 失敗の応答を 503 の固定の文にする関数 (apps/mobile/src/lib/failed-response.ts・apps/mobile/src/lib/service-unavailable.ts) */
 const READERS = ['errorOfFailedResponse', 'serviceUnavailableMessageOf'];
 
 function collectFiles(dir: string): string[] {
@@ -72,8 +79,8 @@ describe('#1457 生の fetch で AI 相談を呼ぶ場所は、503 を固定の�
       expect(code, `${file} は \`HTTP \${status}: ...\` の Error を自分で作っている。errorOfFailedResponse を使う`).not.toMatch(
         /new\s+Error\s*\(\s*`HTTP \$\{/,
       );
-      // service-unavailable から import している
-      expect(code).toMatch(/from\s+["'][./]+(?:src\/)?lib\/service-unavailable["']/);
+      // failed-response (errorOfFailedResponse) か service-unavailable (serviceUnavailableMessageOf) から import している
+      expect(code).toMatch(/from\s+["'][./]+(?:src\/)?lib\/(?:failed-response|service-unavailable)["']/);
     });
   }
 });
