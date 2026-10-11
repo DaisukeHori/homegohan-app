@@ -13,6 +13,7 @@ import { getApi } from "../../src/lib/api";
 import { MOCK_PHOTO_RESPONSE } from "@homegohan/handson-tour-shared";
 import { registerTourTarget, unregisterTourTarget } from "../../src/handson-tour/useTourOverlayLogic";
 import { handleAiConsentRequiredError, useLeaveModalRouteBeforeConsentScreen } from "../../src/lib/ai-consent";
+import { classifyPhotoFailureOf } from "../../src/lib/classify-photo-failure";
 
 // Inlined from lib/meal-image to avoid importing server-side code
 interface MealImageDish { name?: string | null; image_url?: string | null; image_source?: string | null; image_status?: string | null; image_generated_at?: string | null; [key: string]: any; }
@@ -488,6 +489,16 @@ export default function MealNewPage() {
         // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す。
         // 案内の「同意画面を開く」では、この画面 (modal) を閉じてから移る (閉じないと同意画面がこの画面の下に隠れる)
         if (handleAiConsentRequiredError(e, { beforeOpenConsentScreen: leaveBeforeConsentScreen })) { setStep("capture"); return; }
+        // 判別できなかった (422): 判別は数え済みなので、本文の数え済みの印を拾い、種類を手で選ぶ画面へ進む
+        // (選んだ解析に印を入れて、2 回目として数えない。Web の classifyPhoto と同じ。#1487)
+        const failure = classifyPhotoFailureOf(e);
+        if (failure) {
+          aiUsageGrantRef.current = failure.aiUsageGrant;
+          setDetectedType(failure.type); setDetectedConfidence(failure.confidence);
+          setClassificationCandidates(failure.candidates);
+          setStep("classify-failed");
+          return;
+        }
         Alert.alert("判別失敗", e?.message ?? "写真の判別に失敗しました。"); setStep("capture");
       }
     } else {

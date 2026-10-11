@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getEdgeFunctionServiceRoleKey, getSupabaseUrl, isMissingEnvError } from '@/lib/env-required';
+import { refundAiUsage, type AiUsageResult } from '@/lib/plan/entitlements';
+import { createLogger } from '@/lib/db-logger';
 import {
   DEFAULT_MEAL_IMAGE_MODEL,
   buildDishImagePrompt,
@@ -112,10 +114,50 @@ interface EnqueueJobsParams {
   triggerSource: string;
   jobSeeds: MealImageJobSeed[];
   requestId?: string | null;
+  /**
+   * この操作で数えた料理画像の回数 (consumeAiUsage(userId, 'meal_image_auto') の結果。#1149)。
+   * 1 行も積めなかったとき (積む行がすべて重複・書き込みの失敗) は、これを数え戻す (#1487)。
+   * 数えていない (同意が無く処理する側が止める・判定に失敗した) ときは null / 省略 (戻すものが無い)
+   */
+  usage?: AiUsageResult | null;
 }
 
-export async function enqueueMealImageJobs(params: EnqueueJobsParams) {
-  if (!params.jobSeeds.length) return;
+/** enqueueMealImageJobs の結果 (#1487)。行ごとに数える */
+export interface EnqueueMealImageJobsResult {
+  /** 新しく積めた行 */
+  inserted: number;
+  /** 同じ料理の待ち・処理中のジョブがすでにあって積まなかった行 (冪等キーの重複) */
+  duplicates: number;
+  /** 書き込みに失敗した行 (権限・接続など) */
+  failed: number;
+}
+
+/**
+ * 一意制約の違反 (PostgreSQL の SQLSTATE)。meal_image_jobs の冪等キーの一意な索引
+ * (meal_image_jobs_idempotency_pending_idx) は、待ち・処理中 (status が pending / processing) の行だけが対象の部分索引
+ */
+const UNIQUE_VIOLATION_CODE = '23505';
+
+const enqueueLogger = createLogger('lib/meal-image-jobs');
+
+/**
+ * 料理画像のジョブを積む (service role)。行ごとに insert し、積めた・重複・失敗を数えて返す。例外は投げない。
+ *
+ * 1 回の upsert (onConflict: 'idempotency_key', ignoreDuplicates) にしない理由 (#1487):
+ * 冪等キーの一意な索引は部分索引 (WHERE status IN ('pending','processing')) なので、PostgREST の on_conflict が作る
+ * ON CONFLICT (idempotency_key) は索引を推論できず、42P10 で必ず失敗する (行が 1 つも積まれない)。
+ * 部分索引のままにするのは、失敗・取り消し・完了したジョブと同じ料理を、あとで積み直せるようにするため。
+ * そのため行ごとに insert し、一意制約の違反 (23505) は「同じ料理のジョブが待ち・処理中」として重複に数える。
+ *
+ * 1 行も積めなかったときは、params.usage (この操作で数えた料理画像の 1 回) を数え戻す
+ * (AI へは何も送らないので。上限の数え戻しの決まりは src/lib/plan/entitlements.ts の【数え戻し】)。
+ */
+export async function enqueueMealImageJobs(params: EnqueueJobsParams): Promise<EnqueueMealImageJobsResult> {
+  const result: EnqueueMealImageJobsResult = { inserted: 0, duplicates: 0, failed: 0 };
+  if (!params.jobSeeds.length) {
+    await refundUnusedMealImageUsage(params);
+    return result;
+  }
 
   const records = await Promise.all(
     params.jobSeeds.map(async (seed): Promise<Record<string, unknown>> => ({
@@ -138,12 +180,44 @@ export async function enqueueMealImageJobs(params: EnqueueJobsParams) {
     })),
   );
 
-  await params.supabase
-    .from('meal_image_jobs')
-    .upsert(records, {
-      onConflict: 'idempotency_key',
-      ignoreDuplicates: true,
-    });
+  const outcomes = await Promise.all(
+    records.map(async (record) => {
+      try {
+        const { error } = await params.supabase.from('meal_image_jobs').insert(record);
+        if (!error) return 'inserted' as const;
+        if (error.code === UNIQUE_VIOLATION_CODE) return 'duplicate' as const;
+        enqueueLogger.warn('Failed to enqueue meal image job', {
+          userId: params.userId,
+          plannedMealId: params.plannedMealId,
+          dishIndex: record.dish_index,
+          code: error.code,
+          error: error.message,
+        });
+        return 'failed' as const;
+      } catch (error) {
+        enqueueLogger.warn('Failed to enqueue meal image job', {
+          userId: params.userId,
+          plannedMealId: params.plannedMealId,
+          dishIndex: record.dish_index,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return 'failed' as const;
+      }
+    }),
+  );
+  for (const outcome of outcomes) {
+    if (outcome === 'inserted') result.inserted += 1;
+    else if (outcome === 'duplicate') result.duplicates += 1;
+    else result.failed += 1;
+  }
+
+  if (result.inserted === 0) await refundUnusedMealImageUsage(params);
+  return result;
+}
+
+/** 1 行も積まなかったとき、この操作で数えた料理画像の 1 回を戻す (数えていなければ何もしない。#1487) */
+async function refundUnusedMealImageUsage(params: EnqueueJobsParams): Promise<void> {
+  if (params.usage?.allowed) await refundAiUsage(params.userId, 'meal_image_auto', params.usage);
 }
 
 /**

@@ -19,7 +19,11 @@ import {
   aiDailyLimitMessageOfBody,
 } from "../../../../supabase/functions/_shared/ai-daily-limit";
 
-export { AI_DAILY_LIMIT_FALLBACK_MESSAGE, aiDailyLimitMessage } from "../../../../supabase/functions/_shared/ai-daily-limit";
+export {
+  AI_AUTO_SAFETY_CAP_MESSAGE,
+  AI_DAILY_LIMIT_FALLBACK_MESSAGE,
+  aiDailyLimitMessage,
+} from "../../../../supabase/functions/_shared/ai-daily-limit";
 
 // "HTTP 429 Too Many Requests: {...}" / HTTP/2 で statusText が空の "HTTP 429 : {...}" (api-error.ts と同じ形)
 const HTTP_ERROR_PATTERN = /^HTTP (\d{3})[^:]*:\s*([\s\S]+)$/;
