@@ -171,8 +171,12 @@ Edge Function は、現行の `CRON_SECRET` に加えて `CRON_SECRET_PREVIOUS`�
 
 比較ランキング（Web の `/comparison`・モバイルの比較画面）の集計 `calculate-segment-stats` は、pg_cron のジョブ `calculate-segment-stats` が **1 時間ごと（毎時 5 分）** に呼びます（migration `20261009100000_schedule_calculate_segment_stats.sql`。#1406）。
 
-- 毎回、daily / weekly / monthly の 3 つの要求が pg_net から並行して出ます。どれも、自分の期間の食事の記録（monthly は 1 か月分）を全件読みます。
+- 毎回、daily / weekly / monthly の 3 つの要求が pg_net から並行して出ます。1 つの要求が読むものは次のとおりです（#1491）。
+  - 自分の期間の食事の記録（`meals`。monthly は 1 か月分）と献立（`planned_meals`）を全件。
+  - 指標 `total_meals`（全期間の食事の記録の件数）が有効なら、DB の関数 `count_meals_per_user`（migration `20261011060000_count_meals_per_user.sql`）が数えた、記録のある利用者 1 人につき 1 行の件数。`meals` の全期間の行は読みません。`total_meals` が有効でなければ呼びません。
+  - そのほか、全利用者のプロフィール（`user_profiles`）と継続日数（`health_streaks`）。どれも 1 回の応答が 1000 行を超えると、1000 行ずつ取り直します。
 - 日・週・月が切り替わった直後の回（JST 0:05）は、切り替わった種類について直前の期間も 1 回だけ集計し直します（最大 3 つ増えます）。期間の最後の 1 時間（例: 23:05〜23:59）の記録を、その期間の最終の値に入れるためです。
+- 比較のバッジ（順位・上位 X%・平均超え・改善）は、この直前の期間を集計し直す回だけが判定します（#1491）。毎時の今の期間の回は、指標・統計・ランキングを更新するだけです（期間の途中の暫定の値で、取り消されないバッジを付けないため）。手動の集計（`POST /api/comparison/trigger`）も今の期間を集計するので、バッジは付きません。
 - 応答を待つ上限は 400 秒です。間隔（1 時間）より十分短いので、前の回と重なりません。直近の結果は `net._http_response` で確かめられます（下の「比較ランキングの集計が動いているかの確かめ方」）。
 
 利用者が増えて毎時の集計が重くなったら、Supabase Dashboard の SQL Editor で間隔を広げられます（migration は要りません）。例: 3 時間ごと
@@ -184,7 +188,7 @@ SELECT cron.alter_job(
 );
 ```
 
-- **UTC 15 時台（= JST 0 時台）の回を必ず含めてください。** 直前の期間の集計し直しは、期間が切り替わってから 1 時間以内（`calculate_segment_stats_request_bodies` の `c_finalize_window`）の回だけが行います。`'5 */3 * * *'` は UTC 0, 3, …, 15, 18, 21 時なので含みます。`'5 */2 * * *'` は含まないので使えません。
+- **UTC 15 時台（= JST 0 時台）の回を必ず含めてください。** 直前の期間の集計し直しは、期間が切り替わってから 1 時間以内（`calculate_segment_stats_request_bodies` の `c_finalize_window`）の回だけが行います。含めないと、期間の最終の値が入らないうえ、比較のバッジが一度も判定されません。`'5 */3 * * *'` は UTC 0, 3, …, 15, 18, 21 時なので含みます。`'5 */2 * * *'` は含まないので使えません。
 - 間隔を変えたら、モバイルの比較画面の案内（`apps/mobile/app/comparison/index.tsx` の `RANKING_UPDATE_INTERVAL_HOURS`）も同じ時間に直し、次の migration でジョブのスケジュールも揃えてください（`tests/segment-stats-schedule-sync.test.ts` が migration と画面を突き合わせます）。
 - 今の設定は `SELECT jobname, schedule, active FROM cron.job WHERE jobname = 'calculate-segment-stats';` で確かめられます。
 

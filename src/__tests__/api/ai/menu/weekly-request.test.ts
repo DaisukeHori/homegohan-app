@@ -11,6 +11,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { applyHeavyUnitTestTimeout } from '../../../../../tests/helpers/heavy-unit-test-timeout';
+
+// 負荷の高い機械で vitest の既定の時間切れ (テスト 5 秒・フック 10 秒) を超えて落ちたことがあるので、このファイルだけ延ばす
+// (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1488)。テストとフックを定義する前に置く
+applyHeavyUnitTestTimeout();
 
 const mockGetUser = vi.fn();
 

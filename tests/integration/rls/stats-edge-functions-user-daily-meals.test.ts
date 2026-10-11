@@ -21,6 +21,14 @@
  *   - 集計結果が user_metrics / segment_stats / user_segment_rankings / user_badges に保存される
  *   - 途中のクエリが失敗したら例外にして、ログと応答 (500) に残す (この統合テストでは、全クエリが成功することを確認する)
  *
+ * #1491 の追加:
+ *   - バッジは、確定した期間を集計する回 (previousPeriod: true。pg_cron が期間の切り替わった直後の JST 0 時台に送る) だけで付く。
+ *     今の期間を集計する毎時の回 (previousPeriod: false) は、指標・統計・ランキングだけを書き、user_badges には書かない
+ *     (以前は毎時の回の暫定の順位で、取り消されないバッジが付いていた)。
+ *     このテストは、同じ週を「期間の途中の毎時の回」→「週が切り替わった直後の確定の回」の順に集計する
+ *   - 指標 total_meals (全期間の食事の記録の件数) は、DB の関数 count_meals_per_user (migration 20261011060000) で
+ *     利用者ごとに数える。meals の全行は読まない。実 DB で、関数が service role から呼べて正しい件数を返すことを確かめる
+ *
  * 本物のハンドラ (Deno.serve に渡された関数) を、実際のローカル Supabase に向けて呼ぶ。
  * Deno と db-logger (app_logs への書き込み・https://esm.sh の import) だけを差し替える。
  *
@@ -73,7 +81,7 @@ const TS = Date.now();
 const PASSWORD = `${randomBytes(18).toString('base64url')}Aa1!`; // 使い捨てユーザー用。実行のたびに変わる
 const MARK = `x1306-${TS}`; // このテストのユーザーだけが持つ perf_modes の値
 const MARK_ZERO = `x1306z-${TS}`; // 何も記録していない 5 人 (全指標が全員 0) だけが持つ perf_modes の値
-const D = '2026-10-08'; // 集計する日 (2026-10-08 は木曜日)
+const D = '2026-10-08'; // 集計する日 (2026-10-08 は木曜日。週は 10/05 (月)〜10/11 (日))
 const PREV = '2026-10-07';
 
 const createdUserIds: string[] = [];
@@ -184,15 +192,20 @@ describe('calculate-segment-stats: 実スキーマで指標・統計・ランキ
   }
 
   let response: { res: Response; json: Record<string, any> };
+  /** 週の途中の毎時の回 (今の期間・previousPeriod: false) の応答 */
+  let inProgressResponse: { res: Response; json: Record<string, any> };
+  /** 毎時の回のあと (確定の回の前) に、このテストの利用者が持っていた user_badges */
+  let badgesAfterInProgress: Array<{ user_id: string; badge_id: string }> = [];
 
   beforeAll(async () => {
     metricIds.exec = await ensureMetric('menu_execution_rate', 'メニュー実行率');
     metricIds.bf = await ensureMetric('breakfast_rate', '朝食実行率');
     metricIds.veg = await ensureMetric('veg_score_avg', '野菜スコア');
     metricIds.nut = await ensureMetric('nutrition_score', '栄養スコア');
-    // 既存の指標が非アクティブだと処理されない。このテストが依存する 4 つはアクティブであること
+    metricIds.total = await ensureMetric('total_meals', '総食事数');
+    // 既存の指標が非アクティブだと処理されない。このテストが依存する 5 つはアクティブであること
     const { data: actives } = await sr.from('metric_definitions').select('id').in('id', Object.values(metricIds)).eq('is_active', true);
-    expect((actives ?? []).length).toBe(4);
+    expect((actives ?? []).length).toBe(5);
 
     // このテストのユーザーだけが持つ perf_modes の値で絞るセグメント (5 人未満の統計は作られないので、ちょうど 5 人)
     for (let i = 1; i <= 5; i += 1) {
@@ -256,21 +269,38 @@ describe('calculate-segment-stats: 実スキーマで指標・統計・ランキ
     // 1 人だけ 1,100 件 (先に入れた 1,000 件は未完了、最後に入れた 100 件が完了)。このセグメントには入らない (perf_modes が違う)。
     // 期間内の planned_meals は全ユーザー分をまとめて読むので、そのまま取ると 1000 行で黙って打ち切られ、
     // 後ろの完了済み 100 件が落ちて、この人の実行率が 9% (100/1100) にならない
+    // 食事の記録 (meals)。total_meals は全期間の件数 (#1491: DB の関数 count_meals_per_user で数える)。
+    // 集計する週 (10/05〜10/11) の外の日付だけにして、週の記録率などの期間の指標には入れない
+    //   s1: 3 件 (1 年以上前を含む) / s2: 1 件 / s3〜s5: 0 件
+    const { error: mealsError } = await sr.from('meals').insert([
+      { user_id: userIds[0], eaten_at: '2025-01-15T03:00:00Z', meal_type: 'lunch' },
+      { user_id: userIds[0], eaten_at: '2026-09-01T03:00:00Z', meal_type: 'lunch' },
+      { user_id: userIds[0], eaten_at: '2026-09-02T03:00:00Z', meal_type: 'dinner' },
+      { user_id: userIds[1], eaten_at: '2026-09-03T03:00:00Z', meal_type: 'breakfast' },
+    ]);
+    if (mealsError) throw new Error(`meals: ${mealsError.message}`);
     bulkUserId = await createUser('bulk');
     await seedDay(bulkUserId, D, [
       ...Array.from({ length: 1000 }, () => ({ type: 'lunch', completed: false })),
       ...Array.from({ length: 100 }, () => ({ type: 'lunch', completedAt: done })),
     ]);
 
-    // 期間は「今」の週 (月曜起点)。2026-10-08 (木) がどの扱いでも期間の真ん中に入るよう、時刻を固定する
-    // (Date だけ偽物にする。通信のタイマーはそのまま動く)
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-10-08T03:00:00Z'));
+    // 同じ週 (10/05〜10/11) を 2 回集計する (Date だけ偽物にする。通信のタイマーはそのまま動く)
+    //   1 回目: 週の途中 (JST 10/08 木 12:00) の毎時の回。今の期間を集計し、バッジは判定しない (#1491)
+    //   2 回目: 週が切り替わった直後 (JST 10/12 月 0:05) の回。previousPeriod: true で直前の週を集計し直し、バッジを判定する
     h.errors.length = 0;
     // バッジを付与するたびに console.log するので、出力を抑える
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      response = await callSegmentStats({ periodType: 'weekly' });
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-08T03:00:00Z'));
+      inProgressResponse = await callSegmentStats({ periodType: 'weekly' });
+      const { data: badges, error: badgesError } = await sr.from('user_badges').select('user_id, badge_id').in('user_id', [...userIds, ...zeroUserIds]);
+      if (badgesError) throw new Error(`user_badges (毎時の回のあと): ${badgesError.message}`);
+      badgesAfterInProgress = badges ?? [];
+
+      vi.setSystemTime(new Date('2026-10-11T15:05:00Z'));
+      response = await callSegmentStats({ periodType: 'weekly', previousPeriod: true });
     } finally {
       logSpy.mockRestore();
       vi.useRealTimers();
@@ -284,8 +314,10 @@ describe('calculate-segment-stats: 実スキーマで指標・統計・ランキ
     return userIds.map((id) => byUser.get(id) ?? Number.NaN);
   }
 
-  it('S-1: 全クエリが成功し、エラーのログも残らない', () => {
-    expect(response.json).toMatchObject({ success: true, periodType: 'weekly' });
+  it('S-1: 全クエリが成功し、エラーのログも残らない (毎時の回も、確定の回も、同じ週を集計する)', () => {
+    expect(inProgressResponse.res.status).toBe(200);
+    expect(inProgressResponse.json).toMatchObject({ success: true, periodType: 'weekly', previousPeriod: false, badgesJudged: false, periodStart: '2026-10-05', periodEnd: '2026-10-11' });
+    expect(response.json).toMatchObject({ success: true, periodType: 'weekly', previousPeriod: true, badgesJudged: true, periodStart: '2026-10-05', periodEnd: '2026-10-11' });
     expect(response.res.status).toBe(200);
     expect(response.json.processedUsers).toBeGreaterThanOrEqual(5);
     expect(h.errors).toEqual([]);
@@ -419,7 +451,7 @@ describe('calculate-segment-stats: 実スキーマで指標・統計・ランキ
       .in('metric_id', Object.values(metricIds))
       .in('user_id', zeroUserIds);
     expect(error).toBeNull();
-    expect(data).toHaveLength(4 * 5); // 4 指標 × 5 人
+    expect(data).toHaveLength(5 * 5); // 5 指標 (total_meals を含む) × 5 人
     for (const row of data ?? []) {
       // 全員 0 = 全員が同率 1 位 (自分より下の人はいないので百分位 0)。
       // 平均が 0 なので平均との差の割合は決まらず null (0 で保存すると、平均ちょうどと区別できない)
@@ -431,5 +463,15 @@ describe('calculate-segment-stats: 実スキーマで指標・統計・ランキ
     const { data: badges, error: badgesError } = await sr.from('user_badges').select('user_id, badge_id').in('user_id', zeroUserIds);
     expect(badgesError).toBeNull();
     expect(badges).toEqual([]);
+  });
+
+  it('S-8: 週の途中の毎時の回 (今の期間) では、ランキングの 1 位がいても user_badges に 1 件も書かない (#1491)', () => {
+    // 毎時の回の時点で s1〜s3 は 1 位の指標を持っていたが、暫定の値なのでバッジは付かない。
+    // S-5 / S-5b のバッジは、そのあとの確定の回 (previousPeriod: true) で付いたもの
+    expect(badgesAfterInProgress).toEqual([]);
+  });
+
+  it('S-9: total_meals は、全期間の meals の件数を利用者ごとに保存する (DB の関数 count_meals_per_user。期間の外の記録も数える #1491)', async () => {
+    expect(await metricValues(metricIds.total)).toEqual([3, 1, 0, 0, 0]);
   });
 });

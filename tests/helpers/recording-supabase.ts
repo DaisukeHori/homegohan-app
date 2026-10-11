@@ -35,34 +35,50 @@ export type Responder = (query: RecordedQuery) => QueryOutcome | Promise<QueryOu
 export function createRecordingSupabase(respond: Responder) {
   const queries: RecordedQuery[] = [];
 
+  /** 記録を 1 つ足し、await された時点で respond の結果になるチェーンを返す */
+  function record(query: RecordedQuery): unknown {
+    queries.push(query);
+
+    const builder: unknown = new Proxy(
+      {},
+      {
+        get(_target, prop) {
+          if (typeof prop === 'symbol') return undefined;
+          if (prop === 'then') {
+            return (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+              Promise.resolve(respond(query))
+                .then((outcome) => ({ data: outcome.data ?? null, error: outcome.error ?? null }))
+                .then(resolve, reject);
+          }
+          return (...args: unknown[]) => {
+            query.calls.push({ method: prop, args });
+            return builder;
+          };
+        },
+      },
+    );
+    return builder;
+  }
+
   const client = {
     from(table: string) {
-      const query: RecordedQuery = { table, calls: [] };
-      queries.push(query);
-
-      const builder: unknown = new Proxy(
-        {},
-        {
-          get(_target, prop) {
-            if (typeof prop === 'symbol') return undefined;
-            if (prop === 'then') {
-              return (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
-                Promise.resolve(respond(query))
-                  .then((outcome) => ({ data: outcome.data ?? null, error: outcome.error ?? null }))
-                  .then(resolve, reject);
-            }
-            return (...args: unknown[]) => {
-              query.calls.push({ method: prop, args });
-              return builder;
-            };
-          },
-        },
-      );
-      return builder;
+      return record({ table, calls: [] });
+    },
+    /**
+     * DB の関数の呼び出し (supabase.rpc(fn, args))。table は `rpc:<関数名>` (rpcTable) で記録し、
+     * 最初の呼び出しとして { method: 'rpc', args: [fn, args] } を残す。続く order / range などは from と同じく記録する
+     */
+    rpc(fn: string, args?: unknown) {
+      return record({ table: rpcTable(fn), calls: [{ method: 'rpc', args: args === undefined ? [fn] : [fn, args] }] });
     },
   };
 
   return { client, queries };
+}
+
+/** rpc(fn) の呼び出しを記録するときの table の名前 */
+export function rpcTable(fn: string): string {
+  return `rpc:${fn}`;
 }
 
 /** クエリで method が呼ばれたときの引数を、呼ばれた順に返す */
