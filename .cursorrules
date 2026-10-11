@@ -74,7 +74,6 @@ SELECT * FROM app_logs WHERE user_id = 'ユーザーID' ORDER BY created_at DESC
 |--------|------|
 | `generate-menu-v5` | 献立生成（週間・単発・差し替え。v4 は切り戻し用） |
 | `analyze-health-photo` | 健康機器写真分析 |
-| `generate-health-insights` | 健康分析生成 |
 
 **デプロイ:**
 ```bash

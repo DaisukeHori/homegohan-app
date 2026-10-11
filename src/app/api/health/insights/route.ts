@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   // 分析する期間 (JST の暦日)。health_records はこの期間で絞り、保存する行の analysis_date / period_start /
-  // period_end / period_type にも同じ値を入れる (#1432。Edge Function generate-health-insights と同じ組み立て)。
+  // period_end / period_type にも同じ値を入れる (#1432)。
   // 日付をまたいでも絞り込みと保存の日付が食い違わないよう、時刻は 1 回だけ取る。
   const now = new Date();
   const period = calculateHealthInsightPeriod(now);

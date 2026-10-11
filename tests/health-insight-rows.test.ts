@@ -9,8 +9,9 @@
 // ここで確かめること:
 //   - 送る列が、スキーマ (supabase/baseline/prod_schema.sql の CREATE TABLE health_insights) にある列の部分集合で、
 //     NOT NULL かつ既定値の無い列がすべて埋まっている。priority は CHECK 制約が許す値だけ
-//   - 日付と期間は JST の暦日で、Edge Function 用の calculateJstLookbackPeriod (supabase/functions/_shared/jst-date.ts) と
-//     同じ結果になる (Edge Function generate-health-insights の monthly と同じ 30 日)
+//   - 日付と期間は JST の暦日で、JST の今日を終了日に 30 日さかのぼる (period_type は monthly)。
+//     以前は Edge Function generate-health-insights の calculateJstLookbackPeriod と突き合わせていたが、
+//     関数は #1440 で削除したので、実装とは別に暦を手で引いた固定値と突き合わせる
 //   - LLM の応答の想定外の値 (数値の priority・未知の insight_type・空の本文) を、列に合う値へ直す / 捨てる
 // 実 DB に保存できることは tests/integration/security/health-insights-write.test.ts で確かめる。
 
@@ -26,7 +27,6 @@ import {
   MAX_INSIGHT_RECOMMENDATIONS,
   MAX_INSIGHT_TITLE_LENGTH,
 } from '../src/lib/health-insight-rows';
-import { calculateJstLookbackPeriod } from '../supabase/functions/_shared/jst-date.ts';
 
 const ROOT = join(__dirname, '..');
 const USER_ID = '00000000-0000-4000-8000-000000000001';
@@ -213,9 +213,9 @@ describe('buildHealthInsightRows', () => {
   });
 });
 
-// ---- 期間 (Edge Function と同じ結果) ------------------------------------------
+// ---- 期間 (JST の今日から 30 日さかのぼる) ------------------------------------
 
-describe('calculateHealthInsightPeriod は Edge Function の calculateJstLookbackPeriod と同じ期間を返す', () => {
+describe('calculateHealthInsightPeriod は JST の今日を終了日に 30 日さかのぼる期間を返す', () => {
   const originalTz = process.env.TZ;
   afterEach(() => {
     vi.useRealTimers();
@@ -227,6 +227,9 @@ describe('calculateHealthInsightPeriod は Edge Function の calculateJstLookbac
   const cases: Array<[string, string, string, string]> = [
     ['2026-07-12T14:59:59.999Z', '2026-06-12', '2026-07-12', 'JST 7/12 23:59:59.999'],
     ['2026-07-12T15:00:00.000Z', '2026-06-13', '2026-07-13', 'JST 7/13 0:00 ちょうど (UTC はまだ 7/12)'],
+    ['2026-07-12T23:59:59.999Z', '2026-06-13', '2026-07-13', 'JST 7/13 8:59:59.999 (UTC はまだ 7/12)'],
+    ['2026-07-13T00:00:00.000Z', '2026-06-13', '2026-07-13', 'JST 7/13 9:00 (UTC も 7/13)'],
+    ['2026-12-31T14:59:59.999Z', '2026-12-01', '2026-12-31', '大晦日 JST 23:59:59.999'],
     ['2026-12-31T15:00:00.000Z', '2026-12-02', '2027-01-01', '年をまたぐ: JST 元日 0:00 (UTC はまだ 12/31)'],
     ['2028-02-29T15:00:00.000Z', '2028-01-31', '2028-03-01', 'うるう日の翌日 JST 3/1 0:00'],
     ['2026-03-30T15:00:00.000Z', '2026-03-01', '2026-03-31', '2 月を含む: JST 3/31 0:00'],
@@ -238,9 +241,23 @@ describe('calculateHealthInsightPeriod は Edge Function の calculateJstLookbac
       const at = new Date(now);
       const period = calculateHealthInsightPeriod(at);
       expect(period, tz).toEqual({ analysisDate: end, periodStart: start, periodEnd: end, periodType: 'monthly' });
-      expect({ periodStart: period.periodStart, periodEnd: period.periodEnd }, tz).toEqual(
-        calculateJstLookbackPeriod(HEALTH_INSIGHT_LOOKBACK_DAYS, at),
-      );
     }
+  });
+
+  it('JST 00:00〜08:59 も JST の今日を終了日にする (UTC の暦の前日にしない)', () => {
+    for (let h = 0; h < 24; h++) {
+      // JST 2027-01-01 の h 時 30 分 (UTC では h-9 時。h < 9 のときは UTC の 2026-12-31)
+      const at = new Date(Date.UTC(2027, 0, 1, h - 9, 30, 0, 0));
+      expect(calculateHealthInsightPeriod(at), `JST ${h}:30`).toEqual({
+        analysisDate: '2027-01-01',
+        periodStart: '2026-12-02',
+        periodEnd: '2027-01-01',
+        periodType: 'monthly',
+      });
+    }
+  });
+
+  it('さかのぼる日数は 30 日', () => {
+    expect(HEALTH_INSIGHT_LOOKBACK_DAYS).toBe(30);
   });
 });

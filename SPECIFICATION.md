@@ -344,7 +344,7 @@ CREATE TABLE health_insights (
   user_id UUID REFERENCES auth.users(id),
   analysis_date DATE NOT NULL,
   period_type TEXT,  -- 'daily', 'weekly', 'monthly'
-  insight_type TEXT,  -- 'weight_trend', 'blood_pressure', 'sleep_analysis', ...
+  insight_type TEXT,  -- 'nutrition', 'activity', 'sleep', 'checkup', 'trend', 'goal' (POST /api/health/insights が保存する種別。src/lib/health-insight-rows.ts の GENERATED_INSIGHT_TYPES)
   title TEXT NOT NULL,
   summary TEXT,
   details JSONB,
@@ -1003,135 +1003,15 @@ Step 5: DB更新
 
 ---
 
-### 7.6 `generate-health-insights`
+### 7.6 `generate-health-insights` (削除済み)
 
-**トリガー:** 週次スケジュール or 手動トリガー（`/api/health/insights` 経由）
+この Edge Function は #1440 で削除した。アプリ・cron・`pg_net` のどこからも呼ばれておらず、保存も利用者の JWT のクライアントで
+行っていたため、`health_insights` の RLS (利用者向けの INSERT ポリシーが無い) で黙って失敗していた。
 
-**処理フロー:**
-1. JWT認証でユーザー確認
-2. 期間設定（daily/weekly/monthly）
-3. `health_records` から該当期間のデータ取得
-4. ユーザープロファイル・健康目標取得
-5. 6種類の分析を実行
-6. `health_insights` テーブルに保存
-
-**分析アルゴリズム:**
-
-#### 1. 体重トレンド分析 (`analyzeWeightTrend`)
-```typescript
-// 変化量計算
-const change = lastWeight - firstWeight;
-
-// 目標との比較
-if (weightGoal) {
-  goalProgress = {
-    target: weightGoal.target_value,
-    remaining: lastWeight - weightGoal.target_value,
-    onTrack: (目標が減量 && 減少中) || (目標が増量 && 増加中)
-  };
-}
-
-// アラート判定
-if (Math.abs(change) > 2) {
-  priority = 'high';
-  isAlert = true;
-}
-```
-
-#### 2. 血圧分析 (`analyzeBloodPressure`)
-```typescript
-// 基準値判定
-if (avgSystolic >= 140 || avgDiastolic >= 90) {
-  status = '高血圧';
-  priority = 'critical';
-  isAlert = true;
-} else if (avgSystolic >= 130 || avgDiastolic >= 85) {
-  status = '高め';
-  priority = 'high';
-} else if (avgSystolic < 90 || avgDiastolic < 60) {
-  status = '低め';
-  priority = 'medium';
-}
-```
-
-#### 3. 睡眠分析 (`analyzeSleep`)
-```typescript
-// 睡眠時間の評価
-if (avgHours < 6) {
-  priority = 'high';
-  recommendations.push('睡眠時間が不足しています');
-}
-
-// 睡眠の質の評価
-if (avgQuality < 3) {
-  priority = 'high';
-  recommendations.push('睡眠の質が低めです');
-}
-```
-
-#### 4. 相関分析 (`analyzeCorrelations`)
-```typescript
-// 睡眠と体調の相関を分析
-const sleepGoodDays = records.filter(r => 
-  r.sleep_quality >= 4 || r.sleep_hours >= 7
-);
-const sleepGoodMoodAvg = average(sleepGoodDays.map(r => r.mood_score));
-
-const sleepBadDays = records.filter(r => 
-  r.sleep_quality <= 2 || r.sleep_hours < 6
-);
-const sleepBadMoodAvg = average(sleepBadDays.map(r => r.mood_score));
-
-const correlation = sleepGoodMoodAvg - sleepBadMoodAvg;
-```
-
-#### 5. 活動量分析 (`analyzeActivity`)
-```typescript
-// 歩数評価
-if (avgSteps < 5000) {
-  priority = 'high';
-  recommendations.push('活動量が少なめです。1日8000歩を目標に');
-} else if (avgSteps >= 10000) {
-  recommendations.push('素晴らしい活動量です！');
-}
-```
-
-#### 6. AI総合分析 (`generateAIInsight`)
-```typescript
-// OpenAI GPT-4o-mini による総合分析
-const prompt = `以下の健康記録データを分析し、
-ユーザーへの個別アドバイスを生成してください。
-
-期間: ${periodType}
-データサマリー: ${JSON.stringify(summarizeRecords(records))}
-ユーザー情報: 年齢、性別、目標...
-
-JSON形式で回答:
-{
-  "title": "絵文字付きの短いタイトル",
-  "summary": "2-3文の要約",
-  "recommendations": ["アドバイス1", "アドバイス2"],
-  "priority": "low" | "medium" | "high"
-}`;
-```
-
-**生成されるインサイト例:**
-```json
-{
-  "insight_type": "weight_trend",
-  "title": "📉 体重が減少傾向",
-  "summary": "この期間で1.5kg減少しました（平均65.2kg）",
-  "details": {
-    "start_weight": 66.7,
-    "end_weight": 65.2,
-    "change": -1.5,
-    "goal_progress": { "target": 63, "remaining": 2.2, "onTrack": true }
-  },
-  "recommendations": ["目標に向かって順調です！このペースを維持しましょう"],
-  "priority": "low",
-  "is_alert": false
-}
-```
+健康インサイトの生成と保存は、画面が呼ぶ `POST /api/health/insights` (`src/app/api/health/insights/route.ts`) が行う (#1432)。
+行の組み立ては `src/lib/health-insight-rows.ts`: JST の今日を終了日に 30 日さかのぼる期間 (`period_type` は `monthly`) の
+`health_records`・健康診断・食事を AI に渡し、`insight_type` は `nutrition` / `activity` / `sleep` / `checkup` / `trend` / `goal` の
+どれか (それ以外は `trend`)、`priority` は `low` / `medium` / `high` / `critical` で保存する。
 
 ---
 

@@ -111,7 +111,6 @@ pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘
 | `analyze-meal-photo` | 食事写真分析（Gemini） |
 | `analyze-fridge` | 冷蔵庫写真分析（OpenAI Vision） |
 | `analyze-health-photo` | 健康写真分析 |
-| `generate-health-insights` | 健康インサイト生成 |
 | `create-derived-recipe` | 派生レシピ作成 |
 | `aggregate-org-stats` | 組織統計集約。**停止中**（オーナー判断 #1325）。認証（`requireServiceRole`）のあと、何もせず HTTP 410（`DISABLED`）を返すだけで、集計処理は削除済み。デプロイ先から関数を消さないよう、ディレクトリは残している。呼び出し元（画面のボタン・API ルート）も無い。本番に呼び出す `pg_cron` のジョブが残っていれば、migration `20261008130000_stop_aggregate_org_stats_cron.sql` が登録解除する |
 | `calculate-segment-stats` | セグメント統計計算 (比較ランキング)。pg_cron のジョブ `calculate-segment-stats` が 1 時間ごと (毎時 5 分) に daily / weekly / monthly を呼ぶ。期間が切り替わった直後の回 (JST 0 時台) は、本文 `previousPeriod: true` で直前の期間も集計し直す。間隔の変え方は `ENV_SETUP.md` の「比較ランキングの集計の間隔」。手動は `POST /api/comparison/trigger` (super_admin だけ)。#1406 |
@@ -129,6 +128,8 @@ pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘
 | `stripe-price-sync` | プランの価格変更時に、Stripe に新しい Price を作り、旧 Price を無効化する（無効化に失敗しても続行する）。月額・年額を 1 回の呼び出しで受け取り、`{ month, year }` を返す。旧 Price は同じ期間（月額 / 年額）のものだけ無効化する。価格変更は新規契約のみ（`applies_to` は `new_only` だけ）。内部専用（呼び出し元: `POST /api/super-admin/plans/[id]/price-change`） |
 
 チェーン別の `import-*-catalog`（5 関数）はバッチ専用の関数です。呼び出し元は、DB 関数 `invoke_catalog_import()`（呼べる関数名は許可リスト方式）と、管理者用 API の `POST /api/admin/catalog/import`（admin / super_admin が手動で実行する）です。
+
+健康インサイトの生成は Edge Function ではなく、画面が呼ぶ `POST /api/health/insights`（`src/app/api/health/insights/route.ts`）が行います（#1432）。以前あった `generate-health-insights` は、アプリ・cron・`pg_net` のどこからも呼ばれておらず、保存も利用者の JWT のクライアントで行っていたため `health_insights` の RLS（利用者向けの INSERT ポリシーが無い）で黙って失敗していました。#1440 でディレクトリを削除しました（次の main のデプロイで本番からも消えます。#1452）。
 
 ### 献立生成 v4 と v5 の使い分け
 
