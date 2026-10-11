@@ -4,6 +4,18 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
+import { getApi } from "./api";
+import {
+  type PushIssueEvent,
+  type PushIssueServerFields,
+  type PushValueSource,
+  buildPushIssueLogBody,
+  errorIdentifierOf,
+  registrationFailureServerFields,
+  unregisterErrorServerFields,
+  unregisterNoRowsServerFields,
+  unregisterUnfinishedServerFields,
+} from "./push-issue-log";
 import { supabase } from "./supabase";
 
 /**
@@ -80,10 +92,20 @@ export function resolveEasProjectId(): ResolvedEasProjectId {
 }
 
 /**
+ * サーバーログ (POST /api/log) への送信を待つ上限 (ミリ秒)。
+ * ログアウトの直前の削除の失敗は、サインアウトでセッションが消える前に送り終えたいので、この時間だけ待ってから先へ進む
+ * (記録が残るのは端末からのサインアウトのとき。Web から始まったサインアウト・session-expired では、待ってもサーバー側の
+ * セッションがふつうは先に失効していて残らない。理由は unregisterExpoPushToken の説明)。
+ * 削除そのものの上限 (UNREGISTER_TIMEOUT_MS = 3 秒) と合わせても、ログアウトが止まるのは最長 5 秒。
+ * 送れなかった記録は諦める (ログの欠けより、ログアウトが長く止まるほうが利用者に響く)。
+ */
+export const PUSH_ISSUE_LOG_TIMEOUT_MS = 2000;
+
+/**
  * 登録・削除の異常を、端末のコンソールに出す (トークンやユーザー ID は載せない。例外は投げない)。
  *
  * 呼び出し元は失敗を握りつぶす (起動時の自動登録、ログアウト) ので、開発中に気づけるようにするためのもの。
- * PostHog などの外部の計測サービスには送らない (#1166)。サーバーログ (app_logs) への記録は、今は無い。
+ * PostHog などの外部の計測サービスには送らない (#1166)。サーバーログ (app_logs) へは sendPushIssueToServer() が送る。
  */
 function reportPushIssue(event: string, details: Record<string, string | number | boolean>): void {
   try {
@@ -93,13 +115,70 @@ function reportPushIssue(event: string, details: Record<string, string | number 
   }
 }
 
-/** 登録失敗を端末のコンソールに出す (トークンやユーザー ID は載せない) */
+/**
+ * 登録・削除の異常を、サーバーログ (POST /api/log → app_logs) に残す (#1413)。
+ * エラー境界の記録 (error-report.ts) と同じ経路。サーバー側 (sanitizeLogEntry) も秘密情報をマスクするが、
+ * ここでも送る値を決まった値 (イベント名・OS・エラーの種類・件数など) に絞り、トークンの値やエラーの本文は送らない。
+ * 本文は push-issue-log.ts の buildPushIssueLogBody() で組み立てる (送ってよいキーはそこで決めてある。
+ * キー名に token などの語を入れると sanitizeLogEntry が値を "***" にしてしまうため)。
+ *
+ * - 例外を投げない (reject もしない)。送れなくても (オフライン・未ログイン・環境変数なし・サーバーのエラー) 何もしない。
+ *   送信の失敗を、ここからまた記録することはない (自分自身を呼び直さない)
+ * - PUSH_ISSUE_LOG_TIMEOUT_MS で待つのをやめる。待つかどうかは呼び出し側が決める (登録は待たない。削除は待つ)
+ * - accessToken を渡すと、Authorization に明示する (明示すると、共通の HTTP クライアントは端末のセッションのトークンで上書きしない)。
+ *   明示しても、それで記録が残るわけではない。accessToken を渡されるのは Web から始まったサインアウト・session-expired
+ *   (webViewAuthMessages.ts) だけで、そのときはサーバー側のセッションがふつうは先に失効している (Web の signOut() が全端末のセッションを失効させる)。
+ *   /api/log はサーバーで getUser() (GoTrue の GET /user。JWT の session_id のセッションが残っているかまで確かめる) を呼ぶので、
+ *   失効したセッションの JWT では 401 になり、app_logs には残らない。削除の DELETE が同じ JWT で通るのは、PostgREST が
+ *   JWT の署名と期限しか見ないからで、/api/log はそうではない (tests/integration/security/push-issue-log-after-session-revoked.test.ts が
+ *   本物のサーバーで確かめる)。明示は、削除と同じ本人の JWT で送るために残している (害は無い)
+ */
+function sendPushIssueToServer(
+  event: PushIssueEvent,
+  fields: PushIssueServerFields,
+  options: { accessToken?: string | null } = {},
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const send = Promise.resolve()
+      .then(() =>
+        getApi().post(
+          "/api/log",
+          buildPushIssueLogBody(event, fields),
+          {
+            ...(options.accessToken ? { headers: { Authorization: `Bearer ${options.accessToken}` } } : {}),
+            timeoutMs: PUSH_ISSUE_LOG_TIMEOUT_MS,
+            // 記録のために同じ送信を繰り返さない (サインアウトを待たせない)
+            retry: false,
+          },
+        ),
+      )
+      .then(
+        () => undefined,
+        () => undefined,
+      );
+    const limit = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, PUSH_ISSUE_LOG_TIMEOUT_MS);
+    });
+    return Promise.race([send, limit])
+      .catch(() => undefined)
+      .finally(() => {
+        if (timer) clearTimeout(timer);
+      });
+  } catch {
+    if (timer) clearTimeout(timer);
+    return Promise.resolve();
+  }
+}
+
+/** 登録失敗を端末のコンソールとサーバーログに出す (トークンやユーザー ID は載せない。サーバーログにはエラーの本文も載せない) */
 function reportPushRegistrationFailure(
   stage: "get_token" | "save_token",
   error: unknown,
   resolved: ResolvedEasProjectId,
+  httpStatus?: number,
 ): void {
-  const e = error as { name?: unknown; message?: unknown } | null | undefined;
+  const e = error as { name?: unknown; message?: unknown; code?: unknown } | null | undefined;
   reportPushIssue("push_token_registration_failed", {
     stage,
     platform: Platform.OS,
@@ -108,6 +187,20 @@ function reportPushRegistrationFailure(
     project_id_source: resolved.source,
     rejected_project_id_sources: resolved.rejected.join(",") || "none",
   });
+
+  // 登録の失敗は、利用者の操作を待たせない (送り終えるのを待たない)
+  void sendPushIssueToServer(
+    "push_token_registration_failed",
+    registrationFailureServerFields({
+      stage,
+      platform: Platform.OS,
+      errorName: e?.name,
+      errorCode: e?.code,
+      httpStatus,
+      projectIdSource: resolved.source,
+      rejectedProjectIdSources: resolved.rejected.join(",") || "none",
+    }),
+  );
 }
 
 /**
@@ -167,7 +260,7 @@ export async function registerAndSaveExpoPushToken(options: RegisterPushTokenOpt
   }
 
   // DB保存（RLSで本人のみ）
-  const { error } = await supabase.from("user_push_tokens").upsert(
+  const { error, status } = await supabase.from("user_push_tokens").upsert(
     {
       user_id: auth.user.id,
       expo_push_token: token,
@@ -176,7 +269,7 @@ export async function registerAndSaveExpoPushToken(options: RegisterPushTokenOpt
     { onConflict: "user_id,expo_push_token" }
   );
   if (error) {
-    reportPushRegistrationFailure("save_token", error, resolved);
+    reportPushRegistrationFailure("save_token", error, resolved, status);
     throw error;
   }
 
@@ -219,6 +312,21 @@ export type UnregisterPushTokenResult =
   /** 失敗した (エラー・タイムアウト) */
   | "failed";
 
+/** 削除の結果と、端末のコンソール・サーバーログに残す異常 (あれば) */
+type UnregisterOutcome = {
+  result: UnregisterPushTokenResult;
+  issue?: {
+    event: PushIssueEvent;
+    /** 端末のコンソールに出す値 (サーバーには送らないので、キー名は以前のまま。token_source など) */
+    console: Record<string, string | number | boolean>;
+    /**
+     * サーバーログに送る値 (決まった値だけ。push-issue-log.ts で組み立てる)。
+     * キー名は sanitizeLogEntry にマスクされない名前 (token_source → push_value_source、explicit_access_token → explicit_auth_header)
+     */
+    server: PushIssueServerFields;
+  };
+};
+
 export type UnregisterPushTokenOptions = {
   /** 待ち時間の上限 (ミリ秒) */
   timeoutMs?: number;
@@ -231,6 +339,9 @@ export type UnregisterPushTokenOptions = {
    * そのあとに削除の通信を出すと、セッションが無いので anon キーが付き、RLS で 0 行になる (エラーにならない)。
    * Authorization ヘッダーを明示すれば、supabase-js はそれを上書きしない (fetchWithAuth は、既にあれば付けない)。
    * PostgREST は JWT の署名と期限だけを見て、セッションが失効済みかどうかは見ないので、期限内なら本人の行を消せる。
+   *
+   * サーバーログ (POST /api/log) への送信にも同じトークンを付けるが、/api/log はセッションの失効まで確かめるので、
+   * セッションが失効していれば、そちらは 401 になって記録は残らない (下の unregisterExpoPushToken の説明を参照)。
    */
   accessToken?: string | null;
 };
@@ -245,9 +356,22 @@ export type UnregisterPushTokenOptions = {
  *   (消すと、他の端末は登録済みフラグが立っていて再登録されず、通知が届かなくなる)
  * - RLS (本人の行のみ削除可) のため、サインアウトの「前」に呼ぶこと。
  *   セッションが先に失効してしまう場合 (Web からの sign-out / session-expired) は、控えておいたアクセストークンを options.accessToken で渡す
- * - 例外は投げない。失敗・タイムアウトでもログアウトは止めない (失敗は端末のコンソールに出す)
- * - 消えた行が 0 件のときも、エラーにならない (RLS は弾いた行を黙って除く) ので、件数を数えて端末のコンソールに出す
- *   (push_token_unregister_no_rows)。以前はこれを「削除できた」として扱っており、RLS で素通りしても気づけなかった
+ * - 例外は投げない。失敗・タイムアウトでもログアウトは止めない
+ *   (失敗・タイムアウト・途中の例外は push_token_unregister_failed として、端末のコンソールとサーバーログ (app_logs) に出す。#1413。
+ *   サーバーログに残るのは端末からのサインアウトのときだけ。下の「ただし」を参照)
+ * - 消えた行が 0 件のときも、エラーにならない (RLS は弾いた行を黙って除く) ので、件数を数えて端末のコンソールとサーバーログに出す
+ *   (push_token_unregister_no_rows。サーバーログに残る範囲は上と同じ)。以前はこれを「削除できた」として扱っており、RLS で素通りしても気づけなかった
+ * - サーバーログへの送信は、返る前に待つ (上限 PUSH_ISSUE_LOG_TIMEOUT_MS)。呼び出し側はこのあとサインアウトするので、
+ *   セッションが消える前に送り終えるため (サインアウトのあとでは /api/log の認証を通らない)
+ * - ただし、この順番で 0 件・失敗の記録を app_logs に残せるのは、端末からのサインアウト (設定・マイページ・パスワード再設定のあと。
+ *   セッションが生きているまま呼ぶ) だけ。Web から始まったサインアウト・session-expired では、端末が記録を送る時点で、サーバー側の
+ *   セッションがふつうは既に失効している (Web の signOut() が全端末のセッションを失効させる。session-expired は getUser() で失効を
+ *   確かめてからログアウトするので必ず。Web からアカウントを削除したあとの sign-out も、ユーザーが消えているので同じ)。
+ *   /api/log はサーバーの getUser() でセッションの存在まで確かめるので、控えたアクセストークン (options.accessToken) を付けて送っても
+ *   401 になり、記録は残らない (端末のコンソールには出る)。端末が送るより前にサーバー側のセッションが消えているので、送る順番では防げない
+ *   (sign-out は Web の signOut() の前に届くので、Web の失効より先に送れたときだけは残りうる)。
+ *   この経路の記録を残すには、/api/log の認証 (サーバー側) を変える必要がある。削除そのものは、PostgREST が JWT の署名と期限しか
+ *   見ないので、控えたトークンで通る
  * - アカウント削除では呼ばなくてよい (auth.users の削除で user_push_tokens が ON DELETE CASCADE で消える)
  */
 export async function unregisterExpoPushToken(
@@ -257,9 +381,11 @@ export async function unregisterExpoPushToken(
   if (!userId) return "skipped";
   const timeoutMs = options.timeoutMs ?? UNREGISTER_TIMEOUT_MS;
 
-  const work = async (): Promise<UnregisterPushTokenResult> => {
+  const explicitAccessToken = !!options.accessToken;
+
+  const work = async (): Promise<UnregisterOutcome> => {
     let token: string | null = null;
-    let tokenSource: "stored" | "refetched" = "stored";
+    let tokenSource: PushValueSource = "stored";
     try {
       token = await AsyncStorage.getItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:${userId}`);
     } catch {
@@ -276,43 +402,94 @@ export async function unregisterExpoPushToken(
         token = null;
       }
     }
-    if (!token) return "skipped";
+    if (!token) return { result: "skipped" };
 
     const query = supabase
       .from("user_push_tokens")
       .delete({ count: "exact" })
       .eq("user_id", userId)
       .eq("expo_push_token", token);
-    const { error, count } = await (options.accessToken
+    const { error, count, status } = await (options.accessToken
       ? query.setHeader("Authorization", `Bearer ${options.accessToken}`)
       : query);
     if (error) {
-      reportPushIssue("push_token_unregister_failed", {
-        platform: Platform.OS,
-        error_name: typeof error.name === "string" ? error.name : "PostgrestError",
-        error_code: typeof error.code === "string" ? error.code : "",
-      });
-      return "failed";
+      const errorName = typeof error.name === "string" ? error.name : "PostgrestError";
+      const errorCode = typeof error.code === "string" ? error.code : "";
+      return {
+        result: "failed",
+        issue: {
+          event: "push_token_unregister_failed",
+          console: { platform: Platform.OS, error_name: errorName, error_code: errorCode },
+          server: unregisterErrorServerFields({
+            platform: Platform.OS,
+            errorName,
+            errorCode,
+            httpStatus: status,
+            pushValueSource: tokenSource,
+            explicitAuthHeader: explicitAccessToken,
+          }),
+        },
+      };
     }
     if (count === 0) {
-      reportPushIssue("push_token_unregister_no_rows", {
-        platform: Platform.OS,
-        token_source: tokenSource,
-        explicit_access_token: !!options.accessToken,
-      });
-      return "no_rows";
+      return {
+        result: "no_rows",
+        issue: {
+          event: "push_token_unregister_no_rows",
+          console: { platform: Platform.OS, token_source: tokenSource, explicit_access_token: explicitAccessToken },
+          server: unregisterNoRowsServerFields({
+            platform: Platform.OS,
+            pushValueSource: tokenSource,
+            explicitAuthHeader: explicitAccessToken,
+          }),
+        },
+      };
     }
-    return "deleted";
+    return { result: "deleted" };
+  };
+
+  /** 待ち時間の上限を過ぎた・途中で例外が起きたときの記録 (削除できたかどうかは分からない) */
+  const unfinished = (reason: "timeout" | "exception", error?: unknown): UnregisterOutcome => {
+    const rawErrorName = (error as { name?: unknown } | null | undefined)?.name;
+    const errorName = errorIdentifierOf(rawErrorName);
+    return {
+      result: "failed",
+      issue: {
+        event: "push_token_unregister_failed",
+        console: {
+          platform: Platform.OS,
+          reason,
+          ...(reason === "exception" ? { error_name: errorName } : {}),
+        },
+        server: unregisterUnfinishedServerFields({
+          platform: Platform.OS,
+          reason,
+          errorName: rawErrorName,
+          explicitAuthHeader: explicitAccessToken,
+        }),
+      },
+    };
   };
 
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<UnregisterPushTokenResult>((resolve) => {
-    timer = setTimeout(() => resolve("failed"), timeoutMs);
+  const timeout = new Promise<UnregisterOutcome>((resolve) => {
+    timer = setTimeout(() => resolve(unfinished("timeout")), timeoutMs);
   });
 
+  let outcome: UnregisterOutcome;
   try {
-    return await Promise.race([work().catch((): UnregisterPushTokenResult => "failed"), timeout]);
+    outcome = await Promise.race([work().catch((error: unknown) => unfinished("exception", error)), timeout]);
   } finally {
     if (timer) clearTimeout(timer);
   }
+
+  if (outcome.issue) {
+    reportPushIssue(outcome.issue.event, outcome.issue.console);
+    // サインアウトの直前に呼ばれるので、セッションが消える前にサーバーログへ送り終える (上限 PUSH_ISSUE_LOG_TIMEOUT_MS)。
+    // 呼び出し側 (signOutWithCleanup) は、これを待ってからサインアウトする。控えたアクセストークンがあれば Authorization に明示するが、
+    // それを渡されるのは Web から始まったサインアウト・session-expired で、サーバー側のセッションがふつうは先に失効しているため
+    // /api/log は 401 を返し、記録は残らない (この関数の説明の「ただし」を参照)
+    await sendPushIssueToServer(outcome.issue.event, outcome.issue.server, { accessToken: options.accessToken });
+  }
+  return outcome.result;
 }
