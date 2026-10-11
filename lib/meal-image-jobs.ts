@@ -4,15 +4,17 @@ import { refundAiUsage, type AiUsageResult } from '@/lib/plan/entitlements';
 import { createLogger } from '@/lib/db-logger';
 import {
   DEFAULT_MEAL_IMAGE_MODEL,
-  buildDishImagePrompt,
-  buildDishImageSubjectHash,
-  buildMealImageIdempotencyKey,
-  deriveMealCoverImage,
+  buildMealImageJobRecords,
+  insertMealImageJobRecords,
+  markEnqueueFailedDishesInMeal,
   reconcileDishImages,
+  summarizeMealImageJobOutcomes,
+  type EnqueueMealImageJobsResult,
   type MealImageDish,
   type MealImageJobSeed,
-  type ReconcileDishImagesResult,
 } from './meal-image';
+
+export type { EnqueueMealImageJobsResult } from './meal-image';
 
 interface BuildDishImagePayloadParams {
   previousDishes?: MealImageDish[] | null;
@@ -122,22 +124,6 @@ interface EnqueueJobsParams {
   usage?: AiUsageResult | null;
 }
 
-/** enqueueMealImageJobs の結果 (#1487)。行ごとに数える */
-export interface EnqueueMealImageJobsResult {
-  /** 新しく積めた行 */
-  inserted: number;
-  /** 同じ料理の待ち・処理中のジョブがすでにあって積まなかった行 (冪等キーの重複) */
-  duplicates: number;
-  /** 書き込みに失敗した行 (権限・接続など) */
-  failed: number;
-}
-
-/**
- * 一意制約の違反 (PostgreSQL の SQLSTATE)。meal_image_jobs の冪等キーの一意な索引
- * (meal_image_jobs_idempotency_pending_idx) は、待ち・処理中 (status が pending / processing) の行だけが対象の部分索引
- */
-const UNIQUE_VIOLATION_CODE = '23505';
-
 /** ログの名前 (ロガーは使うときに作る。import のときに作ると、ロガーを差し替えるテストの初期化の順に依存する) */
 const ENQUEUE_LOG_NAME = 'lib/meal-image-jobs';
 
@@ -149,70 +135,65 @@ const ENQUEUE_LOG_NAME = 'lib/meal-image-jobs';
  * ON CONFLICT (idempotency_key) は索引を推論できず、42P10 で必ず失敗する (行が 1 つも積まれない)。
  * 部分索引のままにするのは、失敗・取り消し・完了したジョブと同じ料理を、あとで積み直せるようにするため。
  * そのため行ごとに insert し、一意制約の違反 (23505) は「同じ料理のジョブが待ち・処理中」として重複に数える。
+ * 積み方は Edge Function の supabase/functions/_shared/meal-image-jobs.ts と共通 (supabase/functions/_shared/meal-image.ts。#1505)。
+ *
+ * 書き込みに失敗した料理は、保存済みの献立の上で 'failed' + 'enqueue_failed' にする (#1505。'pending' のまま「生成中」に残さない)。
+ * 重複 (同じ料理のジョブが待ち・処理中) の料理は 'pending' のまま (そのジョブが画像を作る)。
  *
  * 1 行も積めなかったときは、params.usage (この操作で数えた料理画像の 1 回) を数え戻す
  * (AI へは何も送らないので。上限の数え戻しの決まりは src/lib/plan/entitlements.ts の【数え戻し】)。
  */
 export async function enqueueMealImageJobs(params: EnqueueJobsParams): Promise<EnqueueMealImageJobsResult> {
-  const result: EnqueueMealImageJobsResult = { inserted: 0, duplicates: 0, failed: 0 };
   if (!params.jobSeeds.length) {
     await refundUnusedMealImageUsage(params);
-    return result;
+    return { inserted: 0, duplicates: 0, failed: 0 };
   }
 
-  const records = await Promise.all(
-    params.jobSeeds.map(async (seed): Promise<Record<string, unknown>> => ({
-      planned_meal_id: params.plannedMealId,
-      user_id: params.userId,
-      dish_index: seed.dishIndex,
-      job_kind: 'dish',
-      subject_hash: seed.subjectHash,
-      idempotency_key: await buildMealImageIdempotencyKey({
-        plannedMealId: params.plannedMealId,
-        dishIndex: seed.dishIndex,
-        subjectHash: seed.subjectHash,
-      }),
-      prompt: seed.prompt,
-      model: seed.model,
-      reference_image_urls: seed.referenceImageUrls,
-      trigger_source: params.triggerSource,
-      request_id: params.requestId ?? null,
-      status: 'pending',
-    })),
+  const records = await buildMealImageJobRecords({
+    plannedMealId: params.plannedMealId,
+    userId: params.userId,
+    seeds: params.jobSeeds,
+    triggerSource: params.triggerSource,
+    requestId: params.requestId ?? null,
+  });
+  const outcomes = await insertMealImageJobRecords(records, (record) =>
+    params.supabase.from('meal_image_jobs').insert(record),
   );
 
   const logger = createLogger(ENQUEUE_LOG_NAME);
-  const outcomes = await Promise.all(
-    records.map(async (record) => {
-      try {
-        const { error } = await params.supabase.from('meal_image_jobs').insert(record);
-        if (!error) return 'inserted' as const;
-        if (error.code === UNIQUE_VIOLATION_CODE) return 'duplicate' as const;
-        logger.warn('Failed to enqueue meal image job', {
-          userId: params.userId,
-          plannedMealId: params.plannedMealId,
-          dishIndex: record.dish_index,
-          code: error.code,
-          error: error.message,
-        });
-        return 'failed' as const;
-      } catch (error) {
-        logger.warn('Failed to enqueue meal image job', {
-          userId: params.userId,
-          plannedMealId: params.plannedMealId,
-          dishIndex: record.dish_index,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return 'failed' as const;
-      }
-    }),
-  );
+  const failures: Array<{ dishIndex: number; subjectHash: string }> = [];
   for (const outcome of outcomes) {
-    if (outcome === 'inserted') result.inserted += 1;
-    else if (outcome === 'duplicate') result.duplicates += 1;
-    else result.failed += 1;
+    if (outcome.kind !== 'failed') continue;
+    failures.push({ dishIndex: outcome.dishIndex, subjectHash: outcome.subjectHash });
+    logger.warn('Failed to enqueue meal image job', {
+      userId: params.userId,
+      plannedMealId: params.plannedMealId,
+      dishIndex: outcome.dishIndex,
+      ...(outcome.code ? { code: outcome.code } : {}),
+      error: outcome.message,
+    });
   }
 
+  if (failures.length > 0) {
+    const marked = await markEnqueueFailedDishesInMeal({
+      failures,
+      loadMeal: () => params.supabase.from('planned_meals').select('dishes').eq('id', params.plannedMealId).maybeSingle(),
+      saveDishes: (dishes) =>
+        params.supabase
+          .from('planned_meals')
+          .update({ dishes, updated_at: new Date().toISOString() })
+          .eq('id', params.plannedMealId),
+    });
+    if (marked.status === 'error') {
+      logger.warn('Failed to mark dishes whose meal image jobs were not enqueued', {
+        userId: params.userId,
+        plannedMealId: params.plannedMealId,
+        error: marked.message,
+      });
+    }
+  }
+
+  const result = summarizeMealImageJobOutcomes(outcomes);
   if (result.inserted === 0) await refundUnusedMealImageUsage(params);
   return result;
 }

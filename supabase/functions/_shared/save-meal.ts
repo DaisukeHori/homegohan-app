@@ -742,14 +742,16 @@ export async function saveMealToDb(
   // Image jobs must run inline (not via scheduleBackgroundTask) because
   // V5's outer waitUntil may resolve before nested background tasks execute.
   try {
-    await enqueueMealImageJobs({
+    // 行ごとに積む (#1505)。書き込みに失敗した料理は enqueueMealImageJobs が 'failed' + 'enqueue_failed' にする。
+    // 処理を起こすのは、待ちのジョブがあるとき (積めた行か、同じ料理のジョブがすでに待ち・処理中の行があるとき)
+    const enqueueResult = await enqueueMealImageJobs({
       supabase,
       plannedMealId,
       userId,
       jobs: reconcileResult.jobs,
       requestId: requestId ?? null,
     });
-    if (reconcileResult.jobs.length > 0) {
+    if (enqueueResult.inserted + enqueueResult.duplicates > 0) {
       const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
       const serviceRoleKey = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
       await triggerMealImageJobProcessing({

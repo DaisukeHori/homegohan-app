@@ -37,7 +37,7 @@ vi.mock("../supabase/functions/_shared/meal-image.ts", () => ({
 }));
 
 vi.mock("../supabase/functions/_shared/meal-image-jobs.ts", () => ({
-  enqueueMealImageJobs: vi.fn(async () => undefined),
+  enqueueMealImageJobs: vi.fn(async () => ({ inserted: 0, duplicates: 0, failed: 0 })),
   triggerMealImageJobProcessing: vi.fn(async () => undefined),
 }));
 
