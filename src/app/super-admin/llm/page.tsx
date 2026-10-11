@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { LLM_USAGE_ANOMALY_NOTICE } from "@/lib/super-admin/llm-usage-anomaly";
 
 interface LLMUsageData {
   total_cost_usd: number;
@@ -80,7 +81,7 @@ export default function LLMUsagePage() {
           <div className="flex items-center gap-2 text-red-300 font-semibold mb-2">
             ⚠️ 異常使用を検知 ({data.anomalies.length} ユーザー)
           </div>
-          <p className="text-red-400 text-sm">1日 5,000 リクエスト超のユーザーがいます</p>
+          <p className="text-red-400 text-sm">{LLM_USAGE_ANOMALY_NOTICE}</p>
         </div>
       )}
 

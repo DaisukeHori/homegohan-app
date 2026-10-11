@@ -16,18 +16,25 @@ import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
+import { isWithinMenuGenerationRange, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 
 const VALID_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
+
+/** 1 日の主な食事の数 (朝・昼・夕)。slot の上限の計算に使う */
+const MAIN_MEALS_PER_DAY = 3;
+
+/** targetSlots の数の上限 (期間の上限 MENU_GENERATION_RANGE_MAX_DAYS 日 × 朝・昼・夕 = 93) */
+const MAX_TARGET_SLOTS = MENU_GENERATION_RANGE_MAX_DAYS * MAIN_MEALS_PER_DAY;
 
 function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlot[]; error?: string } {
   if (!Array.isArray(slots) || slots.length === 0) {
     return { valid: false, slots: [], error: 'targetSlots must be a non-empty array' };
   }
 
-  if (slots.length > 93) {
-    return { valid: false, slots: [], error: 'targetSlots exceeds maximum of 93 (31 days × 3 meals)' };
+  if (slots.length > MAX_TARGET_SLOTS) {
+    return { valid: false, slots: [], error: `targetSlots exceeds maximum of ${MAX_TARGET_SLOTS} (${MENU_GENERATION_RANGE_MAX_DAYS} days × ${MAIN_MEALS_PER_DAY} meals)` };
   }
 
   const validated: TargetSlot[] = [];
@@ -68,6 +75,16 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     seenKeys.add(key);
 
     validated.push({ date, mealType: mealType as MealType, plannedMealId: typeof plannedMealId === 'string' ? plannedMealId : undefined });
+  }
+
+  // 日付の幅 (最も早い日〜最も遅い日) は、画面 (Web・モバイルの「期間を指定」) と同じ MENU_GENERATION_RANGE_MAX_DAYS 日まで (#1482)。
+  // slot の数だけを見ていると、API を直接呼んで遠く離れた 2 日を送れば、行事の検索 (getEventsForRange) が 1 日ずつ数千年分を回りうる
+  if (!isWithinMenuGenerationRange(validated.map((s) => s.date))) {
+    return {
+      valid: false,
+      slots: [],
+      error: `targetSlots dates must span at most ${MENU_GENERATION_RANGE_MAX_DAYS} days (from the earliest date to the latest date, inclusive)`,
+    };
   }
 
   return { valid: true, slots: validated };

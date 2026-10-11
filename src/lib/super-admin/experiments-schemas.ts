@@ -3,6 +3,8 @@
  * operator/01-data-model.md §3.13 + operator/02-api-spec.md §15 準拠
  */
 import { z } from 'zod';
+// 日付は YYYY-MM-DD の実在する日付だけを通す (#1482。正規表現だけでは 2026-02-30 が通り、DB の date 型への変換で失敗する)
+import { CalendarDateSchema } from '@/lib/calendar-date-schema';
 
 export const ExperimentVariantSchema = z.object({
   key: z.string().min(1).max(50),
@@ -16,8 +18,8 @@ export const CreateExperimentSchema = z.object({
   hypothesis: z.string().max(1000).optional(),
   variants: z.array(ExperimentVariantSchema).min(2),
   primary_metric: z.string().max(100).optional(),
-  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  start_date: CalendarDateSchema.optional(),
+  end_date: CalendarDateSchema.optional(),
 }).refine(
   (data) => data.variants.reduce((sum, v) => sum + v.weight, 0) === 100,
   { message: '全バリアントの weight 合計は 100 である必要があります', path: ['variants'] },
@@ -27,7 +29,7 @@ export const UpdateExperimentSchema = z.object({
   status: z.enum(['draft', 'running', 'completed', 'cancelled']).optional(),
   name: z.string().min(1).max(200).optional(),
   hypothesis: z.string().max(1000).optional(),
-  end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  end_date: CalendarDateSchema.optional(),
   result: z.record(z.string(), z.unknown()).optional(),
 });
 

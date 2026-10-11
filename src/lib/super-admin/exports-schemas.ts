@@ -9,6 +9,8 @@
  * (以前のように、本人の GDPR 削除要求の表 gdpr_deletion_requests を代用しない)。
  */
 import { z } from 'zod';
+// 日付は YYYY-MM-DD の実在する日付だけを通す (#1482。正規表現だけでは 2026-02-30 が通り、DB の date 型への変換で失敗する)
+import { CalendarDateSchema } from '@/lib/calendar-date-schema';
 
 /** API (501) の本文。画面の「準備中（未対応）」と同じ内容を伝える */
 export const EXPORTS_NOT_SUPPORTED_MESSAGE =
@@ -21,12 +23,12 @@ export const CreateExportSchema = z.object({
   export_type: z.enum(ExportType),
   format: z.enum(ExportFormat).default('csv'),
   filters: z.object({
-    registered_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    registered_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    registered_from: CalendarDateSchema.optional(),
+    registered_to: CalendarDateSchema.optional(),
     plan_key: z.string().optional(),
     org_id: z.string().uuid().optional(),
-    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    from: CalendarDateSchema.optional(),
+    to: CalendarDateSchema.optional(),
   }).optional(),
   mask_pii: z.boolean().default(true),
 });

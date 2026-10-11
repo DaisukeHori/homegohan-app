@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import type { DailyMeal, PlannedMeal, ShoppingListItem } from '@/types/domain';
 import { toDailyMeal, toPlannedMeal, toShoppingListItem } from '@/lib/converter';
 import type { Tables } from '@homegohan/shared';
-import { todayLocal } from '@/lib/date-utils';
+import { CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { mondayWeekRange } from '@/lib/jst-day-ranges';
 import { internalError } from '@/lib/api/errors';
 
@@ -25,6 +25,14 @@ export async function GET(request: Request) {
   const startDate = searchParams.get('startDate');
   const endDate = searchParams.get('endDate');
   const date = searchParams.get('date');
+
+  // 日付は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲の中) だけを受け付ける (#1482)。
+  // 形を見ずに渡すと、2026-02-30 のような日付が DB の date 型への変換で失敗して 500 になる。空欄 (?date=) は以前どおり「指定なし」
+  for (const [name, value] of [['date', date], ['startDate', startDate], ['endDate', endDate]] as const) {
+    if (value && !isCalendarDate(value)) {
+      return NextResponse.json({ error: `${name} must be ${CALENDAR_DATE_REQUIREMENT}` }, { status: 400 });
+    }
+  }
 
   // 単一日付指定の場合
   if (date) {

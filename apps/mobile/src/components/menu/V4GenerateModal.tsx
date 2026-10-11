@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { addDaysToDate } from "@homegohan/shared";
+import { addDaysToDate, menuGenerationRangeEndMax, menuGenerationRangeStartMax } from "@homegohan/shared";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -135,6 +135,12 @@ function getTodayStr(): string {
 // 以前の new Date(dateStr) + setDate (ローカル時刻) + toISOString (UTC) は、端末のタイムゾーンや夏時間で結果が変わった)
 function addDays(dateStr: string, days: number): string {
   return addDaysToDate(dateStr, days);
+}
+
+/** 日付 value を下限 min・上限 max (無ければ上限なし) に収める。YYYY-MM-DD どうしは文字列の大小が日付の前後と同じ (Web の V4GenerateModal と同じ) */
+function clampDay(value: string, min: string, max: string | undefined): string {
+  if (value < min) return min;
+  return max !== undefined && value > max ? max : value;
 }
 
 function daysBetween(startStr: string, endStr: string): number {
@@ -398,8 +404,9 @@ function V4GenerateModalNormal({
         const saved = await AsyncStorage.getItem(STORAGE_KEY_RANGE_DAYS);
         if (saved) {
           const { startDays, endDays } = JSON.parse(saved);
-          const newStart = addDays(todayStr, startDays);
-          const newEnd = addDays(todayStr, endDays);
+          // 今日を基準に日付を計算し、選べる範囲 (開始日は今日〜1ヶ月先・期間は最大31日) に収める (#1482。Web と同じ)
+          const newStart = clampDay(addDays(todayStr, startDays), todayStr, menuGenerationRangeStartMax(todayStr));
+          const newEnd = clampDay(addDays(todayStr, endDays), newStart, menuGenerationRangeEndMax(newStart));
           setRangeStart(newStart);
           setRangeEnd(newEnd);
           return;
@@ -408,7 +415,10 @@ function V4GenerateModalNormal({
         // パースエラーはデフォルトにフォールバック
       }
       setRangeStart(todayStr);
-      setRangeEnd(weekEndDate >= todayStr ? weekEndDate : addDays(todayStr, 6));
+      // 表示中の週が先の週でも、期間の上限 (開始日を含む最大31日) に収める (#1482)
+      setRangeEnd(
+        clampDay(weekEndDate >= todayStr ? weekEndDate : addDays(todayStr, 6), todayStr, menuGenerationRangeEndMax(todayStr))
+      );
     })();
   }, [visible, todayStr, weekEndDate]);
 
@@ -423,18 +433,26 @@ function V4GenerateModalNormal({
     ).catch(() => {});
   }, [rangeStart, rangeEnd, todayStr]);
 
+  // 期間の入力欄の上限 (#1482。Web の V4GenerateModal (#1463) と同じ)。開始日は今日から 1 ヶ月先まで、
+  // 終了日は開始日を含む最大31日の最後の日まで。値は @homegohan/shared の menu-generation-range でサーバーと共有する。
+  // 入力欄は自由入力なので、過去の日付は今日に、上限より先の日付は上限に直す。
+  // 開始日が終了日より後になった場合は終了日を開始日に合わせ、終了日が期間の上限を超えたら上限に縮める
+  const rangeStartMax = useMemo(() => menuGenerationRangeStartMax(todayStr), [todayStr]);
+
   const handleSetRangeStart = useCallback(
     (value: string) => {
-      const adjusted = value < todayStr ? todayStr : value;
+      const adjusted = clampDay(value, todayStr, rangeStartMax);
       setRangeStart(adjusted);
-      if (adjusted > rangeEnd) setRangeEnd(adjusted);
+      const nextEnd = clampDay(rangeEnd, adjusted, menuGenerationRangeEndMax(adjusted));
+      if (nextEnd !== rangeEnd) setRangeEnd(nextEnd);
     },
-    [todayStr, rangeEnd]
+    [todayStr, rangeEnd, rangeStartMax]
   );
 
+  // 終了日が開始日より前になった場合は開始日を終了日に合わせる
   const handleSetRangeEnd = useCallback(
     (value: string) => {
-      const adjusted = value < todayStr ? todayStr : value;
+      const adjusted = clampDay(value, todayStr, menuGenerationRangeEndMax(rangeStart));
       setRangeEnd(adjusted);
       if (adjusted < rangeStart) setRangeStart(adjusted);
     },
@@ -511,7 +529,14 @@ function V4GenerateModalNormal({
   const handleGenerate = async () => {
     if (isSubmitting || isGenerating) return;
 
-    const slots = buildTargetSlots();
+    let slots: TargetSlot[];
+    try {
+      slots = buildTargetSlots();
+    } catch (error) {
+      // 期間が上限 (最大31日) を超えると slot-builder が投げる。以前は捕まえず、押しても何も起きなかった (#1482)
+      Alert.alert("エラー", error instanceof Error ? error.message : "期間が正しくありません");
+      return;
+    }
     const validation = validateSlotCount(slots);
     if (!validation.valid) {
       Alert.alert("エラー", validation.message ?? "スロットが無効です");

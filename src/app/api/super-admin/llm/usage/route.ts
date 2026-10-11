@@ -19,6 +19,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { LLMUsageQuerySchema } from '@/lib/super-admin/llm-schemas';
+import { findLlmUsageAnomalousUsers, LLM_USAGE_UNKNOWN_USER } from '@/lib/super-admin/llm-usage-anomaly';
 import type { Tables } from '@/types/database.types';
 
 type LlmUsageRow = Pick<
@@ -124,10 +125,13 @@ export async function GET(request: NextRequest) {
     // ユーザー別集計 (Top 50)
     const userMap = new Map<string, { requests: number; cost_usd: number }>();
     for (const r of rows) {
-      const uid = r.user_id ?? 'unknown';
+      const uid = r.user_id ?? LLM_USAGE_UNKNOWN_USER;
       const cur = userMap.get(uid) ?? { requests: 0, cost_usd: 0 };
       userMap.set(uid, { requests: cur.requests + 1, cost_usd: cur.cost_usd + costOf(r) });
     }
+    // 異常使用は 1 日あたり (JST の暦日ごと) のリクエスト数で判定する (#1482。画面の文「1日 5,000 リクエスト超」と設計書のとおり。
+    // 以前は期間全体の件数で判定していて、7 日・30 日では文と食い違っていた)
+    const anomalousUsers = findLlmUsageAnomalousUsers(rows, jstDayOfTimestamp);
     const topUsers = Array.from(userMap.entries())
       .sort(([, a], [, b]) => b.requests - a.requests)
       .slice(0, 50)
@@ -136,7 +140,7 @@ export async function GET(request: NextRequest) {
         email: null, // 別途 join が必要 (パフォーマンス上 omit)
         requests: stats.requests,
         cost_usd: Math.round(stats.cost_usd * 100000) / 100000,
-        is_anomaly: stats.requests > 5000,
+        is_anomaly: anomalousUsers.has(user_id),
       }));
 
     // 日次時系列 (JST の暦日ごと。created_at.slice(0, 10) は UTC の暦日になるので使わない)
