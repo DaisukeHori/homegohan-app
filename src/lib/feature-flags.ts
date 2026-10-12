@@ -23,7 +23,8 @@
  * 書き込みが打ち切られることがある。そのときは app_logs に残らず、コンソールだけになる。
  *
  * 【メモリのキャッシュ】
- * フラグの行はサーバーのメモリに FEATURE_FLAG_CACHE_TTL_MS (30 秒) 覚える。ミドルウェアは全リクエストで呼ぶため、
+ * フラグの行はサーバーのメモリに FEATURE_FLAG_CACHE_TTL_MS (既定 30 秒。環境変数 FEATURE_FLAG_CACHE_TTL_MS で上書きできるが、
+ * 本番では上書きしない。結合テストのサーバーだけが短くする。#1496) 覚える。ミドルウェアは全リクエストで呼ぶため、
  * 毎回 DB を読まないようにするのが目的。運営画面で切り替えたとき、全インスタンスに反映されるまで最大 30 秒かかる
  * (切り替えを受けたインスタンスは invalidateFeatureFlag でメモリを新しくする。ただし、切り替えの前に始まっていた
  * 読み出しが、あとから古い値をメモリに戻すことがある。そのインスタンスも、厳密に即時とは限らない。それでも最大 30 秒)。
@@ -38,6 +39,7 @@
  */
 import { createLogger } from '@/lib/db-logger';
 import { requiredFlagContextFields } from '../../supabase/functions/_shared/feature-flag-eval';
+import { resolveFeatureFlagCacheTtlMs } from '@/lib/feature-flag-cache-ttl';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   evaluateFlag,
@@ -67,8 +69,12 @@ export type KnownFeatureFlagKey = keyof typeof FEATURE_FLAG_DEFAULTS;
  */
 export const CLIENT_FEATURE_FLAG_KEYS = ['ai_chat_enabled', 'maintenance_mode'] as const satisfies readonly KnownFeatureFlagKey[];
 
-/** フラグの行をメモリに覚える時間 (ms)。運営画面で切り替えてから全員に反映されるまでの、最大の遅れ */
-export const FEATURE_FLAG_CACHE_TTL_MS = 30_000;
+/**
+ * フラグの行をメモリに覚える時間 (ms)。運営画面で切り替えてから全員に反映されるまでの、最大の遅れ。
+ * 既定は 30 秒。環境変数 FEATURE_FLAG_CACHE_TTL_MS で上書きできる (結合テストのサーバーだけが短くする。
+ * 読み方は src/lib/feature-flag-cache-ttl.ts。#1496)
+ */
+export const FEATURE_FLAG_CACHE_TTL_MS = resolveFeatureFlagCacheTtlMs();
 /** 読み出しに失敗した (待ちきれなかった) あと、次に読み直すまでの間隔 (ms) */
 export const FEATURE_FLAG_FAILURE_RETRY_MS = 10_000;
 /** 読み出しを待つ上限 (ms)。超えたら既定値で答える */

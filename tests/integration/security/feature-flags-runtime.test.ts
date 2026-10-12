@@ -11,13 +11,18 @@
  *   - GET /api/feature-flags: 未ログインでも、ログイン済みでも答える。運営には maintenance_mode = false
  *   - GET /api/super-admin/flags の active_user_count: 以前は常に 0。実際の判定で数えた人数
  *
- * フラグの値は、ミドルウェアも API route もメモリに最大 30 秒覚える。そのため、切り替えたあとは、
- * 反映されるまで (最大 30 秒強) 繰り返し確かめる。テストの終わりに必ずフラグを元に戻し、反映されるまで待つ
+ * フラグの値は、ミドルウェアも API route もメモリに FEATURE_FLAG_CACHE_TTL_MS (既定 30 秒) 覚える。そのため、切り替えたあとは、
+ * 反映されるまで繰り返し確かめる。テストの終わりに必ずフラグを元に戻し、反映されるまで待つ
  * (戻ったことを確かめずに終わると、あとのテストが 503 を受け取る)。
+ * 反映を待つ上限とポーリングの間隔は、このテストのプロセスの環境変数 FEATURE_FLAG_CACHE_TTL_MS (読み方は
+ * src/lib/feature-flag-cache-ttl.ts。サーバーと同じ) から決める (#1496)。CI (security-regression.yml) と scripts/local-ci.sh は、
+ * next dev とこのテストの両方に短い値 (2 秒) を渡す。本物の 30 秒を待つと、ON と OFF の 2 回の反映待ちで 1 分以上かかる。
+ * ⚠ サーバーとテストには同じ値を渡すこと。サーバーだけが既定 (30 秒) のままだと、テストの待ちの上限が足りずに落ちる。
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
- *   npm run dev &
- *   npx vitest run --config vitest.integration.config.ts tests/integration/security/feature-flags-runtime.test.ts
+ *   FEATURE_FLAG_CACHE_TTL_MS=2000 npm run dev &
+ *   FEATURE_FLAG_CACHE_TTL_MS=2000 npx vitest run --config vitest.integration.config.ts tests/integration/security/feature-flags-runtime.test.ts
+ *   (どちらにも付けなければ、既定の 30 秒で待つ)
  *   (dev サーバが 3000 以外のとき: INTEGRATION_BASE_URL=http://localhost:3414 を付ける)
  */
 
@@ -25,13 +30,27 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { supabaseAdmin } from '../helpers/supabase';
 import { apiCall, apiCallNoAuth, type ApiResponse } from '../helpers/api';
 import { createTestUserWithRoles, cleanupTestUser, cleanupAuditLogs, testEmail, type TestUser } from '../helpers/users';
+import { FEATURE_FLAG_CACHE_TTL_ENV, resolveFeatureFlagCacheTtlMs } from '../../../src/lib/feature-flag-cache-ttl';
 
 const BASE_URL = process.env.INTEGRATION_BASE_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
 const TS = Date.now();
 
-/** フラグのメモリのキャッシュは 30 秒。切り替えの反映を待つ上限 */
-const PROPAGATION_TIMEOUT_MS = 60_000;
-const POLL_INTERVAL_MS = 1_500;
+/** サーバーがフラグの行をメモリに覚える時間 (サーバーと同じ環境変数から、同じ読み方で決める。既定 30 秒) */
+const FLAG_CACHE_TTL_MS = resolveFeatureFlagCacheTtlMs(process.env[FEATURE_FLAG_CACHE_TTL_ENV]);
+/**
+ * 切り替えの反映を待つ上限 = 覚える時間の 2 倍 (以前の既定: 30 秒 → 60 秒)。ミドルウェアと API route が別々に覚えていて、
+ * 切り替えの直前に読んだ値が最大 1 回分残る。ただし、覚える時間を短くしたときも、負荷の高い機械で 1 回のリクエストに
+ * 数秒かかることがあるので、下限 (PROPAGATION_TIMEOUT_FLOOR_MS) を置く
+ */
+const PROPAGATION_TTL_MULTIPLIER = 2;
+const PROPAGATION_TIMEOUT_FLOOR_MS = 20_000;
+const PROPAGATION_TIMEOUT_MS = Math.max(FLAG_CACHE_TTL_MS * PROPAGATION_TTL_MULTIPLIER, PROPAGATION_TIMEOUT_FLOOR_MS);
+/**
+ * ポーリングの間隔 = 覚える時間の 1/20 (以前の既定: 30 秒 → 1.5 秒)。短くしすぎてサーバーを叩きすぎないよう、下限を置く
+ */
+const POLLS_PER_TTL = 20;
+const POLL_INTERVAL_FLOOR_MS = 250;
+const POLL_INTERVAL_MS = Math.max(Math.round(FLAG_CACHE_TTL_MS / POLLS_PER_TTL), POLL_INTERVAL_FLOOR_MS);
 
 const KEYS = ['ai_chat_enabled', 'maintenance_mode'] as const;
 type Key = (typeof KEYS)[number];
@@ -72,7 +91,10 @@ async function waitFor<T>(label: string, fetchValue: () => Promise<T>, isDone: (
     if (isDone(last)) return last;
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
-  throw new Error(`${label}: ${PROPAGATION_TIMEOUT_MS / 1000} 秒待っても反映されなかった。最後の値: ${JSON.stringify(last)}`);
+  throw new Error(
+    `${label}: ${PROPAGATION_TIMEOUT_MS / 1000} 秒待っても反映されなかった (このテストの ${FEATURE_FLAG_CACHE_TTL_ENV} = ${FLAG_CACHE_TTL_MS} ms。` +
+      `サーバー (next dev) にも同じ値を渡しているか確かめる)。最後の値: ${JSON.stringify(last)}`,
+  );
 }
 
 function codeOf(body: unknown): string | undefined {

@@ -416,7 +416,7 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     }
   });
 
-  it('値を読む場所が決まっている変数 (AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPS_ALERT_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
+  it('値を読む場所が決まっている変数 (AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPS_ALERT_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
     const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
 
     expect(sealed.map((entry) => [entry.name, entry.readOnlyBy]).sort()).toEqual([
@@ -426,6 +426,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       ['CRON_SECRET_PREVIOUS', 'src/lib/cron-auth.ts'],
       // #1148 機能フラグの対象ユーザー数を 1 人ずつ数える上限。正の整数でなければ既定値にする読み方を 1 か所に置く
       ['FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT', 'src/lib/super-admin/flag-active-users.ts'],
+      // #1496 機能フラグの行をメモリに覚える時間。middleware (Edge Runtime) も読むので、何も import しないファイル 1 か所で読む
+      ['FEATURE_FLAG_CACHE_TTL_MS', 'src/lib/feature-flag-cache-ttl.ts'],
       // #1174 の同意ゲートのフラグ。middleware (Edge Runtime) が lib/legal-consent.ts の isLegalConsentFlagOn で読む
       ['LEGAL_CONSENT_ENFORCE', 'lib/legal-consent.ts'],
       ['LEGAL_CONSENT_NOTICE', 'lib/legal-consent.ts'],

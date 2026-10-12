@@ -101,6 +101,9 @@ readonly APP_HOST_URL="http://localhost"
 readonly CI_LANG="C.UTF-8"
 # security-regression.yml の next dev の待ち (seq 1 120 × sleep 2)
 readonly DEV_WAIT_TRIES=120
+# security-regression.yml の next dev と 1 本目の結合テストに渡す、機能フラグの行をメモリに覚える時間 (ミリ秒。既定 30 秒を短くする。
+# tests/integration/security/feature-flags-runtime.test.ts が切り替えの反映を待つ時間がこれで決まる。#1496)
+readonly INTEGRATION_FEATURE_FLAG_CACHE_TTL_MS=2000
 # e2e-local.yml の next start の待ち (seq 1 60 × sleep 2)
 readonly START_WAIT_TRIES=60
 readonly WAIT_INTERVAL_SEC=2
@@ -1137,7 +1140,7 @@ stage_integration() {
   # Next dev サーバ (yml と同じく /login が応答するまで待つ)
   log="$ART/integration-next-dev.log"
   say "integration: next dev を起動します"
-  ( ci_env && cd "$WT" && export PORT="$APP_PORT" && exec nohup npm run dev ) >"$log" 2>&1 &
+  ( ci_env && cd "$WT" && export PORT="$APP_PORT" && exec nohup env FEATURE_FLAG_CACHE_TTL_MS="$INTEGRATION_FEATURE_FLAG_CACHE_TTL_MS" npm run dev ) >"$log" 2>&1 &
   SERVER_PID=$!
   if ! wait_app "$DEV_WAIT_TRIES" "$log"; then
     record integration:setup RED - - - - - "$(($(now) - t0))" "$(tail_hint "next dev が $APP_ORIGIN/login に応答しない" "$log")"
@@ -1156,7 +1159,7 @@ stage_integration() {
   log="$ART/integration-security.log"
   t0=$(now)
   run_in "$WT" "$log" npx vitest list --filesOnly --json="$ART/integration-security-list.json" "${INTEG1_ARGS[@]}"
-  run_in "$WT" "$log" npx vitest run "${INTEG1_ARGS[@]}" --reporter=default --reporter=json --outputFile="$ART/integration-security.json"
+  run_in "$WT" "$log" env FEATURE_FLAG_CACHE_TTL_MS="$INTEGRATION_FEATURE_FLAG_CACHE_TTL_MS" npx vitest run "${INTEG1_ARGS[@]}" --reporter=default --reporter=json --outputFile="$ART/integration-security.json"
   rc=$?
   line=$(parse vitest "$ART/integration-security.json" "$ART/integration-security-list.json" "$rc")
   record_parsed integration:security "$(($(now) - t0))" "$line"
