@@ -3,7 +3,7 @@ import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
 import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
 import { internalError } from '@/lib/api/errors';
-import { weeklyMenuRequestStaleBefore } from '@/lib/weekly-menu-request-stale';
+import { isWeeklyMenuRequestStale, markWeeklyMenuRequestStaleIfUnchanged } from '@/lib/weekly-menu-request-stale';
 import {
   WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE,
   WEEKLY_MENU_REQUEST_STALE_MESSAGE,
@@ -21,20 +21,17 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const requestId = searchParams.get('requestId');
-  const now = new Date();
-  // しきい値は止まった行の判定をするすべての場所で共有する (src/lib/weekly-menu-request-stale.ts。#1494)
-  const staleBefore = weeklyMenuRequestStaleBefore(now.getTime());
-
   if (!requestId) {
     return NextResponse.json({ error: 'requestId is required' }, { status: 400 });
   }
 
   try {
     // #1042: 通常ポーリング（3秒間隔）では生成中に肥大化する generated_data(jsonb) を
-    // select しない。stale 判定が成立した場合のみ、下記で二次クエリして取得する。
+    // select しない。止まった行を failed にしたときだけ、更新の戻り値で受け取る。
+    // 止まったかの判定は cleanup と同じ生存信号 (created_at・updated_at・worker_acquired_at) で行う (#1507)
     const { data: request, error } = await supabase
       .from('weekly_menu_requests')
-      .select('id, status, error_message, updated_at, mode, start_date, target_meal_id, progress')
+      .select('id, status, error_message, created_at, updated_at, worker_acquired_at, mode, start_date, target_meal_id, progress')
       .eq('id', requestId)
       .eq('user_id', user.id)
       .maybeSingle();
@@ -48,57 +45,50 @@ export async function GET(request: Request) {
       });
     }
 
-    const updatedAt = request.updated_at ? new Date(request.updated_at) : null;
-    // queued は cron が 1 分ごとに処理するため stale 判定から除外する
-    const isStale = (request.status === 'pending' || request.status === 'processing')
-      && updatedAt
-      && updatedAt < staleBefore;
-    if (isStale) {
-      // stale リクエストを failed に更新
+    // 止まったかの判定・failed への書き換えは src/lib/weekly-menu-request-stale.ts に寄せる (cleanup と同じ。#1494・#1507)。
+    // queued (cron の順番待ち)・生存信号が新しい行 (claim_menu_request が取り直した直後の行を含む)・時刻が読めない行は止まっていない
+    const nowMs = Date.now();
+    if (isWeeklyMenuRequestStale(request, nowMs)) {
       // weekly_menu_requests は利用者 (authenticated) から書けない (#1465)。本人の行に絞って service role で書く
       const queueDb = getAiQueueWriter();
-      const { error: staleError } = await queueDb
-        .from('weekly_menu_requests')
-        .update({
-          status: 'failed',
-          error_message: WEEKLY_MENU_REQUEST_STALE_MESSAGE,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', requestId)
-        .eq('user_id', user.id);
+      const failedAt = new Date(nowMs).toISOString();
+      // 読んだときから状態・生存信号が変わっていない行だけを書き換える (読んでから書くまでに進んだ行は failed にしない)
+      const { rows: failedRows, error: staleError } = await markWeeklyMenuRequestStaleIfUnchanged({
+        supabase: queueDb,
+        userId: user.id,
+        row: request,
+        failedAt,
+      });
       if (staleError) {
+        // 更新が拒まれた行は書き換わっていない。読んだ状態をそのまま返し、次のポーリングでやり直す
         console.error('Failed to mark stale request as failed:', staleError);
       }
 
-      // プレースホルダーは使用しないので、is_generating のクリアは不要
+      const failedRow = failedRows.find((row) => row.id === request.id);
+      if (failedRow) {
+        // プレースホルダーは使用しないので、is_generating のクリアは不要
 
-      // #1042: waitUntil 消失等で生成コールバックが実行されず stale になったケースでも、
-      // 削除済み献立のスナップショットが残っていれば復元する（sweeper 経由の救済ロールバック）。
-      // generated_data は stale 判定成立時のみここで二次クエリして取得する。
-      const { data: snapshotRow, error: snapshotError } = await supabase
-        .from('weekly_menu_requests')
-        .select('generated_data')
-        .eq('id', requestId)
-        .eq('user_id', user.id)
-        .maybeSingle();
-      if (snapshotError) {
-        console.error('Failed to fetch generated_data for stale restore:', snapshotError);
-      }
-      const snapshot = extractPlannedMealsSnapshot(snapshotRow?.generated_data);
-      let restoreResult: { restored: number; skipped: number; failed: number } | null = null;
-      if (snapshot.length > 0) {
-        restoreResult = await restorePlannedMealsSnapshot(supabase, snapshot);
-        console.log(
-          `🔁 [stale sweeper/status] Restored meals for request ${requestId}: restored=${restoreResult.restored} skipped=${restoreResult.skipped} failed=${restoreResult.failed}`,
-        );
-      }
+        // #1042: waitUntil 消失等で生成コールバックが実行されず stale になったケースでも、
+        // 削除済み献立のスナップショットが残っていれば復元する（sweeper 経由の救済ロールバック）。
+        // 復元するのは、実際に failed にした行 (読んでから書くまでに進んだ行を除く) だけ (#1507)。
+        const snapshot = extractPlannedMealsSnapshot(failedRow.generated_data);
+        let restoreResult: { restored: number; skipped: number; failed: number } | null = null;
+        if (snapshot.length > 0) {
+          restoreResult = await restorePlannedMealsSnapshot(supabase, snapshot);
+          console.log(
+            `🔁 [stale sweeper/status] Restored meals for request ${requestId}: restored=${restoreResult.restored} skipped=${restoreResult.skipped} failed=${restoreResult.failed}`,
+          );
+        }
 
-      return NextResponse.json({
-        status: 'failed',
-        errorMessage: WEEKLY_MENU_REQUEST_STALE_MESSAGE,
-        updatedAt: new Date().toISOString(),
-        ...(restoreResult ? { restore: restoreResult } : {}),
-      });
+        return NextResponse.json({
+          status: 'failed',
+          errorMessage: WEEKLY_MENU_REQUEST_STALE_MESSAGE,
+          updatedAt: failedAt,
+          ...(restoreResult ? { restore: restoreResult } : {}),
+        });
+      }
+      // 書き換わらなかった行は、読んでから書くまでに進んだ (進捗を書いた・取り直された・終わった) 行か、更新が拒まれた行。
+      // 止まったとは扱わず、読んだ状態を返す (次のポーリングで新しい状態を読む)
     }
 
     // error_message には、この変更より前に書かれた行や Edge Function が自分で書いた行の、生のエラー文
