@@ -13,6 +13,9 @@
 #
 # PR で動くほかのワークフロー・ジョブ (security.yml の dependency-review など) は写していない。
 # 写していないものと理由は tests/local-ci-workflow-sync.test.ts の EXCLUDED_WORKFLOWS / EXCLUDED_JOBS にある。
+# PR で動かないワークフロー (main への push で動くデプロイなど) は写さない (除外の一覧にも載せない。テストが「PR で動かない」と止める)。
+# そのうち deploy-supabase-functions.yml の「Verify Edge Function dependency pinning」の段は、
+# tests/edge-function-dep-pinning.test.ts がその run を yml から取り出して動かすので、unit 段の vitest で回る (#1515)。
 #
 # yml とこのスクリプトのずれは tests/local-ci-workflow-sync.test.ts が検出する (PR の npm test で落ちる)。
 # PR で動くワークフローが増えて、ここにもテストの除外の一覧にも無いときも落ちる。
