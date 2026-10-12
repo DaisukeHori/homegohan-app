@@ -228,6 +228,67 @@ describe("stripe-price-sync: STRIPE_SECRET_KEY が無いときの 503 の本文 
   });
 });
 
+describe("stripe-price-sync: Supabase の接続情報だけが無いときは 503 にせず、旧 Price の無効化を飛ばして 200 (#1490)", () => {
+  // ENV_SETUP.md の案内 (503 SERVER_CONFIG_MISSING は STRIPE_SECRET_KEY が無いときだけ) の裏付け。
+  // Supabase の接続情報は旧 Price の ID を読むのにだけ使い、読めなければ無効化を全部スキップする (sync.ts の old_price_fetch_failed)
+  const STRIPE_SECRET_KEY_VALUE = "sk_test_dummy";
+  const NEW_PRICE_ID = "price_new_month";
+  let handler: (req: Request) => Promise<Response> | Response;
+  const fetchCalls: string[] = [];
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeAll(async () => {
+    // 環境変数は読み込み時に読むので、Supabase の接続情報を設定しないまま、別の読み込みとして読む
+    h.env = { STRIPE_SECRET_KEY: STRIPE_SECRET_KEY_VALUE };
+    vi.resetModules();
+    handler = await importHandler("../supabase/functions/stripe-price-sync/index.ts");
+  });
+
+  beforeEach(() => {
+    fetchCalls.length = 0;
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+      fetchCalls.push(String(input));
+      return new Response(JSON.stringify({ id: NEW_PRICE_ID }), { status: 200 });
+    });
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it("新しい Price を作り、旧 Price は読まずに無効化を飛ばして 200。本文に変数名を出さず、ログに名前を残す", async () => {
+    h.env = { STRIPE_SECRET_KEY: STRIPE_SECRET_KEY_VALUE };
+
+    const res = await handler(
+      post("http://localhost/functions/v1/stripe-price-sync", {
+        auth: "Bearer cron-secret",
+        body: { plan_id: "plan-1", stripe_product_id: "prod_1", new_monthly_price_jpy: 980 },
+      }),
+    );
+    const text = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(JSON.parse(text)).toEqual({
+      success: true,
+      month: { new_stripe_price_id: NEW_PRICE_ID, deactivated: false, deactivation_skipped_reason: "old_price_fetch_failed" },
+      year: null,
+    });
+    expectNoEnvNames(text, ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "STRIPE_SECRET_KEY"]);
+    // Stripe へは新しい Price の作成 1 回だけ (旧 Price の取り直し・無効化はしない)。DB には接続しない
+    expect(fetchCalls).toHaveLength(1);
+    expect(fetchCalls[0]).toMatch(/\/prices$/);
+    expect(h.createClientCalls).toHaveLength(0);
+    expect(loggedLines()).toContain(`${MISSING_ENV_SERVER_LOG_PREFIX} SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY`);
+  });
+
+  it("ENV_SETUP.md は、stripe-price-sync の 503 を STRIPE_SECRET_KEY だけとし、Supabase の接続情報だけが無いときの 200 を案内している", () => {
+    const doc = fs.readFileSync(path.join(ROOT, "ENV_SETUP.md"), "utf-8");
+
+    expect(doc).toContain("`stripe-price-sync` は `STRIPE_SECRET_KEY` だけです");
+    expect(doc).toContain('"deactivation_skipped_reason":"old_price_fetch_failed"');
+  });
+});
+
 describe("process-meal-image-jobs: 環境変数をリクエストの中で確かめる (#1467)", () => {
   let handler: (req: Request) => Promise<Response> | Response;
   const URL_ = "http://localhost/functions/v1/process-meal-image-jobs";
