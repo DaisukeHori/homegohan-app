@@ -85,7 +85,7 @@ vi.mock("@google/genai", () => ({
   createUserContent: (parts: unknown) => parts,
 }));
 
-// ロガーは app_logs へ書き込むので差し替える (https://esm.sh の import も避けられる)
+// ロガーは app_logs へ書き込むので差し替える
 vi.mock("../supabase/functions/_shared/db-logger.ts", () => ({
   createLogger: () => ({ debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, withUser: () => ({}) }),
   generateRequestId: () => "req_test",

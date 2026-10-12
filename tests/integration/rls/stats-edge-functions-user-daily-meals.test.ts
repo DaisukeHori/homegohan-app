@@ -30,7 +30,7 @@
  *     利用者ごとに数える。meals の全行は読まない。実 DB で、関数が service role から呼べて正しい件数を返すことを確かめる
  *
  * 本物のハンドラ (Deno.serve に渡された関数) を、実際のローカル Supabase に向けて呼ぶ。
- * Deno と db-logger (app_logs への書き込み・https://esm.sh の import) だけを差し替える。
+ * Deno と db-logger (app_logs への書き込み) だけを差し替える。
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
  *   npx vitest run --config vitest.integration.config.ts tests/integration/rls/stats-edge-functions-user-daily-meals.test.ts
@@ -59,7 +59,7 @@ const h = vi.hoisted(() => ({
   errors: [] as Array<{ message: string; error: unknown }>,
 }));
 
-// ロガーは app_logs へ書き込む (しかも https://esm.sh を import する) ので差し替える。error は記録して、成功時に 0 件であることを確かめる
+// ロガーは app_logs へ書き込むので差し替える。error は記録して、成功時に 0 件であることを確かめる
 vi.mock('../../../supabase/functions/_shared/db-logger.ts', () => ({
   createLogger: () => ({
     debug: () => {},
