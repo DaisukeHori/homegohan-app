@@ -35,7 +35,9 @@ export async function GET(
       )
     `)
     .eq('id', params.id)
-    .single();
+    // #1445: 行が見えない (存在しない・本人以外から見た非公開や運営が隠したレシピは RLS で 0 行になる) ときは 404。
+    // .single() だと 0 行が PGRST116 のエラーになり、500 を返していた
+    .maybeSingle();
 
   if (error) return internalError('GET /api/recipes/[id]', error, { userId: user?.id });
   if (!data) return NextResponse.json({ error: 'Not found' }, { status: 404 });

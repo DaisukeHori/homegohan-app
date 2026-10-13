@@ -787,8 +787,13 @@ $$);
 1. ユーザー: 設定画面の「アカウントを削除する」を押す (Web / モバイル)
    - Web: 確認モーダルに「削除します」と入力する
    - モバイル: 確認アラートで「削除」を選ぶ
+   - 凍結 (BAN) 中の利用者 (#1445): 凍結の画面 (/frozen) の「退会・データの書き出し」から /frozen/account を開き、
+     「削除します」と入力して押す (設定画面は凍結中には開けない)
 2. クライアント: POST /api/account/delete { confirm: true }
    - 認証済みセッションが必須 (未認証は 401、confirm がなければ 400)
+   - 凍結中の利用者も呼べる (#1445)。middleware は凍結中の利用者の /api を 403 AUTH_ACCOUNT_FROZEN で止めるが、
+     退会 (POST /api/account/delete) と書き出し (GET /api/account/export) だけは止めない
+     (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS。完全一致。一覧は lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts が固定する)
 3. 削除をブロックする条件 (409):
    - 組織の owner → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
      (先に owner を譲渡するか、組織を解散する)

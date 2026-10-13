@@ -624,8 +624,8 @@ const ALLOWLIST: ReadonlyArray<{ file: string; rule: Rule; count: number; reason
   {
     file: 'src/app/(main)/settings/page.tsx',
     rule: 'A',
-    count: 2,
-    reason: 'エクスポートのファイル名の日付。API が付けるファイル名 (UTC の日付) とそろえている',
+    count: 1,
+    reason: 'エクスポートのファイル名の日付。API が付けるファイル名 (UTC の日付) とそろえている (JSON の分は src/lib/account-self-service.ts へ移した。#1445)',
   },
   {
     file: 'apps/mobile/app/(tabs)/settings.tsx',

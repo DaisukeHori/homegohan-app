@@ -513,8 +513,11 @@ describe('#1101 E: hideModeratedContent を実 DB で', () => {
     const mealId = await insertMeal(owner.id, `#1101 E1 ${TS}`);
     expect(await readableIds(asUser(famMember.jwt), 'meals', [mealId])).toEqual([mealId]);
 
-    // 戻り値は、この呼び出しで新しく隠した行の ID (監査ログの hidden_ids)
-    expect(await hideModeratedContent(srAdmin, 'food', mealId, params(moderator.id))).toEqual([mealId]);
+    // 戻り値は、行があったか (監査ログの hidden / content_found。#1445) と、この呼び出しで新しく隠した行の ID (監査ログの hidden_ids)
+    expect(await hideModeratedContent(srAdmin, 'food', mealId, params(moderator.id))).toEqual({
+      contentFound: true,
+      hiddenIds: [mealId],
+    });
 
     const row = await readHidden('meals', mealId);
     expect(row.hidden_at).not.toBeNull();
@@ -549,18 +552,20 @@ describe('#1101 E: hideModeratedContent を実 DB で', () => {
       const first = await readHidden(table, id);
 
       await new Promise((resolve) => setTimeout(resolve, 20));
-      // 2 回目は何も隠さない (戻り値は空)
+      // 2 回目は何も隠さない (hiddenIds は空)。行はあって隠れた状態なので contentFound: true (#1445)
       expect(
         await hideModeratedContent(srAdmin, type, id, { hiddenBy: secondModerator.id, reason: 'moderation:delete_and_warn' }),
-      ).toEqual([]);
+        table,
+      ).toEqual({ contentFound: true, hiddenIds: [] });
 
       expect(await readHidden(table, id), table).toEqual(first);
     }
   });
 
-  it('E4: 行がもう無いとき (持ち主が先に消した等) は、何も更新せずに成功する', async () => {
-    await expect(hideModeratedContent(srAdmin, 'food', randomUUID(), params(moderator.id))).resolves.toEqual([]);
-    await expect(hideModeratedContent(srAdmin, 'recipe', randomUUID(), params(moderator.id))).resolves.toEqual([]);
+  it('E4: 行がもう無いとき (持ち主が先に消した等) は、何も更新せずに成功する。contentFound: false (#1445: 監査ログを hidden: true にしない)', async () => {
+    const missing = { contentFound: false, hiddenIds: [] };
+    await expect(hideModeratedContent(srAdmin, 'food', randomUUID(), params(moderator.id))).resolves.toEqual(missing);
+    await expect(hideModeratedContent(srAdmin, 'recipe', randomUUID(), params(moderator.id))).resolves.toEqual(missing);
   });
 
   it('E5: 運営の権限 (service_role) ではなく、本人のクライアントで呼ぶと隠せない (hidden_* の書き換えが 42501 で拒否され、例外になる)', async () => {
@@ -644,7 +649,7 @@ describe('#1101 F: 家族への貼り付け (paste_meal_to_family)', () => {
     // 隠す前: 元の持ち主は、家族の複製も読める
     expect(await readableIds(asUser(owner.jwt), 'meals', [copy.id])).toEqual([copy.id]);
 
-    const hiddenIds = await hideModeratedContent(srAdmin, 'food', mealId, {
+    const { hiddenIds } = await hideModeratedContent(srAdmin, 'food', mealId, {
       hiddenBy: moderator.id,
       reason: 'moderation:delete_only',
     });
@@ -665,7 +670,7 @@ describe('#1101 F: 家族への貼り付け (paste_meal_to_family)', () => {
     expect(pasteError).toBeNull();
     const [copy] = await copiesOf(mealId);
 
-    const hiddenIds = await hideModeratedContent(srAdmin, 'food', copy.id, {
+    const { hiddenIds } = await hideModeratedContent(srAdmin, 'food', copy.id, {
       hiddenBy: moderator.id,
       reason: 'moderation:delete_only',
     });
@@ -690,7 +695,7 @@ describe('#1101 F: 家族への貼り付け (paste_meal_to_family)', () => {
       .select('id');
     expect(editError).toBeNull();
 
-    const hiddenIds = await hideModeratedContent(srAdmin, 'food', copy.id, {
+    const { hiddenIds } = await hideModeratedContent(srAdmin, 'food', copy.id, {
       hiddenBy: moderator.id,
       reason: 'moderation:delete_only',
     });
@@ -726,7 +731,7 @@ describe('#1101 F: 家族への貼り付け (paste_meal_to_family)', () => {
         .select('id');
       expect(editError).toBeNull();
 
-      const hiddenIds = await hideModeratedContent(srAdmin, 'food', mealId, {
+      const { hiddenIds } = await hideModeratedContent(srAdmin, 'food', mealId, {
         hiddenBy: moderator.id,
         reason: 'moderation:delete_only',
       });
@@ -799,7 +804,7 @@ describe('#1101 F: 家族への貼り付け (paste_meal_to_family)', () => {
     expect(intruderError).toBeNull();
     createdMealIds.push(intruder!.id as string);
 
-    const hiddenIds = await hideModeratedContent(srAdmin, 'food', intruder!.id as string, {
+    const { hiddenIds } = await hideModeratedContent(srAdmin, 'food', intruder!.id as string, {
       hiddenBy: moderator.id,
       reason: 'moderation:delete_only',
     });
