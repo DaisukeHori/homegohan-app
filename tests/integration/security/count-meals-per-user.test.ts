@@ -13,6 +13,8 @@
  *   B. user_id の順に並べ、range でページ送りできる (Edge Function の fetchAllRows が上限 1000 行を超えたときに使う)
  *   C. 未ログイン (anon)・ログインユーザー (authenticated) は呼べない (42501)。他人の記録の件数を読めない
  *   D. EXECUTE の権限: PUBLIC / anon / authenticated は無く、service_role だけにある (postgres-meta で読み取りだけ確かめる)
+ *   E. ハンズオンのお試しの記録 (meals.is_sandbox = true) は数えない (#1500。migration 20261011120000_segment_stats_finalize_retry.sql)。
+ *      お試しの記録だけを持つ利用者の行は返らない (= total_meals は 0)。実際の記録と一緒に持つ利用者は、実際の記録だけを数える
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。本番には接続しない。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -87,19 +89,24 @@ interface CountRow {
   meal_count: number | string;
 }
 
-let many: TestUser; // 3 件 (1 年以上前の記録を含む)
+let many: TestUser; // 実際の記録 3 件 (1 年以上前の記録を含む) + お試しの記録 1 件
 let one: TestUser; // 1 件
 let none: TestUser; // 0 件
+let sandboxOnly: TestUser; // お試しの記録 1 件だけ (#1500)
 
 beforeAll(async () => {
   many = await createUser('many');
   one = await createUser('one');
   none = await createUser('none');
+  sandboxOnly = await createUser('sandbox');
   const { error } = await sr.from('meals').insert([
     { user_id: many.id, eaten_at: '2025-01-15T03:00:00Z', meal_type: 'lunch' },
     { user_id: many.id, eaten_at: '2026-10-01T03:00:00Z', meal_type: 'lunch' },
     { user_id: many.id, eaten_at: '2026-10-08T10:00:00Z', meal_type: 'dinner' },
     { user_id: one.id, eaten_at: '2026-10-08T23:00:00Z', meal_type: 'breakfast' },
+    // ハンズオンのお試しの記録 (1 人 1 件まで: uniq_user_sandbox_meal)
+    { user_id: many.id, eaten_at: '2026-10-09T03:00:00Z', meal_type: 'lunch', is_sandbox: true },
+    { user_id: sandboxOnly.id, eaten_at: '2026-10-09T03:00:00Z', meal_type: 'lunch', is_sandbox: true },
   ]);
   if (error) throw new Error(`meals: ${error.message}`);
 }, 120_000);
@@ -123,6 +130,18 @@ describe('count_meals_per_user: 利用者ごとの meals の件数 (#1491)', () 
     expect(counts.get(one.id)).toBe(1);
     expect(counts.has(none.id)).toBe(false);
     expect(counts.size).toBe(2);
+  });
+
+  it('E: ハンズオンのお試しの記録 (is_sandbox = true) は数えない。お試しの記録だけの利用者の行は無い (#1500)', async () => {
+    // 前提: お試しの記録が実際に入っている (このテストが空振りしていないことの確認)
+    const { data: sandboxRows, error } = await sr.from('meals').select('user_id').eq('is_sandbox', true).in('user_id', [many.id, sandboxOnly.id]);
+    expect(error).toBeNull();
+    expect((sandboxRows ?? []).map((r) => r.user_id).sort()).toEqual([many.id, sandboxOnly.id].sort());
+
+    const counts = await countsOfTestUsers();
+    // many: 実際の記録 3 件だけ (お試しの記録 1 件は入らない)
+    expect(counts.get(many.id)).toBe(3);
+    expect(counts.has(sandboxOnly.id)).toBe(false);
   });
 
   it('A2: 記録を足すと、次の呼び出しの件数に入る (集計の結果を保存しているのではなく、呼ぶたびに数える)', async () => {
