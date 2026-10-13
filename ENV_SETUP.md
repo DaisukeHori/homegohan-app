@@ -87,7 +87,7 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 |---|---|---|---|
 | Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue` と `/api/cron/app-log-alerts`（どちらも `vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
 | Supabase の Edge Function secrets | `CRON_SECRET`（別名 `SERVICE_ROLE_SECRET`。`CRON_SECRET` が無いときだけ代わりに使われます） | **受ける側**。`supabase/functions/_shared/auth.ts` の `requireServiceRole` が、次の Edge Function でこの値と照らし合わせます: コンビニカタログ取り込み 5 本（`import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog`）、`aggregate-org-stats`（停止中。認証だけ行い 410 を返します。#1325）、`calculate-segment-stats`、`regenerate-embeddings`、`stripe-price-sync`（最後の 2 本は service role key でも呼べます） | Vault の `app_cron_secret` と **同じ値にする** |
-| Supabase Vault | `app_cron_secret` | **送る側**。pg_cron が定期実行する次の関数がこの値を読み、`Authorization: Bearer ...` に付けて Edge Function を呼びます: `public.invoke_catalog_import()`（コンビニカタログ取り込みの Edge Function 5 本。登録時のスケジュールは、毎日 UTC 3:00〜4:00 に 15 分おき）、`public.invoke_calculate_segment_stats()`（比較ランキングの集計 `calculate-segment-stats` を daily / weekly / monthly の 3 回。期間が切り替わった直後の回は直前の期間の分も。ジョブ `calculate-segment-stats`、1 時間ごと（毎時 5 分）。#1406） | Edge Function secrets の `CRON_SECRET` と **同じ値にする** |
+| Supabase Vault | `app_cron_secret` | **送る側**。pg_cron が定期実行する次の関数がこの値を読み、`Authorization: Bearer ...` に付けて Edge Function を呼びます: `public.invoke_catalog_import()`（コンビニカタログ取り込みの Edge Function 5 本。登録時のスケジュールは、毎日 UTC 3:00〜4:00 に 15 分おき）、`public.invoke_calculate_segment_stats()`（比較ランキングの集計 `calculate-segment-stats` を daily / weekly / monthly の 3 回。期間が切り替わった直後の回は直前の期間の分も。ジョブ `calculate-segment-stats`、1 時間ごと（毎時 5 分）。#1406）、`public.invoke_calculate_segment_stats_finalize_retry()`（その直前の期間の分の再試行。ジョブ `calculate-segment-stats-finalize-retry`、毎日 JST 0:20 と 0:35。#1500） | Edge Function secrets の `CRON_SECRET` と **同じ値にする** |
 
 つまり、**値を合わせないと動かないのは「Edge Function secrets の `CRON_SECRET`」と「Vault の `app_cron_secret`」の 2 つだけ**です。Vercel の `CRON_SECRET` は独立しています。
 
@@ -165,18 +165,27 @@ Edge Function は、現行の `CRON_SECRET` に加えて `CRON_SECRET_PREVIOUS`�
 - 手順 3 の前なら、`CRON_SECRET` を旧い値に戻し、`CRON_SECRET_PREVIOUS` を削除します。
 - 手順 3 の後なら、Vault の `app_cron_secret` を旧い値に戻します（`CRON_SECRET_PREVIOUS` が残っている間は、新旧どちらでも通ります）。
 
-旧い値の控えが無いときは、`CRON_SECRET_PREVIOUS` を使えません。コンビニカタログの取り込みが動かない時間帯（UTC 4:30〜翌 2:30）の、比較ランキングの集計の回（毎時 5 分）を避けた時刻（例: 毎時 10 分〜55 分）に、手順 2 では `CRON_SECRET` だけを新しい値にして、すぐ手順 3 を行ってください。その数分の間だけ、手動で呼ぶ処理が 401 になります。比較ランキングの集計の回と重なって 401 になっても、次の回（1 時間後）で取り戻せます（JST 0 時台の回だけは、直前の期間の集計し直しが行われないので、避けてください）。
+旧い値の控えが無いときは、`CRON_SECRET_PREVIOUS` を使えません。コンビニカタログの取り込みが動かない時間帯（UTC 4:30〜翌 2:30）の、比較ランキングの集計の回（毎時 5 分）を避けた時刻（例: 毎時 10 分〜55 分）に、手順 2 では `CRON_SECRET` だけを新しい値にして、すぐ手順 3 を行ってください。その数分の間だけ、手動で呼ぶ処理が 401 になります。比較ランキングの集計の回と重なって 401 になっても、次の回（1 時間後）で取り戻せます（JST 0 時台は、直前の期間の集計し直しとバッジの判定を 0:05 に行い、失敗したときの再試行が 0:20 と 0:35 にしかないので、避けてください）。
 
 ### 比較ランキングの集計の間隔
 
 比較ランキング（Web の `/comparison`・モバイルの比較画面）の集計 `calculate-segment-stats` は、pg_cron のジョブ `calculate-segment-stats` が **1 時間ごと（毎時 5 分）** に呼びます（migration `20261009100000_schedule_calculate_segment_stats.sql`。#1406）。
 
 - 毎回、daily / weekly / monthly の 3 つの要求が pg_net から並行して出ます。1 つの要求が読むものは次のとおりです（#1491）。
-  - 自分の期間の食事の記録（`meals`。monthly は 1 か月分）と献立（`planned_meals`）を全件。
-  - 指標 `total_meals`（全期間の食事の記録の件数）が有効なら、DB の関数 `count_meals_per_user`（migration `20261011060000_count_meals_per_user.sql`）が数えた、記録のある利用者 1 人につき 1 行の件数。`meals` の全期間の行は読みません。`total_meals` が有効でなければ呼びません。
-  - そのほか、全利用者のプロフィール（`user_profiles`）と継続日数（`health_streaks`）。どれも 1 回の応答が 1000 行を超えると、1000 行ずつ取り直します。
+  - 指標とセグメントの定義（`metric_definitions`・`segment_definitions`）。有効なものだけ。
+  - 自分の期間の食事の記録（`meals`。monthly は 1 か月分）と献立（`planned_meals`）を全件。どちらもハンズオンのお試しの記録（`meals.is_sandbox`・`user_daily_meals.is_sandbox` が true）は除きます（#1500）。
+  - 指標 `total_meals`（全期間の食事の記録の件数）が有効なら、DB の関数 `count_meals_per_user`（migration `20261011060000_count_meals_per_user.sql`。お試しの記録を数えないのは `20261011120000_segment_stats_finalize_retry.sql` から）が数えた、記録のある利用者 1 人につき 1 行の件数。`meals` の全期間の行は読みません。`total_meals` が有効でなければ呼びません。
+  - そのほか、全利用者のプロフィール（`user_profiles`）と継続日数（`health_streaks`）。
+  - 変化率の計算元として、1 つ前の期間の指標（`user_metrics`。同じ種類の 1 つ前の期間の分）。
+  - ランキングを作るときに、書いたばかりのセグメントの統計（`segment_stats`）の平均を、セグメントと指標の組ごとに 1 行ずつ。
+  - 確定の回（下の、直前の期間を集計し直す回）だけ: バッジの定義（`badges`）、その期間のランキング（`user_segment_rankings`。バッジの判定に使う）、確定の回をやり終えた期間の記録（`segment_stats_finalized_periods`）。
+  - どれも 1 回の応答が 1000 行を超えると、1000 行ずつ取り直します。
 - 日・週・月が切り替わった直後の回（JST 0:05）は、切り替わった種類について直前の期間も 1 回だけ集計し直します（最大 3 つ増えます）。期間の最後の 1 時間（例: 23:05〜23:59）の記録を、その期間の最終の値に入れるためです。
-- 比較のバッジ（順位・上位 X%・平均超え・改善）は、この直前の期間を集計し直す回だけが判定します（#1491）。毎時の今の期間の回は、指標・統計・ランキングを更新するだけです（期間の途中の暫定の値で、取り消されないバッジを付けないため）。手動の集計（`POST /api/comparison/trigger`）も今の期間を集計するので、バッジは付きません。
+- 比較のバッジ（順位・上位 X%・平均超え・改善）は、この直前の期間を集計し直す回（確定の回）だけが判定します（#1491）。毎時の今の期間の回は、指標・統計・ランキングを更新するだけです（期間の途中の暫定の値で、取り消されないバッジを付けないため）。手動の集計（`POST /api/comparison/trigger`）も今の期間を集計するので、バッジは付きません。
+- 確定の回は、失敗したとき（pg_net の待ち時間切れ・Edge Function の 500 など）のために、ジョブ `calculate-segment-stats-finalize-retry` が **JST 0:20 と 0:35**（UTC 15:20 と 15:35）に同じ本文で 2 回まで呼び直します（migration `20261011120000_segment_stats_finalize_retry.sql`。#1500）。間隔の 15 分は、応答を待つ上限（400 秒）より長くしてあり、前の試みと重なりません。再試行が送るのは確定の回の本文だけです（今の期間の本文は送りません）。
+  - Edge Function は、確定の回をバッジの判定まで終えたら、その期間（種類と開始日）を表 `segment_stats_finalized_periods` に記録します。記録がある期間への確定の回は、何も読まず何も書かずに `{"success":true,"alreadyFinalized":true, ...}` を返します。0:05 の回が成功していれば、0:20 と 0:35 の回は何もしません（期間が終わったあとに足された記録で、確定した値やバッジを変えません。同じバッジが 2 つ付くこともありません）。
+  - 3 回とも失敗しても、知らせる仕組みはありません（運用メールのエラー急増の通知は、15 分で error が 20 件を超えたときだけ送るので、この 3 件だけでは届きません）。JST 0:40 以降に、下の「比較ランキングの集計が動いているかの確かめ方」の 4 と 6 で確かめてください。
+  - 確定の回をやり直したいとき（失敗したまま窓を過ぎた、など）は、SQL Editor で、その期間の記録を消してから（`DELETE FROM public.segment_stats_finalized_periods WHERE period_type = 'weekly' AND period_start = '2026-10-05';` のように）、確定の回を呼び直してください。再試行の関数は、期間が切り替わってから 1 時間を過ぎると何も送らないので、窓の外では、本文 `{"periodType":"weekly","previousPeriod":true}` で Edge Function を直接呼びます（Bearer は Edge Function secrets の `CRON_SECRET`）。直接呼んだときに集計し直すのは「今の 1 つ前の期間」です。
 - 応答を待つ上限は 400 秒です。間隔（1 時間）より十分短いので、前の回と重なりません。直近の結果は `net._http_response` で確かめられます（下の「比較ランキングの集計が動いているかの確かめ方」）。
 
 利用者が増えて毎時の集計が重くなったら、Supabase Dashboard の SQL Editor で間隔を広げられます（migration は要りません）。例: 3 時間ごと
@@ -222,7 +231,7 @@ migration の適用後や、`supabase/config.toml` の `verify_jwt` を変えた
    SELECT status_code, content::text FROM net._http_response ORDER BY created DESC LIMIT 6;
    ```
 
-   - `status_code` が 200 で、本文が `{"success":true, ...}` → 集計できています。
+   - `status_code` が 200 で、本文が `{"success":true, ...}` → 集計できています。JST 0:20 と 0:35 の再試行の回（ジョブ `calculate-segment-stats-finalize-retry`。要求は切り替わった種類の数だけ、最大 3 つ）は、0:05 の確定の回が成功していれば `"alreadyFinalized":true` を返します（何もしていない。正常）。
    - 401 で、本文が `UNAUTHORIZED_INVALID_JWT_FORMAT` → ゲートウェイの JWT 検証で止まっています。`verify_jwt = false` がまだデプロイされていません（上の「値が合っていないとどうなるか」）。
    - 401 で、本文が `{"error":"Unauthorized"}` → Vault の `app_cron_secret` と Edge Function secrets の `CRON_SECRET` の値が合っていません。
    - 503 で、本文が `{"error":"Service not configured"}` → Edge Function secrets に `CRON_SECRET` がありません（本文に `"code":"SERVER_CONFIG_MISSING"` がある 503 は、同じ表に入るカタログ取り込みの結果です。上の「値が合っていないとどうなるか」）。
@@ -236,6 +245,15 @@ migration の適用後や、`supabase/config.toml` の `verify_jwt` を変えた
    SELECT period_type, max(period_start) AS latest_period, count(*) AS rows
    FROM public.segment_stats
    GROUP BY period_type;
+   ```
+
+6. 確定の回（直前の期間の集計し直しとバッジの判定）をやり終えた期間が記録されている（#1500）。JST 0:40 を過ぎても、切り替わった種類の直前の期間の行が無ければ、0:05・0:20・0:35 の 3 回とも失敗しています。4 の結果と Edge Function のログで原因を確かめ、上の「比較ランキングの集計の間隔」の手順でやり直してください。
+
+   ```sql
+   SELECT period_type, period_start, period_end, finalized_at
+   FROM public.segment_stats_finalized_periods
+   ORDER BY finalized_at DESC
+   LIMIT 6;
    ```
 
 ### Vercel の `CRON_SECRET` を入れ替えるとき
