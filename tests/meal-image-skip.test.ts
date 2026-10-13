@@ -6,7 +6,7 @@
  *   2. reconcileDishImages: 同じ料理 (subject_hash が同じ) でも、画像が無く待ち・更新待ち・失敗のままなら積み直す。
  *      画像がある・写真・手で付けた画像は積み直さない
  *   3. enqueueMealImageJobs: 行ごとに insert する (冪等キーの一意な索引は部分索引なので、ON CONFLICT (idempotency_key) は使えない)。
- *      重複 (23505) と失敗を数え、1 行も積めなかったら数えた 1 回を戻す
+ *      重複 (23505) と失敗を数え、1 行も積めなかったら数えた 1 回を戻す。書き込みに失敗した料理は 'failed' + 'enqueue_failed' にする (#1505)
  *   4. 安全弁 (上限に数えない機能) で止めたときの 429 の本文と文: 回数を出さない固定の文 (Web・モバイル共用)
  *   5. (#1487 の整合ゲート) 実データの形 (subject_hash の無い写真・商品の料理、端末から直に保存した料理) を前回にしたとき:
  *      保存し直しても料理の中身を変えても、写真・商品・手で付けた画像を AI の画像で置き換えない。料理を変えない保存し直しでは積まない
@@ -30,6 +30,7 @@ vi.mock('@/lib/db-logger', () => ({ createLogger: () => ({ warn: vi.fn(), error:
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   CATALOG_PRODUCT_MEAL_SOURCE_TYPE,
+  MEAL_IMAGE_ENQUEUE_FAILED_ERROR,
   MEAL_IMAGE_SKIPPED_ERRORS,
   asCatalogMealDish,
   buildDishImageSubjectHash,
@@ -136,12 +137,30 @@ describe('reconcileDishImages: 同じ料理の積み直し (#1487)', () => {
   });
 });
 
-/** meal_image_jobs への insert の作り物。行ごとに返す結果を決める */
-function makeQueueDb(outcomeOf: (row: Record<string, unknown>, index: number) => { code: string; message: string } | null | 'throw') {
+/**
+ * meal_image_jobs への insert の作り物。行ごとに返す結果を決める。
+ * planned_meals は、積めなかった料理を 'failed' にする読み書き (#1505) のために、保存済みの料理 (dishes) を返し、書いた料理を記録する
+ */
+function makeQueueDb(
+  outcomeOf: (row: Record<string, unknown>, index: number) => { code: string; message: string } | null | 'throw',
+  storedDishes: MealImageDish[] = [],
+) {
   const inserted: Array<Record<string, unknown>> = [];
   const upsert = vi.fn();
+  const mealUpdates: Array<{ id: unknown; dishes: MealImageDish[] }> = [];
   let calls = 0;
   const from = vi.fn((table: string) => {
+    if (table === 'planned_meals') {
+      return {
+        select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { dishes: storedDishes }, error: null }) }) }),
+        update: (values: { dishes: MealImageDish[] }) => ({
+          eq: async (_column: string, id: unknown) => {
+            mealUpdates.push({ id, dishes: values.dishes });
+            return { data: null, error: null };
+          },
+        }),
+      };
+    }
     if (table !== 'meal_image_jobs') throw new Error(`unexpected table ${table}`);
     return {
       upsert,
@@ -153,7 +172,12 @@ function makeQueueDb(outcomeOf: (row: Record<string, unknown>, index: number) =>
       }),
     };
   });
-  return { db: { from } as unknown as SupabaseClient, inserted, upsert, from };
+  return { db: { from } as unknown as SupabaseClient, inserted, upsert, from, mealUpdates };
+}
+
+/** 保存済みの、画像を待っている料理 (seed(dishIndex) と同じ subject_hash) */
+function storedPendingDish(dishIndex: number): MealImageDish {
+  return { name: `dish-${dishIndex}`, image_url: null, image_source: 'generated_ai', image_status: 'pending', image_subject_hash: `hash-${dishIndex}` };
 }
 
 const UNIQUE_VIOLATION = { code: '23505', message: 'duplicate key value violates unique constraint "meal_image_jobs_idempotency_pending_idx"' };
@@ -182,11 +206,14 @@ describe('enqueueMealImageJobs: 行ごとに積み、積めなかったら数え
     expect(m.refundAiUsage).not.toHaveBeenCalled();
   });
 
-  it('書き込みに失敗して 1 行も積めなかったら、数えた 1 回を戻す', async () => {
-    const queue = makeQueueDb(() => PERMISSION_DENIED);
+  it('書き込みに失敗して 1 行も積めなかったら、数えた 1 回を戻し、料理を failed + enqueue_failed にする (#1505)', async () => {
+    const queue = makeQueueDb(() => PERMISSION_DENIED, [storedPendingDish(0)]);
     const result = await enqueueMealImageJobs({ ...base, supabase: queue.db, jobSeeds: [seed(0)], usage: AI_USAGE_ALLOWED });
 
     expect(result).toEqual({ inserted: 0, duplicates: 0, failed: 1 });
+    expect(queue.mealUpdates).toHaveLength(1);
+    expect(queue.mealUpdates[0].id).toBe('meal-1');
+    expect(queue.mealUpdates[0].dishes[0]).toMatchObject({ image_status: 'failed', image_error: MEAL_IMAGE_ENQUEUE_FAILED_ERROR, image_url: null });
     expect(m.refundAiUsage).toHaveBeenCalledTimes(1);
     expect(m.refundAiUsage).toHaveBeenCalledWith('user-1', 'meal_image_auto', AI_USAGE_ALLOWED);
   });
@@ -205,6 +232,20 @@ describe('enqueueMealImageJobs: 行ごとに積み、積めなかったら数え
 
     expect(result).toEqual({ inserted: 0, duplicates: 2, failed: 0 });
     expect(m.refundAiUsage).toHaveBeenCalledTimes(1);
+    // 重複の料理は待ちのまま (待ち・処理中のジョブが画像を作る)。献立は書かない
+    expect(queue.mealUpdates).toEqual([]);
+  });
+
+  it('一部の行だけ失敗したら、失敗した料理だけを failed にする。積めた料理は待ちのまま (#1505)', async () => {
+    const queue = makeQueueDb((_row, index) => (index === 1 ? PERMISSION_DENIED : null), [storedPendingDish(0), storedPendingDish(1)]);
+    const result = await enqueueMealImageJobs({ ...base, supabase: queue.db, jobSeeds: [seed(0), seed(1)], usage: AI_USAGE_ALLOWED });
+
+    expect(result).toEqual({ inserted: 1, duplicates: 0, failed: 1 });
+    expect(m.refundAiUsage).not.toHaveBeenCalled();
+    expect(queue.mealUpdates[0].dishes.map((dish) => [dish.image_status, dish.image_error ?? null])).toEqual([
+      ['pending', null],
+      ['failed', MEAL_IMAGE_ENQUEUE_FAILED_ERROR],
+    ]);
   });
 
   it('一部でも積めたら (AI へ送るので) 数え戻さない', async () => {

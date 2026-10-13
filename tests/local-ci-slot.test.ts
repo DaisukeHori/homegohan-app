@@ -24,18 +24,20 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveUnitSlotTestTimeout, testsWithUnexpectedTimeout } from "./helpers/local-ci-slot-test-timeout";
+import { SLOT_LIB, slotMaxOf, slotValueTable, slotValuesOf } from "./helpers/local-ci-slot-values";
 
 const ROOT = process.cwd();
 
 // 1 件のテストの時間切れを、このファイルだけ延ばす (bash・git を何度も起動するので、負荷の高い機械で vitest の既定の 5 秒を超える。
-// 根拠と環境変数での上書きは tests/helpers/local-ci-slot-test-timeout.ts。#1488)。テストを定義する前に置く
+// 根拠と環境変数での上書きは tests/helpers/local-ci-slot-test-timeout.ts。#1488)。テストを定義する前に置く。
+// beforeAll (bash を共有の 1 回だけ起動して、枠の値を読む・config.toml を組み立てる。#1496) の時間切れも同じ値にする
+// (同じ起動を、以前は 1 件のテストの中でしていた。負荷の高い機械ではフックの既定の 10 秒を超えうる)
 const SLOT_TEST_TIMEOUT_MS = resolveUnitSlotTestTimeout(process.env);
-vi.setConfig({ testTimeout: SLOT_TEST_TIMEOUT_MS });
+vi.setConfig({ testTimeout: SLOT_TEST_TIMEOUT_MS, hookTimeout: SLOT_TEST_TIMEOUT_MS });
 // 同時に走らせる実行どうしの競合を確かめるテストの、個別の時間切れ (と、ハーネスを打ち切る上限)
 const RACE_TIMEOUT_MS = 30_000;
-const SLOT_LIB = "scripts/lib/local-ci-slot.sh";
 const SUPABASE_LOCAL = "scripts/supabase-local.sh";
 const LOCAL_CI = "scripts/local-ci.sh";
 
@@ -133,22 +135,22 @@ const SLOT_CONFIG: Array<{ table: string; key: string; slotVar: string }> = [
   { table: "edge_runtime", key: "inspector_port", slotVar: "SLOT_INSPECTOR_PORT" },
 ];
 
+/**
+ * 枠の SLOT_*=値。スクリプトを実際に実行して得る。全部の枠を 1 回の起動でまとめて読み、使い回す
+ * (以前は呼ぶたびに bash を起動していた。#1496。読み方は tests/helpers/local-ci-slot-values.ts)
+ */
 function slotValues(slot: string): Map<string, string> {
-  const out = execFileSync("bash", [SLOT_LIB, slot], { cwd: ROOT, encoding: "utf8" });
-  const values = new Map<string, string>();
-  for (const line of out.split("\n")) {
-    const m = /^(SLOT_[A-Z0-9_]+)=(.*)$/.exec(line);
-    if (m) values.set(m[1], m[2]);
-  }
-  return values;
+  return slotValuesOf(ROOT, slot);
 }
 
 function slotMax(): number {
-  const text = fs.readFileSync(path.join(ROOT, SLOT_LIB), "utf8");
-  const m = /^readonly LCS_SLOT_MAX=(\d+)$/m.exec(text);
-  if (!m) throw new Error(`${SLOT_LIB} に LCS_SLOT_MAX が無い`);
-  return Number(m[1]);
+  return slotMaxOf(ROOT);
 }
+
+// 全部の枠の値を、最初のテストの前に 1 回だけ読む (読めなければ、ここで落ちる)
+beforeAll(() => {
+  expect(slotValueTable(ROOT).size).toBe(slotMax() + 1);
+});
 
 /** 枠ごとに使うポートすべて (範囲 + 個別) */
 function portsOf(values: Map<string, string>): number[] {
@@ -179,7 +181,25 @@ function tomlTables(text: string): Map<string, Map<string, string>> {
 
 describe("scripts/lib/local-ci-slot.sh の枠ごとの値", () => {
   const max = slotMax();
-  const all = Array.from({ length: max + 1 }, (_, slot) => ({ slot, values: slotValues(String(slot)) }));
+  let all: Array<{ slot: number; values: Map<string, string> }> = [];
+  beforeAll(() => {
+    all = Array.from({ length: max + 1 }, (_, slot) => ({ slot, values: slotValues(String(slot)) }));
+  });
+
+  it("全部の枠をまとめて読んだ値は、枠を 1 つずつ指定してスクリプトを起動した値と同じ (まとめて読む仕組みの確かめ)", () => {
+    for (const slot of [0, max]) {
+      const out = execFileSync("bash", [SLOT_LIB, String(slot)], { cwd: ROOT, encoding: "utf8" });
+      const direct = new Map(
+        out
+          .split("\n")
+          .map((line) => /^(SLOT_[A-Z0-9_]+)=(.*)$/.exec(line))
+          .filter((m): m is RegExpExecArray => m !== null)
+          .map((m) => [m[1], m[2]] as const),
+      );
+      expect(direct.size, `枠 ${slot}`).toBeGreaterThan(0);
+      expect(all[slot].values, `枠 ${slot}`).toEqual(direct);
+    }
+  });
 
   it("枠 0 は今までの値 (CI が使う値) と同じ", () => {
     expect(Object.fromEntries(slotValues("0"))).toEqual(SLOT_ZERO_EXPECTED);
@@ -307,6 +327,21 @@ describe("scripts/supabase-local.sh が枠に合わせて組み立てる config.
   };
   const projectIdOf = (config: string) => tomlTables(config).get("")?.get("project_id");
 
+  // 枠 1 → 枠 2 → 枠 0 の順に 1 回だけ組み立て、下の「作業ディレクトリ」「stop / status」「env」「別の枠の config.toml」の
+  // テストで共有する (以前はテストごとに同じ順で組み立て直していた。#1496)。どのテストも、ほかの枠をあとから組み立てたあとの
+  // 状態を確かめる (枠 1 のあとに枠 2・枠 0、枠 2 のあとに枠 0)。間のテストが別の枠 (枠 1・上限の枠) を組み立て直しても、
+  // 枠ごとの作業ディレクトリは分かれているので、その状態は「ほかの枠をあとから組み立てた」ままになる
+  const SHARED_BUILD_ORDER = ["1", "2", "0"] as const;
+  let sharedBuilds: Array<{ slot: string; status: number | null; stderr: string }> = [];
+  beforeAll(() => {
+    sharedBuilds = SHARED_BUILD_ORDER.map((slot) => ({ slot, ...build(slot) }));
+  });
+  const expectSharedBuilds = () => {
+    expect(sharedBuilds.map(({ slot, status, stderr }) => [slot, status, status === 0 ? "" : stderr])).toEqual(
+      SHARED_BUILD_ORDER.map((slot) => [slot, 0, ""]),
+    );
+  };
+
   it("リポジトリの config.toml は、枠でずらす表を持っていない (持つと枠 0 が CLI の既定でなくなり、枠 1 以上は表が 2 回になる)", () => {
     for (const { table } of SLOT_CONFIG) expect(repoConfig.has(table), `[${table}]`).toBe(false);
     expect(repoConfig.has("auth")).toBe(false);
@@ -347,7 +382,7 @@ describe("scripts/supabase-local.sh が枠に合わせて組み立てる config.
   });
 
   it("作業ディレクトリは枠ごとに分かれ、枠 1 と枠 2 を続けて組み立てても枠 1 の config.toml は枠 1 のまま (枠 0 は .supabase-local)", () => {
-    for (const slot of ["1", "2", "0"]) expect(build(slot).status, `枠 ${slot}`).toBe(0);
+    expectSharedBuilds();
     expect(projectIdOf(configOf("1"))).toBe(`"${slotValues("1").get("SLOT_PROJECT_ID")}"`);
     expect(projectIdOf(configOf("2"))).toBe(`"${slotValues("2").get("SLOT_PROJECT_ID")}"`);
     // 枠 0 は今までと同じ場所 (.supabase-local/) に、今までと同じ project_id で組み立てる
@@ -355,8 +390,8 @@ describe("scripts/supabase-local.sh が枠に合わせて組み立てる config.
   });
 
   it("stop / status は、ほかの枠をあとから組み立てても、指定した枠のスタックだけに触る", () => {
-    // 枠 1 → 枠 2 → 枠 0 の順に組み立てたあとで、それぞれの枠を指定して stop / status を打つ
-    for (const slot of ["1", "2", "0"]) expect(build(slot).status).toBe(0);
+    // 枠 1 → 枠 2 → 枠 0 の順に組み立てたあと (beforeAll) で、それぞれの枠を指定して stop / status を打つ
+    expectSharedBuilds();
     for (const slot of ["1", "2", "0", undefined]) {
       const id = slotValues(slot ?? "0").get("SLOT_PROJECT_ID");
       for (const cmd of ["stop", "status"]) {
@@ -368,7 +403,8 @@ describe("scripts/supabase-local.sh が枠に合わせて組み立てる config.
   });
 
   it("env は指定した枠の接続先を書く (あとから組み立てた別の枠の接続先を書かない)", () => {
-    for (const slot of ["1", "0"]) expect(build(slot).status).toBe(0);
+    // 枠 1 → (枠 2 →) 枠 0 の順に組み立てたあと (beforeAll)
+    expectSharedBuilds();
     for (const slot of ["1", "0"]) {
       const values = slotValues(slot);
       const out = path.join(tmp, `env-${slot}.txt`);
@@ -381,8 +417,8 @@ describe("scripts/supabase-local.sh が枠に合わせて組み立てる config.
   });
 
   it("作業ディレクトリの config.toml が別の枠のもの (枠を分ける前の版が組み立てたものなど) なら、stop / status / env は CLI を呼ばずに止まる", () => {
-    expect(build("1").status).toBe(0);
-    expect(build("0").status).toBe(0);
+    // 枠 1 と枠 0 は組み立て済み (beforeAll)
+    expectSharedBuilds();
     // 枠を分ける前の版では、枠 1 を組み立てると .supabase-local/ (枠 0 の場所) に枠 1 の config.toml ができていた
     const slotZeroConfig = path.join(tmp, ".supabase-local/supabase/config.toml");
     fs.writeFileSync(slotZeroConfig, configOf("1"));
@@ -657,13 +693,19 @@ describe("scripts/local-ci.sh: 枠のロック (回収・片付け・外し方)"
 
   // 持ち主の死んだロック: pid 1 は生きているが、開始時刻が違う (= pid が使い回された別のプロセス) ので持ち主ではない
   const DEAD_OWNER = "pid=1\nlstart=Thu Jan  1 00:00:00 1970\n";
-  // 生きている持ち主: このテストのプロセス。local-ci.sh の write_owner と同じく LC_ALL=C・TZ=UTC で開始時刻を書く
+  // 生きている持ち主: このテストのプロセス。local-ci.sh の write_owner と同じく LC_ALL=C・TZ=UTC で開始時刻を書く。
+  // このプロセスの開始時刻は変わらないので、ps は最初の 1 回だけ起動して使い回す (#1496)
+  let liveOwnerText: string | undefined;
   const liveOwner = () => {
-    const lstart = execFileSync("ps", ["-o", "lstart=", "-p", String(process.pid)], {
-      encoding: "utf8",
-      env: { PATH: process.env.PATH, LC_ALL: "C", TZ: "UTC" },
-    }).trim();
-    return `pid=${process.pid}\nlstart=${lstart}\n`;
+    if (liveOwnerText === undefined) {
+      const lstart = execFileSync("ps", ["-o", "lstart=", "-p", String(process.pid)], {
+        encoding: "utf8",
+        env: { PATH: process.env.PATH, LC_ALL: "C", TZ: "UTC" },
+      }).trim();
+      expect(lstart, "このプロセスの開始時刻を ps で読めない").not.toBe("");
+      liveOwnerText = `pid=${process.pid}\nlstart=${lstart}\n`;
+    }
+    return liveOwnerText;
   };
   // 見張りが空くのを待っているあいだに、まだ外していないことを確かめるまでの時間
   const RELEASE_BLOCKED_MS = 1_500;

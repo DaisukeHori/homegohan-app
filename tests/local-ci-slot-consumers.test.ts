@@ -27,6 +27,7 @@ import path from "node:path";
 import ts from "typescript";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { resolveUnitSlotTestTimeout, testsWithUnexpectedTimeout } from "./helpers/local-ci-slot-test-timeout";
+import { SLOT_LIB, slotMaxOf, slotValuesOf, slotWorkDirTable } from "./helpers/local-ci-slot-values";
 
 const ROOT = process.cwd();
 
@@ -34,7 +35,6 @@ const ROOT = process.cwd();
 // 根拠と環境変数での上書きは tests/helpers/local-ci-slot-test-timeout.ts。#1488)。テストを定義する前に置く
 const SLOT_TEST_TIMEOUT_MS = resolveUnitSlotTestTimeout(process.env);
 vi.setConfig({ testTimeout: SLOT_TEST_TIMEOUT_MS });
-const SLOT_LIB = "scripts/lib/local-ci-slot.sh";
 const SUPABASE_LOCAL = "scripts/supabase-local.sh";
 const DRIFT_REPORT = "scripts/baseline/drift_report.sh";
 
@@ -65,14 +65,13 @@ const SUPABASE_URL_ENVS = ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_URL"];
 /** 既定値を入れておく定数の名前 (環境変数が無いときだけ使う値) */
 const DEFAULT_NAME = /^DEFAULT_/;
 
+/**
+ * 枠の SLOT_*=値。スクリプトを実際に実行して得る。全部の枠を 1 回の起動でまとめて読み、使い回す
+ * (以前は呼ぶたびに bash を起動していた。#1496。読み方は tests/helpers/local-ci-slot-values.ts。
+ * まとめて読んだ値が、枠を 1 つずつ指定した起動と同じことは tests/local-ci-slot.test.ts が確かめる)
+ */
 function slotValues(slot: string): Map<string, string> {
-  const out = execFileSync("bash", [SLOT_LIB, slot], { cwd: ROOT, encoding: "utf8" });
-  const values = new Map<string, string>();
-  for (const line of out.split("\n")) {
-    const m = /^(SLOT_[A-Z0-9_]+)=(.*)$/.exec(line);
-    if (m) values.set(m[1], m[2]);
-  }
-  return values;
+  return slotValuesOf(ROOT, slot);
 }
 
 const SLOT_ZERO = slotValues("0");
@@ -89,13 +88,14 @@ const SLOT_ZERO_PORTS = new Set([...SLOT_ZERO_SUPABASE_PORTS, ...SLOT_ZERO_APP_P
 
 /** 枠の番号の上限 (scripts/lib/local-ci-slot.sh の LCS_SLOT_MAX) */
 function slotMax(): number {
-  const m = /^readonly LCS_SLOT_MAX=(\d+)$/m.exec(fs.readFileSync(path.join(ROOT, SLOT_LIB), "utf8"));
-  if (!m) throw new Error(`${SLOT_LIB} に LCS_SLOT_MAX が無い`);
-  return Number(m[1]);
+  return slotMaxOf(ROOT);
 }
 
+let trackedFileList: readonly string[] | undefined;
+/** git 管理のファイルの一覧 (2 つの走査で共有する。git は最初の 1 回だけ起動する。#1496) */
 function trackedFiles(): string[] {
-  return execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8" }).split("\0").filter(Boolean);
+  trackedFileList ??= execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8" }).split("\0").filter(Boolean);
+  return [...trackedFileList];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -468,8 +468,12 @@ describe("scripts/baseline/drift_report.sh は LOCAL_CI_SLOT の枠の DB に繋
     const docker = fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "";
     return { status: r.status, stderr: r.stderr, stdout: r.stdout, docker };
   };
-  const workDirOf = (slot: string) =>
-    execFileSync("bash", ["-c", `. ${SLOT_LIB}; local_ci_slot_work_dir "$1"`, "_", slot], { cwd: ROOT, encoding: "utf8" }).trim();
+  // scripts/lib/local-ci-slot.sh の local_ci_slot_work_dir の値 (全部の枠を 1 回の起動でまとめて求める。#1496)
+  const workDirOf = (slot: string) => {
+    const dir = slotWorkDirTable(ROOT).get(Number(slot));
+    if (dir === undefined) throw new Error(`枠 "${slot}" の作業ディレクトリは無い`);
+    return dir;
+  };
 
   it("枠を指定しない (今までどおり) と枠 0 は、CLI の既定の DB (枠 0) に繋ぎ、結果を .supabase-local/drift に置く", () => {
     for (const slot of [undefined, "0"]) {
