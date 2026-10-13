@@ -223,8 +223,18 @@ export async function logStreamingUsage(
   `image_source` が未設定か `generated_ai` (画像の項目の無い古い商品の料理と、それを以前の保存し直しが書き換えた形) でも、商品の料理
   (`image_source: 'catalog'`・状態なし) として扱う (更新の入口 3 つ (PATCH 2 本・AI 相談の update_meal) と save-meal は、保存する前の献立の行でこれを決めて渡す)。
   献立のカバーがあり、料理ごとの画像を持たない写真・商品・手の画像の料理 (写真の複数の料理など) があるときは、ほかの料理にもジョブを積まない
-  (画像の処理の `deriveMealCoverImage` が、できた AI の画像を献立のカバーに選び、写真・商品の画像を置き換えるため)。
+  (写真・商品の献立の料理には AI の画像を作らない)。
   積むのをやめた料理は、前回と同じ料理なら前回の状態を写し、足した・変えた料理は画像なし (状態なし・subject_hash なし) にする
+  新しく作る入口 (`POST /api/meals`・`POST /api/meal-plans/meals`) で送られた料理の `image_source` が `meal_photo` / `catalog` /
+  `manual_override` なら、前回の料理と同じく画像と状態を保持し、ジョブを積まない (`preserveSubmittedDishImages`)。
+  カバーの持ち主: 献立のカバー (`planned_meals.image_url`) を料理の画像から自動で付け替えてよいのは、いまのカバーが空か、
+  献立の AI の料理 (`image_source: 'generated_ai'`) の `image_url` と一致するときだけ (`isMealCoverAutoReplaceable`)。
+  写真・商品・利用者が作った画像・手で付けた画像のカバー (どの AI の料理の画像とも一致しない、空でないカバー) は、画像の処理
+  (`process-meal-image-jobs`)・保存し直し (`reconcileDishImages`)・AI の作り直し (`save-meal`) のどこからも置き換えない。
+  全員が `deriveMealCoverImage` を通して決める。前の料理の AI の画像だったカバーは料理の画像から選び直し、候補が無ければ空にする。
+  料理が 2 品以上の献立に利用者がカバーを付けた (`PATCH` の `imageUrl`) ときは、カバーにだけ付け、ジョブは今の決まりのまま積む
+  (1 品なら今までどおり料理を `manual_override` にし、ジョブを積まない)。画像の処理はカバーが変わるときだけ `image_url` を書き、
+  読んだときのカバーのままの行にだけ書く
   ジョブは行ごとの insert で積む (冪等キーの一意な索引は待ち・処理中だけの部分索引なので、`ON CONFLICT (idempotency_key)` の upsert は使えない)。
   同じ料理のジョブが待ち・処理中なら一意制約の違反 (23505) を重複として数え、1 行も積めなかったとき (重複・書き込みの失敗) は数えた 1 回を戻す。
   献立の保存に失敗したときも戻す

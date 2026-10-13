@@ -625,7 +625,10 @@ export async function saveMealToDb(
     ...detail,
     ...reconcileResult.dishes[idx],
   }));
-  const mealCoverImageUrl = reconcileResult.mealCoverImageUrl ?? existingMeal?.image_url ?? null;
+  // 献立のカバーは、reconcileDishImages がカバーの持ち主の決まり (isMealCoverAutoReplaceable) で決めたもの (#1487 の整合ゲート)。
+  // 写真・商品・利用者の画像のカバーは作り直してもそのまま。前の料理の AI の画像だったカバーは、新しい料理の画像から選び直す
+  // (候補が無ければ空。前の料理の AI の画像に戻すと、どの料理の画像とも一致しなくなり、新しい AI の画像で付け替えられなくなる)
+  const mealCoverImageUrl = reconcileResult.mealCoverImageUrl;
 
   const dishName = dishDetails.length === 1
     ? String(dishDetails[0]?.name ?? "献立")

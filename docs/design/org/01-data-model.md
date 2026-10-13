@@ -690,6 +690,8 @@ CREATE UNIQUE INDEX idx_org_license_active_per_pool_user
 ```typescript
 // tests/integration/org/data-model-constraints.integration.test.ts
 import { describe, it, expect } from 'vitest';
+// 接続情報は src/lib の getter で取り出す (`process.env.<変数名>!` は使わない。#1182・#1434)
+import { getSupabaseAnonKey, getSupabaseUrl } from '@/lib/env-required';
 
 describe('org_license_pools 同時 INSERT テスト', () => {
   it('used_licenses stays consistent under 100 concurrent INSERT attempts', async () => {
@@ -769,8 +771,8 @@ describe('org_license_audit_log immutability', () => {
   it('rejects UPDATE on org_license_audit_log via RLS', async () => {
     const orgAdminToken = await signInAsUser('org-admin@test.local');
     const orgAdminClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${orgAdminToken}` } } },
     );
     const { error } = await orgAdminClient

@@ -277,8 +277,12 @@ onLCP((metric) => fireAnalytics('web_vitals_lcp', {
 // src/lib/posthog.ts
 import posthog from 'posthog-js';
 
-if (typeof window !== 'undefined') {
-  posthog.init(process.env.NEXT_PUBLIC_POSTHOG_KEY!, {
+// NEXT_PUBLIC_* はブラウザ向けのバンドルでビルド時に値へ置き換わるよう、名前を直接書いて読む。
+// `process.env.<変数名>!` とは書かず、無ければ初期化しない (任意の変数。#1182・#1434)
+const posthogKey = process.env.NEXT_PUBLIC_POSTHOG_KEY;
+
+if (typeof window !== 'undefined' && posthogKey) {
+  posthog.init(posthogKey, {
     api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST,
     person_profiles: 'identified_only',
     autocapture: false,  // 手動 capture のみ
