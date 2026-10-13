@@ -75,15 +75,25 @@ jobs:
             'const res = await fetch("https://api.openai.com/v1/models");'
             '/// <reference types="@supabase/functions-js/edge-runtime.d.ts" />'
           )
+          # 見本は here-string (<<<) で grep に渡す。printf の出力を | で grep に流すと、grep -q が読み終える前に終わったとき
+          # (当たった時点で終わる・読まずに終わる) printf が SIGPIPE で落ち、pipefail で「当たらなかった」と取り違える。
+          # 当たった・当たらなかった・失敗した (終了コード 2 以上) は、grep 自身の終了コードだけで決める。
           for sample in "${must_match[@]}"; do
-            if ! printf '%s\n' "$sample" | grep -qE "$raw_import"; then
-              echo "::error::検査の正規表現が、版を固定していない依存の見本に当たりません: $sample"
+            sample_status=0
+            grep -qE "$raw_import" <<<"$sample" || sample_status=$?
+            if [ "$sample_status" -ne 0 ]; then
+              echo "::error::検査の正規表現が、版を固定していない依存の見本に当たりません (grep の終了コード $sample_status): $sample"
               exit 1
             fi
           done
           for sample in "${must_not_match[@]}"; do
-            if printf '%s\n' "$sample" | grep -qE "$raw_import"; then
+            sample_status=0
+            grep -qE "$raw_import" <<<"$sample" || sample_status=$?
+            if [ "$sample_status" -eq 0 ]; then
               echo "::error::検査の正規表現が、deno.json の名前で書いた依存・import でない URL の見本に当たります: $sample"
+              exit 1
+            elif [ "$sample_status" -ne 1 ]; then
+              echo "::error::見本の確かめで grep が失敗しました (終了コード $sample_status): $sample"
               exit 1
             fi
           done
@@ -97,7 +107,7 @@ jobs:
             echo "::error::$functions_dir に検査するソースがありません。"
             exit 1
           fi
-          echo "検査したファイル: $(printf '%s\n' "$counts" | grep -c '^') 本"
+          echo "検査したファイル: $(grep -c '^' <<<"$counts") 本"
           status=0
           grep -rnE "${includes[@]}" -e "$raw_import" "$functions_dir" || status=$?
           if [ "$status" -eq 0 ]; then

@@ -38,6 +38,8 @@ const EXIT_RED = 1;
 const GREP_EXIT_ERROR = 2;
 /** コマンドが見つからないときのシェルの終了コード (rg が無かったときの元の空回りの再現) */
 const EXIT_COMMAND_NOT_FOUND = 127;
+/** 読まずに終わる偽の grep で段を続けて動かす回数 (SIGPIPE の取り違えは時の運で起きたので、1 回でなく何回か確かめる) */
+const SIGPIPE_REPEAT = 5;
 /** 段が緑で終わるときに出す文 */
 const GREEN_MESSAGE = 'jsr:/npm:/https:// を直接書いた依存はありません';
 
@@ -118,6 +120,14 @@ describe('#1515 段の形', () => {
     const mustNotMatch = run.slice(run.indexOf('must_not_match=('), run.indexOf('for sample in'));
     expect(mustNotMatch).toContain('fetch("https://');
     expect(mustNotMatch).toContain('import { z } from "zod";');
+  });
+
+  it('#1518 grep にはパイプで流し込まない (前のコマンドの SIGPIPE が pipefail で grep の結果に混ざらない)', () => {
+    // printf ... | grep -q のように流すと、grep が読み終える前に終わったとき printf が SIGPIPE (終了コード 141) で落ち、
+    // pipefail でそれがパイプ全体の終了コードになる。見本の確かめが「当たらない」と取り違え、Linux でまれに赤になった。
+    // 見本・本数は here-string (<<<) で渡し、grep 自身の終了コードだけで決める
+    expect(step.run).not.toMatch(/\|\s*grep\b/);
+    expect(step.run).toMatch(/grep -qE "\$raw_import" <<<"\$sample"/);
   });
 
   it('検査する拡張子は、このテストの一覧と同じ', () => {
@@ -272,6 +282,28 @@ describe('#1515 空回りしない (道具が無い・grep が失敗したとき
     const { status, output } = runStep(repoWith(RAW_FILE), fakeGrepPath('exit 0'));
     expect(status).toBe(EXIT_RED);
     expect(output).toContain('見本に当たります');
+  });
+
+  it('#1518 grep が stdin を読まずに当たり (exit 0) で終わっても、毎回「見本に当たります」で赤 (SIGPIPE で取り違えない)', () => {
+    // 読まずに終わる偽の grep でも、見本の確かめは grep の終了コードだけで決まる (元はパイプの SIGPIPE でまれに「当たりません」)
+    const root = repoWith(RAW_FILE);
+    const env = fakeGrepPath('exec 0<&-\nexit 0');
+    for (let i = 0; i < SIGPIPE_REPEAT; i += 1) {
+      const { status, output } = runStep(root, env);
+      expect(status).toBe(EXIT_RED);
+      expect(output).toContain('見本に当たります');
+    }
+  });
+
+  it('#1518 見本の確かめの grep がエラー (終了コード 2) を返したときは赤 (「当たらない」と取り違えない)', () => {
+    // 当たるべき見本には当たり (exit 0)、当たってはいけない見本の確かめでだけエラー (exit 2) を返す偽の grep
+    const env = fakeGrepPath(
+      `if [ "$1" = -qE ]; then IFS= read -r line; case "$line" in *'"zod"'*) exit ${GREP_EXIT_ERROR};; esac; exit 0; fi\nexec ${REAL_GREP} "$@"`,
+    );
+    const { status, output } = runStep(repoWith(RAW_FILE), env);
+    expect(status).toBe(EXIT_RED);
+    expect(output).toContain(`見本の確かめで grep が失敗しました (終了コード ${GREP_EXIT_ERROR}): import { z } from "zod";`);
+    expect(output).not.toContain('見本に当たります');
   });
 
   it('#1518 本数を数える grep がエラー (終了コード 2) を返したときは赤', () => {
