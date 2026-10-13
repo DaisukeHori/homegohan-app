@@ -26,12 +26,14 @@ const EXPECTED_SINGLE_DAY_MAX_DAYS_AHEAD = 30;
 
 describe('1. 運営の LLM 使用量の画面の型は、route の応答の型そのもの', () => {
   const page = read('src/app/super-admin/llm/page.tsx');
+  /** コメントを除いた画面のコード (以前の型の説明のコメントに daily_requests の語が残るので、コードだけを見る) */
+  const pageCode = page.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
   it('画面は LlmUsageResponseData を import して使い、別の型 (daily_requests を含む) を書かない', () => {
     expect(page).toMatch(/import type \{ LlmUsageResponseData \} from "@\/lib\/super-admin\/llm-usage-summary"/);
     expect(page).toContain('useState<LlmUsageResponseData | null>');
-    expect(page).not.toContain('daily_requests');
-    expect(page).not.toMatch(/interface \w+ \{[^}]*anomalies/);
+    expect(pageCode).not.toContain('daily_requests');
+    expect(pageCode).not.toMatch(/interface \w+ \{[^}]*anomalies/);
   });
 
   it('使われていなかった古い型 (LLMUsageSummary。anomalies に daily_requests / detected_at) も残さない', () => {
