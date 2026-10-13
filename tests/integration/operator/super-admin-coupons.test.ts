@@ -288,4 +288,32 @@ describe('POST /api/super-admin/coupons: 有効開始日・有効期限の JST �
     expect(patch.status).toBe(400);
     expect((patch.body as { error: { code: string } }).error.code).toBe('OP_INVALID_INPUT');
   });
+
+  /** DB にいまある valid_until (比べるときは時刻にして比べる) */
+  async function storedValidUntil(): Promise<number> {
+    const { data, error } = await supabaseAdmin.from('coupons').select('valid_until').eq('id', boundaryCouponId).single();
+    if (error) throw new Error(error.message);
+    return new Date(data.valid_until).getTime();
+  }
+
+  // #1510: PATCH は保存済みの有効開始日 (2026-10-10) と、新しい有効期限の前後を JST の暦日で比べる
+  it('PATCH で有効期限を開始日より前の日にすると 400 OP_INVALID_INPUT で、DB の期限は変わらない (#1510)', async () => {
+    const before = await storedValidUntil();
+    const res = await apiCall('PATCH', `/api/super-admin/coupons/${boundaryCouponId}`, superAdminUser.jwt, {
+      valid_until: '2026-10-09',
+    });
+    expect(res.status).toBe(400);
+    expect((res.body as { error: { code: string } }).error.code).toBe('OP_INVALID_INPUT');
+    expect(await storedValidUntil()).toBe(before);
+  });
+
+  it('PATCH で有効期限を開始日と同じ日にできる (その日の JST 0:00〜23:59:59 だけ使える。#1510)', async () => {
+    const res = await apiCall('PATCH', `/api/super-admin/coupons/${boundaryCouponId}`, superAdminUser.jwt, {
+      valid_until: '2026-10-10',
+    });
+    expect(res.status).toBe(200);
+    expect(await startedAt('2026-10-10T00:00:00+09:00')).toBe(true);
+    expect(await notExpiredAt('2026-10-10T23:59:59.999999+09:00')).toBe(true);
+    expect(await notExpiredAt('2026-10-11T00:00:00+09:00')).toBe(false);
+  });
 });

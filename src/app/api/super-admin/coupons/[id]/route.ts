@@ -11,9 +11,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
-import { CouponUpdateSchema } from '@/lib/super-admin/coupons-schemas';
+import { COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE, CouponUpdateSchema } from '@/lib/super-admin/coupons-schemas';
 import { internalError } from '@/lib/api/errors';
-import { couponValidUntilTimestamp } from '@/lib/super-admin/coupon-validity';
+import { couponValidityDay, couponValidUntilTimestamp } from '@/lib/super-admin/coupon-validity';
 
 type RouteContext = { params: { id: string } };
 
@@ -84,7 +84,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     const { data: existing, error: fetchErr } = await supabase
       .from('coupons')
-      .select('id, code')
+      .select('id, code, valid_from')
       .eq('id', params.id)
       .single();
 
@@ -92,6 +92,24 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       return NextResponse.json(
         { error: { code: 'OP_COUPON_NOT_FOUND', message: 'クーポンが見つかりません' } },
         { status: 404 }
+      );
+    }
+
+    // #1510: 新しい有効期限が、保存済みの有効開始日より前の日なら 400 (開始日より前の期限は、一度も使えないクーポンになる)。
+    // POST (CouponCreateSchema) の valid_from <= valid_until と同じ決まりで、JST の暦日で比べる (同じ日は可)。
+    // valid_from は PATCH で変えられないので、DB にある時刻を JST の暦日に戻して比べる。どちらも YYYY-MM-DD (年は 4 桁) なので、
+    // 文字列の大小が日付の前後と同じ。valid_until を送らないときは比べない
+    if (input.valid_until !== undefined && input.valid_until < couponValidityDay(existing.valid_from)) {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'OP_INVALID_INPUT',
+            message: COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE,
+            // 形の誤り (Zod) の 400 と同じく、どの欄の誤りかを details に入れる
+            details: [{ code: 'custom', path: ['valid_until'], message: COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE }],
+          },
+        },
+        { status: 400 }
       );
     }
 

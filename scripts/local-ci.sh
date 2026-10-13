@@ -58,6 +58,8 @@
 #   UNIT_HEAVY_TEST_TIMEOUT_MS / UNIT_HEAVY_HOOK_TIMEOUT_MS
 #                                  unit の段の、負荷の高い機械で既定の時間切れを超えたことがあるファイル (一覧は
 #                                  tests/helpers/heavy-unit-test-timeout.ts) のテスト / フックの時間切れの上書き (既定のままなら CI と同じ)
+#   UNIT_TEST_FILE_BUDGET_MS       unit の段のあとで一覧にする、1 ファイルの時間の予算 (ミリ秒。既定 5000。scripts/test-speed-ratchet.mjs)。
+#                                  超えたファイルを $ART/unit-test-speed.json と unit-test-speed.txt に書くだけで、赤にはしない (#1496)
 #
 # 枠 (slot): integration / e2e (ローカル Supabase と Next を立てる段) を、同じ機械で複数の local-ci.sh が同時に回せるよう、
 # 枠ごとに project_id (コンテナ名) と全ポートをずらす (値の表は scripts/lib/local-ci-slot.sh。枠 0 は今までと同じ値)。
@@ -101,6 +103,9 @@ readonly APP_HOST_URL="http://localhost"
 readonly CI_LANG="C.UTF-8"
 # security-regression.yml の next dev の待ち (seq 1 120 × sleep 2)
 readonly DEV_WAIT_TRIES=120
+# security-regression.yml の next dev と 1 本目の結合テストに渡す、機能フラグの行をメモリに覚える時間 (ミリ秒。既定 30 秒を短くする。
+# tests/integration/security/feature-flags-runtime.test.ts が切り替えの反映を待つ時間がこれで決まる。#1496)
+readonly INTEGRATION_FEATURE_FLAG_CACHE_TTL_MS=2000
 # e2e-local.yml の next start の待ち (seq 1 60 × sleep 2)
 readonly START_WAIT_TRIES=60
 readonly WAIT_INTERVAL_SEC=2
@@ -168,8 +173,9 @@ PW_CONSENT_ARGS=(--trace off tests/e2e/legal-consent-gate.spec.ts)
 # (502 / 503 / 504・接続の失敗) をやり直す回数と最初の間隔の上書き (tests/integration/helpers/auth-transient-retry.ts)。
 # MOBILE_JEST_TEST_TIMEOUT_MS / MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS は mobile の Jest の時間切れの上書き (apps/mobile/jest.timeouts.js)。
 # UNIT_SLOT_TEST_TIMEOUT_MS は unit の段の tests/local-ci-slot*.test.ts の時間切れの上書き (tests/helpers/local-ci-slot-test-timeout.ts)。
-# UNIT_HEAVY_TEST_TIMEOUT_MS / UNIT_HEAVY_HOOK_TIMEOUT_MS は unit の段の重いファイルの時間切れの上書き (tests/helpers/heavy-unit-test-timeout.ts)
-readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT INTEGRATION_TEST_TIMEOUT_MS INTEGRATION_HOOK_TIMEOUT_MS INTEGRATION_AUTH_RETRY_ATTEMPTS INTEGRATION_AUTH_RETRY_BASE_DELAY_MS MOBILE_JEST_TEST_TIMEOUT_MS MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS UNIT_SLOT_TEST_TIMEOUT_MS UNIT_HEAVY_TEST_TIMEOUT_MS UNIT_HEAVY_HOOK_TIMEOUT_MS"
+# UNIT_HEAVY_TEST_TIMEOUT_MS / UNIT_HEAVY_HOOK_TIMEOUT_MS は unit の段の重いファイルの時間切れの上書き (tests/helpers/heavy-unit-test-timeout.ts)。
+# UNIT_TEST_FILE_BUDGET_MS は unit の段のあとで一覧にする 1 ファイルの時間の予算の上書き (scripts/test-speed-ratchet.mjs)
+readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT INTEGRATION_TEST_TIMEOUT_MS INTEGRATION_HOOK_TIMEOUT_MS INTEGRATION_AUTH_RETRY_ATTEMPTS INTEGRATION_AUTH_RETRY_BASE_DELAY_MS MOBILE_JEST_TEST_TIMEOUT_MS MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS UNIT_SLOT_TEST_TIMEOUT_MS UNIT_HEAVY_TEST_TIMEOUT_MS UNIT_HEAVY_HOOK_TIMEOUT_MS UNIT_TEST_FILE_BUDGET_MS"
 # 段の中だけで追加で持ち込む変数名 (e2e のパスワード)
 ENV_EXTRA=""
 # 枠を取ったあとに持ち込む変数名 (apply_slot が決める。supabase-local.sh が読む枠と、結合テストが叩くアプリの URL)
@@ -1075,14 +1081,36 @@ stage_unit() {
   line=$(parse eslint "$ART/unit-eslint.json" - "$rc")
   record_parsed unit:lint "$(($(now) - t0))" "$line"
 
-  # 3) npm test (= vitest run)。収集されるはずのファイルを vitest 自身に数えさせて突き合わせる
+  # 3) npm test (= vitest run)。収集されるはずのファイルを vitest 自身に数えさせて突き合わせる。
+  #    ファイルごとの所要 (収集 + テストとフック) も scripts/vitest-file-timing-reporter.mjs で書く (結果は変えない。#1496)
   log="$ART/unit-vitest.log"
   t0=$(now)
   run_in "$WT" "$log" npx vitest list --filesOnly --json="$ART/unit-vitest-list.json"
-  run_in "$WT" "$log" npm test -- --reporter=default --reporter=json --outputFile="$ART/unit-vitest.json"
+  run_in "$WT" "$log" env UNIT_FILE_TIMING_OUTPUT="$ART/unit-vitest-file-timing.json" npm test -- --reporter=default --reporter=json --outputFile="$ART/unit-vitest.json" --reporter=./scripts/vitest-file-timing-reporter.mjs
   rc=$?
   line=$(parse vitest "$ART/unit-vitest.json" "$ART/unit-vitest-list.json" "$rc")
   record_parsed unit:vitest "$(($(now) - t0))" "$line"
+
+  # 4) 1 ファイルの時間の予算 (既定 5 秒) を超えたファイルの一覧 (速度のラチェット。#1496)。記録だけで、段を赤にしない
+  #    (所要は機械の負荷で大きく揺れるため)。時間切れを延ばしたファイル (#1488) にも印を付けて別に並べる
+  unit_test_speed
+}
+
+# unit の段の vitest の所要を、1 ファイルの時間の予算と比べて一覧にする (記録だけ。record を呼ばない = 段の判定に入れない)
+unit_test_speed() {
+  local timing="$ART/unit-vitest-file-timing.json" out="$ART/unit-test-speed.txt"
+  # reporter の結果が無いとき (vitest が途中で落ちたなど) は、vitest の JSON (収集と最初の beforeAll を含まない所要) で代える
+  [ -s "$timing" ] || timing="$ART/unit-vitest.json"
+  if [ ! -s "$timing" ]; then
+    say "unit: 1 ファイルの時間の予算の一覧は作れません (vitest の結果が無い)"
+    return 0
+  fi
+  if run_in_stdout "$WT" "$out" "$ART/unit-test-speed.log" node scripts/test-speed-ratchet.mjs "$timing" --out "$ART/unit-test-speed.json"; then
+    say "unit: $(grep -m 1 '^予算を超えたファイル' "$out") — 一覧は $out (記録だけ)"
+  else
+    say "unit: 1 ファイルの時間の予算の一覧を作れませんでした (記録だけ。段の判定は変えない): $(tail -n 1 "$ART/unit-test-speed.log" 2>/dev/null)"
+  fi
+  return 0
 }
 
 # ---------------------------------------------------------------------
@@ -1137,7 +1165,7 @@ stage_integration() {
   # Next dev サーバ (yml と同じく /login が応答するまで待つ)
   log="$ART/integration-next-dev.log"
   say "integration: next dev を起動します"
-  ( ci_env && cd "$WT" && export PORT="$APP_PORT" && exec nohup npm run dev ) >"$log" 2>&1 &
+  ( ci_env && cd "$WT" && export PORT="$APP_PORT" && exec nohup env FEATURE_FLAG_CACHE_TTL_MS="$INTEGRATION_FEATURE_FLAG_CACHE_TTL_MS" npm run dev ) >"$log" 2>&1 &
   SERVER_PID=$!
   if ! wait_app "$DEV_WAIT_TRIES" "$log"; then
     record integration:setup RED - - - - - "$(($(now) - t0))" "$(tail_hint "next dev が $APP_ORIGIN/login に応答しない" "$log")"
@@ -1156,7 +1184,7 @@ stage_integration() {
   log="$ART/integration-security.log"
   t0=$(now)
   run_in "$WT" "$log" npx vitest list --filesOnly --json="$ART/integration-security-list.json" "${INTEG1_ARGS[@]}"
-  run_in "$WT" "$log" npx vitest run "${INTEG1_ARGS[@]}" --reporter=default --reporter=json --outputFile="$ART/integration-security.json"
+  run_in "$WT" "$log" env FEATURE_FLAG_CACHE_TTL_MS="$INTEGRATION_FEATURE_FLAG_CACHE_TTL_MS" npx vitest run "${INTEG1_ARGS[@]}" --reporter=default --reporter=json --outputFile="$ART/integration-security.json"
   rc=$?
   line=$(parse vitest "$ART/integration-security.json" "$ART/integration-security-list.json" "$rc")
   record_parsed integration:security "$(($(now) - t0))" "$line"

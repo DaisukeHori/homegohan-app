@@ -417,6 +417,15 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 - 正の整数: その人数まで数えます。大きくすると、運営画面の一覧を開くたびに読むユーザーの行が増え、表示が遅くなります。
 - サーバー側（`src/lib/super-admin/flag-active-users.ts`）だけで読みます。`NEXT_PUBLIC_` は付けません。
 
+### 任意の環境変数: 機能フラグの行をメモリに覚える時間（`FEATURE_FLAG_CACHE_TTL_MS`）
+
+機能フラグ（`feature_flags`）の行を、サーバー（API route とミドルウェア）がメモリに覚える時間（ミリ秒）です。運営画面（`/super-admin/flags`）で切り替えてから全員に反映されるまでの、最大の遅れになります（#1148・#1496）。
+
+- 未設定、または正の整数でない（既定）: 30000（30 秒）。
+- 正の整数: その時間だけ覚えます。短くすると、DB を読む回数が増えます。
+- **本番（Vercel）では設定しません**（既定のまま）。設定するのは、結合テストの段（`.github/workflows/security-regression.yml` と `scripts/local-ci.sh` の integration）が起動する next dev と、そのサーバーに対して反映を待つ `tests/integration/security/feature-flags-runtime.test.ts` だけです（両方に同じ値を渡します。テストは反映を待つ上限をこの値から決めます）。
+- サーバー側（`src/lib/feature-flag-cache-ttl.ts`）だけで読みます。`NEXT_PUBLIC_` は付けません。
+
 ### 任意の環境変数: 献立の単発追加の開始日のずらしの上限（`MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS`）
 
 献立の単発追加（`POST /api/menu-plans/add`）は、本文の `date_offset_days` の日数だけ JST の今日からずらした日を開始日にします。この値の絶対値の上限です（#1463）。上限を超える値（と、開始日が暦の計算で扱える範囲の外に出る値）は 400 になります。利用者が値を選ぶ画面は無く、ハンズオンツアーの見本の献立が 1（明日）を送るだけです。

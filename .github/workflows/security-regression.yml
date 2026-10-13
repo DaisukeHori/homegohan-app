@@ -58,7 +58,13 @@ jobs:
       - name: Write .env.local for the local stack
         run: bash scripts/supabase-local.sh env .env.local
 
+      # FEATURE_FLAG_CACHE_TTL_MS: 機能フラグの行をメモリに覚える時間 (既定 30 秒) を、この結合テストのサーバーだけ短くする。
+      # tests/integration/security/feature-flags-runtime.test.ts が切り替えの反映を待つ時間がこれで決まる
+      # (本物の 30 秒を待つと、ON と OFF の 2 回で 1 テストに 1 分以上かかる。#1496)。テストのステップにも同じ値を渡す。
+      # 本番 (Vercel) には足さない
       - name: Start Next dev server
+        env:
+          FEATURE_FLAG_CACHE_TTL_MS: "2000"
         run: |
           nohup npm run dev > /tmp/next-dev.log 2>&1 &
           for i in $(seq 1 120); do
@@ -75,6 +81,8 @@ jobs:
           done
 
       - name: Run security regression + handson-tour integration tests
+        env:
+          FEATURE_FLAG_CACHE_TTL_MS: "2000"
         run: >
           npx vitest run --config vitest.integration.config.ts --passWithNoTests
           tests/integration/rls tests/integration/security tests/integration/handson-tour

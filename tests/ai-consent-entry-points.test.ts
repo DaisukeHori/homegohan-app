@@ -212,9 +212,23 @@ function callsIn(root: ts.Node, name: string): ts.CallExpression[] {
  * 数えると、コンポーネントのどこかで 1 回呼んでいるだけで、確認していない別の関数まで「確認済み」に見えてしまう。
  */
 function ensuresBefore(fn: FunctionLike, node: ts.Node): boolean {
-  return callsIn(fn, 'ensureAiConsent').some(
+  return ensureCallsIn(fn).some(
     (call) => enclosingFunctions(call)[0] === fn && call.getStart() < node.getStart(),
   );
+}
+
+/**
+ * fn の中の ensureAiConsent() の呼び出し (関数ごとに 1 回だけ走査して覚える。#1496。
+ * isGuarded は AI の呼び出し 1 つごとに外側の関数を全部たどるので、同じ関数を何度も走査していた)
+ */
+const ensureCallsCache = new WeakMap<FunctionLike, ts.CallExpression[]>();
+function ensureCallsIn(fn: FunctionLike): ts.CallExpression[] {
+  let calls = ensureCallsCache.get(fn);
+  if (calls === undefined) {
+    calls = callsIn(fn, 'ensureAiConsent');
+    ensureCallsCache.set(fn, calls);
+  }
+  return calls;
 }
 
 /** node の外側の関数のどれかが、node より前に ensureAiConsent() を呼んでいるか */
@@ -236,8 +250,21 @@ function isAiUrl(url: string): boolean {
   return url.startsWith('/api/ai/') || url === '/api/shopping-list/regenerate';
 }
 
-/** AI の API の fetch / aiFetch の呼び出しを全部集める (文字列・テンプレートで URL が書かれているもの) */
+/**
+ * AI の API の fetch / aiFetch の呼び出しを全部集める (文字列・テンプレートで URL が書かれているもの)。
+ * 3 つのテストが同じファイルについて使うので、ファイルごとに 1 回だけ集めて覚える (#1496。中身は同じ)
+ */
+const aiFetchSitesCache = new WeakMap<ts.SourceFile, readonly AiFetchSite[]>();
 function aiFetchSites(sf: ts.SourceFile): AiFetchSite[] {
+  let sites = aiFetchSitesCache.get(sf);
+  if (sites === undefined) {
+    sites = collectAiFetchSites(sf);
+    aiFetchSitesCache.set(sf, sites);
+  }
+  return [...sites];
+}
+
+function collectAiFetchSites(sf: ts.SourceFile): AiFetchSite[] {
   const sites: AiFetchSite[] = [];
   walk(sf, (node) => {
     const viaAiFetch = isCallTo(node, 'aiFetch');
@@ -257,12 +284,31 @@ function aiFetchSites(sf: ts.SourceFile): AiFetchSite[] {
   return sites;
 }
 
+/**
+ * 名前のある関数を、名前ごとにソースの順で並べたもの (ファイルごとに 1 回だけ走査して覚える。#1496。
+ * 以前は名前を 1 つ探すたびにファイル全体を走査していた)
+ */
+const functionsByNameCache = new WeakMap<ts.SourceFile, ReadonlyMap<string, readonly FunctionLike[]>>();
+function functionsByName(sf: ts.SourceFile): ReadonlyMap<string, readonly FunctionLike[]> {
+  let byName = functionsByNameCache.get(sf);
+  if (byName === undefined) {
+    const map = new Map<string, FunctionLike[]>();
+    walk(sf, (node) => {
+      if (!isFunctionLike(node)) return;
+      const name = nameOf(node);
+      if (name === null) return;
+      const list = map.get(name);
+      if (list) list.push(node);
+      else map.set(name, [node]);
+    });
+    byName = map;
+    functionsByNameCache.set(sf, byName);
+  }
+  return byName;
+}
+
 function findFunctions(sf: ts.SourceFile, name: string): FunctionLike[] {
-  const out: FunctionLike[] = [];
-  walk(sf, (node) => {
-    if (isFunctionLike(node) && nameOf(node) === name) out.push(node);
-  });
-  return out;
+  return [...(functionsByName(sf).get(name) ?? [])];
 }
 
 // ─────────────────────────────────────────────

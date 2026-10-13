@@ -238,6 +238,16 @@ export async function logStreamingUsage(
   ジョブは行ごとの insert で積む (冪等キーの一意な索引は待ち・処理中だけの部分索引なので、`ON CONFLICT (idempotency_key)` の upsert は使えない)。
   同じ料理のジョブが待ち・処理中なら一意制約の違反 (23505) を重複として数え、1 行も積めなかったとき (重複・書き込みの失敗) は数えた 1 回を戻す。
   献立の保存に失敗したときも戻す
+- 料理画像のジョブの積み方 (#1505): Next.js (`lib/meal-image-jobs.ts`) と Edge Function (`supabase/functions/_shared/meal-image-jobs.ts`。
+  献立の生成 `generate-menu-v5` / `generate-menu-v4` の `saveMealToDb`) は、同じ積み方 (`supabase/functions/_shared/meal-image.ts` の
+  `buildMealImageJobRecords` / `insertMealImageJobRecords`) を使う。料理を保存したあとにジョブの書き込みが失敗した料理 (23505 以外のエラー・例外) は、
+  保存済みの献立の上で `image_status: 'failed'` + `image_error: 'enqueue_failed'` にする (同じ料理で、画像が無く待ち・更新待ちの、
+  `image_source` が `generated_ai` か未設定の料理だけ。写真・商品・手の画像の料理と、商品の献立の画像の項目の無い古い商品の料理は変えない。
+  書くのは料理だけで、献立のカバーには触れない)。
+  重複 (23505) の料理は待ちのまま (待ち・処理中のジョブが画像を作る)。`saveMealToDb` が処理 (`process-meal-image-jobs`) を起こすのは、積めた行か重複の行があるときだけ。
+  待ったままの料理の積み直し (`scripts/requeue-pending-meal-images.ts`) は、保存し直しが積まない料理 (商品の献立の古い商品の料理・
+  カバーが料理ごとの画像を持たない写真・商品・手の画像の料理のものである献立の料理) を、同じ共通の判定 (`asCatalogMealDish`・
+  `isMealCoverHeldByImagelessPreservedDish`) で積まない。経路・本番で確かめること・積み直しの手順は `docs/operations/meal-image-pipeline.md`
 - 写真の「オート」: 判別 (`POST /api/ai/classify-photo`) が 1 回数え、数え済みの印 `aiUsageGrant` を応答で返す
   (`g1.<UNIX 秒>.<印の ID>.<HMAC-SHA256>`。署名の対象は機能名・利用者 ID・発行時刻・印の ID、鍵は service role key、有効は 10 分)。
   画面は続く解析 (`analyze-meal-photo` / `analyze-fridge` / `analyze-health-checkup` / `analyze-weight-scale`) の本文の `aiUsageGrant` に入れて送る。
