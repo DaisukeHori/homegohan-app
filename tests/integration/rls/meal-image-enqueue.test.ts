@@ -11,6 +11,11 @@
  *   E-2: enqueueMealImageJobs は行ごとの insert で積める (inserted 1)
  *   E-3: 同じ料理のジョブが待ちのあいだに積むと、一意制約の違反 (23505) を重複として数え、行を増やさない (inserted 0 / duplicates 1)
  *   E-4: そのジョブが終わった (失敗・取り消し・完了) あとは、同じ料理をもう一度積める (保存し直しで積み直す。#1487)
+ *   E-5: Edge Function の積み方 (supabase/functions/_shared/meal-image-jobs.ts。献立の生成の saveMealToDb が使う) も、
+ *        部分索引に対して 42P10 にならずに積める (#1505。以前は upsert で、献立の生成の料理画像のジョブが 1 行も積まれていなかった)
+ *   E-6: Edge の積み方も、待ちのジョブと同じ料理は 23505 を重複として数え、行を増やさない
+ *   E-7: 書き込みに失敗した行 (ここでは request_id が uuid でない 22P02) は失敗として数え、献立の料理を failed + enqueue_failed にする
+ *        (Edge・Next.js の両方。pending のまま「生成中」に残さない。#1505)
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
  *   npx vitest run --config vitest.integration.config.ts tests/integration/rls/meal-image-enqueue.test.ts
@@ -21,7 +26,14 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { enqueueMealImageJobs } from '../../../lib/meal-image-jobs';
-import { buildMealImageIdempotencyKey, type MealImageJobSeed } from '../../../lib/meal-image';
+import { enqueueMealImageJobs as enqueueMealImageJobsEdge } from '../../../supabase/functions/_shared/meal-image-jobs';
+import {
+  MEAL_IMAGE_ENQUEUE_FAILED_ERROR,
+  MEAL_IMAGE_JOB_UNIQUE_VIOLATION_CODE,
+  buildMealImageIdempotencyKey,
+  type MealImageDish,
+  type MealImageJobSeed,
+} from '../../../lib/meal-image';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -40,6 +52,8 @@ const PASSWORD = 'TestPass!2026-mij';
 const DAY = '2026-10-11';
 /** ON CONFLICT の指定に合う一意な索引・制約が無い (invalid_column_reference) */
 const NO_MATCHING_CONFLICT_TARGET = '42P10';
+/** request_id (uuid 列) に uuid でない値を入れたときの失敗 (invalid_text_representation)。書き込みの失敗を起こすのに使う */
+const NOT_A_UUID = 'not-a-uuid';
 
 let userId: string;
 let plannedMealId: string;
@@ -162,5 +176,70 @@ describe('料理画像のジョブの積み方 (#1487)', () => {
     expect(result).toEqual({ inserted: 1, duplicates: 0, failed: 0 });
     const rows = await jobRows();
     expect(rows.map((row) => row.status)).toEqual(['failed', 'pending']);
+  });
+
+  it('E-5: Edge の積み方も、部分索引に対して 42P10 にならずに積める (#1505)', async () => {
+    const edgeSeed = { ...SEED, dishIndex: 1, subjectHash: `edge-hash-${TS}`, triggerSource: 'generate-menu-v5:integration' };
+    const result = await enqueueMealImageJobsEdge({ supabase: srAdmin, plannedMealId, userId, jobs: [edgeSeed], requestId: null });
+
+    expect(result).toEqual({ inserted: 1, duplicates: 0, failed: 0 });
+    const rows = await jobRows();
+    const edgeKey = await buildMealImageIdempotencyKey({ plannedMealId, dishIndex: 1, subjectHash: edgeSeed.subjectHash });
+    expect(rows.filter((row) => row.idempotency_key === edgeKey).map((row) => row.status)).toEqual(['pending']);
+  });
+
+  it('E-6: Edge の積み方も、待ちのジョブと同じ料理は 23505 を重複として数え、行を増やさない', async () => {
+    const before = await jobRows();
+    const edgeSeed = { ...SEED, dishIndex: 1, subjectHash: `edge-hash-${TS}`, triggerSource: 'generate-menu-v5:integration' };
+    const edgeKey = await buildMealImageIdempotencyKey({ plannedMealId, dishIndex: 1, subjectHash: edgeSeed.subjectHash });
+
+    // (前提) 同じ冪等キーの素の insert は、部分索引の一意制約の違反 (23505) になる
+    const { error } = await srAdmin.from('meal_image_jobs').insert({
+      planned_meal_id: plannedMealId,
+      user_id: userId,
+      dish_index: 1,
+      job_kind: 'dish',
+      subject_hash: edgeSeed.subjectHash,
+      idempotency_key: edgeKey,
+      prompt: edgeSeed.prompt,
+      model: edgeSeed.model,
+      status: 'pending',
+    });
+    expect(error?.code).toBe(MEAL_IMAGE_JOB_UNIQUE_VIOLATION_CODE);
+
+    const result = await enqueueMealImageJobsEdge({ supabase: srAdmin, plannedMealId, userId, jobs: [edgeSeed], requestId: null });
+    expect(result).toEqual({ inserted: 0, duplicates: 1, failed: 0 });
+    expect(await jobRows()).toHaveLength(before.length);
+  });
+
+  it.each([
+    ['Edge', 2],
+    ['Next.js', 3],
+  ] as const)('E-7 (%s): 書き込みに失敗した行は失敗として数え、献立の料理を failed + enqueue_failed にする', async (side, dishIndex) => {
+    const failSeed = { ...SEED, dishIndex, subjectHash: `fail-hash-${side}-${TS}` };
+    const dishes: MealImageDish[] = [0, 1, 2, 3].map((index) => ({
+      name: `dish-${index}`,
+      image_url: null,
+      image_source: 'generated_ai',
+      image_status: 'pending',
+      image_subject_hash: index === dishIndex ? failSeed.subjectHash : `other-${index}`,
+    }));
+    const { error: updateError } = await srAdmin.from('planned_meals').update({ dishes }).eq('id', plannedMealId);
+    expect(updateError).toBeNull();
+    const before = await jobRows();
+
+    const result =
+      side === 'Edge'
+        ? await enqueueMealImageJobsEdge({ supabase: srAdmin, plannedMealId, userId, jobs: [failSeed], requestId: NOT_A_UUID })
+        : await enqueueMealImageJobs({ supabase: srAdmin, plannedMealId, userId, triggerSource: SEED.triggerSource, jobSeeds: [failSeed], requestId: NOT_A_UUID });
+
+    expect(result).toEqual({ inserted: 0, duplicates: 0, failed: 1 });
+    expect(await jobRows()).toHaveLength(before.length);
+    const { data: meal, error: mealError } = await srAdmin.from('planned_meals').select('dishes').eq('id', plannedMealId).single();
+    expect(mealError).toBeNull();
+    const saved = (meal?.dishes ?? []) as MealImageDish[];
+    expect(saved[dishIndex]).toMatchObject({ image_status: 'failed', image_error: MEAL_IMAGE_ENQUEUE_FAILED_ERROR, image_url: null });
+    // ほかの料理は変えない
+    expect(saved.filter((_dish, index) => index !== dishIndex).every((dish) => dish.image_status === 'pending')).toBe(true);
   });
 });
