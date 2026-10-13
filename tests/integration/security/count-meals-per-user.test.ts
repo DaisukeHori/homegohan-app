@@ -8,13 +8,15 @@
  *   全利用者の件数を返すので、service role だけが呼べる。
  *
  * 確かめること (ローカル Supabase の実 DB で):
- *   A. service role は呼べて、利用者ごとに (user_id, meal_count) を 1 行ずつ返す。件数は全期間・全行 (期間で絞らない)。
- *      記録の無い利用者の行は無い
+ *   A. service role は呼べて、利用者ごとに (user_id, meal_count) を 1 行ずつ返す。件数は全期間 (期間で絞らない)。
+ *      記録の無い利用者の行は無い。運営が隠した行は数えない (#1445。migration 20261011130000_count_meals_per_user_exclude_hidden.sql)
  *   B. user_id の順に並べ、range でページ送りできる (Edge Function の fetchAllRows が上限 1000 行を超えたときに使う)
  *   C. 未ログイン (anon)・ログインユーザー (authenticated) は呼べない (42501)。他人の記録の件数を読めない
  *   D. EXECUTE の権限: PUBLIC / anon / authenticated は無く、service_role だけにある (postgres-meta で読み取りだけ確かめる)
  *   E. ハンズオンのお試しの記録 (meals.is_sandbox = true) は数えない (#1500。migration 20261011120000_segment_stats_finalize_retry.sql)。
  *      お試しの記録だけを持つ利用者の行は返らない (= total_meals は 0)。実際の記録と一緒に持つ利用者は、実際の記録だけを数える
+ *   F. お試しの記録と隠した食事の両方を持つ利用者は、どちらも数えない (#1445 の migration 20261011130000 が #1500 の絞り込みを
+ *      落としていないこと。後から足した migration が同じ関数を CREATE OR REPLACE するので、両方の条件が残っていることを実 DB で確かめる)
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。本番には接続しない。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -153,6 +155,85 @@ describe('count_meals_per_user: 利用者ごとの meals の件数 (#1491)', () 
     expect(counts.get(none.id)).toBe(1);
     const { error: deleteError } = await sr.from('meals').delete().eq('user_id', none.id);
     expect(deleteError).toBeNull();
+  });
+
+  it('A3: 運営が隠した食事 (hidden_at が入った行。#1101) は数えない。隠した記録しかない利用者の行は無い (#1445。migration 20261011130000)', async () => {
+    const hiddenAt = '2026-10-10T00:00:00Z';
+    const { data: inserted, error } = await sr
+      .from('meals')
+      .insert([
+        { user_id: one.id, eaten_at: '2026-10-09T03:00:00Z', meal_type: 'lunch' },
+        { user_id: none.id, eaten_at: '2026-10-09T03:00:00Z', meal_type: 'lunch' },
+      ])
+      .select('id');
+    expect(error).toBeNull();
+    const insertedIds = ((inserted ?? []) as Array<{ id: string }>).map((r) => r.id);
+    expect(insertedIds).toHaveLength(2);
+    // 運営と同じく service role で隠す (hidden_* を書けるのは service role だけ。guard_hidden_content_columns)
+    const { error: hideError } = await sr
+      .from('meals')
+      .update({ hidden_at: hiddenAt, hidden_reason: 'moderation:delete_only' })
+      .in('id', insertedIds);
+    expect(hideError).toBeNull();
+
+    try {
+      const counts = await countsOfTestUsers();
+      expect(counts.get(many.id)).toBe(3);
+      // one: 見える 1 件 + 隠した 1 件 → 1
+      expect(counts.get(one.id)).toBe(1);
+      // none: 隠した記録だけ → 行が無い (記録の無い利用者と同じ)
+      expect(counts.has(none.id)).toBe(false);
+    } finally {
+      const { error: deleteError } = await sr.from('meals').delete().in('id', insertedIds);
+      expect(deleteError).toBeNull();
+    }
+  });
+
+  it('F: お試しの記録と隠した食事の両方を持つ利用者は、どちらも数えない。お試しの記録と隠した食事しかない利用者の行は無い (#1500 + #1445。migration 20261011130000)', async () => {
+    const mixed = await createUser('mixed'); // 見える実際の記録 1 件 + お試しの記録 1 件 + 隠した実際の記録 1 件 → 1
+    const neither = await createUser('neither'); // お試しの記録 1 件 + 隠した実際の記録 1 件 → 行が無い
+    // 1 回の insert に is_sandbox を持つ行と持たない行を混ぜると、持たない行に NULL が入るので、全行に is_sandbox を明示する
+    const { data: inserted, error } = await sr
+      .from('meals')
+      .insert([
+        { user_id: mixed.id, eaten_at: '2026-10-08T03:00:00Z', meal_type: 'lunch', is_sandbox: false },
+        { user_id: mixed.id, eaten_at: '2026-10-09T03:00:00Z', meal_type: 'lunch', is_sandbox: true },
+        { user_id: mixed.id, eaten_at: '2026-10-09T10:00:00Z', meal_type: 'dinner', is_sandbox: false },
+        { user_id: neither.id, eaten_at: '2026-10-09T03:00:00Z', meal_type: 'lunch', is_sandbox: true },
+        { user_id: neither.id, eaten_at: '2026-10-09T10:00:00Z', meal_type: 'dinner', is_sandbox: false },
+      ])
+      .select('id, user_id, eaten_at, is_sandbox');
+    expect(error).toBeNull();
+    const rows = (inserted ?? []) as Array<{ id: string; user_id: string; eaten_at: string; is_sandbox: boolean }>;
+    expect(rows).toHaveLength(5);
+    // 実際の記録の夕食 (10:00) を、運営と同じく service role で隠す
+    const toHide = rows.filter((r) => !r.is_sandbox && r.eaten_at.startsWith('2026-10-09T10:00:00')).map((r) => r.id);
+    expect(toHide).toHaveLength(2);
+    const { error: hideError } = await sr
+      .from('meals')
+      .update({ hidden_at: '2026-10-10T00:00:00Z', hidden_reason: 'moderation:delete_only' })
+      .in('id', toHide);
+    expect(hideError).toBeNull();
+
+    // 前提: お試しの記録と隠した行が実際に入っている (このテストが空振りしていないことの確認)
+    const { data: check, error: checkError } = await sr
+      .from('meals')
+      .select('user_id, is_sandbox, hidden_at')
+      .in('user_id', [mixed.id, neither.id]);
+    expect(checkError).toBeNull();
+    const kinds = ((check ?? []) as Array<{ user_id: string; is_sandbox: boolean; hidden_at: string | null }>)
+      .map((r) => `${r.user_id === mixed.id ? 'mixed' : 'neither'}:${r.is_sandbox ? 'sandbox' : 'real'}:${r.hidden_at ? 'hidden' : 'visible'}`)
+      .sort();
+    expect(kinds).toEqual(['mixed:real:hidden', 'mixed:real:visible', 'mixed:sandbox:visible', 'neither:real:hidden', 'neither:sandbox:visible']);
+
+    const counts = await countsOfTestUsers();
+    // mixed: 見える実際の記録 1 件だけ (お試しの記録も隠した記録も入らない)
+    expect(counts.get(mixed.id)).toBe(1);
+    // neither: お試しの記録と隠した記録だけ → 行が無い
+    expect(counts.has(neither.id)).toBe(false);
+    // ほかの利用者の件数は変わらない
+    expect(counts.get(many.id)).toBe(3);
+    expect(counts.has(sandboxOnly.id)).toBe(false);
   });
 
   it('B: user_id の順に並べて range でページ送りでき、ページをつなぐと全件と同じになる (fetchAllRows が使う形)', async () => {
