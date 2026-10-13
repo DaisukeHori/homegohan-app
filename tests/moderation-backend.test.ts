@@ -265,9 +265,9 @@ describe('moderation-backend', () => {
       });
       const before = Date.now();
 
-      const hiddenIds = await hideModeratedContent(supabase as never, 'food', 'meal-1', params);
+      const result = await hideModeratedContent(supabase as never, 'food', 'meal-1', params);
 
-      expect(hiddenIds).toEqual(['meal-1']);
+      expect(result).toEqual({ contentFound: true, hiddenIds: ['meal-1'] });
       expect(supabase.from).toHaveBeenCalledTimes(2);
       expect(supabase.from.mock.calls.map((c) => c[0])).toEqual(['meals', 'meals']);
       const lookup = builderAt(supabase, 0);
@@ -304,9 +304,9 @@ describe('moderation-backend', () => {
         ],
       });
 
-      const hiddenIds = await hideModeratedContent(supabase as never, 'food', 'meal-1', params);
+      const result = await hideModeratedContent(supabase as never, 'food', 'meal-1', params);
 
-      expect(hiddenIds).toEqual(['meal-1', 'meal-copy-a', 'meal-copy-b']);
+      expect(result).toEqual({ contentFound: true, hiddenIds: ['meal-1', 'meal-copy-a', 'meal-copy-b'] });
       const group = builderAt(supabase, 1);
       expect(group.select).toHaveBeenCalledWith('id, photo_url, memo');
       expect(group.eq).toHaveBeenCalledWith('paste_group_id', 'group-1');
@@ -337,9 +337,9 @@ describe('moderation-backend', () => {
         ],
       });
 
-      const hiddenIds = await hideModeratedContent(supabase as never, 'food', 'meal-copy-edited', params);
+      const result = await hideModeratedContent(supabase as never, 'food', 'meal-copy-edited', params);
 
-      expect(hiddenIds).toEqual(['meal-copy-edited']);
+      expect(result).toEqual({ contentFound: true, hiddenIds: ['meal-copy-edited'] });
       expect(builderAt(supabase, 2).in).toHaveBeenCalledWith('id', ['meal-copy-edited']);
     });
 
@@ -365,7 +365,7 @@ describe('moderation-backend', () => {
       expect(builderAt(supabase, 2).in).toHaveBeenCalledWith('id', ['meal-1', 'meal-copy-a']);
     });
 
-    it('food: まとまりの中に、まだ隠れていない同じ中身の行が無い (通報された行もすでに隠れている) ときは、何も更新せずに空の一覧を返す', async () => {
+    it('food: まとまりの中に、まだ隠れていない同じ中身の行が無い (通報された行もすでに隠れている) ときは、何も更新せずに空の一覧を返す。行はあるので contentFound: true', async () => {
       const supabase = createFakeSupabase({
         meals: [
           { data: { paste_group_id: 'group-1', photo_url: null, memo: 'm' }, error: null },
@@ -373,7 +373,10 @@ describe('moderation-backend', () => {
         ],
       });
 
-      await expect(hideModeratedContent(supabase as never, 'food', 'meal-1', params)).resolves.toEqual([]);
+      await expect(hideModeratedContent(supabase as never, 'food', 'meal-1', params)).resolves.toEqual({
+        contentFound: true,
+        hiddenIds: [],
+      });
       expect(supabase.from).toHaveBeenCalledTimes(2);
       expect(builderAt(supabase, 1).update).not.toHaveBeenCalled();
     });
@@ -393,10 +396,13 @@ describe('moderation-backend', () => {
       expect(builderAt(supabase, 1).update).not.toHaveBeenCalled();
     });
 
-    it('food: 通報された食事がもう無い (持ち主が先に消した等) ときは、何も更新せずに空の一覧を返す (失敗ではない)', async () => {
+    it('food: 通報された食事がもう無い (持ち主が先に消した等) ときは、何も更新せずに contentFound: false と空の一覧を返す (失敗ではない。#1445: 監査ログを hidden: true にしない)', async () => {
       const supabase = createFakeSupabase({ meals: [{ data: null, error: null }] });
 
-      await expect(hideModeratedContent(supabase as never, 'food', 'meal-gone', params)).resolves.toEqual([]);
+      await expect(hideModeratedContent(supabase as never, 'food', 'meal-gone', params)).resolves.toEqual({
+        contentFound: false,
+        hiddenIds: [],
+      });
       expect(supabase.from).toHaveBeenCalledTimes(1);
       expect(builderAt(supabase, 0).update).not.toHaveBeenCalled();
     });
@@ -413,16 +419,61 @@ describe('moderation-backend', () => {
     it('recipe: recipes の該当行だけを隠す (レシピには複製の仕組みが無いので、読み取りはしない)', async () => {
       const supabase = createFakeSupabase({ recipes: [{ data: [{ id: 'recipe-1' }], error: null }] });
 
-      const hiddenIds = await hideModeratedContent(supabase as never, 'recipe', 'recipe-1', params);
+      const result = await hideModeratedContent(supabase as never, 'recipe', 'recipe-1', params);
 
-      expect(hiddenIds).toEqual(['recipe-1']);
+      expect(result).toEqual({ contentFound: true, hiddenIds: ['recipe-1'] });
       expect(supabase.from).toHaveBeenCalledTimes(1);
       expect(supabase.from).toHaveBeenCalledWith('recipes');
       expect(builderAt(supabase, 0).in).toHaveBeenCalledWith('id', ['recipe-1']);
       expect(builderAt(supabase, 0).update).toHaveBeenCalledTimes(1);
     });
 
-    it('すでに隠れている行は上書きしない (hidden_at IS NULL の行だけ更新する)。保管期間の起点を延ばさない。隠した行が無ければ空の一覧', async () => {
+    it('recipe: 1 行も更新しなかったとき、行がすでに隠れていたなら contentFound: true (行の有無を id で読み直す。#1445)', async () => {
+      const supabase = createFakeSupabase({
+        recipes: [
+          { data: [], error: null },
+          { data: { id: 'recipe-1' }, error: null },
+        ],
+      });
+
+      const result = await hideModeratedContent(supabase as never, 'recipe', 'recipe-1', params);
+
+      expect(result).toEqual({ contentFound: true, hiddenIds: [] });
+      expect(supabase.from).toHaveBeenCalledTimes(2);
+      const lookup = builderAt(supabase, 1);
+      expect(lookup.select).toHaveBeenCalledWith('id');
+      expect(lookup.eq).toHaveBeenCalledWith('id', 'recipe-1');
+      expect(lookup.update).not.toHaveBeenCalled();
+    });
+
+    it('recipe: 1 行も更新せず、行も無い (持ち主が先に消した等) ときは contentFound: false (#1445: 監査ログを hidden: true にしない)', async () => {
+      const supabase = createFakeSupabase({
+        recipes: [
+          { data: [], error: null },
+          { data: null, error: null },
+        ],
+      });
+
+      await expect(hideModeratedContent(supabase as never, 'recipe', 'recipe-gone', params)).resolves.toEqual({
+        contentFound: false,
+        hiddenIds: [],
+      });
+    });
+
+    it('recipe: 行の有無の読み直しでエラーになったら例外を throw する (隠せたかどうかを装わない)', async () => {
+      const supabase = createFakeSupabase({
+        recipes: [
+          { data: [], error: null },
+          { data: null, error: { message: 'connection reset' } },
+        ],
+      });
+
+      await expect(hideModeratedContent(supabase as never, 'recipe', 'recipe-1', params)).rejects.toMatchObject({
+        message: 'connection reset',
+      });
+    });
+
+    it('すでに隠れている行は上書きしない (hidden_at IS NULL の行だけ更新する)。保管期間の起点を延ばさない。隠した行が無ければ空の一覧 (行はあるので contentFound: true)', async () => {
       const supabase = createFakeSupabase({
         meals: [
           { data: { paste_group_id: null, photo_url: null, memo: 'm' }, error: null },
@@ -430,7 +481,10 @@ describe('moderation-backend', () => {
         ],
       });
 
-      await expect(hideModeratedContent(supabase as never, 'food', 'meal-1', params)).resolves.toEqual([]);
+      await expect(hideModeratedContent(supabase as never, 'food', 'meal-1', params)).resolves.toEqual({
+        contentFound: true,
+        hiddenIds: [],
+      });
 
       expect(builderAt(supabase, 1).is).toHaveBeenCalledWith('hidden_at', null);
     });

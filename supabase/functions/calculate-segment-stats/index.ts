@@ -21,7 +21,9 @@ const UPSERT_CHUNK = 200;
 
 // 指標 total_meals (全期間の食事の記録の件数) のコード。有効な指標にこれがあるときだけ、件数を数える (#1491)
 const TOTAL_MEALS_METRIC_CODE = 'total_meals';
-// 利用者ごとの meals の件数を DB の中で数える関数 (supabase/migrations/20261011060000_count_meals_per_user.sql)。
+// 利用者ごとの meals の件数を DB の中で数える関数 (supabase/migrations/20261011060000_count_meals_per_user.sql。
+// お試しの記録を数えないのは 20261011120000_segment_stats_finalize_retry.sql #1500、
+// 運営が隠した行も数えないのは 20261011130000_count_meals_per_user_exclude_hidden.sql #1445)。
 // meals の全行を読んで数えると、記録の件数だけ 1000 行ずつ往復する。これは記録のある利用者 1 人につき 1 行を返す
 const COUNT_MEALS_PER_USER_RPC = 'count_meals_per_user';
 // 確定の回 (previousPeriod: true) をやり終えた期間の記録 (supabase/migrations/20261011120000_segment_stats_finalize_retry.sql。#1500)。
@@ -272,6 +274,7 @@ interface MealCountRow {
 /**
  * 利用者ごとの meals の件数 (指標 total_meals)。DB の関数 count_meals_per_user で数える (#1491)。
  * ハンズオンのお試しの記録 (is_sandbox = true) は、関数の側で数えない (migration 20261011120000。#1500)。
+ * 運営が隠した食事 (hidden_at が入った行) も、関数の側で数えない (migration 20261011130000。#1445)。
  * 以前は meals の全行 (user_id) を読んで、ここで数えていた。返る行は記録のある利用者 1 人につき 1 行で、
  * 1000 行を超えるときは fetchAllRows が user_id の順でページ送りする (user_id は 1 人 1 行なので並びが一意に決まる)
  */
@@ -320,11 +323,14 @@ async function fetchBulkData(periodStart: string, periodEnd: string, metricCodes
       ),
       // ハンズオン (チュートリアル) のお試しの記録 (meals.is_sandbox = true) は実際の食事ではないので数えない
       // (planned_meals・count_meals_per_user・GET /api/badges と同じ扱い。#1500)
+      // 運営が隠した食事 (hidden_at が入った行。#1101) も、比較ランキングの集計に数えない (#1445)。
+      // service role は RLS を通らないので、ここで絞る (count_meals_per_user も同じく除く。migration 20261011130000)
       fetchAllRows<{ user_id: string; eaten_at: string }>('meals (期間内) の取得', () =>
         supabaseAdmin
           .from('meals')
           .select('user_id, eaten_at')
           .eq('is_sandbox', false)
+          .is('hidden_at', null)
           .gte('eaten_at', mealsRange.from)
           .lt('eaten_at', mealsRange.before),
       ),

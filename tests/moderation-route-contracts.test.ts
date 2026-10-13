@@ -717,6 +717,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
         action,
         content_id: 'meal-1',
         hidden: true,
+        content_found: true,
         hidden_ids: ['meal-1'],
         hide_error: null,
       });
@@ -788,6 +789,50 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
     });
   });
 
+  it('delete_only: 通報された食事の行がもう無い (持ち主が先に消した) ときは、判定を保存して 200。監査ログは hidden: false / content_found: false / hidden_ids: [] (#1445: 以前は行が無いのに hidden: true と記録していた)', async () => {
+    fakeSupabase = createFakeSupabase({
+      moderation_flags: [{ data: foodFlagRow(), error: null }, ok],
+      meals: [{ data: null, error: null }],
+      admin_audit_logs: [ok],
+    });
+
+    const res = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'flag-1' } });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ data: { success: true, status: 'rejected', ban_applied: null } });
+    // 行の読み取りだけで、update はしない
+    const mealBuilders = buildersFor(fakeSupabase, 'meals');
+    expect(mealBuilders).toHaveLength(1);
+    expect(mealBuilders[0].update).not.toHaveBeenCalled();
+    const audit = auditInsertPayload(fakeSupabase);
+    expect(audit.details).toMatchObject({
+      content_id: 'meal-1',
+      hidden: false,
+      content_found: false,
+      hidden_ids: [],
+      hide_error: null,
+      status_saved: true,
+    });
+  });
+
+  it('delete_only: 通報された食事がすでに隠れている (同じ操作のやり直し・2 件目の通報) ときは、監査ログは hidden: true / content_found: true / hidden_ids: [] (隠れた状態にある)', async () => {
+    fakeSupabase = createFakeSupabase({
+      moderation_flags: [{ data: foodFlagRow(), error: null }, ok],
+      meals: [mealLookup, { data: [], error: null }],
+      admin_audit_logs: [ok],
+    });
+
+    const res = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'flag-1' } });
+
+    expect(res.status).toBe(200);
+    expect(auditInsertPayload(fakeSupabase).details).toMatchObject({
+      content_id: 'meal-1',
+      hidden: true,
+      content_found: true,
+      hidden_ids: [],
+    });
+  });
+
   it.each(['approve', 'escalate'] as const)(
     '%s: 何も隠さない (meals に触らない)。監査ログは content_id を残し、hidden: false',
     async (action) => {
@@ -804,6 +849,8 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       expect(auditInsertPayload(fakeSupabase).details).toMatchObject({
         content_id: 'meal-1',
         hidden: false,
+        // 隠す操作をしていないので、行の有無は分からない (#1445)
+        content_found: null,
         hide_error: null,
       });
     },
@@ -988,7 +1035,8 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
         },
         ok,
       ],
-      recipes: [ok],
+      // update ... select('id') が隠した行を返す (#1445: 行が無い (0 行) と hidden: false になるので、隠した行を返す形にする)
+      recipes: [{ data: [{ id: 'recipe-1' }], error: null }],
       admin_audit_logs: [ok],
     });
 
@@ -1009,6 +1057,8 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       moderation_type: 'recipe',
       content_id: 'recipe-1',
       hidden: true,
+      content_found: true,
+      hidden_ids: ['recipe-1'],
     });
   });
 });

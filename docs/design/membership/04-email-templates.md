@@ -293,35 +293,59 @@ https://homegohan.app
 ## 8. Resend 送信ラッパ
 
 ```ts
-// src/lib/emails/send.ts
-import { Resend } from 'resend';
-import { getOptionalEnv } from '@/lib/env';
-import { EmailEnvelopeSchema, type EmailEnvelope } from './membership/templates';
+// src/lib/emails/send.ts (要点だけを抜き出した見本。正は src/lib/emails/send.ts と send-result.ts。
+// 契約は send.ts の冒頭のコメントと CLAUDE.md「メール送信の結果と失敗の記録」に従う。#1193)
+import { randomUUID } from 'crypto';
+import { createLogger } from '@/lib/db-logger';
+import { EmailSendError, type SendEmailResult } from '@/lib/emails/send-result';
+import { EmailEnvelopeSchema, type EmailEnvelope } from './envelope';
 
-export async function sendEmail(envelope: EmailEnvelope) {
-  // Zod で送信前検証 (空件名/不正アドレス検出)
-  const v = EmailEnvelopeSchema.parse(envelope);
+/**
+ * 配信の失敗でも例外を投げず、結果 (send-result.ts の SendEmailResult) を返す。
+ *  - 送れた:           { ok: true,  id, attempts, skipped: false, error: null }
+ *  - 送らなかった:     { ok: false, id: null, attempts: 0, skipped: true,  error: EmailSendError('not_configured') }
+ *                      (RESEND_API_KEY が無い。開発・テスト環境、または本番の設定漏れ)
+ *  - 送れなかった:     { ok: false, id: null, attempts, skipped: false, error: EmailSendError(<コード>) }
+ *                      (文面の不備 = invalid_envelope・再試行を使い切った・再試行しても直らない失敗)
+ * 失敗と「送らなかった」は sendEmail が app_logs (createLogger('email')) に残すので、呼び出し元は戻り値を見なくてもよい。
+ * 失敗に追加の処理をする呼び出し元だけが、send-result.ts の isEmailFailure / emailFailureReasons で判定する
+ * (skipped: true は失敗に数えない)。
+ */
+export async function sendEmail(envelope: EmailEnvelope, options: SendEmailOptions = {}): Promise<SendEmailResult> {
+  const logger = createLogger('email');
+  const { template, recipient } = describeEnvelope(envelope); // 文面の名前とマスクした宛先 (ログ用)
 
-  // API キーは送るときに getOptionalEnv で取り出す (`process.env.<変数名>!` とは書かない。#1182・#1434)。
-  // RESEND_API_KEY は任意の変数 (src/lib/env.ts の一覧) なので、無ければ undefined のまま Resend に渡さずに止める。
-  // message に変数名を入れない (変数名は getOptionalEnv が警告のログに残す。#1182・#1490)
-  const apiKey = getOptionalEnv('RESEND_API_KEY');
-  if (!apiKey) throw new Error('EMAIL_NOT_CONFIGURED: メールの送信の設定が無いため、メールを送信しませんでした');
-  const resend = new Resend(apiKey);
-
-  const result = await resend.emails.send({
-    from: v.from,
-    to: v.to,
-    subject: v.subject,
-    text: v.text,
-    html: v.html,
-    reply_to: v.reply_to,
-  });
-
-  if (result.error) {
-    throw new Error(`EMAIL_SEND_FAILED: ${result.error.message}`);
+  // Zod で送信前検証 (空件名/不正アドレス検出)。不正でも投げずに invalid_envelope の結果を返す
+  const parsed = EmailEnvelopeSchema.safeParse(envelope);
+  if (!parsed.success) {
+    const error = new EmailSendError('invalid_envelope', 'EMAIL_INVALID_ENVELOPE: …', null, 0, false);
+    logger.error('メールの内容が不正なため、送信しませんでした', error, { template, recipient, error_code: error.code, attempts: 0 });
+    return { ok: false, id: null, attempts: 0, skipped: false, error };
   }
-  return result.data;
+
+  // API キーが無ければ送らない。投げずに、警告を app_logs に残して skipped の結果を返す。
+  // 変数名は警告のログにだけ残し、message には入れない (#1182・#1490)
+  if (!process.env.RESEND_API_KEY) {
+    logger.warn('RESEND_API_KEY が未設定のため、メールを送信しませんでした', { template, recipient });
+    const error = new EmailSendError(
+      'not_configured',
+      'EMAIL_NOT_CONFIGURED: メールの送信の設定が無いため、メールを送信しませんでした',
+      null,
+      0,
+      false,
+    );
+    return { ok: false, id: null, attempts: 0, skipped: true, error };
+  }
+
+  // 送信。Idempotency-Key を付け (再試行でも同じキー)、429 / 5xx / 通信エラーだけ 500ms → 1s → 2s で最大 3 回再試行する
+  const idempotencyKey = options.idempotencyKey ?? randomUUID();
+  // …(送信と再試行のループ。成功したら { ok: true, id, attempts, skipped: false, error: null } を返す。
+  //    失敗で抜けたときは、送った回数 attempts と最後の失敗 lastFailure (code・message・statusCode・retryable) が残る)
+
+  // 送れなかった。投げずに、app_logs に残して失敗の結果を返す
+  const error = new EmailSendError(lastFailure.code, `EMAIL_SEND_FAILED: ${lastFailure.message}`, lastFailure.statusCode, attempts, lastFailure.retryable);
+  logger.error('メールの送信に失敗しました', error, { template, recipient, error_code: error.code, attempts });
+  return { ok: false, id: null, attempts, skipped: false, error };
 }
 ```
 

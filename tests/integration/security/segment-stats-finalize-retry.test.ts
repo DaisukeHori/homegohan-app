@@ -46,6 +46,37 @@ if (!url || !anonKey || !serviceKey) {
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const MIGRATION_FILE = 'supabase/migrations/20261011120000_segment_stats_finalize_retry.sql';
 const MIGRATION_SQL = fs.readFileSync(path.join(REPO_ROOT, MIGRATION_FILE), 'utf8');
+const MIGRATIONS_DIR = 'supabase/migrations';
+
+/** `--` から行末までのコメントを除く */
+function stripLineComments(sql: string): string {
+  return sql
+    .split('\n')
+    .map((line) => line.replace(/--.*$/, ''))
+    .join('\n');
+}
+
+/** SQL が CREATE OR REPLACE する public の関数の名前 */
+function replacedFunctionNames(sql: string): Set<string> {
+  return new Set([...stripLineComments(sql).matchAll(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.(\w+)\s*\(/gi)].map((m) => m[1]));
+}
+
+/**
+ * 本 migration より後の migration のうち、本 migration が作る関数を作り直すもの (番号の順)。
+ * A で本 migration を流し直すと、それらの関数が本 migration の時点の定義に戻る
+ * (例: 20261011130000_count_meals_per_user_exclude_hidden.sql の count_meals_per_user。#1445)。
+ * 同じ DB を使うほかのテストが最新の定義を前提にしているので、流し直したあとにこれらを番号の順に流して最新の定義へ戻す
+ */
+const LATER_REDEFINING_MIGRATIONS: Array<{ file: string; sql: string }> = (() => {
+  const own = path.basename(MIGRATION_FILE);
+  const ownFunctions = replacedFunctionNames(MIGRATION_SQL);
+  return fs
+    .readdirSync(path.join(REPO_ROOT, MIGRATIONS_DIR))
+    .filter((name) => /^\d{14}_.+\.sql$/.test(name) && name > own)
+    .sort()
+    .map((name) => ({ file: `${MIGRATIONS_DIR}/${name}`, sql: fs.readFileSync(path.join(REPO_ROOT, MIGRATIONS_DIR, name), 'utf8') }))
+    .filter(({ sql }) => [...replacedFunctionNames(sql)].some((fn) => ownFunctions.has(fn)));
+})();
 
 const JOB_NAME = 'calculate-segment-stats-finalize-retry';
 /** UTC 15:20 と 15:35 = JST 0:20 と 0:35 */
@@ -158,15 +189,28 @@ describe('#1500 A. pg_cron のジョブ', () => {
   it('migration を流し直しても、ジョブは 1 つのまま (同じ名前のジョブを外してから登録する)。表の行も消えない', async () => {
     const before = await asPostgres(`SELECT count(*)::int AS n FROM public.${TABLE};`);
 
-    await asPostgres(MIGRATION_SQL);
-    await asPostgres(MIGRATION_SQL);
+    try {
+      await asPostgres(MIGRATION_SQL);
+      await asPostgres(MIGRATION_SQL);
 
-    const jobs = await scheduledJobs();
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0]).toMatchObject({ schedule: JOB_SCHEDULE, username: 'postgres', active: true });
-    const after = await asPostgres(`SELECT count(*)::int AS n FROM public.${TABLE};`);
-    expect(Number(after[0].n)).toBe(Number(before[0].n));
+      const jobs = await scheduledJobs();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]).toMatchObject({ schedule: JOB_SCHEDULE, username: 'postgres', active: true });
+      const after = await asPostgres(`SELECT count(*)::int AS n FROM public.${TABLE};`);
+      expect(Number(after[0].n)).toBe(Number(before[0].n));
+    } finally {
+      // 流し直しで古い定義に戻った関数を、後の migration の定義へ戻す (同じ DB を使うほかのテストのため。#1445)
+      for (const later of LATER_REDEFINING_MIGRATIONS) await asPostgres(later.sql);
+    }
   }, 30_000);
+
+  it('流し直したあと、後の migration が作り直した関数は最新の定義に戻っている (count_meals_per_user は隠した行も除く。#1445)', async () => {
+    // 前提: 後の migration (20261011130000_count_meals_per_user_exclude_hidden.sql) を拾えている
+    expect(LATER_REDEFINING_MIGRATIONS.map((m) => path.basename(m.file))).toContain('20261011130000_count_meals_per_user_exclude_hidden.sql');
+    const [row] = await asPostgres(`SELECT pg_get_functiondef('public.count_meals_per_user()'::regprocedure) AS def;`);
+    const def = String(row.def).replace(/\s+/g, ' ');
+    expect(def).toMatch(/WHERE m\.is_sandbox = false AND m\.hidden_at IS NULL/);
+  });
 });
 
 // ---------------------------------------------------------------

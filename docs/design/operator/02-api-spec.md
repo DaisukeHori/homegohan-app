@@ -311,6 +311,9 @@ BAN 解除
   `paste_meal_to_family` と service_role だけ)。他人の行を自分のまとまりに入れる・まとまりから外す、はできない
 - 監査ログ (`admin_audit_logs.details`) に `content_id` (隠す対象) と `hidden` (隠したか)、この操作で新しく隠した行の ID の一覧 `hidden_ids`、
   隠せなかったときは `hide_error`、判定を保存したか `status_saved` (保存できなかった理由は `status_error`) を記録する。
+  隠す対象の行があったかを `content_found` に記録する (#1445。隠す操作をして行の有無が分かったときだけ true / false、それ以外は null)。
+  行がもう無い (持ち主が先に消した) ときは `hidden: false` / `content_found: false`。すでに隠れていた行は `hidden: true` / `content_found: true`
+  で、`hidden_ids` は空
   隠せなかったとき・隠したあとで判定を保存できなかったときも、監査ログ (severity `warn`) を残す
 - 画像ファイル (`photo_url` / `image_url`) そのものは隠さない (公開バケットの URL は、隠す前に見た人なら取得できる)。完全削除のジョブと合わせて別に扱う
 - `hidden_reason` は持ち主も読める列なので、解決メモ (`resolution_note`) は入れず、`moderation:<action>` の識別子を書く
