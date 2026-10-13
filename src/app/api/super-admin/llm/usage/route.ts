@@ -6,40 +6,38 @@
  * 以前は存在しない prompt_tokens / completion_tokens / cost_usd を select していたため、
  * PostgREST が 42703 で失敗し、この API は常に 500 になっていた (#1306)。
  * 画面が読むレスポンスの項目名 (cost_usd など) は変えず、値は estimated_cost_usd から作る。
- * 列の有無は tests/integration/security/select-columns-exist.test.ts で本番スキーマと突き合わせる。
+ * 今は列を DB の関数の中で読む (#1498)。関数が実在する列だけを読むことは、実 DB の
+ * tests/integration/security/llm-usage-summary.test.ts と super-admin-columns.test.ts で確かめる。
  *
  * 期間 (開始日・終了日) と日次の系列は JST の暦日で決める (#1433)。created_at は timestamptz なので、
  * 日付の文字列をそのまま渡さず (DB は UTC の 0 時 = JST 9 時と読み、JST の 0:00〜8:59 の行が前日に入る)、
- * JST 0 時の時刻にしてから絞る。日次の系列も created_at を JST の暦日にまとめる。
+ * JST 0 時の時刻にしてから絞る。日次の系列も created_at を JST の暦日にまとめる (DB の関数の中で)。
+ *
+ * 集計は DB の関数 llm_usage_summary (supabase/migrations/20261011110000_llm_usage_summary.sql) で行う (#1498)。
+ * 以前は行を 5,000 行まで読んで集計していたが、行は PostgREST の max_rows (既定 1,000) でも打ち切られるので、
+ * 1,000 行を超える期間の合計は実際より小さく、異常使用 (1 人・JST の 1 日に 5,000 回超) は事実上判定できなかった。
+ * 関数は全利用者の使用量を返すので service_role だけが呼べる。requireRole(['super_admin']) を通ったあとに
+ * service role のクライアント (getSupabaseAdmin) で呼ぶ。
+ * 開始日が終了日より後の期間は、関数を呼ぶ前に 400 (VALIDATION_ERROR) にする (関数は 22023 で拒むので、通すと 500 になる)。
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { jstDayOfTimestamp, jstDayRangeTimestamps, llmUsageRange } from '@/lib/jst-day-ranges';
-import { createClient } from '@/lib/supabase/server';
+import { jstDayRangeTimestamps, llmUsageRange } from '@/lib/jst-day-ranges';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { LLMUsageQuerySchema } from '@/lib/super-admin/llm-schemas';
-import { findLlmUsageAnomalousUsers, LLM_USAGE_UNKNOWN_USER } from '@/lib/super-admin/llm-usage-anomaly';
-import type { Tables } from '@/types/database.types';
-
-type LlmUsageRow = Pick<
-  Tables<'llm_usage_logs'>,
-  'model' | 'function_name' | 'estimated_cost_usd' | 'total_tokens' | 'user_id' | 'created_at'
->;
-
-/**
- * 集計に使う行数の上限。
- * 上限を超える期間の合計は実際より小さくなる。さらに PostgREST の max_rows (Supabase の既定は 1,000) でも
- * 黙って打ち切られるので、実際に集計される行数は 1 回の応答で返せる行数までに収まる。
- * 正確に出すには、データベース側で集計する関数 (RPC) が要る。
- */
-const MAX_ROWS = 5000;
+import { LLM_USAGE_FROM_AFTER_TO_MESSAGE, LLMUsageQuerySchema } from '@/lib/super-admin/llm-schemas';
+import {
+  LLM_USAGE_SUMMARY_RPC,
+  LlmUsageSummaryRpcSchema,
+  llmUsageSummaryRpcArgs,
+  toLlmUsageResponseData,
+} from '@/lib/super-admin/llm-usage-summary';
 
 export async function GET(request: NextRequest) {
   const logger = createLogger('GET /api/super-admin/llm/usage', generateRequestId());
   try {
     const user = await requireRole(['super_admin']);
-    const supabase = await createClient();
     const { searchParams } = new URL(request.url);
 
     const parsed = LLMUsageQuerySchema.safeParse(Object.fromEntries(searchParams));
@@ -54,38 +52,40 @@ export async function GET(request: NextRequest) {
 
     // 期間の計算 (開始日・終了日の既定は JST の暦日。#1433)
     const { fromDate, toDate } = llmUsageRange({ period, from, to });
+    // 開始日が終了日より後の期間 (custom の from > to、7d / 30d に過去の to を渡したとき) は入力の誤りなので 400 にし、DB には触れない。
+    // DB の関数は開始の時刻 ≥ 終わりの時刻を 22023 で拒む (呼び出し側の誤りの見張り) ので、通すとサーバーの障害 (500) として
+    // 記録されてしまう (#1498)。日付は YYYY-MM-DD なので文字列の大小が暦日の前後と一致する
+    if (fromDate > toDate) {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: '入力値が不正です',
+            details: { formErrors: [], fieldErrors: { from: [LLM_USAGE_FROM_AFTER_TO_MESSAGE] } },
+          },
+        },
+        { status: 400 },
+      );
+    }
     // created_at (timestamptz) と比べる時刻。開始日の JST 0 時から、終了日の翌日の JST 0 時の手前まで
     const { fromTimestamp, toTimestampExclusive } = jstDayRangeTimestamps(fromDate, toDate);
 
-    let query = supabase
-      .from('llm_usage_logs')
-      .select('model, function_name, estimated_cost_usd, total_tokens, user_id, created_at')
-      // Edge Function は LLM 呼び出しごとの行に加えて、1 回の実行ごとの合計行 (is_summary = true, model = 'mixed') を
-      // 入れる。合計行まで足すとトークン・コスト・リクエスト数が二重に数えられるため、呼び出しごとの行だけを集計する。
-      .eq('is_summary', false)
-      .gte('created_at', fromTimestamp)
-      .lt('created_at', toTimestampExclusive);
+    // requireRole を通ったあとにだけ service role のクライアントを作る (認可の前に作ると権限昇格になる)
+    const supabase = getSupabaseAdmin();
+    const { data: summary, error } = await supabase.rpc(
+      LLM_USAGE_SUMMARY_RPC,
+      llmUsageSummaryRpcArgs({ fromTimestamp, toTimestampExclusive, model, functionName, provider }),
+    );
 
-    if (model) query = query.eq('model', model);
-    if (functionName) query = query.eq('function_name', functionName);
-    // プロバイダー別の画面 (/super-admin/llm/[provider]) が渡す。llm_usage_logs.provider には openai / xai が入る
-    if (provider) query = query.eq('provider', provider);
-
-    // 並べ替えが無いと、上限や max_rows で打ち切られるときにどの行が落ちるかが決まらず、直近の行も落ちうる。
-    // 新しい行から取れば、打ち切られても落ちるのは古い行だけになる (created_at DESC の索引がある)
-    const { data: logs, error } = await query.order('created_at', { ascending: false }).limit(MAX_ROWS);
+    // 失敗の記録に付ける検索条件
+    const searchContext = { period, from: fromDate, to: toDate, model, function: functionName, provider };
 
     if (error) {
       // postgrest-js の error は Error ではない素のオブジェクトで、そのまま渡すと app_logs.error_message が
       // '[object Object]' になる。recordAdminAudit と同じく message を持つ Error に包んで渡す
-      logger.withUser(user.id).error('LLM 使用量ログの取得に失敗', new Error(error.message), {
+      logger.withUser(user.id).error('LLM 使用量の集計に失敗', new Error(error.message), {
         pg_code: error.code,
-        period,
-        from: fromDate,
-        to: toDate,
-        model,
-        function: functionName,
-        provider,
+        ...searchContext,
       });
       return NextResponse.json(
         { error: { code: 'INTERNAL_ERROR', message: 'LLM 使用量の取得に失敗しました' } },
@@ -93,79 +93,18 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const rows = (logs ?? []) as LlmUsageRow[];
-    // 単価表に無いモデル (grok など) は estimated_cost_usd が null なので、コストは 0 として足す
-    const costOf = (r: LlmUsageRow) => r.estimated_cost_usd ?? 0;
-    const tokensOf = (r: LlmUsageRow) => r.total_tokens ?? 0;
-
-    // 集計
-    const totalCostUsd = rows.reduce((s, r) => s + costOf(r), 0);
-    const JPY_RATE = 152;
-
-    // モデル別集計
-    const modelMap = new Map<string, { requests: number; tokens: number; cost_usd: number }>();
-    for (const r of rows) {
-      const m = r.model ?? 'unknown';
-      const cur = modelMap.get(m) ?? { requests: 0, tokens: 0, cost_usd: 0 };
-      modelMap.set(m, {
-        requests: cur.requests + 1,
-        tokens: cur.tokens + tokensOf(r),
-        cost_usd: cur.cost_usd + costOf(r),
-      });
-    }
-
-    // 機能別集計
-    const fnMap = new Map<string, { requests: number; cost_usd: number }>();
-    for (const r of rows) {
-      const fn = r.function_name ?? 'unknown';
-      const cur = fnMap.get(fn) ?? { requests: 0, cost_usd: 0 };
-      fnMap.set(fn, { requests: cur.requests + 1, cost_usd: cur.cost_usd + costOf(r) });
-    }
-
-    // ユーザー別集計 (Top 50)
-    const userMap = new Map<string, { requests: number; cost_usd: number }>();
-    for (const r of rows) {
-      const uid = r.user_id ?? LLM_USAGE_UNKNOWN_USER;
-      const cur = userMap.get(uid) ?? { requests: 0, cost_usd: 0 };
-      userMap.set(uid, { requests: cur.requests + 1, cost_usd: cur.cost_usd + costOf(r) });
-    }
-    // 異常使用は 1 日あたり (JST の暦日ごと) のリクエスト数で判定する (#1482。画面の文「1日 5,000 リクエスト超」と設計書のとおり。
-    // 以前は期間全体の件数で判定していて、7 日・30 日では文と食い違っていた)
-    const anomalousUsers = findLlmUsageAnomalousUsers(rows, jstDayOfTimestamp);
-    const topUsers = Array.from(userMap.entries())
-      .sort(([, a], [, b]) => b.requests - a.requests)
-      .slice(0, 50)
-      .map(([user_id, stats]) => ({
-        user_id,
-        email: null, // 別途 join が必要 (パフォーマンス上 omit)
-        requests: stats.requests,
-        cost_usd: Math.round(stats.cost_usd * 100000) / 100000,
-        is_anomaly: anomalousUsers.has(user_id),
-      }));
-
-    // 日次時系列 (JST の暦日ごと。created_at.slice(0, 10) は UTC の暦日になるので使わない)
-    const dateMap = new Map<string, { cost_usd: number; requests: number }>();
-    for (const r of rows) {
-      // created_at は期間の条件で絞っているので null の行は来ないが、列の定義上は null を取りうる
-      if (!r.created_at) continue;
-      const date = jstDayOfTimestamp(r.created_at);
-      const cur = dateMap.get(date) ?? { cost_usd: 0, requests: 0 };
-      dateMap.set(date, { cost_usd: cur.cost_usd + costOf(r), requests: cur.requests + 1 });
+    // 応答の形が想定と違うときは 500 にして記録する (黙って 0 件として扱うと、異常のバナーが静かに消える)
+    const parsedSummary = LlmUsageSummaryRpcSchema.safeParse(summary);
+    if (!parsedSummary.success) {
+      logger.withUser(user.id).error('LLM 使用量の集計の応答の形が想定と違う', new Error(parsedSummary.error.message), searchContext);
+      return NextResponse.json(
+        { error: { code: 'INTERNAL_ERROR', message: 'LLM 使用量の取得に失敗しました' } },
+        { status: 500 },
+      );
     }
 
     return NextResponse.json({
-      data: {
-        total_cost_usd: Math.round(totalCostUsd * 100) / 100,
-        total_cost_jpy: Math.round(totalCostUsd * JPY_RATE),
-        total_requests: rows.length,
-        total_tokens: rows.reduce((s, r) => s + tokensOf(r), 0),
-        by_model: Array.from(modelMap.entries()).map(([model, stats]) => ({ model, provider: getProvider(model), ...stats })),
-        by_function: Array.from(fnMap.entries()).map(([function_name, stats]) => ({ function: function_name, ...stats })),
-        top_users: topUsers,
-        timeseries: Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, stats]) => ({ date, ...stats })),
-        anomalies: topUsers.filter((u) => u.is_anomaly),
-        period: { from: fromDate, to: toDate },
-      },
+      data: toLlmUsageResponseData(parsedSummary.data, { from: fromDate, to: toDate }),
     });
   } catch (err) {
     if (err instanceof AuthError) {
@@ -178,12 +117,4 @@ export async function GET(request: NextRequest) {
     logger.error('LLM 使用量 API で予期しないエラー', err);
     return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: 'サーバーエラーが発生しました' } }, { status: 500 });
   }
-}
-
-function getProvider(model: string): string {
-  if (model.startsWith('grok')) return 'xai';
-  if (model.startsWith('gemini') || model.startsWith('imagen')) return 'gemini';
-  if (model.startsWith('claude')) return 'anthropic';
-  if (model.startsWith('gpt') || model.startsWith('o1')) return 'openai';
-  return 'unknown';
 }
