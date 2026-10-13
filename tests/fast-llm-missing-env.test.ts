@@ -117,7 +117,11 @@ describe('getFastLLMClient: XAI_API_KEY が無いとき (#1490)', () => {
     const client = getFastLLMClient();
 
     expect(client.apiKey).toBe('test-xai-key');
-    expect(h.logWarn).not.toHaveBeenCalled();
+    // XAI_API_KEY についての警告は出ない。ベース URL (XAI_BASE_URL) も getOptionalEnv で読むので (#1522)、
+    // XAI_BASE_URL が未設定ならその警告は出てよい。ここで見るのは XAI_API_KEY の警告だけ
+    await Promise.resolve();
+    const warnedNames = h.logWarn.mock.calls.map(([, metadata]) => (metadata as { envName?: string } | undefined)?.envName);
+    expect(warnedNames).not.toContain(ENV_NAME);
   });
 });
 
