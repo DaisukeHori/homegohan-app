@@ -187,8 +187,11 @@ const REPORTING_FLAGS = new Map<string, boolean>([
   ["--format", true],
   ["--output-file", true],
 ]);
-/** スクリプトがコマンドの前に足してよい環境変数 (結果の JSON の出力先) */
-const REPORTING_ENV = ["PLAYWRIGHT_JSON_OUTPUT_NAME"];
+/**
+ * スクリプトがコマンドの前に足してよい環境変数 (結果の JSON の出力先)。
+ * UNIT_FILE_TIMING_OUTPUT は scripts/vitest-file-timing-reporter.mjs (ファイルごとの所要を書く reporter。#1496) の出力先
+ */
+const REPORTING_ENV = ["PLAYWRIGHT_JSON_OUTPUT_NAME", "UNIT_FILE_TIMING_OUTPUT"];
 
 /** gitleaks ジョブの照合に使う値 */
 const GITLEAKS_STAGE = JOB_STAGES[SECURITY_WORKFLOW][GITLEAKS_JOB];
@@ -1356,11 +1359,11 @@ describe("検査ロジック自体 (ワークフローやスクリプトを変�
       // unit の vitest を消す (mobile の `npm test --silent` や `npm test -- --ci` で満たしたことにしない)
       [
         ".github/workflows/ci.yml",
-        '  run_in "$WT" "$log" npm test -- --reporter=default --reporter=json --outputFile="$ART/unit-vitest.json"\n',
+        '  run_in "$WT" "$log" env UNIT_FILE_TIMING_OUTPUT="$ART/unit-vitest-file-timing.json" npm test -- --reporter=default --reporter=json --outputFile="$ART/unit-vitest.json" --reporter=./scripts/vitest-file-timing-reporter.mjs\n',
         "",
       ],
       // CI に無い環境変数を前に置く (ヒープを盛る)
-      [".github/workflows/ci.yml", 'run_in "$WT" "$log" npm test --', 'run_in "$WT" "$log" env NODE_OPTIONS=--max-old-space-size=8192 npm test --'],
+      [".github/workflows/ci.yml", 'run_in "$WT" "$log" env UNIT_FILE_TIMING_OUTPUT=', 'run_in "$WT" "$log" env NODE_OPTIONS=--max-old-space-size=8192 UNIT_FILE_TIMING_OUTPUT='],
       // 対象を絞る引数を後ろに足す
       [".github/workflows/ci.yml", '--outputFile="$ART/unit-vitest.json"', '--outputFile="$ART/unit-vitest.json" tests/unit'],
       // jest を apps/mobile でなく直下で回す
