@@ -22,9 +22,14 @@ const UPSERT_CHUNK = 200;
 // 指標 total_meals (全期間の食事の記録の件数) のコード。有効な指標にこれがあるときだけ、件数を数える (#1491)
 const TOTAL_MEALS_METRIC_CODE = 'total_meals';
 // 利用者ごとの meals の件数を DB の中で数える関数 (supabase/migrations/20261011060000_count_meals_per_user.sql。
-// 運営が隠した行を数えないようにしたのは 20261011120000_count_meals_per_user_exclude_hidden.sql #1445)。
+// お試しの記録を数えないのは 20261011120000_segment_stats_finalize_retry.sql #1500、
+// 運営が隠した行も数えないのは 20261011130000_count_meals_per_user_exclude_hidden.sql #1445)。
 // meals の全行を読んで数えると、記録の件数だけ 1000 行ずつ往復する。これは記録のある利用者 1 人につき 1 行を返す
 const COUNT_MEALS_PER_USER_RPC = 'count_meals_per_user';
+// 確定の回 (previousPeriod: true) をやり終えた期間の記録 (supabase/migrations/20261011120000_segment_stats_finalize_retry.sql。#1500)。
+// 確定の回は JST 0:05 のほかに、失敗に備えて 0:20・0:35 にも同じ本文で呼ばれる (pg_cron のジョブ
+// calculate-segment-stats-finalize-retry)。ここに行がある期間は、2 回目以降の呼び出しでは何も読まず何も書かない
+const FINALIZED_PERIODS_TABLE = 'segment_stats_finalized_periods';
 
 /**
  * 指標の向き。metric_definitions.higher_is_better の DB 既定値は true なので、
@@ -82,6 +87,37 @@ Deno.serve(async (req) => {
 
     logger.info(`Starting segment stats calculation for period: ${periodType}${previousPeriod ? " (previous period)" : ""}`);
 
+    // 期間を計算 (JST の暦。Deno の実行環境は UTC なので、new Date() のローカル時刻では求めない #1211)
+    // previousPeriod のときは、今の期間の 1 つ前 (#1406)
+    const { periodStart, periodEnd } = previousPeriod
+      ? calculateJstPreviousPeriod(periodType)
+      : calculateJstPeriod(periodType);
+    logger.info(`Period (JST): ${periodStart} to ${periodEnd}`);
+
+    // 確定の回は、同じ期間についてすでにやり終えていたら、何も読まず何も書かずに終える (#1500)。
+    // JST 0:05 の回が失敗したときのために、0:20・0:35 にも同じ本文で呼ばれる (再試行)。0:05 の回が成功していたら、
+    // 再試行は集計し直さない (期間が終わったあとに足された記録で、確定した値・バッジを変えない)。
+    // バッジ (user_badges) は ignoreDuplicates なので、やり直しても同じバッジが 2 つ付くことは無い
+    if (previousPeriod) {
+      const finalizedAt = await findFinalizedAt(periodType, periodStart);
+      if (finalizedAt !== null) {
+        logger.info(`Already finalized at ${finalizedAt}: nothing to do`);
+        return new Response(JSON.stringify({
+          success: true,
+          alreadyFinalized: true,
+          finalizedAt,
+          periodType,
+          previousPeriod,
+          badgesJudged: false,
+          periodStart,
+          periodEnd,
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+    }
+
     // 1. メトリクス定義を取得
     const { data: metrics, error: metricsError } = await supabaseAdmin
       .from('metric_definitions')
@@ -98,12 +134,7 @@ Deno.serve(async (req) => {
     
     throwIfError('segment_definitions の取得', segmentsError);
 
-    // 3. 期間を計算 (JST の暦。Deno の実行環境は UTC なので、new Date() のローカル時刻では求めない #1211)
-    //    previousPeriod のときは、今の期間の 1 つ前 (#1406)
-    const { periodStart, periodEnd } = previousPeriod
-      ? calculateJstPreviousPeriod(periodType)
-      : calculateJstPeriod(periodType);
-    logger.info(`Period (JST): ${periodStart} to ${periodEnd}`);
+    // 3. 期間は上で計算済み (確定の回をやり終えたかを見るのに要るため、最初に求める)
 
     // 4. 全ユーザーのメトリクスを計算
     const userMetricsMap = await calculateAllUserMetrics(metrics!, periodType, periodStart, periodEnd);
@@ -128,12 +159,15 @@ Deno.serve(async (req) => {
     const badgesJudged = previousPeriod;
     if (badgesJudged) {
       await awardSegmentBadges(periodType, periodStart, userMetricsMap);
+      // 8. 確定の回をやり終えたことを記録する (#1500)。ここまでのどこかで失敗したら記録しないので、次の再試行がやり直す
+      await recordFinalized(periodType, periodStart, periodEnd);
     } else {
       logger.info('Badges are not judged: the current period is still in progress (only a finalized previous period is judged)');
     }
 
     return new Response(JSON.stringify({
       success: true,
+      alreadyFinalized: false,
       processedUsers: userMetricsMap.size,
       processedSegments: segments!.length,
       periodType,
@@ -154,6 +188,37 @@ Deno.serve(async (req) => {
     });
   }
 });
+
+// =====================================================
+// 確定の回をやり終えた期間の記録 (#1500)
+// =====================================================
+
+/** 確定の回をやり終えた時刻 (期間の種類と開始日で引く)。まだなら null */
+async function findFinalizedAt(periodType: string, periodStart: string): Promise<string | null> {
+  const { data, error } = await supabaseAdmin
+    .from(FINALIZED_PERIODS_TABLE)
+    .select('finalized_at')
+    .eq('period_type', periodType)
+    .eq('period_start', periodStart)
+    .maybeSingle();
+  throwIfError(`${FINALIZED_PERIODS_TABLE} の取得`, error);
+  const finalizedAt = (data as { finalized_at?: unknown } | null)?.finalized_at;
+  return typeof finalizedAt === 'string' ? finalizedAt : null;
+}
+
+/**
+ * 確定の回をやり終えたことを記録する。同じ期間の行がすでにあれば何もしない (ignoreDuplicates。最初にやり終えた時刻を残す)。
+ * 記録に失敗したら例外にする (500)。記録できなくても、次の再試行が集計し直すだけで、バッジは増えない
+ */
+async function recordFinalized(periodType: string, periodStart: string, periodEnd: string): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from(FINALIZED_PERIODS_TABLE)
+    .upsert(
+      { period_type: periodType, period_start: periodStart, period_end: periodEnd, finalized_at: new Date().toISOString() },
+      { onConflict: 'period_type,period_start', ignoreDuplicates: true },
+    );
+  throwIfError(`${FINALIZED_PERIODS_TABLE} の保存`, error);
+}
 
 // =====================================================
 // ユーザーメトリクス計算
@@ -208,6 +273,8 @@ interface MealCountRow {
 
 /**
  * 利用者ごとの meals の件数 (指標 total_meals)。DB の関数 count_meals_per_user で数える (#1491)。
+ * ハンズオンのお試しの記録 (is_sandbox = true) は、関数の側で数えない (migration 20261011120000。#1500)。
+ * 運営が隠した食事 (hidden_at が入った行) も、関数の側で数えない (migration 20261011130000。#1445)。
  * 以前は meals の全行 (user_id) を読んで、ここで数えていた。返る行は記録のある利用者 1 人につき 1 行で、
  * 1000 行を超えるときは fetchAllRows が user_id の順でページ送りする (user_id は 1 人 1 行なので並びが一意に決まる)
  */
@@ -254,15 +321,18 @@ async function fetchBulkData(periodStart: string, periodEnd: string, metricCodes
       fetchAllRows<{ user_id: string; current_streak: number | null }>('health_streaks (breakfast) の取得', () =>
         supabaseAdmin.from('health_streaks').select('user_id, current_streak').eq('streak_type', 'breakfast'),
       ),
-      // 運営が隠した食事 (hidden_at が入った行。#1101) は、比較ランキングの集計に数えない (#1445)。
-      // service role は RLS を通らないので、ここで絞る (count_meals_per_user も同じく除く。migration 20261011120000)
+      // ハンズオン (チュートリアル) のお試しの記録 (meals.is_sandbox = true) は実際の食事ではないので数えない
+      // (planned_meals・count_meals_per_user・GET /api/badges と同じ扱い。#1500)
+      // 運営が隠した食事 (hidden_at が入った行。#1101) も、比較ランキングの集計に数えない (#1445)。
+      // service role は RLS を通らないので、ここで絞る (count_meals_per_user も同じく除く。migration 20261011130000)
       fetchAllRows<{ user_id: string; eaten_at: string }>('meals (期間内) の取得', () =>
         supabaseAdmin
           .from('meals')
           .select('user_id, eaten_at')
+          .eq('is_sandbox', false)
+          .is('hidden_at', null)
           .gte('eaten_at', mealsRange.from)
-          .lt('eaten_at', mealsRange.before)
-          .is('hidden_at', null),
+          .lt('eaten_at', mealsRange.before),
       ),
       // planned_meals に user_id / 日付の列は無い。所有者と日付は daily_meal_id でつながる user_daily_meals (user_id, day_date) にある
       // (以前の meal_plan_days / meal_plans は date-based model への移行で削除済み。本番にも無い #1306)。

@@ -107,6 +107,8 @@ const SEGMENT = { id: "s-all", code: "all", name: "全ユーザー", axes: {}, l
 const TOTAL_MEALS_METRIC = { id: "m-total", code: "total_meals", name: "総食事数", higher_is_better: true, is_active: true };
 /** 利用者ごとの meals の件数を数える DB の関数 (supabase/migrations/20261011060000_count_meals_per_user.sql) */
 const COUNT_MEALS_RPC = "count_meals_per_user";
+/** 確定の回をやり終えた期間の表 (supabase/migrations/20261011120000_segment_stats_finalize_retry.sql。#1500) */
+const FINALIZED_TABLE = "segment_stats_finalized_periods";
 
 interface PlannedRow {
   meal_type: string;
@@ -147,11 +149,20 @@ interface Db {
   metrics?: Row[];
   /** 前の期間の user_metrics (変化率の計算元) */
   prevMetrics: Row[];
-  /** meals の行 (user_id, eaten_at)。省略すると空。eaten_at の絞り込み (gte / gt / lte / lt) は問い合わせのとおりに適用する */
+  /**
+   * meals の行 (user_id, eaten_at, is_sandbox)。省略すると空。is_sandbox を省いた行は false (DB の既定値)。
+   * eaten_at の絞り込み (gte / gt / lte / lt) と is_sandbox の eq は、問い合わせのとおりに適用する
+   */
   meals?: Row[];
   badges: Row[];
-  /** 書き込まれた行 */
-  saved: { user_metrics: Row[]; segment_stats: Row[]; user_segment_rankings: Row[]; user_badges: Row[] };
+  /** 書き込まれた行。segment_stats_finalized_periods は、テストの前からある行 (確定の回をやり終えた期間) も入れられる */
+  saved: {
+    user_metrics: Row[];
+    segment_stats: Row[];
+    user_segment_rankings: Row[];
+    user_badges: Row[];
+    segment_stats_finalized_periods: Row[];
+  };
   /** 失敗させたいクエリなら error を返す */
   fail?: (query: RecordedQuery) => QueryOutcome["error"] | undefined;
 }
@@ -162,14 +173,17 @@ function newDb(overrides: Partial<Db> = {}): Db {
     profiles: [1, 2, 3, 4, 5].map((n) => ({ id: uid(n), age_group: "30s", gender: "female", perf_modes: null })),
     prevMetrics: [],
     badges: [],
-    saved: { user_metrics: [], segment_stats: [], user_segment_rankings: [], user_badges: [] },
+    saved: { user_metrics: [], segment_stats: [], user_segment_rankings: [], user_badges: [], segment_stats_finalized_periods: [] },
     ...overrides,
   };
 }
 
+/** meals の行の is_sandbox (省いた行は DB の既定値の false) */
+const isSandboxMeal = (row: Row): boolean => row.is_sandbox === true;
+
 /**
- * meals への問い合わせの eaten_at の絞り込み (gte / gt / lte / lt) と、hidden_at の絞り込み (is('hidden_at', null)。#1445) を、
- * PostgREST と同じように行へ適用する
+ * meals への問い合わせの eaten_at の絞り込み (gte / gt / lte / lt) と、is_sandbox の eq (#1500) と、
+ * hidden_at の絞り込み (is('hidden_at', null)。#1445) を、PostgREST と同じように行へ適用する
  */
 function mealsWithin(rows: Row[], query: RecordedQuery): Row[] {
   const visibleOnly = argsOf(query, "is").some((args) => args[0] === "hidden_at" && args[1] === null);
@@ -178,7 +192,9 @@ function mealsWithin(rows: Row[], query: RecordedQuery): Row[] {
     return value === undefined ? undefined : Date.parse(String(value));
   };
   const [gte, gt, lte, lt] = [bound("gte"), bound("gt"), bound("lte"), bound("lt")];
+  const sandboxFilter = argsOf(query, "eq").find((args) => args[0] === "is_sandbox");
   return rows.filter((row) => {
+    if (sandboxFilter && isSandboxMeal(row) !== sandboxFilter[1]) return false;
     const at = Date.parse(String(row.eaten_at));
     if (visibleOnly && row.hidden_at != null) return false;
     return (gte === undefined || at >= gte) && (gt === undefined || at > gt) && (lte === undefined || at <= lte) && (lt === undefined || at < lt);
@@ -187,12 +203,13 @@ function mealsWithin(rows: Row[], query: RecordedQuery): Row[] {
 
 /**
  * count_meals_per_user の結果 (利用者ごとに 1 行。user_id の順) を、meals の行から作る。
- * DB の関数と同じく、運営が隠した行 (hidden_at が入った行) は数えない (migration 20261011120000。#1445)
+ * DB の関数と同じく、ハンズオンのお試しの記録 (is_sandbox = true。migration 20261011120000。#1500) と、
+ * 運営が隠した行 (hidden_at が入った行。migration 20261011130000。#1445) は数えない
  */
 function countMealsPerUser(rows: Row[]): Array<{ user_id: string; meal_count: number }> {
   const counts = new Map<string, number>();
   for (const row of rows) {
-    if (row.hidden_at != null) continue;
+    if (isSandboxMeal(row) || row.hidden_at != null) continue;
     counts.set(row.user_id, (counts.get(row.user_id) ?? 0) + 1);
   }
   return [...counts.entries()]
@@ -229,8 +246,25 @@ function install(db: Db) {
       case "badges":
         return { data: db.badges };
       case rpcTable(COUNT_MEALS_RPC):
-        // DB の関数と同じく、meals の全行 (期間・is_sandbox で絞らない) を user_id でまとめた件数。並びは user_id の順
+        // DB の関数と同じく、meals の全期間の行 (お試しの記録を除く) を user_id でまとめた件数。並びは user_id の順
         return { data: pageOf(countMealsPerUser(db.meals ?? []), query) };
+
+      case FINALIZED_TABLE: {
+        if (firstMethodOf(query) === "upsert") {
+          // ignoreDuplicates: 同じ (period_type, period_start) の行がすでにあれば何もしない
+          for (const row of upsertedRows(query)) {
+            const exists = db.saved.segment_stats_finalized_periods.some(
+              (r) => r.period_type === row.period_type && r.period_start === row.period_start,
+            );
+            if (!exists) db.saved.segment_stats_finalized_periods.push(row);
+          }
+          return { data: null };
+        }
+        const row = db.saved.segment_stats_finalized_periods.find(
+          (r) => r.period_type === eqValue(query, "period_type") && r.period_start === eqValue(query, "period_start"),
+        );
+        return { data: row ? { finalized_at: row.finalized_at } : null };
+      }
 
       case "user_metrics": {
         if (firstMethodOf(query) === "upsert") {
@@ -306,7 +340,7 @@ function metricRow(db: Db, userNo: number, metricId: string): Row {
   return row;
 }
 
-const WRITE_TABLES = ["user_metrics", "segment_stats", "user_segment_rankings", "user_badges"];
+const WRITE_TABLES = ["user_metrics", "segment_stats", "user_segment_rankings", "user_badges", FINALIZED_TABLE];
 
 /** 何かを書き込むクエリ (upsert) が 1 つも発行されていないこと */
 function expectNoWrites(queries: RecordedQuery[]) {
@@ -1076,6 +1110,8 @@ describe("calculate-segment-stats: 集計期間は JST の暦で決まる (#1211
     expect(argsOf(inPeriod[0], "gte")).toEqual([["eaten_at", "2026-07-12T15:00:00.000Z"]]); // JST 7/13 0:00 (含む)
     expect(argsOf(inPeriod[0], "lt")).toEqual([["eaten_at", "2026-07-19T15:00:00.000Z"]]); // JST 7/20 0:00 (含まない)
     expect(argsOf(inPeriod[0], "lte")).toEqual([]);
+    // ハンズオンのお試しの記録は数えない (#1500)
+    expect(argsOf(inPeriod[0], "eq")).toEqual([["is_sandbox", false]]);
     // 運営が隠した食事は数えない (#1445)
     expect(argsOf(inPeriod[0], "is")).toEqual([["hidden_at", null]]);
 
@@ -1494,5 +1530,232 @@ describe("calculate-segment-stats: total_meals の件数は DB の関数 count_m
     expect(rpc.slice(1).map((q) => argsOf(q, "range")[0])).toEqual([[0, 999], [1000, 1999], [1205, 2204]]);
     expect(metricRow(db, 1, "m-total").value).toBe(1);
     expect(metricRow(db, userCount, "m-total").value).toBe(2);
+  });
+});
+
+// ── ハンズオンのお試しの記録 (meals.is_sandbox = true) は数えない (#1500) ─────────────────────────────
+//
+// planned_meals は user_daily_meals.is_sandbox = false で絞っていたが、期間内の meals と count_meals_per_user は絞っていなかった。
+// お試しの記録 1 件だけで weekly_record_rate や total_meals が 0 を超え、ほかの人が全員 0 なら、確定の回で取り消されない
+// 1 位のバッジが付く筋道があった。GET /api/badges (src/app/api/badges/route.ts) もお試しの記録を数えない。
+
+describe("calculate-segment-stats: ハンズオンのお試しの記録 (meals.is_sandbox) は数えない (#1500)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // JST 月曜 2026-10-12 0:05 (UTC 日曜 2026-10-11 15:05)。確定の回は直前の週 (JST 10/5〜10/11) を集計し直す
+  const FINALIZE_AT = "2026-10-11T15:05:00.000Z";
+  // 直前の週の中の時刻 (JST 木曜 10/8 12:00)
+  const IN_PREVIOUS_WEEK = "2026-10-08T03:00:00.000Z";
+  const RECORD_RATE_METRIC = { id: "m-rec", code: "weekly_record_rate", name: "週の記録率", higher_is_better: true, is_active: true };
+  const meal = (no: number, eatenAt: string, isSandbox: boolean) => ({ user_id: uid(no), eaten_at: eatenAt, is_sandbox: isSandbox });
+
+  it("期間内の記録率と total_meals に、お試しの記録を入れない (お試しの記録だけの人は 0)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(FINALIZE_AT));
+    const db = newDb({
+      metrics: [RECORD_RATE_METRIC, TOTAL_MEALS_METRIC],
+      planned: [],
+      meals: [
+        // u1: お試しの記録だけ → 記録率 0・total_meals 0
+        meal(1, IN_PREVIOUS_WEEK, true),
+        // u2: 実際の記録 1 件と、お試しの記録 1 件 → 記録率 14 (7 日のうち 1 日)・total_meals 1
+        meal(2, IN_PREVIOUS_WEEK, false),
+        meal(2, "2026-10-09T03:00:00.000Z", true),
+      ],
+    });
+    const { queries } = install(db);
+
+    const { res } = await call({ periodType: "weekly", previousPeriod: true });
+
+    expect(res.status).toBe(200);
+    const inPeriod = queriesOf(queries, "meals");
+    expect(inPeriod).toHaveLength(1);
+    expect(argsOf(inPeriod[0], "eq")).toEqual([["is_sandbox", false]]);
+    expect([1, 2, 3].map((no) => metricRow(db, no, "m-rec").value)).toEqual([0, 14, 0]);
+    expect([1, 2, 3].map((no) => metricRow(db, no, "m-total").value)).toEqual([0, 1, 0]);
+  });
+
+  it("お試しの記録だけを持つ人は、ほかの全員が 0 でも 1 位のバッジが付かない (実際の記録なら付く)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(FINALIZE_AT));
+    const metrics = [RECORD_RATE_METRIC, TOTAL_MEALS_METRIC];
+
+    const sandboxOnly = newDb({ metrics, planned: [], badges: ALL_BADGES, meals: [meal(1, IN_PREVIOUS_WEEK, true)] });
+    install(sandboxOnly);
+    const sandboxResult = await call({ periodType: "weekly", previousPeriod: true });
+    expect(sandboxResult.res.status).toBe(200);
+    expect(sandboxResult.json).toMatchObject({ badgesJudged: true });
+    // 全員 0 = 比べる意味の無い分布なので、だれにも付かない
+    expect(sandboxOnly.saved.user_badges).toEqual([]);
+    expect(sandboxOnly.saved.user_segment_rankings.filter((r) => r.user_id === uid(1)).map((r) => r.value)).toEqual([0, 0]);
+
+    // 同じ 1 件が実際の記録なら、u1 は 1 位でバッジが付く (このテストが空振りしていないことの確認)
+    const realRecord = newDb({ metrics, planned: [], badges: ALL_BADGES, meals: [meal(1, IN_PREVIOUS_WEEK, false)] });
+    install(realRecord);
+    const realResult = await call({ periodType: "weekly", previousPeriod: true });
+    expect(realResult.res.status).toBe(200);
+    expect(awardedByCode(realRecord)).toMatchObject({ segment_rank_1: [1] });
+  });
+});
+
+// ── 確定の回は、やり終えた期間では何もしない (再試行で二重に判定しない) (#1500) ─────────────────────────
+//
+// 確定の回 (JST 0:05) が失敗したときのために、pg_cron のジョブ calculate-segment-stats-finalize-retry が JST 0:20・0:35 に
+// 同じ本文 { periodType, previousPeriod: true } で呼ぶ (supabase/migrations/20261011120000_segment_stats_finalize_retry.sql)。
+// 確定の回をやり終えたら segment_stats_finalized_periods に期間を記録し、記録がある期間への確定の回は何も読まず何も書かない。
+
+describe("calculate-segment-stats: 確定の回は、やり終えた期間では何もしない (#1500)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // JST 月曜 2026-10-12 0:05 (確定の回) と 0:20 (1 回目の再試行)。どちらも直前の週は JST 10/5〜10/11
+  const FINALIZE_AT = "2026-10-11T15:05:00.000Z";
+  const RETRY_AT = "2026-10-11T15:20:00.000Z";
+  const PREVIOUS_WEEK = { periodStart: "2026-10-05", periodEnd: "2026-10-11" };
+
+  /** u1 だけが朝食を 1 回記録している (確定の回で u1 に 1 位などのバッジが付く) */
+  const onlyU1Recorded = () => newDb({ planned: [pm(1, "breakfast", true, 5)], badges: ALL_BADGES });
+
+  async function callAt(at: string, body: Record<string, unknown> = FINALIZED) {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(at));
+    return call(body);
+  }
+
+  it("確定の回をやり終えたら、その期間を記録する (種類・開始日・終了日・時刻)", async () => {
+    const db = onlyU1Recorded();
+    install(db);
+
+    const { res, json } = await callAt(FINALIZE_AT);
+
+    expect(res.status).toBe(200);
+    expect(json).toMatchObject({ success: true, alreadyFinalized: false, badgesJudged: true, ...PREVIOUS_WEEK });
+    expect(db.saved.segment_stats_finalized_periods).toEqual([
+      { period_type: "weekly", period_start: "2026-10-05", period_end: "2026-10-11", finalized_at: expect.any(String) },
+    ]);
+    expect(db.saved.user_badges.length).toBeGreaterThan(0);
+  });
+
+  it("2 回目の確定の回 (再試行) は、そのあとに記録が増えていても、何も読まず何も書かず、バッジを増やさない", async () => {
+    const db = onlyU1Recorded();
+    install(db);
+    const first = await callAt(FINALIZE_AT);
+    expect(first.res.status).toBe(200);
+    const badgesAfterFirst = [...db.saved.user_badges];
+    const writesAfterFirst = {
+      user_metrics: db.saved.user_metrics.length,
+      segment_stats: db.saved.segment_stats.length,
+      user_segment_rankings: db.saved.user_segment_rankings.length,
+    };
+    expect(badgesAfterFirst.length).toBeGreaterThan(0);
+
+    // 期間が終わったあとに、u2 が直前の週の分をまとめて記録した (集計し直せば、u2 も 1 位になって新しいバッジが付く)
+    db.planned = [pm(1, "breakfast", true, 5), pm(2, "breakfast", true, 5), pm(2, "lunch", true, 5)];
+    const { queries } = install(db);
+
+    const { res, json } = await callAt(RETRY_AT);
+
+    expect(res.status).toBe(200);
+    expect(json).toEqual({
+      success: true,
+      alreadyFinalized: true,
+      finalizedAt: db.saved.segment_stats_finalized_periods[0].finalized_at,
+      periodType: "weekly",
+      previousPeriod: true,
+      badgesJudged: false,
+      ...PREVIOUS_WEEK,
+    });
+    // 読んだのは、やり終えたかの確認だけ
+    expect(queries.map((q) => q.table)).toEqual([FINALIZED_TABLE]);
+    expect(eqValue(queries[0], "period_type")).toBe("weekly");
+    expect(eqValue(queries[0], "period_start")).toBe("2026-10-05");
+    expectNoWrites(queries);
+    expect(db.saved.user_badges).toEqual(badgesAfterFirst);
+    expect({
+      user_metrics: db.saved.user_metrics.length,
+      segment_stats: db.saved.segment_stats.length,
+      user_segment_rankings: db.saved.user_segment_rankings.length,
+    }).toEqual(writesAfterFirst);
+    expect(db.saved.segment_stats_finalized_periods).toHaveLength(1);
+  });
+
+  it("1 回目が途中で失敗した (記録が無い) なら、再試行が集計し直してバッジを判定し、期間を記録する", async () => {
+    const db = onlyU1Recorded();
+    let failBadgeSave = true;
+    db.fail = (q) => (failBadgeSave && q.table === "user_badges" ? { message: "canceling statement due to statement timeout", code: "57014" } : undefined);
+    install(db);
+
+    const first = await callAt(FINALIZE_AT);
+    expect(first.res.status).toBe(500);
+    expect(db.saved.segment_stats_finalized_periods).toEqual([]);
+    expect(db.saved.user_badges).toEqual([]);
+
+    failBadgeSave = false;
+    const { res, json } = await callAt(RETRY_AT);
+
+    expect(res.status).toBe(200);
+    expect(json).toMatchObject({ success: true, alreadyFinalized: false, badgesJudged: true, ...PREVIOUS_WEEK });
+    expect(awardedByCode(db)).toMatchObject({ segment_rank_1: [1] });
+    expect(db.saved.segment_stats_finalized_periods).toHaveLength(1);
+  });
+
+  it("記録があるのが別の期間 (前の週・同じ開始日の別の種類) なら、何もしないことにはならない", async () => {
+    const db = onlyU1Recorded();
+    db.saved.segment_stats_finalized_periods.push(
+      { period_type: "weekly", period_start: "2026-09-28", period_end: "2026-10-04", finalized_at: "2026-10-04T15:05:10.000Z" },
+      { period_type: "daily", period_start: "2026-10-05", period_end: "2026-10-05", finalized_at: "2026-10-05T15:05:10.000Z" },
+    );
+    install(db);
+
+    const { res, json } = await callAt(FINALIZE_AT);
+
+    expect(res.status).toBe(200);
+    expect(json).toMatchObject({ alreadyFinalized: false, badgesJudged: true, ...PREVIOUS_WEEK });
+    expect(db.saved.user_badges.length).toBeGreaterThan(0);
+    expect(db.saved.segment_stats_finalized_periods).toHaveLength(3);
+  });
+
+  it("今の期間を集計する回 (毎時の回・手動) は、記録を読まず書かない", async () => {
+    const db = onlyU1Recorded();
+    const { queries } = install(db);
+
+    const { res, json } = await callAt(RETRY_AT, { periodType: "weekly" });
+
+    expect(res.status).toBe(200);
+    expect(json).toMatchObject({ success: true, alreadyFinalized: false, previousPeriod: false });
+    expect(queriesOf(queries, FINALIZED_TABLE)).toEqual([]);
+    expect(db.saved.segment_stats_finalized_periods).toEqual([]);
+  });
+
+  it("やり終えたかの確認に失敗したら、集計せず 500 で返してログに残す (確認できないまま集計し直さない)", async () => {
+    const db = onlyU1Recorded();
+    db.fail = (q) => (q.table === FINALIZED_TABLE ? { message: "permission denied", code: "42501" } : undefined);
+    const { queries } = install(db);
+
+    const { res, json } = await callAt(FINALIZE_AT);
+
+    expect(res.status).toBe(500);
+    expect(json.error).toContain(`${FINALIZED_TABLE} の取得`);
+    expectNoWrites(queries);
+    expect(h.errors).toHaveLength(1);
+  });
+
+  it("期間の記録に失敗したら、500 で返す (次の再試行が集計し直す。バッジは ignoreDuplicates で増えない)", async () => {
+    const db = onlyU1Recorded();
+    db.fail = (q) => (q.table === FINALIZED_TABLE && firstMethodOf(q) === "upsert" ? { message: "permission denied", code: "42501" } : undefined);
+    const { queries } = install(db);
+
+    const { res, json } = await callAt(FINALIZE_AT);
+
+    expect(res.status).toBe(500);
+    expect(json.error).toContain(`${FINALIZED_TABLE} の保存`);
+    // 記録はバッジの判定のあと (バッジの保存に失敗したら記録しない)
+    const tables = queries.map((q) => q.table);
+    expect(tables.lastIndexOf("user_badges")).toBeLessThan(tables.lastIndexOf(FINALIZED_TABLE));
+    const upsert = queriesOf(queries, FINALIZED_TABLE).find((q) => firstMethodOf(q) === "upsert")!;
+    expect(argsOf(upsert, "upsert")[0][1]).toEqual({ onConflict: "period_type,period_start", ignoreDuplicates: true });
   });
 });
