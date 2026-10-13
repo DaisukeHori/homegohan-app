@@ -2,13 +2,14 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { GoogleGenAI, createUserContent } from "@google/genai";
 import {
   DEFAULT_MEAL_IMAGE_MODEL,
-  deriveMealCoverImage,
+  applyGeneratedDishImage,
   type MealImageDish,
 } from "../_shared/meal-image.ts";
 import {
   buildImageUploadPath,
   extractInlineImageBase64,
   GeneratedContentPart,
+  writeGeneratedDishImage,
 } from "./utils.ts";
 import { checkAiConsent, type AiConsentDecision } from "../_shared/ai-consent-guard.ts";
 import { aiConsentDeniedPayload } from "../_shared/ai-consent.ts";
@@ -279,26 +280,22 @@ async function processJob(
       return { jobId: jobRow.id, status: "cancelled", message: "dish schema changed" };
     }
 
-    const updatedDish: MealImageDish = {
-      ...latestDish,
-      image_url: publicUrl,
-      image_status: "ready",
-      image_generated_at: new Date().toISOString(),
-      image_error: null,
-      image_source: "generated_ai",
-    };
-    const updatedDishes = [...latestDishes];
-    updatedDishes[jobRow.dish_index] = updatedDish;
-    const cover = deriveMealCoverImage({ dishes: updatedDishes, fallbackMealImageUrl: latestMeal.image_url ?? null });
-
-    const { error: mealUpdateError } = await supabase
-      .from("planned_meals")
-      .update({ dishes: updatedDishes, image_url: cover, updated_at: new Date().toISOString() })
-      .eq("id", meal.id);
-
-    if (mealUpdateError) {
-      throw new Error(`failed to update meal: ${mealUpdateError.message}`);
-    }
+    // 料理に AI の画像を書き、献立のカバーはカバーの持ち主の決まり (isMealCoverAutoReplaceable) で決める (#1487 の整合ゲート)。
+    // 写真・商品・利用者の画像のカバーは置き換えない。カバーが変わらないときは image_url を書かない
+    const currentCover = latestMeal.image_url ?? null;
+    const applied = applyGeneratedDishImage({
+      dishes: latestDishes,
+      dishIndex: jobRow.dish_index,
+      imageUrl: publicUrl,
+      generatedAt: new Date().toISOString(),
+      currentCoverImageUrl: currentCover,
+    });
+    await writeGeneratedDishImage(supabase, {
+      mealId: meal.id,
+      dishes: applied.dishes,
+      currentCover,
+      nextCover: applied.coverChanged ? applied.coverImageUrl : undefined,
+    });
 
     await finalizeJob(jobRow.id, lockToken, "completed", nextAttempt, null, publicUrl);
     return { jobId: jobRow.id, status: "completed", message: publicUrl };
