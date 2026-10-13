@@ -329,7 +329,7 @@ describe("scripts/supabase-local.sh が枠に合わせて組み立てる config.
 
   // 枠 1 → 枠 2 → 枠 0 の順に 1 回だけ組み立て、下の「作業ディレクトリ」「stop / status」「env」「別の枠の config.toml」の
   // テストで共有する (以前はテストごとに同じ順で組み立て直していた。#1496)。どのテストも、ほかの枠をあとから組み立てたあとの
-  // 状態を確かめる (枠 1 のあとに枠 2・枠 0、枠 2 のあとに枠 0)。間のテストが別の枠 (枠 1・上限の枠) を組み立て直しても、
+  // 状態を確かめる (枠 1 のあとに枠 2・枠 0、枠 2 のあとに枠 0)。間のテストが枠 (枠 0・枠 1・上限の枠) を組み立て直しても、
   // 枠ごとの作業ディレクトリは分かれているので、その状態は「ほかの枠をあとから組み立てた」ままになる
   const SHARED_BUILD_ORDER = ["1", "2", "0"] as const;
   let sharedBuilds: Array<{ slot: string; status: number | null; stderr: string }> = [];
@@ -390,7 +390,9 @@ describe("scripts/supabase-local.sh が枠に合わせて組み立てる config.
   });
 
   it("stop / status は、ほかの枠をあとから組み立てても、指定した枠のスタックだけに触る", () => {
-    // 枠 1 → 枠 2 → 枠 0 の順に組み立てたあと (beforeAll) で、それぞれの枠を指定して stop / status を打つ
+    // beforeAll が枠 1 → 枠 2 → 枠 0 の順に組み立て、そのあと間のテストが枠 0 (枠の指定なし・枠 0) → 枠 1 → 上限の枠の順に
+    // 組み立て直している (枠 2 のあとに枠 0・枠 1・上限の枠、枠 0 のあとに枠 1・上限の枠、枠 1 のあとに上限の枠を組み立てた状態)。
+    // その状態で、それぞれの枠を指定して stop / status を打つ
     expectSharedBuilds();
     for (const slot of ["1", "2", "0", undefined]) {
       const id = slotValues(slot ?? "0").get("SLOT_PROJECT_ID");
@@ -403,7 +405,8 @@ describe("scripts/supabase-local.sh が枠に合わせて組み立てる config.
   });
 
   it("env は指定した枠の接続先を書く (あとから組み立てた別の枠の接続先を書かない)", () => {
-    // 枠 1 → (枠 2 →) 枠 0 の順に組み立てたあと (beforeAll)
+    // beforeAll が枠 1 → 枠 2 → 枠 0 の順に組み立て、そのあと間のテストが枠 0 (枠の指定なし・枠 0) → 枠 1 → 上限の枠の順に
+    // 組み立て直している (枠 0 のあとに枠 1・上限の枠、枠 1 のあとに上限の枠を組み立てた状態)
     expectSharedBuilds();
     for (const slot of ["1", "0"]) {
       const values = slotValues(slot);
