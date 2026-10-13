@@ -54,10 +54,17 @@ describe("延ばすのは 2 本のファイルだけ", () => {
   it("2 本のファイルは、テストを定義する前に、このファイルの時間切れを vi.setConfig する", () => {
     for (const file of SLOT_TEST_FILES) {
       const text = fs.readFileSync(path.join(ROOT, file), "utf8");
-      const setConfig = text.indexOf("vi.setConfig({ testTimeout: SLOT_TEST_TIMEOUT_MS });");
-      expect(setConfig, file).toBeGreaterThan(-1);
+      const m = /^vi\.setConfig\(\{ testTimeout: SLOT_TEST_TIMEOUT_MS(, hookTimeout: SLOT_TEST_TIMEOUT_MS)? \}\);$/m.exec(text);
+      expect(m, file).not.toBeNull();
+      const setConfig = m?.index ?? -1;
       const firstDescribe = text.search(/^describe\(/m);
       expect(firstDescribe, file).toBeGreaterThan(setConfig);
+      // beforeAll で bash を起動するファイル (#1496) は、フックの時間切れも同じ値にし、最初の beforeAll より前で設定する
+      const firstBeforeAll = text.search(/\bbeforeAll\(/);
+      if (firstBeforeAll >= 0) {
+        expect(m?.[1], `${file}: beforeAll があるのに hookTimeout を設定していない`).toBeDefined();
+        expect(firstBeforeAll, file).toBeGreaterThan(setConfig);
+      }
       // 実際に効いているか (どのテストも全体の既定のまま残っていないか) は、各ファイルの「このファイルの時間切れ (#1488)」が確かめる
       expect(text, file).toContain('describe("このファイルの時間切れ (#1488)"');
     }
