@@ -67,6 +67,9 @@ export async function POST(request: Request) {
           imageModel,
           existingCover: null,
           fallbackMealImageUrl: imageUrl ?? null,
+          // 送られた写真・商品・手の画像の料理 (image_source が meal_photo / catalog / manual_override) は、
+          // AI の画像の料理にせず、画像と状態を保持する (#1487 の整合ゲート)
+          preserveSubmittedDishImages: true,
         })
       : {
           dishes: dishes || null,
