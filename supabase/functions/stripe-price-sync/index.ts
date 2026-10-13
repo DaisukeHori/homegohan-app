@@ -58,7 +58,7 @@ import { parseSyncRequest, syncPlanPrices, type CreatePriceResult, type SyncDeps
  * 本リポジトリは既に Stripe を REST API 直叩き (fetch) で扱っている
  * (src/app/api/admin/finance/reconciliation/route.ts と同じ方針) ため、
  * SDK を追加せず fetch ベースで実装する
- * (deploy-supabase-functions.yml の「raw jsr:/npm: import 禁止」チェックにも
+ * (deploy-supabase-functions.yml の段「Verify Edge Function dependency pinning」にも
  * 抵触しない)。
  *
  * #1041 round-3 (S) 修正: 作成する Stripe Price に metadata

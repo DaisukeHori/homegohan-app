@@ -7,7 +7,7 @@
  *  - sanitizeLogEntry (3 つの文字列項目 + metadata + user_id)
  *  - Edge Functions と Next.js のロガーがこのサニタイザを通してから insert していること (ソース文字列の契約テスト)
  *
- * Deno 側の db-logger.ts は https://esm.sh から import するためテストでは読み込めない。
+ * Deno 側の db-logger.ts は動かすと app_logs へ書き込むので、テストでは動かさない。
  * そこは実行時のモックではなく、ソースの契約テストで配線を守る (tests/llm-grok-migration.test.ts と同じ方式)。
  */
 

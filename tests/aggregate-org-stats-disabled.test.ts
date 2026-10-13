@@ -39,7 +39,7 @@ vi.mock("@supabase/supabase-js", () => ({
   },
 }));
 
-// ロガーは app_logs へ書き込むので差し替える (https://esm.sh の import も避けられる)
+// ロガーは app_logs へ書き込むので差し替える
 vi.mock("../supabase/functions/_shared/db-logger.ts", () => ({
   createLogger: () => ({
     debug: () => {},

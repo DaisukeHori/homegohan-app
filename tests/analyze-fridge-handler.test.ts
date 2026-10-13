@@ -6,7 +6,7 @@ import { AI_USAGE_ALLOWED, AI_USAGE_DENIED } from "./helpers/ai-usage-mock";
 // 文字列ならどんなスキームでもそのまま上流に渡っていた。ここでは Edge Function の入口 (Deno.serve に渡された関数) に
 // 実際の HTTP 要求を流して、入力が不正なら Vision API を呼ぶ前に 400 で返すことを確かめる。
 //
-// index.ts は Deno 専用の import (esm.sh など) を含み、そのままでは Vitest で読み込めない。
+// index.ts は Deno 専用の API (Deno.serve など) を使い、そのままでは Vitest で動かせない。
 // 外との境目 (認証・ログ・LLM クライアント) だけをモックに差し替え、本体はそのまま動かす。
 
 const mocks = vi.hoisted(() => ({

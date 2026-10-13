@@ -35,11 +35,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      # 関数のソースに jsr: / npm: を直接書いた import (export ... from・import() も) が無いことを確かめる。依存の版は
-      # supabase/functions/deno.json の imports だけで固定する (#1515)。以前は rg で探していたが、ubuntu の runner に rg が無く
-      # (command not found)、if が偽になって毎回通っていた。runner に最初から入っていて macOS でも同じに動く grep -E
-      # (POSIX の拡張正規表現。\s や (?:) は使わない) にし、道具が無い・grep が失敗した (終了コード 2 以上)・
-      # 検査したファイルが 0 本・正規表現が見本の行に当たらない、のどれでも赤にする (空回りで緑にしない)。
+      # 関数のソースに、版を固定していない依存の書き方が無いことを確かめる。依存の版は supabase/functions/deno.json の
+      # imports だけで固定する (#1515・#1518)。赤にするのは、jsr: / npm: / https:// (http:// も) を直接書いた
+      # - import・export ... from・import() (引用符は " ' ` のどれでも)
+      # - 型だけを引く // @deno-types="..." と /// <reference types="..." />
+      # 以前は rg で探していたが、ubuntu の runner に rg が無く (command not found)、if が偽になって毎回通っていた。
+      # runner に最初から入っていて macOS でも同じに動く grep -E (POSIX の拡張正規表現。\s や (?:) は使わない) にし、
+      # 道具が無い・grep が失敗した (終了コード 2 以上)・検査したファイルが 0 本・正規表現が見本の行に当たらない
+      # (または当たってはいけない見本に当たる)、のどれでも赤にする (空回りで緑にしない)。
+      # 検査したファイルの本数は、中身が空のファイルも数える (grep -c は当たりが 0 行のファイルも 1 行で出す)。
       # tests/edge-function-dep-pinning.test.ts が、この run をそのまま bash で動かして確かめる (PR の npm test で走る)。
       - name: Verify Edge Function dependency pinning
         shell: bash
@@ -47,35 +51,73 @@ jobs:
           set -euo pipefail
           functions_dir=supabase/functions
           includes=(--include='*.ts' --include='*.tsx' --include='*.mts' --include='*.js' --include='*.jsx' --include='*.mjs')
-          raw_import='(^|[^[:alnum:]_$])(from|import)[[:space:]]*[(]?[[:space:]]*["'"'"'](jsr|npm):'
+          quote='["'"'"'`]'
+          unpinned="${quote}(jsr:|npm:|https?://)"
+          import_form="(^|[^[:alnum:]_\$])(from|import)[[:space:]]*[(]?[[:space:]]*${unpinned}"
+          deno_types_form="@deno-types[[:space:]]*=[[:space:]]*${unpinned}"
+          reference_form="<reference[[:space:]]+types[[:space:]]*=[[:space:]]*${unpinned}"
+          raw_import="${import_form}|${deno_types_form}|${reference_form}"
           if ! command -v grep >/dev/null 2>&1; then
             echo "::error::grep が無いため、Edge Function の依存の版の固定を検査できません。"
             exit 1
           fi
           # 正規表現が見本の行に当たる・当たらないことを、この runner の grep で確かめる (書き方の誤りで何にも当たらなくなるのを止める)
-          if ! printf '%s\n' "} from \"npm:zod\";" | grep -qE "$raw_import"; then
-            echo "::error::検査の正規表現が、jsr:/npm: を直接書いた import の見本に当たりません。"
+          must_match=(
+            '} from "npm:zod";'
+            'const m = await import(`npm:zod`);'
+            'import { createClient } from "https://esm.sh/@supabase/supabase-js@2";'
+            '// @deno-types="npm:@types/express@4.17.21"'
+            '/// <reference types="npm:@types/node" />'
+          )
+          must_not_match=(
+            'import { z } from "zod";'
+            'const m = await import(`zod`);'
+            'const res = await fetch("https://api.openai.com/v1/models");'
+            '/// <reference types="@supabase/functions-js/edge-runtime.d.ts" />'
+          )
+          # 見本は here-string (<<<) で grep に渡す。printf の出力を | で grep に流すと、grep -q が読み終える前に終わったとき
+          # (当たった時点で終わる・読まずに終わる) printf が SIGPIPE で落ち、pipefail で「当たらなかった」と取り違える。
+          # 当たった・当たらなかった・失敗した (終了コード 2 以上) は、grep 自身の終了コードだけで決める。
+          for sample in "${must_match[@]}"; do
+            sample_status=0
+            grep -qE "$raw_import" <<<"$sample" || sample_status=$?
+            if [ "$sample_status" -ne 0 ]; then
+              echo "::error::検査の正規表現が、版を固定していない依存の見本に当たりません (grep の終了コード $sample_status): $sample"
+              exit 1
+            fi
+          done
+          for sample in "${must_not_match[@]}"; do
+            sample_status=0
+            grep -qE "$raw_import" <<<"$sample" || sample_status=$?
+            if [ "$sample_status" -eq 0 ]; then
+              echo "::error::検査の正規表現が、deno.json の名前で書いた依存・import でない URL の見本に当たります: $sample"
+              exit 1
+            elif [ "$sample_status" -ne 1 ]; then
+              echo "::error::見本の確かめで grep が失敗しました (終了コード $sample_status): $sample"
+              exit 1
+            fi
+          done
+          count_status=0
+          counts=$(grep -rc "${includes[@]}" -e '^' "$functions_dir") || count_status=$?
+          if [ "$count_status" -gt 1 ]; then
+            echo "::error::$functions_dir のソースを読めません (grep の終了コード $count_status)。"
             exit 1
           fi
-          if printf '%s\n' "import { z } from \"zod\";" | grep -qE "$raw_import"; then
-            echo "::error::検査の正規表現が、deno.json の名前で書いた import の見本に当たります。"
+          if [ -z "$counts" ]; then
+            echo "::error::$functions_dir に検査するソースがありません。"
             exit 1
           fi
-          if ! scanned=$(grep -rl "${includes[@]}" -e '^' "$functions_dir"); then
-            echo "::error::$functions_dir に検査するソースがありません (または読めません)。"
-            exit 1
-          fi
-          echo "検査したファイル: $(printf '%s\n' "$scanned" | grep -c '^') 本"
+          echo "検査したファイル: $(grep -c '^' <<<"$counts") 本"
           status=0
           grep -rnE "${includes[@]}" -e "$raw_import" "$functions_dir" || status=$?
           if [ "$status" -eq 0 ]; then
-            echo "::error::Supabase Functions では jsr:/npm: を直接 import せず、supabase/functions/deno.json の imports (版を固定した名前) を使ってください。"
+            echo "::error::Supabase Functions では jsr:/npm:/https:// を直接 import せず (@deno-types・<reference types> も同じ)、supabase/functions/deno.json の imports (版を固定した名前) を使ってください。"
             exit 1
           elif [ "$status" -ne 1 ]; then
             echo "::error::grep が失敗しました (終了コード $status)。"
             exit "$status"
           fi
-          echo "jsr:/npm: を直接書いた import はありません。"
+          echo "jsr:/npm:/https:// を直接書いた依存はありません。"
 
       - name: Verify Supabase CLI version
         run: |

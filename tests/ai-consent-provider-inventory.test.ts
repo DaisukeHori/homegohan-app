@@ -44,7 +44,6 @@ const NON_AI_HOSTS: Record<string, string> = {
   'challenges.cloudflare.com':
     'ボット対策 (Cloudflare Turnstile。#1165)。画面のウィジェットの api.js と、サーバーでのトークンの確認 (siteverify)。送るのはトークンと IP アドレスだけで、利用者のデータは送らない',
   'eu.i.posthog.com': '利用状況の計測の残り (#1166 で外した設定の値)',
-  'esm.sh': 'Edge Functions のモジュールの取得',
   'holidays-jp.github.io': '祝日の一覧 (公開情報)',
   'api.firecrawl.dev': 'コンビニ商品のカタログ (公開情報) の取り込み。利用者のデータは送らない',
   'www.mhlw.go.jp': '厚生労働省の資料へのリンク',
