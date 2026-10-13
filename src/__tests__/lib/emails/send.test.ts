@@ -463,6 +463,9 @@ describe('sendEmail: RESEND_API_KEY が未設定', () => {
     expect(result).toMatchObject({ ok: false, id: null, attempts: 0, skipped: true });
     expect(result.error).toBeInstanceOf(EmailSendError);
     expect(result.error).toMatchObject({ code: 'not_configured', statusCode: null, retryable: false });
+    // 変数名は警告のログにだけ残し、エラーの message には入れない (#1182・#1490)
+    expect(result.error?.message).toMatch(/^EMAIL_NOT_CONFIGURED: /);
+    expect(result.error?.message).not.toContain('RESEND_API_KEY');
   });
 
   it("console だけでなく app_logs にも警告を残す (createLogger('email').warn。文面の名前とマスクした宛先)", async () => {

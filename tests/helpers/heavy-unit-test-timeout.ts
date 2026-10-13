@@ -2,14 +2,17 @@
  * 負荷の高い機械で、vitest の既定の時間切れ (1 件のテスト 5 秒・フック 10 秒) を超えたことがある単体テストのファイルの時間切れ (#1488)。
  *
  * 根拠 (2026-10-11 に、それまでの local-ci の unit 段の結果 JSON 274 本 (この Issue の実走を含む) を集計した):
- *   - 下の HEAVY_UNIT_TEST_FILES の 18 本は、アサーションの失敗ではなく、vitest の既定の時間切れだけで落ちたことがある
+ *   - 次の 18 本は、アサーションの失敗ではなく、vitest の既定の時間切れだけで落ちたことがある
  *     (テストの 5 秒: 15 本・計 60 回 / フックの 10 秒: 3 本・計 10 回。流し直すか M1 で流すと緑)。
+ *     そのうち 2 本 (menu-generation-range-1482・super-admin-llm-usage-route) は、#1498 で数千行の組み立てをやめ
+ *     (集計を DB の関数 llm_usage_summary に移し、行を数える検査は実 DB の結合テストへ)、1 件の所要の最大が
+ *     M2 の 1 分負荷 45 のときで 7ms / 24ms になったので一覧から外した。下の HEAVY_UNIT_TEST_FILES は残りの 16 本。
  *     tests/eslint-react19-guard.test.ts は入れない: 落ちたのは 1 回だけで、ファイル自身が beforeAll に付けた 120 秒の
  *     時間切れだった (テストの所要は最大 618ms)。個別の時間切れはこの延長より優先されるので、一覧に入れても効かない。
  *     中身は、数千行のデータの集計・1,500 通りのでたらめな入力・TypeScript の構文木によるリポジトリの走査・
  *     Edge Function の動的 import・画面の描画など、CPU を使うもの。
  *   - M2 の 1 分負荷が 112 のときの 1 件の所要は、M1 で流したときの最大 36 倍だった
- *     (例: menu-generation-range-1482 は 0.34 秒 → 9.0 秒、super-admin-llm-usage-route は 0.43 秒 → 10.0 秒)。
+ *     (例: menu-generation-range-1482 は 0.34 秒 → 9.0 秒、super-admin-llm-usage-route は 0.43 秒 → 10.0 秒。どちらも #1498 で一覧から外す前の値)。
  *     これらのファイルの M1 での 1 件の所要の最大は 0.43 秒なので、36 倍でも約 15.5 秒。
  *   - 時間切れ: どちらも vitest の既定の 6 倍 (テスト 30 秒・フック 60 秒)。テストは上の約 15.5 秒のおよそ 2 倍の余裕。
  *     フックの所要は結果 JSON に残らないので、フックもテストと同じ倍率にした。
@@ -35,7 +38,7 @@ export const DEFAULT_UNIT_HEAVY_HOOK_TIMEOUT_MS = 60_000;
 export const UNIT_HEAVY_TEST_TIMEOUT_ENV = "UNIT_HEAVY_TEST_TIMEOUT_MS";
 export const UNIT_HEAVY_HOOK_TIMEOUT_ENV = "UNIT_HEAVY_HOOK_TIMEOUT_MS";
 
-/** 時間切れを延ばすファイル (リポジトリの根からの相対パス)。どれも 274 本の結果のどこかで時間切れだけで落ちた */
+/** 時間切れを延ばすファイル (リポジトリの根からの相対パス)。どれも 274 本の結果のどこかで時間切れだけで落ちた (#1498 で速くした 2 本は外した) */
 export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "src/__tests__/api/ai/menu/engine-feature-flags.test.ts",
   "src/__tests__/api/ai/menu/weekly-request.test.ts",
@@ -50,10 +53,8 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/ai-rate-limit-contracts.test.ts",
   "tests/ai-usage-direct-jwt-edge.test.ts",
   "tests/markdown-lite.test.ts",
-  "tests/menu-generation-range-1482.test.ts",
   "tests/recipes-route.test.ts",
   "tests/route-error-boundaries.test.tsx",
-  "tests/super-admin-llm-usage-route.test.ts",
   "tests/use-ai-consent.test.tsx",
 ];
 

@@ -57,15 +57,42 @@ const h = vi.hoisted(() => ({
   handlers: [] as Array<(req: Request) => Promise<Response> | Response>,
   createClientCalls: [] as unknown[][],
   googleClients: 0,
+  /** 表の名前 → select で返す行。null なら DB に接続しようとした時点で落とす (既定) */
+  tables: null as Record<string, unknown[]> | null,
 }));
+
+/** select の結果だけを返す、つなげて呼べる問い合わせ (select / eq / order / limit は条件を見ずに同じ行を返す。書き込みは持たない) */
+type FakeQueryResult = { data: unknown; error: null };
+type FakeQuery = {
+  select: () => FakeQuery;
+  eq: () => FakeQuery;
+  order: () => FakeQuery;
+  limit: () => FakeQuery;
+  maybeSingle: () => Promise<FakeQueryResult>;
+  then: (resolve: (value: FakeQueryResult) => unknown, reject?: (reason: unknown) => unknown) => Promise<unknown>;
+};
+
+function fakeQuery(rows: unknown[]): FakeQuery {
+  const query: FakeQuery = {
+    select: () => query,
+    eq: () => query,
+    order: () => query,
+    limit: () => query,
+    maybeSingle: async () => ({ data: rows[0] ?? null, error: null }),
+    then: (resolve, reject) => Promise.resolve({ data: rows, error: null }).then(resolve, reject),
+  };
+  return query;
+}
 
 // supabase-js: 接続しようとしたことを記録する (設定が足りないときは作らないことを確かめる)
 vi.mock("@supabase/supabase-js", () => ({
   createClient: (...args: unknown[]) => {
     h.createClientCalls.push(args);
     return {
-      from: () => {
-        throw new Error("DB には接続しない (テスト)");
+      from: (table: string) => {
+        const rows = h.tables?.[table];
+        if (!rows) throw new Error("DB には接続しない (テスト)");
+        return fakeQuery(rows);
       },
     };
   },
@@ -115,6 +142,7 @@ beforeEach(() => {
   h.env = {};
   h.createClientCalls.length = 0;
   h.googleClients = 0;
+  h.tables = null;
   consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -228,6 +256,67 @@ describe("stripe-price-sync: STRIPE_SECRET_KEY が無いときの 503 の本文 
   });
 });
 
+describe("stripe-price-sync: Supabase の接続情報だけが無いときは 503 にせず、旧 Price の無効化を飛ばして 200 (#1490)", () => {
+  // ENV_SETUP.md の案内 (503 SERVER_CONFIG_MISSING は STRIPE_SECRET_KEY が無いときだけ) の裏付け。
+  // Supabase の接続情報は旧 Price の ID を読むのにだけ使い、読めなければ無効化を全部スキップする (sync.ts の old_price_fetch_failed)
+  const STRIPE_SECRET_KEY_VALUE = "sk_test_dummy";
+  const NEW_PRICE_ID = "price_new_month";
+  let handler: (req: Request) => Promise<Response> | Response;
+  const fetchCalls: string[] = [];
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeAll(async () => {
+    // 環境変数は読み込み時に読むので、Supabase の接続情報を設定しないまま、別の読み込みとして読む
+    h.env = { STRIPE_SECRET_KEY: STRIPE_SECRET_KEY_VALUE };
+    vi.resetModules();
+    handler = await importHandler("../supabase/functions/stripe-price-sync/index.ts");
+  });
+
+  beforeEach(() => {
+    fetchCalls.length = 0;
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+      fetchCalls.push(String(input));
+      return new Response(JSON.stringify({ id: NEW_PRICE_ID }), { status: 200 });
+    });
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it("新しい Price を作り、旧 Price は読まずに無効化を飛ばして 200。本文に変数名を出さず、ログに名前を残す", async () => {
+    h.env = { STRIPE_SECRET_KEY: STRIPE_SECRET_KEY_VALUE };
+
+    const res = await handler(
+      post("http://localhost/functions/v1/stripe-price-sync", {
+        auth: "Bearer cron-secret",
+        body: { plan_id: "plan-1", stripe_product_id: "prod_1", new_monthly_price_jpy: 980 },
+      }),
+    );
+    const text = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(JSON.parse(text)).toEqual({
+      success: true,
+      month: { new_stripe_price_id: NEW_PRICE_ID, deactivated: false, deactivation_skipped_reason: "old_price_fetch_failed" },
+      year: null,
+    });
+    expectNoEnvNames(text, ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "STRIPE_SECRET_KEY"]);
+    // Stripe へは新しい Price の作成 1 回だけ (旧 Price の取り直し・無効化はしない)。DB には接続しない
+    expect(fetchCalls).toHaveLength(1);
+    expect(fetchCalls[0]).toMatch(/\/prices$/);
+    expect(h.createClientCalls).toHaveLength(0);
+    expect(loggedLines()).toContain(`${MISSING_ENV_SERVER_LOG_PREFIX} SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY`);
+  });
+
+  it("ENV_SETUP.md は、stripe-price-sync の 503 を STRIPE_SECRET_KEY だけとし、Supabase の接続情報だけが無いときの 200 を案内している", () => {
+    const doc = fs.readFileSync(path.join(ROOT, "ENV_SETUP.md"), "utf-8");
+
+    expect(doc).toContain("`stripe-price-sync` は `STRIPE_SECRET_KEY` だけです");
+    expect(doc).toContain('"deactivation_skipped_reason":"old_price_fetch_failed"');
+  });
+});
+
 describe("process-meal-image-jobs: 環境変数をリクエストの中で確かめる (#1467)", () => {
   let handler: (req: Request) => Promise<Response> | Response;
   const URL_ = "http://localhost/functions/v1/process-meal-image-jobs";
@@ -309,6 +398,71 @@ describe("カタログ取り込み (_shared/catalog/import-runner.ts): Supabase 
     expectNoEnvNames(text, ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SERVICE_ROLE_JWT"]);
     expect(h.createClientCalls).toEqual([]);
     expect(loggedLines()).toContain(`${MISSING_ENV_SERVER_LOG_PREFIX} SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY`);
+  });
+
+  describe("Supabase の接続情報はあり、Firecrawl の鍵が無いとき (#1490)", () => {
+    // ENV_SETUP.md の「503 になる secrets」のカタログ取り込みの項 (FIRECRAWL_API_KEY / FIRECRAWL_AUTH_TOKEN・
+    // FIRECRAWL_BASE_URL で自前の Firecrawl を指すときは不要) の裏付け。
+    // 一覧ページの取得 (collectCategoryTargets → scrapeDiscoveryPage → firecrawlScrapeStructured) には内側の try が無く、
+    // 外側の catch が MissingEnvError を 503 にする
+    const SELF_HOSTED_FIRECRAWL_URL = "http://firecrawl.internal:3002";
+    const SOURCE_ROW = { id: "source-1", code: "seven_eleven_jp", brand_name: "セブン-イレブン", is_active: true, metadata_json: {} };
+    const CATEGORY_ROW = {
+      id: "category-1",
+      category_code: "onigiri",
+      category_name: "おにぎり",
+      list_url: "https://www.sej.co.jp/products/a/onigiri/",
+      crawl_priority: 1,
+    };
+    const fetchCalls: string[] = [];
+    let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      h.tables = { catalog_sources: [SOURCE_ROW], catalog_source_categories: [CATEGORY_ROW] };
+      fetchCalls.length = 0;
+      // 一覧ページから商品もたどる先も見つからなかった、という Firecrawl の応答 (取り込みは 0 件で終わる)
+      fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+        fetchCalls.push(String(input));
+        return new Response(JSON.stringify({ success: true, data: { json: { itemUrls: [], categoryUrls: [] } } }), { status: 200 });
+      });
+    });
+
+    afterEach(() => {
+      fetchSpy.mockRestore();
+    });
+
+    it("一覧ページを取りに行く前に 503 (固定の文と code)。Firecrawl を呼ばず、変数名はログにだけ残す", async () => {
+      h.env = { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY };
+
+      const res = await handler(post("http://localhost/functions/v1/import-seven-eleven-catalog", { body: { dryRun: true } }));
+      const text = await res.text();
+
+      expect(res.status).toBe(503);
+      expect(JSON.parse(text)).toEqual({ success: false, error: MISSING_ENV_ERROR_MESSAGE, code: MISSING_ENV_ERROR_CODE });
+      expectNoEnvNames(text, ["FIRECRAWL_API_KEY", "FIRECRAWL_AUTH_TOKEN", "FIRECRAWL_BASE_URL"]);
+      // Supabase の接続情報はそろっているので、DB までは進んでいる (503 は Firecrawl の鍵のせい)
+      expect(h.createClientCalls).toHaveLength(1);
+      expect(fetchCalls).toEqual([]);
+      expect(loggedLines()).toContain(`${MISSING_ENV_SERVER_LOG_PREFIX} FIRECRAWL_API_KEY / FIRECRAWL_AUTH_TOKEN`);
+    });
+
+    it("FIRECRAWL_AUTH_TOKEN があれば 503 にしない (FIRECRAWL_API_KEY の代わりになる)", async () => {
+      h.env = { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY, FIRECRAWL_AUTH_TOKEN: "fc-token" };
+
+      const res = await handler(post("http://localhost/functions/v1/import-seven-eleven-catalog", { body: { dryRun: true } }));
+
+      expect(res.status).toBe(200);
+      expect(fetchCalls).toEqual(["https://api.firecrawl.dev/v2/scrape"]);
+    });
+
+    it("FIRECRAWL_BASE_URL で自前の Firecrawl を指すときは、鍵が無くても 503 にしない", async () => {
+      h.env = { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY, FIRECRAWL_BASE_URL: SELF_HOSTED_FIRECRAWL_URL };
+
+      const res = await handler(post("http://localhost/functions/v1/import-seven-eleven-catalog", { body: { dryRun: true } }));
+
+      expect(res.status).toBe(200);
+      expect(fetchCalls).toEqual([`${SELF_HOSTED_FIRECRAWL_URL}/v2/scrape`]);
+    });
   });
 });
 
@@ -516,5 +670,110 @@ describe("ENV_SETUP.md の pg_net の結果の見方が、503 の 2 つの本文
     for (const line of diagnosisLines) {
       expect(line.includes("本文"), line).toBe(true);
     }
+  });
+});
+
+describe("ENV_SETUP.md の「503 になる secrets」の内訳が、実装が 503 にする変数名と合っている (#1490)", () => {
+  // 手順書は「503 になる secrets は関数ごとに違います: …」と関数ごとに言い切っている。言い切りから変数名が抜けると、
+  // 運用者は 503 を見て内訳にある変数だけを確かめ、本当の原因を取り逃す (R1 の指摘: カタログの Firecrawl の鍵が抜けていた)。
+  // ここでは、503 の経路で名前を残す呼び出し (missingEnvError / logMissingEnv) の変数名が、手順書のその関数の項に全部書いてあるかを見る。
+  const doc = fs.readFileSync(path.join(ROOT, "ENV_SETUP.md"), "utf-8");
+  const FUNCTIONS_DIR = path.join(ROOT, "supabase", "functions");
+  const BREAKDOWN_MARKER = "503 になる secrets は関数ごとに違います";
+  const breakdownLine = doc.split("\n").find((line) => line.includes(BREAKDOWN_MARKER)) ?? "";
+
+  /** 手順書の内訳の行から、ある関数の項 (start から end の手前まで) を切り出す */
+  function breakdownSegment(start: string, end: string): string {
+    const from = breakdownLine.indexOf(start);
+    const to = breakdownLine.indexOf(end, from + start.length);
+    expect(from, `内訳の行に「${start}」が無い`).toBeGreaterThanOrEqual(0);
+    expect(to, `内訳の行に「${start}」の後の「${end}」が無い`).toBeGreaterThan(from);
+    return breakdownLine.slice(from, to);
+  }
+
+  /** ソースの中で、指定した関数の呼び出しの引数に書いた文字列 (変数名) をすべて集める */
+  function envNamesPassedTo(file: string, callees: readonly string[]): string[] {
+    const sf = parse(fs.readFileSync(file, "utf-8"), file);
+    const names = new Set<string>();
+    const collectStrings = (node: ts.Node): void => {
+      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) names.add(node.text);
+      ts.forEachChild(node, collectStrings);
+    };
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) {
+        const name = calleeName(node.expression);
+        if (name && callees.includes(name)) node.arguments.forEach(collectStrings);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+    return [...names];
+  }
+
+  // 503 の経路で変数名を残す箇所。catalog-llm.ts (→ fast-llm.ts の missingEnvError(["XAI_API_KEY"])) は入れない:
+  // getOpenAI() は XAI_API_KEY が無いと null を返して LLM の補助を飛ばすだけで、503 にしない。
+  // stripe-price-sync の missingEnvError(["SUPABASE_URL", ...]) も入れない: 関数の中で受けて 200 (old_price_fetch_failed) にする
+  const CASES = [
+    {
+      label: "コンビニカタログ取り込み",
+      start: "コンビニカタログ取り込み（",
+      end: "`process-meal-image-jobs` は",
+      files: ["_shared/catalog/import-runner.ts", "_shared/firecrawl-client.ts"],
+      callees: ["missingEnvError"],
+    },
+    {
+      label: "process-meal-image-jobs",
+      start: "`process-meal-image-jobs` は",
+      end: "`stripe-price-sync` は",
+      files: ["process-meal-image-jobs/index.ts"],
+      callees: ["logMissingEnv"],
+    },
+    {
+      label: "stripe-price-sync",
+      start: "`stripe-price-sync` は",
+      end: "だけです",
+      files: ["stripe-price-sync/index.ts"],
+      callees: ["logMissingEnv"],
+    },
+  ] as const;
+
+  it("内訳の行がある", () => {
+    expect(breakdownLine).not.toBe("");
+  });
+
+  for (const c of CASES) {
+    it(`${c.label}: 503 にする変数名が、手順書の項に全部書いてある`, () => {
+      const segment = breakdownSegment(c.start, c.end);
+      const names = c.files.flatMap((file) => envNamesPassedTo(path.join(FUNCTIONS_DIR, file), c.callees));
+      // 走査が空振りしていないこと (置き場の名前や呼び方が変わったら、ここで気づく)
+      expect(names.length, c.label).toBeGreaterThan(0);
+      const missing = names.filter((name) => !segment.includes(`\`${name}\``));
+      expect(missing, `${c.label} の項に無い変数名`).toEqual([]);
+    });
+  }
+
+  it("カタログ取り込みの項は、Firecrawl の鍵が要らない場合 (自前の Firecrawl) も書いてある", () => {
+    // firecrawl-client.ts は、鍵が無くても FIRECRAWL_BASE_URL が既定の URL でなければ 503 にしない
+    expect(breakdownSegment(CASES[0].start, CASES[0].end)).toContain("`FIRECRAWL_BASE_URL` で自前の Firecrawl を指すときは不要");
+  });
+
+  it("SERVER_CONFIG_MISSING の 503 を返すのは、内訳に挙げた 3 つ (カタログ取り込みは共有の import-runner) だけ", () => {
+    // 新しく 503 を返す関数が増えたら、手順書の内訳にも足す
+    const responders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith(".ts") && fs.readFileSync(full, "utf-8").includes("missingEnvResponseBody(")) {
+          responders.push(path.relative(FUNCTIONS_DIR, full).split(path.sep).join("/"));
+        }
+      }
+    };
+    walk(FUNCTIONS_DIR);
+    expect(responders.filter((file) => file !== "_shared/missing-env.ts").sort()).toEqual([
+      "_shared/catalog/import-runner.ts",
+      "process-meal-image-jobs/index.ts",
+      "stripe-price-sync/index.ts",
+    ]);
   });
 });
