@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback, useMemo, useEffect } from "react";
 import { addDaysToDate } from "@/lib/date-utils";
-import { menuGenerationRangeEndMax, menuGenerationRangeStartMax } from "@homegohan/shared";
+import { menuGenerationRangeEndMax, menuGenerationRangeStartMax, menuGenerationSingleDayMax } from "@homegohan/shared";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Sparkles, Calendar, Target, RefreshCw,
@@ -37,8 +37,11 @@ type GenerateMode = 'empty' | 'ai_only' | 'selected' | 'range' | 'single_day';
 // destructive flag that must default to false every time the modal opens.
 const STORAGE_KEY_RANGE_DAYS = 'v4_range_days';
 
-/** 「1日だけ」モードで選べる日付の上限 (今日から何日先まで)。画面の説明「今日から1ヶ月先まで」と同じ */
-const SINGLE_DAY_MAX_DAYS_AHEAD = 30;
+/**
+ * 「1日だけ」モードで選べる日付の上限 (今日から 1 ヶ月先。画面の説明「今日から1ヶ月先まで」と同じ)。
+ * 値はモバイルの「1日だけ」の欄 (確定のときの上限) と共有する (@homegohan/shared の menu-generation-range。#1524)
+ */
+export const generateSingleDayMax: (today: string) => string = menuGenerationSingleDayMax;
 
 /**
  * 「期間を指定」の開始日の上限 (今日から 1 ヶ月先 = MENU_GENERATION_RANGE_START_MAX_DAYS_AHEAD 日先。#1463)。
@@ -799,7 +802,7 @@ function V4GenerateModalNormal({
                       type="date"
                       value={singleDayDate}
                       min={todayStr}
-                      max={addDaysToDate(todayStr, SINGLE_DAY_MAX_DAYS_AHEAD)}
+                      max={generateSingleDayMax(todayStr)}
                       onChange={(e) => setSingleDayDate(e.target.value < todayStr ? todayStr : e.target.value)}
                       className="w-full p-3 rounded-lg border text-center"
                       style={{ borderColor: colors.border, fontSize: 16 }}

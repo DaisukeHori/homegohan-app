@@ -1,5 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
-import { addDaysToDate, isCalendarDate, menuGenerationRangeEndMax, menuGenerationRangeStartMax } from "@homegohan/shared";
+import {
+  addDaysToDate,
+  isCalendarDate,
+  menuGenerationRangeEndMax,
+  menuGenerationRangeStartMax,
+  menuGenerationSingleDayMax,
+} from "@homegohan/shared";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -176,12 +182,13 @@ export function commitRangeEndInput(text: string, current: GenerateRange, today:
 
 /**
  * 「1日だけ」の日付の欄を確定する (欄を離れたとき・生成を押したとき。#1498)。
- * text が日付になっていなければ、確定していた日付 current のまま。日付なら、過去は今日に直す (以前と同じ下限)
+ * text が日付になっていなければ、確定していた日付 current のまま。日付なら、過去は今日に直し (以前と同じ下限)、
+ * 上限 (今日から 1 ヶ月先。画面の説明「今日から1ヶ月先まで」。Web の日付の欄の max と同じ共有の値) より先は上限に直す (#1524)
  */
 export function commitSingleDayInput(text: string, current: string, today: string): string {
   const value = text.trim();
   if (!isCalendarDate(value)) return current;
-  return value < today ? today : value;
+  return clampDay(value, today, menuGenerationSingleDayMax(today));
 }
 
 function daysBetween(startStr: string, endStr: string): number {
