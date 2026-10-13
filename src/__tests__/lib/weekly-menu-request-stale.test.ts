@@ -6,6 +6,7 @@
  * - 生存信号: worker_acquired_at がある行は GREATEST(worker_acquired_at, updated_at)、無い行は updated_at、どちらも無ければ created_at
  * - しきい値は 1 つの定数を、止まった行を failed にするすべての route で共有する (同じ値を 2 か所に書かない)
  * - しきい値は claim_menu_request のリース (migration の interval) より長い (cron の取り直しを上書きしない)
+ * - failed への書き換えは、読んだときの status・updated_at・worker_acquired_at と一致する行だけ (比較つきの更新。#1507)
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,9 +17,11 @@ import {
   WEEKLY_MENU_REQUEST_STALE_MS,
   WEEKLY_MENU_REQUEST_STALE_TARGET_STATUSES,
   isWeeklyMenuRequestStale,
+  markWeeklyMenuRequestStaleIfUnchanged,
   weeklyMenuRequestLastAliveAtMs,
   weeklyMenuRequestStaleBefore,
 } from '@/lib/weekly-menu-request-stale';
+import { WEEKLY_MENU_REQUEST_STALE_MESSAGE } from '@/lib/weekly-menu-request-error';
 
 const ROOT = path.resolve(__dirname, '../../..');
 const NOW_MS = Date.parse('2026-10-11T03:00:00.000Z');
@@ -151,5 +154,93 @@ describe('しきい値の共有と、claim_menu_request のリースとの関係
     // 分数の直書き (以前の const staleMinutes = 20 / 5 * 60 * 1000 のような書き方) が残っていない
     expect(source).not.toMatch(/staleMinutes\s*=/);
     expect(source).not.toMatch(/\d+\s*\*\s*60\s*\*\s*1000/);
+  });
+});
+
+describe('markWeeklyMenuRequestStaleIfUnchanged (比較つきの更新。#1507)', () => {
+  type Filter = [string, string, unknown];
+  /** 更新の呼び出しを記録するクライアント (select の戻り値は result) */
+  function recordingClient(result: { data: unknown; error: unknown }) {
+    const calls: Array<{ table: string; payload: unknown; filters: Filter[]; returning?: string }> = [];
+    const client = {
+      from: (table: string) => ({
+        update: (payload: unknown) => {
+          const call: { table: string; payload: unknown; filters: Filter[]; returning?: string } = { table, payload, filters: [] };
+          calls.push(call);
+          const builder = {
+            eq: (column: string, value: unknown) => {
+              call.filters.push(['eq', column, value]);
+              return builder;
+            },
+            is: (column: string, value: unknown) => {
+              call.filters.push(['is', column, value]);
+              return builder;
+            },
+            select: (columns: string) => {
+              call.returning = columns;
+              return Promise.resolve(result);
+            },
+          };
+          return builder;
+        },
+      }),
+    };
+    return { client: client as unknown as Parameters<typeof markWeeklyMenuRequestStaleIfUnchanged>[0]['supabase'], calls };
+  }
+
+  it('本人の行に絞り、読んだときの status・updated_at・worker_acquired_at と一致する行だけを failed にする', async () => {
+    const { client, calls } = recordingClient({ data: [{ id: 'req-1', generated_data: { snapshot: [] } }], error: null });
+
+    const result = await markWeeklyMenuRequestStaleIfUnchanged({
+      supabase: client,
+      userId: 'user-1',
+      row: { id: 'req-1', status: 'processing', updated_at: ago(40), worker_acquired_at: ago(30) },
+      failedAt: ago(0),
+    });
+
+    expect(result).toEqual({ rows: [{ id: 'req-1', generated_data: { snapshot: [] } }], error: null });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].table).toBe('weekly_menu_requests');
+    expect(calls[0].payload).toEqual({ status: 'failed', error_message: WEEKLY_MENU_REQUEST_STALE_MESSAGE, updated_at: ago(0) });
+    expect(calls[0].filters).toEqual([
+      ['eq', 'id', 'req-1'],
+      ['eq', 'user_id', 'user-1'],
+      ['eq', 'status', 'processing'],
+      ['eq', 'updated_at', ago(40)],
+      ['eq', 'worker_acquired_at', ago(30)],
+    ]);
+    expect(calls[0].returning).toBe('id, generated_data');
+  });
+
+  it('NULL の updated_at・worker_acquired_at は .is で比べる', async () => {
+    const { client, calls } = recordingClient({ data: [], error: null });
+
+    const result = await markWeeklyMenuRequestStaleIfUnchanged({
+      supabase: client,
+      userId: 'user-1',
+      row: { id: 'req-1', status: 'pending', updated_at: null, worker_acquired_at: null },
+      failedAt: ago(0),
+    });
+
+    // 一致する行が無い (読んでから書くまでに進んだ) ときは、書き換えた行は 0 行
+    expect(result).toEqual({ rows: [], error: null });
+    expect(calls[0].filters.slice(3)).toEqual([
+      ['is', 'updated_at', null],
+      ['is', 'worker_acquired_at', null],
+    ]);
+  });
+
+  it('DB が更新を拒んだときは、書き換えた行を 0 行にしてエラーを返す', async () => {
+    const rejected = { message: 'update rejected' };
+    const { client } = recordingClient({ data: null, error: rejected });
+
+    const result = await markWeeklyMenuRequestStaleIfUnchanged({
+      supabase: client,
+      userId: 'user-1',
+      row: { id: 'req-1', status: 'processing', updated_at: ago(40), worker_acquired_at: null },
+      failedAt: ago(0),
+    });
+
+    expect(result).toEqual({ rows: [], error: rejected });
   });
 });
