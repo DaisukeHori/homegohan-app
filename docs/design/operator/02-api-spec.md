@@ -1478,7 +1478,7 @@ import Stripe from 'stripe';
 import { validateStripeSignature } from '@/lib/operator/stripe-webhook';
 
 // 署名の生成と検証は手元で完結するので、環境変数を読まずにテスト用の固定の値を使う
-// (`process.env.X!` は使わない。#1182・#1434)
+// (`process.env.<変数名>!` は使わない。#1182・#1434)
 const TEST_STRIPE_SECRET_KEY = 'sk_test_dummy_for_signature_test';
 const TEST_WEBHOOK_SECRET = 'whsec_test_dummy_for_signature_test';
 
