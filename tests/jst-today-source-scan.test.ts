@@ -953,7 +953,10 @@ const REQUIRED_CALLS: Record<string, string[]> = {
   'src/app/api/performance/analyze/route.ts': ['jstToday'],
   'src/app/api/performance/checkins/route.ts': ['jstToday', 'jstDayOffset'],
   'src/app/api/performance/plans/route.ts': ['jstToday'],
-  'src/app/api/super-admin/llm/usage/route.ts': ['llmUsageRange', 'jstDayRangeTimestamps', 'jstDayOfTimestamp'],
+  // 日次の系列・1 日あたりの回数を JST の暦日にまとめるのは DB の関数 llm_usage_summary に移した (#1498。
+  // (created_at AT TIME ZONE 'Asia/Tokyo')::date。tests/llm-usage-summary-contract.test.ts と実 DB の
+  // tests/integration/security/llm-usage-summary.test.ts が確かめる)。route は期間を JST 0 時の時刻に直して渡す
+  'src/app/api/super-admin/llm/usage/route.ts': ['llmUsageRange', 'jstDayRangeTimestamps'],
   'src/app/api/super-admin/audit-logs/route.ts': ['jstOptionalDayRangeTimestamps'],
   'src/app/api/operator/membership/audit/route.ts': ['jstOptionalDayRangeTimestamps'],
   'src/app/api/admin/finance/dashboard/route.ts': ['jstMonthBoundaries'],

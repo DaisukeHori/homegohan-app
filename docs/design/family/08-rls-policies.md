@@ -769,7 +769,7 @@ sequenceDiagram
 // tests/integration/family/rls-policies.integration.test.ts
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
-// 接続情報は src/lib の getter で取り出す (`process.env.X!` は使わない。#1182・#1434)
+// 接続情報は src/lib の getter で取り出す (`process.env.<変数名>!` は使わない。#1182・#1434)
 import { getSupabaseAnonKey, getSupabaseServiceRoleKey, getSupabaseUrl } from '@/lib/env-required';
 import { createTestUser, signInAsUser } from '../../helpers/auth';
 import {

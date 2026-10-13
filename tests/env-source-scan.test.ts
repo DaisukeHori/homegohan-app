@@ -13,7 +13,9 @@
  *   4. 一覧の全変数が .env.example に書かれている / check:env の導線がそろっている
  *   5. 必須の変数名を、例外 (new XxxError(...) / throw) や応答 (NextResponse.json / Response.json / new Response) の
  *      文字列に書かない。書くと 500 の本文に変数名が出うる (#1172)。以前 account/delete が自前の取り出しで
- *      'Supabase admin env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)' を投げ、本文に返していた
+ *      'Supabase admin env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)' を投げ、本文に返していた。
+ *      Web の本番コードでは、必須に限らず一覧 (src/lib/env.ts) のどの変数名も書かない (#1490)。以前は必須の 3 つしか
+ *      見ていなかったため、src/lib/ai/fast-llm.ts の 'Missing XAI_API_KEY' (任意の変数) をすり抜けていた
  *   6. Web の本番コードが名前を書いて読む環境変数は、すべて src/lib/env.ts の一覧にある (Node.js・Next.js が入れる NODE_ENV・NEXT_RUNTIME を除く)。
  *      値を読む場所が決まっている変数 (一覧の readOnlyBy) は、そのファイルだけが読む
  *   7. 必須の変数 (Supabase の接続情報) を、テンプレートリテラルに直接埋め込まない (#1434)。
@@ -42,6 +44,9 @@ import { ENV_VARS } from '../src/lib/env';
 import { MISSING_ENV_SERVER_LOG_PREFIX, REQUIRED_ENV_NAMES } from '../src/lib/env-required';
 
 const ROOT = path.resolve(__dirname, '..');
+
+/** 一覧 (src/lib/env.ts) のすべての変数名 (必須と任意。値を読む場所が決まっているものも含む) */
+const LISTED_ENV_NAMES: readonly string[] = ENV_VARS.map((entry) => entry.name);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 構文木の走査
@@ -150,13 +155,28 @@ const RESPONSE_CALLS = new Set(['NextResponse.json', 'Response.json']);
 const RESPONSE_CONSTRUCTORS = new Set(['Response', 'NextResponse']);
 
 /**
+ * 引数が message ではなく変数名 (envName) になる例外。src/lib/env-required.ts の MissingEnvError は、message を
+ * 固定の文にし、変数名は列挙されないプロパティ envName にだけ持つので、引数の変数名は本文にもログの message にも出ない。
+ */
+const ENV_NAME_ARGUMENT_ERRORS = new Set(['MissingEnvError']);
+
+/** `new MissingEnvError(...)` のように、引数が変数名になる例外を作る式か */
+function isEnvNameArgumentError(node: ts.Node): boolean {
+  if (!ts.isNewExpression(node)) return false;
+  const name = calleeName(node.expression);
+  return name !== null && ENV_NAME_ARGUMENT_ERRORS.has(name);
+}
+
+/**
  * 例外 (throw 文・`new XxxError(...)`) と応答 (`NextResponse.json(...)` など) の引数の文字列に、
  * names のどれかが書かれている行 (1 始まり)。コメントや、それ以外の場所の文字列 (console.error など) は見ない。
+ * `new MissingEnvError('X')` の引数 (envName。message には入らない) も見ない。
  */
 function findEnvNamesInErrorsOrResponses(source: string, names: readonly string[], fileName = 'file.ts'): number[] {
   const sf = parse(source, fileName);
   const lines = new Set<number>();
   const scanStrings = (node: ts.Node): void => {
+    if (isEnvNameArgumentError(node)) return;
     const text =
       ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateLiteralToken(node)
         ? node.text
@@ -170,7 +190,9 @@ function findEnvNamesInErrorsOrResponses(source: string, names: readonly string[
     if (ts.isThrowStatement(node)) scanStrings(node.expression);
     if (ts.isNewExpression(node)) {
       const name = calleeName(node.expression);
-      if (name && (/Error$/.test(name) || RESPONSE_CONSTRUCTORS.has(name))) node.arguments?.forEach(scanStrings);
+      if (name && !isEnvNameArgumentError(node) && (/Error$/.test(name) || RESPONSE_CONSTRUCTORS.has(name))) {
+        node.arguments?.forEach(scanStrings);
+      }
     }
     if (ts.isCallExpression(node)) {
       const name = calleeName(node.expression);
@@ -318,6 +340,19 @@ describe('走査の仕組みの確認 (検出が空振りしないこと)', () =
     expect(findEnvNamesInErrorsOrResponses(source, REQUIRED_ENV_NAMES)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
+  it('一覧のすべての変数名で走査すると、任意の変数の名前 (以前の fast-llm の文) も見つける (#1490)', () => {
+    const source = [
+      'throw new Error("Missing XAI_API_KEY");', // 1: 以前の src/lib/ai/fast-llm.ts
+      "return NextResponse.json({ error: 'STRIPE_SECRET_KEY is not configured' }, { status: 503 });", // 2
+      "console.error('[cron] CRON_SECRET not set');", // 3: ログは対象外
+      'throw new MissingEnvError("XAI_API_KEY");', // 4: MissingEnvError の引数 (envName。message には入らない) は対象外
+    ].join('\n');
+
+    expect(findEnvNamesInErrorsOrResponses(source, LISTED_ENV_NAMES)).toEqual([1, 2]);
+    // 必須の 3 つだけで走査すると、どちらも見つからない (以前の検査がすり抜けていた理由)
+    expect(findEnvNamesInErrorsOrResponses(source, REQUIRED_ENV_NAMES)).toEqual([]);
+  });
+
   it('import / export from / 動的 import / require を静的と動的に分けて拾う', () => {
     const source = [
       "import { z } from 'zod';",
@@ -367,6 +402,27 @@ describe('本番コードに `process.env.X!` を書かない (#1182)', () => {
     // 失敗したら、自前で取り出して名前入りの文を投げるのをやめ、src/lib/env-required.ts の getter
     // (service_role のクライアントは lib/supabase/server.ts の getSupabaseAdmin()) を使う。
     // 欠けていれば MissingEnvError (message は固定の文) になり、変数名はサーバーのログにだけ残る
+    expect(offenders).toEqual([]);
+  }, 30_000);
+
+  it('Web の本番コードは、一覧 (src/lib/env.ts) のどの変数名も、例外・応答の文字列に書いていない (任意の変数も含む。#1490)', () => {
+    const webFiles = files.filter((file) => !path.relative(ROOT, file).startsWith(`apps${path.sep}mobile${path.sep}`));
+    const offenders = webFiles.flatMap((file) => {
+      const source = fs.readFileSync(file, 'utf-8');
+      // 構文木の解析は重いので、一覧の変数名を含まないファイルは読み飛ばす
+      if (!LISTED_ENV_NAMES.some((name) => source.includes(name))) return [];
+      return findEnvNamesInErrorsOrResponses(source, LISTED_ENV_NAMES, file).map(
+        (line) => `${path.relative(ROOT, file)}:${line}`,
+      );
+    });
+
+    // 走査が空振りしていないこと: 一覧には必須の 3 つのほかに任意の変数があり、Web のファイルを見ている
+    expect(LISTED_ENV_NAMES.length).toBeGreaterThan(REQUIRED_ENV_NAMES.length);
+    expect(LISTED_ENV_NAMES).toContain('XAI_API_KEY');
+    expect(webFiles.some((file) => file.endsWith(path.join('src', 'lib', 'ai', 'fast-llm.ts')))).toBe(true);
+    // 失敗したら、変数名入りの文を投げる・返すのをやめる。必須の変数は src/lib/env-required.ts の getter、
+    // 任意の変数は src/lib/env.ts の getOptionalEnv() で取り出し、使えないときは MissingEnvError (message は固定の文。
+    // 変数名は envName と、サーバーのログにだけ残る) を投げる (例: src/lib/ai/fast-llm.ts)
     expect(offenders).toEqual([]);
   }, 30_000);
 

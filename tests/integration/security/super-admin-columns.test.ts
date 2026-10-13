@@ -24,6 +24,8 @@
  *   L-1: LLM 使用量は 200 で返り、LLM 呼び出しごとの行だけを集計する (実行ごとの合計行を二重に数えない)
  *   L-2: プロバイダー・モデルで絞り込める
  *   L-3: super_admin 以外は 403、未認証は 401
+ *   L-4: 1 人が今日 (JST) 5,001 回呼ぶと、異常として返す (#1498。以前は行が PostgREST の max_rows (1,000) で打ち切られ、
+ *        合計は 1,000 回までにしか見えず、異常のバナーは出なかった。集計は DB の関数 llm_usage_summary)
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
  *   npm run dev &
@@ -39,6 +41,14 @@ import { cleanupAuditLogs, cleanupTestUser, createTestUserWithRoles, testEmail, 
 const TS = Date.now();
 /** この実行の LLM 使用量の行を、他のデータと分けて集計するための機能名 */
 const FUNCTION_NAME = `it-1306-${TS}`;
+/** L-4 (#1498) の大量の行の機能名 (L-1〜L-3 の数と混ざらないように別にする) */
+const FUNCTION_NAME_BULK = `it-1498-route-${TS}`;
+/** 異常のしきい値 (1 人・JST の 1 日あたり。設計書 operator/03-ui-spec.md「1 ユーザー 5,000 req/日超」。手で書いた期待値) */
+const ANOMALY_DAILY_REQUESTS = 5000;
+/** PostgREST の max_rows の既定 (Supabase)。以前の集計はこの行数で打ち切られていた */
+const POSTGREST_DEFAULT_MAX_ROWS = 1000;
+/** 1 回の insert で送る行の数 (リクエストの大きさを抑える) */
+const INSERT_CHUNK_ROWS = 2500;
 const UNKNOWN_ID = '00000000-0000-4000-8000-000000000000';
 
 let superAdmin: TestUser;
@@ -58,6 +68,8 @@ interface UsageBody {
     total_tokens: number;
     by_model: Array<{ model: string; provider: string; requests: number; tokens: number; cost_usd: number }>;
     by_function: Array<{ function: string; requests: number; cost_usd: number }>;
+    top_users: Array<{ user_id: string; requests: number; is_anomaly: boolean }>;
+    anomalies: Array<{ user_id: string; requests: number; is_anomaly: boolean }>;
   };
   error?: { code?: string; message?: string };
 }
@@ -180,6 +192,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await srAdmin.from('llm_usage_logs').delete().eq('function_name', FUNCTION_NAME);
+  await srAdmin.from('llm_usage_logs').delete().eq('function_name', FUNCTION_NAME_BULK);
   if (gdprIds.length > 0) {
     await srAdmin.from('admin_audit_logs').delete().in('target_id', gdprIds);
     await srAdmin.from('gdpr_deletion_requests').delete().in('id', gdprIds);
@@ -312,4 +325,34 @@ describe('GET /api/super-admin/llm/usage (llm_usage_logs の列は input_tokens 
     expect((await apiCall('GET', '/api/super-admin/llm/usage?period=1d', plainAdmin.jwt)).status).toBe(403);
     expect((await apiCallNoAuth('GET', '/api/super-admin/llm/usage?period=1d')).status).toBe(401);
   });
+
+  it('L-4: 1 人が今日 (JST) 5,001 回呼ぶと、全部を数えて異常として返す (#1498。以前は 1,000 行で打ち切られた)', async () => {
+    // created_at は既定 (挿入した時刻 = JST の今日)。period=1d は JST の今日
+    const rows = Array.from({ length: ANOMALY_DAILY_REQUESTS + 1 }, () => ({
+      function_name: FUNCTION_NAME_BULK,
+      execution_id: randomUUID(),
+      user_id: subject.userId,
+      provider: 'openai',
+      endpoint: '/v1/chat/completions',
+      model: 'gpt-5-mini',
+      total_tokens: 1,
+      estimated_cost_usd: 0,
+      is_summary: false,
+      success: true,
+    }));
+    for (let i = 0; i < rows.length; i += INSERT_CHUNK_ROWS) {
+      const { error } = await srAdmin.from('llm_usage_logs').insert(rows.slice(i, i + INSERT_CHUNK_ROWS));
+      expect(error, error?.message).toBeNull();
+    }
+
+    const res = await apiCall<UsageBody>('GET', `/api/super-admin/llm/usage?period=1d&function=${FUNCTION_NAME_BULK}`, superAdmin.jwt);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data?.total_requests).toBe(ANOMALY_DAILY_REQUESTS + 1);
+    expect(res.body.data?.total_requests).toBeGreaterThan(POSTGREST_DEFAULT_MAX_ROWS);
+    expect(res.body.data?.anomalies.map((u) => [u.user_id, u.requests, u.is_anomaly])).toEqual([
+      [subject.userId, ANOMALY_DAILY_REQUESTS + 1, true],
+    ]);
+    expect(res.body.data?.top_users[0]).toMatchObject({ user_id: subject.userId, is_anomaly: true });
+  }, 120_000);
 });

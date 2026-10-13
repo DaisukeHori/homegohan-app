@@ -514,6 +514,13 @@ LLM 使用量ダッシュボード
 }
 ```
 
+> **現状 (2026-10, #1498)**: 実装のパスは `GET /api/super-admin/llm/usage` (super_admin のみ)。集計は DB の関数 `llm_usage_summary`
+> (migration `20261011110000_llm_usage_summary.sql`。service_role だけが実行できる) が `llm_usage_logs` の全行を DB の中で集計し、
+> 1 つの JSONB で返す (行を API で読まないので、PostgREST の `max_rows` で打ち切られない)。集計するのは LLM 呼び出しごとの行
+> (`is_summary = false`) だけ。日次の系列 (`timeseries`) は JST の暦日。`top_users` は呼び出し回数の多い順に 50 人。
+> `anomalies` は、JST の 1 日に 5,000 回を超えて呼んだ日があるユーザー全員 (`top_users` に入らない人も含む。operator/03-ui-spec.md の異常アラート)。
+> 応答には上の項目のほかに `total_requests` / `total_tokens` / `period` がある。
+
 ---
 
 ### GET /api/super-admin/llm-usage/users/{id}
@@ -1478,7 +1485,7 @@ import Stripe from 'stripe';
 import { validateStripeSignature } from '@/lib/operator/stripe-webhook';
 
 // 署名の生成と検証は手元で完結するので、環境変数を読まずにテスト用の固定の値を使う
-// (`process.env.X!` は使わない。#1182・#1434)
+// (`process.env.<変数名>!` は使わない。#1182・#1434)
 const TEST_STRIPE_SECRET_KEY = 'sk_test_dummy_for_signature_test';
 const TEST_WEBHOOK_SECRET = 'whsec_test_dummy_for_signature_test';
 
