@@ -26,6 +26,13 @@ const ROOT = path.resolve(__dirname, '../..');
 const CODE_DIRS = ['src', 'apps/mobile/app', 'apps/mobile/src'];
 const CODE_EXT = /\.(ts|tsx)$/;
 const SKIP_DIR = new Set(['node_modules', '__tests__', '.next']);
+/**
+ * 走査しない生成物。DB の型 (supabase gen types の出力) は DB の定義を写したもので、ロックを呼ぶコードではない。
+ * DB には #1165 より前の migration (20261010130000_auth_login_failures.sql など) が作ったロックの関数・列が残っており
+ * (消す migration は無い)、型を作り直すと名前が出る (#1495)。ロックの関数の呼び出し (rpc の関数名の文字列) は、
+ * 呼ぶ側のコードで見つかる
+ */
+const GENERATED_FILES = new Set([path.join('src/types/database.types.ts')]);
 
 /** ログインの API の route (ここでは 423 を返さない) */
 const AUTH_API_DIR = 'src/app/api/auth';
@@ -75,7 +82,7 @@ function findLockoutCode(fileName: string, text: string, isAuthApi: boolean): st
 }
 
 describe('ロックのコードが戻ってきていない', () => {
-  const files = CODE_DIRS.flatMap(listCodeFiles);
+  const files = CODE_DIRS.flatMap(listCodeFiles).filter((rel) => !GENERATED_FILES.has(rel));
 
   it('走査の対象が空ではない (ログインの API と、その中身を含む)', () => {
     expect(files).toContain(path.join('src/app/api/auth/login/route.ts'));

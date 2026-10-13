@@ -76,9 +76,14 @@ npm run test:smoke -- --base-url=https://staging.homegohan.app
 supabase db push --linked --include-all
 # (本番プロジェクトの PROJECT_ID を確認してから実行)
 
-# 5. 型の再生成 (出力先は src/types/database.types.ts)
+# 5. 型の再生成 (出力先は src/types/database.types.ts。packages/shared/src/database.types.ts に同じ内容を写す)
+#    本番に接続しない作り方: ローカルの Supabase (bash scripts/supabase-local.sh start → reset) に全 migration を当て、
+#    npx supabase@2.62.10 gen types typescript --local --schema public --workdir .supabase-local の出力を使う
+#    (--local は __InternalSupabase の PostgrestVersion を出さないので既存の値を残す。#1495)。
+#    tests/database-types-migrations-contract.test.ts が migration と型ファイルの突き合わせ・写しの一致を確かめる
 npm run types:supabase
-git add src/types/database.types.ts
+cp src/types/database.types.ts packages/shared/src/database.types.ts
+git add src/types/database.types.ts packages/shared/src/database.types.ts
 git commit -m "chore: Supabase 型を再生成"
 
 # 6. seed データ投入
