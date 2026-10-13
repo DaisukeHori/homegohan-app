@@ -70,7 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # 比べる相手のコミットまで必要なので、履歴をすべて取る。
           # 浅く取ると、いちばん古いコミットが「全ファイルを追加したコミット」に見えて、全体を検査してしまう
@@ -163,10 +163,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
       # npm audit は package-lock.json だけで動く (npm ci は要らない)。
@@ -229,7 +229,7 @@ jobs:
             echo "enabled=true" >> "${GITHUB_OUTPUT}"
           fi
       - if: steps.graph.outputs.enabled == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
       # PR で増える・上がる依存パッケージに、high 以上の既知の脆弱性があると失敗する。
@@ -258,7 +258,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: github/codeql-action/init@v4
