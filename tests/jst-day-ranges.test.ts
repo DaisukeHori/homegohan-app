@@ -12,7 +12,7 @@
 //   - GET  /api/ai/consultation/sessions (7 日前) / GET /api/performance/checkins (30 日前)
 //     / GET /api/admin/finance/revenue (30 日前)                    → jstDayOffset
 //   - GET  /api/meals・/api/performance/*・health/checkups・health/blood-tests の「今日」 → jstToday
-//   - GET  /api/super-admin/llm/usage (created_at の範囲・日次の系列) → jstDayRangeTimestamps / jstDayOfTimestamp
+//   - GET  /api/super-admin/llm/usage (created_at の範囲)            → jstDayRangeTimestamps (日次の系列は DB の関数 llm_usage_summary が JST の暦日でまとめる。#1498)
 //   - GET  /api/super-admin/audit-logs・/api/operator/membership/audit (created_at の範囲。開始日・終了日は空欄もある)
 //     / GET /api/admin/finance/nps の一覧・POST /api/admin/finance/exports (invoices / subscriptions / nps)
 //                                                                  → jstOptionalDayRangeTimestamps

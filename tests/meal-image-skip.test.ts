@@ -33,7 +33,7 @@ import {
   MEAL_IMAGE_SKIPPED_ERRORS,
   asCatalogMealDish,
   buildDishImageSubjectHash,
-  deriveMealCoverImage,
+  applyGeneratedDishImage,
   isCatalogProductMeal,
   buildMealImageIdempotencyKey,
   isMealImageSkippedError,
@@ -426,15 +426,23 @@ describe('reconcileDishImages: 実データの形 (subject_hash の無い料理)
 
 /**
  * 画像の処理 (process-meal-image-jobs) が、積んだジョブを全部書き終えたあとの献立のカバー。
- * 画像の処理は、ジョブの料理を generated_ai・ready・AI の画像にしてから deriveMealCoverImage(料理, 今のカバー) でカバーを決める
+ * 画像の処理は、ジョブごとに applyGeneratedDishImage (料理を generated_ai・ready・AI の画像にし、カバーの持ち主の決まりでカバーを決める) を使う
  */
 function coverAfterWorker(result: { dishes: MealImageDish[]; jobs: MealImageJobSeed[]; mealCoverImageUrl: string | null }): string | null {
-  const written = result.dishes.map((dish, index) =>
-    result.jobs.some((job) => job.dishIndex === index)
-      ? { ...dish, image_url: `https://example.com/ai-${index}.png`, image_source: 'generated_ai' as const, image_status: 'ready' as const }
-      : dish,
-  );
-  return deriveMealCoverImage({ dishes: written, fallbackMealImageUrl: result.mealCoverImageUrl });
+  let dishes = result.dishes;
+  let cover = result.mealCoverImageUrl;
+  for (const job of result.jobs) {
+    const applied = applyGeneratedDishImage({
+      dishes,
+      dishIndex: job.dishIndex,
+      imageUrl: `https://example.com/ai-${job.dishIndex}.png`,
+      generatedAt: '2026-10-12T00:00:00.000Z',
+      currentCoverImageUrl: cover,
+    });
+    dishes = applied.dishes;
+    cover = applied.coverImageUrl;
+  }
+  return cover;
 }
 
 describe('#1487 の整合ゲート R1: 商品の献立の古い商品の料理・写真の複数の料理の献立のカバーを、AI の画像で置き換えない', () => {
@@ -517,7 +525,7 @@ describe('#1487 の整合ゲート R1: 商品の献立の古い商品の料理�
     expect(coverAfterWorker(result)).toBe(PRODUCT_URL);
   });
 
-  it('前提との対比: 商品の献立と分からなければ (previousMealIsCatalog なし)、同じ料理の名前を変えると積み、画像の処理のあとカバーが AI の画像になる', async () => {
+  it('前提との対比: 商品の献立と分からなければ (previousMealIsCatalog なし)、同じ料理の名前を変えると積む。それでもカバーは商品の画像のまま (カバーの持ち主の決まり)', async () => {
     const result = await reconcileDishImages({
       previousDishes: [LEGACY_CATALOG_DISH],
       nextDishes: [{ ...LEGACY_CATALOG_DISH, name: '幕の内弁当(大盛り)' }],
@@ -525,7 +533,8 @@ describe('#1487 の整合ゲート R1: 商品の献立の古い商品の料理�
       fallbackMealImageUrl: PRODUCT_URL,
     });
     expect(result.jobs).toHaveLength(1);
-    expect(coverAfterWorker(result)).toBe('https://example.com/ai-0.png');
+    // 以前は画像の処理のあとカバーが AI の画像 (ai-0) になっていた。商品の画像はどの AI の料理の画像とも一致しないので、置き換えない
+    expect(coverAfterWorker(result)).toBe(PRODUCT_URL);
   });
 
   it.each([

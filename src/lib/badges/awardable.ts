@@ -30,8 +30,9 @@ export const AWARDABLE_BADGE_CODES = [
 
   // Edge Function calculate-segment-stats が、集計のあとにランキング・改善率から付与する
   // (badges.condition_json の type が segment_rank / segment_percentile / segment_vs_avg / improvement のもの)。
-  // 注意 (2026-10-08 確認): この関数がバッジを取る条件 `condition_json->type.eq.<値>` は PostgREST に 22P02 で拒否され、
-  // 結果の error も見ていないため、いまは実際には付与されない。直すか、この 14 件をリストから外すかはオーナー判断 (#1314)。
+  // バッジは `condition_json->>type.eq.<値>` (text として比べる) で取り、取得・保存の失敗は throwIfError で例外 (500) にする
+  // (#1306。以前の `->` は PostgREST に 22P02 で拒否され、error も見ていなかったので一度も付与されなかった)。
+  // 付与するのは、期間が切り替わった直後の確定の回 (previousPeriod: true) だけ (#1491)。
   'segment_rank_1',
   'segment_rank_top3',
   'segment_top_5',

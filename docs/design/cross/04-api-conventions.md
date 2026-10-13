@@ -433,7 +433,7 @@ docs/api/
 import { getOptionalEnv } from '@/lib/env';
 
 /**
- * Webhook の署名の秘密を取り出す。`process.env.X!` とは書かない (#1182・#1434)。
+ * Webhook の署名の秘密を取り出す。`process.env.<変数名>!` とは書かない (#1182・#1434)。
  * 秘密は src/lib/env.ts の一覧に任意の変数として足し、getOptionalEnv で読む。
  * 無ければ署名を確かめられないので、受け付けずに失敗させる (fail-closed)。
  * message に変数名を入れない (500 の本文に出うるため。変数名は getOptionalEnv が警告のログに残す)。

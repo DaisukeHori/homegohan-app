@@ -132,13 +132,17 @@ export async function GET(request: Request) {
 }
 
 function determinePrize(ranking: any, userBadges: any[]): ComparisonPrize | null {
-  // ランキングに対応するバッジを探す
+  // ランキングに対応するバッジを探す。セグメント・指標に加えて、期間 (種類と開始日) も合うものだけ (#1500)。
+  // user_badges は (利用者, バッジ) ごとに 1 件だけで、一度付くと消えない (付与の記録 context_json に、付いた期間が残る)。
+  // 期間を見ないと、過去の期間に付いたバッジが、今の期間のこのランキングの賞として出続ける
   const relevantBadge = userBadges.find(ub => {
     const context = ub.context_json;
     if (!context) return false;
     return (
       context.segment_id === ranking.segment_id &&
-      context.metric_id === ranking.metric_id
+      context.metric_id === ranking.metric_id &&
+      context.period_type === ranking.period_type &&
+      context.period_start === ranking.period_start
     );
   });
 

@@ -19,12 +19,21 @@
  *   H. (#1487 の整合ゲート) 商品を選んだ保存 (catalogProductId): 料理は商品の料理 (画像は商品の画像) で、AI の画像のジョブを作らない
  *   I. (#1487 の整合ゲート R1) 商品の献立の古い商品の料理 (origin/main の形: 画像の項目なし。以前の保存し直しで generated_ai に書き換わった形) と、
  *      写真の複数の料理に料理を足す保存: ジョブを積まず・数えず、献立のカバーは商品・写真の画像のまま
+ *   J. (#1487 の整合ゲート 3 回目・カバーの持ち主) 料理が 3 品の AI の献立に利用者がカバーを付ける保存: カバーは利用者の画像になり、
+ *      ジョブは今の決まりのまま積む。画像の処理が料理の画像を書いても、完了を切り替えても、カバーは利用者の画像のまま。
+ *      新しく作る入口 (POST) で送られた写真の料理は、画像を消さず AI の画像の料理にしない
  *
  * 献立の行の作り物は、入口が select で名指しした列だけを返す (入口が読まない列 (catalog_product_id など) を読んだことにしない)
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AiUsageResult } from '../supabase/functions/_shared/ai-daily-limit';
-import { buildDishImageSubjectHash, buildPhotoDishList, type MealImageDish } from '../supabase/functions/_shared/meal-image';
+import {
+  applyGeneratedDishImage,
+  buildDishImageSubjectHash,
+  buildPhotoDishList,
+  reconcileDishImages,
+  type MealImageDish,
+} from '../supabase/functions/_shared/meal-image';
 import { AI_USAGE_ALLOWED, AI_USAGE_DENIED } from './helpers/ai-usage-mock';
 
 const USER_ID = 'user-1';
@@ -696,5 +705,133 @@ describe('#1487 H. 商品を選んだ保存では AI の画像のジョブを作
     expect(h.state.queueInserts).toEqual([]);
     expectCatalogDish(savedRow().dishes);
     expect(savedRow().image_url).toBe(PRODUCT_URL);
+  });
+});
+
+/** 料理が 3 品の AI の献立 (reconcileDishImages を通した、画像がまだ無い pending の料理) */
+const THREE_AI_DISHES: MealImageDish[] = [
+  { name: '鮭の塩焼き', role: 'main' },
+  { name: 'ほうれん草のおひたし', role: 'side' },
+  { name: '味噌汁', role: 'soup' },
+];
+const USER_COVER = 'https://example.com/storage/generated/user-1/user-made.png';
+const aiImageUrl = (dishIndex: number) => `https://example.com/storage/fridge-images/generated/${MEAL_ID}/job-${dishIndex}.png`;
+
+/** 画像の処理 (process-meal-image-jobs) が、積んだジョブの料理に AI の画像を書いたあとの料理とカバー (applyGeneratedDishImage) */
+function runImageWorker(dishes: MealImageDish[], cover: string | null): { dishes: MealImageDish[]; cover: string | null } {
+  let current = dishes;
+  let currentCover = cover;
+  for (const job of h.state.queueInserts) {
+    const applied = applyGeneratedDishImage({
+      dishes: current,
+      dishIndex: Number(job.dish_index),
+      imageUrl: aiImageUrl(Number(job.dish_index)),
+      generatedAt: '2026-10-12T00:00:00.000Z',
+      currentCoverImageUrl: currentCover,
+    });
+    current = applied.dishes;
+    currentCover = applied.coverImageUrl;
+  }
+  return { dishes: current, cover: currentCover };
+}
+
+interface CoverEntry extends UpdateEntry {
+  /** 利用者がカバーを付ける保存 (Web の PATCH {imageUrl}・PATCH /api/meals/[id] の image_url・AI 相談の update_meal の image_url) */
+  withCover: (url: string) => Promise<Outcome>;
+}
+
+const COVER_ENTRIES: CoverEntry[] = UPDATE_ENTRIES.map((entry) => ({
+  ...entry,
+  withCover: async (url: string) => {
+    if (entry.name === 'PATCH /api/meals/[id]') {
+      const res = await mealsPatch(json(`http://localhost/api/meals/${MEAL_ID}`, 'PATCH', { image_url: url }), { params: { id: MEAL_ID } });
+      return { status: res.status, ...((await res.json()) as Outcome) };
+    }
+    if (entry.name === 'PATCH /api/meal-plans/meals/[id]') {
+      const res = await mealPlansPatch(json(`http://localhost/api/meal-plans/meals/${MEAL_ID}`, 'PATCH', { imageUrl: url }), { params: { id: MEAL_ID } });
+      return { status: res.status, ...((await res.json()) as Outcome) };
+    }
+    return runConsultation({ image_url: url });
+  },
+}));
+
+describe.each(COVER_ENTRIES)('#1487 J. カバーの持ち主 (利用者が付けたカバーを AI の料理の画像で置き換えない): $name', (entry) => {
+  it('3 品の AI の献立 (画像がまだ無い) にカバーを付ける → 画像の処理が料理の画像を書く → 完了を切り替える: カバーは利用者の画像のまま', async () => {
+    h.state.existingDishes = (await reconcileDishImages({ previousDishes: [], nextDishes: THREE_AI_DISHES, triggerSource: 'test' })).dishes;
+    h.state.existingImageUrl = null;
+
+    const out = await entry.withCover(USER_COVER);
+
+    expect(out.status).toBe(200);
+    expect(savedRow().image_url).toBe(USER_COVER);
+    // 料理の画像のジョブは今の決まりのまま (画像の無い AI の料理を積み直す。操作 1 回で 1 回数える)
+    expect(h.state.queueInserts.map((job) => job.dish_index)).toEqual([0, 1, 2]);
+    expect(h.consumeAiUsage).toHaveBeenCalledTimes(1);
+    expect(h.consumeAiUsage).toHaveBeenCalledWith(USER_ID, 'meal_image_auto');
+    // 利用者の画像は料理には付けない (料理は AI の料理のまま)
+    expect((savedRow().dishes as MealImageDish[]).every((dish) => dish.image_source === 'generated_ai' && !dish.image_url)).toBe(true);
+
+    const worked = runImageWorker(savedRow().dishes as MealImageDish[], savedRow().image_url as string | null);
+    expect(worked.cover).toBe(USER_COVER);
+    expect(worked.dishes.map((dish) => dish.image_url)).toEqual([0, 1, 2].map(aiImageUrl));
+
+    vi.clearAllMocks();
+    h.state.writes = [];
+    h.state.queueInserts = [];
+    h.state.existingDishes = worked.dishes;
+    h.state.existingImageUrl = worked.cover;
+    const toggled = await entry.toggle();
+
+    expect(toggled.status).toBe(200);
+    expect(savedRow().image_url).toBe(USER_COVER);
+    expect(h.state.queueInserts).toEqual([]);
+    expect(h.consumeAiUsage).not.toHaveBeenCalled();
+  });
+
+  it('料理の画像ができあがった AI の献立 (カバーは AI の料理の画像) にカバーを付ける → 完了を切り替える: AI の料理の画像に戻らない', async () => {
+    const pending = (await reconcileDishImages({ previousDishes: [], nextDishes: THREE_AI_DISHES, triggerSource: 'test' })).dishes;
+    h.state.queueInserts = [0, 1, 2].map((dish_index) => ({ dish_index }));
+    const ready = runImageWorker(pending, null);
+    h.state.queueInserts = [];
+    // 空のカバーは AI の料理の画像で付け替わる (今までどおり)
+    expect(ready.cover).toBe(aiImageUrl(0));
+    h.state.existingDishes = ready.dishes;
+    h.state.existingImageUrl = ready.cover;
+
+    await entry.withCover(USER_COVER);
+    expect(savedRow().image_url).toBe(USER_COVER);
+    expect(h.state.queueInserts).toEqual([]);
+
+    h.state.writes = [];
+    h.state.existingDishes = savedRow().dishes as MealImageDish[] ?? ready.dishes;
+    h.state.existingImageUrl = USER_COVER;
+    await entry.toggle();
+    expect(savedRow().image_url).toBe(USER_COVER);
+  });
+});
+
+describe('#1487 J. 新しく作る入口 (POST) で送られた写真の料理を、AI の画像の料理にしない', () => {
+  it.each([
+    ['POST /api/meals', (dishes: MealImageDish[]) => mealsPost(json('http://localhost/api/meals', 'POST', { date: '2026-10-11', mealType: 'lunch', dishName: '親子丼', dishes, imageUrl: PHOTO_URL }))],
+    ['POST /api/meal-plans/meals', (dishes: MealImageDish[]) => mealPlansPost(json('http://localhost/api/meal-plans/meals', 'POST', { dayDate: '2026-10-11', mealType: 'lunch', dishName: '親子丼', dishes, imageUrl: PHOTO_URL }))],
+  ])('%s: 写真の料理 (1 品・複数) の画像と source を保持し、積まず、数えない', async (_label, run) => {
+    for (const photoDishes of [
+      buildPhotoDishList([{ name: '親子丼', role: 'main' }], PHOTO_URL),
+      buildPhotoDishList([{ name: '親子丼', role: 'main' }, { name: '味噌汁', role: 'soup' }], PHOTO_URL),
+    ]) {
+      vi.clearAllMocks();
+      h.state.writes = [];
+      h.state.queueInserts = [];
+      const res = await run(photoDishes);
+
+      expect(res.status).toBe(200);
+      expect(h.consumeAiUsage).not.toHaveBeenCalled();
+      expect(h.state.queueInserts).toEqual([]);
+      const saved = savedRow().dishes as MealImageDish[];
+      photoDishes.forEach((dish, index) => {
+        expect(saved[index]).toMatchObject({ image_url: dish.image_url, image_source: 'meal_photo', image_status: dish.image_status });
+      });
+      expect(savedRow().image_url).toBe(PHOTO_URL);
+    }
   });
 });

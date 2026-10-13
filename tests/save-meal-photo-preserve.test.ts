@@ -184,4 +184,26 @@ describe("save-meal: 前回の写真の料理を AI の画像で置き換えな�
     expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({ jobs: [expect.objectContaining({ dishIndex: 0 })] }));
     expect(row.dishes[0]).toMatchObject({ image_source: "generated_ai", image_status: "stale", image_url: null });
   });
+
+  it("カバーの持ち主: 利用者が付けたカバー (どの AI の料理の画像とも一致しない) は、AI の料理の枠を作り直しても残す", async () => {
+    const userCover = "https://example.com/storage/generated/user-1/user-made.png";
+    const previous: MealImageDish[] = [
+      { name: "カレー", role: "main", image_url: "https://example.com/ai-0.png", image_source: "generated_ai", image_status: "ready", image_subject_hash: "h0" },
+      { name: "サラダ", role: "side", image_url: "https://example.com/ai-1.png", image_source: "generated_ai", image_status: "ready", image_subject_hash: "h1" },
+    ];
+    const row = await regenerate(previous, [aiDish("鮭の塩焼き"), aiDish("お浸し", "side")], { image_url: userCover });
+
+    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({ jobs: [expect.objectContaining({ dishIndex: 0 }), expect.objectContaining({ dishIndex: 1 })] }));
+    expect(row.image_url).toBe(userCover);
+  });
+
+  it("カバーの持ち主: 前の AI の料理の画像だったカバーは、作り直した料理の画像ができるまで空にする (前の料理の画像を残さない)", async () => {
+    const previous: MealImageDish[] = [
+      { name: "カレー", role: "main", image_url: "https://example.com/ai-0.png", image_source: "generated_ai", image_status: "ready", image_subject_hash: "h0" },
+    ];
+    const row = await regenerate(previous, [aiDish("鮭の塩焼き")], { image_url: "https://example.com/ai-0.png" });
+
+    expect(row.dishes[0]).toMatchObject({ image_source: "generated_ai", image_status: "stale", image_url: null });
+    expect(row.image_url).toBeNull();
+  });
 });
