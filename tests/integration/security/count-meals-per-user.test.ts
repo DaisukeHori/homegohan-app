@@ -99,11 +99,13 @@ beforeAll(async () => {
   one = await createUser('one');
   none = await createUser('none');
   sandboxOnly = await createUser('sandbox');
+  // 1 回の insert に is_sandbox を持つ行と持たない行を混ぜると、PostgREST は列をそろえて、持たない行に NULL を入れる
+  // (DB の既定値 false にはならず、NOT NULL で拒まれる)。実際の記録にも is_sandbox: false を明示する
   const { error } = await sr.from('meals').insert([
-    { user_id: many.id, eaten_at: '2025-01-15T03:00:00Z', meal_type: 'lunch' },
-    { user_id: many.id, eaten_at: '2026-10-01T03:00:00Z', meal_type: 'lunch' },
-    { user_id: many.id, eaten_at: '2026-10-08T10:00:00Z', meal_type: 'dinner' },
-    { user_id: one.id, eaten_at: '2026-10-08T23:00:00Z', meal_type: 'breakfast' },
+    { user_id: many.id, eaten_at: '2025-01-15T03:00:00Z', meal_type: 'lunch', is_sandbox: false },
+    { user_id: many.id, eaten_at: '2026-10-01T03:00:00Z', meal_type: 'lunch', is_sandbox: false },
+    { user_id: many.id, eaten_at: '2026-10-08T10:00:00Z', meal_type: 'dinner', is_sandbox: false },
+    { user_id: one.id, eaten_at: '2026-10-08T23:00:00Z', meal_type: 'breakfast', is_sandbox: false },
     // ハンズオンのお試しの記録 (1 人 1 件まで: uniq_user_sandbox_meal)
     { user_id: many.id, eaten_at: '2026-10-09T03:00:00Z', meal_type: 'lunch', is_sandbox: true },
     { user_id: sandboxOnly.id, eaten_at: '2026-10-09T03:00:00Z', meal_type: 'lunch', is_sandbox: true },
