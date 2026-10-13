@@ -13,6 +13,9 @@
  *   日付になっていない値で確定したら、確定していた値に戻す。
  *   保存した期間の復元は非同期 (AsyncStorage)。復元が終わる前に欄を読むと、初期値 (表示中の週) を読んでしまう
  *   (負荷の高いときに 1 回赤になった。#1486 の実走) ので、復元が終わるのを待ってから読む (waitForRestore)。
+ *
+ * #1524: 「1日だけ」の欄は、確定したときに下限 (今日) しか見ていなかった。Web の日付の欄の上限 (今日から 30 日先。
+ *   説明「今日から1ヶ月先まで」) と同じ上限を、確定したときにかける (値は @homegohan/shared で Web と共有する)。
  */
 
 import React from 'react';
@@ -29,7 +32,7 @@ jest.mock('../../src/lib/api', () => ({
   getApi: () => ({ post: jest.fn(), get: jest.fn() }),
 }));
 
-import { V4GenerateModal } from '../../src/components/menu/V4GenerateModal';
+import { commitSingleDayInput, V4GenerateModal } from '../../src/components/menu/V4GenerateModal';
 
 /** 開始日の上限 (今日から何日先まで)。手で書いた期待値 */
 const EXPECTED_START_MAX_DAYS_AHEAD = 30;
@@ -295,5 +298,62 @@ describe('V4GenerateModal (モバイル): 日付の欄は確定したときに�
     fireEvent.changeText(getByTestId('v4-date-picker-single'), 'abc');
     fireEvent(getByTestId('v4-date-picker-single'), 'blur');
     expect(single()).toBe(today);
+  });
+});
+
+describe('V4GenerateModal (モバイル): 「1日だけ」の上限 (#1524)', () => {
+  /** 「1日だけ」の上限 (今日から何日先まで)。画面の説明「今日から1ヶ月先まで」の手で書いた期待値 */
+  const EXPECTED_SINGLE_DAY_MAX_DAYS_AHEAD = 30;
+  /** 端末の暦に左右されない固定の今日 (純粋な関数のテスト用) */
+  const FIXED_TODAY = '2026-10-14';
+
+  it('commitSingleDayInput: 上限より先は今日 + 30 日に収める。上限ちょうどは残す。下限 (過去は今日) と日付でないときは以前どおり', () => {
+    const max = addDaysToDate(FIXED_TODAY, EXPECTED_SINGLE_DAY_MAX_DAYS_AHEAD);
+    expect(max).toBe('2026-11-13');
+    expect(commitSingleDayInput(addDaysToDate(FIXED_TODAY, FAR_FUTURE_DAYS), FIXED_TODAY, FIXED_TODAY)).toBe(max);
+    expect(commitSingleDayInput(addDaysToDate(max, 1), FIXED_TODAY, FIXED_TODAY)).toBe(max);
+    expect(commitSingleDayInput(max, FIXED_TODAY, FIXED_TODAY)).toBe(max);
+    expect(commitSingleDayInput(` ${addDaysToDate(FIXED_TODAY, 5)} `, FIXED_TODAY, FIXED_TODAY)).toBe('2026-10-19');
+    // 下限は今のまま (過去は今日に直す)
+    expect(commitSingleDayInput('2026-10-13', FIXED_TODAY, FIXED_TODAY)).toBe(FIXED_TODAY);
+    expect(commitSingleDayInput(FIXED_TODAY, '2026-10-20', FIXED_TODAY)).toBe(FIXED_TODAY);
+    // 日付でなければ、確定していた日付のまま
+    expect(commitSingleDayInput('2026-10-1', '2026-10-20', FIXED_TODAY)).toBe('2026-10-20');
+    expect(commitSingleDayInput('2026-02-30', '2026-10-20', FIXED_TODAY)).toBe('2026-10-20');
+  });
+
+  it('欄に上限より先の日付を打って確定すると、今日 + 30 日に収める (上限ちょうどはそのまま)', async () => {
+    const { getByTestId, today } = renderModal();
+    await waitForRestore();
+    fireEvent.press(getByTestId('v4-mode-single-day'));
+    const single = () => getByTestId('v4-date-picker-single').props.value as string;
+    const max = addDaysToDate(today, EXPECTED_SINGLE_DAY_MAX_DAYS_AHEAD);
+
+    fireEvent.changeText(getByTestId('v4-date-picker-single'), addDaysToDate(today, FAR_FUTURE_DAYS));
+    fireEvent(getByTestId('v4-date-picker-single'), 'blur');
+    expect(single()).toBe(max);
+
+    fireEvent.changeText(getByTestId('v4-date-picker-single'), addDaysToDate(max, 1));
+    fireEvent(getByTestId('v4-date-picker-single'), 'submitEditing');
+    expect(single()).toBe(max);
+
+    fireEvent.changeText(getByTestId('v4-date-picker-single'), max);
+    fireEvent(getByTestId('v4-date-picker-single'), 'blur');
+    expect(single()).toBe(max);
+  });
+
+  it('欄を離れずに生成を押しても、上限をかけてから使う (上限の日の slot だけを親に渡す)', async () => {
+    const { getByTestId, today, onGenerate } = renderModal();
+    await waitForRestore();
+    fireEvent.press(getByTestId('v4-mode-single-day'));
+    const max = addDaysToDate(today, EXPECTED_SINGLE_DAY_MAX_DAYS_AHEAD);
+
+    fireEvent.changeText(getByTestId('v4-date-picker-single'), addDaysToDate(today, FAR_FUTURE_DAYS));
+    fireEvent.press(getByTestId('v4-submit-btn'));
+
+    await waitFor(() => expect(onGenerate).toHaveBeenCalledTimes(1));
+    const dates = [...new Set(onGenerate.mock.calls[0][0].targetSlots.map((slot: { date: string }) => slot.date))];
+    expect(dates).toEqual([max]);
+    expect(getByTestId('v4-date-picker-single').props.value).toBe(max);
   });
 });

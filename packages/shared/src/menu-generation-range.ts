@@ -1,5 +1,5 @@
 /**
- * 献立生成 (V4 / V5) の「期間を指定」で選べる日付の上限 (#1463・#1482)。
+ * 献立生成 (V4 / V5) の「期間を指定」「1日だけ」で選べる日付の上限 (#1463・#1482・#1524)。
  *
  * Web (src/components/ai-assistant/V4GenerateModal.tsx)・モバイル (apps/mobile/src/components/menu/V4GenerateModal.tsx)
  * の画面と、サーバー (POST /api/ai/menu/v4/generate・/v5/generate) が同じ値を使う。
@@ -19,6 +19,17 @@ export const MENU_GENERATION_RANGE_START_MAX_DAYS_AHEAD = 30;
 /** 「期間を指定」の開始日の上限 (今日から MENU_GENERATION_RANGE_START_MAX_DAYS_AHEAD 日先)。today は YYYY-MM-DD の暦日 */
 export function menuGenerationRangeStartMax(today: string): string {
   return addDaysToDate(today, MENU_GENERATION_RANGE_START_MAX_DAYS_AHEAD);
+}
+
+/**
+ * 「1日だけ」で選べる日付の上限 (今日から何日先まで)。画面の説明「今日から1ヶ月先まで」。
+ * Web の「1日だけ」の日付の欄 (input の max) と、モバイルの「1日だけ」の欄を確定するとき (commitSingleDayInput) が同じ値を使う (#1524)
+ */
+export const MENU_GENERATION_SINGLE_DAY_MAX_DAYS_AHEAD = 30;
+
+/** 「1日だけ」の日付の上限 (今日から MENU_GENERATION_SINGLE_DAY_MAX_DAYS_AHEAD 日先)。today は YYYY-MM-DD の暦日 */
+export function menuGenerationSingleDayMax(today: string): string {
+  return addDaysToDate(today, MENU_GENERATION_SINGLE_DAY_MAX_DAYS_AHEAD);
 }
 
 /**
