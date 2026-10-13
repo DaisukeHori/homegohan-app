@@ -19,6 +19,12 @@ export const LLMUsageQuerySchema = z.object({
   provider: z.enum(LLMProvider).optional(),
 });
 
+/**
+ * 集計する期間の開始日が終了日より後のとき (GET /api/super-admin/llm/usage の 400 の details に入れる文。#1498)。
+ * 期間は period と to から決まる (7d / 30d に過去の to を渡しても開始日が後になる) ので、schema ではなく route で判定する
+ */
+export const LLM_USAGE_FROM_AFTER_TO_MESSAGE = '開始日は終了日と同じ日かそれより前にしてください';
+
 /** 1 日の上限に保存できる最大の回数。運営の入力の打ち間違い (桁の誤り) を止めるための上限 (DB の INTEGER の範囲より十分小さい) */
 export const AI_DAILY_LIMIT_MAX = 10_000;
 /** プランのキーの最大の長さ (subscription_plans.plan_key の実際の値より十分長い) */

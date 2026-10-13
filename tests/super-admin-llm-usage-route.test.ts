@@ -10,6 +10,7 @@
  *   - 期間 (JST 0 時の時刻)・絞り込み・上位の人数・異常のしきい値を引数で渡すこと (しきい値は LLM_USAGE_ANOMALY_DAILY_REQUESTS)
  *   - 関数の応答を、以前と同じ項目名の応答に直すこと (丸め・プロバイダー・user_id の NULL・異常の印)
  *   - 関数の失敗・応答の形の誤りを 500 にして記録すること (黙って 0 件にしない)
+ *   - 開始日が終了日より後の期間は、関数を呼ばずに 400 にすること (関数は 22023 で拒むので、通すと 500 になる)
  * を確かめる。集計そのもの (合計行を数えない・NULL を 0 として足す・JST の暦日・しきい値の境界・打ち切りが無いこと・権限) は
  * 実 DB の tests/integration/security/llm-usage-summary.test.ts で確かめる。
  */
@@ -375,6 +376,39 @@ describe('GET /api/super-admin/llm/usage: 入力・認可・エラー', () => {
     }
     expect(rpc).not.toHaveBeenCalled();
     expect(logError).not.toHaveBeenCalled();
+  });
+
+  // #1498: DB の関数は開始の時刻 ≥ 終わりの時刻を 22023 で拒む。route が判定せずに呼ぶと、利用者の入力の誤りが
+  // 500 (INTERNAL_ERROR) になり、サーバーの障害として app_logs に記録されていた (以前の route は 0 行を読んで 200 だった)
+  it.each([
+    ['custom で開始日が終了日より後', '?period=custom&from=2026-10-10&to=2026-10-05'],
+    ['custom で開始日が終了日の翌日 (JST 0 時の時刻が同じになる)', '?period=custom&from=2026-10-06&to=2026-10-05'],
+    // NOW は JST 2026-10-08。7d の開始日は 10/2 で、終了日 10/1 より後になる
+    ['7d に開始日より前の終了日 (to=2026-10-01)', '?period=7d&to=2026-10-01'],
+    // 30d の開始日は 9/9 で、終了日 9/8 より後になる
+    ['30d に開始日より前の終了日 (to=2026-09-08)', '?period=30d&to=2026-09-08'],
+  ])('開始日が終了日より後の期間 (%s) は 400。DB には触れず、障害として記録しない', async (_label, query) => {
+    const res = await GET(request(query));
+
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error.code).toBe('VALIDATION_ERROR');
+    expect(json.error.details.fieldErrors.from).toEqual(['開始日は終了日と同じ日かそれより前にしてください']);
+    expect(getSupabaseAdmin).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+    expect(logUserError).not.toHaveBeenCalled();
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['custom で開始日と終了日が同じ日', '?period=custom&from=2026-10-05&to=2026-10-05', '2026-10-04T15:00:00.000Z', '2026-10-05T15:00:00.000Z'],
+    // 7d の開始日 10/2 と終了日が同じ日。境界 (開始日 = 終了日) は受け付ける
+    ['7d に開始日と同じ日の終了日 (to=2026-10-02)', '?period=7d&to=2026-10-02', '2026-10-01T15:00:00.000Z', '2026-10-02T15:00:00.000Z'],
+  ])('開始日と終了日が同じ日 (%s) は 200 で、その 1 日を関数に渡す', async (_label, query, pFrom, pToExclusive) => {
+    const res = await GET(request(query));
+
+    expect(res.status).toBe(200);
+    expect(rpcArgs()).toMatchObject({ p_from: pFrom, p_to_exclusive: pToExclusive });
   });
 
   it('DB の関数のエラーは 500 で返し、原因と検索条件を記録する (エラー文は画面に出さない)', async () => {

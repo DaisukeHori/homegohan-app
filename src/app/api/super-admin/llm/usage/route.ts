@@ -18,6 +18,7 @@
  * 1,000 行を超える期間の合計は実際より小さく、異常使用 (1 人・JST の 1 日に 5,000 回超) は事実上判定できなかった。
  * 関数は全利用者の使用量を返すので service_role だけが呼べる。requireRole(['super_admin']) を通ったあとに
  * service role のクライアント (getSupabaseAdmin) で呼ぶ。
+ * 開始日が終了日より後の期間は、関数を呼ぶ前に 400 (VALIDATION_ERROR) にする (関数は 22023 で拒むので、通すと 500 になる)。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { jstDayRangeTimestamps, llmUsageRange } from '@/lib/jst-day-ranges';
@@ -25,7 +26,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { LLMUsageQuerySchema } from '@/lib/super-admin/llm-schemas';
+import { LLM_USAGE_FROM_AFTER_TO_MESSAGE, LLMUsageQuerySchema } from '@/lib/super-admin/llm-schemas';
 import {
   LLM_USAGE_SUMMARY_RPC,
   LlmUsageSummaryRpcSchema,
@@ -51,6 +52,21 @@ export async function GET(request: NextRequest) {
 
     // 期間の計算 (開始日・終了日の既定は JST の暦日。#1433)
     const { fromDate, toDate } = llmUsageRange({ period, from, to });
+    // 開始日が終了日より後の期間 (custom の from > to、7d / 30d に過去の to を渡したとき) は入力の誤りなので 400 にし、DB には触れない。
+    // DB の関数は開始の時刻 ≥ 終わりの時刻を 22023 で拒む (呼び出し側の誤りの見張り) ので、通すとサーバーの障害 (500) として
+    // 記録されてしまう (#1498)。日付は YYYY-MM-DD なので文字列の大小が暦日の前後と一致する
+    if (fromDate > toDate) {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: '入力値が不正です',
+            details: { formErrors: [], fieldErrors: { from: [LLM_USAGE_FROM_AFTER_TO_MESSAGE] } },
+          },
+        },
+        { status: 400 },
+      );
+    }
     // created_at (timestamptz) と比べる時刻。開始日の JST 0 時から、終了日の翌日の JST 0 時の手前まで
     const { fromTimestamp, toTimestampExclusive } = jstDayRangeTimestamps(fromDate, toDate);
 
