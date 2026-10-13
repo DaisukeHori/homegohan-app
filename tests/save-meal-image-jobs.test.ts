@@ -24,7 +24,9 @@ vi.mock("../supabase/functions/_shared/v4-nutrition-adapter.ts", () => ({
   }),
 }));
 
-vi.mock("../supabase/functions/_shared/meal-image.ts", () => ({
+// 料理画像の判定 (isCatalogProductMeal など。#1514) は本物を使い、reconcileDishImages だけを差し替える
+vi.mock("../supabase/functions/_shared/meal-image.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../supabase/functions/_shared/meal-image.ts")>()),
   DEFAULT_MEAL_IMAGE_MODEL: "test-image-model",
   reconcileDishImages: vi.fn(async (params: { nextDishes: unknown[] }) => ({
     dishes: params.nextDishes.map(() => ({})),

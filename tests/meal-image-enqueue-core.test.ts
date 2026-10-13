@@ -4,7 +4,9 @@
  *   1. buildMealImageJobRecords: trigger_source は渡したもの、無ければジョブのもの。priority・時刻は列の既定値に任せる
  *   2. insertMealImageJobRecords: 23505 は重複、それ以外のエラー・例外は失敗 (例外は投げない)
  *   3. markDishImagesEnqueueFailed: 積めなかった同じ料理の、画像が無い待ち・更新待ちだけを failed + enqueue_failed にする
- *   4. markEnqueueFailedDishesInMeal: 読めない・無い・書けないときも例外を投げずに結果を返す
+ *      写真・商品・手の画像の料理と、商品の献立の画像の項目の無い古い商品の料理 (#1514 で AI の画像のジョブを積まない料理) は変えない
+ *   4. markEnqueueFailedDishesInMeal: 読めない・無い・書けないときも例外を投げずに結果を返す。商品の献立かを読んだ行から見る。
+ *      料理 (dishes) だけを書き、献立のカバーには触れない
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -102,10 +104,34 @@ describe("markDishImagesEnqueueFailed", () => {
     ["別の料理に変わった", pending({ image_subject_hash: "hash-other" })],
     ["画像がある", pending({ image_url: "https://example.com/x.png", image_status: "ready" })],
     ["すでに失敗", pending({ image_status: "failed", image_error: "storage upload failed" })],
+    // #1514: 写真・商品・手の画像の料理は AI の画像のジョブを積まない料理なので、積めなかった扱いにもしない
+    ["写真の (複数の料理の、画像の無い 'stale' の)", pending({ image_source: "meal_photo", image_status: "stale" })],
+    ["商品の", pending({ image_source: "catalog" })],
+    ["手で付けた画像の", pending({ image_source: "manual_override", image_status: "stale" })],
+    ["画像なし (none) の", pending({ image_source: "none" })],
   ])("%s料理は変えない", (_label, dish) => {
     const result = markDishImagesEnqueueFailed([dish], [{ dishIndex: 0, subjectHash: "hash-0" }]);
     expect(result.changed).toBe(false);
     expect(result.dishes[0]).toBe(dish);
+  });
+
+  it("商品の献立の、画像の項目の無い古い商品の料理 (先頭) は変えない。商品の献立でなければ同じ料理を failed にする (#1514 の asCatalogMealDish)", () => {
+    const legacyCatalogDish = pending({ image_source: null });
+    const failures = [{ dishIndex: 0, subjectHash: "hash-0" }];
+
+    const asCatalog = markDishImagesEnqueueFailed([legacyCatalogDish], failures, { mealIsCatalog: true });
+    expect(asCatalog.changed).toBe(false);
+    expect(asCatalog.dishes[0]).toBe(legacyCatalogDish);
+
+    const notCatalog = markDishImagesEnqueueFailed([legacyCatalogDish], failures, { mealIsCatalog: false });
+    expect(notCatalog.changed).toBe(true);
+    expect(notCatalog.dishes[0]).toMatchObject({ image_status: "failed", image_error: MEAL_IMAGE_ENQUEUE_FAILED_ERROR });
+
+    // 商品の献立でも、商品の料理の位置 (先頭) でない料理は AI の画像の料理として扱う
+    const second = markDishImagesEnqueueFailed([pending({ image_subject_hash: "hash-x" }), pending({ image_subject_hash: "hash-1" })], [
+      { dishIndex: 1, subjectHash: "hash-1" },
+    ], { mealIsCatalog: true });
+    expect(second.dishes[1]).toMatchObject({ image_status: "failed", image_error: MEAL_IMAGE_ENQUEUE_FAILED_ERROR });
   });
 });
 
@@ -119,6 +145,17 @@ describe("markEnqueueFailedDishesInMeal", () => {
 
     expect(result).toEqual({ status: "updated" });
     expect(saveDishes).toHaveBeenCalledWith([expect.objectContaining({ image_status: "failed", image_error: MEAL_IMAGE_ENQUEUE_FAILED_ERROR })]);
+  });
+
+  it("商品の献立 (catalog_product_id / source_type) の古い商品の料理は書かない (#1514)", async () => {
+    const saveDishes = vi.fn(async () => ({ error: null }));
+    expect(
+      await markEnqueueFailedDishesInMeal({ failures, loadMeal: async () => ({ data: { dishes: stored, catalog_product_id: "product-1" }, error: null }), saveDishes }),
+    ).toEqual({ status: "unchanged" });
+    expect(
+      await markEnqueueFailedDishesInMeal({ failures, loadMeal: async () => ({ data: { dishes: stored, source_type: "catalog_product" }, error: null }), saveDishes }),
+    ).toEqual({ status: "unchanged" });
+    expect(saveDishes).not.toHaveBeenCalled();
   });
 
   it("失敗が無ければ読まない。献立が無い・変える料理が無いときは書かない", async () => {

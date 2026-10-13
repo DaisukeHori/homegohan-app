@@ -19,7 +19,7 @@
 | A. 料理の保存（Web・モバイル） | `POST /api/meals`・`PATCH /api/meals/[id]`・`POST /api/meal-plans/meals`・`PATCH /api/meal-plans/meals/[id]`・AI 相談の献立の変更 | 利用者の操作 | 利用者のセッション。ジョブは service role で積む（`getAiQueueWriter()`。#1465） | Vercel: `NEXT_PUBLIC_SUPABASE_URL`・`SUPABASE_SERVICE_ROLE_KEY` | 見送り（安全弁・レート制限）は保存の前に `failed` + `skipped_*`（#1487）。書き込みの失敗は `failed` + `enqueue_failed`（#1505） |
 | B. 献立の生成 | `/api/cron/process-menu-queue`（Vercel Cron、毎分）が `generate-menu-v5` を呼び、`saveMealToDb` が料理ごとにジョブを積む | Vercel Cron | Vercel の `CRON_SECRET`（Vercel Cron が付ける）。Edge Function は service role の鍵 | Vercel: `CRON_SECRET`・`SUPABASE_SERVICE_ROLE_KEY`。Edge: `SUPABASE_URL`・`SUPABASE_SERVICE_ROLE_KEY`（Supabase が自動で入れる） | 書き込みの失敗は `failed` + `enqueue_failed`（#1505） |
 | C. 処理を起こす | A・B が積んだ直後に `POST {SUPABASE_URL}/functions/v1/process-meal-image-jobs`（`{ plannedMealId, limit }`）を送る（`triggerMealImageJobProcessing`） | A・B の直後だけ。**定期的に待ちのジョブを拾う仕組み（pg_cron・Vercel Cron）は無い** | `Authorization: Bearer <service role の鍵>` と `apikey`。関数は `verify_jwt` が既定（有効）なので、鍵は JWT でなければゲートウェイで 401 | Next.js: `SERVICE_ROLE_JWT`（あれば）か `SUPABASE_SERVICE_ROLE_KEY`。Edge: 同じ順で Edge の環境変数 | 送れない・401・503 でも警告のログだけ。ジョブは pending のまま、料理も pending のまま（下の 4 で直す） |
-| D. 画像を作る | `process-meal-image-jobs` が待ちのジョブ（その献立の分、最大 20 件）を処理中にして、Google の画像の AI で作り、Storage の `fridge-images`（公開バケット）の `generated/<planned_meal_id>/` に置き、料理を `ready` にする | C の要求 | 関数の中で、Bearer か apikey が Edge の `SERVICE_ROLE_JWT`（無ければ `SUPABASE_SERVICE_ROLE_KEY`）と一致するかを見る。**`CRON_SECRET` は使わない**（#1406 の `CRON_SECRET` が無くてもこの経路は止まらない） | Edge: `SUPABASE_URL`・`SUPABASE_SERVICE_ROLE_KEY`・`GOOGLE_AI_STUDIO_API_KEY`（または `GOOGLE_GEN_AI_API_KEY`）。足りなければ 503 `SERVER_CONFIG_MISSING`（ログに変数名） | 同意が無い → ジョブは取り消し、料理は `failed` + 同意の理由。生成・保存の失敗 → ジョブは `failed`、料理は `failed` + 理由。料理が変わった・消えた → ジョブは取り消し |
+| D. 画像を作る | `process-meal-image-jobs` が待ちのジョブ（その献立の分、最大 20 件）を処理中にして、Google の画像の AI で作り、Storage の `fridge-images`（公開バケット）の `generated/<planned_meal_id>/` に置き、料理を `ready` にする。献立のカバー（`planned_meals.image_url`）は、カバーの持ち主の決まり（`applyGeneratedDishImage` → `writeGeneratedDishImage`。#1525）で、空か AI の料理の画像だったときだけ付け替える（写真・商品・利用者のカバーは置き換えない） | C の要求 | 関数の中で、Bearer か apikey が Edge の `SERVICE_ROLE_JWT`（無ければ `SUPABASE_SERVICE_ROLE_KEY`）と一致するかを見る。**`CRON_SECRET` は使わない**（#1406 の `CRON_SECRET` が無くてもこの経路は止まらない） | Edge: `SUPABASE_URL`・`SUPABASE_SERVICE_ROLE_KEY`・`GOOGLE_AI_STUDIO_API_KEY`（または `GOOGLE_GEN_AI_API_KEY`）。足りなければ 503 `SERVER_CONFIG_MISSING`（ログに変数名） | 同意が無い → ジョブは取り消し、料理は `failed` + 同意の理由。生成・保存の失敗 → ジョブは `failed`、料理は `failed` + 理由。料理が変わった・消えた → ジョブは取り消し |
 
 ### 残っている弱いところ（この Issue では直していない）
 
@@ -47,6 +47,8 @@
 - 既定は dry-run（数えるだけ。何も書かない）。`--apply` のときだけ積み、献立ごとに `process-meal-image-jobs` を起こす。
 - 対象の料理: `image_status` が `pending` か `stale`・`image_url` が無い・`image_source` が `generated_ai` か未設定・`image_subject_hash` がある。
   `image_subject_hash` が無い料理は、保存し直さないと直らないので数えるだけ（`no_subject_hash`）。
+  保存し直し（`reconcileDishImages`）が AI の画像のジョブを積まない料理は、同じ共通の判定で積まない（#1514）: 商品の献立の、画像の項目の無い古い商品の料理（`asCatalogMealDish`。`catalog_meal_dish`）と、献立のカバーが料理ごとの画像を持たない写真・商品・手の画像の料理のものである献立の料理（`isMealCoverHeldByImagelessPreservedDish`。`meal_cover_preserved`）。
+  ジョブを積めなかった料理は `failed` + `enqueue_failed` にするが、写真・商品・手の画像の料理は変えない。道具は献立のカバーに書かない。
 - 日付の新しい献立から、`--max-meals`（既定 50・上限 500）件まで。献立ごとに処理を起こしたあと `MEAL_IMAGE_BACKFILL_INTERVAL_MS`（既定 10 秒）待つ。
 - 同じ料理のジョブが待ち・処理中なら重複として数え、行を増やさない（もう一度流しても二重に積まない）。2 の「処理を起こせなかったジョブ」も、これで処理を起こし直せる。
 - 同意が無い利用者のジョブは、`process-meal-image-jobs` が AI へ送らずに取り消す。料理画像の安全弁（1 日の回数）は数えない。

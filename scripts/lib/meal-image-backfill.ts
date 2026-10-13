@@ -14,6 +14,12 @@
  *   - image_source が 'generated_ai' か未設定 (AI が作る画像。写真・手で付けた画像・商品は対象外)
  *   - image_subject_hash がある (処理する側 process-meal-image-jobs は、料理の image_subject_hash とジョブの subject_hash が
  *     同じときだけ画像を書く。無い料理は保存し直さないと直らないので数えるだけにする)
+ *   - 保存し直し (reconcileDishImages) が AI の画像のジョブを積まない料理は積まない (#1487 の整合ゲート・#1514 と同じ共通の判定を使う):
+ *       - 商品の献立 (isCatalogProductMeal) の、画像の項目の無い古い商品の料理 (asCatalogMealDish が商品の料理として読む料理)
+ *       - 献立のカバーが、料理ごとの画像を持たない写真・商品・手の画像の料理のもの (isMealCoverHeldByImagelessPreservedDish) なら、
+ *         その献立の料理はどれも積まない
+ * 献立のカバー (planned_meals.image_url) には、ここでも処理する側でも直接は書かない。画像ができたときのカバーは、処理する側が
+ * カバーの持ち主の決まり (applyGeneratedDishImage → writeGeneratedDishImage。#1525) で決める (写真・商品・利用者のカバーは置き換えない)。
  * プロンプト・モデルは、保存したときに料理に書いた image_prompt / image_model を使う (無ければ今の作り方・既定のモデル)。
  * 同じ料理のジョブが待ち・処理中なら、積み方 (enqueueMealImageJobs) が一意制約の違反 (23505) を重複として数え、行を増やさない。
  * 同意が無い利用者のジョブは、処理する側が AI へ送らずに取り消す (料理は 'failed' + 同意の理由になる)。
@@ -21,7 +27,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   DEFAULT_MEAL_IMAGE_MODEL,
+  asCatalogMealDish,
   buildDishImagePrompt,
+  isCatalogProductMeal,
+  isMealCoverHeldByImagelessPreservedDish,
   type EnqueueMealImageJobsResult,
   type MealImageDish,
   type MealImageJobSeed,
@@ -52,8 +61,29 @@ export const MEAL_IMAGE_BACKFILL_PAGE_SIZE = 200;
  */
 export const MEAL_IMAGE_BACKFILL_DEFAULT_INTERVAL_MS = 10_000;
 
-/** 積み直さない料理の理由 */
-export type MealImageBackfillSkipReason = 'not_waiting' | 'has_image' | 'not_ai_image' | 'no_subject_hash' | 'not_object';
+/**
+ * 積み直さない料理の理由。
+ *   - catalog_meal_dish: 商品の献立の、画像の項目の無い古い商品の料理 (asCatalogMealDish)
+ *   - meal_cover_preserved: 献立のカバーが、料理ごとの画像を持たない写真・商品・手の画像の料理のもの
+ *     (isMealCoverHeldByImagelessPreservedDish)。ほかの理由に当たらない待ちの料理を、この理由で数える
+ */
+export type MealImageBackfillSkipReason =
+  | 'not_waiting'
+  | 'has_image'
+  | 'not_ai_image'
+  | 'no_subject_hash'
+  | 'not_object'
+  | 'catalog_meal_dish'
+  | 'meal_cover_preserved';
+
+/** 献立 (planned_meals の行) のうち、積み直すかの判定に使う項目 */
+export interface MealImageBackfillMealContext {
+  /** 献立のカバー (planned_meals.image_url) */
+  image_url?: string | null;
+  /** 商品の献立か (isCatalogProductMeal) を見る項目 */
+  catalog_product_id?: unknown;
+  source_type?: unknown;
+}
 
 export interface DishImageJobPlan {
   seeds: MealImageJobSeed[];
@@ -61,7 +91,15 @@ export interface DishImageJobPlan {
 }
 
 function emptySkipCounts(): Record<MealImageBackfillSkipReason, number> {
-  return { not_waiting: 0, has_image: 0, not_ai_image: 0, no_subject_hash: 0, not_object: 0 };
+  return {
+    not_waiting: 0,
+    has_image: 0,
+    not_ai_image: 0,
+    no_subject_hash: 0,
+    not_object: 0,
+    catalog_meal_dish: 0,
+    meal_cover_preserved: 0,
+  };
 }
 
 function nonEmptyString(value: unknown): string | null {
@@ -72,17 +110,36 @@ function isWaitingStatus(value: unknown): boolean {
   return MEAL_IMAGE_BACKFILL_TARGET_STATUSES.some((status) => status === value);
 }
 
-/** 献立の料理 (planned_meals.dishes) から、積み直すジョブを作る (読むだけ。書き込みはしない) */
-export function planDishImageJobs(dishes: unknown, triggerSource: string = MEAL_IMAGE_BACKFILL_TRIGGER_SOURCE): DishImageJobPlan {
+function isDishObject(value: unknown): value is MealImageDish {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 献立の料理 (planned_meals.dishes) から、積み直すジョブを作る (読むだけ。書き込みはしない)。
+ * meal は献立のカバーと商品の献立かを見る項目 (渡さなければ、カバーの無い・商品でない献立として見る)
+ */
+export function planDishImageJobs(
+  dishes: unknown,
+  meal: MealImageBackfillMealContext = {},
+  triggerSource: string = MEAL_IMAGE_BACKFILL_TRIGGER_SOURCE,
+): DishImageJobPlan {
   const plan: DishImageJobPlan = { seeds: [], skipped: emptySkipCounts() };
   if (!Array.isArray(dishes)) return plan;
 
+  // 保存し直し (reconcileDishImages) と同じく、商品の献立の古い商品の料理を先に商品の料理として読み、
+  // 献立のカバーが料理ごとの画像を持たない写真・商品・手の画像の料理のものなら、献立ごと積まない (#1487 の整合ゲート)
+  const mealIsCatalog = isCatalogProductMeal(meal);
+  const viewed: unknown[] = dishes.map((value: unknown, dishIndex) =>
+    isDishObject(value) ? asCatalogMealDish(value, dishIndex, mealIsCatalog) : value,
+  );
+  const mealCoverPreserved = isMealCoverHeldByImagelessPreservedDish(viewed.filter(isDishObject), meal.image_url ?? null);
+
   dishes.forEach((value: unknown, dishIndex) => {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    if (!isDishObject(value)) {
       plan.skipped.not_object += 1;
       return;
     }
-    const dish = value as MealImageDish;
+    const dish = value;
     if (!isWaitingStatus(dish.image_status)) {
       plan.skipped.not_waiting += 1;
       return;
@@ -96,9 +153,17 @@ export function planDishImageJobs(dishes: unknown, triggerSource: string = MEAL_
       plan.skipped.not_ai_image += 1;
       return;
     }
+    if (viewed[dishIndex] !== value) {
+      plan.skipped.catalog_meal_dish += 1;
+      return;
+    }
     const subjectHash = nonEmptyString(dish.image_subject_hash);
     if (!subjectHash) {
       plan.skipped.no_subject_hash += 1;
+      return;
+    }
+    if (mealCoverPreserved) {
+      plan.skipped.meal_cover_preserved += 1;
       return;
     }
     plan.seeds.push({
@@ -156,7 +221,7 @@ export interface MealImageBackfillReport {
   triggeredMeals: number;
 }
 
-interface PlannedMealRow {
+interface PlannedMealRow extends MealImageBackfillMealContext {
   id: string;
   dishes: unknown;
   user_daily_meals: { user_id: string; day_date: string } | Array<{ user_id: string; day_date: string }> | null;
@@ -179,7 +244,7 @@ async function loadWaitingMeals(admin: SupabaseClient, options: Pick<MealImageBa
     for (;;) {
       let query = admin
         .from('planned_meals')
-        .select('id, dishes, user_daily_meals!inner(user_id, day_date)')
+        .select('id, dishes, image_url, catalog_product_id, source_type, user_daily_meals!inner(user_id, day_date)')
         // supabase-js の contains に配列を渡すと Postgres の配列 ({...}) として送られるので、jsonb の値は JSON の文字列で渡す
         .filter('dishes', 'cs', JSON.stringify([{ image_status: status }]))
         .order('id', { ascending: true })
@@ -214,7 +279,7 @@ export async function runMealImageBackfill(admin: SupabaseClient, options: MealI
   const candidates: MealImageBackfillCandidate[] = [];
   for (const row of rows) {
     const daily = dailyMealOf(row);
-    const plan = planDishImageJobs(row.dishes);
+    const plan = planDishImageJobs(row.dishes, row);
     for (const reason of Object.keys(skipped) as MealImageBackfillSkipReason[]) skipped[reason] += plan.skipped[reason];
     if (!daily || plan.seeds.length === 0) continue;
     candidates.push({ plannedMealId: row.id, userId: daily.user_id, dayDate: daily.day_date, seeds: plan.seeds });

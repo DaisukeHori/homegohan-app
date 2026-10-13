@@ -6,6 +6,8 @@
  *        待ち・更新待ちの料理を含む献立を読み、対象の料理と対象外の理由を数える
  *   B-2: --apply は対象の料理だけを積み (部分索引に対して 42P10 にならない)、日付の新しい献立から maxMeals 件までにする
  *   B-3: もう一度 --apply しても、待ちのジョブと同じ料理は重複として数え、行を増やさない
+ *   B-4: 保存し直し (reconcileDishImages) が積まない献立の料理は積まない (#1514 と同じ共通の判定)。商品の献立 (source_type 'catalog_product')
+ *        の古い商品の料理と、献立のカバーが写真の (料理ごとの画像の無い) 料理のものである献立の料理。料理も献立のカバーも変えない
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
  *   npx vitest run --config vitest.integration.config.ts tests/integration/rls/meal-image-backfill.test.ts
@@ -39,15 +41,23 @@ let userId: string;
 let newerMealId: string;
 let olderMealId: string;
 let readyMealId: string;
+let catalogMealId: string;
+let photoMealId: string;
+const PHOTO_COVER_URL = 'https://example.com/photo-cover.jpg';
 
 function dish(name: string, overrides: Partial<MealImageDish>): MealImageDish {
   return { name, role: 'main', image_url: null, image_source: 'generated_ai', image_prompt: `prompt ${name}`, image_model: 'test-model', ...overrides };
 }
 
-async function insertMeal(dayId: string, mealType: string, dishes: MealImageDish[]): Promise<string> {
+async function insertMeal(
+  dayId: string,
+  mealType: string,
+  dishes: MealImageDish[],
+  extra: { image_url?: string | null; source_type?: string } = {},
+): Promise<string> {
   const { data, error } = await srAdmin
     .from('planned_meals')
-    .insert({ daily_meal_id: dayId, meal_type: mealType, dish_name: `mib-${mealType}-${TS}`, dishes })
+    .insert({ daily_meal_id: dayId, meal_type: mealType, dish_name: `mib-${mealType}-${TS}`, dishes, ...extra })
     .select('id')
     .single();
   if (error || !data) throw new Error(`planned_meals: ${error?.message}`);
@@ -68,6 +78,12 @@ async function jobRows() {
     .order('dish_index', { ascending: true });
   if (error) throw new Error(`meal_image_jobs select: ${error.message}`);
   return data ?? [];
+}
+
+async function mealOf(mealId: string): Promise<{ dishes: MealImageDish[]; image_url: string | null }> {
+  const { data, error } = await srAdmin.from('planned_meals').select('dishes, image_url').eq('id', mealId).single();
+  if (error || !data) throw new Error(`planned_meals select: ${error?.message}`);
+  return { dishes: (data.dishes ?? []) as MealImageDish[], image_url: (data.image_url ?? null) as string | null };
 }
 
 async function dishesOf(mealId: string): Promise<MealImageDish[]> {
@@ -102,6 +118,23 @@ beforeAll(async () => {
   readyMealId = await insertMeal(olderDay, 'breakfast', [
     dish('パン', { image_status: 'ready', image_url: 'https://example.com/bread.png', image_subject_hash: `h-bread-${TS}` }),
   ]);
+  // 商品の献立: 以前の reconcileDishImages が書き換えた古い商品の料理 (generated_ai・画像なし・待ち)
+  catalogMealId = await insertMeal(
+    olderDay,
+    'snack',
+    [dish('商品', { image_status: 'pending', image_subject_hash: `h-product-${TS}` })],
+    { source_type: 'catalog_product', image_url: 'https://example.com/product.jpg' },
+  );
+  // 写真の複数の料理の献立 (写真は献立のカバーだけ) に、AI の料理が足されたもの
+  photoMealId = await insertMeal(
+    olderDay,
+    'dinner',
+    [
+      dish('写真の料理', { image_source: 'meal_photo', image_status: 'stale' }),
+      dish('足した料理', { image_status: 'pending', image_subject_hash: `h-added-${TS}` }),
+    ],
+    { image_url: PHOTO_COVER_URL },
+  );
 });
 
 afterAll(async () => {
@@ -118,14 +151,14 @@ describe('料理画像を待ったままの料理にジョブを積み直す (#1
 
     expect(report).toMatchObject({
       apply: false,
-      scannedMeals: 2,
+      scannedMeals: 4,
       candidateMeals: 2,
       candidateDishes: 3,
       processedMeals: 0,
       enqueue: { inserted: 0, duplicates: 0, failed: 0 },
       triggeredMeals: 0,
     });
-    expect(report.skipped.no_subject_hash).toBe(1);
+    expect(report.skipped).toMatchObject({ no_subject_hash: 1, catalog_meal_dish: 1, meal_cover_preserved: 1, not_ai_image: 1 });
     expect(await jobRows()).toEqual([]);
     expect(await dishesOf(newerMealId)).toEqual(before);
     // 画像ができている献立は読まない
@@ -151,5 +184,19 @@ describe('料理画像を待ったままの料理にジョブを積み直す (#1
 
     expect(report.enqueue).toEqual({ inserted: 0, duplicates: 2, failed: 0 });
     expect(await jobRows()).toHaveLength(2);
+  });
+
+  it('B-4: 商品の献立の古い商品の料理・写真のカバーの献立の料理は積まず、料理も献立のカバーも変えない (#1514)', async () => {
+    const catalogBefore = await mealOf(catalogMealId);
+    const photoBefore = await mealOf(photoMealId);
+    const report = await runMealImageBackfill(srAdmin, { ...options(), maxMeals: 10, apply: true });
+
+    expect(report.processedMeals).toBe(2);
+    const rows = await jobRows();
+    expect(rows.some((row) => row.planned_meal_id === catalogMealId || row.planned_meal_id === photoMealId)).toBe(false);
+    expect(rows.some((row) => row.planned_meal_id === olderMealId)).toBe(true);
+    expect(await mealOf(catalogMealId)).toEqual(catalogBefore);
+    expect(await mealOf(photoMealId)).toEqual(photoBefore);
+    expect(photoBefore.image_url).toBe(PHOTO_COVER_URL);
   });
 });

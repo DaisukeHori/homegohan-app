@@ -2,7 +2,9 @@
  * #1505 料理画像を待ったままの料理に、ジョブを積み直す道具 (scripts/lib/meal-image-backfill.ts) の判定と引数
  *
  *   1. planDishImageJobs: 画像が無い AI の画像の、待ち・更新待ち (pending / stale) で、image_subject_hash がある料理だけを積む。
- *      プロンプト・モデルは料理に書いたもの (無ければ今の作り方・既定のモデル)
+ *      プロンプト・モデルは料理に書いたもの (無ければ今の作り方・既定のモデル)。
+ *      保存し直し (reconcileDishImages) が積まない料理は積まない (#1514 と同じ共通の判定): 商品の献立の古い商品の料理 (asCatalogMealDish)、
+ *      献立のカバーが料理ごとの画像を持たない写真・商品・手の画像の料理のもの (isMealCoverHeldByImagelessPreservedDish) の献立の料理
  *   2. parseMealImageBackfillArgs: 既定は dry-run・50 献立・処理を起こす。上限を超える数・分からない引数は止める
  *   3. resolveMealImageBackfillIntervalMs: 環境変数で待ちを上書きできる
  * 実 DB に対しての数え方・積み直しは tests/integration/rls/meal-image-backfill.test.ts
@@ -46,7 +48,48 @@ describe('planDishImageJobs', () => {
         referenceImageUrls: [],
       },
     ]);
-    expect(plan.skipped).toEqual({ not_waiting: 2, has_image: 1, not_ai_image: 1, no_subject_hash: 1, not_object: 1 });
+    expect(plan.skipped).toEqual({
+      not_waiting: 2,
+      has_image: 1,
+      not_ai_image: 1,
+      no_subject_hash: 1,
+      not_object: 1,
+      catalog_meal_dish: 0,
+      meal_cover_preserved: 0,
+    });
+  });
+
+  it('商品の献立 (catalog_product_id / source_type) の、画像の項目の無い古い商品の料理 (先頭) は積まない (#1514 の asCatalogMealDish)', () => {
+    const dishes = [{ name: '商品', image_status: 'pending', image_url: null, image_source: 'generated_ai', image_subject_hash: 'h0' }];
+    for (const meal of [{ catalog_product_id: 'product-1' }, { source_type: 'catalog_product' }]) {
+      const plan = planDishImageJobs(dishes, meal);
+      expect(plan.seeds).toEqual([]);
+      expect(plan.skipped.catalog_meal_dish).toBe(1);
+    }
+    // 商品の献立でなければ、同じ料理を積む
+    expect(planDishImageJobs(dishes, {}).seeds.map((seed) => seed.dishIndex)).toEqual([0]);
+  });
+
+  it('献立のカバーが、料理ごとの画像を持たない写真・商品・手の画像の料理のものなら、その献立の料理はどれも積まない (#1514)', () => {
+    const photoMealDishes = [
+      { name: '写真の料理', image_status: 'stale', image_url: null, image_source: 'meal_photo' },
+      { name: '足した料理', image_status: 'pending', image_url: null, image_source: 'generated_ai', image_subject_hash: 'h1' },
+    ];
+    const held = planDishImageJobs(photoMealDishes, { image_url: 'https://example.com/photo.jpg' });
+    expect(held.seeds).toEqual([]);
+    expect(held.skipped).toMatchObject({ not_ai_image: 1, meal_cover_preserved: 1 });
+
+    // 商品の献立の古い商品の料理 (商品の料理として読む) がカバーを持つときも、ほかの料理を積まない
+    const catalogMealDishes = [
+      { name: '商品', image_status: 'pending', image_url: null, image_subject_hash: 'h0' },
+      { name: '足した料理', image_status: 'pending', image_url: null, image_source: 'generated_ai', image_subject_hash: 'h1' },
+    ];
+    const catalogHeld = planDishImageJobs(catalogMealDishes, { image_url: 'https://example.com/product.jpg', catalog_product_id: 'product-1' });
+    expect(catalogHeld.seeds).toEqual([]);
+    expect(catalogHeld.skipped).toMatchObject({ catalog_meal_dish: 1, meal_cover_preserved: 1 });
+
+    // カバーが無ければ、写真の料理以外の AI の料理は積む (reconcileDishImages と同じ)
+    expect(planDishImageJobs(photoMealDishes, { image_url: null }).seeds.map((seed) => seed.dishIndex)).toEqual([1]);
   });
 
   it('料理が配列でなければ何も積まない', () => {

@@ -60,7 +60,7 @@ export async function enqueueMealImageJobs(params: EnqueueMealImageJobsParams): 
     const marked = await markEnqueueFailedDishesInMeal({
       failures,
       loadMeal: () =>
-        params.supabase.from("planned_meals").select("dishes").eq("id", params.plannedMealId).maybeSingle(),
+        params.supabase.from("planned_meals").select("dishes, catalog_product_id, source_type").eq("id", params.plannedMealId).maybeSingle(),
       saveDishes: (dishes) =>
         params.supabase
           .from("planned_meals")
