@@ -271,23 +271,25 @@ describe('#1486 帰属の文の見張りを、AI への送信・緊急停止を�
     'supabase/migrations/20261010120000_unify_feature_flags_seed.sql',
   ];
   const AI_SENDING_TOPIC = /送信|プロバイダー|事業者|ai_chat_enabled|緊急停止/;
+  /** 帰属の語 (この語を検査用の行に書くときも、ここから作る) */
+  const ATTRIBUTION = ['オーナー', '判断'].join('');
+  /** 見張りの判定: 帰属の語と AI への送信・緊急停止の話が同じ行に並ぶ (本体の検査と、空回りの確認の両方がこれを呼ぶ) */
+  const isAttributionOnAiSendingLine = (line: string): boolean => line.includes(ATTRIBUTION) && AI_SENDING_TOPIC.test(line);
 
   it.each(FILES)('%s: 「オーナー判断」と AI への送信・緊急停止の話を同じ行に書かない', (file) => {
     const hits = read(file)
       .split('\n')
       .map((line, index) => ({ line, number: index + 1 }))
-      .filter(({ line }) => line.includes('オーナー判断') && AI_SENDING_TOPIC.test(line))
+      .filter(({ line }) => isAttributionOnAiSendingLine(line))
       .map(({ number, line }) => `${number} 行目: ${line.trim().slice(0, 80)}`);
     expect(hits).toEqual([]);
   });
 
   it('見張りが空回りしていない: 帰属の語と送信の話が同じ行にあれば捕まえ、別々の行なら捕まえない', () => {
-    // 検査のための作り物の行 (実際の決定を書いたものではない)
-    const attribution = ['オーナー', '判断'].join('');
-    const sameLine = `${attribution} (検査用) — AI 事業者への送信の扱い`;
-    expect(sameLine.includes(attribution) && AI_SENDING_TOPIC.test(sameLine)).toBe(true);
-    const otherTopic = `${attribution} (検査用) — 価格の改定の扱い`;
-    expect(otherTopic.includes(attribution) && AI_SENDING_TOPIC.test(otherTopic)).toBe(false);
+    // 検査のための作り物の行 (実際の決定を書いたものではない)。判定は本体の検査と同じ関数を呼ぶ (式を書き写さない。#1515)
+    expect(isAttributionOnAiSendingLine(`${ATTRIBUTION} (検査用) — AI 事業者への送信の扱い`)).toBe(true);
+    expect(isAttributionOnAiSendingLine(`${ATTRIBUTION} (検査用) — 価格の改定の扱い`)).toBe(false);
+    expect(isAttributionOnAiSendingLine('(検査用) — AI 事業者への送信の扱い')).toBe(false);
   });
 });
 
