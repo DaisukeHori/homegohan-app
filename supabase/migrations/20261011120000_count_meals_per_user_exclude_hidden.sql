@@ -1,4 +1,4 @@
--- migration: 20261011090000_count_meals_per_user_exclude_hidden.sql
+-- migration: 20261011120000_count_meals_per_user_exclude_hidden.sql
 -- 比較ランキングの集計 (指標 total_meals) で、運営が隠した食事 (meals.hidden_at が入った行) を数えないようにする (#1445)
 --
 -- 背景:
@@ -17,7 +17,7 @@
 --   CREATE OR REPLACE は既存の EXECUTE の権限を保つが、念のため 20261011060000 と同じ REVOKE / GRANT を流し直す。
 --
 -- 何度流しても同じ結果になる (CREATE OR REPLACE と REVOKE / GRANT)。表のデータには触れない。
--- 戻し方: supabase/rollbacks/20261011090000_count_meals_per_user_exclude_hidden.down.sql
+-- 戻し方: supabase/rollbacks/20261011120000_count_meals_per_user_exclude_hidden.down.sql
 --   (隠した行も数える 20261011060000 の定義に戻す)
 -- 確かめるテスト: tests/integration/security/count-meals-per-user.test.ts (実 DB)
 

@@ -1,4 +1,4 @@
--- rollback: 20261011090000_count_meals_per_user_exclude_hidden.sql
+-- rollback: 20261011120000_count_meals_per_user_exclude_hidden.sql
 -- public.count_meals_per_user() を、運営が隠した行も数える 20261011060000_count_meals_per_user.sql の定義に戻す (#1445)。
 -- 表のデータには触れない。関数は消さない (Edge Function calculate-segment-stats が指標 total_meals のために呼ぶため)。
 --

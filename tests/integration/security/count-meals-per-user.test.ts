@@ -9,7 +9,7 @@
  *
  * 確かめること (ローカル Supabase の実 DB で):
  *   A. service role は呼べて、利用者ごとに (user_id, meal_count) を 1 行ずつ返す。件数は全期間 (期間で絞らない)。
- *      記録の無い利用者の行は無い。運営が隠した行は数えない (#1445。migration 20261011090000)
+ *      記録の無い利用者の行は無い。運営が隠した行は数えない (#1445。migration 20261011120000)
  *   B. user_id の順に並べ、range でページ送りできる (Edge Function の fetchAllRows が上限 1000 行を超えたときに使う)
  *   C. 未ログイン (anon)・ログインユーザー (authenticated) は呼べない (42501)。他人の記録の件数を読めない
  *   D. EXECUTE の権限: PUBLIC / anon / authenticated は無く、service_role だけにある (postgres-meta で読み取りだけ確かめる)
@@ -134,7 +134,7 @@ describe('count_meals_per_user: 利用者ごとの meals の件数 (#1491)', () 
     expect(deleteError).toBeNull();
   });
 
-  it('A3: 運営が隠した食事 (hidden_at が入った行。#1101) は数えない。隠した記録しかない利用者の行は無い (#1445。migration 20261011090000)', async () => {
+  it('A3: 運営が隠した食事 (hidden_at が入った行。#1101) は数えない。隠した記録しかない利用者の行は無い (#1445。migration 20261011120000)', async () => {
     const hiddenAt = '2026-10-10T00:00:00Z';
     const { data: inserted, error } = await sr
       .from('meals')

@@ -187,7 +187,7 @@ function mealsWithin(rows: Row[], query: RecordedQuery): Row[] {
 
 /**
  * count_meals_per_user の結果 (利用者ごとに 1 行。user_id の順) を、meals の行から作る。
- * DB の関数と同じく、運営が隠した行 (hidden_at が入った行) は数えない (migration 20261011090000。#1445)
+ * DB の関数と同じく、運営が隠した行 (hidden_at が入った行) は数えない (migration 20261011120000。#1445)
  */
 function countMealsPerUser(rows: Row[]): Array<{ user_id: string; meal_count: number }> {
   const counts = new Map<string, number>();
