@@ -217,7 +217,8 @@ const userBadgeRows = [
     id: 'ub1',
     user_id: USER_ID,
     badge_id: 'badge-champion',
-    context_json: { segment_id: 'seg-all', metric_id: 'met-cal' },
+    // 集計の Edge Function が付与の記録に残す期間 (period_type / period_start)。ランキングの期間と同じ (#1500)
+    context_json: { segment_id: 'seg-all', metric_id: 'met-cal', period_type: 'weekly', period_start: '2026-01-05' },
     message: '全ユーザーでカロリーバランス1位',
     badges: {
       code: 'segment_champion',
@@ -231,7 +232,7 @@ const userBadgeRows = [
     id: 'ub2',
     user_id: USER_ID,
     badge_id: 'badge-other',
-    context_json: { segment_id: 'seg-all', metric_id: 'met-other' },
+    context_json: { segment_id: 'seg-all', metric_id: 'met-other', period_type: 'weekly', period_start: '2026-01-05' },
     message: '',
     badges: { code: 'other', name: 'その他', icon: null, condition_json: null },
   },
@@ -498,6 +499,63 @@ describe('GET /api/comparison/rankings: レスポンスの形 (並列化で変�
     expect(res.status).toBe(200);
     expect(json.rankings).toEqual([]);
     expect(json.userMetrics).toEqual(userMetricRows);
+  });
+});
+
+// ── 賞は、バッジが付いた期間とランキングの期間が合うときだけ、バッジから出す (#1500) ──────────────────────
+//
+// user_badges は (利用者, バッジ) ごとに 1 件だけで、一度付くと消えない。付与の記録 (context_json) には、付いた期間
+// (period_type / period_start) が残る。以前はセグメントと指標だけで照合していたので、過去の期間に付いたバッジが、
+// 今の期間のランキングの賞として出続けた。
+// バッジが無いときに順位・百分位・平均比から賞を出す既存の挙動 (表示だけ。永続しない) は変えない。
+
+describe('GET /api/comparison/rankings: 賞のバッジは期間も照合する (#1500)', () => {
+  /** ub1 (全ユーザー × カロリー の segment_champion) の付与の記録の期間だけを差し替えた user_badges */
+  function badgesWithChampionContext(context: Record<string, unknown>) {
+    return [{ ...userBadgeRows[0], context_json: { segment_id: 'seg-all', metric_id: 'met-cal', ...context } }, userBadgeRows[1]];
+  }
+
+  /** 全ユーザー × カロリー (順位 1) のランキングの賞 */
+  async function championPrize(): Promise<unknown> {
+    const res = await GET(makeRequest());
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    const calorie = json.rankings.find((m: any) => m.metric.code === 'calorie_balance');
+    return calorie.segments.find((s: any) => s.segment.id === 'seg-all').prize;
+  }
+
+  /** バッジが無いときの、順位 1 の既存の賞 (表示だけ) */
+  const rankOnePrize = { code: 'rank_1', name: '1位', icon: '🏆', category: 'rank', message: '全ユーザーで1位！' };
+
+  it('バッジの期間がランキングの期間と同じなら、バッジの賞を出す', async () => {
+    givenResults({ user_badges: { data: badgesWithChampionContext({ period_type: 'weekly', period_start: '2026-01-05' }), error: null } });
+
+    expect(await championPrize()).toMatchObject({ code: 'segment_champion', message: '全ユーザーでカロリーバランス1位' });
+  });
+
+  it.each([
+    ['前の週に付いたバッジ', { period_type: 'weekly', period_start: '2025-12-29' }],
+    ['同じ開始日でも、別の種類 (月) の期間に付いたバッジ', { period_type: 'monthly', period_start: '2026-01-05' }],
+    ['期間の記録が無いバッジ (期間を照合できない)', {}],
+  ])('%s は、今の期間の賞として出さない (順位から出す既存の賞になる)', async (_label, context) => {
+    givenResults({ user_badges: { data: badgesWithChampionContext(context), error: null } });
+
+    expect(await championPrize()).toEqual(rankOnePrize);
+  });
+
+  it('前の期間のバッジしか無く、順位・百分位・平均比のどれにも当てはまらないランキングには、賞を出さない', async () => {
+    const lowRanking = rankingRow('r-low', segAll, metricCalorie, { rank: 50, total_users: 120, percentile: 58, value: 1500, vs_avg_rate: -3 });
+    givenResults({
+      user_segment_rankings: { data: [lowRanking], error: null },
+      user_badges: { data: badgesWithChampionContext({ period_type: 'weekly', period_start: '2025-12-29' }), error: null },
+    });
+
+    const res = await GET(makeRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.rankings).toHaveLength(1);
+    expect(json.rankings[0].segments[0].prize).toBeNull();
   });
 });
 
