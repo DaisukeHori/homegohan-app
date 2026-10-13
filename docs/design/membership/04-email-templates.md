@@ -295,13 +295,19 @@ https://homegohan.app
 ```ts
 // src/lib/emails/send.ts
 import { Resend } from 'resend';
+import { getOptionalEnv } from '@/lib/env';
 import { EmailEnvelopeSchema, type EmailEnvelope } from './membership/templates';
-
-const resend = new Resend(process.env.RESEND_API_KEY!);
 
 export async function sendEmail(envelope: EmailEnvelope) {
   // Zod で送信前検証 (空件名/不正アドレス検出)
   const v = EmailEnvelopeSchema.parse(envelope);
+
+  // API キーは送るときに getOptionalEnv で取り出す (`process.env.<変数名>!` とは書かない。#1182・#1434)。
+  // RESEND_API_KEY は任意の変数 (src/lib/env.ts の一覧) なので、無ければ undefined のまま Resend に渡さずに止める。
+  // message に変数名を入れない (変数名は getOptionalEnv が警告のログに残す。#1182・#1490)
+  const apiKey = getOptionalEnv('RESEND_API_KEY');
+  if (!apiKey) throw new Error('EMAIL_NOT_CONFIGURED: メールの送信の設定が無いため、メールを送信しませんでした');
+  const resend = new Resend(apiKey);
 
   const result = await resend.emails.send({
     from: v.from,

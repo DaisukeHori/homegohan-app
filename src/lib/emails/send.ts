@@ -197,9 +197,11 @@ export async function sendEmail(envelope: EmailEnvelope, options: SendEmailOptio
   if (!process.env.RESEND_API_KEY) {
     // 本番で設定が漏れていたら、メールが 1 通も出なくなる。console だけでは気づけないので app_logs に残す
     logger.warn('RESEND_API_KEY が未設定のため、メールを送信しませんでした', { template, recipient });
+    // 変数名はサーバーのログ (上の警告) にだけ残し、例外の message には入れない (#1182・#1490)。
+    // 呼び出し元が message を応答の本文や記録に入れても、変数名が外に出ないようにするため
     const error = new EmailSendError(
       'not_configured',
-      'EMAIL_NOT_CONFIGURED: RESEND_API_KEY が未設定のため、メールを送信しませんでした',
+      'EMAIL_NOT_CONFIGURED: メールの送信の設定が無いため、メールを送信しませんでした',
       null,
       0,
       false,
