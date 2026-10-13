@@ -173,8 +173,8 @@ Edge Function は、現行の `CRON_SECRET` に加えて `CRON_SECRET_PREVIOUS`�
 
 - 毎回、daily / weekly / monthly の 3 つの要求が pg_net から並行して出ます。1 つの要求が読むものは次のとおりです（#1491）。
   - 指標とセグメントの定義（`metric_definitions`・`segment_definitions`）。有効なものだけ。
-  - 自分の期間の食事の記録（`meals`。monthly は 1 か月分）と献立（`planned_meals`）を全件。どちらもハンズオンのお試しの記録（`meals.is_sandbox`・`user_daily_meals.is_sandbox` が true）は除きます（#1500）。
-  - 指標 `total_meals`（全期間の食事の記録の件数）が有効なら、DB の関数 `count_meals_per_user`（migration `20261011060000_count_meals_per_user.sql`。お試しの記録を数えないのは `20261011120000_segment_stats_finalize_retry.sql` から）が数えた、記録のある利用者 1 人につき 1 行の件数。`meals` の全期間の行は読みません。`total_meals` が有効でなければ呼びません。
+  - 自分の期間の食事の記録（`meals`。monthly は 1 か月分）と献立（`planned_meals`）を全件。どちらもハンズオンのお試しの記録（`meals.is_sandbox`・`user_daily_meals.is_sandbox` が true）は除きます（#1500）。運営が隠した食事（`meals.hidden_at` が入った行。#1101）も読みません（#1445）。
+  - 指標 `total_meals`（全期間の食事の記録の件数）が有効なら、DB の関数 `count_meals_per_user`（migration `20261011060000_count_meals_per_user.sql`。お試しの記録を数えないのは `20261011120000_segment_stats_finalize_retry.sql` から、運営が隠した食事も数えないのは `20261011130000_count_meals_per_user_exclude_hidden.sql` から）が数えた、記録のある利用者 1 人につき 1 行の件数。`meals` の全期間の行は読みません。`total_meals` が有効でなければ呼びません。
   - そのほか、全利用者のプロフィール（`user_profiles`）と継続日数（`health_streaks`）。
   - 変化率の計算元として、1 つ前の期間の指標（`user_metrics`。同じ種類の 1 つ前の期間の分）。
   - ランキングを作るときに、書いたばかりのセグメントの統計（`segment_stats`）の平均を、セグメントと指標の組ごとに 1 行ずつ。

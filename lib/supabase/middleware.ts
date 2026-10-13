@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { isAuthFlowPath, isPolicyPath, resolveOnboardingRedirect } from '@/lib/onboarding-routing'
-import { isAccountFrozen } from '@/lib/auth/frozen'
+import { isAccountFrozen, isFrozenAllowedApiPath } from '@/lib/auth/frozen'
 import {
   isMaintenanceExemptPath,
   isMaintenanceFlagOn,
@@ -189,7 +189,8 @@ export async function updateSession(request: NextRequest) {
     // supabase.auth.getUser() を直接呼ぶだけの API route が多数存在し
     // (meal-plans/pantry/recipes/health 等)、frozen_at を一切検査しないまま
     // 素通りしていた。ページナビゲーションと同様にここで凍結判定を行い、
-    // 凍結中のアカウントは全 API 呼び出しを 403 で拒否する。
+    // 凍結中のアカウントは全 API 呼び出しを 403 で拒否する
+    // (#1445: 退会と個人データの書き出しの API だけは除く。一覧は src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS)。
     // 認証・プロフィール取得自体に失敗した場合は各 route 側のチェックに委ねる
     // (#348 と同様、一時的な DB/ネットワーク障害で全 API を誤って止めないための
     // fail-open。frozen かどうか確定できた場合のみブロックする)。
@@ -214,7 +215,9 @@ export async function updateSession(request: NextRequest) {
             unbanAt: apiProfile?.unban_at ?? null,
           })
 
-          if (apiFrozen) {
+          // #1445: 退会と個人データの書き出し (FROZEN_ALLOWED_API_PATHS) だけは、凍結中でも止めない。
+          // 凍結の画面 (/frozen/account) から本人が退会・書き出しをできるようにするため。ほかの /api は今までどおり 403
+          if (apiFrozen && !isFrozenAllowedApiPath(request.nextUrl.pathname)) {
             return NextResponse.json(
               { error: { code: 'AUTH_ACCOUNT_FROZEN', message: 'アカウントが凍結されています' } },
               { status: 403, headers: { 'Cache-Control': 'private, no-store' } },
