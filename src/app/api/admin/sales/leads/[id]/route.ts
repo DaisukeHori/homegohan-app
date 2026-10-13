@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { updateLeadSchema } from '@/lib/admin/sales-schemas';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 type RouteContext = { params: { id: string } };
 
@@ -129,14 +130,16 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
 
     // 監査ログ
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: currentUser.id,
-      action_type: 'admin.sales.lead.update',
-      target_id: params.id,
-      target_type: 'sales_lead',
+    await recordAdminAudit({
+      supabase,
+      actorId: currentUser.id,
+      actionType: 'admin.sales.lead.update',
+      targetId: params.id,
+      targetType: 'sales_lead',
       details: updates,
       severity: 'info',
-      ip_address: request.headers.get('x-forwarded-for'),
+      request,
+      routeName: 'api/admin/sales/leads/[id] PATCH',
     });
 
     return NextResponse.json({ data: lead });

@@ -11,6 +11,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { FreezeBodySchema, UnfreezeBodySchema } from '@/lib/admin/users-schemas';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -132,11 +133,12 @@ export async function POST(request: Request, { params }: Params) {
 
   // 監査ログ INSERT (operator/02-api-spec.md §3.3)
   const banId = crypto.randomUUID();
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: actor.id,
-    action_type: 'admin.user.ban',
-    target_id: id,
-    target_type: 'user',
+  await recordAdminAudit({
+    supabase,
+    actorId: actor.id,
+    actionType: 'admin.user.ban',
+    targetId: id,
+    targetType: 'user',
     details: {
       ban_id: banId,
       ban_type: freezeData.ban_type,
@@ -147,7 +149,8 @@ export async function POST(request: Request, { params }: Params) {
       unban_at: unbanAt,
     },
     severity: 'warn',
-    ip_address: request.headers.get('x-forwarded-for'),
+    request,
+    routeName: 'api/admin/users/[id]/freeze POST',
   });
 
   return NextResponse.json({
@@ -238,14 +241,16 @@ export async function DELETE(request: Request, { params }: Params) {
   }
 
   // 監査ログ INSERT
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: actor.id,
-    action_type: 'admin.user.unban',
-    target_id: id,
-    target_type: 'user',
+  await recordAdminAudit({
+    supabase,
+    actorId: actor.id,
+    actionType: 'admin.user.unban',
+    targetId: id,
+    targetType: 'user',
     details: { reason },
     severity: 'warn',
-    ip_address: request.headers.get('x-forwarded-for'),
+    request,
+    routeName: 'api/admin/users/[id]/freeze DELETE',
   });
 
   return NextResponse.json({ data: { success: true } });

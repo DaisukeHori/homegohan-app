@@ -13,6 +13,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
 import { FeaturePackageUpdateSchema } from '@/lib/super-admin/feature-packages-schemas';
 import { internalError } from '@/lib/api/errors';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 type RouteContext = { params: { id: string } };
 
@@ -89,19 +90,17 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
 
     // 監査ログ記録
-    try {
-      await supabase.from('admin_audit_logs').insert({
-        actor_id: user.id,
-        target_id: params.id,
-        target_type: 'feature_package',
-        action_type: 'update_feature_package',
-        details: { changes: updateData },
-        severity: 'info',
-        ip_address: request.headers.get('x-forwarded-for'),
-      });
-    } catch (auditErr) {
-      console.warn('[super-admin/feature-packages/[id] PATCH] audit log failed (graceful):', auditErr);
-    }
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      targetId: params.id,
+      targetType: 'feature_package',
+      actionType: 'update_feature_package',
+      details: { changes: updateData },
+      severity: 'info',
+      request,
+      routeName: 'api/super-admin/feature-packages/[id] PATCH',
+    });
 
     return NextResponse.json({ data: updated });
   } catch (err) {
@@ -151,19 +150,17 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
     }
 
     // 監査ログ記録
-    try {
-      await supabase.from('admin_audit_logs').insert({
-        actor_id: user.id,
-        target_id: params.id,
-        target_type: 'feature_package',
-        action_type: 'delete_feature_package',
-        details: { package_key: existing.package_key },
-        severity: 'warn',
-        ip_address: request.headers.get('x-forwarded-for'),
-      });
-    } catch (auditErr) {
-      console.warn('[super-admin/feature-packages/[id] DELETE] audit log failed (graceful):', auditErr);
-    }
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      targetId: params.id,
+      targetType: 'feature_package',
+      actionType: 'delete_feature_package',
+      details: { package_key: existing.package_key },
+      severity: 'warn',
+      request,
+      routeName: 'api/super-admin/feature-packages/[id] DELETE',
+    });
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {

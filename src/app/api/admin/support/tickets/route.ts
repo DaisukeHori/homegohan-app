@@ -11,6 +11,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { ticketListQuerySchema, createTicketSchema } from '@/lib/admin/support-schemas';
 import { internalError } from '@/lib/api/errors';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export async function GET(request: NextRequest) {
   try {
@@ -133,14 +134,16 @@ export async function POST(request: NextRequest) {
     }
 
     // 監査ログ
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: currentUser.id,
-      action_type: 'admin.support.ticket.create',
-      target_id: ticket.id,
-      target_type: 'support_ticket',
+    await recordAdminAudit({
+      supabase,
+      actorId: currentUser.id,
+      actionType: 'admin.support.ticket.create',
+      targetId: ticket.id,
+      targetType: 'support_ticket',
       details: { subject, category, priority, user_id },
       severity: 'info',
-      ip_address: request.headers.get('x-forwarded-for'),
+      request,
+      routeName: 'api/admin/support/tickets POST',
     });
 
     return NextResponse.json({ data: ticket }, { status: 201 });

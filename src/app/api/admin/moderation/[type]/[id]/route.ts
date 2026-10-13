@@ -81,6 +81,7 @@ import {
 } from '@/lib/admin/moderation-backend';
 import { notSupportedResponse } from '@/lib/admin/not-supported';
 import { applyUserBan, BAN_INTERNAL_ERROR_MESSAGE } from '@/lib/admin/user-ban';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -285,11 +286,12 @@ async function handleResolve(request: Request, params: { type: string; id: strin
     },
     failed: boolean,
   ) => {
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: actor.id,
-      action_type: `admin.moderation.${action}`,
-      target_id: id,
-      target_type: `moderation_item:${type}`,
+    await recordAdminAudit({
+      supabase,
+      actorId: actor.id,
+      actionType: `admin.moderation.${action}`,
+      targetId: id,
+      targetType: `moderation_item:${type}`,
       details: {
         action,
         moderation_type: type,
@@ -315,7 +317,8 @@ async function handleResolve(request: Request, params: { type: string; id: strin
         unban_at: outcome.unbanAt,
       },
       severity: action.includes('ban') || failed ? 'warn' : 'info',
-      ip_address: request.headers.get('x-forwarded-for'),
+      request,
+      routeName: `api/admin/moderation/[type]/[id] ${request.method}`,
     });
   };
 

@@ -11,6 +11,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { leadListQuerySchema, createLeadSchema } from '@/lib/admin/sales-schemas';
 import { internalError } from '@/lib/api/errors';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export async function GET(request: NextRequest) {
   try {
@@ -127,14 +128,16 @@ export async function POST(request: NextRequest) {
     }
 
     // 監査ログ
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: currentUser.id,
-      action_type: 'admin.sales.lead.create',
-      target_id: lead.id,
-      target_type: 'sales_lead',
+    await recordAdminAudit({
+      supabase,
+      actorId: currentUser.id,
+      actionType: 'admin.sales.lead.create',
+      targetId: lead.id,
+      targetType: 'sales_lead',
       details: { company_name: insertData.company_name, stage: 'approach' },
       severity: 'info',
-      ip_address: request.headers.get('x-forwarded-for'),
+      request,
+      routeName: 'api/admin/sales/leads POST',
     });
 
     return NextResponse.json({ data: lead }, { status: 201 });
