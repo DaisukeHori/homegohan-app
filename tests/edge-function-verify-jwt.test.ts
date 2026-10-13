@@ -282,6 +282,8 @@ const CATALOG_IMPORT_FUNCTIONS = [
 ];
 /** public.invoke_calculate_segment_stats と、そのジョブを足した migration */
 const SEGMENT_STATS_MIGRATION = path.posix.join(MIGRATIONS_DIR, '20261009100000_schedule_calculate_segment_stats.sql');
+/** 確定の回の再試行 public.invoke_calculate_segment_stats_finalize_retry と、そのジョブを足した migration (#1500) */
+const SEGMENT_STATS_FINALIZE_RETRY_MIGRATION = path.posix.join(MIGRATIONS_DIR, '20261011120000_segment_stats_finalize_retry.sql');
 
 const DB_HTTP_CALL_SITES: ReadonlyMap<string, DbHttpCallSite> = new Map<string, DbHttpCallSite>([
   // public.invoke_catalog_import: '.../functions/v1/' || p_function_name を v_url に入れ、net.http_post で呼ぶ
@@ -290,6 +292,8 @@ const DB_HTTP_CALL_SITES: ReadonlyMap<string, DbHttpCallSite> = new Map<string, 
   [path.posix.join(BASELINE_DIR, 'prod_schema.sql'), { count: 2, callees: CATALOG_IMPORT_FUNCTIONS }],
   // public.invoke_calculate_segment_stats: 定数 c_url の '.../functions/v1/calculate-segment-stats' を net.http_post で呼ぶ
   [SEGMENT_STATS_MIGRATION, { count: 2, callees: [SEGMENT_STATS_FUNCTION] }],
+  // public.invoke_calculate_segment_stats_finalize_retry: 上と同じ定数 c_url を net.http_post で呼ぶ (確定の回の再試行。#1500)
+  [SEGMENT_STATS_FINALIZE_RETRY_MIGRATION, { count: 2, callees: [SEGMENT_STATS_FUNCTION] }],
 ]);
 
 /**
