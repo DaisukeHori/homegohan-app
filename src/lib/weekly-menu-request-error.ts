@@ -25,7 +25,7 @@ import {
 
 /** それ以外の失敗の固定の文 (画面が error_message の無いときに出す既定の文と同じ) */
 export const WEEKLY_MENU_REQUEST_FAILED_MESSAGE = '献立の生成に失敗しました。もう一度お試しください。';
-/** 進まなくなった行を状態の確認で失敗にしたときの文 (GET /api/ai/menu/weekly/status・pending の route が書く) */
+/** 進まなくなった行を失敗にしたときの文 (src/lib/weekly-menu-request-stale.ts の markWeeklyMenuRequestStaleIfUnchanged が書く。呼ぶのは GET /api/ai/menu/weekly/status・weekly/pending・meal/pending と POST /api/ai/menu/weekly/cleanup) */
 export const WEEKLY_MENU_REQUEST_STALE_MESSAGE = 'stale_request_timeout';
 /** 利用者が中止したときの文 (POST /api/ai/menu/weekly/status が書く) */
 export const WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE = '中止しました';

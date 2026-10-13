@@ -671,11 +671,15 @@ Step 3: スケジュール
 
 ## 34. `/super-admin/settings` — システム設定
 
-- メンテナンスモード (ON/OFF)
 - お知らせバナー設定
 - 全ユーザーへの緊急メッセージ送信
-- Feature flag デフォルト値
 - LLM プロバイダー優先度
+
+> **現状 (2026-10, #1457 / #1486)**: メンテナンスモードと機能フラグは、この画面ではなく `/super-admin/flags` (§7 の機能フラグ API) で切り替える
+> (メンテナンスモードは `maintenance_mode`、AI 相談の緊急停止は `ai_chat_enabled`)。`system_settings` の `feature_flags` 行は
+> もう何も読まず、システム設定では読み取り専用 (「使われていない」と出し、保存させない)。
+> Web にこの画面 (`src/app/super-admin/settings`) は無い。`system_settings` の一覧・保存は、モバイルの運営画面の「システム設定」が
+> `GET / PUT /api/super-admin/settings` で行う (各行の `key` / `value` / `description` / `updated_at` を出し、`description` も保存する)。
 
 ---
 

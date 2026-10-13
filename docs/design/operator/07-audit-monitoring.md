@@ -509,19 +509,21 @@ Better Stack は採用しない (上記)。代わりに、`app_logs` (db-logger 
 |-----|------|
 | 起動 | Vercel Cron が 15 分おきに `GET /api/cron/app-log-alerts` を呼ぶ (`vercel.json`)。認証は他の cron と同じ `requireCronAuth` (`CRON_SECRET` の Bearer。旧シークレット `CRON_SECRET_PREVIOUS` の受け付けを含む。#1196) |
 | 宛先 | 環境変数 `OPS_ALERT_EMAIL` (メールアドレス 1 つ)。**未設定なら何もしない** (info ログを 1 行残すだけで、DB にもメールにも触れない)。形が不正なときは warn を残して送らない |
-| 数え方 | DB の `app_log_error_counts(窓 15 分, 上位 10)` が、`level='error'` を `function_name` ごとに数える。返すのは関数名と件数 (と全体の件数) だけで、ログの本文・ユーザー ID は読まない。既存の索引 `idx_app_logs_created_at` で足りる |
-| 判定 | 全体の合計が **20 件を超えた** (21 件以上) とき。関数ごとではなく合計で見る (小さな失敗が広く散らばる障害も拾うため)。既定値は `src/lib/ops-alerts/app-log-error-spike.ts` の定数で、環境変数 `OPS_ALERT_ERROR_THRESHOLD` (1〜100000 の整数) で上書きできる。整数でない・範囲外の値は既定値に戻し、無視した変数の名前だけを warn に残す。窓 (15 分) は `vercel.json` の間隔と結びついているので、環境変数では変えない |
-| 重複の抑止 | 同じアラートは **60 分は送り直さない** (環境変数 `OPS_ALERT_COOLDOWN_MINUTES` (1〜10080 分。`claim_ops_alert` が受け付ける範囲) で上書きできる。不正な値はしきい値と同じ扱い)。表 `ops_alert_state (alert_key PK, last_sent_at)` (service_role のみ) に覚える。「送ってよいか」は `claim_ops_alert` が 1 つの `INSERT ... ON CONFLICT DO UPDATE ... WHERE` で原子的に決める (Vercel Cron は同じ回をまれに 2 回呼ぶ。読んでから書くと 2 通出る)。キーは固定の `app_logs_error_spike` で、関数名など動的な値は入れない |
+| 数え方 | DB の `app_log_error_counts(窓 15 分, 上位 10)` が、サーバーが書いた `level='error'` (`source <> 'client'`) を `function_name` ごとに数える。ブラウザ・端末から `POST /api/log` で届いた error (`source = 'client'`) は `app_log_client_error_counts` が同じ形で別に数える (#1493。migration `20261011080000_app_log_error_counts_split_client.sql`)。返すのは関数名と件数 (と全体の件数) だけで、ログの本文・ユーザー ID は読まない。既存の索引 `idx_app_logs_created_at` で足りる |
+| 判定 | サーバーの error の全体の合計が **20 件を超えた** (21 件以上) とき。関数ごとではなく合計で見る (小さな失敗が広く散らばる障害も拾うため)。ブラウザ・端末から届いた error は、別の通知として **100 件を超えた** (101 件以上) ときに知らせる (#1493。端末や回線の都合の失敗も混ざり、1 つの不具合でも画面の数だけ届くため、サーバーより高くする)。既定値は `src/lib/ops-alerts/app-log-error-spike.ts` の定数で、環境変数 `OPS_ALERT_ERROR_THRESHOLD` / `OPS_ALERT_CLIENT_ERROR_THRESHOLD` (どちらも 1〜100000 の整数) で上書きできる。整数でない・範囲外の値は既定値に戻し、無視した変数の名前だけを warn に残す。窓 (15 分) は `vercel.json` の間隔と結びついているので、環境変数では変えない |
+| 重複の抑止 | 同じアラートは **60 分は送り直さない** (環境変数 `OPS_ALERT_COOLDOWN_MINUTES` (1〜10080 分。`claim_ops_alert` が受け付ける範囲) で上書きできる。不正な値はしきい値と同じ扱い)。表 `ops_alert_state (alert_key PK, last_sent_at)` (service_role のみ) に覚える。「送ってよいか」は `claim_ops_alert` が 1 つの `INSERT ... ON CONFLICT DO UPDATE ... WHERE` で原子的に決める (Vercel Cron は同じ回をまれに 2 回呼ぶ。読んでから書くと 2 通出る)。キーは固定で、サーバーの通知が `app_logs_error_spike`、ブラウザ・端末の通知が `app_logs_client_error_spike` (#1493。キーが別なので、片方を送っても、もう片方のクールダウンは始まらない。分数は同じ値を使う)。関数名など動的な値は入れない |
 | 送れなかったとき | メールは届くことに依存しない。送信の設定が未完了 (`RESEND_API_KEY` なし)・Resend が断った・例外のときは、`release_ops_alert` で取った権利を返し (「送った」と記録したままにしない)、15 分後の次の回でもう一度試す。失敗は `sendEmail` が `app_logs` に error で残し (宛先はマスク)、cron も件数と関数名を warn で残す。応答は 200 のまま (`status: send_failed` / `send_skipped`) |
 | 載せる内容 | 件数・関数名 (多い順に最大 10 件、残りは合計)・`/super-admin/logs` へのリンク・検知した時刻 (日本時間)。**ユーザー ID・メールアドレス・ログの本文は載せない** (送信先の Resend は米国の事業者)。関数名も、UUID・メールアドレス・トークンの書式はマスクし、80 文字までにしてから載せる |
-| 実装 | `src/app/api/cron/app-log-alerts/route.ts`、`src/lib/ops-alerts/app-log-error-spike.ts` (判定・整形)、`src/lib/emails/ops/app-log-error-spike.ts` (文面)、migration `20261010123500_ops_alert_state.sql` |
-| テスト | `src/__tests__/api/cron/app-log-alerts.test.ts` (401・しきい値・重複の抑止・メールの内容・送れなかったとき)、`src/__tests__/lib/ops-alerts/`、`src/__tests__/lib/emails/ops/`、`tests/integration/rls/ops-alert-state.test.ts` (DB の関数。同時に呼んでも権利を取れるのは 1 本だけ) |
+| 実装 | `src/app/api/cron/app-log-alerts/route.ts`、`src/lib/ops-alerts/app-log-error-spike.ts` (判定・整形)、`src/lib/emails/ops/app-log-error-spike.ts` (文面。件名と最初の段落でサーバー / ブラウザ・端末を書き分ける)、migration `20261010123500_ops_alert_state.sql`・`20261011080000_app_log_error_counts_split_client.sql` |
+| `/api/log` の回数制限 | ログイン済みなら誰でも `source='client'` の行を書けるので、利用者ごとに 1 分 30 回・直近 24 時間 1000 回まで (#1493。`src/lib/rate-limit.ts` の `client-log`、key = 認証で確定した `user.id`)。超えたら 429 で、保存しない。送り手 (Web の `logToServer`、端末の `error-report.ts`・`push-issue-log.ts`) はどれも失敗を握りつぶすので、画面やサインアウトは止まらない |
+| テスト | `src/__tests__/api/cron/app-log-alerts.test.ts` (401・しきい値・重複の抑止・メールの内容・送れなかったとき・サーバーとブラウザ/端末を別に数える)、`src/__tests__/lib/ops-alerts/`、`src/__tests__/lib/emails/ops/`、`tests/integration/rls/ops-alert-state.test.ts` (DB の関数。同時に呼んでも権利を取れるのは 1 本だけ。`source='client'` の error はサーバーの数え方に入らない)、`tests/app-log-error-counts-split-contract.test.ts`、`src/__tests__/api/log.test.ts` (回数制限の境界) |
 
 限界:
 
 - 窓 (15 分) と cron の間隔が同じなので、窓の境目をまたいで集中した少数の error は、どちらの窓でも届かず見逃すことがある。続く障害は次の窓で届く。
 - 数えるのは `app_logs` に書かれた error だけ。ログを書く前に落ちる障害 (関数ごと落ちる・DB に繋がらない) は数えられない。死活の監視 (§9.1) は別。
 - `error` レベルのログがそのままアラートの種になる。想定内の失敗 (入力の誤りなど) は `warn` で書く。`error` で書き続けると、本物の障害と区別できなくなる。
+- ブラウザ・端末の通知は、利用者 1 人でも鳴らせる (回数制限の 1 分 30 回でも、15 分で 100 件を超えられる)。その抑止で止められるのもブラウザ・端末の通知だけで、サーバーの障害の通知には響かない (#1493)。
 - 本番はメールの送信ドメインが未検証で、メールは届かない (`docs/operations/email-domain.md`)。それまでは、送れなかったことが `app_logs` に残るだけ。
 
 ## 9. Status Page (status.homegohan.app) は設置しない
@@ -692,11 +694,13 @@ sequenceDiagram
 // tests/integration/operator/audit-log-rls.integration.test.ts
 import { describe, it, expect, beforeAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
+// 接続情報は src/lib の getter で取り出す (`process.env.<変数名>!` は使わない。#1182・#1434)
+import { getSupabaseAnonKey, getSupabaseServiceRoleKey, getSupabaseUrl } from '@/lib/env-required';
 import { signInAsUser } from '../../helpers/auth';
 
 const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  getSupabaseUrl(),
+  getSupabaseServiceRoleKey(),
 );
 
 describe('admin_audit_logs RLS ポリシー', () => {
@@ -725,8 +729,8 @@ describe('admin_audit_logs RLS ポリシー', () => {
 
   it('rejects UPDATE on admin_audit_logs (audit_logs_no_update policy)', async () => {
     const superClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${superAdminToken}` } } },
     );
     const { error } = await superClient
@@ -738,8 +742,8 @@ describe('admin_audit_logs RLS ポリシー', () => {
 
   it('rejects DELETE on admin_audit_logs (audit_logs_no_delete policy)', async () => {
     const superClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${superAdminToken}` } } },
     );
     const { error } = await superClient
@@ -751,8 +755,8 @@ describe('admin_audit_logs RLS ポリシー', () => {
 
   it('returns 0 rows when admin role (non-super_admin) selects audit_logs', async () => {
     const adminClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${adminToken}` } } },
     );
     const { data, error } = await adminClient
@@ -764,8 +768,8 @@ describe('admin_audit_logs RLS ポリシー', () => {
 
   it('super_admin can SELECT all audit_logs', async () => {
     const superClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${superAdminToken}` } } },
     );
     const { data, error } = await superClient
@@ -778,8 +782,8 @@ describe('admin_audit_logs RLS ポリシー', () => {
 
   it('rejects INSERT when actor_id does not match auth.uid()', async () => {
     const adminClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${adminToken}` } } },
     );
     // actor_id を別ユーザーの UUID に偽装して INSERT 試行

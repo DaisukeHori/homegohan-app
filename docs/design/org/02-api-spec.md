@@ -1121,8 +1121,13 @@ describe('POST /api/webhooks/hr - 冪等テスト', () => {
       timestamp: new Date().toISOString(),
     };
 
+    // 署名の秘密は、テスト対象のサーバーが確かめる値と同じでなければならないので環境変数から読む。
+    // 無ければ undefined のまま署名せずに、ここで止める (`process.env.<変数名>!` は使わない。#1182・#1434)
+    const hrWebhookSecret = process.env.HR_WEBHOOK_SECRET;
+    if (!hrWebhookSecret) throw new Error('HR の Webhook の署名の秘密が未設定です');
+
     const sign = (body: string) => ({
-      'X-HR-Signature': `sha256=${createHmac('sha256', process.env.HR_WEBHOOK_SECRET!)
+      'X-HR-Signature': `sha256=${createHmac('sha256', hrWebhookSecret)
         .update(body)
         .digest('hex')}`,
     });

@@ -251,6 +251,48 @@ describe('#1148 5. AI 相談の緊急停止スイッチ (ai_chat_enabled)', () =
   });
 });
 
+describe('#1486 帰属の文の見張りを、AI への送信・緊急停止を書く文書と部品に広げる', () => {
+  /**
+   * 以前、設計書 02-api-spec の LLM クォータの節に、AI への送信の扱いをオーナーの判断として書いた根拠の無い帰属の文が
+   * 残っていた (#1457 の整合ゲートで見つけて消した)。
+   * 上の検査は CLAUDE.md・migration・ai-chat-gate.ts の決まった 1 か所しか見ないので、同じ形の文が設計書や
+   * クォータの route・Edge の部品に戻っても止まらない。ここでは、AI への送信・緊急停止を書く文書と部品の全行で、
+   * 「オーナー判断」と AI への送信・緊急停止の話が同じ行に並ぶものを探す (ほかの話題のオーナー判断の行は対象にしない)。
+   * 見張りであって証明ではない (行をまたいだ書き方や、別の言い回しの帰属は捕まえない)。
+   */
+  const FILES = [
+    'CLAUDE.md',
+    'docs/design/operator/02-api-spec.md',
+    'docs/design/operator/06-ai-llm.md',
+    'src/app/api/super-admin/llm/quotas/route.ts',
+    'src/lib/ai/ai-chat-gate.ts',
+    'src/lib/feature-flags.ts',
+    'supabase/functions/_shared/ai-chat-flag.ts',
+    'supabase/migrations/20261010120000_unify_feature_flags_seed.sql',
+  ];
+  const AI_SENDING_TOPIC = /送信|プロバイダー|事業者|ai_chat_enabled|緊急停止/;
+  /** 帰属の語 (この語を検査用の行に書くときも、ここから作る) */
+  const ATTRIBUTION = ['オーナー', '判断'].join('');
+  /** 見張りの判定: 帰属の語と AI への送信・緊急停止の話が同じ行に並ぶ (本体の検査と、空回りの確認の両方がこれを呼ぶ) */
+  const isAttributionOnAiSendingLine = (line: string): boolean => line.includes(ATTRIBUTION) && AI_SENDING_TOPIC.test(line);
+
+  it.each(FILES)('%s: 「オーナー判断」と AI への送信・緊急停止の話を同じ行に書かない', (file) => {
+    const hits = read(file)
+      .split('\n')
+      .map((line, index) => ({ line, number: index + 1 }))
+      .filter(({ line }) => isAttributionOnAiSendingLine(line))
+      .map(({ number, line }) => `${number} 行目: ${line.trim().slice(0, 80)}`);
+    expect(hits).toEqual([]);
+  });
+
+  it('見張りが空回りしていない: 帰属の語と送信の話が同じ行にあれば捕まえ、別々の行なら捕まえない', () => {
+    // 検査のための作り物の行 (実際の決定を書いたものではない)。判定は本体の検査と同じ関数を呼ぶ (式を書き写さない。#1515)
+    expect(isAttributionOnAiSendingLine(`${ATTRIBUTION} (検査用) — AI 事業者への送信の扱い`)).toBe(true);
+    expect(isAttributionOnAiSendingLine(`${ATTRIBUTION} (検査用) — 価格の改定の扱い`)).toBe(false);
+    expect(isAttributionOnAiSendingLine('(検査用) — AI 事業者への送信の扱い')).toBe(false);
+  });
+});
+
 describe('#1148 6. ミドルウェアは maintenance_mode を見る', () => {
   it('lib/supabase/middleware.ts が maintenance-mode の判定を使い、フラグの key は maintenance_mode', () => {
     const middleware = code('lib/supabase/middleware.ts');

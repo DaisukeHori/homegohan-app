@@ -8,6 +8,11 @@
  *   3. enqueueMealImageJobs: 行ごとに insert する (冪等キーの一意な索引は部分索引なので、ON CONFLICT (idempotency_key) は使えない)。
  *      重複 (23505) と失敗を数え、1 行も積めなかったら数えた 1 回を戻す。書き込みに失敗した料理は 'failed' + 'enqueue_failed' にする (#1505)
  *   4. 安全弁 (上限に数えない機能) で止めたときの 429 の本文と文: 回数を出さない固定の文 (Web・モバイル共用)
+ *   5. (#1487 の整合ゲート) 実データの形 (subject_hash の無い写真・商品の料理、端末から直に保存した料理) を前回にしたとき:
+ *      保存し直しても料理の中身を変えても、写真・商品・手で付けた画像を AI の画像で置き換えない。料理を変えない保存し直しでは積まない
+ *   6. (#1487 の整合ゲート R1) 商品の献立の古い商品の料理 (画像の項目なし・以前の保存し直しで generated_ai に書き換わったもの) と、
+ *      献立のカバーが料理ごとの画像を持たない写真・商品の料理のもの (写真の複数の料理) に料理を足したとき:
+ *      画像の処理がジョブを全部書き終えたあとも、献立のカバーが写真・商品の画像のまま
  *
  * 入口 (route 4 本 + AI 相談の update_meal) での組み合わせは tests/meal-image-skip-routes.test.ts
  */
@@ -24,14 +29,21 @@ vi.mock('@/lib/db-logger', () => ({ createLogger: () => ({ warn: vi.fn(), error:
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+  CATALOG_PRODUCT_MEAL_SOURCE_TYPE,
   MEAL_IMAGE_ENQUEUE_FAILED_ERROR,
   MEAL_IMAGE_SKIPPED_ERRORS,
+  asCatalogMealDish,
   buildDishImageSubjectHash,
+  applyGeneratedDishImage,
+  isCatalogProductMeal,
   buildMealImageIdempotencyKey,
   isMealImageSkippedError,
   markDishImagesSkipped,
+  isAiImagePipelineDish,
+  isPreservedDishImage,
   needsImageRetry,
   reconcileDishImages,
+  buildPhotoDishList,
   type MealImageDish,
   type MealImageJobSeed,
 } from '../supabase/functions/_shared/meal-image';
@@ -302,3 +314,378 @@ describe('#1487 の回帰の前提: 2 つ目の料理だけに積むとき、1 �
     expect(marked[1]).toMatchObject({ image_status: 'failed', image_error: 'skipped_ai_limit' });
   });
 });
+
+describe('reconcileDishImages: 実データの形 (subject_hash の無い料理) を前回にしたとき (#1487 の整合ゲート)', () => {
+  const PHOTO_URL = 'https://example.com/storage/meal-photos/user-1/photo.jpg';
+  const PRODUCT_URL = 'https://example.com/catalog/bento.jpg';
+  const OYAKODON = { name: '親子丼', role: 'main', ingredient: '鶏肉、卵' };
+  const MISO = { name: '味噌汁', role: 'soup', ingredient: '豆腐' };
+  const PRODUCT = {
+    id: 'catalog-1',
+    sourceId: 'source-1',
+    sourceCode: 'store',
+    brandName: 'ブランド',
+    name: '幕の内弁当',
+    categoryCode: null,
+    description: null,
+    imageUrl: PRODUCT_URL,
+    canonicalUrl: 'https://example.com/catalog/bento',
+    priceYen: 500,
+    caloriesKcal: 650,
+    proteinG: 20,
+    fatG: 18,
+    carbsG: 90,
+    sodiumG: 2.5,
+    fiberG: 3,
+    sugarG: 5,
+    availabilityStatus: 'available',
+  };
+
+  /** 料理以外だけを変える保存 (完了の切り替え): 入口は送られた料理が無いので、前回の料理を写して渡す (buildDishImagePayload の ensureNextDishes) */
+  const unchanged = (dishes: MealImageDish[]): MealImageDish[] => dishes.map((dish) => ({ ...dish }));
+
+  it('前提: 写真の料理・商品の料理は subject_hash を持たない', async () => {
+    const { buildPhotoDishList } = await import('../lib/meal-image');
+    const { buildCatalogMealFields } = await import('../lib/catalog-products');
+    expect(buildPhotoDishList([OYAKODON], PHOTO_URL)[0].image_subject_hash).toBeUndefined();
+    expect(buildCatalogMealFields(PRODUCT).dishes[0]).not.toHaveProperty('image_subject_hash');
+  });
+
+  it.each([
+    ['写真の料理 (1 つ・画像あり)', async () => (await import('../lib/meal-image')).buildPhotoDishList([OYAKODON], PHOTO_URL)],
+    ['写真の料理 (複数・料理ごとの画像なし)', async () => (await import('../lib/meal-image')).buildPhotoDishList([OYAKODON, MISO], PHOTO_URL)],
+    ['商品の料理 (画像あり)', async () => (await import('../lib/catalog-products')).buildCatalogMealFields(PRODUCT).dishes as MealImageDish[]],
+    ['商品の料理 (商品の画像なし)', async () => (await import('../lib/catalog-products')).buildCatalogMealFields({ ...PRODUCT, imageUrl: null }).dishes as MealImageDish[]],
+  ])('%s: 料理を変えずに保存し直してもジョブを積まず、画像と状態をそのまま写す', async (_label, build) => {
+    const previous = await build();
+    const result = await reconcileDishImages({ previousDishes: previous, nextDishes: unchanged(previous), triggerSource: 'toggle' });
+
+    expect(result.jobs).toEqual([]);
+    previous.forEach((dish, index) => {
+      expect(result.dishes[index]).toMatchObject({
+        image_url: dish.image_url ?? null,
+        image_source: dish.image_source,
+        image_status: dish.image_status ?? null,
+        image_subject_hash: null,
+      });
+    });
+  });
+
+  it.each([
+    ['写真の料理 (1 つ)', async () => (await import('../lib/meal-image')).buildPhotoDishList([OYAKODON], PHOTO_URL)],
+    ['写真の料理 (複数)', async () => (await import('../lib/meal-image')).buildPhotoDishList([OYAKODON, MISO], PHOTO_URL)],
+    ['商品の料理', async () => (await import('../lib/catalog-products')).buildCatalogMealFields(PRODUCT).dishes as MealImageDish[]],
+  ])('%s: 料理の中身を変えても (名前・材料)、AI の画像で置き換えない', async (_label, build) => {
+    const previous = await build();
+    // 画面が前回の料理を編集して送る形と、AI が画像の項目の無い料理を送る形の両方
+    const edited = previous.map((dish) => ({ ...dish, name: `${String(dish.name)}(大盛り)`, ingredient: '変更後の材料' }));
+    const bare = previous.map((_dish, index) => ({ name: `別の料理${index}`, role: 'main' }));
+    for (const next of [edited, bare]) {
+      const result = await reconcileDishImages({ previousDishes: previous, nextDishes: next, triggerSource: 'edit' });
+      expect(result.jobs).toEqual([]);
+      previous.forEach((dish, index) => {
+        expect(result.dishes[index]).toMatchObject({ image_url: dish.image_url ?? null, image_source: dish.image_source, image_status: dish.image_status ?? null });
+        expect(result.dishes[index].name).toBe(next[index].name);
+      });
+    }
+  });
+
+  it('写真の料理 (1 つ) の献立のカバーは写真のまま', async () => {
+    const { buildPhotoDishList } = await import('../lib/meal-image');
+    const previous = buildPhotoDishList([OYAKODON], PHOTO_URL);
+    const result = await reconcileDishImages({ previousDishes: previous, nextDishes: unchanged(previous), triggerSource: 'toggle', fallbackMealImageUrl: PHOTO_URL });
+    expect(result.mealCoverImageUrl).toBe(PHOTO_URL);
+  });
+
+  it('写真の料理が subject_hash を持っていても (古い行・どこかで付いた)、置き換えず、hash を外す', async () => {
+    const { buildPhotoDishList } = await import('../lib/meal-image');
+    const previous = buildPhotoDishList([OYAKODON], PHOTO_URL).map((dish) => ({ ...dish, image_subject_hash: 'stray-hash' }));
+    const result = await reconcileDishImages({ previousDishes: previous, nextDishes: [{ name: 'カツ丼', role: 'main' }], triggerSource: 'edit' });
+    expect(result.jobs).toEqual([]);
+    expect(result.dishes[0]).toMatchObject({ image_url: PHOTO_URL, image_source: 'meal_photo', image_status: 'ready', image_subject_hash: null });
+  });
+
+  it('手で付けた画像 (manual_override): 料理を変えると今までどおり stale にし、積まない。変えなければ状態をそのまま写す', async () => {
+    const previous: MealImageDish[] = [{ ...OYAKODON, image_url: 'https://example.com/m.png', image_source: 'manual_override', image_status: 'ready' }];
+    const changed = await reconcileDishImages({ previousDishes: previous, nextDishes: [{ name: 'カツ丼', role: 'main' }], triggerSource: 'edit' });
+    expect(changed.jobs).toEqual([]);
+    expect(changed.dishes[0]).toMatchObject({ image_url: 'https://example.com/m.png', image_source: 'manual_override', image_status: 'stale', image_subject_hash: null });
+
+    const same = await reconcileDishImages({ previousDishes: previous, nextDishes: unchanged(previous), triggerSource: 'toggle' });
+    expect(same.jobs).toEqual([]);
+    expect(same.dishes[0]).toMatchObject({ image_status: 'ready', image_url: 'https://example.com/m.png' });
+  });
+
+  it('source が無く画像がある料理 (この仕組みの外で付いた画像) は、料理を変えても置き換えない', async () => {
+    const previous: MealImageDish[] = [{ ...OYAKODON, image_url: PHOTO_URL }];
+    const result = await reconcileDishImages({ previousDishes: previous, nextDishes: [{ name: 'カツ丼', role: 'main' }], triggerSource: 'edit' });
+    expect(result.jobs).toEqual([]);
+    expect(result.dishes[0]).toMatchObject({ image_url: PHOTO_URL, image_source: null });
+  });
+
+  it('subject_hash も source も無い料理 (端末から直に保存した料理): 変えずに保存し直しても積まず、状態を pending にしない', async () => {
+    const previous: MealImageDish[] = [{ name: 'カレー', role: 'main', calories_kcal: 600 }];
+    const result = await reconcileDishImages({ previousDishes: previous, nextDishes: unchanged(previous), triggerSource: 'toggle' });
+    expect(result.jobs).toEqual([]);
+    expect(result.dishes[0]).toMatchObject({ image_url: null, image_source: null, image_status: null, image_subject_hash: null });
+  });
+
+  it('商品の献立でない、subject_hash も source も無い料理 (端末から直に保存した手入力の料理) は、料理の中身を変えたら AI の画像のジョブを積む (今までどおり)', async () => {
+    const previous: MealImageDish[] = [{ name: 'カレー', role: 'main' }];
+    const result = await reconcileDishImages({ previousDishes: previous, nextDishes: [{ name: 'ハヤシライス', role: 'main' }], triggerSource: 'edit' });
+    expect(result.jobs).toHaveLength(1);
+    expect(result.dishes[0]).toMatchObject({ image_source: 'generated_ai', image_status: 'stale', image_url: null });
+  });
+
+  it('AI の画像の料理 (generated_ai) が subject_hash を持たなくても、変えずに保存し直したら hash を前回の中身から求めて同じ料理とみなす', async () => {
+    const ready: MealImageDish[] = [{ ...CURRY, image_source: 'generated_ai', image_status: 'ready', image_url: 'https://example.com/ai.png' }];
+    const kept = await reconcileDishImages({ previousDishes: ready, nextDishes: unchanged(ready), triggerSource: 'toggle' });
+    expect(kept.jobs).toEqual([]);
+    expect(kept.dishes[0]).toMatchObject({ image_url: 'https://example.com/ai.png', image_status: 'ready' });
+
+    // 積み直しが要る AI の画像の料理は needsImageRetry どおり積み直す
+    const failed: MealImageDish[] = [{ ...CURRY, image_source: 'generated_ai', image_status: 'failed', image_url: null }];
+    const retried = await reconcileDishImages({ previousDishes: failed, nextDishes: unchanged(failed), triggerSource: 'toggle' });
+    expect(retried.jobs).toHaveLength(1);
+    expect(retried.dishes[0]).toMatchObject({ image_status: 'pending', image_source: 'generated_ai' });
+  });
+
+  it('isPreservedDishImage / isAiImagePipelineDish の境界', () => {
+    expect(isPreservedDishImage({ image_source: 'meal_photo' })).toBe(true);
+    expect(isPreservedDishImage({ image_source: 'catalog' })).toBe(true);
+    expect(isPreservedDishImage({ image_source: 'manual_override' })).toBe(true);
+    expect(isPreservedDishImage({ image_source: 'none' })).toBe(true);
+    expect(isPreservedDishImage({ image_url: 'https://example.com/x.jpg' })).toBe(true);
+    expect(isPreservedDishImage({ image_source: 'generated_ai', image_url: 'https://example.com/x.jpg' })).toBe(false);
+    expect(isPreservedDishImage({})).toBe(false);
+
+    expect(isAiImagePipelineDish({ image_subject_hash: 'h' })).toBe(true);
+    expect(isAiImagePipelineDish({ image_source: 'generated_ai' })).toBe(true);
+    expect(isAiImagePipelineDish({ image_status: 'pending' })).toBe(false);
+  });
+});
+
+/**
+ * 画像の処理 (process-meal-image-jobs) が、積んだジョブを全部書き終えたあとの献立のカバー。
+ * 画像の処理は、ジョブごとに applyGeneratedDishImage (料理を generated_ai・ready・AI の画像にし、カバーの持ち主の決まりでカバーを決める) を使う
+ */
+function coverAfterWorker(result: { dishes: MealImageDish[]; jobs: MealImageJobSeed[]; mealCoverImageUrl: string | null }): string | null {
+  let dishes = result.dishes;
+  let cover = result.mealCoverImageUrl;
+  for (const job of result.jobs) {
+    const applied = applyGeneratedDishImage({
+      dishes,
+      dishIndex: job.dishIndex,
+      imageUrl: `https://example.com/ai-${job.dishIndex}.png`,
+      generatedAt: '2026-10-12T00:00:00.000Z',
+      currentCoverImageUrl: cover,
+    });
+    dishes = applied.dishes;
+    cover = applied.coverImageUrl;
+  }
+  return cover;
+}
+
+describe('#1487 の整合ゲート R1: 商品の献立の古い商品の料理・写真の複数の料理の献立のカバーを、AI の画像で置き換えない', () => {
+  const PHOTO_URL = 'https://example.com/storage/meal-photos/user-1/photo.jpg';
+  const PRODUCT_URL = 'https://example.com/catalog/bento.jpg';
+  const PRODUCT = {
+    id: 'catalog-1',
+    sourceId: 'source-1',
+    sourceCode: 'store',
+    brandName: 'ブランド',
+    name: '幕の内弁当',
+    categoryCode: null,
+    description: null,
+    imageUrl: PRODUCT_URL,
+    canonicalUrl: 'https://example.com/catalog/bento',
+    priceYen: 500,
+    caloriesKcal: 650,
+    proteinG: 20,
+    fatG: 18,
+    carbsG: 90,
+    sodiumG: 2.5,
+    fiberG: 3,
+    sugarG: 5,
+    availabilityStatus: 'available',
+  };
+  /** origin/main の buildCatalogMealFields・端末の保存が作った商品の料理 (画像の項目なし。画像は献立のカバーだけ) */
+  const LEGACY_CATALOG_DISH: MealImageDish = { name: '幕の内弁当', role: 'main', calories_kcal: 650, protein_g: 20 };
+
+  /** 以前の reconcileDishImages が、古い商品の料理を「料理が変わった」とみなして書き換えた形 (ジョブは積めず、AI の画像はできていない) */
+  async function rewrittenLegacyCatalogDish(): Promise<MealImageDish> {
+    return {
+      ...LEGACY_CATALOG_DISH,
+      image_subject_hash: await buildDishImageSubjectHash(LEGACY_CATALOG_DISH, 0),
+      image_source: 'generated_ai',
+      image_status: 'stale',
+      image_url: null,
+      image_generated_at: null,
+      image_error: null,
+    };
+  }
+
+  const unchanged = (dishes: MealImageDish[]): MealImageDish[] => dishes.map((dish) => ({ ...dish }));
+
+  it.each([
+    ['画像の項目の無い古い商品の料理', async () => [LEGACY_CATALOG_DISH]],
+    ['以前の保存し直しで generated_ai・画像なしに書き換わった商品の料理', async () => [await rewrittenLegacyCatalogDish()]],
+  ])('商品の献立の%s: 変えない・名前を変える・AI が別の料理を送るのどれでも積まず、商品の料理として保存し、カバーは商品の画像のまま', async (_label, build) => {
+    const previous = await build();
+    for (const next of [unchanged(previous), [{ ...previous[0], name: '幕の内弁当(大盛り)' }], [{ name: 'のり弁当', role: 'main' }]]) {
+      const result = await reconcileDishImages({
+        previousDishes: previous,
+        nextDishes: next,
+        triggerSource: 'edit',
+        fallbackMealImageUrl: PRODUCT_URL,
+        previousMealIsCatalog: true,
+      });
+      expect(result.jobs).toEqual([]);
+      expect(result.dishes[0]).toMatchObject({
+        name: next[0].name,
+        image_url: null,
+        image_source: 'catalog',
+        image_status: null,
+        image_subject_hash: null,
+      });
+      expect(result.mealCoverImageUrl).toBe(PRODUCT_URL);
+      expect(coverAfterWorker(result)).toBe(PRODUCT_URL);
+    }
+  });
+
+  it('商品の献立の古い商品の料理に料理を足しても、足した料理に積まず (状態なし)、カバーは商品の画像のまま', async () => {
+    const result = await reconcileDishImages({
+      previousDishes: [LEGACY_CATALOG_DISH],
+      nextDishes: [{ ...LEGACY_CATALOG_DISH }, { name: '味噌汁', role: 'soup' }],
+      triggerSource: 'edit',
+      fallbackMealImageUrl: PRODUCT_URL,
+      previousMealIsCatalog: true,
+    });
+    expect(result.jobs).toEqual([]);
+    expect(result.dishes[1]).toMatchObject({ name: '味噌汁', image_url: null, image_source: null, image_status: null, image_subject_hash: null });
+    expect(coverAfterWorker(result)).toBe(PRODUCT_URL);
+  });
+
+  it('前提との対比: 商品の献立と分からなければ (previousMealIsCatalog なし)、同じ料理の名前を変えると積む。それでもカバーは商品の画像のまま (カバーの持ち主の決まり)', async () => {
+    const result = await reconcileDishImages({
+      previousDishes: [LEGACY_CATALOG_DISH],
+      nextDishes: [{ ...LEGACY_CATALOG_DISH, name: '幕の内弁当(大盛り)' }],
+      triggerSource: 'edit',
+      fallbackMealImageUrl: PRODUCT_URL,
+    });
+    expect(result.jobs).toHaveLength(1);
+    // 以前は画像の処理のあとカバーが AI の画像 (ai-0) になっていた。商品の画像はどの AI の料理の画像とも一致しないので、置き換えない
+    expect(coverAfterWorker(result)).toBe(PRODUCT_URL);
+  });
+
+  it.each([
+    ['写真の料理 (複数) に料理を 1 品足す', () => {
+      const previous = buildPhotoDishList([{ name: '親子丼', role: 'main' }, { name: '味噌汁', role: 'soup' }], PHOTO_URL);
+      return { previous, next: [...unchanged(previous), { name: 'お新香', role: 'side' }], cover: PHOTO_URL, addedIndexes: [2] };
+    }],
+    ['写真の料理 (複数) に料理を 2 品足す', () => {
+      const previous = buildPhotoDishList([{ name: '親子丼', role: 'main' }, { name: '味噌汁', role: 'soup' }], PHOTO_URL);
+      return { previous, next: [...unchanged(previous), { name: 'お新香', role: 'side' }, { name: 'みかん', role: 'dessert' }], cover: PHOTO_URL, addedIndexes: [2, 3] };
+    }],
+    ['画像の無い商品の料理 (catalog・画像なし) の献立に料理を足す (献立のカバーは手で付けた画像)', () => {
+      const previous: MealImageDish[] = [{ name: '幕の内弁当', role: 'main', image_source: 'catalog', image_url: null, image_status: null }];
+      return { previous, next: [...unchanged(previous), { name: '味噌汁', role: 'soup' }], cover: 'https://example.com/manual-cover.jpg', addedIndexes: [1] };
+    }],
+  ])('%s: 足した料理に積まず (状態なし・hash なし)、写真の料理はそのまま、画像の処理のあともカバーが変わらない', async (_label, build) => {
+    const { previous, next, cover, addedIndexes } = build();
+    const result = await reconcileDishImages({ previousDishes: previous, nextDishes: next, triggerSource: 'edit', fallbackMealImageUrl: cover });
+
+    expect(result.jobs).toEqual([]);
+    previous.forEach((dish, index) => {
+      expect(result.dishes[index]).toMatchObject({ image_url: dish.image_url ?? null, image_source: dish.image_source, image_status: dish.image_status ?? null });
+    });
+    for (const index of addedIndexes) {
+      expect(result.dishes[index]).toMatchObject({ image_url: null, image_source: null, image_status: null, image_subject_hash: null, image_error: null });
+    }
+    expect(result.mealCoverImageUrl).toBe(cover);
+    expect(coverAfterWorker(result)).toBe(cover);
+
+    // 足した料理を変えずにもう一度保存し直しても (完了の切り替え)、積まない
+    const again = await reconcileDishImages({ previousDishes: result.dishes, nextDishes: unchanged(result.dishes), triggerSource: 'toggle', fallbackMealImageUrl: cover });
+    expect(again.jobs).toEqual([]);
+    expect(coverAfterWorker(again)).toBe(cover);
+  });
+
+  it('写真の料理 (複数) の献立の、前回 AI の画像の積み直し待ちの料理 (generated_ai・failed) を変えずに保存し直しても、積まず前回の状態を写す', async () => {
+    const photos = buildPhotoDishList([{ name: '親子丼', role: 'main' }, { name: '味噌汁', role: 'soup' }], PHOTO_URL);
+    const waiting: MealImageDish = {
+      ...SALAD,
+      image_subject_hash: await buildDishImageSubjectHash(SALAD, 2),
+      image_source: 'generated_ai',
+      image_status: 'failed',
+      image_error: 'skipped_ai_limit',
+      image_url: null,
+    };
+    const previous = [...photos, waiting];
+    const result = await reconcileDishImages({ previousDishes: previous, nextDishes: unchanged(previous), triggerSource: 'toggle', fallbackMealImageUrl: PHOTO_URL });
+    expect(result.jobs).toEqual([]);
+    expect(result.dishes[2]).toMatchObject({
+      image_subject_hash: waiting.image_subject_hash,
+      image_source: 'generated_ai',
+      image_status: 'failed',
+      image_error: 'skipped_ai_limit',
+      image_url: null,
+    });
+    expect(coverAfterWorker(result)).toBe(PHOTO_URL);
+  });
+
+  it('写真の料理 (1 つ・料理に写真あり) に料理を足したときは、今までどおり足した料理に積む (画像の処理のあともカバーは写真の料理の写真)', async () => {
+    const previous = buildPhotoDishList([{ name: '親子丼', role: 'main' }], PHOTO_URL);
+    const result = await reconcileDishImages({ previousDishes: previous, nextDishes: [...unchanged(previous), { name: '味噌汁', role: 'soup' }], triggerSource: 'edit', fallbackMealImageUrl: PHOTO_URL });
+    expect(result.jobs.map((job) => job.dishIndex)).toEqual([1]);
+    expect(coverAfterWorker(result)).toBe(PHOTO_URL);
+  });
+
+  it('商品の料理 (catalog・商品の画像あり) に料理を足したときは、今までどおり足した料理に積む (カバーは商品の料理の画像)', async () => {
+    const { buildCatalogMealFields } = await import('../lib/catalog-products');
+    const fields = buildCatalogMealFields(PRODUCT);
+    const previous = fields.dishes as MealImageDish[];
+    const result = await reconcileDishImages({
+      previousDishes: previous,
+      nextDishes: [...unchanged(previous), { name: '味噌汁', role: 'soup' }],
+      triggerSource: 'edit',
+      fallbackMealImageUrl: fields.image_url,
+      previousMealIsCatalog: isCatalogProductMeal(fields),
+    });
+    expect(result.jobs.map((job) => job.dishIndex)).toEqual([1]);
+    expect(coverAfterWorker(result)).toBe(PRODUCT_URL);
+  });
+
+  it('AI の画像の献立 (写真・商品の料理なし) は、カバーがあっても、料理を変えれば今までどおり積む (画像の処理のあと新しい AI の画像がカバー)', async () => {
+    const previous: MealImageDish[] = [
+      { ...CURRY, image_subject_hash: await buildDishImageSubjectHash(CURRY, 0), image_source: 'generated_ai', image_status: 'ready', image_url: 'https://example.com/old-ai.png' },
+    ];
+    const result = await reconcileDishImages({ previousDishes: previous, nextDishes: [{ name: 'ハヤシライス', role: 'main' }], triggerSource: 'edit', fallbackMealImageUrl: 'https://example.com/old-ai.png' });
+    expect(result.jobs).toHaveLength(1);
+    expect(coverAfterWorker(result)).toBe('https://example.com/ai-0.png');
+  });
+
+  it('isCatalogProductMeal: catalog_product_id か source_type (buildCatalogMealFields が書く値) で商品の献立と分かる', async () => {
+    const { buildCatalogMealFields } = await import('../lib/catalog-products');
+    expect(buildCatalogMealFields(PRODUCT).source_type).toBe(CATALOG_PRODUCT_MEAL_SOURCE_TYPE);
+    expect(isCatalogProductMeal(buildCatalogMealFields(PRODUCT))).toBe(true);
+    expect(isCatalogProductMeal({ catalog_product_id: 'catalog-1', source_type: 'manual' })).toBe(true);
+    expect(isCatalogProductMeal({ catalog_product_id: null, source_type: 'catalog_product' })).toBe(true);
+    expect(isCatalogProductMeal({ catalog_product_id: null, source_type: 'manual' })).toBe(false);
+    expect(isCatalogProductMeal(null)).toBe(false);
+  });
+
+  it('asCatalogMealDish: 商品の献立の先頭の、自分の画像が無く source が未設定か generated_ai の料理だけを商品の料理として読む', async () => {
+    const asCatalog = { image_source: 'catalog', image_status: null, image_subject_hash: null, image_error: null, image_generated_at: null };
+    expect(asCatalogMealDish(LEGACY_CATALOG_DISH, 0, true)).toMatchObject(asCatalog);
+    expect(asCatalogMealDish(await rewrittenLegacyCatalogDish(), 0, true)).toMatchObject(asCatalog);
+    // 商品の献立でない・先頭でない・自分の画像がある・写真・手の画像の料理は変えない
+    expect(asCatalogMealDish(LEGACY_CATALOG_DISH, 0, false)).toBe(LEGACY_CATALOG_DISH);
+    expect(asCatalogMealDish(LEGACY_CATALOG_DISH, 1, true)).toBe(LEGACY_CATALOG_DISH);
+    const withImage: MealImageDish = { ...LEGACY_CATALOG_DISH, image_source: 'generated_ai', image_url: 'https://example.com/ai.png' };
+    expect(asCatalogMealDish(withImage, 0, true)).toBe(withImage);
+    const photo: MealImageDish = { ...LEGACY_CATALOG_DISH, image_source: 'meal_photo', image_status: 'stale' };
+    expect(asCatalogMealDish(photo, 0, true)).toBe(photo);
+  });
+});
+

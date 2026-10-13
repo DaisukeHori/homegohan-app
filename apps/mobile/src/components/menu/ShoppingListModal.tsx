@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 
 import { getApi, getApiBaseUrl } from '../../lib/api';
+import { errorOfFailedResponse, isStoppedByServerError, stoppedByServerAlertTitleOf } from '../../lib/failed-response';
 import { supabase } from '../../lib/supabase';
 import { colors, radius, spacing, typography } from '../../theme';
 import { AddShoppingModal } from './AddShoppingModal';
@@ -214,10 +215,15 @@ export const ShoppingListModal: React.FC<Props> = ({
               },
               body: JSON.stringify({ itemIds }),
             });
-            if (!res.ok) throw new Error('全削除に失敗しました');
-          } catch (e: any) {
+            // メンテナンス中などの 503 は固定の文の例外にする (#1486)
+            if (!res.ok) throw errorOfFailedResponse(res.status, await res.text().catch(() => ''));
+          } catch (e: unknown) {
             setItems(snapshot);
-            Alert.alert('削除失敗', e?.message ?? '全削除に失敗しました。');
+            if (isStoppedByServerError(e)) {
+              Alert.alert(stoppedByServerAlertTitleOf(e), e.message);
+            } else {
+              Alert.alert('削除失敗', '全削除に失敗しました。');
+            }
           } finally {
             setClearingAll(false);
           }

@@ -59,6 +59,22 @@ function clampDay(value: string, min: string, max: string | undefined): string {
   return max !== undefined && value > max ? max : value;
 }
 
+/** 「期間を指定」で生成の対象を作れなかったとき (slot-builder が Error 以外を投げたとき) の文 (モバイルの V4GenerateModal と同じ) */
+export const GENERATE_RANGE_INVALID_MESSAGE = '期間が正しくありません';
+
+/** 保存した期間が無いときの「期間を指定」の終了日の既定の日数 (今日から何日後まで。今日を含めて 1 週間) */
+const DEFAULT_RANGE_DAYS_AFTER_TODAY = 6;
+
+/**
+ * 保存した期間が無いときの「期間を指定」の終了日の既定 (開始日は今日)。
+ * 表示中の週の終わりが今日以降ならその日、過ぎていれば今日から 1 週間。どちらも期間の上限 (今日を含む最大31日) に収める (#1498)。
+ * 以前は上限をかけず、先の週 (今日 + 30 日より先) を表示して開くと、範囲で生成を押しても slot-builder が投げて何も起きなかった
+ */
+export function defaultRangeEnd(today: string, weekEndDate: string): string {
+  const end = weekEndDate >= today ? weekEndDate : addDaysToDate(today, DEFAULT_RANGE_DAYS_AFTER_TODAY);
+  return clampDay(end, today, generateRangeEndMax(today));
+}
+
 /**
  * 端末の暦での今日 (YYYY-MM-DD)。このモーダルの「今日」(選べる日付の下限) は以前から端末のローカル時刻で決めている。
  * 「1日だけ」の初期値も同じ今日にそろえる (#1433。以前の初期値は toISOString の UTC の暦日で、JST の 0:00〜8:59 は前日になり、
@@ -430,9 +446,10 @@ function V4GenerateModalNormal({
       }
     }
 
-    // デフォルト: 今日から週末まで
+    // デフォルト: 今日から週末まで。表示中の週が先の週 (今日 + 30 日より先) でも、期間の上限 (開始日を含む最大31日) に収める
+    // (#1498。以前は上限が無く、範囲で生成を押すと slot-builder が投げて何も起きなかった。モバイルは #1482 で同じ形に直した)
     setRangeStart(todayStr);
-    setRangeEnd(weekEndDate >= todayStr ? weekEndDate : addDays(todayStr, 6));
+    setRangeEnd(defaultRangeEnd(todayStr, weekEndDate));
   }, [todayStr, weekEndDate, addDays]);
 
   // rangeStartが変更されたら日数を保存
@@ -608,7 +625,14 @@ function V4GenerateModalNormal({
     // 連打防止
     if (isSubmitting || isGenerating) return;
 
-    const slots = buildTargetSlots();
+    let slots: TargetSlot[];
+    try {
+      slots = buildTargetSlots();
+    } catch (error) {
+      // 期間が上限 (最大31日) を超えると slot-builder が投げる。以前は捕まえず、押しても何も起きなかった (#1498。モバイルと同じ #1482)
+      alert(error instanceof Error ? error.message : GENERATE_RANGE_INVALID_MESSAGE);
+      return;
+    }
     const validation = validateSlotCount(slots);
 
     if (!validation.valid) {

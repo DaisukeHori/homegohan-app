@@ -248,8 +248,8 @@ CREATE TABLE coupons (
   applicable_plans  UUID[] NOT NULL DEFAULT '{}',
   applicable_to     VARCHAR(20) NOT NULL DEFAULT 'all'
     CHECK (applicable_to IN ('all', 'personal', 'family', 'org')),
-  valid_from        TIMESTAMPTZ NOT NULL,
-  valid_until       TIMESTAMPTZ NOT NULL,
+  valid_from        TIMESTAMPTZ NOT NULL,  -- 開始日の JST 0:00 (#1483)
+  valid_until       TIMESTAMPTZ NOT NULL,  -- 期限の日の JST 23:59:59.999999 (#1483。端を含めて有効)
   max_uses          INT,
   uses_count        INT NOT NULL DEFAULT 0,
   per_user_limit    INT NOT NULL DEFAULT 1,
@@ -1479,6 +1479,8 @@ sequenceDiagram
 ```typescript
 // tests/integration/operator/data-model-constraints.integration.test.ts
 import { describe, it, expect } from 'vitest';
+// 接続情報は src/lib の getter で取り出す (`process.env.<変数名>!` は使わない。#1182・#1434)
+import { getSupabaseAnonKey, getSupabaseUrl } from '@/lib/env-required';
 
 describe('personal_subscriptions 制約テスト', () => {
   it('returns unique violation when same user has two active personal_subscriptions', async () => {
@@ -1501,8 +1503,8 @@ describe('admin_audit_logs immutability (RLS)', () => {
   it('rejects UPDATE on admin_audit_logs for admin role', async () => {
     const adminToken = await signInAsUser('admin@test.local');
     const adminClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${adminToken}` } } },
     );
     const { error } = await adminClient
@@ -1515,8 +1517,8 @@ describe('admin_audit_logs immutability (RLS)', () => {
   it('rejects DELETE on admin_audit_logs for super_admin role', async () => {
     const superToken = await signInAsUser('super@test.local');
     const superClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${superToken}` } } },
     );
     const { error } = await superClient

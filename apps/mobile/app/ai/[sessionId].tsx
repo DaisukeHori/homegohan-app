@@ -243,7 +243,7 @@ export default function AiSessionPage() {
         setText(trimmed);
         return;
       }
-      // 今日の AI の利用回数の上限 (#1149)・AI 相談の緊急停止中・メンテナンス中 (#1457) で止められた:
+      // 今日の AI の利用回数の上限 (#1149)・AI 相談の緊急停止中・メンテナンス中 (#1457)・同意の状況を読めなかった (#1486) で止められた:
       // 送らなかったので、メッセージを消して入力 (と添付の画像) を戻し、固定の文を出す
       if (isStoppedByServerError(e)) {
         setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));

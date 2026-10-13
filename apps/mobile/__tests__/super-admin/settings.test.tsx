@@ -33,7 +33,14 @@ const RETIRED_NOTE = 'この設定は使われていません (読み取り専�
 const SETTINGS_RESPONSE = {
   settings: [
     { key: 'feature_flags', value: { menu_generation_v5_direct: true }, updated_at: '2026-09-01T00:00:00.000Z', read_only: true, note: RETIRED_NOTE },
-    { key: 'support_email', value: 'support@example.com', updated_at: '2026-09-02T00:00:00.000Z', read_only: false, note: null },
+    {
+      key: 'support_email',
+      value: 'support@example.com',
+      description: '問い合わせ先のメールアドレス',
+      updated_at: '2026-09-02T00:00:00.000Z',
+      read_only: false,
+      note: null,
+    },
   ],
 };
 
@@ -105,5 +112,30 @@ describe('システム設定の画面 — 使われていない key (#1457)', ()
     });
 
     await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('保存失敗', message));
+  });
+});
+
+describe('システム設定の画面 — サーバーの列の名前で読む (#1486)', () => {
+  it('一覧に description と updated_at (サーバーの列の名前) を出す', async () => {
+    await renderPage();
+
+    expect(screen.getByText('問い合わせ先のメールアドレス')).toBeTruthy();
+    expect(screen.getByText('2026-09-02T00:00:00.000Z')).toBeTruthy();
+  });
+
+  it('行を選ぶと、説明の入力欄にいまの説明が入り、現在の更新日時を出す', async () => {
+    await renderPage();
+
+    fireEvent.press(screen.getByText('support_email'));
+
+    expect(screen.getByPlaceholderText('description (任意)').props.value).toBe('問い合わせ先のメールアドレス');
+    expect(screen.getByText('現在の更新日時: 2026-09-02T00:00:00.000Z')).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('super-admin-settings-save'));
+    });
+    expect(mockPut).toHaveBeenCalledWith(
+      '/api/super-admin/settings',
+      expect.objectContaining({ key: 'support_email', description: '問い合わせ先のメールアドレス' }),
+    );
   });
 });

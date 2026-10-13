@@ -639,23 +639,6 @@ const ALLOWLIST: ReadonlyArray<{ file: string; rule: Rule; count: number; reason
     count: 1,
     reason: '画面下の著作権表示の年 (© 2026)。日付の判定や DB の日付と比べない',
   },
-  {
-    file: 'src/app/super-admin/coupons/new/page.tsx',
-    rule: 'A',
-    count: 1,
-    reason:
-      'クーポンの有効開始日の初期値。送信時に new Date(validFrom).toISOString() で UTC の 0 時に変換するので、初期値だけ JST にすると ' +
-      'JST の 0:00〜8:59 に作ったクーポンが数時間有効にならない。変換と合わせて別に直す',
-  },
-  {
-    file: 'src/app/super-admin/coupons/[id]/page.tsx',
-    rule: 'H',
-    count: 1,
-    reason:
-      'クーポンの有効期限の編集欄の初期値 (valid_until)。保存時に new Date(validUntil).toISOString() (UTC の 0 時) で書き戻すので、' +
-      '読み出しも UTC の暦日で対にしている (この画面で保存した値は UTC の 0 時 = JST の同じ日の 9 時なので、どちらで読んでも同じ日付)。' +
-      '有効期限を JST のその日の終わりまでにするかは、coupons/new の有効開始日 (規則 A の許可) と合わせて、書き込みの変換と一緒に別に直す',
-  },
   // ---- 規則 G: timestamptz の列を、画面で選んだ JST の暦日ではない値で絞る箇所 (ルートごとに件数と理由) ----
   {
     file: 'src/app/api/admin/finance/invoices/route.ts',
@@ -698,12 +681,6 @@ const ALLOWLIST: ReadonlyArray<{ file: string; rule: Rule; count: number; reason
     rule: 'G',
     count: 1,
     reason: '最近の AI セッション数の 30 日前の今の時刻 (今からの相対時刻)。暦日ではない',
-  },
-  {
-    file: 'src/app/api/ai/menu/weekly/cleanup/route.ts',
-    rule: 'G',
-    count: 1,
-    reason: '止まった生成の判定に使う 5 分前の時刻 (今からの相対時刻)。暦日ではない',
   },
 ];
 
@@ -976,7 +953,10 @@ const REQUIRED_CALLS: Record<string, string[]> = {
   'src/app/api/performance/analyze/route.ts': ['jstToday'],
   'src/app/api/performance/checkins/route.ts': ['jstToday', 'jstDayOffset'],
   'src/app/api/performance/plans/route.ts': ['jstToday'],
-  'src/app/api/super-admin/llm/usage/route.ts': ['llmUsageRange', 'jstDayRangeTimestamps', 'jstDayOfTimestamp'],
+  // 日次の系列・1 日あたりの回数を JST の暦日にまとめるのは DB の関数 llm_usage_summary に移した (#1498。
+  // (created_at AT TIME ZONE 'Asia/Tokyo')::date。tests/llm-usage-summary-contract.test.ts と実 DB の
+  // tests/integration/security/llm-usage-summary.test.ts が確かめる)。route は期間を JST 0 時の時刻に直して渡す
+  'src/app/api/super-admin/llm/usage/route.ts': ['llmUsageRange', 'jstDayRangeTimestamps'],
   'src/app/api/super-admin/audit-logs/route.ts': ['jstOptionalDayRangeTimestamps'],
   'src/app/api/operator/membership/audit/route.ts': ['jstOptionalDayRangeTimestamps'],
   'src/app/api/admin/finance/dashboard/route.ts': ['jstMonthBoundaries'],
@@ -987,6 +967,10 @@ const REQUIRED_CALLS: Record<string, string[]> = {
   'src/app/api/menu-plans/add/route.ts': ['jstDayOffset', 'parseMenuPlanDateOffsetDays'],
   'src/app/api/admin/finance/revenue/route.ts': ['jstDayOffset'],
   'src/app/api/org/owner-transfer/propose/route.ts': ['formatLocalDate'],
+  // #1483: クーポンの有効開始日・有効期限 (JST の暦日 ⇄ 開始日の JST 0:00・期限の日の JST 23:59:59.999999)
+  'src/lib/super-admin/coupon-validity.ts': ['jstDayStartTimestamp', 'jstDayEndInclusiveTimestamp', 'jstDayOfTimestamp'],
+  'src/app/api/super-admin/coupons/route.ts': ['couponValidFromTimestamp', 'couponValidUntilTimestamp'],
+  'src/app/api/super-admin/coupons/[id]/route.ts': ['couponValidUntilTimestamp'],
   'src/lib/ai/consultation-action-executor.ts': ['addDaysToDate', 'isCalendarDate'],
   // 献立生成の共通処理
   'lib/slot-builder.ts': ['addDaysToDate', 'isCalendarDate'],
@@ -997,6 +981,9 @@ const REQUIRED_CALLS: Record<string, string[]> = {
   'src/app/(main)/health/settings/page.tsx': ['todayLocal'],
   'src/app/(main)/meals/new/page.tsx': ['todayLocal'],
   'src/app/admin/sales/[id]/page.tsx': ['todayLocal'],
+  'src/app/super-admin/coupons/new/page.tsx': ['todayLocal'],
+  'src/app/super-admin/coupons/[id]/page.tsx': ['couponValidityDay', 'couponValidUntilPatchValue'],
+  'src/app/super-admin/coupons/page.tsx': ['couponValidityDay', 'isCouponExpiredAt'],
   'src/app/onboarding/questions/page.tsx': ['todayLocal'],
   'src/components/ai-assistant/V4GenerateModal.tsx': ['addDaysToDate'],
   // 画面 (モバイル)

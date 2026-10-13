@@ -12,6 +12,7 @@ import { DEFAULT_EMAIL_FROM } from '@/lib/site-config';
 const LOGS_URL = 'https://app.example.test/super-admin/logs';
 
 const baseVars: AppLogErrorSpikeEmailVars = {
+  scope: 'server',
   to_email: 'ops@example.test',
   total: 42,
   window_minutes: 15,
@@ -115,5 +116,41 @@ describe('renderAppLogErrorSpikeEmail (#1157)', () => {
 
     expect(text).toContain('直近 15 分で 1,234 件');
     expect(text).toContain('a … 1,234 件');
+  });
+  it('E-10 (#1493): サーバーの通知は、ブラウザ・端末から届いたエラーを除いて数えたことを本文に書く', () => {
+    const { text, subject } = renderAppLogErrorSpikeEmail(baseVars);
+
+    expect(subject).toBe('【ほめゴハン運用】エラーが急増しています (直近 15 分で 42 件)');
+    expect(text).toContain('サーバーのエラーログ (app_logs の level=error。ブラウザ・端末から届いたものは除く) が、直近 15 分で 42 件ありました。');
+    expect(text).toContain('ブラウザ・端末から届いたエラーは、この通知とは別に数えています。');
+  });
+
+  it('E-11 (#1493): クライアントの通知は、件名と本文でブラウザ・端末のエラーであることが分かる。しきい値はクライアントの値', () => {
+    const envelope = renderAppLogErrorSpikeEmail({
+      ...baseVars,
+      scope: 'client',
+      total: 120,
+      threshold: 100,
+      functions: [{ name: '(関数名なし)', count: 120 }],
+    });
+
+    expect(envelope.subject).toBe('【ほめゴハン運用】ブラウザ・端末のエラーが急増しています (直近 15 分で 120 件)');
+    expect(envelope.subject.length).toBeLessThanOrEqual(100);
+    expect(envelope.template).toBe('ops_app_log_error_spike');
+    expect(() => EmailEnvelopeSchema.parse(envelope)).not.toThrow();
+    expect(envelope.text).toContain('ブラウザ・端末から届いたエラーログ (app_logs の source=client、level=error) が、直近 15 分で 120 件ありました。');
+    expect(envelope.text).toContain('15 分で 100 件を超えると、この通知を送る設定です。');
+    expect(envelope.text).toContain('サーバーの障害の通知とは別に数えています。');
+    expect(envelope.text).not.toContain('サーバーのエラーログ');
+    // 載せないもの (メールアドレス・ログの列名) はサーバーの通知と同じ
+    expect(envelope.text).not.toMatch(/@/);
+    expect(envelope.text).not.toMatch(/error_message|error_stack|user_id|request_id|metadata/);
+  });
+
+  it('E-12 (#1493): クライアントの通知の件名も、件数が大きくても 100 字以内', () => {
+    const envelope = renderAppLogErrorSpikeEmail({ ...baseVars, scope: 'client', total: 123_456_789 });
+
+    expect(envelope.subject.length).toBeLessThanOrEqual(100);
+    expect(envelope.subject).toContain('123,456,789 件');
   });
 });

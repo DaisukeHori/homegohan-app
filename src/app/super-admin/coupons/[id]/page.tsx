@@ -8,6 +8,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { couponValidityDay, couponValidUntilPatchValue } from '@/lib/super-admin/coupon-validity';
 
 type Coupon = {
   id: string;
@@ -73,7 +74,8 @@ export default function CouponDetailPage() {
       }
       setCoupon(data.data!);
       setDisplayName(data.data!.display_name ?? '');
-      setValidUntil(data.data!.valid_until.slice(0, 10));
+      // 有効期限 (DB の時刻) を JST の暦日にして編集欄に入れる (#1483)
+      setValidUntil(couponValidityDay(data.data!.valid_until));
       setMaxUses(data.data!.max_uses != null ? String(data.data!.max_uses) : '');
     } catch {
       setError('ネットワークエラー');
@@ -111,7 +113,8 @@ export default function CouponDetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           display_name: displayName || null,
-          valid_until: new Date(validUntil).toISOString(),
+          // JST の暦日 (YYYY-MM-DD) のまま、日付を変えたときだけ送る。API がその日の JST 23:59:59 の時刻にして書く (#1483)
+          valid_until: coupon ? couponValidUntilPatchValue(validUntil, coupon.valid_until) : validUntil,
           max_uses: maxUses ? Number(maxUses) : null,
         }),
       });

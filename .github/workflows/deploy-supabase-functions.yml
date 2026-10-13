@@ -35,12 +35,47 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      # 関数のソースに jsr: / npm: を直接書いた import (export ... from・import() も) が無いことを確かめる。依存の版は
+      # supabase/functions/deno.json の imports だけで固定する (#1515)。以前は rg で探していたが、ubuntu の runner に rg が無く
+      # (command not found)、if が偽になって毎回通っていた。runner に最初から入っていて macOS でも同じに動く grep -E
+      # (POSIX の拡張正規表現。\s や (?:) は使わない) にし、道具が無い・grep が失敗した (終了コード 2 以上)・
+      # 検査したファイルが 0 本・正規表現が見本の行に当たらない、のどれでも赤にする (空回りで緑にしない)。
+      # tests/edge-function-dep-pinning.test.ts が、この run をそのまま bash で動かして確かめる (PR の npm test で走る)。
       - name: Verify Edge Function dependency pinning
+        shell: bash
         run: |
-          if rg -n '^\s*import(?:.+from\s+)?["'"'"'](?:jsr:|npm:)' supabase/functions --glob '*.ts'; then
-            echo "Supabase Functions では raw jsr:/npm: import を使わず、supabase/functions/deno.json の exact pin alias を使ってください。"
+          set -euo pipefail
+          functions_dir=supabase/functions
+          includes=(--include='*.ts' --include='*.tsx' --include='*.mts' --include='*.js' --include='*.jsx' --include='*.mjs')
+          raw_import='(^|[^[:alnum:]_$])(from|import)[[:space:]]*[(]?[[:space:]]*["'"'"'](jsr|npm):'
+          if ! command -v grep >/dev/null 2>&1; then
+            echo "::error::grep が無いため、Edge Function の依存の版の固定を検査できません。"
             exit 1
           fi
+          # 正規表現が見本の行に当たる・当たらないことを、この runner の grep で確かめる (書き方の誤りで何にも当たらなくなるのを止める)
+          if ! printf '%s\n' "} from \"npm:zod\";" | grep -qE "$raw_import"; then
+            echo "::error::検査の正規表現が、jsr:/npm: を直接書いた import の見本に当たりません。"
+            exit 1
+          fi
+          if printf '%s\n' "import { z } from \"zod\";" | grep -qE "$raw_import"; then
+            echo "::error::検査の正規表現が、deno.json の名前で書いた import の見本に当たります。"
+            exit 1
+          fi
+          if ! scanned=$(grep -rl "${includes[@]}" -e '^' "$functions_dir"); then
+            echo "::error::$functions_dir に検査するソースがありません (または読めません)。"
+            exit 1
+          fi
+          echo "検査したファイル: $(printf '%s\n' "$scanned" | grep -c '^') 本"
+          status=0
+          grep -rnE "${includes[@]}" -e "$raw_import" "$functions_dir" || status=$?
+          if [ "$status" -eq 0 ]; then
+            echo "::error::Supabase Functions では jsr:/npm: を直接 import せず、supabase/functions/deno.json の imports (版を固定した名前) を使ってください。"
+            exit 1
+          elif [ "$status" -ne 1 ]; then
+            echo "::error::grep が失敗しました (終了コード $status)。"
+            exit "$status"
+          fi
+          echo "jsr:/npm: を直接書いた import はありません。"
 
       - name: Verify Supabase CLI version
         run: |

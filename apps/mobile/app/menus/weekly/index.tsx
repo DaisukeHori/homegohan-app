@@ -74,6 +74,7 @@ import {
   promptAiConsentRequired,
 } from "../../../src/lib/ai-consent";
 import { isAiDailyLimitError } from "../../../src/lib/ai-daily-limit";
+import { errorOfFailedResponse, stoppedByServerMessageOr } from "../../../src/lib/failed-response";
 
 type PlannedMealRow = {
   id: string;
@@ -1164,10 +1165,11 @@ export default function WeeklyMenuPage() {
           ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
         },
       });
-      if (!r.ok) throw new Error(`DELETE failed: ${r.status}`);
+      // メンテナンス中などの 503 は固定の文の例外にする (#1486。英語の「DELETE failed: 503」を出さない)
+      if (!r.ok) throw errorOfFailedResponse(r.status, await r.text().catch(() => ""));
       await loadData();
-    } catch (e: any) {
-      setError(e?.message ?? "削除に失敗しました。");
+    } catch (e: unknown) {
+      setError(stoppedByServerMessageOr(e, "削除に失敗しました。"));
     }
   }
 
@@ -1193,9 +1195,10 @@ export default function WeeklyMenuPage() {
         },
         body: JSON.stringify({ isCompleted: newCompleted }),
       });
-      if (!r.ok) throw new Error(`PATCH failed: ${r.status}`);
+      // メンテナンス中などの 503 は固定の文の例外にする (#1486。英語の「PATCH failed: 503」を出さない)
+      if (!r.ok) throw errorOfFailedResponse(r.status, await r.text().catch(() => ""));
       await loadData();
-    } catch (e: any) {
+    } catch (e: unknown) {
       // ロールバック
       setDays(prev =>
         prev.map(d => ({
@@ -1205,7 +1208,7 @@ export default function WeeklyMenuPage() {
           ),
         }))
       );
-      setError(e?.message ?? "更新に失敗しました。");
+      setError(stoppedByServerMessageOr(e, "更新に失敗しました。"));
     }
   }
 

@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   selectResult: { data: [] as unknown[] | null, error: null as unknown },
   upsert: vi.fn(),
   from: vi.fn(),
+  selectColumns: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/helpers', () => ({ requireRole: h.requireRole }));
@@ -24,7 +25,10 @@ vi.mock('@/lib/supabase/server', () => ({
     from: (table: string) => {
       h.from(table);
       return {
-        select: () => ({ order: async () => h.selectResult }),
+        select: (columns: string) => {
+          h.selectColumns(columns);
+          return { order: async () => h.selectResult };
+        },
         upsert: async (row: unknown) => {
           h.upsert(row);
           return { error: null };
@@ -102,6 +106,50 @@ describe('GET /api/super-admin/settings', () => {
       },
     ]);
     // 行は消さない (読むだけ)
+    expect(h.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('#1486 GET / PUT の列の名前 (モバイルの画面が読む名前とそろえる)', () => {
+  it('GET は description と updated_at を、DB の列の名前のまま返す', async () => {
+    h.selectResult = {
+      data: [{ key: 'support_email', value: 'support@example.com', description: '問い合わせ先', updated_at: '2026-09-02T00:00:00Z' }],
+      error: null,
+    };
+
+    const json = (await (await GET()).json()) as { settings: Array<Record<string, unknown>> };
+
+    const columns = String(h.selectColumns.mock.calls[0]?.[0] ?? '')
+      .split(',')
+      .map((c) => c.trim());
+    expect(columns).toEqual(expect.arrayContaining(['key', 'value', 'description', 'updated_at']));
+    expect(json.settings[0]).toMatchObject({ description: '問い合わせ先', updated_at: '2026-09-02T00:00:00Z' });
+    expect(json.settings[0]).not.toHaveProperty('updatedAt');
+  });
+
+  it.each([
+    ['文字列は前後の空白を除いて保存', '  問い合わせ先  ', '問い合わせ先'],
+    ['空の文字列は null (説明を消す)', '   ', null],
+    ['null は null (説明を消す)', null, null],
+  ])('PUT の description: %s', async (_label, description, saved) => {
+    const res = await PUT(putRequest({ key: 'support_email', value: 'new@example.com', description }));
+
+    expect(res.status).toBe(200);
+    expect(h.upsert).toHaveBeenCalledWith(expect.objectContaining({ key: 'support_email', description: saved }));
+  });
+
+  it('PUT で description を省略したら、説明を書き換えない (upsert に description を含めない)', async () => {
+    await PUT(putRequest({ key: 'support_email', value: 'new@example.com' }));
+
+    expect(h.upsert).toHaveBeenCalledTimes(1);
+    expect(h.upsert.mock.calls[0][0]).not.toHaveProperty('description');
+  });
+
+  it('PUT の description が文字列でも null でもなければ 400 (DB に書かない)', async () => {
+    const res = await PUT(putRequest({ key: 'support_email', value: 'x', description: 123 }));
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
     expect(h.upsert).not.toHaveBeenCalled();
   });
 });

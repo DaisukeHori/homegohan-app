@@ -25,6 +25,16 @@ interface BuildDishImagePayloadParams {
   imageModel?: string | null;
   existingCover?: string | null;
   fallbackMealImageUrl?: string | null;
+  /**
+   * 保存する前の献立が商品の献立か (isCatalogProductMeal(保存する前の planned_meals の行))。#1487 の整合ゲート。
+   * 前回の料理を読む更新の入口は必ず渡す (商品の献立の、画像の項目の無い古い商品の料理を AI の画像で置き換えないため)
+   */
+  previousMealIsCatalog?: boolean | null;
+  /**
+   * 新しく作る入口 (POST /api/meals・/api/meal-plans/meals) だけが true を渡す (#1487 の整合ゲート)。
+   * 送られた料理の image_source が meal_photo / catalog / manual_override なら、画像と状態を保持する (reconcileDishImages の同名の引数)
+   */
+  preserveSubmittedDishImages?: boolean | null;
 }
 
 interface DishImagePayload {
@@ -72,12 +82,22 @@ export async function buildDishImagePayload(
     triggerSource: params.triggerSource,
     model: params.imageModel ?? DEFAULT_MEAL_IMAGE_MODEL,
     fallbackMealImageUrl: params.existingCover ?? params.fallbackMealImageUrl,
+    previousMealIsCatalog: params.previousMealIsCatalog ?? false,
+    preserveSubmittedDishImages: params.preserveSubmittedDishImages ?? false,
   });
 
   if (params.imageUrlOverride) {
     if (dishes.length === 1) {
+      // 料理がすでにこの画像を持つ (新しく作る入口で送られた写真・商品の料理を保持した) ときは、料理をそのまま残す
+      // (写真・商品の料理を手で付けた画像に書き換えない。#1487 の整合ゲート)
+      if (dishes[0].image_url === params.imageUrlOverride) {
+        return { dishes, jobs: [], mealCoverImageUrl: params.imageUrlOverride };
+      }
       dishes[0] = {
         ...dishes[0],
+        // 手で付けた画像には subject_hash を付けない (#1487 の整合ゲート。画像の処理は subject_hash が同じ料理にだけ書くので、
+        // 同じ料理の AI の画像のジョブが待ちで残っていても、手で付けた画像を上書きしない)
+        image_subject_hash: null,
         image_url: params.imageUrlOverride,
         image_source: 'manual_override',
         image_status: 'ready',
@@ -91,6 +111,9 @@ export async function buildDishImagePayload(
       };
     }
 
+    // 料理が 2 品以上: 利用者が付けた画像は献立のカバーにだけ付ける (どの料理の画像でもない)。
+    // カバーの持ち主の決まり (isMealCoverAutoReplaceable) で、AI の料理の画像と一致しないカバーは利用者のものとして守られるので、
+    // 料理の画像のジョブは今の決まりのまま積む (できた料理の画像は料理にだけ付き、このカバーを置き換えない。#1487 の整合ゲート)
     return {
       dishes,
       jobs,
@@ -98,10 +121,12 @@ export async function buildDishImagePayload(
     };
   }
 
+  // カバーは reconcileDishImages がカバーの持ち主の決まりで決めたもの (いまのカバーを残すか、選び直すか、空にするか)。
+  // ここでいまのカバーに戻さない (前の料理の AI の画像を残すと、新しい AI の画像で付け替えられなくなる)
   return {
     dishes,
     jobs,
-    mealCoverImageUrl: mealCoverImageUrl ?? params.existingCover ?? null,
+    mealCoverImageUrl,
   };
 }
 

@@ -571,7 +571,7 @@ erDiagram
 // tests/integration/family/data-model-constraints.integration.test.ts
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-// 接続情報は src/lib の getter で取り出す (`process.env.X!` は使わない。#1182・#1434)
+// 接続情報は src/lib の getter で取り出す (`process.env.<変数名>!` は使わない。#1182・#1434)
 import { getSupabaseServiceRoleKey, getSupabaseUrl } from '@/lib/env-required';
 import { faker } from '@faker-js/faker/locale/ja';
 import { createTestUser } from '../../helpers/auth';

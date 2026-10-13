@@ -95,7 +95,7 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 
 - 値が違う → Edge Function は HTTP 401（本文 `{"error":"Unauthorized"}`）を返します。
 - Edge Function 側に `CRON_SECRET`（と `SERVICE_ROLE_SECRET`）が無い → HTTP 503（本文 `{"error":"Service not configured"}`）を返します。
-- Edge Function 側に、関数が動くのに要る secrets（`SUPABASE_URL`・`SUPABASE_SERVICE_ROLE_KEY`・`STRIPE_SECRET_KEY`・Google AI のキー など）が無い → コンビニカタログ取り込み（`_shared/catalog/import-runner.ts` を使う関数）・`process-meal-image-jobs`・`stripe-price-sync` は HTTP 503（本文 `{"error":"サーバーの設定が不足しています","code":"SERVER_CONFIG_MISSING"}`。カタログ取り込みは `"success":false` も付きます）を返します。どの関数も、応答の本文や例外の文には変数名を出さず、足りない変数名は関数のログ（Supabase Dashboard → Edge Functions → Logs）の `[env] missing required env: <変数名>` の行にだけ残します（#1467）。
+- Edge Function 側に、関数が動くのに要る secrets が無い → HTTP 503（本文 `{"error":"サーバーの設定が不足しています","code":"SERVER_CONFIG_MISSING"}`。カタログ取り込みは `"success":false` も付きます）を返します。503 になる secrets は関数ごとに違います: コンビニカタログ取り込み（`_shared/catalog/import-runner.ts` を使う関数）は `SUPABASE_URL`・`SUPABASE_SERVICE_ROLE_KEY`（`SERVICE_ROLE_JWT` でも可）・`FIRECRAWL_API_KEY`（`FIRECRAWL_AUTH_TOKEN` でも可。`FIRECRAWL_BASE_URL` で自前の Firecrawl を指すときは不要）、`process-meal-image-jobs` は `SUPABASE_URL`・`SUPABASE_SERVICE_ROLE_KEY`（`SERVICE_ROLE_JWT` でも可）・Google AI のキー（`GOOGLE_AI_STUDIO_API_KEY` か `GOOGLE_GEN_AI_API_KEY`）、`stripe-price-sync` は `STRIPE_SECRET_KEY` だけです。`stripe-price-sync` は、`SUPABASE_URL`・`SUPABASE_SERVICE_ROLE_KEY`（`SERVICE_ROLE_JWT` でも可）だけが無いときは 503 にせず、新しい Price を作ったうえで旧 Price の無効化を飛ばして HTTP 200 を返します（本文の `month` / `year` のうち、新しい Price を作った方が `"deactivated":false,"deactivation_skipped_reason":"old_price_fetch_failed"` になります）。どの関数も、応答の本文や例外の文には変数名を出さず、足りない変数名は関数のログ（Supabase Dashboard → Edge Functions → Logs）の `[env] missing required env: <変数名>` の行にだけ残します（#1467）。
 - pg_cron は pg_net で **非同期に** 呼び出すため、cron ジョブ自体は成功扱いのままです（`cron.job_run_details` は HTTP の結果にかかわらず `succeeded` になります）。エラーの表示もなく、カタログ取り込みだけが止まります。
 
 値とは別に、**関数のゲートウェイの JWT 検証（`verify_jwt`）が有効なまま** だと、値が合っていても関数に届く前に止まります。`app_cron_secret`（`CRON_SECRET`）はランダムな文字列で JWT ではないため、Supabase のゲートウェイが HTTP 401（本文 `{"code":"UNAUTHORIZED_INVALID_JWT_FORMAT", ...}`）を返します。pg_cron から呼ぶ関数は `supabase/config.toml` で `verify_jwt = false` にしてあり（認証は関数の中の `requireServiceRole` が行います。#1406）、GitHub Actions の「Deploy Supabase Functions」がこの設定ごとデプロイします。この 401 が出たら、設定がまだデプロイされていません。Actions の「Deploy Supabase Functions」が成功しているかを確かめ、必要なら手動で実行（Run workflow）し直してください。
@@ -276,17 +276,21 @@ Vercel Dashboard → Settings → Environment Variables で `CRON_SECRET` の値
 
 アプリのエラーログ（`app_logs` の `level = 'error'`）が急に増えたときに、運用の担当者へ 1 通だけメールで知らせます（#1157）。Vercel Cron が 15 分おきに `GET /api/cron/app-log-alerts` を呼び、直近 15 分の件数を数えます。
 
+数えるものは 2 種類あり、別々に知らせます（#1493）。サーバーが書いた `error`（`source` が `client` 以外）と、ブラウザ・端末から `POST /api/log` で届いた `error`（`source = 'client'`）です。`/api/log` はログインしていれば誰でも書けるので、まとめて数えると、利用者が `error` を書くだけでサーバーの障害の通知を鳴らしたり、その 60 分の抑止で本物の障害の通知を止めたりできてしまうためです。2 種類の通知は抑止も別々です。
+
 | 環境変数 | 例 | 役割 | 未設定のときの動き |
 |---|---|---|---|
 | `OPS_ALERT_EMAIL` | `ops@example.com` | 通知メールの宛先。**メールアドレスを 1 つだけ**書く（`名前 <アドレス>` の形や、カンマ区切りの複数は不可）。共有の受信箱ができるまでは、個人のアドレスでよい | 通知しない。cron は動くが、`app_logs` に info ログを 1 行残すだけで、DB にもメールにも触れない |
-| `OPS_ALERT_ERROR_THRESHOLD`（任意） | `50` | しきい値。直近 15 分の `error` が**この件数を超えたら**通知する。1〜100000 の整数 | 既定の 20 件。整数でない・範囲外の値も既定値に戻し、`cron/app-log-alerts` の warn ログに変数名だけを残す |
+| `OPS_ALERT_ERROR_THRESHOLD`（任意） | `50` | サーバーの `error` のしきい値。直近 15 分のサーバーの `error` が**この件数を超えたら**通知する。1〜100000 の整数 | 既定の 20 件。整数でない・範囲外の値も既定値に戻し、`cron/app-log-alerts` の warn ログに変数名だけを残す |
+| `OPS_ALERT_CLIENT_ERROR_THRESHOLD`（任意） | `300` | ブラウザ・端末から届いた `error` のしきい値（#1493）。直近 15 分のその `error` が**この件数を超えたら**、サーバーとは別の通知を送る。1〜100000 の整数 | 既定の 100 件。不正な値は既定値に戻す（サーバーのしきい値と同じ） |
 | `OPS_ALERT_COOLDOWN_MINUTES`（任意） | `120` | 同じ通知を送り直さない時間（分）。1〜10080 の整数 | 既定の 60 分。不正な値は既定値に戻す（しきい値と同じ） |
 
-- 通知する条件: 直近 15 分の `error` が **20 件を超えた**とき（21 件から）。既定値は `src/lib/ops-alerts/app-log-error-spike.ts` の定数で、`OPS_ALERT_ERROR_THRESHOLD` で上書きできる。窓（15 分）は `vercel.json` の cron の間隔と同じにしてあるので、環境変数では変えない。
-- 同じ通知は **60 分は送り直さない**（`OPS_ALERT_COOLDOWN_MINUTES` で上書きできる）（DB の `ops_alert_state` で覚える。メールを送れなかったときは「送った」と記録せず、15 分後の次の回でもう一度試す）。
+- 通知する条件: 直近 15 分のサーバーの `error` が **20 件を超えた**とき（21 件から）。ブラウザ・端末から届いた `error` は **100 件を超えた**とき（101 件から）に別の通知を送る。既定値は `src/lib/ops-alerts/app-log-error-spike.ts` の定数で、`OPS_ALERT_ERROR_THRESHOLD` / `OPS_ALERT_CLIENT_ERROR_THRESHOLD` で上書きできる。窓（15 分）は `vercel.json` の cron の間隔と同じにしてあるので、環境変数では変えない。
+- 同じ通知は **60 分は送り直さない**（`OPS_ALERT_COOLDOWN_MINUTES` で上書きできる。分数は 2 種類で同じだが、抑止は種類ごとに別々）（DB の `ops_alert_state` で覚える。キーはサーバーが `app_logs_error_spike`、ブラウザ・端末が `app_logs_client_error_spike`。メールを送れなかったときは「送った」と記録せず、15 分後の次の回でもう一度試す）。
 - メールに載るのは、件数・関数名・運用ログ画面（`/super-admin/logs`）へのリンクだけです。ユーザー ID・メールアドレス・ログの本文は載せません（送信先の Resend は米国の事業者のため）。
 - **メールが実際に届くには、メールの送信元ドメインを Resend で検証し、`RESEND_API_KEY` と `EMAIL_FROM` を設定する必要があります**（手順は [`docs/operations/email-domain.md`](docs/operations/email-domain.md)）。それまでは、送れなかったことが `app_logs`（`function_name = 'email'` の error と、`cron/app-log-alerts` の warn）に残るだけで、アプリの動きには影響しません。
-- 応答（JSON）の `status` は、`disabled`（宛先が未設定）・`invalid_config`（宛先の形が不正）・`below_threshold`（しきい値以下）・`deduped`（60 分以内に送信済み）・`sent`（送信した）・`send_skipped` / `send_failed`（送れなかった）のどれかです。cron が動いているかは、Vercel の Cron Jobs の画面（HTTP ステータス）で確かめられます。`app_logs`（`/super-admin/logs` で `function_name` に `cron/app-log-alerts` を指定）に残るのは、宛先が未設定・形が不正・通知した・通知できなかった回と、しきい値・クールダウンの環境変数の値が不正だった回 (warn。変数名だけ) です（しきい値以下の回と、60 分以内の回は何も残しません）。
+- ブラウザ・端末から届いたログ（`POST /api/log`）は、利用者ごとに 1 分 30 回・直近 24 時間で 1000 回までしか受け付けません（超えると 429。#1493）。
+- 応答（JSON）の `status`（サーバーの判定。ブラウザ・端末の判定は `client.status`）は、`disabled`（宛先が未設定）・`invalid_config`（宛先の形が不正）・`below_threshold`（しきい値以下）・`deduped`（60 分以内に送信済み）・`sent`（送信した）・`send_skipped` / `send_failed`（送れなかった）のどれかです。cron が動いているかは、Vercel の Cron Jobs の画面（HTTP ステータス）で確かめられます。`app_logs`（`/super-admin/logs` で `function_name` に `cron/app-log-alerts` を指定）に残るのは、宛先が未設定・形が不正・通知した・通知できなかった回と、しきい値・クールダウンの環境変数の値が不正だった回 (warn。変数名だけ) です（しきい値以下の回と、60 分以内の回は何も残しません）。
 - 認証は他の cron と同じ `CRON_SECRET`（上の「Cron の共有シークレットの保管場所とローテーション」）。手で呼ぶ場合は `Authorization: Bearer <CRON_SECRET>` を付けます（値はコマンドの履歴やチャットに残さないこと）。しきい値を超えているときに手で呼ぶと、本物の通知メールが 1 通出て、60 分の抑止が始まります。
 
 ---
