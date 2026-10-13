@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   createClient: vi.fn(),
 }));
 
-// _shared/db-logger.ts は URL import (esm.sh) を含み Vitest で読めないので、差し替える
+// _shared/db-logger.ts は app_logs へ書き込むので、差し替える
 vi.mock('../supabase/functions/_shared/db-logger.ts', () => ({
   createLogger: () => ({
     withUser: (userId: string) => {

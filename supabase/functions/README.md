@@ -26,7 +26,7 @@ curl -X POST "https://flmeolcfutuwwbjmzyoz.supabase.co/functions/v1/<function-na
 - `supabase/functions/deno.json` を Edge Functions 用の共有設定として使います
 - `deno.lock` は Supabase 側が lockfile v5 を読めないため commit しません
 - 依存関係は `supabase/functions/deno.json` の `imports` に exact version で固定します
-- 関数ファイルの中で `jsr:` や `npm:` を直接 import しません
+- 関数ファイルの中で `jsr:`・`npm:`・`https://` を直接 import しません (`// @deno-types="..."`・`/// <reference types="..." />` も同じ。デプロイの段「Verify Edge Function dependency pinning」が赤にします)
 - 関数ごとの `deno.json` は、共有設定で表現できない事情があるときだけ追加します
 
 ### 自動デプロイ（推奨）
@@ -240,10 +240,10 @@ touch supabase/functions/<function-name>/index.ts
 利用者の JWT で認証する関数（ブラウザからも呼ばれうる関数）のテンプレートです。バッチ専用の関数には CORS を付けません（下の「CORS」を参照）。
 
 ```typescript
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
 
-serve(async (req) => {
+// HTTP サーバーは Deno の組み込みの Deno.serve を使う (URL から import しない。外部の依存は deno.json の imports の名前で import する)
+Deno.serve(async (req) => {
   // Origin はリクエストごとに違うので、ハンドラの先頭で作る
   const corsHeaders = getCorsHeaders(req);
 

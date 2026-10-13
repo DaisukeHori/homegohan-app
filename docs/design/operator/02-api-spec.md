@@ -489,30 +489,34 @@ OFF なら同じ 503 を返す (#1486。`supabase/functions/_shared/ai-chat-flag
 
 ## 8. LLM 使用量 API
 
-### GET /api/super-admin/llm-usage
-LLM 使用量ダッシュボード
+### GET /api/super-admin/llm/usage
+LLM 使用量ダッシュボード (super_admin のみ)
 
-**クエリ**: `?period=7d&model=xai_grok&function=knowledge-gpt`
+**クエリ**: `?period=7d&model=grok-4-fast&function=knowledge-gpt&provider=xai`
+(`period` は `1d` / `7d` / `30d` / `custom`。既定は `7d`。`from` / `to` は JST の暦日 `YYYY-MM-DD`。`provider` は `gemini` / `xai` / `anthropic` / `openai`)
 
 **レスポンス**:
 ```json
 {
   "data": {
     "total_cost_usd": 1234.56,
-    "total_cost_jpy": 187000,
+    "total_cost_jpy": 187653,
+    "total_requests": 52000,
+    "total_tokens": 14000000,
     "by_model": [
-      { "model": "xai_grok", "requests": 45000, "tokens": 12000000, "cost_usd": 800 }
+      { "model": "grok-4-fast", "provider": "xai", "requests": 45000, "tokens": 12000000, "cost_usd": 800 }
     ],
     "by_function": [
       { "function": "knowledge-gpt", "requests": 30000, "cost_usd": 600 }
     ],
     "top_users": [
-      { "user_id": "uuid", "email": "user@example.com", "requests": 1200, "cost_usd": 50 }
+      { "user_id": "uuid", "email": null, "requests": 1200, "cost_usd": 50, "is_anomaly": false }
     ],
     "timeseries": [
-      { "date": "2026-05-06", "cost_usd": 180 }
+      { "date": "2026-05-06", "cost_usd": 180, "requests": 7400 }
     ],
-    "anomalies": []
+    "anomalies": [],
+    "period": { "from": "2026-04-30", "to": "2026-05-06" }
   }
 }
 ```
@@ -522,7 +526,8 @@ LLM 使用量ダッシュボード
 > 1 つの JSONB で返す (行を API で読まないので、PostgREST の `max_rows` で打ち切られない)。集計するのは LLM 呼び出しごとの行
 > (`is_summary = false`) だけ。日次の系列 (`timeseries`) は JST の暦日。`top_users` は呼び出し回数の多い順に 50 人。
 > `anomalies` は、JST の 1 日に 5,000 回を超えて呼んだ日があるユーザー全員 (`top_users` に入らない人も含む。operator/03-ui-spec.md の異常アラート)。
-> 応答には上の項目のほかに `total_requests` / `total_tokens` / `period` がある。
+> `anomalies` の各要素は `top_users` と同じ形 (`user_id` / `email` / `requests` / `cost_usd` / `is_anomaly`)。`email` は常に `null` (結合しない)。
+> `total_cost_jpy` は `total_cost_usd` × 152 (概算) を四捨五入したもの。応答の型は `src/lib/super-admin/llm-usage-summary.ts` の `LlmUsageResponseData` (画面も同じ型を使う。#1524)。
 
 ---
 

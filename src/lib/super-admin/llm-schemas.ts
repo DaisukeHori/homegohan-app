@@ -61,43 +61,6 @@ export const LLM_QUOTAS_ENFORCED_NOTE =
 export type LLMUsageQuery = z.infer<typeof LLMUsageQuerySchema>;
 export type UpdateAiDailyLimitInput = z.infer<typeof UpdateAiDailyLimitSchema>;
 
-export interface LLMUsageSummary {
-  total_cost_usd: number;
-  total_cost_jpy: number;
-  total_requests: number;
-  total_tokens: number;
-  by_model: Array<{
-    model: string;
-    provider: string;
-    requests: number;
-    tokens: number;
-    cost_usd: number;
-  }>;
-  by_function: Array<{
-    function: string;
-    requests: number;
-    cost_usd: number;
-  }>;
-  top_users: Array<{
-    user_id: string;
-    email: string | null;
-    requests: number;
-    cost_usd: number;
-    is_anomaly: boolean;
-  }>;
-  timeseries: Array<{
-    date: string;
-    cost_usd: number;
-    requests: number;
-  }>;
-  anomalies: Array<{
-    user_id: string;
-    email: string | null;
-    daily_requests: number;
-    detected_at: string;
-  }>;
-}
-
 /** GET /api/super-admin/llm/quotas の 1 行 (プランごとの AI の 1 日の上限。#1149) */
 export interface AiDailyLimitRow {
   plan_key: string;

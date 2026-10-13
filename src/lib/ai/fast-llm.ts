@@ -16,12 +16,15 @@ function normalizeBaseUrl(raw?: string | null): string {
   return `${withoutSlash}/v1`;
 }
 
+// FAST_LLM_MODEL・XAI_BASE_URL は任意の変数 (src/lib/env.ts の一覧)。ほかの任意の変数と同じく getOptionalEnv で読む
+// (未設定・空・空白だけなら undefined。プロセスごとに 1 回だけ警告をサーバーのログに出す)。
+// 無いときの既定値は以前と同じ (DEFAULT_FAST_LLM_MODEL・DEFAULT_XAI_BASE_URL)。#1522
 export function getFastLLMModel(): string {
-  return String(process.env.FAST_LLM_MODEL ?? "").trim() || DEFAULT_FAST_LLM_MODEL;
+  return getOptionalEnv("FAST_LLM_MODEL")?.trim() || DEFAULT_FAST_LLM_MODEL;
 }
 
 export function getFastLLMBaseUrl(): string {
-  return normalizeBaseUrl(process.env.XAI_BASE_URL);
+  return normalizeBaseUrl(getOptionalEnv("XAI_BASE_URL"));
 }
 
 export function getFastLLMClient(): OpenAI {

@@ -3,19 +3,10 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { LLM_USAGE_ANOMALY_NOTICE } from "@/lib/super-admin/llm-usage-anomaly";
-
-interface LLMUsageData {
-  total_cost_usd: number;
-  total_cost_jpy: number;
-  total_requests: number;
-  total_tokens: number;
-  by_model: Array<{ model: string; provider: string; requests: number; tokens: number; cost_usd: number }>;
-  by_function: Array<{ function: string; requests: number; cost_usd: number }>;
-  top_users: Array<{ user_id: string; email: string | null; requests: number; cost_usd: number; is_anomaly: boolean }>;
-  timeseries: Array<{ date: string; cost_usd: number; requests: number }>;
-  anomalies: Array<{ user_id: string; email: string | null; daily_requests: number }>;
-  period: { from: string; to: string };
-}
+// GET /api/super-admin/llm/usage の data の型は、route が返す toLlmUsageResponseData の型をそのまま使う (#1524)。
+// 以前は画面に別の型を書いていて、anomalies の各要素に応答に無い daily_requests があると宣言していた
+// (応答は requests / cost_usd / is_anomaly)。型を 2 か所に書かないので、応答の形が変われば画面の型も一緒に変わる
+import type { LlmUsageResponseData } from "@/lib/super-admin/llm-usage-summary";
 
 const PROVIDERS = [
   { key: "gemini", label: "Gemini", color: "bg-blue-500" },
@@ -26,7 +17,7 @@ const PROVIDERS = [
 
 export default function LLMUsagePage() {
   const [period, setPeriod] = useState("7d");
-  const [data, setData] = useState<LLMUsageData | null>(null);
+  const [data, setData] = useState<LlmUsageResponseData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
