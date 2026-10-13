@@ -694,11 +694,13 @@ sequenceDiagram
 // tests/integration/operator/audit-log-rls.integration.test.ts
 import { describe, it, expect, beforeAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
+// 接続情報は src/lib の getter で取り出す (`process.env.<変数名>!` は使わない。#1182・#1434)
+import { getSupabaseAnonKey, getSupabaseServiceRoleKey, getSupabaseUrl } from '@/lib/env-required';
 import { signInAsUser } from '../../helpers/auth';
 
 const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  getSupabaseUrl(),
+  getSupabaseServiceRoleKey(),
 );
 
 describe('admin_audit_logs RLS ポリシー', () => {
@@ -727,8 +729,8 @@ describe('admin_audit_logs RLS ポリシー', () => {
 
   it('rejects UPDATE on admin_audit_logs (audit_logs_no_update policy)', async () => {
     const superClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${superAdminToken}` } } },
     );
     const { error } = await superClient
@@ -740,8 +742,8 @@ describe('admin_audit_logs RLS ポリシー', () => {
 
   it('rejects DELETE on admin_audit_logs (audit_logs_no_delete policy)', async () => {
     const superClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${superAdminToken}` } } },
     );
     const { error } = await superClient
@@ -753,8 +755,8 @@ describe('admin_audit_logs RLS ポリシー', () => {
 
   it('returns 0 rows when admin role (non-super_admin) selects audit_logs', async () => {
     const adminClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${adminToken}` } } },
     );
     const { data, error } = await adminClient
@@ -766,8 +768,8 @@ describe('admin_audit_logs RLS ポリシー', () => {
 
   it('super_admin can SELECT all audit_logs', async () => {
     const superClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${superAdminToken}` } } },
     );
     const { data, error } = await superClient
@@ -780,8 +782,8 @@ describe('admin_audit_logs RLS ポリシー', () => {
 
   it('rejects INSERT when actor_id does not match auth.uid()', async () => {
     const adminClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${adminToken}` } } },
     );
     // actor_id を別ユーザーの UUID に偽装して INSERT 試行

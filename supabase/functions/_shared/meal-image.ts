@@ -33,7 +33,17 @@ export interface ReconcileDishImagesParams<TDish extends MealImageDish> {
   nextDishes?: TDish[] | null;
   model?: string | null;
   triggerSource: string;
+  /**
+   * いまの献立のカバー (保存する前の planned_meals.image_url。新しく作るときは送られたカバー)。
+   * 返す mealCoverImageUrl は、カバーの持ち主の決まり (isMealCoverAutoReplaceable) で決める
+   */
   fallbackMealImageUrl?: string | null;
+  /**
+   * 新しく作る入口 (POST /api/meals・/api/meal-plans/meals) で、送られた料理の image_source が meal_photo / catalog / manual_override なら、
+   * その画像と状態を前回の料理と同じく保持する (generated_ai にして画像を消さない。#1487 の整合ゲート)。
+   * 前回の料理がある位置では、前回の料理で決める (送られた source は見ない)
+   */
+  preserveSubmittedDishImages?: boolean | null;
   /**
    * 前回の献立が商品の献立か (保存する前の planned_meals を isCatalogProductMeal で見た結果。#1487 の整合ゲート)。
    * 真なら、前回の商品の料理が画像の項目を持たない古い形でも、商品の料理として扱う (asCatalogMealDish)
@@ -132,6 +142,14 @@ export function isPreservedDishImage(dish: MealImageDish): boolean {
 }
 
 /**
+ * 新しく作る入口で送られた料理が、保持する写真・商品・手の画像の料理か (#1487 の整合ゲート。reconcileDishImages の preserveSubmittedDishImages)。
+ * image_source が meal_photo / catalog / manual_override のとき (写真の複数の料理のように、料理ごとの画像が無くても保持する)
+ */
+function isSubmittedPreservedDishImage(dish: MealImageDish): boolean {
+  return isCoverReadySource(dish.image_source ?? null);
+}
+
+/**
  * AI の画像の仕組み (reconcileDishImages → 画像の処理) が扱っている料理だと分かるか (#1487 の整合ゲート)。
  * subject_hash を持つ (reconcileDishImages が書いた) か、image_source が generated_ai のとき。
  * どちらも無い料理 (端末から直に保存した料理・この仕組みより前の料理) は、料理を変えずに保存し直しても積み直さない
@@ -167,7 +185,7 @@ export function isCatalogProductMeal(
  * 商品の料理に image_source を付ける前の形 (origin/main の buildCatalogMealFields・端末の保存。料理に画像の項目が無く、画像は献立のカバーだけ) と、
  * その形の料理を以前の reconcileDishImages が「料理が変わった」とみなして書き換えた形 (generated_ai・画像なし。ジョブは積めておらず
  * AI の画像はできていない) は、どちらも source だけでは商品の料理と分からず、保存し直すと AI の画像のジョブを積んでしまう
- * (画像の処理の deriveMealCoverImage が、できた AI の画像を献立のカバーに選び、商品の画像を置き換える)。
+ * (商品の献立の料理に AI の画像を作り、安全弁の 1 回を数えてしまう。献立のカバーはカバーの持ち主の決まり (isMealCoverAutoReplaceable) が守る)。
  * 対象は商品の料理の位置 (先頭) で、自分の画像 (image_url) を持たず、source が未設定か generated_ai の料理だけ。
  * 自分の画像のある料理・写真・手の画像の料理は変えない
  */
@@ -193,8 +211,9 @@ export function asCatalogMealDish<TDish extends MealImageDish>(
 /**
  * 献立のカバーが、料理ごとの画像を持たない写真・商品・手の画像の料理のものか (#1487 の整合ゲート)。
  * 写真の複数の料理 (buildPhotoDishList は料理ごとの画像を付けず、写真は献立のカバーだけ) や、画像の項目の無い商品の料理のとき。
- * このとき AI の画像のジョブを積むと、画像の処理 (process-meal-image-jobs) の deriveMealCoverImage が、できた AI の画像を
- * 献立のカバーに選び、写真・商品の画像を置き換えてしまう (写真・商品の料理は自分の画像を持たないので、カバーの候補にならない)
+ * このときは、ほかの料理にも AI の画像のジョブを積まない (写真・商品の献立の料理には AI の画像を作らない、いまの決まり)。
+ * カバーそのものは、カバーの持ち主の決まり (isMealCoverAutoReplaceable) が守る (写真・商品のカバーは AI の料理の画像と一致しないので、
+ * 画像の処理も保存し直しも置き換えない)。ジョブを積むかと安全弁の 1 回を数えるかを変えないために、この判定は残している
  */
 function isMealCoverHeldByImagelessPreservedDish(
   dishes: ReadonlyArray<MealImageDish>,
@@ -278,22 +297,33 @@ export async function buildMealImageIdempotencyKey(params: {
   return sha256Hex(`${jobKind}:${params.plannedMealId}:${params.dishIndex}:${params.subjectHash}`);
 }
 
-export function deriveMealCoverImage<TDish extends MealImageDish>(params: {
-  dishes?: TDish[] | null;
-  fallbackMealImageUrl?: string | null;
-}): string | null {
-  const dishes = Array.isArray(params.dishes) ? params.dishes : [];
-  if (dishes.length === 0) return params.fallbackMealImageUrl ?? null;
+/** 料理の画像が、AI の画像の処理 (process-meal-image-jobs) が作った画像か (image_source が generated_ai で画像がある) */
+function hasGeneratedAiDishImage(dish: MealImageDish, imageUrl: string): boolean {
+  return dish.image_source === 'generated_ai' && !!dish.image_url && dish.image_url === imageUrl;
+}
 
-  if (dishes.length === 1) {
-    const dish = dishes[0];
-    const source = dish.image_source ?? null;
-    const status = dish.image_status ?? null;
-    if (dish.image_url && (isCoverReadyStatus(status) || isCoverReadySource(source))) {
-      return dish.image_url;
-    }
-  }
+/**
+ * 献立のカバー (planned_meals.image_url) を、料理の画像から自動で付け替えてよいか (カバーの持ち主。#1487 の整合ゲート)。
+ * 付け替えてよいのは、いまのカバーが空か、献立の AI の料理 (image_source が generated_ai) の画像と一致する (AI の料理の画像から来た) ときだけ。
+ * 写真・商品・利用者が作った画像・手で付けた画像のカバー (どの AI の料理の画像とも一致しない、空でないカバー) は、
+ * 画像の処理 (process-meal-image-jobs)・保存し直し (reconcileDishImages)・AI の作り直し (save-meal) のどこからも置き換えない。
+ * カバーを決める全員は、deriveMealCoverImage を通してこの決まりに従う。
+ *
+ * dishLists: いまのカバーの出どころになりうる料理の一覧 (保存する前の料理と、これから保存する料理)。
+ * 料理が書き換わる保存し直しでは、前回の料理の AI の画像だったカバーも AI のものとして扱う
+ */
+export function isMealCoverAutoReplaceable(
+  currentCoverImageUrl: string | null | undefined,
+  dishLists: ReadonlyArray<ReadonlyArray<MealImageDish> | null | undefined>,
+): boolean {
+  if (!currentCoverImageUrl) return true;
+  return dishLists.some(
+    (list) => Array.isArray(list) && list.some((dish) => hasGeneratedAiDishImage(dish, currentCoverImageUrl)),
+  );
+}
 
+/** 料理の画像からカバーの候補を選ぶ (先頭から、できあがった画像か写真・商品・手の画像) */
+function pickDishCoverImage(dishes: ReadonlyArray<MealImageDish>): string | null {
   for (const dish of dishes) {
     const source = dish.image_source ?? null;
     const status = dish.image_status ?? null;
@@ -301,8 +331,62 @@ export function deriveMealCoverImage<TDish extends MealImageDish>(params: {
       return dish.image_url;
     }
   }
+  return null;
+}
 
-  return params.fallbackMealImageUrl ?? null;
+/**
+ * 献立のカバーを決める (#1487 の整合ゲート。カバーの持ち主は isMealCoverAutoReplaceable)。
+ *   - いまのカバー (currentCoverImageUrl) が AI のものでない (写真・商品・利用者の画像など): いまのカバーをそのまま返す
+ *   - 空か AI の料理の画像から来たもの: 料理の画像 (先頭から、できあがった画像か写真・商品・手の画像) を選ぶ。
+ *     候補が無ければ、いまのカバーがまだ献立の AI の料理の画像なら残し、そうでなければ (料理が変わって画像が無くなった) 空にする
+ *     (前の料理の AI の画像をカバーに残すと、どの料理の画像とも一致しなくなり、新しい AI の画像で付け替えられなくなるため)
+ * previousDishes: 保存する前の料理 (料理が書き換わる保存し直しで渡す。いまのカバーが前回の AI の料理の画像かを見る)
+ */
+export function deriveMealCoverImage<TDish extends MealImageDish>(params: {
+  dishes?: TDish[] | null;
+  currentCoverImageUrl?: string | null;
+  previousDishes?: ReadonlyArray<MealImageDish> | null;
+}): string | null {
+  const dishes = Array.isArray(params.dishes) ? params.dishes : [];
+  const currentCover = params.currentCoverImageUrl || null;
+  if (!isMealCoverAutoReplaceable(currentCover, [dishes, params.previousDishes])) return currentCover;
+
+  const picked = pickDishCoverImage(dishes);
+  if (picked) return picked;
+  return currentCover && isMealCoverAutoReplaceable(currentCover, [dishes]) ? currentCover : null;
+}
+
+/**
+ * 画像の処理 (process-meal-image-jobs) が、できた AI の画像を料理に書くときの、料理とカバーの書き込み (#1487 の整合ゲート)。
+ * カバーは deriveMealCoverImage (カバーの持ち主の決まり) で決め、変わるとき (coverChanged) だけ書く。
+ * 変わらないときは、画像の処理は献立の image_url を書かない (読んでから書くまでに利用者が付けたカバーを、古い値で上書きしないため)
+ */
+export function applyGeneratedDishImage<TDish extends MealImageDish>(params: {
+  dishes: TDish[];
+  dishIndex: number;
+  imageUrl: string;
+  generatedAt: string;
+  currentCoverImageUrl: string | null | undefined;
+}): { dishes: TDish[]; coverImageUrl: string | null; coverChanged: boolean } {
+  const updatedDishes = [...params.dishes];
+  const target = updatedDishes[params.dishIndex];
+  if (target) {
+    updatedDishes[params.dishIndex] = {
+      ...target,
+      image_url: params.imageUrl,
+      image_status: 'ready',
+      image_generated_at: params.generatedAt,
+      image_error: null,
+      image_source: 'generated_ai',
+    };
+  }
+  const currentCover = params.currentCoverImageUrl || null;
+  const coverImageUrl = deriveMealCoverImage({
+    dishes: updatedDishes,
+    currentCoverImageUrl: currentCover,
+    previousDishes: params.dishes,
+  });
+  return { dishes: updatedDishes, coverImageUrl, coverChanged: coverImageUrl !== currentCover };
 }
 
 export function buildPhotoDishList(dishes: MealImageDish[], imageUrl: string | null): MealImageDish[] {
@@ -354,15 +438,20 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
     // 写真・商品・手で付けた画像 (と source の無い画像) は、料理の中身を変えても AI の画像で置き換えない (#1487 の整合ゲート)。
     // ジョブを積まず、前回の画像と状態をそのまま写す。手で付けた画像だけは、料理を変えたら今までどおり 'stale' にする。
     // subject_hash は付けない (画像の処理は、料理の subject_hash とジョブの subject_hash が同じときだけ書くので、
-    // 付けなければ同じ料理の待ちのジョブが残っていても、この画像を上書きしない)
-    if (previousDish && isPreservedDishImage(previousDish)) {
-      const manualOverrideChanged = previousDish.image_source === 'manual_override' && !!previousDish.image_url && !sameSubject;
+    // 付けなければ同じ料理の待ちのジョブが残っていても、この画像を上書きしない)。
+    // 新しく作る入口 (POST) で送られた写真・商品・手の画像の料理も、前回の料理と同じく保持する (preserveSubmittedDishImages)
+    const preservedSource: MealImageDish | null = previousDish
+      ? (isPreservedDishImage(previousDish) ? previousDish : null)
+      : (params.preserveSubmittedDishImages === true && isSubmittedPreservedDishImage(nextDish) ? nextDish : null);
+    if (preservedSource) {
+      const manualOverrideChanged = preservedSource === previousDish &&
+        preservedSource.image_source === 'manual_override' && !!preservedSource.image_url && !sameSubject;
       reconciledDish.image_subject_hash = null;
-      reconciledDish.image_url = previousDish.image_url ?? null;
-      reconciledDish.image_source = previousDish.image_source ?? null;
-      reconciledDish.image_status = manualOverrideChanged ? 'stale' : previousDish.image_status ?? null;
-      reconciledDish.image_generated_at = previousDish.image_generated_at ?? null;
-      reconciledDish.image_error = manualOverrideChanged ? null : previousDish.image_error ?? null;
+      reconciledDish.image_url = preservedSource.image_url ?? null;
+      reconciledDish.image_source = preservedSource.image_source ?? null;
+      reconciledDish.image_status = manualOverrideChanged ? 'stale' : preservedSource.image_status ?? null;
+      reconciledDish.image_generated_at = preservedSource.image_generated_at ?? null;
+      reconciledDish.image_error = manualOverrideChanged ? null : preservedSource.image_error ?? null;
       dishes.push(reconciledDish);
       continue;
     }
@@ -413,8 +502,8 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
   }
 
   // 献立のカバーが、料理ごとの画像を持たない写真・商品の料理のもの (写真の複数の料理・画像の項目の無い商品の料理) なら、
-  // AI の画像のジョブを積まない (#1487 の整合ゲート)。積むと、画像の処理の deriveMealCoverImage が、できた AI の画像を献立のカバーに選び、
-  // 写真・商品の画像を置き換える (料理を足した・写真の料理以外の料理を変えたときも)。
+  // AI の画像のジョブを積まない (#1487 の整合ゲート。写真・商品の献立の料理には AI の画像を作らない、いまの決まり。
+  // 料理を足した・写真の料理以外の料理を変えたときも)。カバーそのものはカバーの持ち主の決まり (deriveMealCoverImage) が守る。
   // 積むのをやめた料理は、前回と同じ料理なら前回の状態をそのまま写す ('pending' にすると、処理するジョブが無いので「生成中」のまま残る)。
   // それ以外 (足した料理・中身を変えた料理) は画像の無い状態 (状態なし。画面は「生成中」「再生成待ち」を出さない) にし、
   // subject_hash も付けない (AI の画像の料理とみなさず、次に変えずに保存し直しても積み直さない)
@@ -444,9 +533,12 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
   return {
     dishes,
     jobs,
+    // カバーの持ち主の決まり (isMealCoverAutoReplaceable): いまのカバーが写真・商品・利用者の画像なら、そのまま返す。
+    // 前回の AI の料理の画像だったカバーは、料理の画像から選び直す
     mealCoverImageUrl: deriveMealCoverImage({
       dishes,
-      fallbackMealImageUrl: params.fallbackMealImageUrl,
+      currentCoverImageUrl: params.fallbackMealImageUrl,
+      previousDishes,
     }),
   };
 }

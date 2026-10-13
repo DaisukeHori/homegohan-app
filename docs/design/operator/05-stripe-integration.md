@@ -43,13 +43,17 @@ stripe_price_id    VARCHAR(255),  -- price_xxx (現在有効な Price ID)
 
 ```typescript
 // src/app/api/webhooks/stripe/route.ts
+import { verifyStripeWebhook } from '@/lib/webhook/verify';
+
 export async function POST(request: Request) {
   // 1. Stripe-Signature 検証
   const signature = request.headers.get('Stripe-Signature')!;
   const body = await request.text();
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(body, signature, process.env.STRIPE_WEBHOOK_SECRET!);
+    // 署名の秘密は cross/04-api-conventions.md §10.1 の verifyStripeWebhook が getOptionalEnv で取り出す
+    // (`process.env.<変数名>!` とは書かない。無ければ受け付けない fail-closed。#1182・#1434)
+    event = await verifyStripeWebhook(body, signature);
   } catch {
     return new Response('Invalid signature', { status: 400 });
   }
@@ -656,15 +660,26 @@ describe('mapStripeStatus', () => {
 // tests/integration/operator/stripe-webhook-events.integration.test.ts
 import Stripe from 'stripe';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY_TEST!, {
+// 署名ヘッダーの生成は手元で完結する (Stripe の API を呼ばない) ので、秘密鍵はテスト用の固定の値でよい
+// (`process.env.<変数名>!` は使わない。#1182・#1434)
+const TEST_STRIPE_SECRET_KEY = 'sk_test_dummy_for_signature_test';
+const stripe = new Stripe(TEST_STRIPE_SECRET_KEY, {
   apiVersion: '2024-11-20.acacia',
 });
+
+// 署名の秘密は、テスト対象のサーバーが確かめる値と同じでなければならないので環境変数から読む。
+// 無ければ undefined のまま署名せずに、ここで止める (`process.env.<変数名>!` は使わない。#1182・#1434)
+function requireWebhookSecretForTest(): string {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!secret) throw new Error('Stripe の Webhook の署名の秘密が未設定です');
+  return secret;
+}
 
 function signEvent(payload: object) {
   const body = JSON.stringify(payload);
   const signature = stripe.webhooks.generateTestHeaderString({
     payload: body,
-    secret: process.env.STRIPE_WEBHOOK_SECRET!,
+    secret: requireWebhookSecretForTest(),
   });
   return {
     body,
