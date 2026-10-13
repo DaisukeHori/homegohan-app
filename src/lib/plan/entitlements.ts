@@ -56,6 +56,7 @@
 
 import { createLogger } from '@/lib/db-logger';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import type { Database } from '@/types/database.types';
 import { getEdgeFunctionServiceRoleKey, getSupabaseServiceRoleKey, isMissingEnvError } from '@/lib/env-required';
 import { NextResponse } from 'next/server';
 import {
@@ -98,9 +99,26 @@ interface RpcError {
   code?: string;
 }
 
-/** supabase-js の rpc だけを使う最小の形 (テストで差し替えられる) */
+type PublicFunctions = Database['public']['Functions'];
+
+/** このファイルが呼ぶ DB の関数。引数と戻り値は生成された型 (Database['public']['Functions']) に合わせる (#1495) */
+type PlanRpcName = 'consume_ai_usage' | 'refund_ai_usage' | 'claim_ai_usage_grant' | 'get_effective_plan';
+
+/**
+ * supabase-js の rpc だけを使う最小の形 (テストで差し替えられる)。
+ * 関数の名前・引数の名前と型は生成された型で検査する (DB の関数の引数名を間違えたら tsc が止める)
+ */
 export interface PlanRpcClient {
-  rpc(fn: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: RpcError | null }>;
+  rpc<F extends PlanRpcName>(
+    fn: F,
+    args: PublicFunctions[F]['Args'],
+  ): PromiseLike<{ data: PublicFunctions[F]['Returns'] | null; error: RpcError | null }>;
+}
+
+/** 既定のクライアント (service_role。getSupabaseAdmin) の rpc を、生成された型の引数で呼ぶ形にする */
+function adminPlanRpcClient(): PlanRpcClient {
+  const admin = getSupabaseAdmin();
+  return { rpc: (fn, args) => admin.rpc(fn, args) };
 }
 
 export interface ConsumeAiUsageOptions {
@@ -156,7 +174,7 @@ export async function consumeAiUsage(
   options: ConsumeAiUsageOptions = {},
 ): Promise<AiUsageResult> {
   try {
-    const client = options.client ?? (getSupabaseAdmin() as unknown as PlanRpcClient);
+    const client = options.client ?? adminPlanRpcClient();
     const { data, error } = await withTimeout(
       client.rpc('consume_ai_usage', { p_user_id: userId, p_feature: feature }),
       options.timeoutMs ?? AI_USAGE_TIMEOUT_MS,
@@ -187,7 +205,7 @@ export async function refundAiUsage(
 ): Promise<void> {
   if (!usage.usageDate) return;
   try {
-    const client = options.client ?? (getSupabaseAdmin() as unknown as PlanRpcClient);
+    const client = options.client ?? adminPlanRpcClient();
     const { error } = await withTimeout(
       client.rpc('refund_ai_usage', { p_user_id: userId, p_feature: feature, p_usage_date: usage.usageDate }),
       options.timeoutMs ?? AI_USAGE_TIMEOUT_MS,
@@ -276,7 +294,7 @@ export async function redeemAiUsageGrant(
   try {
     const verified = await verifyAiUsageGrant(value, feature, userId, grantSecrets(), options.nowMs ?? Date.now());
     if (!verified) return false;
-    const client = options.client ?? (getSupabaseAdmin() as unknown as PlanRpcClient);
+    const client = options.client ?? adminPlanRpcClient();
     const { data, error } = await withTimeout(
       client.rpc('claim_ai_usage_grant', { p_user_id: userId, p_grant_id: verified.grantId }),
       options.timeoutMs ?? AI_USAGE_TIMEOUT_MS,
@@ -320,7 +338,7 @@ export async function aiUsageRecordedHeaders(userId: string, now: number = Date.
  * 失敗したときは例外を投げる (AI の記録と違い、呼び出し側が扱いを決める)。
  */
 export async function getEffectivePlan(userId: string, options: { client?: PlanRpcClient } = {}): Promise<string> {
-  const client = options.client ?? (getSupabaseAdmin() as unknown as PlanRpcClient);
+  const client = options.client ?? adminPlanRpcClient();
   const { data, error } = await client.rpc('get_effective_plan', { p_user_id: userId });
   if (error) throw toError(error);
   return typeof data === 'string' && data.length > 0 ? data : 'free';
