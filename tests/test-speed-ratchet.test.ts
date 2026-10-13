@@ -172,9 +172,9 @@ describe('一覧 (予算を超えたファイル・時間切れを延ばした�
     expect(hasExtendedTimeout('vi.setConfig({ restoreMocks: true });')).toBe(false);
   });
 
-  it('#1501 で時間切れを延ばした 20 本 (heavy-unit-test-timeout.ts の一覧 18 本 + local-ci-slot 系 2 本) は、どれも延ばしたファイルとして拾う', () => {
+  it('時間切れを延ばしたファイル (heavy-unit-test-timeout.ts の一覧 16 本 + local-ci-slot 系 2 本 = 18 本。#1501 で 20 本・#1498 で 2 本を一覧から外した) は、どれも延ばしたファイルとして拾う', () => {
     const extended = [...HEAVY_UNIT_TEST_FILES, ...SLOT_TIMEOUT_FILES];
-    expect(extended).toHaveLength(20);
+    expect(extended).toHaveLength(18);
     for (const file of extended) expect(hasExtendedTimeout(read(file)), file).toBe(true);
   });
 });
