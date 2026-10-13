@@ -82,11 +82,164 @@ const BOUNDARIES = [
 
 type Boundary = (typeof BOUNDARIES)[number];
 
-/** fn(now) をすべてのタイムゾーンで呼び、すべて expected と等しいことを確かめる */
-function expectSameInEveryTimeZone<T>(b: Boundary, fn: (now: Date) => T, expected: T) {
-  for (const { tz, value } of inEachTimeZone(() => fn(new Date(b.at)))) {
-    expect(value, `${b.label} / TZ=${tz}`).toEqual(expected);
+/**
+ * 1 つの境界で、どのタイムゾーンでも同じになるべき値 (1 件の it の中の 1 つの確かめ)。
+ *   run: その境界の時刻 (now) を渡して値を求める。clock: 'system' のものは、now を渡さずに現在時刻 (fake timers を
+ *        その境界の時刻にしたもの) を読む
+ */
+interface BoundaryCheck {
+  label: string;
+  run: (now: Date) => unknown;
+  expected: unknown;
+  clock?: 'system';
+}
+
+/** 境界ごとの it の名前と、その中の確かめ (it の名前は以前と同じ) */
+const BOUNDARY_TESTS: ReadonlyArray<{ name: string; checks: (b: Boundary) => BoundaryCheck[] }> = [
+  {
+    name: 'jstToday / jstDayOffset (今日・1 日前・7 日前・30 日前・7 日後)',
+    checks: (b) => [
+      { label: 'jstToday', run: (now) => jstToday(now), expected: b.today },
+      { label: 'jstDayOffset(-1)', run: (now) => jstDayOffset(-1, now), expected: b.d1 },
+      { label: 'jstDayOffset(-7)', run: (now) => jstDayOffset(-7, now), expected: b.d7 },
+      { label: 'jstDayOffset(-30)', run: (now) => jstDayOffset(-30, now), expected: b.d30 },
+      { label: 'jstDayOffset(7)', run: (now) => jstDayOffset(7, now), expected: b.p7 },
+    ],
+  },
+  {
+    name: 'jstToday は、引数を省略すると現在時刻 (fake timers の時刻) の JST の暦日',
+    checks: (b) => [{ label: 'jstToday() / jstDayOffset(-7)', run: () => [jstToday(), jstDayOffset(-7)], expected: [b.today, b.d7], clock: 'system' }],
+  },
+  {
+    name: 'nutritionAnalysisRange: 今日 = 今日だけ / 週 = 今日を含む 7 日 / 月 = 今日を含む 30 日',
+    checks: (b) => [
+      { label: 'today', run: (now) => nutritionAnalysisRange('today', now), expected: { startDate: b.today, endDate: b.today } },
+      { label: 'week', run: (now) => nutritionAnalysisRange('week', now), expected: { startDate: b.d6, endDate: b.today } },
+      { label: 'month', run: (now) => nutritionAnalysisRange('month', now), expected: { startDate: b.d29, endDate: b.today } },
+      // 想定外の period は「今日」と同じ (以前のルートの default)
+      { label: 'year (想定外)', run: (now) => nutritionAnalysisRange('year', now), expected: { startDate: b.today, endDate: b.today } },
+    ],
+  },
+  {
+    name: 'consecutiveDayStreak: JST の今日から途切れずに続く日数 (今日が無ければ昨日から)',
+    checks: (b) => [
+      { label: '今日・1・2・6 日前', run: (now) => consecutiveDayStreak([b.today, b.d1, b.d2, b.d6], now), expected: 3 },
+      { label: '1・2 日前', run: (now) => consecutiveDayStreak([b.d1, b.d2], now), expected: 2 },
+      { label: '今日・2 日前', run: (now) => consecutiveDayStreak([b.today, b.d2], now), expected: 1 },
+      { label: '2 日前', run: (now) => consecutiveDayStreak([b.d2], now), expected: 0 },
+      { label: '空', run: (now) => consecutiveDayStreak([], now), expected: 0 },
+      // 「明日」(UTC の暦日だと JST の今日が明日に見える時間帯がある) は数えない
+      { label: '明日', run: (now) => consecutiveDayStreak([jstDayOffset(1, now)], now), expected: 0 },
+    ],
+  },
+  {
+    name: 'challengePeriod: 開始日 = JST の今日、終了日 = 7 日後',
+    checks: (b) => [{ label: 'challengePeriod(7)', run: (now) => challengePeriod(7, now), expected: { startDate: b.today, endDate: b.p7 } }],
+  },
+  {
+    name: 'llmUsageRange: 終了日の既定は JST の今日、開始日は今日を含む 1 / 7 / 30 日間の最初の日 (#1463。画面のラベル「今日」「7日」「30日」)',
+    checks: (b) => [
+      // 1d は今日だけ (以前は昨日と今日の 2 暦日で、画面のラベル「今日」と合わなかった)
+      { label: '1d', run: (now) => llmUsageRange({ period: '1d' }, now), expected: { fromDate: b.today, toDate: b.today } },
+      { label: '7d', run: (now) => llmUsageRange({ period: '7d' }, now), expected: { fromDate: b.d6, toDate: b.today } },
+      { label: '30d', run: (now) => llmUsageRange({ period: '30d' }, now), expected: { fromDate: b.d29, toDate: b.today } },
+      // custom で from が無いときは 30d と同じ
+      { label: 'custom (from なし)', run: (now) => llmUsageRange({ period: 'custom' }, now), expected: { fromDate: b.d29, toDate: b.today } },
+      // 指定された from / to はそのまま
+      {
+        label: 'custom (from / to あり)',
+        run: (now) => llmUsageRange({ period: 'custom', from: '2026-01-01', to: '2026-01-31' }, now),
+        expected: { fromDate: '2026-01-01', toDate: '2026-01-31' },
+      },
+    ],
+  },
+  {
+    name: 'jstMonthBoundaries: 今月の月初・先月の月初・先月の末日 (JST の暦)',
+    checks: (b) => [
+      {
+        label: 'jstMonthBoundaries',
+        run: (now) => jstMonthBoundaries(now),
+        expected: { thisMonthStart: b.mStart, lastMonthStart: b.pmStart, lastMonthEnd: b.pmEnd },
+      },
+    ],
+  },
+  {
+    name: 'jstDayOfTimestamp: 時刻 (timestamptz の値) が属する JST の暦日',
+    checks: (b) => [
+      { label: 'Z の表記', run: () => jstDayOfTimestamp(b.at), expected: b.today },
+      // DB (PostgREST) が返す +00:00 の表記でも同じ
+      { label: '+00:00 の表記', run: () => jstDayOfTimestamp(b.at.replace('.000Z', '+00:00')), expected: b.today },
+    ],
+  },
+  {
+    name: '健康グラフ (モバイル): 取得の開始日 = 30 日前、横軸 = JST の今日を最後の日とする 7 日',
+    checks: (b) => [
+      { label: 'healthGraphFetchStartDate(30)', run: (now) => healthGraphFetchStartDate(30, now), expected: b.d30 },
+      {
+        label: 'healthGraphDateSlots(7)',
+        run: (now) => {
+          const slots = healthGraphDateSlots(7, now);
+          return { length: slots.length, first: slots[0], last: slots[slots.length - 1] };
+        },
+        expected: { length: 7, first: b.d6, last: b.today },
+      },
+    ],
+  },
+  {
+    name: '旬の食材 (Date を渡したとき): その時刻の JST の月',
+    checks: (b) => [
+      {
+        label: 'getSeasonalIngredientsForDate',
+        run: (now) => getSeasonalIngredientsForDate(now),
+        expected: getSeasonalIngredients(Number(b.today.slice(5, 7))),
+      },
+    ],
+  },
+];
+
+/** 確かめの値 (例外を投げたときは、その文面。どのタイムゾーン・どの確かめで投げたかを、期待値との差で見せる) */
+type Outcome = { value: unknown } | { thrown: string };
+
+function outcomeOf(fn: () => unknown): Outcome {
+  try {
+    return { value: fn() };
+  } catch (error) {
+    return { thrown: error instanceof Error ? `${error.name}: ${error.message}` : String(error) };
   }
+}
+
+/**
+ * 全境界 × 全確かめを、タイムゾーンを 1 つずつ切り替えて 1 回の走査で求める (#1496)。
+ * 以前は確かめ 1 つごとに 5 つのタイムゾーンを切り替えていた (process.env.TZ の書き換えは 1 回数 ms かかり、
+ * 9 境界 × 28 か所 × 5 つ × 2 回 = 約 2,500 回でこのファイルの所要の大半を占めていた)。
+ * 求める組み合わせ (境界 × 確かめ × タイムゾーン) と期待値は以前と同じで、減らしていない。
+ * 走査の中で、各タイムゾーンのローカル時刻のずれも記録し、切り替えが効いていたことを確かめる。
+ */
+function sweepBoundaries() {
+  return inEachTimeZone(() => ({
+    offsetMinutes: localOffsetMinutesOn20260101(),
+    boundaries: BOUNDARIES.map((b) =>
+      BOUNDARY_TESTS.map((t) =>
+        t.checks(b).map((c) => {
+          if (c.clock !== 'system') return outcomeOf(() => c.run(new Date(b.at)));
+          vi.useFakeTimers({ toFake: ['Date'] });
+          try {
+            vi.setSystemTime(new Date(b.at));
+            return outcomeOf(() => c.run(new Date(b.at)));
+          } finally {
+            vi.useRealTimers();
+          }
+        }),
+      ),
+    ),
+  }));
+}
+
+let sweep: ReturnType<typeof sweepBoundaries> | undefined;
+/** 走査の結果 (最初に使うときに 1 回だけ求める) */
+function sweptOutcomes(): NonNullable<typeof sweep> {
+  sweep ??= sweepBoundaries();
+  return sweep;
 }
 
 describe('テストの前提', () => {
@@ -95,91 +248,30 @@ describe('テストの前提', () => {
     expect(offsets.size).toBe(TEST_TIME_ZONES.length);
   });
 
+  it('境界の確かめの走査 (sweepBoundaries) でも、タイムゾーンごとに切り替えが効いていて、全部のタイムゾーン・境界・確かめを求めている', () => {
+    const swept = sweptOutcomes();
+    expect(swept.map((s) => s.tz)).toEqual([...TEST_TIME_ZONES]);
+    expect(new Set(swept.map((s) => s.value.offsetMinutes)).size).toBe(TEST_TIME_ZONES.length);
+    const expectedCounts = BOUNDARIES.map((b) => BOUNDARY_TESTS.map((t) => t.checks(b).length));
+    for (const { tz, value } of swept) {
+      expect(value.boundaries.map((tests) => tests.map((checks) => checks.length)), tz).toEqual(expectedCounts);
+    }
+  });
+
   it('以前の書き方 (toISOString の先頭 10 文字) は、JST 0:00〜8:59:59 に前日になる (直した不具合)', () => {
     expect(new Date('2026-10-09T15:00:00.000Z').toISOString().slice(0, 10)).toBe('2026-10-09');
     expect(new Date('2026-10-09T23:59:59.000Z').toISOString().split('T')[0]).toBe('2026-10-09');
   });
 });
 
-describe.each(BOUNDARIES)('$label', (b) => {
-  it(`jstToday / jstDayOffset (今日・1 日前・7 日前・30 日前・7 日後)`, () => {
-    expectSameInEveryTimeZone(b, (now) => jstToday(now), b.today);
-    expectSameInEveryTimeZone(b, (now) => jstDayOffset(-1, now), b.d1);
-    expectSameInEveryTimeZone(b, (now) => jstDayOffset(-7, now), b.d7);
-    expectSameInEveryTimeZone(b, (now) => jstDayOffset(-30, now), b.d30);
-    expectSameInEveryTimeZone(b, (now) => jstDayOffset(7, now), b.p7);
-  });
-
-  it('jstToday は、引数を省略すると現在時刻 (fake timers の時刻) の JST の暦日', () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date(b.at));
-    for (const { tz, value } of inEachTimeZone(() => [jstToday(), jstDayOffset(-7)])) {
-      expect(value, tz).toEqual([b.today, b.d7]);
+describe.each(BOUNDARIES.map((b, bi) => ({ ...b, bi })))('$label', (b) => {
+  it.each(BOUNDARY_TESTS.map((t, ti) => ({ name: t.name, ti })))('$name', ({ ti }) => {
+    const checks = BOUNDARY_TESTS[ti].checks(b);
+    for (const { tz, value } of sweptOutcomes()) {
+      checks.forEach((c, ci) => {
+        expect(value.boundaries[b.bi][ti][ci], `${b.label} / TZ=${tz} / ${c.label}`).toEqual({ value: c.expected });
+      });
     }
-  });
-
-  it('nutritionAnalysisRange: 今日 = 今日だけ / 週 = 今日を含む 7 日 / 月 = 今日を含む 30 日', () => {
-    expectSameInEveryTimeZone(b, (now) => nutritionAnalysisRange('today', now), { startDate: b.today, endDate: b.today });
-    expectSameInEveryTimeZone(b, (now) => nutritionAnalysisRange('week', now), { startDate: b.d6, endDate: b.today });
-    expectSameInEveryTimeZone(b, (now) => nutritionAnalysisRange('month', now), { startDate: b.d29, endDate: b.today });
-    // 想定外の period は「今日」と同じ (以前のルートの default)
-    expectSameInEveryTimeZone(b, (now) => nutritionAnalysisRange('year', now), { startDate: b.today, endDate: b.today });
-  });
-
-  it('consecutiveDayStreak: JST の今日から途切れずに続く日数 (今日が無ければ昨日から)', () => {
-    expectSameInEveryTimeZone(b, (now) => consecutiveDayStreak([b.today, b.d1, b.d2, b.d6], now), 3);
-    expectSameInEveryTimeZone(b, (now) => consecutiveDayStreak([b.d1, b.d2], now), 2);
-    expectSameInEveryTimeZone(b, (now) => consecutiveDayStreak([b.today, b.d2], now), 1);
-    expectSameInEveryTimeZone(b, (now) => consecutiveDayStreak([b.d2], now), 0);
-    expectSameInEveryTimeZone(b, (now) => consecutiveDayStreak([], now), 0);
-    // 「明日」(UTC の暦日だと JST の今日が明日に見える時間帯がある) は数えない
-    expectSameInEveryTimeZone(b, (now) => consecutiveDayStreak([jstDayOffset(1, now)], now), 0);
-  });
-
-  it('challengePeriod: 開始日 = JST の今日、終了日 = 7 日後', () => {
-    expectSameInEveryTimeZone(b, (now) => challengePeriod(7, now), { startDate: b.today, endDate: b.p7 });
-  });
-
-  it('llmUsageRange: 終了日の既定は JST の今日、開始日は今日を含む 1 / 7 / 30 日間の最初の日 (#1463。画面のラベル「今日」「7日」「30日」)', () => {
-    // 1d は今日だけ (以前は昨日と今日の 2 暦日で、画面のラベル「今日」と合わなかった)
-    expectSameInEveryTimeZone(b, (now) => llmUsageRange({ period: '1d' }, now), { fromDate: b.today, toDate: b.today });
-    expectSameInEveryTimeZone(b, (now) => llmUsageRange({ period: '7d' }, now), { fromDate: b.d6, toDate: b.today });
-    expectSameInEveryTimeZone(b, (now) => llmUsageRange({ period: '30d' }, now), { fromDate: b.d29, toDate: b.today });
-    // custom で from が無いときは 30d と同じ
-    expectSameInEveryTimeZone(b, (now) => llmUsageRange({ period: 'custom' }, now), { fromDate: b.d29, toDate: b.today });
-    // 指定された from / to はそのまま
-    expectSameInEveryTimeZone(
-      b,
-      (now) => llmUsageRange({ period: 'custom', from: '2026-01-01', to: '2026-01-31' }, now),
-      { fromDate: '2026-01-01', toDate: '2026-01-31' },
-    );
-  });
-
-  it('jstMonthBoundaries: 今月の月初・先月の月初・先月の末日 (JST の暦)', () => {
-    expectSameInEveryTimeZone(b, (now) => jstMonthBoundaries(now), {
-      thisMonthStart: b.mStart,
-      lastMonthStart: b.pmStart,
-      lastMonthEnd: b.pmEnd,
-    });
-  });
-
-  it('jstDayOfTimestamp: 時刻 (timestamptz の値) が属する JST の暦日', () => {
-    expectSameInEveryTimeZone(b, () => jstDayOfTimestamp(b.at), b.today);
-    // DB (PostgREST) が返す +00:00 の表記でも同じ
-    expectSameInEveryTimeZone(b, () => jstDayOfTimestamp(b.at.replace('.000Z', '+00:00')), b.today);
-  });
-
-  it('健康グラフ (モバイル): 取得の開始日 = 30 日前、横軸 = JST の今日を最後の日とする 7 日', () => {
-    expectSameInEveryTimeZone(b, (now) => healthGraphFetchStartDate(30, now), b.d30);
-    expectSameInEveryTimeZone(b, (now) => {
-      const slots = healthGraphDateSlots(7, now);
-      return { length: slots.length, first: slots[0], last: slots[slots.length - 1] };
-    }, { length: 7, first: b.d6, last: b.today });
-  });
-
-  it('旬の食材 (Date を渡したとき): その時刻の JST の月', () => {
-    const jstMonth = Number(b.today.slice(5, 7));
-    expectSameInEveryTimeZone(b, (now) => getSeasonalIngredientsForDate(now), getSeasonalIngredients(jstMonth));
   });
 });
 
