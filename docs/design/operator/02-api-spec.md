@@ -1240,16 +1240,18 @@ deprecated → private にロールバック (緊急用)
 
 ## 19. クーポン管理 API
 
-### GET /api/admin/coupons
+**権限**: すべて `super_admin` だけ (それ以外は 403 `OP_PERMISSION_DENIED`、未ログインは 401 `AUTH_UNAUTHENTICATED`)。運営の画面 `/super-admin/coupons` から使う。
+
+### GET /api/super-admin/coupons
 クーポン一覧
 
-**クエリ**: `?status=active&page=1`
+**クエリ**: `?status=active&applicable_to=all&page=1&per_page=50` (どれも省略可。`per_page` は 1〜200)
 
-**権限**: `sales`, `admin`, `super_admin`
+**レスポンス**: `{ "data": [ coupons の行 ], "meta": { "total": 12, "page": 1, "per_page": 50 } }`
 
 ---
 
-### POST /api/admin/coupons
+### POST /api/super-admin/coupons
 クーポン作成
 
 **リクエスト**:
@@ -1271,29 +1273,72 @@ deprecated → private にロールバック (緊急用)
 **バリデーション**:
 - `valid_from` / `valid_until` は JST の暦日 (YYYY-MM-DD の実在する日付。存在しない日付は 400 `OP_INVALID_INPUT`)。`valid_from <= valid_until` (同じ日は可)
 - DB には開始日の JST 0:00・期限の日の JST 23:59:59.999999 の時刻にして書く (#1483。`apply_coupon` の `now() > valid_until` は端を含むので、期限の日の終わりまで使える)。PATCH の `valid_until` も同じ
+- `code` が既にあるときは 409 `OP_COUPON_CODE_DUPLICATE`
 - 0 円や 1 円となるクーポン (100% OFF + monthly_price <= 1 円) は警告表示
 - `gross_margin_preview_jpy` を計算して返す
 
+**レスポンス**: 201 `{ "data": 作った coupons の行 }` (`status` は `active`)
+
 ---
 
-### PATCH /api/admin/coupons/{id}
-クーポン編集
+### GET /api/super-admin/coupons/{id}
+クーポン詳細。`{ "data": coupons の行 }`。無ければ 404 `OP_COUPON_NOT_FOUND`
 
-### POST /api/admin/coupons/{id}/pause
-一時停止
+---
 
-### GET /api/admin/coupons/{id}/redemptions
-利用統計
+### PATCH /api/super-admin/coupons/{id}
+クーポン編集 (送った欄だけを変える。どれも省略可)
+
+**リクエスト**:
+```json
+{
+  "display_name": "法人営業キャンペーン2026 (延長)",
+  "status": "paused",
+  "valid_until": "2027-03-31",
+  "max_uses": 200,
+  "applicable_plans": ["uuid"],
+  "applicable_to": "org",
+  "gross_margin_preview_jpy": 1200
+}
+```
+
+- `display_name`: 200 文字まで (`null` で消す)
+- `status`: `active` / `paused` / `expired`。一時停止は `paused` にする (専用の API は無い)
+- `valid_until`: JST の暦日 (YYYY-MM-DD の実在する日付)。DB にはその日の JST 23:59:59.999999 にして書く (#1483。POST と同じ)
+- `max_uses`: 1 以上の整数 (`null` で無制限)
+- `applicable_plans`: プランの id (UUID) の配列 / `applicable_to`: `all` / `personal` / `family` / `org`
+- `code` / `discount_type` / `discount_value` / `valid_from` / `per_user_limit` / `duration_months` は変えられない (送っても無視する)
+
+**バリデーション**:
+- 形の誤り (上の各欄) は 400 `OP_INVALID_INPUT`
+- 変える欄が 1 つも無いときは 400 `OP_NO_UPDATE`
+- クーポンが無いときは 404 `OP_COUPON_NOT_FOUND`
+- `valid_until` を送ったときは、保存済みの `valid_from` を JST の暦日に戻して比べ、`valid_until` の日がそれより前なら 400 `OP_INVALID_INPUT` (`details[].path` は `["valid_until"]`)。同じ日は可 (POST の `valid_from <= valid_until` と同じ決まり。#1510)。`valid_until` を送らないときは比べない
+
+**レスポンス**: 200 `{ "data": 変えたあとの coupons の行 }`。監査ログに `update_coupon` (`details.changes` に書いた値) を残す
+
+---
+
+### DELETE /api/super-admin/coupons/{id}
+クーポン削除。204。利用実績がある (`uses_count > 0`) ときは 409 `OP_COUPON_IN_USE` (`paused` にする)。無ければ 404 `OP_COUPON_NOT_FOUND`
+
+---
+
+### POST /api/super-admin/coupons/{id}/apply
+契約へのクーポンの適用 (super_admin の承認で遡及して適用する)。operator/04-plan-management.md §4.1
+
+---
+
+### GET /api/super-admin/coupons/{id}/redemptions
+適用履歴 (coupon_redemptions の行。新しい順 = `redeemed_at` の降順)
+
+**クエリ**: `?page=1&per_page=50` (`per_page` は 1〜200)
 
 **レスポンス**:
 ```json
 {
-  "data": {
-    "total_redemptions": 45,
-    "active_redemptions": 42,
-    "total_discount_jpy": 894000,
-    "redemptions": [ { "user_id": "uuid", "redeemed_at": "2026-05-01T00:00:00Z" } ]
-  }
+  "data": [ { "coupon_id": "uuid", "user_id": "uuid", "discount_amount_jpy": 500, "redeemed_at": "2026-05-01T00:00:00Z" } ],
+  "meta": { "total": 45, "page": 1, "per_page": 50, "coupon_code": "ENTERPRISE2026" }
 }
 ```
 

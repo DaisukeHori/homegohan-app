@@ -20,12 +20,16 @@
 import { test, expect } from "../fixtures/fresh-user";
 import { config as dotenvConfig } from "dotenv";
 import * as path from "path";
+import { addDaysToDate, todayLocal } from "../../../packages/shared/src/date-utils";
 
 dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
 
 // ─── 定数 ────────────────────────────────────────────────────────────────────
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
+
+// テスト用クーポンの有効期間の日数 (開始日 = JST の今日から、この日数後の日まで)
+const TEST_COUPON_VALID_DAYS = 30;
 
 // テスト用クーポンコード (衝突回避のためタイムスタンプを含める)
 const TEST_COUPON_CODE = `E2ETEST${Date.now().toString(36).toUpperCase()}`;
@@ -138,11 +142,10 @@ test.describe("operator/super-admin: クーポン作成 → プラン PATCH → 
   test("T14-S3: super_admin がクーポンを作成し audit_log に記録される", async ({ superAdminUser }) => {
     const { page } = superAdminUser;
 
-    // クーポン作成
-    const today = new Date().toISOString().split("T")[0];
-    const nextMonth = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .split("T")[0];
+    // クーポン作成 (#1483 / #1510: 有効開始日・有効期限は JST の暦日で送る。
+    // toISOString の先頭 10 文字は UTC の暦日なので、JST の 0:00〜8:59 は前日になる)
+    const today = todayLocal();
+    const nextMonth = addDaysToDate(today, TEST_COUPON_VALID_DAYS);
 
     const createResult = await apiFetch(page, "/api/super-admin/coupons", {
       method: "POST",
