@@ -43,7 +43,7 @@ stripe_price_id    VARCHAR(255),  -- price_xxx (現在有効な Price ID)
 
 ```typescript
 // src/app/api/webhooks/stripe/route.ts
-import { verifyStripeWebhook } from '@/lib/webhook/verify';
+import { verifyStripeWebhook, WebhookSecretMissingError } from '@/lib/webhook/verify';
 
 export async function POST(request: Request) {
   // 1. Stripe-Signature 検証
@@ -54,7 +54,13 @@ export async function POST(request: Request) {
     // 署名の秘密は cross/04-api-conventions.md §10.1 の verifyStripeWebhook が getOptionalEnv で取り出す
     // (`process.env.<変数名>!` とは書かない。無ければ受け付けない fail-closed。#1182・#1434)
     event = await verifyStripeWebhook(body, signature);
-  } catch {
+  } catch (err: unknown) {
+    if (err instanceof WebhookSecretMissingError) {
+      // 設定漏れ (署名の秘密が無い) は、送り手の誤りではなくこちらの設定の誤り。署名の誤り (400) と分けて 500 にする
+      // (cross/04 §4.1: システム内部エラーの SYS_ は 500。502 / 503 の EXT_ は外部サービスの誤りに使う)。
+      // Stripe は 2xx 以外を再送するので、秘密を設定し直せば届き直す。本文に変数名を入れない (変数名はログにだけ残る)
+      return new Response('Webhook is not configured', { status: 500 });
+    }
     return new Response('Invalid signature', { status: 400 });
   }
 
