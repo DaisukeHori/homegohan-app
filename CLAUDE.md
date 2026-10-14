@@ -42,11 +42,11 @@ CI では GitHub Secrets に登録する。
 
 - `.github/workflows/security.yml`:
   - **gitleaks**: PR で増えたコミットと main への push だけを検査し、見つかったら失敗する。
-  - **npm audit**: 参考情報で、PR を止めない。critical が 0 件になったら、止める検査に切り替える。**`continue-on-error` は、ジョブではなく npm audit の「ステップ」に付ける。** ジョブに付けると、ワークフローは通っても、そのジョブの check run が失敗 (赤い ×) のまま残る。すると、すべての PR の Checks が赤くなり、毎日の整合性チェック (`scripts/lib/consistency-check.mjs`) も、止まっている PR を「赤のまま」に数える (`tests/security-workflow.test.ts` が、`pull_request` で動くワークフローのジョブ単位の `continue-on-error` を検出する)。
+  - **npm audit**: 本番で動く依存 (`npm audit --omit=dev`) に critical の脆弱性があれば失敗し、PR を止める (#1444 で critical が 0 件になったので切り替えた)。high 以下は止めず、件数を Summary に出す。止めない検査に戻すときは、**`continue-on-error` をジョブではなく npm audit の「ステップ」に付ける。** ジョブに付けると、ワークフローは通っても、そのジョブの check run が失敗 (赤い ×) のまま残る。すると、すべての PR の Checks が赤くなり、毎日の整合性チェック (`scripts/lib/consistency-check.mjs`) も、止まっている PR を「赤のまま」に数える (`tests/security-workflow.test.ts` が、`pull_request` で動くワークフローのジョブ単位の `continue-on-error` を検出する)。
   - **依存関係レビュー**と **CodeQL**: リポジトリが公開の間だけ動く。非公開にすると自動でスキップされる。依存関係レビューは、リポジトリの Dependency graph が無効の間 (GitHub が依存の差分を 403 Forbidden で断る) だけ、レビューを飛ばして警告と Summary を出す (すべての PR を赤くしないため)。有効にすれば、次の PR から止める検査として働く。CodeQL のジョブそのものは止めないが、コードスキャンの結果を知らせる別の check run が付き、新しい重大なアラートが増えた PR では赤くなる。
 - gitleaks の誤検知は `.gitleaks.toml` に**値そのもの**を足す (ファイル・ディレクトリ単位では除外しない)。1 行だけなら行末に `gitleaks:allow`。本物のキーが見つかったときは除外せず、そのキーを無効にして発行し直す (履歴から消すだけでは取り消せない)。gitleaks の版と SHA-256 は workflow に固定してある。上げるときはリリースの `checksums.txt` の値に合わせる。
 - **テストに書くダミーの認証値** (`apiKey` / `token` / `secret` / `password` など) は、gitleaks の汎用ルール (generic-api-key) に掛かりやすい。掛かると PR の `security / gitleaks` が失敗するので、ダミーの値の行の末尾に `gitleaks:allow` と書く。ダミーでも、`sk-` や `ghp_` や JWT のような、本物のキーの書式にしない。
-- `.github/dependabot.yml`: npm (ルートの package-lock.json が workspaces をまとめて管理) と GitHub Actions を週 1 回。マイナー・パッチは 1 本の PR にまとめる。Next / React / Expo / React Native は、メジャー更新 (Expo / React Native はマイナー更新も) の PR を出さない。計画して上げる (#1199)。自動承認・自動マージはしない。
+- `.github/dependabot.yml`: npm (ルートの package-lock.json が workspaces をまとめて管理) と GitHub Actions を週 1 回。マイナー・パッチは 1 本の PR にまとめる。Next / React / Expo / React Native は、メジャー更新 (Expo / React Native はマイナー更新も) の PR を出さない。計画して上げる (#1199・#1444)。自動承認・自動マージはしない。
 - **Dependabot の PR には Actions のシークレットが渡されない。** `pull_request` で動き、`secrets.*` (`GITHUB_TOKEN` 以外) を使うジョブには `if: github.actor != 'dependabot[bot]'` を付ける。付け忘れると、依存更新の PR が毎回赤くなる (`tests/security-workflow.test.ts` が検査する)。
 
 ---
@@ -193,17 +193,16 @@ Web の画面で利用者がログアウトするときは、`clearUserScopedLoc
 
 ---
 
-## Web アプリは Next 14 + React 18 (React 19 / Next 15 前提の API は使わない)
+## Web アプリは Next 15 + React 19 (#1444)
 
-- Web アプリ (`src/`) は **Next.js 14 + React 18** で動く。React 19 / Next 15 ではない (モバイルの `apps/mobile` だけが Expo 53 + React 19)。`docs/design/` には Next 15 / React 19 前提の記述が残っているが、実装の現状はこの節が正。
-- **React 19 / Next 15 前提の API は `src/` で使わない**: `use` / `useActionState` / `useOptimistic` (`react`)、`useFormStatus` (`react-dom`)。ESLint の `no-restricted-imports` と `no-restricted-properties` が `src/**` で止める (#1199)。`import * as React from 'react'` も同じルールに掛かるので、名前付き import (`import { useState } from 'react'`) を使う。`import React from 'react'` のあとの `React.use(...)` なども止まる。
-  - 禁止する理由は、Next 15 / React 19 前提の書き方を持ち込まないため。Next 14 の App Router が同梱する React (canary) には `use` / `useOptimistic` / `useFormStatus` が実在するが、`useActionState` は無く、Next 14 の `params` は Promise ではない。
-  - ルールの対象は `src/**` だけ。モバイルと、ルート直下の `components/` ・ `lib/` (`@/` の別名の逃げ先 `./*` 経由で Web からも使われる) は対象外。そこにも React 19 / Next 15 前提の API を書かない。
-- **型検査ではこれらを止められない。止めているのは上の ESLint ルールだけなので、外さないこと。** Next 14 の型 (`next/types/index.d.ts`) が `react/experimental` と `react-dom/experimental` (canary の型) を読み込むため、`@types/react` が 18 系でも `use` / `useOptimistic` / `useActionState` / `useFormStatus` は `npm run typecheck` を通る。この前提は `tests/eslint-react19-guard.test.ts` が確かめる。
-- Next 14 のページでは `params` は Promise ではなく普通のオブジェクト。`use(params)` は実行時に例外になる (#1275)。クライアントページでは `useParams()` を使う。
-- 型の版は実行時の React にそろえてある。ルート `package.json` の `@types/react` / `@types/react-dom` は **18 系**。これで React 19 の型にしかない書き方 (例: `<Context value={...}>`) は型検査で落ちる (上の API は止まらない)。モバイルは自前の `@types/react ~19.0.10` を `apps/mobile/node_modules` に入れ子で持ち、`apps/mobile/tsconfig.json` の `paths` で `react` の型をそれに固定している (外すとモバイルの型エラーが増える)。ルートの型だけを 19 系に上げない。`tests/react-types-version-contract.test.ts` が検査する。
-- React 19 / Next 15 への移行は別タスク。やるときは `react` と `@types/react` を一緒に上げ、`eslint.config.mjs` のルールとそのテスト (`tests/eslint-react19-guard.test.ts`)、`apps/mobile/tsconfig.json` の固定、この節も更新する。
-- ルートで依存を更新する `npm install` は、`react-native` の peer (`react@^19`) とルートの `react@18` が衝突して ERESOLVE になることがある (モバイルが React 19 を入れ子で持つ構成のため)。その場合は `npm install --package-lock-only --legacy-peer-deps` で `package-lock.json` だけ更新し、続けて `npm install --package-lock-only` を 1 回実行して形をそろえる。差分が意図した変更だけであることと `npm ci --dry-run` が通ることを確認する。
+- Web アプリ (`src/`) は **Next.js 15 + React 19** で動く (#1444 で Next 14 + React 18 から上げた)。モバイルの `apps/mobile` は Expo 53 + React 19.0 で、ルートとは別の版の `react` を `apps/mobile/node_modules` に入れ子で持つ (モバイルの React は react-native に入っているレンダラーと「完全に同じ版」でないと動かないため。モバイルの更新は #1591)。Next 16 にはまだ上げない。
+- **ページ・レイアウト・route handler の `params` / `searchParams` は Promise。** サーバーでは `await props.params`、クライアントのページでは `use(props.params)` か `useParams()` で読む。`cookies()` / `headers()` / `draftMode()` も Promise を返すので `await` する。`lib/supabase/server.ts` の `createClient()` は `cookies()` を読むので非同期 (`await createClient()`)。Next 15 には同期のまま読む互換の道も残っているが、開発時に警告が出て Next 16 で無くなるので使わない。
+- **キャッシュの既定は Next 14 と違う。** Next 15 は、`fetch` をキャッシュせず (`no-store`)、GET の route handler も毎回動かす。ブラウザの中のルーターのキャッシュ (Client Router Cache) は、動的なページを使い回さない (0 秒) のが既定になった。
+  - ルーターのキャッシュは、Next 14 と同じ時間 (動的 30 秒・静的 300 秒) を `next.config.mjs` の `experimental.staleTimes` で明示している (`src/__tests__/config/next-config-client-router-cache.test.ts` が固定する)。
+  - `fetch` と GET の route handler は Next 15 の既定 (キャッシュしない) のまま。Next 14 の「既定でキャッシュする」動きは、古い件数・古いログを返す不具合のもとで、キャッシュさせたくない所には `cache: 'no-store'` や `dynamic = 'force-dynamic'` を書いてあった (残してある)。キャッシュしたい `fetch` を足すときは、`cache: 'force-cache'` か `next: { revalidate }` を明示する。
+- 型の版は実行時の React にそろえてある。ルート `package.json` の `@types/react` / `@types/react-dom` は **19 系** (19.2)。モバイルは自前の `@types/react ~19.0.10` を `apps/mobile/node_modules` に入れ子で持ち、`apps/mobile/tsconfig.json` の `paths` で `react` の型をそれに固定している (Web とモバイルで型の版が違う間は外さない)。`tests/react-types-version-contract.test.ts` が検査する。
+- テストの `act` は `react` から import する (`import { act } from 'react'`)。`react-dom/test-utils` の `act` は React 19 で非推奨 (呼ぶたびに警告が出る)。
+- ルートで依存を更新する `npm install` が、ルートと `apps/mobile` の React の版の違いで ERESOLVE になることがある。その場合は `npm install --package-lock-only --legacy-peer-deps` で `package-lock.json` だけ更新し、続けて `npm install --package-lock-only` を 1 回実行して形をそろえる。差分が意図した変更だけであることと `npm ci --dry-run` が通ることを確認する。
 
 ---
 
@@ -249,7 +248,7 @@ PR の検査は `bash scripts/local-ci.sh` でローカルに回せる (CI の c
 
 - migration を含まない PR は、local-ci.sh の 5 段 (secrets・unit・mobile・integration・e2e) が緑で、出力の Markdown (sha と件数) を PR 本文に貼れば、CI の完了を待たずにマージしてよい (オーナー判断 2026-10-09)。CI の結果はマージ後に確かめ、赤なら直す。
 - secrets 段 (gitleaks) が赤のときはマージしない。リポジトリは公開なので、main に入った秘密は取り消せない (本物のキーなら無効にして発行し直す。ダミーなら `.gitleaks.toml` か行末の `gitleaks:allow`)。
-- 依存 (`package.json` / `package-lock.json`) を変える PR は、security.yml の dependency review (high 以上の既知の脆弱性がある版を入れていないか) の緑を待ってからマージする。これは GitHub の Dependency graph を使うので、ローカルでは再現できない。
+- 依存 (`package.json` / `package-lock.json`) を変える PR は、security.yml の dependency review (high 以上の既知の脆弱性がある版を入れていないか) と npm audit (本番の依存に critical が無いか) の緑を待ってからマージする。これらは GitHub の Dependency graph と npm のレジストリ (脆弱性データベース) を使うので、ローカルでは再現できない。
 - PR で動くワークフローのうち local-ci.sh に写していないもの (と理由) は `tests/local-ci-workflow-sync.test.ts` の `EXCLUDED_WORKFLOWS` / `EXCLUDED_JOBS` にある。PR で動くワークフロー・ジョブを足したら、local-ci.sh に写すか、そこに理由を書く (書かないと `npm test` が落ちる)。
 - migration (`supabase/migrations/**`) を含む PR は、Deploy Supabase Migrations の PR ジョブ (本番台帳とのドリフト検知) の緑を待ってからマージする。これはローカルでは再現できない。
 - 本番への反映 (Vercel・`db push`・functions deploy) は従来どおり PR → main → CI の経路だけ。

@@ -51,7 +51,8 @@ let sessionDb: SchemaDb;
 const adminDb = createSchemaDb({ tables: {} });
 
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: () => makeClient(sessionDb, sessionUser),
+  // createClient() は async (Next 15 では cookies() が Promise のため)。モックも Promise を返し、await を忘れた呼び出しはここで落ちるようにする
+  createClient: async () => makeClient(sessionDb, sessionUser),
   getSupabaseAdmin: () => mockGetSupabaseAdmin(),
 }));
 
@@ -202,7 +203,8 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const idParams = (id: string) => ({ params: { id } });
+// Next 15 の route の params は Promise。同期のオブジェクトを渡すと、await を忘れた route を見逃す
+const idParams = (id: string) => ({ params: Promise.resolve({ id }) });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. 認可

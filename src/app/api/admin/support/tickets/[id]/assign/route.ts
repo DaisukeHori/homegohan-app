@@ -11,9 +11,10 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { assignTicketSchema } from '@/lib/admin/support-schemas';
 import { recordAdminAudit } from '@/lib/admin/audit';
 
-type RouteContext = { params: { id: string } };
+type RouteContext = { params: Promise<{ id: string }> };
 
-export async function POST(request: NextRequest, { params }: RouteContext) {
+export async function POST(request: NextRequest, props: RouteContext) {
+  const params = await props.params;
   try {
     const currentUser = await requireRole(['support', 'admin', 'super_admin']);
 

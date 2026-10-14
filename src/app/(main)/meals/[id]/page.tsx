@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, use } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -96,7 +96,8 @@ interface PlannedMealDetail {
   catalogProduct: CatalogProductSummary | null;
 }
 
-export default function MealDetailPage({ params }: { params: { id: string } }) {
+export default function MealDetailPage(props: { params: Promise<{ id: string }> }) {
+  const params = use(props.params);
   const router = useRouter();
   const [meal, setMeal] = useState<PlannedMealDetail | null>(null);
   const [loading, setLoading] = useState(true);

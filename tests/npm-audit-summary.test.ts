@@ -74,9 +74,9 @@ describe('renderAuditSummary', () => {
     expect(withInfo).toContain('| info | 2 |');
   });
 
-  it('critical が残っている間は PR を止めない参考情報だと書く', () => {
-    expect(markdown).toContain('参考情報です');
-    expect(markdown).toContain('continue-on-error');
+  it('critical があるときは、検査が失敗して PR を止めると書く (#1444 から止める検査)', () => {
+    expect(markdown).toContain('この検査は失敗します (PR を止めます)');
+    expect(markdown).not.toContain('continue-on-error');
   });
 
   it('critical のパッケージだけを内訳に出す (high のパッケージは出さない)', () => {
@@ -105,13 +105,14 @@ describe('renderAuditSummary', () => {
     expect(shellQuote).toContain('`npm audit fix` で直せる');
   });
 
-  it('critical が無いときは、止める検査に切り替えられると書き、内訳は出さない', () => {
+  it('critical が無いときは、0 件で high 以下は止めないと書き、内訳は出さない', () => {
     const none = renderAuditSummary({
       vulnerabilities: { ws: { name: 'ws', severity: 'high', via: [] } },
       metadata: { vulnerabilities: { low: 0, moderate: 0, high: 1, critical: 0, total: 1 } },
     });
     expect(none).toContain('critical の脆弱性は 0 件です');
-    expect(none).toContain('continue-on-error');
+    expect(none).toContain('high 以下は PR を止めません');
+    expect(none).not.toContain('continue-on-error');
     expect(none).not.toContain('### critical の内訳');
     expect(none).toContain('| high | 1 |');
   });

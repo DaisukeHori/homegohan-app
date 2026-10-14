@@ -82,7 +82,8 @@ const EXCLUDED_JOBS: Record<string, Record<string, string>> = {
   [SECURITY_WORKFLOW]: {
     "dependency-review":
       "GitHub の Dependency graph の API (PR の base と head の依存の差分) と GitHub の脆弱性データベースで判定する。ローカルでは同じ判定を再現できない。依存 (package.json / package-lock.json) を変える PR は、CI のこのジョブの緑を待ってからマージする (CLAUDE.md の「マージ前の検査」)",
-    "npm-audit": "止めない検査 (npm audit のステップに continue-on-error)。結果は Summary に出るだけで、PR の判定を変えない",
+    "npm-audit":
+      "npm のレジストリ (GitHub の脆弱性データベースを引く npm audit の API) に問い合わせて判定する。答えは問い合わせた時点の脆弱性データベースで変わり、ローカルの検査の結果として固定できない。依存 (package.json / package-lock.json) を変える PR は、CI のこのジョブの緑を待ってからマージする (CLAUDE.md の「マージ前の検査」。#1444 で本番の依存の critical で止める検査になった)",
     codeql: "止めない検査 (ジョブはアラートで失敗しない)。結果は GitHub の Security タブと Code scanning results に出る。ローカルに同じ解析の環境は無い",
   },
 };

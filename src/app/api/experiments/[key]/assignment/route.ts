@@ -31,9 +31,10 @@ import {
 } from '@/lib/experiments/assignment';
 import { internalError } from '@/lib/api/errors';
 
-type Params = { params: { key: string } };
+type Params = { params: Promise<{ key: string }> };
 
-export async function GET(_request: Request, { params }: Params) {
+export async function GET(_request: Request, props: Params) {
+  const params = await props.params;
   let userId: string;
   try {
     const user = await requireUser();

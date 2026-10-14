@@ -34,9 +34,10 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-type RouteContext = { params: { id: string } };
+type RouteContext = { params: Promise<{ id: string }> };
 
-export async function GET(request: Request, { params }: RouteContext) {
+export async function GET(request: Request, props: RouteContext) {
+  const params = await props.params;
   const logger = createLogger('GET /api/admin/inquiries/[id]', generateRequestId());
 
   let actor;
@@ -56,7 +57,7 @@ export async function GET(request: Request, { params }: RouteContext) {
   }
   const id = idResult.data;
 
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data, error } = await supabase
     .from('inquiries')
     .select(INQUIRY_COLUMNS)
@@ -113,7 +114,7 @@ async function updateInquiry(request: Request, { params }: RouteContext, method:
   }
   const log = logger.withUser(actor.id);
 
-  const idResult = inquiryIdSchema.safeParse(params.id);
+  const idResult = inquiryIdSchema.safeParse((await params).id);
   if (!idResult.success) {
     return errorResponse(400, 'VALIDATION_ERROR', 'id が不正です', idResult.error.flatten());
   }
@@ -132,7 +133,7 @@ async function updateInquiry(request: Request, { params }: RouteContext, method:
   const input = bodyResult.data;
 
   // 更新対象は inquiries の RLS (admin / super_admin / support のみ UPDATE 可) に任せ、本人のセッションで行う
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data: currentData, error: readError } = await supabase
     .from('inquiries')
     .select(INQUIRY_COLUMNS)

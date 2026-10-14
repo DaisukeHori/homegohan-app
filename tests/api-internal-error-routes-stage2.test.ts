@@ -72,11 +72,8 @@ function makeClient() {
 }
 
 vi.mock('@/lib/supabase/server', () => ({
-  // createClient() は async の route と同期の route の両方がある。await しても、しなくても同じクライアントになるようにする
-  createClient: () => {
-    const client = makeClient();
-    return Object.assign(Promise.resolve(client), client);
-  },
+  // createClient() は async (Next 15 では cookies() が Promise のため)。モックも Promise を返し、await を忘れた呼び出しはここで落ちるようにする
+  createClient: async () => makeClient(),
 }));
 
 // 構造化ログ: app_logs へは書かず、呼び出しを記録する

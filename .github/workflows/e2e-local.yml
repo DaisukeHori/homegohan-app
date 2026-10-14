@@ -73,7 +73,7 @@ jobs:
       - name: Build and start the app
         env:
           # next/font/google がビルド時に Google Fonts へ取りに行かないようにする (#1330)。
-          # GitHub Actions からだと拡張子の無いフォント URL が返ることがあり、Next.js 14 の読み込み処理が
+          # GitHub Actions からだと拡張子の無いフォント URL が返ることがあり、Next.js (14 / 15) の読み込み処理が
           # TypeError で落ちてビルドが失敗していた。e2e はフォントの見た目に依存しないので、モックで代替フォント表示にする。
           # 詳細は tests/e2e/fixtures/google-fonts-mock.cjs。本番 (Vercel) のビルドには関係しない。
           NEXT_FONT_GOOGLE_MOCKED_RESPONSES: ${{ github.workspace }}/tests/e2e/fixtures/google-fonts-mock.cjs

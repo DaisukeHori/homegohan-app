@@ -7,9 +7,16 @@
  * 2 ゲートが無条件で素通りしていた (fail-open)。menu-plans/add と共通のヘルパー
  * (src/lib/handson-tour/sandbox-eligibility.ts) に集約して直したので、拒否パスが実効化することを固定する。
  *
+ * #1604: お試しの記録は meals (is_sandbox = true) の 1 行に入れ、user_daily_meals / planned_meals には書かない
+ * (設計書 09-onboarding-handson-tour 13-integration §2.7)。以前は今日の user_daily_meals をお試しで作っていて、
+ *   - 同じ日に本物の記録をすると、UNIQUE(user_id, day_date) でお試しの日にぶら下がり、集計から外れた
+ *   - 別の日にやり直すと uniq_user_sandbox_daily_meal (利用者ごとに 1 行) で insert が一意違反になり 500 だった
+ *
  * Test patterns:
- *   1. 200 — sandbox 適格ユーザーが写真から食事を追加 → user_daily_meals は is_sandbox=true、
- *            planned_meals は source_type='handson_tour' で実際に INSERT される
+ *   1. 200 — sandbox 適格ユーザーが写真から食事を追加 → meals に is_sandbox=true の行が 1 行入り、
+ *            user_daily_meals は作られない
+ *   1b. 200 — 前の日のお試しの行が残っていても (中断して別の日にやり直し)、行を増やさずに使い回す (#1604)
+ *   1c. お試しの保存のあと同じ日に本物の記録をすると、is_sandbox=false の日に入る (#1604)
  *   2. 401 — 認証なし
  *   3. 403 — admin ロールは sandbox_not_eligible (admin_role) で拒否され、何も書き込まれない
  *   4. 409 — ツアー完了済みユーザーは sandbox_not_eligible (already_finished) で拒否され、何も書き込まれない
@@ -65,6 +72,22 @@ async function postAddFromPhoto(
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
 }
 
+/** 前の日にお試しの記録をした時刻 (中断して別の日にやり直す場合の模擬。日付は比べず、更新後の時刻より前であることだけを見る) */
+const PREVIOUS_DAY_EATEN_AT = '2020-01-01T12:00:00.000Z';
+
+type SandboxMealRow = { id: string; meal_type: string; memo: string | null; photo_url: string | null; eaten_at: string };
+
+/** 対象ユーザーの meals のお試しの行 (is_sandbox = true) */
+async function sandboxMeals(userId: string): Promise<SandboxMealRow[]> {
+  const { data, error } = await adminClient()
+    .from('meals')
+    .select('id, meal_type, memo, photo_url, eaten_at')
+    .eq('user_id', userId)
+    .eq('is_sandbox', true);
+  expect(error).toBeNull();
+  return (data ?? []) as SandboxMealRow[];
+}
+
 /** 対象ユーザーの user_daily_meals の件数 (拒否されたリクエストでは 0 のままのはず) */
 async function countDailyMeals(userId: string): Promise<number> {
   const { count, error } = await adminClient()
@@ -81,11 +104,11 @@ describe.skipIf(!shouldRunIntegration())(
     let user: TestUser;
 
     afterEach(async () => {
-      // user_daily_meals / planned_meals は auth user の削除で cascade される
+      // meals / user_daily_meals / planned_meals は auth user の削除で cascade される
       if (user) await cleanupTestUser(user.id);
     });
 
-    it('1. 200 — sandbox 適格ユーザーの保存で user_daily_meals (is_sandbox=true) と planned_meals が INSERT される (#1109)', async () => {
+    it('1. 200 — sandbox 適格ユーザーの保存で meals に is_sandbox=true の行が入り、user_daily_meals は作られない (#1109 / #1604)', async () => {
       // 非 admin・ツアー未完了・既存 activity なし = sandbox 適格な fixture であること
       user = await createTestUser({ onboardingCompleted: true });
 
@@ -93,29 +116,58 @@ describe.skipIf(!shouldRunIntegration())(
 
       expect(status).toBe(200);
       expect(body.success).toBe(true);
-      expect(body.dailyMealId).toBeTruthy();
+      expect(body.sandbox).toBe(true);
       expect(body.mealId).toBeTruthy();
 
-      const client = adminClient();
-      const { data: day, error: dayError } = await client
-        .from('user_daily_meals')
-        .select('id, user_id, day_date, is_sandbox')
-        .eq('id', body.dailyMealId as string)
-        .single();
-      expect(dayError).toBeNull();
-      expect(day?.user_id).toBe(user.id);
-      expect(day?.day_date).toBe(DAY_DATE);
-      expect(day?.is_sandbox).toBe(true);
+      const rows = await sandboxMeals(user.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe(body.mealId);
+      expect(rows[0].meal_type).toBe('dinner');
+      expect(rows[0].memo).toBe('鶏の唐揚げ');
+      expect(rows[0].photo_url).toBeNull();
+      expect(await countDailyMeals(user.id)).toBe(0);
+    });
 
-      const { data: meal, error: mealError } = await client
-        .from('planned_meals')
-        .select('id, daily_meal_id, meal_type, source_type')
-        .eq('id', body.mealId as string)
-        .single();
-      expect(mealError).toBeNull();
-      expect(meal?.daily_meal_id).toBe(body.dailyMealId);
-      expect(meal?.meal_type).toBe('dinner');
-      expect(meal?.source_type).toBe('handson_tour');
+    it('1b. 200 — 前の日のお試しの行が残っていてもやり直しの保存は成功し、行は 1 行のまま食べた時刻が更新される (#1604)', async () => {
+      user = await createTestUser({ onboardingCompleted: true });
+      const client = adminClient();
+      const { error: seedError } = await client.from('meals').insert({
+        user_id: user.id,
+        eaten_at: PREVIOUS_DAY_EATEN_AT,
+        meal_type: 'lunch',
+        is_sandbox: true,
+      });
+      expect(seedError).toBeNull();
+      const [seeded] = await sandboxMeals(user.id);
+
+      const { status, body } = await postAddFromPhoto(user.accessToken, { ...PHOTO_BODY, sandbox: true });
+
+      expect(status, JSON.stringify(body)).toBe(200);
+      expect(body.mealId).toBe(seeded.id);
+      const rows = await sandboxMeals(user.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].meal_type).toBe('dinner');
+      expect(Date.parse(rows[0].eaten_at)).toBeGreaterThan(Date.parse(PREVIOUS_DAY_EATEN_AT));
+      expect(await countDailyMeals(user.id)).toBe(0);
+    });
+
+    it('1c. お試しの保存のあと同じ日に本物の記録をすると、is_sandbox=false の日に入る (お試しの日にぶら下がらない。#1604)', async () => {
+      user = await createTestUser({ onboardingCompleted: true });
+
+      const sandboxSaved = await postAddFromPhoto(user.accessToken, { ...PHOTO_BODY, sandbox: true });
+      expect(sandboxSaved.status).toBe(200);
+
+      const { status, body } = await postAddFromPhoto(user.accessToken, PHOTO_BODY, 'normal');
+
+      expect(status, JSON.stringify(body)).toBe(200);
+      const { data: days, error } = await adminClient()
+        .from('user_daily_meals')
+        .select('id, day_date, is_sandbox')
+        .eq('user_id', user.id);
+      expect(error).toBeNull();
+      expect(days).toEqual([{ id: body.dailyMealId, day_date: DAY_DATE, is_sandbox: false }]);
+      // お試しの行は meals に残ったまま (本物の記録とは別の行)
+      expect(await sandboxMeals(user.id)).toHaveLength(1);
     });
 
     it('2. 401 — 認証なしリクエスト', async () => {

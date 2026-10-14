@@ -17,7 +17,7 @@ export async function GET(request: Request) {
   )
 
   // クッキー情報をログ（PKCE code verifier の確認）
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
   const allCookies = cookieStore.getAll()
   console.log('[auth/callback] Cookies:', allCookies.map(c => ({ name: c.name, hasValue: !!c.value })))
   const codeVerifier = allCookies.find(c => c.name.includes('code_verifier'))
@@ -52,7 +52,7 @@ export async function GET(request: Request) {
 
   console.log('[auth/callback] Auth params:', { code: !!code, token_hash: !!token_hash, token: !!token, type })
 
-  const supabase = createClient()
+  const supabase = await createClient()
   let authSuccess = false
 
   // OAuth/PKCE コールバック（code パラメータ）

@@ -3,10 +3,8 @@ import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 
 // コメント一覧取得 (user_id は公開しない)
-export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const supabase = await createClient();
 
   // 未認証は 401
@@ -41,10 +39,8 @@ export async function GET(
 }
 
 // コメント追加
-export async function POST(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

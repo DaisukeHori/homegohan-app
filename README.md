@@ -68,7 +68,7 @@
 
 ```
 homegohan/
-├── src/               # Next.js 14 Web アプリ (App Router)
+├── src/               # Next.js 15 Web アプリ (App Router)
 ├── apps/mobile/       # Expo / React Native モバイルアプリ (iOS / Android)
 ├── supabase/
 │   ├── functions/     # Supabase Edge Functions (Deno)

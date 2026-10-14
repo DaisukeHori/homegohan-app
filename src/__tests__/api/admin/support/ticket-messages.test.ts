@@ -142,7 +142,7 @@ function postRequest(body: unknown) {
   }) as unknown as NextRequest;
 }
 
-const post = (body: unknown) => POST(postRequest(body), { params: { id: TICKET_ID } });
+const post = (body: unknown) => POST(postRequest(body), { params: Promise.resolve({ id: TICKET_ID }) });
 const postExternal = (body: string = REPLY_BODY) => post({ body, is_internal: false });
 const postInternal = (body: string = INTERNAL_NOTE) => post({ body, is_internal: true });
 

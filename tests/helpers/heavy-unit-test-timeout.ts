@@ -7,8 +7,8 @@
  *     そのうち 2 本 (menu-generation-range-1482・super-admin-llm-usage-route) は、#1498 で数千行の組み立てをやめ
  *     (集計を DB の関数 llm_usage_summary に移し、行を数える検査は実 DB の結合テストへ)、1 件の所要の最大が
  *     M2 の 1 分負荷 45 のときで 7ms / 24ms になったので一覧から外した。下の HEAVY_UNIT_TEST_FILES は残りの 16 本。
- *     tests/eslint-react19-guard.test.ts は入れない: 落ちたのは 1 回だけで、ファイル自身が beforeAll に付けた 120 秒の
- *     時間切れだった (テストの所要は最大 618ms)。個別の時間切れはこの延長より優先されるので、一覧に入れても効かない。
+ *     (集計の当時あった tests/eslint-react19-guard.test.ts も時間切れで 1 回落ちたが、ファイル自身の beforeAll の
+ *     時間切れで、この延長では効かないので入れなかった。#1444 で Next 15 に上げたときに、このテストは消した)
  *     中身は、数千行のデータの集計・1,500 通りのでたらめな入力・TypeScript の構文木によるリポジトリの走査・
  *     Edge Function の動的 import・画面の描画など、CPU を使うもの。
  *   - M2 の 1 分負荷が 112 のときの 1 件の所要は、M1 で流したときの最大 36 倍だった
