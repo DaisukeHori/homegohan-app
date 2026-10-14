@@ -101,7 +101,6 @@ export const MAESTRO_MISSING_TESTID_ALLOWLIST: readonly MissingTestIdAllowance[]
   { flow: "flows/health/05-goal-progress-top2.yaml", id: "home-health-card", reason: R.HOME_WEBVIEW },
   { flow: "flows/health/06-graph-month-weight.yaml", id: "home-screen", reason: R.HOME_WEBVIEW },
   { flow: "flows/health/06-graph-month-weight.yaml", id: "home-health-card", reason: R.HOME_WEBVIEW },
-  { flow: "flows/health/06-graph-month-weight.yaml", id: "health-graphs-button", reason: R.NOT_IN_SOURCE_OUT_OF_SCOPE },
   { flow: "flows/health/07-checkup-high-risk-badge.yaml", id: "home-screen", reason: R.HOME_WEBVIEW },
   { flow: "flows/health/07-checkup-high-risk-badge.yaml", id: "home-health-card", reason: R.HOME_WEBVIEW },
   { flow: "flows/health/08-validation-empty-fields.yaml", id: "home-screen", reason: R.HOME_WEBVIEW },

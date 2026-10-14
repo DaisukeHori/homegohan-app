@@ -9,7 +9,14 @@
 //       "x" / 'x' / `x`          → そのままの testID
 //       `prefix-${...}`           → テンプレート。${...} を「1 文字以上の何か」とした正規表現にする
 //       名前が …Prefix の右辺の "x" → x と、x-<何か> (testIDPrefix を使う側が `${testIDPrefix}-${…}` で組み立てる)
-//   - 右辺の { … } は、括弧の対応で 1 式ぶんを読む (三項演算子・オブジェクトの中の testID: "x" も拾う)
+//   - 右辺の読み方は、始まりの文字で決める (readExpressionLiterals)
+//       文字列で始まる   → その文字列 1 つ (testID="x"・testID: "x")
+//       { で始まる       → 対応の取れた { … } (testID={cond ? "a" : "b"}・オブジェクトの中の testID: "x")
+//       それ以外で始まる → 式の終わりまで (const testID = cond ? "a" : "b"; ・ testID: cond ? "a" : "b", ・ [ … ] など)。
+//                          式の終わり = 括弧の外の ; か , ・ 開いていない閉じ括弧の手前・括弧の外の改行で、
+//                          次の行が名前の行より深く字下げされていないとき
+//   - 比べる演算子 (=== !== == !=) の両側の文字列は条件なので集めない (a.href === "/health/graphs" ? … ・ typeof x === 'string')
+//   - コメント (// … と /* … */) の中は読まない (空白にしてから読む)。括弧の対応は文字列の中を数えない
 //
 // flow の id の抜き出し方
 //   - ブロックの書き方 (- tapOn: の下の id: x) と、フローの書き方 (- tapOn: { id: "x" }・below: { id: "x" } の入れ子・
@@ -203,60 +210,164 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** text[start] から始まる 1 式ぶん (文字列 1 つ、または対応の取れた { … }) を返す。読めなければ null */
-function readExpression(text: string, start: number): string | null {
-  const c = text[start];
-  if (c === '"' || c === "'" || c === "`") {
-    const end = text.indexOf(c, start + 1);
-    return end === -1 ? null : text.slice(start, end + 1);
-  }
-  if (c === "{") {
-    let depth = 0;
-    for (let i = start; i < text.length; i++) {
-      if (text[i] === "{") depth++;
-      else if (text[i] === "}") {
-        depth--;
-        if (depth === 0) return text.slice(start, i + 1);
-      }
-    }
-  }
-  return null;
-}
+const QUOTE_CHARS = new Set(['"', "'", "`"]);
+const OPEN_BRACKETS = new Set(["(", "[", "{"]);
+const CLOSE_BRACKETS = new Set([")", "]", "}"]);
+/** 比べる演算子 (=== !== == !=) の直前・直後。その側にある文字列は条件で、testID の値ではない */
+const COMPARED_BEFORE_RE = /[=!]==?\s*$/;
+const COMPARED_AFTER_RE = /^\s*[=!]==?/;
+/** 型注釈に使う文字だけか (fieldTestIdMap: Partial<Record<keyof FormData, string>> = … の「: と = の間」) */
+const TYPE_ANNOTATION_RE = /^[\w\s.,|&<>[\]()]+$/;
 
-/** 名前のあと (= / : / 型注釈のあとの =) から、右辺の式の始まりの位置を返す。右辺が読めなければ -1 */
-function expressionStart(text: string, afterName: number): number {
-  const rest = text.slice(afterName);
-  const direct = /^\s*(?:=(?![=>])|:)\s*/.exec(rest);
-  if (!direct) return -1;
-  const at = afterName + direct[0].length;
-  if (/["'`{]/.test(text[at] ?? "")) return at;
-  // 型注釈 (例: fieldTestIdMap: Partial<Record<…>> = { … })。同じ行の = のあとを読む
-  if (direct[0].includes(":")) {
-    const lineEnd = text.indexOf("\n", afterName);
-    const line = text.slice(afterName, lineEnd === -1 ? text.length : lineEnd);
-    const assign = /[^=!<>]=(?![=>])\s*/.exec(line);
-    if (assign) {
-      const pos = afterName + assign.index + assign[0].length;
-      if (/["'`{]/.test(text[pos] ?? "")) return pos;
+/** 文字列リテラル (" ' `) の 1 つ */
+type SourceLiteral = { template: boolean; body: string };
+
+/** text[i] の引用符で始まる文字列の、閉じ引用符の位置。" と ' は同じ行の中だけ探す (JS の文字列は改行を含まない)。無ければ -1 */
+function stringEnd(text: string, i: number): number {
+  const q = text[i];
+  for (let j = i + 1; j < text.length; j++) {
+    const c = text[j];
+    if (c === "\\") {
+      j++;
+      continue;
     }
+    if (c === q) return j;
+    if (c === "\n" && q !== "`") return -1;
   }
   return -1;
 }
 
-/** ソースのファイルの中身から、testID を集める (collectSourceTestIds の 1 ファイル分) */
-export function addTestIdsFromSource(text: string, into: SourceTestIds): void {
+function lineStartOf(text: string, i: number): number {
+  return text.lastIndexOf("\n", i - 1) + 1;
+}
+
+function lineEndOf(text: string, i: number): number {
+  const end = text.indexOf("\n", i);
+  return end === -1 ? text.length : end;
+}
+
+/** text[from] からの、次の空でない行が baseIndent より深く字下げされているか (= 式が次の行に続いているか) */
+function continuesOnNextLine(text: string, from: number, baseIndent: number): boolean {
+  let at = from;
+  while (at < text.length) {
+    const end = lineEndOf(text, at);
+    const line = text.slice(at, end);
+    if (line.trim() !== "") return indentOf(line) > baseIndent;
+    at = end + 1;
+  }
+  return false;
+}
+
+/** 文字列リテラル text[i..end] が、比べる演算子の片側 (条件) か */
+function isComparedLiteral(text: string, i: number, end: number): boolean {
+  return (
+    COMPARED_BEFORE_RE.test(text.slice(lineStartOf(text, i), i)) ||
+    COMPARED_AFTER_RE.test(text.slice(end + 1, lineEndOf(text, end + 1)))
+  );
+}
+
+/**
+ * ソースのコメント (// … と /* … *\/) を空白に置き換える (位置と改行はそのまま)。
+ * 文字列 (" ' `) の中の // と、\ のすぐあとの文字 (正規表現の /\// など) はコメントの始まりにしない。
+ * コメントの中の「testID: …」の文は testID ではない (読むと、文の中の閉じない括弧で式の終わりを見失い、後ろの文の文字列まで拾う)
+ */
+export function blankSourceComments(text: string): string {
+  const chunks: string[] = [];
+  let copiedUpTo = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "\\") {
+      i++;
+      continue;
+    }
+    if (QUOTE_CHARS.has(c)) {
+      const end = stringEnd(text, i);
+      if (end !== -1) i = end;
+      continue;
+    }
+    if (c !== "/" || (text[i + 1] !== "/" && text[i + 1] !== "*")) continue;
+    const close = text[i + 1] === "*" ? text.indexOf("*/", i + 2) : -1;
+    const end = text[i + 1] === "/" ? lineEndOf(text, i) : close === -1 ? text.length : close + 2;
+    chunks.push(text.slice(copiedUpTo, i), text.slice(i, end).replace(/[^\n]/g, " "));
+    copiedUpTo = end;
+    i = end - 1;
+  }
+  chunks.push(text.slice(copiedUpTo));
+  return chunks.join("");
+}
+
+/**
+ * text[start] から始まる右辺の式を読み、中の文字列リテラル (比べる演算子の片側は除く) を返す。
+ * 読み方は、始まりの文字で決める (ファイルの先頭のコメントの「右辺の読み方」)。text はコメントを空白にしたもの (blankSourceComments)。
+ * baseIndent = 名前のある行の字下げ (式が次の行に続いているかの判定に使う)
+ */
+function readExpressionLiterals(text: string, start: number, baseIndent: number): SourceLiteral[] {
+  const first = text[start];
+  if (first === undefined) return [];
+  if (QUOTE_CHARS.has(first)) {
+    const end = stringEnd(text, start);
+    return end === -1 ? [] : [{ template: first === "`", body: text.slice(start + 1, end) }];
+  }
+  /** { で始まる式 (JSX の testID={…}) は、対応の取れた { … } だけを読む。中の ( [ は数えない (正規表現の /\(/ などで崩れないように) */
+  const braceOnly = first === "{";
+  const literals: SourceLiteral[] = [];
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (QUOTE_CHARS.has(c)) {
+      const end = stringEnd(text, i);
+      if (end === -1) continue;
+      if (!isComparedLiteral(text, i, end)) literals.push({ template: c === "`", body: text.slice(i + 1, end) });
+      i = end;
+      continue;
+    }
+    const opens = braceOnly ? c === "{" : OPEN_BRACKETS.has(c);
+    const closes = braceOnly ? c === "}" : CLOSE_BRACKETS.has(c);
+    if (opens) {
+      depth++;
+    } else if (closes) {
+      if (depth === 0) break;
+      depth--;
+      if (braceOnly && depth === 0) break;
+    } else if (!braceOnly && depth === 0) {
+      if (c === ";" || c === ",") break;
+      if (c === "\n" && !continuesOnNextLine(text, i + 1, baseIndent)) break;
+    }
+  }
+  return literals;
+}
+
+/** 名前のすぐあとの = か : (== => は除く)。sticky で、名前の次の位置から見る */
+const ASSIGN_OR_COLON_RE = /\s*(?:=(?![=>])|:)\s*/y;
+
+/** 名前のあと (= / : / 型注釈のあとの =) から、右辺の式の始まりの位置を返す。右辺が無ければ -1 */
+function expressionStart(text: string, afterName: number): number {
+  ASSIGN_OR_COLON_RE.lastIndex = afterName;
+  const direct = ASSIGN_OR_COLON_RE.exec(text);
+  if (!direct) return -1;
+  const at = afterName + direct[0].length;
+  if (QUOTE_CHARS.has(text[at] ?? "") || text[at] === "{" || !direct[0].includes(":")) return at;
+  // 型注釈 (例: fieldTestIdMap: Partial<Record<…>> = { … })。同じ行で、: と = の間が型の書き方だけなら、= のあとを読む
+  const line = text.slice(at, lineEndOf(text, at));
+  const assign = /(?<![=!<>])=(?![=>])\s*/.exec(line);
+  if (assign && TYPE_ANNOTATION_RE.test(line.slice(0, assign.index))) return at + assign.index + assign[0].length;
+  return at;
+}
+
+/** ソースのファイルの中身から、testID を集める (collectSourceTestIds の 1 ファイル分)。コメントの中は読まない */
+export function addTestIdsFromSource(source: string, into: SourceTestIds): void {
+  const text = blankSourceComments(source);
   const nameRe = /\b(\w*test_?id\w*)\b|\bdata-testid\b/gi;
   let m: RegExpExecArray | null;
   while ((m = nameRe.exec(text)) !== null) {
     const name = m[1] ?? "data-testid";
     const start = expressionStart(text, m.index + m[0].length);
     if (start === -1) continue;
-    const expr = readExpression(text, start);
-    if (expr === null) continue;
+    const baseIndent = indentOf(text.slice(lineStartOf(text, m.index), m.index));
     const isPrefix = /prefix$/i.test(name);
-    for (const lit of expr.matchAll(/"([^"\n]*)"|'([^'\n]*)'|`([^`]*)`/g)) {
-      const plain = lit[1] ?? lit[2];
-      if (plain !== undefined) {
+    for (const lit of readExpressionLiterals(text, start, baseIndent)) {
+      if (!lit.template) {
+        const plain = lit.body;
         if (!/^[\w:-]+$/.test(plain)) continue;
         into.exact.add(plain);
         if (isPrefix) {
@@ -265,7 +376,7 @@ export function addTestIdsFromSource(text: string, into: SourceTestIds): void {
         }
         continue;
       }
-      const template = lit[3];
+      const template = lit.body;
       const parts = template.split(/\$\{[^}]*\}/);
       if (parts.length === 1) {
         if (/^[\w:-]+$/.test(template)) into.exact.add(template);
