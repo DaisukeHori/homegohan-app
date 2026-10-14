@@ -47,6 +47,8 @@ jest.mock(
   { virtual: true },
 );
 jest.mock('../../src/lib/pushNotifications', () => ({ ensurePushTokenRegistered: jest.fn() }));
+// 通知の受け取り口 (#1049 F7-11) は __tests__/components/NotificationRouter.test.tsx で確かめる
+jest.mock('../../src/components/NotificationRouter', () => ({ NotificationRouter: () => null }));
 jest.mock('../../src/lib/error-report', () => ({ reportBoundaryError: jest.fn() }));
 jest.mock('@expo-google-fonts/noto-sans-jp', () => ({
   NotoSansJP_400Regular: 1,
