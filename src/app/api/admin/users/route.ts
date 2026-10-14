@@ -1,12 +1,16 @@
 /**
  * GET /api/admin/users — ユーザー一覧・検索
  * operator/02-api-spec.md §4 準拠
+ *
+ * #1326: 1 件以上返した検索は、1 回の検索 = 1 行で admin.user.list を監査ログに残す
+ * (検索条件と件数だけ。返した行の ID や値は入れない)。
  */
 
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
+import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
 import { UsersSearchSchema } from '@/lib/admin/users-schemas';
 import { canViewUserEmail, fetchUserEmails, findUserIdsByEmail } from '@/lib/admin/user-emails';
 import { buildUserSearchFilter } from '@/lib/admin/users-search';
@@ -186,6 +190,38 @@ export async function GET(request: Request) {
     meal_count: 0, // 集計は別クエリが必要
     organization_id: u.organization_id,
   }));
+
+  // #1326: 一覧・検索の閲覧を、1 回の検索 = 1 行で監査ログに残す。検索条件 (検索語を含む) と件数だけを入れ、
+  // 返した行の ID や値は入れない。0 件のときは情報を返していないので記録しない (07-audit-monitoring.md §4.1.1)。
+  // 記録は本人の権限の client で行う (RLS の audit_logs_insert_admins は actor_id = auth.uid() を強制する)。
+  // 記録に失敗しても一覧は返す (失敗は db-logger に error で残る)。
+  if (users.length > 0) {
+    await recordAdminAudit({
+      supabase: await createClient(),
+      actorId: actor.id,
+      actionType: 'admin.user.list',
+      targetType: 'user',
+      details: buildListViewDetails(
+        {
+          q: params.q?.trim(),
+          plan: params.plan,
+          role: params.role,
+          status: params.status,
+          registered_from: params.registered_from,
+          registered_to: params.registered_to,
+          last_login_before: params.last_login_before,
+          sort: params.sort,
+          order: params.order,
+          page: params.page,
+          per_page: params.per_page,
+        },
+        users.length,
+        count ?? null,
+      ),
+      request,
+      routeName: LOG_SOURCE,
+    });
+  }
 
   return NextResponse.json(
     {

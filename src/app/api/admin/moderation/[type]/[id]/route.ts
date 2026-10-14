@@ -1,5 +1,6 @@
 /**
  * GET  /api/admin/moderation/{type}/{id} — 個別モデレーションアイテム取得
+ *      (#1326: 返すたびに admin.moderation.view を監査ログに残す)
  * POST /api/admin/moderation/{type}/{id} — 個別モデレーション (承認/却下)
  * PUT  /api/admin/moderation/{type}/{id} — モデレーション個別解決 (E2E: w5-12-admin-adversarial G-28, G-29, G-30)
  * operator/02-api-spec.md §5 準拠
@@ -108,9 +109,10 @@ function describeError(err: unknown): string {
   return typeof message === 'string' && message ? message : String(err);
 }
 
-export async function GET(_request: Request, { params }: Params) {
+export async function GET(request: Request, { params }: Params) {
+  let actor;
   try {
-    await requireRole(['admin', 'super_admin', 'content_moderator']);
+    actor = await requireRole(['admin', 'super_admin', 'content_moderator']);
   } catch (err) {
     if (err instanceof AuthError) {
       return NextResponse.json(
@@ -153,6 +155,27 @@ export async function GET(_request: Request, { params }: Params) {
     if (!item) {
       return notFoundResponse();
     }
+
+    // #1326: 通報されたコンテンツ (写真など) を返す前に、誰がどの通報を見たかを監査ログに残す。
+    // 対象はコンテンツの持ち主 (07-audit-monitoring.md §4.1.1: 情報を見られた本人)。持ち主が分からない
+    // (コンテンツが消えた等) ときは通報そのもの。details は通報・コンテンツの ID と返した項目名だけ。
+    // 記録は本人の権限の client で行い (RLS の audit_logs_insert_admins)、失敗しても閲覧は止めない
+    await recordAdminAudit({
+      supabase: await createClient(),
+      actorId: actor.id,
+      actionType: 'admin.moderation.view',
+      targetId: item.user_id ?? id,
+      targetType: item.user_id ? 'user' : `moderation_item:${type}`,
+      details: {
+        moderation_type: type,
+        flag_id: id,
+        content_id: item.content_id,
+        viewed_fields: Object.keys(item),
+      },
+      request,
+      routeName: 'api/admin/moderation/[type]/[id] GET',
+    });
+
     return NextResponse.json({ data: item });
   } catch (err) {
     console.error('[api/admin/moderation/[type]/[id]] GET error:', err instanceof Error ? err.message : err);
