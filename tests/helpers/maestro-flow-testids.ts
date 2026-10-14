@@ -3,25 +3,29 @@
 // ソース (apps/mobile と src) に実在する testID と突き合わせる (#1552)。
 // 使う側: tests/maestro-flow-testids.test.ts
 //
-// ソースの testID の集め方
-//   - 名前に testID / testId / testid を含むもの (testID・tabBarButtonTestID・inputTestID・data-testid・
-//     fieldTestIdMap・testIDPrefix など) の右辺 (= や : のあと。型注釈があればその後の =) にある文字列を集める
-//       "x" / 'x' / `x`          → そのままの testID
-//       `prefix-${...}`           → テンプレート。${...} を「1 文字以上の何か」とした正規表現にする
-//       名前が …Prefix の右辺の "x" → x と、x-<何か> (testIDPrefix を使う側が `${testIDPrefix}-${…}` で組み立てる)
-//   - 右辺の読み方は、始まりの文字で決める (readExpressionLiterals)
-//       文字列で始まる   → その文字列 1 つ (testID="x"・testID: "x")
-//       { で始まる       → 対応の取れた { … } (testID={cond ? "a" : "b"}・fieldTestIdMap = { weight: "field-weight" } のような対応表)
-//       それ以外で始まる → 式の終わりまで (const testID = cond ? "a" : "b"; ・ testID: cond ? "a" : "b", ・ [ … ] など)。
-//                          式の終わり = 括弧の外の ; か , ・ 開いていない閉じ括弧の手前・括弧の外の改行で、
-//                          次の行が名前の行より深く字下げされていないとき
-//   - 比べる演算子 (=== !== == !=) の両側の文字列は条件なので集めない (a.href === "/health/graphs" ? … ・ typeof x === 'string')
-//   - コメント (// … と /* … */) の中は読まない (空白にしてから読む)。括弧の対応は文字列の中を数えない
+// どちらの側も、文字を数えて読むのではなく構文として読む (ソース = TypeScript の構文木、flow = YAML のパーサ)。
+// コメント・文字列の中身・式の終わり・字下げは、パーサがそのまま扱う。
 //
-// flow の id の抜き出し方
-//   - ブロックの書き方 (- tapOn: の下の id: x) と、フローの書き方 (- tapOn: { id: "x" }・below: { id: "x" } の入れ子・
-//     複数行に渡る { … }) の両方を読む
-//   - コメント (#) と、ブロックスカラー (| / > で始まる複数行の文字列。evalScript の JS など) の中身は読まない
+// ソースの testID の集め方 (TypeScript の構文木。ts.createSourceFile)
+//   - 名前に testID / testId / testid を含むもの (testID・tabBarButtonTestID・inputTestID・data-testid・
+//     fieldTestIdMap・testIDPrefix など) の値を見る。名前と値の組:
+//       JSX の属性 (testID="x"・testID={…}) / オブジェクトのプロパティ (testID: …) / 変数 (const testID = …) /
+//       引数・分割代入の既定値 ({ testID = … }) / クラスのフィールド / 代入 (testID = …・x.testID = …)
+//   - 値は、testID になりうる部分だけをたどる
+//       ( … )・as・satisfies・<T>x・x!・JSX の { … } → 中身
+//       三項 (cond ? a : b) → a と b (cond は条件なので見ない。a === "x" の "x" はここで外れる)
+//       ?? || && → 左右
+//       [ … ] → 要素 / { … } → プロパティの値
+//   - たどった先の文字列
+//       "x" / 'x' / `x`              → そのままの testID
+//       `prefix-${...}`               → テンプレート。${...} を「1 文字以上の何か」とした正規表現にする
+//       名前が …Prefix の右辺の "x"     → x と、x-<何か> (testIDPrefix を使う側が `${testIDPrefix}-${…}` で組み立てる)
+//
+// flow の id の抜き出し方 (YAML のパーサ。js-yaml の loadAll)
+//   - すべての文書をたどり、キーが id の値を出てきた順に集める。ブロックの書き方 (- tapOn: の下の id: x) も
+//     フローの書き方 (- tapOn: { id: "x" }・below: { id: "x" } の入れ子) も同じ構造になる
+//   - コメントはパーサが捨て、ブロックスカラー (| / > の複数行の文字列。evalScript の JS など) は 1 つの文字列なので中を見ない
+//   - 値はすべて文字列として読む (FAILSAFE_SCHEMA)。maestro は id を文字列として比べるので、id: 2024 も "2024" として扱う
 //
 // flow の id の扱い
 //   - maestro の id は正規表現として全体一致で比べられる。正規表現の記号 (. * + ? など) を含む id は正規表現として、
@@ -30,6 +34,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+
+import yaml from "js-yaml";
+import ts from "typescript";
 
 export const REPO_ROOT = path.resolve(__dirname, "../..");
 
@@ -69,131 +76,29 @@ export function listSourceFiles(root: string = REPO_ROOT): string[] {
   return SOURCE_DIRS.flatMap((d) => walk(path.join(root, d), (f) => SOURCE_FILE_RE.test(f) && !TEST_FILE_RE.test(f)));
 }
 
-/** 引用符を開ける位置か (YAML の引用符つきの値は、行頭・空白・: { [ , のあとでだけ始まる) */
-function opensQuote(line: string, i: number): boolean {
-  const c = line[i];
-  return (c === '"' || c === "'") && (i === 0 || /[\s:{[,]/.test(line[i - 1]));
-}
+/** maestro の flow で、要素の testID を指すキー */
+const FLOW_ID_KEY = "id";
 
 /**
- * 1 行から、引用符の外にある # 以降 (YAML のコメント) を外す。
- * # は行頭か空白のあとにあるときだけコメント
- */
-function stripYamlComment(line: string): string {
-  let quote: '"' | "'" | null = null;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (quote !== null) {
-      if (quote === '"' && c === "\\") i++;
-      else if (c === quote) quote = null;
-      continue;
-    }
-    if (opensQuote(line, i)) quote = c === '"' ? '"' : "'";
-    else if (c === "#" && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i);
-  }
-  return line;
-}
-
-/**
- * id: のあとの値を読む。引用符つきならその中身、無ければ
- * フロー ({ … } の中) では , { } [ ] の手前まで、ブロックでは行末まで (前後の空白は外す)。空なら null
- */
-function readYamlScalar(rest: string, inFlow: boolean): string | null {
-  const s = rest.trimStart();
-  const q = s[0];
-  if (q === '"' || q === "'") {
-    let out = "";
-    for (let i = 1; i < s.length; i++) {
-      const c = s[i];
-      if (q === '"' && c === "\\" && i + 1 < s.length) {
-        out += s[++i];
-        continue;
-      }
-      if (c === q) {
-        // 一重引用符の中の '' は ' 1 文字
-        if (q === "'" && s[i + 1] === "'") {
-          out += "'";
-          i++;
-          continue;
-        }
-        return out === "" ? null : out;
-      }
-      out += c;
-    }
-    return null;
-  }
-  const plain = (inFlow ? s.split(/[,{}[\]]/)[0] : s).trim();
-  return plain === "" ? null : plain;
-}
-
-/** フロー ({ … } の中) の区切り ({ か , ) のすぐあとに id: が来ているか (sticky で、区切りの次の位置から見る) */
-const FLOW_ID_KEY_RE = /\s*id:(?=\s|$)\s*/y;
-/** ブロックの id: (行頭の字下げ・- のあと) */
-const BLOCK_ID_KEY_RE = /^\s*(?:-\s+)?id:(?=\s|$)/;
-/** 複数行に渡るフロー ({ … } の中) の行頭の id: */
-const FLOW_LINE_ID_KEY_RE = /^\s*id:(?=\s|$)/;
-/** ブロックスカラー (| や > で始まる複数行の文字列。evalScript の JS など) を始める行 */
-const BLOCK_SCALAR_START_RE = /:\s*[|>][-+0-9]*\s*$/;
-
-function indentOf(line: string): number {
-  return /^\s*/.exec(line)?.[0].length ?? 0;
-}
-
-/**
- * flow の 1 ファイルから、id: の値を書かれた順に抜き出す (コメント・ブロックスカラーの中身は除く)。
+ * flow の 1 ファイルから、id: の値を書かれた順に抜き出す (YAML のパーサで読む。コメント・ブロックスカラーの中身は除く)。
  * ブロックの書き方 (- tapOn: の下の id: x、below: の下の id: x) と、
- * フローの書き方 (- tapOn: { id: "x" }、{ below: { id: "x" } } のような入れ子、複数行に渡る { … }) の両方を読む
+ * フローの書き方 (- tapOn: { id: "x" }、{ below: { id: "x" } } のような入れ子、複数行に渡る { … }) の両方を読む。
+ * YAML として読めない flow は例外 (maestro も読めない)
  */
-export function extractFlowIds(yaml: string): string[] {
+export function extractFlowIds(text: string): string[] {
   const ids: string[] = [];
-  /** 引用符の外の { [ の深さ (0 = ブロック。行をまたいで持ち越す) */
-  let depth = 0;
-  /** ブロックスカラーの中にいる間、その親の行の字下げ (中身はこれより深く字下げされた行・空行) */
-  let blockScalarIndent: number | null = null;
-  for (const rawLine of yaml.split("\n")) {
-    if (blockScalarIndent !== null) {
-      if (rawLine.trim() === "" || indentOf(rawLine) > blockScalarIndent) continue;
-      blockScalarIndent = null;
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item);
+      return;
     }
-    const line = stripYamlComment(rawLine);
-    const head = (depth === 0 ? BLOCK_ID_KEY_RE : FLOW_LINE_ID_KEY_RE).exec(line);
-    if (head) {
-      const value = readYamlScalar(line.slice(head[0].length), depth > 0);
-      if (value !== null) ids.push(value);
+    if (node === null || typeof node !== "object") return;
+    for (const [key, value] of Object.entries(node)) {
+      if (key === FLOW_ID_KEY && typeof value === "string") ids.push(value);
+      visit(value);
     }
-    let quote: '"' | "'" | null = null;
-    for (let i = 0; i < line.length; i++) {
-      const c = line[i];
-      if (quote !== null) {
-        if (quote === '"' && c === "\\") i++;
-        else if (c === quote) quote = null;
-        continue;
-      }
-      if (opensQuote(line, i)) {
-        quote = c === '"' ? '"' : "'";
-        continue;
-      }
-      if (c === "}" || c === "]") {
-        if (depth > 0) depth--;
-        continue;
-      }
-      if (c === "{" || c === "[") {
-        // ブロックでは、値の始まり (行頭・: のあと・- のあと) の { [ だけがフローを開く (文の途中の { は文字)
-        const before = line.slice(0, i).trimEnd();
-        const startsValue = before === "" || before.endsWith(":") || /(?:^|\s)-$/.test(before);
-        if (depth === 0 && !startsValue) continue;
-        depth++;
-      } else if (c !== "," || depth === 0) {
-        continue;
-      }
-      // ここに来るのは、フローの中の { [ , のすぐあと。id: が続けばその値を読む
-      FLOW_ID_KEY_RE.lastIndex = i + 1;
-      if (FLOW_ID_KEY_RE.exec(line) === null) continue;
-      const value = readYamlScalar(line.slice(FLOW_ID_KEY_RE.lastIndex), true);
-      if (value !== null) ids.push(value);
-    }
-    if (depth === 0 && BLOCK_SCALAR_START_RE.test(line)) blockScalarIndent = indentOf(line);
-  }
+  };
+  for (const doc of yaml.loadAll(text, undefined, { schema: yaml.FAILSAFE_SCHEMA })) visit(doc);
   return ids;
 }
 
@@ -210,189 +115,125 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-const QUOTE_CHARS = new Set(['"', "'", "`"]);
-const OPEN_BRACKETS = new Set(["(", "[", "{"]);
-const CLOSE_BRACKETS = new Set([")", "]", "}"]);
-/** 比べる演算子 (=== !== == !=) の直前・直後。その側にある文字列は条件で、testID の値ではない */
-const COMPARED_BEFORE_RE = /[=!]==?\s*$/;
-const COMPARED_AFTER_RE = /^\s*[=!]==?/;
-/** 型注釈に使う文字だけか (fieldTestIdMap: Partial<Record<keyof FormData, string>> = … の「: と = の間」) */
-const TYPE_ANNOTATION_RE = /^[\w\s.,|&<>[\]()]+$/;
+/** 名前が testID か (testID・tabBarButtonTestID・inputTestID・data-testid・fieldTestIdMap・testIDPrefix など) */
+const TEST_ID_NAME_RE = /test_?id/i;
+/** 名前が …Prefix か (testIDPrefix を使う側が `${testIDPrefix}-${…}` で組み立てる) */
+const PREFIX_NAME_RE = /prefix$/i;
+/** testID として集める文字列の形 (英数字・_ ・: ・-。文の文字列や URL は testID ではない) */
+const TEST_ID_VALUE_RE = /^[\w:-]+$/;
+/** テンプレートの固定の部分に英数字があるか (無ければ何にでも一致するので使わない) */
+const HAS_ALNUM_RE = /[a-z0-9]/i;
 
-/** 文字列リテラル (" ' `) の 1 つ */
-type SourceLiteral = { template: boolean; body: string };
+/** ソースの文字列を直接渡したとき (ファイル名が無いとき) の仮の名前。JSX も型注釈も読める TSX として読む */
+const INLINE_SOURCE_NAME = "inline.tsx";
 
-/** text[i] の引用符で始まる文字列の、閉じ引用符の位置。" と ' は同じ行の中だけ探す (JS の文字列は改行を含まない)。無ければ -1 */
-function stringEnd(text: string, i: number): number {
-  const q = text[i];
-  for (let j = i + 1; j < text.length; j++) {
-    const c = text[j];
-    if (c === "\\") {
-      j++;
-      continue;
-    }
-    if (c === q) return j;
-    if (c === "\n" && q !== "`") return -1;
+/**
+ * 読み方。.ts だけは JSX を読まない (<T>x を型の指定として読む)。
+ * .tsx・.js・.jsx (とファイル名なし) は JSX を読む TSX として読む (JS の JSX も TSX と同じ構文木になる)
+ */
+function scriptKindOf(fileName: string): ts.ScriptKind {
+  return path.extname(fileName) === ".ts" ? ts.ScriptKind.TS : ts.ScriptKind.TSX;
+}
+
+/** 値の左右をたどる演算子 (?? || &&)。比べる演算子 (=== など) の両側は条件なので入れない */
+const EITHER_SIDE_OPERATORS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.QuestionQuestionToken,
+  ts.SyntaxKind.BarBarToken,
+  ts.SyntaxKind.AmpersandAmpersandToken,
+]);
+
+/** 名前の文字列 (識別子・#private・引用符つきのプロパティ名・JSX の a:b)。計算するプロパティ名 ([key]) などは undefined */
+function nameText(name: ts.Node | undefined): string | undefined {
+  if (name === undefined) return undefined;
+  if (ts.isIdentifier(name) || ts.isPrivateIdentifier(name) || ts.isStringLiteral(name)) return name.text;
+  if (ts.isJsxNamespacedName(name)) return `${name.namespace.text}:${name.name.text}`;
+  return undefined;
+}
+
+/** 名前と値の組 (ファイルの先頭のコメントの「名前と値の組」)。node がそのどれでもなければ undefined */
+function namedValue(node: ts.Node): { names: (string | undefined)[]; value: ts.Node | undefined } | undefined {
+  if (ts.isJsxAttribute(node)) return { names: [nameText(node.name)], value: node.initializer };
+  if (ts.isPropertyAssignment(node)) return { names: [nameText(node.name)], value: node.initializer };
+  if (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isPropertyDeclaration(node)) {
+    return { names: [nameText(node.name)], value: node.initializer };
   }
-  return -1;
-}
-
-function lineStartOf(text: string, i: number): number {
-  return text.lastIndexOf("\n", i - 1) + 1;
-}
-
-function lineEndOf(text: string, i: number): number {
-  const end = text.indexOf("\n", i);
-  return end === -1 ? text.length : end;
-}
-
-/** text[from] からの、次の空でない行が baseIndent より深く字下げされているか (= 式が次の行に続いているか) */
-function continuesOnNextLine(text: string, from: number, baseIndent: number): boolean {
-  let at = from;
-  while (at < text.length) {
-    const end = lineEndOf(text, at);
-    const line = text.slice(at, end);
-    if (line.trim() !== "") return indentOf(line) > baseIndent;
-    at = end + 1;
+  // { testID = "x" } と { testID: alias = "x" } (どちらの名前でも testID とみなす)
+  if (ts.isBindingElement(node)) return { names: [nameText(node.propertyName), nameText(node.name)], value: node.initializer };
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    const left = node.left;
+    const name = ts.isIdentifier(left) ? left.text : ts.isPropertyAccessExpression(left) ? nameText(left.name) : undefined;
+    return { names: [name], value: node.right };
   }
-  return false;
+  return undefined;
 }
 
-/** 文字列リテラル text[i..end] が、比べる演算子の片側 (条件) か */
-function isComparedLiteral(text: string, i: number, end: number): boolean {
-  return (
-    COMPARED_BEFORE_RE.test(text.slice(lineStartOf(text, i), i)) ||
-    COMPARED_AFTER_RE.test(text.slice(end + 1, lineEndOf(text, end + 1)))
-  );
+/** そのままの文字列 (引用符・置き換えの無いテンプレート) を testID として足す */
+function addPlainTestId(text: string, isPrefix: boolean, into: SourceTestIds): void {
+  if (!TEST_ID_VALUE_RE.test(text)) return;
+  into.exact.add(text);
+  if (!isPrefix) return;
+  into.patterns.push(new RegExp(`^${escapeRegExp(text)}-.+$`));
+  into.samples.add(`${text}-${TEMPLATE_SAMPLE_VALUE}`);
+}
+
+/** テンプレート (`a-${…}-b`) を、固定の部分 (["a-", "-b"]) から正規表現と埋めた文字列にして足す */
+function addTemplateTestId(fixedParts: string[], into: SourceTestIds): void {
+  // ${…} だけで固定の部分が無いテンプレート (例: `${testIDPrefix}-${opt.value}`) は、何にでも一致するので使わない
+  if (!HAS_ALNUM_RE.test(fixedParts.join(""))) return;
+  into.patterns.push(new RegExp(`^${fixedParts.map(escapeRegExp).join(".+")}$`));
+  into.samples.add(fixedParts.join(TEMPLATE_SAMPLE_VALUE));
+}
+
+/** testID の値の式から、testID になりうる文字列を集める (ファイルの先頭のコメントの「値は、testID になりうる部分だけをたどる」) */
+function addTestIdsFromValue(value: ts.Node, isPrefix: boolean, into: SourceTestIds): void {
+  const next = (node: ts.Node | undefined) => {
+    if (node !== undefined) addTestIdsFromValue(node, isPrefix, into);
+  };
+  if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) {
+    addPlainTestId(value.text, isPrefix, into);
+  } else if (ts.isTemplateExpression(value)) {
+    addTemplateTestId([value.head.text, ...value.templateSpans.map((span) => span.literal.text)], into);
+  } else if (ts.isJsxExpression(value)) {
+    next(value.expression);
+  } else if (
+    ts.isParenthesizedExpression(value) ||
+    ts.isAsExpression(value) ||
+    ts.isSatisfiesExpression(value) ||
+    ts.isTypeAssertionExpression(value) ||
+    ts.isNonNullExpression(value)
+  ) {
+    next(value.expression);
+  } else if (ts.isConditionalExpression(value)) {
+    next(value.whenTrue);
+    next(value.whenFalse);
+  } else if (ts.isBinaryExpression(value) && EITHER_SIDE_OPERATORS.has(value.operatorToken.kind)) {
+    next(value.left);
+    next(value.right);
+  } else if (ts.isArrayLiteralExpression(value)) {
+    value.elements.forEach(next);
+  } else if (ts.isObjectLiteralExpression(value)) {
+    for (const property of value.properties) if (ts.isPropertyAssignment(property)) next(property.initializer);
+  }
 }
 
 /**
- * ソースのコメント (// … と /* … *\/) を空白に置き換える (位置と改行はそのまま)。
- * 文字列 (" ' `) の中の // と、\ のすぐあとの文字 (正規表現の /\// など) はコメントの始まりにしない。
- * コメントの中の「testID: …」の文は testID ではない (読むと、文の中の閉じない括弧で式の終わりを見失い、後ろの文の文字列まで拾う)
+ * ソースのファイルの中身から、testID を集める (collectSourceTestIds の 1 ファイル分)。
+ * fileName の拡張子で読み方を決める (scriptKindOf)。省くと TSX として読む
  */
-export function blankSourceComments(text: string): string {
-  const chunks: string[] = [];
-  let copiedUpTo = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (c === "\\") {
-      i++;
-      continue;
-    }
-    if (QUOTE_CHARS.has(c)) {
-      const end = stringEnd(text, i);
-      if (end !== -1) i = end;
-      continue;
-    }
-    if (c !== "/" || (text[i + 1] !== "/" && text[i + 1] !== "*")) continue;
-    const close = text[i + 1] === "*" ? text.indexOf("*/", i + 2) : -1;
-    const end = text[i + 1] === "/" ? lineEndOf(text, i) : close === -1 ? text.length : close + 2;
-    chunks.push(text.slice(copiedUpTo, i), text.slice(i, end).replace(/[^\n]/g, " "));
-    copiedUpTo = end;
-    i = end - 1;
-  }
-  chunks.push(text.slice(copiedUpTo));
-  return chunks.join("");
-}
-
-/**
- * text[start] から始まる右辺の式を読み、中の文字列リテラル (比べる演算子の片側は除く) を返す。
- * 読み方は、始まりの文字で決める (ファイルの先頭のコメントの「右辺の読み方」)。text はコメントを空白にしたもの (blankSourceComments)。
- * baseIndent = 名前のある行の字下げ (式が次の行に続いているかの判定に使う)
- */
-function readExpressionLiterals(text: string, start: number, baseIndent: number): SourceLiteral[] {
-  const first = text[start];
-  if (first === undefined) return [];
-  if (QUOTE_CHARS.has(first)) {
-    const end = stringEnd(text, start);
-    return end === -1 ? [] : [{ template: first === "`", body: text.slice(start + 1, end) }];
-  }
-  /** { で始まる式 (JSX の testID={…}) は、対応の取れた { … } だけを読む。中の ( [ は数えない (正規表現の /\(/ などで崩れないように) */
-  const braceOnly = first === "{";
-  const literals: SourceLiteral[] = [];
-  let depth = 0;
-  for (let i = start; i < text.length; i++) {
-    const c = text[i];
-    if (QUOTE_CHARS.has(c)) {
-      const end = stringEnd(text, i);
-      if (end === -1) continue;
-      if (!isComparedLiteral(text, i, end)) literals.push({ template: c === "`", body: text.slice(i + 1, end) });
-      i = end;
-      continue;
-    }
-    const opens = braceOnly ? c === "{" : OPEN_BRACKETS.has(c);
-    const closes = braceOnly ? c === "}" : CLOSE_BRACKETS.has(c);
-    if (opens) {
-      depth++;
-    } else if (closes) {
-      if (depth === 0) break;
-      depth--;
-      if (braceOnly && depth === 0) break;
-    } else if (!braceOnly && depth === 0) {
-      if (c === ";" || c === ",") break;
-      if (c === "\n" && !continuesOnNextLine(text, i + 1, baseIndent)) break;
-    }
-  }
-  return literals;
-}
-
-/** 名前のすぐあとの = か : (== => は除く)。sticky で、名前の次の位置から見る */
-const ASSIGN_OR_COLON_RE = /\s*(?:=(?![=>])|:)\s*/y;
-
-/** 名前のあと (= / : / 型注釈のあとの =) から、右辺の式の始まりの位置を返す。右辺が無ければ -1 */
-function expressionStart(text: string, afterName: number): number {
-  ASSIGN_OR_COLON_RE.lastIndex = afterName;
-  const direct = ASSIGN_OR_COLON_RE.exec(text);
-  if (!direct) return -1;
-  const at = afterName + direct[0].length;
-  if (QUOTE_CHARS.has(text[at] ?? "") || text[at] === "{" || !direct[0].includes(":")) return at;
-  // 型注釈 (例: fieldTestIdMap: Partial<Record<…>> = { … })。同じ行で、: と = の間が型の書き方だけなら、= のあとを読む
-  const line = text.slice(at, lineEndOf(text, at));
-  const assign = /(?<![=!<>])=(?![=>])\s*/.exec(line);
-  if (assign && TYPE_ANNOTATION_RE.test(line.slice(0, assign.index))) return at + assign.index + assign[0].length;
-  return at;
-}
-
-/** ソースのファイルの中身から、testID を集める (collectSourceTestIds の 1 ファイル分)。コメントの中は読まない */
-export function addTestIdsFromSource(source: string, into: SourceTestIds): void {
-  const text = blankSourceComments(source);
-  const nameRe = /\b(\w*test_?id\w*)\b|\bdata-testid\b/gi;
-  let m: RegExpExecArray | null;
-  while ((m = nameRe.exec(text)) !== null) {
-    const name = m[1] ?? "data-testid";
-    const start = expressionStart(text, m.index + m[0].length);
-    if (start === -1) continue;
-    const baseIndent = indentOf(text.slice(lineStartOf(text, m.index), m.index));
-    const isPrefix = /prefix$/i.test(name);
-    for (const lit of readExpressionLiterals(text, start, baseIndent)) {
-      if (!lit.template) {
-        const plain = lit.body;
-        if (!/^[\w:-]+$/.test(plain)) continue;
-        into.exact.add(plain);
-        if (isPrefix) {
-          into.patterns.push(new RegExp(`^${escapeRegExp(plain)}-.+$`));
-          into.samples.add(`${plain}-${TEMPLATE_SAMPLE_VALUE}`);
-        }
-        continue;
-      }
-      const template = lit.body;
-      const parts = template.split(/\$\{[^}]*\}/);
-      if (parts.length === 1) {
-        if (/^[\w:-]+$/.test(template)) into.exact.add(template);
-        continue;
-      }
-      // ${…} だけで固定の部分が無いテンプレート (例: `${testIDPrefix}-${opt.value}`) は、何にでも一致するので使わない
-      if (!/[a-z0-9]/i.test(parts.join(""))) continue;
-      into.patterns.push(new RegExp(`^${parts.map(escapeRegExp).join(".+")}$`));
-      into.samples.add(parts.join(TEMPLATE_SAMPLE_VALUE));
-    }
-  }
+export function addTestIdsFromSource(source: string, into: SourceTestIds, fileName: string = INLINE_SOURCE_NAME): void {
+  const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, false, scriptKindOf(fileName));
+  const visit = (node: ts.Node): void => {
+    const named = namedValue(node);
+    const name = named?.names.find((n) => n !== undefined && TEST_ID_NAME_RE.test(n));
+    if (named?.value !== undefined && name !== undefined) addTestIdsFromValue(named.value, PREFIX_NAME_RE.test(name), into);
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
 }
 
 export function collectSourceTestIds(root: string = REPO_ROOT): SourceTestIds {
   const ids: SourceTestIds = { exact: new Set(), patterns: [], samples: new Set() };
-  for (const file of listSourceFiles(root)) addTestIdsFromSource(fs.readFileSync(file, "utf8"), ids);
+  for (const file of listSourceFiles(root)) addTestIdsFromSource(fs.readFileSync(file, "utf8"), ids, file);
   return ids;
 }
 
@@ -414,13 +255,22 @@ export function isFlowIdInSource(id: string, source: SourceTestIds): boolean {
 
 export type MissingFlowId = { flow: string; id: string };
 
+/** flow の 1 ファイルの id (YAML として読めなければ、どの flow かを添えて例外) */
+function readFlowIds(root: string, flow: string): string[] {
+  try {
+    return extractFlowIds(fs.readFileSync(path.join(root, flow), "utf8"));
+  } catch (error) {
+    throw new Error(`maestro の flow を YAML として読めません: ${flow}`, { cause: error });
+  }
+}
+
 /** ソースに無い testID を期待している (flow, id) の一覧 (同じ flow の同じ id は 1 件にまとめる) */
 export function findMissingFlowIds(root: string = REPO_ROOT): MissingFlowId[] {
   const source = collectSourceTestIds(root);
   const missing: MissingFlowId[] = [];
   for (const flow of listMaestroFlowFiles(root)) {
     const seen = new Set<string>();
-    for (const id of extractFlowIds(fs.readFileSync(path.join(root, flow), "utf8"))) {
+    for (const id of readFlowIds(root, flow)) {
       if (seen.has(id)) continue;
       seen.add(id);
       if (!isFlowIdInSource(id, source)) missing.push({ flow, id });

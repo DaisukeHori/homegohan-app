@@ -13,6 +13,7 @@
 // - meals の flow と、すべての flow が使う共通のログイン (_shared/login.yaml・ensure-welcome.yaml) は、許可リストに載せられない
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -89,6 +90,42 @@ describe("#1552 maestro の flow の testID の抜き出し (検査の道具そ�
     ]);
   });
 
+  it("YAML の書き方の違い (先頭の appId の文書と --- のあとの文書・引用符つきのキー \"id\"・数に見える id) でも、id を文字列として抜き出す", () => {
+    // 引用符つきのキーは、以前の読み方 (行の文字を数える) では id と読めなかった。
+    // 数に見える id は YAML の既定の型では数になるが、maestro は id を文字列として比べるので、文字列として抜き出す
+    const yaml = [
+      "appId: com.example.app",
+      "---",
+      '- tapOn: { "id": "quoted-key-flow" }',
+      "- tapOn:",
+      "    'id': quoted-key-block",
+      "- assertVisible:",
+      "    id: 2024",
+      "- tapOn: { id: true }",
+      // 値の無い id: と、値が対応表の id: は文字列ではないので抜き出さない (実物の flow なら、素朴に数えた件数との突き合わせで落ちる)。
+      // 対応表の中はたどる
+      "- tapOn:",
+      "    id:",
+      "- tapOn:",
+      "    id:",
+      "      id: inside-mapping-id",
+    ].join("\n");
+    expect(extractFlowIds(yaml)).toEqual(["quoted-key-flow", "quoted-key-block", "2024", "true", "inside-mapping-id"]);
+  });
+
+  it("YAML として読めない flow は、黙って id を 0 件にせず例外にする (maestro も読めない)。突き合わせでは、どの flow かを添える", () => {
+    expect(() => extractFlowIds('- tapOn: { id: "unclosed"')).toThrow();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "maestro-flow-testids-"));
+    try {
+      const flowDir = path.join(root, MAESTRO_DIR, "flows");
+      fs.mkdirSync(flowDir, { recursive: true });
+      fs.writeFileSync(path.join(flowDir, "broken.yaml"), '- tapOn: { id: "unclosed"');
+      expect(() => findMissingFlowIds(root)).toThrow(`${MAESTRO_DIR}/flows/broken.yaml`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("実際の flow の id: は、書き方によらずすべて抜き出せている (読めない書き方の id があれば落ちる)", () => {
     // 数えるだけの素朴な方法 (コメントを外した行の、行頭・空白・{ ・ , のあとの id:) と、抜き出した件数を突き合わせる
     const crudeCount = (yaml: string) =>
@@ -117,16 +154,22 @@ describe("#1552 maestro の flow の testID の抜き出し (検査の道具そ�
         "const fieldTestIdMap: Partial<Record<Field, string>> = { weight: \"field-weight\" };",
         '<Choice testIDPrefix="gender" />',
         '<div data-testid="web-only" />',
+        "<View testID={`no-sub-template`} />",
+        '<Link testID="https://example.com/not-an-id" />',
         "<Row testID={`${testIDPrefix}-${opt.value}`} />",
         "const label = \"not-a-testid\";",
       ].join("\n"),
       ids,
     );
-    for (const id of ["plain-screen", "submit-button", "next-button", "tab-x", "mode-a", "field-weight", "web-only"]) {
+    for (const id of ["plain-screen", "submit-button", "next-button", "tab-x", "mode-a", "field-weight", "web-only", "no-sub-template"]) {
       expect(isFlowIdInSource(id, ids)).toBe(true);
     }
     expect(isFlowIdInSource("meal-mode-meal", ids)).toBe(true);
     expect(isFlowIdInSource("gender-male", ids)).toBe(true);
+    // 接頭辞は、正規表現の id (gender-.*) にも全体一致する
+    expect(isFlowIdInSource("gender-.*", ids)).toBe(true);
+    // testID の形でない値 (URL・文) は集めない
+    expect(isFlowIdInSource("https://example.com/not-an-id", ids)).toBe(false);
     // testID の文脈に無い文字列は testID ではない
     expect(isFlowIdInSource("not-a-testid", ids)).toBe(false);
     // 固定の部分が無いテンプレート (`${testIDPrefix}-${opt.value}`) は、何にでも一致させない
@@ -136,7 +179,7 @@ describe("#1552 maestro の flow の testID の抜き出し (検査の道具そ�
     expect(isFlowIdInSource("meal-type-meal", ids)).toBe(false);
   });
 
-  it("右辺が文字列でも { でもない式 (const testID = cond ? … ; ・ testID: cond ? … , ・ [ … ]・型注釈のあと) の文字列も、式の終わりまで読んで集める", () => {
+  it("右辺が式 (const testID = cond ? … ・ testID: cond ? … ・ [ … ]・型注釈のあと・複数行・?? || &&) の文字列を集め、同じ文の外や testID でない名前の文字列は集めない", () => {
     const ids = emptyIds();
     addTestIdsFromSource(
       [
@@ -150,17 +193,12 @@ describe("#1552 maestro の flow の testID の抜き出し (検査の道具そ�
         '    ? "multi-line-a"',
         '    : "multi-line-b"',
         '  const nextLine = "next-statement"',
-        // 式の中のコメントは読まない (コメントの括弧を数えると ; で止まれず、後ろの文の文字列まで拾う)
-        "const commentTestID = done // 例 (閉じない括弧",
-        '  ? "comment-a"',
-        '  : "comment-b";',
-        'const afterComment = "after-comment";',
-        'const blockTestID = /* ) */ done ? "block-a" : "block-b";',
-        // 式が次の行から始まり ; が無いとき、続いているかは名前の行の字下げと比べる
-        "const wrapTestID =",
-        "  done ?",
-        '  "wrap-a" : "wrap-b"',
-        'const afterWrap = "after-wrap"',
+        'const fallbackTestID = props.testID ?? ("fallback-id" as const);',
+        'const orTestID = custom || "or-id";',
+        'const andTestID = visible && "and-id";',
+        'const nonNullTestID = (flag ? "non-null-a" : "non-null-b")!;',
+        'const satisfiesTestID = "satisfies-id" satisfies string;',
+        'const mixedTestID = (cond && "mixed-a") || "mixed-b";',
       ].join("\n"),
       ids,
     );
@@ -175,17 +213,55 @@ describe("#1552 maestro の flow の testID の抜き出し (検査の道具そ�
       "typed-b",
       "multi-line-a",
       "multi-line-b",
-      "comment-a",
-      "comment-b",
-      "block-a",
-      "block-b",
-      "wrap-a",
-      "wrap-b",
+      "fallback-id",
+      "or-id",
+      "and-id",
+      "non-null-a",
+      "non-null-b",
+      "satisfies-id",
+      "mixed-a",
+      "mixed-b",
     ]) {
       expect(isFlowIdInSource(id, ids), id).toBe(true);
     }
-    // 式の終わり (; ・ , ・ 字下げが戻った次の行) より後の文字列と、比べる演算子の片側 (条件) は集めない
-    for (const id of ["after-statement", "title-text", "next-statement", "cond-value", "after-comment", "after-wrap"]) {
+    // 名前が testID でない文の文字列・同じオブジェクトの別のプロパティ・比べる演算子の片側 (条件) は集めない
+    for (const id of ["after-statement", "title-text", "next-statement", "cond-value"]) {
+      expect(isFlowIdInSource(id, ids), id).toBe(false);
+    }
+  });
+
+  it("引数・分割代入の既定値、クラスのフィールド、代入 (testID = … ・ x.testID = …)、引用符つきの名前・JSX の a:b の testID も集める", () => {
+    const ids = emptyIds();
+    addTestIdsFromSource(
+      [
+        'function Row({ testID = "default-row", label = "default-label" }: Props) {}',
+        'function Cell({ testID: id = "renamed-cell" }: Props) {}',
+        'const Item = (testID = "param-item") => null;',
+        'class Screen { testID = "class-field"; #testID = "private-field"; title = "class-title"; }',
+        'let assignedTestID; assignedTestID = "assigned-id";',
+        'el.testID = "member-assigned";',
+        'el.label = "member-label";',
+        'const attrs = { "data-testid": "quoted-name", "aria-label": "quoted-label" };',
+        '<View ns:testid="namespaced-attr" />',
+        'const snake = { test_id: "snake-case-id" };',
+      ].join("\n"),
+      ids,
+    );
+    for (const id of [
+      "default-row",
+      "renamed-cell",
+      "param-item",
+      "class-field",
+      "private-field",
+      "assigned-id",
+      "member-assigned",
+      "quoted-name",
+      "namespaced-attr",
+      "snake-case-id",
+    ]) {
+      expect(isFlowIdInSource(id, ids), id).toBe(true);
+    }
+    for (const id of ["default-label", "class-title", "member-label", "quoted-label"]) {
       expect(isFlowIdInSource(id, ids), id).toBe(false);
     }
   });
@@ -198,18 +274,20 @@ describe("#1552 maestro の flow の testID の抜き出し (検査の道具そ�
         '<Row testID={opt.value === "newest" ? "sort-newest" : opt.value !== "oldest" ? "sort-name" : "sort-oldest"} />',
         "<Bubble data-testid={msg.role == 'assistant' ? 'ai-bubble' : undefined} />",
         "<Chip testID={'by-name' != sort ? 'chip-off' : 'chip-on'} />",
+        'if (props.testID === "compared-testid") {}',
+        'const isDefaultTestId = testID === "compared-direct";',
       ].join("\n"),
       ids,
     );
     for (const id of ["sort-newest", "sort-name", "sort-oldest", "ai-bubble", "chip-off", "chip-on"]) {
       expect(isFlowIdInSource(id, ids), id).toBe(true);
     }
-    for (const id of ["string", "newest", "oldest", "assistant", "by-name"]) {
+    for (const id of ["string", "newest", "oldest", "assistant", "by-name", "compared-testid", "compared-direct"]) {
       expect(isFlowIdInSource(id, ids), id).toBe(false);
     }
   });
 
-  it("コメント (// … と /* … */) の中は読まない。文字列の中の // と、正規表現の \\/ はコメントの始まりにしない", () => {
+  it("コメント (// … と /* … */) の中の testID は集めない。前に正規表現・URL・文字列の中の // や引用符があっても同じ", () => {
     const ids = emptyIds();
     addTestIdsFromSource(
       [
@@ -219,28 +297,61 @@ describe("#1552 maestro の flow の testID の抜き出し (検査の道具そ�
         "/**",
         ' * <View testID="doc-comment-id" />',
         " */",
-        // コメントの中の文を式として読むと、閉じない括弧で式の終わりを見失い、後ろの文の文字列まで拾う
         "// testID: don't (閉じない括弧",
         'const afterApostrophe = "after-apostrophe";',
+        // 正規表現の中の " のあとのコメント (以前の読み方は " を文字列の始まりと読み、コメントの中の文字列を testID として集めた)
+        's.replace(/"/g, ""); // testID: "after-regex-quote-comment"',
         '<Link href="https://example.com//x" testID="after-url" />',
         '<View onPress={() => s.split(/\\//)} testID="after-regex" />',
+        'const quoteRegexTestID = /"/.test(s) ? "after-quote-regex" : "after-quote-regex-else";',
       ].join("\n"),
       ids,
     );
-    for (const id of ["after-url", "after-regex"]) {
+    for (const id of ["after-url", "after-regex", "after-quote-regex", "after-quote-regex-else"]) {
       expect(isFlowIdInSource(id, ids), id).toBe(true);
     }
-    for (const id of ["select-", "line-comment-id", "jsx-comment-id", "doc-comment-id", "after-apostrophe"]) {
+    for (const id of [
+      "select-",
+      "line-comment-id",
+      "jsx-comment-id",
+      "doc-comment-id",
+      "after-apostrophe",
+      "after-regex-quote-comment",
+    ]) {
       expect(isFlowIdInSource(id, ids), id).toBe(false);
     }
   });
 
-  it("JSX の testID={…} は、対応の取れた { … } だけを読む (中の正規表現の ( や [ で崩れて、後ろの属性の文字列を拾わない)", () => {
+  it("JSX の testID={…} の値だけを見る (中に正規表現の ( や [ があっても、後ろの属性の文字列は集めない)", () => {
     const ids = emptyIds();
     addTestIdsFromSource('<View testID={label.replace(/\\(/g, "") ? "paren-a" : "paren-b"} style={{ title: "after-attr" }} />', ids);
     expect(isFlowIdInSource("paren-a", ids)).toBe(true);
     expect(isFlowIdInSource("paren-b", ids)).toBe(true);
     expect(isFlowIdInSource("after-attr", ids)).toBe(false);
+  });
+
+  it("テンプレートの ${…} の中に { } があっても、固定の部分 (前後の文字) だけで正規表現を作る", () => {
+    // 以前の読み方 (${ から最初の } まで) は `row-${fn({ a: 1 })}` を row- と )} に分け、row-5 に一致しなかった
+    const ids = emptyIds();
+    addTestIdsFromSource("<View testID={`row-${fn({ a: 1 })}`} />\n<View testID={`cell-${obj[`k${i}`]}-end`} />", ids);
+    expect(isFlowIdInSource("row-5", ids)).toBe(true);
+    expect(isFlowIdInSource("cell-7-end", ids)).toBe(true);
+    expect(isFlowIdInSource("cell-7", ids)).toBe(false);
+  });
+
+  it("ファイルの拡張子で読み方を変える (.ts の <T>x は型の指定。.tsx・.jsx・拡張子なしは JSX を読む)", () => {
+    const fromTs = emptyIds();
+    addTestIdsFromSource('const testID = <const>"ts-assertion";', fromTs, "screen.ts");
+    expect(isFlowIdInSource("ts-assertion", fromTs)).toBe(true);
+    // .tsx で同じ書き方は JSX の <const> になり、文字列ではない
+    const fromTsx = emptyIds();
+    addTestIdsFromSource('const testID = <const>"ts-assertion";', fromTsx, "screen.tsx");
+    expect(isFlowIdInSource("ts-assertion", fromTsx)).toBe(false);
+    for (const fileName of ["legacy.jsx", undefined]) {
+      const ids = emptyIds();
+      addTestIdsFromSource('<View testID="jsx-attr" />', ids, fileName);
+      expect(isFlowIdInSource("jsx-attr", ids), String(fileName)).toBe(true);
+    }
   });
 
   it("正規表現の id (maestro は id を正規表現として全体一致で比べる) は、testID やテンプレートを埋めた文字列に全体一致すれば実在とする", () => {
@@ -264,7 +375,7 @@ describe("#1552 maestro の flow の testID の抜き出し (検査の道具そ�
     // apps/mobile/app/meals/new.tsx のテンプレート `meal-mode-${…}`
     expect(isFlowIdInSource("meal-mode-meal", ids)).toBe(true);
     // apps/mobile/app/(tabs)/health.tsx のクイックアクション (const testID = a.href === … ? "health-graphs-button" : …;
-    // 右辺が文字列でも { でもない式。以前は読めず、ソースにあるのに許可リストに載っていた)
+    // 右辺が三項の式。#1552 の最初の集め方では読めず、ソースにあるのに許可リストに載っていた)
     expect(isFlowIdInSource("health-graphs-button", ids)).toBe(true);
     expect(isFlowIdInSource("health-goals-button", ids)).toBe(true);
     // 比べる演算子の片側 ((tabs)/favorites.tsx の opt.value === "newest"・handson-tour の typeof target === 'string') は testID ではない

@@ -7,6 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -22,6 +23,46 @@ const ROOT = path.resolve(__dirname, '../../../..');
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const PLACEMENTS: AccountActionsPlacement[] = ['undecided', 'native', 'web'];
+
+/** 設定画面で、ブラウザのときだけ出す枝の条件 (accountActionsPlacement === 'web') */
+const WEB_PLACEMENT_VARIABLE = 'accountActionsPlacement';
+const WEB_PLACEMENT_VALUE: AccountActionsPlacement = 'web';
+
+/**
+ * ソース (TSX) の data-testid="<testId>" の要素ごとに、accountActionsPlacement === 'web' && ( … ) の枝の中にあるか。
+ * 文字の位置 (枝の条件より後ろにあるか) ではなく、構文木の親をたどって確かめる (枝が閉じた後ろの要素を「中」と数えない)
+ */
+function testIdsInsideWebBranch(source: string, testId: string): boolean[] {
+  const sourceFile = ts.createSourceFile('page.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const isWebCondition = (node: ts.Node) =>
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken &&
+    ts.isIdentifier(node.left) &&
+    node.left.text === WEB_PLACEMENT_VARIABLE &&
+    ts.isStringLiteral(node.right) &&
+    node.right.text === WEB_PLACEMENT_VALUE;
+  const isWebBranch = (node: ts.Node) =>
+    ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken && isWebCondition(node.left);
+  const results: boolean[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isJsxAttribute(node) &&
+      node.name.getText(sourceFile) === 'data-testid' &&
+      node.initializer !== undefined &&
+      ts.isStringLiteral(node.initializer) &&
+      node.initializer.text === testId
+    ) {
+      let inside = false;
+      for (let parent: ts.Node | undefined = node.parent; parent !== undefined && !inside; parent = parent.parent) {
+        inside = isWebBranch(parent);
+      }
+      results.push(inside);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return results;
+}
 
 describe('#1552 他の端末のログアウトを確認できなかったときの注意書き', () => {
   it('ブラウザでは、Web の設定の「ログアウト」を指す (以前と同じ文)', () => {
@@ -84,11 +125,23 @@ describe('#1552 案内が指す言葉が、実在する画面の言葉と一致�
 
   it('アプリの中の Web の設定画面には「ログアウト」のボタンが出ない (ブラウザのときだけ出す)。だから案内はネイティブの歯車を指す', () => {
     const settings = read('src/app/(main)/settings/page.tsx');
-    // ログアウトのボタン (data-testid="logout-button") は、ブラウザと判定されたとき ('web') の枝の中にだけある
-    const webBranch = settings.indexOf("accountActionsPlacement === 'web'");
-    const logoutButton = settings.indexOf('data-testid="logout-button"');
-    expect(webBranch).toBeGreaterThan(-1);
-    expect(logoutButton).toBeGreaterThan(webBranch);
+    // ログアウトのボタン (data-testid="logout-button") は 1 つだけで、ブラウザと判定されたとき ('web') の枝の中にある
+    expect(testIdsInsideWebBranch(settings, 'logout-button')).toEqual([true]);
+  });
+
+  it('枝の中かどうかは構文で見る (枝の条件より後ろにあっても、枝が閉じた後ろや別の枝の中は「中」としない)', () => {
+    const wrap = (body: string) => `const view = <div>${body}</div>;`;
+    expect(testIdsInsideWebBranch(wrap(`{accountActionsPlacement === 'web' && (<Button data-testid="logout-button" />)}`), 'logout-button')).toEqual([true]);
+    // 以前の確かめ方 (文字の位置が枝の条件より後ろか) では「中」と数えていた
+    expect(
+      testIdsInsideWebBranch(wrap(`{accountActionsPlacement === 'web' && (<p>x</p>)}<Button data-testid="logout-button" />`), 'logout-button'),
+    ).toEqual([false]);
+    expect(
+      testIdsInsideWebBranch(wrap(`{accountActionsPlacement === 'native' && (<Button data-testid="logout-button" />)}`), 'logout-button'),
+    ).toEqual([false]);
+    expect(
+      testIdsInsideWebBranch(wrap(`{accountActionsPlacement !== 'web' && (<Button data-testid="logout-button" />)}`), 'logout-button'),
+    ).toEqual([false]);
   });
 
   it('アカウント画面は、案内の文を直書きせず、この出し分けを使う', () => {
