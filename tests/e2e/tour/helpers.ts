@@ -299,9 +299,14 @@ export async function skipTourAtStep0(page: Page): Promise<void> {
  * intro → カメラ → 解析中 (ここまで自動) → 結果 → [次へ] → [保存] → Step 2 (/handson-tour/menu) へ。
  * 保存の通信 (POST /api/meal-plans/add-from-photo) の応答を返す。
  * 保存が失敗すると、画面はエラー (tour-step-1-error) を出して先へ進まない (設計書 03-step1 §3.10。#1604)。
- * Step 2 への遷移の時間切れで落ちると原因が分からないので、失敗の応答ならその本文を付けて投げる。
+ * Step 2 への遷移の時間切れで落ちると原因が分からないので、思っていた応答でなければその本文を付けて投げる。
+ * @param options.expectedStatus 思っている応答のステータス。既定は成功 (2xx)。設定からのやり直しでは、お試しの保存は
+ *   409 sandbox_not_eligible で断られ、画面はエラーにせず Step 2 へ進む (#1604)。そのときは 409 を渡す
  */
-export async function completeStep1(page: Page): Promise<ApiResponseResult> {
+export async function completeStep1(
+  page: Page,
+  options: { expectedStatus?: number } = {},
+): Promise<ApiResponseResult> {
   await expect(page.getByTestId("meal-result-dish-name")).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
   await nextButton(page, "次へ").click({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
   // 保存ボタンの Spotlight 段階。meal-save-button 自体はオーバーレイの下なので、押すのは吹き出しの [保存]
@@ -314,8 +319,11 @@ export async function completeStep1(page: Page): Promise<ApiResponseResult> {
     nextButton(page, "保存").click({ timeout: AUTO_ADVANCE_TIMEOUT_MS }),
   ]);
   const result = await readResponse(saved);
-  if (!saved.ok()) {
-    throw new Error(`[tour/helpers] Step 1 の保存が ${result.status} で失敗しました: ${describeBody(result.body)}`);
+  const asExpected = options.expectedStatus === undefined ? saved.ok() : result.status === options.expectedStatus;
+  if (!asExpected) {
+    throw new Error(
+      `[tour/helpers] Step 1 の保存が ${result.status} でした (期待: ${options.expectedStatus ?? "2xx"}): ${describeBody(result.body)}`,
+    );
   }
   await page.waitForURL("**/handson-tour/menu", { timeout: NAVIGATION_TIMEOUT_MS });
   return result;

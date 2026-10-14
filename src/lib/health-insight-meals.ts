@@ -38,7 +38,8 @@ export interface InsightMealDay {
  * 本人の直近 RECENT_MEAL_DAYS 日分の食事を、新しい日から順に取得する。
  *
  * - planned_meals!inner: 食事が 1 件も無い日 (空の user_daily_meals) は除く。limit が「食事のある直近の日」になる
- * - is_sandbox = false: ハンズオンツアーが入れるダミーの献立 (最大 90 日残る) は食事の記録ではない
+ * - is_sandbox = false: ハンズオンツアーのお試しの日 (ダミーの献立。最大 90 日残る) は食事の記録ではない
+ *   (#1604 から Web のツアーの Step 1 は meals のお試しの行に保存し、user_daily_meals には作らない。別の経路で作られても除く)
  * - day_date <= 今日: 先の予定 (まだ食べていない献立) は「直近の食事」ではない。「今日」は JST 基準
  *
  * `today` は YYYY-MM-DD。省略すると JST の今日。失敗しても throw せず、PostgREST の error をそのまま返す

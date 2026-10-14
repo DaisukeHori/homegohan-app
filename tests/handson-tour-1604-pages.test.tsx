@@ -1,8 +1,9 @@
 /**
  * #1604 ハンズオンツアー (Web) の不具合 3 件の回帰テスト。#846 の E2E で見つけたもの。
  *
- *   1. Step 1 (src/app/handson-tour/photo/page.tsx) の保存: 本文に dayDate / mealType が無く 400 になり、画面は失敗を無視して Step 2 へ進んでいた。
- *      設計書 03-step1 §3.7 の本文 (今日の夕食) で送り、失敗したら §3.10 のエラー画面 (もう一度 / あとで) を出して先へ進まない。
+ *   1. Step 1 (src/app/handson-tour/photo/page.tsx) の保存: 本文に mealType が無く 400 になり、画面は失敗を無視して Step 2 へ進んでいた。
+ *      設計書 03-step1 §3.7 の本文 (夕食) で送り、失敗したら §3.10 のエラー画面 (もう一度 / あとで) を出して先へ進まない。
+ *      ただし「お試しの保存の対象でない」(sandbox_not_eligible。設定からのやり直しなど) は、エラーにせず Step 2 へ進む。
  *   2. Step 3 (src/app/handson-tour/badges/page.tsx) の「獲得済」: 応答に無い obtained_at を見ていた。/api/badges の earned を見る。
  *   3. Step 3 の自動スクロール: 吹き出しの対象のカードを画面の中へスクロールする (設計書 05-step3 §7.2 / §7.3)。
  *
@@ -80,6 +81,9 @@ const { default: HandsonTourBadgesPage } = await import('@/app/handson-tour/badg
 
 const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
+const HTTP_FORBIDDEN = 403;
+const HTTP_CONFLICT = 409;
+const HTTP_INTERNAL_ERROR = 500;
 
 let container: HTMLDivElement;
 let root: Root;
@@ -157,7 +161,7 @@ async function advancePhotoToSaveAndPress() {
 }
 
 describe('#1604 Step 1: 保存の本文と失敗の扱い', () => {
-  it('保存は今日の夕食の本文で POST し、成功したら Step 2 へ進み、完了を記録する', async () => {
+  it('保存は夕食のお試しの記録の本文で POST し、成功したら Step 2 へ進み、完了を記録する', async () => {
     fetchMock.mockResolvedValue(jsonResponse(HTTP_OK, { success: true }));
     await mountPage(HandsonTourPhotoPage);
 
@@ -170,7 +174,8 @@ describe('#1604 Step 1: 保存の本文と失敗の扱い', () => {
     expect(init.method).toBe('POST');
     const body = JSON.parse(init.body);
     expect(body).toMatchObject({ sandbox: true, mealType: 'dinner', totalCalories: 780, imageUrl: null });
-    expect(body.dayDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // お試しの記録は meals に入り、食べた時刻はサーバーの今。日付 (dayDate) は送らない
+    expect(body).not.toHaveProperty('dayDate');
     expect(body.dishes).toEqual([{ name: '鶏の唐揚げ定食', cal: 780, role: 'main' }]);
 
     expect(mocks.push).toHaveBeenCalledWith(HANDSON_TOUR_ROUTES.step2);
@@ -204,6 +209,52 @@ describe('#1604 Step 1: 保存の本文と失敗の扱い', () => {
     expect(mocks.push).not.toHaveBeenCalled();
     expect(byTestId('tour-step-1-error')).not.toBeNull();
     expect(analyticsEvents('handson_tour_step_error')[0][1]).toMatchObject({ error_code: 'sandbox_save_network_error' });
+  });
+
+  // 設定からのやり直し (完了・スキップ済み) では、お試しの保存は 409 already_finished で必ず断られる (設計書 17-security §2.1)。
+  // 以前はこれをエラー画面にしていて、【もう一度】は永久に失敗し、Step 2〜4 へ進めなかった (R1 blocking 1)
+  it.each([
+    [HTTP_CONFLICT, 'already_finished'],
+    [HTTP_CONFLICT, 'existing_user'],
+    [HTTP_FORBIDDEN, 'admin_role'],
+  ])(
+    '保存が %i sandbox_not_eligible (%s) なら、エラー画面を出さずに Step 2 へ進み、完了を記録して失敗は記録しない',
+    async (status, reason) => {
+      fetchMock.mockResolvedValue(
+        jsonResponse(status, {
+          error: { code: 'sandbox_not_eligible', message: 'サンドボックスの利用条件を満たしていません', reason },
+        }),
+      );
+      await mountPage(HandsonTourPhotoPage);
+
+      await advancePhotoToSaveAndPress();
+
+      expect(callsTo('/api/meal-plans/add-from-photo')).toHaveLength(1);
+      expect(mocks.push).toHaveBeenCalledWith(HANDSON_TOUR_ROUTES.step2);
+      expect(byTestId('tour-step-1-error')).toBeNull();
+      expect(analyticsEvents('handson_tour_step_completed')).toHaveLength(1);
+      expect(analyticsEvents('handson_tour_step_error')).toHaveLength(0);
+    },
+  );
+
+  it.each([
+    [HTTP_CONFLICT, { error: { code: 'conflict' } }],
+    [HTTP_INTERNAL_ERROR, { error: 'Failed to save sandbox meal' }],
+    [HTTP_INTERNAL_ERROR, 'not json'],
+  ])('保存の対象でないという応答でない失敗 (%i) は、これまでどおりエラー画面を出して進まない', async (status, body) => {
+    fetchMock.mockResolvedValue(
+      typeof body === 'string' ? new Response(body, { status }) : jsonResponse(status, body),
+    );
+    await mountPage(HandsonTourPhotoPage);
+
+    await advancePhotoToSaveAndPress();
+
+    expect(mocks.push).not.toHaveBeenCalled();
+    expect(byTestId('tour-step-1-error')).not.toBeNull();
+    expect(analyticsEvents('handson_tour_step_error')[0][1]).toMatchObject({
+      error_code: 'sandbox_save_failed',
+      http_status: status,
+    });
   });
 
   it('【もう一度】で同じ本文を送り直し、成功したら Step 2 へ進む', async () => {

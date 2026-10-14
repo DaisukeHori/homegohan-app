@@ -137,7 +137,7 @@ describe('日付が 1 日ずれても連続日数は変わらない — 日付�
  * 比べるなら jstDaysAgo を使い、比べないならここに理由を足す。
  */
 const REVIEWED_UTC_DATE_FILES: Record<string, string> = {
-  'handson-tour/add-from-photo-sandbox.test.ts': 'dayDate として送り、保存された day_date が同じ値かだけを見る (ルートは今日と比べない)',
+  'handson-tour/add-from-photo-sandbox.test.ts': '通常の保存の dayDate として送り、保存された day_date が同じ値かだけを見る (ルートは今日と比べない。お試しの記録は日付を使わない)',
   'handson-tour/complete.test.ts': 'meals.eaten_at に入れるだけ。判定は行があるかどうか (日付は比べない)',
   'handson-tour/menu-plans-add.test.ts': 'meals.eaten_at に入れるだけ。判定は行があるかどうか (日付は比べない)',
   'handson-tour/rpc-user-has-non-sandbox-activity.test.ts': 'user_daily_meals.day_date に入れるだけ。RPC は行があるかどうかを見る (日付は比べない)',

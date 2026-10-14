@@ -137,6 +137,8 @@ export function createFakeSandboxDb(options: FakeSandboxDbOptions) {
           return builder;
         }),
         single: vi.fn(async () => run()),
+        // 行が無いときは data: null / error: null を返す取り方 (handler がその形で返す)
+        maybeSingle: vi.fn(async () => run()),
         // await builder で結果を受け取るクエリ (select 一覧 / delete / update) 用
         then: (onFulfilled: (value: FakeResult) => unknown, onRejected?: (reason: unknown) => unknown) =>
           Promise.resolve(run()).then(onFulfilled, onRejected),

@@ -20,7 +20,11 @@ import {
   type PhotoTourProfile,
 } from '@/lib/handson-tour/tour-profile';
 import { reportTourProfileFailures } from '@/lib/handson-tour/tour-profile-report';
-import { TOUR_PHOTO_SAVE_URL, buildTourPhotoSaveBody } from '@/lib/handson-tour/photo-save';
+import {
+  TOUR_PHOTO_SAVE_URL,
+  buildTourPhotoSaveBody,
+  isSandboxNotEligibleBody,
+} from '@/lib/handson-tour/photo-save';
 
 /** 保存の失敗の記録 (handson_tour_step_error の error_code / error_message / http_status) */
 type SaveFailure = {
@@ -179,6 +183,9 @@ export default function HandsonTourPhotoPage() {
   // 保存 (サブステップ 1.6 → 1.7 → 1.8)。設計書 03-step1 §3.7〜§3.10:
   // 成功したら Step 2 へ。失敗したら黙って進まずにエラー画面 (tour-step-1-error) を出し、【もう一度】で 1.7 から再実行、【あとで】でホームへ。
   // 以前は失敗しても Step 2 へ進んでいて (#1057 の時点で計測だけ足した)、保存が 400 で落ち続けても利用者にも見えなかった (#1604)。
+  // ただし「この利用者はお試しの保存の対象ではない」(sandbox_not_eligible) は、通信や保存の失敗ではなく、何度送っても変わらない答えなので、
+  // エラー画面を出さずに Step 2 へ進める。設定からのやり直し (完了・スキップ済み → 409 already_finished。設計書 17-security §2.1) は
+  // 保存できないまま Step 4 まで通して見せる決め (設計書 01-trigger-flow §1.2 / §4.2) で、ここで止めると行き止まりになる。
   const handleSandboxComplete = async () => {
     // 二重送信を防ぐ (吹き出しの【保存】と、下の画面の保存ボタンの両方から呼ばれうる)
     if (savingRef.current) return;
@@ -195,11 +202,14 @@ export default function HandsonTourPhotoPage() {
         body: JSON.stringify(buildTourPhotoSaveBody()),
       });
       if (!res.ok) {
-        failure = {
-          error_code: 'sandbox_save_failed',
-          error_message: 'POST /api/meal-plans/add-from-photo failed',
-          http_status: res.status,
-        };
+        const body: unknown = await res.json().catch(() => null);
+        if (!isSandboxNotEligibleBody(body)) {
+          failure = {
+            error_code: 'sandbox_save_failed',
+            error_message: 'POST /api/meal-plans/add-from-photo failed',
+            http_status: res.status,
+          };
+        }
       }
     } catch {
       failure = {
@@ -229,7 +239,8 @@ export default function HandsonTourPhotoPage() {
       return;
     }
 
-    // 完了の計測は保存が成功してから (設計書 03-step1 §9: handson_tour_step_completed は 1.6 保存成功)
+    // 完了の計測は保存が成功してから (設計書 03-step1 §9: handson_tour_step_completed は 1.6 保存成功)。
+    // 保存の対象でない利用者 (sandbox_not_eligible) も Step 1 を終えて先へ進むので記録する (設計書 22-analytics: 各ステップ進む)
     if (userId) {
       try {
         fireAnalytics('handson_tour_step_completed', {
