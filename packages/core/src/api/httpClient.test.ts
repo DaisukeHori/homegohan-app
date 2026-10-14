@@ -803,3 +803,36 @@ describe("リトライ — Retry-After を守る", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+/**
+ * #1444 (CodeQL js/polynomial-redos) の回帰テスト。
+ * baseUrl の末尾の "/" は、正規表現を使わずに線形の時間で落とす。結果は以前 (/\/+$/ で落としていたとき) と同じ。
+ */
+describe("baseUrl の末尾の / の扱い", () => {
+  /** "/" が長く続いたあとに別の文字がある baseUrl の、"/" の数 (正規表現で落とすと照合が 2 乗の時間になる長さ) */
+  const LONG_SLASH_RUN = 50_000;
+
+  it.each([
+    ["末尾に / が無い", "https://api.example.com", "/api/pantry", "https://api.example.com/api/pantry"],
+    ["末尾に / が 1 つ", "https://api.example.com/", "/api/pantry", "https://api.example.com/api/pantry"],
+    ["末尾に / が 3 つ", "https://api.example.com///", "api/pantry", "https://api.example.com/api/pantry"],
+    ["パスの途中の / は残す", "https://api.example.com/v1//", "/x", "https://api.example.com/v1/x"],
+  ])("%s", async (_label, baseUrl, path, expected) => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(200, {})));
+    await createHttpClient({ baseUrl }).get(path);
+    expect(fetchMock.mock.calls[0][0]).toBe(expected);
+  });
+
+  it("末尾の / をすべて落とすので、/ だけの baseUrl は空になる", async () => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(200, {})));
+    await createHttpClient({ baseUrl: "/".repeat(LONG_SLASH_RUN) }).get("/x");
+    expect(fetchMock.mock.calls[0][0]).toBe("/x");
+  });
+
+  it("/ が長く続いたあとに別の文字があっても、そのまま残して連結する", async () => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(200, {})));
+    const baseUrl = `https://api.example.com${"/".repeat(LONG_SLASH_RUN)}v1`;
+    await createHttpClient({ baseUrl }).get("/x");
+    expect(fetchMock.mock.calls[0][0]).toBe(`${baseUrl}/x`);
+  });
+});

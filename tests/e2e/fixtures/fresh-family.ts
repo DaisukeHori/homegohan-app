@@ -11,7 +11,7 @@
  */
 
 import { test as base, type Page } from "@playwright/test";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
 import {
@@ -275,7 +275,7 @@ async function deleteFamilyGroup(familyId: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function buildFamilyFixture(opts: {
-  supabaseAdmin: ReturnType<typeof createClient>;
+  supabaseAdmin: SupabaseClient;
   familyName: string;
   adultCount: number;
   childCount: number;
