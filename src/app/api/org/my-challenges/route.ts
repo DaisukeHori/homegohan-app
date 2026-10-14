@@ -44,7 +44,7 @@ interface MyParticipationRow {
 export async function GET() {
   try {
     const { user, profile } = await requireOrgMember();
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const { data: rows, error } = await supabase
       .from('organization_challenges')
