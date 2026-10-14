@@ -22,6 +22,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { CouponApplySchema } from '@/lib/super-admin/coupons-schemas';
 import { applyCoupon, CouponApplyError } from '@/lib/plan/coupon';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 type RouteContext = { params: { id: string } };
 
@@ -64,25 +65,23 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     }
 
     // 監査ログ記録 (severity='warn' — 課金影響操作、遡及適用のため)
-    try {
-      await supabase.from('admin_audit_logs').insert({
-        actor_id: user.id,
-        target_id: params.id,
-        target_type: 'coupon',
-        action_type: 'apply_coupon',
-        details: {
-          subscription_target: input.subscription_target,
-          subscription_id: input.subscription_id,
-          reason: input.reason,
-          redemption_id: result.redemptionId,
-          discount_amount_jpy: result.discountAmountJpy,
-        },
-        severity: 'warn',
-        ip_address: request.headers.get('x-forwarded-for'),
-      });
-    } catch (auditErr) {
-      console.warn('[super-admin/coupons/[id]/apply] audit log failed (graceful):', auditErr);
-    }
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      targetId: params.id,
+      targetType: 'coupon',
+      actionType: 'apply_coupon',
+      details: {
+        subscription_target: input.subscription_target,
+        subscription_id: input.subscription_id,
+        reason: input.reason,
+        redemption_id: result.redemptionId,
+        discount_amount_jpy: result.discountAmountJpy,
+      },
+      severity: 'warn',
+      request,
+      routeName: 'api/super-admin/coupons/[id]/apply POST',
+    });
 
     return NextResponse.json({
       data: {

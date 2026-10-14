@@ -16,6 +16,7 @@ import {
 } from '@/lib/super-admin/coupons-schemas';
 import { internalError } from '@/lib/api/errors';
 import { couponValidFromTimestamp, couponValidUntilTimestamp } from '@/lib/super-admin/coupon-validity';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export async function GET(request: NextRequest) {
   try {
@@ -124,27 +125,25 @@ export async function POST(request: NextRequest) {
     }
 
     // 監査ログ記録 (クーポン作成は課金影響 → severity='warn')
-    try {
-      await supabase.from('admin_audit_logs').insert({
-        actor_id: user.id,
-        target_id: coupon.id,
-        target_type: 'coupon',
-        action_type: 'create_coupon',
-        details: {
-          code: input.code,
-          discount_type: input.discount_type,
-          discount_value: input.discount_value,
-          applicable_to: input.applicable_to,
-          valid_from: validFrom,
-          valid_until: validUntil,
-          max_uses: input.max_uses,
-        },
-        severity: 'warn',
-        ip_address: request.headers.get('x-forwarded-for'),
-      });
-    } catch (auditErr) {
-      console.warn('[super-admin/coupons POST] audit log failed (graceful):', auditErr);
-    }
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      targetId: coupon.id,
+      targetType: 'coupon',
+      actionType: 'create_coupon',
+      details: {
+        code: input.code,
+        discount_type: input.discount_type,
+        discount_value: input.discount_value,
+        applicable_to: input.applicable_to,
+        valid_from: validFrom,
+        valid_until: validUntil,
+        max_uses: input.max_uses,
+      },
+      severity: 'warn',
+      request,
+      routeName: 'api/super-admin/coupons POST',
+    });
 
     return NextResponse.json({ data: coupon }, { status: 201 });
   } catch (err) {
