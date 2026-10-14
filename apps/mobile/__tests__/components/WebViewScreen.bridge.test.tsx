@@ -537,9 +537,39 @@ describe('onShouldStartLoadWithRequest', () => {
     },
   );
 
-  it('originWhitelist は既定のまま (非 http(s) スキームのハンドオフを壊さない)', async () => {
+  // originWhitelist は「どの URL を onShouldStartLoadWithRequest に渡すか」の入口。
+  // react-native-webview 13.13.5 (src/WebViewShared.tsx) の判定を写して、渡した値がどう振り分けるかを確かめる:
+  // 一覧に前方一致しない URL は onShouldStartLoadWithRequest を通らずにライブラリが Linking.openURL で OS に渡す。
+  function passesLibraryWhitelist(whitelist: readonly string[], url: string): boolean {
+    const origin = /^[A-Za-z][A-Za-z0-9+\-.]+:(\/\/)?[^/]*/.exec(url)?.[0] ?? '';
+    return ['about:blank', ...whitelist]
+      .map((item) => `^${item.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&').replace(/-/g, '\\x2d').replace(/\\\*/g, '.*')}`)
+      .some((pattern) => new RegExp(pattern).test(origin));
+  }
+
+  it('originWhitelist を明示し、http(s) はすべて onShouldStartLoadWithRequest (厳密な判定) に渡す', async () => {
     await renderScreen('/home');
-    expect(mockWebViewProps.originWhitelist).toBeUndefined();
+    const whitelist: string[] = mockWebViewProps.originWhitelist;
+    expect(whitelist).toEqual(['https://*', 'http://*']);
+    // 自オリジン・他オリジン・自オリジンに見せかけた URL は、どれもライブラリを素通りして decideNavigation に届く
+    // (自オリジン 1 つに絞ると、前方一致のため見せかけの URL は通り、他オリジンのサブフレームは OS のブラウザに渡ってしまう)
+    for (const url of [
+      `${WEB_BASE_URL}/home`,
+      'https://evil.example/',
+      'https://homegohan-app.vercel.app.evil.example/',
+      'http://homegohan-app.vercel.app/',
+      'about:blank',
+    ]) {
+      expect(passesLibraryWhitelist(whitelist, url)).toBe(true);
+    }
+  });
+
+  it('http(s) 以外 (mailto: など) は originWhitelist に一致せず、従来どおりライブラリが OS に渡す', async () => {
+    await renderScreen('/home');
+    const whitelist: string[] = mockWebViewProps.originWhitelist;
+    for (const url of ['mailto:support@example.com', 'tel:0000000000']) {
+      expect(passesLibraryWhitelist(whitelist, url)).toBe(false);
+    }
   });
 });
 
