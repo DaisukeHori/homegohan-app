@@ -29,6 +29,7 @@ Web / Mobile 共通の **API クライアント・計算エンジン** パッケ
 - やり直しを止めるときは `{ retry: false }` (クライアント全体なら `createHttpClient({ retry: false })`)。
 - 応答を受け取れなかったときは `HttpNetworkError` を投げる。`kind` が `'timeout'` (待ち時間切れ) か `'offline'` (圏外・機内モードなど)。画面は `isHttpNetworkError(error)` で見分けて「通信できません」と案内できる。`networkErrorMessages` で、エラーの文面を画面に出せる文にできる。
 - HTTP のエラー応答 (4xx / 5xx) は、従来どおり `HTTP <status> <statusText>: <本文>` の `Error`。
+- 成功の応答 (2xx) でも本文が JSON として読めないとき (公衆 Wi-Fi のログインページの HTML・途中で切れた本文など) は、`SyntaxError` ではなく同じ形 `HTTP <status> <statusText>: <本文>` の `Error` になる (本文は 200 文字で切る。元の `SyntaxError` は `cause`。やり直さない。#1049 F7-12)。
 
 ## 含めないもの
 

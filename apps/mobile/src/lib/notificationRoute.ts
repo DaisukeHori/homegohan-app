@@ -3,7 +3,9 @@
  *
  * 行き先は data.path (アプリ内のパス。例: '/family') か、data.deep_link (homegohan:// の URL。
  * docs/design/mobile/03-push-notification.md §3.3 の例: 'homegohan://family/meal-requests') に入る。
- * どちらも docs/design/mobile/02-deep-link.md §3.1 のとおり、homegohan:// の後ろがアプリ内のパス (expo-router の画面) になる。
+ * どちらも homegohan:// の後ろがアプリ内のパス (expo-router の画面) になる。app.json の scheme が "homegohan" で、
+ * expo-router は URL のパスをそのまま app/ の画面に当てるため (docs/design/mobile/02-deep-link.md §3.1 はこのスキームで
+ * 受ける URL の一覧で、通知の行き先の形はここで決める。通知の data の形は 03-push-notification.md §3.3)。
  *
  * 通知の中身はサーバーが組み立てるが、Expo の Push Token が分かれば第三者も送れるので、受け取った行き先をそのまま
  * 画面遷移に使わない。許す形を狭く決め、外れるものは無視する (無視すると、アプリがその場で開くだけ)。

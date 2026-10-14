@@ -53,6 +53,7 @@ jest.mock('react-native-safe-area-context', () => ({
 import React from 'react';
 import { Pressable } from 'react-native';
 import AiSessionPage from '../../app/ai/[sessionId]';
+import { TIMEOUT_NOTICE_MESSAGE, TIMEOUT_RELOAD_LABEL } from '../../src/lib/ai-chat-timeout';
 import { supabase } from '../../src/lib/supabase';
 
 /** テキスト入力欄を見つけて文字を入力し、送信ボタンを押す */
@@ -115,10 +116,12 @@ describe('AiSessionPage — AbortController abort() による stream 中断', ()
       jest.advanceTimersByTime(26000);
     });
 
-    // タイムアウトエラーメッセージが表示される
+    // 時間切れの案内と、会話を取り直す導線が表示される (#1049 F7-18。以前は「タイムアウトしました」で終わっていた)
     await waitFor(() => {
-      expect(screen.getByText(/タイムアウト/)).toBeTruthy();
+      expect(screen.getByTestId('ai-chat-timeout-notice')).toBeTruthy();
     });
+    expect(screen.getByText(TIMEOUT_NOTICE_MESSAGE)).toBeTruthy();
+    expect(screen.getByText(TIMEOUT_RELOAD_LABEL)).toBeTruthy();
   });
 
   it('abort 後に楽観的メッセージが削除される', async () => {
@@ -155,10 +158,11 @@ describe('AiSessionPage — AbortController abort() による stream 中断', ()
       jest.advanceTimersByTime(26000);
     });
 
-    // abort 後、楽観的メッセージが削除される
+    // abort 後、楽観的メッセージが削除され、送った文は入力欄に戻る (#1049 F7-18)
     await waitFor(() => {
       expect(screen.queryByText('削除確認テスト')).toBeNull();
     });
+    expect(screen.getByPlaceholderText('相談内容を入力...').props.value).toBe('削除確認テスト');
   });
 });
 
@@ -193,9 +197,9 @@ describe('AiSessionPage — fetch ハングタイムアウト (26秒)', () => {
       jest.advanceTimersByTime(25999);
     });
 
-    // まだエラーは表示されていない（タイムアウトが発火していない）
+    // まだ時間切れの案内は表示されていない（タイムアウトが発火していない）
     // (楽観的メッセージが表示中)
-    expect(screen.queryByText(/タイムアウト/)).toBeNull();
+    expect(screen.queryByTestId('ai-chat-timeout-notice')).toBeNull();
 
     // 26秒でタイムアウト発火
     await act(async () => {
@@ -203,7 +207,7 @@ describe('AiSessionPage — fetch ハングタイムアウト (26秒)', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/タイムアウト/)).toBeTruthy();
+      expect(screen.getByTestId('ai-chat-timeout-notice')).toBeTruthy();
     });
   });
 
