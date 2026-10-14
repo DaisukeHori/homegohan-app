@@ -8,10 +8,12 @@
  *
  *   1. 共通の補助関数 tests/e2e/helpers/test-session.ts の createTestSession が呼ぶのは、
  *      POST /auth/v1/admin/generate_link (service_role) → POST /auth/v1/verify (anon key) の 2 つだけで、
- *      パスワードのログインを呼ばないこと (呼び出しの検査)。失敗の段・ステータスの報告と、鍵を出さないこと
+ *      パスワードのログインを呼ばないこと (呼び出しの検査)。失敗の段・ステータスの報告と、鍵を出さないこと。
+ *      同じメールアドレスで並行に呼ばれて /verify が 403 になったら、generate_link からやり直すこと
  *   2. Issue に挙がった e2e の各所が、この補助関数を使うこと (自分でパスワードのログインを呼ばない)
  *   3. テストの道具 (tests/e2e・scripts・apps/mobile/maestro) のコード (コメントを除く) に、パスワードのログインが戻ってこないこと
  *   4. Maestro の apps/mobile/maestro/flows/scripts/reset-onboarding.js を、Maestro の http を差し替えて動かしたときの呼び出し
+ *      (確認が otp_expired のときのやり直しを含む)
  *      (Maestro そのものは手元では動かせない。実機・シミュレーターが要る)
  *
  * ローカルの Supabase (local-ci) は CAPTCHA が無効なので、e2e が緑でも「CAPTCHA が有効でも通る」ことは示せない。
@@ -26,13 +28,18 @@ import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  TEST_SESSION_DEFAULT_MAX_ATTEMPTS,
   TEST_SESSION_ENV_NAMES,
   TEST_SESSION_LINK_TYPE,
+  TEST_SESSION_MAX_ATTEMPTS_ENV,
   TEST_SESSION_NO_HTTP_STATUS,
+  TEST_SESSION_RETRY_BASE_DELAY_MS,
+  TEST_SESSION_VERIFY_RETRY_STATUS,
   createTestSession,
   describeTestSessionFailure,
   missingTestSessionEnv,
   readTestSessionConfig,
+  testSessionMaxAttempts,
   type TestSessionConfig,
 } from "./e2e/helpers/test-session";
 
@@ -146,10 +153,19 @@ describe("createTestSession (tests/e2e/helpers/test-session.ts)", () => {
     const expired = makeFetch({
       [VERIFY_URL]: () => Response.json({ error_code: "otp_expired" }, { status: 403 }),
     });
-    expect(await createTestSession(EMAIL, { config: CONFIG, fetchImpl: expired.fetchImpl })).toMatchObject({
+    expect(
+      await createTestSession(EMAIL, { config: CONFIG, fetchImpl: expired.fetchImpl, sleepImpl: async () => {} }),
+    ).toMatchObject({
       ok: false,
       step: "verify",
       status: 403,
+    });
+
+    const unauthorized = makeFetch({ [VERIFY_URL]: () => new Response("bad", { status: 401 }) });
+    expect(await createTestSession(EMAIL, { config: CONFIG, fetchImpl: unauthorized.fetchImpl })).toMatchObject({
+      ok: false,
+      step: "verify",
+      status: 401,
     });
 
     const empty = makeFetch({ [VERIFY_URL]: () => Response.json({}) });
@@ -202,6 +218,148 @@ describe("createTestSession (tests/e2e/helpers/test-session.ts)", () => {
     expect(text).toContain("HTTP 500");
     // 長い本文で出力が埋まらない
     expect(text.length).toBeLessThan(400);
+  });
+
+  // ─── 同じメールアドレスで並行に呼ばれたとき (後の generate_link が先のトークンを消す) ───
+
+  it("/verify が 403 なら、待ってから generate_link からやり直し、新しいトークンでセッションを返す", async () => {
+    let issued = 0;
+    const { fetchImpl, calls } = makeFetch({
+      [GENERATE_LINK_URL]: () => Response.json({ hashed_token: `${TOKEN_HASH}-${++issued}` }),
+      [VERIFY_URL]: () =>
+        calls.filter((c) => c.url === VERIFY_URL).length === 1
+          ? Response.json({ code: 403, error_code: "otp_expired" }, { status: 403 })
+          : Response.json(SESSION),
+    });
+    const sleeps: number[] = [];
+
+    const result = await createTestSession(EMAIL, {
+      config: CONFIG,
+      fetchImpl,
+      sleepImpl: async (ms) => {
+        sleeps.push(ms);
+      },
+      randomImpl: () => 0.5,
+    });
+
+    expect(result).toEqual({ ok: true, session: SESSION });
+    expect(calls.map((c) => c.url)).toEqual([GENERATE_LINK_URL, VERIFY_URL, GENERATE_LINK_URL, VERIFY_URL]);
+    // やり直しの確認は、やり直しで発行した新しいトークンで行う (消されたトークンを使い回さない)
+    expect(calls[3].body).toEqual({ type: "recovery", token_hash: `${TOKEN_HASH}-2` });
+    expect(sleeps).toEqual([Math.floor(0.5 * TEST_SESSION_RETRY_BASE_DELAY_MS)]);
+  });
+
+  it("同じメールアドレスで 2 つ同時に呼んでも、どちらもセッションを受け取る (Supabase Auth の消し合いを再現)", async () => {
+    // Supabase Auth の動き: 発行するたびに同じ種類の既存のトークンを消す。確認は今のトークンだけを受け付け、使ったら消す
+    let issued = 0;
+    let current: string | null = null;
+    const { fetchImpl, calls } = makeFetch({
+      [GENERATE_LINK_URL]: () => {
+        current = `${TOKEN_HASH}-${++issued}`;
+        return Response.json({ hashed_token: current });
+      },
+      [VERIFY_URL]: (init) => {
+        const { token_hash } = JSON.parse(String(init.body)) as { token_hash: string };
+        if (token_hash !== current) return Response.json({ code: 403, error_code: "otp_expired" }, { status: 403 });
+        current = null;
+        return Response.json(SESSION);
+      },
+    });
+    const options = { config: CONFIG, fetchImpl, sleepImpl: async () => {}, randomImpl: () => 0 };
+
+    const [first, second] = await Promise.all([createTestSession(EMAIL, options), createTestSession(EMAIL, options)]);
+
+    expect(first).toEqual({ ok: true, session: SESSION });
+    expect(second).toEqual({ ok: true, session: SESSION });
+    // 2 つの発行が先に済み、先の確認が 403 になってから、やり直している (競合が起きたうえで吸収したこと)
+    expect(calls.slice(0, 2).map((c) => c.url)).toEqual([GENERATE_LINK_URL, GENERATE_LINK_URL]);
+    expect(calls.filter((c) => c.url === GENERATE_LINK_URL).length).toBeGreaterThan(2);
+  });
+
+  it("/verify の 403 が続けば、上限の回数で止めて段 verify・403 と試した回数を返す。待ち時間の幅は回数とともに広がる", async () => {
+    const { fetchImpl, calls } = makeFetch({
+      [VERIFY_URL]: () => Response.json({ error_code: "otp_expired" }, { status: 403 }),
+    });
+    const sleeps: number[] = [];
+    const maxAttempts = 3;
+
+    const result = await createTestSession(EMAIL, {
+      config: CONFIG,
+      fetchImpl,
+      maxAttempts,
+      sleepImpl: async (ms) => {
+        sleeps.push(ms);
+      },
+      randomImpl: () => 0.5,
+    });
+
+    expect(result).toMatchObject({ ok: false, step: "verify", status: TEST_SESSION_VERIFY_RETRY_STATUS });
+    if (!result.ok) expect(result.detail).toContain(`${maxAttempts} 回`);
+    expect(calls.filter((c) => c.url === GENERATE_LINK_URL)).toHaveLength(maxAttempts);
+    expect(calls.filter((c) => c.url === VERIFY_URL)).toHaveLength(maxAttempts);
+    expect(sleeps).toEqual([
+      Math.floor(0.5 * TEST_SESSION_RETRY_BASE_DELAY_MS * 1),
+      Math.floor(0.5 * TEST_SESSION_RETRY_BASE_DELAY_MS * 2),
+    ]);
+  });
+
+  it("やり直すのは /verify の 403 だけ。generate_link の失敗や /verify の 403 以外 (401・429・500・通信できない) はやり直さない", async () => {
+    const cases: Array<[string, Partial<Record<string, Handler>>]> = [
+      ["generate_link 403", { [GENERATE_LINK_URL]: () => new Response("forbidden", { status: 403 }) }],
+      ["verify 401", { [VERIFY_URL]: () => new Response("bad", { status: 401 }) }],
+      ["verify 429", { [VERIFY_URL]: () => new Response("rate limited", { status: 429 }) }],
+      ["verify 500", { [VERIFY_URL]: () => new Response("error", { status: 500 }) }],
+      [
+        "verify 通信できない",
+        {
+          [VERIFY_URL]: () => {
+            throw new TypeError("fetch failed");
+          },
+        },
+      ],
+    ];
+    for (const [name, overrides] of cases) {
+      const { fetchImpl, calls } = makeFetch(overrides);
+      const sleepImpl = vi.fn(async () => {});
+
+      const result = await createTestSession(EMAIL, { config: CONFIG, fetchImpl, sleepImpl });
+
+      expect(result.ok, name).toBe(false);
+      expect(calls.filter((c) => c.url === GENERATE_LINK_URL), name).toHaveLength(1);
+      expect(sleepImpl, name).not.toHaveBeenCalled();
+    }
+  });
+
+  it("試す回数の上限は、省略すれば環境変数 (1 以上の整数) か既定の値", async () => {
+    expect(TEST_SESSION_MAX_ATTEMPTS_ENV).toBe("E2E_TEST_SESSION_MAX_ATTEMPTS");
+    expect(testSessionMaxAttempts({})).toBe(TEST_SESSION_DEFAULT_MAX_ATTEMPTS);
+    expect(testSessionMaxAttempts({ E2E_TEST_SESSION_MAX_ATTEMPTS: "9" })).toBe(9);
+    expect(testSessionMaxAttempts({ E2E_TEST_SESSION_MAX_ATTEMPTS: " 2 " })).toBe(2);
+    expect(testSessionMaxAttempts({ E2E_TEST_SESSION_MAX_ATTEMPTS: "1" })).toBe(1);
+    for (const invalid of ["", "0", "-1", "1.5", "abc", "99999999999999999999"]) {
+      expect(testSessionMaxAttempts({ E2E_TEST_SESSION_MAX_ATTEMPTS: invalid }), invalid).toBe(
+        TEST_SESSION_DEFAULT_MAX_ATTEMPTS,
+      );
+    }
+
+    // createTestSession は maxAttempts を省略すると環境変数を読む
+    vi.stubEnv(TEST_SESSION_MAX_ATTEMPTS_ENV, "2");
+    try {
+      const { fetchImpl, calls } = makeFetch({
+        [VERIFY_URL]: () => Response.json({ error_code: "otp_expired" }, { status: 403 }),
+      });
+      await createTestSession(EMAIL, { config: CONFIG, fetchImpl, sleepImpl: async () => {} });
+      expect(calls.filter((c) => c.url === GENERATE_LINK_URL)).toHaveLength(2);
+
+      vi.stubEnv(TEST_SESSION_MAX_ATTEMPTS_ENV, "");
+      const defaults = makeFetch({
+        [VERIFY_URL]: () => Response.json({ error_code: "otp_expired" }, { status: 403 }),
+      });
+      await createTestSession(EMAIL, { config: CONFIG, fetchImpl: defaults.fetchImpl, sleepImpl: async () => {} });
+      expect(defaults.calls.filter((c) => c.url === GENERATE_LINK_URL)).toHaveLength(TEST_SESSION_DEFAULT_MAX_ATTEMPTS);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("readTestSessionConfig は今までのテストと同じ環境変数を読み、1 つでも無ければ null。URL の末尾の / は落とす", () => {
@@ -455,10 +613,42 @@ describe("Maestro の reset-onboarding.js (#1547)", () => {
         : { body: JSON.stringify({ error_code: "otp_expired" }) },
     );
     expect(verifyFailed.error?.message).toContain("otp_expired");
-    expect(verifyFailed.calls.map((c) => c.url)).toEqual([GENERATE_LINK_URL, VERIFY_URL]);
-    for (const failed of [linkFailed, verifyFailed]) {
+    // otp_expired は発行からやり直し、上限の回数 (スクリプトの MAX_ATTEMPTS = 補助関数の既定と同じ) で止める
+    expect(verifyFailed.error?.message).toContain(`${TEST_SESSION_DEFAULT_MAX_ATTEMPTS} 回`);
+    expect(verifyFailed.calls.map((c) => c.url)).toEqual(
+      Array.from({ length: TEST_SESSION_DEFAULT_MAX_ATTEMPTS }, () => [GENERATE_LINK_URL, VERIFY_URL]).flat(),
+    );
+
+    // otp_expired 以外の確認の失敗はやり直さない
+    const verifyRejected = runMaestroScript(MAESTRO_PARAMS, (url) =>
+      url === GENERATE_LINK_URL
+        ? { body: JSON.stringify({ hashed_token: TOKEN_HASH }) }
+        : { body: JSON.stringify({ error_code: "bad_jwt" }) },
+    );
+    expect(verifyRejected.error?.message).toContain("bad_jwt");
+    expect(verifyRejected.calls.map((c) => c.url)).toEqual([GENERATE_LINK_URL, VERIFY_URL]);
+    for (const failed of [linkFailed, verifyFailed, verifyRejected]) {
       for (const secret of [SERVICE_ROLE_KEY, ANON_KEY, TOKEN_HASH]) expect(failed.error?.message ?? "").not.toContain(secret);
     }
+  });
+
+  it("確認が otp_expired (同時に作った相手にトークンを消された) なら、発行からやり直し、新しいトークンでリセットまで進む", () => {
+    let issued = 0;
+    let verified = 0;
+    const { calls, output, error } = runMaestroScript(MAESTRO_PARAMS, (url) => {
+      if (url === GENERATE_LINK_URL) return { body: JSON.stringify({ hashed_token: `${TOKEN_HASH}-${++issued}` }) };
+      if (url === VERIFY_URL) {
+        return ++verified === 1
+          ? { body: JSON.stringify({ code: 403, error_code: "otp_expired" }) }
+          : { body: JSON.stringify(SESSION) };
+      }
+      return { body: JSON.stringify({ ok: url === RESET_URL }) };
+    });
+
+    expect(error).toBeNull();
+    expect(output.ok).toBe(true);
+    expect(calls.map((c) => c.url)).toEqual([GENERATE_LINK_URL, VERIFY_URL, GENERATE_LINK_URL, VERIFY_URL, RESET_URL]);
+    expect(calls[3].body).toEqual({ type: "recovery", token_hash: `${TOKEN_HASH}-2` });
   });
 
   it("Maestro の共通のフローは、パスワードを渡さず、Supabase の値をシェルの MAESTRO_ 付きの環境変数から渡す", () => {

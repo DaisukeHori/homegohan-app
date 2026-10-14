@@ -17,6 +17,8 @@
  *     1. service_role で POST /auth/v1/admin/generate_link ({ type: "recovery", email }) → hashed_token (メールは送られない)
  *     2. anon key で POST /auth/v1/verify ({ type: "recovery", token_hash }) → access_token
  *   どちらも CAPTCHA の対象外 (根拠は tests/e2e/helpers/test-session.ts の先頭のコメント)。
+ *   同じテストユーザーで同時にセッションを作られると、後の発行が先のトークンを消し、確認が 403 になる。そのときは発行からやり直す
+ *   (AUTH_DEFAULT_MAX_ATTEMPTS)。
  *   この手順は、確認したい環境の service_role (管理用の鍵) を要る。**本番では --with-auth を使わない**
  *   (本番の管理用の鍵を、確認用の端末やシェルに出さないため)。本番は --with-auth なしの 4 項目で確認する。
  *   このファイルは node でそのまま動かす .mjs で、TypeScript の helpers/test-session.ts を読み込めないので、同じ手順をここにも書いている。
@@ -36,6 +38,20 @@ export const AUTH_ENV_NAMES = [
 
 /** --with-auth のセッションの作り方 (generate_link と verify に渡す type)。理由は tests/e2e/helpers/test-session.ts */
 export const AUTH_LINK_TYPE = 'recovery';
+
+/**
+ * 確認 (/verify) が 403 (トークンが見つからない = otp_expired) のとき、発行からやり直す回数の上限 (最初の 1 回を含む)。
+ * 同じテストユーザーで e2e などが同時にセッションを作ると、後の発行が先のトークンを消すため (理由と根拠は
+ * tests/e2e/helpers/test-session.ts の先頭のコメント)。smoke は 1 回しか作らないので、相手 (e2e は乱数で待ってからやり直す) より
+ * 先に確認を済ませられれば足りる。間を空けずにやり直す。環境変数 AUTH_MAX_ATTEMPTS_ENV (1 以上の整数) で上書きできる。
+ */
+export const AUTH_DEFAULT_MAX_ATTEMPTS = 3;
+
+/** AUTH_DEFAULT_MAX_ATTEMPTS を上書きする環境変数の名前 (tests/e2e/helpers/test-session.ts と同じ名前) */
+export const AUTH_MAX_ATTEMPTS_ENV = 'E2E_TEST_SESSION_MAX_ATTEMPTS';
+
+/** 確認 (/verify) がトークンを見つけられなかったときの status。このときだけ発行からやり直す */
+const AUTH_VERIFY_RETRY_STATUS = 403;
 
 export const USAGE = `デプロイ後 / DR 復元後の smoke test (#1181)
 
@@ -134,6 +150,16 @@ function missingAuthEnv(env) {
   return AUTH_ENV_NAMES.filter((name) => !env[name]);
 }
 
+/** --with-auth の、発行からやり直す回数の上限 (環境変数が 1 以上の整数ならその値。それ以外は既定) */
+export function authMaxAttempts(env) {
+  const raw = env[AUTH_MAX_ATTEMPTS_ENV];
+  if (typeof raw === 'string' && /^\d+$/.test(raw.trim())) {
+    const parsed = Number(raw.trim());
+    if (Number.isSafeInteger(parsed) && parsed >= 1) return parsed;
+  }
+  return AUTH_DEFAULT_MAX_ATTEMPTS;
+}
+
 const pass = (detail) => ({ ok: true, detail });
 const fail = (detail) => ({ ok: false, detail });
 
@@ -223,50 +249,60 @@ function buildChecks({ baseUrl, fetchImpl, timeoutMs, env, withAuth }) {
       }
 
       // 1. 管理用の鍵で、ワンタイムのトークン (のハッシュ) を発行する (メールは送られない)
-      const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY;
-      const linkRes = await send(`${supabaseUrl}/auth/v1/admin/generate_link`, {
-        method: 'POST',
-        headers: {
-          apikey: serviceRoleKey,
-          Authorization: `Bearer ${serviceRoleKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ type: AUTH_LINK_TYPE, email: env.E2E_USER_EMAIL }),
-      });
-      if (linkRes.status !== 200) {
-        await drain(linkRes);
-        return fail(`ログインに失敗しました (${host}): 管理用のトークンの発行が HTTP ${linkRes.status}`);
-      }
-      let link = null;
-      try {
-        link = await linkRes.json();
-      } catch {
-        // 下で hashed_token が無いものとして扱う
-      }
-      const tokenHash = link?.hashed_token;
-      if (typeof tokenHash !== 'string' || !tokenHash) {
-        return fail(`管理用のトークンの発行の応答に hashed_token がありません (${host})`);
-      }
-
       // 2. そのトークンをセッションに換える (/verify には CAPTCHA が掛からない)
-      const loginRes = await send(`${supabaseUrl}/auth/v1/verify`, {
-        method: 'POST',
-        headers: { apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: AUTH_LINK_TYPE, token_hash: tokenHash }),
-      });
-      if (loginRes.status !== 200) {
-        await drain(loginRes);
-        return fail(`ログインに失敗しました (${host}): トークンの確認が HTTP ${loginRes.status}`);
-      }
-      let session = null;
-      try {
-        session = await loginRes.json();
-      } catch {
-        // 下で access_token が無いものとして扱う
-      }
-      const accessToken = session?.access_token;
-      if (typeof accessToken !== 'string' || !accessToken) {
-        return fail(`ログイン応答に access_token がありません (${host})`);
+      // 確認が 403 (同時に作った相手に消された) なら、発行からやり直す (AUTH_DEFAULT_MAX_ATTEMPTS のコメント)
+      const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY;
+      const maxAttempts = authMaxAttempts(env);
+      let accessToken = null;
+      for (let attempt = 1; accessToken === null; attempt++) {
+        const linkRes = await send(`${supabaseUrl}/auth/v1/admin/generate_link`, {
+          method: 'POST',
+          headers: {
+            apikey: serviceRoleKey,
+            Authorization: `Bearer ${serviceRoleKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ type: AUTH_LINK_TYPE, email: env.E2E_USER_EMAIL }),
+        });
+        if (linkRes.status !== 200) {
+          await drain(linkRes);
+          return fail(`ログインに失敗しました (${host}): 管理用のトークンの発行が HTTP ${linkRes.status}`);
+        }
+        let link = null;
+        try {
+          link = await linkRes.json();
+        } catch {
+          // 下で hashed_token が無いものとして扱う
+        }
+        const tokenHash = link?.hashed_token;
+        if (typeof tokenHash !== 'string' || !tokenHash) {
+          return fail(`管理用のトークンの発行の応答に hashed_token がありません (${host})`);
+        }
+
+        const loginRes = await send(`${supabaseUrl}/auth/v1/verify`, {
+          method: 'POST',
+          headers: { apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: AUTH_LINK_TYPE, token_hash: tokenHash }),
+        });
+        if (loginRes.status === AUTH_VERIFY_RETRY_STATUS && attempt < maxAttempts) {
+          await drain(loginRes);
+          continue;
+        }
+        if (loginRes.status !== 200) {
+          await drain(loginRes);
+          const tried = loginRes.status === AUTH_VERIFY_RETRY_STATUS ? ` (発行から ${attempt} 回試しました)` : '';
+          return fail(`ログインに失敗しました (${host}): トークンの確認が HTTP ${loginRes.status}${tried}`);
+        }
+        let session = null;
+        try {
+          session = await loginRes.json();
+        } catch {
+          // 下で access_token が無いものとして扱う
+        }
+        if (typeof session?.access_token !== 'string' || !session.access_token) {
+          return fail(`ログイン応答に access_token がありません (${host})`);
+        }
+        accessToken = session.access_token;
       }
 
       const res = await send(`${baseUrl}/api/profile`, {

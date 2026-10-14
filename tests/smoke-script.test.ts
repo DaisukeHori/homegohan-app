@@ -21,8 +21,11 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 
 import {
+  AUTH_DEFAULT_MAX_ATTEMPTS,
   AUTH_ENV_NAMES,
   AUTH_LINK_TYPE,
+  AUTH_MAX_ATTEMPTS_ENV,
+  authMaxAttempts,
   DEFAULT_BASE_URL,
   DEFAULT_TIMEOUT_MS,
   UsageError,
@@ -409,7 +412,7 @@ describe('runSmoke --with-auth', () => {
   });
 
   it('トークンの確認に失敗したら FAIL (ステータスだけ報告し、応答本文は出さない)', async () => {
-    const { fetchImpl } = makeFetch({
+    const { fetchImpl, calls } = makeFetch({
       [VERIFY]: () => Response.json({ error_code: 'otp_expired', msg: `expired ${TOKEN_HASH}` }, { status: 403 }),
     });
 
@@ -417,7 +420,68 @@ describe('runSmoke --with-auth', () => {
 
     expect(result.ok).toBe(false);
     expect(result.detail).toContain('HTTP 403');
+    expect(result.detail).toContain(`${AUTH_DEFAULT_MAX_ATTEMPTS} 回`);
     expect(result.detail).not.toContain(TOKEN_HASH);
+    // 403 は発行からやり直し、上限の回数で止める
+    expect(calls.filter((c) => `${c.method} ${c.url}` === GENERATE_LINK)).toHaveLength(AUTH_DEFAULT_MAX_ATTEMPTS);
+    expect(calls.filter((c) => `${c.method} ${c.url}` === VERIFY)).toHaveLength(AUTH_DEFAULT_MAX_ATTEMPTS);
+  });
+
+  it('確認が 403 (同時に作った相手にトークンを消された) なら、発行からやり直して新しいトークンでログインする', async () => {
+    let issued = 0;
+    let verified = 0;
+    const { fetchImpl, calls } = makeFetch({
+      [GENERATE_LINK]: () => Response.json({ hashed_token: `${TOKEN_HASH}-${++issued}` }),
+      [VERIFY]: () =>
+        ++verified === 1
+          ? Response.json({ code: 403, error_code: 'otp_expired' }, { status: 403 })
+          : Response.json({ access_token: ACCESS_TOKEN, token_type: 'bearer' }),
+    });
+
+    const result = byName(await runSmoke({ baseUrl: BASE, withAuth: true, env: AUTH_ENV, fetchImpl }), AUTH_CHECK);
+
+    expect(result).toMatchObject({ ok: true });
+    expect(calls.slice(4).map((c) => `${c.method} ${c.url}`)).toEqual([
+      GENERATE_LINK,
+      VERIFY,
+      GENERATE_LINK,
+      VERIFY,
+      `GET ${BASE}/api/profile`,
+    ]);
+    expect(JSON.parse(String(calls[7].init.body))).toEqual({ type: 'recovery', token_hash: `${TOKEN_HASH}-2` });
+  });
+
+  it('やり直すのは確認の 403 だけ。確認の 401・429・500 はやり直さない', async () => {
+    for (const status of [401, 429, 500]) {
+      const { fetchImpl, calls } = makeFetch({ [VERIFY]: () => new Response('x', { status }) });
+
+      const result = byName(await runSmoke({ baseUrl: BASE, withAuth: true, env: AUTH_ENV, fetchImpl }), AUTH_CHECK);
+
+      expect(result.ok, String(status)).toBe(false);
+      expect(result.detail, String(status)).toContain(`HTTP ${status}`);
+      expect(calls.filter((c) => `${c.method} ${c.url}` === GENERATE_LINK), String(status)).toHaveLength(1);
+    }
+  });
+
+  it('やり直す回数の上限は、環境変数 (1 以上の整数) で上書きでき、それ以外の値は既定に戻る', async () => {
+    expect(AUTH_MAX_ATTEMPTS_ENV).toBe('E2E_TEST_SESSION_MAX_ATTEMPTS');
+    expect(authMaxAttempts({})).toBe(AUTH_DEFAULT_MAX_ATTEMPTS);
+    expect(authMaxAttempts({ E2E_TEST_SESSION_MAX_ATTEMPTS: '5' })).toBe(5);
+    expect(authMaxAttempts({ E2E_TEST_SESSION_MAX_ATTEMPTS: '1' })).toBe(1);
+    for (const invalid of ['', '0', '-2', '2.5', 'x']) {
+      expect(authMaxAttempts({ E2E_TEST_SESSION_MAX_ATTEMPTS: invalid }), invalid).toBe(AUTH_DEFAULT_MAX_ATTEMPTS);
+    }
+
+    const { fetchImpl, calls } = makeFetch({
+      [VERIFY]: () => Response.json({ error_code: 'otp_expired' }, { status: 403 }),
+    });
+    await runSmoke({
+      baseUrl: BASE,
+      withAuth: true,
+      env: { ...AUTH_ENV, E2E_TEST_SESSION_MAX_ATTEMPTS: '1' },
+      fetchImpl,
+    });
+    expect(calls.filter((c) => `${c.method} ${c.url}` === GENERATE_LINK)).toHaveLength(1);
   });
 
   it('確認の応答に access_token が無ければ FAIL', async () => {

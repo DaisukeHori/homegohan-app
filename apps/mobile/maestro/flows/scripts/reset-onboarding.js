@@ -13,6 +13,8 @@
 //     1. service_role で POST /auth/v1/admin/generate_link ({ type: "recovery", email }) → hashed_token (メールは送られない)
 //     2. anon key で POST /auth/v1/verify ({ type: "recovery", token_hash }) → access_token
 //   どちらも CAPTCHA の対象外 (根拠は tests/e2e/helpers/test-session.ts の先頭のコメント)。
+//   同じテストユーザーで同時にセッションを作られると (web の e2e など)、後の発行が先のトークンを消し、確認が otp_expired になる。
+//   そのときは発行からやり直す (MAX_ATTEMPTS)。
 //   このファイルは Maestro の JavaScript (GraalJS) で動き、npm のモジュールを読み込めないので、同じ手順をここにも書いている。
 //
 // 要る値 (runScript の env で渡す。_shared/login-for-onboarding.yaml が、シェルの MAESTRO_ 付きの環境変数から渡す):
@@ -71,37 +73,53 @@ function describeAuthError(data) {
   return String(data.error_code || data.msg || data.error || 'unknown');
 }
 
-// Step 1: 管理用の鍵で、ワンタイムのトークン (のハッシュ) を発行する (メールは送られない)
-var linkResponse = http.post(
-  supabaseUrl + '/auth/v1/admin/generate_link',
-  {
-    body: JSON.stringify({ type: LINK_TYPE, email: email }),
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': serviceRoleKey,
-      'Authorization': 'Bearer ' + serviceRoleKey
-    }
-  }
-);
-var linkData = parseJson(linkResponse.body);
-if (!linkData || typeof linkData.hashed_token !== 'string' || !linkData.hashed_token) {
-  throw new Error('Auth failed - generate_link: ' + describeAuthError(linkData));
-}
+// 確認 (/verify) が otp_expired (トークンが見つからない) のとき、発行からやり直す回数の上限 (最初の 1 回を含む)。
+// scripts/maestro-parallel-runner.sh は、並列のシミュレーター (既定 10 台) すべてに同じテストユーザー (E2E_USER_01_EMAIL) を渡すので、
+// 同時にぶつかりうる。ぶつかった中で最後に発行した側は確認を済ませて抜けるので、やり直すたびに競う数は減っていく。
+// tests/e2e/helpers/test-session.ts の既定 (TEST_SESSION_DEFAULT_MAX_ATTEMPTS) と同じ回数にしてある。
+// Maestro の http には status が無いことがあるので、応答の error_code で見分ける。Maestro の JavaScript には待つ手段が無いので、
+// 間を空けずにやり直す (1 回の発行 → 確認の往復の時間が、シミュレーターごとにばらつく)
+var MAX_ATTEMPTS = 6;
+var VERIFY_RETRY_ERROR_CODE = 'otp_expired';
 
-// Step 2: そのトークンをセッションに換える (/verify には CAPTCHA が掛からない)
-var authResponse = http.post(
-  supabaseUrl + '/auth/v1/verify',
-  {
-    body: JSON.stringify({ type: LINK_TYPE, token_hash: linkData.hashed_token }),
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': supabaseAnonKey
+var authData = null;
+for (var attempt = 1; ; attempt++) {
+  // Step 1: 管理用の鍵で、ワンタイムのトークン (のハッシュ) を発行する (メールは送られない)
+  var linkResponse = http.post(
+    supabaseUrl + '/auth/v1/admin/generate_link',
+    {
+      body: JSON.stringify({ type: LINK_TYPE, email: email }),
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': serviceRoleKey,
+        'Authorization': 'Bearer ' + serviceRoleKey
+      }
     }
+  );
+  var linkData = parseJson(linkResponse.body);
+  if (!linkData || typeof linkData.hashed_token !== 'string' || !linkData.hashed_token) {
+    throw new Error('Auth failed - generate_link: ' + describeAuthError(linkData));
   }
-);
-var authData = parseJson(authResponse.body);
-if (!authData || !authData.access_token) {
-  throw new Error('Auth failed - no access_token: ' + describeAuthError(authData));
+
+  // Step 2: そのトークンをセッションに換える (/verify には CAPTCHA が掛からない)
+  var authResponse = http.post(
+    supabaseUrl + '/auth/v1/verify',
+    {
+      body: JSON.stringify({ type: LINK_TYPE, token_hash: linkData.hashed_token }),
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': supabaseAnonKey
+      }
+    }
+  );
+  authData = parseJson(authResponse.body);
+  if (authData && authData.access_token) break;
+  if (!authData || authData.error_code !== VERIFY_RETRY_ERROR_CODE || attempt >= MAX_ATTEMPTS) {
+    throw new Error(
+      'Auth failed - no access_token: ' + describeAuthError(authData) +
+        (authData && authData.error_code === VERIFY_RETRY_ERROR_CODE ? ' (発行から ' + attempt + ' 回試しました)' : '')
+    );
+  }
 }
 
 var accessToken = authData.access_token;

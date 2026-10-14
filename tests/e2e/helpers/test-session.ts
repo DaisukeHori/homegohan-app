@@ -24,6 +24,13 @@
  * メールアドレスを打ち間違えると、本番にアカウントができる)。recovery は、ユーザーがいなければ 404 で止まり、何も作らない。
  * いるユーザーに対しては、どちらも同じ recovery_token を発行し、/verify で同じ処理 (recoverVerify) を通る。
  *
+ * 同じメールアドレスで並行に呼ばれたとき (worker がテストユーザーを共有するとき。fixtures/auth.ts の authedPage など):
+ *   generate_link は、そのユーザーの同じ種類のトークンを発行し直す (internal/api/mail.go の adminGenerateLink →
+ *   internal/models/one_time_token.go の CreateOneTimeToken が、最初に同じ種類の既存のトークンを消す)。そのため、
+ *   先に発行した側の /verify はトークンが見つからず 403 (otp_expired。internal/api/verify.go) になる。パスワードのログインでは
+ *   起きなかった競合なので、/verify の 403 は generate_link からやり直す (回数は testSessionMaxAttempts。待ち時間は乱数で
+ *   ずらし、同じ競合を繰り返さないようにする)。
+ *
  * 鍵の値は、出力・ログ・例外のメッセージに含めない (失敗の報告は、どの段かと HTTP のステータスと、応答の本文の先頭だけ)。
  */
 
@@ -42,6 +49,29 @@ const ERROR_BODY_PREVIEW_CHARS = 200;
 
 /** 「通信できなかった」「設定が足りない」ときの status (HTTP の応答が無い) */
 export const TEST_SESSION_NO_HTTP_STATUS = 0;
+
+/** /verify がトークンを見つけられなかったときの status (otp_expired。並行の generate_link に消された。ファイルの先頭のコメント) */
+export const TEST_SESSION_VERIFY_RETRY_STATUS = 403;
+
+/**
+ * /verify の 403 で generate_link からやり直すときの、試す回数の上限 (最初の 1 回を含む)。
+ * テストユーザーを共有する worker の数 (playwright.config.ts は CI 以外で workers を指定しないので CPU コアの半分。
+ * ユーザーが 1 人のときは全 worker) がぶつかっても、待ち時間の乱数でずれて、どれかが先に確認を済ませる。
+ * ぶつかった中で最後に発行した側は、その後に誰も発行しなければ確認を済ませて抜けるので、やり直すたびに競う数は減っていく。
+ * 待ち時間の幅も回数とともに広がるので、数回で足りる。足りずに 403 のまま終われば、そのまま失敗として返す。
+ * TEST_SESSION_MAX_ATTEMPTS_ENV で上書きできる (worker を増やして足りなくなったとき)。
+ */
+export const TEST_SESSION_DEFAULT_MAX_ATTEMPTS = 6;
+
+/** TEST_SESSION_DEFAULT_MAX_ATTEMPTS を上書きする環境変数の名前 (1 以上の整数。それ以外の値は無視して既定を使う) */
+export const TEST_SESSION_MAX_ATTEMPTS_ENV = "E2E_TEST_SESSION_MAX_ATTEMPTS";
+
+/**
+ * やり直す前の待ち時間の基準 (ms)。n 回目のやり直しの前に [0, 基準 × n) の乱数だけ待つ。
+ * ぶつかった相手と同じ間隔でやり直すと、また同じ順で消し合うので、乱数でずらす。1 回の generate_link → verify は
+ * ローカルでも本番でも数十〜数百 ms なので、その数倍の幅にしてある。
+ */
+export const TEST_SESSION_RETRY_BASE_DELAY_MS = 200;
 
 export interface TestSessionConfig {
   supabaseUrl: string;
@@ -78,6 +108,27 @@ export interface CreateTestSessionOptions {
   config?: TestSessionConfig | null;
   /** 単体テストで差し替える。省略時は globalThis.fetch */
   fetchImpl?: typeof fetch;
+  /** 試す回数の上限 (最初の 1 回を含む)。省略時は testSessionMaxAttempts() */
+  maxAttempts?: number;
+  /** 単体テストで差し替える (やり直す前に待つ)。省略時は setTimeout */
+  sleepImpl?: (ms: number) => Promise<void>;
+  /** 単体テストで差し替える ([0, 1) の乱数)。省略時は Math.random */
+  randomImpl?: () => number;
+}
+
+/**
+ * /verify の 403 でやり直すときの、試す回数の上限 (最初の 1 回を含む)。
+ * 環境変数 TEST_SESSION_MAX_ATTEMPTS_ENV が 1 以上の整数ならその値、そうでなければ TEST_SESSION_DEFAULT_MAX_ATTEMPTS。
+ *
+ * @param env - 読む環境変数 (省略時は process.env)
+ */
+export function testSessionMaxAttempts(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env[TEST_SESSION_MAX_ATTEMPTS_ENV];
+  if (raw && /^\d+$/.test(raw.trim())) {
+    const parsed = Number(raw.trim());
+    if (Number.isSafeInteger(parsed) && parsed >= 1) return parsed;
+  }
+  return TEST_SESSION_DEFAULT_MAX_ATTEMPTS;
 }
 
 /**
@@ -110,6 +161,8 @@ function failure(step: TestSessionStep, status: number, detail: string): TestSes
 /**
  * email のユーザーのセッションを、パスワードのログインを使わずに作る。例外は投げず、結果で返す。
  * ユーザーがいなければ、作らずに失敗を返す (generate_link が 404)。
+ * /verify が 403 (並行の呼び出しにトークンを消された) なら、乱数で待ってから generate_link からやり直す
+ * (上限は options.maxAttempts。ファイルの先頭のコメント)。それ以外の失敗はやり直さずに返す (429 などは呼び出し側が決める)。
  *
  * @param email - セッションを作るユーザーのメールアドレス (既にいるユーザー)
  */
@@ -126,7 +179,28 @@ export async function createTestSession(
     );
   }
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const maxAttempts = options.maxAttempts ?? testSessionMaxAttempts();
+  const sleepImpl = options.sleepImpl ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const randomImpl = options.randomImpl ?? Math.random;
 
+  let result = await createTestSessionOnce(email, config, fetchImpl);
+  for (let attempt = 1; attempt < maxAttempts; attempt++) {
+    if (result.ok || result.step !== "verify" || result.status !== TEST_SESSION_VERIFY_RETRY_STATUS) return result;
+    await sleepImpl(Math.floor(randomImpl() * TEST_SESSION_RETRY_BASE_DELAY_MS * attempt));
+    result = await createTestSessionOnce(email, config, fetchImpl);
+  }
+  if (!result.ok && result.step === "verify" && result.status === TEST_SESSION_VERIFY_RETRY_STATUS) {
+    return failure(result.step, result.status, `${result.detail} (generate_link から ${maxAttempts} 回試しました)`);
+  }
+  return result;
+}
+
+/** generate_link → verify を 1 回だけ行う (やり直しは createTestSession) */
+async function createTestSessionOnce(
+  email: string,
+  config: TestSessionConfig,
+  fetchImpl: typeof fetch,
+): Promise<TestSessionResult> {
   // 1. 管理用の鍵で、ワンタイムのトークン (のハッシュ) を発行する。メールは送られない
   let linkResp: Response;
   try {

@@ -62,6 +62,8 @@ test("...", async ({ authedPage }) => {
 - 要る環境変数: `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` (ローカルは `.env.local`)。
 - `SUPABASE_SERVICE_ROLE_KEY` が無いとき、`global-setup.ts` と `authedPage` は画面からのログインに回る (`E2E_USER_PASSWORD` を使う)。
 - 画面からのログイン (`/login`) は今までどおりパスワードを使う。
+- 同じテストユーザーのセッションを複数の worker が同時に作ると、後の `generate_link` が先のトークンを消し、先の `/verify` が 403 (`otp_expired`) になる。
+  `createTestSession` は、この 403 のときだけ、乱数で待ってから `generate_link` からやり直す (既定 6 回まで。環境変数 `E2E_TEST_SESSION_MAX_ATTEMPTS` で変えられる)。
 
 ### パスワードの扱い
 
