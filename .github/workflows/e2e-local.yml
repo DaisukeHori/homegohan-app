@@ -97,6 +97,7 @@ jobs:
       # auth-turnstile は、Turnstile のウィジェットが本物のブラウザ・本物の CSP で動くことを確かめる (#1165)。
       # family/01・operator/01・operator/02 は、主要ペルソナ (家族・admin・super_admin) の happy path (#856)。
       # ユーザーは test ごとに、.env.local (上の手順が書く) の SUPABASE_SERVICE_ROLE_KEY でローカルの DB に作る (鍵が無ければ skip せず失敗する)。
+      # tour/01〜07 は、ハンズオンツアー (初回の使い方ガイド) の判定 API と Step 0〜4・スキップ・やり直し (#846)。ユーザーは同じく test ごとに作る。
       - name: Run Playwright tests (MVP, AI を使わないもの + 未ログインで読める公開ページ + Turnstile)
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:3000
@@ -117,6 +118,13 @@ jobs:
           tests/e2e/family/01-invite-accept-share.spec.ts
           tests/e2e/operator/01-admin-flow.spec.ts
           tests/e2e/operator/02-super-admin-flow.spec.ts
+          tests/e2e/tour/01-eligibility.spec.ts
+          tests/e2e/tour/02-step0-welcome.spec.ts
+          tests/e2e/tour/03-step1-photo.spec.ts
+          tests/e2e/tour/04-step2-menu.spec.ts
+          tests/e2e/tour/05-step3-badges.spec.ts
+          tests/e2e/tour/06-step4-graduate.spec.ts
+          tests/e2e/tour/07-skip-and-replay.spec.ts
 
       # 規約・プライバシーポリシーの再同意ゲート (#1174) の「強制あり」(LEGAL_CONSENT_ENFORCE=on) の挙動は、
       # 同じビルドを on でもう 1 つ別のポート (3001) に起動して確かめる (環境変数はサーバーの起動時に読まれる)。

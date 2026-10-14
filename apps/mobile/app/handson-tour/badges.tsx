@@ -129,6 +129,7 @@ export default function HandsonTourBadges() {
     title?: string;
     body: string;
     position: 'top' | 'bottom' | 'left' | 'right' | 'auto';
+    testId?: string;
   } => {
     switch (subStep) {
       case '3.0':
@@ -141,6 +142,8 @@ export default function HandsonTourBadges() {
           title: personalize(i18n.step3.intro_title, { nickname }),
           body: i18n.step3.intro_title,
           position: 'auto',
+          // E2E (Maestro) が各 Step の最初の intro 吹き出しを見分ける目印 (設計書 09-onboarding-handson-tour の testID 一覧。#846)
+          testId: 'tour-step-3-intro',
         };
       case '3.2':
         return {
