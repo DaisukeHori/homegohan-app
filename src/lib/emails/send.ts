@@ -14,6 +14,13 @@
  * - 二重送信の防止: Resend の Idempotency-Key を付ける。再試行では同じキーを使うので、1 回目が実は届いていたのに
  *   応答だけ失われた場合でも、同じメールが 2 通届かない。
  * - RESEND_API_KEY が無いときは送らずに app_logs へ警告を残し、skipped: true を返す (ok は false)。
+ * - 宛先停止リスト (email_blacklist。ハードバウンス・苦情・運営の手入力) に載っている宛先へは送らない (#1184)。
+ *   送らずに app_logs へ警告を残し (宛先はマスク)、error.code = 'suppressed' の失敗 (ok: false / skipped: false) を返す。
+ *   届いていないので、呼び出し側からは送れなかったメールに見える (isEmailFailure が true)。
+ *   停止リストを引けなかったとき (DB の失敗・時間切れ) は送る (src/lib/emails/suppression.ts の lookupEmailSuppression)。
+ *   メールの種類で分けない (退会の完了の知らせ・譲渡の提案など、このモジュールを通るものはすべて止める)。
+ *   サインアップの確認・パスワードの再設定のメールは Supabase Auth が送り、このモジュールを通らないので、ここでは止まらない。
+ *   届かない・迷惑メールと報告された宛先へ送り続けると、送信元の評価が落ちて、ほかの人へのメールまで届きにくくなるため。
  *
  * 【規約】利用者が指定したアドレスへメールを送る処理は、このモジュールを呼ぶ前に
  * src/lib/membership/invite-throttle.ts の送信回数制限を通すこと (tests/email-send-throttle-contract.test.ts が検査する)。
@@ -21,8 +28,10 @@
  */
 import { randomUUID } from 'crypto';
 import { Resend } from 'resend';
+import { errorCodeOf, toLoggableError } from '@/lib/api/errors';
 import { createLogger } from '@/lib/db-logger';
 import { EmailSendError, type SendEmailResult } from '@/lib/emails/send-result';
+import { lookupEmailSuppression } from '@/lib/emails/suppression';
 import { EmailEnvelopeSchema, type EmailEnvelope } from './envelope';
 
 export type { SendEmailFailed, SendEmailResult, SendEmailSent, SendEmailSkipped } from '@/lib/emails/send-result';
@@ -207,6 +216,32 @@ export async function sendEmail(envelope: EmailEnvelope, options: SendEmailOptio
       false,
     );
     return { ok: false, id: null, attempts: 0, skipped: true, error };
+  }
+
+  // 宛先停止リストを引く (#1184)。載っていたら送らない。引けなかったときは送る (止めない側に倒す)
+  const suppression = await lookupEmailSuppression(v.to);
+  if (suppression.status === 'suppressed') {
+    logger.warn('宛先停止リストに載っている宛先のため、メールを送信しませんでした', {
+      template,
+      recipient,
+      suppression_reason: suppression.reason,
+    });
+    const error = new EmailSendError(
+      'suppressed',
+      'EMAIL_SUPPRESSED: 宛先停止リストに載っている宛先のため、メールを送信しませんでした',
+      null,
+      0,
+      false,
+    );
+    return { ok: false, id: null, attempts: 0, skipped: false, error };
+  }
+  if (suppression.status === 'lookup_failed') {
+    logger.warn('宛先停止リストを引けなかったため、確かめずにメールを送ります', {
+      template,
+      recipient,
+      error_code: errorCodeOf(suppression.error) ?? null,
+      error_message: redactEmailAddresses(toLoggableError(suppression.error).message),
+    });
   }
 
   const payload = {

@@ -18,6 +18,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
 import { aiDailyLimitMessage } from "../_shared/ai-daily-limit.ts";
+import { MENU_REQUEST_FAILED_MESSAGE } from "../_shared/stored-failure-messages.ts";
+import { createLogger } from "../_shared/db-logger.ts";
 import {
   buildSearchQueryBase,
   buildUserContextForPrompt,
@@ -2146,6 +2148,10 @@ async function executeStep3_Complete(
     errors,
     successMessage: `全${totalSlots}件の献立が完成しました！`,
   });
+  // 枠ごとの理由 (例外の文面を含む) はログにだけ残す。行の error_message は定型の文 (#1478)
+  if (finalSummary.issueDetails.length > 0) {
+    console.warn(`[save] 保存しなかった枠 (request ${requestId}):`, finalSummary.issueDetails.join("; "));
+  }
 
   await runSupabaseQuery(
     () => supabase
@@ -2698,6 +2704,10 @@ async function executeStep6_FinalSave(
     successMessage: `全${totalSlots}件の献立が完成しました！`,
     successSuffix: praiseComment ? ` ${praiseComment}` : "",
   });
+  // 枠ごとの理由 (例外の文面を含む) はログにだけ残す。行の error_message は定型の文 (#1478)
+  if (finalSummary.issueDetails.length > 0) {
+    console.warn(`[save] 保存しなかった枠 (request ${requestId}):`, finalSummary.issueDetails.join("; "));
+  }
 
   await runSupabaseQuery(
     () => supabase
@@ -2912,6 +2922,13 @@ Deno.serve(async (req: Request) => {
         console.log(`✅ Step ${currentStep} completed successfully`);
       } catch (bgErr: any) {
         console.error(`❌ Step ${currentStep} error:`, bgErr?.message ?? String(bgErr), bgErr);
+        // 例外の文面は console と構造化ログ (app_logs) にだけ残す。行の error_message は画面がそのまま出すので定型の文を書く (#1478)
+        const backgroundLogger = createLogger("generate-menu-v4", requestId ?? undefined);
+        (userId ? backgroundLogger.withUser(userId) : backgroundLogger).error(
+          "バックグラウンドの工程でエラーが発生しました",
+          bgErr,
+          { requestId, step: currentStep },
+        );
         if (requestId) {
           try {
             await runSupabaseQuery(
@@ -2919,7 +2936,7 @@ Deno.serve(async (req: Request) => {
                 .from("weekly_menu_requests")
                 .update({
                   status: "failed",
-                  error_message: bgErr?.message ?? String(bgErr) ?? "Step error",
+                  error_message: MENU_REQUEST_FAILED_MESSAGE,
                   updated_at: new Date().toISOString(),
                 })
                 .eq("id", requestId),
@@ -2955,7 +2972,11 @@ Deno.serve(async (req: Request) => {
   } catch (err: any) {
     const errorMessage = err?.message ?? String(err) ?? "Unknown error";
     console.error("Request error:", errorMessage, err);
-    
+    // 例外の文面は console と構造化ログ (app_logs) にだけ残す。行の error_message と応答の本文には定型の文を入れる (#1478)。
+    // userId が確定する前に失敗した場合は、ユーザーなしのロガーで記録する (#1171 と同じ)
+    const handlerLogger = createLogger("generate-menu-v4", requestId ?? undefined);
+    (userId ? handlerLogger.withUser(userId) : handlerLogger).error("ハンドラでエラーが発生しました", err, { requestId });
+
     if (requestId) {
       try {
         await runSupabaseQuery(
@@ -2963,7 +2984,7 @@ Deno.serve(async (req: Request) => {
             .from("weekly_menu_requests")
             .update({
               status: "failed",
-              error_message: errorMessage,
+              error_message: MENU_REQUEST_FAILED_MESSAGE,
               updated_at: new Date().toISOString(),
             })
             .eq("id", requestId),
@@ -2977,7 +2998,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    return new Response(JSON.stringify({ error: errorMessage }), {
+    return new Response(JSON.stringify({ error: MENU_REQUEST_FAILED_MESSAGE }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
