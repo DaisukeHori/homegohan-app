@@ -72,6 +72,9 @@
 #   LOCAL_CI_SLOT_WAIT_SECONDS     空きを待つ上限の秒数 (既定 SLOT_WAIT_SECONDS_DEFAULT)。過ぎたら「待ちの時間切れ」で終了コード 3
 #   LOCAL_CI_LEGACY_LOCK           枠 0 を使う前に、このパスが無いことも確かめる (枠を使わずに既定のポートで動く作業の外側のロック。既定は空 = 確かめない)
 #   LOCAL_CI_SLOT_MEMORY_MIB       1 枠の Docker のメモリの目安 (MiB。既定 SLOT_MEMORY_MIB_DEFAULT)。空きがこれより少なければ警告する (止めない)
+#   SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS / SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT
+#                                  ローカル Supabase の停止が、同じ dockerd の別の枠の prune と重なって失敗したときに打ち直す回数の上限と
+#                                  待ち時間の単位秒 (scripts/supabase-local.sh の stop_with_retry。#1616)
 #   LOCAL_CI_PLAYWRIGHT_WITH_DEPS  1 にすると playwright install に --with-deps を付ける (Linux で OS の依存も入れる。root 権限が要る)
 #   LOCAL_CI_TOOLS                 gitleaks の配布物 (tar.gz) を置いておく場所 (既定: ${XDG_CACHE_HOME:-$HOME/.cache}/homegohan-local-ci)。
 #                                  毎回 SHA-256 を確かめ、合わなければ取り直す
@@ -175,7 +178,7 @@ PW_CONSENT_ARGS=(--trace off tests/e2e/legal-consent-gate.spec.ts)
 # UNIT_SLOT_TEST_TIMEOUT_MS は unit の段の tests/local-ci-slot*.test.ts の時間切れの上書き (tests/helpers/local-ci-slot-test-timeout.ts)。
 # UNIT_HEAVY_TEST_TIMEOUT_MS / UNIT_HEAVY_HOOK_TIMEOUT_MS は unit の段の重いファイルの時間切れの上書き (tests/helpers/heavy-unit-test-timeout.ts)。
 # UNIT_TEST_FILE_BUDGET_MS は unit の段のあとで一覧にする 1 ファイルの時間の予算の上書き (scripts/test-speed-ratchet.mjs)
-readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT INTEGRATION_TEST_TIMEOUT_MS INTEGRATION_HOOK_TIMEOUT_MS INTEGRATION_AUTH_RETRY_ATTEMPTS INTEGRATION_AUTH_RETRY_BASE_DELAY_MS MOBILE_JEST_TEST_TIMEOUT_MS MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS UNIT_SLOT_TEST_TIMEOUT_MS UNIT_HEAVY_TEST_TIMEOUT_MS UNIT_HEAVY_HOOK_TIMEOUT_MS UNIT_TEST_FILE_BUDGET_MS"
+readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT INTEGRATION_TEST_TIMEOUT_MS INTEGRATION_HOOK_TIMEOUT_MS INTEGRATION_AUTH_RETRY_ATTEMPTS INTEGRATION_AUTH_RETRY_BASE_DELAY_MS MOBILE_JEST_TEST_TIMEOUT_MS MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS UNIT_SLOT_TEST_TIMEOUT_MS UNIT_HEAVY_TEST_TIMEOUT_MS UNIT_HEAVY_HOOK_TIMEOUT_MS UNIT_TEST_FILE_BUDGET_MS"
 # 段の中だけで追加で持ち込む変数名 (e2e のパスワード)
 ENV_EXTRA=""
 # 枠を取ったあとに持ち込む変数名 (apply_slot が決める。supabase-local.sh が読む枠と、結合テストが叩くアプリの URL)
@@ -448,11 +451,30 @@ stop_server() {
 
 SUPA_STARTED=0
 SUPA_LOG=""
+# ローカル Supabase を起動した段の名前 (integration / e2e)。止めたあとに残ったものを赤にするときの行の名前に使う
+SUPA_STAGE=""
+# 止めるときの流れ (#1616):
+#   1. 枠 1 以上なら、止める前に、この枠の project_id のコンテナ ID とボリュームの名前を控える (remember_own_stack)。
+#      段の前の check_slot_stack で何も残っていないことを確かめ、枠のロックはこの実行が持っているので、ここにあるのは
+#      この実行が起動したもの
+#   2. supabase-local.sh stop で止める。同じ dockerd の別の枠の prune と重なったときは、supabase-local.sh が間をおいて打ち直す
+#   3. 枠 1 以上なら、残ったものを確かめ、1 で控えたものだけを docker rm / docker volume rm で消し (clear_own_stack)、
+#      もう一度確かめる。まだ残っていれば (消せない・控えていないものがある) <段>:teardown を赤にし、理由と持ち主をログに出す
+#   枠 0 は、枠を使わない作業 (CI・手で起動したスタック・外側のロックで動く Workflow) と共有しているので、2 だけ行う
+#   (失敗はログに出す。check_slot_stack も枠 0 は確かめない)
 stop_supabase() {
   [ "$SUPA_STARTED" = 1 ] || return 0
+  local stage="${SUPA_STAGE:-supabase}"
   say "ローカル Supabase を停止します"
-  run_in "$WT" "${SUPA_LOG:-/dev/null}" bash scripts/supabase-local.sh stop || true
+  if [ "$SLOT" -ne 0 ]; then remember_own_stack; fi
+  if ! run_in "$WT" "${SUPA_LOG:-/dev/null}" bash scripts/supabase-local.sh stop; then
+    say "supabase-local.sh stop が失敗しました (ログ: ${SUPA_LOG:-なし})"
+  fi
   SUPA_STARTED=0
+  [ "$SLOT" -ne 0 ] || return 0
+  if ! clear_own_stack; then
+    record "$stage:teardown" RED - - - - - 0 "$(tail_hint "止めたあとも枠 $SLOT の project_id ($SLOT_PROJECT_ID) のコンテナ / ボリュームが残っている ($OWN_STACK_NOTE)" "${SUPA_LOG:-なし}")"
+  fi
 }
 
 # wait_app <待つ回数> <サーバーのログ>: APP_ORIGIN/login が応答するまで待つ (yml と同じ curl)
@@ -930,10 +952,106 @@ acquire_slot() {
   done
 }
 
+# slot_containers / slot_volumes: この枠の project_id のラベル (Supabase CLI が付ける) のコンテナ ID / ボリュームの名前を
+# 空白区切りで出す。docker が失敗したら終了コードを非 0 にする
+slot_containers() {
+  local out
+  out="$(docker ps -aq --no-trunc --filter "label=com.supabase.cli.project=$SLOT_PROJECT_ID" 2>/dev/null)" || return 1
+  printf '%s' "${out//$'\n'/ }"
+}
+slot_volumes() {
+  local out
+  out="$(docker volume ls -q --filter "label=com.supabase.cli.project=$SLOT_PROJECT_ID" 2>/dev/null)" || return 1
+  printf '%s' "${out//$'\n'/ }"
+}
+
 # slot_stack_exists: この枠の project_id のコンテナかボリュームが 1 つでもあれば真
 slot_stack_exists() {
-  local filter="label=com.supabase.cli.project=$SLOT_PROJECT_ID"
-  [ -n "$(docker ps -aq --filter "$filter" 2>/dev/null)" ] || [ -n "$(docker volume ls -q --filter "$filter" 2>/dev/null)" ]
+  [ -n "$(slot_containers)" ] || [ -n "$(slot_volumes)" ]
+}
+
+# この実行が、いま持っている枠 (1 以上) に起動したスタックのコンテナ ID とボリュームの名前 (空白区切り)。
+# stop_supabase が止める前に控え、clear_own_stack と check_slot_stack が「この実行のもの」を見分けるのに使う。
+# 控えた枠 (OWN_STACK_SLOT) と違う枠では使わない
+OWN_STACK_SLOT=""
+OWN_STACK_CONTAINERS=""
+OWN_STACK_VOLUMES=""
+# clear_own_stack が、残ったものを説明する文 (赤の行の備考に入れる)
+OWN_STACK_NOTE=""
+
+# in_list <語> <空白区切りの一覧>: 一覧にその語がそのままあれば真
+in_list() { case " $2 " in *" $1 "*) return 0 ;; esac; return 1; }
+
+# remember_own_stack: いまこの枠にあるコンテナ・ボリュームを「この実行のもの」として控える (前の段で控えたものに足す)
+remember_own_stack() {
+  local c v x
+  [ "$SLOT" -ne 0 ] || return 0
+  if [ "$OWN_STACK_SLOT" != "$SLOT" ]; then
+    OWN_STACK_SLOT="$SLOT"
+    OWN_STACK_CONTAINERS=""
+    OWN_STACK_VOLUMES=""
+  fi
+  c="$(slot_containers)" || c=""
+  v="$(slot_volumes)" || v=""
+  for x in $c; do in_list "$x" "$OWN_STACK_CONTAINERS" || OWN_STACK_CONTAINERS="$OWN_STACK_CONTAINERS${OWN_STACK_CONTAINERS:+ }$x"; done
+  for x in $v; do in_list "$x" "$OWN_STACK_VOLUMES" || OWN_STACK_VOLUMES="$OWN_STACK_VOLUMES${OWN_STACK_VOLUMES:+ }$x"; done
+  return 0
+}
+
+# own_stack_only: この枠に残っているものが 1 つ以上あり、どれもこの実行が控えたもの (remember_own_stack) なら真。
+# docker で一覧を取れない・控えていないものが 1 つでもあれば偽 (見分けられないものは他人のものとみなす)
+own_stack_only() {
+  local c v x
+  [ "$SLOT" -ne 0 ] && [ "$OWN_STACK_SLOT" = "$SLOT" ] || return 1
+  c="$(slot_containers)" || return 1
+  v="$(slot_volumes)" || return 1
+  [ -n "$c$v" ] || return 1
+  for x in $c; do in_list "$x" "$OWN_STACK_CONTAINERS" || return 1; done
+  for x in $v; do in_list "$x" "$OWN_STACK_VOLUMES" || return 1; done
+  return 0
+}
+
+# clear_own_stack: この枠 (1 以上) に残ったもののうち、この実行が控えたものだけを消し、何も残っていないことを確かめる。
+# 消すのは「いまこの枠の project_id のラベルが付いていて、かつ控えたもの」だけ (ほかの枠・ほかの project・控えていないものには触らない)。
+# コンテナを先に消す (ボリュームはコンテナが使っている間は消せない)。何も残っていなければ真。
+# 残っていれば OWN_STACK_NOTE に理由を書いて偽
+clear_own_stack() {
+  local c v x mine_c="" mine_v="" foreign=""
+  OWN_STACK_NOTE=""
+  [ "$SLOT" -ne 0 ] || return 0
+  if ! c="$(slot_containers)" || ! v="$(slot_volumes)"; then
+    OWN_STACK_NOTE="docker で枠の project_id のコンテナ / ボリュームの一覧を取れず、消えたかを確かめられない"
+    say "枠 $SLOT ($SLOT_PROJECT_ID): $OWN_STACK_NOTE"
+    return 1
+  fi
+  [ -n "$c$v" ] || return 0
+  if [ "$OWN_STACK_SLOT" = "$SLOT" ]; then
+    for x in $c; do if in_list "$x" "$OWN_STACK_CONTAINERS"; then mine_c="$mine_c${mine_c:+ }$x"; fi; done
+    for x in $v; do if in_list "$x" "$OWN_STACK_VOLUMES"; then mine_v="$mine_v${mine_v:+ }$x"; fi; done
+  fi
+  if [ -n "$mine_c$mine_v" ]; then
+    say "枠 $SLOT ($SLOT_PROJECT_ID) に、この実行が起動したスタックのコンテナ / ボリュームが残っているので消します (コンテナ: ${mine_c:-なし} / ボリューム: ${mine_v:-なし})"
+    # shellcheck disable=SC2086  # 空白区切りの一覧を 1 つずつの引数にする (ID と名前に空白は無い)
+    if [ -n "$mine_c" ]; then docker rm -f $mine_c >/dev/null 2>&1 || say "docker rm が失敗しました ($mine_c)"; fi
+    # shellcheck disable=SC2086
+    if [ -n "$mine_v" ]; then docker volume rm -f $mine_v >/dev/null 2>&1 || say "docker volume rm が失敗しました ($mine_v)"; fi
+  fi
+  if ! c="$(slot_containers)" || ! v="$(slot_volumes)"; then
+    OWN_STACK_NOTE="消したあとに docker で一覧を取れず、消えたかを確かめられない"
+    say "枠 $SLOT ($SLOT_PROJECT_ID): $OWN_STACK_NOTE"
+    return 1
+  fi
+  [ -n "$c$v" ] || return 0
+  for x in $c; do in_list "$x" "$mine_c" || foreign="$foreign${foreign:+ }$x"; done
+  for x in $v; do in_list "$x" "$mine_v" || foreign="$foreign${foreign:+ }$x"; done
+  OWN_STACK_NOTE="残っているコンテナ: ${c:-なし} / ボリューム: ${v:-なし}"
+  if [ -n "$foreign" ]; then
+    OWN_STACK_NOTE="$OWN_STACK_NOTE。うち $foreign はこの実行が控えたものではないので消していない。持ち主を確かめる"
+  else
+    OWN_STACK_NOTE="$OWN_STACK_NOTE。どれもこの実行が起動したスタックのもので、docker rm / docker volume rm で消せなかった"
+  fi
+  say "枠 $SLOT ($SLOT_PROJECT_ID): $OWN_STACK_NOTE"
+  return 1
 }
 
 # 持ち主の死んだ枠 (1 以上) のロックを回収して取ったときだけ、その持ち主が残したスタックを片付ける。
@@ -944,14 +1062,23 @@ clear_slot_leftovers() {
   [ "$SLOT" -ne 0 ] && [ "$SLOT_RECLAIMED" = 1 ] || return 0
   slot_stack_exists || return 0
   say "枠 $SLOT ($SLOT_PROJECT_ID) のロックを持ち主の死んだ実行から回収したので、その実行が残したコンテナ / ボリュームを片付けます"
-  run_in "$WT" "$ART/slot-leftover.log" bash scripts/supabase-local.sh stop-leftover || true
+  run_in "$WT" "$ART/slot-leftover.log" bash scripts/supabase-local.sh stop-leftover \
+    || say "stop-leftover が失敗しました (ログ: $ART/slot-leftover.log。残っていれば段の前の check_slot_stack が赤にする)"
 }
 
 # check_slot_stack <段>: integration / e2e の前に、この枠 (1 以上) の project_id のコンテナ・ボリュームが残っていないかを確かめる。
-# 残っていれば消さずに赤で終える (check_ports と同じく、他の作業のものには触らない)。枠 0 は今までどおり確かめない
+# 残っているものがどれも、この実行が前の段で起動したスタックのもの (stop_supabase が止める前に控えたもの) なら、片付けて進む
+# (消せなければ赤)。ほかのもの (見分けられないもの) が 1 つでもあれば、何も消さずに赤で終える
+# (check_ports と同じく、他の作業のものには触らない)。枠 0 は今までどおり確かめない
 check_slot_stack() {
   [ "$SLOT" -ne 0 ] || return 0
   slot_stack_exists || return 0
+  if own_stack_only; then
+    say "枠 $SLOT ($SLOT_PROJECT_ID) に、この実行が前の段で起動したスタックが残っているので片付けます"
+    clear_own_stack && return 0
+    record "$1:setup" RED - - - - - 0 "枠 $SLOT の project_id ($SLOT_PROJECT_ID) に、この実行が前の段で起動したスタックの残りがあり、消せない ($OWN_STACK_NOTE)"
+    return 1
+  fi
   record "$1:setup" RED - - - - - 0 "枠 $SLOT の project_id ($SLOT_PROJECT_ID) のコンテナ / ボリュームが残っている (ロックを取らずに手で起動したスタックなどかもしれないので消さずに赤で終える。持ち主を確かめ、要らなければ LOCAL_CI_SLOT=$SLOT bash scripts/supabase-local.sh stop-leftover で止めてから再実行する)"
   return 1
 }
@@ -1151,6 +1278,7 @@ stage_integration() {
   t0=$(now)
   say "integration: ローカル Supabase を起動します (初回はイメージ取得で数分)"
   SUPA_STARTED=1
+  SUPA_STAGE=integration
   if ! run_in "$WT" "$SUPA_LOG" bash scripts/supabase-local.sh start; then
     record integration:setup RED - - - - - "$(($(now) - t0))" "$(tail_hint "supabase-local.sh start が失敗" "$SUPA_LOG")"
     stop_supabase
@@ -1229,6 +1357,7 @@ stage_e2e() {
   SUPA_LOG="$ART/e2e-supabase.log"
   say "e2e: ローカル Supabase を起動します"
   SUPA_STARTED=1
+  SUPA_STAGE=e2e
   if ! run_in "$WT" "$SUPA_LOG" bash scripts/supabase-local.sh start; then
     record e2e:setup RED - - - - - "$(($(now) - t0))" "$(tail_hint "supabase-local.sh start が失敗" "$SUPA_LOG")"
     stop_supabase

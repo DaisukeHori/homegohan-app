@@ -38,6 +38,9 @@
 #                                    (既定: studio,imgproxy,logflare,vector,edge-runtime)
 #   SUPABASE_LOCAL_REALTIME_VERSION  Realtime イメージの版を固定する (既定: IPv6 が無効な環境のみ v2.83.1)
 #   SUPABASE_LOCAL_RETRY_WAIT_UNIT   start を一過性のエラーでやり直すときの待ち時間の単位秒 (既定: 30。n 回目は n 倍)
+#   SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS   stop / stop-leftover が prune の衝突で失敗したときに CLI の stop を打つ回数の上限
+#                                        (最初の 1 回を含む。既定: STOP_RETRY_ATTEMPTS_DEFAULT。1 以上の整数)
+#   SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT  そのやり直しの待ち時間の単位秒 (既定: STOP_RETRY_WAIT_UNIT_DEFAULT。n 回目は n 倍。0 以上の整数)
 #
 # IPv6 について: Claude Code Cloud の VM はカーネルで IPv6 が無効 (ipv6.disable=1)。
 # CLI 2.62.10 既定の Realtime v2.65.3 は IPv6 での待ち受けがハードコードされており起動に失敗する。
@@ -76,6 +79,30 @@ fi
 SUPABASE_LOCAL_EXCLUDE="${SUPABASE_LOCAL_EXCLUDE-studio,imgproxy,logflare,vector,edge-runtime}"
 
 log() { echo "[supabase-local] $*" >&2; }
+
+# stop の prune の衝突 (#1616)。CLI の stop は、コンテナを止めたあと project_id のラベルで絞った prune (コンテナ・ボリューム・
+# ネットワーク) で消す。dockerd は prune を同時に 1 つしか受け付けないので、同じ dockerd で別の枠の stop の prune と重なると
+# 「a prune operation is already running」で失敗し、止まっただけのコンテナとボリュームが残る (2026-10-15 に d256 で実測。
+# 止めることは終わっているので、間をおいて CLI の stop を打ち直せば prune だけがやり直される)。
+# この文言の失敗だけをやり直す (ほかの失敗は打ち直しても直らないので、そのまま返す)
+readonly STOP_PRUNE_CONFLICT_PATTERN='a prune operation is already running'
+# 打つ回数の上限の既定 (最初の 1 回を含む)。相手の prune は、1 枠のスタック (コンテナ 8 個前後とそのボリューム) を消すだけなので
+# 数秒で終わる見込み。既定の待ち (単位 × 1 + 2 + 3 + 4 = 50 秒) は、それが続けて何本か重なっても足りる長さにした
+readonly STOP_RETRY_ATTEMPTS_DEFAULT=5
+# やり直しの待ち時間の単位秒の既定 (n 回目の失敗のあとは n 倍待つ)
+readonly STOP_RETRY_WAIT_UNIT_DEFAULT=5
+STOP_RETRY_ATTEMPTS="${SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS:-$STOP_RETRY_ATTEMPTS_DEFAULT}"
+STOP_RETRY_WAIT_UNIT="${SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT:-$STOP_RETRY_WAIT_UNIT_DEFAULT}"
+if ! [[ "$STOP_RETRY_ATTEMPTS" =~ ^[0-9]+$ ]] || [ "$((10#$STOP_RETRY_ATTEMPTS))" -lt 1 ]; then
+  log "SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS は 1 以上の整数にしてください: $STOP_RETRY_ATTEMPTS"
+  exit 2
+fi
+if ! [[ "$STOP_RETRY_WAIT_UNIT" =~ ^[0-9]+$ ]]; then
+  log "SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT は 0 以上の整数にしてください: $STOP_RETRY_WAIT_UNIT"
+  exit 2
+fi
+STOP_RETRY_ATTEMPTS="$((10#$STOP_RETRY_ATTEMPTS))"
+STOP_RETRY_WAIT_UNIT="$((10#$STOP_RETRY_WAIT_UNIT))"
 
 cli() {
   # shellcheck disable=SC2086
@@ -316,10 +343,37 @@ ensure_work_matches_slot() {
   fi
 }
 
+# CLI の stop --no-backup を打つ。prune の衝突 (STOP_PRUNE_CONFLICT_PATTERN) で失敗したときだけ、間をおいて
+# 最大 STOP_RETRY_ATTEMPTS 回まで打ち直す。最後の終了コードを返す (やり直しても失敗したら失敗のまま返す。
+# 残ったコンテナ・ボリュームの片付けと確かめは scripts/local-ci.sh の stop_supabase が行う)。
+# CLI のエラーは stderr に出るため、stderr だけを画面に流しつつファイルにも残して判定する (stdout はそのまま)
+stop_with_retry() {
+  local err status attempt=1
+  err="$(mktemp)"
+  while :; do
+    status=0
+    { cli stop --no-backup 2>&1 1>&3 | tee "$err" >&2; } 3>&1 || status=$?
+    if [ "$status" -eq 0 ]; then
+      break
+    fi
+    if [ "$attempt" -ge "$STOP_RETRY_ATTEMPTS" ] || ! grep -qF "$STOP_PRUNE_CONFLICT_PATTERN" "$err"; then
+      break
+    fi
+    log "supabase stop が別の prune と重なって失敗したため ($STOP_PRUNE_CONFLICT_PATTERN)、$((attempt * STOP_RETRY_WAIT_UNIT)) 秒待ってやり直します ($attempt / $STOP_RETRY_ATTEMPTS 回目)"
+    sleep "$((attempt * STOP_RETRY_WAIT_UNIT))"
+    attempt=$((attempt + 1))
+  done
+  rm -f "$err"
+  if [ "$status" -ne 0 ]; then
+    log "supabase stop が失敗しました (終了コード $status。$attempt 回打った)。枠 $SLOT ($PROJECT_ID) のコンテナ / ボリュームが残っているかもしれません"
+  fi
+  return "$status"
+}
+
 cmd_stop() {
   if [ -d "$WORK/supabase" ]; then
     ensure_work_matches_slot
-    cli stop --no-backup
+    stop_with_retry
   fi
 }
 
@@ -333,7 +387,7 @@ cmd_stop_leftover() {
   ensure_docker
   prepare
   log "枠 $SLOT ($PROJECT_ID) の残ったスタックを止めます"
-  cli stop --no-backup
+  stop_with_retry
 }
 
 cmd_status() {
