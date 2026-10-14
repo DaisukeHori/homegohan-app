@@ -52,6 +52,17 @@ test("...", async ({ authedPage }) => {
 - `E2E_USER_EMAIL` (例: `e2e-user-01@homegohan.test`)
 - `E2E_USER_PASSWORD`
 
+### テスト用のセッションの作り方 (#1547)
+
+`global-setup.ts`・`fixtures/auth.ts` (`authedPage`)・`fixtures/fresh-user.ts` (`injectSession`) などが Cookie に入れるセッションは、
+パスワードのログイン (`/auth/v1/token?grant_type=password`) ではなく、`helpers/test-session.ts` の `createTestSession` で作る
+(管理用の鍵で `/auth/v1/admin/generate_link` → `/auth/v1/verify`。Supabase の CAPTCHA を有効にしても止まらない)。
+自分でパスワードのログインを呼ばず、この関数を使う (`tests/e2e-test-session.test.ts` が検査する)。
+
+- 要る環境変数: `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` (ローカルは `.env.local`)。
+- `SUPABASE_SERVICE_ROLE_KEY` が無いとき、`global-setup.ts` と `authedPage` は画面からのログインに回る (`E2E_USER_PASSWORD` を使う)。
+- 画面からのログイン (`/login`) は今までどおりパスワードを使う。
+
 ### パスワードの扱い
 
 リポジトリには、`e2e-user-XX@homegohan.test` のパスワードの既定値を置かない。

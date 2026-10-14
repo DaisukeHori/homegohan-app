@@ -120,7 +120,7 @@ async function fetchTestSession(email: string): Promise<Record<string, unknown> 
 }
 
 /**
- * refresh_token を使って新しいセッションを取得する (rate limit が password grant より緩い)。
+ * refresh_token を使って新しいセッションを取得する (セッションを新しく作るより rate limit が緩い)。
  */
 export async function refreshSupabaseSession(
   supabaseUrl: string,

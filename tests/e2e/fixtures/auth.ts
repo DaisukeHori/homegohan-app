@@ -198,7 +198,7 @@ function isStorageStateExpired(storageStatePath: string, bufferSeconds = EXPIRY_
 
 /**
  * refresh_token を使ってセッションを更新し、Cookie として Playwright コンテキストに注入する。
- * password grant より rate limit が緩い。
+ * セッションを新しく作る (helpers/test-session.ts) より rate limit が緩い。
  */
 async function refreshSessionViaCookie(
   page: Page,
@@ -433,7 +433,7 @@ async function doLogin(page: Page, baseURL: string, workerIndex: number): Promis
     }
   }
 
-  // 2. storageState が期限切れ → refresh_token で再取得 (password grant より rate limit が緩い)
+  // 2. storageState が期限切れ → refresh_token で再取得 (セッションを新しく作るより rate limit が緩い)
   if (fs.existsSync(refreshTokenPath)) {
     const refreshOk = await refreshSessionViaCookie(page, baseURL, refreshTokenPath);
     if (refreshOk) {
