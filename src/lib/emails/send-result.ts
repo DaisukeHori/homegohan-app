@@ -15,7 +15,8 @@ export class EmailSendError extends Error {
     /**
      * Resend のエラーコード (rate_limit_exceeded / validation_error / invalid_api_key など)。
      * Resend の外で起きた失敗は network_error (通信できなかった) / invalid_response (応答に ID が無い) /
-     * invalid_envelope (内容の不備) / not_configured (RESEND_API_KEY が無い)
+     * invalid_envelope (内容の不備) / not_configured (RESEND_API_KEY が無い) /
+     * suppressed (宛先停止リスト email_blacklist に載っている宛先なので送らなかった。#1184)
      */
     public readonly code: string,
     message: string,
@@ -51,7 +52,10 @@ export interface SendEmailSkipped {
   error: EmailSendError;
 }
 
-/** 送ろうとしたが、送れなかった (再試行を使い切った、または再試行しても直らない種類の失敗、または文面の不備) */
+/**
+ * 送ろうとしたが、送れなかった (再試行を使い切った、または再試行しても直らない種類の失敗、または文面の不備、
+ * または宛先停止リストに載っている宛先 = error.code 'suppressed')
+ */
 export interface SendEmailFailed {
   ok: false;
   id: null;

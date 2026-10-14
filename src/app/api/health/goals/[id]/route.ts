@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { INVALID_ID_PARAM_CODE, INVALID_ID_PARAM_MESSAGE, isUuid } from '@/lib/http-params';
 import { sanitizeHealthGoalUpdate } from '@/lib/health-payloads';
 import { calculateGoalProgressPercentage } from '@/lib/health-goal-progress';
 
@@ -17,6 +18,10 @@ export async function GET(
   }
 
   const { id } = await params;
+  // uuid 型の列に UUID でない文字列を渡すと 22P02 で 500 になるので、DB に投げる前に 400 にする (#1478)
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: INVALID_ID_PARAM_MESSAGE, code: INVALID_ID_PARAM_CODE }, { status: 400 });
+  }
 
   const { data, error } = await supabase
     .from('health_goals')
@@ -45,6 +50,10 @@ export async function PUT(
   }
 
   const { id } = await params;
+  // uuid 型の列に UUID でない文字列を渡すと 22P02 で 500 になるので、DB に投げる前に 400 にする (#1478)
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: INVALID_ID_PARAM_MESSAGE, code: INVALID_ID_PARAM_CODE }, { status: 400 });
+  }
   const body = await request.json().catch(() => null);
 
   // 目標の所有者確認
@@ -172,6 +181,10 @@ export async function DELETE(
   }
 
   const { id } = await params;
+  // uuid 型の列に UUID でない文字列を渡すと 22P02 で 500 になるので、DB に投げる前に 400 にする (#1478)
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: INVALID_ID_PARAM_MESSAGE, code: INVALID_ID_PARAM_CODE }, { status: 400 });
+  }
 
   const { error } = await supabase
     .from('health_goals')

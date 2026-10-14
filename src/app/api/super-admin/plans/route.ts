@@ -15,6 +15,7 @@ import {
   PlansQuerySchema,
 } from '@/lib/super-admin/plans-schemas';
 import { internalError } from '@/lib/api/errors';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export async function GET(request: NextRequest) {
   try {
@@ -123,19 +124,17 @@ export async function POST(request: NextRequest) {
     }
 
     // 監査ログ記録 (operator/07-audit-monitoring §3 準拠)
-    try {
-      await supabase.from('admin_audit_logs').insert({
-        actor_id: user.id,
-        target_id: plan.id,
-        target_type: 'subscription_plan',
-        action_type: 'create_plan',
-        details: { plan_key: input.plan_key, display_name: input.display_name, plan_type: input.plan_type },
-        severity: 'info',
-        ip_address: request.headers.get('x-forwarded-for'),
-      });
-    } catch (auditErr) {
-      console.warn('[super-admin/plans POST] audit log failed (graceful):', auditErr);
-    }
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      targetId: plan.id,
+      targetType: 'subscription_plan',
+      actionType: 'create_plan',
+      details: { plan_key: input.plan_key, display_name: input.display_name, plan_type: input.plan_type },
+      severity: 'info',
+      request,
+      routeName: 'api/super-admin/plans POST',
+    });
 
     return NextResponse.json({ data: plan }, { status: 201 });
   } catch (err) {

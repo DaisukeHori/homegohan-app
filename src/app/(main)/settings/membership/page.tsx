@@ -8,6 +8,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
+import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
 import { ChevronLeft, Users, Building2, AlertTriangle } from 'lucide-react';
 
 // スイッチコンポーネント
@@ -200,9 +201,10 @@ export default function MembershipSettingsPage() {
     setLeaveError(null);
     try {
       const res = await fetch('/api/family/leave', { method: 'POST' });
-      const json = await res.json();
+      const json = await res.json().catch(() => null);
       if (!res.ok) {
-        throw new Error(json?.error?.message ?? '家族からの脱退に失敗しました');
+        // 本文の message は操作ごとの固定の文なので、理由は code から引く (#1478)
+        throw new Error(`家族からの脱退に失敗しました: ${membershipErrorMessageOfBody(json)}`);
       }
       setShowLeaveFamilyModal(false);
       router.push('/settings');
@@ -219,9 +221,10 @@ export default function MembershipSettingsPage() {
     setLeaveError(null);
     try {
       const res = await fetch('/api/org/leave', { method: 'POST' });
-      const json = await res.json();
+      const json = await res.json().catch(() => null);
       if (!res.ok) {
-        throw new Error(json?.error?.message ?? '組織からの脱退に失敗しました');
+        // 本文の message は操作ごとの固定の文なので、理由は code から引く (#1478)
+        throw new Error(`組織からの脱退に失敗しました: ${membershipErrorMessageOfBody(json)}`);
       }
       setShowLeaveOrgModal(false);
       router.push('/settings');

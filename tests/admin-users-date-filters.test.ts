@@ -29,7 +29,11 @@ const state = vi.hoisted(() => ({ supabase: null as unknown }));
 const requireRole = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/auth/helpers', () => ({ requireRole }));
-vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: () => state.supabase }));
+// 監査ログ (#1326 admin.user.list) は本人の権限の client に書く。このテストの対象外なので、INSERT を受けるだけのフェイクにする
+vi.mock('@/lib/supabase/server', () => ({
+  getSupabaseAdmin: () => state.supabase,
+  createClient: async () => ({ from: () => ({ insert: async () => ({ error: null }) }) }),
+}));
 
 import { GET } from '../src/app/api/admin/users/route';
 
