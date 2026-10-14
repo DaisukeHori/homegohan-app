@@ -1,6 +1,7 @@
 import { Trash2 } from 'lucide-react-native';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { formatLocalDate, parseLocalDate, todayCalendarDate } from '@homegohan/shared';
 
 import { colors } from '../../theme/colors';
 import { radius } from '../../theme/spacing';
@@ -17,12 +18,19 @@ export type PantryItemData = {
 
 export type ExpiryStatus = 'expired' | 'expiringSoon' | 'normal';
 
+/** 1 日のミリ秒 */
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * 期限 (YYYY-MM-DD か ISO 8601 の時刻) が、日本の今日から何日後か (過去は負、今日は 0)。
+ * 期限も今日も日本の暦日にしてから数える (#1049 F7-21)。以前は new Date("YYYY-MM-DD") (UTC の 0 時) と
+ * 端末の今日を端末のローカル時刻で比べていて、日本より西の端末では期限が 1 日前にずれた。
+ * YYYY-MM-DD は UTC の 0 時 = 日本の同じ日の 9 時として読まれるので、日本の暦日にすると同じ日になる。
+ * 暦日の差は、夏時間のある端末でも 23・25 時間の日があるだけなので、四捨五入で日数にする
+ */
 export function daysFromToday(expiryDate: string): number {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const exp = new Date(expiryDate);
-  exp.setHours(0, 0, 0, 0);
-  return Math.round((exp.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  const expiryDay = parseLocalDate(formatLocalDate(new Date(expiryDate)));
+  return Math.round((expiryDay.getTime() - todayCalendarDate().getTime()) / MS_PER_DAY);
 }
 
 export function getExpiryStatus(expiryDate: string | null): ExpiryStatus {

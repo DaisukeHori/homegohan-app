@@ -5,7 +5,8 @@
  * Realtime・直接の select・状態の確認の API で受けて、そのまま表示する。
  *   1. 保存の結果のまとめ (summarizeSaveResults) は、枠ごとの理由 (例外の文面を含む) を errorMessage に入れず、定型の文だけを返す
  *      (枠ごとの理由は issueDetails でログ用に返す)
- *   2. 1 日の上限で止めたときの文の見分け (isAiDailyLimitMessage)
+ *   2. 上限 (1 日・究極モード #1142) で止めたときの文の見分け (isAiDailyLimitMessage)。
+ *      行に書く側 (aiDailyLimitMessageOfDenied) が作りうる文は、読む側がすべて既知の文として通す (契約)
  *   3. 読む側の絞り込み: こちらで書いた文 (定型・同意・上限) はそのまま、それ以外は汎用の文。
  *      Web (src/lib/weekly-menu-request-error.ts) とアプリ (apps/mobile/src/lib/menu-request-error.ts) が同じ答えを出す
  *   4. 買い物リストの状態の確認の API の絞り込み (src/lib/shopping-list-request-error.ts)
@@ -14,8 +15,13 @@ import { describe, expect, it } from 'vitest';
 import { summarizeSaveResults } from '../supabase/functions/generate-menu-v4/step-utils';
 import {
   AI_AUTO_SAFETY_CAP_MESSAGE,
+  AI_DAILY_CAPPED_FEATURES,
+  AI_DAILY_LIMIT_CODE,
   AI_DAILY_LIMIT_FALLBACK_MESSAGE,
   aiDailyLimitMessage,
+  aiDailyLimitMessageOfBody,
+  aiDailyLimitMessageOfDenied,
+  aiUltimateModeDailyLimitMessage,
   isAiDailyLimitMessage,
 } from '../supabase/functions/_shared/ai-daily-limit';
 import { AI_CONSENT_CHECK_FAILED_MESSAGE, AI_CONSENT_REQUIRED_MESSAGE } from '../supabase/functions/_shared/ai-consent';
@@ -46,6 +52,13 @@ const RAW_MESSAGES = [
   // 上限の文に似せた、回数が数字でない・後ろに文が付いた文 (上限の文としては扱わない)
   '今日の AI の利用回数の上限 (x 回) に達しました。明日 0 時から使えます。',
   `${aiDailyLimitMessage(10)} detail: secret`,
+  // 究極モードの上限の文 (#1142) に似せた文: 回数が負・数字でない・先頭に 0・1 文字違う・後ろに文が付いた・機能名だけ違う
+  '今日の究極モードの利用回数の上限 (-1 回) に達しました。明日 0 時から使えます。',
+  '今日の究極モードの利用回数の上限 (x 回) に達しました。明日 0 時から使えます。',
+  '今日の究極モードの利用回数の上限 (01 回) に達しました。明日 0 時から使えます。',
+  '今日の究極モードの利用回数の上限 (1 回) に達しました。明日 1 時から使えます。',
+  `${aiUltimateModeDailyLimitMessage(1)} detail: secret`,
+  '今日の秘密モードの利用回数の上限 (1 回) に達しました。明日 0 時から使えます。',
 ];
 
 describe('summarizeSaveResults: 行の error_message には枠ごとの理由 (例外の文面) を入れない (#1478)', () => {
@@ -138,11 +151,35 @@ describe('summarizeSaveResults: 行の error_message には枠ごとの理由 (�
   });
 });
 
-describe('isAiDailyLimitMessage: 1 日の上限で止めたときの文の見分け', () => {
+describe('isAiDailyLimitMessage: 上限 (1 日・究極モード) で止めたときの文の見分け', () => {
   it('aiDailyLimitMessage(n)・回数の分からないときの文・安全弁の文は上限の文', () => {
     for (const value of [aiDailyLimitMessage(0), aiDailyLimitMessage(10), aiDailyLimitMessage(300), AI_DAILY_LIMIT_FALLBACK_MESSAGE, AI_AUTO_SAFETY_CAP_MESSAGE]) {
       expect(isAiDailyLimitMessage(value)).toBe(true);
     }
+  });
+
+  it('(#1142) 究極モードの 1 日の上限の文 aiUltimateModeDailyLimitMessage(n) も上限の文', () => {
+    for (const value of [aiUltimateModeDailyLimitMessage(0), aiUltimateModeDailyLimitMessage(1), aiUltimateModeDailyLimitMessage(5)]) {
+      expect(isAiDailyLimitMessage(value)).toBe(true);
+    }
+  });
+
+  it('(#1142 契約) 行に書く側 (aiDailyLimitMessageOfDenied) と応答の本文から作る側 (aiDailyLimitMessageOfBody) が作りうる文は、すべて上限の文として通る', () => {
+    const limits = [0, 1, 3, 10];
+    const denieds = limits.flatMap((limit) => [
+      { limit },
+      { limit, safetyCap: true as const },
+      ...AI_DAILY_CAPPED_FEATURES.map((cappedFeature) => ({ limit, cappedFeature })),
+    ]);
+    for (const denied of denieds) {
+      const written = aiDailyLimitMessageOfDenied(denied);
+      expect(isAiDailyLimitMessage(written)).toBe(true);
+      const shown = aiDailyLimitMessageOfBody({ code: AI_DAILY_LIMIT_CODE, ...denied });
+      expect(shown).not.toBeNull();
+      expect(isAiDailyLimitMessage(shown)).toBe(true);
+    }
+    // 回数の分からない本文 (limit なし) の文も通る
+    expect(isAiDailyLimitMessage(aiDailyLimitMessageOfBody({ code: AI_DAILY_LIMIT_CODE }))).toBe(true);
   });
 
   it('似せた文・文字列でない値・空は上限の文ではない', () => {
@@ -159,6 +196,9 @@ describe('画面に出すときの絞り込み (Web とアプリが同じ答え)
     AI_CONSENT_CHECK_FAILED_MESSAGE,
     aiDailyLimitMessage(10),
     AI_DAILY_LIMIT_FALLBACK_MESSAGE,
+    // 究極モードの 1 日の上限 (#1142) で止めたとき、generate-menu-v4 / v5 が行に書く文
+    aiDailyLimitMessageOfDenied({ limit: 1, cappedFeature: 'menu_generation_ultimate' }),
+    aiUltimateModeDailyLimitMessage(3),
   ];
 
   it.each(KNOWN)('こちらで書いた文 %s はそのまま出す', (stored) => {

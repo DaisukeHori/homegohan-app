@@ -6,7 +6,7 @@
 expo-image-picker による食事写真の撮影・アップロード・EXIF 削除、および健診結果 PDF アップロードを扱う。
 
 **対象外**:
-- 冷蔵庫写真 (`fridge-images` バケット) → 既存 `uploadFridgePhoto()` が実装済み (設計変更不要)
+- 冷蔵庫写真 (`fridge-images` バケット) → 既存 `uploadFridgePhoto()` が実装済み。本文の渡し方は §3.3 の注記 (ArrayBuffer) に合わせ済み (#1049 F7-17)
 - Web 側のファイル入力 UI → `family/03-ui-spec.md`
 
 ## 2. 関連要件
@@ -87,9 +87,12 @@ export async function uploadMealPhoto(options: UploadMealPhotoOptions): Promise<
   const random = Math.random().toString(36).substring(2, 8);
   const path = `${userId}/${date}/${Date.now()}-${random}.jpg`;
 
-  // 3. Blob 変換
-  const response = await fetch(processed.uri);
-  const blob = await response.blob();
+  // 3. 本文を ArrayBuffer にする (#1049 F7-17)
+  //    fetch(uri).blob() の Blob を supabase-js に渡すと、React Native では中身が送られず 0 バイトのファイルになることがある
+  //    (supabase-js は Blob を FormData に載せて送るため)。expo-file-system で base64 として読み、ArrayBuffer にして渡す
+  //    (uploadFridgePhoto と同じ。base64 の変換は src/lib/base64.ts の base64ToArrayBuffer)
+  const base64 = await FileSystem.readAsStringAsync(processed.uri, { encoding: FileSystem.EncodingType.Base64 });
+  const body = base64ToArrayBuffer(base64);
 
   // 4. metadata 設定
   const metadata: Record<string, string> = {
@@ -101,7 +104,7 @@ export async function uploadMealPhoto(options: UploadMealPhotoOptions): Promise<
   // 5. Supabase Storage へアップロード (multipart)
   const { data, error } = await supabase.storage
     .from('meal-photos')
-    .upload(path, blob, {
+    .upload(path, body, {
       contentType: 'image/jpeg',
       metadata,
       upsert: false,
@@ -458,7 +461,7 @@ describe('uploadMealPhoto()', () => {
 
 ### 保持
 
-- `src/lib/storage.ts` の `uploadFridgePhoto()` (冷蔵庫写真、変更なし)
+- `src/lib/storage.ts` の `uploadFridgePhoto()` (冷蔵庫写真。#1049 F7-17 で本文を ArrayBuffer で渡す形に直した)
 - `app.json` の `expo-image-picker` plugin 設定
 - カメラ・写真ライブラリ権限文言 (既存設定済み)
 

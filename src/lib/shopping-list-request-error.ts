@@ -10,7 +10,8 @@
  * そのまま返してよい result.error (画面が見分ける、こちらで書いた文) は次のものだけ。それ以外は固定の文にする。
  *   - AI_CONSENT_REQUIRED_MESSAGE / AI_CONSENT_CHECK_FAILED_MESSAGE: 同意の判定で止めた (T15 / #1154)。
  *     Edge Function が aiConsentDeniedStoredMessage で書き、画面は aiConsentReasonOfStoredError でこの文を見分けて同意画面へ案内する
- *   - aiDailyLimitMessage(n) など (isAiDailyLimitMessage): 1 日の上限で止めた (#1149。Edge Function が書く)
+ *   - aiDailyLimitMessage(n) など (isAiDailyLimitMessage): 1 日の上限で止めた (#1149。Edge Function が書く)。
+ *     isAiDailyLimitMessage は究極モードの上限の文 (#1142) も通すが、買い物リストの作り直しはその文を書かない
  *   - SHOPPING_LIST_REQUEST_FAILED_MESSAGE: それ以外の失敗の固定の文
  *
  * 書く側 (Edge Function) も、#1478 から例外の文面は書かず SHOPPING_LIST_REQUEST_FAILED_MESSAGE を書く

@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
+import { formatCalendarDate, todayCalendarDate } from "@homegohan/shared";
 
 import { Button, Card, EmptyState, LoadingState, PageHeader, ProgressBar, SectionHeader, StatCard } from "../../src/components/ui";
 import { colors, spacing } from "../../src/theme";
@@ -38,10 +39,6 @@ function streakTypeLabel(type: string): string {
   return STREAK_TYPE_LABELS[type] ?? type;
 }
 
-function toYmd(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
 export default function HealthStreaksPage() {
   const [data, setData] = useState<StreakResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -68,13 +65,13 @@ export default function HealthStreaksPage() {
   const weekly = useMemo(() => {
     const recorded = new Set(data?.weeklyRecords ?? []);
     const days: { date: string; recorded: boolean }[] = [];
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
+    // 日本の今日から数える (端末のタイムゾーンに左右されない #1049 F7-21)
+    const start = todayCalendarDate();
     start.setDate(start.getDate() - 6);
     for (let i = 0; i < 7; i++) {
       const d = new Date(start);
       d.setDate(start.getDate() + i);
-      const ymd = toYmd(d);
+      const ymd = formatCalendarDate(d);
       days.push({ date: ymd, recorded: recorded.has(ymd) });
     }
     return days;

@@ -29,6 +29,29 @@ export function parseLocalDate(dateStr: string): Date {
 }
 
 /**
+ * 現地 (デフォルト Asia/Tokyo) の今日の暦日を、実行環境の 0 時の Date で返す (#1049 F7-21)。
+ * 年月日だけが意味を持つ Date で、parseLocalDate が返すものと同じ形。
+ * setDate / getDay で前後の日・曜日・週の始まりを求め、formatCalendarDate で YYYY-MM-DD に戻す。
+ * `new Date()` から数えると、端末のタイムゾーンが日本でないとき (海外旅行中など) に「今日」が日本とずれる。
+ */
+export function todayCalendarDate(timeZone = 'Asia/Tokyo'): Date {
+  return parseLocalDate(todayLocal(timeZone));
+}
+
+/**
+ * 暦日の Date (parseLocalDate / todayCalendarDate が返す、年月日だけが意味を持つ実行環境の 0 時の Date) を
+ * YYYY-MM-DD にする (#1049 F7-21)。年月日を実行環境のローカル時刻で読むだけ。
+ * 瞬間 (時刻を持つ値。new Date() やサーバーの timestamptz) を日本の日付にするときは formatLocalDate を使う
+ * (瞬間をこの関数に渡すと、端末のタイムゾーンの日付になる)。
+ */
+export function formatCalendarDate(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
  * 指定した日付に days 日加算した Date を返す。
  */
 export function addDays(date: Date, days: number): Date {

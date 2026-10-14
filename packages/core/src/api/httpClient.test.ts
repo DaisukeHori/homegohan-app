@@ -171,13 +171,40 @@ describe("createHttpClient — 基本の動作 (従来どおり)", () => {
     expect(message.length).toBeLessThan(260);
   });
 
-  it("成功 (2xx) の本文が JSON として読めないときは、従来どおり SyntaxError を投げる", async () => {
+  it("成功 (2xx) の本文が JSON として読めないときは、SyntaxError ではなく `HTTP <status> <statusText>: <本文>` の Error (元の SyntaxError は cause。#1049 F7-12)", async () => {
     installFetch(vi.fn().mockResolvedValue(textResponse(200, "<html>not json</html>")));
 
     const { state, settled } = settle(client().get("/api/x"));
     await settled;
 
-    expect(state.error).toBeInstanceOf(SyntaxError);
+    expect(state.ok).toBe(false);
+    expect(state.error).not.toBeInstanceOf(SyntaxError);
+    expect(isHttpNetworkError(state.error)).toBe(false);
+    expect((state.error as Error).message).toBe("HTTP 200 OK: <html>not json</html>");
+    expect((state.error as Error & { cause?: unknown }).cause).toBeInstanceOf(SyntaxError);
+    // 成功の応答なのでやり直さない (サーバーでは処理が済んでいることがある)
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("成功 (2xx) の読めない本文が長いときも、200 文字で切る (公衆 Wi-Fi のログインページの HTML 全体を出さない)", async () => {
+    installFetch(vi.fn().mockResolvedValue(textResponse(200, `<html>${"a".repeat(1000)}</html>`)));
+
+    const { state, settled } = settle(client().post("/api/x", { a: 1 }));
+    await settled;
+
+    const message = (state.error as Error).message;
+    expect(message.startsWith("HTTP 200 OK: <html>aaa")).toBe(true);
+    expect(message.endsWith("…")).toBe(true);
+    expect(message.length).toBeLessThan(260);
+  });
+
+  it("成功 (2xx) の本文が途中で切れた JSON でも、同じ形の Error になる", async () => {
+    installFetch(vi.fn().mockResolvedValue(textResponse(200, '{"items":[1,2')));
+
+    const { state, settled } = settle(client().get("/api/x"));
+    await settled;
+
+    expect((state.error as Error).message).toBe('HTTP 200 OK: {"items":[1,2');
   });
 
   it("headers を持たない応答 (簡易なモック) でも動く", async () => {

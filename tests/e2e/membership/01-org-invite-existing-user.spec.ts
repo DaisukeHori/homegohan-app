@@ -85,7 +85,7 @@ freshOrgTest.describe('org 招待 — 既存ユーザ', () => {
         await expect(inviteePage.getByText(orgName, { exact: false })).toBeVisible();
 
         // 3. invitee のセッションを注入 (ログイン済みにする)
-        await injectSession(inviteePage, invitee.email, invitee.password);
+        await injectSession(inviteePage, invitee.email);
 
         // /invite/{token} に再アクセス
         await inviteePage.goto(inviteUrl);
@@ -157,7 +157,7 @@ freshOrgTest.describe('org 招待 — 既存ユーザ', () => {
       // 2. invitee がログイン済み状態でアクセス (セッション注入 → 直接アクセス)
       const inviteePage = await browser.newPage();
       try {
-        await injectSession(inviteePage, invitee.email, invitee.password);
+        await injectSession(inviteePage, invitee.email);
 
         // /invite/{token} に直接アクセス → ログイン画面を経由しない
         await inviteePage.goto(inviteUrl);

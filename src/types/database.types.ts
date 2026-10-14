@@ -7840,6 +7840,23 @@ export type Database = {
         Args: { p_at: string; p_feature: string; p_user_id: string }
         Returns: Json
       }
+      consume_ai_usage_capped: {
+        Args: {
+          p_feature: string
+          p_feature_daily_cap: number
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      consume_ai_usage_capped_at: {
+        Args: {
+          p_at: string
+          p_feature: string
+          p_feature_daily_cap: number
+          p_user_id: string
+        }
+        Returns: Json
+      }
       consume_native_bridge_code: {
         Args: { p_code_hash: string }
         Returns: {

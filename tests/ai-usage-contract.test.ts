@@ -49,10 +49,16 @@ import {
 import { ROOT, exportedHandlers, listEdgeFunctions, listFiles, reachesAi, rel, stripComments } from './helpers/ai-reach';
 import { AI_QUEUE_TABLES, type AiQueueTable } from '../src/lib/ai/ai-queue-tables';
 import {
+  AI_CAPPED_FEATURES,
+  AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT,
+  AI_ULTIMATE_MODE_FEATURE,
   AI_UNMETERED_DAILY_CAP_DEFAULTS,
   AI_UNMETERED_DAILY_CAP_FALLBACK,
   AI_UNMETERED_FEATURES,
+  aiFeatureDailyCap,
+  isMeteredAiFeature,
 } from '../supabase/functions/_shared/ai-usage-core';
+import { AI_DAILY_CAPPED_FEATURES } from '../supabase/functions/_shared/ai-daily-limit';
 import { AI_DAILY_LIMIT_DEFAULT_PLAN_KEY } from '../src/lib/super-admin/llm-schemas';
 import ts from 'typescript';
 
@@ -651,8 +657,52 @@ describe('AI 利用回数の記録 (#1177): 機能名の定義', () => {
     ]
       .map(rel)
       .filter((file) => !file.startsWith('src/__tests__/'));
-    const callers = files.filter((file) => /rpc\(\s*['"](?:record_ai_usage|consume_ai_usage|refund_ai_usage|claim_ai_usage_grant)['"]/.test(stripComments(read(file))));
+    const callers = files.filter((file) =>
+      /rpc\(\s*['"](?:record_ai_usage|consume_ai_usage|consume_ai_usage_capped|refund_ai_usage|claim_ai_usage_grant)['"]/.test(stripComments(read(file))),
+    );
     expect(callers.sort()).toEqual(['src/lib/plan/entitlements.ts', 'supabase/functions/_shared/ai-usage.ts']);
+  });
+
+  it('(#1142) 機能ごとの 1 日の上限がある機能 (究極モード) は、上限に数える機能 (1 日の上限にも 1 回入る)。一覧は _shared/ai-daily-limit.ts と同じ', () => {
+    expect([...AI_CAPPED_FEATURES]).toEqual(['menu_generation_ultimate']);
+    expect(AI_ULTIMATE_MODE_FEATURE).toBe('menu_generation_ultimate');
+    expect([...AI_CAPPED_FEATURES].sort()).toEqual([...AI_DAILY_CAPPED_FEATURES].sort());
+    for (const feature of AI_CAPPED_FEATURES) {
+      expect(AI_FEATURES, feature).toContain(feature);
+      // 上限に数えない機能の一覧 (= migration の c_unmetered。上のテストが突き合わせる) に入れない
+      expect(AI_UNMETERED_FEATURES, feature).not.toContain(feature);
+      expect(isMeteredAiFeature(feature), `${feature} は 1 日の上限に数える`).toBe(true);
+      expect(aiFeatureDailyCap(feature, () => undefined), feature).toBe(AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT);
+    }
+    // 上限のない機能は null (consume_ai_usage で数える)
+    for (const feature of AI_FEATURES.filter((f) => !AI_CAPPED_FEATURES.includes(f))) {
+      expect(aiFeatureDailyCap(feature, () => '5'), feature).toBeNull();
+    }
+    // 究極モードを数える入口 (menu_generation_ultimate を記録する入口) は、どれも通常の生成 (menu_generation) も記録する
+    // (本文の ultimateMode で、どちらか一方を 1 回だけ数える)
+    const entries = [
+      ...Object.values(ALL_ROUTES).flatMap((entry) => Object.values(entry.handlers)),
+      ...Object.values(LIBRARY_RECORDERS),
+      ...Object.values(ALL_EDGE).map((entry) => entry.usage),
+    ];
+    const ultimateEntries = entries.filter((usage) => usage && 'record' in usage && usage.record.includes(AI_ULTIMATE_MODE_FEATURE));
+    expect(ultimateEntries.length).toBeGreaterThan(0);
+    for (const usage of ultimateEntries) expect(usage && 'record' in usage ? [...usage.record] : []).toContain('menu_generation');
+  });
+
+  it('(#1142) migration の consume_ai_usage_capped_at は、consume_ai_usage_at と同じ鍵のロックを取ってから、consume_ai_usage_at に渡す', () => {
+    const definitions = migrationSqls()
+      .map(({ sql }) => sql.match(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.consume_ai_usage_capped_at\([\s\S]*?\$\$([\s\S]*?)\$\$/i)?.[1])
+      .filter((body): body is string => Boolean(body));
+    expect(definitions.length, 'consume_ai_usage_capped_at の定義が見つからない').toBeGreaterThan(0);
+    const body = definitions[definitions.length - 1].replace(/--.*$/gm, '');
+    const lockKey = /pg_advisory_xact_lock\(\s*pg_catalog\.hashtextextended\('ai_usage:' \|\| p_user_id::TEXT \|\| ':' \|\| v_date::TEXT, 0\)\s*\)/;
+    const lockAt = body.search(lockKey);
+    const countAt = body.search(/FROM\s+public\.ai_usage_counters/);
+    const delegateAt = body.search(/public\.consume_ai_usage_at\(p_user_id, p_feature, p_at\)/);
+    expect(lockAt, 'consume_ai_usage_at と同じ鍵のロックが無い').toBeGreaterThanOrEqual(0);
+    expect(countAt).toBeGreaterThan(lockAt);
+    expect(delegateAt).toBeGreaterThan(countAt);
   });
 
   it('すべての機能が、どこか (route・ライブラリ・Edge Function) で使われている', () => {

@@ -165,9 +165,17 @@ describe('AI_FEATURES: 記録する機能の一覧', () => {
 });
 
 describe('公開するもの (上限の判定の結果・429 の本文は _shared/ai-daily-limit.ts に分けた。#1149)', () => {
-  it('公開するのは、機能の一覧・上限に数えない機能とその安全弁・待つ上限・記録済みの印・数え済みの印だけ (署名の部品を持たないモバイルが読むものは別のファイル)', () => {
+  it('公開するのは、機能の一覧・上限に数えない機能とその安全弁・機能ごとの上限 (究極モード #1142)・待つ上限・記録済みの印・数え済みの印だけ (署名の部品を持たないモバイルが読むものは別のファイル)', () => {
     expect(Object.keys(core).sort()).toEqual(
       [
+        // #1142 機能ごとの 1 日の上限 (究極モード) の定義と、究極モードかどうかの判定
+        'AI_CAPPED_FEATURES',
+        'AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT',
+        'AI_ULTIMATE_MODE_DAILY_LIMIT_ENV',
+        'AI_ULTIMATE_MODE_FEATURE',
+        'aiFeatureDailyCap',
+        'isUltimateModeRequested',
+        'resolveAiUltimateModeDailyLimit',
         'AI_FEATURES',
         'AI_UNMETERED_DAILY_CAP_DEFAULTS',
         'AI_UNMETERED_DAILY_CAP_FALLBACK',

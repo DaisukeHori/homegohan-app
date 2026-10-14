@@ -14,6 +14,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { todayLocal } from "@homegohan/shared";
 
 import { Button } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
@@ -55,9 +56,9 @@ type Step = "form" | "review";
 
 const CHECKUP_TYPES = ["定期健診", "人間ドック", "特定健診", "その他"];
 
+/** 日本の今日 (端末のタイムゾーンに左右されない #1049 F7-21) */
 function todayStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return todayLocal();
 }
 
 function toNum(v: string): number | undefined {

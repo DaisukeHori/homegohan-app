@@ -14,6 +14,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { formatLocalDate, todayLocal } from "@homegohan/shared";
 
 import { Button, EmptyState, LoadingState } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
@@ -105,9 +106,9 @@ type Screen = "list" | "form" | "review";
 
 // ─── Helpers ──────────────────────────────────────────
 
+/** 日本の今日 (端末のタイムゾーンに左右されない #1049 F7-21) */
 function todayStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return todayLocal();
 }
 
 function toNum(v: string): number | undefined {
@@ -124,12 +125,13 @@ function toInt(v: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+/**
+ * 日付 (YYYY-MM-DD) か時刻 (ISO 8601) を、日本の日付 (YYYY/MM/DD) にする (#1049 F7-21)。
+ * 以前は new Date("YYYY-MM-DD") (UTC の 0 時) を端末のローカル時刻で読んでいて、日本より西の端末では 1 日前に出た。
+ * YYYY-MM-DD は UTC の 0 時 = 日本の同じ日の 9 時として読まれるので、日本の日付にすると同じ日になる
+ */
 function formatDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}/${m}/${day}`;
+  return formatLocalDate(new Date(dateStr)).replace(/-/g, "/");
 }
 
 function getRiskColor(level?: string): { bg: string; text: string } {
