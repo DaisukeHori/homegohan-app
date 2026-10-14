@@ -20,7 +20,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES } from '@homegohan/shared';
-import { convertV4ProgressToUIFormat } from '@/app/(main)/menus/weekly/_state';
+import { convertV4ProgressToUIFormat } from '@/app/(main)/menus/weekly/_state/v4ProgressUi';
 import { isUltimateModeWeeklyMenuRequest } from '@/lib/ai/weekly-menu-request-ultimate';
 
 const WEEKLY_DIR = path.resolve(__dirname, '../../../../app/(main)/menus/weekly');
