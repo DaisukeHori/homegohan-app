@@ -98,9 +98,28 @@ export async function exportAccountData(options: { isNativeApp: boolean }): Prom
 export type AccountDeletionResult =
   | { kind: 'deleted' }
   | { kind: 'unauthorized' }
-  /** 組織のオーナー・家族の代表者なので、先に譲渡や解散が要る (409)。message はサーバーが書いた固定の文 */
+  /**
+   * 組織のオーナー・家族の代表者なので、先に譲渡や解散が要る (409)。
+   * message はサーバーが書いた固定の文 (src/lib/account-deletion.ts の findBlocker の 2 つの文。利用者向けの日本語で、
+   * DB などの生のエラー文は入らない)。画面はこの文をそのまま出してよい (#1447)。本文に無ければ null
+   */
   | { kind: 'blocked'; message: string | null }
   | { kind: 'failed' };
+
+/** 退会に失敗したとき (409 以外の失敗・通信の失敗) に出す文 */
+export const ACCOUNT_DELETE_FAILED_MESSAGE = 'アカウントの削除に失敗しました。時間をおいて再度お試しください。';
+
+/** 退会できなかった (409) のに、サーバーの本文に理由の文が無かったときに出す文 */
+export const ACCOUNT_DELETE_BLOCKED_FALLBACK_MESSAGE =
+  '組織のオーナー、または家族グループの代表者のため、退会できません。先にオーナー・代表者を譲渡するか、組織・家族グループを解散してください。';
+
+/**
+ * 退会できなかった (409) ときに出す文 (#1447)。サーバーの文 (譲渡や解散が先だという案内) があればそれを、無ければ定型の文を返す。
+ * 設定画面は、これまで 409 でも「削除に失敗しました」としか出さず、何をすれば退会できるかが分からなかった。
+ */
+export function accountDeletionBlockedMessage(message: string | null): string {
+  return message !== null && message.trim() !== '' ? message : ACCOUNT_DELETE_BLOCKED_FALLBACK_MESSAGE;
+}
 
 /**
  * 本人のアカウントを即時に削除する (取り消せない)。例外は投げず、結果の種類を返す。

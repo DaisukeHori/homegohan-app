@@ -24,6 +24,9 @@ homegohan://                          アプリ起動 (ルート)
 homegohan://invite/family/{token}     家族グループ招待受諾
 homegohan://invite/org/{token}        組織招待受諾
 homegohan://callback#access_token=... Supabase Auth 認証コールバック (既存)
+homegohan://auth/verify...           Supabase Auth のメール確認の戻り先 (新規登録の確認・Google ログインの戻り・メールアドレス変更の確認 #1187)。
+                                      app/(auth)/auth/verify.tsx が src/lib/authLink.ts でセッションにする。
+                                      メールアドレス変更で両方の確認が要る設定の 1 通目は #message=... だけが届き、「もう一方の確認待ち」を表示する
 ```
 
 `app.json` に `scheme: "homegohan"` が既に設定済みのため、iOS/Android とも追加設定不要。

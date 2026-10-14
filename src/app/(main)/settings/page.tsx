@@ -11,9 +11,12 @@ import { requestNotificationPermission } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { useAccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { AI_CONSENT_SETTINGS_ENTRY_TITLE, AI_CONSENT_SETTINGS_PATH } from "@/lib/ai/consent-config";
+import { getSupportEmail } from "@/lib/site-config";
 import {
   ACCOUNT_DELETE_CONFIRM_KEYWORD,
+  ACCOUNT_DELETE_FAILED_MESSAGE,
   ACCOUNT_EXPORT_FAILED_MESSAGE,
+  accountDeletionBlockedMessage,
   accountExportRateLimitedMessage,
   deleteOwnAccount,
   exportAccountData,
@@ -210,8 +213,19 @@ export default function SettingsPage() {
     if (accountActionsDelegated || deleteConfirmText !== DELETE_KEYWORD || deleting) return;
     setDeleting(true);
     const result = await deleteOwnAccount();
-    if (result.kind !== 'deleted') {
-      alert('アカウントの削除に失敗しました。時間をおいて再度お試しください。');
+    if (result.kind === 'unauthorized') {
+      // ログインが切れている (書き出しと凍結中の画面と同じく、ログインの画面へ)
+      router.push('/login');
+      return;
+    }
+    if (result.kind === 'blocked') {
+      // 組織のオーナー・家族の代表者 (409)。失敗の定型文ではなく、譲渡や解散が先だというサーバーの案内を出す (#1447)
+      alert(accountDeletionBlockedMessage(result.message));
+      setDeleting(false);
+      return;
+    }
+    if (result.kind === 'failed') {
+      alert(ACCOUNT_DELETE_FAILED_MESSAGE);
       setDeleting(false);
       return;
     }
@@ -473,8 +487,9 @@ export default function SettingsPage() {
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
              </button>
 
+             {/* 問い合わせ先は NEXT_PUBLIC_SUPPORT_EMAIL (未設定なら既定値)。src/lib/site-config.ts (#1194) */}
              <a 
-               href="mailto:support@homegohan.jp"
+               href={`mailto:${getSupportEmail()}`}
                className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
              >
                <div className="flex items-center gap-3">
