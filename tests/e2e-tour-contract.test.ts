@@ -177,6 +177,24 @@ describe("#846: spec が指す testID は Web の実装に実在する", () => {
   });
 });
 
+/**
+ * モバイルの各 Step の画面と、そこで最初の intro 吹き出しに付ける testID (#846。Maestro が見分ける名前)。
+ * モバイルの E2E (Maestro) は PR の CI で流れないので、画面が testId を渡していることはここで見る
+ * (吹き出しが testId を中身に付けることは apps/mobile/__tests__/components/TourBubble.testid.test.tsx が確かめる)。
+ */
+const MOBILE_INTRO_TEST_IDS: ReadonlyArray<{ file: string; testId: string }> = [
+  { file: "apps/mobile/app/handson-tour/photo.tsx", testId: "tour-step-1-intro" },
+  { file: "apps/mobile/app/handson-tour/menu.tsx", testId: "tour-step-2-intro" },
+  { file: "apps/mobile/app/handson-tour/badges.tsx", testId: "tour-step-3-intro" },
+];
+
+describe("#846: モバイルの各 Step の画面は、最初の intro 吹き出しに testID を渡す", () => {
+  it.each(MOBILE_INTRO_TEST_IDS)("$file が testId: '$testId' を吹き出しに渡す", ({ file, testId }) => {
+    const code = stripComments(read(path.join(ROOT, file)));
+    expect(code).toMatch(new RegExp(`testId:\\s*["']${testId}["']`));
+  });
+});
+
 describe("検査ロジック自体 (過去の不具合の再現)", () => {
   it("以前の書き方 (isVisible に timeout を渡して、出ていなければ test.skip) を検出する", () => {
     const before = [
