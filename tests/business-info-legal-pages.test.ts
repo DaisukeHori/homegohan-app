@@ -67,8 +67,9 @@ function renderHtml(Page: ComponentType): string {
   return renderToStaticMarkup(createElement(Page));
 }
 
+/** タグを空白に置き換えた本文 (表のセルどうしがつながって 1 つの名前に見えないように) */
 function renderText(Page: ComponentType): string {
-  return renderHtml(Page).replace(/<[^>]*>/g, '');
+  return renderHtml(Page).replace(/<[^>]*>/g, ' ');
 }
 
 const LEGAL_PAGES: { url: string; Page: ComponentType }[] = [
