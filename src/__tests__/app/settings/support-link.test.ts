@@ -1,6 +1,6 @@
 // src/__tests__/app/settings/support-link.test.ts
 // #1194: 設定画面 (/settings) の「お問い合わせ」は、問い合わせ先を直接書かず src/lib/site-config.ts の getSupportEmail() から作る。
-// 以前は mailto:support@homegohan.jp と書かれていて、メールの文面・お問い合わせ画面・招待画面 (どれも getSupportEmail())
+// 以前は .jp ドメインの support 宛の mailto が直接書かれていて、メールの文面・お問い合わせ画面・招待画面 (どれも getSupportEmail())
 // とは別のドメインを指していた。
 //
 // NOTE: tsconfig の jsx: "preserve" の都合で、拡張子 .ts + React.createElement で書く (account-link.test.ts と同じ)。
