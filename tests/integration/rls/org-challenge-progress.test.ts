@@ -1069,7 +1069,8 @@ describe('#1132 J. get_org_challenge_ranking: 参加者本人にだけ順位表�
         .update({ organization_id: orgA, org_role: 'member', is_active_in_org: true, roles: ['user'] })
         .in('id', extraIds);
       if (memberError) throw new Error(`membership: ${memberError.message}`);
-      // 順位は a5 (5 位) の下に、6 位から 1 人ずつ。値は順位が下がるほど小さく、負にならないようにする
+      // 順位は a5 (5 位) の下に、6 位から 1 人ずつ。値は a5 (0) より小さく、順位が下がるほど小さくする (負の値。
+      // 順位表は rank の順に並べるだけで値の範囲は見ないので、順位と値の向きを揃えるために負にしている)
       const { error: joinError } = await srAdmin.from('organization_challenge_participants').insert(
         extraIds.map((id, i) => ({
           challenge_id: challenge,

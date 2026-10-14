@@ -103,7 +103,11 @@ export const RANKING_OTHER_LABEL = '参加者';
 /** 順位表で、本人の行に出す名前 */
 export const RANKING_SELF_LABEL = 'あなた';
 
-/** 順位表に出す人数の上限 (上位から。本人の行は、圏外でも必ず付ける) */
+/**
+ * 順位表に出す人数の上限 (上位から。本人の行は、圏外でも必ず付ける)。
+ * DB の関数 get_org_challenge_ranking の既定の人数 (cfg.default_limit) と同じ値にする (tests/org-challenges-lib.test.ts が確かめる)。
+ * DB 側は 1 回に返す人数を cfg.max_limit (100 人) で打ち切るので、それ以下にする。
+ */
 export const RANKING_ENTRY_LIMIT = 20;
 
 /**
