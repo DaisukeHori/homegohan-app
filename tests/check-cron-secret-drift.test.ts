@@ -13,7 +13,9 @@
  *
  * 保管場所 (stores) とコマンドの実行 (run) は偽物を差し込む。本物の Vercel / Supabase / Vault には接続しない。
  */
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,6 +23,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import {
   ALIAS_NAME,
+  CLEANUP_SIGNALS,
   CURRENT_NAME,
   DEFAULT_COMMAND_TIMEOUT_MS,
   DEFAULT_DB_URL_ENV,
@@ -28,6 +31,8 @@ import {
   EMPTY_SHA256,
   HELP,
   PREVIOUS_NAME,
+  REDACTED,
+  SIGNAL_EXIT_CODE_BASE,
   STDERR_TAIL_LINES,
   TIMEOUT_ENV_NAME,
   UsageError,
@@ -36,6 +41,7 @@ import {
   VERCEL_SENSITIVE_PLACEHOLDER,
   commandTimeoutMs,
   createDefaultStores,
+  createSignalCleanup,
   digestsFromEnvText,
   evaluate,
   exitCodeOf,
@@ -46,7 +52,9 @@ import {
   parseVaultDigestOutput,
   pgEnvFromUrl,
   redact,
+  redactSensitive,
   runCommand,
+  secretValuesFromEnv,
   sha256Hex,
 } from '../scripts/lib/cron-secret-drift.mjs';
 
@@ -322,6 +330,22 @@ describe('evaluate (ダイジェストの比較)', () => {
     expect(exitCodeOf(checks)).toBe(1);
   });
 
+  it('Edge と Vault が食い違ったときの案内は「Vault の app_cron_secret を正として、Edge Function secrets の CRON_SECRET を合わせる」 (#1560)', () => {
+    // 別名 (SERVICE_ROLE_SECRET) が使われているときも、合わせる先は CRON_SECRET (あれば別名は見られない)
+    for (const edgeEntries of [{ [CURRENT_NAME]: digestEntry(SECRET_NEW) }, { [ALIAS_NAME]: digestEntry(SECRET_NEW) }]) {
+      const checks = evaluate({ ...healthy(), edge: okStore(edgeEntries), vault: okStore({ [VAULT_SECRET_NAME]: digestEntry(SECRET_OTHER) }) });
+      const detail = checks.find((c: Check) => c.id === 'edge-vault-match')?.detail ?? '';
+      expect(detail).toContain(`Vault の ${VAULT_SECRET_NAME} を正として、Edge Function secrets の ${CURRENT_NAME} をそれに合わせてください`);
+      // Vault を変えるのは入れ替えそのものが目的のときだけで、そのときはローテーション手順に従う
+      expect(detail).toContain('入れ替えそのものが目的のときだけ');
+      expect(detail).toContain('ローテーション手順');
+      // 「どちらが正しいかを確かめ、もう一方を合わせる」という古い案内は残さない
+      expect(detail).not.toContain('もう一方');
+      expect(detail).not.toContain('どちらが正しい値');
+    }
+    expect(HELP).toContain(`Vault の ${VAULT_SECRET_NAME} を正として`);
+  });
+
   it('入れ替えの途中 (Vault がまだ Edge の CRON_SECRET_PREVIOUS と同じ) → WARN で、FAIL にしない', () => {
     const snapshot = {
       ...healthy(),
@@ -452,6 +476,8 @@ describe('evaluate (ダイジェストの比較)', () => {
     expect(exitCodeOf(unread)).toBe(2);
 
     const both = evaluate({ ...healthy(), vault: { state: 'error', message: 'x' }, vercel: okStore({}) });
+    expect(levelOf(both, 'vault-read')).toBe('error');
+    expect(levelOf(both, 'vercel-current')).toBe('fail');
     expect(exitCodeOf(both)).toBe(1);
   });
 
@@ -795,6 +821,261 @@ describe('runCommand と、本物の /bin/sh を通した Vercel の読み取り
   });
 });
 
+describe('失敗したときの標準エラー出力の伏せ字 (#1560)', () => {
+  const baseOptions = () => parseArgs(['--project-ref', 'abcdefgh'], {});
+  // どれも本物ではない。形だけ秘密に似せる
+  const ACCESS_TOKEN = 'fake-access-token-0123456789abcdef0123456789';
+  const VERCEL_TOKEN_VALUE = 'vercel-login-token-DO-NOT-PRINT';
+  const SECRET_LIKE = [ACCESS_TOKEN, VERCEL_TOKEN_VALUE, SECRET_NEW, SECRET_OLD, SECRET_VERCEL, DB_PASSWORD, DB_URL];
+  /** コマンドが失敗したときに、秘密らしいものを書いてしまった標準エラー出力 */
+  const leakyStderr = [
+    `Error: Unauthorized. access_token=${ACCESS_TOKEN}`,
+    `request to https://api.example.invalid/v1/projects?apikey=${SECRET_NEW} failed`,
+    `Authorization: Bearer ${SECRET_OLD}`,
+    `${CURRENT_NAME}="${SECRET_VERCEL}"`,
+    `FATAL: password "${DB_PASSWORD}" rejected for ${DB_URL}`,
+    `logged in with ${VERCEL_TOKEN_VALUE}`,
+  ].join('\n');
+  /** 子に渡す環境変数 (コマンドの資格情報)。値は伏せる対象 */
+  const credentialEnv = { SUPABASE_ACCESS_TOKEN: ACCESS_TOKEN, VERCEL_TOKEN: VERCEL_TOKEN_VALUE, PATH: '/usr/bin' };
+
+  function expectRedacted(message: string) {
+    expect(message).toContain(REDACTED);
+    for (const secret of SECRET_LIKE) expect(message).not.toContain(secret);
+  }
+
+  it('supabase secrets list の失敗: 末尾の行の値・URL・トークン・パスワードらしきものを伏せて出す', async () => {
+    const { run } = fakeRun(() => ({ code: 1, stdout: '', stderr: leakyStderr }));
+    const store = await createDefaultStores({ options: baseOptions(), env: credentialEnv, run, fsApi: fakeFs().api }).edge();
+    expect(store.state).toBe('error');
+    const message = (store as { message: string }).message;
+    expect(message.startsWith('supabase secrets list が終了コード 1 で失敗しました: ')).toBe(true);
+    expectRedacted(message);
+  });
+
+  it('vercel env pull の失敗: 末尾の行の値・URL・トークン・パスワードらしきものを伏せて出す (一時ディレクトリは消す)', async () => {
+    const fsFake = fakeFs();
+    const { run } = fakeRun(() => ({ code: 1, stdout: '', stderr: leakyStderr }));
+    const store = await createDefaultStores({ options: baseOptions(), env: credentialEnv, run, fsApi: fsFake.api, tmpdir: '/virtual-tmp' }).vercel();
+    expect(store.state).toBe('error');
+    const message = (store as { message: string }).message;
+    expect(message.startsWith('vercel env pull が終了コード 1 で失敗しました: ')).toBe(true);
+    expectRedacted(message);
+    expect(fsFake.removed).toHaveLength(1);
+  });
+
+  it('psql の失敗も、同じ伏せ字を通す (接続先の URL・パスワードに加えて、形から秘密らしいもの)', async () => {
+    const { run } = fakeRun(() => ({ code: 2, stdout: '', stderr: leakyStderr }));
+    const store = await createDefaultStores({ options: baseOptions(), env: { ...credentialEnv, [DEFAULT_DB_URL_ENV]: DB_URL }, run, fsApi: fakeFs().api }).vault();
+    expectRedacted((store as { message: string }).message);
+  });
+
+  it('main() の出力 (読めなかった理由) にも、秘密らしいものは出ない', async () => {
+    const { run } = fakeRun(() => ({ code: 1, stdout: '', stderr: leakyStderr }));
+    const out: string[] = [];
+    const code = await main(['--project-ref', 'abcdefgh', '--skip-vault', '--skip-vercel'], {
+      env: credentialEnv,
+      log: (line: string) => out.push(line),
+      errorLog: (line: string) => out.push(line),
+      run,
+      fsApi: fakeFs().api,
+    });
+    expect(code).toBe(2);
+    const report = out.join('\n');
+    expect(report).toContain('[ERROR] Edge Function secrets を読めませんでした');
+    for (const secret of SECRET_LIKE) expect(report).not.toContain(secret);
+  });
+
+  it('redactSensitive: 秘密らしいものだけを伏せ、原因の手がかりになる普通の文は残す', () => {
+    expect(redactSensitive(`token=${ACCESS_TOKEN}`)).toBe(`token=${REDACTED}`);
+    expect(redactSensitive(`"api_key": "${SECRET_NEW}"`)).toBe(`"api_key": ${REDACTED}`);
+    expect(redactSensitive(`Authorization: Bearer ${SECRET_OLD}`)).toBe(`Authorization: ${REDACTED}`);
+    expect(redactSensitive(`sent Bearer ${SECRET_OLD} upstream`)).toBe(`sent Bearer ${REDACTED} upstream`);
+    expect(redactSensitive(`see ${DB_URL} now`)).toBe(`see ${REDACTED} now`);
+    expect(redactSensitive(`export ${CURRENT_NAME}='${SECRET_VERCEL}'`)).toBe(`export ${CURRENT_NAME}=${REDACTED}`);
+    expect(redactSensitive(`password "${DB_PASSWORD}" rejected`)).toBe(`password ${REDACTED} rejected`);
+    // 区切りの無い長い英数字の連なり (トークン・ダイジェスト) は、名前が無くても伏せる
+    expect(redactSensitive(`got ${D(SECRET_NEW)}`)).toBe(`got ${REDACTED}`);
+    // 分かっている秘密は、形にかかわらず伏せる
+    expect(redactSensitive('as user hunter-two', ['hunter-two'])).toBe(`as user ${REDACTED}`);
+    // 普通の文は残す (行をまたいで伏せない)
+    const plain = ['Error: Not linked', 'Unauthorized: invalid access token', 'project abcdefghijklmnopqrst not found', 'Try `vercel link`'].join('\n');
+    expect(redactSensitive(plain)).toBe(plain);
+  });
+
+  it('secretValuesFromEnv: 秘密らしい名前で、短すぎない値だけを伏せる対象にする', () => {
+    expect(
+      secretValuesFromEnv({ SUPABASE_ACCESS_TOKEN: ACCESS_TOKEN, VERCEL_TOKEN: VERCEL_TOKEN_VALUE, SUPABASE_DB_URL: DB_URL, PATH: '/usr/bin:/bin', CI_TOKEN: '1', HOME: undefined }).sort(),
+    ).toEqual([ACCESS_TOKEN, DB_URL, VERCEL_TOKEN_VALUE].sort());
+  });
+});
+
+/** シグナルの受け手を記録する偽の process */
+function fakeProcess() {
+  const emitter = new EventEmitter();
+  const exits: number[] = [];
+  const proc = {
+    on: (event: string, listener: (signal: string) => void) => emitter.on(event, listener),
+    removeListener: (event: string, listener: (signal: string) => void) => emitter.removeListener(event, listener),
+    exit: (code: number) => {
+      exits.push(code);
+    },
+  };
+  return { emitter, exits, proc };
+}
+
+describe('createSignalCleanup (止めたときの後始末。#1560)', () => {
+  it('hold の間だけ SIGINT・SIGTERM・SIGHUP の受け手を置き、すべて release したら外す', () => {
+    const { emitter, proc } = fakeProcess();
+    const cleanup = createSignalCleanup({ proc, rmSync: () => {}, writeError: () => {} });
+    expect(CLEANUP_SIGNALS).toEqual(['SIGINT', 'SIGTERM', 'SIGHUP']);
+    const releaseA = cleanup.hold();
+    const releaseB = cleanup.hold();
+    for (const signal of CLEANUP_SIGNALS) expect(emitter.listenerCount(signal)).toBe(1);
+    releaseA();
+    releaseA(); // 2 回呼んでも、もう一方の hold を外さない
+    for (const signal of CLEANUP_SIGNALS) expect(emitter.listenerCount(signal)).toBe(1);
+    releaseB();
+    for (const signal of CLEANUP_SIGNALS) expect(emitter.listenerCount(signal)).toBe(0);
+  });
+
+  it('シグナルを受けたら、子を止め、一時ディレクトリを同期的に消し、128 + シグナル番号で終わる', () => {
+    for (const signal of CLEANUP_SIGNALS) {
+      const { emitter, exits, proc } = fakeProcess();
+      const removed: string[] = [];
+      const killed: string[] = [];
+      const errors: string[] = [];
+      const cleanup = createSignalCleanup({ proc, rmSync: (dir: string) => void removed.push(dir), writeError: (text: string) => void errors.push(text) });
+      cleanup.hold();
+      cleanup.addDir('/virtual-tmp/cron-secret-drift-A');
+      cleanup.addDir('/virtual-tmp/cron-secret-drift-B');
+      cleanup.removeDir('/virtual-tmp/cron-secret-drift-B'); // 読み終えて消したもの
+      cleanup.addChild({ kill: (name: string) => void killed.push(name) });
+      emitter.emit(signal, signal);
+      expect(killed).toEqual(['SIGKILL']);
+      expect(removed).toEqual(['/virtual-tmp/cron-secret-drift-A']);
+      expect(exits).toEqual([SIGNAL_EXIT_CODE_BASE + os.constants.signals[signal as keyof typeof os.constants.signals]]);
+      expect(errors.join('')).toContain(`${signal} で止めました (一時ファイルは消しました)`);
+      for (const name of CLEANUP_SIGNALS) expect(emitter.listenerCount(name)).toBe(0);
+    }
+  });
+
+  it('一時ディレクトリを消せなかったら、手で消せるよう場所を出す (終わることは変わらない)', () => {
+    const { emitter, exits, proc } = fakeProcess();
+    const errors: string[] = [];
+    const cleanup = createSignalCleanup({
+      proc,
+      rmSync: () => {
+        throw new Error('EACCES');
+      },
+      writeError: (text: string) => void errors.push(text),
+    });
+    cleanup.hold();
+    cleanup.addDir('/virtual-tmp/cron-secret-drift-A');
+    emitter.emit('SIGINT', 'SIGINT');
+    expect(exits).toEqual([SIGNAL_EXIT_CODE_BASE + os.constants.signals.SIGINT]);
+    expect(errors.join('')).toContain('手で消してください: /virtual-tmp/cron-secret-drift-A');
+  });
+
+  it('Vercel の読み取りが終われば、process にシグナルの受け手を残さない (成功でも失敗でも)', async () => {
+    const before = CLEANUP_SIGNALS.map((signal) => process.listenerCount(signal));
+    const options = parseArgs(['--skip-edge', '--skip-vault'], {});
+    for (const code of [0, 1]) {
+      const fsFake = fakeFs();
+      const { run } = fakeRun((_command, args) => {
+        fsFake.files.set(args[6], `${CURRENT_NAME}="${SECRET_VERCEL}"\n`);
+        return { code, stdout: '', stderr: '' };
+      });
+      await createDefaultStores({ options, env: {}, run, fsApi: fsFake.api, tmpdir: '/virtual-tmp' }).vercel();
+      expect(CLEANUP_SIGNALS.map((signal) => process.listenerCount(signal))).toEqual(before);
+    }
+  });
+});
+
+describe('止めたときに一時ファイルが残らない (本物の子プロセスにシグナルを送る。#1560)', () => {
+  /** 偽の vercel が一時ファイルを書き終えるのを待つ上限 (node の起動を含む) */
+  const WAIT_FOR_PULL_MS = 15_000;
+  /** 子の終わりや、偽の vercel が止まったかを見に行く間隔 */
+  const POLL_INTERVAL_MS = 50;
+  /** 偽の vercel が眠る秒数。後始末で止められなければ、この間は残る (テストの上限より長い) */
+  const FAKE_VERCEL_SLEEP_SECONDS = 60;
+  /** このテスト 1 本の上限 (シグナル 2 種 × 子の起動と後始末) */
+  const TEST_TIMEOUT_MS = 60_000;
+  const tmpRoots: string[] = [];
+  afterAll(() => {
+    for (const dir of tmpRoots) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function waitFor(condition: () => boolean, label: string) {
+    const deadline = Date.now() + WAIT_FOR_PULL_MS;
+    while (!condition()) {
+      if (Date.now() > deadline) throw new Error(`待ちきれませんでした: ${label}`);
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
+  }
+
+  function isAlive(pid: number) {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  it(
+    'vercel env pull の途中で SIGINT / SIGTERM を受けたら、一時ディレクトリを消し、偽の vercel を止め、130 / 143 で終わる',
+    async () => {
+      for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-drift-signal-test-'));
+        tmpRoots.push(root);
+        const tmpdir = path.join(root, 'tmp');
+        fs.mkdirSync(tmpdir);
+        const pulledMarker = path.join(root, 'pulled');
+        const fakeVercel = path.join(root, 'fake-vercel.sh');
+        // args: env pull <file> --environment=production --yes。書き終えたら自分の pid を印に残し、眠ったまま止められるのを待つ
+        fs.writeFileSync(
+          fakeVercel,
+          ['#!/bin/sh', `printf '${CURRENT_NAME}="%s"\\n' "${SECRET_VERCEL}" > "$3"`, `echo $$ > "${pulledMarker}"`, `exec sleep ${FAKE_VERCEL_SLEEP_SECONDS}`, ''].join('\n'),
+          { mode: 0o700 },
+        );
+        // 本物の Vercel には接続しない (--vercel-bin で偽物を使い、Edge と Vault は外す)。os.tmpdir() は TMPDIR を見る
+        const child = spawn(process.execPath, [path.join(ROOT, 'scripts/check-cron-secret-drift.mjs'), '--skip-edge', '--skip-vault', '--vercel-bin', fakeVercel], {
+          env: { PATH: process.env.PATH, TMPDIR: tmpdir },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', (chunk) => {
+          stdout += chunk;
+        });
+        child.stderr.on('data', (chunk) => {
+          stderr += chunk;
+        });
+        const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.on('exit', (code, sig) => resolve({ code, signal: sig })));
+
+        await waitFor(() => fs.existsSync(pulledMarker) && fs.readFileSync(pulledMarker, 'utf8').trim() !== '', '偽の vercel が一時ファイルを書く');
+        // 止める直前には、本番の環境変数を書いた一時ディレクトリがある (このテストが確かめる状況になっている)
+        const during = fs.readdirSync(tmpdir).filter((name) => name.startsWith('cron-secret-drift-'));
+        expect(during).toHaveLength(1);
+        expect(fs.existsSync(path.join(tmpdir, during[0], 'vercel.env'))).toBe(true);
+        const fakePid = Number(fs.readFileSync(pulledMarker, 'utf8').trim());
+
+        child.kill(signal);
+        const result = await exited;
+        expect(result).toEqual({ code: SIGNAL_EXIT_CODE_BASE + os.constants.signals[signal], signal: null });
+        expect(fs.readdirSync(tmpdir)).toEqual([]);
+        expect(stderr).toContain(`${signal} で止めました (一時ファイルは消しました)`);
+        // 判定の結果は出さない (途中で止めたので)。値も出さない
+        expect(stdout).not.toContain('判定:');
+        expect(stdout + stderr).not.toContain(SECRET_VERCEL);
+        await waitFor(() => !isAlive(fakePid), '偽の vercel が止まる');
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+});
+
 describe('ENV_SETUP.md の案内 (#1196)', () => {
   const doc = fs.readFileSync(path.join(ROOT, 'ENV_SETUP.md'), 'utf8');
 
@@ -814,6 +1095,20 @@ describe('ENV_SETUP.md の案内 (#1196)', () => {
     expect(HELP).toContain(VERCEL_SENSITIVE_PLACEHOLDER);
     // 「まだ仕組みが無い」という古い案内は残さない
     expect(section).not.toContain('値のずれを自動で見つける仕組みは、まだありません');
+  });
+
+  it('ずれたときは Vault を正として Edge Function secrets を合わせる、FAIL と「読めなかった」が同時なら終了コード 1、を案内している (#1560)', () => {
+    const start = doc.indexOf('### 値のずれの確かめ方');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const section = doc.slice(start, doc.indexOf('\n### ', start + 1));
+    expect(section).toContain('**Vault の `app_cron_secret` を正として、Edge Function secrets の `CRON_SECRET` をそれに合わせます**');
+    expect(section).toContain('Vault を変えるのは、Vault の値が漏えいした・失われたなど、入れ替えそのものが目的のときだけです');
+    expect(section).toContain('FAIL と「読めなかった」が同時のときは、終了コード 1 を優先します');
+    expect(section).toContain(`末尾 ${STDERR_TAIL_LINES} 行`);
+    expect(section).toContain(`\`${REDACTED}\``);
+    expect(section).toContain('Ctrl-C');
+    // 実装と食い違っていない: FAIL と ERROR が同時なら 1
+    expect(exitCodeOf([{ id: 'a', level: 'fail', title: '', detail: '' }, { id: 'b', level: 'error', title: '', detail: '' }])).toBe(1);
   });
 
   it('入口のスクリプトがあり、本体の main() を呼ぶ', () => {
