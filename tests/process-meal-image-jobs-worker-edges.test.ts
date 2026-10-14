@@ -276,7 +276,7 @@ async function runWorker(): Promise<Array<{ jobId: string; status: string; messa
     new Request(URL_, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${SERVICE_ROLE_KEY}` },
-      body: JSON.stringify({ plannedMealId: MEAL_ID, limit: 1 }),
+      body: JSON.stringify({ plannedMealId: h.jobs[0]?.planned_meal_id, limit: 1 }),
     }),
   );
   expect(res.status).toBe(200);
@@ -464,6 +464,24 @@ describe('(3) 書かなかった画像を Storage から消す (#1553)', () => {
     expect(warns).toHaveLength(1);
     expect(warns[0].metadata).toMatchObject({ jobId: JOB_ID, error: 'storage unavailable', why: 'meal_deleted' });
     expect(h.logs.filter((log) => log.level === 'error')).toEqual([]);
+  });
+
+  it('組み立てたパスがそのジョブのものと確かめられないとき (献立の ID に区切り文字) は消さず、warn だけ', async () => {
+    const oddMealId = 'meal/../other';
+    h.meal = { ...(h.meal as Record<string, unknown>), id: oddMealId };
+    Object.assign(job(), { planned_meal_id: oddMealId });
+    h.onMealRead = (n) => {
+      if (n === 1) h.meal = null;
+    };
+
+    const [outcome] = await runWorker();
+
+    expect(outcome).toEqual({ jobId: JOB_ID, status: 'cancelled', message: 'meal was deleted' });
+    expect(h.uploads).toHaveLength(1);
+    expect(h.removes).toEqual([]);
+    const warns = h.logs.filter((log) => log.level === 'warn');
+    expect(warns).toHaveLength(1);
+    expect(warns[0].metadata).toMatchObject({ jobId: JOB_ID, uploadPath: h.uploads[0], why: 'meal_deleted' });
   });
 
   it('書けたときは消さない', async () => {
