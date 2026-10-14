@@ -7,7 +7,7 @@ import { Card, ListItem, LoadingState, PageHeader } from "../../src/components/u
 import { getApi } from "../../src/lib/api";
 import { getPrivacyUrl, getSupportMailtoUrl, getTermsUrl } from "../../src/lib/siteConfig";
 import { supabase } from "../../src/lib/supabase";
-import { signOutWithCleanup } from "../../src/lib/signOut";
+import { signOutOnDevice } from "../../src/lib/signOut";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { colors, spacing, radius } from "../../src/theme";
@@ -86,7 +86,7 @@ const COOKING_EXP = [
 ];
 
 export default function ProfilePage() {
-  const { user } = useAuth();
+  const { user, clearSession } = useAuth();
   const { profile: ctxProfile, refresh: refreshProfile } = useProfile();
 
   const [profileData, setProfileData] = useState<any>(null);
@@ -168,8 +168,9 @@ export default function ProfilePage() {
   }
 
   async function handleLogout() {
-    // push token の削除 → ユーザー別データの削除 → サインアウトの順 (#1038 F7-10)
-    await signOutWithCleanup(user?.id ?? null);
+    // push token の削除 → ユーザー別データの削除 → サインアウトの順 (#1038 F7-10)。
+    // 設定画面のログアウトと同じ共通処理 (サインアウトが失敗しても端末のセッションと画面の状態を消す。#1037)
+    await signOutOnDevice(user?.id ?? null, { clearSession });
     router.replace("/");
   }
 
