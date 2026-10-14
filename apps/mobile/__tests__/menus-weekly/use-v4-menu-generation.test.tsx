@@ -14,7 +14,7 @@
  *    onError を呼ばず onAiConsentRequired を呼ぶ。同意の状況を読めなかった文 (一時的) は onError にそのまま渡す
  * 5. 受け付けたあとの失敗の文のうち、こちらで書いた文 (定型・同意・上限) 以外は汎用の文にして渡す (#1478)。
  *    文字列でない error_message も汎用の文にし、progress の中身と status はそのまま onProgress に渡す。
- *    Realtime の行は型で受ける (フックのソースに as any を置かない)
+ *    Realtime の行は型で受ける (フックのソースで any へキャストしない)
  * を固定する。
  */
 
@@ -257,7 +257,7 @@ describe('useV4MenuGeneration.subscribeToProgress — 受け付けたあとの�
     }
   });
 
-  // #1478 R1: Realtime の行を as any でなく型 (error_message は unknown) で受ける。文字列でない値も汎用の文に寄せる
+  // #1478 R1: Realtime の行を any へのキャストでなく型 (error_message は unknown) で受ける。文字列でない値も汎用の文に寄せる
   it('error_message が文字列でない値 (オブジェクト) なら汎用の文にし、progress の中身と status はそのまま onProgress に渡す', async () => {
     const onError = jest.fn();
     const { result } = renderHook(() => useV4MenuGeneration({ onError }));
@@ -285,7 +285,7 @@ describe('useV4MenuGeneration.subscribeToProgress — 受け付けたあとの�
     expect(JSON.stringify([onError.mock.calls, onProgress.mock.calls])).not.toContain('does not exist');
   });
 
-  it('フックのソースは Realtime の行を as any で受けない (読む列は型で確かめる #1478)', () => {
+  it('フックのソースは Realtime の行を any へキャストして受けない (読む列は型で確かめる #1478)', () => {
     const source = fs.readFileSync(path.join(__dirname, '../../src/hooks/useV4MenuGeneration.ts'), 'utf8');
     // コメントを除いた実コードで判定する (説明の文に語が出ても誤検知しない)
     const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
