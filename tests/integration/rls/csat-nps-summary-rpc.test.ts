@@ -14,7 +14,8 @@
  *   D. 権限: anon は呼べない (42501)
  *   E. 旧実装との同値性: ユーザーごとに、「関数 + 丸め (src/lib/admin/nps-summary.ts)」の結果が、
  *      修正前の「同じユーザーの権限で全行を読んで JS で数える」結果 (tests/helpers/legacy-nps-summary.ts) と一致する。
- *      誰が何を見られるか (finance ロールの扱い=#1311 を含む) には依存しない。RLS の見え方は変えていないことの確認
+ *      誰が何を見られるか (finance ロールは RLS が許していない。API ルートも #1311 で finance を通さなくなった) には依存しない。
+ *      RLS の見え方は変えていないことの確認
  *   F. 件数が多くても数え切れる: API の 1 回の応答で返す最大行数 (既定 1000 行) を超える 1,100 行でも、
  *      関数は切り詰めずに正確に数える (修正前は 1000 行で黙って打ち切られた)
  *
@@ -222,7 +223,7 @@ let staffSupport: TestUser; // サポート担当 (roles = ['support'])
 let staffAdmin: TestUser; // admin
 let userA: TestUser; // 一般ユーザー
 let userB: TestUser; // 一般ユーザー
-let financeUser: TestUser; // finance ロール (API ルートは通すが RLS は許していない。#1311)
+let financeUser: TestUser; // finance ロール (RLS は許していない。API ルートも #1311 で通さなくなったが、関数を直接呼んだときの見え方の確認に使う)
 
 beforeAll(async () => {
   // 前回の実行が途中で落ちて残した行を掃除する (期間の合計を数える検証が、残りの行で狂わないように)
@@ -543,7 +544,8 @@ describe('#1217 E. 関数 + 丸めの結果が、修正前 (同じユーザー�
   ];
   const plans: Array<string | null> = [null, 'pro', 'free', 'enterprise'];
 
-  // finance は API ルートは通るが RLS が許していない (#1311)。見え方がどうであっても「関数 = 旧実装」が成り立つことだけを確かめる
+  // finance は RLS が許していない (API ルートも #1311 で通さなくなった)。関数を直接呼んだときの見え方がどうであっても
+  // 「関数 = 旧実装」が成り立つことだけを確かめる
   const personas = (): Array<{ name: string; user: TestUser }> => [
     { name: 'サポート担当', user: staffSupport },
     { name: 'admin', user: staffAdmin },

@@ -2,10 +2,31 @@ import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE, internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
-import { runConsultationAction } from '@/lib/ai/consultation-action-executor';
+import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
+import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
+import { addDaysToDate, todayLocal } from '@/lib/date-utils';
+import { mondayWeekRange } from '@/lib/jst-day-ranges';
+import { AI_ALLOWED_MEAL_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';
 import { CANONICAL_GOAL_TYPES, describeGoalRangesForPrompt } from '@/lib/health-goal-types';
+import { requireAiConsent } from '@/lib/ai/consent-guard';
+
+/**
+ * AI に渡す日付 (過去の相談の日・重要なメッセージの日・今日) を書くタイムゾーン (#1433)。
+ * サーバー (Vercel) のタイムゾーンは UTC なので、指定しない toLocaleDateString は UTC の暦日になり、
+ * JST 0:00〜8:59 の出来事が前日の日付で AI に伝わっていた
+ */
+const PROMPT_DATE_TIME_ZONE = 'Asia/Tokyo';
+
+/** AI 相談のシステムプロンプトに入れる「今後の献立」の範囲 (明日から、今日の何日後までか) */
+const UPCOMING_MEALS_DAYS = 7;
+/** AI 相談のシステムプロンプトに入れる「最近の食事・健康記録」の日数 (今日の何日前から) */
+const RECENT_MEALS_DAYS = 14;
+/** 1 週間の日数 (来週の月曜日 = 今週の月曜日の 1 週間後) */
+const DAYS_PER_WEEK = 7;
 
 // #1047 F2-21: アクション自動実行を self-fetch
 // (`${NEXT_PUBLIC_APP_URL}/api/ai/consultation/actions/.../execute`) 経由で行うと、
@@ -90,7 +111,7 @@ export async function GET(
     .eq('session_id', params.sessionId)
     .order('created_at', { ascending: true });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return internalError('GET /api/ai/consultation/sessions/[sessionId]/messages', error, { userId: user.id });
 
   const messages = (data || [])
     .filter((m: any) => !m.metadata?.isSystemPrompt)
@@ -109,12 +130,11 @@ export async function GET(
 
 // ユーザーの詳細情報を取得してシステムプロンプトを構築
 async function buildSystemPrompt(supabase: any, userId: string): Promise<string> {
-  // 日付計算を先に行う（JST基準）
+  // 日付計算を先に行う（JST基準）。ずらしは暦の計算だけで行う (#1463。parseLocalDate + setDate (ローカル時刻) +
+  // formatLocalDate (JST) は、JST より東のタイムゾーンで動くと 1 日前の日付になった)
   const today = todayLocal();
-  const oneWeekLater = parseLocalDate(today);
-  oneWeekLater.setDate(oneWeekLater.getDate() + 7);
-  const fourteenDaysAgo = parseLocalDate(today);
-  fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+  const oneWeekLaterStr = addDaysToDate(today, UPCOMING_MEALS_DAYS);
+  const fourteenDaysAgoStr = addDaysToDate(today, -RECENT_MEALS_DAYS);
 
   // ===== 並列クエリ実行（レイテンシー改善） =====
   const [
@@ -145,7 +165,7 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
       user_daily_meals!inner(day_date, user_id)
     `).eq('user_daily_meals.user_id', userId)
       .gt('user_daily_meals.day_date', today)
-      .lte('user_daily_meals.day_date', formatLocalDate(oneWeekLater))
+      .lte('user_daily_meals.day_date', oneWeekLaterStr)
       .limit(30),
 
     // 4. 過去14日の食事
@@ -153,14 +173,14 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
       id, meal_type, dish_name, dishes, calories_kcal, protein_g, fat_g, carbs_g, is_completed, mode,
       user_daily_meals!inner(day_date, user_id)
     `).eq('user_daily_meals.user_id', userId)
-      .gte('user_daily_meals.day_date', formatLocalDate(fourteenDaysAgo))
+      .gte('user_daily_meals.day_date', fourteenDaysAgoStr)
       .lt('user_daily_meals.day_date', today)
       .limit(50),
 
     // 5. 健康記録（過去14日）
     supabase.from('health_records').select('*')
       .eq('user_id', userId)
-      .gte('record_date', formatLocalDate(fourteenDaysAgo))
+      .gte('record_date', fourteenDaysAgoStr)
       .order('record_date', { ascending: false })
       .limit(14),
 
@@ -499,7 +519,7 @@ ${pastSessions.map((s: any) => {
   const keyFacts = s.context_snapshot?.key_facts || [];
   const userInsights = s.context_snapshot?.user_insights || [];
   return `
-■ ${s.title}（${s.summary_generated_at ? new Date(s.summary_generated_at).toLocaleDateString('ja-JP') : '日付不明'}）
+■ ${s.title}（${s.summary_generated_at ? new Date(s.summary_generated_at).toLocaleDateString('ja-JP', { timeZone: PROMPT_DATE_TIME_ZONE }) : '日付不明'}）
   概要: ${s.summary || '要約なし'}
   トピック: ${(s.key_topics || []).join(', ') || 'なし'}
   ${keyFacts.length > 0 ? `重要な事実:
@@ -512,7 +532,7 @@ ${keyFacts.map((f: any) => `    - [${f.category}] ${f.date ? f.date + ': ' : ''}
   const importantMessagesInfo = importantMessages && importantMessages.length > 0 ? `
 【⭐ ユーザーが重要とマークした過去の会話（最新20件）】
 ${importantMessages.map((m: any) => {
-  const date = new Date(m.created_at).toLocaleDateString('ja-JP');
+  const date = new Date(m.created_at).toLocaleDateString('ja-JP', { timeZone: PROMPT_DATE_TIME_ZONE });
   const role = m.role === 'user' ? 'ユーザー' : 'AI';
   const reason = m.importance_reason ? ` (理由: ${m.importance_reason})` : '';
   const category = m.metadata?.category ? ` [${m.metadata.category}]` : '';
@@ -533,20 +553,14 @@ ${importantMessages.map((m: any) => {
     month: 'long',
     day: 'numeric',
     weekday: 'long',
-    timeZone: 'Asia/Tokyo',
+    timeZone: PROMPT_DATE_TIME_ZONE,
   });
 
-  // 明日の日付（JST基準）
-  const tomorrow = parseLocalDate(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = formatLocalDate(tomorrow);
+  // 明日の日付（JST基準。暦の計算だけで求める。#1463）
+  const tomorrowStr = addDaysToDate(today, 1);
 
-  // 来週月曜日の日付（JST基準）
-  const weekStart = parseLocalDate(today);
-  const dayOfWeek = weekStart.getDay(); // 0=日, 1=月, ..., 6=土
-  const daysUntilNextMonday = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
-  weekStart.setDate(weekStart.getDate() + daysUntilNextMonday);
-  const weekStartStr = formatLocalDate(weekStart);
+  // 来週月曜日の日付（JST基準）= 今日を含む月曜始まりの週の、次の週の月曜日 (日曜日なら明日)。暦の計算だけで求める (#1463)
+  const weekStartStr = addDaysToDate(mondayWeekRange(today).startDate, DAYS_PER_WEEK);
 
   // 現在時刻に基づく食事の解釈ルール
   let mealInterpretation = '';
@@ -654,7 +668,7 @@ ${importantMessagesInfo}
 - generate_single_meal: AIが栄養計算付きで1食を生成（推奨）
   params: {
     date: "YYYY-MM-DD",
-    mealType: "breakfast|lunch|dinner|snack",
+    mealType: "${AI_ALLOWED_MEAL_TYPES.join('|')}",
     specificDish?: "希望の料理名（例: 肉じゃが、カレー）",
     recipeId?: "uuid",              // レシピDB検索結果のUUID（search_recipesで取得）
     recipeExternalId?: "external_id", // レシピDBの外部ID（search_recipesで取得）
@@ -665,6 +679,7 @@ ${importantMessagesInfo}
   }
   ※ このアクションはAIが正確な栄養計算を行い、一汁三菜の献立を生成します
   ※ recipeId/recipeExternalIdを指定すると、レシピDBの正確な栄養データを使用します
+  ※ mealType の意味: ${AI_ALLOWED_MEAL_TYPES.map((type) => `${type}=${mealTypeLabels[type]}`).join(' / ')}（夜食・おやつもこのアクションで生成できます）
 
 - generate_day_menu: 1日分の献立を一括作成 (params: { date: "YYYY-MM-DD", ultimateMode?: true })
 - generate_week_menu: 1週間分の献立を一括作成 (params: { startDate: "YYYY-MM-DD", ultimateMode?: true })
@@ -967,10 +982,22 @@ export async function POST(
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  // #1148: AI 相談の緊急停止スイッチ (feature_flags の ai_chat_enabled。通常は ON)。回数の枠を使わせないよう、レート制限より前に見る
+  const unavailable = await aiChatDisabledResponse(user.id);
+  if (unavailable) return unavailable;
+
+  // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
+  const aiConsentDenied = await requireAiConsent(supabase, user.id);
+  if (aiConsentDenied) return aiConsentDenied;
+
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
+    // 必須の環境変数は、ユーザーのメッセージを保存する前に確かめる。欠けていれば MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す)
+    // (保存したあとで気づくと、メッセージだけが残って AI の返答が付かない) (#1182)
+    const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
+
     const openai = getFastLLMClient();
     // セッション所有者確認
     const { data: session } = await supabase
@@ -990,6 +1017,11 @@ export async function POST(
       return NextResponse.json({ error: 'メッセージを入力してください' }, { status: 400 });
     }
 
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeAiUsage(user.id, 'consultation');
+    if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
+
     // ユーザーメッセージを保存
     const { data: savedUserMessage, error: userMsgError } = await supabase
       .from('ai_consultation_messages')
@@ -1001,7 +1033,11 @@ export async function POST(
       .select()
       .single();
 
-    if (userMsgError) throw userMsgError;
+    if (userMsgError) {
+      // 相談の文を保存できず、AI へは何も送っていないので、数えた 1 回を戻す (#1149)
+      await refundAiUsage(user.id, 'consultation', aiUsage);
+      throw userMsgError;
+    }
 
     // システムプロンプトを構築（ユーザー情報を含む）
     const systemPrompt = await buildSystemPrompt(supabase, user.id);
@@ -1029,9 +1065,7 @@ export async function POST(
     const url = new URL(request.url);
     const useStreaming = url.searchParams.get('stream') === 'true';
 
-    // knowledge-gpt（ナレッジベース付きAI）で応答生成
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    // knowledge-gpt（ナレッジベース付きAI）で応答生成 (接続情報は上で取得済み)
 
     // ストリーミングモード
     if (useStreaming) {
@@ -1187,7 +1221,9 @@ export async function POST(
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(finalData)}\n\n`));
 
           } catch (error: any) {
-            console.error('Streaming error:', error);
+            createLogger('POST /api/ai/consultation/sessions/[sessionId]/messages', generateRequestId())
+              .withUser(user.id)
+              .error('相談の応答の生成中にエラーが発生しました', error, { session_id: params.sessionId });
             // エラー時でも必ずassistantメッセージをDBに書き込んでユーザーに通知する
             const errorContent = 'すみません、応答の生成中にエラーが発生しました。しばらく待ってから再度お試しください。';
             try {
@@ -1215,11 +1251,15 @@ export async function POST(
                 },
                 actionExecuted: false,
                 actionResult: null,
-                error: error.message,
+                // 本文 (SSE) に生のエラー文を出さない (#1172)。画面は error の有無だけを見る。詳細は上のログに残す
+                error: INTERNAL_ERROR_MESSAGE,
+                code: INTERNAL_ERROR_CODE,
               })}\n\n`));
             } catch (dbError) {
               console.error('Failed to write error message to DB:', dbError);
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: error.message })}\n\n`));
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE })}\n\n`),
+              );
             }
           } finally {
             controller.close();
@@ -1423,8 +1463,8 @@ JSONで回答してください：
       actionResult,
     });
 
-  } catch (error: any) {
-    console.error('Message error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
+    return internalError('POST /api/ai/consultation/sessions/[sessionId]/messages', error, { userId: user.id });
   }
 }

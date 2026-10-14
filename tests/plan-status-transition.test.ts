@@ -9,6 +9,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { isAllowedPlanStatusTransition } from '@/lib/super-admin/plans-schemas';
 import { createFakeSupabase } from './helpers/fake-supabase';
+import { createFakePlanSubscribersDb } from './helpers/fake-plan-subscribers-db';
 
 describe('isAllowedPlanStatusTransition', () => {
   it('draft --> public / private を許可する', () => {
@@ -50,6 +51,10 @@ let fakeSupabase: ReturnType<typeof createFakeSupabase>;
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: () => Promise.resolve(fakeSupabase),
+  // #1127: 廃止 (--> deprecated) の前に、service_role で契約者数を数えるようになった。
+  // このファイルが確かめるのは状態遷移の規則なので、契約者のいない DB を渡す
+  // (契約者がいるときの動きは tests/plan-deprecate-subscribers-route.test.ts)
+  getSupabaseAdmin: () => createFakePlanSubscribersDb().client,
 }));
 
 const { PATCH } = await import('@/app/api/super-admin/plans/[id]/route');

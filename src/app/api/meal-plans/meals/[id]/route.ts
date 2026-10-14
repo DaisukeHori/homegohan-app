@@ -1,10 +1,11 @@
 import { createClient } from '@/lib/supabase/server';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
 import {
   buildCatalogSelectionUpdate,
   clearCatalogSelectionMetadata,
 } from '../../../../../lib/catalog-products';
-import type { MealImageJobSeed } from '../../../../../lib/meal-image';
+import { isCatalogProductMeal, markDishImagesSkipped, type MealImageJobSeed } from '../../../../../lib/meal-image';
 import {
   buildDishImagePayload,
   cancelPendingMealImageJobs,
@@ -12,8 +13,11 @@ import {
   triggerMealImageJobProcessing,
 } from '../../../../../lib/meal-image-jobs';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { aiDailyLimitSkippedField, consumeAiUsage, refundAiUsage, type AiUsageResult } from '@/lib/plan/entitlements';
+import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { createLogger } from '@/lib/db-logger';
 import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
+import { internalError } from '@/lib/api/errors';
 
 export async function PATCH(
   request: Request,
@@ -121,7 +125,12 @@ export async function PATCH(
       (Array.isArray(dishes) && dishes.length > 0);
     let jobs: MealImageJobSeed[] = [];
 
-    if (hasImageManagedDishes) {
+    // 商品を選んだとき (catalogProductId) は、料理と画像を商品のもの (上の buildCatalogSelectionUpdate の dishes / image_url) にし、
+    // 前回の料理から AI の画像のジョブを作らない (#1487 の整合ゲート。前回の料理の名前を商品名に変えたものを料理の変更とみなして、
+    // 商品の料理を AI の画像で置き換えてしまうため)
+    if (catalogProductId) {
+      // 料理と画像は buildCatalogSelectionUpdate の fields で設定済み
+    } else if (hasImageManagedDishes) {
       const { dishes: reconciledDishes, jobs: nextJobs, mealCoverImageUrl } = await buildDishImagePayload({
         previousDishes: existingMeal.dishes ?? null,
         nextDishes: dishes ?? undefined,
@@ -131,12 +140,64 @@ export async function PATCH(
         imageModel,
         existingCover: existingMeal.image_url ?? null,
         fallbackMealImageUrl: existingMeal.image_url ?? null,
+        // 保存する前の献立で見る (料理を変えると、上で商品とのつながりを外すが、前回の料理は商品の料理のまま。#1487 の整合ゲート)
+        previousMealIsCatalog: isCatalogProductMeal(existingMeal),
       });
       updateData.dishes = reconciledDishes;
       updateData.image_url = mealCoverImageUrl;
       jobs = nextJobs;
     } else if (imageUrl !== undefined) {
       updateData.image_url = imageUrl;
+    }
+
+    // 料理画像のジョブを積むかを、料理 (dishes) を保存する前に決める (#1487)。
+    // 見送るなら、対象の料理を見送りの状態 ('failed' + 理由) にしてから保存する
+    // ('pending' のまま保存すると、処理するジョブが無いので「料理画像を生成中です」のまま残る)
+    let imageGenerationThrottled = false;
+    // #1149 AI の利用回数の上限の判定の結果 (画像を付けない・同意が無い・レート制限で止めたときは判定しないので null)
+    let imageUsage: AiUsageResult | null = null;
+    let imageAllowed = false;
+    if (jobs.length > 0) {
+      // #1022 画像副作用（enqueue + trigger）は献立更新の成否から独立させる（詳細は meals/route.ts 参照）
+      try {
+        const rl = await checkRateLimit(user.id, 'image');
+        imageAllowed = rl.success;
+        if (imageAllowed) {
+          // 同意が無ければ (判定に失敗した場合も)、画像の生成ジョブを処理する Edge Function (process-meal-image-jobs) が
+          // AI へ送らずに止める (T15 / #1154。料理は 'failed' + 同意の理由になる)。AI へ送らない操作は記録しない
+          // (同意の判定 → 利用回数の記録 → AI への送信の順)。ジョブを積むかどうかは、同意の有無では変えない (止めるのは処理する側)
+          const imageConsent = await checkUserAiConsent(supabase, user.id);
+          if (imageConsent.allowed) {
+            // #1149 料理画像は保存の自動の副作用なので、明示の 1 日の上限 (10 回) には数えない ('meal_image_auto'。記録だけ。
+            // 食事を記録するだけで AI 相談や写真の解析が止まらないように)。そのかわり料理画像だけの安全弁 (DB の ai_unmetered_daily_caps。
+            // 既定は 1 日 20 回) があり、達していれば画像だけ見送る (ジョブを積まない。献立の保存はそのまま。応答の aiSkipped: AI_DAILY_LIMIT)。
+            // 操作 1 回で 1 回 (積む画像のジョブの数によらない)。判定に失敗したときは止めない
+            imageUsage = await consumeAiUsage(user.id, 'meal_image_auto');
+            if (!imageUsage.allowed) imageAllowed = false;
+          }
+        }
+      } catch (rlError) {
+        createLogger('api/meal-plans/meals/[id]').warn('Image rate-limit check failed; skipping image generation', {
+          userId: user.id,
+          plannedMealId: existingMeal.id,
+          error: rlError instanceof Error ? rlError.message : String(rlError),
+        });
+        imageAllowed = false;
+      }
+
+      if (!imageAllowed) {
+        const skipReason = imageUsage?.allowed === false ? 'ai_limit' : 'rate_limit';
+        if (skipReason === 'rate_limit') {
+          // レート制限で見送った (上限 #1149 で見送ったときは、下の aiSkipped で知らせる)
+          imageGenerationThrottled = true;
+          console.warn('[meal-plans/meals/[id]] Image generation skipped due to rate limit', {
+            userId: user.id,
+            plannedMealId: existingMeal.id,
+          });
+        }
+        updateData.dishes = markDishImagesSkipped(updateData.dishes, jobs, skipReason);
+        jobs = [];
+      }
     }
 
     const { data, error } = await supabase
@@ -146,41 +207,26 @@ export async function PATCH(
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      // 料理画像の 1 回を数えたあと、献立を保存できなかった (AI へは何も送っていない) ので数え戻す (#1149 の数え戻し)
+      if (imageUsage?.allowed) await refundAiUsage(user.id, 'meal_image_auto', imageUsage);
+      throw error;
+    }
 
-    let imageGenerationThrottled = false;
-    if (jobs.length > 0) {
-      // #1022 画像副作用（enqueue + trigger）は献立更新の成否から独立させる（詳細は meals/route.ts 参照）
-      let imageAllowed = false;
-      try {
-        const rl = await checkRateLimit(user.id, 'image');
-        imageAllowed = rl.success;
-      } catch (rlError) {
-        createLogger('api/meal-plans/meals/[id]').warn('Image rate-limit check failed; skipping image generation', {
-          userId: user.id,
-          plannedMealId: data.id,
-          error: rlError instanceof Error ? rlError.message : String(rlError),
-        });
-        imageAllowed = false;
-      }
-
-      if (imageAllowed) {
-        await enqueueMealImageJobs({
-          supabase,
-          plannedMealId: data.id,
-          userId: user.id,
-          triggerSource,
-          jobSeeds: jobs,
-          requestId,
-        });
-        await triggerMealImageJobProcessing({ plannedMealId: data.id, limit: jobs.length });
-      } else {
-        imageGenerationThrottled = true;
-        console.warn('[meal-plans/meals/[id]] Image generation skipped due to rate limit', {
-          userId: user.id,
-          plannedMealId: data.id,
-        });
-      }
+    if (imageAllowed && jobs.length > 0) {
+      // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。service role で積む。
+      // 1 行も積めなかったとき (重複・書き込みの失敗) は、enqueueMealImageJobs が数えた 1 回を戻す (#1487)
+      const queueDb = getAiQueueWriter();
+      await enqueueMealImageJobs({
+        supabase: queueDb,
+        plannedMealId: data.id,
+        userId: user.id,
+        triggerSource,
+        jobSeeds: jobs,
+        requestId,
+        usage: imageUsage,
+      });
+      await triggerMealImageJobProcessing({ plannedMealId: data.id, limit: jobs.length });
     }
 
     return NextResponse.json({
@@ -188,9 +234,11 @@ export async function PATCH(
       meal: data,
       // #1022 (Suggestion): 画像生成がスロットルされた場合のみ additive にフラグを付与する
       ...(imageGenerationThrottled ? { imageGenerationThrottled: true } : {}),
+      // #1149 今日の AI の利用回数の上限に達して、料理画像だけを見送ったとき
+      ...aiDailyLimitSkippedField(imageUsage),
     });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('PATCH /api/meal-plans/meals/[id]', error, { userId: user.id });
   }
 }
 
@@ -203,8 +251,11 @@ export async function DELETE(
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
+    // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。本人の行に絞って service role で取り消す
+    const queueDb = getAiQueueWriter();
     await cancelPendingMealImageJobs({
-      supabase,
+      supabase: queueDb,
+      userId: user.id,
       plannedMealId: params.id,
       reason: 'meal deleted',
     });
@@ -218,6 +269,6 @@ export async function DELETE(
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('DELETE /api/meal-plans/meals/[id]', error, { userId: user.id });
   }
 }

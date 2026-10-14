@@ -28,6 +28,18 @@ test.use({
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "https://homegohan-app.vercel.app";
 
+/**
+ * #1174: サインアップ画面に「利用規約・プライバシーポリシーに同意します」の必須チェックが入った。
+ * この exploration spec は本番 (まだチェックの無い版) にも向けて実行するため、チェックがあるときだけ入れる。
+ */
+async function acceptLegalConsentIfPresent(page: Page): Promise<void> {
+  const consent = page.locator("#agree-legal");
+  if ((await consent.count()) > 0) {
+    await consent.check();
+  }
+}
+
+
 // E2E テスト用アカウント（存在しているはずのアカウント）は、各テストの中で requireE2eUserCredentials() で読む。
 // 認証情報は環境変数 (E2E_USER_EMAIL / E2E_USER_PASSWORD) からだけ取り、リポジトリには既定値を置かない (#1114)。
 // 未設定ならそのテストがエラーで止まる。モジュール直下で読まないのは、
@@ -218,6 +230,7 @@ test.describe("Scenario 2: /signup バリデーション & 重複エラー", () 
   }) => {
     const { consoleLogs, networkErrors } = attachMonitors(page);
     await page.goto(`${BASE_URL}/signup`);
+    await acceptLegalConsentIfPresent(page);
 
     await page.locator("#email").fill("test-weak-pwd-explore@example.com");
     await page.locator("#password").fill(WEAK_PASSWORD);
@@ -244,6 +257,7 @@ test.describe("Scenario 2: /signup バリデーション & 重複エラー", () 
     const { email: duplicateEmail } = requireE2eUserCredentials(); // 同一アカウントで重複テスト
     const { consoleLogs, networkErrors } = attachMonitors(page);
     await page.goto(`${BASE_URL}/signup`);
+    await acceptLegalConsentIfPresent(page);
 
     // 既存アカウントのメールアドレスを使う
     await page.locator("#email").fill(duplicateEmail);
@@ -278,6 +292,7 @@ test.describe("Scenario 2: /signup バリデーション & 重複エラー", () 
   }) => {
     const { consoleLogs, networkErrors } = attachMonitors(page);
     await page.goto(`${BASE_URL}/signup`);
+    await acceptLegalConsentIfPresent(page);
 
     // タイムスタンプ付きユニークアドレス（実際には送信されないテスト用）
     const uniqueEmail = `explore-test-${Date.now()}@example.com`;

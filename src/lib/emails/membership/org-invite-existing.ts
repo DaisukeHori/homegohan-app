@@ -1,7 +1,9 @@
 // src/lib/emails/membership/org-invite-existing.ts
 // (設計書 04-email-templates.md §2)
 import type { InviteEmailVars } from './templates';
-import type { EmailEnvelope } from '@/lib/emails/send';
+import type { EmailEnvelope } from '../envelope';
+import { emailSignature } from '../common';
+import { getEmailFrom, getSupportEmail } from '@/lib/site-config';
 
 export function renderOrgInviteExistingEmail(vars: InviteEmailVars): EmailEnvelope {
   const greeting = vars.display_name ?? vars.email_address;
@@ -10,8 +12,9 @@ export function renderOrgInviteExistingEmail(vars: InviteEmailVars): EmailEnvelo
     : '';
 
   return {
+    template: 'org_invite_existing',
     to: vars.email_address,
-    from: 'ほめゴハン <noreply@homegohan.app>',
+    from: getEmailFrom(),
     subject: `[ほめゴハン] ${vars.scope_name} からメンバー招待が届きました`,
     text: `${greeting} 様
 
@@ -24,11 +27,9 @@ ${vars.invite_url}
 期限切れの場合は、招待者に再送を依頼してください。
 
 心当たりのない場合はこのメールを無視してください。
-不正利用のおそれがある場合は support@homegohan.app までご連絡ください。
+不正利用のおそれがある場合は ${getSupportEmail()} までご連絡ください。
 
-─────────────────
-ほめゴハン
-https://homegohan.app
+${emailSignature()}
 `,
   };
 }

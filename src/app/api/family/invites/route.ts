@@ -6,6 +6,7 @@ import { CreateFamilyInviteBodySchema } from '@/schemas/membership/family-invite
 import { MembershipErrorCode } from '@/lib/errors/membership-errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { sendEmail } from '@/lib/emails/send';
+import { isEmailFailure } from '@/lib/emails/send-result';
 import { renderFamilyInviteExistingEmail } from '@/lib/emails/membership/family-invite-existing';
 import { renderFamilyInviteNewEmail } from '@/lib/emails/membership/family-invite-new';
 import {
@@ -14,6 +15,7 @@ import {
   inviteThrottleResponse,
 } from '@/lib/membership/invite-throttle';
 import { buildFamilyInviteUrl } from '@/lib/membership/urls';
+import { jstDayOfTimestamp } from '@/lib/jst-day-ranges';
 
 // 招待一覧取得
 export async function GET(_request: Request) {
@@ -178,7 +180,6 @@ export async function POST(request: Request) {
   const invite_url = buildFamilyInviteUrl(invite.token);
   const inviterName = inviterProfile.nickname || user.email || '招待者';
   const scopeName = familyGroup?.name ?? '家族グループ';
-  const expiresDate = invite.expires_at.slice(0, 10); // YYYY-MM-DD
 
   // 既存ユーザー判定: get_invite_details で is_existing_user を確認
   let isExistingUser = false;
@@ -199,6 +200,10 @@ export async function POST(request: Request) {
 
   // Resend でメール送信 (失敗は warn のみ)
   try {
+    // メールの「このリンクは YYYY-MM-DD まで有効です」の日付は、期限の時刻 (timestamptz) が属する JST の暦日 (#1433)。
+    // expires_at.slice(0, 10) は UTC の暦日になり、期限が JST 0:00〜8:59 のとき 1 日早い日付を書いていた。
+    // 読めない時刻なら RangeError になり、下の catch でメールだけ諦める (作った招待は残す)
+    const expiresDate = jstDayOfTimestamp(invite.expires_at);
     const emailVars = {
       display_name: isExistingUser ? inviteeDisplayName : null,
       email_address: email,
@@ -211,7 +216,9 @@ export async function POST(request: Request) {
     const envelope = isExistingUser
       ? renderFamilyInviteExistingEmail(emailVars)
       : renderFamilyInviteNewEmail(emailVars);
-    await sendEmail(envelope);
+    const sent = await sendEmail(envelope);
+    // sendEmail は配信の失敗で例外を投げず、結果で返す。失敗も下の catch で、他の失敗と同じように警告に残す
+    if (isEmailFailure(sent)) throw sent.error;
   } catch (emailError) {
     // メール送信失敗は警告のみ (invite row は残す)
     console.warn('[api/family/invites] email send failed (invite row kept):', emailError);

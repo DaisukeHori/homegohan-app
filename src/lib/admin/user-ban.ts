@@ -15,6 +15,9 @@
  * (20260710210030 migration で追加) に永続化する。従来は監査ログにしか
  * 記録されず、判定時比較による自動解除が不可能だった。
  *
+ * #1172: DB の読み書きに失敗したとき、error には DB の生のエラー文ではなく固定の文を入れる
+ * (呼び出し側がそのまま応答の本文に入れても漏れないように)。元のエラーは cause に入る。
+ *
  * 呼び出し側は必ず authz (requireRole 等) を通した後に、service-role
  * クライアント (`getSupabaseAdmin()`) を渡すこと (user_profiles の他ユーザー
  * 行の更新は RLS で拒否されるため)。
@@ -36,6 +39,16 @@ export interface ApplyUserBanParams {
   durationDays?: number | null;
 }
 
+/**
+ * BAN できなかった理由の種類 (#1172)。
+ *   - 'internal': DB の読み書きに失敗した。error は固定の文 (BAN_INTERNAL_ERROR_MESSAGE)。元のエラーは cause にだけ入る
+ *   - 'not_found' / 'super_admin': こちらで決めた規則で断った。error はこちらが書いた文なので、そのまま利用者に見せてよい
+ */
+export type ApplyUserBanFailureKind = 'internal' | 'not_found' | 'super_admin';
+
+/** DB の読み書きに失敗したときの error (固定の文)。DB の生のエラー文は応答の本文に出さない (#1172) */
+export const BAN_INTERNAL_ERROR_MESSAGE = 'BAN の適用に失敗しました';
+
 export interface ApplyUserBanResult {
   success: boolean;
   /**
@@ -45,7 +58,15 @@ export interface ApplyUserBanResult {
    * アクセスが回復する。
    */
   unbanAt: string | null;
+  /** 失敗したときの、利用者に見せてよい文 (DB の生のエラー文は入らない) */
   error?: string;
+  /** 失敗したときの理由の種類 */
+  kind?: ApplyUserBanFailureKind;
+  /**
+   * kind が 'internal' のときだけ入る、DB が返した元のエラー (supabase-js のエラーオブジェクト)。
+   * 呼び出し側は構造化ログ・監査ログにだけ残し、応答の本文には入れない
+   */
+  cause?: unknown;
 }
 
 /**
@@ -67,15 +88,20 @@ export async function applyUserBan(
     .maybeSingle();
 
   if (profileError) {
-    return { success: false, unbanAt: null, error: profileError.message };
+    return { success: false, unbanAt: null, error: BAN_INTERNAL_ERROR_MESSAGE, kind: 'internal', cause: profileError };
   }
   if (!profile) {
-    return { success: false, unbanAt: null, error: 'BAN 対象ユーザーが見つかりません' };
+    return { success: false, unbanAt: null, error: 'BAN 対象ユーザーが見つかりません', kind: 'not_found' };
   }
 
   const roles = (profile as { roles?: unknown }).roles;
   if (Array.isArray(roles) && roles.includes('super_admin')) {
-    return { success: false, unbanAt: null, error: 'super_admin ユーザーを BAN することはできません' };
+    return {
+      success: false,
+      unbanAt: null,
+      error: 'super_admin ユーザーを BAN することはできません',
+      kind: 'super_admin',
+    };
   }
 
   let unbanAt: string | null = null;
@@ -96,7 +122,7 @@ export async function applyUserBan(
     .eq('id', userId);
 
   if (updateError) {
-    return { success: false, unbanAt: null, error: updateError.message };
+    return { success: false, unbanAt: null, error: BAN_INTERNAL_ERROR_MESSAGE, kind: 'internal', cause: updateError };
   }
 
   return { success: true, unbanAt };

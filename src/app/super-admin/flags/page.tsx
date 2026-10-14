@@ -9,7 +9,8 @@ interface FeatureFlag {
   enabled: boolean;
   rollout_strategy: { type: string; value?: number } | null;
   constraints: Record<string, unknown> | null;
-  active_user_count: number;
+  /** 今 ON になっているユーザー数 (#1148)。ユーザーが多すぎる・集計に失敗したときは null */
+  active_user_count: number | null;
   updated_at: string;
 }
 
@@ -39,6 +40,19 @@ export default function FlagsPage() {
     fetchFlags();
   }, []);
 
+  // 切り替えのあとに一覧を読み直して、対象ユーザー数 (active_user_count) を新しい値にする (#1148)。
+  // 読み直せなくても、切り替えそのものは済んでいるので、画面は手元の値のまま (エラーにしない)
+  const reloadFlagsQuietly = async () => {
+    try {
+      const res = await fetch("/api/super-admin/flags");
+      if (!res.ok) return;
+      const { data } = await res.json();
+      if (Array.isArray(data)) setFlags(data);
+    } catch {
+      // 手元の値のまま
+    }
+  };
+
   const handleToggle = async (key: string, currentEnabled: boolean) => {
     setToggling(key);
     try {
@@ -52,6 +66,7 @@ export default function FlagsPage() {
         throw new Error(body.error?.message ?? `HTTP ${res.status}`);
       }
       setFlags((prev) => prev.map((f) => f.key === key ? { ...f, enabled: !currentEnabled } : f));
+      void reloadFlagsQuietly();
     } catch (err) {
       alert(err instanceof Error ? err.message : "更新に失敗しました");
     } finally {
@@ -123,6 +138,7 @@ export default function FlagsPage() {
                 <th className="text-left px-6 py-4 font-medium">説明</th>
                 <th className="text-left px-6 py-4 font-medium">ロールアウト</th>
                 <th className="text-left px-6 py-4 font-medium">ステータス</th>
+                <th className="text-left px-6 py-4 font-medium">対象ユーザー数</th>
                 <th className="text-left px-6 py-4 font-medium">更新日</th>
                 <th className="text-left px-6 py-4 font-medium">操作</th>
               </tr>
@@ -161,6 +177,15 @@ export default function FlagsPage() {
                     <span className={`ml-2 text-xs ${flag.enabled ? "text-green-400" : "text-slate-500"}`}>
                       {flag.enabled ? "ON" : "OFF"}
                     </span>
+                  </td>
+                  <td className="px-6 py-4 text-slate-300 text-sm">
+                    {flag.active_user_count === null ? (
+                      <span className="text-slate-500" title="ユーザーが多すぎる、または集計に失敗したため、数えていません">
+                        —
+                      </span>
+                    ) : (
+                      `${flag.active_user_count.toLocaleString("ja-JP")} 人`
+                    )}
                   </td>
                   <td className="px-6 py-4 text-slate-400 text-sm">
                     {new Date(flag.updated_at).toLocaleDateString("ja-JP")}

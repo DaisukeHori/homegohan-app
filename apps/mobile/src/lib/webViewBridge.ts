@@ -364,6 +364,21 @@ export function decideNavigation(request: NavigationRequestLike): NavigationDeci
   return { allow: false };
 }
 
+/**
+ * WebView の originWhitelist。react-native-webview (13.13.5 の WebViewShared.tsx) は、遷移先の
+ * 「scheme://authority」がこの一覧のどれにも前方一致しないものを onShouldStartLoadWithRequest に渡さずに遮断し、
+ * Linking.openURL で OS に渡す。一致したものだけが onShouldStartLoadWithRequest (decideNavigation) に届く。
+ *
+ * 自オリジン 1 つに絞らない理由:
+ *   - 一致は未アンカーの前方一致なので、`https://homegohan-app.vercel.app.evil.com` も自オリジンの指定に一致し、
+ *     境界にならない (境界は decideNavigation の厳密なパースが担う)
+ *   - 絞ると、他オリジンの http(s) のサブフレームまで OS のブラウザで開かれる (decideNavigation は黙って遮断する)
+ * http(s) はすべて decideNavigation に渡し、自オリジン以外のトップフレームは decideNavigation が既定ブラウザへ回す。
+ * http(s) 以外 (mailto: など。Web の設定画面・問い合わせページのリンク) は従来どおりライブラリが OS に渡す。
+ * ライブラリの既定値と同じ中身だが、WebView を自オリジンに固定する仕組みの一部として明示する。
+ */
+export const WEB_VIEW_ORIGIN_WHITELIST: string[] = ['https://*', 'http://*'];
+
 export interface OpenWindowDecision {
   /** 自オリジンなら現在の WebView 内で開く (iOS の target=_blank の従来挙動を維持) */
   navigateTo?: string;
@@ -397,6 +412,22 @@ export async function openExternalUrl(url: string): Promise<void> {
  */
 export function buildOriginGuardScript(): string {
   return `if (window.location.origin !== ${JSON.stringify(getWebOrigin())}) return;`;
+}
+
+/**
+ * 任意の注入スクリプトを、自アプリのオリジンのページでだけ動くように包む。
+ * injectedJavaScriptBeforeContentLoaded は WebView のすべての読み込み (外部ページが万一載った場合も) で動くため、
+ * そこに入れるスクリプトは必ずこれで包む (#1036: 注入はオリジンを確かめてから)。
+ * script は単独で完結した文の並び (IIFE など) であること。
+ */
+export function buildOwnOriginOnlyScript(script: string): string {
+  return `
+(function() {
+  ${buildOriginGuardScript()}
+  ${script}
+})();
+true;
+`;
 }
 
 export interface NavigateScriptOptions {

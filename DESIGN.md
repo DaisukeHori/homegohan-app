@@ -13,8 +13,9 @@
   - **v1（legacy/旧方式）**: 既存の献立生成（RAG/LLM中心。`knowledge-gpt` 経由など）
   - **v2（dataset/データセット駆動）**: pgvector＋データセットDBを根拠に **ID選定→DB確定値を `planned_meals` に反映**する方式
 
-**互換方針（重要）**
-- `generate-weekly-menu` は互換入口として残し、内部で v2 を実行して旧呼び出しも壊さない（詳細は実装コメント参照）
+**いまの献立生成（この文書の v1/v2 の記述より優先）**
+- 献立生成の Edge Function は `generate-menu-v5`（既定）と `generate-menu-v4`（機能フラグ `menu_generation_v5_wrapped` / `menu_generation_v5_direct` が OFF のとき）。呼び分けは `supabase/functions/README.md` の「献立生成 v4 と v5 の使い分け」を参照
+- 旧い互換入口 `generate-weekly-menu` と、`generate-single-meal` / `regenerate-meal-direct`（とその `-v2` / `-v3`）は、リポジトリからも本番からも削除済み（#1452）。この文書に残るそれらの記述は、旧い方式の記録
 
 ---
 
@@ -1886,9 +1887,7 @@ V4は「週間献立生成」ではなく「汎用献立生成エンジン」と
   - 料理（レシピ）近傍検索：`pgvector`（またはRAG）で近い既存レシピを取得し、proxyの `base_recipe_id` を確定
 - 食材（Ingredient）近傍検索：`pg_trgm` + `pgvector` で `dataset_ingredients` を検索し、派生レシピの栄養計算の根拠にする
 - **献立生成ワーカー（Edge Function）**：
-  - `generate-weekly-menu`：21枠の料理リスト生成→proxy解決→検証/修復→保存
-  - `generate-single-meal`：1枠の料理リスト生成→proxy解決→検証/修復→保存
-  - `regenerate-meal-direct`：既存1枠を（最小差分で）差し替え
+  - `generate-menu-v5`（機能フラグが OFF なら `generate-menu-v4`）：週・1 日・1 食の生成と差し替え。旧い `generate-weekly-menu`（21枠）・`generate-single-meal`（1枠）・`regenerate-meal-direct`（1枠の差し替え）は #1452 で削除済み
   - `create-derived-recipe`：派生レシピ（材料/手順）生成 → 食材名解決 → 栄養合算 → `derived_recipes` 永続化
   - `backfill-ingredient-embeddings`：`dataset_ingredients.name_embedding` のバックフィル（管理者/運用）
 - **LLM（OpenAI）**：献立例を参照した相性判断、提案、差し替え、説明文
@@ -2479,7 +2478,7 @@ v2では、LLMが"いい感じの献立知識を内蔵している"ことを前�
 ## 6. 移行手順（全ユーザーにデフォルト適用）
 1. DBへデータセットを取り込み（ETL＋マッピング率確認）
 2. `system_settings` に有効データセット版を設定
-3. `generate-weekly-menu` / `generate-single-meal` / `regenerate-meal-direct` を v2ロジックへ切替
+3. 献立生成の Edge Function を v2ロジックへ切替（当時の `generate-weekly-menu` / `generate-single-meal` / `regenerate-meal-direct`。いずれも #1452 で削除済みで、いまは `generate-menu-v5`、機能フラグで `generate-menu-v4`）
 4. 監視（失敗率/所要時間/未マッピング率）を見ながら改善
 
 ## 7. リスク・未決定事項
@@ -2635,6 +2634,8 @@ CREATE INDEX IF NOT EXISTS idx_planned_meals_source_type ON planned_meals(source
 ```
 
 ### 8-3. LLMレスポンス JSON出力スキーマ
+
+> **注**: 下の 3 つのスキーマの見出しの関数名 (`generate-weekly-menu` / `generate-single-meal` / `regenerate-meal-direct`) は、#1452 で削除した旧関数の名前です。スキーマは `packages/core/src/schemas/menu-response.ts` に残っています。いまの献立生成は `generate-menu-v5`（機能フラグで `generate-menu-v4`）です。
 
 #### 週次献立生成（generate-weekly-menu）
 
@@ -3252,6 +3253,8 @@ for (const [i, result] of imageResults.entries()) {
 
 画像生成を別のEdge Functionに切り出し、非同期で実行：
 
+（当時の案。`generate-weekly-menu` は #1452 で削除済み）
+
 ```
 generate-weekly-menu
   │
@@ -3441,7 +3444,7 @@ await updateRequestStatus('completed');
 | **型定義** | `types/domain.ts` (`DishDetail`) | TypeScript型 |
 | **DB (JSONB)** | `planned_meals.dishes[]` | 各料理の栄養情報 |
 | **DB (カラム)** | `planned_meals.*_g`, `*_mg`, `*_ug` | 食事合計の栄養情報 |
-| **Edge Functions** | `generate-weekly-menu-v3` 等 | LLM出力から変換 |
+| **Edge Functions** | `generate-menu-v5` / `generate-menu-v4` | LLM出力から変換 |
 | **UI** | `src/app/(main)/menus/weekly/page.tsx` | 表示処理 |
 | **コンバーター** | `lib/converter.ts` | DB→ドメイン変換 |
 
@@ -3457,9 +3460,8 @@ await updateRequestStatus('completed');
    - `types/domain.ts` の `DishDetail` インターフェース
 
 3. **Edge Functions更新**
-   - `generate-weekly-menu-v3/index.ts`
-   - `generate-single-meal-v3/index.ts`
-   - `regenerate-meal-direct-v3/index.ts`
+   - `generate-menu-v5/index.ts`
+   - `generate-menu-v4/index.ts`
    - `_shared/nutrition-calculator.ts`
 
 4. **UI更新**

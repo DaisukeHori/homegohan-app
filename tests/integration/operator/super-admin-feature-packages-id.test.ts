@@ -35,7 +35,8 @@ beforeAll(async () => {
   ]);
 
   // Create a feature package for GET / PATCH
-  const { data: pkg } = await supabaseAdmin
+  // INSERT の error は必ず確認する (作れないまま黙ってスキップさせず、このあとのテストが空振りで通るのを防ぐ)
+  const { data: pkg, error: pkgError } = await supabaseAdmin
     .from('feature_packages')
     .insert({
       package_key: `test_pkg_id_${TS}`,
@@ -48,12 +49,11 @@ beforeAll(async () => {
     .select('id')
     .single();
 
-  if (pkg) {
-    testPackageId = pkg.id;
-  }
+  if (pkgError || !pkg) throw new Error(`Failed to create the feature package: ${pkgError?.message}`);
+  testPackageId = pkg.id;
 
   // Create a separate package for DELETE tests
-  const { data: del } = await supabaseAdmin
+  const { data: del, error: delError } = await supabaseAdmin
     .from('feature_packages')
     .insert({
       package_key: `test_del_pkg_${TS}`,
@@ -65,9 +65,8 @@ beforeAll(async () => {
     .select('id')
     .single();
 
-  if (del) {
-    deletablePackageId = del.id;
-  }
+  if (delError || !del) throw new Error(`Failed to create the feature package to delete: ${delError?.message}`);
+  deletablePackageId = del.id;
 }, 60000);
 
 afterAll(async () => {

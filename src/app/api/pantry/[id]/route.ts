@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { internalError } from '@/lib/api/errors';
 
 export async function PATCH(
   request: Request,
@@ -27,7 +28,7 @@ export async function PATCH(
       .select('*')
       .single();
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return internalError('PATCH /api/pantry/[id]', error, { userId: user.id });
 
     return NextResponse.json({
       item: {
@@ -40,7 +41,7 @@ export async function PATCH(
       },
     });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('PATCH /api/pantry/[id]', error, { userId: user.id });
   }
 }
 
@@ -58,7 +59,7 @@ export async function DELETE(
     .eq('id', params.id)
     .eq('user_id', user.id);
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return internalError('DELETE /api/pantry/[id]', error, { userId: user.id });
 
   return NextResponse.json({ success: true });
 }

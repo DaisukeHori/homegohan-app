@@ -26,6 +26,15 @@ function jsxElement(source: string, tag: string): string {
   return source.slice(start, end + 2);
 }
 
+/** `start` (例: `const f = () => {`) から始まる関数の本文。最初の `\n  };` (この画面の関数の閉じ) までを取り出す */
+function functionBody(start: string): string {
+  const from = page.indexOf(start);
+  expect(from).toBeGreaterThanOrEqual(0);
+  const to = page.indexOf('\n  };', from);
+  expect(to).toBeGreaterThan(from);
+  return page.slice(from, to);
+}
+
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
@@ -62,6 +71,44 @@ describe('weekly 画面: 献立を改善の配線', () => {
     expect(body).toContain('generate: v4Generate');
     // 生成中かどうかは、この画面が進捗を追っている生成の有無で判定する
     expect(body).toContain('isBusy: pendingRequestId !== null');
+  });
+
+  it('同意が必要で止められたとき (T15 / #1154) の案内は、改善モーダル・栄養分析の詳細・V4 生成モーダルを閉じてから出す', () => {
+    // 生成のフックの onAiConsentRequired は、モーダルを閉じてから案内を出す関数につながっている
+    expect(page).toContain('onAiConsentRequired: () => promptAiConsentAfterClosingModals(),');
+    // 週の画面に置いた改善モーダルも、同意で止められたら同じ関数で案内する (改善モーダルは自分では案内を出さない)
+    expect(jsxElement(page, 'ImproveMealModal')).toContain('onAiConsentRequired={promptAiConsentAfterClosingModals}');
+    const body = functionBody('const promptAiConsentAfterClosingModals = () => {');
+    expect(body).toContain('setShowImproveMealModal(false)');
+    expect(body).toContain('setShowNutritionDetailModal(false)');
+    expect(body).toContain('setShowV4Modal(false)');
+    // 閉じたあとに案内を出す (閉じる前に出すと、案内から開いた同意画面がモーダルの下に隠れる)。
+    // 「同意画面を開く」を押したときには、この画面のモーダルをすべて閉じる (下の検査)
+    expect(body.indexOf('promptAiConsentRequired({ beforeOpenConsentScreen: closeAllModals })')).toBeGreaterThan(
+      body.indexOf('setShowNutritionDetailModal(false)'),
+    );
+    // 受け付けたあとにサーバーが止めたとき (Realtime / ポーリング) も、同じ関数で案内する
+    expect(page.match(/handleStoredAiConsentFailure\([^)]*, promptAiConsentAfterClosingModals\)/g)?.length).toBe(2);
+  });
+
+  it('「同意画面を開く」の前に閉じる closeAllModals は、この画面のモーダルを 1 つ残らず閉じる (R4 の指摘と同じ型)', () => {
+    // 受け付けたあとに同意で止められた (Realtime / ポーリング) とき、利用者は待つ間に別のモーダル (栄養分析・手動編集など) を
+    // 開いていることがある。1 つでも開いたままだと、同意画面がその下に隠れる。
+    // この画面 (WeeklyMenuPage) が描くモーダルの visible={...} を全部拾い、closeAllModals がそれぞれを閉じる値にするかを見る
+    const pageBody = page.slice(page.indexOf('export default function WeeklyMenuPage('));
+    const visibles = [...pageBody.matchAll(/\bvisible=\{([^}]+)\}/g)].map((m) => m[1].trim());
+    // 空振りしていない: V4 生成・改善・栄養分析の詳細・栄養分析・買い物・冷蔵庫・手動編集など 13 か所
+    expect(visibles.length).toBeGreaterThanOrEqual(13);
+    const body = functionBody('const closeAllModals = () => {');
+    const missing = visibles.filter((expr) => {
+      const flag = /^(\w+)$/.exec(expr);
+      if (flag) return !body.includes(`set${flag[1][0].toUpperCase()}${flag[1].slice(1)}(false)`);
+      const compared = /^(\w+)\s*(?:===|!==)\s*.+$/.exec(expr);
+      if (compared) return !body.includes(`set${compared[1][0].toUpperCase()}${compared[1].slice(1)}(null)`);
+      return true; // 読めない形の visible は、ここに足すこと
+    });
+    // closeAllModals が閉じないモーダル (同意画面がその下に隠れる) が無い
+    expect(missing).toEqual([]);
   });
 
   it('V4 生成モーダルの生成中表示は、完了しても戻らないフックの isGenerating ではなく pendingRequestId で決める', () => {

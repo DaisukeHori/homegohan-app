@@ -8,10 +8,13 @@ import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text,
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getApi, getApiBaseUrl } from "../../src/lib/api";
+import { errorOfFailedResponse, isStoppedByServerError, stoppedByServerAlertTitleOf } from "../../src/lib/failed-response";
+import { getPrivacyUrl, getSupportMailtoUrl, getTermsUrl } from "../../src/lib/siteConfig";
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing, radius, shadows } from "../../src/theme";
-import { clearUserScopedAsyncStorage } from "../../src/lib/user-storage";
+import { signOutOnDevice } from "../../src/lib/signOut";
+import { AI_CONSENT_SCREEN_PATH, AI_CONSENT_SETTINGS_ENTRY_TITLE } from "../../src/lib/ai-consent";
 
 type WeekStartDay = "sunday" | "monday";
 
@@ -50,11 +53,10 @@ function SettingRow({ icon, iconBg, title, subtitle, right, onPress, last, testI
 
 export default function SettingsTab() {
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, clearSession } = useAuth();
 
   const [notifications, setNotifications] = useState(true);
   const [autoAnalyze, setAutoAnalyze] = useState(true);
-  const [dataShare, setDataShare] = useState(true);
   const [weekStartDay, setWeekStartDay] = useState<WeekStartDay>("monday");
   const [savingWeekStart, setSavingWeekStart] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -76,11 +78,10 @@ export default function SettingsTab() {
       // 通知・自動解析設定を API から取得
       try {
         const api = getApi();
-        const res = await api.get<{ settings: { notifications_enabled: boolean; auto_analyze_enabled: boolean; data_share_enabled: boolean } }>("/api/notification-preferences");
+        const res = await api.get<{ settings: { notifications_enabled: boolean; auto_analyze_enabled: boolean } }>("/api/notification-preferences");
         if (res.settings) {
           setNotifications(res.settings.notifications_enabled);
           setAutoAnalyze(res.settings.auto_analyze_enabled);
-          setDataShare(res.settings.data_share_enabled);
         }
       } catch (e) {
         console.error("Failed to fetch notification preferences:", e);
@@ -90,7 +91,7 @@ export default function SettingsTab() {
   }, [user]);
 
   async function handleToggleNotificationPreference(
-    key: "notifications_enabled" | "auto_analyze_enabled" | "data_share_enabled",
+    key: "notifications_enabled" | "auto_analyze_enabled",
     setter: React.Dispatch<React.SetStateAction<boolean>>,
     currentValue: boolean,
   ) {
@@ -165,9 +166,8 @@ export default function SettingsTab() {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
+      // メンテナンス中などの 503 は固定の文の例外にする (#1486)
+      if (!res.ok) throw errorOfFailedResponse(res.status, await res.text().catch(() => ""));
       const text = await res.text();
       const today = new Date().toISOString().slice(0, 10);
       const filename = `homegohan-export-${today}.json`;
@@ -187,6 +187,10 @@ export default function SettingsTab() {
       }
     } catch (err) {
       console.error("JSON export error:", err);
+      if (isStoppedByServerError(err)) {
+        Alert.alert(stoppedByServerAlertTitleOf(err), err.message);
+        return;
+      }
       Alert.alert("エラー", "JSONエクスポートに失敗しました。時間をおいて再度お試しください。");
     } finally {
       setExportingJson(false);
@@ -207,9 +211,8 @@ export default function SettingsTab() {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
+      // メンテナンス中などの 503 は固定の文の例外にする (#1486)
+      if (!res.ok) throw errorOfFailedResponse(res.status, await res.text().catch(() => ""));
       const text = await res.text();
       const today = new Date().toISOString().slice(0, 10);
       const filename = `homegohan-meals-${today}.csv`;
@@ -229,6 +232,10 @@ export default function SettingsTab() {
       }
     } catch (err) {
       console.error("CSV export error:", err);
+      if (isStoppedByServerError(err)) {
+        Alert.alert(stoppedByServerAlertTitleOf(err), err.message);
+        return;
+      }
       Alert.alert("エラー", "CSVエクスポートに失敗しました。時間をおいて再度お試しください。");
     } finally {
       setExportingCsv(false);
@@ -236,10 +243,10 @@ export default function SettingsTab() {
   }
 
   async function handleLogout() {
-    try {
-      await clearUserScopedAsyncStorage(user?.id ?? null);
-      await supabase.auth.signOut();
-    } catch {}
+    // push token の削除 → ユーザー別データ (AsyncStorage・WebView の localStorage) の削除 → サインアウトの順 (#1038 F7-10 / #1037)。
+    // サインアウトが失敗しても (オフラインなど)、端末のセッションと画面の状態を消してから移る (signOutOnDevice は例外を投げない)。
+    // 消さずに "/" へ移ると、入口 (app/index.tsx) がホームへ戻してしまう
+    await signOutOnDevice(user?.id ?? null, { clearSession });
     router.replace("/");
   }
 
@@ -354,14 +361,18 @@ export default function SettingsTab() {
               onPress={handleExportCsv}
               right={exportingCsv ? <Text style={{ fontSize: 12, color: "#6B7280" }}>処理中…</Text> : undefined}
             />
+            {/* 外国の AI 事業者への提供の同意の確認・撤回 (T15 / #1154)。AI のコメントの案内の一文が「設定の「…」から」と指す先 */}
             <SettingRow
-              icon="📊"
-              iconBg="#FFF7ED"
-              title="トレーナーと共有"
-              subtitle="栄養士やジムと連携"
+              icon="🤖"
+              iconBg="#EEF2FF"
+              title={AI_CONSENT_SETTINGS_ENTRY_TITLE}
+              subtitle="日本国外の AI 事業者への提供の確認・撤回"
+              testID="settings-ai-consent-row"
+              onPress={() => router.push(AI_CONSENT_SCREEN_PATH)}
               last
-              right={<Switch value={dataShare} onValueChange={() => handleToggleNotificationPreference("data_share_enabled", setDataShare, dataShare)} trackColor={{ true: colors.accent }} />}
             />
+            {/* #1144: 「トレーナーと共有」の項目は外した。トレーナーなどに共有する機能が無いのに、項目だけが画面にあったため。
+                戻すときは、先に src/app/api/notification-preferences/route.ts のコメントを読むこと (保存済みの値は同意ではない)。 */}
           </View>
         </View>
 
@@ -390,20 +401,20 @@ export default function SettingsTab() {
               iconBg="#F9FAFB"
               title="利用規約"
               testID="settings-tos-row"
-              onPress={() => Linking.openURL("https://homegohan.app/terms")}
+              onPress={() => Linking.openURL(getTermsUrl())}
             />
             <SettingRow
               icon="🔒"
               iconBg="#F9FAFB"
               title="プライバシーポリシー"
               testID="settings-privacy-row"
-              onPress={() => Linking.openURL("https://homegohan.app/privacy")}
+              onPress={() => Linking.openURL(getPrivacyUrl())}
             />
             <SettingRow
               icon="✉️"
               iconBg="#F9FAFB"
               title="お問い合わせ"
-              onPress={() => Linking.openURL("mailto:support@homegohan.jp")}
+              onPress={() => Linking.openURL(getSupportMailtoUrl())}
               last
             />
           </View>

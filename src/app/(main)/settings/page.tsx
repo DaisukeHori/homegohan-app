@@ -6,8 +6,20 @@ import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
+import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { requestNotificationPermission } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
+import { useAccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
+import { AI_CONSENT_SETTINGS_ENTRY_TITLE, AI_CONSENT_SETTINGS_PATH } from "@/lib/ai/consent-config";
+import {
+  ACCOUNT_DELETE_CONFIRM_KEYWORD,
+  ACCOUNT_EXPORT_FAILED_MESSAGE,
+  accountExportRateLimitedMessage,
+  deleteOwnAccount,
+  exportAccountData,
+  saveResponseAsDownload,
+  signOutAfterAccountDeletion,
+} from "@/lib/account-self-service";
 
 type WeekStartDay = 'sunday' | 'monday';
 
@@ -41,22 +53,14 @@ export default function SettingsPage() {
   const router = useRouter();
   const supabase = createClient();
   const isNativeApp = useNativeAppMode();
+  // アプリの中では、ログアウトと退会をネイティブの設定画面に一本化する (#1037。判定は hooks/useAccountActionsPlacement.ts)
+  const accountActionsPlacement = useAccountActionsPlacement(isNativeApp);
+  // Web の画面にログアウト・退会を出してよいのはブラウザと分かったときだけ (判定前・アプリの中では出さない)
+  const accountActionsDelegated = accountActionsPlacement !== 'web';
   const [showLogoutModal, setShowLogoutModal] = useState(false);
-
-  // Fix 3: mode=app 時は postMessage で RN に転送 (iOS WebView では <a download> が動作しないため)
-  const postMessageDownload = (filename: string, content: string, mimeType: string) => {
-    const w = window as unknown as { ReactNativeWebView?: { postMessage: (s: string) => void } };
-    w.ReactNativeWebView?.postMessage(JSON.stringify({
-      type: 'download',
-      filename,
-      content,
-      mimeType,
-    }));
-  };
 
   const [settings, setSettings] = useState({
     notifications: true,
-    dataShare: false,
     autoAnalyze: true
   });
 
@@ -73,7 +77,6 @@ export default function SettingsPage() {
         setSettings({
           notifications: json.settings.notifications_enabled,
           autoAnalyze: json.settings.auto_analyze_enabled,
-          dataShare: json.settings.data_share_enabled,
         });
       }
     };
@@ -128,10 +131,7 @@ export default function SettingsPage() {
 
     setSettings(prev => ({ ...prev, [key]: newValue }));
     try {
-      const apiKey =
-        key === 'notifications' ? 'notifications_enabled' :
-        key === 'autoAnalyze' ? 'auto_analyze_enabled' :
-        'data_share_enabled';
+      const apiKey = key === 'notifications' ? 'notifications_enabled' : 'auto_analyze_enabled';
       const res = await fetch('/api/notification-preferences', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -144,54 +144,22 @@ export default function SettingsPage() {
     }
   };
 
-  // 取得したレスポンスをファイルとして保存する (JSON / CSV エクスポート共通)
-  const saveResponseAsFile = async (res: Response, filename: string, mimeType: string) => {
-    if (isNativeApp) {
-      // Fix 3: iOS WebView では Blob URL が使えないので RN へ転送
-      const text = await res.text();
-      postMessageDownload(filename, text, mimeType);
-      return;
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  // #1131: 個人データ一式を JSON でダウンロードする (モバイルアプリと同じ GET /api/account/export)
+  // #1131: 個人データ一式を JSON でダウンロードする (モバイルアプリと同じ GET /api/account/export)。
+  // 呼び方と保存のしかたは凍結中の画面 (/frozen/account) と共通 (src/lib/account-self-service.ts)
   const [exporting, setExporting] = useState(false);
   const handleExportData = async () => {
     if (exporting) return;
     setExporting(true);
     try {
-      const res = await fetch('/api/account/export', { method: 'GET' });
-      if (!res.ok) {
-        if (res.status === 401) {
-          router.push('/login');
-          return;
-        }
-        if (res.status === 429) {
-          // 連打防止の上限 (10 分あたり 5 回)。いつ再開できるかをサーバーの Retry-After から伝える
-          const retryAfterSec = Number(res.headers.get('Retry-After'));
-          const wait =
-            Number.isFinite(retryAfterSec) && retryAfterSec > 0
-              ? `${Math.ceil(retryAfterSec / 60)}分ほど`
-              : 'しばらく';
-          alert(`短い時間にエクスポートを繰り返したため、一時的に実行できません。${wait}待ってからもう一度お試しください。`);
-          return;
-        }
-        throw new Error(`Data export failed: ${res.status}`);
+      const result = await exportAccountData({ isNativeApp });
+      if (result.kind === 'unauthorized') {
+        router.push('/login');
+      } else if (result.kind === 'rate_limited') {
+        // 連打防止の上限 (10 分あたり 5 回)。いつ再開できるかをサーバーの Retry-After から伝える
+        alert(accountExportRateLimitedMessage(result.retryAfterSec));
+      } else if (result.kind === 'failed') {
+        alert(ACCOUNT_EXPORT_FAILED_MESSAGE);
       }
-      const today = new Date().toISOString().slice(0, 10);
-      await saveResponseAsFile(res, `homegohan-export-${today}.json`, 'application/json');
-    } catch (err) {
-      console.error(err);
-      alert('データのエクスポートに失敗しました。時間をおいて再度お試しください。');
     } finally {
       setExporting(false);
     }
@@ -211,7 +179,7 @@ export default function SettingsPage() {
         throw new Error(`CSV export failed: ${res.status}`);
       }
       const today = new Date().toISOString().slice(0, 10);
-      await saveResponseAsFile(res, `homegohan-meals-${today}.csv`, 'text/csv');
+      await saveResponseAsDownload(res, `homegohan-meals-${today}.csv`, 'text/csv', isNativeApp);
     } catch (err) {
       console.error(err);
       alert('CSVエクスポートに失敗しました。時間をおいて再度お試しください。');
@@ -220,16 +188,12 @@ export default function SettingsPage() {
     }
   };
 
-  const handleTrainerShareInfo = () => {
-    alert(
-      'トレーナー連携機能は近日公開予定です。\n' +
-      '現状、データシェア設定の ON/OFF は記録のみで、外部共有は行っていません。\n' +
-      '正式リリースまで今しばらくお待ちください。'
-    );
-  };
-
   const handleLogout = async () => {
+    // ボタンを出さないだけでなく、処理の側でもアプリの中では動かさない (#1037)
+    if (accountActionsDelegated) return;
     clearUserScopedLocalStorage();
+    // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
+    notifyNativeSignOut();
     await supabase.auth.signOut();
     broadcastSignOut();
     router.push('/login');
@@ -239,30 +203,21 @@ export default function SettingsPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
-  const DELETE_KEYWORD = '削除します';
+  const DELETE_KEYWORD = ACCOUNT_DELETE_CONFIRM_KEYWORD;
 
+  // 呼び方と退会のあとのログアウトの順番は、凍結中の画面 (/frozen/account) と共通 (src/lib/account-self-service.ts)
   const handleDeleteAccount = async () => {
-    if (deleteConfirmText !== DELETE_KEYWORD || deleting) return;
+    if (accountActionsDelegated || deleteConfirmText !== DELETE_KEYWORD || deleting) return;
     setDeleting(true);
-    try {
-      const res = await fetch('/api/account/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirm: true }),
-      });
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        throw new Error(json.error ?? `Delete failed: ${res.status}`);
-      }
-      clearUserScopedLocalStorage();
-      await supabase.auth.signOut();
-      broadcastSignOut();
-      router.push('/login');
-    } catch (err) {
-      console.error('[delete account]', err);
+    const result = await deleteOwnAccount();
+    if (result.kind !== 'deleted') {
       alert('アカウントの削除に失敗しました。時間をおいて再度お試しください。');
       setDeleting(false);
+      return;
     }
+    // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
+    await signOutAfterAccountDeletion(supabase);
+    router.push('/login');
   };
 
   return (
@@ -443,20 +398,25 @@ export default function SettingsPage() {
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
              </button>
 
+             {/* 外国の AI 事業者への提供の同意の確認・撤回 (T15 / #1154)。AI のコメントの案内の一文が「設定の「…」から」と指す先 */}
              <button
                type="button"
-               onClick={handleTrainerShareInfo}
+               onClick={() => router.push(AI_CONSENT_SETTINGS_PATH)}
+               data-testid="settings-ai-consent-link"
                className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
              >
                <div className="flex items-center gap-3">
-                 <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500" aria-hidden="true">📊</div>
+                 <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-500" aria-hidden="true">🤖</div>
                  <div className="text-left">
-                   <span className="font-bold text-gray-700">トレーナーと共有（準備中）</span>
-                   <p className="text-xs text-gray-400">栄養士やジムと連携・近日公開予定</p>
+                   <span className="font-bold text-gray-700">{AI_CONSENT_SETTINGS_ENTRY_TITLE}</span>
+                   <p className="text-xs text-gray-400">日本国外の AI 事業者への提供の確認・撤回</p>
                  </div>
                </div>
-               <span className="text-xs text-gray-400">{settings.dataShare ? '記録ON' : '記録OFF'}</span>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
              </button>
+
+             {/* #1144: 「トレーナーと共有」の項目は外した。トレーナーなどに共有する機能が無いのに、項目だけが画面にあったため。
+                 戻すときは、先に src/app/api/notification-preferences/route.ts のコメントを読むこと (保存済みの値は同意ではない)。 */}
 
           </div>
         </div>
@@ -529,22 +489,34 @@ export default function SettingsPage() {
 
         {/* セクション 5: アクション */}
         <div>
-          <Button
-            variant="outline"
-            data-testid="logout-button"
-            onClick={() => setShowLogoutModal(true)}
-            className="w-full py-6 rounded-2xl border-red-100 text-red-500 hover:bg-red-50 hover:border-red-200 font-bold mb-4"
-          >
-            ログアウト
-          </Button>
+          {accountActionsPlacement === 'native' && (
+            // アプリの中: ログアウトと退会はネイティブの設定画面で行う (#1037)
+            <p
+              data-testid="settings-native-account-actions-note"
+              className="text-center text-xs text-gray-500 mb-4 px-2"
+            >
+              ログアウトとアカウントの削除は、マイページの右上の歯車 (設定) から行えます。
+            </p>
+          )}
+          {accountActionsPlacement === 'web' && (
+            <Button
+              variant="outline"
+              data-testid="logout-button"
+              onClick={() => setShowLogoutModal(true)}
+              className="w-full py-6 rounded-2xl border-red-100 text-red-500 hover:bg-red-50 hover:border-red-200 font-bold mb-4"
+            >
+              ログアウト
+            </Button>
+          )}
           <p className="text-center text-xs text-gray-400">
             Version {process.env.NEXT_PUBLIC_APP_VERSION ?? 'v1.0.0'} (Build {process.env.NEXT_PUBLIC_BUILD_DATE ?? '20260430'})<br/>
             &copy; {new Date().getFullYear()} ほめゴハン
           </p>
         </div>
 
-        {/* セクション 6: アカウント削除 */}
-        <div>
+        {/* セクション 6: アカウント削除 (アプリの中では出さない。#1037) */}
+        {!accountActionsDelegated && (
+        <div data-testid="settings-delete-account-section">
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">危険ゾーン</h2>
           <div className="bg-white rounded-2xl shadow-sm border border-red-100 overflow-hidden">
             <div className="p-4">
@@ -566,12 +538,13 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
+        )}
 
       </div>
 
       {/* ログアウト確認モーダル */}
       <AnimatePresence>
-        {showLogoutModal && (
+        {showLogoutModal && !accountActionsDelegated && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -614,7 +587,7 @@ export default function SettingsPage() {
 
       {/* アカウント削除確認モーダル */}
       <AnimatePresence>
-        {showDeleteModal && (
+        {showDeleteModal && !accountActionsDelegated && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

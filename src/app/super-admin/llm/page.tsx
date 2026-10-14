@@ -2,19 +2,11 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-
-interface LLMUsageData {
-  total_cost_usd: number;
-  total_cost_jpy: number;
-  total_requests: number;
-  total_tokens: number;
-  by_model: Array<{ model: string; provider: string; requests: number; tokens: number; cost_usd: number }>;
-  by_function: Array<{ function: string; requests: number; cost_usd: number }>;
-  top_users: Array<{ user_id: string; email: string | null; requests: number; cost_usd: number; is_anomaly: boolean }>;
-  timeseries: Array<{ date: string; cost_usd: number; requests: number }>;
-  anomalies: Array<{ user_id: string; email: string | null; daily_requests: number }>;
-  period: { from: string; to: string };
-}
+import { LLM_USAGE_ANOMALY_NOTICE } from "@/lib/super-admin/llm-usage-anomaly";
+// GET /api/super-admin/llm/usage の data の型は、route が返す toLlmUsageResponseData の型をそのまま使う (#1524)。
+// 以前は画面に別の型を書いていて、anomalies の各要素に応答に無い daily_requests があると宣言していた
+// (応答は requests / cost_usd / is_anomaly)。型を 2 か所に書かないので、応答の形が変われば画面の型も一緒に変わる
+import type { LlmUsageResponseData } from "@/lib/super-admin/llm-usage-summary";
 
 const PROVIDERS = [
   { key: "gemini", label: "Gemini", color: "bg-blue-500" },
@@ -25,7 +17,7 @@ const PROVIDERS = [
 
 export default function LLMUsagePage() {
   const [period, setPeriod] = useState("7d");
-  const [data, setData] = useState<LLMUsageData | null>(null);
+  const [data, setData] = useState<LlmUsageResponseData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,7 +48,7 @@ export default function LLMUsagePage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-white">LLM 使用量</h1>
-          <p className="text-slate-400 mt-1">プロバイダー別使用量・コスト・クォータ管理</p>
+          <p className="text-slate-400 mt-1">プロバイダー別使用量・コスト</p>
         </div>
 
         <div className="flex gap-2">
@@ -80,7 +72,7 @@ export default function LLMUsagePage() {
           <div className="flex items-center gap-2 text-red-300 font-semibold mb-2">
             ⚠️ 異常使用を検知 ({data.anomalies.length} ユーザー)
           </div>
-          <p className="text-red-400 text-sm">1日 5,000 リクエスト超のユーザーがいます</p>
+          <p className="text-red-400 text-sm">{LLM_USAGE_ANOMALY_NOTICE}</p>
         </div>
       )}
 
@@ -161,11 +153,10 @@ export default function LLMUsagePage() {
             <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold text-white">ユーザー別使用量 Top 50</h2>
-                <Link
-                  href="/super-admin/llm/quotas"
-                  className="text-purple-400 hover:text-purple-300 text-sm"
-                >
-                  クォータ設定 →
+                {/* AI の 1 日の利用回数の上限 (プランごと) の画面 (#1149)。/super-admin/llm/quotas は
+                    固定のパスの画面 (quotas/page.tsx) なので、プロバイダー別の詳細画面 ([provider]) より先に解決される */}
+                <Link href="/super-admin/llm/quotas" className="text-purple-400 text-sm hover:text-purple-300">
+                  AI の利用上限 →
                 </Link>
               </div>
               <table className="w-full">

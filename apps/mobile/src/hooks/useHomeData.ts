@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { getApi } from "../lib/api";
 import { formatLocalDate } from "@homegohan/core";
+import { handleAiConsentRequiredError } from "../lib/ai-consent";
 
 interface DailySummary {
   totalCalories: number;
@@ -482,6 +483,11 @@ export const useHomeData = (userId: string | undefined) => {
         setSuggestion("変更に失敗しました。もう一度お試しください。");
       }
     } catch (e) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、失敗の表示は出さない
+      if (handleAiConsentRequiredError(e)) {
+        setSuggestion(null);
+        return;
+      }
       console.error("Execute nutrition suggestion error:", e);
       setSuggestion("変更に失敗しました。もう一度お試しください。");
     }

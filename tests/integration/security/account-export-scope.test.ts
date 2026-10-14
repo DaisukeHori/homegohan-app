@@ -508,6 +508,12 @@ describe('#1131 エクスポート: 本物の RLS の上で本人の行だけが
     expect(data.inquiries[0]).not.toHaveProperty('admin_notes');
     expect(data.coupon_redemptions[0]).not.toHaveProperty('approved_by');
     expect(data.recipe_flags[0]).not.toHaveProperty('reviewed_by');
+    // #1101: 運営が隠したときの記録。隠した日時と理由は本人に関わる記録として出し、操作した運営ユーザーの ID (hidden_by) は出さない
+    for (const rows of [data.meals, data.recipes]) {
+      expect(rows[0]).toHaveProperty('hidden_at');
+      expect(rows[0]).toHaveProperty('hidden_reason');
+      expect(rows[0]).not.toHaveProperty('hidden_by');
+    }
     expect(data.gdpr_deletion_requests[0]).not.toHaveProperty('executed_by');
     expect(data.weekly_menu_requests[0]).not.toHaveProperty('result_json');
     expect(data.weekly_menu_requests[0]).not.toHaveProperty('worker_id');

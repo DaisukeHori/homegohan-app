@@ -246,30 +246,23 @@ test.describe("Scenario 3: データエクスポート", () => {
 });
 
 // ────────────────────────────────────────────────────────
-// シナリオ 4: /settings — トレーナーと共有 (修正済 #45)
+// シナリオ 4: /settings — トレーナーと共有 (#45 で押せるようにしたが、#1144 で設定画面から外した)
 // ────────────────────────────────────────────────────────
 
 test.describe("Scenario 4: トレーナーと共有", () => {
-  test("4-1: 「トレーナーと共有」ボタンクリックで alert が表示される", async ({ page }) => {
+  test("4-1: 「トレーナーと共有」の項目が設定画面に出ない (#1144)", async ({ page }) => {
     const { consoleLogs, networkErrors } = attachMonitors(page);
     await login(page);
     await page.goto(`${BASE_URL}/settings`);
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
 
-    const trainerButton = page.getByRole("button", { name: /トレーナーと共有/ });
-    await expect(trainerButton).toBeVisible({ timeout: 10_000 });
+    // 設定画面が描画されてから「無い」ことを確かめる (読み込み前に空振りで通らないよう、隣の項目を先に待つ)
+    await expect(page.getByRole("button", { name: /献立をCSVエクスポート/ })).toBeVisible({ timeout: 10_000 });
 
-    let dialogMessage: string | null = null;
-    page.once("dialog", async (dialog) => {
-      dialogMessage = dialog.message();
-      await dialog.dismiss();
-    });
-    await trainerButton.click();
+    await expect(page.getByRole("button", { name: /トレーナーと共有/ })).toHaveCount(0);
+    await expect(page.getByText(/トレーナー/)).toHaveCount(0);
 
-    await expect.poll(() => dialogMessage, { timeout: 5_000 }).toBeTruthy();
-    expect(dialogMessage).toContain("近日公開予定");
-
-    await saveScreenshot(page, "08-trainer-share-alert");
+    await saveScreenshot(page, "08-trainer-share-removed");
 
     if (networkErrors.length > 0) {
       console.warn("5xx errors:", networkErrors);

@@ -5,6 +5,9 @@
  * Zod schema 全件 pass + fireAnalytics の adapter 呼び出し確認。
  * 実 Supabase 接続不要 — fireAnalytics / AnalyticsAdapter のみ検証。
  *
+ * #1166: PostHog は採用しないことになり、アプリは adapter を注入していない (fireAnalytics は何も送らない)。
+ * ここで確かめるのは、イベントの schema と、adapter を注入したときの fireAnalytics の委譲だけ。
+ *
  * カバー対象イベント:
  *   handson_tour_eligible
  *   handson_tour_started

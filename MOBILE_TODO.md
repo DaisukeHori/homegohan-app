@@ -17,6 +17,7 @@ Web版（Next.js）で実装済みの「ほめゴハン」を **React Native / E
 - 端末に **秘密鍵を置かない**（OpenAI/Gemini/Service Roleなどはサーバ・Edge Functions側）
 - 「まず日常導線」→「機能拡張」→「管理系」→「全機能完了」の順で進める
 - **WebView ハイブリッド**: タブの主要画面は Web（Next.js）を WebView で表示し、ネイティブはタブ・認証・設定・カメラ・Push・ディープリンクに絞る（`docs/design/mobile/01-architecture.md`）
+- **管理者（admin）の画面はモバイルに作らない**: 運営作業は Web に一本化する（2026-10-08 オーナー判断、#1122）。アプリの `(admin)` 画面と、その Maestro フロー（`flows/admin/`）は削除済み。admin / super_admin のユーザーも、ログイン後は他のユーザーと同じ振り分けになる。`(support)` と `(super-admin)` の画面も同じ方針にするかは未決定（オーナーに確認する）。なお `(org)` / `(support)` / `(super-admin)` へ移動する導線は、アプリ内に元々なく、深いリンクで直接開いたときだけ表示される
 
 ---
 
@@ -39,7 +40,7 @@ Web版（Next.js）で実装済みの「ほめゴハン」を **React Native / E
 | 4 | 中優先の不具合のまとめ | 通知タップの遷移、WebView のエラー / オフライン UI、env の不整合、状態の復元など | #1049 |
 | 5 | Sign in with Apple | Google ログインがあるため、App Store 審査（4.8）で Sign in with Apple も必要 | 作業計画 T43 |
 | 6 | 公開のプライバシーポリシー URL | `/privacy` と `/terms` が未ログインだと `/login` に転送される。App Store Connect には誰でも開ける URL が要る | 作業計画 T04 / #1364 |
-| 7 | AI 利用の同意 | 外国の AI 事業者へデータを送ることを説明し、同意を取る（App Store 審査 5.1.2）。**データの送信は止めない**（オーナー方針）。足すのは同意の取得だけ | 作業計画 T15 / T18 / #1154 |
+| 7 | AI 利用の同意 | 外国の AI 事業者へデータを送ることを説明し、同意を取る（App Store 審査 5.1.2）。未同意（撤回後・文面の版が古いを含む）の利用者のデータは、サーバーが送る手前で止める（403 `AI_CONSENT_REQUIRED`）。アプリは止められたら同意画面へ案内する | 作業計画 T15 / T18 / #1154 |
 | 8 | 公開レシピの通報機能 | 利用者が投稿した公開レシピを、ほかの人が見られる。通報の手段を付けるかは **オーナー判断待ち**（App Store 審査 1.2） | オーナー判断 |
 
 #1036・#1037・#1038・#1049 と PR #1079 / #1289 は、モバイル協調リリース調整トラッカー #1115 でリリースの順序を合わせる。
@@ -94,7 +95,7 @@ Web版（Next.js）で実装済みの「ほめゴハン」を **React Native / E
 - [ ] レシピ機能（検索/いいね/コメント/コレクション）
 - [ ] 比較・ランキング（セグメント）
 - [ ] 家族機能
-- [ ] 管理系（admin/org/support/super-admin）をモバイルに実装（ロールに応じてUI/権限制御）
+- [ ] 管理系（org/support/super-admin）をモバイルに実装（ロールに応じてUI/権限制御）。管理者（admin）は作らない（運営作業は Web に一本化。#1122）
 
 ---
 
@@ -155,13 +156,7 @@ Web版（Next.js）で実装済みの「ほめゴハン」を **React Native / E
 - [ ] `/org/settings`
 
 ### 管理者（admin）
-- [ ] `/admin`
-- [ ] `/admin/announcements`
-- [ ] `/admin/audit-logs`
-- [ ] `/admin/inquiries`
-- [ ] `/admin/moderation`
-- [ ] `/admin/organizations`
-- [ ] `/admin/users`
+モバイルには作らない（運営作業は Web に一本化する。2026-10-08 オーナー判断、#1122）。`/admin` 以下は Web だけで使う。
 
 ### スーパー管理（super-admin）
 - [ ] `/super-admin`
@@ -189,8 +184,8 @@ Web版（Next.js）で実装済みの「ほめゴハン」を **React Native / E
 - [ ] Pass 1: 導線（到達性）— アプリ内の UI だけで、5 つのタブと設定（ログアウト・アカウント削除・通知）へ着ける。孤立したネイティブ画面は、削除するか導線を張る（#1037）。タブ内の WebView から Web の全ルートを開ける
 - [ ] Pass 2: WebView の境界 — 自オリジン以外を WebView 内で開かず、外部リンクは OS のブラウザに渡す。認証ブリッジはワンタイム code 方式で、トークンが URL・ログ・外部サイトの localStorage に出ない（#1036）
 - [ ] Pass 3: 認証/セッション — メール / Google / Sign in with Apple でのログイン、ログアウト、起動時の復元、期限切れ、オフライン起動、メール確認、パスワード再設定。Web 側のログアウトとネイティブの状態がずれない。共有端末に前の利用者の情報や push token が残らない（#1038、Sign in with Apple は T43）
-- [ ] Pass 4: RLS/権限 — 他の利用者のデータに触れない（Web 側の RLS 回帰テストが緑であることが前提）。admin / org / support の画面はロール判定で出し分ける
-- [ ] Pass 5: AI機能 — Edge Function の長時間処理（30 秒超）でアプリが落ちない。失敗時とリトライ。外国の AI 事業者への送信について説明し、同意を取る（T15 / T18）。送信は止めない
+- [ ] Pass 4: RLS/権限 — 他の利用者のデータに触れない（Web 側の RLS 回帰テストが緑であることが前提）。org / support / super-admin の画面はロール判定で出し分ける（admin の画面は削除済み。#1122）
+- [ ] Pass 5: AI機能 — Edge Function の長時間処理（30 秒超）でアプリが落ちない。失敗時とリトライ。外国の AI 事業者への送信について説明し、同意を取る（T15）。未同意なら AI 機能は同意画面への案内になる
 - [ ] Pass 6: 画像/アップロード — ネイティブの ImagePicker で撮影 → Storage へアップロード → 解析、の経路が iOS 実機で通る（iOS 18 のカメラ dismiss の回避を含む）。失敗から戻れる
 - [ ] Pass 7: データ整合性 — Web とモバイルが同じデータを見ている（献立/食事/健康/買い物/冷蔵庫）。ネイティブ画面と WebView の画面が別々に書き込まない
 - [ ] Pass 8: UX — ローディング/エラー/空/戻る/多重送信/オフライン。WebView が読み込めないときにリトライ UI が出る。通知をタップして該当画面へ移る（#1049）
@@ -218,7 +213,7 @@ Web版（Next.js）で実装済みの「ほめゴハン」を **React Native / E
 ### フェーズ 1 — 認証 / ナビゲーション (実装済み)
 - [x] login / signup
 - [x] auth/forgot-password / auth/reset-password / auth/verify
-- [x] expo-router の (auth) / (tabs) / (admin) / (org) / (super-admin) / (support) / (public)
+- [x] expo-router の (auth) / (tabs) / (org) / (super-admin) / (support) / (public)（`(admin)` は 2026-10-08 に削除。#1122）
 
 ### フェーズ 2 — 日常導線 (実装済み)
 - [x] ホーム `app/(tabs)/home.tsx` (694 行)
@@ -236,7 +231,7 @@ Web版（Next.js）で実装済みの「ほめゴハン」を **React Native / E
 ### フェーズ 5 — 完全移植 (実装済み)
 - [x] レシピ機能 `app/recipes/` 配下: index / new / [id] / [id]/edit / collections / collections/[id] / collections/select
 - [x] 比較 `app/comparison/`、バッジ `app/badges/`、家族 `app/family/`、プロフィール `app/profile/` + `app/profile/nutrition-targets.tsx`
-- [x] 管理系 `(admin)`: index / users / organizations / inquiries / inquiries/[id] / moderation / announcements / audit-logs
+- [x] 管理系 `(admin)`: 実装したが、2026-10-08 に削除した（運営作業は Web に一本化するオーナー判断。呼び先の API がサーバーに無い画面もあった。#1122）
 - [x] 組織 `(org)`: dashboard / members / invites / departments / challenges / settings
 - [x] スーパー管理 `(super-admin)`: index / admins / database / feature-flags / settings
 - [x] サポート `(support)`: index / inquiries / inquiries/[id] / users / users/[id]

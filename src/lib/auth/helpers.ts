@@ -7,8 +7,8 @@
  */
 
 import { type User } from '@supabase/supabase-js';
-import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
-import { AuthError, ForbiddenError, ImpersonationError } from './errors';
+import { createClient } from '@/lib/supabase/server';
+import { AuthError, ForbiddenError } from './errors';
 import { type RoleName, type OrgRoleName, type UserProfile } from './types';
 import { isAccountFrozen } from './frozen';
 import { isOrgAdmin, type OrgAdminRole } from './org-admin';
@@ -69,42 +69,6 @@ function assertNotFrozen(frozenAt: string | null, unbanAt: string | null): void 
   if (isAccountFrozen({ frozenAt, unbanAt })) {
     throw new ForbiddenError('AUTH_ACCOUNT_FROZEN', 'アカウントが凍結されています');
   }
-}
-
-/**
- * user_profiles を service_role (RLS バイパス) で取得する。
- * #1030 (round-5 Critical fix): user_profiles の SELECT ポリシーは
- * "Users can view own profile" USING (auth.uid() = id) の1本のみであり、
- * 実行者以外の行は通常クライアント (createClient(), RLS 有効) では 0 行になる。
- * impersonate() の対象ユーザー参照など、認可 (super_admin 判定) 通過後に
- * 他ユーザーの行を読む必要がある箇所は、既存パターン (#1028: freeze/route.ts 等)
- * に合わせて admin client を使用する。
- * 対象が存在しない場合は null を返す (RLS による不可視か実在しないかは呼び出し側で
- * 区別せず、いずれも「対象が見つからない」として扱う)。
- */
-async function getUserProfileAdmin(userId: string): Promise<{
-  roles: RoleName[];
-  organization_id: string | null;
-  frozen_at: string | null;
-  unban_at: string | null;
-} | null> {
-  const supabaseAdmin = getSupabaseAdmin();
-  const { data: profile, error } = await supabaseAdmin
-    .from('user_profiles')
-    .select('roles, organization_id, frozen_at, unban_at')
-    .eq('id', userId)
-    .single();
-
-  if (error || !profile) {
-    return null;
-  }
-
-  return {
-    roles: (profile.roles ?? ['user']) as RoleName[],
-    organization_id: profile.organization_id ?? null,
-    frozen_at: (profile as { frozen_at?: string | null }).frozen_at ?? null,
-    unban_at: (profile as { unban_at?: string | null }).unban_at ?? null,
-  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -253,144 +217,4 @@ export async function requireOrgAdmin(): Promise<OrgAdminContext> {
       nickname: profile.nickname ?? null,
     },
   };
-}
-
-/**
- * impersonate (super_admin が他ユーザーに成り代わる)。
- * cross/01-auth-session.md §11 仕様に準拠。
- * admin_audit_logs に impersonate 記録を挿入する。
- *
- * @param targetUserId - impersonate 対象のユーザー ID
- * @param reason       - impersonate の理由 (audit_log に記録)
- * @returns impersonation_token と expires_at
- * @throws AuthError          - 実行者が未認証の場合
- * @throws ImpersonationError - super_admin 以外が実行した場合 / 対象が拒否設定の場合 /
- *                              #1030 (round-4): 対象ユーザーが凍結中の場合 /
- *                              #1030 (round-5): 対象ユーザーが存在しない場合
- */
-export async function impersonate(
-  targetUserId: string,
-  reason: string,
-): Promise<{ impersonation_token: string; expires_at: string }> {
-  const user = await getAuthUser();
-  const { roles } = await getUserProfile(user.id);
-
-  if (!roles.includes('super_admin')) {
-    throw new ImpersonationError(
-      'AUTH_IMPERSONATION_DENIED',
-      'impersonate は super_admin のみ実行可能です',
-    );
-  }
-
-  // #1030 (round-5 Critical fix): 対象ユーザーの行は RLS (自分の行のみ SELECT 可) により
-  // 通常クライアントでは読めないため、admin client (service_role) で取得する。
-  // super_admin 判定 (上記) を通過した後にのみ呼び出すこと (認可前に使うと権限昇格になる)。
-  const targetProfile = await getUserProfileAdmin(targetUserId);
-  if (!targetProfile) {
-    throw new ImpersonationError(
-      'AUTH_IMPERSONATION_TARGET_NOT_FOUND',
-      '対象ユーザーが見つかりません',
-    );
-  }
-
-  // #1030 (round-4 Warning fix): 凍結中のユーザーへの成りすましセッションを拒否する。
-  // impersonate は対象ユーザーとして振る舞えるセッションを発行するため、対象が凍結中
-  // (BAN 中) の場合にこれを許すと、frozen_at enforcement (requireUser/requireRole/
-  // middleware) を impersonate 経由で迂回できてしまう。
-  const { frozen_at: targetFrozenAt, unban_at: targetUnbanAt } = targetProfile;
-  if (isAccountFrozen({ frozenAt: targetFrozenAt, unbanAt: targetUnbanAt })) {
-    throw new ImpersonationError(
-      'AUTH_IMPERSONATION_TARGET_FROZEN',
-      '凍結中のユーザーへは impersonate できません',
-    );
-  }
-
-  const supabase = createClient();
-
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-  const impersonationToken = crypto.randomUUID();
-
-  // admin_audit_logs に記録 (テーブル不在時は graceful degradation)
-  try {
-    const { error: auditError } = await supabase.from('admin_audit_logs').insert({
-      actor_id: user.id,
-      target_id: targetUserId,
-      target_type: 'user',
-      action_type: 'impersonate',
-      impersonated_by: user.id,
-      details: { reason, impersonation_token: impersonationToken, expires_at: expiresAt },
-      severity: 'warn',
-    });
-
-    if (auditError) {
-      console.error('[auth/helpers] admin_audit_logs INSERT failed (graceful):', auditError.message);
-    }
-  } catch (err) {
-    console.error('[auth/helpers] admin_audit_logs unavailable (graceful):', err);
-  }
-
-  return {
-    impersonation_token: impersonationToken,
-    expires_at: expiresAt,
-  };
-}
-
-/**
- * impersonate を解除する。
- * admin_audit_logs に解除記録を挿入する。
- *
- * @throws AuthError - 実行者が未認証の場合
- */
-export async function endImpersonation(): Promise<void> {
-  const user = await getAuthUser();
-  const supabase = createClient();
-
-  try {
-    const { error: auditError } = await supabase.from('admin_audit_logs').insert({
-      actor_id: user.id,
-      target_id: user.id,
-      target_type: 'user',
-      action_type: 'impersonate_end',
-      severity: 'info',
-      details: {},
-    });
-
-    if (auditError) {
-      console.error('[auth/helpers] admin_audit_logs INSERT failed (graceful):', auditError.message);
-    }
-  } catch (err) {
-    console.error('[auth/helpers] admin_audit_logs unavailable (graceful):', err);
-  }
-}
-
-/**
- * 現在 impersonate 中かどうかを確認する。
- * admin_audit_logs.impersonated_by が NOT NULL であるかをチェックする。
- *
- * @param user - requireUser / requireRole で取得した User
- * @returns impersonate 中であれば true
- */
-export async function isImpersonating(user: User): Promise<boolean> {
-  const supabase = createClient();
-
-  try {
-    const { data, error } = await supabase
-      .from('admin_audit_logs')
-      .select('id')
-      .eq('target_id', user.id)
-      .eq('action_type', 'impersonate')
-      .not('impersonated_by', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    if (error) {
-      console.error('[auth/helpers] isImpersonating query failed (graceful):', error.message);
-      return false;
-    }
-
-    return (data ?? []).length > 0;
-  } catch (err) {
-    console.error('[auth/helpers] admin_audit_logs unavailable (graceful):', err);
-    return false;
-  }
 }

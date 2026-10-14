@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 import { RECORD_DATE_PATTERN, sanitizeHealthRecordPayload } from '@/lib/health-payloads';
-import { todayLocal } from '@/lib/date-utils';
+import { CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { updateHealthStreak } from '@/lib/health-streaks';
 import { clampIntParam } from '@/lib/http-params';
 
@@ -22,6 +23,14 @@ export async function GET(request: NextRequest) {
   // 200 では末尾約165日が欠落していた。集計用途を考慮し上限を400に緩和。
   const limit = clampIntParam(searchParams.get('limit'), { min: 1, max: 400, default: 30 });
 
+  // 日付は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲の中) だけを受け付ける (#1482)。
+  // 形を見ずに渡すと、2026-02-30 のような日付が DB の date 型への変換で失敗して 500 になる。空欄 (?start_date=) は以前どおり「指定なし」
+  for (const [name, value] of [['start_date', startDate], ['end_date', endDate]] as const) {
+    if (value && !isCalendarDate(value)) {
+      return NextResponse.json({ error: `${name} must be ${CALENDAR_DATE_REQUIREMENT}` }, { status: 400 });
+    }
+  }
+
   let query = supabase
     .from('health_records')
     .select('*')
@@ -39,7 +48,7 @@ export async function GET(request: NextRequest) {
   const { data, error } = await query;
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/health/records', error, { userId: user.id, table: 'health_records' });
   }
 
   return NextResponse.json({ records: data });
@@ -66,7 +75,11 @@ export async function POST(request: NextRequest) {
   }
 
   // #256: record_date フォーマット検証（YYYY-MM-DD のみ許可）
-  if (!RECORD_DATE_PATTERN.test(record_date.trim())) {
+  // 存在しない日付 (2026-02-30 など) も、形だけでは通って DB の date 型への変換で 500 になるので isCalendarDate で弾く (#1463)
+  // 検査した値 (前後の空白を除いた値) を、そのまま upsert・連続記録・プロフィールの体重の判定に使う (#1482。
+  // 以前は trim する前の値を渡していて、前後に空白があると連続記録を黙って更新せず、今日の体重もプロフィールに写さなかった)
+  const recordDate = record_date.trim();
+  if (!RECORD_DATE_PATTERN.test(recordDate) || !isCalendarDate(recordDate)) {
     return NextResponse.json({ error: 'record_date must be in YYYY-MM-DD format' }, { status: 400 });
   }
 
@@ -89,7 +102,7 @@ export async function POST(request: NextRequest) {
     .upsert(
       {
         user_id: user.id,
-        record_date,
+        record_date: recordDate,
         ...sanitizedRecordData,
         updated_at: new Date().toISOString(),
       },
@@ -99,17 +112,17 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (result.error) {
-    return NextResponse.json({ error: result.error.message }, { status: 500 });
+    return internalError('POST /api/health/records', result.error, { userId: user.id, table: 'health_records' });
   }
 
   // 連続記録を更新
-  await updateHealthStreak(supabase, user.id, record_date);
+  await updateHealthStreak(supabase, user.id, recordDate);
 
   // user_profilesの体重も更新（最新の記録の場合）
   if ('weight' in sanitizedRecordData && sanitizedRecordData.weight !== null) {
     // #266: new Date() UTC ではなく JST の今日を使用
     const today = todayLocal();
-    if (record_date === today) {
+    if (recordDate === today) {
       await supabase
         .from('user_profiles')
         .update({ weight: sanitizedRecordData.weight })

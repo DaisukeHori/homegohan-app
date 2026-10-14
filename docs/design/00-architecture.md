@@ -34,11 +34,11 @@ PR #797 要件定義 (01/02/03 + 100-scenarios.md) に基づく実装基本設�
 - **LLM**:
   - xAI Grok (チャット・献立提案)
   - Google Gemini (画像認識・OCR)
-  - Anthropic Claude (産業医アドバイス)
-- **エラー監視**: Sentry
-- **APM**: Vercel Speed Insights + Sentry Performance
-- **ログ集約**: Better Stack (旧 Logtail)
-- **Status Page**: status.homegohan.app (Better Stack)
+  - 産業医アドバイス用の LLM は未採用 (#1133 が保留のため。採用が決まったら追記する)
+- **エラー監視**: アプリ内の `app_logs` テーブルに記録し、`/super-admin/logs` で見る。Sentry は採用しない (#1179)
+- **APM**: Vercel Speed Insights のみ (`@vercel/speed-insights` を、送る URL から `?` 以降と招待トークンを消す `SpeedInsightsClient` 経由で `src/app/layout.tsx` に置く。本番ではすでに有効とみられる。`operator/07-audit-monitoring.md` §7.3)。Sentry Performance は採用しない (#1179)
+- **ログ集約**: `app_logs` に構造化ログを集める (Next.js: `src/lib/db-logger.ts`、Edge Functions: `supabase/functions/_shared/db-logger.ts`)。Better Stack は採用しない (#1179)
+- **Status Page**: 設置しない (`status.homegohan.app` は作らない)。死活監視用の `/api/health` は残す (`operator/07-audit-monitoring.md` §9)
 - **CAPTCHA**: Cloudflare Turnstile
 
 ## 2. アーキテクチャ全体図
@@ -72,12 +72,12 @@ PR #797 要件定義 (01/02/03 + 100-scenarios.md) に基づく実装基本設�
                                     │  - pg_cron         │
                                     └────────┬───────────┘
                                              │
-                          ┌──────────────────┼──────────────────┐
-                          │                  │                  │
-                  ┌───────▼──────┐  ┌────────▼───────┐  ┌──────▼──────┐
-                  │ xAI Grok API │  │ Google Gemini  │  │ Anthropic   │
-                  │ (chat/menu)  │  │ (image/OCR)    │  │ Claude      │
-                  └──────────────┘  └────────────────┘  └─────────────┘
+                          ┌──────────────────┤
+                          │                  │
+                  ┌───────▼──────┐  ┌────────▼───────┐
+                  │ xAI Grok API │  │ Google Gemini  │
+                  │ (chat/menu)  │  │ (image/OCR)    │
+                  └──────────────┘  └────────────────┘
 
   ┌─────────────────────────────────────────────────────────┐
   │ Stripe (決済) ←─ Webhook ─→ Next.js /api/webhooks/stripe │
@@ -247,7 +247,7 @@ supabase/
     ├── ...
     ├── family-meal-ai-propose/    # 新規 (個別献立 AI 提案)
     ├── family-shared-menu-generate/  # 新規 (家族全員制約和集合献立)
-    ├── industrial-doctor-advice/  # 新規 (Claude Sonnet)
+    ├── industrial-doctor-advice/  # 保留 (#1133。LLM は未採用)
     ├── stripe-price-sync/         # 新規 (価格変更時の Stripe 連携)
     ├── notify-push/               # 新規 (Expo Push 一斉送信)
     ├── notify-email/              # 新規 (Resend 一斉送信)
@@ -301,7 +301,6 @@ apps/mobile/                       # 既存維持 + 新規追加
 | Resend | 開発者体験良好、bounces webhook 充実、SPF/DKIM 自動設定 |
 | xAI Grok | latency 最速、コスト競争力 |
 | Gemini Flash | 画像認識最安、OCR 品質高 |
-| Claude Sonnet | 健康指導の専門性・安全性 |
 
 ## 8. 環境構成
 

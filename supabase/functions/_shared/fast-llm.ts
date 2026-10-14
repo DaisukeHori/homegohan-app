@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { missingEnvError } from "./missing-env.ts";
 
 const DEFAULT_XAI_BASE_URL = "https://api.x.ai/v1";
 const DEFAULT_FAST_LLM_MODEL = "grok-4-1-fast-non-reasoning";
@@ -29,7 +30,8 @@ export function getFastLLMModel(envName = "FAST_LLM_MODEL"): string {
 export function getFastLLMApiKey(): string {
   const apiKey = String(readDenoEnv("XAI_API_KEY") ?? "").trim();
   if (!apiKey) {
-    throw new Error("Missing XAI_API_KEY");
+    // 変数名は message に入れず、ログにだけ残す (呼び出し元が message を応答の本文や記録に入れうる。#1467)
+    throw missingEnvError(["XAI_API_KEY"]);
   }
   return apiKey;
 }

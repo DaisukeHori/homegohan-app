@@ -1,35 +1,67 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { GoogleGenAI, createUserContent } from "@google/genai";
 import {
   DEFAULT_MEAL_IMAGE_MODEL,
-  deriveMealCoverImage,
+  applyGeneratedDishImage,
   type MealImageDish,
 } from "../_shared/meal-image.ts";
 import {
   buildImageUploadPath,
   extractInlineImageBase64,
   GeneratedContentPart,
+  writeGeneratedDishImage,
 } from "./utils.ts";
+import { checkAiConsent, type AiConsentDecision } from "../_shared/ai-consent-guard.ts";
+import { aiConsentDeniedPayload } from "../_shared/ai-consent.ts";
+import { logMissingEnv, MISSING_ENV_HTTP_STATUS, missingEnvResponseBody } from "../_shared/missing-env.ts";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const STORAGE_BUCKET = "fridge-images";
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const SUPABASE_SERVICE_KEY = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-const GOOGLE_AI_KEY = Deno.env.get("GOOGLE_AI_STUDIO_API_KEY") ?? Deno.env.get("GOOGLE_GEN_AI_API_KEY") ?? "";
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-  throw new Error("Missing SUPABASE_URL or service role key");
+/**
+ * 環境変数は、モジュールの読み込み時ではなくリクエストの処理の中で確かめる (#1467)。
+ * 以前は読み込み時に変数名入りの例外を投げており、関数が起動できないうえ、呼び出し元には実行環境の既定の
+ * エラーしか返らなかった。いまは欠けていればログに変数名を残し、本文は固定の文と code の 503 を返す。
+ * クライアントは最初のリクエストで作り、以後は使い回す (以前の読み込み時の生成と同じく 1 インスタンス 1 個)。
+ */
+let supabase: SupabaseClient;
+let aiClient: GoogleGenAI;
+let initialized = false;
+
+function readServiceConfig(): { url: string; serviceKey: string } | null {
+  const url = Deno.env.get("SUPABASE_URL") ?? "";
+  const serviceKey = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  if (!url || !serviceKey) {
+    // 足りないものだけを名前で残す (鍵は別名のどちらかがあればよいので、両方の名前を出す)
+    logMissingEnv([
+      ...(url ? [] : ["SUPABASE_URL"]),
+      ...(serviceKey ? [] : ["SERVICE_ROLE_JWT", "SUPABASE_SERVICE_ROLE_KEY"]),
+    ]);
+    return null;
+  }
+  return { url, serviceKey };
 }
 
-if (!GOOGLE_AI_KEY) {
-  throw new Error("Missing Google AI key for image generation");
+function readGoogleAiKey(): string | null {
+  const key = Deno.env.get("GOOGLE_AI_STUDIO_API_KEY") ?? Deno.env.get("GOOGLE_GEN_AI_API_KEY") ?? "";
+  if (!key) {
+    logMissingEnv(["GOOGLE_AI_STUDIO_API_KEY", "GOOGLE_GEN_AI_API_KEY"]);
+    return null;
+  }
+  return key;
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-const aiClient = new GoogleGenAI({ apiKey: GOOGLE_AI_KEY });
+function missingEnvResponse(): Response {
+  return new Response(JSON.stringify(missingEnvResponseBody()), {
+    status: MISSING_ENV_HTTP_STATUS,
+    headers: JSON_HEADERS,
+  });
+}
 
 interface MealImageJobRow {
   id: string;
+  /** 献立の持ち主。外国の AI 事業者への提供の同意の判定に使う (T15 / #1154) */
+  user_id: string | null;
   planned_meal_id: string;
   dish_index: number;
   subject_hash: string | null;
@@ -50,12 +82,28 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: "POST only" }), { status: 405, headers: JSON_HEADERS });
   }
 
+  // 認証に service role key を使うので、接続情報は認証より先に確かめる。鍵が空のまま比べると、
+  // Authorization の無い要求 (空文字) と一致して通ってしまう
+  const serviceConfig = readServiceConfig();
+  if (!serviceConfig) return missingEnvResponse();
+
   const authHeader = req.headers.get("Authorization") ?? "";
   const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
   const apiKey = req.headers.get("apikey")?.trim() ?? "";
+  // 名前は以前のモジュール定数と同じにしておく (tests/ai-usage-contract.test.ts が service role の照合をこの名前で見つける)
+  const SUPABASE_SERVICE_KEY = serviceConfig.serviceKey;
   const isInternalCaller = bearerToken === SUPABASE_SERVICE_KEY || apiKey === SUPABASE_SERVICE_KEY;
   if (!isInternalCaller) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: JSON_HEADERS });
+  }
+
+  const googleAiKey = readGoogleAiKey();
+  if (!googleAiKey) return missingEnvResponse();
+
+  if (!initialized) {
+    supabase = createClient(serviceConfig.url, serviceConfig.serviceKey);
+    aiClient = new GoogleGenAI({ apiKey: googleAiKey });
+    initialized = true;
   }
 
   const body = await req.json().catch(() => ({}));
@@ -90,8 +138,10 @@ Deno.serve(async (req) => {
 
 async function processJobs(jobs: MealImageJobRow[]): Promise<ProcessResponse[]> {
   const results: ProcessResponse[] = [];
+  // 同じ利用者のジョブが続くことが多いので、1 回の実行の中では同意の判定を使い回す
+  const consentByUser = new Map<string, Promise<AiConsentDecision>>();
   for (const job of jobs) {
-    const outcome = await processJob(job);
+    const outcome = await processJob(job, consentByUser);
     results.push(outcome);
   }
   return results;
@@ -100,7 +150,7 @@ async function processJobs(jobs: MealImageJobRow[]): Promise<ProcessResponse[]> 
 async function fetchPendingJobs(plannedMealId: string | undefined, limit: number): Promise<MealImageJobRow[]> {
   const query = supabase
     .from("meal_image_jobs")
-    .select("id, planned_meal_id, dish_index, subject_hash, prompt, model, reference_image_urls, attempt_count")
+    .select("id, user_id, planned_meal_id, dish_index, subject_hash, prompt, model, reference_image_urls, attempt_count")
     .eq("status", "pending")
     .order("priority", { ascending: false })
     .order("created_at", { ascending: true })
@@ -118,7 +168,10 @@ async function fetchPendingJobs(plannedMealId: string | undefined, limit: number
   return data ?? [];
 }
 
-async function processJob(job: MealImageJobRow): Promise<ProcessResponse> {
+async function processJob(
+  job: MealImageJobRow,
+  consentByUser: Map<string, Promise<AiConsentDecision>>,
+): Promise<ProcessResponse> {
   const now = new Date().toISOString();
   const lockToken = crypto.randomUUID();
   const leasedUntil = new Date(Date.now() + 2 * 60_000).toISOString();
@@ -142,6 +195,24 @@ async function processJob(job: MealImageJobRow): Promise<ProcessResponse> {
 
   const nextAttempt = (locked.attempt_count ?? 0) + 1;
   const jobRow: MealImageJobRow = locked;
+
+  // 料理の画像の作成は、献立の料理名などを外国の AI 事業者 (Google) へ送る。
+  // 献立の持ち主の同意が無ければ (判定に失敗した場合・持ち主が分からない場合も)、送らずにジョブを取り消す (T15 / #1154。fail-closed)
+  const ownerId = typeof jobRow.user_id === "string" ? jobRow.user_id : "";
+  let consent = consentByUser.get(ownerId);
+  if (!consent) {
+    consent = checkAiConsent(supabase, ownerId);
+    consentByUser.set(ownerId, consent);
+  }
+  const decision = await consent;
+  if (!decision.allowed) {
+    const reason = aiConsentDeniedPayload(decision).body.code;
+    const finalized = await finalizeJob(jobRow.id, lockToken, "cancelled", nextAttempt, reason);
+    if (finalized) {
+      await markDishFailure(jobRow, reason);
+    }
+    return { jobId: jobRow.id, status: "cancelled", message: reason };
+  }
 
   try {
     const { data: meal } = await supabase
@@ -209,26 +280,22 @@ async function processJob(job: MealImageJobRow): Promise<ProcessResponse> {
       return { jobId: jobRow.id, status: "cancelled", message: "dish schema changed" };
     }
 
-    const updatedDish: MealImageDish = {
-      ...latestDish,
-      image_url: publicUrl,
-      image_status: "ready",
-      image_generated_at: new Date().toISOString(),
-      image_error: null,
-      image_source: "generated_ai",
-    };
-    const updatedDishes = [...latestDishes];
-    updatedDishes[jobRow.dish_index] = updatedDish;
-    const cover = deriveMealCoverImage({ dishes: updatedDishes, fallbackMealImageUrl: latestMeal.image_url ?? null });
-
-    const { error: mealUpdateError } = await supabase
-      .from("planned_meals")
-      .update({ dishes: updatedDishes, image_url: cover, updated_at: new Date().toISOString() })
-      .eq("id", meal.id);
-
-    if (mealUpdateError) {
-      throw new Error(`failed to update meal: ${mealUpdateError.message}`);
-    }
+    // 料理に AI の画像を書き、献立のカバーはカバーの持ち主の決まり (isMealCoverAutoReplaceable) で決める (#1487 の整合ゲート)。
+    // 写真・商品・利用者の画像のカバーは置き換えない。カバーが変わらないときは image_url を書かない
+    const currentCover = latestMeal.image_url ?? null;
+    const applied = applyGeneratedDishImage({
+      dishes: latestDishes,
+      dishIndex: jobRow.dish_index,
+      imageUrl: publicUrl,
+      generatedAt: new Date().toISOString(),
+      currentCoverImageUrl: currentCover,
+    });
+    await writeGeneratedDishImage(supabase, {
+      mealId: meal.id,
+      dishes: applied.dishes,
+      currentCover,
+      nextCover: applied.coverChanged ? applied.coverImageUrl : undefined,
+    });
 
     await finalizeJob(jobRow.id, lockToken, "completed", nextAttempt, null, publicUrl);
     return { jobId: jobRow.id, status: "completed", message: publicUrl };

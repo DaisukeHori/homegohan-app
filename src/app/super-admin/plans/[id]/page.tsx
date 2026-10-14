@@ -19,7 +19,10 @@ type Plan = {
   yearly_price_jpy: number | null;
   max_members: number | null;
   stripe_product_id: string | null;
+  /** 月額の Stripe Price ID */
   stripe_price_id: string | null;
+  /** 年額の Stripe Price ID (#1102) */
+  stripe_yearly_price_id: string | null;
   status: string;
   display_order: number;
   trial_days: number;
@@ -391,9 +394,15 @@ export default function PlanDetailPage() {
                 </code>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-slate-500">Price ID:</span>
+                <span className="text-slate-500">Price ID (月額):</span>
                 <code className="font-mono text-xs bg-slate-100 px-2 py-0.5 rounded">
                   {plan.stripe_price_id ? `${plan.stripe_price_id.slice(0, 12)}...` : '未設定'}
+                </code>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">Price ID (年額):</span>
+                <code className="font-mono text-xs bg-slate-100 px-2 py-0.5 rounded">
+                  {plan.stripe_yearly_price_id ? `${plan.stripe_yearly_price_id.slice(0, 12)}...` : '未設定'}
                 </code>
               </div>
             </div>

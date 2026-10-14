@@ -1,6 +1,11 @@
 /**
  * (admin) レイアウト — admin / super_admin ロールガード + サイドバー
  * operator/03-ui-spec.md §3 準拠
+ *
+ * 入れるロールは admin / super_admin / content_moderator。設計書 §3.2 は support / finance / sales にも
+ * 入れる想定だが、広げるのはオーナーの判断待ち。サポートチケット・売上・経理・営業 CRM のリンクは、
+ * いま入れる admin / super_admin にだけ出している。
+ * 入口の画面 (page.tsx) のカードを出すロールは、このサイドバーと同じにする。
  */
 
 export const dynamic = 'force-dynamic';
@@ -75,6 +80,16 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             </Link>
           )}
 
+          {/* 組織管理 */}
+          {isAdmin && (
+            <Link
+              href="/admin/organizations"
+              className="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors text-sm font-medium"
+            >
+              <span>組織管理</span>
+            </Link>
+          )}
+
           {/* モデレーション */}
           {(isAdmin || isContentModerator) && (
             <Link
@@ -82,6 +97,46 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               className="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors text-sm font-medium"
             >
               <span>モデレーション</span>
+            </Link>
+          )}
+
+          {/* サポートチケット */}
+          {isAdmin && (
+            <Link
+              href="/admin/support"
+              className="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors text-sm font-medium"
+            >
+              <span>サポートチケット</span>
+            </Link>
+          )}
+
+          {/* 売上・経理 */}
+          {isAdmin && (
+            <Link
+              href="/admin/finance"
+              className="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors text-sm font-medium"
+            >
+              <span>売上・経理</span>
+            </Link>
+          )}
+
+          {/* 営業 CRM */}
+          {isAdmin && (
+            <Link
+              href="/admin/sales"
+              className="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors text-sm font-medium"
+            >
+              <span>営業 CRM</span>
+            </Link>
+          )}
+
+          {/* お知らせ */}
+          {isAdmin && (
+            <Link
+              href="/admin/announcements"
+              className="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors text-sm font-medium"
+            >
+              <span>お知らせ</span>
             </Link>
           )}
 

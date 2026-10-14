@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { createLogger, generateRequestId } from '@/lib/db-logger'
+import { internalError } from '@/lib/api/errors'
 import { NextResponse } from 'next/server'
 import { fromUserProfile } from '@/lib/converter'
 import { calculateNutritionTargets } from '@homegohan/core'
@@ -48,13 +49,12 @@ export async function GET() {
       .single()
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return internalError('GET /api/profile', error, { userId: user.id, table: 'user_profiles' })
     }
 
     return NextResponse.json(data)
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return internalError('GET /api/profile', error)
   }
 }
 
@@ -121,8 +121,7 @@ export async function POST(request: Request) {
       .single()
 
     if (error) {
-      logger.error('Profile update error', error);
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return internalError('POST /api/profile', error, { userId: user.id, requestId, table: 'user_profiles' })
     }
 
     // 栄養目標に影響するフィールドが更新された場合、再計算を試みる
@@ -133,9 +132,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(data)
   } catch (error: unknown) {
-    logger.error('API Error', error);
-    const message = error instanceof Error ? error.message : 'Unknown error'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return internalError('POST /api/profile', error, { requestId })
   }
 }
 
@@ -183,7 +180,7 @@ export async function PUT(request: Request) {
       .single()
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return internalError('PUT /api/profile', error, { userId: user.id, requestId, table: 'user_profiles' })
     }
 
     // 栄養目標に影響するフィールドが更新された場合、再計算を試みる
@@ -194,9 +191,7 @@ export async function PUT(request: Request) {
 
     return NextResponse.json(data)
   } catch (error: unknown) {
-    logger.error('API Error (PUT /api/profile)', error);
-    const message = error instanceof Error ? error.message : 'Unknown error'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return internalError('PUT /api/profile', error, { requestId })
   }
 }
 

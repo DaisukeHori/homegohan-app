@@ -111,7 +111,7 @@ export default function SalesLeadsPage() {
               </button>
             </div>
             <Link
-              href="/sales/new"
+              href="/admin/sales/new"
               className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
             >
               + 新規リード
@@ -163,7 +163,7 @@ export default function SalesLeadsPage() {
                   {leadsByStage[stage].map((lead) => (
                     <Link
                       key={lead.id}
-                      href={`/sales/${lead.id}`}
+                      href={`/admin/sales/${lead.id}`}
                       className="block bg-white rounded border border-gray-200 p-3 hover:shadow-sm transition-shadow"
                     >
                       <p className="text-sm font-medium text-gray-900 truncate">{lead.company_name}</p>
@@ -221,7 +221,7 @@ export default function SalesLeadsPage() {
                         {new Date(lead.updated_at).toLocaleDateString('ja-JP')}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <Link href={`/sales/${lead.id}`} className="text-blue-600 hover:text-blue-800 text-sm">
+                        <Link href={`/admin/sales/${lead.id}`} className="text-blue-600 hover:text-blue-800 text-sm">
                           詳細
                         </Link>
                       </td>

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { LegalDocumentMeta } from "@/components/legal/LegalDocumentMeta";
+import { getSupportEmail } from "@/lib/site-config";
 
 // #1174 (同意の前提): 未ログインでも読める公開ページ。サインアップ画面・LP フッターの同意リンクと、
 // ストア審査に出すプライバシー URL の着地点なので、(main) グループ (ログイン後の画面。アプリ用のナビ付き) の外に置く。
@@ -22,7 +24,8 @@ export default function PrivacyPage() {
       </header>
 
       <main className="p-6 max-w-3xl mx-auto text-gray-700 leading-relaxed [&_h3]:mt-8 [&_h3]:mb-2 [&_h3]:text-lg [&_h3]:font-bold [&_h3]:text-gray-900 [&_p]:mb-4 [&_ul]:mb-4 [&_ul]:list-disc [&_ul]:pl-6 [&_li]:mb-1">
-        <p className="text-sm text-gray-500 mb-8">最終更新日: 2025年1月1日</p>
+        {/* 版・施行日は packages/shared の LEGAL_DOCUMENTS (同意の記録に使う版と同じ値) から出す */}
+        <LegalDocumentMeta type="privacy_policy" />
 
         <p>Homegohan Inc.（以下，「当社」といいます。）は，本ウェブサイト上で提供するサービス（以下,「本サービス」といいます。）における，ユーザーの個人情報の取扱いについて，以下のとおりプライバシーポリシー（以下，「本ポリシー」といいます。）を定めます。</p>
 
@@ -56,7 +59,7 @@ export default function PrivacyPage() {
         <p>本ポリシーに関するお問い合わせは，以下の窓口までお願いいたします。</p>
         <p>
           Homegohan Inc. 個人情報担当<br />
-          E-mail: support@homegohan.jp
+          E-mail: {getSupportEmail()}
         </p>
       </main>
 

@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect } from "react";
+import { reportBoundaryError, toDisplayErrorCode } from "@/lib/report-boundary-error";
 
+/**
+ * ルートの layout 自体が例外を投げたときだけ出る、最後の受け皿。
+ * 通常の画面の例外は、より内側の error.tsx (#1207) が受けるので、ここまでは届かない。
+ * ルートの layout が壊れているので、スタイルは globals.css に頼らず inline で書く。
+ */
 export default function GlobalError({
   error,
   reset,
@@ -10,9 +16,11 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    // エラーをコンソールに記録（本番では app_logs 等に送信）
-    console.error("[GlobalError]", error);
+    // コンソールとサーバーログ (app_logs) に記録する (#1207)
+    reportBoundaryError("global", error);
   }, [error]);
+
+  const errorCode = toDisplayErrorCode(error.digest);
 
   return (
     <html lang="ja">
@@ -64,9 +72,9 @@ export default function GlobalError({
             }}
           >
             しばらく時間をおいてから再度お試しください。
-            {error.digest && (
+            {errorCode && (
               <span style={{ display: "block", marginTop: 8, fontSize: 12 }}>
-                エラーコード: {error.digest}
+                エラーコード: {errorCode}
               </span>
             )}
           </p>

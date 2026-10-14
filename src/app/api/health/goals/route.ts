@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 import { sanitizeHealthGoalCreate } from '@/lib/health-payloads';
 import { calculateGoalProgressPercentage } from '@/lib/health-goal-progress';
 import { findGoalTypeDef, isWithinGoalRange } from '@/lib/health-goal-types';
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
   const { data, error } = await query;
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/health/goals', error, { userId: user.id, table: 'health_goals' });
   }
 
   return NextResponse.json({ goals: data });
@@ -122,7 +123,7 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/health/goals', error, { userId: user.id, table: 'health_goals' });
   }
 
   // user_profilesの目標も更新

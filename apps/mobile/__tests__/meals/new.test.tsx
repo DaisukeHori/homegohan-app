@@ -8,8 +8,10 @@ import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
 
 // ─── モック ─────────────────────────────────────────────
 jest.mock('expo-router', () => ({
-  router: { back: jest.fn(), push: jest.fn(), replace: jest.fn() },
+  router: { back: jest.fn(), push: jest.fn(), replace: jest.fn(), canGoBack: jest.fn(() => true) },
   useLocalSearchParams: jest.fn(() => ({})),
+  // 同意の案内から同意画面へ移るときに、この画面 (modal) を閉じるかを決めるのに使う (T15 / #1154)
+  useNavigation: jest.fn(() => ({ isFocused: () => true })),
 }));
 
 jest.mock('@expo/vector-icons', () => ({

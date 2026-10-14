@@ -3,6 +3,11 @@
  *
  * /api/notification-preferences の GET / PATCH ルートの単体テスト。
  * Supabase と Next.js の server utils は全てモックで差し替える。
+ *
+ * #1144: data_share_enabled (旧「トレーナーと共有」) は、Web とアプリの設定画面から外したが、
+ * 旧ビルドのアプリがまだ読み書きするので、API の項目としては残している。ここでは、その API の契約
+ * (読める / 書ける / boolean 以外は 400 / 送っていない項目は書き換えない) が変わっていないことを確かめる。
+ * 保存済みの値は利用者の同意ではない (route.ts のコメント参照)。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -89,7 +94,7 @@ describe('GET /api/notification-preferences', () => {
     });
   });
 
-  it('DB に保存済みの値を返す', async () => {
+  it('DB に保存済みの値を返す (data_share_enabled は旧ビルドのアプリ向けに、そのまま返す。#1144)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
     mockMaybeSingle.mockResolvedValue({
       data: {
@@ -105,6 +110,19 @@ describe('GET /api/notification-preferences', () => {
     const body = await res.json();
     expect(body.settings.notifications_enabled).toBe(false);
     expect(body.settings.data_share_enabled).toBe(true);
+  });
+
+  it('data_share_enabled が null の行は、既定値 (false) として返す (#1144)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
+    mockMaybeSingle.mockResolvedValue({
+      data: { notifications_enabled: true, auto_analyze_enabled: true, data_share_enabled: null },
+      error: null,
+    });
+
+    const res = await GET(makeRequest('GET'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.settings.data_share_enabled).toBe(false);
   });
 });
 
@@ -179,5 +197,59 @@ describe('PATCH /api/notification-preferences', () => {
       expect.objectContaining({ user_id: 'user-1', notifications_enabled: false }),
       { onConflict: 'user_id' },
     );
+  });
+
+  // ── #1144: data_share_enabled は画面から外したが、旧ビルドのアプリ向けに API は残している ──────────
+
+  it('data_share_enabled だけを送ると、その項目だけを upsert する (旧ビルド互換。送っていない項目は書き換えない)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
+    mockSingle.mockResolvedValueOnce({
+      data: { notifications_enabled: true, auto_analyze_enabled: true, data_share_enabled: true },
+      error: null,
+    });
+
+    const res = await PATCH(makeRequest('PATCH', { data_share_enabled: true }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.settings.data_share_enabled).toBe(true);
+
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    const [row, options] = mockUpsert.mock.calls[0];
+    expect(row).toEqual(expect.objectContaining({ user_id: 'user-1', data_share_enabled: true }));
+    expect(row).not.toHaveProperty('notifications_enabled');
+    expect(row).not.toHaveProperty('auto_analyze_enabled');
+    expect(options).toEqual({ onConflict: 'user_id' });
+  });
+
+  it('data_share_enabled が boolean 以外なら 400 を返し、何も書かない (旧ビルド向けの入力検証も変えない)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
+
+    for (const value of ['yes', 1, null]) {
+      const res = await PATCH(makeRequest('PATCH', { data_share_enabled: value }));
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe('data_share_enabled must be boolean');
+    }
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+
+  it('通知・自動解析だけを送っても、data_share_enabled は書き換えない (新しい画面はこの項目を送らない)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
+    mockSingle.mockResolvedValueOnce({
+      data: { notifications_enabled: false, auto_analyze_enabled: false, data_share_enabled: true },
+      error: null,
+    });
+
+    const res = await PATCH(makeRequest('PATCH', { notifications_enabled: false, auto_analyze_enabled: false }));
+    expect(res.status).toBe(200);
+
+    const [row] = mockUpsert.mock.calls[0];
+    expect(row).toEqual(
+      expect.objectContaining({ user_id: 'user-1', notifications_enabled: false, auto_analyze_enabled: false }),
+    );
+    expect(row).not.toHaveProperty('data_share_enabled');
+    // 既存の値 (旧画面で true にしたもの) は、そのまま返る。ここで同意として扱うことはしない
+    const body = await res.json();
+    expect(body.settings.data_share_enabled).toBe(true);
   });
 });

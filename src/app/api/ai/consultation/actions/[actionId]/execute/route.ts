@@ -1,7 +1,11 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { runConsultationAction } from '@/lib/ai/consultation-action-executor';
+import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
+import { AI_SENDING_ACTION_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';
+import { aiDailyLimitResponse } from '@/lib/plan/entitlements';
+import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 // 指定日付の user_daily_meals を取得または作成するヘルパー関数
 // NOTE: 現状このファイル内では未使用（resolveExistingTargetSlots が同等の処理を担う）。
@@ -42,8 +46,16 @@ export async function POST(
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  // #1148: AI 相談の緊急停止スイッチ (feature_flags の ai_chat_enabled。通常は ON)。回数の枠を使わせないよう、レート制限より前に見る
+  const unavailable = await aiChatDisabledResponse(user.id);
+  if (unavailable) return unavailable;
+
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+  // #1177 AI 利用回数は、ここ (アクションの実行) では記録しない。AI を使うアクション (献立の生成・料理画像) だけを、
+  // runConsultationAction (src/lib/ai/consultation-action-executor.ts) が AI へ送る直前に記録する
+  // (献立の削除・買い物リストの操作など、AI を使わないアクションは記録しない)
 
   try {
     // actionIdはメッセージIDまたはアクションログIDの可能性がある
@@ -86,12 +98,25 @@ export async function POST(
       return NextResponse.json({ error: 'Action already processed' }, { status: 400 });
     }
 
+    // 献立の生成のアクションは、利用者のデータを外国の AI 事業者へ送る。同意が無ければ送らずに止める
+    // (T15 / #1154。403 AI_CONSENT_REQUIRED)。アクションは pending のまま残すので、同意したあとにもう一度実行できる
+    if (AI_SENDING_ACTION_TYPES.has(action.action_type)) {
+      const aiConsentDenied = await requireAiConsent(supabase, user.id);
+      if (aiConsentDenied) return aiConsentDenied;
+    }
+
     // #1047 F2-21: アクション実行の中核ロジックは src/lib/ai/consultation-action-executor.ts
     // に抽出済み（messages/route.ts からも self-fetch ではなく直接呼び出す）。
     const executionResult = await runConsultationAction(supabase, user, action);
 
     if (executionResult.unknownActionType) {
       return NextResponse.json({ error: 'Unknown action type' }, { status: 400 });
+    }
+
+    // 今日の AI の利用回数の上限 (#1149) に達して、献立の生成をしなかった。アクションは pending のまま残す
+    // (明日もう一度実行できる。同意が無くて止めたときと同じ扱い)
+    if (executionResult.aiDailyLimit) {
+      return aiDailyLimitResponse(executionResult.aiDailyLimit);
     }
 
     const { success, result } = executionResult;
@@ -113,8 +138,7 @@ export async function POST(
     });
 
   } catch (error: any) {
-    console.error('Action execution error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/consultation/actions/[actionId]/execute', error, { userId: user.id });
   }
 }
 
@@ -178,7 +202,6 @@ export async function DELETE(
     return NextResponse.json({ success: true });
 
   } catch (error: any) {
-    console.error('Action rejection error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('DELETE /api/ai/consultation/actions/[actionId]/execute', error, { userId: user.id });
   }
 }

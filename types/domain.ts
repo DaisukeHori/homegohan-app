@@ -625,7 +625,7 @@ export type MealMode = 'cook' | 'quick' | 'buy' | 'out' | 'skip' | 'ai_creative'
  * 
  * 【変更禁止の理由】
  *   1. DBの planned_meals.dishes (JSONB) にこの形式で保存されている
- *   2. Edge Functions (generate-weekly-menu-v3 等) がこの形式で出力している
+ *   2. Edge Functions (generate-menu-v5 / generate-menu-v4。_shared/nutrition-calculator.ts・_shared/save-meal.ts) がこの形式で出力している
  *   3. UI (weekly/page.tsx 等) がこの形式を参照している
  *   4. マイグレーションを行わずに変更すると、新旧データの不整合が発生する
  * 

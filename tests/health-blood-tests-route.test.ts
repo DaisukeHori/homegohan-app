@@ -36,6 +36,25 @@ vi.mock('@/lib/rate-limit', () => ({
   rateLimitExceededResponse: vi.fn(),
 }));
 
+// 構造化ログ (#1172): DB エラーのとき internalError() が app_logs へ記録する。DB へは書かず、呼び出しだけ見る
+const mockLogError = vi.fn();
+const mockWithUser = vi.fn(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: mockLogError,
+}));
+vi.mock('@/lib/db-logger', () => ({
+  createLogger: vi.fn(() => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: mockLogError,
+    withUser: mockWithUser,
+  })),
+  generateRequestId: vi.fn(() => 'req_test'),
+}));
+
 const { GET } = await import('@/app/api/health/blood-tests/route');
 
 const user = { id: 'user-1' };
@@ -236,13 +255,27 @@ describe('GET /api/health/blood-tests: クランプ以外の挙動は変えな�
     expect(reviewBuilder.eq).toHaveBeenCalledWith('user_id', 'user-1');
   });
 
-  it('DB エラーのときは 500 とメッセージを返し、経年レビューは取りに行かない', async () => {
+  it('DB エラーのときは 500 と汎用メッセージを返し (生のエラー文は返さない)、経年レビューは取りに行かない', async () => {
     setupQueries({ results: { data: null, error: { message: 'boom' } } });
 
     const { res, json } = await callGet('?limit=20');
 
     expect(res.status).toBe(500);
-    expect(json).toEqual({ error: 'boom' });
+    // #1172: DB の生のエラー文 ('boom') は本文に出さない。以前は { error: 'boom' } を返していた
+    expect(json).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+    expect(JSON.stringify(json)).not.toContain('boom');
     expect(mockFrom).toHaveBeenCalledTimes(1);
+  });
+
+  it('DB エラーの元の文面は、利用者 ID 付きで構造化ログにだけ残す (#1172)', async () => {
+    setupQueries({ results: { data: null, error: { message: 'boom', code: '42501' } as never } });
+
+    await callGet('?limit=20');
+
+    expect(mockWithUser).toHaveBeenCalledWith('user-1');
+    expect(mockLogError).toHaveBeenCalledTimes(1);
+    const [, loggedError, metadata] = mockLogError.mock.calls[0];
+    expect((loggedError as Error).message).toBe('boom');
+    expect(metadata).toMatchObject({ table: 'blood_test_results', error_code: '42501' });
   });
 });

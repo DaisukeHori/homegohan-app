@@ -1,5 +1,7 @@
 // src/lib/emails/membership/org-transfer-proposed.ts
-import type { EmailEnvelope } from '@/lib/emails/send';
+import type { EmailEnvelope } from '../envelope';
+import { emailSignature } from '../common';
+import { getEmailFrom, getSupportEmail } from '@/lib/site-config';
 
 export interface OrgTransferProposedVars {
   to_email: string;
@@ -18,8 +20,9 @@ export function renderOrgTransferProposedEmail(vars: OrgTransferProposedVars): E
     : '';
 
   return {
+    template: 'org_transfer_proposed',
     to: vars.to_email,
-    from: 'ほめゴハン <noreply@homegohan.app>',
+    from: getEmailFrom(),
     subject: `【ほめゴハン】組織オーナー譲渡の提案を受信しました`,
     text: `${greeting} 様
 
@@ -32,11 +35,9 @@ ${vars.accept_url}
 承諾しない場合、この提案は自動的に期限切れとなります。
 
 心当たりのない場合はこのメールを無視してください。
-不正利用のおそれがある場合は support@homegohan.app までご連絡ください。
+不正利用のおそれがある場合は ${getSupportEmail()} までご連絡ください。
 
-─────────────────
-ほめゴハン
-https://homegohan.app
+${emailSignature()}
 `,
   };
 }

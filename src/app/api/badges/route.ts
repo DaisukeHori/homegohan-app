@@ -1,7 +1,9 @@
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
+import { consecutiveDayStreak } from '@/lib/jst-day-ranges';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { isAwardableBadgeCode } from '@/lib/badges/awardable';
 import { NextResponse } from 'next/server';
+import { internalError } from '@/lib/api/errors';
 
 export async function GET(request: Request) {
   const supabase = await createClient();
@@ -89,20 +91,8 @@ export async function GET(request: Request) {
     // ユニークな日付を取得
     const uniqueDates = [...new Set(completedDaysRes.data?.map(d => d.day_date) || [])];
     
-    // 連続日数を計算
-    let streak = 0;
-    const today = new Date();
-    for (let i = 0; i < uniqueDates.length; i++) {
-      const checkDate = new Date(today);
-      checkDate.setDate(checkDate.getDate() - i);
-      const checkDateStr = checkDate.toISOString().split('T')[0];
-      
-      if (uniqueDates.includes(checkDateStr)) {
-        streak++;
-      } else if (i > 0) {
-        break;
-      }
-    }
+    // 連続日数を計算 (JST の今日からさかのぼる。#1433。UTC の暦日だと JST 0:00〜8:59 に今日の記録を数えられなかった)
+    const streak = consecutiveDayStreak(uniqueDates);
 
     // 4. 未獲得バッジの判定
     const earnedCandidates: typeof allBadges = [];
@@ -218,7 +208,6 @@ export async function GET(request: Request) {
     });
 
   } catch (error: any) {
-    logger.error('Badge API error', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/badges', error);
   }
 }

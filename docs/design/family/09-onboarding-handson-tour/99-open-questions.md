@@ -25,7 +25,7 @@
 - ✅ **Q7 target_kcal_per_day**: カラム不存在を確認。実装は既存 `src/lib/build-nutrition-input.ts:26-50` の `buildNutritionCalculatorInput()` + `calculateNutritionTargets()` を流用。新規 helper 不要。実カラム名は `age`(整数) / `height`(NUMERIC) / `weight`(NUMERIC) を使う (`birth_date` / `height_cm` / `weight_kg` は不存在)
 - ✅ **Q9 Mobile V4GenerateModal**: 実装済 (`apps/mobile/src/components/menu/V4GenerateModal.tsx` 642 行)。Web (`src/components/ai-assistant/V4GenerateModal.tsx` 556 行) と独立した実装。両方に `mode='sandbox'` prop を追加する
 - ✅ **Q10 Mobile BadgesPage**: 実装済 (`apps/mobile/app/badges/index.tsx` 109 行、Expo Router `/badges` 対応)。Web (`src/app/(main)/badges/page.tsx` 294 行) と独立。両方を改修。Mobile 版はフィルタ/ハイライト/アニメーション機能が Web 比で簡素なため、`tutorialMode` prop と `badge-card-{code}` testID 追加に加えハイライト演出を Mobile 側にも追加
-- ✅ **Q8 Analytics 配信先**: PostHog で確定。既存 SDK 未導入、設計書 §22-analytics.md §4 は既に PostHog 前提のコードサンプル(`posthog-js` + `posthog-react-native`)を持つ。導入物 / 環境変数:
+- ✅ **Q8 Analytics 配信先**: PostHog で確定 (**2026-10-08 に不採用へ変更 (オーナー判断 #1166)。§7 の議論履歴を参照**)。既存 SDK 未導入、設計書 §22-analytics.md §4 は既に PostHog 前提のコードサンプル(`posthog-js` + `posthog-react-native`)を持つ。導入物 / 環境変数:
   - `posthog-js` (Web、`NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST`)
   - `posthog-react-native` (Mobile、`EXPO_PUBLIC_POSTHOG_KEY`)
   - 設定: `person_profiles: 'identified_only'` + `autocapture: false`(Cookie 同意 + PII 要件適合、cross/08-legal-compliance §13)
@@ -284,6 +284,7 @@
 | 2026-05-08 | Q10 Mobile BadgesPage | 実装済 → Web/Mobile 両方改修 |
 | 2026-05-08 | Q8 Analytics 配信先 | PostHog 採用 (既存基盤なし、設計書 §22 既に PostHog 前提) |
 | 2026-05-08 | Q16 アプリストア審査 | リスク低、Phase 1 着手可。Apple 2.3.1 / Google Misrepresentation の双方で「Notes for Review 記載 + ストア説明文明記」で対応可、業界標準慣行に合致。Phase 4 前にリスク低減策 5 項目 |
+| 2026-10-08 | Q8 Analytics 配信先 (上の PostHog 採用を取り消し) | PostHog は不採用 (オーナー判断 #1166)。Web・モバイルから SDK を外した。`fireAnalytics` は送り先を持たず何も送らない。詳細は operator/07 §15 |
 
 ---
 

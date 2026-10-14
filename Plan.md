@@ -14,8 +14,8 @@
 - `DESIGN.md`
   - **V4パイプライン図**（コンテキスト→プロンプト→日単位生成→栄養→保存）
   - **Edge Function: generate-menu-v4**（日単位並列生成/対象スロットのみ保存）
-- V3実装（コードが真実）
-  - `supabase/functions/generate-weekly-menu-v3/index.ts`
+- V3実装（当時のコード。`generate-weekly-menu-v3` はリポジトリから削除済み (コミット `f60a43c0`) で、本番からも #1452 で削除済み。読むときは git の履歴から。いまの献立生成は `generate-menu-v5`、機能フラグで `generate-menu-v4`）
+  - `supabase/functions/generate-weekly-menu-v3/index.ts`（削除済み）
     - `triggerNextStep()` / `_continue` / `SERVICE_ROLE_JWT` の扱い
     - Step1→Step2→Step3 の分割と `current_step` / `generated_data` の利用
     - `reviewWeeklyMenus` / `regenerateMealForIssue` / swap適用

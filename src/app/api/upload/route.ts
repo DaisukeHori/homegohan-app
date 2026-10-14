@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createLogger, generateRequestId } from "@/lib/db-logger";
+import { checkRateLimit, rateLimitExceededResponse } from "@/lib/rate-limit";
 import { userScopedStoragePath } from "@/lib/storage-paths";
 
 
@@ -49,12 +51,24 @@ function detectMimeByMagicBytes(buffer: Uint8Array): string | null {
 
 export async function POST(request: Request) {
   const supabase = await createClient();
-
+  const logger = createLogger('POST /api/upload', generateRequestId());
+  // 認証できたあとはユーザー ID 付きのログにする (認証前の失敗はユーザーなし)
+  let log: Pick<typeof logger, 'error'> = logger;
 
   try {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    log = logger.withUser(user.id);
+
+    // 認証の直後、本文 (最大 10MB) を読み込む前に、ユーザー単位の回数制限を判定する (#1164)。
+    // 先に判定するのは、断るリクエストの本文を読み込んで処理を無駄に走らせないため。
+    // key は認証で確定した user.id だけ (リクエストの値は使わない)。401 は上で返しているので枠を使わない。
+    // 判定できないとき (Redis 障害) は例外がそのまま下の catch に届き、500 で断る (fail-close)
+    const rateLimit = await checkRateLimit(user.id, 'upload');
+    if (!rateLimit.success) {
+      return rateLimitExceededResponse(rateLimit);
     }
 
     const formData = await request.formData();
@@ -116,7 +130,12 @@ export async function POST(request: Request) {
       });
 
     if (uploadError) {
-      console.error('Upload error:', uploadError);
+      // 詳細は構造化ログに残し、レスポンスには汎用メッセージだけ返す (#1172)
+      log.error('Upload to storage failed', uploadError, {
+        path: fileName,
+        content_type: detectedMime,
+        size: file.size,
+      });
       return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
     }
 
@@ -127,8 +146,9 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ url: publicUrl });
 
-  } catch (error: any) {
-    console.error('Upload API error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    // 回数制限の判定に失敗した例外 (Redis 障害など) もここに届く。内部のエラー文はレスポンスに載せない (#1172)
+    log.error('Upload API error', error);
+    return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
   }
 }

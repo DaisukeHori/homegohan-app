@@ -2,6 +2,10 @@ import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiDailyLimitSkippedField, consumeAiUsage } from '@/lib/plan/entitlements';
+import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
+import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 function stripMarkdownCodeBlock(text: string): string {
   let cleaned = text.trim();
@@ -60,6 +64,10 @@ export async function POST(
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  // #1148: AI 相談の緊急停止スイッチ (feature_flags の ai_chat_enabled。通常は ON)。回数の枠を使わせないよう、レート制限より前に見る
+  const unavailable = await aiChatDisabledResponse(user.id);
+  if (unavailable) return unavailable;
+
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
@@ -88,8 +96,16 @@ export async function POST(
 
     let summaryData = null;
 
+    // 要約は会話を外国の AI 事業者に送って作る。同意が無ければ (判定に失敗した場合も) 要約を作らずに閉じる (T15 / #1154)
+    const hasConversation = Boolean(messages && messages.length > 1);
+    const aiConsent = hasConversation ? await checkUserAiConsent(supabase, user.id) : null;
+
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。要約を AI へ送る直前 (同意などの判定のあと) に、操作 1 回につき 1 回数える。
+    // 上限に達していれば、要約を作らずに閉じる (応答の aiSkipped: AI_DAILY_LIMIT で画面に知らせる。判定に失敗したときは止めない)
+    const aiUsage = messages && hasConversation && aiConsent?.allowed ? await consumeAiUsage(user.id, 'consultation') : null;
+
     // メッセージがある場合のみ要約を生成
-    if (messages && messages.length > 1) {
+    if (messages && hasConversation && aiConsent?.allowed && aiUsage?.allowed) {
       const importantMessages = messages.filter((m: any) => m.is_important);
       const conversationText = messages
         .filter((m: any) => m.role !== 'system')
@@ -206,10 +222,11 @@ ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n
     return NextResponse.json({
       success: true,
       summary: summaryData,
+      ...aiConsentSkippedField(aiConsent),
+      ...aiDailyLimitSkippedField(aiUsage),
     });
 
   } catch (error: any) {
-    console.error('Session close error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/consultation/sessions/[sessionId]/close', error, { userId: user.id });
   }
 }

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EmailSendError } from '@/lib/emails/send-result';
 import { createFakeServiceRole, leadingUsers, type FakeServiceRole } from '../../operator/membership/fake-service-role';
 
 // POST /api/family/representative-transfer/[id]/accept の完了メール (#1110) とエラーコードの変換。
@@ -231,6 +232,59 @@ describe('POST /api/family/representative-transfer/[id]/accept: 完了メール 
     });
     // ログに宛先のメールアドレスを残さない
     expect(JSON.stringify(mocks.logError.mock.calls)).not.toContain('@example.com');
+  });
+
+  it('sendEmail が reject せず ok: false の結果を返した宛先も失敗として数え、200 のまま、ほかの宛先には送り、構造化ログに残す (#1193)', async () => {
+    const sendError = new EmailSendError('rate_limit_exceeded', 'EMAIL_SEND_FAILED: Too many requests', 429, 4, true);
+    mocks.sendEmail.mockImplementation(async (envelope: SentEmail) => {
+      if (envelope.to === OLD_EMAIL) return { ok: false, id: null, attempts: 4, skipped: false, error: sendError };
+      return { ok: true, id: 'email-ok', attempts: 1, skipped: false, error: null };
+    });
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(2);
+    expect(mocks.withUser).toHaveBeenCalledWith(NEW_REP_ID);
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+    expect(mocks.logError).toHaveBeenCalledWith(expect.any(String), sendError, {
+      proposal_id: PROPOSAL_ID,
+      failed_count: 1,
+    });
+    // ログに宛先のメールアドレスを残さない
+    expect(JSON.stringify(mocks.logError.mock.calls)).not.toContain('@example.com');
+  });
+
+  it('reject された宛先と ok: false の宛先が混ざっても、失敗の件数を合計して 1 件のログにまとめる (#1193)', async () => {
+    const thrown = new Error('EMAIL_SEND_FAILED: unexpected');
+    const resultError = new EmailSendError('application_error', 'EMAIL_SEND_FAILED: Service Unavailable', 503, 4, true);
+    mocks.sendEmail.mockImplementation(async (envelope: SentEmail) => {
+      if (envelope.to === OLD_EMAIL) throw thrown;
+      if (envelope.to === NEW_EMAIL) return { ok: false, id: null, attempts: 4, skipped: false, error: resultError };
+      return { ok: true, id: 'email-ok', attempts: 1, skipped: false, error: null };
+    });
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+    const [, reason, metadata] = mocks.logError.mock.calls[0];
+    expect([thrown, resultError]).toContain(reason);
+    expect(metadata).toEqual({
+      proposal_id: PROPOSAL_ID,
+      failed_count: 2,
+    });
+  });
+
+  it('RESEND_API_KEY が無くて送らなかった (skipped) 宛先は、失敗に数えず、エラーログも残さない (#1193)', async () => {
+    const skippedError = new EmailSendError('not_configured', 'EMAIL_NOT_CONFIGURED: RESEND_API_KEY が未設定', null, 0, false);
+    mocks.sendEmail.mockResolvedValue({ ok: false, id: null, attempts: 0, skipped: true, error: skippedError });
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(2);
+    expect(mocks.logError).not.toHaveBeenCalled();
   });
 
   it('旧代表者のアドレスを取得できなくても 200 を返し、新代表者には送り、警告ログに残す', async () => {

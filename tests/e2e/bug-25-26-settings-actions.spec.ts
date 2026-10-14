@@ -1,9 +1,11 @@
 /**
  * Bug-25 (#44): 「データをエクスポート」ボタンが完全に未実装 (onClick ハンドラ無し)
  * Bug-26 (#45): 「トレーナーと共有」がクリック不可な <div> 要素として実装されている
+ * #1144: 「トレーナーと共有」は、トレーナーなどに共有する機能が無いまま項目だけが画面にあったため、設定画面から外した
  *
- * 確認: 両ボタンが button 要素で、aria-label を持ち、エクスポートは API へ GET、
- *       トレーナー共有は alert() を発火する。
+ * 確認: エクスポートのボタンは button 要素で、API へ GET してファイルを保存する。
+ *       「トレーナーと共有」の項目 (Bug-26 の修正で押すと「近日公開予定」を出すようにしていたもの) は、
+ *       設定画面に出ない。
  */
 import { test, expect } from "./fixtures/fresh-user";
 
@@ -39,18 +41,16 @@ test.describe("settings data & privacy actions", () => {
     expect(exported.data.user_profiles[0].id).toBe(exported.user_id);
   });
 
-  test("trainer share button shows coming-soon alert (not a div)", async ({ tourPendingUser }) => {
+  test("trainer share entry is not shown on the settings page (#1144)", async ({ tourPendingUser }) => {
     await tourPendingUser.goto("/settings");
 
-    const trainerButton = tourPendingUser.getByRole("button", { name: /トレーナーと共有/ });
-    await expect(trainerButton).toBeVisible();
+    // 設定画面が描画されてから「無い」ことを確かめる (読み込み前に空振りで通らないよう、隣の項目を先に待つ)
+    await expect(tourPendingUser.getByRole("button", { name: /データをエクスポート/ })).toBeVisible();
+    await expect(tourPendingUser.getByRole("button", { name: /献立をCSVエクスポート/ })).toBeVisible();
 
-    let dialogMessage: string | null = null;
-    tourPendingUser.once("dialog", async (dialog) => {
-      dialogMessage = dialog.message();
-      await dialog.dismiss();
-    });
-    await trainerButton.click();
-    await expect.poll(() => dialogMessage, { timeout: 5_000 }).toContain("近日公開予定");
+    await expect(tourPendingUser.getByRole("button", { name: /トレーナーと共有/ })).toHaveCount(0);
+    await expect(tourPendingUser.getByText(/トレーナー/)).toHaveCount(0);
+    // 保存済みの値を表していた「記録ON / 記録OFF」の表示も出ない
+    await expect(tourPendingUser.getByText(/記録(ON|OFF)/)).toHaveCount(0);
   });
 });

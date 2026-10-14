@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
 // Resend モック (EmailEnvelopeSchema を使うために send.ts を import すると resend が読み込まれるため)
 vi.mock('resend', () => {
@@ -15,9 +15,10 @@ import {
 } from '@/lib/emails/support/ticket-reply';
 import type { TicketReplyEmailVars } from '@/lib/emails/support/ticket-reply';
 import { EmailEnvelopeSchema } from '@/lib/emails/send';
+import { DEFAULT_EMAIL_FROM } from '@/lib/site-config';
 
 const ticketId = 'a1b2c3d4-0000-4000-8000-000000000001';
-const contactUrl = 'https://homegohan.app/contact';
+const contactUrl = 'https://app.example.test/contact';
 
 const baseVars: TicketReplyEmailVars = {
   to_email: 'taro@example.com',
@@ -31,6 +32,15 @@ const baseVars: TicketReplyEmailVars = {
 const hasLoneSurrogate = (s: string) =>
   /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
 
+// 送信元の既定値 (src/lib/site-config.ts) を確かめるテスト。手元の EMAIL_FROM に左右されないよう未設定から始める
+beforeEach(() => {
+  vi.stubEnv('EMAIL_FROM', '');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe('renderTicketReplyEmail', () => {
   it('EmailEnvelopeSchema で valid な envelope を返す', () => {
     const result = EmailEnvelopeSchema.safeParse(renderTicketReplyEmail(baseVars));
@@ -40,7 +50,7 @@ describe('renderTicketReplyEmail', () => {
   it('to がチケットの顧客本人、from が ほめゴハン noreply である', () => {
     const envelope = renderTicketReplyEmail(baseVars);
     expect(envelope.to).toBe('taro@example.com');
-    expect(envelope.from).toBe('ほめゴハン <noreply@homegohan.app>');
+    expect(envelope.from).toBe(DEFAULT_EMAIL_FROM);
   });
 
   it('件名はサポートからの返信であることと、チケットの件名・受付番号を含む', () => {
@@ -76,8 +86,8 @@ describe('renderTicketReplyEmail', () => {
   });
 
   it('reply_to 指定: envelope.reply_to に入り、本文は「そのまま返信」を案内する', () => {
-    const envelope = renderTicketReplyEmail({ ...baseVars, reply_to: 'support@homegohan.app' });
-    expect(envelope.reply_to).toBe('support@homegohan.app');
+    const envelope = renderTicketReplyEmail({ ...baseVars, reply_to: 'support@example.test' });
+    expect(envelope.reply_to).toBe('support@example.test');
     expect(EmailEnvelopeSchema.safeParse(envelope).success).toBe(true);
     expect(envelope.text).toContain('そのまま返信していただくと');
     expect(envelope.text).not.toContain('返信しても届きません');

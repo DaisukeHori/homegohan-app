@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 import { sanitizeHealthGoalUpdate } from '@/lib/health-payloads';
 import { calculateGoalProgressPercentage } from '@/lib/health-goal-progress';
 
@@ -25,7 +26,7 @@ export async function GET(
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/health/goals/[id]', error, { userId: user.id, table: 'health_goals' });
   }
 
   return NextResponse.json({ goal: data });
@@ -152,7 +153,7 @@ export async function PUT(
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('PUT /api/health/goals/[id]', error, { userId: user.id, table: 'health_goals' });
   }
 
   return NextResponse.json({ goal: data });
@@ -179,7 +180,7 @@ export async function DELETE(
     .eq('user_id', user.id);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('DELETE /api/health/goals/[id]', error, { userId: user.id, table: 'health_goals' });
   }
 
   return NextResponse.json({ success: true });

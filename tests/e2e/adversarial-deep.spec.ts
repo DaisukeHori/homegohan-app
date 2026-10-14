@@ -207,7 +207,7 @@ test("B-2: 高速 sign-in → sign-out → /home への不正アクセスがで�
   page,
 }) => {
   await page.goto("/login");
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load"); // networkidle は待たない (ログイン画面の Turnstile が通信し続ける。helpers/login-form.ts)
 
   // /home を直接 fetch して 401/307 を確認
   const res = await page.request.get("/home");

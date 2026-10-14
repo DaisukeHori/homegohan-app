@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { addDays, formatLocalDate } from '@/lib/date-utils';
+import { internalError } from '@/lib/api/errors';
+import { jstDayOffset } from '@/lib/jst-day-ranges';
 import { clampIntParam } from '@/lib/http-params';
 
 // 体重履歴を取得（直近N日間）
@@ -18,8 +19,9 @@ export async function GET(request: NextRequest) {
   // clampIntParam で安全にフォールバック・クランプする（日数の制限は最大90日）。
   const limitedDays = clampIntParam(searchParams.get('days'), { min: 1, max: 90, default: 7 });
 
-  // N日前の日付を計算
-  const startDateStr = formatLocalDate(addDays(new Date(), -limitedDays));
+  // N日前の日付を計算 (JST の今日から暦の計算でずらす。#1463。addDays (ローカル時刻の setDate) + formatLocalDate (JST) は、
+  // 夏時間のある実行環境で 1 時間ずれて日付が変わりうる)
+  const startDateStr = jstDayOffset(-limitedDays);
 
   const { data, error } = await supabase
     .from('health_records')
@@ -30,8 +32,7 @@ export async function GET(request: NextRequest) {
     .order('record_date', { ascending: true });
 
   if (error) {
-    console.error('Failed to fetch weight history:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/health/records/history', error, { userId: user.id, table: 'health_records' });
   }
 
   return NextResponse.json(data || []);

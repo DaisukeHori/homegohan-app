@@ -3,6 +3,8 @@
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { TurnstileWidget, useTurnstile } from "@/components/auth/TurnstileWidget";
+import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "@/lib/auth/turnstile";
 import { getSafeRedirectPath } from "@/lib/auth/safe-redirect";
 import { useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
@@ -17,6 +19,9 @@ function VerifyContent() {
   // #1057 (UX1-01): signup から引き継いだ招待リダイレクト先(あれば)をメール確認リンクにも伝播
   const safeRedirect = getSafeRedirectPath(searchParams.get('redirect'));
   const supabase = createClient();
+  // #1474: Supabase の CAPTCHA を有効にすると、トークンの無い再送 (resend) は断られる。
+  // ログイン・新規登録と同じ Turnstile の部品でトークンを取る。サイトキーが未設定なら無効で、今までどおりに動く
+  const captcha = useTurnstile();
 
   const handleResend = async () => {
     setResendError(null);
@@ -26,19 +31,31 @@ function VerifyContent() {
       return;
     }
 
+    // #1474: トークンは 1 回しか使えない。取り出した時点で、ウィジェットが次のトークンを取り直す。
+    // Turnstile が有効なのにトークンが無いとき (ボタンの無効化をすり抜けて呼ばれた場合) は送らない
+    const captchaToken = captcha.takeToken();
+    if (captcha.enabled && !captchaToken) {
+      setResendError('ボットではないことの確認が終わるまで、少しお待ちください。');
+      return;
+    }
+
     setIsResending(true);
     try {
+      // resend の captchaToken は options の中 (emailRedirectTo と同じ階層) に渡す。
+      // Turnstile が無効のときは captchaToken を付けない (今までのリクエストと同じ)
       const { error } = await supabase.auth.resend({
         type: 'signup',
         email: email,
         options: {
           emailRedirectTo: `${window.location.origin}/auth/callback${safeRedirect ? `?next=${encodeURIComponent(safeRedirect)}` : ''}`,
+          ...(captchaToken ? { captchaToken } : {}),
         },
       });
 
       if (error) {
         console.error('Resend error:', error);
-        setResendError(`再送信に失敗しました: ${error.message}`);
+        // #1474: CAPTCHA の確認で断られたときは、英語の生のエラー文を出さない (ウィジェットは取り直し済み)
+        setResendError(isCaptchaFailure(error) ? CAPTCHA_FAILED_MESSAGE : `再送信に失敗しました: ${error.message}`);
         return;
       }
 
@@ -46,7 +63,11 @@ function VerifyContent() {
       setTimeout(() => setResendSuccess(false), 5000);
     } catch (error: any) {
       console.error('Resend error:', error);
-      setResendError(`予期せぬエラーが発生しました: ${error.message || '不明なエラー'}`);
+      setResendError(
+        isCaptchaFailure(error)
+          ? CAPTCHA_FAILED_MESSAGE
+          : `予期せぬエラーが発生しました: ${error.message || '不明なエラー'}`,
+      );
     } finally {
       setIsResending(false);
     }
@@ -90,11 +111,16 @@ function VerifyContent() {
           メールアプリを開く
         </a>
 
+        {/* #1474: サイトキーが未設定なら何も出さない */}
+        <TurnstileWidget {...captcha.widgetProps} action="resend-confirmation" />
+
         <p className="text-xs text-gray-400">
           メールが届かない場合は、迷惑メールフォルダをご確認いただくか、<br/>
           <button
+            type="button"
+            data-testid="resend-confirmation-button"
             onClick={handleResend}
-            disabled={isResending}
+            disabled={isResending || !captcha.ready}
             className="text-[#FF8A65] font-bold hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isResending ? '送信中...' : '再送信'}

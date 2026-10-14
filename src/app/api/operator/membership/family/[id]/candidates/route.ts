@@ -4,33 +4,27 @@
  * 05-operator-emergency-ui.md §E 準拠
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { internalError } from '@/lib/api/errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 
 export const dynamic = 'force-dynamic';
 
-function getServiceRoleClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error('Supabase service role env missing');
-  return createSupabaseClient(url, key, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
+const ROUTE_NAME = 'GET /api/operator/membership/family/[id]/candidates';
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  const logger = createLogger('GET /api/operator/membership/family/[id]/candidates', generateRequestId());
+  const logger = createLogger(ROUTE_NAME, generateRequestId());
   try {
     const { userId: operatorId } = await requireSuperAdmin();
     const { id: familyId } = params;
 
-    const admin = getServiceRoleClient();
+    const admin = getSupabaseAdmin();
 
     // adult ロールの active メンバを candidate とする
     const { data: members, error } = await admin
@@ -43,10 +37,7 @@ export async function GET(
       .order('joined_at', { ascending: true });
 
     if (error) {
-      return NextResponse.json(
-        { error: { code: 'INTERNAL_ERROR', message: error.message } },
-        { status: 500 },
-      );
+      return internalError(ROUTE_NAME, error, { userId: operatorId }, { shape: 'nested' });
     }
 
     // adult / representative はアカウントを持つが、念のため NULL は除く (.in() に null を渡すと uuid として解釈できず失敗する)
@@ -86,7 +77,7 @@ export async function GET(
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    // 本文は汎用メッセージだけにし、元のエラーは構造化ログに残す (#1172)
+    return internalError(ROUTE_NAME, err, {}, { shape: 'nested' });
   }
 }

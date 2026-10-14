@@ -7,7 +7,9 @@ import { createClient } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
+import { isEmailFailure } from '@/lib/emails/send-result';
 import { renderFamilyPromoteEmail } from '@/lib/emails/membership/family-promote';
+import { buildFamilyPromotionUrl } from '@/lib/membership/urls';
 import {
   checkInviteEmailLimits,
   inviteThrottleFailureFromRpcError,
@@ -118,16 +120,18 @@ export async function POST(
   // ★token は HTTP レスポンスに絶対含めない (メールで対象者本人にのみ届く同意証跡)。
   // ミューテーション感度テスト対象 (設計 §8-A)。
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://homegohan.app';
     const envelope = renderFamilyPromoteEmail({
       email_address: req.email,
       family_name: req.family_name ?? '家族グループ',
       member_display_name: req.member_display_name ?? '子供メンバー',
       requester_name: req.requester_name ?? user.email ?? '家族の代表者',
-      accept_url: `${baseUrl}/family/promotions/${req.token}`,
+      // リンクの基点は src/lib/membership/urls.ts に 1 つだけある (#1194)
+      accept_url: buildFamilyPromotionUrl(req.token),
       expires_at: req.expires_at,
     });
-    await sendEmail(envelope);
+    const sent = await sendEmail(envelope);
+    // sendEmail は配信の失敗で例外を投げず、結果で返す。失敗も下の catch で、リクエストとの対応が分かる形で記録する
+    if (isEmailFailure(sent)) throw sent.error;
   } catch (emailErr) {
     // メール失敗はリクエスト作成自体を失敗にしない (再送 = 再リクエストで可能)
     logger.withUser(user.id).error('promotion request email send failed', emailErr, {

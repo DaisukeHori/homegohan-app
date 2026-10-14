@@ -42,6 +42,12 @@ const MAIL_TRIGGERING_RPCS = [
  * 理由は「利用者が宛先を指定できない」「本人が 1 回しか実行できない」など、乱用の余地が無い根拠を書く。
  */
 const EXEMPT_EMAIL_SENDERS: Record<string, string> = {
+  // #1157 エラー急増の運用メール。利用者の操作で動く API ではなく、Vercel Cron だけが呼ぶ
+  'src/app/api/cron/app-log-alerts/route.ts':
+    '宛先は環境変数 OPS_ALERT_EMAIL の固定アドレス 1 つだけ (未設定なら送らない) で、利用者は宛先も本文も指定できない。' +
+    'CRON_SECRET の Bearer 認証 (requireCronAuth) を通った Vercel Cron からしか動かない。' +
+    '送信は DB の claim_ops_alert で原子的に「送る権利」を取った 1 回だけで、同じアラートは 60 分に 1 通までに制限される (Cron が同じ回を 2 回呼んでも 1 通)。' +
+    '本文は件数と関数名だけで、利用者の情報・ログの本文は含めない',
   'src/app/api/contact/route.ts':
     '宛先は環境変数 ADMIN_NOTIFICATION_EMAIL の固定アドレスだけで、利用者は宛先を指定できない。IP 単位の制限 (共通ヘルパー src/lib/rate-limit.ts の contact カテゴリ、10 回/分) がある',
   'src/app/api/family/representative-transfer/[id]/accept/route.ts':
@@ -68,6 +74,12 @@ const EXEMPT_EMAIL_SENDERS: Record<string, string> = {
     '宛先は、除名された本人、または脱退先の家族の代表者 / 組織のオーナーの auth.users 上の登録アドレス (resolveAuthEmails) に固定で、' +
     '利用者はアドレスを指定できない。宛先になるのは本人の同意 (招待の承諾) でメンバーになった人と、その所属先の責任者だけなので、' +
     '任意のアドレスへ送り付けることはできない',
+  // #1152 退会の完了メール。送る入口は POST /api/account/delete (deleteAccount) だが、送信はこのモジュールだけが行う
+  'src/lib/account-deletion-notification.ts':
+    '退会 (deleteAccount) で auth.admin.deleteUser が実際にアカウントを削除した直後に、1 回だけ送る ' +
+    '(409・途中の失敗・すでに消えていたユーザーのやり直しでは送らない)。退会は本人がログイン中のセッションで実行する。' +
+    '宛先は、退会した本人の auth.users 上の登録アドレス (削除の前に getUserById で控えたもの) に固定で、利用者はアドレスを指定できない。' +
+    'アカウント 1 つにつき 1 回しか送れないので、繰り返して送り付けることはできない',
 };
 
 // ─────────────────────────────────────────────

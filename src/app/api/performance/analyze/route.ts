@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { isCalendarDate, jstToday } from '@/lib/jst-day-ranges'
 import { NextRequest, NextResponse } from 'next/server'
 import { toPerformancePlan, fromPerformancePlan, toUserProfile, toPerformanceProfile } from '@/lib/converter'
 import {
@@ -8,7 +9,7 @@ import {
   type CheckinAverages as CoreCheckinAverages,
 } from '@homegohan/core'
 import type { NutritionGoal } from '@homegohan/core'
-import { RECORD_DATE_PATTERN } from '@/lib/health-payloads'
+import { internalError } from '@/lib/api/errors'
 
 type SupabaseLike = Awaited<ReturnType<typeof createClient>>
 
@@ -22,7 +23,9 @@ type AnalysisRunResult =
       nextAction: ReturnType<typeof analyzeCheckinLoop>['nextAction']
       currentTargets: { calories: number; protein: number; fat: number; carbs: number }
     }
-  | { ok: false; status: number; error: string }
+  | { ok: false; kind: 'client'; status: number; error: string }
+  // DB のエラーなど。生のエラー文は本文に出さず、route が internalError() で汎用の 500 にする (#1172)
+  | { ok: false; kind: 'internal'; cause: unknown }
 
 /**
  * #1048 F2-18: GET/POST 双方で同じ「プロフィール→栄養目標→7日平均→分析」の
@@ -38,7 +41,7 @@ async function runAnalysis(supabase: SupabaseLike, userId: string, date: string)
     .single()
 
   if (profileError || !profileData) {
-    return { ok: false, status: 404, error: 'Profile not found' }
+    return { ok: false, kind: 'client', status: 404, error: 'Profile not found' }
   }
 
   // 2. 現在の栄養目標を取得
@@ -49,7 +52,7 @@ async function runAnalysis(supabase: SupabaseLike, userId: string, date: string)
     .single()
 
   if (targetsError || !targetsData) {
-    return { ok: false, status: 404, error: 'Nutrition targets not found' }
+    return { ok: false, kind: 'client', status: 404, error: 'Nutrition targets not found' }
   }
 
   const currentTargets = {
@@ -66,8 +69,7 @@ async function runAnalysis(supabase: SupabaseLike, userId: string, date: string)
   })
 
   if (avgError) {
-    console.error('Checkin averages error:', avgError)
-    return { ok: false, status: 500, error: avgError.message }
+    return { ok: false, kind: 'internal', cause: avgError }
   }
 
   const rawAvg = avgData?.[0] || null
@@ -133,10 +135,15 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const rawDate = searchParams.get('date')
-    const date = rawDate && RECORD_DATE_PATTERN.test(rawDate) ? rawDate : new Date().toISOString().split('T')[0]
+    // 日付の指定が無ければ JST の今日 (#1433)。日付でない値は以前から今日に読み替えている。
+    // 存在しない日付 (2026-02-30 など) も形だけでは通って DB の date 型への変換で 500 になるので、isCalendarDate で見て今日に読み替える (#1482)
+    const date = rawDate && isCalendarDate(rawDate) ? rawDate : jstToday()
 
     const run = await runAnalysis(supabase, user.id, date)
     if (!run.ok) {
+      if (run.kind === 'internal') {
+        return internalError('GET /api/performance/analyze', run.cause, { userId: user.id })
+      }
       return NextResponse.json({ error: run.error }, { status: run.status })
     }
 
@@ -160,8 +167,7 @@ export async function GET(request: NextRequest) {
       date,
     })
   } catch (error: any) {
-    console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return internalError('GET /api/performance/analyze', error)
   }
 }
 
@@ -187,7 +193,9 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json().catch(() => ({}))
     const rawDate = typeof body?.date === 'string' ? body.date : null
-    const date = rawDate && RECORD_DATE_PATTERN.test(rawDate) ? rawDate : new Date().toISOString().split('T')[0]
+    // 日付の指定が無ければ JST の今日 (#1433)。日付でない値は以前から今日に読み替えている。
+    // 存在しない日付 (2026-02-30 など) も形だけでは通って DB の date 型への変換で 500 になるので、isCalendarDate で見て今日に読み替える (#1482)
+    const date = rawDate && isCalendarDate(rawDate) ? rawDate : jstToday()
 
     const rawApplyTop = body?.applyTop
     const applyTop =
@@ -198,6 +206,9 @@ export async function POST(request: NextRequest) {
     // 1. サーバー側で分析を再計算する（クライアント入力の recommendations は使用しない）
     const run = await runAnalysis(supabase, user.id, date)
     if (!run.ok) {
+      if (run.kind === 'internal') {
+        return internalError('POST /api/performance/analyze', run.cause, { userId: user.id })
+      }
       return NextResponse.json({ error: run.error }, { status: run.status })
     }
     if (!run.eligible || run.recommendations.length === 0) {
@@ -224,13 +235,13 @@ export async function POST(request: NextRequest) {
         .eq('user_id', user.id)
 
       if (updateError) {
-        console.error('Nutrition targets update error:', updateError)
-        return NextResponse.json({ error: updateError.message }, { status: 500 })
+        return internalError('POST /api/performance/analyze', updateError, { userId: user.id })
       }
     }
 
     // 4. 既存のactive planをsupersededに
-    const today = new Date().toISOString().split('T')[0]
+    // 置き換えた計画の終了日は JST の今日 (#1433)
+    const today = jstToday()
     await supabase
       .from('performance_plans')
       .update({
@@ -271,8 +282,7 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (planError) {
-      console.error('Plan create error:', planError)
-      return NextResponse.json({ error: planError.message }, { status: 500 })
+      return internalError('POST /api/performance/analyze', planError, { userId: user.id })
     }
 
     return NextResponse.json({
@@ -287,7 +297,6 @@ export async function POST(request: NextRequest) {
       plan: toPerformancePlan(planResult),
     })
   } catch (error: any) {
-    console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return internalError('POST /api/performance/analyze', error)
   }
 }

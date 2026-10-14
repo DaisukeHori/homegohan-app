@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { EmailSendError } from '@/lib/emails/send-result';
 
 // #1160 除名・脱退の通知メールの共通ヘルパー。
 // route 経由のテスト (src/__tests__/api/**/remove.test.ts, leave.test.ts) では再現しにくい、
@@ -43,7 +44,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   log = { warn: vi.fn(), error: vi.fn() };
   mocks.resolveAuthEmails.mockResolvedValue(new Map([[RECIPIENT_ID, RECIPIENT_EMAIL]]));
-  mocks.sendEmail.mockResolvedValue({ id: 'email-1' });
+  mocks.sendEmail.mockResolvedValue({ ok: true, id: 'email-1', attempts: 1, skipped: false, error: null });
 });
 
 afterEach(() => {
@@ -250,6 +251,49 @@ describe('notifyMemberRemoved: 外された本人への通知', () => {
       scope_id: ORG_ID,
       recipient_user_id: RECIPIENT_ID,
     });
+  });
+
+  it('sendEmail が reject せず ok: false の結果を返しても、所属先と宛先の user_id だけをエラーログに残す (#1193)', async () => {
+    const sendError = new EmailSendError('validation_error', 'EMAIL_SEND_FAILED: domain is not verified', 403, 1, false);
+    mocks.sendEmail.mockResolvedValue({ ok: false, id: null, attempts: 1, skipped: false, error: sendError });
+
+    await expect(
+      notifyMemberRemoved({ scope: orgScope, removedUserId: RECIPIENT_ID, actorUserId: USER_ID, log: logger() }),
+    ).resolves.toBeUndefined();
+
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(log.error).toHaveBeenCalledWith(expect.any(String), sendError, {
+      scope: 'organization',
+      scope_id: ORG_ID,
+      recipient_user_id: RECIPIENT_ID,
+    });
+    expect(JSON.stringify(log.error.mock.calls)).not.toContain(RECIPIENT_EMAIL);
+  });
+
+  it('脱退の通知も、ok: false の結果で返ったら、脱退先の user_id つきでエラーログに残す (#1193)', async () => {
+    const sendError = new EmailSendError('application_error', 'EMAIL_SEND_FAILED: Service Unavailable', 503, 4, true);
+    mocks.sendEmail.mockResolvedValue({ ok: false, id: null, attempts: 4, skipped: false, error: sendError });
+
+    await expect(notifyMemberLeft({ scope: familyScope, log: logger() })).resolves.toBeUndefined();
+
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(log.error).toHaveBeenCalledWith(expect.any(String), sendError, {
+      scope: 'family',
+      scope_id: FAMILY_ID,
+      recipient_user_id: RECIPIENT_ID,
+    });
+  });
+
+  it('RESEND_API_KEY が無くて送らなかった (skipped) ときは、失敗に数えず、エラーログも残さない (#1193)', async () => {
+    const skippedError = new EmailSendError('not_configured', 'EMAIL_NOT_CONFIGURED: RESEND_API_KEY が未設定', null, 0, false);
+    mocks.sendEmail.mockResolvedValue({ ok: false, id: null, attempts: 0, skipped: true, error: skippedError });
+
+    await expect(
+      notifyMemberRemoved({ scope: familyScope, removedUserId: RECIPIENT_ID, actorUserId: USER_ID, log: logger() }),
+    ).resolves.toBeUndefined();
+
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    expect(log.error).not.toHaveBeenCalled();
   });
 
   it('送信が失敗し、そのログの出力自体も例外を投げても、呼び出し元には例外を投げない', async () => {

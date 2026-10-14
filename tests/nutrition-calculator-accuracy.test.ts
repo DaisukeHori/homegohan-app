@@ -203,3 +203,100 @@ describe("#1046 F5-12: no double rounding when aggregating multiple dishes", () 
     expect(meal.totals.zinc_mg).toBe(expectedRounded.zinc_mg);
   });
 });
+
+// #1146: 糖質 (sugar_g) を 炭水化物 − 食物繊維 で計算する。
+// 食材 DB (dataset_ingredients) には糖質の列が無く、AI が作った献立の糖質が常に 0g と表示されていた。
+describe("#1146: sugar_g = carbs_g - fiber_g (per ingredient, floored at 0)", () => {
+  function nutritionOf(overrides: Partial<MatchedIngredientData>, amount_g = 100) {
+    const matchResult: IngredientMatchResult = {
+      input: { name: "test-ingredient", amount_g },
+      matched: makeMatched(overrides),
+      confidence: "high",
+      matchMethod: "exact_map",
+    };
+    return calculateIngredientNutrition(matchResult).nutrition;
+  }
+
+  it("starts from 0 in both calculators", () => {
+    expect(initNutritionTotals().sugar_g).toBe(0);
+    expect(emptyNutrition().sugar_g).toBe(0);
+  });
+
+  it("carbs 50g / fiber 5g per 100g -> sugar 45g", () => {
+    const n = nutritionOf({ carbs_g: 50, fiber_g: 5 });
+    expect(n.carbs_g).toBeCloseTo(50, 5);
+    expect(n.fiber_g).toBeCloseTo(5, 5);
+    expect(n.sugar_g).toBeCloseTo(45, 5);
+  });
+
+  it("treats a missing fiber value as 0, so sugar equals carbs", () => {
+    expect(nutritionOf({ carbs_g: 50, fiber_g: null }).sugar_g).toBeCloseTo(50, 5);
+  });
+
+  it("is 0 when carbs is missing (nothing to compute from)", () => {
+    expect(nutritionOf({ carbs_g: null, fiber_g: 3 }).sugar_g).toBe(0);
+    expect(nutritionOf({ carbs_g: null, fiber_g: null }).sugar_g).toBe(0);
+  });
+
+  it("never goes negative when fiber is larger than carbs (seaweed, agar)", () => {
+    expect(nutritionOf({ carbs_g: 10, fiber_g: 30 }).sugar_g).toBe(0);
+  });
+
+  it("scales with the amount and the discard rate (200g, 20% discard -> factor 1.6)", () => {
+    const n = nutritionOf({ carbs_g: 50, fiber_g: 5, discard_rate_percent: 20 }, 200);
+    expect(n.sugar_g).toBeCloseTo(45 * 1.6, 5);
+    expect(n.sugar_g).toBeCloseTo(n.carbs_g - n.fiber_g, 5);
+  });
+
+  it("sums per-ingredient sugar (a fiber-rich ingredient does not cancel the others)", () => {
+    const rice = makeMatched({ id: "rice", carbs_g: 50, fiber_g: 5 }); // sugar 45
+    const seaweed = makeMatched({ id: "seaweed", carbs_g: 10, fiber_g: 30 }); // sugar 0 (not -20)
+    const dish = calculateDishNutrition("dish", "main", [
+      { input: { name: "rice", amount_g: 100 }, matched: rice, confidence: "high", matchMethod: "exact_map" },
+      { input: { name: "seaweed", amount_g: 100 }, matched: seaweed, confidence: "high", matchMethod: "exact_map" },
+    ]);
+
+    // 合計の 炭水化物(60) - 食物繊維(35) = 25 ではなく、材料ごとの 45 + 0 になる
+    expect(dish.rawTotals.carbs_g).toBeCloseTo(60, 5);
+    expect(dish.rawTotals.fiber_g).toBeCloseTo(35, 5);
+    expect(dish.rawTotals.sugar_g).toBeCloseTo(45, 5);
+    expect(dish.totals.sugar_g).toBe(45);
+  });
+
+  it("sumNutrition adds sugar_g and roundNutrition rounds it to 1 decimal", () => {
+    const a = { ...initNutritionTotals(), sugar_g: 10.04 };
+    const b = { ...initNutritionTotals(), sugar_g: 5.02 };
+    expect(sumNutrition(a, b).sugar_g).toBeCloseTo(15.06, 5);
+    expect(roundNutrition(sumNutrition(a, b)).sugar_g).toBe(15.1);
+  });
+
+  it("meal totals sum raw dish sugar and round once (no double rounding)", () => {
+    // 100g あたり 糖質 0.04g の食材を 1品 100g 使う = 各品 0.04g (丸めると 0.0)
+    const matched = makeMatched({ carbs_g: 0.04, fiber_g: 0 });
+    const dishes = Array.from({ length: 10 }, (_, i) =>
+      calculateDishNutrition(`dish-${i}`, "side", [
+        { input: { name: "test", amount_g: 100 }, matched, confidence: "high", matchMethod: "exact_map" },
+      ])
+    );
+    expect(dishes[0].totals.sugar_g).toBe(0);
+    expect(calculateMealNutrition(dishes).totals.sugar_g).toBe(0.4);
+  });
+
+  it("v1 addNutritionFromMatch and v2 give the same sugar (incl. discard rate and string values)", () => {
+    const matched = makeMatched({ carbs_g: 50, fiber_g: 5, discard_rate_percent: 20 });
+    const v1 = emptyNutrition();
+    addNutritionFromMatch(v1, matched, 200);
+    expect(v1.sugar_g).toBeCloseTo(45 * 1.6, 5);
+    expect(v1.sugar_g).toBeCloseTo(nutritionOf({ carbs_g: 50, fiber_g: 5, discard_rate_percent: 20 }, 200).sugar_g, 5);
+
+    // PostgREST の numeric 列は文字列で返ることがある
+    const v1String = emptyNutrition();
+    addNutritionFromMatch(v1String, { ...matched, carbs_g: "50", fiber_g: "5" }, 100);
+    expect(v1String.sugar_g).toBeCloseTo(36, 5); // 45 * 0.8 (廃棄率 20%)
+
+    // 食物繊維が欠けていても、炭水化物がそのまま糖質になる
+    const v1MissingFiber = emptyNutrition();
+    addNutritionFromMatch(v1MissingFiber, makeMatched({ carbs_g: 50, fiber_g: null }), 100);
+    expect(v1MissingFiber.sugar_g).toBeCloseTo(50, 5);
+  });
+});

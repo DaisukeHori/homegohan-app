@@ -4,6 +4,7 @@ import {
   CreateOrgInviteRequestBodySchema,
   AddOrgMemberRequestBodySchema,
 } from '@/schemas/membership/organization-invite';
+import { TEST_TIME_ZONES, withTimeZoneAsync } from '../../../../tests/helpers/time-zones';
 
 // #1163 createOrgInviteWithEmail (POST /api/org/invites と POST /api/org/members の共通処理) の単体テスト。
 // 送信回数の判定 (invite-throttle) はモックし、「RPC・メール送信の前に判定すること」「超過時の戻り値」を確かめる。
@@ -18,12 +19,15 @@ vi.mock('@/lib/membership/invite-throttle', async (importOriginal) => ({
 
 // 構造化ログのモック (DB の上限の超過は createLogger(...).withUser(userId).warn(...) で記録される)
 const mockLogWarn = vi.fn();
-const mockWithUser = vi.fn(() => ({
+const mockLogError = vi.fn();
+const mockWithUser = vi.fn((_userId: string) => ({
   debug: vi.fn(),
   info: vi.fn(),
   warn: mockLogWarn,
-  error: vi.fn(),
+  error: mockLogError,
 }));
+/** orgInviteFailureResponse に渡す構造化ログの文脈 */
+const LOG_CONTEXT = { routeName: 'POST /api/org/invites', userId: 'inviter-user-1172' };
 
 vi.mock('@/lib/db-logger', () => ({
   createLogger: vi.fn(() => ({
@@ -233,7 +237,7 @@ describe('createOrgInviteWithEmail: DB の 24 時間上限 (#1163)', () => {
   it('失敗は orgInviteFailureResponse で Retry-After 付きの 429 になる (POST /api/org/invites と /api/org/members 共通)', async () => {
     mockRpc.mockImplementation(async () => dbRateLimited());
 
-    const res = orgInviteFailureResponse((await create()) as never);
+    const res = orgInviteFailureResponse((await create()) as never, LOG_CONTEXT);
     const json = await res.json();
 
     expect(res.status).toBe(429);
@@ -246,7 +250,13 @@ describe('createOrgInviteWithEmail: DB の 24 時間上限 (#1163)', () => {
 
     const result = await create();
 
-    expect(result).toEqual({ ok: false, status: 409, code: 'SEAT_LIMIT_EXCEEDED', message: 'SEAT_LIMIT_EXCEEDED' });
+    // #1172: message は RPC の生のエラー文ではなく、コードごとの固定の文
+    expect(result).toEqual({
+      ok: false,
+      status: 409,
+      code: 'SEAT_LIMIT_EXCEEDED',
+      message: '組織のライセンス数の上限に達しているため、招待できません',
+    });
     expect(mockLogWarn).not.toHaveBeenCalled();
   });
 });
@@ -287,7 +297,56 @@ describe('createOrgInviteWithEmail: 既存の挙動', () => {
       role: 'member',
     });
 
-    expect(result).toEqual({ ok: false, status: 403, code: 'NOT_ORG_ADMIN', message: 'NOT_ORG_ADMIN' });
+    expect(result).toEqual({
+      ok: false,
+      status: 403,
+      code: 'NOT_ORG_ADMIN',
+      message: '招待できるのは組織のオーナーと管理者だけです',
+    });
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it('#1172: 4xx のコードでも、RPC の生のエラー文 (コード以外の文面) は message に入れない', async () => {
+    const raw = 'ERROR: NOT_ORG_ADMIN (sentinel-org-invite-4xx-1172) CONTEXT: PL/pgSQL function create_org_invite line 14';
+    mockRpc.mockImplementation(async () => ({ data: null, error: { message: raw, code: 'P0001' } }));
+
+    const result = await createOrgInviteWithEmail({
+      supabase: makeSupabase(),
+      inviter,
+      organizationId,
+      email: 'taro@example.com',
+      role: 'member',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      status: 403,
+      code: 'NOT_ORG_ADMIN',
+      message: '招待できるのは組織のオーナーと管理者だけです',
+    });
+    expect(JSON.stringify(result)).not.toContain('sentinel-org-invite-4xx-1172');
+  });
+
+  it('#1172: コードに当たらない RPC のエラー (500) は、固定の文と、元のエラーを internalCause に持たせて返す', async () => {
+    const rpcError = { message: 'relation "organization_invites" does not exist (sentinel-org-invite-500-1172)', code: '42P01' };
+    mockRpc.mockImplementation(async () => ({ data: null, error: rpcError }));
+
+    const result = await createOrgInviteWithEmail({
+      supabase: makeSupabase(),
+      inviter,
+      organizationId,
+      email: 'taro@example.com',
+      role: 'member',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      status: 500,
+      code: 'UNKNOWN',
+      message: '処理中にエラーが発生しました',
+      internalCause: rpcError,
+    });
+    expect((result as { message: string }).message).not.toContain('sentinel-org-invite-500-1172');
     expect(mockSendEmail).not.toHaveBeenCalled();
   });
 
@@ -310,13 +369,16 @@ describe('createOrgInviteWithEmail: 既存の挙動', () => {
 
 describe('orgInviteFailureResponse', () => {
   it('429: Retry-After ヘッダーと error.retryAfter を付ける', async () => {
-    const res = orgInviteFailureResponse({
-      ok: false,
-      status: 429,
-      code: 'RATE_LIMITED',
-      message: '本日の送信上限に達しました。しばらく時間をおいてからお試しください。',
-      retryAfterSec: 3600,
-    });
+    const res = orgInviteFailureResponse(
+      {
+        ok: false,
+        status: 429,
+        code: 'RATE_LIMITED',
+        message: '本日の送信上限に達しました。しばらく時間をおいてからお試しください。',
+        retryAfterSec: 3600,
+      },
+      LOG_CONTEXT,
+    );
     const json = await res.json();
 
     expect(res.status).toBe(429);
@@ -331,12 +393,31 @@ describe('orgInviteFailureResponse', () => {
   });
 
   it('429 以外: 従来どおり { error: { code, message } } だけで、Retry-After は付けない', async () => {
-    const res = orgInviteFailureResponse({ ok: false, status: 403, code: 'NOT_ORG_ADMIN', message: 'NOT_ORG_ADMIN' });
+    const res = orgInviteFailureResponse(
+      { ok: false, status: 403, code: 'NOT_ORG_ADMIN', message: '招待できるのは組織のオーナーと管理者だけです' },
+      LOG_CONTEXT,
+    );
     const json = await res.json();
 
     expect(res.status).toBe(403);
     expect(res.headers.get('Retry-After')).toBeNull();
-    expect(json).toEqual({ error: { code: 'NOT_ORG_ADMIN', message: 'NOT_ORG_ADMIN' } });
+    expect(json).toEqual({ error: { code: 'NOT_ORG_ADMIN', message: '招待できるのは組織のオーナーと管理者だけです' } });
+  });
+
+  it('#1172: internalCause があるときは、汎用の 500 (nested) を返し、元のエラーを構造化ログにだけ残す', async () => {
+    const rpcError = { message: 'sentinel-org-invite-response-1172', code: '42P01' };
+    const res = orgInviteFailureResponse(
+      { ok: false, status: 500, code: 'UNKNOWN', message: '処理中にエラーが発生しました', internalCause: rpcError },
+      LOG_CONTEXT,
+    );
+    const raw = await res.text();
+
+    expect(res.status).toBe(500);
+    expect(raw).not.toContain('sentinel-org-invite-response-1172');
+    expect(JSON.parse(raw)).toEqual({ error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました' } });
+    expect(mockWithUser).toHaveBeenCalledWith(LOG_CONTEXT.userId);
+    expect(mockLogError).toHaveBeenCalledTimes(1);
+    expect((mockLogError.mock.calls[0] as unknown[])[1]).toMatchObject({ message: 'sentinel-org-invite-response-1172' });
   });
 });
 
@@ -370,5 +451,71 @@ describe('invalidOrgInviteBodyResponse', () => {
   it('項目が特定できない (本文がオブジェクトでない) ときは汎用の文言', async () => {
     expect(await messageFor(CreateOrgInviteRequestBodySchema, null)).toBe('リクエストボディが不正です');
     expect(await messageFor(CreateOrgInviteRequestBodySchema, 'text')).toBe('リクエストボディが不正です');
+  });
+});
+
+// #1433: 組織の招待メールの「このリンクは YYYY-MM-DD まで有効です」の日付は、期限の時刻 (expires_at。timestamptz) が属する JST の暦日。
+// 以前は expires_at.substring(0, 10) (UTC の暦日) で、期限が JST 0:00〜8:59 のとき 1 日早い日付を書いていた。
+describe('createOrgInviteWithEmail: 招待メールの期限の日付は JST の暦日 (#1433)', () => {
+  const withExpiresAt = (expiresAt: string, isExistingUser = false) => {
+    mockRpc.mockImplementation(async (fn: string) => {
+      if (fn === 'create_org_invite') return { data: { ...inviteRow, expires_at: expiresAt }, error: null };
+      if (fn === 'get_invite_details') return { data: { is_existing_user: isExistingUser }, error: null };
+      throw new Error(`unexpected rpc: ${fn}`);
+    });
+  };
+  const invite = () =>
+    createOrgInviteWithEmail({
+      supabase: makeSupabase(),
+      inviter,
+      organizationId,
+      email: 'taro@example.com',
+      role: 'member',
+    });
+  const sentText = () => {
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    return String((mockSendEmail.mock.calls[0][0] as { text: string }).text);
+  };
+
+  it.each([
+    // [期限の時刻 (PostgREST が返す timestamptz の形), メールに書く日付, 以前の substring(0, 10)]
+    ['2026-10-16T15:00:00+00:00', '2026-10-17', '2026-10-16'], // JST 10/17 0:00 ちょうど
+    ['2026-10-16T23:59:59+00:00', '2026-10-17', '2026-10-16'], // JST 10/17 8:59:59
+    ['2026-10-17T14:59:59+00:00', '2026-10-17', '2026-10-17'], // JST 10/17 23:59:59
+    ['2026-10-31T15:00:00+00:00', '2026-11-01', '2026-10-31'], // 月初 (JST 11/1 0:00)
+    ['2026-12-31T15:00:00+00:00', '2027-01-01', '2026-12-31'], // 年始 (JST 1/1 0:00)
+  ])('期限 %s → メールは「%s まで有効」(以前は %s)。実行環境のタイムゾーンによらない', async (expiresAt, expected, legacy) => {
+    for (const tz of TEST_TIME_ZONES) {
+      mockSendEmail.mockClear();
+      withExpiresAt(expiresAt);
+      const result = await withTimeZoneAsync(tz, invite);
+      expect(result.ok, tz).toBe(true);
+      const text = sentText();
+      expect(text, tz).toContain(`このリンクは ${expected} まで有効です。`);
+      if (legacy !== expected) expect(text, tz).not.toContain(`このリンクは ${legacy} まで有効です。`);
+    }
+  });
+
+  it('既存ユーザー向けのメールも同じ日付 (JST の暦日)', async () => {
+    withExpiresAt('2026-10-16T15:00:00+00:00', true);
+    const result = await invite();
+    expect(result.ok).toBe(true);
+    expect(sentText()).toContain('このリンクは 2026-10-17 まで有効です。');
+  });
+
+  it('戻り値の招待の expires_at は DB の時刻のまま (日付にしない)', async () => {
+    withExpiresAt('2026-10-16T15:00:00+00:00');
+    const result = await invite();
+    expect(result.ok && result.invite.expires_at).toBe('2026-10-16T15:00:00+00:00');
+  });
+
+  it('期限の時刻が読めない値なら、メールだけ送らず警告に残し、招待は作れたことを返す', async () => {
+    withExpiresAt('not-a-time');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = await invite();
+    expect(result.ok).toBe(true);
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('メール送信失敗'), expect.any(RangeError));
+    warn.mockRestore();
   });
 });

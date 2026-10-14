@@ -18,6 +18,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
 import { colors, radius, shadows, spacing } from "../../../src/theme";
+import { aiSkippedReasonOf, handleAiConsentRequiredError, type AiSkippedReason } from "../../../src/lib/ai-consent";
+import { AiSkippedNotice } from "../../../src/components/ai/AiSkippedNotice";
 
 // ─── Types ────────────────────────────────────────────
 interface FormData {
@@ -73,6 +75,7 @@ export default function NewCheckupPage() {
   const [step, setStep] = useState<Step>("form");
   const [saving, setSaving] = useState(false);
   const [savedCheckup, setSavedCheckup] = useState<any>(null);
+  const [aiSkipped, setAiSkipped] = useState<AiSkippedReason | null>(null);
   const [isOcrProcessing, setIsOcrProcessing] = useState(false);
   const [isOcrDone, setIsOcrDone] = useState(false);
 
@@ -181,6 +184,8 @@ export default function NewCheckupPage() {
       setIsOcrDone(true);
       Alert.alert("OCR完了", "検査値を自動入力しました。内容を確認して登録してください。");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、ここのエラー表示は出さない
+      if (handleAiConsentRequiredError(e)) return;
       Alert.alert("OCRエラー", e?.message ?? "画像の読み取りに失敗しました。手動で入力してください。");
     } finally {
       setIsOcrProcessing(false);
@@ -231,8 +236,10 @@ export default function NewCheckupPage() {
       }
 
       const api = getApi();
-      const data = await api.post<{ checkup: any }>("/api/health/checkups", payload);
+      const data = await api.post<{ checkup: any; aiSkipped?: string }>("/api/health/checkups", payload);
       setSavedCheckup(data.checkup);
+      // 同意が無い (または同意の状況を読めない) とき、サーバーは記録だけを保存し、AI の分析を省いて aiSkipped で知らせる (T15 / #1154)
+      setAiSkipped(aiSkippedReasonOf(data));
       setStep("review");
     } catch (e: any) {
       Alert.alert("保存失敗", e?.message ?? "記録の保存に失敗しました。");
@@ -363,11 +370,7 @@ export default function NewCheckupPage() {
               )}
             </>
           ) : (
-            <View style={styles.reviewCard}>
-              <Text style={[styles.reviewCardBody, { color: colors.textMuted, textAlign: "center" }]}>
-                AI分析を実行できませんでした
-              </Text>
-            </View>
+            <AiSkippedNotice reason={aiSkipped} />
           )}
 
           <Button onPress={() => router.push("/health/checkups" as any)}>完了</Button>

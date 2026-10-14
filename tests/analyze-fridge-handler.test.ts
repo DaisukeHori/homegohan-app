@@ -1,23 +1,32 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { AI_USAGE_ALLOWED, AI_USAGE_DENIED } from "./helpers/ai-usage-mock";
 
 // #1227: analyze-fridge Edge Function は imageUrl の型も形式も確かめずに外部の Vision API へ渡していた。
 // 文字列でない値 (数値など) が来ると、ログ出力用の imageUrl.slice(0, 80) で TypeError になって 500 を返し、
 // 文字列ならどんなスキームでもそのまま上流に渡っていた。ここでは Edge Function の入口 (Deno.serve に渡された関数) に
 // 実際の HTTP 要求を流して、入力が不正なら Vision API を呼ぶ前に 400 で返すことを確かめる。
 //
-// index.ts は Deno 専用の import (esm.sh など) を含み、そのままでは Vitest で読み込めない。
+// index.ts は Deno 専用の API (Deno.serve など) を使い、そのままでは Vitest で動かせない。
 // 外との境目 (認証・ログ・LLM クライアント) だけをモックに差し替え、本体はそのまま動かす。
 
 const mocks = vi.hoisted(() => ({
   requireAuth: vi.fn(),
+  consumeEdgeAiUsage: vi.fn(),
   createCompletion: vi.fn(),
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-edge.test.ts が実際のハンドラと構文木で確かめる
+vi.mock('../supabase/functions/_shared/ai-consent-guard.ts', () => import('./helpers/edge-ai-consent-guard-allowed'));
 vi.mock("../supabase/functions/_shared/auth.ts", () => ({ requireAuth: mocks.requireAuth }));
 vi.mock("../supabase/functions/_shared/db-logger.ts", () => ({
   createLogger: () => ({ withUser: () => mocks.logger }),
   generateRequestId: () => "req_test",
+}));
+// #1177 / #1149: AI 利用回数の上限の判定と記録。DB を呼ぶ consumeEdgeAiUsage だけを差し替える (consumeEdgeAiUsage 自体の挙動は tests/ai-usage-edge.test.ts)
+vi.mock("../supabase/functions/_shared/ai-usage.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../supabase/functions/_shared/ai-usage.ts")>()),
+  consumeEdgeAiUsage: mocks.consumeEdgeAiUsage,
 }));
 vi.mock("../supabase/functions/_shared/fast-llm.ts", () => ({
   createFastLLMClient: () => ({ chat: { completions: { create: mocks.createCompletion } } }),
@@ -44,6 +53,8 @@ afterAll(() => {
 beforeEach(() => {
   mocks.requireAuth.mockReset();
   mocks.requireAuth.mockResolvedValue({ userId: "user-1" });
+  mocks.consumeEdgeAiUsage.mockReset();
+  mocks.consumeEdgeAiUsage.mockResolvedValue(AI_USAGE_ALLOWED);
   mocks.createCompletion.mockReset();
   mocks.createCompletion.mockResolvedValue({
     choices: [{ message: { content: JSON.stringify({ ingredients: ["卵", "牛乳"], expiringSoon: ["牛乳"] }) } }],
@@ -254,5 +265,42 @@ describe("analyze-fridge の CORS (#1167)", () => {
     const denied = await call({ imageUrl: SUPABASE_URL }, undefined, OTHER_SITE);
     expect(denied.status).toBe(401);
     expect(denied.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+});
+
+// #1177: AI 利用回数の記録。ユーザーの JWT で直接呼ばれたときに記録する (Next.js が記録済みの呼び出しは、印があれば記録しない)
+describe("analyze-fridge の AI 利用回数の記録 (#1177)", () => {
+  it("AH-15: JWT の認証に成功したら、受け取った req とユーザー ID で記録する。Vision API を呼ぶ前に記録する", async () => {
+    const res = await call({ imageUrl: SUPABASE_URL });
+
+    expect(res.status).toBe(200);
+    expect(mocks.consumeEdgeAiUsage).toHaveBeenCalledTimes(1);
+    const [req, userId, feature] = mocks.consumeEdgeAiUsage.mock.calls[0];
+    expect(req).toBeInstanceOf(Request);
+    expect(userId).toBe("user-1");
+    expect(feature).toBe("photo_analysis");
+    expect(mocks.consumeEdgeAiUsage.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.createCompletion.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("#1149: 今日の AI の利用回数の上限に達していたら、Vision API を呼ばずに 429 AI_DAILY_LIMIT (CORS ヘッダーつき)", async () => {
+    mocks.consumeEdgeAiUsage.mockResolvedValue(AI_USAGE_DENIED);
+
+    const res = await call({ imageUrl: SUPABASE_URL });
+
+    expect(res.status).toBe(429);
+    await expect(res.json()).resolves.toMatchObject({ code: "AI_DAILY_LIMIT", limit: AI_USAGE_DENIED.limit });
+    expect(res.headers.get("Retry-After")).toMatch(/^\d+$/);
+    expect(mocks.createCompletion).not.toHaveBeenCalled();
+  });
+
+  it("AH-16: 認証に失敗したら記録しない", async () => {
+    mocks.requireAuth.mockResolvedValue(new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 }));
+
+    const res = await call({ imageUrl: SUPABASE_URL });
+
+    expect(res.status).toBe(401);
+    expect(mocks.consumeEdgeAiUsage).not.toHaveBeenCalled();
   });
 });

@@ -16,6 +16,8 @@ import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from 
 import { fetchWithRetry } from "../_shared/network-retry.ts";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { requireAuth } from "../_shared/auth.ts";
+import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
+import { requireAiConsentForUser } from "../_shared/ai-consent-guard.ts";
 
 // 過大入力によるLLMコスト濫用/DoS防止のための上限
 const MAX_INGREDIENTS = 500;
@@ -288,6 +290,11 @@ Deno.serve(async (req: Request) => {
   const authResult = await requireAuth(req);
   if (authResult instanceof Response) return withCors(authResult, req);
 
+  // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+  // この関数は利用者の JWT で直接呼べるので、ここで止める
+  const aiConsentDenied = await requireAiConsentForUser(authResult.userId, corsHeaders);
+  if (aiConsentDenied) return aiConsentDenied;
+
   const requestId = generateRequestId();
   const executionId = generateExecutionId();
   const logger = createLogger("normalize-shopping-list", requestId);
@@ -341,6 +348,12 @@ Deno.serve(async (req: Request) => {
 
     // 入力名のセットを作成（バリデーション用）
     const inputNames = new Set(ingredients.map((ing) => ing.name));
+
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (Next.js が数え済みの印があれば数えない)。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeEdgeAiUsage(req, authResult.userId, "shopping_list");
+    if (!aiUsage.allowed) return aiDailyLimitEdgeResponse(aiUsage, corsHeaders);
 
     // LLM呼び出し（トークン使用量計測付き）
     const rawItems = await withOpenAIUsageContext({

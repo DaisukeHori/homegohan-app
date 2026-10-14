@@ -21,6 +21,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { getSupabasePublicConfig, isMissingEnvError } from '@/lib/env-required';
 
 // 静的化されて古い応答が返ることを防ぐ (GET の route handler は既定で静的化され得る)
 export const dynamic = 'force-dynamic';
@@ -80,9 +81,15 @@ function logDbFailure(reason: DbFailureReason, cause?: unknown): void {
  * 失敗の原因は応答に出さず、ログにだけ残す。
  */
 async function pingDatabase(): Promise<boolean> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !anonKey) {
+  // 接続情報は env-required の getter で取り出す (#1434。空白だけの値も欠けているとみなす)。
+  // この route は middleware の検査の対象外なので、欠けていても例外にはせず、ここで 503 (config_missing) にする。
+  // 欠けている変数名は getter がサーバーのログに残す (応答には出さない)
+  let url: string;
+  let anonKey: string;
+  try {
+    ({ url, anonKey } = getSupabasePublicConfig());
+  } catch (error) {
+    if (!isMissingEnvError(error)) throw error;
     logDbFailure('config_missing');
     return false;
   }

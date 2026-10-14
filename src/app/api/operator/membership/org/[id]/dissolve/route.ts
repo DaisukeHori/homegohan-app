@@ -4,36 +4,30 @@
  * 05-operator-emergency-ui.md §7 準拠
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { internalError } from '@/lib/api/errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail } from '@/lib/emails/send';
+import { emailFailureReasons } from '@/lib/emails/send-result';
 import { renderForceDissolveEmail } from '@/lib/emails/membership/operator-force-dissolve';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
 
+const ROUTE_NAME = 'POST /api/operator/membership/org/[id]/dissolve';
+
 const BodySchema = z.object({
   reason: z.string().min(1).max(1000),
 });
-
-function getServiceRoleClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error('Supabase service role env missing');
-  return createSupabaseClient(url, key, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
 
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  const logger = createLogger('POST /api/operator/membership/org/[id]/dissolve', generateRequestId());
+  const logger = createLogger(ROUTE_NAME, generateRequestId());
   try {
     const { userId: operatorId } = await requireSuperAdmin();
     const { id: orgId } = params;
@@ -49,7 +43,7 @@ export async function POST(
     const { reason } = parsed.data;
 
     // 解散前に全メンバ情報を取得 (解散後は取得困難)
-    const admin = getServiceRoleClient();
+    const admin = getSupabaseAdmin();
     const { data: preMembers, error: preMembersError } = await admin
       .from('user_profiles')
       .select('id, nickname')
@@ -70,10 +64,7 @@ export async function POST(
     });
 
     if (rpcError) {
-      return NextResponse.json(
-        { error: { code: 'INTERNAL_ERROR', message: rpcError.message } },
-        { status: 500 },
-      );
+      return internalError(ROUTE_NAME, rpcError, { userId: operatorId }, { shape: 'nested' });
     }
 
     // 通知メール (best-effort)。解散はすでに完了しているので、失敗しても 200 を返し、ログに残す。
@@ -112,10 +103,12 @@ export async function POST(
       });
 
       const results = await Promise.allSettled(emailTasks);
-      const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      // 送れなかったもの: reject (想定外の例外) と ok: false の結果 (sendEmail は配信の失敗で例外を投げない)。
+      // 1 通ごとの詳細 (文面の名前・マスクした宛先・エラーコード) は sendEmail が app_logs に記録している
+      const failures = emailFailureReasons(results);
       if (failures.length > 0) {
         // 個別の送信失敗も握りつぶさず記録する (ログに宛先のメールアドレスは残さない)
-        log.error('通知メールの一部を送信できませんでした', failures[0].reason, {
+        log.error('通知メールの一部を送信できませんでした', failures[0], {
           organization_id: orgId,
           failed_count: failures.length,
         });
@@ -132,7 +125,7 @@ export async function POST(
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    // 本文は汎用メッセージだけにし、元のエラーは構造化ログに残す (#1172)
+    return internalError(ROUTE_NAME, err, {}, { shape: 'nested' });
   }
 }

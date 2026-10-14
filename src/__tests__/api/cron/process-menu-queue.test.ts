@@ -1,14 +1,32 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
+import { WEEKLY_MENU_REQUEST_FAILED_MESSAGE } from '@/lib/weekly-menu-request-error';
+import {
+  AI_CONSENT_CHECK_FAILED_CODE,
+  AI_CONSENT_CHECK_FAILED_MESSAGE,
+  AI_CONSENT_CHECK_FAILED_STATUS,
+  AI_CONSENT_REQUIRED_CODE,
+  AI_CONSENT_REQUIRED_MESSAGE,
+  AI_CONSENT_REQUIRED_STATUS,
+} from '../../../../supabase/functions/_shared/ai-consent';
 
 const mockRpc = vi.fn();
 const mockFetch = vi.fn();
 const mockLogWarn = vi.fn();
+const mockLogError = vi.fn();
+// weekly_menu_requests への update に渡した値 (失敗にしたときの error_message を見る)
+const mockUpdateValues = vi.fn();
 
+// 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
+vi.mock('@/lib/ai/consent-guard', () => import('../../../../tests/helpers/ai-consent-guard-allowed'));
 vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => ({
     rpc: mockRpc,
     from: () => ({
-      update: () => ({ eq: () => ({ eq: () => ({ in: vi.fn() }) }) }),
+      update: (values: Record<string, unknown>) => {
+        mockUpdateValues(values);
+        return { eq: () => ({ eq: () => ({ in: vi.fn() }) }) };
+      },
     }),
   })),
 }));
@@ -16,11 +34,13 @@ vi.mock('@supabase/supabase-js', () => ({
 // 構造化ログ (app_logs への保存) はここでは確かめない。取り直しのときに警告を出すことだけ見る
 vi.mock('@/lib/db-logger', () => ({
   createLogger: () => ({
-    withUser: () => ({ info: vi.fn(), warn: mockLogWarn, error: vi.fn() }),
+    withUser: () => ({ info: vi.fn(), warn: mockLogWarn, error: mockLogError }),
     info: vi.fn(),
     warn: mockLogWarn,
-    error: vi.fn(),
+    error: mockLogError,
   }),
+  // internalError() が使う (#1182)
+  generateRequestId: () => 'req-test',
 }));
 
 const { GET } = await import('@/app/api/cron/process-menu-queue/route');
@@ -182,14 +202,49 @@ describe('GET /api/cron/process-menu-queue: 取り直した行は続きから再
     expect(mockLogWarn.mock.calls[0][1]).toMatchObject({ requestId: 'req-1', attemptCount: 2, currentStep: 4 });
   });
 
-  it('C-8: Edge Function がエラーを返したら 500 を返す (従来どおり)', async () => {
+  it('C-8: Edge Function がエラーを返したら 500 を返す。本文に例外の文面を出さず、構造化ログに残す (#1172)', async () => {
     mockFetch.mockImplementation(async () => new Response('boom', { status: 500 }));
 
     const { res } = await dispatch(claimedRow({ attempt_count: 2, current_step: 4 }));
 
     expect(res.status).toBe(500);
-    const json = await res.json();
-    expect(json.failed).toBe('req-1');
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
+    expect(text).not.toContain('boom');
+    // 元の例外は構造化ログにだけ残る (本文にはその文面が 1 文字も出ない)
+    expect(mockLogError).toHaveBeenCalledTimes(1);
+    const loggedError = mockLogError.mock.calls[0][1] as Error;
+    expect(loggedError).toBeInstanceOf(Error);
+    expect(loggedError.message).not.toBe('');
+    expect(text).not.toContain(loggedError.message);
+  });
+
+  it('C-9: Edge Function がエラーを返したら、行の error_message には固定の文を書く (状態コード・応答の本文を書かない。#1172)', async () => {
+    const edgeBody = JSON.stringify({ error: 'relation "planned_meals" does not exist' });
+    mockFetch.mockImplementation(async () => new Response(edgeBody, { status: 500 }));
+
+    await dispatch(claimedRow());
+
+    expect(mockUpdateValues).toHaveBeenCalledTimes(1);
+    const written = mockUpdateValues.mock.calls[0][0] as Record<string, unknown>;
+    expect(written).toMatchObject({ status: 'failed', error_message: WEEKLY_MENU_REQUEST_FAILED_MESSAGE });
+    expect(String(written.error_message)).not.toContain('planned_meals');
+    expect(String(written.error_message)).not.toContain('500');
+    // 原因 (状態コードと本文) は構造化ログにだけ残る
+    const loggedError = mockLogError.mock.calls[0][1] as Error;
+    expect(loggedError.message).toContain('planned_meals');
+  });
+
+  it.each([
+    ['未同意 (403)', AI_CONSENT_REQUIRED_STATUS, AI_CONSENT_REQUIRED_CODE, AI_CONSENT_REQUIRED_MESSAGE],
+    ['判定を読めない (503)', AI_CONSENT_CHECK_FAILED_STATUS, AI_CONSENT_CHECK_FAILED_CODE, AI_CONSENT_CHECK_FAILED_MESSAGE],
+  ] as const)('C-10: Edge Function が同意の判定で止めた (%s) ら、行には画面が見分ける人向けの文をそのまま書く', async (_label, status, code, message) => {
+    mockFetch.mockImplementation(async () => new Response(JSON.stringify({ error: message, code }), { status }));
+
+    await dispatch(claimedRow());
+
+    expect(mockUpdateValues).toHaveBeenCalledTimes(1);
+    expect(mockUpdateValues.mock.calls[0][0]).toMatchObject({ status: 'failed', error_message: message });
   });
 });
 
@@ -239,5 +294,37 @@ describe('GET /api/cron/process-menu-queue (#1196 シークレットの入れ替
     vi.stubEnv('CRON_SECRET_PREVIOUS', 'my-old-cron-secret');
     await GET(makeRequest('Bearer not-a-secret'));
     expect(mockRpc).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------
+// #1182 / #1172: 必須の環境変数が欠けていたら、汎用の 500 で止める。
+//   本文には変数名を出さず、変数名は構造化ログ (db-logger) にだけ渡す。キューには触らない。
+// ---------------------------------------------------------------
+describe('GET /api/cron/process-menu-queue: 必須の環境変数 (#1182)', () => {
+  it.each(['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'])(
+    '%s が未設定なら、汎用の 500 (本文に変数名なし)。変数名は db-logger に渡し、キューには触らない',
+    async (name) => {
+      vi.stubEnv(name, undefined);
+
+      const res = await GET(makeRequest('Bearer my-cron-secret-value'));
+      const text = await res.text();
+
+      expect(res.status).toBe(500);
+      expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+      expect(text).not.toContain(name);
+      expect(mockLogError).toHaveBeenCalledTimes(1);
+      expect(mockLogError.mock.calls[0][1]).toMatchObject({ name: 'MissingEnvError', envName: name });
+      expect(mockRpc).not.toHaveBeenCalled();
+    },
+  );
+
+  it('認証に通らなければ、環境変数が欠けていても 401 (設定の不足を教えない)', async () => {
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', undefined);
+
+    const res = await GET(makeRequest('Bearer wrong-secret'));
+
+    expect(res.status).toBe(401);
+    expect(mockLogError).not.toHaveBeenCalled();
   });
 });

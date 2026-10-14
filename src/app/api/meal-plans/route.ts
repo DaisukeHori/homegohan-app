@@ -3,7 +3,9 @@ import { NextResponse } from 'next/server';
 import type { DailyMeal, PlannedMeal, ShoppingListItem } from '@/types/domain';
 import { toDailyMeal, toPlannedMeal, toShoppingListItem } from '@/lib/converter';
 import type { Tables } from '@homegohan/shared';
-import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
+import { CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
+import { mondayWeekRange } from '@/lib/jst-day-ranges';
+import { internalError } from '@/lib/api/errors';
 
 /**
  * Get meals for a date range (日付ベースモデル対応)
@@ -24,6 +26,14 @@ export async function GET(request: Request) {
   const endDate = searchParams.get('endDate');
   const date = searchParams.get('date');
 
+  // 日付は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲の中) だけを受け付ける (#1482)。
+  // 形を見ずに渡すと、2026-02-30 のような日付が DB の date 型への変換で失敗して 500 になる。空欄 (?date=) は以前どおり「指定なし」
+  for (const [name, value] of [['date', date], ['startDate', startDate], ['endDate', endDate]] as const) {
+    if (value && !isCalendarDate(value)) {
+      return NextResponse.json({ error: `${name} must be ${CALENDAR_DATE_REQUIREMENT}` }, { status: 400 });
+    }
+  }
+
   // 単一日付指定の場合
   if (date) {
     const { data, error } = await supabase
@@ -37,7 +47,7 @@ export async function GET(request: Request) {
       .maybeSingle();
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return internalError('GET /api/meal-plans', error, { userId: user.id });
     }
 
     if (!data) {
@@ -51,15 +61,13 @@ export async function GET(request: Request) {
     return NextResponse.json({ dailyMeal, meals });
   }
 
-  // 日付範囲指定の場合（デフォルトは今週、JST基準）
-  const today = parseLocalDate(todayLocal());
-  const defaultStart = new Date(today);
-  defaultStart.setDate(today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1));
-  const defaultEnd = new Date(defaultStart);
-  defaultEnd.setDate(defaultStart.getDate() + 6);
+  // 日付範囲指定の場合（デフォルトは今週 = JST の今日を含む月曜〜日曜）。
+  // 週は暦の計算だけで求める (#1463。以前の parseLocalDate + setDate (ローカル時刻) + formatLocalDate (JST) は、
+  // JST より東のタイムゾーンで動くと 1 日前の日付になった)
+  const thisWeek = mondayWeekRange(todayLocal());
 
-  const queryStartDate = startDate || formatLocalDate(defaultStart);
-  const queryEndDate = endDate || formatLocalDate(defaultEnd);
+  const queryStartDate = startDate || thisWeek.startDate;
+  const queryEndDate = endDate || thisWeek.endDate;
 
   const { data, error } = await supabase
     .from('user_daily_meals')
@@ -73,7 +81,7 @@ export async function GET(request: Request) {
     .order('day_date', { ascending: true });
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/meal-plans', error, { userId: user.id });
   }
 
   const dailyMeals = (data || []).map((day: any) => ({

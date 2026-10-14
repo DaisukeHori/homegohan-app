@@ -7,6 +7,7 @@ import {
   ArrowLeft, Trophy, Target, Flame, Calendar, Plus,
   CheckCircle2, Clock, X, Sparkles, Star
 } from 'lucide-react';
+import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
 
 const colors = {
   bg: '#FAF9F7',
@@ -16,11 +17,8 @@ const colors = {
   textMuted: '#9A9A9A',
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
-  success: '#4CAF50',
-  successLight: '#E8F5E9',
-  warning: '#FF9800',
-  warningLight: '#FFF3E0',
-  error: '#F44336',
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
   purple: '#7C4DFF',
   purpleLight: '#EDE7F6',
   blue: '#2196F3',
@@ -128,12 +126,13 @@ export default function HealthChallengesPage() {
     return Math.min(100, (challenge.current_value / challenge.target_value) * 100);
   };
 
-  const getDifficultyColor = (difficulty: string) => {
+  // fill は薄い下地 (後ろに 20 を付けて透過にする) 用の塗りの色、text はバッジの文字用の濃い色 (#590)
+  const getDifficultyColors = (difficulty: string) => {
     switch (difficulty) {
-      case 'easy': return colors.success;
-      case 'medium': return colors.warning;
-      case 'hard': return colors.error;
-      default: return colors.textMuted;
+      case 'easy': return { fill: colors.success, text: colors.successText };
+      case 'medium': return { fill: colors.warning, text: colors.warningText };
+      case 'hard': return { fill: colors.error, text: colors.dangerText };
+      default: return { fill: colors.textMuted, text: colors.textMuted };
     }
   };
 
@@ -173,7 +172,7 @@ export default function HealthChallengesPage() {
                 <Star size={20} style={{ color: colors.warning }} />
                 <div>
                   <p className="text-xs" style={{ color: colors.textMuted }}>累計獲得ポイント</p>
-                  <p className="text-lg font-bold" style={{ color: colors.warning }}>{totalEarnedPoints} pt</p>
+                  <p className="text-lg font-bold" style={{ color: colors.warningText }}>{totalEarnedPoints} pt</p>
                 </div>
               </div>
             </div>
@@ -241,7 +240,7 @@ export default function HealthChallengesPage() {
                         ) : (
                           <div className="flex items-center gap-1 px-2 py-1 rounded-full" style={{ backgroundColor: colors.warningLight }}>
                             <Clock size={12} style={{ color: colors.warning }} />
-                            <span className="text-xs font-medium" style={{ color: colors.warning }}>
+                            <span className="text-xs font-medium" style={{ color: colors.warningText }}>
                               残り{daysRemaining}日
                             </span>
                           </div>
@@ -308,10 +307,10 @@ export default function HealthChallengesPage() {
                         <CheckCircle2 size={20} color="white" />
                       </div>
                       <div>
-                        <p className="font-semibold" style={{ color: colors.success }}>
+                        <p className="font-semibold" style={{ color: colors.successText }}>
                           {challenge.title}
                         </p>
-                        <p className="text-sm" style={{ color: colors.success }}>
+                        <p className="text-sm" style={{ color: colors.successText }}>
                           {challenge.target_value}{challenge.target_unit} 達成！
                         </p>
                       </div>
@@ -432,8 +431,8 @@ export default function HealthChallengesPage() {
                           <span 
                             className="px-2 py-0.5 rounded-full text-xs font-medium"
                             style={{ 
-                              backgroundColor: `${getDifficultyColor(template.difficulty)}20`,
-                              color: getDifficultyColor(template.difficulty),
+                              backgroundColor: `${getDifficultyColors(template.difficulty).fill}20`,
+                              color: getDifficultyColors(template.difficulty).text,
                             }}
                           >
                             {template.difficulty === 'easy' ? '初級' : 
@@ -447,7 +446,7 @@ export default function HealthChallengesPage() {
                           <span className="text-xs" style={{ color: colors.textMuted }}>
                             {template.duration_days}日間
                           </span>
-                          <span className="text-xs" style={{ color: colors.warning }}>
+                          <span className="text-xs" style={{ color: colors.warningText }}>
                             🏆 {template.reward_points}pt
                           </span>
                         </div>

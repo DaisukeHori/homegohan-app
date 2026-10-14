@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EmailSendError } from '@/lib/emails/send-result';
 import { NextRequest } from 'next/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createFakeServiceRole, leadingUsers, type FakeServiceRole } from './fake-service-role';
@@ -23,12 +24,18 @@ vi.mock('@/lib/auth/operator-permissions', () => ({
   requireSuperAdmin: mocks.requireSuperAdmin,
 }));
 
-// RPC は運営者本人のセッションで実行される (cookies() を使う本物の createClient は使わない)
-vi.mock('@/lib/supabase/server', () => ({
-  createClient: () => ({ rpc: mocks.rpc }),
-}));
+// RPC は運営者本人のセッションで実行される (cookies() を使う本物の createClient は使わない)。
+// service-role のクライアントは本物の getSupabaseAdmin を通す (#1162。接続情報は env-required の getter で取り出し、
+// 下で差し替えた @supabase/supabase-js の createClient で作る)。呼ばれた回数を数える
+vi.mock('@/lib/supabase/server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/supabase/server')>();
+  return {
+    createClient: () => ({ rpc: mocks.rpc }),
+    getSupabaseAdmin: vi.fn(actual.getSupabaseAdmin),
+  };
+});
 
-// 通知用の service-role クライアント (route 内の createSupabaseClient)
+// service-role クライアント (getSupabaseAdmin が作る) の実体
 vi.mock('@supabase/supabase-js', () => ({
   createClient: mocks.createServiceRoleClient,
 }));
@@ -49,6 +56,7 @@ vi.mock('@/lib/db-logger', () => ({
 }));
 
 import { POST } from '@/app/api/operator/membership/family/[id]/dissolve/route';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 
 const OPERATOR_ID = 'd0eebc99-9c0b-4ef8-bb6d-6bb9bd380a44';
 const FAMILY_ID = 'f0eebc99-9c0b-4ef8-bb6d-6bb9bd380a66';
@@ -129,7 +137,7 @@ let fake: FakeServiceRole;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // 本物のキーではないダミー値 (getServiceRoleClient が環境変数の有無だけを見る)
+  // 本物のキーではないダミー値 (getSupabaseAdmin は環境変数の有無だけを見る)
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'http://127.0.0.1:54321');
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'test-service-role-key');
 
@@ -271,6 +279,59 @@ describe('POST /api/operator/membership/family/[id]/dissolve: 通知メールの
     expect(JSON.stringify(mocks.logError.mock.calls)).not.toContain('@example.com');
   });
 
+  it('sendEmail が reject せず ok: false の結果を返した宛先も失敗として数え、200 のまま、ほかの宛先には送り、構造化ログに残す (#1193)', async () => {
+    const sendError = new EmailSendError('rate_limit_exceeded', 'EMAIL_SEND_FAILED: Too many requests', 429, 4, true);
+    mocks.sendEmail.mockImplementation(async (envelope: SentEmail) => {
+      if (envelope.to === ADULT_EMAIL) return { ok: false, id: null, attempts: 4, skipped: false, error: sendError };
+      return { ok: true, id: 'email-ok', attempts: 1, skipped: false, error: null };
+    });
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(3);
+    expect(mocks.withUser).toHaveBeenCalledWith(OPERATOR_ID);
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+    expect(mocks.logError).toHaveBeenCalledWith(expect.any(String), sendError, {
+      family_id: FAMILY_ID,
+      failed_count: 1,
+    });
+    // ログに宛先のメールアドレスを残さない
+    expect(JSON.stringify(mocks.logError.mock.calls)).not.toContain('@example.com');
+  });
+
+  it('reject された宛先と ok: false の宛先が混ざっても、失敗の件数を合計して 1 件のログにまとめる (#1193)', async () => {
+    const thrown = new Error('EMAIL_SEND_FAILED: unexpected');
+    const resultError = new EmailSendError('application_error', 'EMAIL_SEND_FAILED: Service Unavailable', 503, 4, true);
+    mocks.sendEmail.mockImplementation(async (envelope: SentEmail) => {
+      if (envelope.to === REP_EMAIL) throw thrown;
+      if (envelope.to === ADULT_EMAIL) return { ok: false, id: null, attempts: 4, skipped: false, error: resultError };
+      return { ok: true, id: 'email-ok', attempts: 1, skipped: false, error: null };
+    });
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+    const [, reason, metadata] = mocks.logError.mock.calls[0];
+    expect([thrown, resultError]).toContain(reason);
+    expect(metadata).toEqual({
+      family_id: FAMILY_ID,
+      failed_count: 2,
+    });
+  });
+
+  it('RESEND_API_KEY が無くて送らなかった (skipped) 宛先は、失敗に数えず、エラーログも残さない (#1193)', async () => {
+    const skippedError = new EmailSendError('not_configured', 'EMAIL_NOT_CONFIGURED: RESEND_API_KEY が未設定', null, 0, false);
+    mocks.sendEmail.mockResolvedValue({ ok: false, id: null, attempts: 0, skipped: true, error: skippedError });
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(3);
+    expect(mocks.logError).not.toHaveBeenCalled();
+  });
+
   it('解散前のメンバー一覧を読めなかったときも解散は完了させ、メールは送らず、構造化ログに残す', async () => {
     const readError = { message: 'connection reset by peer', code: '08006' };
     fake.readErrors.family_members = readError;
@@ -295,6 +356,9 @@ describe('POST /api/operator/membership/family/[id]/dissolve: RPC のエラー',
 
     expect(res.status).toBe(500);
     expect(json.error.code).toBe('INTERNAL_ERROR');
+    // DB の生のエラー文は本文に出さない (#1172 / #1434)
+    expect(json.error.message).toBe('処理中にエラーが発生しました');
+    expect(JSON.stringify(json)).not.toContain('NOT_OPERATOR');
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     expect(fake.auth.admin.getUserById).not.toHaveBeenCalled();
   });
@@ -340,5 +404,28 @@ describe('POST /api/operator/membership/family/[id]/dissolve: 認可と入力検
     expect(fake.events).toEqual([]);
     expect(mocks.rpc).not.toHaveBeenCalled();
     expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/operator/membership/family/[id]/dissolve: service-role のクライアントは canonical の getSupabaseAdmin で作る (#1162)', () => {
+  it('同じ鍵・同じ設定 (セッションを保存しない・自動で更新しない) のクライアントを、解散前のメンバー取得と通知で 1 回だけ作る', async () => {
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(getSupabaseAdmin)).toHaveBeenCalledTimes(1);
+    expect(mocks.createServiceRoleClient).toHaveBeenCalledTimes(1);
+    expect(mocks.createServiceRoleClient).toHaveBeenCalledWith('http://127.0.0.1:54321', 'test-service-role-key', {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+  });
+
+  it('認可 (requireSuperAdmin) に落ちたら、service-role のクライアントを作らない', async () => {
+    mocks.requireSuperAdmin.mockRejectedValue(new ForbiddenError('PERM_DENIED', 'super_admin 権限が必要です'));
+
+    const res = await call();
+
+    expect(res.status).toBe(403);
+    expect(vi.mocked(getSupabaseAdmin)).not.toHaveBeenCalled();
+    expect(mocks.createServiceRoleClient).not.toHaveBeenCalled();
   });
 });

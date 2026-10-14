@@ -308,6 +308,7 @@ POST /api/meals/paste
        body: { source_meal_id, target_user_ids: [father_id, childB_id] }
 
 server → 認可: source_meal.user_id == auth.uid()
+       → 運営が隠した食事 (hidden_at IS NOT NULL) は 403 MEAL_HIDDEN (#1101。持ち主の確認のあと)
        → 整合性: 全 target が同 family の active member
        → SUPABASE.rpc('paste_meal_to_family', { p_source_meal_id, p_target_user_ids })
        → 各 target に新 meal レコード INSERT (paste_group_id 共通)

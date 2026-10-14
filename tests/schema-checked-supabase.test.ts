@@ -106,7 +106,7 @@ describe('createSchemaCheckedDb', () => {
     expect(await table().select('id').eq('id', 'missing').maybeSingle()).toEqual({ data: null, error: null });
   });
 
-  it('eq / is / gte / lte / order / limit', async () => {
+  it('eq / is / gte / lte / lt / order / limit', async () => {
     const db = createSchemaCheckedDb({
       llm_usage_logs: [
         { id: 'a', created_at: '2026-10-05T01:00:00.000Z', is_summary: false, total_tokens: 1 },
@@ -123,6 +123,13 @@ describe('createSchemaCheckedDb', () => {
       .gte('created_at', '2026-10-06')
       .lte('created_at', '2026-10-08T23:59:59Z');
     expect(ranged.data).toEqual([{ id: 'b' }, { id: 'd' }]);
+
+    // lt は境界の時刻を含まない (gte は含む)。JST の暦日の範囲 [JST 0 時, 翌日の JST 0 時) を絞る形 (#1433)
+    const halfOpen = await logs()
+      .select('id')
+      .gte('created_at', '2026-10-07T01:00:00.000Z')
+      .lt('created_at', '2026-10-08T02:00:00.000Z');
+    expect(halfOpen.data).toEqual([{ id: 'b' }, { id: 'c' }]);
 
     expect((await logs().select('id').is('total_tokens', null)).data).toEqual([{ id: 'd' }]);
 

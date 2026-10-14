@@ -6,11 +6,18 @@ import { useNavigation, useRouter, useLocalSearchParams } from 'expo-router';
 import { getDownloadFailureNotice, handleWebViewDownload } from '../../lib/webViewDownload';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
+import { useWebAuthMessages } from '../../lib/webViewAuthMessages';
+import {
+  buildClearUserScopedWebStorageScript,
+  readPendingWebViewUserScopedStorageClear,
+} from '../../lib/webViewUserStorageCleanup';
 // 認証ブリッジ・オリジン検証・外部遷移の判定は webViewBridge.ts に集約 (#1036 / #1158)
 import {
+  WEB_VIEW_ORIGIN_WHITELIST,
   buildBridgeUrl,
   buildNavigateScript,
   buildOriginGuardScript,
+  buildOwnOriginOnlyScript,
   buildWebUrl,
   decideNavigation,
   decideOpenWindow,
@@ -25,6 +32,9 @@ import {
 interface Props {
   path: string;  // 例 '/home', '/menus/weekly'
   testID?: string;
+  // WebView の上 (上端の安全領域の内側) に置くネイティブの部品。
+  // マイページのタブの歯車 (ネイティブの設定画面への入口) に使う (#1037。設計書 01-architecture.md §3.2)
+  header?: React.ReactNode;
 }
 
 // 各タブの「所有する」パス prefix と Expo Router タブルート のマッピング
@@ -114,9 +124,13 @@ true;
 `;
 };
 
-export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
+export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
   const webViewRef = useRef<WebView>(null);
+  // Web 側のログアウト・セッション失効の通知 (sign-out / session-expired) をネイティブに反映する (#1038 F7-04 / F7-05)
+  const handleAuthMessage = useWebAuthMessages(path);
   const [uri, setUri] = useState<string | null>(null);
+  // WebView を開くときに注入する前の利用者の localStorage の掃除 (#1037)。自オリジンのガード付き。掃除が要らなければ空
+  const [injectedJS, setInjectedJS] = useState<string>('');
   const navigation = useNavigation();
   const router = useRouter();
 
@@ -157,29 +171,45 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
     // effectivePath が変わる/アンマウントした後に、遅れて返ってきた結果で URL を上書きしない
     let cancelled = false;
 
-    const init = async () => {
-      // effectivePath に既に mode=app が含まれている場合は重複付与しない
-      const nextPath = withAppMode(effectivePath);
-
-      // 既定はトークンを一切含まない直接 URL。bridge に成功したときだけ code 付き URL に差し替える。
-      // セッションが無い・refresh できない・code 発行に失敗した場合もここに倒れる
-      // (旧方式のトークン付き URL には決してフォールバックしない)。
-      let target = buildWebUrl(nextPath);
+    // bridge 用のセッション取得と code 発行。失敗はすべて null (= トークンを含まない直接 URL) に倒す
+    // (旧方式のトークン付き URL には決してフォールバックしない)。
+    const resolveBridgeCode = async (): Promise<string | null> => {
       try {
         // access_token の残りが少なければ先に更新する。Web 側は残りが 150 秒未満の access_token には code を発行せず 401 を返すうえ、
         // Web 側 setSession による refresh_token のローテーションも避けたいため (閾値の根拠は webViewBridge.ts の BRIDGE_MIN_TOKEN_TTL_SEC)。
         // 更新に失敗して残りが Web 側の下限を割る場合は null が返り、code 発行を呼ばずに直接 URL へ倒れる
         const session = await getSessionForBridge(supabase.auth);
-        if (session) {
-          // ネイティブが Bearer で code を発行してもらい、WebView の URL には code だけを載せる (#1036)
-          // access_token / refresh_token は URL・注入スクリプト・WebView の props のどこにも載せない
-          const code = await requestBridgeCode(session);
-          if (code) target = buildBridgeUrl(code, nextPath);
-        }
+        if (!session) return null;
+        // ネイティブが Bearer で code を発行してもらい、WebView の URL には code だけを載せる (#1036)
+        // access_token / refresh_token は URL・注入スクリプト・WebView の props のどこにも載せない
+        return await requestBridgeCode(session);
       } catch {
         // 想定外の失敗でも直接 URL にフォールバックする
+        return null;
       }
-      if (!cancelled) setUri(target);
+    };
+
+    const init = async () => {
+      // effectivePath に既に mode=app が含まれている場合は重複付与しない
+      const nextPath = withAppMode(effectivePath);
+
+      // ネイティブのログアウト・退会のあとなら、Web のページが読み込まれる前に、前の利用者の localStorage を消す (#1037)。
+      // ログイン中・未ログインのどちらで開くときも入れる (webViewUserStorageCleanup.ts)。
+      // 掃除の ID (AsyncStorage) と bridge の code は並べて取る (読み込みを遅らせない。ID の読み込みは例外を投げない)。
+      // 掃除は利用者別のキーだけを消し、セッションには触れない。セッションは native-bridge が Cookie に張るので (#1036)、
+      // 掃除と bridge の順序はぶつからない。
+      const [pendingClearId, code] = await Promise.all([
+        readPendingWebViewUserScopedStorageClear(),
+        resolveBridgeCode(),
+      ]);
+      if (cancelled) return;
+
+      // 掃除の JS は自アプリのオリジンのページでだけ動かす (#1036)。
+      // injectedJavaScriptBeforeContentLoaded は WebView のすべての読み込みで動くので、外部ページが万一載っても、
+      // そのサイトの localStorage を消したり書いたりしない
+      setInjectedJS(pendingClearId ? buildOwnOriginOnlyScript(buildClearUserScopedWebStorageScript(pendingClearId)) : '');
+      // 既定はトークンを一切含まない直接 URL。bridge に成功したときだけ code 付き URL に差し替える
+      setUri(code ? buildBridgeUrl(code, nextPath) : buildWebUrl(nextPath));
     };
     init();
 
@@ -194,6 +224,7 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
   if (!uri) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }} edges={['top']}>
+        {header}
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size="large" color={colors.accent} />
         </View>
@@ -203,12 +234,16 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }} edges={['top']}>
+      {header}
       <WebView
         ref={webViewRef}
         testID={testID ?? 'webview-screen'}
         source={{ uri }}
-        // セッション情報 (localStorage 等) はページコンテキストへ一切注入しない (#1036)。
+        // セッション情報 (トークン・localStorage のセッション) はページコンテキストへ一切注入しない (#1036)。
         // Web 側のセッションは native-bridge が Cookie に張る。
+        // 読み込み前に注入するのは、ネイティブのログアウト後の利用者別の localStorage の掃除 (#1037) だけで、
+        // 自アプリのオリジンのページでだけ動く (buildOwnOriginOnlyScript)
+        injectedJavaScriptBeforeContentLoaded={injectedJS || undefined}
         // Fix 1: postMessage 方式のタブ intercept script を全ページロード後に inject
         // capture phase click + pushState hook で SPA ナビゲーションも確実に捕捉
         injectedJavaScript={buildTabInterceptScript(currentTabRoot)}
@@ -230,6 +265,9 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
         // originWhitelist は未アンカーの前方一致で境界にならないため、URL を厳密にパースして判定する。
         // Android の shouldOverrideUrlLoading は JS の応答待ちが長引くと許可に倒れるので、
         // これは多層防御の一つ (本命は、ページから参照できるトークンを持たせないこと)。
+        // originWhitelist は「どの URL を下の onShouldStartLoadWithRequest に渡すか」の入口 (WEB_VIEW_ORIGIN_WHITELIST を参照)。
+        // http(s) はすべて判定に渡し、自オリジンかどうかは decideNavigation が URL を厳密にパースして決める。
+        originWhitelist={WEB_VIEW_ORIGIN_WHITELIST}
         onShouldStartLoadWithRequest={(request) => {
           const decision = decideNavigation(request);
           if (decision.openExternal) {
@@ -294,6 +332,9 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
                 const notice = getDownloadFailureNotice(result);
                 if (notice) Alert.alert(notice.title, notice.message);
               });
+            } else if (data.type === 'sign-out' || data.type === 'session-expired') {
+              // Web 側でログアウトした / Web 側のセッションが切れた。送り元の検証と処理は useWebAuthMessages に集約している
+              handleAuthMessage(data, event.nativeEvent.url);
             }
           } catch {
             // JSON パース失敗は無視

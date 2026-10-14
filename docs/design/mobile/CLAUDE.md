@@ -10,6 +10,7 @@
 | `02-deep-link.md` | `homegohan://` カスタムスキーム / Universal Links / 招待受諾画面 | 01 §15.1 |
 | `03-push-notification.md` | Expo Push / バッジカウント / 通知種別 on-off / Quiet Hours | 01 §15.3-4 |
 | `04-storage-camera.md` | meal-photos バケット / native ImagePicker / EXIF 削除 | 01 §15.2 |
+| `05-auth-session.md` | セッションの保管 (SecureStore) / 起動時の復元 / Google ログイン / push token / WebView とネイティブのログアウト・セッション失効の同期 | #1038 |
 
 ## ドメインの役割
 

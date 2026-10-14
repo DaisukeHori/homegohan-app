@@ -10,6 +10,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
 import { CouponRedemptionsQuerySchema } from '@/lib/super-admin/coupons-schemas';
+import { internalError } from '@/lib/api/errors';
 
 type RouteContext = { params: { id: string } };
 
@@ -56,11 +57,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       .range(offset, offset + per_page - 1);
 
     if (error) {
-      console.error('[super-admin/coupons/[id]/redemptions GET]', error);
-      return NextResponse.json(
-        { error: { code: 'OP_DB_ERROR', message: error.message } },
-        { status: 500 }
-      );
+      return internalError('GET /api/super-admin/coupons/[id]/redemptions', error, {}, { shape: 'nested' });
     }
 
     return NextResponse.json({

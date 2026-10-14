@@ -18,8 +18,9 @@ const USER_ID = 'user-1';
 
 const logError = vi.hoisted(() => vi.fn());
 
-vi.mock('@/lib/menu-generation-feature-flags', () => ({
-  loadFeatureFlags: vi.fn(async () => ({})),
+// #1148: 献立生成のエンジン切り替えは feature_flags (isFeatureEnabled)。買い物リストの処理には関係しないので OFF 固定
+vi.mock('@/lib/feature-flags', () => ({
+  isFeatureEnabled: vi.fn(async () => false),
 }));
 
 vi.mock('@/lib/db-logger', () => ({

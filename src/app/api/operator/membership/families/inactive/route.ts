@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { internalError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,10 +18,7 @@ export async function GET() {
 
     const { data, error } = await supabase.rpc('list_families_with_inactive_representative');
     if (error) {
-      return NextResponse.json(
-        { error: { code: 'INTERNAL_ERROR', message: error.message } },
-        { status: 500 },
-      );
+      return internalError('GET /api/operator/membership/families/inactive', error, {}, { shape: 'nested' });
     }
 
     return NextResponse.json({ data: data ?? [] });
@@ -31,7 +29,6 @@ export async function GET() {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('GET /api/operator/membership/families/inactive', err, {}, { shape: 'nested' });
   }
 }

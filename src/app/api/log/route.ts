@@ -1,11 +1,18 @@
 /**
  * クライアントサイドログを受け取ってDBに保存するAPI
+ *
+ * ログイン済みなら誰でも書ける (source='client' で保存する) ので、利用者ごとに回数を制限する (#1493)。
+ * 枠は src/lib/rate-limit.ts の 'client-log' (key = 認証で確定した user.id)。超えたら 429 で断り、保存しない。
+ * 送り手 (Web の logToServer、端末の error-report.ts・push-issue-log.ts) はどれも失敗を握りつぶすので、
+ * 断っても画面やサインアウトは止まらない。
+ * ここで書いた error は、運用のエラー急増メール (#1157) ではサーバーの障害とは別に数える
+ * (src/lib/ops-alerts/app-log-error-spike.ts。利用者が書いた error でサーバーの障害の通知を鳴らしたり止めたりできないように)。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { sanitizeLogEntry } from '@/lib/db-logger';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 // #1044 (F6-20): level は enum に限定、message は上限文字数を設ける
 const ALLOWED_LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
@@ -41,15 +48,16 @@ export async function POST(request: NextRequest) {
     }
     const userId = user.id;
 
-    // service_roleでログを保存
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-    if (!supabaseUrl || !supabaseServiceKey) {
-      return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
+    // 利用者ごとの回数制限 (#1493)。認証で確定した user.id で数え、保存 (と sanitizeLogEntry の重い処理) より前に断る。
+    // Upstash が例外を投げたときは下の catch で 500 (判定できないなら通さない。src/lib/rate-limit.ts の fail-close)
+    const rateLimit = await checkRateLimit(userId, 'client-log');
+    if (!rateLimit.success) {
+      return rateLimitExceededResponse(rateLimit);
     }
 
-    const supabaseAdmin = createSupabaseClient(supabaseUrl, supabaseServiceKey);
+    // service_roleでログを保存。クライアントは canonical の getSupabaseAdmin で作る (#1162。認証と回数制限を通した後)。
+    // 接続情報が欠けていれば MissingEnvError (変数名はサーバーのログにだけ残る。#1434) → 下の catch で固定の文の 500
+    const supabaseAdmin = getSupabaseAdmin();
 
     // 秘密情報マスキング + サイズ切り詰め (F6-20)。message もクライアントが自由に書ける文字列なので、
     // metadata と同じく保存前にマスクする (#1171)

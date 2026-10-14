@@ -30,16 +30,13 @@
   - **v2（dataset/データセット駆動）**: pgvector＋データセットDBを根拠に **ID選定→DB確定値を `planned_meals` に反映**する方式
   - **v3（LLMクリエイティブ + 3ステップ分割）**: LLMが料理名・材料・手順を直接生成し、栄養は `dataset_ingredients` のベクトル検索で計算。**3ステップ分割アーキテクチャ**（生成→レビュー・修正→完了処理）でタイムアウトを回避。全体俯瞰レビュー・修正フェーズを含む。
 
-**対応表（主要Edge Function）**
-- `generate-weekly-menu`: 互換入口（現在は **v3の処理に委譲**して旧クライアントも動かす）
-- `generate-weekly-menu-v3`: **v3**（LLMクリエイティブ + 3ステップ分割）← 現在の推奨
-- `generate-single-meal`: v1（legacy/旧方式）
-- `generate-single-meal-v3`: **v3**（LLMクリエイティブ + 3ステップ分割）
-- `regenerate-meal-direct`: v1（legacy/旧方式）
-- `regenerate-meal-direct-v3`: **v3**（LLMクリエイティブ + 3ステップ分割）
+**いまの献立生成の Edge Function**
+- `generate-menu-v5`: 献立生成 (週・1 日・1 食・差し替え) の既定のエンジン
+- `generate-menu-v4`: 機能フラグ (`menu_generation_v5_wrapped` / `menu_generation_v5_direct`。`src/lib/feature-flags.ts`) を OFF にしたときのエンジン
 
-> **注**: v2関数は互換性のため残していますが、新規開発はv3を使用してください。
-> **全てのv3関数は3ステップ分割アーキテクチャを採用しています。**
+API (`src/app/api/ai/menu/**`) がフラグを見て v5 / v4 のどちらを呼ぶかを決めます (`POST /api/ai/nutrition-analysis` だけは今もフラグに関係なく v4)。呼び出し関係の詳細は `supabase/functions/README.md` の「献立生成 v4 と v5 の使い分け」と 8.7 を参照してください。
+
+> **注**: v1〜v3 の関数 (`generate-weekly-menu` / `generate-single-meal` / `regenerate-meal-direct` とその `-v2` / `-v3`、`regenerate-meal` / `regenerate-day`) は、リポジトリからも本番からも削除済みです (#1452)。この文書の下のほうに残る v1〜v3 の節は、旧い方式の記録です。
 
 ### 主要機能
 - 📸 **食事写真分析**: 写真からAIが料理を認識し、栄養素を推定
@@ -106,9 +103,7 @@
 ### 3.1 OpenAI GPT-5-mini
 
 **使用箇所:**
-- `generate-weekly-menu` Edge Function
-- `generate-single-meal` Edge Function
-- `regenerate-meal-direct` Edge Function
+- (旧) `generate-weekly-menu` / `generate-single-meal` / `regenerate-meal-direct` Edge Function — #1452 で削除済み。いまの献立生成は `generate-menu-v5` (機能フラグで `generate-menu-v4`) で、使うモデルは各関数の実装を正とする
 - `/api/ai/hint` API
 
 **プロンプト戦略:**
@@ -344,7 +339,7 @@ CREATE TABLE health_insights (
   user_id UUID REFERENCES auth.users(id),
   analysis_date DATE NOT NULL,
   period_type TEXT,  -- 'daily', 'weekly', 'monthly'
-  insight_type TEXT,  -- 'weight_trend', 'blood_pressure', 'sleep_analysis', ...
+  insight_type TEXT,  -- 'nutrition', 'activity', 'sleep', 'checkup', 'trend', 'goal' (POST /api/health/insights が保存する種別。src/lib/health-insight-rows.ts の GENERATED_INSIGHT_TYPES)
   title TEXT NOT NULL,
   summary TEXT,
   details JSONB,
@@ -408,7 +403,7 @@ CREATE TABLE app_logs (
 SELECT * FROM app_logs WHERE level = 'error' ORDER BY created_at DESC LIMIT 20;
 
 -- 特定の関数のログ
-SELECT * FROM app_logs WHERE function_name = 'generate-weekly-menu-v2' ORDER BY created_at DESC LIMIT 50;
+SELECT * FROM app_logs WHERE function_name = 'generate-menu-v5' ORDER BY created_at DESC LIMIT 50;
 
 -- 今日のログ
 SELECT * FROM app_logs WHERE created_at >= CURRENT_DATE ORDER BY created_at DESC;
@@ -745,7 +740,9 @@ AI分析結果一覧
 
 ## 7. Supabase Edge Functions
 
-### 7.1 `generate-weekly-menu`
+> **注**: 7.1 `generate-weekly-menu`・7.2 `generate-single-meal`・7.2.1 `regenerate-meal-direct`・7.7 `generate-weekly-menu` (健康記録統合版) は、#1452 で削除した旧関数の記録です。いまの献立生成は `generate-menu-v5` (機能フラグ `menu_generation_v5_wrapped` / `menu_generation_v5_direct` が OFF なら `generate-menu-v4`) が担います (8.7 汎用献立生成エンジン)。
+
+### 7.1 `generate-weekly-menu` (旧・削除済み)
 
 **トリガー:** `/api/ai/menu/weekly/request` からの呼び出し
 
@@ -781,7 +778,7 @@ if (goals.includes('lose_weight')) TDEE -= 500
 if (goals.includes('build_muscle')) TDEE += 300
 ```
 
-### 7.2 `generate-single-meal`
+### 7.2 `generate-single-meal` (旧・削除済み)
 
 **トリガー:** `/api/ai/menu/meal/generate` からの呼び出し
 
@@ -804,7 +801,7 @@ const mealCalorieRatio = {
 }
 ```
 
-### 7.2.1 `regenerate-meal-direct`（献立差し替え）
+### 7.2.1 `regenerate-meal-direct`（献立差し替え。旧・削除済み）
 
 **トリガー:** `/api/ai/menu/meal/regenerate`、`/api/ai/menu/day/regenerate`、`/api/ai/nutrition-analysis` 等
 
@@ -1003,139 +1000,19 @@ Step 5: DB更新
 
 ---
 
-### 7.6 `generate-health-insights`
+### 7.6 `generate-health-insights` (削除済み)
 
-**トリガー:** 週次スケジュール or 手動トリガー（`/api/health/insights` 経由）
+この Edge Function は #1440 で削除した。アプリ・cron・`pg_net` のどこからも呼ばれておらず、保存も利用者の JWT のクライアントで
+行っていたため、`health_insights` の RLS (利用者向けの INSERT ポリシーが無い) で黙って失敗していた。
 
-**処理フロー:**
-1. JWT認証でユーザー確認
-2. 期間設定（daily/weekly/monthly）
-3. `health_records` から該当期間のデータ取得
-4. ユーザープロファイル・健康目標取得
-5. 6種類の分析を実行
-6. `health_insights` テーブルに保存
-
-**分析アルゴリズム:**
-
-#### 1. 体重トレンド分析 (`analyzeWeightTrend`)
-```typescript
-// 変化量計算
-const change = lastWeight - firstWeight;
-
-// 目標との比較
-if (weightGoal) {
-  goalProgress = {
-    target: weightGoal.target_value,
-    remaining: lastWeight - weightGoal.target_value,
-    onTrack: (目標が減量 && 減少中) || (目標が増量 && 増加中)
-  };
-}
-
-// アラート判定
-if (Math.abs(change) > 2) {
-  priority = 'high';
-  isAlert = true;
-}
-```
-
-#### 2. 血圧分析 (`analyzeBloodPressure`)
-```typescript
-// 基準値判定
-if (avgSystolic >= 140 || avgDiastolic >= 90) {
-  status = '高血圧';
-  priority = 'critical';
-  isAlert = true;
-} else if (avgSystolic >= 130 || avgDiastolic >= 85) {
-  status = '高め';
-  priority = 'high';
-} else if (avgSystolic < 90 || avgDiastolic < 60) {
-  status = '低め';
-  priority = 'medium';
-}
-```
-
-#### 3. 睡眠分析 (`analyzeSleep`)
-```typescript
-// 睡眠時間の評価
-if (avgHours < 6) {
-  priority = 'high';
-  recommendations.push('睡眠時間が不足しています');
-}
-
-// 睡眠の質の評価
-if (avgQuality < 3) {
-  priority = 'high';
-  recommendations.push('睡眠の質が低めです');
-}
-```
-
-#### 4. 相関分析 (`analyzeCorrelations`)
-```typescript
-// 睡眠と体調の相関を分析
-const sleepGoodDays = records.filter(r => 
-  r.sleep_quality >= 4 || r.sleep_hours >= 7
-);
-const sleepGoodMoodAvg = average(sleepGoodDays.map(r => r.mood_score));
-
-const sleepBadDays = records.filter(r => 
-  r.sleep_quality <= 2 || r.sleep_hours < 6
-);
-const sleepBadMoodAvg = average(sleepBadDays.map(r => r.mood_score));
-
-const correlation = sleepGoodMoodAvg - sleepBadMoodAvg;
-```
-
-#### 5. 活動量分析 (`analyzeActivity`)
-```typescript
-// 歩数評価
-if (avgSteps < 5000) {
-  priority = 'high';
-  recommendations.push('活動量が少なめです。1日8000歩を目標に');
-} else if (avgSteps >= 10000) {
-  recommendations.push('素晴らしい活動量です！');
-}
-```
-
-#### 6. AI総合分析 (`generateAIInsight`)
-```typescript
-// OpenAI GPT-4o-mini による総合分析
-const prompt = `以下の健康記録データを分析し、
-ユーザーへの個別アドバイスを生成してください。
-
-期間: ${periodType}
-データサマリー: ${JSON.stringify(summarizeRecords(records))}
-ユーザー情報: 年齢、性別、目標...
-
-JSON形式で回答:
-{
-  "title": "絵文字付きの短いタイトル",
-  "summary": "2-3文の要約",
-  "recommendations": ["アドバイス1", "アドバイス2"],
-  "priority": "low" | "medium" | "high"
-}`;
-```
-
-**生成されるインサイト例:**
-```json
-{
-  "insight_type": "weight_trend",
-  "title": "📉 体重が減少傾向",
-  "summary": "この期間で1.5kg減少しました（平均65.2kg）",
-  "details": {
-    "start_weight": 66.7,
-    "end_weight": 65.2,
-    "change": -1.5,
-    "goal_progress": { "target": 63, "remaining": 2.2, "onTrack": true }
-  },
-  "recommendations": ["目標に向かって順調です！このペースを維持しましょう"],
-  "priority": "low",
-  "is_alert": false
-}
-```
+健康インサイトの生成と保存は、画面が呼ぶ `POST /api/health/insights` (`src/app/api/health/insights/route.ts`) が行う (#1432)。
+行の組み立ては `src/lib/health-insight-rows.ts`: JST の今日を終了日に 30 日さかのぼる期間 (`period_type` は `monthly`) の
+`health_records`・健康診断・食事を AI に渡し、`insight_type` は `nutrition` / `activity` / `sleep` / `checkup` / `trend` / `goal` の
+どれか (それ以外は `trend`)、`priority` は `low` / `medium` / `high` / `critical` で保存する。
 
 ---
 
-### 7.7 `generate-weekly-menu` (健康記録統合版)
+### 7.7 `generate-weekly-menu` (健康記録統合版。旧・削除済み)
 
 **トリガー:** `/api/ai/menu/weekly/request` からの呼び出し
 
@@ -1645,6 +1522,8 @@ CREATE INDEX IF NOT EXISTS idx_planned_meals_source_type ON planned_meals(source
 - これは `EdgeRuntime.waitUntil()` の制限を超えるため、**3ステップ分割方式**を採用
 
 #### 8.5.9 v3: 3ステップ分割アーキテクチャ（タイムアウト回避）
+
+> **注**: この節の v2 / v3 の関数 (`generate-weekly-menu-v2` / `-v3` など) は #1452 で削除済みです。旧い方式の記録として残しています。
 
 週間献立生成は処理時間が長い（LLM呼び出し多数）ため、単一のバックグラウンドタスクでは`EdgeRuntime.waitUntil()`のタイムアウトを超過する。
 v3ではこの問題を解決するため、以下の設計を採用。
@@ -2583,11 +2462,12 @@ EXPO_PUBLIC_APP_ENV=development|preview|production
 ```
 
 ### 11.10 最終ゴール（機能完全移植）
-Webにある **全機能**（メイン機能/組織/管理者/サポート/スーパー管理を含む）を、
-段階的にモバイルへ実装する。移行の基準は以下:
+Webにある **全機能**（メイン機能/組織/サポート/スーパー管理を含む）を、
+段階的にモバイルへ実装する。ただし **管理者（admin）の画面はモバイルに作らない**
+（運営作業は Web に一本化する。2026-10-08 オーナー判断、#1122）。移行の基準は以下:
 - Phase A: **日常利用のメイン導線**（認証/オンボ/ホーム/献立/食事記録/AI相談）
 - Phase B: **生活・健康の拡張**（健康/買い物/冷蔵庫/レシピ/バッジ/比較/家族）
-- Phase C: **管理系の完全移植**（組織/管理者/サポート/スーパー管理）
+- Phase C: **管理系の移植**（組織/サポート/スーパー管理。管理者 (admin) は対象外）
 
 ### 11.11 機能・画面一覧（Web → Mobile）
 #### Webページ一覧（`src/app/**/page.tsx`）
@@ -2613,7 +2493,7 @@ Webにある **全機能**（メイン機能/組織/管理者/サポート/ス�
   - `/profile`, `/settings`
 - **組織（org）**
   - `/org/dashboard`, `/org/challenges`, `/org/departments`, `/org/invites`, `/org/members`, `/org/settings`
-- **管理者（admin）**
+- **管理者（admin）**（Web のみ。モバイルには作らない。運営作業は Web に一本化。#1122）
   - `/admin`
   - `/admin/announcements`, `/admin/audit-logs`, `/admin/inquiries`, `/admin/moderation`, `/admin/organizations`, `/admin/users`
 - **スーパー管理（super-admin）**
@@ -2627,7 +2507,7 @@ Webにある **全機能**（メイン機能/組織/管理者/サポート/ス�
 - `apps/mobile/app/(public)`：公開ページ（必要に応じて簡略UI）
 - `apps/mobile/app/(auth)`：ログイン/登録/パスワード再設定/メール確認
 - `apps/mobile/app/(tabs)`：日常導線（ホーム/献立/食事/健康/設定）
-- `apps/mobile/app/(org)` / `(admin)` / `(super-admin)` / `(support)`：ロールに応じた管理画面（設定画面から遷移）
+- `apps/mobile/app/(org)` / `(super-admin)` / `(support)`：ロールに応じた管理画面（設定画面から遷移）。管理者 (admin) の画面は作らない（#1122）
 
 #### バックエンドAPIの対応（モバイル）
 - **基本CRUD**: Supabase（RLS）をモバイルから直接利用（anon key + user JWT）

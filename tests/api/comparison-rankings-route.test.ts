@@ -15,12 +15,15 @@
  *       他 3 クエリの error → 無視して空扱いで 200
  *       例外               → 500 と error メッセージ
  *
- * 期間 (periodStart / periodEnd) の境界計算は #1211 の担当。ここでは具体的な日付を固定せず、
+ * 期間 (periodStart / periodEnd) の境界 (JST の暦) は #1211 の担当で、末尾の「集計期間は JST の暦で決まる」で、
+ * 固定した時刻を使って確かめる。それ以外のテストは具体的な日付を固定せず、
  * 「4 クエリに渡した periodStart とレスポンスの periodStart が一致する」ことだけを見る
  * (実行マシンのタイムゾーンにも依存しない)。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MetricDefinition, SegmentDefinition } from '@/types/comparison';
+import { calculateJstPeriod } from '../../supabase/functions/_shared/jst-date.ts';
+import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
 
 // ── supabase/server モック ────────────────────────────────────────────────────
 
@@ -214,7 +217,8 @@ const userBadgeRows = [
     id: 'ub1',
     user_id: USER_ID,
     badge_id: 'badge-champion',
-    context_json: { segment_id: 'seg-all', metric_id: 'met-cal' },
+    // 集計の Edge Function が付与の記録に残す期間 (period_type / period_start)。ランキングの期間と同じ (#1500)
+    context_json: { segment_id: 'seg-all', metric_id: 'met-cal', period_type: 'weekly', period_start: '2026-01-05' },
     message: '全ユーザーでカロリーバランス1位',
     badges: {
       code: 'segment_champion',
@@ -228,7 +232,7 @@ const userBadgeRows = [
     id: 'ub2',
     user_id: USER_ID,
     badge_id: 'badge-other',
-    context_json: { segment_id: 'seg-all', metric_id: 'met-other' },
+    context_json: { segment_id: 'seg-all', metric_id: 'met-other', period_type: 'weekly', period_start: '2026-01-05' },
     message: '',
     badges: { code: 'other', name: 'その他', icon: null, condition_json: null },
   },
@@ -498,6 +502,63 @@ describe('GET /api/comparison/rankings: レスポンスの形 (並列化で変�
   });
 });
 
+// ── 賞は、バッジが付いた期間とランキングの期間が合うときだけ、バッジから出す (#1500) ──────────────────────
+//
+// user_badges は (利用者, バッジ) ごとに 1 件だけで、一度付くと消えない。付与の記録 (context_json) には、付いた期間
+// (period_type / period_start) が残る。以前はセグメントと指標だけで照合していたので、過去の期間に付いたバッジが、
+// 今の期間のランキングの賞として出続けた。
+// バッジが無いときに順位・百分位・平均比から賞を出す既存の挙動 (表示だけ。永続しない) は変えない。
+
+describe('GET /api/comparison/rankings: 賞のバッジは期間も照合する (#1500)', () => {
+  /** ub1 (全ユーザー × カロリー の segment_champion) の付与の記録の期間だけを差し替えた user_badges */
+  function badgesWithChampionContext(context: Record<string, unknown>) {
+    return [{ ...userBadgeRows[0], context_json: { segment_id: 'seg-all', metric_id: 'met-cal', ...context } }, userBadgeRows[1]];
+  }
+
+  /** 全ユーザー × カロリー (順位 1) のランキングの賞 */
+  async function championPrize(): Promise<unknown> {
+    const res = await GET(makeRequest());
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    const calorie = json.rankings.find((m: any) => m.metric.code === 'calorie_balance');
+    return calorie.segments.find((s: any) => s.segment.id === 'seg-all').prize;
+  }
+
+  /** バッジが無いときの、順位 1 の既存の賞 (表示だけ) */
+  const rankOnePrize = { code: 'rank_1', name: '1位', icon: '🏆', category: 'rank', message: '全ユーザーで1位！' };
+
+  it('バッジの期間がランキングの期間と同じなら、バッジの賞を出す', async () => {
+    givenResults({ user_badges: { data: badgesWithChampionContext({ period_type: 'weekly', period_start: '2026-01-05' }), error: null } });
+
+    expect(await championPrize()).toMatchObject({ code: 'segment_champion', message: '全ユーザーでカロリーバランス1位' });
+  });
+
+  it.each([
+    ['前の週に付いたバッジ', { period_type: 'weekly', period_start: '2025-12-29' }],
+    ['同じ開始日でも、別の種類 (月) の期間に付いたバッジ', { period_type: 'monthly', period_start: '2026-01-05' }],
+    ['期間の記録が無いバッジ (期間を照合できない)', {}],
+  ])('%s は、今の期間の賞として出さない (順位から出す既存の賞になる)', async (_label, context) => {
+    givenResults({ user_badges: { data: badgesWithChampionContext(context), error: null } });
+
+    expect(await championPrize()).toEqual(rankOnePrize);
+  });
+
+  it('前の期間のバッジしか無く、順位・百分位・平均比のどれにも当てはまらないランキングには、賞を出さない', async () => {
+    const lowRanking = rankingRow('r-low', segAll, metricCalorie, { rank: 50, total_users: 120, percentile: 58, value: 1500, vs_avg_rate: -3 });
+    givenResults({
+      user_segment_rankings: { data: [lowRanking], error: null },
+      user_badges: { data: badgesWithChampionContext({ period_type: 'weekly', period_start: '2025-12-29' }), error: null },
+    });
+
+    const res = await GET(makeRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.rankings).toHaveLength(1);
+    expect(json.rankings[0].segments[0].prize).toBeNull();
+  });
+});
+
 describe('GET /api/comparison/rankings: エラー処理 (従来どおり)', () => {
   it('rankings の error はログに出し、ランキングは空として 200 を返す', async () => {
     const rankingsError = { message: 'permission denied for table user_segment_rankings', code: '42501' };
@@ -557,15 +618,22 @@ describe('GET /api/comparison/rankings: エラー処理 (従来どおり)', () =
     expect(json.userMetrics).toEqual(userMetricRows);
   });
 
-  it('クエリが例外を投げたら、ログに出して 500 と error メッセージを返す', async () => {
+  it('クエリが例外を投げたら、ログに出して 500 と汎用メッセージを返す (例外の文面は本文に出さない。#1172)', async () => {
     const failure = new Error('connection reset');
     givenResults({ user_metrics: { rejectWith: failure } });
 
     const res = await GET(makeRequest());
+    const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: 'connection reset' });
-    expect(errorSpy).toHaveBeenCalledWith('Comparison API error:', failure);
+    expect(JSON.parse(text)).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
+    expect(text).not.toContain('connection reset');
+    // 元の例外は、route の名前でサーバーのログに残る (internalError() → db-logger)
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[GET /api/comparison/rankings]'),
+      failure,
+      expect.anything(),
+    );
   });
 
   it('複数のクエリが例外を投げても 500 を 1 回返すだけで、未処理の rejection を残さない', async () => {
@@ -578,10 +646,106 @@ describe('GET /api/comparison/rankings: エラー処理 (従来どおり)', () =
     const json = await res.json();
 
     expect(res.status).toBe(500);
-    expect(['stats failed', 'badges failed']).toContain(json.error);
+    expect(json).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
 
     // 2 つ目の reject が未処理のまま残らないこと (残ると Vitest が unhandled rejection として失敗にする)。
     // テストが終わる前に、残りのタイマーを消化させておく。
     await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+});
+
+// ── 集計期間は JST の暦で決まる (#1211) ──────────────────────────────────────
+//
+// 以前は new Date() の getDay() / getDate() / getMonth() (Vercel の実行環境は UTC) で期間を求めていたので、
+// JST の 00:00〜08:59 (UTC では前日) の間は、月曜の早朝が日曜日扱いで週の開始日が 1 週間前の月曜に、月初は前月に、
+// 毎日は前日になっていた。集計の Edge Function (calculate-segment-stats) が保存する period_start と
+// 食い違うと、新しい週の集計が見つからない (または前の週の数字が出る)。
+// 期間の求め方そのものは tests/jst-period.test.ts が確かめる。ここでは、この API がその期間で読むことを見る。
+
+describe('GET /api/comparison/rankings: 集計期間は JST の暦で決まる (#1211)', () => {
+  const originalTz = process.env.TZ;
+
+  afterEach(() => {
+    vi.useRealTimers();
+    if (originalTz === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTz;
+  });
+
+  /** 現在時刻 (Date だけ) を固定する。DB の往復を模した setTimeout は本物のまま動かす */
+  function setNow(iso: string) {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(iso));
+  }
+
+  // [periodType, 現在時刻 (UTC), 期間の開始日, 期間の終了日, 説明]
+  const boundaries: Array<[string, string, string, string, string]> = [
+    ['weekly', '2026-07-12T14:59:59.999Z', '2026-07-06', '2026-07-12', 'JST 日曜 7/12 23:59:59 は、まだ前の週'],
+    ['weekly', '2026-07-12T15:00:00.000Z', '2026-07-13', '2026-07-19', 'JST 月曜 7/13 0:00 から新しい週 (UTC はまだ日曜。修正前は前の週のままだった)'],
+    ['weekly', '2026-07-12T23:59:59.999Z', '2026-07-13', '2026-07-19', 'JST 月曜 7/13 8:59:59 も新しい週 (UTC はまだ日曜)'],
+    ['monthly', '2026-07-31T14:59:59.999Z', '2026-07-01', '2026-07-31', 'JST 7/31 23:59:59 は、まだ 7 月'],
+    ['monthly', '2026-07-31T15:00:00.000Z', '2026-08-01', '2026-08-31', 'JST 8/1 0:00 から 8 月 (UTC はまだ 7/31。修正前は 7 月のままだった)'],
+    ['daily', '2026-07-12T14:59:59.999Z', '2026-07-12', '2026-07-12', 'JST 7/12 23:59:59 は、まだ 7/12'],
+    ['daily', '2026-07-12T15:00:00.000Z', '2026-07-13', '2026-07-13', 'JST 7/13 0:00 から 7/13 (UTC はまだ 7/12。修正前は前日のままだった)'],
+    ['all_time', '2026-07-12T15:00:00.000Z', '2024-01-01', '2026-07-13', '全期間は 2024-01-01 から JST の今日まで (集計側が保存する全期間と同じ。修正前は直近 7 日を探していた)'],
+  ];
+
+  it.each(boundaries)('%s @ %s → %s 〜 %s (%s)', async (periodType, now, start, end) => {
+    setNow(now);
+
+    const res = await GET(makeRequest(`?periodType=${periodType}`));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json).toMatchObject({ periodType, periodStart: start, periodEnd: end });
+    // 期間で絞る 3 クエリも、同じ開始日で読む
+    for (const table of ['user_segment_rankings', 'segment_stats', 'user_metrics']) {
+      expect(issued.find((q) => q.table === table)?.ops, table).toContainEqual(['eq', 'period_start', start]);
+    }
+  });
+
+  it('periodType を省略すると週 (weekly) で、JST の月曜 0 時から新しい週になる', async () => {
+    setNow('2026-07-12T15:00:00.000Z');
+
+    const res = await GET(makeRequest());
+    const json = await res.json();
+
+    expect(json).toMatchObject({ periodType: 'weekly', periodStart: '2026-07-13', periodEnd: '2026-07-19' });
+  });
+
+  it('集計の Edge Function (calculate-segment-stats) が保存する期間と、同じ期間で読む (保存側と読み出し側が食い違わない)', async () => {
+    for (const now of [
+      '2026-07-12T14:59:59.999Z',
+      '2026-07-12T15:00:00.000Z',
+      '2026-07-12T23:59:59.999Z',
+      '2026-07-13T00:00:00.000Z',
+      '2026-07-31T15:00:00.000Z',
+      '2026-12-31T15:00:00.000Z',
+      '2028-02-28T15:00:00.000Z',
+    ]) {
+      setNow(now);
+      for (const periodType of ['daily', 'weekly', 'monthly', 'all_time']) {
+        const res = await GET(makeRequest(`?periodType=${periodType}`));
+        const json = await res.json();
+
+        expect({ periodStart: json.periodStart, periodEnd: json.periodEnd }, `${periodType} @ ${now}`).toEqual(
+          calculateJstPeriod(periodType, new Date(now)),
+        );
+      }
+    }
+  });
+
+  it('実行環境のタイムゾーンに左右されない (JST の実行環境でも、サマータイムのある地域でも同じ期間)', async () => {
+    for (const tz of ['UTC', 'Asia/Tokyo', 'America/Los_Angeles', 'Pacific/Kiritimati', 'Pacific/Midway']) {
+      process.env.TZ = tz;
+      setNow('2026-07-12T15:00:00.000Z'); // JST 月曜 7/13 0:00
+
+      const weekly = await (await GET(makeRequest('?periodType=weekly'))).json();
+      const monthly = await (await GET(makeRequest('?periodType=monthly'))).json();
+      const daily = await (await GET(makeRequest('?periodType=daily'))).json();
+
+      expect([weekly.periodStart, weekly.periodEnd], `${tz} weekly`).toEqual(['2026-07-13', '2026-07-19']);
+      expect([monthly.periodStart, monthly.periodEnd], `${tz} monthly`).toEqual(['2026-07-01', '2026-07-31']);
+      expect([daily.periodStart, daily.periodEnd], `${tz} daily`).toEqual(['2026-07-13', '2026-07-13']);
+    }
   });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
 // Resend モック (send.ts が module-level で new Resend() するため)
 vi.mock('resend', () => {
@@ -11,16 +11,26 @@ vi.mock('resend', () => {
 import { renderFamilyInviteEmail } from '@/lib/emails/membership/family-invite';
 import { EmailEnvelopeSchema } from '@/lib/emails/send';
 import type { InviteEmailVars } from '@/lib/emails/membership/templates';
+import { DEFAULT_EMAIL_FROM } from '@/lib/site-config';
 
 const baseVars: InviteEmailVars = {
   display_name: '山田太郎',
   email_address: 'taro@example.com',
   inviter_name: '山田花子',
   scope_name: '山田家',
-  invite_url: 'https://homegohan.app/invite/abc123def456',
+  invite_url: 'https://app.example.test/invite/abc123def456',
   expires_at: '2026-05-24',
   custom_message: null,
 };
+
+// 送信元の既定値 (src/lib/site-config.ts) を確かめるテスト。手元の EMAIL_FROM に左右されないよう未設定から始める
+beforeEach(() => {
+  vi.stubEnv('EMAIL_FROM', '');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('renderFamilyInviteEmail', () => {
   it('EmailEnvelopeSchema で valid な envelope を返す', () => {
@@ -42,7 +52,7 @@ describe('renderFamilyInviteEmail', () => {
 
   it('from が ほめゴハン noreply である', () => {
     const envelope = renderFamilyInviteEmail(baseVars);
-    expect(envelope.from).toBe('ほめゴハン <noreply@homegohan.app>');
+    expect(envelope.from).toBe(DEFAULT_EMAIL_FROM);
   });
 
   it('テキスト本文に display_name 様 が含まれる', () => {
@@ -62,7 +72,7 @@ describe('renderFamilyInviteEmail', () => {
 
   it('テキスト本文に invite_url が含まれる', () => {
     const envelope = renderFamilyInviteEmail(baseVars);
-    expect(envelope.text).toContain('https://homegohan.app/invite/abc123def456');
+    expect(envelope.text).toContain('https://app.example.test/invite/abc123def456');
   });
 
   it('テキスト本文に expires_at (YYYY-MM-DD) が含まれる', () => {

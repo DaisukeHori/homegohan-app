@@ -4,7 +4,8 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 06-loader-state: 比較画面でローダーが正しく表示・非表示される (状態遷移)
-# NOTE: comparison-loader testID が未実装のため、再計算ボタン動作のみ確認
+# NOTE: comparison-loader testID が未実装のため、期間の切り替えによる再読み込みの動作のみ確認
+# (#1406: 再計算ボタンは super_admin だけに出す。E2E_USER_01 は一般の利用者なので、期間の切り替えで読み直しを起こす)
 - runFlow: ../_shared/login.yaml
 
 # 比較画面へ移動
@@ -19,9 +20,9 @@ env:
 - waitForAnimationToEnd:
     timeout: 15000
 
-# 再計算で再度ロードが発生することを確認
+# 期間を切り替えて再度ロードが発生することを確認
 - tapOn:
-    id: "comparison-recalculate-button"
+    id: "comparison-period-monthly"
 - waitForAnimationToEnd:
     timeout: 15000
 - assertVisible:

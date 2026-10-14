@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { internalError } from '@/lib/api/errors';
 
 // 重要マークのトグル
 export async function POST(
@@ -55,8 +56,7 @@ export async function POST(
     });
 
   } catch (error: any) {
-    console.error('Important toggle error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/consultation/sessions/[sessionId]/messages/[messageId]/important', error, { userId: user.id });
   }
 }
 

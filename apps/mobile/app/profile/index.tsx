@@ -5,8 +5,9 @@ import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextIn
 
 import { Card, ListItem, LoadingState, PageHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
+import { getPrivacyUrl, getSupportMailtoUrl, getTermsUrl } from "../../src/lib/siteConfig";
 import { supabase } from "../../src/lib/supabase";
-import { clearUserScopedAsyncStorage } from "../../src/lib/user-storage";
+import { signOutOnDevice } from "../../src/lib/signOut";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { colors, spacing, radius } from "../../src/theme";
@@ -85,7 +86,7 @@ const COOKING_EXP = [
 ];
 
 export default function ProfilePage() {
-  const { user } = useAuth();
+  const { user, clearSession } = useAuth();
   const { profile: ctxProfile, refresh: refreshProfile } = useProfile();
 
   const [profileData, setProfileData] = useState<any>(null);
@@ -167,8 +168,9 @@ export default function ProfilePage() {
   }
 
   async function handleLogout() {
-    await clearUserScopedAsyncStorage(user?.id ?? null);
-    await supabase.auth.signOut();
+    // push token の削除 → ユーザー別データの削除 → サインアウトの順 (#1038 F7-10)。
+    // 設定画面のログアウトと同じ共通処理 (サインアウトが失敗しても端末のセッションと画面の状態を消す。#1037)
+    await signOutOnDevice(user?.id ?? null, { clearSession });
     router.replace("/");
   }
 
@@ -792,19 +794,19 @@ export default function ProfilePage() {
           <Text style={{ fontSize: 11, fontWeight: "800", color: colors.textMuted, textTransform: "uppercase", letterSpacing: 1 }}>サポート</Text>
           <ListItem
             title="利用規約"
-            onPress={() => Linking.openURL("https://homegohan.app/terms")}
+            onPress={() => Linking.openURL(getTermsUrl())}
             left={<View style={[s.menuIcon, { backgroundColor: colors.bg }]}><Ionicons name="document-text-outline" size={18} color={colors.textLight} /></View>}
             right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
           />
           <ListItem
             title="プライバシーポリシー"
-            onPress={() => Linking.openURL("https://homegohan.app/privacy")}
+            onPress={() => Linking.openURL(getPrivacyUrl())}
             left={<View style={[s.menuIcon, { backgroundColor: colors.bg }]}><Ionicons name="lock-closed-outline" size={18} color={colors.textLight} /></View>}
             right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
           />
           <ListItem
             title="お問い合わせ"
-            onPress={() => Linking.openURL("mailto:support@homegohan.jp")}
+            onPress={() => Linking.openURL(getSupportMailtoUrl())}
             left={<View style={[s.menuIcon, { backgroundColor: colors.bg }]}><Ionicons name="mail-outline" size={18} color={colors.textLight} /></View>}
             right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
           />

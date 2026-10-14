@@ -25,14 +25,35 @@ const supabaseClient = {
   storage: { from: mockStorageFrom },
 };
 
-vi.mock('@/lib/supabase/server', () => ({
-  createClient: () => supabaseClient,
-}));
+// service_role のクライアントは本物の getSupabaseAdmin を通す (#1162。下で差し替えた @supabase/supabase-js の createClient で作る)
+vi.mock('@/lib/supabase/server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/supabase/server')>();
+  return {
+    createClient: () => supabaseClient,
+    getSupabaseAdmin: actual.getSupabaseAdmin,
+  };
+});
 
 // @supabase/supabase-js の直接インスタンス (service_role 用) もモック
 vi.mock('@supabase/supabase-js', () => ({
   createClient: () => supabaseClient,
 }));
+
+// #1164 /api/upload は 1 ユーザーあたり 10 回/分 (upload カテゴリ) で制限される。
+// #186 の describe は同じユーザー (uid-1) で 10 回を超えて呼び、MIME / サイズ / magic bytes の検証だけを確かめたいので、
+// upload カテゴリの判定だけを常に通す。それ以外のカテゴリ (#166 の contact など) は本物の判定を通す。
+// upload の制限そのものは src/__tests__/api/upload-rate-limit.test.ts で確かめる。
+// (vi.fn() ではなく普通の関数にしているのは、各 describe の vi.resetAllMocks() で挙動が消えないようにするため)
+vi.mock('@/lib/rate-limit', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/rate-limit')>();
+  return {
+    ...actual,
+    checkRateLimit: (key: string, category: Parameters<typeof actual.checkRateLimit>[1]) =>
+      category === 'upload'
+        ? Promise.resolve({ success: true, limit: 10, remaining: 9, reset: Date.now() + 60_000, windowSec: 60 })
+        : actual.checkRateLimit(key, category),
+  };
+});
 
 // ─────────────────────────────────────────────
 // #163 /api/log — 認証なし書き込み禁止
@@ -267,7 +288,8 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
 
     const selectChainDetail = {
       eq: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: recipeRow, error: null }),
+      // #1445: 詳細は .maybeSingle() で読む (0 行を 404 にするため)
+      maybeSingle: vi.fn().mockResolvedValue({ data: recipeRow, error: null }),
     };
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue(selectChainDetail),
@@ -287,11 +309,12 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
     mockRpc.mockResolvedValue({ data: null, error: null });
 
     // #257: view_count 更新は SELECT+UPDATE ではなく単一アトミック RPC
-    // (increment_recipe_view_count) で行われるため、詳細取得の select().eq().single()
+    // (increment_recipe_view_count) で行われるため、詳細取得の select().eq().maybeSingle()
     // は1回だけ呼ばれ、そのまま recipeRow を返す。
     const selectChainDetail = {
       eq: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: recipeRow, error: null }),
+      // #1445: 詳細は .maybeSingle() で読む (0 行を 404 にするため)
+      maybeSingle: vi.fn().mockResolvedValue({ data: recipeRow, error: null }),
     };
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue(selectChainDetail),

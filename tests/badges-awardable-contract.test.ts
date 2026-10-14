@@ -20,10 +20,11 @@
  * 拾える形に寄せるか、このテストの経路の探し方に足す。
  * TypeScript は構文木で走査するので、コメントや文字列の中の `awardBadge(` には反応しない。
  *
- * 注意 (2026-10-08 確認): calculate-segment-stats がバッジを取る条件 `condition_json->type.eq.<値>` は、
- * PostgREST に 22P02 (invalid input syntax for type json) で拒否される (文字列で比べるなら `->>`)。戻り値の error を
- * 見ていないため、いまは実際には 1 つも付与されない。このテストは「付与の経路がコードにあるか」を見るので通るが、
- * 動いているかは別の話。直す (または一覧から外す) かはオーナー判断 (#1314 の残課題)。
+ * calculate-segment-stats は、バッジを `condition_json->>type.eq.<値>` (text として比べる) で取り、取得・保存の失敗は
+ * throwIfError で例外 (500) にする (#1306。以前の `->` は PostgREST に 22P02 で拒否され、error も見ていなかったので
+ * 1 つも付与されなかった)。付与するのは確定の回 (previousPeriod: true) だけ (#1491)。
+ * このテストは「付与の経路がコードにあるか」を見る (下の segmentConditionTypes は `->` でも `->>` でも拾う)。
+ * 実際に付与されることは tests/integration/rls/stats-edge-functions-user-daily-meals.test.ts が実 DB で確かめる。
  */
 import fs from 'node:fs';
 import path from 'node:path';
