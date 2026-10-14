@@ -98,7 +98,7 @@ beforeEach(() => {
 
 const call = (userId: string = MEMBER_ID) =>
   POST(new Request(`http://localhost/api/org/members/${userId}/remove`, { method: 'POST' }), {
-    params: { user_id: userId },
+    params: Promise.resolve({ user_id: userId }),
   });
 
 /** sendEmail に渡された封筒。同じ宛先に 2 通送っていたら気づけるよう配列で扱う */

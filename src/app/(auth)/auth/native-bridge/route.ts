@@ -139,7 +139,7 @@ function clearSupabaseAuthCookies(cookieStore: Awaited<ReturnType<typeof cookies
  * 成功時は userId (セッションのユーザー ID。取れなければ null) を返す。
  */
 async function establishSession(
-  supabase: ReturnType<typeof createClient>,
+  supabase: Awaited<ReturnType<typeof createClient>>,
   accessToken: string,
   refreshToken: string,
 ): Promise<{ ok: true; userId: string | null } | { ok: false; message: string }> {
@@ -161,7 +161,7 @@ async function establishSession(
  * 無ければ /login。セッションは作らないので is_native_app も設定しない。
  */
 async function continueIfAlreadySignedIn(
-  supabase: ReturnType<typeof createClient>,
+  supabase: Awaited<ReturnType<typeof createClient>>,
   nextPath: string,
   requestUrl: string,
 ) {
