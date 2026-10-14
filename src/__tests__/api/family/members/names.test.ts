@@ -4,7 +4,8 @@ import { createFakeServiceRole, type FakeServiceRole } from '../../operator/memb
 // GET /api/family/members/names — 家族の画面に出すメンバーの名前 (#1584)。
 //
 // 招待を承諾したメンバーは family_members.display_name が NULL のままで、家族の画面に「名前未設定」と出ていた。
-// 名前は承諾のときに写さず、display_name → 本人のプロフィールの今の名前 (user_profiles.nickname) → null の順に決める。
+// 名前は承諾のときに写さず、display_name → 本人のプロフィールの今の名前 (user_profiles.nickname。仮置きの 'Guest' は
+// 名前とみなさない) → null の順に決める。
 // 他の家族の user_profiles は RLS で読めないので、名前だけを service_role で引く。
 //
 // 利用者のクライアント (RLS つき) と service_role のクライアントを別の偽物にする。利用者の偽物には、RLS で読める行
@@ -48,6 +49,7 @@ const INVITED_ID = 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22'; // 招待を承諾し
 const NAMED_ID = 'c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33'; // display_name のある大人
 const NO_NAME_ID = 'd0eebc99-9c0b-4ef8-bb6d-6bb9bd380a44'; // display_name もプロフィールの名前も無い大人
 const LEFT_ID = 'e0eebc99-9c0b-4ef8-bb6d-6bb9bd380a55'; // 脱退した大人
+const GUEST_ID = 'f1eebc99-9c0b-4ef8-bb6d-6bb9bd380a77'; // 初期設定より前に招待を承諾した大人 (プロフィールの名前が仮置きの 'Guest')
 
 const M_REP = '10eebc99-9c0b-4ef8-bb6d-6bb9bd380a01';
 const M_INVITED = '20eebc99-9c0b-4ef8-bb6d-6bb9bd380a02';
@@ -55,6 +57,7 @@ const M_NAMED = '30eebc99-9c0b-4ef8-bb6d-6bb9bd380a03';
 const M_NO_NAME = '40eebc99-9c0b-4ef8-bb6d-6bb9bd380a04';
 const M_CHILD = '50eebc99-9c0b-4ef8-bb6d-6bb9bd380a05';
 const M_LEFT = '60eebc99-9c0b-4ef8-bb6d-6bb9bd380a06';
+const M_GUEST = '70eebc99-9c0b-4ef8-bb6d-6bb9bd380a07';
 
 /** プロフィールの名前以外の列 (応答に漏れてはならない) */
 const SECRET_COLUMNS = {
@@ -96,6 +99,7 @@ function setup(memberOverrides: Array<Record<string, unknown>> | null = null) {
         profileRow(NAMED_ID, '次郎'),
         profileRow(NO_NAME_ID, '   '),
         profileRow(LEFT_ID, '去った人'),
+        profileRow(GUEST_ID, 'Guest'),
       ],
     },
     users: [],
@@ -139,6 +143,22 @@ describe('GET /api/family/members/names (#1584)', () => {
 
     expect(nameOf(body, M_NO_NAME)).toBeNull();
     expect(nameOf(body, M_CHILD)).toBeNull();
+  });
+
+  it("初期設定より前に招待を承諾した人 (display_name が NULL・プロフィールの名前が仮置きの 'Guest') は null (画面は「名前未設定」)", async () => {
+    setup([
+      { id: M_REP, family_id: FAMILY_ID, user_id: REP_ID, role: 'representative', display_name: 'ママ', status: 'active' },
+      { id: M_GUEST, family_id: FAMILY_ID, user_id: GUEST_ID, role: 'adult', display_name: null, status: 'active' },
+      { id: M_INVITED, family_id: FAMILY_ID, user_id: INVITED_ID, role: 'adult', display_name: null, status: 'active' },
+    ]);
+
+    const { status, body } = await callGet();
+
+    expect(status).toBe(200);
+    expect(nameOf(body, M_GUEST)).toBeNull();
+    expect(JSON.stringify(body)).not.toContain('Guest');
+    // 同じ応答の中で、実名のあるメンバーはその名前のまま
+    expect(nameOf(body, M_INVITED)).toBe('太郎');
   });
 
   it('返すのは member id と名前だけ (プロフィールのほかの列・user_id・役割を返さない)', async () => {

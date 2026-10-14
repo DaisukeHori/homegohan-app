@@ -3,8 +3,8 @@
 //
 // 招待を承諾したメンバーは family_members.display_name が NULL のままなので、家族の画面に「名前未設定」と出ていた。
 // 名前は承諾のときに写さず (プロフィールの名前を後で変えても追随させるため)、ここで
-// display_name → 本人のプロフィールの今の名前 (user_profiles.nickname) → null の順に決めて返す
-// (決め方は src/lib/membership/family-member-names.ts)。
+// display_name → 本人のプロフィールの今の名前 (user_profiles.nickname。仮置きの 'Guest' は名前とみなさない) → null の順に
+// 決めて返す (決め方は src/lib/membership/family-member-names.ts)。
 //
 // 認可: 家族のメンバーの行は、ログイン中の利用者のクライアント (RLS: family_members_select_self_or_family) で読む。
 // 他の家族の user_profiles は RLS で読めないので、名前だけは service_role で引く。引くのは、RLS で読めた行のうち
@@ -74,7 +74,8 @@ export async function GET() {
   const profileNames = new Map<string, string>();
   const userIds = userIdsNeedingProfileName(rows);
   if (userIds.length > 0) {
-    // 名前の補完は表示の改善なので、引けなくても 200 で返す (その人の名前は null = 画面は「名前未設定」)
+    // 名前の補完は表示の改善なので、引けなくても 200 で返す (その人の名前は null = 画面は「名前未設定」)。
+    // 仮置きの 'Guest' はここでは除かず、buildFamilyMemberNames が null にする (決め方を 1 か所にまとめる)
     try {
       const { data: profiles, error: profilesError } = await getSupabaseAdmin()
         .from('user_profiles')
