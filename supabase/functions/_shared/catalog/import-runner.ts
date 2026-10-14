@@ -244,8 +244,10 @@ export async function handleCatalogImportRequest(req: Request, options: HandlerO
         ).slice(0, maxProductsPerCategory);
 
         if (!dryRun) {
-          // 一覧を取れたカテゴリの最終取得時刻。書けなくても取り込みは続ける (時刻が古いまま残るだけ) が、
-          // 黙って捨てずにログに残す (以前は結果を見ていなかった。#1540)
+          // 一覧を取れたカテゴリの最終取得時刻。update が error を返したときは、取り込みは続ける (時刻が古いまま残るだけ) が、
+          // 黙って捨てずにログに残す (以前は結果を見ていなかった。#1540)。
+          // 例外を投げたときは、この try の中なので run は failed になる (#1522)。ただし supabase-js は
+          // throwOnError を付けないかぎり投げないので、その経路はまず通らない
           const { error: lastCrawledError } = await supabase
             .from("catalog_source_categories")
             .update({ last_crawled_at: new Date().toISOString() })

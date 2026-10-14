@@ -48,7 +48,7 @@ export default function ProviderDetailPage({ params }: { params: { provider: str
           throw new Error(body.error?.message ?? `HTTP ${res.status}`);
         }
         const { data }: { data: LlmUsageResponseData } = await res.json();
-        setModelStats(data.by_model ?? []);
+        setModelStats(data.by_model);
       } catch (err) {
         setError(err instanceof Error ? err.message : "読み込みに失敗しました");
       } finally {

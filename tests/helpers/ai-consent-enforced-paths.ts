@@ -260,6 +260,12 @@ export const EXEMPT_ROUTES: Record<string, AiRouteEntry> = {
     consent: 'ログイン (メールアドレスとパスワード)。AI へは送らない (env.ts の一覧に届くだけ)',
     handlers: { POST: { noAi: 'ログイン。送る先は Supabase Auth と Turnstile だけ' } },
   },
+  // #1184 Resend の Webhook の受け口。署名の秘密を getOptionalEnv で読むため、import を辿ると環境変数の一覧 (src/lib/env.ts) に届くだけで、
+  // 書く先は DB の宛先停止リスト (email_blacklist) だけ。利用者のデータを AI へ送らない
+  'src/app/api/webhooks/resend/route.ts': {
+    consent: 'Resend からのバウンス・苦情の知らせ。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: '宛先停止リストに入れるだけ。送る先は無い (DB に書くだけ)' } },
+  },
 };
 
 /**

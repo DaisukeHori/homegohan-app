@@ -9,6 +9,8 @@
  * 型だけを引く // @deno-types="..." と /// <reference types="..." /> も赤にする (_shared/db-logger.ts が
  * esm.sh からメジャー版だけの指定で supabase-js を読んでいたのを、この検査が見ていなかった)。
  * 検査したファイルの本数は、中身が空のファイルも数える (このテストの walkSources と同じ数え方)。
+ * 手元で deno が supabase/functions/node_modules を作ると、段の grep -r と walkSources がその中の依存のソースまで数え、
+ * 偽の赤になっていたので、段 (--exclude-dir) と walkSources の両方で node_modules を除く (#1518 の整合ゲートの残り・#1555)。
  *
  * ここでは、ワークフローの run を書き写さず、yml から取り出してそのまま bash で動かす
  * (書き写すと、ワークフローだけが壊れたときに気づけない)。動かす bash の引数は、shell: bash の段に GitHub Actions が
@@ -40,6 +42,8 @@ const GREP_EXIT_ERROR = 2;
 const EXIT_COMMAND_NOT_FOUND = 127;
 /** 読まずに終わる偽の grep で段を続けて動かす回数 (SIGPIPE の取り違えは時の運で起きたので、1 回でなく何回か確かめる) */
 const SIGPIPE_REPEAT = 5;
+/** 検査しないディレクトリ (手元で deno が作る依存の置き場。段の --exclude-dir と同じ。下で段の文字列と突き合わせる) */
+const EXCLUDED_DIRS = ['node_modules'];
 /** 段が緑で終わるときに出す文 */
 const GREEN_MESSAGE = 'jsr:/npm:/https:// を直接書いた依存はありません';
 
@@ -87,10 +91,13 @@ function fakeGrepPath(body: string): NodeJS.ProcessEnv {
   return { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` };
 }
 
+/** 段と同じく、対象の拡張子のソースを数える。node_modules (EXCLUDED_DIRS) の中は数えない (#1518 手元の偽の赤) */
 function walkSources(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) walkSources(full, out);
+    if (entry.isDirectory()) {
+      if (!EXCLUDED_DIRS.includes(entry.name)) walkSources(full, out);
+    }
     else if (SOURCE_EXTENSIONS.includes(path.extname(entry.name))) out.push(full);
   }
   return out;
@@ -133,6 +140,14 @@ describe('#1515 段の形', () => {
   it('検査する拡張子は、このテストの一覧と同じ', () => {
     const included = [...(step.run ?? '').matchAll(/--include='\*(\.[a-z]+)'/g)].map((m) => m[1]).sort();
     expect(included).toEqual([...SOURCE_EXTENSIONS].sort());
+  });
+
+  it('#1518 検査しないディレクトリは、このテストの一覧と同じ。本数を数える grep と本体の検索の grep の両方に付ける', () => {
+    const run = step.run ?? '';
+    const excluded = [...run.matchAll(/--exclude-dir=([A-Za-z0-9_.-]+)/g)].map((m) => m[1]).sort();
+    expect(excluded).toEqual([...EXCLUDED_DIRS].sort());
+    expect(run).toMatch(/grep -rc "\$\{includes\[@\]\}" "\$\{excludes\[@\]\}"/);
+    expect(run).toMatch(/grep -rnE "\$\{includes\[@\]\}" "\$\{excludes\[@\]\}"/);
   });
 });
 
@@ -248,6 +263,32 @@ describe('#1518 検査したファイルの本数の数え方 (walkSources と�
     expect(output).toContain('検査したファイル: 1 本');
     expect(output).toContain(GREEN_MESSAGE);
     expect(status).toBe(0);
+  });
+
+  it('#1518 supabase/functions/node_modules の中は、段も walkSources も数えず、中の版なしの import でも赤にしない', () => {
+    // 手元で deno が node_modules を作ると、依存のソース (npm: や https:// の import を含む) を数えて偽の赤になっていた
+    const root = repoWith({
+      'a/index.ts': 'import { z } from "zod";\n',
+      'node_modules/zod/index.js': 'import "npm:dotenv/config";\n',
+      'node_modules/.deno/x/mod.ts': 'import { y } from "https://esm.sh/y";\n',
+      'a/node_modules/dep/index.mjs': 'export * from "jsr:@std/assert";\n',
+    });
+    const expected = walkSources(path.join(root, FUNCTIONS_DIR)).length;
+    expect(expected).toBe(1);
+    const { status, output } = runStep(root);
+    expect(output).toContain(`検査したファイル: ${expected} 本`);
+    expect(output).not.toContain('node_modules');
+    expect(output).toContain(GREEN_MESSAGE);
+    expect(status).toBe(0);
+  });
+
+  it('#1518 node_modules という名前でないディレクトリの中は、これまでどおり数えて赤にする', () => {
+    const root = repoWith({ 'a/index.ts': '', 'node_modules_like/index.ts': 'import { z } from "npm:zod";\n' });
+    expect(walkSources(path.join(root, FUNCTIONS_DIR)).length).toBe(2);
+    const { status, output } = runStep(root);
+    expect(output).toContain('検査したファイル: 2 本');
+    expect(output).toContain(`${FUNCTIONS_DIR}/node_modules_like/index.ts:`);
+    expect(status).toBe(EXIT_RED);
   });
 
   it('対象の拡張子でないファイルは数えない', () => {

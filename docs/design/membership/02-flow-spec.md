@@ -37,7 +37,7 @@ server  → 認可: caller.org_role IN ('owner','admin')
         → IF 既存 → invite_url = `${BASE_URL}/invite/${token}`, template = 'A'
         → IF 新規 → invite_url 同上, template = 'B'
         → Resend.send({ to: email, ...templateA|B })
-        → IF email send fail → 500 EMAIL_SEND_FAILED (招待 row は残す, retry 可)
+        → IF email send fail → ログに残し (org-invite.ts の warn と、sendEmail の app_logs への error)、招待 row は残して 200 (sendEmail は送信の失敗で例外を投げず結果で返す。src/lib/membership/org-invite.ts)
         → 200 { data: { invite, invite_url } }
 
 [Alice (既存)] mail click → /invite/{token}

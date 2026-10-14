@@ -121,6 +121,14 @@ export const SERVER_ENV_VARS = {
     description: 'Resend の API キー (メール送信)',
     whenMissing: 'メール (お問い合わせの通知・招待・サポート返信など) が送れない',
   },
+  RESEND_WEBHOOK_SECRET: {
+    required: false,
+    description:
+      'Resend の Webhook の署名の秘密 (whsec_ で始まる値。Resend の管理画面で Webhook を登録すると出る)。' +
+      'POST /api/webhooks/resend が、届いたイベントの署名をこれで確かめる (#1184)',
+    whenMissing:
+      'Resend の Webhook を受け付けない (503)。ハードバウンス・苦情の宛先が宛先停止リストに入らず、届かない宛先へも送り続ける',
+  },
   EMAIL_FROM: {
     required: false,
     description: 'メールの送信元 (From)。「表示名 <アドレス>」の形か、アドレスだけ。Resend で検証済みのドメインにする',
@@ -278,9 +286,9 @@ export const SERVER_ENV_VARS = {
   FEATURE_FLAG_CACHE_TTL_MS: {
     required: false,
     description:
-      '機能フラグの行をメモリに覚える時間 (ミリ秒。正の整数) (#1496)。運営画面で切り替えてから反映されるまでの最大の遅れ。結合テストのサーバーだけが短くする。本番では設定しない',
-    whenMissing: '30,000 ms (30 秒)。正の整数でない値も 30 秒',
-    // middleware (Edge Runtime) も読むので、zod を持つこのファイルの getOptionalEnv は使えない。読み方 (正の整数でなければ既定値) を 1 か所に置く
+      '機能フラグの行をメモリに覚える時間 (ミリ秒。正の整数を 10 進の数字だけで書く: 前後の空白を除いて先頭が 1〜9) (#1496・#1535)。運営画面で切り替えてから反映されるまでの最大の遅れ。結合テストのサーバーだけが短くする。本番では設定しない',
+    whenMissing: '30,000 ms (30 秒)。10 進の数字だけで書いた正の整数でない値 (空・0・負・小数・1e3・0x7D0・+2000 など) も 30 秒',
+    // middleware (Edge Runtime) も読むので、zod を持つこのファイルの getOptionalEnv は使えない。読み方 (10 進の数字だけの正の整数でなければ既定値) を 1 か所に置く
     readOnlyBy: 'src/lib/feature-flag-cache-ttl.ts',
   },
   MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS: {

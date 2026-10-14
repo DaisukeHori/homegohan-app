@@ -50,7 +50,10 @@ describe('db-logger の接続情報 (#1434)', () => {
     createLogger('GET /api/test').info('hello');
     await flush();
 
-    expect(mocks.createClient).toHaveBeenCalledWith(TEST_URL, TEST_SERVICE_ROLE_KEY);
+    // クライアントの設定は getSupabaseAdmin (lib/supabase/server.ts) とそろえる (#1555)
+    expect(mocks.createClient).toHaveBeenCalledWith(TEST_URL, TEST_SERVICE_ROLE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
     expect(mocks.insert).toHaveBeenCalledTimes(1);
   });
 

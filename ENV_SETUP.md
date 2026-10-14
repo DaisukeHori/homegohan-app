@@ -326,6 +326,29 @@ Vercel Dashboard → Settings → Environment Variables で `CRON_SECRET` の値
 - `https://homegohan-app.vercel.app` は、配布済みのアプリのビルドが WebView で開くため、古いビルドが使われなくなるまで止めない・リダイレクトしないでください。
 - 送信用の DNS（Resend の DKIM・Return-Path・DMARC）が見えているかは、`node scripts/check-email-dns.mjs` で確かめられます（DNS を引くだけで、何も書き換えません）。
 
+### 届かない宛先・苦情の宛先へ送らない（`RESEND_WEBHOOK_SECRET`。#1184）
+
+Resend から「届かなかった（ハードバウンス）」「迷惑メールと報告された（苦情）」の知らせを Webhook で受け、その宛先を宛先停止リスト（DB の `email_blacklist`）に入れます。アプリのメール（招待・譲渡・退会の知らせ・サポート返信・運用メールなど。`src/lib/emails/send.ts` の `sendEmail` を通るもの）は、送る前にこのリストを引き、載っている宛先へは送りません（`app_logs` の `function_name = 'email'` に「宛先停止リストに載っている宛先のため、メールを送信しませんでした」の warn が残ります。宛先はマスクされます）。
+
+| 環境変数 | 値の例 | 用途 | 未設定のとき |
+|---|---|---|---|
+| `RESEND_WEBHOOK_SECRET` | `whsec_...`（Resend の管理画面に出る値） | `POST /api/webhooks/resend` が、届いたイベントの署名（`svix-id` / `svix-timestamp` / `svix-signature`）をこの値で確かめる | Webhook を 503 で断る（受け付けない）。宛先停止リストに入らず、届かない宛先へも送り続ける |
+
+設定の手順（Resend の管理画面と Vercel。コードの変更は要りません）:
+
+1. Resend の管理画面 → Webhooks → Add Webhook。宛先の URL は `https://<サイトのドメイン>/api/webhooks/resend`、イベントは `email.bounced` と `email.complained` を選ぶ（ほかのイベントを選んでも、何もせずに 200 を返すだけです）。
+2. 登録した Webhook の署名の秘密（`whsec_` で始まる値）を、Vercel の環境変数 `RESEND_WEBHOOK_SECRET`（Production）に入れて再デプロイする。値はコマンドの履歴やチャットに残さないこと。
+3. Resend の管理画面のその Webhook の配信の記録で、送られたイベントが 200 になっていることを確かめる。401 なら値が違う、503 なら環境変数が入っていない（または再デプロイ前）です。
+
+振り分け:
+
+- `email.bounced` のうち、`bounce.type` が `Permanent`（宛先が存在しない・受け取りを拒否された）だけを入れます（理由 `bounce`）。`Temporary` などの一時的な不達（受信箱がいっぱいなど）は入れません。
+- `email.complained` は入れます（理由 `complaint`）。
+- 同じ知らせが何度届いても、行は 1 つのままです（最初に入った理由と時刻が残ります）。運営が手で入れた行（理由 `manual`）も上書きしません。
+- リストから外すときは、SQL Editor で `DELETE FROM public.email_blacklist WHERE email = '<小文字のアドレス>';` を実行します（宛先は小文字で入っています）。
+- 宛先停止リストを引けなかったとき（DB の不調・3 秒を超えたとき）は、確かめずに送ります（warn ログが残ります）。メールを全部止めてしまわないためです。
+- サインアップの確認メール・パスワード再設定メールは Supabase が送るので、このリストでは止まりません（Supabase の Custom SMTP に Resend を使っていれば、Resend 自身の停止リストが効きます）。
+
 ---
 
 ## 🚨 エラー急増の運用メール（`OPS_ALERT_EMAIL`）
@@ -459,8 +482,8 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 
 機能フラグ（`feature_flags`）の行を、サーバー（API route とミドルウェア）がメモリに覚える時間（ミリ秒）です。運営画面（`/super-admin/flags`）で切り替えてから全員に反映されるまでの、最大の遅れになります（#1148・#1496）。
 
-- 未設定、または正の整数でない（既定）: 30000（30 秒）。
-- 正の整数: その時間だけ覚えます。短くすると、DB を読む回数が増えます。
+- 未設定、または 10 進の数字だけで書いた正の整数でない（既定）: 30000（30 秒）。空・`0`・負の数・小数（`2000.0`）・指数（`1e3`）・16 進（`0x7D0`）・符号つき（`+2000`）も既定になります（#1535）。
+- 10 進の数字だけで書いた正の整数（前後の空白を除いて、先頭が 1〜9 の数字だけ）: その時間だけ覚えます。短くすると、DB を読む回数が増えます。
 - **本番（Vercel）では設定しません**（既定のまま）。設定するのは、結合テストの段（`.github/workflows/security-regression.yml` と `scripts/local-ci.sh` の integration）が起動する next dev と、そのサーバーに対して反映を待つ `tests/integration/security/feature-flags-runtime.test.ts` だけです（両方に同じ値を渡します。テストは反映を待つ上限をこの値から決めます）。
 - サーバー側（`src/lib/feature-flag-cache-ttl.ts`）だけで読みます。`NEXT_PUBLIC_` は付けません。
 

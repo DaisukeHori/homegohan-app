@@ -8,7 +8,8 @@ import {
 } from '@/lib/ai/consent-guard';
 // runtime = 'edge' のルートなので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
 import { getSupabaseServiceConfig } from '@/lib/env-required';
-// service_role のクライアントは canonical の getSupabaseAdmin で作る (#1162。lib/supabase/server.ts も env-required だけを読む)
+// service_role のクライアントは canonical の getSupabaseAdmin で作る (#1162)。lib/supabase/server.ts は next/headers と
+// @supabase/ssr も import するが、環境変数は env-required の getter だけで読み、zod を持つ @/lib/env は import しない
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { weeklyMenuRequestStoredErrorMessage } from '@/lib/weekly-menu-request-error';

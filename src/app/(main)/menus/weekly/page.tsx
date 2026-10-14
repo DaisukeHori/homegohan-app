@@ -27,7 +27,7 @@ import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
-import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, formatExpiry, formatDateJa } from "@homegohan/shared";
+import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, formatExpiry, formatDateJa } from "@homegohan/shared";
 import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
 import remarkGfm from "remark-gfm";
 // #fix/e2e-profile-reminder-banner-chunk: chunk 404 防止のため静的 import に変更
@@ -118,7 +118,7 @@ function safeLocalStorageSetItem(key: string, value: string): void {
 // Types & Constants (Reference UI Style)
 // ============================================
 
-type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
+// MealType (食事の区分 5 値) は @homegohan/shared が正本 (#1446)
 type ModalType = 'ai' | 'aiPreview' | 'aiMeal' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | 'addFridge' | 'addShopping' | 'editMeal' | 'regenerateMeal' | 'manualEdit' | 'photoEdit' | 'imageGenerate' | 'addMealSlot' | 'confirmDelete' | 'shoppingRange' | null;
 
 // 日付ベースモデル用のローカル型定義
@@ -136,9 +136,6 @@ interface WeekPlan {
 }
 
 // 買い物リスト範囲選択の型は #1031 で shoppingStore (_state/shoppingStore.ts) に一本化
-
-// 全ての食事タイプ
-const ALL_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
 
 // LegacyDishDetail は _state/types.ts (Issue #1031 Step 0 で移設、formDraftStore と共有)
 
@@ -1259,8 +1256,8 @@ export default function WeeklyMenuPage() {
       const day = plan.days.find(d => d.dayDate === dayDate);
       if (!day || !day.meals) continue;
       
-      // 今日の場合は時間帯優先、それ以外は朝食から
-      const priorities = dayIdx === todayIndex ? mealPriority : ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
+      // 今日の場合は時間帯優先、それ以外は朝食から (並びは @homegohan/shared の MEAL_ORDER が正本 #1446)
+      const priorities = dayIdx === todayIndex ? mealPriority : MEAL_ORDER_SHARED;
       
       for (const mealType of priorities) {
         const meal = day.meals.find((m: any) => m.mealType === mealType && !m.isCompleted);
