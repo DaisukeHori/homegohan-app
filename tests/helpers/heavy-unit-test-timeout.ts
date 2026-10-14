@@ -52,9 +52,6 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/ai-consent-stored-failure.test.ts",
   "tests/ai-rate-limit-contracts.test.ts",
   "tests/ai-usage-direct-jwt-edge.test.ts",
-  // #1478: 時間切れで落ちた記録は無いが、beforeAll で tests/ai-consent-stored-failure.test.ts (上の一覧。時間切れで落ちたことがある)
-  // と同じ 3 本の Edge Function (generate-menu-v4 / v5・regenerate-shopping-list-v2) を動的 import するので、同じ扱いにする
-  "tests/edge-stored-failure-raw-error.test.ts",
   "tests/markdown-lite.test.ts",
   "tests/recipes-route.test.ts",
   "tests/route-error-boundaries.test.tsx",

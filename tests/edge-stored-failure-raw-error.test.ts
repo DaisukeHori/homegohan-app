@@ -20,10 +20,7 @@ import {
   MENU_REQUEST_FAILED_MESSAGE,
   SHOPPING_LIST_REQUEST_FAILED_MESSAGE,
 } from '../supabase/functions/_shared/stored-failure-messages';
-import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
-
-// Edge Function の本体の読み込みは重いので、このファイルだけ時間切れを延ばす (tests/helpers/heavy-unit-test-timeout.ts)
-applyHeavyUnitTestTimeout();
+import { DEFAULT_UNIT_HEAVY_HOOK_TIMEOUT_MS } from './helpers/heavy-unit-test-timeout';
 
 // Edge Runtime の型宣言だけの import (node_modules に無い)。中身は無いので空のモジュールにする
 vi.mock('@supabase/functions-js/edge-runtime.d.ts', () => ({}));
@@ -153,7 +150,9 @@ beforeAll(async () => {
     await w.load();
   }
   vi.stubGlobal('Deno', { serve: () => undefined, env: { get: (key: string) => ENV[key] } });
-});
+  // 3 本の Edge Function の本体の動的 import は重い (同じ import をする tests/ai-consent-stored-failure.test.ts は、負荷の高い機械で
+  // フックの既定の 10 秒を超えたことがある)。ファイル全体の時間切れの一覧 (heavy-unit-test-timeout.ts) には入れず、このフックだけ延ばす
+}, DEFAULT_UNIT_HEAVY_HOOK_TIMEOUT_MS);
 
 afterAll(() => {
   vi.unstubAllGlobals();
