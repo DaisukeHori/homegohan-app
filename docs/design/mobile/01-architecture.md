@@ -49,6 +49,15 @@ Mobile はそれを `WebViewScreen` コンポーネント経由で表示する�
 | 認証画面群 | `app/(auth)/` | Supabase Auth セッション初期取得 |
 | 設定画面 | `app/(tabs)/settings.tsx` | 通知権限・ログアウト等の OS API |
 
+設定画面はタブバーに出さない (`app/(tabs)/_layout.tsx` の `href: null`)。入口は、マイページのタブ (WebView) の上に置いた歯車
+(`app/(tabs)/profile.tsx`、testID `profile-settings-button`。`WebViewScreen` の `header` に渡す) (#1037)。
+ログアウト・通知の設定・退会 (`app/settings/account.tsx`) はここから行う。
+
+アプリの中で開いた Web の設定画面 (`/settings`) とマイページ (`/profile`) は、ログアウトと退会を出さず、ネイティブの設定画面に一本化する。
+「アプリの中か」は既にある判定 (`useNativeAppMode` と `window.ReactNativeWebView`) のどちらかで決め、描画が終わるまでは出さない側に倒す
+(`src/hooks/useAccountActionsPlacement.ts`)。ブラウザで開いたときは、Web の画面にログアウトと退会を出す。
+Web の設定画面にしか無い項目 (パスワード・メールアドレスの変更など) へは、マイページの「アプリ設定」→「設定」から行ける。
+
 #### WebViewScreen の役割
 
 `src/components/web/WebViewScreen.tsx` が担う処理:
@@ -59,6 +68,7 @@ Mobile はそれを `WebViewScreen` コンポーネント経由で表示する�
 4. **SPA pushState hook**: `history.pushState` を override し programmatic ナビゲーションも interceptor に流す
 5. **ダウンロード処理**: Web 側 `postMessage({ type: 'download' })` を受け取り `expo-sharing` で共有
 6. **タブ再タップ時リセット**: `navigation.addListener('tabPress')` でアクティブ WebView を初期 URL へ `window.location.replace`
+7. **ネイティブの部品の差し込み**: `header` に渡した部品を WebView の上 (上端の安全領域の内側) に置く (マイページの歯車。#1037)
 
 #### postMessage プロトコル (Web → Native)
 

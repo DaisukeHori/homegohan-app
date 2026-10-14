@@ -13,7 +13,7 @@ import { getPrivacyUrl, getSupportMailtoUrl, getTermsUrl } from "../../src/lib/s
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing, radius, shadows } from "../../src/theme";
-import { signOutWithCleanup } from "../../src/lib/signOut";
+import { signOutOnDevice } from "../../src/lib/signOut";
 import { AI_CONSENT_SCREEN_PATH, AI_CONSENT_SETTINGS_ENTRY_TITLE } from "../../src/lib/ai-consent";
 
 type WeekStartDay = "sunday" | "monday";
@@ -53,7 +53,7 @@ function SettingRow({ icon, iconBg, title, subtitle, right, onPress, last, testI
 
 export default function SettingsTab() {
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, clearSession } = useAuth();
 
   const [notifications, setNotifications] = useState(true);
   const [autoAnalyze, setAutoAnalyze] = useState(true);
@@ -243,10 +243,10 @@ export default function SettingsTab() {
   }
 
   async function handleLogout() {
-    try {
-      // push token の削除 → ユーザー別データの削除 → サインアウトの順 (#1038 F7-10)
-      await signOutWithCleanup(user?.id ?? null);
-    } catch {}
+    // push token の削除 → ユーザー別データ (AsyncStorage・WebView の localStorage) の削除 → サインアウトの順 (#1038 F7-10 / #1037)。
+    // サインアウトが失敗しても (オフラインなど)、端末のセッションと画面の状態を消してから移る (signOutOnDevice は例外を投げない)。
+    // 消さずに "/" へ移ると、入口 (app/index.tsx) がホームへ戻してしまう
+    await signOutOnDevice(user?.id ?? null, { clearSession });
     router.replace("/");
   }
 

@@ -10,6 +10,9 @@ import { getSupabaseAnonKey, getSupabaseServiceRoleKey, getSupabaseUrl } from '@
  *
  * admin/* の API ルートが管理者操作(他ユーザーの user_profiles 参照・更新等)を
  * 行う際の共通ヘルパー。#1028 で organizations route の重複実装を集約した。
+ * #1162 で、運営の強制譲渡・強制解散・候補者一覧・クライアントログ・オーナー移譲の提案・献立キューの cron が
+ * 自前で作っていたクライアントもここへ寄せた。service_role のクライアントは自前で createClient せず、必ずこれを使う
+ * (tests/supabase-service-role-client-scan.test.ts が見張る。例外は理由つきの一覧にある)。
  *
  * 環境変数が欠けていれば MissingEnvError を投げる (#1182)。欠けている変数名は envName にあり、message には入らない。
  */

@@ -2,11 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Supabase (認証チェック用) クライアントのモック
 const mockGetUser = vi.fn();
-vi.mock('@/lib/supabase/server', () => ({
-  createClient: vi.fn().mockResolvedValue({
-    auth: { getUser: mockGetUser },
-  }),
-}));
+// service_role のクライアントは本物の getSupabaseAdmin を通す (#1162。下で差し替えた @supabase/supabase-js の createClient で作る)
+vi.mock('@/lib/supabase/server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/supabase/server')>();
+  return {
+    createClient: vi.fn().mockResolvedValue({
+      auth: { getUser: mockGetUser },
+    }),
+    getSupabaseAdmin: vi.fn(actual.getSupabaseAdmin),
+  };
+});
 
 // service_role クライアント (app_logs への insert) のモック
 const mockInsert = vi.fn();
@@ -37,6 +42,8 @@ vi.mock('@/lib/db-logger', async (importOriginal) => {
 });
 
 const { POST } = await import('@/app/api/log/route');
+const { getSupabaseAdmin } = await import('@/lib/supabase/server');
+const { createClient: createSupabaseJsClient } = await import('@supabase/supabase-js');
 
 const validUser = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' };
 
@@ -243,3 +250,26 @@ describe('POST /api/log の利用者ごとの回数制限 (#1493)', () => {
   });
 });
 
+
+describe('POST /api/log の service_role のクライアント (#1162)', () => {
+  it('canonical の getSupabaseAdmin で、同じ鍵・同じ設定 (セッションを保存しない・自動で更新しない) のクライアントを作る', async () => {
+    const res = await POST(makeRequest({ level: 'info', message: 'hello' }));
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(getSupabaseAdmin)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createSupabaseJsClient)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createSupabaseJsClient)).toHaveBeenCalledWith('https://example.supabase.co', 'service-role-key', {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+  });
+
+  it('未認証なら service_role のクライアントを作らない (認証を先に通す)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: new Error('no session') });
+
+    const res = await POST(makeRequest({ level: 'info', message: 'hello' }));
+
+    expect(res.status).toBe(401);
+    expect(vi.mocked(getSupabaseAdmin)).not.toHaveBeenCalled();
+    expect(vi.mocked(createSupabaseJsClient)).not.toHaveBeenCalled();
+  });
+});
