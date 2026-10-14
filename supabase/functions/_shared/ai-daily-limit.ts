@@ -6,6 +6,7 @@
  *  - 上限に達したときの応答 (429 AI_DAILY_LIMIT) の形 (aiDailyLimitPayload) と、画面に出す文 (aiDailyLimitMessage / aiDailyLimitMessageOfBody /
  *    aiDailyLimitMessageOfDenied。上限に数えない機能の安全弁で止めたときは AI_AUTO_SAFETY_CAP_MESSAGE、
  *    究極モードの 1 日の上限 (#1142) で止めたときは aiUltimateModeDailyLimitMessage)
+ *  - 行に書かれた文が、上のどれかの文か (isAiDailyLimitMessage。画面が行の失敗の文をそのまま出してよいかの判定)
  *  - 次の JST の 0 時 (上限が戻る時刻) までの秒数 (secondsUntilNextJstMidnight)
  *  - AI の部分を省いた応答の欄 (aiDailyLimitSkippedField)
  *
@@ -54,21 +55,6 @@ export const AI_DAILY_LIMIT_FALLBACK_MESSAGE = "今日の AI の利用回数の�
  */
 export const AI_AUTO_SAFETY_CAP_MESSAGE = "今日はこれ以上、自動のコメントを作れません。明日また表示されます。";
 
-/** aiDailyLimitMessage の文から回数を取り出す形 (取り出した回数で文を作り直し、一字一句同じかを確かめる) */
-const AI_DAILY_LIMIT_MESSAGE_PATTERN = /^今日の AI の利用回数の上限 \((\d+) 回\)/;
-
-/**
- * 上限で止めたときの文 (aiDailyLimitMessage(n)・AI_DAILY_LIMIT_FALLBACK_MESSAGE・AI_AUTO_SAFETY_CAP_MESSAGE) のどれかか (#1478)。
- * 生成のリクエストの行の失敗の欄 (Edge Function が aiDailyLimitMessage で書く) を、画面が「こちらで書いた文」として
- * そのまま出してよいかの判定に使う (それ以外の文は汎用の文に寄せる)
- */
-export function isAiDailyLimitMessage(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  if (value === AI_DAILY_LIMIT_FALLBACK_MESSAGE || value === AI_AUTO_SAFETY_CAP_MESSAGE) return true;
-  const match = AI_DAILY_LIMIT_MESSAGE_PATTERN.exec(value);
-  return match !== null && aiDailyLimitMessage(Number(match[1])) === value;
-}
-
 /**
  * 機能ごとの 1 日の上限がある機能 (#1142。DB の consume_ai_usage_capped が止めたときに capped_feature で返す機能名)。
  * _shared/ai-usage-core.ts の AI_CAPPED_FEATURES と同じ (このファイルは import を持たないので、ここにも置く。
@@ -96,6 +82,31 @@ function cappedFeatureMessage(feature: AiDailyCappedFeature, limit: number): str
     case "menu_generation_ultimate":
       return aiUltimateModeDailyLimitMessage(limit);
   }
+}
+
+/**
+ * 回数の入った上限の文 (aiDailyLimitMessage(n) と、機能ごとの上限の文 (aiUltimateModeDailyLimitMessage(n) など)) から
+ * 回数を取り出す形。取り出した回数で文を作り直し、一字一句同じかを確かめる (形が合うだけでは通さない)
+ */
+const AI_LIMIT_MESSAGE_COUNT_PATTERN = /^今日の.+?の利用回数の上限 \((\d+) 回\)/;
+
+/** 回数 limit で止めたときに書きうる、回数の入った上限の文 (1 日の上限の文と、AI_DAILY_CAPPED_FEATURES の各機能の文) */
+function aiLimitMessagesWithCount(limit: number): readonly string[] {
+  return [aiDailyLimitMessage(limit), ...AI_DAILY_CAPPED_FEATURES.map((feature) => cappedFeatureMessage(feature, limit))];
+}
+
+/**
+ * 上限で止めたときの文のどれかか (#1478・#1142)。aiDailyLimitMessageOfDenied / aiDailyLimitMessageOfBody が作りうる文を、すべて通す:
+ *   aiDailyLimitMessage(n)・機能ごとの上限の文 (究極モードの aiUltimateModeDailyLimitMessage(n))・
+ *   AI_DAILY_LIMIT_FALLBACK_MESSAGE・AI_AUTO_SAFETY_CAP_MESSAGE
+ * 生成のリクエストの行の失敗の欄 (Edge Function の generate-menu-v4 / v5 が aiDailyLimitMessageOfDenied で書く) を、
+ * 画面 (Web・モバイル) が「こちらで書いた文」としてそのまま出してよいかの判定に使う (それ以外の文は汎用の文に寄せる)
+ */
+export function isAiDailyLimitMessage(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  if (value === AI_DAILY_LIMIT_FALLBACK_MESSAGE || value === AI_AUTO_SAFETY_CAP_MESSAGE) return true;
+  const match = AI_LIMIT_MESSAGE_COUNT_PATTERN.exec(value);
+  return match !== null && aiLimitMessagesWithCount(Number(match[1])).includes(value);
 }
 
 /**

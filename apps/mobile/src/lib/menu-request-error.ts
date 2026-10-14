@@ -10,7 +10,7 @@
  * こちらで書いた文 (Web の src/lib/weekly-menu-request-error.ts の isKnownWeeklyMenuRequestErrorMessage と同じ):
  *   - MENU_REQUEST_FIXED_MESSAGES (失敗・既存の献立を守った・一部だけ保存・進まなくなった・中止)
  *   - 同意の判定で止めたときの文 (aiConsentReasonOfStoredError。画面は handleStoredAiConsentFailure で見分けて同意画面へ案内する)
- *   - 1 日の上限で止めたときの文 (isAiDailyLimitMessage)
+ *   - 上限で止めたときの文 (isAiDailyLimitMessage。1 日の上限 (#1149) と究極モードの 1 日の上限 (#1142) の文)
  */
 import { aiConsentReasonOfStoredError } from "../../../../supabase/functions/_shared/ai-consent";
 import { isAiDailyLimitMessage } from "../../../../supabase/functions/_shared/ai-daily-limit";
