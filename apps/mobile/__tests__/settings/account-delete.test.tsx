@@ -99,6 +99,13 @@ jest.mock('../../src/components/ui', () => {
 });
 
 import AccountSettingsPage from '../../app/settings/account';
+import { HttpNetworkError } from '@homegohan/core';
+import {
+  ACCOUNT_DELETE_BLOCKED_FALLBACK_MESSAGE,
+  ACCOUNT_DELETE_FAILED_MESSAGE,
+} from '../../src/lib/account-deletion-error';
+import { NETWORK_ERROR_MESSAGES } from '../../src/lib/api-error';
+import { ServiceUnavailableError } from '../../src/lib/service-unavailable';
 
 // Alert.alert をモックし、確認ダイアログでは "削除" ボタンを自動タップしたことにする
 const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((title, _message, buttons) => {
@@ -160,14 +167,15 @@ describe('AccountSettingsPage — アカウント削除', () => {
   });
 
   it('2. 削除 API が失敗した場合、ローカルセッションは破棄されずログイン状態を維持する', async () => {
-    mockPost.mockRejectedValueOnce(new Error('サーバーエラー'));
+    mockPost.mockRejectedValueOnce(new Error('HTTP 500 Internal Server Error: {"error":"処理中にエラーが発生しました","code":"INTERNAL_ERROR"}'));
 
     render(<AccountSettingsPage />);
 
     fireEvent.press(screen.getByTestId('account-delete-button'));
 
+    // 生の例外の文 (HTTP のステータスや JSON) は出さず、汎用の文を出す (#1447)
     await waitFor(() => {
-      expect(alertSpy).toHaveBeenCalledWith('削除失敗', expect.stringContaining('サーバーエラー'));
+      expect(alertSpy).toHaveBeenCalledWith('削除失敗', ACCOUNT_DELETE_FAILED_MESSAGE);
     });
 
     // 削除 API が失敗した場合、ローカルクリア・signOut・遷移は一切実行されない
@@ -273,5 +281,75 @@ describe('AccountSettingsPage — アカウント削除', () => {
     expect(mockRemoveStoredItem).toHaveBeenCalledWith('sb-test-auth-token');
     expect(mockClearSession).toHaveBeenCalledTimes(1);
     expect(alertSpy).toHaveBeenCalledWith('アカウントを削除しました', expect.any(String));
+  });
+});
+
+describe('AccountSettingsPage — 退会できない・失敗したときの文 (#1447)', () => {
+  /** サーバー (src/lib/account-deletion.ts の findBlocker) が 409 の本文に入れる文 */
+  const ORG_OWNER_MESSAGE = '組織のオーナーです。先にオーナーを譲渡するか組織を解散してください。';
+  const FAMILY_REPRESENTATIVE_MESSAGE = '家族グループの代表者です。先に代表者を譲渡するか家族グループを解散してください。';
+
+  /** 削除を押して、出た Alert (確認のダイアログ以外) の見出しと本文を返す */
+  async function pressDeleteAndGetFailureAlert() {
+    render(<AccountSettingsPage />);
+    fireEvent.press(screen.getByTestId('account-delete-button'));
+    await waitFor(() => {
+      expect(alertSpy.mock.calls.some(([title]) => title !== 'アカウント削除')).toBe(true);
+    });
+    const failures = alertSpy.mock.calls.filter(([title]) => title !== 'アカウント削除');
+    expect(failures).toHaveLength(1);
+    // 退会はしていない: 端末のログアウト・遷移はしない
+    expect(mockClearUserScopedAsyncStorage).not.toHaveBeenCalled();
+    expect(mockSignOut).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
+    return { title: failures[0][0], message: failures[0][1] };
+  }
+
+  it.each([
+    ['組織のオーナー', 'HTTP 409 Conflict', 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER', ORG_OWNER_MESSAGE],
+    // HTTP/2 では statusText が空になる
+    ['家族グループの代表者 (statusText が空)', 'HTTP 409 ', 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE', FAMILY_REPRESENTATIVE_MESSAGE],
+  ])('409 (%s): 生の文字列ではなく、譲渡や解散が先だというサーバーの文を出す', async (_label, prefix, code, message) => {
+    mockPost.mockRejectedValueOnce(
+      new Error(`${prefix}: ${JSON.stringify({ error: code, message, organization: { id: 'org-1', name: '組織 A' } })}`),
+    );
+    const alert = await pressDeleteAndGetFailureAlert();
+    expect(alert).toEqual({ title: '退会できません', message });
+  });
+
+  it('409 で本文に文が無いときは、定型の案内の文を出す', async () => {
+    mockPost.mockRejectedValueOnce(new Error('HTTP 409 Conflict: {"error":"ACCOUNT_DELETE_BLOCKED_ORG_OWNER"}'));
+    const alert = await pressDeleteAndGetFailureAlert();
+    expect(alert).toEqual({ title: '退会できません', message: ACCOUNT_DELETE_BLOCKED_FALLBACK_MESSAGE });
+  });
+
+  it('409 以外の HTTP のエラーは、本文に message があっても汎用の文を出す', async () => {
+    mockPost.mockRejectedValueOnce(new Error('HTTP 400 Bad Request: {"error":"confirm is required","message":"内部の文"}'));
+    const alert = await pressDeleteAndGetFailureAlert();
+    expect(alert).toEqual({ title: '削除失敗', message: ACCOUNT_DELETE_FAILED_MESSAGE });
+  });
+
+  it('通信できなかったときは「通信できません」の文を出す', async () => {
+    mockPost.mockRejectedValueOnce(new HttpNetworkError('offline', 'raw offline'));
+    const alert = await pressDeleteAndGetFailureAlert();
+    expect(alert).toEqual({ title: '削除失敗', message: NETWORK_ERROR_MESSAGES.offline });
+  });
+
+  it('メンテナンス中など (getApi() が置き換えた ServiceUnavailableError) は、その固定の文を出す', async () => {
+    mockPost.mockRejectedValueOnce(new ServiceUnavailableError('ただいまメンテナンス中です。'));
+    const alert = await pressDeleteAndGetFailureAlert();
+    expect(alert).toEqual({ title: '削除失敗', message: 'ただいまメンテナンス中です。' });
+  });
+
+  it('Error ではない値 (文字列) の 409 で本文が JSON でないときも、定型の案内の文を出す', async () => {
+    mockPost.mockRejectedValueOnce('HTTP 409 Conflict: not json');
+    const alert = await pressDeleteAndGetFailureAlert();
+    expect(alert).toEqual({ title: '退会できません', message: ACCOUNT_DELETE_BLOCKED_FALLBACK_MESSAGE });
+  });
+
+  it('Error でも文字列でもない値で失敗したときは、汎用の文を出す', async () => {
+    mockPost.mockRejectedValueOnce({ status: 409 });
+    const alert = await pressDeleteAndGetFailureAlert();
+    expect(alert).toEqual({ title: '削除失敗', message: ACCOUNT_DELETE_FAILED_MESSAGE });
   });
 });
