@@ -10,6 +10,8 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+import { PERSISTENCE_KEYS } from "./persistence";
+
 /**
  * ユーザー ID を含まないフラットなキー (将来追加時はここに列挙)。
  */
@@ -18,6 +20,12 @@ const STATIC_USER_SCOPED_KEYS: readonly string[] = [
   // 読む処理が無かったので今は書かない (#1049 F7-20。src/hooks/useV4MenuGeneration.ts) が、
   // 旧ビルドから更新した端末に前のユーザーの値が残っているので、ログアウトでは消す
   "v4MenuGenerating",
+  // アプリの永続化キー (persistence.ts の PERSISTENCE_KEYS。#1599)。どれも Web の利用者別の localStorage のキー
+  // (packages/shared の USER_SCOPED_LOCAL_STORAGE_KEYS) と同じ中身で、ログイン中の利用者の値を持つ。
+  //   - v4_range_days: V4 の献立生成の期間の設定 (src/components/menu/V4GenerateModal.tsx が書く)
+  //   - singleMealGenerating: 1 食の作り直しの生成中の状態。前の利用者の食事の ID が入る (src/components/menu/RegenerateMealModal.tsx が書く)
+  //   - weeklyMenuGenerating・shoppingListRegenerating: 生成中の状態 (いまのアプリは書かないが、同じ一覧のキーなので消す)
+  ...Object.values(PERSISTENCE_KEYS).map(({ key }) => key),
 ];
 
 /**

@@ -14,6 +14,7 @@ jest.mock('expo-constants', () => ({ default: {} }));
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { PUSH_TOKEN_REGISTERED_KEY_PREFIX, PUSH_TOKEN_VALUE_KEY_PREFIX } from '../../src/lib/pushNotifications';
+import { PERSISTENCE_KEYS } from '../../src/lib/persistence';
 import { clearUserScopedAsyncStorage } from '../../src/lib/user-storage';
 
 beforeEach(async () => {
@@ -91,5 +92,45 @@ describe('clearUserScopedAsyncStorage — 旧ビルドが書いた V4 献立の�
 
     expect(await AsyncStorage.getItem('v4MenuGenerating')).toBeNull();
     expect(await AsyncStorage.getItem('auth_last_fail_ts')).toBe('123');
+  });
+});
+
+describe('clearUserScopedAsyncStorage — アプリの永続化キー (#1599)', () => {
+  // Web の利用者別の localStorage のキーと同じ中身を、アプリは AsyncStorage に持つ。共有端末で次にログインする
+  // 別の利用者に、前の利用者の期間の設定・生成中の状態 (前の利用者の食事の ID) が残らないよう、ログアウトで消す
+  const PREVIOUS_USER_VALUES: Array<[string, string]> = [
+    // src/components/menu/V4GenerateModal.tsx が書く (キーの文字列そのもので確かめる)
+    ['v4_range_days', JSON.stringify({ startDays: 0, endDays: 6 })],
+    // src/components/menu/RegenerateMealModal.tsx が setItemWithTTL で書く
+    ['singleMealGenerating', JSON.stringify({ data: { mealId: 'meal-of-previous-user' }, expiresAt: 1 })],
+    ['weeklyMenuGenerating', JSON.stringify({ data: {}, expiresAt: 1 })],
+    ['shoppingListRegenerating', JSON.stringify({ data: {}, expiresAt: 1 })],
+  ];
+
+  it.each([['user-1'], [null]])('ログアウト (userId=%p) で永続化キーをすべて消す (端末の設定・ログイン前の値は残す)', async (userId) => {
+    await AsyncStorage.multiSet([
+      ...PREVIOUS_USER_VALUES,
+      // AI のボタンの位置 (端末の表示の設定。利用者別ではない)
+      ['aiFabPosition', JSON.stringify({ x: 1, y: 2 })],
+      ['auth_last_fail_ts', '123'],
+    ]);
+
+    await clearUserScopedAsyncStorage(userId);
+
+    for (const [key] of PREVIOUS_USER_VALUES) {
+      expect(await AsyncStorage.getItem(key)).toBeNull();
+    }
+    expect(await AsyncStorage.getItem('aiFabPosition')).toBe(JSON.stringify({ x: 1, y: 2 }));
+    expect(await AsyncStorage.getItem('auth_last_fail_ts')).toBe('123');
+  });
+
+  it('persistence.ts の PERSISTENCE_KEYS のキーは、すべてログアウトで消す (足したキーも自動で消える)', async () => {
+    const keys = Object.values(PERSISTENCE_KEYS).map(({ key }) => key);
+    expect(keys.length).toBeGreaterThan(0);
+    await AsyncStorage.multiSet(keys.map((key) => [key, 'previous-user'] as [string, string]));
+
+    await clearUserScopedAsyncStorage('user-1');
+
+    expect((await AsyncStorage.multiGet(keys)).filter(([, value]) => value !== null)).toEqual([]);
   });
 });
