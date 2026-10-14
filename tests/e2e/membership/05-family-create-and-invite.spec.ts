@@ -188,7 +188,7 @@ test.describe("family 作成 + 招待 + 承諾 (β-1, β-2)", () => {
 
     try {
       // 招待先ユーザでセッション注入
-      await injectSession(inviteePage, inviteeUser.email, inviteeUser.password);
+      await injectSession(inviteePage, inviteeUser.email);
 
       // 招待ページにアクセス
       await inviteePage.goto(`${BASE_URL}/invite/family/${token}`);

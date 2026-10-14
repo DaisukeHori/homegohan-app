@@ -3,9 +3,9 @@
  *
  * WebView の onMessage に { type: 'sign-out' } / { type: 'session-expired' } が届いたとき、
  *   - sign-out        : ネイティブもログアウトして、ウェルカム画面へ戻る
- *   - session-expired : ネイティブのセッションを確かめたうえで、同じタブを新しい bridge で開き直す
- *                       (initialPath に使い捨ての値 _rb を付けて、WebViewScreen の「initialPath が変わったら bridge をやり直す」
- *                        仕組みに乗せる。WebViewScreen 本体の中身には手を入れない)
+ *   - session-expired : ネイティブのセッションを確かめたうえで、同じ画面 (タブ、タブ以外の /settings/ai-consent) を新しい bridge で開き直す
+ *                       (いま開いているパス = WebViewScreen が initialPath を検証したあとの effectivePath に使い捨ての値 _rb を付けて
+ *                        initialPath に入れ、WebViewScreen の「initialPath が変わったら bridge をやり直す」仕組みに乗せる)
  * ことを、実際の WebViewScreen と useWebAuthMessages をつないで確かめる。処理そのものの細かい場合分けは
  * web-view-auth-messages.test.ts で確かめている。
  */
@@ -159,6 +159,56 @@ describe('WebViewScreen — session-expired (#1038 F7-05)', () => {
 
     await waitFor(() => expect(mockSetParams).toHaveBeenCalledTimes(1));
     expect(mockSetParams.mock.calls[0][0].initialPath).toMatch(/^\/home\?_rb=\d+$/);
+  });
+
+  // expo-router の setParams がルートのパラメータを書き換えて再描画するのを、テストの中で再現する
+  function applySetParamsOnce() {
+    mockSetParams.mockImplementationOnce((next: Record<string, string>) => {
+      mockRouteParams = { ...mockRouteParams, ...next };
+    });
+  }
+
+  // タブ以外の画面 (main の #1451: app/settings/ai-consent.tsx)。ここで再 bridge が効かないと、Web 側は refresh_token を
+  // 持たないので access_token の期限で同意画面のセッションが切れ、利用者は同意できなくなる
+  it('タブ以外の画面 (/settings/ai-consent) でも _rb を付けて開き直し、WebView の URL が差し替わる', async () => {
+    applySetParamsOnce();
+    const { rerender } = render(<WebViewScreen path="/settings/ai-consent" />);
+    await waitFor(() => expect(mockWebViewProps.source?.uri).toBe(`${WEB_BASE_URL}/settings/ai-consent?mode=app`));
+
+    postFromWeb({ type: 'session-expired' });
+    await waitFor(() => expect(mockSetParams).toHaveBeenCalledTimes(1));
+    const { initialPath } = mockSetParams.mock.calls[0][0];
+    expect(initialPath).toMatch(/^\/settings\/ai-consent\?_rb=\d+$/);
+
+    rerender(<WebViewScreen path="/settings/ai-consent" />);
+    await waitFor(() => expect(mockWebViewProps.source.uri).toBe(`${WEB_BASE_URL}${initialPath}&mode=app`));
+  });
+
+  // deep link の initialPath は WebViewScreen の検証で弾かれるとタブの既定のパスに戻る。
+  // 弾かれた値を基準に _rb を付けると、また既定のパスに戻されて URL が変わらず、開き直しが起きない
+  it('検証で弾かれた initialPath (deep link の認証ブリッジ) を持つタブは、いま開いているタブのパスで開き直す', async () => {
+    mockRouteParams = { initialPath: '/auth/native-bridge?code=ATTACKERCODE&next=%2Fhome' };
+    applySetParamsOnce();
+    const { rerender } = render(<WebViewScreen path="/home" />);
+    await waitFor(() => expect(mockWebViewProps.source?.uri).toBe(`${WEB_BASE_URL}/home?mode=app`));
+
+    postFromWeb({ type: 'session-expired' });
+    await waitFor(() => expect(mockSetParams).toHaveBeenCalledTimes(1));
+    const { initialPath } = mockSetParams.mock.calls[0][0];
+    expect(initialPath).toMatch(/^\/home\?_rb=\d+$/);
+
+    rerender(<WebViewScreen path="/home" />);
+    await waitFor(() => expect(mockWebViewProps.source.uri).toBe(`${WEB_BASE_URL}${initialPath}&mode=app`));
+  });
+
+  it('2 回目の再 bridge は前の _rb を付け替える (付け足さない)', async () => {
+    mockRouteParams = { initialPath: '/home?_rb=1' };
+    await renderScreen('/home');
+
+    postFromWeb({ type: 'session-expired' });
+    await waitFor(() => expect(mockSetParams).toHaveBeenCalledTimes(1));
+    expect(mockSetParams.mock.calls[0][0].initialPath).toMatch(/^\/home\?_rb=\d+$/);
+    expect(mockSetParams.mock.calls[0][0].initialPath).not.toBe('/home?_rb=1');
   });
 
   it('ネイティブのセッションも失効していたら、開き直さずログアウトを揃える', async () => {

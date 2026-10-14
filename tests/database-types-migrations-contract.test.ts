@@ -17,8 +17,10 @@
  *   - それ以外で型に出ないもの: EXCLUDED_FUNCTIONS / EXCLUDED_TABLES に理由を付けて書く
  *   - ロールバック (supabase/rollbacks/) は migration として当たらないので読まない
  *
- * 型の作り直し方: ローカルの Supabase (bash scripts/supabase-local.sh start → reset。本番には接続しない) に全 migration を当て、
+ * 型の作り直し方: ローカルの Supabase をベースライン方式で組み立て (bash scripts/supabase-local.sh start → reset。本番には接続しない。
+ * 本番スキーマのスナップショット supabase/baseline/ を当て、そのあとにベースラインより新しい migration だけを当てる。scripts/supabase-local.sh の冒頭)、
  * npx supabase@2.62.10 gen types typescript --local --schema public --workdir .supabase-local の出力で
+ * (枠 n (LOCAL_CI_SLOT=n) で組み立てたときの作業ディレクトリは .supabase-local-s<n>)
  * src/types/database.types.ts を置き換え、同じ内容を packages/shared/src/database.types.ts に写す。
  * --local は __InternalSupabase (PostgREST の版) を出さないので、既存の値を残す (下の PostgREST の版の検査)。
  */

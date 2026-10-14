@@ -4,17 +4,31 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { useNavigation, useRouter, useLocalSearchParams } from 'expo-router';
 import { getDownloadFailureNotice, handleWebViewDownload } from '../../lib/webViewDownload';
-import { getWebBaseUrl } from '../../lib/webBaseUrl';
 import { colors } from '../../theme/colors';
+import { supabase } from '../../lib/supabase';
 import { useWebAuthMessages } from '../../lib/webViewAuthMessages';
-import { SUPABASE_AUTH_STORAGE_KEY, supabase } from '../../lib/supabase';
 import {
   buildClearUserScopedWebStorageScript,
   readPendingWebViewUserScopedStorageClear,
 } from '../../lib/webViewUserStorageCleanup';
-
-// download の送信元の確認 (webViewDownload.ts) と同じ値から決める (既定値を 2 か所に持たない)
-const WEB_BASE_URL = getWebBaseUrl();
+// 認証ブリッジ・オリジン検証・外部遷移の判定は webViewBridge.ts に集約 (#1036 / #1158)
+import {
+  WEB_VIEW_ORIGIN_WHITELIST,
+  buildBridgeUrl,
+  buildNavigateScript,
+  buildOriginGuardScript,
+  buildOwnOriginOnlyScript,
+  buildWebUrl,
+  decideNavigation,
+  decideOpenWindow,
+  getSessionForBridge,
+  isOwnOrigin,
+  openExternalUrl,
+  pathnameOf,
+  requestBridgeCode,
+  sanitizeInitialPath,
+  withAppMode,
+} from '../../lib/webViewBridge';
 
 interface Props {
   path: string;  // 例 '/home', '/menus/weekly'
@@ -42,6 +56,8 @@ const buildTabInterceptScript = (currentTabRoot: string): string => {
   const tabPaths = TAB_ROUTES.map((t) => t.pathPrefix);
   return `
 (function() {
+  // 自アプリのオリジン以外 (外部サイトが万一表示された場合) では何もしない (#1036)
+  ${buildOriginGuardScript()}
   if (window.__tabInterceptInstalled) return;
   window.__tabInterceptInstalled = true;
 
@@ -109,105 +125,112 @@ true;
 `;
 };
 
+// この画面が navigation で使うのは、タブの再タップ (tabPress) の購読と isFocused の 2 つだけ。
+// useNavigation() の既定の型はルートのナビゲーターの型で、イベントの一覧に tabPress が無い (タブのナビゲーターだけが持つ)。
+// そのため使う 2 つを型で宣言して useNavigation の型引数に渡す (イベント名を any へ外して型検査を止めない)。
+// タブ以外の画面 (/settings/ai-consent など) では tabPress が発火しないだけで、購読も解除も同じに動く
+type TabPressNavigation = {
+  addListener: (event: 'tabPress', callback: () => void) => () => void;
+  isFocused: () => boolean;
+};
+
 export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
   const webViewRef = useRef<WebView>(null);
-  // Web 側のログアウト・セッション失効の通知 (sign-out / session-expired) をネイティブに反映する (#1038 F7-04 / F7-05)
-  const handleAuthMessage = useWebAuthMessages(path);
   const [uri, setUri] = useState<string | null>(null);
+  // WebView を開くときに注入する前の利用者の localStorage の掃除 (#1037)。自オリジンのガード付き。掃除が要らなければ空
   const [injectedJS, setInjectedJS] = useState<string>('');
-  const navigation = useNavigation();
+  const navigation = useNavigation<TabPressNavigation>();
   const router = useRouter();
 
   // Fix 2: tab-navigate で fullPath (クエリ付き) を受け取った場合に初期 URL を上書き
+  // initialPath は deep link (homegohan://home?initialPath=…) からも指定できるため、
+  // 単一の "/" で始まる同一オリジンのパスで、かつどれかのタブの prefix か、この画面自身の path のパス部分の配下のものだけを受け付ける
+  // (//evil.example や /auth/native-bridge?code=… 等は path に戻す。tab-navigate の fullPath は必ずタブの prefix に一致する)。
+  // 画面自身の path を入れるのは、タブ以外の画面 (/settings/ai-consent) でも session-expired の再 bridge
+  // (initialPath に使い捨ての _rb を付けて effectivePath を変え、下の useEffect で code を取り直す) を効かせるため。
+  // path はコードに書かれた信頼できる値なので、受け付ける範囲はタブの prefix と同じ強さで限られる
   const params = useLocalSearchParams<{ initialPath?: string }>();
-  const effectivePath = params.initialPath ?? path;
+  const effectivePath = sanitizeInitialPath(params.initialPath, path, [
+    ...TAB_ROUTES.map((t) => t.pathPrefix),
+    pathnameOf(path),
+  ]);
+
+  // Web 側のログアウト・セッション失効の通知 (sign-out / session-expired) をネイティブに反映する (#1038 F7-04 / F7-05)。
+  // 再 bridge は、いま開いているパス (検証済みの effectivePath) に _rb を付けて開き直す。
+  // 検証で弾かれる initialPath を基準にすると、_rb を付けても path に戻されて effectivePath が変わらず、読み込み直しが起きない
+  const handleAuthMessage = useWebAuthMessages(effectivePath);
 
   // タブ再タップ時に WebView を初期 URL にリセットする
   // tabPress は同じタブを再タップした際にも発火するため useFocusEffect より確実
   useEffect(() => {
-    const unsubscribe = navigation.addListener('tabPress' as any, () => {
+    const unsubscribe = navigation.addListener('tabPress', () => {
       // isFocused() が true = 既にアクティブなタブを再タップした
       if (navigation.isFocused()) {
-        const alreadyHasMode = path.includes('mode=app');
-        const separator = path.includes('?') ? '&' : '?';
-        const targetPath = alreadyHasMode ? path : `${path}${separator}mode=app`;
-        const targetUrl = `${WEB_BASE_URL}${targetPath}`;
+        const targetUrl = buildWebUrl(withAppMode(path));
         // window.location.replace で履歴を残さず初期 URL に置換してフレッシュな state に戻す
         // (写真撮影デッドロック対策: step state や input キャッシュをリセット)
-        webViewRef.current?.injectJavaScript(`
-          (function() {
-            window.location.replace('${targetUrl}');
-          })();
-          true;
-        `);
+        // URL は JSON.stringify でリテラル化する (#1036)。
+        // オリジンガードは付けない (guard: false)。このリセットは、WebView が自オリジンを表示していないときの復帰手段でもある:
+        //   - 起動時にオフラインで直接 URL の読み込みに失敗すると、iOS は about:blank (origin は "null") のままエラー表示になる。
+        //     エラー表示に再試行手段は無く、init も再実行されないので、戻れるのはこの再タップだけ
+        //   - Android の shouldOverrideUrlLoading が待ち時間切れで許可に倒れ、外部ページが WebView に載った場合も同じ
+        // このスクリプトが持つのは公開されている自オリジンの URL だけ (トークン・code は無い) なので、
+        // 外部ページ上で実行されても漏れるものが無い。
+        webViewRef.current?.injectJavaScript(buildNavigateScript(targetUrl, 'replace', { guard: false }));
       }
     });
     return unsubscribe;
   }, [navigation, path]);
 
   useEffect(() => {
-    const init = async () => {
-      // ネイティブのログアウト・退会のあとなら、Web のページが読み込まれる前に、前の利用者の localStorage を消す (#1037)。
-      // ログイン中・未ログインのどちらで開くときも先頭に入れる (webViewUserStorageCleanup.ts)。
-      // 掃除の ID (AsyncStorage) とセッションは並べて読む (読み込みを遅らせない。ID の読み込みは例外を投げない)
-      const [pendingClearId, { data: { session } }] = await Promise.all([
-        readPendingWebViewUserScopedStorageClear(),
-        supabase.auth.getSession(),
-      ]);
-      const clearScript = pendingClearId ? buildClearUserScopedWebStorageScript(pendingClearId) : '';
-      if (session?.access_token && session?.refresh_token) {
-        // bridge URL に access/refresh token + next path を埋め込む
-        // effectivePath に既に mode=app が含まれている場合は重複付与しない
-        const alreadyHasMode = effectivePath.includes('mode=app');
-        const separator = effectivePath.includes('?') ? '&' : '?';
-        const nextPath = alreadyHasMode
-          ? effectivePath
-          : `${effectivePath}${separator}mode=app`;
-        const next = encodeURIComponent(nextPath);
-        const bridgeUrl = `${WEB_BASE_URL}/auth/native-bridge?access_token=${session.access_token}&refresh_token=${session.refresh_token}&next=${next}`;
-        setUri(bridgeUrl);
+    // effectivePath が変わる/アンマウントした後に、遅れて返ってきた結果で URL を上書きしない
+    let cancelled = false;
 
-        // localStorage 注入: クライアント Supabase JS SDK が参照するキーに session を書き込む
-        // SSR middleware は Cookie で動作するが、クライアント側 SDK は localStorage を参照するため両方設定が必要。
-        // キーは lib/supabase.ts のセッションの保存キーと同じ値 (sb-<プロジェクト ref>-auth-token) を使う (#1434)。
-        // 以前はここで EXPO_PUBLIC_SUPABASE_URL を '' にフォールバックして読み、未設定だと sb--auth-token になっていた
-        const storageKey = SUPABASE_AUTH_STORAGE_KEY;
-        const sessionPayload = JSON.stringify({
-          access_token: session.access_token,
-          refresh_token: session.refresh_token,
-          expires_at: session.expires_at,
-          expires_in: session.expires_in,
-          token_type: 'bearer',
-          user: session.user,
-          provider_token: session.provider_token ?? null,
-          provider_refresh_token: session.provider_refresh_token ?? null,
-        });
-        // JS 文字列リテラル内で安全に使えるよう バックスラッシュ・シングルクォートをエスケープ
-        const escapedPayload = sessionPayload
-          .replace(/\\/g, '\\\\')
-          .replace(/'/g, "\\'");
-        setInjectedJS(`${clearScript}
-          (function() {
-            try {
-              window.localStorage.setItem('${storageKey}', '${escapedPayload}');
-            } catch (e) {
-              // localStorage 書き込み失敗時は Cookie 経由で認証継続
-            }
-          })();
-          true;
-        `);
-      } else {
-        // セッションなし → 直接 effectivePath (mode=app 付き)
-        const alreadyHasMode = effectivePath.includes('mode=app');
-        const separator = effectivePath.includes('?') ? '&' : '?';
-        const directUrl = alreadyHasMode
-          ? `${WEB_BASE_URL}${effectivePath}`
-          : `${WEB_BASE_URL}${effectivePath}${separator}mode=app`;
-        setUri(directUrl);
-        setInjectedJS(clearScript);
+    // bridge 用のセッション取得と code 発行。失敗はすべて null (= トークンを含まない直接 URL) に倒す
+    // (旧方式のトークン付き URL には決してフォールバックしない)。
+    const resolveBridgeCode = async (): Promise<string | null> => {
+      try {
+        // access_token の残りが少なければ先に更新する。Web 側は残りが 150 秒未満の access_token には code を発行せず 401 を返すうえ、
+        // Web 側 setSession による refresh_token のローテーションも避けたいため (閾値の根拠は webViewBridge.ts の BRIDGE_MIN_TOKEN_TTL_SEC)。
+        // 更新に失敗して残りが Web 側の下限を割る場合は null が返り、code 発行を呼ばずに直接 URL へ倒れる
+        const session = await getSessionForBridge(supabase.auth);
+        if (!session) return null;
+        // ネイティブが Bearer で code を発行してもらい、WebView の URL には code だけを載せる (#1036)
+        // access_token / refresh_token は URL・注入スクリプト・WebView の props のどこにも載せない
+        return await requestBridgeCode(session);
+      } catch {
+        // 想定外の失敗でも直接 URL にフォールバックする
+        return null;
       }
     };
+
+    const init = async () => {
+      // effectivePath に既に mode=app が含まれている場合は重複付与しない
+      const nextPath = withAppMode(effectivePath);
+
+      // ネイティブのログアウト・退会のあとなら、Web のページが読み込まれる前に、前の利用者の localStorage を消す (#1037)。
+      // ログイン中・未ログインのどちらで開くときも入れる (webViewUserStorageCleanup.ts)。
+      // 掃除の ID (AsyncStorage) と bridge の code は並べて取る (読み込みを遅らせない。ID の読み込みは例外を投げない)。
+      // 掃除は利用者別のキーだけを消し、セッションには触れない。セッションは native-bridge が Cookie に張るので (#1036)、
+      // 掃除と bridge の順序はぶつからない。
+      const [pendingClearId, code] = await Promise.all([
+        readPendingWebViewUserScopedStorageClear(),
+        resolveBridgeCode(),
+      ]);
+      if (cancelled) return;
+
+      // 掃除の JS は自アプリのオリジンのページでだけ動かす (#1036)。
+      // injectedJavaScriptBeforeContentLoaded は WebView のすべての読み込みで動くので、外部ページが万一載っても、
+      // そのサイトの localStorage を消したり書いたりしない
+      setInjectedJS(pendingClearId ? buildOwnOriginOnlyScript(buildClearUserScopedWebStorageScript(pendingClearId)) : '');
+      // 既定はトークンを一切含まない直接 URL。bridge に成功したときだけ code 付き URL に差し替える
+      setUri(code ? buildBridgeUrl(code, nextPath) : buildWebUrl(nextPath));
+    };
     init();
+
+    return () => {
+      cancelled = true;
+    };
   }, [effectivePath]);
 
   // effectivePath からクエリ・ハッシュを除いた純粋なパス部分
@@ -231,6 +254,10 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
         ref={webViewRef}
         testID={testID ?? 'webview-screen'}
         source={{ uri }}
+        // セッション情報 (トークン・localStorage のセッション) はページコンテキストへ一切注入しない (#1036)。
+        // Web 側のセッションは native-bridge が Cookie に張る。
+        // 読み込み前に注入するのは、ネイティブのログアウト後の利用者別の localStorage の掃除 (#1037) だけで、
+        // 自アプリのオリジンのページでだけ動く (buildOwnOriginOnlyScript)
         injectedJavaScriptBeforeContentLoaded={injectedJS || undefined}
         // Fix 1: postMessage 方式のタブ intercept script を全ページロード後に inject
         // capture phase click + pushState hook で SPA ナビゲーションも確実に捕捉
@@ -248,7 +275,47 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
         // TODO: Phase B-2 で <input type="file"> を expo-image-picker bridge に置換
         allowsInlineMediaPlayback={true}
         mediaPlaybackRequiresUserAction={false}
+        // #1036 / #1158: WebView を自アプリのオリジンに固定する。
+        // 他オリジンへのトップフレーム遷移 (レシピ外部リンク等) は WebView に載せず OS の既定ブラウザで開く。
+        // 他オリジンの iframe (Web の CSP が許す Turnstile) は WebView の中で読み込む (decideNavigation を参照)。
+        // originWhitelist は未アンカーの前方一致で境界にならないため、URL を厳密にパースして判定する。
+        // Android の shouldOverrideUrlLoading は JS の応答待ちが長引くと許可に倒れるので、
+        // これは多層防御の一つ (本命は、ページから参照できるトークンを持たせないこと)。
+        // originWhitelist は「どの URL を下の onShouldStartLoadWithRequest に渡すか」の入口 (WEB_VIEW_ORIGIN_WHITELIST を参照)。
+        // http(s) はすべて判定に渡し、自オリジンかどうかは decideNavigation が URL を厳密にパースして決める。
+        originWhitelist={WEB_VIEW_ORIGIN_WHITELIST}
+        onShouldStartLoadWithRequest={(request) => {
+          const decision = decideNavigation(request);
+          if (decision.openExternal) {
+            void openExternalUrl(decision.openExternal);
+          }
+          return decision.allow;
+        }}
+        // target="_blank" / window.open。iOS は onOpenWindow が無いと同じ WebView で開いてしまい (#1158)、
+        // Android は何も起きない。自オリジンは今の WebView で開き、他オリジンは既定ブラウザで開く。
+        onOpenWindow={(event) => {
+          const decision = decideOpenWindow(event.nativeEvent.targetUrl);
+          if (decision.navigateTo) {
+            webViewRef.current?.injectJavaScript(buildNavigateScript(decision.navigateTo));
+          } else if (decision.openExternal) {
+            void openExternalUrl(decision.openExternal);
+          }
+        }}
         onMessage={(event) => {
+          // window.ReactNativeWebView はどのオリジンのページにも存在する。
+          // 送信元が自アプリのオリジンでなければ、tab-navigate / download 等のメッセージは一切処理しない。
+          // event.nativeEvent.url に入るもの (react-native-webview 13.13.5 のソースで確認):
+          //   - iOS: メッセージを送ったフレームの request URL (WKScriptMessage.frameInfo.request)
+          //   - Android: WebMessageListener に対応した WebView では、送ったフレームのオリジン。
+          //     非対応の古い WebView (fallback の JavascriptInterface) ではトップフレームの URL (getUrl())
+          // 最後のケースでは、自オリジンのページの中の他オリジンの iframe からのメッセージもこのゲートを通る。
+          // Web の CSP (next.config.mjs の frame-src) が許す他オリジンの iframe は Cloudflare Turnstile だけ
+          // (/login、/settings/account のパスワード変更など。webViewBridge.ts の WEB_VIEW_EMBED_ORIGINS)。
+          // この経路ではゲートが境界にならないので、Turnstile の iframe からのメッセージを止めるものは、下の各処理の中身の検証だけになる
+          // (tab-navigate はタブの prefix と sanitizeInitialPath、download は webViewDownload.ts の送信元・ファイル名・サイズ)。
+          // 埋め込みを足すときは、CSP とあわせて Android 実機で確認すること
+          // (onShouldStartLoadWithRequest 側の Android の注記は webViewBridge.ts の NavigationRequestLike を参照)
+          if (!isOwnOrigin(event.nativeEvent.url)) return;
           try {
             const data = JSON.parse(event.nativeEvent.data);
             if (data.type === 'tab-navigate') {
@@ -259,11 +326,11 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
                   // 買い物リストのモーダル等を開くクエリが失われないようにする
                   if (data.fullPath && data.fullPath !== data.path) {
                     router.push({
-                      pathname: matched.tab as any,
+                      pathname: matched.tab,
                       params: { initialPath: data.fullPath },
                     });
                   } else {
-                    router.push(matched.tab as any);
+                    router.push(matched.tab);
                   }
                 }, 0);
               }
@@ -272,7 +339,7 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
               if (router.canGoBack()) {
                 router.back();
               } else {
-                router.push('/(tabs)/home' as any);
+                router.push('/(tabs)/home');
               }
             } else if (data.type === 'download') {
               // Fix 3: iOS WebView でのエクスポート対応

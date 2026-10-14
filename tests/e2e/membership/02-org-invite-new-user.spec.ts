@@ -10,6 +10,7 @@ import { createClient } from '@supabase/supabase-js';
 import { getUserProfile } from '../helpers/membership';
 import { createFreshUser, cleanupFreshUser } from '../fixtures/fresh-user';
 import { generateTestPassword } from '../helpers/credentials';
+import { createTestSession, describeTestSessionFailure } from '../helpers/test-session.mjs';
 import * as path from 'path';
 import { config as dotenvConfig } from 'dotenv';
 
@@ -96,18 +97,17 @@ test.describe('org 招待 — 新規ユーザ (α-4)', () => {
 
         if (signupAcceptRes.status() === 404) {
           // API が未実装の場合は accept 単体でテスト
-          // セッション注入してから accept
-          const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+          // セッション注入してから accept。セッションはパスワードのログインではなく、管理用の鍵で作る (#1547)
           const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 
-          const tokenRes = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', apikey: anonKey },
-            body: JSON.stringify({ email: newUserEmail, password: newUserPassword }),
-          });
+          const sessionResult = await createTestSession(newUserEmail);
+          expect(
+            sessionResult.ok,
+            sessionResult.ok ? '' : describeTestSessionFailure(sessionResult),
+          ).toBe(true);
 
-          if (tokenRes.ok) {
-            const session = await tokenRes.json() as Record<string, unknown>;
+          if (sessionResult.ok) {
+            const session = sessionResult.session;
             const supabaseRef = supabaseUrl.replace('https://', '').split('.')[0];
             const cookieName = `sb-${supabaseRef}-auth-token`;
             const domain = new URL(BASE_URL).hostname;
@@ -202,19 +202,14 @@ test.describe('org 招待 — 新規ユーザ (α-4)', () => {
       newUserId = newUserData?.user?.id ?? null;
       expect(newUserId).toBeTruthy();
 
-      // ユーザーのセッションを取得してから accept を呼ぶ
-      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+      // ユーザーのセッションを取得してから accept を呼ぶ。パスワードのログインではなく、管理用の鍵で作る (#1547)
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 
-      const tokenRes = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: anonKey },
-        body: JSON.stringify({ email: newUserEmail, password: newUserPassword }),
-      });
-      expect(tokenRes.ok, `password grant 失敗: ${tokenRes.status}`).toBeTruthy();
-
-      const session = await tokenRes.json() as { access_token: string };
-      const accessToken = session.access_token;
+      const sessionResult = await createTestSession(newUserEmail);
+      if (!sessionResult.ok) {
+        throw new Error(describeTestSessionFailure(sessionResult));
+      }
+      const session = sessionResult.session;
 
       // アクセストークンで直接 accept API を呼ぶ
       const acceptRes = await fetch(`${BASE_URL}/api/org/invites/${token}/accept`, {

@@ -111,7 +111,7 @@ async function signInAsNewUser(page: Page, options: ProfileOptions) {
     if (error) throw new Error(`user_profiles INSERT 失敗: ${error.message}`);
   }
 
-  await injectSession(page, user.email, user.password);
+  await injectSession(page, user.email);
   return user;
 }
 
