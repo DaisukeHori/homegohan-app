@@ -21,7 +21,7 @@
  *   5. spec が getByTestId などで指す testID は、Web の実装 (src/) に実在する (spec だけが知っている名前で、何も無い要素を待たない)。
  *
  * 落ちたとき:
- *   1. skip ではなく原因を直す。製品の欠陥で直せないなら、理由付きの test.fixme にして KNOWN_FIXMES の数を足す。
+ *   1・2. skip ではなく原因を直す。製品の欠陥で直せないなら、理由付きの test.fixme にして KNOWN_FIXMES の数を足す。
  *   3. expect(locator).toBeVisible({ timeout }) に変える。
  *   4. e2e-local.yml の Playwright の引数と、local-ci.sh の PW_ARGS に spec を足す。
  *   5. 実装に testID (data-testid) を付けるか、spec の名前を実装に合わせる。
@@ -43,9 +43,11 @@ const EXPECTED_SPEC_COUNT = 7;
 /**
  * 製品の既知の不具合で動かせず、理由付きの test.fixme にしているテストの数 (ファイルごと)。
  * 03-step1-photo: ツアーの Step 1 の保存 (POST /api/meal-plans/add-from-photo) が、本文に dayDate / mealType が無く 400 になる (#846 で発見)。
+ * 05-step3-badges: Step 3 の画面が /api/badges の earned / obtainedAt ではなく obtained_at を見ていて、「獲得済」が付かない (#846 で発見)。
  */
 const KNOWN_FIXMES: Readonly<Record<string, number>> = {
   "03-step1-photo.spec.ts": 1,
+  "05-step3-badges.spec.ts": 1,
 };
 
 /** コメントを除く (説明文に skip や isVisible と書いても検査に引っかからないように。URL の // では切らない) */

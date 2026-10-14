@@ -28,6 +28,9 @@ import {
 
 test.use({ storageState: EMPTY_STORAGE_STATE });
 
+/** 獲得済みのバッジのカードに出る文言 (src/app/handson-tour/badges/page.tsx) */
+const EARNED_LABEL = "獲得済";
+
 test.describe("Tour - Step 3: バッジ確認", () => {
   test.beforeEach(async ({ tourUser }) => {
     // Step 1 / Step 2 を終えたあとの状態: first_bite と planner は獲得済み、tutorial_complete は Step 4 でもらう
@@ -61,6 +64,28 @@ test.describe("Tour - Step 3: バッジ確認", () => {
     await expect(page.getByTestId("badge-card-planner")).toBeVisible();
     await expect(page.getByTestId("badge-card-tutorial_complete")).toBeVisible();
   });
+
+  // 製品の既知の不具合で通らない (#846 の E2E で見つけた。直したら .fixme を外し、tests/e2e-tour-contract.test.ts の KNOWN_FIXMES を減らす)
+  test.fixme(
+    "Step 3: 前の Step で獲得したバッジ (first_bite / planner) に「獲得済」が付き、tutorial_complete には付かない",
+    {
+      annotation: {
+        type: "fixme",
+        description:
+          "Step 3 の画面 (src/app/handson-tour/badges/page.tsx) は各バッジの obtained_at を見て「獲得済」を出すが、" +
+          "/api/badges は earned と obtainedAt (キャメルケース) を返すので、獲得済みのバッジにも「獲得済」が付かない。",
+      },
+    },
+    async ({ page }) => {
+      await page.goto("/handson-tour/badges");
+
+      await expect(page.getByTestId("badge-card-first_bite")).toContainText(EARNED_LABEL, {
+        timeout: AUTO_ADVANCE_TIMEOUT_MS,
+      });
+      await expect(page.getByTestId("badge-card-planner")).toContainText(EARNED_LABEL);
+      await expect(page.getByTestId("badge-card-tutorial_complete")).not.toContainText(EARNED_LABEL);
+    },
+  );
 
   test("Step 3: 「次へ」タップ → Step 4 (tour-step-4-saving) へ遷移", async ({ page }) => {
     await page.goto("/handson-tour/badges");
