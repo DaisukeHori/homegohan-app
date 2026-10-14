@@ -5,6 +5,7 @@ import type { TargetSlot, MenuGenerationConstraints } from "@/types/domain";
 import { createClient } from "@/lib/supabase/client";
 import type { Tables } from "@homegohan/shared";
 import { AiConsentRequiredError, aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
+import { weeklyMenuRequestErrorMessageForDisplay } from "@/lib/weekly-menu-request-error";
 
 interface UseV4MenuGenerationOptions {
   onGenerationStart?: (requestId: string) => void;
@@ -105,10 +106,13 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
           const progressObj = (typeof newData.progress === 'object' && newData.progress !== null && !Array.isArray(newData.progress))
             ? (newData.progress as Record<string, unknown>)
             : {};
+          // 行の error_message は、こちらで書いた定型の文 (同意・上限・失敗の固定の文など) だけをそのまま出し、
+          // それ以外 (#1478 より前に Edge Function が書いた例外の文面など) は汎用の文に寄せる
+          const displayErrorMessage = weeklyMenuRequestErrorMessageForDisplay(newData.error_message);
           const progressWithStatus = {
             ...progressObj,
             status: newData.status,
-            errorMessage: newData.error_message,
+            errorMessage: displayErrorMessage,
           };
           onProgress(progressWithStatus);
           
@@ -119,7 +123,7 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
             if (newData.status === "completed") {
               options.onGenerationComplete?.();
             } else {
-              options.onError?.(newData.error_message || "生成に失敗しました");
+              options.onError?.(displayErrorMessage || "生成に失敗しました");
             }
             
             channel.unsubscribe();
@@ -156,7 +160,8 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
     return {
       status: data.status,
       progress: data.progress,
-      errorMessage: data.error_message,
+      // 画面がそのまま出すので、こちらで書いた定型の文以外は汎用の文に寄せる (#1478)
+      errorMessage: weeklyMenuRequestErrorMessageForDisplay(data.error_message),
     };
   }, []);
 
