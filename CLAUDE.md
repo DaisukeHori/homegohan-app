@@ -166,7 +166,8 @@ DB の日付列は JST の暦日で、Vercel / Edge の実行環境は UTC (#143
 ### localStorage クリーンアップ
 
 `src/lib/user-storage.ts` の `clearUserScopedLocalStorage()` を使う。  
-サインアウト処理では **Supabase signOut を呼ぶ前に** このヘルパーを実行する。
+サインアウト処理では **Supabase signOut を呼ぶ前に** このヘルパーを実行する。  
+消すキーの一覧は `packages/shared/src/user-scoped-storage.ts` (`USER_SCOPED_LOCAL_STORAGE_KEYS`) の 1 か所だけに持つ。モバイルアプリのネイティブのログアウト・退会 (`apps/mobile/src/lib/signOut.ts`) は、次に開く WebView で、Web のページが読み込まれる前に同じ一覧のキーを消させる (`apps/mobile/src/lib/webViewUserStorageCleanup.ts`。#1037)。キーを足すときは共有の一覧に足すだけでよい。
 
 ### Web のログアウト画面と、モバイルアプリの WebView への通知
 

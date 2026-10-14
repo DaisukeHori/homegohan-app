@@ -308,16 +308,20 @@ describe('process-meal-image-jobs の書き込み: カバーの二重の守り (
   interface Call {
     values: Record<string, unknown>;
     filters: Array<[string, string, unknown]>;
-    selected: boolean;
   }
+  const READ_AT = '2026-10-12T00:00:00.000000+00:00';
 
-  /** planned_meals の update の作り物。guardedRows はカバーを条件にした update が当たる行数 */
-  function makeDb(guardedRows: number): { db: PlannedMealWriter; calls: Call[] } {
+  /**
+   * planned_meals の update の作り物。rows は各回の update が当たる行数 (足りなければ最後の値)。
+   * 競合の振る舞い (条件の評価・読み直し) は tests/process-meal-image-jobs-write-race.test.ts (#1527)
+   */
+  function makeDb(rows: number[]): { db: PlannedMealWriter; calls: Call[] } {
     const calls: Call[] = [];
     const db: PlannedMealWriter = {
       from: () => ({
         update: (values) => {
-          const call: Call = { values, filters: [], selected: false };
+          const call: Call = { values, filters: [] };
+          const index = calls.length;
           calls.push(call);
           const filter = {
             eq: (column: string, value: string) => {
@@ -329,10 +333,9 @@ describe('process-meal-image-jobs の書き込み: カバーの二重の守り (
               return filter;
             },
             select: () => {
-              call.selected = true;
-              return Promise.resolve({ data: Array.from({ length: guardedRows }, () => ({ id: 'meal-1' })), error: null });
+              const count = rows[Math.min(index, rows.length - 1)];
+              return Promise.resolve({ data: Array.from({ length: count }, () => ({ id: 'meal-1' })), error: null });
             },
-            then: <T>(resolve: (value: { error: null }) => T) => Promise.resolve({ error: null }).then(resolve),
           };
           return filter;
         },
@@ -341,39 +344,66 @@ describe('process-meal-image-jobs の書き込み: カバーの二重の守り (
     return { db, calls };
   }
 
-  it('カバーを変えないときは、料理だけを書き、image_url に触れない', async () => {
-    const { db, calls } = makeDb(1);
-    await writeGeneratedDishImage(db, { mealId: 'meal-1', dishes: [], currentCover: USER_COVER, nextCover: undefined });
+  /** 料理 1 品 (dish 0) の、画像を待っている AI の献立の行を読む関数 */
+  async function readerOf(cover: string | null, updatedAt: string | null = READ_AT) {
+    const result = await reconcileDishImages({ previousDishes: [], nextDishes: [THREE_DISHES[0]], triggerSource: 'test' });
+    const dishes = result.dishes;
+    return {
+      subjectHash: dishes[0].image_subject_hash ?? null,
+      read: async () => ({ id: 'meal-1', dishes: structuredClone(dishes), image_url: cover, updated_at: updatedAt }),
+    };
+  }
+
+  it('カバーを変えないときは、料理だけを書き、image_url に触れない (読んだときの updated_at の行にだけ書く)', async () => {
+    const { db, calls } = makeDb([1]);
+    const { subjectHash, read } = await readerOf(USER_COVER);
+    await writeGeneratedDishImage(db, { mealId: 'meal-1', dishIndex: 0, subjectHash, imageUrl: AI_0, read });
     expect(calls).toHaveLength(1);
     expect(calls[0].values).not.toHaveProperty('image_url');
-    expect(calls[0].filters).toEqual([['eq', 'id', 'meal-1']]);
+    expect(calls[0].filters).toEqual([['eq', 'id', 'meal-1'], ['eq', 'updated_at', READ_AT]]);
   });
 
-  it('カバーを変えるときは、読んだときのカバーのままの行にだけ書く', async () => {
-    const { db, calls } = makeDb(1);
-    await writeGeneratedDishImage(db, { mealId: 'meal-1', dishes: [], currentCover: AI_1, nextCover: AI_0 });
+  it('カバーを変えるときは、読んだときのカバーと updated_at のままの行にだけ書く', async () => {
+    const { db, calls } = makeDb([1]);
+    const { subjectHash, read } = await readerOf(null);
+    await writeGeneratedDishImage(db, { mealId: 'meal-1', dishIndex: 0, subjectHash, imageUrl: AI_0, read });
     expect(calls).toHaveLength(1);
     expect(calls[0].values).toMatchObject({ image_url: AI_0 });
-    expect(calls[0].filters).toEqual([['eq', 'id', 'meal-1'], ['eq', 'image_url', AI_1]]);
+    expect(calls[0].filters).toEqual([['eq', 'id', 'meal-1'], ['eq', 'updated_at', READ_AT], ['is', 'image_url', null]]);
 
-    const empty = makeDb(1);
-    await writeGeneratedDishImage(empty.db, { mealId: 'meal-1', dishes: [], currentCover: null, nextCover: AI_0 });
-    expect(empty.calls[0].filters).toEqual([['eq', 'id', 'meal-1'], ['is', 'image_url', null]]);
+    const aiCover = makeDb([1]);
+    const withAiCover = await readerOf(AI_1);
+    // AI_1 はこの献立の料理の画像ではない (料理の画像と一致しない) ので、利用者のカバーとして守られる
+    await writeGeneratedDishImage(aiCover.db, { mealId: 'meal-1', dishIndex: 0, subjectHash: withAiCover.subjectHash, imageUrl: AI_0, read: withAiCover.read });
+    expect(aiCover.calls[0].values).not.toHaveProperty('image_url');
+
+    const nullUpdatedAt = makeDb([1]);
+    const withoutUpdatedAt = await readerOf(null, null);
+    await writeGeneratedDishImage(nullUpdatedAt.db, { mealId: 'meal-1', dishIndex: 0, subjectHash: withoutUpdatedAt.subjectHash, imageUrl: AI_0, read: withoutUpdatedAt.read });
+    expect(nullUpdatedAt.calls[0].filters).toEqual([['eq', 'id', 'meal-1'], ['is', 'updated_at', null], ['is', 'image_url', null]]);
   });
 
-  it('読んでから書くまでにカバーが付け替えられていたら (0 行)、カバーに触れずに料理だけを書く', async () => {
-    const { db, calls } = makeDb(0);
-    await writeGeneratedDishImage(db, { mealId: 'meal-1', dishes: [{ name: 'x' }], currentCover: null, nextCover: AI_0 });
+  it('読んでから書くまでに行が変わっていたら (0 行)、古い料理を条件なしで書かずに、読み直して書き直す (#1527)', async () => {
+    const { db, calls } = makeDb([0, 1]);
+    const { subjectHash, read } = await readerOf(null);
+    const outcome = await writeGeneratedDishImage(db, { mealId: 'meal-1', dishIndex: 0, subjectHash, imageUrl: AI_0, read });
+    expect(outcome).toEqual({ status: 'written' });
     expect(calls).toHaveLength(2);
-    expect(calls[1].values).not.toHaveProperty('image_url');
-    expect(calls[1].values).toMatchObject({ dishes: [{ name: 'x' }] });
+    for (const call of calls) {
+      expect(call.filters).toContainEqual(['eq', 'updated_at', READ_AT]);
+    }
   });
 
-  it('画像の処理 (index.ts) は、カバーを applyGeneratedDishImage で決め、writeGeneratedDishImage で書く (直に image_url を書かない)', () => {
+  it('画像の処理 (index.ts) は、料理とカバーを writeGeneratedDishImage で書き (中で applyGeneratedDishImage がカバーを決める)、直に image_url を書かない', () => {
     const source = readFileSync(join(process.cwd(), 'supabase/functions/process-meal-image-jobs/index.ts'), 'utf8');
-    expect(source).toContain('applyGeneratedDishImage(');
+    const utils = readFileSync(join(process.cwd(), 'supabase/functions/process-meal-image-jobs/utils.ts'), 'utf8');
     expect(source).toContain('writeGeneratedDishImage(supabase');
+    expect(source).not.toContain('applyGeneratedDishImage(');
     expect(source).not.toContain('deriveMealCoverImage(');
     expect(source).not.toMatch(/image_url:\s*cover/);
+    // 献立の料理を直に書く update は index.ts に無い (料理の書き込みはすべて utils.ts の楽観的な排他を通す。#1527)
+    expect(source).not.toMatch(/from\("planned_meals"\)\s*\.update\(/);
+    expect(utils).toContain('applyGeneratedDishImage(');
+    expect(utils).not.toContain('deriveMealCoverImage(');
   });
 });
