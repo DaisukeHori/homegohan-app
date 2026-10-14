@@ -13,7 +13,9 @@ import { useAccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { AI_CONSENT_SETTINGS_ENTRY_TITLE, AI_CONSENT_SETTINGS_PATH } from "@/lib/ai/consent-config";
 import {
   ACCOUNT_DELETE_CONFIRM_KEYWORD,
+  ACCOUNT_DELETE_FAILED_MESSAGE,
   ACCOUNT_EXPORT_FAILED_MESSAGE,
+  accountDeletionBlockedMessage,
   accountExportRateLimitedMessage,
   deleteOwnAccount,
   exportAccountData,
@@ -210,8 +212,19 @@ export default function SettingsPage() {
     if (accountActionsDelegated || deleteConfirmText !== DELETE_KEYWORD || deleting) return;
     setDeleting(true);
     const result = await deleteOwnAccount();
-    if (result.kind !== 'deleted') {
-      alert('アカウントの削除に失敗しました。時間をおいて再度お試しください。');
+    if (result.kind === 'unauthorized') {
+      // ログインが切れている (書き出しと凍結中の画面と同じく、ログインの画面へ)
+      router.push('/login');
+      return;
+    }
+    if (result.kind === 'blocked') {
+      // 組織のオーナー・家族の代表者 (409)。失敗の定型文ではなく、譲渡や解散が先だというサーバーの案内を出す (#1447)
+      alert(accountDeletionBlockedMessage(result.message));
+      setDeleting(false);
+      return;
+    }
+    if (result.kind === 'failed') {
+      alert(ACCOUNT_DELETE_FAILED_MESSAGE);
       setDeleting(false);
       return;
     }

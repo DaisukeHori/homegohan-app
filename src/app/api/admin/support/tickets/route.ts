@@ -4,6 +4,9 @@
  *
  * operator/02-api-spec.md §10 準拠
  * 権限: support, admin, super_admin
+ *
+ * #1326: 一覧は 1 件以上返したとき、1 回の取得 = 1 行で admin.support.ticket.list を監査ログに残す
+ * (絞り込みの条件と件数だけ。返したチケットの ID や件名は入れない)。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
@@ -11,6 +14,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { ticketListQuerySchema, createTicketSchema } from '@/lib/admin/support-schemas';
 import { internalError } from '@/lib/api/errors';
+import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
 
 export async function GET(request: NextRequest) {
   try {
@@ -66,6 +70,21 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       return internalError('GET /api/admin/support/tickets', error, { userId: currentUser.id }, { shape: 'nested' });
+    }
+
+    const rows = data ?? [];
+    // #1326: 一覧の閲覧を 1 回 = 1 行で残す。0 件のときは情報を返していないので記録しない。
+    // 記録に失敗しても一覧は返す (失敗は db-logger に error で残る)
+    if (rows.length > 0) {
+      await recordAdminAudit({
+        supabase,
+        actorId: currentUser.id,
+        actionType: 'admin.support.ticket.list',
+        targetType: 'support_ticket',
+        details: buildListViewDetails({ status, priority, assignee_id, page, per_page }, rows.length, count ?? null),
+        request,
+        routeName: 'api/admin/support/tickets GET',
+      });
     }
 
     return NextResponse.json({
@@ -133,14 +152,16 @@ export async function POST(request: NextRequest) {
     }
 
     // 監査ログ
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: currentUser.id,
-      action_type: 'admin.support.ticket.create',
-      target_id: ticket.id,
-      target_type: 'support_ticket',
+    await recordAdminAudit({
+      supabase,
+      actorId: currentUser.id,
+      actionType: 'admin.support.ticket.create',
+      targetId: ticket.id,
+      targetType: 'support_ticket',
       details: { subject, category, priority, user_id },
       severity: 'info',
-      ip_address: request.headers.get('x-forwarded-for'),
+      request,
+      routeName: 'api/admin/support/tickets POST',
     });
 
     return NextResponse.json({ data: ticket }, { status: 201 });

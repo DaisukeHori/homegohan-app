@@ -19,6 +19,7 @@ import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { ExportRequestSchema } from '@/lib/admin/finance-schemas';
 import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -152,22 +153,20 @@ export async function POST(request: NextRequest) {
     }
 
     // 監査ログ記録 (破壊的操作ではないが export はログ対象とする)
-    try {
-      await supabase.from('admin_audit_logs').insert({
-        actor_id: user.id,
-        action_type: 'admin.finance.export',
-        target_type: 'finance_data',
-        severity: 'info',
-        details: {
-          export_type: req.export_type,
-          from: req.from,
-          to: req.to,
-        },
-        ip_address: null,
-      });
-    } catch {
-      // graceful: ログ失敗でもエクスポートは返す
-    }
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      actionType: 'admin.finance.export',
+      targetType: 'finance_data',
+      severity: 'info',
+      details: {
+        export_type: req.export_type,
+        from: req.from,
+        to: req.to,
+      },
+      request,
+      routeName: 'api/admin/finance/exports POST',
+    });
 
     return new NextResponse(csvContent, {
       status: 200,

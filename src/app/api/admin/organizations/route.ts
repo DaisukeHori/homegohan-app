@@ -12,6 +12,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { z } from 'zod';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -212,14 +213,16 @@ export async function POST(request: Request) {
   }
 
   // 監査ログ
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: actor.id,
-    action_type: 'admin.organization.create',
-    target_id: org.id,
-    target_type: 'organization',
+  await recordAdminAudit({
+    supabase,
+    actorId: actor.id,
+    actionType: 'admin.organization.create',
+    targetId: org.id,
+    targetType: 'organization',
     details: { name, plan },
     severity: 'info',
-    ip_address: request.headers.get('x-forwarded-for'),
+    request,
+    routeName: 'api/admin/organizations POST',
   });
 
   return NextResponse.json({ organization: org });
