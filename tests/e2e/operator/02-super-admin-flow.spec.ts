@@ -1,405 +1,266 @@
 /**
  * tests/e2e/operator/02-super-admin-flow.spec.ts
  *
- * T14 — super_admin ログイン → クーポン作成 → プラン PATCH → flag 操作 happy path
+ * T14 (#856) — super_admin のペルソナの happy path: ログイン → クーポン作成 → プラン変更 → 機能フラグの操作。
+ * どの操作も、監査ログ (GET /api/super-admin/audit-logs) に本人の記録が残ることまで確かめる。
  *
- * happy path:
- *   1. super_admin ユーザーとしてログイン
- *   2. POST /api/super-admin/coupons でクーポンを作成し audit_log に記録されることを確認
- *   3. PATCH /api/super-admin/plans/{id} でプランを更新し audit_log に記録を確認
- *   4. GET /api/super-admin/flags → PATCH /api/super-admin/flags/{key} で flag 操作
- *   5. /api/super-admin/audit-logs で全操作が記録されていることを確認
+ *   T14-S1: 未ログインでは super_admin の API を使えない (401)
+ *   T14-S2: 一般の利用者は super_admin の API を使えない (403)
+ *   T14-S3: super_admin がクーポンを作ると、一覧に出て、監査ログに記録が残る
+ *   T14-S4: super_admin がプランを変更すると (テスト専用の下書きのプランの表示名)、変更が保存され、監査ログに記録が残る
+ *   T14-S5: super_admin が機能フラグの画面で、テスト専用のフラグを ON にして OFF に戻すと、保存され、監査ログに 2 件残る
+ *   T14-S6: super_admin がクーポンの管理の画面を開ける
  *
- * 前提条件:
- *   - superAdminUser fixture: createFreshUser + user_profiles.roles=['super_admin'] で自動生成
+ * ユーザー: fixtures/fresh-user.ts の superAdminUser / regularUser (test ごとに新しく作る)。
+ * プラン・機能フラグは、本番の設定や他のテストに触れないよう、テスト専用の行を service_role で作って操作し、終わったら消す
+ * (#1148: 既存のフラグを切り替えるテストは、本番の緊急スイッチを動かしてしまう)。作ったクーポンも消す。
  *
  * 実行:
- *   npm run test:e2e -- tests/e2e/operator
+ *   npx playwright test tests/e2e/operator
  */
 
 import { test, expect } from "../fixtures/fresh-user";
-import { config as dotenvConfig } from "dotenv";
-import * as path from "path";
 import { addDaysToDate, todayLocal } from "../../../packages/shared/src/date-utils";
+import {
+  EMPTY_STORAGE_STATE,
+  apiRequest,
+  dataOf,
+  expectAuditLogEntryShape,
+  fetchAuditLogs,
+  serviceRoleRest,
+} from "../helpers/persona-api";
 
-dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
+// 共有のログイン状態 (playwright.config.ts の storageState) を引き継がず、各テストが自分のユーザーで入る
+test.use({ storageState: EMPTY_STORAGE_STATE });
 
 // ─── 定数 ────────────────────────────────────────────────────────────────────
 
-const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
+/** 画面の要素が出るまで待つ上限 (ほかの spec と同じ。本番ビルドの初回の描画を含めて足りる長さ) */
+const PAGE_READY_TIMEOUT_MS = 20_000;
 
-// テスト用クーポンの有効期間の日数 (開始日 = JST の今日から、この日数後の日まで)
+/** テスト用クーポンの有効期間の日数 (開始日 = JST の今日から、この日数後の日まで) */
 const TEST_COUPON_VALID_DAYS = 30;
 
-// テスト用クーポンコード (衝突回避のためタイムスタンプを含める)
-const TEST_COUPON_CODE = `E2ETEST${Date.now().toString(36).toUpperCase()}`;
+/** テスト用クーポンの割引率 (%) */
+const TEST_COUPON_DISCOUNT_PERCENT = 10;
 
-/**
- * API fetch を page コンテキストで実行する。
- */
-async function apiFetch(
-  page: import("@playwright/test").Page,
-  path: string,
-  options: { method?: string; body?: unknown } = {},
-): Promise<{ status: number; body: unknown }> {
-  return page.evaluate(
-    async ({ path, options }: { path: string; options: { method?: string; body?: unknown } }) => {
-      const res = await fetch(path, {
-        method: options.method ?? "GET",
-        headers: options.body ? { "Content-Type": "application/json" } : {},
-        body: options.body ? JSON.stringify(options.body) : undefined,
-        credentials: "include",
+/** テスト用クーポンの最大利用回数 */
+const TEST_COUPON_MAX_USES = 100;
+
+/** クーポンの一覧の API から 1 回に読む件数 (src/lib/super-admin/coupons-schemas.ts の per_page の上限以内) */
+const COUPON_LIST_PAGE_SIZE = 100;
+
+/** プランの一覧の API から 1 回に読む件数 (src/lib/super-admin/plans-schemas.ts の per_page の上限以内。下書きだけに絞って読む) */
+const PLAN_LIST_PAGE_SIZE = 100;
+
+/** 機能フラグの切り替えの監査ログの action_type (src/app/api/super-admin/flags/[key]/route.ts) */
+const FEATURE_FLAG_TOGGLE_ACTION_TYPE = "super_admin.feature_flag.toggle";
+
+/** ON にして OFF に戻すので、切り替えの監査ログは 2 件 */
+const FEATURE_FLAG_TOGGLE_COUNT = 2;
+
+/** 機能フラグの画面の表の列の位置 (0 始まり。src/app/super-admin/flags/page.tsx の thead の「ステータス」) */
+const FLAG_TABLE_STATUS_COLUMN = 3;
+
+/** 衝突しない識別子 (コード・キー) の後ろに付ける文字列 */
+function uniqueSuffix(): string {
+  return Date.now().toString(36);
+}
+
+/** 機能フラグの enabled を DB から読む (画面の表示だけでなく、保存されたことを確かめる) */
+async function readFlagEnabled(flagKey: string): Promise<boolean | undefined> {
+  const rows = await serviceRoleRest<{ enabled: boolean }>(`feature_flags?key=eq.${flagKey}&select=enabled`, {
+    method: "GET",
+  });
+  return rows[0]?.enabled;
+}
+
+// ─── テスト ──────────────────────────────────────────────────────────────────
+
+test.describe("operator/super-admin: クーポン作成 → プラン変更 → 機能フラグの操作 (T14)", () => {
+  test("T14-S1: 未ログインで super_admin の API を使うと 401", async ({ page }) => {
+    expect((await apiRequest(page, "/api/super-admin/coupons")).status).toBe(401);
+    expect((await apiRequest(page, "/api/super-admin/plans")).status).toBe(401);
+    expect((await apiRequest(page, "/api/super-admin/flags")).status).toBe(401);
+    expect((await apiRequest(page, "/api/super-admin/audit-logs?per_page=5&page=1")).status).toBe(401);
+  });
+
+  test("T14-S2: 一般の利用者は super_admin の API に 403 で弾かれる", async ({ regularUser }) => {
+    expect((await apiRequest(regularUser, "/api/super-admin/coupons")).status).toBe(403);
+    expect((await apiRequest(regularUser, "/api/super-admin/plans")).status).toBe(403);
+    expect((await apiRequest(regularUser, "/api/super-admin/flags")).status).toBe(403);
+  });
+
+  test("T14-S3: super_admin がクーポンを作ると、一覧に出て、監査ログに記録が残る", async ({ superAdminUser }) => {
+    const { page, userId } = superAdminUser;
+    const code = `E2ET14${uniqueSuffix().toUpperCase()}`;
+    // #1483 / #1510: 有効開始日・有効期限は JST の暦日で送る (toISOString の先頭 10 文字は UTC の暦日なので使わない)
+    const validFrom = todayLocal();
+    const validUntil = addDaysToDate(validFrom, TEST_COUPON_VALID_DAYS);
+    let couponId: string | null = null;
+
+    try {
+      const created = await apiRequest(page, "/api/super-admin/coupons", {
+        method: "POST",
+        body: {
+          code,
+          discount_type: "percentage",
+          discount_value: TEST_COUPON_DISCOUNT_PERCENT,
+          applicable_to: "all",
+          valid_from: validFrom,
+          valid_until: validUntil,
+          max_uses: TEST_COUPON_MAX_USES,
+          per_user_limit: 1,
+        },
       });
-      let body: unknown;
-      try {
-        body = await res.json();
-      } catch {
-        body = await res.text();
+      expect(created.status, JSON.stringify(created.body)).toBe(201);
+      const coupon = dataOf(created.body) as Record<string, unknown>;
+      expect(typeof coupon.id).toBe("string");
+      couponId = coupon.id as string;
+      expect(coupon.code).toBe(code);
+      expect(coupon.discount_type).toBe("percentage");
+      expect(coupon.discount_value).toBe(TEST_COUPON_DISCOUNT_PERCENT);
+      expect(coupon.status).toBe("active");
+      expect(coupon.created_by).toBe(userId);
+
+      // 一覧に出る
+      const list = await apiRequest(page, `/api/super-admin/coupons?per_page=${COUPON_LIST_PAGE_SIZE}&page=1`);
+      expect(list.status).toBe(200);
+      const coupons = dataOf(list.body) as Array<Record<string, unknown>>;
+      expect(coupons.map((c) => c.id)).toContain(couponId);
+
+      // 監査ログに、作った本人のクーポン作成の記録が 1 件残る
+      const { status, logs } = await fetchAuditLogs(page, { actionType: "create_coupon", targetId: couponId });
+      expect(status).toBe(200);
+      expect(logs).toHaveLength(1);
+      const [entry] = logs;
+      expectAuditLogEntryShape(entry, { actorId: userId });
+      expect(entry.action_type).toBe("create_coupon");
+      expect(entry.target_type).toBe("coupon");
+      expect(entry.severity).toBe("warn");
+      expect(entry.details).toEqual(
+        expect.objectContaining({ code, discount_type: "percentage", discount_value: TEST_COUPON_DISCOUNT_PERCENT }),
+      );
+    } finally {
+      if (couponId) {
+        await serviceRoleRest(`coupons?id=eq.${couponId}`, { method: "DELETE" });
       }
-      return { status: res.status, body };
-    },
-    { path, options },
-  );
-}
-
-/**
- * service_role で PostgREST を直接呼ぶ (テスト専用のデータの用意と後始末用)。
- * .env.local の NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY を使う。
- */
-async function serviceRoleRest(
-  pathAndQuery: string,
-  init: { method: "POST" | "DELETE"; body?: unknown },
-): Promise<void> {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error(
-      "[T14] NEXT_PUBLIC_SUPABASE_URL または SUPABASE_SERVICE_ROLE_KEY が未設定です。.env.local を確認してください。",
-    );
-  }
-  const resp = await fetch(`${supabaseUrl}/rest/v1/${pathAndQuery}`, {
-    method: init.method,
-    headers: {
-      "Content-Type": "application/json",
-      apikey: serviceRoleKey,
-      Authorization: `Bearer ${serviceRoleKey}`,
-      Prefer: "return=minimal",
-    },
-    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
-  });
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`[T14] ${init.method} ${pathAndQuery} 失敗 (${resp.status}): ${text.substring(0, 200)}`);
-  }
-}
-
-// ─── テストスイート ───────────────────────────────────────────────────────────
-
-test.describe("operator/super-admin: クーポン作成 → プラン PATCH → flag 操作 happy path", () => {
-  /**
-   * T14-S1: 未認証で super-admin API にアクセスすると 401
-   */
-  test("T14-S1: 未認証で super-admin API にアクセスすると 401 が返る", async ({ page }) => {
-    await page.goto(`${BASE_URL}/login`);
-
-    // クーポン一覧: 未認証
-    const couponRes = await apiFetch(page, "/api/super-admin/coupons");
-    expect(couponRes.status).toBe(401);
-
-    // フラグ一覧: 未認証
-    const flagRes = await apiFetch(page, "/api/super-admin/flags");
-    expect(flagRes.status).toBe(401);
-
-    // 監査ログ: 未認証
-    const auditRes = await apiFetch(page, "/api/super-admin/audit-logs?per_page=5&page=1");
-    expect(auditRes.status).toBe(401);
+    }
   });
 
-  /**
-   * T14-S2: 一般ユーザーは super-admin API に 401/403 で弾かれる
-   *
-   * onboardingPendingUser fixture = super_admin ロールを持たない fresh user。
-   */
-  test("T14-S2: 一般ユーザーは super-admin API に 401/403 で弾かれる", async ({ onboardingPendingUser }) => {
-    // クーポン一覧
-    const couponRes = await apiFetch(onboardingPendingUser, "/api/super-admin/coupons");
-    expect([401, 403]).toContain(couponRes.status);
-
-    // プラン一覧
-    const planRes = await apiFetch(onboardingPendingUser, "/api/super-admin/plans");
-    expect([401, 403]).toContain(planRes.status);
-
-    // フラグ一覧
-    const flagRes = await apiFetch(onboardingPendingUser, "/api/super-admin/flags");
-    expect([401, 403]).toContain(flagRes.status);
-  });
-
-  /**
-   * T14-S3: super_admin がクーポンを作成し audit_log に記録されることを確認
-   *
-   * superAdminUser fixture: createFreshUser + user_profiles.roles=['super_admin'] で自動生成。
-   */
-  test("T14-S3: super_admin がクーポンを作成し audit_log に記録される", async ({ superAdminUser }) => {
-    const { page } = superAdminUser;
-
-    // クーポン作成 (#1483 / #1510: 有効開始日・有効期限は JST の暦日で送る。
-    // toISOString の先頭 10 文字は UTC の暦日なので、JST の 0:00〜8:59 は前日になる)
-    const today = todayLocal();
-    const nextMonth = addDaysToDate(today, TEST_COUPON_VALID_DAYS);
-
-    const createResult = await apiFetch(page, "/api/super-admin/coupons", {
+  test("T14-S4: super_admin がプランを変更すると、保存され、監査ログに記録が残る", async ({ superAdminUser }) => {
+    const { page, userId } = superAdminUser;
+    const suffix = uniqueSuffix();
+    // テスト専用の下書きのプラン (公開中のプランは表示名などしか変えられず、契約者にも見える。下書きなら誰にも見えない)
+    const [plan] = await serviceRoleRest<{ id: string; plan_key: string }>("subscription_plans", {
       method: "POST",
       body: {
-        code: TEST_COUPON_CODE,
-        discount_type: "percentage",
-        discount_value: 10,
-        applicable_to: "all",
-        valid_from: today,
-        valid_until: nextMonth,
-        max_uses: 100,
-        per_user_limit: 1,
+        plan_key: `e2e_t14_s4_${suffix}`,
+        display_name: `E2E T14-S4 ${suffix}`,
+        plan_type: "personal",
+        status: "draft",
       },
     });
+    const newDisplayName = `E2E T14-S4 変更後 ${suffix}`;
 
-    expect(createResult.status).toBe(201);
-    const createBody = createResult.body as Record<string, unknown>;
-    expect(createBody.data).toBeDefined();
+    try {
+      // 一覧 (下書き) に出る
+      const list = await apiRequest(page, `/api/super-admin/plans?status=draft&per_page=${PLAN_LIST_PAGE_SIZE}&page=1`);
+      expect(list.status).toBe(200);
+      expect((dataOf(list.body) as Array<Record<string, unknown>>).map((p) => p.id)).toContain(plan.id);
 
-    const coupon = createBody.data as Record<string, unknown>;
-    expect(coupon.id).toBeDefined();
-    expect(coupon.code).toBe(TEST_COUPON_CODE);
-    expect(coupon.discount_type).toBe("percentage");
-    expect(coupon.discount_value).toBe(10);
-    expect(coupon.status).toBe("active");
+      // 表示名を変える
+      const patched = await apiRequest(page, `/api/super-admin/plans/${plan.id}`, {
+        method: "PATCH",
+        body: { display_name: newDisplayName },
+      });
+      expect(patched.status, JSON.stringify(patched.body)).toBe(200);
+      expect((dataOf(patched.body) as Record<string, unknown>).display_name).toBe(newDisplayName);
 
-    // audit_log でクーポン作成が記録されていることを確認
-    // (audit_log は非同期で書き込まれることがあるため少し待機)
-    await page.waitForTimeout(1000);
+      // 保存されている (詳細を読み直す)
+      const detail = await apiRequest(page, `/api/super-admin/plans/${plan.id}`);
+      expect(detail.status).toBe(200);
+      expect((dataOf(detail.body) as Record<string, unknown>).display_name).toBe(newDisplayName);
 
-    const auditResult = await apiFetch(
-      page,
-      `/api/super-admin/audit-logs?action_type=create_coupon&per_page=10&page=1`,
-    );
-    expect(auditResult.status).toBe(200);
-    const auditBody = auditResult.body as Record<string, unknown>;
-    const logs = auditBody.data as Array<Record<string, unknown>>;
-    // クーポン作成ログが存在する (直近の記録を確認)
-    if (logs.length > 0) {
-      const couponLog = logs.find(
-        (log) =>
-          log.action_type === "create_coupon" &&
-          (log.details as Record<string, unknown>)?.code === TEST_COUPON_CODE,
-      );
-      if (couponLog) {
-        expect(couponLog.target_type).toBe("coupon");
-        expect(couponLog.severity).toBe("warn"); // クーポン作成は warn severity
-      }
-    }
-
-    // クリーンアップ: クーポンを非活性化 (PATCH で status を変更する手段がない場合はスキップ)
-    const couponId = coupon.id as string;
-    await apiFetch(page, `/api/super-admin/coupons/${couponId}`, {
-      method: "PATCH",
-      body: { status: "inactive" },
-    });
-  });
-
-  /**
-   * T14-S4: super_admin がプラン一覧を取得して存在を確認する
-   *
-   * superAdminUser fixture: createFreshUser + user_profiles.roles=['super_admin'] で自動生成。
-   */
-  test("T14-S4: super_admin がプラン一覧を取得できる", async ({ superAdminUser }) => {
-    const { page } = superAdminUser;
-
-    const { status, body } = await apiFetch(page, "/api/super-admin/plans?per_page=10&page=1");
-
-    expect(status).toBe(200);
-    const responseBody = body as Record<string, unknown>;
-    expect(responseBody.data).toBeDefined();
-    expect(Array.isArray(responseBody.data)).toBe(true);
-    expect(responseBody.meta).toBeDefined();
-
-    const meta = responseBody.meta as Record<string, unknown>;
-    expect(typeof meta.total).toBe("number");
-
-    // プランが存在する場合は形式を確認
-    const plans = responseBody.data as Array<Record<string, unknown>>;
-    if (plans.length > 0) {
-      const firstPlan = plans[0];
-      expect(typeof firstPlan.id).toBe("string");
-      expect(typeof firstPlan.plan_key).toBe("string");
-      expect(typeof firstPlan.display_name).toBe("string");
-      expect(["personal", "family", "org"]).toContain(firstPlan.plan_type);
+      // 監査ログに、変更した本人のプラン変更の記録が 1 件残る
+      const { status, logs } = await fetchAuditLogs(page, { actionType: "update_plan", targetId: plan.id });
+      expect(status).toBe(200);
+      expect(logs).toHaveLength(1);
+      const [entry] = logs;
+      expectAuditLogEntryShape(entry, { actorId: userId });
+      expect(entry.action_type).toBe("update_plan");
+      expect(entry.target_type).toBe("subscription_plan");
+      expect(entry.severity).toBe("info");
+      const details = entry.details as { plan_key?: unknown; changes?: Record<string, unknown> };
+      expect(details.plan_key).toBe(plan.plan_key);
+      expect(details.changes?.display_name).toBe(newDisplayName);
+    } finally {
+      await serviceRoleRest(`subscription_plans?id=eq.${plan.id}`, { method: "DELETE" });
     }
   });
 
-  /**
-   * T14-S5: super_admin が機能フラグ一覧を取得して flag 操作を行う
-   *
-   * 操作シーケンス:
-   * 1. このテスト専用のフラグを service_role で作る
-   * 2. GET /api/super-admin/flags でフラグ一覧を取得し、作ったフラグがある
-   * 3. PATCH /api/super-admin/flags/{key} で enabled を toggle し、元に戻す
-   * 4. audit_log に記録されたことを確認
-   * 5. 作ったフラグを消す
-   *
-   * #1148: 本番のフラグ (maintenance_mode・ai_chat_enabled などの緊急スイッチや、献立生成のエンジン切り替え) は、
-   * 一覧の先頭を切り替える書き方だと、このテストが本番のサイトを一瞬メンテナンス中にしたり AI 相談を止めたりしてしまう
-   * (フラグの値はサーバーが最大 30 秒覚えるため、切り替えの瞬間に読まれた値がしばらく残る)。
-   * そのため、既存のフラグには触らず、このテスト専用のフラグだけを切り替える。
-   */
-  test("T14-S5: super_admin が機能フラグ一覧を取得し flag を toggle する", async ({ superAdminUser }) => {
-    const { page } = superAdminUser;
-
-    const targetKey = `e2e_t14s5_${Date.now().toString(36)}`;
+  test("T14-S5: super_admin が機能フラグの画面でテスト専用のフラグを ON → OFF にすると、保存され、監査ログに残る", async ({
+    superAdminUser,
+  }) => {
+    const { page, userId } = superAdminUser;
+    // #1148: 既存のフラグ (maintenance_mode などの緊急スイッチ) には触らず、このテスト専用のフラグだけを切り替える
+    const flagKey = `e2e_t14s5_${uniqueSuffix()}`;
     await serviceRoleRest("feature_flags", {
       method: "POST",
-      body: { key: targetKey, description: "e2e T14-S5 (自動削除)", enabled: false },
+      body: { key: flagKey, description: "e2e T14-S5 (自動削除)", enabled: false },
     });
 
     try {
-      // フラグ一覧を取得
-      const { status: flagListStatus, body: flagListBody } = await apiFetch(
-        page,
-        "/api/super-admin/flags",
-      );
-
-      expect(flagListStatus).toBe(200);
-      const flagBody = flagListBody as Record<string, unknown>;
-      expect(flagBody.data).toBeDefined();
-      expect(Array.isArray(flagBody.data)).toBe(true);
-
-      const flags = flagBody.data as Array<Record<string, unknown>>;
-
-      // 作ったフラグが一覧にある
-      const targetFlag = flags.find((flag) => flag.key === targetKey);
-      expect(targetFlag, "作ったフラグが一覧にある").toBeDefined();
-      const currentEnabled = targetFlag!.enabled as boolean;
-
-      const patchResult = await apiFetch(page, `/api/super-admin/flags/${targetKey}`, {
-        method: "PATCH",
-        body: { enabled: !currentEnabled },
+      await page.goto("/super-admin/flags");
+      await expect(page.getByRole("heading", { level: 1, name: "機能フラグ管理" })).toBeVisible({
+        timeout: PAGE_READY_TIMEOUT_MS,
       });
 
-      expect(patchResult.status).toBe(200);
-      const patchBody = patchResult.body as Record<string, unknown>;
-      const updatedFlag = patchBody.data as Record<string, unknown>;
-      expect(updatedFlag.key).toBe(targetKey);
-      expect(updatedFlag.enabled).toBe(!currentEnabled);
+      const flagRow = page.locator("tbody tr", { has: page.locator("code", { hasText: flagKey }) });
+      const statusCell = flagRow.locator("td").nth(FLAG_TABLE_STATUS_COLUMN);
+      await expect(statusCell).toContainText("OFF");
 
-      // 元に戻す
-      const restoreResult = await apiFetch(page, `/api/super-admin/flags/${targetKey}`, {
-        method: "PATCH",
-        body: { enabled: currentEnabled },
+      // ON にする
+      await statusCell.getByRole("button").click();
+      await expect(statusCell).toContainText("ON");
+      await expect.poll(() => readFlagEnabled(flagKey)).toBe(true);
+
+      // OFF に戻す
+      await statusCell.getByRole("button").click();
+      await expect(statusCell).toContainText("OFF");
+      await expect.poll(() => readFlagEnabled(flagKey)).toBe(false);
+
+      // 監査ログに、本人の切り替えの記録が 2 件 (ON と OFF) 残る
+      const { status, logs } = await fetchAuditLogs(page, {
+        actionType: FEATURE_FLAG_TOGGLE_ACTION_TYPE,
+        actorId: userId,
       });
-      expect(restoreResult.status).toBe(200);
-
-      // audit_log で flag toggle が記録されていることを確認
-      await page.waitForTimeout(500);
-
-      const auditResult = await apiFetch(
-        page,
-        `/api/super-admin/audit-logs?action_type=feature_flag&per_page=5&page=1`,
-      );
-      expect(auditResult.status).toBe(200);
-      const auditBody = auditResult.body as Record<string, unknown>;
-      const logs = auditBody.data as Array<Record<string, unknown>>;
-
-      if (logs.length > 0) {
-        // flag toggle の audit log エントリが存在することを確認
-        const flagLog = logs.find(
-          (log) =>
-            (log.action_type as string)?.includes("feature_flag") &&
-            log.target_type === "feature_flag",
-        );
-        if (flagLog) {
-          expect(flagLog.severity).toBe("info");
-          const details = flagLog.details as Record<string, unknown>;
-          expect(details.key).toBe(targetKey);
-        }
+      expect(status).toBe(200);
+      const flagLogs = logs.filter((log) => (log.details as { key?: unknown } | null)?.key === flagKey);
+      expect(flagLogs).toHaveLength(FEATURE_FLAG_TOGGLE_COUNT);
+      for (const entry of flagLogs) {
+        expectAuditLogEntryShape(entry, { actorId: userId });
+        expect(entry.action_type).toBe(FEATURE_FLAG_TOGGLE_ACTION_TYPE);
+        expect(entry.target_type).toBe("feature_flag");
+        expect(entry.severity).toBe("info");
       }
+      const enabledChanges = flagLogs
+        .map((log) => (log.details as { changes?: { enabled?: unknown } }).changes?.enabled)
+        .sort();
+      expect(enabledChanges).toEqual([false, true]);
     } finally {
-      await serviceRoleRest(`feature_flags?key=eq.${targetKey}`, { method: "DELETE" });
+      await serviceRoleRest(`feature_flags?key=eq.${flagKey}`, { method: "DELETE" });
     }
   });
 
-  /**
-   * T14-S6: super_admin が /super-admin/flags UI ページを表示できる
-   *
-   * superAdminUser fixture: createFreshUser + user_profiles.roles=['super_admin'] で自動生成。
-   */
-  test("T14-S6: super_admin が /super-admin/flags UI を表示できる", async ({ superAdminUser }) => {
+  test("T14-S6: super_admin が /super-admin/coupons の画面を表示できる", async ({ superAdminUser }) => {
     const { page } = superAdminUser;
 
-    await page.goto(`${BASE_URL}/super-admin/flags`);
-    await page.waitForLoadState("networkidle");
+    await page.goto("/super-admin/coupons");
 
-    // ページがログインにリダイレクトされていないことを確認
-    expect(page.url()).not.toContain("/login");
-
-    // flags ページの見出しが表示される
-    await expect(page.locator("h1")).toBeVisible({ timeout: 20_000 });
-    const h1Text = await page.locator("h1").textContent();
-    expect(h1Text).toContain("機能フラグ");
-  });
-
-  /**
-   * T14-S7: super_admin が /super-admin/coupons UI ページを表示できる
-   *
-   * superAdminUser fixture: createFreshUser + user_profiles.roles=['super_admin'] で自動生成。
-   */
-  test("T14-S7: super_admin が /super-admin/coupons UI を表示できる", async ({ superAdminUser }) => {
-    const { page } = superAdminUser;
-
-    await page.goto(`${BASE_URL}/super-admin/coupons`);
-    await page.waitForLoadState("networkidle");
-
-    expect(page.url()).not.toContain("/login");
-
-    // クーポン管理ページが表示される
-    await expect(page.locator("h1, h2")).toBeVisible({ timeout: 20_000 });
-  });
-
-  /**
-   * T14-S8: audit_log の全エントリが仕様通りの形式であることを確認
-   *
-   * super_admin として /api/super-admin/audit-logs を取得し、
-   * レスポンスフィールドが operator/07-audit-monitoring §3-4 準拠の形式であることを検証。
-   */
-  test("T14-S8: audit_log エントリが operator spec 準拠の形式で記録されている", async ({
-    superAdminUser,
-  }) => {
-    const { page } = superAdminUser;
-
-    const { status, body } = await apiFetch(
-      page,
-      "/api/super-admin/audit-logs?per_page=20&page=1",
-    );
-
-    expect(status).toBe(200);
-    const responseBody = body as Record<string, unknown>;
-    expect(responseBody.data).toBeDefined();
-    expect(responseBody.meta).toBeDefined();
-
-    const meta = responseBody.meta as Record<string, unknown>;
-    expect(typeof meta.total).toBe("number");
-    expect(meta.page).toBe(1);
-    expect(meta.per_page).toBe(20);
-
-    const logs = responseBody.data as Array<Record<string, unknown>>;
-
-    for (const log of logs) {
-      // 必須フィールドの存在確認
-      expect(typeof log.id).toBe("string");
-      expect(typeof log.action_type).toBe("string");
-      expect(["info", "warn", "critical"]).toContain(log.severity);
-      expect(typeof log.created_at).toBe("string");
-
-      // actor_id または actor_email_snapshot が存在すること
-      const hasActor =
-        log.actor_id !== undefined || log.actor_email_snapshot !== undefined;
-      expect(hasActor).toBe(true);
-    }
+    await expect(page.getByRole("heading", { level: 1, name: "クーポン管理" })).toBeVisible({
+      timeout: PAGE_READY_TIMEOUT_MS,
+    });
+    expect(new URL(page.url()).pathname).toBe("/super-admin/coupons");
   });
 });
