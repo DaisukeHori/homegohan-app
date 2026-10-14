@@ -50,8 +50,14 @@
  * 名前は DB の CHECK (小文字の英字で始まり、小文字・数字・アンダースコアだけ、64 文字まで) に合わせる。
  */
 export const AI_FEATURES = [
-  /** 献立生成 (週間・1 日・1 食・作り直し・キュー・栄養分析からの献立変更) */
+  /** 献立生成 (週間・1 日・1 食・作り直し・キュー・栄養分析からの献立変更)。究極モードの生成は menu_generation_ultimate で数える */
   "menu_generation",
+  /**
+   * 献立生成の究極モード (#1142。AI が作った献立をもう一度見直す。AI を通常の倍の 6 段階呼ぶ)。
+   * 上限に数える機能 (1 日の上限の合計に 1 回入る) で、そのうえ機能ごとの 1 日の上限 (AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT = 1 回) がある。
+   * 究極モードの生成 1 回を、menu_generation ではなくこの機能名で 1 回だけ数える (両方の上限に 1 回ずつ入る)
+   */
+  "menu_generation_ultimate",
   /** AI 相談 (チャット・要約・アクションの実行) */
   "consultation",
   /** 写真の解析 (冷蔵庫・食事・健診・体重計・写真の判別・栄養の画像解析) */
@@ -115,6 +121,67 @@ export const AI_UNMETERED_DAILY_CAP_FALLBACK = 20;
 /** 上限に数える機能か */
 export function isMeteredAiFeature(feature: AiFeature): boolean {
   return !AI_UNMETERED_FEATURES.includes(feature);
+}
+
+// ---------------------------------------------------------------
+// 機能ごとの 1 日の上限 (#1142: 究極モードは 1 人 1 日 1 回まで)
+// ---------------------------------------------------------------
+//
+// 1 日の AI の上限 (DB の ai_daily_limits。上限に数える機能の合計) とは別に、機能ごとに 1 日 (JST の暦日) の上限を持つ機能。
+// いまは究極モード (menu_generation_ultimate) だけ。判定と記録は DB の consume_ai_usage_capped が 1 回の呼び出しで行う
+// (機能ごとの上限 → 1 日の上限の順に判定し、どちらかに達していれば記録せずに止める。同じ利用者・同じ日は 1 本ずつ判定する)。
+// 上限の値は DB に置かず、ここの既定の値 (環境変数で上書きできる) を呼び出し側が DB の関数に引数で渡す。
+// 呼び出し側 (src/lib/plan/entitlements.ts の consumeAiUsage / _shared/ai-usage.ts の consumeEdgeAiUsage) は、
+// 機能名が上限を持つ機能なら consume_ai_usage_capped を、そうでなければ consume_ai_usage を呼ぶ (aiFeatureDailyCap で決める)。
+
+/** 究極モードの機能名。_shared/ai-daily-limit.ts の AI_DAILY_CAPPED_FEATURES と同じ (tests/ai-usage-contract.test.ts が突き合わせる) */
+export const AI_ULTIMATE_MODE_FEATURE = "menu_generation_ultimate" satisfies AiFeature;
+
+/** 機能ごとの 1 日の上限がある機能 */
+export const AI_CAPPED_FEATURES: readonly AiFeature[] = [AI_ULTIMATE_MODE_FEATURE];
+
+/**
+ * 究極モードの、利用者ごと・1 日 (JST の暦日) の上限の既定の回数 (#1142)。
+ * オーナーの選択 (2026-10-14): 「究極モードを全員に開放する。ただし、1 日の AI の上限 (#1480・#1149) とは別に、究極モードだけ
+ * 1 人 1 日 1 回 (JST の暦日) までにする。」
+ * 運用で変えるときは環境変数 AI_ULTIMATE_MODE_DAILY_LIMIT (0 以上の整数。0 はその日は 1 回も使えない) を、
+ * Next.js (Vercel) と Edge Functions (Supabase の secrets) の両方に同じ値で入れる (片方だけだと、入口によって上限が変わる)
+ */
+export const AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT = 1;
+
+/** 究極モードの 1 日の上限を上書きする環境変数の名前 */
+export const AI_ULTIMATE_MODE_DAILY_LIMIT_ENV = "AI_ULTIMATE_MODE_DAILY_LIMIT";
+
+/** 環境変数の値として受け付ける形 (0 以上の整数。桁数は DB の INTEGER に収まる範囲) */
+const DAILY_LIMIT_ENV_PATTERN = /^\d{1,9}$/;
+
+/**
+ * 究極モードの 1 日の上限 (回数)。環境変数の値 (呼び出し側が読んで渡す) が 0 以上の整数ならその値、
+ * 無い・空・形が違う (負・小数・文字) ときは既定の値 (AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT)。
+ * 形が違う値で無制限にならないよう、既定の値に倒す
+ */
+export function resolveAiUltimateModeDailyLimit(raw: string | null | undefined): number {
+  const value = raw?.trim();
+  if (!value || !DAILY_LIMIT_ENV_PATTERN.test(value)) return AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT;
+  return Number(value);
+}
+
+/**
+ * その機能の、機能ごとの 1 日の上限 (回数)。機能ごとの上限が無い機能は null (1 日の上限の合計だけで判定する)。
+ * readEnv は環境変数を読む関数 (Next.js は process.env、Edge Functions は Deno.env.get。このファイルは環境変数を直接読まない)
+ */
+export function aiFeatureDailyCap(feature: AiFeature, readEnv: (name: string) => string | undefined): number | null {
+  if (feature === AI_ULTIMATE_MODE_FEATURE) return resolveAiUltimateModeDailyLimit(readEnv(AI_ULTIMATE_MODE_DAILY_LIMIT_ENV));
+  return null;
+}
+
+/**
+ * 献立生成の依頼が究極モードか (#1142)。本文の ultimateMode が真偽値の true のときだけ究極モード。
+ * 数える機能名 (menu_generation_ultimate / menu_generation) と、生成の処理 (Edge Function) に渡す値は、どちらもこの関数の結果で決める
+ * (文字列の "true" などを、数えるときは通常・生成は究極モード、と食い違って扱わないように)
+ */
+export function isUltimateModeRequested(value: unknown): boolean {
+  return value === true;
 }
 
 /**

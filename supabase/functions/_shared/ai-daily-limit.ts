@@ -3,8 +3,9 @@
  *
  * ここにあるのは次のもの。
  *  - DB の consume_ai_usage の戻り値の読み取り (parseConsumeAiUsageResult) と、判定の結果の型 (AiUsageResult)
- *  - 上限に達したときの応答 (429 AI_DAILY_LIMIT) の形 (aiDailyLimitPayload) と、画面に出す文 (aiDailyLimitMessage / aiDailyLimitMessageOfBody。
- *    上限に数えない機能の安全弁で止めたときは AI_AUTO_SAFETY_CAP_MESSAGE)
+ *  - 上限に達したときの応答 (429 AI_DAILY_LIMIT) の形 (aiDailyLimitPayload) と、画面に出す文 (aiDailyLimitMessage / aiDailyLimitMessageOfBody /
+ *    aiDailyLimitMessageOfDenied。上限に数えない機能の安全弁で止めたときは AI_AUTO_SAFETY_CAP_MESSAGE、
+ *    究極モードの 1 日の上限 (#1142) で止めたときは aiUltimateModeDailyLimitMessage)
  *  - 次の JST の 0 時 (上限が戻る時刻) までの秒数 (secondsUntilNextJstMidnight)
  *  - AI の部分を省いた応答の欄 (aiDailyLimitSkippedField)
  *
@@ -54,6 +55,35 @@ export const AI_DAILY_LIMIT_FALLBACK_MESSAGE = "今日の AI の利用回数の�
 export const AI_AUTO_SAFETY_CAP_MESSAGE = "今日はこれ以上、自動のコメントを作れません。明日また表示されます。";
 
 /**
+ * 機能ごとの 1 日の上限がある機能 (#1142。DB の consume_ai_usage_capped が止めたときに capped_feature で返す機能名)。
+ * _shared/ai-usage-core.ts の AI_CAPPED_FEATURES と同じ (このファイルは import を持たないので、ここにも置く。
+ * tests/ai-usage-contract.test.ts が突き合わせる)
+ */
+export const AI_DAILY_CAPPED_FEATURES = ["menu_generation_ultimate"] as const;
+
+/** 機能ごとの 1 日の上限がある機能の名前 */
+export type AiDailyCappedFeature = (typeof AI_DAILY_CAPPED_FEATURES)[number];
+
+const isDailyCappedFeature = (value: unknown): value is AiDailyCappedFeature =>
+  typeof value === "string" && (AI_DAILY_CAPPED_FEATURES as readonly string[]).includes(value);
+
+/**
+ * 究極モードの 1 日の上限 (#1142) に達したときに画面に出す文 (Web・モバイル・Edge Function の応答の error)。
+ * 1 日の AI の上限 (aiDailyLimitMessage) と同じ形で、何の上限かだけを変える (究極モードを使わない生成は、1 日の上限まで使える)
+ */
+export function aiUltimateModeDailyLimitMessage(limit: number): string {
+  return `今日の究極モードの利用回数の上限 (${limit} 回) に達しました。明日 0 時から使えます。`;
+}
+
+/** 機能ごとの上限で止めたときの文 */
+function cappedFeatureMessage(feature: AiDailyCappedFeature, limit: number): string {
+  switch (feature) {
+    case "menu_generation_ultimate":
+      return aiUltimateModeDailyLimitMessage(limit);
+  }
+}
+
+/**
  * AI の部分を省いた応答の aiSkipped に入れる値は AI_DAILY_LIMIT_CODE (aiDailyLimitSkippedField)。
  * 画面の出し分け (aiSkippedReasonOf の 'daily_limit') と省いたときの一文は _shared/ai-consent.ts (同意で省いたときと同じ場所)。
  */
@@ -85,6 +115,11 @@ export interface AiUsageDenied {
    * 明示の 1 日の上限で止めたときは付けない。limit はそのときの安全弁の回数で、画面には出さない
    */
   safetyCap?: true;
+  /**
+   * 機能ごとの 1 日の上限 (#1142。究極モード) で止めたときの機能名 (DB の戻り値の capped_feature)。
+   * limit・used はその機能の上限と回数。1 日の上限 (合計) で止めたときは付けない
+   */
+  cappedFeature?: AiDailyCappedFeature;
 }
 
 export type AiUsageResult = AiUsageAllowed | AiUsageDenied;
@@ -96,6 +131,7 @@ const isDateString = (value: unknown): value is string => typeof value === "stri
  * DB の consume_ai_usage の戻り値 (jsonb) を読む。形が違えば null (呼び出し側は判定の失敗として扱い、許可する)。
  *   許可: { allowed: true,  metered, plan, limit (null 可), used (null 可), usage_date }
  *   止め: { allowed: false, metered: true, plan, limit, used, usage_date }
+ *         (機能ごとの上限で止めたとき (consume_ai_usage_capped。#1142) は capped_feature も付く)
  */
 export function parseConsumeAiUsageResult(data: unknown): AiUsageResult | null {
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
@@ -106,6 +142,8 @@ export function parseConsumeAiUsageResult(data: unknown): AiUsageResult | null {
     const denied: AiUsageDenied = { allowed: false, limit: row.limit, used: row.used, usageDate: row.usage_date };
     // 上限に数えない機能の安全弁で止めた (DB は metered: false を返す)。明示の上限で止めたときは metered: true
     if (row.metered === false) denied.safetyCap = true;
+    // 機能ごとの上限 (究極モード) で止めた。知らない機能名は付けない (1 日の上限の文になる)
+    if (isDailyCappedFeature(row.capped_feature)) denied.cappedFeature = row.capped_feature;
     return denied;
   }
   if (row.allowed !== true) return null;
@@ -135,22 +173,39 @@ export interface AiDailyLimitBody {
   limit?: number;
   /** 上限に数えない機能の安全弁で止めたとき true (#1487。画面は AI_AUTO_SAFETY_CAP_MESSAGE を出す) */
   safetyCap?: true;
+  /** 機能ごとの 1 日の上限 (#1142。究極モード) で止めたときの機能名 (画面は aiUltimateModeDailyLimitMessage を出す)。limit はその機能の上限 */
+  cappedFeature?: AiDailyCappedFeature;
   /** 使えるようになるまでの秒数 (次の JST の 0 時まで) */
   retryAfter: number;
 }
 
 /**
+ * 止めたときに画面に出す文 (止めた理由で選ぶ)。応答の本文の error・生成のリクエストの行の error_message・AI 相談のアクションの結果が使う。
+ *   安全弁 (safetyCap) → AI_AUTO_SAFETY_CAP_MESSAGE / 機能ごとの上限 (cappedFeature。究極モード) → その機能の文 / それ以外 → 1 日の上限の文
+ */
+export function aiDailyLimitMessageOfDenied(denied: Pick<AiUsageDenied, "limit" | "safetyCap" | "cappedFeature">): string {
+  if (denied.safetyCap) return AI_AUTO_SAFETY_CAP_MESSAGE;
+  if (denied.cappedFeature) return cappedFeatureMessage(denied.cappedFeature, denied.limit);
+  return aiDailyLimitMessage(denied.limit);
+}
+
+/**
  * 上限に達したときの応答 (状態・ヘッダー・本文)。Next.js と Edge Function が同じ形で返す。
- * 安全弁で止めたとき (denied.safetyCap) は、回数を出さない固定の文 (AI_AUTO_SAFETY_CAP_MESSAGE) にし、本文に limit を入れない
+ * 安全弁で止めたとき (denied.safetyCap) は、回数を出さない固定の文 (AI_AUTO_SAFETY_CAP_MESSAGE) にし、本文に limit を入れない。
+ * 機能ごとの上限で止めたとき (denied.cappedFeature。究極モード #1142) は、その機能の文にし、本文に cappedFeature を入れる
+ * (状態・コードは 1 日の上限と同じ 429 AI_DAILY_LIMIT。画面は今の 429 の扱いのまま、文だけが変わる)
  */
 export function aiDailyLimitPayload(
-  denied: Pick<AiUsageDenied, "limit" | "safetyCap">,
+  denied: Pick<AiUsageDenied, "limit" | "safetyCap" | "cappedFeature">,
   nowMs: number = Date.now(),
 ): { status: number; headers: Record<string, string>; body: AiDailyLimitBody } {
   const retryAfter = secondsUntilNextJstMidnight(nowMs);
+  const error = aiDailyLimitMessageOfDenied(denied);
   const body: AiDailyLimitBody = denied.safetyCap
-    ? { error: AI_AUTO_SAFETY_CAP_MESSAGE, code: AI_DAILY_LIMIT_CODE, safetyCap: true, retryAfter }
-    : { error: aiDailyLimitMessage(denied.limit), code: AI_DAILY_LIMIT_CODE, limit: denied.limit, retryAfter };
+    ? { error, code: AI_DAILY_LIMIT_CODE, safetyCap: true, retryAfter }
+    : denied.cappedFeature
+      ? { error, code: AI_DAILY_LIMIT_CODE, limit: denied.limit, cappedFeature: denied.cappedFeature, retryAfter }
+      : { error, code: AI_DAILY_LIMIT_CODE, limit: denied.limit, retryAfter };
   return {
     status: AI_DAILY_LIMIT_STATUS,
     headers: { "Retry-After": String(retryAfter) },
@@ -165,11 +220,23 @@ export function aiDailyLimitPayload(
  */
 export function aiDailyLimitMessageOfBody(body: unknown): string | null {
   if (!body || typeof body !== "object") return null;
-  const { code, error, limit, safetyCap } = body as { code?: unknown; error?: unknown; limit?: unknown; safetyCap?: unknown };
-  const nested = error && typeof error === "object" ? (error as { code?: unknown; limit?: unknown; safetyCap?: unknown }) : null;
+  const { code, error, limit, safetyCap, cappedFeature } = body as {
+    code?: unknown;
+    error?: unknown;
+    limit?: unknown;
+    safetyCap?: unknown;
+    cappedFeature?: unknown;
+  };
+  const nested =
+    error && typeof error === "object"
+      ? (error as { code?: unknown; limit?: unknown; safetyCap?: unknown; cappedFeature?: unknown })
+      : null;
   if (code !== AI_DAILY_LIMIT_CODE && nested?.code !== AI_DAILY_LIMIT_CODE) return null;
   // 安全弁で止めたときは回数を出さない固定の文 (#1487)
   if (safetyCap === true || nested?.safetyCap === true) return AI_AUTO_SAFETY_CAP_MESSAGE;
   const value = isInt(limit) ? limit : isInt(nested?.limit) ? nested.limit : null;
-  return value !== null && value >= 0 ? aiDailyLimitMessage(value) : AI_DAILY_LIMIT_FALLBACK_MESSAGE;
+  if (value === null || value < 0) return AI_DAILY_LIMIT_FALLBACK_MESSAGE;
+  // 機能ごとの上限 (究極モード #1142) で止めたときは、その機能の文
+  const capped = isDailyCappedFeature(cappedFeature) ? cappedFeature : isDailyCappedFeature(nested?.cappedFeature) ? nested.cappedFeature : null;
+  return capped ? cappedFeatureMessage(capped, value) : aiDailyLimitMessage(value);
 }

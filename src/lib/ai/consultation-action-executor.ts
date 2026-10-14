@@ -35,8 +35,9 @@ import {
   type AiUsageDenied,
   type AiUsageResult,
 } from '@/lib/plan/entitlements';
-import { AI_DAILY_LIMIT_CODE, aiDailyLimitMessage } from '../../../supabase/functions/_shared/ai-daily-limit';
+import { AI_DAILY_LIMIT_CODE, aiDailyLimitMessageOfDenied } from '../../../supabase/functions/_shared/ai-daily-limit';
 import { checkUserAiConsent } from '@/lib/ai/consent-guard';
+import { isUltimateModeRequested } from '@/lib/ai/ultimate-mode';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { createLogger } from '@/lib/db-logger';
 import { errorCodeOf, toLoggableError } from '@/lib/api/errors';
@@ -291,7 +292,8 @@ export interface ConsultationActionExecutionResult {
 
 /** 上限 (#1149) に達して生成しなかったときの結果 (ai_action_logs.result と、会話の中の自動実行の結果に残る。人向けの文) */
 function dailyLimitResult(denied: AiUsageDenied): { error: string; code: typeof AI_DAILY_LIMIT_CODE } {
-  return { error: aiDailyLimitMessage(denied.limit), code: AI_DAILY_LIMIT_CODE };
+  // 究極モードの 1 日の上限 (#1142) で止めたときは、究極モードの文 (1 日の上限の文と同じ形)
+  return { error: aiDailyLimitMessageOfDenied(denied), code: AI_DAILY_LIMIT_CODE };
 }
 
 export async function runConsultationAction(
@@ -344,7 +346,13 @@ export async function runConsultationAction(
       // 判定に失敗したときは止めない
       // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (数える前に作る)
       const queueDb = getAiQueueWriter();
-      const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+      // 究極モード (#1142) は 'menu_generation_ultimate' で数える (1 日の上限に 1 回 + 究極モードの 1 日の上限 (既定 1 回) に 1 回)。
+      // 究極モードかどうかはアクションの引数の ultimateMode が true のときだけ。生成に渡す値も同じ判定の結果にする
+      const ultimate = isUltimateModeRequested(ultimateMode);
+      const usageFeature = ultimate ? 'menu_generation_ultimate' : 'menu_generation';
+      const aiUsage = ultimate
+        ? await consumeAiUsage(user.id, 'menu_generation_ultimate')
+        : await consumeAiUsage(user.id, 'menu_generation');
       if (!aiUsage.allowed) {
         aiDailyLimit = aiUsage;
         result = dailyLimitResult(aiUsage);
@@ -376,7 +384,7 @@ export async function runConsultationAction(
       if (requestError) {
         console.error('Failed to create request:', requestError);
         // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
-        await refundAiUsage(user.id, 'menu_generation', aiUsage);
+        await refundAiUsage(user.id, usageFeature, aiUsage);
         result = { error: 'リクエストの作成に失敗しました' };
         break;
       }
@@ -400,7 +408,7 @@ export async function runConsultationAction(
             seasonalContext: {},
             constraints: {},
             familySize: profile?.family_size || 1,
-            ultimateMode: ultimateMode ?? false,
+            ultimateMode: ultimate,
           },
           // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに利用回数を記録する。
           // この生成は上 (consumeAiUsage) で数え済みなので、二重に数えないよう、署名つきの印を付ける
@@ -458,7 +466,13 @@ export async function runConsultationAction(
       // 判定に失敗したときは止めない
       // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (数える前に作る)
       const queueDb = getAiQueueWriter();
-      const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+      // 究極モード (#1142) は 'menu_generation_ultimate' で数える (1 日の上限に 1 回 + 究極モードの 1 日の上限 (既定 1 回) に 1 回)。
+      // 究極モードかどうかはアクションの引数の ultimateMode が true のときだけ。生成に渡す値も同じ判定の結果にする
+      const ultimate = isUltimateModeRequested(ultimateMode);
+      const usageFeature = ultimate ? 'menu_generation_ultimate' : 'menu_generation';
+      const aiUsage = ultimate
+        ? await consumeAiUsage(user.id, 'menu_generation_ultimate')
+        : await consumeAiUsage(user.id, 'menu_generation');
       if (!aiUsage.allowed) {
         aiDailyLimit = aiUsage;
         result = dailyLimitResult(aiUsage);
@@ -490,7 +504,7 @@ export async function runConsultationAction(
       if (requestError) {
         console.error('Failed to create request:', requestError);
         // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
-        await refundAiUsage(user.id, 'menu_generation', aiUsage);
+        await refundAiUsage(user.id, usageFeature, aiUsage);
         result = { error: 'リクエストの作成に失敗しました' };
         break;
       }
@@ -514,7 +528,7 @@ export async function runConsultationAction(
             seasonalContext: {},
             constraints: {},
             familySize: profile?.family_size || 1,
-            ultimateMode: ultimateMode ?? false,
+            ultimateMode: ultimate,
           },
           // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに利用回数を記録する。
           // この生成は上 (consumeAiUsage) で数え済みなので、二重に数えないよう、署名つきの印を付ける
@@ -582,7 +596,13 @@ export async function runConsultationAction(
       // 判定に失敗したときは止めない
       // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (数える前に作る)
       const queueDb = getAiQueueWriter();
-      const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+      // 究極モード (#1142) は 'menu_generation_ultimate' で数える (1 日の上限に 1 回 + 究極モードの 1 日の上限 (既定 1 回) に 1 回)。
+      // 究極モードかどうかはアクションの引数の ultimateMode が true のときだけ。生成に渡す値も同じ判定の結果にする
+      const ultimate = isUltimateModeRequested(ultimateMode);
+      const usageFeature = ultimate ? 'menu_generation_ultimate' : 'menu_generation';
+      const aiUsage = ultimate
+        ? await consumeAiUsage(user.id, 'menu_generation_ultimate')
+        : await consumeAiUsage(user.id, 'menu_generation');
       if (!aiUsage.allowed) {
         aiDailyLimit = aiUsage;
         result = dailyLimitResult(aiUsage);
@@ -616,7 +636,7 @@ export async function runConsultationAction(
       if (requestError) {
         console.error('Failed to create request:', requestError);
         // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
-        await refundAiUsage(user.id, 'menu_generation', aiUsage);
+        await refundAiUsage(user.id, usageFeature, aiUsage);
         result = { error: 'リクエストの作成に失敗しました' };
         break;
       }
@@ -649,7 +669,7 @@ export async function runConsultationAction(
             },
             note,
             familySize,
-            ultimateMode: ultimateMode ?? false,
+            ultimateMode: ultimate,
           },
           // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに利用回数を記録する。
           // この生成は上 (consumeAiUsage) で数え済みなので、二重に数えないよう、署名つきの印を付ける

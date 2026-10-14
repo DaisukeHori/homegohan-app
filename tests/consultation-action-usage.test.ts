@@ -107,7 +107,7 @@ function makeSupabase() {
 
 const MENU_ACTIONS: Array<{ type: string; params: Record<string, unknown> }> = [
   { type: 'generate_day_menu', params: { date: '2026-10-10' } },
-  { type: 'generate_week_menu', params: { startDate: '2026-10-10', ultimateMode: true } },
+  { type: 'generate_week_menu', params: { startDate: '2026-10-10' } },
   { type: 'generate_single_meal', params: { date: '2026-10-10', mealType: 'dinner' } },
 ];
 
@@ -226,6 +226,49 @@ describe('(#1149) 生成のリクエストの行を作れなかったら、数�
   });
 });
 
+describe('(#1142) 究極モード: 引数の ultimateMode が true なら menu_generation_ultimate で 1 回数え、生成にも true を渡す', () => {
+  it.each(MENU_ACTIONS)('$type: ultimateMode: true', async ({ type, params }) => {
+    const { db, out } = await runMenu(runConsultationAction, type, { ...params, ultimateMode: true });
+    expect(out.success).toBe(true);
+    expect(m.consumeAiUsage.mock.calls).toEqual([[USER.id, 'menu_generation_ultimate']]);
+    expect(db.functions.invoke).toHaveBeenCalledTimes(1);
+    expect(m.consumeAiUsage.mock.invocationCallOrder[0]).toBeLessThan(db.functions.invoke.mock.invocationCallOrder[0]);
+    expect((db.functions.invoke.mock.calls[0][1] as unknown as { body: { ultimateMode: unknown } }).body.ultimateMode).toBe(true);
+  });
+
+  it.each(MENU_ACTIONS)('$type: 真偽値の true でない ultimateMode ("true") は通常のモード (menu_generation で数え、生成にも false を渡す)', async ({ type, params }) => {
+    const { db } = await runMenu(runConsultationAction, type, { ...params, ultimateMode: 'true' });
+    expect(m.consumeAiUsage.mock.calls).toEqual([[USER.id, 'menu_generation']]);
+    expect((db.functions.invoke.mock.calls[0][1] as unknown as { body: { ultimateMode: unknown } }).body.ultimateMode).toBe(false);
+  });
+
+  it.each(MENU_ACTIONS)('$type: 究極モードの上限に達していたら、生成せず、究極モードの文の結果と aiDailyLimit を返す', async ({ type, params }) => {
+    const capped = { ...AI_USAGE_DENIED, limit: 1, used: 1, cappedFeature: 'menu_generation_ultimate' as const };
+    m.consumeAiUsage.mockResolvedValue(capped);
+    const { db, out } = await runMenu(runConsultationAction, type, { ...params, ultimateMode: true });
+    expect(out.success).toBe(false);
+    expect(out.aiDailyLimit).toEqual(capped);
+    expect(out.result).toEqual({ error: '今日の究極モードの利用回数の上限 (1 回) に達しました。明日 0 時から使えます。', code: AI_DAILY_LIMIT_CODE });
+    expect(db.functions.invoke).not.toHaveBeenCalled();
+    expect(m.refundAiUsage).not.toHaveBeenCalled();
+  });
+
+  it.each(MENU_ACTIONS)('$type: 生成のリクエストの行を作れなかったら、menu_generation_ultimate で 1 回戻す', async ({ type, params }) => {
+    const failing = makeSupabase();
+    queue.db = {
+      ...failing,
+      from: (table: string) =>
+        table === 'weekly_menu_requests'
+          ? new Proxy({}, { get: (_t, prop) => (prop === 'single' ? async () => ({ data: null, error: { message: 'insert failed' } }) : () => queue.proxy) })
+          : failing.from(table),
+    };
+    queue.proxy = (queue.db as { from: (t: string) => unknown }).from('weekly_menu_requests');
+    const { out } = await runMenu(runConsultationAction, type, { ...params, ultimateMode: true });
+    expect(out.success).toBe(false);
+    expect(m.refundAiUsage).toHaveBeenCalledWith(USER.id, 'menu_generation_ultimate', AI_USAGE_ALLOWED);
+  });
+});
+
 describe('回帰: 実際のソースを壊した写しで、上の検査が落ちる', () => {
   it('R3 指摘 5: generate_day_menu の記録を Edge Function の呼び出しのあとへ動かすと、記録より先に AI へ送っている', async () => {
     const mutant = writeMutant('src/lib/ai/consultation-action-executor.ts', (source) => {
@@ -233,7 +276,10 @@ describe('回帰: 実際のソースを壊した写しで、上の検査が落�
       const end = source.indexOf("case 'generate_week_menu': {");
       const block = source.slice(start, end);
       const moved = block
-        .replace("      const aiUsage = await consumeAiUsage(user.id, 'menu_generation');\n", "      const aiUsage = AI_USAGE_PLACEHOLDER;\n")
+        .replace(
+          "      const aiUsage = ultimate\n        ? await consumeAiUsage(user.id, 'menu_generation_ultimate')\n        : await consumeAiUsage(user.id, 'menu_generation');\n",
+          "      const aiUsage = AI_USAGE_PLACEHOLDER;\n",
+        )
         .replace(/(\n\s*const invokeResult = await invokeGenerateMenuV4WithRetry\(\{[\s\S]*?\n\s*\}\);\n)/, "$1      await consumeAiUsage(user.id, 'menu_generation');\n");
       if (moved === block) throw new Error('変異が起きていない');
       return (

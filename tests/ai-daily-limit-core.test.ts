@@ -11,6 +11,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  AI_AUTO_SAFETY_CAP_MESSAGE,
+  AI_DAILY_CAPPED_FEATURES,
   AI_DAILY_LIMIT_CODE,
   AI_DAILY_LIMIT_FALLBACK_MESSAGE,
   AI_DAILY_LIMIT_STATUS,
@@ -18,13 +20,18 @@ import {
   AI_USAGE_NOT_COUNTED,
   aiDailyLimitMessage,
   aiDailyLimitMessageOfBody,
+  aiDailyLimitMessageOfDenied,
   aiDailyLimitPayload,
   aiDailyLimitSkippedField,
+  aiUltimateModeDailyLimitMessage,
   parseConsumeAiUsageResult,
   secondsUntilNextJstMidnight,
 } from '../supabase/functions/_shared/ai-daily-limit';
 import {
+  AI_CAPPED_FEATURES,
   AI_FEATURES,
+  AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT,
+  resolveAiUltimateModeDailyLimit,
   AI_UNMETERED_DAILY_CAP_DEFAULTS,
   AI_UNMETERED_DAILY_CAP_FALLBACK,
   AI_UNMETERED_FEATURES,
@@ -126,6 +133,77 @@ describe('aiDailyLimitPayload: 429 の応答の形', () => {
       body: { error: aiDailyLimitMessage(10), code: AI_DAILY_LIMIT_CODE, limit: 10, retryAfter: 3600 },
     });
     expect(AI_DAILY_LIMIT_STATUS).toBe(429);
+  });
+});
+
+describe('(#1142) 究極モードの 1 日の上限 (機能ごとの上限) で止めたとき', () => {
+  const CAPPED_ROW = { allowed: false, metered: true, plan: null, limit: 1, used: 1, usage_date: '2026-10-11', capped_feature: 'menu_generation_ultimate' };
+
+  it('DB の戻り値の capped_feature を読む。知らない機能名は付けない (1 日の上限の止めとして扱う)', () => {
+    expect(parseConsumeAiUsageResult(CAPPED_ROW)).toEqual({
+      allowed: false,
+      limit: 1,
+      used: 1,
+      usageDate: '2026-10-11',
+      cappedFeature: 'menu_generation_ultimate',
+    });
+    expect(parseConsumeAiUsageResult({ ...CAPPED_ROW, capped_feature: 'photo_analysis' })).toEqual({
+      allowed: false,
+      limit: 1,
+      used: 1,
+      usageDate: '2026-10-11',
+    });
+  });
+
+  it('文は 1 日の上限と同じ形で、究極モードの上限と分かる文。429・コード・Retry-After は 1 日の上限と同じ', () => {
+    expect(aiUltimateModeDailyLimitMessage(1)).toBe('今日の究極モードの利用回数の上限 (1 回) に達しました。明日 0 時から使えます。');
+    const now = Date.UTC(2026, 9, 11, 14, 0, 0); // JST 23:00
+    expect(aiDailyLimitPayload({ limit: 1, cappedFeature: 'menu_generation_ultimate' }, now)).toEqual({
+      status: AI_DAILY_LIMIT_STATUS,
+      headers: { 'Retry-After': '3600' },
+      body: {
+        error: aiUltimateModeDailyLimitMessage(1),
+        code: AI_DAILY_LIMIT_CODE,
+        limit: 1,
+        cappedFeature: 'menu_generation_ultimate',
+        retryAfter: 3600,
+      },
+    });
+  });
+
+  it('JST の日付が変わると戻る: retryAfter は次の JST の 0 時 (UTC 15:00) まで。0 時ちょうどは丸 1 日', () => {
+    expect(aiDailyLimitPayload({ limit: 1, cappedFeature: 'menu_generation_ultimate' }, Date.UTC(2026, 9, 11, 14, 59, 59)).body.retryAfter).toBe(1);
+    expect(aiDailyLimitPayload({ limit: 1, cappedFeature: 'menu_generation_ultimate' }, Date.UTC(2026, 9, 11, 15, 0, 0)).body.retryAfter).toBe(SECONDS_PER_DAY);
+  });
+
+  it('画面 (Web・モバイル) が本文から作る文も究極モードの文 (本文の error の文は使わない。入れ子の形も)', () => {
+    expect(aiDailyLimitMessageOfBody({ code: AI_DAILY_LIMIT_CODE, limit: 1, cappedFeature: 'menu_generation_ultimate', error: '<x>' })).toBe(
+      aiUltimateModeDailyLimitMessage(1),
+    );
+    expect(aiDailyLimitMessageOfBody({ error: { code: AI_DAILY_LIMIT_CODE, limit: 2, cappedFeature: 'menu_generation_ultimate' } })).toBe(
+      aiUltimateModeDailyLimitMessage(2),
+    );
+    // 知らない機能名・limit が無いときは、今までどおりの文
+    expect(aiDailyLimitMessageOfBody({ code: AI_DAILY_LIMIT_CODE, limit: 10, cappedFeature: 'x' })).toBe(aiDailyLimitMessage(10));
+    expect(aiDailyLimitMessageOfBody({ code: AI_DAILY_LIMIT_CODE, cappedFeature: 'menu_generation_ultimate' })).toBe(AI_DAILY_LIMIT_FALLBACK_MESSAGE);
+  });
+
+  it('aiDailyLimitMessageOfDenied: 止めた理由で文を選ぶ (安全弁 > 機能ごとの上限 > 1 日の上限)', () => {
+    expect(aiDailyLimitMessageOfDenied({ limit: 10 })).toBe(aiDailyLimitMessage(10));
+    expect(aiDailyLimitMessageOfDenied({ limit: 1, cappedFeature: 'menu_generation_ultimate' })).toBe(aiUltimateModeDailyLimitMessage(1));
+    expect(aiDailyLimitMessageOfDenied({ limit: 30, safetyCap: true })).toBe(AI_AUTO_SAFETY_CAP_MESSAGE);
+  });
+
+  it('_shared/ai-daily-limit.ts に写した機能の一覧は、_shared/ai-usage-core.ts の AI_CAPPED_FEATURES と同じ', () => {
+    expect([...AI_DAILY_CAPPED_FEATURES].sort()).toEqual([...AI_CAPPED_FEATURES].sort());
+  });
+
+  it('上限の回数は既定 1 回。環境変数の値は 0 以上の整数だけ受け付け、それ以外は既定の値', () => {
+    expect(AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT).toBe(1);
+    expect(resolveAiUltimateModeDailyLimit(undefined)).toBe(1);
+    expect(resolveAiUltimateModeDailyLimit('4')).toBe(4);
+    expect(resolveAiUltimateModeDailyLimit('0')).toBe(0);
+    for (const raw of ['', ' ', '-1', '1.5', 'one', '9999999999']) expect(resolveAiUltimateModeDailyLimit(raw), raw).toBe(1);
   });
 });
 

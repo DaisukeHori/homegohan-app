@@ -48,6 +48,7 @@ import {
   type PlanRpcClient,
 } from '@/lib/plan/entitlements';
 import { signAiUsageGrant, verifyAiUsageGrant, verifyAiUsageRecorded } from '../../../../supabase/functions/_shared/ai-usage-core';
+import { isUltimateModeRequested } from '@/lib/ai/ultimate-mode';
 import { AI_USAGE_NOT_COUNTED } from '../../../../supabase/functions/_shared/ai-daily-limit';
 
 const USER_ID = '11111111-2222-3333-4444-555555555555';
@@ -142,6 +143,9 @@ describe('consumeAiUsage: 上限の判定と記録を DB の 1 回の呼び出�
         'AI_DAILY_LIMIT_CODE',
         'AI_DAILY_LIMIT_STATUS',
         'AI_FEATURES',
+        'AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT',
+        'AI_ULTIMATE_MODE_DAILY_LIMIT_ENV',
+        'AI_ULTIMATE_MODE_FEATURE',
         'AI_UNMETERED_DAILY_CAP_DEFAULTS',
         'AI_UNMETERED_FEATURES',
         'AI_USAGE_COVERED_BY_GRANT',
@@ -158,6 +162,99 @@ describe('consumeAiUsage: 上限の判定と記録を DB の 1 回の呼び出�
         'refundAiUsage',
       ].sort(),
     );
+  });
+});
+
+describe('consumeAiUsage: 究極モード (#1142) は機能ごとの 1 日の上限と 1 日の上限を DB の 1 回の呼び出しで判定する', () => {
+  /** DB の consume_ai_usage_capped の戻り値 (究極モードの上限に達している。記録していない) */
+  const cappedDeniedRow = {
+    allowed: false,
+    metered: true,
+    plan: null,
+    limit: 1,
+    used: 1,
+    usage_date: TODAY_JST,
+    capped_feature: 'menu_generation_ultimate',
+  };
+
+  it('menu_generation_ultimate は consume_ai_usage_capped を、既定の上限 1 回で呼ぶ (consume_ai_usage は呼ばない)', async () => {
+    const { rpc, client } = clientReturning({ data: allowedRow(3), error: null });
+
+    expect(await consumeAiUsage(USER_ID, 'menu_generation_ultimate', { client })).toEqual({
+      allowed: true,
+      metered: true,
+      usageDate: TODAY_JST,
+      limit: LIMIT,
+      used: 3,
+    });
+    expect(rpc.mock.calls).toEqual([
+      ['consume_ai_usage_capped', { p_user_id: USER_ID, p_feature: 'menu_generation_ultimate', p_feature_daily_cap: 1 }],
+    ]);
+  });
+
+  it('究極モードの上限に達していたら、cappedFeature 付きの止めを返す。429 の本文は究極モードの文 (状態とコードは 1 日の上限と同じ)', async () => {
+    const { client } = clientReturning({ data: cappedDeniedRow, error: null });
+    const denied = await consumeAiUsage(USER_ID, 'menu_generation_ultimate', { client });
+    expect(denied).toEqual({ allowed: false, limit: 1, used: 1, usageDate: TODAY_JST, cappedFeature: 'menu_generation_ultimate' });
+    if (denied.allowed) throw new Error('止めのはず');
+
+    const NOW_MS = Date.parse('2026-10-11T14:00:00Z'); // JST 23:00 (次の 0 時まで 1 時間)
+    const res = aiDailyLimitResponse(denied, NOW_MS);
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('3600');
+    expect(await res.json()).toEqual({
+      error: '今日の究極モードの利用回数の上限 (1 回) に達しました。明日 0 時から使えます。',
+      code: 'AI_DAILY_LIMIT',
+      limit: 1,
+      cappedFeature: 'menu_generation_ultimate',
+      retryAfter: 3600,
+    });
+  });
+
+  it('究極モードの上限に達していなくても、1 日の上限で止めたとき (capped_feature が無い) は 1 日の上限の止め', async () => {
+    const { client } = clientReturning({ data: deniedRow, error: null });
+    expect(await consumeAiUsage(USER_ID, 'menu_generation_ultimate', { client })).toEqual({
+      allowed: false,
+      limit: LIMIT,
+      used: LIMIT,
+      usageDate: TODAY_JST,
+    });
+  });
+
+  it.each([
+    ['3', 3],
+    ['0', 0],
+    [' 2 ', 2],
+  ])('環境変数 AI_ULTIMATE_MODE_DAILY_LIMIT=%j なら、その値 (%i) を渡す', async (raw, expected) => {
+    vi.stubEnv('AI_ULTIMATE_MODE_DAILY_LIMIT', raw);
+    const { rpc, client } = clientReturning({ data: allowedRow(1), error: null });
+    await consumeAiUsage(USER_ID, 'menu_generation_ultimate', { client });
+    expect(rpc.mock.calls[0][1]).toEqual({ p_user_id: USER_ID, p_feature: 'menu_generation_ultimate', p_feature_daily_cap: expected });
+  });
+
+  it.each(['', 'abc', '-1', '1.5', '1e3'])('環境変数の値が使えない (%j) ときは既定の 1 回 (無制限にしない)', async (raw) => {
+    vi.stubEnv('AI_ULTIMATE_MODE_DAILY_LIMIT', raw);
+    const { rpc, client } = clientReturning({ data: allowedRow(1), error: null });
+    await consumeAiUsage(USER_ID, 'menu_generation_ultimate', { client });
+    expect(rpc.mock.calls[0][1]).toMatchObject({ p_feature_daily_cap: 1 });
+  });
+
+  it('通常の献立生成 (menu_generation) は、環境変数があっても consume_ai_usage (機能ごとの上限なし)', async () => {
+    vi.stubEnv('AI_ULTIMATE_MODE_DAILY_LIMIT', '0');
+    const { rpc, client } = clientReturning({ data: allowedRow(1), error: null });
+    await consumeAiUsage(USER_ID, 'menu_generation', { client });
+    expect(rpc.mock.calls).toEqual([['consume_ai_usage', { p_user_id: USER_ID, p_feature: 'menu_generation' }]]);
+  });
+
+  it('DB の関数が無い (migration の未適用) ときは、ログに残して数えずに許可する (止めない)', async () => {
+    const { client } = clientReturning({ data: null, error: { code: 'PGRST202', message: 'Could not find the function consume_ai_usage_capped' } });
+    expect(await consumeAiUsage(USER_ID, 'menu_generation_ultimate', { client })).toEqual(AI_USAGE_NOT_COUNTED);
+    expect(mocks.loggerError.mock.calls[0][2]).toEqual({ feature: 'menu_generation_ultimate' });
+  });
+
+  it('isUltimateModeRequested: 真偽値の true だけが究極モード', () => {
+    expect(isUltimateModeRequested(true)).toBe(true);
+    for (const value of [false, 'true', 1, null, undefined, {}]) expect(isUltimateModeRequested(value), String(value)).toBe(false);
   });
 });
 
