@@ -12,9 +12,14 @@
  *    (呼び出し側の catch が「失敗しました」を案内に重ねて出さないように。silent でも同じ)
  * 4. 受け付けたあと (Realtime) に、サーバーが同意の判定で止めた文 (AI_CONSENT_REQUIRED_MESSAGE) で失敗したら、
  *    onError を呼ばず onAiConsentRequired を呼ぶ。同意の状況を読めなかった文 (一時的) は onError にそのまま渡す
- * 5. 受け付けたあとの失敗の文のうち、こちらで書いた文 (定型・同意・上限) 以外は汎用の文にして渡す (#1478)
+ * 5. 受け付けたあとの失敗の文のうち、こちらで書いた文 (定型・同意・上限) 以外は汎用の文にして渡す (#1478)。
+ *    文字列でない error_message も汎用の文にし、progress の中身と status はそのまま onProgress に渡す。
+ *    Realtime の行は型で受ける (フックのソースに as any を置かない)
  * を固定する。
  */
+
+import fs from 'fs';
+import path from 'path';
 
 import { act, renderHook } from '@testing-library/react-native';
 
@@ -250,6 +255,42 @@ describe('useV4MenuGeneration.subscribeToProgress — 受け付けたあとの�
       await failWith(stored, { onError });
       expect(onError).toHaveBeenCalledWith(stored);
     }
+  });
+
+  // #1478 R1: Realtime の行を as any でなく型 (error_message は unknown) で受ける。文字列でない値も汎用の文に寄せる
+  it('error_message が文字列でない値 (オブジェクト) なら汎用の文にし、progress の中身と status はそのまま onProgress に渡す', async () => {
+    const onError = jest.fn();
+    const { result } = renderHook(() => useV4MenuGeneration({ onError }));
+    const onProgress = jest.fn();
+    act(() => {
+      result.current.subscribeToProgress('req-10', onProgress);
+    });
+    await act(async () => {
+      await mockRealtime.handler!({
+        new: {
+          status: 'failed',
+          error_message: { message: 'relation "planned_meals" does not exist' },
+          progress: { currentStep: 3, totalSteps: 6 },
+        },
+      });
+    });
+
+    expect(onProgress).toHaveBeenCalledWith({
+      currentStep: 3,
+      totalSteps: 6,
+      status: 'failed',
+      errorMessage: MENU_REQUEST_FAILED_MESSAGE,
+    });
+    expect(onError).toHaveBeenCalledWith(MENU_REQUEST_FAILED_MESSAGE);
+    expect(JSON.stringify([onError.mock.calls, onProgress.mock.calls])).not.toContain('does not exist');
+  });
+
+  it('フックのソースは Realtime の行を as any で受けない (読む列は型で確かめる #1478)', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../../src/hooks/useV4MenuGeneration.ts'), 'utf8');
+    // コメントを除いた実コードで判定する (説明の文に語が出ても誤検知しない)
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(code).not.toMatch(/\bas\s+any\b/);
+    expect(code).toMatch(/payload\.new as WeeklyMenuRequestRealtimeRow\b/);
   });
 });
 

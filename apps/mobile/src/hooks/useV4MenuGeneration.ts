@@ -10,6 +10,17 @@ import { menuRequestErrorMessageForDisplay } from "../lib/menu-request-error";
 // AsyncStorage key (localStorage 代替)
 const STORAGE_KEY_V4_GENERATING = "v4MenuGenerating";
 
+/**
+ * Realtime の UPDATE で届く weekly_menu_requests の行のうち、subscribeToProgress が読む列。
+ * error_message は画面に出す前に menuRequestErrorMessageForDisplay で確かめるので unknown で受ける
+ * (文字列でない値や、こちらで書いた文でない値は汎用の文に寄せる #1478)。
+ */
+type WeeklyMenuRequestRealtimeRow = {
+  status?: string | null;
+  progress?: Record<string, unknown> | null;
+  error_message?: unknown;
+};
+
 interface UseV4MenuGenerationOptions {
   onGenerationStart?: (requestId: string) => void;
   onGenerationComplete?: () => void;
@@ -129,7 +140,7 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
             filter: `id=eq.${reqId}`,
           },
           async (payload) => {
-            const newData = payload.new as any;
+            const newData = payload.new as WeeklyMenuRequestRealtimeRow;
 
             // 行の error_message は、こちらで書いた定型の文 (同意・上限・失敗の固定の文など) だけをそのまま出し、
             // それ以外 (#1478 より前に Edge Function が書いた例外の文面など) は汎用の文に寄せる
