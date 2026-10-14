@@ -669,6 +669,61 @@ describe('#1132 F. 繰り返し実行しても同じ結果。終了日より後�
 });
 
 // ================================================================
+// F2. 数えない記録 (お試しの記録・運営が隠した食事) — 3 指標とも
+// ================================================================
+describe('#1132 F2. お試しの記録と、運営が隠した食事は、3 つの指標のどれにも数えない', () => {
+  it('お試しの記録 (is_sandbox) と隠した食事 (meals.hidden_at) しかない参加者は 0。通常の記録だけが値になる', async () => {
+    const breakfast = await createChallenge({ type: 'breakfast_rate', start: START, end: END });
+    const veg = await createChallenge({ type: 'veg_score', start: START, end: END });
+    const cooking = await createChallenge({ type: 'cooking_rate', start: START, end: END });
+    for (const challenge of [breakfast, veg, cooking]) {
+      await join(challenge, a1.id);
+      await join(challenge, a2.id);
+    }
+
+    // a1: ハンズオンのお試しの記録 (朝食・野菜 5・自炊) だけ。数えれば 25.0 / 5.0 / 100.0 になる
+    await seedDay(a1.id, '2020-03-02', [{ type: 'breakfast', veg: 5, mode: 'cook' }], { sandbox: true });
+    // a1: 運営が隠した食事 (meals の行。is_sandbox = false で、隠していなければ比較ランキングの件数に入る行)
+    const { data: hiddenMeals, error: mealError } = await srAdmin
+      .from('meals')
+      .insert([
+        { user_id: a1.id, eaten_at: '2020-03-03T00:00:00Z', meal_type: 'breakfast', is_sandbox: false },
+        { user_id: a1.id, eaten_at: '2020-03-04T03:00:00Z', meal_type: 'lunch', is_sandbox: false },
+      ])
+      .select('id');
+    expect(mealError).toBeNull();
+    try {
+      const hiddenIds = (hiddenMeals ?? []).map((m) => m.id);
+      expect(hiddenIds).toHaveLength(2);
+      const { error: hideError } = await srAdmin
+        .from('meals')
+        .update({ hidden_at: '2020-03-05T00:00:00Z', hidden_reason: 'moderation:delete_only' })
+        .in('id', hiddenIds);
+      expect(hideError).toBeNull();
+
+      // a2: 通常の記録 (03-03 に朝食・野菜 2・自炊) -> 朝食 1/4 = 25.0 / 野菜 2.0 / 自炊 1/1 = 100.0
+      await seedDay(a2.id, '2020-03-03', [{ type: 'breakfast', veg: 2, mode: 'cook' }]);
+
+      await runProgress(NOW_MIDWEEK);
+
+      const breakfastRows = await participants(breakfast);
+      expect(breakfastRows.get(a2.id)).toEqual({ value: 25, rank: 1 });
+      expect(breakfastRows.get(a1.id)).toEqual({ value: 0, rank: 2 });
+
+      const vegRows = await participants(veg);
+      expect(vegRows.get(a2.id)).toEqual({ value: 2, rank: 1 });
+      expect(vegRows.get(a1.id)).toEqual({ value: 0, rank: 2 });
+
+      const cookingRows = await participants(cooking);
+      expect(cookingRows.get(a2.id)).toEqual({ value: 100, rank: 1 });
+      expect(cookingRows.get(a1.id)).toEqual({ value: 0, rank: 2 });
+    } finally {
+      await srAdmin.from('meals').delete().eq('user_id', a1.id);
+    }
+  });
+});
+
+// ================================================================
 // G. 権限
 // ================================================================
 describe('#1132 G. 実行権限: service_role だけ', () => {

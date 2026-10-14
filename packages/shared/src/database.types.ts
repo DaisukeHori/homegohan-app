@@ -8037,6 +8037,30 @@ export type Database = {
         }
         Returns: string
       }
+      get_org_challenge_aggregates: {
+        Args: { p_organization_id: string }
+        Returns: {
+          average_value: number
+          challenge_id: string
+          min_participants: number
+          participant_count: number
+        }[]
+      }
+      get_org_challenge_ranking: {
+        Args: {
+          p_challenge_id: string
+          p_limit?: number
+          p_user_id: string
+          p_with_names?: boolean
+        }
+        Returns: {
+          current_value: number
+          is_me: boolean
+          nickname: string
+          rank: number
+          ranked_count: number
+        }[]
+      }
       get_promotion_details: { Args: { p_token: string }; Returns: Json }
       increment_recipe_like_count: {
         Args: { p_recipe_id?: string; p_recipe_uuid?: string }
@@ -9053,6 +9077,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      update_org_challenge_progress: {
+        Args: { p_now?: string }
+        Returns: Json
       }
       upsert_daily_meal_slot: {
         Args: {

@@ -123,6 +123,55 @@ describe('最小人数 (DB の関数と同じ値)', () => {
   });
 });
 
+/** SQL のコメント (-- から行末、/* ... *\/) を取り除く。コメントの中の語を拾わないように */
+function stripSqlComments(sql: string): string {
+  return sql.replace(/\/\*[\s\S]*?\*\//g, '').replace(/--[^\n]*/g, '');
+}
+
+/** migration の中の関数 1 本の本体 ($$ ... $$)。コメントは取り除く */
+function functionBody(sql: string, name: string): string {
+  const code = stripSqlComments(sql);
+  const m = code.match(new RegExp(String.raw`CREATE OR REPLACE FUNCTION public\.${name}\([\s\S]*?\$\$([\s\S]*?)\$\$`));
+  if (!m) throw new Error(`migration に関数 ${name} が見つからない`);
+  return m[1];
+}
+
+/** database.types.ts の、表 1 つの Row の列名 */
+function rowColumnsOf(types: string, table: string): string[] {
+  const m = types.match(new RegExp(String.raw`\n      ${table}: \{\n        Row: \{\n([\s\S]*?)\n        \}`));
+  if (!m) throw new Error(`database.types.ts に ${table} の Row が見つからない`);
+  return [...m[1].matchAll(/^\s+([a-z_0-9]+)\??:/gm)].map((c) => c[1]);
+}
+
+describe('集計に数えない記録 (お試しの記録・運営が隠した食事)。比較ランキングの集計と同じ決まり', () => {
+  const body = functionBody(MIGRATION, 'update_org_challenge_progress');
+  const TYPES = fs.readFileSync(path.join(ROOT, 'src/types/database.types.ts'), 'utf-8');
+  const SEGMENT_STATS = fs.readFileSync(path.join(ROOT, 'supabase/functions/calculate-segment-stats/index.ts'), 'utf-8');
+
+  it('update_org_challenge_progress は、ハンズオンのお試しの記録 (user_daily_meals.is_sandbox = true) を読まない', () => {
+    expect(body).toMatch(/LEFT JOIN public\.user_daily_meals AS d\s+ON d\.user_id = m\.user_id\s+AND d\.is_sandbox = false/);
+    // 比較ランキングの集計 (calculate-segment-stats) の planned_meals の読み込みと同じ絞り込み (#1500)
+    expect(SEGMENT_STATS).toMatch(/\.from\('planned_meals'\)[\s\S]{0,400}\.eq\('user_daily_meals\.is_sandbox', false\)/);
+  });
+
+  it('update_org_challenge_progress は public.meals を読まない (運営が隠す食事 hidden_at は meals の列。読むなら hidden_at IS NULL で絞ること)', () => {
+    expect(body).not.toMatch(/\bpublic\.meals\b/);
+    expect(body).toMatch(/\bpublic\.planned_meals\b/);
+    expect(rowColumnsOf(TYPES, 'meals')).toContain('hidden_at');
+  });
+
+  it('集計が読む planned_meals / user_daily_meals には、運営が隠す列 (hidden_at) が無い。足したら、この集計でも隠した行を数えないようにする', () => {
+    for (const table of ['planned_meals', 'user_daily_meals']) {
+      const columns = rowColumnsOf(TYPES, table);
+      expect(columns, `${table} の列が読めていない`).toContain('id');
+      expect(columns, `${table} に hidden_at が足された。update_org_challenge_progress でも hidden_at IS NULL で絞ること`).not.toContain(
+        'hidden_at',
+      );
+    }
+    expect(rowColumnsOf(TYPES, 'user_daily_meals')).toContain('is_sandbox');
+  });
+});
+
 describe('チャレンジの状態', () => {
   it('状態は表の CHECK 制約 (organization_challenges_status_check) と同じ', () => {
     const m = BASELINE.match(/organization_challenges_status_check" CHECK \(\("status" = ANY \(ARRAY\[([^\]]+)\]/);

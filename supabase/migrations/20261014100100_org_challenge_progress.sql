@@ -1,10 +1,10 @@
--- migration: 20261008200800_org_challenge_progress.sql
+-- migration: 20261014100100_org_challenge_progress.sql
 -- #1132: 組織チャレンジの進み具合 (current_value) と順位 (rank) を、食事の記録から毎日自動で計算する
 --
 -- 背景:
 --   organization_challenges / organization_challenge_participants (current_value・rank) は、作成・参加・人数の表示までは
 --   あったが、記録から current_value / rank を計算して書き込む処理がどこにも無く、参加しても進み具合も順位も一切動かなかった。
---   2026-10-08 のオーナー判断 (#1132): 参加は任意。食事の記録から出せる 3 つの指標 (朝食をとれた日の割合・野菜スコア・自炊の割合) で始める。
+--   #1132 の方針: 参加は任意。食事の記録から出せる 3 つの指標 (朝食をとれた日の割合・野菜スコア・自炊の割合) で始める。
 --   順位は参加者どうしにだけ見せ、管理者には集計 (人数と平均) だけを見せる。歩数と体重は、健康データの同意の仕組みを作った後に足す。
 --
 -- 変更 (表・列は増やさない):
@@ -28,6 +28,12 @@
 --        INSERT: 変更しない (#1238 の「Users can join challenges」のまま)。UPDATE: ポリシーなしのまま (利用者は進み具合を書き換えられない)。
 --
 -- 指標の定義 (対象は参加者本人の記録だけ。user_daily_meals.is_sandbox = false のもの。ハンズオンのお試しの記録は数えない):
+--   数えない記録の決まりは、比較ランキングの集計 (Edge Function calculate-segment-stats) の planned_meals の読み込みと同じ
+--   (user_daily_meals.is_sandbox = false で絞る。#1500)。
+--   運営が隠した食事 (#1101 の hidden_at。#1445 で比較ランキングの集計からも外した) は、meals / recipes の列で、
+--   この集計が読む planned_meals / user_daily_meals には無い (隠す対象にならない)。この関数は public.meals を読まない。
+--   meals を読むように変えるときは、count_meals_per_user (20261011130000) と同じく is_sandbox = false かつ hidden_at IS NULL で絞ること。
+--   (tests/org-challenges-lib.test.ts が、この関数が meals を読まないことと、planned_meals / user_daily_meals に hidden_at が無いことを検査する)
 --   食事として数える記録 = planned_meals の is_completed = true で、mode が 'skip' (食べない) でないもの。
 --   期間 = チャレンジの開始日から、min(終了日, 前日) までの日 (JST の暦日)。
 --     今日はまだ終わっていないので含めない。夜中 03:10 の実行で、前日までの記録が集計される。
@@ -78,9 +84,9 @@
 --   - 表への書き込みを待たせるロックは、ポリシーの付け替え (ACCESS EXCLUSIVE。一瞬) だけ。10 秒でロック待ちを諦める。
 --
 -- 冪等: CREATE OR REPLACE FUNCTION / DROP POLICY IF EXISTS → CREATE POLICY / 既存の同名ジョブの登録解除 → 登録。何度流しても同じ結果になる。
--- 適用順: API・画面のコードと同じ PR。migration は version 順にマージする (20261008200800)。
+-- 適用順: API・画面のコードと同じ PR。migration は version 順にマージする (20261014100100)。
 -- 確認: tests/integration/rls/org-challenge-progress.test.ts / tests/integration/security/org-challenges-api.test.ts
--- ロールバック: supabase/rollbacks/20261008200800_org_challenge_progress.down.sql
+-- ロールバック: supabase/rollbacks/20261014100100_org_challenge_progress.down.sql
 --   (ポリシーを元に戻すと、同じ組織の全員が参加行を読めるようになる。権限が広がるので注意)
 
 SET LOCAL lock_timeout = '10s';
