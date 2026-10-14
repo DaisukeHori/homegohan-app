@@ -83,12 +83,15 @@ appId: com.homegohan.app
     timeout: 15000
 
 # ─── 7. タブ遷移 — マイページ (profile) ──────────────────────────────────────
+# マイページは WebView。上にネイティブの設定画面への歯車 (profile-settings-button) がある (#1037)
 - tapOn:
     id: "tab-profile"
 - extendedWaitUntil:
     visible:
       id: "webview-profile"
     timeout: 15000
+- assertVisible:
+    id: "profile-settings-button"
 
 # ─── 8. ホームへ戻る ─────────────────────────────────────────────────────────
 - tapOn:
