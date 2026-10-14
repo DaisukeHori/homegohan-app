@@ -12,6 +12,7 @@ import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { useAccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { toUserProfile } from "@/lib/converter";
+import { assignAtPath } from "@/lib/assign-at-path";
 import type { UserProfile, FitnessGoal, WorkStyle, CookingExperience, DietStyle } from "@/types/domain";
 import { Icons } from "@/components/icons";
 import { ChevronRight, ChevronLeft, Check, Sparkles } from "lucide-react";
@@ -309,14 +310,9 @@ function ProfilePageContent() {
       priorities: { protein: 'moderate', carbs: 'moderate', fat: 'moderate', hydration: 'moderate' },
     };
 
-    const paths = path.split('.');
     const newProfile = JSON.parse(JSON.stringify(current)); // Deep copy
-    let obj: any = newProfile;
-    for (let i = 0; i < paths.length - 1; i++) {
-      if (!obj[paths[i]]) obj[paths[i]] = {};
-      obj = obj[paths[i]];
-    }
-    obj[paths[paths.length - 1]] = value;
+    // #1444: パスの先へ書く処理は、__proto__ などを拒む assignAtPath に寄せる (プロトタイプ汚染を防ぐ)
+    assignAtPath(newProfile, path, value);
 
     updateField('performanceProfile', newProfile);
   };
