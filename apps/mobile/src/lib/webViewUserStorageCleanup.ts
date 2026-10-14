@@ -28,12 +28,17 @@
  *   - 印 (AsyncStorage の値) は消さずに残す。掃除の済んだかどうかは WebView の側の ID で判定するので、残しても二度は消さない。
  *     利用者別のデータではないので、clearUserScopedAsyncStorage の対象にも入れない。
  *
- * 消すキーの一覧は packages/shared/src/user-scoped-storage.ts (USER_SCOPED_LOCAL_STORAGE_KEYS) を正にする。
+ * 消すキーの一覧は packages/shared/src/user-scoped-storage.ts (USER_SCOPED_LOCAL_STORAGE_KEYS と、
+ * 後ろに ID が付くキーの接頭辞 USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES) を正にする。
  * Web の clearUserScopedLocalStorage() と同じ一覧で、ここには写さない。一覧にキーを足せば、注入する JS も自動で追随する。
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { USER_SCOPED_LOCAL_STORAGE_KEYS, USER_SCOPED_STORAGE_CLEARED_EVENT } from "@homegohan/shared";
+import {
+  USER_SCOPED_LOCAL_STORAGE_KEYS,
+  USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES,
+  USER_SCOPED_STORAGE_CLEARED_EVENT,
+} from "@homegohan/shared";
 
 /** AsyncStorage: 最後に頼んだ掃除の ID (ネイティブのログアウトの印)。利用者別のデータではないので、ログアウトでは消さない */
 export const WEB_VIEW_STORAGE_CLEAR_REQUEST_KEY = "webview_user_scoped_storage_clear_request_v1";
@@ -87,7 +92,8 @@ export async function readPendingWebViewUserScopedStorageClear(): Promise<string
 /**
  * WebView の injectedJavaScriptBeforeContentLoaded に入れる、利用者別の localStorage を消す JS。
  * 済んだ掃除の ID (WEB_VIEW_STORAGE_CLEARED_MARKER_KEY) が requestId と違うときだけ、
- * USER_SCOPED_LOCAL_STORAGE_KEYS を消し、Web の clearUserScopedLocalStorage() と同じイベントを出してから ID を書く。
+ * USER_SCOPED_LOCAL_STORAGE_KEYS と、USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES の接頭辞で始まるキー (#1599) を消し、
+ * Web の clearUserScopedLocalStorage() と同じイベントを出してから ID を書く。
  * 途中で失敗したら ID を書かないので、次の読み込みでもう一度消す。
  */
 export function buildClearUserScopedWebStorageScript(requestId: string): string {
@@ -100,6 +106,19 @@ export function buildClearUserScopedWebStorageScript(requestId: string): string 
     if (storage.getItem(MARKER_KEY) === REQUEST_ID) return;
     var KEYS = ${JSON.stringify(USER_SCOPED_LOCAL_STORAGE_KEYS)};
     for (var i = 0; i < KEYS.length; i++) storage.removeItem(KEYS[i]);
+    var PREFIXES = ${JSON.stringify(USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES)};
+    var prefixed = [];
+    for (var j = 0; j < storage.length; j++) {
+      var key = storage.key(j);
+      if (key === null) continue;
+      for (var k = 0; k < PREFIXES.length; k++) {
+        if (key.indexOf(PREFIXES[k]) === 0) {
+          prefixed.push(key);
+          break;
+        }
+      }
+    }
+    for (var m = 0; m < prefixed.length; m++) storage.removeItem(prefixed[m]);
     try {
       window.dispatchEvent(new Event(${JSON.stringify(USER_SCOPED_STORAGE_CLEARED_EVENT)}));
     } catch (e) {}

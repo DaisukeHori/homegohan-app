@@ -19,7 +19,7 @@ import { adminFetch } from '@/lib/admin/fetch';
 import { PreparingNotice } from '@/components/operator/PreparingNotice';
 
 interface PageProps {
-  searchParams: { status?: string; type?: string; page?: string };
+  searchParams: Promise<{ status?: string; type?: string; page?: string }>;
 }
 
 interface ModerationItem {
@@ -41,7 +41,8 @@ interface ModerationApiResponse {
   };
 }
 
-export default async function AdminModerationPage({ searchParams }: PageProps) {
+export default async function AdminModerationPage(props: PageProps) {
+  const searchParams = await props.searchParams;
   try {
     await requireRole(['admin', 'super_admin', 'content_moderator']);
   } catch (err) {

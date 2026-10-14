@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
 
 interface FamilyMember {
   id: string;
@@ -74,7 +75,9 @@ export default function FamilyDashboardPage() {
       if (membersError) {
         setError('メンバー情報の取得に失敗しました');
       } else {
-        setMembers((membersData ?? []) as FamilyMember[]);
+        // 画面に出す名前 (display_name が無ければ本人のプロフィールの今の名前) は API で決める (#1584)
+        const names = await fetchFamilyMemberNames();
+        setMembers(applyFamilyMemberNames((membersData ?? []) as FamilyMember[], names));
       }
 
       setLoading(false);

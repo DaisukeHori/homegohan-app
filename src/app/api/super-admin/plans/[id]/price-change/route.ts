@@ -60,7 +60,7 @@ import { PriceChangeSchema } from '@/lib/super-admin/plans-schemas';
 import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
 
-type RouteContext = { params: { id: string } };
+type RouteContext = { params: Promise<{ id: string }> };
 
 /** Edge Function stripe-price-sync が interval ごとに返す結果 (変えなかった interval は null / 省略) */
 type StripeSyncIntervalResult = {
@@ -79,7 +79,8 @@ type IntervalSync = {
 
 const NO_SYNC: IntervalSync = { newPriceId: null, oldPriceDeactivated: false, oldPriceDeactivationSkippedReason: null };
 
-export async function POST(request: NextRequest, { params }: RouteContext) {
+export async function POST(request: NextRequest, props: RouteContext) {
+  const params = await props.params;
   try {
     const user = await requireRole(['super_admin']);
     const supabase = await createClient();

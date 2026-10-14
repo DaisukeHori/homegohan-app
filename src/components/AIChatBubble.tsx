@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { createElement, useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MessageCircle, X, Send, Sparkles, ChevronDown,
@@ -107,6 +107,26 @@ const ACTION_LABELS: Record<string, { label: string; icon: any; color: string }>
 /** 献立の作成が、同意が無くて止められたときにチャットに出す一文 (T15 / #1154。同意画面は AiConsentRequiredHost が出す) */
 const V4_CONSENT_REQUIRED_CHAT_NOTE =
   'AI へのデータ提供への同意が必要なため、献立は作成しませんでした。同意したあとに、もう一度お試しください。';
+
+/**
+ * 提案されたアクションのカードの見出し (アイコンと名前)。
+ *
+ * アイコンは JSX (`<Icon />`) ではなく createElement で描く。Next 15 (15.5.27) の SWC は、`<style jsx global>` がある
+ * このファイルで、変数に入れたコンポーネント (`const Icon = actionInfo?.icon || Sparkles`) を JSX で描くと、
+ * styled-jsx の変換 (SSR とブラウザ向け) が終わらなくなり、next build / next dev が止まった (#1444。
+ * 同じ変数を createElement に渡すと止まらない)。描かれるものは JSX で書いたときと同じ。
+ * 以前は AIChatBubble の JSX の中の即時関数だったものを、読みやすさのために切り出した。
+ */
+function ProposedActionHeading({ type }: { type: string }) {
+  const actionInfo = ACTION_LABELS[type];
+  const icon = createElement(actionInfo?.icon || Sparkles, { size: 16, color: actionInfo?.color || colors.purple });
+  return (
+    <>
+      {icon}
+      <span style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>{actionInfo?.label || type}</span>
+    </>
+  );
+}
 
 export default function AIChatBubble() {
   const isNativeApp = useNativeAppMode();
@@ -1306,18 +1326,7 @@ export default function AIChatBubble() {
                             }}
                           >
                             <div className="flex items-center gap-2 mb-2">
-                              {(() => {
-                                const actionInfo = ACTION_LABELS[msg.proposedActions.type];
-                                const Icon = actionInfo?.icon || Sparkles;
-                                return (
-                                  <>
-                                    <Icon size={16} color={actionInfo?.color || colors.purple} />
-                                    <span style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>
-                                      {actionInfo?.label || msg.proposedActions.type}
-                                    </span>
-                                  </>
-                                );
-                              })()}
+                              <ProposedActionHeading type={msg.proposedActions.type} />
                             </div>
                             
                             <div className="flex gap-2">

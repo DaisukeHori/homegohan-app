@@ -2,30 +2,21 @@
  * #1199 React 本体と @types/react のメジャーバージョン不一致を防ぐ contract テスト
  *
  * 以前はルートの react / react-dom が 18 系なのに @types/react / @types/react-dom が 19 系で、
- * 実行時は React 18・型検査は React 19 という食い違いが Web アプリ (Next 14) に及んでいた。
- * React 19 の型にしかない書き方 (例: `<Context value={...}>`) が typecheck を素通りしかねなかった。
- * 型の版を実行時の React にそろえておくと、そうした書き方は型検査で落ちる。
- *
- * ただし、型の版をそろえても `use` / `useOptimistic` / `useActionState` / `useFormStatus` は止まらない。
- * Next 14 の型 (next/types/index.d.ts) が react/experimental と react-dom/experimental (canary の型) を
- * 読み込むため、@types/react が 18 系でも `npm run typecheck` を通る。#1275 (`use(params)` が本番で 500 に
- * なった) のような書き方を止めているのは eslint.config.mjs の ESLint ルールだけで、前提と挙動は
- * tests/eslint-react19-guard.test.ts が確かめる。このテストが守るのは「型の版をそろえておくこと」だけ。
+ * 実行時は React 18・型検査は React 19 という食い違いが Web アプリ (当時は Next 14) に及んでいた。
+ * 型の版を実行時の React にそろえておくと、実行時の React に無い書き方は型検査で落ちる。
+ * #1444 で Web アプリを Next 15 + React 19 に上げたあとも、型の版をそろえておく約束は同じ。
  *
  * このテストは「React 本体と型のメジャーが同じ」であることを、宣言 (package.json) と
  * 実際に解決された版 (package-lock.json) の両方で確かめる。
  *
  *   - Web アプリ (ルート): react / react-dom ↔ @types/react / @types/react-dom
- *   - モバイル (apps/mobile): react ↔ @types/react (Expo 53 + React 19 で、ルートとは別の版を入れ子で持つ)
+ *   - モバイル (apps/mobile): react ↔ @types/react (Expo 53 + React 19.0 で、ルートとは別の版を入れ子で持つ)
  *
- * モバイルは CI で型検査をしていないため、ルートの型を 18 系にした結果として
- * 「react-native などルートに巻き上げられたパッケージの型だけが React 18 の型で解決される」状態になると、
- * 気付かないままモバイルの型エラーが大きく増える。これを防ぐ apps/mobile/tsconfig.json の固定 (paths) が
- * 外れていないことも確かめる。
+ * モバイルは CI で型検査をしていないため、モバイルの型がルートの @types/react (Web 用) で解決される状態になると、
+ * 気付かないままモバイルの型エラーが増えうる。モバイルが自前の @types/react を入れ子で持っている間は、
+ * それを使わせる apps/mobile/tsconfig.json の固定 (paths) が外れていないことも確かめる。
  *
  * 落ちたら: 片方だけ上げ下げしていないか確認し、React 本体と型を同時に同じメジャーへそろえる。
- * Web を React 19 / Next 15 に上げるときは、react と @types/react を一緒に上げ、
- * eslint.config.mjs の React 19 専用 API 禁止ルールと CLAUDE.md の記述も更新する。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -115,7 +106,7 @@ describe('#1199 モバイル (apps/mobile) の React 本体と型のメジャー
   });
 
   it('package-lock.json: apps/mobile から見て解決される @types/react は react と同じメジャー', () => {
-    // ルートの @types/react は Web (React 18) 用なので、モバイルは apps/mobile/node_modules に自前の版を持つ必要がある。
+    // ルートの @types/react は Web 用 (#1444 から 19.2 系)。モバイルは Expo 53 に合わせた 19.0 系を apps/mobile/node_modules に持つ。
     const react = majorOf(resolveInLock(lock, 'apps/mobile', 'react').version, 'apps/mobile から見た react');
     const types = majorOf(
       resolveInLock(lock, 'apps/mobile', '@types/react').version,
@@ -125,13 +116,13 @@ describe('#1199 モバイル (apps/mobile) の React 本体と型のメジャー
   });
 });
 
-describe('#1199 Web とモバイルで @types/react のメジャーが違う間は、モバイルの tsconfig で react の型を固定している', () => {
+describe('#1199 モバイルが自前の @types/react を入れ子で持つ間は、モバイルの tsconfig で react の型を固定している', () => {
   const webTypes = resolveInLock(lock, '', '@types/react');
   const mobileTypes = resolveInLock(lock, 'apps/mobile', '@types/react');
-  const webMajor = majorOf(webTypes.version, 'Web の @types/react');
-  const mobileMajor = majorOf(mobileTypes.version, 'モバイルの @types/react');
-  // 同じメジャーでルートに 1 つだけ巻き上げられている (固定が不要な) 場合は、この 2 件は実行しない
-  const dualTypes = webMajor !== mobileMajor;
+  // Web とモバイルで @types/react の版が違い、モバイルが入れ子の版を持つ間は、モバイルの型をそれに固定する。
+  // #1444 で Web も 19 系 (19.2) になったが、モバイルは 19.0 系のままなので、メジャーが同じでも 2 つの版が並ぶ。
+  // 同じ版がルートに 1 つだけ巻き上げられている (固定が不要な) 場合は、この 2 件は実行しない。
+  const dualTypes = webTypes.version !== mobileTypes.version;
 
   // tsconfig はコメントを書けるので、JSON.parse ではなく TypeScript の読み込みを使う
   const mobileTsconfig = ts.parseConfigFileTextToJson(
@@ -144,10 +135,10 @@ describe('#1199 Web とモバイルで @types/react のメジャーが違う間�
   });
 
   it.runIf(dualTypes)(
-    'apps/mobile/tsconfig.json の paths.react が入れ子の @types/react を指す (react-native などの型も React 19 で解決させる)',
+    'apps/mobile/tsconfig.json の paths.react が入れ子の @types/react を指す (react-native などの型もモバイルの React の型で解決させる)',
     () => {
-      // 固定しないと、ルートに巻き上げられた react-native などが React 18 の型で解決され、
-      // モバイルの型検査で TS2786 (JSX コンポーネントとして使えない) などが一斉に増える。
+      // 固定しないと、ルートに巻き上げられた react-native などがルートの (Web 用の) 型で解決される。
+      // ルートが 18 系だったときは、モバイルの型検査で TS2786 (JSX コンポーネントとして使えない) などが一斉に増えた。
       // 末尾が .d.ts の別名は Expo の Metro に無視される (実行時の react の解決は metro.config.js のまま) ので安全。
       expect(mobileTsconfig.compilerOptions?.paths?.react).toEqual(['./node_modules/@types/react/index.d.ts']);
     },

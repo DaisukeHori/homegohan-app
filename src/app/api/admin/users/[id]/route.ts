@@ -23,9 +23,10 @@ const LOG_SOURCE = 'GET /api/admin/users/[id]';
 /** PATCH の構造化ログ・監査ログ失敗時の発生元 */
 const PATCH_ROUTE_NAME = 'PATCH /api/admin/users/[id]';
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
-export async function GET(request: Request, { params }: Params) {
+export async function GET(request: Request, props: Params) {
+  const params = await props.params;
   let actor;
   try {
     actor = await requireRole(['admin', 'super_admin', 'support']);
@@ -196,7 +197,8 @@ export async function GET(request: Request, { params }: Params) {
  *     details にはノートの ID だけを入れ、本文は入れない (POST /api/support/users/[id]/notes と同じ)。
  * リクエストの形 ({ admin_note }) と権限 (admin / super_admin) は operator/02-api-spec.md のまま。
  */
-export async function PATCH(request: Request, { params }: Params) {
+export async function PATCH(request: Request, props: Params) {
+  const params = await props.params;
   let actor;
   try {
     actor = await requireRole(['admin', 'super_admin']);

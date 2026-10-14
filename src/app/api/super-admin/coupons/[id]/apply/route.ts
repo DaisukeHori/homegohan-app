@@ -24,9 +24,10 @@ import { CouponApplySchema } from '@/lib/super-admin/coupons-schemas';
 import { applyCoupon, CouponApplyError } from '@/lib/plan/coupon';
 import { recordAdminAudit } from '@/lib/admin/audit';
 
-type RouteContext = { params: { id: string } };
+type RouteContext = { params: Promise<{ id: string }> };
 
-export async function POST(request: NextRequest, { params }: RouteContext) {
+export async function POST(request: NextRequest, props: RouteContext) {
+  const params = await props.params;
   try {
     const user = await requireRole(['super_admin']);
     // requireRole 通過後のみ到達する (#1041 round-2 E)。coupon_redemptions

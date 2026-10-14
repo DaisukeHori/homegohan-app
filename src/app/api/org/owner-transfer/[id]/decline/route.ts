@@ -4,11 +4,9 @@ import { NextResponse } from 'next/server';
 import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { internalError } from '@/lib/api/errors';
 
-export async function POST(
-  _request: Request,
-  { params }: { params: { id: string } },
-) {
-  const supabase = createClient();
+export async function POST(_request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
+  const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) {
     return NextResponse.json(

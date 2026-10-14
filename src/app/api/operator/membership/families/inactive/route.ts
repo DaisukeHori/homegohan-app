@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     await requireSuperAdmin();
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const { data, error } = await supabase.rpc('list_families_with_inactive_representative');
     if (error) {

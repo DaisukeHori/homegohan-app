@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, use } from "react";
 import Link from "next/link";
 // GET /api/super-admin/llm/usage の data の型は、route が返す toLlmUsageResponseData の型をそのまま使う (#1540)。
 // 以前は by_model の 1 行の型を画面に手で書き写していた (その時点では一致)。型を 2 か所に書かないので、
@@ -29,7 +29,8 @@ const PROVIDER_LABELS: Record<string, { label: string; models: string[] }> = {
 /** モデル別の 1 行 (応答の by_model の要素) */
 type ModelStats = LlmUsageResponseData["by_model"][number];
 
-export default function ProviderDetailPage({ params }: { params: { provider: string } }) {
+export default function ProviderDetailPage(props: { params: Promise<{ provider: string }> }) {
+  const params = use(props.params);
   const [period, setPeriod] = useState("7d");
   const [modelStats, setModelStats] = useState<ModelStats[]>([]);
   const [isLoading, setIsLoading] = useState(true);

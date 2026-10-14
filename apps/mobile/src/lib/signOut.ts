@@ -10,6 +10,8 @@
  *      - AsyncStorage の利用者別のキー (user-storage.ts)
  *      - WebView の利用者別の localStorage (#1037)。次に WebView を開いたとき、Web のページが読み込まれる前に消させる
  *        (webViewUserStorageCleanup.ts。ネイティブのログアウトは Web の画面の掃除を通らないため)
+ *      - 掃除は userScopedLocalData.ts の clearUserScopedLocalData にまとめてあり、起動時に失効が分かったときの
+ *        端末側だけのサインアウト (AuthProvider) も同じものを通る (#1599)
  *   3. サインアウト (保管庫のセッションを消す)
  *
  * アカウント削除では使わない。auth.users の削除で user_push_tokens が ON DELETE CASCADE で消える。
@@ -25,8 +27,7 @@
 import { unregisterExpoPushToken } from "./pushNotifications";
 import { secureSessionStorage } from "./secureSessionStorage";
 import { SUPABASE_AUTH_STORAGE_KEY, supabase } from "./supabase";
-import { clearUserScopedAsyncStorage } from "./user-storage";
-import { requestWebViewUserScopedStorageClear } from "./webViewUserStorageCleanup";
+import { clearUserScopedLocalData } from "./userScopedLocalData";
 
 export type SignOutOptions = {
   /** push token の削除を認可する、本人のアクセストークン。セッションが先に失効する場合に、呼び出し側が控えた値を渡す */
@@ -37,20 +38,6 @@ export type SignOutOptions = {
 export type ForgetSessionOptions = {
   clearSession: () => void;
 };
-
-/** サインアウトの前に、端末に残る利用者別のデータを消す。失敗してもサインアウトは続けるので、例外は投げない */
-async function clearUserScopedLocalData(userId: string | null | undefined): Promise<void> {
-  try {
-    await clearUserScopedAsyncStorage(userId ?? null);
-  } catch {
-    // ローカルデータの掃除に失敗しても、サインアウトは続ける
-  }
-  try {
-    await requestWebViewUserScopedStorageClear();
-  } catch {
-    // 同上
-  }
-}
 
 /**
  * サインアウトし、失敗したら端末だけでセッションを忘れる。例外は投げない。

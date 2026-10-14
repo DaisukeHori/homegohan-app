@@ -16,9 +16,10 @@ import { CouponRedemptionsQuerySchema } from '@/lib/super-admin/coupons-schemas'
 import { internalError } from '@/lib/api/errors';
 import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
 
-type RouteContext = { params: { id: string } };
+type RouteContext = { params: Promise<{ id: string }> };
 
-export async function GET(request: NextRequest, { params }: RouteContext) {
+export async function GET(request: NextRequest, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireRole(['super_admin']);
     const supabase = await createClient();

@@ -23,7 +23,7 @@ import ModerationReviewForm from '@/components/operator/moderation/ModerationRev
 import { PreparingNotice } from '@/components/operator/PreparingNotice';
 
 interface PageProps {
-  params: { type: string; id: string };
+  params: Promise<{ type: string; id: string }>;
 }
 
 type ModerationItem = {
@@ -44,7 +44,8 @@ interface ModerationDetailApiResponse {
   data: ModerationItem;
 }
 
-export default async function AdminModerationDetailPage({ params }: PageProps) {
+export default async function AdminModerationDetailPage(props: PageProps) {
+  const params = await props.params;
   let actor;
   try {
     actor = await requireRole(['admin', 'super_admin', 'content_moderator']);

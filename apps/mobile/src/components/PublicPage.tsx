@@ -5,13 +5,15 @@ import React from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 
 import { Card } from "./ui";
+import { webPageUrl } from "../lib/siteConfig";
 import { colors, spacing, radius, shadows } from "../theme";
 
-function getWebBaseUrl(): string | null {
-  const base = process.env.EXPO_PUBLIC_API_BASE_URL;
-  if (!base) return null;
-  return base.replace(/\/+$/, "");
-}
+/*
+ * 「Web版を開く」で開く URL は、siteConfig.ts の webPageUrl (利用規約・プライバシーポリシーと同じ、
+ * webBaseUrl.ts の getWebBaseUrl() = EXPO_PUBLIC_WEB_URL か既定の Web のオリジン) から作る (#1049 F7-19)。
+ * 以前は API のオリジン (EXPO_PUBLIC_API_BASE_URL) を流用していて、API と Web が別のオリジンのビルドでは
+ * 利用規約などを API のサーバーで開こうとしていた。
+ */
 
 export function PublicPage(props: {
   title: string;
@@ -19,9 +21,7 @@ export function PublicPage(props: {
   webPath?: string;
 }) {
   const { title, children, webPath } = props;
-  const webBaseUrl = getWebBaseUrl();
-  const canOpenWeb = !!webBaseUrl && !!webPath;
-  const url = canOpenWeb ? `${webBaseUrl}${webPath}` : null;
+  const url = webPath ? webPageUrl(webPath) : null;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>

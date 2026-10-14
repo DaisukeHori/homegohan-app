@@ -46,7 +46,7 @@ export function canOperate(roles: string[], permission: OperatorPermission): boo
  * 未認証なら AuthError (401)、権限不足なら ForbiddenError (403) を throw する。
  */
 export async function requireSuperAdmin(): Promise<{ userId: string }> {
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) {
     throw new AuthError('AUTH_UNAUTHENTICATED', '認証が必要です');
@@ -75,7 +75,7 @@ export async function requireSuperAdmin(): Promise<{ userId: string }> {
  * Server Component や Server Action から使用する。
  */
 export async function isSuperAdmin(userId: string): Promise<boolean> {
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data: profile } = await supabase
     .from('user_profiles')
     .select('roles')

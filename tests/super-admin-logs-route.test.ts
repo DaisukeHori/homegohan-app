@@ -446,8 +446,8 @@ describe('GET /api/super-admin/logs: 一覧', () => {
   });
 
   it('毎回 DB を読む (force-dynamic)。Next の fetch キャッシュに、古いログを返させない', () => {
-    // supabase-js の GET は fetch で行われ、Next 14 は fetch の結果を既定でキャッシュする。
-    // force-dynamic にすると、この route の fetch は no-store になる
+    // supabase-js の GET は fetch で行われ、Next 14 は fetch の結果を既定でキャッシュしていた。
+    // force-dynamic にすると、この route の fetch は no-store になる (Next 15 は既定でキャッシュしないが、明示しておく。#1444)
     expect(logsRoute.dynamic).toBe('force-dynamic');
   });
 

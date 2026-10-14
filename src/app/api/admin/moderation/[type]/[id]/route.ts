@@ -86,7 +86,7 @@ import { recordAdminAudit } from '@/lib/admin/audit';
 
 export const dynamic = 'force-dynamic';
 
-type Params = { params: { type: string; id: string } };
+type Params = { params: Promise<{ type: string; id: string }> };
 
 function notFoundResponse() {
   return NextResponse.json(
@@ -109,7 +109,8 @@ function describeError(err: unknown): string {
   return typeof message === 'string' && message ? message : String(err);
 }
 
-export async function GET(request: Request, { params }: Params) {
+export async function GET(request: Request, props: Params) {
+  const params = await props.params;
   let actor;
   try {
     actor = await requireRole(['admin', 'super_admin', 'content_moderator']);
@@ -183,11 +184,13 @@ export async function GET(request: Request, { params }: Params) {
   }
 }
 
-export async function POST(request: Request, { params }: Params) {
+export async function POST(request: Request, props: Params) {
+  const params = await props.params;
   return handleResolve(request, params);
 }
 
-export async function PUT(request: Request, { params }: Params) {
+export async function PUT(request: Request, props: Params) {
+  const params = await props.params;
   return handleResolve(request, params);
 }
 

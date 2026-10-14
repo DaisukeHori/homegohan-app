@@ -18,10 +18,8 @@ function internalError(err: unknown, metadata?: Record<string, unknown>) {
 // ユーザー詳細取得（サポート用 - 限定情報）
 // 権限: support / admin / super_admin (共通の requireRole()、#1161)
 // #1200: 情報を返すたびに admin_audit_logs へ admin.user.view_support を記録する
-export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const actor = await requireRole(['support', 'admin', 'super_admin']);
 

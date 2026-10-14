@@ -5,6 +5,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
 
 interface FamilyMember {
   id: string;
@@ -19,8 +20,8 @@ interface FamilyMember {
 }
 
 export default function FamilyMemberDetailPage() {
-  // Next.js 14 のクライアントページでは params は Promise ではなく、use(params) は例外になる (#1275)。
-  // useParams は 14 / 15 のどちらでも使える。
+  // パスの値は useParams で読む。props の params は Next 15 から Promise で、Next 14 では use(params) が例外になった (#1275)。
+  // useParams はどちらでも同じに使えるので、こちらにそろえている (#1444)。
   const { id: memberId } = useParams<{ id: string }>();
   const router = useRouter();
   const supabase = createClient();
@@ -71,7 +72,10 @@ export default function FamilyMemberDetailPage() {
         return;
       }
 
-      setMember(memberData as FamilyMember);
+      // 画面に出す名前 (display_name が無ければ本人のプロフィールの今の名前) は API で決める (#1584)
+      const names = await fetchFamilyMemberNames();
+      const [namedMember] = applyFamilyMemberNames([memberData as FamilyMember], names);
+      setMember(namedMember);
       setShareMeals(memberData.share_meals);
       setShareHealth(memberData.share_health);
       setShareMenu(memberData.share_menu);

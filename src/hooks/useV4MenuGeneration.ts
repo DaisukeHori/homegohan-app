@@ -63,10 +63,13 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
       setRequestId(data.requestId);
       
       // Store generation state in localStorage for persistence
+      // ultimateMode: 究極モードで始めた生成か (#1597)。週間献立の画面が再読み込みで進捗を戻すとき、進捗の段 (究極 / 通常) をこれで決める
+      // (行の progress.totalSteps は、行を作った時点では枠の数で、究極モードかを表さない)
       localStorage.setItem("v4MenuGenerating", JSON.stringify({
         requestId: data.requestId,
         timestamp: Date.now(),
         totalSlots: data.totalSlots,
+        ultimateMode: params.ultimateMode === true,
       }));
 
       options.onGenerationStart?.(data.requestId);

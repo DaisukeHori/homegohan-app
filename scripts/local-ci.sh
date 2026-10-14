@@ -1296,10 +1296,12 @@ stage_e2e() {
   fi
 
   # 規約の同意ゲート (#1174) の「強制あり」: 同じビルドを LEGAL_CONSENT_ENFORCE=on で 2 つ目のポートに起動する (yml と同じ)。
-  # yml では前の手順が赤だとこの先は回らないが、ここでは手がかりを多く残すため、前の結果によらず回す
+  # yml では前の手順が赤だとこの先は回らないが、ここでは手がかりを多く残すため、前の結果によらず回す。
+  # -p と同じ値を PORT にも入れる (#1584。運営画面のサーバー側 fetch (src/lib/admin/fetch.ts) は、NEXTAUTH_URL も VERCEL_URL も
+  # 無いと http://localhost:$PORT の自分自身に問い合わせる。PORT が無いと 3000 = 別のサーバーに繋がる)
   log="$ART/e2e-next-start-enforced.log"
   t0=$(now)
-  ( ci_env && cd "$WT" && exec nohup env LEGAL_CONSENT_ENFORCE=on npx next start -p "$ENFORCED_APP_PORT" ) >"$log" 2>&1 &
+  ( ci_env && cd "$WT" && export PORT="$ENFORCED_APP_PORT" && exec nohup env LEGAL_CONSENT_ENFORCE=on npx next start -p "$ENFORCED_APP_PORT" ) >"$log" 2>&1 &
   ENFORCED_SERVER_PID=$!
   if wait_enforced_app "$log"; then
     record e2e:start-enforced GREEN - - - - - "$(($(now) - t0))" "-"
@@ -1324,7 +1326,7 @@ stage_e2e() {
   # 規約の同意ゲート (#1174) の「お知らせあり」: 同じビルドを LEGAL_CONSENT_NOTICE=on で 3 つ目のポートに起動する (yml と同じ)
   log="$ART/e2e-next-start-notice.log"
   t0=$(now)
-  ( ci_env && cd "$WT" && exec nohup env LEGAL_CONSENT_NOTICE=on npx next start -p "$NOTICE_APP_PORT" ) >"$log" 2>&1 &
+  ( ci_env && cd "$WT" && export PORT="$NOTICE_APP_PORT" && exec nohup env LEGAL_CONSENT_NOTICE=on npx next start -p "$NOTICE_APP_PORT" ) >"$log" 2>&1 &
   NOTICE_SERVER_PID=$!
   if wait_notice_app "$log"; then
     record e2e:start-notice GREEN - - - - - "$(($(now) - t0))" "-"

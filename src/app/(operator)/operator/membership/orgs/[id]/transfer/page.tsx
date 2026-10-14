@@ -31,8 +31,8 @@ function formatLastLogin(v: string | null): string {
 }
 
 export default function OrgTransferPage() {
-  // Next.js 14 のクライアントページでは params は Promise ではなく、use(params) は例外になる (#1275)。
-  // useParams は 14 / 15 のどちらでも使える。
+  // パスの値は useParams で読む。props の params は Next 15 から Promise で、Next 14 では use(params) が例外になった (#1275)。
+  // useParams はどちらでも同じに使えるので、こちらにそろえている (#1444)。
   const { id: orgId } = useParams<{ id: string }>();
   const router = useRouter();
 

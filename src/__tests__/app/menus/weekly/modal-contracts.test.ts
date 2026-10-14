@@ -16,10 +16,9 @@
 // 共有設定である vitest.config.ts を変更する影響範囲を避けるため、本ファイルは
 // あえて拡張子 .ts + React.createElement を使い JSX 構文を回避する。
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 import { usePantryStore } from '@/app/(main)/menus/weekly/_state/pantryStore';
 import { useShoppingStore } from '@/app/(main)/menus/weekly/_state/shoppingStore';

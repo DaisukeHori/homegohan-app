@@ -34,7 +34,7 @@ export interface OrgMemberContext {
  * @throws Error                     - プロフィールを読めなかった場合 (DB の障害。呼び出し側の catch で 500 にして記録する)
  */
 export async function requireOrgMember(): Promise<OrgMemberContext> {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
     error: authError,

@@ -26,7 +26,18 @@ import {
 } from "react-native";
 
 import { getApi, getApiBaseUrl } from "../../lib/api";
-import { AI_CHAT_STREAM_TIMEOUT_MS } from "../../lib/ai-chat-timeout";
+import {
+  AI_CHAT_STREAM_TIMEOUT_MS,
+  TIMEOUT_DELIVERED_NO_REPLY_MESSAGE,
+  TIMEOUT_NOTICE_MESSAGE,
+  TIMEOUT_NOT_DELIVERED_MESSAGE,
+  TIMEOUT_RELOAD_FAILED_MESSAGE,
+  TIMEOUT_RELOAD_LABEL,
+  clearInputIfDelivered,
+  restoreInputAfterTimeout,
+  timeoutReloadOutcomeOf,
+  type TimedOutSend,
+} from "../../lib/ai-chat-timeout";
 import { supabase } from "../../lib/supabase";
 import { colors, radius, shadows, spacing } from "../../theme";
 import { AIDayMenuModal } from "./AIDayMenuModal";
@@ -63,16 +74,6 @@ const WELCOME_MESSAGE: Message = {
     "こんにちは！🍳 ほめゴハンのAIアドバイザーです。\n\n食事や栄養のことで気になることがあれば、何でも聞いてくださいね。献立の提案や、買い物リストの作成もお手伝いできますよ！",
   createdAt: new Date().toISOString(),
 };
-
-/**
- * 送信が時間切れ (AI_CHAT_STREAM_TIMEOUT_MS) になったときの案内 (#1049 F7-18)。
- * 打ち切ったのは画面の待ちだけで、サーバーでは返答の保存が続いていることがあるので、取り直しの導線を出す。
- * もう一度送るように促すのは、取り直しても返答が無かったときだけ (先に送り直すと、同じ相談が二重に届く)
- */
-const TIMEOUT_NOTICE_MESSAGE =
-  "応答に時間がかかっています。返答はサーバーで続いていることがあります。少し待ってから「最新の会話を読み込む」を押してください。返答が無ければ、もう一度送ってください。";
-const TIMEOUT_RELOAD_LABEL = "最新の会話を読み込む";
-const TIMEOUT_RELOAD_FAILED_MESSAGE = "会話を読み込めませんでした。通信の状態を確認して、もう一度お試しください。";
 
 const QUICK_QUESTIONS = [
   "献立を提案してほしい",
@@ -161,8 +162,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [dayMenuModalVisible, setDayMenuModalVisible] = useState(false);
   const [isClosingSession, setIsClosingSession] = useState(false);
-  // 送信が時間切れになった相談の id。あるあいだ「最新の会話を読み込む」を出す (#1049 F7-18)
-  const [timedOutSessionId, setTimedOutSessionId] = useState<string | null>(null);
+  // 送信が時間切れになった送信。あるあいだ「最新の会話を読み込む」を出す (#1049 F7-18。扱いは src/lib/ai-chat-timeout.ts)
+  const [timedOutSend, setTimedOutSend] = useState<TimedOutSend | null>(null);
   const [reloadingAfterTimeout, setReloadingAfterTimeout] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
@@ -188,7 +189,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       scrollRef.current?.scrollToEnd({ animated: true });
     }, 100);
     return () => clearTimeout(t);
-  }, [messages.length, streamingContent, sending, timedOutSessionId]);
+  }, [messages.length, streamingContent, sending, timedOutSend]);
 
   async function initSession() {
     try {
@@ -243,21 +244,30 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   }
 
   /**
-   * 送信が時間切れになったあと、相談のメッセージを取り直す (#1049 F7-18)。
-   * 取れなければ、今の表示と案内をそのまま残す (今の会話を消さない)
+   * 送信が時間切れになったあと、相談のメッセージを取り直す (#1049 F7-18。扱いは src/lib/ai-chat-timeout.ts)。
+   * 取れなければ、今の表示と案内をそのまま残す (今の会話を消さない)。
+   * 送った文が届いていたら、入力欄に戻した文を消す (二重に送らないため)。返答がまだ無ければ案内を残す。
+   * 届いていなければ、案内を消して、入力欄の文をもう一度送るように知らせる
    */
   async function reloadAfterTimeout() {
-    const sessionId = timedOutSessionId;
-    if (!sessionId || reloadingAfterTimeout) return;
+    const sent = timedOutSend;
+    if (!sent || reloadingAfterTimeout) return;
     setReloadingAfterTimeout(true);
     try {
-      const loaded = await fetchMessages(sessionId);
+      const loaded = await fetchMessages(sent.sessionId);
       if (loaded === null) {
         Alert.alert("エラー", TIMEOUT_RELOAD_FAILED_MESSAGE);
         return;
       }
       setMessages(loaded.length > 0 ? loaded : [WELCOME_MESSAGE]);
-      setTimedOutSessionId(null);
+      const outcome = timeoutReloadOutcomeOf(sent, loaded);
+      if (outcome === "not-delivered") {
+        setTimedOutSend(null);
+        Alert.alert("送信できませんでした", TIMEOUT_NOT_DELIVERED_MESSAGE);
+        return;
+      }
+      setInputText((current) => clearInputIfDelivered(current, sent.text));
+      setTimedOutSend(outcome === "replied" ? null : { ...sent, delivered: true });
     } finally {
       setReloadingAfterTimeout(false);
     }
@@ -272,7 +282,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       }>("/api/ai/consultation/sessions", { title: "AI相談" });
       setCurrentSessionId(createRes.session.id);
       setMessages([WELCOME_MESSAGE]);
-      setTimedOutSessionId(null);
+      setTimedOutSend(null);
       setShowSessionList(false);
       // セッション一覧を更新
       const res = await api.get<{ sessions: Session[] }>(
@@ -286,7 +296,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
   async function selectSession(sessionId: string) {
     setCurrentSessionId(sessionId);
-    setTimedOutSessionId(null);
+    setTimedOutSend(null);
     setShowSessionList(false);
     await loadMessages(sessionId);
   }
@@ -389,10 +399,13 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     const trimmed = text.trim();
     if (!trimmed || sending) return;
 
+    // 時間切れのあとの取り直しで、送った文が届いたかを見分けるため、送る前に出ていたサーバーのメッセージの id を持つ
+    const knownMessageIds = messages.filter((m) => m.id !== WELCOME_MESSAGE.id && !m.id.startsWith("local-")).map((m) => m.id);
+
     setSending(true);
     setInputText("");
     setStreamingContent(null);
-    setTimedOutSessionId(null);
+    setTimedOutSend(null);
 
     const optimistic: Message = {
       id: `local-${Date.now()}`,
@@ -556,12 +569,16 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         Alert.alert(stoppedByServerAlertTitleOf(e), e.message);
         return;
       }
-      if (e?.name === "AbortError" && sessionId) {
+      if (e?.name === "AbortError") {
         // 待ちを打ち切っただけで、サーバーでは返答の保存が続いていることがある (#1049 F7-18)。
-        // 失敗として終わらせず、会話を取り直す導線 (TIMEOUT_RELOAD_LABEL) を出す
-        setTimedOutSessionId(sessionId);
-      } else if (e?.name === "AbortError") {
-        Alert.alert("タイムアウト", TIMEOUT_NOTICE_MESSAGE);
+        // 失敗として終わらせず、会話を取り直す導線 (TIMEOUT_RELOAD_LABEL) を出し、送った文を入力欄に戻す
+        // (届いていたかは取り直しで分かる。届いていたら、戻した文はそこで消す)
+        setInputText((current) => restoreInputAfterTimeout(current, trimmed));
+        if (sessionId) {
+          setTimedOutSend({ sessionId, text: trimmed, knownMessageIds, delivered: false });
+        } else {
+          Alert.alert("タイムアウト", TIMEOUT_NOTICE_MESSAGE);
+        }
       } else {
         Alert.alert("エラー", e?.message ?? "送信に失敗しました。");
       }
@@ -724,9 +741,11 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                   )}
 
                   {/* 送信が時間切れになったときの、取り直しの導線 (#1049 F7-18) */}
-                  {timedOutSessionId != null && timedOutSessionId === currentSessionId && !sending && (
+                  {timedOutSend != null && timedOutSend.sessionId === currentSessionId && !sending && (
                     <View testID="ai-timeout-notice" style={styles.timeoutNotice}>
-                      <Text style={styles.timeoutNoticeText}>{TIMEOUT_NOTICE_MESSAGE}</Text>
+                      <Text style={styles.timeoutNoticeText}>
+                        {timedOutSend.delivered ? TIMEOUT_DELIVERED_NO_REPLY_MESSAGE : TIMEOUT_NOTICE_MESSAGE}
+                      </Text>
                       <Pressable
                         testID="ai-timeout-reload"
                         accessibilityRole="button"

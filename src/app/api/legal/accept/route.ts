@@ -43,7 +43,7 @@ export async function POST(request: Request) {
   const logger = createLogger('POST /api/legal/accept', generateRequestId());
 
   try {
-    const supabase = createClient();
+    const supabase = await createClient();
     const {
       data: { user },
       error: authError,

@@ -45,9 +45,27 @@ export const LeaveFamilyResponseSchema = apiResponse(z.object({
   left_at: z.string().datetime(),
 }));
 
+/**
+ * GET /api/family/members/names の 1 行 (#1584)。家族の画面に出すメンバーの名前だけを返す (ほかの列は返さない)。
+ * name = family_members.display_name、それが無ければ本人のプロフィールの今の名前 (user_profiles.nickname)、両方無ければ null。
+ */
+export const FamilyMemberNameSchema = z
+  .object({
+    id: z.string().uuid(),
+    name: z.string().nullable(),
+  })
+  .strict();
+
+/** GET /api/family/members/names の応答の data */
+export const FamilyMemberNamesDataSchema = z.object({
+  members: z.array(FamilyMemberNameSchema),
+});
+
 export type FamilyMemberStatus = z.infer<typeof FamilyMemberStatusSchema>;
 export type FamilyMember = z.infer<typeof FamilyMemberSchema>;
 export type AddFamilyChildBody = z.infer<typeof AddFamilyChildBodySchema>;
 export type PromoteChildBody = z.infer<typeof PromoteChildBodySchema>;
 export type RemoveFamilyMemberBody = z.infer<typeof RemoveFamilyMemberBodySchema>;
 export type LeaveFamilyResponse = z.infer<typeof LeaveFamilyResponseSchema>;
+export type FamilyMemberName = z.infer<typeof FamilyMemberNameSchema>;
+export type FamilyMemberNamesData = z.infer<typeof FamilyMemberNamesDataSchema>;

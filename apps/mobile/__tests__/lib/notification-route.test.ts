@@ -33,7 +33,7 @@ describe('resolveNotificationHref (#1049 F7-11)', () => {
 
   it('画面が無い下位のパスは、一番近い上位の画面にする (下位のためのクエリは引き継がない)', () => {
     expect(resolveNotificationHref({ deep_link: 'homegohan://family/meal-requests' })).toBe('/family');
-    expect(resolveNotificationHref({ path: '/health/checkups/abc?x=1' })).toBe('/health/checkups');
+    expect(resolveNotificationHref({ path: '/health/streaks/abc?x=1' })).toBe('/health/streaks');
   });
 
   it.each([
@@ -103,5 +103,32 @@ describe('NOTIFICATION_ROUTES の画面は apps/mobile/app/ に実在する (#10
       .map((part) => (part.startsWith(':') ? ':' : part))
       .join('/');
     expect(routes).toContain(normalized);
+  });
+});
+
+describe('notificationRoute.ts の説明の指し先 (#1049 の整合ゲート)', () => {
+  const MOBILE_ROOT = path.resolve(__dirname, '../..');
+  const REPO_ROOT = path.resolve(MOBILE_ROOT, '../..');
+  const source = fs.readFileSync(path.join(MOBILE_ROOT, 'src/lib/notificationRoute.ts'), 'utf8');
+
+  it('homegohan:// の後ろがアプリ内のパスになる根拠は、app.json の scheme (行き先の頭の DEEP_LINK_SCHEME と同じ)', () => {
+    const appJson = JSON.parse(fs.readFileSync(path.join(MOBILE_ROOT, 'app.json'), 'utf8')) as { expo: { scheme: string } };
+    expect(appJson.expo.scheme).toBe('homegohan');
+    expect(source).toContain(`const DEEP_LINK_SCHEME = "${appJson.expo.scheme}://";`);
+    expect(source).toMatch(/app\.json の scheme が "homegohan"/);
+  });
+
+  it('説明が指す設計書の節 (docs/design/mobile/<ファイル> §n.n) は、すべて実在する', () => {
+    const header = source.slice(0, source.indexOf('const DEEP_LINK_SCHEME'));
+    const refs = [...header.matchAll(/(0\d-[a-z-]+\.md) §(\d+\.\d+)/g)].map((m) => ({ file: m[1], section: m[2] }));
+    expect(refs.length).toBeGreaterThanOrEqual(2);
+    for (const { file, section } of refs) {
+      const doc = fs.readFileSync(path.join(REPO_ROOT, 'docs/design/mobile', file), 'utf8');
+      expect(doc).toMatch(new RegExp(`^### ${section.replace('.', '\\.')} `, 'm'));
+    }
+  });
+
+  it('02-deep-link.md §3.1 (受ける URL の一覧) を、パスの当て方の根拠として指さない (§3.1 にその記述は無い)', () => {
+    expect(source).not.toMatch(/02-deep-link\.md §3\.1 のとおり/);
   });
 });
