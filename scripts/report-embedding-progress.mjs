@@ -5,15 +5,20 @@
  */
 
 import { readFileSync, writeFileSync } from 'fs';
-import { execSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
+import { quoteShellArg } from './lib/shell-quote-arg.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const STATUS_FILE = "/tmp/embedding-status.json";
 const LOG_FILE = "/tmp/embedding-resume.log";
 const REPORT_FILE = "/tmp/embedding-report.txt";
+/** 完了していないときに、次に進捗を見るまでの間隔 (分) */
+const RERUN_DELAY_MINUTES = 5;
+const SECONDS_PER_MINUTE = 60;
+
 
 function checkProgress() {
   try {
@@ -124,10 +129,18 @@ if (shouldContinue) {
   
   // atコマンドで5分後に実行
   // ラッパースクリプトを使うことで、出力をターミナルに表示
-  const atCommand = `echo '${wrapperPath}' | at now + 5 minutes 2>&1`;
-  
+  // #1444 (CodeQL js/shell-command-injection-from-environment): パスをシェルのコマンド文字列に埋め込まない。
+  // at はシェルを通さずに引数の配列で起動する。at は標準入力をジョブとしてシェルで実行するので、
+  // 実行するパスはシェルの 1 語に引用してから標準入力で渡す
   try {
-    const result = execSync(atCommand, { encoding: 'utf-8' });
+    const at = spawnSync('at', ['now', '+', String(RERUN_DELAY_MINUTES), 'minutes'], {
+      encoding: 'utf-8',
+      input: `${quoteShellArg(wrapperPath)}\n`,
+    });
+    if (at.error) throw at.error;
+    if (at.status !== 0) throw new Error(`at exited with ${at.status}: ${at.stderr}`);
+    // at は「job N at ...」を標準エラーに出す (以前は 2>&1 でまとめて表示していた)
+    const result = `${at.stdout}${at.stderr}`;
     console.log('⏰ 5分後に再実行をスケジュールしました');
     if (result.trim()) {
       console.log(`   ${result.trim()}\n`);
@@ -137,7 +150,11 @@ if (shouldContinue) {
   } catch (e) {
     // atコマンドが使えない場合、バックグラウンドでsleepしてから実行
     console.log('⏰ バックグラウンドで5分待機してから再実行します...\n');
-    const bgCommand = `(sleep 300 && ${wrapperPath}) &`;
-    execSync(bgCommand, { stdio: 'inherit' });
+    // パスはシェルの文字列に埋め込まず、位置引数 ($1) で渡す
+    const child = spawn('sh', ['-c', 'sleep "$0" && exec "$1"', String(RERUN_DELAY_MINUTES * SECONDS_PER_MINUTE), wrapperPath], {
+      detached: true,
+      stdio: 'inherit',
+    });
+    child.unref();
   }
 }
