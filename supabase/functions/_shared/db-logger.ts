@@ -152,9 +152,20 @@ export function createLogger(functionName: string, requestId?: string) {
   };
 }
 
+/** リクエスト ID の乱数の部分のバイト数 (16 進で 12 文字 = 48 ビット。同じミリ秒に作った ID どうしが重ならない程度) */
+const REQUEST_ID_RANDOM_BYTES = 6;
+/** 1 バイトを 16 進で書いたときの桁数 */
+const HEX_DIGITS_PER_BYTE = 2;
+
 /**
  * リクエストIDを生成
+ *
+ * 形は「req_<ミリ秒>_<英小文字と数字>」(以前と同じ)。乱数の部分は crypto.getRandomValues で作る
+ * (#1444 CodeQL js/insecure-randomness: Math.random は推測できる。ID はログの突き合わせに使うだけだが、
+ * 推測できる乱数を使う場所を残さない)。ブラウザ・Node・Deno のどれにも globalThis.crypto がある。
  */
 export function generateRequestId(): string {
-  return `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(REQUEST_ID_RANDOM_BYTES));
+  const random = Array.from(bytes, (byte) => byte.toString(16).padStart(HEX_DIGITS_PER_BYTE, "0")).join("");
+  return `req_${Date.now()}_${random}`;
 }
