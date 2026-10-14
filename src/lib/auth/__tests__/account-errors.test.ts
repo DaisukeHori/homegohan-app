@@ -19,6 +19,7 @@ import {
   isRateLimitAuthError,
   isSessionExpiredAuthError,
 } from '../account-errors';
+import { CAPTCHA_FAILED_MESSAGE } from '../turnstile';
 
 const invalidCredentials = {
   name: 'AuthApiError',
@@ -81,6 +82,16 @@ describe('describePasswordChangeError: 現在のパスワードでの再認証 (
     expect(
       describePasswordChangeError({ name: 'AuthApiError', status: 429, code: 'over_request_rate_limit', message: 'x' }, 'reauth'),
     ).toContain('しばらく待ってから');
+  });
+
+  it('#1474: Supabase の CAPTCHA が本人確認を断った (captcha_failed) ら、パスワード違いではなく、ボットの確認の文言を出す', () => {
+    const captchaFailed = { name: 'AuthApiError', status: 400, code: 'captcha_failed', message: 'captcha verification process failed' };
+    expect(describePasswordChangeError(captchaFailed, 'reauth')).toBe(CAPTCHA_FAILED_MESSAGE);
+    // コードが無くても、メッセージに captcha が入っていれば同じ (isCaptchaFailure と同じ判定)
+    expect(describePasswordChangeError({ status: 400, message: 'captcha protection: request disallowed' }, 'reauth')).toBe(
+      CAPTCHA_FAILED_MESSAGE,
+    );
+    expect(describePasswordChangeError(captchaFailed, 'reauth')).not.toContain('現在のパスワードが正しくありません');
   });
 
   it('それ以外のエラーは、英語のメッセージをそのまま出さず、汎用の文言にする', () => {

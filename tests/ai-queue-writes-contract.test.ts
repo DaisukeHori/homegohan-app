@@ -120,10 +120,10 @@ const ALLOWED_RECEIVERS: Record<string, { receiver: string; serviceRoleEvidence:
     receiver: 'params.supabase',
     serviceRoleEvidence: /export async function markWeeklyMenuRequestStaleIfUnchanged/,
   },
-  // Vercel Cron。service role の鍵でクライアントを作る
+  // Vercel Cron。service role のクライアントを canonical の getSupabaseAdmin で作る (#1162)
   'src/app/api/cron/process-menu-queue/route.ts': {
     receiver: 'supabase',
-    serviceRoleEvidence: /const supabase = createClient\(supabaseUrl, serviceRoleKey\)/,
+    serviceRoleEvidence: /const supabase = getSupabaseAdmin\(\)/,
   },
 };
 

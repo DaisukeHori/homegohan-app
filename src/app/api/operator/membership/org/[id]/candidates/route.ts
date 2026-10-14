@@ -4,28 +4,16 @@
  * 05-operator-emergency-ui.md §E 準拠
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 
 export const dynamic = 'force-dynamic';
 
 const ROUTE_NAME = 'GET /api/operator/membership/org/[id]/candidates';
-
-/**
- * 通知・候補の取得に使う service_role のクライアント。接続情報は env-required の getter で取り出す (#1434)。
- * 欠けていれば MissingEnvError (message は固定の文で、変数名はサーバーのログにだけ残る)。
- */
-function getServiceRoleClient() {
-  const { url, serviceRoleKey } = getSupabaseServiceConfig();
-  return createSupabaseClient(url, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
 
 export async function GET(
   _req: NextRequest,
@@ -36,7 +24,7 @@ export async function GET(
     const { userId: operatorId } = await requireSuperAdmin();
     const { id: orgId } = params;
 
-    const admin = getServiceRoleClient();
+    const admin = getSupabaseAdmin();
 
     const { data, error } = await admin
       .from('user_profiles')
