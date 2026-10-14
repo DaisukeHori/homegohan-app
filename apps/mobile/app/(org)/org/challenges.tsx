@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { formatParticipantCount } from "@homegohan/shared";
 
 import { Card, Button, SectionHeader, StatusBadge, LoadingState, EmptyState } from "../../../src/components/ui";
 import { Input } from "../../../src/components/ui";
@@ -16,7 +17,10 @@ type Challenge = {
   startDate: string;
   endDate: string;
   status: string;
-  participantCount: number;
+  // 参加者が最小人数 (ORG_CHALLENGE_MIN_PARTICIPANTS。@homegohan/shared) に満たないときは null (API が人数を返さない。少人数だと誰が参加しているかが分かってしまうため)
+  participantCount: number | null;
+  // 人数と平均を出すのに必要な、参加者の最小人数 (平均は Web の管理画面に表示する)
+  aggregate?: { minParticipants: number };
 };
 
 const STATUS_MAP: Record<string, { variant: "completed" | "pending" | "generating" | "info"; label: string }> = {
@@ -105,7 +109,7 @@ export default function OrgChallengesPage() {
             <Input
               value={challengeType}
               onChangeText={setChallengeType}
-              placeholder="breakfast_rate / veg_score / cooking_rate / steps / weight_loss / custom"
+              placeholder="breakfast_rate / veg_score / cooking_rate (歩数・体重は準備中)"
               label="チャレンジタイプ"
             />
             <Input value={startDate} onChangeText={setStartDate} placeholder="YYYY-MM-DD" label="開始日" />
@@ -147,7 +151,9 @@ export default function OrgChallengesPage() {
                     </View>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                       <Ionicons name="people" size={14} color={colors.textMuted} />
-                      <Text style={{ fontSize: 13, color: colors.textMuted }}>参加 {c.participantCount}人</Text>
+                      <Text style={{ fontSize: 13, color: colors.textMuted }}>
+                        参加 {formatParticipantCount(c.participantCount, c.aggregate?.minParticipants)}
+                      </Text>
                     </View>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                       <Ionicons name="calendar" size={14} color={colors.textMuted} />
