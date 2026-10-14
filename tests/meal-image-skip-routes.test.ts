@@ -89,6 +89,8 @@ const h = vi.hoisted(() => ({
     saveError: null as { code: string; message: string } | null,
     /** meal_image_jobs の insert の結果 */
     queueError: null as { code: string; message: string } | null,
+    /** meal_image_jobs の insert の結果を行ごとに決める (#1532。queueError より優先) */
+    queueErrorFor: null as ((row: Record<string, unknown>) => { code: string; message: string } | null) | null,
     writes: [] as Array<{ table: string; op: 'insert' | 'update' | 'upsert'; payload: unknown }>,
     queueInserts: [] as Array<Record<string, unknown>>,
   },
@@ -182,7 +184,8 @@ function makeQueueDb() {
     from: (table: string) => ({
       insert: async (row: Record<string, unknown>) => {
         if (table !== 'meal_image_jobs') throw new Error(`unexpected queue table ${table}`);
-        if (h.state.queueError) return { data: null, error: h.state.queueError };
+        const error = h.state.queueErrorFor ? h.state.queueErrorFor(row) : h.state.queueError;
+        if (error) return { data: null, error };
         h.state.queueInserts.push(row);
         return { data: null, error: null };
       },
@@ -236,15 +239,24 @@ interface Entry {
   run: () => Promise<Outcome>;
 }
 
+/** 入口へ送る x-request-id (#1532。null なら送らない) */
+let requestIdHeader: string | null = null;
+/** 入口へ送る料理 (#1532 で 2 品にする。既定はカレー 1 品) */
+let submittedDishes: MealImageDish[] = [CURRY];
+
 const json = (url: string, method: string, body: unknown) =>
-  new Request(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  new Request(url, {
+    method,
+    headers: { 'content-type': 'application/json', ...(requestIdHeader === null ? {} : { 'x-request-id': requestIdHeader }) },
+    body: JSON.stringify(body),
+  });
 
 const ENTRIES: Entry[] = [
   {
     name: 'POST /api/meals',
     updates: false,
     run: async () => {
-      const res = await mealsPost(json('http://localhost/api/meals', 'POST', { date: '2026-10-11', mealType: 'dinner', dishName: 'カレー', dishes: [CURRY] }));
+      const res = await mealsPost(json('http://localhost/api/meals', 'POST', { date: '2026-10-11', mealType: 'dinner', dishName: 'カレー', dishes: submittedDishes }));
       return { status: res.status, ...((await res.json()) as Outcome) };
     },
   },
@@ -252,7 +264,7 @@ const ENTRIES: Entry[] = [
     name: 'POST /api/meal-plans/meals',
     updates: false,
     run: async () => {
-      const res = await mealPlansPost(json('http://localhost/api/meal-plans/meals', 'POST', { dayDate: '2026-10-11', mealType: 'dinner', dishName: 'カレー', dishes: [CURRY] }));
+      const res = await mealPlansPost(json('http://localhost/api/meal-plans/meals', 'POST', { dayDate: '2026-10-11', mealType: 'dinner', dishName: 'カレー', dishes: submittedDishes }));
       return { status: res.status, ...((await res.json()) as Outcome) };
     },
   },
@@ -260,7 +272,7 @@ const ENTRIES: Entry[] = [
     name: 'PATCH /api/meals/[id]',
     updates: true,
     run: async () => {
-      const res = await mealsPatch(json(`http://localhost/api/meals/${MEAL_ID}`, 'PATCH', { dishes: [CURRY] }), { params: { id: MEAL_ID } });
+      const res = await mealsPatch(json(`http://localhost/api/meals/${MEAL_ID}`, 'PATCH', { dishes: submittedDishes }), { params: { id: MEAL_ID } });
       return { status: res.status, ...((await res.json()) as Outcome) };
     },
   },
@@ -268,7 +280,7 @@ const ENTRIES: Entry[] = [
     name: 'PATCH /api/meal-plans/meals/[id]',
     updates: true,
     run: async () => {
-      const res = await mealPlansPatch(json(`http://localhost/api/meal-plans/meals/${MEAL_ID}`, 'PATCH', { dishes: [CURRY] }), { params: { id: MEAL_ID } });
+      const res = await mealPlansPatch(json(`http://localhost/api/meal-plans/meals/${MEAL_ID}`, 'PATCH', { dishes: submittedDishes }), { params: { id: MEAL_ID } });
       return { status: res.status, ...((await res.json()) as Outcome) };
     },
   },
@@ -280,7 +292,7 @@ const ENTRIES: Entry[] = [
       const out = await runConsultationAction(db as unknown as Parameters<typeof runConsultationAction>[0], { id: USER_ID }, {
         id: 'action-1',
         action_type: 'update_meal',
-        action_params: { mealId: MEAL_ID, updates: { dishes: [CURRY] } },
+        action_params: { mealId: MEAL_ID, updates: { dishes: submittedDishes } },
       } as unknown as Parameters<typeof runConsultationAction>[2]);
       return { status: out.success ? 200 : 500, ...((out.result ?? {}) as Outcome) };
     },
@@ -302,6 +314,9 @@ beforeEach(() => {
   h.state.existingSourceType = null;
   h.state.saveError = null;
   h.state.queueError = null;
+  h.state.queueErrorFor = null;
+  requestIdHeader = null;
+  submittedDishes = [CURRY];
   h.state.writes = [];
   h.state.queueInserts = [];
   h.checkRateLimit.mockResolvedValue({ success: true, limit: 1, remaining: 0, reset: 0 });
@@ -833,5 +848,79 @@ describe('#1487 J. 新しく作る入口 (POST) で送られた写真の料理�
       });
       expect(savedRow().image_url).toBe(PHOTO_URL);
     }
+  });
+});
+
+const SOUP = { name: '味噌汁', role: 'soup' };
+const PERMISSION_DENIED = { code: '42501', message: 'permission denied for table meal_image_jobs' };
+const UNIQUE_VIOLATION = { code: '23505', message: 'duplicate key value' };
+/** 4 本の HTTP の入口 (x-request-id を読む入口。AI 相談の update_meal はアクションの id を使う) */
+const HTTP_ENTRIES = ENTRIES.filter((entry) => entry.name.includes('/api/'));
+
+describe.each(ENTRIES)('#1532 処理を起こす条件と件数: $name', (entry) => {
+  it('積めた行の数だけを limit に渡す (2 品のうち 1 品の書き込みが失敗したら 1)', async () => {
+    submittedDishes = [CURRY, SOUP];
+    h.state.queueErrorFor = (row) => (row.dish_index === 1 ? PERMISSION_DENIED : null);
+    const out = await entry.run();
+
+    expect(out.status).toBe(200);
+    expect(h.state.queueInserts.map((row) => row.dish_index)).toEqual([0]);
+    expect(h.trigger).toHaveBeenCalledTimes(1);
+    expect(h.trigger).toHaveBeenCalledWith({ plannedMealId: MEAL_ID, limit: 1 });
+  });
+
+  it('2 品とも積めたら limit は 2', async () => {
+    submittedDishes = [CURRY, SOUP];
+    await entry.run();
+
+    expect(h.state.queueInserts).toHaveLength(2);
+    expect(h.trigger).toHaveBeenCalledWith({ plannedMealId: MEAL_ID, limit: 2 });
+  });
+
+  it('1 行も積めず待ちのジョブも無い (書き込みの失敗だけ) なら、処理を起こさない (空振りの呼び出しを出さない)', async () => {
+    h.state.queueError = PERMISSION_DENIED;
+    const out = await entry.run();
+
+    expect(out.status).toBe(200);
+    expect(h.state.queueInserts).toEqual([]);
+    expect(h.trigger).not.toHaveBeenCalled();
+  });
+
+  it('同じ料理のジョブが待ち・処理中 (重複) なら、その件数で処理を起こす (前の呼び出しが失敗して待ちのまま残ったジョブを処理させる)', async () => {
+    h.state.queueError = UNIQUE_VIOLATION;
+    await entry.run();
+
+    expect(h.state.queueInserts).toEqual([]);
+    expect(h.trigger).toHaveBeenCalledTimes(1);
+    expect(h.trigger).toHaveBeenCalledWith({ plannedMealId: MEAL_ID, limit: 1 });
+  });
+});
+
+describe.each(HTTP_ENTRIES)('#1532 x-request-id を request_id (uuid の列) に入れるのは uuid のときだけ: $name', (entry) => {
+  it.each([
+    ['uuid でない値', 'req-123'],
+    ['空白入りの値', ' 5f0c6a3e-2b9d-4c1a-8e7f-0a1b2c3d4e5f '],
+    ['桁の足りない uuid に似た値', '5f0c6a3e-2b9d-4c1a-8e7f-0a1b2c3d4e5'],
+  ])('%s は null にして積み、保存は成功させる', async (_label, header) => {
+    requestIdHeader = header;
+    const out = await entry.run();
+
+    expect(out.status).toBe(200);
+    expect(h.state.queueInserts).toHaveLength(1);
+    expect(h.state.queueInserts[0].request_id).toBeNull();
+    expect(h.trigger).toHaveBeenCalledTimes(1);
+  });
+
+  it('uuid の値はそのまま入れる', async () => {
+    requestIdHeader = '5F0C6A3E-2B9D-4C1A-8E7F-0A1B2C3D4E5F';
+    await entry.run();
+
+    expect(h.state.queueInserts[0].request_id).toBe('5F0C6A3E-2B9D-4C1A-8E7F-0A1B2C3D4E5F');
+  });
+
+  it('ヘッダが無ければ null', async () => {
+    await entry.run();
+
+    expect(h.state.queueInserts[0].request_id).toBeNull();
   });
 });
