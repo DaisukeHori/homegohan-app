@@ -35,6 +35,9 @@ const ROOT = path.resolve(__dirname, '..');
 /** 走査する本番コードの置き場 (src/app・src/lib を含む)。canonical の lib/supabase/server.ts は lib にある */
 const SCAN_ROOTS = ['src', 'lib'];
 
+/** canonical の getSupabaseAdmin があるファイル */
+const CANONICAL_FILE = 'lib/supabase/server.ts';
+
 const SUPABASE_JS_MODULE = '@supabase/supabase-js';
 const SUPABASE_SSR_MODULE = '@supabase/ssr';
 const SUPABASE_JS_CLIENT_FACTORY = 'createClient';
@@ -62,7 +65,7 @@ interface AllowedClientCreator {
 /** @supabase/supabase-js の createClient を値として import してよいファイル (リポジトリの根からの相対パス) */
 const SUPABASE_JS_CLIENT_ALLOWLIST: readonly AllowedClientCreator[] = [
   {
-    file: 'lib/supabase/server.ts',
+    file: CANONICAL_FILE,
     serviceRole: true,
     why: 'canonical の getSupabaseAdmin (#1028 / #1162)。service_role のクライアントはここでだけ作る',
   },
@@ -224,7 +227,7 @@ describe('service_role の Supabase クライアントは canonical の getSupab
   const allowlisted = new Map(SUPABASE_JS_CLIENT_ALLOWLIST.map((entry) => [entry.file, entry]));
 
   it('走査の対象が空でない (置き場の名前が変わっても空振りしない)', () => {
-    expect(sources.has('lib/supabase/server.ts')).toBe(true);
+    expect(sources.has(CANONICAL_FILE)).toBe(true);
     expect(sources.has('src/lib/env-required.ts')).toBe(true);
     expect([...sources.keys()].some((file) => file.startsWith('src/app/api/'))).toBe(true);
     expect([...sources.keys()].some((file) => file.startsWith('src/lib/'))).toBe(true);
@@ -247,13 +250,15 @@ describe('service_role の Supabase クライアントは canonical の getSupab
     expect(offenders).toEqual([]);
   });
 
-  it('@supabase/ssr のクライアントを作るファイルは、service_role の鍵の取り出し口に触れない', () => {
+  it('@supabase/ssr のクライアントを作るファイルは、service_role の鍵の取り出し口に触れない (canonical を除く)', () => {
     const ssrFiles = [...sources.entries()].filter(([file, source]) => createsSsrClient(source, file));
     const offenders = ssrFiles
+      // canonical は Cookie のセッションのクライアント (createClient。anon キー) と getSupabaseAdmin を同じファイルに持つ
+      .filter(([file]) => file !== CANONICAL_FILE)
       .map(([file, source]) => ({ file, serviceRoleKeySources: findServiceRoleKeySources(source, file) }))
       .filter((entry) => entry.serviceRoleKeySources.length > 0);
 
-    expect(ssrFiles.map(([file]) => file)).toContain('lib/supabase/server.ts');
+    expect(ssrFiles.map(([file]) => file)).toContain(CANONICAL_FILE);
     expect(offenders).toEqual([]);
   });
 
@@ -267,10 +272,10 @@ describe('service_role の Supabase クライアントは canonical の getSupab
   });
 
   it('canonical の lib/supabase/server.ts が getSupabaseAdmin を export し、service_role の鍵で作る', () => {
-    const source = sources.get('lib/supabase/server.ts') ?? '';
+    const source = sources.get(CANONICAL_FILE) ?? '';
 
     expect(source).toMatch(/export function getSupabaseAdmin\(\)/);
-    expect(findServiceRoleKeySources(source, 'lib/supabase/server.ts')).toEqual(['getSupabaseServiceRoleKey']);
+    expect(findServiceRoleKeySources(source, CANONICAL_FILE)).toEqual(['getSupabaseServiceRoleKey']);
   });
 
   // 以前 service_role のクライアントを自前で作っていた route。canonical から取り込んでいることを確かめる
