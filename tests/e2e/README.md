@@ -110,7 +110,7 @@ artifact には上げず、`tests/e2e/.output/` (失敗時のスクリーンシ�
 
 ## Turnstile (ログイン・新規登録・パスワード再設定の bot 対策、#1165)
 
-`auth-turnstile.spec.ts` は、Web の 3 画面に出す Cloudflare Turnstile が、本物のブラウザ・本物の CSP (`next.config.mjs`) ・
+`auth-turnstile.spec.ts` は、Web の 3 画面とメール確認の再送 (`/auth/verify`、#1474) に出す Cloudflare Turnstile が、本物のブラウザ・本物の CSP (`next.config.mjs`) ・
 本物の Cloudflare の `api.js` と、Cloudflare 公式のテスト用サイトキーで動くことを確かめる
 (単体テストは `window.turnstile` の偽物を使うので、CSP が止めていないかは、ここでしか確かめられない)。
 Supabase の Auth API はブラウザの通信を差し替えるので、Supabase にも実在のユーザーにも繋がない。

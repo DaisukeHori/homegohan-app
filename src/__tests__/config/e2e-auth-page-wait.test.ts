@@ -15,8 +15,13 @@ const E2E_DIR = path.join(ROOT, 'tests/e2e');
 /** Playwright の出力・レポートの置き場所。検査しない */
 const SKIPPED_DIRS = new Set(['.output', '.report', 'node_modules']);
 
-/** Turnstile のウィジェットを出す Web の画面 (src/app/(auth) のログイン・新規登録・パスワード再設定) への goto */
-const AUTH_PAGE_GOTO = /\.goto\(\s*[`'"][^`'"]*\/(login|signup|auth\/forgot-password|auth\/reset-password)\b/;
+/**
+ * Turnstile のウィジェットを出す Web の画面への goto
+ * (src/app/(auth) のログイン・新規登録・パスワード再設定と、#1474 で足したメール確認の再送 /auth/verify・
+ *  設定のパスワード変更 /settings/account)
+ */
+const AUTH_PAGE_GOTO =
+  /\.goto\(\s*[`'"][^`'"]*\/(login|signup|auth\/forgot-password|auth\/reset-password|auth\/verify|settings\/account)\b/;
 /** goto のあと、別の画面へ移ったとみなす操作 (ここから先は、その画面の networkidle ではない) */
 const LEAVES_PAGE = /\.goto\(|\.click\(|waitForURL\(/;
 /** networkidle を待つ呼び出し (waitForLoadState("networkidle") と goto / waitForURL の waitUntil: "networkidle")。コメントの文字列は対象外 */
@@ -86,6 +91,9 @@ describe('e2e: ログイン系の画面では networkidle を待たない (#1165
       ['await page.goto("/signup");', 'await page.waitForLoadState("networkidle");'].join('\n'),
       ['await page.goto(`${baseURL}/auth/reset-password`);', 'await page.waitForLoadState("networkidle");'].join('\n'),
       ['await page.goto("/auth/forgot-password");', 'await page.waitForLoadState("networkidle");'].join('\n'),
+      // #1474: メール確認の再送と、設定のパスワード変更にもウィジェットを出す
+      ['await page.goto("/auth/verify?email=a%40example.com");', 'await page.waitForLoadState("networkidle");'].join('\n'),
+      'await page.goto("/settings/account", { waitUntil: "networkidle" });',
     ];
     for (const sample of samples) {
       expect(findNetworkIdleOnAuthPages('sample.spec.ts', sample), sample).toHaveLength(1);
