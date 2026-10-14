@@ -20,7 +20,8 @@
  * (下の「サーバーログ (POST /api/log) への、削除の 0 件の記録」)。
  *
  * 本物を使うもの: supabase-js / auth-js (GoTrueClient)、secureSessionStorage、signOut.ts、pushNotifications.ts、webViewAuthMessages.ts、
- *                 api.ts (共通の HTTP クライアント)
+ *                 api.ts (共通の HTTP クライアント)。最後の describe では、AuthProvider と端末データの掃除
+ *                 (userScopedLocalData.ts・user-storage.ts) も本物 (#1615)
  * 差し替えるもの: fetch (Supabase と /api/log のサーバー役)、expo-secure-store / AsyncStorage (メモリ上。実機に近づけるため数 ms 遅らせる)、
  *                 expo-notifications など端末の機能
  */
@@ -554,5 +555,88 @@ describe('サーバーログ (POST /api/log) への、削除の 0 件の記録 (
 
     expect(result).toBe('signed-out');
     expect(server.appLogs).toEqual([{ authorization: `Bearer ${accessToken}`, body: noRowsLog(true) }]);
+  });
+});
+
+describe('AuthProvider と一緒に動かしたとき: session-expired の getUser() が SIGNED_OUT を起こしても、控えた push token の値で行を消す (#1615)', () => {
+  // AuthProvider は SIGNED_OUT で利用者別の端末データを掃除する (#1615)。session-expired では、getUser() が失効を見つけて
+  // 端末のセッションを消すと SIGNED_OUT が届き、その掃除が、ログアウト (signOutWithCleanup) の push token の行の削除より先に走る。
+  // 掃除がこの端末の push token の値 (push_token_value_v1:<利用者>) まで消すと、削除が値を読めず、端末から取り直せなければ
+  // 行が残って、共有端末で前の利用者宛ての通知が届く (#1038 F7-10)。SIGNED_OUT の掃除は値を残すので、控えた値で行を消せる。
+  // 本物の AuthProvider・本物の掃除 (userScopedLocalData.ts → user-storage.ts)・本物の supabase-js で通す
+  it('SIGNED_OUT の掃除が先に走っても、保存済みの値で本人の行を消し、端末から取り直さない。値は削除のあとの掃除で消える', async () => {
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    // loadModules() が jest.resetModules() したあとのモジュールの表から読む (supabase のクライアント・AsyncStorage を共有するため)
+    const React = require('react') as typeof import('react');
+    const { Text } = require('react-native') as typeof import('react-native');
+    const { render, waitFor, act } = require('@testing-library/react-native') as typeof import('@testing-library/react-native');
+    const { AuthProvider, useAuth } = require('../../src/providers/AuthProvider') as typeof import('../../src/providers/AuthProvider');
+    const { PERSISTENCE_KEYS } = require('../../src/lib/persistence') as typeof import('../../src/lib/persistence');
+    const Notifications = require('expo-notifications') as { getExpoPushTokenAsync: jest.Mock };
+    /* eslint-enable @typescript-eslint/no-require-imports */
+
+    const pushTokenValueKey = `push_token_value_v1:${USER_ID}`;
+    const rangeDaysKey = PERSISTENCE_KEYS.v4_range_days.key;
+    await m.AsyncStorage.setItem(rangeDaysKey, JSON.stringify({ data: 7 }));
+
+    // 端末のストレージへの呼び出しの順を記録する (呼び出した時点で。本物の AsyncStorage も呼び出しの順に処理する)
+    const storageLog: string[] = [];
+    const storage = m.AsyncStorage as unknown as {
+      multiRemove: (keys: string[]) => Promise<void>;
+      getItem: (key: string) => Promise<string | null>;
+    };
+    const originalMultiRemove = storage.multiRemove.bind(storage);
+    const originalGetItem = storage.getItem.bind(storage);
+    storage.multiRemove = (keys: string[]) => {
+      storageLog.push(keys.includes(pushTokenValueKey) ? 'multiRemove:with-push-token-value' : 'multiRemove:keeps-push-token-value');
+      return originalMultiRemove(keys);
+    };
+    storage.getItem = (key: string) => {
+      if (key === pushTokenValueKey) storageLog.push('getItem:push-token-value');
+      return originalGetItem(key);
+    };
+
+    function Probe() {
+      const { session } = useAuth();
+      return React.createElement(Text, { testID: 'session' }, session ? 'signed-in' : 'none');
+    }
+    const api = render(React.createElement(AuthProvider, { children: React.createElement(Probe) }));
+    try {
+      // 起動時の復元 (getUser() はまだ生きているので通る) で、AuthProvider が利用者を覚える
+      await waitFor(() => expect(api.getByTestId('session').props.children).toBe('signed-in'));
+      expect(storageLog).toEqual([]);
+
+      // Web のログアウトで、全端末のセッションが失効した。そのあとに Web から session-expired が届く
+      server.sessionRevoked = true;
+      server.calls.length = 0;
+      const tab = makeDeps();
+      let result: unknown;
+      await act(async () => {
+        result = await m.handleWebAuthMessage({ type: 'session-expired' }, PAGE, tab.deps);
+      });
+
+      expect(result).toBe('signed-out');
+      // この試験が見たい順番になっている: SIGNED_OUT の掃除 (値を残す) → 削除が値を読む → 削除のあとの掃除 (値も消す)
+      const signedOutCleanup = storageLog.indexOf('multiRemove:keeps-push-token-value');
+      const readForDelete = storageLog.indexOf('getItem:push-token-value');
+      const cleanupAfterDelete = storageLog.indexOf('multiRemove:with-push-token-value');
+      expect(signedOutCleanup).toBeGreaterThanOrEqual(0);
+      expect(readForDelete).toBeGreaterThan(signedOutCleanup);
+      expect(cleanupAfterDelete).toBeGreaterThan(readForDelete);
+
+      // 保存済みの値で、本人の JWT を付けて、この端末の行だけを消した。端末から取り直していない
+      expectOneDeleteWithUserJwt();
+      expectOnlyThisDeviceRowDeleted();
+      expect(Notifications.getExpoPushTokenAsync).not.toHaveBeenCalled();
+
+      // 最後には、値もほかの利用者別のキーも消えている
+      expect(await m.AsyncStorage.getItem(pushTokenValueKey)).toBeNull();
+      expect(await m.AsyncStorage.getItem(rangeDaysKey)).toBeNull();
+      expect(api.getByTestId('session').props.children).toBe('none');
+      expect(tab.goToWelcome).toHaveBeenCalledTimes(1);
+      expect(await nativeSessionIsGone()).toBe(true);
+    } finally {
+      api.unmount();
+    }
   });
 });

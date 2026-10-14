@@ -12,7 +12,9 @@
  *        (webViewUserStorageCleanup.ts。ネイティブのログアウトは Web の画面の掃除を通らないため)
  *      - 掃除は userScopedLocalData.ts の clearUserScopedLocalData にまとめてあり、起動時に失効が分かったときの
  *        端末側だけのサインアウト (AuthProvider) も同じものを通る (#1599)。AuthProvider は、起動時に未ログインと決まったときと
- *        SIGNED_OUT でも同じものを通す (#1615)。ここでのサインアウトのあとに届く SIGNED_OUT で、掃除がもう一度走る (害は無い)
+ *        SIGNED_OUT でも同じものを通す (#1615)。ここでのサインアウトのあとに届く SIGNED_OUT で、掃除がもう一度走る (害は無い)。
+ *        Web の session-expired では、getUser() が端末のセッションを消すので、SIGNED_OUT の掃除が 1 より前に走ることがある。
+ *        SIGNED_OUT の掃除は push token の値 (1 で読む) を残すので、1 は控えた値で行を消せる (AuthProvider.tsx の先頭の表)
  *   3. サインアウト (保管庫のセッションを消す)
  *
  * アカウント削除では使わない。auth.users の削除で user_push_tokens が ON DELETE CASCADE で消える。

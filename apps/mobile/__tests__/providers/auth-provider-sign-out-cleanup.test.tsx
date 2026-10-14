@@ -88,9 +88,18 @@ async function seedPreviousUserData() {
   ]);
 }
 
-async function expectPreviousUserDataCleared() {
+/**
+ * 前の利用者の値が消えていること。
+ * pushTokenValue: 'kept' は SIGNED_OUT の掃除。この端末の push token の値だけは残す (このあとに signOut.ts が読んで
+ * user_push_tokens の行を消すことがある。#1615。AuthProvider.tsx の先頭の表)
+ */
+async function expectPreviousUserDataCleared({ pushTokenValue }: { pushTokenValue: 'cleared' | 'kept' } = { pushTokenValue: 'cleared' }) {
   expect(await AsyncStorage.getItem(RANGE_DAYS_KEY)).toBeNull();
-  expect(await AsyncStorage.getItem(PUSH_TOKEN_VALUE_KEY)).toBeNull();
+  if (pushTokenValue === 'cleared') {
+    expect(await AsyncStorage.getItem(PUSH_TOKEN_VALUE_KEY)).toBeNull();
+  } else {
+    expect(await AsyncStorage.getItem(PUSH_TOKEN_VALUE_KEY)).toBe('ExponentPushToken[previous]');
+  }
   // 利用者別でないキーは消さない
   expect(await AsyncStorage.getItem('unrelated')).toBe('keep');
   // 次に開く WebView に、利用者別の localStorage の掃除が頼まれている
@@ -137,8 +146,23 @@ describe('AuthProvider — 未ログインになるどの経路でも、端末�
     act(() => authListener('SIGNED_OUT', null));
 
     expect(text(api, 'session')).toBe('none');
-    await waitFor(async () => expect(await AsyncStorage.getItem(PUSH_TOKEN_VALUE_KEY)).toBeNull());
-    await expectPreviousUserDataCleared();
+    // SIGNED_OUT の掃除が WebView の掃除を頼むまで待つ (AsyncStorage の掃除のあとに頼む)
+    await waitFor(async () => expect(await readPendingWebViewUserScopedStorageClear()).toEqual(expect.any(String)));
+    await expectPreviousUserDataCleared({ pushTokenValue: 'kept' });
+  });
+
+  it('一度もセッションが無いまま SIGNED_OUT が届いても (ID なしの掃除)、push token の値は残す', async () => {
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+    // 起動時の掃除 (ID なし) が消したので、前の利用者の値を置き直す
+    await seedPreviousUserData();
+    const requestBefore = await readPendingWebViewUserScopedStorageClear();
+
+    act(() => authListener('SIGNED_OUT', null));
+
+    // SIGNED_OUT の掃除が WebView の掃除を頼み直すまで待つ (AsyncStorage の掃除のあとに頼む)
+    await waitFor(async () => expect(await readPendingWebViewUserScopedStorageClear()).not.toBe(requestBefore));
+    await expectPreviousUserDataCleared({ pushTokenValue: 'kept' });
   });
 
   it('起動時に保存済みのセッションが無い (getSession() が null)', async () => {
