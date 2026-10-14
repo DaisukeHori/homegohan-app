@@ -77,11 +77,18 @@ supabase db push --linked --include-all
 # (本番プロジェクトの PROJECT_ID を確認してから実行)
 
 # 5. 型の再生成 (出力先は src/types/database.types.ts。packages/shared/src/database.types.ts に同じ内容を写す)
-#    本番に接続しない作り方: ローカルの Supabase (bash scripts/supabase-local.sh start → reset) に全 migration を当て、
-#    npx supabase@2.62.10 gen types typescript --local --schema public --workdir .supabase-local の出力を使う
-#    (--local は __InternalSupabase の PostgrestVersion を出さないので既存の値を残す。#1495)。
+#    本番に接続せずに作る: ローカルの Supabase をベースライン方式で組み立て (本番スキーマのスナップショット supabase/baseline/ を当て、
+#    そのあとにベースラインより新しい migration だけを当てる。scripts/supabase-local.sh の冒頭)、--local で出力する。
+#    --workdir は組み立てた枠の作業ディレクトリ (枠 0 は .supabase-local、LOCAL_CI_SLOT=n は .supabase-local-s<n>)。
+#    --local は __InternalSupabase の PostgrestVersion を出さないので既存の値を残す (#1495)。
 #    tests/database-types-migrations-contract.test.ts が migration と型ファイルの突き合わせ・写しの一致を確かめる
-npm run types:supabase
+#    (npm run types:supabase は --linked で本番に接続するので、この手順では使わない)
+bash scripts/supabase-local.sh start
+bash scripts/supabase-local.sh reset
+npx supabase@2.62.10 gen types typescript --local --schema public --workdir .supabase-local > /tmp/database.types.generated.ts
+# 出力には __InternalSupabase の PostgrestVersion が無い。src/types/database.types.ts の __InternalSupabase のブロックはそのまま残し、
+# それ以外を /tmp/database.types.generated.ts の中身で置き換える (ファイルを丸ごと上書きすると PostgrestVersion が消え、
+# tests/database-types-migrations-contract.test.ts の PostgrestVersion の検査が赤になる)
 cp src/types/database.types.ts packages/shared/src/database.types.ts
 git add src/types/database.types.ts packages/shared/src/database.types.ts
 git commit -m "chore: Supabase 型を再生成"
