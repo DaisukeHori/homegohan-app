@@ -149,7 +149,7 @@ export const FamilySharedMenuGenerateInputSchema = z.object({
     budget_per_meal_jpy: z.number().int().min(100).max(5000).optional(),
   }).default({}),
   meal_types: z.array(
-    z.enum(['breakfast', 'lunch', 'dinner', 'snack'])
+    z.enum(['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'])
   ).default(['breakfast', 'lunch', 'dinner']),
 });
 

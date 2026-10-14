@@ -8,11 +8,15 @@
 
 ### 0.1 Supabase 型自動生成
 ```bash
-# package.json に script として登録 (毎 migration 後に実行)
-npm run types:supabase
-
-# 内部で実行
-npx supabase gen types typescript --linked > src/types/database.types.ts
+# 毎 migration 後に実行。本番に接続せず、ローカルの Supabase (ベースライン + それより新しい migration) から作る (#1495)。
+# 手順の正本は operator/09-runbook.md の「5. 型の再生成」(PostgrestVersion の扱い・packages/shared への写しを含む)
+bash scripts/supabase-local.sh start
+bash scripts/supabase-local.sh reset
+npx supabase@2.62.10 gen types typescript --local --schema public --workdir .supabase-local > /tmp/database.types.generated.ts
+# 出力には __InternalSupabase の PostgrestVersion が無い。src/types/database.types.ts の __InternalSupabase のブロックはそのまま残し、
+# それ以外を /tmp/database.types.generated.ts の中身で置き換える (ファイルを丸ごと上書きすると PostgrestVersion が消え、
+# tests/database-types-migrations-contract.test.ts の PostgrestVersion の検査が赤になる)
+cp src/types/database.types.ts packages/shared/src/database.types.ts
 ```
 
 ### 0.2 全コードでの利用方針

@@ -342,8 +342,9 @@ export async function sendEmail(envelope: EmailEnvelope, options: SendEmailOptio
   // …(送信と再試行のループ。成功したら { ok: true, id, attempts, skipped: false, error: null } を返す。
   //    失敗で抜けたときは、送った回数 attempts と最後の失敗 lastFailure (code・message・statusCode・retryable) が残る)
 
-  // 送れなかった。投げずに、app_logs に残して失敗の結果を返す
-  const error = new EmailSendError(lastFailure.code, `EMAIL_SEND_FAILED: ${lastFailure.message}`, lastFailure.statusCode, attempts, lastFailure.retryable);
+  // 送れなかった。投げずに、app_logs に残して失敗の結果を返す。
+  // 送信先の応答の文に宛先のメールアドレスが入っていてもそのままログに出さないよう、message は redactEmailAddresses を通す (src/lib/emails/send.ts)
+  const error = new EmailSendError(lastFailure.code, `EMAIL_SEND_FAILED: ${redactEmailAddresses(lastFailure.message)}`, lastFailure.statusCode, attempts, lastFailure.retryable);
   logger.error('メールの送信に失敗しました', error, { template, recipient, error_code: error.code, attempts });
   return { ok: false, id: null, attempts, skipped: false, error };
 }

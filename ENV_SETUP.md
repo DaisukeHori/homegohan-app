@@ -147,9 +147,12 @@ FROM vault.decrypted_secrets WHERE name = 'app_cron_secret';
 判定（`--help` に全部のオプションがあります）:
 
 - **FAIL**（終了コード 1）: Edge Function secrets の `CRON_SECRET`（無いときだけ `SERVICE_ROLE_SECRET`）と Vault の `app_cron_secret` が食い違う（pg_cron の呼び出しが 401）／どちらかが無い・空（503・例外）／Vercel の `CRON_SECRET` が無い（cron の API が 503）。
+  - Edge Function secrets と Vault が食い違ったら、**Vault の `app_cron_secret` を正として、Edge Function secrets の `CRON_SECRET` をそれに合わせます**（下の「Edge Function secrets の設定手順」。Vault の値は控え（パスワードマネージャ）から取り出します。控えが無いときは、SQL Editor で `SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'app_cron_secret';` を実行して読めます。画面に値が出るので、周りに人がいないところで行ってください）。`CRON_SECRET` が無く `SERVICE_ROLE_SECRET` が使われているときも、`CRON_SECRET` に Vault の値を入れます（`CRON_SECRET` があれば `SERVICE_ROLE_SECRET` は見られません）。Vault を変えるのは、Vault の値が漏えいした・失われたなど、入れ替えそのものが目的のときだけです。そのときは下の「ローテーション手順」に従います。合わせた後に、もう一度実行して Edge ⇔ Vault が PASS になることを確かめます。
 - **WARN**: Vault がまだ Edge Function secrets の `CRON_SECRET_PREVIOUS`（旧い値）と同じ（入れ替えの途中。下の手順の 2 と 3 の間）／Vault が新しい値なのに `CRON_SECRET_PREVIOUS` が残っている（手順 5 の外し忘れ）／`CRON_SECRET_PREVIOUS` が現行と同じ／Vercel の `CRON_SECRET` が Sensitive の変数で値を取り出せない（`vercel env pull` では値の代わりに `[SENSITIVE]`、古い vercel CLI では空で書かれるため、ある・無いしか分かりません。`--vercel-must-match` を付けていても FAIL にはせず WARN にします）。
 - **INFO**: Vercel の `CRON_SECRET` が Supabase 側と同じか違うか。上の表のとおり Vercel は独立しているので、違っていても失敗にしません（同じ値で運用すると決めたときは `--vercel-must-match` で FAIL にできます）。
-- 読めなかった保管場所がある（CLI が無い・ログインしていない・接続できない）と、終了コード 2 です。`--skip-edge` / `--skip-vault` / `--skip-vercel` で、その保管場所を外して実行できます。
+- 読めなかった保管場所がある（CLI が無い・ログインしていない・接続できない）と、終了コード 2 です。ただし、FAIL と「読めなかった」が同時のときは、終了コード 1 を優先します（読めた保管場所だけで、すでにずれが分かっているため）。`--skip-edge` / `--skip-vault` / `--skip-vercel` で、その保管場所を外して実行できます。
+- 読めなかったときは、コマンド（`supabase secrets list`・`vercel env pull`・`psql`）の標準エラー出力の末尾 5 行を理由として出します。その中の値・URL・パスワードやトークンらしきものは `***` に伏せます。
+- 実行中に Ctrl-C などで止めても、`vercel env pull` に書かせた一時ファイル（本番の全部の環境変数が入ります）は消してから終わります（終了コードは 128 + シグナル番号。Ctrl-C なら 130）。消せなかったときは、その場所を表示するので、手で消してください。
 
 ローテーションの後（下の手順の 4 と 5）と、カタログ取り込みや比較ランキングの集計の結果がおかしいときに実行してください。
 
@@ -479,8 +482,8 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 
 機能フラグ（`feature_flags`）の行を、サーバー（API route とミドルウェア）がメモリに覚える時間（ミリ秒）です。運営画面（`/super-admin/flags`）で切り替えてから全員に反映されるまでの、最大の遅れになります（#1148・#1496）。
 
-- 未設定、または正の整数でない（既定）: 30000（30 秒）。
-- 正の整数: その時間だけ覚えます。短くすると、DB を読む回数が増えます。
+- 未設定、または 10 進の数字だけで書いた正の整数でない（既定）: 30000（30 秒）。空・`0`・負の数・小数（`2000.0`）・指数（`1e3`）・16 進（`0x7D0`）・符号つき（`+2000`）も既定になります（#1535）。
+- 10 進の数字だけで書いた正の整数（前後の空白を除いて、先頭が 1〜9 の数字だけ）: その時間だけ覚えます。短くすると、DB を読む回数が増えます。
 - **本番（Vercel）では設定しません**（既定のまま）。設定するのは、結合テストの段（`.github/workflows/security-regression.yml` と `scripts/local-ci.sh` の integration）が起動する next dev と、そのサーバーに対して反映を待つ `tests/integration/security/feature-flags-runtime.test.ts` だけです（両方に同じ値を渡します。テストは反映を待つ上限をこの値から決めます）。
 - サーバー側（`src/lib/feature-flag-cache-ttl.ts`）だけで読みます。`NEXT_PUBLIC_` は付けません。
 
