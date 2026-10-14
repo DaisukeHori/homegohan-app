@@ -9,8 +9,12 @@ import { ArrowLeft, Camera, Plus, Trash2, RefreshCw, Package, AlertCircle, X, Pe
 import { PantryItemForm, emptyPantryItemFormValues, type PantryItemFormValues } from "@/components/pantry/PantryItemForm";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
+import { addDaysToDate, isCalendarDate, todayLocal } from "@/lib/date-utils";
 import { useAiConsent } from "@/hooks/useAiConsent";
 import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
+
+/** 「期限間近」とみなす期限の範囲 (今日から何日後の期限までか。今日が期限のものも含む)。#1594 の前と同じ 3 日 */
+const EXPIRING_SOON_DAYS = 3;
 
 const colors = {
   bg: "#FAF9F7",
@@ -276,10 +280,18 @@ export default function PantryPage() {
     other: "その他",
   };
 
+  // 「期限間近」の判定の今日 (#1594)。日本の暦日で、描画のたびに求める
+  const expiryToday = todayLocal();
+
+  /**
+   * 期限 (YYYY-MM-DD) が今日 (日本の暦日) から EXPIRING_SOON_DAYS 日後まで (両端を含む) か (#1594)。
+   * 以前は期限を new Date(dateStr) (その日の UTC の 0 時 = 日本の 9 時) にして今の時刻と比べていたので、
+   * 期限が今日の食材は日本の 9 時に「期限間近」から外れ、3 日後が期限の食材は日本の 9 時まで「期限間近」にならなかった。
+   * 4 桁の年の YYYY-MM-DD どうしは、文字列の大小が日付の前後と同じ。日付になっていない値は判定しない (以前も NaN の比較で false)
+   */
   const isExpiringSoon = (dateStr: string | null): boolean => {
-    if (!dateStr) return false;
-    const diff = (new Date(dateStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
-    return diff >= 0 && diff <= 3;
+    if (!isCalendarDate(dateStr)) return false;
+    return dateStr >= expiryToday && dateStr <= addDaysToDate(expiryToday, EXPIRING_SOON_DAYS);
   };
 
   return (

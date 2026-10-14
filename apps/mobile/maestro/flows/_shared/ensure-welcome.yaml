@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # _shared/ensure-welcome.yaml: どの画面からでもウェルカム画面を確保する共通フロー
-# ホーム画面にいる場合: タブ経由でログアウト
+# ホーム画面 (WebView の webview-home。#1552) にいる場合: タブ経由でログアウト
 # ホーム以外のサブ画面にいる場合: tab-home でホームに戻ってからログアウト
 # ウェルカム画面にいる場合: 何もしない
 
@@ -16,7 +16,7 @@ appId: com.homegohan.app
 - runFlow:
     when:
       visible:
-        id: "home-screen"
+        id: "webview-home"
     file: "./logout.yaml"
 
 # ホーム以外のサブ画面にいてタブバーが見える場合: tab-homeをタップしてホームへ戻る
@@ -36,5 +36,5 @@ appId: com.homegohan.app
 - runFlow:
     when:
       visible:
-        id: "home-screen"
+        id: "webview-home"
     file: "./logout.yaml"
