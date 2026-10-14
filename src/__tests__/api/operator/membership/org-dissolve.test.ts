@@ -24,12 +24,18 @@ vi.mock('@/lib/auth/operator-permissions', () => ({
   requireSuperAdmin: mocks.requireSuperAdmin,
 }));
 
-// RPC は運営者本人のセッションで実行される (cookies() を使う本物の createClient は使わない)
-vi.mock('@/lib/supabase/server', () => ({
-  createClient: () => ({ rpc: mocks.rpc }),
-}));
+// RPC は運営者本人のセッションで実行される (cookies() を使う本物の createClient は使わない)。
+// service-role のクライアントは本物の getSupabaseAdmin を通す (#1162。接続情報は env-required の getter で取り出し、
+// 下で差し替えた @supabase/supabase-js の createClient で作る)。呼ばれた回数を数える
+vi.mock('@/lib/supabase/server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/supabase/server')>();
+  return {
+    createClient: () => ({ rpc: mocks.rpc }),
+    getSupabaseAdmin: vi.fn(actual.getSupabaseAdmin),
+  };
+});
 
-// 通知用の service-role クライアント (route 内の createSupabaseClient)
+// service-role クライアント (getSupabaseAdmin が作る) の実体
 vi.mock('@supabase/supabase-js', () => ({
   createClient: mocks.createServiceRoleClient,
 }));
@@ -50,6 +56,7 @@ vi.mock('@/lib/db-logger', () => ({
 }));
 
 import { POST } from '@/app/api/operator/membership/org/[id]/dissolve/route';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 
 const OPERATOR_ID = 'd0eebc99-9c0b-4ef8-bb6d-6bb9bd380a44';
 const ORG_ID = 'e0eebc99-9c0b-4ef8-bb6d-6bb9bd380a55';
@@ -123,7 +130,7 @@ let fake: FakeServiceRole;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // 本物のキーではないダミー値 (getServiceRoleClient が環境変数の有無だけを見る)
+  // 本物のキーではないダミー値 (getSupabaseAdmin は環境変数の有無だけを見る)
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'http://127.0.0.1:54321');
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'test-service-role-key');
 
@@ -390,5 +397,28 @@ describe('POST /api/operator/membership/org/[id]/dissolve: 認可と入力検証
     expect(fake.events).toEqual([]);
     expect(mocks.rpc).not.toHaveBeenCalled();
     expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/operator/membership/org/[id]/dissolve: service-role のクライアントは canonical の getSupabaseAdmin で作る (#1162)', () => {
+  it('同じ鍵・同じ設定 (セッションを保存しない・自動で更新しない) のクライアントを、解散前のメンバー取得と通知で 1 回だけ作る', async () => {
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(getSupabaseAdmin)).toHaveBeenCalledTimes(1);
+    expect(mocks.createServiceRoleClient).toHaveBeenCalledTimes(1);
+    expect(mocks.createServiceRoleClient).toHaveBeenCalledWith('http://127.0.0.1:54321', 'test-service-role-key', {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+  });
+
+  it('認可 (requireSuperAdmin) に落ちたら、service-role のクライアントを作らない', async () => {
+    mocks.requireSuperAdmin.mockRejectedValue(new ForbiddenError('PERM_DENIED', 'super_admin 権限が必要です'));
+
+    const res = await call();
+
+    expect(res.status).toBe(403);
+    expect(vi.mocked(getSupabaseAdmin)).not.toHaveBeenCalled();
+    expect(mocks.createServiceRoleClient).not.toHaveBeenCalled();
   });
 });

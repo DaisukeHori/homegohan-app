@@ -7,6 +7,7 @@
  *   2. mode=app 重複付与の抑制
  *   3. injectedJS の localStorage 書込みスクリプト生成
  *   4. セッション無し時の直接 URL 遷移
+ *   6. ネイティブのログアウト・退会のあと、Web のページが読み込まれる前に利用者別の localStorage を消す (#1037)
  */
 
 import React from 'react';
@@ -82,7 +83,14 @@ jest.mock('../../src/theme/colors', () => ({
   colors: { accent: '#FF6B35' },
 }));
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { USER_SCOPED_LOCAL_STORAGE_KEYS } from '@homegohan/shared';
+
 import { WebViewScreen } from '../../src/components/web/WebViewScreen';
+import {
+  requestWebViewUserScopedStorageClear,
+  resetWebViewUserStorageCleanupForTests,
+} from '../../src/lib/webViewUserStorageCleanup';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ヘルパー
@@ -106,11 +114,37 @@ function makeSession(overrides: Partial<{
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
   // mockWebViewProps をクリア
   Object.keys(mockWebViewProps).forEach((k) => delete mockWebViewProps[k]);
+  // ネイティブのログアウトの印 (ケース 6) を、ほかのケースへ持ち越さない
+  resetWebViewUserStorageCleanupForTests();
+  await AsyncStorage.clear();
 });
+
+/** 注入する JS を、localStorage を持つ偽の window の上で走らせ、走ったあとの localStorage を返す */
+function runInjectedJS(js: string, initial: Record<string, string>): Map<string, string> {
+  const items = new Map(Object.entries(initial));
+  const localStorage = {
+    getItem: (key: string) => (items.has(key) ? (items.get(key) as string) : null),
+    setItem: (key: string, value: string) => {
+      items.set(key, String(value));
+    },
+    removeItem: (key: string) => {
+      items.delete(key);
+    },
+  };
+  const fakeWindow = { localStorage, dispatchEvent: () => true };
+  // eslint-disable-next-line no-new-func -- 注入する JS の文字列を実際に評価して挙動を確かめるため
+  new Function('window', 'Event', js)(fakeWindow, class {});
+  return items;
+}
+
+/** 前の利用者が残した、利用者別のキーの値 (一覧のすべてのキー) */
+function previousUserItems(): Record<string, string> {
+  return Object.fromEntries(USER_SCOPED_LOCAL_STORAGE_KEYS.map((key) => [key, 'previous-user']));
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ケース 1: bridge URL 生成 (token 埋め込み)
@@ -327,5 +361,55 @@ describe('ケース5: header (Issue #1037)', () => {
 
     // 読み込み後も同じ部品が出続ける
     expect(getByTestId('test-header')).toBeTruthy();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ケース 6: ネイティブのログアウト・退会のあとの localStorage の掃除 (#1037)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('ケース6: ネイティブのログアウトのあと、Web のページの前に利用者別の localStorage を消す (#1037)', () => {
+  it('ログアウトのあとに開く WebView (ログイン中) は、利用者別のキーを消してから、新しいセッションを書く', async () => {
+    await requestWebViewUserScopedStorageClear();
+    mockGetSession.mockResolvedValue({ data: { session: makeSession() } });
+
+    render(<WebViewScreen path="/home" />);
+    await waitFor(() => {
+      expect(mockWebViewProps.injectedJavaScriptBeforeContentLoaded).toBeDefined();
+    });
+
+    const js: string = mockWebViewProps.injectedJavaScriptBeforeContentLoaded;
+    const after = runInjectedJS(js, { ...previousUserItems(), 'sb-abcdef1234-auth-token': 'old-session' });
+
+    expect(USER_SCOPED_LOCAL_STORAGE_KEYS.filter((key) => after.has(key))).toEqual([]);
+    // 掃除のあとで、ネイティブのセッションを書く (掃除がセッションを消さない)
+    expect(after.get('sb-abcdef1234-auth-token')).toContain('test-access-token');
+  });
+
+  it('ログアウトのあとに開く WebView (未ログイン) でも、利用者別のキーを消す', async () => {
+    await requestWebViewUserScopedStorageClear();
+    mockGetSession.mockResolvedValue({ data: { session: null } });
+
+    render(<WebViewScreen path="/home" />);
+    await waitFor(() => {
+      expect(mockWebViewProps.source?.uri).toBeDefined();
+    });
+
+    const js: string = mockWebViewProps.injectedJavaScriptBeforeContentLoaded;
+    expect(js).toEqual(expect.any(String));
+    const after = runInjectedJS(js, previousUserItems());
+    expect(USER_SCOPED_LOCAL_STORAGE_KEYS.filter((key) => after.has(key))).toEqual([]);
+  });
+
+  it('一度もログアウトしていなければ、利用者別のキーは消さない (ログイン中の利用者の値を残す)', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: makeSession() } });
+
+    render(<WebViewScreen path="/home" />);
+    await waitFor(() => {
+      expect(mockWebViewProps.injectedJavaScriptBeforeContentLoaded).toBeDefined();
+    });
+
+    const js: string = mockWebViewProps.injectedJavaScriptBeforeContentLoaded;
+    const after = runInjectedJS(js, previousUserItems());
+    expect(USER_SCOPED_LOCAL_STORAGE_KEYS.filter((key) => after.has(key))).toEqual([...USER_SCOPED_LOCAL_STORAGE_KEYS]);
   });
 });

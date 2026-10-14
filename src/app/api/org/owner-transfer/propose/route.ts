@@ -1,8 +1,8 @@
 // POST /api/org/owner-transfer/propose
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { formatLocalDate } from '@/lib/date-utils';
 import { NextResponse } from 'next/server';
-import { getSupabaseServiceConfig, isMissingEnvError } from '@/lib/env-required';
+import { isMissingEnvError } from '@/lib/env-required';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure } from '@/lib/emails/send-result';
@@ -118,22 +118,20 @@ export async function POST(request: Request) {
     .single();
 
   // service_role なしでは auth.users のメールアドレスは取得できないため、管理者 API でメールを取得する。
-  // 接続情報は env-required の getter で取り出す (#1434。空白だけの値も欠けているとみなす)
-  let service: { url: string; serviceRoleKey: string } | null = null;
+  // 管理者クライアントは canonical の getSupabaseAdmin で作る (#1162。認証と提案の作成を通した後)。
+  // 接続情報は env-required の getter で取り出す (#1434。空白だけの値も欠けているとみなす)。
+  // 欠けていれば (MissingEnvError) メールだけを諦める (提案の作成は成功のまま)。それ以外の失敗は下の catch で警告に残す
+  let serviceConfigMissing = false;
   try {
-    service = getSupabaseServiceConfig();
-  } catch (envErr) {
-    if (!isMissingEnvError(envErr)) throw envErr;
-    // 欠けている変数名は getter がサーバーのログに残している。メールだけを諦める (提案の作成は成功のまま)
-  }
-  if (service) {
+    let adminSupabase: ReturnType<typeof getSupabaseAdmin> | null = null;
     try {
-      const { createClient: createAdminClient } = await import('@supabase/supabase-js');
-      const adminSupabase = createAdminClient(
-        service.url,
-        service.serviceRoleKey,
-        { auth: { autoRefreshToken: false, persistSession: false } },
-      );
+      adminSupabase = getSupabaseAdmin();
+    } catch (envErr) {
+      if (!isMissingEnvError(envErr)) throw envErr;
+      // 欠けている変数名は getter がサーバーのログに残している
+      serviceConfigMissing = true;
+    }
+    if (adminSupabase) {
       const { data: toUserData } = await adminSupabase.auth.admin.getUserById(body.to_user_id);
       const toEmail = toUserData?.user?.email ?? null;
 
@@ -152,10 +150,11 @@ export async function POST(request: Request) {
         // sendEmail は配信の失敗で例外を投げず、結果で返す。失敗も下の catch で、他の失敗と同じように警告に残す
         if (isEmailFailure(sent)) throw sent.error;
       }
-    } catch (emailErr) {
-      console.warn('[api/org/owner-transfer/propose] メール送信失敗:', emailErr);
     }
-  } else {
+  } catch (emailErr) {
+    console.warn('[api/org/owner-transfer/propose] メール送信失敗:', emailErr);
+  }
+  if (serviceConfigMissing) {
     console.info('[api/org/owner-transfer/propose] Supabase の service_role の接続情報が無いためメール送信スキップ', {
       proposalId,
       acceptUrl,
