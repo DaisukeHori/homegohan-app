@@ -22,10 +22,8 @@ function internalError(method: 'GET' | 'POST', err: unknown, metadata?: Record<s
 }
 
 // ユーザーノート追加
-export async function POST(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const actor = await requireRole(['support', 'admin', 'super_admin']);
 
@@ -119,10 +117,8 @@ export async function POST(
 
 // ノート一覧取得
 // #1200: ノートを 1 件以上返したときは、admin_audit_logs へ admin.user.view_notes を記録する
-export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const actor = await requireRole(['support', 'admin', 'super_admin']);
 

@@ -12,9 +12,10 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { updateTicketSchema } from '@/lib/admin/support-schemas';
 import { recordAdminAudit } from '@/lib/admin/audit';
 
-type RouteContext = { params: { id: string } };
+type RouteContext = { params: Promise<{ id: string }> };
 
-export async function GET(request: NextRequest, { params }: RouteContext) {
+export async function GET(request: NextRequest, props: RouteContext) {
+  const params = await props.params;
   try {
     const currentUser = await requireRole(['support', 'admin', 'super_admin']);
     const supabase = await createClient();
@@ -107,7 +108,8 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
   }
 }
 
-export async function PATCH(request: NextRequest, { params }: RouteContext) {
+export async function PATCH(request: NextRequest, props: RouteContext) {
+  const params = await props.params;
   try {
     const currentUser = await requireRole(['support', 'admin', 'super_admin']);
 

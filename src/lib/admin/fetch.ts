@@ -31,7 +31,7 @@ export async function adminFetch(
   const url = `${baseUrl}${path}`;
 
   // Cookie ヘッダーを構築 (Supabase auth セッション用)
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const allCookies = cookieStore.getAll();
   const cookieHeader = allCookies
     .map((c) => `${c.name}=${c.value}`)

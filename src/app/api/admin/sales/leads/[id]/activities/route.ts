@@ -12,9 +12,10 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createActivitySchema } from '@/lib/admin/sales-schemas';
 import { internalError } from '@/lib/api/errors';
 
-type RouteContext = { params: { id: string } };
+type RouteContext = { params: Promise<{ id: string }> };
 
-export async function GET(_request: NextRequest, { params }: RouteContext) {
+export async function GET(_request: NextRequest, props: RouteContext) {
+  const params = await props.params;
   try {
     await requireRole(['sales', 'admin', 'super_admin']);
     const supabase = await createClient();
@@ -51,7 +52,8 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
   }
 }
 
-export async function POST(request: NextRequest, { params }: RouteContext) {
+export async function POST(request: NextRequest, props: RouteContext) {
+  const params = await props.params;
   try {
     const currentUser = await requireRole(['sales', 'admin', 'super_admin']);
 

@@ -15,7 +15,7 @@ import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 interface ActiveSubscription {
@@ -52,7 +52,8 @@ interface UserDetailApiResponse {
   data: UserDetailProfile;
 }
 
-export default async function AdminUserDetailPage({ params }: PageProps) {
+export default async function AdminUserDetailPage(props: PageProps) {
+  const params = await props.params;
   let actor;
   try {
     actor = await requireRole(['admin', 'super_admin', 'support']);

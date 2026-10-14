@@ -124,7 +124,7 @@ function resolveNextPath(requestUrl: URL): string {
 }
 
 /** Supabase のセッション Cookie (sb-*-auth-token と分割分) を削除する。signOut と違い、サーバ側のセッションは失効させない */
-function clearSupabaseAuthCookies(cookieStore: ReturnType<typeof cookies>) {
+function clearSupabaseAuthCookies(cookieStore: Awaited<ReturnType<typeof cookies>>) {
   for (const { name } of cookieStore.getAll()) {
     if (SUPABASE_AUTH_COOKIE_PATTERN.test(name)) {
       // 設定時と同じ path (/) を明示する。省略するとリクエスト URL 由来の既定パス (/auth) になり、ブラウザが消さない
@@ -178,8 +178,8 @@ async function continueIfAlreadySignedIn(
 /** 新方式: ?code=... */
 async function handleCode(requestUrl: URL, rawUrl: string, nextPath: string) {
   const code = requestUrl.searchParams.get('code') ?? ''
-  const cookieStore = cookies()
-  const supabase = createClient(cookieStore)
+  const cookieStore = await cookies()
+  const supabase = await createClient(cookieStore)
   const logger = createLogger('auth/native-bridge', generateRequestId())
 
   let consumed: ConsumedNativeBridgeCode | null = null
@@ -246,7 +246,7 @@ async function handleLegacy(
     )
   }
 
-  const supabase = createClient(cookies())
+  const supabase = await createClient(await cookies())
   const session = await establishSession(supabase, accessToken, refreshToken)
   if (!session.ok) {
     console.error('[auth/native-bridge] setSession error:', session.message)
