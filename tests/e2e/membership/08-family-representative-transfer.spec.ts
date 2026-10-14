@@ -157,7 +157,7 @@ test.describe("family 代表者譲渡", () => {
         const adultPage = await adultCtx.newPage();
 
         try {
-          await injectSession(adultPage, adult.email, adult.password);
+          await injectSession(adultPage, adult.email);
 
           const acceptResult = await apiFetch(
             adultPage,
@@ -269,7 +269,7 @@ test.describe("family 代表者譲渡", () => {
         const adultPage = await adultCtx.newPage();
 
         try {
-          await injectSession(adultPage, adult.email, adult.password);
+          await injectSession(adultPage, adult.email);
 
           const declineResult = await apiFetch(
             adultPage,

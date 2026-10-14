@@ -105,7 +105,7 @@ test.describe("meal paste (家族へのペースト)", () => {
       });
 
       // --- owner の session で page を認証 ---
-      await injectSession(page, ownerUser.email, ownerUser.password);
+      await injectSession(page, ownerUser.email);
 
       // --- POST /api/meals/paste ---
       const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
@@ -205,7 +205,7 @@ test.describe("meal paste (家族へのペースト)", () => {
         menuName: "テスト昼食",
       });
 
-      await injectSession(page, ownerUser.email, ownerUser.password);
+      await injectSession(page, ownerUser.email);
       const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
       await page.goto(`${baseURL}/home`);
 
@@ -311,7 +311,7 @@ test.describe("meal paste (家族へのペースト)", () => {
       });
 
       // member としてログイン (owner の meal をペーストしようとする)
-      await injectSession(page, memberUser.email, memberUser.password);
+      await injectSession(page, memberUser.email);
       const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
       await page.goto(`${baseURL}/home`);
 

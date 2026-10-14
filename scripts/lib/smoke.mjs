@@ -5,22 +5,41 @@
  * ネットワークと終了コードに触れる処理は runSmoke() / main() に閉じ込めてある。
  *
  * 守っていること:
- *   - データを書き換えるリクエストは送らない (GET と、--with-auth 時のログインだけ)
+ *   - データを書き換えるリクエストは送らない (GET と、--with-auth 時のログインだけ。ログインは、管理用の鍵で
+ *     ワンタイムのトークンを発行し (Supabase Auth がユーザーの行にトークンを記録する)、それをセッションに換える。
+ *     パスワードのログインと同じく、ログインした記録が残るだけ)
  *   - パスワード・トークン・API キーは出力に含めない (ステータスコードと成否だけ出す)
  *   - .env.local は読まない (確認したい環境と別の環境の値が混ざるのを避けるため)
+ *
+ * --with-auth のログイン (#1547):
+ *   Supabase の CAPTCHA を有効にすると、トークンの無いパスワードのログイン (/auth/v1/token?grant_type=password) は断られる。
+ *   そこで、パスワードのログインは使わず、e2e と共通の補助関数 tests/e2e/helpers/test-session.mjs の createTestSession を
+ *   import してセッションを作る (手順をここに写さない)。手順は、管理用の鍵で POST /auth/v1/admin/generate_link → anon key で
+ *   POST /auth/v1/verify。どちらも CAPTCHA の対象外 (根拠は test-session.mjs の先頭のコメント)。
+ *   同じテストユーザーで同時にセッションを作られて確認が 403 になったときのやり直し (回数の上限・待ち方・上書きの環境変数) も、
+ *   e2e と同じ規則に従う (test-session.mjs)。設定と回数の上限は、runSmoke に渡された env から読む (.env.local は読まない)。
+ *   この手順は、確認したい環境の service_role (管理用の鍵) を要る。**本番では --with-auth を使わない**
+ *   (本番の管理用の鍵を、確認用の端末やシェルに出さないため)。本番は --with-auth なしの 4 項目で確認する。
  */
+
+import { TEST_SESSION_ENV_NAMES, createTestSession } from '../../tests/e2e/helpers/test-session.mjs';
 
 export const DEFAULT_BASE_URL = 'http://localhost:3000';
 export const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_TIMEOUT_MS = 600_000;
 
-/** --with-auth のときだけ必要な環境変数 (値は出力しない。足りないものの名前だけ出す) */
-export const AUTH_ENV_NAMES = [
-  'E2E_USER_EMAIL',
-  'E2E_USER_PASSWORD',
-  'NEXT_PUBLIC_SUPABASE_URL',
-  'NEXT_PUBLIC_SUPABASE_ANON_KEY',
-];
+/**
+ * --with-auth のときだけ必要な環境変数 (値は出力しない。足りないものの名前だけ出す)。
+ * テストユーザーのメールアドレスと、共通の補助関数がセッションを作るのに読む 3 つ (TEST_SESSION_ENV_NAMES)
+ */
+export const AUTH_ENV_NAMES = ['E2E_USER_EMAIL', ...Object.values(TEST_SESSION_ENV_NAMES)];
+
+/** --with-auth のログインの失敗を報告するときの、段の呼び名 (共通の補助関数の step ごと) */
+const AUTH_STEP_LABELS = {
+  config: '設定',
+  generate_link: '管理用のトークンの発行',
+  verify: 'トークンの確認',
+};
 
 export const USAGE = `デプロイ後 / DR 復元後の smoke test (#1181)
 
@@ -38,8 +57,11 @@ export const USAGE = `デプロイ後 / DR 復元後の smoke test (#1181)
 オプション:
   --base-url=<URL>   確認先。省略時は環境変数 PLAYWRIGHT_BASE_URL、それも無ければ ${DEFAULT_BASE_URL}
   --with-auth        テストユーザーでログインし、GET /api/profile が 200 になることも確認する。
+                     パスワードのログインは使わず、管理用の鍵 (service_role) でセッションを作る
+                     (Supabase の CAPTCHA を有効にしても動く。#1547)。
                      次の環境変数を、確認したい環境の値で渡す (.env.local は読まない):
                      ${AUTH_ENV_NAMES.join(' / ')}
+                     本番では使わない (本番の管理用の鍵を手元に出さないため)。本番は --with-auth なしで確認する。
   --timeout-ms=<ms>  1 リクエストの待ち時間 (既定 ${DEFAULT_TIMEOUT_MS}。コールドスタートが遅いときに延ばす)
   -h, --help         この説明を表示する
 
@@ -143,7 +165,7 @@ function safeVersion(value) {
   return typeof value === 'string' && /^[\w.+-]{1,40}$/.test(value) ? value : null;
 }
 
-function buildChecks({ baseUrl, fetchImpl, timeoutMs, env, withAuth }) {
+function buildChecks({ baseUrl, fetchImpl, timeoutMs, env, withAuth, sleepImpl }) {
   // リダイレクトは追わない。エイリアス URL へ飛ばされているときに、気づかず別の場所を確認するのを避ける
   const send = (url, init = {}) =>
     fetchImpl(url, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs), ...init });
@@ -195,34 +217,28 @@ function buildChecks({ baseUrl, fetchImpl, timeoutMs, env, withAuth }) {
       const missing = missingAuthEnv(env);
       if (missing.length > 0) return fail(`環境変数が足りません: ${missing.join(', ')}`);
 
-      const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL.replace(/\/+$/, '');
       // どの環境にログインしたか分かるよう、ホスト名だけ出す (鍵は出さない)
       let host = 'Supabase';
       try {
-        host = new URL(supabaseUrl).host;
+        host = new URL(env[TEST_SESSION_ENV_NAMES.supabaseUrl]).host;
       } catch {
         // URL として読めなければ、そのままリクエストが失敗して報告される
       }
 
-      const loginRes = await send(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-        method: 'POST',
-        headers: { apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: env.E2E_USER_EMAIL, password: env.E2E_USER_PASSWORD }),
+      // e2e と共通の補助関数でセッションを作る (管理用の鍵で発行 → 確認。確認の 403 のやり直しも含む。test-session.mjs)。
+      // 送るのは、ほかの項目と同じ send (リダイレクトを追わない・時間切れ付き)
+      const result = await createTestSession(env.E2E_USER_EMAIL, {
+        env,
+        fetchImpl: send,
+        ...(sleepImpl ? { sleepImpl } : {}),
       });
-      if (loginRes.status !== 200) {
-        await drain(loginRes);
-        return fail(`ログインに失敗しました (${host}): HTTP ${loginRes.status}`);
+      if (!result.ok) {
+        // 通信できなかった (時間切れ・接続できない) ときは、ほかの項目と同じ書き方で報告する (runSmoke の catch)
+        if ('cause' in result) throw result.cause;
+        // 応答の本文 (responseBodyPreview) は出さない。段とステータスと説明だけ
+        return fail(`ログインに失敗しました (${host}): ${AUTH_STEP_LABELS[result.step] ?? result.step}: ${result.detail}`);
       }
-      let session = null;
-      try {
-        session = await loginRes.json();
-      } catch {
-        // 下で access_token が無いものとして扱う
-      }
-      const accessToken = session?.access_token;
-      if (typeof accessToken !== 'string' || !accessToken) {
-        return fail(`ログイン応答に access_token がありません (${host})`);
-      }
+      const accessToken = result.session.access_token;
 
       const res = await send(`${baseUrl}/api/profile`, {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -248,16 +264,20 @@ function buildChecks({ baseUrl, fetchImpl, timeoutMs, env, withAuth }) {
   ];
 }
 
-/** 全項目を順に実行し、結果の配列 [{ name, ok, detail, ms }] を返す。例外は投げない */
+/**
+ * 全項目を順に実行し、結果の配列 [{ name, ok, detail, ms }] を返す。例外は投げない。
+ * sleepImpl は --with-auth の確認の 403 でやり直す前に待つ関数 (単体テストで差し替える。省略時は共通の補助関数の既定)
+ */
 export async function runSmoke({
   baseUrl,
   withAuth = false,
   env = process.env,
   fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  sleepImpl,
 }) {
   const results = [];
-  for (const check of buildChecks({ baseUrl, fetchImpl, timeoutMs, env, withAuth })) {
+  for (const check of buildChecks({ baseUrl, fetchImpl, timeoutMs, env, withAuth, sleepImpl })) {
     const startedAt = Date.now();
     let outcome;
     try {

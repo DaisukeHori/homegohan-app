@@ -168,7 +168,7 @@ test.describe("family 招待 — エッジケース", () => {
     const expiredPage = await expiredContext.newPage();
 
     try {
-      await injectSession(expiredPage, targetUser.email, targetUser.password);
+      await injectSession(expiredPage, targetUser.email);
       await expiredPage.goto(`${BASE_URL}/invite/family/${token}`);
       await expiredPage.waitForLoadState("networkidle");
 
@@ -228,7 +228,7 @@ test.describe("family 招待 — エッジケース", () => {
     const revokedPage = await revokedContext.newPage();
 
     try {
-      await injectSession(revokedPage, targetUser.email, targetUser.password);
+      await injectSession(revokedPage, targetUser.email);
 
       // API で accept を試みる → 失敗すること
       const apiResult = await apiFetch(
@@ -281,7 +281,7 @@ test.describe("family 招待 — エッジケース", () => {
     const mismatchPage = await mismatchContext.newPage();
 
     try {
-      await injectSession(mismatchPage, userB.email, userB.password);
+      await injectSession(mismatchPage, userB.email);
 
       const apiResult = await apiFetch(
         mismatchPage,
@@ -326,7 +326,7 @@ test.describe("family 招待 — エッジケース", () => {
     const samePage = await sameCtx.newPage();
 
     try {
-      await injectSession(samePage, family.owner.email, family.owner.password);
+      await injectSession(samePage, family.owner.email);
 
       const apiResult = await apiFetch(
         samePage,
@@ -378,7 +378,7 @@ test.describe("family 招待 — エッジケース", () => {
     const otherPage = await otherCtx.newPage();
 
     try {
-      await injectSession(otherPage, otherUser.email, otherUser.password);
+      await injectSession(otherPage, otherUser.email);
 
       const apiResult = await apiFetch(
         otherPage,
@@ -458,7 +458,7 @@ test.describe("family 招待 — エッジケース", () => {
     const bPage = await bCtx.newPage();
 
     try {
-      await injectSession(bPage, famBOwner.email, famBOwner.password);
+      await injectSession(bPage, famBOwner.email);
 
       const apiResult = await apiFetch(
         bPage,

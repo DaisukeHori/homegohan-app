@@ -17,6 +17,7 @@ import { config as dotenvConfig } from "dotenv";
 import { generateTestPassword } from "../helpers/credentials";
 import { grantE2eAiConsent } from "../../../scripts/lib/e2e-ai-consent";
 import { acceptLegalConsentIfShown } from "../helpers/legal-consent";
+import { createTestSession, describeTestSessionFailure, type TestSessionResult } from "../helpers/test-session.mjs";
 
 // Node.js 20 は native WebSocket を持たないため ws パッケージを明示的に指定。
 // Supabase Realtime クライアントが WebSocket を必要とするが admin API のみ使うため
@@ -34,6 +35,11 @@ dotenvConfig({ path: path.resolve(__dirname, "../../../../.env.local") });
 
 // 実行ごとにランダムな値 (リポジトリに固定のパスワードを置かない)
 const FRESH_USER_PASSWORD = generateTestPassword();
+
+// injectSession がテスト用のセッションを作るときの、429 (rate limit) でのやり直し (回数と、1 回ごとに伸ばす待ち時間)
+const SESSION_CREATE_MAX_RETRIES = 4;
+const SESSION_CREATE_RETRY_STEP_MS = 3_000;
+const HTTP_TOO_MANY_REQUESTS = 429;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Supabase admin クライアント (service_role)
@@ -118,57 +124,42 @@ export async function cleanupFreshUser(
 }
 
 /**
- * anon API でパスワードグラントを行い、Cookie を Playwright コンテキストに注入する。
+ * テスト用のセッションを作り (#1547: パスワードのログインは使わない。helpers/test-session.mjs)、
+ * Cookie を Playwright コンテキストに注入する。
  * @supabase/ssr は Cookie ベース認証を使用するため localStorage 注入では機能しない。
- * 429 (rate limit) の場合は最大 3 回、指数バックオフでリトライする。
+ * 429 (rate limit) の場合は最大 SESSION_CREATE_MAX_RETRIES 回、間隔を伸ばしながらリトライする。
  */
 export async function injectSession(
   page: Page,
   email: string,
-  password: string,
 ): Promise<void> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !anonKey) {
-    throw new Error(
-      "[fresh-user fixture] NEXT_PUBLIC_SUPABASE_URL または NEXT_PUBLIC_SUPABASE_ANON_KEY が未設定です。",
-    );
+  if (!supabaseUrl) {
+    throw new Error("[fresh-user fixture] NEXT_PUBLIC_SUPABASE_URL が未設定です。");
   }
 
-  const MAX_RETRIES = 4;
-  let resp: Response | null = null;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    resp = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: anonKey,
-      },
-      body: JSON.stringify({ email, password }),
-    });
+  let result: TestSessionResult | null = null;
+  for (let attempt = 1; attempt <= SESSION_CREATE_MAX_RETRIES; attempt++) {
+    result = await createTestSession(email);
 
-    if (resp.status !== 429) break;
+    if (result.ok || result.status !== HTTP_TOO_MANY_REQUESTS || attempt === SESSION_CREATE_MAX_RETRIES) break;
 
-    // 429: rate limit — wait with exponential backoff before retry
-    const waitMs = attempt * 3000; // 3s, 6s, 9s, 12s
+    // 429: rate limit — wait with backoff before retry
+    const waitMs = attempt * SESSION_CREATE_RETRY_STEP_MS; // 3s, 6s, 9s, 12s
     console.warn(
-      `[fresh-user fixture] injectSession rate limited (429), attempt ${attempt}/${MAX_RETRIES}. 待機: ${waitMs}ms`,
+      `[fresh-user fixture] injectSession rate limited (429), attempt ${attempt}/${SESSION_CREATE_MAX_RETRIES}. 待機: ${waitMs}ms`,
     );
     await new Promise((r) => setTimeout(r, waitMs));
   }
 
-  if (!resp || !resp.ok) {
-    const body = await resp?.text().catch(() => "") ?? "";
+  if (!result || !result.ok) {
     throw new Error(
-      `[fresh-user fixture] セッション取得失敗 (${resp?.status ?? "?"}) after ${MAX_RETRIES} attempts: ${body.substring(0, 300)}`,
+      `[fresh-user fixture] セッション取得失敗 after ${SESSION_CREATE_MAX_RETRIES} attempts: ` +
+        (result ? describeTestSessionFailure(result) : "結果がありません"),
     );
   }
 
-  const session = (await resp.json()) as Record<string, unknown>;
-  if (!session.access_token) {
-    throw new Error("[fresh-user fixture] access_token が含まれていません");
-  }
+  const session = result.session;
 
   const supabaseRef = new URL(supabaseUrl).hostname.split(".")[0];
   const cookieName = `sb-${supabaseRef}-auth-token`;
@@ -490,7 +481,7 @@ export const test = base.extend<FreshUserFixtures>({
       // 外国の AI 事業者への提供の同意 (T15 / #1154)。test.use({ aiConsentGranted: false }) なら記録しない
       if (aiConsentGranted) await grantE2eAiConsent(supabaseAdmin, user.id);
       // session inject のみ。user_profiles は作成しない (onboarding 未完了)
-      await injectSession(page, user.email, user.password);
+      await injectSession(page, user.email);
       await use(page);
     } finally {
       await cleanupFreshUser(supabaseAdmin, user.id);
@@ -543,7 +534,7 @@ export const test = base.extend<FreshUserFixtures>({
       }
 
       // session inject
-      await injectSession(page, user.email, user.password);
+      await injectSession(page, user.email);
       await use(page);
     } finally {
       // admin.deleteUser で cascade 削除 (user_profiles も消える)
@@ -578,7 +569,7 @@ export const test = base.extend<FreshUserFixtures>({
         roles: ["user"],
       });
 
-      await injectSession(page, user.email, user.password);
+      await injectSession(page, user.email);
       await use(page);
     } finally {
       // admin.deleteUser で cascade 削除 (user_profiles も消える)
@@ -614,7 +605,7 @@ export const test = base.extend<FreshUserFixtures>({
       });
 
       // session inject
-      await injectSession(page, user.email, user.password);
+      await injectSession(page, user.email);
 
       await use({
         page,
@@ -658,7 +649,7 @@ export const test = base.extend<FreshUserFixtures>({
       });
 
       // session inject
-      await injectSession(page, user.email, user.password);
+      await injectSession(page, user.email);
 
       await use({
         page,
@@ -712,7 +703,7 @@ export const test = base.extend<FreshUserFixtures>({
       });
 
       // session inject
-      await injectSession(page, user.email, user.password);
+      await injectSession(page, user.email);
 
       await use({
         page,
