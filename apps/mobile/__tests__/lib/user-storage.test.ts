@@ -78,3 +78,18 @@ describe('clearUserScopedAsyncStorage', () => {
     expect(await AsyncStorage.getItem(`${PUSH_TOKEN_REGISTERED_KEY_PREFIX}:user-9`)).toBeNull();
   });
 });
+
+describe('clearUserScopedAsyncStorage — 旧ビルドが書いた V4 献立の生成中の状態 (#1049 F7-20)', () => {
+  // 今のビルドは書かないが (読む処理が無かった)、旧ビルドから更新した端末には前のユーザーの値が残っている
+  it.each([['user-1'], [null]])('ログアウト (userId=%p) で "v4MenuGenerating" を消す (他のキーは残す)', async (userId) => {
+    await AsyncStorage.multiSet([
+      ['v4MenuGenerating', JSON.stringify({ requestId: 'req-old', timestamp: 1, totalSlots: 7 })],
+      ['auth_last_fail_ts', '123'],
+    ]);
+
+    await clearUserScopedAsyncStorage(userId);
+
+    expect(await AsyncStorage.getItem('v4MenuGenerating')).toBeNull();
+    expect(await AsyncStorage.getItem('auth_last_fail_ts')).toBe('123');
+  });
+});
