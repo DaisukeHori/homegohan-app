@@ -91,7 +91,10 @@ async function createUser(label: string): Promise<TestUser> {
 
 /**
  * 「n 日前」の日付文字列。route.ts の連続日数 (consecutiveDayStreak) と同じく、JST の今日から数えた暦日にする (#1545)。
- * 以前は toISOString (UTC の暦日) で作っていたので、JST の 0〜9 時はサーバーの「昨日」を「今日」として入れ、K-8 が落ちていた
+ * 以前は toISOString (UTC の暦日) で作っていたので、JST の 0〜9 時はサーバーの「昨日」を「今日」として入れていた。
+ * ただし、このファイルの入れ方では日付がまるごと 1 日ずれても返る数とバッジは変わらない (ルートは数を日付で絞らず、
+ * 連続日数が変わらないことは tests/integration-jst-days.test.ts で確かめている。だから K-8 の赤の原因ではない)。
+ * ここはサーバーの暦日に揃えるための整理
  */
 function dayStr(daysAgo: number): string {
   return jstDaysAgo(daysAgo);
