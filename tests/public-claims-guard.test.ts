@@ -11,12 +11,16 @@
  *
  * 実在の事業者情報が確定したとき、または有料プランの販売を始めるとき (課金導線 #1151 の実装後) は、
  * このテストの該当項目 (「準備中」の確認と、載せてよくなった文字列) を意図して更新する。
+ * 2026-10-14 (#1155): 事業者名・代表者が確定し、所在地・電話番号は「請求があった場合に遅滞なく開示します」とする扱いになったので、
+ * 特定商取引法ページと運営会社ページの該当項目を更新した (値は src/lib/business-info.ts)。
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { createElement, type ComponentType, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
+import { BUSINESS_NAME, BUSINESS_REPRESENTATIVE, DISCLOSED_ON_REQUEST } from '@/lib/business-info';
+import { getSupportEmail } from '@/lib/site-config';
 
 // next/link と next/image は描画に Next.js の実行環境を要らないよう、素の a / img に置き換える
 vi.mock('next/link', async () => {
@@ -162,13 +166,21 @@ describe('#1155 特定商取引法ページ (/legal)', () => {
   const source = readSource('src/app/legal/page.tsx');
   const text = renderText(LegalPage);
 
-  it('代表者・所在地・電話番号・メールアドレスは「準備中」と表示する', () => {
-    for (const label of ['代表者', '所在地', '電話番号', 'メールアドレス']) {
+  it('販売事業者・代表者・所在地・電話番号・メールアドレスは確定した値 (所在地・電話番号は請求時に開示) を表示し、「準備中」は残さない', () => {
+    const expected: Record<string, string> = {
+      販売事業者: BUSINESS_NAME,
+      代表者: BUSINESS_REPRESENTATIVE,
+      所在地: DISCLOSED_ON_REQUEST,
+      電話番号: DISCLOSED_ON_REQUEST,
+      メールアドレス: getSupportEmail(),
+    };
+    for (const [label, value] of Object.entries(expected)) {
       // 表の 1 行 = <th>ラベル</th><td>値</td>
       const row = new RegExp(`<th[^>]*>\\s*${label}\\s*</th>\\s*<td[^>]*>([\\s\\S]*?)</td>`).exec(renderHtml(LegalPage));
       expect(row, `「${label}」の行が無い`).not.toBeNull();
-      expect(row![1].replace(/<[^>]*>/g, '').trim(), `「${label}」の値`).toBe(PENDING_NOTICE);
+      expect(row![1].replace(/<[^>]*>/g, '').trim(), `「${label}」の値`).toBe(value);
     }
+    expect(text).not.toContain(PENDING_NOTICE);
   });
 
   it('販売価格・支払方法・支払時期・サービス提供時期・解約は「有料プランは準備中です（販売開始前）」と表示する', () => {
@@ -183,12 +195,14 @@ describe('#1155 特定商取引法ページ (/legal)', () => {
     expect(renderHtml(LegalPage)).toContain('href="/contact"');
     expect(text).toContain('お問い合わせフォーム');
     // ソースにも文言が残っていること (描画に頼らず、書き換えられたときに気付けるようにする)
-    expect(source).toContain(PENDING_NOTICE);
     expect(source).toContain(PAID_PLAN_PENDING_NOTICE);
   });
 
-  it('販売事業者名の行はそのまま残している (事業者名の扱いは別途決める)', () => {
-    expect(text).toContain('株式会社ほめゴハン');
+  it('事業者名・代表者は src/lib/business-info.ts の定数から出す (ページに直接書かない)', () => {
+    expect(source).toContain('BUSINESS_NAME');
+    expect(source).toContain('BUSINESS_REPRESENTATIVE');
+    expect(source).not.toContain(BUSINESS_NAME);
+    expect(source).not.toContain(BUSINESS_REPRESENTATIVE);
   });
 });
 
@@ -196,10 +210,17 @@ describe('#1155 運営会社ページ (/company)', () => {
   const html = renderHtml(CompanyPage);
   const text = renderText(CompanyPage);
 
-  it('チーム紹介・沿革は載せず、代表者・所在地は「準備中」と表示する', () => {
+  it('チーム紹介・沿革は載せず、会社名・代表者は確定した値、所在地は「準備中」と表示する', () => {
     expect(text).not.toContain('沿革');
     expect(text).not.toContain('チーム');
-    expect(text).toContain(PENDING_NOTICE);
+    const cell = (label: string) => {
+      const row = new RegExp(`<th[^>]*>\\s*${label}\\s*</th>\\s*<td[^>]*>([\\s\\S]*?)</td>`).exec(html);
+      expect(row, `「${label}」の行が無い`).not.toBeNull();
+      return row![1].replace(/<[^>]*>/g, '').trim();
+    };
+    expect(cell('会社名')).toBe(BUSINESS_NAME);
+    expect(cell('代表者')).toBe(BUSINESS_REPRESENTATIVE);
+    expect(cell('所在地')).toBe(PENDING_NOTICE);
   });
 
   it('お問い合わせは /contact のフォームへ案内する', () => {
