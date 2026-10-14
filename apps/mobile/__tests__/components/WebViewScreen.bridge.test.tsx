@@ -6,8 +6,10 @@
  *   1. code 発行リクエスト (POST /api/auth/native-bridge/code, Bearer, body は refresh_token)
  *   2. 失敗時 (ネットワーク / 非 2xx / 不正レスポンス / セッション無し) はトークン無しの直接 URL へ倒れる
  *   3. access_token の残りが少なければ (Web 側の下限 150 秒 + 余裕) 先に refreshSession する。更新に失敗して下限を割るなら POST しない
- *   4. initialPath (deep link 由来) の検証: //evil.example 等は既定パスへ戻る
- *   5. onShouldStartLoadWithRequest: 自オリジン以外のトップフレーム遷移は遮断して既定ブラウザへ
+ *   4. initialPath (deep link 由来) の検証: //evil.example 等は既定パスへ戻る。
+ *      タブ以外の画面 (/settings/ai-consent) でも、画面自身の path の配下 (再 bridge の _rb) は受け付けて code を取り直す
+ *   5. onShouldStartLoadWithRequest: 自オリジン以外のトップフレーム遷移は遮断して既定ブラウザへ。
+ *      CSP が許す iframe (Turnstile) は WebView の中で読み込む
  *   6. onOpenWindow (target=_blank): 自オリジンは今の WebView、他オリジンは既定ブラウザ
  *   7. onMessage: 送信元が自オリジンでなければ tab-navigate / download 等を処理しない
  *   8. 注入スクリプト (タブ intercept / tabPress リセット): 他オリジンでは何も実行しない
@@ -451,6 +453,47 @@ describe('initialPath の検証', () => {
     expect(new URL(uriOf()).searchParams.get('next')).toBe(expectedNext);
   });
 
+  // タブ以外の画面 (main の #1451: app/settings/ai-consent.tsx の <WebViewScreen path="/settings/ai-consent" />)。
+  // session-expired の再 bridge は initialPath に _rb を付けて effectivePath を変え、code を取り直して読み込み直す。
+  // タブの prefix だけを許すと _rb 付きのパスが path に戻され、effectivePath が変わらず読み込み直しが起きない
+  it('タブ以外の画面でも、画面自身の path の配下の initialPath (再 bridge の _rb) で新しい code を取り直して URL を差し替える', async () => {
+    mockFetch
+      .mockResolvedValueOnce(okResponse({ code: 'A'.repeat(43), expires_in: 60 }))
+      .mockResolvedValueOnce(okResponse({ code: 'B'.repeat(43), expires_in: 60 }));
+
+    const { rerender } = render(<WebViewScreen path="/settings/ai-consent" />);
+    await waitFor(() => expect(mockWebViewProps.source?.uri).toContain('code=' + 'A'.repeat(43)));
+    expect(new URL(uriOf()).searchParams.get('next')).toBe('/settings/ai-consent?mode=app');
+
+    mockSearchParams = { initialPath: '/settings/ai-consent?_rb=1' };
+    rerender(<WebViewScreen path="/settings/ai-consent" />);
+
+    await waitFor(() => expect(uriOf()).toContain('code=' + 'B'.repeat(43)));
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(new URL(uriOf()).searchParams.get('next')).toBe('/settings/ai-consent?_rb=1&mode=app');
+  });
+
+  it.each([
+    ['ログイン画面', '/login'],
+    ['認証ブリッジ (login CSRF)', `/auth/native-bridge?code=${'C'.repeat(43)}&next=%2Fsettings%2Fai-consent`],
+    ['画面の path の前方一致だけ', '/settings/ai-consent-evil'],
+    ['同じ親の別の画面', '/settings/account'],
+    ['画面の path からドットセグメントで外へ', '/settings/ai-consent/../../auth/native-bridge?code=x'],
+    ['プロトコル相対', '//evil.example/settings/ai-consent'],
+  ])('タブ以外の画面でも、画面自身の path の配下でない initialPath は path に戻す: %s', async (_label, initialPath) => {
+    mockSearchParams = { initialPath };
+    await renderScreen('/settings/ai-consent');
+
+    expect(new URL(uriOf()).searchParams.get('next')).toBe('/settings/ai-consent?mode=app');
+  });
+
+  it('受け付ける範囲は画面ごと: タブの画面はタブ以外の画面の path の配下を受け付けない', async () => {
+    mockSearchParams = { initialPath: '/settings/ai-consent?_rb=1' };
+    await renderScreen('/home');
+
+    expect(new URL(uriOf()).searchParams.get('next')).toBe('/home?mode=app');
+  });
+
   it('配列で渡された場合は先頭要素だけを検証して使う', async () => {
     mockSearchParams = { initialPath: ['//evil.example', '/menus'] };
     await renderScreen('/home');
@@ -512,9 +555,25 @@ describe('onShouldStartLoadWithRequest', () => {
     expect(openURLSpy).toHaveBeenCalledWith('https://cookpad.example/recipe/123');
   });
 
-  it('他オリジンのサブフレームは黙って遮断する (外部ブラウザは開かない)', async () => {
+  // Web の CSP (next.config.mjs の frame-src) は Cloudflare Turnstile の iframe を許す。iOS はサブフレームの読み込みも
+  // onShouldStartLoadWithRequest に渡すので、止めると /login や /settings/account (パスワード変更) で送信できなくなる
+  it('Turnstile の iframe (サブフレーム) は WebView の中で読み込み、外部ブラウザは開かない', async () => {
+    await renderScreen('/settings/account');
+    expect(load('https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv/x', false)).toBe(true);
+    expect(openURLSpy).not.toHaveBeenCalled();
+  });
+
+  it('他オリジンの http(s) のサブフレームは WebView の中で読み込む (どの iframe を読めるかは CSP が決める)', async () => {
     await renderScreen('/home');
-    expect(load('https://tracker.example/frame', false)).toBe(false);
+    expect(load('https://tracker.example/frame', false)).toBe(true);
+    expect(openURLSpy).not.toHaveBeenCalled();
+  });
+
+  // Android はフレームを報告しない (isTopFrame が無い)。Turnstile のオリジンはフレームを問わず WebView の中で読み込む。
+  // Android の WebView が iframe の読み込みをこの判定に渡すかは実機で確かめていない (webViewBridge.ts の NavigationRequestLike)
+  it('isTopFrame が無い (Android) ときも、Turnstile のオリジンは WebView の中で読み込み、外部ブラウザは開かない', async () => {
+    await renderScreen('/home');
+    expect(load('https://challenges.cloudflare.com/cdn-cgi/challenge-platform/x', undefined)).toBe(true);
     expect(openURLSpy).not.toHaveBeenCalled();
   });
 
@@ -552,7 +611,7 @@ describe('onShouldStartLoadWithRequest', () => {
     const whitelist: string[] = mockWebViewProps.originWhitelist;
     expect(whitelist).toEqual(['https://*', 'http://*']);
     // 自オリジン・他オリジン・自オリジンに見せかけた URL は、どれもライブラリを素通りして decideNavigation に届く
-    // (自オリジン 1 つに絞ると、前方一致のため見せかけの URL は通り、他オリジンのサブフレームは OS のブラウザに渡ってしまう)
+    // (自オリジン 1 つに絞ると、前方一致のため見せかけの URL は通り、他オリジンのサブフレーム (Turnstile) は OS のブラウザに渡ってしまう)
     for (const url of [
       `${WEB_BASE_URL}/home`,
       'https://evil.example/',

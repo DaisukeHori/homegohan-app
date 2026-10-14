@@ -7,11 +7,14 @@
  *   - sanitizeWebPath: deep link の initialPath などから来るパスの検証 (open redirect / authority 注入)
  *   - withAppMode / buildWebUrl / buildBridgeUrl: URL に載るのは code と next だけでトークンは載らない
  *   - decideNavigation / decideOpenWindow / openExternalUrl: WebView を自オリジンに固定し外部は既定ブラウザへ
+ *     (CSP が許す iframe = Turnstile は WebView の中で読み込む。WEB_VIEW_EMBED_ORIGINS と next.config.mjs の frame-src の突き合わせ)
  *   - buildOriginGuardScript / buildNavigateScript: 注入スクリプトのオリジンガード
  *   - getSessionForBridge: access_token の残りが少ないときの事前 refresh (Web 側の下限 150 秒との関係は webViewBridge.supabase.test.ts も参照)
  *   - requestBridgeCode: Bearer 認証の POST、失敗時は null、ログにトークンを出さない
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vm from 'vm';
 import { Linking } from 'react-native';
 
@@ -27,6 +30,7 @@ import {
   BRIDGE_REQUEST_TIMEOUT_MS,
   BRIDGE_SERVER_MIN_TOKEN_TTL_SEC,
   DEFAULT_WEB_ORIGIN,
+  WEB_VIEW_EMBED_ORIGINS,
   buildBridgeUrl,
   buildNavigateScript,
   buildOriginGuardScript,
@@ -37,6 +41,7 @@ import {
   getWebOrigin,
   isOwnOrigin,
   openExternalUrl,
+  pathnameOf,
   requestBridgeCode,
   sanitizeInitialPath,
   sanitizeWebPath,
@@ -527,6 +532,31 @@ describe('sanitizeInitialPath()', () => {
     expect(sanitize(FALLBACK)).toBe(FALLBACK);
   });
 
+  // WebViewScreen はタブの prefix に「画面自身の path のパス部分」を足して渡す (タブ以外の画面 /settings/ai-consent の再 bridge 用)
+  describe('タブ以外の画面 (画面自身の path を prefix に足す)', () => {
+    const SCREEN_PATH = '/settings/ai-consent';
+    const screenSanitize = (raw: unknown) => sanitizeInitialPath(raw, SCREEN_PATH, [...PREFIXES, pathnameOf(SCREEN_PATH)]);
+
+    it.each(['/settings/ai-consent?_rb=1', '/settings/ai-consent?mode=app&_rb=2#x', '/settings/ai-consent/detail'])(
+      '画面自身の path の配下は通す: %s',
+      (raw) => {
+        expect(screenSanitize(raw)).toBe(raw);
+      },
+    );
+
+    it.each([
+      '/settings/ai-consent-evil',
+      '/settings/account',
+      '/settings',
+      '/settings/ai-consent/../../auth/native-bridge?code=x',
+      '/settings/ai-consent/%2e%2e/%2e%2e/auth/native-bridge',
+      '/auth/native-bridge?code=x&next=%2Fsettings%2Fai-consent',
+      '//evil.example/settings/ai-consent',
+    ])('画面自身の path の配下でないものは fallback: %s', (raw) => {
+      expect(screenSanitize(raw)).toBe(SCREEN_PATH);
+    });
+  });
+
   it('許可する prefix が空なら何も通さない', () => {
     expect(sanitizeInitialPath('/home', FALLBACK, [])).toBe(FALLBACK);
   });
@@ -738,8 +768,38 @@ describe('decideNavigation()', () => {
     });
   });
 
-  it('他オリジンのサブフレーム (isTopFrame:false) は黙って遮断する', () => {
-    expect(decideNavigation({ url: 'https://example.com/embed', isTopFrame: false })).toEqual({ allow: false });
+  // Web の CSP (next.config.mjs の frame-src) は Cloudflare Turnstile の iframe を許す (#1165 / #1474)。
+  // iOS はサブフレームの読み込みも onShouldStartLoadWithRequest に渡すので、ここで止めると
+  // /login・/settings/account (パスワード変更) で Turnstile のトークンが取れず、送信できなくなる
+  it('他オリジンの http(s) のサブフレーム (isTopFrame:false) は WebView の中で読み込む (外部ブラウザは開かない)', () => {
+    expect(
+      decideNavigation({ url: 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv/x', isTopFrame: false }),
+    ).toEqual({ allow: true });
+    // どの iframe を読み込めるかは CSP が決める (WebView にはページから参照できるトークンが無い)
+    expect(decideNavigation({ url: 'https://example.com/embed', isTopFrame: false })).toEqual({ allow: true });
+    expect(decideNavigation({ url: 'http://example.com/embed', isTopFrame: false })).toEqual({ allow: true });
+  });
+
+  it('サブフレームでも非 http(s) は遮断する', () => {
+    expect(decideNavigation({ url: 'javascript:alert(1)', isTopFrame: false })).toEqual({ allow: false });
+    expect(decideNavigation({ url: 'data:text/html,x', isTopFrame: false })).toEqual({ allow: false });
+  });
+
+  it('Turnstile のオリジンは isTopFrame が無い (Android) ときも WebView の中で読み込む (既定ブラウザに回さない)', () => {
+    expect(decideNavigation({ url: 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/x' })).toEqual({
+      allow: true,
+    });
+    expect(decideNavigation({ url: 'https://CHALLENGES.cloudflare.com/x' })).toEqual({ allow: true });
+  });
+
+  it.each([
+    ['http スキーム', 'http://challenges.cloudflare.com/x'],
+    ['サフィックス偽装', 'https://challenges.cloudflare.com.evil.example/x'],
+    ['userinfo 偽装', 'https://challenges.cloudflare.com@evil.example/x'],
+    ['異なるポート', 'https://challenges.cloudflare.com:8443/x'],
+    ['別のサブドメイン', 'https://evil.cloudflare.com/x'],
+  ])('Turnstile のオリジンに見せかけたトップフレーム遷移は、既定ブラウザへ回す: %s', (_label, url) => {
+    expect(decideNavigation({ url })).toEqual({ allow: false, openExternal: url });
   });
 
   it.each([
@@ -766,6 +826,56 @@ describe('decideNavigation()', () => {
   it('url が文字列でなければ遮断', () => {
     expect(decideNavigation({})).toEqual({ allow: false });
     expect(decideNavigation({ url: 123 })).toEqual({ allow: false });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WEB_VIEW_EMBED_ORIGINS と Web の CSP (next.config.mjs の frame-src) の突き合わせ
+//   OTA が無効なので、Web が新しい埋め込み先を CSP に足したとき、配布済みのアプリは後から直せない。
+//   CSP の frame-src に他オリジンを足したら、モバイルの WEB_VIEW_EMBED_ORIGINS にも足させる
+// ─────────────────────────────────────────────────────────────────────────────
+describe('WEB_VIEW_EMBED_ORIGINS と next.config.mjs の frame-src', () => {
+  const NEXT_CONFIG_PATH = path.resolve(__dirname, '../../../../next.config.mjs');
+
+  function frameSrcSources(): string[] {
+    const config = fs.readFileSync(NEXT_CONFIG_PATH, 'utf8');
+    // next.config.mjs では "frame-src 'self' https://…" の 1 行 (二重引用符の文字列) で書かれている。
+    // コメントの中の「frame-src」に当たらないよう、文字列の開始の " から読む
+    const directive = /"frame-src\s+([^"]+)"/.exec(config);
+    if (!directive) throw new Error('next.config.mjs に frame-src の指定が見つからない');
+    return directive[1].trim().split(/\s+/);
+  }
+
+  it('frame-src の自オリジン以外の埋め込み先は、すべて WEB_VIEW_EMBED_ORIGINS にある', () => {
+    const external = frameSrcSources().filter((source) => source !== "'self'");
+    expect(external.length).toBeGreaterThan(0);
+    for (const source of external) {
+      expect(WEB_VIEW_EMBED_ORIGINS).toContain(source);
+    }
+  });
+
+  it('WEB_VIEW_EMBED_ORIGINS は frame-src にあるものだけ (CSP が読ませない先を許可しない)', () => {
+    const sources = frameSrcSources();
+    for (const origin of WEB_VIEW_EMBED_ORIGINS) {
+      expect(sources).toContain(origin);
+    }
+  });
+
+  it('WEB_VIEW_EMBED_ORIGINS は https のオリジン (パス・末尾スラッシュなし)', () => {
+    for (const origin of WEB_VIEW_EMBED_ORIGINS) {
+      expect(origin).toMatch(/^https:\/\/[a-z0-9.-]+$/);
+    }
+  });
+});
+
+describe('pathnameOf()', () => {
+  it.each([
+    ['/settings/ai-consent', '/settings/ai-consent'],
+    ['/settings/ai-consent?_rb=1', '/settings/ai-consent'],
+    ['/menus/weekly#top', '/menus/weekly'],
+    ['/home?x=1#y', '/home'],
+  ])('%s のパス部分は %s', (input, expected) => {
+    expect(pathnameOf(input)).toBe(expected);
   });
 });
 

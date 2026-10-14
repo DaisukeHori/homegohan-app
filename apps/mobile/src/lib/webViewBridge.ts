@@ -208,7 +208,7 @@ function startsWithSingleSlash(candidate: string): boolean {
 }
 
 /** パスの `?` / `#` より前の部分 */
-function pathnameOf(path: string): string {
+export function pathnameOf(path: string): string {
   const end = path.search(/[?#]/);
   return end === -1 ? path : path.slice(0, end);
 }
@@ -284,8 +284,8 @@ function isUnderPathPrefixes(path: string, prefixes: readonly string[]): boolean
 }
 
 /**
- * initialPath (deep link の `homegohan://home?initialPath=…`、tab-navigate の fullPath) 用の検証。
- * sanitizeWebPath に加えて、パス部分が allowedPrefixes (各タブの prefix) の配下であることを要求する。
+ * initialPath (deep link の `homegohan://home?initialPath=…`、tab-navigate の fullPath、session-expired の再 bridge) 用の検証。
+ * sanitizeWebPath に加えて、パス部分が allowedPrefixes (各タブの prefix と、その画面自身の path のパス部分) の配下であることを要求する。
  * 満たさなければ fallback を返す (fallback は呼び出し側が信頼できる値を渡すこと)。
  *
  * これは多層防御。deep link は他のアプリや Web ページからも起動でき、initialPath は WebView が最初に開くパスになる。
@@ -331,11 +331,13 @@ export interface NavigationRequestLike {
   url?: unknown;
   /**
    * false が明示されたときだけサブフレームとみなす。
-   * iOS は実際のフレームを報告する。Android (react-native-webview の shouldOverrideUrlLoading) は
-   * request.isForMainFrame() を渡さず、isTopFrame を載せない (デバッグ時の代替経路では常に true を載せる)。
-   * そのため Android では、他オリジンの iframe 内での遷移もトップフレーム扱いになり、既定ブラウザが開いてしまう。
-   * 現状の Web には他オリジンの iframe が無い (src を grep して確認済み) ので実害は無いが、
-   * 動画などの埋め込みを足すときは Android 実機で確認すること (判定は decideNavigation を参照)。
+   * iOS (react-native-webview 13.13.5 の apple/RNCWebViewImpl.m) はサブフレームの読み込みも渡し、実際のフレームを報告する。
+   * Android (shouldOverrideUrlLoading) は request.isForMainFrame() を渡さず、isTopFrame を載せない
+   * (デバッグ時の代替経路では常に true を載せる)。そのため Android では、他オリジンの iframe の読み込みや
+   * iframe 内での遷移が届いた場合、どれもトップフレーム扱いになる。Web の CSP (next.config.mjs の frame-src) が
+   * 許す埋め込み先 (WEB_VIEW_EMBED_ORIGINS = Turnstile) は、この区別に頼らず許可する (decideNavigation を参照)。
+   * Android の WebView が iframe の読み込みをこの判定に渡すかどうかは端末で確かめていない。
+   * Turnstile のある画面 (/login、/settings/account のパスワード変更) を Android 実機で確認すること。
    */
   isTopFrame?: boolean;
 }
@@ -347,10 +349,34 @@ export interface NavigationDecision {
 }
 
 /**
+ * Web の CSP (next.config.mjs の frame-src) が iframe での表示を許している、自オリジン以外の埋め込み先。
+ * 今は Cloudflare Turnstile (ログイン・新規登録・パスワード再設定・設定のパスワード変更の bot 対策) のウィジェットだけ。
+ * Android は遷移がどのフレームのものかを報告しない (NavigationRequestLike の isTopFrame を参照) ので、
+ * ここにある https のオリジンは、フレームを問わず WebView の中で読み込む (既定ブラウザへ回さない)。
+ * Web がこのオリジンのページをトップフレームで開くことは無く、開いても WebView にはトークンが無いので漏れるものは無い。
+ *
+ * next.config.mjs の frame-src に他オリジンを足したら、ここにも足す (__tests__/lib/webViewBridge.test.ts が
+ * next.config.mjs と突き合わせる)。OTA が無効なので、配布済みのアプリの値は後から直せない。
+ */
+export const WEB_VIEW_EMBED_ORIGINS: readonly string[] = ['https://challenges.cloudflare.com'];
+
+/** url が WEB_VIEW_EMBED_ORIGINS のどれかの https オリジンか (スキーム・ホスト・ポートの完全一致、認証情報なし) */
+function isEmbedOrigin(url: string): boolean {
+  const parsed = parseUrl(url);
+  if (!parsed || parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') return false;
+  return WEB_VIEW_EMBED_ORIGINS.includes(`${parsed.protocol}//${asciiLowerCase(parsed.host)}`);
+}
+
+/**
  * onShouldStartLoadWithRequest 用の判定。
  *   - 自オリジン / about:blank: 許可
- *   - 他オリジンの http(s) トップフレーム遷移: 遮断して外部ブラウザで開く
- *   - それ以外 (他オリジンのサブフレーム、非 http(s)): 黙って遮断
+ *   - 非 http(s): 黙って遮断
+ *   - 他オリジンの http(s) のサブフレーム (isTopFrame が false): 許可。
+ *     どの iframe を読み込めるかは Web の CSP (frame-src) が決める。WebView にはページから参照できるトークンが無く、
+ *     サブフレームの読み込みでトップフレームのページは変わらない。
+ *     ここで止めると、CSP が許す Turnstile の iframe が iOS で読み込めず、ログインや設定のパスワード変更ができなくなる
+ *   - WEB_VIEW_EMBED_ORIGINS (Turnstile): フレームを問わず許可 (Android はフレームを報告しないため)
+ *   - それ以外の他オリジンの http(s) (トップフレーム、または Android): 遮断して外部ブラウザで開く
  *
  * Android の shouldOverrideUrlLoading は JS の応答を最大 250ms 待って許可に倒れるため、
  * このガードだけを境界にしてはいけない。本命の防御は「ページから参照できるトークンが存在しない」こと。
@@ -359,9 +385,9 @@ export function decideNavigation(request: NavigationRequestLike): NavigationDeci
   const url = request.url;
   if (typeof url !== 'string') return { allow: false };
   if (url === ABOUT_BLANK || isOwnOrigin(url)) return { allow: true };
-  const isTopFrame = request.isTopFrame !== false;
-  if (isTopFrame && isHttpUrl(url)) return { allow: false, openExternal: url };
-  return { allow: false };
+  if (!isHttpUrl(url)) return { allow: false };
+  if (request.isTopFrame === false || isEmbedOrigin(url)) return { allow: true };
+  return { allow: false, openExternal: url };
 }
 
 /**
@@ -372,7 +398,8 @@ export function decideNavigation(request: NavigationRequestLike): NavigationDeci
  * 自オリジン 1 つに絞らない理由:
  *   - 一致は未アンカーの前方一致なので、`https://homegohan-app.vercel.app.evil.com` も自オリジンの指定に一致し、
  *     境界にならない (境界は decideNavigation の厳密なパースが担う)
- *   - 絞ると、他オリジンの http(s) のサブフレームまで OS のブラウザで開かれる (decideNavigation は黙って遮断する)
+ *   - 絞ると、他オリジンの http(s) のサブフレーム (CSP が許す Turnstile の iframe) まで、ライブラリが WebView で読み込まずに
+ *     OS のブラウザで開いてしまう (decideNavigation はサブフレームを WebView の中で許可する)
  * http(s) はすべて decideNavigation に渡し、自オリジン以外のトップフレームは decideNavigation が既定ブラウザへ回す。
  * http(s) 以外 (mailto: など。Web の設定画面・問い合わせページのリンク) は従来どおりライブラリが OS に渡す。
  * ライブラリの既定値と同じ中身だが、WebView を自オリジンに固定する仕組みの一部として明示する。

@@ -24,6 +24,7 @@ import {
   getSessionForBridge,
   isOwnOrigin,
   openExternalUrl,
+  pathnameOf,
   requestBridgeCode,
   sanitizeInitialPath,
   withAppMode,
@@ -126,8 +127,6 @@ true;
 
 export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
   const webViewRef = useRef<WebView>(null);
-  // Web 側のログアウト・セッション失効の通知 (sign-out / session-expired) をネイティブに反映する (#1038 F7-04 / F7-05)
-  const handleAuthMessage = useWebAuthMessages(path);
   const [uri, setUri] = useState<string | null>(null);
   // WebView を開くときに注入する前の利用者の localStorage の掃除 (#1037)。自オリジンのガード付き。掃除が要らなければ空
   const [injectedJS, setInjectedJS] = useState<string>('');
@@ -136,14 +135,21 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
 
   // Fix 2: tab-navigate で fullPath (クエリ付き) を受け取った場合に初期 URL を上書き
   // initialPath は deep link (homegohan://home?initialPath=…) からも指定できるため、
-  // 単一の "/" で始まる同一オリジンのパスで、かつどれかのタブの prefix 配下のものだけを受け付ける
-  // (//evil.example や /auth/native-bridge?code=… 等は path に戻す。tab-navigate の fullPath は必ずタブの prefix に一致する)
+  // 単一の "/" で始まる同一オリジンのパスで、かつどれかのタブの prefix か、この画面自身の path のパス部分の配下のものだけを受け付ける
+  // (//evil.example や /auth/native-bridge?code=… 等は path に戻す。tab-navigate の fullPath は必ずタブの prefix に一致する)。
+  // 画面自身の path を入れるのは、タブ以外の画面 (/settings/ai-consent) でも session-expired の再 bridge
+  // (initialPath に使い捨ての _rb を付けて effectivePath を変え、下の useEffect で code を取り直す) を効かせるため。
+  // path はコードに書かれた信頼できる値なので、受け付ける範囲はタブの prefix と同じ強さで限られる
   const params = useLocalSearchParams<{ initialPath?: string }>();
-  const effectivePath = sanitizeInitialPath(
-    params.initialPath,
-    path,
-    TAB_ROUTES.map((t) => t.pathPrefix),
-  );
+  const effectivePath = sanitizeInitialPath(params.initialPath, path, [
+    ...TAB_ROUTES.map((t) => t.pathPrefix),
+    pathnameOf(path),
+  ]);
+
+  // Web 側のログアウト・セッション失効の通知 (sign-out / session-expired) をネイティブに反映する (#1038 F7-04 / F7-05)。
+  // 再 bridge は、いま開いているパス (検証済みの effectivePath) に _rb を付けて開き直す。
+  // 検証で弾かれる initialPath を基準にすると、_rb を付けても path に戻されて effectivePath が変わらず、読み込み直しが起きない
+  const handleAuthMessage = useWebAuthMessages(effectivePath);
 
   // タブ再タップ時に WebView を初期 URL にリセットする
   // tabPress は同じタブを再タップした際にも発火するため useFocusEffect より確実
@@ -262,6 +268,7 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
         mediaPlaybackRequiresUserAction={false}
         // #1036 / #1158: WebView を自アプリのオリジンに固定する。
         // 他オリジンへのトップフレーム遷移 (レシピ外部リンク等) は WebView に載せず OS の既定ブラウザで開く。
+        // 他オリジンの iframe (Web の CSP が許す Turnstile) は WebView の中で読み込む (decideNavigation を参照)。
         // originWhitelist は未アンカーの前方一致で境界にならないため、URL を厳密にパースして判定する。
         // Android の shouldOverrideUrlLoading は JS の応答待ちが長引くと許可に倒れるので、
         // これは多層防御の一つ (本命は、ページから参照できるトークンを持たせないこと)。
@@ -292,9 +299,12 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
           //   - iOS: メッセージを送ったフレームの request URL (WKScriptMessage.frameInfo.request)
           //   - Android: WebMessageListener に対応した WebView では、送ったフレームのオリジン。
           //     非対応の古い WebView (fallback の JavascriptInterface) ではトップフレームの URL (getUrl())
-          // 最後のケースでは、自オリジンのページに他オリジンの iframe があると、その中からのメッセージもこのゲートを通る。
-          // 現状の Web は CSP (next.config.mjs: default-src 'self' で frame-src の指定なし) が外部 iframe を読み込ませないので実害は無い。
-          // 動画などの外部埋め込みを足すときは、CSP とあわせて Android 実機で確認すること
+          // 最後のケースでは、自オリジンのページの中の他オリジンの iframe からのメッセージもこのゲートを通る。
+          // Web の CSP (next.config.mjs の frame-src) が許す他オリジンの iframe は Cloudflare Turnstile だけ
+          // (/login、/settings/account のパスワード変更など。webViewBridge.ts の WEB_VIEW_EMBED_ORIGINS)。
+          // この経路ではゲートが境界にならないので、Turnstile の iframe からのメッセージを止めるものは、下の各処理の中身の検証だけになる
+          // (tab-navigate はタブの prefix と sanitizeInitialPath、download は webViewDownload.ts の送信元・ファイル名・サイズ)。
+          // 埋め込みを足すときは、CSP とあわせて Android 実機で確認すること
           // (onShouldStartLoadWithRequest 側の Android の注記は webViewBridge.ts の NavigationRequestLike を参照)
           if (!isOwnOrigin(event.nativeEvent.url)) return;
           try {
