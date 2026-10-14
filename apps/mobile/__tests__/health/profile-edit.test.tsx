@@ -48,15 +48,17 @@ jest.mock('../../src/lib/user-storage', () => ({
 }));
 
 // ログアウトの共通処理 (push token の削除 → 端末データの削除 → サインアウト) は別テストで検証する
-const mockSignOutWithCleanup = jest.fn();
+const mockSignOutOnDevice = jest.fn();
 jest.mock('../../src/lib/signOut', () => ({
-  signOutWithCleanup: (...args: unknown[]) => mockSignOutWithCleanup(...args),
+  signOutOnDevice: (...args: unknown[]) => mockSignOutOnDevice(...args),
 }));
 
 // AuthProvider mock
+const mockClearSession = jest.fn();
 jest.mock('../../src/providers/AuthProvider', () => ({
   useAuth: () => ({
     user: { id: 'uid-1', email: 'test@example.com' },
+    clearSession: mockClearSession,
   }),
 }));
 
@@ -167,7 +169,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   alertSpy.mockClear();
   mockRefreshProfile.mockResolvedValue(undefined);
-  mockSignOutWithCleanup.mockResolvedValue({ error: null });
+  mockSignOutOnDevice.mockResolvedValue({ error: null });
 
   // デフォルト: プロフィール取得成功
   mockGet
@@ -293,7 +295,8 @@ describe('ProfilePage — ログアウト (#1038 F7-10)', () => {
     });
 
     await waitFor(() => expect(mockRouterReplace).toHaveBeenCalledWith('/'));
-    // push token の削除はサインアウトの前に行う必要があるので、個別に呼ばず共通処理に任せている
-    expect(mockSignOutWithCleanup).toHaveBeenCalledWith('uid-1');
+    // push token の削除はサインアウトの前に行う必要があるので、個別に呼ばず共通処理に任せている。
+    // サインアウトが失敗したときに画面の状態も消せるよう、clearSession を渡す (設定画面のログアウトと同じ。#1037)
+    expect(mockSignOutOnDevice).toHaveBeenCalledWith('uid-1', { clearSession: mockClearSession });
   });
 });
