@@ -325,9 +325,14 @@ describe("テストの道具が、パスワードのログインを呼ばない 
   });
 
   it("e2e の中で、セッションを作るための /auth/v1/admin/generate_link・/auth/v1/verify を直接呼ぶのは共通の補助関数だけ (同じ処理を各所に写さない)", () => {
+    const route = /\/auth\/v1\/(?:admin\/generate_link|verify)\b/;
     const owners = files
       .filter((rel) => rel.startsWith(path.join("tests/e2e")))
-      .filter((rel) => /\/auth\/v1\/(?:admin\/generate_link|verify)\b/.test(stripComments(rel, fs.readFileSync(path.join(ROOT, rel), "utf8"))));
+      .filter((rel) => {
+        const text = fs.readFileSync(path.join(ROOT, rel), "utf8");
+        // 文字列が無いファイルは、コメントを除く処理 (遅い) を省く
+        return route.test(text) && route.test(stripComments(rel, text));
+      });
     expect(owners).toEqual([path.join("tests/e2e/helpers/test-session.ts")]);
   });
 });
