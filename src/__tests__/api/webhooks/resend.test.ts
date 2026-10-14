@@ -297,12 +297,12 @@ describe('受けた宛先へは送らない (Webhook → sendEmail の通し)', 
     mocks.emailsSend.mockResolvedValue({ data: { id: 'sent-id' }, error: null, headers: null });
     await POST(signedRequest(bouncedEvent('Hard@Example.com', 'Permanent')));
 
-    const blocked = await sendEmail({ to: 'Hard@Example.com', subject: 's', text: 't', template: 'org_invite_new' });
+    const blocked = await sendEmail({ to: 'Hard@Example.com', from: 'noreply@example.test', subject: 's', text: 't', template: 'org_invite_new' });
     expect(blocked.ok).toBe(false);
     expect(blocked.error?.code).toBe('suppressed');
     expect(mocks.emailsSend).not.toHaveBeenCalled();
 
-    const sent = await sendEmail({ to: 'other@example.com', subject: 's', text: 't', template: 'org_invite_new' });
+    const sent = await sendEmail({ to: 'other@example.com', from: 'noreply@example.test', subject: 's', text: 't', template: 'org_invite_new' });
     expect(sent.ok).toBe(true);
     expect(mocks.emailsSend).toHaveBeenCalledTimes(1);
   });
