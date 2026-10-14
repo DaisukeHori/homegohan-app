@@ -153,7 +153,7 @@ describe('アプリ内の画面遷移の行き先が実在する (#1049 F7-14)',
 describe('行き先の拾い方 (#1049)', () => {
   it.each([
     ['router.push', "router.push('/a/b')", '/a/b'],
-    ['as any を付けたテンプレート文字列', 'router.push(`/health/checkups/${checkup.id}` as any)', `/health/checkups/${DYNAMIC_VALUE}`],
+    ['型の注釈を付けたテンプレート文字列', 'router.push(`/health/checkups/${checkup.id}` as Href)', `/health/checkups/${DYNAMIC_VALUE}`],
     ['replace', 'router.replace("/login")', '/login'],
     ['dismissTo', "router.dismissTo('/home')", '/home'],
     ['pathname', "router.push({ pathname: '/x/y', params: { id } })", '/x/y'],

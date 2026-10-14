@@ -82,6 +82,9 @@ const METRIC_GROUPS: readonly { key: string; title: string; icon: keyof typeof I
   { key: "kidney", title: "腎機能・尿酸", icon: "pulse-outline", columns: ["creatinine", "egfr", "uric_acid"] },
 ];
 
+/** 健診の結果の画像の縦横比 (幅 : 高さ)。紙の結果票 (縦長の A4 に近い) を、縦に伸ばしすぎずに全体が見える比率にする */
+const CHECKUP_IMAGE_ASPECT_RATIO = 3 / 4;
+
 // ─── Helpers ──────────────────────────────────────────
 /** 日付 (YYYY-MM-DD) を日本の日付 (YYYY/MM/DD) にする。一覧 (index.tsx の formatDate) と同じ (#1049 F7-21) */
 function formatDate(dateStr: string): string {
@@ -334,5 +337,5 @@ const styles = StyleSheet.create({
   statusLabelRow: { flexDirection: "row", alignItems: "center", gap: 2 },
   statusDot: { width: 8, height: 8, borderRadius: radius.full },
   statusLabel: { fontSize: 11, fontWeight: "700" },
-  image: { width: "100%", aspectRatio: 3 / 4, borderRadius: radius.xl, backgroundColor: colors.card },
+  image: { width: "100%", aspectRatio: CHECKUP_IMAGE_ASPECT_RATIO, borderRadius: radius.xl, backgroundColor: colors.card },
 });
