@@ -1,5 +1,5 @@
 import { type Session, type User } from "@supabase/supabase-js";
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { classifyAuthError } from "../lib/authErrors";
 import { getStoredSession, supabase } from "../lib/supabase";
@@ -23,12 +23,62 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+/**
+ * サインアウトになる経路と、利用者別の端末データの掃除 (clearUserScopedLocalData) の関係 (#1599 / #1615)。
+ * どの経路でも、同じ掃除を通す (CLAUDE.md: 消さないと、この端末で次にログインする別の利用者に前の利用者の値が残る)。
+ *
+ * | 経路 | 掃除を呼ぶ所 | 掃除する利用者の ID | サインアウトとの順 |
+ * |---|---|---|---|
+ * | 設定・マイページのログアウト、退会のあと、Web からの sign-out (signOut.ts) | signOut.ts | 画面が持つ利用者 | 掃除 → signOut。そのあと届く SIGNED_OUT で、下の行の掃除がもう一度走る |
+ * | 起動時、サーバーが失効と明言した (getUser() が invalid) | restoreSession | 保存済みのセッションの利用者 | 掃除 → signOut({ scope: "local" })。そのあと届く SIGNED_OUT で、下の行の掃除がもう一度走る |
+ * | 起動時、保存済みのセッションが無い (getSession() が null。refresh_token の失効・保管庫を読めない・一度もログインしていない) | restoreSession | 直前に分かっていたセッションの利用者。ふつうは分からず null (利用者別のキーを接頭辞で全員分消す) | supabase-js が既に消している。掃除が済んでから未ログインの画面を出す |
+ * | 起動時、getSession() が通信の失敗で null を返し、保存済みのセッションも無い | restoreSession | 同上 | 同上 |
+ * | 起動時、getSession() が例外を投げた | restoreSession | 同上 | 同上 |
+ * | SIGNED_OUT (supabase-js の自動更新で refresh_token が失効と答えた・getUser() が失効を見つけて端末のセッションを消した・上の行の signOut) | onAuthStateChange | 直前に分かっていたセッションの利用者 (無ければ null) | supabase-js が既に消している。画面はすぐ未ログインにし、掃除はそのあと (下の注) |
+ *
+ * 二重に掃除しても害は無い:
+ *   - AsyncStorage: 同じキーを消し直すだけ (消えているキーの削除はエラーにならない)
+ *   - WebView の localStorage: 掃除の ID が新しくなるだけで、次に開く WebView が一度だけ消す。二度目の掃除が頼まれるのは
+ *     利用者がまだログインしていない間なので、次の利用者が書いた値は消さない
+ * SIGNED_OUT の掃除は画面を未ログインにしたあとに走る。次の利用者がログイン (人の操作で数秒) するより、掃除 (端末の中の読み書きで
+ * 数ミリ秒) のほうが先に終わる。万一ログインのほうが先でも、消えるのは次の利用者の設定の値で、前の利用者の値が残ることはない。
+ * 画面を掃除の完了まで待たせないのは、失効したセッションで画面を出し続けないため。
+ */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
+  /**
+   * 直前に分かっていたセッションの利用者の ID。SIGNED_OUT のときの nextSession は null なので、
+   * 誰のキーを消すかはここから取る。画面の状態 (session) は onAuthStateChange の購読の時点の値で閉じ込められるので、ref に持つ
+   */
+  const lastKnownUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
+
+    /** セッションを画面の状態にし、利用者の ID を覚える (null のときは覚えている ID を残す。SIGNED_OUT の掃除で使う) */
+    function applySession(next: Session | null) {
+      const userId = next?.user?.id;
+      if (userId) lastKnownUserIdRef.current = userId;
+      setSession(next);
+    }
+
+    /**
+     * 起動時に未ログインと決まったときの後始末。通常のログアウトと同じ掃除を通してから、未ログインにする。
+     * 掃除する利用者は、直前に分かっていたセッションの利用者。起動時なのでふつうは分からず (supabase-js がセッションを既に消している)、
+     * そのときは ID なしで掃除できる範囲 (利用者別のキーを接頭辞で全員分) を消す
+     */
+    async function settleSignedOutAtStartup() {
+      const userId = lastKnownUserIdRef.current;
+      lastKnownUserIdRef.current = null;
+      try {
+        await clearUserScopedLocalData(userId);
+      } catch {
+        // 掃除は例外を投げないが、万一投げても、未ログインにする
+      }
+      if (!isMounted) return;
+      setSession(null);
+    }
 
     /**
      * 起動時にセッションを復元する。
@@ -54,12 +104,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // 読み込み中の表示がその分 (約 50 秒) さらに長くなる (実測で、getSession() と getUser() を合わせて約 100 秒)。
           const stored = await getStoredSession();
           if (!isMounted) return;
-          setSession(stored);
+          if (!stored) {
+            // 保存済みのセッションも無い: 未ログインで起動する。通常のログアウトと同じ掃除を通す (#1615)
+            await settleSignedOutAtStartup();
+            return;
+          }
+          applySession(stored);
           return;
         }
 
         if (!cachedSession) {
-          setSession(null);
+          // 保存済みのセッションが無い (refresh_token の失効で supabase-js が消した・保管庫を読めない・一度もログインしていない)。
+          // 未ログインで起動するので、通常のログアウトと同じ掃除を通す (#1615。前の利用者の値を次の利用者に残さない)
+          await settleSignedOutAtStartup();
           return;
         }
         trusted = cachedSession;
@@ -69,13 +126,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!isMounted) return;
 
         if (!userError && userData.user) {
-          setSession(cachedSession);
+          applySession(cachedSession);
           return;
         }
 
         if (userError && classifyAuthError(userError) !== "invalid") {
           // 通信失敗・サーバー障害・レート制限: 失効とは限らないので、保存済みのセッションのまま続ける
-          setSession(cachedSession);
+          applySession(cachedSession);
           return;
         }
 
@@ -98,7 +155,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(null);
       } catch {
         // 想定外の例外 (通信の失敗が例外として出た場合など)。失効が確認できていないので、保存済みのセッションがあれば維持する
-        if (isMounted) setSession(trusted);
+        if (!isMounted) return;
+        if (trusted) {
+          applySession(trusted);
+        } else {
+          // getSession() 自体が例外を投げた: 未ログインで起動するので、通常のログアウトと同じ掃除を通す (#1615)
+          await settleSignedOutAtStartup();
+        }
       } finally {
         if (isMounted) setIsLoading(false);
       }
@@ -112,12 +175,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // 可能性があるので採用しない (採用すると、上の復元結果を null で上書きしてしまう)。
         // 値があるときは、検証完了を待たずにすぐ画面を出すため採用する
         if (nextSession) {
-          setSession(nextSession);
+          applySession(nextSession);
           setIsLoading(false);
         }
         return;
       }
-      setSession(nextSession);
+      if (event === "SIGNED_OUT") {
+        // supabase-js がセッションを消した (ログアウト・refresh_token の失効・getUser() が失効を見つけたなど)。
+        // 通常のログアウトと同じ掃除を通す (#1615)。画面はすぐ未ログインにし、掃除はそのあと (上の表の注)
+        const userId = lastKnownUserIdRef.current;
+        lastKnownUserIdRef.current = null;
+        setSession(null);
+        setIsLoading(false);
+        Promise.resolve()
+          .then(() => clearUserScopedLocalData(userId))
+          .catch(() => {
+            // 掃除は例外を投げないが、万一投げても、サインアウトは済んでいる
+          });
+        return;
+      }
+      applySession(nextSession);
       setIsLoading(false);
     });
 

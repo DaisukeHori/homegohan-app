@@ -11,7 +11,8 @@
  *      - WebView の利用者別の localStorage (#1037)。次に WebView を開いたとき、Web のページが読み込まれる前に消させる
  *        (webViewUserStorageCleanup.ts。ネイティブのログアウトは Web の画面の掃除を通らないため)
  *      - 掃除は userScopedLocalData.ts の clearUserScopedLocalData にまとめてあり、起動時に失効が分かったときの
- *        端末側だけのサインアウト (AuthProvider) も同じものを通る (#1599)
+ *        端末側だけのサインアウト (AuthProvider) も同じものを通る (#1599)。AuthProvider は、起動時に未ログインと決まったときと
+ *        SIGNED_OUT でも同じものを通す (#1615)。ここでのサインアウトのあとに届く SIGNED_OUT で、掃除がもう一度走る (害は無い)
  *   3. サインアウト (保管庫のセッションを消す)
  *
  * アカウント削除では使わない。auth.users の削除で user_push_tokens が ON DELETE CASCADE で消える。
