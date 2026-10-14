@@ -19,6 +19,9 @@ import { useV4MenuGeneration } from '@/hooks/useV4MenuGeneration';
 
 type Generate = ReturnType<typeof useV4MenuGeneration>['generate'];
 
+// React の act() を使う検査であることを React に伝える (伝えないと act の警告が出る)
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
 let container: HTMLDivElement;
 let root: Root;
 let generate: Generate | null = null;
