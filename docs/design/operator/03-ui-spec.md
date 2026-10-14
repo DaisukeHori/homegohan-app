@@ -648,7 +648,10 @@ Step 3: スケジュール
 
 ---
 
-## 33. `/super-admin/llm-usage` — LLM 使用量 (強化)
+## 33. `/super-admin/llm` — LLM 使用量 (強化)
+
+> **現状 (2026-10, #1524)**: 画面のパスは `/super-admin/llm` (プロバイダー別の内訳は `/super-admin/llm/[provider]`)。
+> データは `GET /api/super-admin/llm/usage` から読む (`/super-admin/llm-usage` という画面は無い)。
 
 **期間選択**: 今日 / 7 日 / 30 日 / カスタム
 

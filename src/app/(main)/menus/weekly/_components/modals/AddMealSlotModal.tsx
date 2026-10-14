@@ -4,7 +4,7 @@ import React, { useId, useRef } from "react";
 import { motion } from "framer-motion";
 import FocusTrap from "focus-trap-react";
 import { X, ChevronRight } from "lucide-react";
-import { MEAL_LABELS, formatDateJa } from "@homegohan/shared";
+import { MEAL_LABELS, MEAL_ORDER, formatDateJa, type MealType } from "@homegohan/shared";
 import { useDialogA11y } from "@/components/common/useDialogA11y";
 
 const colors = {
@@ -21,10 +21,6 @@ const colors = {
   blueLight: '#EEF4FB',
   border: '#E8E8E8',
 };
-
-type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
-
-const ALL_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
 
 interface WeekDate {
   date: Date;
@@ -84,7 +80,8 @@ export function AddMealSlotModal({
         {dayInfo && `${formatDateJa(dayInfo.dateStr)}（${dayInfo.dayOfWeek}）`}に追加する食事を選んでください
       </p>
       <div className="flex flex-col gap-2">
-        {ALL_MEAL_TYPES.map(type => (
+        {/* 選択肢の値と並びは @homegohan/shared の MEAL_ORDER が正本 (#1446) */}
+        {MEAL_ORDER.map(type => (
           <button
             key={type}
             onClick={() => onSelectMealType(type, selectedDayIndex)}

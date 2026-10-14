@@ -77,11 +77,18 @@ supabase db push --linked --include-all
 # (本番プロジェクトの PROJECT_ID を確認してから実行)
 
 # 5. 型の再生成 (出力先は src/types/database.types.ts。packages/shared/src/database.types.ts に同じ内容を写す)
-#    本番に接続しない作り方: ローカルの Supabase (bash scripts/supabase-local.sh start → reset) に全 migration を当て、
-#    npx supabase@2.62.10 gen types typescript --local --schema public --workdir .supabase-local の出力を使う
-#    (--local は __InternalSupabase の PostgrestVersion を出さないので既存の値を残す。#1495)。
+#    本番に接続せずに作る: ローカルの Supabase をベースライン方式で組み立て (本番スキーマのスナップショット supabase/baseline/ を当て、
+#    そのあとにベースラインより新しい migration だけを当てる。scripts/supabase-local.sh の冒頭)、--local で出力する。
+#    --workdir は組み立てた枠の作業ディレクトリ (枠 0 は .supabase-local、LOCAL_CI_SLOT=n は .supabase-local-s<n>)。
+#    --local は __InternalSupabase の PostgrestVersion を出さないので既存の値を残す (#1495)。
 #    tests/database-types-migrations-contract.test.ts が migration と型ファイルの突き合わせ・写しの一致を確かめる
-npm run types:supabase
+#    (npm run types:supabase は --linked で本番に接続するので、この手順では使わない)
+bash scripts/supabase-local.sh start
+bash scripts/supabase-local.sh reset
+npx supabase@2.62.10 gen types typescript --local --schema public --workdir .supabase-local > /tmp/database.types.generated.ts
+# 出力には __InternalSupabase の PostgrestVersion が無い。src/types/database.types.ts の __InternalSupabase のブロックはそのまま残し、
+# それ以外を /tmp/database.types.generated.ts の中身で置き換える (ファイルを丸ごと上書きすると PostgrestVersion が消え、
+# tests/database-types-migrations-contract.test.ts の PostgrestVersion の検査が赤になる)
 cp src/types/database.types.ts packages/shared/src/database.types.ts
 git add src/types/database.types.ts packages/shared/src/database.types.ts
 git commit -m "chore: Supabase 型を再生成"
@@ -601,6 +608,16 @@ Step 1: 即時対応 (T+0)
     - CRON_SECRET
     - RESEND_API_KEY
     - 全 LLM API キー
+  □ cron の共有シークレットを rotate (Vercel の CRON_SECRET とは別の保管場所。Supabase 側の 2 か所を同じ新しい値にそろえる)
+    - Supabase の Edge Function secrets: CRON_SECRET (別名 SERVICE_ROLE_SECRET。入れ替えの間だけ CRON_SECRET_PREVIOUS)
+    - Supabase Vault: app_cron_secret (pg_cron が Edge Function を呼ぶときの Bearer)
+    - 手順: ENV_SETUP.md の「Cron の共有シークレットの保管場所とローテーション」→「ローテーション手順」
+    - 侵害時は旧い値を受け付け続けないよう、CRON_SECRET_PREVIOUS は使わないか、使うならできるだけ早く外す
+      (ENV_SETUP.md の手順 5 の注意と、「旧い値の控えが無いとき」の進め方)
+  □ 入れ替えの後、node scripts/check-cron-secret-drift.mjs --project-ref <ref> で確かめる
+    - Edge Function secrets と Vault の app_cron_secret が一致している (Edge ⇔ Vault が PASS)
+    - CRON_SECRET_PREVIOUS が残っていない (WARN が出ない)
+    - Vault は SUPABASE_DB_URL (psql) か、SQL Editor で得たダイジェストを --vault-digest で渡す (値は表示されない)
 
 Step 2: 被害調査 (T+1h)
   □ 侵害経路の特定 (ログ調査)

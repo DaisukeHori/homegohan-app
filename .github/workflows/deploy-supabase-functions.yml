@@ -51,6 +51,9 @@ jobs:
           set -euo pipefail
           functions_dir=supabase/functions
           includes=(--include='*.ts' --include='*.tsx' --include='*.mts' --include='*.js' --include='*.jsx' --include='*.mjs')
+          # 手元で deno が supabase/functions/node_modules を作ると、その中の依存のソースまで数えて偽の赤になるので、
+          # node_modules は検査しない (#1518。tests/edge-function-dep-pinning.test.ts の walkSources も同じ)
+          excludes=(--exclude-dir=node_modules)
           quote='["'"'"'`]'
           unpinned="${quote}(jsr:|npm:|https?://)"
           import_form="(^|[^[:alnum:]_\$])(from|import)[[:space:]]*[(]?[[:space:]]*${unpinned}"
@@ -98,7 +101,7 @@ jobs:
             fi
           done
           count_status=0
-          counts=$(grep -rc "${includes[@]}" -e '^' "$functions_dir") || count_status=$?
+          counts=$(grep -rc "${includes[@]}" "${excludes[@]}" -e '^' "$functions_dir") || count_status=$?
           if [ "$count_status" -gt 1 ]; then
             echo "::error::$functions_dir のソースを読めません (grep の終了コード $count_status)。"
             exit 1
@@ -109,7 +112,7 @@ jobs:
           fi
           echo "検査したファイル: $(grep -c '^' <<<"$counts") 本"
           status=0
-          grep -rnE "${includes[@]}" -e "$raw_import" "$functions_dir" || status=$?
+          grep -rnE "${includes[@]}" "${excludes[@]}" -e "$raw_import" "$functions_dir" || status=$?
           if [ "$status" -eq 0 ]; then
             echo "::error::Supabase Functions では jsr:/npm:/https:// を直接 import せず (@deno-types・<reference types> も同じ)、supabase/functions/deno.json の imports (版を固定した名前) を使ってください。"
             exit 1
