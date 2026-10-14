@@ -13,6 +13,10 @@
  * 画面を実際に描画し、AI アシスタントと改善モーダルの代わりに、画面が渡す onGenerate / onSubmit を
  * 直接呼んで確かめる (画面の中の本物の handleV4Generate / handleImprove / useV4MenuGeneration を通る)。
  * 見る場所は利用者に見える進捗カードの表示。
+ *
+ * 画面に入り直したとき・週を移ったとき (#1582) は、生成中の行の確認 (GET /api/ai/menu/weekly/pending) の
+ * ultimateMode (サーバーが行の generated_data.ultimateMode から決める) で決める。mode (v4 / v5) は生成のエンジンで、
+ * 通常の生成も「献立を改善」も v4 / v5 になるので、mode では見分けない。
  */
 
 // ============================================================
@@ -303,6 +307,94 @@ describe('週間献立画面: 進捗カードの種類 (#1142)', () => {
     await completeGeneration();
 
     await generateFromAssistant(true);
+
+    expectProgressCard(screen, 'ultimate');
+  });
+});
+
+// ============================================================
+// 画面に入り直したとき・週を移ったとき (#1582)
+// ============================================================
+
+/** 生成中の行の確認 (GET /api/ai/menu/weekly/pending) が返す行 */
+type PendingRow = { mode: string; ultimateMode?: boolean };
+
+/**
+ * 生成中の行の確認に、問い合わせた週の行として row を返す (週の初日は画面が送った date をそのまま使う)。
+ * onlyWeekOffset を渡したときは、最初に問い合わせた週から数えてその週だけで返す (ほかの週は生成中の行が無い)
+ */
+function mockPendingRow(row: PendingRow, onlyWeekOffset?: number) {
+  const askedDates: string[] = [];
+  mockGet.mockImplementation(async (url: string) => {
+    if (url.startsWith('/api/ai/menu/weekly/pending')) {
+      const date = new URL(url, 'http://localhost').searchParams.get('date') ?? '';
+      if (!askedDates.includes(date)) askedDates.push(date);
+      if (onlyWeekOffset !== undefined && askedDates.indexOf(date) !== onlyWeekOffset) return { hasPending: false };
+      return { hasPending: true, requestId: 'req-pending', status: 'processing', startDate: date, ...row };
+    }
+    if (url.startsWith('/api/ai/menu/weekly/status')) return { status: 'processing', progress: null };
+    if (url.startsWith('/api/meal-plans')) return { dailyMeals: [] };
+    return {};
+  });
+}
+
+describe('週間献立画面: 入り直したときの進捗カードの種類は、行が究極モードかで決まる (#1582)', () => {
+  it('通常の v4 の生成の待ち (ultimateMode: false) は、通常の進捗カードになる', async () => {
+    mockPendingRow({ mode: 'v4', ultimateMode: false });
+    const screen = await renderPage();
+    expectProgressCard(screen, 'normal');
+  });
+
+  it('通常の v5 の生成の待ち (ultimateMode: false) は、通常の進捗カードになる', async () => {
+    mockPendingRow({ mode: 'v5', ultimateMode: false });
+    const screen = await renderPage();
+    expectProgressCard(screen, 'normal');
+  });
+
+  it('「献立を改善」の待ち (v4・常に通常モードで送るので ultimateMode: false) は、通常の進捗カードになる', async () => {
+    mockPendingRow({ mode: 'v4', ultimateMode: false });
+    const screen = await renderPage();
+    expectProgressCard(screen, 'normal');
+    // 入り直した行を追うだけで、新しい生成は頼まない
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it('究極モードの生成の待ち (v4・ultimateMode: true) は、究極モードの進捗カードになる', async () => {
+    mockPendingRow({ mode: 'v4', ultimateMode: true });
+    const screen = await renderPage();
+    expectProgressCard(screen, 'ultimate');
+  });
+
+  it('究極モードの生成の待ち (v5・ultimateMode: true) は、究極モードの進捗カードになる', async () => {
+    mockPendingRow({ mode: 'v5', ultimateMode: true });
+    const screen = await renderPage();
+    expectProgressCard(screen, 'ultimate');
+  });
+
+  it('応答に ultimateMode が無い (古いサーバー) 待ちは、mode が v4 でも通常の進捗カードになる', async () => {
+    mockPendingRow({ mode: 'v4' });
+    const screen = await renderPage();
+    expectProgressCard(screen, 'normal');
+  });
+
+  it('週を移った先で見つけた通常の生成の待ちは、通常の進捗カードになる', async () => {
+    mockPendingRow({ mode: 'v4', ultimateMode: false }, 1);
+    const screen = await renderPage();
+    expect(screen.queryByTestId('weekly-generating-indicator')).toBeNull();
+
+    fireEvent.press(screen.getByTestId('weekly-next-button'));
+    await waitFor(() => expect(screen.queryByTestId('weekly-generating-indicator')).not.toBeNull());
+
+    expectProgressCard(screen, 'normal');
+  });
+
+  it('週を移った先で見つけた究極モードの生成の待ちは、究極モードの進捗カードになる', async () => {
+    mockPendingRow({ mode: 'v4', ultimateMode: true }, 1);
+    const screen = await renderPage();
+    expect(screen.queryByTestId('weekly-generating-indicator')).toBeNull();
+
+    fireEvent.press(screen.getByTestId('weekly-next-button'));
+    await waitFor(() => expect(screen.queryByTestId('weekly-generating-indicator')).not.toBeNull());
 
     expectProgressCard(screen, 'ultimate');
   });
