@@ -8,11 +8,12 @@
  *  3. params.error がある場合、エラーアラートを出す
  *  4. (#1038 F7-08) リンクの情報が無い / エラー / 交換失敗のときは「確認が完了しました」と誤表示せず、エラー表示にする
  *  5. (#1038 F7-08) 起動リンクの取得が済むまでは、エラー表示をちらつかせない
+ *  6. (#1187) メールアドレス変更の確認の 1 通目は、エラーでも完了でもなく「もう一方の確認待ち」を表示する
  */
 
 import React from 'react';
 import { Alert, StyleSheet } from 'react-native';
-import { render, waitFor } from '@testing-library/react-native';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import { resetAuthLinkResultsForTests } from '../../src/lib/authLink';
 
 // ---- Mocks ----
@@ -50,9 +51,10 @@ jest.mock('expo-linking', () => ({
 }));
 
 const mockBack = jest.fn();
+const mockReplace = jest.fn();
 const mockRedirect = jest.fn();
 jest.mock('expo-router', () => ({
-  router: { back: (...args: any[]) => mockBack(...args), replace: jest.fn() },
+  router: { back: (...args: any[]) => mockBack(...args), replace: (...args: any[]) => mockReplace(...args) },
   Redirect: (props: any) => {
     mockRedirect(props);
     return null;
@@ -263,5 +265,44 @@ describe('VerifyPage — 起動リンクの取得待ち (#1038 F7-08)', () => {
     render(<VerifyPage />);
 
     await waitFor(() => expect(mockExchangeCodeForSession).toHaveBeenCalledWith('event-code'));
+  });
+});
+
+describe('VerifyPage — メールアドレス変更の確認の 1 通目 (#1187)', () => {
+  const FIRST_OF_TWO_URL =
+    'homegohan://auth/verify#message=Confirmation+link+accepted.+Please+proceed+to+confirm+link+sent+to+the+other+email';
+
+  it('6-1. 「もう一方の確認待ち」を表示し、エラー表示・完了表示・ホームへの自動の移動はしない', async () => {
+    mockURL = FIRST_OF_TWO_URL;
+    mockExtract.mockReturnValue({
+      message: 'Confirmation link accepted. Please proceed to confirm link sent to the other email',
+    });
+    // ログインしたまま開いた (メールアドレスの変更はログイン中に申し込む)
+    mockGetSession.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } });
+
+    const api = render(<VerifyPage />);
+
+    expect(await api.findByTestId('verify-awaiting-other-text')).toBeTruthy();
+    expect(api.getByText(/もう一方のメールアドレスに届いた確認メールのリンクも開いてください/)).toBeTruthy();
+    expect(api.queryByTestId('verify-error-text')).toBeNull();
+    expect(api.queryByText('確認が完了しました。ログインしてください。')).toBeNull();
+    expect(Alert.alert).not.toHaveBeenCalled();
+    // セッションがあっても、ここでホームへは移さない (知らせを読む前に画面が消えないように)
+    expect(mockGetSession).not.toHaveBeenCalled();
+    expect(mockRedirect).not.toHaveBeenCalled();
+  });
+
+  it('6-2. ボタンは「アプリへ戻る」で、入口 ("/") へ戻す (ログイン画面へは送らない)', async () => {
+    mockURL = FIRST_OF_TWO_URL;
+    mockExtract.mockReturnValue({
+      message: 'Confirmation link accepted. Please proceed to confirm link sent to the other email',
+    });
+
+    const api = render(<VerifyPage />);
+
+    await api.findByTestId('verify-awaiting-other-text');
+    fireEvent.press(api.getByTestId('verify-next-button'));
+    expect(api.getByText('アプリへ戻る')).toBeTruthy();
+    expect(mockReplace).toHaveBeenCalledWith('/');
   });
 });

@@ -18,6 +18,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
 import { aiDailyLimitMessage } from "../_shared/ai-daily-limit.ts";
+import { MENU_REQUEST_FAILED_MESSAGE } from "../_shared/stored-failure-messages.ts";
+import { createLogger } from "../_shared/db-logger.ts";
 import {
   buildSearchQueryBase,
   buildUserContextForPrompt,
@@ -118,7 +120,6 @@ import { addDaysToDate, monthJst, todayJst } from "../_shared/jst-date.ts";
 import { aiConsentDeniedResponse, checkAiConsent, invokeMenuContinuation } from "../_shared/ai-consent-guard.ts";
 import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
 import { missingEnvError } from "../_shared/missing-env.ts";
-import { PublicRequestError, publicErrorMessage } from "../_shared/public-error.ts";
 
 console.log("Generate Menu V4 Function loaded (Slot-based generation)");
 
@@ -2147,6 +2148,10 @@ async function executeStep3_Complete(
     errors,
     successMessage: `全${totalSlots}件の献立が完成しました！`,
   });
+  // 枠ごとの理由 (例外の文面を含む) はログにだけ残す。行の error_message は定型の文 (#1478)
+  if (finalSummary.issueDetails.length > 0) {
+    console.warn(`[save] 保存しなかった枠 (request ${requestId}):`, finalSummary.issueDetails.join("; "));
+  }
 
   await runSupabaseQuery(
     () => supabase
@@ -2699,6 +2704,10 @@ async function executeStep6_FinalSave(
     successMessage: `全${totalSlots}件の献立が完成しました！`,
     successSuffix: praiseComment ? ` ${praiseComment}` : "",
   });
+  // 枠ごとの理由 (例外の文面を含む) はログにだけ残す。行の error_message は定型の文 (#1478)
+  if (finalSummary.issueDetails.length > 0) {
+    console.warn(`[save] 保存しなかった枠 (request ${requestId}):`, finalSummary.issueDetails.join("; "));
+  }
 
   await runSupabaseQuery(
     () => supabase
@@ -2756,8 +2765,8 @@ Deno.serve(async (req: Request) => {
 
     const authHeader = req.headers.get("Authorization") ?? "";
     const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (!accessToken) throw new PublicRequestError("Missing access token");
-    if (!requestId) throw new PublicRequestError("request_id is required");
+    if (!accessToken) throw new Error("Missing access token");
+    if (!requestId) throw new Error("request_id is required");
 
     // 継続呼び出し（_continue=true）は SERVICE_ROLE_KEY で呼ばれる（自関数からの内部呼び出しのみ）
     // SERVICE_ROLE_JWT / SUPABASE_SERVICE_ROLE_KEY のどちらが設定されていても一致を許容する
@@ -2777,7 +2786,7 @@ Deno.serve(async (req: Request) => {
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
-      if (!body.userId) throw new PublicRequestError("userId is required for continuation calls");
+      if (!body.userId) throw new Error("userId is required for continuation calls");
       userId = body.userId;
       console.log(`📍 Continuation call with userId: ${userId}`);
     } else if (isServiceRoleCaller && body.userId) {
@@ -2913,6 +2922,13 @@ Deno.serve(async (req: Request) => {
         console.log(`✅ Step ${currentStep} completed successfully`);
       } catch (bgErr: any) {
         console.error(`❌ Step ${currentStep} error:`, bgErr?.message ?? String(bgErr), bgErr);
+        // 例外の文面は console と構造化ログ (app_logs) にだけ残す。行の error_message は画面がそのまま出すので定型の文を書く (#1478)
+        const backgroundLogger = createLogger("generate-menu-v4", requestId ?? undefined);
+        (userId ? backgroundLogger.withUser(userId) : backgroundLogger).error(
+          "バックグラウンドの工程でエラーが発生しました",
+          bgErr,
+          { requestId, step: currentStep },
+        );
         if (requestId) {
           try {
             await runSupabaseQuery(
@@ -2920,7 +2936,7 @@ Deno.serve(async (req: Request) => {
                 .from("weekly_menu_requests")
                 .update({
                   status: "failed",
-                  error_message: bgErr?.message ?? String(bgErr) ?? "Step error",
+                  error_message: MENU_REQUEST_FAILED_MESSAGE,
                   updated_at: new Date().toISOString(),
                 })
                 .eq("id", requestId),
@@ -2956,7 +2972,11 @@ Deno.serve(async (req: Request) => {
   } catch (err: any) {
     const errorMessage = err?.message ?? String(err) ?? "Unknown error";
     console.error("Request error:", errorMessage, err);
-    
+    // 例外の文面は console と構造化ログ (app_logs) にだけ残す。行の error_message と応答の本文には定型の文を入れる (#1478)。
+    // userId が確定する前に失敗した場合は、ユーザーなしのロガーで記録する (#1171 と同じ)
+    const handlerLogger = createLogger("generate-menu-v4", requestId ?? undefined);
+    (userId ? handlerLogger.withUser(userId) : handlerLogger).error("ハンドラでエラーが発生しました", err, { requestId });
+
     if (requestId) {
       try {
         await runSupabaseQuery(
@@ -2964,7 +2984,7 @@ Deno.serve(async (req: Request) => {
             .from("weekly_menu_requests")
             .update({
               status: "failed",
-              error_message: errorMessage,
+              error_message: MENU_REQUEST_FAILED_MESSAGE,
               updated_at: new Date().toISOString(),
             })
             .eq("id", requestId),
@@ -2978,10 +2998,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // #1444 (CodeQL js/stack-trace-exposure): 利用者の JWT で直接呼べるので、本文には入力の誤りの文だけを返し、
-    // 内部の例外 (DB・AI の API など) の文は返さない (中身は上の console.error と、リクエストの行の error_message に残る)。
-    // 状態コードは以前と同じ 400 のまま (呼び出し元の再試行の判定を変えない)
-    return new Response(JSON.stringify({ error: publicErrorMessage(err) }), {
+    return new Response(JSON.stringify({ error: MENU_REQUEST_FAILED_MESSAGE }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

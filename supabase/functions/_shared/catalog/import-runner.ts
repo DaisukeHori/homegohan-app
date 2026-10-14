@@ -244,10 +244,21 @@ export async function handleCatalogImportRequest(req: Request, options: HandlerO
         ).slice(0, maxProductsPerCategory);
 
         if (!dryRun) {
-          await supabase
+          // 一覧を取れたカテゴリの最終取得時刻。update が error を返したときは、取り込みは続ける (時刻が古いまま残るだけ) が、
+          // 黙って捨てずにログに残す (以前は結果を見ていなかった。#1540)。
+          // 例外を投げたときは、この try の中なので run は failed になる (#1522)。ただし supabase-js は
+          // throwOnError を付けないかぎり投げないので、その経路はまず通らない
+          const { error: lastCrawledError } = await supabase
             .from("catalog_source_categories")
             .update({ last_crawled_at: new Date().toISOString() })
             .eq("id", category.id);
+          if (lastCrawledError) {
+            logger.error("Failed to record catalog category last_crawled_at", lastCrawledError, {
+              importRunId,
+              categoryId: category.id,
+              categoryCode: category.category_code,
+            });
+          }
         }
 
         if (!dryRun && storeRawDocuments && importRunId) {
@@ -340,23 +351,6 @@ export async function handleCatalogImportRequest(req: Request, options: HandlerO
         }
       }
 
-      if (!dryRun && importRunId) {
-        const { error: completeError } = await supabase
-          .from("catalog_import_runs")
-          .update({
-            status: stats.productErrors.length > 0 ? IMPORT_RUN_STATUS.partial : IMPORT_RUN_STATUS.completed,
-            completed_at: new Date().toISOString(),
-            ...runCounts(stats),
-            error_log: stats.productErrors.length > 0
-              ? JSON.stringify(stats.productErrors.slice(0, IMPORT_RUN_ERROR_LOG_MAX_ENTRIES))
-              : null,
-          })
-          .eq("id", importRunId);
-        if (completeError) {
-          // 取り込み自体は終わっているので応答は変えない。行が 'running' のまま残ったことをログに残す
-          logger.error("Failed to mark catalog import run as finished", completeError, { importRunId });
-        }
-      }
     } catch (runError) {
       if (importRunId) {
         await markImportRunFailed(supabase, logger, {
@@ -366,6 +360,13 @@ export async function handleCatalogImportRequest(req: Request, options: HandlerO
         });
       }
       throw runError;
+    }
+
+    // 取り込みは終わった。完了の記録は上の try の外で行う: 完了の更新が例外を投げても、取り込みの失敗として
+    // 行を 'failed' に書き換えない (以前は try の中にあり、例外が外の catch に届くと、済んだ取り込みが 'failed' と
+    // 記録され 500 を返しえた。#1540)。完了の記録の失敗は markImportRunFinished がログに残す
+    if (!dryRun && importRunId) {
+      await markImportRunFinished(supabase, logger, { importRunId, stats });
     }
 
     return jsonResponse({
@@ -417,6 +418,38 @@ function runCounts(stats: ImportStats) {
     products_unchanged: stats.productsUnchanged,
     products_discontinued: stats.productsDiscontinued,
   };
+}
+
+/**
+ * 取り込みが最後まで進んだ run の行を 'completed' (商品ごとの失敗があれば 'partial') にする。
+ * 取り込み自体は済んでいるので、この更新の失敗 (error が返る・例外が投げられる) は応答を変えず、
+ * 行を 'failed' にもしない。行が 'running' のまま残ったことと、記録しようとした結果 (status) をログに残す (#1540)。
+ */
+async function markImportRunFinished(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  logger: ReturnType<typeof createLogger>,
+  input: { importRunId: string; stats: ImportStats },
+): Promise<void> {
+  const hasProductErrors = input.stats.productErrors.length > 0;
+  const status = hasProductErrors ? IMPORT_RUN_STATUS.partial : IMPORT_RUN_STATUS.completed;
+  try {
+    const { error } = await supabase
+      .from("catalog_import_runs")
+      .update({
+        status,
+        completed_at: new Date().toISOString(),
+        ...runCounts(input.stats),
+        error_log: hasProductErrors
+          ? JSON.stringify(input.stats.productErrors.slice(0, IMPORT_RUN_ERROR_LOG_MAX_ENTRIES))
+          : null,
+      })
+      .eq("id", input.importRunId);
+    if (error) {
+      logger.error("Failed to mark catalog import run as finished", error, { importRunId: input.importRunId, status });
+    }
+  } catch (updateError) {
+    logger.error("Failed to mark catalog import run as finished", updateError, { importRunId: input.importRunId, status });
+  }
 }
 
 /**

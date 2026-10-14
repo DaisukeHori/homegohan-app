@@ -245,6 +245,7 @@ describe("V4 Supabase Functions - step utils", () => {
         status: "completed",
         message: "全3件の献立が完成しました！",
         errorMessage: null,
+        issueDetails: [],
       });
     });
 
@@ -262,7 +263,13 @@ describe("V4 Supabase Functions - step utils", () => {
       })).toEqual({
         status: "failed",
         message: "保存されませんでした（既存3件を保護）",
-        errorMessage: "2026-01-03:breakfast: 既存献立を保護したため未保存; 2026-01-03:lunch: 既存献立を保護したため未保存; 2026-01-03:dinner: 既存献立を保護したため未保存",
+        // #1478: 行の error_message (画面がそのまま出す) は定型の文。枠ごとの理由は issueDetails (ログ用)
+        errorMessage: "対象スロットは既存献立を保護したため保存されませんでした。",
+        issueDetails: [
+          "2026-01-03:breakfast: 既存献立を保護したため未保存",
+          "2026-01-03:lunch: 既存献立を保護したため未保存",
+          "2026-01-03:dinner: 既存献立を保護したため未保存",
+        ],
       });
     });
 
@@ -276,7 +283,9 @@ describe("V4 Supabase Functions - step utils", () => {
       })).toEqual({
         status: "completed",
         message: "保存完了（成功2/4、スキップ1、エラー1）",
-        errorMessage: "2026-01-03:lunch: 既存献立を保護したため未保存; 2026-01-03:dinner: timeout",
+        // #1478: 枠ごとの理由 (保存の失敗では例外の文面) は error_message に入れず、issueDetails にだけ入れる
+        errorMessage: "一部の献立を保存できませんでした。",
+        issueDetails: ["2026-01-03:lunch: 既存献立を保護したため未保存", "2026-01-03:dinner: timeout"],
       });
     });
   });

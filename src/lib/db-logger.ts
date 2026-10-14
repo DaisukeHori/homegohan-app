@@ -65,6 +65,8 @@ interface LogEntry {
  * canonical の getSupabaseAdmin (lib/supabase/server.ts) を使わないのは、このファイルがブラウザ向けのページからも
  * import され、next/headers を読むあちらを取り込めないため (#1162。tests/supabase-service-role-client-scan.test.ts の例外の一覧)。
  * app_logs への insert にだけ使い、ほかの用途で service_role のクライアントをここから出さない。
+ * クライアントの設定 (autoRefreshToken・persistSession を切る) は getSupabaseAdmin とそろえる (#1555。
+ * service_role の鍵にはサインインのセッションが無いので、トークンの更新もセッションの保存も要らない)。
  */
 function getSupabaseClient() {
   let config: { url: string; serviceRoleKey: string };
@@ -75,7 +77,9 @@ function getSupabaseClient() {
     throw error;
   }
 
-  return createClient(config.url, config.serviceRoleKey);
+  return createClient(config.url, config.serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
 }
 
 /**

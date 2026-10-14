@@ -9,14 +9,14 @@ P0-P7 のタスク分解。各 phase で **並列起動可否** を明示。
 
 ### deliverables
 1. `supabase/migrations/20260511000000〜30_membership_*.sql` 計 13 ファイル
-2. `npm run types:supabase` 実行 → `src/types/database.types.ts` 更新
+2. 型の再生成 → `src/types/database.types.ts` 更新 (本番に接続せずローカルの Supabase から作る。手順は operator/09-runbook.md の「5. 型の再生成」。#1495)
 3. `src/schemas/membership/*.ts` Zod スキーマ全件
 4. `src/lib/errors/membership-errors.ts` ErrorCode enum
 
 ### ステップ
 1. local supabase で migration apply 検証 (`npx supabase db reset` → migration 全件 apply)
 2. RLS policy が壊していない既存機能の sanity test (既存 E2E spec を 1 件走らせる)
-3. `npm run types:supabase` でリンクされたプロジェクトから型生成
+3. ローカルの Supabase から型生成 (operator/09-runbook.md の「5. 型の再生成」。リンクされた本番プロジェクトには接続しない。#1495)
 4. PR: `feat(membership): P0 — DDL + RLS + RPC + Zod schemas`
 
 ### 検証

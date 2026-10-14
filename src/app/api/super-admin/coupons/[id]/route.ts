@@ -14,6 +14,7 @@ import { createClient } from '@/lib/supabase/server';
 import { COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE, CouponUpdateSchema } from '@/lib/super-admin/coupons-schemas';
 import { internalError } from '@/lib/api/errors';
 import { couponValidityDay, couponValidUntilTimestamp } from '@/lib/super-admin/coupon-validity';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 type RouteContext = { params: { id: string } };
 
@@ -125,19 +126,17 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
 
     // 監査ログ記録
-    try {
-      await supabase.from('admin_audit_logs').insert({
-        actor_id: user.id,
-        target_id: params.id,
-        target_type: 'coupon',
-        action_type: 'update_coupon',
-        details: { code: existing.code, changes: updateData },
-        severity: 'info',
-        ip_address: request.headers.get('x-forwarded-for'),
-      });
-    } catch (auditErr) {
-      console.warn('[super-admin/coupons/[id] PATCH] audit log failed (graceful):', auditErr);
-    }
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      targetId: params.id,
+      targetType: 'coupon',
+      actionType: 'update_coupon',
+      details: { code: existing.code, changes: updateData },
+      severity: 'info',
+      request,
+      routeName: 'api/super-admin/coupons/[id] PATCH',
+    });
 
     return NextResponse.json({ data: updated });
   } catch (err) {
@@ -188,19 +187,17 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
     }
 
     // 監査ログ記録
-    try {
-      await supabase.from('admin_audit_logs').insert({
-        actor_id: user.id,
-        target_id: params.id,
-        target_type: 'coupon',
-        action_type: 'delete_coupon',
-        details: { code: existing.code },
-        severity: 'warn',
-        ip_address: request.headers.get('x-forwarded-for'),
-      });
-    } catch (auditErr) {
-      console.warn('[super-admin/coupons/[id] DELETE] audit log failed (graceful):', auditErr);
-    }
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      targetId: params.id,
+      targetType: 'coupon',
+      actionType: 'delete_coupon',
+      details: { code: existing.code },
+      severity: 'warn',
+      request,
+      routeName: 'api/super-admin/coupons/[id] DELETE',
+    });
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {

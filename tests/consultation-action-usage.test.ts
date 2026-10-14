@@ -35,7 +35,8 @@ const m = vi.hoisted(() => ({
   refundAiUsage: vi.fn(async () => undefined),
   aiUsageRecordedHeaders: vi.fn(async (_userId: string) => ({ 'x-hg-ai-usage-recorded': 'test-marker' })),
   checkUserAiConsent: vi.fn(async (_db: unknown, _userId: string) => ({ allowed: true }) as { allowed: boolean; reason?: string }),
-  enqueueMealImageJobs: vi.fn(async () => undefined),
+  // 積んだ結果 (1 品を積めた)。処理を起こすかと limit はこの結果で決まる (#1532)
+  enqueueMealImageJobs: vi.fn(async () => ({ inserted: 1, duplicates: 0, failed: 0 })),
 }));
 
 vi.mock('@/lib/plan/entitlements', () => ({

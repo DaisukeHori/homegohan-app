@@ -2,6 +2,10 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+// GET /api/super-admin/llm/usage の data の型は、route が返す toLlmUsageResponseData の型をそのまま使う (#1540)。
+// 以前は by_model の 1 行の型を画面に手で書き写していた (その時点では一致)。型を 2 か所に書かないので、
+// 応答の形が変われば画面の型も一緒に変わり、合わなくなった読み方は型検査で止まる
+import type { LlmUsageResponseData } from "@/lib/super-admin/llm-usage-summary";
 
 const PROVIDER_LABELS: Record<string, { label: string; models: string[] }> = {
   gemini: {
@@ -22,13 +26,8 @@ const PROVIDER_LABELS: Record<string, { label: string; models: string[] }> = {
   },
 };
 
-interface ModelStats {
-  model: string;
-  provider: string;
-  requests: number;
-  tokens: number;
-  cost_usd: number;
-}
+/** モデル別の 1 行 (応答の by_model の要素) */
+type ModelStats = LlmUsageResponseData["by_model"][number];
 
 export default function ProviderDetailPage({ params }: { params: { provider: string } }) {
   const [period, setPeriod] = useState("7d");
@@ -48,8 +47,8 @@ export default function ProviderDetailPage({ params }: { params: { provider: str
           const body = await res.json();
           throw new Error(body.error?.message ?? `HTTP ${res.status}`);
         }
-        const { data } = await res.json();
-        setModelStats(data.by_model ?? []);
+        const { data }: { data: LlmUsageResponseData } = await res.json();
+        setModelStats(data.by_model);
       } catch (err) {
         setError(err instanceof Error ? err.message : "読み込みに失敗しました");
       } finally {

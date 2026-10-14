@@ -109,11 +109,11 @@ import {
 import { getCorsHeaders } from "../_shared/cors.ts";
 import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
 import { aiDailyLimitMessage } from "../_shared/ai-daily-limit.ts";
+import { MENU_REQUEST_FAILED_MESSAGE } from "../_shared/stored-failure-messages.ts";
 import { addDaysToDate, monthJst, todayJst } from "../_shared/jst-date.ts";
 import { aiConsentDeniedResponse, checkAiConsent, invokeMenuContinuation } from "../_shared/ai-consent-guard.ts";
 import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
 import { missingEnvError } from "../_shared/missing-env.ts";
-import { PublicRequestError, publicErrorMessage } from "../_shared/public-error.ts";
 
 console.log("Generate Menu V5 Function loaded (template-anchored generation)");
 
@@ -728,6 +728,10 @@ async function executeStep3_Save(
     errors,
     successMessage: `全${totalSlots}件の献立が完成しました！`,
   });
+  // 枠ごとの理由 (例外の文面を含む) はログにだけ残す。行の error_message は定型の文 (#1478)
+  if (finalSummary.issueDetails.length > 0) {
+    console.warn(`[save] 保存しなかった枠 (request ${requestId}):`, finalSummary.issueDetails.join("; "));
+  }
 
   // #1202: 最終書き込みは、まだ終わっていない行 (queued / processing) にだけ当てる
   await finalizeMenuRequest(
@@ -3428,6 +3432,10 @@ async function executeStep6_FinalSave(
     successMessage: `全${totalSlots}件の献立が完成しました！`,
     successSuffix: praiseComment ? ` ${praiseComment}` : "",
   });
+  // 枠ごとの理由 (例外の文面を含む) はログにだけ残す。行の error_message は定型の文 (#1478)
+  if (finalSummary.issueDetails.length > 0) {
+    console.warn(`[save] 保存しなかった枠 (request ${requestId}):`, finalSummary.issueDetails.join("; "));
+  }
 
   // #1202: 最終書き込みは、まだ終わっていない行 (queued / processing) にだけ当てる
   const finalized = await finalizeMenuRequest(
@@ -3481,7 +3489,7 @@ Deno.serve(async (req: Request) => {
 
     const authHeader = req.headers.get("Authorization") ?? "";
     const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (!requestId) throw new PublicRequestError("request_id is required");
+    if (!requestId) throw new Error("request_id is required");
 
     // 継続呼び出し（_continue=true）は SERVICE_ROLE_KEY で呼ばれる（自関数からの内部呼び出しのみ）
     // SERVICE_ROLE_JWT / SUPABASE_SERVICE_ROLE_KEY のどちらが設定されていても一致を許容する
@@ -3501,7 +3509,7 @@ Deno.serve(async (req: Request) => {
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
-      if (!body.userId) throw new PublicRequestError("userId is required for continuation calls");
+      if (!body.userId) throw new Error("userId is required for continuation calls");
       userId = body.userId;
     } else if (isServiceRoleCaller && body.userId) {
       // 信頼済みバックエンド（Next.js API route）からの呼び出し。userId はサーバ側で検証済み。
@@ -3509,7 +3517,7 @@ Deno.serve(async (req: Request) => {
     } else {
       // 非継続かつ service role 以外の呼び出しは、Authorization トークンから必ず userId を導出する
       // （body.userId はなりすまし防止のため採用しない）
-      if (!accessToken) throw new PublicRequestError("Missing access token");
+      if (!accessToken) throw new Error("Missing access token");
       const { data: userData, error: userErr } = await supabase.auth.getUser(accessToken);
       if (userErr || !userData?.user) {
         return new Response(
@@ -3656,7 +3664,8 @@ Deno.serve(async (req: Request) => {
             .from("weekly_menu_requests")
             .update({
               status: "failed",
-              error_message: error?.message ?? String(error),
+              // 例外の文面は console と構造化ログ (app_logs) にだけ残す。行は画面がそのまま出すので定型の文 (#1478)
+              error_message: MENU_REQUEST_FAILED_MESSAGE,
               updated_at: new Date().toISOString(),
             })
             .eq("id", requestId!)
@@ -3705,7 +3714,8 @@ Deno.serve(async (req: Request) => {
             .from("weekly_menu_requests")
             .update({
               status: "failed",
-              error_message: error?.message ?? String(error),
+              // 例外の文面は console と構造化ログ (app_logs) にだけ残す。行は画面がそのまま出すので定型の文 (#1478)
+              error_message: MENU_REQUEST_FAILED_MESSAGE,
               updated_at: new Date().toISOString(),
             })
             .eq("id", requestId)
@@ -3721,9 +3731,7 @@ Deno.serve(async (req: Request) => {
     }
 
     return new Response(
-      // #1444 (CodeQL js/stack-trace-exposure): 利用者の JWT で直接呼べるので、本文には入力の誤りの文だけを返し、
-      // 内部の例外の文は返さない (中身は上のログと、リクエストの行の error_message に残る)
-      JSON.stringify({ error: publicErrorMessage(error) }),
+      JSON.stringify({ error: MENU_REQUEST_FAILED_MESSAGE }),
       {
         status: 500,
         headers: {

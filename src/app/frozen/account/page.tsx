@@ -16,6 +16,7 @@ import { createClient } from "@/lib/supabase/client";
 import { isInNativeWebView } from "@/lib/native-auth-bridge";
 import {
   ACCOUNT_DELETE_CONFIRM_KEYWORD,
+  ACCOUNT_DELETE_FAILED_MESSAGE,
   ACCOUNT_EXPORT_FAILED_MESSAGE,
   accountExportRateLimitedMessage,
   deleteOwnAccount,
@@ -26,7 +27,6 @@ import {
 /** 退会できなかったとき (組織のオーナー・家族の代表者) に、サーバーの文に続けて出す案内 */
 const DELETE_BLOCKED_GUIDANCE =
   "凍結中は、オーナー・代表者の譲渡や解散の操作ができません。お手数ですが、サポートにお問い合わせください。";
-const DELETE_FAILED_MESSAGE = "アカウントの削除に失敗しました。時間をおいて再度お試しください。";
 
 type Notice = { tone: "info" | "error"; text: string } | null;
 
@@ -85,7 +85,7 @@ export default function FrozenAccountPage() {
         });
         break;
       case "failed":
-        setDeleteNotice({ tone: "error", text: DELETE_FAILED_MESSAGE });
+        setDeleteNotice({ tone: "error", text: ACCOUNT_DELETE_FAILED_MESSAGE });
         break;
     }
     setDeleting(false);

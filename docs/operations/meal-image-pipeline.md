@@ -11,6 +11,10 @@
 | 2 | Edge Function の入口（`supabase/functions/_shared/meal-image-jobs.ts`。献立の生成 `generate-menu-v5` / `generate-menu-v4` の `saveMealToDb` が使う） | 1 と同じ upsert が残っていた。献立の生成の料理は、ジョブが 1 行も積まれず pending のまま | #1505 で 1 と同じ積み方にした。積み方は `supabase/functions/_shared/meal-image.ts` に置き、Next.js と Edge が共用する |
 | 3 | 積めなかった料理（両方の入口） | 料理を保存したあとにジョブの書き込みが失敗すると、料理は pending のまま（処理するジョブが無いので「生成中」に残る） | 書き込みに失敗した料理は、保存済みの献立の上で `image_status: 'failed'` + `image_error: 'enqueue_failed'` にする。保存し直すと積み直す（`needsImageRetry`） |
 | 4 | `saveMealToDb` の処理の起こし方 | 積む料理があれば、積めたかどうかに関係なく処理を起こしていた | 待ちのジョブがあるとき（積めた行か、重複の行があるとき）だけ起こす |
+| 5 | Next.js の 5 か所の入口・積み直しの道具の処理の起こし方（#1532） | Next.js は積めた行が 0 でも処理を起こしていた（空振りの呼び出し）。limit は積もうとした料理の数だった | `saveMealToDb` と同じく、積めた行か重複の行があるときだけ起こす。limit はその数（`countMealImageJobsToProcess`。書き込みに失敗した行は数えない） |
+| 6 | Next.js の 4 本の HTTP の入口の `request_id`（#1532） | `x-request-id` ヘッダをそのまま `meal_image_jobs.request_id`（uuid の列）に入れていた。uuid でない値だと insert が 22P02 で失敗し、料理が `failed` + `enqueue_failed` になっていた | uuid の形式のときだけ入れ、それ以外は null（`uuidOrNull`。保存は失敗にしない） |
+| 7 | 積めなかった料理の印付け（`markEnqueueFailedDishesInMeal`。#1532） | 献立の料理を読んでから、条件なしで書き直していた。そのあいだにワーカーが書いたほかの料理の画像を巻き戻しえた | 読んだときの `updated_at` の行にだけ書き、0 行なら読み直して当て直す（D と同じ `writePlannedMealDishesWithOptimisticLock`。上限 `MEAL_DISH_WRITE_MAX_ATTEMPTS`） |
+| 8 | 画像の処理の端の経路（`process-meal-image-jobs`。#1553） | ①料理を失敗の印にできない（`MEAL_DISH_WRITE_MAX_ATTEMPTS` 回負けた・読めなかった）と `console.warn` だけで、料理が `pending`（生成中）のまま残ったことをジョブから追えなかった ②最初の献立の読み取りのエラーも「献立が消えた」としてジョブを取り消していた ③書き込みを諦めた・書かずにやめたジョブのアップロード済みの画像が Storage に残っていた | ①料理は条件なしで書かず（#1527 の排他を保つ）、`app_logs` に error で残し、ジョブの `last_error` に `dish left pending` を足す（`last_error LIKE '%dish left pending%'` で探せる。料理は保存し直すか 4 の道具で積み直す） ②読み取りを書くときと同じ `readMealSnapshot` にし、エラーはジョブを `failed`、行が無いときだけ取り消す ③諦めた（`MealDishWriteExhaustedError`）・書かずにやめたときだけ、そのジョブの `generated/<planned_meal_id>/<job_id>-<ts>.png` の 1 ファイルを消す（`isOwnJobUploadPath`。消せなくても結果は変えず warn のログだけ。書き込みのエラーでは書けたか分からないので消さない） |
 
 ## 2. 経路（ジョブを積んでから画像ができるまで）
 

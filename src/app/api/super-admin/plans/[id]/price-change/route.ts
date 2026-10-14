@@ -58,6 +58,7 @@ import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { PriceChangeSchema } from '@/lib/super-admin/plans-schemas';
 import { internalError } from '@/lib/api/errors';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 type RouteContext = { params: { id: string } };
 
@@ -328,40 +329,38 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     }
 
     // 監査ログ記録 (severity='warn' — 課金影響操作)
-    try {
-      await supabase.from('admin_audit_logs').insert({
-        actor_id: user.id,
-        target_id: params.id,
-        target_type: 'subscription_plan',
-        action_type: 'change_price',
-        details: {
-          plan_key: plan.plan_key,
-          old_monthly_price_jpy: plan.monthly_price_jpy,
-          new_monthly_price_jpy: input.new_monthly_price_jpy,
-          old_yearly_price_jpy: plan.yearly_price_jpy,
-          new_yearly_price_jpy: input.new_yearly_price_jpy,
-          applies_to: input.applies_to,
-          reason: input.reason,
-          stripe_mock: !stripeSyncExpected,
-          // #1102: 月額 (stripe_price_id) と年額 (stripe_yearly_price_id) の Price ID。
-          // 変えなかった interval の new_* は null。
-          old_stripe_price_id: plan.stripe_price_id ?? null,
-          new_stripe_price_id: monthly.newPriceId,
-          old_stripe_yearly_price_id: plan.stripe_yearly_price_id ?? null,
-          new_stripe_yearly_price_id: yearly.newPriceId,
-          // #1041 round-4 (C): 旧 Price の deactivate 結果 (interval 不一致等で
-          // スキップされた場合、運用者が気づけるよう監査ログに残す)。月額 / 年額それぞれ。
-          old_stripe_price_deactivated: monthly.oldPriceDeactivated,
-          old_stripe_price_deactivation_skipped_reason: monthly.oldPriceDeactivationSkippedReason,
-          old_stripe_yearly_price_deactivated: yearly.oldPriceDeactivated,
-          old_stripe_yearly_price_deactivation_skipped_reason: yearly.oldPriceDeactivationSkippedReason,
-        },
-        severity: 'warn',
-        ip_address: request.headers.get('x-forwarded-for'),
-      });
-    } catch (auditErr) {
-      console.warn('[super-admin/price-change POST] audit log failed (graceful):', auditErr);
-    }
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      targetId: params.id,
+      targetType: 'subscription_plan',
+      actionType: 'change_price',
+      details: {
+        plan_key: plan.plan_key,
+        old_monthly_price_jpy: plan.monthly_price_jpy,
+        new_monthly_price_jpy: input.new_monthly_price_jpy,
+        old_yearly_price_jpy: plan.yearly_price_jpy,
+        new_yearly_price_jpy: input.new_yearly_price_jpy,
+        applies_to: input.applies_to,
+        reason: input.reason,
+        stripe_mock: !stripeSyncExpected,
+        // #1102: 月額 (stripe_price_id) と年額 (stripe_yearly_price_id) の Price ID。
+        // 変えなかった interval の new_* は null。
+        old_stripe_price_id: plan.stripe_price_id ?? null,
+        new_stripe_price_id: monthly.newPriceId,
+        old_stripe_yearly_price_id: plan.stripe_yearly_price_id ?? null,
+        new_stripe_yearly_price_id: yearly.newPriceId,
+        // #1041 round-4 (C): 旧 Price の deactivate 結果 (interval 不一致等で
+        // スキップされた場合、運用者が気づけるよう監査ログに残す)。月額 / 年額それぞれ。
+        old_stripe_price_deactivated: monthly.oldPriceDeactivated,
+        old_stripe_price_deactivation_skipped_reason: monthly.oldPriceDeactivationSkippedReason,
+        old_stripe_yearly_price_deactivated: yearly.oldPriceDeactivated,
+        old_stripe_yearly_price_deactivation_skipped_reason: yearly.oldPriceDeactivationSkippedReason,
+      },
+      severity: 'warn',
+      request,
+      routeName: 'api/super-admin/plans/[id]/price-change POST',
+    });
 
     return NextResponse.json({
       data: {

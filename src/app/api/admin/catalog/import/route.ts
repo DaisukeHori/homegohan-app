@@ -13,6 +13,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { z } from 'zod';
 import { getSupabaseServiceConfig, isMissingEnvError } from '@/lib/env-required';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -169,13 +170,15 @@ export async function POST(request: Request) {
     // 監査ログ (Edge Function 呼び出し成功後)
     const { createClient } = await import('@/lib/supabase/server');
     const supabase = await createClient();
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: actor.id,
-      action_type: 'admin.catalog.import',
-      target_type: 'catalog',
+    await recordAdminAudit({
+      supabase,
+      actorId: actor.id,
+      actionType: 'admin.catalog.import',
+      targetType: 'catalog',
       details: { sourceCode, function_name: functionName },
       severity: 'info',
-      ip_address: request.headers.get('x-forwarded-for'),
+      request,
+      routeName: 'api/admin/catalog/import POST',
     });
 
     // 商品ごとの失敗の文 (DB の生のエラー文を含みうる) は返さず、件数にまとめる (#1172)

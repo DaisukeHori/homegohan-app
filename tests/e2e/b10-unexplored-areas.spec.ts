@@ -269,8 +269,10 @@ test.describe("4. 静的ページ・リンク整合性", () => {
     // 特定商取引法テキストがあること
     const hasLegal = (await page.getByText(/特定商取引法|販売事業者/).count()) > 0;
     expect(hasLegal, "特定商取引法テキストが見つからない").toBe(true);
-    // 実在しないダミーの事業者情報は出さず、確定していない項目は「準備中」と案内する (#1155)
-    await expect(page.getByText("準備中（確定次第掲載します）").first()).toBeVisible();
+    // 実在しないダミーの事業者情報は出さない。所在地・電話番号は請求時に開示する扱い (#1155。値は src/lib/business-info.ts)
+    await expect(page.getByText("株式会社MHD医健").first()).toBeVisible();
+    await expect(page.getByText("請求があった場合に遅滞なく開示します").first()).toBeVisible();
+    await expect(page.locator("body")).not.toContainText("準備中（確定次第掲載します）");
     await expect(page.getByText("有料プランは準備中です（販売開始前）").first()).toBeVisible();
     await expect(page.locator("body")).not.toContainText("03-1234-5678");
     await expect(page.locator("body")).not.toContainText("山田 太郎");

@@ -428,7 +428,7 @@ export default function SettingsTab() {
               icon="⚠️"
               iconBg="#FEF2F2"
               title="アカウント管理"
-              subtitle="アカウント削除"
+              subtitle="パスワード・メールアドレスの変更、アカウント削除"
               testID="settings-account-row"
               onPress={() => router.push("/settings/account")}
               last

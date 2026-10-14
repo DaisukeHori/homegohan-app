@@ -428,14 +428,18 @@ docs/api/
 
 全 Webhook エンドポイントは署名検証を **必須** とする。
 
-> **未実装の見本**: `src/lib/webhook/verify.ts` (`requireWebhookSecret` / `verifyStripeWebhook` / `verifyResendWebhook`) は、まだ実装に無い。
-> `STRIPE_WEBHOOK_SECRET` / `RESEND_WEBHOOK_SECRET` も、まだ `src/lib/env.ts` の一覧 (`SERVER_ENV_VARS`) に無い。
-> 一覧に無い名前は `getOptionalEnv(name)` の引数の型 (`OptionalEnvName`) に入らないので、この見本はそのままでは型が通らない。
-> 実装するときに、2 つの変数を一覧に任意の変数として足し (`whenMissing` も書く)、`.env.example` にも書く (src/lib/env.ts の冒頭の「新しい環境変数を足すとき」の手順。
-> `.env.example` には `STRIPE_WEBHOOK_SECRET=` の行だけが既にあり、`RESEND_WEBHOOK_SECRET` の行は無い)。
+> **実装との対応**: Resend の受け口は実装済み (#1184)。`src/lib/webhook/verify.ts` に `WebhookSecretMissingError`・`readSvixHeaders`・
+> `verifySvixSignature`・`verifyResendWebhook` がある。Resend は Svix の形 (`svix-id`・`svix-timestamp`・`svix-signature`。HMAC-SHA256 の入力は
+> 「id.timestamp.生の本文」、時刻の許容幅は前後 5 分) で署名し、`src/app/api/webhooks/resend/route.ts` は署名が合わなければ 401、
+> 秘密が未設定なら 503 を返す (下の見本の「本文だけの hex の HMAC」「400 / 500」とは違う。Resend については実装が正)。
+> `RESEND_WEBHOOK_SECRET` は `src/lib/env.ts` の一覧 (`SERVER_ENV_VARS`) と `.env.example` にある。
+> 未実装なのは Stripe の側だけ: `requireWebhookSecret`・`verifyStripeWebhook` は無く、`STRIPE_WEBHOOK_SECRET` は `.env.example` に行があるが
+> `src/lib/env.ts` の一覧に無い (一覧に無い名前は `getOptionalEnv(name)` の引数の型 `OptionalEnvName` に入らないので、下の見本の Stripe の部分は
+> そのままでは型が通らない)。Stripe の受け口を作るときに、一覧に任意の変数として足し (`whenMissing` も書く)、src/lib/env.ts の冒頭の
+> 「新しい環境変数を足すとき」の手順に従う。
 
 ```typescript
-// src/lib/webhook/verify.ts (未実装。上の注を参照)
+// src/lib/webhook/verify.ts (Stripe の部分は未実装。Resend の実装は上の注を参照)
 import { getOptionalEnv } from '@/lib/env';
 
 /**
@@ -453,7 +457,7 @@ export class WebhookSecretMissingError extends Error {
 /**
  * Webhook の署名の秘密を取り出す。`process.env.<変数名>!` とは書かない (#1182・#1434)。
  * 秘密は src/lib/env.ts の一覧に任意の変数として足し、getOptionalEnv で読む
- * (STRIPE_WEBHOOK_SECRET / RESEND_WEBHOOK_SECRET は、まだ一覧に無い。上の注を参照)。
+ * (STRIPE_WEBHOOK_SECRET は、まだ一覧に無い。RESEND_WEBHOOK_SECRET は一覧にある。上の注を参照)。
  * 無ければ署名を確かめられないので、受け付けずに失敗させる (fail-closed)。
  * message に変数名を入れない (500 の本文に出うるため。変数名は getOptionalEnv が警告のログに残す)。
  */
