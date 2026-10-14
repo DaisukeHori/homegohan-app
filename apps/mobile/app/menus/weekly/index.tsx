@@ -1225,7 +1225,7 @@ export default function WeeklyMenuPage() {
       const ao = a.display_order ?? 0;
       const bo = b.display_order ?? 0;
       if (ao !== bo) return ao - bo;
-      // 5 値以外の meal_type は indexOf と同じく -1 として扱う (#1446: as any を外した。並びは変えない)
+      // 5 値以外の meal_type は indexOf と同じく -1 として扱う (#1446: 型を外すキャストをやめ、型ガードで絞る。並びは変えない)
       const ai = isMealType(a.meal_type) ? MEAL_ORDER.indexOf(a.meal_type) : -1;
       const bi = isMealType(b.meal_type) ? MEAL_ORDER.indexOf(b.meal_type) : -1;
       return ai - bi;

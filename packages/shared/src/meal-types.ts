@@ -23,7 +23,7 @@ export const MEAL_ORDER: MealType[] = [
 /**
  * 文字列が食事の区分 (MealType の 5 値) のどれかかを確かめる型ガード (#1446)。
  * DB の行の meal_type は string で来るので、MEAL_ORDER.indexOf などに渡す前に
- * `as any` / `as MealType` で型を外さず、これで絞る。値の正本は MEAL_ORDER。
+ * キャストで型を外さず、これで絞る。値の正本は MEAL_ORDER。
  */
 export function isMealType(value: string): value is MealType {
   return MEAL_ORDER.some((mealType) => mealType === value);
