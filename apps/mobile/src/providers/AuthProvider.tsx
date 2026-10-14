@@ -29,7 +29,7 @@ const AuthContext = createContext<AuthState | null>(null);
  *
  * | 経路 | 掃除を呼ぶ所 | 掃除する利用者の ID | サインアウトとの順 |
  * |---|---|---|---|
- * | 設定・マイページのログアウト、退会のあと、Web からの sign-out (signOut.ts) | signOut.ts | 画面が持つ利用者 | push token の行の削除 → 掃除 → signOut。そのあと届く SIGNED_OUT で、SIGNED_OUT の行の掃除がもう一度走る |
+ * | 設定・マイページのログアウト、退会のあと、Web からの sign-out (signOut.ts) | signOut.ts | 画面が持つ利用者 (Web からのときは、処理の最初に控えた利用者) | push token の行の削除 (退会のあとは無し) → 掃除 → signOut。そのあと届く SIGNED_OUT で、SIGNED_OUT の行の掃除がもう一度走る |
  * | Web からの session-expired で、getUser() が失効を見つけた (webViewAuthMessages.ts) | 先に SIGNED_OUT の行、続いて signOut.ts | SIGNED_OUT の行は直前に分かっていたセッションの利用者、signOut.ts は getUser() の前に控えた利用者 (同じ利用者) | getUser() が端末のセッションを消して SIGNED_OUT が届く → SIGNED_OUT の行の掃除 (push token の値は残す。次の削除と前後してよい) → push token の行の削除 (残した値を読む) → 掃除 (値もここで消える) → signOut |
  * | 起動時、サーバーが失効と明言した (getUser() が invalid) | restoreSession | 保存済みのセッションの利用者 | 掃除 → signOut({ scope: "local" })。そのあと届く SIGNED_OUT で、SIGNED_OUT の行の掃除がもう一度走る |
  * | 起動時、保存済みのセッションが無い (getSession() が null。refresh_token の失効・保管庫を読めない・一度もログインしていない) | restoreSession | 直前に分かっていたセッションの利用者。ふつうは分からず null (利用者別のキーを接頭辞で全員分消す) | supabase-js が既に消している。掃除が済んでから未ログインの画面を出す |
