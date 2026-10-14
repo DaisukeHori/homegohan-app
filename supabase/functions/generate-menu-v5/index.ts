@@ -113,6 +113,7 @@ import { addDaysToDate, monthJst, todayJst } from "../_shared/jst-date.ts";
 import { aiConsentDeniedResponse, checkAiConsent, invokeMenuContinuation } from "../_shared/ai-consent-guard.ts";
 import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
 import { missingEnvError } from "../_shared/missing-env.ts";
+import { PublicRequestError, publicErrorMessage } from "../_shared/public-error.ts";
 
 console.log("Generate Menu V5 Function loaded (template-anchored generation)");
 
@@ -3480,7 +3481,7 @@ Deno.serve(async (req: Request) => {
 
     const authHeader = req.headers.get("Authorization") ?? "";
     const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (!requestId) throw new Error("request_id is required");
+    if (!requestId) throw new PublicRequestError("request_id is required");
 
     // 継続呼び出し（_continue=true）は SERVICE_ROLE_KEY で呼ばれる（自関数からの内部呼び出しのみ）
     // SERVICE_ROLE_JWT / SUPABASE_SERVICE_ROLE_KEY のどちらが設定されていても一致を許容する
@@ -3500,7 +3501,7 @@ Deno.serve(async (req: Request) => {
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
-      if (!body.userId) throw new Error("userId is required for continuation calls");
+      if (!body.userId) throw new PublicRequestError("userId is required for continuation calls");
       userId = body.userId;
     } else if (isServiceRoleCaller && body.userId) {
       // 信頼済みバックエンド（Next.js API route）からの呼び出し。userId はサーバ側で検証済み。
@@ -3508,7 +3509,7 @@ Deno.serve(async (req: Request) => {
     } else {
       // 非継続かつ service role 以外の呼び出しは、Authorization トークンから必ず userId を導出する
       // （body.userId はなりすまし防止のため採用しない）
-      if (!accessToken) throw new Error("Missing access token");
+      if (!accessToken) throw new PublicRequestError("Missing access token");
       const { data: userData, error: userErr } = await supabase.auth.getUser(accessToken);
       if (userErr || !userData?.user) {
         return new Response(
@@ -3720,7 +3721,9 @@ Deno.serve(async (req: Request) => {
     }
 
     return new Response(
-      JSON.stringify({ error: error?.message ?? "Unexpected error" }),
+      // #1444 (CodeQL js/stack-trace-exposure): 利用者の JWT で直接呼べるので、本文には入力の誤りの文だけを返し、
+      // 内部の例外の文は返さない (中身は上のログと、リクエストの行の error_message に残る)
+      JSON.stringify({ error: publicErrorMessage(error) }),
       {
         status: 500,
         headers: {

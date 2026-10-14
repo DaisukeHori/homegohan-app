@@ -118,6 +118,7 @@ import { addDaysToDate, monthJst, todayJst } from "../_shared/jst-date.ts";
 import { aiConsentDeniedResponse, checkAiConsent, invokeMenuContinuation } from "../_shared/ai-consent-guard.ts";
 import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
 import { missingEnvError } from "../_shared/missing-env.ts";
+import { PublicRequestError, publicErrorMessage } from "../_shared/public-error.ts";
 
 console.log("Generate Menu V4 Function loaded (Slot-based generation)");
 
@@ -2755,8 +2756,8 @@ Deno.serve(async (req: Request) => {
 
     const authHeader = req.headers.get("Authorization") ?? "";
     const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (!accessToken) throw new Error("Missing access token");
-    if (!requestId) throw new Error("request_id is required");
+    if (!accessToken) throw new PublicRequestError("Missing access token");
+    if (!requestId) throw new PublicRequestError("request_id is required");
 
     // 継続呼び出し（_continue=true）は SERVICE_ROLE_KEY で呼ばれる（自関数からの内部呼び出しのみ）
     // SERVICE_ROLE_JWT / SUPABASE_SERVICE_ROLE_KEY のどちらが設定されていても一致を許容する
@@ -2776,7 +2777,7 @@ Deno.serve(async (req: Request) => {
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
-      if (!body.userId) throw new Error("userId is required for continuation calls");
+      if (!body.userId) throw new PublicRequestError("userId is required for continuation calls");
       userId = body.userId;
       console.log(`📍 Continuation call with userId: ${userId}`);
     } else if (isServiceRoleCaller && body.userId) {
@@ -2977,7 +2978,10 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    return new Response(JSON.stringify({ error: errorMessage }), {
+    // #1444 (CodeQL js/stack-trace-exposure): 利用者の JWT で直接呼べるので、本文には入力の誤りの文だけを返し、
+    // 内部の例外 (DB・AI の API など) の文は返さない (中身は上の console.error と、リクエストの行の error_message に残る)。
+    // 状態コードは以前と同じ 400 のまま (呼び出し元の再試行の判定を変えない)
+    return new Response(JSON.stringify({ error: publicErrorMessage(err) }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
