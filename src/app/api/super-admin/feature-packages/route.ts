@@ -15,6 +15,7 @@ import {
   FeaturePackagesQuerySchema,
 } from '@/lib/super-admin/feature-packages-schemas';
 import { internalError } from '@/lib/api/errors';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export async function GET(request: NextRequest) {
   try {
@@ -109,19 +110,17 @@ export async function POST(request: NextRequest) {
     }
 
     // 監査ログ記録
-    try {
-      await supabase.from('admin_audit_logs').insert({
-        actor_id: user.id,
-        target_id: pkg.id,
-        target_type: 'feature_package',
-        action_type: 'create_feature_package',
-        details: { package_key: input.package_key, display_name: input.display_name },
-        severity: 'info',
-        ip_address: request.headers.get('x-forwarded-for'),
-      });
-    } catch (auditErr) {
-      console.warn('[super-admin/feature-packages POST] audit log failed (graceful):', auditErr);
-    }
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      targetId: pkg.id,
+      targetType: 'feature_package',
+      actionType: 'create_feature_package',
+      details: { package_key: input.package_key, display_name: input.display_name },
+      severity: 'info',
+      request,
+      routeName: 'api/super-admin/feature-packages POST',
+    });
 
     return NextResponse.json({ data: pkg }, { status: 201 });
   } catch (err) {

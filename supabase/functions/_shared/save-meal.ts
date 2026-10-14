@@ -22,6 +22,7 @@ import {
   type PostNutritionIssue,
 } from "../generate-menu-v4/step-utils.ts";
 import {
+  countMealImageJobsToProcess,
   isCatalogProductMeal,
   reconcileDishImages,
   DEFAULT_MEAL_IMAGE_MODEL,
@@ -757,14 +758,16 @@ export async function saveMealToDb(
       jobs: reconcileResult.jobs,
       requestId: requestId ?? null,
     });
-    if (enqueueResult.inserted + enqueueResult.duplicates > 0) {
+    // limit は積めた行と待ちのジョブの数 (書き込みに失敗した行は数えない。#1532)
+    const jobsToProcess = countMealImageJobsToProcess(enqueueResult);
+    if (jobsToProcess > 0) {
       const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
       const serviceRoleKey = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
       await triggerMealImageJobProcessing({
         supabaseUrl,
         serviceRoleKey,
         plannedMealId,
-        limit: reconcileResult.jobs.length,
+        limit: jobsToProcess,
       });
     }
   } catch (imageError: any) {

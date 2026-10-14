@@ -129,7 +129,7 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 | パスワード再設定の依頼 | `resetPasswordForEmail` | 対応済み | 対応済み (次のビルドから) |
 | Google ログイン・登録 | `signInWithOAuth` | CAPTCHA の対象外 | CAPTCHA の対象外 |
 | メール確認の再送 (`/auth/verify`) | `resend` | 対応済み (トークンは `options.captchaToken`。#1474) | (モバイルに再送の画面は無い) |
-| 設定 → アカウント → パスワード変更の本人確認 | `signInWithPassword` | 対応済み (トークンは `options.captchaToken`。`src/app/(main)/settings/account/page.tsx`。#1474) | (モバイルに同等の処理は無い) |
+| 設定 → アカウント → パスワード変更の本人確認 | `signInWithPassword` | 対応済み (トークンは `options.captchaToken`。`src/app/(main)/settings/account/page.tsx`。#1474) | **未対応** (設定 → アカウント管理 → パスワード変更。`apps/mobile/src/lib/account-credentials.ts`。#1187 で次のビルドから入る画面で、トークンはまだ付けていない) |
 | 新しいパスワードの保存 (`/auth/reset-password`) | `updateUser` | CAPTCHA の対象外 | CAPTCHA の対象外 |
 
 メール確認の再送と、設定のパスワード変更の本人確認は、#1474 でトークンを付けた (それまでは、Supabase で CAPTCHA を有効にすると動かなくなる「未対応」だった)。ほかの画面と同じく、サイトキーが未設定ならウィジェットを出さず、トークンも付けない。サイトキーがあれば、トークンが取れるまで再送・変更のボタンは押せない。パスワード変更では、新しいパスワードの保存 (`updateUser`) と他の端末のログアウト (`signOut`) は CAPTCHA の対象外なので、トークンは本人確認の `signInWithPassword` にだけ付ける。
@@ -150,6 +150,10 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 - **デプロイ後の動作確認スクリプトの `--with-auth`** (`npm run test:smoke -- --with-auth`、本体は `scripts/lib/smoke.mjs`): 共通の補助関数 `tests/e2e/helpers/test-session.mjs` を import して使う (手順を写さない)。確認したい環境の `SUPABASE_SERVICE_ROLE_KEY` が要る (`E2E_USER_PASSWORD` は使わなくなった)。**本番では `--with-auth` を使わない** (本番の管理用の鍵を、確認用の端末やシェルに出さないため)。本番は `--with-auth` なしの 4 項目で確認する (`--with-auth` を付けない通常の確認は、CAPTCHA の影響を受けない)。
 - **Maestro (モバイルの e2e) の補助スクリプト** `apps/mobile/maestro/flows/scripts/reset-onboarding.js`: 同じ手順 (Maestro の JavaScript は import できないので、ここだけ写している)。Supabase の URL・anon key・service_role は、シェルの環境変数 `MAESTRO_SUPABASE_URL` / `MAESTRO_SUPABASE_ANON_KEY` / `MAESTRO_SUPABASE_SERVICE_ROLE_KEY` で渡す (`apps/mobile/maestro/README.md`)。**本番の Supabase には使わない** (本番の URL や鍵を既定値として持たない)。
 - 結合テスト (`tests/integration/`) は、ローカルの Supabase (CAPTCHA は常に無効) に向けて動くので影響しない (今までどおりパスワードでログインする)。
+
+そのほか、CAPTCHA を有効にすると動かなくなるもの:
+
+- **モバイルの設定 → アカウント管理 → パスワード変更** (#1187)。本人確認の `signInWithPassword` にトークンを付けていないので、有効にすると「ボットではないことの確認に失敗しました」と断られ、パスワードを変えられなくなる (メールアドレス変更の `updateUser` は CAPTCHA の対象外で影響しない)。有効にする前に、Web (#1474) と同じくトークンを付ける。
 
 ---
 

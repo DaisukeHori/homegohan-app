@@ -3,8 +3,8 @@
 //
 // 以前の FAQ は「設定画面の『アカウント』から (メールアドレスを) 変更できます」「『アカウント』→『アカウント削除』から削除できます」
 // と案内していたが、Web の設定画面にそのような画面は無く、メール・パスワードの変更手段は何も無かった。
-// 今は Web の設定画面に「アカウント」→「パスワード・メールアドレス」ができ、モバイルアプリの設定画面には
-// まだ変更の項目が無い。FAQ の文言がそれぞれ実在する画面の言葉と一致していることを、ここで固定する。
+// 今は Web の設定画面に「アカウント」→「パスワード・メールアドレス」ができ、モバイルアプリの設定画面の
+// 「アカウント」→「アカウント管理」にも同じ変更の項目がある。FAQ の文言がそれぞれ実在する画面の言葉と一致していることを、ここで固定する。
 //
 // 1) FAQ を描画して、各回答の文言を確かめる
 // 2) 回答が案内している画面の言葉が、Web・モバイルのソースに実在することを確かめる (言葉がずれたらここで気づく)
@@ -126,7 +126,7 @@ describe('#1187 FAQ: アカウントまわりの回答', () => {
     }
   });
 
-  it('「メールアドレスを変更したい」: Web の設定画面の入口と手順、確認メール、モバイルにはまだ無いことを案内する', async () => {
+  it('「メールアドレスを変更したい」: Web とモバイルアプリの設定画面の入口と手順、確認メールを案内する', async () => {
     const answer = (await collectAnswers()).get('メールアドレスを変更したい')!;
 
     // Web の入口 (設定画面の「アカウント」→「パスワード・メールアドレス」→「メールアドレスを変更」)
@@ -137,9 +137,11 @@ describe('#1187 FAQ: アカウントまわりの回答', () => {
     expect(answer).toContain('現在のメールアドレスにも確認メールが届く場合があります');
     expect(answer).toContain('両方のリンクを開いてください');
     expect(answer).toContain('確認が終わるまでは、これまでのメールアドレスでログインできます');
-    // モバイルアプリの設定画面にはまだ無い。代わりの手順を示す
-    expect(answer).toContain('モバイルアプリの設定画面には、まだ変更の項目がありません');
-    expect(answer).toContain('Web版にログインして変更してください');
+    // モバイルアプリの入口 (設定画面の「アカウント」→「アカウント管理」→「メールアドレスを変更」)。古い版の人への一言
+    expect(answer).toContain('モバイルアプリでは、設定画面の「アカウント」→「アカウント管理」を開き、「メールアドレスを変更」');
+    expect(answer).toContain('アプリを最新版に更新してください');
+    // 以前の「モバイルにはまだ無い」という案内が残っていない
+    expect(answer).not.toContain('まだ変更の項目がありません');
     // Google でログインしている人
     expect(answer).toContain('Googleアカウントでログインしている場合');
     expect(answer).toContain('お問い合わせ');
@@ -148,7 +150,7 @@ describe('#1187 FAQ: アカウントまわりの回答', () => {
     expect(answer).not.toContain('設定画面の「アカウント」から変更できます');
   });
 
-  it('「パスワードを変更したい」: Web の設定画面の入口と手順、他の端末が解除されること、モバイルでの当面の手順を案内する', async () => {
+  it('「パスワードを変更したい」: Web とモバイルアプリの設定画面の入口と手順、他の端末が解除されること、忘れたときの手順を案内する', async () => {
     const answer = (await collectAnswers()).get('パスワードを変更したい')!;
 
     expect(answer).toContain('設定画面の「アカウント」→「パスワード・メールアドレス」');
@@ -156,10 +158,13 @@ describe('#1187 FAQ: アカウントまわりの回答', () => {
     expect(answer).toContain('現在のパスワードと新しいパスワードを入力');
     // 変更すると、操作した端末以外のログインが解除される (signOut({ scope: 'others' }))
     expect(answer).toContain('いま使っている端末以外のログインはすべて解除されます');
-    // モバイルアプリの設定画面にはまだ無い。ブラウザで Web 版から変更するか、ログイン画面の再設定を使う
-    expect(answer).toContain('モバイルアプリの設定画面には、まだ変更の項目がありません');
-    expect(answer).toContain('Web版にログインして変更する');
-    expect(answer).toContain('ログイン画面の「パスワードを忘れた？」からパスワードを再設定してください');
+    // モバイルアプリの入口 (設定画面の「アカウント」→「アカウント管理」→「パスワードを変更」)。古い版の人への一言
+    expect(answer).toContain('モバイルアプリでは、設定画面の「アカウント」→「アカウント管理」を開き、「パスワードを変更」');
+    expect(answer).toContain('アプリを最新版に更新してください');
+    expect(answer).not.toContain('まだ変更の項目がありません');
+    // 現在のパスワードを思い出せないときは、ログイン画面の再設定 (Web は「忘れた場合」、モバイルは「パスワードを忘れた？」)
+    expect(answer).toContain('現在のパスワードを思い出せないときは');
+    expect(answer).toContain('「パスワードを忘れた？」）からパスワードを再設定してください');
     // Google でログインしている人
     expect(answer).toContain('Googleアカウントでログインしている場合');
   });
@@ -238,19 +243,17 @@ describe('#1187 FAQ が案内している画面の言葉は、アプリに実在
     expect(read('apps/mobile/app/settings/account.tsx')).toContain('アカウント削除');
   });
 
-  it('モバイルの設定画面には、まだパスワード・メールアドレスの変更が無い (FAQ の「準備中」の根拠)', () => {
-    // モバイルに変更機能 (updateUser) を入れたら、このテストが落ちる。そのときは次を一緒に直すこと:
-    //   - src/app/faq/page.tsx の「パスワードを変更したい」「メールアドレスを変更したい」にあるモバイルの案内 (「準備中です」)
-    //   - このテストと、上の「パスワードを変更したい」「メールアドレスを変更したい」のテスト
-    const mobileSettingsFiles = [
-      'apps/mobile/app/(tabs)/settings.tsx',
-      ...fs
-        .readdirSync(path.join(ROOT, 'apps/mobile/app/settings'))
-        .filter((name) => /\.(ts|tsx)$/.test(name))
-        .map((name) => `apps/mobile/app/settings/${name}`),
-    ];
-    for (const file of mobileSettingsFiles) {
-      expect(read(file), `${file} に updateUser が入りました。FAQ の「モバイルはまだ」の案内を直してください`).not.toContain('updateUser');
-    }
+  it('モバイルのアカウント管理: 「パスワードを変更」「メールアドレスを変更」の項目があり、実際に Supabase で変更する', () => {
+    // 画面 (account.tsx) が項目の部品を描き、部品が見出しと入力欄を持ち、変更の処理が updateUser を呼ぶ
+    expect(read('apps/mobile/app/settings/account.tsx')).toContain('<AccountCredentialsSection />');
+    const section = read('apps/mobile/src/components/settings/AccountCredentialsSection.tsx');
+    expect(section).toContain('title="パスワードを変更"');
+    expect(section).toContain('title="メールアドレスを変更"');
+    expect(section).toContain('現在のパスワード');
+    expect(section).toContain('新しいメールアドレス');
+    const credentials = read('apps/mobile/src/lib/account-credentials.ts');
+    expect(credentials).toContain('updateUser({ password: input.newPassword })');
+    expect(credentials).toContain('{ email: input.email }');
+    expect(credentials).toContain('signOut({ scope: "others" })');
   });
 });

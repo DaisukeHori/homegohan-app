@@ -5,8 +5,17 @@
  * USER_NOT_IN_ORG が NOT_IN_ORG に化ける不具合の回帰テスト。
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { mapPgErrorToHttp, MembershipErrorCode } from "../src/lib/errors/membership-errors";
+import {
+  mapPgErrorToHttp,
+  MEMBERSHIP_ERROR_FALLBACK_MESSAGE,
+  MEMBERSHIP_ERROR_MESSAGES,
+  MembershipErrorCode,
+  membershipErrorMessage,
+  membershipErrorMessageOfBody,
+} from "../src/lib/errors/membership-errors";
 
 describe("mapPgErrorToHttp", () => {
   it("#1045 F6-16: USER_NOT_IN_ORG を含むメッセージが NOT_IN_ORG に化けず 404/USER_NOT_IN_ORG になる", () => {
@@ -176,5 +185,55 @@ describe("mapPgErrorToHttp", () => {
       code: "UNKNOWN",
       status: 500,
     });
+  });
+});
+
+// #1478: 組織・家族の API の 4xx は本文の message が操作ごとの固定の文なので、画面は code から理由の文を引く
+describe("membershipErrorMessage / membershipErrorMessageOfBody (#1478)", () => {
+  it("表 (MEMBERSHIP_ERROR_MESSAGES) は enum の全値を網羅し、どれも空でない日本語の文 (コードそのものを出さない)", () => {
+    const codes = Object.values(MembershipErrorCode);
+    expect(Object.keys(MEMBERSHIP_ERROR_MESSAGES).sort()).toEqual([...codes].sort());
+    for (const code of codes) {
+      const message = MEMBERSHIP_ERROR_MESSAGES[code];
+      expect(message.trim().length).toBeGreaterThan(0);
+      expect(message).toMatch(/[ぁ-んァ-ヶ一-龠]/);
+      expect(message).not.toMatch(/[A-Z]{2,}_[A-Z_]+/);
+      expect(membershipErrorMessage(code)).toBe(message);
+    }
+  });
+
+  it("表に無い code (INVALID_BODY・INTERNAL_ERROR・UNKNOWN)・空・文字列でない値は汎用の文", () => {
+    for (const code of ["INVALID_BODY", "INTERNAL_ERROR", "UNKNOWN", "", undefined, null, 409, { code: "NOT_IN_ORG" }]) {
+      expect(membershipErrorMessage(code)).toBe(MEMBERSHIP_ERROR_FALLBACK_MESSAGE);
+    }
+  });
+
+  it("本文 ({ error: { code, message } }) から code の文を引き、本文の message (サーバーの文) は出さない", () => {
+    const body = { error: { code: "OWNER_CANNOT_LEAVE", message: "組織からの脱退に失敗しました" } };
+    expect(membershipErrorMessageOfBody(body)).toBe(MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.OWNER_CANNOT_LEAVE]);
+    expect(membershipErrorMessageOfBody({ error: { code: "IS_ORG_OWNER", message: "x" } })).toBe(
+      MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.IS_ORG_OWNER],
+    );
+    // flat の形 ({ error, code }) も受け付ける
+    expect(membershipErrorMessageOfBody({ error: "処理中にエラーが発生しました", code: "RATE_LIMITED" })).toBe(
+      MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.RATE_LIMITED],
+    );
+  });
+
+  it("本文が無い・形が違う・未知の code は汎用の文 (生の文を出さない)", () => {
+    for (const body of [null, undefined, "raw text", 500, {}, { error: { code: "SOMETHING_NEW", message: "raw db error" } }, { error: "raw db error" }]) {
+      expect(membershipErrorMessageOfBody(body)).toBe(MEMBERSHIP_ERROR_FALLBACK_MESSAGE);
+    }
+  });
+});
+
+// #1478: 組織・家族の脱退・除名の画面は、本文の message をそのまま出さず、code から文を引く (書き戻しの見張り)
+describe("組織・家族の脱退・除名の画面が code から文を引く (#1478)", () => {
+  const PAGES = ["src/app/(org)/org/members/page.tsx", "src/app/(main)/settings/membership/page.tsx"];
+
+  it.each(PAGES)("%s は本文の error.message を読まず、membershipErrorMessageOfBody を使う", (rel) => {
+    const source = fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
+    expect(source).not.toMatch(/error\??\.message/);
+    expect(source).toContain("membershipErrorMessageOfBody(");
   });
 });

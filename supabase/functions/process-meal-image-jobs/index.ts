@@ -7,7 +7,10 @@ import {
 import {
   buildImageUploadPath,
   extractInlineImageBase64,
+  formatDishLeftPendingLastError,
   GeneratedContentPart,
+  isOwnJobUploadPath,
+  MealDishWriteExhaustedError,
   type MealDishWriteSkipReason,
   type PlannedMealSnapshot,
   writeDishImageFailure,
@@ -16,9 +19,17 @@ import {
 import { checkAiConsent, type AiConsentDecision } from "../_shared/ai-consent-guard.ts";
 import { aiConsentDeniedPayload } from "../_shared/ai-consent.ts";
 import { logMissingEnv, MISSING_ENV_HTTP_STATUS, missingEnvResponseBody } from "../_shared/missing-env.ts";
+import { createLogger } from "../_shared/db-logger.ts";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const STORAGE_BUCKET = "fridge-images";
+const FUNCTION_NAME = "process-meal-image-jobs";
+
+/** 料理の印を付けられなかったとき・画像を消せなかったときの記録 (app_logs。#1553) */
+const logger = createLogger(FUNCTION_NAME);
+
+/** ジョブの終わりの状態 (finalizeJob が書く status) */
+type FinalJobStatus = "completed" | "failed" | "cancelled";
 
 /**
  * 環境変数は、モジュールの読み込み時ではなくリクエストの処理の中で確かめる (#1467)。
@@ -221,17 +232,15 @@ async function processJob(
     const reason = aiConsentDeniedPayload(decision).body.code;
     const finalized = await finalizeJob(jobRow.id, lockToken, "cancelled", nextAttempt, reason);
     if (finalized) {
-      await markDishFailure(jobRow, reason);
+      await markDishFailure(jobRow, { status: "cancelled", attemptCount: nextAttempt, reason });
     }
     return { jobId: jobRow.id, status: "cancelled", message: reason };
   }
 
   try {
-    const { data: meal } = await supabase
-      .from("planned_meals")
-      .select("id, dishes, image_url")
-      .eq("id", jobRow.planned_meal_id)
-      .maybeSingle();
+    // 書くときの読み直しと同じ読み方にする (#1553)。行が無いときだけ meal_deleted で取り消し、
+    // 読めなかった (エラー) ときは例外にして、下の catch でジョブを失敗にする (以前はエラーも「献立が消えた」として取り消していた)
+    const meal = await readMealSnapshot(jobRow.planned_meal_id);
 
     if (!meal) {
       return await cancelSkippedJob(jobRow.id, lockToken, nextAttempt, "meal_deleted");
@@ -270,14 +279,26 @@ async function processJob(
     // (楽観的な排他。#1527。読んでから書くまでに別のワーカーや利用者が書いていたら、読み直して当て直す)。
     // カバーはカバーの持ち主の決まり (isMealCoverAutoReplaceable。#1487 の整合ゲート) で決め、変わらないときは image_url を書かない。
     // 写真・商品・利用者の画像のカバーは置き換えない
-    const written = await writeGeneratedDishImage(supabase, {
-      mealId: meal.id,
-      dishIndex: jobRow.dish_index,
-      subjectHash: jobRow.subject_hash,
-      imageUrl: publicUrl,
-      read: () => readMealSnapshot(meal.id),
-    });
+    let written: Awaited<ReturnType<typeof writeGeneratedDishImage>>;
+    try {
+      written = await writeGeneratedDishImage(supabase, {
+        mealId: meal.id,
+        dishIndex: jobRow.dish_index,
+        subjectHash: jobRow.subject_hash,
+        imageUrl: publicUrl,
+        read: () => readMealSnapshot(meal.id),
+      });
+    } catch (writeError: unknown) {
+      // 書き込みを諦めた (どの回も 0 行で、献立には書いていない) ときだけ、アップロードした画像を消す (#1553)。
+      // 書き込みのエラー・読み取りのエラーでは消さない (書けたかどうかが分からない画像を、料理から参照させたまま消さない)
+      if (writeError instanceof MealDishWriteExhaustedError) {
+        await removeJobUploadedImage(jobRow, uploadPath, "write_exhausted");
+      }
+      throw writeError;
+    }
     if (written.status === "skipped") {
+      // 書かずにやめた (献立が消えた・料理が変わった) ので、アップロードした画像はどこからも参照されない (#1553)
+      await removeJobUploadedImage(jobRow, uploadPath, written.reason);
       return await cancelSkippedJob(jobRow.id, lockToken, nextAttempt, written.reason);
     }
 
@@ -287,7 +308,7 @@ async function processJob(
     const reason = error?.message ?? "unknown error";
     const finalized = await finalizeJob(jobRow.id, lockToken, "failed", nextAttempt, reason);
     if (finalized) {
-      await markDishFailure(jobRow, reason);
+      await markDishFailure(jobRow, { status: "failed", attemptCount: nextAttempt, reason });
     }
     return { jobId: jobRow.id, status: "failed", message: reason };
   }
@@ -319,7 +340,7 @@ async function readMealSnapshot(mealId: string): Promise<PlannedMealSnapshot | n
 async function finalizeJob(
   jobId: string,
   leaseToken: string,
-  status: "completed" | "failed" | "cancelled",
+  status: FinalJobStatus,
   attemptCount: number,
   lastError: string | null,
   resultImageUrl?: string,
@@ -350,19 +371,92 @@ async function finalizeJob(
 
 /**
  * ジョブの料理を失敗にする (#1527。読んだ最新の料理のうちジョブの料理だけを変え、読んだときの行のままの場合にだけ書く)。
- * ジョブの後始末なので例外は投げない (書けなければログに残す。ほかのジョブの処理を止めない)
+ * ジョブの後始末なので例外は投げない (ほかのジョブの処理を止めない)。
+ * 書けなかった (MEAL_DISH_WRITE_MAX_ATTEMPTS 回負けた・読めなかった) ときは、料理が生成中 (pending) のまま残る。
+ * 料理の側を条件なしで書き直すことはせず (#1527 の排他を壊さない)、app_logs に error で残し、
+ * ジョブの last_error に目印 (DISH_LEFT_PENDING_LAST_ERROR_MARKER) を足して、ジョブの側から追えるようにする (#1553)
  */
-async function markDishFailure(job: MealImageJobRow, reason: string) {
+async function markDishFailure(
+  job: MealImageJobRow,
+  finalized: { status: Exclude<FinalJobStatus, "completed">; attemptCount: number; reason: string },
+) {
   try {
     await writeDishImageFailure(supabase, {
       mealId: job.planned_meal_id,
       dishIndex: job.dish_index,
       subjectHash: job.subject_hash,
-      reason,
+      reason: finalized.reason,
       read: () => readMealSnapshot(job.planned_meal_id),
     });
-  } catch (error) {
-    console.warn("Failed to mark meal image dish as failed:", job.id, error);
+  } catch (error: unknown) {
+    logger.error("料理を失敗の印にできず、生成中 (pending) のまま残りました", error, {
+      jobId: job.id,
+      plannedMealId: job.planned_meal_id,
+      dishIndex: job.dish_index,
+      jobStatus: finalized.status,
+    });
+    await recordDishLeftPending(job, finalized, error);
+  }
+}
+
+/**
+ * 料理が生成中のまま残ったことを、終えたジョブの last_error に書き足す (#1553)。
+ * finalizeJob が書いたときの行 (同じ status・attempt_count・貸し出しなし) のままの場合にだけ書く。書けなくても例外は投げない
+ */
+async function recordDishLeftPending(
+  job: MealImageJobRow,
+  finalized: { status: Exclude<FinalJobStatus, "completed">; attemptCount: number; reason: string },
+  cause: unknown,
+) {
+  try {
+    const { data, error } = await supabase
+      .from("meal_image_jobs")
+      .update({
+        last_error: formatDishLeftPendingLastError(finalized.reason, cause),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", job.id)
+      .eq("status", finalized.status)
+      .eq("attempt_count", finalized.attemptCount)
+      .is("lease_token", null)
+      .select("id");
+    if (error) throw new Error(`failed to update meal image job: ${error.message}`);
+    // 0 行 = finalizeJob のあとにジョブの行が変わった (積み直しなど)。新しい状態を上書きしない
+    if (!Array.isArray(data) || data.length === 0) throw new Error("the finalized job row was changed afterwards");
+  } catch (error: unknown) {
+    logger.error("料理が生成中のまま残ったことを、ジョブの last_error に書けませんでした", error, {
+      jobId: job.id,
+      plannedMealId: job.planned_meal_id,
+      dishIndex: job.dish_index,
+    });
+  }
+}
+
+/**
+ * 書かずにやめた・書き込みを諦めたジョブが、自分でアップロードした画像を Storage から消す (#1553。best effort)。
+ * 消すのは、このジョブの buildImageUploadPath のパス (isOwnJobUploadPath) の 1 ファイルだけ。ほかのジョブ・利用者の画像は消さない。
+ * 消せなくてもジョブの結果は変えない (ログに残すだけ)
+ */
+async function removeJobUploadedImage(
+  job: MealImageJobRow,
+  uploadPath: string,
+  why: MealDishWriteSkipReason | "write_exhausted",
+): Promise<void> {
+  const context = { jobId: job.id, plannedMealId: job.planned_meal_id, uploadPath, why };
+  if (!isOwnJobUploadPath(uploadPath, { plannedMealId: job.planned_meal_id, jobId: job.id })) {
+    logger.warn("ジョブの画像のパスではないので、Storage から消しませんでした", context);
+    return;
+  }
+  try {
+    const { error } = await supabase.storage.from(STORAGE_BUCKET).remove([uploadPath]);
+    if (error) {
+      logger.warn("書かなかった料理の画像を Storage から消せませんでした", { ...context, error: error.message });
+    }
+  } catch (error: unknown) {
+    logger.warn("書かなかった料理の画像を Storage から消せませんでした", {
+      ...context,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 

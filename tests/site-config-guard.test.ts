@@ -12,12 +12,16 @@
  * このテストは src/ と apps/mobile/ の全ファイルを読み、次のドメイン表記が直接書かれていないことを確かめる:
  *   '@homegohan.app'  '@homegohan.jp'  'https://homegohan.app'  'https://homegohan.jp'
  * 許すのは、既定値の定数そのものと、既定値を固定するテストだけ (ALLOWED_FILES)。
+ * さらに、製品のソース (テストを除く .ts / .tsx / .js などを、コメントを除いてから読む) には、homegohan.com を含めた
+ * 3 つのドメインのどれも書かれていないことを確かめる (PRODUCT_ALLOWED_FILES の既定値の定数を除く)。
+ * 本番のドメインはまだ決まっていないので、製品のコードがドメインを知っているのは既定値の定数だけにしておく。
  * 落ちたときは、ドメインを書かずに getSiteUrl() / getEmailFrom() / getSupportEmail() (Web) か
  * getSupportEmail() / getTermsUrl() / getPrivacyUrl() (モバイル) を呼ぶ。テストの期待値には、定数 (DEFAULT_*) か
  * example.test のような例示用のドメインを使う。
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_EMAIL_FROM, DEFAULT_SITE_URL, DEFAULT_SUPPORT_EMAIL } from '@/lib/site-config';
 import { DEFAULT_SUPPORT_EMAIL as MOBILE_DEFAULT_SUPPORT_EMAIL } from '../apps/mobile/src/lib/siteConfig';
@@ -43,15 +47,6 @@ const ALLOWED_FILES: Record<string, string> = {
   'src/lib/site-config.ts': 'Web の既定値 (DEFAULT_EMAIL_FROM / DEFAULT_SUPPORT_EMAIL)',
   'apps/mobile/src/lib/siteConfig.ts': 'モバイルの既定値 (DEFAULT_SUPPORT_EMAIL)',
   'src/__tests__/lib/site-config.test.ts': '既定値が「いま動いている値」のままであることを固定するテスト',
-};
-
-/**
- * 別の PR が書き換え中のため、一時的に許すファイル。その PR が getSupportEmail() に置き換えたら、ここから消す
- * (消し忘れは下のテストが「もう書かれていない」と知らせる)。
- */
-const PENDING_FILES: Record<string, string> = {
-  'src/app/(main)/settings/page.tsx':
-    'PR #1079 (孤立ネイティブ画面の導線) が設定画面を SettingsPageClient.tsx に移す。移した先で getSupportEmail() にする',
 };
 
 /** 本文からの禁止表記の位置 (1 始まりの行番号と、その行) */
@@ -99,7 +94,7 @@ describe('送信元・問い合わせ先・サイトの URL は 1 か所 (#1194)
 
   it('@homegohan.app / @homegohan.jp / https://homegohan.app を直接書かない (既定値の定数と、それを固定するテストを除く)', () => {
     const offenders = [...hitsByFile.entries()]
-      .filter(([file]) => !(file in ALLOWED_FILES) && !(file in PENDING_FILES))
+      .filter(([file]) => !(file in ALLOWED_FILES))
       .flatMap(([file, hits]) => hits.map((hit) => `${file}:${hit.line}  ${hit.text}`));
 
     expect(
@@ -110,15 +105,152 @@ describe('送信元・問い合わせ先・サイトの URL は 1 か所 (#1194)
         offenders.join('\n'),
     ).toEqual([]);
   });
+});
 
-  it('一時的に許しているファイルに、まだ禁止表記が残っている (置き換えが済んだら PENDING_FILES から外す)', () => {
-    for (const [file, reason] of Object.entries(PENDING_FILES)) {
-      expect(fs.existsSync(path.join(ROOT, file)), `${file} が無い。PENDING_FILES から外す (${reason})`).toBe(true);
-      expect(
-        hitsByFile.has(file),
-        `${file} にはもう禁止表記が無い。PENDING_FILES から外すこと (${reason})`,
-      ).toBe(true);
+/**
+ * 製品のソース (テストを除く) で、コメントを除いたあとに書かれていてはいけないドメイン。
+ * 上の FORBIDDEN より広く、本番の候補の homegohan.com も含める (本番のドメインは未定のため、製品のコードには書かない)。
+ * 'com.homegohan.app' (アプリの識別子) は対象外。'homegohan-app.vercel.app' はドメインが違うので当たらない。
+ */
+const PRODUCT_FORBIDDEN = /(?<!\bcom\.)\bhomegohan\.(?:app|jp|com)\b/i;
+
+/** 製品のソースのうち、ドメインを直接書いてよいファイル (既定値の定数そのもの) */
+const PRODUCT_ALLOWED_FILES: Record<string, string> = {
+  'src/lib/site-config.ts': 'Web の既定値の定数 (DEFAULT_EMAIL_FROM / DEFAULT_SUPPORT_EMAIL)',
+  'apps/mobile/src/lib/siteConfig.ts': 'モバイルの既定値の定数 (DEFAULT_SUPPORT_EMAIL)',
+};
+
+/** 製品のソースとして読むファイル */
+const PRODUCT_SOURCE_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs|mts|cts)$/;
+/** テストのファイルとフォルダ (製品のソースではない) */
+const TEST_FILE = /\.(?:test|spec)\.(?:ts|tsx|js|jsx|mjs|cjs|mts|cts)$/;
+const TEST_DIRS = new Set(['__tests__', '__mocks__']);
+
+function scriptKindOf(fileName: string): ts.ScriptKind {
+  if (fileName.endsWith('.tsx')) return ts.ScriptKind.TSX;
+  if (fileName.endsWith('.jsx')) return ts.ScriptKind.JSX;
+  if (/\.(?:js|mjs|cjs)$/.test(fileName)) return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
+}
+
+/**
+ * コメントだけを空白に置き換えた本文を返す (改行は残すので、行番号は元のまま)。
+ * 文字列の中の '//' (URL) や JSX の文字はコメントと見なさないよう、TypeScript の構文木でトークンごとに、
+ * その前後にあるコメントの位置を求める。
+ * - 前 (leading): 改行のあとに置いたコメント (行の頭のコメント・JSDoc)
+ * - 後ろ (trailing): トークンと同じ行の後ろに置いたコメント (`foo(); // 説明`・JSX の `{` の直後のコメント)。
+ *   TypeScript の leading は、直前のトークンと同じ行にあるコメントを返さないので、こちらも拾う。
+ * JSX の文字の範囲に入るもの (`<p>// …</p>` の '// …') は、直前のトークンの後ろを読むとコメントの形に見えるが、
+ * 画面に出る文字なので除く。
+ */
+function stripComments(fileName: string, source: string): string {
+  const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, scriptKindOf(fileName));
+  const ranges: ts.CommentRange[] = [];
+  /** JSX の文字の範囲 [pos, end) */
+  const jsxTextSpans: Array<readonly [number, number]> = [];
+  const visit = (node: ts.Node): void => {
+    const children = node.getChildren(sf);
+    if (children.length === 0) {
+      // JSX の文字はトリビア (コメント) を持たない。'// …' と書かれた文字をコメントと見なさない
+      if (node.kind === ts.SyntaxKind.JsxText) {
+        jsxTextSpans.push([node.pos, node.end]);
+      } else {
+        ranges.push(...(ts.getLeadingCommentRanges(source, node.getFullStart()) ?? []));
+        ranges.push(...(ts.getTrailingCommentRanges(source, node.getEnd()) ?? []));
+      }
+      return;
     }
+    children.forEach(visit);
+  };
+  visit(sf);
+  const inJsxText = (pos: number): boolean => jsxTextSpans.some(([start, end]) => pos >= start && pos < end);
+  const chars = source.split('');
+  for (const { pos, end } of ranges.filter((range) => !inJsxText(range.pos))) {
+    for (let i = pos; i < end; i += 1) {
+      if (chars[i] !== '\n' && chars[i] !== '\r') chars[i] = ' ';
+    }
+  }
+  return chars.join('');
+}
+
+/** コメントを除いた本文から、製品のソースに書いてはいけないドメインの位置 (1 始まりの行番号と、その行) */
+function findProductForbidden(fileName: string, source: string): Array<{ line: number; text: string }> {
+  // 元の本文に 1 つも無ければ、コメントを除いても無い (構文木を作らずに済ませる)
+  if (!PRODUCT_FORBIDDEN.test(source)) return [];
+  const hits: Array<{ line: number; text: string }> = [];
+  stripComments(fileName, source)
+    .split('\n')
+    .forEach((text, index) => {
+      if (PRODUCT_FORBIDDEN.test(text)) hits.push({ line: index + 1, text: text.trim().slice(0, 120) });
+    });
+  return hits;
+}
+
+function collectProductFiles(dir: string): string[] {
+  const files: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!SKIP_DIRS.has(entry.name) && !TEST_DIRS.has(entry.name)) files.push(...collectProductFiles(full));
+    } else if (entry.isFile() && PRODUCT_SOURCE_FILE.test(entry.name) && !TEST_FILE.test(entry.name)) {
+      files.push(full);
+    }
+  }
+  return files;
+}
+
+const productHitsByFile = new Map<string, Array<{ line: number; text: string }>>();
+let productFileCount = 0;
+for (const scanRoot of SCAN_ROOTS) {
+  for (const file of collectProductFiles(path.join(ROOT, scanRoot))) {
+    productFileCount += 1;
+    const hits = findProductForbidden(file, fs.readFileSync(file, 'utf8'));
+    if (hits.length > 0) productHitsByFile.set(path.relative(ROOT, file).split(path.sep).join('/'), hits);
+  }
+}
+
+describe('製品のソースは、コメントを除くと既定値の定数のほかにドメインを持たない (#1194)', () => {
+  it('走査が機能している: 既定値の定数のファイルから、定数の行だけを検出する (コメントの中の例は数えない)', () => {
+    expect(productFileCount).toBeGreaterThan(300);
+    expect(productHitsByFile.get('src/lib/site-config.ts')?.map((hit) => hit.text)).toEqual([
+      "export const DEFAULT_EMAIL_FROM = 'ほめゴハン <noreply@homegohan.app>';",
+      "export const DEFAULT_SUPPORT_EMAIL = 'support@homegohan.app';",
+    ]);
+    expect(productHitsByFile.get('apps/mobile/src/lib/siteConfig.ts')?.map((hit) => hit.text)).toEqual([
+      "export const DEFAULT_SUPPORT_EMAIL = 'support@homegohan.app';",
+    ]);
+  });
+
+  it('homegohan.app / homegohan.jp / homegohan.com を、既定値の定数のほかに書かない', () => {
+    const offenders = [...productHitsByFile.entries()]
+      .filter(([file]) => !(file in PRODUCT_ALLOWED_FILES))
+      .flatMap(([file, hits]) => hits.map((hit) => `${file}:${hit.line}  ${hit.text}`));
+
+    expect(
+      offenders,
+      '製品のコードにドメインを直接書かず、Web は src/lib/site-config.ts の getEmailFrom() / getSupportEmail() / getSiteUrl()、' +
+        'モバイルは apps/mobile/src/lib/siteConfig.ts の getSupportEmail() / getTermsUrl() / getPrivacyUrl() を使うこと:\n' +
+        offenders.join('\n'),
+    ).toEqual([]);
+  });
+
+  it('設定画面の「お問い合わせ」は getSupportEmail() から宛先を作る (以前は support@homegohan.jp と直接書いていた)', () => {
+    const settings = stripComments('page.tsx', read('src/app/(main)/settings/page.tsx'));
+    expect(settings).toMatch(/import\s*\{[^}]*\bgetSupportEmail\b[^}]*\}\s*from\s*["']@\/lib\/site-config["']/);
+    expect(settings).toContain('href={`mailto:${getSupportEmail()}`}');
+    expect(settings).not.toMatch(/mailto:[^`$]/);
+  });
+});
+
+describe('site-config.ts の冒頭の表の既定値は、定数と同じ', () => {
+  it('表の「DEFAULT_* = 値」が、書き出している定数の値と一致する', () => {
+    const header = read('src/lib/site-config.ts').split('*/')[0];
+    const rows = [...header.matchAll(/\|\s*(DEFAULT_[A-Z_]+) = ([^|]+?)\s*\|/g)].map(([, name, value]) => [name, value]);
+    expect(rows).toEqual([
+      ['DEFAULT_SITE_URL', DEFAULT_SITE_URL],
+      ['DEFAULT_EMAIL_FROM', DEFAULT_EMAIL_FROM],
+      ['DEFAULT_SUPPORT_EMAIL', DEFAULT_SUPPORT_EMAIL],
+    ]);
   });
 });
 
@@ -199,6 +331,53 @@ describe('禁止表記の判定ロジック', () => {
   it('行番号を返す', () => {
     expect(findForbidden('a\nb\nmailto:support@homegohan.jp\nd')).toEqual([
       { line: 3, text: 'mailto:support@homegohan.jp' },
+    ]);
+  });
+});
+
+describe('製品のソースの判定ロジック (コメントを除いてから読む)', () => {
+  it('3 つのドメインを、文字列・テンプレート文字列・JSX の属性と文字の中で検出する (homegohan.com も含む)', () => {
+    for (const [fileName, source] of [
+      ['a.ts', "const from = 'ほめゴハン <noreply@homegohan.app>';"],
+      ['a.ts', 'const url = `https://homegohan.com/${path}`;'],
+      ['a.tsx', 'const A = () => <a href="mailto:support@homegohan.jp">問い合わせ</a>;'],
+      ['a.tsx', 'const A = () => <p>// support@homegohan.com まで</p>;'],
+      ['a.tsx', 'const A = () => <p>/* support@homegohan.com */</p>;'],
+      ['a.tsx', 'const A = () => <a href="/contact">// support@homegohan.jp</a>;'],
+      ['a.js', "const u = 'https://mail.homegohan.com'; // 説明"],
+      ['a.ts', "const u = 'SUPPORT@HOMEGOHAN.COM';"],
+    ] as const) {
+      expect(findProductForbidden(fileName, source), source).toHaveLength(1);
+    }
+  });
+
+  it('コメントの中は数えない (行コメント・ブロックコメント・JSX の中のコメント)', () => {
+    for (const [fileName, source] of [
+      ['a.ts', '// 例: support@homegohan.com\nconst a = 1;'],
+      ['a.ts', '/**\n * NEXT_PUBLIC_APP_URL=https://homegohan.com\n */\nexport const a = 1;'],
+      ['a.ts', "const a = getSupportEmail(); /* 以前は support@homegohan.jp */"],
+      ['a.ts', 'const a = getSupportEmail(); // 以前は support@homegohan.jp\nconst b = 2;'],
+      ['a.ts', 'call(/* 以前は support@homegohan.jp */ getSupportEmail());'],
+      ['a.tsx', 'const A = () => (\n  <div>\n    {/* 以前は mailto:support@homegohan.jp */}\n  </div>\n);'],
+      ['a.tsx', 'const A = () => <div>{/* 以前は support@homegohan.jp */}</div>;'],
+    ] as const) {
+      expect(findProductForbidden(fileName, source), source).toEqual([]);
+    }
+  });
+
+  it('許すもの: アプリの識別子 (com.homegohan.app)・実際の URL (homegohan-app.vercel.app)・例示用のドメイン', () => {
+    for (const source of [
+      "const bundleIdentifier = 'com.homegohan.app';",
+      "const url = 'https://homegohan-app.vercel.app';",
+      "const support = 'support@example.test';",
+    ]) {
+      expect(findProductForbidden('a.ts', source), source).toEqual([]);
+    }
+  });
+
+  it('コメントを除いても行番号は元のまま', () => {
+    expect(findProductForbidden('a.ts', '/* 1\n2 */\n// 3\nconst a = "x@homegohan.app";')).toEqual([
+      { line: 4, text: 'const a = "x@homegohan.app";' },
     ]);
   });
 });
