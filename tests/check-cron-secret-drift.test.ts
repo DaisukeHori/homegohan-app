@@ -28,6 +28,7 @@ import {
   EMPTY_SHA256,
   HELP,
   PREVIOUS_NAME,
+  STDERR_TAIL_LINES,
   TIMEOUT_ENV_NAME,
   UsageError,
   VAULT_DIGEST_SQL,
@@ -273,6 +274,10 @@ describe('pgEnvFromUrl', () => {
       PGSSLMODE: 'require',
     });
     expect(pgEnvFromUrl('postgres://u:p@h/db?sslmode=verify-full')).toMatchObject({ PGSSLMODE: 'verify-full', PGDATABASE: 'db' });
+    // データベース名もポートも無い URL は、psql の既定のポートと postgres データベースに任せる
+    const bare = pgEnvFromUrl('postgres://u:p@h');
+    expect(bare.PGDATABASE).toBe('postgres');
+    expect(bare.PGPORT).toBeUndefined();
   });
 
   it('URL でない・postgres でない接続先は例外 (中身はエラーの文に出さない)', () => {
@@ -394,6 +399,16 @@ describe('evaluate (ダイジェストの比較)', () => {
     expect(levelOf(same, 'vercel-previous')).toBe('warn');
     const leftover = evaluate({ ...healthy(), vercel: okStore({ [CURRENT_NAME]: digestEntry(SECRET_VERCEL), [PREVIOUS_NAME]: digestEntry(SECRET_OLD) }) });
     expect(levelOf(leftover, 'vercel-previous')).toBe('info');
+    const unreadable = evaluate({ ...healthy(), vercel: okStore({ [CURRENT_NAME]: digestEntry(SECRET_VERCEL), [PREVIOUS_NAME]: { kind: 'unreadable' } }) });
+    expect(levelOf(unreadable, 'vercel-previous')).toBe('info');
+    expect(unreadable.find((c: Check) => c.id === 'vercel-previous')?.title).toContain('値は取り出せません');
+    const empty = evaluate({
+      ...healthy(),
+      vercel: okStore({ [CURRENT_NAME]: digestEntry(SECRET_VERCEL), [PREVIOUS_NAME]: { kind: 'digest', digest: EMPTY_SHA256 } }),
+    });
+    expect(levelOf(empty, 'vercel-previous')).toBe('info');
+    expect(empty.find((c: Check) => c.id === 'vercel-previous')?.title).toContain('空の値');
+    expect(exitCodeOf(unreadable)).toBe(0);
   });
 
   it('読めなかった保管場所 → ERROR で終了コード 2。FAIL もあれば終了コード 1 を優先', () => {
@@ -544,6 +559,8 @@ describe('createDefaultStores (各保管場所の読み取り)', () => {
       [{ code: 1, stdout: '', stderr: 'line1\nUnauthorized: invalid access token\n', error: undefined }, '終了コード 1 で失敗しました: line1 / Unauthorized'],
       [{ code: null, stdout: '', stderr: '', error: 'TIMEOUT' }, TIMEOUT_ENV_NAME],
       [{ code: 0, stdout: 'garbage', stderr: '' }, 'JSON ではありません'],
+      [{ code: null, stdout: '', stderr: '', error: 'EACCES' }, '実行できませんでした (EACCES)'],
+      [{ code: 0, stdout: '{}', stderr: '' }, '配列ではありません'],
     ];
     for (const [result, fragment] of cases) {
       const { run } = fakeRun(() => result);
@@ -566,6 +583,13 @@ describe('createDefaultStores (各保管場所の読み取り)', () => {
     expect(calls[0].env.PGPORT).toBe('6543');
     expect(calls[0].env[DEFAULT_DB_URL_ENV]).toBeUndefined();
     expect(calls[0].env.PATH).toBe('/usr/bin');
+  });
+
+  it(`失敗したときの標準エラー出力は、空行を除いた末尾 ${STDERR_TAIL_LINES} 行だけを出す`, async () => {
+    const stderr = ['l1', '', 'l2', 'l3', 'l4', 'l5', 'l6', 'l7', ''].join('\n');
+    const { run } = fakeRun(() => ({ code: 1, stdout: '', stderr }));
+    const store = await createDefaultStores({ options: baseOptions(), env: {}, run, fsApi: fakeFs().api }).edge();
+    expect((store as { message: string }).message).toBe('supabase secrets list が終了コード 1 で失敗しました: l3 / l4 / l5 / l6 / l7');
   });
 
   it('Vault (psql): 失敗したときの標準エラー出力は、パスワードと URL を伏せてから出す', async () => {
