@@ -3,7 +3,7 @@
  * apps/mobile/src/lib/user-storage.ts のテスト (#1038 F7-10)
  *
  * ログアウト時に、ユーザー別の AsyncStorage キーを消す。
- * push token の「登録済み」フラグと「この端末のトークンの値」の両方が対象。
+ * push token の「この端末のトークンの値」と、旧ビルドが付けた「登録済み」の印 (v2・v1。今は読まず書かない: #1599) が対象。
  */
 
 jest.mock('../../src/lib/supabase', () => ({ supabase: {} }));
@@ -13,7 +13,7 @@ jest.mock('expo-constants', () => ({ default: {} }));
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { PUSH_TOKEN_REGISTERED_KEY_PREFIX, PUSH_TOKEN_VALUE_KEY_PREFIX } from '../../src/lib/pushNotifications';
+import { PUSH_TOKEN_VALUE_KEY_PREFIX } from '../../src/lib/pushNotifications';
 import { PERSISTENCE_KEYS } from '../../src/lib/persistence';
 import { clearUserScopedAsyncStorage } from '../../src/lib/user-storage';
 
@@ -22,7 +22,7 @@ beforeEach(async () => {
 });
 
 describe('clearUserScopedAsyncStorage', () => {
-  it('ユーザー ID を指定すると、そのユーザーの push token の登録済みフラグと値を消す (他のユーザー・他のキーは残す)', async () => {
+  it('ユーザー ID を指定すると、そのユーザーの push token の値と旧ビルドの登録済みの印を消す (他のユーザー・他のキーは残す)', async () => {
     await AsyncStorage.multiSet([
       ['push_token_registered_v1:user-1', '1'],
       [`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-1`, 'ExponentPushToken[abc]'],
@@ -53,7 +53,7 @@ describe('clearUserScopedAsyncStorage', () => {
     expect([...(await AsyncStorage.getAllKeys())].sort()).toEqual(['auth_last_fail_ts']);
   });
 
-  it('旧ビルドが付けた登録済みの印 (v1) も、今のビルドの印 (v2) も消す (文字列そのもので確かめる)', async () => {
+  it('旧ビルドが付けた登録済みの印 (v1・v2。#1599 から読まず書かない) を消す (文字列そのもので確かめる)', async () => {
     await AsyncStorage.multiSet([
       ['push_token_registered_v1:user-1', '1'],
       ['push_token_registered_v2:user-1', '1'],
@@ -70,13 +70,14 @@ describe('clearUserScopedAsyncStorage', () => {
   it('pushNotifications.ts が使うキーの接頭辞と、ここで消す接頭辞が一致している (食い違うとログアウト後に値が残る)', async () => {
     await AsyncStorage.multiSet([
       [`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-9`, 'ExponentPushToken[zzz]'],
-      [`${PUSH_TOKEN_REGISTERED_KEY_PREFIX}:user-9`, '1'],
+      ['push_token_registered_v2:user-9', '1'],
     ]);
 
     await clearUserScopedAsyncStorage('user-9');
 
     expect(await AsyncStorage.getItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-9`)).toBeNull();
-    expect(await AsyncStorage.getItem(`${PUSH_TOKEN_REGISTERED_KEY_PREFIX}:user-9`)).toBeNull();
+    // 旧ビルドが付けた v2 の印 (#1599 から読まず書かない) も消す
+    expect(await AsyncStorage.getItem('push_token_registered_v2:user-9')).toBeNull();
   });
 });
 

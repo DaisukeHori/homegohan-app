@@ -27,16 +27,6 @@ import { supabase } from "./supabase";
  */
 export const PUSH_TOKEN_VALUE_KEY_PREFIX = "push_token_value_v1";
 
-/**
- * push token を DB に登録済みであることの印。実際のキーは `${接頭辞}:${userId}` (ログアウトで消える)。
- *
- * v1 は使わない。#1038 より前のビルドは、権限を拒否されて登録できなかった (null が返った) ときも v1 の印を付けていたため、
- * 通知を拒否した端末には v1 の印が残っている。v1 をそのまま見ると、後から OS の設定で許可しても二度と登録されない。
- * v2 は「トークンを実際に保存できたときだけ」付けるので、v1 は読まず (ログアウトでは消す: user-storage.ts)、
- * 更新後の初回起動で 1 度だけ登録を確かめ直す (登録済みの端末では upsert が何も変えないだけ)。
- */
-export const PUSH_TOKEN_REGISTERED_KEY_PREFIX = "push_token_registered_v2";
-
 /** プレースホルダーを無効値として扱う (eas init 前の app.json などに入っていた値) */
 const PLACEHOLDER = "PLEASE_SET_VIA_EAS_INIT";
 
@@ -302,7 +292,7 @@ export async function registerAndSaveExpoPushToken(options: RegisterPushTokenOpt
   // 同じトークンが別の利用者の行にも残っていれば、サーバーで外す (#1599)。
   // 共有の端末で、前の利用者のログアウトの削除がオフラインなどで失敗すると、前の利用者の行が残り、
   // この利用者がログインしたあとも前の利用者宛ての通知がこの端末に届き得る。RLS で本人の行しか触れないので、サーバーの API で外す。
-  // 失敗したら登録の失敗として投げる (起動時の自動登録は「登録済み」の印を付けないので、次の起動でやり直す)
+  // 失敗したら登録の失敗として投げる (起動時の自動登録 ensurePushTokenRegistered は、起動・ログインのたびに登録と claim をやり直すので、次の起動でやり直す)
   try {
     await getApi().post(PUSH_TOKEN_CLAIM_API_PATH, { expo_push_token: token });
   } catch (error) {
@@ -314,19 +304,21 @@ export async function registerAndSaveExpoPushToken(options: RegisterPushTokenOpt
 }
 
 /**
- * ログイン済みのユーザーについて、この端末の push token が未登録なら登録する (アプリ起動時に呼ぶ)。
+ * ログイン済みのユーザーについて、この端末の push token を登録する (アプリの起動時と、ログインした利用者が変わったときに呼ぶ)。
  *
- * 「登録済み」の印は、トークンを実際に DB へ保存できたときだけ付ける (#1038 F7-09)。
- * 以前は registerAndSaveExpoPushToken() が権限の拒否などで null を返しても印を付けていたため、
- * 後から OS の設定で通知を許可しても、二度と登録されなかった。
- * 印はログアウトで消える (user-storage.ts)。例外は呼び出し側 (PushTokenRegistrar) が握りつぶす。
+ * 起動・ログインのたびに、登録 (本人の行の upsert) と claim (同じトークンのほかの利用者の行を外す) を通す。どちらも何度呼んでも同じ結果になる。
+ * 「登録済み」の印を見て省くことはしない (#1599)。claim は同じトークンのほかの利用者の行を消すので、印があっても行があるとは限らない。
+ * 例: 共有の端末で、利用者 A のセッションが掃除を通らずに終わる (Web の signOut() による全端末の失効で、起動時の更新が失敗して
+ * SIGNED_OUT になるなど) → 利用者 B がログインして claim で A の行を消す → A が再びログインする。このとき印で省くと、
+ * A の行が無いまま再登録されず、A 宛ての通知がこの端末に届かなくなる。
+ * 以前の印 (push_token_registered_v2 / v1) は読まず書かない (旧ビルドが残した印はログアウトで消す: user-storage.ts)。
+ *
+ * 権限のダイアログは、まだ一度も尋ねていない (undetermined) ときだけ出る (shouldAskForPermission)。拒否・実機でないときは何もせずに終わり、
+ * 後から OS の設定で許可すれば、次の起動で登録される (#1038 F7-09)。例外は呼び出し側 (PushTokenRegistrar) が握りつぶす。
  */
-export async function ensurePushTokenRegistered(userId: string): Promise<void> {
-  const key = `${PUSH_TOKEN_REGISTERED_KEY_PREFIX}:${userId}`;
-  if ((await AsyncStorage.getItem(key)) === "1") return;
-
-  const token = await registerAndSaveExpoPushToken();
-  if (token) await AsyncStorage.setItem(key, "1");
+export async function ensurePushTokenRegistered(): Promise<void> {
+  // 登録する利用者は registerAndSaveExpoPushToken が getUser() で確かめる (いまのセッションの本人だけを登録する)
+  await registerAndSaveExpoPushToken();
 }
 
 /** ログアウト時のトークン削除に使う待ち時間の上限 (ミリ秒)。通信が遅くてもログアウトを長く止めない */
@@ -383,7 +375,7 @@ export type UnregisterPushTokenOptions = {
  * 同じトークンが複数ユーザーの行に併存する。ログアウトで消さないと、共有端末で前のユーザー宛ての通知が届き得る。
  *
  * - 消すのは「この端末のトークンの、このユーザーの行」だけ。同じユーザーの他の端末の行は消さない
- *   (消すと、他の端末は登録済みフラグが立っていて再登録されず、通知が届かなくなる)
+ *   (消すと、他の端末では、次にアプリを起動するまで再登録されず、その間は通知が届かなくなる)
  * - RLS (本人の行のみ削除可) のため、サインアウトの「前」に呼ぶこと。
  *   セッションが先に失効してしまう場合 (Web からの sign-out / session-expired) は、控えておいたアクセストークンを options.accessToken で渡す
  * - 例外は投げない。失敗・タイムアウトでもログアウトは止めない
