@@ -14,7 +14,7 @@
     "test:e2e:smoke": "maestro test maestro/smoke.yaml"
   },
   "dependencies": {
-    "@expo-google-fonts/noto-sans-jp": "^0.4.3",
+    "@expo-google-fonts/noto-sans-jp": "^0.4.4",
     "@homegohan/core": "*",
     "@homegohan/handson-tour-shared": "*",
     "@homegohan/shared": "*",
