@@ -41,6 +41,16 @@ const config = [
       "jsx-a11y/alt-text": "off",
     },
   },
+  {
+    // Playwright の fixture (test.extend) は、準備ができたら `await use(値)` を呼ぶ決まり。この `use` は React の
+    // フックではない。eslint-config-next 15 に入っている eslint-plugin-react-hooks 5 は、React 19 の `use` を
+    // フックとして数えるので、fixture の関数 (名前が use で始まらない) で rules-of-hooks を誤検出する (#1444)。
+    // e2e には React のコンポーネントもフックも無いので、このルールだけを外す。
+    files: ["tests/e2e/**/*.{ts,tsx}"],
+    rules: {
+      "react-hooks/rules-of-hooks": "off",
+    },
+  },
 ];
 
 export default config;
