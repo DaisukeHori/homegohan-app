@@ -16,6 +16,7 @@ export * from './auth-captcha';
 export * from './account-change-errors';
 export * from './account-change-input';
 export * from './health-blood-test-reference';
+export * from './org-challenges';
 export type {
   Json,
   Database,

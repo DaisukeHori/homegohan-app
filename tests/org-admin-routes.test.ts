@@ -11,6 +11,8 @@
  *     401 / 403 の本文は route ごとの従来の形のまま (画面が読んでいる)。403 のときは DB の読み書きも RPC もしない。
  *  2. 組織の絞り込みは、呼び出した人のプロフィールの organization_id だけを使う (他組織の行は読めず・触れない)。
  *  3. 500 の本文は汎用メッセージだけ。DB の生のエラー文は db-logger にだけ残す (#1172)。壊れた JSON は 400。
+ *  4. 組織チャレンジ (#1132): 管理者に返すのは集計 (参加者数・平均) だけで、最小人数に満たない間は値を返さない。
+ *     作成・開始できる種類は食事の記録から計算できる 3 つだけ (歩数・体重・カスタムは、健康データの同意の仕組みができるまで止める)。
  *
  * DB のモックは tests/helpers/schema-checked-db.ts (存在しない列・外部キーは本物の PostgREST と同じエラーになる)。
  */
@@ -36,13 +38,15 @@ vi.mock('@/lib/db-logger', () => ({
 }));
 
 const mockRpc = vi.fn();
+// service_role (getSupabaseAdmin) の rpc。チャレンジの集計 (get_org_challenge_aggregates) を返す
+const mockAdminRpc = vi.fn();
 let sessionUser: FakeUser | null = null;
 let sessionDb: SchemaDb;
 let adminDb: SchemaDb;
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: () => makeClient(sessionDb, sessionUser, mockRpc),
-  getSupabaseAdmin: () => makeClient(adminDb, null),
+  getSupabaseAdmin: () => makeClient(adminDb, null, mockAdminRpc),
 }));
 
 // 招待の作成 (RPC + メール送信 + 送信回数制限) は tests の別ファイルで確かめている。ここでは入口の認可だけを見る
@@ -81,6 +85,7 @@ const DEPT_A = uuid(301);
 const DEPT_B = uuid(302);
 const CHALLENGE_A = uuid(401);
 const CHALLENGE_B = uuid(402);
+const CHALLENGE_A_STEPS = uuid(403); // 組織 A の下書き (歩数。作成・開始できない種類)
 const INVITE_A = uuid(501);
 const INVITE_B = uuid(502);
 
@@ -104,8 +109,9 @@ function worldTables(): Record<string, Row[]> {
       { id: DEPT_B, organization_id: ORG_B, name: 'B の開発部', parent_id: null, manager_id: null, display_order: 1, created_at: '2026-02-02T00:00:00Z' },
     ],
     organization_challenges: [
-      { id: CHALLENGE_A, organization_id: ORG_A, title: 'A の歩数チャレンジ', description: null, challenge_type: 'steps', target_value: 10000, target_unit: 'steps', start_date: '2026-10-01', end_date: '2026-10-31', reward_description: null, status: 'active', department_id: DEPT_A, created_at: '2026-09-01T00:00:00Z' },
-      { id: CHALLENGE_B, organization_id: ORG_B, title: 'B のチャレンジ', description: null, challenge_type: 'steps', target_value: 1, target_unit: 'steps', start_date: '2026-10-01', end_date: '2026-10-31', reward_description: null, status: 'active', department_id: null, created_at: '2026-09-02T00:00:00Z' },
+      { id: CHALLENGE_A, organization_id: ORG_A, title: 'A の朝食チャレンジ', description: null, challenge_type: 'breakfast_rate', target_value: 80, target_unit: '%', start_date: '2026-10-01', end_date: '2026-10-31', reward_description: null, status: 'active', department_id: DEPT_A, created_at: '2026-09-01T00:00:00Z' },
+      { id: CHALLENGE_B, organization_id: ORG_B, title: 'B のチャレンジ', description: null, challenge_type: 'breakfast_rate', target_value: 1, target_unit: '%', start_date: '2026-10-01', end_date: '2026-10-31', reward_description: null, status: 'active', department_id: null, created_at: '2026-09-02T00:00:00Z' },
+      { id: CHALLENGE_A_STEPS, organization_id: ORG_A, title: 'A の歩数チャレンジ', description: null, challenge_type: 'steps', target_value: 10000, target_unit: 'steps', start_date: '2026-10-01', end_date: '2026-10-31', reward_description: null, status: 'draft', department_id: null, created_at: '2026-08-01T00:00:00Z' },
     ],
     organization_challenge_participants: [
       { id: 'p1', challenge_id: CHALLENGE_A, user_id: MEMBER_A },
@@ -148,6 +154,7 @@ const url = (path: string) => `http://localhost${path}`;
 beforeEach(() => {
   vi.clearAllMocks();
   mockRpc.mockResolvedValue({ data: null, error: null });
+  mockAdminRpc.mockResolvedValue({ data: [], error: null });
   mockCreateOrgInvite.mockImplementation(async (params: { email: string; role: string }) => ({
     ok: true,
     invite: { id: uuid(900), email: params.email, role: params.role, status: 'pending', expires_at: '2099-01-01T00:00:00Z', invite_url: 'http://localhost/invite/x' },
@@ -215,7 +222,7 @@ const endpoints: Endpoint[] = [
       challenges.POST(
         jsonRequest(url('/api/org/challenges'), 'POST', {
           title: '新チャレンジ',
-          challengeType: 'steps',
+          challengeType: 'breakfast_rate',
           startDate: '2026-11-01',
           endDate: '2026-11-30',
         }),
@@ -288,6 +295,7 @@ function expectNothingDone() {
   expect(sessionDb.queries.filter((q) => q.table === 'user_profiles' && q.op !== 'select')).toHaveLength(0);
   expect(adminDb.queries).toHaveLength(0);
   expect(mockRpc).not.toHaveBeenCalled();
+  expect(mockAdminRpc).not.toHaveBeenCalled();
   expect(mockCreateOrgInvite).not.toHaveBeenCalled();
 }
 
@@ -451,23 +459,101 @@ describe('組織の絞り込み: 呼び出した人の organization_id だけを
     expect(sessionDb.recorded('user_profiles', 'select').filter((q) => q.count)).toHaveLength(0);
   });
 
-  it('challenges GET: 自組織のチャレンジだけ。参加者数と部署名つき', async () => {
+  it('challenges GET: 自組織のチャレンジだけ。部署名つき。集計は認可で確定した自組織の分だけ service_role の DB 関数で取る', async () => {
+    mockAdminRpc.mockResolvedValue({
+      data: [{ challenge_id: CHALLENGE_A, participant_count: 12, min_participants: 5, average_value: '63.2' }],
+      error: null,
+    });
+
     const body = await json(await challenges.GET(new Request(url('/api/org/challenges'))));
 
-    expect(body.challenges).toHaveLength(1);
-    expect(body.challenges[0]).toMatchObject({
-      id: CHALLENGE_A,
-      title: 'A の歩数チャレンジ',
-      participantCount: 2,
+    expect(body.challenges.map((c: Row) => c.id).sort()).toEqual([CHALLENGE_A, CHALLENGE_A_STEPS].sort());
+    expect(body.challenges.find((c: Row) => c.id === CHALLENGE_A)).toMatchObject({
+      title: 'A の朝食チャレンジ',
       departmentName: 'A の営業部',
+      participantCount: 12,
+      aggregate: { minParticipants: 5, visible: true, averageValue: 63.2 },
     });
+    // 集計は、呼び出した管理者の組織 (リクエストに組織 ID を渡す口は無い) だけ。参加者の行を直接読まない
+    expect(mockAdminRpc).toHaveBeenCalledTimes(1);
+    expect(mockAdminRpc).toHaveBeenCalledWith('get_org_challenge_aggregates', { p_organization_id: ORG_A });
+    expect(adminDb.recorded('organization_challenge_participants', 'select')).toHaveLength(0);
+    expect(sessionDb.recorded('organization_challenge_participants', 'select')).toHaveLength(0);
+  });
+
+  it('challenges GET: 管理者に返すのは集計だけ。参加者の ID・個人の値・順位は返さない', async () => {
+    mockAdminRpc.mockResolvedValue({
+      data: [{ challenge_id: CHALLENGE_A, participant_count: 12, min_participants: 5, average_value: 63.2 }],
+      error: null,
+    });
+
+    const text = await (await challenges.GET(new Request(url('/api/org/challenges')))).text();
+
+    // テストデータの参加者 (MEMBER_A / ADMIN_A) の ID は、どこにも現れない
+    expect(text).not.toContain(MEMBER_A);
+    expect(text).not.toContain(ADMIN_A);
+    const body = JSON.parse(text);
+    for (const challenge of body.challenges) {
+      expect(Object.keys(challenge.aggregate).sort()).toEqual(['averageValue', 'minParticipants', 'visible']);
+      expect(challenge).not.toHaveProperty('participants');
+      expect(challenge).not.toHaveProperty('rank');
+      expect(challenge).not.toHaveProperty('ranking');
+    }
+  });
+
+  it('challenges GET: 最小人数に満たない間は、参加者数も平均も返さない (DB の関数が返した null をそのまま通す)', async () => {
+    mockAdminRpc.mockResolvedValue({
+      data: [
+        { challenge_id: CHALLENGE_A, participant_count: null, min_participants: 5, average_value: null },
+        // 参加者は 5 人以上いるが、集計が済んだ人が 5 人に満たない: 人数は出て、平均は出ない
+        { challenge_id: CHALLENGE_A_STEPS, participant_count: 6, min_participants: 5, average_value: null },
+      ],
+      error: null,
+    });
+
+    const body = await json(await challenges.GET(new Request(url('/api/org/challenges'))));
+
+    const a = body.challenges.find((c: Row) => c.id === CHALLENGE_A);
+    expect(a.participantCount).toBeNull();
+    expect(a.aggregate).toEqual({ minParticipants: 5, visible: false, averageValue: null });
+    const steps = body.challenges.find((c: Row) => c.id === CHALLENGE_A_STEPS);
+    expect(steps.participantCount).toBe(6);
+    expect(steps.aggregate).toEqual({ minParticipants: 5, visible: false, averageValue: null });
+  });
+
+  it('challenges GET: 集計の行が無いチャレンジも、0 人とは偽らず null (「5 人未満」) にする。平均 0 は 0 のまま出る', async () => {
+    mockAdminRpc.mockResolvedValue({
+      data: [{ challenge_id: CHALLENGE_A, participant_count: 5, min_participants: 5, average_value: 0 }],
+      error: null,
+    });
+
+    const body = await json(await challenges.GET(new Request(url('/api/org/challenges'))));
+
+    const a = body.challenges.find((c: Row) => c.id === CHALLENGE_A);
+    expect(a.participantCount).toBe(5);
+    expect(a.aggregate).toEqual({ minParticipants: 5, visible: true, averageValue: 0 });
+    const noRow = body.challenges.find((c: Row) => c.id === CHALLENGE_A_STEPS);
+    expect(noRow.participantCount).toBeNull();
+    expect(noRow.aggregate).toEqual({ minParticipants: 5, visible: false, averageValue: null });
+  });
+
+  it('challenges GET: 計算できない種類 (歩数) には、DB の関数が平均を返しても出さない', async () => {
+    mockAdminRpc.mockResolvedValue({
+      data: [{ challenge_id: CHALLENGE_A_STEPS, participant_count: 9, min_participants: 5, average_value: 1234 }],
+      error: null,
+    });
+
+    const body = await json(await challenges.GET(new Request(url('/api/org/challenges'))));
+
+    const steps = body.challenges.find((c: Row) => c.id === CHALLENGE_A_STEPS);
+    expect(steps.aggregate).toEqual({ minParticipants: 5, visible: false, averageValue: null });
   });
 
   it('challenges POST / PUT: 作成は自組織・操作した人で、他組織のチャレンジは更新できない', async () => {
     const created = await challenges.POST(
       jsonRequest(url('/api/org/challenges'), 'POST', {
         title: '新チャレンジ',
-        challengeType: 'steps',
+        challengeType: 'breakfast_rate',
         startDate: '2026-11-01',
         endDate: '2026-11-30',
         organization_id: ORG_B,
@@ -520,6 +606,171 @@ describe('組織の絞り込み: 呼び出した人の organization_id だけを
     expect(mockRpc).toHaveBeenCalledWith('revoke_org_invite', { p_invite_id: INVITE_A });
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect((await json(res)).error.code).toBeTruthy();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 組織チャレンジ (#1132): 作成・開始できる種類と、入力の確認
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('組織チャレンジ (#1132): 作成・開始できるのは食事の記録から計算できる種類だけ', () => {
+  const createBody = (extra: Record<string, unknown> = {}) => ({
+    title: '新チャレンジ',
+    challengeType: 'breakfast_rate',
+    startDate: '2026-11-01',
+    endDate: '2026-11-30',
+    ...extra,
+  });
+  const create = (extra: Record<string, unknown> = {}) =>
+    challenges.POST(jsonRequest(url('/api/org/challenges'), 'POST', createBody(extra)));
+  const update = (body: Record<string, unknown>) => challenges.PUT(jsonRequest(url('/api/org/challenges'), 'PUT', body));
+  const inserts = () => sessionDb.recorded('organization_challenges', 'insert');
+  const updates = () => sessionDb.recorded('organization_challenges', 'update');
+
+  it.each(['breakfast_rate', 'veg_score', 'cooking_rate'])('POST: %s は作成できる', async (challengeType) => {
+    const res = await create({ challengeType });
+
+    expect(res.status).toBe(200);
+    expect(inserts()).toHaveLength(1);
+    expect(inserts()[0].values).toMatchObject({ challenge_type: challengeType, organization_id: ORG_A, status: 'draft' });
+  });
+
+  it.each(['steps', 'weight_loss', 'custom', 'veggie_score', 'homecook_rate', 'unknown'])(
+    'POST: %s は作成できない (400 CHALLENGE_TYPE_DISABLED)。何も書き込まない',
+    async (challengeType) => {
+      const res = await create({ challengeType });
+
+      expect(res.status).toBe(400);
+      expect((await json(res)).code).toBe('CHALLENGE_TYPE_DISABLED');
+      expect(inserts()).toHaveLength(0);
+      expect(mockLoggerError).not.toHaveBeenCalled();
+    },
+  );
+
+  it('POST: 種類・タイトル・日付が欠けていれば 400 (Required fields missing)', async () => {
+    for (const missing of ['title', 'challengeType', 'startDate', 'endDate']) {
+      const res = await create({ [missing]: undefined });
+      expect(res.status, missing).toBe(400);
+      expect(await json(res)).toEqual({ error: 'Required fields missing' });
+    }
+    expect(inserts()).toHaveLength(0);
+  });
+
+  it.each([
+    ['開始日が終了日より後', { startDate: '2026-12-01', endDate: '2026-11-30' }],
+    ['実在しない日付', { startDate: '2026-02-30' }],
+    ['日付の形式が違う', { startDate: '2026/11/01' }],
+    ['日時の文字列', { endDate: '2026-11-30T00:00:00Z' }],
+    ['日付が文字列でない', { startDate: 20261101 }],
+    ['タイトルが文字列でない', { title: 123 }],
+  ])('POST: %s は 400 INVALID_PERIOD。何も書き込まない', async (_label, extra) => {
+    const res = await create(extra);
+
+    expect(res.status).toBe(400);
+    expect((await json(res)).code).toBe('INVALID_PERIOD');
+    expect(inserts()).toHaveLength(0);
+  });
+
+  it('POST: 開始日と終了日が同じ日 (1 日だけのチャレンジ) は作成できる', async () => {
+    const res = await create({ startDate: '2026-11-01', endDate: '2026-11-01' });
+
+    expect(res.status).toBe(200);
+  });
+
+  it.each([
+    ['breakfast_rate', 100],
+    ['breakfast_rate', 0],
+    ['cooking_rate', 60.5],
+    ['veg_score', 100],
+    ['veg_score', 4],
+  ])('POST: %s の目標値 %s は受け付ける。null / 省略もよい', async (challengeType, targetValue) => {
+    expect((await create({ challengeType, targetValue })).status).toBe(200);
+    expect((await create({ challengeType, targetValue: null })).status).toBe(200);
+    expect((await create({ challengeType, targetValue: undefined })).status).toBe(200);
+  });
+
+  it.each([
+    ['breakfast_rate', 101],
+    ['breakfast_rate', -1],
+    ['cooking_rate', 1000],
+    ['veg_score', 101],
+    ['breakfast_rate', '80'],
+    ['breakfast_rate', 'abc'],
+    ['breakfast_rate', true],
+  ])('POST: %s の目標値 %j は 400 INVALID_TARGET。何も書き込まない', async (challengeType, targetValue) => {
+    const res = await create({ challengeType, targetValue });
+
+    expect(res.status).toBe(400);
+    expect((await json(res)).code).toBe('INVALID_TARGET');
+    expect(inserts()).toHaveLength(0);
+  });
+
+  it('PUT: 状態に DB が受け付けない値を指定したら 400 INVALID_STATUS。何も更新しない', async () => {
+    const res = await update({ id: CHALLENGE_A, status: 'finished' });
+
+    expect(res.status).toBe(400);
+    expect((await json(res)).code).toBe('INVALID_STATUS');
+    expect(updates()).toHaveLength(0);
+  });
+
+  it('PUT: id が UUID でなければ 400 (DB に渡さない)', async () => {
+    const res = await update({ id: 'not-a-uuid', status: 'active' });
+
+    expect(res.status).toBe(400);
+    expect(await json(res)).toEqual({ error: 'Invalid challenge ID' });
+    expect(updates()).toHaveLength(0);
+  });
+
+  it('PUT: 食事の記録から計算できる種類のチャレンジは、開始 (active) にできる', async () => {
+    const res = await update({ id: CHALLENGE_A, status: 'active' });
+
+    expect(res.status).toBe(200);
+    expect(updates()).toHaveLength(1);
+    expect(updates()[0].values).toEqual({ status: 'active' });
+    expect(updates()[0].eq).toContainEqual(['id', CHALLENGE_A]);
+    expect(updates()[0].eq).toContainEqual(['organization_id', ORG_A]);
+  });
+
+  it('PUT: 歩数のチャレンジは開始できない (400 CHALLENGE_TYPE_DISABLED)。何も更新しない', async () => {
+    const res = await update({ id: CHALLENGE_A_STEPS, status: 'active' });
+
+    expect(res.status).toBe(400);
+    expect((await json(res)).code).toBe('CHALLENGE_TYPE_DISABLED');
+    expect(updates()).toHaveLength(0);
+    expect(sessionDb.rows('organization_challenges').find((c) => c.id === CHALLENGE_A_STEPS)?.status).toBe('draft');
+  });
+
+  it('PUT: 歩数のチャレンジでも、終了や中止にはできる (開始だけを止める)', async () => {
+    for (const status of ['completed', 'cancelled']) {
+      const res = await update({ id: CHALLENGE_A_STEPS, status });
+      expect(res.status, status).toBe(200);
+    }
+    expect(updates()).toHaveLength(2);
+  });
+
+  it('PUT: 他組織のチャレンジの種類は調べない・更新もしない (自組織の絞り込み)', async () => {
+    const res = await update({ id: CHALLENGE_B, status: 'active', title: '乗っ取り' });
+
+    expect(res.status).toBe(200); // 従来どおり、該当する行が無いだけ (存在を知らせない)
+    expect(sessionDb.rows('organization_challenges').find((c) => c.id === CHALLENGE_B)?.title).toBe('B のチャレンジ');
+    for (const query of sessionDb.queries.filter((q) => q.table === 'organization_challenges')) {
+      expect(query.eq).toContainEqual(['organization_id', ORG_A]);
+    }
+  });
+
+  it('GET: 集計 (service_role の DB 関数) の失敗は、集計なしで返さず 500 の汎用メッセージ。生のエラー文は記録にだけ残す', async () => {
+    const RAW = 'permission denied for function get_org_challenge_aggregates; token=abc123';
+    mockAdminRpc.mockResolvedValue({ data: null, error: { code: '42501', message: RAW } });
+
+    const res = await challenges.GET(new Request(url('/api/org/challenges')));
+    const text = await res.text();
+
+    expect(res.status).toBe(500);
+    expect(JSON.parse(text)).toEqual({ error: 'Internal server error' });
+    expect(text).not.toContain('abc123');
+    expect(mockLoggerError).toHaveBeenCalledTimes(1);
+    expect(mockLoggerError.mock.calls[0][0]).toBe('GET /api/org/challenges');
+    expect((mockLoggerError.mock.calls[0][2] as Error).message).toContain(RAW);
   });
 });
 
@@ -592,7 +843,7 @@ describe('500 の本文は汎用メッセージだけ (生のエラー文は db-
       'POST',
       () =>
         challenges.POST(
-          jsonRequest(url('/api/org/challenges'), 'POST', { title: 't', challengeType: 'steps', startDate: '2026-11-01', endDate: '2026-11-30' }),
+          jsonRequest(url('/api/org/challenges'), 'POST', { title: 't', challengeType: 'breakfast_rate', startDate: '2026-11-01', endDate: '2026-11-30' }),
         ),
       'POST /api/org/challenges',
     ],
