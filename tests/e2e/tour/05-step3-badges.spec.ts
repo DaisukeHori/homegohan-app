@@ -19,10 +19,13 @@
 import {
   AUTO_ADVANCE_TIMEOUT_MS,
   EMPTY_STORAGE_STATE,
+  NAVIGATION_TIMEOUT_MS,
+  STEP3_ALL_BADGES_VIEWPORT,
   awardBadge,
   completeStep3,
   delayBadgesApi,
   expect,
+  nextButton,
   test,
 } from "./helpers";
 
@@ -87,15 +90,46 @@ test.describe("Tour - Step 3: バッジ確認", () => {
     },
   );
 
-  test("Step 3: 「次へ」タップ → Step 4 (tour-step-4-saving) へ遷移", async ({ page }) => {
-    await page.goto("/handson-tour/badges");
+  // 既定の画面の高さ (720) では [次へ] が画面の外に出て押せない (下の fixme)。一覧と吹き出しが収まる高さで、Step 4 への遷移を確かめる
+  test.describe("一覧と吹き出しが画面に収まる高さ", () => {
+    test.use({ viewport: STEP3_ALL_BADGES_VIEWPORT });
 
-    // first_bite → planner → tutorial_complete の順に [次へ] を押すと、卒業画面 (Step 4) へ
-    await completeStep3(page);
+    test("Step 3: 「次へ」タップ → Step 4 (tour-step-4-saving) へ遷移", async ({ page }) => {
+      await page.goto("/handson-tour/badges");
 
-    // Step 4: 完了処理中 (tour-step-4-saving) か、完了後の卒業画面 (tour-step-4-graduate)。処理は速いので saving は一瞬のことがある
-    await expect(page.getByTestId("tour-step-4-saving").or(page.getByTestId("tour-step-4-graduate"))).toBeVisible({
-      timeout: AUTO_ADVANCE_TIMEOUT_MS,
+      // first_bite → planner → tutorial_complete の順に [次へ] を押すと、卒業画面 (Step 4) へ
+      await completeStep3(page);
+
+      // Step 4: 完了処理中 (tour-step-4-saving) か、完了後の卒業画面 (tour-step-4-graduate)。処理は速いので saving は一瞬のことがある
+      await expect(page.getByTestId("tour-step-4-saving").or(page.getByTestId("tour-step-4-graduate"))).toBeVisible({
+        timeout: AUTO_ADVANCE_TIMEOUT_MS,
+      });
     });
   });
+
+  // 製品の既知の不具合で通らない (#846 の E2E で見つけた。直したら .fixme を外し、tests/e2e-tour-contract.test.ts の KNOWN_FIXMES を減らす)
+  test.fixme(
+    "Step 3: 既定の画面の大きさ (1280x720) でも、案内中のバッジの吹き出しの [次へ] が画面の中にあって押せる",
+    {
+      annotation: {
+        type: "fixme",
+        description:
+          "Step 3 の吹き出しはバッジのカードの下 (position: 'bottom') に出て、全面のオーバーレイ (position: fixed) の中にある。" +
+          "planner / tutorial_complete のカードが画面の下にあると、吹き出しの [次へ] が画面の外に出て、スクロールもできず先へ進めない。" +
+          "設計書 (05-step3-badges) の、案内するバッジのカードを画面の中へスクロールする動きが実装に無い。",
+      },
+    },
+    async ({ page }) => {
+      await page.goto("/handson-tour/badges");
+
+      // first_bite → planner → tutorial_complete の各段階で、[次へ] が画面の中にあって押せる
+      for (const card of ["badge-card-first_bite", "badge-card-planner", "badge-card-tutorial_complete"]) {
+        await expect(page.getByTestId(card)).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
+        const next = nextButton(page, "次へ");
+        await expect(next).toBeInViewport({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
+        await next.click();
+      }
+      await page.waitForURL("**/handson-tour/graduate", { timeout: NAVIGATION_TIMEOUT_MS });
+    },
+  );
 });

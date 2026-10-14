@@ -48,6 +48,16 @@ const BUBBLE_CHANGE_TIMEOUT_MS = 10_000;
  */
 export const BADGES_API_DELAY_MS = 1_500;
 
+/**
+ * Step 3 (バッジ確認) を [次へ] で進めるテストの画面の大きさ。
+ * Step 3 の吹き出しは、案内するバッジのカードの下 (position: 'bottom') に出て、全面のオーバーレイ (position: fixed) の中にあるので
+ * 画面の外に出るとスクロールしても届かない。既定の 1280x720 (Desktop Chrome) では planner / tutorial_complete のカードが画面の下にあり、
+ * [次へ] が画面の外に出て押せない (製品の不具合。#846 で発見。05-step3-badges の fixme が確かめる)。
+ * Step 3 の先 (Step 4) を確かめるテストは、バッジの一覧 (付与処理のあるバッジ約 20 枚 = 3 列で 7〜8 行、1 行約 100px) と
+ * 吹き出しが画面に収まる高さで動かす
+ */
+export const STEP3_ALL_BADGES_VIEWPORT = { width: 1280, height: 1800 } as const;
+
 /** 失敗のメッセージに載せる、応答の本文の先頭の長さ */
 const ERROR_BODY_PREVIEW_CHARS = 300;
 
@@ -253,7 +263,7 @@ export async function clickNextAndWaitForNextBubble(page: Page, label: string): 
   await expect(button).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
   const body = page.getByTestId("tour-bubble-body");
   const before = (await body.textContent()) ?? "";
-  await button.click();
+  await button.click({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
   await expect(body).not.toHaveText(before, { timeout: BUBBLE_CHANGE_TIMEOUT_MS });
 }
 
@@ -283,14 +293,14 @@ export async function openTour(page: Page): Promise<void> {
 
 /** Step 0 の「はじめる」を押して Step 1 (写真) へ進む */
 export async function startTour(page: Page): Promise<void> {
-  await page.getByTestId("tour-step-0-start").click();
+  await page.getByTestId("tour-step-0-start").click({ timeout: NAVIGATION_TIMEOUT_MS });
   await page.waitForURL("**/handson-tour/photo", { timeout: NAVIGATION_TIMEOUT_MS });
 }
 
 /** Step 0 の「あとで」を押して /home へ戻る (openTour のあとに呼ぶ) */
 export async function skipTourAtStep0(page: Page): Promise<void> {
   await waitForReactHandlers(page, "tour-step-0-skip");
-  await page.getByTestId("tour-step-0-skip").click();
+  await page.getByTestId("tour-step-0-skip").click({ timeout: NAVIGATION_TIMEOUT_MS });
   await page.waitForURL("**/home", { timeout: NAVIGATION_TIMEOUT_MS, waitUntil: "commit" });
 }
 
@@ -309,7 +319,7 @@ export async function completeStep1(page: Page): Promise<ApiResponseResult> {
       (r) => r.url().includes("/api/meal-plans/add-from-photo") && r.request().method() === "POST",
       { timeout: NAVIGATION_TIMEOUT_MS },
     ),
-    nextButton(page, "保存").click(),
+    nextButton(page, "保存").click({ timeout: AUTO_ADVANCE_TIMEOUT_MS }),
   ]);
   const result = await readResponse(saved);
   await page.waitForURL("**/handson-tour/menu", { timeout: NAVIGATION_TIMEOUT_MS });
@@ -326,7 +336,7 @@ export async function completeStep2(page: Page): Promise<ApiResponseResult> {
   await clickNextAndWaitForNextBubble(page, "次へ"); // 2.2 条件フラグ → 2.3 自由メモ
   await clickNextAndWaitForNextBubble(page, "次へ"); // 2.3 自由メモ → 2.4 生成ボタン
   await expect(page.getByTestId("v4-generate-button")).toBeVisible();
-  await nextButton(page, "生成する").click();
+  await nextButton(page, "生成する").click({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
   await expect(page.getByTestId("v4-result-card")).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS }); // 2.5 (自動) → 2.6
   await clickNextAndWaitForNextBubble(page, "次へ"); // 2.6 結果 → 2.7 追加ボタン
   await expect(page.getByTestId("v4-add-to-menu-button")).toBeVisible();
@@ -334,7 +344,7 @@ export async function completeStep2(page: Page): Promise<ApiResponseResult> {
     page.waitForResponse((r) => r.url().includes("/api/menu-plans/add") && r.request().method() === "POST", {
       timeout: NAVIGATION_TIMEOUT_MS,
     }),
-    nextButton(page, "献立に追加").click(),
+    nextButton(page, "献立に追加").click({ timeout: AUTO_ADVANCE_TIMEOUT_MS }),
   ]);
   const result = await readResponse(saved);
   await page.waitForURL("**/handson-tour/badges", { timeout: NAVIGATION_TIMEOUT_MS });
@@ -349,7 +359,7 @@ export async function completeStep3(page: Page): Promise<void> {
   await expect(page.getByTestId("badge-card-first_bite")).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
   await clickNextAndWaitForNextBubble(page, "次へ"); // 3.2 first_bite → 3.3 planner (intro は自動)
   await clickNextAndWaitForNextBubble(page, "次へ"); // 3.3 planner → 3.4 tutorial_complete
-  await nextButton(page, "次へ").click(); // 3.4 tutorial_complete → Step 4
+  await nextButton(page, "次へ").click({ timeout: AUTO_ADVANCE_TIMEOUT_MS }); // 3.4 tutorial_complete → Step 4
   await page.waitForURL("**/handson-tour/graduate", { timeout: NAVIGATION_TIMEOUT_MS });
 }
 

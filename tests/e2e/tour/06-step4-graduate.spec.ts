@@ -20,6 +20,7 @@ import {
   AUTO_ADVANCE_TIMEOUT_MS,
   EMPTY_STORAGE_STATE,
   NAVIGATION_TIMEOUT_MS,
+  STEP3_ALL_BADGES_VIEWPORT,
   completeStep1,
   completeStep2,
   completeStep3,
@@ -73,31 +74,36 @@ test.describe("Tour - Step 4: 卒業画面", () => {
     await expect(disclaimer).toContainText("課金");
   });
 
-  test("Step 4: tour-step-4-go-home タップ → /home へ遷移 (Step 0 から通しで)", async ({ page, tourUser }) => {
-    test.setTimeout(FULL_TOUR_TEST_TIMEOUT_MS);
+  // Step 3 は、既定の画面の高さ (720) では吹き出しの [次へ] が画面の外に出て押せない (05-step3-badges の fixme)。一覧と吹き出しが収まる高さで通す
+  test.describe("Step 3 の一覧と吹き出しが画面に収まる高さ", () => {
+    test.use({ viewport: STEP3_ALL_BADGES_VIEWPORT });
 
-    await openTour(page);
-    await startTour(page);
-    await completeStep1(page);
-    await completeStep2(page);
-    await completeStep3(page);
+    test("Step 4: tour-step-4-go-home タップ → /home へ遷移 (Step 0 から通しで)", async ({ page, tourUser }) => {
+      test.setTimeout(FULL_TOUR_TEST_TIMEOUT_MS);
 
-    // 卒業画面表示を確認
-    await expect(page.getByTestId("tour-step-4-graduate")).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
+      await openTour(page);
+      await startTour(page);
+      await completeStep1(page);
+      await completeStep2(page);
+      await completeStep3(page);
 
-    // 「ホームへ」ボタンが有効化されるまで待機 (仕様: 5 秒後に活性化)
-    await expect(page.getByTestId("tour-step-4-go-home")).toBeEnabled({ timeout: GO_HOME_ENABLED_TIMEOUT_MS });
+      // 卒業画面表示を確認
+      await expect(page.getByTestId("tour-step-4-graduate")).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
 
-    // 「ホームへ」をクリック → /home に遷移
-    await page.getByTestId("tour-step-4-go-home").click();
-    await page.waitForURL("**/home", { timeout: NAVIGATION_TIMEOUT_MS, waitUntil: "commit" });
-    expect(new URL(page.url()).pathname).toBe("/home");
+      // 「ホームへ」ボタンが有効化されるまで待機 (仕様: 5 秒後に活性化)
+      await expect(page.getByTestId("tour-step-4-go-home")).toBeEnabled({ timeout: GO_HOME_ENABLED_TIMEOUT_MS });
 
-    // ツアーを最後まで終えたので、完了が記録され、tutorial_complete バッジが付いている (スキップではない)
-    const profile = await readTourProfile(tourUser.id);
-    expect(profile.handson_tour_completed_at).not.toBeNull();
-    expect(profile.handson_tour_skipped_at).toBeNull();
-    expect(await hasBadge(tourUser.id, "tutorial_complete")).toBe(true);
+      // 「ホームへ」をクリック → /home に遷移
+      await page.getByTestId("tour-step-4-go-home").click();
+      await page.waitForURL("**/home", { timeout: NAVIGATION_TIMEOUT_MS, waitUntil: "commit" });
+      expect(new URL(page.url()).pathname).toBe("/home");
+
+      // ツアーを最後まで終えたので、完了が記録され、tutorial_complete バッジが付いている (スキップではない)
+      const profile = await readTourProfile(tourUser.id);
+      expect(profile.handson_tour_completed_at).not.toBeNull();
+      expect(profile.handson_tour_skipped_at).toBeNull();
+      expect(await hasBadge(tourUser.id, "tutorial_complete")).toBe(true);
+    });
   });
 
   test("Step 4: 完了の通信が成功したときは、エラー画面 (tour-step-4-error / tour-step-4-retry) を出さない", async ({

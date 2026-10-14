@@ -44,10 +44,11 @@ const EXPECTED_SPEC_COUNT = 7;
  * 製品の既知の不具合で動かせず、理由付きの test.fixme にしているテストの数 (ファイルごと)。
  * 03-step1-photo: ツアーの Step 1 の保存 (POST /api/meal-plans/add-from-photo) が、本文に dayDate / mealType が無く 400 になる (#846 で発見)。
  * 05-step3-badges: Step 3 の画面が /api/badges の earned / obtainedAt ではなく obtained_at を見ていて、「獲得済」が付かない (#846 で発見)。
+ *                  Step 3 の吹き出しが既定の画面の大きさ (1280x720) で画面の外に出て、[次へ] が押せない (#846 で発見)。
  */
 const KNOWN_FIXMES: Readonly<Record<string, number>> = {
   "03-step1-photo.spec.ts": 1,
-  "05-step3-badges.spec.ts": 1,
+  "05-step3-badges.spec.ts": 2,
 };
 
 /** コメントを除く (説明文に skip や isVisible と書いても検査に引っかからないように。URL の // では切らない) */
