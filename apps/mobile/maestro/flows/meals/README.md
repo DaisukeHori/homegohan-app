@@ -18,7 +18,7 @@ WebView の中の Web の画面を操作する検査は、Web の e2e (Playwrigh
 
 ## 外した flow (#1552)
 
-以前の flow は、ソースに無い testID (`meals-screen`・`meals-add-button`・`meal-list`・`home-meal-fab`・`meal-result-screen` など) を期待していました。
+以前の flow は、ソースに無い testID (`meals-screen`・`meals-add-button`・`meal-list`・`home-meal-fab`・`meal-name-error` など) を期待していました。
 食事のタブがネイティブの画面だったころの想定で、いまのアプリでは動きません。flow ごとの判断は次のとおりです。
 
 | 以前の flow | 判断 | 理由 / 代わりの検査 |

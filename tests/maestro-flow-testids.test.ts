@@ -109,7 +109,7 @@ describe("#1552 maestro の flow の testID の抜き出し (検査の道具そ�
     // apps/mobile/app/meals/new.tsx のテンプレート `meal-mode-${…}`
     expect(isFlowIdInSource("meal-mode-meal", ids)).toBe(true);
     // 以前の meals の flow が期待していた、ソースに無い testID
-    for (const id of ["meals-screen", "meal-list", "home-meal-fab", "meal-result-screen", "meals-add-button", "home-screen"]) {
+    for (const id of ["meals-screen", "meal-list", "home-meal-fab", "meals-add-button", "meal-name-error", "home-screen"]) {
       expect(isFlowIdInSource(id, ids)).toBe(false);
     }
   });
