@@ -22,6 +22,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { STEP3_SUB_STEP_TO_TARGET } from '@homegohan/handson-tour-shared';
+import { jstDayOffset } from '@/lib/jst-day-ranges';
 
 const mockGetUser = vi.fn();
 const mockFrom = vi.fn();
@@ -96,11 +97,13 @@ interface SetupOptions {
 // DB の値であることを区別できるよう、固定した現在時刻 (beforeEach) とは数 ms ずらしている
 const OBTAINED_AT = '2026-10-07T03:00:00.123Z';
 
-/** route.ts の連続日数計算と同じ方法で「n 日前」の日付文字列を作る */
+/**
+ * 「n 日前」の日付文字列。route.ts の連続日数 (consecutiveDayStreak) と同じく、JST の今日から数えた暦日にする (#1545)。
+ * 以前は toISOString (UTC の暦日) で作っており、固定した時計 (beforeEach の JST 12:00) では UTC と JST の暦日が同じなので
+ * たまたま一致していた。時計を JST の 0〜9 時に置くとサーバーの「昨日」を「今日」として渡すことになる
+ */
 function dayStr(daysAgo: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - daysAgo);
-  return d.toISOString().split('T')[0];
+  return jstDayOffset(-daysAgo);
 }
 
 /** 今日から daysCount 日連続の完了日 */

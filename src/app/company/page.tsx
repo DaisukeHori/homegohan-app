@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Users, Target, Heart, Sparkles } from "lucide-react";
+import { BUSINESS_NAME, BUSINESS_REPRESENTATIVE } from "@/lib/business-info";
 
 const colors = {
   primary: '#E07A5F',
@@ -28,8 +29,9 @@ const values = [
   { icon: <Sparkles size={24} />, title: '技術で社会貢献', desc: '最新のAI技術を活用し、誰もが健康になれる社会を目指します。', color: colors.warning },
 ];
 
-// 事業者の実在情報がまだ確定していない項目の表示。
-// 架空の代表者名・住所・沿革・チーム紹介などは載せない。確定したら実際の値に差し替える。
+// 事業者の実在情報がまだ確定していない項目 (所在地) の表示。
+// 架空の住所・沿革・チーム紹介などは載せない。確定したら実際の値に差し替える。
+// 会社名・代表者は src/lib/business-info.ts で決める (特定商取引法に基づく表記・規約・ポリシーと同じ値)。
 const PENDING = '準備中（確定次第掲載します）';
 
 export default function CompanyPage() {
@@ -105,9 +107,9 @@ export default function CompanyPage() {
               <table className="w-full">
                 <tbody>
                   {[
-                    { label: '会社名', value: '株式会社ほめゴハン' },
+                    { label: '会社名', value: BUSINESS_NAME },
                     { label: '事業内容', value: '食事管理アプリ「ほめゴハン」の企画・開発・運営' },
-                    { label: '代表者', value: PENDING },
+                    { label: '代表者', value: BUSINESS_REPRESENTATIVE },
                     { label: '所在地', value: PENDING },
                   ].map((row, i) => (
                     <tr key={i} className="border-b last:border-b-0" style={{ borderColor: colors.border }}>
