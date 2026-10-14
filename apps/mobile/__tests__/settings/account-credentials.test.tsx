@@ -19,22 +19,22 @@ const mockGetUser = jest.fn();
 const mockSignInWithPassword = jest.fn();
 const mockUpdateUser = jest.fn();
 const mockSignOut = jest.fn();
-let callOrder: string[] = [];
+let mockCallOrder: string[] = [];
 
 jest.mock('../../src/lib/supabase', () => ({
   supabase: {
     auth: {
       getUser: (...args: unknown[]) => mockGetUser(...args),
       signInWithPassword: (...args: unknown[]) => {
-        callOrder.push('signInWithPassword');
+        mockCallOrder.push('signInWithPassword');
         return mockSignInWithPassword(...args);
       },
       updateUser: (...args: unknown[]) => {
-        callOrder.push('updateUser');
+        mockCallOrder.push('updateUser');
         return mockUpdateUser(...args);
       },
       signOut: (...args: unknown[]) => {
-        callOrder.push('signOut');
+        mockCallOrder.push('signOut');
         return mockSignOut(...args);
       },
     },
@@ -59,7 +59,7 @@ function emailUser() {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  callOrder = [];
+  mockCallOrder = [];
   jest.spyOn(console, 'error').mockImplementation(() => {});
   mockGetUser.mockResolvedValue(emailUser());
   mockSignInWithPassword.mockResolvedValue({ data: { session: {} }, error: null });
@@ -136,7 +136,7 @@ describe('AccountCredentialsSection — パスワードの変更', () => {
     fireEvent.press(screen.getByTestId('account-password-submit'));
 
     expect(await screen.findByTestId('password-change-success')).toBeTruthy();
-    expect(callOrder).toEqual(['signInWithPassword', 'updateUser', 'signOut']);
+    expect(mockCallOrder).toEqual(['signInWithPassword', 'updateUser', 'signOut']);
     expect(mockSignInWithPassword).toHaveBeenCalledWith({ email: EMAIL, password: 'oldPass123' });
     expect(mockUpdateUser).toHaveBeenCalledWith({ password: 'newPass456' });
     expect(mockSignOut).toHaveBeenCalledWith({ scope: 'others' });

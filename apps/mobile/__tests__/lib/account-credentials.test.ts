@@ -16,21 +16,21 @@ const mockSignInWithPassword = jest.fn();
 const mockUpdateUser = jest.fn();
 const mockSignOut = jest.fn();
 // 呼ばれた順番 (再認証 → 更新 → 他の端末のログアウト)
-let callOrder: string[] = [];
+let mockCallOrder: string[] = [];
 
 jest.mock('../../src/lib/supabase', () => ({
   supabase: {
     auth: {
       signInWithPassword: (...args: unknown[]) => {
-        callOrder.push('signInWithPassword');
+        mockCallOrder.push('signInWithPassword');
         return mockSignInWithPassword(...args);
       },
       updateUser: (...args: unknown[]) => {
-        callOrder.push('updateUser');
+        mockCallOrder.push('updateUser');
         return mockUpdateUser(...args);
       },
       signOut: (...args: unknown[]) => {
-        callOrder.push('signOut');
+        mockCallOrder.push('signOut');
         return mockSignOut(...args);
       },
     },
@@ -61,7 +61,7 @@ const emailExists = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  callOrder = [];
+  mockCallOrder = [];
   jest.spyOn(console, 'error').mockImplementation(() => {});
   mockSignInWithPassword.mockResolvedValue({ data: { session: {} }, error: null });
   mockUpdateUser.mockResolvedValue({ data: { user: {} }, error: null });
@@ -77,7 +77,7 @@ describe('changePassword — 成功', () => {
     const result = await changePassword(EMAIL, VALID_INPUT);
 
     expect(result).toEqual({ ok: true, othersSignedOut: true });
-    expect(callOrder).toEqual(['signInWithPassword', 'updateUser', 'signOut']);
+    expect(mockCallOrder).toEqual(['signInWithPassword', 'updateUser', 'signOut']);
     expect(mockSignInWithPassword).toHaveBeenCalledWith({ email: EMAIL, password: 'oldPass123' });
     expect(mockUpdateUser).toHaveBeenCalledWith({ password: 'newPass456' });
     // 'others': 操作中の端末のセッションは残す (全端末の 'global' や、この端末だけの 'local' ではない)
@@ -174,7 +174,7 @@ describe('changePassword — 入力の検証 (API を呼ばずに止める。規
     const result = await changePassword(EMAIL, input);
 
     expect(result).toEqual({ ok: false, message });
-    expect(callOrder).toEqual([]);
+    expect(mockCallOrder).toEqual([]);
   });
 });
 
@@ -189,7 +189,7 @@ describe('requestEmailChange', () => {
       { emailRedirectTo: 'homegohan://auth/verify' },
     );
     // メール変更では、ログアウトや再認証はしない
-    expect(callOrder).toEqual(['updateUser']);
+    expect(mockCallOrder).toEqual(['updateUser']);
   });
 
   it('使われているメールアドレス: 理由を日本語で返す', async () => {
