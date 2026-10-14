@@ -296,3 +296,41 @@ describe('GET /api/ai/menu/weekly/pending: 止まりの判定は cleanup と同�
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 });
+
+describe('GET /api/ai/menu/weekly/pending: 究極モードの生成か (ultimateMode) を返す (#1582)', () => {
+  it('generated_data 全体は読まず、generated_data.ultimateMode だけを ultimate_mode として読む', async () => {
+    pendingResultQueue.push({ data: pendingRow({ ultimate_mode: true }), error: null });
+
+    await GET(makeRequest());
+
+    const columns = String(mockSelect.mock.calls[0][0]).split(',').map((c) => c.trim());
+    expect(columns).toContain('ultimate_mode:generated_data->ultimateMode');
+    expect(columns).not.toContain('generated_data');
+  });
+
+  it.each([
+    { label: '通常の v4 の生成', mode: 'v4', ultimate_mode: false, expected: false },
+    { label: '通常の v5 の生成', mode: 'v5', ultimate_mode: false, expected: false },
+    { label: '「献立を改善」(v4・常に通常モード)', mode: 'v4', ultimate_mode: false, expected: false },
+    { label: '究極モードの v4 の生成', mode: 'v4', ultimate_mode: true, expected: true },
+    { label: '究極モードの v5 の生成', mode: 'v5', ultimate_mode: true, expected: true },
+    { label: 'generated_data が無い行 (古い行)', mode: 'v4', ultimate_mode: null, expected: false },
+    { label: '真偽値でない値 (文字列の "true")', mode: 'v4', ultimate_mode: 'true', expected: false },
+  ])('$label の待ちは ultimateMode: $expected を返す (mode は v4 / v5 のまま返す)', async ({ mode, ultimate_mode, expected }) => {
+    pendingResultQueue.push({ data: pendingRow({ mode, ultimate_mode }), error: null });
+
+    const json = await (await GET(makeRequest())).json();
+
+    expect(json.hasPending).toBe(true);
+    expect(json.mode).toBe(mode);
+    expect(json.ultimateMode).toBe(expected);
+  });
+
+  it('ultimate_mode の列が無い (取り出せなかった) 行は、通常の生成として返す', async () => {
+    pendingResultQueue.push({ data: pendingRow({ mode: 'v4' }), error: null });
+
+    const json = await (await GET(makeRequest())).json();
+
+    expect(json.ultimateMode).toBe(false);
+  });
+});

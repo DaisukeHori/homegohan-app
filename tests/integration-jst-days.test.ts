@@ -202,4 +202,15 @@ describe('結合テストの日付の関数が jstDaysAgo を使っている (#1
     expect(code).toMatch(/function dayStr\(daysAgo: number\): string \{\s*return jstDaysAgo\(daysAgo\);\s*\}/);
     expect(code).not.toMatch(UTC_DATE_PART);
   });
+
+  it('org-challenges-api.test.ts (#1132) は、参加の API がサーバーの JST の今日と比べる終了日を jstDaysAgo で作り、自前の +9 時間や UTC の暦日で作らない', () => {
+    const code = codeOf('integration/security/org-challenges-api.test.ts');
+    expect(code).toContain("import { jstDaysAgo } from '../helpers/jst-days';");
+    expect(code).toContain('const TODAY = jstDaysAgo(0);');
+    // 終了日が昨日 (CHALLENGE_ENDED) と、終了日の当日 (まだ参加できる) の境目
+    expect(code).toContain('newChallenge({ start: jstDaysAgo(10), end: jstDaysAgo(1) })');
+    expect(code).toContain('newChallenge({ start: jstDaysAgo(10), end: TODAY })');
+    expect(code).not.toMatch(UTC_DATE_PART);
+    expect(code).not.toMatch(/getTime\(\)\s*\+/);
+  });
 });

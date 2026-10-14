@@ -43,6 +43,17 @@ const ORG_ADMIN_ROUTES = [
   'src/app/api/org/members/[user_id]/remove/route.ts',
 ];
 
+/**
+ * 組織のメンバー向けの route (#1132。役割は問わず、いずれかの組織に所属していればよい):
+ * 全ての HTTP handler が requireOrgMember() (src/lib/auth/org-member.ts) を呼ぶ。
+ * route に getUser() → user_profiles の取得 → 所属の判定を手書きしない
+ */
+const ORG_MEMBER_ROUTES = [
+  'src/app/api/org/my-challenges/route.ts',
+  'src/app/api/org/challenges/[id]/route.ts',
+  'src/app/api/org/challenges/[id]/join/route.ts',
+];
+
 const SUPPORT_ROLES = ['support', 'admin', 'super_admin'];
 const ADMIN_ROLES = ['admin', 'super_admin'];
 
@@ -223,7 +234,7 @@ describe('ロール認可の手書き禁止 (#1161): src/app/api のソース', 
   it('走査が機能している: 既知の route と、requireRole を使う多数の route を検出している', () => {
     // 走査が壊れて何も見つけられなくなったときに、下の contract が空振りで通ってしまわないようにする
     expect(analyses.size).toBeGreaterThan(100);
-    for (const file of [...ORG_ADMIN_ROUTES, ...Object.keys(ROLE_GATED_ROUTES)]) {
+    for (const file of [...ORG_ADMIN_ROUTES, ...ORG_MEMBER_ROUTES, ...Object.keys(ROLE_GATED_ROUTES)]) {
       expect(analyses.has(file), `${file} が走査に含まれていない`).toBe(true);
       expect(analyses.get(file)!.handlers.length, `${file} の HTTP handler を検出できていない`).toBeGreaterThan(0);
     }
@@ -254,6 +265,14 @@ describe('ロール認可の手書き禁止 (#1161): src/app/api のソース', 
     expect(handlers.length).toBeGreaterThan(0);
     const missing = handlers.filter((h) => !h.calls.has('requireOrgAdmin')).map((h) => h.name);
     expect(missing, `${file} の ${missing.join(', ')} が requireOrgAdmin() を呼んでいない`).toEqual([]);
+  });
+
+  it.each(ORG_MEMBER_ROUTES)('%s: 全ての HTTP handler が requireOrgMember() を呼ぶ', (file) => {
+    const { handlers } = analyses.get(file)!;
+
+    expect(handlers.length).toBeGreaterThan(0);
+    const missing = handlers.filter((h) => !h.calls.has('requireOrgMember')).map((h) => h.name);
+    expect(missing, `${file} の ${missing.join(', ')} が requireOrgMember() を呼んでいない`).toEqual([]);
   });
 
   it.each(Object.entries(ROLE_GATED_ROUTES))(

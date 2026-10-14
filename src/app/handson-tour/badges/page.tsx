@@ -49,6 +49,8 @@ function buildBubble(subStep: SubStepOfStep3, nickname: string) {
       return {
         body: personalize(i18n.intro_title, { nickname }),
         position: 'auto' as const,
+        // E2E が各 Step の最初の intro 吹き出しを見分ける目印 (設計書 09-onboarding-handson-tour の testID 一覧。#846)
+        testId: 'tour-step-3-intro',
       };
     case '3.2':
       return {

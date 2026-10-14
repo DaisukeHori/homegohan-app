@@ -558,8 +558,9 @@ describe("テストの道具が、パスワードのログインを呼ばない 
       "tests/e2e/fixtures/auth.ts",
       "tests/e2e/fixtures/fresh-user.ts",
       "tests/e2e/helpers/seed-roles.ts",
+      // tests/e2e/tour の spec (01-eligibility など) は、自分ではセッションを作らず tour/helpers.ts の getAccessToken と
+      // fixture を使う (#846)。spec がパスワードのログインを呼ばないことは、上の走査 (tests/e2e 全体) が確かめる
       "tests/e2e/tour/helpers.ts",
-      "tests/e2e/tour/01-eligibility.spec.ts",
       "tests/e2e/membership/02-org-invite-new-user.spec.ts",
       "scripts/lib/smoke.mjs",
     ]) {
