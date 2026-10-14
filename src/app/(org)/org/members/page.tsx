@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
+import { membershipErrorMessageOfBody } from "@/lib/errors/membership-errors";
 
 interface Member {
   id: string;
@@ -69,8 +70,9 @@ export default function MembersPage() {
         method: 'POST',
       });
       if (!res.ok) {
-        const err = await res.json();
-        alert(`除名失敗: ${err.error?.message ?? '不明なエラー'}`);
+        // 本文の message は操作ごとの固定の文なので、理由は code から引く (#1478)
+        const err = await res.json().catch(() => null);
+        alert(`除名失敗: ${membershipErrorMessageOfBody(err)}`);
         return;
       }
       await fetchData();
@@ -85,8 +87,9 @@ export default function MembersPage() {
     try {
       const res = await fetch('/api/org/leave', { method: 'POST' });
       if (!res.ok) {
-        const err = await res.json();
-        alert(`脱退失敗: ${err.error?.message ?? '不明なエラー'}`);
+        // 本文の message は操作ごとの固定の文なので、理由は code から引く (#1478)
+        const err = await res.json().catch(() => null);
+        alert(`脱退失敗: ${membershipErrorMessageOfBody(err)}`);
         return;
       }
       router.push('/home');

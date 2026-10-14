@@ -38,6 +38,10 @@ export function isUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_PATTERN.test(value);
 }
 
+/** パスパラメータの id が UUID の形式でないときの 400 の本文の文とコード (#1478) */
+export const INVALID_ID_PARAM_MESSAGE = 'id の形式が正しくありません';
+export const INVALID_ID_PARAM_CODE = 'VALIDATION_ERROR';
+
 /**
  * リクエストボディの JSON を読む。壊れた JSON は例外にせず { ok: false } を返す。
  *
