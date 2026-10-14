@@ -125,12 +125,21 @@ true;
 `;
 };
 
+// この画面が navigation で使うのは、タブの再タップ (tabPress) の購読と isFocused の 2 つだけ。
+// useNavigation() の既定の型はルートのナビゲーターの型で、イベントの一覧に tabPress が無い (タブのナビゲーターだけが持つ)。
+// そのため使う 2 つを型で宣言して useNavigation の型引数に渡す (イベント名を any へ外して型検査を止めない)。
+// タブ以外の画面 (/settings/ai-consent など) では tabPress が発火しないだけで、購読も解除も同じに動く
+type TabPressNavigation = {
+  addListener: (event: 'tabPress', callback: () => void) => () => void;
+  isFocused: () => boolean;
+};
+
 export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
   const webViewRef = useRef<WebView>(null);
   const [uri, setUri] = useState<string | null>(null);
   // WebView を開くときに注入する前の利用者の localStorage の掃除 (#1037)。自オリジンのガード付き。掃除が要らなければ空
   const [injectedJS, setInjectedJS] = useState<string>('');
-  const navigation = useNavigation();
+  const navigation = useNavigation<TabPressNavigation>();
   const router = useRouter();
 
   // Fix 2: tab-navigate で fullPath (クエリ付き) を受け取った場合に初期 URL を上書き
@@ -154,7 +163,7 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
   // タブ再タップ時に WebView を初期 URL にリセットする
   // tabPress は同じタブを再タップした際にも発火するため useFocusEffect より確実
   useEffect(() => {
-    const unsubscribe = navigation.addListener('tabPress' as any, () => {
+    const unsubscribe = navigation.addListener('tabPress', () => {
       // isFocused() が true = 既にアクティブなタブを再タップした
       if (navigation.isFocused()) {
         const targetUrl = buildWebUrl(withAppMode(path));
@@ -317,11 +326,11 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
                   // 買い物リストのモーダル等を開くクエリが失われないようにする
                   if (data.fullPath && data.fullPath !== data.path) {
                     router.push({
-                      pathname: matched.tab as any,
+                      pathname: matched.tab,
                       params: { initialPath: data.fullPath },
                     });
                   } else {
-                    router.push(matched.tab as any);
+                    router.push(matched.tab);
                   }
                 }, 0);
               }
@@ -330,7 +339,7 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
               if (router.canGoBack()) {
                 router.back();
               } else {
-                router.push('/(tabs)/home' as any);
+                router.push('/(tabs)/home');
               }
             } else if (data.type === 'download') {
               // Fix 3: iOS WebView でのエクスポート対応
