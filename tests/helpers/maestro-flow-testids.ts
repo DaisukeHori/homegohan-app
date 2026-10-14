@@ -11,6 +11,11 @@
 //       名前が …Prefix の右辺の "x" → x と、x-<何か> (testIDPrefix を使う側が `${testIDPrefix}-${…}` で組み立てる)
 //   - 右辺の { … } は、括弧の対応で 1 式ぶんを読む (三項演算子・オブジェクトの中の testID: "x" も拾う)
 //
+// flow の id の抜き出し方
+//   - ブロックの書き方 (- tapOn: の下の id: x) と、フローの書き方 (- tapOn: { id: "x" }・below: { id: "x" } の入れ子・
+//     複数行に渡る { … }) の両方を読む
+//   - コメント (#) と、ブロックスカラー (| / > で始まる複数行の文字列。evalScript の JS など) の中身は読まない
+//
 // flow の id の扱い
 //   - maestro の id は正規表現として全体一致で比べられる。正規表現の記号 (. * + ? など) を含む id は正規表現として、
 //     ソースのどれか (そのままの testID、またはテンプレートの ${...} を仮の値で埋めた文字列) に全体一致すれば実在とする
@@ -57,17 +62,130 @@ export function listSourceFiles(root: string = REPO_ROOT): string[] {
   return SOURCE_DIRS.flatMap((d) => walk(path.join(root, d), (f) => SOURCE_FILE_RE.test(f) && !TEST_FILE_RE.test(f)));
 }
 
-/** flow の 1 ファイルから、id: の値を書かれた順に抜き出す (コメント行は除く) */
+/** 引用符を開ける位置か (YAML の引用符つきの値は、行頭・空白・: { [ , のあとでだけ始まる) */
+function opensQuote(line: string, i: number): boolean {
+  const c = line[i];
+  return (c === '"' || c === "'") && (i === 0 || /[\s:{[,]/.test(line[i - 1]));
+}
+
+/**
+ * 1 行から、引用符の外にある # 以降 (YAML のコメント) を外す。
+ * # は行頭か空白のあとにあるときだけコメント
+ */
+function stripYamlComment(line: string): string {
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quote !== null) {
+      if (quote === '"' && c === "\\") i++;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (opensQuote(line, i)) quote = c === '"' ? '"' : "'";
+    else if (c === "#" && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i);
+  }
+  return line;
+}
+
+/**
+ * id: のあとの値を読む。引用符つきならその中身、無ければ
+ * フロー ({ … } の中) では , { } [ ] の手前まで、ブロックでは行末まで (前後の空白は外す)。空なら null
+ */
+function readYamlScalar(rest: string, inFlow: boolean): string | null {
+  const s = rest.trimStart();
+  const q = s[0];
+  if (q === '"' || q === "'") {
+    let out = "";
+    for (let i = 1; i < s.length; i++) {
+      const c = s[i];
+      if (q === '"' && c === "\\" && i + 1 < s.length) {
+        out += s[++i];
+        continue;
+      }
+      if (c === q) {
+        // 一重引用符の中の '' は ' 1 文字
+        if (q === "'" && s[i + 1] === "'") {
+          out += "'";
+          i++;
+          continue;
+        }
+        return out === "" ? null : out;
+      }
+      out += c;
+    }
+    return null;
+  }
+  const plain = (inFlow ? s.split(/[,{}[\]]/)[0] : s).trim();
+  return plain === "" ? null : plain;
+}
+
+/** フロー ({ … } の中) の区切り ({ か , ) のすぐあとに id: が来ているか (sticky で、区切りの次の位置から見る) */
+const FLOW_ID_KEY_RE = /\s*id:(?=\s|$)\s*/y;
+/** ブロックの id: (行頭の字下げ・- のあと) */
+const BLOCK_ID_KEY_RE = /^\s*(?:-\s+)?id:(?=\s|$)/;
+/** 複数行に渡るフロー ({ … } の中) の行頭の id: */
+const FLOW_LINE_ID_KEY_RE = /^\s*id:(?=\s|$)/;
+/** ブロックスカラー (| や > で始まる複数行の文字列。evalScript の JS など) を始める行 */
+const BLOCK_SCALAR_START_RE = /:\s*[|>][-+0-9]*\s*$/;
+
+function indentOf(line: string): number {
+  return /^\s*/.exec(line)?.[0].length ?? 0;
+}
+
+/**
+ * flow の 1 ファイルから、id: の値を書かれた順に抜き出す (コメント・ブロックスカラーの中身は除く)。
+ * ブロックの書き方 (- tapOn: の下の id: x、below: の下の id: x) と、
+ * フローの書き方 (- tapOn: { id: "x" }、{ below: { id: "x" } } のような入れ子、複数行に渡る { … }) の両方を読む
+ */
 export function extractFlowIds(yaml: string): string[] {
   const ids: string[] = [];
-  for (const line of yaml.split("\n")) {
-    const m = /^\s*(?:-\s+)?id:\s*(.+?)\s*$/.exec(line);
-    if (!m) continue;
-    let value = m[1];
-    const quoted = /^(["'])(.*)\1(?:\s+#.*)?$/.exec(value);
-    if (quoted) value = quoted[2];
-    else value = value.replace(/\s+#.*$/, "");
-    if (value !== "") ids.push(value);
+  /** 引用符の外の { [ の深さ (0 = ブロック。行をまたいで持ち越す) */
+  let depth = 0;
+  /** ブロックスカラーの中にいる間、その親の行の字下げ (中身はこれより深く字下げされた行・空行) */
+  let blockScalarIndent: number | null = null;
+  for (const rawLine of yaml.split("\n")) {
+    if (blockScalarIndent !== null) {
+      if (rawLine.trim() === "" || indentOf(rawLine) > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
+    const line = stripYamlComment(rawLine);
+    const head = (depth === 0 ? BLOCK_ID_KEY_RE : FLOW_LINE_ID_KEY_RE).exec(line);
+    if (head) {
+      const value = readYamlScalar(line.slice(head[0].length), depth > 0);
+      if (value !== null) ids.push(value);
+    }
+    let quote: '"' | "'" | null = null;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (quote !== null) {
+        if (quote === '"' && c === "\\") i++;
+        else if (c === quote) quote = null;
+        continue;
+      }
+      if (opensQuote(line, i)) {
+        quote = c === '"' ? '"' : "'";
+        continue;
+      }
+      if (c === "}" || c === "]") {
+        if (depth > 0) depth--;
+        continue;
+      }
+      if (c === "{" || c === "[") {
+        // ブロックでは、値の始まり (行頭・: のあと・- のあと) の { [ だけがフローを開く (文の途中の { は文字)
+        const before = line.slice(0, i).trimEnd();
+        const startsValue = before === "" || before.endsWith(":") || /(?:^|\s)-$/.test(before);
+        if (depth === 0 && !startsValue) continue;
+        depth++;
+      } else if (c !== "," || depth === 0) {
+        continue;
+      }
+      // ここに来るのは、フローの中の { [ , のすぐあと。id: が続けばその値を読む
+      FLOW_ID_KEY_RE.lastIndex = i + 1;
+      if (FLOW_ID_KEY_RE.exec(line) === null) continue;
+      const value = readYamlScalar(line.slice(FLOW_ID_KEY_RE.lastIndex), true);
+      if (value !== null) ids.push(value);
+    }
+    if (depth === 0 && BLOCK_SCALAR_START_RE.test(line)) blockScalarIndent = indentOf(line);
   }
   return ids;
 }

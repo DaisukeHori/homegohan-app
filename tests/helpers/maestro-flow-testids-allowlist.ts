@@ -212,6 +212,7 @@ export const MAESTRO_MISSING_TESTID_ALLOWLIST: readonly MissingTestIdAllowance[]
   { flow: "flows/menus-weekly/08-ultimate-mode.yaml", id: "weekly-request-ultimate-toggle", reason: R.NOT_IN_SOURCE_OUT_OF_SCOPE },
   { flow: "flows/menus-weekly/11-recipe-modal.yaml", id: "home-screen", reason: R.HOME_WEBVIEW },
   { flow: "flows/menus-weekly/11-recipe-modal.yaml", id: "recipe-dish-0", reason: R.NOT_IN_SOURCE_OUT_OF_SCOPE },
+  { flow: "flows/menus-weekly/17-servings-modal.yaml", id: "weekly-servings-btn", reason: R.MENUS_WEBVIEW },
   { flow: "flows/menus-weekly/27-ultimate-mode-generate.yaml", id: "weekly-request-ultimate-toggle", reason: R.NOT_IN_SOURCE_OUT_OF_SCOPE },
   { flow: "flows/onboarding/01-welcome-start-complete.yaml", id: "home-screen", reason: R.HOME_WEBVIEW },
   { flow: "flows/onboarding/02-welcome-skip-home.yaml", id: "home-screen", reason: R.HOME_WEBVIEW },

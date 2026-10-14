@@ -57,6 +57,51 @@ describe("#1552 maestro の flow の testID の抜き出し (検査の道具そ�
     expect(extractFlowIds(yaml)).toEqual(["tab-meals", "webview-meals", "plain-id", "settings-logout-button"]);
   });
 
+  it("フローの書き方 ({ id: \"x\" }・入れ子の below: { id: … }・複数行の { … }) の id も抜き出す。引用符の中・コメント・ブロックスカラーの中は拾わない", () => {
+    const yaml = [
+      '- tapOn: { id: "flow-quoted" }',
+      "- assertVisible: { id: 'flow-single', index: 0 }",
+      "- tapOn: { index: 1, id: flow-plain }",
+      '- assertVisible: { text: "x, id: not-an-id", below: { id: "flow-nested" } }',
+      "- tapOn: {",
+      '    id: "flow-multiline",',
+      "    index: 0 }",
+      '- tapOn: { id: "flow-with-comment" }  # 昼食を外す',
+      '# - tapOn: { id: "commented-out" }',
+      "- evalScript: |",
+      '    const o = { id: "in-block-scalar" }',
+      "    id: also-in-block-scalar",
+      "- tapOn: Hello {name}",
+      "- tapOn:",
+      "    id: block-after-scalar",
+    ].join("\n");
+    expect(extractFlowIds(yaml)).toEqual([
+      "flow-quoted",
+      "flow-single",
+      "flow-plain",
+      "flow-nested",
+      "flow-multiline",
+      "flow-with-comment",
+      "block-after-scalar",
+    ]);
+  });
+
+  it("実際の flow の id: は、書き方によらずすべて抜き出せている (読めない書き方の id があれば落ちる)", () => {
+    // 数えるだけの素朴な方法 (コメントを外した行の、行頭・空白・{ ・ , のあとの id:) と、抜き出した件数を突き合わせる
+    const crudeCount = (yaml: string) =>
+      yaml
+        .split("\n")
+        .map((line) => line.replace(/(^|\s)#.*$/, ""))
+        .reduce((n, line) => n + (line.match(/(?:^|[\s{,])id:(?=\s|$)/g)?.length ?? 0), 0);
+    for (const flow of listMaestroFlowFiles()) {
+      const yaml = fs.readFileSync(path.join(REPO_ROOT, flow), "utf8");
+      expect(extractFlowIds(yaml).length, flow).toBe(crudeCount(yaml));
+    }
+    // フローの書き方だけで書かれた実物の flow (以前はここの id を 1 つも拾えていなかった)
+    const servings = fs.readFileSync(path.join(REPO_ROOT, fromMaestro("flows/menus-weekly/17-servings-modal.yaml")), "utf8");
+    expect(extractFlowIds(servings)).toContain("weekly-servings-btn");
+  });
+
   it("ソースの testID を、属性・オブジェクトの値・三項演算子・テンプレート・型注釈つきの対応表・接頭辞から集める", () => {
     const ids = emptyIds();
     addTestIdsFromSource(
