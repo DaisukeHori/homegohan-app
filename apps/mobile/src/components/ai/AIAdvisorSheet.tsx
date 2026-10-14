@@ -26,6 +26,7 @@ import {
 } from "react-native";
 
 import { getApi, getApiBaseUrl } from "../../lib/api";
+import { AI_CHAT_STREAM_TIMEOUT_MS } from "../../lib/ai-chat-timeout";
 import { supabase } from "../../lib/supabase";
 import { colors, radius, shadows, spacing } from "../../theme";
 import { AIDayMenuModal } from "./AIDayMenuModal";
@@ -62,6 +63,16 @@ const WELCOME_MESSAGE: Message = {
     "こんにちは！🍳 ほめゴハンのAIアドバイザーです。\n\n食事や栄養のことで気になることがあれば、何でも聞いてくださいね。献立の提案や、買い物リストの作成もお手伝いできますよ！",
   createdAt: new Date().toISOString(),
 };
+
+/**
+ * 送信が時間切れ (AI_CHAT_STREAM_TIMEOUT_MS) になったときの案内 (#1049 F7-18)。
+ * 打ち切ったのは画面の待ちだけで、サーバーでは返答の保存が続いていることがあるので、取り直しの導線を出す。
+ * もう一度送るように促すのは、取り直しても返答が無かったときだけ (先に送り直すと、同じ相談が二重に届く)
+ */
+const TIMEOUT_NOTICE_MESSAGE =
+  "応答に時間がかかっています。返答はサーバーで続いていることがあります。少し待ってから「最新の会話を読み込む」を押してください。返答が無ければ、もう一度送ってください。";
+const TIMEOUT_RELOAD_LABEL = "最新の会話を読み込む";
+const TIMEOUT_RELOAD_FAILED_MESSAGE = "会話を読み込めませんでした。通信の状態を確認して、もう一度お試しください。";
 
 const QUICK_QUESTIONS = [
   "献立を提案してほしい",
@@ -150,6 +161,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [dayMenuModalVisible, setDayMenuModalVisible] = useState(false);
   const [isClosingSession, setIsClosingSession] = useState(false);
+  // 送信が時間切れになった相談の id。あるあいだ「最新の会話を読み込む」を出す (#1049 F7-18)
+  const [timedOutSessionId, setTimedOutSessionId] = useState<string | null>(null);
+  const [reloadingAfterTimeout, setReloadingAfterTimeout] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
 
@@ -174,7 +188,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       scrollRef.current?.scrollToEnd({ animated: true });
     }, 100);
     return () => clearTimeout(t);
-  }, [messages.length, streamingContent, sending]);
+  }, [messages.length, streamingContent, sending, timedOutSessionId]);
 
   async function initSession() {
     try {
@@ -206,20 +220,46 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     }
   }
 
-  async function loadMessages(sessionId: string) {
+  /** 相談のメッセージをサーバーから取る。取れなければ null (画面をどうするかは呼び出し側が決める) */
+  async function fetchMessages(sessionId: string): Promise<Message[] | null> {
     try {
       const api = getApi();
       const msgRes = await api.get<{ messages: Message[] }>(
         `/api/ai/consultation/sessions/${sessionId}/messages`
       );
-      const loaded = msgRes.messages ?? [];
-      if (loaded.length > 0) {
-        setMessages(loaded);
-      } else {
-        setMessages([WELCOME_MESSAGE]);
-      }
+      return msgRes.messages ?? [];
     } catch {
+      return null;
+    }
+  }
+
+  async function loadMessages(sessionId: string) {
+    const loaded = await fetchMessages(sessionId);
+    if (loaded && loaded.length > 0) {
+      setMessages(loaded);
+    } else {
       setMessages([WELCOME_MESSAGE]);
+    }
+  }
+
+  /**
+   * 送信が時間切れになったあと、相談のメッセージを取り直す (#1049 F7-18)。
+   * 取れなければ、今の表示と案内をそのまま残す (今の会話を消さない)
+   */
+  async function reloadAfterTimeout() {
+    const sessionId = timedOutSessionId;
+    if (!sessionId || reloadingAfterTimeout) return;
+    setReloadingAfterTimeout(true);
+    try {
+      const loaded = await fetchMessages(sessionId);
+      if (loaded === null) {
+        Alert.alert("エラー", TIMEOUT_RELOAD_FAILED_MESSAGE);
+        return;
+      }
+      setMessages(loaded.length > 0 ? loaded : [WELCOME_MESSAGE]);
+      setTimedOutSessionId(null);
+    } finally {
+      setReloadingAfterTimeout(false);
     }
   }
 
@@ -232,6 +272,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       }>("/api/ai/consultation/sessions", { title: "AI相談" });
       setCurrentSessionId(createRes.session.id);
       setMessages([WELCOME_MESSAGE]);
+      setTimedOutSessionId(null);
       setShowSessionList(false);
       // セッション一覧を更新
       const res = await api.get<{ sessions: Session[] }>(
@@ -245,6 +286,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
   async function selectSession(sessionId: string) {
     setCurrentSessionId(sessionId);
+    setTimedOutSessionId(null);
     setShowSessionList(false);
     await loadMessages(sessionId);
   }
@@ -350,6 +392,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     setSending(true);
     setInputText("");
     setStreamingContent(null);
+    setTimedOutSessionId(null);
 
     const optimistic: Message = {
       id: `local-${Date.now()}`,
@@ -363,8 +406,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       return [...withoutWelcome, optimistic];
     });
 
+    // 時間切れのあとの取り直しに使うので、try の外で持つ
+    let sessionId = currentSessionId;
     try {
-      let sessionId = currentSessionId;
       if (!sessionId) {
         const api = getApi();
         const createRes = await api.post<{
@@ -382,7 +426,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       const url = `${baseUrl}/api/ai/consultation/sessions/${sessionId}/messages?stream=true`;
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 26000);
+      const timeoutId = setTimeout(() => controller.abort(), AI_CHAT_STREAM_TIMEOUT_MS);
 
       let res: Response;
       try {
@@ -512,11 +556,12 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         Alert.alert(stoppedByServerAlertTitleOf(e), e.message);
         return;
       }
-      if (e?.name === "AbortError") {
-        Alert.alert(
-          "タイムアウト",
-          "応答がタイムアウトしました。しばらく待ってから再度お試しください。"
-        );
+      if (e?.name === "AbortError" && sessionId) {
+        // 待ちを打ち切っただけで、サーバーでは返答の保存が続いていることがある (#1049 F7-18)。
+        // 失敗として終わらせず、会話を取り直す導線 (TIMEOUT_RELOAD_LABEL) を出す
+        setTimedOutSessionId(sessionId);
+      } else if (e?.name === "AbortError") {
+        Alert.alert("タイムアウト", TIMEOUT_NOTICE_MESSAGE);
       } else {
         Alert.alert("エラー", e?.message ?? "送信に失敗しました。");
       }
@@ -675,6 +720,26 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                       <View style={styles.bubbleAssistant}>
                         <TypingIndicator />
                       </View>
+                    </View>
+                  )}
+
+                  {/* 送信が時間切れになったときの、取り直しの導線 (#1049 F7-18) */}
+                  {timedOutSessionId != null && timedOutSessionId === currentSessionId && !sending && (
+                    <View testID="ai-timeout-notice" style={styles.timeoutNotice}>
+                      <Text style={styles.timeoutNoticeText}>{TIMEOUT_NOTICE_MESSAGE}</Text>
+                      <Pressable
+                        testID="ai-timeout-reload"
+                        accessibilityRole="button"
+                        onPress={reloadAfterTimeout}
+                        disabled={reloadingAfterTimeout}
+                        style={[styles.timeoutReloadBtn, reloadingAfterTimeout && styles.sendButtonDisabled]}
+                      >
+                        {reloadingAfterTimeout ? (
+                          <ActivityIndicator size="small" color={colors.accent} />
+                        ) : (
+                          <Text style={styles.timeoutReloadLabel}>{TIMEOUT_RELOAD_LABEL}</Text>
+                        )}
+                      </Pressable>
                     </View>
                   )}
 
@@ -946,6 +1011,31 @@ const styles = StyleSheet.create({
   },
   cursor: {
     color: colors.accent,
+  },
+  timeoutNotice: {
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.warningLight,
+  },
+  timeoutNoticeText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.warningText,
+  },
+  timeoutReloadBtn: {
+    alignSelf: "flex-start",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    backgroundColor: colors.card,
+  },
+  timeoutReloadLabel: {
+    fontSize: 13,
+    color: colors.accent,
+    fontWeight: "600",
   },
   quickQuestions: {
     flexDirection: "row",

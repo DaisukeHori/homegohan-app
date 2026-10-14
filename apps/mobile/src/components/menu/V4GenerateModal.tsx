@@ -5,6 +5,7 @@ import {
   menuGenerationRangeEndMax,
   menuGenerationRangeStartMax,
   menuGenerationSingleDayMax,
+  todayLocal,
 } from "@homegohan/shared";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -133,9 +134,9 @@ function toMealDays(days: DayRow[]): MealDay[] {
 // ============================================================
 // Date helpers
 // ============================================================
+/** 日本の今日 (YYYY-MM-DD)。端末のタイムゾーンに左右されない (#1049 F7-21) */
 function getTodayStr(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  return todayLocal();
 }
 
 // 暦日 (YYYY-MM-DD) を days 日ずらす。暦の計算だけで行い、端末のタイムゾーンに左右されない (#1433。

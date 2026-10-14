@@ -122,11 +122,6 @@ const RAW_FETCHES: Record<
     silentFallback:
       '失敗 (503 のメンテナンス中を含む) は null を返し、呼び出し側がトークンを含まない直接 URL を WebView に開く。利用者向けの文は出さない (メンテナンス中なら Web のページ自身がそれを出す)',
   },
-  'src/lib/storage.ts::uploadFridgePhoto': {
-    route: null,
-    returnsDailyLimit: false,
-    reason: '端末の写真のファイルを Blob に読むだけ (fetch(localUri))。アプリの API ではない',
-  },
 };
 
 // ─────────────────────────────────────────────

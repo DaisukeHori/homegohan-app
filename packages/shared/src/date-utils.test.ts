@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatLocalDate, todayLocal, parseLocalDate, addDays, daysUntilLocal, formatExpiry, formatDateJa } from './date-utils';
+import { formatLocalDate, todayLocal, parseLocalDate, addDays, daysUntilLocal, formatExpiry, formatDateJa, todayCalendarDate, formatCalendarDate } from './date-utils';
 
 describe('formatLocalDate', () => {
   it('UTC の真夜中直前 (23:59 JST = 14:59 UTC) を JST 当日として返す', () => {
@@ -192,5 +192,46 @@ describe('formatDateJa (#1053)', () => {
 
   it('includeYear: true で「YYYY年M月D日」を返す', () => {
     expect(formatDateJa('2026-07-08', { includeYear: true })).toBe('2026年7月8日');
+  });
+});
+
+describe('todayCalendarDate / formatCalendarDate (#1049 F7-21)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('日本の 0 時台 (UTC ではまだ前日) でも、日本の今日の暦日を返す', () => {
+    vi.useFakeTimers();
+    // 2026-03-15 15:30 UTC = 2026-03-16 00:30 JST
+    vi.setSystemTime(new Date('2026-03-15T15:30:00Z'));
+    const today = todayCalendarDate();
+    expect(formatCalendarDate(today)).toBe('2026-03-16');
+    expect(formatCalendarDate(today)).toBe(todayLocal());
+  });
+
+  it('返す Date は実行環境の 0 時で、setDate / getDay で前後の日・曜日を数えられる', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-15T15:30:00Z')); // JST 2026-03-16 (月)
+    const today = todayCalendarDate();
+    expect([today.getHours(), today.getMinutes(), today.getSeconds()]).toEqual([0, 0, 0]);
+    expect(today.getDay()).toBe(1);
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    expect(formatCalendarDate(yesterday)).toBe('2026-03-15');
+    const monthEnd = parseLocalDate('2026-02-28');
+    monthEnd.setDate(monthEnd.getDate() + 1);
+    expect(formatCalendarDate(monthEnd)).toBe('2026-03-01');
+  });
+
+  it('タイムゾーンを渡せば、その地域の今日の暦日', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-15T15:30:00Z'));
+    expect(formatCalendarDate(todayCalendarDate('UTC'))).toBe('2026-03-15');
+  });
+
+  it('formatCalendarDate は parseLocalDate の逆 (ゼロ埋めの YYYY-MM-DD)', () => {
+    for (const day of ['2026-01-01', '2026-12-31', '2024-02-29', '2026-10-09']) {
+      expect(formatCalendarDate(parseLocalDate(day))).toBe(day);
+    }
   });
 });

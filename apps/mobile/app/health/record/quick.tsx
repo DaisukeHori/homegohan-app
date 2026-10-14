@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { todayLocal } from "@homegohan/shared";
 
 import { Button, Card, Input, PageHeader } from "../../../src/components/ui";
 import { colors, spacing, radius } from "../../../src/theme";
@@ -24,7 +25,8 @@ const SLEEP_OPTIONS = [
 ];
 
 export default function HealthQuickRecordPage() {
-  const [recordDate, setRecordDate] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; });
+  // 日本の今日 (端末のタイムゾーンに左右されない #1049 F7-21)
+  const [recordDate, setRecordDate] = useState(() => todayLocal());
   const [weight, setWeight] = useState("");
   const [moodScore, setMoodScore] = useState<number | null>(null);
   const [sleepQuality, setSleepQuality] = useState<number | null>(null);
