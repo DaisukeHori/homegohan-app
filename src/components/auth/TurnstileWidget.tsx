@@ -3,7 +3,8 @@
 /**
  * Cloudflare Turnstile のウィジェットと、それを画面から使うためのフック (#1165)
  *
- * ログイン・新規登録・パスワード再設定の 3 画面で使う。使い方:
+ * ログイン・新規登録・パスワード再設定の 3 画面と、Supabase の CAPTCHA の対象になる残りの 2 か所
+ * (メール確認の再送 /auth/verify・設定のパスワード変更の本人確認 /settings/account。#1474) で使う。使い方:
  *
  *   const captcha = useTurnstile();
  *   ...
@@ -38,8 +39,11 @@ export interface TurnstileWidgetHandle {
 }
 
 export interface TurnstileWidgetProps {
-  /** Cloudflare の管理画面の集計で、どの画面の確認かを見分けるための名前 */
-  action: 'login' | 'signup' | 'password-reset';
+  /**
+   * Cloudflare の管理画面の集計で、どの画面の確認かを見分けるための名前 (英数字・_・- のみ、32 文字まで)。
+   * resend-confirmation: メール確認の再送 (/auth/verify)。password-change: 設定のパスワード変更の本人確認 (#1474)
+   */
+  action: 'login' | 'signup' | 'password-reset' | 'resend-confirmation' | 'password-change';
   /** トークンが取れたら文字列。期限切れ・失敗・やり直し・取り外しのときは null */
   onTokenChange: (token: string | null) => void;
 }
