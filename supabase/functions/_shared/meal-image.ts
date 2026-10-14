@@ -306,6 +306,19 @@ export function markDishImagesEnqueueFailed<TDish extends MealImageDish>(
  */
 export const MEAL_DISH_WRITE_MAX_ATTEMPTS = 5;
 
+/**
+ * 献立の料理の書き込みを、MEAL_DISH_WRITE_MAX_ATTEMPTS 回続けて負けて諦めたときの例外 (#1553)。
+ * どの回も 0 行 (条件に合う行が無かった) なので、献立には何も書いていないことが確かなときだけ投げる。
+ * 書き込みのエラー (書けたかどうかが分からない) とは型で見分ける。画像の処理は、これを受けたときだけ、
+ * そのジョブがアップロードした画像を消してよい (料理から参照されていないことが確か)
+ */
+export class MealDishWriteExhaustedError extends Error {
+  constructor() {
+    super(`failed to update meal: the meal kept changing while writing (${MEAL_DISH_WRITE_MAX_ATTEMPTS} attempts)`);
+    this.name = 'MealDishWriteExhaustedError';
+  }
+}
+
 /** 献立の書き込みが使う、update の最小の形 (supabase-js のクライアントの一部。テストで作り物を渡せるように) */
 export interface PlannedMealUpdateFilter {
   eq(column: string, value: string): PlannedMealUpdateFilter;
@@ -377,9 +390,7 @@ export async function writePlannedMealDishesWithOptimisticLock<TSnapshot extends
     if (error) throw new Error(`failed to update meal: ${error.message}`);
     if (Array.isArray(data) && data.length > 0) return { status: 'written' };
   }
-  throw new Error(
-    `failed to update meal: the meal kept changing while writing (${MEAL_DISH_WRITE_MAX_ATTEMPTS} attempts)`,
-  );
+  throw new MealDishWriteExhaustedError();
 }
 
 /** 積めなかった料理の印付けで読む献立の行 (planned_meals の dishes, image_url, updated_at, catalog_product_id, source_type) */
