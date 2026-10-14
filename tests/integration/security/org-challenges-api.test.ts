@@ -30,6 +30,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
+import { jstDaysAgo } from '../helpers/jst-days';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -89,23 +90,12 @@ async function setMembership(userId: string, orgId: string, orgRole: 'owner' | '
   if (error) throw new Error(`setMembership: ${error.message}`);
 }
 
-function addDays(isoDate: string, days: number): string {
-  const d = new Date(`${isoDate}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-/**
- * JST の今日 (YYYY-MM-DD)。アプリのコードを import せず、ここで独立に求める (サーバーの決め方と食い違えば、テストが落ちる)。
- * JST は UTC+9 で夏時間が無いので、9 時間進めた時刻の UTC の日付が JST の暦日になる
- */
-function jstToday(now: Date = new Date()): string {
-  return new Date(now.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
-}
-
-const TODAY = jstToday();
-const START = addDays(TODAY, -3);
-const END = addDays(TODAY, 20);
+// 日付はサーバー (参加の API ルートの todayJst) と同じ JST の暦日で作る (#1545 の jstDaysAgo)。
+// UTC の暦日 (toISOString の日付部分) で作ると、JST の 0:00〜8:59 にサーバーの「昨日」を「今日」として入れてしまう。
+// jstDaysAgo(n) はサーバーの JST の今日から n 日前 (負の値は n 日後)
+const TODAY = jstDaysAgo(0);
+const START = jstDaysAgo(3);
+const END = jstDaysAgo(-20);
 
 interface ChallengeSeed {
   org?: string;
@@ -348,14 +338,14 @@ describe('#1132 B. 参加とやめる', () => {
     }
 
     // 状態はまだ開催中だが、終了日 (JST) が昨日 (毎日の集計で終了になるまでの間)
-    const ended = await newChallenge({ start: addDays(TODAY, -10), end: addDays(TODAY, -1) });
+    const ended = await newChallenge({ start: jstDaysAgo(10), end: jstDaysAgo(1) });
     const endedRes = await apiCall<{ error: { code: string } }>('POST', `/api/org/challenges/${ended}/join`, m2.jwt);
     expect(endedRes.status).toBe(409);
     expect(endedRes.body.error.code).toBe('CHALLENGE_ENDED');
     expect(await participantCount(ended)).toBe(0);
 
     // 終了日の当日 (JST) は、まだ参加できる
-    const lastDay = await newChallenge({ start: addDays(TODAY, -10), end: TODAY });
+    const lastDay = await newChallenge({ start: jstDaysAgo(10), end: TODAY });
     expect((await apiCall('POST', `/api/org/challenges/${lastDay}/join`, m2.jwt)).status).toBe(200);
   });
 
