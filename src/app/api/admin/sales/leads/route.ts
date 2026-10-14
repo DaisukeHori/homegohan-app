@@ -4,6 +4,9 @@
  *
  * operator/02-api-spec.md §14 準拠
  * 権限: sales, admin, super_admin
+ *
+ * #1326: 一覧は担当者の連絡先 (氏名・メール・電話) を返すため、1 件以上返したとき、
+ * 1 回の取得 = 1 行で admin.sales.lead.list を監査ログに残す (絞り込みの条件と件数だけ)。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
@@ -11,6 +14,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { leadListQuerySchema, createLeadSchema } from '@/lib/admin/sales-schemas';
 import { internalError } from '@/lib/api/errors';
+import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
 
 export async function GET(request: NextRequest) {
   try {
@@ -66,6 +70,21 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       return internalError('GET /api/admin/sales/leads', error, { userId: currentUser.id }, { shape: 'nested' });
+    }
+
+    const rows = data ?? [];
+    // #1326: 一覧の閲覧を 1 回 = 1 行で残す。0 件のときは情報を返していないので記録しない。
+    // 記録に失敗しても一覧は返す (失敗は db-logger に error で残る)
+    if (rows.length > 0) {
+      await recordAdminAudit({
+        supabase,
+        actorId: currentUser.id,
+        actionType: 'admin.sales.lead.list',
+        targetType: 'sales_lead',
+        details: buildListViewDetails({ stage, assigned_to, page, per_page }, rows.length, count ?? null),
+        request,
+        routeName: 'api/admin/sales/leads GET',
+      });
     }
 
     return NextResponse.json({
@@ -127,14 +146,16 @@ export async function POST(request: NextRequest) {
     }
 
     // 監査ログ
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: currentUser.id,
-      action_type: 'admin.sales.lead.create',
-      target_id: lead.id,
-      target_type: 'sales_lead',
+    await recordAdminAudit({
+      supabase,
+      actorId: currentUser.id,
+      actionType: 'admin.sales.lead.create',
+      targetId: lead.id,
+      targetType: 'sales_lead',
       details: { company_name: insertData.company_name, stage: 'approach' },
       severity: 'info',
-      ip_address: request.headers.get('x-forwarded-for'),
+      request,
+      routeName: 'api/admin/sales/leads POST',
     });
 
     return NextResponse.json({ data: lead }, { status: 201 });
