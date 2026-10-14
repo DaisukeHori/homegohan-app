@@ -31,6 +31,8 @@ const mocks = vi.hoisted(() => ({
   clearUserScopedLocalStorage: vi.fn(),
   broadcastSignOut: vi.fn(),
   push: vi.fn(),
+  /** useNativeAppMode() の結果 (アプリの中か。#1552 の案内の出し分け) */
+  native: { value: false },
 }));
 
 vi.mock('@/lib/supabase/client', () => ({
@@ -52,7 +54,11 @@ vi.mock('@/lib/user-storage', () => ({
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mocks.push, back: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
 }));
+
+// アプリの中か (?mode=app・Cookie・sessionStorage の印)。既定はブラウザ (false)
+vi.mock('@/hooks/useNativeAppMode', () => ({ useNativeAppMode: () => mocks.native.value }));
 
 vi.mock('next/link', async () => {
   const react = await import('react');
@@ -96,6 +102,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   mocks.calls.length = 0;
+  mocks.native.value = false;
   vi.clearAllMocks();
 
   mocks.getUser.mockImplementation(async () => {
@@ -567,6 +574,72 @@ describe('#1187 パスワード変更: 更新やログアウトの失敗', () =>
     expect(mocks.clearUserScopedLocalStorage).not.toHaveBeenCalled();
     expect(mocks.broadcastSignOut).not.toHaveBeenCalled();
     expect(consoleError).toHaveBeenCalled();
+  });
+});
+
+// ================================================================
+// 6.2 「ログアウトして…」の案内の指し先 (#1552)
+//     アプリの中の Web の設定には「ログアウト」が出ない (#1037) ので、アプリの中ではネイティブの設定
+//     (マイページの右上の歯車) とネイティブのログイン画面の「パスワードを忘れた？」を指す
+// ================================================================
+describe('#1552 アカウント画面: 「ログアウトして…」の案内は、アプリの中とブラウザで指し先を分ける', () => {
+  async function failOthersSignOut() {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    mocks.signOut.mockImplementation(async (options?: { scope?: string }) => {
+      mocks.calls.push(`signOut:${options?.scope}`);
+      return { error: { name: 'AuthRetryableFetchError', status: 0, message: 'Failed to fetch' } };
+    });
+    await renderPage();
+    await submitPasswordForm(CURRENT_PASSWORD, NEW_PASSWORD);
+  }
+
+  it('ブラウザ: 他の端末を確認できなかったときは、Web の設定の「ログアウト」を指す', async () => {
+    await failOthersSignOut();
+    const note = byTestId('password-change-others-not-signed-out-note')?.textContent ?? '';
+    expect(note).toBe(
+      'ただし、他の端末のログアウトを確認できませんでした。心配な場合は、設定の「ログアウト」でこの端末もログアウトして、新しいパスワードでログインし直してください。',
+    );
+  });
+
+  it('ブラウザ: 現在のパスワードを忘れた人には、Web のログイン画面の「忘れた場合」を指す', async () => {
+    await renderPage();
+    const note = byTestId('password-change-forgot-current-note')?.textContent ?? '';
+    expect(note).toBe(
+      '現在のパスワードを思い出せないときは、いったんログアウトして、ログイン画面の「忘れた場合」からパスワードを再設定してください。',
+    );
+  });
+
+  it('アプリの中 (useNativeAppMode): Web の設定の「ログアウト」は指さず、マイページの右上の歯車 (設定) を指す', async () => {
+    mocks.native.value = true;
+    await failOthersSignOut();
+    const note = byTestId('password-change-others-not-signed-out-note')?.textContent ?? '';
+    expect(note).toBe(
+      'ただし、他の端末のログアウトを確認できませんでした。心配な場合は、マイページの右上の歯車 (設定) の「ログアウト」でこの端末もログアウトして、新しいパスワードでログインし直してください。',
+    );
+    expect(note).not.toContain('設定の「ログアウト」');
+  });
+
+  it('アプリの中: 現在のパスワードを忘れた人には、歯車からのログアウトと、アプリのログイン画面の「パスワードを忘れた？」を指す', async () => {
+    mocks.native.value = true;
+    await renderPage();
+    const note = byTestId('password-change-forgot-current-note')?.textContent ?? '';
+    expect(note).toBe(
+      '現在のパスワードを思い出せないときは、マイページの右上の歯車 (設定) からいったんログアウトして、ログイン画面の「パスワードを忘れた？」からパスワードを再設定してください。',
+    );
+    expect(note).not.toContain('「忘れた場合」');
+  });
+
+  it('アプリの中 (WebView の印 window.ReactNativeWebView だけ): Cookie などの印が無くても、歯車を指す', async () => {
+    (window as unknown as { ReactNativeWebView?: { postMessage: (m: string) => void } }).ReactNativeWebView = {
+      postMessage: () => {},
+    };
+    try {
+      await failOthersSignOut();
+      expect(byTestId('password-change-others-not-signed-out-note')?.textContent).toContain('マイページの右上の歯車 (設定) の「ログアウト」');
+      expect(byTestId('password-change-forgot-current-note')?.textContent).toContain('「パスワードを忘れた？」');
+    } finally {
+      delete (window as unknown as { ReactNativeWebView?: unknown }).ReactNativeWebView;
+    }
   });
 });
 
