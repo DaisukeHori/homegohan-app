@@ -6,10 +6,16 @@ import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Button, Card, PageHeader, SectionHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
-import { clearSupabaseAuthStorage, clearUserScopedAsyncStorage } from "../../src/lib/user-storage";
+import { signOutAfterAccountDeletion } from "../../src/lib/signOut";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing } from "../../src/theme";
 import { typography } from "../../src/theme/typography";
+
+/** 削除の API が理由を返さなかったときの文 (アカウントは消えていないので、もう一度試せる) */
+const ACCOUNT_DELETE_FAILED_MESSAGE = "アカウントの削除に失敗しました。時間をおいて再度お試しください。";
+/** 削除は済んだが、端末のログアウトに失敗したときの文 */
+const ACCOUNT_DELETED_SIGN_OUT_FAILED_MESSAGE =
+  "アカウントの削除は完了しましたが、端末側のログアウト処理に失敗しました。お手数ですが、アプリを再起動してください。";
 
 export default function AccountSettingsPage() {
   const { clearSession } = useAuth();
@@ -42,62 +48,36 @@ export default function AccountSettingsPage() {
       return;
     }
 
-    // 削除前にユーザー ID を確保しておく。
-    // サーバー側削除後は getUser() がセッション無効化により失敗しうるため、
-    // ローカルストレージのスコープ解除には削除前に取得した ID を使う。
+    // 削除前にユーザー ID を控える。削除のあとは getUser() がセッションの失効で失敗し得るため、
+    // ユーザー別のローカルデータの掃除には、ここで控えた ID を使う。
     const { data: { user } } = await supabase.auth.getUser();
 
-    // Round-2 レビュー指摘 #3: サーバー側の削除 API が成功した場合のみ
-    // ローカルセッション (AsyncStorage / Supabase セッション) を破棄する。
-    // 削除に失敗した場合はログイン状態を維持し、ユーザーが再試行できるようにする
-    // (旧実装は削除前にローカルを消していたため、削除失敗時にログインしたまま
-    // ローカルデータだけ失われる不整合があった)。
+    // サーバーでの削除が成功したときだけ、端末のセッションとデータを消す。
+    // 削除に失敗したらログインしたままにして、もう一度試せるようにする (以前は削除の前に端末のデータを消していたため、
+    // 削除に失敗するとログインしたままデータだけが消えていた)。
     try {
       const api = getApi();
       await api.post("/api/account/delete", { confirm: true });
-    } catch (e: any) {
-      // Round-3 レビュー指摘 #3: サーバー側の削除 API 自体が失敗した場合は
-      // アカウントは未削除・再試行可能なので、その旨がわかる文言にする。
-      Alert.alert("削除失敗", e?.message ?? "アカウントの削除に失敗しました。時間をおいて再度お試しください。");
+    } catch (e: unknown) {
+      const message = e instanceof Error && e.message ? e.message : ACCOUNT_DELETE_FAILED_MESSAGE;
+      Alert.alert("削除失敗", message);
       deletingRef.current = false;
       setDeleting(false);
       return;
     }
 
-    try {
-      await clearUserScopedAsyncStorage(user?.id ?? null);
-      // Round-4 レビュー指摘 (Sonnet Warning): signOut() はネットワークエラー等で
-      // 失敗しても例外を投げず `{ error }` を返すだけのことがある (auth-js の
-      // `GoTrueClient#_signOut` はサーバー側のトークン失効 API が失敗すると
-      // `_removeSession()` をスキップして早期 return するが、throwOnError が
-      // 既定 false のため呼び出し側には戻り値でしか伝わらない)。戻り値を無視すると
-      // AsyncStorage の認証トークンも AuthProvider の in-memory session も
-      // 残ったまま router.replace("/") してしまい、下の catch のフェイルセーフを
-      // 通れないため、ここで明示的にチェックして throw する。
-      const { error: signOutError } = (await supabase.auth.signOut()) ?? {};
-      if (signOutError) {
-        throw signOutError;
-      }
-      router.replace("/");
-    } catch (e: any) {
-      // Round-3 レビュー指摘 #3: ここに到達した時点でサーバー側の削除自体は成功済み。
-      // 端末側の後片付け (ローカルクリア/signOut) にのみ失敗しており、再試行しても
-      // 削除 API は (アカウントが既に無いため) 失敗するだけなので、削除失敗と紛れない
-      // 別文言で案内し、ログイン画面へは進める。
-      console.error("[account delete] local cleanup failed after server delete succeeded", e);
-      // Round-4 レビュー指摘 (Sonnet Warning): signOut がネットワークエラー等で
-      // 失敗すると AsyncStorage の認証トークンも AuthProvider の in-memory session も
-      // 残ったままになり得る。router.replace("/") 後に app/index.tsx が session を
-      // truthy と判定してホームタブへ戻すフラッシュが起きるのを防ぐため、
-      // ネットワークに依存しないローカル専用クリアを保証してから遷移する。
-      await clearSupabaseAuthStorage();
+    // ここから先は、サーバーでの削除は済んでいる。もう一度試しても削除の API は失敗するだけなので、
+    // 端末の後片付けに失敗しても、削除の失敗とは別の文で知らせて、ログイン画面へ進める。
+    const { error } = await signOutAfterAccountDeletion(user?.id ?? null);
+    if (error) {
+      console.error("[account delete] sign out failed after server delete succeeded", error);
+      // サインアウトが失敗すると SIGNED_OUT が届かず、AuthProvider がセッションを持ったままになる。
+      // そのまま "/" へ移ると、入口 (app/index.tsx) がホームへ戻してしまうので、画面の状態も消す
+      // (保管庫のセッションは signOutAfterAccountDeletion が端末だけで消している)。
       clearSession();
-      Alert.alert(
-        "アカウントを削除しました",
-        "アカウントの削除は完了しましたが、端末側のログアウト処理に失敗しました。お手数ですが、アプリを再起動してください。",
-      );
-      router.replace("/");
+      Alert.alert("アカウントを削除しました", ACCOUNT_DELETED_SIGN_OUT_FAILED_MESSAGE);
     }
+    router.replace("/");
   }
 
   return (

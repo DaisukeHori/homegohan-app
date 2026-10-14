@@ -79,16 +79,8 @@ const mockGetSession = mockSupabase.auth.getSession as jest.Mock;
 
 // ── テーマモック ──────────────────────────────────────────────────────────────
 jest.mock('../../src/theme/colors', () => ({
-  colors: { accent: '#FF6B35', text: '#2D2D2D', border: '#E8E8E8' },
+  colors: { accent: '#FF6B35' },
 }));
-
-// ── @expo/vector-icons モック ─────────────────────────────────────────────────
-jest.mock('@expo/vector-icons', () => {
-  const React = require('react');
-  return {
-    Ionicons: (props: any) => React.createElement('Ionicons', props),
-  };
-});
 
 import { WebViewScreen } from '../../src/components/web/WebViewScreen';
 
@@ -293,10 +285,12 @@ describe('ケース4: セッション無し時の直接 URL 遷移', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ケース 5: headerAction (Issue #1037 — 孤立ネイティブ画面への導線)
+// ケース 5: header (Issue #1037 — マイページの歯車からネイティブの設定画面へ)
 // ─────────────────────────────────────────────────────────────────────────────
-describe('ケース5: headerAction ボタン (Issue #1037)', () => {
-  it('headerAction が未指定の場合はヘッダーボタンを描画しない', async () => {
+describe('ケース5: header (Issue #1037)', () => {
+  const { Pressable, Text } = require('react-native');
+
+  it('header が未指定の場合は何も足さない', async () => {
     mockGetSession.mockResolvedValue({ data: { session: null } });
 
     const { queryByTestId } = render(<WebViewScreen path="/home" />);
@@ -305,53 +299,33 @@ describe('ケース5: headerAction ボタン (Issue #1037)', () => {
       expect(mockWebViewProps.source?.uri).toBeDefined();
     });
 
-    expect(queryByTestId('profile-settings-button')).toBeNull();
+    expect(queryByTestId('test-header')).toBeNull();
   });
 
-  it('headerAction 指定時にヘッダーボタンが描画され、testID でタップできる', async () => {
-    mockGetSession.mockResolvedValue({ data: { session: null } });
+  it('header は WebView の読み込み前 (ローディング中) から表示され、押せる', async () => {
+    let resolveSession: ((value: unknown) => void) | undefined;
+    mockGetSession.mockImplementation(() => new Promise((resolve) => { resolveSession = resolve; }));
     const onPress = jest.fn();
 
     const { getByTestId } = render(
       <WebViewScreen
         path="/profile"
         testID="webview-profile"
-        headerAction={{
-          icon: 'settings-outline',
-          testID: 'profile-settings-button',
-          accessibilityLabel: '設定',
-          onPress,
-        }}
+        header={<Pressable testID="test-header" onPress={onPress}><Text>設定</Text></Pressable>}
       />,
     );
 
-    // WebView 読み込み完了前 (ローディング中) でもヘッダーボタンは即座に表示される
-    expect(getByTestId('profile-settings-button')).toBeTruthy();
-
-    fireEvent.press(getByTestId('profile-settings-button'));
+    // セッションの取得が終わっていない (uri がまだ無い) 間も出ている
+    expect(mockWebViewProps.source?.uri).toBeUndefined();
+    fireEvent.press(getByTestId('test-header'));
     expect(onPress).toHaveBeenCalledTimes(1);
-  });
 
-  it('headerAction は WebView 読み込み完了後も同じ testID で表示され続ける', async () => {
-    mockGetSession.mockResolvedValue({ data: { session: null } });
-    const onPress = jest.fn();
-
-    const { getByTestId } = render(
-      <WebViewScreen
-        path="/profile"
-        testID="webview-profile"
-        headerAction={{
-          icon: 'settings-outline',
-          testID: 'profile-settings-button',
-          onPress,
-        }}
-      />,
-    );
-
+    resolveSession?.({ data: { session: null } });
     await waitFor(() => {
       expect(mockWebViewProps.source?.uri).toBeDefined();
     });
 
-    expect(getByTestId('profile-settings-button')).toBeTruthy();
+    // 読み込み後も同じ部品が出続ける
+    expect(getByTestId('test-header')).toBeTruthy();
   });
 });
