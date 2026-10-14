@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EmailEnvelopeSchema, maskEmailAddress, sendEmail, type EmailEnvelope } from '@/lib/emails/send';
-import { EmailSendError } from '@/lib/emails/send-result';
+import { EmailSendError, isEmailFailure } from '@/lib/emails/send-result';
 import { DEFAULT_EMAIL_FROM } from '@/lib/site-config';
 import { maskSecrets } from '../../../../supabase/functions/_shared/log-sanitizer';
 
@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   logWarn: vi.fn(),
   logError: vi.fn(),
   createLogger: vi.fn(),
+  lookupEmailSuppression: vi.fn(),
 }));
 
 vi.mock('resend', () => {
@@ -23,6 +24,11 @@ vi.mock('resend', () => {
 
 vi.mock('@/lib/db-logger', () => ({
   createLogger: mocks.createLogger,
+}));
+
+// 宛先停止リスト (email_blacklist) の引き当て (#1184)。既定は「載っていない」
+vi.mock('@/lib/emails/suppression', () => ({
+  lookupEmailSuppression: mocks.lookupEmailSuppression,
 }));
 
 // 本物のキーではないダミー値 (ログに出ないことを確かめるための目印。秘密情報の書式にしない)
@@ -56,6 +62,7 @@ beforeEach(() => {
     error: mocks.logError,
   });
   mocks.emailsSend.mockResolvedValue(accepted());
+  mocks.lookupEmailSuppression.mockResolvedValue({ status: 'clear' });
 });
 
 afterEach(() => {
@@ -523,6 +530,84 @@ describe('sendEmail: 文面 (封筒) が不正', () => {
 
     expect(result).toMatchObject({ ok: false, attempts: 0 });
     expect(mocks.logError.mock.calls[0][2]).toMatchObject({ template: 'unknown', recipient: '***' });
+  });
+});
+
+describe('sendEmail: 宛先停止リスト (email_blacklist。#1184)', () => {
+  it('載っている宛先へは送らず、suppressed の失敗 (ok: false / skipped: false / attempts: 0) を返す', async () => {
+    mocks.lookupEmailSuppression.mockResolvedValueOnce({ status: 'suppressed', reason: 'bounce' });
+
+    const result = await sendAndSettle();
+
+    expect(mocks.lookupEmailSuppression).toHaveBeenCalledWith(RECIPIENT);
+    expect(mocks.emailsSend).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: false, id: null, attempts: 0, skipped: false });
+    expect(result.error).toBeInstanceOf(EmailSendError);
+    expect(result.error?.code).toBe('suppressed');
+    expect(result.error?.retryable).toBe(false);
+    // 届いていないので、呼び出し側からは送れなかったメールに見える (skipped の「設定が無い」とは区別する)
+    expect(isEmailFailure(result)).toBe(true);
+  });
+
+  it('苦情 (complaint) で載っている宛先も同じく送らない', async () => {
+    mocks.lookupEmailSuppression.mockResolvedValueOnce({ status: 'suppressed', reason: 'complaint' });
+
+    const result = await sendAndSettle();
+
+    expect(mocks.emailsSend).not.toHaveBeenCalled();
+    expect(result.error?.code).toBe('suppressed');
+  });
+
+  it('送らなかったことを app_logs に warn で残す。宛先はマスクし、生のアドレスは結果にもログにも出さない', async () => {
+    mocks.lookupEmailSuppression.mockResolvedValueOnce({ status: 'suppressed', reason: 'bounce' });
+
+    const result = await sendAndSettle();
+
+    expect(mocks.createLogger).toHaveBeenCalledWith('email');
+    expect(mocks.logWarn).toHaveBeenCalledTimes(1);
+    expect(mocks.logWarn.mock.calls[0][1]).toEqual({
+      template: 'org_invite_new',
+      recipient: MASKED_RECIPIENT,
+      suppression_reason: 'bounce',
+    });
+    expect(mocks.logError).not.toHaveBeenCalled();
+    expect(loggedText()).not.toContain(RECIPIENT);
+    expect(result.error?.message).not.toContain(RECIPIENT);
+  });
+
+  it('載っていなければ、今までどおり送る (引き当ては 1 回だけ。再試行のたびには引かない)', async () => {
+    mocks.emailsSend
+      .mockResolvedValueOnce(rejected('rate_limit_exceeded', 429))
+      .mockResolvedValueOnce(accepted('after-retry'));
+
+    const result = await sendAndSettle();
+
+    expect(result).toMatchObject({ ok: true, id: 'after-retry', attempts: 2 });
+    expect(mocks.lookupEmailSuppression).toHaveBeenCalledTimes(1);
+  });
+
+  it('停止リストを引けなかったとき (DB の失敗・時間切れ) は送る。引けなかったことを warn に残す (エラー文の中のアドレスはマスク)', async () => {
+    mocks.lookupEmailSuppression.mockResolvedValueOnce({
+      status: 'lookup_failed',
+      error: { message: `timeout while reading ${RECIPIENT}`, code: '57014' },
+    });
+
+    const result = await sendAndSettle();
+
+    expect(mocks.emailsSend).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ ok: true, attempts: 1 });
+    expect(mocks.logWarn).toHaveBeenCalledTimes(1);
+    expect(mocks.logWarn.mock.calls[0][1]).toMatchObject({ recipient: MASKED_RECIPIENT, error_code: '57014' });
+    expect(loggedText()).not.toContain(RECIPIENT);
+  });
+
+  it('RESEND_API_KEY が無いとき・封筒が不正なときは、停止リストを引かない (送らないので DB を読む必要がない)', async () => {
+    vi.stubEnv('RESEND_API_KEY', '');
+    await sendAndSettle();
+    vi.stubEnv('RESEND_API_KEY', API_KEY);
+    await sendAndSettle({ ...validEnvelope, subject: '' });
+
+    expect(mocks.lookupEmailSuppression).not.toHaveBeenCalled();
   });
 });
 
