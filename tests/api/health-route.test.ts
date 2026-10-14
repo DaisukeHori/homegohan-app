@@ -15,6 +15,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resolveHeavyUnitTimeouts } from '../helpers/heavy-unit-test-timeout';
 
 const SUPABASE_URL = 'https://health-test-project.supabase.co';
 const ANON_KEY = 'anon-key-for-health-test';
@@ -70,6 +71,14 @@ const ok = (): Promise<QueryResult> => Promise.resolve({ data: [{ id: 'plan-1' }
 const shallowRequest = () => new Request('http://localhost/api/health');
 const deepRequest = (value = '1') => new Request(`http://localhost/api/health?deep=${value}`);
 
+/**
+ * route を丸ごと読み込み直すフック (beforeEach) の時間切れ (#1605)。負荷の高い機械で、route の動的 import がフックの既定の 10 秒を
+ * 超えうる (同じ型の tests/ai-consent-enforcement-routes.test.ts は時間切れだけで落ちたことがある。#1488)。このファイルのテストは
+ * 読み込んだ GET / HEAD を呼ぶだけなので一覧 (HEAVY_UNIT_TEST_FILES) には入れず、読み込みのフックにだけ同じ値 (環境変数で上書き可) を使う
+ * (tests/ai-chat-flag-edge.test.ts と同じ形)
+ */
+const ROUTE_IMPORT_HOOK_TIMEOUT_MS = resolveHeavyUnitTimeouts(process.env).hookTimeout;
+
 beforeEach(async () => {
   vi.clearAllMocks();
   // 前のテストで設定した戻り値・例外を持ち越さない
@@ -80,7 +89,7 @@ beforeEach(async () => {
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', ANON_KEY);
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', SERVICE_ROLE_KEY);
   vi.stubEnv('NEXT_PUBLIC_APP_VERSION', 'v9.9.9-test');
-});
+}, ROUTE_IMPORT_HOOK_TIMEOUT_MS);
 
 afterEach(() => {
   vi.useRealTimers();

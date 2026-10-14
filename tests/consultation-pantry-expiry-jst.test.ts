@@ -11,6 +11,11 @@
  * (差し替えるのは Supabase のクライアント・AI の呼び出しなど外との境目だけ。consultation-action-raw-error-text.test.ts と同じ形)。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
+
+// 1 件のテストの中で route を丸ごと読み込むので、負荷の高い機械で vitest の既定の時間切れ (テスト 5 秒) を超えうる (#1605 の同じ型)。
+// このファイルだけ延ばす (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1488・#1605)。テストとフックを定義する前に置く
+applyHeavyUnitTestTimeout();
 
 const USER = '11111111-1111-4111-8111-111111111111';
 const SESSION_ID = '22222222-2222-4222-8222-222222222222';

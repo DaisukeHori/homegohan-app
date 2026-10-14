@@ -22,6 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveHeavyUnitTimeouts } from "./helpers/heavy-unit-test-timeout";
 
 import {
   DEFAULT_ALLOWED_ORIGINS,
@@ -561,6 +562,14 @@ async function loadHandler(name: string, load: () => Promise<unknown>) {
   await load();
 }
 
+/**
+ * Edge Function の本体を動的に読み込むフック (beforeEach) の時間切れ (#1605)。負荷の高い機械で、Edge Function の動的 import が
+ * フックの既定の 10 秒を超えたことがある (tests/ai-consent-enforcement-edge.test.ts。#1488)。このファイルのテストは読み込んだ
+ * ハンドラを呼ぶだけなので一覧 (HEAVY_UNIT_TEST_FILES) には入れず、読み込みのフックにだけ同じ値 (環境変数で上書き可) を使う
+ * (tests/ai-chat-flag-edge.test.ts と同じ形)
+ */
+const EDGE_IMPORT_HOOK_TIMEOUT_MS = resolveHeavyUnitTimeouts(process.env).hookTimeout;
+
 beforeEach(async () => {
   env = { CRON_SECRET: BATCH_SECRET };
   mocks.requireAuth.mockReset();
@@ -576,7 +585,7 @@ beforeEach(async () => {
     await loadHandler("generate-hint", () => import("../supabase/functions/generate-hint/index.ts"));
   }
   stubDeno();
-});
+}, EDGE_IMPORT_HOOK_TIMEOUT_MS);
 
 function call(fn: string, init: { method?: string; origin?: string; auth?: string; body?: unknown }): Promise<Response> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };

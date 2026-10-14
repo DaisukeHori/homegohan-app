@@ -29,6 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveHeavyUnitTimeouts } from "./helpers/heavy-unit-test-timeout";
 
 import {
   isMissingEnvError,
@@ -160,6 +161,14 @@ function expectNoEnvNames(text: string, names: readonly string[]): void {
   for (const name of names) expect(text).not.toContain(name);
 }
 
+/**
+ * Edge Function の本体を動的に読み込むフック (beforeAll。importHandler を通して読む) の時間切れ (#1605)。負荷の高い機械で、
+ * Edge Function の動的 import がフックの既定の 10 秒を超えたことがある (tests/ai-consent-enforcement-edge.test.ts。#1488)。
+ * このファイルのテストは読み込んだハンドラを呼ぶだけなので一覧 (HEAVY_UNIT_TEST_FILES) には入れず、読み込みのフックにだけ
+ * 同じ値 (環境変数で上書き可) を使う (tests/ai-chat-flag-edge.test.ts と同じ形)
+ */
+const EDGE_IMPORT_HOOK_TIMEOUT_MS = resolveHeavyUnitTimeouts(process.env).hookTimeout;
+
 /** 読み込んだ関数の Deno.serve のハンドラ (読み込みのたびに 1 つ増える) */
 async function importHandler(modulePath: string): Promise<(req: Request) => Promise<Response> | Response> {
   const before = h.handlers.length;
@@ -241,7 +250,7 @@ describe("stripe-price-sync: STRIPE_SECRET_KEY が無いときの 503 の本文 
     // STRIPE_SECRET_KEY は読み込み時に読む。ここでは設定しないまま読み込む
     h.env = { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY };
     handler = await importHandler("../supabase/functions/stripe-price-sync/index.ts");
-  });
+  }, EDGE_IMPORT_HOOK_TIMEOUT_MS);
 
   it("認証の後、503 で固定の文と code を返し、本文に変数名を出さない (変数名はログにだけ残る)", async () => {
     h.env = { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY };
@@ -270,7 +279,7 @@ describe("stripe-price-sync: Supabase の接続情報だけが無いときは 50
     h.env = { STRIPE_SECRET_KEY: STRIPE_SECRET_KEY_VALUE };
     vi.resetModules();
     handler = await importHandler("../supabase/functions/stripe-price-sync/index.ts");
-  });
+  }, EDGE_IMPORT_HOOK_TIMEOUT_MS);
 
   beforeEach(() => {
     fetchCalls.length = 0;
@@ -326,7 +335,7 @@ describe("process-meal-image-jobs: 環境変数をリクエストの中で確か
     // 以前は、環境変数が無いと読み込みの時点で投げていた (読み込めること自体を確かめる)
     h.env = {};
     handler = await importHandler("../supabase/functions/process-meal-image-jobs/index.ts");
-  });
+  }, EDGE_IMPORT_HOOK_TIMEOUT_MS);
 
   it("Supabase の接続情報が無いと、認証の前に 503 (固定の文と code) を返す。空の鍵と空の Authorization を一致させて通さない", async () => {
     for (const auth of [undefined, "Bearer ", `Bearer ${SERVICE_ROLE_KEY}`]) {
@@ -385,7 +394,7 @@ describe("カタログ取り込み (_shared/catalog/import-runner.ts): Supabase 
 
   beforeAll(async () => {
     handler = await importHandler("../supabase/functions/import-seven-eleven-catalog/index.ts");
-  });
+  }, EDGE_IMPORT_HOOK_TIMEOUT_MS);
 
   it("以前は 500 の本文に 'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY' を返していた。いまは 503 で固定の文と code", async () => {
     h.env = {};

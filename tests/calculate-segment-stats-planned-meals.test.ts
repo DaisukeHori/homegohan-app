@@ -20,6 +20,7 @@
 // それ以外のテストは具体的な日付を固定せず、「レスポンスの periodStart / periodEnd と、クエリに渡した日付が一致する」ことだけを見る。
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveHeavyUnitTimeouts } from "./helpers/heavy-unit-test-timeout";
 
 import {
   argsOf,
@@ -63,6 +64,14 @@ vi.mock("../supabase/functions/_shared/db-logger.ts", () => ({
   generateRequestId: () => "req_test",
 }));
 
+/**
+ * Edge Function の本体を動的に読み込むフック (beforeAll) の時間切れ (#1605)。負荷の高い機械で、Edge Function の動的 import が
+ * フックの既定の 10 秒を超えたことがある (tests/ai-consent-enforcement-edge.test.ts。#1488)。このファイルのテストは読み込んだ
+ * ハンドラを呼ぶだけなので一覧 (HEAVY_UNIT_TEST_FILES) には入れず、読み込みのフックにだけ同じ値 (環境変数で上書き可) を使う
+ * (tests/ai-chat-flag-edge.test.ts と同じ形)
+ */
+const EDGE_IMPORT_HOOK_TIMEOUT_MS = resolveHeavyUnitTimeouts(process.env).hookTimeout;
+
 beforeAll(async () => {
   const env: Record<string, string> = {
     SUPABASE_URL: "http://127.0.0.1:54321",
@@ -76,7 +85,7 @@ beforeAll(async () => {
     },
   });
   await import("../supabase/functions/calculate-segment-stats/index.ts");
-});
+}, EDGE_IMPORT_HOOK_TIMEOUT_MS);
 
 afterAll(() => {
   vi.unstubAllGlobals();

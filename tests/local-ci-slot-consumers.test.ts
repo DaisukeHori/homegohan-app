@@ -33,8 +33,10 @@ const ROOT = process.cwd();
 
 // 1 件のテストの時間切れを、このファイルだけ延ばす (bash・git を何度も起動するので、負荷の高い機械で vitest の既定の 5 秒を超える。
 // 根拠と環境変数での上書きは tests/helpers/local-ci-slot-test-timeout.ts。#1488)。テストを定義する前に置く
+// afterAll (drift_report.sh の一時の git リポジトリを消す) の時間切れも同じ値にする。フックの既定の 10 秒のままだと、負荷の高い
+// 機械でテストが全部通ったあとにこのファイルだけが落ちた (#1605。どのテストも落ちずにファイルだけが赤になった)
 const SLOT_TEST_TIMEOUT_MS = resolveUnitSlotTestTimeout(process.env);
-vi.setConfig({ testTimeout: SLOT_TEST_TIMEOUT_MS });
+vi.setConfig({ testTimeout: SLOT_TEST_TIMEOUT_MS, hookTimeout: SLOT_TEST_TIMEOUT_MS });
 const SUPABASE_LOCAL = "scripts/supabase-local.sh";
 const DRIFT_REPORT = "scripts/baseline/drift_report.sh";
 
