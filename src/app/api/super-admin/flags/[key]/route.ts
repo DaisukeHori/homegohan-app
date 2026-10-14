@@ -12,9 +12,10 @@ import { UpdateFeatureFlagSchema } from '@/lib/super-admin/flags-schemas';
 import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
 
-type Params = { params: { key: string } };
+type Params = { params: Promise<{ key: string }> };
 
-export async function PATCH(request: NextRequest, { params }: Params) {
+export async function PATCH(request: NextRequest, props: Params) {
+  const params = await props.params;
   try {
     const user = await requireRole(['super_admin']);
     const supabase = await createClient();
@@ -78,7 +79,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(request: NextRequest, { params }: Params) {
+export async function DELETE(request: NextRequest, props: Params) {
+  const params = await props.params;
   try {
     const user = await requireRole(['super_admin']);
     const supabase = await createClient();

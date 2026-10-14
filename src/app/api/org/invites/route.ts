@@ -32,7 +32,7 @@ function handleError(method: string, error: unknown) {
 export async function GET(request: Request) {
   try {
     const { profile } = await requireOrgAdmin();
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const { data: invites, error } = await supabase
       .from('organization_invites')
@@ -110,7 +110,7 @@ export async function POST(request: Request) {
   const { email, role, custom_message } = parsed.data;
 
   // 招待を作り、招待メールを送る (POST /api/org/members と共通。送信回数の制限もこの中で判定する)
-  const supabase = createClient();
+  const supabase = await createClient();
   const result = await createOrgInviteWithEmail({
     supabase,
     inviter: { id: user.id, email: user.email, nickname: profile.nickname },
@@ -130,7 +130,7 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   try {
     const { profile } = await requireOrgAdmin();
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const { searchParams } = new URL(request.url);
     const inviteId = searchParams.get('id');

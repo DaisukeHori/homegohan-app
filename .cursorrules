@@ -2,7 +2,7 @@
 
 ## プロジェクト概要
 AIを活用した食事管理・献立提案アプリケーション。
-- Web: Next.js 14 (App Router)
+- Web: Next.js 15 (App Router) + React 19
 - Mobile: Expo (React Native)
 - Backend: Supabase (PostgreSQL, Edge Functions, Auth, Storage)
 - AI: OpenAI GPT-5-mini, Google Gemini 2.0 Flash

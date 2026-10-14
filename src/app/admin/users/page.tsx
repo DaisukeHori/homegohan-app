@@ -15,7 +15,7 @@ import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
 
 interface PageProps {
-  searchParams: { q?: string; status?: string; page?: string };
+  searchParams: Promise<{ q?: string; status?: string; page?: string }>;
 }
 
 interface UserItem {
@@ -40,7 +40,8 @@ interface UsersApiResponse {
   };
 }
 
-export default async function AdminUsersPage({ searchParams }: PageProps) {
+export default async function AdminUsersPage(props: PageProps) {
+  const searchParams = await props.searchParams;
   let actor;
   try {
     actor = await requireRole(['admin', 'super_admin', 'support']);

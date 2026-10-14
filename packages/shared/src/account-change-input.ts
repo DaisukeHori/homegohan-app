@@ -7,8 +7,30 @@
 
 import { validatePassword } from './password-policy';
 
-/** 形式の大まかな確認だけ行う (厳密な検証は Supabase 側がする) */
-export const EMAIL_CHANGE_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** 空白 (正規表現の \s と同じ範囲) を 1 文字でも含むか */
+const WHITESPACE_PATTERN = /\s/;
+
+/**
+ * メールアドレスの形式の大まかな確認だけ行う (厳密な検証は Supabase 側がする)。
+ * 空白を含まず、@ がちょうど 1 つで、その前に 1 文字以上あり、@ の後ろ (ドメイン) の
+ * 先頭と末尾以外のどこかに . があること。
+ *
+ * 以前は `/^[^\s@]+@[^\s@]+\.[^\s@]+$/` で判定していた。ドメインの部分の `[^\s@]+\.[^\s@]+` は、
+ * "." が何度も続き、最後に合わない文字 (空白など) がある長い文字列で、"." の出現ごとに末尾まで読み直すため、
+ * 時間が長さの 2 乗で増える (CodeQL js/polynomial-redos #42)。入力は利用者が打ったメールアドレスなので、
+ * 同じ判定を、先頭から 1 回ずつ探すだけの書き方 (長さに比例する時間) に直した。判定の結果は以前の正規表現と同じ
+ * (account-change-input.test.ts が以前の正規表現と突き合わせる)。
+ */
+export function isEmailChangeFormat(value: string): boolean {
+  if (WHITESPACE_PATTERN.test(value)) return false;
+  const at = value.indexOf('@');
+  // @ の前に 1 文字以上・@ は 1 つだけ
+  if (at < 1 || value.indexOf('@', at + 1) !== -1) return false;
+  const domain = value.slice(at + 1);
+  // ドメインの 2 文字目以降で最初の "." が、末尾の 1 文字より前にあること (= 前後に 1 文字以上ある "." がある)
+  const dot = domain.indexOf('.', 1);
+  return dot !== -1 && dot < domain.length - 1;
+}
 
 export interface PasswordChangeInput {
   currentPassword: string;
@@ -37,7 +59,7 @@ export type EmailChangeInputResult = { ok: true; email: string } | { ok: false; 
 export function normalizeEmailChangeInput(newEmail: string, currentEmail: string): EmailChangeInputResult {
   const normalized = newEmail.trim().toLowerCase();
   if (!normalized) return { ok: false, message: '新しいメールアドレスを入力してください' };
-  if (!EMAIL_CHANGE_PATTERN.test(normalized)) return { ok: false, message: 'メールアドレスの形式が正しくありません' };
+  if (!isEmailChangeFormat(normalized)) return { ok: false, message: 'メールアドレスの形式が正しくありません' };
   // Supabase は今と同じアドレスを指定してもエラーにせず何もしない。確認メールが届かないまま
   // 「送りました」と表示してしまわないよう、ここで止める
   if (normalized === currentEmail.trim().toLowerCase()) {

@@ -58,7 +58,7 @@ export type ConsentDb = Pick<SupabaseClient, 'from'>;
  * userId は認証で確定した ID を渡す。
  */
 export async function getAiConsentStatus(userId: string, db?: ConsentDb): Promise<AiConsentStatus> {
-  const client: ConsentDb = db ?? createClient();
+  const client: ConsentDb = db ?? (await createClient());
   const { data, error } = await client
     .from(TABLE)
     .select('id, provider, consented, consented_at, revoked_at, policy_version')

@@ -22,9 +22,16 @@ export function getSupabaseAdmin() {
   })
 }
 
-export function createClient(cookieStore?: ReturnType<typeof cookies>) {
-  const store = cookieStore || cookies()
-  const authHeader = headers().get('authorization')
+/**
+ * リクエストの Cookie と Authorization ヘッダを使う (RLS が効く) Supabase クライアントを返す。
+ *
+ * Next 15 では cookies() / headers() が Promise を返すので、この関数も非同期にした (#1444)。
+ * 呼び出し側は `const supabase = await createClient()` と書く。
+ * Next 15 には cookies() を同期のまま読む互換の道も残っているが、開発時に警告が出て、Next 16 で無くなるので使わない。
+ */
+export async function createClient(cookieStore?: Awaited<ReturnType<typeof cookies>>) {
+  const store = cookieStore ?? (await cookies())
+  const authHeader = (await headers()).get('authorization')
 
   return createServerClient(
     getSupabaseUrl(),

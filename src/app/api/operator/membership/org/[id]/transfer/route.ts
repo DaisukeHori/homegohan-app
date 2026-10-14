@@ -24,10 +24,8 @@ const BodySchema = z.object({
   reason: z.string().min(1).max(1000),
 });
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const logger = createLogger(ROUTE_NAME, generateRequestId());
   try {
     const { userId: operatorId } = await requireSuperAdmin();
@@ -63,7 +61,7 @@ export async function POST(
       preOrgError = err;
     }
 
-    const supabase = createClient();
+    const supabase = await createClient();
 
     // RPC 実行
     const { data: org, error: rpcError } = await supabase.rpc('operator_force_owner_transfer', {

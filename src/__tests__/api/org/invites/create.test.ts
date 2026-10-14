@@ -5,14 +5,15 @@ import type { RateLimitCategory, RateLimitResult } from '@/lib/rate-limit';
 
 // POST /api/org/invites の招待メール送信回数制限と入力検証 (#1163)
 
-// Supabase クライアントのモック。org 系の route は createClient() を同期で呼ぶので mockResolvedValue ではなく vi.fn(() => client)
+// Supabase クライアントのモック。createClient() は async (Next 15 では cookies() が Promise のため) なので、Promise を返す。
+// await を忘れた呼び出しは、ここで Promise の .auth / .from に触って落ちる
 const mockGetUser = vi.fn();
 const mockRpc = vi.fn();
 const mockFrom = vi.fn();
 const client = { auth: { getUser: mockGetUser }, rpc: mockRpc, from: mockFrom };
 
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: vi.fn(() => client),
+  createClient: vi.fn(async () => client),
 }));
 
 // limiter は部分モック: 本物の応答ビルダー (getRetryAfterSec など) は残し、checkRateLimit だけ差し替える

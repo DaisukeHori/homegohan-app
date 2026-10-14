@@ -23,10 +23,9 @@
 // を検証する。「行の onKeyDown ガードを外す」「削除ボタンを再びネストする」という
 // 1行の巻き戻しで red になることを想定した回帰テスト。
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 import { FavoriteListItem } from '../FavoriteListItem';
 

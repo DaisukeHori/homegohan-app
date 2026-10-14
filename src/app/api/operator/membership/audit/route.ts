@@ -31,7 +31,7 @@ const QuerySchema = z.object({
 export async function GET(request: NextRequest) {
   try {
     await requireSuperAdmin();
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const { searchParams } = new URL(request.url);
     const parsed = QuerySchema.safeParse(Object.fromEntries(searchParams));

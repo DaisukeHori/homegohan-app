@@ -38,10 +38,8 @@ async function getOrCreateDailyMeal(supabase: any, userId: string, dayDate: stri
 }
 
 // アクション実行
-export async function POST(
-  request: Request,
-  { params }: { params: { actionId: string } }
-) {
+export async function POST(request: Request, props: { params: Promise<{ actionId: string }> }) {
+  const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -143,10 +141,8 @@ export async function POST(
 }
 
 // アクション拒否
-export async function DELETE(
-  request: Request,
-  { params }: { params: { actionId: string } }
-) {
+export async function DELETE(request: Request, props: { params: Promise<{ actionId: string }> }) {
+  const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

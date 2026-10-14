@@ -82,7 +82,37 @@ export function isSessionExpiredAuthError(error: unknown): boolean {
   if (e.code && RELOGIN_CODES.has(e.code)) return true;
   if (e.name === 'AuthSessionMissingError') return true;
   if (e.status === 401) return true;
-  return /auth session missing|session.*(not found|expired|missing)|invalid jwt|jwt expired/i.test(e.message ?? '');
+  return mentionsExpiredSession(e.message ?? '');
+}
+
+/** これだけで「ログインし直しが要る」と分かる言い回し (メッセージのどこにあってもよい) */
+const EXPIRED_SESSION_PHRASES: readonly string[] = ['invalid jwt', 'jwt expired'];
+/** 「session」のあと (同じ行の中) に続けば、セッションが無い・失効したと分かる語 ("Auth session missing!" も含む) */
+const SESSION_WORD = 'session';
+const SESSION_STATE_WORDS: readonly string[] = ['not found', 'expired', 'missing'];
+/** 正規表現の `.` がまたがない行の区切り (改行・復帰・行区切り・段落区切り) */
+const LINE_TERMINATOR_PATTERN = /[\n\r\u2028\u2029]/;
+
+/**
+ * メッセージが、セッションが無い・失効した・JWT が不正であることを示すか。
+ *
+ * 以前は `/auth session missing|session.*(not found|expired|missing)|invalid jwt|jwt expired/i` で判定していた。
+ * `session.*(…)` は、"session" が何度も続く長い文字列で、"session" の出現ごとに行末まで読み直すため、
+ * 時間が文字列の長さの 2 乗で増える (CodeQL js/polynomial-redos #41)。メッセージはライブラリ (Supabase Auth) の
+ * エラー文で、利用者が直接は決められないが、行ごとに最初の "session" から先を 1 回ずつ探すだけの書き方
+ * (長さに比例する時間) に直した。判定の結果は以前の正規表現と同じ (大文字小文字は区別しない・
+ * "session" と後ろの語は同じ行の中にあること)。src/lib/auth/__tests__/account-errors.test.ts が以前の正規表現と突き合わせる。
+ */
+function mentionsExpiredSession(message: string): boolean {
+  const text = message.toLowerCase();
+  if (EXPIRED_SESSION_PHRASES.some((phrase) => text.includes(phrase))) return true;
+  return text.split(LINE_TERMINATOR_PATTERN).some((line) => {
+    const sessionAt = line.indexOf(SESSION_WORD);
+    if (sessionAt === -1) return false;
+    // いちばん前の "session" から先を探せば、後ろの "session" から先にある語も必ず見つかる
+    const after = sessionAt + SESSION_WORD.length;
+    return SESSION_STATE_WORDS.some((word) => line.indexOf(word, after) !== -1);
+  });
 }
 
 /**

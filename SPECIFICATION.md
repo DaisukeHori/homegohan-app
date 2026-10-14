@@ -53,8 +53,8 @@ API (`src/app/api/ai/menu/**`) がフラグを見て v5 / v4 のどちらを呼�
 ### フロントエンド
 | 技術 | バージョン | 用途 |
 |------|-----------|------|
-| Next.js | 14.2.3 | Reactフレームワーク（App Router） |
-| React | 18.3.1 | UIライブラリ |
+| Next.js | 15.5.27 | Reactフレームワーク（App Router） |
+| React | 19.2.8 | UIライブラリ |
 | TypeScript | 5.9.3 | 型安全な開発 |
 | Tailwind CSS | 4.1.17 | スタイリング |
 | Framer Motion | 12.23.24 | アニメーション |
