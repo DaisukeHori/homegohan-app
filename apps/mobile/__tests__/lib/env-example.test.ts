@@ -66,9 +66,15 @@ describe('apps/mobile/env.example (#1049 F7-19)', () => {
     expect(missing).toEqual([]);
   });
 
-  it('EXPO_PUBLIC_WEB_URL は代入の行 (コメントアウトでない) として、既定と同じ Web の URL の例で書かれている', () => {
+  it('EXPO_PUBLIC_WEB_URL は代入の行 (コメントアウトでない) として 1 回だけ、既定と同じ Web の URL の例で書かれている', () => {
     const example = fs.readFileSync(path.join(MOBILE_ROOT, 'env.example'), 'utf8');
-    expect(example).toMatch(/^EXPO_PUBLIC_WEB_URL=https:\/\/\S+$/m);
-    expect(example).toContain(`EXPO_PUBLIC_WEB_URL=${DEFAULT_WEB_URL}\n`);
+    const assignments = example.match(/^EXPO_PUBLIC_WEB_URL=.*$/gm) ?? [];
+    expect(assignments).toEqual([`EXPO_PUBLIC_WEB_URL=${DEFAULT_WEB_URL}`]);
+  });
+
+  it('同じ変数を 2 回代入しない (後の行が前の行を黙って上書きする)', () => {
+    const example = fs.readFileSync(path.join(MOBILE_ROOT, 'env.example'), 'utf8');
+    const names = [...example.matchAll(/^(EXPO_PUBLIC_[A-Z0-9_]+)=/gm)].map((match) => match[1]);
+    expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([]);
   });
 });
