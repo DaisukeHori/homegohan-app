@@ -16,6 +16,7 @@
  *   - scripts/local-ci.sh は、ローカル Supabase を止めきれなかったとき (同じ dockerd の別の枠の prune と重なったときなど。#1616)、
  *     止める前に控えた自分の枠のコンテナ・ボリュームだけを消し、消えたかを確かめる (残れば <段>:teardown を赤)。
  *     次の段の前に残っているのが、この実行が前の段で起動したものだけなら片付けて進み、ほかのものがあれば今までどおり消さずに赤。
+ *     枠 0 (枠を使わない作業と共有) は何も消さないが、打ち直しても止めきれなければ <段>:teardown を赤にする (判定は飲み込まない)。
  *     scripts/supabase-local.sh の stop / stop-leftover は、prune の衝突のときだけ間をおいて打ち直す
  *   - scripts/local-ci.sh の回収の見張りは、シグナル (INT / TERM / HUP。Ctrl-C のようにプロセスグループ全体に届くものを含む) で
  *     どこで終わっても残らない (残ると、その枠の死んだロックを誰も回収できなくなる)。外すときに、別の実行が取り直した見張りは消さない
@@ -1294,8 +1295,8 @@ describe("scripts/local-ci.sh: ローカル Supabase を止めたあとの残り
       'apply_slot "$HARNESS_SLOT"',
       // integration の段と同じく、枠に残りが無いことを確かめてから起動した (ここでは FAKE_STATE に置いたものが起動したスタック)
       'if [ "${HARNESS_FRESH:-0}" = 0 ]; then',
-      "  SUPA_STARTED=1; SUPA_STAGE=integration",
-      "  record integration:security GREEN 1 0 0 1 1 1 -",
+      '  SUPA_STARTED=1; SUPA_STAGE="${HARNESS_STAGE:-integration}"',
+      '  record "$SUPA_STAGE:security" GREEN 1 0 0 1 1 1 -',
       "  stop_supabase",
       '  echo "AFTER_STOP STARTED=$SUPA_STARTED OWN_C=$OWN_STACK_CONTAINERS OWN_V=$OWN_STACK_VOLUMES"',
       "fi",
@@ -1321,7 +1322,7 @@ describe("scripts/local-ci.sh: ローカル Supabase を止めたあとの残り
     { kind: "c", id: "otherproj01", project: "other-project" },
     { kind: "v", id: "other-project-vol", project: "other-project" },
   ];
-  const runTeardown = (opts: { slot: string; state: Row[]; stop?: string; rmFails?: number; next?: boolean; fresh?: boolean }) => {
+  const runTeardown = (opts: { slot: string; state: Row[]; stop?: string; rmFails?: number; next?: boolean; fresh?: boolean; stage?: string }) => {
     caseNo += 1;
     const dir = path.join(tmp, `case-${caseNo}`);
     fs.mkdirSync(dir);
@@ -1336,6 +1337,7 @@ describe("scripts/local-ci.sh: ローカル Supabase を止めたあとの残り
       HARNESS_SLOT: opts.slot,
       HARNESS_NEXT: opts.next ? "1" : "0",
       HARNESS_FRESH: opts.fresh ? "1" : "0",
+      HARNESS_STAGE: opts.stage ?? "integration",
       FAKE_STATE: state,
       FAKE_CALLS: calls,
       FAKE_LS_FAIL: path.join(dir, "ls-fail"),
@@ -1415,14 +1417,41 @@ describe("scripts/local-ci.sh: ローカル Supabase を止めたあとの残り
     expect(red(r.rows).map((row) => [row[0], row[8].includes("消えたかを確かめられない")])).toEqual([["integration:teardown", true]]);
   });
 
-  it("枠 0 は、止めきれなくても消さず、赤にもしない (枠を使わない作業と共有している)", () => {
-    const state = [...stackOf("0", "zero"), ...stackOf("2", "s2")];
+  it("枠 0 は、止めきれなければ何も消さずに <段>:teardown を赤にし、終了コードを赤 (EXIT_RED) にする (枠を使わない作業と共有しているので消さないが、判定は飲み込まない)", () => {
+    // others() は枠 0 のスタック (s0…)・枠 2 のスタック・ほかの project のもの
+    const state = others();
     const r = runTeardown({ slot: "0", state, stop: "prune" });
-    expect(r.status, r.err).toBe(0);
+    expect(r.status, r.err).toBe(EXIT_RED);
+    // docker には一覧も削除も打たない (止めるのは supabase-local.sh の stop だけ)
+    expect(r.calls).toEqual(["RUN_IN bash scripts/supabase-local.sh stop"]);
     expect(rmCalls(r.calls)).toEqual([]);
-    expect(red(r.rows)).toEqual([]);
     expect(sorted(r.left)).toEqual(sorted(state));
+    const reds = red(r.rows);
+    expect(reds.map((row) => row[0])).toEqual(["integration:teardown"]);
+    expect(reds[0][8]).toContain("枠 0 のローカル Supabase を止めきれなかった");
+    expect(reds[0][8]).toContain(`project_id (${projectOf("0")})`);
+    expect(reds[0][8]).toContain("消していない");
+    // 失敗したログの場所も備考に出す
+    expect(reds[0][8]).toContain("supabase.log");
+    expect(r.err).toContain("supabase-local.sh stop が失敗しました");
     expect(r.out).toContain("AFTER_STOP STARTED=0 OWN_C= OWN_V=");
+  });
+
+  it("枠 0 は、止めるのに成功すれば何も消さず緑のまま (docker を打たない)", () => {
+    const r = runTeardown({ slot: "0", state: others(), stop: "ok" });
+    expect(r.status, r.err).toBe(0);
+    expect(r.calls).toEqual(["RUN_IN bash scripts/supabase-local.sh stop"]);
+    expect(red(r.rows)).toEqual([]);
+    // 止めた CLI が消したのは枠 0 の project_id のものだけ (ほかの枠・ほかの project は残る)
+    expect(sorted(r.left)).toEqual(sorted(others().filter((x) => x.project !== projectOf("0"))));
+    expect(r.out).toContain("AFTER_STOP STARTED=0 OWN_C= OWN_V=");
+  });
+
+  it("枠 0 で stop が失敗したときの赤の行の名前は、起動した段の名前 (SUPA_STAGE) から作る", () => {
+    // e2e の段で起動していれば e2e:teardown (SUPA_STAGE を読まずに固定の名前を書くと、どの段の後片付けか分からなくなる)
+    const r = runTeardown({ slot: "0", state: others(), stop: "prune", stage: "e2e" });
+    expect(r.status, r.err).toBe(EXIT_RED);
+    expect(red(r.rows).map((row) => row[0])).toEqual(["e2e:teardown"]);
   });
 
   it("次の段の前 (check_slot_stack) に残っているのが、この実行が前の段で起動したスタックだけなら、片付けて進む", () => {

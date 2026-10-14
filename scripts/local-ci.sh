@@ -460,18 +460,25 @@ SUPA_STAGE=""
 #   2. supabase-local.sh stop で止める。同じ dockerd の別の枠の prune と重なったときは、supabase-local.sh が間をおいて打ち直す
 #   3. 枠 1 以上なら、残ったものを確かめ、1 で控えたものだけを docker rm / docker volume rm で消し (clear_own_stack)、
 #      もう一度確かめる。まだ残っていれば (消せない・控えていないものがある) <段>:teardown を赤にし、理由と持ち主をログに出す
-#   枠 0 は、枠を使わない作業 (CI・手で起動したスタック・外側のロックで動く Workflow) と共有しているので、2 だけ行う
-#   (失敗はログに出す。check_slot_stack も枠 0 は確かめない)
+#   枠 0 は、枠を使わない作業 (CI・手で起動したスタック・外側のロックで動く Workflow) と共有しているので、2 だけ行い、何も消さない
+#   (check_slot_stack も枠 0 は確かめない)。打ち直しても stop が失敗したら、残ったかもしれないものを消さずに <段>:teardown を赤にする
+#   (消さないことと判定は別。赤にしても他人のものには触れない)
 stop_supabase() {
   [ "$SUPA_STARTED" = 1 ] || return 0
-  local stage="${SUPA_STAGE:-supabase}"
+  local stage="${SUPA_STAGE:-supabase}" stopped=1
   say "ローカル Supabase を停止します"
   if [ "$SLOT" -ne 0 ]; then remember_own_stack; fi
   if ! run_in "$WT" "${SUPA_LOG:-/dev/null}" bash scripts/supabase-local.sh stop; then
+    stopped=0
     say "supabase-local.sh stop が失敗しました (ログ: ${SUPA_LOG:-なし})"
   fi
   SUPA_STARTED=0
-  [ "$SLOT" -ne 0 ] || return 0
+  if [ "$SLOT" -eq 0 ]; then
+    if [ "$stopped" = 0 ]; then
+      record "$stage:teardown" RED - - - - - 0 "$(tail_hint "枠 0 のローカル Supabase を止めきれなかった (prune の衝突などで打ち直しても失敗。枠 0 は枠を使わない作業と共有しているので消していない。project_id ($SLOT_PROJECT_ID) のコンテナ / ボリュームの残りと持ち主を確かめる)" "${SUPA_LOG:-なし}")"
+    fi
+    return 0
+  fi
   if ! clear_own_stack; then
     record "$stage:teardown" RED - - - - - 0 "$(tail_hint "止めたあとも枠 $SLOT の project_id ($SLOT_PROJECT_ID) のコンテナ / ボリュームが残っている ($OWN_STACK_NOTE)" "${SUPA_LOG:-なし}")"
   fi
