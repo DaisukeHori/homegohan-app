@@ -23,9 +23,10 @@
  *     その起動と読み込みで、負荷に比例して伸びる) で、既定の 5 秒に頼っていたファイルも、落ちる前に一覧に入れた
  *     (まだ時間切れで落ちたことは無い。2026-10-14〜15 の local-ci の unit 段の結果 JSON 89 本 (1 号機 16・2 号機 8・256 65) で、
  *     これらのファイルの 1 件の所要の最大は 2.2 秒。どれも M1 なら 1 秒未満で、上の 36 倍の見積もりの範囲)。どのファイルが同じ型かは
- *     tests/heavy-unit-test-timeout.test.ts の「同じ型のファイルは時間切れを延ばしている (#1605)」が機械で数え、延ばしていないと赤にする。
+ *     tests/heavy-unit-test-timeout.test.ts の「同じ型のファイルは時間切れを延ばしている (#1605)」が機械で数え、延ばしていないと赤にする
+ *     (読み込みを関数に任せ、パスを文字列で渡す書き方 (tests/edge-missing-env-response.test.ts の importHandler("../supabase/functions/x/index.ts")) も数える)。
  *     読み込みがフック (beforeAll / beforeEach) にしかないファイルは一覧に入れず、そのフックにだけ resolveHeavyUnitTimeouts の
- *     hookTimeout を渡す (tests/ai-chat-flag-edge.test.ts と同じ形。テストの 5 秒はそのまま。最初のテストの所要には、フックでの
+ *     hookTimeout を渡す (読み込むフックが複数あれば、どれにも渡す。tests/ai-chat-flag-edge.test.ts と同じ形。テストの 5 秒はそのまま。最初のテストの所要には、フックでの
  *     読み込みの時間が入る: tests/edge-function-cors.test.ts は 6.4 秒だったが、フックの 10 秒の内なので落ちなかった)。
  *   - 値はこれまでと同じ (テスト 30 秒・フック 60 秒)。同じ日に 29.8 秒かかった tests/mobile-easignore-bundle-inputs.test.ts
  *     (1 件ごとに git を 2 回起こす) は 30 秒では足りないので、bash・git を何度も起動する tests/local-ci-slot*.test.ts と同じ
