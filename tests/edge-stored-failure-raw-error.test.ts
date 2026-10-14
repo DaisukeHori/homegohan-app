@@ -204,7 +204,8 @@ describe.each(WRITERS)('Edge Function $name: 処理の途中で DB の生のエ�
     expect(responseText).not.toContain('secret_internal_table');
 
     // 元の文はログ (構造化ログ・console) に残る (捨てていない)
-    const consoleErrors = (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls.flat();
+    // console.error は beforeEach の vi.spyOn で差し替えてあるので、vi.mocked で型を付けて呼び出しを読む (型の二重の言い換えをしない)
+    const consoleErrors: unknown[] = vi.mocked(console.error).mock.calls.flat();
     expect([...e.loggedErrors, ...consoleErrors].some(containsRaw)).toBe(true);
   });
 });
