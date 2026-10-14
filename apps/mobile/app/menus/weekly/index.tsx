@@ -38,7 +38,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 
-import { NUTRIENT_DEFINITIONS, type NutrientDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType } from "@homegohan/shared";
+import { NUTRIENT_DEFINITIONS, type NutrientDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, isMealType, type MealType } from "@homegohan/shared";
 import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../src/components/ui";
 import { AddMealModal } from "../../../src/components/menu/AddMealModal";
 import { AddMealSlotModal } from "../../../src/components/menu/AddMealSlotModal";
@@ -1225,8 +1225,9 @@ export default function WeeklyMenuPage() {
       const ao = a.display_order ?? 0;
       const bo = b.display_order ?? 0;
       if (ao !== bo) return ao - bo;
-      const ai = MEAL_ORDER.indexOf(a.meal_type as any);
-      const bi = MEAL_ORDER.indexOf(b.meal_type as any);
+      // 5 値以外の meal_type は indexOf と同じく -1 として扱う (#1446: as any を外した。並びは変えない)
+      const ai = isMealType(a.meal_type) ? MEAL_ORDER.indexOf(a.meal_type) : -1;
+      const bi = isMealType(b.meal_type) ? MEAL_ORDER.indexOf(b.meal_type) : -1;
       return ai - bi;
     });
   }, [selectedDay]);
