@@ -9,6 +9,7 @@
 
 import { test, expect } from "@playwright/test";
 import { cleanupTestUser, generateTestEmail, signupViaApi } from "./helpers";
+import { createTestSession } from "../helpers/test-session";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
 
@@ -16,26 +17,14 @@ dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
-/** サービスロール経由で JWT を取得する (admin 操作用) */
-async function getUserToken(email: string, password: string): Promise<string | null> {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
-  try {
-    const resp = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!resp.ok) return null;
-    const data = await resp.json() as Record<string, unknown>;
-    return (data.access_token as string) ?? null;
-  } catch {
-    return null;
-  }
+/**
+ * ユーザーのアクセストークン (JWT) を取得する。テスト用のセッションを管理用の鍵 (service_role) で作る
+ * (#1547: パスワードのログインは使わない。helpers/test-session.ts)。作れなければ null
+ */
+async function getUserToken(email: string): Promise<string | null> {
+  const result = await createTestSession(email);
+  return result.ok ? result.session.access_token : null;
 }
 
 /** service_role 経由でユーザーの onboarding_completed_at を設定する */
@@ -134,7 +123,7 @@ test.describe("Tour - Eligibility API", () => {
       // onboarding_completed_at を null のままにする
       await setOnboardingCompleted(userId, null);
 
-      const token = await getUserToken(email, TEST_PASSWORD);
+      const token = await getUserToken(email);
       if (!token) {
         test.skip(true, "JWT 取得不可");
         return;
@@ -168,7 +157,7 @@ test.describe("Tour - Eligibility API", () => {
       // onboarding 完了状態にする
       await setOnboardingCompleted(userId, new Date().toISOString());
 
-      const token = await getUserToken(email, TEST_PASSWORD);
+      const token = await getUserToken(email);
       if (!token) {
         test.skip(true, "JWT 取得不可");
         return;
@@ -201,7 +190,7 @@ test.describe("Tour - Eligibility API", () => {
       await setOnboardingCompleted(userId, new Date().toISOString());
       await setTourCompleted(userId, new Date().toISOString());
 
-      const token = await getUserToken(email, TEST_PASSWORD);
+      const token = await getUserToken(email);
       if (!token) {
         test.skip(true, "JWT 取得不可");
         return;
@@ -234,7 +223,7 @@ test.describe("Tour - Eligibility API", () => {
       await setOnboardingCompleted(userId, new Date().toISOString());
       await setTourSkipped(userId, new Date().toISOString());
 
-      const token = await getUserToken(email, TEST_PASSWORD);
+      const token = await getUserToken(email);
       if (!token) {
         test.skip(true, "JWT 取得不可");
         return;
@@ -267,7 +256,7 @@ test.describe("Tour - Eligibility API", () => {
       await setOnboardingCompleted(userId, new Date().toISOString());
       await setUserRoles(userId, ["user", "admin"]);
 
-      const token = await getUserToken(email, TEST_PASSWORD);
+      const token = await getUserToken(email);
       if (!token) {
         test.skip(true, "JWT 取得不可");
         return;

@@ -79,7 +79,7 @@ test.describe('org 招待 — エッジケース', () => {
       // bob がログイン済み状態で alice 宛の招待 URL にアクセス
       const bobPage = await browser.newPage();
       try {
-        await injectSession(bobPage, bob.email, bob.password);
+        await injectSession(bobPage, bob.email);
         await bobPage.goto(inviteUrl);
 
         // パターン C: email 不一致 → 「ログアウトしてやり直す」ボタン表示
@@ -176,7 +176,7 @@ test.describe('org 招待 — エッジケース', () => {
 
       const inviteePage = await browser.newPage();
       try {
-        await injectSession(inviteePage, invitee.email, invitee.password);
+        await injectSession(inviteePage, invitee.email);
 
         // 一度承諾
         const acceptRes = await inviteePage.request.post(`${BASE_URL}/api/org/invites/${token}/accept`);
@@ -216,7 +216,7 @@ test.describe('org 招待 — エッジケース', () => {
 
       const inviteePage = await browser.newPage();
       try {
-        await injectSession(inviteePage, invitee.email, invitee.password);
+        await injectSession(inviteePage, invitee.email);
         await inviteePage.goto(inviteUrl);
 
         await expect(
@@ -261,7 +261,7 @@ test.describe('org 招待 — エッジケース', () => {
 
       const alicePage = await browser.newPage();
       try {
-        await injectSession(alicePage, alice.email, alice.password);
+        await injectSession(alicePage, alice.email);
         await alicePage.goto(inviteUrl);
 
         await expect(
@@ -317,7 +317,7 @@ test.describe('org 招待 — エッジケース', () => {
 
       const inviteePage = await browser.newPage();
       try {
-        await injectSession(inviteePage, invitee.email, invitee.password);
+        await injectSession(inviteePage, invitee.email);
         await inviteePage.goto(inviteUrl);
 
         await expect(

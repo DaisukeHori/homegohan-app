@@ -4,6 +4,7 @@
 > 更新: 2026-10-10 — Web のログインのサーバー経由化 (`POST /api/auth/login`) と、ログイン失敗の回数によるボットの確認を追加 (§1・§2.1・§4〜§8)
 > 更新: 2026-10-10 — ログイン失敗のロック (5 回で 15 分など) をやめた。失敗が続いたらボットの確認を求めるだけにした (§1・§2・§2.1・§5・§7・§8)
 > 更新: 2026-10-14 — メール確認の再送 (`/auth/verify`) と、設定のパスワード変更の本人確認にも Turnstile のトークンを付けた (#1474。§1・§4〜§6・§8〜§10)
+> 更新: 2026-10-14 — e2e・デプロイ後の動作確認スクリプト (`--with-auth`)・Maestro の補助スクリプトが、パスワードのログインを使わず、管理用の鍵でセッションを作るようにした (#1547。§1・§4・§6・§8・§10)
 >
 > この文書は 2 つのことを 1 か所にまとめる。
 > 1. **いまの Supabase Auth の設定値の記録** (レート制限・攻撃対策)。「**オーナー記入**」と書いた欄は、Supabase のダッシュボードで見える現在の値を、オーナーが書き込む。
@@ -27,7 +28,7 @@
 Supabase の CAPTCHA を有効にすると、ログイン・登録・パスワード再設定の API は、Turnstile のトークンが付いていないリクエストを**断る**ようになる。
 
 - 今配られているモバイルのビルドは、トークンを付けられない。有効にした瞬間に、ログインも新規登録もできなくなる。
-- 本番を対象にした e2e (`tests/e2e/global-setup.ts` など) は、Supabase の `/auth/v1/token?grant_type=password` を直接呼んでいる。トークンが無いので失敗する。デプロイ後の動作確認スクリプト (`--with-auth`) と Maestro の補助スクリプトも同じ (§4)。
+- 本番を対象にした e2e (`tests/e2e/global-setup.ts` など)・デプロイ後の動作確認スクリプト (`--with-auth`)・Maestro の補助スクリプトは、Supabase の `/auth/v1/token?grant_type=password` を直接呼んでいた。トークンが無いので失敗する。#1547 で、パスワードのログインを使わない方法に変えた (§4)。
 
 一方で、**Web の画面に Turnstile を出しただけでは、本当の防御にはならない**。Supabase の URL と anon key は公開されているので、攻撃者は画面を通さずに Supabase の Auth API を直接呼べる。トークンを必須にする (= Supabase で CAPTCHA を有効にする) まで、直接呼ぶ攻撃は止まらない。だから、順番は「Web とモバイルの両方がトークンを付けるようになる → 古いビルドが消える → Supabase で有効にする」になる。
 
@@ -133,12 +134,20 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 
 メール確認の再送と、設定のパスワード変更の本人確認は、#1474 でトークンを付けた (それまでは、Supabase で CAPTCHA を有効にすると動かなくなる「未対応」だった)。ほかの画面と同じく、サイトキーが未設定ならウィジェットを出さず、トークンも付けない。サイトキーがあれば、トークンが取れるまで再送・変更のボタンは押せない。パスワード変更では、新しいパスワードの保存 (`updateUser`) と他の端末のログアウト (`signOut`) は CAPTCHA の対象外なので、トークンは本人確認の `signInWithPassword` にだけ付ける。
 
-そのほか、CAPTCHA を有効にすると動かなくなるもの:
+テストの道具のログイン (#1547 で対応済み):
 
-- 本番 (Supabase の本番プロジェクト) を対象にした e2e のログイン (`tests/e2e/global-setup.ts`、`tests/e2e/fixtures/auth.ts` など。Supabase の REST を直接呼ぶ)。有効にするのと同時に、トークンが要らない方法 (管理 API でセッションを作るなど) へ変える。
-- **デプロイ後の動作確認スクリプトの `--with-auth`** (`npm run test:smoke -- --with-auth`、本体は `scripts/lib/smoke.mjs`)。テストユーザーで Supabase の `/auth/v1/token?grant_type=password` を直接呼ぶので、トークンが無く断られ、「ログインに失敗しました」と報告されて確認全体が失敗 (終了コード 1) になる。有効にするのと同時に、`--with-auth` を使わない運用 (未ログインで叩ける範囲だけの確認) にするか、トークンが要らない方法へ変える。`--with-auth` を付けない通常の確認は影響しない。
-- **Maestro (モバイルの e2e) の補助スクリプト** `apps/mobile/maestro/flows/scripts/reset-onboarding.js`。同じく Supabase のパスワードログインを直接呼ぶので、有効にすると失敗する。e2e と同じ扱いで直す。
-- 結合テスト (`tests/integration/`) は、ローカルの Supabase (CAPTCHA は常に無効) に向けて動くので影響しない。
+以前は、次の 3 つが Supabase のパスワードのログイン (`/auth/v1/token?grant_type=password`) を直接呼んでいて、CAPTCHA を有効にすると断られた。いまは、パスワードのログインを使わず、**管理用の鍵 (service_role) でテスト用のセッションを作る**。手順は 3 つとも同じ:
+
+1. service_role で `POST /auth/v1/admin/generate_link` (`type: "recovery"`) → ワンタイムのトークン (`hashed_token`) を受け取る。メールは送られない
+2. anon key で `POST /auth/v1/verify` (`type: "recovery"`, `token_hash`) → セッションを受け取る
+
+`/admin/generate_link` (管理用の鍵の検査だけ) と `/verify` には、Supabase の CAPTCHA の検査が掛からない (Supabase Auth のソースで確かめた。根拠の場所は `tests/e2e/helpers/test-session.ts` の先頭のコメント)。`type` は `recovery` にする (`magiclink` は、そのメールアドレスのユーザーがいないと新しく作ってしまう。`recovery` はいなければ 404 で止まる)。
+
+- **e2e** (`tests/e2e/global-setup.ts`、`tests/e2e/fixtures/auth.ts`・`fresh-user.ts`、`tests/e2e/helpers/seed-roles.ts`、`tests/e2e/tour/`、`tests/e2e/membership/02-org-invite-new-user.spec.ts`): 共通の補助関数 `tests/e2e/helpers/test-session.ts` の `createTestSession` を呼ぶ。鍵は今までのテストと同じ環境変数 (`NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY`) から読む。`SUPABASE_SERVICE_ROLE_KEY` が無いと、`global-setup.ts` と `fixtures/auth.ts` は画面からのログインに回る。
+  - CI の本番向け e2e (`.github/workflows/e2e.yml`) は、Supabase の値を渡していないので、もとから画面からログインしている (この変更の影響は無い)。画面のログインは Turnstile のウィジェットのトークンを付けるので CAPTCHA を有効にしても通るが、本番のサイトキーでは自動化ブラウザに操作を求めることがある (§6 手順 2 の注意)。
+- **デプロイ後の動作確認スクリプトの `--with-auth`** (`npm run test:smoke -- --with-auth`、本体は `scripts/lib/smoke.mjs`): 同じ手順。確認したい環境の `SUPABASE_SERVICE_ROLE_KEY` が要る (`E2E_USER_PASSWORD` は使わなくなった)。**本番では `--with-auth` を使わない** (本番の管理用の鍵を、確認用の端末やシェルに出さないため)。本番は `--with-auth` なしの 4 項目で確認する (`--with-auth` を付けない通常の確認は、CAPTCHA の影響を受けない)。
+- **Maestro (モバイルの e2e) の補助スクリプト** `apps/mobile/maestro/flows/scripts/reset-onboarding.js`: 同じ手順。Supabase の URL・anon key・service_role は、シェルの環境変数 `MAESTRO_SUPABASE_URL` / `MAESTRO_SUPABASE_ANON_KEY` / `MAESTRO_SUPABASE_SERVICE_ROLE_KEY` で渡す (`apps/mobile/maestro/README.md`)。**本番の Supabase には使わない** (本番の URL や鍵を既定値として持たない)。
+- 結合テスト (`tests/integration/`) は、ローカルの Supabase (CAPTCHA は常に無効) に向けて動くので影響しない (今までどおりパスワードでログインする)。
 
 ---
 
@@ -221,7 +230,7 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
 - [ ] モバイルの新しいビルドが配られ、**古いビルドが使われなくなった** (使われているビルドの内訳は、App Store Connect / Google Play Console で見る)
 - [x] メール確認の再送と、設定画面のパスワード変更の本人確認に、トークンを付ける対応が入った (#1474。§4)
 - [ ] 本番向け e2e のログインを、トークンが要らない方法へ変えた (§4)
-- [ ] デプロイ後の動作確認スクリプトの `--with-auth` (`scripts/lib/smoke.mjs`) と、Maestro の補助スクリプト (`apps/mobile/maestro/flows/scripts/reset-onboarding.js`) を、トークンが要らない方法へ変えた、または使わない運用にした (§4)
+- [x] デプロイ後の動作確認スクリプトの `--with-auth` (`scripts/lib/smoke.mjs`) と、Maestro の補助スクリプト (`apps/mobile/maestro/flows/scripts/reset-onboarding.js`) を、トークンが要らない方法へ変えた、または使わない運用にした (§4。#1547: 管理用の鍵でセッションを作る方法に変えた。どちらも本番では使わない)
 - [ ] Web の本番に `NEXT_PUBLIC_TURNSTILE_SITE_KEY` が入っていて、3 画面と、メール確認の再送・設定のパスワード変更で動いている
 - [ ] ロールバック手順 (§7) を読んだ
 
@@ -261,6 +270,7 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
 - **ローカルの Supabase は CAPTCHA を有効にしない** (`supabase/config.toml` に `[auth.captcha]` を書かない)。結合テスト・e2e・開発は、トークン無しで `signInWithPassword` / `signUp` を呼ぶため。`src/__tests__/config/turnstile-config.test.ts` が、有効にされていないことを検査する。
 - **単体テスト** (`tests/auth-turnstile-widget.test.tsx`、`tests/auth-turnstile-pages.test.tsx`、`tests/auth-turnstile-resend-password-change.test.tsx`): ウィジェットの動き、3 画面とメール確認の再送・設定のパスワード変更 (#1474) が Supabase の**正しい場所**にトークンを付けること、「トークンが無い間は送信ボタンが押せない」こと。モバイルは `apps/mobile/__tests__/`。
   - 注意: `resetPasswordForEmail` だけは、`captchaToken` を `options` の中ではなく**第 2 引数の直下** (`redirectTo` と同じ階層) に渡す。`options` の中に入れても、Supabase には届かず、黙って無視される。
+- **テストの道具のログイン (#1547)**: 単体テスト `tests/e2e-test-session.test.ts` が、共通の補助関数 (`tests/e2e/helpers/test-session.ts`) と Maestro の補助スクリプトが CAPTCHA の対象外の経路 (`/admin/generate_link` と `/verify`) だけを呼び、パスワードのログインを呼ばないこと (呼び出しの検査)、e2e の各所がこの補助関数を使うこと、`tests/e2e`・`scripts`・`apps/mobile/maestro` のコード (コメントを除く) にパスワードのログインが戻ってきていないことを確かめる。`--with-auth` は `tests/smoke-script.test.ts`。ローカルの Supabase は CAPTCHA が無効なので、e2e が緑でも「CAPTCHA が有効でも通る」ことは示せない。そのため呼び出しの形で固定している。
 - **ログインに続けて失敗したとき (ロックしない)**: 単体テスト `tests/auth/login-failures.test.ts` (回数 → ボットの確認の決定表・時間で戻る・環境変数)・`tests/auth/guarded-login.test.ts` (状態 × 操作の表。何回失敗しても正しいパスワードならログインできる)・`tests/api/auth-login-route.test.ts` (応答の表。何回失敗しても 423 にならない)・`tests/auth/turnstile-verify.test.ts`。回帰テスト `tests/auth/no-login-lockout.test.ts` (ロックの応答・ロックの DB の関数・ロックを外す API がコードに戻ってきたら失敗する。AI の送る先の一覧のログインの項に外したメール (Resend) が書かれていたり、文書にロックを前提にした文が書かれていたりしても失敗する)。結合テスト `tests/integration/security/auth-login-lock.test.ts` (ローカルの Supabase で、DB の関数の権限・同時の加算・時間で戻る・本物の Auth と組み合わせて 25 回失敗してもロックしないこと)。
 - **e2e** (`tests/e2e/auth-turnstile.spec.ts`): 本物のブラウザ・本物の CSP・本物の Cloudflare の `api.js` と、**Cloudflare のテスト用サイトキー** (`1x00000000000000000000AA`) で、ウィジェットがトークンを出し、新規登録・パスワード再設定・メール確認の再送 (#1474) では Supabase へのリクエストに `captcha_token` が、ログインでは `POST /api/auth/login` の本文に `captchaToken` が入ることを確かめる。通信はブラウザで差し替えるので、Supabase には繋がない。
   - CI: `.github/workflows/e2e-local.yml` が、このテスト用サイトキーを付けてアプリをビルドし、この spec と `01-login.spec.ts` を回す。`01-login.spec.ts` は通信を差し替えず、ウィジェットがトークンを出すのを待ってから本物のサーバーでログインし、`POST /api/auth/login` の本文に `captchaToken` が付くことを確かめる。
@@ -287,6 +297,6 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
 - [ ] Supabase ダッシュボードの**現在の設定値** (§3.1・§3.2) を、この文書の表に記入する
 - [ ] Web の本番に入れる時期を決める (§6 手順 2)
 - [ ] モバイルの新しいビルドを配り、**古いビルドが使われなくなる**のを待つ。実機での確認は §6 手順 3
-- [ ] 本番向け e2e・動作確認スクリプト (`--with-auth`)・Maestro 補助スクリプトのログインの対応を依頼する (§4 の「未対応」だった 2 つは #1474 で対応済み)
+- [x] 本番向け e2e・動作確認スクリプト (`--with-auth`)・Maestro 補助スクリプトのログインの対応を依頼する (§4 の「未対応」だった 2 つは #1474 で対応済み。e2e・`--with-auth`・Maestro 補助スクリプトの Supabase の直接の呼び出しは #1547 で対応済み)
 - [ ] **Supabase で CAPTCHA を有効にする時期**を決める (§6 手順 5)
 - [ ] プライバシーポリシーへの追記が要るか判断する (§9)

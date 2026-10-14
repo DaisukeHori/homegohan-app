@@ -5,9 +5,21 @@
  * ネットワークと終了コードに触れる処理は runSmoke() / main() に閉じ込めてある。
  *
  * 守っていること:
- *   - データを書き換えるリクエストは送らない (GET と、--with-auth 時のログインだけ)
+ *   - データを書き換えるリクエストは送らない (GET と、--with-auth 時のログインだけ。ログインは、管理用の鍵で
+ *     ワンタイムのトークンを発行し (Supabase Auth がユーザーの行にトークンを記録する)、それをセッションに換える。
+ *     パスワードのログインと同じく、ログインした記録が残るだけ)
  *   - パスワード・トークン・API キーは出力に含めない (ステータスコードと成否だけ出す)
  *   - .env.local は読まない (確認したい環境と別の環境の値が混ざるのを避けるため)
+ *
+ * --with-auth のログイン (#1547):
+ *   Supabase の CAPTCHA を有効にすると、トークンの無いパスワードのログイン (/auth/v1/token?grant_type=password) は断られる。
+ *   そこで、パスワードのログインは使わず、tests/e2e/helpers/test-session.ts と同じ手順でセッションを作る:
+ *     1. service_role で POST /auth/v1/admin/generate_link ({ type: "recovery", email }) → hashed_token (メールは送られない)
+ *     2. anon key で POST /auth/v1/verify ({ type: "recovery", token_hash }) → access_token
+ *   どちらも CAPTCHA の対象外 (根拠は tests/e2e/helpers/test-session.ts の先頭のコメント)。
+ *   この手順は、確認したい環境の service_role (管理用の鍵) を要る。**本番では --with-auth を使わない**
+ *   (本番の管理用の鍵を、確認用の端末やシェルに出さないため)。本番は --with-auth なしの 4 項目で確認する。
+ *   このファイルは node でそのまま動かす .mjs で、TypeScript の helpers/test-session.ts を読み込めないので、同じ手順をここにも書いている。
  */
 
 export const DEFAULT_BASE_URL = 'http://localhost:3000';
@@ -17,10 +29,13 @@ const MAX_TIMEOUT_MS = 600_000;
 /** --with-auth のときだけ必要な環境変数 (値は出力しない。足りないものの名前だけ出す) */
 export const AUTH_ENV_NAMES = [
   'E2E_USER_EMAIL',
-  'E2E_USER_PASSWORD',
   'NEXT_PUBLIC_SUPABASE_URL',
   'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+  'SUPABASE_SERVICE_ROLE_KEY',
 ];
+
+/** --with-auth のセッションの作り方 (generate_link と verify に渡す type)。理由は tests/e2e/helpers/test-session.ts */
+export const AUTH_LINK_TYPE = 'recovery';
 
 export const USAGE = `デプロイ後 / DR 復元後の smoke test (#1181)
 
@@ -38,8 +53,11 @@ export const USAGE = `デプロイ後 / DR 復元後の smoke test (#1181)
 オプション:
   --base-url=<URL>   確認先。省略時は環境変数 PLAYWRIGHT_BASE_URL、それも無ければ ${DEFAULT_BASE_URL}
   --with-auth        テストユーザーでログインし、GET /api/profile が 200 になることも確認する。
+                     パスワードのログインは使わず、管理用の鍵 (service_role) でセッションを作る
+                     (Supabase の CAPTCHA を有効にしても動く。#1547)。
                      次の環境変数を、確認したい環境の値で渡す (.env.local は読まない):
                      ${AUTH_ENV_NAMES.join(' / ')}
+                     本番では使わない (本番の管理用の鍵を手元に出さないため)。本番は --with-auth なしで確認する。
   --timeout-ms=<ms>  1 リクエストの待ち時間 (既定 ${DEFAULT_TIMEOUT_MS}。コールドスタートが遅いときに延ばす)
   -h, --help         この説明を表示する
 
@@ -204,14 +222,41 @@ function buildChecks({ baseUrl, fetchImpl, timeoutMs, env, withAuth }) {
         // URL として読めなければ、そのままリクエストが失敗して報告される
       }
 
-      const loginRes = await send(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+      // 1. 管理用の鍵で、ワンタイムのトークン (のハッシュ) を発行する (メールは送られない)
+      const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY;
+      const linkRes = await send(`${supabaseUrl}/auth/v1/admin/generate_link`, {
+        method: 'POST',
+        headers: {
+          apikey: serviceRoleKey,
+          Authorization: `Bearer ${serviceRoleKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ type: AUTH_LINK_TYPE, email: env.E2E_USER_EMAIL }),
+      });
+      if (linkRes.status !== 200) {
+        await drain(linkRes);
+        return fail(`ログインに失敗しました (${host}): 管理用のトークンの発行が HTTP ${linkRes.status}`);
+      }
+      let link = null;
+      try {
+        link = await linkRes.json();
+      } catch {
+        // 下で hashed_token が無いものとして扱う
+      }
+      const tokenHash = link?.hashed_token;
+      if (typeof tokenHash !== 'string' || !tokenHash) {
+        return fail(`管理用のトークンの発行の応答に hashed_token がありません (${host})`);
+      }
+
+      // 2. そのトークンをセッションに換える (/verify には CAPTCHA が掛からない)
+      const loginRes = await send(`${supabaseUrl}/auth/v1/verify`, {
         method: 'POST',
         headers: { apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: env.E2E_USER_EMAIL, password: env.E2E_USER_PASSWORD }),
+        body: JSON.stringify({ type: AUTH_LINK_TYPE, token_hash: tokenHash }),
       });
       if (loginRes.status !== 200) {
         await drain(loginRes);
-        return fail(`ログインに失敗しました (${host}): HTTP ${loginRes.status}`);
+        return fail(`ログインに失敗しました (${host}): トークンの確認が HTTP ${loginRes.status}`);
       }
       let session = null;
       try {

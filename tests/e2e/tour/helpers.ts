@@ -8,12 +8,12 @@ import type { Page, Locator } from "@playwright/test";
 import { expect } from "@playwright/test";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
+import { createTestSession, describeTestSessionFailure } from "../helpers/test-session";
 
 dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
 /** テストユーザーのパスワード (固定値) */
 const TEST_USER_PASSWORD = "E2eTourUser2026!";
@@ -112,23 +112,19 @@ export async function signupViaApi(email: string, password: string): Promise<str
 }
 
 /**
+ * テスト用のセッションを作り (#1547: パスワードのログインは使わない。helpers/test-session.ts)、
  * Supabase Cookie を page context に注入してログイン状態を作る。
  * @supabase/ssr は Cookie ベース認証を使用する。
  */
-async function injectSession(page: Page, email: string, password: string): Promise<boolean> {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return false;
+async function injectSession(page: Page, email: string): Promise<boolean> {
+  if (!SUPABASE_URL) return false;
   try {
-    const resp = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!resp.ok) return false;
-    const session = await resp.json() as Record<string, unknown>;
-    if (!session.access_token) return false;
+    const result = await createTestSession(email);
+    if (!result.ok) {
+      console.warn(`[tour/helpers] ${describeTestSessionFailure(result)}`);
+      return false;
+    }
+    const session = result.session;
 
     const supabaseRef = new URL(SUPABASE_URL).hostname.split(".")[0];
     const cookieName = `sb-${supabaseRef}-auth-token`;
@@ -176,7 +172,7 @@ export async function signupAsNewUser(page: Page, email: string): Promise<string
   }
 
   // 2. Cookie セッション注入
-  const injected = await injectSession(page, email, TEST_USER_PASSWORD);
+  const injected = await injectSession(page, email);
   if (!injected) {
     console.warn("[tour/helpers] signupAsNewUser: セッション注入失敗");
     return userId;

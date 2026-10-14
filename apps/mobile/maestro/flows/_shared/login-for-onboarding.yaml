@@ -95,6 +95,9 @@ appId: com.homegohan.app
           timeout: 15000
 
 # ログイン後に home-screen になった場合: onboarding 完了済みなのでリセットしてリロード
+# リセットのスクリプトは、パスワードのログインを使わず、管理用の鍵でセッションを作る (#1547)。
+# Supabase の URL・anon key・service_role は、シェルの環境変数 MAESTRO_SUPABASE_URL / MAESTRO_SUPABASE_ANON_KEY /
+# MAESTRO_SUPABASE_SERVICE_ROLE_KEY から渡す (-e で渡すとコマンドラインに鍵が残る)。本番の Supabase には使わない (README.md)
 - runFlow:
     when:
       visible:
@@ -104,7 +107,9 @@ appId: com.homegohan.app
           file: "../scripts/reset-onboarding.js"
           env:
             E2E_USER_EMAIL: ${E2E_USER_EMAIL}
-            E2E_USER_PASSWORD: ${E2E_USER_PASSWORD}
+            SUPABASE_URL: "${typeof MAESTRO_SUPABASE_URL !== 'undefined' ? MAESTRO_SUPABASE_URL : ''}"
+            SUPABASE_ANON_KEY: "${typeof MAESTRO_SUPABASE_ANON_KEY !== 'undefined' ? MAESTRO_SUPABASE_ANON_KEY : ''}"
+            SUPABASE_SERVICE_ROLE_KEY: "${typeof MAESTRO_SUPABASE_SERVICE_ROLE_KEY !== 'undefined' ? MAESTRO_SUPABASE_SERVICE_ROLE_KEY : ''}"
       - launchApp:
           clearState: false
       - waitForAnimationToEnd:

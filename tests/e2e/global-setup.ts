@@ -4,7 +4,9 @@
  * 全 worker が共有する storageState を生成する。
  *
  * 戦略:
- * 1. Supabase Auth REST API でトークン取得 (ブラウザログインをスキップ)
+ * 1. 管理用の鍵 (service_role) でテスト用のセッションを作る (ブラウザログインをスキップ)。
+ *    パスワードのログイン (/auth/v1/token?grant_type=password) は呼ばない。Supabase の CAPTCHA を有効にしても
+ *    止まらないように (#1547。helpers/test-session.ts)
  * 2. 取得したセッションを Cookie として Playwright コンテキストに直接設定
  *    (@supabase/ssr は localStorage でなく Cookie を使うため)
  * 3. /home に遷移して認証済み状態を確認
@@ -27,6 +29,7 @@ import { acceptLegalConsentIfShown } from "./helpers/legal-consent";
 import { ensureAiConsentGranted } from "./helpers/ai-consent";
 import { waitForLoginFormReady } from "./helpers/login-form";
 import { seedClassifyFixtures } from "./setup/seed-classify-fixtures";
+import { createTestSession, describeTestSessionFailure, readTestSessionConfig } from "./helpers/test-session";
 
 /** backward compat: 既存コードが参照するエクスポート (user-01 のパスを返す) */
 export const REFRESH_TOKEN_PATH = "tests/e2e/.auth/refresh-01.json";
@@ -104,38 +107,16 @@ function atomicWriteJson(filePath: string, data: unknown): void {
 }
 
 /**
- * Supabase Auth REST API でサインインしてセッションを取得する。
+ * テスト用のセッションを作る (#1547: パスワードのログインを使わない。helpers/test-session.ts)。
+ * 作れなければ警告を出して null を返す (呼び出し側は UI ログインにフォールバックする)。
  */
-async function fetchSupabaseSession(
-  supabaseUrl: string,
-  anonKey: string,
-  email: string,
-  password: string,
-): Promise<Record<string, unknown> | null> {
-  try {
-    const resp = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: anonKey,
-      },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!resp.ok) {
-      const body = await resp.text();
-      console.warn(`[global-setup] Supabase auth API error ${resp.status}: ${body.substring(0, 200)}`);
-      return null;
-    }
-    const data = await resp.json() as Record<string, unknown>;
-    if (!data.access_token) {
-      console.warn(`[global-setup] Supabase auth: no access_token in response`);
-      return null;
-    }
-    return data;
-  } catch (err) {
-    console.warn(`[global-setup] fetchSupabaseSession error: ${err}`);
+async function fetchTestSession(email: string): Promise<Record<string, unknown> | null> {
+  const result = await createTestSession(email);
+  if (!result.ok) {
+    console.warn(`[global-setup] ${describeTestSessionFailure(result)}`);
     return null;
   }
+  return result.session;
 }
 
 /**
@@ -181,7 +162,6 @@ async function setupUserSession(
   email: string,
   password: string,
   supabaseUrl: string,
-  supabaseAnonKey: string,
   storageStatePath: string,
   refreshTokenPath: string,
 ): Promise<boolean> {
@@ -198,9 +178,10 @@ async function setupUserSession(
     try {
       let sessionInjected = false;
 
-      if (supabaseUrl && supabaseAnonKey) {
+      // 管理用の鍵 (SUPABASE_SERVICE_ROLE_KEY) が無ければ、セッションは作れないので UI ログインに回る
+      if (supabaseUrl && readTestSessionConfig()) {
         console.log(`[global-setup] ${email} セッション取得中... (attempt ${attempt})`);
-        const session = await fetchSupabaseSession(supabaseUrl, supabaseAnonKey, email, password);
+        const session = await fetchTestSession(email);
 
         if (session) {
           const supabaseRef = new URL(supabaseUrl).hostname.split(".")[0];
@@ -352,7 +333,6 @@ async function globalSetup(config: FullConfig): Promise<void> {
     "http://localhost:3000";
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
   // 保存先ディレクトリを作成
   const dir = path.dirname(getStorageStatePath(0));
@@ -377,7 +357,6 @@ async function globalSetup(config: FullConfig): Promise<void> {
       envEmail!,
       password,
       supabaseUrl,
-      supabaseAnonKey,
       "tests/e2e/.auth/user.json",
       "tests/e2e/.auth/refresh.json",
     );
@@ -413,7 +392,6 @@ async function globalSetup(config: FullConfig): Promise<void> {
       userEmail,
       userPassword,
       supabaseUrl,
-      supabaseAnonKey,
       storageStatePath,
       refreshTokenPath,
     );
