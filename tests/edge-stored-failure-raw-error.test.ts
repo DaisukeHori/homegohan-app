@@ -8,7 +8,7 @@
  * shopping_list_requests.result.error に、捕まえた例外の文面 (DB の生のエラー文など) をそのまま書いていた。
  * 画面は Realtime や直接の select でこの欄を受けてそのまま出すので、API (状態の確認) では固定の文、Realtime では生の文が見えていた。
  *
- * ここでは同意を済ませた状態で、処理の途中の DB の読み取りを生のエラー文の例外で落とし、
+ * ここでは同意を済ませた状態で、処理の途中の DB の読み取りと外部への通信を生のエラー文の例外で落とし、
  *   1. 行の失敗の欄には定型の文 (_shared/stored-failure-messages.ts) が入る
  *   2. 行の書き込みの値にも、応答の本文にも、生のエラー文が入らない
  *   3. 生のエラー文は構造化ログ (db-logger) か console にだけ残る
@@ -102,6 +102,10 @@ const ENV: Record<string, string> = {
   SUPABASE_URL: 'https://project.supabase.test',
   SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY,
   SUPABASE_ANON_KEY: 'anon-key',
+  // 外部の AI の鍵 (値は使わない)。無いと設定不足の例外 (文は固定) で先に止まり、生の文の経路を通らない
+  AIMLAPI_API_KEY: 'test-aimlapi-key',
+  XAI_API_KEY: 'test-xai-key',
+  OPENAI_API_KEY: 'test-openai-key',
 };
 
 const WRITERS: Array<{
@@ -162,6 +166,8 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  // 外部への通信 (AI・埋め込み) も、生の文の例外で落とす (どの経路で失敗しても、行と本文に生の文が出ないことを見る)
+  vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error(RAW_DB_ERROR));
 });
 
 afterEach(() => {
