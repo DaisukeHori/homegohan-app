@@ -228,7 +228,7 @@ describe('止めないもの (AI を呼ばない API)', () => {
     const { DELETE } = await import('@/app/api/ai/consultation/actions/[actionId]/execute/route');
 
     const res = await DELETE(new Request('http://localhost/api/ai/consultation/actions/a1/execute', { method: 'DELETE' }), {
-      params: { actionId: 'a1' },
+      params: Promise.resolve({ actionId: 'a1' }),
     });
 
     expect(res.status).toBe(404); // フラグではなく、対象が無いことで返っている

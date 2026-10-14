@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic';
 const NO_STORE = { 'Cache-Control': 'no-store' } as const;
 
 export async function POST() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
     error: userError,

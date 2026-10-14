@@ -3,10 +3,9 @@
 // - 既存の確認/キャンセル挙動（後方互換）が保たれていること
 // - role="dialog" / aria-modal / Escape クローズ等、以前は無かった a11y が備わったこと
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 import { ConfirmDeleteModal } from '../ConfirmDeleteModal';
 

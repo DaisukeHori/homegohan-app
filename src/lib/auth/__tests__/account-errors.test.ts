@@ -212,4 +212,47 @@ describe('判定ヘルパー', () => {
     expect(isSessionExpiredAuthError(invalidCredentials)).toBe(false);
     expect(isSessionExpiredAuthError(networkDown)).toBe(false);
   });
+
+  it('isSessionExpiredAuthError: "session" の後ろの語は同じ行の中にあるときだけ数える (以前の正規表現の `.` と同じ)', () => {
+    expect(isSessionExpiredAuthError({ message: 'Session from storage expired' })).toBe(true);
+    expect(isSessionExpiredAuthError({ message: 'Auth session missing!' })).toBe(true);
+    expect(isSessionExpiredAuthError({ message: 'session\nexpired' })).toBe(false);
+    expect(isSessionExpiredAuthError({ message: 'expired session' })).toBe(false);
+  });
+});
+
+describe('isSessionExpiredAuthError: 以前の正規表現と同じ判定を、長さに比例する時間で行う (CodeQL js/polynomial-redos #41)', () => {
+  /** 以前の判定 (同じ語が何度も続くと時間が長さの 2 乗で増える)。短い文字列での突き合わせにだけ使う */
+  const LEGACY_SESSION_EXPIRED_PATTERN = /auth session missing|session.*(not found|expired|missing)|invalid jwt|jwt expired/i;
+  /** 突き合わせに使う部品 (大文字小文字・途中で切れた語・行の区切りを混ぜる) */
+  const PARTS = ['session', 'SESSION', 'sess', 'ion', 'auth ', 'not found', 'Expired', 'missing', 'invalid ', 'jwt', 'JWT expired', 'x', '\n', '\r', '\u2028'];
+  /** 部品をいくつまで並べるか (15 部品 × 4 個で約 5 万通り。すべての並びを試す) */
+  const MAX_PARTS = 4;
+
+  it('部品 0〜4 個のすべての並びで、以前の正規表現と結果が同じ', () => {
+    let checked = 0;
+    let level = [''];
+    for (let count = 0; count <= MAX_PARTS; count++) {
+      for (const message of level) {
+        expect(isSessionExpiredAuthError({ message }), JSON.stringify(message)).toBe(
+          LEGACY_SESSION_EXPIRED_PATTERN.test(message),
+        );
+        checked++;
+      }
+      level = level.flatMap((prefix) => PARTS.map((part) => prefix + part));
+    }
+    // 15^0 + 15^1 + … + 15^4 = 54,241 通りを試したこと (突き合わせが空回りしていない)
+    expect(checked).toBe(54_241);
+  });
+
+  it('"session" が何度も続く長いメッセージでも、すぐに終わる (以前の正規表現は長さの 2 乗の時間がかかった)', () => {
+    const REPEAT = 100_000;
+    const adversarial = 'session'.repeat(REPEAT);
+    // 長さに比例する時間なら数ミリ秒で終わる。負荷の高い CI でも誤って落ちないよう、上限は大きめにとる
+    const TIME_LIMIT_MS = 1_000;
+    const startedAt = performance.now();
+    expect(isSessionExpiredAuthError({ message: adversarial })).toBe(false);
+    expect(performance.now() - startedAt).toBeLessThan(TIME_LIMIT_MS);
+    expect(isSessionExpiredAuthError({ message: `${adversarial} expired` })).toBe(true);
+  });
 });

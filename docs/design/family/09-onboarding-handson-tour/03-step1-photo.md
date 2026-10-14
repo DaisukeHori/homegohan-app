@@ -70,7 +70,7 @@ Step 1 は **「写真 1 枚で食事が記録できる」体験を提供する*
 | `intro_hint` | "タップで進む" |
 
 #### testID
-- `tour-step-1-intro`: カード全体
+- `tour-step-1-intro`: intro 吹き出しの中身 (吹き出し全体は共通の `tour-bubble`。#846 で実装に付けた位置)
 - `tour-step-1-intro-tap`: タップ領域
 
 ---
@@ -208,19 +208,23 @@ const handleSave = async () => {
     const response = await fetch('/api/meal-plans/add-from-photo?source=handson_tour', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      // POST /api/meal-plans/add-from-photo が読む本文の形 (mealType / dishes / totalCalories / imageUrl)。
+      // 夕食として記録する (src/lib/handson-tour/photo-save.ts の buildTourPhotoSaveBody)。
+      // 食べた時刻 (eaten_at) はサーバーが保存した今で入れる。お試しの記録は meals の 1 行なので日付 (dayDate) は送らない
       body: JSON.stringify({
         sandbox: true,
-        dishName: '鶏の唐揚げ定食',
-        calories: 780,
-        protein_g: 38,
-        fat_g: 32,
-        carbs_g: 88,
-        photo_url: null,  // mock のため
-        eaten_at: new Date().toISOString(),
-        meal_type: 'dinner',
+        mealType: 'dinner',
+        dishes: [{ name: '鶏の唐揚げ定食', cal: 780, role: 'main' }],
+        totalCalories: 780,
+        imageUrl: null,  // mock のため
       }),
     });
-    if (!response.ok) throw new Error(`status_${response.status}`);
+    if (!response.ok) {
+      // 保存の対象でない利用者 (sandbox_not_eligible。設定からのやり直しで完了・スキップ済みなど。17-security §2.1) は
+      // エラー画面にせず Step 2 へ進める (01-trigger-flow §1.2 / §4.2: やり直しでも Step 4 まで通して見せる)
+      const body = await response.json().catch(() => null);
+      if (body?.error?.code !== 'sandbox_not_eligible') throw new Error(`status_${response.status}`);
+    }
 
     fireAnalytics('handson_tour_step_completed', { step: 1, dwell_ms: Date.now() - mountTime.current });
     router.push('/handson-tour/menu');
@@ -275,6 +279,12 @@ WHERE b.code = 'first_bite'
 
 → 既に first_bite を持っているユーザー (= force=1 で再表示してる場合) は INSERT されない (NOT EXISTS で防御、§19-rollout)。
 
+実装 (#1604) との差:
+- force=1 の再表示 (完了・スキップ済み) は、17-security §2.1 の段階 1 で 409 sandbox_not_eligible / already_finished になり、meals には入らない。画面は §3.7 のとおり Step 2 へ進む。
+- お試しの行は利用者ごとに 1 行 (uniq_user_sandbox_meal)。中断して再開したとき (01-trigger-flow §7.4・08-state-db §4.2) の 2 回目の保存は、その行を使い回して eaten_at などを更新する (二重 INSERT にしない)。
+- first_bite の付与はしない (#1314: お試しの記録はバッジの判定に数えない。GET /api/badges)。
+- user_daily_meals / planned_meals には書かない (UNIQUE(user_id, day_date) で同じ日の本物の記録と取り合うため)。
+
 ---
 
 ### 3.10 エラー画面 (1.6 失敗時)
@@ -299,6 +309,7 @@ WHERE b.code = 'first_bite'
 - 【もう一度】タップ → 1.7 から再実行 (再 API 呼び出し)
 - 【あとで】タップ → /home へ遷移 + skip API
 - 連続 3 回失敗で【あとで】を強調表示 (太字)
+- 保存の対象でない応答 (sandbox_not_eligible) はこの画面を出さない (§3.7)
 
 #### 文言
 

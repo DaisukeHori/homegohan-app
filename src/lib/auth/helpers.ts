@@ -24,7 +24,7 @@ export { type RoleName, type OrgRoleName, type UserProfile };
  * 未認証・エラー時は AuthError を throw する。
  */
 async function getAuthUser(): Promise<User> {
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error || !user) {
     throw new AuthError('AUTH_UNAUTHENTICATED');
@@ -41,7 +41,7 @@ async function getUserProfile(userId: string): Promise<{
   frozen_at: string | null;
   unban_at: string | null;
 }> {
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data: profile, error } = await supabase
     .from('user_profiles')
     .select('roles, organization_id, frozen_at, unban_at')
@@ -138,7 +138,7 @@ export async function requireOrgRole(
   orgId: string,
   allowedRoles: ReadonlyArray<OrgRoleName>,
 ): Promise<void> {
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data: profile, error } = await supabase
     .from('user_profiles')
     .select('roles, organization_id')
@@ -192,7 +192,7 @@ export interface OrgAdminContext {
 export async function requireOrgAdmin(): Promise<OrgAdminContext> {
   const user = await getAuthUser();
 
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data } = await supabase
     .from('user_profiles')
     .select('organization_id, org_role, nickname')

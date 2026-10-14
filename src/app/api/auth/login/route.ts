@@ -185,7 +185,7 @@ export async function POST(request: NextRequest) {
     return internalError(ROUTE_NAME, error, { stage: 'admin-client' });
   }
   const failureStore: LoginFailureRpcClient = { rpc: (fn, args) => admin.rpc(fn, args) };
-  const supabase = createClient();
+  const supabase = await createClient();
 
   try {
     const result = await performGuardedLogin(

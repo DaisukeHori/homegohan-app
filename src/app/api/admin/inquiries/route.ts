@@ -66,7 +66,7 @@ export async function GET(request: Request) {
 
   // inquiries は RLS (admin / super_admin / support のみ SELECT 可) に任せ、本人のセッションで読む。
   // service_role を使うのは、RLS で読めないニックネームの解決だけ (fetchNicknames)。
-  const supabase = createClient();
+  const supabase = await createClient();
   let query = supabase
     .from('inquiries')
     .select(INQUIRY_LIST_COLUMNS, { count: 'exact' })

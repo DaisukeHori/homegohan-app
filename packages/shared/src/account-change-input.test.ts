@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  EMAIL_CHANGE_PATTERN,
+  isEmailChangeFormat,
   normalizeEmailChangeInput,
   validatePasswordChangeInput,
 } from './account-change-input';
@@ -74,8 +74,50 @@ describe('normalizeEmailChangeInput', () => {
   });
 
   it('形式の確認は大まかなものだけ (@ の前後と、ドメインの . があるか)', () => {
-    expect(EMAIL_CHANGE_PATTERN.test('a@b.c')).toBe(true);
-    expect(EMAIL_CHANGE_PATTERN.test('a@b')).toBe(false);
-    expect(EMAIL_CHANGE_PATTERN.test('a b@c.d')).toBe(false);
+    expect(isEmailChangeFormat('a@b.c')).toBe(true);
+    expect(isEmailChangeFormat('a@b')).toBe(false);
+    expect(isEmailChangeFormat('a b@c.d')).toBe(false);
+    expect(isEmailChangeFormat('@b.c')).toBe(false);
+    expect(isEmailChangeFormat('a@@b.c')).toBe(false);
+    expect(isEmailChangeFormat('a@.b')).toBe(false);
+    expect(isEmailChangeFormat('a@b.')).toBe(false);
+    expect(isEmailChangeFormat('a@.b.c')).toBe(true);
+    expect(isEmailChangeFormat('a@b..')).toBe(true);
+  });
+});
+
+describe('isEmailChangeFormat: 以前の正規表現と同じ判定を、長さに比例する時間で行う (CodeQL js/polynomial-redos #42)', () => {
+  /** 以前の判定 (入力が長いと時間が長さの 2 乗で増える)。短い文字列での突き合わせにだけ使う */
+  const LEGACY_EMAIL_CHANGE_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  /** 突き合わせに使う文字: 普通の文字・@・.・空白 (半角・改行・全角・ノーブレークスペース) */
+  const ALPHABET = ['a', '@', '.', ' ', '\n', '\u3000', '\u00a0'];
+  /** 突き合わせる文字列の長さの上限 (7 文字 × 長さ 6 で約 14 万通り。すべての並びを試す) */
+  const MAX_LENGTH = 6;
+
+  it('長さ 0〜6 の、上の文字のすべての並びで、以前の正規表現と結果が同じ', () => {
+    let checked = 0;
+    let level = [''];
+    for (let length = 0; length <= MAX_LENGTH; length++) {
+      for (const value of level) {
+        expect(isEmailChangeFormat(value), JSON.stringify(value)).toBe(LEGACY_EMAIL_CHANGE_PATTERN.test(value));
+        checked++;
+      }
+      level = level.flatMap((prefix) => ALPHABET.map((ch) => prefix + ch));
+    }
+    // 7^0 + 7^1 + … + 7^6 = 137,257 通りを試したこと (突き合わせが空回りしていない)
+    expect(checked).toBe(137_257);
+  });
+
+  it('"." が何度も続き、最後に空白がある長い入力でも、すぐに終わる (以前の正規表現は長さの 2 乗の時間がかかった)', () => {
+    // CodeQL が示した形: '!@!.' のあと '!.' が何度も続き、最後に合わない文字がある
+    const REPEAT = 100_000;
+    const adversarial = `!@!.${'!.'.repeat(REPEAT)} `;
+    // 長さに比例する時間なら数ミリ秒で終わる。以前の正規表現では、この長さで数十秒以上かかる。
+    // 負荷の高い CI でも誤って落ちないよう、上限は大きめにとる
+    const TIME_LIMIT_MS = 1_000;
+    const startedAt = performance.now();
+    expect(isEmailChangeFormat(adversarial)).toBe(false);
+    expect(performance.now() - startedAt).toBeLessThan(TIME_LIMIT_MS);
+    expect(isEmailChangeFormat(adversarial.trim())).toBe(true);
   });
 });

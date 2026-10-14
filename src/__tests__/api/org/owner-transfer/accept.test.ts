@@ -133,7 +133,7 @@ beforeEach(() => {
 
 const call = () =>
   POST(new Request(`http://localhost/api/org/owner-transfer/${PROPOSAL_ID}/accept`, { method: 'POST' }), {
-    params: { id: PROPOSAL_ID },
+    params: Promise.resolve({ id: PROPOSAL_ID }),
   });
 
 /** sendEmail に渡された封筒。同じ宛先に 2 通送っていたら気づけるよう配列で扱う */

@@ -14,7 +14,7 @@ export async function POST(
 ) {
   const { id: token } = await params;
 
-  const supabase = createClient();
+  const supabase = await createClient();
 
   const { error } = await supabase.rpc('reject_org_invite', { p_token: token });
 

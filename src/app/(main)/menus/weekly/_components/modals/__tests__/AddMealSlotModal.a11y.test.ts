@@ -3,10 +3,9 @@
 // role="dialog"/aria-modal/フォーカストラップ/Escape がゼロだった問題への対応を、
 // 実際に DOM へレンダリングして検証する。
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 import { AddMealSlotModal } from '../AddMealSlotModal';
 

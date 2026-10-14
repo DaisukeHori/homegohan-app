@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, use } from "react";
 import Link from "next/link";
 
 interface ExperimentResults {
@@ -41,7 +41,8 @@ const STATUS_BADGE: Record<string, string> = {
   cancelled: "bg-red-800 text-red-200",
 };
 
-export default function ExperimentDetailPage({ params }: { params: { id: string } }) {
+export default function ExperimentDetailPage(props: { params: Promise<{ id: string }> }) {
+  const params = use(props.params);
   const [experiment, setExperiment] = useState<Experiment | null>(null);
   const [results, setResults] = useState<ExperimentResults | null>(null);
   const [isLoading, setIsLoading] = useState(true);

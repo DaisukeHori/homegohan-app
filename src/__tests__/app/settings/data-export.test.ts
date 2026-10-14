@@ -9,10 +9,9 @@
 // NOTE: tsconfig の jsx: "preserve" と Vitest の .tsx 変換が非互換のため、他の描画テストと同様に
 // 拡張子 .ts + React.createElement で書く。
 
-import React from 'react';
+import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 const h = React.createElement;
 
