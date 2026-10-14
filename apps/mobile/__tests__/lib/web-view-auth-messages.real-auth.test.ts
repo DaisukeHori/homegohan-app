@@ -569,7 +569,8 @@ describe('AuthProvider と一緒に動かしたとき: session-expired の getUs
     // loadModules() が jest.resetModules() したあとのモジュールの表から読む (supabase のクライアント・AsyncStorage を共有するため)
     const React = require('react') as typeof import('react');
     const { Text } = require('react-native') as typeof import('react-native');
-    const { render, waitFor, act } = require('@testing-library/react-native') as typeof import('@testing-library/react-native');
+    // pure: テストの中で読むので、後片付けのフック (afterEach) を足さない版。後片付けは下の finally で unmount する
+    const { render, waitFor, act } = require('@testing-library/react-native/pure') as typeof import('@testing-library/react-native/pure');
     const { AuthProvider, useAuth } = require('../../src/providers/AuthProvider') as typeof import('../../src/providers/AuthProvider');
     const { PERSISTENCE_KEYS } = require('../../src/lib/persistence') as typeof import('../../src/lib/persistence');
     const Notifications = require('expo-notifications') as { getExpoPushTokenAsync: jest.Mock };
@@ -588,7 +589,7 @@ describe('AuthProvider と一緒に動かしたとき: session-expired の getUs
     const originalMultiRemove = storage.multiRemove.bind(storage);
     const originalGetItem = storage.getItem.bind(storage);
     storage.multiRemove = (keys: string[]) => {
-      storageLog.push(keys.includes(pushTokenValueKey) ? 'multiRemove:with-push-token-value' : 'multiRemove:keeps-push-token-value');
+      storageLog.push(keys.includes(pushTokenValueKey) ? 'multiRemove:with-push-token-value' : 'multiRemove:without-push-token-value');
       return originalMultiRemove(keys);
     };
     storage.getItem = (key: string) => {
@@ -616,13 +617,14 @@ describe('AuthProvider と一緒に動かしたとき: session-expired の getUs
       });
 
       expect(result).toBe('signed-out');
-      // この試験が見たい順番になっている: SIGNED_OUT の掃除 (値を残す) → 削除が値を読む → 削除のあとの掃除 (値も消す)
-      const signedOutCleanup = storageLog.indexOf('multiRemove:keeps-push-token-value');
+      // この試験が見たい順番になっている: 最初の掃除は SIGNED_OUT の掃除で、削除が値を読むより前に走り、値を残した。
+      // 値は、削除が読んだあとの掃除 (signOutWithCleanup) で消えた
+      const signedOutCleanup = storageLog.findIndex((entry) => entry.startsWith('multiRemove:'));
       const readForDelete = storageLog.indexOf('getItem:push-token-value');
-      const cleanupAfterDelete = storageLog.indexOf('multiRemove:with-push-token-value');
       expect(signedOutCleanup).toBeGreaterThanOrEqual(0);
       expect(readForDelete).toBeGreaterThan(signedOutCleanup);
-      expect(cleanupAfterDelete).toBeGreaterThan(readForDelete);
+      expect(storageLog[signedOutCleanup]).toBe('multiRemove:without-push-token-value');
+      expect(storageLog.indexOf('multiRemove:with-push-token-value')).toBeGreaterThan(readForDelete);
 
       // 保存済みの値で、本人の JWT を付けて、この端末の行だけを消した。端末から取り直していない
       expectOneDeleteWithUserJwt();
