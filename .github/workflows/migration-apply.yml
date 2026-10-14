@@ -1,0 +1,222 @@
+name: Migration Apply (#1064 Phase 1, drift guard 無し)
+
+# migration-repair.yml で台帳を repair 済み (000136 と 20260710090000 の2本のみ
+# local-only) であることを前提に、その2本だけを db push --include-all で本番へ
+# 実適用する専用 workflow。drift guard は意図的に通さない (local-only 2本を push
+# するのが目的なので、guard を通すと exit 1 でブロックされてしまう = Critical-2 対応)。
+#
+# dry_run job で "適用対象が2本のみ" であることを機械的アサーション + 人手確認の
+# 両方で担保してから出力し、apply job は GitHub Environment (production-db) の
+# required reviewers 承認を経てから、直前に同アサーションを再実行してから push する
+# (round-2 監査 #3 対応: repair 未完了/部分失敗状態での apply 単独 dispatch 暴発を防止)。
+#
+# 【前提 (最終監査残課題 対応)】この workflow が checkout する ref は、PR-M
+# (forward-ref 修正 + draft migration 4本追加) がマージ済みであることを前提とする。
+# 未マージのまま dispatch した場合、`db push --include-all --dry-run` の適用対象が
+# 期待の2本 (20260511000136 / 20260710090000) 未満になり、下記の
+# "Assert apply target is exactly the expected 2 versions" が found<2 で
+# 正しく exit 1 して停止する (機械的に安全側に倒れる)。
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: '実行確認。文字列 "APPLY" を入力した場合のみ実行される'
+        required: true
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  SUPABASE_PROJECT_ID: flmeolcfutuwwbjmzyoz
+
+jobs:
+  dry_run:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.confirm == 'APPLY' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Guard - confirm input must be APPLY
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "APPLY" ]; then
+            echo "::error::confirm 入力が 'APPLY' ではありません。中止します。"
+            exit 1
+          fi
+
+      - name: Create artifacts directory
+        run: mkdir -p artifacts
+
+      - name: Verify Supabase CLI version
+        run: npx --yes supabase@2.62.10 --version
+
+      - name: Link Supabase project
+        run: |
+          npx --yes supabase@2.62.10 link --project-ref ${{ env.SUPABASE_PROJECT_ID }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: db push --include-all --dry-run (適用対象の事前確認)
+        run: |
+          npx --yes supabase@2.62.10 db push --linked --include-all --dry-run 2>&1 | tee artifacts/apply_dryrun.txt
+          {
+            echo "## apply_dryrun.txt (db push --include-all --dry-run)"
+            echo ""
+            echo "\`\`\`"
+            cat artifacts/apply_dryrun.txt
+            echo "\`\`\`"
+            echo ""
+            echo "**承認前に必ず確認すること**: 適用対象が \`20260511000136\` と \`20260710090000\` の"
+            echo "2本のみであること。それ以外が含まれる場合は migration-repair.yml が未完了、"
+            echo "または repair 対象リストと台帳の不一致がある可能性が高い。承認しないこと。"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      # --- 「適用対象がちょうど2本」の機械アサーション (round-2 監査 #3 対応) ---
+      # `db push --include-all --dry-run` の実出力は以下の形式であることを実測済み:
+      #   Would push these migrations:
+      #    • 20260511000136_rls_guard_privileged_columns.sql
+      #    • 20260710090000_reconcile_paired_drift.sql
+      #   Finished supabase db push.
+      # 各行末尾の "<14桁version>_....sql" を抽出し、期待する2 version の集合と
+      # 完全一致するかを検証する。想定外の migration が並んだ場合や repair 未完了で
+      # 3本以上/1本以下になっている場合は exit 1 で機械的に停止する。
+      - name: Assert apply target is exactly the expected 2 versions
+        run: |
+          python3 - <<'PY'
+          import re
+          import sys
+
+          EXPECTED = {"20260511000136", "20260710090000"}
+
+          with open("artifacts/apply_dryrun.txt", encoding="utf-8") as fh:
+              lines = fh.readlines()
+
+          found = set()
+          for raw_line in lines:
+              line = raw_line.rstrip("\n").strip()
+              m = re.search(r"(\d{14})_\S+\.sql$", line)
+              if m:
+                  found.add(m.group(1))
+
+          if found != EXPECTED:
+              print("::error::apply 対象が想定の2本 (20260511000136 / 20260710090000) と一致しません。", file=sys.stderr)
+              print(f"検出された version: {sorted(found)}", file=sys.stderr)
+              print(f"期待される version: {sorted(EXPECTED)}", file=sys.stderr)
+              sys.exit(1)
+
+          print(f"OK: apply 対象は想定通り2本 ({sorted(found)})")
+          PY
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Upload dry-run artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-apply-dryrun
+          path: artifacts/apply_dryrun.txt
+          retention-days: 90
+
+  apply:
+    needs: dry_run
+    runs-on: ubuntu-latest
+    # required reviewers による承認ゲート。repo Settings > Environments で
+    # "production-db" environment を作成し、Required reviewers を設定しておくこと。
+    # 未設定の場合、このジョブは承認待ちにならず即実行される点に注意。
+    environment: production-db
+    if: ${{ github.event.inputs.confirm == 'APPLY' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Create artifacts directory
+        run: mkdir -p artifacts
+
+      - name: Verify Supabase CLI version
+        run: npx --yes supabase@2.62.10 --version
+
+      - name: Link Supabase project
+        run: |
+          npx --yes supabase@2.62.10 link --project-ref ${{ env.SUPABASE_PROJECT_ID }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      # dry_run job の承認からこの job の実行までに時間差があり得るため、push 直前に
+      # 同じ dry-run + アサーションを再実行する (二重化。round-2 監査 #3 対応)。
+      # dry_run job の artifact をそのまま信用せず、この job 自身で fresh に取得し直す。
+      - name: db push --include-all --dry-run (push 直前の再確認)
+        run: |
+          npx --yes supabase@2.62.10 db push --linked --include-all --dry-run 2>&1 | tee artifacts/apply_dryrun_recheck.txt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Assert apply target is exactly the expected 2 versions (re-check before push)
+        run: |
+          python3 - <<'PY'
+          import re
+          import sys
+
+          EXPECTED = {"20260511000136", "20260710090000"}
+
+          with open("artifacts/apply_dryrun_recheck.txt", encoding="utf-8") as fh:
+              lines = fh.readlines()
+
+          found = set()
+          for raw_line in lines:
+              line = raw_line.rstrip("\n").strip()
+              m = re.search(r"(\d{14})_\S+\.sql$", line)
+              if m:
+                  found.add(m.group(1))
+
+          if found != EXPECTED:
+              print("::error::[re-check] apply 対象が想定の2本 (20260511000136 / 20260710090000) と一致しません。push を中止します。", file=sys.stderr)
+              print(f"検出された version: {sorted(found)}", file=sys.stderr)
+              print(f"期待される version: {sorted(EXPECTED)}", file=sys.stderr)
+              sys.exit(1)
+
+          print(f"OK: push 直前の再確認でも apply 対象は想定通り2本 ({sorted(found)})")
+          PY
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      # drift guard は意図的に無し (000136 + 20260710090000 の local-only 2本を
+      # 承認済みで push するのがこの workflow の目的そのものであるため)
+      - name: db push --include-all (承認後の実適用)
+        run: |
+          npx --yes supabase@2.62.10 db push --linked --include-all
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Verify migration list after apply (完全 paired 確認用)
+        run: |
+          npx --yes supabase@2.62.10 migration list --linked | tee artifacts/migration_list_final.txt
+          {
+            echo "## migration list (apply 後・最終確認)"
+            echo ""
+            echo "\`\`\`"
+            cat artifacts/migration_list_final.txt
+            echo "\`\`\`"
+            echo ""
+            echo "期待値: 全 version が Local/Remote 完全 paired。片方のみの行が残っていれば異常。"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Upload post-apply artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-apply-final
+          path: |
+            artifacts/apply_dryrun_recheck.txt
+            artifacts/migration_list_final.txt
+          retention-days: 90

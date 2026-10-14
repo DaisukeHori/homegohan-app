@@ -11,6 +11,7 @@ export * from './family-group';
 export * from './family-invite';
 export * from './family-invite-action';
 export * from './family-member';
+export * from './family-promote-action';
 export * from './family-representative-transfer';
 export * from './ownership-transfer';
 export * from './membership-audit';

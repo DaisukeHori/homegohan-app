@@ -1,12 +1,6 @@
--- e2e テストユーザーの onboarding_completed_at を埋めて
--- /pantry や /home が onboarding 画面に飛ばされないようにする
--- (アプリは onboarding_completed_at の有無のみで完了判定しているため、このカラムのみ更新)
-UPDATE public.user_profiles
-   SET onboarding_completed_at = COALESCE(onboarding_completed_at, NOW())
- WHERE id IN (
-   SELECT id FROM auth.users WHERE email IN (
-     'e2e-user@homegohan.test',
-     'e2e-admin@homegohan.test',
-     'e2e-super@homegohan.test'
-   )
- );
+-- migration: 20260430230000_fix_e2e_user_onboarding_completed.sql
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;

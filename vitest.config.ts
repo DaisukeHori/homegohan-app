@@ -37,7 +37,27 @@ export default defineConfig({
         __dirname,
         "packages/handson-tour-shared/src/index.ts",
       ),
+      // tsconfig.json の paths と同じく、このリポジトリの packages/shared を直接読む。
+      // node_modules/@homegohan/shared (ワークスペースのシンボリックリンク) 経由だと、
+      // node_modules を別の場所のものと共有している作業コピー (git worktree など) で
+      // 手元の packages/shared ではなくリンク先の古い内容を読んでしまい、
+      // 追加した定数が見えずにテストが空振りするため (#1197)。
+      "@homegohan/shared": path.resolve(__dirname, "packages/shared/src/index.ts"),
+      // @homegohan/core も同じ理由で、このリポジトリの packages/core を直接読む (#1146)。
+      // 作業コピーで node_modules を共有していると、リンク先の古い packages/core を読んでしまい、
+      // 手元で変えた SUGAR_APP_DEFAULT などがテストに反映されなかった。
+      // packages/core/package.json の exports は "." (src/index.ts) だけで、サブパスの import は無い。
+      "@homegohan/core": path.resolve(__dirname, "packages/core/src/index.ts"),
     },
+  },
+  // tsconfig.json は Next.js の SWC コンパイラ向けに jsx: "preserve" を指定しているが、
+  // このバージョンの Vite (rolldown-vite, oxc ベース) は tsconfig の jsx: "preserve" を
+  // そのまま引き継いでしまい .tsx の変換に失敗する
+  // ("Failed to parse source... jsx to preserve" エラー)。
+  // tsconfig.json 自体は Next.js ビルド/tsc の都合で変更せず、Vitest 専用の
+  // oxc 設定だけを上書きしてコンポーネントの render テストを可能にする (#1031)。
+  oxc: {
+    jsx: { runtime: "automatic" },
   },
   test: {
     exclude: [
@@ -45,8 +65,11 @@ export default defineConfig({
       "**/dist/**",
       "**/.next/**",
       "tests/e2e/**",
+      "tests/integration/**",
       "homegohan-app/**",
       ".claude/**",
+      ".worktrees/**",
+      "apps/mobile/**",
     ],
     environment: "jsdom",
   },

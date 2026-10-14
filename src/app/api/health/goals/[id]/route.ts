@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 import { sanitizeHealthGoalUpdate } from '@/lib/health-payloads';
+import { calculateGoalProgressPercentage } from '@/lib/health-goal-progress';
 
 // 目標の取得
 export async function GET(
@@ -24,7 +26,7 @@ export async function GET(
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/health/goals/[id]', error, { userId: user.id, table: 'health_goals' });
   }
 
   return NextResponse.json({ goal: data });
@@ -44,7 +46,21 @@ export async function PUT(
 
   const { id } = await params;
   const body = await request.json().catch(() => null);
-  const { data: updates, errors } = sanitizeHealthGoalUpdate(body);
+
+  // 目標の所有者確認
+  // #1229: 目標値の範囲は goal_type ごとに違うため、入力の検証より先に対象の行を取得する
+  const { data: existing } = await supabase
+    .from('health_goals')
+    .select('*')
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .single();
+
+  if (!existing) {
+    return NextResponse.json({ error: 'Goal not found' }, { status: 404 });
+  }
+
+  const { data: updates, errors } = sanitizeHealthGoalUpdate(body, { goalType: existing.goal_type });
 
   if (errors.length > 0) {
     return NextResponse.json({ error: errors.join(', ') }, { status: 400 });
@@ -62,18 +78,6 @@ export async function PUT(
     return NextResponse.json({ error: 'target_unit cannot be null' }, { status: 400 });
   }
 
-  // 目標の所有者確認
-  const { data: existing } = await supabase
-    .from('health_goals')
-    .select('*')
-    .eq('id', id)
-    .eq('user_id', user.id)
-    .single();
-
-  if (!existing) {
-    return NextResponse.json({ error: 'Goal not found' }, { status: 404 });
-  }
-
   // current_valueが更新された場合、進捗率を再計算
   const targetValue =
     updates.target_value !== undefined ? updates.target_value : existing.target_value;
@@ -82,11 +86,12 @@ export async function PUT(
 
   let progressPercentage = existing.progress_percentage;
   if (currentValue !== null && existing.start_value !== null && targetValue !== null) {
-    const totalChange = Math.abs(targetValue - existing.start_value);
-    const currentChange = Math.abs(currentValue - existing.start_value);
-    if (totalChange > 0) {
-      progressPercentage = Math.min(100, (currentChange / totalChange) * 100);
-    }
+    progressPercentage = calculateGoalProgressPercentage(
+      existing.start_value,
+      targetValue,
+      currentValue,
+      progressPercentage,
+    );
   }
 
   // マイルストーン達成チェック
@@ -148,7 +153,7 @@ export async function PUT(
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('PUT /api/health/goals/[id]', error, { userId: user.id, table: 'health_goals' });
   }
 
   return NextResponse.json({ goal: data });
@@ -175,7 +180,7 @@ export async function DELETE(
     .eq('user_id', user.id);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('DELETE /api/health/goals/[id]', error, { userId: user.id, table: 'health_goals' });
   }
 
   return NextResponse.json({ success: true });

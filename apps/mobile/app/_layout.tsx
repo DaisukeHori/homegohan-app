@@ -4,16 +4,18 @@ import {
   NotoSansJP_700Bold,
   useFonts,
 } from '@expo-google-fonts/noto-sans-jp';
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SplashScreen from 'expo-splash-screen';
 import { Stack } from "expo-router";
+import type { ErrorBoundaryProps } from "expo-router";
 import { useEffect } from "react";
 import { LogBox } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
-import { registerAndSaveExpoPushToken } from "../src/lib/pushNotifications";
+import { ConfigErrorScreen } from "../src/components/ConfigErrorScreen";
+import { ErrorFallback } from "../src/components/ErrorFallback";
+import { MobileConfigError, resolveRequiredMobileEnv } from "../src/lib/env";
+import { ensurePushTokenRegistered } from "../src/lib/pushNotifications";
 import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
-import { PostHogProvider } from "../src/providers/PostHogProvider";
 import { ProfileProvider } from "../src/providers/ProfileProvider";
 
 // E2E テスト中に LogBox の自動ポップアップがタップを横取りして失敗するため抑制する
@@ -22,7 +24,15 @@ LogBox.ignoreAllLogs();
 
 SplashScreen.preventAutoHideAsync();
 
-const PUSH_TOKEN_REGISTERED_KEY = "push_token_registered_v1";
+// 画面の描画中に起きた例外を受ける、ルートの境界 (#1207)。
+// expo-router は、この export がある layout の中で起きた描画の例外を受けて、画面の代わりにこれを出す。
+// 無いとアプリ全体がクラッシュする (白い画面)。グループ専用の境界を持たない画面 (献立・食事・レシピ・健康・AI など、
+// app 直下の画面) の例外は、ここで受ける。
+// ルートの境界は Provider ごと置き換えて描画されるため、Provider に頼らない最小の画面にしている。
+// 移動先のナビゲーションも残っていないので、「再試行」だけを出す。
+export function ErrorBoundary(props: ErrorBoundaryProps) {
+  return <ErrorFallback {...props} boundary="root" />;
+}
 
 function PushTokenRegistrar() {
   const { user } = useAuth();
@@ -32,14 +42,10 @@ function PushTokenRegistrar() {
 
     (async () => {
       try {
-        const key = `${PUSH_TOKEN_REGISTERED_KEY}:${user.id}`;
-        const already = await AsyncStorage.getItem(key);
-        if (already === "1") return;
-
-        await registerAndSaveExpoPushToken();
-        await AsyncStorage.setItem(key, "1");
+        // 登録済みの印は、トークンを保存できたときだけ付く (権限の拒否などで未登録なら、次の起動でまた試す)
+        await ensurePushTokenRegistered(user.id);
       } catch {
-        // silent — user can retry via settings toggle
+        // silent — 失敗は registerAndSaveExpoPushToken() が端末のコンソールとサーバーログ (app_logs) に出す (#1413)。user can retry via settings toggle
       }
     })();
   }, [user?.id]);
@@ -54,6 +60,19 @@ export default function RootLayout() {
     NotoSansJP_700Bold,
   });
 
+  // 必須の環境変数 (EXPO_PUBLIC_SUPABASE_* と EXPO_PUBLIC_API_BASE_URL。#1182 / #1434) がそろっているか
+  const requiredEnv = resolveRequiredMobileEnv();
+  const missingEnvMessage = requiredEnv.ok ? null : new MobileConfigError(requiredEnv.missing).message;
+
+  useEffect(() => {
+    if (!missingEnvMessage) return;
+    // 足りない変数名を端末のログに残す (リリースビルドの設定エラーの画面には名前を出さないため)。
+    // Supabase の 2 つは lib/supabase.ts も読み込み時に残すが、EXPO_PUBLIC_API_BASE_URL はここでしか残らない
+    console.error(
+      `${missingEnvMessage} - このビルドには必須の環境変数が入っていません。EAS の環境変数に登録して、ビルドし直してください`,
+    );
+  }, [missingEnvMessage]);
+
   useEffect(() => {
     if (fontsLoaded) {
       SplashScreen.hideAsync();
@@ -62,26 +81,28 @@ export default function RootLayout() {
 
   if (!fontsLoaded) return null;
 
+  // 必須の環境変数が入っていないビルドは、Provider を立ち上げずに設定エラーの画面を出す (#1182)。
+  // Supabase を使う Provider が動くと、存在しない接続先に向かって失敗し続け、原因が分からないため。
+  // EXPO_PUBLIC_API_BASE_URL が無いと、API を呼ぶ画面 (getApiBaseUrl()) が例外で落ちるので、これもゲートに入れる (#1434)
+  if (!requiredEnv.ok) return <ConfigErrorScreen missing={requiredEnv.missing} />;
+
   return (
     <SafeAreaProvider>
-      <PostHogProvider>
-        <AuthProvider>
-          <ProfileProvider>
-            <PushTokenRegistrar />
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="index" />
-              <Stack.Screen name="(public)" />
-              <Stack.Screen name="(auth)" />
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen name="(org)" />
-              <Stack.Screen name="(admin)" />
-              <Stack.Screen name="(support)" />
-              <Stack.Screen name="(super-admin)" />
-              <Stack.Screen name="meals/new" options={{ presentation: "modal" }} />
-            </Stack>
-          </ProfileProvider>
-        </AuthProvider>
-      </PostHogProvider>
+      <AuthProvider>
+        <ProfileProvider>
+          <PushTokenRegistrar />
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="(public)" />
+            <Stack.Screen name="(auth)" />
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="(org)" />
+            <Stack.Screen name="(support)" />
+            <Stack.Screen name="(super-admin)" />
+            <Stack.Screen name="meals/new" options={{ presentation: "modal" }} />
+          </Stack>
+        </ProfileProvider>
+      </AuthProvider>
     </SafeAreaProvider>
   );
 }

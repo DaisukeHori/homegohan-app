@@ -1,0 +1,4 @@
+id,name,public,file_size_limit,allowed_mime_types
+fridge-images,fridge-images,t,,""
+health-checkups,health-checkups,f,10485760,"image/jpeg,image/png,image/webp,image/heic"
+meal_photos,meal_photos,t,,""

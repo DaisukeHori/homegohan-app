@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { calculateNutritionTargets } from '@homegohan/core'
 import { buildNutritionCalculatorInput } from '@/lib/build-nutrition-input'
 import { getHandsonTourStatusInternal } from '@/lib/handson-tour/getStatus'
+import { internalError } from '@/lib/api/errors'
 
 /**
  * オンボーディング完了API (OB-API-02)
@@ -22,15 +23,41 @@ export async function POST() {
     const now = new Date().toISOString()
 
     // 現在のプロファイルを取得
-    const { data: profile, error: fetchError } = await supabase
+    // #1045 (F6-11): welcome 画面の「あとで設定する」は質問に一つも答えないまま
+    // このAPIを呼ぶため、user_profiles 行がまだ存在しないことがある。
+    // .single() は 0 行のとき error を返してしまうため .maybeSingle() に変更する。
+    const { data: fetchedProfile, error: fetchError } = await supabase
       .from('user_profiles')
       .select('*')
       .eq('id', user.id)
-      .single()
+      .maybeSingle()
 
     if (fetchError) {
-      console.error('Profile fetch error:', fetchError)
-      return NextResponse.json({ error: fetchError.message }, { status: 500 })
+      return internalError('POST /api/onboarding/complete', fetchError, { userId: user.id })
+    }
+
+    let profile = fetchedProfile
+
+    if (!profile) {
+      // #1045 (F6-11): プロファイル行が存在しない場合は最低限のデフォルト値で作成してから
+      // 完了処理を続行する (行が無いまま update すると 0 行更新で完了扱いになれない)
+      const { data: upsertedProfile, error: upsertError } = await supabase
+        .from('user_profiles')
+        .upsert({
+          id: user.id,
+          nickname: 'Guest',
+          gender: 'unspecified',
+          age_group: 'unspecified',
+          onboarding_started_at: now,
+        })
+        .select('*')
+        .single()
+
+      if (upsertError || !upsertedProfile) {
+        return internalError('POST /api/onboarding/complete', upsertError, { userId: user.id })
+      }
+
+      profile = upsertedProfile
     }
 
     // ===== 自動変換処理 =====
@@ -104,8 +131,7 @@ export async function POST() {
       .eq('id', user.id)
 
     if (updateError) {
-      console.error('Onboarding complete error:', updateError)
-      return NextResponse.json({ error: updateError.message }, { status: 500 })
+      return internalError('POST /api/onboarding/complete', updateError, { userId: user.id })
     }
 
     // 栄養目標を計算・保存（共通モジュール使用）
@@ -159,8 +185,6 @@ export async function POST() {
 
     return NextResponse.json({ success: true, next_route: nextRoute })
   } catch (error: unknown) {
-    console.error('API Error:', error)
-    const message = error instanceof Error ? error.message : 'Unknown error'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return internalError('POST /api/onboarding/complete', error)
   }
 }

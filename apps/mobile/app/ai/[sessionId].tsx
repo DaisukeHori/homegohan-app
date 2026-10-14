@@ -8,6 +8,8 @@ import { LoadingState, PageHeader } from "../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../src/theme";
 import { getApi, getApiBaseUrl } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
+import { handleAiConsentRequiredError } from "../../src/lib/ai-consent";
+import { errorOfFailedResponse, isStoppedByServerError } from "../../src/lib/failed-response";
 
 type Message = {
   id: string;
@@ -136,7 +138,8 @@ export default function AiSessionPage() {
 
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        throw new Error(`HTTP ${res.status}: ${text}`);
+        // 429 AI_DAILY_LIMIT (#1149)・503 の緊急停止・メンテナンス中 (#1457) は、固定の文の例外にする (生の本文を画面に出さない)
+        throw errorOfFailedResponse(res.status, text);
       }
 
       if (!res.body) {
@@ -234,6 +237,21 @@ export default function AiSessionPage() {
       }
     } catch (e: any) {
       setStreamingContent(null);
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出した。送らなかったので、メッセージを消して入力を戻す
+      if (handleAiConsentRequiredError(e)) {
+        setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
+        setText(trimmed);
+        return;
+      }
+      // 今日の AI の利用回数の上限 (#1149)・AI 相談の緊急停止中・メンテナンス中 (#1457)・同意の状況を読めなかった (#1486) で止められた:
+      // 送らなかったので、メッセージを消して入力 (と添付の画像) を戻し、固定の文を出す
+      if (isStoppedByServerError(e)) {
+        setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
+        setText(trimmed);
+        if (imageSnapshot) setAttachedImage(imageSnapshot);
+        setError(e.message);
+        return;
+      }
       if (e?.name === "AbortError") {
         setError("応答がタイムアウトしました（25秒）。しばらく待ってから再度お試しください。");
       } else {
@@ -254,6 +272,8 @@ export default function AiSessionPage() {
       await load();
       Alert.alert("実行しました", "アクションを実行しました。");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、ここのエラー表示は出さない
+      if (handleAiConsentRequiredError(e)) return;
       Alert.alert("実行失敗", e?.message ?? "実行に失敗しました。");
     }
   }
@@ -300,6 +320,8 @@ export default function AiSessionPage() {
         : "要約を生成できませんでした。";
       Alert.alert("要約", text);
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、ここのエラー表示は出さない
+      if (handleAiConsentRequiredError(e)) return;
       Alert.alert("要約失敗", e?.message ?? "要約に失敗しました。");
     }
   }

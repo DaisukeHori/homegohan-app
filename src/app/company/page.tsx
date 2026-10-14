@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { MapPin, Mail, Phone, ExternalLink, Users, Target, Heart, Sparkles } from "lucide-react";
+import { Users, Target, Heart, Sparkles } from "lucide-react";
 
 const colors = {
   primary: '#E07A5F',
@@ -28,23 +28,9 @@ const values = [
   { icon: <Sparkles size={24} />, title: '技術で社会貢献', desc: '最新のAI技術を活用し、誰もが健康になれる社会を目指します。', color: colors.warning },
 ];
 
-const team = [
-  { name: '山田 太郎', role: '代表取締役 CEO', avatar: '👨‍💼', bio: '元大手IT企業のプロダクトマネージャー。自身のダイエット経験から「褒めて伸ばす」食事管理の重要性に気づき、ほめゴハンを創業。' },
-  { name: '鈴木 花子', role: 'CTO', avatar: '👩‍💻', bio: 'AIスタートアップ出身のエンジニア。機械学習と画像認識のスペシャリスト。食事認識AIの開発をリード。' },
-  { name: '佐藤 健太', role: 'デザイン責任者', avatar: '👨‍🎨', bio: 'UI/UXデザイナー。「使いやすさ」と「楽しさ」の両立を追求。ユーザーが毎日使いたくなるアプリを目指す。' },
-  { name: '田中 美咲', role: '栄養監修', avatar: '👩‍⚕️', bio: '管理栄養士。病院勤務を経て、テクノロジーを活用した栄養指導の可能性に魅力を感じ参画。' },
-];
-
-const history = [
-  { year: '2023年4月', event: '株式会社ほめゴハン設立' },
-  { year: '2023年8月', event: 'シードラウンド資金調達完了' },
-  { year: '2023年12月', event: 'ほめゴハン β版リリース' },
-  { year: '2024年3月', event: 'ほめゴハン 正式リリース' },
-  { year: '2024年6月', event: 'ユーザー数1万人突破' },
-  { year: '2024年9月', event: 'シリーズAラウンド資金調達完了' },
-  { year: '2024年12月', event: 'ユーザー数10万人突破' },
-  { year: '2025年1月', event: '健康記録機能リリース' },
-];
+// 事業者の実在情報がまだ確定していない項目の表示。
+// 架空の代表者名・住所・沿革・チーム紹介などは載せない。確定したら実際の値に差し替える。
+const PENDING = '準備中（確定次第掲載します）';
 
 export default function CompanyPage() {
   return (
@@ -120,12 +106,9 @@ export default function CompanyPage() {
                 <tbody>
                   {[
                     { label: '会社名', value: '株式会社ほめゴハン' },
-                    { label: '設立', value: '2023年4月1日' },
-                    { label: '代表者', value: '代表取締役 山田 太郎' },
-                    { label: '資本金', value: '1億円（資本準備金含む）' },
-                    { label: '従業員数', value: '15名（2025年1月現在）' },
                     { label: '事業内容', value: '食事管理アプリ「ほめゴハン」の企画・開発・運営' },
-                    { label: '所在地', value: '〒150-0001\n東京都渋谷区神宮前1-2-3\nほめゴハンビル 5F' },
+                    { label: '代表者', value: PENDING },
+                    { label: '所在地', value: PENDING },
                   ].map((row, i) => (
                     <tr key={i} className="border-b last:border-b-0" style={{ borderColor: colors.border }}>
                       <th className="py-4 pr-4 text-left align-top w-1/3 font-bold text-sm" style={{ color: colors.text }}>
@@ -142,84 +125,14 @@ export default function CompanyPage() {
           </div>
         </section>
 
-        {/* チーム */}
-        <section className="py-16">
-          <div className="container mx-auto px-4 max-w-4xl">
-            <h2 className="text-3xl font-bold mb-8 text-center" style={{ color: colors.text }}>チーム</h2>
-            <div className="grid md:grid-cols-2 gap-6">
-              {team.map((member, i) => (
-                <motion.div
-                  key={i}
-                  className="p-6 rounded-2xl"
-                  style={{ background: colors.card, border: `1px solid ${colors.border}` }}
-                  initial={{ opacity: 0, y: 20 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ delay: i * 0.1 }}
-                >
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl" style={{ background: colors.bgAlt }}>
-                      {member.avatar}
-                    </div>
-                    <div>
-                      <h3 className="font-bold" style={{ color: colors.text }}>{member.name}</h3>
-                      <p className="text-sm" style={{ color: colors.primary }}>{member.role}</p>
-                    </div>
-                  </div>
-                  <p className="text-sm" style={{ color: colors.textLight }}>{member.bio}</p>
-                </motion.div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* 沿革 */}
-        <section className="py-16" style={{ background: colors.bgAlt }}>
-          <div className="container mx-auto px-4 max-w-2xl">
-            <h2 className="text-3xl font-bold mb-8 text-center" style={{ color: colors.text }}>沿革</h2>
-            <div className="space-y-4">
-              {history.map((item, i) => (
-                <motion.div
-                  key={i}
-                  className="flex gap-4"
-                  initial={{ opacity: 0, x: -20 }}
-                  whileInView={{ opacity: 1, x: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ delay: i * 0.05 }}
-                >
-                  <div className="w-24 flex-shrink-0 text-sm font-bold" style={{ color: colors.primary }}>
-                    {item.year}
-                  </div>
-                  <div className="flex-1 pb-4 border-b" style={{ borderColor: colors.border }}>
-                    <p className="text-sm" style={{ color: colors.textLight }}>{item.event}</p>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          </div>
-        </section>
-
         {/* お問い合わせ */}
         <section className="py-16">
           <div className="container mx-auto px-4 max-w-2xl text-center">
             <h2 className="text-3xl font-bold mb-8" style={{ color: colors.text }}>お問い合わせ</h2>
-            <div className="grid md:grid-cols-3 gap-4">
-              <div className="p-6 rounded-2xl" style={{ background: colors.card, border: `1px solid ${colors.border}` }}>
-                <MapPin size={24} className="mx-auto mb-3" style={{ color: colors.primary }} />
-                <p className="text-sm font-bold mb-1" style={{ color: colors.text }}>所在地</p>
-                <p className="text-xs" style={{ color: colors.textLight }}>東京都渋谷区<br />神宮前1-2-3</p>
-              </div>
-              <div className="p-6 rounded-2xl" style={{ background: colors.card, border: `1px solid ${colors.border}` }}>
-                <Mail size={24} className="mx-auto mb-3" style={{ color: colors.primary }} />
-                <p className="text-sm font-bold mb-1" style={{ color: colors.text }}>メール</p>
-                <p className="text-xs" style={{ color: colors.textLight }}>support@<br />homegohan.jp</p>
-              </div>
-              <div className="p-6 rounded-2xl" style={{ background: colors.card, border: `1px solid ${colors.border}` }}>
-                <Phone size={24} className="mx-auto mb-3" style={{ color: colors.primary }} />
-                <p className="text-sm font-bold mb-1" style={{ color: colors.text }}>電話</p>
-                <p className="text-xs" style={{ color: colors.textLight }}>03-1234-5678<br />（平日10-18時）</p>
-              </div>
-            </div>
+            <p className="text-sm leading-relaxed" style={{ color: colors.textLight }}>
+              メールアドレス・電話番号・所在地の掲載は準備中です（確定次第掲載します）。<br />
+              お問い合わせは、下のお問い合わせフォームからお願いします。
+            </p>
             <Link href="/contact" className="inline-block mt-8">
               <motion.button
                 className="px-8 py-3 rounded-full font-bold text-white"

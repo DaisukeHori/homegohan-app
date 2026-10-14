@@ -1,4 +1,5 @@
 import { fetchWithRetry } from "./network-retry.ts";
+import { missingEnvError } from "./missing-env.ts";
 
 export type V4FastLLMProvider = "openai" | "xai" | "openai-mini";
 
@@ -57,7 +58,8 @@ export function getV4FastLLMConfig(): V4FastLLMConfig {
   if (provider === "xai") {
     const apiKey = String(Deno.env.get("XAI_API_KEY") ?? "").trim();
     if (!apiKey) {
-      throw new Error("Missing XAI_API_KEY");
+      // 変数名は message に入れず、ログにだけ残す (呼び出し元が message を応答の本文や記録に入れうる。#1467)
+      throw missingEnvError(["XAI_API_KEY"]);
     }
 
     return {
@@ -71,7 +73,8 @@ export function getV4FastLLMConfig(): V4FastLLMConfig {
   if (provider === "openai-mini") {
     const apiKey = String(Deno.env.get("OPENAI_API_KEY") ?? "").trim();
     if (!apiKey) {
-      throw new Error("Missing OPENAI_API_KEY");
+      // 変数名は message に入れず、ログにだけ残す (呼び出し元が message を応答の本文や記録に入れうる。#1467)
+      throw missingEnvError(["OPENAI_API_KEY"]);
     }
 
     return {
@@ -84,7 +87,8 @@ export function getV4FastLLMConfig(): V4FastLLMConfig {
 
   const apiKey = String(Deno.env.get("OPENAI_API_KEY") ?? "").trim();
   if (!apiKey) {
-    throw new Error("Missing OPENAI_API_KEY");
+    // 変数名は message に入れず、ログにだけ残す (呼び出し元が message を応答の本文や記録に入れうる。#1467)
+    throw missingEnvError(["OPENAI_API_KEY"]);
   }
 
   return {

@@ -28,16 +28,51 @@ import { login, newAuthedContext } from "./fixtures/auth";
 const BASE_URL =
   process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 
+// 画面の描画 (React の hydration と、質問が切り替わるアニメーションを含む) を待つ上限。
+// dev サーバーを負荷の高い環境で動かすと数秒かかるため、余裕を持たせる (#854)。
+const UI_TIMEOUT = 20_000;
+
 // fresh-user fixture を使用するため storageState はクリア
 test.use({ storageState: { cookies: [], origins: [] } });
 
 // ─── ヘルパー ─────────────────────────────────────────────────────────────────
 
 /**
+ * page.evaluate 内の fetch を、アプリと同じオリジンで実行できるようにする。
+ *
+ * onboardingPendingUser fixture が渡す page は、セッション cookie を入れただけで about:blank のまま。
+ * about:blank からの fetch はクロスオリジン扱いになり、CORS の preflight (OPTIONS) に失敗して
+ * "TypeError: Failed to fetch" で落ちる (dev サーバのログには OPTIONS /api/... 204 だけが並ぶ)。
+ * そのため、オンボーディング未完了のユーザーが開ける /onboarding/welcome へ先に移動してから
+ * fetch を実行する (#854)。移動済みなら何もしない。
+ */
+async function ensureAppOrigin(page: Page): Promise<void> {
+  if (page.url().startsWith(BASE_URL)) return;
+  await page.goto(`${BASE_URL}/onboarding/welcome`);
+}
+
+/**
+ * オンボーディング途中のユーザーが開く /onboarding/resume から、先に離れておく。
+ *
+ * このページは、開いてから少し遅れて「オンボーディングの状態」を取得し、未開始 (not_started) なら
+ * /onboarding/welcome へ自動で移動する。login 直後にこのページを開いたまま状態をリセット (DELETE) すると、
+ * 遅れて届いた取得結果が「未開始」になり、そのあとのテストの page.goto を横取りして
+ * "net::ERR_ABORTED" で失敗させる (B-12 で 3 割前後の確率で起きた #854)。
+ * /onboarding/questions は (?resume=true を付けない限り) 状態を見て移動しないので、先にそこへ移っておく。
+ */
+async function leaveOnboardingResumePage(page: Page): Promise<void> {
+  if (new URL(page.url()).pathname === "/onboarding/resume") {
+    await page.goto(`${BASE_URL}/onboarding/questions`);
+  }
+}
+
+/**
  * ログイン後にオンボーディング状態をリセットして not_started に戻す。
  * page.evaluate 経由で session cookie を引き継いだ fetch を実行。
  */
 async function resetOnboarding(page: Page): Promise<void> {
+  await ensureAppOrigin(page);
+  await leaveOnboardingResumePage(page);
   const res = await page.evaluate(async (url: string) => {
     const r = await fetch(url, { method: "DELETE", credentials: "include" });
     return r.status;
@@ -50,6 +85,7 @@ async function resetOnboarding(page: Page): Promise<void> {
  * オンボーディング API 経由で onboarding_completed_at を設定し完了扱いにする。
  */
 async function completeOnboardingViaApi(page: Page): Promise<void> {
+  await ensureAppOrigin(page);
   const res = await page.evaluate(async (url: string) => {
     const r = await fetch(url, { method: "POST", credentials: "include" });
     return r.status;
@@ -69,13 +105,14 @@ async function startOnboardingFlow(page: Page): Promise<void> {
     await startLink.click();
     await page.waitForLoadState("networkidle");
   }
-  // nickname テキスト入力があれば回答して in_progress を確定
+  // nickname テキスト入力に回答して in_progress を確定する。
+  // 入力欄が見えなければ失敗させる (isVisible() は待たずに判定するため、ページ遷移の直後だと
+  // まだ描画されていないだけで「無い」と判定して黙って飛ばし、in_progress にならないままだった #854)
   const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
-  if (await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false)) {
-    await nicknameInput.fill("テストユーザー");
-    await page.keyboard.press("Enter");
-    await page.waitForTimeout(1_000); // saveProgress の非同期 fetch を待つ
-  }
+  await expect(nicknameInput).toBeVisible({ timeout: UI_TIMEOUT });
+  await nicknameInput.fill("テストユーザー");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(1_000); // saveProgress の非同期 fetch を待つ
 }
 
 /**
@@ -84,11 +121,89 @@ async function startOnboardingFlow(page: Page): Promise<void> {
 async function getOnboardingStatus(
   page: Page
 ): Promise<{ status: string; progress?: unknown; nickname?: string }> {
+  await ensureAppOrigin(page);
   const result = await page.evaluate(async (url: string) => {
     const r = await fetch(url, { method: "GET", credentials: "include" });
     return r.json();
   }, `${BASE_URL}/api/onboarding/status`);
   return result;
+}
+
+/**
+ * progress API に途中経過を直接保存し、200 が返ることを確認する。
+ *
+ * 質問フローを UI で最後まで操作せずに、任意の質問から再開した状態 (?resume=true) を作るために使う。
+ * 保存に失敗したまま先へ進むと、再開した画面が想定と違う理由が分かりにくくなるため、ここで止める。
+ */
+async function saveProgressViaApi(
+  page: Page,
+  payload: {
+    currentStep: number;
+    answers: Record<string, unknown>;
+    totalQuestions: number;
+  },
+): Promise<void> {
+  await ensureAppOrigin(page);
+  const status = await page.evaluate(
+    async ({ url, body }: { url: string; body: unknown }) => {
+      const r = await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return r.status;
+    },
+    { url: `${BASE_URL}/api/onboarding/progress`, body: payload },
+  );
+  expect(status).toBe(200);
+}
+
+/**
+ * onboarding/questions を開き、1 問目 (nickname) に回答して 2 問目へ進める。
+ *
+ * 入力欄が見えなければ、その場で失敗させる。以前は「見えなければ黙ってスキップ扱いにする」
+ * 書き方だったため、ページに到達できない不具合 (上の ensureAppOrigin で直した fetch の失敗など) が
+ * スキップの陰に隠れていた (#854)。
+ */
+async function answerNickname(page: Page, nickname: string): Promise<void> {
+  await page.goto(`${BASE_URL}/onboarding/questions`);
+  await page.waitForLoadState("networkidle");
+
+  const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
+  await expect(nicknameInput).toBeVisible({ timeout: UI_TIMEOUT });
+  await nicknameInput.fill(nickname);
+  await page.keyboard.press("Enter");
+}
+
+/**
+ * nickname → gender (男性) → body_stats (年齢・職業・身長・体重) の入力画面まで進める。
+ * どのステップでも、次の要素が見えなければその場で失敗させる。
+ */
+async function reachBodyStatsStep(page: Page): Promise<void> {
+  await answerNickname(page, "テスト");
+
+  const maleButton = page.locator('button:has-text("男性")').first();
+  await expect(maleButton).toBeVisible({ timeout: UI_TIMEOUT });
+  await maleButton.click();
+
+  await expect(page.locator('input[placeholder="60"]').first()).toBeVisible({
+    timeout: UI_TIMEOUT,
+  });
+}
+
+/**
+ * body_stats の年齢・身長・体重に正常値を入れ、「次へ」が押せる状態にする。
+ *
+ * 先に「次へ」が押せることを確かめておくと、そのあと 1 項目だけ異常値に書き換えたとき、
+ * 「次へ」が disabled なのはその項目のせいだと言い切れる
+ * (他の欄が未入力なだけで disabled のまま、という偽の成功を防ぐ)。
+ */
+async function fillValidBodyStats(page: Page): Promise<void> {
+  await page.locator('input[placeholder="25"]').first().fill("25");
+  await page.locator('input[placeholder="170"]').first().fill("170");
+  await page.locator('input[placeholder="60"]').first().fill("60");
+  await expect(page.locator('button:has-text("次へ")').first()).toBeEnabled();
 }
 
 // ─── A. 完了後の動作 ──────────────────────────────────────────────────────────
@@ -422,26 +537,21 @@ test.describe("B. 中断 / 再開", () => {
     });
 
     // 「スキップ」リンクが表示されるまで待つ
+    // (ヘッダーのスキップは質問の種類に関係なく常に表示される。見えなければ失敗させる)
     const skipButton = page
       .locator('button:has-text("スキップ"), a:has-text("スキップ")')
       .last();
-    if (await skipButton.isVisible({ timeout: 8_000 }).catch(() => false)) {
-      // confirm ダイアログをオートクリックで承認
-      page.on("dialog", (dialog) => dialog.accept());
-      await skipButton.click();
-      await page.waitForTimeout(3_000);
+    await expect(skipButton).toBeVisible({ timeout: UI_TIMEOUT });
 
-      // complete API が呼ばれたこと、または menus にリダイレクトされたことを確認
-      const afterUrl = page.url();
-      const apiOrRedirect =
-        completeApiCalled || afterUrl.includes("/menus");
-      expect(apiOrRedirect).toBe(true);
-    } else {
-      // fixme: オンボーディングの「スキップ」ボタンが表示されなかった。
-      // questions ページの初期表示に nickname ステップが必要で、その後のスキップボタンが
-      // 見えるまでのフロー到達が不安定なため。T04 のフロー整備後に有効化する。
-      test.fixme();
-    }
+    // confirm ダイアログをオートクリックで承認
+    page.on("dialog", (dialog) => dialog.accept());
+    await skipButton.click();
+    await page.waitForTimeout(3_000);
+
+    // complete API が呼ばれたこと、または menus にリダイレクトされたことを確認
+    const afterUrl = page.url();
+    const apiOrRedirect = completeApiCalled || afterUrl.includes("/menus");
+    expect(apiOrRedirect).toBe(true);
   });
 
   /**
@@ -454,40 +564,34 @@ test.describe("B. 中断 / 再開", () => {
     onboardingPendingUser: page,
   }) => {
     await resetOnboarding(page);
-    await page.goto(`${BASE_URL}/onboarding/questions`);
-    await page.waitForLoadState("networkidle");
 
-    // 最初の質問に回答して次に進む
-    const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
-    if (await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false)) {
-      await nicknameInput.fill("テスト");
-      await page.keyboard.press("Enter");
-      await page.waitForTimeout(1_000);
+    // 最初の質問に回答して次に進む (入力欄が見えなければ失敗させる)
+    await answerNickname(page, "テスト");
 
-      // 戻るボタンを取得
-      const backButton = page.locator('button').filter({
-        has: page.locator('path[d*="M15 19l-7-7 7-7"]'),
-      }).first();
+    // 戻るボタンを取得 (1 問目に回答して stepHistory が空でなくなると表示される)
+    const backButton = page.locator('button').filter({
+      has: page.locator('path[d*="M15 19l-7-7 7-7"]'),
+    }).first();
+    await expect(backButton).toBeVisible({ timeout: UI_TIMEOUT });
 
-      // 戻るボタンを 5 回連打
-      for (let i = 0; i < 5; i++) {
-        const isVisible = await backButton
-          .isVisible({ timeout: 1_000 })
-          .catch(() => false);
-        if (isVisible) {
-          await backButton.click();
-          await page.waitForTimeout(200);
-        }
+    // 戻るボタンを 5 回連打
+    for (let i = 0; i < 5; i++) {
+      const isVisible = await backButton
+        .isVisible({ timeout: 1_000 })
+        .catch(() => false);
+      if (isVisible) {
+        await backButton.click();
+        await page.waitForTimeout(200);
       }
-
-      // ページがクラッシュしていないことを確認
-      await expect(page.locator("body")).toBeVisible();
-    } else {
-      // fixme: onboarding/questions ページで nicknameInput が表示されなかった。
-      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
-      // T04 のグローバルセットアップ整備後に有効化する。
-      test.fixme();
     }
+
+    // ページがクラッシュしていないことを確認
+    await expect(page.locator("body")).toBeVisible();
+
+    // 連打しても負のステップにならず、いずれかの質問が描画されたままであること。
+    // (負のインデックスになると質問が描画されず空白になるが、body は表示されたままなので
+    //  上の確認だけでは検出できない。ヘッダーの "Setup Profile" は現在の質問があるときだけ描画される)
+    await expect(page.getByText("Setup Profile")).toBeVisible({ timeout: UI_TIMEOUT });
   });
 
   /**
@@ -524,6 +628,8 @@ test.describe("B. 中断 / 再開", () => {
 
     // 新しいタブで再開
     const page2 = await ctx.newPage();
+    // 新しいタブは about:blank のままなので、fetch を実行できるようアプリのページを開いておく
+    await ensureAppOrigin(page2);
     const statusData = await page2.evaluate(async (url: string) => {
       const r = await fetch(url, { credentials: "include" });
       return r.json();
@@ -590,57 +696,21 @@ test.describe("C. 異常入力", () => {
   /**
    * C-14a: 体重フィールドに -100 → 「次へ」が disabled になる
    *
-   * custom_stats の体重フィールドは min=10 max=300 の HTML 制約と
+   * custom_stats の体重フィールドは min=10 max=200 の HTML 制約と
    * JS バリデーション (Number(answers.weight) < 10) を持つ。
    */
   test("C-14a: 体重に -100 を入力すると「次へ」が disabled になる", async ({
     onboardingPendingUser: page,
   }) => {
     await resetOnboarding(page);
-    await page.goto(`${BASE_URL}/onboarding/questions`);
-    await page.waitForLoadState("networkidle");
 
-    // nickname を入力して body_stats ステップへ進む
-    const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
-    if (!(await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      // fixme: onboarding/questions ページで nicknameInput (placeholder="たろう") が表示されなかった。
-      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
-      // T04 のグローバルセットアップ整備後に有効化する。
-      test.fixme();
-      return;
-    }
-    await nicknameInput.fill("テスト");
-    await page.keyboard.press("Enter");
-    await page.waitForTimeout(1_000);
+    // nickname → gender → body_stats ステップへ進む (見えない要素があれば失敗させる)
+    await reachBodyStatsStep(page);
+    // 正常値で全欄を埋めて「次へ」が押せることを確かめてから、体重だけ異常値に書き換える
+    await fillValidBodyStats(page);
 
-    // gender 選択 (choice型)
-    const maleButton = page.locator('button:has-text("男性")').first();
-    if (await maleButton.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await maleButton.click();
-      await page.waitForTimeout(1_000);
-    }
-
-    // body_stats ステップ
     const weightInput = page.locator('input[placeholder="60"]').first();
-    if (!(await weightInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      // fixme: body_stats ステップの体重 input (placeholder="60") が表示されなかった。
-      // nickname → gender → body_stats の順でステップが進む必要があり、
-      // 各ステップへの到達がフロー実装の変更に依存する。T04 整備後に有効化する。
-      test.fixme();
-      return;
-    }
-
-    const heightInput = page.locator('input[placeholder="170"]').first();
-    const ageInput = page.locator('input[placeholder="25"]').first();
     const nextButton = page.locator('button:has-text("次へ")').first();
-
-    // 正常値で他フィールドを埋める
-    if (await ageInput.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await ageInput.fill("25");
-    }
-    if (await heightInput.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await heightInput.fill("170");
-    }
 
     // 体重に -100 を入力
     await weightInput.fill("-100");
@@ -655,48 +725,14 @@ test.describe("C. 異常入力", () => {
     onboardingPendingUser: page,
   }) => {
     await resetOnboarding(page);
-    await page.goto(`${BASE_URL}/onboarding/questions`);
-    await page.waitForLoadState("networkidle");
 
-    const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
-    if (!(await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      // fixme: onboarding/questions ページで nicknameInput (placeholder="たろう") が表示されなかった。
-      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
-      // T04 のグローバルセットアップ整備後に有効化する。
-      test.fixme();
-      return;
-    }
-    await nicknameInput.fill("テスト");
-    await page.keyboard.press("Enter");
-    await page.waitForTimeout(1_000);
-
-    const maleButton = page.locator('button:has-text("男性")').first();
-    if (await maleButton.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await maleButton.click();
-      await page.waitForTimeout(1_000);
-    }
+    await reachBodyStatsStep(page);
+    await fillValidBodyStats(page);
 
     const weightInput = page.locator('input[placeholder="60"]').first();
-    if (!(await weightInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      // fixme: body_stats ステップの体重 input (placeholder="60") が表示されなかった。
-      // nickname → gender → body_stats の順でステップが進む必要があり、
-      // 各ステップへの到達がフロー実装の変更に依存する。T04 整備後に有効化する。
-      test.fixme();
-      return;
-    }
-
-    const heightInput = page.locator('input[placeholder="170"]').first();
-    const ageInput = page.locator('input[placeholder="25"]').first();
     const nextButton = page.locator('button:has-text("次へ")').first();
 
-    if (await ageInput.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await ageInput.fill("25");
-    }
-    if (await heightInput.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await heightInput.fill("170");
-    }
-
-    // 体重に 999999 を入力 (max=300 を超える)
+    // 体重に 999999 を入力 (max=200 を超える)
     await weightInput.fill("999999");
     await expect(nextButton).toBeDisabled({ timeout: 3_000 });
   });
@@ -712,49 +748,21 @@ test.describe("C. 異常入力", () => {
     onboardingPendingUser: page,
   }) => {
     await resetOnboarding(page);
-    await page.goto(`${BASE_URL}/onboarding/questions`);
-    await page.waitForLoadState("networkidle");
 
-    const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
-    if (!(await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      // fixme: onboarding/questions ページで nicknameInput (placeholder="たろう") が表示されなかった。
-      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
-      // T04 のグローバルセットアップ整備後に有効化する。
-      test.fixme();
-      return;
-    }
-    await nicknameInput.fill("テスト");
-    await page.keyboard.press("Enter");
-    await page.waitForTimeout(1_000);
-
-    const maleButton = page.locator('button:has-text("男性")').first();
-    if (await maleButton.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await maleButton.click();
-      await page.waitForTimeout(1_000);
-    }
+    await reachBodyStatsStep(page);
+    // 年齢・身長は正常値にしておく (体重以外が原因で disabled のままになる偽の成功を防ぐ)
+    await fillValidBodyStats(page);
 
     const weightInput = page.locator('input[placeholder="60"]').first();
-    if (!(await weightInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      // fixme: body_stats ステップの体重 input (placeholder="60") が表示されなかった。
-      // nickname → gender → body_stats の順でステップが進む必要があり、
-      // 各ステップへの到達がフロー実装の変更に依存する。T04 整備後に有効化する。
-      test.fixme();
-      return;
-    }
-
-    const heightInput = page.locator('input[placeholder="170"]').first();
-    const ageInput = page.locator('input[placeholder="25"]').first();
     const nextButton = page.locator('button:has-text("次へ")').first();
 
-    if (await ageInput.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await ageInput.fill("25");
-    }
-    if (await heightInput.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await heightInput.fill("170");
-    }
-
-    // "abc" を type (number input は弾くが念の為確認)
-    await weightInput.fill("abc");
+    // 体重を空にしてから "abc" をキー入力する。
+    // (fill() は type="number" に数字以外を渡すと "Cannot type text into input[type=number]" の
+    //  例外になるため、実際のユーザー操作に近い pressSequentially() を使う)
+    await weightInput.fill("");
+    await weightInput.pressSequentially("abc");
+    // number input は数字以外を受け付けず、空のまま
+    await expect(weightInput).toHaveValue("");
     await expect(nextButton).toBeDisabled({ timeout: 3_000 });
   });
 
@@ -768,26 +776,23 @@ test.describe("C. 異常入力", () => {
     onboardingPendingUser: page,
   }) => {
     await resetOnboarding(page);
-    await page.goto(`${BASE_URL}/onboarding/questions`);
-    await page.waitForLoadState("networkidle");
 
-    const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
-    if (!(await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      // fixme: onboarding/questions ページで nicknameInput (placeholder="たろう") が表示されなかった。
-      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
-      // T04 のグローバルセットアップ整備後に有効化する。
-      test.fixme();
-      return;
-    }
-
-    // XSS ペイロードを入力
+    // alert が出たら記録して閉じる (閉じないとページが止まる)
     let alertFired = false;
-    page.on("dialog", () => {
+    page.on("dialog", async (dialog) => {
       alertFired = true;
+      await dialog.dismiss();
     });
 
-    await nicknameInput.fill('<script>alert(1)</script>');
-    await page.keyboard.press("Enter");
+    // XSS ペイロードを nickname として入力して送信 (入力欄が見えなければ失敗させる)
+    const xssPayload = '<script>alert(1)</script>';
+    await answerNickname(page, xssPayload);
+
+    // 2 問目の文面「{nickname}さん、よろしくお願いします！」にペイロードが
+    // 文字のまま表示されていること (= 入力が確かに送信され、HTML として解釈されていない)
+    await expect(page.getByText(`${xssPayload}さん`)).toBeVisible({
+      timeout: UI_TIMEOUT,
+    });
     await page.waitForTimeout(2_000);
 
     // alert が発火していないこと
@@ -801,40 +806,20 @@ test.describe("C. 異常入力", () => {
     onboardingPendingUser: page,
   }) => {
     await resetOnboarding(page);
-    await page.goto(`${BASE_URL}/onboarding/questions`);
-    await page.waitForLoadState("networkidle");
 
-    const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
-    if (!(await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      // fixme: onboarding/questions ページで nicknameInput (placeholder="たろう") が表示されなかった。
-      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
-      // T04 のグローバルセットアップ整備後に有効化する。
-      test.fixme();
-      return;
-    }
-    await nicknameInput.fill("テスト");
-    await page.keyboard.press("Enter");
-    await page.waitForTimeout(1_000);
-
-    const maleButton = page.locator('button:has-text("男性")').first();
-    if (await maleButton.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await maleButton.click();
-      await page.waitForTimeout(1_000);
-    }
+    await reachBodyStatsStep(page);
+    // 年齢・体重は正常値にしておく (身長以外が原因で disabled のままになる偽の成功を防ぐ)
+    await fillValidBodyStats(page);
 
     const heightInput = page.locator('input[placeholder="170"]').first();
-    if (!(await heightInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      // fixme: body_stats ステップの身長 input (placeholder="170") が表示されなかった。
-      // nickname → gender → body_stats の順でステップが進む必要があり、
-      // 各ステップへの到達がフロー実装の変更に依存する。T04 整備後に有効化する。
-      test.fixme();
-      return;
-    }
-
     const nextButton = page.locator('button:has-text("次へ")').first();
 
-    // 絵文字を入力 (number input では無効)
-    await heightInput.fill("🏃");
+    // 身長を空にしてから絵文字をキー入力する
+    // (fill() は type="number" に数字以外を渡すと例外になるため、pressSequentially() を使う)
+    await heightInput.fill("");
+    await heightInput.pressSequentially("🏃");
+    // number input は絵文字を受け付けず、空のまま (身長が空なので「次へ」は押せない)
+    await expect(heightInput).toHaveValue("");
     await expect(nextButton).toBeDisabled({ timeout: 3_000 });
   });
 
@@ -982,55 +967,36 @@ test.describe("C. 異常入力", () => {
     await resetOnboarding(page);
 
     // nutrition_goal=lose_weight の状態で target_weight ステップを表示するために
-    // progress API で状態を設定
-    await page.evaluate(
-      async ({ url, payload }: { url: string; payload: unknown }) => {
-        await fetch(url, {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
+    // progress API で状態を設定 (200 が返らなければここで失敗させる)
+    await saveProgressViaApi(page, {
+      currentStep: 4, // target_weight は index 4
+      answers: {
+        nickname: "テスト",
+        gender: "male",
+        body_stats: "completed",
+        nutrition_goal: "lose_weight",
       },
-      {
-        url: `${BASE_URL}/api/onboarding/progress`,
-        payload: {
-          currentStep: 4, // target_weight は index 4
-          answers: {
-            nickname: "テスト",
-            gender: "male",
-            body_stats: "completed",
-            nutrition_goal: "lose_weight",
-          },
-          totalQuestions: 30,
-        },
-      }
-    );
+      totalQuestions: 30,
+    });
 
     await page.goto(`${BASE_URL}/onboarding/questions?resume=true`);
     await page.waitForLoadState("networkidle");
-    await page.waitForTimeout(3_000);
 
-    // target_weight 入力フィールドを探す
+    // target_weight 入力フィールドが表示されること (見えなければ失敗させる)
     const targetWeightInput = page
       .locator('input[type="number"]')
       .first();
-    if (
-      await targetWeightInput.isVisible({ timeout: 5_000 }).catch(() => false)
-    ) {
-      await targetWeightInput.fill("0");
-      const nextOrSubmitBtn = page
-        .locator('button[type="submit"], button:has-text("次へ")')
-        .first();
-      if (await nextOrSubmitBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-        await expect(nextOrSubmitBtn).toBeDisabled({ timeout: 3_000 });
-      }
-    } else {
-      // fixme: progress API で target_weight ステップに移動しても number input が表示されなかった。
-      // currentStep=4 + nutrition_goal=lose_weight の状態から target_weight フィールドが
-      // 表示されるかどうかはフロー実装に依存する。T04 整備後に有効化する。
-      test.fixme();
-    }
+    await expect(targetWeightInput).toBeVisible({ timeout: UI_TIMEOUT });
+    const nextOrSubmitBtn = page
+      .locator('button[type="submit"], button:has-text("次へ")')
+      .first();
+
+    // 範囲内の値なら送信できること (0 が原因で disabled になっていると言い切るための確認)
+    await targetWeightInput.fill("55");
+    await expect(nextOrSubmitBtn).toBeEnabled();
+
+    await targetWeightInput.fill("0");
+    await expect(nextOrSubmitBtn).toBeDisabled({ timeout: 3_000 });
   });
 
   /**
@@ -1043,35 +1009,59 @@ test.describe("C. 異常入力", () => {
     onboardingPendingUser: page,
   }) => {
     await resetOnboarding(page);
-    await page.goto(`${BASE_URL}/onboarding/questions`);
+
+    // exercise_types ステップ (multi_choice, QUESTIONS の index 10) から再開した状態を
+    // progress API で作る。
+    // (以前は 1 問目の nickname に答えただけで、multi_choice に着いていない 2 問目 (gender) を
+    //  操作していたため、このテストは名前どおりの確認をしていなかった)
+    await saveProgressViaApi(page, {
+      currentStep: 10,
+      answers: {
+        nickname: "テスト",
+        gender: "male",
+        body_stats: "completed",
+        nutrition_goal: "maintain",
+      },
+      totalQuestions: 30,
+    });
+
+    await page.goto(`${BASE_URL}/onboarding/questions?resume=true`);
     await page.waitForLoadState("networkidle");
 
-    // exercise_types ステップ (multi_choice) まで進む
-    const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
-    if (!(await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      // fixme: onboarding/questions ページで nicknameInput (placeholder="たろう") が表示されなかった。
-      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
-      // T04 のグローバルセットアップ整備後に有効化する。
-      test.fixme();
-      return;
-    }
-    await nicknameInput.fill("テスト");
-    await page.keyboard.press("Enter");
-    await page.waitForTimeout(1_000);
+    // multi_choice の質問が表示されていること (見えなければ失敗させる)
+    const exerciseQuestion = page.getByText("普段どんな運動をしていますか？");
+    await expect(exerciseQuestion).toBeVisible({ timeout: UI_TIMEOUT });
 
-    // multi_choice の「次へ」ボタンを見つけて連打
+    // ここから先の progress 保存を数える (ステップが進めば次の質問の保存が走る)
+    let progressPostCount = 0;
+    page.on("request", (req) => {
+      if (
+        req.method() === "POST" &&
+        req.url().includes("/api/onboarding/progress")
+      ) {
+        progressPostCount++;
+      }
+    });
+
+    // 何も選択していないので multi_choice の「次へ」は disabled
     const nextButton = page
       .locator('button:has-text("次へ")')
       .first();
+    await expect(nextButton).toBeDisabled();
+
+    // 「次へ」を連打 (disabled でも force クリック)
     for (let i = 0; i < 10; i++) {
-      if (await nextButton.isVisible({ timeout: 500 }).catch(() => false)) {
-        await nextButton.click({ force: true }); // disabled でも force クリック
-        await page.waitForTimeout(100);
-      }
+      await nextButton.click({ force: true, timeout: 1_000 }).catch(() => {});
+      await page.waitForTimeout(100);
     }
 
     // ページがクラッシュしていないことを確認
     await expect(page.locator("body")).toBeVisible();
+
+    // ステップが進んでいないこと: 同じ質問が表示されたまま、進捗の保存も走っていない
+    await expect(exerciseQuestion).toBeVisible();
+    await expect(nextButton).toBeDisabled();
+    expect(progressPostCount).toBe(0);
   });
 });
 
@@ -1097,6 +1087,8 @@ test.describe("D. 並列 / 競合", () => {
     await resetOnboarding(pageA);
 
     const pageB = await ctx.newPage();
+    // 新しいタブは about:blank のままなので、fetch を実行できるようアプリのページを開いておく
+    await ensureAppOrigin(pageB);
 
     // 両タブで progress を設定
     const progressPayload = {
@@ -1171,6 +1163,8 @@ test.describe("D. 並列 / 競合", () => {
 
     // タブ B で progress を保存（古いクライアントが送ってくる状況）
     const pageB = await ctx.newPage();
+    // 新しいタブは about:blank のままなので、fetch を実行できるようアプリのページを開いておく
+    await ensureAppOrigin(pageB);
     const res = await pageB.evaluate(
       async ({ url, payload }: { url: string; payload: unknown }) => {
         const r = await fetch(url, {
@@ -1212,38 +1206,46 @@ test.describe("D. 並列 / 競合", () => {
     onboardingPendingUser: page,
   }) => {
     await resetOnboarding(page);
-    await page.goto(`${BASE_URL}/onboarding/questions`);
-    await page.waitForLoadState("networkidle");
 
-    const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
-    if (!(await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      // fixme: onboarding/questions ページで nicknameInput (placeholder="たろう") が表示されなかった。
-      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
-      // T04 のグローバルセットアップ整備後に有効化する。
-      test.fixme();
-      return;
-    }
-    await nicknameInput.fill("テスト");
-    await page.keyboard.press("Enter");
-    await page.waitForTimeout(800);
-
-    // gender 選択の choice ボタンを 10 回連打
-    const maleButton = page.locator('button:has-text("男性")').first();
-    if (await maleButton.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      for (let i = 0; i < 10; i++) {
-        await maleButton.click({ force: true }).catch(() => {});
-        await page.waitForTimeout(50);
+    // 進捗の保存 (質問に答えるたびに送られる) の currentStep を記録する
+    const savedSteps: number[] = [];
+    page.on("request", (req) => {
+      if (
+        req.method() === "POST" &&
+        req.url().includes("/api/onboarding/progress")
+      ) {
+        try {
+          savedSteps.push(JSON.parse(req.postData() ?? "{}").currentStep);
+        } catch {
+          // 本文が JSON でなければ数えない
+        }
       }
-      await page.waitForTimeout(1_500);
+    });
 
-      // ページがクラッシュしていないこと
-      await expect(page.locator("body")).toBeVisible();
-    } else {
-      // fixme: gender 選択の「男性」ボタンが表示されなかった。
-      // nickname 回答後に gender ステップに進む必要があり、
-      // アニメーションやフロー状態によって表示タイミングが変動する。T04 整備後に有効化する。
-      test.fixme();
+    // 1 問目 (nickname) に回答して gender ステップへ進む (入力欄が見えなければ失敗させる)
+    await answerNickname(page, "テスト");
+
+    // gender 選択の choice ボタンを 10 回連打。
+    // 1 回目のクリックで回答が確定して入力エリアが消えるため、2 回目以降は押せない。
+    // (待たされないよう、短いタイムアウトで失敗させて先へ進む)
+    const maleButton = page.locator('button:has-text("男性")').first();
+    await expect(maleButton).toBeVisible({ timeout: UI_TIMEOUT });
+    for (let i = 0; i < 10; i++) {
+      await maleButton.click({ force: true, timeout: 300 }).catch(() => {});
+      await page.waitForTimeout(50);
     }
+
+    // ページがクラッシュしていないこと
+    await expect(page.locator("body")).toBeVisible();
+
+    // 質問が飛ばされず、gender の次 (body_stats) にちょうど進んでいること
+    await expect(page.locator('input[placeholder="60"]').first()).toBeVisible({
+      timeout: UI_TIMEOUT,
+    });
+    await page.waitForTimeout(1_500);
+    // 保存されたのは nickname 回答後 (step 1) と gender 回答後 (step 2) の 1 回ずつだけ
+    // (連打で回答が二重に確定していれば、同じ step の保存が重複する)
+    expect(savedSteps).toEqual([1, 2]);
   });
 
   /**

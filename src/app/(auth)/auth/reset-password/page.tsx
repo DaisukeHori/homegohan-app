@@ -5,7 +5,43 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
+import { validatePassword, PASSWORD_MIN_LENGTH } from "@/lib/auth/validate-password";
+import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
+import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { Lock, CheckCircle2, AlertCircle, Eye, EyeOff } from "lucide-react";
+
+/**
+ * #1188: パスワードを更新できた後に、この端末を含むすべての端末のログインを無効にする。
+ *
+ * scope: 'global' は、このリセットメールのリンクで作られたセッションも含め、
+ * そのユーザーの全セッションを失効させる (設計書 docs/design/cross/01-auth-session.md §9.1 の
+ * 「全セッション revoke (リセット後は再ログイン強制)」。モバイルの reset-password.tsx と同じ挙動)。
+ * 'others' だとこの端末のセッションが残ってしまうので使わない。
+ * (GoTrue は updateUser({ password }) の時点で、更新した本人以外のセッションを自動で消す。
+ *  それでも更新した本人のセッションは残るので、ここで明示的に消す。
+ *  この挙動は tests/integration/security/password-update-revokes-sessions.test.ts で確認している。)
+ *
+ * パスワードはもう更新できているので、失敗しても例外にはしない (エラー画面に戻すと、
+ * 更新済みなのに「失敗した」と見えてしまう)。無効にできたら true を返す。
+ */
+async function signOutEverywhere(supabase: ReturnType<typeof createClient>): Promise<boolean> {
+  try {
+    // CLAUDE.md: サインアウトでは Supabase の signOut より前に、端末のユーザー別データを消す
+    clearUserScopedLocalStorage();
+    // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
+    notifyNativeSignOut();
+    const { error } = await supabase.auth.signOut({ scope: "global" });
+    if (error) {
+      throw error;
+    }
+    // 同じブラウザで開いている他のタブも /login へ移す
+    broadcastSignOut();
+    return true;
+  } catch (err) {
+    console.error("Sign out error after password update:", err);
+    return false;
+  }
+}
 
 export default function ResetPasswordPage() {
   const router = useRouter();
@@ -14,6 +50,8 @@ export default function ResetPasswordPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  // パスワードは更新できたが、全端末のログアウトを完了できなかった
+  const [signOutFailed, setSignOutFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isValidSession, setIsValidSession] = useState<boolean | null>(null);
 
@@ -35,8 +73,11 @@ export default function ResetPasswordPage() {
       return;
     }
 
-    if (password.length < 6) {
-      setError("パスワードは6文字以上で設定してください");
+    // #1057 (UX1-05): signup と要件を統一(以前は6文字のみでOKだったため
+    // `123456` のような弱いパスワードでリセットが成立してしまっていた)
+    const pwdError = validatePassword(password);
+    if (pwdError) {
+      setError(pwdError);
       return;
     }
 
@@ -54,6 +95,9 @@ export default function ResetPasswordPage() {
         throw updateError;
       }
 
+      // #1188: 更新できたら、この端末も含めて全端末をログアウトし、新しいパスワードで入り直してもらう
+      const signedOut = await signOutEverywhere(supabase);
+      setSignOutFailed(!signedOut);
       setSuccess(true);
       
       // 3秒後にログインページへリダイレクト
@@ -129,9 +173,23 @@ export default function ResetPasswordPage() {
                 パスワードを更新しました
               </h1>
               <p className="text-sm text-gray-500 mb-6">
-                新しいパスワードでログインできます。
+                {signOutFailed
+                  ? "新しいパスワードでログインできます。"
+                  : "セキュリティのため、すべての端末からログアウトしました。新しいパスワードでログインしてください。"}
                 自動的にログインページに移動します...
               </p>
+              {signOutFailed && (
+                <div
+                  role="alert"
+                  className="flex items-start gap-2 p-3 mb-6 rounded-xl bg-amber-50 text-amber-800 text-left"
+                >
+                  <AlertCircle size={18} className="shrink-0 mt-0.5" />
+                  <span className="text-sm">
+                    他の端末のログアウトを確認できませんでした。
+                    心配な場合は、ログイン後に「設定」からログアウトしてください。
+                  </span>
+                </div>
+              )}
               <Link
                 href="/login"
                 className="block w-full py-3 rounded-xl font-bold text-white bg-[#E07A5F] hover:bg-[#D16A4F] transition-colors text-center"
@@ -154,7 +212,7 @@ export default function ResetPasswordPage() {
                   新しいパスワードを設定
                 </h1>
                 <p className="text-sm text-gray-500">
-                  6文字以上の新しいパスワードを入力してください。
+                  {PASSWORD_MIN_LENGTH}文字以上、英字と数字を含む新しいパスワードを入力してください。
                 </p>
               </div>
 
@@ -170,7 +228,7 @@ export default function ResetPasswordPage() {
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="••••••••"
                       required
-                      minLength={6}
+                      minLength={PASSWORD_MIN_LENGTH}
                       className="w-full px-4 py-3 pr-12 rounded-xl border border-gray-200 focus:border-[#E07A5F] focus:ring-2 focus:ring-[#E07A5F]/20 outline-none transition-all"
                     />
                     <button
@@ -193,7 +251,7 @@ export default function ResetPasswordPage() {
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="••••••••"
                     required
-                    minLength={6}
+                    minLength={PASSWORD_MIN_LENGTH}
                     className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#E07A5F] focus:ring-2 focus:ring-[#E07A5F]/20 outline-none transition-all"
                   />
                 </div>

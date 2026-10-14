@@ -1,7 +1,6 @@
-SET search_path TO public, extensions;
-SET statement_timeout TO 0;
-
--- Temporary operational migration:
--- drop the menu-set vector index so the remaining 1024-dim backfill can finish
--- without per-row HNSW maintenance causing statement timeouts.
-DROP INDEX IF EXISTS idx_dataset_menu_sets_embedding_hnsw;
+-- migration: 20260309080000_drop_menu_set_embedding_index_for_backfill.sql
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;

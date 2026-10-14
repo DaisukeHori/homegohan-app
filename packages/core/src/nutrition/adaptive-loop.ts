@@ -427,6 +427,12 @@ export function applyRecommendations(
   recommendations: AdjustmentRecommendation[],
   options: {
     maxCalorieChange?: number; // デフォルト200
+    // #1048 F2-18: calories 以外は delta の上限が無く、
+    // recommendations の出所（呼び出し元）が信頼できない場合に
+    // nutrition_targets が無制限に変更され得た。安全弁として上限を設ける。
+    maxProteinChange?: number; // デフォルト60g（analyzeCheckinLoop の想定最大は15g）
+    maxCarbsChange?: number;   // デフォルト100g（想定最大は40g）
+    maxFatChange?: number;     // デフォルト50g（想定最大は0g、将来拡張の余地を残す）
     applyTop?: number; // 上位N件のみ適用（デフォルト1）
   } = {}
 ): {
@@ -436,7 +442,13 @@ export function applyRecommendations(
   carbs: number;
   appliedRecommendations: AdjustmentRecommendation[];
 } {
-  const { maxCalorieChange = 200, applyTop = 1 } = options;
+  const {
+    maxCalorieChange = 200,
+    maxProteinChange = 60,
+    maxCarbsChange = 100,
+    maxFatChange = 50,
+    applyTop = 1,
+  } = options;
 
   let { calories, protein, fat, carbs } = currentTargets;
   const appliedRecommendations: AdjustmentRecommendation[] = [];
@@ -454,18 +466,24 @@ export function applyRecommendations(
         appliedRecommendations.push({ ...rec, delta: clampedDelta });
         break;
       }
-      case 'protein':
-        protein = Math.max(40, protein + rec.delta);
-        appliedRecommendations.push(rec);
+      case 'protein': {
+        const clampedDelta = Math.max(-maxProteinChange, Math.min(maxProteinChange, rec.delta));
+        protein = Math.max(40, protein + clampedDelta);
+        appliedRecommendations.push({ ...rec, delta: clampedDelta });
         break;
-      case 'carbs':
-        carbs = Math.max(50, carbs + rec.delta);
-        appliedRecommendations.push(rec);
+      }
+      case 'carbs': {
+        const clampedDelta = Math.max(-maxCarbsChange, Math.min(maxCarbsChange, rec.delta));
+        carbs = Math.max(50, carbs + clampedDelta);
+        appliedRecommendations.push({ ...rec, delta: clampedDelta });
         break;
-      case 'fat':
-        fat = Math.max(20, fat + rec.delta);
-        appliedRecommendations.push(rec);
+      }
+      case 'fat': {
+        const clampedDelta = Math.max(-maxFatChange, Math.min(maxFatChange, rec.delta));
+        fat = Math.max(20, fat + clampedDelta);
+        appliedRecommendations.push({ ...rec, delta: clampedDelta });
         break;
+      }
     }
   }
 

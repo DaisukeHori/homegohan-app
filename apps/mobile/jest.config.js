@@ -6,10 +6,14 @@ const path = require('path');
 const repoRoot = path.resolve(__dirname, '../..');
 const worktreeNodeModules = path.join(repoRoot, 'node_modules');
 const mobileNodeModules = path.join(__dirname, 'node_modules');
+// 時間切れの既定 (根拠と環境変数での上書きは jest.timeouts.js)
+const { resolveMobileJestTimeouts } = require('./jest.timeouts');
 
 /** @type {import('jest-expo').JestExpoConfig} */
 module.exports = {
   preset: 'jest-expo',
+  // 1 件のテストの時間切れ。負荷の高い機械で Jest の既定の 5 秒を超えて落ちるため延ばす (jest.timeouts.js)
+  testTimeout: resolveMobileJestTimeouts(process.env).testTimeout,
   modulePaths: [mobileNodeModules, worktreeNodeModules],
   transformIgnorePatterns: [
     'node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg))',
@@ -23,6 +27,10 @@ module.exports = {
     '^react-native/(.*)$': path.join(worktreeNodeModules, 'react-native', '$1'),
     '^react-test-renderer$': path.join(worktreeNodeModules, 'react-test-renderer'),
     '^react-test-renderer/(.*)$': path.join(worktreeNodeModules, 'react-test-renderer', '$1'),
+    // tsconfig.json の paths と同じく、このリポジトリの packages/shared を直接読む (#1197)。
+    // node_modules/@homegohan/shared (ワークスペースのシンボリックリンク) 経由だと、node_modules を
+    // 別の場所のものと共有している作業コピー (git worktree など) で、手元ではなくリンク先の古い内容を読むため。
+    '^@homegohan/shared$': path.join(repoRoot, 'packages/shared/src/index.ts'),
     // react-native-webview はネイティブモジュール (RNCWebViewModule) を必要とするため
     // Jest 環境では stub モックに差し替える。
     '^react-native-webview$': '<rootDir>/__mocks__/react-native-webview.js',

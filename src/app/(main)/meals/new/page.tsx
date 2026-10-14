@@ -2,12 +2,17 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { todayLocal } from "@/lib/date-utils";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveClassifyPhotoType } from "@/lib/ai/image-recognition";
 import { logToServer } from "@/lib/db-logger";
+import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
+import { useAiConsent } from "@/hooks/useAiConsent";
+import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { formatLocalDate } from "@homegohan/shared";
 import type { CatalogDishMatch, CatalogProductSummary } from "@/types/catalog";
 import { motion, AnimatePresence } from "framer-motion";
+import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 import {
   Camera, Image as ImageIcon, X, ChevronLeft, ChevronRight,
   Sparkles, Check, Calendar, Clock, Sun, Coffee, Moon,
@@ -38,7 +43,9 @@ const colors = {
 
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
 type DishDetail = { name: string; cal: number; calories_kcal?: number; role: string; ingredient?: string };
-type Step = 'mode-select' | 'capture' | 'analyzing' | 'result' | 'select-date' | 'fridge-result' | 'health-result' | 'weight-result' | 'classify-failed';
+// UX2-14: 'analyze-timeout' は photoMode が既知（auto 以外）の状態でのタイムアウト専用ステップ。
+// 'classify-failed'（写真の種類が判別できない）とは原因も文言も異なるため区別する。
+type Step = 'mode-select' | 'capture' | 'analyzing' | 'result' | 'select-date' | 'fridge-result' | 'health-result' | 'weight-result' | 'classify-failed' | 'analyze-timeout';
 type PhotoMode = 'auto' | 'meal' | 'fridge' | 'health_checkup' | 'weight_scale';
 type ClassifyResult = PhotoMode | 'unknown';
 
@@ -100,6 +107,16 @@ const PHOTO_MODE_COPY: Record<PhotoMode, {
     analyzingDescription: '体重や体組成の表示値を読み取っています',
   },
 };
+
+// #1141: ?mode=<撮影の種類> で来たときは、モード選択を飛ばしてその種類の撮影ステップから始める
+// (例: 健康記録の「写真で記録」→ /meals/new?mode=weight_scale)。
+// mode クエリには撮影の種類以外の値も来る (ネイティブアプリの WebView は全 URL に mode=app を付ける。
+// src/middleware.ts / useNativeAppMode 参照)。PHOTO_MODES に無い値は無視して従来どおりモード選択から始める。
+// `in` 演算子だと constructor / toString などの組み込みプロパティ名も「ある」と判定されるため、
+// PHOTO_MODES 自身のキーだけで判定する。
+const parsePhotoModeParam = (value: string | null): PhotoMode | null => (
+  value !== null && Object.prototype.hasOwnProperty.call(PHOTO_MODES, value) ? (value as PhotoMode) : null
+);
 
 // 冷蔵庫解析結果
 interface FridgeIngredient {
@@ -250,22 +267,50 @@ const scaleDimensions = (
 
 export default function MealCaptureModal() {
   const router = useRouter();
+  // クエリ: mode (撮影の種類の指定) / prefill (ネイティブアプリから渡される AI 解析済みデータ) /
+  // source + sandbox (ハンズオンツアー)
+  const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  // #1149 写真の「オート」の判別 (classify-photo) が数えたあとに返す「数え済みの印」。続く解析 (analyze-*) の本文に 1 回だけ付けて送り、
+  // 解析を数えないようにする (1 回の操作を 1 回)。判別できずに種類を手で選んだときも、その判別の続きとして使う。
+  // 新しい操作 (analyzeByMode) の始めに捨てる。印はサーバーで 1 回しか使えず、期限もある (偽の印や古い印はサーバーが数える)
+  const aiUsageGrantRef = useRef<string | null>(null);
+  const takeAiUsageGrant = (): string | undefined => {
+    const grant = aiUsageGrantRef.current;
+    aiUsageGrantRef.current = null;
+    return grant ?? undefined;
+  };
 
-  const [step, setStep] = useState<Step>('mode-select');
-  const [photoMode, setPhotoMode] = useState<PhotoMode>('auto');
+  // #1141: ?mode=weight_scale などが指定されていれば、モード選択を飛ばしてその種類の撮影ステップから始める。
+  // 使うのは初回表示の値だけ (useState の初期値)。画面を使っている途中で URL が変わっても、
+  // 解析中・結果表示中の状態は壊さない。
+  const requestedPhotoMode = parsePhotoModeParam(searchParams.get('mode'));
+  const [step, setStep] = useState<Step>(requestedPhotoMode ? 'capture' : 'mode-select');
+  const [photoMode, setPhotoMode] = useState<PhotoMode>(requestedPhotoMode ?? 'auto');
   const modeCopy = PHOTO_MODE_COPY[photoMode];
   // 複数枚対応
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
+  // #1222: プレビュー用 Blob URL は、削除・撮り直し・各ステップのリセット (setPhotoPreviews([]) が多数ある)・
+  // ページ離脱のたびに、配列から外れた分をここでまとめて revoke する。
+  // ハンズオンの固定画像 (SAMPLE_MEAL_IMAGE.webPath) は blob: ではないので対象外。
+  useRevokeBlobUrls(photoPreviews);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。写真を AI に送る前に、未同意なら出す。
+  // 「同意しない」なら解析しない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)
+  const { ensureAiConsent, consentModal } = useAiConsent();
 
   // 冷蔵庫解析結果
   const [fridgeIngredients, setFridgeIngredients] = useState<FridgeIngredient[]>([]);
   const [fridgeSummary, setFridgeSummary] = useState('');
   const [fridgeSuggestions, setFridgeSuggestions] = useState<string[]>([]);
   const [isSavingFridge, setIsSavingFridge] = useState(false);
+  // UX2-04: 「入れ替える」は既存の冷蔵庫データを全削除する破壊的操作なのに確認が無かった。
+  // 対象件数（既存の冷蔵庫食材数）を明示した確認ダイアログを挟む。
+  const [showFridgeReplaceConfirm, setShowFridgeReplaceConfirm] = useState(false);
+  const [existingFridgeCount, setExistingFridgeCount] = useState<number | null>(null);
+  const [isCheckingFridgeCount, setIsCheckingFridgeCount] = useState(false);
 
   // 健康診断解析結果
   const [healthData, setHealthData] = useState<HealthCheckupData>({});
@@ -281,6 +326,8 @@ export default function MealCaptureModal() {
   const [isSavingWeight, setIsSavingWeight] = useState(false);
   const [showWeightSuccessModal, setShowWeightSuccessModal] = useState(false);
   const [savedWeight, setSavedWeight] = useState<number | null>(null);
+  // UX2-15: 解析済み結果を破棄して閉じる確認モーダル
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
 
   // オートモード判別結果
   const [detectedType, setDetectedType] = useState<string | null>(null);
@@ -314,12 +361,10 @@ export default function MealCaptureModal() {
   
   const [isSaving, setIsSaving] = useState(false);
 
-  // ネイティブアプリから渡される AI 解析済みデータを prefill として受け取る
-  const searchParams = useSearchParams();
-
   // ハンズオンツアー sandbox モード検出
   const isSandboxMode = searchParams.get('source') === 'handson_tour' && searchParams.get('sandbox') === 'true';
 
+  // ネイティブアプリから渡される AI 解析済みデータを prefill として受け取る
   useEffect(() => {
     const prefillParam = searchParams.get('prefill');
     if (!prefillParam) return;
@@ -374,18 +419,25 @@ export default function MealCaptureModal() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSandboxMode]);
 
-  // analyzing ステップに 45 秒の上限タイマー — タイムアウト時は classify-failed に遷移
+  // analyzing ステップに 45 秒の上限タイマー
+  // UX2-14: photoMode が既知（auto 以外）の場合は「種類判別できませんでした」画面ではなく、
+  // 通信確認+同モード再解析を促す専用のタイムアウト画面（analyze-timeout）に遷移する。
+  // auto モードのみ、判別自体が目的なので従来どおり classify-failed に遷移する。
   useEffect(() => {
     if (step !== 'analyzing') return;
     const timer = setTimeout(() => {
-      setDetectedDescription('AI 解析がタイムアウトしました。もう一度お試しください');
-      setDetectedType('unknown');
-      setDetectedConfidence(0);
-      setClassificationCandidates([]);
-      setStep('classify-failed');
+      if (photoMode === 'auto') {
+        setDetectedDescription('AI 解析がタイムアウトしました。もう一度お試しください');
+        setDetectedType('unknown');
+        setDetectedConfidence(0);
+        setClassificationCandidates([]);
+        setStep('classify-failed');
+      } else {
+        setStep('analyze-timeout');
+      }
     }, 45_000);
     return () => clearTimeout(timer);
-  }, [step]);
+  }, [step, photoMode]);
 
   const weekDates = getWeekDates(weekStart);
   const todayStr = formatLocalDate(new Date());
@@ -498,16 +550,23 @@ export default function MealCaptureModal() {
       });
       const imageDataArray = await buildImagePayloads(photoFiles, IMAGE_PAYLOAD_CONFIG.meal);
 
-      const res = await fetch('/api/ai/analyze-meal-photo', {
+      const res = await aiFetch('/api/ai/analyze-meal-photo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           images: imageDataArray,
           mealType: selectedMealType,
           prefetchedGeminiResult,
+          aiUsageGrant: takeAiUsageGrant(),
         }),
       });
       
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さずに種類の選択へ戻す (写真は残す)
+      if (await isAiConsentRequiredResponse(res)) {
+        setStep('mode-select');
+        return;
+      }
+
       if (res.ok) {
         const data = await res.json();
         void logToServer('info', 'meal-photo analysis succeeded', {
@@ -575,7 +634,8 @@ export default function MealCaptureModal() {
   };
 
   // 写真タイプを判別（オートモード）
-  const classifyPhoto = async (files: File[]): Promise<ClassificationResponse> => {
+  // 同意が必要で止められたときは null (同意画面 (AiConsentRequiredHost) が案内する)
+  const classifyPhoto = async (files: File[]): Promise<ClassificationResponse | null> => {
     try {
       const startedAt = Date.now();
       void logToServer('info', 'photo classification started', {
@@ -583,7 +643,7 @@ export default function MealCaptureModal() {
         photoMode,
       });
       const images = await buildImagePayloads(files, IMAGE_PAYLOAD_CONFIG.classify);
-      const res = await fetch('/api/ai/classify-photo', {
+      const res = await aiFetch('/api/ai/classify-photo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -593,8 +653,11 @@ export default function MealCaptureModal() {
         }),
       });
 
+      if (await isAiConsentRequiredResponse(res)) return null;
+
       if (res.ok) {
         const data = await res.json();
+        aiUsageGrantRef.current = typeof data.aiUsageGrant === 'string' ? data.aiUsageGrant : null;
         void logToServer('info', 'photo classification succeeded', {
           photoCount: files.length,
           photoMode,
@@ -621,6 +684,14 @@ export default function MealCaptureModal() {
       }
 
       const errorText = await res.text();
+      // 判別できなかった (422) ときも、数えた印が返る。種類を手で選んで解析するときに使う
+      try {
+        const errorBody: unknown = JSON.parse(errorText);
+        const grant = errorBody && typeof errorBody === 'object' ? (errorBody as { aiUsageGrant?: unknown }).aiUsageGrant : undefined;
+        if (typeof grant === 'string') aiUsageGrantRef.current = grant;
+      } catch {
+        // JSON でない本文 (印は無い)
+      }
       console.error('Classification request failed:', res.status, errorText);
       void logToServer('warn', 'photo classification failed', {
         photoCount: files.length,
@@ -661,11 +732,17 @@ export default function MealCaptureModal() {
     try {
       const [{ base64, mimeType }] = await buildImagePayloads([photoFiles[0]], IMAGE_PAYLOAD_CONFIG.fridge);
 
-      const res = await fetch('/api/ai/analyze-fridge', {
+      const res = await aiFetch('/api/ai/analyze-fridge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: base64, mimeType }),
+        body: JSON.stringify({ imageBase64: base64, mimeType, aiUsageGrant: takeAiUsageGrant() }),
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さずに種類の選択へ戻す (写真は残す)
+      if (await isAiConsentRequiredResponse(res)) {
+        setStep('mode-select');
+        return;
+      }
 
       if (res.ok) {
         const data = await res.json();
@@ -699,11 +776,17 @@ export default function MealCaptureModal() {
     try {
       const [{ base64, mimeType }] = await buildImagePayloads([photoFiles[0]], IMAGE_PAYLOAD_CONFIG.health_checkup);
 
-      const res = await fetch('/api/ai/analyze-health-checkup', {
+      const res = await aiFetch('/api/ai/analyze-health-checkup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: base64, mimeType }),
+        body: JSON.stringify({ imageBase64: base64, mimeType, aiUsageGrant: takeAiUsageGrant() }),
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さずに種類の選択へ戻す (写真は残す)
+      if (await isAiConsentRequiredResponse(res)) {
+        setStep('mode-select');
+        return;
+      }
 
       if (res.ok) {
         const data = await res.json();
@@ -755,11 +838,17 @@ export default function MealCaptureModal() {
     try {
       const [{ base64, mimeType }] = await buildImagePayloads([photoFiles[0]], IMAGE_PAYLOAD_CONFIG.weight_scale);
 
-      const res = await fetch('/api/ai/analyze-weight-scale', {
+      const res = await aiFetch('/api/ai/analyze-weight-scale', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64, mimeType }),
+        body: JSON.stringify({ image: base64, mimeType, aiUsageGrant: takeAiUsageGrant() }),
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さずに種類の選択へ戻す (写真は残す)
+      if (await isAiConsentRequiredResponse(res)) {
+        setStep('mode-select');
+        return;
+      }
 
       if (res.ok) {
         const data = await res.json();
@@ -832,6 +921,9 @@ export default function MealCaptureModal() {
     targetMode: Exclude<ClassifyResult, 'unknown'>,
     classification?: ClassificationResponse,
   ) => {
+    // 手動で種類を選び直した場合など、analyzeByMode を通らない経路でも確認する (同意済み・確認済みなら待たない)。
+    // 「同意しない」なら写真を AI に送らない
+    if ((await ensureAiConsent()) === 'declined') return;
     switch (targetMode) {
       case 'fridge':
         await analyzeFridge();
@@ -852,8 +944,14 @@ export default function MealCaptureModal() {
   const analyzeByMode = async () => {
     if (photoFiles.length === 0) return;
 
+    // 未同意なら同意画面を出す。オートモードの種類判別 (classify-photo) も写真を送るので、その前に確認する。
+    // 「同意しない」なら写真を AI に送らない
+    if ((await ensureAiConsent()) === 'declined') return;
+
     let targetMode: ClassifyResult = photoMode as ClassifyResult;
     let classification: ClassificationResponse | undefined;
+    // 新しい操作: 前の判別の印は使わない (この操作の判別が数えたら、新しい印が入る)
+    aiUsageGrantRef.current = null;
     void logToServer('info', 'photo flow started', {
       photoMode,
       photoCount: photoFiles.length,
@@ -864,8 +962,14 @@ export default function MealCaptureModal() {
       setStep('analyzing');
       setIsAnalyzing(true);
 
-      classification = await classifyPhoto(photoFiles);
+      const classified = await classifyPhoto(photoFiles);
       setIsAnalyzing(false);
+      if (!classified) {
+        // 同意が必要で止められた: 同意画面が案内する。種類の選択へ戻す (写真は残す)
+        setStep('mode-select');
+        return;
+      }
+      classification = classified;
 
       const resolvedClassification = resolveClassifyPhotoType(classification);
       if (!resolvedClassification.type) {
@@ -933,6 +1037,26 @@ export default function MealCaptureModal() {
     }
   };
 
+  // UX2-04: 「入れ替える」クリック時。既存の冷蔵庫食材数を確認してから破壊操作の確認を出す
+  // （件数取得に失敗しても、件数無しのメッセージで確認自体はブロックしない）。
+  const handleFridgeReplaceClick = async () => {
+    setIsCheckingFridgeCount(true);
+    try {
+      const res = await fetch('/api/pantry');
+      if (res.ok) {
+        const data = await res.json();
+        setExistingFridgeCount((data.items || []).length);
+      } else {
+        setExistingFridgeCount(null);
+      }
+    } catch {
+      setExistingFridgeCount(null);
+    } finally {
+      setIsCheckingFridgeCount(false);
+    }
+    setShowFridgeReplaceConfirm(true);
+  };
+
   // 健康診断データを保存
   const saveHealthCheckup = async () => {
     setIsSavingHealth(true);
@@ -943,7 +1067,7 @@ export default function MealCaptureModal() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          checkup_date: healthData.checkupDate || new Date().toISOString().split('T')[0],
+          checkup_date: healthData.checkupDate || todayLocal(),
           facility_name: healthData.facilityName,
           height: healthData.height,
           weight: healthData.weight,
@@ -1027,11 +1151,16 @@ export default function MealCaptureModal() {
       });
       
       if (res.ok) {
-        // 成功したら献立表ページへ
-        router.push('/menus/weekly');
+        // UX2-16: 保存成功のフィードバックが無いまま遷移し、別週保存だと保存先が分からない問題への対応。
+        // 献立表ページに保存日・食事種別・成功フラグをクエリで渡し、対象週を初期選択の上でトースト表示する。
+        const params = new URLSearchParams({ date: selectedDate, mealType: selectedMealType, saved: '1' });
+        router.push(`/menus/weekly?${params.toString()}`);
       } else {
         const err = await res.json();
-        alert(`保存に失敗しました: ${err.error || '不明なエラー'}`);
+        // sandbox の利用条件エラーなどは { error: { code, message } } 形式、それ以外は { error: '文字列' } 形式で返る。
+        // オブジェクトをそのまま埋め込むと '[object Object]' と表示されてしまうため、message を取り出す (#1109)。
+        const errorMessage = typeof err.error === 'string' ? err.error : err.error?.message;
+        alert(`保存に失敗しました: ${errorMessage || '不明なエラー'}`);
       }
     } catch (error) {
       console.error('Save error:', error);
@@ -1054,8 +1183,8 @@ export default function MealCaptureModal() {
     setWeekStart(newStart);
   };
 
-  // 閉じる
-  const handleClose = () => {
+  // 実際に閉じる処理（確認後 or 確認不要なステップから呼ばれる）
+  const doClose = () => {
     // WebView ネイティブアプリ環境では ReactNativeWebView に back メッセージを送る
     const w = window as unknown as { ReactNativeWebView?: { postMessage: (s: string) => void } };
     if (w.ReactNativeWebView) {
@@ -1068,6 +1197,16 @@ export default function MealCaptureModal() {
     } else {
       router.push('/home');
     }
+  };
+
+  // UX2-15: 解析済み結果（result 以降）を X で閉じようとした場合は破棄確認を挟む
+  const RESULT_STEPS: Step[] = ['result', 'select-date', 'fridge-result', 'health-result', 'weight-result'];
+  const handleClose = () => {
+    if (RESULT_STEPS.includes(step)) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    doClose();
   };
 
   return (
@@ -1089,6 +1228,7 @@ export default function MealCaptureModal() {
             {step === 'health-result' && '健康診断結果'}
             {step === 'weight-result' && '体重計読み取り結果'}
             {step === 'classify-failed' && '判別できませんでした'}
+            {step === 'analyze-timeout' && 'タイムアウトしました'}
           </span>
         </div>
         <div className="w-10" />
@@ -1762,8 +1902,8 @@ export default function MealCaptureModal() {
                 <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>追記する</span>
               </button>
               <button
-                onClick={() => saveFridgeItems('replace')}
-                disabled={isSavingFridge}
+                onClick={handleFridgeReplaceClick}
+                disabled={isSavingFridge || isCheckingFridgeCount}
                 className="flex-1 py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60"
                 style={{ background: colors.accent }}
               >
@@ -2303,6 +2443,65 @@ export default function MealCaptureModal() {
           </motion.div>
         )}
 
+        {/* UX2-14: タイムアウト画面（photoMode が既知の場合）。判別失敗ではなく通信状況の確認と同モードでの再解析を促す */}
+        {step === 'analyze-timeout' && (
+          <motion.div
+            key="analyze-timeout"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="flex-1 flex flex-col items-center justify-center p-6"
+          >
+            <div className="text-6xl mb-4">📶</div>
+            <h2 className="text-xl font-bold mb-2 text-center" style={{ color: colors.text }}>
+              解析がタイムアウトしました
+            </h2>
+            <p className="text-center mb-8" style={{ color: colors.textLight, fontSize: 14 }}>
+              通信状況をご確認のうえ、もう一度お試しください。
+              {photoMode !== 'auto' && `「${PHOTO_MODES[photoMode].label}」として再解析します。`}
+            </p>
+
+            <div className="w-full max-w-xs space-y-3">
+              <button
+                onClick={() => {
+                  void analyzeResolvedMode(photoMode as Exclude<ClassifyResult, 'unknown'>);
+                }}
+                className="w-full py-4 rounded-xl flex items-center justify-center gap-2"
+                style={{ background: colors.accent }}
+              >
+                <RefreshCw size={18} color="#fff" />
+                <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>
+                  同じモードで再解析
+                </span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setPhotoFiles([]);
+                  setPhotoPreviews([]);
+                  setStep('capture');
+                }}
+                className="w-full py-4 rounded-xl flex items-center justify-center gap-2"
+                style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+              >
+                <Camera size={18} color={colors.textLight} />
+                <span style={{ fontSize: 15, fontWeight: 500, color: colors.textLight }}>
+                  撮り直す
+                </span>
+              </button>
+
+              <button
+                onClick={() => setStep('mode-select')}
+                className="w-full py-3 rounded-xl"
+              >
+                <span style={{ fontSize: 14, fontWeight: 500, color: colors.textMuted }}>
+                  モードを選び直す
+                </span>
+              </button>
+            </div>
+          </motion.div>
+        )}
+
         {/* 体重保存成功モーダル */}
         {showWeightSuccessModal && savedWeight && (
           <motion.div
@@ -2334,6 +2533,73 @@ export default function MealCaptureModal() {
             </motion.div>
           </motion.div>
         )}
+
+        {/* UX2-15: 解析済み結果を破棄して閉じる確認モーダル */}
+        {showDiscardConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            onClick={() => setShowDiscardConfirm(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="bg-white rounded-2xl p-6 mx-4 text-center max-w-xs"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="text-5xl mb-3">⚠️</div>
+              <h3 className="text-lg font-bold mb-2" style={{ color: colors.text }}>
+                破棄して閉じますか？
+              </h3>
+              <p className="text-sm mb-6" style={{ color: colors.textLight }}>
+                解析した結果はまだ保存されていません。閉じると内容は失われます。
+              </p>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => {
+                    setShowDiscardConfirm(false);
+                    doClose();
+                  }}
+                  className="w-full py-3 rounded-xl"
+                  style={{ background: colors.accent }}
+                >
+                  <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>破棄して閉じる</span>
+                </button>
+                <button
+                  onClick={() => setShowDiscardConfirm(false)}
+                  className="w-full py-3 rounded-xl"
+                  style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                >
+                  <span style={{ fontSize: 15, fontWeight: 500, color: colors.textLight }}>キャンセル</span>
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {/* UX2-04: 「入れ替える」の破壊操作確認（対象件数を明示） */}
+        {showFridgeReplaceConfirm && (
+          <ConfirmDeleteModal
+            title="冷蔵庫の食材を入れ替えますか？"
+            message={
+              existingFridgeCount !== null
+                ? `既存の${existingFridgeCount}件の食材が削除され、写真から検出された${fridgeIngredients.length}件に入れ替わります。この操作は取り消せません。`
+                : `既存の食材が削除され、写真から検出された${fridgeIngredients.length}件に入れ替わります。この操作は取り消せません。`
+            }
+            isDeleting={isSavingFridge}
+            tone="danger"
+            confirmLabel="入れ替える"
+            onCancel={() => setShowFridgeReplaceConfirm(false)}
+            onConfirm={async () => {
+              setShowFridgeReplaceConfirm(false);
+              await saveFridgeItems('replace');
+            }}
+          />
+        )}
+
+        {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。未同意なら出る */}
+        {consentModal}
     </div>
   );
 }

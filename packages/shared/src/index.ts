@@ -5,7 +5,11 @@ export * from './meal-types';
 export * from './mode-config';
 export * from './progress-phases';
 export * from './date-utils';
+export * from './menu-generation-range';
 export * from './nutrition-planner';
+export * from './design-tokens';
+export * from './legal-versions';
+export * from './service-unavailable';
 export type {
   Json,
   Database,

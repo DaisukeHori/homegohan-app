@@ -6,6 +6,8 @@
 
 対象外: `auth.users`（Supabase Auth 管轄）、`dataset_*`（公開マスター）、family 系・org 系テーブル。
 
+> **退会との関係 (#1175)**: この文書の DDL の `REFERENCES auth.users(id)` に `ON DELETE` の指定が無いものは、設計時の記述。実際の定義は `supabase/migrations/20261010000100_auth_users_fk_on_delete.sql` で、本人だけの記録 (`nps_surveys` / `csat_feedbacks` / `experiment_assignments`) は `ON DELETE CASCADE`、サポート・会計の記録 (`support_tickets.user_id` / `support_ticket_messages.sender_id` / `coupon_redemptions.user_id` / `referral_rewards.referrer_id, referred_id` / `gdpr_deletion_requests.user_id`) と運営者・作成者・承認者の列 (`created_by` / `changed_by` / `actor_id` / `assignee_id` / `ack_by` など) は `ON DELETE SET NULL` (列は NULL を許す。`coupon_redemptions` は匿名化の日時 `anonymized_at` を持つ)。`auth.users` を指す外部キーを足すときは、必ず `ON DELETE` を書く (CLAUDE.md の「退会」)。
+
 ## 2. 関連要件
 
 - 要件 03 §7 データモデル
@@ -72,7 +74,8 @@ CREATE TABLE subscription_plans (
   currency                VARCHAR(3) NOT NULL DEFAULT 'JPY',
   -- Stripe 連携
   stripe_product_id       VARCHAR(255),   -- Stripe Product object ID
-  stripe_price_id         VARCHAR(255),   -- 現在有効な Stripe Price ID
+  stripe_price_id         VARCHAR(255),   -- 月額の現在有効な Stripe Price ID (#1102 で「月額」と決めた)
+  stripe_yearly_price_id  VARCHAR(255),   -- 年額の現在有効な Stripe Price ID (#1102 で追加。migration 20261008190000)
   -- 上限値
   max_members             INT,            -- 家族最大人数、組織最大 seat 数
   max_family_seats        INT,            -- 組織プランの家族同梱 seat 数
@@ -200,11 +203,13 @@ CREATE TABLE plan_price_history (
   new_monthly_price_jpy INT,
   old_yearly_price_jpy  INT,
   new_yearly_price_jpy  INT,
-  old_stripe_price_id   VARCHAR(255),
+  old_stripe_price_id   VARCHAR(255),   -- 月額の Stripe Price ID (subscription_plans.stripe_price_id と同じ意味。年額の Price ID は admin_audit_logs.details に残す。#1102)
   new_stripe_price_id   VARCHAR(255),
   changed_by            UUID NOT NULL REFERENCES auth.users(id),
   reason                TEXT,
   effective_at          TIMESTAMPTZ NOT NULL,
+  -- 価格変更 API が書くのは 'new_only' だけ (#1102。オーナー判断 2026-10-08: 価格変更は新規契約のみ)。
+  -- CHECK は旧値 (on_renewal / immediately) を許したまま (過去の行を読めるように)
   applies_to            VARCHAR(30) NOT NULL
     CHECK (applies_to IN ('new_only', 'on_renewal', 'immediately')),
   affected_subscription_count INT,
@@ -243,8 +248,8 @@ CREATE TABLE coupons (
   applicable_plans  UUID[] NOT NULL DEFAULT '{}',
   applicable_to     VARCHAR(20) NOT NULL DEFAULT 'all'
     CHECK (applicable_to IN ('all', 'personal', 'family', 'org')),
-  valid_from        TIMESTAMPTZ NOT NULL,
-  valid_until       TIMESTAMPTZ NOT NULL,
+  valid_from        TIMESTAMPTZ NOT NULL,  -- 開始日の JST 0:00 (#1483)
+  valid_until       TIMESTAMPTZ NOT NULL,  -- 期限の日の JST 23:59:59.999999 (#1483。端を含めて有効)
   max_uses          INT,
   uses_count        INT NOT NULL DEFAULT 0,
   per_user_limit    INT NOT NULL DEFAULT 1,
@@ -475,7 +480,7 @@ ALTER TABLE admin_audit_logs
   ADD COLUMN IF NOT EXISTS target_type          VARCHAR(30),
   ADD COLUMN IF NOT EXISTS severity             VARCHAR(20) NOT NULL DEFAULT 'info'
     CHECK (severity IN ('info', 'warn', 'critical')),
-  ADD COLUMN IF NOT EXISTS impersonated_by      UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS impersonated_by      UUID REFERENCES auth.users(id) ON DELETE SET NULL,  -- 履歴用 (#1124: impersonate は提供しない。新しく書く処理は無い)
   ADD COLUMN IF NOT EXISTS session_id           VARCHAR(255),
   ADD COLUMN IF NOT EXISTS ip_address           INET,
   ADD COLUMN IF NOT EXISTS user_agent           TEXT,
@@ -661,6 +666,10 @@ CREATE TABLE sales_lead_activities (
   details         JSONB NOT NULL,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- リード単位の活動履歴 (WHERE lead_id = ? ORDER BY created_at DESC) と ON DELETE CASCADE 用。
+-- 初版には無く、#1216 で追加 (supabase/migrations/20261007160200_sales_lead_activities_lead_index.sql)
+CREATE INDEX idx_sales_lead_activities_lead_created ON sales_lead_activities(lead_id, created_at DESC);
 
 ALTER TABLE sales_leads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sales_lead_activities ENABLE ROW LEVEL SECURITY;
@@ -987,6 +996,10 @@ CREATE POLICY "email_blacklist_admin" ON email_blacklist
 
 ### 3.21 `gdpr_deletion_requests`
 
+> **2026-10-08 オーナー判断 (#1130)**: 退会は即時削除が正式仕様で、このテーブルは退会フローでは使わない。
+> 下の `cooling_until` (30 日の待機) と `cancelled_at` は、待機期間を前提にした旧設計の列。
+> 廃止するか別用途にするかは未決 (cross/08-legal-compliance.md §16.4 / §19)。
+
 ```sql
 CREATE TABLE gdpr_deletion_requests (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1154,7 +1167,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_sandbox_meal
 
 利用方針:
 - 通常 UI(週間献立 / 食事一覧)は `WHERE is_sandbox = false` を必ず付与
-- バッジ判定(`first_bite` 等)は `is_sandbox=true` も対象に含める(設計書 §03-step1-photo §03)
+- バッジ判定(`first_bite` 等)は `is_sandbox=true` を対象に含めない(#1314。オーナー判断 2026-10-08。当初の設計書 §03-step1-photo §03 は「含める」だったが変更。`GET /api/badges` の食事数・自炊数・連続日数は `is_sandbox = false` の日だけで数える)
 
 #### 3.26.3 `user_daily_meals` 拡張 (sandbox 識別子)
 
@@ -1432,10 +1445,10 @@ sequenceDiagram
   API->>DB: SELECT personal_subscriptions COUNT (影響シミュレーション)
   DB-->>API: affected_count
   API-->>SA: 影響シミュレーション結果
-  SA->>API: 確定 (applies_to='on_renewal')
-  API->>Stripe: prices.create(new_price)
-  Stripe-->>API: new_stripe_price_id
-  API->>DB: UPDATE subscription_plans SET stripe_price_id, monthly_price_jpy
+  SA->>API: 確定 (applies_to='new_only'。#1102: 価格変更は新規契約のみ)
+  API->>Stripe: prices.create(new_price) (変えた月額 / 年額それぞれ。旧 Price は同じ interval のものだけ無効化)
+  Stripe-->>API: new_stripe_price_id (月額) / new_stripe_yearly_price_id (年額)
+  API->>DB: UPDATE subscription_plans SET stripe_price_id (月額) / stripe_yearly_price_id (年額), monthly_price_jpy / yearly_price_jpy
   API->>DB: INSERT plan_price_history
   API->>DB: INSERT admin_audit_logs (actor_id WITH CHECK)
   API-->>SA: 200 OK
@@ -1466,6 +1479,8 @@ sequenceDiagram
 ```typescript
 // tests/integration/operator/data-model-constraints.integration.test.ts
 import { describe, it, expect } from 'vitest';
+// 接続情報は src/lib の getter で取り出す (`process.env.<変数名>!` は使わない。#1182・#1434)
+import { getSupabaseAnonKey, getSupabaseUrl } from '@/lib/env-required';
 
 describe('personal_subscriptions 制約テスト', () => {
   it('returns unique violation when same user has two active personal_subscriptions', async () => {
@@ -1488,8 +1503,8 @@ describe('admin_audit_logs immutability (RLS)', () => {
   it('rejects UPDATE on admin_audit_logs for admin role', async () => {
     const adminToken = await signInAsUser('admin@test.local');
     const adminClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${adminToken}` } } },
     );
     const { error } = await adminClient
@@ -1502,8 +1517,8 @@ describe('admin_audit_logs immutability (RLS)', () => {
   it('rejects DELETE on admin_audit_logs for super_admin role', async () => {
     const superToken = await signInAsUser('super@test.local');
     const superClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      getSupabaseUrl(),
+      getSupabaseAnonKey(),
       { global: { headers: { Authorization: `Bearer ${superToken}` } } },
     );
     const { error } = await superClient
@@ -1593,6 +1608,7 @@ describe('subscription_plans seed', () => {
 ## 8. 既存実装との関連
 
 - `admin_audit_logs`: 既存テーブルに `target_type`, `severity`, `impersonated_by` 等を ALTER で追加
+  - `impersonated_by`: なりすまし (impersonate) は提供しない (#1124)。新しく書き込む処理は無く、過去に書かれた行の履歴として列だけ残す (列を消す migration は作らない)
 - `organizations`: `coupon_redemptions` が FK 参照 — org/ ドメインの `organizations` テーブルが先に存在すること
 - `family_members`: `parental_consents` が FK 参照 — DDL は family/01-data-model.md に移動済み。family/ ドメイン適用後に作成されること
 

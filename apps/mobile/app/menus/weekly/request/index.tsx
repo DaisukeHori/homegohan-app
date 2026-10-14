@@ -12,6 +12,7 @@ import { colors, radius, spacing } from "../../../../src/theme";
 import { useProfile } from "../../../../src/providers/ProfileProvider";
 import type { WeekStartDay } from "../../../../src/providers/ProfileProvider";
 import { THEME_LABELS_REQUEST } from "@homegohan/shared";
+import { handleAiConsentRequiredError } from "../../../../src/lib/ai-consent";
 
 
 const formatLocalDate = (date: Date): string => {
@@ -105,6 +106,8 @@ export default function WeeklyRequestPage() {
       setFridgeSummary((analyzed as any)?.summary ?? null);
       setFridgeSuggestions(Array.isArray((analyzed as any)?.suggestions) ? (analyzed as any).suggestions : []);
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、ここのエラー表示は出さない
+      if (handleAiConsentRequiredError(e)) return;
       Alert.alert("冷蔵庫解析失敗", e?.message ?? "解析に失敗しました。");
     } finally {
       setIsUploading(false);
@@ -152,6 +155,8 @@ export default function WeeklyRequestPage() {
 
       router.replace("/menus/weekly");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、ここのエラー表示は出さない
+      if (handleAiConsentRequiredError(e)) return;
       Alert.alert("生成失敗", e?.message ?? "生成に失敗しました。");
     } finally {
       setIsSubmitting(false);

@@ -1,8 +1,21 @@
 import { createClient } from '@/lib/supabase/server';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
+import { SUGAR_APP_DEFAULT } from '@homegohan/core';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiDailyLimitResponse, aiDailyLimitSkippedField, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
+import { CALENDAR_DATE_REQUIREMENT, isCalendarDate, nutritionAnalysisRange } from '@/lib/jst-day-ranges';
+import { aiConsentSkippedField, checkUserAiConsent, requireAiConsent } from '@/lib/ai/consent-guard';
+
+// 栄養目標が未設定のときの既定値（g/日）。
+// 糖質は「炭水化物 − 食物繊維」で計算しているので、目標も同じ定義（炭水化物の目標 − 食物繊維の目標）で導く (#1146)。
+const DEFAULT_CARBS_TARGET_G = 300;
+const DEFAULT_FIBER_TARGET_G = 21;
+const DEFAULT_SUGAR_TARGET_G = SUGAR_APP_DEFAULT.calculateFromCarbs(DEFAULT_CARBS_TARGET_G, DEFAULT_FIBER_TARGET_G);
 
 /**
  * 栄養分析API
@@ -47,26 +60,8 @@ export async function GET(request: Request) {
       .eq('user_id', user.id)
       .single();
 
-    // 2. 期間に応じた日付範囲を計算
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
-    let startDate: string;
-    let endDate: string = todayStr;
-
-    switch (period) {
-      case 'week':
-        const weekAgo = new Date(today);
-        weekAgo.setDate(weekAgo.getDate() - 6);
-        startDate = weekAgo.toISOString().split('T')[0];
-        break;
-      case 'month':
-        const monthAgo = new Date(today);
-        monthAgo.setDate(monthAgo.getDate() - 29);
-        startDate = monthAgo.toISOString().split('T')[0];
-        break;
-      default: // today
-        startDate = todayStr;
-    }
+    // 2. 期間に応じた日付範囲を JST の暦日で計算する (#1433。UTC の暦日だと JST 0:00〜8:59 に 1 日ずれる)
+    const { startDate, endDate } = nutritionAnalysisRange(period);
 
     // 3. 食事データを取得（日付ベースで直接取得）
     const { data: meals } = await supabase
@@ -141,14 +136,19 @@ export async function GET(request: Request) {
     const comparison: Record<string, { actual: number; target: number; percentage: number; status: string }> = {};
     
     if (targets) {
+      const carbsTarget = targets.carbs_g || DEFAULT_CARBS_TARGET_G;
+      const fiberTarget = targets.fiber_g || DEFAULT_FIBER_TARGET_G;
       const targetMap: Record<string, number> = {
         calories: targets.daily_calories || 2000,
         protein: targets.protein_g || 60,
         fat: targets.fat_g || 60,
-        carbs: targets.carbs_g || 300,
-        fiber: targets.fiber_g || 21,
+        carbs: carbsTarget,
+        fiber: fiberTarget,
         sodium: targets.sodium_g || 7,
-        sugar: targets.sugar_g || 50,
+        // 糖質の目標は、保存済みの sugar_g ではなく 炭水化物の目標 − 食物繊維の目標 から求める。
+        // 以前に保存された sugar_g は WHO の遊離糖の目安（約25g）で、糖質（炭水化物 − 食物繊維）の実績と比べると
+        // 常に「過剰」と判定されてしまう。手動編集された炭水化物の目標にも追従する。 (#1146)
+        sugar: SUGAR_APP_DEFAULT.calculateFromCarbs(carbsTarget, fiberTarget),
         potassium: targets.potassium_mg || 2500,
         calcium: targets.calcium_mg || 650,
         iron: targets.iron_mg || 10,
@@ -158,6 +158,8 @@ export async function GET(request: Request) {
       };
 
       for (const [key, target] of Object.entries(targetMap)) {
+        // 目標が 0 以下（炭水化物の目標が食物繊維の目標以下で糖質の目標が 0 になる場合など）は割り算できないので比べない
+        if (!(target > 0)) continue;
         const actual = dailyAverage[key] || 0;
         const percentage = Math.round((actual / target) * 100);
         let status = 'ok';
@@ -209,10 +211,31 @@ export async function GET(request: Request) {
     let advice: string | null = null;
     let suggestion: any = null;
 
-    if (includeAdvice || includeSuggestion) {
+    // 外国の AI 事業者への提供の同意が無ければ (判定に失敗した場合も)、AI へ送らない (T15 / #1154)。
+    // この GET はホームを開くと自動で呼ばれ、AI を使わない集計 (analysis) も返すので、403 で全体を止めずに
+    // AI の部分 (advice / suggestion) だけを省き、aiSkipped (AI_CONSENT_REQUIRED など) で画面に知らせる。
+    const aiRequested = includeAdvice || includeSuggestion;
+    const aiConsent = aiRequested ? await checkUserAiConsent(supabase, user.id) : null;
+
+    // #1149 AI の利用回数の判定と記録 (#1177)。この GET はホームを開くと自動で呼ばれる (利用者が押した操作ではない) ので、
+    // 上限に数えない機能 ('nutrition_advice_auto') で数える (ホームを開くだけで 1 日の上限 (10 回) が減らないように)。
+    // ただし includeAdvice / includeSuggestion はクライアントが送る値で、API を直接呼べば何度でも AI を呼べるので、
+    // 自動の分だけの安全弁 (DB の ai_unmetered_daily_caps。既定は 1 日 30 回) がある。達していれば DB が止め (allowed: false)、
+    // AI の部分だけを省いて aiSkipped (AI_DAILY_LIMIT) で知らせる (集計は返す)
+    const aiUsage = aiRequested && aiConsent?.allowed ? await consumeAiUsage(user.id, 'nutrition_advice_auto') : null;
+
+    if (aiRequested && aiConsent?.allowed && aiUsage?.allowed) {
       const healthConditions = profile?.health_conditions || [];
       const medications = profile?.medications || [];
       const nutritionGoal = profile?.nutrition_goal || 'maintain';
+
+      // 糖質の目標の書き方。栄養目標はあるのに糖質の目標が 0 以下で比較から外れたときは、
+      // 既定値 (例: 279g) を出すと実際の目標と食い違うので「なし」と書く。栄養目標そのものが無いときだけ既定値を使う。
+      const sugarTargetText = comparison.sugar
+        ? `${comparison.sugar.target}g`
+        : targets
+          ? 'なし'
+          : `${DEFAULT_SUGAR_TARGET_G}g`;
 
       const prompt = `あなたは専門の管理栄養士です。以下のユーザーの栄養データを分析し、アドバイスを提供してください。
 
@@ -227,10 +250,10 @@ export async function GET(request: Request) {
 - カロリー: ${dailyAverage.calories}kcal（目標: ${comparison.calories?.target || 2000}kcal）
 - タンパク質: ${dailyAverage.protein}g（目標: ${comparison.protein?.target || 60}g）
 - 脂質: ${dailyAverage.fat}g（目標: ${comparison.fat?.target || 60}g）
-- 炭水化物: ${dailyAverage.carbs}g（目標: ${comparison.carbs?.target || 300}g）
-- 食物繊維: ${dailyAverage.fiber}g（目標: ${comparison.fiber?.target || 21}g）
+- 炭水化物: ${dailyAverage.carbs}g（目標: ${comparison.carbs?.target || DEFAULT_CARBS_TARGET_G}g）
+- 食物繊維: ${dailyAverage.fiber}g（目標: ${comparison.fiber?.target || DEFAULT_FIBER_TARGET_G}g）
 - 塩分: ${dailyAverage.sodium}g（目標: ${comparison.sodium?.target || 7}g）
-- 糖質: ${dailyAverage.sugar}g（目標: ${comparison.sugar?.target || 50}g）
+- 糖質: ${dailyAverage.sugar}g（目標: ${sugarTargetText}）
 - カルシウム: ${dailyAverage.calcium}mg（目標: ${comparison.calcium?.target || 650}mg）
 - 鉄分: ${dailyAverage.iron}mg（目標: ${comparison.iron?.target || 10}mg）
 - ビタミンC: ${dailyAverage.vitaminC}mg（目標: ${comparison.vitaminC?.target || 100}mg）
@@ -308,6 +331,8 @@ JSON形式で出力してください：
       },
       advice,
       suggestion,
+      ...aiConsentSkippedField(aiConsent),
+      ...aiDailyLimitSkippedField(aiUsage),
       profile: {
         nutritionGoal: profile?.nutrition_goal,
         healthConditions: profile?.health_conditions,
@@ -315,8 +340,7 @@ JSON形式で出力してください：
     });
 
   } catch (error: any) {
-    console.error('Nutrition analysis error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/ai/nutrition-analysis', error, { userId: user.id });
   }
 }
 
@@ -330,6 +354,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
+  const aiConsentDenied = await requireAiConsent(supabase, user.id);
+  if (aiConsentDenied) return aiConsentDenied;
+
   const rateLimitResult = await checkRateLimit(user.id, 'generation');
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
@@ -339,6 +367,12 @@ export async function POST(request: Request) {
 
     if (!targetDate || !targetMealType || !prompt) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+
+    // targetDate は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433)。DB の date 型は 2026/10/10 なども日付として読むが、
+    // そのまま target_slots に入ると、献立生成 (Edge Function) が日付を前後にずらすところで RangeError になる
+    if (!isCalendarDate(targetDate)) {
+      return NextResponse.json({ error: `targetDate must be ${CALENDAR_DATE_REQUIREMENT}` }, { status: 400 });
     }
 
     // 該当日付の user_daily_meals を取得（日付ベースモデル）
@@ -366,12 +400,19 @@ export async function POST(request: Request) {
     }
 
     // generate-menu-v4を呼び出す（同期呼び出し）
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    // 必須の環境変数が欠けていれば、リクエストの行を作る前に MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す) (#1182)
+    const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
+    // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。本人の確認・同意のあとで、service role で書く
+    const queueDb = getAiQueueWriter();
+
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+    if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
     // リクエストを作成
     const targetSlots = [{ date: targetDate, mealType: targetMealType, plannedMealId: meal.id }];
-    const { data: requestData, error: requestError } = await supabase
+    const { data: requestData, error: requestError } = await queueDb
       .from('weekly_menu_requests')
       .insert({
         user_id: user.id,
@@ -390,6 +431,8 @@ export async function POST(request: Request) {
 
     if (requestError || !requestData) {
       console.error('Failed to create request:', requestError);
+      // 献立の変更を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
+      await refundAiUsage(user.id, 'menu_generation', aiUsage);
       return NextResponse.json({ error: 'Failed to create request' }, { status: 500 });
     }
 
@@ -408,7 +451,7 @@ export async function POST(request: Request) {
     if (!regenerateResult.ok) {
       console.error('Regenerate error:', regenerateResult.errorMessage);
       await markWeeklyMenuRequestFailed({
-        supabase,
+        supabase: queueDb,
         requestId: requestData.id,
         errorMessage: regenerateResult.errorMessage,
       });
@@ -432,8 +475,8 @@ export async function POST(request: Request) {
       result,
     });
 
-  } catch (error: any) {
-    console.error('Meal update error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
+    return internalError('POST /api/ai/nutrition-analysis', error);
   }
 }

@@ -5,6 +5,7 @@
 // 共通レイアウト: scope_name / role / invited_by_name / expires_at 表示
 
 import { type ReactNode } from 'react';
+import { getSupportEmail } from '@/lib/site-config';
 
 interface InviteLayoutProps {
   scope: 'organization' | 'family';
@@ -23,6 +24,8 @@ export function InviteLayout({
   children,
 }: InviteLayoutProps) {
   const scopeLabel = scope === 'organization' ? '組織' : '家族グループ';
+  // 問い合わせ先は NEXT_PUBLIC_SUPPORT_EMAIL (未設定なら既定値)。src/lib/site-config.ts (#1194)
+  const supportEmail = getSupportEmail();
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -55,8 +58,8 @@ export function InviteLayout({
       <footer className="py-6 text-center text-xs text-gray-400 border-t border-gray-100">
         <p>
           不正利用のおそれがある場合は{' '}
-          <a href="mailto:support@homegohan.app" className="underline">
-            support@homegohan.app
+          <a href={`mailto:${supportEmail}`} className="underline">
+            {supportEmail}
           </a>{' '}
           までご連絡ください
         </p>

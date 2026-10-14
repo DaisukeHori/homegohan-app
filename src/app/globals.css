@@ -5,8 +5,14 @@
   --foreground: #333333;
   --accent: #FF8A65;     /* Coral Orange */
   --accent-soft: #FFCCBC;
-  --text-muted: #666666;
+  --text-muted: #666666; /* 白背景比コントラスト比 約5.74:1、WCAG AA (4.5:1) 通過を確認済み (#1058) */
   --border-light: #F0F0F0;
+
+  /* a11y 下限値トークン (#1058)。#1050/#1051/#1052 の個別コントラスト/フォント/タップ領域修正はここを参照する */
+  --a11y-min-font-size: 14px;      /* 本文の最小フォントサイズ */
+  --a11y-min-contrast-normal: 4.5; /* WCAG AA 通常テキストの最小コントラスト比 (参考値) */
+  --a11y-min-contrast-large: 3;    /* WCAG AA 大きいテキスト/UI部品の最小コントラスト比 (参考値) */
+  --a11y-min-tap-size: 44px;       /* タップ/クリック領域の最小サイズ (WCAG 2.5.5 相当) */
 }
 
 @theme inline {
@@ -25,6 +31,64 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+}
+
+/* グローバル a11y 基盤 (#1058) */
+
+/* キーボードフォーカスの可視化 (全要素共通)
+   --accent (#FF8A65) は白背景比 約2.3:1 で WCAG 1.4.11 (非テキストコントラスト 3:1) 未達のため、
+   --foreground (#333333) に変更。白背景比 約12.63:1、--accent 背景比でも 約5.47:1 で 3:1 を確保 (#1058)。
+   ただし --foreground 単色は bg-slate-900 (#0f172a) の管理画面サイドバー
+   (super-admin/operator-membership レイアウト) では約1.41:1 (3:1 未達) となり、今度は
+   ダーク面で不可視になってしまう。単一色では 白/アクセント/ダーク の3面を同時に満たせないため、
+   box-shadow で外側に白リングを重ねる2トーン構成にする。
+   outline-offset(2px)+outline幅(2px)=4px の外側、6px まで白リングを伸ばすことで
+   [白 0-2px][--foreground 2-4px][白 4-6px] の三層になり、
+   明るい背景(白/アクセント)では内側の --foreground リングが (vs 白 約12.63:1 / vs アクセント 約5.47:1)、
+   暗い背景(#0f172a)では外側の白リングが (vs #0f172a 約17.85:1)、それぞれ 3:1 以上を確保する (#1058) */
+:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 6px #FFFFFF;
+}
+
+/* スキップリンク: 通常は画面外、フォーカス時のみ表示
+   背景を --accent (#FF8A65) から --foreground (#333333) に変更。
+   白文字 (#FFFFFF) on --foreground のコントラスト比 約12.63:1 で 14px bold の WCAG AA (4.5:1) を満たす (#1058) */
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 0.5rem;
+  z-index: 100;
+  background: var(--foreground);
+  color: #FFFFFF;
+  padding: 0.5rem 1rem;
+  border-radius: 0 0 0.5rem 0.5rem;
+  font-weight: 700;
+  font-size: 0.875rem;
+  transition: top 0.15s ease-in-out;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* タップ/クリック領域の最小サイズを保証するユーティリティ */
+.a11y-tap-target {
+  min-width: var(--a11y-min-tap-size);
+  min-height: var(--a11y-min-tap-size);
+}
+
+/* prefers-reduced-motion の尊重: 装飾アニメーション・トランジションを短縮 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* 繊細なスクロールバー */

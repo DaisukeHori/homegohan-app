@@ -1,21 +1,49 @@
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { formatBuildDateJst } from './shared/build-date.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
 const isDev = process.env.NODE_ENV === 'development';
+// ローカルの Supabase (scripts/supabase-local.sh の http://127.0.0.1:54321 など) にブラウザから接続できるよう、
+// NEXT_PUBLIC_SUPABASE_URL が *.supabase.co 以外のときだけ、その origin (と Realtime 用の ws / wss) を CSP に加える。
+// 本番 (*.supabase.co) の CSP は変わらない。
+const supabaseLocalOrigins = (() => {
+  try {
+    const url = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? '');
+    if (url.hostname.endsWith('.supabase.co')) return null;
+    return { http: url.origin, ws: `${url.protocol === 'https:' ? 'wss:' : 'ws:'}//${url.host}` };
+  } catch {
+    return null;
+  }
+})();
+const supabaseImgSrc = supabaseLocalOrigins ? ` ${supabaseLocalOrigins.http}` : '';
+const supabaseConnectSrc = supabaseLocalOrigins ? ` ${supabaseLocalOrigins.http} ${supabaseLocalOrigins.ws}` : '';
+
+/**
+ * 空・空白だけの値は未設定として扱う (#1434)。src/lib/env.ts (normalizeEnvSource・getOptionalEnv) と
+ * npm run check:env と同じ扱い。.env.example は `NEXT_PUBLIC_APP_VERSION=` のように空で書いてあり、
+ * `??` だけだと空のまま設定画面に出ていた。値があるときは加工せずにそのまま返す。
+ */
+function envValueOrUndefined(value) {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   env: {
-    NEXT_PUBLIC_APP_VERSION: process.env.NEXT_PUBLIC_APP_VERSION ?? `v${pkg.version}`,
-    NEXT_PUBLIC_BUILD_DATE: process.env.NEXT_PUBLIC_BUILD_DATE ?? new Date().toISOString().slice(0, 10).replace(/-/g, ''),
+    NEXT_PUBLIC_APP_VERSION: envValueOrUndefined(process.env.NEXT_PUBLIC_APP_VERSION) ?? `v${pkg.version}`,
+    // 既定値は JST の暦日 (#1467。toISOString の UTC だと JST の 0:00〜8:59 のビルドが前日になる)
+    NEXT_PUBLIC_BUILD_DATE: envValueOrUndefined(process.env.NEXT_PUBLIC_BUILD_DATE) ?? formatBuildDateJst(),
   },
   async headers() {
     return [
       {
-        source: '/handson-tour/(.*)',
+        // #1044 (F6-08): '/handson-tour/(.*)' は認証必須ページ (例: /handson-tour/photo) にも
+        // マッチしてしまい、CDN が認証済み HTML を1年キャッシュする恐れがあった。
+        // public/handson-tour 配下の静的アセットのみに限定する。
+        source: '/handson-tour/sample-meal.webp',
         headers: [
           {
             key: 'Cache-Control',
@@ -48,10 +76,16 @@ const nextConfig = {
             // dev モードでは Next.js webpack HMR が unsafe-eval を必要とするため条件付きで追加
             value: [
               "default-src 'self'",
-              `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''} *.vercel-scripts.com`,
+              // #1165: Cloudflare Turnstile (ログイン・新規登録・パスワード再設定の bot 対策)。許可するのは
+              // api.js を読む script-src と、ウィジェットを iframe で出す frame-src だけ。
+              // frame-src を書くと default-src 'self' へのフォールバックが無くなるので、今までの動き (自分のページの iframe) を保つため 'self' も書く
+              `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''} *.vercel-scripts.com https://challenges.cloudflare.com`,
+              "frame-src 'self' https://challenges.cloudflare.com",
               "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data: blob: *.supabase.co images.unsplash.com",
-              "connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co",
+              `img-src 'self' data: blob: *.supabase.co images.unsplash.com${supabaseImgSrc}`,
+              // #1166: 利用状況の計測 (PostHog) はやめたので、PostHog の送信先は許可しない
+              // (環境変数 NEXT_PUBLIC_POSTHOG_HOST が残っていても CSP には出ない。src/__tests__/config/next-config-headers.test.ts が検査する)
+              `connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co${supabaseConnectSrc}`,
               "frame-ancestors 'none'",
               "font-src 'self'",
               "object-src 'none'",

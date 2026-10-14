@@ -1,13 +1,14 @@
-/* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useState, useRef } from "react";
+import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
-  Camera, ArrowLeft, Scale, Sparkles, CheckCircle2,
-  Upload, X, Loader2
+  ArrowLeft, Scale, CheckCircle2, AlertTriangle,
 } from 'lucide-react';
+import { todayLocal } from '@/lib/date-utils';
+import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
 
 const colors = {
   bg: '#FAF9F7',
@@ -17,8 +18,8 @@ const colors = {
   textMuted: '#9A9A9A',
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
-  success: '#4CAF50',
-  successLight: '#E8F5E9',
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
   purple: '#7C4DFF',
   purpleLight: '#EDE7F6',
   blue: '#2196F3',
@@ -28,65 +29,33 @@ const colors = {
 
 export default function QuickRecordPage() {
   const router = useRouter();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  
-  const [mode, setMode] = useState<'select' | 'camera' | 'manual'>('select');
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [detectedWeight, setDetectedWeight] = useState<string>('');
+
+  // 「写真で記録」は、体重計を撮影して AI が数値を読み取る既存のフロー
+  // (/meals/new の体重計モード) へのリンク (#1141)。読み取った値は /meals/new の
+  // 確認ステップで利用者が見て「この体重を記録」を押すまで保存されない。
+  // #1051 UX3-01 でダミー値 (65.2kg) を「読み取り結果」として出していた問題の再発防止のため、
+  // この画面で読み取り結果を作ったり、確認なしに保存したりしない。
+  // 手入力は、この画面の中で体重を入力して保存する。
+  const [mode, setMode] = useState<'select' | 'manual'>('select');
   const [manualWeight, setManualWeight] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // プレビュー表示
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      setPhotoPreview(e.target?.result as string);
-    };
-    reader.readAsDataURL(file);
-
-    setMode('camera');
-    setAnalyzing(true);
-
-    // AIで体重を読み取り（TODO: Edge Function実装後に有効化）
-    try {
-      // const formData = new FormData();
-      // formData.append('file', file);
-      // const res = await fetch('/api/health/records/photo', {
-      //   method: 'POST',
-      //   body: formData,
-      // });
-      // if (res.ok) {
-      //   const data = await res.json();
-      //   setDetectedWeight(data.weight?.toString() || '');
-      // }
-      
-      // 仮実装：3秒後にダミーデータ
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      setDetectedWeight('65.2');
-    } catch (error) {
-      console.error('Failed to analyze photo:', error);
-    }
-    setAnalyzing(false);
-  };
+  // #1051 UX3-05: 保存失敗時に無反応だったため、エラーを表示し入力を保持する
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const handleSave = async () => {
-    const weight = mode === 'camera' ? detectedWeight : manualWeight;
-    if (!weight) return;
+    if (!manualWeight) return;
 
     setSaving(true);
+    setSaveError(null);
     try {
       const res = await fetch('/api/health/records/quick', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          weight: parseFloat(weight),
-          record_date: new Date().toISOString().split('T')[0],
+          weight: parseFloat(manualWeight),
+          record_date: todayLocal(),
         }),
       });
 
@@ -94,25 +63,21 @@ export default function QuickRecordPage() {
         const data = await res.json();
         setMessage(data.message);
         setSuccess(true);
-        
+
         // 2秒後にダッシュボードへ
         setTimeout(() => {
           router.push('/health');
         }, 2000);
+        return;
       }
+
+      const data = await res.json().catch(() => null);
+      setSaveError(data?.error || '記録に失敗しました。もう一度お試しください。');
     } catch (error) {
       console.error('Failed to save:', error);
+      setSaveError('記録に失敗しました。もう一度お試しください。');
     }
     setSaving(false);
-  };
-
-  const resetPhoto = () => {
-    setPhotoPreview(null);
-    setDetectedWeight('');
-    setMode('select');
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
   };
 
   // 成功画面
@@ -166,46 +131,47 @@ export default function QuickRecordPage() {
               記録方法を選んでください
             </p>
 
-            {/* 写真で記録 */}
-            <motion.button
-              whileTap={{ scale: 0.98 }}
-              onClick={() => fileInputRef.current?.click()}
-              className="w-full p-6 rounded-2xl text-left"
-              style={{ 
-                backgroundColor: colors.card,
-                boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
-              }}
-            >
-              <div className="flex items-center gap-4">
-                <div 
-                  className="w-16 h-16 rounded-xl flex items-center justify-center"
-                  style={{ backgroundColor: colors.blueLight }}
-                >
-                  <Camera size={32} style={{ color: colors.blue }} />
+            {/* 写真で記録 (#1141: /meals/new の体重計モードへ。AI の読み取り結果は確認ステップで見てから記録する) */}
+            <Link href="/meals/new?mode=weight_scale" className="block">
+              <motion.div
+                whileTap={{ scale: 0.98 }}
+                className="w-full p-6 rounded-2xl text-left"
+                style={{
+                  backgroundColor: colors.card,
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
+                }}
+              >
+                <div className="flex items-center gap-4">
+                  <div
+                    className="w-16 h-16 rounded-xl flex items-center justify-center"
+                    style={{ backgroundColor: colors.blueLight }}
+                  >
+                    <Scale size={32} style={{ color: colors.blue }} />
+                  </div>
+                  <div>
+                    <p className="font-bold text-lg" style={{ color: colors.text }}>
+                      📸 写真で記録
+                    </p>
+                    <p className="text-sm mt-1" style={{ color: colors.textMuted }}>
+                      体重計を撮影すると、AIが数値を読み取ります。記録前に確認できます
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <p className="font-bold text-lg" style={{ color: colors.text }}>
-                    📸 写真で記録
-                  </p>
-                  <p className="text-sm mt-1" style={{ color: colors.textMuted }}>
-                    体重計の画面を撮影するだけ
-                  </p>
-                </div>
-              </div>
-            </motion.button>
+              </motion.div>
+            </Link>
 
             {/* 手入力 */}
             <motion.button
               whileTap={{ scale: 0.98 }}
               onClick={() => setMode('manual')}
               className="w-full p-6 rounded-2xl text-left"
-              style={{ 
+              style={{
                 backgroundColor: colors.card,
                 boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
               }}
             >
               <div className="flex items-center gap-4">
-                <div 
+                <div
                   className="w-16 h-16 rounded-xl flex items-center justify-center"
                   style={{ backgroundColor: colors.accentLight }}
                 >
@@ -221,107 +187,6 @@ export default function QuickRecordPage() {
                 </div>
               </div>
             </motion.button>
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-          </motion.div>
-        )}
-
-        {/* 写真モード */}
-        {mode === 'camera' && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="space-y-4"
-          >
-            {/* 写真プレビュー */}
-            <div className="relative">
-              {photoPreview && (
-                <img
-                  src={photoPreview}
-                  alt="体重計"
-                  className="w-full rounded-2xl"
-                />
-              )}
-              <button
-                onClick={resetPhoto}
-                className="absolute top-2 right-2 p-2 rounded-full bg-black/50"
-              >
-                <X size={20} color="white" />
-              </button>
-            </div>
-
-            {/* 解析中 */}
-            {analyzing && (
-              <div 
-                className="p-6 rounded-2xl text-center"
-                style={{ backgroundColor: colors.card }}
-              >
-                <Loader2 size={32} className="animate-spin mx-auto mb-3" style={{ color: colors.accent }} />
-                <p className="font-medium" style={{ color: colors.text }}>
-                  AIが体重を読み取り中...
-                </p>
-              </div>
-            )}
-
-            {/* 読み取り結果 */}
-            {!analyzing && detectedWeight && (
-              <div 
-                className="p-6 rounded-2xl"
-                style={{ backgroundColor: colors.card }}
-              >
-                <div className="flex items-center gap-2 mb-4">
-                  <Sparkles size={20} style={{ color: colors.accent }} />
-                  <span className="font-medium" style={{ color: colors.text }}>
-                    読み取り結果
-                  </span>
-                </div>
-                <div className="text-center">
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={detectedWeight}
-                    onChange={(e) => setDetectedWeight(e.target.value)}
-                    className="text-5xl font-bold text-center w-full bg-transparent"
-                    style={{ color: colors.text }}
-                  />
-                  <span className="text-2xl" style={{ color: colors.textMuted }}>kg</span>
-                </div>
-                <p className="text-center text-sm mt-2" style={{ color: colors.textMuted }}>
-                  数値が違う場合はタップして修正できます
-                </p>
-              </div>
-            )}
-
-            {/* 保存ボタン */}
-            {!analyzing && detectedWeight && (
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                onClick={handleSave}
-                disabled={saving}
-                className="w-full py-4 rounded-xl font-bold text-white"
-                style={{ backgroundColor: colors.accent }}
-              >
-                {saving ? '保存中...' : 'この体重で記録する'}
-              </motion.button>
-            )}
-
-            {/* 撮り直し */}
-            {!analyzing && (
-              <button
-                onClick={resetPhoto}
-                className="w-full py-3 text-center"
-                style={{ color: colors.accent }}
-              >
-                撮り直す
-              </button>
-            )}
           </motion.div>
         )}
 
@@ -332,7 +197,7 @@ export default function QuickRecordPage() {
             animate={{ opacity: 1, y: 0 }}
             className="space-y-6"
           >
-            <div 
+            <div
               className="p-6 rounded-2xl"
               style={{ backgroundColor: colors.card }}
             >
@@ -366,7 +231,7 @@ export default function QuickRecordPage() {
                     setManualWeight(newValue.toFixed(1));
                   }}
                   className="py-3 rounded-xl font-medium"
-                  style={{ 
+                  style={{
                     backgroundColor: colors.bg,
                     color: colors.textLight,
                   }}
@@ -375,6 +240,14 @@ export default function QuickRecordPage() {
                 </motion.button>
               ))}
             </div>
+
+            {/* #1051 UX3-05: 保存失敗を無反応にせず、入力を保持したままエラーを表示する */}
+            {saveError && (
+              <div className="flex items-start gap-2 p-3 rounded-lg" style={{ backgroundColor: colors.errorLight }}>
+                <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" style={{ color: colors.error }} />
+                <p className="text-sm" style={{ color: colors.dangerText }}>{saveError}</p>
+              </div>
+            )}
 
             {/* 保存ボタン */}
             <motion.button
@@ -389,7 +262,7 @@ export default function QuickRecordPage() {
 
             {/* 戻る */}
             <button
-              onClick={() => setMode('select')}
+              onClick={() => { setMode('select'); setSaveError(null); }}
               className="w-full py-3 text-center"
               style={{ color: colors.accent }}
             >

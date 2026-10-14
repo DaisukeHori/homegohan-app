@@ -35,8 +35,9 @@ interface UserDetail {
     mealCount: number;
     aiSessionCount: number;
   };
-  inquiries: { id: string; inquiryType: string; subject: string; status: string; createdAt: string }[];
-  notes: { id: string; note: string; createdAt: string; adminName?: string }[];
+  // GET /api/support/users/[id] は問い合わせとノートを DB の列名 (snake_case) のまま返す (モバイルアプリも同じ形を読む)
+  inquiries: { id: string; inquiry_type: string; subject: string; status: string; created_at: string }[];
+  notes: { id: string; note: string; created_at: string; admin_id: string }[];
 }
 
 function SupportUsersContent() {
@@ -282,7 +283,7 @@ function SupportUsersContent() {
                           <div key={inq.id} className="bg-gray-50 rounded-lg p-3">
                             <p className="text-sm text-gray-800 line-clamp-1">{inq.subject}</p>
                             <p className="text-xs text-gray-500 mt-1">
-                              {new Date(inq.createdAt).toLocaleDateString('ja-JP')} - {inq.status}
+                              {new Date(inq.created_at).toLocaleDateString('ja-JP')} - {inq.status}
                             </p>
                           </div>
                         ))}
@@ -298,7 +299,7 @@ function SupportUsersContent() {
                         <div key={note.id} className="bg-yellow-50 rounded-lg p-3">
                           <p className="text-sm text-gray-800 whitespace-pre-wrap">{note.note}</p>
                           <p className="text-xs text-gray-500 mt-1">
-                            {new Date(note.createdAt).toLocaleDateString('ja-JP')}
+                            {new Date(note.created_at).toLocaleDateString('ja-JP')}
                           </p>
                         </div>
                       ))}

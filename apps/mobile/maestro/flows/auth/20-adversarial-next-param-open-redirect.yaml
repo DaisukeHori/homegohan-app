@@ -7,7 +7,7 @@ env:
 # アプリは ?next= が '/' 始まりでない場合、無視してデフォルトルートへ遷移
 # deep link で ?next=https://evil.com を付与してログインを試みる
 - launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
+# 前の状態をリセット (ホームにいる場合)
 - runFlow:
     file: "../_shared/ensure-welcome.yaml"
 

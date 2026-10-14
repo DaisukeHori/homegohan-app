@@ -3,7 +3,9 @@
  * ログをapp_logsテーブルに保存する
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// 版は supabase/functions/deno.json の imports で固定する (#1518。以前は esm.sh からメジャー版だけの指定で読んでいた)
+import { createClient } from "@supabase/supabase-js";
+import { sanitizeLogEntry } from "./log-sanitizer.ts";
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -41,9 +43,11 @@ async function saveLog(entry: LogEntry): Promise<void> {
   try {
     const supabase = getSupabaseClient();
     if (!supabase) return;
-    
-    const { error } = await supabase.from('app_logs').insert(entry);
-    
+
+    // #1171: 保存前に message / error_message / error_stack / metadata の秘密情報マスキングと
+    // 文字数の切り詰めを行い、uuid でない user_id は NULL にする (Next.js 側の src/lib/db-logger.ts と同じ処理)
+    const { error } = await supabase.from('app_logs').insert(sanitizeLogEntry(entry));
+
     if (error) {
       console.error('Failed to save log to DB:', error);
     }

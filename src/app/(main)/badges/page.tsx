@@ -73,7 +73,9 @@ function BadgesPageInner() {
   const [badges, setBadges] = useState<BadgeWithStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [earnedCount, setEarnedCount] = useState(0);
-  const [newEarned, setNewEarned] = useState(false);
+  // #1055 (wave-3b): 「新しいバッジを獲得！」だけでどのバッジか分からなかったため、
+  // 直近獲得したバッジ本体を保持し、お祝い表示・カードハイライトの両方に使う
+  const [newlyEarnedBadges, setNewlyEarnedBadges] = useState<BadgeWithStatus[]>([]);
   const [selectedBadge, setSelectedBadge] = useState<BadgeWithStatus | null>(null);
 
   useEffect(() => {
@@ -90,10 +92,14 @@ function BadgesPageInner() {
 
         setBadges(mappedBadges);
         setEarnedCount(mappedBadges.filter((b: any) => b.earned).length);
-        
-        if (data.newEarnedCount > 0) {
-          setNewEarned(true);
-          setTimeout(() => setNewEarned(false), 5000); // 5秒後に非表示
+
+        // #1055 (wave-3b): どのバッジを新規獲得したか (code) を使ってお祝い表示・
+        // カードハイライトの対象を特定する
+        const newCodes: string[] = data.newEarnedBadgeCodes ?? [];
+        if (newCodes.length > 0) {
+          const newlyEarned = mappedBadges.filter((b: BadgeWithStatus) => newCodes.includes(b.code));
+          setNewlyEarnedBadges(newlyEarned);
+          setTimeout(() => setNewlyEarnedBadges([]), 5000); // 5秒後に非表示
         }
       } catch (e) {
         console.error(e);
@@ -136,19 +142,30 @@ function BadgesPageInner() {
       )}
 
       {/* お祝いエフェクト（新規獲得時） */}
+      {/* #1055 (wave-3b): 「新しいバッジを獲得！」だけでは匿名で何を取ったか分からなかったため、
+          直近獲得バッジのアイコン・名前・取得条件を表示する（該当カードは下のグリッドでハイライト） */}
       <AnimatePresence>
-        {newEarned && (
-          <motion.div 
+        {newlyEarnedBadges.length > 0 && (
+          <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 pointer-events-none z-[60] flex items-center justify-center"
           >
             <div className="absolute inset-0 bg-black/20" />
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.5, y: 50 }} animate={{ scale: 1, y: 0 }}
-              className="bg-white p-8 rounded-3xl shadow-2xl text-center"
+              className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-xs"
             >
-              <div className="text-6xl mb-4">🎊</div>
+              <div className="text-6xl mb-4">{newlyEarnedBadges[0].icon}</div>
               <h2 className="text-2xl font-bold text-gray-900">新しいバッジを獲得！</h2>
+              <p className="text-lg font-bold text-[#FF8A65] mt-2">{newlyEarnedBadges[0].name}</p>
+              {newlyEarnedBadges[0].description && (
+                <p className="text-sm text-gray-500 mt-1">{newlyEarnedBadges[0].description}</p>
+              )}
+              {newlyEarnedBadges.length > 1 && (
+                <p className="text-xs text-gray-400 mt-3">
+                  他 {newlyEarnedBadges.length - 1} 個のバッジも獲得しました
+                </p>
+              )}
             </motion.div>
           </motion.div>
         )}
@@ -197,7 +214,9 @@ function BadgesPageInner() {
       ) : (
         <div className="px-6 grid grid-cols-2 md:grid-cols-3 gap-4">
           {badges.map((badge, i) => {
-            const isHighlighted = tutorialMode && highlightCodes.includes(badge.code);
+            // #1055 (wave-3b): 新規獲得バッジのカードも既存のハイライトスタイルを流用して目立たせる
+            const isHighlighted = (tutorialMode && highlightCodes.includes(badge.code))
+              || newlyEarnedBadges.some((b) => b.code === badge.code);
             return (
             <motion.button
               key={badge.code}

@@ -9,6 +9,7 @@ import {
   isDatasetEmbeddingConfig,
 } from "../../../shared/dataset-embedding.mjs";
 import { requireServiceRole } from "../_shared/auth.ts";
+import { missingEnvError } from "../_shared/missing-env.ts";
 
 /**
  * 埋め込みベクトル再生成 Edge Function
@@ -53,7 +54,7 @@ const TABLE_CONFIGS: Record<string, TableConfig> = {
 
 async function embedBatch(texts: string[], model: string, dimensions: number): Promise<number[][]> {
   if (!DATASET_EMBEDDING_API_KEY) {
-    throw new Error(`Missing ${DATASET_EMBEDDING_API_KEY_ENV}`);
+    throw missingEnvError([DATASET_EMBEDDING_API_KEY_ENV]);
   }
   if (!isDatasetEmbeddingConfig(model, dimensions)) {
     throw new Error(`Invalid embedding config. Use ${DATASET_EMBEDDING_MODEL} with ${DATASET_EMBEDDING_DIMENSIONS} dimensions.`);
@@ -64,17 +65,9 @@ async function embedBatch(texts: string[], model: string, dimensions: number): P
   }) as number[][];
 }
 
+// 内部専用 (ブラウザからは呼ばれない) なので CORS は付けない (#1167)。
+// ブラウザの事前確認 (OPTIONS) は下の認証で 401 になり、CORS ヘッダーが無いためブラウザ側で止まる。
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, {
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      },
-    });
-  }
-
   // cron/内部専用: service role key の完全一致（SERVICE_ROLE_JWT / SUPABASE_SERVICE_ROLE_KEY のどちらでも可）、
   // または CRON_SECRET/SERVICE_ROLE_SECRET のいずれかを満たせば許可
   const authHeader = req.headers.get("Authorization") ?? "";
@@ -83,7 +76,7 @@ Deno.serve(async (req) => {
     !!bearerToken &&
     (bearerToken === Deno.env.get("SERVICE_ROLE_JWT") || bearerToken === Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
   if (!isServiceRoleKey) {
-    const authError = requireServiceRole(req);
+    const authError = await requireServiceRole(req);
     if (authError) return authError;
   }
 

@@ -8,6 +8,8 @@ import Svg, { Path } from "react-native-svg";
 
 import { colors, spacing, radius, shadows } from "../../src/theme";
 import { supabase } from "../../src/lib/supabase";
+import { TurnstileWidget, useTurnstile } from "../../src/components/auth/TurnstileWidget";
+import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "../../src/lib/turnstile";
 
 function GoogleIcon() {
   return (
@@ -26,6 +28,8 @@ export default function SignupScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // #1165: bot 対策 (Cloudflare Turnstile)。サイトキーが未設定なら無効で、今までどおりに動く
+  const captcha = useTurnstile();
 
   async function onGoogleSignup() {
     setIsSubmitting(true);
@@ -81,13 +85,22 @@ export default function SignupScreen() {
       return;
     }
 
+    // #1165: トークンは 1 回しか使えない。取り出した時点で、ウィジェットが次のトークンを取り直す
+    // (入力の検証で弾いた場合は取り出さないよう、検証の後で呼ぶ)。Turnstile が有効なのにトークンが無いときは送らない
+    const captchaToken = captcha.takeToken();
+    if (captcha.enabled && !captchaToken) {
+      Alert.alert("しばらくお待ちください", "ボットではないことの確認が終わるまで、少しお待ちください。");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const emailRedirectTo = Linking.createURL("/auth/verify");
       const { data, error } = await supabase.auth.signUp({
         email: trimmedEmail,
         password,
-        options: { emailRedirectTo },
+        // Turnstile が無効のときは captchaToken を付けない (今までのリクエストと同じ)
+        options: { emailRedirectTo, ...(captchaToken ? { captchaToken } : {}) },
       });
       if (error) throw error;
       // Supabase の email confirmation 有効時、重複メールアドレスは
@@ -104,7 +117,8 @@ export default function SignupScreen() {
         { text: "OK", onPress: () => router.replace("/(auth)/login") },
       ]);
     } catch (e: any) {
-      const msg = e?.message ?? "登録に失敗しました。";
+      // #1165: 英語の生のエラー文は出さない (ウィジェットは取り直し済み)
+      const msg = isCaptchaFailure(e) ? CAPTCHA_FAILED_MESSAGE : (e?.message ?? "登録に失敗しました。");
       setErrorMessage(msg);
       Alert.alert("登録失敗", msg);
     } finally {
@@ -219,13 +233,16 @@ export default function SignupScreen() {
             </Text>
           </View>
 
+          {/* bot 対策 (Turnstile)。サイトキーが未設定なら何も出ない */}
+          <TurnstileWidget {...captcha.widgetProps} action="signup" />
+
           {/* 登録ボタン */}
           <Pressable
             testID="signup-button"
             onPress={onSubmit}
-            disabled={isSubmitting}
+            disabled={isSubmitting || !captcha.ready}
             style={({ pressed }) => ({
-              backgroundColor: isSubmitting ? colors.textMuted : colors.accent,
+              backgroundColor: isSubmitting || !captcha.ready ? colors.textMuted : colors.accent,
               borderRadius: radius.lg, paddingVertical: 16,
               alignItems: "center", ...shadows.md,
               opacity: pressed ? 0.9 : 1, marginTop: spacing.sm,

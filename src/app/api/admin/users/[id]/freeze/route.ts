@@ -101,13 +101,24 @@ export async function POST(request: Request, { params }: Params) {
     );
   }
 
-  // frozen_at / frozen_reason / frozen_by を UPDATE (roles には手を加えない)
+  // 凍結期限計算 (#1030: unban_at 列に永続化するため UPDATE より先に計算する)
+  let unbanAt: string | null = null;
+  if (freezeData.ban_type === 'temporary' && freezeData.duration_days) {
+    const unbanDate = new Date();
+    unbanDate.setDate(unbanDate.getDate() + freezeData.duration_days);
+    unbanAt = unbanDate.toISOString();
+  }
+
+  // frozen_at / frozen_reason / frozen_by / unban_at を UPDATE (roles には手を加えない)
+  // #1030: unban_at を永続化することで、判定時比較 (requireUser/requireRole/middleware)
+  // による一時 BAN の自動解除が可能になる。
   const { error: updateError } = await supabaseAdmin
     .from('user_profiles')
     .update({
       frozen_at: new Date().toISOString(),
       frozen_reason: `[${freezeData.reason_category}] ${freezeData.reason_detail}`,
       frozen_by: actor.id,
+      unban_at: unbanAt,
     } as Record<string, unknown>)
     .eq('id', id);
 
@@ -117,14 +128,6 @@ export async function POST(request: Request, { params }: Params) {
       { error: { code: 'INTERNAL_ERROR', message: '凍結処理に失敗しました' } },
       { status: 500 },
     );
-  }
-
-  // 凍結期限計算
-  let unbanAt: string | null = null;
-  if (freezeData.ban_type === 'temporary' && freezeData.duration_days) {
-    const unbanDate = new Date();
-    unbanDate.setDate(unbanDate.getDate() + freezeData.duration_days);
-    unbanAt = unbanDate.toISOString();
   }
 
   // 監査ログ INSERT (operator/02-api-spec.md §3.3)
@@ -215,13 +218,14 @@ export async function DELETE(request: Request, { params }: Params) {
     );
   }
 
-  // frozen_at / frozen_reason / frozen_by を NULL にリセット (凍結解除)
+  // frozen_at / frozen_reason / frozen_by / unban_at を NULL にリセット (凍結解除)
   const { error: updateError } = await supabaseAdmin
     .from('user_profiles')
     .update({
       frozen_at: null,
       frozen_reason: null,
       frozen_by: null,
+      unban_at: null,
     } as Record<string, unknown>)
     .eq('id', id);
 

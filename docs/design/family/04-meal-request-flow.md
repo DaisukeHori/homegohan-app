@@ -663,9 +663,12 @@ test('pattern-3: owner requests custom meal, AI proposes, owner accepts', async 
 }) => {
   // owner としてログイン (fixture)
   const mealReqPage = new MealRequestPage(page);
+  // `process.env.<変数名>!` は使わない (#1182・#1434)。無ければ undefined のまま進めず、ここで止める
+  const targetMemberId = process.env.TEST_MEMBER_ID;
+  if (!targetMemberId) throw new Error('E2E の対象メンバーの ID が未設定です');
 
   await mealReqPage.createRequest({
-    targetMemberId: process.env.TEST_MEMBER_ID!,
+    targetMemberId,
     date: '2026-07-15',
     mealType: 'dinner',
     reason: '低カロリーにしたい',

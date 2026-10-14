@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 import { sanitizeHealthCheckupPayload } from '@/lib/health-payloads';
 
 // 健康診断の詳細取得
@@ -24,7 +25,7 @@ export async function GET(
     .maybeSingle();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/health/checkups/[id]', error, { userId: user.id, table: 'health_checkups' });
   }
 
   if (!data) {
@@ -86,7 +87,7 @@ export async function PUT(
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('PUT /api/health/checkups/[id]', error, { userId: user.id, table: 'health_checkups' });
   }
 
   return NextResponse.json({ checkup: data });
@@ -141,7 +142,7 @@ export async function DELETE(
     .eq('id', id);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('DELETE /api/health/checkups/[id]', error, { userId: user.id, table: 'health_checkups' });
   }
 
   return NextResponse.json({ success: true });

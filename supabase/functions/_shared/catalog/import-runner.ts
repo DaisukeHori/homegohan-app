@@ -1,5 +1,4 @@
 import { createClient } from "@supabase/supabase-js";
-import { corsHeaders } from "../cors.ts";
 import { createLogger, generateRequestId } from "../db-logger.ts";
 import { requireServiceRole } from "../auth.ts";
 import { firecrawlScrapeStructured } from "../firecrawl-client.ts";
@@ -18,6 +17,12 @@ import {
   sha256Hex,
 } from "../catalog-utils.ts";
 import { getCatalogSourceAdapter } from "./source-adapters.ts";
+import {
+  isMissingEnvError,
+  MISSING_ENV_HTTP_STATUS,
+  missingEnvError,
+  missingEnvResponseBody,
+} from "../missing-env.ts";
 
 export type ImportRequest = {
   sourceCode?: string;
@@ -39,6 +44,26 @@ type HandlerOptions = {
   lockSourceCode?: boolean;
   functionName: string;
 };
+
+/**
+ * catalog_import_runs.error_log に残す失敗の件数の上限。error_log は text 列で、件数が多いと
+ * 1 行が肥大して一覧の確認が重くなるため、先頭の分だけ残す (以前から 20 件で切っていた値を名前にしたもの)。
+ */
+const IMPORT_RUN_ERROR_LOG_MAX_ENTRIES = 20;
+
+/**
+ * catalog_import_runs.status の値 (表の CHECK 制約 catalog_import_runs_status_check の語彙:
+ * running / completed / failed / partial)。新しい値は作らない。
+ */
+const IMPORT_RUN_STATUS = {
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+  partial: "partial",
+} as const;
+
+/** error_log に入れる 1 件 (商品ごとの失敗と、run 全体を止めた失敗で同じ形にする) */
+type ImportRunErrorEntry = { categoryCode: string | null; url: string | null; error: string };
 
 const DISCOVERY_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -90,17 +115,15 @@ const DETAIL_SCHEMA: Record<string, unknown> = {
   required: ["name"],
 };
 
+// バッチ専用 (pg_cron と管理画面の API ルートから呼ばれ、ブラウザからは呼ばれない) なので CORS は付けない (#1167)。
+// ブラウザの事前確認 (OPTIONS) は下の認証で 401 になり、CORS ヘッダーが無いためブラウザ側で止まる。
 export async function handleCatalogImportRequest(req: Request, options: HandlerOptions) {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
   // バッチ専用: CRON_SECRET 認証（Firecrawl / LLM コスト保護）
-  const authErr = requireServiceRole(req);
+  const authErr = await requireServiceRole(req);
   if (authErr) {
     return new Response(authErr.body, {
       status: authErr.status,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json" },
     });
   }
 
@@ -163,7 +186,7 @@ export async function handleCatalogImportRequest(req: Request, options: HandlerO
       source_code: source.code,
       category_code: categoryCode,
       trigger_type: triggerType,
-      status: "running",
+      status: IMPORT_RUN_STATUS.running,
       categories_total: categories.length,
       metadata_json: {
         dryRun,
@@ -185,148 +208,164 @@ export async function handleCatalogImportRequest(req: Request, options: HandlerO
       importRunId = insertedRun.id;
     }
 
-    const stats = {
+    const stats: ImportStats = {
       pagesTotal: 0,
       productsSeen: 0,
       productsInserted: 0,
       productsUpdated: 0,
       productsUnchanged: 0,
       productsDiscontinued: 0,
-      productErrors: [] as Array<{ categoryCode: string; url: string; error: string }>,
+      productErrors: [],
     };
 
-    for (const category of categories) {
-      logger.info("Scraping category", {
-        sourceCode: source.code,
-        categoryCode: category.category_code,
-        listUrl: category.list_url,
-        strategy: adapter.config.strategy,
-      });
+    // run の行を 'running' で入れたあとは、どこで投げても行を 'failed' にしてから外側の catch へ渡す
+    // (以前は外側の catch が 503 / 500 を返すだけで、行が 'running' のまま残っていた。#1522)
+    let currentCategoryCode: string | null = null;
+    try {
+      for (const category of categories) {
+        currentCategoryCode = category.category_code;
+        logger.info("Scraping category", {
+          sourceCode: source.code,
+          categoryCode: category.category_code,
+          listUrl: category.list_url,
+          strategy: adapter.config.strategy,
+        });
 
-      const discovery = await collectCategoryTargets({
-        adapter,
-        categoryCode: category.category_code,
-        listUrl: category.list_url,
-        maxItems: maxProductsPerCategory,
-      });
-      stats.pagesTotal += discovery.pages.length;
+        const discovery = await collectCategoryTargets({
+          adapter,
+          categoryCode: category.category_code,
+          listUrl: category.list_url,
+          maxItems: maxProductsPerCategory,
+        });
+        stats.pagesTotal += discovery.pages.length;
 
-      const uniqueItems = dedupeProductUrls(
-        discovery.itemUrls.map((url) => normalizeCatalogProductUrl(url, source.code)),
-      ).slice(0, maxProductsPerCategory);
+        const uniqueItems = dedupeProductUrls(
+          discovery.itemUrls.map((url) => normalizeCatalogProductUrl(url, source.code)),
+        ).slice(0, maxProductsPerCategory);
 
-      if (!dryRun) {
-        await supabase
-          .from("catalog_source_categories")
-          .update({ last_crawled_at: new Date().toISOString() })
-          .eq("id", category.id);
-      }
-
-      if (!dryRun && storeRawDocuments && importRunId) {
-        for (const page of discovery.pages) {
-          await saveRawDocument(supabase, {
-            sourceId: source.id,
-            importRunId,
-            categoryCode: category.category_code,
-            documentType: "list",
-            url: page.url,
-            httpStatus: 200,
-            payload: page.payload,
-          });
+        if (!dryRun) {
+          await supabase
+            .from("catalog_source_categories")
+            .update({ last_crawled_at: new Date().toISOString() })
+            .eq("id", category.id);
         }
-      }
 
-      for (const itemUrl of uniqueItems) {
-        stats.productsSeen += 1;
-
-        try {
-          const { json: detailJson, markdown: detailMarkdown, raw: detailRaw } = await firecrawlScrapeStructured<unknown>(itemUrl, {
-            prompt: adapter.buildDetailPrompt({
-              categoryCode: category.category_code,
-              brandName: source.brand_name,
-            }),
-            schema: DETAIL_SCHEMA,
-            includeMarkdown: true,
-          });
-
-          let detailExtract = parseProductExtract(detailJson, itemUrl);
-          if (!detailExtract) {
-            detailExtract = await rescueProductExtractFromMarkdown(detailMarkdown, { url: itemUrl });
-          }
-          if (!detailExtract) {
-            throw new Error(`Failed to extract product detail for ${itemUrl}`);
-          }
-
-          const cleanedBase = await cleanupCatalogExtract(detailExtract, {
-            sourceCode: source.code,
-            brandName: source.brand_name,
-            fallbackCategoryCode: category.category_code,
-          });
-          const cleaned: CleanedCatalogProduct = {
-            ...cleanedBase,
-            metadataJson: {
-              ...cleanedBase.metadataJson,
-              sourceStrategy: adapter.config.strategy,
-              supportsFullNutrition: adapter.config.supportsFullNutrition,
-            },
-          };
-
-          if (!dryRun && storeRawDocuments && importRunId) {
+        if (!dryRun && storeRawDocuments && importRunId) {
+          for (const page of discovery.pages) {
             await saveRawDocument(supabase, {
               sourceId: source.id,
               importRunId,
               categoryCode: category.category_code,
-              documentType: "detail",
-              url: itemUrl,
+              documentType: "list",
+              url: page.url,
               httpStatus: 200,
-              payload: detailRaw,
+              payload: page.payload,
             });
           }
+        }
 
-          if (dryRun) {
-            continue;
+        for (const itemUrl of uniqueItems) {
+          stats.productsSeen += 1;
+
+          try {
+            const { json: detailJson, markdown: detailMarkdown, raw: detailRaw } = await firecrawlScrapeStructured<unknown>(itemUrl, {
+              prompt: adapter.buildDetailPrompt({
+                categoryCode: category.category_code,
+                brandName: source.brand_name,
+              }),
+              schema: DETAIL_SCHEMA,
+              includeMarkdown: true,
+            });
+
+            let detailExtract = parseProductExtract(detailJson, itemUrl);
+            if (!detailExtract) {
+              detailExtract = await rescueProductExtractFromMarkdown(detailMarkdown, { url: itemUrl });
+            }
+            if (!detailExtract) {
+              throw new Error(`Failed to extract product detail for ${itemUrl}`);
+            }
+
+            const cleanedBase = await cleanupCatalogExtract(detailExtract, {
+              sourceCode: source.code,
+              brandName: source.brand_name,
+              fallbackCategoryCode: category.category_code,
+            });
+            const cleaned: CleanedCatalogProduct = {
+              ...cleanedBase,
+              metadataJson: {
+                ...cleanedBase.metadataJson,
+                sourceStrategy: adapter.config.strategy,
+                supportsFullNutrition: adapter.config.supportsFullNutrition,
+              },
+            };
+
+            if (!dryRun && storeRawDocuments && importRunId) {
+              await saveRawDocument(supabase, {
+                sourceId: source.id,
+                importRunId,
+                categoryCode: category.category_code,
+                documentType: "detail",
+                url: itemUrl,
+                httpStatus: 200,
+                payload: detailRaw,
+              });
+            }
+
+            if (dryRun) {
+              continue;
+            }
+
+            const result = await upsertCatalogProduct(supabase, {
+              sourceId: source.id,
+              importRunId,
+              categoryCode: category.category_code,
+              cleaned,
+            });
+
+            if (result === "inserted") stats.productsInserted += 1;
+            else if (result === "updated") stats.productsUpdated += 1;
+            else stats.productsUnchanged += 1;
+          } catch (error) {
+            const message = errorMessage(error);
+            logger.error("Failed to import product", error, {
+              categoryCode: category.category_code,
+              url: itemUrl,
+            });
+            stats.productErrors.push({
+              categoryCode: category.category_code,
+              url: itemUrl,
+              error: message,
+            });
           }
-
-          const result = await upsertCatalogProduct(supabase, {
-            sourceId: source.id,
-            importRunId,
-            categoryCode: category.category_code,
-            cleaned,
-          });
-
-          if (result === "inserted") stats.productsInserted += 1;
-          else if (result === "updated") stats.productsUpdated += 1;
-          else stats.productsUnchanged += 1;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          logger.error("Failed to import product", error, {
-            categoryCode: category.category_code,
-            url: itemUrl,
-          });
-          stats.productErrors.push({
-            categoryCode: category.category_code,
-            url: itemUrl,
-            error: message,
-          });
         }
       }
-    }
 
-    if (!dryRun && importRunId) {
-      await supabase
-        .from("catalog_import_runs")
-        .update({
-          status: stats.productErrors.length > 0 ? "partial" : "completed",
-          completed_at: new Date().toISOString(),
-          pages_total: stats.pagesTotal,
-          products_seen: stats.productsSeen,
-          products_inserted: stats.productsInserted,
-          products_updated: stats.productsUpdated,
-          products_unchanged: stats.productsUnchanged,
-          products_discontinued: stats.productsDiscontinued,
-          error_log: stats.productErrors.length > 0 ? JSON.stringify(stats.productErrors.slice(0, 20)) : null,
-        })
-        .eq("id", importRunId);
+      if (!dryRun && importRunId) {
+        const { error: completeError } = await supabase
+          .from("catalog_import_runs")
+          .update({
+            status: stats.productErrors.length > 0 ? IMPORT_RUN_STATUS.partial : IMPORT_RUN_STATUS.completed,
+            completed_at: new Date().toISOString(),
+            ...runCounts(stats),
+            error_log: stats.productErrors.length > 0
+              ? JSON.stringify(stats.productErrors.slice(0, IMPORT_RUN_ERROR_LOG_MAX_ENTRIES))
+              : null,
+          })
+          .eq("id", importRunId);
+        if (completeError) {
+          // 取り込み自体は終わっているので応答は変えない。行が 'running' のまま残ったことをログに残す
+          logger.error("Failed to mark catalog import run as finished", completeError, { importRunId });
+        }
+      }
+    } catch (runError) {
+      if (importRunId) {
+        await markImportRunFailed(supabase, logger, {
+          importRunId,
+          stats,
+          failure: { categoryCode: currentCategoryCode, url: null, error: errorMessage(runError) },
+        });
+      }
+      throw runError;
     }
 
     return jsonResponse({
@@ -339,10 +378,77 @@ export async function handleCatalogImportRequest(req: Request, options: HandlerO
     });
   } catch (error) {
     logger.error("Convenience catalog import failed", error);
+    // 必須の環境変数が無いときは、固定の文と code だけを返す (変数名はログにだけ残っている。#1467)
+    if (isMissingEnvError(error)) {
+      return jsonResponse({ success: false, ...missingEnvResponseBody() }, MISSING_ENV_HTTP_STATUS);
+    }
     return jsonResponse(
-      { success: false, error: error instanceof Error ? error.message : String(error) },
+      { success: false, error: errorMessage(error) },
       500,
     );
+  }
+}
+
+/**
+ * 例外の文。MissingEnvError の message は固定の文 (変数名を含まない。#1467) なので、そのまま error_log に入れてよい。
+ * それ以外は、以前から 500 の本文と商品ごとの error_log に入れていた message と同じ。
+ */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+type ImportStats = {
+  pagesTotal: number;
+  productsSeen: number;
+  productsInserted: number;
+  productsUpdated: number;
+  productsUnchanged: number;
+  productsDiscontinued: number;
+  productErrors: Array<{ categoryCode: string; url: string; error: string }>;
+};
+
+/** catalog_import_runs の件数の列 (終わった run にも、途中で止まった run にも同じ列を書く) */
+function runCounts(stats: ImportStats) {
+  return {
+    pages_total: stats.pagesTotal,
+    products_seen: stats.productsSeen,
+    products_inserted: stats.productsInserted,
+    products_updated: stats.productsUpdated,
+    products_unchanged: stats.productsUnchanged,
+    products_discontinued: stats.productsDiscontinued,
+  };
+}
+
+/**
+ * 途中で止まった run の行を 'failed' にする (#1522)。
+ * error_log は 'partial' のときと同じ形 (JSON の配列。各要素は { categoryCode, url, error }) で、
+ * それまでの商品ごとの失敗のあとに、run を止めた失敗を 1 件足す。件数の上限も同じ。
+ * この更新が失敗しても、元の失敗の応答を優先する (ここでは投げずにログに残すだけ)。
+ */
+async function markImportRunFailed(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  logger: ReturnType<typeof createLogger>,
+  input: { importRunId: string; stats: ImportStats; failure: ImportRunErrorEntry },
+): Promise<void> {
+  const entries: ImportRunErrorEntry[] = [
+    ...input.stats.productErrors.slice(0, IMPORT_RUN_ERROR_LOG_MAX_ENTRIES - 1),
+    input.failure,
+  ];
+  try {
+    const { error } = await supabase
+      .from("catalog_import_runs")
+      .update({
+        status: IMPORT_RUN_STATUS.failed,
+        completed_at: new Date().toISOString(),
+        ...runCounts(input.stats),
+        error_log: JSON.stringify(entries),
+      })
+      .eq("id", input.importRunId);
+    if (error) {
+      logger.error("Failed to mark catalog import run as failed", error, { importRunId: input.importRunId });
+    }
+  } catch (updateError) {
+    logger.error("Failed to mark catalog import run as failed", updateError, { importRunId: input.importRunId });
   }
 }
 
@@ -350,7 +456,8 @@ function getSupabaseAdmin() {
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SERVICE_ROLE_JWT") ?? "";
   if (!supabaseUrl || !serviceRole) {
-    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    // 変数名は message に入れず、ログにだけ残す (catch が message を 500 の本文に返していた。#1467)
+    throw missingEnvError(["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]);
   }
   return createClient(supabaseUrl, serviceRole, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -674,7 +781,6 @@ function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
       "Content-Type": "application/json",
     },
   });

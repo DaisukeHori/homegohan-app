@@ -20,24 +20,23 @@
  */
 
 import { test, expect, type BrowserContext, type Page } from "@playwright/test";
+import { requireE2eUserCredentials } from "./helpers/credentials";
 
 // ============================================================
 // 定数・ヘルパー
 // ============================================================
 
-const E2E_USER = {
-  email: process.env.E2E_USER_EMAIL ?? "claude-debug-1777477826@homegohan.local",
-  password: process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!",
-};
-
 /** 指定コンテキストでログインする。最大 2 回リトライ。 */
 async function loginInContext(context: BrowserContext): Promise<Page> {
+  // 認証情報は環境変数 (E2E_USER_EMAIL / E2E_USER_PASSWORD) からだけ取る (既定値は無い)。
+  // 未設定なら、ページを開いたりリトライしたりする前にエラーで止める
+  const { email, password } = requireE2eUserCredentials();
   const page = await context.newPage();
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       await page.goto("/login");
-      await page.locator("#email").fill(E2E_USER.email);
-      await page.locator("#password").fill(E2E_USER.password);
+      await page.locator("#email").fill(email);
+      await page.locator("#password").fill(password);
       await Promise.all([
         page.waitForURL(
           (url) =>
@@ -1175,8 +1174,9 @@ test("W5D-18: signin → signout → signin 高速繰り返し → 状態が一�
     await attach(page, testInfo, "W5D-18: signout後 /login");
 
     // 再サインイン
-    await page.locator("#email").fill(E2E_USER.email);
-    await page.locator("#password").fill(E2E_USER.password);
+    const { email, password } = requireE2eUserCredentials();
+    await page.locator("#email").fill(email);
+    await page.locator("#password").fill(password);
     await Promise.all([
       page.waitForURL(
         (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),

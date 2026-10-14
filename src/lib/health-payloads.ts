@@ -1,9 +1,39 @@
+import {
+  ACCEPTED_GOAL_TYPES,
+  FALLBACK_GOAL_RANGES,
+  findGoalTypeDef,
+  type GoalTypeDef,
+} from '@/lib/health-goal-types';
+import { isCalendarDate } from '@/lib/date-utils';
+
 type ValidationResult<T extends object> = {
   data: Partial<T>;
   errors: string[];
 };
 
 type PlainObject = Record<string, unknown>;
+
+/**
+ * #1048 F2-19: 呼び出し側が `{ weight: body.weight, ... }` のように別名フィールドから
+ * 値を詰め替えるとき、元の値が `undefined`（＝クライアントが送らなかった）でも
+ * オブジェクトリテラルには **キー自体は存在してしまう**
+ * （`Object.prototype.hasOwnProperty.call({ foo: undefined }, 'foo')` は true）。
+ *
+ * sanitizeHealthRecordPayload 等は「キーが存在するか」で送信有無を判定するため、
+ * これを素通しすると「未送信」が「null を送信」と誤認され、
+ * 既存の保存値を意図せず null で上書きしてしまう（例: mood のみのクイック記録が
+ * weight を null に巻き戻す）。値を詰め替える呼び出し側は、渡す前に本関数で
+ * `undefined` のキーを除去すること。
+ */
+export function stripUndefined<T extends PlainObject>(input: T): Partial<T> {
+  const result: Partial<T> = {};
+  for (const key of Object.keys(input) as (keyof T)[]) {
+    if (input[key] !== undefined) {
+      result[key] = input[key];
+    }
+  }
+  return result;
+}
 
 export interface NotificationPreferencesPayload {
   enabled: boolean;
@@ -44,6 +74,15 @@ export interface HealthGoalUpdatePayload {
   target_value: number | null;
   current_value: number | null;
   target_unit: string | null;
+  target_date: string | null;
+  note: string | null;
+}
+
+/** 新しい健康目標 (health_goals の INSERT) に使える項目。user_id / status などは呼び出し側が決める */
+export interface HealthGoalCreatePayload {
+  goal_type: string;
+  target_value: number;
+  target_unit: string;
   target_date: string | null;
   note: string | null;
 }
@@ -110,6 +149,8 @@ export const DEFAULT_NOTIFICATION_PREFERENCES = {
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+// #1048 F2-16: health/records/[date] 等、複数ルートで YYYY-MM-DD 検証を共有するため export する
+export const RECORD_DATE_PATTERN = DATE_PATTERN;
 const NOTIFICATION_RECORD_MODES = new Set(['standard', 'minimal', 'weekly', 'off']);
 const NOTIFICATION_PERSONALITY_TYPES = new Set(['positive', 'logical', 'gentle', 'competitive']);
 
@@ -138,7 +179,8 @@ function parseNullableString(
 
   const trimmed = value.trim();
   if (!trimmed) return null;
-  if (opts.date && !DATE_PATTERN.test(trimmed)) {
+  // 形だけでなく実在する日付か (isCalendarDate) も見る。2026-02-30 のような日付は DB の date 型への変換で失敗して 500 になる (#1482)
+  if (opts.date && (!DATE_PATTERN.test(trimmed) || !isCalendarDate(trimmed))) {
     errors.push(`${key} must be a date in YYYY-MM-DD format`);
     return undefined;
   }
@@ -337,18 +379,22 @@ export function sanitizeHealthRecordPayload(
       if (value !== undefined) data[field] = value;
     }
 
+    // #1046 F2-13: sleep_quality/overall_condition/mood_score/energy_level/stress_level は
+    // 記録画面(renderScoreButtons, 1-5の絵文字5段階)・AI相談プロンプト(x/5表記)が
+    // いずれも1-5スケールで運用されているが、サニタイザだけmax=10のままだったため、
+    // UI上ありえない6-10の値もAPIレベルでは通過してしまっていた。実態のUI(1-5)に統一する。
     const integerFieldOpts: Record<string, { min?: number; max?: number; label?: string }> = {
       systolic_bp: { min: 30, max: 300, label: '収縮期血圧 (mmHg)' },
       diastolic_bp: { min: 20, max: 200, label: '拡張期血圧 (mmHg)' },
       heart_rate: { min: 20, max: 300, label: '心拍数 (bpm)' },
-      sleep_quality: { min: 1, max: 10, label: '睡眠の質 (1-10)' },
+      sleep_quality: { min: 1, max: 5, label: '睡眠の質 (1-5)' },
       water_intake: { min: 0, max: 10000, label: '水分摂取量 (mL)' },
       step_count: { min: 0, max: 100000, label: '歩数' },
       bowel_movement: { min: 0, max: 20, label: '排便回数' },
-      overall_condition: { min: 1, max: 10, label: '全体的な体調 (1-10)' },
-      mood_score: { min: 1, max: 10, label: '気分スコア (1-10)' },
-      energy_level: { min: 1, max: 10, label: 'エネルギーレベル (1-10)' },
-      stress_level: { min: 1, max: 10, label: 'ストレスレベル (1-10)' },
+      overall_condition: { min: 1, max: 5, label: '全体的な体調 (1-5)' },
+      mood_score: { min: 1, max: 5, label: '気分スコア (1-5)' },
+      energy_level: { min: 1, max: 5, label: 'エネルギーレベル (1-5)' },
+      stress_level: { min: 1, max: 5, label: 'ストレスレベル (1-5)' },
     };
     const integerFields = [
       'systolic_bp',
@@ -383,14 +429,40 @@ export function sanitizeHealthRecordPayload(
   });
 }
 
-export function sanitizeHealthGoalUpdate(input: unknown): ValidationResult<HealthGoalUpdatePayload> {
+/**
+ * #1229: 目標値 (target_value) / 現在値 (current_value) の範囲チェック用の設定を goal_type の定義から作る。
+ * 種類が分からない (def が undefined) ときは、符号と桁あふれだけを見る汎用の範囲を使う。
+ * DB には検査トリガー trg_health_goals_validate_values があり、書き込む値について target_value > 0 と
+ * current_value IS NULL OR >= 0 を見る (supabase/migrations/20261008110100_health_goals_value_trigger.sql)。
+ * ここの下限はそれより厳しいか同じ。
+ */
+function goalValueOpts(def: GoalTypeDef | undefined, kind: 'target' | 'current') {
+  const range = (def ?? FALLBACK_GOAL_RANGES)[kind];
+  const noun = kind === 'target' ? '目標値' : '現在値';
+  return { min: range.min, max: range.max, label: def ? `${def.label}の${noun} (${def.unit})` : noun };
+}
+
+/**
+ * 既存の健康目標の更新 (PUT /api/health/goals/[id]、AI 相談の update_health_goal) に使える項目だけを取り出して検証する。
+ *
+ * goalType には更新対象の行の goal_type を渡す (goal_type 自体は更新できない)。
+ * 種類ごとの範囲 (例: 体重 20〜300kg) で target_value / current_value を検証する。
+ * goalType が未指定、または受け付けない種類 (種類を決める前に作られた既存データ) のときは、
+ * 0 以下の目標値・負の現在値・桁あふれだけを止める。
+ */
+export function sanitizeHealthGoalUpdate(
+  input: unknown,
+  opts: { goalType?: string } = {},
+): ValidationResult<HealthGoalUpdatePayload> {
+  const def = opts.goalType ? findGoalTypeDef(opts.goalType) : undefined;
+
   return parseKnownFields(input, (body, errors) => {
     const data: Record<string, unknown> = {};
 
-    const targetValue = parseNullableNumber(body, 'target_value', errors);
+    const targetValue = parseNullableNumber(body, 'target_value', errors, goalValueOpts(def, 'target'));
     if (targetValue !== undefined) data.target_value = targetValue;
 
-    const currentValue = parseNullableNumber(body, 'current_value', errors);
+    const currentValue = parseNullableNumber(body, 'current_value', errors, goalValueOpts(def, 'current'));
     if (currentValue !== undefined) data.current_value = currentValue;
 
     const targetUnit = parseNullableString(body, 'target_unit', errors);
@@ -404,6 +476,54 @@ export function sanitizeHealthGoalUpdate(input: unknown): ValidationResult<Healt
 
     return data;
   });
+}
+
+/**
+ * 新しい健康目標 (POST /api/health/goals、AI 相談の set_health_goal) に使える項目を取り出して検証する (#1229)。
+ *
+ * - goal_type: 前後の空白を除き、受け付ける種類 (src/lib/health-goal-types.ts) だけ通す
+ * - target_value: その種類の範囲に収まる数値 (0 以下や範囲外は拒否)
+ * - target_unit: 必須。opts.defaultUnit が true のときは、省略すると種類に合う単位を入れる (AI 相談は省略しうる)
+ * - target_date / note: 任意
+ * 受け付けない項目 (user_id / status / current_value など) は無視する。
+ *
+ * 検証に通ると data に値が入り、通らないと data は null で errors に理由が入る。
+ */
+export function sanitizeHealthGoalCreate(
+  input: unknown,
+  opts: { defaultUnit?: boolean } = {},
+): { data: HealthGoalCreatePayload | null; errors: string[] } {
+  const result = parseKnownFields<HealthGoalCreatePayload>(input, (body, errors) => {
+    const goalType = typeof body.goal_type === 'string' ? body.goal_type.trim() : '';
+    const def = goalType ? findGoalTypeDef(goalType) : undefined;
+    if (goalType && !def) {
+      errors.push(`goal_type は ${ACCEPTED_GOAL_TYPES.join(', ')} のいずれかを指定してください`);
+    }
+
+    const targetValue = parseNullableNumber(body, 'target_value', errors, goalValueOpts(def, 'target'));
+    const targetUnit =
+      parseNullableString(body, 'target_unit', errors) ?? (opts.defaultUnit ? def?.unit : undefined);
+    const targetDate = parseNullableString(body, 'target_date', errors, { date: true });
+    const note = parseNullableString(body, 'note', errors);
+
+    // 形式や範囲の誤りが無いときだけ、必須項目の不足を報告する (従来の POST と同じ順序・同じ文言)
+    if (errors.length === 0 && (!def || targetValue == null || !targetUnit)) {
+      errors.push('goal_type, target_value, and target_unit are required');
+    }
+    if (errors.length > 0 || !def || targetValue == null || !targetUnit) return {};
+
+    return {
+      goal_type: def.type,
+      target_value: targetValue,
+      target_unit: targetUnit,
+      target_date: targetDate ?? null,
+      note: note ?? null,
+    };
+  });
+
+  return result.errors.length > 0
+    ? { data: null, errors: result.errors }
+    : { data: result.data as HealthGoalCreatePayload, errors: [] };
 }
 
 export function sanitizeHealthCheckupPayload(input: unknown): ValidationResult<HealthCheckupPayload> {

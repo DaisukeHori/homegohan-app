@@ -19,7 +19,10 @@ type Plan = {
   yearly_price_jpy: number | null;
   max_members: number | null;
   stripe_product_id: string | null;
+  /** 月額の Stripe Price ID */
   stripe_price_id: string | null;
+  /** 年額の Stripe Price ID (#1102) */
+  stripe_yearly_price_id: string | null;
   status: string;
   display_order: number;
   trial_days: number;
@@ -128,9 +131,63 @@ export default function PlanDetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
       });
-      if (res.ok) fetchPlan();
+      if (res.ok) {
+        fetchPlan();
+        return;
+      }
+      // #1041 修正: 失敗時 (422/400/403 等) に無反応にせず、必ずエラーを表示する
+      const data = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+      alert(data?.error?.message ?? `ステータス変更に失敗しました (HTTP ${res.status})`);
     } catch {
-      alert('ステータス変更に失敗しました');
+      alert('ステータス変更に失敗しました (ネットワークエラー)');
+    }
+  };
+
+  // #1041 修正: public/private --> deprecated への廃止移行を許可 (以前は恒久ロックされていた)
+  const handleDeprecate = async () => {
+    const endsAtInput = window.prompt('廃止予定日 (YYYY-MM-DD) を入力してください');
+    if (!endsAtInput) return;
+    const endsAtDate = new Date(`${endsAtInput}T00:00:00.000Z`);
+    if (Number.isNaN(endsAtDate.getTime())) {
+      alert('日付の形式が不正です (例: 2026-12-31)');
+      return;
+    }
+    if (!window.confirm(`このプランを ${endsAtInput} 廃止予定で廃止しますか？`)) return;
+
+    try {
+      const res = await fetch(`/api/super-admin/plans/${planId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'deprecated', ends_at: endsAtDate.toISOString() }),
+      });
+      if (res.ok) {
+        fetchPlan();
+        return;
+      }
+      const data = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+      alert(data?.error?.message ?? `廃止処理に失敗しました (HTTP ${res.status})`);
+    } catch {
+      alert('廃止処理に失敗しました (ネットワークエラー)');
+    }
+  };
+
+  // deprecated --> private への緊急ロールバック (public には戻さない)
+  const handleUndeprecate = async () => {
+    if (!window.confirm('廃止を取り消し、非公開状態に戻しますか？')) return;
+    try {
+      const res = await fetch(`/api/super-admin/plans/${planId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'private' }),
+      });
+      if (res.ok) {
+        fetchPlan();
+        return;
+      }
+      const data = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+      alert(data?.error?.message ?? `廃止取り消しに失敗しました (HTTP ${res.status})`);
+    } catch {
+      alert('廃止取り消しに失敗しました (ネットワークエラー)');
     }
   };
 
@@ -195,6 +252,22 @@ export default function PlanDetailPage() {
             >
               価格変更
             </Link>
+          )}
+          {(plan.status === 'public' || plan.status === 'private') && (
+            <button
+              onClick={handleDeprecate}
+              className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-xs font-medium hover:bg-red-600 transition-colors"
+            >
+              廃止する
+            </button>
+          )}
+          {plan.status === 'deprecated' && (
+            <button
+              onClick={handleUndeprecate}
+              className="px-3 py-1.5 bg-slate-500 text-white rounded-lg text-xs font-medium hover:bg-slate-600 transition-colors"
+            >
+              廃止を取り消す
+            </button>
           )}
         </div>
       </div>
@@ -321,9 +394,15 @@ export default function PlanDetailPage() {
                 </code>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-slate-500">Price ID:</span>
+                <span className="text-slate-500">Price ID (月額):</span>
                 <code className="font-mono text-xs bg-slate-100 px-2 py-0.5 rounded">
                   {plan.stripe_price_id ? `${plan.stripe_price_id.slice(0, 12)}...` : '未設定'}
+                </code>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">Price ID (年額):</span>
+                <code className="font-mono text-xs bg-slate-100 px-2 py-0.5 rounded">
+                  {plan.stripe_yearly_price_id ? `${plan.stripe_yearly_price_id.slice(0, 12)}...` : '未設定'}
                 </code>
               </div>
             </div>

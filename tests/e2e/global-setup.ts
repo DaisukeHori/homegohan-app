@@ -22,6 +22,10 @@
 import { chromium, type FullConfig } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
+import { getExistingUserPassword } from "./helpers/credentials";
+import { acceptLegalConsentIfShown } from "./helpers/legal-consent";
+import { ensureAiConsentGranted } from "./helpers/ai-consent";
+import { waitForLoginFormReady } from "./helpers/login-form";
 import { seedClassifyFixtures } from "./setup/seed-classify-fixtures";
 
 /** backward compat: 既存コードが参照するエクスポート (user-01 のパスを返す) */
@@ -52,6 +56,35 @@ export function getRefreshTokenPath(workerIndex: number): string {
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * E2E_REQUIRE_LOGIN=1 (CI) のとき、ログインできなかったら全テストを走らせずに止める。
+ * 既定 (未設定) では従来どおり警告だけ出して続行し、各テストが個別ログインにフォールバックする。
+ */
+function assertLoggedIn(email: string, loggedIn: boolean): void {
+  if (process.env.E2E_REQUIRE_LOGIN !== "1" || loggedIn) return;
+  throw new Error(
+    `[global-setup] ${email} でログインできませんでした (E2E_REQUIRE_LOGIN=1)。` +
+      "テストユーザーと E2E_USER_EMAIL / E2E_USER_PASSWORD を確認してください。",
+  );
+}
+
+/**
+ * ユーザーのパスワードが環境変数に無いときの扱い。既定のパスワードは無い (リポジトリに置かない)。
+ * E2E_REQUIRE_LOGIN=1 (CI) では全テストを走らせずに止める。既定 (未設定) では警告だけ出して続行する
+ * (storageState は作らない。各テストは getUserCredentials() で同じエラーになる)。
+ *
+ * @param envNames - 設定すべき環境変数の名前 (メッセージ用)
+ */
+function reportMissingPassword(email: string, envNames: string): void {
+  const message =
+    `[global-setup] ${email} のパスワードが未設定です。` +
+    `${envNames} を設定してください (既定値はありません)。`;
+  if (process.env.E2E_REQUIRE_LOGIN === "1") {
+    throw new Error(`${message} (E2E_REQUIRE_LOGIN=1)`);
+  }
+  console.warn(`${message} storageState なしで続行します。`);
 }
 
 /**
@@ -140,8 +173,8 @@ export async function refreshSupabaseSession(
 }
 
 /**
- * 1ユーザー分の storageState を生成して保存する。
- * MAX_RETRIES 回失敗しても警告のみで続行する。
+ * 1ユーザー分の storageState を生成して保存する。成功したら true を返す。
+ * MAX_RETRIES 回失敗しても警告のみで続行する (false を返す)。
  */
 async function setupUserSession(
   baseURL: string,
@@ -151,7 +184,7 @@ async function setupUserSession(
   supabaseAnonKey: string,
   storageStatePath: string,
   refreshTokenPath: string,
-): Promise<void> {
+): Promise<boolean> {
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -170,7 +203,7 @@ async function setupUserSession(
         const session = await fetchSupabaseSession(supabaseUrl, supabaseAnonKey, email, password);
 
         if (session) {
-          const supabaseRef = supabaseUrl.replace("https://", "").split(".")[0];
+          const supabaseRef = new URL(supabaseUrl).hostname.split(".")[0];
           const cookieName = `sb-${supabaseRef}-auth-token`;
           const domain = new URL(baseURL).hostname;
           const cookieValue = encodeURIComponent(JSON.stringify(session));
@@ -221,6 +254,11 @@ async function setupUserSession(
             }
           }
           if (!navigated) throw new Error(`[global-setup] ${email}: /home に遷移できませんでした`);
+          // #1174: 規約の同意画面に回された (サーバーが LEGAL_CONSENT_ENFORCE=on で、このユーザーの同意の記録が無い) ときは同意する。
+          // 同意は DB に残るので、以降の spec はどれも同意画面に回されない。同意画面でなければ何もしない
+          if (await acceptLegalConsentIfShown(page)) {
+            console.log(`[global-setup] 規約の同意画面に回されたため、同意しました (${email})`);
+          }
           console.log(`[global-setup] 認証確認成功 (${email}): ${page.url()}`);
           sessionInjected = true;
         }
@@ -229,8 +267,14 @@ async function setupUserSession(
       if (!sessionInjected) {
         console.log(`[global-setup] UI ログインにフォールバック (${email}, attempt ${attempt})`);
         await page.goto(`${baseURL}/login`);
-        await page.waitForLoadState("networkidle");
-        await page.evaluate(() => { localStorage.removeItem("auth_last_fail_ts"); });
+        await waitForLoginFormReady(page);
+        // #1057 (UX1-16 round-2): キーがメールアドレス単位 (`auth_last_fail_ts:<email>`) に
+        // 変わったため prefix 一致で全て削除する
+        await page.evaluate(() => {
+          Object.keys(localStorage)
+            .filter((k) => k.startsWith("auth_last_fail_ts"))
+            .forEach((k) => localStorage.removeItem(k));
+        });
 
         await page.waitForFunction(
           () => {
@@ -253,6 +297,9 @@ async function setupUserSession(
         await page.locator("button[type=submit]").click();
         await navPromise;
 
+        // #1174: 規約の同意画面に回されたときは同意する (上の Cookie 注入の経路と同じ)
+        await acceptLegalConsentIfShown(page);
+
         if (page.url().includes("/onboarding")) {
           await page.evaluate(async () => {
             try {
@@ -264,6 +311,11 @@ async function setupUserSession(
         }
       }
 
+      // 外国の AI 事業者への提供の同意 (T15 / #1154)。未同意の利用者のデータは、サーバーが AI へ送る手前で止める
+      // (403 AI_CONSENT_REQUIRED) ので、AI を使う spec が止められないよう記録しておく。同意は DB に残る。
+      // すでに現行の版に同意していれば何もしない
+      await ensureAiConsentGranted(page, baseURL);
+
       // storageState を atomic write (tmp path -> rename) で保存
       const storageStateTmpPath = `${storageStatePath}.tmp.${process.pid}`;
       await context.storageState({ path: storageStateTmpPath });
@@ -271,7 +323,7 @@ async function setupUserSession(
       console.log(`[global-setup] storageState saved to ${storageStatePath} (${email}, attempt ${attempt})`);
       await context.close();
       await browser.close();
-      return;
+      return true;
     } catch (err) {
       lastError = err;
       console.warn(`[global-setup] ログイン試行 ${attempt}/${MAX_RETRIES} 失敗 (${email}): ${err}`);
@@ -287,6 +339,7 @@ async function setupUserSession(
   }
 
   console.warn(`[global-setup] ${MAX_RETRIES} 回試行後もログイン失敗 (${email})。storageState なしで続行: ${lastError}`);
+  return false;
 }
 
 async function globalSetup(config: FullConfig): Promise<void> {
@@ -312,10 +365,14 @@ async function globalSetup(config: FullConfig): Promise<void> {
   const isMultiUserPattern = !envEmail || /^e2e-user-\d+@homegohan\.test$/.test(envEmail);
 
   if (!isMultiUserPattern) {
-    // backward compat: 単一ユーザーモード
-    const password = process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!";
+    // backward compat: 単一ユーザーモード。パスワードは E2E_USER_PASSWORD からだけ取る (既定値は無い)
+    const password = getExistingUserPassword();
+    if (!password) {
+      reportMissingPassword(envEmail!, "E2E_USER_PASSWORD");
+      return;
+    }
     console.log(`[global-setup] 単一ユーザーモード (E2E_USER_EMAIL=${envEmail})`);
-    await setupUserSession(
+    const loggedIn = await setupUserSession(
       baseURL,
       envEmail!,
       password,
@@ -324,6 +381,7 @@ async function globalSetup(config: FullConfig): Promise<void> {
       "tests/e2e/.auth/user.json",
       "tests/e2e/.auth/refresh.json",
     );
+    assertLoggedIn(envEmail!, loggedIn);
     return;
   }
 
@@ -337,18 +395,20 @@ async function globalSetup(config: FullConfig): Promise<void> {
     const storageStatePath = `tests/e2e/.auth/user-${padded}.json`;
     const refreshTokenPath = `tests/e2e/.auth/refresh-${padded}.json`;
 
-    // パスワード優先順位: 個別環境変数 > 共通環境変数 > fallback
+    // パスワード優先順位: 個別環境変数 > 共通環境変数。既定値は無い (リポジトリに置かない)
     const perUserPassword = process.env[`E2E_USER_${padded}_PASSWORD`];
     const commonPassword = process.env.E2E_USER_PASSWORD;
-    const userPassword = perUserPassword ?? commonPassword ?? "TestE2E2026!secure";
+    const userPassword = perUserPassword || commonPassword;
+    if (!userPassword) {
+      reportMissingPassword(userEmail, `E2E_USER_${padded}_PASSWORD または E2E_USER_PASSWORD`);
+      continue;
+    }
     const passwordSource = perUserPassword
       ? `個別 (E2E_USER_${padded}_PASSWORD)`
-      : commonPassword
-        ? "共通 (E2E_USER_PASSWORD)"
-        : "fallback";
+      : "共通 (E2E_USER_PASSWORD)";
     console.log(`[global-setup] user-${padded}: password 由来 = ${passwordSource}`);
 
-    await setupUserSession(
+    const loggedIn = await setupUserSession(
       baseURL,
       userEmail,
       userPassword,
@@ -357,6 +417,7 @@ async function globalSetup(config: FullConfig): Promise<void> {
       storageStatePath,
       refreshTokenPath,
     );
+    assertLoggedIn(userEmail, loggedIn);
 
     // 最後のユーザー以外は 1 秒待機して rate limit を回避
     if (i < MULTI_USER_COUNT - 1) {

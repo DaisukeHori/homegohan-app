@@ -1,10 +1,25 @@
 // POST /api/org/owner-transfer/propose
 import { createClient } from '@/lib/supabase/server';
+import { formatLocalDate } from '@/lib/date-utils';
 import { NextResponse } from 'next/server';
+import { getSupabaseServiceConfig, isMissingEnvError } from '@/lib/env-required';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
+import { isEmailFailure } from '@/lib/emails/send-result';
 import { renderOrgTransferProposedEmail } from '@/lib/emails/membership/org-transfer-proposed';
+import { buildOrgTransferAcceptUrl } from '@/lib/membership/urls';
+import {
+  checkTransferProposeLimit,
+  inviteThrottleFailureFromRpcError,
+  inviteThrottleResponse,
+} from '@/lib/membership/invite-throttle';
 import { z } from 'zod';
+import { internalError } from '@/lib/api/errors';
+
+/** メールに書く有効期限 (提案から何日後か)。以前と同じ 7 日 */
+const OWNER_TRANSFER_EMAIL_EXPIRY_DAYS = 7;
+/** 1 日のミリ秒 */
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const BodySchema = z.object({
   organization_id: z.string().uuid(),
@@ -20,6 +35,13 @@ export async function POST(request: Request) {
       { error: { code: 'NOT_AUTHENTICATED', message: '認証が必要です' } },
       { status: 401 },
     );
+  }
+
+  // #1163 譲渡提案メールの送信回数を制限する (提案者の user.id 単位)。
+  // 判定できない (Redis 障害など) ときは例外がそのまま伝播し、RPC もメールも実行されない (fail-closed)。
+  const throttle = await checkTransferProposeLimit(user.id);
+  if (throttle) {
+    return inviteThrottleResponse(throttle);
   }
 
   let body: z.infer<typeof BodySchema>;
@@ -57,8 +79,18 @@ export async function POST(request: Request) {
   });
 
   if (rpcError) {
+    // #1163 DB の 24 時間上限 (enforce_membership_daily_cap。家族の代表者譲渡と組織のオーナー譲渡の合計) に
+    // 達したときは、アプリ層の上限と同じ 429 にする。DB が返す生の文字列 'RATE_LIMITED' は見せない。
+    const dbThrottle = inviteThrottleFailureFromRpcError(rpcError, { flow: 'transfer-propose', userId: user.id });
+    if (dbThrottle) {
+      return inviteThrottleResponse(dbThrottle);
+    }
+    // RPC の生のエラー文は本文に出さない (#1172)。分かるコードは固定の文で返し、分からないものは汎用の 500 にして構造化ログに残す
     const { code, status } = mapPgErrorToHttp(rpcError.message);
-    return NextResponse.json({ error: { code, message: rpcError.message } }, { status });
+    if (status >= 500) {
+      return internalError('POST /api/org/owner-transfer/propose', rpcError, { userId: user.id }, { shape: 'nested' });
+    }
+    return NextResponse.json({ error: { code, message: '譲渡の提案に失敗しました' } }, { status });
   }
 
   if (!proposalId) {
@@ -75,8 +107,8 @@ export async function POST(request: Request) {
     .eq('id', body.to_user_id)
     .single();
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
-  const acceptUrl = `${baseUrl}/org/transfer-accept/${proposalId}`;
+  // リンクの基点は src/lib/membership/urls.ts に 1 つだけある (#1194)
+  const acceptUrl = buildOrgTransferAcceptUrl(String(proposalId));
   const fromName = profile.nickname ?? user.email?.split('@')[0] ?? 'オーナー';
 
   const { data: orgData } = await supabase
@@ -85,15 +117,21 @@ export async function POST(request: Request) {
     .eq('id', body.organization_id)
     .single();
 
-  // service_role なしでは auth.users のメールアドレスは取得できないため
-  // 環境変数 SUPABASE_SERVICE_ROLE_KEY がある場合のみ管理者 API でメール取得
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (serviceKey) {
+  // service_role なしでは auth.users のメールアドレスは取得できないため、管理者 API でメールを取得する。
+  // 接続情報は env-required の getter で取り出す (#1434。空白だけの値も欠けているとみなす)
+  let service: { url: string; serviceRoleKey: string } | null = null;
+  try {
+    service = getSupabaseServiceConfig();
+  } catch (envErr) {
+    if (!isMissingEnvError(envErr)) throw envErr;
+    // 欠けている変数名は getter がサーバーのログに残している。メールだけを諦める (提案の作成は成功のまま)
+  }
+  if (service) {
     try {
       const { createClient: createAdminClient } = await import('@supabase/supabase-js');
       const adminSupabase = createAdminClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        serviceKey,
+        service.url,
+        service.serviceRoleKey,
         { auth: { autoRefreshToken: false, persistSession: false } },
       );
       const { data: toUserData } = await adminSupabase.auth.admin.getUserById(body.to_user_id);
@@ -106,16 +144,19 @@ export async function POST(request: Request) {
           from_name: fromName,
           org_name: orgData?.name ?? '組織',
           accept_url: acceptUrl,
-          expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
+          // メールに書く有効期限の日付は JST の暦日 (#1433。UTC の暦日だと JST 0:00〜8:59 の提案で 1 日前の日付になる)
+          expires_at: formatLocalDate(new Date(Date.now() + OWNER_TRANSFER_EMAIL_EXPIRY_DAYS * MS_PER_DAY)),
           reason: body.reason,
         });
-        await sendEmail(envelope);
+        const sent = await sendEmail(envelope);
+        // sendEmail は配信の失敗で例外を投げず、結果で返す。失敗も下の catch で、他の失敗と同じように警告に残す
+        if (isEmailFailure(sent)) throw sent.error;
       }
     } catch (emailErr) {
       console.warn('[api/org/owner-transfer/propose] メール送信失敗:', emailErr);
     }
   } else {
-    console.info('[api/org/owner-transfer/propose] SUPABASE_SERVICE_ROLE_KEY 未設定のためメール送信スキップ', {
+    console.info('[api/org/owner-transfer/propose] Supabase の service_role の接続情報が無いためメール送信スキップ', {
       proposalId,
       acceptUrl,
     });

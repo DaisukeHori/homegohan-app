@@ -1,11 +1,14 @@
 import { createClient } from '@/lib/supabase/server';
-import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
+import { isFeatureEnabled } from '@/lib/feature-flags';
 import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { getSeasonalIngredientsForRange } from '@/lib/seasonal-ingredients';
 import { getEventsForRange } from '@/lib/seasonal-events';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 import type {
   TargetSlot,
   ExistingMenuContext,
@@ -18,6 +21,10 @@ import type { Tables } from '@homegohan/shared';
 import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
+import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
+import { isWithinMenuGenerationRange, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
+import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -26,13 +33,19 @@ export const maxDuration = 300;
 
 const VALID_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
 
+/** 1 日の主な食事の数 (朝・昼・夕)。slot の上限の計算に使う */
+const MAIN_MEALS_PER_DAY = 3;
+
+/** targetSlots の数の上限 (期間の上限 MENU_GENERATION_RANGE_MAX_DAYS 日 × 朝・昼・夕 = 93) */
+const MAX_TARGET_SLOTS = MENU_GENERATION_RANGE_MAX_DAYS * MAIN_MEALS_PER_DAY;
+
 function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlot[]; error?: string } {
   if (!Array.isArray(slots) || slots.length === 0) {
     return { valid: false, slots: [], error: 'targetSlots must be a non-empty array' };
   }
   
-  if (slots.length > 93) {
-    return { valid: false, slots: [], error: 'targetSlots exceeds maximum of 93 (31 days × 3 meals)' };
+  if (slots.length > MAX_TARGET_SLOTS) {
+    return { valid: false, slots: [], error: `targetSlots exceeds maximum of ${MAX_TARGET_SLOTS} (${MENU_GENERATION_RANGE_MAX_DAYS} days × ${MAIN_MEALS_PER_DAY} meals)` };
   }
   
   const validated: TargetSlot[] = [];
@@ -51,8 +64,10 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     const plannedMealId = slotObj['plannedMealId'];
 
     // date validation
-    if (!date || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      return { valid: false, slots: [], error: `targetSlots[${i}].date must be YYYY-MM-DD format` };
+    // YYYY-MM-DD の形で、実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを通す (#1433)。形だけを見ていると 2026-02-30 のような日付が通り、
+    // 後ろの addDaysToDate (前後 7 日の文脈の期間) が RangeError を投げて 500 になる
+    if (!isCalendarDate(date)) {
+      return { valid: false, slots: [], error: `targetSlots[${i}].date must be ${CALENDAR_DATE_REQUIREMENT}` };
     }
 
     // mealType validation
@@ -81,6 +96,16 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     });
   }
   
+  // 日付の幅 (最も早い日〜最も遅い日) は、画面 (Web・モバイルの「期間を指定」) と同じ MENU_GENERATION_RANGE_MAX_DAYS 日まで (#1482)。
+  // slot の数だけを見ていると、API を直接呼んで遠く離れた 2 日を送れば、行事の検索 (getEventsForRange) が 1 日ずつ数千年分を回りうる
+  if (!isWithinMenuGenerationRange(validated.map((s) => s.date))) {
+    return {
+      valid: false,
+      slots: [],
+      error: `targetSlots dates must span at most ${MENU_GENERATION_RANGE_MAX_DAYS} days (from the earliest date to the latest date, inclusive)`,
+    };
+  }
+
   return { valid: true, slots: validated };
 }
 
@@ -117,8 +142,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
+    const aiConsentDenied = await requireAiConsent(supabase, user.id);
+    if (aiConsentDenied) return aiConsentDenied;
+
     const rateLimitResult = await checkRateLimit(user.id, 'generation');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+    // 必須の環境変数は、認証とレート制限のあと・DB に書き込む前に確かめる。欠けていれば MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す)。
+    // (未ログインの呼び出しに、設定の不足を教えない。書き込んだあとで気づくと、Edge Function を呼べないまま、
+    //  リクエストの行を作って失敗として記録するだけの無駄な動きになる) (#1182)
+    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
+    // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。本人の確認・同意のあとで、service role で書く
+    const queueDb = getAiQueueWriter();
 
     const targetSlots = body?.resolveExistingMeals
       ? await resolveExistingTargetSlots({
@@ -153,7 +189,7 @@ export async function POST(request: Request) {
         .eq('user_daily_meals.user_id', user.id);
 
       if (plannedMealsError) {
-        return NextResponse.json({ error: plannedMealsError.message }, { status: 500 });
+        return internalError('POST /api/ai/menu/v4/generate', plannedMealsError, { userId: user.id });
       }
 
       const foundIds = new Set((plannedMeals || []).map((m: any) => m.id));
@@ -188,7 +224,7 @@ export async function POST(request: Request) {
     // 5-7. 並列でデータ取得（パフォーマンス最適化）
     const contextStartDate = addDays(startDate, -7); // 7 days before
     const contextEndDate = addDays(endDate, 7); // 7 days after
-    const todayStr = getTodayStr();
+    const todayStr = todayLocal();
 
     // 並列実行: 既存メニュー、冷蔵庫、ユーザープロフィール
     const [existingMealsResult, pantryResult, profileResult] = await Promise.all([
@@ -268,7 +304,8 @@ export async function POST(request: Request) {
     // 8. Build seasonal context
     const seasonalIngredients = getSeasonalIngredientsForRange(startDate, endDate);
     const seasonalEvents = getEventsForRange(startDate, endDate);
-    const month = new Date(startDate).getMonth() + 1;
+    // startDate は YYYY-MM-DD の暦日。new Date(startDate) は UTC の 0 時なので、月も UTC で読む (#1433。getMonth はローカル時刻で、実行環境のタイムゾーンで変わる)
+    const month = new Date(startDate).getUTCMonth() + 1;
     
     const seasonalContext: SeasonalContext = {
       month,
@@ -282,12 +319,17 @@ export async function POST(request: Request) {
       ? rawConstraints as MenuGenerationConstraints 
       : {};
 
-    const featureFlags = await loadFeatureFlags(supabase);
-    const useV5Direct = Boolean(featureFlags.menu_generation_v5_direct);
+    // #1148: エンジンの切り替えは feature_flags (運営画面で切り替える) を見る
+    const useV5Direct = await isFeatureEnabled('menu_generation_v5_direct', user.id);
     const engine = useV5Direct ? 'v5' : 'v4';
 
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+    if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
+
     // 10. Create request record
-    const { data: requestData, error: insertError } = await supabase
+    const { data: requestData, error: insertError } = await queueDb
       .from('weekly_menu_requests')
       .insert({
         user_id: user.id,
@@ -309,13 +351,12 @@ export async function POST(request: Request) {
 
     if (insertError) {
       console.error('Failed to create request record:', insertError);
+      // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
+      await refundAiUsage(user.id, 'menu_generation', aiUsage);
       throw new Error(`Failed to create request: ${insertError.message}`);
     }
 
     // 11. Call Edge Function in background
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-    
     const generator = useV5Direct ? callGenerateMenuV5WithRetry : callGenerateMenuV4WithRetry;
     const targetLabel = useV5Direct ? 'generate-menu-v5' : 'generate-menu-v4';
 
@@ -341,7 +382,7 @@ export async function POST(request: Request) {
       if (!result.ok) {
         console.error('❌ Edge Function error:', result.errorMessage);
         await markWeeklyMenuRequestFailed({
-          supabase,
+          supabase: queueDb,
           requestId: requestData.id,
           errorMessage: result.errorMessage,
         });
@@ -361,21 +402,16 @@ export async function POST(request: Request) {
       totalSlots: targetSlots.length,
     });
 
-  } catch (error: any) {
-    console.error("API Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
+    return internalError('POST /api/ai/menu/v4/generate', error);
   }
 }
 
 // ===== Helper Functions =====
 
+// 暦日 (YYYY-MM-DD) を days 日ずらす。暦の計算だけで行い、実行環境のタイムゾーンに左右されない (#1433。
+// 以前の new Date(dateStr) + setDate (ローカル時刻) + toISOString (UTC) は、実行環境のタイムゾーンで結果が変わった)
 function addDays(dateStr: string, days: number): string {
-  const date = new Date(dateStr);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().split('T')[0];
-}
-
-function getTodayStr(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  return addDaysToDate(dateStr, days);
 }

@@ -1,23 +1,33 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { requireOrgAdmin } from '@/lib/auth/helpers';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { readJsonBody } from '@/lib/http-params';
+
+// 権限: 所属組織の org_role が owner / admin (#1235)。判定は共通の requireOrgAdmin() (#1161)
+
+/**
+ * 認可エラー (401 / 403) はそのまま返し、それ以外は 500 の汎用メッセージにする。
+ * 生のエラー文は返さず (#1172)、詳細は db-logger (app_logs) にだけ残す。
+ */
+function handleError(method: string, error: unknown) {
+  if (error instanceof AuthError) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (error instanceof ForbiddenError) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+  createLogger(`${method} /api/org/challenges`, generateRequestId()).error('組織チャレンジの処理に失敗しました', error);
+  return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+}
 
 // チャレンジ一覧取得
 export async function GET(request: Request) {
-  const supabase = await createClient();
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('organization_id, roles')
-    .eq('id', user.id)
-    .single();
-
-  if (!profile?.roles?.includes('org_admin') || !profile?.organization_id) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
   try {
+    const { profile } = await requireOrgAdmin();
+    const supabase = await createClient();
+
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
 
@@ -77,29 +87,21 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ challenges: challengesWithParticipants });
 
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    return handleError('GET', error);
   }
 }
 
 // チャレンジ作成
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('organization_id, roles')
-    .eq('id', user.id)
-    .single();
-
-  if (!profile?.roles?.includes('org_admin') || !profile?.organization_id) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
   try {
-    const body = await request.json();
+    const { user, profile } = await requireOrgAdmin();
+    const supabase = await createClient();
+
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+    }
     const {
       title,
       description,
@@ -110,10 +112,25 @@ export async function POST(request: Request) {
       endDate,
       rewardDescription,
       departmentId,
-    } = body;
+    } = (parsed.body ?? {}) as Record<string, any>;
 
     if (!title || !challengeType || !startDate || !endDate) {
       return NextResponse.json({ error: 'Required fields missing' }, { status: 400 });
+    }
+
+    // #1235: 部署は自組織のものだけ指定できる (他組織の部署 id を付けたチャレンジを作らせない)
+    if (departmentId) {
+      const { data: department, error: departmentError } = await supabase
+        .from('departments')
+        .select('id')
+        .eq('id', departmentId)
+        .eq('organization_id', profile.organization_id)
+        .maybeSingle();
+      // 22P02: departmentId が uuid の形式でない
+      if (departmentError && departmentError.code !== '22P02') throw departmentError;
+      if (!department) {
+        return NextResponse.json({ error: 'Invalid departmentId' }, { status: 400 });
+      }
     }
 
     const { data, error } = await supabase
@@ -146,30 +163,22 @@ export async function POST(request: Request) {
       },
     });
 
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    return handleError('POST', error);
   }
 }
 
 // チャレンジ更新
 export async function PUT(request: Request) {
-  const supabase = await createClient();
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('organization_id, roles')
-    .eq('id', user.id)
-    .single();
-
-  if (!profile?.roles?.includes('org_admin') || !profile?.organization_id) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
   try {
-    const body = await request.json();
-    const { id, ...updates } = body;
+    const { profile } = await requireOrgAdmin();
+    const supabase = await createClient();
+
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+    }
+    const { id, ...updates } = (parsed.body ?? {}) as Record<string, any>;
 
     if (!id) {
       return NextResponse.json({ error: 'Challenge ID is required' }, { status: 400 });
@@ -193,8 +202,7 @@ export async function PUT(request: Request) {
 
     return NextResponse.json({ success: true });
 
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    return handleError('PUT', error);
   }
 }
-

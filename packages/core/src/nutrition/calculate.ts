@@ -153,7 +153,6 @@ export function calculateNutritionTargets(
     pregnancyStatus,
     healthConditions,
     medications,
-    calories: energyCalc.final_kcal,
   });
 
   // ================================================
@@ -164,6 +163,7 @@ export function calculateNutritionTargets(
     age,
     gender,
     weight,
+    tdee: energyCalc.tdee_kcal,
     calories: energyCalc.final_kcal,
     protein: macrosCalc.values.protein,
     fat: macrosCalc.values.fat,
@@ -176,6 +176,25 @@ export function calculateNutritionTargets(
   const finalProtein = guardrailResult.protein;
   const finalFat = guardrailResult.fat;
   const finalCarbs = guardrailResult.carbs;
+
+  // ================================================
+  // 4.6. 糖質（炭水化物の目標 − 食物繊維の目標）
+  // ================================================
+  // ガードレール・持病による調整が済んだ最終の炭水化物・食物繊維から導く。
+  // 糖質だけ別の固定値（以前は WHO の遊離糖の 25g）にすると、炭水化物の目標と食い違う（#1146）。
+  const finalSugar = SUGAR_APP_DEFAULT.calculateFromCarbs(finalCarbs, micronutrients.values.fiber_g);
+  micronutrients.references.sugar_g = {
+    basis_type: 'DG',
+    reference_value: finalSugar,
+    age_range: ageGroup,
+    gender: gender,
+    source: {
+      url: DRI2020_SOURCES.energy_pfc.url,
+      title: 'アプリ独自基準（炭水化物の目標 − 食物繊維の目標。DRI2020には糖質の基準値なし）',
+      section: DRI2020_SOURCES.energy_pfc.section,
+    },
+    final_value: finalSugar,
+  };
 
   // ================================================
   // 5. 計算根拠の構築
@@ -221,7 +240,7 @@ export function calculateNutritionTargets(
     fiber_soluble_g: Math.round(micronutrients.values.fiber_g / 3),
     fiber_insoluble_g: Math.round(micronutrients.values.fiber_g * 2 / 3),
     sodium_g: micronutrients.values.sodium_g,
-    sugar_g: micronutrients.values.sugar_g,
+    sugar_g: finalSugar,
     potassium_mg: micronutrients.values.potassium_mg,
     calcium_mg: micronutrients.values.calcium_mg,
     phosphorus_mg: micronutrients.values.phosphorus_mg,
@@ -546,14 +565,12 @@ interface MicronutrientsInput {
   pregnancyStatus: PregnancyStatus;
   healthConditions: string[];
   medications: string[];
-  calories: number;
 }
 
 interface MicronutrientsResult {
   values: {
     fiber_g: number;
     sodium_g: number;
-    sugar_g: number;
     potassium_mg: number;
     calcium_mg: number;
     phosphorus_mg: number;
@@ -578,7 +595,7 @@ interface MicronutrientsResult {
 }
 
 function calculateMicronutrients(input: MicronutrientsInput): MicronutrientsResult {
-  const { ageGroup, gender, pregnancyStatus, healthConditions, medications, calories } = input;
+  const { ageGroup, gender, pregnancyStatus, healthConditions, medications } = input;
   
   const values: MicronutrientsResult['values'] = {} as MicronutrientsResult['values'];
   const references: Record<string, NutrientReference> = {};
@@ -642,21 +659,6 @@ function calculateMicronutrients(input: MicronutrientsInput): MicronutrientsResu
       section: '',
     },
     final_value: CHOLESTEROL_APP_DEFAULT.default,
-  };
-  
-  // 糖類（DRIにないためWHO推奨ベース）
-  values.sugar_g = SUGAR_APP_DEFAULT.calculateFromCalories(calories);
-  references.sugar_g = {
-    basis_type: 'DG',
-    reference_value: values.sugar_g,
-    age_range: ageGroup,
-    gender: gender,
-    source: {
-      url: 'https://www.who.int/nutrition/publications/guidelines/sugars_intake/en/',
-      title: 'WHO推奨（エネルギーの5%目標、DRI2020には基準値なし）',
-      section: '',
-    },
-    final_value: values.sugar_g,
   };
   
   // ================================================
@@ -734,22 +736,11 @@ function calculateMicronutrients(input: MicronutrientsInput): MicronutrientsResu
   if (healthConditions.includes('糖尿病')) {
     const adjustments: NonNullable<CalculationBasis['health_adjustments']>[0]['adjustments'] = [];
     
-    // 糖類制限
-    const originalSugar = values.sugar_g;
-    values.sugar_g = 25;
-    adjustments.push({
-      nutrient: 'sugar_g',
-      original: originalSugar,
-      adjusted: 25,
-      reason: '糖尿病: 糖類摂取を制限',
-      source_url: DRI2020_SOURCES.diabetes.url,
-    });
-    if (references.sugar_g) {
-      references.sugar_g.adjustments = references.sugar_g.adjustments || [];
-      references.sugar_g.adjustments.push({ delta: 25 - originalSugar, reason: '糖尿病による制限' });
-      references.sugar_g.final_value = 25;
-    }
-    
+    // 糖質の目標は、炭水化物の比率を下げたこと（calculateMacros の糖尿病: 40%）と、
+    // 食物繊維を増やしたことから導かれる（炭水化物の目標 − 食物繊維の目標）。
+    // 糖質だけ別の固定値（以前は 25g）にはしない（#1146）。
+    // 数値は管理栄養士・医師の確認が済んでいない暫定のもの。
+
     // 食物繊維増加
     const originalFiber = values.fiber_g;
     values.fiber_g = Math.max(values.fiber_g, 25);
@@ -768,10 +759,12 @@ function calculateMicronutrients(input: MicronutrientsInput): MicronutrientsResu
       }
     }
     
-    healthAdjustments.push({
-      condition: '糖尿病',
-      adjustments,
-    });
+    if (adjustments.length > 0) {
+      healthAdjustments.push({
+        condition: '糖尿病',
+        adjustments,
+      });
+    }
   }
   
   // 腎臓病
@@ -987,6 +980,8 @@ interface GuardrailInput {
   age: number;
   gender: Gender;
   weight: number;
+  /** TDEE（kcal/日）。calculateEnergy で算出済みの値（目標による増減・妊娠授乳の加算を含まない） */
+  tdee: number;
   calories: number;
   protein: number;
   fat: number;
@@ -1011,9 +1006,12 @@ interface GuardrailOutput {
  * 3. fat_floor: 脂質下限（ホルモン・細胞膜維持）
  * 4. calorie_minimum: カロリー下限
  * 5. sport_specific: スポーツ特有調整
+ *
+ * @internal ガードレール単体の挙動をテストするために export している。
+ * パッケージの公開 API（nutrition/index.ts）には含めない。
  */
-function applyPerformanceGuardrails(input: GuardrailInput): GuardrailOutput {
-  const { age, gender, weight, performanceProfile } = input;
+export function applyPerformanceGuardrails(input: GuardrailInput): GuardrailOutput {
+  const { age, gender, weight, tdee, performanceProfile } = input;
   let { calories, protein, fat, carbs } = input;
   const guardrails: GuardrailResult[] = [];
 
@@ -1052,15 +1050,16 @@ function applyPerformanceGuardrails(input: GuardrailInput): GuardrailOutput {
   // 2. 減量安全性（Cut Safety）
   // ================================================
   if (performanceProfile?.cut?.enabled && performanceProfile?.sport?.phase === 'cut') {
-    // 急速減量の場合、体重の1%/週を超えない
+    // 急速減量の場合でも、減量ペースは週1kgまで
     const strategy = performanceProfile.cut.strategy;
 
     if (strategy === 'rapid') {
       // 急速減量: 最大週1kg減（7700kcal/週 = 1100kcal/日の赤字）
       const maxDeficit = 1100;
-      // BMR * 1.2 を基準として赤字を計算（仮定）
-      const estimatedTDEE = calories + maxDeficit; // 逆算
-      const minCutCalories = Math.max(gender === 'male' ? 1500 : 1200, estimatedTDEE - maxDeficit);
+      // 下限は実際の TDEE から求める。calories から TDEE を逆算（calories + maxDeficit）すると
+      // 直後の (TDEE - maxDeficit) で打ち消し合って calories 自身になり、
+      // `calories < minCutCalories` が常に偽となってガードが発火しなくなる (#1208)
+      const minCutCalories = Math.max(gender === 'male' ? 1500 : 1200, tdee - maxDeficit);
 
       if (calories < minCutCalories) {
         guardrails.push({

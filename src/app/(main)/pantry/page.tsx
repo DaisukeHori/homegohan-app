@@ -4,7 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
-import { ArrowLeft, Camera, Plus, Trash2, RefreshCw, Package, AlertCircle } from "lucide-react";
+import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
+import { ArrowLeft, Camera, Plus, Trash2, RefreshCw, Package, AlertCircle, X, Pencil } from "lucide-react";
+import { PantryItemForm, emptyPantryItemFormValues, type PantryItemFormValues } from "@/components/pantry/PantryItemForm";
+import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
+import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
+import { useAiConsent } from "@/hooks/useAiConsent";
+import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 
 const colors = {
   bg: "#FAF9F7",
@@ -15,9 +21,8 @@ const colors = {
   accent: "#E07A5F",
   accentLight: "#FDF0ED",
   border: "#EEEEEE",
-  success: "#4CAF50",
-  successLight: "#E8F5E9",
-  error: "#F44336",
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
 };
 
 interface PantryItem {
@@ -44,6 +49,9 @@ interface AnalysisResult {
 export default function PantryPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。冷蔵庫の写真を AI に送る前に、未同意なら出す。
+  // 「同意しない」なら解析しない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)
+  const { ensureAiConsent, consentModal } = useAiConsent();
   const [items, setItems] = useState<PantryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
@@ -51,6 +59,16 @@ export default function PantryPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  // #1222: 写真を選び直したとき・保存後に null へ戻したとき・ページ離脱のときに、前のプレビュー用 Blob URL を revoke する
+  useRevokeBlobUrls(previewUrl);
+  // UX2-18: 手入力での追加・編集（写真のみ・編集不可だった機能非対称を解消）
+  const [formValues, setFormValues] = useState<PantryItemFormValues>(emptyPantryItemFormValues);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [showManualForm, setShowManualForm] = useState(false);
+  const [savingManual, setSavingManual] = useState(false);
+  // UX2-04: 「全て置き換え」は既存の食材を全削除する破壊的操作なのに確認が無かった。
+  // 対象件数を明示した確認ダイアログを挟む。
+  const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
 
   const fetchItems = useCallback(async () => {
     try {
@@ -82,13 +100,19 @@ export default function PantryPage() {
     setAnalyzing(true);
 
     try {
+      // 同意していなければ同意画面を出す。「同意しない」なら写真を AI に送らない
+      if ((await ensureAiConsent()) === "declined") {
+        setPreviewUrl(null);
+        return;
+      }
+
       // Base64に変換してAPIへ送信
       const arrayBuffer = await file.arrayBuffer();
       const base64 = btoa(
         new Uint8Array(arrayBuffer).reduce((acc, byte) => acc + String.fromCharCode(byte), "")
       );
 
-      const res = await fetch("/api/ai/analyze-fridge", {
+      const res = await aiFetch("/api/ai/analyze-fridge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -96,6 +120,12 @@ export default function PantryPage() {
           mimeType: file.type || "image/jpeg",
         }),
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、ここではエラーを出さない
+      if (await isAiConsentRequiredResponse(res)) {
+        setPreviewUrl(null);
+        return;
+      }
 
       if (!res.ok) {
         const data = await res.json();
@@ -152,6 +182,16 @@ export default function PantryPage() {
     }
   };
 
+  // UX2-04: 「全て置き換え」クリック時。既存食材がある場合のみ確認を挟む
+  // （空の状態から追加する場合は何も失われないため確認不要）。
+  const handleReplaceClick = () => {
+    if (items.length > 0) {
+      setShowReplaceConfirm(true);
+    } else {
+      handleSaveIngredients("replace");
+    }
+  };
+
   const handleDelete = async (id: string) => {
     try {
       const res = await fetch(`/api/pantry/${id}`, { method: "DELETE" });
@@ -160,6 +200,71 @@ export default function PantryPage() {
       }
     } catch (err) {
       console.error("Delete failed:", err);
+    }
+  };
+
+  // UX2-18: 手入力での新規追加を開く（写真のみだった機能非対称の解消）
+  const openManualAdd = () => {
+    setEditingItemId(null);
+    setFormValues(emptyPantryItemFormValues);
+    setShowManualForm(true);
+  };
+
+  // UX2-18: 一覧タップで編集フォームを開く（編集不可だった機能非対称の解消）
+  const openEditItem = (item: PantryItem) => {
+    setEditingItemId(item.id);
+    setFormValues({
+      name: item.name,
+      amount: item.amount || "",
+      expirationDate: item.expirationDate || "",
+    });
+    setShowManualForm(true);
+  };
+
+  const closeManualForm = () => {
+    setShowManualForm(false);
+    setEditingItemId(null);
+    setFormValues(emptyPantryItemFormValues);
+  };
+
+  // UX2-18: 手入力フォームの送信（新規追加 or 編集更新）。週間献立側の FridgeModal と同じ API を使う
+  const handleManualSubmit = async () => {
+    if (!formValues.name) return;
+    setSavingManual(true);
+    try {
+      if (editingItemId) {
+        const res = await fetch(`/api/pantry/${editingItemId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: formValues.name,
+            amount: formValues.amount,
+            expirationDate: formValues.expirationDate || null,
+          }),
+        });
+        if (!res.ok) throw new Error("更新に失敗しました");
+        const { item } = await res.json();
+        setItems((prev) => prev.map((it) => (it.id === editingItemId ? { ...it, ...item } : it)));
+      } else {
+        const res = await fetch("/api/pantry", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: formValues.name,
+            amount: formValues.amount,
+            category: "other",
+            expirationDate: formValues.expirationDate || null,
+          }),
+        });
+        if (!res.ok) throw new Error("追加に失敗しました");
+        const { item } = await res.json();
+        setItems((prev) => [...prev, item]);
+      }
+      closeManualForm();
+    } catch (err: any) {
+      setError(err.message || "保存に失敗しました");
+    } finally {
+      setSavingManual(false);
     }
   };
 
@@ -187,15 +292,27 @@ export default function PantryPage() {
           </button>
           <h1 className="font-bold" style={{ color: colors.text }}>食材管理</h1>
         </div>
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          data-testid="add-by-photo-btn"
-          className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium"
-          style={{ backgroundColor: colors.accent, color: "white" }}
-        >
-          <Camera size={16} />
-          写真で追加
-        </button>
+        <div className="flex items-center gap-2">
+          {/* UX2-18: 週間献立側の FridgeModal と機能を揃え、手入力での追加もできるようにする */}
+          <button
+            onClick={openManualAdd}
+            data-testid="add-manually-btn"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-medium"
+            style={{ backgroundColor: colors.card, color: colors.accent, border: `1px solid ${colors.accent}` }}
+          >
+            <Plus size={16} />
+            手入力
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            data-testid="add-by-photo-btn"
+            className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium"
+            style={{ backgroundColor: colors.accent, color: "white" }}
+          >
+            <Camera size={16} />
+            写真で追加
+          </button>
+        </div>
       </div>
 
       <input
@@ -215,10 +332,10 @@ export default function PantryPage() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             className="mx-4 mb-4 p-3 rounded-xl flex items-center gap-2"
-            style={{ backgroundColor: "#FFEBEE" }}
+            style={{ backgroundColor: colors.errorLight }}
           >
             <AlertCircle size={18} style={{ color: colors.error }} />
-            <p className="text-sm" style={{ color: colors.error }}>{error}</p>
+            <p className="text-sm" style={{ color: colors.dangerText }}>{error}</p>
           </motion.div>
         )}
       </AnimatePresence>
@@ -291,7 +408,7 @@ export default function PantryPage() {
                 {saving ? "保存中…" : "追加保存"}
               </button>
               <button
-                onClick={() => handleSaveIngredients("replace")}
+                onClick={handleReplaceClick}
                 disabled={saving}
                 className="flex-1 py-2 rounded-xl text-sm font-medium"
                 style={{ backgroundColor: colors.card, color: colors.accent, border: `1px solid ${colors.accent}` }}
@@ -316,14 +433,24 @@ export default function PantryPage() {
           >
             <Package size={48} style={{ color: colors.textMuted }} />
             <p className="text-sm" style={{ color: colors.textMuted }}>食材がありません</p>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 px-6 py-3 rounded-full text-sm font-medium"
-              style={{ backgroundColor: colors.accent, color: "white" }}
-            >
-              <Camera size={16} />
-              冷蔵庫を撮影して追加
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={openManualAdd}
+                className="flex items-center gap-2 px-5 py-3 rounded-full text-sm font-medium"
+                style={{ backgroundColor: colors.card, color: colors.accent, border: `1px solid ${colors.accent}` }}
+              >
+                <Plus size={16} />
+                手入力で追加
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 px-6 py-3 rounded-full text-sm font-medium"
+                style={{ backgroundColor: colors.accent, color: "white" }}
+              >
+                <Camera size={16} />
+                冷蔵庫を撮影して追加
+              </button>
+            </div>
           </div>
         ) : (
           <div className="space-y-2">
@@ -334,7 +461,11 @@ export default function PantryPage() {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, x: -20 }}
-                className="flex items-center justify-between p-4 rounded-2xl"
+                role="button"
+                tabIndex={0}
+                onClick={() => openEditItem(item)}
+                onKeyDown={(e) => { if (e.key === 'Enter') openEditItem(item); }}
+                className="flex items-center justify-between p-4 rounded-2xl cursor-pointer"
                 style={{ backgroundColor: colors.card }}
               >
                 <div className="flex-1 min-w-0">
@@ -344,7 +475,7 @@ export default function PantryPage() {
                       <span
                         data-testid="expiry-soon-badge"
                         className="text-xs px-2 py-0.5 rounded-full"
-                        style={{ backgroundColor: "#FFEBEE", color: colors.error }}
+                        style={{ backgroundColor: colors.errorLight, color: colors.dangerText }}
                       >
                         期限間近
                       </span>
@@ -360,16 +491,26 @@ export default function PantryPage() {
                     {item.expirationDate && (
                       <span
                         className="text-xs"
-                        style={{ color: isExpiringSoon(item.expirationDate) ? colors.error : colors.textMuted }}
+                        style={{ color: isExpiringSoon(item.expirationDate) ? colors.dangerText : colors.textMuted }}
                       >
                         ・{item.expirationDate}まで
                       </span>
                     )}
                   </div>
                 </div>
+                {/* UX2-18: 編集不可だった機能非対称を解消 */}
                 <button
-                  onClick={() => handleDelete(item.id)}
-                  className="ml-3 p-2 rounded-full"
+                  onClick={(e) => { e.stopPropagation(); openEditItem(item); }}
+                  aria-label="編集"
+                  className="ml-2 p-2 rounded-full"
+                  style={{ color: colors.textMuted }}
+                >
+                  <Pencil size={16} />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}
+                  aria-label="削除"
+                  className="ml-1 p-2 rounded-full"
                   style={{ color: colors.textMuted }}
                 >
                   <Trash2 size={16} />
@@ -379,6 +520,64 @@ export default function PantryPage() {
           </div>
         )}
       </div>
+
+      {/* UX2-18: 手入力での追加・編集モーダル（写真専用だった /pantry ページに機能を追加） */}
+      <AnimatePresence>
+        {showManualForm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-end lg:items-center justify-center bg-black/40"
+            onClick={closeManualForm}
+          >
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="w-full lg:max-w-sm rounded-t-3xl lg:rounded-3xl p-5"
+              style={{ backgroundColor: colors.card }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <p className="font-bold" style={{ color: colors.text }}>
+                  {editingItemId ? "食材を編集" : "食材を追加"}
+                </p>
+                <button onClick={closeManualForm} className="p-1 rounded-full" style={{ color: colors.textMuted }}>
+                  <X size={18} />
+                </button>
+              </div>
+              <PantryItemForm
+                values={formValues}
+                onChange={setFormValues}
+                onSubmit={handleManualSubmit}
+                isEditing={Boolean(editingItemId)}
+                submitting={savingManual}
+              />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* UX2-04: 「全て置き換え」の破壊操作確認（対象件数を明示） */}
+      {showReplaceConfirm && (
+        <ConfirmDeleteModal
+          title="食材を全て置き換えますか？"
+          message={`既存の${items.length}件の食材が削除され、写真から検出された${analysisResult?.detailedIngredients.length ?? 0}件に置き換わります。この操作は取り消せません。`}
+          isDeleting={saving}
+          tone="danger"
+          confirmLabel="置き換える"
+          onCancel={() => setShowReplaceConfirm(false)}
+          onConfirm={async () => {
+            setShowReplaceConfirm(false);
+            await handleSaveIngredients("replace");
+          }}
+        />
+      )}
+
+      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。未同意なら出る */}
+      {consentModal}
     </div>
   );
 }

@@ -13,8 +13,9 @@
   - **v1（legacy/旧方式）**: 既存の献立生成（RAG/LLM中心。`knowledge-gpt` 経由など）
   - **v2（dataset/データセット駆動）**: pgvector＋データセットDBを根拠に **ID選定→DB確定値を `planned_meals` に反映**する方式
 
-**互換方針（重要）**
-- `generate-weekly-menu` は互換入口として残し、内部で v2 を実行して旧呼び出しも壊さない（詳細は実装コメント参照）
+**いまの献立生成（この文書の v1/v2 の記述より優先）**
+- 献立生成の Edge Function は `generate-menu-v5`（既定）と `generate-menu-v4`（機能フラグ `menu_generation_v5_wrapped` / `menu_generation_v5_direct` が OFF のとき）。呼び分けは `supabase/functions/README.md` の「献立生成 v4 と v5 の使い分け」を参照
+- 旧い互換入口 `generate-weekly-menu` と、`generate-single-meal` / `regenerate-meal-direct`（とその `-v2` / `-v3`）は、リポジトリからも本番からも削除済み（#1452）。この文書に残るそれらの記述は、旧い方式の記録
 
 ---
 
@@ -644,9 +645,9 @@ IDごとに簡潔にまとめます。
 
   * GET / PATCH / DELETE
 * `/api/ai/nutrition`（画像アップロード時に叩く or ワーカー向け）
-* `/api/ai/feedback`
+* `/api/ai/nutrition/feedback`
 
-  * POST（ほめコメント生成）
+  * POST（ほめコメント生成） / GET（生成状況の確認）
 * `/api/ai/recipe/request`
 
   * POST（単品レシピ生成リクエスト）
@@ -1126,30 +1127,54 @@ export interface UserBadge {
 * フォールバック：
   * 材料マッチング失敗 → v1方式（LLM直接推定）
 
-### 3-4. AIほめコメント `/api/ai/feedback` POST
+### 3-4. AIほめコメント `/api/ai/nutrition/feedback` POST / GET
 
-* リクエスト：
+* リクエスト（POST）：
 
 ```json
 {
-  "mealId": "uuid"
+  "date": "2026-01-04",
+  "nutrition": { "caloriesKcal": 1850, "proteinG": 72, "fatG": 55, "carbsG": 240 },
+  "mealCount": 3,
+  "weekData": [
+    { "date": "2026-01-04", "meals": [{ "title": "鶏の照り焼き定食", "calories": 550, "dishes": ["鶏の照り焼き", "味噌汁"] }] }
+  ],
+  "forceRefresh": false
 }
 ```
 
+* `date` と `nutrition`（その日の栄養合計）は必須。`weekData`（週の献立）と `forceRefresh`（キャッシュを使わず再生成する）は任意
 * 処理：
 
-  1. Meal, MealNutritionEstimate, UserProfile を取得
-  2. プロンプトを生成
-  3. OpenAI GPTに投げる
-* レスポンス：
+  1. 認証とレート制限を確認
+  2. 栄養データと週の献立からハッシュを作り、`nutrition_feedback_cache` に同じ内容の完了済みキャッシュがあればそれを返す（生成中の行があれば、生成中としてそのまま返す）
+  3. なければ `status = generating` の行を保存し、栄養データ・今日の献立・週の献立からプロンプトを生成してOpenAI GPTに投げる
+  4. 結果（JSON）を `nutrition_feedback_cache` に保存し、`status` を `completed`（失敗時は `error`）にする
+* レスポンス（POST）：生成を始めたとき（または生成中）
 
 ```json
 {
-  "mealId": "uuid",
-  "feedbackText": "昼からしっかり炭水化物とたんぱく質が取れていて、とても良いバランスです！...",
-  "adviceText": "次は具だくさんの汁物を加えると、野菜と水分も一緒にとれてさらに◎です。"
+  "feedback": null,
+  "cached": false,
+  "status": "generating",
+  "cacheId": "uuid"
 }
 ```
+
+* レスポンス（POST）：生成済みのキャッシュがあるとき
+
+```json
+{
+  "praiseComment": "昼からしっかり炭水化物とたんぱく質が取れていて、とても良いバランスです！...",
+  "advice": "次は具だくさんの汁物を加えると、野菜と水分も一緒にとれてさらに◎です。",
+  "nutritionTip": "...",
+  "feedback": "（advice と同じ値。後方互換用）",
+  "cached": true,
+  "status": "completed"
+}
+```
+
+* 生成状況の確認（GET）：`?date=YYYY-MM-DD` または `?cacheId=uuid` を付ける。`status`（`generating` / `completed` / `error` / `not_found`）を返し、完了していれば上と同じ `praiseComment` / `advice` / `nutritionTip` も返す
 
 ### 3-5. 週献立生成 `/api/ai/menu/weekly/request` POST
 
@@ -1606,7 +1631,7 @@ app/
     profile/route.ts
     ai/
       nutrition/route.ts
-      feedback/route.ts
+      nutrition/feedback/route.ts
       recipe/request/route.ts
       recipe/[id]/route.ts
       menu/weekly/request/route.ts
@@ -1862,9 +1887,7 @@ V4は「週間献立生成」ではなく「汎用献立生成エンジン」と
   - 料理（レシピ）近傍検索：`pgvector`（またはRAG）で近い既存レシピを取得し、proxyの `base_recipe_id` を確定
 - 食材（Ingredient）近傍検索：`pg_trgm` + `pgvector` で `dataset_ingredients` を検索し、派生レシピの栄養計算の根拠にする
 - **献立生成ワーカー（Edge Function）**：
-  - `generate-weekly-menu`：21枠の料理リスト生成→proxy解決→検証/修復→保存
-  - `generate-single-meal`：1枠の料理リスト生成→proxy解決→検証/修復→保存
-  - `regenerate-meal-direct`：既存1枠を（最小差分で）差し替え
+  - `generate-menu-v5`（機能フラグが OFF なら `generate-menu-v4`）：週・1 日・1 食の生成と差し替え。旧い `generate-weekly-menu`（21枠）・`generate-single-meal`（1枠）・`regenerate-meal-direct`（1枠の差し替え）は #1452 で削除済み
   - `create-derived-recipe`：派生レシピ（材料/手順）生成 → 食材名解決 → 栄養合算 → `derived_recipes` 永続化
   - `backfill-ingredient-embeddings`：`dataset_ingredients.name_embedding` のバックフィル（管理者/運用）
 - **LLM（OpenAI）**：献立例を参照した相性判断、提案、差し替え、説明文
@@ -1882,6 +1905,8 @@ V4は「週間献立生成」ではなく「汎用献立生成エンジン」と
 > 補足：v2では「非同期＝待ち時間の解決」に加え、**データセット参照＝数値の完全性/再現性**を担保する。
 
 ### 4-3. 構成（v4）
+
+> **Status: 2026-10-07 確認 — 現行の本番主系は V5。** 4-3〜4-5（構成・データフロー・UI 設計の v4）は V4 の設計記録です。`generate-menu-v4` は非推奨で、feature flag OFF 時のフォールバックとして残っています。ただし `POST /api/ai/nutrition-analysis` は今もフラグに関係なく V4 を直接呼びます。`/api/ai/menu/v4/generate` も、`menu_generation_v5_direct`（既定 ON）の間は V5 を呼びます。最新の呼び出し関係は `supabase/functions/README.md` の「献立生成 v4 と v5 の使い分け」を参照してください。
 
 **V4アーキテクチャの追加点:**
 - **`generate-menu-v4`**: 汎用献立生成エンジン（1食〜31日分対応）
@@ -2453,7 +2478,7 @@ v2では、LLMが"いい感じの献立知識を内蔵している"ことを前�
 ## 6. 移行手順（全ユーザーにデフォルト適用）
 1. DBへデータセットを取り込み（ETL＋マッピング率確認）
 2. `system_settings` に有効データセット版を設定
-3. `generate-weekly-menu` / `generate-single-meal` / `regenerate-meal-direct` を v2ロジックへ切替
+3. 献立生成の Edge Function を v2ロジックへ切替（当時の `generate-weekly-menu` / `generate-single-meal` / `regenerate-meal-direct`。いずれも #1452 で削除済みで、いまは `generate-menu-v5`、機能フラグで `generate-menu-v4`）
 4. 監視（失敗率/所要時間/未マッピング率）を見ながら改善
 
 ## 7. リスク・未決定事項
@@ -2609,6 +2634,8 @@ CREATE INDEX IF NOT EXISTS idx_planned_meals_source_type ON planned_meals(source
 ```
 
 ### 8-3. LLMレスポンス JSON出力スキーマ
+
+> **注**: 下の 3 つのスキーマの見出しの関数名 (`generate-weekly-menu` / `generate-single-meal` / `regenerate-meal-direct`) は、#1452 で削除した旧関数の名前です。スキーマは `packages/core/src/schemas/menu-response.ts` に残っています。いまの献立生成は `generate-menu-v5`（機能フラグで `generate-menu-v4`）です。
 
 #### 週次献立生成（generate-weekly-menu）
 
@@ -3226,6 +3253,8 @@ for (const [i, result] of imageResults.entries()) {
 
 画像生成を別のEdge Functionに切り出し、非同期で実行：
 
+（当時の案。`generate-weekly-menu` は #1452 で削除済み）
+
 ```
 generate-weekly-menu
   │
@@ -3415,7 +3444,7 @@ await updateRequestStatus('completed');
 | **型定義** | `types/domain.ts` (`DishDetail`) | TypeScript型 |
 | **DB (JSONB)** | `planned_meals.dishes[]` | 各料理の栄養情報 |
 | **DB (カラム)** | `planned_meals.*_g`, `*_mg`, `*_ug` | 食事合計の栄養情報 |
-| **Edge Functions** | `generate-weekly-menu-v3` 等 | LLM出力から変換 |
+| **Edge Functions** | `generate-menu-v5` / `generate-menu-v4` | LLM出力から変換 |
 | **UI** | `src/app/(main)/menus/weekly/page.tsx` | 表示処理 |
 | **コンバーター** | `lib/converter.ts` | DB→ドメイン変換 |
 
@@ -3431,9 +3460,8 @@ await updateRequestStatus('completed');
    - `types/domain.ts` の `DishDetail` インターフェース
 
 3. **Edge Functions更新**
-   - `generate-weekly-menu-v3/index.ts`
-   - `generate-single-meal-v3/index.ts`
-   - `regenerate-meal-direct-v3/index.ts`
+   - `generate-menu-v5/index.ts`
+   - `generate-menu-v4/index.ts`
    - `_shared/nutrition-calculator.ts`
 
 4. **UI更新**

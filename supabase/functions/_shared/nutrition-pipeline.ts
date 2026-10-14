@@ -23,13 +23,15 @@ import {
   initNutritionTotals,
   roundNutrition
 } from './nutrition-calculator-v2.ts'
-import { 
-  verifyNutrition, 
-  createEvidenceInfo, 
+import {
+  verifyNutrition,
+  createEvidenceInfo,
+  applyCalorieCorrection,
   EvidenceInfo,
   MatchedIngredientInfo
 } from './evidence-verifier.ts'
 import { generateGeminiJson } from './gemini-json.ts'
+import { calcSugarG } from './nutrition-sugar.ts'
 import {
   estimateNutritionWithPerplexity,
   isPerplexityNutritionCandidate,
@@ -114,6 +116,8 @@ export interface NutritionPipelineResult {
   nutrition: {
     sodiumG: number
     fiberG: number
+    // 糖質 (炭水化物 − 食物繊維)。写真で献立を上書きするとき、炭水化物・食物繊維と一緒に保存する (#1146)
+    sugarG: number
     potassiumMg: number
     calciumMg: number
     magnesiumMg: number
@@ -450,13 +454,16 @@ function normalizeDishForNutrition(dish: GeminiDish): GeminiDish {
   }
 }
 
-function scaleNutritionTotals(totals: NutritionTotals, factor: number): NutritionTotals {
-  return roundNutrition({
+// #1046 F5-12: 丸め済みの totals ではなく未丸めの rawTotals を係数倍し、
+// totals はその結果を最後に1回だけ丸めて算出する（丸め→倍率→丸めの二重丸めを避ける）。
+export function scaleNutritionTotalsRaw(totals: NutritionTotals, factor: number): NutritionTotals {
+  return {
     calories_kcal: totals.calories_kcal * factor,
     protein_g: totals.protein_g * factor,
     fat_g: totals.fat_g * factor,
     carbs_g: totals.carbs_g * factor,
     fiber_g: totals.fiber_g * factor,
+    sugar_g: totals.sugar_g * factor,
     sodium_mg: totals.sodium_mg * factor,
     potassium_mg: totals.potassium_mg * factor,
     calcium_mg: totals.calcium_mg * factor,
@@ -480,10 +487,10 @@ function scaleNutritionTotals(totals: NutritionTotals, factor: number): Nutritio
     biotin_ug: totals.biotin_ug * factor,
     vitamin_c_mg: totals.vitamin_c_mg * factor,
     salt_eq_g: totals.salt_eq_g * factor,
-  })
+  }
 }
 
-function applyDishNutritionCalibration(
+export function applyDishNutritionCalibration(
   dish: GeminiDish,
   dishNutrition: DishNutrition,
 ): { dishNutrition: DishNutrition; factor: number } {
@@ -522,10 +529,13 @@ function applyDishNutritionCalibration(
     caloriesAfter: Math.round(dishNutrition.totals.calories_kcal * factor),
   })
 
+  const scaledRaw = scaleNutritionTotalsRaw(dishNutrition.rawTotals ?? dishNutrition.totals, factor)
+
   return {
     dishNutrition: {
       ...dishNutrition,
-      totals: scaleNutritionTotals(dishNutrition.totals, factor),
+      totals: roundNutrition(scaledRaw),
+      rawTotals: scaledRaw,
     },
     factor,
   }
@@ -538,37 +548,44 @@ function shouldUseEstimatedNutrition(dish: GeminiDish): boolean {
   return confidence === 'medium' && ['soup', 'rice', 'salad'].includes(dish.role)
 }
 
-function totalsFromEstimatedNutrition(estimate: MealNutritionEstimate): NutritionTotals {
-  return roundNutrition({
+// #1046 F5-12: 丸めは行わず生値のまま返す。呼び出し側(rawTotals)が未丸めを保持できるようにする。
+export function totalsFromEstimatedNutritionRaw(estimate: MealNutritionEstimate): NutritionTotals {
+  return {
     ...initNutritionTotals(),
     calories_kcal: estimate.calories_kcal,
     protein_g: estimate.protein_g,
     fat_g: estimate.fat_g,
     carbs_g: estimate.carbs_g,
     fiber_g: estimate.fiber_g,
+    // 糖質は推定した炭水化物・食物繊維から求める (#1146)
+    sugar_g: calcSugarG(estimate.carbs_g, estimate.fiber_g),
     salt_eq_g: estimate.salt_eq_g,
     sodium_mg: estimate.salt_eq_g * 393.4,
-  })
+  }
 }
 
-function overlayEstimatedTopLineNutrition(
+export function overlayEstimatedTopLineNutrition(
   dishNutrition: DishNutrition,
   estimate: MealNutritionEstimate,
 ): DishNutrition {
-  const estimatedTotals = totalsFromEstimatedNutrition(estimate)
+  const estimatedTotals = totalsFromEstimatedNutritionRaw(estimate)
+  const baseRaw = dishNutrition.rawTotals ?? dishNutrition.totals
+  const rawTotals: NutritionTotals = {
+    ...baseRaw,
+    calories_kcal: estimatedTotals.calories_kcal,
+    protein_g: estimatedTotals.protein_g,
+    fat_g: estimatedTotals.fat_g,
+    carbs_g: estimatedTotals.carbs_g,
+    fiber_g: estimatedTotals.fiber_g,
+    sugar_g: estimatedTotals.sugar_g,
+    sodium_mg: estimatedTotals.sodium_mg,
+    salt_eq_g: estimatedTotals.salt_eq_g,
+  }
 
   return {
     ...dishNutrition,
-    totals: roundNutrition({
-      ...dishNutrition.totals,
-      calories_kcal: estimatedTotals.calories_kcal,
-      protein_g: estimatedTotals.protein_g,
-      fat_g: estimatedTotals.fat_g,
-      carbs_g: estimatedTotals.carbs_g,
-      fiber_g: estimatedTotals.fiber_g,
-      sodium_mg: estimatedTotals.sodium_mg,
-      salt_eq_g: estimatedTotals.salt_eq_g,
-    }),
+    totals: roundNutrition(rawTotals),
+    rawTotals,
   }
 }
 
@@ -921,6 +938,8 @@ export async function analyzeWithEvidence(
         analyzedDish,
         stats,
         totals: dishNutrition.totals,
+        // #1046 F5-12: 食事全体の合算は丸め済み totals ではなく rawTotals を使う
+        rawTotals: dishNutrition.rawTotals,
         matchedIngredients,
         ingredientMatchingMs: dishIngredientMatchingMs,
         nutritionCalculationMs: dishNutritionCalculationMs,
@@ -950,34 +969,38 @@ export async function analyzeWithEvidence(
     llmFallbackConfidence = mergeFallbackConfidence(llmFallbackConfidence, processed.llmConfidence)
     allMatchedIngredients.push(...processed.matchedIngredients)
 
-    mealTotals.calories_kcal += processed.totals.calories_kcal
-    mealTotals.protein_g += processed.totals.protein_g
-    mealTotals.fat_g += processed.totals.fat_g
-    mealTotals.carbs_g += processed.totals.carbs_g
-    mealTotals.fiber_g += processed.totals.fiber_g
-    mealTotals.sodium_mg += processed.totals.sodium_mg
-    mealTotals.potassium_mg += processed.totals.potassium_mg
-    mealTotals.calcium_mg += processed.totals.calcium_mg
-    mealTotals.magnesium_mg += processed.totals.magnesium_mg
-    mealTotals.phosphorus_mg += processed.totals.phosphorus_mg
-    mealTotals.iron_mg += processed.totals.iron_mg
-    mealTotals.zinc_mg += processed.totals.zinc_mg
-    mealTotals.iodine_ug += processed.totals.iodine_ug
-    mealTotals.cholesterol_mg += processed.totals.cholesterol_mg
-    mealTotals.vitamin_a_ug += processed.totals.vitamin_a_ug
-    mealTotals.vitamin_d_ug += processed.totals.vitamin_d_ug
-    mealTotals.vitamin_e_mg += processed.totals.vitamin_e_mg
-    mealTotals.vitamin_k_ug += processed.totals.vitamin_k_ug
-    mealTotals.vitamin_b1_mg += processed.totals.vitamin_b1_mg
-    mealTotals.vitamin_b2_mg += processed.totals.vitamin_b2_mg
-    mealTotals.niacin_mg += processed.totals.niacin_mg
-    mealTotals.vitamin_b6_mg += processed.totals.vitamin_b6_mg
-    mealTotals.vitamin_b12_ug += processed.totals.vitamin_b12_ug
-    mealTotals.folic_acid_ug += processed.totals.folic_acid_ug
-    mealTotals.pantothenic_acid_mg += processed.totals.pantothenic_acid_mg
-    mealTotals.biotin_ug += processed.totals.biotin_ug
-    mealTotals.vitamin_c_mg += processed.totals.vitamin_c_mg
-    mealTotals.salt_eq_g += processed.totals.salt_eq_g
+    // #1046 F5-12: 丸め済みの processed.totals ではなく未丸めの rawTotals を合算し、
+    // 二重丸めによる誤差累積を避ける（最終丸めは下の roundNutrition(mealTotals) で1回のみ）。
+    const dishRaw = processed.rawTotals ?? processed.totals
+    mealTotals.calories_kcal += dishRaw.calories_kcal
+    mealTotals.protein_g += dishRaw.protein_g
+    mealTotals.fat_g += dishRaw.fat_g
+    mealTotals.carbs_g += dishRaw.carbs_g
+    mealTotals.fiber_g += dishRaw.fiber_g
+    mealTotals.sugar_g += dishRaw.sugar_g
+    mealTotals.sodium_mg += dishRaw.sodium_mg
+    mealTotals.potassium_mg += dishRaw.potassium_mg
+    mealTotals.calcium_mg += dishRaw.calcium_mg
+    mealTotals.magnesium_mg += dishRaw.magnesium_mg
+    mealTotals.phosphorus_mg += dishRaw.phosphorus_mg
+    mealTotals.iron_mg += dishRaw.iron_mg
+    mealTotals.zinc_mg += dishRaw.zinc_mg
+    mealTotals.iodine_ug += dishRaw.iodine_ug
+    mealTotals.cholesterol_mg += dishRaw.cholesterol_mg
+    mealTotals.vitamin_a_ug += dishRaw.vitamin_a_ug
+    mealTotals.vitamin_d_ug += dishRaw.vitamin_d_ug
+    mealTotals.vitamin_e_mg += dishRaw.vitamin_e_mg
+    mealTotals.vitamin_k_ug += dishRaw.vitamin_k_ug
+    mealTotals.vitamin_b1_mg += dishRaw.vitamin_b1_mg
+    mealTotals.vitamin_b2_mg += dishRaw.vitamin_b2_mg
+    mealTotals.niacin_mg += dishRaw.niacin_mg
+    mealTotals.vitamin_b6_mg += dishRaw.vitamin_b6_mg
+    mealTotals.vitamin_b12_ug += dishRaw.vitamin_b12_ug
+    mealTotals.folic_acid_ug += dishRaw.folic_acid_ug
+    mealTotals.pantothenic_acid_mg += dishRaw.pantothenic_acid_mg
+    mealTotals.biotin_ug += dishRaw.biotin_ug
+    mealTotals.vitamin_c_mg += dishRaw.vitamin_c_mg
+    mealTotals.salt_eq_g += dishRaw.salt_eq_g
   }
 
   mealTotals = roundNutrition(mealTotals)
@@ -992,7 +1015,21 @@ export async function analyzeWithEvidence(
     elapsedMs: evidenceVerificationMs,
     referenceCount: verification.allReferences.length,
   })
-  
+
+  // #1047 F5: 参照値との乖離が50%を超える場合（excessive_deviation）は
+  // 生の計算値をそのまま保存せず、参照値の±50%レンジにクランプした値へ補正する。
+  // 以前は confidenceScore を下げるだけで実際の保存値は補正されていなかった。
+  if (verification.reason === 'excessive_deviation') {
+    console.warn('Step 4: excessive deviation detected, clamping nutrition totals', {
+      dishName: mainDish?.name,
+      calculatedCalories: verification.calculatedCalories,
+      referenceCalories: verification.referenceCalories,
+      recommendedCalories: verification.recommendedCalories,
+      deviationPercent: verification.deviationPercent,
+    })
+    mealTotals = applyCalorieCorrection(mealTotals, verification)
+  }
+
   // 全料理の参照レシピを収集
   const allReferences = verification.allReferences
 
@@ -1036,6 +1073,7 @@ export async function analyzeWithEvidence(
     nutrition: {
       sodiumG: mealTotals.sodium_mg / 1000, // mg → g
       fiberG: mealTotals.fiber_g,
+      sugarG: mealTotals.sugar_g,
       potassiumMg: mealTotals.potassium_mg,
       calciumMg: mealTotals.calcium_mg,
       magnesiumMg: mealTotals.magnesium_mg,

@@ -1,17 +1,19 @@
 "use client";
 
-import React from "react";
+import React, { useId, useRef } from "react";
 import { motion } from "framer-motion";
+import FocusTrap from "focus-trap-react";
 import { X } from "lucide-react";
 import type { ServingsConfig } from "@/types/domain";
 import { useServingsConfigStore } from "../../_state";
+import { useDialogA11y } from "@/components/common/useDialogA11y";
 
 const colors = {
   bg: '#F7F6F3',
   card: '#FFFFFF',
   text: '#2D2D2D',
   textLight: '#6B6B6B',
-  textMuted: '#A0A0A0',
+  textMuted: '#767676', // #1052 (コントラスト): #A0A0A0 (白地で約2.7:1) から WCAG AA相当の #767676 (約4.5:1) へ
   accent: '#E07A5F',
   success: '#6B9B6B',
   successLight: '#EDF5ED',
@@ -20,6 +22,8 @@ const colors = {
 
 type DayOfWeekKey = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
 type MealTimeKey = 'breakfast' | 'lunch' | 'dinner';
+
+const MEAL_TIME_LABELS: Record<MealTimeKey, string> = { breakfast: '朝', lunch: '昼', dinner: '夜' };
 
 interface ServingsModalProps {
   onClose: () => void;
@@ -49,23 +53,46 @@ export function ServingsModal({
     setServingsConfig(updated);
   };
 
+  // #1052 (体系的 a11y): このモーダルは独自の backdrop/panel を持つ「自己完結型」。
+  // 親側は AnimatePresence を使わず条件付きマウントで開閉するため、既存の exit アニメーション
+  // 無し挙動を変えないよう BottomSheet への置き換えはせず、role/aria/FocusTrap/Escape を
+  // このコンポーネント自身に後付けする。
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogA11y({ onClose });
+
   return (
+    <FocusTrap
+      focusTrapOptions={{
+        allowOutsideClick: true,
+        escapeDeactivates: false,
+        fallbackFocus: () => panelRef.current ?? document.body,
+      }}
+    >
     <motion.div
+      role="presentation"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-[300] flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.5)' }}
       onClick={onClose}
     >
       <motion.div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
         className="w-[95%] max-w-md rounded-2xl p-5"
         style={{ background: colors.card }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center mb-4">
-          <h3 style={{ fontSize: 18, fontWeight: 700 }}>曜日別人数設定</h3>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-            <X size={16} color={colors.textLight} />
+          <h3 id={titleId} style={{ fontSize: 18, fontWeight: 700 }}>曜日別人数設定</h3>
+          <button onClick={onClose} aria-label="閉じる" className="min-w-[44px] min-h-[44px] -m-[6px] flex items-center justify-center">
+            <span className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+              <X size={16} color={colors.textLight} />
+            </span>
           </button>
         </div>
 
@@ -103,9 +130,19 @@ export function ServingsModal({
                       border: `1px solid ${value === 0 ? colors.border : colors.success}`
                     }}
                   >
+                    {/* #1052 (タップ領域 / Sonnet 指摘の Critical 修正):
+                        当初は min-w/min-h + 負の「水平」マージン(-mx)でヒット領域を44x44pxへ
+                        拡大していたが、grid-cols-4 gap-2 の狭いセルでは -mx が隣の食事列
+                        （朝/昼/夜）の±ボタンのヒット領域と水平方向に重なり、375px幅の実機で
+                        「朝の+」を押すと「昼の−」が発火する誤操作を招いていた
+                        （elementFromPoint が後続DOM要素をヒットさせるため）。
+                        そのため水平方向のマージン拡張は完全に撤回し、ヒット領域拡大は
+                        「垂直方向のみ」（-my）に限定する。水平方向は幅を固定値のまま
+                        （視覚サイズ維持）にとどめ、隣接セルへ侵食しない。 */}
                     <button
                       onClick={() => updateValue(day, meal, value - 1)}
-                      className="w-7 h-9 flex items-center justify-center text-lg font-bold"
+                      aria-label={`${dayLabels[day]}曜${MEAL_TIME_LABELS[meal]}の人数を1人減らす`}
+                      className="w-7 min-h-[44px] -my-1 flex items-center justify-center text-lg font-bold"
                       style={{ color: value === 0 ? colors.textMuted : colors.success }}
                     >
                       −
@@ -121,7 +158,8 @@ export function ServingsModal({
                     </span>
                     <button
                       onClick={() => updateValue(day, meal, value + 1)}
-                      className="w-7 h-9 flex items-center justify-center text-lg font-bold"
+                      aria-label={`${dayLabels[day]}曜${MEAL_TIME_LABELS[meal]}の人数を1人増やす`}
+                      className="w-7 min-h-[44px] -my-1 flex items-center justify-center text-lg font-bold"
                       style={{ color: value === 0 ? colors.textMuted : colors.success }}
                     >
                       +
@@ -155,5 +193,6 @@ export function ServingsModal({
         </button>
       </motion.div>
     </motion.div>
+    </FocusTrap>
   );
 }

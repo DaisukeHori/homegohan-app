@@ -445,20 +445,90 @@ test.describe("[settings][adversarial] B. 設定 toggle", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test.describe("[profile][adversarial] C. プロフィール編集", () => {
-  /** プロフィール編集モーダルの基本タブを開くヘルパー */
-  async function openProfileBasicTab(page: Page) {
+  // 読み込み完了を待ってから操作するため、描画の遅い環境 (dev サーバーなど) では
+  // 通常の 60 秒に収まらないことがある (C-4〜C-6 は値ごとに保存して /profile を開き直す)
+  test.describe.configure({ timeout: 120_000 });
+
+  /**
+   * /profile を開き、プロフィールの読み込みが終わるまで待つ。
+   *
+   * このページは、カード (基本情報・目標設定など) を読み込みの前から表示する。読み込みが終わる前に
+   * カードを押すと、(a) 描画の遅い環境ではモーダルが開くまでに待ち時間の上限を超えることがあり、
+   * (b) 読み込み前に入力した値は、読み込み完了時にフォームごと上書きされる。
+   * 「プロファイル完成度」は読み込み後にだけ表示されるので、これが見えるまで待ってから押す (#854)。
+   * (以前の「カードが見えたらすぐ押す」書き方は、このタイミング次第でモーダルが開かず、
+   *  テストがスキップされたり失敗したりしていた)
+   *
+   * 注意: dev サーバー (next dev) に対して動かすとき、プロジェクトの中に書かれるファイル
+   * (Playwright の成果物の既定の出力先 tests/e2e/.output や、ログイン情報の tests/e2e/.auth) が
+   * 変わるたびに再コンパイルが走り、その間はページの読み込みが止まって、ここで待ち切れないことがある。
+   * その場合は `--output=<プロジェクト外のフォルダ>` を付けるか、本番ビルド (next start) に対して動かす
+   * (詳しくは tests/e2e/README.md)。
+   */
+  async function gotoProfilePage(page: Page) {
     await page.goto("/profile");
     await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
+    await expect(page.getByText("プロファイル完成度")).toBeVisible({ timeout: 30_000 });
+  }
+
+  /**
+   * プロフィール編集モーダルの基本タブを開くヘルパー。
+   *
+   * 基本タブの入力欄 (#profile-age-input) が見えなければ、その場で失敗させる。
+   * 以前は「見えなければ黙ってスキップ扱いにする」書き方で、しかも isVisible() は待たずに
+   * 即座に判定するため、モーダルの描画が少し遅れただけで、本物の不具合でもないのに
+   * テストがスキップされていた (#854)。
+   */
+  async function openProfileBasicTab(page: Page) {
+    await gotoProfilePage(page);
 
     const basicBtn = page.getByRole("button", { name: /基本情報/ }).first();
-    const isVisible = await basicBtn.isVisible({ timeout: 5_000 }).catch(() => false);
-    if (isVisible) {
-      await basicBtn.click();
-    } else {
-      await page.locator("button").filter({ hasText: /基本情報/ }).first().click();
-    }
+    await expect(basicBtn).toBeVisible({ timeout: 15_000 });
+    await basicBtn.click();
 
-    await page.waitForTimeout(1_000);
+    await expect(page.locator("#profile-age-input")).toBeVisible({ timeout: 10_000 });
+  }
+
+  /**
+   * プロフィール編集モーダルの「目標設定」タブを開き、目標期限の date input を返すヘルパー。
+   * 目標設定のカードや date input が見えなければ、その場で失敗させる (#854)。
+   */
+  async function openProfileGoalsTab(page: Page) {
+    await gotoProfilePage(page);
+
+    const goalBtn = page.getByRole("button", { name: /目標設定/ }).first();
+    await expect(goalBtn).toBeVisible({ timeout: 15_000 });
+    await goalBtn.click();
+
+    const dateInput = page.locator(".pointer-events-auto input[type='date']").first();
+    await expect(dateInput).toBeVisible({ timeout: 10_000 });
+    return dateInput;
+  }
+
+  /**
+   * 保存したあと、次の値を入れる前に、プロフィール編集モーダルを開き直す
+   * (値を変えながら繰り返し保存するテスト用)。
+   *
+   * 保存に成功するとモーダルは閉じ、失敗したとき (alert が出たとき) は開いたままになる。
+   * 閉じる途中 (フェードアウト中) に次の入力へ進むと、消えかけの入力欄に書き込むことになるため、
+   * 閉じ終わるのを待ってから、開き直すかどうかを判断する。
+   */
+  async function reopenProfileModalIfClosed(page: Page) {
+    const heading = page.getByRole("heading", { name: "プロフィール編集" });
+    await heading.waitFor({ state: "hidden", timeout: 3_000 }).catch(() => {});
+    const modalOpen = await heading.isVisible().catch(() => false);
+    if (!modalOpen) {
+      await openProfileBasicTab(page);
+    }
+  }
+
+  /**
+   * プロフィール編集モーダルのニックネーム入力欄。
+   * Input コンポーネントは type 属性を出力しないため、input[type='text'] では取れない。
+   * (id も付いていないので、利用者に見えるプレースホルダで特定する)
+   */
+  function profileNicknameInput(page: Page) {
+    return page.getByPlaceholder("例: たろう");
   }
 
   /**
@@ -470,19 +540,7 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     await login(page);
     await openProfileBasicTab(page);
 
-    const ageInput = page.locator("#profile-age-input");
-    const visible = await ageInput.isVisible({ timeout: 5_000 }).catch(() => false);
-    if (!visible) {
-      // fixme: プロフィール編集モーダルの #profile-age-input が未表示。
-      // T04 で profile モーダルの testID が確立された後に有効化する。
-      test.fixme();
-      return;
-    }
-
-    const nicknameInput = page
-      .locator("input[type='text']")
-      .or(page.locator(".pointer-events-auto input"))
-      .first();
+    const nicknameInput = profileNicknameInput(page);
 
     const xssPayload = '<script>alert("xss")</script>';
 
@@ -500,7 +558,7 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
       .or(page.getByRole("button", { name: /変更を保存/ }))
       .first();
 
-    await saveBtn.click({ timeout: 5_000 }).catch(() => {});
+    await saveBtn.click({ timeout: 5_000 });
     await page.waitForTimeout(2_000);
 
     // XSS は実行されない
@@ -516,19 +574,8 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     await login(page);
     await openProfileBasicTab(page);
 
-    const ageInput = page.locator("#profile-age-input");
-    const visible = await ageInput.isVisible({ timeout: 5_000 }).catch(() => false);
-    if (!visible) {
-      // fixme: プロフィール編集モーダルの #profile-age-input が未表示。
-      // T04 で profile モーダルの testID が確立された後に有効化する。
-      test.fixme();
-      return;
-    }
-
     const longName = "あ".repeat(1000);
-    const nicknameInput = page
-      .locator(".pointer-events-auto input[type='text']")
-      .first();
+    const nicknameInput = profileNicknameInput(page);
 
     await nicknameInput.fill(longName);
 
@@ -540,13 +587,12 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     const saveBtn = page
       .locator(".pointer-events-auto button:has-text('変更を保存')")
       .first();
-    await saveBtn.click({ timeout: 5_000 }).catch(() => {});
+    await saveBtn.click({ timeout: 5_000 });
 
-    const res = await responsePromise.catch(() => null);
-    if (res) {
-      // 5xx は許容しない (400 エラーは許容)
-      expect(res.status()).toBeLessThan(500);
-    }
+    // 応答が返らなければ (= 保存が実行されなければ) 失敗させる
+    const res = await responsePromise;
+    // 5xx は許容しない (400 エラーは許容)
+    expect(res.status()).toBeLessThan(500);
   });
 
   /**
@@ -558,18 +604,7 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     await login(page);
     await openProfileBasicTab(page);
 
-    const ageInput = page.locator("#profile-age-input");
-    const visible = await ageInput.isVisible({ timeout: 5_000 }).catch(() => false);
-    if (!visible) {
-      // fixme: プロフィール編集モーダルの #profile-age-input が未表示。
-      // T04 で profile モーダルの testID が確立された後に有効化する。
-      test.fixme();
-      return;
-    }
-
-    const nicknameInput = page
-      .locator(".pointer-events-auto input[type='text']")
-      .first();
+    const nicknameInput = profileNicknameInput(page);
     await nicknameInput.fill("");
 
     const responsePromise = page.waitForResponse(
@@ -580,12 +615,11 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     const saveBtn = page
       .locator(".pointer-events-auto button:has-text('変更を保存')")
       .first();
-    await saveBtn.click({ timeout: 5_000 }).catch(() => {});
+    await saveBtn.click({ timeout: 5_000 });
 
-    const res = await responsePromise.catch(() => null);
-    if (res) {
-      expect(res.status()).toBeLessThan(500);
-    }
+    // 応答が返らなければ (= 保存が実行されなければ) 失敗させる
+    const res = await responsePromise;
+    expect(res.status()).toBeLessThan(500);
   });
 
   /**
@@ -598,22 +632,16 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     await login(page);
     await openProfileBasicTab(page);
 
-    const ageInput = page.locator("#profile-age-input");
-    const visible = await ageInput.isVisible({ timeout: 5_000 }).catch(() => false);
-    if (!visible) {
-      // fixme: プロフィール編集モーダルの #profile-age-input が未表示。
-      // T04 で profile モーダルの testID が確立された後に有効化する。
-      test.fixme();
-      return;
-    }
-
     const weightInput = page.locator("#profile-weight-input");
     await expect(weightInput).toBeVisible();
 
     const testValues = ["0", "-1", "999", "9999"];
 
-    for (const val of testValues) {
-      await weightInput.fill(val);
+    for (let i = 0; i < testValues.length; i++) {
+      // 保存に成功するとモーダルが閉じるので、2 回目以降は開き直してから入力する
+      if (i > 0) await reopenProfileModalIfClosed(page);
+
+      await weightInput.fill(testValues[i]);
 
       const responsePromise = page.waitForResponse(
         (res) => res.url().includes("/api/profile"),
@@ -623,22 +651,11 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
       const saveBtn = page
         .locator(".pointer-events-auto button:has-text('変更を保存')")
         .first();
-      await saveBtn.click({ timeout: 5_000 }).catch(() => {});
+      await saveBtn.click({ timeout: 5_000 });
 
-      const res = await responsePromise.catch(() => null);
-      if (res) {
-        expect(res.status()).toBeLessThan(500);
-      }
-
-      // 再度モーダルを開く
-      await page.waitForTimeout(500);
-      const modal = await page
-        .locator("text=プロフィール編集")
-        .isVisible()
-        .catch(() => false);
-      if (!modal) {
-        await openProfileBasicTab(page);
-      }
+      // 応答が返らなければ (= 保存が実行されなければ) 失敗させる
+      const res = await responsePromise;
+      expect(res.status()).toBeLessThan(500);
     }
   });
 
@@ -650,20 +667,15 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     await openProfileBasicTab(page);
 
     const heightInput = page.locator("#profile-height-input");
-    const visible = await heightInput
-      .isVisible({ timeout: 5_000 })
-      .catch(() => false);
-    if (!visible) {
-      // fixme: プロフィール編集モーダルの #profile-height-input が未表示。
-      // T04 で profile モーダルの testID が確立された後に有効化する。
-      test.fixme();
-      return;
-    }
+    await expect(heightInput).toBeVisible();
 
     const testValues = ["0", "-1", "250", "9999"];
 
-    for (const val of testValues) {
-      await heightInput.fill(val);
+    for (let i = 0; i < testValues.length; i++) {
+      // 保存に成功するとモーダルが閉じるので、2 回目以降は開き直してから入力する
+      if (i > 0) await reopenProfileModalIfClosed(page);
+
+      await heightInput.fill(testValues[i]);
 
       const responsePromise = page.waitForResponse(
         (res) => res.url().includes("/api/profile"),
@@ -673,21 +685,11 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
       const saveBtn = page
         .locator(".pointer-events-auto button:has-text('変更を保存')")
         .first();
-      await saveBtn.click({ timeout: 5_000 }).catch(() => {});
+      await saveBtn.click({ timeout: 5_000 });
 
-      const res = await responsePromise.catch(() => null);
-      if (res) {
-        expect(res.status()).toBeLessThan(500);
-      }
-
-      await page.waitForTimeout(500);
-      const modal = await page
-        .locator("text=プロフィール編集")
-        .isVisible()
-        .catch(() => false);
-      if (!modal) {
-        await openProfileBasicTab(page);
-      }
+      // 応答が返らなければ (= 保存が実行されなければ) 失敗させる
+      const res = await responsePromise;
+      expect(res.status()).toBeLessThan(500);
     }
   });
 
@@ -701,18 +703,14 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     await openProfileBasicTab(page);
 
     const ageInput = page.locator("#profile-age-input");
-    const visible = await ageInput.isVisible({ timeout: 5_000 }).catch(() => false);
-    if (!visible) {
-      // fixme: プロフィール編集モーダルの #profile-age-input が未表示。
-      // T04 で profile モーダルの testID が確立された後に有効化する。
-      test.fixme();
-      return;
-    }
 
     const testValues = ["-1", "0", "200"];
 
-    for (const val of testValues) {
-      await ageInput.fill(val);
+    for (let i = 0; i < testValues.length; i++) {
+      // 保存に成功するとモーダルが閉じるので、2 回目以降は開き直してから入力する
+      if (i > 0) await reopenProfileModalIfClosed(page);
+
+      await ageInput.fill(testValues[i]);
 
       const responsePromise = page.waitForResponse(
         (res) => res.url().includes("/api/profile"),
@@ -722,21 +720,11 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
       const saveBtn = page
         .locator(".pointer-events-auto button:has-text('変更を保存')")
         .first();
-      await saveBtn.click({ timeout: 5_000 }).catch(() => {});
+      await saveBtn.click({ timeout: 5_000 });
 
-      const res = await responsePromise.catch(() => null);
-      if (res) {
-        expect(res.status()).toBeLessThan(500);
-      }
-
-      await page.waitForTimeout(500);
-      const modal = await page
-        .locator("text=プロフィール編集")
-        .isVisible()
-        .catch(() => false);
-      if (!modal) {
-        await openProfileBasicTab(page);
-      }
+      // 応答が返らなければ (= 保存が実行されなければ) 失敗させる
+      const res = await responsePromise;
+      expect(res.status()).toBeLessThan(500);
     }
   });
 
@@ -747,27 +735,9 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     page,
   }) => {
     await login(page);
-    await page.goto("/profile");
-    await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
 
-    // 目標タブを開く
-    const goalBtn = page.getByRole("button", { name: /目標設定/ }).first();
-    const goalVisible = await goalBtn.isVisible({ timeout: 5_000 }).catch(() => false);
-    if (goalVisible) {
-      await goalBtn.click();
-    }
-    await page.waitForTimeout(1_000);
-
-    const dateInput = page.locator(".pointer-events-auto input[type='date']").first();
-    const dateVisible = await dateInput
-      .isVisible({ timeout: 5_000 })
-      .catch(() => false);
-    if (!dateVisible) {
-      // fixme: 目標設定タブの date input が未表示。
-      // プロフィールモーダルの目標タブ実装が変更された後に有効化する。
-      test.fixme();
-      return;
-    }
+    // 目標タブを開く (目標期限の date input が見えなければ失敗させる)
+    const dateInput = await openProfileGoalsTab(page);
 
     await dateInput.fill("2000-01-01");
 
@@ -779,12 +749,11 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     const saveBtn = page
       .locator(".pointer-events-auto button:has-text('変更を保存')")
       .first();
-    await saveBtn.click({ timeout: 5_000 }).catch(() => {});
+    await saveBtn.click({ timeout: 5_000 });
 
-    const res = await responsePromise.catch(() => null);
-    if (res) {
-      expect(res.status()).toBeLessThan(500);
-    }
+    // 応答が返らなければ (= 保存が実行されなければ) 失敗させる
+    const res = await responsePromise;
+    expect(res.status()).toBeLessThan(500);
   });
 
   /**
@@ -794,26 +763,9 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     page,
   }) => {
     await login(page);
-    await page.goto("/profile");
-    await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
 
-    const goalBtn = page.getByRole("button", { name: /目標設定/ }).first();
-    const goalVisible = await goalBtn.isVisible({ timeout: 5_000 }).catch(() => false);
-    if (goalVisible) {
-      await goalBtn.click();
-    }
-    await page.waitForTimeout(1_000);
-
-    const dateInput = page.locator(".pointer-events-auto input[type='date']").first();
-    const dateVisible = await dateInput
-      .isVisible({ timeout: 5_000 })
-      .catch(() => false);
-    if (!dateVisible) {
-      // fixme: 目標設定タブの date input が未表示。
-      // プロフィールモーダルの目標タブ実装が変更された後に有効化する。
-      test.fixme();
-      return;
-    }
+    // 目標タブを開く (目標期限の date input が見えなければ失敗させる)
+    const dateInput = await openProfileGoalsTab(page);
 
     await dateInput.fill("9999-12-31");
 
@@ -825,12 +777,11 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     const saveBtn = page
       .locator(".pointer-events-auto button:has-text('変更を保存')")
       .first();
-    await saveBtn.click({ timeout: 5_000 }).catch(() => {});
+    await saveBtn.click({ timeout: 5_000 });
 
-    const res = await responsePromise.catch(() => null);
-    if (res) {
-      expect(res.status()).toBeLessThan(500);
-    }
+    // 応答が返らなければ (= 保存が実行されなければ) 失敗させる
+    const res = await responsePromise;
+    expect(res.status()).toBeLessThan(500);
   });
 
   /**
@@ -847,15 +798,7 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     const genderSelect = page
       .locator(".pointer-events-auto select")
       .first();
-    const genderVisible = await genderSelect
-      .isVisible({ timeout: 5_000 })
-      .catch(() => false);
-    if (!genderVisible) {
-      // fixme: プロフィール編集モーダルの gender select が未表示。
-      // T04 で profile モーダルの testID が確立された後に有効化する。
-      test.fixme();
-      return;
-    }
+    await expect(genderSelect).toBeVisible({ timeout: 10_000 });
 
     // 3 回切り替え
     const options = ["male", "female", "unspecified", "male", "female", "unspecified"];
@@ -873,12 +816,11 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     const saveBtn = page
       .locator(".pointer-events-auto button:has-text('変更を保存')")
       .first();
-    await saveBtn.click({ timeout: 5_000 }).catch(() => {});
+    await saveBtn.click({ timeout: 5_000 });
 
-    const res = await profileResponsePromise.catch(() => null);
-    if (res) {
-      expect(res.status()).toBeLessThan(500);
-    }
+    // 応答が返らなければ (= 保存が実行されなければ) 失敗させる
+    const res = await profileResponsePromise;
+    expect(res.status()).toBeLessThan(500);
   });
 });
 

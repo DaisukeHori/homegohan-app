@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { AI_USAGE_ALLOWED } from './helpers/ai-usage-mock';
 
 const mockGetUser = vi.fn();
 const mockInvoke = vi.fn();
@@ -17,6 +18,8 @@ const mockSingle = vi.fn();
 let selectChainData: any[] = [];
 let selectChainError: { message: string } | null = null;
 
+// 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
+vi.mock('@/lib/ai/consent-guard', () => import('./helpers/ai-consent-guard-allowed'));
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(() => ({
     auth: { getUser: mockGetUser },
@@ -35,6 +38,17 @@ vi.mock('next/headers', () => ({
   cookies: vi.fn(() => undefined),
 }));
 
+// #1177 / #1149: AI 利用回数の上限の判定と記録 (DB を呼ぶ境目)。consumeAiUsage 自体の挙動は src/__tests__/lib/plan/entitlements.test.ts。
+// 止めたときの応答 (aiDailyLimitResponse) は本物を使う
+const mockConsumeAiUsage = vi.fn();
+const mockAiUsageRecordedHeaders = vi.fn();
+vi.mock('@/lib/plan/entitlements', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/plan/entitlements')>()),
+  consumeAiUsage: (...args: unknown[]) => mockConsumeAiUsage(...args),
+  aiUsageRecordedHeaders: (...args: unknown[]) => mockAiUsageRecordedHeaders(...args),
+}));
+const RECORDED_HEADERS = { 'x-hg-ai-usage-recorded': 'test-marker' };
+
 vi.mock('@google/genai', () => ({
   GoogleGenAI: class {
     models = {
@@ -51,6 +65,10 @@ describe('image route contracts', () => {
     selectChainData = [];
     selectChainError = null;
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    mockConsumeAiUsage.mockReset();
+    mockConsumeAiUsage.mockResolvedValue(AI_USAGE_ALLOWED);
+    mockAiUsageRecordedHeaders.mockReset();
+    mockAiUsageRecordedHeaders.mockResolvedValue(RECORDED_HEADERS);
     mockInvoke.mockReset();
     mockUpload.mockResolvedValue({ error: null });
     mockGetPublicUrl.mockReturnValue({ data: { publicUrl: 'https://example.com/generated.png' } });
@@ -125,6 +143,13 @@ describe('image route contracts', () => {
     }));
 
     expect(response.status).toBe(200);
+    // #1177 この API ルートが 1 回と記録し、Edge Function が二重に記録しないよう、記録済みの印を付けて呼ぶ
+    expect(mockConsumeAiUsage).toHaveBeenCalledTimes(1);
+    expect(mockConsumeAiUsage).toHaveBeenCalledWith('user-1', 'photo_analysis');
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'analyze-health-photo',
+      expect.objectContaining({ headers: RECORDED_HEADERS }),
+    );
     await expect(response.json()).resolves.toEqual({
       weight: 65.2,
       bodyFat: 18.4,
@@ -159,7 +184,13 @@ describe('image route contracts', () => {
         mealType: 'dinner',
         userId: 'user-1',
       },
+      // #1177 Edge Function が二重に記録しないよう、記録済みの印を付けて呼ぶ
+      headers: RECORDED_HEADERS,
     });
+    expect(mockAiUsageRecordedHeaders).toHaveBeenCalledWith('user-1');
+    // #1177 この API ルートが、認証で確定したユーザーの AI 利用を 1 回と記録する
+    expect(mockConsumeAiUsage).toHaveBeenCalledTimes(1);
+    expect(mockConsumeAiUsage).toHaveBeenCalledWith('user-1', 'photo_analysis');
     await expect(response.json()).resolves.toEqual({
       dishes: [{ name: 'カレー', role: 'main', cal: 620 }],
       totalCalories: 620,
@@ -209,6 +240,7 @@ describe('image route contracts', () => {
         prefetchedGeminiResult,
         userId: 'user-1',
       },
+      headers: RECORDED_HEADERS,
     });
     await expect(response.json()).resolves.toEqual({
       dishes: [{ name: '親子丼', role: 'main', cal: 640 }],
@@ -685,10 +717,13 @@ describe('image route contracts', () => {
       }),
     }));
 
-    expect(response.status).toBe(200);
-    const payload = await response.json();
+    // #779 で「結果が空(unknown)のときも200で返し画面が真っ白になる」問題を修正し、
+    // unknown 判定は 422 + error: 'unknown_type' を返す契約に変更された。
     // 非食品画像は unknown を返す（meal への強制変換が行われていないことを確認）
+    expect(response.status).toBe(422);
+    const payload = await response.json();
     expect(payload.type).toBe('unknown');
+    expect(payload.error).toBe('unknown_type');
   });
 
   // #151: 1px ブランク JPEG が type:meal, confidence:1.0 で誤判別される問題の repro
@@ -742,6 +777,7 @@ describe('image route contracts', () => {
         mealId: 'meal-123',
         invokedAt: expect.any(String),
       }),
+      headers: RECORDED_HEADERS,
     });
 
     // invokedAt が正しい時刻範囲内であることを確認

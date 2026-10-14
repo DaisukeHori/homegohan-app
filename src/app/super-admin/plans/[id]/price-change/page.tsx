@@ -6,6 +6,10 @@
  *
  * Step1: 新価格入力 + 影響シミュレーション
  * Step2: 確認 → 実行
+ *
+ * #1102 (オーナー判断 2026-10-08): 価格変更は新規契約だけに適用する。適用範囲の選択 (次回更新時から / 即時) は
+ * 実際には既存契約へ反映されない偽の選択肢だったため、画面から外した。既存の契約者の請求額は変わらない。
+ * 月額・年額は、変える方だけを送る (両方を同時に変えてもよい)。
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -13,11 +17,13 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 type ImpactData = {
+  /** 新規契約のみなので常に 0 (既存契約は現行価格のまま) */
   affected_subscription_count: number;
   affected_mrr_change_jpy: number;
   current_monthly_price_jpy: number;
   new_monthly_price_jpy: number;
   applies_to: string;
+  effective_timing: string;
 };
 
 type Plan = {
@@ -29,11 +35,8 @@ type Plan = {
   status: string;
 };
 
-const APPLIES_TO_LABELS: Record<string, string> = {
-  new_only: '新規契約のみ',
-  on_renewal: '次回更新時から全契約',
-  immediately: '即時に全契約 (日割り適用)',
-};
+/** 適用範囲は新規契約のみ (選択肢ではなく、固定の説明として表示する) */
+const APPLIES_TO_LABEL = '新規契約のみ';
 
 export default function PriceChangePage() {
   const params = useParams();
@@ -43,7 +46,6 @@ export default function PriceChangePage() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [newMonthlyPrice, setNewMonthlyPrice] = useState('');
   const [newYearlyPrice, setNewYearlyPrice] = useState('');
-  const [appliesTo, setAppliesTo] = useState<'new_only' | 'on_renewal' | 'immediately'>('new_only');
   const [reason, setReason] = useState('');
   const [effectiveAt, setEffectiveAt] = useState(new Date().toISOString().slice(0, 16));
   const [impact, setImpact] = useState<ImpactData | null>(null);
@@ -66,9 +68,24 @@ export default function PriceChangePage() {
     fetchPlan();
   }, [planId]);
 
+  // #1041 round-4 (W1): 月額・年額入力欄は常に現在価格で prefill されているため、
+  // 何も変更していない状態でシミュレーション/実行を叩けてしまっていた
+  // (handleExecute 内で送信直前に検知していたが、UI 上はボタンが有効なままだった)。
+  // ここで算出し、シミュレーション/実行ボタンの有効・無効判定と handleSimulate/
+  // handleExecute の全てで同じ値を使う (ロジック重複を避ける)。
+  const monthlyChanged = newMonthlyPrice !== '' && Number(newMonthlyPrice) !== plan?.monthly_price_jpy;
+  const yearlyChanged = newYearlyPrice !== '' && Number(newYearlyPrice) !== plan?.yearly_price_jpy;
+  const hasAnyChange = monthlyChanged || yearlyChanged;
+
   const handleSimulate = useCallback(async () => {
     if (!newMonthlyPrice && !newYearlyPrice) {
       setSimulateError('月額または年額を入力してください');
+      return;
+    }
+    // #1041 round-4 (W1): ボタンの disabled 判定と同じ条件を関数内でも検証する
+    // (defense in depth。プログラム的な呼び出しでも変更なしでは実行させない)。
+    if (!hasAnyChange) {
+      setSimulateError('変更がありません');
       return;
     }
     setIsSimulating(true);
@@ -76,7 +93,6 @@ export default function PriceChangePage() {
     try {
       const params = new URLSearchParams();
       if (newMonthlyPrice) params.set('new_monthly_price_jpy', newMonthlyPrice);
-      params.set('applies_to', appliesTo);
       const res = await fetch(`/api/super-admin/plans/${planId}/price-impact?${params.toString()}`);
       const data = await res.json() as { data?: ImpactData; error?: { message: string } };
       if (!res.ok) {
@@ -89,23 +105,37 @@ export default function PriceChangePage() {
     } finally {
       setIsSimulating(false);
     }
-  }, [newMonthlyPrice, newYearlyPrice, appliesTo, planId]);
+  }, [newMonthlyPrice, newYearlyPrice, planId, hasAnyChange]);
 
   const handleExecute = async () => {
     if (!reason) {
       setError('変更理由を入力してください');
       return;
     }
+    if (!plan) {
+      setError('プラン情報の読み込みに失敗しました');
+      return;
+    }
+    if (!hasAnyChange) {
+      setError('変更がありません');
+      return;
+    }
     setIsExecuting(true);
     setError('');
     try {
+      // 月額・年額入力欄は常に現在価格で prefill されているため、変更していない方までそのまま送ると、
+      // 変えていない方の Stripe Price も新しく作られ、いまの Price が無効化されてしまう (#1041 round-3 (C2))。
+      // 変更されたフィールドのみ送る。月額・年額の両方を変えたときは、両方を送る (1 回のリクエストで
+      // 両方を Stripe へ同期できる。#1102)。
+      // (monthlyChanged/yearlyChanged はコンポーネント本体で算出済みのものを使う #1041 round-4 (W1))
       const res = await fetch(`/api/super-admin/plans/${planId}/price-change`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          new_monthly_price_jpy: newMonthlyPrice ? Number(newMonthlyPrice) : null,
-          new_yearly_price_jpy: newYearlyPrice ? Number(newYearlyPrice) : null,
-          applies_to: appliesTo,
+          new_monthly_price_jpy: monthlyChanged ? Number(newMonthlyPrice) : null,
+          new_yearly_price_jpy: yearlyChanged ? Number(newYearlyPrice) : null,
+          // 価格変更は新規契約のみに適用される (#1102)。API はこの値だけを受け付ける
+          applies_to: 'new_only',
           reason,
           effective_at: new Date(effectiveAt).toISOString(),
         }),
@@ -164,7 +194,13 @@ export default function PriceChangePage() {
                 <input
                   type="number"
                   value={newMonthlyPrice}
-                  onChange={(e) => setNewMonthlyPrice(e.target.value)}
+                  onChange={(e) => {
+                    setNewMonthlyPrice(e.target.value);
+                    // #1212: 入力を変えたら古いシミュレーション結果は無効 (再シミュレーションを必須にする)
+                    setImpact(null);
+                  }}
+                  // #1212: シミュレーション中に入力を変えると、遅れて届いた古い結果が表示されてしまうため固定する
+                  disabled={isSimulating}
                   min="0"
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
                 />
@@ -181,22 +217,13 @@ export default function PriceChangePage() {
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">適用範囲</label>
-              <select
-                value={appliesTo}
-                onChange={(e) => setAppliesTo(e.target.value as typeof appliesTo)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
-              >
-                {Object.entries(APPLIES_TO_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-              {appliesTo === 'immediately' && (
-                <p className="text-xs text-red-600 mt-1">
-                  即時適用は全アクティブ契約に影響します。慎重に選択してください。
-                </p>
-              )}
+            {/* #1102: 価格変更は新規契約のみ。適用範囲は選べない (固定の説明として表示する) */}
+            <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm">
+              <span className="text-slate-500">適用範囲:</span>{' '}
+              <strong className="text-slate-800">{APPLIES_TO_LABEL}</strong>
+              <p className="text-xs text-slate-500 mt-1">
+                新しい価格は新規の契約にだけ適用されます。既存の契約者の請求額は変わりません。
+              </p>
             </div>
 
             {simulateError && (
@@ -205,9 +232,14 @@ export default function PriceChangePage() {
               </div>
             )}
 
+            {/* #1041 round-4 (W1): 何も変更していない状態で叩けないよう無効化する */}
+            {!hasAnyChange && (
+              <p className="text-xs text-slate-400">変更がありません (月額または年額を変更してください)</p>
+            )}
+
             <button
               onClick={handleSimulate}
-              disabled={isSimulating}
+              disabled={isSimulating || !hasAnyChange}
               className="w-full py-2.5 border-2 border-orange-500 text-orange-600 rounded-lg text-sm font-medium hover:bg-orange-50 transition-colors disabled:opacity-50"
             >
               {isSimulating ? 'シミュレーション中...' : '影響をシミュレーション'}
@@ -217,21 +249,15 @@ export default function PriceChangePage() {
             {impact && (
               <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
                 <h3 className="text-sm font-semibold text-orange-800 mb-3">影響シミュレーション結果</h3>
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <span className="text-orange-600">影響契約数:</span>{' '}
-                    <strong className="text-orange-800">{impact.affected_subscription_count.toLocaleString()} 件</strong>
-                  </div>
-                  <div>
-                    <span className="text-orange-600">MRR 変化:</span>{' '}
-                    <strong className={`${impact.affected_mrr_change_jpy >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                      {impact.affected_mrr_change_jpy >= 0 ? '+' : ''}
-                      ¥{impact.affected_mrr_change_jpy.toLocaleString()}
-                    </strong>
-                  </div>
-                </div>
+                {/* #1102: 価格変更は新規契約のみ。既存契約には影響しない (影響契約数・MRR 変化は出さない) */}
+                <p className="text-sm text-orange-800">
+                  <strong>既存契約への影響なし</strong>
+                  <span className="block text-xs text-orange-600 mt-1">
+                    新しい価格は新規契約にのみ適用されます。既存の契約者は現行価格のままです。
+                  </span>
+                </p>
                 <p className="text-xs text-orange-600 mt-2">
-                  適用範囲: {APPLIES_TO_LABELS[impact.applies_to]}
+                  適用範囲: {APPLIES_TO_LABEL}
                 </p>
               </div>
             )}
@@ -262,25 +288,39 @@ export default function PriceChangePage() {
               </div>
               <div className="flex justify-between">
                 <span className="text-orange-600">旧月額 → 新月額:</span>
-                <strong>
-                  ¥{(plan.monthly_price_jpy ?? 0).toLocaleString()} → ¥{Number(newMonthlyPrice).toLocaleString()}
-                </strong>
+                {monthlyChanged ? (
+                  <strong>
+                    ¥{(plan.monthly_price_jpy ?? 0).toLocaleString()} → ¥{Number(newMonthlyPrice).toLocaleString()}
+                  </strong>
+                ) : (
+                  <span className="text-slate-400">変更なし (¥{(plan.monthly_price_jpy ?? 0).toLocaleString()})</span>
+                )}
+              </div>
+              {/* #1041 round-4 (W2): 年額の旧 → 新も確認画面に表示する (従来は月額のみ表示され、
+                  年額のみ変更した場合に確認画面から変更内容が読み取れなかった) */}
+              <div className="flex justify-between">
+                <span className="text-orange-600">旧年額 → 新年額:</span>
+                {yearlyChanged ? (
+                  <strong>
+                    ¥{(plan.yearly_price_jpy ?? 0).toLocaleString()} → ¥{Number(newYearlyPrice).toLocaleString()}
+                  </strong>
+                ) : (
+                  <span className="text-slate-400">変更なし (¥{(plan.yearly_price_jpy ?? 0).toLocaleString()})</span>
+                )}
               </div>
               <div className="flex justify-between">
                 <span className="text-orange-600">適用範囲:</span>
-                <strong>{APPLIES_TO_LABELS[appliesTo]}</strong>
+                <strong>{APPLIES_TO_LABEL}</strong>
               </div>
+              {/* #1102: 価格変更は新規契約のみ。既存契約には影響しない (影響契約数・MRR 変化は出さない) */}
               <div className="flex justify-between">
-                <span className="text-orange-600">影響契約数:</span>
-                <strong>{impact.affected_subscription_count.toLocaleString()} 件</strong>
+                <span className="text-orange-600">既存契約への影響:</span>
+                <strong>なし (既存の契約者は現行価格のまま)</strong>
               </div>
-              <div className="flex justify-between">
-                <span className="text-orange-600">MRR 変化:</span>
-                <strong className={impact.affected_mrr_change_jpy >= 0 ? 'text-green-700' : 'text-red-700'}>
-                  {impact.affected_mrr_change_jpy >= 0 ? '+' : ''}
-                  ¥{impact.affected_mrr_change_jpy.toLocaleString()}
-                </strong>
-              </div>
+              <p className="text-xs text-orange-600">
+                ※ Stripe 連携が有効な環境では、変更した月額・年額のそれぞれに新しい Stripe 価格 (Price) が作られ、
+                同じ期間の旧い Price は新規の申し込みでは選べなくなります。既存の契約者は、これまでの Price のまま請求されます。
+              </p>
             </div>
           </div>
 
@@ -313,6 +353,14 @@ export default function PriceChangePage() {
               </div>
             )}
 
+            {/* #1041 round-4 (W1): Step1 で加えたガードを回避して (例: 戻って価格を
+                元に戻してから再度進む) 変更なし状態のまま実行できないようにする */}
+            {!hasAnyChange && (
+              <div className="bg-slate-50 border border-slate-200 text-slate-500 px-4 py-3 rounded-lg text-sm">
+                変更がありません
+              </div>
+            )}
+
             <div className="flex gap-3 justify-between">
               <button
                 onClick={() => setStep(1)}
@@ -322,7 +370,7 @@ export default function PriceChangePage() {
               </button>
               <button
                 onClick={handleExecute}
-                disabled={isExecuting || !reason}
+                disabled={isExecuting || !reason || !hasAnyChange}
                 className="px-6 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
               >
                 {isExecuting ? '実行中...' : '価格変更を実行する'}

@@ -6,7 +6,22 @@ on:
       - main
     paths:
       - 'supabase/functions/**'
+      # 関数ごとの verify_jwt (ゲートウェイの JWT 検証) はここに書く。変えただけでもデプロイし直す (#1406)
+      - 'supabase/config.toml'
+      # 削除の手順 (下の「Delete functions not in the repository」) を変えたときも走らせる (#1452)
+      - '.github/workflows/deploy-supabase-functions.yml'
+      - 'scripts/edge-functions-prune.mjs'
   workflow_dispatch: # 手動トリガー可能
+
+# 同じ ref のデプロイ (と、そのあとの削除) は 1 本ずつ走らせる (#1452)。並んで走ると、先に始まった古い版の実行の削除の手順が、
+# あとの版のデプロイで本番に入った関数を「リポジトリに無い」と見て消してしまうため。走っている実行は取り消さない
+# (デプロイのあと削除の前で止めると、その版の削除が抜けるため)。group を ref ごとにするのは deploy-supabase-migrations.yml と同じ理由:
+# GitHub は同じ group で待っている実行を 1 本しか持たず、新しく来た実行が待っている実行を取り消す。group を固定すると、
+# 別の ref からの手動実行が、待っている main の実行を取り消してしまう。別の ref からの手動実行は削除をしない (下の if) ので、
+# main の実行と並んでも本番の関数を消すことはない。
+concurrency:
+  group: deploy-supabase-functions-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -20,20 +35,113 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      # 関数のソースに、版を固定していない依存の書き方が無いことを確かめる。依存の版は supabase/functions/deno.json の
+      # imports だけで固定する (#1515・#1518)。赤にするのは、jsr: / npm: / https:// (http:// も) を直接書いた
+      # - import・export ... from・import() (引用符は " ' ` のどれでも)
+      # - 型だけを引く // @deno-types="..." と /// <reference types="..." />
+      # 以前は rg で探していたが、ubuntu の runner に rg が無く (command not found)、if が偽になって毎回通っていた。
+      # runner に最初から入っていて macOS でも同じに動く grep -E (POSIX の拡張正規表現。\s や (?:) は使わない) にし、
+      # 道具が無い・grep が失敗した (終了コード 2 以上)・検査したファイルが 0 本・正規表現が見本の行に当たらない
+      # (または当たってはいけない見本に当たる)、のどれでも赤にする (空回りで緑にしない)。
+      # 検査したファイルの本数は、中身が空のファイルも数える (grep -c は当たりが 0 行のファイルも 1 行で出す)。
+      # tests/edge-function-dep-pinning.test.ts が、この run をそのまま bash で動かして確かめる (PR の npm test で走る)。
       - name: Verify Edge Function dependency pinning
+        shell: bash
         run: |
-          if rg -n '^\s*import(?:.+from\s+)?["'"'"'](?:jsr:|npm:)' supabase/functions --glob '*.ts'; then
-            echo "Supabase Functions では raw jsr:/npm: import を使わず、supabase/functions/deno.json の exact pin alias を使ってください。"
+          set -euo pipefail
+          functions_dir=supabase/functions
+          includes=(--include='*.ts' --include='*.tsx' --include='*.mts' --include='*.js' --include='*.jsx' --include='*.mjs')
+          quote='["'"'"'`]'
+          unpinned="${quote}(jsr:|npm:|https?://)"
+          import_form="(^|[^[:alnum:]_\$])(from|import)[[:space:]]*[(]?[[:space:]]*${unpinned}"
+          deno_types_form="@deno-types[[:space:]]*=[[:space:]]*${unpinned}"
+          reference_form="<reference[[:space:]]+types[[:space:]]*=[[:space:]]*${unpinned}"
+          raw_import="${import_form}|${deno_types_form}|${reference_form}"
+          if ! command -v grep >/dev/null 2>&1; then
+            echo "::error::grep が無いため、Edge Function の依存の版の固定を検査できません。"
             exit 1
           fi
+          # 正規表現が見本の行に当たる・当たらないことを、この runner の grep で確かめる (書き方の誤りで何にも当たらなくなるのを止める)
+          must_match=(
+            '} from "npm:zod";'
+            'const m = await import(`npm:zod`);'
+            'import { createClient } from "https://esm.sh/@supabase/supabase-js@2";'
+            '// @deno-types="npm:@types/express@4.17.21"'
+            '/// <reference types="npm:@types/node" />'
+          )
+          must_not_match=(
+            'import { z } from "zod";'
+            'const m = await import(`zod`);'
+            'const res = await fetch("https://api.openai.com/v1/models");'
+            '/// <reference types="@supabase/functions-js/edge-runtime.d.ts" />'
+          )
+          # 見本は here-string (<<<) で grep に渡す。printf の出力を | で grep に流すと、grep -q が読み終える前に終わったとき
+          # (当たった時点で終わる・読まずに終わる) printf が SIGPIPE で落ち、pipefail で「当たらなかった」と取り違える。
+          # 当たった・当たらなかった・失敗した (終了コード 2 以上) は、grep 自身の終了コードだけで決める。
+          for sample in "${must_match[@]}"; do
+            sample_status=0
+            grep -qE "$raw_import" <<<"$sample" || sample_status=$?
+            if [ "$sample_status" -ne 0 ]; then
+              echo "::error::検査の正規表現が、版を固定していない依存の見本に当たりません (grep の終了コード $sample_status): $sample"
+              exit 1
+            fi
+          done
+          for sample in "${must_not_match[@]}"; do
+            sample_status=0
+            grep -qE "$raw_import" <<<"$sample" || sample_status=$?
+            if [ "$sample_status" -eq 0 ]; then
+              echo "::error::検査の正規表現が、deno.json の名前で書いた依存・import でない URL の見本に当たります: $sample"
+              exit 1
+            elif [ "$sample_status" -ne 1 ]; then
+              echo "::error::見本の確かめで grep が失敗しました (終了コード $sample_status): $sample"
+              exit 1
+            fi
+          done
+          count_status=0
+          counts=$(grep -rc "${includes[@]}" -e '^' "$functions_dir") || count_status=$?
+          if [ "$count_status" -gt 1 ]; then
+            echo "::error::$functions_dir のソースを読めません (grep の終了コード $count_status)。"
+            exit 1
+          fi
+          if [ -z "$counts" ]; then
+            echo "::error::$functions_dir に検査するソースがありません。"
+            exit 1
+          fi
+          echo "検査したファイル: $(grep -c '^' <<<"$counts") 本"
+          status=0
+          grep -rnE "${includes[@]}" -e "$raw_import" "$functions_dir" || status=$?
+          if [ "$status" -eq 0 ]; then
+            echo "::error::Supabase Functions では jsr:/npm:/https:// を直接 import せず (@deno-types・<reference types> も同じ)、supabase/functions/deno.json の imports (版を固定した名前) を使ってください。"
+            exit 1
+          elif [ "$status" -ne 1 ]; then
+            echo "::error::grep が失敗しました (終了コード $status)。"
+            exit "$status"
+          fi
+          echo "jsr:/npm:/https:// を直接書いた依存はありません。"
 
       - name: Verify Supabase CLI version
         run: |
           npx --yes supabase@2.62.10 --version
 
+      # 名前を指定しない deploy は supabase/config.toml の [functions.<name>] verify_jwt を関数ごとに読む
+      # (CLI 2.62.10 の internal/functions/deploy の GetFunctionConfig)。JWT 検証を外すフラグは全関数に効くので付けない (#1406)。
+      # tests/edge-function-verify-jwt.test.ts がこのファイルをコメントも含めて読むので、そのフラグの名前はここにも書かない
       - name: Deploy all functions
         run: |
           npx --yes supabase@2.62.10 functions deploy --project-ref ${{ env.SUPABASE_PROJECT_ID }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      # 本番にあって supabase/functions/ に無い関数を消す (#1452)。リポジトリから関数を消すと、ここで本番からも消える。
+      # リポジトリの関数が 0 本・本番の一覧が読めない・削除が上限 (EDGE_FUNCTIONS_PRUNE_MAX_DELETIONS) を超える等のときは、
+      # 1 本も消さずに赤で止まる。削除した関数の名前と件数をログに残す。
+      # 消すのは main の実行だけ (別の ref からの手動実行は、その ref に無い main の関数を消してしまうため)。さらに
+      # --require-latest main で、このチェックアウトの supabase/functions/ が origin の main の最新と違えば何も消さない
+      # (古い実行の再実行などで、あとの版で足した関数を消さないため。関数を変えた新しい版は、その版の実行が消す)。
+      - name: Delete functions not in the repository
+        if: github.ref == 'refs/heads/main'
+        run: |
+          node scripts/edge-functions-prune.mjs --apply --require-latest main --project-ref ${{ env.SUPABASE_PROJECT_ID }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 

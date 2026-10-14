@@ -2,18 +2,24 @@
  * tests/e2e/membership/07-family-child-management.spec.ts
  *
  * β-5: 子供追加 (auth account なし)
- * β-6: 子供 promote (auth account 紐付け)
+ * β-6: 子供 promote (本人同意フロー: 参加リクエストの作成。承認・拒否・取消は spec 12)
  * 子供削除
  *
  * 設計書: docs/design/membership/02-flow-spec.md §8, §9, §11
  *         docs/design/membership/03-ui-spec.md §8, §9
+ *         Issue #1232 (旧: 代表者の操作だけで既存アカウントを即時に編入していた)
  */
 
 import { expect } from "@playwright/test";
 import { test } from "../fixtures/fresh-family";
 import {
   addChild,
+  apiFetch,
   getFamilyMemberFromDB,
+  getPendingPromotionRequest,
+  getUserFamilyIdFromDB,
+  gotoWithoutClientErrors,
+  upsertUserProfileDirect,
 } from "../helpers/membership-family";
 import { createFreshUser, cleanupFreshUser, injectSession } from "../fixtures/fresh-user";
 import { createClient } from "@supabase/supabase-js";
@@ -42,29 +48,9 @@ function getAdminClient() {
   });
 }
 
-/**
- * page.evaluate 経由で API を叩く。
- */
-async function apiFetch(
-  page: import("@playwright/test").Page,
-  apiPath: string,
-  options: { method?: string; body?: unknown } = {},
-): Promise<{ status: number; body: unknown }> {
-  return page.evaluate(
-    async ({ apiPath, options }: { apiPath: string; options: { method?: string; body?: unknown } }) => {
-      const res = await fetch(apiPath, {
-        method: options.method ?? "GET",
-        headers: options.body ? { "Content-Type": "application/json" } : {},
-        body: options.body ? JSON.stringify(options.body) : undefined,
-        credentials: "include",
-      });
-      let body: unknown;
-      try { body = await res.json(); } catch { body = await res.text(); }
-      return { status: res.status, body };
-    },
-    { apiPath, options },
-  );
-}
+// page.evaluate 経由で API を叩く apiFetch は helpers/membership-family.ts に移した。
+// fixture 直後の page (about:blank) では相対 URL の fetch が失敗し、
+// β-5 (API) / 子供削除 のテストが API を呼ぶ前に落ちていたため (origin を確立してから叩く)。
 
 /**
  * service_role で family_members 行を memberId で取得する。
@@ -87,6 +73,11 @@ async function getMemberById(memberId: string): Promise<Record<string, unknown> 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+// 動画は tests/e2e/.output (リポジトリ内) に書き出される。dev サーバはその書き込みのたびに再ビルドし、
+// 再ビルド中に開いたページが無関係な例外 (ChunkLoadError / SyntaxError) で落ちるため、動画は撮らない。
+// 失敗時のスクリーンショットは残る。
+test.use({ video: "off" });
 
 test.describe("family 子供メンバ管理 (β-5, β-6)", () => {
   /**
@@ -200,16 +191,20 @@ test.describe("family 子供メンバ管理 (β-5, β-6)", () => {
   });
 
   /**
-   * β-6: 子供 promote — auth account 紐付け
+   * β-6: 子供 promote — 本人同意フロー (#1232)
+   *
+   * 旧実装は {user_id} を受け取り、その場で既存アカウントを家族へ編入していた
+   * (持ち主の同意なし)。現在は {email} で「参加リクエスト」を作るだけで、
+   * 編入は本人が承認したときに起きる (承認・拒否・取消は spec 12)。
    *
    * 1. 子供メンバを追加
-   * 2. 新規ユーザを fresh user で作成
-   * 3. POST /api/family/members/{id}/promote で紐付け
-   * 4. family_members.user_id が設定され, child_profile が NULL になることを確認
+   * 2. 子供本人の既存アカウントを fresh user で作成 (旧実装ならこれだけで編入されてしまう相手)
+   * 3. POST /api/family/members/{id}/promote {email} → 200, request.status = 'pending'
+   * 4. レスポンスに token が含まれない (token は本人宛のメールにだけ載る)
+   * 5. family_members.user_id は NULL のまま・child_profile も残り、本人の user_profiles.family_id も NULL のまま
    */
-  test("β-6: 子供 promote → family_members.user_id がセットされる", async ({
+  test("β-6: 子供 promote → 参加リクエストが作られるだけで、family_members.user_id は NULL のまま", async ({
     freshFamilyWithOwner,
-    browser,
   }) => {
     const { ownerPage, family } = freshFamilyWithOwner;
     const supabaseAdmin = getAdminClient();
@@ -222,83 +217,57 @@ test.describe("family 子供メンバ管理 (β-5, β-6)", () => {
       age: 15,
     });
 
-    // 子供本人のアカウントを作成
+    // 子供本人のアカウントを作成 (オンボーディング完了済みの既存アカウント)
     const childUser = await createFreshUser(supabaseAdmin, { emailPrefix: "e2e-promote-child" });
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-    await fetch(`${supabaseUrl}/rest/v1/user_profiles`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: serviceRoleKey,
-        Authorization: `Bearer ${serviceRoleKey}`,
-        Prefer: "resolution=merge-duplicates,return=minimal",
-      },
-      body: JSON.stringify({
-        id: childUser.id,
-        nickname: "Promoted Child",
-        age_group: "10s",
-        gender: "male",
-        roles: ["user"],
-        onboarding_completed_at: new Date().toISOString(),
-      }),
-    });
 
     try {
+      await upsertUserProfileDirect({
+        userId: childUser.id,
+        nickname: "Promoted Child",
+        onboarding: "completed",
+      });
+
       // owner が promote API を呼ぶ
       const result = await apiFetch(
         ownerPage,
         `/api/family/members/${childMemberId}/promote`,
         {
           method: "POST",
-          body: { user_id: childUser.id },
+          body: { email: childUser.email },
         },
       );
 
       console.log("[spec-07] promote API status:", result.status);
+      expect(result.status, JSON.stringify(result.body)).toBe(200);
 
-      if (result.status === 200 || result.status === 201) {
-        // DB で確認
-        const member = await getMemberById(childMemberId);
-        expect(member).not.toBeNull();
-        expect(member!.user_id).toBe(childUser.id);
-        expect(member!.child_profile).toBeNull();
-      } else {
-        // API が未実装の場合は service_role で直接確認
-        expect([200, 201, 404]).toContain(result.status);
+      const request = (result.body as { data?: { request?: Record<string, unknown> } }).data?.request;
+      expect(request).toBeDefined();
+      expect(request!.status).toBe("pending");
+      expect(request!.member_id).toBe(childMemberId);
+      expect(request!.email).toBe(childUser.email);
 
-        // service_role で直接 promote を試みる
-        const patchResp = await fetch(
-          `${supabaseUrl}/rest/v1/family_members?id=eq.${childMemberId}`,
-          {
-            method: "PATCH",
-            headers: {
-              "Content-Type": "application/json",
-              apikey: serviceRoleKey,
-              Authorization: `Bearer ${serviceRoleKey}`,
-              Prefer: "return=minimal",
-            },
-            body: JSON.stringify({
-              user_id: childUser.id,
-              child_profile: null,
-            }),
-          },
-        );
+      // token は本人宛のメールにだけ載せる。HTTP レスポンスには出さない
+      expect(request).not.toHaveProperty("token");
+      const dbRequest = await getPendingPromotionRequest(childMemberId);
+      expect(dbRequest.token).toMatch(/^[a-f0-9]{64}$/);
+      expect(JSON.stringify(result.body)).not.toContain(dbRequest.token);
 
-        if (patchResp.ok) {
-          const member = await getMemberById(childMemberId);
-          expect(member!.user_id).toBe(childUser.id);
-        }
-      }
+      // 本人の同意があるまで何も変わらない
+      const member = await getMemberById(childMemberId);
+      expect(member).not.toBeNull();
+      expect(member!.user_id).toBeNull();
+      expect(member!.child_profile).not.toBeNull();
+      expect(await getUserFamilyIdFromDB(childUser.id)).toBeNull();
     } finally {
       await cleanupFreshUser(supabaseAdmin, childUser.id);
     }
   });
 
   /**
-   * β-6 (UI): /family/members/[id]/promote ページが表示される
+   * β-6 (UI): /family/members/[id]/promote は、旧「アカウント発行」ではなく
+   * 参加リクエストの送信フォームを表示する (#1232)
    */
-  test("β-6 (UI): promote ページにアクセスできる", async ({
+  test("β-6 (UI): promote ページに参加リクエストの送信フォームが表示される", async ({
     freshFamilyWithOwner,
   }) => {
     const { ownerPage, family } = freshFamilyWithOwner;
@@ -311,14 +280,23 @@ test.describe("family 子供メンバ管理 (β-5, β-6)", () => {
       age: 12,
     });
 
-    await ownerPage.goto(`${BASE_URL}/family/members/${childMemberId}/promote`);
-    await ownerPage.waitForLoadState("networkidle");
+    // 画面が壊れていれば (未処理のクライアント例外)、ここで原因つきで落ちる
+    await gotoWithoutClientErrors(ownerPage, `${BASE_URL}/family/members/${childMemberId}/promote`);
 
     const title = await ownerPage.title();
     expect(title).not.toContain("500");
 
+    // 見出し 「{子供の名前} の参加リクエスト」 と、メールアドレスの入力欄・送信ボタン
+    await expect(
+      ownerPage.getByRole("heading", { level: 1, name: /の参加リクエスト/ }),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(ownerPage.getByPlaceholder("子供本人のメールアドレス")).toBeVisible();
+    await expect(ownerPage.getByRole("button", { name: "参加リクエストを送信" })).toBeVisible();
+
     const pageText = await ownerPage.evaluate(() => document.body.innerText);
     console.log("[spec-07] promote pageText:", pageText.substring(0, 300));
+    // 旧「アカウントを発行しました」系の文言は残っていない
+    expect(pageText).not.toContain("アカウントを発行");
   });
 
   /**

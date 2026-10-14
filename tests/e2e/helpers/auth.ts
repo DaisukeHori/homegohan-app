@@ -7,6 +7,10 @@
  */
 
 import type { Page } from "@playwright/test";
+import { requireExistingUserPassword } from "./credentials";
+import { acceptLegalConsentIfShown } from "./legal-consent";
+import { ensureAiConsentGranted } from "./ai-consent";
+import { waitForLoginFormReady } from "./login-form";
 
 const LOGIN_TIMEOUT_MS = 90_000;
 const HYDRATION_TIMEOUT_MS = 15_000;
@@ -45,17 +49,20 @@ export async function login(
 ): Promise<void> {
   const _email =
     email ?? process.env.E2E_USER_EMAIL ?? "e2e-user@homegohan.test";
-  const _password =
-    password ??
-    process.env.E2E_USER_PASSWORD ??
-    "E2eUser2026!Test#Secure";
+  // 既定値は持たない。未設定なら分かりやすいエラーで止める
+  const _password = password ?? requireExistingUserPassword();
 
   await page.goto("/login");
-  // networkidle でネットワーク落ち着きを待つ
-  await page.waitForLoadState("networkidle");
+  // フォームが出て、(Turnstile が有効なら) トークンが出て、送信ボタンが押せるまで待つ。
+  // networkidle は待たない (ウィジェットが通信し続けるので成り立たない。helpers/login-form.ts)
+  await waitForLoginFormReady(page);
   // client-side rate limit key をクリアして「しばらく待って」エラーを回避
+  // #1057 (UX1-16 round-2): キーがメールアドレス単位 (`auth_last_fail_ts:<email>`) に
+  // 変わったため prefix 一致で全て削除する
   await page.evaluate(() => {
-    localStorage.removeItem('auth_last_fail_ts');
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith('auth_last_fail_ts'))
+      .forEach((k) => localStorage.removeItem(k));
   });
   // React hydration 完了を確認 (button に __reactProps が付くまで)
   await waitForHydration(page).catch(() => {
@@ -77,6 +84,10 @@ export async function login(
     page.locator("button[type=submit]").click(),
   ]);
 
+  // #1174: 規約の同意画面に回された (サーバーが LEGAL_CONSENT_ENFORCE=on で、このユーザーの同意の記録が無い) ときは同意する。
+  // 同意画面でなければ何もしない
+  await acceptLegalConsentIfShown(page);
+
   // オンボーディング未完了の場合はAPIで完了させてホームへ誘導
   if (page.url().includes("/onboarding")) {
     await page.evaluate(async () => {
@@ -92,4 +103,9 @@ export async function login(
     await page.goto("/home");
     await page.waitForURL("**/home", { timeout: 60_000 });
   }
+
+  // 外国の AI 事業者への提供の同意 (T15 / #1154)。未同意の利用者のデータは、サーバーが AI へ送る手前で止める
+  // (403 AI_CONSENT_REQUIRED) ので、AI を使う spec (02-meal-photo / 03-ai-advisor など) が止められないよう記録する。
+  // すでに現行の版に同意していれば何もしない
+  await ensureAiConsentGranted(page, new URL(page.url()).origin);
 }

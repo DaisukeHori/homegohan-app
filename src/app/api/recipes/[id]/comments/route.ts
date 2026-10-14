@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { internalError } from '@/lib/api/errors';
 
 // コメント一覧取得 (user_id は公開しない)
 export async function GET(
@@ -26,7 +27,7 @@ export async function GET(
     .eq('recipe_id', params.id)
     .order('created_at', { ascending: false });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return internalError('GET /api/recipes/[id]/comments', error, { userId: user.id });
 
   const comments = (data || []).map((c: any) => ({
     id: c.id,
@@ -103,8 +104,7 @@ export async function POST(
     });
 
   } catch (error: any) {
-    console.error('Comment error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/recipes/[id]/comments', error, { userId: user.id });
   }
 }
 

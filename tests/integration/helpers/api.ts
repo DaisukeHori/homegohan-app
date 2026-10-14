@@ -12,14 +12,17 @@ export interface ApiResponse<T = unknown> {
   headers: Record<string, string>;
 }
 
+type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+
 /**
- * Make an authenticated HTTP request to the API
+ * 認証ヘッダを付けて HTTP リクエストを送る共通処理。
+ * `rawBody` は文字列のままボディに載せる (JSON.stringify は呼び出し側の責任)。
  */
-export async function apiCall<T = unknown>(
-  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+async function send<T>(
+  method: HttpMethod,
   path: string,
   jwt: string | null,
-  body?: unknown
+  rawBody: string | undefined
 ): Promise<ApiResponse<T>> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -34,7 +37,7 @@ export async function apiCall<T = unknown>(
   const response = await fetch(`${BASE_URL}${path}`, {
     method,
     headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: rawBody,
   });
 
   let responseBody: T;
@@ -59,10 +62,35 @@ export async function apiCall<T = unknown>(
 }
 
 /**
+ * Make an authenticated HTTP request to the API
+ */
+export async function apiCall<T = unknown>(
+  method: HttpMethod,
+  path: string,
+  jwt: string | null,
+  body?: unknown
+): Promise<ApiResponse<T>> {
+  return send<T>(method, path, jwt, body !== undefined ? JSON.stringify(body) : undefined);
+}
+
+/**
+ * 生のボディ文字列をそのまま送る (JSON.stringify を通さない)。
+ * 壊れた JSON など、`apiCall` では作れないリクエストボディの検証用。
+ */
+export async function apiCallRaw<T = unknown>(
+  method: Exclude<HttpMethod, 'GET'>,
+  path: string,
+  jwt: string | null,
+  rawBody: string
+): Promise<ApiResponse<T>> {
+  return send<T>(method, path, jwt, rawBody);
+}
+
+/**
  * Make an unauthenticated request (no JWT)
  */
 export async function apiCallNoAuth<T = unknown>(
-  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+  method: HttpMethod,
   path: string,
   body?: unknown
 ): Promise<ApiResponse<T>> {

@@ -1,9 +1,12 @@
 "use client";
 
-import React from "react";
+import React, { useId, useRef } from "react";
 import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
+import FocusTrap from "focus-trap-react";
 import { BarChart3, X, ChefHat, Flame, Sparkles, Heart, RefreshCw } from "lucide-react";
+import { formatLocalDate, formatDateJa } from "@homegohan/shared";
+import { useDialogA11y } from "@/components/common/useDialogA11y";
 
 const NutritionRadarChart = dynamic(
   () => import("@/components/NutritionRadarChart").then(m => ({ default: m.NutritionRadarChart })),
@@ -15,7 +18,7 @@ const colors = {
   card: '#FFFFFF',
   text: '#2D2D2D',
   textLight: '#6B6B6B',
-  textMuted: '#A0A0A0',
+  textMuted: '#767676', // #1052 (コントラスト): #A0A0A0 (白地で約2.7:1) から WCAG AA相当の #767676 (約4.5:1) へ
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
   success: '#6B9B6B',
@@ -99,8 +102,25 @@ export function StatsModal({
   const today = new Date();
   const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
 
+  // #1052 (体系的 a11y)
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogA11y({ onClose });
+
   return (
+    <FocusTrap
+      focusTrapOptions={{
+        allowOutsideClick: true,
+        escapeDeactivates: false,
+        fallbackFocus: () => panelRef.current ?? document.body,
+      }}
+    >
     <motion.div
+      ref={panelRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      tabIndex={-1}
       initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
       transition={{ type: "spring", damping: 25, stiffness: 300 }}
       className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
@@ -110,10 +130,12 @@ export function StatsModal({
       <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
         <div className="flex items-center gap-2">
           <BarChart3 size={18} color={colors.purple} />
-          <span style={{ fontSize: 15, fontWeight: 600 }}>栄養分析</span>
+          <span id={titleId} style={{ fontSize: 15, fontWeight: 600 }}>栄養分析</span>
         </div>
-        <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-          <X size={14} color={colors.textLight} />
+        <button onClick={onClose} aria-label="閉じる" className="min-w-[44px] min-h-[44px] -m-2 flex items-center justify-center">
+          <span className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+            <X size={14} color={colors.textLight} />
+          </span>
         </button>
       </div>
 
@@ -124,21 +146,23 @@ export function StatsModal({
             <div className="flex-1 rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.8)' }}>
               <ChefHat size={18} color={colors.success} className="mx-auto mb-0.5" />
               <p style={{ fontSize: 20, fontWeight: 700, color: colors.success, margin: 0 }}>{stats.cookRate}%</p>
-              <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>自炊率</p>
+              <p style={{ fontSize: 11, color: colors.textLight, margin: 0 }}>自炊率</p>
             </div>
             <div className="flex-1 rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.8)' }}>
               <Flame size={18} color={colors.accent} className="mx-auto mb-0.5" />
               <p style={{ fontSize: 20, fontWeight: 700, color: colors.accent, margin: 0 }}>{stats.avgCal}</p>
-              <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>平均kcal/日</p>
+              <p style={{ fontSize: 11, color: colors.textLight, margin: 0 }}>平均kcal/日</p>
             </div>
             <div className="flex-1 rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.8)' }}>
-              <div className="flex justify-center gap-1 mb-0.5">
-                <span style={{ fontSize: 9, color: colors.success }}>🍳{stats.cookCount}</span>
-                <span style={{ fontSize: 9, color: colors.purple }}>🛒{stats.buyCount}</span>
-                <span style={{ fontSize: 9, color: colors.warning }}>🍽{stats.outCount}</span>
+              {/* #1119: 3 枚が横並びの 360px 幅では 1 枚の内側が約 84px。
+                  11px の絵文字+数字 3 組は 2 桁だとちょうど収まる幅なので、はみ出さず折り返せるようにする */}
+              <div className="flex flex-wrap justify-center gap-x-1 mb-0.5">
+                <span style={{ fontSize: 11, color: colors.success, whiteSpace: 'nowrap' }}>🍳{stats.cookCount}</span>
+                <span style={{ fontSize: 11, color: colors.purple, whiteSpace: 'nowrap' }}>🛒{stats.buyCount}</span>
+                <span style={{ fontSize: 11, color: colors.warning, whiteSpace: 'nowrap' }}>🍽{stats.outCount}</span>
               </div>
               <p style={{ fontSize: 14, fontWeight: 600, color: colors.text, margin: 0 }}>{stats.cookCount + stats.buyCount + stats.outCount}食</p>
-              <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>今週の献立</p>
+              <p style={{ fontSize: 11, color: colors.textLight, margin: 0 }}>今週の献立</p>
             </div>
           </div>
         </div>
@@ -147,6 +171,7 @@ export function StatsModal({
         <div className="flex px-4 py-2 gap-2" style={{ borderBottom: `1px solid ${colors.border}` }}>
           <button
             onClick={() => onChangeTab('today')}
+            aria-pressed={weeklySummaryTab === 'today'}
             className="flex-1 py-2 rounded-lg text-sm font-medium transition-all"
             style={{
               background: weeklySummaryTab === 'today' ? colors.accent : 'transparent',
@@ -157,6 +182,7 @@ export function StatsModal({
           </button>
           <button
             onClick={() => onChangeTab('week')}
+            aria-pressed={weeklySummaryTab === 'week'}
             className="flex-1 py-2 rounded-lg text-sm font-medium transition-all"
             style={{
               background: weeklySummaryTab === 'week' ? colors.accent : 'transparent',
@@ -174,9 +200,9 @@ export function StatsModal({
               {/* 今日の日付 */}
               <div className="flex items-center justify-between mb-3">
                 <p style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>
-                  {today.getMonth() + 1}月{today.getDate()}日（{dayNames[today.getDay()]}）の栄養
+                  {formatDateJa(formatLocalDate(today))}（{dayNames[today.getDay()]}）の栄養
                 </p>
-                <span className="px-2 py-0.5 rounded-full text-[10px]" style={{ background: colors.accentLight, color: colors.accent }}>
+                <span className="px-2 py-0.5 rounded-full text-xs" style={{ background: colors.accentLight, color: colors.accent }}>
                   {todayMealCount}食分
                 </span>
               </div>
@@ -229,8 +255,8 @@ export function StatsModal({
                 {/* 栄養豆知識 */}
                 {nutritionTip && (
                   <div className="p-2 rounded-lg flex items-start gap-2" style={{ background: colors.blueLight }}>
-                    <span style={{ fontSize: 10 }}>💡</span>
-                    <p style={{ fontSize: 10, color: colors.blue, lineHeight: 1.4 }}>{nutritionTip}</p>
+                    <span style={{ fontSize: 11 }}>💡</span>
+                    <p style={{ fontSize: 11, color: colors.blue, lineHeight: 1.5 }}>{nutritionTip}</p>
                   </div>
                 )}
               </div>
@@ -254,7 +280,7 @@ export function StatsModal({
                 <p style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>
                   {weekDates[0]?.date.getMonth() + 1}/{weekDates[0]?.date.getDate()} 〜 {weekDates[6]?.date.getMonth() + 1}/{weekDates[6]?.date.getDate()} の平均栄養
                 </p>
-                <span className="px-2 py-0.5 rounded-full text-[10px]" style={{ background: colors.purpleLight, color: colors.purple }}>
+                <span className="px-2 py-0.5 rounded-full text-xs" style={{ background: colors.purpleLight, color: colors.purple }}>
                   {weekNutrition.daysWithMeals}日分
                 </span>
               </div>
@@ -299,7 +325,12 @@ export function StatsModal({
                 ].map(item => (
                   <div key={item.label} className="p-2 rounded-lg text-center" style={{ background: colors.bg }}>
                     <p style={{ fontSize: 16, fontWeight: 600, color: item.color, margin: 0 }}>{item.value}</p>
-                    <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>{item.label}({item.unit}/日)</p>
+                    {/* #1119: 3 列の 1 枚は 360px 幅で内側約 88px。11px だと最長の「カロリー(kcal/日)」は約 85px で、
+                        フォントによっては収まらない。単位は 1 まとまりにして、「日)」だけが次の行に落ちないようにする
+                        (収まらないときは「カロリー」と「(kcal/日)」の 2 行になる。横にははみ出さない) */}
+                    <p style={{ fontSize: 11, color: colors.textLight, margin: 0, lineHeight: 1.3 }}>
+                      {item.label}<span style={{ whiteSpace: 'nowrap' }}>({item.unit}/日)</span>
+                    </p>
                   </div>
                 ))}
               </div>
@@ -308,5 +339,6 @@ export function StatsModal({
         </div>
       </div>
     </motion.div>
+    </FocusTrap>
   );
 }

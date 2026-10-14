@@ -69,7 +69,8 @@ describe("createLogger – フォーマット検証", () => {
   });
 
   it("withUser() が user_id を含める", async () => {
-    const userId = "user-uuid-1234";
+    // #1171: app_logs.user_id は uuid 列なので、uuid の形をした値だけが user_id として保存される
+    const userId = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
     const logger = createLogger("test-route").withUser(userId);
     logger.error("ユーザーエラー", new Error("user error"));
 
@@ -78,6 +79,19 @@ describe("createLogger – フォーマット検証", () => {
     const [insertArg] = mockInsert.mock.calls[0];
     expect(insertArg.user_id).toBe(userId);
     expect(insertArg.error_message).toBe("user error");
+  });
+
+  it("withUser() に uuid でない値を渡しても、user_id を省略してログ自体は保存する (#1171)", async () => {
+    // uuid 列 + auth.users への外部キーなので、"unknown" のような値を入れると insert が失敗してログごと捨てられていた
+    const logger = createLogger("test-route").withUser("unknown");
+    logger.error("ユーザー不明のエラー", new Error("no user"));
+
+    await vi.waitFor(() => expect(mockInsert).toHaveBeenCalledTimes(1));
+
+    const [insertArg] = mockInsert.mock.calls[0];
+    expect(insertArg.user_id).toBeUndefined();
+    expect(insertArg.message).toBe("ユーザー不明のエラー");
+    expect(insertArg.error_message).toBe("no user");
   });
 
   it("metadata が undefined でも INSERT が失敗しない", async () => {
@@ -113,6 +127,99 @@ describe("createLogger – フォーマット検証", () => {
     const [insertArg] = mockInsert.mock.calls[0];
     expect(insertArg.error_message).toBe("string error value");
     expect(insertArg.error_stack).toBeUndefined();
+  });
+});
+
+// ── #1171: app_logs に保存する前の秘密情報マスキング ───────────────────────────
+// 秘密情報に見える文字列は、リポジトリのシークレットスキャンに誤検知されないよう実行時に組み立てる
+const FAKE_JWT = ["eyJ", "hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9", ".", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", ".", "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"].join("");
+const FAKE_OPENAI_KEY = ["sk-", "proj-", "abcdefghijklmnopqrstuvwxyz0123456789ABCD"].join("");
+
+describe("createLogger – app_logs 保存前の秘密情報マスキング (#1171)", () => {
+  beforeEach(() => {
+    mockInsert.mockClear();
+    mockFrom.mockClear();
+    mockFrom.mockReturnValue({ insert: mockInsert });
+  });
+
+  it("error(): error_message と error_stack に混入したトークンとパスワードをマスクして保存する", async () => {
+    const logger = createLogger("x");
+    logger.error("m", new Error(`boom Bearer ${FAKE_JWT} password=hunter2`));
+
+    await vi.waitFor(() => expect(mockInsert).toHaveBeenCalledTimes(1));
+
+    const [insertArg] = mockInsert.mock.calls[0];
+    expect(insertArg.error_message).toBe("boom Bearer *** password=***");
+    expect(insertArg.error_message).not.toContain("hunter2");
+    // スタックの 1 行目にはエラーメッセージが入る
+    expect(typeof insertArg.error_stack).toBe("string");
+    expect(insertArg.error_stack).not.toContain("hunter2");
+    expect(insertArg.error_stack).not.toContain("eyJ");
+    expect(insertArg.error_stack).toContain("boom Bearer *** password=***");
+  });
+
+  it("error(): message の中の秘密情報もマスクする", async () => {
+    createLogger("x").error(`DB 接続に失敗: postgresql://postgres:hunter2@db.example.com:5432/postgres`, new Error("connect failed"));
+
+    await vi.waitFor(() => expect(mockInsert).toHaveBeenCalledTimes(1));
+
+    const [insertArg] = mockInsert.mock.calls[0];
+    expect(insertArg.message).toBe("DB 接続に失敗: postgresql://postgres:***@db.example.com:5432/postgres");
+  });
+
+  it("info / warn: message と、metadata の文字列の値 (キー名が無関係でも) をマスクする", async () => {
+    const logger = createLogger("x");
+    logger.warn(`upstream rejected ${FAKE_OPENAI_KEY}`, { error: `Incorrect API key: ${FAKE_OPENAI_KEY}`, status: 401 });
+
+    await vi.waitFor(() => expect(mockInsert).toHaveBeenCalledTimes(1));
+
+    const [insertArg] = mockInsert.mock.calls[0];
+    expect(insertArg.message).toBe("upstream rejected ***");
+    expect(insertArg.metadata).toEqual({ error: "Incorrect API key: ***", status: 401 });
+  });
+
+  it("error(): metadata の文字列の値の中のキーもマスクする", async () => {
+    createLogger("x").error("m", new Error("e"), { error: `... ${FAKE_OPENAI_KEY}`, nested: { list: [`password=hunter2`] } });
+
+    await vi.waitFor(() => expect(mockInsert).toHaveBeenCalledTimes(1));
+
+    const [insertArg] = mockInsert.mock.calls[0];
+    expect(insertArg.metadata).toEqual({ error: "... ***", nested: { list: ["password=***"] } });
+  });
+
+  it("withUser().error(): ユーザー付きの経路でもマスクする。user_id はそのまま残る", async () => {
+    const userId = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
+    createLogger("x").withUser(userId).error("m", new Error("token=abc123 failed"), { note: "ok" });
+
+    await vi.waitFor(() => expect(mockInsert).toHaveBeenCalledTimes(1));
+
+    const [insertArg] = mockInsert.mock.calls[0];
+    expect(insertArg.user_id).toBe(userId);
+    expect(insertArg.error_message).toBe("token=*** failed");
+    expect(insertArg.metadata).toEqual({ note: "ok" });
+  });
+
+  it("極端に長い message / error_message / error_stack は切り詰めて保存する", async () => {
+    createLogger("x").error("m".repeat(10_000), new Error("e".repeat(10_000)));
+
+    await vi.waitFor(() => expect(mockInsert).toHaveBeenCalledTimes(1));
+
+    const [insertArg] = mockInsert.mock.calls[0];
+    expect(insertArg.message.length).toBeLessThan(2100);
+    expect(insertArg.error_message.length).toBeLessThan(2100);
+    expect(insertArg.error_stack.length).toBeLessThan(8100);
+    expect(insertArg.message.endsWith("…[truncated]")).toBe(true);
+  });
+
+  it("insert する行は app_logs の列だけで構成される", async () => {
+    createLogger("x", "req_1").error("m", new Error("e"), { a: 1 });
+
+    await vi.waitFor(() => expect(mockInsert).toHaveBeenCalledTimes(1));
+
+    const [insertArg] = mockInsert.mock.calls[0];
+    const columns = ["error_message", "error_stack", "function_name", "level", "message", "metadata", "request_id", "source", "user_id"];
+    for (const key of Object.keys(insertArg)) expect(columns).toContain(key);
+    expect(insertArg).toMatchObject({ level: "error", source: "api-route", function_name: "x", request_id: "req_1", message: "m" });
   });
 });
 

@@ -9,7 +9,7 @@
  *   5. 既存活動ユーザー (existing_user_auto_skip) — non-sandbox meal あり
  *   6. onboarding 未完 (onboarding_not_completed)
  *
- * Requires: SUPABASE_INTEGRATION_TEST=1, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, API_BASE_URL
+ * Requires: SUPABASE_INTEGRATION_TEST=1, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, INTEGRATION_BASE_URL (or API_BASE_URL)
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -22,6 +22,7 @@ import {
 } from '../helpers/supabase';
 
 const BASE_URL =
+  process.env.INTEGRATION_BASE_URL ??
   process.env.API_BASE_URL ??
   process.env.PLAYWRIGHT_BASE_URL ??
   'http://localhost:3000';
@@ -97,16 +98,16 @@ describe.skipIf(!shouldRunIntegration())(
       const client = adminClient();
 
       // Insert a non-sandbox meal for this user
+      // (meals に dish_name 列は無い。必須列は user_id / eaten_at / meal_type)
       const { error: mealError } = await client.from('meals').insert({
         user_id: user.id,
         eaten_at: new Date().toISOString().split('T')[0],
         meal_type: 'lunch',
-        dish_name: 'テスト食事',
         is_sandbox: false,
       });
-      if (mealError) {
-        console.warn('meal insert error (may be missing columns):', mealError.message);
-      }
+      // 前提データが入らないと should_show=true (eligible) になり、原因が分かりにくい失敗になる。
+      // INSERT の失敗はここで落とす。
+      expect(mealError).toBeNull();
 
       const { status, body } = await getStatus(user.accessToken);
       expect(status).toBe(200);

@@ -13,37 +13,23 @@ import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from 
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
 import { requireAuth } from "../_shared/auth.ts";
+import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
+import { aiDailyLimitMessage } from "../_shared/ai-daily-limit.ts";
+import { getCorsHeaders, withCors } from "../_shared/cors.ts";
+import { aggregateIngredientOccurrences, InputIngredient } from "../_shared/shopping-list-aggregation.ts";
+import { verifyRequestOwnership } from "../_shared/request-ownership.ts";
+import { replaceActiveShoppingList } from "../_shared/shopping-list-replace.ts";
+import { aiConsentDeniedResponse, checkAiConsent } from "../_shared/ai-consent-guard.ts";
+import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
 
-// ============================================
-// CORS
-// ============================================
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
+// CORS ヘッダーは許可したオリジン (ALLOWED_ORIGINS) にだけ、リクエストごとに getCorsHeaders(req) で作る (#1167)。
 // 認証ヘルパー（_shared/auth.ts）が返す Response には CORS ヘッダーが付与されていないため、
-// ブラウザからの呼び出し（functions.invoke）でも CORS エラーにならないようここで付け直す。
-function withCors(res: Response): Response {
-  const headers = new Headers(res.headers);
-  for (const [key, value] of Object.entries(corsHeaders)) {
-    headers.set(key, value);
-  }
-  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
-}
+// ブラウザからの呼び出し（functions.invoke）でも CORS エラーにならないよう withCors で付け直す。
 
 // ============================================
 // 型定義
 // ============================================
-
-interface InputIngredient {
-  name: string;
-  amount?: string | null;
-  count: number;
-}
+// InputIngredient は _shared/shopping-list-aggregation.ts からimport（#1046 F5-13）
 
 interface QuantityVariant {
   display: string;
@@ -67,17 +53,21 @@ interface Progress {
 // ============================================
 // 進捗更新ヘルパー
 // ============================================
+// service role（RLS の対象外）で更新するため、ハンドラでの所有権検証（#1240）に加えて、
+// 更新条件にも user_id を入れる（多層防御）。
 
 async function updateProgress(
   supabase: SupabaseClient,
   requestId: string,
+  userId: string,
   progress: Progress
 ): Promise<void> {
   console.log(`[progress] ${progress.phase}: ${progress.percentage}% - ${progress.message}`);
   const { error } = await supabase
     .from("shopping_list_requests")
     .update({ progress, updated_at: new Date().toISOString() })
-    .eq("id", requestId);
+    .eq("id", requestId)
+    .eq("user_id", userId);
   if (error) {
     console.error(`[progress] Failed to update progress:`, error);
   }
@@ -86,6 +76,7 @@ async function updateProgress(
 async function markCompleted(
   supabase: SupabaseClient,
   requestId: string,
+  userId: string,
   shoppingListId: string,
   stats: { inputCount: number; outputCount: number; mergedCount: number; totalServings?: number }
 ): Promise<void> {
@@ -100,7 +91,8 @@ async function markCompleted(
       result: { stats },
       updated_at: new Date().toISOString(),
     })
-    .eq("id", requestId);
+    .eq("id", requestId)
+    .eq("user_id", userId);
   if (error) {
     console.error(`[markCompleted] Failed to mark completed:`, error);
   } else {
@@ -111,6 +103,7 @@ async function markCompleted(
 async function markFailed(
   supabase: SupabaseClient,
   requestId: string,
+  userId: string,
   error: string
 ): Promise<void> {
   console.log(`[markFailed] Starting - requestId: ${requestId}, error: ${error}`);
@@ -122,7 +115,8 @@ async function markFailed(
       result: { error },
       updated_at: new Date().toISOString(),
     })
-    .eq("id", requestId);
+    .eq("id", requestId)
+    .eq("user_id", userId);
   if (dbError) {
     console.error(`[markFailed] Failed to mark failed:`, dbError);
   } else {
@@ -135,10 +129,17 @@ async function markFailed(
 // ============================================
 
 function buildPrompt(ingredients: InputIngredient[]): string {
+  // #1046 round-2 Warning: InputIngredient.count は「この材料が何回の食事出現から
+  // 合算されたか」という集計用の内部カウントであり、amount（確定合算済みの総量）に
+  // 掛け合わせる係数ではない。しかしJSONをそのまま渡すとLLMが amount×count と
+  // 誤読し購入量を水増しする恐れがあるため、count はLLM入力から除去し
+  // name/amount のみを渡す（count はプロンプト生成に不要）。
+  const promptIngredients = ingredients.map(({ name, amount }) => ({ name, amount }));
+
   return `あなたは買い物リストの最適化AIです。スーパーで買い物しやすいリストを作成します。
 
-以下の材料リストを整理してください：
-${JSON.stringify(ingredients, null, 2)}
+以下の材料リストを整理してください（amountは既に合算済みの確定総量です。掛け算や倍量は不要です）：
+${JSON.stringify(promptIngredients, null, 2)}
 
 【タスク1: 表記ゆれの統一】
 同じ材料の異なる表記を統一してマージ
@@ -325,11 +326,13 @@ interface ServingsConfig {
   };
 }
 
-// 日付から曜日を取得 (monday, tuesday, ...)
+// 日付 (YYYY-MM-DD の暦日) から曜日を取得 (monday, tuesday, ...)
+// new Date("YYYY-MM-DD") は UTC の 0 時になるので、曜日も UTC で読む (#1433)。
+// getDay() (実行環境のローカル時刻) だと、UTC より西のタイムゾーンでは前日の曜日になる。
 function getDayOfWeek(dateStr: string): string {
   const date = new Date(dateStr);
   const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  return days[date.getDay()];
+  return days[date.getUTCDay()];
 }
 
 // servingsConfigから人数を取得
@@ -387,7 +390,7 @@ async function processRegeneration(
       supabaseClient: supabase,
     }, async () => {
       // Phase 1: 材料抽出
-      await updateProgress(supabase, requestId, {
+      await updateProgress(supabase, requestId, userId, {
         phase: "extracting",
         message: `献立から材料を抽出中...（${startDate}〜${endDate}）`,
         percentage: 10,
@@ -429,7 +432,10 @@ async function processRegeneration(
     if (mealsError) throw mealsError;
 
     // 材料を抽出（人数倍率適用）
-    const ingredientsMap = new Map<string, InputIngredient>();
+    // #1046 F5-13: 各出現を { name, amount_g } のフラットな配列として集め、
+    // 名前だけをキーに amount_g を確定合算(aggregateIngredientOccurrences)する。
+    // 合算(200g+300g→500g)を LLM のプロンプト任せにしない。
+    const ingredientOccurrences: Array<{ name: string; amount_g: number }> = [];
     let totalMeals = 0; // 食事数（人数ではなく食事の回数）
 
     (dailyMeals || []).forEach((dailyMeal: any) => {
@@ -446,54 +452,22 @@ async function processRegeneration(
         if (servings === 0) return;
 
         totalMeals += 1; // 食事数をカウント（人数ではない）
-        
+
         if (meal.dishes && Array.isArray(meal.dishes)) {
           meal.dishes.forEach((dish: any) => {
             if (dish.ingredients && Array.isArray(dish.ingredients)) {
               dish.ingredients.forEach((ing: any) => {
                 const parsed = parseIngredientAmount(ing);
-                if (!parsed) return;
-                
-                const { name, amount_g } = parsed;
-                const scaledAmount = amount_g * servings;
-                const amountStr = scaledAmount > 0 ? `${Math.round(scaledAmount)}g` : null;
-
-                if (name) {
-                  const key = `${name}|${amountStr || ""}`;
-                  const existing = ingredientsMap.get(key);
-                  if (existing) {
-                    existing.count++;
-                  } else {
-                    ingredientsMap.set(key, {
-                      name: name.trim(),
-                      amount: amountStr,
-                      count: 1,
-                    });
-                  }
-                }
+                if (!parsed || !parsed.name) return;
+                ingredientOccurrences.push({ name: parsed.name, amount_g: parsed.amount_g * servings });
               });
             }
           });
         } else if (meal.ingredients && Array.isArray(meal.ingredients)) {
           meal.ingredients.forEach((ingredient: string) => {
             const parsed = parseIngredientAmount(ingredient);
-            if (!parsed) return;
-            
-            const { name, amount_g } = parsed;
-            const scaledAmount = amount_g * servings;
-            const amountStr = scaledAmount > 0 ? `${Math.round(scaledAmount)}g` : null;
-            const key = `${name}|${amountStr || ""}`;
-            
-            const existing = ingredientsMap.get(key);
-            if (existing) {
-              existing.count++;
-            } else {
-              ingredientsMap.set(key, {
-                name: name.trim(),
-                amount: amountStr,
-                count: 1,
-              });
-            }
+            if (!parsed || !parsed.name) return;
+            ingredientOccurrences.push({ name: parsed.name, amount_g: parsed.amount_g * servings });
           });
         }
       });
@@ -501,35 +475,22 @@ async function processRegeneration(
 
     console.log(`Total meals calculated: ${totalMeals}`);
 
-    const rawIngredients = Array.from(ingredientsMap.values());
+    const rawIngredients = aggregateIngredientOccurrences(ingredientOccurrences);
 
-    // 既存のアクティブな買い物リストをアーカイブ
-    await supabase
-      .from("shopping_lists")
-      .update({ status: "archived", updated_at: new Date().toISOString() })
-      .eq("user_id", userId)
-      .eq("status", "active");
-
-    // 新しい買い物リストを作成
-    const { data: newShoppingList, error: listError } = await supabase
-      .from("shopping_lists")
-      .insert({
-        user_id: userId,
-        start_date: startDate,
-        end_date: endDate,
-        status: "active",
-        servings_config: effectiveServingsConfig,
-        title: `${startDate}〜${endDate}の買い物リスト`,
-      })
-      .select("id")
-      .single();
-
-    if (listError) throw listError;
-    const shoppingListId = newShoppingList.id;
+    // 既存のアクティブな買い物リストをアーカイブして、新しい買い物リストを作成する。
+    // アーカイブと INSERT は DB 関数 replace_active_shopping_list の 1 トランザクションで行う。
+    // ユーザーごとの排他ロックを取るので、同時に「レシピから追加」(add-recipe) がリストを作っても、
+    // INSERT が一意制約違反 (23505) で失敗しない (#1312)。失敗したらアーカイブも取り消される。
+    const shoppingListId = await replaceActiveShoppingList(supabase, {
+      userId,
+      startDate,
+      endDate,
+      servingsConfig: effectiveServingsConfig,
+    });
 
     if (rawIngredients.length === 0) {
       // 材料がない場合は空のリストで完了
-      await markCompleted(supabase, requestId, shoppingListId, {
+      await markCompleted(supabase, requestId, userId, shoppingListId, {
         inputCount: 0,
         outputCount: 0,
         mergedCount: 0,
@@ -539,7 +500,7 @@ async function processRegeneration(
     }
 
     // Phase 2: AI正規化
-    await updateProgress(supabase, requestId, {
+    await updateProgress(supabase, requestId, userId, {
       phase: "normalizing",
       message: "AIが材料を整理中...",
       percentage: 30,
@@ -550,7 +511,7 @@ async function processRegeneration(
     const rawItems = await callOpenAI(prompt);
 
     // Phase 3: バリデーション
-    await updateProgress(supabase, requestId, {
+    await updateProgress(supabase, requestId, userId, {
       phase: "validating",
       message: "整合性チェック中...",
       percentage: 60,
@@ -559,7 +520,7 @@ async function processRegeneration(
     const validatedItems = validateItems(rawItems, inputNames);
 
     // Phase 4: カテゴリ分類・保存準備
-    await updateProgress(supabase, requestId, {
+    await updateProgress(supabase, requestId, userId, {
       phase: "categorizing",
       message: "カテゴリ分類中...",
       percentage: 70,
@@ -578,7 +539,7 @@ async function processRegeneration(
     }));
 
     // Phase 5: 保存
-    await updateProgress(supabase, requestId, {
+    await updateProgress(supabase, requestId, userId, {
       phase: "saving",
       message: "保存中...",
       percentage: 85,
@@ -601,7 +562,7 @@ async function processRegeneration(
       };
 
       console.log(`[processRegeneration] About to call markCompleted...`);
-      await markCompleted(supabase, requestId, shoppingListId, stats);
+      await markCompleted(supabase, requestId, userId, shoppingListId, stats);
       console.log(`[processRegeneration] markCompleted finished, exiting withOpenAIUsageContext`);
     }); // withOpenAIUsageContext end
     console.log(`[processRegeneration] withOpenAIUsageContext completed successfully`);
@@ -615,6 +576,7 @@ async function processRegeneration(
     await markFailed(
       supabase,
       requestId,
+      userId,
       error instanceof Error ? error.message : "Unknown error"
     );
   }
@@ -625,6 +587,8 @@ async function processRegeneration(
 // ============================================
 
 Deno.serve(async (req: Request) => {
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -643,6 +607,9 @@ Deno.serve(async (req: Request) => {
     const isTrustedInternalCall = serviceRoleKey.length > 0 && accessToken === serviceRoleKey;
 
     let userId: string;
+    // #1177 ユーザー自身の JWT で直接呼ばれたときの利用者 ID (この経路だけ、AI へ送る直前に利用回数を記録する)。
+    // service role (Next.js の POST /api/shopping-list/regenerate) の呼び出しは null のまま (Next.js が記録済み)
+    let directJwtUserId: string | null = null;
 
     if (isTrustedInternalCall) {
       if (!bodyUserId || typeof bodyUserId !== "string") {
@@ -657,7 +624,7 @@ Deno.serve(async (req: Request) => {
       userId = bodyUserId;
     } else {
       const authResult = await requireAuth(req);
-      if (authResult instanceof Response) return withCors(authResult);
+      if (authResult instanceof Response) return withCors(authResult, req);
 
       if (bodyUserId && bodyUserId !== authResult.userId) {
         return new Response(
@@ -669,6 +636,7 @@ Deno.serve(async (req: Request) => {
         );
       }
       userId = authResult.userId;
+      directJwtUserId = authResult.userId;
     }
 
     if (!requestId || !startDate || !endDate) {
@@ -685,6 +653,62 @@ Deno.serve(async (req: Request) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // requestId の所有権検証（#1240 IDOR対策）: 以降の書き込みは service role（RLS の対象外）で行うため、
+    // 他人の shopping_list_requests 行の id を渡されると、その行の status / progress / shopping_list_id を
+    // 書き換えてしまう。書き込みを始める前に、行が userId のものかを確かめる。
+    // 他人の行と存在しない行は同じ 404 にする（他人の requestId が実在するかを漏らさない。generate-menu-v4 と同じ）。
+    // src/app/api/shopping-list/regenerate/route.ts は、自分の user_id で行を作ってから呼ぶので、この確認を通る。
+    const ownership = await verifyRequestOwnership(supabase, "shopping_list_requests", requestId, userId);
+    if (!ownership.ok) {
+      if (ownership.reason === "lookup_failed") {
+        createLogger("regenerate-shopping-list-v2").withUser(userId).error(
+          "shopping_list_requests の所有権確認に失敗しました",
+          new Error(ownership.message),
+          { requestId },
+        );
+        return new Response(
+          JSON.stringify({ error: "Internal Server Error" }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+      createLogger("regenerate-shopping-list-v2").withUser(userId).warn(
+        "本人のものではない requestId での呼び出しを拒否しました",
+        { requestId: String(requestId), reason: ownership.reason },
+      );
+      return new Response(
+        JSON.stringify({ error: "Not Found" }),
+        {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+    // 利用者の JWT で直接呼ばれた場合も、Next.js (src/app/api/shopping-list/regenerate) から呼ばれた場合も、ここで止める。
+    // リクエストの行は失敗にしておく (画面の進み具合の確認が止まったままにならないように)。
+    // result.error は画面がそのまま出すので、コードではなく人向けの文を書く (画面はこの文を見分けて同意画面へ案内する)
+    const aiConsent = await checkAiConsent(supabase, userId);
+    if (!aiConsent.allowed) {
+      await markFailed(supabase, requestId, userId, aiConsentDeniedStoredMessage(aiConsent));
+      return aiConsentDeniedResponse(aiConsent, corsHeaders);
+    }
+
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・所有の確認・同意の判定のあと) に数える
+    // (未同意で止めた呼び出しは数えない)。ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js が数え済みの印があれば数えない。
+    // 判定に失敗したときは止めない)。上限に達していれば、作り直しを始めずにリクエストの行を失敗にして
+    // (result.error は画面がそのまま出す人向けの文)、429 AI_DAILY_LIMIT
+    if (directJwtUserId) {
+      const aiUsage = await consumeEdgeAiUsage(req, directJwtUserId, "shopping_list");
+      if (!aiUsage.allowed) {
+        await markFailed(supabase, requestId, userId, aiDailyLimitMessage(aiUsage.limit));
+        return aiDailyLimitEdgeResponse(aiUsage, corsHeaders);
+      }
+    }
 
     // 非同期で処理開始（即座にレスポンス返す。レスポンス後も処理が打ち切られないようwaitUntilに委ねる）
     const backgroundTask = processRegeneration(supabase, requestId, userId, startDate, endDate, servingsConfig || null);

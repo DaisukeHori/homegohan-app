@@ -8,6 +8,7 @@ tags: ["handson-tour", "P2"]
 #   - /handson-tour に deep link でアクセスしても tour-step-0 は表示されない
 #   - home-screen に即リダイレクトされる
 # 前提: E2E_TOUR_ADMIN_EMAIL / E2E_TOUR_ADMIN_PASSWORD に admin role ユーザーが設定済み
+#       (オンボーディング完了済み。ログイン後は他のユーザーと同じ振り分けでホームに着く)
 # 備考: shouldShowHandsonTour() の condition D (admin role bypass) を確認するシナリオ
 
 # admin role でログイン
@@ -33,26 +34,12 @@ tags: ["handson-tour", "P2"]
 - tapOn:
     id: "login-button"
 
-# admin は home-screen または admin console に遷移
-- extendedWaitUntil:
-    anyOf:
-      - visible:
-          id: "home-screen"
-      - visible:
-          text: "Admin Console"
-    timeout: 15000
-
-# admin console にいる場合は home に戻る
-- runFlow:
-    when:
-      visible:
-        text: "Admin Console"
-    file: "../_shared/back-from-admin.yaml"
-
+# admin も他のユーザーと同じ振り分けで home-screen に遷移する
+# (#1122: アプリの管理者画面は廃止したので、admin だけ別の画面に送られることはない)
 - extendedWaitUntil:
     visible:
       id: "home-screen"
-    timeout: 10000
+    timeout: 15000
 
 # tour-step-0 は表示されない
 - assertNotVisible:

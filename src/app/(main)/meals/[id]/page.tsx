@@ -6,6 +6,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import type { CatalogProductSummary } from "@/types/catalog";
 import { extractCatalogProductFromMetadata } from "@/lib/catalog-products";
+import { parseLocalDate } from "@homegohan/shared";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   ChefHat, Store, UtensilsCrossed, Zap, FastForward,
@@ -58,6 +59,18 @@ interface DishDetail {
   ingredients?: string;
 }
 
+// UX2-30: 「1人前」ハードコード解消のため、人数設定を取得して実値を算出する
+interface MealServings {
+  breakfast?: number;
+  lunch?: number;
+  dinner?: number;
+}
+interface ServingsConfig {
+  default: number;
+  byDayMeal: Partial<Record<string, MealServings>>;
+}
+const DAY_OF_WEEK_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
+
 interface PlannedMealDetail {
   id: string;
   dailyMealId: string;
@@ -89,6 +102,25 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
   const [loading, setLoading] = useState(true);
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  // UX2-30: 実際の人数設定（取得できるまでは null。取得できない場合は「1人前」を出さない）
+  const [servingsConfig, setServingsConfig] = useState<ServingsConfig | null>(null);
+
+  useEffect(() => {
+    const fetchServings = async () => {
+      try {
+        const res = await fetch('/api/profile', { cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.servings_config) {
+            setServingsConfig(data.servings_config as ServingsConfig);
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to fetch servings config:', e);
+      }
+    };
+    void fetchServings();
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -223,6 +255,15 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
     weekday: 'short',
   });
 
+  // UX2-30: 曜日別・食事別の人数設定があればそれを、無ければ既定人数を使う。取得できなければ表示しない
+  const resolvedServings = (() => {
+    if (!servingsConfig || !meal.dayDate) return null;
+    if (meal.mealType !== 'breakfast' && meal.mealType !== 'lunch' && meal.mealType !== 'dinner') return null;
+    const dow = DAY_OF_WEEK_NAMES[parseLocalDate(meal.dayDate).getDay()];
+    const perMeal = servingsConfig.byDayMeal?.[dow]?.[meal.mealType];
+    return perMeal ?? servingsConfig.default ?? null;
+  })();
+
   return (
     <div className="min-h-screen pb-20" style={{ background: colors.bg }}>
       
@@ -266,7 +307,8 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
                   exit={{ opacity: 0, scale: 0.9, y: 10 }}
                   className="absolute right-0 top-12 w-44 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-50"
                 >
-                  <Link href={`/menus/weekly`}>
+                  {/* UX2-31: 献立表トップに飛ぶだけだったのを、該当日・該当献立を直接開くように変更 */}
+                  <Link href={`/menus/weekly?date=${meal.dayDate}&meal=${meal.id}`}>
                     <button className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-bold text-gray-700 flex items-center gap-2">
                       <Edit size={16} />
                       編集する
@@ -410,10 +452,13 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
                   <span className="text-sm font-medium" style={{ color: colors.blue }}>{meal.cookingTimeMinutes}分</span>
                 </div>
               )}
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: colors.successLight }}>
-                <Users size={16} color={colors.success} />
-                <span className="text-sm font-medium" style={{ color: colors.success }}>1人前</span>
-              </div>
+              {/* UX2-30: 実際の人数設定が取得できた場合のみ表示する（不明な値の「1人前」固定表示をやめた） */}
+              {resolvedServings != null && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: colors.successLight }}>
+                  <Users size={16} color={colors.success} />
+                  <span className="text-sm font-medium" style={{ color: colors.success }}>{resolvedServings}人前</span>
+                </div>
+              )}
             </div>
           </div>
         )}

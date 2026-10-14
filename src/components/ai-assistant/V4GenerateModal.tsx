@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useCallback, useMemo, useEffect } from "react";
+import { addDaysToDate } from "@/lib/date-utils";
+import { menuGenerationRangeEndMax, menuGenerationRangeStartMax, menuGenerationSingleDayMax } from "@homegohan/shared";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Sparkles, Calendar, Target, RefreshCw,
@@ -21,6 +23,8 @@ import {
 import {
   MOCK_MENU_RESPONSE,
 } from "@homegohan/handson-tour-shared";
+import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
+import { useAiConsent } from "@/hooks/useAiConsent";
 
 // ============================================
 // Types
@@ -32,6 +36,57 @@ type GenerateMode = 'empty' | 'ai_only' | 'selected' | 'range' | 'single_day';
 // NOTE: v4_include_existing is intentionally NOT persisted – it is a
 // destructive flag that must default to false every time the modal opens.
 const STORAGE_KEY_RANGE_DAYS = 'v4_range_days';
+
+/**
+ * 「1日だけ」モードで選べる日付の上限 (今日から 1 ヶ月先。画面の説明「今日から1ヶ月先まで」と同じ)。
+ * 値はモバイルの「1日だけ」の欄 (確定のときの上限) と共有する (@homegohan/shared の menu-generation-range。#1524)
+ */
+export const generateSingleDayMax: (today: string) => string = menuGenerationSingleDayMax;
+
+/**
+ * 「期間を指定」の開始日の上限 (今日から 1 ヶ月先 = MENU_GENERATION_RANGE_START_MAX_DAYS_AHEAD 日先。#1463)。
+ * 以前は上限が無く、遠い未来の日付を選ぶと、端末の slot-builder とサーバーの行事の検索 (getEventsForRange) が 1 日ずつ大量に回った。
+ * 上限の値はモバイルの画面・サーバー (POST /api/ai/menu/v4/generate・/v5/generate) と共有する (@homegohan/shared の menu-generation-range。#1482)
+ */
+export const generateRangeStartMax: (today: string) => string = menuGenerationRangeStartMax;
+
+/**
+ * 「期間を指定」の終了日の上限 (開始日を含む MENU_GENERATION_RANGE_MAX_DAYS 日 = 画面の説明「最大31日」の最後の日)。
+ * 開始日が日付でない (空欄など) ときは上限を付けない (undefined)
+ */
+export const generateRangeEndMax: (start: string) => string | undefined = menuGenerationRangeEndMax;
+
+/** 日付 value を下限 min・上限 max (無ければ上限なし) に収める。YYYY-MM-DD どうしは文字列の大小が日付の前後と同じ */
+function clampDay(value: string, min: string, max: string | undefined): string {
+  if (value < min) return min;
+  return max !== undefined && value > max ? max : value;
+}
+
+/** 「期間を指定」で生成の対象を作れなかったとき (slot-builder が Error 以外を投げたとき) の文 (モバイルの V4GenerateModal と同じ) */
+export const GENERATE_RANGE_INVALID_MESSAGE = '期間が正しくありません';
+
+/** 保存した期間が無いときの「期間を指定」の終了日の既定の日数 (今日から何日後まで。今日を含めて 1 週間) */
+const DEFAULT_RANGE_DAYS_AFTER_TODAY = 6;
+
+/**
+ * 保存した期間が無いときの「期間を指定」の終了日の既定 (開始日は今日)。
+ * 表示中の週の終わりが今日以降ならその日、過ぎていれば今日から 1 週間。どちらも期間の上限 (今日を含む最大31日) に収める (#1498)。
+ * 以前は上限をかけず、先の週 (今日 + 30 日より先) を表示して開くと、範囲で生成を押しても slot-builder が投げて何も起きなかった
+ */
+export function defaultRangeEnd(today: string, weekEndDate: string): string {
+  const end = weekEndDate >= today ? weekEndDate : addDaysToDate(today, DEFAULT_RANGE_DAYS_AFTER_TODAY);
+  return clampDay(end, today, generateRangeEndMax(today));
+}
+
+/**
+ * 端末の暦での今日 (YYYY-MM-DD)。このモーダルの「今日」(選べる日付の下限) は以前から端末のローカル時刻で決めている。
+ * 「1日だけ」の初期値も同じ今日にそろえる (#1433。以前の初期値は toISOString の UTC の暦日で、JST の 0:00〜8:59 は前日になり、
+ * 下限 (今日) より前の日付が選ばれた状態で開いていた)。
+ */
+function getDeviceTodayStr(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
 
 // ============================================
 // Sandbox types (family/09 §07 §6.2)
@@ -360,20 +415,14 @@ function V4GenerateModalNormal({
   const [includeExisting, setIncludeExisting] = useState(false);
 
   // Single day mode state
-  const [singleDayDate, setSingleDayDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [singleDayDate, setSingleDayDate] = useState(() => getDeviceTodayStr());
   
   // 今日の日付を取得（他のhooksより先に定義）
-  const todayStr = useMemo(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  }, []);
+  const todayStr = useMemo(() => getDeviceTodayStr(), []);
 
-  // Helper: 日付を加算
-  const addDays = useCallback((dateStr: string, days: number): string => {
-    const date = new Date(dateStr);
-    date.setDate(date.getDate() + days);
-    return date.toISOString().split('T')[0];
-  }, []);
+  // Helper: 日付を加算 (暦の計算だけで行う。#1433。以前の new Date(dateStr) + setDate (ローカル時刻) + toISOString (UTC) は、
+  // 端末のタイムゾーンや夏時間で結果が変わった)
+  const addDays = useCallback((dateStr: string, days: number): string => addDaysToDate(dateStr, days), []);
 
   // Helper: 日付の差（日数）を計算
   const daysBetween = useCallback((startStr: string, endStr: string): number => {
@@ -389,9 +438,9 @@ function V4GenerateModalNormal({
     if (savedRangeDays) {
       try {
         const { startDays, endDays } = JSON.parse(savedRangeDays);
-        // 今日を基準に日付を計算
-        const newStart = addDays(todayStr, startDays);
-        const newEnd = addDays(todayStr, endDays);
+        // 今日を基準に日付を計算し、選べる範囲 (開始日は今日〜1ヶ月先・期間は最大31日) に収める (#1463)
+        const newStart = clampDay(addDays(todayStr, startDays), todayStr, generateRangeStartMax(todayStr));
+        const newEnd = clampDay(addDays(todayStr, endDays), newStart, generateRangeEndMax(newStart));
         setRangeStart(newStart);
         setRangeEnd(newEnd);
         return;
@@ -400,9 +449,10 @@ function V4GenerateModalNormal({
       }
     }
 
-    // デフォルト: 今日から週末まで
+    // デフォルト: 今日から週末まで。表示中の週が先の週 (今日 + 30 日より先) でも、期間の上限 (開始日を含む最大31日) に収める
+    // (#1498。以前は上限が無く、範囲で生成を押すと slot-builder が投げて何も起きなかった。モバイルは #1482 で同じ形に直した)
     setRangeStart(todayStr);
-    setRangeEnd(weekEndDate >= todayStr ? weekEndDate : addDays(todayStr, 6));
+    setRangeEnd(defaultRangeEnd(todayStr, weekEndDate));
   }, [todayStr, weekEndDate, addDays]);
 
   // rangeStartが変更されたら日数を保存
@@ -422,20 +472,26 @@ function V4GenerateModalNormal({
     }
   }, [isOpen]);
 
-  // rangeStart/rangeEndのsetterをラップして、過去日付の場合は今日に調整
-  // 開始日が終了日より後になった場合は終了日を開始日に合わせる
+  // 期間の入力欄の上限 (#1463)。開始日は今日から MENU_GENERATION_RANGE_START_MAX_DAYS_AHEAD 日先まで、
+  // 終了日は開始日を含む MENU_GENERATION_RANGE_MAX_DAYS 日の最後の日まで
+  const rangeStartMax = useMemo(() => generateRangeStartMax(todayStr), [todayStr]);
+  const rangeEndMax = generateRangeEndMax(rangeStart);
+
+  // rangeStart/rangeEndのsetterをラップして、過去日付の場合は今日に、上限より先の日付は上限に調整
+  // (入力欄の max は日付の選択だけを制限し、キーボードで打った日付は通るため)
+  // 開始日が終了日より後になった場合は終了日を開始日に合わせ、終了日が期間の上限を超えたら上限に縮める
   const handleSetRangeStart = useCallback((value: string) => {
-    const adjusted = value < todayStr ? todayStr : value;
+    const adjusted = clampDay(value, todayStr, rangeStartMax);
     setRangeStart(adjusted);
-    // 開始日が終了日より後になった場合、終了日を開始日に合わせる
-    if (adjusted > rangeEnd) {
-      setRangeEnd(adjusted);
+    const nextEnd = clampDay(rangeEnd, adjusted, generateRangeEndMax(adjusted));
+    if (nextEnd !== rangeEnd) {
+      setRangeEnd(nextEnd);
     }
-  }, [todayStr, rangeEnd]);
+  }, [todayStr, rangeEnd, rangeStartMax]);
 
   // 終了日が開始日より前になった場合は開始日を終了日に合わせる
   const handleSetRangeEnd = useCallback((value: string) => {
-    const adjusted = value < todayStr ? todayStr : value;
+    const adjusted = clampDay(value, todayStr, generateRangeEndMax(rangeStart));
     setRangeEnd(adjusted);
     // 終了日が開始日より前になった場合、開始日を終了日に合わせる
     if (adjusted < rangeStart) {
@@ -460,10 +516,21 @@ function V4GenerateModalNormal({
   // ローカルの送信中状態（即座にフィードバックを与えるため）
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // モーダルが開くたびに isSubmitting をリセット
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。未同意なら生成の直前に出す。
+  // 「同意しない」なら生成しない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)
+  const { ensureAiConsent, consentModal } = useAiConsent();
+
+  // UX2-04: 既存献立を上書きする破壊的な生成（「既存の献立も作り直す」/ 1日献立変更 /
+  // AI献立だけ変更 等、plannedMealId 付きスロットを含む生成）の前に対象件数付きで確認する。
+  const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
+  const [pendingOverwriteSlots, setPendingOverwriteSlots] = useState<TargetSlot[] | null>(null);
+
+  // モーダルが開くたびに isSubmitting / 上書き確認状態をリセット
   useEffect(() => {
     if (isOpen) {
       setIsSubmitting(false);
+      setShowOverwriteConfirm(false);
+      setPendingOverwriteSlots(null);
     }
   }, [isOpen]);
 
@@ -532,23 +599,17 @@ function V4GenerateModalNormal({
     }
   }, [selectedMode, mealPlanDays, effectiveStartDate, weekEndDate, rangeStart, rangeEnd, includeExisting, singleDayDate]);
 
-  // Handle generate
-  const handleGenerate = async () => {
-    // 連打防止
-    if (isSubmitting || isGenerating) return;
-    
-    const slots = buildTargetSlots();
-    const validation = validateSlotCount(slots);
-    
-    if (!validation.valid) {
-      alert(validation.message);
-      return;
-    }
-
+  // 実際に onGenerate を呼び出す（上書き確認が不要な場合はそのまま、必要な場合は確認後に呼ばれる）
+  const runGenerate = async (slots: TargetSlot[]) => {
     // 即座にローディング状態に
     setIsSubmitting(true);
-    
+
     try {
+      // 「同意しない」なら生成を依頼しない (好み・アレルギーなどを AI に送らない)
+      if ((await ensureAiConsent()) === "declined") {
+        setIsSubmitting(false);
+        return;
+      }
       await onGenerate({
         targetSlots: slots,
         constraints,
@@ -560,6 +621,49 @@ function V4GenerateModalNormal({
       setIsSubmitting(false);
     }
     // 成功時はモーダルが閉じるので isSubmitting のリセットは不要
+  };
+
+  // Handle generate
+  const handleGenerate = async () => {
+    // 連打防止
+    if (isSubmitting || isGenerating) return;
+
+    let slots: TargetSlot[];
+    try {
+      slots = buildTargetSlots();
+    } catch (error) {
+      // 期間が上限 (最大31日) を超えると slot-builder が投げる。以前は捕まえず、押しても何も起きなかった (#1498。モバイルと同じ #1482)
+      alert(error instanceof Error ? error.message : GENERATE_RANGE_INVALID_MESSAGE);
+      return;
+    }
+    const validation = validateSlotCount(slots);
+
+    if (!validation.valid) {
+      alert(validation.message);
+      return;
+    }
+
+    // UX2-04: plannedMealId が付いたスロット = 既存の献立を上書きする破壊的操作。
+    // 「既存の献立も作り直す」チェックや「1日献立変更」「AI献立だけ変更」等はここに該当する。
+    // 単食の削除には確認があるのに、これらの大規模上書きには確認が無かった逆転を解消する。
+    const overwriteCount = slots.filter((s) => s.plannedMealId).length;
+    if (overwriteCount > 0) {
+      setPendingOverwriteSlots(slots);
+      setShowOverwriteConfirm(true);
+      return;
+    }
+
+    await runGenerate(slots);
+  };
+
+  // 上書き確認モーダルで「上書きして生成する」が押されたときの処理
+  const handleConfirmOverwrite = async () => {
+    const slots = pendingOverwriteSlots;
+    setShowOverwriteConfirm(false);
+    setPendingOverwriteSlots(null);
+    if (slots) {
+      await runGenerate(slots);
+    }
   };
 
   // Toggle constraint
@@ -574,7 +678,7 @@ function V4GenerateModalNormal({
     onClose();
   };
 
-  if (!isOpen) return null;
+  if (!isOpen) return <>{consentModal}</>;
 
   // Mode selection buttons
   const modes = [
@@ -625,6 +729,7 @@ function V4GenerateModalNormal({
   ];
 
   return (
+    <>
     <AnimatePresence>
       <motion.div
         initial={{ opacity: 0 }}
@@ -697,11 +802,7 @@ function V4GenerateModalNormal({
                       type="date"
                       value={singleDayDate}
                       min={todayStr}
-                      max={(() => {
-                        const maxDate = new Date();
-                        maxDate.setDate(maxDate.getDate() + 30);
-                        return maxDate.toISOString().split('T')[0];
-                      })()}
+                      max={generateSingleDayMax(todayStr)}
                       onChange={(e) => setSingleDayDate(e.target.value < todayStr ? todayStr : e.target.value)}
                       className="w-full p-3 rounded-lg border text-center"
                       style={{ borderColor: colors.border, fontSize: 16 }}
@@ -723,6 +824,7 @@ function V4GenerateModalNormal({
                           type="date"
                           value={rangeStart}
                           min={todayStr}
+                          max={rangeStartMax}
                           onChange={(e) => handleSetRangeStart(e.target.value)}
                           className="w-full p-2 rounded-lg border mt-1"
                           style={{ borderColor: colors.border }}
@@ -734,6 +836,7 @@ function V4GenerateModalNormal({
                           type="date"
                           value={rangeEnd}
                           min={todayStr}
+                          max={rangeEndMax}
                           onChange={(e) => handleSetRangeEnd(e.target.value)}
                           className="w-full p-2 rounded-lg border mt-1"
                           style={{ borderColor: colors.border }}
@@ -860,6 +963,24 @@ function V4GenerateModalNormal({
         </motion.div>
       </motion.div>
     </AnimatePresence>
+
+    {/* UX2-04: 既存献立の上書き確認（対象件数を明示） */}
+    {showOverwriteConfirm && pendingOverwriteSlots && (
+      <ConfirmDeleteModal
+        title="既存の献立を上書きしますか？"
+        message={`${pendingOverwriteSlots.filter((s) => s.plannedMealId).length}件の献立が上書きされます。この操作は取り消せません。`}
+        isDeleting={isSubmitting}
+        tone="danger"
+        icon={AlertTriangle}
+        confirmLabel="上書きして生成する"
+        onCancel={() => { setShowOverwriteConfirm(false); setPendingOverwriteSlots(null); }}
+        onConfirm={handleConfirmOverwrite}
+      />
+    )}
+
+    {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。未同意なら出る */}
+    {consentModal}
+    </>
   );
 }
 

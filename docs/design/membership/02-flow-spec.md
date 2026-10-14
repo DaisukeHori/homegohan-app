@@ -57,7 +57,7 @@ server (Next.js page)
 POST /api/org/invites/{token}/accept
 
 server  → SUPABASE.rpc('accept_org_invite', { token })
-        → user_profiles 更新, organization_invites.status = 'accepted'
+        → user_profiles 更新 (プロフィール行が無ければ既定値で作る。#1273), organization_invites.status = 'accepted'
         → membership_audit に invite_accepted 記録
         → 200 { data: { organization_id, org_role } }
         → /org/dashboard へ redirect
@@ -159,11 +159,22 @@ server → rpc('propose_org_owner_transfer', { p_organization_id, p_to_user_id }
 
 POST /api/org/owner-transfer/{proposal_id}/accept
 server → rpc('accept_org_owner_transfer', { p_proposal_id })
+       → 整合性: 承諾時点で Bob が今もこの組織のメンバーでなければ TRANSFER_ACCEPTOR_NOT_IN_ORG (403)
        → Alice.org_role = 'admin', Bob.org_role = 'owner'
        → organizations.owner_id = bob_id
        → 監査ログ owner_transferred
+       → Resend で Alice (旧オーナー) と Bob (新オーナー) に完了メール (失敗しても 200。構造化ログに残す。04 §5.2)
        → 200 { data: { organization } }
 ```
+
+**承諾時の不変条件 (#1236):** 提案 (`ownership_transfer_proposals`) は最長 7 日間 pending のまま残り、その間に宛先が脱退・別組織へ移籍することがある。承諾 RPC は承諾時点で `user_profiles.organization_id = 提案の組織` を再検証し、満たさなければ何も変更せずに `TRANSFER_ACCEPTOR_NOT_IN_ORG` (403) を返す。accepted への更新は `status = 'pending'` 条件付きで行い、競合時は `TRANSFER_NOT_PENDING` (409) とする (二重承諾の防止)。
+
+| エラーコード | HTTP | 意味 |
+|---|---|---|
+| `TRANSFER_PROPOSAL_NOT_FOUND` | 404 | pending かつ自分宛ての提案が無い (承諾済み・他人宛て・存在しない) |
+| `TRANSFER_PROPOSAL_EXPIRED` | 410 | 期限切れ |
+| [NEW] `TRANSFER_ACCEPTOR_NOT_IN_ORG` | 403 | 承諾時点で組織のメンバーでない |
+| `TRANSFER_NOT_PENDING` | 409 | 同時に承諾が競合し、既に処理済み |
 
 ---
 
@@ -207,7 +218,7 @@ server → rpc('create_family_group', { p_name, p_plan_key })
 POST /api/family/invites/{token}/accept
        body: { share_meals: true, share_health: false, share_menu: true }
 server → rpc('accept_family_invite', { p_token, p_share_meals, p_share_health, p_share_menu })
-       → user_profiles.family_id = X, family_members INSERT (role='adult', share_*)
+       → user_profiles.family_id = X (プロフィール行が無ければ既定値で作る。#1273), family_members INSERT (role='adult', share_*)
        → 監査ログ
 ```
 
@@ -227,27 +238,40 @@ server → rpc('add_family_child', { p_family_id, p_display_name, p_child_profil
 
 ---
 
-## 9. family 子供 → 実 user promote
+## 9. family 子供 → 実 user promote (本人同意フロー、#1232)
+
+旧設計 (代表者・大人が `promote_child_to_user` で即時に紐付ける) は、本人の同意なしに既存ユーザーを
+家族へ編入できたため廃止した (#1232)。`promote_child_to_user` は両方の引数の版とも常に
+`PROMOTION_DIRECT_DISABLED` を返す (もしくは削除済み)。
 
 ```
-[adult] /family/members/{id} → [アカウントを発行する]
-       (子供本人の email or 親が代理 email 指定)
-       (子供本人がスマホで signup → 親に通知 → 親が「同一人物」確認)
+[rep/adult] /family/members/{id}/promote → 子供本人のメールアドレスを入力
+POST /api/family/members/{id}/promote  body: { email }
+server → rpc('request_child_promotion', { p_member_id, p_email })
+       → family_promotion_requests に pending 行 (token 64 桁 hex、14 日有効)
+       → 同意依頼メール (リンク: /family/promotions/{token})。token は HTTP 応答に含めない
+       → family_members / user_profiles は変えない
+       (DELETE 同 URL → rpc('revoke_child_promotion') で取消。再送は旧 pending を自動で取消)
 
-POST /api/family/members/{id}/promote
-       body: { user_id }
-server → rpc('promote_child_to_user', { p_member_id, p_user_id })
-       → family_members.user_id = X, child_profile = NULL
-       → user_profiles.family_id 設定
-       → 過去 meals/health の "child_profile_id" 参照を user_id に書き換え (script)
-       → 監査ログ
+[本人] /family/promotions/{token} (未ログイン・初期設定前でも開ける)
+       → rpc('get_promotion_details', { p_token }) で内容を表示
+       → 宛先メールアドレスのアカウントでログインして承認 / 拒否
+POST /api/family/promotions/{token}/accept  body: { share_meals, share_health, share_menu }
+server → rpc('accept_child_promotion', ...)
+       → 本人の auth.uid() のメールが宛先と一致するときだけ
+         family_members.user_id = 本人, role = 'adult', child_profile = NULL, share_* = 本人の選択
+       → user_profiles.family_id 設定 (プロフィール行が無ければ既定値で作る)
+       → 監査ログ (child_promoted)
+POST /api/family/promotions/{token}/reject → rpc('reject_child_promotion')
 ```
 
 ---
 
 ## 10. family 代表者譲渡 (2 step)
 
-org owner 譲渡と同パターン。`propose_family_representative_transfer` / `accept_family_representative_transfer`。代表は他の adult にしか譲渡できない (child は不可)。
+org owner 譲渡と同パターン。`propose_family_representative_transfer` / `accept_family_representative_transfer`。代表は他の adult にしか譲渡できない (child は不可)。提案時に宛先へ提案メール、承諾後に旧代表者と新代表者へ完了メールを送る (§5 と同じ。宛先のメールアドレスは `auth.users` から引く。04 §5)。
+
+**承諾時の不変条件 (#1237):** 承諾 RPC は承諾時点で、承諾者がその家族の `status = 'active'` かつ `role IN ('representative', 'adult')` のメンバーであることを再検証し、満たさなければ何も変更せずに [NEW] `TRANSFER_ACCEPTOR_NOT_IN_FAMILY` (403) を返す (脱退・除名済みのユーザーが古い提案で代表者になり、家族グループを DELETE CASCADE できてしまうのを防ぐ)。二重承諾の防止とその他のエラーコードは §5 と同じ。
 
 ---
 
@@ -284,6 +308,7 @@ POST /api/meals/paste
        body: { source_meal_id, target_user_ids: [father_id, childB_id] }
 
 server → 認可: source_meal.user_id == auth.uid()
+       → 運営が隠した食事 (hidden_at IS NOT NULL) は 403 MEAL_HIDDEN (#1101。持ち主の確認のあと)
        → 整合性: 全 target が同 family の active member
        → SUPABASE.rpc('paste_meal_to_family', { p_source_meal_id, p_target_user_ids })
        → 各 target に新 meal レコード INSERT (paste_group_id 共通)
@@ -337,7 +362,12 @@ server → caller の family_members 行を UPDATE
 | reject_family_invite | token | family_invites | anon/authenticated | POST /api/family/invites/{token}/reject |
 | revoke_family_invite | invite_id | family_invites | authenticated | POST /api/family/invites/{id}/revoke |
 | add_family_child | family_id, display_name, child_profile | family_members | authenticated | POST /api/family/members/child |
-| promote_child_to_user | member_id, user_id | family_members | authenticated | POST /api/family/members/{id}/promote |
+| request_child_promotion (#1232) | member_id, email | JSONB (token はメール用。HTTP 応答には含めない) | authenticated | POST /api/family/members/{id}/promote |
+| revoke_child_promotion (#1232) | member_id | family_promotion_requests | authenticated | DELETE /api/family/members/{id}/promote |
+| accept_child_promotion (#1232) | token, share_meals, share_health, share_menu | family_members | authenticated | POST /api/family/promotions/{token}/accept |
+| reject_child_promotion (#1232) | token | family_promotion_requests | authenticated | POST /api/family/promotions/{token}/reject |
+| get_promotion_details (#1232) | token | JSONB | anon/authenticated | (承認ページ /family/promotions/{token} から直接) |
+| promote_child_to_user (廃止、#1232) | member_id, email | family_members | authenticated | (常に PROMOTION_DIRECT_DISABLED) |
 | remove_family_member | family_id, user_id | family_members | authenticated | POST /api/family/members/{user_id}/remove |
 | leave_family | (none) | family_members | authenticated | POST /api/family/leave |
 | propose_family_representative_transfer | family_id, to_user_id | UUID | authenticated | POST /api/family/representative-transfer/propose |

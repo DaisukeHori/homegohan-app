@@ -69,7 +69,7 @@ const guides = [
     color: colors.secondary,
     steps: [
       { title: '体重を記録', desc: '健康画面から体重を入力。グラフで推移を確認できます。', image: '/guide/weight.png' },
-      { title: '写真で記録', desc: '体重計の写真を撮ると、AIが数値を自動認識！', image: '/guide/weight-photo.png' },
+      { title: '写真で記録', desc: '健康画面の「写真で記録」から体重計を撮影すると、AIが数値を読み取ります。内容を確認してから記録できます。', image: '/guide/weight-photo.png' },
       { title: 'トレンドを確認', desc: '週間・月間のトレンドをグラフで確認。AIがアドバイスもくれます。', image: '/guide/trend.png' },
     ]
   },

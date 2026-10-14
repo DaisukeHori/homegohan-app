@@ -31,6 +31,15 @@ export type PregnancyStatus = 'none' | 'pregnant' | 'nursing';
 // ================================================
 
 export type TrainingPhase = 'training' | 'competition' | 'cut' | 'recovery';
+
+/**
+ * 減量ペースの方針。
+ *
+ * rapid は提供しない (#1208)。安全装置 (applyPerformanceGuardrails) は残す。
+ * 画面・オンボーディングが保存するのは 'gradual' だけ。'rapid' を型に残しているのは、
+ * 保存済みの performance_profile.cut.strategy が 'rapid' でも読めて、安全装置 (cut_safety) が
+ * 働くようにするため。新しく 'rapid' を選べる画面や API を足さないこと。
+ */
 export type CutStrategy = 'gradual' | 'rapid';
 
 /**

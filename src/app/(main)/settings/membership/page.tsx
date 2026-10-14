@@ -285,12 +285,11 @@ export default function MembershipSettingsPage() {
             ) : (
               <div className="space-y-3">
                 <p className="text-sm text-gray-500">所属していません</p>
-                <button
-                  className="text-sm text-blue-500 font-medium"
-                  onClick={() => router.push('/org')}
-                >
-                  組織を作成・参加
-                </button>
+                {/* 組織をユーザー自身で作る機能は無く、参加は招待メールのリンクからだけ。
+                    以前の「組織を作成・参加」ボタンは /org (組織の管理者専用) に送るだけで行き止まりだった (#1143, #1123) */}
+                <p className="text-xs text-gray-400">
+                  組織への参加は、組織から届いた招待メールのリンクから行えます。
+                </p>
               </div>
             )}
           </div>

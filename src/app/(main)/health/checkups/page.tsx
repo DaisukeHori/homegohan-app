@@ -8,6 +8,7 @@ import {
   FileText, Plus, ChevronRight, TrendingUp, TrendingDown, Minus,
   Activity, AlertTriangle, CheckCircle2, Clock, Heart, Droplet
 } from 'lucide-react';
+import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
 
 // カラーパレット
 const colors = {
@@ -18,12 +19,8 @@ const colors = {
   textMuted: '#9A9A9A',
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
-  success: '#4CAF50',
-  successLight: '#E8F5E9',
-  warning: '#FF9800',
-  warningLight: '#FFF3E0',
-  error: '#F44336',
-  errorLight: '#FFEBEE',
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
   purple: '#7C4DFF',
   purpleLight: '#EDE7F6',
   blue: '#2196F3',
@@ -98,14 +95,15 @@ export default function HealthCheckupsPage() {
     return `${date.getFullYear()}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getDate().toString().padStart(2, '0')}`;
   };
 
+  // icon はアイコンの色 (文字ではなく塗りの色。#590)
   const getRiskLevelStyle = (level?: string) => {
     switch (level) {
       case 'high':
-        return { bg: colors.errorLight, text: colors.error };
+        return { bg: colors.errorLight, icon: colors.error };
       case 'medium':
-        return { bg: colors.warningLight, text: colors.warning };
+        return { bg: colors.warningLight, icon: colors.warning };
       default:
-        return { bg: colors.successLight, text: colors.success };
+        return { bg: colors.successLight, icon: colors.success };
     }
   };
 
@@ -297,11 +295,11 @@ export default function HealthCheckupsPage() {
                           style={{ backgroundColor: riskStyle.bg }}
                         >
                           {checkup.individual_review.riskLevel === 'high' ? (
-                            <AlertTriangle size={16} style={{ color: riskStyle.text }} />
+                            <AlertTriangle size={16} style={{ color: riskStyle.icon }} />
                           ) : checkup.individual_review.riskLevel === 'medium' ? (
-                            <Clock size={16} style={{ color: riskStyle.text }} />
+                            <Clock size={16} style={{ color: riskStyle.icon }} />
                           ) : (
-                            <CheckCircle2 size={16} style={{ color: riskStyle.text }} />
+                            <CheckCircle2 size={16} style={{ color: riskStyle.icon }} />
                           )}
                         </div>
                       )}

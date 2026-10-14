@@ -1,14 +1,13 @@
 /**
  * Supabase Edge Functions smoke tests
  *
- * 対象 function (7 個):
+ * 対象 function (6 個):
  *   1. generate-hint           — requireAuth (Supabase JWT)
  *   2. analyze-fridge          — requireAuth (Supabase JWT)
- *   3. generate-health-insights — Authorization header → 401
- *   4. analyze-meal-photo      — Authorization header → 401
- *   5. knowledge-gpt           — Authorization header → 401, GET → 405
- *   6. normalize-shopping-list — 認証なし、ingredients 配列必須
- *   7. regenerate-shopping-list-v2 — 認証なし(内部 service role)、必須フィールド → 400
+ *   3. analyze-meal-photo      — Authorization header → 401
+ *   4. knowledge-gpt           — Authorization header → 401, GET → 405
+ *   5. normalize-shopping-list — 認証なし、ingredients 配列必須
+ *   6. regenerate-shopping-list-v2 — 認証なし(内部 service role)、必須フィールド → 400
  *
  * 実行前提:
  *   SUPABASE_INTEGRATION_TEST=1
@@ -157,28 +156,24 @@ if (!shouldRunIntegration()) {
       // imageUrl 必須のため 400 が返る
       expect(res.status).toBe(400);
     });
-  });
 
-  // ---------------------------------------------------------------------------
-  // 3. generate-health-insights
-  // ---------------------------------------------------------------------------
-  describe('generate-health-insights', () => {
-    it('未認証 → 401', async () => {
-      const res = await invoke('generate-health-insights', { body: {} });
-      expect([401, 403]).toContain(res.status);
-    });
-
-    it('不正トークン → 401', async () => {
-      const res = await invoke('generate-health-insights', {
-        body: {},
-        authToken: 'bad_token_here',
+    // #1227: imageUrl の型・形式を検証し、不正なら Vision API を呼ぶ前に 400 を返す (500 にしない)
+    it.each([
+      ['数値', 12345],
+      ['配列', ['https://example.com/a.jpg']],
+      ['http', 'http://example.com/a.jpg'],
+      ['javascript:', 'javascript:alert(1)'],
+    ])('認証あり + imageUrl が不正 (%s) → 400', async (_label, imageUrl) => {
+      const res = await invoke('analyze-fridge', {
+        body: { imageUrl },
+        authToken: testUserAccessToken,
       });
-      expect([401, 403]).toContain(res.status);
+      expect(res.status).toBe(400);
     });
   });
 
   // ---------------------------------------------------------------------------
-  // 4. analyze-meal-photo
+  // 3. analyze-meal-photo
   // ---------------------------------------------------------------------------
   describe('analyze-meal-photo', () => {
     it('未認証 → 401', async () => {
@@ -196,7 +191,7 @@ if (!shouldRunIntegration()) {
   });
 
   // ---------------------------------------------------------------------------
-  // 5. knowledge-gpt
+  // 4. knowledge-gpt
   // ---------------------------------------------------------------------------
   describe('knowledge-gpt', () => {
     it('未認証 → 401', async () => {
@@ -214,7 +209,7 @@ if (!shouldRunIntegration()) {
   });
 
   // ---------------------------------------------------------------------------
-  // 6. normalize-shopping-list
+  // 5. normalize-shopping-list
   //    config.toml に verify_jwt 設定なし = デフォルト true (JWT ゲートウェイ認証)
   //    → 未認証リクエストはゲートウェイが 401 を返す
   // ---------------------------------------------------------------------------
@@ -247,7 +242,7 @@ if (!shouldRunIntegration()) {
   });
 
   // ---------------------------------------------------------------------------
-  // 7. regenerate-shopping-list-v2
+  // 6. regenerate-shopping-list-v2
   //    config.toml に verify_jwt 設定なし = デフォルト true (JWT ゲートウェイ認証)
   //    → 未認証リクエストはゲートウェイが 401 を返す
   // ---------------------------------------------------------------------------

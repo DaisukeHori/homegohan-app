@@ -1,13 +1,6 @@
--- ============================================================
--- dataset_recipes RLS ポリシー修正：anonロールを追加
--- ============================================================
-
--- 既存のポリシーを削除
-DROP POLICY IF EXISTS "dataset_recipes_select_all" ON dataset_recipes;
-
--- SELECT ポリシー: 全ユーザーは読み取り可能（公開データ）
-CREATE POLICY "dataset_recipes_select_all"
-  ON dataset_recipes
-  FOR SELECT
-  TO authenticated, anon
-  USING (true);
+-- migration: 20260111130001_fix_dataset_recipes_rls_add_anon.sql
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;

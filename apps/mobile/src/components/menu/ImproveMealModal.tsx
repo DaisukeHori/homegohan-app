@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -12,25 +12,52 @@ import {
 
 import { MEAL_LABELS } from '@homegohan/shared';
 
-import { getApi } from '../../lib/api';
+import { isAiConsentRequiredError } from '../../lib/ai-consent';
+import {
+  IMPROVE_MEAL_TYPES,
+  isImproveMealRejectedError,
+  type ImproveMealRequest,
+  type ImproveMealType,
+} from '../../lib/improve-meal';
 import { colors } from '../../theme/colors';
 import { radius, spacing } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
 
-type MealType = 'breakfast' | 'lunch' | 'dinner';
+type MealType = ImproveMealType;
 
-const MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner'];
+const MEAL_TYPES: readonly MealType[] = IMPROVE_MEAL_TYPES;
 
 interface Props {
   visible: boolean;
   onClose: () => void;
   selectedDate: string; // 改善対象日 (YYYY-MM-DD)
+  /**
+   * 「改善」を押したときの処理 (献立の生成を始める)。
+   * このモーダルは API を直接呼ばず、親に任せる (#1138: 以前は存在しない API を直接呼んでいた)。
+   * リクエストが受け付けられるまで待ち、成功したらモーダルを閉じる。
+   * 失敗 (reject) したらエラーを表示し、モーダルは開いたままにして再試行できるようにする。
+   * 利用者に見せたい理由があるときは ImproveMealRejectedError を投げる。
+   * 「同意が必要です」(403 AI_CONSENT_REQUIRED。T15 / #1154) で reject したら、失敗は表示せず、モーダルを閉じてから
+   * onAiConsentRequired を呼ぶ (週の画面の onSubmit は、同意で止められても reject しない。案内は生成のフックが出す)。
+   */
+  onSubmit: (request: ImproveMealRequest) => Promise<void>;
+  /**
+   * onSubmit が「同意が必要です」で reject したときに呼ぶ (T15 / #1154)。このモーダルは自分を閉じてから呼ぶ。
+   * 呼ばれた側 (このモーダルを開いた画面・モーダル) が、自分も同意画面を隠さないように閉じてから、同意画面への案内を出す
+   * (このモーダルだけを閉じて案内を出すと、下に開いたままの栄養分析の詳細が、案内から開いた同意画面を隠す。
+   * src/lib/ai-consent.ts の規則)
+   */
+  onAiConsentRequired: () => void;
+  /** 画面に表示中の AI栄養士の提案。あれば onSubmit にそのまま渡し、生成の要望として使われる */
+  advice?: string | null;
 }
 
-export const ImproveMealModal: React.FC<Props> = ({ visible, onClose, selectedDate }) => {
+export const ImproveMealModal: React.FC<Props> = ({ visible, onClose, selectedDate, onSubmit, onAiConsentRequired, advice }) => {
   const [selectedMeals, setSelectedMeals] = useState<MealType[]>(['breakfast', 'lunch', 'dinner']);
   const [improveNextDay, setImproveNextDay] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // state の更新は次の描画まで反映されないため、同じフレームでの連打は ref で止める
+  const inFlightRef = useRef(false);
 
   const toggleMeal = (m: MealType) => {
     setSelectedMeals(prev =>
@@ -39,23 +66,38 @@ export const ImproveMealModal: React.FC<Props> = ({ visible, onClose, selectedDa
   };
 
   const submit = async () => {
+    if (inFlightRef.current) return;
     if (selectedMeals.length === 0) {
       Alert.alert('エラー', '食事タイプを 1 つ以上選択してください');
       return;
     }
+    inFlightRef.current = true;
     setSubmitting(true);
     try {
-      const api = getApi();
-      await api.post('/api/ai/menu/meal/improve', {
+      await onSubmit({
         date: selectedDate,
-        mealTypes: selectedMeals,
+        // 選んだ順ではなく 朝→昼→夕 の順で渡す
+        mealTypes: MEAL_TYPES.filter(m => selectedMeals.includes(m)),
         nextDay: improveNextDay,
+        advice,
       });
       onClose();
     } catch (e) {
-      console.error('ImproveMealModal submit error:', e);
-      Alert.alert('エラー', '改善に失敗しました。もう一度お試しください。');
+      if (isAiConsentRequiredError(e)) {
+        // 同意が必要で止められた: 「改善に失敗しました」は出さない。モーダルを閉じてから、開いた側に知らせる (案内は開いた側が出す)
+        onClose();
+        onAiConsentRequired();
+        return;
+      }
+      if (isImproveMealRejectedError(e)) {
+        // 生成中・過去の日付など、利用者に見せたい理由がある失敗
+        Alert.alert('エラー', e.message);
+      } else {
+        console.error('ImproveMealModal submit error:', e);
+        Alert.alert('エラー', '改善に失敗しました。もう一度お試しください。');
+      }
     } finally {
+      inFlightRef.current = false;
       setSubmitting(false);
     }
   };

@@ -1,30 +1,20 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { useNavigation, useRouter, useLocalSearchParams } from 'expo-router';
-import * as FileSystem from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
-import { Ionicons } from '@expo/vector-icons';
+import { getDownloadFailureNotice, handleWebViewDownload } from '../../lib/webViewDownload';
+import { getWebBaseUrl } from '../../lib/webBaseUrl';
 import { colors } from '../../theme/colors';
-import { supabase } from '../../lib/supabase';
+import { useWebAuthMessages } from '../../lib/webViewAuthMessages';
+import { SUPABASE_AUTH_STORAGE_KEY, supabase } from '../../lib/supabase';
 
-const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_URL ?? 'https://homegohan-app.vercel.app';
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
-// "https://abc123.supabase.co" → "abc123"
-const PROJECT_REF = SUPABASE_URL.replace('https://', '').split('.')[0];
+// download の送信元の確認 (webViewDownload.ts) と同じ値から決める (既定値を 2 か所に持たない)
+const WEB_BASE_URL = getWebBaseUrl();
 
 interface Props {
   path: string;  // 例 '/home', '/menus/weekly'
   testID?: string;
-  // Issue #1037: WebView タブ内から到達不能なネイティブ画面 (設定/ログアウト/削除等) への
-  // 導線として、ヘッダーに 1 個だけアイコンボタンを追加できるオプション。
-  headerAction?: {
-    icon: React.ComponentProps<typeof Ionicons>['name'];
-    onPress: () => void;
-    testID?: string;
-    accessibilityLabel?: string;
-  };
 }
 
 // 各タブの「所有する」パス prefix と Expo Router タブルート のマッピング
@@ -112,8 +102,10 @@ true;
 `;
 };
 
-export const WebViewScreen: React.FC<Props> = ({ path, testID, headerAction }) => {
+export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
   const webViewRef = useRef<WebView>(null);
+  // Web 側のログアウト・セッション失効の通知 (sign-out / session-expired) をネイティブに反映する (#1038 F7-04 / F7-05)
+  const handleAuthMessage = useWebAuthMessages(path);
   const [uri, setUri] = useState<string | null>(null);
   const [injectedJS, setInjectedJS] = useState<string>('');
   const navigation = useNavigation();
@@ -162,8 +154,10 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, headerAction }) =
         setUri(bridgeUrl);
 
         // localStorage 注入: クライアント Supabase JS SDK が参照するキーに session を書き込む
-        // SSR middleware は Cookie で動作するが、クライアント側 SDK は localStorage を参照するため両方設定が必要
-        const storageKey = `sb-${PROJECT_REF}-auth-token`;
+        // SSR middleware は Cookie で動作するが、クライアント側 SDK は localStorage を参照するため両方設定が必要。
+        // キーは lib/supabase.ts のセッションの保存キーと同じ値 (sb-<プロジェクト ref>-auth-token) を使う (#1434)。
+        // 以前はここで EXPO_PUBLIC_SUPABASE_URL を '' にフォールバックして読み、未設定だと sb--auth-token になっていた
+        const storageKey = SUPABASE_AUTH_STORAGE_KEY;
         const sessionPayload = JSON.stringify({
           access_token: session.access_token,
           refresh_token: session.refresh_token,
@@ -205,28 +199,9 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, headerAction }) =
   // effectivePath からクエリ・ハッシュを除いた純粋なパス部分
   const currentTabRoot = effectivePath.split('?')[0].split('#')[0];
 
-  // Issue #1037: WebView タブの上に固定表示するヘッダーバー。
-  // WebView 読み込み前後どちらでも同じ場所から即座にタップできるよう、
-  // ローディング分岐より前の共通レンダリングとして扱う。
-  const headerBar = headerAction ? (
-    <View style={styles.headerBar}>
-      <Pressable
-        testID={headerAction.testID}
-        onPress={headerAction.onPress}
-        accessibilityRole="button"
-        accessibilityLabel={headerAction.accessibilityLabel}
-        hitSlop={8}
-        style={styles.headerButton}
-      >
-        <Ionicons name={headerAction.icon} size={22} color={colors.text} />
-      </Pressable>
-    </View>
-  ) : null;
-
   if (!uri) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }} edges={['top']}>
-        {headerBar}
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size="large" color={colors.accent} />
         </View>
@@ -236,7 +211,6 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, headerAction }) =
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }} edges={['top']}>
-      {headerBar}
       <WebView
         ref={webViewRef}
         testID={testID ?? 'webview-screen'}
@@ -287,24 +261,16 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, headerAction }) =
             } else if (data.type === 'download') {
               // Fix 3: iOS WebView でのエクスポート対応
               // Web 側から postMessage で受け取ったファイル内容を expo-sharing で保存・共有
-              const { filename, content, mimeType } = data;
-              (async () => {
-                try {
-                  const filePath = `${FileSystem.documentDirectory}${filename}`;
-                  await FileSystem.writeAsStringAsync(filePath, content, {
-                    encoding: FileSystem.EncodingType.UTF8,
-                  });
-                  const isAvailable = await Sharing.isAvailableAsync();
-                  if (isAvailable) {
-                    await Sharing.shareAsync(filePath, {
-                      mimeType,
-                      dialogTitle: filename,
-                    });
-                  }
-                } catch (e) {
-                  console.error('[WebViewScreen] download failed', e);
-                }
-              })();
+              // filename / content / mimeType も送信元ページも WebView 内の JS が自由に作れるので信用せず、
+              // 送信元・ファイル名・サイズの検証と cacheDirectory への保存は webViewDownload.ts に集約 (#1159)
+              // 正規のエクスポートが失敗したときは、「押しても何も起きない」ように見えないよう利用者に知らせる
+              void handleWebViewDownload(data, event.nativeEvent.url).then((result) => {
+                const notice = getDownloadFailureNotice(result);
+                if (notice) Alert.alert(notice.title, notice.message);
+              });
+            } else if (data.type === 'sign-out' || data.type === 'session-expired') {
+              // Web 側でログアウトした / Web 側のセッションが切れた。送り元の検証と処理は useWebAuthMessages に集約している
+              handleAuthMessage(data, event.nativeEvent.url);
             }
           } catch {
             // JSON パース失敗は無視
@@ -319,20 +285,3 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, headerAction }) =
     </SafeAreaView>
   );
 };
-
-const styles = StyleSheet.create({
-  headerBar: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    height: 44,
-    paddingHorizontal: 12,
-    backgroundColor: '#FFF',
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  headerButton: {
-    padding: 8,
-    borderRadius: 20,
-  },
-});

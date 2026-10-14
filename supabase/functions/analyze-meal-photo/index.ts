@@ -8,16 +8,18 @@ import { createClient } from "@supabase/supabase-js";
 import { analyzeWithEvidence, ImageInput, GeminiAnalysisResult } from '../_shared/nutrition-pipeline.ts'
 import { buildPhotoDishList } from '../_shared/meal-image.ts'
 import { cancelPendingMealImageJobs } from '../_shared/meal-image-jobs.ts'
+import { buildPhotoOverwriteNutrition } from '../_shared/meal-photo-update.ts'
 import { createLogger } from '../_shared/db-logger.ts'
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+import { getCorsHeaders } from '../_shared/cors.ts'
+import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from '../_shared/ai-usage.ts'
+import { requireAiConsentForUser } from '../_shared/ai-consent-guard.ts'
 
 console.log("Analyze Meal Photo Function v2 loaded")
 
 Deno.serve(async (req) => {
+  // 許可したオリジンにだけ CORS ヘッダーを付ける (#1167)
+  const corsHeaders = getCorsHeaders(req)
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -45,6 +47,11 @@ Deno.serve(async (req) => {
       })
     }
 
+    // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+    // この関数は利用者の JWT で直接呼べるので、Next.js の API Route とは別にここでも止める
+    const aiConsentDenied = await requireAiConsentForUser(user.id, corsHeaders)
+    if (aiConsentDenied) return aiConsentDenied
+
     const body = await req.json()
     const { images, imageBase64, mimeType, mealId, mealType, prefetchedGeminiResult } = body as {
       images?: ImageInput[];
@@ -67,6 +74,12 @@ Deno.serve(async (req) => {
       })
     }
 
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (Next.js が数え済みの印があれば数えない)。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeEdgeAiUsage(req, user.id, 'photo_analysis')
+    if (!aiUsage.allowed) return aiDailyLimitEdgeResponse(aiUsage, corsHeaders)
+
     // mealId が無い場合: 同期的に解析して結果を返す
     if (!mealId) {
       const supabase = createClient(
@@ -86,7 +99,8 @@ Deno.serve(async (req) => {
         const bytes = new Uint8Array(binaryString.length)
         for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i)
 
-        const fileName = `meals/${user.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`
+        // 本人のフォルダ <user_id>/meals/ の下に保存する (storage.objects の RLS が本人のフォルダだけを許可する)
+        const fileName = `${user.id}/meals/${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`
         const { error: uploadError } = await supabase.storage
           .from('fridge-images')
           .upload(fileName, bytes, { contentType: first.mimeType || 'image/jpeg', upsert: false })
@@ -182,7 +196,8 @@ async function analyzeMealPhotoBackgroundTask({
       bytes[i] = binaryString.charCodeAt(i)
     }
     
-    const fileName = `meals/${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`
+    // 本人のフォルダ <user_id>/meals/ の下に保存する (storage.objects の RLS が本人のフォルダだけを許可する)
+    const fileName = `${userId}/meals/${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`
     
     const { error: uploadError } = await supabase.storage
       .from('fridge-images')
@@ -213,8 +228,15 @@ async function analyzeMealPhotoBackgroundTask({
     
     // planned_mealsを更新（全栄養素）
     try {
+      // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。ユーザーの JWT のクライアントでは取り消せないので、
+      // 本人 (JWT で確かめた userId) の行に絞って service role で取り消す
+      const queueDb = createClient(
+        Deno.env.get('SUPABASE_URL') ?? '',
+        Deno.env.get('SERVICE_ROLE_JWT') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+      )
       await cancelPendingMealImageJobs({
-        supabase,
+        supabase: queueDb,
+        userId,
         plannedMealId: mealId,
         reason: 'photo overwrite',
       })
@@ -229,32 +251,9 @@ async function analyzeMealPhotoBackgroundTask({
       dishes: photoDishes,
         image_url: imageUrl,
         description: result.praiseComment,
-        // 基本栄養素
-        calories_kcal: result.totalCalories,
-        protein_g: result.totalProtein,
-        fat_g: result.totalFat,
-        carbs_g: result.totalCarbs,
-        // 拡張栄養素
-        sodium_g: result.nutrition.sodiumG,
-        fiber_g: result.nutrition.fiberG,
-        potassium_mg: result.nutrition.potassiumMg,
-        calcium_mg: result.nutrition.calciumMg,
-        phosphorus_mg: result.nutrition.phosphorusMg,
-        iron_mg: result.nutrition.ironMg,
-        zinc_mg: result.nutrition.zincMg,
-        iodine_ug: result.nutrition.iodineUg,
-        cholesterol_mg: result.nutrition.cholesterolMg,
-        vitamin_a_ug: result.nutrition.vitaminAUg,
-        vitamin_d_ug: result.nutrition.vitaminDUg,
-        vitamin_e_mg: result.nutrition.vitaminEMg,
-        vitamin_k_ug: result.nutrition.vitaminKUg,
-        vitamin_b1_mg: result.nutrition.vitaminB1Mg,
-        vitamin_b2_mg: result.nutrition.vitaminB2Mg,
-        vitamin_b6_mg: result.nutrition.vitaminB6Mg,
-        vitamin_b12_ug: result.nutrition.vitaminB12Ug,
-        folic_acid_ug: result.nutrition.folicAcidUg,
-        vitamin_c_mg: result.nutrition.vitaminCMg,
-        magnesium_mg: result.nutrition.magnesiumMg,
+        // 栄養素 (基本・拡張・糖質)。書く列は meal-photo-update.ts に集約している。
+        // 糖質 (sugar_g) を炭水化物・食物繊維と一緒に上書きしないと、上書き前の AI 献立の古い糖質が残る (#1146)
+        ...buildPhotoOverwriteNutrition(result),
         // スコア
         veg_score: result.vegScore,
         // メタデータ

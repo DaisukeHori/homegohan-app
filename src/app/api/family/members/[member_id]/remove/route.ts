@@ -2,13 +2,20 @@
 // (設計書 02-flow-spec.md §11)
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
+import {
+  notifyMemberRemoved,
+  readFamilyMemberToNotify,
+  readFamilyNotice,
+} from '@/lib/membership/exit-notification';
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ member_id: string }> },
 ) {
   const { member_id } = await params;
+  const logger = createLogger('POST /api/family/members/[member_id]/remove', generateRequestId());
   const supabase = await createClient();
 
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -18,6 +25,7 @@ export async function POST(
       { status: 401 },
     );
   }
+  const log = logger.withUser(user.id);
 
   let body: unknown;
   try {
@@ -38,6 +46,15 @@ export async function POST(
     );
   }
 
+  // 除名の通知メールに使う情報は、RPC の前に読む (#1160)。
+  // - 家族グループ名
+  // - 外される人の user_id。remove_family_member はすでに外れた行にも成功するので、active だった行だけを対象にする
+  //   (アカウントを持たない子供メンバーは user_id が NULL で、送り先が無い)
+  const [notice, removedUserId] = await Promise.all([
+    readFamilyNotice(supabase, parsed.family_id, log),
+    readFamilyMemberToNotify(supabase, parsed.family_id, member_id, log),
+  ]);
+
   // RPC の p_member_id は family_members.id (URL の [member_id])
   const { data, error } = await supabase.rpc('remove_family_member', {
     p_family_id: parsed.family_id,
@@ -57,6 +74,9 @@ export async function POST(
       { status },
     );
   }
+
+  // 外された本人への通知メール (best-effort)。除名はすでに完了しているので、失敗しても応答は変えない (#1160)
+  await notifyMemberRemoved({ scope: notice, removedUserId, actorUserId: user.id, log });
 
   return NextResponse.json({ data: { member: data } }, { status: 200 });
 }

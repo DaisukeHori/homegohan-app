@@ -10,24 +10,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const mockGetUser = vi.fn();
-const mockInsert = vi.fn();
-const mockSelect = vi.fn();
-const mockEq = vi.fn();
-const mockNot = vi.fn();
-const mockOrder = vi.fn();
-const mockLimit = vi.fn();
-const mockSingle = vi.fn();
 
 // クエリビルダーのチェーンをセットアップするファクトリ
 function makeQueryBuilder(finalResult: { data?: unknown; error?: unknown }) {
   const builder: Record<string, unknown> = {};
   builder.select = vi.fn().mockReturnValue(builder);
   builder.eq = vi.fn().mockReturnValue(builder);
-  builder.not = vi.fn().mockReturnValue(builder);
-  builder.order = vi.fn().mockReturnValue(builder);
-  builder.limit = vi.fn().mockResolvedValue(finalResult);
   builder.single = vi.fn().mockResolvedValue(finalResult);
-  builder.insert = vi.fn().mockResolvedValue(finalResult);
   return builder;
 }
 
@@ -46,22 +35,17 @@ vi.mock('@/lib/supabase/server', () => ({
 // テスト対象のインポート (モック設定後)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import {
-  requireUser,
-  requireRole,
-  requireOrgRole,
-  impersonate,
-  endImpersonation,
-  isImpersonating,
-} from '../helpers';
-import { AuthError, ForbiddenError, ImpersonationError } from '../errors';
+import * as authHelpers from '../helpers';
+import * as authBarrel from '../index';
+import * as authErrors from '../errors';
+import { requireUser, requireRole, requireOrgRole } from '../helpers';
+import { AuthError, ForbiddenError } from '../errors';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // テストヘルパー
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fakeUser = { id: 'user-id-1', email: 'test@example.com' };
-const fakeSuperAdmin = { id: 'super-id-1', email: 'super@example.com' };
 
 function setupGetUser(user: typeof fakeUser | null, error: unknown = null) {
   mockGetUser.mockResolvedValue({ data: { user }, error });
@@ -71,9 +55,11 @@ function setupUserProfile(
   userId: string,
   roles: string[],
   organization_id: string | null = null,
+  frozen_at: string | null = null,
+  unban_at: string | null = null,
 ) {
   const profileBuilder = makeQueryBuilder({
-    data: { roles, organization_id },
+    data: { roles, organization_id, frozen_at, unban_at },
     error: null,
   });
   supabaseClient.from = vi.fn().mockImplementation((table: string) => {
@@ -100,6 +86,7 @@ describe('requireUser', () => {
 
   it('認証済みユーザーを返す', async () => {
     setupGetUser(fakeUser);
+    setupUserProfile(fakeUser.id, ['user'], null);
     const user = await requireUser();
     expect(user.id).toBe(fakeUser.id);
     expect(user.email).toBe(fakeUser.email);
@@ -114,6 +101,34 @@ describe('requireUser', () => {
   it('Supabase エラーがある場合 AuthError を throw する', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: { message: 'auth error' } });
     await expect(requireUser()).rejects.toThrow(AuthError);
+  });
+
+  // #1030: frozen_at enforcement
+  it('frozen_at がセット (無期限 BAN) されている場合 ForbiddenError(AUTH_ACCOUNT_FROZEN) を throw する', async () => {
+    setupGetUser(fakeUser);
+    setupUserProfile(fakeUser.id, ['user'], null, '2026-07-01T00:00:00.000Z', null);
+    await expect(requireUser()).rejects.toThrow(ForbiddenError);
+    await expect(requireUser()).rejects.toMatchObject({ code: 'AUTH_ACCOUNT_FROZEN' });
+  });
+
+  it('frozen_at がセットされていても unban_at が過去 (一時 BAN 期限切れ) なら成功する', async () => {
+    setupGetUser(fakeUser);
+    setupUserProfile(
+      fakeUser.id,
+      ['user'],
+      null,
+      '2026-07-01T00:00:00.000Z',
+      '2026-07-02T00:00:00.000Z', // 過去
+    );
+    const user = await requireUser();
+    expect(user.id).toBe(fakeUser.id);
+  });
+
+  it('frozen_at がセットされ unban_at が未来 (一時 BAN 継続中) なら ForbiddenError を throw する', async () => {
+    setupGetUser(fakeUser);
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    setupUserProfile(fakeUser.id, ['user'], null, '2026-07-01T00:00:00.000Z', future);
+    await expect(requireUser()).rejects.toMatchObject({ code: 'AUTH_ACCOUNT_FROZEN' });
   });
 });
 
@@ -169,6 +184,16 @@ describe('requireRole', () => {
 
     const profile = await requireRole(['admin', 'super_admin', 'finance']);
     expect(profile.roles).toContain('finance');
+  });
+
+  // #1030: frozen_at enforcement (allowedRoles を満たしていても凍結中なら拒否)
+  it('allowedRoles を満たしていても frozen_at がセットされていれば ForbiddenError(AUTH_ACCOUNT_FROZEN) を throw する', async () => {
+    setupGetUser(fakeUser);
+    setupUserProfile(fakeUser.id, ['admin'], null, '2026-07-01T00:00:00.000Z', null);
+
+    await expect(requireRole(['admin', 'super_admin'])).rejects.toMatchObject({
+      code: 'AUTH_ACCOUNT_FROZEN',
+    });
   });
 });
 
@@ -243,146 +268,31 @@ describe('requireOrgRole', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// impersonate
+// なりすまし (impersonate) は提供しない (#1124)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('impersonate', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+describe('なりすまし (impersonate) は提供しない (#1124)', () => {
+  // 以前は super_admin が「なりすましトークン」を発行できたが、トークンは監査ログに平文で書かれるだけで、
+  // 受け取って使う側がどこにも無かった (動いているように見えて、実際には何もできない機能だった)。
+  // オーナー判断 (#1124) で機能ごと削除した。サポートは、読み取り専用のユーザー画面で対応する。
+  // 復活させるときは、トークンを検証する側 (セッションの分け方・赤バナー・本人の拒否設定) も一緒に設計すること。
+  const REMOVED_EXPORTS = ['impersonate', 'endImpersonation', 'isImpersonating', 'ImpersonationError'];
+
+  it.each([
+    ['helpers.ts', authHelpers],
+    ['errors.ts', authErrors],
+    ['index.ts (barrel)', authBarrel],
+  ])('%s は、なりすまし関連のものを export していない', (_file, mod) => {
+    const exported = Object.keys(mod);
+    for (const name of REMOVED_EXPORTS) {
+      expect(exported).not.toContain(name);
+    }
   });
 
-  it('super_admin が impersonate すると impersonation_token と expires_at を返す', async () => {
-    setupGetUser(fakeSuperAdmin);
-    const auditBuilder = makeQueryBuilder({ data: null, error: null });
-    supabaseClient.from = vi.fn().mockImplementation((table: string) => {
-      if (table === 'user_profiles') {
-        return makeQueryBuilder({ data: { roles: ['super_admin'], organization_id: null }, error: null });
-      }
-      return auditBuilder;
-    });
-
-    const result = await impersonate('target-user-id', 'テスト目的');
-    expect(result).toHaveProperty('impersonation_token');
-    expect(result).toHaveProperty('expires_at');
-    expect(typeof result.impersonation_token).toBe('string');
-    expect(typeof result.expires_at).toBe('string');
-  });
-
-  it('admin ロールが impersonate すると ImpersonationError を throw する', async () => {
-    setupGetUser(fakeUser);
-    setupUserProfile(fakeUser.id, ['admin'], null);
-
-    await expect(impersonate('target-user-id', '理由')).rejects.toThrow(ImpersonationError);
-    await expect(impersonate('target-user-id', '理由')).rejects.toMatchObject({
-      code: 'AUTH_IMPERSONATION_DENIED',
-    });
-  });
-
-  it('未認証の場合 AuthError を throw する', async () => {
-    setupGetUser(null);
-    await expect(impersonate('target-user-id', '理由')).rejects.toThrow(AuthError);
-  });
-
-  it('admin_audit_logs に action_type=impersonate の記録を挿入する', async () => {
-    setupGetUser(fakeSuperAdmin);
-    const insertMock = vi.fn().mockResolvedValue({ data: null, error: null });
-    supabaseClient.from = vi.fn().mockImplementation((table: string) => {
-      if (table === 'user_profiles') {
-        return makeQueryBuilder({ data: { roles: ['super_admin'], organization_id: null }, error: null });
-      }
-      if (table === 'admin_audit_logs') {
-        return { insert: insertMock };
-      }
-      return makeQueryBuilder({ data: null, error: null });
-    });
-
-    await impersonate('target-user-id', '監査テスト');
-    expect(insertMock).toHaveBeenCalledOnce();
-    const insertedData = insertMock.mock.calls[0][0] as Record<string, unknown>;
-    expect(insertedData.action_type).toBe('impersonate');
-    expect(insertedData.actor_id).toBe(fakeSuperAdmin.id);
-    expect(insertedData.target_id).toBe('target-user-id');
-  });
-
-  it('admin_audit_logs テーブルが存在しなくても graceful に続行する', async () => {
-    setupGetUser(fakeSuperAdmin);
-    const insertMock = vi.fn().mockResolvedValue({ data: null, error: { message: 'table does not exist' } });
-    supabaseClient.from = vi.fn().mockImplementation((table: string) => {
-      if (table === 'user_profiles') {
-        return makeQueryBuilder({ data: { roles: ['super_admin'], organization_id: null }, error: null });
-      }
-      return { insert: insertMock };
-    });
-
-    const result = await impersonate('target-user-id', '理由');
-    expect(result).toHaveProperty('impersonation_token');
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// endImpersonation
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('endImpersonation', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('認証済みユーザーが呼ぶと admin_audit_logs に解除記録を挿入する', async () => {
-    setupGetUser(fakeUser);
-    const insertMock = vi.fn().mockResolvedValue({ data: null, error: null });
-    supabaseClient.from = vi.fn().mockReturnValue({ insert: insertMock });
-
-    await endImpersonation();
-    expect(insertMock).toHaveBeenCalledOnce();
-    const insertedData = insertMock.mock.calls[0][0] as Record<string, unknown>;
-    expect(insertedData.action_type).toBe('impersonate_end');
-  });
-
-  it('未認証の場合 AuthError を throw する', async () => {
-    setupGetUser(null);
-    await expect(endImpersonation()).rejects.toThrow(AuthError);
-  });
-
-  it('admin_audit_logs テーブルが存在しなくても graceful に続行する', async () => {
-    setupGetUser(fakeUser);
-    const insertMock = vi.fn().mockResolvedValue({ data: null, error: { message: 'table does not exist' } });
-    supabaseClient.from = vi.fn().mockReturnValue({ insert: insertMock });
-
-    await expect(endImpersonation()).resolves.toBeUndefined();
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// isImpersonating
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('isImpersonating', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('impersonate 記録がある場合 true を返す', async () => {
-    const queryBuilder = makeQueryBuilder({ data: [{ id: 'audit-id-1' }], error: null });
-    supabaseClient.from = vi.fn().mockReturnValue(queryBuilder);
-
-    const result = await isImpersonating(fakeUser as Parameters<typeof isImpersonating>[0]);
-    expect(result).toBe(true);
-  });
-
-  it('impersonate 記録がない場合 false を返す', async () => {
-    const queryBuilder = makeQueryBuilder({ data: [], error: null });
-    supabaseClient.from = vi.fn().mockReturnValue(queryBuilder);
-
-    const result = await isImpersonating(fakeUser as Parameters<typeof isImpersonating>[0]);
-    expect(result).toBe(false);
-  });
-
-  it('admin_audit_logs クエリが失敗した場合 graceful に false を返す', async () => {
-    const queryBuilder = makeQueryBuilder({ data: null, error: { message: 'table not found' } });
-    supabaseClient.from = vi.fn().mockReturnValue(queryBuilder);
-
-    const result = await isImpersonating(fakeUser as Parameters<typeof isImpersonating>[0]);
-    expect(result).toBe(false);
+  it('認可の入口 (requireUser / requireRole / requireOrgRole / requireOrgAdmin) は残っている', () => {
+    for (const name of ['requireUser', 'requireRole', 'requireOrgRole', 'requireOrgAdmin']) {
+      expect(Object.keys(authHelpers)).toContain(name);
+      expect(Object.keys(authBarrel)).toContain(name);
+    }
   });
 });

@@ -505,10 +505,11 @@ test.describe("ND-3: NutritionDetailModal nutrient 選択/解除", () => {
     expect(initialCount).toBeGreaterThan(0);
 
     // 選択済みの最初の栄養素ボタン (背景がアクセントカラー = オレンジ) をクリックして解除
-    // 選択済みボタンには順番バッジ (span.text-[8px]) が入っている
+    // 選択済みボタンには順番バッジ (data-testid="radar-nutrient-order-badge") が入っている。
+    // #1119: 以前はバッジの文字サイズのクラス名で探していたが、極小フォントを直したため data-testid に変えた
     const selectedBtns = page.locator(
       "button.rounded-full.px-2.py-0\\.5"
-    ).filter({ has: page.locator("span.text-\\[8px\\]") });
+    ).filter({ has: page.locator('[data-testid="radar-nutrient-order-badge"]') });
 
     const selectedCount = await selectedBtns.count();
 

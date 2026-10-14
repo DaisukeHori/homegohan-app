@@ -2,7 +2,7 @@
 import { create } from 'zustand';
 import type { ShoppingListItem, ShoppingList } from '@/types/domain';
 
-export type ShoppingRangeType = 'today' | 'tomorrow' | 'dayAfterTomorrow' | 'week' | 'days' | 'custom';
+export type ShoppingRangeType = 'today' | 'tomorrow' | 'dayAfterTomorrow' | 'week' | 'days' | 'currentWeek' | 'custom';
 
 export interface ShoppingRangeSelection {
   type: ShoppingRangeType;

@@ -1,99 +1,43 @@
 /**
- * GET    /api/super-admin/exports/[id]  — エクスポートステータス確認
- * DELETE /api/super-admin/exports/[id]  — エクスポートキャンセル
- * operator/02-api-spec.md §16 準拠
+ * /api/super-admin/exports/[id] — データエクスポートの状態確認・キャンセル (準備中・未対応)
+ *
+ * 全メソッドが 501 (OP_NOT_SUPPORTED) を返す (#1126。オーナー判断 2026-10-08: 準備中と明示する)。
+ * 認可 (super_admin) は従来どおり先に行い、通った人にだけ 501 を返す。DB には一切触れない。
+ *
+ * 以前は、エクスポートの代わりに利用者本人の GDPR 削除要求の表 (gdpr_deletion_requests) を読み書きしていた。
+ * 特に DELETE (キャンセル) は、実在する本人の削除要求に cancelled_at を入れて取り消してしまうため、
+ * 「エクスポートのキャンセル」のつもりで本人の削除要求を止める事故につながった。
+ * 専用の exports テーブルとファイルを作る処理が入るまで、この API は何も読まず、何も更新しない。
+ * 一覧・依頼 (POST) は ./route.ts。設計: operator/02-api-spec.md §16
  */
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
-import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { respondNotSupported } from '@/lib/admin/not-supported';
+import { EXPORTS_NOT_SUPPORTED_MESSAGE } from '@/lib/super-admin/exports-schemas';
 
-type Params = { params: { id: string } };
+export const dynamic = 'force-dynamic';
 
-export async function GET(_request: NextRequest, { params }: Params) {
-  try {
-    await requireRole(['super_admin']);
-    const supabase = await createClient();
+const respond = (method: string) =>
+  respondNotSupported({
+    routeName: `${method} /api/super-admin/exports/[id]`,
+    roles: ['super_admin'],
+    message: EXPORTS_NOT_SUPPORTED_MESSAGE,
+  });
 
-    const { data, error } = await supabase
-      .from('gdpr_deletion_requests')
-      .select('*')
-      .eq('id', params.id)
-      .single();
-
-    if (error || !data) {
-      return NextResponse.json({ error: { code: 'NOT_FOUND', message: 'エクスポートが見つかりません' } }, { status: 404 });
-    }
-
-    return NextResponse.json({
-      data: {
-        id: data.id,
-        export_type: data.deletion_type ?? 'user_data',
-        format: (data.request_details as { format?: string } | null)?.format ?? 'csv',
-        status: data.status ?? 'pending',
-        requested_by: data.user_id,
-        created_at: data.created_at,
-        file_url: null,
-      },
-    });
-  } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
-  }
+export async function GET() {
+  return respond('GET');
 }
 
-export async function DELETE(_request: NextRequest, { params }: Params) {
-  try {
-    const user = await requireRole(['super_admin']);
-    const supabase = await createClient();
+export async function POST() {
+  return respond('POST');
+}
 
-    const { data: existing } = await supabase
-      .from('gdpr_deletion_requests')
-      .select('status')
-      .eq('id', params.id)
-      .single();
+export async function PUT() {
+  return respond('PUT');
+}
 
-    if (!existing) {
-      return NextResponse.json({ error: { code: 'NOT_FOUND', message: 'エクスポートが見つかりません' } }, { status: 404 });
-    }
+export async function PATCH() {
+  return respond('PATCH');
+}
 
-    if (existing.status === 'completed') {
-      return NextResponse.json(
-        { error: { code: 'VALIDATION_ERROR', message: '完了済みのエクスポートはキャンセルできません' } },
-        { status: 422 },
-      );
-    }
-
-    await supabase
-      .from('gdpr_deletion_requests')
-      .update({ status: 'cancelled' })
-      .eq('id', params.id);
-
-    // 監査ログ
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: user.id,
-      action_type: 'admin.export.request',
-      target_type: 'export',
-      target_id: params.id,
-      details: { action: 'cancel' },
-      severity: 'info',
-    });
-
-    return NextResponse.json({ data: { id: params.id, deleted: true } });
-  } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
-  }
+export async function DELETE() {
+  return respond('DELETE');
 }

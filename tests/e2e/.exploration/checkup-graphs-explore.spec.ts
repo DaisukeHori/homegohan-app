@@ -32,6 +32,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
+import { requireE2eUserCredentials } from "../helpers/credentials";
 
 // ────────────────────────────────────────────────────────
 // 設定
@@ -45,10 +46,6 @@ test.use({
 
 const BASE_URL =
   process.env.PLAYWRIGHT_BASE_URL ?? "https://homegohan-app.vercel.app";
-
-const E2E_EMAIL =
-  process.env.E2E_USER_EMAIL ?? "claude-debug-1777477826@homegohan.local";
-const E2E_PASSWORD = process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!";
 
 const SCREENSHOT_DIR = path.resolve(
   __dirname,
@@ -85,9 +82,13 @@ async function saveScreenshot(page: Page, name: string) {
 }
 
 async function login(page: Page) {
+  // E2E テスト用アカウント (存在しているはずのアカウント)。認証情報は環境変数 (E2E_USER_EMAIL / E2E_USER_PASSWORD)
+  // からだけ取り、リポジトリには既定値を置かない (#1114)。未設定ならここでエラーで止まる。
+  // モジュール直下で読まないのは、未設定のときに spec の読み込みで投げて、他の spec まで巻き込むため
+  const { email, password } = requireE2eUserCredentials();
   await page.goto(`${BASE_URL}/login`);
-  await page.locator("#email").fill(E2E_EMAIL);
-  await page.locator("#password").fill(E2E_PASSWORD);
+  await page.locator("#email").fill(email);
+  await page.locator("#password").fill(password);
   await Promise.all([
     page
       .waitForURL(
@@ -350,7 +351,9 @@ test.describe("5-7. /health/graphs — 4 タブ + Bug-17 回帰", () => {
 
       if (hasEmpty) {
         // 統計カード「最大」に "100.0" が表示されてはいけない
-        const maxLabel = page.getByText("最大", { exact: true }).first();
+        // #1055 (wave-3b): 血圧タブは系列混在を避けるため「最大（収縮期）」等の
+        // ラベルになるため、前方一致で取得する（exact ではなくなる）
+        const maxLabel = page.getByText(/^最大/).first();
         const maxCard = maxLabel.locator("..");
         const cardText = (await maxCard.innerText()).trim();
         expect(cardText, `[Bug-17 回帰] タブ「${tabLabel}」: 最大値に 100.0 が表示されている`).not.toMatch(/100\.0/);
@@ -358,7 +361,7 @@ test.describe("5-7. /health/graphs — 4 タブ + Bug-17 回帰", () => {
         console.log(`✓ [${tabLabel}] データなし: 最大 = ${cardText}`);
       } else {
         // データあり: 統計値が数値であること
-        const maxLabel = page.getByText("最大", { exact: true }).first();
+        const maxLabel = page.getByText(/^最大/).first();
         const maxCard = maxLabel.locator("..");
         const cardText = (await maxCard.innerText()).trim();
         console.log(`✓ [${tabLabel}] データあり: 最大 = ${cardText}`);

@@ -1,12 +1,9 @@
 import "@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "@supabase/supabase-js";
 import { generateGeminiJson } from "../_shared/gemini-json.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+import { getCorsHeaders } from "../_shared/cors.ts";
+import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
+import { requireAiConsentForUser } from "../_shared/ai-consent-guard.ts";
 
 interface AnalysisResult {
   type: 'weight_scale' | 'blood_pressure' | 'thermometer' | 'unknown';
@@ -84,6 +81,9 @@ function normalizeAnalysisResult(raw: unknown): AnalysisResult {
 }
 
 Deno.serve(async (req) => {
+  // 許可したオリジンにだけ CORS ヘッダーを付ける (#1167)
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -111,6 +111,11 @@ Deno.serve(async (req) => {
       );
     }
 
+    // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+    // この関数は利用者の JWT で直接呼べるので、Next.js の API Route とは別にここでも止める
+    const aiConsentDenied = await requireAiConsentForUser(user.id, corsHeaders);
+    if (aiConsentDenied) return aiConsentDenied;
+
     const formData = await req.formData();
     const imageFile = formData.get("image") as File | null;
     const imageBase64 = formData.get("image_base64") as string | null;
@@ -133,6 +138,12 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (Next.js が数え済みの印があれば数えない)。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeEdgeAiUsage(req, user.id, "photo_analysis");
+    if (!aiUsage.allowed) return aiDailyLimitEdgeResponse(aiUsage, corsHeaders);
 
     const { data, model, rawText } = await generateGeminiJson<AnalysisResult>({
       prompt: buildAnalysisPrompt(deviceType),

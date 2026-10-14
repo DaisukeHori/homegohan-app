@@ -8,8 +8,14 @@ import { Icons } from "@/components/icons";
 import AIChatBubble from "@/components/AIChatBubble";
 import { createClient } from "@/lib/supabase/client";
 import { clearUserScopedLocalStorage } from "@/lib/user-storage";
+import { NATIVE_REBRIDGE_WAIT_MS, isInNativeWebView, notifyNativeSessionExpired } from "@/lib/native-auth-bridge";
+import { isOrgAdmin } from "@/lib/auth/org-admin";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { NativeAppTabRouter } from "@/components/native-app/NativeAppTabRouter";
+import { LegalConsentBanner } from "@/components/legal/LegalConsentBanner";
+import { NativeSessionWatcher } from "@/components/native-app/NativeSessionWatcher";
+import { AiConsentRequiredHost } from "@/components/consent/AiConsentRequiredHost";
+import { AiDailyLimitHost } from "@/components/consent/AiDailyLimitHost";
 
 // ロール別の管理メニュー
 const ADMIN_MENU_ITEMS: Record<string, { href: string; label: string; icon: string; color: string }> = {
@@ -88,12 +94,16 @@ function BottomNav({ pathname, initialIsNativeApp }: { pathname: string; initial
 export default function MainLayout({
   children,
   initialIsNativeApp = false,
+  legalConsentPending = false,
 }: {
   children: React.ReactNode
   initialIsNativeApp?: boolean
+  /** #1174: 規約への同意が済んでいない (お知らせは有効・強制はしていない) とき、画面の上に「同意のお願い」を出す */
+  legalConsentPending?: boolean
 }) {
   const pathname = usePathname();
   const [userRoles, setUserRoles] = useState<string[]>([]);
+  const [isOrgAdminUser, setIsOrgAdminUser] = useState(false);
   const supabase = createClient();
 
   useEffect(() => {
@@ -102,12 +112,13 @@ export default function MainLayout({
       if (user) {
         const { data: profile } = await supabase
           .from('user_profiles')
-          .select('roles')
+          .select('roles, org_role, organization_id')
           .eq('id', user.id)
           .single();
         if (profile?.roles) {
           setUserRoles(profile.roles);
         }
+        setIsOrgAdminUser(isOrgAdmin(profile));
       }
     };
     fetchUserRoles();
@@ -115,29 +126,64 @@ export default function MainLayout({
 
   // #145: signOut を別タブにも伝播させる
   useEffect(() => {
+    // ログアウトとして扱う: 端末のユーザー別データを消して、ログイン画面へ移る
+    const treatAsSignedOut = () => {
+      clearUserScopedLocalStorage();
+      window.location.href = '/login';
+    };
+
+    // モバイルアプリの WebView で、ネイティブが読み込み直してくれるのを待っている間のタイマー (#1038 F7-05)
+    let rebridgeWaitTimer: ReturnType<typeof setTimeout> | null = null;
+    const stopWaitingForRebridge = () => {
+      if (rebridgeWaitTimer !== null) {
+        clearTimeout(rebridgeWaitTimer);
+        rebridgeWaitTimer = null;
+      }
+    };
+
     // Supabase onAuthStateChange で同一タブ内のサインアウトを検知
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_OUT') {
-        clearUserScopedLocalStorage();
-        window.location.href = '/login';
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // 待っている間にセッションが戻った (別のタブが先に再ブリッジされ、共有の Cookie が新しくなったなど) ときは、何もしない
+      if (session) stopWaitingForRebridge();
+
+      if (event !== 'SIGNED_OUT') return;
+
+      if (!isInNativeWebView()) {
+        treatAsSignedOut();
+        return;
+      }
+
+      // モバイルアプリの WebView の中の SIGNED_OUT は、利用者のログアウトとは限らない (#1038 F7-05)。
+      // Web 側のセッションはネイティブから借りたもので、refresh_token は更新に使えない値。auth-js は期限が近づくと
+      // その値で更新しようとして必ず失敗し、セッションを捨てて SIGNED_OUT を出す。前面で使っているときは
+      // NativeSessionWatcher が先に再ブリッジを頼むので避けられるが、1 時間以上バックグラウンドに置いて戻ったときは、
+      // 復帰した瞬間に auth-js が更新を試みるので、どんな閾値でも先回りできない。
+      // ここでログアウト扱いにすると、ログアウトしていないのに v4MenuGenerating などの user-scoped の localStorage が消え
+      // (全タブの WebView で共有)、再ブリッジの読み込み直しで進行中の生成の追跡が途切れ、/login が一瞬出てしまう。
+      // そこでネイティブに再ブリッジを頼み、読み込み直されるのを待つ。
+      // 利用者が意図したログアウト (設定・マイページなど) は、各画面が signOut の前に自分で localStorage を消し、
+      // broadcastSignOut() で sign-out を送り、router.push('/login') で移る。その場合は、この画面を離れるときに待ちが終わる。
+      notifyNativeSessionExpired();
+      // 読み込み直されないとき (session-expired を知らない旧アプリで、実際の refresh_token のセッションが失効した場合など) は、
+      // 従来どおりログアウトとして扱う
+      if (rebridgeWaitTimer === null) {
+        rebridgeWaitTimer = setTimeout(treatAsSignedOut, NATIVE_REBRIDGE_WAIT_MS);
       }
     });
 
-    // BroadcastChannel で別タブからの signOut を受信
+    // BroadcastChannel で別タブからの signOut を受信 (broadcastSignOut() が送る。利用者が意図したログアウトなので、WebView の中でも待たずに移る)
     let channel: BroadcastChannel | null = null;
     if (typeof BroadcastChannel !== 'undefined') {
       channel = new BroadcastChannel('auth');
       channel.addEventListener('message', (e) => {
-        if (e.data === 'SIGNED_OUT') {
-          clearUserScopedLocalStorage();
-          window.location.href = '/login';
-        }
+        if (e.data === 'SIGNED_OUT') treatAsSignedOut();
       });
     }
 
     return () => {
       subscription.unsubscribe();
       channel?.close();
+      stopWaitingForRebridge();
     };
   }, [supabase]);
 
@@ -160,8 +206,8 @@ export default function MainLayout({
     if (hasRole('support') || hasRole('admin') || hasRole('super_admin')) {
       items.push(ADMIN_MENU_ITEMS.support);
     }
-    // org_adminロールを持っている場合
-    if (hasRole('org_admin')) {
+    // 所属組織の owner / admin の場合 (#1235: roles の org_admin では判定しない)
+    if (isOrgAdminUser) {
       items.push(ADMIN_MENU_ITEMS.org_admin);
     }
     
@@ -176,6 +222,8 @@ export default function MainLayout({
   return (
     <div className="flex min-h-screen bg-gray-50">
       <NativeAppTabRouter />
+      {/* モバイルアプリの WebView の中で、セッションが切れる前にネイティブへ再ブリッジを頼む (#1038 F7-05)。ブラウザでは何もしない */}
+      <NativeSessionWatcher />
       
       {/* デスクトップ用サイドバー (Hidden on Mobile) */}
       <aside className={`${initialIsNativeApp ? 'hidden' : 'hidden lg:flex'} flex-col w-64 fixed inset-y-0 left-0 bg-white border-r border-gray-100 z-50 shadow-sm`}>
@@ -250,9 +298,14 @@ export default function MainLayout({
 
       {/* メインコンテンツ */}
       <main className="flex-1 lg:ml-64 relative min-h-screen">
+        {legalConsentPending && <LegalConsentBanner />}
         {children}
         {/* AIチャットバブル - モーダルのオーバーレイでカバーされるようにmain内に配置 */}
         <AIChatBubble />
+        {/* 外国の AI 事業者への提供の同意: AI の API に「同意が必要です」で止められたときに同意画面を出す (T15 / #1154) */}
+        <AiConsentRequiredHost />
+        {/* AI の 1 日の利用回数の上限: AI の API に「今日の上限に達しました」で止められたときに固定の文を出す (#1149) */}
+        <AiDailyLimitHost />
       </main>
 
       {/* モバイル用ボトムナビゲーション (Floating) — isNativeApp 時は非表示 */}

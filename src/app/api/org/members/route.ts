@@ -1,40 +1,22 @@
-import { createClient } from '@supabase/supabase-js';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { requireOrgAdmin, type OrgAdminContext } from '@/lib/auth/helpers';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { readJsonBody } from '@/lib/http-params';
+import {
+  createOrgInviteWithEmail,
+  invalidOrgInviteBodyResponse,
+  orgInviteFailureResponse,
+} from '@/lib/membership/org-invite';
+import { AddOrgMemberRequestBodySchema } from '@/schemas/membership/organization-invite';
 
-// admin 機能用には supabase-js のクライアントを直接使う（service_role キーが必要）
-function getSupabaseAdmin() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceKey) {
-    throw new Error('Supabase admin env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)');
-  }
-  return createClient(url, serviceKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
-}
-
-// メンバー一覧取得
+// メンバー一覧取得 (所属組織の owner / admin のみ。判定は共通の requireOrgAdmin()、#1161)
 export async function GET(_request: Request) {
-  const supabase = await createServerClient();
-
   try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const { profile: adminProfile } = await requireOrgAdmin();
 
-    const { data: adminProfile } = await supabase
-      .from('user_profiles')
-      .select('organization_id, roles')
-      .eq('id', user.id)
-      .single();
-
-    if (!adminProfile?.roles?.includes('org_admin') || !adminProfile?.organization_id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
+    const supabase = await createServerClient();
     const { data: members, error } = await supabase
       .from('user_profiles')
       .select('id, nickname, roles, created_at, updated_at, organization_id')
@@ -45,71 +27,77 @@ export async function GET(_request: Request) {
 
     return NextResponse.json({ members });
 
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (error instanceof ForbiddenError) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    // 500 の本文は汎用メッセージだけ (#1172)。詳細は db-logger にだけ残す
+    createLogger('GET /api/org/members', generateRequestId()).error('組織メンバー一覧の取得に失敗しました', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
-// メンバー作成 (org_admin のみ)
+// メンバーの追加 = 組織への招待 (所属組織の owner / admin のみ) (#1235)
+//
+// 以前はここで、管理者が指定したメールアドレスとパスワードで「メール確認済み」のアカウントを作っていた。
+// メールの持ち主の確認無しに使えるアカウントを作れると、アカウント事前乗っ取り (pre-hijacking) の原因になるうえ、
+// 本当の持ち主がそのアドレスで登録できなくなる。2026-10-07 のオーナー判断で招待メール方式に変更し、
+// Web の「メンバーを招待」(POST /api/org/invites) と同じ組織招待 (役割は member) を送る。
+// アカウントは作らない。リクエストの password は受け取っても使わない (古いモバイルアプリが送ってくるため無視する)。
 export async function POST(request: Request) {
-  const supabase = await createServerClient();
-
+  let admin: OrgAdminContext;
   try {
-    const supabaseAdmin = getSupabaseAdmin();
-
-    // 1. リクエスト実行者の権限チェック
-    const { data: { user: actor } } = await supabase.auth.getUser();
-    if (!actor) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-    const { data: adminProfile } = await supabase
-      .from('user_profiles')
-      .select('organization_id, roles')
-      .eq('id', actor.id)
-      .single();
-
-    if (!adminProfile?.roles?.includes('org_admin') || !adminProfile?.organization_id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    admin = await requireOrgAdmin();
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: { code: 'NOT_AUTHENTICATED', message: '認証が必要です' } }, { status: 401 });
     }
-
-    // 2. 作成パラメータ取得
-    const body = await request.json();
-    const { email, password, nickname } = body;
-
-    if (!email || !password || !nickname) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    if (error instanceof ForbiddenError) {
+      return NextResponse.json(
+        { error: { code: 'INSUFFICIENT_PERMISSION', message: 'owner/admin のみ招待可能です' } },
+        { status: 403 },
+      );
     }
-
-    // 3. ユーザー作成 (Admin API)
-    const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { nickname },
-    });
-
-    if (createError) throw createError;
-    if (!newUser.user) throw new Error('Failed to create user');
-
-    // 4. プロフィール作成 & 組織紐付け
-    const { error: profileError } = await supabaseAdmin
-      .from('user_profiles')
-      .upsert({
-        id: newUser.user.id,
-        nickname,
-        organization_id: adminProfile.organization_id,
-        roles: ['user'],
-        updated_at: new Date().toISOString(),
-      });
-
-    if (profileError) {
-      console.error('Profile update error', profileError);
-      return NextResponse.json({ error: 'User created but profile update failed' }, { status: 500 });
-    }
-
-    return NextResponse.json({ success: true, user: newUser.user });
-
-  } catch (error: any) {
-    console.error('Create member error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    createLogger('POST /api/org/members', generateRequestId()).error('組織管理者の確認に失敗しました', error);
+    return NextResponse.json(
+      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
+      { status: 500 },
+    );
   }
+  const { user: actor, profile: adminProfile } = admin;
+
+  const parsedBody = await readJsonBody(request);
+  if (!parsedBody.ok) {
+    return NextResponse.json({ error: { code: 'INVALID_BODY', message: 'リクエストボディが不正です' } }, { status: 400 });
+  }
+
+  // #1163 メールアドレスは前後の空白を除いて小文字にし、形式と長さを確かめる。nickname は 50 文字まで。
+  // password など未知のキーは取り除かれる (受け取っても使わない)
+  const parsed = AddOrgMemberRequestBodySchema.safeParse(parsedBody.body);
+  if (!parsed.success) {
+    return invalidOrgInviteBodyResponse(parsed.error);
+  }
+  const { email } = parsed.data;
+  // 未入力 (空文字) は宛名なしにする
+  const nickname = parsed.data.nickname ? parsed.data.nickname : null;
+
+  // 招待を作り、招待メールを送る (POST /api/org/invites と共通。送信回数の制限もこの中で判定するので、
+  // この入口からも回避できない)
+  const supabase = await createServerClient();
+  const result = await createOrgInviteWithEmail({
+    supabase,
+    inviter: { id: actor.id, email: actor.email, nickname: adminProfile.nickname },
+    organizationId: adminProfile.organization_id,
+    email,
+    role: 'member',
+    displayName: nickname,
+  });
+  if (!result.ok) {
+    return orgInviteFailureResponse(result, { routeName: 'POST /api/org/members', userId: actor.id });
+  }
+
+  return NextResponse.json({ ok: true, invite: result.invite }, { status: 201 });
 }

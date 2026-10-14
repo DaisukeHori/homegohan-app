@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
 import { TourProgress } from '@/components/handson-tour/TourProgress';
 import { useReducedMotion } from '@/components/handson-tour/useReducedMotion';
+import { useTour } from '@/contexts/TourContext';
 import {
   HANDSON_TOUR_I18N_JA,
   HANDSON_TOUR_ROUTES,
@@ -24,7 +25,6 @@ function safeNickname(raw: string | null | undefined): string {
 
 export default function HandsonTourWelcomePage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const prefersReducedMotion = useReducedMotion();
   const mountTime = useRef(Date.now());
 
@@ -32,8 +32,13 @@ export default function HandsonTourWelcomePage() {
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
 
-  const entrySource =
-    searchParams.get('force') === '1' ? 'settings_force' : 'auto';
+  // #1045 round-2 (Fable Warning): force フローが /handson-tour/replay 経由の
+  // HttpOnly Cookie に移った (F6-05) ため、このページで URL クエリの force フラグを
+  // 読んでも常に false になり、設定画面からの「もう一度見る」でも entry_source が
+  // 'auto' になって settings_force が計測されなくなっていた。
+  // layout.tsx がサーバー側で Cookie を判定して TourProvider に渡した entrySource を
+  // 参照することで、この画面でも正しい entry_source を使う。
+  const { entrySource } = useTour();
 
   useEffect(() => {
     const supabase = createClient();
@@ -43,7 +48,10 @@ export default function HandsonTourWelcomePage() {
       supabase
         .from('user_profiles')
         .select('nickname')
-        .eq('user_id', user.id)
+        // #1045 round-2 (ついでに修正・#1025 同型バグ): user_profiles の PK は `id`
+        // (auth.users(id) 参照) で `user_id` 列は存在しない。以前は .eq('user_id', ...)
+        // が黙って 0 件ヒットし、ニックネームが常に「あなた」固定になっていた。
+        .eq('id', user.id)
         .single()
         .then(({ data }) => {
           if (data?.nickname) {

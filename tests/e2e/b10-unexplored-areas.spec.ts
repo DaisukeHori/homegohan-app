@@ -237,13 +237,18 @@ test.describe("3. オンボーディング", () => {
 // ============================================================
 
 test.describe("4. 静的ページ・リンク整合性", () => {
-  test("4-1: /pricing ページが 200 相当で表示される", async ({ page }) => {
+  test("4-1: /pricing ページが 200 相当で表示される (有料プランは準備中)", async ({ page }) => {
     await page.goto("/pricing");
     await expect(page).not.toHaveURL(/error/);
     await expect(page.locator("body")).not.toContainText("500");
     // 料金関連のテキストがあること
-    const hasPricing = (await page.getByText(/プラン|料金|月額|年額|円/).count()) > 0;
+    const hasPricing = (await page.getByText(/プラン|料金/).count()) > 0;
     expect(hasPricing, "料金テキストが見つからない").toBe(true);
+    // 有料プランは販売開始前なので、価格は出さず「準備中」と案内する (#1155 #1151)
+    await expect(page.getByText("有料プランは準備中です（販売開始前）").first()).toBeVisible();
+    await expect(page.locator("body")).not.toContainText("¥980");
+    await expect(page.locator("body")).not.toContainText("¥1,980");
+    await expect(page.locator("body")).not.toContainText("年払い");
     await saveEvidence(page, "b10-static", "pricing-page");
   });
 
@@ -264,6 +269,14 @@ test.describe("4. 静的ページ・リンク整合性", () => {
     // 特定商取引法テキストがあること
     const hasLegal = (await page.getByText(/特定商取引法|販売事業者/).count()) > 0;
     expect(hasLegal, "特定商取引法テキストが見つからない").toBe(true);
+    // 実在しないダミーの事業者情報は出さず、確定していない項目は「準備中」と案内する (#1155)
+    await expect(page.getByText("準備中（確定次第掲載します）").first()).toBeVisible();
+    await expect(page.getByText("有料プランは準備中です（販売開始前）").first()).toBeVisible();
+    await expect(page.locator("body")).not.toContainText("03-1234-5678");
+    await expect(page.locator("body")).not.toContainText("山田 太郎");
+    await expect(page.locator("body")).not.toContainText("神宮前1-2-3");
+    // 問い合わせはフォームへ案内する
+    await expect(page.locator('a[href="/contact"]').first()).toBeVisible();
     await saveEvidence(page, "b10-static", "legal-page");
   });
 

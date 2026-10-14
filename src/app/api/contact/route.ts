@@ -1,7 +1,23 @@
-import { Ratelimit } from '@upstash/ratelimit';
-import { Redis } from '@upstash/redis';
+import { createLogger } from '@/lib/db-logger';
+import { checkRateLimit, rateLimitExceededResponse, type RateLimitResult } from '@/lib/rate-limit';
+import { getEmailFrom } from '@/lib/site-config';
 import { createClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+
+// #1044 (F6-19): 入力を Zod で厳密検証する
+const contactInquirySchema = z.object({
+  inquiryType: z.enum(['general', 'support', 'bug', 'feature'], {
+    message: 'inquiryType の値が不正です',
+  }),
+  email: z.string().email('有効なメールアドレスを入力してください'),
+  subject: z.string().min(1, '件名は必須です').max(100, '件名は100文字以内です'),
+  message: z.string().min(1, 'お問い合わせ内容は必須です').max(5000, 'お問い合わせ内容は5000文字以内です'),
+});
+
+// GET で返す列は必要最小限に限定する (admin_notes 等の内部情報は返さない)
+const INQUIRY_SAFE_COLUMNS =
+  'id, inquiry_type, subject, message, status, created_at, updated_at, resolved_at';
 
 async function sendAdminNotification(inquiry: {
   id: string;
@@ -26,7 +42,8 @@ async function sendAdminNotification(inquiry: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: 'ほめゴハン <noreply@homegohan.app>',
+        // 送信元は EMAIL_FROM (未設定なら既定値)。ほかのメールと同じく src/lib/site-config.ts で決める (#1194)
+        from: getEmailFrom(),
         to: [adminEmail],
         subject: `[お問い合わせ] ${inquiry.subject}`,
         text: [
@@ -52,94 +69,45 @@ async function sendAdminNotification(inquiry: {
   }
 }
 
-// #274 レートリミット: Upstash Redis があれば分散 ratelimit、なければ in-memory フォールバック
-// TODO: env 設定後 ratelimit 有効化 — UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN を設定すること
-
-const RATE_LIMIT_MAX = 10;
-const RATE_LIMIT_WINDOW_SEC = 60;
-const RATE_LIMIT_WINDOW_MS = RATE_LIMIT_WINDOW_SEC * 1000;
-
-// Upstash Redis を使った分散 ratelimiter（env 設定済みの場合のみ初期化）
-let upstashRatelimiter: Ratelimit | null = null;
-if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-  try {
-    const redis = new Redis({
-      url: process.env.UPSTASH_REDIS_REST_URL,
-      token: process.env.UPSTASH_REDIS_REST_TOKEN,
-    });
-    upstashRatelimiter = new Ratelimit({
-      redis,
-      limiter: Ratelimit.slidingWindow(RATE_LIMIT_MAX, `${RATE_LIMIT_WINDOW_SEC} s`),
-      prefix: 'homegohan:contact:rl',
-    });
-  } catch (err) {
-    console.warn('[contact] Upstash ratelimit 初期化失敗。in-memory フォールバックを使用します。', err);
-  }
-} else {
-  console.warn(
-    '[contact] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN が未設定です。' +
-    'in-memory レートリミットを使用します（Vercel サーバーレス環境では無効）。',
-  );
-}
-
-// in-memory フォールバック（単一インスタンス内でのみ有効）
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-
-function checkRateLimitInMemory(ip: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    return true;
-  }
-  if (entry.count >= RATE_LIMIT_MAX) return false;
-  entry.count++;
-  return true;
-}
-
-async function checkRateLimit(ip: string): Promise<boolean> {
-  if (upstashRatelimiter) {
-    const { success } = await upstashRatelimiter.limit(ip);
-    return success;
-  }
-  return checkRateLimitInMemory(ip);
-}
-
 export async function POST(request: NextRequest) {
-  // レートリミットチェック
+  // #1197 レートリミットは共通ヘルパー (src/lib/rate-limit.ts) の contact カテゴリ (クライアント IP 単位で
+  // 10 回/分) に一本化した。以前はこのファイルに Upstash / in-memory の制限が独自実装されていた。
+  // 失敗時の扱いは共通ヘルパーに揃える。
+  // - Upstash 未設定: fail-open (無制限に通す) にも hard 503 にもしない。in-memory フォールバック
+  //   (+ warn ログ) で最低限の制限をかけて受け付ける。本番で Upstash が未接続の間も問い合わせフォームを
+  //   止めないため (#1044 round-2)。Vercel ではインスタンスごとに数えるベストエフォートの防御になる。
+  // - Upstash への問い合わせが例外: fail-closed。判定できないときは通さず 500 を返し、
+  //   問い合わせの保存も管理者への通知メールも行わない。
   const ip =
     request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
     request.headers.get('x-real-ip') ??
     'unknown';
-  if (!await checkRateLimit(ip)) {
+  let rateLimit: RateLimitResult;
+  try {
+    rateLimit = await checkRateLimit(ip, 'contact');
+  } catch (error) {
+    createLogger('contact').error('レート制限の判定に失敗しました (fail-closed)', error);
     return NextResponse.json(
-      { error: 'リクエストが多すぎます。しばらく時間をおいてからお試しください。' },
-      { status: 429 },
+      { error: 'サーバーエラーが発生しました' },
+      { status: 500 },
     );
   }
+  if (!rateLimit.success) return rateLimitExceededResponse(rateLimit);
 
   const supabase = await createClient();
 
   try {
     const body = await request.json();
-    const { inquiryType, email, subject, message } = body;
 
-    // バリデーション
-    if (!inquiryType || !email || !subject || !message) {
+    // #1044 (F6-19): Zod による厳密バリデーション
+    const parseResult = contactInquirySchema.safeParse(body);
+    if (!parseResult.success) {
       return NextResponse.json(
-        { error: '必須項目が入力されていません' },
+        { error: '入力内容を確認してください', details: parseResult.error.flatten() },
         { status: 400 },
       );
     }
-
-    // メールアドレスの簡易バリデーション
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return NextResponse.json(
-        { error: '有効なメールアドレスを入力してください' },
-        { status: 400 },
-      );
-    }
+    const { inquiryType, email, subject, message } = parseResult.data;
 
     // ユーザーIDを取得（ログイン中の場合）
     const { data: { user } } = await supabase.auth.getUser();
@@ -197,7 +165,7 @@ export async function GET() {
   try {
     const { data, error } = await supabase
       .from('inquiries')
-      .select('*')
+      .select(INQUIRY_SAFE_COLUMNS)
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 

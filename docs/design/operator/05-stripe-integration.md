@@ -43,14 +43,24 @@ stripe_price_id    VARCHAR(255),  -- price_xxx (現在有効な Price ID)
 
 ```typescript
 // src/app/api/webhooks/stripe/route.ts
+import { verifyStripeWebhook, WebhookSecretMissingError } from '@/lib/webhook/verify';
+
 export async function POST(request: Request) {
   // 1. Stripe-Signature 検証
   const signature = request.headers.get('Stripe-Signature')!;
   const body = await request.text();
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(body, signature, process.env.STRIPE_WEBHOOK_SECRET!);
-  } catch {
+    // 署名の秘密は cross/04-api-conventions.md §10.1 の verifyStripeWebhook が getOptionalEnv で取り出す
+    // (`process.env.<変数名>!` とは書かない。無ければ受け付けない fail-closed。#1182・#1434)
+    event = await verifyStripeWebhook(body, signature);
+  } catch (err: unknown) {
+    if (err instanceof WebhookSecretMissingError) {
+      // 設定漏れ (署名の秘密が無い) は、送り手の誤りではなくこちらの設定の誤り。署名の誤り (400) と分けて 500 にする
+      // (cross/04 §4.1: システム内部エラーの SYS_ は 500。502 / 503 の EXT_ は外部サービスの誤りに使う)。
+      // Stripe は 2xx 以外を再送するので、秘密を設定し直せば届き直す。本文に変数名を入れない (変数名はログにだけ残る)
+      return new Response('Webhook is not configured', { status: 500 });
+    }
     return new Response('Invalid signature', { status: 400 });
   }
 
@@ -193,6 +203,13 @@ async function handleDisputeCreated(dispute: Stripe.Dispute) {
 
 ## 5. 価格変更 → Stripe Price 同期
 
+> **実装の現状 (#1102。オーナー判断 2026-10-08)**: 価格変更は**新規契約のみ**に適用する。下のコード例にある `on_renewal` / `immediately` と、
+> 既存サブスクリプションを新 Price へ切り替える処理 (`batchUpdateExistingSubscriptions`) は作らない (廃止)。
+> 実装は `supabase/functions/stripe-price-sync/index.ts` (HTTP の入口) と `sync.ts` (処理本体) で、`apply_price_change` RPC は無い。
+> 月額・年額を 1 回の呼び出しで同期し、`{ month, year }` を返す。DB の更新 (`subscription_plans` の
+> `stripe_price_id` = 月額 / `stripe_yearly_price_id` = 年額、`plan_price_history`、`admin_audit_logs`) は呼び出し元の
+> `POST /api/super-admin/plans/{id}/price-change` が行う。詳細は `04-plan-management.md` §3.3 を参照。
+
 ### 5.1 Edge Function: stripe-price-sync
 
 `supabase/functions/stripe-price-sync/index.ts`:
@@ -262,9 +279,9 @@ Deno.serve(async (req) => {
 
 | 適用範囲 | Stripe 操作 |
 |---------|------------|
-| `new_only` | 旧 Price を `active=false` に更新 (新規購入で旧 Price が選ばれないようにする) |
-| `on_renewal` | 各 `personal_subscriptions` の `stripe_subscription_id` に `items.update` で新 Price を次回更新時から適用 |
-| `immediately` | `stripe.subscriptions.update({ proration_behavior: 'create_prorations', items: [{ price: newPriceId }] })` を全既存 sub に適用 |
+| `new_only` (唯一の適用範囲。#1102) | 変えた interval ごとに新 Price を作り、**同じ interval の旧 Price だけ** `active=false` に更新する (新規購入で旧 Price が選ばれないようにする。既存サブスクリプションは旧 Price のまま) |
+| ~~`on_renewal`~~ (廃止) | ~~各 `personal_subscriptions` の `stripe_subscription_id` に `items.update` で新 Price を次回更新時から適用~~ |
+| ~~`immediately`~~ (廃止) | ~~`stripe.subscriptions.update({ proration_behavior: 'create_prorations', items: [{ price: newPriceId }] })` を全既存 sub に適用~~ |
 
 ```sql
 -- apply_price_change RPC 内の処理
@@ -649,15 +666,26 @@ describe('mapStripeStatus', () => {
 // tests/integration/operator/stripe-webhook-events.integration.test.ts
 import Stripe from 'stripe';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY_TEST!, {
+// 署名ヘッダーの生成は手元で完結する (Stripe の API を呼ばない) ので、秘密鍵はテスト用の固定の値でよい
+// (`process.env.<変数名>!` は使わない。#1182・#1434)
+const TEST_STRIPE_SECRET_KEY = 'sk_test_dummy_for_signature_test';
+const stripe = new Stripe(TEST_STRIPE_SECRET_KEY, {
   apiVersion: '2024-11-20.acacia',
 });
+
+// 署名の秘密は、テスト対象のサーバーが確かめる値と同じでなければならないので環境変数から読む。
+// 無ければ undefined のまま署名せずに、ここで止める (`process.env.<変数名>!` は使わない。#1182・#1434)
+function requireWebhookSecretForTest(): string {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!secret) throw new Error('Stripe の Webhook の署名の秘密が未設定です');
+  return secret;
+}
 
 function signEvent(payload: object) {
   const body = JSON.stringify(payload);
   const signature = stripe.webhooks.generateTestHeaderString({
     payload: body,
-    secret: process.env.STRIPE_WEBHOOK_SECRET!,
+    secret: requireWebhookSecretForTest(),
   });
   return {
     body,

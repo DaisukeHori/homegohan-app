@@ -3,12 +3,19 @@
 // TourProvider でラップ + 認証ガード + status 確認
 
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import type { ErrorBoundaryProps } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
+import { ErrorFallback } from '../../src/components/ErrorFallback';
 import { useAuth } from '../../src/providers/AuthProvider';
 import { TourProvider } from '../../src/contexts/TourContext';
 import { getApi } from '../../src/lib/api';
+
+// この区画の画面で描画の例外が起きたとき、アプリ全体をクラッシュさせずに再試行を出す (#1207)
+export function ErrorBoundary(props: ErrorBoundaryProps) {
+  return <ErrorFallback {...props} boundary="handson-tour" homeHref="/(tabs)/home" />;
+}
 
 export default function HandsonTourLayout() {
   const { session, isLoading: authLoading } = useAuth();

@@ -1,11 +1,17 @@
-import { corsHeaders } from '../_shared/cors.ts';
+import { getCorsHeaders } from '../_shared/cors.ts';
 import { createFastLLMClient, getFastLLMModel } from '../_shared/fast-llm.ts';
 import { requireAuth } from '../_shared/auth.ts';
+import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from '../_shared/ai-usage.ts';
 import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
+import { validateAnalyzeFridgeRequest } from './validate-request.ts';
+import { requireAiConsentForUser } from '../_shared/ai-consent-guard.ts';
 
 const openai = createFastLLMClient();
 
 Deno.serve(async (req) => {
+  // 許可したオリジンにだけ CORS ヘッダーを付ける (#1167)
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -20,20 +26,46 @@ Deno.serve(async (req) => {
   }
   const { userId } = authResult;
 
+  // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+  // この関数は利用者の JWT で直接呼べるので、Next.js の API Route とは別にここでも止める
+  const aiConsentDenied = await requireAiConsentForUser(userId, corsHeaders);
+  if (aiConsentDenied) return aiConsentDenied;
+
   const requestId = generateRequestId();
   const logger = createLogger('analyze-fridge', requestId).withUser(userId);
 
   try {
-    const { imageUrl } = await req.json();
-
-    if (!imageUrl) {
-      return new Response(JSON.stringify({ error: 'Image URL is required' }), {
+    // 本文が JSON として読めないのは呼び出し側の誤りなので、500 ではなく 400 で返す
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      logger.warn('Invalid analyze-fridge request', { reason: 'invalid_json' });
+      return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 400,
       });
     }
 
-    logger.info('Analyzing fridge image', { imageUrl: imageUrl.slice(0, 80) });
+    // imageUrl はそのまま外部の Vision API に渡るため、型・長さ・https の URL かどうかを先に確かめる (#1227)
+    const validation = validateAnalyzeFridgeRequest(body);
+    if (!validation.ok) {
+      logger.warn('Invalid analyze-fridge request', { reason: validation.reason, ...validation.meta });
+      return new Response(JSON.stringify({ error: validation.message }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      });
+    }
+    const { imageUrl, host } = validation;
+
+    // 署名付き URL の token がログに残らないよう、URL 全体ではなくホストと長さだけ記録する
+    logger.info('Analyzing fridge image', { imageHost: host, imageUrlLength: imageUrl.length });
+
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (Next.js が数え済みの印があれば数えない)。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeEdgeAiUsage(req, userId, 'photo_analysis');
+    if (!aiUsage.allowed) return aiDailyLimitEdgeResponse(aiUsage, corsHeaders);
 
     // Vision API
     const response = await openai.chat.completions.create({
@@ -75,7 +107,8 @@ Deno.serve(async (req) => {
     });
   } catch (error: any) {
     logger.error('Error analyzing fridge', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    // 上流 API のエラー文などの内部情報はクライアントに返さない (詳細は上のログで追える)
+    return new Response(JSON.stringify({ error: 'Internal server error' }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 500,
     });

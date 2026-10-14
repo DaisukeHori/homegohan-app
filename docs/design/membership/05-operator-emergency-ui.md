@@ -355,6 +355,24 @@ POST /api/operator/membership/family/{id}/dissolve body: { reason }
 3. 失敗してもログ残しのみで成功扱い (操作自体は成功)
 4. 通知の retry は別 cron (TODO: P7 後期で追加)
 
+**transfer (譲渡) の注意: 旧オーナー / 旧代表者は RPC 実行"前"に取得する (#1209)**
+
+`operator_force_owner_transfer` / `operator_force_representative_transfer` は `owner_id` / `representative_id` を
+新オーナーへ書き換えた後の行を返す。実行後に読み直す (または RPC の戻り値を使う) と「旧オーナー」が新オーナー自身になり、
+本当の旧オーナーに「権限が移譲されました」通知が届かず、新オーナー宛の「旧オーナー」欄も自分のアドレスになる。
+そのため route は RPC の前に service-role で旧オーナーと scope 名を取得し、RPC 後の通知はその値を使う
+(dissolve が実行前にメンバーを取得するのと同じ考え方)。
+取得に失敗した場合は誤った宛先・本文を送らないよう通知だけを省略し、構造化ログ (`app_logs`) に残す。操作自体は止めない。
+
+**宛先のメールアドレスの引き方 (#1204)**
+
+メールアドレスは `auth.users` にしか無い (`user_profiles` に email 列は無い)。`auth.admin.listUsers()` は page / perPage を
+渡さないと先頭 50 件しか返さず、登録ユーザーが 50 人を超えると宛先が一覧に載らず、通知が例外もログもなく
+スキップされていた。そのため、通知先の user_id だけを `src/lib/membership/resolve-auth-emails.ts` の
+`resolveAuthEmails` で引く (`getUserById` を同時実行数の上限つきで呼ぶ。全体の登録人数に依存しない)。
+取得できなかった人には送らず、件数と user_id を警告ログ (`app_logs`) に残す (メールアドレスはログに残さない)。
+候補者一覧 (`candidates`) も同じ関数で email を引き、取得できなかった人は `email: null` で返す。
+
 ---
 
 ## 9. 24h 待機オプション (運用ベストプラクティス)

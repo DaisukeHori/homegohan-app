@@ -5,7 +5,7 @@ appId: com.homegohan.app
 # ディープリンクで /(tabs)/home に直接アクセスを試みる
 # → 認証されていないため welcome 画面 (/) にリダイレクトされること
 - launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
+# 前の状態をリセット (ホームにいる場合)
 - runFlow:
     file: "../_shared/ensure-welcome.yaml"
 - extendedWaitUntil:

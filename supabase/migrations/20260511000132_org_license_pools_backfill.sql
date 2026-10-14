@@ -1,14 +1,6 @@
 -- migration: 20260511000132_org_license_pools_backfill.sql
--- Round 4 監査 C-7
--- org_license_pools の used_licenses を実メンバ数 (is_active_in_org = TRUE) で再計算
--- accept_org_invite RPC が used_licenses を +1 する前に既存データが 0 のままなので backfill が必要
-
-UPDATE org_license_pools lp
-SET used_licenses = (
-  SELECT COUNT(*)
-  FROM user_profiles up
-  WHERE up.organization_id = lp.organization_id
-    AND up.is_active_in_org = TRUE
-),
-updated_at = NOW()
-WHERE TRUE;
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;

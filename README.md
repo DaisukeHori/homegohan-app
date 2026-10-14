@@ -138,8 +138,10 @@ npm run mobile:start  # モバイル Metro bundler 起動
 # ユニットテスト
 npm run test
 
-# インテグレーションテスト (Supabase 接続が必要)
-SUPABASE_INTEGRATION_TEST=1 npm run test:integration
+# インテグレーションテスト (ローカル Supabase + ローカル dev サーバが必要。本番には向けない)
+#   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
+#   npm run dev   # 別ターミナル
+npm run test:integration -- tests/integration/operator/admin-
 ```
 
 `tests/e2e/` は vitest の除外対象です (`vitest.config.ts` の `exclude` を参照)。

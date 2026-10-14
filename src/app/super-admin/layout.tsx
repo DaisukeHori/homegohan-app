@@ -15,6 +15,11 @@ const superAdminNavItems = [
   { href: '/super-admin/coupons', label: 'クーポン', icon: '🎟' },
 ];
 
+// 運用・監視。プラン管理とは見出しを分ける (アプリログはプランと関係ないため)
+const superAdminOperationsNavItems = [
+  { href: '/super-admin/logs', label: 'アプリログ', icon: '📜' },
+];
+
 export default async function SuperAdminLayout({
   children,
 }: {
@@ -69,6 +74,18 @@ export default async function SuperAdminLayout({
         <nav className="flex-1 p-4 space-y-1 mt-2">
           <p className="text-xs text-slate-500 px-3 pb-1 uppercase tracking-wider">プラン管理</p>
           {superAdminNavItems.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-700 transition-colors text-sm"
+            >
+              <span>{item.icon}</span>
+              <span>{item.label}</span>
+            </Link>
+          ))}
+
+          <p className="text-xs text-slate-500 px-3 pt-4 pb-1 uppercase tracking-wider">運用</p>
+          {superAdminOperationsNavItems.map((item) => (
             <Link
               key={item.href}
               href={item.href}

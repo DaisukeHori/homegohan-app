@@ -1,17 +1,19 @@
 "use client";
 
-import React from "react";
+import React, { useId, useRef } from "react";
 import { motion } from "framer-motion";
+import FocusTrap from "focus-trap-react";
 import { Sparkles, X, Check, Send } from "lucide-react";
 import { AI_CONDITIONS } from "@homegohan/shared";
 import { useFormDraftStore } from "../../_state";
+import { useDialogA11y } from "@/components/common/useDialogA11y";
 
 const colors = {
   bg: '#F7F6F3',
   card: '#FFFFFF',
   text: '#2D2D2D',
   textLight: '#6B6B6B',
-  textMuted: '#A0A0A0',
+  textMuted: '#767676', // #1052 (コントラスト): #A0A0A0 (白地で約2.7:1) から WCAG AA相当の #767676 (約4.5:1) へ
   accent: '#E07A5F',
   accentLight: 'rgba(224,122,95,0.1)',
   border: '#E8E8E8',
@@ -35,8 +37,25 @@ export function AiAssistantModal({
   const setSelectedConditions = useFormDraftStore((s) => s.setSelectedConditions);
   const setAiChatInput = useFormDraftStore((s) => s.setAiChatInput);
 
+  // #1052 (体系的 a11y)
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogA11y({ onClose });
+
   return (
+    <FocusTrap
+      focusTrapOptions={{
+        allowOutsideClick: true,
+        escapeDeactivates: false,
+        fallbackFocus: () => panelRef.current ?? document.body,
+      }}
+    >
     <motion.div
+      ref={panelRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      tabIndex={-1}
       initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
       transition={{ type: "spring", damping: 25, stiffness: 300 }}
       className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
@@ -45,10 +64,12 @@ export function AiAssistantModal({
       <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
         <div className="flex items-center gap-2">
           <Sparkles size={18} color={colors.accent} />
-          <span style={{ fontSize: 15, fontWeight: 600 }}>AIアシスタント</span>
+          <span id={titleId} style={{ fontSize: 15, fontWeight: 600 }}>AIアシスタント</span>
         </div>
-        <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-          <X size={14} color={colors.textLight} />
+        <button onClick={onClose} aria-label="閉じる" className="min-w-[44px] min-h-[44px] -m-2 flex items-center justify-center">
+          <span className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+            <X size={14} color={colors.textLight} />
+          </span>
         </button>
       </div>
       <div className="flex-1 p-4 overflow-auto">
@@ -109,12 +130,14 @@ export function AiAssistantModal({
           value={aiChatInput}
           onChange={(e) => setAiChatInput(e.target.value)}
           placeholder="例: 木金は簡単に..."
+          aria-label="AIへのリクエスト"
           className="flex-1 px-3.5 py-2.5 rounded-full text-[13px] outline-none"
           style={{ background: colors.bg }}
         />
         <button
           onClick={onGenerateWeekly}
           disabled={isGenerating}
+          aria-label="AIに献立を生成させる"
           className="w-11 h-11 rounded-full flex items-center justify-center cursor-pointer hover:opacity-90 transition-opacity"
           style={{ background: colors.accent }}
         >
@@ -122,5 +145,6 @@ export function AiAssistantModal({
         </button>
       </div>
     </motion.div>
+    </FocusTrap>
   );
 }

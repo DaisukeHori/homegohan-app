@@ -7,14 +7,22 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
+import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 
 export const dynamic = 'force-dynamic';
 
+const ROUTE_NAME = 'GET /api/operator/membership/family/[id]/candidates';
+
+/**
+ * 通知・候補の取得に使う service_role のクライアント。接続情報は env-required の getter で取り出す (#1434)。
+ * 欠けていれば MissingEnvError (message は固定の文で、変数名はサーバーのログにだけ残る)。
+ */
 function getServiceRoleClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error('Supabase service role env missing');
-  return createSupabaseClient(url, key, {
+  const { url, serviceRoleKey } = getSupabaseServiceConfig();
+  return createSupabaseClient(url, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 }
@@ -23,8 +31,9 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  const logger = createLogger(ROUTE_NAME, generateRequestId());
   try {
-    await requireSuperAdmin();
+    const { userId: operatorId } = await requireSuperAdmin();
     const { id: familyId } = params;
 
     const admin = getServiceRoleClient();
@@ -40,13 +49,13 @@ export async function GET(
       .order('joined_at', { ascending: true });
 
     if (error) {
-      return NextResponse.json(
-        { error: { code: 'INTERNAL_ERROR', message: error.message } },
-        { status: 500 },
-      );
+      return internalError(ROUTE_NAME, error, { userId: operatorId }, { shape: 'nested' });
     }
 
-    const userIds = (members ?? []).map((m) => m.user_id);
+    // adult / representative はアカウントを持つが、念のため NULL は除く (.in() に null を渡すと uuid として解釈できず失敗する)
+    const userIds = (members ?? [])
+      .map((m) => m.user_id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
 
     // user_profiles からニックネームを取得
     const { data: profiles } = await admin
@@ -59,20 +68,16 @@ export async function GET(
       profileMap[p.id] = { nickname: p.nickname, last_login_at: p.last_login_at };
     }
 
-    // email 取得
-    const { data: authUsers } = await admin.auth.admin.listUsers();
-    const emailMap: Record<string, string> = {};
-    for (const u of authUsers?.users ?? []) {
-      if (userIds.includes(u.id) && u.email) {
-        emailMap[u.id] = u.email;
-      }
-    }
+    // email 取得 (auth.users)。listUsers() は page / perPage を渡さないと先頭 50 件しか返さず、
+    // 登録ユーザーが 50 人を超えると候補者の email が欠けるため、候補者の分だけを引く (#1204)。
+    // 取得できなかった人は email: null で返し、警告ログに残す
+    const emailMap = await resolveAuthEmails(userIds, { admin, logger: logger.withUser(operatorId) });
 
     const candidates = (members ?? []).map((m) => ({
       id: m.user_id,
       role: m.role,
       nickname: profileMap[m.user_id]?.nickname ?? null,
-      email: emailMap[m.user_id] ?? null,
+      email: emailMap.get(m.user_id) ?? null,
       last_login_at: profileMap[m.user_id]?.last_login_at ?? null,
     }));
 
@@ -84,7 +89,7 @@ export async function GET(
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    // 本文は汎用メッセージだけにし、元のエラーは構造化ログに残す (#1172)
+    return internalError(ROUTE_NAME, err, {}, { shape: 'nested' });
   }
 }

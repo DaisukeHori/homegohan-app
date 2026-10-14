@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { MonitoringNotConnectedNotice } from "@/components/operator/infra/MonitoringNotConnectedNotice";
 
 interface InfraAlert {
   id: string;
@@ -15,14 +16,8 @@ interface InfraAlert {
   ack_at: string | null;
 }
 
-interface ExternalSource {
-  source: string;
-  available: boolean;
-}
-
 export default function InfraPage() {
   const [alerts, setAlerts] = useState<InfraAlert[]>([]);
-  const [externalSources, setExternalSources] = useState<ExternalSource[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "open" | "resolved">("open");
@@ -38,9 +33,8 @@ export default function InfraPage() {
           const body = await res.json();
           throw new Error(body.error?.message ?? `HTTP ${res.status}`);
         }
-        const { data, external_sources } = await res.json();
+        const { data } = await res.json();
         setAlerts(data ?? []);
-        setExternalSources(external_sources ?? []);
       } catch (err) {
         setError(err instanceof Error ? err.message : "読み込みに失敗しました");
       } finally {
@@ -49,8 +43,6 @@ export default function InfraPage() {
     };
     fetchAlerts();
   }, [filter]);
-
-  const openCount = alerts.filter((a) => !a.resolved_at).length;
 
   return (
     <div className="p-8">
@@ -67,22 +59,6 @@ export default function InfraPage() {
         </Link>
       </div>
 
-      {/* 外部サービス接続状態 (graceful) */}
-      <div className="mb-6 flex gap-3">
-        {externalSources.map((src) => (
-          <div
-            key={src.source}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
-              src.available ? "bg-green-900/50 text-green-300 border border-green-700" : "bg-slate-800 text-slate-500 border border-slate-700"
-            }`}
-          >
-            <span className={`w-2 h-2 rounded-full ${src.available ? "bg-green-400" : "bg-slate-500"}`} />
-            {src.source === "sentry" ? "Sentry" : "Better Stack"}
-            {!src.available && " (未設定)"}
-          </div>
-        ))}
-      </div>
-
       {/* フィルタ */}
       <div className="flex gap-2 mb-6">
         {(["all", "open", "resolved"] as const).map((f) => (
@@ -93,7 +69,7 @@ export default function InfraPage() {
               filter === f ? "bg-purple-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
             }`}
           >
-            {f === "all" ? "すべて" : f === "open" ? `未解決 (${openCount})` : "解決済み"}
+            {f === "all" ? "すべて" : f === "open" ? "未解決" : "解決済み"}
           </button>
         ))}
       </div>
@@ -105,10 +81,8 @@ export default function InfraPage() {
       ) : error ? (
         <div className="bg-red-900/50 border border-red-500 rounded-xl p-4 text-red-300">{error}</div>
       ) : alerts.length === 0 ? (
-        <div className="bg-slate-800 rounded-xl p-12 text-center text-slate-400 border border-slate-700">
-          <div className="text-5xl mb-4">✅</div>
-          <p>{filter === "open" ? "未解決のアラートはありません" : "アラートがありません"}</p>
-        </div>
+        // アラートを書き込む処理 (監視データの収集) はまだ無い。空は「問題なし」ではなく「未接続」(#1180)
+        <MonitoringNotConnectedNotice />
       ) : (
         <div className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700">
           <table className="w-full">

@@ -60,7 +60,10 @@ export default function HandsonTourGraduatePage() {
       supabase
         .from('user_profiles')
         .select('nickname')
-        .eq('user_id', user.id)
+        // #1057 (UX1-02 同型バグ, #1045 レビュー起因): user_profiles の PK は `id`
+        // (auth.users(id) 参照) で `user_id` 列は存在しない。以前は .eq('user_id', ...)
+        // が黙って 0 件ヒットし、卒業画面でニックネームが常に「あなた」固定になっていた。
+        .eq('id', user.id)
         .single()
         .then(({ data }) => {
           if (data?.nickname) setNickname(safeNickname(data.nickname));

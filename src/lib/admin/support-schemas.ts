@@ -53,7 +53,8 @@ export type AssignTicketInput = z.infer<typeof assignTicketSchema>;
 
 // ─── メッセージ作成 ───────────────────────────────────────────────────────────
 export const createMessageSchema = z.object({
-  body: z.string().min(1, 'メッセージ本文は必須です'),
+  // 前後の空白を除いてから検査する。空白だけの本文は、顧客向けの返信としてメールに載せても空欄になるため受け付けない (#1183)
+  body: z.string().trim().min(1, 'メッセージ本文は必須です'),
   is_internal: z.boolean().default(false),
   attachments: z
     .array(

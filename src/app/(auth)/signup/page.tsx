@@ -4,48 +4,64 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/auth/PasswordInput";
+import { TurnstileWidget, useTurnstile } from "@/components/auth/TurnstileWidget";
 import { createClient } from "@/lib/supabase/client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { getSafeRedirectPath } from "@/lib/auth/safe-redirect";
+import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "@/lib/auth/turnstile";
+import { validatePassword, PASSWORD_HINT_TEXT } from "@/lib/auth/validate-password";
+import { useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
-// パスワード強度バリデーション
-// 要件: 8文字以上 / 英字を含む / 数字を含む
-function validatePassword(password: string): string | null {
-  if (!password) {
-    return 'パスワードを入力してください';
-  }
-  if (password.length < 8) {
-    return 'パスワードは8文字以上で入力してください';
-  }
-  if (!/[A-Za-z]/.test(password)) {
-    return 'パスワードには英字を含めてください';
-  }
-  if (!/[0-9]/.test(password)) {
-    return 'パスワードには数字を含めてください';
-  }
-  return null;
-}
+const LEGAL_AGREEMENT_REQUIRED_MESSAGE = '登録するには、利用規約とプライバシーポリシーへの同意が必要です。';
 
-export default function SignupPage() {
+function SignupContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  // #1174: 利用規約・プライバシーポリシーへの明示的な同意 (チェックするまで、どの登録方法のボタンも押せない)。
+  // 「続行することで同意したものとみなされる」というみなし同意をやめた。
+  // このチェックは登録のボタンを押せるようにするだけで、同意の記録 (版・日時) は残さない。記録は同意画面
+  // /legal-consent で同意したとき (POST /api/legal/accept) だけ残る。登録 (Google 登録・メール確認) のあとは、
+  // /auth/callback が、初期設定を始めていない未同意の人を、LEGAL_CONSENT_ENFORCE の値に関わらず同意画面へ回す (#1435)。
+  // ログイン画面の「Googleで続ける」で初めて入った人も、同じ /auth/callback を通る。
+  // 初期設定を始めたあとの人を止めるかは、これまでどおり同意ゲート (lib/supabase/middleware.ts) の
+  // 強制 (環境変数 LEGAL_CONSENT_ENFORCE=on) で決まり、アプリ (WebView) から始めた登録もそのゲートを通る。
+  const [agreedToLegal, setAgreedToLegal] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClient();
+  // #1165: bot 対策 (Cloudflare Turnstile)。サイトキーが未設定なら無効で、今までどおりに動く
+  const captcha = useTurnstile();
+
+  // #1057 (UX1-01): 招待経由サインアップ (invite/[token]/page.tsx が
+  // `/signup?redirect=/invite/xxx&email=...` で遷移させてくる) のコンテキストを保持する。
+  // open redirect 対策は login と同じ共有ヘルパーを再利用。
+  const safeRedirect = getSafeRedirectPath(searchParams.get('redirect'));
+  const prefilledEmail = searchParams.get('email') ?? '';
+
+  const buildCallbackUrl = () =>
+    `${window.location.origin}/auth/callback${safeRedirect ? `?next=${encodeURIComponent(safeRedirect)}` : ''}`;
 
   const handleGoogleSignup = async () => {
+    if (!agreedToLegal) {
+      setFormError(LEGAL_AGREEMENT_REQUIRED_MESSAGE);
+      return;
+    }
     try {
       setIsLoading(true);
+      setFormError(null);
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          redirectTo: buildCallbackUrl(),
         },
       });
       if (error) throw error;
     } catch (error) {
       console.error('Error signing up with Google:', error);
-      alert('Google登録に失敗しました。');
+      // #1057 (UX1-07): native alert() → 既存の赤インラインエラーに統一
+      setFormError('Google登録に失敗しました。しばらくしてからお試しください。');
     } finally {
       setIsLoading(false);
     }
@@ -54,18 +70,32 @@ export default function SignupPage() {
   const handleEmailSignup = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setFormError(null);
+    if (!agreedToLegal) {
+      setFormError(LEGAL_AGREEMENT_REQUIRED_MESSAGE);
+      return;
+    }
     const formData = new FormData(e.currentTarget);
     // #288: 大文字メールを正規化して既存アカウントとの混同を防ぐ
     const email = (formData.get('email') as string).trim().toLowerCase();
     const password = formData.get('password') as string;
 
     // クライアント側でパスワード強度をチェック (Bug-33)
+    // #1057 (UX1-05): reset-password と共通のバリデーションヘルパーを使用
     const pwdError = validatePassword(password);
     if (pwdError) {
       setPasswordError(pwdError);
       return;
     }
     setPasswordError(null);
+
+    // #1165: トークンは 1 回しか使えない。取り出した時点で、ウィジェットが次のトークンを取り直す
+    // (入力の検証で弾いた場合は取り出さないよう、検証の後で呼ぶ)。
+    // Turnstile が有効なのにトークンが無いとき (Enter キーなどでボタンを通らずに送られた場合) は送らない
+    const captchaToken = captcha.takeToken();
+    if (captcha.enabled && !captchaToken) {
+      setFormError('ボットではないことの確認が終わるまで、少しお待ちください。');
+      return;
+    }
 
     setIsLoading(true);
 
@@ -74,7 +104,9 @@ export default function SignupPage() {
         email,
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          emailRedirectTo: buildCallbackUrl(),
+          // Turnstile が無効のときは captchaToken を付けない (今までのリクエストと同じ)
+          ...(captchaToken ? { captchaToken } : {}),
         },
       });
 
@@ -94,6 +126,9 @@ export default function SignupPage() {
           setFormError('このメールアドレスは既に登録されています。ログインへ進んでください。');
         } else if (isWeakPassword) {
           setFormError('パスワードは8文字以上で入力してください');
+        } else if (isCaptchaFailure(error)) {
+          // #1165: 英語の生のエラー文は出さない (ウィジェットは取り直し済み)
+          setFormError(CAPTCHA_FAILED_MESSAGE);
         } else {
           setFormError(`登録に失敗しました: ${error.message}`);
         }
@@ -113,10 +148,13 @@ export default function SignupPage() {
           return;
         }
         // メール確認が必要な場合
-        router.push(`/auth/verify?email=${encodeURIComponent(email)}`);
+        // #1057 (UX1-01): 招待コンテキスト (redirect) を verify 画面にも引き継ぐ
+        const verifyParams = new URLSearchParams({ email });
+        if (safeRedirect) verifyParams.set('redirect', safeRedirect);
+        router.push(`/auth/verify?${verifyParams.toString()}`);
       } else if (data.session) {
         // 自動ログインされた場合（メール確認が不要な設定の場合）
-        router.push('/onboarding');
+        router.push(safeRedirect ?? '/onboarding');
       }
     } catch (error: any) {
       console.error('Signup error:', error);
@@ -149,10 +187,39 @@ export default function SignupPage() {
       </div>
 
       <div className="space-y-4">
-        <Button 
-          variant="outline" 
+        {/* #1174: 明示的な同意。チェックするまで、Google 登録・メール登録のどちらも押せない */}
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+          <label htmlFor="agree-legal" className="flex cursor-pointer items-start gap-3 text-sm text-gray-700">
+            <input
+              id="agree-legal"
+              name="agree_legal"
+              type="checkbox"
+              checked={agreedToLegal}
+              onChange={(e) => {
+                setAgreedToLegal(e.target.checked);
+                if (e.target.checked) setFormError((current) => (current === LEGAL_AGREEMENT_REQUIRED_MESSAGE ? null : current));
+              }}
+              aria-describedby={agreedToLegal ? undefined : 'agree-legal-hint'}
+              className="mt-0.5 h-5 w-5 shrink-0 accent-[#FF8A65]"
+            />
+            <span>
+              <Link href="/terms" className="font-bold text-orange-700 underline underline-offset-2">利用規約</Link>
+              および
+              <Link href="/privacy" className="font-bold text-orange-700 underline underline-offset-2">プライバシーポリシー</Link>
+              を確認し、同意します
+            </span>
+          </label>
+          {!agreedToLegal && (
+            <p id="agree-legal-hint" className="mt-2 pl-8 text-xs text-gray-500">
+              登録するには、チェックして同意してください。
+            </p>
+          )}
+        </div>
+
+        <Button
+          variant="outline"
           onClick={handleGoogleSignup}
-          disabled={isLoading}
+          disabled={isLoading || !agreedToLegal}
           className="w-full py-6 rounded-xl border-gray-200 hover:bg-gray-50 hover:border-gray-300 transition-all font-bold text-gray-700 flex items-center gap-3 relative overflow-hidden group"
         >
            <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -182,6 +249,8 @@ export default function SignupPage() {
               type="email"
               placeholder="name@example.com"
               required
+              // #1057 (UX1-01): 招待メールから来た場合はメールアドレスを事前入力
+              defaultValue={prefilledEmail}
               onInvalid={(e) => {
                 const target = e.target as HTMLInputElement;
                 if (target.validity.valueMissing) {
@@ -198,10 +267,9 @@ export default function SignupPage() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">パスワード</Label>
-            <Input
+            <PasswordInput
               id="password"
               name="password"
-              type="password"
               required
               aria-invalid={passwordError ? 'true' : 'false'}
               aria-describedby={passwordError ? 'password-error' : 'password-hint'}
@@ -229,18 +297,19 @@ export default function SignupPage() {
               </p>
             ) : (
               <p id="password-hint" className="text-xs text-gray-400">
-                8文字以上、英字と数字を含めてください
+                {PASSWORD_HINT_TEXT}
               </p>
             )}
           </div>
+          <TurnstileWidget {...captcha.widgetProps} action="signup" />
           {formError && (
             <p role="alert" className="text-sm text-red-600 font-medium bg-red-50 border border-red-100 rounded-xl px-3 py-2">
               {formError}
             </p>
           )}
-          <Button 
+          <Button
             type="submit"
-            disabled={isLoading}
+            disabled={isLoading || !agreedToLegal || !captcha.ready}
             className="w-full py-6 rounded-full bg-[#FF8A65] hover:bg-[#FF7043] text-white font-bold shadow-lg hover:shadow-xl hover:shadow-[#FF8A65]/30 transition-all duration-300"
           >
             {isLoading ? '登録処理中...' : '登録して始める'}
@@ -249,15 +318,22 @@ export default function SignupPage() {
 
         <p className="text-center text-sm text-gray-500">
           すでにアカウントをお持ちですか？{" "}
-          <Link href="/login" className="font-bold text-[#FF8A65] hover:text-[#FF7043] hover:underline underline-offset-4">
+          <Link
+            href={safeRedirect ? `/login?redirect=${encodeURIComponent(safeRedirect)}` : '/login'}
+            className="font-bold text-[#FF8A65] hover:text-[#FF7043] hover:underline underline-offset-4"
+          >
             ログイン
           </Link>
         </p>
-
-        <p className="text-xs text-center text-gray-400 mt-8">
-          続行することで、<Link href="/terms" className="underline">利用規約</Link>および<Link href="/privacy" className="underline">プライバシーポリシー</Link>に同意したものとみなされます。
-        </p>
       </div>
     </div>
+  );
+}
+
+export default function SignupPage() {
+  return (
+    <Suspense fallback={<div className="flex justify-center py-8">読み込み中...</div>}>
+      <SignupContent />
+    </Suspense>
   );
 }

@@ -9,6 +9,7 @@ import { test, expect } from '../fixtures/fresh-org';
 import { createClient } from '@supabase/supabase-js';
 import { getUserProfile } from '../helpers/membership';
 import { createFreshUser, cleanupFreshUser } from '../fixtures/fresh-user';
+import { generateTestPassword } from '../helpers/credentials';
 import * as path from 'path';
 import { config as dotenvConfig } from 'dotenv';
 
@@ -38,7 +39,7 @@ test.describe('org 招待 — 新規ユーザ (α-4)', () => {
     // 招待先メールはまだ Supabase に未登録
     const uniqueId = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
     const newUserEmail = `e2e-new-invite-${uniqueId}@homegohan.test`;
-    const newUserPassword = 'TestE2E2026!secure';
+    const newUserPassword = generateTestPassword();
     let newUserId: string | null = null;
 
     try {
@@ -176,7 +177,7 @@ test.describe('org 招待 — 新規ユーザ (α-4)', () => {
 
     const uniqueId = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
     const newUserEmail = `e2e-new-invite2-${uniqueId}@homegohan.test`;
-    const newUserPassword = 'TestE2E2026!secure';
+    const newUserPassword = generateTestPassword();
     let newUserId: string | null = null;
 
     try {

@@ -8,10 +8,12 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { corsHeaders } from "../_shared/cors.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
 import { requireAuth } from "../_shared/auth.ts";
+import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
 import { createLogger, generateRequestId } from "../_shared/db-logger.ts";
 import { createFastLLMClient, getFastLLMModel } from "../_shared/fast-llm.ts";
+import { requireAiConsentForUser } from "../_shared/ai-consent-guard.ts";
 
 const openai = createFastLLMClient();
 
@@ -26,6 +28,9 @@ interface HintRequest {
 }
 
 Deno.serve(async (req) => {
+  // 許可したオリジンにだけ CORS ヘッダーを付ける (#1167)
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -39,6 +44,11 @@ Deno.serve(async (req) => {
     });
   }
   const { userId } = authResult;
+
+  // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+  // この関数は利用者の JWT で直接呼べる (Next.js からは #1327 以降呼んでいない) ので、ここで止める
+  const aiConsentDenied = await requireAiConsentForUser(userId, corsHeaders);
+  if (aiConsentDenied) return aiConsentDenied;
 
   const requestId = generateRequestId();
   const logger = createLogger("generate-hint", requestId).withUser(userId);
@@ -79,6 +89,12 @@ Deno.serve(async (req) => {
 
 ヒントはポジティブなトーンで、具体的で実践しやすい内容にしてください。
 JSON形式で {"hint": "..."} のみ出力してください。`;
+
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
+    // Next.js を経由せず JWT で直接呼ばれた場合だけ数える (Next.js が数え済みの印があれば数えない)。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeEdgeAiUsage(req, userId, "nutrition_advice");
+    if (!aiUsage.allowed) return aiDailyLimitEdgeResponse(aiUsage, corsHeaders);
 
     const response = await openai.chat.completions.create({
       model: getFastLLMModel(),

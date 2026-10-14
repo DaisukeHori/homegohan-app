@@ -2,8 +2,8 @@
 
 // src/app/(main)/family/transfer-accept/[proposal_id]/page.tsx
 // (設計書 03-ui-spec.md §10.2, 02-flow-spec.md §10)
-import { useState, useEffect, use } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
 interface TransferProposal {
@@ -17,12 +17,10 @@ interface TransferProposal {
   expires_at: string;
 }
 
-export default function FamilyTransferAcceptPage({
-  params,
-}: {
-  params: Promise<{ proposal_id: string }>;
-}) {
-  const { proposal_id } = use(params);
+export default function FamilyTransferAcceptPage() {
+  // Next.js 14 のクライアントページでは params は Promise ではなく、use(params) は例外になる (#1275)。
+  // useParams は 14 / 15 のどちらでも使える。
+  const { proposal_id } = useParams<{ proposal_id: string }>();
   const router = useRouter();
   const supabase = createClient();
 
@@ -59,12 +57,14 @@ export default function FamilyTransferAcceptPage({
       setProposal(proposalData as TransferProposal);
 
       // 提案者情報
+      // user_profiles に email 列は無い (メールアドレスは auth.users にしか無く、他人のものは画面にも出さない)。
+      // 他人の行は RLS で読めないことが多く、読めなければ「代表者」と表示する
       const { data: fromProfile } = await supabase
         .from('user_profiles')
-        .select('nickname, email')
+        .select('nickname')
         .eq('id', proposalData.from_user_id)
         .single();
-      setFromName(fromProfile?.nickname ?? fromProfile?.email ?? '代表者');
+      setFromName(fromProfile?.nickname ?? '代表者');
 
       // 家族グループ名
       if (proposalData.scope === 'family') {

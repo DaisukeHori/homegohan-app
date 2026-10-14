@@ -1,6 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
+import { jstToday } from '@/lib/jst-day-ranges'
 import { NextRequest, NextResponse } from 'next/server'
 import { toPerformancePlan, fromPerformancePlan } from '@/lib/converter'
+import { internalError } from '@/lib/api/errors'
 
 /**
  * GET /api/performance/plans
@@ -36,16 +38,14 @@ export async function GET(request: NextRequest) {
     const { data, error } = await query.limit(50)
 
     if (error) {
-      console.error('Plans fetch error:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return internalError('GET /api/performance/plans', error, { userId: user.id })
     }
 
     return NextResponse.json({
       plans: data.map(toPerformancePlan),
     })
   } catch (error: any) {
-    console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return internalError('GET /api/performance/plans', error)
   }
 }
 
@@ -88,7 +88,8 @@ export async function POST(request: NextRequest) {
       .from('performance_plans')
       .update({
         status: 'superseded',
-        end_date: startDate || new Date().toISOString().split('T')[0],
+        // 開始日の指定が無ければ JST の今日 (#1433)
+        end_date: startDate || jstToday(),
         updated_at: new Date().toISOString(),
       })
       .eq('user_id', user.id)
@@ -102,7 +103,7 @@ export async function POST(request: NextRequest) {
     // 2. 新しい計画を作成
     const dbData = fromPerformancePlan({
       userId: user.id,
-      startDate: startDate || new Date().toISOString().split('T')[0],
+      startDate: startDate || jstToday(),
       endDate: endDate || undefined,
       status: 'active',
       adjustmentType,
@@ -119,8 +120,7 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (error) {
-      console.error('Plan create error:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return internalError('POST /api/performance/plans', error, { userId: user.id })
     }
 
     return NextResponse.json({
@@ -128,8 +128,7 @@ export async function POST(request: NextRequest) {
       plan: toPerformancePlan(data),
     })
   } catch (error: any) {
-    console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return internalError('POST /api/performance/plans', error)
   }
 }
 
@@ -169,8 +168,7 @@ export async function PATCH(request: NextRequest) {
       .single()
 
     if (error) {
-      console.error('Plan update error:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return internalError('PATCH /api/performance/plans', error, { userId: user.id })
     }
 
     return NextResponse.json({
@@ -178,7 +176,6 @@ export async function PATCH(request: NextRequest) {
       plan: toPerformancePlan(data),
     })
   } catch (error: any) {
-    console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return internalError('PATCH /api/performance/plans', error)
   }
 }

@@ -59,13 +59,6 @@ const features = [
   },
 ];
 
-const stats = [
-  { value: '1,234,567+', label: '食の分析実績' },
-  { value: '98.7%', label: '継続率' },
-  { value: '4.9', label: 'App Store評価' },
-  { value: '42日', label: '最長連続記録' },
-];
-
 export default function AboutPage() {
   return (
     <div className="min-h-screen" style={{ background: colors.bg }}>
@@ -104,27 +97,6 @@ export default function AboutPage() {
               だから、続けられる。
             </p>
           </motion.div>
-        </div>
-      </section>
-
-      {/* 実績 */}
-      <section className="py-12 border-b" style={{ background: colors.card, borderColor: colors.border }}>
-        <div className="container mx-auto px-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            {stats.map((stat, i) => (
-              <motion.div
-                key={i}
-                className="text-center"
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.1 }}
-              >
-                <div className="text-3xl md:text-4xl font-bold mb-1" style={{ color: colors.primary }}>{stat.value}</div>
-                <div className="text-sm" style={{ color: colors.textMuted }}>{stat.label}</div>
-              </motion.div>
-            ))}
-          </div>
         </div>
       </section>
 
@@ -213,7 +185,7 @@ export default function AboutPage() {
           <div className="flex justify-center gap-6 mt-6 text-sm" style={{ color: colors.textMuted }}>
             <span>✓ 30秒で登録</span>
             <span>✓ カード不要</span>
-            <span>✓ いつでも解約OK</span>
+            <span>✓ いつでも退会OK</span>
           </div>
         </div>
       </section>

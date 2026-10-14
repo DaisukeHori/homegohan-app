@@ -1,11 +1,21 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs, Redirect, router } from "expo-router";
+import type { ErrorBoundaryProps } from "expo-router";
 import { ActivityIndicator, Platform, View } from "react-native";
 
 import { colors } from "../../src/theme";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { AIFloatingFab } from "../../src/components/ai/AIFloatingFab";
+import { ErrorFallback } from "../../src/components/ErrorFallback";
+
+// この区画 (ホーム・献立・スキャン・比較・マイページ) の画面で描画の例外が起きたとき、
+// アプリ全体をクラッシュさせずに再試行を出す (#1207)。
+// 「ホームへ戻る」の移動先は、この区画の外の "/" (入口 → ホーム)。(tabs) の中のホームへ直接移ると、
+// この区画のナビゲーターが壊れている間は移動が効かないため。
+export function ErrorBoundary(props: ErrorBoundaryProps) {
+  return <ErrorFallback {...props} boundary="tabs" homeHref="/" />;
+}
 
 export default function TabsLayout() {
   const { session, isLoading } = useAuth();

@@ -1,5 +1,8 @@
 # モバイルアプリ — EAS Build / Submit ハンドオフ (2026-04-29)
 
+> **2026-10-08 追記**: 最初のストア提出は **iOS のみ**（オーナー判断）。Android（Google Play）の手順と、§7「完了の定義」の Android の項目は、iOS の提出後に行う。当面、`--platform all` は `--platform ios` に読み替える。
+> 提出前に片付けるブロッカーと、WebView ハイブリッド向けに定義し直した Pass 1〜10 は `MOBILE_TODO.md` を参照。
+
 ## 現状
 
 `apps/mobile/` のフェーズ 0〜3 / 5 は実装完了。残るは **フェーズ 4 = ストア提出** のみ。本書はそれを最短で完遂するための実作業ガイド。
@@ -205,7 +208,7 @@ Android:
 ### iOS
 - **アイコン alpha 問題** — 修正済み (`icon-ios.png` を使用)
 - **NSCameraUsageDescription / NSPhotoLibraryUsageDescription** — 設定済み (`app.json`)
-- **退会導線** — App Store Guideline 5.1.1(v) で必須。実装済み (`app/settings/account.tsx` で「アカウント削除」ボタン確認)
+- **退会導線** — App Store Guideline 5.1.1(v) で必須。画面は実装済み (`app/settings/account.tsx` に「アカウント削除」ボタン)。ただしアプリ内の UI から着く導線が無い (#1037。`MOBILE_TODO.md` のブロッカー)
 - **Privacy Manifest (PrivacyInfo.xcprivacy)** — Expo SDK 52 では自動生成されるはずだが、build ログで warn が出てないか確認
 - **In-App Purchase / Subscription** — 現状なし。将来導入時は別途 Guideline 3.1.1 対応
 

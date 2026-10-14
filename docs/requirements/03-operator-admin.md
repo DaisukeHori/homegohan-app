@@ -659,7 +659,7 @@ SSO           |      |     |             |           |              |           
   - `ai-consultation` (ストリーミング、トークン多)
   - `generate-week-menu`
   - `generate-day-menu`
-  - `generate-single-meal`
+  - 1 食の献立生成 (Edge Function `generate-menu-v5`。機能フラグが OFF なら `generate-menu-v4`。旧 `generate-single-meal` は #1452 で削除済み)
   - `image/generate` (献立画像生成)
 - ユーザー別 Top 50: 異常使用検知
 - 時系列推移: 時間 / 日別
@@ -1420,8 +1420,8 @@ CREATE TABLE coupons (
   discount_value      NUMERIC NOT NULL,  -- fixed: JPY、percentage: 0-100
   applicable_plans    UUID[] NOT NULL DEFAULT '{}',  -- 適用可能なプラン id (空 = 全プラン)
   applicable_to       VARCHAR(20) NOT NULL DEFAULT 'all' CHECK (applicable_to IN ('all', 'personal', 'family', 'org')),
-  valid_from          TIMESTAMPTZ NOT NULL,
-  valid_until         TIMESTAMPTZ NOT NULL,
+  valid_from          TIMESTAMPTZ NOT NULL,  -- 開始日の JST 0:00 (#1483。画面・API は JST の暦日で受け取る)
+  valid_until         TIMESTAMPTZ NOT NULL,  -- 期限の日の JST 23:59:59.999999 (#1483。端を含めて有効。開始日と同じ日かそれより後の日 = POST・PATCH とも。#1510)
   max_uses            INT,  -- NULL = 無制限
   uses_count          INT NOT NULL DEFAULT 0,
   per_user_limit      INT NOT NULL DEFAULT 1,
@@ -1914,7 +1914,7 @@ CREATE TABLE infra_alerts (
 | `OP_TARGET_PROTECTED` | super_admin 等 保護ユーザーへの操作不可 |
 | `OP_AUDIT_LOG_IMMUTABLE` | 監査ログ書き換え不可 |
 | `OP_FEATURE_FLAG_IN_USE` | 削除しようとしたフラグが利用中 |
-| `OP_QUOTA_EXCEEDED` | LLM クォータ超過 |
+| `AI_DAILY_LIMIT` | 今日の AI の利用回数の上限に達した (429。#1149。docs/design/operator/06-ai-llm.md §5) |
 | `OP_RE_AUTH_REQUIRED` | 再認証必須 |
 
 ---
@@ -2257,7 +2257,7 @@ CREATE TABLE gdpr_deletion_requests (
 
 ```
 [admin 系]
-- admin.user.ban / unban / role_change / impersonate
+- admin.user.ban / unban / role_change (impersonate は提供しない: §17.11, #1124)
 - admin.organization.create / suspend / restore / delete
 - admin.coupon.create / pause / activate / retroactive_apply
 - admin.refund.issue
@@ -2627,12 +2627,12 @@ CREATE TABLE user_sessions_metadata (
 );
 ```
 
-### 17.5 ログイン失敗・アカウントロック
+### 17.5 ログイン失敗 (アカウントはロックしない)
 
-- 5 回連続失敗 → 15 分アカウントロック
-- 10 回連続失敗 → 1 時間ロック + 本人へメール通知
-- 20 回連続失敗 → 24 時間ロック + 管理者通知
-- ロック中は正しいパスワードでも拒否、メール経由のリセットのみ可
+- アカウントのロックアウトはしない (オーナーの選択 2026-10-10。他人のメールアドレスで失敗を繰り返すだけで本人を締め出せるため。失敗が続いたらボットの確認を求める)
+- 3 回連続失敗 → 次のログインから Cloudflare Turnstile のボットの確認を求める
+- 何回失敗しても、正しいパスワードならログインできる。回数はログインの成功と、最後の失敗から一定時間 (既定 24 時間) で 0 に戻る
+- 詳細: docs/design/cross/01-auth-session.md §8、docs/operations/auth-protection.md §2.1
 
 ### 17.6 ソーシャルログイン
 
@@ -2690,13 +2690,15 @@ CREATE TABLE parental_consents (
 );
 ```
 
-### 17.11 impersonation (なりすまし支援)
+### 17.11 impersonation (なりすまし支援) — 提供しない (#1124)
 
-- `super_admin` のみ実行可
-- API: `POST /api/super-admin/impersonate/{userId}` → 一時セッショントークン発行 (max 1 時間)
-- **画面上部に常時赤バナー表示**: 「⚠ 〇〇 (運営) として 山田太郎 さんとしてログイン中。すべての操作が記録されます」
-- 全操作が `admin_audit_logs` に `impersonated_by` 列付きで記録
-- 個別ユーザーの設定で impersonate 拒否可能 (デフォルト: 許可)
+**提供しない** (オーナー判断 2026-10-08)。
+
+- 以前の要件 (`super_admin` が一時セッショントークンを発行して他ユーザーとしてログインする / 画面上部の常時赤バナー / 個別ユーザーの設定での拒否) は採用しない
+- 実装されていたのはトークンの発行だけで、トークンは `admin_audit_logs` に平文で書かれるだけだった (受け取って使う側が無かった)。API・ヘルパー・画面の表示をすべて削除した
+- サポート対応は、本人として操作せず、読み取り専用のユーザー画面で行う
+- `admin_audit_logs.impersonated_by` 列は、過去に書かれた行の履歴として残す (新しく書く処理は無い)
+- 設計の詳細は `docs/design/cross/01-auth-session.md` §11
 
 ### 17.12 ログアウト時の Cookie 完全削除
 

@@ -2,6 +2,9 @@ import { test as base, expect, type Page, type BrowserContext } from "@playwrigh
 import * as fs from "fs";
 import { config as dotenvConfig } from "dotenv";
 import * as path from "path";
+import { requireExistingUserPassword } from "../helpers/credentials";
+import { appOrigin, ensureAiConsentGranted } from "../helpers/ai-consent";
+import { waitForLoginFormReady } from "../helpers/login-form";
 import {
   refreshSupabaseSession,
   getStorageStatePath,
@@ -47,19 +50,18 @@ export function getUserCredentials(workerIndex: number): { email: string; passwo
   const isMultiUserPattern = !envEmail || /^e2e-user-\d+@homegohan\.test$/.test(envEmail);
 
   if (!isMultiUserPattern) {
-    // backward compat: 単一ユーザーモード
+    // backward compat: 単一ユーザーモード。パスワードは E2E_USER_PASSWORD からだけ取る。
+    // 既定値は持たない。未設定なら分かりやすいエラーで止める
     return {
       email: envEmail!,
-      password: process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!",
+      password: requireExistingUserPassword(),
     };
   }
 
   const idx = (workerIndex % 4) + 1;
   const padded = String(idx).padStart(2, "0");
-  const password =
-    process.env[`E2E_USER_${padded}_PASSWORD`] ??
-    process.env.E2E_USER_PASSWORD ??
-    "TestE2E2026!secure";
+  // 既定値は持たない。未設定なら分かりやすいエラーで止める
+  const password = requireExistingUserPassword(padded);
   const email = getWorkerUserEmail(workerIndex);
   return { email, password };
 }
@@ -219,7 +221,7 @@ async function refreshSessionViaCookie(
       });
     }
 
-    const supabaseRef = supabaseUrl.replace("https://", "").split(".")[0];
+    const supabaseRef = new URL(supabaseUrl).hostname.split(".")[0];
     const cookieName = `sb-${supabaseRef}-auth-token`;
     const domain = baseURL ? new URL(baseURL).hostname : "localhost";
     const isSecure = baseURL.startsWith("https");
@@ -328,7 +330,7 @@ async function injectSessionViaCookie(
       if (!session.access_token) return false;
 
       // @supabase/ssr の Cookie 名は sb-{project-ref}-auth-token
-      const supabaseRef = supabaseUrl.replace("https://", "").split(".")[0];
+      const supabaseRef = new URL(supabaseUrl).hostname.split(".")[0];
       const cookieName = `sb-${supabaseRef}-auth-token`;
       const domain = baseURL ? new URL(baseURL).hostname : "localhost";
       const isSecure = baseURL.startsWith("https");
@@ -453,8 +455,14 @@ async function doLogin(page: Page, baseURL: string, workerIndex: number): Promis
   for (let attempt = 1; attempt <= MAX_UI_RETRIES; attempt++) {
     try {
       await page.goto(`${baseURL}/login`);
-      await page.waitForLoadState("networkidle");
-      await page.evaluate(() => { localStorage.removeItem("auth_last_fail_ts"); });
+      await waitForLoginFormReady(page);
+      // #1057 (UX1-16 round-2): キーがメールアドレス単位 (`auth_last_fail_ts:<email>`) に
+      // 変わったため prefix 一致で全て削除する
+      await page.evaluate(() => {
+        Object.keys(localStorage)
+          .filter((k) => k.startsWith("auth_last_fail_ts"))
+          .forEach((k) => localStorage.removeItem(k));
+      });
 
       // React hydration 確認
       await page.waitForFunction(
@@ -547,9 +555,17 @@ export async function newAuthedContext(
 
 type AuthFixtures = {
   authedPage: Page;
+  /**
+   * ログインした利用者の、外国の AI 事業者への提供の同意を記録してから渡す (既定 true。T15 / #1154)。
+   * 未同意の利用者のデータは、サーバーが AI へ送る手前で止める (403 AI_CONSENT_REQUIRED) ので、
+   * AI を使う spec が止められないようにする。同意済みなら何もしない (helpers/ai-consent.ts)。
+   */
+  aiConsentGranted: boolean;
 };
 
 export const test = base.extend<AuthFixtures>({
+  aiConsentGranted: [true, { option: true }],
+
   /**
    * B: worker 別 fresh login fixture。
    *
@@ -560,7 +576,7 @@ export const test = base.extend<AuthFixtures>({
    * Speed cost: 1 worker あたり +~3s (Supabase REST 往復) だが、
    * auth 失敗による retry > timeout > リトライ連鎖より大幅に速い。
    */
-  authedPage: async ({ page, baseURL }, use) => {
+  authedPage: async ({ page, baseURL, aiConsentGranted }, use) => {
     const workerIndex = test.info().workerIndex;
     const resolvedBase = baseURL ?? "";
     const { email, password } = getUserCredentials(workerIndex);
@@ -571,6 +587,11 @@ export const test = base.extend<AuthFixtures>({
       // フォールバック: storageState ベースの login (既存フロー)
       console.warn(`[auth fixture] worker${workerIndex}: fresh login 失敗、storageState フォールバックを使用`);
       await login(page, resolvedBase, workerIndex);
+    }
+
+    // 外国の AI 事業者への提供の同意 (T15 / #1154)。未同意だと AI を使う spec がサーバーに止められる
+    if (aiConsentGranted) {
+      await ensureAiConsentGranted(page, resolvedBase || appOrigin(page, process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000"));
     }
 
     await use(page);
@@ -588,7 +609,7 @@ export const E2E_USER = {
     return process.env.E2E_USER_EMAIL ?? "e2e-user-01@homegohan.test";
   },
   get password() {
-    return process.env.E2E_USER_PASSWORD ?? "TestE2E2026!secure";
+    return requireExistingUserPassword();
   },
 };
 

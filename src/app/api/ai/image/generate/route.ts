@@ -2,6 +2,10 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { GoogleGenAI, createUserContent } from '@google/genai';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiDailyLimitResponse, consumeAiUsage } from '@/lib/plan/entitlements';
+import { userScopedStoragePath } from '@/lib/storage-paths';
+import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 interface ReferenceImageInput {
   base64: string;
@@ -27,18 +31,11 @@ function normalizeReferenceImages(raw: unknown): ReferenceImageInput[] {
     .filter((image): image is ReferenceImageInput => image !== null);
 }
 
-function getQuotaErrorMessage(rawError: string): string {
-  try {
-    const parsed = JSON.parse(rawError);
-    if (parsed.error?.message) {
-      return parsed.error.message;
-    }
-  } catch {
-    // ignore JSON parse failure
-  }
-
-  return '画像生成のクォータが超過しました。しばらく待ってから再度お試しください。';
-}
+/**
+ * 画像生成の回数の上限 (Gemini の 429) に当たったときの文面。
+ * Gemini が返した生のエラー文は本文に出さない (#1172。サーバーのログにだけ残す)
+ */
+const QUOTA_EXCEEDED_MESSAGE = '画像生成のクォータが超過しました。しばらく待ってから再度お試しください。';
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -55,6 +52,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
+    const aiConsentDenied = await requireAiConsent(supabase, user.id);
+    if (aiConsentDenied) return aiConsentDenied;
+
     const rateLimitResult = await checkRateLimit(user.id, 'image');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
@@ -68,6 +69,11 @@ export async function POST(request: Request) {
 
     const enhancedPrompt = `Create a delicious, appetizing, professional food photography shot of ${prompt}. Natural lighting, high resolution, minimalist plating, Japanese cuisine style.`;
     const referenceImages = normalizeReferenceImages(images);
+
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeAiUsage(user.id, 'image_generation');
+    if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
     let imageBase64 = '';
     let textResponse = '';
@@ -113,7 +119,7 @@ export async function POST(request: Request) {
       const rawMessage = typeof genError?.message === 'string' ? genError.message : '';
       if (status === 429 || rawMessage.includes('429')) {
         return NextResponse.json({
-          error: getQuotaErrorMessage(rawMessage),
+          error: QUOTA_EXCEEDED_MESSAGE,
           code: 'QUOTA_EXCEEDED',
           suggestion: 'Google AI Studioで Nano Banana 2 のクォータを確認してください: https://ai.google.dev/gemini-api/docs/image-generation',
         }, { status: 429 });
@@ -124,7 +130,8 @@ export async function POST(request: Request) {
 
     const buffer = Buffer.from(imageBase64, 'base64');
     const bucketName = 'fridge-images';
-    const fileName = `generated/${user.id}/${Date.now()}.png`;
+    // 本人のフォルダ <user_id>/generated/ の下に保存する (storage.objects の RLS が本人のフォルダだけを許可する)
+    const fileName = userScopedStoragePath(user.id, 'generated', `${Date.now()}.png`);
 
     const { error: uploadError } = await supabase.storage
       .from(bucketName)
@@ -135,45 +142,9 @@ export async function POST(request: Request) {
       });
 
     if (uploadError) {
-      console.error('Upload error:', uploadError);
-
-      const errorMessage = uploadError.message || String(uploadError);
-      const errorStatus = uploadError.status;
-
-      if (
-        errorMessage.includes('Bucket not found') ||
-        errorMessage.includes('not found') ||
-        errorMessage.includes('does not exist') ||
-        errorStatus === 404
-      ) {
-        return NextResponse.json({
-          error: `Storage bucket '${bucketName}' not found.`,
-          code: 'BUCKET_NOT_FOUND',
-          details: errorMessage,
-          suggestion: `1. Go to Supabase Dashboard → Storage\n2. Verify bucket '${bucketName}' exists and is Public\n3. Check bucket name spelling (case-sensitive)`,
-        }, { status: 404 });
-      }
-
-      if (
-        errorMessage.includes('permission') ||
-        errorMessage.includes('policy') ||
-        errorMessage.includes('RLS') ||
-        errorMessage.includes('new row violates') ||
-        errorStatus === 403
-      ) {
-        return NextResponse.json({
-          error: `Permission denied for Storage bucket '${bucketName}'.`,
-          code: 'PERMISSION_DENIED',
-          details: errorMessage,
-          suggestion: `Set up Storage RLS policies:\n1. Go to Supabase Dashboard → Storage → ${bucketName}\n2. Click "Policies" tab\n3. Create policy:\n   - Policy name: "Allow authenticated users to upload"\n   - Allowed operation: INSERT\n   - Target roles: authenticated\n   - USING expression: auth.role() = 'authenticated'\n   - WITH CHECK expression: auth.role() = 'authenticated'`,
-        }, { status: 403 });
-      }
-
-      return NextResponse.json({
-        error: `Failed to upload image: ${errorMessage}`,
-        code: 'UPLOAD_ERROR',
-        details: errorMessage,
-      }, { status: 500 });
+      // バケットが無い・Storage のポリシーで弾かれた、はどちらもサーバー側の設定の問題。
+      // 生のエラー文・バケット名・設定の手順は本文に出さず (#1172)、構造化ログにだけ残す
+      return internalError('POST /api/ai/image/generate', uploadError, { userId: user.id });
     }
 
     const { data: { publicUrl } } = supabase.storage
@@ -187,7 +158,6 @@ export async function POST(request: Request) {
       text: textResponse.trim(),
     });
   } catch (error: any) {
-    console.error('Image Gen Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/image/generate', error);
   }
 }

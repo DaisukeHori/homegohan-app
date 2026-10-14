@@ -1,16 +1,6 @@
 -- migration: 20260511000131_membership_audit_super_admin_only.sql
--- Round 4 監査 C-5
--- membership_audit_select_operator policy を super_admin のみに絞る
--- (000104 では 'super_admin' OR 'admin' が参照可能だったため admin が全ログ閲覧できてしまう)
-
-DROP POLICY IF EXISTS membership_audit_select_operator ON membership_audit;
-
-CREATE POLICY membership_audit_select_operator ON membership_audit
-  FOR SELECT
-  USING (
-    EXISTS (
-      SELECT 1 FROM user_profiles
-      WHERE id = auth.uid()
-        AND 'super_admin' = ANY(roles)
-    )
-  );
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;

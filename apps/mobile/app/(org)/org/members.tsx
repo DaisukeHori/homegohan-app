@@ -23,7 +23,6 @@ export default function OrgMembersPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [nickname, setNickname] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -45,22 +44,21 @@ export default function OrgMembersPage() {
     load();
   }, []);
 
-  async function createUser() {
+  // #1235: アカウントは作らず、招待メールを送る (本人が承諾すると組織のメンバーになる)
+  async function inviteMember() {
     const e = email.trim();
-    const p = password.trim();
     const n = nickname.trim();
-    if (!e || !p || !n || isSubmitting) return;
+    if (!e || isSubmitting) return;
     setIsSubmitting(true);
     try {
       const api = getApi();
-      await api.post("/api/org/members", { email: e, password: p, nickname: n });
+      await api.post("/api/org/members", { email: e, nickname: n });
       setEmail("");
-      setPassword("");
       setNickname("");
-      Alert.alert("作成しました", "ユーザーを作成しました。");
+      Alert.alert("招待を送りました", `${e} に招待メールを送りました。本人が承諾すると組織のメンバーになります。`);
       await load();
     } catch (err: any) {
-      Alert.alert("作成失敗", err?.message ?? "作成に失敗しました。");
+      Alert.alert("招待失敗", err?.message ?? "招待に失敗しました。");
     } finally {
       setIsSubmitting(false);
     }
@@ -82,17 +80,16 @@ export default function OrgMembersPage() {
       <View style={{ paddingHorizontal: spacing.xl, gap: spacing.lg }}>
         {/* Create Form */}
         <Card>
-          <SectionHeader title="ユーザー作成（組織内）" />
+          <SectionHeader title="メンバーを招待" />
           <View style={{ gap: spacing.md, marginTop: spacing.sm }}>
             <Input value={email} onChangeText={setEmail} placeholder="example@email.com" label="メールアドレス" keyboardType="email-address" autoCapitalize="none" />
-            <Input value={password} onChangeText={setPassword} placeholder="パスワード" label="パスワード" secureTextEntry />
-            <Input value={nickname} onChangeText={setNickname} placeholder="ニックネーム" label="ニックネーム" />
-            <Button onPress={createUser} loading={isSubmitting} disabled={isSubmitting}>
-              {isSubmitting ? "作成中..." : "作成"}
+            <Input value={nickname} onChangeText={setNickname} placeholder="ニックネーム（任意）" label="ニックネーム（招待メールの宛名）" />
+            <Button onPress={inviteMember} loading={isSubmitting} disabled={isSubmitting}>
+              {isSubmitting ? "送信中..." : "招待を送る"}
             </Button>
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
               <Ionicons name="information-circle" size={16} color={colors.textMuted} />
-              <Text style={{ fontSize: 12, color: colors.textMuted, flex: 1 }}>メール送信は未実装。初期パスワードでログインできます。</Text>
+              <Text style={{ fontSize: 12, color: colors.textMuted, flex: 1 }}>招待メールのリンクから、本人が自分のアカウントで承諾すると組織のメンバーになります。</Text>
             </View>
           </View>
         </Card>

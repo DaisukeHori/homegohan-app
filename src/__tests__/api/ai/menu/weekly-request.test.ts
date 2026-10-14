@@ -1,0 +1,406 @@
+/**
+ * src/__tests__/api/ai/menu/weekly-request.test.ts
+ *
+ * #1042 (F1a-03): weekly/request が生成前に既存献立を物理削除しロールバックなし
+ * だった問題の修正確認（失敗注入テスト）。
+ *
+ * - 既存献立の削除前にスナップショットを取得し weekly_menu_requests.generated_data に退避すること
+ * - Edge Function 呼び出しが失敗した場合、スナップショットからのロールバック復元
+ *   (restorePlannedMealsSnapshot) が実行されること
+ * - Edge Function が成功した場合はロールバックを実行しないこと
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { applyHeavyUnitTestTimeout } from '../../../../../tests/helpers/heavy-unit-test-timeout';
+
+// 負荷の高い機械で vitest の既定の時間切れ (テスト 5 秒・フック 10 秒) を超えて落ちたことがあるので、このファイルだけ延ばす
+// (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1488)。テストとフックを定義する前に置く
+applyHeavyUnitTestTimeout();
+
+const mockGetUser = vi.fn();
+
+// user_daily_meals.select('id').eq().eq().maybeSingle() のキュー（日毎に1回ずつ呼ばれる）
+const userDailyMealsQueue: Array<{ data: any; error: any }> = [];
+const mockUserDailyMealsMaybeSingle = vi.fn(() =>
+  Promise.resolve(userDailyMealsQueue.shift() ?? { data: null, error: null }),
+);
+
+// planned_meals.select('*').eq('daily_meal_id', ...) のキュー（スナップショット取得）
+const plannedMealsSelectQueue: Array<{ data: any; error: any }> = [];
+const mockPlannedMealsSelectEq = vi.fn(() =>
+  Promise.resolve(plannedMealsSelectQueue.shift() ?? { data: [], error: null }),
+);
+
+const mockPlannedMealsDeleteEq = vi.fn(() => Promise.resolve({ data: null, error: null }));
+
+const mockWeeklyInsertSingle = vi.fn();
+const mockWeeklyInsertCall = vi.fn((..._args: any[]) => ({
+  select: () => ({ single: mockWeeklyInsertSingle }),
+}));
+const mockWeeklyUpdateUserEq = vi.fn((..._args: any[]) => Promise.resolve({ data: null, error: null }));
+const mockWeeklyUpdateEq = vi.fn((..._args: any[]) => ({ eq: mockWeeklyUpdateUserEq }));
+
+const mockFrom = vi.fn((table: string) => {
+  if (table === 'user_daily_meals') {
+    return {
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            maybeSingle: mockUserDailyMealsMaybeSingle,
+          }),
+        }),
+      }),
+    };
+  }
+  if (table === 'planned_meals') {
+    return {
+      select: () => ({
+        eq: mockPlannedMealsSelectEq,
+      }),
+      delete: () => ({
+        eq: mockPlannedMealsDeleteEq,
+      }),
+    };
+  }
+  // weekly_menu_requests は利用者のクライアントでは書かない (#1465)。service role のクライアント (mockAdminFrom) で書く
+  throw new Error(`Unexpected table in test: ${table}`);
+});
+
+const mockSupabase = {
+  auth: { getUser: mockGetUser },
+  from: mockFrom,
+};
+
+const mockAdminFrom = vi.fn((table: string) => {
+  if (table === 'weekly_menu_requests') {
+    return {
+      insert: mockWeeklyInsertCall,
+      update: () => ({
+        eq: mockWeeklyUpdateEq,
+      }),
+    };
+  }
+  throw new Error(`Unexpected table in test (admin): ${table}`);
+});
+const mockAdminClient = { from: mockAdminFrom };
+
+// 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
+vi.mock('@/lib/ai/consent-guard', () => import('../../../../../tests/helpers/ai-consent-guard-allowed'));
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: vi.fn(async () => mockSupabase),
+  // AI のキューへの書き込みは service role のクライアント (getAiQueueWriter → getSupabaseAdmin) で行う (#1465)
+  getSupabaseAdmin: vi.fn(() => mockAdminClient),
+}));
+
+vi.mock('@/lib/rate-limit', () => ({
+  checkRateLimit: vi.fn(async () => ({ success: true, limit: 10, remaining: 9, reset: Date.now() + 60_000 })),
+  rateLimitExceededResponse: vi.fn(),
+}));
+
+// #1148: エンジンの切り替えは feature_flags (isFeatureEnabled)。既定は v4 (OFF) で、v5 を確かめるテストだけ ON にする
+const mockIsFeatureEnabled = vi.fn(async (_key: string, _userId?: string) => false);
+vi.mock('@/lib/feature-flags', () => ({
+  isFeatureEnabled: (key: string, userId?: string) => mockIsFeatureEnabled(key, userId),
+}));
+
+vi.mock('@/lib/meal-image-jobs', () => ({
+  cancelPendingMealImageJobs: vi.fn(async () => {}),
+}));
+
+// internalError() が使う構造化ログ。変数名がここに渡ることを見る (#1182)
+const mockLoggerError = vi.fn();
+vi.mock('@/lib/db-logger', () => ({
+  createLogger: vi.fn(() => ({
+    withUser: vi.fn().mockReturnThis(),
+    error: mockLoggerError,
+  })),
+  generateRequestId: vi.fn(() => 'req-test'),
+}));
+
+const mockCallGenerateMenuV4WithRetry = vi.fn(async (..._args: any[]): Promise<
+  { ok: true; attempts: number; response: Response } | { ok: false; attempts: number; errorMessage: string }
+> => ({
+  ok: true,
+  attempts: 1,
+  response: new Response(),
+}));
+const mockMarkWeeklyMenuRequestFailed = vi.fn(async (..._args: any[]) => {});
+
+vi.mock('@/lib/generate-menu-v4-retry', () => ({
+  callGenerateMenuV4WithRetry: mockCallGenerateMenuV4WithRetry,
+  markWeeklyMenuRequestFailed: mockMarkWeeklyMenuRequestFailed,
+}));
+
+const mockCallGenerateMenuV5WithRetry = vi.fn(async (..._args: any[]) => ({
+  ok: true as const,
+  attempts: 1,
+  response: new Response(),
+}));
+vi.mock('@/lib/generate-menu-v5-retry', () => ({
+  callGenerateMenuV5WithRetry: mockCallGenerateMenuV5WithRetry,
+}));
+
+const waitUntilPromises: Promise<unknown>[] = [];
+vi.mock('@vercel/functions', () => ({
+  waitUntil: vi.fn((p: Promise<unknown>) => {
+    waitUntilPromises.push(p);
+  }),
+}));
+
+const mockRestorePlannedMealsSnapshot = vi.fn(async (..._args: any[]) => ({ restored: 0, skipped: 0, failed: 0 }));
+vi.mock('@/lib/planned-meals-snapshot', () => ({
+  restorePlannedMealsSnapshot: mockRestorePlannedMealsSnapshot,
+}));
+
+const { POST } = await import('@/app/api/ai/menu/weekly/request/route');
+const { createLogger } = await import('@/lib/db-logger');
+
+const user = { id: 'user-1' };
+const startDate = '2026-07-06'; // 固定した「今日」= fake timer で使用
+
+// 必須の環境変数 (#1182)。Edge Function の呼び出しはモックなので、値はダミー
+const TEST_SUPABASE_URL = 'https://example.supabase.co';
+const TEST_SERVICE_ROLE_KEY = 'service-role-key-for-test';
+
+const makeRequest = (body: Record<string, unknown>) =>
+  new Request('http://localhost/api/ai/menu/weekly/request', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+const flushBackground = async () => {
+  await Promise.all(waitUntilPromises);
+};
+
+const existingBreakfast = {
+  id: 'meal-breakfast-1',
+  daily_meal_id: 'day-1',
+  meal_type: 'breakfast',
+  dish_name: '元の朝食',
+};
+const existingLunch = {
+  id: 'meal-lunch-1',
+  daily_meal_id: 'day-1',
+  meal_type: 'lunch',
+  dish_name: '元の昼食',
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockIsFeatureEnabled.mockImplementation(async () => false);
+  waitUntilPromises.length = 0;
+  userDailyMealsQueue.length = 0;
+  plannedMealsSelectQueue.length = 0;
+
+  vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', TEST_SUPABASE_URL);
+  vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', TEST_SERVICE_ROLE_KEY);
+
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-07-06T09:00:00+09:00'));
+
+  mockGetUser.mockResolvedValue({ data: { user }, error: null });
+  mockWeeklyInsertSingle.mockResolvedValue({ data: { id: 'request-1' }, error: null });
+
+  // day0(startDate): 既存の献立あり（削除→スナップショット対象）
+  userDailyMealsQueue.push({ data: { id: 'day-1' }, error: null });
+  plannedMealsSelectQueue.push({ data: [existingBreakfast, existingLunch], error: null });
+  // day1〜day6: 既存の献立なし
+  for (let i = 0; i < 6; i++) {
+    userDailyMealsQueue.push({ data: null, error: null });
+  }
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
+
+describe('POST /api/ai/menu/weekly/request', () => {
+  it('Edge Function 失敗時、削除前スナップショットからロールバック復元する', async () => {
+    mockCallGenerateMenuV4WithRetry.mockResolvedValue({
+      ok: false,
+      attempts: 3,
+      errorMessage: 'generate-menu-v4 failed after 3/3 attempts',
+    });
+    mockRestorePlannedMealsSnapshot.mockResolvedValue({ restored: 2, skipped: 0, failed: 0 });
+
+    const res = await POST(makeRequest({ startDate }));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.status).toBe('processing');
+
+    // weekly_menu_requests insert に削除前スナップショットが退避されていること
+    const insertPayload = mockWeeklyInsertCall.mock.calls[0][0];
+    expect(insertPayload.generated_data).toEqual({ snapshot: [existingBreakfast, existingLunch] });
+
+    await flushBackground();
+
+    // Edge Function 失敗 → ロールバック復元が呼ばれること
+    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
+    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledWith(
+      mockSupabase,
+      [existingBreakfast, existingLunch],
+    );
+
+    // markWeeklyMenuRequestFailed にロールバック結果が反映されたエラーメッセージが渡ること
+    expect(mockMarkWeeklyMenuRequestFailed).toHaveBeenCalledTimes(1);
+    const failedArgs = mockMarkWeeklyMenuRequestFailed.mock.calls[0][0];
+    expect(failedArgs.requestId).toBe('request-1');
+    expect(failedArgs.errorMessage).toContain('rollback: restored=2, skipped=0, failed=0');
+    // 失敗の記録も service role のクライアントで書く (#1465)
+    expect(failedArgs.supabase).toBe(mockAdminClient);
+    // 上書きする献立の画像のジョブの取り消しも、service role で本人の行に絞って行う
+    const { cancelPendingMealImageJobs } = await import('@/lib/meal-image-jobs');
+    expect(vi.mocked(cancelPendingMealImageJobs)).toHaveBeenCalledWith(
+      expect.objectContaining({ supabase: mockAdminClient, userId: 'user-1', plannedMealId: existingBreakfast.id }),
+    );
+    // target_slots・mode の更新は、本人の行に絞って書く
+    expect(mockWeeklyUpdateEq).toHaveBeenCalledWith('id', 'request-1');
+    expect(mockWeeklyUpdateUserEq).toHaveBeenCalledWith('user_id', 'user-1');
+  });
+
+  it('#1148: menu_generation_v5_wrapped が OFF なら v4、ON なら v5 の Edge Function を呼び、mode にも反映する', async () => {
+    // OFF (feature_flags の menu_generation_v5_wrapped = false): v4
+    const offRes = await POST(makeRequest({ startDate }));
+    expect(offRes.status).toBe(200);
+    await flushBackground();
+    expect(mockIsFeatureEnabled).toHaveBeenCalledWith('menu_generation_v5_wrapped', 'user-1');
+    expect(mockCallGenerateMenuV4WithRetry).toHaveBeenCalledTimes(1);
+    expect(mockCallGenerateMenuV5WithRetry).not.toHaveBeenCalled();
+
+    // ON: v5。apikey ヘッダーも付く
+    vi.clearAllMocks();
+    waitUntilPromises.length = 0;
+    userDailyMealsQueue.length = 0;
+    plannedMealsSelectQueue.length = 0;
+    for (let i = 0; i < 7; i++) userDailyMealsQueue.push({ data: null, error: null });
+    mockWeeklyInsertSingle.mockResolvedValue({ data: { id: 'request-2' }, error: null });
+    mockIsFeatureEnabled.mockImplementation(async (key: string) => key === 'menu_generation_v5_wrapped');
+
+    const onRes = await POST(makeRequest({ startDate }));
+    expect(onRes.status).toBe(200);
+    await flushBackground();
+    expect(mockCallGenerateMenuV5WithRetry).toHaveBeenCalledTimes(1);
+    expect(mockCallGenerateMenuV4WithRetry).not.toHaveBeenCalled();
+    expect(mockCallGenerateMenuV5WithRetry.mock.calls[0][0].extraHeaders).toBeDefined();
+  });
+
+  it('Edge Function が同意の判定で止めた (T15 / #1154) ときも復元するが、失敗の文は人向けの文のまま残す (画面が見分けて同意画面へ案内するため)', async () => {
+    const { AI_CONSENT_REQUIRED_MESSAGE, aiConsentReasonOfStoredError } = await import('@/lib/ai/consent-config');
+    mockCallGenerateMenuV4WithRetry.mockResolvedValue({ ok: false, attempts: 1, errorMessage: AI_CONSENT_REQUIRED_MESSAGE });
+    mockRestorePlannedMealsSnapshot.mockResolvedValue({ restored: 2, skipped: 0, failed: 0 });
+
+    const res = await POST(makeRequest({ startDate }));
+    expect(res.status).toBe(200);
+    await flushBackground();
+
+    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
+    expect(mockMarkWeeklyMenuRequestFailed).toHaveBeenCalledTimes(1);
+    const failedArgs = mockMarkWeeklyMenuRequestFailed.mock.calls[0][0];
+    expect(failedArgs.errorMessage).toBe(AI_CONSENT_REQUIRED_MESSAGE);
+    expect(aiConsentReasonOfStoredError(failedArgs.errorMessage)).toBe('consent_required');
+  });
+
+  it('Edge Function 成功時はロールバックを実行しない', async () => {
+    mockCallGenerateMenuV4WithRetry.mockResolvedValue({ ok: true, attempts: 1, response: new Response() });
+
+    const res = await POST(makeRequest({ startDate }));
+    expect(res.status).toBe(200);
+
+    await flushBackground();
+
+    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockMarkWeeklyMenuRequestFailed).not.toHaveBeenCalled();
+  });
+
+  it('削除対象の既存献立がない週は generated_data.snapshot を null にする', async () => {
+    userDailyMealsQueue.length = 0;
+    plannedMealsSelectQueue.length = 0;
+    for (let i = 0; i < 7; i++) {
+      userDailyMealsQueue.push({ data: null, error: null });
+    }
+    mockCallGenerateMenuV4WithRetry.mockResolvedValue({ ok: true, attempts: 1, response: new Response() });
+
+    const res = await POST(makeRequest({ startDate }));
+    expect(res.status).toBe(200);
+
+    const insertPayload = mockWeeklyInsertCall.mock.calls[0][0];
+    expect(insertPayload.generated_data).toBeNull();
+
+    await flushBackground();
+    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('#1035: TZ=UTC ランタイムで JST 早朝でも「昨日」の献立を削除しない（今日以降のみ処理）', async () => {
+    // Vercel Node ランタイムを模して TZ=UTC を強制する
+    vi.stubEnv('TZ', 'UTC');
+    // JST 2026-07-06 00:30 = UTC 2026-07-05 15:30（UTC 基準だと「今日」は 07-05 に誤判定されうる境界）
+    vi.setSystemTime(new Date('2026-07-05T15:30:00Z'));
+
+    const localStartDate = '2026-06-30'; // 週の開始（過去日）
+    // addDays(startDate, 6) = 2026-07-06（JSTの「今日」）のみ既存献立ありとする
+    userDailyMealsQueue.length = 0;
+    plannedMealsSelectQueue.length = 0;
+    userDailyMealsQueue.push({ data: { id: 'day-today' }, error: null });
+    plannedMealsSelectQueue.push({ data: [existingBreakfast], error: null });
+
+    mockCallGenerateMenuV4WithRetry.mockResolvedValue({ ok: true, attempts: 1, response: new Response() });
+
+    const res = await POST(makeRequest({ startDate: localStartDate }));
+    expect(res.status).toBe(200);
+
+    // 「今日以降」と判定された日だけ user_daily_meals に問い合わせる。
+    // UTC ベースの旧実装（todayStr='2026-07-05'）だと 07-05（昨日）・07-06（今日）の
+    // 2日分が対象になってしまうが、修正後は 07-06 の1日のみ。
+    expect(mockUserDailyMealsMaybeSingle).toHaveBeenCalledTimes(1);
+
+    // 削除（スナップショット退避）されるのは今日分のみで、昨日の献立・完食記録は保持される
+    const insertPayload = mockWeeklyInsertCall.mock.calls[0][0];
+    expect(insertPayload.generated_data).toEqual({ snapshot: [existingBreakfast] });
+  });
+});
+
+// #1182: 必須の環境変数が欠けているとき、既存の献立を消したり weekly_menu_requests を作ったりする「前」に、
+// 汎用の 500 で止める (本文には変数名を出さず (#1172)、変数名は構造化ログにだけ渡す)。以前は `process.env.X!` を、献立を消してリクエストの行を作った「後」に読んでいたため、
+// 欠けていると undefined の URL への通信になり、(失敗の復元は走るものの) 無駄に献立を消して戻す動きになっていた。
+describe('POST /api/ai/menu/weekly/request — 必須の環境変数 (#1182)', () => {
+  it('設定されていれば、その値をそのまま Edge Function の呼び出しに渡す', async () => {
+    mockCallGenerateMenuV4WithRetry.mockResolvedValue({ ok: true, attempts: 1, response: new Response() });
+
+    const res = await POST(makeRequest({ startDate }));
+    expect(res.status).toBe(200);
+    await flushBackground();
+
+    expect(mockCallGenerateMenuV4WithRetry).toHaveBeenCalledTimes(1);
+    expect(mockCallGenerateMenuV4WithRetry.mock.calls[0][0]).toMatchObject({
+      supabaseUrl: TEST_SUPABASE_URL,
+      serviceRoleKey: TEST_SERVICE_ROLE_KEY,
+    });
+  });
+
+  it.each(['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'])(
+    '%s が未設定なら、献立を消す前・リクエストを作る前に、汎用の 500 で止める (本文に変数名なし・ログに変数名あり)',
+    async (name) => {
+      vi.stubEnv(name, undefined);
+
+      const res = await POST(makeRequest({ startDate }));
+      const text = await res.text();
+
+      expect(res.status).toBe(500);
+      expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+      expect(text).not.toContain(name);
+      expect(mockLoggerError).toHaveBeenCalledTimes(1);
+      expect(mockLoggerError.mock.calls[0][1]).toMatchObject({ name: 'MissingEnvError', envName: name });
+      // 構造化ログの function_name は、ほかの route と同じ「METHOD /path」の形 (#1434)
+      expect(vi.mocked(createLogger)).toHaveBeenCalledWith('POST /api/ai/menu/weekly/request', expect.any(String));
+
+      // 何も書き込んでいない・消していない・Edge Function を呼んでいない
+      expect(mockPlannedMealsDeleteEq).not.toHaveBeenCalled();
+      expect(mockWeeklyInsertCall).not.toHaveBeenCalled();
+      expect(mockCallGenerateMenuV4WithRetry).not.toHaveBeenCalled();
+      expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    },
+  );
+});

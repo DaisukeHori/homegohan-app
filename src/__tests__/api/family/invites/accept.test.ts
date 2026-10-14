@@ -159,6 +159,70 @@ describe('POST /api/family/invites/[token]/accept', () => {
     expect(json.error.code).toBe('INVITE_EMAIL_MISMATCH');
   });
 
+  it('MEMBER_LIMIT_EXCEEDED: 409 を返す (#1213。以前はマッピングが無く 500 RPC_FAILED だった)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: validUser }, error: null });
+    mockRpc.mockResolvedValue({
+      data: null,
+      error: { code: 'P0001', message: 'MEMBER_LIMIT_EXCEEDED' },
+    });
+
+    const req = new Request(`http://localhost/api/family/invites/${validToken}/accept`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validBody),
+    });
+
+    const res = await POST(req, makeParams(validToken));
+    const json = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(json.error.code).toBe('MEMBER_LIMIT_EXCEEDED');
+    // 画面 (FamilyInviteAcceptModal) は、コードが未知のときにこの message をそのまま表示する
+    expect(json.error.message).toContain('上限');
+  });
+
+  it('FAMILY_NOT_FOUND (招待先の家族が解散済み): 404 を返す (#1213)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: validUser }, error: null });
+    mockRpc.mockResolvedValue({
+      data: null,
+      error: { code: 'P0001', message: 'FAMILY_NOT_FOUND' },
+    });
+
+    const req = new Request(`http://localhost/api/family/invites/${validToken}/accept`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validBody),
+    });
+
+    const res = await POST(req, makeParams(validToken));
+    const json = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(json.error.code).toBe('FAMILY_NOT_FOUND');
+  });
+
+  it('想定外の RPC エラー: 500 RPC_FAILED を返す (上のマッピングを足しても、この経路は変わらない)', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockGetUser.mockResolvedValue({ data: { user: validUser }, error: null });
+    mockRpc.mockResolvedValue({
+      data: null,
+      error: { code: 'XX000', message: 'unexpected failure' },
+    });
+
+    const req = new Request(`http://localhost/api/family/invites/${validToken}/accept`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validBody),
+    });
+
+    const res = await POST(req, makeParams(validToken));
+    const json = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(json.error.code).toBe('RPC_FAILED');
+    consoleError.mockRestore();
+  });
+
   it('share_settings のデフォルト値が適用される (body なし)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: validUser }, error: null });
     mockRpc.mockResolvedValue({

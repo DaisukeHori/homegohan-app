@@ -1,13 +1,626 @@
-// Round-3 レビュー指摘 #1: SSR hydration mismatch + 破壊的ボタンの一瞬フラッシュ対策。
-// Server Component として cookies() から is_native_app を読み、Client Component
-// (SettingsPageClient) へ初期値として渡す。(main)/layout.tsx → MainLayout →
-// BottomNav の SSR-safe パターンをこのページにも適用する。
-import { cookies } from "next/headers";
-import { SettingsPageClient } from "./SettingsPageClient";
+"use client";
 
-export default async function SettingsPage() {
-  const cookieStore = await cookies();
-  const initialIsNativeApp = cookieStore.get("is_native_app")?.value === "1";
+import { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Button } from "@/components/ui/button";
+import { createClient } from "@/lib/supabase/client";
+import { useRouter } from "next/navigation";
+import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
+import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
+import { requestNotificationPermission } from "@/lib/local-notification";
+import { useNativeAppMode } from "@/hooks/useNativeAppMode";
+import { AI_CONSENT_SETTINGS_ENTRY_TITLE, AI_CONSENT_SETTINGS_PATH } from "@/lib/ai/consent-config";
+import {
+  ACCOUNT_DELETE_CONFIRM_KEYWORD,
+  ACCOUNT_EXPORT_FAILED_MESSAGE,
+  accountExportRateLimitedMessage,
+  deleteOwnAccount,
+  exportAccountData,
+  saveResponseAsDownload,
+  signOutAfterAccountDeletion,
+} from "@/lib/account-self-service";
 
-  return <SettingsPageClient initialIsNativeApp={initialIsNativeApp} />;
+type WeekStartDay = 'sunday' | 'monday';
+
+// スイッチコンポーネント (#207: role=switch / aria-checked / aria-label 追加)
+const Switch = ({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  label: string;
+}) => (
+  <button
+    role="switch"
+    aria-checked={checked}
+    aria-label={label}
+    onClick={onChange}
+    className={`w-12 h-7 rounded-full p-1 transition-colors duration-300 ${checked ? 'bg-[#FF8A65]' : 'bg-gray-200'}`}
+  >
+    <motion.div
+      layout
+      className="w-5 h-5 bg-white rounded-full shadow-sm"
+      animate={{ x: checked ? 20 : 0 }}
+      transition={{ type: "spring", stiffness: 500, damping: 30 }}
+    />
+  </button>
+);
+
+export default function SettingsPage() {
+  const router = useRouter();
+  const supabase = createClient();
+  const isNativeApp = useNativeAppMode();
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
+
+  const [settings, setSettings] = useState({
+    notifications: true,
+    autoAnalyze: true
+  });
+
+  const [weekStartDay, setWeekStartDay] = useState<WeekStartDay>('monday');
+  const [savingWeekStart, setSavingWeekStart] = useState(false);
+
+  // mount 時に notification_preferences から設定を取得
+  useEffect(() => {
+    const fetchSettings = async () => {
+      const res = await fetch('/api/notification-preferences');
+      if (!res.ok) return;
+      const json = await res.json();
+      if (json.settings) {
+        setSettings({
+          notifications: json.settings.notifications_enabled,
+          autoAnalyze: json.settings.auto_analyze_enabled,
+        });
+      }
+    };
+    fetchSettings();
+  }, []);
+
+  // Fetch current week start day setting
+  useEffect(() => {
+    const fetchWeekStart = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('week_start_day')
+        .eq('id', user.id)
+        .single();
+      if (profile?.week_start_day) {
+        setWeekStartDay(profile.week_start_day as WeekStartDay);
+      }
+    };
+    fetchWeekStart();
+  }, [supabase]);
+
+  const handleWeekStartDayChange = async (newValue: WeekStartDay) => {
+    setWeekStartDay(newValue);
+    setSavingWeekStart(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      await supabase
+        .from('user_profiles')
+        .update({ week_start_day: newValue })
+        .eq('id', user.id);
+    } catch (error) {
+      console.error('Failed to save week start day:', error);
+    } finally {
+      setSavingWeekStart(false);
+    }
+  };
+
+  const toggle = async (key: keyof typeof settings) => {
+    const newValue = !settings[key];
+
+    // 通知を ON にするときはブラウザのパーミッションをリクエスト
+    if (key === 'notifications' && newValue) {
+      const permission = await requestNotificationPermission();
+      if (permission === 'denied') {
+        alert('ブラウザの通知がブロックされています。ブラウザの設定から許可してください。');
+        return; // DB への保存も行わない
+      }
+    }
+
+    setSettings(prev => ({ ...prev, [key]: newValue }));
+    try {
+      const apiKey = key === 'notifications' ? 'notifications_enabled' : 'auto_analyze_enabled';
+      const res = await fetch('/api/notification-preferences', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [apiKey]: newValue }),
+      });
+      if (!res.ok) throw new Error('save failed');
+    } catch {
+      setSettings(prev => ({ ...prev, [key]: !newValue }));
+      alert('設定の保存に失敗しました');
+    }
+  };
+
+  // #1131: 個人データ一式を JSON でダウンロードする (モバイルアプリと同じ GET /api/account/export)。
+  // 呼び方と保存のしかたは凍結中の画面 (/frozen/account) と共通 (src/lib/account-self-service.ts)
+  const [exporting, setExporting] = useState(false);
+  const handleExportData = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const result = await exportAccountData({ isNativeApp });
+      if (result.kind === 'unauthorized') {
+        router.push('/login');
+      } else if (result.kind === 'rate_limited') {
+        // 連打防止の上限 (10 分あたり 5 回)。いつ再開できるかをサーバーの Retry-After から伝える
+        alert(accountExportRateLimitedMessage(result.retryAfterSec));
+      } else if (result.kind === 'failed') {
+        alert(ACCOUNT_EXPORT_FAILED_MESSAGE);
+      }
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const [exportingCsv, setExportingCsv] = useState(false);
+  const handleExportCsv = async () => {
+    if (exportingCsv) return;
+    setExportingCsv(true);
+    try {
+      const res = await fetch('/api/export/meals', { method: 'GET' });
+      if (!res.ok) {
+        if (res.status === 401) {
+          router.push('/login');
+          return;
+        }
+        throw new Error(`CSV export failed: ${res.status}`);
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      await saveResponseAsDownload(res, `homegohan-meals-${today}.csv`, 'text/csv', isNativeApp);
+    } catch (err) {
+      console.error(err);
+      alert('CSVエクスポートに失敗しました。時間をおいて再度お試しください。');
+    } finally {
+      setExportingCsv(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    clearUserScopedLocalStorage();
+    // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
+    notifyNativeSignOut();
+    await supabase.auth.signOut();
+    broadcastSignOut();
+    router.push('/login');
+  };
+
+  // アカウント削除
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const DELETE_KEYWORD = ACCOUNT_DELETE_CONFIRM_KEYWORD;
+
+  // 呼び方と退会のあとのログアウトの順番は、凍結中の画面 (/frozen/account) と共通 (src/lib/account-self-service.ts)
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmText !== DELETE_KEYWORD || deleting) return;
+    setDeleting(true);
+    const result = await deleteOwnAccount();
+    if (result.kind !== 'deleted') {
+      alert('アカウントの削除に失敗しました。時間をおいて再度お試しください。');
+      setDeleting(false);
+      return;
+    }
+    // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
+    await signOutAfterAccountDeletion(supabase);
+    router.push('/login');
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 pb-24 relative">
+      
+      <div className="bg-white p-6 pb-4 border-b border-gray-100 sticky top-0 z-20">
+        <h1 className="text-2xl font-bold text-gray-900">設定</h1>
+      </div>
+
+      <div className="p-6 space-y-8">
+        
+        {/* セクション 1: 一般設定 */}
+        <div>
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">一般</h2>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+             
+             <div className="flex items-center justify-between p-4 border-b border-gray-50">
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-blue-500">🔔</div>
+                 <span className="font-bold text-gray-700">通知</span>
+               </div>
+               <Switch checked={settings.notifications} onChange={() => toggle('notifications')} label="通知を有効化" />
+             </div>
+
+             <div className="flex items-center justify-between p-4 border-b border-gray-50">
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-purple-50 flex items-center justify-center text-purple-500">🤖</div>
+                 <span className="font-bold text-gray-700">自動解析</span>
+               </div>
+               <Switch checked={settings.autoAnalyze} onChange={() => toggle('autoAnalyze')} label="自動解析を有効化" />
+             </div>
+
+             <div className="flex items-center justify-between p-4">
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-teal-50 flex items-center justify-center text-teal-500">📅</div>
+                 <div>
+                   <span className="font-bold text-gray-700">週の開始日</span>
+                   <p className="text-xs text-gray-400">カレンダーの開始曜日</p>
+                 </div>
+               </div>
+               <div className="flex gap-1">
+                 <button
+                   onClick={() => handleWeekStartDayChange('sunday')}
+                   disabled={savingWeekStart}
+                   className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                     weekStartDay === 'sunday'
+                       ? 'bg-[#FF8A65] text-white'
+                       : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                   }`}
+                 >
+                   日曜
+                 </button>
+                 <button
+                   onClick={() => handleWeekStartDayChange('monday')}
+                   disabled={savingWeekStart}
+                   className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                     weekStartDay === 'monday'
+                       ? 'bg-[#FF8A65] text-white'
+                       : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                   }`}
+                 >
+                   月曜
+                 </button>
+               </div>
+             </div>
+
+          </div>
+        </div>
+
+        {/* セクション 2: 個人情報 */}
+        <div>
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">個人情報</h2>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+
+             <button
+               onClick={() => router.push('/profile')}
+               className="w-full flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-blue-500">👤</div>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">プロフィール</span>
+                   <p className="text-xs text-gray-400">名前、年齢、身長・体重など</p>
+                 </div>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
+             <button
+               onClick={() => router.push('/health/checkups')}
+               className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center text-red-500">🩺</div>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">健康診断</span>
+                   <p className="text-xs text-gray-400">検査結果の記録・分析</p>
+                 </div>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
+             <button
+               onClick={() => router.push('/profile/nutrition-targets')}
+               className="w-full flex items-center justify-between p-4 border-t border-gray-50 hover:bg-gray-50 transition-colors"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500">🎯</div>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">栄養目標を再設定</span>
+                   <p className="text-xs text-gray-400">計算根拠を見ながら目標カロリーを調整</p>
+                 </div>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
+          </div>
+        </div>
+
+        {/* セクション 2.5: アカウント (#1187: パスワード・メールアドレスの変更。FAQ の案内先) */}
+        <div>
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">アカウント</h2>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+
+             <button
+               type="button"
+               data-testid="settings-account-link"
+               onClick={() => router.push('/settings/account')}
+               className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-500" aria-hidden="true">🔑</div>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">パスワード・メールアドレス</span>
+                   <p className="text-xs text-gray-400">ログイン情報の変更</p>
+                 </div>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
+          </div>
+        </div>
+
+        {/* セクション 3: データ・プライバシー */}
+        <div>
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">データとプライバシー</h2>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+             
+             <button
+               type="button"
+               onClick={handleExportData}
+               disabled={exporting}
+               className="w-full flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center text-green-500" aria-hidden="true">☁️</div>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">{exporting ? 'エクスポート中…' : 'データをエクスポート'}</span>
+                   <p className="text-xs text-gray-400">JSON 形式（GDPR データポータビリティ対応）</p>
+                 </div>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
+             <button
+               type="button"
+               onClick={handleExportCsv}
+               disabled={exportingCsv}
+               className="w-full flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600" aria-hidden="true">📋</div>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">{exportingCsv ? 'エクスポート中…' : '献立をCSVエクスポート'}</span>
+                   <p className="text-xs text-gray-400">Excel・スプレッドシートで開ける CSV 形式</p>
+                 </div>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
+             {/* 外国の AI 事業者への提供の同意の確認・撤回 (T15 / #1154)。AI のコメントの案内の一文が「設定の「…」から」と指す先 */}
+             <button
+               type="button"
+               onClick={() => router.push(AI_CONSENT_SETTINGS_PATH)}
+               data-testid="settings-ai-consent-link"
+               className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-500" aria-hidden="true">🤖</div>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">{AI_CONSENT_SETTINGS_ENTRY_TITLE}</span>
+                   <p className="text-xs text-gray-400">日本国外の AI 事業者への提供の確認・撤回</p>
+                 </div>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
+             {/* #1144: 「トレーナーと共有」の項目は外した。トレーナーなどに共有する機能が無いのに、項目だけが画面にあったため。
+                 戻すときは、先に src/app/api/notification-preferences/route.ts のコメントを読むこと (保存済みの値は同意ではない)。 */}
+
+          </div>
+        </div>
+
+        {/* セクション 3.5: ハンズオンガイド */}
+        <div>
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">チュートリアル</h2>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <button
+              type="button"
+              data-testid="settings-restart-handson-tour"
+              // #1045 (F6-05): /handson-tour/layout.tsx (Server Component) は searchParams を
+              // 受け取れないため ?force=1 は無視されていた。専用ルート (Cookie 発行 + redirect)
+              // をフルナビゲーションで叩く必要があるため router.push ではなく location 遷移を使う。
+              onClick={() => { window.location.href = '/handson-tour/replay'; }}
+              className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500" aria-hidden="true">📖</div>
+                <div className="text-left">
+                  <span className="font-bold text-gray-700">使い方ガイドをもう一度見る</span>
+                  <p className="text-xs text-gray-400">ハンズオンチュートリアルを最初から体験</p>
+                </div>
+              </div>
+              <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+            </button>
+          </div>
+        </div>
+
+        {/* セクション 4: サポート・法的情報 */}
+        <div>
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">サポートと法的情報</h2>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+
+             <button
+               onClick={() => router.push('/terms')}
+               className="w-full flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center text-gray-500">📄</div>
+                 <span className="font-bold text-gray-700">利用規約</span>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
+             <button 
+               onClick={() => router.push('/privacy')}
+               className="w-full flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center text-gray-500">🔒</div>
+                 <span className="font-bold text-gray-700">プライバシーポリシー</span>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
+             <a 
+               href="mailto:support@homegohan.jp"
+               className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center text-gray-500">✉️</div>
+                 <span className="font-bold text-gray-700">お問い合わせ</span>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </a>
+
+          </div>
+        </div>
+
+        {/* セクション 5: アクション */}
+        <div>
+          <Button
+            variant="outline"
+            data-testid="logout-button"
+            onClick={() => setShowLogoutModal(true)}
+            className="w-full py-6 rounded-2xl border-red-100 text-red-500 hover:bg-red-50 hover:border-red-200 font-bold mb-4"
+          >
+            ログアウト
+          </Button>
+          <p className="text-center text-xs text-gray-400">
+            Version {process.env.NEXT_PUBLIC_APP_VERSION ?? 'v1.0.0'} (Build {process.env.NEXT_PUBLIC_BUILD_DATE ?? '20260430'})<br/>
+            &copy; {new Date().getFullYear()} ほめゴハン
+          </p>
+        </div>
+
+        {/* セクション 6: アカウント削除 */}
+        <div>
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">危険ゾーン</h2>
+          <div className="bg-white rounded-2xl shadow-sm border border-red-100 overflow-hidden">
+            <div className="p-4">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center text-red-500" aria-hidden="true">🗑️</div>
+                <div>
+                  <p className="font-bold text-gray-700">アカウントを削除</p>
+                  <p className="text-xs text-gray-400">すべてのデータが完全に削除されます。この操作は取り消せません。</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(true)}
+                className="w-full py-3 rounded-xl border border-red-300 text-red-600 font-bold hover:bg-red-50 transition-colors text-sm"
+                aria-label="アカウントを削除する"
+              >
+                アカウントを削除する
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      {/* ログアウト確認モーダル */}
+      <AnimatePresence>
+        {showLogoutModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm pointer-events-none"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white rounded-3xl p-8 w-full max-w-sm text-center shadow-2xl pointer-events-auto"
+            >
+              <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-6 text-3xl">
+                👋
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">ログアウトしますか？</h3>
+              <p className="text-gray-500 mb-8 text-sm">
+                ログアウトしてもデータは保持されます。<br/>
+                またすぐにお会いしましょう。
+              </p>
+              <div className="flex flex-col gap-3">
+                <button
+                  data-testid="logout-confirm-button"
+                  onClick={handleLogout}
+                  className="w-full py-3 rounded-full bg-[#333] text-white font-bold hover:bg-black transition-colors shadow-lg"
+                >
+                  ログアウト
+                </button>
+                <button
+                  onClick={() => setShowLogoutModal(false)}
+                  className="w-full py-3 rounded-full font-bold text-gray-500 hover:bg-gray-100 transition-colors"
+                >
+                  キャンセル
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* アカウント削除確認モーダル */}
+      <AnimatePresence>
+        {showDeleteModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm pointer-events-none"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white rounded-3xl p-8 w-full max-w-sm text-center shadow-2xl pointer-events-auto"
+            >
+              <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-6 text-3xl">
+                ⚠️
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">アカウントを削除しますか？</h3>
+              <p className="text-gray-500 mb-6 text-sm">
+                すべての食事記録・設定・データが<strong className="text-red-600">完全に削除</strong>されます。<br/>
+                この操作は取り消せません。
+              </p>
+              <p className="text-sm text-gray-600 mb-2 text-left">
+                確認のため「<span className="font-bold text-red-600">{DELETE_KEYWORD}</span>」と入力してください
+              </p>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder={DELETE_KEYWORD}
+                aria-label="削除確認テキスト入力"
+                className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-6 focus:outline-none focus:ring-2 focus:ring-red-300 focus:border-transparent"
+              />
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={handleDeleteAccount}
+                  disabled={deleteConfirmText !== DELETE_KEYWORD || deleting}
+                  aria-label="アカウントを完全に削除する"
+                  className="w-full py-3 rounded-full bg-red-600 text-white font-bold hover:bg-red-700 transition-colors shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {deleting ? '削除中…' : 'アカウントを削除'}
+                </button>
+                <button
+                  onClick={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}
+                  disabled={deleting}
+                  className="w-full py-3 rounded-full font-bold text-gray-500 hover:bg-gray-100 transition-colors disabled:opacity-40"
+                >
+                  キャンセル
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+    </div>
+  );
 }

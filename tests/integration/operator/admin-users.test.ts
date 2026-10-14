@@ -1,12 +1,27 @@
 /**
- * Integration tests: GET/PATCH /api/admin/users, freeze, impersonate
+ * Integration tests: GET/PATCH /api/admin/users, freeze (+ impersonate が無いこと)
  * Roles: admin, super_admin, support
  * Auth boundary: 401 (no auth), 403 (general user)
+ *
+ * freeze の解除 (DELETE) は admin-moderation-detail.test.ts にある。
+ * impersonate (なりすまし) は #1124 で API ごと削除した。無いこと (404) をこのファイルの末尾で確認する。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createTestUserWithRoles, cleanupTestUser, cleanupAuditLogs, testEmail, type TestUser } from '../helpers/users';
 import { supabaseAdmin } from '../helpers/supabase';
 import { apiCall, apiCallNoAuth } from '../helpers/api';
+import { expectError } from '../helpers/admin-test-utils';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import ws from 'ws';
+
+/** ログインした本人の JWT で RLS を通る client (PostgREST に直接問い合わせる) */
+function userScopedClient(jwt: string): SupabaseClient {
+  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? '', process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '', {
+    auth: { autoRefreshToken: false, persistSession: false },
+    realtime: { transport: ws as unknown as typeof WebSocket },
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
+  });
+}
 
 const TS = Date.now();
 
@@ -27,6 +42,9 @@ beforeAll(async () => {
 }, 60000);
 
 afterAll(async () => {
+  // PATCH が追加した管理ノート (admin_user_notes.admin_id は auth.users を ON DELETE なしで参照するため、ユーザーより先に消す)
+  await supabaseAdmin.from('admin_user_notes').delete().eq('user_id', targetUser.userId);
+
   // Cleanup audit logs first to avoid FK issues
   await Promise.all([
     cleanupAuditLogs(adminUser.userId),
@@ -37,7 +55,7 @@ afterAll(async () => {
   // Unfreeze target user before cleanup
   await supabaseAdmin
     .from('user_profiles')
-    .update({ frozen_at: null, frozen_reason: null, frozen_by: null })
+    .update({ frozen_at: null, frozen_reason: null, frozen_by: null, unban_at: null })
     .eq('id', targetUser.userId);
 
   await Promise.all([
@@ -69,6 +87,23 @@ describe('GET /api/admin/users', () => {
     expect(res.body).toHaveProperty('data');
   });
 
+  // #1145: メールアドレスは admin / super_admin にだけ返す (詳細は tests/integration/security/admin-users-email.test.ts)
+  it('admin: メールアドレスで検索でき、email が返る (#1145)', async () => {
+    const res = await apiCall('GET', `/api/admin/users?q=${encodeURIComponent(targetUser.email)}`, adminUser.jwt);
+    expect(res.status).toBe(200);
+    const items = (res.body as { data: Array<{ id: string; email: string | null }> }).data;
+    const item = items.find((u) => u.id === targetUser.userId);
+    expect(item?.email).toBe(targetUser.email);
+  });
+
+  it('support: メールアドレスで検索しても見つからず、email は返らない (#1145)', async () => {
+    const res = await apiCall('GET', `/api/admin/users?q=${encodeURIComponent(targetUser.email)}`, supportUser.jwt);
+    expect(res.status).toBe(200);
+    const items = (res.body as { data: Array<{ id: string; email: string | null }> }).data;
+    expect(items.find((u) => u.id === targetUser.userId)).toBeUndefined();
+    expect(items.every((u) => u.email === null)).toBe(true);
+  });
+
   it('403 for general user', async () => {
     const res = await apiCall('GET', '/api/admin/users', generalUser.jwt);
     expect(res.status).toBe(403);
@@ -86,16 +121,21 @@ describe('GET /api/admin/users/[id]', () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('data');
     expect((res.body as { data: { id: string } }).data.id).toBe(targetUser.userId);
+    // #1145: admin には auth.users のメールアドレスが返る
+    expect((res.body as { data: { email: string | null } }).data.email).toBe(targetUser.email);
   });
 
   it('200 for super_admin', async () => {
     const res = await apiCall('GET', `/api/admin/users/${targetUser.userId}`, superAdminUser.jwt);
     expect(res.status).toBe(200);
+    expect((res.body as { data: { email: string | null } }).data.email).toBe(targetUser.email);
   });
 
-  it('200 for support', async () => {
+  it('200 for support (メールアドレスは返らない)', async () => {
     const res = await apiCall('GET', `/api/admin/users/${targetUser.userId}`, supportUser.jwt);
     expect(res.status).toBe(200);
+    // #1145: support には email を返さない
+    expect((res.body as { data: { email: string | null } }).data.email).toBeNull();
   });
 
   it('403 for general user', async () => {
@@ -110,25 +150,66 @@ describe('GET /api/admin/users/[id]', () => {
 });
 
 describe('PATCH /api/admin/users/[id]', () => {
-  it('200 for admin and inserts audit log', async () => {
+  // #1103 (項目 5): 以前は存在しない user_profiles.admin_note 列へ UPDATE して常に 500 だった。
+  // 管理ノートは admin_user_notes に 1 行追加する (本人には読めない運営の内部メモ)。
+  it('200 for admin: admin_user_notes に 1 行追加され、admin.user.note_add が本文なしで記録される', async () => {
+    const noteText = `Integration test note ${TS}`;
     const res = await apiCall('PATCH', `/api/admin/users/${targetUser.userId}`, adminUser.jwt, {
-      admin_note: 'Integration test note',
+      admin_note: `  ${noteText}  `,
     });
     expect(res.status).toBe(200);
-    expect((res.body as { data: { success: boolean } }).data.success).toBe(true);
+    const body = res.body as { data: { success: boolean; note_id: string } };
+    expect(body.data.success).toBe(true);
 
-    // Verify audit log was inserted
+    const { data: notes } = await supabaseAdmin
+      .from('admin_user_notes')
+      .select('id, user_id, admin_id, note')
+      .eq('user_id', targetUser.userId)
+      .eq('admin_id', adminUser.userId);
+    expect(notes).toEqual([
+      { id: body.data.note_id, user_id: targetUser.userId, admin_id: adminUser.userId, note: noteText },
+    ]);
+
     const { data: logs } = await supabaseAdmin
       .from('admin_audit_logs')
       .select('*')
       .eq('actor_id', adminUser.userId)
-      .eq('action_type', 'admin.user.note_update')
-      .eq('target_id', targetUser.userId)
-      .order('created_at', { ascending: false })
-      .limit(1);
-
+      .eq('action_type', 'admin.user.note_add')
+      .eq('target_id', targetUser.userId);
     expect(logs).toHaveLength(1);
-    expect(logs![0].actor_id).toBe(adminUser.userId);
+    expect(logs![0].details).toEqual({ note_id: body.data.note_id });
+  });
+
+  it('200 for super_admin', async () => {
+    const res = await apiCall('PATCH', `/api/admin/users/${targetUser.userId}`, superAdminUser.jwt, {
+      admin_note: 'super_admin note',
+    });
+    expect(res.status).toBe(200);
+    const { data: notes } = await supabaseAdmin
+      .from('admin_user_notes')
+      .select('note')
+      .eq('user_id', targetUser.userId)
+      .eq('admin_id', superAdminUser.userId);
+    expect(notes).toEqual([{ note: 'super_admin note' }]);
+  });
+
+  it('対象ユーザー本人は自分の管理ノートを読めない (RLS)', async () => {
+    const { data, error } = await userScopedClient(targetUser.jwt).from('admin_user_notes').select('id').eq('user_id', targetUser.userId);
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+  });
+
+  it('404 for unknown user (何も追加しない)', async () => {
+    const unknownId = '00000000-0000-4000-8000-000000000000';
+    const res = await apiCall('PATCH', `/api/admin/users/${unknownId}`, adminUser.jwt, { admin_note: 'x' });
+    expect(res.status).toBe(404);
+    const { data } = await supabaseAdmin.from('admin_user_notes').select('id').eq('user_id', unknownId);
+    expect(data).toEqual([]);
+  });
+
+  it('400 for blank note (空白だけのノートは追加しない)', async () => {
+    const res = await apiCall('PATCH', `/api/admin/users/${targetUser.userId}`, adminUser.jwt, { admin_note: '   ' });
+    expect(res.status).toBe(400);
   });
 
   it('403 for support (support cannot PATCH)', async () => {
@@ -214,61 +295,26 @@ describe('POST /api/admin/users/[id]/freeze', () => {
   });
 });
 
-describe('POST /api/admin/users/[id]/impersonate', () => {
-  it('200 for super_admin and audit log has impersonated_by', async () => {
+// #1124: なりすまし (impersonate) は提供しない。
+// 以前の POST /api/admin/users/[id]/impersonate は、トークンを監査ログに平文で書くだけで、
+// 受け取って使う側がどこにも無かったため、API ごと削除した (サポートは読み取り専用のユーザー画面で対応する)。
+// 最も強い権限 (super_admin) でも 404 になり、監査ログ (action_type = 'impersonate') も増えないことを確認する。
+describe('POST /api/admin/users/[id]/impersonate (提供しない: #1124)', () => {
+  it('404 for super_admin (API は削除済み) and writes no audit log', async () => {
     const res = await apiCall(
       'POST',
       `/api/admin/users/${targetUser.userId}/impersonate`,
       superAdminUser.jwt,
-      { reason: 'Integration test impersonation' }
+      { reason: 'impersonate は提供しない' }
     );
-    // impersonate endpoint may return 200 or 403 depending on implementation
-    // The core contract is: super_admin gets 200, admin gets 403
-    expect([200, 404]).toContain(res.status);
+    expectError(res, 404);
 
-    if (res.status === 200) {
-      // Verify audit log contains impersonated_by info
-      const { data: logs } = await supabaseAdmin
-        .from('admin_audit_logs')
-        .select('*')
-        .eq('actor_id', superAdminUser.userId)
-        .ilike('action_type', '%impersonat%')
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      // If audit log exists, verify structure
-      if (logs && logs.length > 0) {
-        expect(logs[0].actor_id).toBe(superAdminUser.userId);
-      }
-    }
-  });
-
-  it('403 for admin (admin cannot impersonate)', async () => {
-    const res = await apiCall(
-      'POST',
-      `/api/admin/users/${targetUser.userId}/impersonate`,
-      adminUser.jwt,
-      { reason: 'Admin should not impersonate' }
-    );
-    expect(res.status).toBe(403);
-  });
-
-  it('403 for general user', async () => {
-    const res = await apiCall(
-      'POST',
-      `/api/admin/users/${targetUser.userId}/impersonate`,
-      generalUser.jwt,
-      { reason: 'General user should not impersonate' }
-    );
-    expect(res.status).toBe(403);
-  });
-
-  it('401 for no auth', async () => {
-    const res = await apiCallNoAuth(
-      'POST',
-      `/api/admin/users/${targetUser.userId}/impersonate`,
-      { reason: 'No auth impersonate' }
-    );
-    expect(res.status).toBe(401);
+    const { data: logs, error } = await supabaseAdmin
+      .from('admin_audit_logs')
+      .select('id')
+      .eq('actor_id', superAdminUser.userId)
+      .eq('action_type', 'impersonate');
+    expect(error).toBeNull();
+    expect(logs).toHaveLength(0);
   });
 });

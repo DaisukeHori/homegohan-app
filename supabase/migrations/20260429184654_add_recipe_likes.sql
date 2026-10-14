@@ -1,30 +1,6 @@
--- recipe_likes: ユーザーがレシピにいいねできるテーブル
--- recipe_id は dish.name (テキスト) を使用
-
-CREATE TABLE IF NOT EXISTS recipe_likes (
-  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id     UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  recipe_id   TEXT        NOT NULL,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (user_id, recipe_id)
-);
-
--- インデックス
-CREATE INDEX IF NOT EXISTS idx_recipe_likes_user_id   ON recipe_likes (user_id);
-CREATE INDEX IF NOT EXISTS idx_recipe_likes_recipe_id ON recipe_likes (recipe_id);
-
--- RLS
-ALTER TABLE recipe_likes ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Users can view own recipe likes"
-  ON recipe_likes FOR SELECT
-  USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can insert own recipe likes"
-  ON recipe_likes FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
-
-CREATE POLICY "Users can delete own recipe likes"
-  ON recipe_likes FOR DELETE
-  USING (auth.uid() = user_id);
-;
+-- migration: 20260429184654_add_recipe_likes.sql
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;

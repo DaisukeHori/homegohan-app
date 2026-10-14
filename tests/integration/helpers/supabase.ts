@@ -129,9 +129,12 @@ export async function createTestUser(
   const userId = authData.user.id;
 
   // Insert profile row (may already exist due to trigger, so upsert)
+  // user_profiles の必須列は nickname / age_group / gender (display_name 列は存在しない)
   const profileData: Record<string, unknown> = {
     id: userId,
-    display_name: `Test User ${timestamp}`,
+    nickname: `Test User ${timestamp}`,
+    age_group: '30s',
+    gender: 'other',
     onboarding_completed_at: options.onboardingCompleted
       ? new Date().toISOString()
       : null,

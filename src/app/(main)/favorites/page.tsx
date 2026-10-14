@@ -1,9 +1,11 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Heart, Search, X, ChevronLeft, RefreshCw, Utensils, SortAsc, Clock } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { Heart, Search, X, ChevronLeft, RefreshCw, SortAsc } from "lucide-react";
+import { AnimatePresence } from "framer-motion";
+import { FavoriteRecipeModal } from "./_components/FavoriteRecipeModal";
+import { FavoriteListItem } from "./_components/FavoriteListItem";
 
 // カラーパレット（アプリ共通）
 const colors = {
@@ -37,22 +39,43 @@ export default function FavoritesPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  // UX2-19: 検索中は既存リストを残したまま小スピナーのみ表示するための状態（全画面ローディングとは分離）
+  const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  // UX2-19: 1キーストロークごとの全画面ローディングを防ぐため、実際の検索実行は300ms debounceする
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [sort, setSort] = useState<SortOption>("newest");
   const [removingId, setRemovingId] = useState<string | null>(null);
   // #263: offset-based pagination
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  // 初回フェッチかどうか（初回のみ全画面ローディングを表示し、以降の検索/並び替えは小スピナーに留める）
+  const isFirstFetchRef = useRef(true);
+  // UX2-06: recipeUuid を保持しているのに未使用で、削除しかできなかった問題への対応。
+  // タップでレシピ詳細（材料・作り方・買い物追加）を表示する。
+  // selectedFavorite は閉じるアニメーション中も内容を保持するため isRecipeModalOpen とは
+  // 別の state にしている（isRecipeModalOpen=false で閉じアニメーションのみ発火させる）。
+  const [selectedFavorite, setSelectedFavorite] = useState<FavoriteItem | null>(null);
+  const [isRecipeModalOpen, setIsRecipeModalOpen] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   const fetchFavorites = useCallback(async (nextOffset = 0) => {
     if (nextOffset === 0) {
-      setLoading(true);
+      if (isFirstFetchRef.current) {
+        setLoading(true);
+      } else {
+        setIsSearching(true);
+      }
     } else {
       setLoadingMore(true);
     }
     try {
       const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(nextOffset), sort });
-      if (searchQuery) params.set("q", searchQuery);
+      if (debouncedQuery) params.set("q", debouncedQuery);
       const res = await fetch(`/api/favorites?${params}`);
       if (!res.ok) throw new Error("Failed to fetch favorites");
       const data = await res.json();
@@ -70,8 +93,10 @@ export default function FavoritesPage() {
     } finally {
       setLoading(false);
       setLoadingMore(false);
+      setIsSearching(false);
+      isFirstFetchRef.current = false;
     }
-  }, [searchQuery, sort]);
+  }, [debouncedQuery, sort]);
 
   useEffect(() => {
     setOffset(0);
@@ -93,6 +118,11 @@ export default function FavoritesPage() {
     } finally {
       setRemovingId(null);
     }
+  };
+
+  const openRecipeDetail = (item: FavoriteItem) => {
+    setSelectedFavorite(item);
+    setIsRecipeModalOpen(true);
   };
 
   const formatDate = (iso: string) => {
@@ -188,7 +218,11 @@ export default function FavoritesPage() {
             padding: "8px 12px",
           }}
         >
-          <Search size={16} color={colors.textMuted} />
+          {isSearching ? (
+            <RefreshCw size={16} color={colors.textMuted} style={{ animation: "spin 1s linear infinite" }} />
+          ) : (
+            <Search size={16} color={colors.textMuted} />
+          )}
           <input
             type="text"
             placeholder="レシピ名で検索..."
@@ -272,95 +306,14 @@ export default function FavoritesPage() {
           <AnimatePresence>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {favorites.map((item) => (
-                <motion.div
+                <FavoriteListItem
                   key={item.id}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ duration: 0.2 }}
-                  style={{
-                    background: colors.card,
-                    border: `1px solid ${colors.border}`,
-                    borderRadius: 16,
-                    padding: "14px 16px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                  }}
-                >
-                  {/* Icon */}
-                  <div
-                    style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: 12,
-                      background: colors.favRedLight,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Utensils size={20} color={colors.favRed} />
-                  </div>
-
-                  {/* Info */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p
-                      style={{
-                        fontWeight: 600,
-                        fontSize: 15,
-                        color: colors.text,
-                        margin: 0,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {item.recipeName}
-                    </p>
-                    <p
-                      style={{
-                        fontSize: 12,
-                        color: colors.textMuted,
-                        margin: "2px 0 0",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 4,
-                      }}
-                    >
-                      <Clock size={11} />
-                      {formatDate(item.likedAt)} に追加
-                    </p>
-                  </div>
-
-                  {/* Remove button */}
-                  <button
-                    onClick={() => handleRemove(item)}
-                    disabled={removingId === item.id}
-                    aria-label="お気に入りから削除"
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: "50%",
-                      background: removingId === item.id ? colors.bg : colors.favRedLight,
-                      border: "none",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      cursor: removingId === item.id ? "default" : "pointer",
-                      flexShrink: 0,
-                      transition: "opacity 0.2s",
-                      opacity: removingId === item.id ? 0.5 : 1,
-                    }}
-                  >
-                    <Heart
-                      size={16}
-                      color={colors.favRed}
-                      fill={removingId === item.id ? "none" : colors.favRed}
-                    />
-                  </button>
-                </motion.div>
+                  item={item}
+                  isRemoving={removingId === item.id}
+                  onOpen={() => openRecipeDetail(item)}
+                  onRemove={() => handleRemove(item)}
+                  formatDate={formatDate}
+                />
               ))}
 
               {/* #263: 次の50件ボタン */}
@@ -394,6 +347,13 @@ export default function FavoritesPage() {
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
+
+      {/* UX2-06: レシピ詳細（材料・作り方・買い物追加） */}
+      <FavoriteRecipeModal
+        isOpen={isRecipeModalOpen}
+        favorite={selectedFavorite}
+        onClose={() => setIsRecipeModalOpen(false)}
+      />
     </div>
   );
 }

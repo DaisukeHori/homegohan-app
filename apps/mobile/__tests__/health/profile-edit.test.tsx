@@ -8,6 +8,7 @@
  *  3. ニックネームを変更して「保存」を押すと /api/profile に PATCH が呼ばれる
  *  4. 保存成功後に isEditing が false に戻り、更新後の値が表示される
  *  5. 保存失敗時に Alert(更新失敗) が表示される
+ *  6. (#1038 F7-10) ログアウトは共通処理 (push token の削除 → 端末データの削除 → サインアウト) を通り、トップへ戻る
  */
 
 import React from 'react';
@@ -46,6 +47,12 @@ jest.mock('../../src/lib/user-storage', () => ({
   clearUserScopedAsyncStorage: jest.fn().mockResolvedValue(undefined),
 }));
 
+// ログアウトの共通処理 (push token の削除 → 端末データの削除 → サインアウト) は別テストで検証する
+const mockSignOutWithCleanup = jest.fn();
+jest.mock('../../src/lib/signOut', () => ({
+  signOutWithCleanup: (...args: unknown[]) => mockSignOutWithCleanup(...args),
+}));
+
 // AuthProvider mock
 jest.mock('../../src/providers/AuthProvider', () => ({
   useAuth: () => ({
@@ -63,8 +70,9 @@ jest.mock('../../src/providers/ProfileProvider', () => ({
 }));
 
 // expo-router mock
+const mockRouterReplace = jest.fn();
 jest.mock('expo-router', () => ({
-  router: { replace: jest.fn() },
+  router: { replace: (...args: unknown[]) => mockRouterReplace(...args) },
 }));
 
 jest.mock('@expo/vector-icons', () => ({
@@ -159,6 +167,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   alertSpy.mockClear();
   mockRefreshProfile.mockResolvedValue(undefined);
+  mockSignOutWithCleanup.mockResolvedValue({ error: null });
 
   // デフォルト: プロフィール取得成功
   mockGet
@@ -262,5 +271,29 @@ describe('ProfilePage — 編集', () => {
     await waitFor(() => {
       expect(alertSpy).toHaveBeenCalledWith('更新失敗', expect.stringContaining('通信エラー'));
     });
+  });
+});
+
+describe('ProfilePage — ログアウト (#1038 F7-10)', () => {
+  it('6. ログアウトを確定すると、共通のログアウト処理にユーザー ID を渡して実行し、トップへ戻る', async () => {
+    render(<ProfilePage />);
+    await waitFor(() => expect(screen.queryByTestId('loading')).toBeNull());
+
+    fireEvent.press(screen.getByTestId('profile-logout-button'));
+
+    // 確認ダイアログの「ログアウト」ボタンを押す
+    const [, , buttons] = alertSpy.mock.calls[alertSpy.mock.calls.length - 1] as unknown as [
+      string,
+      string,
+      Array<{ text: string; onPress?: () => void }>,
+    ];
+    const confirm = buttons.find((b) => b.text === 'ログアウト');
+    await act(async () => {
+      confirm?.onPress?.();
+    });
+
+    await waitFor(() => expect(mockRouterReplace).toHaveBeenCalledWith('/'));
+    // push token の削除はサインアウトの前に行う必要があるので、個別に呼ばず共通処理に任せている
+    expect(mockSignOutWithCleanup).toHaveBeenCalledWith('uid-1');
   });
 });

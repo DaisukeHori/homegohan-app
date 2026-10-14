@@ -27,7 +27,52 @@ export const OFFICIAL_PLAN_KEYS = [
 
 export const PLAN_TYPES = ['personal', 'family', 'org'] as const;
 export const PLAN_STATUSES = ['draft', 'public', 'private', 'deprecated'] as const;
-export const PRICE_APPLIES_TO = ['new_only', 'on_renewal', 'immediately'] as const;
+
+/**
+ * 価格変更の適用範囲。新規契約のみ (new_only) だけを受け付ける。
+ *
+ * #1102 (オーナー判断 2026-10-08): 価格変更は新規契約だけに適用する。既存の契約者の請求額は変えない
+ * (既存サブスクリプションの Stripe 価格の切り替えは作らない)。
+ * 従来は on_renewal (次回更新時から全契約) / immediately (即時に全契約) も選べたが、実際に既存契約へ反映する処理は
+ * 無く、選んでも請求額は変わらない偽の選択肢だったため、400 で拒否する。
+ * DB の plan_price_history.applies_to の CHECK は旧値 (on_renewal / immediately) を許したままにしている (過去の行を読めるように)。
+ */
+export const PRICE_APPLIES_TO = ['new_only'] as const;
+
+/** applies_to に new_only 以外が来たときのメッセージ (route が最初の issue の message をそのまま UI / 呼び出し元へ返す) */
+const PRICE_APPLIES_TO_MESSAGE =
+  '価格変更は新規契約のみに適用されます。applies_to には new_only だけを指定できます (既存契約の価格は変更できません)';
+
+/**
+ * プランステータス遷移マップ (operator/04-plan-management.md §3.4 ライフサイクル準拠)
+ *
+ * #1041 (プラン状態遷移一方向ロック) 修正: 従来は public/private 到達後、
+ * status キー自体が恒久的に disallowedKeys 扱いとなり publish/unpublish/deprecate
+ * が一切できなくなっていた。ここで許可される遷移を明示的に定義し、
+ * それ以外の遷移のみを拒否するようにする。
+ *
+ *   draft --> public   : 新規申込受付開始
+ *   public --> private  : 新規申込停止 (既存契約は継続)
+ *   private --> public  : 再公開
+ *   public --> deprecated  : 廃止
+ *   private --> deprecated : 廃止
+ *   deprecated --> private : 緊急ロールバック (un-deprecate、public には戻さない)
+ */
+export const PLAN_STATUS_TRANSITIONS: Record<(typeof PLAN_STATUSES)[number], ReadonlyArray<(typeof PLAN_STATUSES)[number]>> = {
+  draft: ['public', 'private'],
+  public: ['private', 'deprecated'],
+  private: ['public', 'deprecated'],
+  deprecated: ['private'],
+};
+
+export function isAllowedPlanStatusTransition(
+  from: string,
+  to: string,
+): boolean {
+  if (from === to) return true;
+  const allowed = PLAN_STATUS_TRANSITIONS[from as (typeof PLAN_STATUSES)[number]];
+  return Array.isArray(allowed) && (allowed as readonly string[]).includes(to);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // スキーマ定義
@@ -82,11 +127,16 @@ export const PlanUpdateSchema = z.object({
 
 export type PlanUpdateInput = z.infer<typeof PlanUpdateSchema>;
 
-/** 価格変更リクエスト */
+/**
+ * 価格変更リクエスト
+ *
+ * 月額・年額は、変える方だけを指定する (両方を指定してもよい。#1102 で 1 回のリクエストで両方を Stripe へ同期できるようにした)。
+ * applies_to は new_only だけ。省略すると new_only になり、on_renewal / immediately は 400 で拒否する (#1102)。
+ */
 export const PriceChangeSchema = z.object({
   new_monthly_price_jpy: z.number().int().min(0).nullable().optional(),
   new_yearly_price_jpy: z.number().int().min(0).nullable().optional(),
-  applies_to: z.enum(PRICE_APPLIES_TO),
+  applies_to: z.enum(PRICE_APPLIES_TO, { message: PRICE_APPLIES_TO_MESSAGE }).default('new_only'),
   reason: z.string().min(1).max(1000),
   effective_at: z.string().datetime(),
 }).refine((data) => {
@@ -115,10 +165,14 @@ export const PlansQuerySchema = z.object({
 
 export type PlansQueryInput = z.infer<typeof PlansQuerySchema>;
 
-/** 価格影響シミュレーション クエリパラメータ */
+/**
+ * 価格影響シミュレーション クエリパラメータ
+ *
+ * applies_to は new_only だけ (省略時も new_only)。on_renewal / immediately は 400 で拒否する (#1102)。
+ */
 export const PriceImpactQuerySchema = z.object({
   new_monthly_price_jpy: z.coerce.number().int().min(0).optional(),
-  applies_to: z.enum(PRICE_APPLIES_TO).optional(),
+  applies_to: z.enum(PRICE_APPLIES_TO, { message: PRICE_APPLIES_TO_MESSAGE }).optional(),
 });
 
 export type PriceImpactQueryInput = z.infer<typeof PriceImpactQuerySchema>;

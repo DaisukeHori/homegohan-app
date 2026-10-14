@@ -20,7 +20,7 @@ Last updated: 2026-03-17
 - `supabase/functions/analyze-fridge/index.ts`
   - `gpt-5-mini`
 - `supabase/functions/generate-health-insights/index.ts`
-  - `gpt-5-mini`
+  - `gpt-5-mini` (#1440 で関数ごと削除。健康インサイトは `POST /api/health/insights` が生成する)
 - `supabase/functions/create-derived-recipe/index.ts`
   - `gpt-5-mini`
 - `supabase/functions/knowledge-gpt/index.ts`
@@ -72,8 +72,6 @@ Last updated: 2026-03-17
 
 ### Not an actual LLM call
 
-- `src/app/api/ai/feedback/route.ts`
-  - display/mock metadata only
 - `supabase/functions/_shared/llm-usage.ts`
   - legacy cost table keeps historical `mini/nano` entries for old log rows
 

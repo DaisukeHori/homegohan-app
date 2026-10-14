@@ -1,9 +1,20 @@
 import { createClient } from '@/lib/supabase/server';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { buildPhotoDishList } from '../../../../lib/meal-image';
 import { cancelPendingMealImageJobs } from '../../../../lib/meal-image-jobs';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiDailyLimitResponse, consumeAiUsage } from '@/lib/plan/entitlements';
+import {
+  PLANNED_MEAL_NUTRIENT_FIELDS,
+  plannedMealValidationErrorBody,
+  sanitizeAiNutrient,
+  validatePlannedMealInput,
+  type PlannedMealNutrientValues,
+} from '@/lib/planned-meal-validation';
+import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 /**
  * 献立の栄養情報を更新
@@ -49,13 +60,24 @@ export async function POST(request: Request) {
 
     // 3. 栄養データが直接提供された場合はそれを使用
     if (nutritionData) {
-      const { error: updateError } = await supabase
-        .from('planned_meals')
-        .update({
+      // #1205: クライアントから直接渡された栄養素は型・範囲を確認する（不正なら 400）
+      const validation = validatePlannedMealInput({
+        nutrients: {
           calories_kcal: nutritionData.calories_kcal,
           protein_g: nutritionData.protein_g,
           fat_g: nutritionData.fat_g,
           carbs_g: nutritionData.carbs_g,
+        },
+      });
+      if (!validation.ok) {
+        return NextResponse.json(plannedMealValidationErrorBody(validation), { status: 400 });
+      }
+
+      const { error: updateError } = await supabase
+        .from('planned_meals')
+        .update({
+          // 検証済みの値（送られていない項目は含まれず、既存の値を残す）
+          ...validation.nutrients,
           veg_score: nutritionData.veg_score,
           quality_tags: nutritionData.quality_tags,
           updated_at: new Date().toISOString(),
@@ -63,7 +85,7 @@ export async function POST(request: Request) {
         .eq('id', plannedMealId);
 
       if (updateError) {
-        return NextResponse.json({ error: updateError.message }, { status: 500 });
+        return internalError('POST /api/ai/nutrition', updateError, { userId: user.id });
       }
 
       return NextResponse.json({ success: true, nutritionData });
@@ -71,6 +93,16 @@ export async function POST(request: Request) {
 
     // 4. 画像URLが提供された場合はAI解析を実行
     if (imageUrl) {
+      // 写真の URL を外国の AI 事業者へ送って栄養を推定する。同意が無ければ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+      // 栄養の数値をそのまま渡す保存 (上の nutritionData) は AI へ送らないので止めない
+      const aiConsentDenied = await requireAiConsent(supabase, user.id);
+      if (aiConsentDenied) return aiConsentDenied;
+
+      // nutritionData を直接渡す経路 (上) と、同意が無く止めた経路は AI を呼ばないので、数えるのは AI で解析するここだけ
+      // #1149 AI の利用回数の上限の判定と記録 (#1177)。上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+      const aiUsage = await consumeAiUsage(user.id, 'photo_analysis');
+      if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
+
       const prompt = `
         この食事の写真を栄養士の視点で分析し、以下のJSON形式で出力してください。
         数値は概算で構いません。
@@ -125,17 +157,25 @@ export async function POST(request: Request) {
           : [];
         const photoDishes = buildPhotoDishList(baseDishes, imageUrl);
 
+        // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。本人の行に絞って service role で取り消す
+        const queueDb = getAiQueueWriter();
         await cancelPendingMealImageJobs({
-          supabase,
+          supabase: queueDb,
+          userId: user.id,
           plannedMealId,
           reason: 'nutrition photo overwrite',
         });
 
+        // #1205: AI の推定値は桁を間違えることがあるため、範囲内に整えてから保存する
+        // （数値でない・負 → null、上限超え → 上限、小数 → 四捨五入。応答に含まれない項目は書かない）
+        const aiNutrients: PlannedMealNutrientValues = {};
+        for (const field of PLANNED_MEAL_NUTRIENT_FIELDS) {
+          const value = sanitizeAiNutrient(field, result[field]);
+          if (value !== undefined) aiNutrients[field] = value;
+        }
+
         const updatePayload: Record<string, unknown> = {
-          calories_kcal: result.calories_kcal,
-          protein_g: result.protein_g,
-          fat_g: result.fat_g,
-          carbs_g: result.carbs_g,
+          ...aiNutrients,
           veg_score: result.veg_score,
           quality_tags: result.quality_tags,
           dishes: photoDishes.length > 0 ? photoDishes : existing.dishes ?? null,
@@ -154,21 +194,19 @@ export async function POST(request: Request) {
           .eq('id', plannedMealId);
 
         if (updateError) {
-          return NextResponse.json({ error: updateError.message }, { status: 500 });
+          return internalError('POST /api/ai/nutrition', updateError, { userId: user.id });
         }
 
         return NextResponse.json({ success: true, nutritionData: result });
 
       } catch (aiError: any) {
-        console.error('AI Analysis Error:', aiError);
-        return NextResponse.json({ error: 'AI analysis failed: ' + aiError.message }, { status: 500 });
+        return internalError('POST /api/ai/nutrition', aiError, { userId: user.id });
       }
     }
 
     return NextResponse.json({ error: 'Either nutritionData or imageUrl is required' }, { status: 400 });
 
   } catch (error: any) {
-    console.error('Nutrition API Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/ai/nutrition', error);
   }
 }

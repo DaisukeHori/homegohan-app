@@ -36,7 +36,7 @@ export const AdjustmentSchema = z.object({
 export type Adjustment = z.infer<typeof AdjustmentSchema>;
 
 // ============================================================
-// 週次献立生成（generate-weekly-menu）
+// 週次献立生成（旧 generate-weekly-menu 向けに定めた形。旧関数は #1452 で削除済みで、いまの献立生成は generate-menu-v5、機能フラグで generate-menu-v4）
 // ============================================================
 
 /**
@@ -63,7 +63,7 @@ export const WeeklyMenuResponseSchema = z.object({
 export type WeeklyMenuResponse = z.infer<typeof WeeklyMenuResponseSchema>;
 
 // ============================================================
-// 単発生成（generate-single-meal）
+// 単発生成（旧 generate-single-meal 向けに定めた形。旧関数は #1452 で削除済み）
 // ============================================================
 
 /**
@@ -89,7 +89,7 @@ export const SingleMealResponseSchema = z.object({
 export type SingleMealResponse = z.infer<typeof SingleMealResponseSchema>;
 
 // ============================================================
-// 差し替え（regenerate-meal-direct）
+// 差し替え（旧 regenerate-meal-direct 向けに定めた形。旧関数は #1452 で削除済み）
 // ============================================================
 
 /**

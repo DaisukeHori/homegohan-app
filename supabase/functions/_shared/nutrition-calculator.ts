@@ -11,6 +11,8 @@ import {
   fetchDatasetEmbeddings,
 } from "../../../shared/dataset-embedding.mjs";
 import { fetchWithRetry, isRetryableError, withRetry, withTimeout } from "./network-retry.ts";
+import { calcSugarG } from "./nutrition-sugar.ts";
+import { missingEnvError } from "./missing-env.ts";
 
 function readDenoEnv(name: string): string | undefined {
   const denoLike = (globalThis as typeof globalThis & {
@@ -22,7 +24,8 @@ function readDenoEnv(name: string): string | undefined {
 function getLocalFastLLMApiKey(): string {
   const apiKey = String(readDenoEnv("XAI_API_KEY") ?? "").trim();
   if (!apiKey) {
-    throw new Error("Missing XAI_API_KEY");
+    // 変数名は message に入れず、ログにだけ残す (呼び出し元が message を応答の本文や記録に入れうる。#1467)
+    throw missingEnvError(["XAI_API_KEY"]);
   }
   return apiKey;
 }
@@ -79,7 +82,7 @@ export type NutritionTotals = {
   fiber_g: number;
   fiber_soluble_g: number;
   fiber_insoluble_g: number;
-  sugar_g: number;           // 糖質
+  sugar_g: number;           // 糖質 (炭水化物 − 食物繊維)
   sodium_g: number;          // 塩分相当量 (g単位)
   
   // ミネラル
@@ -292,8 +295,16 @@ export const INGREDIENT_ALIASES: Record<string, string[]> = {
 };
 
 // 栄養値を加算するヘルパー関数
+// #1046 F5-11: 廃棄率(discard_rate_percent)を可食部補正として適用する。
+// v2(nutrition-calculator-v2.ts の calculateIngredientNutrition)と同じ計算式に揃え、
+// 皮付き野菜・骨付き肉等で栄養が過大計上されるv1/v2間の不一致を解消する。
 export function addNutritionFromMatch(totals: NutritionTotals, matched: any, amount_g: number) {
-  const factor = amount_g / 100.0;
+  const discardRateRaw = typeof matched?.discard_rate_percent === 'string'
+    ? parseFloat(matched.discard_rate_percent)
+    : matched?.discard_rate_percent;
+  const discardRate = Number.isFinite(discardRateRaw) ? discardRateRaw : 0;
+  const effectiveAmount_g = amount_g * (1 - discardRate / 100);
+  const factor = effectiveAmount_g / 100.0;
   const add = (key: keyof NutritionTotals, v: number | string | null | undefined) => {
     // DBからの値は文字列の場合があるので、parseFloatで変換
     const num = typeof v === 'string' ? parseFloat(v) : v;
@@ -308,7 +319,9 @@ export function addNutritionFromMatch(totals: NutritionTotals, matched: any, amo
   add("fat_g", matched.fat_g);
   add("carbs_g", matched.carbs_g);
   add("fiber_g", matched.fiber_g);
-  // sugar_g: DBに存在しないので計算しない（常に0）
+  // 糖質: dataset_ingredients に列は無いので、炭水化物 − 食物繊維 で材料ごとに求める (#1146)。
+  // v2 (calculateIngredientNutrition) と同じ式。DBの値は文字列のことがあるので parseFloat で変換する。
+  add("sugar_g", calcSugarG(matched.carbs_g, matched.fiber_g));
   add("sodium_g", matched.salt_eq_g);        // 塩分相当量
   
   // ミネラル
@@ -487,7 +500,7 @@ ${candidateList}
 // Embedding API を呼び出す
 export async function embedTexts(texts: string[], dimensions = DATASET_EMBEDDING_DIMENSIONS): Promise<number[][]> {
   const apiKey = readDenoEnv(DATASET_EMBEDDING_API_KEY_ENV);
-  if (!apiKey) throw new Error(`Embedding API Key is missing (${DATASET_EMBEDDING_API_KEY_ENV})`);
+  if (!apiKey) throw missingEnvError([DATASET_EMBEDDING_API_KEY_ENV]);
   const embeddings = await withRetry(async () => {
     return await fetchDatasetEmbeddings(texts, {
       apiKey,
@@ -504,9 +517,10 @@ export async function embedTexts(texts: string[], dimensions = DATASET_EMBEDDING
 }
 
 // DBに実際に存在するカラムのみを選択
-// 存在しないカラム: sugar_g, saturated_fat_g, monounsaturated_fat_g, polyunsaturated_fat_g
+// 存在しないカラム: sugar_g (carbs_g − fiber_g から計算する), saturated_fat_g, monounsaturated_fat_g, polyunsaturated_fat_g
+// #1046 F5-11: discard_rate_percent（廃棄率）を選択に含め、可食部補正をv2と揃える
 const INGREDIENT_SELECT = `
-  id, name, name_norm,
+  id, name, name_norm, discard_rate_percent,
   calories_kcal, protein_g, fat_g, carbs_g, fiber_g, salt_eq_g,
   potassium_mg, calcium_mg, phosphorus_mg, magnesium_mg, iron_mg, zinc_mg, iodine_ug,
   cholesterol_mg,
@@ -1609,7 +1623,11 @@ export async function validateAndAdjustNutrition(
     
     // その他の栄養素はスケーリング
     adjustedNutrition.fiber_g *= scaleFactor;
-    adjustedNutrition.sugar_g *= scaleFactor;
+    // 糖質 (#1146): v4 (validateAndAdjustNutritionV4) と同じ方針。
+    // 炭水化物を参照レシピの値に置き換えたときは 炭水化物 − 食物繊維 で求め直し、置き換えないときは倍率で換算する。
+    adjustedNutrition.sugar_g = reference.carbs_g != null
+      ? calcSugarG(adjustedNutrition.carbs_g, adjustedNutrition.fiber_g)
+      : calculatedNutrition.sugar_g * scaleFactor;
     adjustedNutrition.potassium_mg *= scaleFactor;
     adjustedNutrition.calcium_mg *= scaleFactor;
     adjustedNutrition.phosphorus_mg *= scaleFactor;

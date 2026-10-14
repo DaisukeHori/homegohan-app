@@ -29,6 +29,7 @@ import {
   emptyNutrition,
   type NutritionTotals,
 } from "../_shared/nutrition-calculator.ts";
+import { resolveRecipeSugarG } from "../_shared/nutrition-sugar.ts";
 import {
   generateNutritionFeedback,
   aggregateDayNutrition,
@@ -37,7 +38,6 @@ import {
 } from "../_shared/nutrition-feedback.ts";
 import { createLogger } from "../_shared/db-logger.ts";
 import {
-  fetchWithRetry,
   isRetryableError,
   withRetry,
   withTimeout,
@@ -63,6 +63,7 @@ import {
   DEFAULT_STEP6_SLOT_BATCH,
   computeMaxFixesForRange,
   countGeneratedTargetSlots,
+  findInvalidTargetSlotDate,
   getSlotKey,
   normalizeTargetSlots,
   sortTargetSlots,
@@ -100,13 +101,20 @@ import {
   validateGeneratedMeals,
   type DiversityViolation,
 } from "./diversity-validator.ts";
+import {
+  ACTIVE_REQUEST_STATUSES,
+  buildActiveRequestUpdate,
+  wasRequestUpdated,
+} from "./request-finalize.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
+import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
+import { aiDailyLimitMessage } from "../_shared/ai-daily-limit.ts";
+import { addDaysToDate, monthJst, todayJst } from "../_shared/jst-date.ts";
+import { aiConsentDeniedResponse, checkAiConsent, invokeMenuContinuation } from "../_shared/ai-consent-guard.ts";
+import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
+import { missingEnvError } from "../_shared/missing-env.ts";
 
 console.log("Generate Menu V5 Function loaded (template-anchored generation)");
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
 
 const DEFAULT_V5_INVOCATION_SOFT_BUDGET_MS = Number(Deno.env.get("V5_INVOCATION_SOFT_BUDGET_MS") ?? 18000);
 const STEP1_WAVE_RESERVE_MS = 9000;
@@ -253,14 +261,15 @@ function scheduleBackgroundTask(label: string, task: () => Promise<void>): void 
   void promise;
 }
 
+// 日付の計算は JST の暦日で行う (#1433)。Edge Function の時計は UTC なので、
+// new Date().toISOString().slice(0, 10) だと JST 0:00〜8:59 に「今日」が前日になり、
+// 賞味期限の判定 (pantry_items.expiration_date >= 今日) と過去の献立の判定 (isPast) が 1 日ずれていた。
 function addDays(dateStr: string, days: number): string {
-  const date = new Date(`${dateStr}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
+  return addDaysToDate(dateStr, days);
 }
 
 function getTodayStr(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayJst();
 }
 
 function mealTypeToJa(mealType: MealType): string {
@@ -330,6 +339,62 @@ async function updateProgress(
   }
 }
 
+/**
+ * 生存信号 (ハートビート): updated_at だけを現在時刻にする (#1202)。
+ * claim_menu_request は GREATEST(worker_acquired_at, updated_at) から 5 分たった行を「止まった」と見なして取り直す。
+ * 進捗を書かないまま長く続く処理 (LLM を連続で呼ぶ穴埋めなど) の途中で呼び、動いている最中の行が取り直されないようにする。
+ * ベストエフォート: 失敗しても処理は止めない。終わった行 (completed / failed) の updated_at は触らない。
+ */
+async function touchRequestHeartbeat(supabase: any, requestId: string): Promise<void> {
+  try {
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({ updated_at: new Date().toISOString() })
+        .eq("id", requestId)
+        .in("status", [...ACTIVE_REQUEST_STATUSES]),
+      `weekly_menu_requests.heartbeat:${requestId}`,
+      null,
+      5000,
+      0,
+    );
+  } catch (error) {
+    console.warn("Failed to write heartbeat:", error);
+  }
+}
+
+/**
+ * 最終 status (completed / failed) の書き込み。まだ終わっていない行 (queued / processing) にだけ当てる (#1202)。
+ *
+ * ワーカーが止まったと見なされた行は、別の cron が取り直して続きから再開する。止まったと見なされた側が
+ * 実は遅れて動いていると、同じ request に 2 本が最後まで走る。後から終わった側が、先に確定した
+ * status / progress / generated_data を上書きしないよう、終わった行には書かない (#122 の失敗側と同じ考え方)。
+ * 書けたら true、すでに終わっていて見送ったら false。
+ */
+async function finalizeMenuRequest(
+  supabase: any,
+  userId: string,
+  requestId: string,
+  update: Record<string, unknown>,
+  label: string,
+): Promise<boolean> {
+  const rows = await runSupabaseQuery<Array<{ id: string }>>(
+    () => buildActiveRequestUpdate(supabase, requestId, update),
+    label,
+    [],
+    10000,
+    1,
+  );
+  const applied = wasRequestUpdated(rows);
+  if (!applied) {
+    createLogger("generate-menu-v5", requestId).withUser(userId).warn(
+      "最終書き込みを見送りました（この request はすでに別の経路で終了しています）",
+      { requestId, label, attemptedStatus: update.status ?? null },
+    );
+  }
+  return applied;
+}
+
 async function triggerNextV5Step(
   supabaseUrl: string,
   supabaseServiceKey: string,
@@ -337,7 +402,8 @@ async function triggerNextV5Step(
   userId: string,
 ) {
   const url = `${supabaseUrl}/functions/v1/generate-menu-v5`;
-  await fetchWithRetry(url, {
+  // 続きの工程が同意の判定で止めたら (T15 / #1154)、再試行も例外もしない。行は続きの工程が失敗にし、人向けの文を書いている
+  await invokeMenuContinuation(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -662,28 +728,26 @@ async function executeStep3_Save(
     successMessage: `全${totalSlots}件の献立が完成しました！`,
   });
 
-  await runSupabaseQuery(
-    () => supabase
-      .from("weekly_menu_requests")
-      .update({
-        status: finalSummary.status,
-        generated_data: updatedGeneratedData,
-        current_step: 3,
-        progress: {
-          currentStep: 3,
-          totalSteps,
-          message: finalSummary.message,
-          completedSlots: totalSlots,
-          totalSlots,
-        },
-        error_message: finalSummary.errorMessage,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", requestId),
+  // #1202: 最終書き込みは、まだ終わっていない行 (queued / processing) にだけ当てる
+  await finalizeMenuRequest(
+    supabase,
+    userId,
+    requestId,
+    {
+      status: finalSummary.status,
+      generated_data: updatedGeneratedData,
+      current_step: 3,
+      progress: {
+        currentStep: 3,
+        totalSteps,
+        message: finalSummary.message,
+        completedSlots: totalSlots,
+        totalSlots,
+      },
+      error_message: finalSummary.errorMessage,
+      updated_at: new Date().toISOString(),
+    },
     `weekly_menu_requests.v5_step3_final:${requestId}`,
-    null,
-    10000,
-    1,
   );
 }
 
@@ -763,6 +827,8 @@ async function resolveRecipeFromDB(
       fat_g: data.fat_g ?? 0,
       carbs_g: data.carbs_g ?? 0,
       fiber_g: data.fiber_g ?? 0,
+      // 糖質: レシピDBの sugar_g、無ければ 炭水化物 − 食物繊維 (#1146)
+      sugar_g: resolveRecipeSugarG(data),
       sodium_g: data.sodium_g ?? 0,
       potassium_mg: data.potassium_mg ?? 0,
       calcium_mg: data.calcium_mg ?? 0,
@@ -793,7 +859,7 @@ async function resolveRecipeFromDB(
 
 async function embedText(text: string, dimensions = DATASET_EMBEDDING_DIMENSIONS): Promise<number[]> {
   const apiKey = Deno.env.get(DATASET_EMBEDDING_API_KEY_ENV) ?? "";
-  if (!apiKey) throw new Error(`Missing ${DATASET_EMBEDDING_API_KEY_ENV}`);
+  if (!apiKey) throw missingEnvError([DATASET_EMBEDDING_API_KEY_ENV]);
   const embedding = await withRetry(
     async () => await fetchSingleDatasetEmbedding(text, { apiKey, inputType: "query" }),
     { retries: 3, label: "embedText" },
@@ -975,7 +1041,7 @@ async function searchMenuCandidates(
     // プールからランダムサンプリング: 必要数を各 mealType ごとにランダム抽出
     const allTemplatesRaw = dedupeTemplatesByContent(buildTemplateCatalog(mergedRows as unknown as DatasetMenuSetRaw[]));
     // 季節外れのテンプレートを除外（クリスマス料理が4月に出るなど）
-    const currentMonth = month ?? new Date().getMonth() + 1;
+    const currentMonth = month ?? monthJst();
     const allTemplates = allTemplatesRaw.filter((t) => isSeasonallyAppropriate(t, currentMonth));
     const sampledTemplates: MenuTemplate[] = [];
     for (const mealType of requestedMealTypes) {
@@ -1765,7 +1831,7 @@ async function executeStep1_Generate(
   let userProfile = generatedData.userProfile ?? body?.userProfile ?? {};
   const seasonalContext: SeasonalContext =
     (generatedData.seasonalContext ?? body?.seasonalContext) ??
-    { month: new Date().getMonth() + 1, seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
+    { month: monthJst(), seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
   const constraintsRaw = generatedData.constraints ?? body?.constraints ?? reqRow.constraints ?? {};
 
   const hasUserProfile = userProfile && typeof userProfile === "object" && Object.keys(userProfile).length > 0;
@@ -2318,7 +2384,7 @@ async function executeStep2_Review(
   const generatedMeals: Record<string, GeneratedMeal> = (generatedData.generatedMeals ?? {}) as any;
   const existingMenus: ExistingMenuContext[] = (generatedData.existingMenus ?? []) as any[];
   const fridgeItems: FridgeItemContext[] = (generatedData.fridgeItems ?? []) as any[];
-  const seasonalContext = generatedData.seasonalContext ?? { month: new Date().getMonth() + 1, seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
+  const seasonalContext = generatedData.seasonalContext ?? { month: monthJst(), seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
   const constraints = generatedData.constraints ?? {};
   const note = generatedData.note ?? null;
   const userContext = generatedData.userContext;
@@ -2378,6 +2444,9 @@ async function executeStep2_Review(
       } catch (e: any) {
         console.error(`❌ ${missingSlot.date}/${missingSlot.mealType}: recovery failed: ${e?.message ?? e}`);
       }
+      // #1202: この穴埋めは、時間予算の確認も進捗の書き込みも無いまま LLM を連続で呼ぶ。
+      // 5 分書き込みが無いと止まったと見なされて取り直されるので、1 スロットごとに生存信号を書く
+      await touchRequestHeartbeat(supabase, requestId);
     }
     // generatedMeals を DB に保存
     await runSupabaseQuery(
@@ -3045,7 +3114,7 @@ async function executeStep5_RegenerateWithAdvice(
   const existingMenus = (generatedData.existingMenus ?? []) as ExistingMenuContext[];
   const fridgeItems = (generatedData.fridgeItems ?? []) as FridgeItemContext[];
   const seasonalContext: SeasonalContext = (generatedData.seasonalContext as any) ??
-    { month: new Date().getMonth() + 1, seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
+    { month: monthJst(), seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
   const constraints = generatedData.constraints ?? {};
   const note = generatedData.note ?? null;
   const userContext = generatedData.userContext;
@@ -3359,32 +3428,37 @@ async function executeStep6_FinalSave(
     successSuffix: praiseComment ? ` ${praiseComment}` : "",
   });
 
-  await runSupabaseQuery(
-    () => supabase
-      .from("weekly_menu_requests")
-      .update({
-        status: finalSummary.status,
-        generated_data: updatedGeneratedData,
-        current_step: 6,
-        progress: {
-          currentStep: 6,
-          totalSteps: 6,
-          message: finalSummary.message,
-          completedSlots: totalSlots,
-          totalSlots,
-        },
-        error_message: finalSummary.errorMessage,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", requestId),
+  // #1202: 最終書き込みは、まだ終わっていない行 (queued / processing) にだけ当てる
+  const finalized = await finalizeMenuRequest(
+    supabase,
+    userId,
+    requestId,
+    {
+      status: finalSummary.status,
+      generated_data: updatedGeneratedData,
+      current_step: 6,
+      progress: {
+        currentStep: 6,
+        totalSteps: 6,
+        message: finalSummary.message,
+        completedSlots: totalSlots,
+        totalSlots,
+      },
+      error_message: finalSummary.errorMessage,
+      updated_at: new Date().toISOString(),
+    },
     `weekly_menu_requests.v5_step6_final:${requestId}`,
-    null, 10000, 1,
   );
 
-  console.log(`✅ V5 Ultimate Mode completed: ${savedCount}/${totalSlots} meals saved`);
+  if (finalized) {
+    console.log(`✅ V5 Ultimate Mode completed: ${savedCount}/${totalSlots} meals saved`);
+  }
 }
 
 Deno.serve(async (req: Request) => {
+  // 許可したオリジンにだけ CORS ヘッダーを付ける (#1167)
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -3395,6 +3469,9 @@ Deno.serve(async (req: Request) => {
 
   let requestId: string | null = null;
   let userId: string | null = null;
+  // #1177 ユーザー自身の JWT で直接呼ばれたときの利用者 ID (この経路だけ、AI へ送る直前に利用回数を記録する)。
+  // service role の呼び出し (Next.js の API ルート・cron・続きの工程 _continue) は null のまま (呼び出し元が記録済み)
+  let directJwtUserId: string | null = null;
 
   try {
     const body = await req.json().catch(() => ({}));
@@ -3460,6 +3537,53 @@ Deno.serve(async (req: Request) => {
           { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
+
+      directJwtUserId = userData.user.id;
+    }
+
+    // 本文の targetSlots の日付は、YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433)。
+    // 工程 1 は DB の target_slots が空のとき本文の targetSlots を使い、その日付を addDays (前後 7 日の文脈の期間) に渡すので、
+    // 2026-02-30 や 2026/10/10 が来ると受け付けたあとの裏の処理が RangeError で落ちる。呼び出し元を確かめたあと・AI へ送る前に 400 にする。
+    // リクエストの行は (まだ動いていれば) 失敗にしておく (生成中のまま残さない)
+    const invalidSlotDate = findInvalidTargetSlotDate(body.targetSlots);
+    if (invalidSlotDate) {
+      const { error: persistError } = await supabase
+        .from("weekly_menu_requests")
+        .update({
+          status: "failed",
+          error_message: invalidSlotDate,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId!)
+        .eq("user_id", userId!)
+        .in("status", ["queued", "processing"]);
+      if (persistError) console.error("Failed to persist invalid targetSlots failure:", persistError);
+      return new Response(
+        JSON.stringify({ error: invalidSlotDate }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // 献立の生成は、利用者のデータ (好み・アレルギー・健康目標・冷蔵庫の食材など) を外国の AI 事業者へ送る。
+    // 同意が無ければ (判定に失敗した場合も)、送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+    // 利用者の JWT で直接呼ばれた場合・Next.js / cron から service role で呼ばれた場合・続きの工程 (_continue) のどれもここを通る
+    // (続きの工程でも確かめるので、生成の途中で撤回すると次の工程から止まる)。リクエストの行は失敗にしておく。
+    // error_message は画面がそのまま出すので、コードではなく人向けの文を書く (画面はこの文を見分けて同意画面へ案内する)。
+    // 続きの工程を呼んだ側 (前の工程) は invokeMenuContinuation で呼ぶので、この文を内部の文で上書きしない
+    const aiConsent = await checkAiConsent(supabase, userId);
+    if (!aiConsent.allowed) {
+      const { error: persistError } = await supabase
+        .from("weekly_menu_requests")
+        .update({
+          status: "failed",
+          error_message: aiConsentDeniedStoredMessage(aiConsent),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId!)
+        .eq("user_id", userId!)
+        .in("status", ["queued", "processing"]);
+      if (persistError) console.error("Failed to persist AI consent failure:", persistError);
+      return aiConsentDeniedResponse(aiConsent, corsHeaders);
     }
 
     let currentStep = 1;
@@ -3474,6 +3598,28 @@ Deno.serve(async (req: Request) => {
         null,
       );
       currentStep = reqData?.current_step ?? 1;
+    }
+
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (所有の確認・同意などの判定のあと、生成を始める前) に、
+    // 生成 1 回につき 1 回数える (究極モードも 1 回)。ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js の API ルート・cron は
+    // service role で呼び、呼び出し元が数え済み)。Next.js が数え済みの印があれば数えない。判定に失敗したときは止めない。
+    // 上限に達していれば、生成を始めずにリクエストの行を失敗にして (error_message は画面がそのまま出す人向けの文)、429 AI_DAILY_LIMIT
+    if (directJwtUserId) {
+      const aiUsage = await consumeEdgeAiUsage(req, directJwtUserId, "menu_generation");
+      if (!aiUsage.allowed) {
+        const { error: persistError } = await supabase
+          .from("weekly_menu_requests")
+          .update({
+            status: "failed",
+            error_message: aiDailyLimitMessage(aiUsage.limit),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", requestId!)
+          .eq("user_id", userId!)
+          .in("status", ["queued", "processing"]);
+        if (persistError) console.error("Failed to persist AI daily limit failure:", persistError);
+        return aiDailyLimitEdgeResponse(aiUsage, corsHeaders);
+      }
     }
 
     const invocationContext: V5InvocationContext = {
@@ -3495,7 +3641,10 @@ Deno.serve(async (req: Request) => {
         );
       } catch (error: any) {
         console.error("generate-menu-v5 background error:", error);
-        createLogger("generate-menu-v5", requestId ?? undefined).withUser(userId ?? "unknown").error(
+        // #1171: userId が無いときに withUser("unknown") とすると、uuid 列 (auth.users への外部キー) への insert が
+        // 失敗してログごと捨てられる。ユーザーが分からない場合はユーザーなしのロガーで記録する。
+        const backgroundLogger = createLogger("generate-menu-v5", requestId ?? undefined);
+        (userId ? backgroundLogger.withUser(userId) : backgroundLogger).error(
           "バックグラウンド処理でエラーが発生しました",
           error,
           { requestId, step: currentStep },
@@ -3540,7 +3689,9 @@ Deno.serve(async (req: Request) => {
     );
   } catch (error: any) {
     console.error("generate-menu-v5 handler error:", error);
-    createLogger("generate-menu-v5", requestId ?? undefined).withUser(userId ?? "unknown").error(
+    // #1171: userId が確定する前に失敗した場合は withUser("unknown") を使わず、ユーザーなしのロガーで記録する
+    const handlerLogger = createLogger("generate-menu-v5", requestId ?? undefined);
+    (userId ? handlerLogger.withUser(userId) : handlerLogger).error(
       "ハンドラでエラーが発生しました",
       error,
       { requestId },

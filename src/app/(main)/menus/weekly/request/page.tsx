@@ -8,8 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
+import { userScopedStoragePath } from "@/lib/storage-paths";
 import { BackButton } from "@/components/ui/shared/BackButton";
-import { THEME_LABELS_REQUEST } from "@homegohan/shared";
+import { THEME_LABELS_REQUEST, todayLocal } from "@homegohan/shared";
+import { useAiConsent } from "@/hooks/useAiConsent";
+import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 
 // ステップ定義
 const STEPS = [
@@ -26,11 +29,14 @@ export default function MenuRequestWizard() {
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。冷蔵庫の写真の解析と献立の生成依頼の前に、未同意なら出す。
+  // 「同意しない」なら進めない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)
+  const { ensureAiConsent, consentModal } = useAiConsent();
   
   const [formData, setFormData] = useState({
     imageUrl: '',
     ingredients: [] as string[],
-    startDate: new Date().toISOString().split('T')[0],
+    startDate: todayLocal(),
     cookingTimeWeekday: 30,
     cookingTimeWeekend: 60,
     themes: [] as string[],
@@ -45,9 +51,11 @@ export default function MenuRequestWizard() {
 
     setAnalyzing(true);
     try {
-      // Upload to Supabase Storage
+      // Upload to Supabase Storage (本人のフォルダ <user_id>/ の下に保存する)
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
       const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}.${fileExt}`;
+      const fileName = userScopedStoragePath(user.id, 'fridge', `${Date.now()}.${fileExt}`);
       const { data, error } = await supabase.storage
         .from('fridge-images')
         .upload(fileName, file);
@@ -60,8 +68,11 @@ export default function MenuRequestWizard() {
 
       setFormData(p => ({ ...p, imageUrl: publicUrl }));
 
-      // Call AI analysis API
-      const res = await fetch('/api/ai/analyze-fridge', {
+      // 写真を AI に送る前に、未同意なら同意画面を出す。「同意しない」なら解析しない (写真は献立の依頼に添付される)
+      if ((await ensureAiConsent()) === "declined") return;
+
+      // Call AI analysis API (同意が必要で止められたときは、同意画面 (AiConsentRequiredHost) が案内する。res.ok ではないので何もしない)
+      const res = await aiFetch('/api/ai/analyze-fridge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageUrl: publicUrl }),
@@ -100,7 +111,9 @@ export default function MenuRequestWizard() {
   const handleSubmit = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/ai/menu/weekly/request', {
+      // 献立の生成は好みや食材を AI に送る。「同意しない」なら依頼しない
+      if ((await ensureAiConsent()) === "declined") return;
+      const res = await aiFetch('/api/ai/menu/weekly/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -120,6 +133,9 @@ export default function MenuRequestWizard() {
           note: formData.note,
         }),
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さない
+      if (await isAiConsentRequiredResponse(res)) return;
 
       if (!res.ok) throw new Error('Request failed');
 
@@ -157,7 +173,7 @@ export default function MenuRequestWizard() {
               >
                 {step.id}
               </div>
-              <span className={`text-[10px] mt-1 font-bold ${step.id <= currentStep ? "text-[#FF8A65]" : "text-gray-400"}`}>
+              <span className={`text-xs mt-1 font-bold ${step.id <= currentStep ? "text-[#FF8A65]" : "text-gray-400"}`}>
                 {step.title}
               </span>
             </div>
@@ -215,7 +231,7 @@ export default function MenuRequestWizard() {
                   {formData.ingredients.map((item, i) => (
                     <span key={i} className="px-3 py-1 bg-green-50 text-green-700 rounded-full text-sm font-bold flex items-center gap-1">
                       {item}
-                      <button onClick={() => removeIngredient(item)} className="w-4 h-4 rounded-full bg-green-200 flex items-center justify-center text-[10px]">✕</button>
+                      <button onClick={() => removeIngredient(item)} className="w-4 h-4 rounded-full bg-green-200 flex items-center justify-center text-[11px]">✕</button>
                     </span>
                   ))}
                 </div>
@@ -451,6 +467,9 @@ export default function MenuRequestWizard() {
 
         </AnimatePresence>
       </div>
+
+      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。未同意なら出る */}
+      {consentModal}
     </div>
   );
 }

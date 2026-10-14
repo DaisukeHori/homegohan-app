@@ -25,6 +25,8 @@ export type IngredientMatchDebug = {
   calculated_fat_g: number;
   calculated_carbs_g: number;
   calculated_fiber_g: number;
+  // 糖質 (炭水化物 − 食物繊維)。#1146 より前のログには無いので省略可
+  calculated_sugar_g?: number;
 };
 
 export type ValidationDebug = {

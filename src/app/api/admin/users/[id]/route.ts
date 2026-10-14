@@ -1,6 +1,7 @@
 /**
  * GET /api/admin/users/{id} — ユーザー詳細
- * PATCH /api/admin/users/{id} — admin_note 更新
+ *   (#1200: 情報を返すたびに admin_audit_logs へ admin.user.view を記録する)
+ * PATCH /api/admin/users/{id} — 管理ノート (admin_note) の追加 (#1103。保存先は admin_user_notes)
  * operator/02-api-spec.md §4 準拠
  */
 
@@ -9,12 +10,22 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { UserPatchBodySchema } from '@/lib/admin/users-schemas';
+import { recordAdminAudit } from '@/lib/admin/audit';
+import { canViewUserEmail, fetchUserEmails } from '@/lib/admin/user-emails';
+import { isAccountFrozen } from '@/lib/auth/frozen';
+import { internalError } from '@/lib/api/errors';
+import { isUuid, readJsonBody } from '@/lib/http-params';
 
 export const dynamic = 'force-dynamic';
 
+/** ログの発生元 (src/lib/admin/user-emails.ts がメール取得の失敗を記録するときに使う) */
+const LOG_SOURCE = 'GET /api/admin/users/[id]';
+/** PATCH の構造化ログ・監査ログ失敗時の発生元 */
+const PATCH_ROUTE_NAME = 'PATCH /api/admin/users/[id]';
+
 type Params = { params: { id: string } };
 
-export async function GET(_request: Request, { params }: Params) {
+export async function GET(request: Request, { params }: Params) {
   let actor;
   try {
     actor = await requireRole(['admin', 'super_admin', 'support']);
@@ -55,6 +66,13 @@ export async function GET(_request: Request, { params }: Params) {
       { status: 404 },
     );
   }
+
+  // メールアドレス (#1145): 見てよいのは admin / super_admin だけ。support には引かず null。
+  // この 1 件のぶんだけを service_role 専用の RPC で auth.users から引く。
+  // 引けなかった (メールを持たない / 取得に失敗した) ときも null。
+  const email = canViewUserEmail(actor.roles)
+    ? ((await fetchUserEmails(supabaseAdmin, [profile.id], LOG_SOURCE)).get(profile.id) ?? null)
+    : null;
 
   // サポートチケット数 (テーブルが存在する場合)
   let supportTicketCount = 0;
@@ -111,10 +129,10 @@ export async function GET(_request: Request, { params }: Params) {
 
   void auditLogs; // 現在は ban_history として返す
 
-  return NextResponse.json({
+  const body = {
     data: {
       id: profile.id,
-      email: null,
+      email,
       nickname: profile.nickname,
       roles: profile.roles ?? ['user'],
       plan_key: profile.plan_key_cached ?? 'free',
@@ -129,16 +147,55 @@ export async function GET(_request: Request, { params }: Params) {
       ban_history: banHistory,
       support_ticket_count: supportTicketCount,
       active_subscription: activeSubscription,
-      is_banned: (profile as { frozen_at?: string | null }).frozen_at != null,
+      // #1030: 一時 BAN は unban_at 経過後に自動解除扱いとする (判定時比較)。
+      // frozen_at が NOT NULL のままでも unban_at が過去なら is_banned=false を返す。
+      is_banned: isAccountFrozen({
+        frozenAt: (profile as { frozen_at?: string | null }).frozen_at ?? null,
+        unbanAt: (profile as { unban_at?: string | null }).unban_at ?? null,
+      }),
       frozen_at: (profile as { frozen_at?: string | null }).frozen_at ?? null,
       frozen_reason: (profile as { frozen_reason?: string | null }).frozen_reason ?? null,
       frozen_by: (profile as { frozen_by?: string | null }).frozen_by ?? null,
+      unban_at: (profile as { unban_at?: string | null }).unban_at ?? null,
       last_login_at: profile.last_login_at ?? null,
       registered_at: profile.created_at,
     },
+  };
+
+  // #1200: 他ユーザーの情報を返す前に、誰が誰を閲覧したかを監査ログへ残す。
+  // 404 (対象なし) は上で返しているため、ここに来るのは情報を返すときだけ。
+  // 記録に失敗しても閲覧は止めない (失敗は db-logger に error で残る)。
+  // details には返した項目名 (値が null の項目も含む) だけを入れ、値や email は入れない。
+  await recordAdminAudit({
+    supabase,
+    actorId: actor.id,
+    actionType: 'admin.user.view',
+    targetId: id,
+    targetType: 'user',
+    details: { viewed_fields: Object.keys(body.data) },
+    request,
+    routeName: 'api/admin/users/[id] GET',
   });
+
+  const response = NextResponse.json(body);
+  // メールアドレスを含むため、共有キャッシュに残さない
+  response.headers.set('Cache-Control', 'no-store');
+  return response;
 }
 
+/**
+ * PATCH /api/admin/users/{id} — 管理ノート (admin note) の追加
+ *
+ * #1103 (項目 5): 以前は user_profiles.admin_note 列へ UPDATE していたが、その列は本番にもリポジトリにも無く、
+ * 常に「column does not exist」で 500 になっていた。列を足さずに、運営の内部メモの保存先である
+ * admin_user_notes (サポート画面のユーザーノートと同じ表) に 1 行追加する。
+ *   - user_profiles に列を足すと、本人の行を読む RLS (自分の行は全列が読める) と select('*') で、
+ *     運営が書いた内部メモを利用者本人が読めてしまう。admin_user_notes は運営ロールだけが読み書きでき
+ *     (RLS)、アカウントのデータ書き出しからも外してある (src/lib/account-export-tables.ts)。
+ *   - 監査ログの種別は設計書 (operator/07-audit-monitoring.md §4.1) の admin.user.note_add。
+ *     details にはノートの ID だけを入れ、本文は入れない (POST /api/support/users/[id]/notes と同じ)。
+ * リクエストの形 ({ admin_note }) と権限 (admin / super_admin) は operator/02-api-spec.md のまま。
+ */
 export async function PATCH(request: Request, { params }: Params) {
   let actor;
   try {
@@ -160,18 +217,23 @@ export async function PATCH(request: Request, { params }: Params) {
   }
 
   const { id } = params;
+  // uuid 型の列に UUID でない文字列を渡すと 22P02 になり、存在しない id なのに 500 になる
+  if (!isUuid(id)) {
+    return NextResponse.json(
+      { error: { code: 'NOT_FOUND', message: 'ユーザーが見つかりません' } },
+      { status: 404 },
+    );
+  }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
+  const parsedBody = await readJsonBody(request);
+  if (!parsedBody.ok) {
     return NextResponse.json(
       { error: { code: 'INVALID_JSON', message: 'リクエストボディが不正です' } },
       { status: 400 },
     );
   }
 
-  const parseResult = UserPatchBodySchema.safeParse(body);
+  const parseResult = UserPatchBodySchema.safeParse(parsedBody.body);
   if (!parseResult.success) {
     return NextResponse.json(
       { error: { code: 'VALIDATION_ERROR', message: 'バリデーションエラー', details: parseResult.error.flatten() } },
@@ -180,44 +242,54 @@ export async function PATCH(request: Request, { params }: Params) {
   }
 
   const { admin_note } = parseResult.data;
-  // requireRole 通過後のみ到達する。RLS は user_profiles に自分の行のみの
-  // ポリシーしか無いため、他ユーザーの admin_note 更新には service_role が必須 (#1028)。
-  const supabaseAdmin = getSupabaseAdmin();
-  const supabase = await createClient();
 
-  // admin_note をプロファイルに保存
-  const { data: updated, error: updateError } = await supabaseAdmin
+  // 対象ユーザーの存在確認。user_profiles は RLS で本人の行しか見えないため、
+  // requireRole を通したあとだけ service_role で、対象の id に絞って引く (#1028)。
+  const { data: target, error: targetError } = await getSupabaseAdmin()
     .from('user_profiles')
-    .update({ admin_note } as Record<string, unknown>)
+    .select('id')
     .eq('id', id)
-    .select('id');
+    .maybeSingle();
 
-  if (updateError) {
-    console.error('[api/admin/users/[id]] PATCH error:', updateError.message);
-    return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: '更新に失敗しました' } },
-      { status: 500 },
-    );
+  if (targetError) {
+    return internalError(PATCH_ROUTE_NAME, targetError, { userId: actor.id, table: 'user_profiles' }, { shape: 'nested' });
   }
-
-  // 更新0行 = 対象ユーザーが存在しない (#1028: 以前は 0 行でも 200 偽成功していた)
-  if (!updated || updated.length === 0) {
+  if (!target) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: 'ユーザーが見つかりません' } },
       { status: 404 },
     );
   }
 
-  // 監査ログ
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: actor.id,
-    action_type: 'admin.user.note_update',
-    target_id: id,
-    target_type: 'user',
-    details: { admin_note },
-    severity: 'info',
-    ip_address: request.headers.get('x-forwarded-for'),
+  // ノートを追加する。admin_user_notes の RLS は運営ロール (admin / super_admin / support) に読み書きを許しているため、
+  // 操作した本人のセッションの client で書く (admin_id は auth.uid() と同じ本人の ID)。
+  const supabase = await createClient();
+  const { data: note, error: insertError } = await supabase
+    .from('admin_user_notes')
+    .insert({ user_id: id, admin_id: actor.id, note: admin_note })
+    .select('id')
+    .single();
+
+  if (insertError || !note) {
+    return internalError(
+      PATCH_ROUTE_NAME,
+      insertError ?? new Error('admin_user_notes の追加結果が空でした'),
+      { userId: actor.id, table: 'admin_user_notes' },
+      { shape: 'nested' },
+    );
+  }
+
+  // 監査ログ (失敗しても追加は取り消さない。失敗は db-logger に error で残る)
+  await recordAdminAudit({
+    supabase,
+    actorId: actor.id,
+    actionType: 'admin.user.note_add',
+    targetId: id,
+    targetType: 'user',
+    details: { note_id: note.id },
+    request,
+    routeName: PATCH_ROUTE_NAME,
   });
 
-  return NextResponse.json({ data: { success: true } });
+  return NextResponse.json({ data: { success: true, note_id: note.id } });
 }

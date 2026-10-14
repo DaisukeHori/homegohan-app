@@ -38,6 +38,7 @@ export const UpdateFeatureFlagSchema = z.object({
 export type CreateFeatureFlagInput = z.infer<typeof CreateFeatureFlagSchema>;
 export type UpdateFeatureFlagInput = z.infer<typeof UpdateFeatureFlagSchema>;
 export type RolloutStrategy = z.infer<typeof RolloutStrategySchema>;
+export type FeatureFlagConstraints = z.infer<typeof FeatureFlagConstraintsSchema>;
 
 export interface FeatureFlag {
   id: string;

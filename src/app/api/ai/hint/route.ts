@@ -1,43 +1,30 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
-import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
+/**
+ * POST /api/ai/hint
+ *
+ * 週間献立ページ (統計モーダル) の「週間AIヒント」に出す一言を返す。
+ *
+ * #1327: 以前は Edge Function generate-hint (中で AI を呼ぶ) を呼んでいたが、戻り値は使わず、
+ * このルートはいつも下の getDefaultHint() の結果を返していた (Edge Function が結果を保存する
+ * user_hints テーブルも本番に無い)。週間献立ページを開くたびに AI を呼んで結果を捨てる費用の無駄
+ * だったため、Edge Function は呼ばず、自炊率・平均カロリー・期限間近の食材から決まる定型のヒントだけを返す。
+ * 呼び出し元 (menus/weekly/page.tsx の fetchAiHint) とレスポンスの形 ({ hint }) は変えていない。
+ *
+ * AI を呼ばないので、写真解析などと共有する 'analysis' のレート制限は使わない
+ * (使うと、ページを開くたびにその枠を消費し、写真解析が 429 になりうる)。
+ */
 export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const rateLimitResult = await checkRateLimit(user.id, 'analysis');
-  if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
-
   try {
-    const { cookRate, avgCal, cookCount, buyCount, outCount, expiringItems } = await request.json();
+    const { cookRate, avgCal, expiringItems } = await request.json();
 
-    // Call Supabase Edge Function for AI hint generation (async)
-    const { error: invokeError } = await supabase.functions.invoke('generate-hint', {
-      body: {
-        userId: user.id,
-        cookRate,
-        avgCal,
-        cookCount,
-        buyCount,
-        outCount,
-        expiringItems
-      },
-    });
-
-    if (invokeError) {
-      // If Edge Function fails, return a default hint
-      console.error('Hint generation error:', invokeError);
-      return NextResponse.json({ 
-        hint: getDefaultHint(cookRate, avgCal, expiringItems) 
-      });
-    }
-
-    // For now, return a smart default hint while the async process runs
-    // In a full implementation, you'd store and retrieve the hint
-    return NextResponse.json({ 
-      hint: getDefaultHint(cookRate, avgCal, expiringItems) 
+    return NextResponse.json({
+      hint: getDefaultHint(cookRate, avgCal, expiringItems),
     });
   } catch (error: any) {
     console.error('AI Hint API Error:', error);

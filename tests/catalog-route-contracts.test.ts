@@ -14,8 +14,13 @@ import { GET as catalogSearchGET } from '../src/app/api/catalog/products/route';
 import { GET as catalogDetailGET } from '../src/app/api/catalog/products/[id]/route';
 import type { CatalogProductSummary } from '../types/catalog';
 
+// /api/catalog/products/[id] は catalog_products.id (DB 上は uuid 型) を UUID 形式で
+// バリデーションするため、テストの id も本番同様の UUID 形式で与える必要がある。
+const VALID_PRODUCT_ID = '11111111-1111-1111-1111-111111111111';
+const MISSING_PRODUCT_ID = '22222222-2222-2222-2222-222222222222';
+
 const sampleProduct: CatalogProductSummary = {
-  id: 'prod-1',
+  id: VALID_PRODUCT_ID,
   sourceId: 'src',
   sourceCode: 'SRC',
   brandName: 'Brand',
@@ -71,8 +76,8 @@ describe('catalog product routes', () => {
 
   it('detail returns 401 without auth', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
-    const response = await catalogDetailGET(new Request('http://localhost/api/catalog/products/prod-1'), {
-      params: { id: 'prod-1' },
+    const response = await catalogDetailGET(new Request(`http://localhost/api/catalog/products/${VALID_PRODUCT_ID}`), {
+      params: { id: VALID_PRODUCT_ID },
     });
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' });
@@ -81,8 +86,8 @@ describe('catalog product routes', () => {
   it('detail returns 404 when product is missing', async () => {
     ensureAuthorized();
     getCatalogProductById.mockResolvedValue(null);
-    const response = await catalogDetailGET(new Request('http://localhost/api/catalog/products/prod-missing'), {
-      params: { id: 'prod-missing' },
+    const response = await catalogDetailGET(new Request(`http://localhost/api/catalog/products/${MISSING_PRODUCT_ID}`), {
+      params: { id: MISSING_PRODUCT_ID },
     });
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({ error: 'Not found' });
@@ -91,11 +96,11 @@ describe('catalog product routes', () => {
   it('detail returns product data when found', async () => {
     ensureAuthorized();
     getCatalogProductById.mockResolvedValue(sampleProduct);
-    const response = await catalogDetailGET(new Request('http://localhost/api/catalog/products/prod-1'), {
-      params: { id: 'prod-1' },
+    const response = await catalogDetailGET(new Request(`http://localhost/api/catalog/products/${VALID_PRODUCT_ID}`), {
+      params: { id: VALID_PRODUCT_ID },
     });
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ product: sampleProduct });
-    expect(getCatalogProductById).toHaveBeenCalledWith(supabaseClient, 'prod-1');
+    expect(getCatalogProductById).toHaveBeenCalledWith(supabaseClient, VALID_PRODUCT_ID);
   });
 });

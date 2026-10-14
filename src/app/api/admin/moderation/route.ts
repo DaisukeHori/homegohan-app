@@ -3,7 +3,24 @@
  * 権限: admin, super_admin, content_moderator
  *
  * レスポンス形式:
- *   { mealFlags: [], recipeFlags: [], aiFlags: [] }
+ *   { mealFlags: [], recipeFlags: [], aiFlags: [], aiFlagsSupported: false }
+ *
+ * #1041 (F4-04) 修正: 実在しない `moderation_items` テーブル参照を廃止し、
+ * 実テーブル (moderation_flags / recipe_flags) を参照するよう修正。
+ * DB エラー発生時は空配列にフォールバックせず 500 を返す (fail-closed)。
+ *
+ * #1128: ai_content (AI コンテンツ) の審査は準備中 (未対応) で、バックエンドのテーブルが無い。
+ * aiFlags は常に空配列だが、これは「通報 0 件」ではなく「未対応」の意味なので、
+ * `aiFlagsSupported: false` を添えて区別できるようにする (オーナー判断 2026-10-08)。
+ * aiFlags を配列のままにしているのは、配布済みの古いモバイルアプリの運営画面が
+ * `...(res.aiFlags ?? [])` と配列として展開しており、形を変えるとその版が壊れるため
+ * (この画面はリポジトリからは #1389 で削除済みだが、端末に入っている古い版は残る)。
+ *
+ * #1041 round-2 (F) 修正: `moderation_flags_admin_all` RLS ポリシーは
+ * admin/super_admin のみで content_moderator を許可しない。requireRole は
+ * content_moderator を許可しているため、user-scoped client では
+ * content_moderator が呼ぶと常に 0 件 (偽成功) になっていた。requireRole
+ * 通過後に service-role (`getSupabaseAdmin()`) へ切り替えて解消する。
  *
  * E2E: w5-12-admin-adversarial G-27, G-27b
  */
@@ -11,8 +28,9 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { z } from 'zod';
+import { fetchModerationList } from '@/lib/admin/moderation-backend';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,55 +67,25 @@ export async function GET(request: Request) {
   }
 
   const { status } = parseResult.data;
-  const supabase = await createClient();
-
-  // meal フラグ (food タイプ)
-  let mealFlags: unknown[] = [];
-  let recipeFlags: unknown[] = [];
-  let aiFlags: unknown[] = [];
+  // requireRole 通過後のみ到達する (#1041 round-2 F)。
+  const supabaseAdmin = getSupabaseAdmin();
 
   try {
-    const { data: mealData } = await supabase
-      .from('moderation_items')
-      .select('*')
-      .eq('type', 'food')
-      .eq('status', status)
-      .order('created_at', { ascending: true })
-      .limit(50);
-    mealFlags = mealData ?? [];
-  } catch {
-    // moderation_items テーブル未作成の場合は空配列
-  }
+    const [mealFlags, recipeFlags] = await Promise.all([
+      fetchModerationList(supabaseAdmin, 'food', status, 50),
+      fetchModerationList(supabaseAdmin, 'recipe', status, 50),
+    ]);
 
-  try {
-    const { data: recipeData } = await supabase
-      .from('moderation_items')
-      .select('*')
-      .eq('type', 'recipe')
-      .eq('status', status)
-      .order('created_at', { ascending: true })
-      .limit(50);
-    recipeFlags = recipeData ?? [];
-  } catch {
-    // graceful degradation
-  }
+    // ai_content はバックエンドテーブル未実装 (準備中)。既存レスポンス形式との互換のため
+    // 空配列を返すが、これは「該当なし」ではなく「未対応」を意味する (aiFlagsSupported: false)。
+    const aiFlags: never[] = [];
 
-  try {
-    const { data: aiData } = await supabase
-      .from('moderation_items')
-      .select('*')
-      .eq('type', 'ai_content')
-      .eq('status', status)
-      .order('created_at', { ascending: true })
-      .limit(50);
-    aiFlags = aiData ?? [];
-  } catch {
-    // graceful degradation
+    return NextResponse.json({ mealFlags, recipeFlags, aiFlags, aiFlagsSupported: false });
+  } catch (err) {
+    console.error('[api/admin/moderation] fetch error:', err instanceof Error ? err.message : err);
+    return NextResponse.json(
+      { error: { code: 'INTERNAL_ERROR', message: 'モデレーションデータの取得に失敗しました' } },
+      { status: 500 },
+    );
   }
-
-  return NextResponse.json({
-    mealFlags,
-    recipeFlags,
-    aiFlags,
-  });
 }

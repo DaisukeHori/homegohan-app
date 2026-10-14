@@ -7,7 +7,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { invalidateFeatureFlag } from '@/lib/feature-flags';
 import { UpdateFeatureFlagSchema } from '@/lib/super-admin/flags-schemas';
+import { internalError } from '@/lib/api/errors';
 
 type Params = { params: { key: string } };
 
@@ -26,6 +28,27 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       );
     }
 
+    // #1029: feature_flags テーブルを実 UPDATE する (以前は監査ログを INSERT するだけで
+    // enabled/rollout_strategy/constraints を永続化していなかった)
+    const updateData: Record<string, unknown> = { ...parsed.data, updated_at: new Date().toISOString() };
+
+    const { data: updated, error } = await supabase
+      .from('feature_flags')
+      .update(updateData)
+      .eq('key', flagKey)
+      .select('key, description, enabled, rollout_strategy, constraints, updated_at')
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return NextResponse.json(
+          { error: { code: 'OP_FEATURE_FLAG_NOT_FOUND', message: '指定されたフラグが見つかりません' } },
+          { status: 404 },
+        );
+      }
+      return internalError('PATCH /api/super-admin/flags/[key]', error, { userId: user.id }, { shape: 'nested' });
+    }
+
     // 監査ログ
     await supabase.from('admin_audit_logs').insert({
       actor_id: user.id,
@@ -35,9 +58,11 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       severity: 'info',
     });
 
-    return NextResponse.json({
-      data: { key: flagKey, ...parsed.data, updated_at: new Date().toISOString() },
-    });
+    // #1148: この API を処理したインスタンスの、API route 側のフラグのメモリを新しくする。
+    // 他のインスタンスとミドルウェア (Edge。メモリは別) には、最大 30 秒で反映される
+    invalidateFeatureFlag(flagKey);
+
+    return NextResponse.json({ data: updated });
   } catch (err) {
     if (err instanceof AuthError) {
       return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
@@ -45,8 +70,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('PATCH /api/super-admin/flags/[key]', err, {}, { shape: 'nested' });
   }
 }
 
@@ -74,6 +98,18 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
       );
     }
 
+    // #1029: feature_flags テーブルから実 DELETE する (以前は監査ログを INSERT するだけで
+    // 実データを一切削除していなかった)。未登録キー (feature_flags に行が無い) の DELETE は
+    // 0 行 affected でもエラーにせず成功として扱う (既存の orphan キー削除フローと整合)。
+    const { error: deleteError } = await supabase
+      .from('feature_flags')
+      .delete()
+      .eq('key', flagKey);
+
+    if (deleteError) {
+      return internalError('DELETE /api/super-admin/flags/[key]', deleteError, { userId: user.id }, { shape: 'nested' });
+    }
+
     // 監査ログ
     await supabase.from('admin_audit_logs').insert({
       actor_id: user.id,
@@ -83,6 +119,10 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
       severity: 'warn',
     });
 
+    // #1148: この API を処理したインスタンスの、API route 側のフラグのメモリを新しくする。
+    // 他のインスタンスとミドルウェア (Edge。メモリは別) には、最大 30 秒で反映される
+    invalidateFeatureFlag(flagKey);
+
     return NextResponse.json({ data: { key: flagKey, deleted: true } });
   } catch (err) {
     if (err instanceof AuthError) {
@@ -91,7 +131,6 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('DELETE /api/super-admin/flags/[key]', err, {}, { shape: 'nested' });
   }
 }

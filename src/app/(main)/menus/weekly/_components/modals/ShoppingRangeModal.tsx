@@ -1,17 +1,20 @@
 "use client";
 
-import React from "react";
+import React, { useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import FocusTrap from "focus-trap-react";
 import { X, ChevronDown, ChevronRight, ChevronLeft, Check, Sparkles } from "lucide-react";
 import type { ServingsConfig } from "@/types/domain";
+import { formatLocalDate, formatDateJa } from "@homegohan/shared";
 import { useShoppingStore, useServingsConfigStore } from "../../_state";
+import { useDialogA11y } from "@/components/common/useDialogA11y";
 
 const colors = {
   bg: '#F7F6F3',
   card: '#FFFFFF',
   text: '#2D2D2D',
   textLight: '#6B6B6B',
-  textMuted: '#A0A0A0',
+  textMuted: '#767676', // #1052 (コントラスト): #A0A0A0 (白地で約2.7:1) から WCAG AA相当の #767676 (約4.5:1) へ
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
   success: '#6B9B6B',
@@ -21,13 +24,20 @@ const colors = {
 
 interface ShoppingRangeModalProps {
   isTodayExpanded: boolean;
+  /** カレンダーで現在表示中の週の開始日（UX2-09: 「表示中の週」選択肢用） */
+  currentWeekStart: Date;
   onClose: () => void;
   onToggleTodayExpanded: (expanded: boolean) => void;
   onGenerate: (servingsConfig: ServingsConfig | null) => Promise<void>;
 }
 
+// UX2-09: 「日付範囲」文字列を作る（単日なら1つ、範囲なら「〜」で連結）
+const formatDateRangeLabel = (startStr: string, endStr: string): string =>
+  startStr === endStr ? formatDateJa(startStr) : `${formatDateJa(startStr)}〜${formatDateJa(endStr)}`;
+
 export function ShoppingRangeModal({
   isTodayExpanded,
+  currentWeekStart,
   onClose,
   onToggleTodayExpanded,
   onGenerate,
@@ -39,8 +49,45 @@ export function ShoppingRangeModal({
   const servingsConfig = useServingsConfigStore((s) => s.servingsConfig);
   const setServingsConfig = useServingsConfigStore((s) => s.setServingsConfig);
 
+  // UX2-09: 各選択肢に具体的な日付範囲を併記する
+  const now = new Date();
+  const todayStr = formatLocalDate(now);
+  const tomorrowDate = new Date(now);
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrowStr = formatLocalDate(tomorrowDate);
+  const dayAfterDate = new Date(now);
+  dayAfterDate.setDate(dayAfterDate.getDate() + 2);
+  const dayAfterStr = formatLocalDate(dayAfterDate);
+  const daysEndDate = new Date(now);
+  daysEndDate.setDate(daysEndDate.getDate() + shoppingRange.daysCount - 1);
+  const daysEndStr = formatLocalDate(daysEndDate);
+  const weekEndDate = new Date(now);
+  weekEndDate.setDate(weekEndDate.getDate() + 6);
+  const weekEndStr = formatLocalDate(weekEndDate);
+  const currentWeekStartStr = formatLocalDate(currentWeekStart);
+  const currentWeekEndDate = new Date(currentWeekStart);
+  currentWeekEndDate.setDate(currentWeekEndDate.getDate() + 6);
+  const currentWeekEndStr = formatLocalDate(currentWeekEndDate);
+
+  // #1052 (体系的 a11y): ステップにより見出しが変わるため aria-labelledby ではなく
+  // 動的な aria-label を使う。
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogA11y({ onClose });
+
   return (
+    <FocusTrap
+      focusTrapOptions={{
+        allowOutsideClick: true,
+        escapeDeactivates: false,
+        fallbackFocus: () => panelRef.current ?? document.body,
+      }}
+    >
     <motion.div
+      ref={panelRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={shoppingRangeStep === 'range' ? '買い物の範囲を選択' : '人数を確認'}
+      tabIndex={-1}
       initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
       transition={{ type: "spring", damping: 25, stiffness: 300 }}
       className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-4 lg:pb-6 rounded-t-3xl max-h-[75vh] overflow-y-auto"
@@ -55,8 +102,10 @@ export function ShoppingRangeModal({
               <span style={{ fontSize: 15, fontWeight: 600 }}>買い物の範囲を選択</span>
               <span style={{ fontSize: 11, color: colors.textMuted, background: colors.bg, padding: '2px 6px', borderRadius: 6 }}>ステップ 1/2</span>
             </div>
-            <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-              <X size={14} color={colors.textLight} />
+            <button onClick={onClose} aria-label="閉じる" className="min-w-[44px] min-h-[44px] -m-2 flex items-center justify-center">
+              <span className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                <X size={14} color={colors.textLight} />
+              </span>
             </button>
           </div>
 
@@ -80,6 +129,7 @@ export function ShoppingRangeModal({
               >
                 <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'today' ? '#fff' : colors.text }}>
                   今日の分
+                  <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>（{formatDateJa(todayStr)}）</span>
                 </span>
                 {shoppingRange.type === 'today' && (
                   <ChevronDown
@@ -113,6 +163,7 @@ export function ShoppingRangeModal({
                                 : [...shoppingRange.todayMeals, mealType];
                               setShoppingRange({ ...shoppingRange, todayMeals: newMeals });
                             }}
+                            aria-pressed={isSelected}
                             className="w-full p-2.5 rounded-lg flex items-center gap-2"
                             style={{ background: isSelected ? `${colors.accent}15` : 'transparent' }}
                           >
@@ -146,6 +197,7 @@ export function ShoppingRangeModal({
             >
               <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'tomorrow' ? '#fff' : colors.text }}>
                 明日の分
+                <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>（{formatDateJa(tomorrowStr)}）</span>
               </span>
             </button>
 
@@ -160,6 +212,22 @@ export function ShoppingRangeModal({
             >
               <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'dayAfterTomorrow' ? '#fff' : colors.text }}>
                 明後日の分
+                <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>（{formatDateJa(dayAfterStr)}）</span>
+              </span>
+            </button>
+
+            {/* 表示中の週（UX2-09: 今日起点ではなく、カレンダーで開いている週） */}
+            <button
+              onClick={() => setShoppingRange({ ...shoppingRange, type: 'currentWeek' })}
+              className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
+              style={{
+                background: shoppingRange.type === 'currentWeek' ? colors.accent : colors.bg,
+                border: `1px solid ${shoppingRange.type === 'currentWeek' ? colors.accent : colors.border}`
+              }}
+            >
+              <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'currentWeek' ? '#fff' : colors.text }}>
+                表示中の週
+                <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>（{formatDateRangeLabel(currentWeekStartStr, currentWeekEndStr)}）</span>
               </span>
             </button>
 
@@ -175,6 +243,7 @@ export function ShoppingRangeModal({
               >
                 <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'days' ? '#fff' : colors.text }}>
                   {shoppingRange.daysCount}日分
+                  <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>（{formatDateRangeLabel(todayStr, daysEndStr)}）</span>
                 </span>
               </button>
 
@@ -204,7 +273,8 @@ export function ShoppingRangeModal({
               }}
             >
               <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'week' ? '#fff' : colors.text }}>
-                1週間分
+                1週間分（今日から）
+                <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>{formatDateRangeLabel(todayStr, weekEndStr)}</span>
               </span>
             </button>
           </div>
@@ -229,6 +299,7 @@ export function ShoppingRangeModal({
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShoppingRangeStep('range')}
+                aria-label="前のステップ（範囲選択）に戻る"
                 className="w-7 h-7 rounded-full flex items-center justify-center"
                 style={{ background: colors.bg }}
               >
@@ -237,8 +308,10 @@ export function ShoppingRangeModal({
               <span style={{ fontSize: 15, fontWeight: 600 }}>人数を確認</span>
               <span style={{ fontSize: 11, color: colors.textMuted, background: colors.bg, padding: '2px 6px', borderRadius: 6 }}>ステップ 2/2</span>
             </div>
-            <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-              <X size={14} color={colors.textLight} />
+            <button onClick={onClose} aria-label="閉じる" className="min-w-[44px] min-h-[44px] -m-2 flex items-center justify-center">
+              <span className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                <X size={14} color={colors.textLight} />
+              </span>
             </button>
           </div>
 
@@ -287,9 +360,19 @@ export function ShoppingRangeModal({
                         border: `1px solid ${value === 0 ? colors.border : colors.success}`
                       }}
                     >
+                      {/* #1052 (タップ領域 / Sonnet 指摘の Critical 修正):
+                          当初は min-w/min-h + 負の「水平」マージン(-mx-[10px])でヒット領域を
+                          44x44pxへ拡大していたが、grid-cols-4 gap-2 の狭いセルでは -mx が
+                          隣の食事列（朝/昼/夜）の±ボタンのヒット領域と水平方向に重なり、
+                          375px幅の実機で「朝の+」を押すと「昼の−」が発火する誤操作を招いていた
+                          （elementFromPoint が後続DOM要素をヒットさせるため）。
+                          そのため水平方向のマージン拡張は完全に撤回し、ヒット領域拡大は
+                          「垂直方向のみ」（-my）に限定する。水平方向は幅を固定値のまま
+                          （視覚サイズ維持）にとどめ、隣接セルへ侵食しない。 */}
                       <button
                         onClick={() => updateValue(value - 1)}
-                        className="w-6 h-8 flex items-center justify-center text-lg font-bold"
+                        aria-label={`${labels[day]}曜${meal === 'breakfast' ? '朝' : meal === 'lunch' ? '昼' : '夜'}の人数を1人減らす`}
+                        className="w-6 min-h-[44px] -my-1 flex items-center justify-center text-lg font-bold"
                         style={{ color: value === 0 ? colors.textMuted : colors.success }}
                       >
                         −
@@ -305,7 +388,8 @@ export function ShoppingRangeModal({
                       </span>
                       <button
                         onClick={() => updateValue(value + 1)}
-                        className="w-6 h-8 flex items-center justify-center text-lg font-bold"
+                        aria-label={`${labels[day]}曜${meal === 'breakfast' ? '朝' : meal === 'lunch' ? '昼' : '夜'}の人数を1人増やす`}
+                        className="w-6 min-h-[44px] -my-1 flex items-center justify-center text-lg font-bold"
                         style={{ color: value === 0 ? colors.textMuted : colors.success }}
                       >
                         +
@@ -342,5 +426,6 @@ export function ShoppingRangeModal({
         </>
       )}
     </motion.div>
+    </FocusTrap>
   );
 }

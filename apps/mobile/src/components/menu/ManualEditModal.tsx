@@ -31,6 +31,7 @@ import { getApi } from "../../lib/api";
 import { colors, radius, shadows, spacing } from "../../theme";
 import { DishEditor, type DishItem } from "./DishEditor";
 import { PhotoEditModal, type MealAnalysis } from "./PhotoEditModal";
+import { promptAiConsentRequired } from "../../lib/ai-consent";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -790,10 +791,18 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
           </KeyboardAvoidingView>
         </SafeAreaView>
       </Modal>
+      {/*
+        写真の解析が「同意が必要です」で止められたとき (T15 / #1154。写真の画面は自分を閉じてから onAiConsentRequired を呼ぶ):
+        この手動編集の画面 (モーダル) は、案内の前には閉じない (編集中の内容を捨てない)。案内の「同意画面を開く」を押したときに
+        閉じる (閉じないと、同意画面がこの画面の下に隠れる)。「閉じる」を押したときは、編集を続けられる。
+        写真の画面は、この画面が閉じられたら一緒に閉じる (visible && …)。週の画面が同意画面を開く前にモーダルをすべて
+        閉じるとき (closeAllModals)、この画面の上に重ねた写真の画面が残ると、同意画面を隠す
+      */}
       <PhotoEditModal
-        visible={showPhotoEdit}
+        visible={visible && showPhotoEdit}
         onClose={() => setShowPhotoEdit(false)}
         onResult={handlePhotoResult}
+        onAiConsentRequired={() => promptAiConsentRequired({ beforeOpenConsentScreen: onClose })}
       />
     </>
   );

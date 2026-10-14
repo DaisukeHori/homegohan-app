@@ -1,6 +1,8 @@
 // i18n キー完全定義 (ja v1)
 // Canonical: docs/design/family/09-onboarding-handson-tour/14-mocks-i18n.md §2.3
-// キー総数: 81 (step0:8 / step1:14 / step2:14 / step3:13 / step4:12 / step5:2 / cooking_experience:3 / a11y:9 / common:6)
+// キー総数: 87 (step0:7 / step1:15 / step2:18 / step3:14 / step4:13 / step5:2 / cooking_experience:3 / a11y:9 / common:6)
+// (設計書 §2.4 の 81 は初版の数。その後キーを足したため、実数は i18n.test.ts の件数 assert が正。
+//  JA / EN は同じキー・同じ placeholder を持つ)
 //
 // placeholder 一覧 (§2.5):
 //   {nickname}               - 例: "太郎"       - Step 0/1/2/3/4/5 各所
@@ -13,7 +15,7 @@
 
 export const HANDSON_TOUR_I18N_EN = {
   tour: {
-    // ====== Step 0 Welcome (8 keys) ======
+    // ====== Step 0 Welcome (7 keys) ======
     step0: {
       title: 'Welcome, {nickname}!',
       subtitle: "Let's try 3 handy features together (about 90 seconds)",
@@ -24,7 +26,7 @@ export const HANDSON_TOUR_I18N_EN = {
       a11y_later_hint: 'Tap to exit the tutorial',
     },
 
-    // ====== Step 1 Add a photo (14 keys) ======
+    // ====== Step 1 Add a photo (15 keys) ======
     step1: {
       // intro
       intro_title: 'Log meals with just one photo',
@@ -54,7 +56,7 @@ export const HANDSON_TOUR_I18N_EN = {
         "Chicken karaage set meal, 780 kcal. {percent}% of {nickname}'s goal of {target_kcal} kcal.",
     },
 
-    // ====== Step 2 AI meal plan (14 keys) ======
+    // ====== Step 2 AI meal plan (18 keys) ======
     step2: {
       intro_title: "Plan tomorrow's meals with one tap",
       intro_hint: 'Tap to continue',
@@ -84,7 +86,7 @@ export const HANDSON_TOUR_I18N_EN = {
       a11y_result_announce: 'Ginger pork stir-fry, 620 kcal, 20 min cooking time.',
     },
 
-    // ====== Step 3 Badge check (13 keys) ======
+    // ====== Step 3 Badge check (14 keys) ======
     step3: {
       // loading
       loading_text: 'Checking badges...',
@@ -181,7 +183,7 @@ export type HandsonTourI18nEn = typeof HANDSON_TOUR_I18N_EN;
 
 export const HANDSON_TOUR_I18N_JA = {
   tour: {
-    // ====== Step 0 ウェルカム (8 キー) ======
+    // ====== Step 0 ウェルカム (7 キー) ======
     step0: {
       title: '{nickname} さん、ようこそ!',
       subtitle: '3 つの便利機能を一緒に試してみましょう (約 90 秒)',
@@ -192,7 +194,7 @@ export const HANDSON_TOUR_I18N_JA = {
       a11y_later_hint: 'タップするとチュートリアルを終了します',
     },
 
-    // ====== Step 1 写真追加 (14 キー) ======
+    // ====== Step 1 写真追加 (15 キー) ======
     step1: {
       // intro
       intro_title: '写真 1 枚で食事が記録できます',
@@ -220,7 +222,7 @@ export const HANDSON_TOUR_I18N_JA = {
       a11y_result_announce: '鶏の唐揚げ定食、780 キロカロリー。{nickname} さんの目標 {target_kcal} キロカロリー の {percent} パーセントです。',
     },
 
-    // ====== Step 2 AI 献立 (14 キー) ======
+    // ====== Step 2 AI 献立 (18 キー) ======
     step2: {
       intro_title: 'ボタン 1 つで明日の献立が決まります',
       intro_hint: 'タップで進む',
@@ -250,7 +252,7 @@ export const HANDSON_TOUR_I18N_JA = {
       a11y_result_announce: '豚肉と野菜の生姜焼き、620 キロカロリー、調理時間 20 分。',
     },
 
-    // ====== Step 3 バッジ確認 (13 キー) ======
+    // ====== Step 3 バッジ確認 (14 キー) ======
     step3: {
       // loading
       loading_text: 'バッジを確認中...',
@@ -278,7 +280,7 @@ export const HANDSON_TOUR_I18N_JA = {
       a11y_title: 'ステップ 4 / 5、{nickname} さん、もう 2 つバッジを獲得しています',
     },
 
-    // ====== Step 4 卒業 (14 キー) ======
+    // ====== Step 4 卒業 (13 キー: badge_disclaimer_title / badge_disclaimer_body を含む) ======
     step4: {
       // saving
       saving_text: '完了処理中...',

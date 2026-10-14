@@ -8,6 +8,7 @@
  * spec ファイル内でのボイラープレートを削減する。
  */
 
+import type { Page } from "@playwright/test";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
 
@@ -20,6 +21,8 @@ dotenvConfig({ path: path.resolve(__dirname, "../../../../../../.env.local") });
 // ─────────────────────────────────────────────────────────────────────────────
 // 定数
 // ─────────────────────────────────────────────────────────────────────────────
+
+const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 
 function getSupabaseConfig() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -529,4 +532,197 @@ export async function getTransferProposalFromDB(params: {
   );
   const rows = result.body as Array<Record<string, unknown>>;
   return rows[0] ?? null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 子供メンバーの昇格 (本人同意フロー, #1232) 用ヘルパー
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * ログイン済みの page から API を叩く (Cookie が自動で付く)。
+ *
+ * fixture から渡された直後の page は about:blank で、相対 URL の fetch が
+ * "Failed to parse URL" になる。そのときだけ、アプリを描画しない静的ファイル
+ * (middleware の matcher 対象外) を開いて、origin と Cookie を使える状態にする。
+ */
+export async function apiFetch(
+  page: Page,
+  apiPath: string,
+  options: { method?: string; body?: unknown } = {},
+): Promise<{ status: number; body: unknown }> {
+  if (!/^https?:/.test(page.url())) {
+    await page.goto(`${BASE_URL}/robots.txt`);
+  }
+
+  return page.evaluate(
+    async ({ apiPath, options }: { apiPath: string; options: { method?: string; body?: unknown } }) => {
+      const res = await fetch(apiPath, {
+        method: options.method ?? "GET",
+        headers: options.body ? { "Content-Type": "application/json" } : {},
+        body: options.body ? JSON.stringify(options.body) : undefined,
+        credentials: "include",
+      });
+      let body: unknown;
+      try { body = await res.json(); } catch { body = await res.text(); }
+      return { status: res.status, body };
+    },
+    { apiPath, options },
+  );
+}
+
+/**
+ * 画面を開き、読み込みが落ち着くまでに未処理のクライアント例外 (pageerror) が出ていないことを確認する。
+ *
+ * 画面が壊れて真っ白 (またはエラー画面) になると、後続の「見出しが見える」系の検証は
+ * 長いタイムアウトの末に「要素が無い」としか言わない。原因の例外メッセージを先に出すために使う。
+ *
+ * dev サーバはファイルの変更 (他の作業や Playwright の成果物の書き出しを含む) のたびに再ビルドし、
+ * その最中に開くと、チャンクが欠けている・途中までしか書かれていない状態で配信されて
+ * 一瞬だけ例外になることがある (ChunkLoadError / "Invalid or unexpected token" など)。
+ * そのため、例外が出たときは警告を出して 1 回だけ開き直す。
+ * アプリ側の不具合なら開き直しても同じ例外が出るので、2 回目で失敗として報告される。
+ */
+export async function gotoWithoutClientErrors(page: Page, url: string): Promise<void> {
+  const MAX_ATTEMPTS = 2;
+
+  for (let attempt = 1; ; attempt++) {
+    const errors: string[] = [];
+    const onPageError = (error: Error) => {
+      errors.push(error.message);
+    };
+
+    page.on("pageerror", onPageError);
+    try {
+      await page.goto(url);
+      // dev サーバの常時通信などで networkidle にならなくても、検証自体は続けられるようにする
+      await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
+    } finally {
+      page.off("pageerror", onPageError);
+    }
+
+    if (errors.length === 0) return;
+
+    const summary = [...new Set(errors)].join(" / ");
+    if (attempt < MAX_ATTEMPTS) {
+      console.warn(
+        `[membership-family] ${url} でクライアント例外 (${summary})。dev サーバの再ビルド中の可能性があるため、1 回だけ開き直します`,
+      );
+      continue;
+    }
+    throw new Error(`[membership-family] ${url} でクライアント例外が発生しました: ${summary}`);
+  }
+}
+
+/**
+ * service_role で user_profiles を UPSERT する (fresh user に事前に作るプロフィール)。
+ *
+ * - completed: オンボーディング完了済み (onboarding_completed_at = 現在時刻)
+ * - pending:   オンボーディング未着手 (onboarding_started_at / onboarding_completed_at とも NULL)
+ */
+export async function upsertUserProfileDirect(params: {
+  userId: string;
+  nickname: string;
+  onboarding: "completed" | "pending";
+}): Promise<void> {
+  const { supabaseUrl, serviceRoleKey } = getSupabaseConfig();
+
+  const resp = await fetch(`${supabaseUrl}/rest/v1/user_profiles`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      Prefer: "resolution=merge-duplicates,return=minimal",
+    },
+    body: JSON.stringify({
+      id: params.userId,
+      nickname: params.nickname,
+      age_group: "10s",
+      gender: "unspecified",
+      roles: ["user"],
+      onboarding_started_at: null,
+      onboarding_completed_at: params.onboarding === "completed" ? new Date().toISOString() : null,
+    }),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(
+      `[membership-family] user_profiles UPSERT 失敗 (${resp.status}): ${text.substring(0, 300)}`,
+    );
+  }
+}
+
+/**
+ * DB から user_profiles.family_id を取得する (assertion 用)。
+ * 行が無いときは NULL と区別するために throw する (「NULL のまま」の検証が空振りしないように)。
+ */
+export async function getUserFamilyIdFromDB(userId: string): Promise<string | null> {
+  const result = await serviceApiFetch(`user_profiles?id=eq.${userId}&select=family_id`);
+  const rows = result.body as Array<{ family_id: string | null }>;
+  if (result.status !== 200 || !Array.isArray(rows) || rows.length === 0) {
+    throw new Error(
+      `[membership-family] user_profiles 行が取得できません (userId: ${userId}, status: ${result.status})`,
+    );
+  }
+  return rows[0].family_id;
+}
+
+export type PromotionRequestRow = {
+  id: string;
+  member_id: string;
+  email: string;
+  /** 64 桁 hex。本人にだけメールで届く同意の証跡 (HTTP レスポンスには載らない) */
+  token: string;
+  status: "pending" | "accepted" | "rejected" | "revoked" | "expired";
+  expires_at: string;
+  resolved_by: string | null;
+};
+
+/**
+ * DB から family_promotion_requests 行を member_id で取得する (新しい順)。
+ *
+ * token 列は authenticated ロールに列単位 GRANT で読ませていないため、
+ * メールの代わりにここ (service_role) から読む。
+ */
+export async function getPromotionRequestsFromDB(memberId: string): Promise<PromotionRequestRow[]> {
+  const result = await serviceApiFetch(
+    `family_promotion_requests?member_id=eq.${memberId}&select=id,member_id,email,token,status,expires_at,resolved_by&order=created_at.desc`,
+  );
+  if (result.status !== 200 || !Array.isArray(result.body)) {
+    throw new Error(
+      `[membership-family] family_promotion_requests 取得失敗 (status: ${result.status}): ${JSON.stringify(result.body).substring(0, 300)}`,
+    );
+  }
+  return result.body as PromotionRequestRow[];
+}
+
+/**
+ * 昇格リクエストの有効期限を過去にする (期限切れのテスト用)。
+ * status は 'pending' のまま変えない (期限切れは常に expires_at で判定される)。
+ */
+export async function expirePromotionRequestInDB(requestId: string): Promise<void> {
+  const result = await serviceApiFetch(`family_promotion_requests?id=eq.${requestId}`, {
+    method: "PATCH",
+    body: { expires_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() },
+    prefer: "return=minimal",
+  });
+  if (result.status >= 300) {
+    throw new Error(
+      `[membership-family] family_promotion_requests の期限切れ化に失敗 (status: ${result.status})`,
+    );
+  }
+}
+
+/**
+ * pending の昇格リクエストを 1 件取得する (token 付き)。pending が 1 件でなければ throw。
+ */
+export async function getPendingPromotionRequest(memberId: string): Promise<PromotionRequestRow> {
+  const pending = (await getPromotionRequestsFromDB(memberId)).filter((row) => row.status === "pending");
+  if (pending.length !== 1) {
+    throw new Error(
+      `[membership-family] pending の昇格リクエストが ${pending.length} 件です (期待: 1 件, memberId: ${memberId})`,
+    );
+  }
+  return pending[0];
 }

@@ -1,4 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
+import { jstToday } from '@/lib/jst-day-ranges';
 import { NextResponse } from 'next/server';
 import { buildCatalogSelectionUpdate } from '../../../lib/catalog-products';
 import {
@@ -6,8 +8,13 @@ import {
   enqueueMealImageJobs,
   triggerMealImageJobProcessing,
 } from '../../../lib/meal-image-jobs';
+import { markDishImagesSkipped } from '../../../lib/meal-image';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { aiDailyLimitSkippedField, consumeAiUsage, refundAiUsage, type AiUsageResult } from '@/lib/plan/entitlements';
+import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { createLogger } from '@/lib/db-logger';
+import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
+import { internalError } from '@/lib/api/errors';
 
 /**
  * 食事一覧取得（日付ベースモデル: user_daily_meals → planned_meals）
@@ -25,8 +32,8 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const date = searchParams.get('date');
 
-    // 日付が指定されていない場合は今日
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    // 日付が指定されていない場合は今日 (JST の暦日。#1433)
+    const targetDate = date || jstToday();
 
     // user_daily_mealsとplanned_mealsをJOINして取得
     const { data: dailyMeal, error: dayError } = await supabase
@@ -44,7 +51,7 @@ export async function GET(request: Request) {
       .maybeSingle();
 
     if (dayError) {
-      return NextResponse.json({ error: dayError.message }, { status: 500 });
+      return internalError('GET /api/meals', dayError, { userId: user.id });
     }
 
     if (!dailyMeal) {
@@ -59,8 +66,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ meals });
 
   } catch (error: any) {
-    console.error('Error fetching meals:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/meals', error);
   }
 }
 
@@ -95,11 +101,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    // #1205: meal_type と栄養素の型・範囲を、DB に触れる前に確認する（不正なら 400）
+    const validation = validatePlannedMealInput({
+      mealType,
+      nutrients: { calories_kcal: caloriesKcal },
+    });
+    if (!validation.ok) {
+      return NextResponse.json(plannedMealValidationErrorBody(validation), { status: 400 });
+    }
+
     const manualImageUrl = typeof imageUrl === 'string' ? imageUrl : undefined;
     const imageModel = process.env.GEMINI_IMAGE_MODEL ?? undefined;
     const triggerSource = 'nextjs:meals:POST';
     const requestId = request.headers.get('x-request-id') ?? null;
-    const hasImageManagedDishes = Array.isArray(dishes) && dishes.length > 0;
+    // 商品を選んだとき (catalogProductId) は、料理を商品の料理 (画像は商品の画像。buildCatalogSelectionUpdate の dishes / image_url) で
+    // 保存するので、送られた料理から AI の画像のジョブを作らない (#1487 の整合ゲート。作ると、保存しない料理のために安全弁の 1 回を数え、
+    // ジョブを積んでしまう)
+    const hasImageManagedDishes = !catalogProductId && Array.isArray(dishes) && dishes.length > 0;
     const dishImagePayload = hasImageManagedDishes
       ? await buildDishImagePayload({
           previousDishes: null,
@@ -110,12 +128,72 @@ export async function POST(request: Request) {
           imageModel,
           existingCover: null,
           fallbackMealImageUrl: imageUrl ?? null,
+          // 送られた写真・商品・手の画像の料理 (image_source が meal_photo / catalog / manual_override) は、
+          // AI の画像の料理にせず、画像と状態を保持する (#1487 の整合ゲート)
+          preserveSubmittedDishImages: true,
         })
       : {
           dishes: dishes ?? null,
           jobs: [],
           mealCoverImageUrl: imageUrl ?? null,
         };
+
+    // 料理画像のジョブを積むかを、料理 (dishes) を保存する前に決める (#1487)。
+    // 見送るなら、対象の料理を見送りの状態 ('failed' + 理由) にしてから保存する
+    // ('pending' のまま保存すると、処理するジョブが無いので「料理画像を生成中です」のまま残る)。
+    let imageDishes = dishImagePayload.dishes;
+    let imageJobs = dishImagePayload.jobs;
+    let imageGenerationThrottled = false;
+    // #1149 AI の利用回数の上限の判定の結果 (画像を付けない・同意が無い・レート制限で止めたときは判定しないので null)
+    let imageUsage: AiUsageResult | null = null;
+    let imageAllowed = false;
+    if (imageJobs.length > 0) {
+      // #1022 画像副作用（enqueue + trigger）は meal 本体の成否から独立させる。
+      // - rate 超過時は enqueue 自体もスキップし、孤児 pending ジョブ（掃かれず永久欠落する行）を作らない。
+      // - checkRateLimit が例外（Upstash 到達不能等）を投げても、ここではローカルで握りつぶし
+      //   画像生成をスキップするだけに留める。meal 作成自体の成否（200）には波及させない。
+      //   ※ この緩和は画像副作用サイト限定。主目的が AI 呼び出しの route は fail-close を維持する。
+      try {
+        const rl = await checkRateLimit(user.id, 'image');
+        imageAllowed = rl.success;
+        if (imageAllowed) {
+          // 同意が無ければ (判定に失敗した場合も)、画像の生成ジョブを処理する Edge Function (process-meal-image-jobs) が
+          // AI へ送らずに止める (T15 / #1154。料理は 'failed' + 同意の理由になる)。AI へ送らない操作は記録しない
+          // (同意の判定 → 利用回数の記録 → AI への送信の順)。ジョブを積むかどうかは、同意の有無では変えない (止めるのは処理する側)
+          const imageConsent = await checkUserAiConsent(supabase, user.id);
+          if (imageConsent.allowed) {
+            // #1149 料理画像は保存の自動の副作用なので、明示の 1 日の上限 (10 回) には数えない ('meal_image_auto'。記録だけ。
+            // 食事を記録するだけで AI 相談や写真の解析が止まらないように)。そのかわり料理画像だけの安全弁 (DB の ai_unmetered_daily_caps。
+            // 既定は 1 日 20 回) があり、達していれば画像だけ見送る (ジョブを積まない。献立の保存はそのまま。応答の aiSkipped: AI_DAILY_LIMIT)。
+            // 操作 1 回で 1 回 (積む画像のジョブの数によらない)。判定に失敗したときは止めない
+            imageUsage = await consumeAiUsage(user.id, 'meal_image_auto');
+            if (!imageUsage.allowed) imageAllowed = false;
+          }
+        }
+      } catch (rlError) {
+        createLogger('api/meals').warn('Image rate-limit check failed; skipping image generation', {
+          userId: user.id,
+          error: rlError instanceof Error ? rlError.message : String(rlError),
+        });
+        imageAllowed = false;
+      }
+
+      if (!imageAllowed) {
+        const skipReason = imageUsage?.allowed === false ? 'ai_limit' : 'rate_limit';
+        if (skipReason === 'rate_limit') {
+          // レート制限で見送った (上限 #1149 で見送ったときは、下の aiSkipped で知らせる)
+          imageGenerationThrottled = true;
+          console.warn('[meals] Image generation skipped due to rate limit', { userId: user.id });
+        }
+        imageDishes = markDishImagesSkipped(imageDishes, imageJobs, skipReason);
+        imageJobs = [];
+      }
+    }
+
+    // 料理画像の 1 回を数えたあと、献立を保存できなかったときは数え戻す (AI へは何も送っていない。#1149 の数え戻し)
+    const refundImageUsage = async () => {
+      if (imageUsage?.allowed) await refundAiUsage(user.id, 'meal_image_auto', imageUsage);
+    };
 
     // 1. user_daily_mealsをupsert
     const { data: dailyMeal, error: dailyMealError } = await supabase
@@ -132,6 +210,7 @@ export async function POST(request: Request) {
       .single();
 
     if (dailyMealError || !dailyMeal) {
+      await refundImageUsage();
       throw dailyMealError || new Error('Failed to create daily meal');
     }
 
@@ -142,84 +221,70 @@ export async function POST(request: Request) {
       dish_name: dishName,
       mode: mode,
       description: description,
-      calories_kcal: caloriesKcal,
+      // 検証済みの値（整数に丸め済み。未送信なら undefined のまま列を書かない）
+      calories_kcal: validation.nutrients.calories_kcal,
       ingredients: ingredients,
       image_url: dishImagePayload.mealCoverImageUrl,
-      dishes: dishImagePayload.dishes,
+      dishes: imageDishes,
       is_completed: false,
       source_type: sourceType || 'manual',
     };
 
-    if (catalogProductId) {
-      const { fields } = await buildCatalogSelectionUpdate({
-        supabase,
-        catalogProductId,
-        mode: mode || 'buy',
-        imageUrl: imageUrl ?? undefined,
-        description: description ?? undefined,
-        selectedFrom: 'manual_search',
-      });
-      Object.assign(insertData, fields);
+    let meal;
+    try {
+      if (catalogProductId) {
+        const { fields } = await buildCatalogSelectionUpdate({
+          supabase,
+          catalogProductId,
+          mode: mode || 'buy',
+          imageUrl: imageUrl ?? undefined,
+          description: description ?? undefined,
+          selectedFrom: 'manual_search',
+        });
+        Object.assign(insertData, fields);
+      }
+
+      const { data: inserted, error: mealError } = await supabase
+        .from('planned_meals')
+        .insert(insertData)
+        .select()
+        .single();
+
+      if (mealError) throw mealError;
+      meal = inserted;
+    } catch (saveError) {
+      await refundImageUsage();
+      throw saveError;
     }
 
-    const { data: meal, error: mealError } = await supabase
-      .from('planned_meals')
-      .insert(insertData)
-      .select()
-      .single();
-
-    if (mealError) throw mealError;
-
-    let imageGenerationThrottled = false;
-    if (dishImagePayload.jobs.length > 0) {
-      // #1022 画像副作用（enqueue + trigger）は meal 本体の成否から独立させる。
-      // - rate 超過時は enqueue 自体もスキップし、孤児 pending ジョブ（掃かれず永久欠落する行）を作らない。
-      // - checkRateLimit が例外（Upstash 到達不能等）を投げても、ここではローカルで握りつぶし
-      //   画像生成をスキップするだけに留める。meal 作成自体の成否（200）には波及させない。
-      //   ※ この緩和は画像副作用サイト限定。主目的が AI 呼び出しの route は fail-close を維持する。
-      let imageAllowed = false;
-      try {
-        const rl = await checkRateLimit(user.id, 'image');
-        imageAllowed = rl.success;
-      } catch (rlError) {
-        createLogger('api/meals').warn('Image rate-limit check failed; skipping image generation', {
-          userId: user.id,
-          plannedMealId: meal.id,
-          error: rlError instanceof Error ? rlError.message : String(rlError),
-        });
-        imageAllowed = false;
-      }
-
-      if (imageAllowed) {
-        await enqueueMealImageJobs({
-          supabase,
-          plannedMealId: meal.id,
-          userId: user.id,
-          triggerSource,
-          jobSeeds: dishImagePayload.jobs,
-          requestId,
-        });
-        await triggerMealImageJobProcessing({
-          plannedMealId: meal.id,
-          limit: dishImagePayload.jobs.length,
-        });
-      } else {
-        imageGenerationThrottled = true;
-        console.warn('[meals] Image generation skipped due to rate limit', {
-          userId: user.id,
-          plannedMealId: meal.id,
-        });
-      }
+    if (imageAllowed && imageJobs.length > 0) {
+      // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。service role で積む。
+      // 1 行も積めなかったとき (重複・書き込みの失敗) は、enqueueMealImageJobs が数えた 1 回を戻す (#1487)
+      const queueDb = getAiQueueWriter();
+      await enqueueMealImageJobs({
+        supabase: queueDb,
+        plannedMealId: meal.id,
+        userId: user.id,
+        triggerSource,
+        jobSeeds: imageJobs,
+        requestId,
+        usage: imageUsage,
+      });
+      await triggerMealImageJobProcessing({
+        plannedMealId: meal.id,
+        limit: imageJobs.length,
+      });
     }
 
     return NextResponse.json({
       meal,
       // #1022 (Suggestion): 画像生成がスロットルされた場合のみ additive にフラグを付与する
       ...(imageGenerationThrottled ? { imageGenerationThrottled: true } : {}),
+      // #1149 今日の AI の利用回数の上限に達して、料理画像だけを見送ったとき
+      ...aiDailyLimitSkippedField(imageUsage),
     });
 
   } catch (error: any) {
-    console.error('Error creating meal:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/meals', error);
   }
 }

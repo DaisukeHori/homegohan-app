@@ -5,14 +5,26 @@ import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
 import { Button, Card, EmptyState, Input, LoadingState, SectionHeader } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
+import { getApiErrorMessage } from "../../../src/lib/api-error";
 import { colors, spacing } from "../../../src/theme";
 
+/** GET /api/super-admin/settings の 1 行 (列の名前はサーバーのまま。src/app/api/super-admin/settings/route.ts。#1486) */
 type SettingRow = {
   key: string;
   value: any;
   description: string | null;
-  updatedAt: string | null;
+  updated_at: string | null;
+  /**
+   * 使われていない key (サーバーの src/lib/super-admin/retired-settings.ts。例: 旧 feature_flags) なら true (#1457)。
+   * 画面は「使われていない」と出し、保存させない (サーバーも PUT を 409 SETTING_READ_ONLY で断る)
+   */
+  read_only?: boolean;
+  /** read_only の行に出す説明 (サーバーが決めた文)。ほかは null */
+  note?: string | null;
 };
+
+/** サーバーが説明 (note) を返さなかったときに、使われていない key に出す文 */
+const READ_ONLY_FALLBACK_NOTE = "この設定は使われていません (読み取り専用)。";
 
 export default function SuperAdminSettingsPage() {
   const [items, setItems] = useState<SettingRow[]>([]);
@@ -44,7 +56,7 @@ export default function SuperAdminSettingsPage() {
 
   async function upsert() {
     const k = keyText.trim();
-    if (!k || isSubmitting) return;
+    if (!k || isSubmitting || selectedReadOnly) return;
 
     let value: any = valueText;
     try {
@@ -64,13 +76,16 @@ export default function SuperAdminSettingsPage() {
       Alert.alert("保存しました", "設定を更新しました。");
       await load();
     } catch (e: any) {
-      Alert.alert("保存失敗", e?.message ?? "保存に失敗しました。");
+      // 使われていない key の 409 SETTING_READ_ONLY などは、本文の message を出す (生の文字列 (JSON) を出さない。#1457)
+      Alert.alert("保存失敗", getApiErrorMessage(e, "保存に失敗しました。"));
     } finally {
       setIsSubmitting(false);
     }
   }
 
   const selected = useMemo(() => items.find((i) => i.key === keyText.trim()) ?? null, [items, keyText]);
+  // 使われていない key は保存させない (#1457)
+  const selectedReadOnly = selected?.read_only === true;
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["4xl"] }}>
@@ -110,10 +125,16 @@ export default function SuperAdminSettingsPage() {
           {selected ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
               <Ionicons name="time-outline" size={14} color={colors.textMuted} />
-              <Text style={{ fontSize: 12, color: colors.textMuted }}>現在の更新日時: {selected.updatedAt ?? "-"}</Text>
+              <Text style={{ fontSize: 12, color: colors.textMuted }}>現在の更新日時: {selected.updated_at ?? "-"}</Text>
             </View>
           ) : null}
-          <Button onPress={upsert} loading={isSubmitting} disabled={isSubmitting}>
+          {selectedReadOnly ? (
+            <View testID="super-admin-settings-read-only-note" style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+              <Ionicons name="lock-closed-outline" size={14} color={colors.textMuted} />
+              <Text style={{ fontSize: 12, color: colors.textMuted, flex: 1 }}>{selected?.note ?? READ_ONLY_FALLBACK_NOTE}</Text>
+            </View>
+          ) : null}
+          <Button testID="super-admin-settings-save" onPress={upsert} loading={isSubmitting} disabled={isSubmitting || selectedReadOnly}>
             {isSubmitting ? "保存中..." : "保存"}
           </Button>
         </View>
@@ -148,10 +169,15 @@ export default function SuperAdminSettingsPage() {
                 </View>
                 <View style={{ flex: 1, gap: 2 }}>
                   <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{s.key}</Text>
+                  {s.read_only ? (
+                    <Text testID={`super-admin-settings-retired-${s.key}`} style={{ fontSize: 12, color: colors.textMuted }}>
+                      {s.note ?? READ_ONLY_FALLBACK_NOTE}
+                    </Text>
+                  ) : null}
                   {s.description ? <Text style={{ fontSize: 13, color: colors.textLight }}>{s.description}</Text> : null}
                   <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
                     <Ionicons name="time-outline" size={12} color={colors.textMuted} />
-                    <Text style={{ fontSize: 12, color: colors.textMuted }}>{s.updatedAt ?? "-"}</Text>
+                    <Text style={{ fontSize: 12, color: colors.textMuted }}>{s.updated_at ?? "-"}</Text>
                   </View>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />

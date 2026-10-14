@@ -6,6 +6,7 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 
 export async function GET() {
   try {
@@ -19,7 +20,7 @@ export async function GET() {
       .order('created_at', { ascending: false });
 
     if (error) {
-      return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 });
+      return internalError('GET /api/super-admin/admins', error, {}, { shape: 'nested' });
     }
 
     return NextResponse.json({ admins: data ?? [] });
@@ -30,7 +31,6 @@ export async function GET() {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    return internalError('GET /api/super-admin/admins', err, {}, { shape: 'nested' });
   }
 }

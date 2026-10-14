@@ -14,6 +14,12 @@ import {
   type SubStepOfStep1,
 } from '@homegohan/handson-tour-shared';
 import { createClient } from '@/lib/supabase/client';
+import {
+  EMPTY_PHOTO_TOUR_PROFILE,
+  fetchPhotoTourProfile,
+  type PhotoTourProfile,
+} from '@/lib/handson-tour/tour-profile';
+import { reportTourProfileFailures } from '@/lib/handson-tour/tour-profile-report';
 
 function safeNickname(raw: string | null | undefined): string {
   if (!raw) return 'あなた';
@@ -23,12 +29,7 @@ function safeNickname(raw: string | null | undefined): string {
   return trimmed;
 }
 
-type UserProfile = {
-  nickname: string | null;
-  target_kcal_per_day: number | null;
-};
-
-function buildBubble(subStep: SubStepOfStep1, profile: UserProfile) {
+function buildBubble(subStep: SubStepOfStep1, profile: PhotoTourProfile) {
   const i18n = HANDSON_TOUR_I18N_JA.tour.step1;
   const nickname = safeNickname(profile.nickname);
 
@@ -50,7 +51,7 @@ function buildBubble(subStep: SubStepOfStep1, profile: UserProfile) {
         position: 'auto' as const,
       };
     case '1.5': {
-      const targetKcal = profile.target_kcal_per_day;
+      const targetKcal = profile.target_kcal;
       if (targetKcal) {
         const percent = Math.round((MOCK_PHOTO_RESPONSE.calories / targetKcal) * 100);
         return {
@@ -90,32 +91,33 @@ function buildBubble(subStep: SubStepOfStep1, profile: UserProfile) {
 export default function HandsonTourPhotoPage() {
   const router = useRouter();
   const [subStep, setSubStep] = useState<SubStepOfStep1>('1.1');
-  const [profile, setProfile] = useState<UserProfile>({ nickname: null, target_kcal_per_day: null });
+  const [profile, setProfile] = useState<PhotoTourProfile>(EMPTY_PHOTO_TOUR_PROFILE);
   const [isSaving, setIsSaving] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const mountTimeRef = useRef(Date.now());
 
   useEffect(() => {
+    let cancelled = false;
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) return;
-      setUserId(user.id);
-      supabase
-        .from('user_profiles')
-        .select('nickname, target_kcal_per_day')
-        .eq('id', user.id)
-        .single()
-        .then(({ data }) => {
-          if (data) {
-            setProfile({
-              nickname: data.nickname ?? null,
-              target_kcal_per_day: (data as unknown as Record<string, unknown>).target_kcal_per_day != null
-                ? Number((data as unknown as Record<string, unknown>).target_kcal_per_day)
-                : null,
-            });
-          }
-        });
-    });
+    supabase.auth
+      .getUser()
+      .then(async ({ data: { user } }) => {
+        if (!user || cancelled) return;
+        setUserId(user.id);
+        // #1040: 目標カロリーは nutrition_targets.daily_calories にある
+        // (以前は存在しない user_profiles.target_kcal_per_day を select して 42703 で失敗し、ニックネームも空のままだった)
+        const { profile: loaded, failures } = await fetchPhotoTourProfile(supabase, user.id);
+        if (cancelled) return;
+        setProfile(loaded);
+        // 体験モードなので失敗してもブロックしないが、必ず記録する
+        reportTourProfileFailures({ step: 1, userId: user.id, failures });
+      })
+      .catch(() => {
+        // 認証情報の取得などに失敗してもパーソナライズなしで続ける(体験モードのため必須ではない)
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // mount 時に step_viewed (step=1) を発火
@@ -133,6 +135,31 @@ export default function HandsonTourPhotoPage() {
 
   const advanceSubStep = (next: SubStepOfStep1) => {
     setSubStep(next);
+  };
+
+  // #1057 (UX1-03): ツアー中盤に途中離脱手段が無く完走を強制していたため、
+  // Step0(page.tsx)と同じパターンでスキップを追加する
+  const handleSkip = async () => {
+    if (userId) {
+      fireAnalytics('handson_tour_skipped', {
+        user_id: userId,
+        timestamp: new Date().toISOString(),
+        platform: 'web' as const,
+        app_version: '1.0.0',
+        step: 1,
+        reason: 'user_action',
+      });
+    }
+    try {
+      await fetch('/api/handson-tour/skip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ step: 1, reason: 'user_action' }),
+      });
+    } catch {
+      // ネットワークエラー時もローカルでスキップ
+    }
+    router.push('/home');
   };
 
   const handleSandboxComplete = async () => {
@@ -155,7 +182,7 @@ export default function HandsonTourPhotoPage() {
       }
     }
     try {
-      await fetch('/api/meal-plans/add-from-photo?source=handson_tour', {
+      const res = await fetch('/api/meal-plans/add-from-photo?source=handson_tour', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -164,8 +191,36 @@ export default function HandsonTourPhotoPage() {
           source: 'handson_tour',
         }),
       });
+      // #1057 (UX1-09): レスポンス失敗を確認せず「成功したふり」で次へ進んでいたため、
+      // API 障害時に何が起きたか観測できなかった。体験モードはブロックせず次へ進めるが、
+      // 失敗は必ず記録する。
+      if (!res.ok && userId) {
+        fireAnalytics('handson_tour_step_error', {
+          user_id: userId,
+          timestamp: new Date().toISOString(),
+          platform: 'web' as const,
+          app_version: '1.0.0',
+          step: 1,
+          sub_step: '1.6',
+          error_code: 'sandbox_save_failed',
+          error_message: 'POST /api/meal-plans/add-from-photo failed',
+          http_status: res.status,
+        });
+      }
     } catch {
-      // ネットワークエラーはスキップして次へ
+      // ネットワークエラーはスキップして次へ(体験モードのため保存必須ではない)
+      if (userId) {
+        fireAnalytics('handson_tour_step_error', {
+          user_id: userId,
+          timestamp: new Date().toISOString(),
+          platform: 'web' as const,
+          app_version: '1.0.0',
+          step: 1,
+          sub_step: '1.6',
+          error_code: 'sandbox_save_network_error',
+          error_message: 'POST /api/meal-plans/add-from-photo threw',
+        });
+      }
     } finally {
       setIsSaving(false);
       router.push(HANDSON_TOUR_ROUTES.step2);
@@ -413,7 +468,8 @@ export default function HandsonTourPhotoPage() {
           autoAdvanceMs,
           onAutoAdvance,
           primaryAction,
-          showSkip: false,
+          showSkip: true,
+          onSkip: handleSkip,
           accessibilityLabel: i18n.a11y_title,
         }}
         childProps={{

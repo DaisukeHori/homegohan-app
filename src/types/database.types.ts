@@ -285,6 +285,87 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_daily_limits: {
+        Row: {
+          daily_limit: number | null
+          plan_key: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          daily_limit?: number | null
+          plan_key: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          daily_limit?: number | null
+          plan_key?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      ai_unmetered_daily_caps: {
+        Row: {
+          daily_cap: number
+          feature: string
+          updated_at: string
+        }
+        Insert: {
+          daily_cap: number
+          feature: string
+          updated_at?: string
+        }
+        Update: {
+          daily_cap?: number
+          feature?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      ai_usage_counters: {
+        Row: {
+          count: number
+          feature: string
+          updated_at: string
+          usage_date: string
+          user_id: string
+        }
+        Insert: {
+          count?: number
+          feature: string
+          updated_at?: string
+          usage_date: string
+          user_id: string
+        }
+        Update: {
+          count?: number
+          feature?: string
+          updated_at?: string
+          usage_date?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      ai_usage_grant_claims: {
+        Row: {
+          claimed_at: string
+          grant_id: string
+          user_id: string
+        }
+        Insert: {
+          claimed_at?: string
+          grant_id: string
+          user_id: string
+        }
+        Update: {
+          claimed_at?: string
+          grant_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       announcement_reads: {
         Row: {
           announcement_id: string
@@ -398,6 +479,33 @@ export type Database = {
           request_id?: string | null
           source?: string
           user_id?: string | null
+        }
+        Relationships: []
+      }
+      auth_login_failures: {
+        Row: {
+          created_at: string
+          email_hash: string
+          failure_count: number
+          last_failed_at: string | null
+          locked_until: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          email_hash: string
+          failure_count?: number
+          last_failed_at?: string | null
+          locked_until?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          email_hash?: string
+          failure_count?: number
+          last_failed_at?: string | null
+          locked_until?: string | null
+          updated_at?: string
         }
         Relationships: []
       }
@@ -1063,6 +1171,7 @@ export type Database = {
       }
       coupon_redemptions: {
         Row: {
+          anonymized_at: string | null
           applied_retroactively: boolean
           applied_to_subscription_id: string
           approved_by: string | null
@@ -1078,6 +1187,7 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          anonymized_at?: string | null
           applied_retroactively?: boolean
           applied_to_subscription_id: string
           approved_by?: string | null
@@ -1093,6 +1203,7 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          anonymized_at?: string | null
           applied_retroactively?: boolean
           applied_to_subscription_id?: string
           approved_by?: string | null
@@ -1123,7 +1234,7 @@ export type Database = {
           applicable_to: string
           code: string
           created_at: string
-          created_by: string
+          created_by: string | null
           discount_type: string
           discount_value: number
           display_name: string | null
@@ -1142,7 +1253,7 @@ export type Database = {
           applicable_to?: string
           code: string
           created_at?: string
-          created_by: string
+          created_by?: string | null
           discount_type: string
           discount_value: number
           display_name?: string | null
@@ -1161,7 +1272,7 @@ export type Database = {
           applicable_to?: string
           code?: string
           created_at?: string
-          created_by?: string
+          created_by?: string | null
           discount_type?: string
           discount_value?: number
           display_name?: string | null
@@ -2125,7 +2236,7 @@ export type Database = {
       experiments: {
         Row: {
           created_at: string
-          created_by: string
+          created_by: string | null
           end_date: string | null
           hypothesis: string | null
           id: string
@@ -2139,7 +2250,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
-          created_by: string
+          created_by?: string | null
           end_date?: string | null
           hypothesis?: string | null
           id?: string
@@ -2153,7 +2264,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
-          created_by?: string
+          created_by?: string | null
           end_date?: string | null
           hypothesis?: string | null
           id?: string
@@ -2173,6 +2284,7 @@ export type Database = {
           consented_at: string
           id: string
           ip_address: unknown
+          policy_version: string | null
           provider: string
           revoked_at: string | null
           user_agent: string | null
@@ -2183,6 +2295,7 @@ export type Database = {
           consented_at?: string
           id?: string
           ip_address?: unknown
+          policy_version?: string | null
           provider: string
           revoked_at?: string | null
           user_agent?: string | null
@@ -2193,6 +2306,7 @@ export type Database = {
           consented_at?: string
           id?: string
           ip_address?: unknown
+          policy_version?: string | null
           provider?: string
           revoked_at?: string | null
           user_agent?: string | null
@@ -2440,6 +2554,99 @@ export type Database = {
           },
         ]
       }
+      family_promotion_requests: {
+        Row: {
+          created_at: string
+          email: string
+          expires_at: string
+          family_id: string
+          id: string
+          member_id: string
+          requested_by: string
+          resolved_at: string | null
+          resolved_by: string | null
+          status: string
+          token: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          expires_at?: string
+          family_id: string
+          id?: string
+          member_id: string
+          requested_by: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          token: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          expires_at?: string
+          family_id?: string
+          id?: string
+          member_id?: string
+          requested_by?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "family_promotion_requests_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "family_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "family_promotion_requests_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "family_members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      feature_flags: {
+        Row: {
+          constraints: Json | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          enabled: boolean
+          id: string
+          key: string
+          rollout_strategy: Json | null
+          updated_at: string
+        }
+        Insert: {
+          constraints?: Json | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          enabled?: boolean
+          id?: string
+          key: string
+          rollout_strategy?: Json | null
+          updated_at?: string
+        }
+        Update: {
+          constraints?: Json | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          enabled?: boolean
+          id?: string
+          key?: string
+          rollout_strategy?: Json | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       feature_packages: {
         Row: {
           created_at: string
@@ -2486,7 +2693,7 @@ export type Database = {
           id: string
           notes: string | null
           requested_at: string
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           cancelled_at?: string | null
@@ -2497,7 +2704,7 @@ export type Database = {
           id?: string
           notes?: string | null
           requested_at?: string
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           cancelled_at?: string | null
@@ -2508,7 +2715,7 @@ export type Database = {
           id?: string
           notes?: string | null
           requested_at?: string
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -3021,7 +3228,7 @@ export type Database = {
           body: string
           category: string | null
           created_at: string
-          created_by: string
+          created_by: string | null
           id: string
           locale: string
           slug: string
@@ -3035,7 +3242,7 @@ export type Database = {
           body: string
           category?: string | null
           created_at?: string
-          created_by: string
+          created_by?: string | null
           id?: string
           locale?: string
           slug: string
@@ -3049,7 +3256,7 @@ export type Database = {
           body?: string
           category?: string | null
           created_at?: string
-          created_by?: string
+          created_by?: string | null
           id?: string
           locale?: string
           slug?: string
@@ -3204,6 +3411,57 @@ export type Database = {
           subject?: string
           updated_at?: string | null
           user_id?: string | null
+        }
+        Relationships: []
+      }
+      iroca_calibration_shots: {
+        Row: {
+          angles_deg: Json | null
+          ccm_residual: Json | null
+          created_at: string | null
+          id: number
+          sample_name: string
+          shot_metadata: Json | null
+          visual_labs: Json | null
+        }
+        Insert: {
+          angles_deg?: Json | null
+          ccm_residual?: Json | null
+          created_at?: string | null
+          id?: number
+          sample_name: string
+          shot_metadata?: Json | null
+          visual_labs?: Json | null
+        }
+        Update: {
+          angles_deg?: Json | null
+          ccm_residual?: Json | null
+          created_at?: string | null
+          id?: number
+          sample_name?: string
+          shot_metadata?: Json | null
+          visual_labs?: Json | null
+        }
+        Relationships: []
+      }
+      iroca_correction_model: {
+        Row: {
+          created_at: string | null
+          id: number
+          is_active: boolean | null
+          model: Json
+        }
+        Insert: {
+          created_at?: string | null
+          id?: number
+          is_active?: boolean | null
+          model: Json
+        }
+        Update: {
+          created_at?: string | null
+          id?: number
+          is_active?: boolean | null
+          model?: Json
         }
         Relationships: []
       }
@@ -3799,6 +4057,9 @@ export type Database = {
         Row: {
           created_at: string | null
           eaten_at: string
+          hidden_at: string | null
+          hidden_by: string | null
+          hidden_reason: string | null
           id: string
           is_sandbox: boolean
           meal_type: string
@@ -3811,6 +4072,9 @@ export type Database = {
         Insert: {
           created_at?: string | null
           eaten_at: string
+          hidden_at?: string | null
+          hidden_by?: string | null
+          hidden_reason?: string | null
           id?: string
           is_sandbox?: boolean
           meal_type: string
@@ -3823,6 +4087,9 @@ export type Database = {
         Update: {
           created_at?: string | null
           eaten_at?: string
+          hidden_at?: string | null
+          hidden_by?: string | null
+          hidden_reason?: string | null
           id?: string
           is_sandbox?: boolean
           meal_type?: string
@@ -3952,6 +4219,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      native_bridge_codes: {
+        Row: {
+          access_token: string
+          code_hash: string
+          created_at: string
+          expires_at: string
+          refresh_token: string
+          user_id: string
+        }
+        Insert: {
+          access_token: string
+          code_hash: string
+          created_at?: string
+          expires_at?: string
+          refresh_token: string
+          user_id: string
+        }
+        Update: {
+          access_token?: string
+          code_hash?: string
+          created_at?: string
+          expires_at?: string
+          refresh_token?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       notification_preferences: {
         Row: {
@@ -4220,6 +4514,21 @@ export type Database = {
           vitamin_e_mg?: number | null
           vitamin_k_ug?: number | null
           zinc_mg?: number | null
+        }
+        Relationships: []
+      }
+      ops_alert_state: {
+        Row: {
+          alert_key: string
+          last_sent_at: string
+        }
+        Insert: {
+          alert_key: string
+          last_sent_at?: string
+        }
+        Update: {
+          alert_key?: string
+          last_sent_at?: string
         }
         Relationships: []
       }
@@ -4820,7 +5129,7 @@ export type Database = {
         Row: {
           affected_subscription_count: number | null
           applies_to: string
-          changed_by: string
+          changed_by: string | null
           created_at: string
           effective_at: string
           id: string
@@ -4836,7 +5145,7 @@ export type Database = {
         Insert: {
           affected_subscription_count?: number | null
           applies_to: string
-          changed_by: string
+          changed_by?: string | null
           created_at?: string
           effective_at: string
           id?: string
@@ -4852,7 +5161,7 @@ export type Database = {
         Update: {
           affected_subscription_count?: number | null
           applies_to?: string
-          changed_by?: string
+          changed_by?: string | null
           created_at?: string
           effective_at?: string
           id?: string
@@ -5317,6 +5626,9 @@ export type Database = {
           cuisine_type: string | null
           description: string | null
           difficulty: string | null
+          hidden_at: string | null
+          hidden_by: string | null
+          hidden_reason: string | null
           id: string
           image_url: string | null
           ingredients: Json | null
@@ -5342,6 +5654,9 @@ export type Database = {
           cuisine_type?: string | null
           description?: string | null
           difficulty?: string | null
+          hidden_at?: string | null
+          hidden_by?: string | null
+          hidden_reason?: string | null
           id?: string
           image_url?: string | null
           ingredients?: Json | null
@@ -5367,6 +5682,9 @@ export type Database = {
           cuisine_type?: string | null
           description?: string | null
           difficulty?: string | null
+          hidden_at?: string | null
+          hidden_by?: string | null
+          hidden_reason?: string | null
           id?: string
           image_url?: string | null
           ingredients?: Json | null
@@ -5392,8 +5710,8 @@ export type Database = {
           expires_at: string | null
           granted_at: string | null
           id: string
-          referred_id: string
-          referrer_id: string
+          referred_id: string | null
+          referrer_id: string | null
           reward_type: string
           reward_value: Json
           status: string
@@ -5403,8 +5721,8 @@ export type Database = {
           expires_at?: string | null
           granted_at?: string | null
           id?: string
-          referred_id: string
-          referrer_id: string
+          referred_id?: string | null
+          referrer_id?: string | null
           reward_type: string
           reward_value: Json
           status?: string
@@ -5414,8 +5732,8 @@ export type Database = {
           expires_at?: string | null
           granted_at?: string | null
           id?: string
-          referred_id?: string
-          referrer_id?: string
+          referred_id?: string | null
+          referrer_id?: string | null
           reward_type?: string
           reward_value?: Json
           status?: string
@@ -5485,7 +5803,7 @@ export type Database = {
       sales_lead_activities: {
         Row: {
           activity_type: string
-          actor_id: string
+          actor_id: string | null
           created_at: string
           details: Json
           id: string
@@ -5493,7 +5811,7 @@ export type Database = {
         }
         Insert: {
           activity_type: string
-          actor_id: string
+          actor_id?: string | null
           created_at?: string
           details: Json
           id?: string
@@ -5501,7 +5819,7 @@ export type Database = {
         }
         Update: {
           activity_type?: string
-          actor_id?: string
+          actor_id?: string | null
           created_at?: string
           details?: Json
           id?: string
@@ -5672,6 +5990,27 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      segment_stats_finalized_periods: {
+        Row: {
+          finalized_at: string
+          period_end: string
+          period_start: string
+          period_type: string
+        }
+        Insert: {
+          finalized_at?: string
+          period_end: string
+          period_start: string
+          period_type: string
+        }
+        Update: {
+          finalized_at?: string
+          period_end?: string
+          period_start?: string
+          period_type?: string
+        }
+        Relationships: []
       }
       shopping_list_items: {
         Row: {
@@ -5908,6 +6247,7 @@ export type Database = {
           status: string
           stripe_price_id: string | null
           stripe_product_id: string | null
+          stripe_yearly_price_id: string | null
           superseded_by_plan_id: string | null
           trial_days: number
           updated_at: string
@@ -5934,6 +6274,7 @@ export type Database = {
           status?: string
           stripe_price_id?: string | null
           stripe_product_id?: string | null
+          stripe_yearly_price_id?: string | null
           superseded_by_plan_id?: string | null
           trial_days?: number
           updated_at?: string
@@ -5960,6 +6301,7 @@ export type Database = {
           status?: string
           stripe_price_id?: string | null
           stripe_product_id?: string | null
+          stripe_yearly_price_id?: string | null
           superseded_by_plan_id?: string | null
           trial_days?: number
           updated_at?: string
@@ -5983,7 +6325,7 @@ export type Database = {
           created_at: string
           id: string
           is_internal: boolean
-          sender_id: string
+          sender_id: string | null
           ticket_id: string
         }
         Insert: {
@@ -5992,7 +6334,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_internal?: boolean
-          sender_id: string
+          sender_id?: string | null
           ticket_id: string
         }
         Update: {
@@ -6001,7 +6343,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_internal?: boolean
-          sender_id?: string
+          sender_id?: string | null
           ticket_id?: string
         }
         Relationships: [
@@ -6028,7 +6370,7 @@ export type Database = {
           status: string
           subject: string
           updated_at: string
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           assignee_id?: string | null
@@ -6043,7 +6385,7 @@ export type Database = {
           status?: string
           subject: string
           updated_at?: string
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           assignee_id?: string | null
@@ -6058,7 +6400,7 @@ export type Database = {
           status?: string
           subject?: string
           updated_at?: string
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -6385,6 +6727,7 @@ export type Database = {
           cuisine_preferences: Json | null
           daily_water_ml: number | null
           department: string | null
+          department_id: string | null
           desk_hours_per_day: number | null
           diet_flags: Json | null
           diet_style: string | null
@@ -6426,6 +6769,7 @@ export type Database = {
           kitchen_appliances: string[] | null
           last_login_at: string | null
           last_profile_update: string | null
+          legal_accepted_at: string | null
           lifestyle: Json | null
           login_count: number | null
           meal_prep_ok: boolean | null
@@ -6454,6 +6798,7 @@ export type Database = {
           preferred_stores: string[] | null
           pregnancy_status: string | null
           presentation_importance: string | null
+          privacy_version_accepted: string | null
           profile_completeness: number | null
           radar_chart_nutrients: string[] | null
           region: string | null
@@ -6477,8 +6822,10 @@ export type Database = {
           target_weight: number | null
           taste_preferences: Json | null
           temperature_preference: string | null
+          terms_version_accepted: string | null
           texture_preferences: string[] | null
           travel_frequency: string | null
+          unban_at: string | null
           updated_at: string | null
           wake_time: string | null
           water_cutting: boolean | null
@@ -6518,6 +6865,7 @@ export type Database = {
           cuisine_preferences?: Json | null
           daily_water_ml?: number | null
           department?: string | null
+          department_id?: string | null
           desk_hours_per_day?: number | null
           diet_flags?: Json | null
           diet_style?: string | null
@@ -6559,6 +6907,7 @@ export type Database = {
           kitchen_appliances?: string[] | null
           last_login_at?: string | null
           last_profile_update?: string | null
+          legal_accepted_at?: string | null
           lifestyle?: Json | null
           login_count?: number | null
           meal_prep_ok?: boolean | null
@@ -6587,6 +6936,7 @@ export type Database = {
           preferred_stores?: string[] | null
           pregnancy_status?: string | null
           presentation_importance?: string | null
+          privacy_version_accepted?: string | null
           profile_completeness?: number | null
           radar_chart_nutrients?: string[] | null
           region?: string | null
@@ -6610,8 +6960,10 @@ export type Database = {
           target_weight?: number | null
           taste_preferences?: Json | null
           temperature_preference?: string | null
+          terms_version_accepted?: string | null
           texture_preferences?: string[] | null
           travel_frequency?: string | null
+          unban_at?: string | null
           updated_at?: string | null
           wake_time?: string | null
           water_cutting?: boolean | null
@@ -6651,6 +7003,7 @@ export type Database = {
           cuisine_preferences?: Json | null
           daily_water_ml?: number | null
           department?: string | null
+          department_id?: string | null
           desk_hours_per_day?: number | null
           diet_flags?: Json | null
           diet_style?: string | null
@@ -6692,6 +7045,7 @@ export type Database = {
           kitchen_appliances?: string[] | null
           last_login_at?: string | null
           last_profile_update?: string | null
+          legal_accepted_at?: string | null
           lifestyle?: Json | null
           login_count?: number | null
           meal_prep_ok?: boolean | null
@@ -6720,6 +7074,7 @@ export type Database = {
           preferred_stores?: string[] | null
           pregnancy_status?: string | null
           presentation_importance?: string | null
+          privacy_version_accepted?: string | null
           profile_completeness?: number | null
           radar_chart_nutrients?: string[] | null
           region?: string | null
@@ -6743,8 +7098,10 @@ export type Database = {
           target_weight?: number | null
           taste_preferences?: Json | null
           temperature_preference?: string | null
+          terms_version_accepted?: string | null
           texture_preferences?: string[] | null
           travel_frequency?: string | null
+          unban_at?: string | null
           updated_at?: string | null
           wake_time?: string | null
           water_cutting?: boolean | null
@@ -6760,6 +7117,13 @@ export type Database = {
           work_style?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "user_profiles_department_id_fkey"
+            columns: ["department_id"]
+            isOneToOne: false
+            referencedRelation: "departments"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "user_profiles_family_id_fkey"
             columns: ["family_id"]
@@ -6779,23 +7143,29 @@ export type Database = {
       user_push_tokens: {
         Row: {
           created_at: string
+          device_name: string | null
           expo_push_token: string
           id: string
           platform: string | null
+          updated_at: string | null
           user_id: string
         }
         Insert: {
           created_at?: string
+          device_name?: string | null
           expo_push_token: string
           id?: string
           platform?: string | null
+          updated_at?: string | null
           user_id: string
         }
         Update: {
           created_at?: string
+          device_name?: string | null
           expo_push_token?: string
           id?: string
           platform?: string | null
+          updated_at?: string | null
           user_id?: string
         }
         Relationships: []
@@ -7032,6 +7402,37 @@ export type Database = {
       }
     }
     Functions: {
+      accept_child_promotion: {
+        Args: {
+          p_share_health?: boolean
+          p_share_meals?: boolean
+          p_share_menu?: boolean
+          p_token: string
+        }
+        Returns: {
+          avatar_color: string
+          child_profile: Json | null
+          display_name: string | null
+          family_id: string
+          id: string
+          joined_at: string
+          relationship: string | null
+          removed_at: string | null
+          role: Database["public"]["Enums"]["family_role_enum"]
+          share_health: boolean
+          share_meals: boolean
+          share_menu: boolean
+          status: string
+          tags: string[]
+          user_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       accept_family_invite: {
         Args: {
           p_share_health?: boolean
@@ -7083,6 +7484,15 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      accept_legal_documents: {
+        Args: {
+          p_ip?: unknown
+          p_privacy_version: string
+          p_terms_version: string
+          p_user_agent?: string
+        }
+        Returns: Json
+      }
       accept_org_invite: {
         Args: { p_token: string }
         Returns: {
@@ -7110,6 +7520,7 @@ export type Database = {
           cuisine_preferences: Json | null
           daily_water_ml: number | null
           department: string | null
+          department_id: string | null
           desk_hours_per_day: number | null
           diet_flags: Json | null
           diet_style: string | null
@@ -7151,6 +7562,7 @@ export type Database = {
           kitchen_appliances: string[] | null
           last_login_at: string | null
           last_profile_update: string | null
+          legal_accepted_at: string | null
           lifestyle: Json | null
           login_count: number | null
           meal_prep_ok: boolean | null
@@ -7179,6 +7591,7 @@ export type Database = {
           preferred_stores: string[] | null
           pregnancy_status: string | null
           presentation_importance: string | null
+          privacy_version_accepted: string | null
           profile_completeness: number | null
           radar_chart_nutrients: string[] | null
           region: string | null
@@ -7202,8 +7615,10 @@ export type Database = {
           target_weight: number | null
           taste_preferences: Json | null
           temperature_preference: string | null
+          terms_version_accepted: string | null
           texture_preferences: string[] | null
           travel_frequency: string | null
+          unban_at: string | null
           updated_at: string | null
           wake_time: string | null
           water_cutting: boolean | null
@@ -7282,6 +7697,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      admin_find_user_ids_by_email: {
+        Args: { p_limit?: number; p_q: string }
+        Returns: string[]
+      }
       admin_set_user_roles: {
         Args: { p_roles: string[]; p_user_id: string }
         Returns: {
@@ -7289,8 +7708,84 @@ export type Database = {
           roles: string[]
         }[]
       }
+      admin_user_emails: {
+        Args: { p_ids: string[] }
+        Returns: {
+          email: string
+          user_id: string
+        }[]
+      }
+      app_log_client_error_counts: {
+        Args: { p_limit?: number; p_window_minutes?: number }
+        Returns: {
+          error_count: number
+          function_name: string
+          total_count: number
+        }[]
+      }
+      app_log_error_counts: {
+        Args: { p_limit?: number; p_window_minutes?: number }
+        Returns: {
+          error_count: number
+          function_name: string
+          total_count: number
+        }[]
+      }
+      apply_coupon: {
+        Args: {
+          p_approved_by: string
+          p_coupon_id: string
+          p_subscription_id: string
+          p_target: string
+        }
+        Returns: Json
+      }
+      auth_login_account_user_id: { Args: { p_email: string }; Returns: string }
+      auth_login_apply_lock: {
+        Args: { p_email: string; p_locked_until: string }
+        Returns: undefined
+      }
+      auth_login_clear_failures: {
+        Args: { p_email: string }
+        Returns: undefined
+      }
+      auth_login_count_failure: {
+        Args: { p_email: string; p_reset_after_minutes: number }
+        Returns: number
+      }
+      auth_login_email_hash: { Args: { p_email: string }; Returns: string }
+      auth_login_failure_count: {
+        Args: { p_email: string; p_reset_after_minutes: number }
+        Returns: number
+      }
+      auth_login_lock_status: {
+        Args: { p_email: string }
+        Returns: {
+          failure_count: number
+          locked_until: string
+        }[]
+      }
+      auth_login_record_failure: {
+        Args: { p_email: string }
+        Returns: {
+          failure_count: number
+          locked_until: string
+        }[]
+      }
+      calculate_segment_stats_finalize_retry_bodies: {
+        Args: { p_at: string }
+        Returns: Json[]
+      }
+      calculate_segment_stats_request_bodies: {
+        Args: { p_at: string }
+        Returns: Json[]
+      }
       can_view_user_meals: {
         Args: { p_target_user_id: string }
+        Returns: boolean
+      }
+      claim_ai_usage_grant: {
+        Args: { p_grant_id: string; p_user_id: string }
         Returns: boolean
       }
       claim_menu_request: {
@@ -7328,9 +7823,38 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      claim_ops_alert: {
+        Args: { p_alert_key: string; p_cooldown_minutes?: number }
+        Returns: string
+      }
+      cleanup_expired_ai_usage_grant_claims: { Args: never; Returns: number }
       cleanup_handson_tour_sandbox_rows: { Args: never; Returns: Json }
       cleanup_old_logs: { Args: never; Returns: undefined }
-      complete_handson_tour: { Args: { p_user_id: string }; Returns: Json }
+      cleanup_stale_auth_login_failures: { Args: never; Returns: number }
+      complete_handson_tour: { Args: never; Returns: Json }
+      consume_ai_usage: {
+        Args: { p_feature: string; p_user_id: string }
+        Returns: Json
+      }
+      consume_ai_usage_at: {
+        Args: { p_at: string; p_feature: string; p_user_id: string }
+        Returns: Json
+      }
+      consume_native_bridge_code: {
+        Args: { p_code_hash: string }
+        Returns: {
+          access_token: string
+          refresh_token: string
+          user_id: string
+        }[]
+      }
+      count_meals_per_user: {
+        Args: never
+        Returns: {
+          meal_count: number
+          user_id: string
+        }[]
+      }
       create_family_group: {
         Args: { p_name: string; p_plan_key?: string }
         Returns: {
@@ -7415,6 +7939,54 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      decline_family_representative_transfer: {
+        Args: { p_proposal_id: string }
+        Returns: {
+          expires_at: string
+          from_user_id: string
+          id: string
+          proposed_at: string
+          resolved_at: string | null
+          scope: string
+          scope_id: string
+          status: string
+          to_user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "ownership_transfer_proposals"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      decline_org_owner_transfer: {
+        Args: { p_proposal_id: string }
+        Returns: {
+          expires_at: string
+          from_user_id: string
+          id: string
+          proposed_at: string
+          resolved_at: string | null
+          scope: string
+          scope_id: string
+          status: string
+          to_user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "ownership_transfer_proposals"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      decrement_recipe_like_count: {
+        Args: { p_recipe_id?: string; p_recipe_uuid?: string }
+        Returns: number
+      }
+      enforce_membership_daily_cap: {
+        Args: { p_email?: string; p_kind: string; p_scope_id: string }
+        Returns: undefined
+      }
       get_7d_checkin_averages: {
         Args: { p_date?: string; p_user_id: string }
         Returns: {
@@ -7431,12 +8003,77 @@ export type Database = {
           weight_start: number
         }[]
       }
+      get_csat_summary: {
+        Args: { p_from?: string; p_to?: string }
+        Returns: {
+          score_1_count: number
+          score_2_count: number
+          score_3_count: number
+          score_4_count: number
+          score_5_count: number
+          score_sum: number
+          total_responses: number
+        }[]
+      }
+      get_effective_plan: { Args: { p_user_id: string }; Returns: string }
       get_invite_details: { Args: { p_token: string }; Returns: Json }
+      get_nps_summary: {
+        Args: { p_from?: string; p_plan_key?: string; p_to?: string }
+        Returns: {
+          detractors: number
+          passives: number
+          promoters: number
+          score_sum: number
+          sent_count: number
+          total_responses: number
+        }[]
+      }
+      get_or_create_active_shopping_list: {
+        Args: {
+          p_end_date: string
+          p_start_date: string
+          p_title: string
+          p_user_id: string
+        }
+        Returns: string
+      }
+      get_promotion_details: { Args: { p_token: string }; Returns: Json }
+      increment_recipe_like_count: {
+        Args: { p_recipe_id?: string; p_recipe_uuid?: string }
+        Returns: number
+      }
+      increment_recipe_view_count: {
+        Args: { recipe_id: string }
+        Returns: undefined
+      }
+      invoke_calculate_segment_stats: { Args: never; Returns: number[] }
+      invoke_calculate_segment_stats_finalize_retry: {
+        Args: never
+        Returns: number[]
+      }
       invoke_catalog_import: {
         Args: { p_function_name: string }
         Returns: number
       }
+      is_active_family_adult: {
+        Args: { p_family_id: string }
+        Returns: boolean
+      }
+      is_active_family_member: {
+        Args: { p_family_id: string }
+        Returns: boolean
+      }
       is_inactive_user: { Args: { p_user_id: string }; Returns: boolean }
+      issue_native_bridge_code: {
+        Args: {
+          p_access_token: string
+          p_code_hash: string
+          p_refresh_token: string
+          p_ttl_seconds?: number
+          p_user_id: string
+        }
+        Returns: string
+      }
       leave_family: {
         Args: never
         Returns: {
@@ -7490,6 +8127,7 @@ export type Database = {
           cuisine_preferences: Json | null
           daily_water_ml: number | null
           department: string | null
+          department_id: string | null
           desk_hours_per_day: number | null
           diet_flags: Json | null
           diet_style: string | null
@@ -7531,6 +8169,7 @@ export type Database = {
           kitchen_appliances: string[] | null
           last_login_at: string | null
           last_profile_update: string | null
+          legal_accepted_at: string | null
           lifestyle: Json | null
           login_count: number | null
           meal_prep_ok: boolean | null
@@ -7559,6 +8198,7 @@ export type Database = {
           preferred_stores: string[] | null
           pregnancy_status: string | null
           presentation_importance: string | null
+          privacy_version_accepted: string | null
           profile_completeness: number | null
           radar_chart_nutrients: string[] | null
           region: string | null
@@ -7582,8 +8222,10 @@ export type Database = {
           target_weight: number | null
           taste_preferences: Json | null
           temperature_preference: string | null
+          terms_version_accepted: string | null
           texture_preferences: string[] | null
           travel_frequency: string | null
+          unban_at: string | null
           updated_at: string | null
           wake_time: string | null
           water_cutting: boolean | null
@@ -7626,6 +8268,18 @@ export type Database = {
           owner_last_sign_in: string
           owner_user_id: string
         }[]
+      }
+      llm_usage_summary: {
+        Args: {
+          p_anomaly_daily_requests?: number
+          p_from: string
+          p_function_name?: string
+          p_model?: string
+          p_provider?: string
+          p_to_exclusive: string
+          p_top_users_limit?: number
+        }
+        Returns: Json
       }
       normalize_dish_name: { Args: { name: string }; Returns: string }
       operator_force_dissolve_family: {
@@ -7726,10 +8380,15 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      organizations_owner_id_unchanged: {
+        Args: { p_new_owner_id: string; p_org_id: string }
+        Returns: boolean
+      }
       paste_meal_to_family: {
         Args: { p_source_meal_id: string; p_target_user_ids: string[] }
         Returns: string
       }
+      prepare_account_deletion: { Args: { p_user_id: string }; Returns: Json }
       preview_family_invite: {
         Args: { p_token: string }
         Returns: {
@@ -7783,6 +8442,40 @@ export type Database = {
       propose_org_owner_transfer: {
         Args: { p_organization_id: string; p_to_user_id: string }
         Returns: string
+      }
+      record_ai_usage: {
+        Args: { p_feature: string; p_user_id: string }
+        Returns: undefined
+      }
+      record_ai_usage_at: {
+        Args: { p_at: string; p_feature: string; p_user_id: string }
+        Returns: undefined
+      }
+      refund_ai_usage: {
+        Args: { p_feature: string; p_usage_date: string; p_user_id: string }
+        Returns: boolean
+      }
+      reject_child_promotion: {
+        Args: { p_token: string }
+        Returns: {
+          created_at: string
+          email: string
+          expires_at: string
+          family_id: string
+          id: string
+          member_id: string
+          requested_by: string
+          resolved_at: string | null
+          resolved_by: string | null
+          status: string
+          token: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_promotion_requests"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       reject_family_invite: {
         Args: { p_token: string }
@@ -7839,6 +8532,14 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      release_ops_alert: {
+        Args: { p_alert_key: string; p_claimed_at: string }
+        Returns: boolean
+      }
+      release_user_membership: {
+        Args: { p_user_id: string }
+        Returns: undefined
+      }
       remove_family_member: {
         Args: { p_family_id: string; p_member_id: string }
         Returns: {
@@ -7892,6 +8593,7 @@ export type Database = {
           cuisine_preferences: Json | null
           daily_water_ml: number | null
           department: string | null
+          department_id: string | null
           desk_hours_per_day: number | null
           diet_flags: Json | null
           diet_style: string | null
@@ -7933,6 +8635,7 @@ export type Database = {
           kitchen_appliances: string[] | null
           last_login_at: string | null
           last_profile_update: string | null
+          legal_accepted_at: string | null
           lifestyle: Json | null
           login_count: number | null
           meal_prep_ok: boolean | null
@@ -7961,6 +8664,7 @@ export type Database = {
           preferred_stores: string[] | null
           pregnancy_status: string | null
           presentation_importance: string | null
+          privacy_version_accepted: string | null
           profile_completeness: number | null
           radar_chart_nutrients: string[] | null
           region: string | null
@@ -7984,8 +8688,10 @@ export type Database = {
           target_weight: number | null
           taste_preferences: Json | null
           temperature_preference: string | null
+          terms_version_accepted: string | null
           texture_preferences: string[] | null
           travel_frequency: string | null
+          unban_at: string | null
           updated_at: string | null
           wake_time: string | null
           water_cutting: boolean | null
@@ -8007,7 +8713,43 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      replace_active_shopping_list: {
+        Args: {
+          p_end_date: string
+          p_servings_config?: Json
+          p_start_date: string
+          p_title: string
+          p_user_id: string
+        }
+        Returns: string
+      }
+      request_child_promotion: {
+        Args: { p_email: string; p_member_id: string }
+        Returns: Json
+      }
       reset_e2e_test_users: { Args: never; Returns: undefined }
+      revoke_child_promotion: {
+        Args: { p_member_id: string }
+        Returns: {
+          created_at: string
+          email: string
+          expires_at: string
+          family_id: string
+          id: string
+          member_id: string
+          requested_by: string
+          resolved_at: string | null
+          resolved_by: string | null
+          status: string
+          token: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_promotion_requests"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       revoke_family_invite: {
         Args: { p_invite_id: string }
         Returns: {
@@ -8273,6 +9015,15 @@ export type Database = {
           similarity: number
         }[]
       }
+      snapshot_daily_active_users: {
+        Args: { p_date: string }
+        Returns: {
+          dau: number
+          mau: number
+          snapshot_date: string
+          wau: number
+        }[]
+      }
       update_my_share_settings: {
         Args: {
           p_share_health: boolean
@@ -8302,6 +9053,15 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      upsert_daily_meal_slot: {
+        Args: {
+          p_day_date: string
+          p_meal_type: string
+          p_planned_data: Json
+          p_user_id: string
+        }
+        Returns: Json
       }
       user_has_non_sandbox_activity: { Args: never; Returns: boolean }
     }
@@ -8440,3 +9200,4 @@ export const Constants = {
     },
   },
 } as const
+

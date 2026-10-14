@@ -12,50 +12,15 @@ import {
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { notifyMenuGenerated } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
-
-// シンプルなマークダウンパーサー
-const parseMarkdown = (text: string): string => {
-  if (!text) return '';
-  
-  // アクションブロックを除去（別途表示されるため）
-  let html = text.replace(/```action[\s\S]*?```/g, '');
-  
-  // コードブロック（```）を処理
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre class="md-code-block"><code>$2</code></pre>');
-  
-  // インラインコード（`）を処理
-  html = html.replace(/`([^`]+)`/g, '<code class="md-inline-code">$1</code>');
-  
-  // 太字（**text** または __text__）
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-  
-  // 斜体（*text* または _text_）- 太字の後に処理
-  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
-  
-  // 見出し（### ## #）
-  html = html.replace(/^### (.+)$/gm, '<h4 class="md-h4">$1</h4>');
-  html = html.replace(/^## (.+)$/gm, '<h3 class="md-h3">$1</h3>');
-  html = html.replace(/^# (.+)$/gm, '<h2 class="md-h2">$1</h2>');
-  
-  // 箇条書き（- または *）
-  html = html.replace(/^[-*] (.+)$/gm, '<li class="md-li">$1</li>');
-  // 連続するliをulで囲む
-  html = html.replace(/(<li class="md-li">.*?<\/li>\n?)+/g, '<ul class="md-ul">$&</ul>');
-  
-  // 番号付きリスト
-  html = html.replace(/^\d+\. (.+)$/gm, '<li class="md-li-num">$1</li>');
-  html = html.replace(/(<li class="md-li-num">.*?<\/li>\n?)+/g, '<ol class="md-ol">$&</ol>');
-  
-  // リンク [text](url)
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="md-link">$1</a>');
-  
-  // 改行を<br>に変換（ただし、HTMLタグの直後は除く）
-  html = html.replace(/\n(?!<)/g, '<br>');
-  
-  return html;
-};
+import { useAiConsent } from "@/hooks/useAiConsent";
+import { AiConsentRequiredError, aiFetch, handleStoredAiConsentFailure, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
+import { aiDailyLimitMessageOfResponse } from "@/lib/ai/daily-limit-client";
+import { aiSummarySkippedNote } from "@/lib/ai/consent-config";
+import { todayLocal, parseLocalDate, formatLocalDate } from "@/lib/date-utils";
+// AI 応答を HTML にして dangerouslySetInnerHTML へ渡すときは、必ずこの関数を通す (#1169)
+import { parseMarkdown } from "@/lib/markdown-lite";
+// AI 相談の緊急停止中 (503 + AI_CHAT_DISABLED) にサーバーが返すやさしい文面を、そのまま画面に出す (#1148)
+import { readAiChatUnavailableMessage } from "@/lib/ai/ai-chat-unavailable";
 
 const colors = {
   primary: '#E07A5F',
@@ -139,10 +104,18 @@ const ACTION_LABELS: Record<string, { label: string; icon: any; color: string }>
   update_profile_preferences: { label: '好み・習慣を更新', icon: User, color: colors.secondary },
 };
 
+/** 献立の作成が、同意が無くて止められたときにチャットに出す一文 (T15 / #1154。同意画面は AiConsentRequiredHost が出す) */
+const V4_CONSENT_REQUIRED_CHAT_NOTE =
+  'AI へのデータ提供への同意が必要なため、献立は作成しませんでした。同意したあとに、もう一度お試しください。';
+
 export default function AIChatBubble() {
   const isNativeApp = useNativeAppMode();
   const [isMounted, setIsMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。初回の送信の直前だけ出す。
+  // 「同意しない」なら送らない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)。
+  // この部品は全ページに常駐するので、同意の状況は相談の画面を開くまで取りにいかない (毎ページの読み込みで API を呼ばない)
+  const { ensureAiConsent, consentModal } = useAiConsent({ prefetch: isOpen });
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -180,16 +153,16 @@ export default function AIChatBubble() {
   // to *tomorrow* rather than today to avoid silently overwriting today's
   // existing menu when the user opens this modal for a future day.
   const computeDefaultDayMenuDate = (): string => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = todayLocal();
     if (typeof window !== 'undefined') {
       const fromWeekly = window.__weeklyCurrentDate;
       if (typeof fromWeekly === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(fromWeekly)) {
         if (fromWeekly !== todayStr) return fromWeekly;
       }
     }
-    const tomorrow = new Date();
+    const tomorrow = parseLocalDate(todayStr);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    return tomorrow.toISOString().split('T')[0];
+    return formatLocalDate(tomorrow);
   };
   const [selectedDate, setSelectedDate] = useState<string>(() => computeDefaultDayMenuDate());
 
@@ -224,6 +197,17 @@ export default function AIChatBubble() {
     },
     onError: (error) => {
       setV4Progress(null);
+      // 生成を受け付けたあとに、サーバーが同意の判定で止めた (未同意。T15 / #1154): 同意画面 (AiConsentRequiredHost) が案内する。
+      // 同期で止められたとき (下の catch) と同じ一文だけを出し、失敗の文は出さない
+      if (handleStoredAiConsentFailure(error)) {
+        setMessages(prev => [...prev, {
+          id: `v4-consent-${Date.now()}`,
+          role: 'assistant',
+          content: V4_CONSENT_REQUIRED_CHAT_NOTE,
+          createdAt: new Date().toISOString(),
+        }]);
+        return;
+      }
       setMessages(prev => [...prev, {
         id: `v4-error-${Date.now()}`,
         role: 'assistant',
@@ -423,6 +407,18 @@ export default function AIChatBubble() {
           content: 'こんにちは！🍳 ほめゴハンのAIアドバイザーです。\n\n食事や栄養のことで気になることがあれば、何でも聞いてくださいね。献立の提案や、買い物リストの作成もお手伝いできますよ！',
           createdAt: new Date().toISOString(),
         }]);
+      } else {
+        // #1148: AI 相談の緊急停止中は、サーバーのやさしい文面を出す (入力しても送れないので、セッションは作らない)
+        const unavailableMessage = await readAiChatUnavailableMessage(res);
+        if (unavailableMessage) {
+          setCurrentSessionId(null);
+          setMessages([{
+            id: 'unavailable',
+            role: 'assistant',
+            content: unavailableMessage,
+            createdAt: new Date().toISOString(),
+          }]);
+        }
       }
     } catch (e) {
       console.error('Failed to create session:', e);
@@ -460,20 +456,50 @@ export default function AIChatBubble() {
       },
     ]);
 
+    // 送らなかったとき (「同意しない」・同意が必要で止められた) は、楽観的に出したメッセージを消して、入力を戻す
+    const undoOptimisticMessages = () => {
+      setMessages(prev => prev.filter(m => m.id !== tempUserMsgId && m.id !== tempAiMsgId));
+      setInputText(userMessage);
+    };
+
+    // 未同意なら同意画面を出す。選択を待つ時間をタイムアウトに含めないよう、タイマーを始める前に待つ。
+    // 「同意しない」なら相談文を AI に送らない
+    if ((await ensureAiConsent()) === 'declined') {
+      undoOptimisticMessages();
+      setIsSending(false);
+      return;
+    }
+
     // クライアント側タイムアウト（28秒）: サーバーが応答しない場合にユーザーへ通知
     const clientAbortController = new AbortController();
     const clientTimeoutId = setTimeout(() => clientAbortController.abort(), 28000);
 
     try {
       // ストリーミングモードでAPI呼び出し
-      const res = await fetch(`/api/ai/consultation/sessions/${currentSessionId}/messages?stream=true`, {
+      const res = await aiFetch(`/api/ai/consultation/sessions/${currentSessionId}/messages?stream=true`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMessage }),
         signal: clientAbortController.signal,
       });
 
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内する。送らなかったので、メッセージを消して入力を戻す
+      if (await isAiConsentRequiredResponse(res)) {
+        undoOptimisticMessages();
+        return;
+      }
+
       if (!res.ok) {
+        // #1148: AI 相談の緊急停止中は、サーバーのやさしい文面を AI の吹き出しに出す
+        const unavailableMessage = await readAiChatUnavailableMessage(res);
+        if (unavailableMessage) {
+          setMessages(prev => prev.map(m =>
+            m.id === tempAiMsgId
+              ? { ...m, content: unavailableMessage, isStreaming: false }
+              : m
+          ));
+          return;
+        }
         throw new Error(`HTTP error: ${res.status}`);
       }
 
@@ -621,10 +647,16 @@ export default function AIChatBubble() {
   const executeAction = async (actionId: string, messageId: string) => {
     setExecutingActionId(messageId);
     try {
+      // 提案の実行は、サーバーで献立の生成などの AI の処理を始めることがある。未同意なら同意画面を出す (「同意しない」なら実行しない)
+      if ((await ensureAiConsent()) === 'declined') return;
+
       // まずアクションログを取得
-      const res = await fetch(`/api/ai/consultation/actions/${messageId}/execute`, {
+      const res = await aiFetch(`/api/ai/consultation/actions/${messageId}/execute`, {
         method: 'POST',
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内する。提案は残っているので、同意したあとにもう一度実行できる
+      if (await isAiConsentRequiredResponse(res)) return;
 
       if (res.ok) {
         const data = await res.json();
@@ -650,6 +682,9 @@ export default function AIChatBubble() {
           detail: { actionType: data.actionType, result: data.result }
         }));
       } else {
+        // 今日の AI の利用回数の上限に達した (429 AI_DAILY_LIMIT。#1149): aiFetch が全画面共通の AiDailyLimitHost に固定の文を
+        // 出させたので、ここでは重ねて出さない (提案は残っているので、明日また実行できる)
+        if (await aiDailyLimitMessageOfResponse(res)) return;
         alert('アクションの実行に失敗しました');
       }
     } catch (e) {
@@ -737,6 +772,20 @@ export default function AIChatBubble() {
               createdAt: new Date().toISOString(),
             },
           ]);
+        } else {
+          // 同意が無くて (または同意の状況を読めなくて) サーバーが要約 (AI) を省いた (T15 / #1154): その旨を一言だけ出す
+          const skippedNote = aiSummarySkippedNote(data);
+          if (skippedNote) {
+            setMessages(prev => [
+              ...prev,
+              {
+                id: `summary-skipped-${Date.now()}`,
+                role: 'assistant',
+                content: skippedNote,
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+          }
         }
       }
     } catch (e) {
@@ -751,6 +800,9 @@ export default function AIChatBubble() {
     if (isGeneratingDayMenu) return;
 
     setShowDayMenuModal(false);
+
+    // 未同意なら同意画面を出す (「同意しない」なら生成しない)
+    if ((await ensureAiConsent()) === 'declined') return;
 
     // 日付をフォーマット
     const dateObj = new Date(selectedDate);
@@ -789,6 +841,16 @@ export default function AIChatBubble() {
         });
       }
     } catch (e: any) {
+      if (e instanceof AiConsentRequiredError) {
+        // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内する。作成中の表示を打ち消しておく
+        setMessages(prev => [...prev, {
+          id: `v4-consent-${Date.now()}`,
+          role: 'assistant',
+          content: V4_CONSENT_REQUIRED_CHAT_NOTE,
+          createdAt: new Date().toISOString(),
+        }]);
+        return;
+      }
       console.error('Failed to generate day menu:', e);
       // エラーはフックのonErrorで処理される
     }
@@ -1056,16 +1118,38 @@ export default function AIChatBubble() {
                               { id: tempUserMsgId, role: 'user', content: prompt, createdAt: new Date().toISOString() },
                               { id: tempAiMsgId, role: 'assistant', content: '', createdAt: new Date().toISOString(), isStreaming: true },
                             ]);
+                            // 送らなかったとき (「同意しない」・同意が必要で止められた) は、楽観的に出したメッセージを消す
+                            const undoOptimisticMessages = () =>
+                              setMessages(prev => prev.filter(m => m.id !== tempUserMsgId && m.id !== tempAiMsgId));
+                            // 未同意なら同意画面を出す (「同意しない」なら送らない)
+                            if ((await ensureAiConsent()) === 'declined') {
+                              undoOptimisticMessages();
+                              setIsSending(false);
+                              return;
+                            }
                             const clientAbortController = new AbortController();
                             const clientTimeoutId = setTimeout(() => clientAbortController.abort(), 28000);
                             try {
-                              const res = await fetch(`/api/ai/consultation/sessions/${currentSessionId}/messages?stream=true`, {
+                              const res = await aiFetch(`/api/ai/consultation/sessions/${currentSessionId}/messages?stream=true`, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ message: prompt }),
                                 signal: clientAbortController.signal,
                               });
-                              if (!res.ok) throw new Error(`HTTP error: ${res.status}`);
+                              // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内する
+                              if (await isAiConsentRequiredResponse(res)) {
+                                undoOptimisticMessages();
+                                return;
+                              }
+                              if (!res.ok) {
+                                // #1148: AI 相談の緊急停止中は、サーバーのやさしい文面を出す
+                                const unavailableMessage = await readAiChatUnavailableMessage(res);
+                                if (unavailableMessage) {
+                                  setMessages(prev => prev.map(m => m.id === tempAiMsgId ? { ...m, content: unavailableMessage, isStreaming: false } : m));
+                                  return;
+                                }
+                                throw new Error(`HTTP error: ${res.status}`);
+                              }
                               const reader = res.body?.getReader();
                               if (!reader) throw new Error('No reader available');
                               const decoder = new TextDecoder();
@@ -1396,11 +1480,11 @@ export default function AIChatBubble() {
                   type="date"
                   value={selectedDate}
                   onChange={(e) => setSelectedDate(e.target.value)}
-                  min={new Date().toISOString().split('T')[0]}
+                  min={todayLocal()}
                   max={(() => {
-                    const maxDate = new Date();
+                    const maxDate = parseLocalDate(todayLocal());
                     maxDate.setDate(maxDate.getDate() + 14);
-                    return maxDate.toISOString().split('T')[0];
+                    return formatLocalDate(maxDate);
                   })()}
                   className="w-full px-4 py-3 rounded-xl border text-center"
                   style={{
@@ -1447,6 +1531,9 @@ export default function AIChatBubble() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。未同意なら出る */}
+      {consentModal}
 
       {/* マークダウン用スタイル */}
       <style jsx global>{`

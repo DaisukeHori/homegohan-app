@@ -8,8 +8,10 @@
 
 import { type User } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
-import { AuthError, ForbiddenError, ImpersonationError } from './errors';
+import { AuthError, ForbiddenError } from './errors';
 import { type RoleName, type OrgRoleName, type UserProfile } from './types';
+import { isAccountFrozen } from './frozen';
+import { isOrgAdmin, type OrgAdminRole } from './org-admin';
 
 export { type RoleName, type OrgRoleName, type UserProfile };
 
@@ -31,13 +33,18 @@ async function getAuthUser(): Promise<User> {
 }
 
 /**
- * user_profiles テーブルから roles と organization_id を取得する。
+ * user_profiles テーブルから roles と organization_id、凍結状態 (frozen_at/unban_at) を取得する。
  */
-async function getUserProfile(userId: string): Promise<{ roles: RoleName[]; organization_id: string | null }> {
+async function getUserProfile(userId: string): Promise<{
+  roles: RoleName[];
+  organization_id: string | null;
+  frozen_at: string | null;
+  unban_at: string | null;
+}> {
   const supabase = createClient();
   const { data: profile, error } = await supabase
     .from('user_profiles')
-    .select('roles, organization_id')
+    .select('roles, organization_id, frozen_at, unban_at')
     .eq('id', userId)
     .single();
 
@@ -48,7 +55,20 @@ async function getUserProfile(userId: string): Promise<{ roles: RoleName[]; orga
   return {
     roles: (profile.roles ?? ['user']) as RoleName[],
     organization_id: profile.organization_id ?? null,
+    frozen_at: (profile as { frozen_at?: string | null }).frozen_at ?? null,
+    unban_at: (profile as { unban_at?: string | null }).unban_at ?? null,
   };
+}
+
+/**
+ * #1030: frozen_at がセットされ、かつ一時 BAN の unban_at が未到来の場合に
+ * ForbiddenError('AUTH_ACCOUNT_FROZEN') を throw する。
+ * unban_at 経過後 (一時 BAN の自動解除) は許可する (判定時比較)。
+ */
+function assertNotFrozen(frozenAt: string | null, unbanAt: string | null): void {
+  if (isAccountFrozen({ frozenAt, unbanAt })) {
+    throw new ForbiddenError('AUTH_ACCOUNT_FROZEN', 'アカウントが凍結されています');
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -57,9 +77,14 @@ async function getUserProfile(userId: string): Promise<{ roles: RoleName[]; orga
 
 /**
  * Supabase auth で取得した user を返す。未認証なら 401 相当の AuthError を throw する。
+ * #1030: frozen_at がセットされている(かつ一時 BAN 未解除)場合は 403 相当の
+ * ForbiddenError('AUTH_ACCOUNT_FROZEN') を throw する。
  */
 export async function requireUser(): Promise<User> {
-  return getAuthUser();
+  const user = await getAuthUser();
+  const { frozen_at, unban_at } = await getUserProfile(user.id);
+  assertNotFrozen(frozen_at, unban_at);
+  return user;
 }
 
 /**
@@ -69,13 +94,14 @@ export async function requireUser(): Promise<User> {
  * @param allowedRoles - 許可するロールの配列
  * @returns 認証済みユーザーの UserProfile
  * @throws AuthError (401) - 未認証の場合
- * @throws ForbiddenError (403) - ロール不足の場合
+ * @throws ForbiddenError (403) - ロール不足の場合、または #1030: アカウント凍結中の場合
  */
 export async function requireRole(
   allowedRoles: ReadonlyArray<RoleName>,
 ): Promise<UserProfile> {
   const user = await getAuthUser();
-  const { roles, organization_id } = await getUserProfile(user.id);
+  const { roles, organization_id, frozen_at, unban_at } = await getUserProfile(user.id);
+  assertNotFrozen(frozen_at, unban_at);
 
   if (!roles.some((r) => allowedRoles.includes(r))) {
     throw new ForbiddenError(
@@ -96,6 +122,10 @@ export async function requireRole(
  * 指定 org の指定 org ロールを保有しているか確認する。
  * 組織とユーザーの所属一致も検証する。
  * org_industrial_doctor の場合は family データ閲覧不可ガードを内包する。
+ *
+ * 注意: roles 配列の org_* (org_admin など) で判定するため、「組織の管理者」の判定には使わない。
+ * roles の org_admin はどの組織で付与されたかを区別できず、脱退・除名でも消えない (#1235)。
+ * 組織の管理者 (org_role が owner / admin) は requireOrgAdmin() を使うこと。
  *
  * @param userId      - 検証対象ユーザー ID
  * @param orgId       - 組織 ID
@@ -131,116 +161,60 @@ export async function requireOrgRole(
 }
 
 /**
- * impersonate (super_admin が他ユーザーに成り代わる)。
- * cross/01-auth-session.md §11 仕様に準拠。
- * admin_audit_logs に impersonate 記録を挿入する。
- *
- * @param targetUserId - impersonate 対象のユーザー ID
- * @param reason       - impersonate の理由 (audit_log に記録)
- * @returns impersonation_token と expires_at
- * @throws AuthError          - 実行者が未認証の場合
- * @throws ImpersonationError - super_admin 以外が実行した場合 / 対象が拒否設定の場合
+ * requireOrgAdmin の戻り値。
+ * profile は「呼び出した本人」の所属組織の情報で、isOrgAdmin() を通ったあとなので
+ * organization_id は必ず string、org_role は owner / admin のどちらか。
  */
-export async function impersonate(
-  targetUserId: string,
-  reason: string,
-): Promise<{ impersonation_token: string; expires_at: string }> {
-  const user = await getAuthUser();
-  const { roles } = await getUserProfile(user.id);
-
-  if (!roles.includes('super_admin')) {
-    throw new ImpersonationError(
-      'AUTH_IMPERSONATION_DENIED',
-      'impersonate は super_admin のみ実行可能です',
-    );
-  }
-
-  const supabase = createClient();
-
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-  const impersonationToken = crypto.randomUUID();
-
-  // admin_audit_logs に記録 (テーブル不在時は graceful degradation)
-  try {
-    const { error: auditError } = await supabase.from('admin_audit_logs').insert({
-      actor_id: user.id,
-      target_id: targetUserId,
-      target_type: 'user',
-      action_type: 'impersonate',
-      impersonated_by: user.id,
-      details: { reason, impersonation_token: impersonationToken, expires_at: expiresAt },
-      severity: 'warn',
-    });
-
-    if (auditError) {
-      console.error('[auth/helpers] admin_audit_logs INSERT failed (graceful):', auditError.message);
-    }
-  } catch (err) {
-    console.error('[auth/helpers] admin_audit_logs unavailable (graceful):', err);
-  }
-
-  return {
-    impersonation_token: impersonationToken,
-    expires_at: expiresAt,
+export interface OrgAdminContext {
+  user: User;
+  profile: {
+    organization_id: string;
+    org_role: OrgAdminRole;
+    /** 招待メールの差出人名などに使う。未設定なら null */
+    nickname: string | null;
   };
 }
 
 /**
- * impersonate を解除する。
- * admin_audit_logs に解除記録を挿入する。
+ * ログイン中のユーザーが、所属組織の管理者 (user_profiles.org_role が owner / admin) であることを確認する。
+ * 組織 (/api/org/*) の管理系 API は、入口でこの関数を呼ぶ (各 route に判定を手書きしない: #1161)。
  *
- * @throws AuthError - 実行者が未認証の場合
+ * 判定そのものは isOrgAdmin() (src/lib/auth/org-admin.ts) に一本化している。
+ * roles 配列の 'org_admin' は見ない。どの組織の管理者かを区別できず、脱退・除名でも消えないため (#1235)。
+ * 組織の絞り込みは呼び出し側で profile.organization_id を使って行う (他組織の行を触らせない)。
+ *
+ * 凍結中のアカウントは、ミドルウェア (lib/supabase/middleware.ts) が API 全体で 403 にするため、ここでは見ない。
+ *
+ * @returns 認証済みユーザーと、その所属組織・組織内の役割
+ * @throws AuthError      (401 相当) - 未認証の場合
+ * @throws ForbiddenError (403 相当) - 組織に所属していない、または org_role が owner / admin でない場合
  */
-export async function endImpersonation(): Promise<void> {
+export async function requireOrgAdmin(): Promise<OrgAdminContext> {
   const user = await getAuthUser();
+
   const supabase = createClient();
+  const { data } = await supabase
+    .from('user_profiles')
+    .select('organization_id, org_role, nickname')
+    .eq('id', user.id)
+    .single();
+  const profile = data as {
+    organization_id?: string | null;
+    org_role?: string | null;
+    nickname?: string | null;
+  } | null;
 
-  try {
-    const { error: auditError } = await supabase.from('admin_audit_logs').insert({
-      actor_id: user.id,
-      target_id: user.id,
-      target_type: 'user',
-      action_type: 'impersonate_end',
-      severity: 'info',
-      details: {},
-    });
-
-    if (auditError) {
-      console.error('[auth/helpers] admin_audit_logs INSERT failed (graceful):', auditError.message);
-    }
-  } catch (err) {
-    console.error('[auth/helpers] admin_audit_logs unavailable (graceful):', err);
+  // プロフィールが無い (取得できなかった) 場合も、組織の管理者ではないものとして 403 にする
+  if (!isOrgAdmin(profile)) {
+    throw new ForbiddenError('PERM_DENIED', 'owner/admin role required');
   }
-}
 
-/**
- * 現在 impersonate 中かどうかを確認する。
- * admin_audit_logs.impersonated_by が NOT NULL であるかをチェックする。
- *
- * @param user - requireUser / requireRole で取得した User
- * @returns impersonate 中であれば true
- */
-export async function isImpersonating(user: User): Promise<boolean> {
-  const supabase = createClient();
-
-  try {
-    const { data, error } = await supabase
-      .from('admin_audit_logs')
-      .select('id')
-      .eq('target_id', user.id)
-      .eq('action_type', 'impersonate')
-      .not('impersonated_by', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    if (error) {
-      console.error('[auth/helpers] isImpersonating query failed (graceful):', error.message);
-      return false;
-    }
-
-    return (data ?? []).length > 0;
-  } catch (err) {
-    console.error('[auth/helpers] admin_audit_logs unavailable (graceful):', err);
-    return false;
-  }
+  return {
+    user,
+    profile: {
+      organization_id: profile.organization_id,
+      org_role: profile.org_role,
+      nickname: profile.nickname ?? null,
+    },
+  };
 }
