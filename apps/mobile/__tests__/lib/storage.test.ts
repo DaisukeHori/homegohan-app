@@ -18,7 +18,7 @@ jest.mock('expo-file-system', () => ({
 
 const mockUpload = jest.fn();
 const mockGetPublicUrl = jest.fn();
-const mockFrom = jest.fn(() => ({ upload: mockUpload, getPublicUrl: mockGetPublicUrl }));
+const mockFrom = jest.fn((_bucket: string) => ({ upload: mockUpload, getPublicUrl: mockGetPublicUrl }));
 jest.mock('../../src/lib/supabase', () => ({
   supabase: { storage: { from: (bucket: string) => mockFrom(bucket) } },
 }));
