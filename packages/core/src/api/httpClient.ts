@@ -12,6 +12,8 @@
  *   - やり直す失敗は、応答を受け取れなかったとき (offline) と、HTTP の 408 / 429 / 5xx (ただし 501 と 505 は除く)。
  *   - タイムアウトはやり直さない。待ち時間が (やり直しの回数 + 1) 倍になり、サーバーが重いときに追い打ちになるため。
  *   - 最大 2 回まで。待ち時間は指数的に増やし、乱数で散らす。サーバーが Retry-After を返したときはそれ以上待つ。
+ * - 読めない本文: 成功 (2xx) の応答の本文が JSON として読めないとき (公衆 Wi-Fi のログインページの HTML など) は、
+ *   SyntaxError ではなく、エラー応答と同じ `HTTP <status> <statusText>: <本文>` の Error を投げる (#1049 F7-12)。
  */
 
 export type GetAccessToken = () => Promise<string | null> | string | null;
@@ -232,6 +234,12 @@ function toHttpError(res: Response, text: string): Error {
   return new Error(`HTTP ${res.status} ${res.statusText}: ${message}`);
 }
 
+/** Error に cause を付ける (HttpNetworkError と同じく、lib の版に型が無くても動く標準と同じ形) */
+function withCause(error: Error, cause: unknown): Error {
+  Object.defineProperty(error, "cause", { value: cause, writable: true, configurable: true, enumerable: false });
+  return error;
+}
+
 export function createHttpClient(config: {
   baseUrl: string;
   getAccessToken?: GetAccessToken;
@@ -318,7 +326,17 @@ export function createHttpClient(config: {
 
       const { res, text } = sent;
       if (res.ok) {
-        return (text ? JSON.parse(text) : null) as T;
+        if (!text) return null as T;
+        try {
+          return JSON.parse(text) as T;
+        } catch (error) {
+          // 成功の応答でも、本文が JSON として読めないことがある (#1049 F7-12)。
+          // 公衆 Wi-Fi のログインページ・プロキシ・CDN が 200 で返す HTML や、途中で切れた本文など。
+          // SyntaxError のまま投げると、画面が「Unexpected token <」のような文を出すか、エラーの種類を見分けられないので、
+          // エラー応答と同じ `HTTP <status> <statusText>: <本文>` の Error にする (本文は 200 文字で切る。元の SyntaxError は cause)。
+          // やり直さない (成功の応答なので、サーバーでは処理が済んでいることがある)
+          throw withCause(toHttpError(res, text), error);
+        }
       }
 
       if (attempt < retry.retries && isRetryableStatus(res.status)) {
