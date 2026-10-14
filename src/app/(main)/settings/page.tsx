@@ -9,6 +9,7 @@ import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storag
 import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { requestNotificationPermission } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
+import { useAccountActionsDelegatedToNative } from "@/hooks/useAccountActionsDelegatedToNative";
 import { AI_CONSENT_SETTINGS_ENTRY_TITLE, AI_CONSENT_SETTINGS_PATH } from "@/lib/ai/consent-config";
 import {
   ACCOUNT_DELETE_CONFIRM_KEYWORD,
@@ -52,6 +53,8 @@ export default function SettingsPage() {
   const router = useRouter();
   const supabase = createClient();
   const isNativeApp = useNativeAppMode();
+  // アプリの中では、ログアウトと退会をネイティブの設定画面に一本化する (#1037。判定は hooks/useAccountActionsDelegatedToNative.ts)
+  const accountActionsDelegated = useAccountActionsDelegatedToNative(isNativeApp);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const [settings, setSettings] = useState({
@@ -184,6 +187,8 @@ export default function SettingsPage() {
   };
 
   const handleLogout = async () => {
+    // ボタンを出さないだけでなく、処理の側でもアプリの中では動かさない (#1037)
+    if (accountActionsDelegated) return;
     clearUserScopedLocalStorage();
     // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
     notifyNativeSignOut();
@@ -200,7 +205,7 @@ export default function SettingsPage() {
 
   // 呼び方と退会のあとのログアウトの順番は、凍結中の画面 (/frozen/account) と共通 (src/lib/account-self-service.ts)
   const handleDeleteAccount = async () => {
-    if (deleteConfirmText !== DELETE_KEYWORD || deleting) return;
+    if (accountActionsDelegated || deleteConfirmText !== DELETE_KEYWORD || deleting) return;
     setDeleting(true);
     const result = await deleteOwnAccount();
     if (result.kind !== 'deleted') {
@@ -482,22 +487,33 @@ export default function SettingsPage() {
 
         {/* セクション 5: アクション */}
         <div>
-          <Button
-            variant="outline"
-            data-testid="logout-button"
-            onClick={() => setShowLogoutModal(true)}
-            className="w-full py-6 rounded-2xl border-red-100 text-red-500 hover:bg-red-50 hover:border-red-200 font-bold mb-4"
-          >
-            ログアウト
-          </Button>
+          {accountActionsDelegated ? (
+            // アプリの中: ログアウトと退会はネイティブの設定画面で行う (#1037)
+            <p
+              data-testid="settings-native-account-actions-note"
+              className="text-center text-xs text-gray-500 mb-4 px-2"
+            >
+              ログアウトとアカウントの削除は、マイページの右上の歯車 (設定) から行えます。
+            </p>
+          ) : (
+            <Button
+              variant="outline"
+              data-testid="logout-button"
+              onClick={() => setShowLogoutModal(true)}
+              className="w-full py-6 rounded-2xl border-red-100 text-red-500 hover:bg-red-50 hover:border-red-200 font-bold mb-4"
+            >
+              ログアウト
+            </Button>
+          )}
           <p className="text-center text-xs text-gray-400">
             Version {process.env.NEXT_PUBLIC_APP_VERSION ?? 'v1.0.0'} (Build {process.env.NEXT_PUBLIC_BUILD_DATE ?? '20260430'})<br/>
             &copy; {new Date().getFullYear()} ほめゴハン
           </p>
         </div>
 
-        {/* セクション 6: アカウント削除 */}
-        <div>
+        {/* セクション 6: アカウント削除 (アプリの中では出さない。#1037) */}
+        {!accountActionsDelegated && (
+        <div data-testid="settings-delete-account-section">
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">危険ゾーン</h2>
           <div className="bg-white rounded-2xl shadow-sm border border-red-100 overflow-hidden">
             <div className="p-4">
@@ -519,12 +535,13 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
+        )}
 
       </div>
 
       {/* ログアウト確認モーダル */}
       <AnimatePresence>
-        {showLogoutModal && (
+        {showLogoutModal && !accountActionsDelegated && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -567,7 +584,7 @@ export default function SettingsPage() {
 
       {/* アカウント削除確認モーダル */}
       <AnimatePresence>
-        {showDeleteModal && (
+        {showDeleteModal && !accountActionsDelegated && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
