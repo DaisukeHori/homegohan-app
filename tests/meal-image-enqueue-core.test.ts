@@ -6,7 +6,7 @@
  *   3. markDishImagesEnqueueFailed: 積めなかった同じ料理の、画像が無い待ち・更新待ちだけを failed + enqueue_failed にする
  *      写真・商品・手の画像の料理と、商品の献立の画像の項目の無い古い商品の料理 (#1514 で AI の画像のジョブを積まない料理) は変えない
  *   4. markEnqueueFailedDishesInMeal: 読めない・無い・書けないときも例外を投げずに結果を返す。商品の献立かを読んだ行から見る。
- *      料理 (dishes) だけを書き、献立のカバーには触れない
+ *      料理 (dishes) だけを書き、献立のカバーには触れない。読んだときの updated_at の行にだけ書き、0 行なら読み直して当て直す (#1532)
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -17,11 +17,13 @@ import {
   insertMealImageJobRecords,
   isMealImageSkippedError,
   markDishImagesEnqueueFailed,
+  MEAL_DISH_WRITE_MAX_ATTEMPTS,
   markEnqueueFailedDishesInMeal,
   needsImageRetry,
   summarizeMealImageJobOutcomes,
   type MealImageDish,
   type MealImageJobSeed,
+  type PlannedMealWriter,
 } from "../supabase/functions/_shared/meal-image";
 
 const SEED: MealImageJobSeed = {
@@ -135,58 +137,204 @@ describe("markDishImagesEnqueueFailed", () => {
   });
 });
 
+/** 積めなかった料理の印付けで読む献立の行の作り物 (planned_meals の 1 行。ENQUEUE_FAILED_MEAL_COLUMNS の列) */
+interface FakeMealRow {
+  dishes: unknown;
+  image_url: string | null;
+  updated_at: string | null;
+  catalog_product_id?: string | null;
+  source_type?: string | null;
+}
+
+/**
+ * planned_meals の 1 行の作り物。update の条件 (eq / is) を本当に評価し、当たれば値を書いて updated_at を進める
+ * (本物の trg_planned_meals_updated_at と同じく、どの書き手が書いても変わる)
+ */
+function makeMealTable(initial: FakeMealRow | null, options: { writeError?: { message: string } } = {}) {
+  let row: FakeMealRow | null = initial ? structuredClone(initial) : null;
+  let tick = 0;
+  const updates: Array<{ values: Record<string, unknown>; filters: Array<[string, string, unknown]>; matched: boolean }> = [];
+  const bump = (): string => {
+    tick += 1;
+    return `2026-10-14T00:00:0${tick}.000000+00:00`;
+  };
+
+  const db: PlannedMealWriter = {
+    from: () => ({
+      update: (values) => {
+        const record = { values, filters: [] as Array<[string, string, unknown]>, matched: false };
+        const filter = {
+          eq: (column: string, value: string) => {
+            record.filters.push(["eq", column, value]);
+            return filter;
+          },
+          is: (column: string, value: null) => {
+            record.filters.push(["is", column, value]);
+            return filter;
+          },
+          select: async () => {
+            updates.push(record);
+            if (options.writeError) return { data: null, error: options.writeError };
+            const current = row as Record<string, unknown> | null;
+            const byColumn = (column: string) => (column === "id" ? MEAL_ID : current?.[column]);
+            record.matched = current !== null && record.filters.every(([, column, value]) => byColumn(column) === value);
+            if (record.matched && row) row = { ...row, ...structuredClone(values), updated_at: bump() } as FakeMealRow;
+            return { data: record.matched ? [{ id: MEAL_ID }] : [], error: null };
+          },
+        };
+        return filter;
+      },
+    }),
+  };
+
+  return {
+    db,
+    updates,
+    get row(): FakeMealRow | null {
+      return row;
+    },
+    /** loadMeal の形 (書き込みの値を共有しないように写しを返す) */
+    loadMeal: vi.fn(async () => ({ data: row ? structuredClone(row) : null, error: null })),
+    /** ワーカー・利用者の保存など、ほかの書き手が条件なしで書く (updated_at が進む) */
+    writeDirectly(values: Partial<FakeMealRow>): void {
+      if (!row) throw new Error("row deleted");
+      row = { ...row, ...structuredClone(values), updated_at: bump() };
+    },
+  };
+}
+
+const MEAL_ID = "meal-1";
+const READ_AT = "2026-10-14T00:00:00.000000+00:00";
+
 describe("markEnqueueFailedDishesInMeal", () => {
   const failures = [{ dishIndex: 0, subjectHash: "hash-0" }];
   const stored: MealImageDish[] = [{ image_status: "pending", image_url: null, image_subject_hash: "hash-0" }];
+  const storedRow = (extra: Partial<FakeMealRow> = {}): FakeMealRow => ({ dishes: stored, image_url: null, updated_at: READ_AT, ...extra });
 
-  it("待ちの料理を failed にして書く", async () => {
-    const saveDishes = vi.fn(async () => ({ error: null }));
-    const result = await markEnqueueFailedDishesInMeal({ failures, loadMeal: async () => ({ data: { dishes: stored }, error: null }), saveDishes });
+  it("待ちの料理を failed にして、読んだときの updated_at の行にだけ書く。カバー (image_url) には触れない", async () => {
+    const table = makeMealTable(storedRow({ image_url: "https://example.com/cover.png" }));
+    const result = await markEnqueueFailedDishesInMeal({ failures, mealId: MEAL_ID, db: table.db, loadMeal: table.loadMeal });
 
     expect(result).toEqual({ status: "updated" });
-    expect(saveDishes).toHaveBeenCalledWith([expect.objectContaining({ image_status: "failed", image_error: MEAL_IMAGE_ENQUEUE_FAILED_ERROR })]);
+    expect(table.updates).toHaveLength(1);
+    expect(table.updates[0].filters).toEqual([
+      ["eq", "id", MEAL_ID],
+      ["eq", "updated_at", READ_AT],
+    ]);
+    expect(table.updates[0].values).not.toHaveProperty("image_url");
+    expect(table.row?.dishes).toEqual([expect.objectContaining({ image_status: "failed", image_error: MEAL_IMAGE_ENQUEUE_FAILED_ERROR })]);
+    expect(table.row?.image_url).toBe("https://example.com/cover.png");
+  });
+
+  it("updated_at が null の行は is null を条件にする", async () => {
+    const table = makeMealTable(storedRow({ updated_at: null }));
+    expect(await markEnqueueFailedDishesInMeal({ failures, mealId: MEAL_ID, db: table.db, loadMeal: table.loadMeal })).toEqual({ status: "updated" });
+    expect(table.updates[0].filters).toEqual([
+      ["eq", "id", MEAL_ID],
+      ["is", "updated_at", null],
+    ]);
+  });
+
+  it("#1532 読んでから書くまでにワーカーが別の料理の画像を書いたら (0 行)、読み直して当て直し、その画像を巻き戻さない", async () => {
+    const worker: MealImageDish = { image_status: "ready", image_url: "https://example.com/dish-1.png", image_subject_hash: "hash-1" };
+    const twoDishes: MealImageDish[] = [stored[0], { image_status: "pending", image_url: null, image_subject_hash: "hash-1" }];
+    const table = makeMealTable(storedRow({ dishes: twoDishes }));
+    let reads = 0;
+    const loadMeal = async () => {
+      const loaded = await table.loadMeal();
+      reads += 1;
+      // 最初に読んだ直後に、別の料理のワーカーが条件なしで書く (updated_at が進む)
+      if (reads === 1) table.writeDirectly({ dishes: [twoDishes[0], worker] });
+      return loaded;
+    };
+
+    const result = await markEnqueueFailedDishesInMeal({ failures, mealId: MEAL_ID, db: table.db, loadMeal });
+
+    expect(result).toEqual({ status: "updated" });
+    expect(reads).toBe(2);
+    expect(table.updates.map((u) => u.matched)).toEqual([false, true]);
+    expect(table.row?.dishes).toEqual([
+      expect.objectContaining({ image_status: "failed", image_error: MEAL_IMAGE_ENQUEUE_FAILED_ERROR }),
+      worker,
+    ]);
+  });
+
+  it("#1532 読み直したら料理がもう待ちでない (そのあいだに画像が付いた) なら、書かずに unchanged", async () => {
+    const table = makeMealTable(storedRow());
+    let reads = 0;
+    const loadMeal = async () => {
+      const loaded = await table.loadMeal();
+      reads += 1;
+      if (reads === 1) table.writeDirectly({ dishes: [{ image_status: "ready", image_url: "https://example.com/dish-0.png", image_subject_hash: "hash-0" }] });
+      return loaded;
+    };
+
+    expect(await markEnqueueFailedDishesInMeal({ failures, mealId: MEAL_ID, db: table.db, loadMeal })).toEqual({ status: "unchanged" });
+    expect(table.updates).toHaveLength(1);
+    expect(table.row?.dishes).toEqual([expect.objectContaining({ image_status: "ready", image_url: "https://example.com/dish-0.png" })]);
+  });
+
+  it(`#1532 ${MEAL_DISH_WRITE_MAX_ATTEMPTS} 回続けて負けたら書くのをやめ、error を返す (例外は投げない)`, async () => {
+    const table = makeMealTable(storedRow());
+    // 読むたびに、書く前にほかの書き手が書く (毎回 0 行になる)
+    const loadMeal = async () => {
+      const loaded = await table.loadMeal();
+      table.writeDirectly({ dishes: stored });
+      return loaded;
+    };
+
+    const result = await markEnqueueFailedDishesInMeal({ failures, mealId: MEAL_ID, db: table.db, loadMeal });
+
+    expect(result).toEqual({
+      status: "error",
+      message: `failed to update meal: the meal kept changing while writing (${MEAL_DISH_WRITE_MAX_ATTEMPTS} attempts)`,
+    });
+    expect(table.updates).toHaveLength(MEAL_DISH_WRITE_MAX_ATTEMPTS);
+    expect(table.updates.every((u) => !u.matched)).toBe(true);
+    expect(table.row?.dishes).toEqual(stored);
   });
 
   it("商品の献立 (catalog_product_id / source_type) の古い商品の料理は書かない (#1514)", async () => {
-    const saveDishes = vi.fn(async () => ({ error: null }));
-    expect(
-      await markEnqueueFailedDishesInMeal({ failures, loadMeal: async () => ({ data: { dishes: stored, catalog_product_id: "product-1" }, error: null }), saveDishes }),
-    ).toEqual({ status: "unchanged" });
-    expect(
-      await markEnqueueFailedDishesInMeal({ failures, loadMeal: async () => ({ data: { dishes: stored, source_type: "catalog_product" }, error: null }), saveDishes }),
-    ).toEqual({ status: "unchanged" });
-    expect(saveDishes).not.toHaveBeenCalled();
+    for (const extra of [{ catalog_product_id: "product-1" }, { source_type: "catalog_product" }]) {
+      const table = makeMealTable(storedRow(extra));
+      expect(await markEnqueueFailedDishesInMeal({ failures, mealId: MEAL_ID, db: table.db, loadMeal: table.loadMeal })).toEqual({ status: "unchanged" });
+      expect(table.updates).toEqual([]);
+    }
   });
 
   it("失敗が無ければ読まない。献立が無い・変える料理が無いときは書かない", async () => {
-    const loadMeal = vi.fn(async () => ({ data: { dishes: stored }, error: null }));
-    const saveDishes = vi.fn(async () => ({ error: null }));
+    const table = makeMealTable(storedRow());
+    expect(await markEnqueueFailedDishesInMeal({ failures: [], mealId: MEAL_ID, db: table.db, loadMeal: table.loadMeal })).toEqual({ status: "unchanged" });
+    expect(table.loadMeal).not.toHaveBeenCalled();
 
-    expect(await markEnqueueFailedDishesInMeal({ failures: [], loadMeal, saveDishes })).toEqual({ status: "unchanged" });
-    expect(loadMeal).not.toHaveBeenCalled();
-    expect(await markEnqueueFailedDishesInMeal({ failures, loadMeal: async () => ({ data: null, error: null }), saveDishes })).toEqual({ status: "not_found" });
-    expect(
-      await markEnqueueFailedDishesInMeal({ failures, loadMeal: async () => ({ data: { dishes: "not-an-array" }, error: null }), saveDishes }),
-    ).toEqual({ status: "unchanged" });
-    expect(saveDishes).not.toHaveBeenCalled();
+    const missing = makeMealTable(null);
+    expect(await markEnqueueFailedDishesInMeal({ failures, mealId: MEAL_ID, db: missing.db, loadMeal: missing.loadMeal })).toEqual({ status: "not_found" });
+    expect(missing.updates).toEqual([]);
+
+    const notArray = makeMealTable(storedRow({ dishes: "not-an-array" }));
+    expect(await markEnqueueFailedDishesInMeal({ failures, mealId: MEAL_ID, db: notArray.db, loadMeal: notArray.loadMeal })).toEqual({ status: "unchanged" });
+    expect(notArray.updates).toEqual([]);
   });
 
   it("読めない・書けない・例外のときも例外を投げず、error と文を返す", async () => {
-    const ok = async () => ({ data: { dishes: stored }, error: null });
+    const table = makeMealTable(storedRow());
     expect(
-      await markEnqueueFailedDishesInMeal({ failures, loadMeal: async () => ({ data: null, error: { message: "read failed" } }), saveDishes: async () => ({ error: null }) }),
+      await markEnqueueFailedDishesInMeal({ failures, mealId: MEAL_ID, db: table.db, loadMeal: async () => ({ data: null, error: { message: "read failed" } }) }),
     ).toEqual({ status: "error", message: "read failed" });
-    expect(await markEnqueueFailedDishesInMeal({ failures, loadMeal: ok, saveDishes: async () => ({ error: { message: "write failed" } }) })).toEqual({
+
+    const failing = makeMealTable(storedRow(), { writeError: { message: "write failed" } });
+    expect(await markEnqueueFailedDishesInMeal({ failures, mealId: MEAL_ID, db: failing.db, loadMeal: failing.loadMeal })).toEqual({
       status: "error",
-      message: "write failed",
+      message: "failed to update meal: write failed",
     });
     expect(
       await markEnqueueFailedDishesInMeal({
         failures,
+        mealId: MEAL_ID,
+        db: table.db,
         loadMeal: async () => {
           throw new Error("boom");
         },
-        saveDishes: async () => ({ error: null }),
       }),
     ).toEqual({ status: "error", message: "boom" });
   });

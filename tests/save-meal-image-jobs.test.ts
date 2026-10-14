@@ -129,6 +129,15 @@ describe("saveMealToDb: 料理画像のジョブを積んだあとに処理を�
     expect(h.trigger).not.toHaveBeenCalled();
   });
 
+  it("#1532 limit は積めた行と重複の数 (書き込みに失敗した行は数えない)。3 品のうち 1 品が失敗なら 2", async () => {
+    h.jobs = [JOB, { ...JOB, dishIndex: 1, subjectHash: "hash-1" }, { ...JOB, dishIndex: 2, subjectHash: "hash-2" }];
+    h.enqueue.mockResolvedValue({ inserted: 1, duplicates: 1, failed: 1 });
+    await save();
+
+    expect(h.trigger).toHaveBeenCalledTimes(1);
+    expect(h.trigger).toHaveBeenCalledWith(expect.objectContaining({ plannedMealId: "planned-meal-1", limit: 2 }));
+  });
+
   it("積むジョブが無ければ、起こさない", async () => {
     h.jobs = [];
     h.enqueue.mockResolvedValue({ inserted: 0, duplicates: 0, failed: 0 });

@@ -2,6 +2,8 @@
 
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { BUSINESS_NAME, BUSINESS_REPRESENTATIVE, DISCLOSED_ON_REQUEST } from "@/lib/business-info";
+import { getSupportEmail } from "@/lib/site-config";
 
 const colors = {
   primary: '#E07A5F',
@@ -15,19 +17,19 @@ const colors = {
   border: '#E8E8E8',
 };
 
-// 事業者の実在情報がまだ確定していない項目の表示。
-// 架空の値 (ダミーの代表者名・住所・電話番号など) は載せない。確定したら実際の値に差し替える。
-const PENDING = '準備中（確定次第掲載します）';
+// 事業者名・代表者は src/lib/business-info.ts で決める (法務ページの間で食い違わないように)。
+// 所在地・電話番号は載せず、請求があったときに遅滞なく開示する。架空の値 (ダミーの住所・電話番号など) は載せない。
+// メールアドレスは問い合わせ先の設定 (src/lib/site-config.ts の getSupportEmail) を使う。
 
 // 有料プランは販売開始前。価格・支払・解約などの条件はまだ決まっていないので載せない。
 const PAID_PLAN_PENDING = '有料プランは準備中です（販売開始前）';
 
 const rows: { label: string; value: ReactNode }[] = [
-  { label: '販売事業者', value: '株式会社ほめゴハン' },
-  { label: '代表者', value: PENDING },
-  { label: '所在地', value: PENDING },
-  { label: '電話番号', value: PENDING },
-  { label: 'メールアドレス', value: PENDING },
+  { label: '販売事業者', value: BUSINESS_NAME },
+  { label: '代表者', value: BUSINESS_REPRESENTATIVE },
+  { label: '所在地', value: DISCLOSED_ON_REQUEST },
+  { label: '電話番号', value: DISCLOSED_ON_REQUEST },
+  { label: 'メールアドレス', value: getSupportEmail() },
   {
     label: 'お問い合わせ',
     value: (
@@ -89,7 +91,7 @@ export default function LegalPage() {
         </div>
 
         <p className="text-center text-sm mt-8" style={{ color: colors.textMuted }}>
-          最終更新日：2026年10月8日
+          最終更新日：2026年10月14日
         </p>
       </main>
 

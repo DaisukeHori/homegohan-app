@@ -29,6 +29,7 @@ import {
   DEFAULT_MEAL_IMAGE_MODEL,
   asCatalogMealDish,
   buildDishImagePrompt,
+  countMealImageJobsToProcess,
   isCatalogProductMeal,
   isMealCoverHeldByImagelessPreservedDish,
   type EnqueueMealImageJobsResult,
@@ -313,12 +314,14 @@ export async function runMealImageBackfill(admin: SupabaseClient, options: MealI
     report.enqueue.duplicates += result.duplicates;
     report.enqueue.failed += result.failed;
 
-    if (options.trigger && result.inserted + result.duplicates > 0) {
+    // limit は積めた行と待ちのジョブの数 (書き込みに失敗した行は数えない。#1532)
+    const jobsToProcess = countMealImageJobsToProcess(result);
+    if (options.trigger && jobsToProcess > 0) {
       await triggerMealImageJobProcessing({
         supabaseUrl: options.supabaseUrl ?? '',
         serviceRoleKey: options.serviceRoleKey ?? '',
         plannedMealId: candidate.plannedMealId,
-        limit: candidate.seeds.length,
+        limit: jobsToProcess,
       });
       report.triggeredMeals += 1;
       await sleep(options.intervalMs);

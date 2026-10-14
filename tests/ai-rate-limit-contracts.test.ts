@@ -581,7 +581,8 @@ describe('meals route: 画像生成ジョブの同期トリガーは image カ�
       jobs: [{ dishIndex: 0, subjectHash: 'hash-1', prompt: 'p', model: 'm', referenceImageUrls: [] }],
       mealCoverImageUrl: null,
     });
-    mockEnqueueMealImageJobs.mockResolvedValue(undefined);
+    // 積んだ結果 (1 品を積めた)。処理を起こすかはこの結果で決まる (#1532)
+    mockEnqueueMealImageJobs.mockResolvedValue({ inserted: 1, duplicates: 0, failed: 0 });
     mockTriggerMealImageJobProcessing.mockResolvedValue(undefined);
     mockCancelPendingMealImageJobs.mockResolvedValue(undefined);
 
@@ -826,7 +827,8 @@ describe('consultation/actions/execute update_meal: 画像トリガーは genera
       jobs: [{ dishIndex: 0, subjectHash: 'hash-1', prompt: 'p', model: 'm', referenceImageUrls: [] }],
       mealCoverImageUrl: null,
     });
-    mockEnqueueMealImageJobs.mockResolvedValue(undefined);
+    // 積んだ結果 (1 品を積めた)。処理を起こすかはこの結果で決まる (#1532)
+    mockEnqueueMealImageJobs.mockResolvedValue({ inserted: 1, duplicates: 0, failed: 0 });
     mockTriggerMealImageJobProcessing.mockResolvedValue(undefined);
 
     const actionLogsChain: any = {

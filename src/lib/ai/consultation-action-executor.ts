@@ -19,7 +19,7 @@ import { updateHealthStreak } from '@/lib/health-streaks';
 import { todayLocal } from '@/lib/date-utils';
 import { invokeGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { isFeatureEnabled } from '@/lib/feature-flags';
-import { isCatalogProductMeal, markDishImagesSkipped, type MealImageJobSeed } from '@/lib/meal-image';
+import { countMealImageJobsToProcess, isCatalogProductMeal, markDishImagesSkipped, type MealImageJobSeed } from '@/lib/meal-image';
 import {
   buildDishImagePayload,
   cancelPendingMealImageJobs,
@@ -851,7 +851,7 @@ export async function runConsultationAction(
         // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。service role で積む。
         // 1 行も積めなかったとき (重複・書き込みの失敗) は、enqueueMealImageJobs が数えた 1 回を戻す (#1487)
         const queueDb = getAiQueueWriter();
-        await enqueueMealImageJobs({
+        const enqueued = await enqueueMealImageJobs({
           supabase: queueDb,
           plannedMealId: mealId,
           userId: user.id,
@@ -860,7 +860,11 @@ export async function runConsultationAction(
           requestId: action.id,
           usage: imageUsage,
         });
-        await triggerMealImageJobProcessing({ plannedMealId: mealId, limit: jobs.length });
+        // 積めた行と、同じ料理の待ちのジョブがあるときだけ処理を起こす (書き込みの失敗だけなら空振りの呼び出しを出さない。#1532)
+        const jobsToProcess = countMealImageJobsToProcess(enqueued);
+        if (jobsToProcess > 0) {
+          await triggerMealImageJobProcessing({ plannedMealId: mealId, limit: jobsToProcess });
+        }
       }
 
       console.log('Meal updated successfully:', updatedMeal);
