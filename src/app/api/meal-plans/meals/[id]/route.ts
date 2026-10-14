@@ -5,7 +5,7 @@ import {
   buildCatalogSelectionUpdate,
   clearCatalogSelectionMetadata,
 } from '../../../../../lib/catalog-products';
-import { isCatalogProductMeal, markDishImagesSkipped, type MealImageJobSeed } from '../../../../../lib/meal-image';
+import { isCatalogProductMeal, countMealImageJobsToProcess, markDishImagesSkipped, type MealImageJobSeed } from '../../../../../lib/meal-image';
 import {
   buildDishImagePayload,
   cancelPendingMealImageJobs,
@@ -18,6 +18,7 @@ import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { createLogger } from '@/lib/db-logger';
 import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
 import { internalError } from '@/lib/api/errors';
+import { uuidOrNull } from '@/lib/http-params';
 
 export async function PATCH(
   request: Request,
@@ -217,16 +218,21 @@ export async function PATCH(
       // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。service role で積む。
       // 1 行も積めなかったとき (重複・書き込みの失敗) は、enqueueMealImageJobs が数えた 1 回を戻す (#1487)
       const queueDb = getAiQueueWriter();
-      await enqueueMealImageJobs({
+      const enqueued = await enqueueMealImageJobs({
         supabase: queueDb,
         plannedMealId: data.id,
         userId: user.id,
         triggerSource,
         jobSeeds: jobs,
-        requestId,
+        // uuid の形式でない x-request-id は入れない (request_id は uuid の列で、入れると 22P02 で積めない。#1532)
+        requestId: uuidOrNull(requestId),
         usage: imageUsage,
       });
-      await triggerMealImageJobProcessing({ plannedMealId: data.id, limit: jobs.length });
+      // 積めた行と、同じ料理の待ちのジョブがあるときだけ処理を起こす (書き込みの失敗だけなら空振りの呼び出しを出さない。#1532)
+      const jobsToProcess = countMealImageJobsToProcess(enqueued);
+      if (jobsToProcess > 0) {
+        await triggerMealImageJobProcessing({ plannedMealId: data.id, limit: jobsToProcess });
+      }
     }
 
     return NextResponse.json({
