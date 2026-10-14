@@ -142,12 +142,12 @@ FROM vault.decrypted_secrets WHERE name = 'app_cron_secret';
 |---|---|---|
 | Edge Function secrets（`CRON_SECRET`・`SERVICE_ROLE_SECRET`・`CRON_SECRET_PREVIOUS`） | `supabase secrets list -o json`。Supabase は値を返さず、SHA-256 のダイジェストだけを返します | supabase CLI（ログイン済み、または `SUPABASE_ACCESS_TOKEN`） |
 | Vault（`app_cron_secret`） | 上の SQL を psql で実行（接続先は環境変数 `SUPABASE_DB_URL`。`--db-url-env` で別の名前にできます）、または SQL Editor で実行して `--vault-digest` で渡す | psql、または SQL Editor |
-| Vercel（`CRON_SECRET`・`CRON_SECRET_PREVIOUS`） | `vercel env pull` を、権限 700 の一時ディレクトリに umask 077 で書かせ、ダイジェストを計算したらすぐ消します（既定は `--vercel-environment production`） | vercel CLI（ログイン済み。このディレクトリにリンクしていないときは `--vercel-project` / `--vercel-scope`） |
+| Vercel（`CRON_SECRET`・`CRON_SECRET_PREVIOUS`） | `vercel env pull` を、権限 700 の一時ディレクトリに umask 077 で書かせ、ダイジェストを計算したらすぐ消します（既定は `--vercel-environment production`）。Sensitive の変数は値の代わりに `[SENSITIVE]`（古い vercel CLI では空）で書かれるので、ある・無いだけを確かめます | vercel CLI（ログイン済み。このディレクトリにリンクしていないときは `--vercel-project` / `--vercel-scope`） |
 
 判定（`--help` に全部のオプションがあります）:
 
 - **FAIL**（終了コード 1）: Edge Function secrets の `CRON_SECRET`（無いときだけ `SERVICE_ROLE_SECRET`）と Vault の `app_cron_secret` が食い違う（pg_cron の呼び出しが 401）／どちらかが無い・空（503・例外）／Vercel の `CRON_SECRET` が無い（cron の API が 503）。
-- **WARN**: Vault がまだ Edge Function secrets の `CRON_SECRET_PREVIOUS`（旧い値）と同じ（入れ替えの途中。下の手順の 2 と 3 の間）／Vault が新しい値なのに `CRON_SECRET_PREVIOUS` が残っている（手順 5 の外し忘れ）／`CRON_SECRET_PREVIOUS` が現行と同じ／Vercel の `CRON_SECRET` が Sensitive の変数で値を取り出せない（`vercel env pull` では空になるため、ある・無いしか分かりません）。
+- **WARN**: Vault がまだ Edge Function secrets の `CRON_SECRET_PREVIOUS`（旧い値）と同じ（入れ替えの途中。下の手順の 2 と 3 の間）／Vault が新しい値なのに `CRON_SECRET_PREVIOUS` が残っている（手順 5 の外し忘れ）／`CRON_SECRET_PREVIOUS` が現行と同じ／Vercel の `CRON_SECRET` が Sensitive の変数で値を取り出せない（`vercel env pull` では値の代わりに `[SENSITIVE]`、古い vercel CLI では空で書かれるため、ある・無いしか分かりません。`--vercel-must-match` を付けていても FAIL にはせず WARN にします）。
 - **INFO**: Vercel の `CRON_SECRET` が Supabase 側と同じか違うか。上の表のとおり Vercel は独立しているので、違っていても失敗にしません（同じ値で運用すると決めたときは `--vercel-must-match` で FAIL にできます）。
 - 読めなかった保管場所がある（CLI が無い・ログインしていない・接続できない）と、終了コード 2 です。`--skip-edge` / `--skip-vault` / `--skip-vercel` で、その保管場所を外して実行できます。
 

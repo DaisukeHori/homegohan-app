@@ -33,6 +33,7 @@ import {
   UsageError,
   VAULT_DIGEST_SQL,
   VAULT_SECRET_NAME,
+  VERCEL_SENSITIVE_PLACEHOLDER,
   commandTimeoutMs,
   createDefaultStores,
   digestsFromEnvText,
@@ -233,6 +234,17 @@ describe('digestsFromEnvText (vercel env pull のファイル)', () => {
   it('無い名前は結果に入れない (未設定)', () => {
     expect(digestsFromEnvText('OTHER="x"\n')).toEqual({});
   });
+
+  it('Sensitive の変数 (vercel CLI が値の代わりに書く [SENSITIVE]) は「取り出せない」で、プレースホルダのダイジェストを作らない', () => {
+    // vercel CLI の SENSITIVE_PLACEHOLDER と同じ文字列であること (CLI の実装が書く形)
+    expect(VERCEL_SENSITIVE_PLACEHOLDER).toBe('[SENSITIVE]');
+    expect(digestsFromEnvText(`${CURRENT_NAME}="[SENSITIVE]"`)).toEqual({ [CURRENT_NAME]: { kind: 'unreadable' } });
+    const entries = digestsFromEnvText(['# Created by Vercel CLI', `${CURRENT_NAME}="[SENSITIVE]"`, `${PREVIOUS_NAME}="[SENSITIVE]"`, ''].join('\n'));
+    expect(entries).toEqual({ [CURRENT_NAME]: { kind: 'unreadable' }, [PREVIOUS_NAME]: { kind: 'unreadable' } });
+    expect(JSON.stringify(entries)).not.toContain(D(VERCEL_SENSITIVE_PLACEHOLDER));
+    // プレースホルダを含むだけの本物の値は、値としてダイジェストにする
+    expect(digestsFromEnvText(`${CURRENT_NAME}="x[SENSITIVE]"`)).toEqual({ [CURRENT_NAME]: digestEntry('x[SENSITIVE]') });
+  });
 });
 
 describe('parseVaultDigestOutput (psql -A -t の出力)', () => {
@@ -383,6 +395,28 @@ describe('evaluate (ダイジェストの比較)', () => {
     const same = evaluate({ ...healthy(), vercel: okStore({ [CURRENT_NAME]: digestEntry(SECRET_NEW) }) });
     expect(levelOf(same, 'vercel-vs-supabase')).toBe('info');
     expect(exitCodeOf(same)).toBe(0);
+  });
+
+  it('Vercel の CRON_SECRET と CRON_SECRET_PREVIOUS が両方 Sensitive ([SENSITIVE]): 設定ありの PASS・現行と同じの WARN・must-match の FAIL を出さない', () => {
+    const sensitiveFile = [`${CURRENT_NAME}="${VERCEL_SENSITIVE_PLACEHOLDER}"`, `${PREVIOUS_NAME}="${VERCEL_SENSITIVE_PLACEHOLDER}"`, ''].join('\n');
+    const snapshot = { ...healthy(), vercel: okStore(digestsFromEnvText(sensitiveFile)) };
+    const checks = evaluate(snapshot);
+    expect(levelOf(checks, 'vercel-current')).toBe('warn');
+    expect(checks.find((c: Check) => c.id === 'vercel-current')?.detail).toContain(VERCEL_SENSITIVE_PLACEHOLDER);
+    expect(levelOf(checks, 'vercel-previous')).toBe('info');
+    expect(checks.find((c: Check) => c.id === 'vercel-previous')?.title).not.toContain('現行の値と同じ');
+    expect(levelOf(checks, 'vercel-vs-supabase')).toBeUndefined();
+    expect(exitCodeOf(checks)).toBe(0);
+
+    const strict = evaluate(snapshot, { vercelMustMatch: true });
+    expect(levelOf(strict, 'vercel-vs-supabase')).toBe('warn');
+    expect(exitCodeOf(strict)).toBe(0);
+
+    // 表示: プレースホルダのダイジェストの先頭を「設定あり (…)」として出さない
+    const report = formatReport(checks, snapshot);
+    expect(report).toContain(`Vercel ${CURRENT_NAME}: 値を取り出せない`);
+    expect(report).toContain(`Vercel ${PREVIOUS_NAME}: 値を取り出せない`);
+    expect(report).not.toContain(D(VERCEL_SENSITIVE_PLACEHOLDER).slice(0, DIGEST_PREFIX_LENGTH));
   });
 
   it('--vercel-must-match のときだけ、Vercel が Supabase 側と違えば FAIL', () => {
@@ -645,6 +679,33 @@ describe('createDefaultStores (各保管場所の読み取り)', () => {
     expect(JSON.stringify(store)).not.toContain(SECRET_VERCEL);
   });
 
+  it('Vercel: vercel env pull が Sensitive の変数を [SENSITIVE] で書いたら、main() は値の照合をせず WARN で終了コード 0 (--vercel-must-match でも)', async () => {
+    for (const argv of [[], ['--vercel-must-match']]) {
+      const fsFake = fakeFs();
+      const { run } = fakeRun((_command, args) => {
+        // vercel CLI 58.10.0 が書く形 (CONTENTS_PREFIX のあとに KEY="値" を 1 行ずつ)
+        fsFake.files.set(args[6], `# Created by Vercel CLI\n${CURRENT_NAME}="[SENSITIVE]"\n${PREVIOUS_NAME}="[SENSITIVE]"\n`);
+        return { code: 0, stdout: '', stderr: '' };
+      });
+      const vercel = createDefaultStores({ options: baseOptions(argv), env: {}, run, fsApi: fsFake.api, tmpdir: '/virtual-tmp' }).vercel;
+      const out: string[] = [];
+      const code = await main(['--project-ref', 'abcdefgh', ...argv], {
+        env: {},
+        log: (line: string) => out.push(line),
+        errorLog: () => {},
+        stores: { edge: async () => healthy().edge, vault: async () => healthy().vault, vercel },
+      });
+      const report = out.join('\n');
+      expect(code).toBe(0);
+      expect(report).toContain(`[WARN] Vercel の ${CURRENT_NAME} は値を取り出せません`);
+      expect(report).not.toContain(`[PASS] Vercel の ${CURRENT_NAME} が設定されています`);
+      expect(report).not.toContain(`[WARN] Vercel の ${PREVIOUS_NAME} が現行の値と同じです`);
+      expect(report).not.toContain('[FAIL]');
+      expect(report).not.toContain(D(VERCEL_SENSITIVE_PLACEHOLDER).slice(0, DIGEST_PREFIX_LENGTH));
+      expect(fsFake.files.size).toBe(0);
+    }
+  });
+
   it('Vercel: 失敗しても一時ディレクトリは必ず消す', async () => {
     const fsFake = fakeFs();
     const { run } = fakeRun((_command, args) => {
@@ -747,6 +808,10 @@ describe('ENV_SETUP.md の案内 (#1196)', () => {
     // 手順書の SQL (SQL Editor で実行して --vault-digest に渡す) は、スクリプトが psql で流す SQL と同じ計算
     expect(section).toContain("encode(extensions.digest(convert_to(decrypted_secret, 'UTF8'), 'sha256'), 'hex')");
     expect(VAULT_DIGEST_SQL).toContain("encode(extensions.digest(convert_to(decrypted_secret, 'UTF8'), 'sha256'), 'hex')");
+    // Sensitive の変数が vercel env pull でどう書かれるかを、CLI の実際の形 ([SENSITIVE]) で案内する (「空になる」だけの古い案内を残さない)
+    expect(section).toContain(`\`${VERCEL_SENSITIVE_PLACEHOLDER}\``);
+    expect(section).not.toContain('`vercel env pull` では空になるため');
+    expect(HELP).toContain(VERCEL_SENSITIVE_PLACEHOLDER);
     // 「まだ仕組みが無い」という古い案内は残さない
     expect(section).not.toContain('値のずれを自動で見つける仕組みは、まだありません');
   });

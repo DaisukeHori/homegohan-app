@@ -60,6 +60,12 @@ export const STDERR_TAIL_LINES = 5;
 export const DEFAULT_DB_URL_ENV = 'SUPABASE_DB_URL';
 /** Vercel の環境 (production / preview / development) の既定値 */
 export const DEFAULT_VERCEL_ENVIRONMENT = 'production';
+/**
+ * vercel env pull が Sensitive の変数の値の代わりに書く文字列。vercel CLI の SENSITIVE_PLACEHOLDER と同じ
+ * (58.10.0 の envPullCommandLogic: Vercel の API が空で返した type === 'sensitive' のキーを、この文字列で書き出す)。
+ * 古い vercel CLI や、CLI が Sensitive のキーを引けなかったときは空で書かれる。どちらも値を取り出せない印として扱う。
+ */
+export const VERCEL_SENSITIVE_PLACEHOLDER = '[SENSITIVE]';
 /** Supabase の project ref を読む環境変数 (--project-ref が無いとき) */
 export const PROJECT_REF_ENV_NAME = 'SUPABASE_PROJECT_REF';
 /** 接続先の URL に sslmode が無いときに使う値 (Supabase の DB は TLS を要求する) */
@@ -105,6 +111,8 @@ Vercel の環境変数で食い違っていないかを確かめます。値は�
   --help                    このメッセージ
 
 要るもの: supabase CLI (ログイン済み、または SUPABASE_ACCESS_TOKEN)・vercel CLI (ログイン済み)・psql (--vault-digest を使わないとき)。
+Vercel の Sensitive の変数は、vercel env pull で値の代わりに ${VERCEL_SENSITIVE_PLACEHOLDER} (古い vercel CLI では空) で書かれるので、
+ある・無いだけを確かめ、値は照合しません (WARN)。
 コマンド 1 つを待つ上限は ${DEFAULT_COMMAND_TIMEOUT_MS / MS_PER_SECOND} 秒です (環境変数 ${TIMEOUT_ENV_NAME} にミリ秒で書くと変えられます)。
 終了コード: 0 = 問題なし (警告は除く) / 1 = 値のずれ・未設定あり / 2 = 引数の誤り、または読めなかった保管場所がある`;
 
@@ -235,7 +243,9 @@ export function parseSupabaseSecretsJson(stdout, names = [CURRENT_NAME, PREVIOUS
 
 /**
  * vercel env pull が書いたファイルの中身から、名前ごとのダイジェストを計算する。値は返さない。
- * 空の値は「取り出せない」として扱う (Sensitive の変数は、vercel env pull では空で書かれるため)。
+ * VERCEL_SENSITIVE_PLACEHOLDER と空の値は「取り出せない」として扱う。Sensitive の変数は、vercel env pull では
+ * 値の代わりに VERCEL_SENSITIVE_PLACEHOLDER (古い vercel CLI や、CLI が Sensitive のキーを引けなかったときは空) で書かれるため。
+ * これをダイジェストにすると、別の値どうしが同じダイジェストになり、照合の結果が嘘になる。
  */
 export function digestsFromEnvText(text, names = [CURRENT_NAME, PREVIOUS_NAME]) {
   const parsed = parseEnv(text);
@@ -243,7 +253,7 @@ export function digestsFromEnvText(text, names = [CURRENT_NAME, PREVIOUS_NAME]) 
   for (const name of names) {
     if (!Object.hasOwn(parsed, name)) continue;
     const value = parsed[name];
-    entries[name] = value === '' ? { kind: 'unreadable' } : { kind: 'digest', digest: sha256Hex(value) };
+    entries[name] = value === '' || value === VERCEL_SENSITIVE_PLACEHOLDER ? { kind: 'unreadable' } : { kind: 'digest', digest: sha256Hex(value) };
   }
   return entries;
 }
@@ -562,7 +572,7 @@ export function evaluate(snapshot, { vercelMustMatch = false } = {}) {
         'vercel-current',
         'warn',
         `Vercel の ${CURRENT_NAME} は値を取り出せません`,
-        'Sensitive の変数 (と空の値) は vercel env pull で空になります。ある・無いだけは分かりますが、値の照合はできません。空の値なら cron の API は HTTP 503 を返すので、Vercel の Cron Jobs の画面で HTTP ステータスを確かめてください',
+        `Sensitive の変数は vercel env pull で値の代わりに ${VERCEL_SENSITIVE_PLACEHOLDER} (古い vercel CLI では空) で書かれ、空の値と同じく値を取り出せません。ある・無いだけは分かりますが、値の照合はできません。空の値なら cron の API は HTTP 503 を返すので、Vercel の Cron Jobs の画面で HTTP ステータスを確かめてください`,
       );
     } else {
       add('vercel-current', 'fail', `Vercel の ${CURRENT_NAME}: ${describeEntry(current)}`, 'cron の API (/api/cron/*) が HTTP 503 を返し、Vercel Cron が動きません');
