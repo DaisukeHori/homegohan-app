@@ -24,13 +24,18 @@
  *   FAIL  cron の呼び出しが 401 / 503 になる (値のずれ・未設定)
  *   INFO  参考情報
  *   SKIP  確かめていない (--skip-* で外した保管場所)
- * 終了コード: 0 = FAIL なし / 1 = FAIL あり / 2 = 引数の誤り、または読めなかった保管場所がある (判定できない)
+ * 終了コード: 0 = FAIL なし / 1 = FAIL あり / 2 = 引数の誤り、または読めなかった保管場所がある (判定できない)。
+ *           FAIL と読めなかった保管場所が両方あるときは 1 (読めた保管場所だけで、すでにずれが分かっているため)
+ *
+ * Ctrl-C (SIGINT)・SIGTERM・SIGHUP で止めたときも、Vercel の一時ディレクトリ (本番の全部の環境変数が入る) を
+ * 同期的に消してから、シグナルの終了コード (128 + シグナル番号) で終わる (createSignalCleanup)。
  *
  * 単体テストから使えるよう、本体 (このファイル) と入口を分けてある。外部のコマンドの実行 (run) と
  * ファイルの操作 (fsApi)、保管場所の読み取り (stores) は差し替えられるので、テストは本物の Vercel / Supabase に接続しない。
  */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -70,6 +75,25 @@ export const VERCEL_SENSITIVE_PLACEHOLDER = '[SENSITIVE]';
 export const PROJECT_REF_ENV_NAME = 'SUPABASE_PROJECT_REF';
 /** 接続先の URL に sslmode が無いときに使う値 (Supabase の DB は TLS を要求する) */
 export const DEFAULT_PG_SSLMODE = 'require';
+/** 伏せ字の印 */
+export const REDACTED = '***';
+/**
+ * 標準エラー出力の中で、秘密らしいとみなして伏せる、区切りの無い英数字の連なりの最短の長さ。
+ * 秘密の形 (Vercel のトークン 24 文字・Supabase のアクセストークン sbp_ + 40 文字・openssl rand -base64 32 の 44 文字など) は
+ * この長さ以上で、エラーの文に出る普通の語 (コマンド名・オプション名・project ref の 20 文字) はこれより短い
+ */
+export const MIN_OPAQUE_TOKEN_LENGTH = 24;
+/**
+ * 子に渡す環境変数のうち、値を伏せる対象とみなす名前。コマンドが自分の資格情報 (SUPABASE_ACCESS_TOKEN・VERCEL_TOKEN など) を
+ * エラーの文にそのまま書いても、表示に出さないため
+ */
+export const SECRET_ENV_NAME_PATTERN = /(TOKEN|SECRET|PASSWORD|PASSWD|KEY|DB_URL|DATABASE_URL)/i;
+/** 上の名前の環境変数でも、これより短い値は伏せない (「1」や「true」で普通の語まで伏せてしまわないため) */
+export const MIN_SECRET_ENV_VALUE_LENGTH = 8;
+/** 止めたときに一時ディレクトリを消すシグナル (Ctrl-C・kill・端末を閉じた) */
+export const CLEANUP_SIGNALS = Object.freeze(['SIGINT', 'SIGTERM', 'SIGHUP']);
+/** シグナルで止まったときの終了コードの基数 (シェルの慣習: 128 + シグナル番号。SIGINT なら 130) */
+export const SIGNAL_EXIT_CODE_BASE = 128;
 
 const HEX_DIGEST_PATTERN = new RegExp(`^[0-9a-f]{${SHA256_HEX_LENGTH}}$`);
 
@@ -114,7 +138,9 @@ Vercel の環境変数で食い違っていないかを確かめます。値は�
 Vercel の Sensitive の変数は、vercel env pull で値の代わりに ${VERCEL_SENSITIVE_PLACEHOLDER} (古い vercel CLI では空) で書かれるので、
 ある・無いだけを確かめ、値は照合しません (WARN)。
 コマンド 1 つを待つ上限は ${DEFAULT_COMMAND_TIMEOUT_MS / MS_PER_SECOND} 秒です (環境変数 ${TIMEOUT_ENV_NAME} にミリ秒で書くと変えられます)。
-終了コード: 0 = 問題なし (警告は除く) / 1 = 値のずれ・未設定あり / 2 = 引数の誤り、または読めなかった保管場所がある`;
+終了コード: 0 = 問題なし (警告は除く) / 1 = 値のずれ・未設定あり / 2 = 引数の誤り、または読めなかった保管場所がある
+(値のずれ・未設定と、読めなかった保管場所が両方あるときは 1)。
+Edge Function secrets と Vault が食い違ったら、Vault の ${VAULT_SECRET_NAME} を正として、Edge Function secrets の ${CURRENT_NAME} を合わせます。`;
 
 /**
  * @param {string[]} argv
@@ -275,14 +301,52 @@ export function parseVaultDigestOutput(stdout) {
 /** 文の中の秘密の文字列を伏せる (コマンドの標準エラー出力を見せるときの用心) */
 export function redact(text, secrets) {
   let result = text;
-  for (const secret of secrets) {
-    if (secret) result = result.split(secret).join('***');
+  // 長いものから伏せる (短い秘密が長い秘密の一部のとき、長い方の残りが出ないように)
+  const ordered = [...secrets].filter(Boolean).sort((a, b) => b.length - a.length);
+  for (const secret of ordered) {
+    result = result.split(secret).join(REDACTED);
   }
   return result;
 }
 
+/** URL (スキーム://...。ユーザー名・パスワード・トークンをクエリに含みうる) */
+const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s'"<>]+/gi;
+/** Authorization ヘッダの値 (行をまたがない) */
+const AUTH_SCHEME_PATTERN = /\b(Bearer|Basic)[ \t]+[^\s'",;]+/gi;
+/**
+ * 秘密らしい名前のあとの値 (password=..., "token": "...", password "...", Authorization: Bearer ... など)。行をまたがない。
+ * 値の前の認証方式の語 (Bearer など) は値ごと伏せる (語だけ伏せて値を残さないため)
+ */
+const SECRET_ASSIGNMENT_PATTERN =
+  /\b([A-Za-z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|authorization|credential)[A-Za-z0-9_.-]*["']?)([ \t]*[=:][ \t]*|[ \t]+(?=["']))(?:(?:Bearer|Basic|Token)[ \t]+)?("[^"]*"|'[^']*'|[^\s,;]+)/gi;
+/** 環境変数の書き出し (NAME=値。vercel env pull のファイルの中身がエラーの文に出た場合) */
+const ENV_LINE_PATTERN = /^([ \t]*(?:export[ \t]+)?[A-Z][A-Z0-9_]*[ \t]*=[ \t]*)\S.*$/gm;
+/** 区切りの無い長い英数字の連なり (トークン・鍵・ダイジェストらしきもの) */
+const OPAQUE_TOKEN_PATTERN = new RegExp(`[A-Za-z0-9+/_=-]{${MIN_OPAQUE_TOKEN_LENGTH},}`, 'g');
+
+/**
+ * コマンドの標準エラー出力を表示する前に、値・URL・パスワードらしきものを伏せる。
+ * 分かっている秘密 (secrets) をそのまま伏せたうえで、形から秘密らしいものも伏せる。
+ * 伏せすぎて原因が読みにくくなることはあっても、秘密を出すよりはよい (どの保管場所の失敗かは、伏せずに出る文で分かる)。
+ */
+export function redactSensitive(text, secrets = []) {
+  return redact(text, secrets)
+    .replace(URL_PATTERN, REDACTED)
+    .replace(SECRET_ASSIGNMENT_PATTERN, (_match, name, separator) => `${name}${separator.trim() === '' ? ' ' : separator}${REDACTED}`)
+    .replace(AUTH_SCHEME_PATTERN, (_match, scheme) => `${scheme} ${REDACTED}`)
+    .replace(ENV_LINE_PATTERN, (_match, head) => `${head}${REDACTED}`)
+    .replace(OPAQUE_TOKEN_PATTERN, (match) => (/[A-Za-z]/.test(match) && /[0-9]/.test(match) ? REDACTED : match));
+}
+
+/** 環境変数のうち、秘密らしい名前の値 (伏せる対象) */
+export function secretValuesFromEnv(env) {
+  return Object.entries(env)
+    .filter(([name, value]) => SECRET_ENV_NAME_PATTERN.test(name) && typeof value === 'string' && value.length >= MIN_SECRET_ENV_VALUE_LENGTH)
+    .map(([, value]) => value);
+}
+
 function stderrTail(stderr, secrets = []) {
-  const lines = redact(stderr ?? '', secrets)
+  const lines = redactSensitive(stderr ?? '', secrets)
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
     .filter((line) => line !== '');
@@ -330,7 +394,7 @@ export function commandTimeoutMs(env) {
  * 外部のコマンドを実行する (既定の run)。シェルは通さない。標準出力・標準エラー出力は呼び出し側に返すだけで、端末には出さない。
  * @returns {Promise<{ code: number | null, stdout: string, stderr: string, error?: string }>}
  */
-export function runCommand(command, args, { env, timeoutMs }) {
+export function runCommand(command, args, { env, timeoutMs, onSpawn }) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -339,6 +403,8 @@ export function runCommand(command, args, { env, timeoutMs }) {
       resolve({ code: null, stdout: '', stderr: '', error: error?.code ?? 'spawn failed' });
       return;
     }
+    // 止めたときに子も止められるよう、呼び出し側に子を渡す (Vercel の読み取りの後始末)
+    onSpawn?.(child);
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -364,15 +430,105 @@ export function runCommand(command, args, { env, timeoutMs }) {
 }
 
 /**
- * 本物の保管場所を読む関数の組を作る。run / fsApi / tmpdir を差し替えればテストからも使える。
- * @param {{ options: ReturnType<typeof parseArgs>, env: Record<string, string | undefined>, run?: typeof runCommand, fsApi?: Pick<typeof fsPromises, 'mkdtemp' | 'readFile' | 'rm'>, tmpdir?: string }} deps
+ * シグナル (Ctrl-C など) で止めたときの後始末。登録した一時ディレクトリを同期的に消し、登録した子 (vercel) を止めてから、
+ * 128 + シグナル番号の終了コードで終わる。シグナルの受け手を置くのは、一時ディレクトリを持っている間 (hold から release まで) だけ。
+ * それ以外の間は Node の既定のふるまい (そのまま終わる) のまま。
+ * proc / rmSync / writeError を差し替えればテストからも使える。
+ * @typedef {{ on: (event: string, listener: (signal: string) => void) => unknown, removeListener: (event: string, listener: (signal: string) => void) => unknown, exit: (code: number) => void }} SignalProcess
+ * @typedef {{ kill: (signal: string) => unknown, once?: (event: string, listener: () => void) => unknown }} KillableChild
+ * @param {{ proc?: SignalProcess, rmSync?: (dir: string, options: { recursive: boolean, force: boolean }) => void, writeError?: (text: string) => void, signals?: readonly string[] }} [deps]
  */
-export function createDefaultStores({ options, env, run = runCommand, fsApi = fsPromises, tmpdir = os.tmpdir() }) {
+export function createSignalCleanup({ proc = process, rmSync = fs.rmSync, writeError = (text) => fs.writeSync(process.stderr.fd, text), signals = CLEANUP_SIGNALS } = {}) {
+  const dirs = new Set();
+  const children = new Set();
+  let holders = 0;
+
+  function onSignal(signal) {
+    for (const child of children) {
+      try {
+        // 書きかけのファイルを消したあとに書き足されないよう、待たずに止める
+        child.kill('SIGKILL');
+      } catch {
+        // すでに終わっている
+      }
+    }
+    const leftovers = [];
+    for (const dir of dirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        leftovers.push(dir);
+      }
+    }
+    dirs.clear();
+    children.clear();
+    for (const name of signals) proc.removeListener(name, onSignal);
+    holders = 0;
+    try {
+      // 一時ディレクトリの場所は秘密ではない (中身を消せなかったときに、手で消せるよう出す)
+      writeError(
+        leftovers.length === 0
+          ? `check-cron-secret-drift: ${signal} で止めました (一時ファイルは消しました)\n`
+          : `check-cron-secret-drift: ${signal} で止めました。一時ディレクトリを消せませんでした。本番の環境変数が入っているので、手で消してください: ${leftovers.join(' ')}\n`,
+      );
+    } catch {
+      // 標準エラー出力に書けなくても、終わることを優先する
+    }
+    // 知らない名前のシグナルは来ない (受け手を置くのは signals だけ) が、番号が引けなくても終わる
+    proc.exit(SIGNAL_EXIT_CODE_BASE + (os.constants.signals[signal] ?? 0));
+  }
+
+  return {
+    /** シグナルの受け手を置く。返した関数で外す (何度呼んでもよい) */
+    hold() {
+      if (holders === 0) for (const name of signals) proc.on(name, onSignal);
+      holders += 1;
+      let released = false;
+      return () => {
+        if (released || holders === 0) return;
+        released = true;
+        holders -= 1;
+        if (holders === 0) for (const name of signals) proc.removeListener(name, onSignal);
+      };
+    },
+    /** @param {string} dir */
+    addDir(dir) {
+      dirs.add(dir);
+    },
+    /** @param {string} dir */
+    removeDir(dir) {
+      dirs.delete(dir);
+    },
+    /** @param {KillableChild} child */
+    addChild(child) {
+      children.add(child);
+      child.once?.('close', () => children.delete(child));
+    },
+  };
+}
+
+/**
+ * 既定のファイル操作。mkdtemp だけは同期版を使う: 一時ディレクトリができてから、それを後始末の対象に登録するまでの間に
+ * シグナルの受け手が割り込まないようにするため (同期で作れば、登録までが 1 回の実行の中で終わる)
+ */
+const defaultFsApi = {
+  mkdtemp: async (prefix) => fs.mkdtempSync(prefix),
+  readFile: fsPromises.readFile,
+  rm: fsPromises.rm,
+};
+
+/**
+ * 本物の保管場所を読む関数の組を作る。run / fsApi / tmpdir / signalCleanup を差し替えればテストからも使える。
+ * @param {{ options: ReturnType<typeof parseArgs>, env: Record<string, string | undefined>, run?: typeof runCommand, fsApi?: Pick<typeof fsPromises, 'mkdtemp' | 'readFile' | 'rm'>, tmpdir?: string, signalCleanup?: ReturnType<typeof createSignalCleanup> }} deps
+ */
+export function createDefaultStores({ options, env, run = runCommand, fsApi = defaultFsApi, tmpdir = os.tmpdir(), signalCleanup = createSignalCleanup() }) {
   const timeoutMs = commandTimeoutMs(env);
+  // コマンドが自分の資格情報をエラーの文に書いても出さないよう、子に渡す環境変数のうち秘密らしいものの値を伏せる
+  const envSecrets = secretValuesFromEnv(env);
 
   async function readEdge() {
     const result = await run(options.supabaseBin, ['secrets', 'list', '--project-ref', options.projectRef, '-o', 'json'], { env, timeoutMs });
-    if (result.error || result.code !== 0) return failed(commandFailure('supabase secrets list', result));
+    if (result.error || result.code !== 0) return failed(commandFailure('supabase secrets list', result, envSecrets));
     try {
       return ok(parseSupabaseSecretsJson(result.stdout));
     } catch (error) {
@@ -396,7 +552,7 @@ export function createDefaultStores({ options, env, run = runCommand, fsApi = fs
     const childEnv = { ...env, ...pgEnv };
     delete childEnv[options.dbUrlEnv];
     const result = await run(options.psqlBin, ['-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-c', VAULT_DIGEST_SQL], { env: childEnv, timeoutMs });
-    if (result.error || result.code !== 0) return failed(commandFailure('psql', result, [url, pgEnv.PGPASSWORD]));
+    if (result.error || result.code !== 0) return failed(commandFailure('psql', result, [url, pgEnv.PGPASSWORD, ...envSecrets]));
     try {
       return ok(parseVaultDigestOutput(result.stdout));
     } catch (error) {
@@ -405,24 +561,36 @@ export function createDefaultStores({ options, env, run = runCommand, fsApi = fs
   }
 
   async function readVercel() {
-    // 権限 700 の一時ディレクトリ。中のファイルは umask 077 で書かせ、ダイジェストを計算したらディレクトリごと消す
-    const dir = await fsApi.mkdtemp(path.join(tmpdir, 'cron-secret-drift-'));
-    const file = path.join(dir, 'vercel.env');
+    // 権限 700 の一時ディレクトリ。中のファイルは umask 077 で書かせ、ダイジェストを計算したらディレクトリごと消す。
+    // Ctrl-C などで止めたときも残らないよう、ディレクトリを作る前からシグナルの受け手を置いておく
+    const release = signalCleanup.hold();
     try {
-      const args = ['env', 'pull', file, `--environment=${options.vercelEnvironment}`, '--yes'];
-      if (options.vercelProject) args.push(`--project=${options.vercelProject}`);
-      if (options.vercelScope) args.push(`--scope=${options.vercelScope}`);
-      const result = await run('/bin/sh', ['-c', 'umask 077 && exec "$@"', 'sh', options.vercelBin, ...args], { env, timeoutMs });
-      if (result.error || result.code !== 0) return failed(commandFailure('vercel env pull', result));
-      let text;
+      const dir = await fsApi.mkdtemp(path.join(tmpdir, 'cron-secret-drift-'));
+      signalCleanup.addDir(dir);
+      const file = path.join(dir, 'vercel.env');
       try {
-        text = await fsApi.readFile(file, 'utf8');
-      } catch {
-        return failed('vercel env pull の書いたファイルを読めませんでした');
+        const args = ['env', 'pull', file, `--environment=${options.vercelEnvironment}`, '--yes'];
+        if (options.vercelProject) args.push(`--project=${options.vercelProject}`);
+        if (options.vercelScope) args.push(`--scope=${options.vercelScope}`);
+        const result = await run('/bin/sh', ['-c', 'umask 077 && exec "$@"', 'sh', options.vercelBin, ...args], {
+          env,
+          timeoutMs,
+          onSpawn: (child) => signalCleanup.addChild(child),
+        });
+        if (result.error || result.code !== 0) return failed(commandFailure('vercel env pull', result, envSecrets));
+        let text;
+        try {
+          text = await fsApi.readFile(file, 'utf8');
+        } catch {
+          return failed('vercel env pull の書いたファイルを読めませんでした');
+        }
+        return ok(digestsFromEnvText(text));
+      } finally {
+        await fsApi.rm(dir, { recursive: true, force: true });
+        signalCleanup.removeDir(dir);
       }
-      return ok(digestsFromEnvText(text));
     } finally {
-      await fsApi.rm(dir, { recursive: true, force: true });
+      release();
     }
   }
 
@@ -534,7 +702,7 @@ export function evaluate(snapshot, { vercelMustMatch = false } = {}) {
         'edge-vault-match',
         'fail',
         `Edge Function secrets と Vault の ${VAULT_SECRET_NAME} が食い違っています`,
-        'pg_cron からの呼び出しが HTTP 401 ({"error":"Unauthorized"}) になります。どちらが正しい値かを控え (パスワードマネージャ) で確かめ、もう一方を合わせてください',
+        `pg_cron からの呼び出しが HTTP 401 ({"error":"Unauthorized"}) になります。Vault の ${VAULT_SECRET_NAME} を正として、Edge Function secrets の ${CURRENT_NAME} をそれに合わせてください (Vault を変えるのは、Vault の値が漏えいした・失われたなど、入れ替えそのものが目的のときだけ。そのときは ENV_SETUP.md の「ローテーション手順」に従います)`,
       );
     }
   } else if (edge.state !== 'error' && vault.state !== 'error' && (edge.state === 'skipped' || vault.state === 'skipped')) {
@@ -643,7 +811,7 @@ export function formatReport(checks, snapshot) {
   return lines.join('\n');
 }
 
-/** 判定の一覧から終了コードを決める (FAIL を優先) */
+/** 判定の一覧から終了コードを決める (FAIL を優先。読めなかった保管場所があっても、読めた分でずれが分かっていれば 1) */
 export function exitCodeOf(checks) {
   if (checks.some((check) => check.level === 'fail')) return 1;
   if (checks.some((check) => check.level === 'error')) return 2;
