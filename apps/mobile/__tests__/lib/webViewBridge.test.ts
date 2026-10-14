@@ -75,13 +75,13 @@ describe('getWebOrigin()', () => {
   });
 
   it('設定された値のオリジンを返す', () => {
-    process.env.EXPO_PUBLIC_WEB_URL = 'https://homegohan.app';
-    expect(getWebOrigin()).toBe('https://homegohan.app');
+    process.env.EXPO_PUBLIC_WEB_URL = 'https://app.example.test';
+    expect(getWebOrigin()).toBe('https://app.example.test');
   });
 
   it('末尾スラッシュ・パス・クエリは落としてオリジンだけにする', () => {
-    process.env.EXPO_PUBLIC_WEB_URL = 'https://homegohan.app/some/path/?x=1';
-    expect(getWebOrigin()).toBe('https://homegohan.app');
+    process.env.EXPO_PUBLIC_WEB_URL = 'https://app.example.test/some/path/?x=1';
+    expect(getWebOrigin()).toBe('https://app.example.test');
   });
 
   it('開発用の http://host:port も許可する (ポートを保持)', () => {
@@ -90,17 +90,17 @@ describe('getWebOrigin()', () => {
   });
 
   it('大文字を含む設定値はホストを小文字化する (RN の URL polyfill は小文字化しないため)', () => {
-    process.env.EXPO_PUBLIC_WEB_URL = 'HTTPS://HomeGohan.App';
-    expect(getWebOrigin()).toBe('https://homegohan.app');
-    expect(isOwnOrigin('https://homegohan.app/home')).toBe(true);
-    expect(isOwnOrigin('https://HOMEGOHAN.APP/home')).toBe(true);
+    process.env.EXPO_PUBLIC_WEB_URL = 'HTTPS://App.Example.Test';
+    expect(getWebOrigin()).toBe('https://app.example.test');
+    expect(isOwnOrigin('https://app.example.test/home')).toBe(true);
+    expect(isOwnOrigin('https://APP.EXAMPLE.TEST/home')).toBe(true);
   });
 
   it.each([
-    ['スキーム無し', 'homegohan.app'],
-    ['http(s) 以外', 'ftp://homegohan.app'],
+    ['スキーム無し', 'app.example.test'],
+    ['http(s) 以外', 'ftp://app.example.test'],
     ['javascript:', 'javascript:alert(1)'],
-    ['認証情報付き', 'https://user:pass@homegohan.app'],
+    ['認証情報付き', 'https://user:pass@app.example.test'],
     ['空文字', ''],
   ])('不正な値 (%s) は既定のオリジンへ倒す', (_label, value) => {
     jest.spyOn(console, 'warn').mockImplementation(() => {});
@@ -161,7 +161,7 @@ describe('getWebOrigin()', () => {
     );
 
     it('https は本番ビルドでも常に許可する', () => {
-      expect(originFor('https://homegohan.app', false)).toBe('https://homegohan.app');
+      expect(originFor('https://app.example.test', false)).toBe('https://app.example.test');
     });
 
     it('http の誤設定は isOwnOrigin にも反映される (既定の https オリジンだけが自オリジン)', () => {
@@ -647,8 +647,8 @@ describe('buildWebUrl()', () => {
   });
 
   it('EXPO_PUBLIC_WEB_URL の値に追従する (実行時に読む)', () => {
-    process.env.EXPO_PUBLIC_WEB_URL = 'https://homegohan.app';
-    expect(buildWebUrl('/home')).toBe('https://homegohan.app/home');
+    process.env.EXPO_PUBLIC_WEB_URL = 'https://app.example.test';
+    expect(buildWebUrl('/home')).toBe('https://app.example.test/home');
   });
 
   it('クエリ中の @ は残り、ホストは変わらない (tab-navigate の fullPath を失わない)', () => {
@@ -1243,14 +1243,14 @@ describe('requestBridgeCode()', () => {
   });
 
   it('EXPO_PUBLIC_WEB_URL のオリジンへ送る (EXPO_PUBLIC_API_BASE_URL ではない)', async () => {
-    process.env.EXPO_PUBLIC_WEB_URL = 'https://homegohan.app';
+    process.env.EXPO_PUBLIC_WEB_URL = 'https://app.example.test';
     process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.com';
     const fetchMock = jest.fn().mockResolvedValue(jsonResponse({ code: CODE, expires_in: 60 }));
     global.fetch = fetchMock as unknown as typeof fetch;
 
     await requestBridgeCode(SESSION);
 
-    expect(fetchMock.mock.calls[0][0]).toBe('https://homegohan.app/api/auth/native-bridge/code');
+    expect(fetchMock.mock.calls[0][0]).toBe('https://app.example.test/api/auth/native-bridge/code');
   });
 
   it('本番ビルドで EXPO_PUBLIC_WEB_URL が http:// に誤設定されても、refresh_token を平文では送らない (既定の https オリジンへ送る)', async () => {
