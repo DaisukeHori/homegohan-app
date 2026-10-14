@@ -5,6 +5,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
 
 interface FamilyMember {
   id: string;
@@ -71,7 +72,10 @@ export default function FamilyMemberDetailPage() {
         return;
       }
 
-      setMember(memberData as FamilyMember);
+      // 画面に出す名前 (display_name が無ければ本人のプロフィールの今の名前) は API で決める (#1584)
+      const names = await fetchFamilyMemberNames();
+      const [namedMember] = applyFamilyMemberNames([memberData as FamilyMember], names);
+      setMember(namedMember);
       setShareMeals(memberData.share_meals);
       setShareHealth(memberData.share_health);
       setShareMenu(memberData.share_menu);

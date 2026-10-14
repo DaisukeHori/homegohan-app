@@ -5,9 +5,13 @@
  * 「Unmatched Route」の画面が出ていた (正しくは app/(auth)/login.tsx = '/login')。
  * 同じ取り違えが他に入らないよう、ソース (app/ と src/) に書かれた行き先を全部拾って、画面のファイルと突き合わせる。
  *
- * 拾う書き方: router.push / replace / navigate (と useRouter() の戻り値の同名のメソッド) の第 1 引数、
- * { pathname: ... }、href= / homeHref= の、'/' で始まる文字列 (テンプレート文字列の ${...} は 1 区間の任意の値として扱う)。
- * 行き先の中の (group) は、その group の中の画面であることも確かめる。
+ * 拾う書き方: router.push / replace / navigate / dismissTo (と useRouter() の戻り値の同名のメソッド) の第 1 引数、
+ * { pathname: ... }、href= / homeHref= (JSX) と、行き先の一覧の { href: ... } / { route: ... } の、'/' で始まる文字列
+ * (テンプレート文字列の ${...} は 1 区間の任意の値として扱う)。行き先の中の (group) は、その group の中の画面であることも確かめる。
+ *
+ * 例外の一覧は持たない (#1049 の整合ゲート)。以前は「画面が無いことが分かっている行き先」の一覧 (KNOWN_MISSING_TARGETS) があり、
+ * 健康診断の一覧の行のタップ ('/health/checkups/${id}') がそこに載っていたため、詳細の画面が無いまま、この確認を通っていた。
+ * 画面の無い行き先は、画面を作るか遷移をやめて直す。
  */
 
 import fs from 'fs';
@@ -20,16 +24,6 @@ const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
 
 /** テンプレート文字列の ${...} を置き換える印 (動的な区間 [id] にだけ一致する) */
 const DYNAMIC_VALUE = '\u0000dynamic\u0000';
-
-/**
- * 画面が無いことが分かっていて、別に扱う行き先 (行き先 → 理由)。ここに足すのは、直すのに画面を新しく作るなど、
- * この確認の範囲を超えるものだけ。直したら消す (使われていない行が残っていると、下のテストが落ちる)。
- */
-const KNOWN_MISSING_TARGETS: Record<string, string> = {
-  // 健康診断の一覧の各行のタップ。モバイルに詳細画面 (app/health/checkups/[id].tsx) が無い (Web にはある)。
-  // 詳細画面を作るか、タップをやめるかの判断が要るので、#1049 の範囲外として報告した
-  [`/health/checkups/${DYNAMIC_VALUE}`]: 'モバイルに健康診断の詳細画面が無い (#1049 の範囲外として報告済み)',
-};
 
 type RouteFile = { groups: string[]; segments: string[] };
 
@@ -77,26 +71,35 @@ function routeExists(routes: RouteFile[], target: string): boolean {
   );
 }
 
-/** ソースから行き先を拾う。返すのは { file, target } (target の ${...} は DYNAMIC_VALUE) */
-function collectTargets(): { file: string; target: string }[] {
+/** 1 つのソースから行き先を拾う (target の ${...} は DYNAMIC_VALUE) */
+function targetsInSource(source: string): string[] {
   // 'xxx' / "xxx" / `xxx` の、'/' で始まる文字列
   const literal = String.raw`(?:'(\/[^'\n]*)'|"(\/[^"\n]*)"|\x60(\/[^\x60\n]*)\x60)`;
   const patterns = [
-    new RegExp(String.raw`\b(?:push|replace|navigate)\(\s*${literal}`, 'g'),
+    new RegExp(String.raw`\b(?:push|replace|navigate|dismissTo)\(\s*${literal}`, 'g'),
     new RegExp(String.raw`\bpathname:\s*${literal}`, 'g'),
     new RegExp(String.raw`\b(?:href|homeHref)=\{?\s*${literal}`, 'g'),
+    // 行き先の一覧 ({ href: '/x', label: ... } / { route: '/x', ... })
+    new RegExp(String.raw`\b(?:href|route):\s*${literal}`, 'g'),
   ];
+  const results: string[] = [];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      const raw = match[1] ?? match[2] ?? match[3];
+      // ${...} の後ろに文字が続く区間 (`/x/${a}-${b}` など) も 1 区間の任意の値として扱う
+      results.push(raw.replace(/\$\{[^}]*\}/g, DYNAMIC_VALUE).replace(new RegExp(`[^/]*${DYNAMIC_VALUE}[^/]*`, 'g'), DYNAMIC_VALUE));
+    }
+  }
+  return results;
+}
+
+/** ソース (app/ と src/) から行き先を拾う。返すのは { file, target } */
+function collectTargets(): { file: string; target: string }[] {
   const results: { file: string; target: string }[] = [];
   for (const dir of SOURCE_DIRS) {
     for (const file of walk(dir)) {
-      const source = fs.readFileSync(file, 'utf8');
-      for (const pattern of patterns) {
-        for (const match of source.matchAll(pattern)) {
-          const raw = match[1] ?? match[2] ?? match[3];
-          // ${...} の後ろに文字が続く区間 (`/x/${a}-${b}` など) も 1 区間の任意の値として扱う
-          const target = raw.replace(/\$\{[^}]*\}/g, DYNAMIC_VALUE).replace(new RegExp(`[^/]*${DYNAMIC_VALUE}[^/]*`, 'g'), DYNAMIC_VALUE);
-          results.push({ file: path.relative(MOBILE_ROOT, file), target });
-        }
+      for (const target of targetsInSource(fs.readFileSync(file, 'utf8'))) {
+        results.push({ file: path.relative(MOBILE_ROOT, file), target });
       }
     }
   }
@@ -113,9 +116,8 @@ describe('アプリ内の画面遷移の行き先が実在する (#1049 F7-14)',
     expect(targets.map((t) => t.target)).toContain('/login');
   });
 
-  it('拾った行き先が、すべて app/ の画面に当たる (既知の例外を除く)', () => {
+  it('拾った行き先が、すべて app/ の画面に当たる (例外なし)', () => {
     const missing = targets
-      .filter(({ target }) => !(target in KNOWN_MISSING_TARGETS))
       .filter(({ target }) => !routeExists(routes, target))
       .map(({ file, target }) => `${file}: ${target.replace(new RegExp(DYNAMIC_VALUE, 'g'), '${…}')}`);
     expect(missing).toEqual([]);
@@ -130,11 +132,42 @@ describe('アプリ内の画面遷移の行き先が実在する (#1049 F7-14)',
     expect(routeExists(routes, '/(auth)/sign-in')).toBe(false);
   });
 
-  it('既知の例外の一覧に、もう使われていない行・実在する画面の行が残っていない', () => {
-    const used = new Set(targets.map((t) => t.target));
-    for (const target of Object.keys(KNOWN_MISSING_TARGETS)) {
-      expect(used.has(target)).toBe(true);
-      expect(routeExists(routes, target)).toBe(false);
-    }
+  it('健康診断の一覧の行のタップは、実在する詳細の画面 (app/health/checkups/[id].tsx) を開く (#1049)', () => {
+    const listTargets = targets.filter((t) => t.file === path.join('app', 'health', 'checkups', 'index.tsx')).map((t) => t.target);
+    expect(listTargets).toContain(`/health/checkups/${DYNAMIC_VALUE}`);
+    expect(fs.existsSync(path.join(APP_DIR, 'health', 'checkups', '[id].tsx'))).toBe(true);
+    expect(routeExists(routes, `/health/checkups/${DYNAMIC_VALUE}`)).toBe(true);
+    // 登録の画面 (new.tsx) も残っている (expo-router は静的な区間 'new' を動的な区間 [id] より先に当てる)
+    expect(routeExists(routes, '/health/checkups/new')).toBe(true);
+  });
+
+  it('このテストは例外の一覧を持たない (画面の無い行き先を、一覧に載せて通さない)', () => {
+    const source = fs.readFileSync(__filename, 'utf8');
+    // 以前の例外の一覧の宣言 (const <名前>: Record<string, string> = { 行き先: 理由 })。説明のコメントにある名前には当たらない
+    const exceptionTable = new RegExp(String.raw`const\s+${['KNOWN', 'MISSING', 'TARGETS'].join('_')}\b`);
+    expect(source).not.toMatch(exceptionTable);
+    expect(source).not.toMatch(/const\s+\w+\s*:\s*Record<string,\s*string>\s*=/);
+  });
+});
+
+describe('行き先の拾い方 (#1049)', () => {
+  it.each([
+    ['router.push', "router.push('/a/b')", '/a/b'],
+    ['型の注釈を付けたテンプレート文字列', 'router.push(`/health/checkups/${checkup.id}` as Href)', `/health/checkups/${DYNAMIC_VALUE}`],
+    ['replace', 'router.replace("/login")', '/login'],
+    ['dismissTo', "router.dismissTo('/home')", '/home'],
+    ['pathname', "router.push({ pathname: '/x/y', params: { id } })", '/x/y'],
+    ['JSX の href', '<Link href="/about">', '/about'],
+    ['JSX の href={...}', '<Redirect href={`/u/${id}`} />', `/u/${DYNAMIC_VALUE}`],
+    ['行き先の一覧の href:', '{ href: "/health/record" as const, label: "x" }', '/health/record'],
+    ['行き先の一覧の route:', "{ label: 'メンバー', route: '/org/members' }", '/org/members'],
+  ])('%s', (_name, source, expected) => {
+    expect(targetsInSource(source)).toEqual([expected]);
+  });
+
+  it('画面の無い行き先は、routeExists が false を返す (確認が空振りしない)', () => {
+    const routes = collectRoutes();
+    expect(routeExists(routes, `/health/checkups/${DYNAMIC_VALUE}/edit`)).toBe(false);
+    expect(routeExists(routes, '/no-such-screen')).toBe(false);
   });
 });

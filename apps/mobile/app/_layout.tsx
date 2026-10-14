@@ -43,8 +43,10 @@ function PushTokenRegistrar() {
 
     (async () => {
       try {
-        // 登録済みの印は、トークンを保存できたときだけ付く (権限の拒否などで未登録なら、次の起動でまた試す)
-        await ensurePushTokenRegistered(user.id);
+        // 起動・ログインした利用者が変わるたびに、登録と claim (同じトークンのほかの利用者の行を外す) を通す (#1599)。
+        // 「登録済み」の印で省かない (ほかの利用者の claim で行が消えていても、ここで登録し直す)。
+        // 権限の拒否などで登録できなければ、次の起動でまた試す
+        await ensurePushTokenRegistered();
       } catch {
         // silent — 失敗は registerAndSaveExpoPushToken() が端末のコンソールとサーバーログ (app_logs) に出す (#1413)。user can retry via settings toggle
       }

@@ -12,8 +12,10 @@ import {
   usePantryStore,
   useShoppingStore,
   useFormDraftStore,
+  convertV4ProgressToUIFormat,
   type LegacyDishDetail,
 } from './_state';
+import { isUltimateModeWeeklyMenuRequest } from "@/lib/ai/weekly-menu-request-ultimate";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
@@ -427,215 +429,8 @@ const isDateInWeek = (date: Date, weekStartDate: Date): boolean => {
   return dateStart >= weekStartDate && dateStart <= weekEnd;
 };
 
-// UX2-10: V4進捗をUI形式に変換するヘルパー関数。
-// モジュールスコープの純関数として定義し、生成進捗の変換ロジックをこの1箇所に統一する
-// （以前は復元/handleV4Generate/ポーリング等4箇所に類似ロジックが重複し、計算式が不一致だった）。
-// 単調増加ガードは呼び出し側の aiGenerationReducer(GEN_PROGRESS) で行う。
-const convertV4ProgressToUIFormat = (progress: {
-  phase?: string;
-  message?: string;
-  percentage?: number;
-  currentStep?: number;
-  totalSteps?: number;
-  completedSlots?: number;
-  totalSlots?: number;
-}) => {
-  const completedSlots = progress.completedSlots || 0;
-  const totalSlots = progress.totalSlots || 0;
-
-  // 既にUI形式の場合はそのまま返す（totalSlotsを追加）
-  if (progress.phase && progress.percentage !== undefined) {
-    return {
-      phase: progress.phase,
-      message: progress.message || '',
-      percentage: progress.percentage,
-      totalSlots,
-      completedSlots,
-    };
-  }
-
-  // V4形式の場合はUI形式に変換
-  if (progress.currentStep !== undefined && progress.totalSteps !== undefined) {
-    const message = progress.message || 'AIが献立を生成中...';
-    const currentStep = progress.currentStep;
-    const isUltimateMode = progress.totalSteps === 6;
-
-    let phase = 'generating';
-    let percentage = 0;
-
-    if (isUltimateMode) {
-      // 究極モード（6ステップ）
-      // Step 1 (0-25%): 生成フェーズ
-      if (currentStep === 1 || currentStep === 0) {
-        if (message.includes('ユーザー情報') || message.includes('取得中')) {
-          phase = 'user_context';
-          percentage = 3;
-        } else if (message.includes('参考') || message.includes('検索中')) {
-          phase = 'search_references';
-          percentage = 6;
-        } else if (message.includes('生成完了')) {
-          phase = 'step1_complete';
-          percentage = 25;
-        } else {
-          phase = 'generating';
-          percentage = 8 + Math.round((completedSlots / Math.max(totalSlots, 1)) * 15);
-        }
-      }
-      // Step 2 (25-38%): レビューフェーズ
-      else if (currentStep === 2) {
-        if (message.includes('バランス') || message.includes('チェック中') || message.includes('重複')) {
-          phase = 'reviewing';
-          percentage = 28;
-        } else if (message.includes('改善中')) {
-          phase = 'fixing';
-          percentage = 32;
-        } else if (message.includes('レビュー完了')) {
-          phase = 'step2_complete';
-          percentage = 38;
-        } else {
-          phase = 'reviewing';
-          percentage = 30;
-        }
-      }
-      // Step 3 (38-48%): 栄養計算フェーズ（究極モードでは保存しない）
-      else if (currentStep === 3) {
-        if (message.includes('栄養計算') || message.includes('栄養')) {
-          phase = 'calculating';
-          percentage = 42;
-        } else if (message.includes('完了')) {
-          phase = 'step3_complete';
-          percentage = 48;
-        } else {
-          phase = 'calculating';
-          percentage = 45;
-        }
-      }
-      // Step 4 (48-62%): 栄養バランス詳細分析
-      else if (currentStep === 4) {
-        phase = 'nutrition_analyzing';
-        const match = message.match(/(\d+)\/(\d+)/);
-        if (match) {
-          const current = parseInt(match[1]);
-          const total = parseInt(match[2]);
-          percentage = 50 + Math.round((current / Math.max(total, 1)) * 12);
-        } else {
-          percentage = 55;
-        }
-      }
-      // Step 5 (62-82%): 献立改善
-      else if (currentStep === 5) {
-        phase = 'improving';
-        const match = message.match(/(\d+)\/(\d+)/);
-        if (match) {
-          const current = parseInt(match[1]);
-          const total = parseInt(match[2]);
-          percentage = 65 + Math.round((current / Math.max(total, 1)) * 17);
-        } else {
-          percentage = 70;
-        }
-      }
-      // Step 6 (82-100%): 最終保存
-      else if (currentStep === 6) {
-        if (message.includes('完了') || message.includes('完成')) {
-          phase = 'completed';
-          percentage = 100;
-        } else {
-          phase = 'final_saving';
-          const match = message.match(/(\d+)\/(\d+)/);
-          if (match) {
-            const current = parseInt(match[1]);
-            const total = parseInt(match[2]);
-            percentage = 85 + Math.round((current / Math.max(total, 1)) * 13);
-          } else {
-            percentage = 90;
-          }
-        }
-      }
-    } else {
-      // 通常モード（3ステップ）
-      // Step 1 (0-40%): 生成フェーズ
-      if (currentStep === 1 || currentStep === 0) {
-        if (message.includes('ユーザー情報') || message.includes('取得中')) {
-          phase = 'user_context';
-          percentage = 5;
-        } else if (message.includes('参考') || message.includes('検索中')) {
-          phase = 'search_references';
-          percentage = 10;
-        } else {
-          phase = 'generating';
-          percentage = 12 + Math.round((completedSlots / Math.max(totalSlots, 1)) * 28);
-        }
-      }
-      // Step 2 (40-75%): レビューフェーズ
-      else if (currentStep === 2) {
-        if (message.includes('バランス') || message.includes('チェック中') || message.includes('重複')) {
-          phase = 'reviewing';
-          percentage = 47;
-        } else if (message.includes('改善中')) {
-          phase = 'fixing';
-          const match = message.match(/(\d+)\/(\d+)/);
-          if (match) {
-            const current = parseInt(match[1]);
-            const total = parseInt(match[2]);
-            percentage = 58 + Math.round((current / Math.max(total, 1)) * 12);
-          } else {
-            percentage = 60;
-          }
-        } else if (message.includes('問題なし')) {
-          phase = 'no_issues';
-          percentage = 72;
-        } else if (message.includes('レビュー完了')) {
-          phase = 'step2_complete';
-          percentage = 75;
-        } else {
-          phase = 'reviewing';
-          percentage = 50;
-        }
-      }
-      // Step 3 (75-100%): 保存フェーズ
-      else if (currentStep === 3) {
-        if (message.includes('栄養計算') || message.includes('栄養')) {
-          phase = 'calculating';
-          percentage = 80;
-        } else if (message.includes('保存中')) {
-          phase = 'saving';
-          const match = message.match(/(\d+)\/(\d+)/);
-          if (match) {
-            const current = parseInt(match[1]);
-            const total = parseInt(match[2]);
-            percentage = 88 + Math.round((current / Math.max(total, 1)) * 10);
-          } else {
-            percentage = 90;
-          }
-        } else if (message.includes('完了') || message.includes('保存しました')) {
-          phase = 'completed';
-          percentage = 100;
-        } else {
-          phase = 'saving';
-          percentage = 88;
-        }
-      }
-    }
-
-    return {
-      phase,
-      message,
-      percentage: Math.round(percentage),
-      totalSlots,
-      completedSlots,
-      isUltimateMode,
-    };
-  }
-
-  // フォールバック
-  return {
-    phase: 'generating',
-    message: progress.message || 'AIが献立を生成中...',
-    percentage: 0,
-    totalSlots,
-    completedSlots,
-  };
-};
+// UX2-10 / #1597: V4進捗をUI形式に変換するヘルパー関数 (convertV4ProgressToUIFormat) は ./_state/v4ProgressUi.ts。
+// 究極モードの段か通常の段かは、呼び出し側が生成の印 (ultimateMode) を渡して決める (totalSteps では見分けない)
 
 // ============================================
 // Main Component
@@ -1385,7 +1180,10 @@ export default function WeeklyMenuPage() {
       if (!stored) return;
 
       try {
-        const { requestId, timestamp, totalSlots } = JSON.parse(stored);
+        const { requestId, timestamp, totalSlots, ultimateMode: storedUltimateMode } = JSON.parse(stored);
+        // 究極モードで始めた生成か (#1597)。生成を始めたときに useV4MenuGeneration が保存した要求で決める
+        // (真偽値の true のときだけ究極モード。保存していない古い形の値は通常の生成として扱う)
+        const restoredUltimateMode = isUltimateModeWeeklyMenuRequest(storedUltimateMode);
         // 30分以上経過していたら古いデータとして削除
         if (Date.now() - timestamp > 30 * 60 * 1000) {
           localStorage.removeItem('v4MenuGenerating');
@@ -1426,7 +1224,7 @@ export default function WeeklyMenuPage() {
 
         // 現在の進捗をDBの値から復元（UX2-10: 変換ロジックはconvertV4ProgressToUIFormatに一本化）
         const dbProgress = currentStatus?.progress || { totalSlots };
-        setGenerationProgress(convertV4ProgressToUIFormat(dbProgress));
+        setGenerationProgress(convertV4ProgressToUIFormat(dbProgress, restoredUltimateMode));
 
         // 進捗追跡を再開
         v4Generation.subscribeToProgress(requestId, (progress) => {
@@ -1457,7 +1255,7 @@ export default function WeeklyMenuPage() {
             return;
           }
 
-          setGenerationProgress(convertV4ProgressToUIFormat(progress));
+          setGenerationProgress(convertV4ProgressToUIFormat(progress, restoredUltimateMode));
         });
       } catch (e) {
         console.error('[restore] Failed to restore V4 generation:', e);
@@ -1488,6 +1286,10 @@ export default function WeeklyMenuPage() {
       // UX2-12: この生成の対象スロットを記録し、EmptySlot の「考え中」表示を対象外の日・スロットに出さない
       setGenTargetSlotKeys(params.targetSlots);
 
+      // 究極モードで始めた生成か (#1597)。この生成の進捗の段 (究極 / 通常) は、生成を始めたときの要求で決める
+      // (モバイルの requestedUltimateRef と同じ考え方。progress.totalSteps は行を作った時点では枠の数で、究極モードかを表さない)
+      const requestedUltimateMode = params.ultimateMode === true;
+
       // 初期進捗を設定（totalSlotsを含める）
       const initialTotalSlots = result?.totalSlots || params.targetSlots.length;
       setGenerationProgress({
@@ -1496,6 +1298,7 @@ export default function WeeklyMenuPage() {
         percentage: 3,
         totalSlots: initialTotalSlots,
         completedSlots: 0,
+        isUltimateMode: requestedUltimateMode,
       });
       
       // Subscribe to progress updates
@@ -1543,7 +1346,7 @@ export default function WeeklyMenuPage() {
               });
             } else if (dbProgress) {
               // Realtimeが届いていない間も進捗表示を維持（nullの場合のみ上書き）
-              setGenerationProgress((prev) => prev ?? convertV4ProgressToUIFormat(dbProgress));
+              setGenerationProgress((prev) => prev ?? convertV4ProgressToUIFormat(dbProgress, requestedUltimateMode));
             }
           } catch {
             // ポーリングエラーは無視して継続
@@ -1560,7 +1363,7 @@ export default function WeeklyMenuPage() {
             }
           }
           // UX2-10: 変換ロジックはconvertV4ProgressToUIFormatに一本化（重複実装の解消）
-          setGenerationProgress(convertV4ProgressToUIFormat(progress));
+          setGenerationProgress(convertV4ProgressToUIFormat(progress, requestedUltimateMode));
         });
       }
     } catch (error) {
@@ -1675,7 +1478,7 @@ export default function WeeklyMenuPage() {
           if (weeklyRes.ok) {
             const data = await weeklyRes.json();
             console.log('🔍 weeklyRes data:', data);
-            const { hasPending, requestId, status, startDate: pendingStartDate } = data;
+            const { hasPending, requestId, status, startDate: pendingStartDate, ultimateMode: pendingUltimateMode } = data;
             if (hasPending && requestId) {
               console.log('📦 週間献立の生成中リクエストを復元:', requestId, status, 'startDate:', pendingStartDate);
               
@@ -1686,7 +1489,9 @@ export default function WeeklyMenuPage() {
               }
               
               setIsGenerating(true);
-              subscribeToRequestStatus(pendingStartDate || targetDate, requestId);
+              // 究極モードの生成かは、pending の ultimateMode (行の generated_data.ultimateMode の判定) で決める (#1597)。
+              // 真偽値の true のときだけ究極モード (印の無い古い行・値の無い応答は通常の生成)
+              subscribeToRequestStatus(pendingStartDate || targetDate, requestId, isUltimateModeWeeklyMenuRequest(pendingUltimateMode));
               return; // 週間生成中なら他はスキップ
             } else {
               console.log('🔍 No pending weekly request found');
@@ -1718,7 +1523,8 @@ export default function WeeklyMenuPage() {
                   // mode === 'single' の場合は新規追加
                   setGeneratingMeal({ dayIndex: dayIdx, mealType: latestRequest.targetMealType as MealType });
                   setSelectedDayIndex(dayIdx);
-                  subscribeToRequestStatus(targetDate, latestRequest.requestId);
+                  // 1 食の生成 (mode='single') に究極モードは無い (#1597)
+                  subscribeToRequestStatus(targetDate, latestRequest.requestId, false);
                 }
                 return; // DBで見つかったらlocalStorageはスキップ
               }
@@ -1745,7 +1551,8 @@ export default function WeeklyMenuPage() {
                   if (status === 'queued' || status === 'pending' || status === 'processing') {
                     console.log('📦 週間献立をlocalStorageから復元:', requestId, 'status:', status);
                     setIsGenerating(true);
-                    subscribeToRequestStatus(targetDate, requestId);
+                    // weeklyMenuGenerating は旧来の週の生成 (/api/ai/menu/weekly/request) の印で、究極モードは無い (#1597)
+                    subscribeToRequestStatus(targetDate, requestId, false);
                     return;
                   } else if (status === 'failed') {
                     // 失敗の場合はエラーモーダルを表示してlocalStorageをクリア
@@ -1790,7 +1597,8 @@ export default function WeeklyMenuPage() {
                     console.log('📦 単一食事をlocalStorageから復元:', requestId, 'status:', status);
                     setGeneratingMeal({ dayIndex, mealType });
                     setSelectedDayIndex(dayIndex);
-                    subscribeToRequestStatus(targetDate, requestId);
+                    // 1 食の生成に究極モードは無い (#1597)
+                    subscribeToRequestStatus(targetDate, requestId, false);
                   } else {
                     // completed または failed の場合はlocalStorageをクリア
                     console.log('🗑️ 単一食事のlocalStorageをクリア（status:', status, ')');
@@ -2147,11 +1955,12 @@ export default function WeeklyMenuPage() {
         // DBで生成中のリクエストがあるか確認
         const pendingRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDateStr}`);
         if (pendingRes.ok) {
-          const { hasPending, requestId } = await pendingRes.json();
+          const { hasPending, requestId, ultimateMode: pendingUltimateMode } = await pendingRes.json();
           if (hasPending && requestId) {
             // 生成中状態を復元してポーリング開始
             setIsGenerating(true);
-            subscribeToRequestStatus(targetDateStr, requestId);
+            // 究極モードの生成かは、pending の ultimateMode (行の generated_data.ultimateMode の判定) で決める (#1597)
+            subscribeToRequestStatus(targetDateStr, requestId, isUltimateModeWeeklyMenuRequest(pendingUltimateMode));
           }
         }
 
@@ -2299,7 +2108,9 @@ export default function WeeklyMenuPage() {
   }, [cleanupRealtime, cleanupPolling, setIsGenerating, setGenerationProgress, setGeneratingMeal, setSuccessMessage, setShowConfirmCancelGeneration]);
 
   // ポーリングで進捗を取得
-  const startPolling = useCallback((targetDate: string, requestId: string) => {
+  // ultimateMode: 監視する生成が究極モードか (#1597)。進捗の段 (究極 / 通常) をこれで決める (totalSteps では見分けない)。
+  // 呼び出し元の subscribeToRequestStatus が受け取った値をそのまま渡す
+  const startPolling = useCallback((targetDate: string, requestId: string, ultimateMode: boolean) => {
     console.log('⏱️ Starting fallback polling for requestId:', requestId);
     cleanupPolling();
     
@@ -2323,7 +2134,7 @@ export default function WeeklyMenuPage() {
         const data = await res.json();
         
         if (data.progress) {
-          const uiProgress = convertV4ProgressToUIFormat(data.progress);
+          const uiProgress = convertV4ProgressToUIFormat(data.progress, ultimateMode);
           setGenerationProgress(uiProgress);
         }
         
@@ -2376,7 +2187,10 @@ export default function WeeklyMenuPage() {
   }, [cleanupPolling, cleanupRealtime, updateCalendarMealDatesFromDailyMeals]);
 
   // Realtime で生成完了を監視（常にポーリングも並行実行）
-  const subscribeToRequestStatus = useCallback((targetDate: string, requestId: string) => {
+  // ultimateMode: 監視する生成が究極モードか (#1597)。進捗の段 (究極 / 通常) をこれで決める。呼び出し元が次のどれかを渡す:
+  //   - 画面に入り直したとき: 生成中の行の確認 (GET /api/ai/menu/weekly/pending) の ultimateMode (行の generated_data.ultimateMode の判定)
+  //   - 究極モードの無い生成 (旧来の週の生成 /api/ai/menu/weekly/request・1 食の生成): false
+  const subscribeToRequestStatus = useCallback((targetDate: string, requestId: string, ultimateMode: boolean) => {
     // 既存のサブスクリプションをクリーンアップ
     cleanupRealtime();
     cleanupPolling();
@@ -2384,7 +2198,7 @@ export default function WeeklyMenuPage() {
     console.log('📡 Subscribing to Realtime for requestId:', requestId);
     
     // 常にポーリングも開始（Realtimeの信頼性が低いため）
-    startPolling(targetDate, requestId);
+    startPolling(targetDate, requestId, ultimateMode);
     
     let realtimeConnected = false;
     
@@ -2421,7 +2235,7 @@ export default function WeeklyMenuPage() {
             // 進捗情報を更新（V4形式をUI形式に変換）
             if (newData?.progress) {
               console.log('📊 Progress update:', newData.progress);
-              const uiProgress = convertV4ProgressToUIFormat(newData.progress);
+              const uiProgress = convertV4ProgressToUIFormat(newData.progress, ultimateMode);
               setGenerationProgress(uiProgress);
             }
             
@@ -2479,7 +2293,7 @@ export default function WeeklyMenuPage() {
           // Realtimeが失敗したらポーリングにフォールバック
           if (!realtimeConnected) {
             console.warn('📡 Realtime failed, falling back to polling');
-            startPolling(targetDate, requestId);
+            startPolling(targetDate, requestId, ultimateMode);
           }
         }
       });
@@ -2490,7 +2304,7 @@ export default function WeeklyMenuPage() {
     setTimeout(() => {
       if (!realtimeConnected && !pollingIntervalRef.current) {
         console.warn('📡 Realtime not connected after 5s, starting polling');
-        startPolling(targetDate, requestId);
+        startPolling(targetDate, requestId, ultimateMode);
       }
     }, 5000);
   }, [cleanupRealtime, cleanupPolling, startPolling, updateCalendarMealDatesFromDailyMeals]);
@@ -3608,8 +3422,9 @@ export default function WeeklyMenuPage() {
       setAiChatInput("");
       
       // DBベースのポーリングを開始
+      // 旧来の週の生成 (/api/ai/menu/weekly/request) に究極モードは無い (#1597)
       if (requestId) {
-        subscribeToRequestStatus(weekStartDate, requestId);
+        subscribeToRequestStatus(weekStartDate, requestId, false);
       } else {
         // requestIdがない場合は旧方式でポーリング
         // レガシーポーリングは廃止（requestIdがある場合のみRealtime監視）
@@ -3685,8 +3500,9 @@ export default function WeeklyMenuPage() {
         setSelectedDayIndex(addMealDayIndex);
         
         // DBベースのポーリングを開始
+        // 1 食の生成 (/api/ai/menu/meal/generate) に究極モードは無い (#1597)
         if (requestId) {
-          subscribeToRequestStatus(formatLocalDate(weekStart), requestId);
+          subscribeToRequestStatus(formatLocalDate(weekStart), requestId, false);
         } else {
           // requestIdがない場合はRealtime監視できない
           console.warn('No requestId returned, cannot subscribe to Realtime');
@@ -4679,7 +4495,8 @@ export default function WeeklyMenuPage() {
         v4Generation.subscribeToProgress(
           improveRequestId,
           async (progress: any) => {
-            const uiProgress = convertV4ProgressToUIFormat(progress);
+            // 献立の改善は究極モードで始めない (v4 の生成に ultimateMode を送らない。#1597)
+            const uiProgress = convertV4ProgressToUIFormat(progress, false);
             setGenerationProgress(uiProgress);
 
             if (progress.status === 'completed' || progress.status === 'failed') {
@@ -4702,7 +4519,7 @@ export default function WeeklyMenuPage() {
               await finishImprove('failed', errorMessage || errorMessageSnake);
             } else if (dbProgress) {
               // Realtimeが届いていない間も進捗表示を維持（nullの場合のみ上書き）
-              setGenerationProgress((prev) => prev ?? convertV4ProgressToUIFormat(dbProgress));
+              setGenerationProgress((prev) => prev ?? convertV4ProgressToUIFormat(dbProgress, false));
             }
           } catch (e) {
             console.error('Improve polling error:', e);

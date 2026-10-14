@@ -18,6 +18,9 @@ export type { ModalState, ModalAction, ModalType } from './reducers/modalReducer
 export { aiGenerationReducer, initialAiGenerationState } from './reducers/aiGenerationReducer';
 export type { AiGenerationState, AiGenerationAction, GenerationProgress } from './reducers/aiGenerationReducer';
 export { useAiConsentGenerationFailure } from './aiGenerationConsent';
+// #1597: 生成の進捗 (V4 形式) を画面の形にする。究極モードの段かは生成の印で決める
+export { convertV4ProgressToUIFormat } from './v4ProgressUi';
+export type { V4GenerationProgress } from './v4ProgressUi';
 
 export { nutritionReducer, initialNutritionState } from './reducers/nutritionReducer';
 export type { NutritionState, NutritionAction } from './reducers/nutritionReducer';
