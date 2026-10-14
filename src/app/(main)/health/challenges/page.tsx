@@ -8,6 +8,7 @@ import {
   CheckCircle2, Clock, X, Sparkles, Star
 } from 'lucide-react';
 import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
+import { daysUntilLocal } from '@/lib/date-utils';
 
 const colors = {
   bg: '#FAF9F7',
@@ -114,12 +115,12 @@ export default function HealthChallengesPage() {
   // #1055 UX3-16: 獲得ptの行き先が無かったため、達成したチャレンジの合計を表示する
   const totalEarnedPoints = completedChallenges.reduce((sum, c) => sum + (c.reward_points || 0), 0);
 
-  const getDaysRemaining = (endDate: string) => {
-    const end = new Date(endDate);
-    const now = new Date();
-    const diff = Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    return diff;
-  };
+  /**
+   * 終了日 (YYYY-MM-DD・日本の暦日。作成時に JST の今日から求めた日付) まで、今日 (日本の暦日) から何日か (#1594)。
+   * 終了日が今日なら 0、過ぎていれば負。以前は終了日を new Date(endDate) (その日の UTC の 0 時 = 日本の 9 時) にして
+   * 今の時刻と比べていたので、終了日の翌日の日本の 9 時まで「期限切れ」にならず、残りの日数も日本の 9 時を境に変わっていた
+   */
+  const getDaysRemaining = (endDate: string): number | null => daysUntilLocal(endDate);
 
   const getProgressPercentage = (challenge: Challenge) => {
     if (challenge.target_value === 0) return 0;
@@ -209,7 +210,7 @@ export default function HealthChallengesPage() {
                 {activeChallenges.map((challenge) => {
                   const daysRemaining = getDaysRemaining(challenge.end_date);
                   // #1055 UX3-16: 期限切れの場合「残り-3日」のような負数表示にせず、期限切れバッジ+グレーアウトにする
-                  const isExpired = daysRemaining < 0;
+                  const isExpired = daysRemaining !== null && daysRemaining < 0;
                   const progress = getProgressPercentage(challenge);
 
                   return (
