@@ -54,6 +54,12 @@ import { POST as mealPlansPost } from '../src/app/api/meal-plans/meals/route';
 import { POST as mealsPost } from '../src/app/api/meals/route';
 import { PATCH as mealsPatch } from '../src/app/api/meals/[id]/route';
 
+// x-request-id は uuid の形式のときだけ meal_image_jobs.request_id (uuid の列) に入る (#1532)
+const REQUEST_ID_1 = '6b1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+const REQUEST_ID_2 = '7c2a3b4d-5e6f-4b7c-9d8e-0f1a2b3c4d5e';
+/** enqueueMealImageJobs の作り物の結果 (dishPayloadStub の 1 品を積めた。処理を起こす件数は 1。#1532) */
+const ENQUEUED_ONE = { inserted: 1, duplicates: 0, failed: 0 };
+
 const dishPayloadStub = () => ({
   dishes: [{ name: 'reconciled' }],
   jobs: [
@@ -84,6 +90,7 @@ describe('meal image route contracts', () => {
     });
     vi.mocked(checkUserAiConsent).mockResolvedValue({ allowed: true });
     vi.mocked(consumeAiUsage).mockResolvedValue(AI_USAGE_ALLOWED);
+    vi.mocked(enqueueMealImageJobs).mockResolvedValue(ENQUEUED_ONE);
   });
 
   it('meal-plans PATCH reconciles dishes and enqueues jobs', async () => {
@@ -120,7 +127,7 @@ describe('meal image route contracts', () => {
     const response = await mealPlansPatch(
       new Request('http://localhost/api/meal-plans/meals/meal-1', {
         method: 'PATCH',
-        headers: { 'x-request-id': 'req-1' },
+        headers: { 'x-request-id': REQUEST_ID_1 },
         body: JSON.stringify({ dishes: [{ name: 'new' }], imageUrl: 'manual-cover' }),
       }),
       { params: { id: 'meal-1' } }
@@ -144,7 +151,7 @@ describe('meal image route contracts', () => {
         supabase: mockQueueClient,
         plannedMealId: 'meal-1',
         jobSeeds: payload.jobs,
-        requestId: 'req-1',
+        requestId: REQUEST_ID_1,
       })
     );
     expect(vi.mocked(triggerMealImageJobProcessing)).toHaveBeenCalledWith({
@@ -180,7 +187,7 @@ describe('meal image route contracts', () => {
     const response = await mealPlansPost(
       new Request('http://localhost/api/meal-plans/meals', {
         method: 'POST',
-        headers: { 'x-request-id': 'req-2' },
+        headers: { 'x-request-id': REQUEST_ID_2 },
         body: JSON.stringify({
           dayDate: '2026-03-18',
           mealType: 'lunch',
@@ -204,7 +211,7 @@ describe('meal image route contracts', () => {
         supabase: mockQueueClient,
         plannedMealId: 'meal-2',
         jobSeeds: payload.jobs,
-        requestId: 'req-2',
+        requestId: REQUEST_ID_2,
       })
     );
     expect(vi.mocked(triggerMealImageJobProcessing)).toHaveBeenCalledWith({
@@ -283,6 +290,7 @@ describe.each(IMAGE_ROUTE_CASES)('料理画像の生成の AI 利用回数の記
     vi.mocked(consumeAiUsage).mockResolvedValue(AI_USAGE_ALLOWED);
     vi.mocked(buildDishImagePayload).mockResolvedValue(dishPayloadStub());
     mockFrom.mockImplementation((table: string) => anyQuery(table));
+    vi.mocked(enqueueMealImageJobs).mockResolvedValue(ENQUEUED_ONE);
   });
 
   it('同意済みなら、同意を判定したあとで meal_image_auto (1 日の上限 10 回に数えない料理画像) を 1 回記録し、ジョブを積む (記録はジョブを積むより前)', async () => {
