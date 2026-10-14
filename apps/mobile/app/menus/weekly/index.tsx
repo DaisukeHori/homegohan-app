@@ -38,7 +38,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 
-import { NUTRIENT_DEFINITIONS, type NutrientDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType } from "@homegohan/shared";
+import { NUTRIENT_DEFINITIONS, type NutrientDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, formatCalendarDate, todayCalendarDate, todayLocal } from "@homegohan/shared";
 import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../src/components/ui";
 import { AddMealModal } from "../../../src/components/menu/AddMealModal";
 import { AddMealSlotModal } from "../../../src/components/menu/AddMealSlotModal";
@@ -516,13 +516,6 @@ function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys, wee
   );
 }
 
-const formatLocalDate = (date: Date): string => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
-
 // Get day-of-week labels ordered by weekStartDay
 const getDayLabels = (weekStartDay: WeekStartDay = 'monday'): string[] => {
   return weekStartDay === 'sunday'
@@ -612,17 +605,18 @@ const MODE_CONFIG = Object.fromEntries(
 export default function WeeklyMenuPage() {
   const { profile } = useProfile();
   const weekStartDay = profile?.weekStartDay ?? 'monday';
-  const [weekStart, setWeekStart] = useState<Date>(() => getWeekStart(new Date(), weekStartDay));
-  const weekStartStr = useMemo(() => formatLocalDate(weekStart), [weekStart]);
+  // 週・選択日・カレンダーの月は、日本の今日から数える (端末のタイムゾーンに左右されない #1049 F7-21)
+  const [weekStart, setWeekStart] = useState<Date>(() => getWeekStart(todayCalendarDate(), weekStartDay));
+  const weekStartStr = useMemo(() => formatCalendarDate(weekStart), [weekStart]);
   const weekEndStr = useMemo(() => {
     const end = new Date(weekStart);
     end.setDate(end.getDate() + 6);
-    return formatLocalDate(end);
+    return formatCalendarDate(end);
   }, [weekStart]);
 
   const [plan, setPlan] = useState<MealPlanRow | null>(null);
   const [days, setDays] = useState<DayRow[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string>(() => formatLocalDate(new Date()));
+  const [selectedDate, setSelectedDate] = useState<string>(() => todayLocal());
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [regeneratingMealId, setRegeneratingMealId] = useState<string | null>(null);
@@ -708,7 +702,7 @@ export default function WeeklyMenuPage() {
   const [radarChartNutrients, setRadarChartNutrients] = useState<(keyof DayNutritionTotals)[]>(DEFAULT_RADAR_KEYS);
 
   // Calendar state
-  const [displayMonth, setDisplayMonth] = useState<Date>(() => new Date());
+  const [displayMonth, setDisplayMonth] = useState<Date>(() => todayCalendarDate());
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [isCalendarExpanded, setIsCalendarExpanded] = useState(false);
   const [calendarMealDates, setCalendarMealDates] = useState<Set<string>>(new Set());
@@ -759,7 +753,7 @@ export default function WeeklyMenuPage() {
   const handleImprove = useCallback(async (request: ImproveMealRequest) => {
     await submitImprove({
       request,
-      today: formatLocalDate(new Date()),
+      today: todayLocal(),
       isBusy: pendingRequestId !== null,
       generate: v4Generate,
     });
@@ -789,7 +783,7 @@ export default function WeeklyMenuPage() {
   }, []);
 
   useEffect(() => {
-    setWeekStart(getWeekStart(new Date(), weekStartDay));
+    setWeekStart(getWeekStart(todayCalendarDate(), weekStartDay));
   }, [weekStartDay]);
 
   // Sync displayMonth to weekStart
@@ -817,13 +811,13 @@ export default function WeeklyMenuPage() {
 
   // Fetch and cache meal existence dates for a date range
   const fetchAndCacheMealDates = useCallback(async (startDate: Date, endDate: Date) => {
-    const rangeKey = `${formatLocalDate(startDate)}_${formatLocalDate(endDate)}`;
+    const rangeKey = `${formatCalendarDate(startDate)}_${formatCalendarDate(endDate)}`;
     if (fetchedRangesRef.current.has(rangeKey)) return;
     fetchedRangesRef.current.add(rangeKey);
     try {
       const api = getApi();
       const res = await api.get<{ dailyMeals: any[] }>(
-        `/api/meal-plans?startDate=${formatLocalDate(startDate)}&endDate=${formatLocalDate(endDate)}`
+        `/api/meal-plans?startDate=${formatCalendarDate(startDate)}&endDate=${formatCalendarDate(endDate)}`
       );
       const newDates = new Set<string>();
       res.dailyMeals?.forEach((day: any) => {
@@ -950,7 +944,7 @@ export default function WeeklyMenuPage() {
     for (let i = 0; i < 7; i++) {
       const d = new Date(start);
       d.setDate(start.getDate() + i);
-      const dayDate = formatLocalDate(d);
+      const dayDate = formatCalendarDate(d);
       const existingDay = days.find((day) => day.day_date === dayDate);
       if (existingDay) {
         result.push(existingDay);
@@ -967,8 +961,7 @@ export default function WeeklyMenuPage() {
   );
 
   const emptySlotCount = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = todayCalendarDate();
     let count = 0;
     for (const day of virtualDays) {
       const dayDate = new Date(day.day_date + "T00:00:00");
@@ -985,7 +978,7 @@ export default function WeeklyMenuPage() {
     const d = new Date(weekStart);
     d.setDate(d.getDate() + delta * 7);
     setWeekStart(getWeekStart(d, weekStartDay));
-    setSelectedDate(formatLocalDate(d));
+    setSelectedDate(formatCalendarDate(d));
   }
 
   async function checkPending() {
@@ -1286,7 +1279,7 @@ export default function WeeklyMenuPage() {
   // Calendar memos
   const calendarDays = useMemo(() => getCalendarDays(displayMonth, weekStartDay), [displayMonth, weekStartDay]);
   const dayLabels = useMemo(() => getDayLabels(weekStartDay), [weekStartDay]);
-  const todayStr = useMemo(() => formatLocalDate(new Date()), []);
+  const todayStr = useMemo(() => todayLocal(), []);
   const mealExistenceMap = useMemo(() => {
     const map = new Map<string, boolean>();
     days.forEach(d => {
@@ -1383,11 +1376,11 @@ export default function WeeklyMenuPage() {
 
   function handleCalendarDateClick(day: Date) {
     const newWeekStart = getWeekStart(day, weekStartDay);
-    const newWeekStartStr = formatLocalDate(newWeekStart);
+    const newWeekStartStr = formatCalendarDate(newWeekStart);
     if (newWeekStartStr !== weekStartStr) {
       setWeekStart(newWeekStart);
     }
-    setSelectedDate(formatLocalDate(day));
+    setSelectedDate(formatCalendarDate(day));
     setIsCalendarExpanded(false);
   }
 
@@ -1491,7 +1484,7 @@ export default function WeeklyMenuPage() {
             {/* 日付グリッド */}
             <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
               {calendarDays.map((day, i) => {
-                const dateStr = formatLocalDate(day);
+                const dateStr = formatCalendarDate(day);
                 const isCurrentMonth = day.getMonth() === displayMonth.getMonth();
                 const isSelected = dateStr === selectedDate;
                 const isInSelectedWeek =

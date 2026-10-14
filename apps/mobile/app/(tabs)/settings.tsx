@@ -6,6 +6,7 @@ import * as Sharing from "expo-sharing";
 import React, { useEffect, useState } from "react";
 import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { todayLocal } from "@homegohan/shared";
 
 import { getApi, getApiBaseUrl } from "../../src/lib/api";
 import { errorOfFailedResponse, isStoppedByServerError, stoppedByServerAlertTitleOf } from "../../src/lib/failed-response";
@@ -169,7 +170,8 @@ export default function SettingsTab() {
       // メンテナンス中などの 503 は固定の文の例外にする (#1486)
       if (!res.ok) throw errorOfFailedResponse(res.status, await res.text().catch(() => ""));
       const text = await res.text();
-      const today = new Date().toISOString().slice(0, 10);
+      // ファイル名の日付は日本の今日 (以前は UTC の日付で、日本の 0〜9 時は前日になっていた #1049 F7-21)
+      const today = todayLocal();
       const filename = `homegohan-export-${today}.json`;
       const fileUri = (FileSystem.documentDirectory ?? "") + filename;
       await FileSystem.writeAsStringAsync(fileUri, text, {
@@ -214,7 +216,8 @@ export default function SettingsTab() {
       // メンテナンス中などの 503 は固定の文の例外にする (#1486)
       if (!res.ok) throw errorOfFailedResponse(res.status, await res.text().catch(() => ""));
       const text = await res.text();
-      const today = new Date().toISOString().slice(0, 10);
+      // ファイル名の日付は日本の今日 (以前は UTC の日付で、日本の 0〜9 時は前日になっていた #1049 F7-21)
+      const today = todayLocal();
       const filename = `homegohan-meals-${today}.csv`;
       const fileUri = (FileSystem.documentDirectory ?? "") + filename;
       await FileSystem.writeAsStringAsync(fileUri, text, {

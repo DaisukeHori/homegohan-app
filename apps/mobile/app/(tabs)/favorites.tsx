@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { formatLocalDate } from "@homegohan/shared";
 
 import { getApi } from "../../src/lib/api";
 import { colors, radius, shadows, spacing } from "../../src/theme";
@@ -32,9 +33,9 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "name", label: "名前順" },
 ];
 
+/** お気に入りに入れた時刻 (ISO 8601) を、日本の日付 (YYYY/MM/DD) にする (端末のタイムゾーンに左右されない #1049 F7-21) */
 function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+  return formatLocalDate(new Date(iso)).replace(/-/g, "/");
 }
 
 export default function FavoritesScreen() {

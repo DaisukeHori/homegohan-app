@@ -3,6 +3,7 @@ import * as ImagePicker from "expo-image-picker";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
+import { addDaysToDate, todayLocal } from "@homegohan/shared";
 
 import { Button } from "../../src/components/ui/Button";
 import { Card } from "../../src/components/ui/Card";
@@ -207,15 +208,20 @@ export default function PantryPage() {
     return "other";
   }
 
-  const todayStr = useMemo(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  }, []);
+  // 日本の今日 (端末のタイムゾーンに左右されない #1049 F7-21)
+  const todayStr = useMemo(() => todayLocal(), []);
 
-  function addDaysToDate(dateStr: string, days: number): string {
-    const d = new Date(dateStr);
-    d.setDate(d.getDate() + days);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  /**
+   * AI が読んだ「あと何日」から賞味期限の日付を作る。日付の計算は暦だけで行う (#1049 F7-21。以前は
+   * new Date("YYYY-MM-DD") (UTC の 0 時) を端末のローカル時刻で読んでいて、日本より西の端末では 1 日前にずれた)。
+   * 日数の小数は切り捨てる (以前の Date#setDate と同じ)。暦で扱えない日数なら期限なし
+   */
+  function expirationDateAfter(days: number): string | undefined {
+    try {
+      return addDaysToDate(todayStr, Math.trunc(days));
+    } catch {
+      return undefined;
+    }
   }
 
   async function analyzeFridge() {
@@ -317,7 +323,7 @@ export default function PantryPage() {
   }
 
   function toIngredientInput(i: FridgeIngredient) {
-    const exp = typeof i.daysRemaining === "number" && i.daysRemaining > 0 ? addDaysToDate(todayStr, i.daysRemaining) : undefined;
+    const exp = typeof i.daysRemaining === "number" && i.daysRemaining > 0 ? expirationDateAfter(i.daysRemaining) : undefined;
     return {
       name: i.name,
       amount: i.quantity || undefined,
