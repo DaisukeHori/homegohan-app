@@ -163,6 +163,14 @@ export function setupNotificationHandler(): void {
 }
 ```
 
+> **実装 (#1049 F7-11)**: フォアグラウンドの表示 (`setNotificationHandler`) と通知のタップ (`addNotificationResponseReceivedListener` /
+> `getLastNotificationResponseAsync`) は、`src/components/NotificationRouter.tsx` にまとめ、`app/_layout.tsx` が Provider の内側に置く
+> (置かれている間だけ有効で、外されたら `setNotificationHandler(null)` とリスナーの `remove()` で解除する)。
+> 表示は `shouldShowBanner` / `shouldShowList` / `shouldPlaySound` / `shouldSetBadge` (expo-notifications 0.31 では `shouldShowAlert` は非推奨)。
+> タップの行き先は `data.path` (アプリ内のパス) か `data.deep_link` (`homegohan://…`) から `src/lib/notificationRoute.ts` が決め、
+> 許した画面 (`NOTIFICATION_ROUTES`) にだけ遷移する。画面が無い下位のパス (§3.3 の例の `family/meal-requests`) は、一番近い上位の画面 (`/family`) を開く。
+> 下のコード例 (`setupNotificationHandler()`・`setNotificationBadge()` によるバッジの手動更新) は当初の案で、実装はしていない。
+
 `setupNotificationHandler()` は `app/_layout.tsx` の `RootLayout` 内で呼び出す:
 
 ```typescript

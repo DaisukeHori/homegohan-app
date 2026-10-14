@@ -44,7 +44,7 @@ import {
   refundEdgeAiUsage,
   type AiUsageRpcClient,
 } from '../supabase/functions/_shared/ai-usage.ts';
-import { AI_USAGE_NOT_COUNTED, aiDailyLimitMessage } from '../supabase/functions/_shared/ai-daily-limit';
+import { AI_USAGE_NOT_COUNTED, aiDailyLimitMessage, aiDailyLimitMessageOfDenied } from '../supabase/functions/_shared/ai-daily-limit';
 import { aiUsageRecordedHeaders } from '../src/lib/plan/entitlements';
 
 const USER_ID = '11111111-2222-3333-4444-555555555555';
@@ -109,6 +109,42 @@ describe('consumeEdgeAiUsage: ユーザーの JWT で直接呼ばれたときに
     expect(res.headers.get('Retry-After')).toBe('3600');
     expect(res.headers.get('Content-Type')).toBe('application/json');
     expect(await res.json()).toEqual({ error: aiDailyLimitMessage(10), code: 'AI_DAILY_LIMIT', limit: 10, retryAfter: 3600 });
+  });
+
+  it('(#1142) 究極モード (menu_generation_ultimate) は consume_ai_usage_capped を既定の上限 1 回で呼ぶ。上限に達したら究極モードの文の 429', async () => {
+    const allowed = clientReturning(OK);
+    await expect(consumeEdgeAiUsage(requestWith(), USER_ID, 'menu_generation_ultimate', { client: allowed.client })).resolves.toEqual(COUNTED);
+    expect(allowed.rpc.mock.calls).toEqual([
+      ['consume_ai_usage_capped', { p_user_id: USER_ID, p_feature: 'menu_generation_ultimate', p_feature_daily_cap: 1 }],
+    ]);
+
+    const denied = clientReturning({
+      data: { allowed: false, metered: true, plan: null, limit: 1, used: 1, usage_date: '2026-10-11', capped_feature: 'menu_generation_ultimate' },
+      error: null,
+    });
+    const result = await consumeEdgeAiUsage(requestWith(), USER_ID, 'menu_generation_ultimate', { client: denied.client });
+    expect(result).toEqual({ allowed: false, limit: 1, used: 1, usageDate: '2026-10-11', cappedFeature: 'menu_generation_ultimate' });
+    if (result.allowed) throw new Error('unreachable');
+    const res = aiDailyLimitEdgeResponse(result, {}, Date.UTC(2026, 9, 11, 14, 0, 0));
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({
+      error: aiDailyLimitMessageOfDenied(result),
+      code: 'AI_DAILY_LIMIT',
+      limit: 1,
+      cappedFeature: 'menu_generation_ultimate',
+      retryAfter: 3600,
+    });
+  });
+
+  it('(#1142) 究極モードの上限は Edge Function の環境変数 AI_ULTIMATE_MODE_DAILY_LIMIT で上書きできる。通常の生成は consume_ai_usage のまま', async () => {
+    env.AI_ULTIMATE_MODE_DAILY_LIMIT = '2';
+    const { rpc, client } = clientReturning(OK);
+    await consumeEdgeAiUsage(requestWith(), USER_ID, 'menu_generation_ultimate', { client });
+    await consumeEdgeAiUsage(requestWith(), USER_ID, 'menu_generation', { client });
+    expect(rpc.mock.calls).toEqual([
+      ['consume_ai_usage_capped', { p_user_id: USER_ID, p_feature: 'menu_generation_ultimate', p_feature_daily_cap: 2 }],
+      ['consume_ai_usage', { p_user_id: USER_ID, p_feature: 'menu_generation' }],
+    ]);
   });
 
   it('(#1149) refundEdgeAiUsage: 数えた日で refund_ai_usage を呼ぶ。数えていない結果では呼ばない。失敗しても例外を出さない', async () => {

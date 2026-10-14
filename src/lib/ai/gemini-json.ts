@@ -271,6 +271,9 @@ export function getGoogleAiApiKey(): string {
   return apiKey;
 }
 
+/** 画像を取りに行くときの時間切れ (ミリ秒)。Supabase Storage の画像 1 枚に 10 秒あれば足りる (以前からの値) */
+const IMAGE_FETCH_TIMEOUT_MS = 10_000;
+
 // #272 SSRF対策: 許可するホスト名のリスト
 // 環境変数 NEXT_PUBLIC_SUPABASE_URL からプロジェクト固有ホストを動的に取得し、静的フォールバックと結合する
 function getAllowedImageHosts(): string[] {
@@ -325,12 +328,19 @@ export async function fetchImageAsBase64(imageUrl: string): Promise<GeminiImageI
     throw new Error('Image URL points to a private/internal host');
   }
 
-  const allowedHosts = getAllowedImageHosts();
-  if (!allowedHosts.includes(parsedUrl.hostname)) {
+  const allowedHost = getAllowedImageHosts().find((host) => host === parsedUrl.hostname);
+  if (!allowedHost) {
     throw new Error(`Image host not allowed: ${parsedUrl.hostname}`);
   }
 
-  const response = await fetch(imageUrl, { signal: AbortSignal.timeout(10_000) });
+  // #1444 (CodeQL js/request-forgery): 取りに行く URL は、受け取った文字列をそのまま使わず、許可リストの値 (ホスト) と
+  // 解析済みのパス・クエリから組み立て直す (利用者の情報・ポートの指定は落ちる)。
+  // リダイレクトは追わない: 許可したホストの応答がリダイレクト (例: Auth の redirect_to) なら、別のホストへ出ずに失敗にする
+  const safeUrl = `https://${allowedHost}${parsedUrl.pathname}${parsedUrl.search}`;
+  const response = await fetch(safeUrl, {
+    signal: AbortSignal.timeout(IMAGE_FETCH_TIMEOUT_MS),
+    redirect: 'error',
+  });
   if (!response.ok) {
     throw new Error('Failed to fetch image');
   }

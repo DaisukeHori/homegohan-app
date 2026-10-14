@@ -1,199 +1,172 @@
 /**
  * tests/e2e/family/01-invite-accept-share.spec.ts
  *
- * T14 — family 招待発行 → 別ユーザーで承認 → 共有メニュー閲覧 happy path
+ * T14 (#856) — 家族のペルソナの happy path: 代表者が招待 → 招待された人が承諾 → 家族で共有する献立の画面を見る
  *
- * 概要:
- *   1. org_admin ユーザーが /api/org/invites に POST して招待を発行する
- *   2. 返却された invite_token を確認する
- *   3. 招待一覧 UI (/org/invites) で招待が表示されることを確認する
- *   4. 招待リンクのコピー / URL 形式が正しいことをアサートする
+ *   T14-F1: 未ログインでは家族の招待を作れない (401)
+ *   T14-F2: 家族に入っていない人は、その家族の招待を作れない (403)
+ *   T14-F3: 代表者が招待を作り (POST /api/family/invites)、招待された人が招待の画面 (/invite/{token}) で
+ *           「週間献立」を共有する設定のまま承諾すると、家族の画面と、週間献立の画面の家族の表示の切り替えに 2 人の家族として出る
  *
- * 前提条件:
- *   - ADMIN_USER_EMAIL / ADMIN_USER_PASSWORD に org_admin ロールを持つユーザーを設定
- *     （未設定の場合は API レベルの権限チェックテストのみ実行）
- *   - SUPABASE_SERVICE_ROLE_KEY があれば seed-roles でロール付与も可能
+ * ユーザー:
+ *   - 代表者: fixtures/fresh-family.ts の freshFamilyWithOwner (家族と代表者のメンバーの行を service_role で作る)
+ *   - 招待された人: このテストの中で作り、別のブラウザのコンテキストで動かす (helpers/persona-api.ts の openUserContext)
+ *   - 家族に入っていない人: fixtures/fresh-user.ts の regularUser
+ * どのユーザーも、SUPABASE_SERVICE_ROLE_KEY (.env.local) が無ければ fixture が例外で失敗する (skip にはしない)。
  *
  * 実行:
- *   npm run test:e2e -- tests/e2e/family
+ *   npx playwright test tests/e2e/family
  */
 
-import { test, expect } from "../fixtures/fresh-user";
-import { config as dotenvConfig } from "dotenv";
-import * as path from "path";
+import { randomUUID } from "node:crypto";
+import { mergeTests } from "@playwright/test";
+import {
+  test as freshUserTest,
+  expect,
+  createFreshUser,
+  getAdminClient,
+  upsertUserProfile,
+} from "../fixtures/fresh-user";
+import { test as freshFamilyTest } from "../fixtures/fresh-family";
+import { getFamilyInviteFromDB, getFamilyMemberFromDB } from "../helpers/membership-family";
+import {
+  EMPTY_STORAGE_STATE,
+  apiRequest,
+  dataOf,
+  deleteRoleUser,
+  errorCodeOf,
+  openUserContext,
+  serviceRoleRest,
+} from "../helpers/persona-api";
 
-dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
+const test = mergeTests(freshUserTest, freshFamilyTest);
+
+// 共有のログイン状態 (playwright.config.ts の storageState) を引き継がず、各テストが自分のユーザーで入る
+test.use({ storageState: EMPTY_STORAGE_STATE });
 
 // ─── 定数 ────────────────────────────────────────────────────────────────────
 
-const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
-
-// service_role key 経由で直接 API を叩くケース (T14-F5)
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
-// テスト用招待先メールアドレス（ランダムサフィックスで衝突回避）
-const TEST_INVITE_EMAIL = `e2e-family-invite-${Date.now()}@homegohan.test`;
-
 /**
- * API fetch を page コンテキストで実行する (認証 Cookie を自動送信するため)。
+ * T14-F3 の時間の上限。招待・承諾のあと、家族の画面と週間献立の画面 (大きいクライアントの画面) を本番ビルドで順に開く。
+ * playwright.config.ts の既定 (60 秒) は 1 画面を開くテストの長さなので、開く画面の数のぶん延ばす。
  */
-async function apiFetch(
-  page: import("@playwright/test").Page,
-  path: string,
-  options: { method?: string; body?: unknown } = {},
-): Promise<{ status: number; body: unknown }> {
-  return page.evaluate(
-    async ({ path, options }: { path: string; options: { method?: string; body?: unknown } }) => {
-      const res = await fetch(path, {
-        method: options.method ?? "GET",
-        headers: options.body ? { "Content-Type": "application/json" } : {},
-        body: options.body ? JSON.stringify(options.body) : undefined,
-        credentials: "include",
-      });
-      let body: unknown;
-      try {
-        body = await res.json();
-      } catch {
-        body = await res.text();
-      }
-      return { status: res.status, body };
-    },
-    { path, options },
-  );
-}
+const FAMILY_FLOW_TIMEOUT_MS = 180_000;
 
-// ─── テストスイート ───────────────────────────────────────────────────────────
+/** 画面の要素が出るまで待つ上限 (ほかの spec と同じ。本番ビルドの初回の描画を含めて足りる長さ) */
+const PAGE_READY_TIMEOUT_MS = 20_000;
 
-test.describe("family: 招待発行 → 承認 → 共有メニュー閲覧 happy path", () => {
-  /**
-   * T14-F1: 未認証ユーザーは /api/org/invites に POST できない (401)
-   *
-   * 招待 API の認証ガードが正しく機能していることを確認する。
-   */
-  test("T14-F1: 未認証で招待 API を叩くと 401 が返る", async ({ page }) => {
-    await page.goto(`${BASE_URL}/login`);
+/** 招待のトークンの長さ (create_family_invite が gen_random_uuid() 2 つの 16 進 (32 + 32 文字) を連ねて作る) */
+const FAMILY_INVITE_TOKEN_LENGTH = 64;
 
-    const { status } = await apiFetch(page, "/api/org/invites", {
+/** 承諾のあとの家族の人数 (代表者 + 承諾した人) */
+const MEMBER_COUNT_AFTER_ACCEPT = 2;
+
+/** 代表者のメンバーの表示名 (fixtures/fresh-family.ts の buildFamilyFixture が付ける) */
+const OWNER_DISPLAY_NAME = "お母さん";
+
+// ─── テスト ──────────────────────────────────────────────────────────────────
+
+test.describe("family: 招待 → 承諾 → 共有の献立の閲覧 (T14)", () => {
+  test("T14-F1: 未ログインで家族の招待を作ろうとすると 401", async ({ page }) => {
+    const { status, body } = await apiRequest(page, "/api/family/invites", {
       method: "POST",
-      body: { email: TEST_INVITE_EMAIL, role: "member" },
+      body: { family_id: randomUUID(), email: `e2e-t14-f1-${Date.now()}@homegohan.test` },
     });
 
     expect(status).toBe(401);
+    expect(errorCodeOf(body)).toBe("NOT_AUTHENTICATED");
   });
 
-  /**
-   * T14-F2: org_admin 権限なしユーザーは招待 API を利用できない (403)
-   *
-   * onboardingPendingUser fixture = org_admin ロールを持たない fresh user。
-   */
-  test("T14-F2: org_admin 権限なしで招待 API を叩くと 403 が返る", async ({ onboardingPendingUser }) => {
-    const { status } = await apiFetch(onboardingPendingUser, "/api/org/invites", {
+  test("T14-F2: 家族に入っていない人は、その家族の招待を作れない (403)", async ({ regularUser }) => {
+    const { status, body } = await apiRequest(regularUser, "/api/family/invites", {
       method: "POST",
-      body: { email: TEST_INVITE_EMAIL, role: "member" },
+      body: { family_id: randomUUID(), email: `e2e-t14-f2-${Date.now()}@homegohan.test` },
     });
 
-    // org_admin ロールを持たない場合は 403
-    expect([403, 401]).toContain(status);
+    expect(status).toBe(403);
+    expect(errorCodeOf(body)).toBe("NOT_FAMILY_ADULT");
   });
 
-  /**
-   * T14-F3: org_admin ユーザーが招待を発行する happy path
-   *
-   * operatorUser fixture: createFreshUser + organizations INSERT + user_profiles.roles=['org_admin'] で自動生成。
-   * 1. org_admin としてログイン (fixture が session inject 済み)
-   * 2. POST /api/org/invites で招待を作成
-   * 3. 返却された invite_url に token が含まれることを確認
-   * 4. GET /api/org/invites で招待一覧に追加されていることを確認
-   */
-  test("T14-F3: org_admin が招待を発行し invite_token を取得する", async ({ operatorUser }) => {
-    const { page } = operatorUser;
+  test("T14-F3: 代表者が招待し、招待された人が承諾すると、家族の画面と週間献立の家族の表示に 2 人で出る", async ({
+    freshFamilyWithOwner,
+    browser,
+  }) => {
+    test.setTimeout(FAMILY_FLOW_TIMEOUT_MS);
+    const { ownerPage, family } = freshFamilyWithOwner;
 
-    // 招待を発行する
-    const createResult = await apiFetch(page, "/api/org/invites", {
-      method: "POST",
-      body: { email: TEST_INVITE_EMAIL, role: "member" },
-    });
+    // 招待される人 (初期設定は済ませておく。まだ家族には入っていない)
+    const invitee = await createFreshUser(getAdminClient(), { emailPrefix: "e2e-t14-family-invitee" });
+    let inviteeContext: Awaited<ReturnType<typeof openUserContext>>["context"] | null = null;
 
-    expect(createResult.status).toBe(200);
-    const createBody = createResult.body as Record<string, unknown>;
-    expect(createBody.success).toBe(true);
+    try {
+      await upsertUserProfile(invitee.id, { nickname: "E2E T14 Invitee" });
 
-    const invite = createBody.invite as Record<string, unknown>;
-    expect(invite).toBeDefined();
-    expect(invite.inviteUrl).toMatch(/\/invite\//);
-    expect(typeof invite.expiresAt).toBe("string");
+      // 1. 代表者が招待を作る (アプリの API。メールの送信に失敗しても招待は残る)
+      const created = await apiRequest(ownerPage, "/api/family/invites", {
+        method: "POST",
+        body: { family_id: family.familyId, email: invitee.email },
+      });
+      expect(created.status, JSON.stringify(created.body)).toBe(201);
+      const createdData = dataOf(created.body) as { invite?: { token?: unknown }; invite_url?: unknown };
+      const token = createdData.invite?.token;
+      if (typeof token !== "string") {
+        throw new Error(`招待の応答に token がありません: ${JSON.stringify(created.body)}`);
+      }
+      expect(token).toHaveLength(FAMILY_INVITE_TOKEN_LENGTH);
+      expect(createdData.invite_url).toEqual(expect.stringContaining(`/invite/${token}`));
 
-    // invite_token を URL から取得
-    const inviteUrl = invite.inviteUrl as string;
-    const tokenMatch = inviteUrl.match(/\/invite\/([a-f0-9]+)/);
-    expect(tokenMatch).not.toBeNull();
-    const inviteToken = tokenMatch![1];
-    expect(inviteToken).toHaveLength(64); // crypto.randomBytes(32).hex の長さ
+      const pendingInvite = await getFamilyInviteFromDB(token);
+      expect(pendingInvite?.family_id).toBe(family.familyId);
+      expect(pendingInvite?.status).toBe("pending");
 
-    // 招待一覧に表示されていることを確認
-    const listResult = await apiFetch(page, "/api/org/invites");
-    expect(listResult.status).toBe(200);
-    const listBody = listResult.body as Record<string, unknown>;
-    const invites = listBody.invites as Array<Record<string, unknown>>;
-    const created = invites.find((i) => i.email === TEST_INVITE_EMAIL);
-    expect(created).toBeDefined();
-    expect(created!.isAccepted).toBe(false);
-    expect(created!.isExpired).toBe(false);
+      // 2. 招待された人が、自分のブラウザで招待の画面を開いて承諾する (共有の設定は既定のまま。週間献立は共有する)
+      const opened = await openUserContext(browser, invitee.email);
+      inviteeContext = opened.context;
+      const inviteePage = opened.page;
 
-    // 招待リンクのコピー → URL 形式が正しいことを確認
-    const inviteUrlFromList = `${BASE_URL}/invite/${created!.token}`;
-    expect(inviteUrlFromList).toContain("/invite/");
+      await inviteePage.goto(`/invite/${token}`);
+      await expect(inviteePage.getByRole("heading", { name: `${family.familyName}への招待` })).toBeVisible({
+        timeout: PAGE_READY_TIMEOUT_MS,
+      });
+      const shareMenuCheckbox = inviteePage.locator("label", { hasText: "週間献立" }).locator('input[type="checkbox"]');
+      await expect(shareMenuCheckbox).toBeChecked();
 
-    // クリーンアップ: 招待を削除
-    const deleteResult = await apiFetch(page, `/api/org/invites?id=${created!.id}`, {
-      method: "DELETE",
-    });
-    expect(deleteResult.status).toBe(200);
-  });
+      await inviteePage.getByRole("button", { name: "承諾する" }).click();
+      await inviteePage.waitForURL((url) => url.pathname === "/family/dashboard", { timeout: PAGE_READY_TIMEOUT_MS });
 
-  /**
-   * T14-F4: 招待 UI 画面 (/org/invites) が表示される (org_admin)
-   *
-   * operatorUser fixture: createFreshUser + organizations INSERT + user_profiles.roles=['org_admin'] で自動生成。
-   */
-  test("T14-F4: /org/invites 画面にアクセスして招待管理 UI が表示される", async ({ operatorUser }) => {
-    const { page } = operatorUser;
+      // 家族の画面: 家族の名前と、代表者・承諾した人の 2 人が出る
+      await expect(inviteePage.getByRole("heading", { level: 1 })).toHaveText(family.familyName, {
+        timeout: PAGE_READY_TIMEOUT_MS,
+      });
+      await expect(inviteePage.getByText(new RegExp(`^${MEMBER_COUNT_AFTER_ACCEPT}/\\d+ 人$`))).toBeVisible();
+      await expect(inviteePage.getByText(OWNER_DISPLAY_NAME)).toBeVisible();
 
-    await page.goto(`${BASE_URL}/org/invites`);
+      // DB: 招待は承諾済み。承諾した人は大人のメンバーで、週間献立を共有する
+      const acceptedInvite = await getFamilyInviteFromDB(token);
+      expect(acceptedInvite?.status).toBe("accepted");
+      expect(acceptedInvite?.accepted_by).toBe(invitee.id);
+      const inviteeMember = await getFamilyMemberFromDB({ familyId: family.familyId, userId: invitee.id });
+      expect(inviteeMember?.role).toBe("adult");
+      expect(inviteeMember?.share_menu).toBe(true);
 
-    // ページタイトルの確認
-    await expect(page.locator("h1")).toContainText("メンバー招待", { timeout: 20_000 });
+      // 3. 承諾した人が週間献立の画面を開くと、家族の表示の切り替え (既定は「家族全員」) に 2 人の家族として出る
+      await inviteePage.goto("/menus/weekly");
+      const familyViewSwitcher = inviteePage.getByRole("button", { name: "ビューを切替" });
+      await expect(familyViewSwitcher).toBeVisible({ timeout: PAGE_READY_TIMEOUT_MS });
+      await expect(familyViewSwitcher).toContainText("家族全員");
+      await expect(familyViewSwitcher).toContainText(`${MEMBER_COUNT_AFTER_ACCEPT}人`);
 
-    // 「+ 新規招待」ボタンの存在確認 (共有メニュー相当の操作トリガー)
-    await expect(page.locator("button:has-text('新規招待')")).toBeVisible({ timeout: 10_000 });
-  });
-
-  /**
-   * T14-F5: service_role key で招待情報を直接確認する (インフラ疎通テスト)
-   *
-   * SUPABASE_SERVICE_ROLE_KEY が設定されている場合のみ実行。
-   * REST API 経由で organization_invites テーブルへのアクセスを確認する。
-   */
-  test("T14-F5: service_role key で organization_invites テーブルにアクセスできる", async () => {
-    if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-      test.skip(true, "SUPABASE_URL / SERVICE_ROLE_KEY 未設定のためスキップ");
-      return;
+      // 表示するメンバーの選択に、代表者が出る
+      await familyViewSwitcher.click();
+      const memberSheet = inviteePage.getByRole("dialog", { name: "表示するメンバーを選択" });
+      await expect(memberSheet).toBeVisible();
+      await expect(memberSheet.getByText(OWNER_DISPLAY_NAME)).toBeVisible();
+    } finally {
+      await inviteeContext?.close();
+      // 承諾した人のメンバーの行を先に消す (残したまま利用者を消すと family_members.user_id が NULL になり、
+      // 大人の行は user_id 必須の CHECK (family_members_child_profile_consistency) に反して消せない)
+      await serviceRoleRest(`family_members?user_id=eq.${invitee.id}`, { method: "DELETE" });
+      await deleteRoleUser(invitee.id);
     }
-
-    const resp = await fetch(
-      `${SUPABASE_URL}/rest/v1/organization_invites?limit=1&select=id,email,token,expires_at`,
-      {
-        headers: {
-          apikey: SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
-        },
-      },
-    );
-
-    // テーブルが存在すれば 200 (空配列でも OK)
-    expect([200, 206]).toContain(resp.status);
-    const data = await resp.json();
-    expect(Array.isArray(data)).toBe(true);
   });
 });

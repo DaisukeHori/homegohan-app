@@ -367,3 +367,49 @@ describe('knowledge-gpt (実際のハンドラ): AI 相談の緊急停止スイ�
     expect(e.tables).not.toContain('feature_flags');
   });
 });
+
+// ─────────────────────────────────────────────
+// 4. #1444 (CodeQL js/stack-trace-exposure): 内部のエラーの中身を、利用者の JWT で直接呼んだ人に返さない
+// ─────────────────────────────────────────────
+
+describe('knowledge-gpt (実際のハンドラ): 内部のエラーの文を本文に出さない (#1444)', () => {
+  /** AI の呼び出しが投げる例外の文 (内部の情報の代わり。本文に出たら漏れている) */
+  const INTERNAL_DETAIL = 'upstream 401: invalid api key sk-internal-detail-1444';
+  /** 内部のエラーのときの固定の文 (supabase/functions/knowledge-gpt/index.ts の KNOWLEDGE_GPT_INTERNAL_ERROR_MESSAGE) */
+  const GENERIC_MESSAGE = 'Internal server error';
+
+  function streamingRequest(token: string): Request {
+    return new Request('http://localhost/functions/v1/knowledge-gpt', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, Origin: ORIGIN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: '夕食の相談' }], stream: true }),
+    });
+  }
+
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    e.flagResult = { data: flagRow({ enabled: true }), error: null };
+    e.logger.error.mockClear();
+    e.fastLLMCreate.mockRejectedValueOnce(new Error(INTERNAL_DETAIL));
+  });
+
+  it('JSON の応答: 500 と固定の文だけを返し、例外の文は返さない (ログには残す)', async () => {
+    const res = await (handler as Handler)(knowledgeGptRequest('user-token'));
+
+    expect(res.status).toBe(500);
+    const text = await res.text();
+    expect(text).not.toContain(INTERNAL_DETAIL);
+    expect(JSON.parse(text)).toEqual({ error: { message: GENERIC_MESSAGE, type: 'internal_error' } });
+    expect(e.fastLLMCreate).toHaveBeenCalledTimes(1);
+    expect(e.logger.error).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ message: INTERNAL_DETAIL }));
+  });
+
+  it('ストリームの応答: 途中の失敗も固定の文だけを流し、例外の文は流さない', async () => {
+    const res = await (handler as Handler)(streamingRequest('user-token'));
+
+    const text = await res.text();
+    expect(e.fastLLMCreate).toHaveBeenCalledTimes(1);
+    expect(text).not.toContain(INTERNAL_DETAIL);
+    expect(text).toContain(`data: ${JSON.stringify({ error: { message: GENERIC_MESSAGE, type: 'internal_error' } })}`);
+  });
+});

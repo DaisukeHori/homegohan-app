@@ -5,6 +5,7 @@ import {
   menuGenerationRangeEndMax,
   menuGenerationRangeStartMax,
   menuGenerationSingleDayMax,
+  todayLocal,
 } from "@homegohan/shared";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -51,7 +52,8 @@ export interface V4GenerateParams {
   resolveExistingMeals: boolean;
   constraints: MenuGenerationConstraints;
   note: string;
-  ultimateMode: false;
+  /** 究極モード (AIが献立を見直して栄養バランスを改善)。全員が使える (#1142) */
+  ultimateMode: boolean;
 }
 
 // ── Sandbox props (discriminated union) ──────────────────────
@@ -132,9 +134,9 @@ function toMealDays(days: DayRow[]): MealDay[] {
 // ============================================================
 // Date helpers
 // ============================================================
+/** 日本の今日 (YYYY-MM-DD)。端末のタイムゾーンに左右されない (#1049 F7-21) */
 function getTodayStr(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  return todayLocal();
 }
 
 // 暦日 (YYYY-MM-DD) を days 日ずらす。暦の計算だけで行い、端末のタイムゾーンに左右されない (#1433。
@@ -453,6 +455,8 @@ function V4GenerateModalNormal({
   });
 
   const [note, setNote] = useState("");
+  // 究極モード。通常より時間がかかるため既定は OFF にし、モーダルを開くたびに OFF に戻す (WEB と同じ)
+  const [ultimateMode, setUltimateMode] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // モーダルが開くたびに状態をリセット
@@ -460,6 +464,7 @@ function V4GenerateModalNormal({
     if (visible) {
       setIsSubmitting(false);
       setIncludeExisting(false); // 破壊的フラグは毎回リセット
+      setUltimateMode(false);
     }
   }, [visible]);
 
@@ -625,7 +630,7 @@ function V4GenerateModalNormal({
         resolveExistingMeals: includeExisting,
         constraints,
         note,
-        ultimateMode: false,
+        ultimateMode,
       });
     } catch {
       setIsSubmitting(false);
@@ -929,8 +934,12 @@ function V4GenerateModalNormal({
               <ConditionPills values={constraints} onChange={setConstraints} />
             </View>
 
-            {/* 究極モード (PR 4-3) */}
-            <UltimateModeToggle enabled={false} />
+            {/* 究極モード (#1142: 全員に開放) */}
+            <UltimateModeToggle
+              value={ultimateMode}
+              onValueChange={setUltimateMode}
+              disabled={isSubmitting || isGenerating}
+            />
 
             {/* メモ */}
             <TextInput

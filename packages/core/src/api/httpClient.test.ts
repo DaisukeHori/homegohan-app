@@ -171,13 +171,40 @@ describe("createHttpClient — 基本の動作 (従来どおり)", () => {
     expect(message.length).toBeLessThan(260);
   });
 
-  it("成功 (2xx) の本文が JSON として読めないときは、従来どおり SyntaxError を投げる", async () => {
+  it("成功 (2xx) の本文が JSON として読めないときは、SyntaxError ではなく `HTTP <status> <statusText>: <本文>` の Error (元の SyntaxError は cause。#1049 F7-12)", async () => {
     installFetch(vi.fn().mockResolvedValue(textResponse(200, "<html>not json</html>")));
 
     const { state, settled } = settle(client().get("/api/x"));
     await settled;
 
-    expect(state.error).toBeInstanceOf(SyntaxError);
+    expect(state.ok).toBe(false);
+    expect(state.error).not.toBeInstanceOf(SyntaxError);
+    expect(isHttpNetworkError(state.error)).toBe(false);
+    expect((state.error as Error).message).toBe("HTTP 200 OK: <html>not json</html>");
+    expect((state.error as Error & { cause?: unknown }).cause).toBeInstanceOf(SyntaxError);
+    // 成功の応答なのでやり直さない (サーバーでは処理が済んでいることがある)
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("成功 (2xx) の読めない本文が長いときも、200 文字で切る (公衆 Wi-Fi のログインページの HTML 全体を出さない)", async () => {
+    installFetch(vi.fn().mockResolvedValue(textResponse(200, `<html>${"a".repeat(1000)}</html>`)));
+
+    const { state, settled } = settle(client().post("/api/x", { a: 1 }));
+    await settled;
+
+    const message = (state.error as Error).message;
+    expect(message.startsWith("HTTP 200 OK: <html>aaa")).toBe(true);
+    expect(message.endsWith("…")).toBe(true);
+    expect(message.length).toBeLessThan(260);
+  });
+
+  it("成功 (2xx) の本文が途中で切れた JSON でも、同じ形の Error になる", async () => {
+    installFetch(vi.fn().mockResolvedValue(textResponse(200, '{"items":[1,2')));
+
+    const { state, settled } = settle(client().get("/api/x"));
+    await settled;
+
+    expect((state.error as Error).message).toBe('HTTP 200 OK: {"items":[1,2');
   });
 
   it("headers を持たない応答 (簡易なモック) でも動く", async () => {
@@ -774,5 +801,38 @@ describe("リトライ — Retry-After を守る", () => {
     expect((state.error as Error).name).toBe("AbortError");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+/**
+ * #1444 (CodeQL js/polynomial-redos) の回帰テスト。
+ * baseUrl の末尾の "/" は、正規表現を使わずに線形の時間で落とす。結果は以前 (/\/+$/ で落としていたとき) と同じ。
+ */
+describe("baseUrl の末尾の / の扱い", () => {
+  /** "/" が長く続いたあとに別の文字がある baseUrl の、"/" の数 (正規表現で落とすと照合が 2 乗の時間になる長さ) */
+  const LONG_SLASH_RUN = 50_000;
+
+  it.each([
+    ["末尾に / が無い", "https://api.example.com", "/api/pantry", "https://api.example.com/api/pantry"],
+    ["末尾に / が 1 つ", "https://api.example.com/", "/api/pantry", "https://api.example.com/api/pantry"],
+    ["末尾に / が 3 つ", "https://api.example.com///", "api/pantry", "https://api.example.com/api/pantry"],
+    ["パスの途中の / は残す", "https://api.example.com/v1//", "/x", "https://api.example.com/v1/x"],
+  ])("%s", async (_label, baseUrl, path, expected) => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(200, {})));
+    await createHttpClient({ baseUrl }).get(path);
+    expect(fetchMock.mock.calls[0][0]).toBe(expected);
+  });
+
+  it("末尾の / をすべて落とすので、/ だけの baseUrl は空になる", async () => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(200, {})));
+    await createHttpClient({ baseUrl: "/".repeat(LONG_SLASH_RUN) }).get("/x");
+    expect(fetchMock.mock.calls[0][0]).toBe("/x");
+  });
+
+  it("/ が長く続いたあとに別の文字があっても、そのまま残して連結する", async () => {
+    installFetch(vi.fn().mockResolvedValue(jsonResponse(200, {})));
+    const baseUrl = `https://api.example.com${"/".repeat(LONG_SLASH_RUN)}v1`;
+    await createHttpClient({ baseUrl }).get("/x");
+    expect(fetchMock.mock.calls[0][0]).toBe(`${baseUrl}/x`);
   });
 });
