@@ -191,6 +191,40 @@ describe('criticalPackages', () => {
   });
 });
 
+describe('表のセル: バックスラッシュのエスケープ (#1444 CodeQL js/incomplete-sanitization)', () => {
+  /** 表の行のうち、エスケープされていない縦線 (= セルの区切り) の数 */
+  function cellSeparators(row: string): number {
+    let count = 0;
+    for (let i = 0; i < row.length; i += 1) {
+      if (row[i] === '\\') {
+        i += 1; // バックスラッシュの次の 1 文字はエスケープされている
+      } else if (row[i] === '|') {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  function rowFor(title: string): string {
+    const markdown = renderAuditSummary({
+      vulnerabilities: {
+        evil: { name: 'evil', severity: 'critical', via: [{ title, severity: 'critical' }], fixAvailable: true },
+      },
+      metadata: { vulnerabilities: { critical: 1, total: 1 } },
+    });
+    return markdown.split('\n').find((r) => r.startsWith('| `evil` |'))!;
+  }
+
+  it('題名の「\\|」も、表のセルを分けない (バックスラッシュを先にエスケープする)', () => {
+    const plain = rowFor('plain title');
+    const tricky = rowFor('a \\| b');
+    // 区切りの数は、ふつうの題名の行と同じ
+    expect(cellSeparators(tricky)).toBe(cellSeparators(plain));
+    // バックスラッシュは \\ に、縦線は \| になる (表示は「a \| b」)
+    expect(tricky).toContain('a \\\\\\| b');
+  });
+});
+
 describe('describeFix', () => {
   it('true は npm audit fix、オブジェクトは更新先 (メジャーなら明記)、false・未定義は修正版なし', () => {
     expect(describeFix(true)).toBe('`npm audit fix` で直せる');

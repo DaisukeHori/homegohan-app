@@ -13,7 +13,12 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 /**
  * ユーザー ID を含まないフラットなキー (将来追加時はここに列挙)。
  */
-const STATIC_USER_SCOPED_KEYS: readonly string[] = [];
+const STATIC_USER_SCOPED_KEYS: readonly string[] = [
+  // 旧ビルドが V4 献立生成の受付時に書いた、生成中の状態 ({ requestId, timestamp, totalSlots })。
+  // 読む処理が無かったので今は書かない (#1049 F7-20。src/hooks/useV4MenuGeneration.ts) が、
+  // 旧ビルドから更新した端末に前のユーザーの値が残っているので、ログアウトでは消す
+  "v4MenuGenerating",
+];
 
 /**
  * ユーザー ID をサフィックスに持つキーのプレフィックス一覧。

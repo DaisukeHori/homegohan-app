@@ -3,17 +3,11 @@ import { Link } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { formatCalendarDate, todayCalendarDate, todayLocal } from "@homegohan/shared";
 
 import { Button, Card, LoadingState, ProgressBar } from "../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
-
-function formatLocalDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
 
 // ─── Types ───────────────────────────────────────────
 interface HealthRecord {
@@ -68,10 +62,11 @@ function getWeekDays() {
   const days: { date: string; day: string; dayNum: number; isToday: boolean }[] = [];
   const DAYS = ["日", "月", "火", "水", "木", "金", "土"];
   for (let i = 6; i >= 0; i--) {
-    const d = new Date();
+    // 日本の今日から数える (端末のタイムゾーンに左右されない #1049 F7-21)
+    const d = todayCalendarDate();
     d.setDate(d.getDate() - i);
     days.push({
-      date: formatLocalDate(d),
+      date: formatCalendarDate(d),
       day: DAYS[d.getDay()],
       dayNum: d.getDate(),
       isToday: i === 0,
@@ -119,7 +114,7 @@ export default function HealthDashboardTab() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const today = useMemo(() => formatLocalDate(new Date()), []);
+  const today = useMemo(() => todayLocal(), []);
   const weekDays = useMemo(() => getWeekDays(), []);
 
   const fetchData = useCallback(async () => {

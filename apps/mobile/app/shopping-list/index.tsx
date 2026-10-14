@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { formatCalendarDate, todayCalendarDate } from "@homegohan/shared";
 
 import { Button } from "../../src/components/ui/Button";
 import { Card } from "../../src/components/ui/Card";
@@ -44,13 +45,6 @@ type ShoppingRange = {
   todayMeals: MealType[];
   daysCount: number;
 };
-
-function formatLocalDate(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
 
 export default function ShoppingListPage() {
   const [shoppingListId, setShoppingListId] = useState<string | null>(null);
@@ -292,8 +286,9 @@ export default function ShoppingListPage() {
   }
 
   function calculateDateRange() {
-    const today = new Date();
-    const todayStr = formatLocalDate(today);
+    // 日本の今日から数える (端末のタイムゾーンに左右されない #1049 F7-21)
+    const today = todayCalendarDate();
+    const todayStr = formatCalendarDate(today);
 
     switch (shoppingRange.type) {
       case 'today':
@@ -306,8 +301,8 @@ export default function ShoppingListPage() {
         const tomorrow = new Date(today);
         tomorrow.setDate(tomorrow.getDate() + 1);
         return {
-          startDate: formatLocalDate(tomorrow),
-          endDate: formatLocalDate(tomorrow),
+          startDate: formatCalendarDate(tomorrow),
+          endDate: formatCalendarDate(tomorrow),
           mealTypes: ['breakfast', 'lunch', 'dinner'] as MealType[],
         };
       }
@@ -315,8 +310,8 @@ export default function ShoppingListPage() {
         const dayAfter = new Date(today);
         dayAfter.setDate(dayAfter.getDate() + 2);
         return {
-          startDate: formatLocalDate(dayAfter),
-          endDate: formatLocalDate(dayAfter),
+          startDate: formatCalendarDate(dayAfter),
+          endDate: formatCalendarDate(dayAfter),
           mealTypes: ['breakfast', 'lunch', 'dinner'] as MealType[],
         };
       }
@@ -325,7 +320,7 @@ export default function ShoppingListPage() {
         weekEnd.setDate(weekEnd.getDate() + 6);
         return {
           startDate: todayStr,
-          endDate: formatLocalDate(weekEnd),
+          endDate: formatCalendarDate(weekEnd),
           mealTypes: ['breakfast', 'lunch', 'dinner'] as MealType[],
         };
       }
@@ -335,7 +330,7 @@ export default function ShoppingListPage() {
         endDay.setDate(endDay.getDate() + count - 1);
         return {
           startDate: todayStr,
-          endDate: formatLocalDate(endDay),
+          endDate: formatCalendarDate(endDay),
           mealTypes: ['breakfast', 'lunch', 'dinner'] as MealType[],
         };
       }

@@ -21,6 +21,7 @@
 import fs from 'fs';
 import path from 'path';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, renderHook } from '@testing-library/react-native';
 
 const mockPost = jest.fn();
@@ -367,5 +368,47 @@ describe('献立を改善 → v4 生成 API まで通した結果', () => {
 
     expect(onAiConsentRequired).toHaveBeenCalledTimes(1);
     expect(onError).not.toHaveBeenCalled();
+  });
+});
+
+describe('生成中の状態を端末に保存しない (#1049 F7-20)', () => {
+  // 以前は受け付けのたびに AsyncStorage の "v4MenuGenerating" に書いていたが、読む処理がどこにも無かった
+  // (形式も persistence.ts の TTL 付きの形と違っていた)。書かないことと、ソースから読み書きが消えたことを確かめる
+  const LEGACY_KEY = 'v4MenuGenerating';
+
+  beforeEach(async () => {
+    await AsyncStorage.clear();
+  });
+
+  it('受け付け・完了・取り消しのどれでも、端末の保存領域に何も書かない', async () => {
+    mockPost.mockResolvedValue({ requestId: 'req-1', totalSlots: 1 });
+    const onGenerationComplete = jest.fn();
+    const { result } = renderHook(() => useV4MenuGeneration({ onGenerationComplete }));
+
+    await act(async () => {
+      await result.current.generate(params);
+    });
+    // 受け付けた直後 (生成中) も何も書かれていない (以前はここで { requestId, timestamp, totalSlots } が書かれていた)
+    expect(await AsyncStorage.getAllKeys()).toEqual([]);
+    act(() => {
+      result.current.subscribeToProgress('req-1', jest.fn());
+    });
+    await act(async () => {
+      await mockRealtime.handler!({ new: { status: 'completed', error_message: null, progress: null } });
+    });
+    await act(async () => {
+      await result.current.cancelGeneration();
+    });
+
+    expect(onGenerationComplete).toHaveBeenCalledTimes(1);
+    expect(await AsyncStorage.getItem(LEGACY_KEY)).toBeNull();
+    expect(await AsyncStorage.getAllKeys()).toEqual([]);
+  });
+
+  it('フックのソースは AsyncStorage も "v4MenuGenerating" のキーも使わない (読み手の無い保存を戻さない)', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../../src/hooks/useV4MenuGeneration.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(code).not.toMatch(/AsyncStorage/);
+    expect(code).not.toContain(LEGACY_KEY);
   });
 });

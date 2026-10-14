@@ -5,22 +5,15 @@ import { useEffect, useMemo, useState } from "react";
 import { Alert, Image, ScrollView, Text, View } from "react-native";
 
 import { Button, Card, ChipSelector, Input, PageHeader, SectionHeader } from "../../../../src/components/ui";
-import { UltimateModeToggle } from "../../../../src/components/menu/UltimateModeToggle";
 import { getApi } from "../../../../src/lib/api";
 import { uploadFridgePhoto } from "../../../../src/lib/storage";
 import { colors, radius, spacing } from "../../../../src/theme";
 import { useProfile } from "../../../../src/providers/ProfileProvider";
 import type { WeekStartDay } from "../../../../src/providers/ProfileProvider";
-import { THEME_LABELS_REQUEST } from "@homegohan/shared";
+import { THEME_LABELS_REQUEST, formatCalendarDate, todayCalendarDate } from "@homegohan/shared";
 import { handleAiConsentRequiredError } from "../../../../src/lib/ai-consent";
 
 
-const formatLocalDate = (date: Date): string => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
 
 function getWeekStart(date: Date, weekStartDay: WeekStartDay = 'monday'): Date {
   const d = new Date(date);
@@ -37,7 +30,8 @@ function getWeekStart(date: Date, weekStartDay: WeekStartDay = 'monday'): Date {
 export default function WeeklyRequestPage() {
   const { profile } = useProfile();
   const weekStartDay = profile?.weekStartDay ?? 'monday';
-  const [startDate, setStartDate] = useState(() => formatLocalDate(getWeekStart(new Date(), weekStartDay)));
+  // 週の始まりは、日本の今日から数える (端末のタイムゾーンに左右されない #1049 F7-21)
+  const [startDate, setStartDate] = useState(() => formatCalendarDate(getWeekStart(todayCalendarDate(), weekStartDay)));
   const [familySize, setFamilySize] = useState("1");
   const [cheatDay, setCheatDay] = useState("");
   const [note, setNote] = useState("");
@@ -49,7 +43,7 @@ export default function WeeklyRequestPage() {
   const [fridgeSuggestions, setFridgeSuggestions] = useState<string[]>([]);
 
   useEffect(() => {
-    setStartDate(formatLocalDate(getWeekStart(new Date(), weekStartDay)));
+    setStartDate(formatCalendarDate(getWeekStart(todayCalendarDate(), weekStartDay)));
   }, [weekStartDay]);
 
   const [isUploading, setIsUploading] = useState(false);
@@ -126,7 +120,7 @@ export default function WeeklyRequestPage() {
         return;
       }
       const ws = getWeekStart(parsedDate, weekStartDay);
-      const weekStartStr = formatLocalDate(ws);
+      const weekStartStr = formatCalendarDate(ws);
 
       const parsedFamilySize = Math.max(1, Math.min(10, parseInt(familySize || "1") || 1));
       const parsedCheatDay = cheatDay.trim() || null;
@@ -135,7 +129,9 @@ export default function WeeklyRequestPage() {
 
       const api = getApi();
 
-      // 通常モード: WEB 形式 constraints で送信 (ultimateMode は WEB に揃えて false 固定)
+      // WEB 形式 constraints で送信。
+      // この API (/api/ai/menu/weekly/request) は究極モード (ultimateMode) を受け付けない。
+      // 究極モードは、週間献立画面の AI アシスタント (V4GenerateModal → /api/ai/menu/v4/generate) から選ぶ (#1142)。
       // 過渡期: cookingTime は固定値 (PR 3-2 でスライダー追加予定)
       await api.post("/api/ai/menu/weekly/request", {
         startDate: weekStartStr,
@@ -149,7 +145,6 @@ export default function WeeklyRequestPage() {
         inventoryImageUrl: inventoryImageUrl ?? null,
         detectedIngredients: ingredients,
         note: note.trim() || null,
-        ultimateMode: false,
       });
       Alert.alert("生成開始", "週間献立の生成を開始しました。生成中は「生成中...」と表示されます。");
 
@@ -285,9 +280,6 @@ export default function WeeklyRequestPage() {
           />
         </View>
       </Card>
-
-      {/* 究極モードトグル (WEB に揃えて disabled) */}
-      <UltimateModeToggle enabled={false} />
 
       <Button testID="weekly-request-submit-button" onPress={submit} disabled={isSubmitting || isUploading} loading={isSubmitting} size="lg">
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>

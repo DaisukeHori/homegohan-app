@@ -1060,18 +1060,129 @@ describe('consultation execute (#1149): 献立の生成のアクションが上�
   });
 });
 
-describe('究極モード (#1149): 1 回の操作は 1 回と数える', () => {
-  it.each([
-    ['menu/v5/generate', async () => (await import('@/app/api/ai/menu/v5/generate/route')).POST(
-      json('http://localhost/api/ai/menu/v5/generate', { targetSlots: [{ date: TODAY, mealType: 'dinner' }], ultimateMode: true }),
-    )],
-    ['menu/weekly/request', async () => (await import('@/app/api/ai/menu/weekly/request/route')).POST(
-      json('http://localhost/api/ai/menu/weekly/request', { startDate: TODAY, ultimateMode: true }),
-    )],
-  ] as const)('%s: ultimateMode でも consume_ai_usage は 1 回 (menu_generation)', async (_label, call) => {
+/** consume_ai_usage_capped (#1142。機能ごとの上限がある機能 = 究極モード) の呼び出しの引数 */
+const cappedCalls = () => h.state.rpcCalls.flatMap((name, i) => (name === 'consume_ai_usage_capped' ? [h.state.rpcArgs[i]] : []));
+/** DB の consume_ai_usage_capped の戻り値: 究極モードの 1 日の上限 (1 回) に達している (#1142。記録していない) */
+const CAPPED_ULTIMATE_DENIED_ROW = {
+  allowed: false,
+  metered: true,
+  plan: null,
+  limit: 1,
+  used: 1,
+  usage_date: '2026-10-11',
+  capped_feature: 'menu_generation_ultimate',
+};
+const queueInserts = () => h.state.writes.filter((w) => (AI_QUEUE_TABLES as readonly string[]).includes(w.table) && w.op === 'insert');
+
+/** 究極モードを受け付ける入口 (#1142)。本文の ultimateMode で、数える機能名と生成に渡す値が変わる */
+const ULTIMATE_ROUTES = [
+  {
+    label: 'menu/v4/generate',
+    call: (body: Record<string, unknown>) => async () => (await import('@/app/api/ai/menu/v4/generate/route')).POST(
+      json('http://localhost/api/ai/menu/v4/generate', { targetSlots: [{ date: TODAY, mealType: 'dinner' }], ...body }),
+    ),
+    /** 生成に渡した ultimateMode (V4: 生成の関数の payload / V5: キューの行の generated_data) */
+    passedUltimateMode: () => {
+      const calls = [...h.callV4.mock.calls, ...h.callV5.mock.calls] as unknown as Array<[{ payload: { ultimateMode?: unknown } }]>;
+      return calls.map(([args]) => args.payload.ultimateMode);
+    },
+  },
+  {
+    label: 'menu/v5/generate',
+    call: (body: Record<string, unknown>) => async () => (await import('@/app/api/ai/menu/v5/generate/route')).POST(
+      json('http://localhost/api/ai/menu/v5/generate', { targetSlots: [{ date: TODAY, mealType: 'dinner' }], ...body }),
+    ),
+    passedUltimateMode: () =>
+      queueInserts().map((w) => ((w.payload as { generated_data?: { ultimateMode?: unknown } }).generated_data ?? {}).ultimateMode),
+  },
+] as const;
+
+describe('究極モード (#1142): 1 人 1 日 1 回まで。1 日の AI の上限にも 1 回と数える', () => {
+  beforeEach(() => {
     h.state.consentMode = 'granted';
-    const res = await call();
+    h.state.rpc.consume_ai_usage_capped = CONSUME_ALLOWED_ROW;
+  });
+
+  it.each(ULTIMATE_ROUTES)('$label: ultimateMode: true は consume_ai_usage_capped で 1 回だけ数える (menu_generation_ultimate・上限 1 回)。consume_ai_usage は呼ばない', async (route) => {
+    const res = await route.call({ ultimateMode: true })();
+    expect(res.status).toBeLessThan(400);
+    expect(cappedCalls()).toEqual([{ p_user_id: USER, p_feature: 'menu_generation_ultimate', p_feature_daily_cap: 1 }]);
+    // 1 日の上限の合計 (consume_ai_usage) には、同じ 1 回が DB の中で入る (別に数えない = 2 回にならない)
+    expect(usageRecords(), h.state.rpcCalls.join(', ')).toBe(0);
+    expect(route.passedUltimateMode()).toEqual([true]);
+  });
+
+  it.each(ULTIMATE_ROUTES)('$label: 2 回目 (究極モードの上限に達している) は 429 AI_DAILY_LIMIT と究極モードの文。生成しない・積まない・数え戻さない', async (route) => {
+    h.state.rpc.consume_ai_usage_capped = CAPPED_ULTIMATE_DENIED_ROW;
+    const res = await route.call({ ultimateMode: true })();
+    expect(res.status).toBe(429);
+    const body = await bodyOf(res);
+    expect(body).toMatchObject({
+      code: 'AI_DAILY_LIMIT',
+      limit: 1,
+      cappedFeature: 'menu_generation_ultimate',
+      error: '今日の究極モードの利用回数の上限 (1 回) に達しました。明日 0 時から使えます。',
+    });
+    // 画面 (Web の aiFetch・モバイルの getApi) が出す文も、究極モードの文になる
+    expect(aiDailyLimitMessageOfBody(body)).toBe(body.error);
+    expect(Number(res.headers.get('Retry-After'))).toBeGreaterThan(0);
+    expect(body.retryAfter).toBe(Number(res.headers.get('Retry-After')));
+    expect(aiSendCount(), JSON.stringify(aiSendBreakdown())).toBe(0);
+    expect(queueInserts()).toEqual([]);
+    expect(h.state.rpcCalls).not.toContain('refund_ai_usage');
+  });
+
+  it.each(ULTIMATE_ROUTES)('$label: 通常のモードは影響を受けない (究極モードの上限に達していても、consume_ai_usage で数えて生成する)', async (route) => {
+    h.state.rpc.consume_ai_usage_capped = CAPPED_ULTIMATE_DENIED_ROW;
+    for (const body of [{}, { ultimateMode: false }]) {
+      h.state.rpcCalls = [];
+      h.state.rpcArgs = [];
+      const res = await route.call(body)();
+      expect(res.status, JSON.stringify(body)).toBeLessThan(400);
+      expect(consumedFeatures(), JSON.stringify(body)).toEqual(['menu_generation']);
+      expect(cappedCalls(), JSON.stringify(body)).toEqual([]);
+    }
+    expect(route.passedUltimateMode()).toEqual([false, false]);
+  });
+
+  it.each(ULTIMATE_ROUTES)('$label: 真偽値の true でない ultimateMode ("true" / 1) は通常のモード (数え方と生成に渡す値が食い違わない)', async (route) => {
+    for (const ultimateMode of ['true', 1]) {
+      h.state.rpcCalls = [];
+      h.state.rpcArgs = [];
+      const res = await route.call({ ultimateMode })();
+      expect(res.status).toBeLessThan(400);
+      expect(consumedFeatures()).toEqual(['menu_generation']);
+      expect(cappedCalls()).toEqual([]);
+    }
+    expect(route.passedUltimateMode()).toEqual([false, false]);
+  });
+
+  it('環境変数 AI_ULTIMATE_MODE_DAILY_LIMIT で上限の回数を変えられる (DB の関数に渡す値が変わる)', async () => {
+    vi.stubEnv('AI_ULTIMATE_MODE_DAILY_LIMIT', '3');
+    try {
+      const res = await ULTIMATE_ROUTES[0].call({ ultimateMode: true })();
+      expect(res.status).toBeLessThan(400);
+      expect(cappedCalls()).toEqual([{ p_user_id: USER, p_feature: 'menu_generation_ultimate', p_feature_daily_cap: 3 }]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each(ULTIMATE_ROUTES)('$label: 生成のリクエストの行を作れなかったとき、数え戻しは究極モードの機能名で戻す', async (route) => {
+    h.state.failInsert = new Set(['weekly_menu_requests']);
+    const res = await route.call({ ultimateMode: true })();
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(aiSendCount(), JSON.stringify(aiSendBreakdown())).toBe(0);
+    const refunds = h.state.rpcCalls.flatMap((name, i) => (name === 'refund_ai_usage' ? [h.state.rpcArgs[i]] : []));
+    expect(refunds).toEqual([{ p_user_id: USER, p_feature: 'menu_generation_ultimate', p_usage_date: CONSUME_ALLOWED_ROW.usage_date }]);
+  });
+
+  it('menu/weekly/request は究極モードを受け取らない: ultimateMode: true でも menu_generation で 1 回', async () => {
+    const res = await (await import('@/app/api/ai/menu/weekly/request/route')).POST(
+      json('http://localhost/api/ai/menu/weekly/request', { startDate: TODAY, ultimateMode: true }),
+    );
     expect(res.status).toBeLessThan(400);
     expect(consumedFeatures()).toEqual(['menu_generation']);
+    expect(cappedCalls()).toEqual([]);
   });
 });

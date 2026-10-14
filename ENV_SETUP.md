@@ -495,6 +495,15 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 - 正の整数: その日数まで受け付けます。
 - サーバー側（`src/lib/menu-plan-date-offset.ts`）だけで読みます。`NEXT_PUBLIC_` は付けません。
 
+### 任意の環境変数: 献立生成の究極モードの 1 日の上限（`AI_ULTIMATE_MODE_DAILY_LIMIT`）
+
+献立生成の究極モードは、1 日の AI の上限（DB の `ai_daily_limits`）とは別に、利用者ごと・1 日（JST の暦日）にこの回数まで使えます（#1142）。1 回の究極モードは、1 日の AI の上限の合計にも 1 回入ります。
+
+- 未設定、または 0 以上の整数でない（既定）: 1（`AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT`）。
+- 0 以上の整数: その回数まで使えます（0 はその日は 1 回も使えません）。超えると 429 `AI_DAILY_LIMIT` になります。
+- Vercel と Edge Functions（Supabase の secrets）の**両方に同じ値**を入れます。片方だけだと、入口によって上限が変わります。
+- Web ではサーバー側（`src/lib/plan/entitlements.ts`）だけで読みます。`NEXT_PUBLIC_` は付けません。
+
 ---
 
 ## 🖥️ ローカル開発環境での設定

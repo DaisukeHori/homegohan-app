@@ -13,6 +13,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ConfigErrorScreen } from "../src/components/ConfigErrorScreen";
 import { ErrorFallback } from "../src/components/ErrorFallback";
+import { NotificationRouter } from "../src/components/NotificationRouter";
 import { MobileConfigError, resolveRequiredMobileEnv } from "../src/lib/env";
 import { ensurePushTokenRegistered } from "../src/lib/pushNotifications";
 import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
@@ -91,6 +92,8 @@ export default function RootLayout() {
       <AuthProvider>
         <ProfileProvider>
           <PushTokenRegistrar />
+          {/* フォアグラウンドの通知の表示と、通知のタップでの遷移 (#1049 F7-11)。外されたら解除する */}
+          <NotificationRouter />
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="index" />
             <Stack.Screen name="(public)" />

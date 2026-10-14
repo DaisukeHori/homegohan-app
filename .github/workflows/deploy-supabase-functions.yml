@@ -33,7 +33,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       # 関数のソースに、版を固定していない依存の書き方が無いことを確かめる。依存の版は supabase/functions/deno.json の
       # imports だけで固定する (#1515・#1518)。赤にするのは、jsr: / npm: / https:// (http:// も) を直接書いた

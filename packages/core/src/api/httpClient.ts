@@ -12,6 +12,8 @@
  *   - やり直す失敗は、応答を受け取れなかったとき (offline) と、HTTP の 408 / 429 / 5xx (ただし 501 と 505 は除く)。
  *   - タイムアウトはやり直さない。待ち時間が (やり直しの回数 + 1) 倍になり、サーバーが重いときに追い打ちになるため。
  *   - 最大 2 回まで。待ち時間は指数的に増やし、乱数で散らす。サーバーが Retry-After を返したときはそれ以上待つ。
+ * - 読めない本文: 成功 (2xx) の応答の本文が JSON として読めないとき (公衆 Wi-Fi のログインページの HTML など) は、
+ *   SyntaxError ではなく、エラー応答と同じ `HTTP <status> <statusText>: <本文>` の Error を投げる (#1049 F7-12)。
  */
 
 export type GetAccessToken = () => Promise<string | null> | string | null;
@@ -104,11 +106,25 @@ const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "PUT", "DELETE"]);
 /** 5xx のうち、やり直しても結果が変わらないもの (未実装・未対応のバージョン) */
 const PERMANENT_SERVER_ERRORS = new Set([501, 505]);
 
+/** "/" の文字コード (trimTrailingSlashes で末尾の "/" を見分ける) */
+const SLASH_CHAR_CODE = "/".charCodeAt(0);
+
 /** エラー応答の本文がテキスト (JSON ではない) のときに、エラー文に入れる最大の長さ。ゲートウェイの HTML 全体を画面に出さないため */
 const MAX_TEXT_BODY_CHARS = 200;
 
+/**
+ * 末尾の "/" をすべて落とす。
+ * 正規表現 (/\/+$/) だと、"/" が長く続いたあとに別の文字がある文字列で、照合が文字数の 2 乗の時間になる
+ * (#1444 CodeQL js/polynomial-redos)。後ろから 1 文字ずつ見て、線形の時間で落とす。
+ */
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === SLASH_CHAR_CODE) end -= 1;
+  return value.slice(0, end);
+}
+
 function joinUrl(baseUrl: string, path: string): string {
-  const base = baseUrl.replace(/\/+$/, "");
+  const base = trimTrailingSlashes(baseUrl);
   const p = path.startsWith("/") ? path : `/${path}`;
   return `${base}${p}`;
 }
@@ -232,6 +248,12 @@ function toHttpError(res: Response, text: string): Error {
   return new Error(`HTTP ${res.status} ${res.statusText}: ${message}`);
 }
 
+/** Error に cause を付ける (HttpNetworkError と同じく、lib の版に型が無くても動く標準と同じ形) */
+function withCause(error: Error, cause: unknown): Error {
+  Object.defineProperty(error, "cause", { value: cause, writable: true, configurable: true, enumerable: false });
+  return error;
+}
+
 export function createHttpClient(config: {
   baseUrl: string;
   getAccessToken?: GetAccessToken;
@@ -318,7 +340,17 @@ export function createHttpClient(config: {
 
       const { res, text } = sent;
       if (res.ok) {
-        return (text ? JSON.parse(text) : null) as T;
+        if (!text) return null as T;
+        try {
+          return JSON.parse(text) as T;
+        } catch (error) {
+          // 成功の応答でも、本文が JSON として読めないことがある (#1049 F7-12)。
+          // 公衆 Wi-Fi のログインページ・プロキシ・CDN が 200 で返す HTML や、途中で切れた本文など。
+          // SyntaxError のまま投げると、画面が「Unexpected token <」のような文を出すか、エラーの種類を見分けられないので、
+          // エラー応答と同じ `HTTP <status> <statusText>: <本文>` の Error にする (本文は 200 文字で切る。元の SyntaxError は cause)。
+          // やり直さない (成功の応答なので、サーバーでは処理が済んでいることがある)
+          throw withCause(toHttpError(res, text), error);
+        }
       }
 
       if (attempt < retry.retries && isRetryableStatus(res.status)) {
