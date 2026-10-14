@@ -371,6 +371,12 @@ describe('runSmoke --with-auth', () => {
     expect(JSON.parse(String(verify.init.body))).toEqual({ type: 'recovery', token_hash: TOKEN_HASH });
 
     expect(new Headers(profile.init.headers).get('authorization')).toBe(`Bearer ${ACCESS_TOKEN}`);
+
+    // 共通の補助関数には、ほかの項目と同じ送り方 (リダイレクトを追わない・時間切れ付き) を渡している
+    for (const call of [link, verify]) {
+      expect(call.init.redirect, call.url).toBe('manual');
+      expect(call.init.signal, call.url).toBeInstanceOf(AbortSignal);
+    }
   });
 
   it('パスワードのログイン (grant_type=password) は呼ばない。E2E_USER_PASSWORD があっても送らない (#1547)', async () => {
