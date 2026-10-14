@@ -14,7 +14,11 @@
  * - 完了の更新 ('completed' / 'partial') が例外を投げても、済んだ取り込みを 'failed' に書き換えず 200 を返す
  *   (以前は完了の更新が try の中にあり、例外が外の catch に届くと markImportRunFailed が呼ばれていた)。
  * - カテゴリの last_crawled_at の更新の失敗を黙って捨てず、ログに残す (取り込みは続ける)。
+ * - 完了 / 失敗の記録の関数それぞれの真上に、その関数の約束を書いた JSDoc がある (別の関数の JSDoc が
+ *   挟まって、'failed' の約束が markImportRunFinished の上に来ていた R1 の指摘の見張り)。
  */
+
+import { readFileSync } from "node:fs";
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -397,5 +401,42 @@ describe("カテゴリの last_crawled_at の更新の失敗をログに残す (
     expect(res.status).toBe(200);
     expect(h.writes.filter((write) => write.table === "catalog_source_categories")).toHaveLength(1);
     expect(h.loggedErrors).toEqual([]);
+  });
+});
+
+/** import-runner.ts の本文 (JSDoc の置き場所の見張りに使う) */
+const IMPORT_RUNNER_SOURCE = readFileSync(
+  new URL("../supabase/functions/_shared/catalog/import-runner.ts", import.meta.url),
+  "utf8",
+);
+
+/** 宣言の行のすぐ上 (空行を挟まない) にある JSDoc の本文を返す。無ければ null */
+function jsDocDirectlyAbove(source: string, declaration: string): string | null {
+  const at = source.indexOf(declaration);
+  if (at < 0) throw new Error(`宣言が見つからない: ${declaration}`);
+  const before = source.slice(0, at);
+  if (!before.endsWith("*/\n")) return null;
+  const start = before.lastIndexOf("/**");
+  return start < 0 ? null : before.slice(start);
+}
+
+describe("run の行を記録する関数の JSDoc は、それぞれの関数の真上にある (#1540 R1)", () => {
+  it("markImportRunFailed の真上の JSDoc は 'failed' の約束 (error_log の形・上限・元の失敗の応答を優先) を書いている", () => {
+    const doc = jsDocDirectlyAbove(IMPORT_RUNNER_SOURCE, "async function markImportRunFailed(");
+    expect(doc).not.toBeNull();
+    expect(doc).toContain("'failed' にする (#1522)");
+    expect(doc).toContain("元の失敗の応答を優先する");
+    expect(doc).not.toContain("'completed'");
+  });
+
+  it("markImportRunFinished の真上の JSDoc は 'completed' / 'partial' の約束を書き、'failed' の約束は混ざらない", () => {
+    const doc = jsDocDirectlyAbove(IMPORT_RUNNER_SOURCE, "async function markImportRunFinished(");
+    expect(doc).not.toBeNull();
+    expect(doc).toContain("'completed' (商品ごとの失敗があれば 'partial') にする");
+    expect(doc).not.toContain("(#1522)");
+  });
+
+  it("JSDoc が 2 つ続けて並ぶ箇所が無い (片方が宙に浮いて、別の関数の説明に見える)", () => {
+    expect(IMPORT_RUNNER_SOURCE).not.toMatch(/\*\/\n\/\*\*/);
   });
 });

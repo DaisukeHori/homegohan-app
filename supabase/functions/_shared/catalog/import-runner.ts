@@ -419,12 +419,6 @@ function runCounts(stats: ImportStats) {
 }
 
 /**
- * 途中で止まった run の行を 'failed' にする (#1522)。
- * error_log は 'partial' のときと同じ形 (JSON の配列。各要素は { categoryCode, url, error }) で、
- * それまでの商品ごとの失敗のあとに、run を止めた失敗を 1 件足す。件数の上限も同じ。
- * この更新が失敗しても、元の失敗の応答を優先する (ここでは投げずにログに残すだけ)。
- */
-/**
  * 取り込みが最後まで進んだ run の行を 'completed' (商品ごとの失敗があれば 'partial') にする。
  * 取り込み自体は済んでいるので、この更新の失敗 (error が返る・例外が投げられる) は応答を変えず、
  * 行を 'failed' にもしない。行が 'running' のまま残ったことと、記録しようとした結果 (status) をログに残す (#1540)。
@@ -456,6 +450,12 @@ async function markImportRunFinished(
   }
 }
 
+/**
+ * 途中で止まった run の行を 'failed' にする (#1522)。
+ * error_log は 'partial' のときと同じ形 (JSON の配列。各要素は { categoryCode, url, error }) で、
+ * それまでの商品ごとの失敗のあとに、run を止めた失敗を 1 件足す。件数の上限も同じ。
+ * この更新が失敗しても、元の失敗の応答を優先する (ここでは投げずにログに残すだけ)。
+ */
 async function markImportRunFailed(
   supabase: ReturnType<typeof getSupabaseAdmin>,
   logger: ReturnType<typeof createLogger>,
