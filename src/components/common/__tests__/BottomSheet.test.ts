@@ -6,10 +6,9 @@
 // 既存の modal-contracts.test.ts / progress-todo-card-cancel.test.ts に倣い
 // 拡張子 .ts + React.createElement で JSX 構文を回避する。
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 import { BottomSheet } from '../BottomSheet';
 

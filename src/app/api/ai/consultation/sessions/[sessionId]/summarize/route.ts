@@ -79,10 +79,8 @@ function buildExistingSummary(session: any): any | null {
 }
 
 // セッション要約を生成
-export async function POST(
-  request: Request,
-  { params }: { params: { sessionId: string } }
-) {
+export async function POST(request: Request, props: { params: Promise<{ sessionId: string }> }) {
+  const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

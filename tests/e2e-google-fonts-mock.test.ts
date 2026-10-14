@@ -38,7 +38,6 @@ type GoogleFontLoader = (args: {
 
 type PostcssNextFontPlugin = (options: {
   exports: Array<{ name: string; value: string }>;
-  fontFamilyHash: string;
   fallbackFonts?: string[];
   adjustFontFallback?: unknown;
   variable?: string;
@@ -98,7 +97,6 @@ describe('Google Fonts のモック (e2e-local のビルド用)', () => {
       const processed = await postcss([
         postcssNextFont({
           exports: exportsList,
-          fontFamilyHash: 'test',
           fallbackFonts: result.fallbackFonts,
           adjustFontFallback: result.adjustFontFallback,
           variable: result.variable,
@@ -106,9 +104,12 @@ describe('Google Fonts のモック (e2e-local のビルド用)', () => {
           style: result.style,
         }),
       ]).process(result.css, { from: undefined });
-      expect(processed.css).toContain(`'__${family.replace(/ /g, '_')}_test'`);
+      // Next 15 の postcss-next-font は font-family の名前を書き換えない (名前を他と重ならなくするのは、そのあとの
+      // CSS Modules の処理)。Next 14 は、ここで '__Noto_Sans_JP_<hash>' に書き換えていた (#1444)
+      const fallbackFamily = `'${family}', '${family} Fallback'`;
+      expect(processed.css).toContain(`font-family: ${fallbackFamily}`);
       // layout.tsx が使う CSS 変数 (--font-sans / --font-serif) も今までどおり定義される
-      expect(processed.css).toContain(`${options.variable}: '__${family.replace(/ /g, '_')}_test'`);
+      expect(processed.css).toContain(`${options.variable}: ${fallbackFamily}`);
       expect(exportsList.map((e) => e.name)).toContain('style');
     },
   );

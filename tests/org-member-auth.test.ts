@@ -17,7 +17,8 @@ let sessionUser: FakeUser | null = null;
 let sessionDb: SchemaDb;
 
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: () => makeClient(sessionDb, sessionUser),
+  // createClient() は async (Next 15 では cookies() が Promise のため)。モックも Promise を返し、await を忘れた呼び出しはここで落ちるようにする
+  createClient: async () => makeClient(sessionDb, sessionUser),
 }));
 
 const { requireOrgMember } = await import('@/lib/auth/org-member');

@@ -7,10 +7,9 @@
 // 永久に表示され続けた。isLoadingFeedback を最優先で判定し、ローディング終了後は
 // 取得成功/失敗を明確に分岐させ、失敗時は再試行ボタンを表示することを検証する。
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 import { NutritionDetailModal } from '../NutritionDetailModal';
 

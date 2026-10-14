@@ -88,10 +88,8 @@ async function executeAndFinalizeAction(
 }
 
 // メッセージ一覧取得
-export async function GET(
-  request: Request,
-  { params }: { params: { sessionId: string } }
-) {
+export async function GET(request: Request, props: { params: Promise<{ sessionId: string }> }) {
+  const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -980,10 +978,8 @@ AIが最適な一汁三菜の献立を生成しますね。
 }
 
 // メッセージ送信（AI応答を含む）
-export async function POST(
-  request: Request,
-  { params }: { params: { sessionId: string } }
-) {
+export async function POST(request: Request, props: { params: Promise<{ sessionId: string }> }) {
+  const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

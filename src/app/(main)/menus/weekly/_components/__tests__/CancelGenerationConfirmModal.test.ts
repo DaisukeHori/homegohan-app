@@ -9,10 +9,9 @@
 // 配線されていることを検証する（page.tsx 内での配置・呼び出し位置の検証は
 // cancel-generation-modal-reachability.test.ts の AST ベーステストが担当する）。
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 import { CancelGenerationConfirmModal } from '../CancelGenerationConfirmModal';
 

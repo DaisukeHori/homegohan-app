@@ -561,8 +561,8 @@
 
 | 技術 | バージョン | 用途 |
 |------|-----------|------|
-| Next.js | 14.2 | Webアプリケーション（App Router） |
-| React | 18.3 | UIライブラリ |
+| Next.js | 15.5 | Webアプリケーション（App Router） |
+| React | 19.2 | UIライブラリ |
 | TypeScript | 5.9 | 型安全性 |
 | Tailwind CSS | 4.1 | スタイリング |
 | Framer Motion | 12.23 | アニメーション |

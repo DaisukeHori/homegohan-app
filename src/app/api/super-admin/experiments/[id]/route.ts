@@ -12,9 +12,10 @@ import { UpdateExperimentSchema } from '@/lib/super-admin/experiments-schemas';
 import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
-export async function GET(_request: NextRequest, { params }: Params) {
+export async function GET(_request: NextRequest, props: Params) {
+  const params = await props.params;
   try {
     await requireRole(['super_admin']);
     const supabase = await createClient();
@@ -41,7 +42,8 @@ export async function GET(_request: NextRequest, { params }: Params) {
   }
 }
 
-export async function PATCH(request: NextRequest, { params }: Params) {
+export async function PATCH(request: NextRequest, props: Params) {
+  const params = await props.params;
   try {
     const user = await requireRole(['super_admin']);
     const supabase = await createClient();
@@ -91,7 +93,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(request: NextRequest, { params }: Params) {
+export async function DELETE(request: NextRequest, props: Params) {
+  const params = await props.params;
   try {
     const user = await requireRole(['super_admin']);
     const supabase = await createClient();

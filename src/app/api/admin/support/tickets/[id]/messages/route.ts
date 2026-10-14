@@ -21,9 +21,10 @@ import { sendTicketReplyEmail } from '@/lib/admin/send-ticket-reply-email';
 import type { ReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
 import { internalError } from '@/lib/api/errors';
 
-type RouteContext = { params: { id: string } };
+type RouteContext = { params: Promise<{ id: string }> };
 
-export async function GET(request: NextRequest, { params }: RouteContext) {
+export async function GET(request: NextRequest, props: RouteContext) {
+  const params = await props.params;
   try {
     const currentUser = await requireRole(['support', 'admin', 'super_admin']);
     const supabase = await createClient();
@@ -102,7 +103,8 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
   }
 }
 
-export async function POST(request: NextRequest, { params }: RouteContext) {
+export async function POST(request: NextRequest, props: RouteContext) {
+  const params = await props.params;
   const logger = createLogger('POST /api/admin/support/tickets/[id]/messages', generateRequestId());
 
   try {

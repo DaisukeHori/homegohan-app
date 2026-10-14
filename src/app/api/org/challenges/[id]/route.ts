@@ -36,14 +36,15 @@ import {
 
 const ROUTE = 'GET /api/org/challenges/[id]';
 
-export async function GET(_request: Request, { params }: { params: { id: string } }) {
+export async function GET(_request: Request, props: { params: Promise<{ id: string }> }) {
   try {
+    const params = await props.params;
     const { user, profile } = await requireOrgMember();
 
     const notFound = () => challengeError('CHALLENGE_NOT_FOUND', 'チャレンジが見つかりません', 404);
     if (!isUuid(params.id)) return notFound();
 
-    const supabase = createClient();
+    const supabase = await createClient();
     const { data, error } = await supabase
       .from('organization_challenges')
       .select(CHALLENGE_COLUMNS)

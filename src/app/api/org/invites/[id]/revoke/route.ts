@@ -39,7 +39,7 @@ export async function POST(
     );
   }
 
-  const supabase = createClient();
+  const supabase = await createClient();
   const { error } = await supabase.rpc('revoke_org_invite', { p_invite_id: id });
 
   if (error) {

@@ -8,10 +8,9 @@
 //   実DOM検証」と述べていたが実際には AddMealSlotModal にしかその実テストが無かったため、
 //   本ファイルにも実際の Tab(+Shift+Tab) 境界テストを追加してその主張を実態に合わせる。
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 import { FridgeModal } from '../FridgeModal';
 import { usePantryStore } from '../../../_state';

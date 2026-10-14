@@ -65,11 +65,11 @@ import {
 // sendEmail (Resend の SDK と node:crypto) は Node.js ランタイムで動く。Edge にはしない
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// Next 14 の route handler では、dynamic = 'force-dynamic' だけでは fetch のキャッシュ (Data Cache) は切れない
+// Next 14 の route handler では、dynamic = 'force-dynamic' だけでは fetch のキャッシュ (Data Cache) は切れなかった
 // (force-dynamic だとリクエストの読み取りも追跡されず、ほかの route が cookies() などで暗黙に得ている「キャッシュしない」も効かない)。
 // すると、supabase-js の RPC (POST) や Resend の呼び出しが「同じ内容なら前回の応答」で返ってしまい、
-// 数えた件数も、送る権利 (claim_ops_alert) も、毎回同じ古い値になる。ローカルの動作確認で、DB を書き換えても応答が変わらなかった。
-// この route の fetch は、すべてキャッシュしない。
+// 数えた件数も、送る権利 (claim_ops_alert) も、毎回同じ古い値になった。ローカルの動作確認で、DB を書き換えても応答が変わらなかった。
+// Next 15 (#1444) では fetch は既定でキャッシュしないが、既定に頼らず、この route の fetch はすべてキャッシュしないと明示しておく。
 export const fetchCache = 'force-no-store';
 export const maxDuration = 60; // Vercel Pro: 60s OK (メールの再試行を含めても数秒で終わる)
 

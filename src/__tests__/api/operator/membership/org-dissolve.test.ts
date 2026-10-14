@@ -164,7 +164,7 @@ const postRequest = (body: unknown) =>
 const validBody = { reason: REASON };
 
 const call = (body: unknown = validBody, orgId: string = ORG_ID) =>
-  POST(postRequest(body), { params: { id: orgId } });
+  POST(postRequest(body), { params: Promise.resolve({ id: orgId }) });
 
 /** sendEmail に渡された封筒。同じ宛先に 2 通送っていたら気づけるよう配列で扱う */
 const sentEmails = () => mocks.sendEmail.mock.calls.map(([envelope]) => envelope as SentEmail);

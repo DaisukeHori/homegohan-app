@@ -5,10 +5,9 @@
 //
 // NOTE: tsconfig の jsx: "preserve" の都合で、拡張子 .ts + React.createElement で書く (account-link.test.ts と同じ)。
 
-import React from 'react';
+import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 import { DEFAULT_SUPPORT_EMAIL } from '@/lib/site-config';
 
 const h = React.createElement;
