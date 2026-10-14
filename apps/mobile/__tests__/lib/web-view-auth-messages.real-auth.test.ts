@@ -580,7 +580,9 @@ describe('AuthProvider と一緒に動かしたとき: session-expired の getUs
     const rangeDaysKey = PERSISTENCE_KEYS.v4_range_days.key;
     await m.AsyncStorage.setItem(rangeDaysKey, JSON.stringify({ data: 7 }));
 
-    // 端末のストレージへの呼び出しの順を記録する (呼び出した時点で。本物の AsyncStorage も呼び出しの順に処理する)
+    // 端末のストレージへの呼び出しの順を記録する (呼び出した時点で。本物の AsyncStorage も呼び出しの順に処理する)。
+    // 利用者別の端末データの掃除 (clearUserScopedAsyncStorage) は、毎回、利用者別でないキー (v4_range_days など) を含めて
+    // multiRemove する。それ以外の multiRemove (AsyncStorage のモックの removeItem が中で呼ぶものなど) は記録しない
     const storageLog: string[] = [];
     const storage = m.AsyncStorage as unknown as {
       multiRemove: (keys: string[]) => Promise<void>;
@@ -589,7 +591,9 @@ describe('AuthProvider と一緒に動かしたとき: session-expired の getUs
     const originalMultiRemove = storage.multiRemove.bind(storage);
     const originalGetItem = storage.getItem.bind(storage);
     storage.multiRemove = (keys: string[]) => {
-      storageLog.push(keys.includes(pushTokenValueKey) ? 'multiRemove:with-push-token-value' : 'multiRemove:without-push-token-value');
+      if (keys.includes(rangeDaysKey)) {
+        storageLog.push(keys.includes(pushTokenValueKey) ? 'cleanup:removes-push-token-value' : 'cleanup:keeps-push-token-value');
+      }
       return originalMultiRemove(keys);
     };
     storage.getItem = (key: string) => {
@@ -617,14 +621,12 @@ describe('AuthProvider と一緒に動かしたとき: session-expired の getUs
       });
 
       expect(result).toBe('signed-out');
-      // この試験が見たい順番になっている: 最初の掃除は SIGNED_OUT の掃除で、削除が値を読むより前に走り、値を残した。
-      // 値は、削除が読んだあとの掃除 (signOutWithCleanup) で消えた
-      const signedOutCleanup = storageLog.findIndex((entry) => entry.startsWith('multiRemove:'));
+      // この試験が見たい順番になっている: 最初の掃除 (SIGNED_OUT の掃除) は、削除が値を読むより前に走り、値を残した。
+      // 値は、削除が読んだあとの掃除 (signOutWithCleanup) で消えた。そのあとの signOut() の SIGNED_OUT でもう一度掃除が走る
       const readForDelete = storageLog.indexOf('getItem:push-token-value');
-      expect(signedOutCleanup).toBeGreaterThanOrEqual(0);
-      expect(readForDelete).toBeGreaterThan(signedOutCleanup);
-      expect(storageLog[signedOutCleanup]).toBe('multiRemove:without-push-token-value');
-      expect(storageLog.indexOf('multiRemove:with-push-token-value')).toBeGreaterThan(readForDelete);
+      expect(readForDelete).toBeGreaterThan(0);
+      expect(storageLog.slice(0, readForDelete)).toEqual(['cleanup:keeps-push-token-value']);
+      expect(storageLog[readForDelete + 1]).toBe('cleanup:removes-push-token-value');
 
       // 保存済みの値で、本人の JWT を付けて、この端末の行だけを消した。端末から取り直していない
       expectOneDeleteWithUserJwt();
