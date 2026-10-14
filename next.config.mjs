@@ -42,6 +42,13 @@ const CLIENT_ROUTER_CACHE_STATIC_STALE_SEC = 300;
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // next build の中の ESLint は動かさない。lint は `npm run lint` (eslint .) で別に回している (CI の ci.yml と local-ci の unit 段)。
+  // Next 15 の next build は、ESLint 8.57 と flat config (eslint.config.mjs) の組み合わせで、ESLint 9 にしか通じない
+  // 外し方をしたまま古い設定 (useEslintrc / extensions) を渡し、「⨯ ESLint: Invalid Options」を出して lint を飛ばす (#1444)。
+  // 飛ばされると分かっている検査をビルドに残さない。
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   experimental: {
     staleTimes: {
       dynamic: CLIENT_ROUTER_CACHE_DYNAMIC_STALE_SEC,
