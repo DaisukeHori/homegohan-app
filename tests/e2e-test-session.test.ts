@@ -613,7 +613,7 @@ describe("Maestro の reset-onboarding.js (#1547)", () => {
         : { body: JSON.stringify({ error_code: "otp_expired" }) },
     );
     expect(verifyFailed.error?.message).toContain("otp_expired");
-    // otp_expired は発行からやり直し、上限の回数 (スクリプトの MAX_ATTEMPTS = 補助関数の既定と同じ) で止める
+    // otp_expired は発行からやり直し、上限の回数 (渡されなければスクリプトの既定 MAX_ATTEMPTS_DEFAULT = 補助関数の既定と同じ) で止める
     expect(verifyFailed.error?.message).toContain(`${TEST_SESSION_DEFAULT_MAX_ATTEMPTS} 回`);
     expect(verifyFailed.calls.map((c) => c.url)).toEqual(
       Array.from({ length: TEST_SESSION_DEFAULT_MAX_ATTEMPTS }, () => [GENERATE_LINK_URL, VERIFY_URL]).flat(),
@@ -651,13 +651,85 @@ describe("Maestro の reset-onboarding.js (#1547)", () => {
     expect(calls[3].body).toEqual({ type: "recovery", token_hash: `${TOKEN_HASH}-2` });
   });
 
+  it("発行からやり直す回数の上限は、runScript の env の E2E_TEST_SESSION_MAX_ATTEMPTS (1 以上の整数) で上書きでき、それ以外の値は既定に戻る", () => {
+    const alwaysExpired: MaestroResponder = (url) =>
+      url === GENERATE_LINK_URL
+        ? { body: JSON.stringify({ hashed_token: TOKEN_HASH }) }
+        : { body: JSON.stringify({ error_code: "otp_expired" }) };
+    const issuedCount = (calls: Array<{ url: string }>) => calls.filter((c) => c.url === GENERATE_LINK_URL).length;
+
+    // 上書きが効く (前後の空白は無視する。補助関数の testSessionMaxAttempts と同じ規則)
+    for (const [raw, expected] of [
+      ["1", 1],
+      ["2", 2],
+      [" 3 ", 3],
+      [String(TEST_SESSION_DEFAULT_MAX_ATTEMPTS + 4), TEST_SESSION_DEFAULT_MAX_ATTEMPTS + 4],
+    ] as const) {
+      const { calls, error } = runMaestroScript({ ...MAESTRO_PARAMS, E2E_TEST_SESSION_MAX_ATTEMPTS: raw }, alwaysExpired);
+      expect(issuedCount(calls), raw).toBe(expected);
+      expect(error?.message, raw).toContain(`${expected} 回`);
+      expect(calls.some((c) => c.url === RESET_URL), raw).toBe(false);
+    }
+
+    // 不正な値・置き換えられなかった値は無視して既定 (補助関数の既定と同じ回数) を使う
+    for (const invalid of [
+      "",
+      "0",
+      "-1",
+      "1.5",
+      "abc",
+      "99999999999999999999",
+      "undefined",
+      "${MAESTRO_E2E_TEST_SESSION_MAX_ATTEMPTS}",
+    ]) {
+      const { calls } = runMaestroScript({ ...MAESTRO_PARAMS, E2E_TEST_SESSION_MAX_ATTEMPTS: invalid }, alwaysExpired);
+      expect(issuedCount(calls), invalid).toBe(TEST_SESSION_DEFAULT_MAX_ATTEMPTS);
+    }
+
+    // 上限より前に確認が通れば、上書きした上限まで回らずにリセットへ進む
+    let verified = 0;
+    const recovered = runMaestroScript({ ...MAESTRO_PARAMS, E2E_TEST_SESSION_MAX_ATTEMPTS: "3" }, (url) => {
+      if (url === GENERATE_LINK_URL) return { body: JSON.stringify({ hashed_token: TOKEN_HASH }) };
+      if (url === VERIFY_URL) {
+        return ++verified < 3 ? { body: JSON.stringify({ error_code: "otp_expired" }) } : { body: JSON.stringify(SESSION) };
+      }
+      return { body: JSON.stringify({ ok: url === RESET_URL }) };
+    });
+    expect(recovered.error).toBeNull();
+    expect(recovered.output.ok).toBe(true);
+    expect(issuedCount(recovered.calls)).toBe(3);
+  });
+
   it("Maestro の共通のフローは、パスワードを渡さず、Supabase の値をシェルの MAESTRO_ 付きの環境変数から渡す", () => {
     const yaml = fs.readFileSync(path.join(ROOT, "apps/mobile/maestro/flows/_shared/login-for-onboarding.yaml"), "utf8");
     const runScript = yaml.slice(yaml.indexOf('file: "../scripts/reset-onboarding.js"'));
     const envBlock = runScript.slice(0, runScript.indexOf("- launchApp"));
     expect(envBlock).not.toContain("E2E_USER_PASSWORD");
-    for (const name of ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"]) {
+    for (const name of ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", TEST_SESSION_MAX_ATTEMPTS_ENV]) {
       expect(envBlock).toContain(`${name}: "\${typeof MAESTRO_${name} !== 'undefined' ? MAESTRO_${name} : ''}"`);
+    }
+  });
+
+  it("/auth/v1/verify でセッションを作る道具はどれも、やり直す回数の上限を同じ環境変数の名前で上書きできる", () => {
+    // 1 か所だけ固定の値のまま残る (上書きできない) のを防ぐ。Maestro のスクリプトは npm のモジュールを読めないので、
+    // 名前の定数を共有できない。そのため、/verify を呼ぶファイルを走査で列挙し、コメントを除いたコードがその名前を読んでいることを確かめる
+    const route = /\/auth\/v1\/verify\b/;
+    const owners = ["tests/e2e", "scripts", "apps/mobile/maestro"]
+      .flatMap(listCodeFiles)
+      .map((rel) => ({ rel, text: fs.readFileSync(path.join(ROOT, rel), "utf8") }))
+      // 文字列が無いファイルは、コメントを除く処理 (遅い) を省く
+      .filter(({ text }) => route.test(text))
+      .map(({ rel, text }) => ({ rel, code: stripComments(rel, text) }))
+      .filter(({ code }) => route.test(code));
+    expect(owners.map((o) => o.rel).sort()).toEqual(
+      [
+        "apps/mobile/maestro/flows/scripts/reset-onboarding.js",
+        "scripts/lib/smoke.mjs",
+        "tests/e2e/helpers/test-session.ts",
+      ].map((f) => path.join(f)),
+    );
+    for (const { rel, code } of owners) {
+      expect(code, rel).toContain(TEST_SESSION_MAX_ATTEMPTS_ENV);
     }
   });
 });

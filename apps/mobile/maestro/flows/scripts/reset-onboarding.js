@@ -14,7 +14,7 @@
 //     2. anon key で POST /auth/v1/verify ({ type: "recovery", token_hash }) → access_token
 //   どちらも CAPTCHA の対象外 (根拠は tests/e2e/helpers/test-session.ts の先頭のコメント)。
 //   同じテストユーザーで同時にセッションを作られると (web の e2e など)、後の発行が先のトークンを消し、確認が otp_expired になる。
-//   そのときは発行からやり直す (MAX_ATTEMPTS)。
+//   そのときは発行からやり直す (上限は maxAttempts。既定は MAX_ATTEMPTS_DEFAULT)。
 //   このファイルは Maestro の JavaScript (GraalJS) で動き、npm のモジュールを読み込めないので、同じ手順をここにも書いている。
 //
 // 要る値 (runScript の env で渡す。_shared/login-for-onboarding.yaml が、シェルの MAESTRO_ 付きの環境変数から渡す):
@@ -22,6 +22,8 @@
 //   SUPABASE_URL               アプリがつながっている Supabase の URL
 //   SUPABASE_ANON_KEY          その Supabase の anon key
 //   SUPABASE_SERVICE_ROLE_KEY  その Supabase の service_role (管理用の鍵)
+// 任意の値 (同じく runScript の env で渡す。渡されなければ既定を使う):
+//   E2E_TEST_SESSION_MAX_ATTEMPTS  発行からやり直す回数の上限 (1 以上の整数。シェルの MAESTRO_E2E_TEST_SESSION_MAX_ATTEMPTS から渡す)
 // 本番の Supabase には使わない (本番の管理用の鍵を、Maestro を動かす端末に出さないため)。本番の URL や鍵を既定値として持たない。
 // 管理用の鍵は、maestro test の -e (コマンドラインに残る) ではなく、シェルの環境変数 MAESTRO_SUPABASE_SERVICE_ROLE_KEY で渡す。
 
@@ -73,13 +75,31 @@ function describeAuthError(data) {
   return String(data.error_code || data.msg || data.error || 'unknown');
 }
 
-// 確認 (/verify) が otp_expired (トークンが見つからない) のとき、発行からやり直す回数の上限 (最初の 1 回を含む)。
-// scripts/maestro-parallel-runner.sh は、並列のシミュレーター (既定 10 台) すべてに同じテストユーザー (E2E_USER_01_EMAIL) を渡すので、
+// 確認 (/verify) が otp_expired (トークンが見つからない) のとき、発行からやり直す回数の上限の既定 (最初の 1 回を含む)。
+// scripts/maestro-parallel-runner.sh は、並列のシミュレーター (PARALLEL_COUNT。既定 10 台) すべてに同じテストユーザー (E2E_USER_01_EMAIL) を渡すので、
 // 同時にぶつかりうる。ぶつかった中で最後に発行した側は確認を済ませて抜けるので、やり直すたびに競う数は減っていく。
 // tests/e2e/helpers/test-session.ts の既定 (TEST_SESSION_DEFAULT_MAX_ATTEMPTS) と同じ回数にしてある。
 // Maestro の http には status が無いことがあるので、応答の error_code で見分ける。Maestro の JavaScript には待つ手段が無いので、
-// 間を空けずにやり直す (1 回の発行 → 確認の往復の時間が、シミュレーターごとにばらつく)
-var MAX_ATTEMPTS = 6;
+// 間を空けずにやり直す (1 回の発行 → 確認の往復の時間が、シミュレーターごとにばらつく)。
+// 待たずにやり直すので、最悪の場合は 1 周に 1 台しか抜けられない。シミュレーターを増やして足りなくなったときは、
+// runScript の env の E2E_TEST_SESSION_MAX_ATTEMPTS (シェルの MAESTRO_E2E_TEST_SESSION_MAX_ATTEMPTS) で上書きする
+// (e2e の補助関数・--with-auth と同じ名前・同じ規則。1 以上の整数のときだけ使い、それ以外の値は無視して既定を使う)
+var MAX_ATTEMPTS_DEFAULT = 6;
+
+/** やり直す回数の上限。渡された値が 1 以上の整数ならその値、そうでなければ MAX_ATTEMPTS_DEFAULT */
+function readMaxAttempts(value) {
+  var raw = readParam(value);
+  if (raw === null) return MAX_ATTEMPTS_DEFAULT;
+  var trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return MAX_ATTEMPTS_DEFAULT;
+  var parsed = Number(trimmed);
+  if (Number.isSafeInteger(parsed) && parsed >= 1) return parsed;
+  return MAX_ATTEMPTS_DEFAULT;
+}
+
+var maxAttempts = readMaxAttempts(
+  typeof E2E_TEST_SESSION_MAX_ATTEMPTS !== 'undefined' ? E2E_TEST_SESSION_MAX_ATTEMPTS : undefined
+);
 var VERIFY_RETRY_ERROR_CODE = 'otp_expired';
 
 var authData = null;
@@ -114,7 +134,7 @@ for (var attempt = 1; ; attempt++) {
   );
   authData = parseJson(authResponse.body);
   if (authData && authData.access_token) break;
-  if (!authData || authData.error_code !== VERIFY_RETRY_ERROR_CODE || attempt >= MAX_ATTEMPTS) {
+  if (!authData || authData.error_code !== VERIFY_RETRY_ERROR_CODE || attempt >= maxAttempts) {
     throw new Error(
       'Auth failed - no access_token: ' + describeAuthError(authData) +
         (authData && authData.error_code === VERIFY_RETRY_ERROR_CODE ? ' (発行から ' + attempt + ' 回試しました)' : '')
