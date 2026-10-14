@@ -55,7 +55,7 @@ import * as Notifications from 'expo-notifications';
 import { supabase } from '../../src/lib/supabase';
 import {
   PUSH_ISSUE_LOG_TIMEOUT_MS,
-  PUSH_TOKEN_REGISTERED_KEY_PREFIX,
+  PUSH_TOKEN_CLAIM_API_PATH,
   PUSH_TOKEN_VALUE_KEY_PREFIX,
   ensurePushTokenRegistered,
   registerAndSaveExpoPushToken,
@@ -400,6 +400,108 @@ describe('registerAndSaveExpoPushToken — 失敗の観測 (#1038 F7-09)', () =>
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// #1599: 登録の直後に、同じトークンのほかの利用者の行をサーバーで外す (claim)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** mockPost への呼び出しのうち、claim の API へのもの */
+function claimCalls(): unknown[][] {
+  return mockPost.mock.calls.filter(([path]) => path === PUSH_TOKEN_CLAIM_API_PATH);
+}
+
+describe('registerAndSaveExpoPushToken — 同じトークンのほかの利用者の行を外す (#1599)', () => {
+  it('API のパスは、サーバーの route (src/app/api/push-tokens/claim/route.ts) と同じ', () => {
+    expect(PUSH_TOKEN_CLAIM_API_PATH).toBe('/api/push-tokens/claim');
+  });
+
+  it('本人の行の登録 (upsert) が済んでから、同じトークンで claim を呼ぶ (値の控えは claim より先)', async () => {
+    const order: string[] = [];
+    const mockUpsert = jest.fn(async () => {
+      order.push('upsert');
+      return { error: null };
+    });
+    mockFrom.mockReturnValue({ upsert: mockUpsert });
+    mockPost.mockImplementation(async (path: string) => {
+      order.push(`post:${path}`);
+      // claim の時点で、ログアウトで消すための値はもう控えてある
+      order.push(`stored:${await AsyncStorage.getItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`)}`);
+      return { released: 1 };
+    });
+
+    const result = await registerAndSaveExpoPushToken();
+
+    expect(result).toBe('ExponentPushToken[test-token]');
+    expect(order).toEqual(['upsert', `post:${PUSH_TOKEN_CLAIM_API_PATH}`, 'stored:ExponentPushToken[test-token]']);
+    expect(claimCalls()).toEqual([[PUSH_TOKEN_CLAIM_API_PATH, { expo_push_token: 'ExponentPushToken[test-token]' }]]);
+  });
+
+  it('権限が無くトークンを取らなかったとき・登録 (upsert) が失敗したときは、claim を呼ばない', async () => {
+    mockGetPermissionsAsync.mockResolvedValue({ status: 'denied' });
+    mockRequestPermissionsAsync.mockResolvedValue({ status: 'denied' });
+    await registerAndSaveExpoPushToken();
+    expect(claimCalls()).toEqual([]);
+
+    mockGetPermissionsAsync.mockResolvedValue({ status: 'granted' });
+    setupUpsert({ error: new Error('DB upsert failed') });
+    await expect(registerAndSaveExpoPushToken()).rejects.toThrow('DB upsert failed');
+    expect(claimCalls()).toEqual([]);
+  });
+
+  it('claim が失敗したら登録の失敗として投げ、起動時の自動登録は次の起動で登録と claim をやり直す', async () => {
+    const claimError = new Error('HTTP 500 Internal Server Error: {"error":"処理中にエラーが発生しました"}');
+    mockPost.mockImplementation(async (path: string) => {
+      if (path === PUSH_TOKEN_CLAIM_API_PATH) throw claimError;
+      return { success: true };
+    });
+
+    await expect(ensurePushTokenRegistered()).rejects.toBe(claimError);
+
+    // 本人の行は登録済みなので、ログアウトで消せるよう値は控えてある
+    expect(await AsyncStorage.getItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`)).toBe('ExponentPushToken[test-token]');
+
+    // 次の起動では、登録と claim をもう一度通す
+    mockPost.mockResolvedValue({ released: 1 });
+    await ensurePushTokenRegistered();
+    expect(claimCalls()).toHaveLength(2);
+  });
+
+  it('claim の失敗は、段 claim_token と HTTP の状態だけを端末のコンソールとサーバーログに残す (トークンの値・本文は送らない)', async () => {
+    mockPost.mockImplementation(async (path: string) => {
+      if (path === PUSH_TOKEN_CLAIM_API_PATH) {
+        throw new Error(`HTTP 503 Service Unavailable: ${SECRET_ERROR_TEXT}`);
+      }
+      return { success: true };
+    });
+
+    await expect(registerAndSaveExpoPushToken()).rejects.toThrow('HTTP 503');
+
+    expect(loggedPushIssues().map((issue) => issue.event)).toEqual(['push_token_registration_failed']);
+    expect(loggedPushIssues()[0].details).toEqual(expect.objectContaining({ stage: 'claim_token' }));
+    const logs = serverLogCalls().filter((call) => call.path === '/api/log');
+    expect(logs).toHaveLength(1);
+    expect(logs[0].body.metadata).toEqual(
+      expect.objectContaining({ event: 'push_token_registration_failed', stage: 'claim_token', http_status: 503 }),
+    );
+    const sentLogs = JSON.stringify(logs);
+    expect(sentLogs).not.toContain('ExponentPushToken');
+    expect(sentLogs).not.toContain('hunter2');
+    expect(sentLogs).not.toContain('user-123');
+  });
+
+  it('通信の失敗 (HTTP の状態が無いエラー) では、http_status を送らない', async () => {
+    mockPost.mockImplementation(async (path: string) => {
+      if (path === PUSH_TOKEN_CLAIM_API_PATH) throw new TypeError('Network request failed');
+      return { success: true };
+    });
+
+    await expect(registerAndSaveExpoPushToken()).rejects.toThrow('Network request failed');
+
+    const logs = serverLogCalls().filter((call) => call.path === '/api/log');
+    expect(logs[0].body.metadata).toEqual(expect.objectContaining({ stage: 'claim_token', error_name: 'TypeError' }));
+    expect(logs[0].body.metadata).not.toHaveProperty('http_status');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // #1038 F7-10: ログアウト時に push token を消す
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -586,69 +688,166 @@ describe('unregisterExpoPushToken — #1038 F7-10', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// #1038 F7-09: 起動時の登録 (「登録済み」の印を付けるタイミング)
+// #1038 F7-09 / #1599: 起動時の登録 (「登録済み」の印で省かない)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('ensurePushTokenRegistered — #1038 F7-09', () => {
-  const FLAG_KEY = `${PUSH_TOKEN_REGISTERED_KEY_PREFIX}:user-123`;
+/** user_push_tokens の行 (テストの中だけの表) */
+type FakeTokenRow = { user_id: string; expo_push_token: string };
 
-  it('登録できたときだけ「登録済み」の印を付ける', async () => {
-    await ensurePushTokenRegistered('user-123');
+/**
+ * user_push_tokens の upsert と claim (同じトークンのほかの利用者の行を消す) と、ログアウトの削除を、テストの中の表で真似る。
+ * サーバーの claim の本物は src/__tests__/api/push-tokens-claim.test.ts (vitest) が確かめる。
+ * ここでは、端末の登録の流れが「いまの利用者の行が表にある」状態へ戻すかを見る
+ */
+function setupFakeTokenTable() {
+  const rows: FakeTokenRow[] = [];
+  let currentUserId = 'user-123';
+  mockGetUser.mockImplementation(async () => ({ data: { user: { id: currentUserId } } }));
+  mockFrom.mockReturnValue({
+    upsert: jest.fn(async (row: FakeTokenRow) => {
+      if (!rows.some((r) => r.user_id === row.user_id && r.expo_push_token === row.expo_push_token)) {
+        rows.push({ user_id: row.user_id, expo_push_token: row.expo_push_token });
+      }
+      return { error: null, status: 201 };
+    }),
+  });
+  mockPost.mockImplementation(async (path: string, body?: { expo_push_token?: string }) => {
+    if (path !== PUSH_TOKEN_CLAIM_API_PATH) return { success: true };
+    let released = 0;
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      if (rows[i].expo_push_token === body?.expo_push_token && rows[i].user_id !== currentUserId) {
+        rows.splice(i, 1);
+        released += 1;
+      }
+    }
+    return { released };
+  });
+  return {
+    rows,
+    login(userId: string) {
+      currentUserId = userId;
+    },
+    /** 掃除を通らずにセッションが終わる (印や控えの値は端末に残る) */
+    endSessionWithoutCleanup() {
+      currentUserId = '';
+    },
+    /** 通常のログアウトの削除 (この端末のトークンの、この利用者の行だけ) */
+    deleteOwnRow(userId: string, token: string) {
+      const index = rows.findIndex((r) => r.user_id === userId && r.expo_push_token === token);
+      if (index >= 0) rows.splice(index, 1);
+    },
+  };
+}
 
-    expect(mockGetExpoPushTokenAsync).toHaveBeenCalledTimes(1);
-    expect(await AsyncStorage.getItem(FLAG_KEY)).toBe('1');
+describe('ensurePushTokenRegistered — #1038 F7-09 / #1599', () => {
+  const TOKEN = 'ExponentPushToken[test-token]';
+
+  it('起動のたびに、登録 (upsert) と claim を通す (「登録済み」の印は付けない・読まない)', async () => {
+    const mockUpsert = setupUpsert({ error: null });
+
+    await ensurePushTokenRegistered();
+    await ensurePushTokenRegistered();
+
+    expect(mockGetExpoPushTokenAsync).toHaveBeenCalledTimes(2);
+    expect(mockUpsert).toHaveBeenCalledTimes(2);
+    expect(claimCalls()).toHaveLength(2);
+    // 印は書かない (旧ビルドの印はログアウトで消すだけ: user-storage.ts)
+    expect(await AsyncStorage.getItem('push_token_registered_v2:user-123')).toBeNull();
   });
 
-  it('権限が拒否されて登録できなかったときは印を付けない (後から OS の設定で許可したとき、次の起動で登録できる)', async () => {
+  it('旧ビルドが付けた「登録済み」の印 (v2・v1) が残っていても、登録と claim を通す', async () => {
+    // v1: #1038 より前のビルドは、権限を拒否されても印を付けた。v2: #1599 より前のビルドは、印があれば何もしなかった
+    await AsyncStorage.setItem('push_token_registered_v1:user-123', '1');
+    await AsyncStorage.setItem('push_token_registered_v2:user-123', '1');
+
+    await ensurePushTokenRegistered();
+
+    expect(mockGetExpoPushTokenAsync).toHaveBeenCalledTimes(1);
+    expect(claimCalls()).toEqual([[PUSH_TOKEN_CLAIM_API_PATH, { expo_push_token: TOKEN }]]);
+  });
+
+  it('共有の端末: 掃除を通らずにセッションが終わった利用者 A の行を、B の claim が消したあと、A が再びログインすると A の行が戻る', async () => {
+    const table = setupFakeTokenTable();
+
+    // (1) A がログインして登録する。旧ビルドなら、ここで A の「登録済み」の印が付いていた
+    table.login('user-a');
+    await ensurePushTokenRegistered();
+    await AsyncStorage.setItem('push_token_registered_v2:user-a', '1');
+    expect(table.rows).toEqual([{ user_id: 'user-a', expo_push_token: TOKEN }]);
+
+    // (2) A のセッションが掃除を通らずに終わる (Web の signOut() による全端末の失効で、起動時の更新が失敗して SIGNED_OUT になるなど)
+    table.endSessionWithoutCleanup();
+
+    // (3) B が同じ端末でログインして登録する。claim が A の行を消す
+    table.login('user-b');
+    await ensurePushTokenRegistered();
+    expect(table.rows).toEqual([{ user_id: 'user-b', expo_push_token: TOKEN }]);
+
+    // (4) B は通常どおりログアウトし、B の行を消す
+    table.deleteOwnRow('user-b', TOKEN);
+    expect(table.rows).toEqual([]);
+
+    // (5) A が同じ端末で再びログインする。A の印が残っていても、A の行を登録し直す
+    table.login('user-a');
+    await ensurePushTokenRegistered();
+    expect(table.rows).toEqual([{ user_id: 'user-a', expo_push_token: TOKEN }]);
+  });
+
+  it('同じ端末で B のログアウトの削除が失敗しても、A が再びログインすると、トークンは A だけに紐づく', async () => {
+    const table = setupFakeTokenTable();
+
+    table.login('user-a');
+    await ensurePushTokenRegistered();
+    table.endSessionWithoutCleanup();
+    table.login('user-b');
+    await ensurePushTokenRegistered();
+    // B のログアウトの削除が失敗した (オフラインなど): B の行が残る
+    table.endSessionWithoutCleanup();
+
+    table.login('user-a');
+    await ensurePushTokenRegistered();
+    expect(table.rows).toEqual([{ user_id: 'user-a', expo_push_token: TOKEN }]);
+  });
+
+  it('権限が拒否されて登録できなかったときは何もしない。後から OS の設定で許可すれば、次の起動で登録される', async () => {
     mockGetPermissionsAsync.mockResolvedValue({ status: 'denied' });
     mockRequestPermissionsAsync.mockResolvedValue({ status: 'denied' });
 
-    await ensurePushTokenRegistered('user-123');
+    await ensurePushTokenRegistered();
 
-    expect(await AsyncStorage.getItem(FLAG_KEY)).toBeNull();
+    expect(mockGetExpoPushTokenAsync).not.toHaveBeenCalled();
+    expect(claimCalls()).toEqual([]);
 
     // 許可された後の起動では、登録される
     mockGetPermissionsAsync.mockResolvedValue({ status: 'granted' });
-    await ensurePushTokenRegistered('user-123');
+    await ensurePushTokenRegistered();
     expect(mockGetExpoPushTokenAsync).toHaveBeenCalledTimes(1);
-    expect(await AsyncStorage.getItem(FLAG_KEY)).toBe('1');
+    expect(claimCalls()).toHaveLength(1);
   });
 
-  it('実機でない (Expo Go のシミュレーターなど) 場合も印は付けない。毎回の確認は設定を読むだけで軽い', async () => {
+  it('起動時の自動登録は、拒否された権限のダイアログを出し直さない (まだ尋ねていないときだけ出す)', async () => {
+    mockGetPermissionsAsync.mockResolvedValue({ status: 'denied', canAskAgain: true });
+
+    await ensurePushTokenRegistered();
+    await ensurePushTokenRegistered();
+
+    expect(mockRequestPermissionsAsync).not.toHaveBeenCalled();
+  });
+
+  it('実機でない (Expo Go のシミュレーターなど) 場合は何もしない', async () => {
     jest.requireMock('expo-device').isDevice = false;
 
-    await ensurePushTokenRegistered('user-123');
+    await ensurePushTokenRegistered();
 
-    expect(await AsyncStorage.getItem(FLAG_KEY)).toBeNull();
     expect(mockGetExpoPushTokenAsync).not.toHaveBeenCalled();
+    expect(claimCalls()).toEqual([]);
   });
 
-  it('既に登録済みの印があれば、何もしない', async () => {
-    await AsyncStorage.setItem(FLAG_KEY, '1');
-
-    await ensurePushTokenRegistered('user-123');
-
-    expect(mockGetPermissionsAsync).not.toHaveBeenCalled();
-    expect(mockGetExpoPushTokenAsync).not.toHaveBeenCalled();
-  });
-
-  it('旧ビルドが付けた「登録済み」の印 (v1) は信用しない。旧ビルドは権限を拒否されても印を付けたので、後から許可しても登録されなくなっていた', async () => {
-    // 旧ビルドで通知を拒否した端末の状態: v1 の印だけがあり、トークンは登録されていない
-    await AsyncStorage.setItem('push_token_registered_v1:user-123', '1');
-
-    await ensurePushTokenRegistered('user-123');
-
-    expect(mockGetExpoPushTokenAsync).toHaveBeenCalledTimes(1);
-    expect(await AsyncStorage.getItem(FLAG_KEY)).toBe('1');
-    expect(FLAG_KEY).toBe('push_token_registered_v2:user-123');
-  });
-
-  it('登録に失敗したら例外を伝え (呼び出し側が握りつぶす)、印は付けない', async () => {
+  it('登録に失敗したら例外を伝える (呼び出し側が握りつぶす)', async () => {
     mockGetExpoPushTokenAsync.mockRejectedValue(new Error('No "projectId" found'));
 
-    await expect(ensurePushTokenRegistered('user-123')).rejects.toThrow('No "projectId" found');
-
-    expect(await AsyncStorage.getItem(FLAG_KEY)).toBeNull();
+    await expect(ensurePushTokenRegistered()).rejects.toThrow('No "projectId" found');
+    expect(claimCalls()).toEqual([]);
   });
 });
 
@@ -815,7 +1014,7 @@ describe('サーバーログ (POST /api/log) への記録 — 登録の失敗 (#
   it('登録できたときは、/api/log に何も送らない', async () => {
     await registerAndSaveExpoPushToken();
 
-    expect(mockPost).not.toHaveBeenCalled();
+    expect(serverLogCalls().filter((call) => call.path === '/api/log')).toEqual([]);
   });
 });
 

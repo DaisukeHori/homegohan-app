@@ -43,6 +43,7 @@ type NewMeal = TablesInsert<"planned_meals">;
 | `theme-labels.ts` | `THEME_LABELS_REQUEST`, `AI_CONDITIONS` |
 | `progress-phases.ts` | `PROGRESS_PHASES`, `ULTIMATE_PROGRESS_PHASES`, `SHOPPING_LIST_PHASES` |
 | `design-tokens.ts` | `STATUS_COLOR_TOKENS`, `StatusColorTokenKey` (状態色。塗り用の `success` / `warning` / `error` / `danger` と各 `*Light`、文字用の `successText` / `warningText` / `dangerText`。文字用は WCAG AA 4.5:1 以上。Web の home・health・pantry とモバイルの `colors.ts` が import する。#590) |
+| `health-blood-test-reference.ts` | `ALL_METRIC_DEFS`, `BLOOD_METRIC_DEFS`, `BODY_METRIC_DEFS`, `getRangeForSex`, `formatRangeText`, `evaluateStatus`, `getStatusLabel`, `getMetricLabel`, `getMetricUnit`, `BiologicalSex`, `MetricKey`, `MetricStatus` (健診・血液検査の値の基準値 (性別依存) と判定。Web の健診の詳細・血液検査の画面と、モバイルの健診の詳細の画面が使う。Web の `src/lib/health-blood-test-reference.ts` はここを読み直すだけ。#1055 / #1049) |
 | `database.types.ts` | `Database`, `Tables`, `TablesInsert`, `TablesUpdate`, `Enums`, `CompositeTypes`, `DatabaseConstants` |
 
 ## Supabase 型の再生成

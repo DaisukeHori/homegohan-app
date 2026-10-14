@@ -280,7 +280,7 @@ useEffect(() => {
 現時点では Supabase JS SDK がアップロード進捗コールバックをサポートしていないため、
 `onProgress` コールバックは以下で簡易実装:
 - アップロード開始時: `onProgress(0)`
-- Blob 生成完了時: `onProgress(30)`
+- 写真の読み込み (expo-file-system で base64 として読み、ArrayBuffer にする。#1049 F7-17) の完了時: `onProgress(30)`
 - アップロード完了時: `onProgress(100)`
 
 ### 3.7 エラーハンドリング

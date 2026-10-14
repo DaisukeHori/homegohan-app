@@ -10,6 +10,9 @@
  *   3. 押すと会話を取り直し、サーバーに保存されていた返答が出て、導線は消える
  *   4. 取り直しに失敗したら、今の会話を消さず、導線を残してエラーを知らせる
  *   5. 次の送信・別の相談に移ったら、導線は消える
+ *   6. 時間切れのときは送った文を入力欄に戻す。取り直しで届いていたと分かったら、戻した文のままの入力欄を消す
+ *      (二重に送らないため。書き換えていれば残す)。返答がまだ無ければ、その旨の案内と導線を残す。
+ *      届いていなければ、導線を消して入力欄の文を残し、もう一度送るように知らせる
  */
 import fs from 'fs';
 import path from 'path';
@@ -47,7 +50,12 @@ jest.mock('expo-linear-gradient', () => ({
 
 import React from 'react';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
-import { AI_CHAT_STREAM_TIMEOUT_MS } from '../../src/lib/ai-chat-timeout';
+import {
+  AI_CHAT_STREAM_TIMEOUT_MS,
+  TIMEOUT_DELIVERED_NO_REPLY_MESSAGE,
+  TIMEOUT_NOTICE_MESSAGE,
+  TIMEOUT_NOT_DELIVERED_MESSAGE,
+} from '../../src/lib/ai-chat-timeout';
 
 const SESSION = { id: 'session-1', title: 'AI相談', messageCount: 2, status: 'active' };
 const OTHER_SESSION = { id: 'session-2', title: 'AI相談', messageCount: 0, status: 'closed' };
@@ -226,5 +234,82 @@ describe('AIAdvisorSheet — 送信が時間切れになったあとの取り直
 
     await waitFor(() => expect(screen.queryByText('野菜を足しましょう')).toBeNull());
     expect(screen.queryByTestId('ai-timeout-notice')).toBeNull();
+  });
+});
+
+describe('AIAdvisorSheet — 時間切れのときの入力欄 (#1049 F7-18)', () => {
+  const inputValue = () => screen.getByTestId('ai-input').props.value as string;
+
+  it('時間切れになったら、送った文を入力欄に戻す', async () => {
+    await openSheet();
+    await sendAndTimeOut();
+
+    expect(inputValue()).toBe(SENT_TEXT);
+    expect(screen.getByText(TIMEOUT_NOTICE_MESSAGE)).toBeTruthy();
+  });
+
+  it('取り直しで返答まで届いていたら、戻した文を消し、導線も消す (そのまま送ると二重に届く)', async () => {
+    await openSheet();
+    await sendAndTimeOut();
+
+    serverMessages = SAVED_MESSAGES;
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-timeout-reload'));
+    });
+
+    await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
+    expect(inputValue()).toBe('');
+    expect(screen.queryByTestId('ai-timeout-notice')).toBeNull();
+  });
+
+  it('送った文は届いているが返答がまだ無ければ、戻した文を消し、返答を待つ案内と導線を残す', async () => {
+    await openSheet();
+    await sendAndTimeOut();
+
+    serverMessages = [...OLD_MESSAGES, { id: 'm3', role: 'user', content: SENT_TEXT, createdAt: '2026-10-08T00:01:00.000Z' }];
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-timeout-reload'));
+    });
+
+    await waitFor(() => expect(screen.getByText(TIMEOUT_DELIVERED_NO_REPLY_MESSAGE)).toBeTruthy());
+    expect(inputValue()).toBe('');
+    expect(screen.getByTestId('ai-timeout-reload')).toBeTruthy();
+    expect(alertSpy).not.toHaveBeenCalled();
+
+    // もう一度取り直して返答が届いていれば、導線は消える
+    serverMessages = SAVED_MESSAGES;
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-timeout-reload'));
+    });
+    await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
+    expect(screen.queryByTestId('ai-timeout-notice')).toBeNull();
+  });
+
+  it('届いていたと分かっても、入力欄を書き換えていれば消さない', async () => {
+    await openSheet();
+    await sendAndTimeOut();
+
+    fireEvent.changeText(screen.getByTestId('ai-input'), `${SENT_TEXT} ささみは?`);
+    serverMessages = SAVED_MESSAGES;
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-timeout-reload'));
+    });
+
+    await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
+    expect(inputValue()).toBe(`${SENT_TEXT} ささみは?`);
+  });
+
+  it('取り直しても届いていなければ、導線を消し、入力欄の文を残して、もう一度送るように知らせる', async () => {
+    await openSheet();
+    await sendAndTimeOut();
+
+    serverMessages = OLD_MESSAGES;
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-timeout-reload'));
+    });
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('送信できませんでした', TIMEOUT_NOT_DELIVERED_MESSAGE));
+    expect(screen.queryByTestId('ai-timeout-notice')).toBeNull();
+    expect(inputValue()).toBe(SENT_TEXT);
   });
 });

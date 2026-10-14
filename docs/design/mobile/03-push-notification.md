@@ -39,6 +39,11 @@ Expo Push Notifications を使用したプッシュ通知の設計を定義す�
 2. Android: 通知チャンネル `"default"` 作成
 3. `Notifications.getExpoPushTokenAsync({ projectId })` でトークン取得
 4. `user_push_tokens` テーブルに `upsert` (onConflict: `user_id,expo_push_token`)
+5. `POST /api/push-tokens/claim` で、同じトークンのほかの利用者の行をサーバー (service_role) で外す (#1599)。
+   共有の端末で前の利用者のログアウトの削除がオフラインなどで失敗しても、次に登録した利用者だけにトークンが紐づく
+   (同じトークンは、最後に登録した 1 人だけ)。失敗したら登録の失敗として扱い、次回起動時に再試行する。
+   起動時の自動登録 (`ensurePushTokenRegistered`) は、起動・ログインした利用者が変わるたびに 1〜5 を通す (「登録済み」の印で省かない。
+   ほかの利用者の claim で行が消えていても、次のログインで登録し直すため)
 
 #### DB スキーマ変更 (`user_push_tokens`)
 
@@ -451,7 +456,7 @@ sequenceDiagram
   Expo->>APNs: APN 送信
   APNs->>Husband: Push 通知表示 (バッジ 3)
   Husband->>Husband: setNotificationHandler → setBadgeCountAsync(3)
-  Husband->>Husband: 通知タップ → /family/meal-requests 画面へ
+  Husband->>Husband: 通知タップ → /family 画面へ (/family/meal-requests の画面は無いので、notificationRoute が一番近い上位の画面を開く)
 ```
 
 ### 5.2 通知種別 on/off 設定フロー
@@ -478,6 +483,7 @@ sequenceDiagram
 |---------|------|
 | `getExpoPushTokenAsync` が null を返す | エラーを silent に処理、設定画面で手動再試行を促す |
 | `user_push_tokens` への upsert 失敗 | エラーログ、次回起動時に再試行 |
+| `POST /api/push-tokens/claim` の失敗 (#1599) | エラーログ (段 `claim_token`)、次回起動時に再試行 (起動のたびに登録と claim を通す) |
 | Expo Push API がトークン無効を返す (`DeviceNotRegistered`) | `user_push_tokens` から該当トークンを削除 |
 | Push 権限が拒否済み | OS 設定画面へ誘導 (`Linking.openSettings()`) |
 | Quiet Hours 中の緊急通知 | `URGENT_CATEGORIES` はスキップせず即送信 |
@@ -491,7 +497,8 @@ sequenceDiagram
 |--------|---------|------|
 | `setNotificationBadge` | `__tests__/lib/pushNotifications.test.ts` | モックで `setBadgeCountAsync` が呼ばれることを確認 |
 | `decrementBadge` | 同上 | 現在値取得 → デクリメント → 0 以下にならないことを確認 |
-| `setupNotificationHandler` | 同上 | badge フィールドがある通知で `setBadgeCountAsync` が呼ばれる |
+| フォアグラウンドの表示と通知のタップ (#1049 F7-11) | `__tests__/components/NotificationRouter.test.tsx` | `setNotificationHandler` の表示の設定と、外したときの解除。タップ (起動中・終了からの起動) で `resolveNotificationHref` の行き先へ遷移する |
+| 通知の行き先 (#1049 F7-11) | `__tests__/lib/notification-route.test.ts` | `data.path` / `data.deep_link` の許す形・上位の画面への置き換え・`NOTIFICATION_ROUTES` の画面が `app/` に実在すること |
 | Quiet Hours ロジック | `__tests__/lib/quietHours.test.ts` | 22:00-07:00 でスキップされることを確認 |
 
 ### Manual テスト (必須)
@@ -529,8 +536,8 @@ appId: com.homegohan.app
   - `setNotificationBadge()` 関数を追加
   - `decrementBadge()` 関数を追加
   - `setupNotificationHandler()` 関数を追加
-- `app/_layout.tsx`: `setupNotificationHandler()` の呼び出しを追加
-- `app/(tabs)/settings.tsx`: 「通知」の単一 Switch を「通知設定 →」リンクに変更
+- `app/_layout.tsx`: 通知の受け取り口 `src/components/NotificationRouter.tsx` を Provider の内側に置く (実装済み。#1049 F7-11。`setupNotificationHandler()` は作っていない)
+- `app/(tabs)/settings.tsx`: 「通知」の単一 Switch を「通知設定 →」リンクに変更 (未実装。`app/settings/notifications.tsx` がまだ無く、単一 Switch のまま)
 
 ### 新規
 

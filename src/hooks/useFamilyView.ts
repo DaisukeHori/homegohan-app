@@ -5,6 +5,7 @@
 // 家族ビュー切替状態を localStorage に永続化する hook
 
 import { useState, useEffect, useCallback } from 'react';
+import { FAMILY_VIEW_STATE_KEY_PREFIX } from '@homegohan/shared';
 
 export type FamilyViewPreset =
   | 'self'
@@ -24,8 +25,9 @@ const DEFAULT_STATE: FamilyViewState = {
   visible_member_ids: [],
 };
 
+// 利用者別のキーとして、ログアウトで消す (接頭辞は packages/shared の USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES に載せている。#1599)
 function getStorageKey(familyId: string): string {
-  return `familyViewState_${familyId}`;
+  return `${FAMILY_VIEW_STATE_KEY_PREFIX}${familyId}`;
 }
 
 export function useFamilyView(familyId: string | null | undefined) {

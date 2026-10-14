@@ -12,6 +12,7 @@
 
 import {
   USER_SCOPED_LOCAL_STORAGE_KEYS,
+  USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES,
   USER_SCOPED_STORAGE_CLEARED_EVENT,
 } from '@homegohan/shared';
 
@@ -27,10 +28,23 @@ export { USER_SCOPED_STORAGE_CLEARED_EVENT };
  * Removes all user-scoped localStorage keys.
  * Safe to call in a non-browser environment (no-op if `localStorage` is
  * not available, e.g. during SSR).
+ *
+ * 決まったキー (USER_SCOPED_LOCAL_STORAGE_KEYS) と、利用者別の接頭辞 (USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES) で
+ * 始まるキーを消す (#1599)。接頭辞のキーは、消しながら数えるとずれるので、先に集めてから消す。
  */
 export function clearUserScopedLocalStorage(): void {
   if (typeof window === 'undefined') return;
   for (const key of USER_SCOPED_LOCAL_STORAGE_KEYS) {
+    localStorage.removeItem(key);
+  }
+  const prefixedKeys: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key !== null && USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+      prefixedKeys.push(key);
+    }
+  }
+  for (const key of prefixedKeys) {
     localStorage.removeItem(key);
   }
   window.dispatchEvent(new Event(USER_SCOPED_STORAGE_CLEARED_EVENT));

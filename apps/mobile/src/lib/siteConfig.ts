@@ -36,8 +36,12 @@ export function getSupportMailtoUrl(): string {
   return `mailto:${getSupportEmail()}`;
 }
 
-/** Web の公開ページ (未ログインでも読める) の URL。Web のオリジンは webBaseUrl.ts と同じ値から決める */
-function webPageUrl(path: string): string {
+/**
+ * Web の公開ページ (未ログインでも読める) の URL。Web のオリジンは webBaseUrl.ts と同じ値から決める。
+ * path は '/' で始まる Web のパス ('/terms' など)。公開ページの画面 (src/components/PublicPage.tsx の「Web版を開く」) も
+ * これを使う (#1049 F7-19。利用規約などと別のオリジンを開かないように)
+ */
+export function webPageUrl(path: string): string {
   return `${getWebBaseUrl().replace(/\/+$/, '')}${path}`;
 }
 

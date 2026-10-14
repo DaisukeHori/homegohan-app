@@ -12,7 +12,9 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  FAMILY_VIEW_STATE_KEY_PREFIX,
   USER_SCOPED_LOCAL_STORAGE_KEYS,
+  USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES,
   USER_SCOPED_STORAGE_CLEARED_EVENT as SHARED_CLEARED_EVENT,
 } from '@homegohan/shared'
 
@@ -38,6 +40,29 @@ describe('Web の clearUserScopedLocalStorage()', () => {
 
     expect(USER_SCOPED_LOCAL_STORAGE_KEYS.filter((key) => localStorage.getItem(key) !== null)).toEqual([])
     expect(localStorage.getItem('unrelated-key')).toBe('keep')
+  })
+
+  it('利用者別の接頭辞で始まるキー (家族の表示の切り替え familyViewState_<familyId> など) もすべて消す (#1599)', () => {
+    expect(USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES).toContain(FAMILY_VIEW_STATE_KEY_PREFIX)
+    // 消しながら数えるとずれるので、連続した 3 つ以上のキーで確かめる
+    const familyKeys = ['family-a', 'family-b', 'family-c'].map((id) => `${FAMILY_VIEW_STATE_KEY_PREFIX}${id}`)
+    for (const key of familyKeys) localStorage.setItem(key, JSON.stringify({ preset: 'children_only', visible_member_ids: ['m-1'] }))
+    for (const prefix of USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES) localStorage.setItem(`${prefix}other`, 'previous-user')
+    localStorage.setItem('unrelated-key', 'keep')
+    // 接頭辞が途中にあるだけのキーは消さない (前方一致だけ)
+    localStorage.setItem(`x${FAMILY_VIEW_STATE_KEY_PREFIX}family-a`, 'keep')
+
+    clearUserScopedLocalStorage()
+
+    const remaining = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)).sort()
+    expect(remaining).toEqual(['unrelated-key', `x${FAMILY_VIEW_STATE_KEY_PREFIX}family-a`].sort())
+  })
+
+  it('useFamilyView (src/hooks/useFamilyView.ts) は、共有の接頭辞でキーを作る (接頭辞を写すと、ログアウトで消えなくなる)', () => {
+    const source = readFileSync(path.join(REPO_ROOT, 'src/hooks/useFamilyView.ts'), 'utf8')
+
+    expect(source).toContain('FAMILY_VIEW_STATE_KEY_PREFIX')
+    expect(source.includes(`'${FAMILY_VIEW_STATE_KEY_PREFIX}`) || source.includes(`\`${FAMILY_VIEW_STATE_KEY_PREFIX}`)).toBe(false)
   })
 
   it('消したことを、共有の名前のイベントで知らせる (モバイルアプリが注入する掃除の JS も同じ名前を使う)', () => {
