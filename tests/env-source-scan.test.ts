@@ -196,6 +196,21 @@ function isEnvNameArgumentError(node: ts.Node): boolean {
 }
 
 /**
+ * text に環境変数の名前 name が、1 つの語として書かれているか (前後が英数字・_ でない)。
+ * 部分一致にすると、短い名前 (PORT など。#1584) が別の語 (EXPORT_FAILED のエラーコードなど) の一部にも当たる。
+ */
+function containsEnvName(text: string, name: string): boolean {
+  let from = text.indexOf(name);
+  while (from >= 0) {
+    const before = from === 0 ? '' : text[from - 1];
+    const after = text[from + name.length] ?? '';
+    if (!/[A-Za-z0-9_]/.test(before) && !/[A-Za-z0-9_]/.test(after)) return true;
+    from = text.indexOf(name, from + 1);
+  }
+  return false;
+}
+
+/**
  * 例外 (throw 文・`new XxxError(...)`) と応答 (`NextResponse.json(...)` など) の引数の文字列に、
  * names のどれかが書かれている行 (1 始まり)。コメントや、それ以外の場所の文字列 (console.error など) は見ない。
  * `new MissingEnvError('X')` の引数 (envName。message には入らない) も見ない。
@@ -209,7 +224,7 @@ function findEnvNamesInErrorsOrResponses(source: string, names: readonly string[
       ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateLiteralToken(node)
         ? node.text
         : null;
-    if (text !== null && names.some((name) => text.includes(name))) {
+    if (text !== null && names.some((name) => containsEnvName(text, name))) {
       lines.add(sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1);
     }
     ts.forEachChild(node, scanStrings);
@@ -394,9 +409,12 @@ describe('走査の仕組みの確認 (検出が空振りしないこと)', () =
       "return NextResponse.json({ error: 'STRIPE_SECRET_KEY is not configured' }, { status: 503 });", // 2
       "console.error('[cron] CRON_SECRET not set');", // 3: ログは対象外
       'throw new MissingEnvError("XAI_API_KEY");', // 4: MissingEnvError の引数 (envName。message には入らない) は対象外
+      "return NextResponse.json({ error: 'x', code: 'EXPORT_FAILED' }, { status: 500 });", // 5: 別の語の一部 (PORT) は対象外 (#1584)
+      "throw new Error('PORT is not set');", // 6: 1 つの語として書いた任意の変数の名前
     ].join('\n');
 
-    expect(findEnvNamesInErrorsOrResponses(source, LISTED_ENV_NAMES)).toEqual([1, 2]);
+    expect(LISTED_ENV_NAMES).toContain('PORT');
+    expect(findEnvNamesInErrorsOrResponses(source, LISTED_ENV_NAMES)).toEqual([1, 2, 6]);
     // 必須の 3 つだけで走査すると、どちらも見つからない (以前の検査がすり抜けていた理由)
     expect(findEnvNamesInErrorsOrResponses(source, REQUIRED_ENV_NAMES)).toEqual([]);
   });
