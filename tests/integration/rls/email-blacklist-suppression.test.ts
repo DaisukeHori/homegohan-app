@@ -118,7 +118,9 @@ describe('#1184 email_blacklist の読み書き (実 DB)', () => {
 
   it("B-4: 運営が手で入れた 'manual' の行は上書きせず、大文字を含む形のまま入った行もその形で引ける", async () => {
     const lower = address('manual');
-    const operatorForm = `${ADDRESS_MARK}-Manual@${ADDRESS_DOMAIN}`;
+    // 小文字の形の行は入れない (引き当てが元の形の候補で当たったことを確かめるため)
+    const operatorForm = `${ADDRESS_MARK}-Operator@${ADDRESS_DOMAIN}`;
+    expect(await rowsOf([operatorForm.toLowerCase()])).toHaveLength(0);
 
     const { error } = await admin.from('email_blacklist').insert([
       { email: lower, reason: 'manual', added_at: FIRST_ADDED_AT },
