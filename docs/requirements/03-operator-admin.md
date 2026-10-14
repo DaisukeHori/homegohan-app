@@ -276,7 +276,7 @@
 ### 4.6 UC-OP-06: LLM 使用量分析
 
 **フロー**:
-1. `/super-admin/llm-usage` を開く
+1. `/super-admin/llm` を開く
 2. 期間選択 (今日 / 7 日 / 30 日 / カスタム)
 3. ダッシュボード:
    - 総コスト (USD / JPY)
@@ -1601,9 +1601,9 @@ CREATE TABLE infra_alerts (
 - `DELETE /api/super-admin/feature-flags/{key}`
 
 ### 8.5 LLM 使用量
-- `GET /api/super-admin/llm-usage` (フィルタ・期間指定)
-- `GET /api/super-admin/llm-usage/users/{id}`
-- `POST /api/super-admin/llm-usage/quota-update`
+- `GET /api/super-admin/llm/usage` (フィルタ・期間指定)
+- ユーザー別の詳細の API は無い (ユーザー別の数字は `GET /api/super-admin/llm/usage` の `top_users`・`anomalies` だけ)
+- `GET` / `PATCH /api/super-admin/llm/quotas` (プランごとの 1 日の上限。`POST /api/super-admin/llm-usage/quota-update` というパスは無い)
 
 ### 8.6 売上 / 経理
 - `GET /api/admin/finance/dashboard`
@@ -1757,7 +1757,7 @@ CREATE TABLE infra_alerts (
 - LLM コストアラート
 - 過去 24 時間の重要イベント
 
-#### 9.3.2 `/super-admin/llm-usage` 強化
+#### 9.3.2 `/super-admin/llm` 強化
 - ユーザー別 Top N
 - 異常検知アラート
 - クォータ設定

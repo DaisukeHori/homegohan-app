@@ -93,7 +93,7 @@ async function withSessionPage(
   const context = await newIsolatedContext(browser);
   try {
     const page = await context.newPage();
-    await injectSession(page, user.email, user.password);
+    await injectSession(page, user.email);
     await fn(page);
   } finally {
     await context.close();

@@ -402,7 +402,7 @@ export const test = base.extend<FreshFamilyFixtures>({
     });
 
     try {
-      await injectSession(page, family.owner.email, family.owner.password);
+      await injectSession(page, family.owner.email);
 
       await use({
         ownerPage: page,
@@ -435,7 +435,7 @@ export const test = base.extend<FreshFamilyFixtures>({
     });
 
     try {
-      await injectSession(page, family.owner.email, family.owner.password);
+      await injectSession(page, family.owner.email);
 
       await use({
         ownerPage: page,
