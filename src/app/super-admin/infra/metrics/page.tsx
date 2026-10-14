@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { MonitoringNotConnectedNotice } from "@/components/operator/infra/MonitoringNotConnectedNotice";
 
 interface InfraMetric {
   id: string;
@@ -106,11 +107,8 @@ export default function InfraMetricsPage() {
       ) : error ? (
         <div className="bg-red-900/50 border border-red-500 rounded-xl p-4 text-red-300">{error}</div>
       ) : metrics.length === 0 ? (
-        <div className="bg-slate-800 rounded-xl p-12 text-center text-slate-400 border border-slate-700">
-          <div className="text-5xl mb-4">📊</div>
-          <p>メトリクスデータがありません</p>
-          <p className="text-sm mt-2">infra_metrics テーブルへの書き込みは operator-F (cron) が担当します</p>
-        </div>
+        // メトリクスを書き込む処理 (監視データの収集) はまだ無い。空は「問題なし」ではなく「未接続」(#1180)
+        <MonitoringNotConnectedNotice />
       ) : (
         <div className="space-y-4">
           {Object.entries(groupedByMetric).map(([key, rows]) => {

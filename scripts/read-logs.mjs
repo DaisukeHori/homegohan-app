@@ -7,7 +7,7 @@
  *   node scripts/read-logs.mjs                     # 最新50件
  *   node scripts/read-logs.mjs --level error       # エラーのみ
  *   node scripts/read-logs.mjs --source edge-function  # Edge Functionsのみ
- *   node scripts/read-logs.mjs --function generate-weekly-menu-v2
+ *   node scripts/read-logs.mjs --function generate-menu-v5   # いまある関数名 (supabase/functions/ を参照)
  *   node scripts/read-logs.mjs --since 1h          # 過去1時間
  *   node scripts/read-logs.mjs --tail              # リアルタイムポーリング
  */

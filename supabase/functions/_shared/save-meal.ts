@@ -22,6 +22,7 @@ import {
   type PostNutritionIssue,
 } from "../generate-menu-v4/step-utils.ts";
 import {
+  isCatalogProductMeal,
   reconcileDishImages,
   DEFAULT_MEAL_IMAGE_MODEL,
 } from "./meal-image.ts";
@@ -307,7 +308,7 @@ export async function saveMealToDb(
     ? await runSupabaseQuery(
         () => supabase
           .from("planned_meals")
-          .select("id, dishes, image_url, user_daily_meals!inner(user_id)")
+          .select("id, dishes, image_url, catalog_product_id, source_type, user_daily_meals!inner(user_id)")
           .eq("id", targetSlot.plannedMealId)
           .maybeSingle(),
         `planned_meals.lookup:${targetSlot.plannedMealId}`,
@@ -617,12 +618,17 @@ export async function saveMealToDb(
     triggerSource: jobTriggerSource,
     fallbackMealImageUrl: existingMeal?.image_url ?? null,
     model: DEFAULT_MEAL_IMAGE_MODEL,
+    // 商品の献立の古い商品の料理 (画像の項目なし) を、作り直しても AI の画像で置き換えない (#1487 の整合ゲート。写真・商品の料理と同じ扱い)
+    previousMealIsCatalog: isCatalogProductMeal(existingMeal),
   });
   const mergedDishes = dishDetails.map((detail, idx) => ({
     ...detail,
     ...reconcileResult.dishes[idx],
   }));
-  const mealCoverImageUrl = reconcileResult.mealCoverImageUrl ?? existingMeal?.image_url ?? null;
+  // 献立のカバーは、reconcileDishImages がカバーの持ち主の決まり (isMealCoverAutoReplaceable) で決めたもの (#1487 の整合ゲート)。
+  // 写真・商品・利用者の画像のカバーは作り直してもそのまま。前の料理の AI の画像だったカバーは、新しい料理の画像から選び直す
+  // (候補が無ければ空。前の料理の AI の画像に戻すと、どの料理の画像とも一致しなくなり、新しい AI の画像で付け替えられなくなる)
+  const mealCoverImageUrl = reconcileResult.mealCoverImageUrl;
 
   const dishName = dishDetails.length === 1
     ? String(dishDetails[0]?.name ?? "献立")
@@ -742,14 +748,16 @@ export async function saveMealToDb(
   // Image jobs must run inline (not via scheduleBackgroundTask) because
   // V5's outer waitUntil may resolve before nested background tasks execute.
   try {
-    await enqueueMealImageJobs({
+    // 行ごとに積む (#1505)。書き込みに失敗した料理は enqueueMealImageJobs が 'failed' + 'enqueue_failed' にする。
+    // 処理を起こすのは、待ちのジョブがあるとき (積めた行か、同じ料理のジョブがすでに待ち・処理中の行があるとき)
+    const enqueueResult = await enqueueMealImageJobs({
       supabase,
       plannedMealId,
       userId,
       jobs: reconcileResult.jobs,
       requestId: requestId ?? null,
     });
-    if (reconcileResult.jobs.length > 0) {
+    if (enqueueResult.inserted + enqueueResult.duplicates > 0) {
       const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
       const serviceRoleKey = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
       await triggerMealImageJobProcessing({

@@ -27,7 +27,9 @@ vi.mock("../supabase/functions/_shared/v4-nutrition-adapter.ts", () => ({
   validateAndAdjustNutritionV4: validateMock,
 }));
 
-vi.mock("../supabase/functions/_shared/meal-image.ts", () => ({
+// 料理の画像の組み立てだけを作り物にする (ほかの部品 (isCatalogProductMeal など) は本物。#1487 の整合ゲート R1 で save-meal が使う)
+vi.mock("../supabase/functions/_shared/meal-image.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../supabase/functions/_shared/meal-image.ts")>()),
   DEFAULT_MEAL_IMAGE_MODEL: "test-image-model",
   reconcileDishImages: vi.fn(async (params: { nextDishes: unknown[] }) => ({
     dishes: params.nextDishes.map(() => ({})),
@@ -37,7 +39,7 @@ vi.mock("../supabase/functions/_shared/meal-image.ts", () => ({
 }));
 
 vi.mock("../supabase/functions/_shared/meal-image-jobs.ts", () => ({
-  enqueueMealImageJobs: vi.fn(async () => undefined),
+  enqueueMealImageJobs: vi.fn(async () => ({ inserted: 0, duplicates: 0, failed: 0 })),
   triggerMealImageJobProcessing: vi.fn(async () => undefined),
 }));
 

@@ -59,6 +59,24 @@ describe('getApiBaseUrl()', () => {
       expect(() => getApiBaseUrl()).toThrow('[mobile] Missing env: EXPO_PUBLIC_API_BASE_URL');
     });
   });
+
+  it.each(['', '   '])('EXPO_PUBLIC_API_BASE_URL が %j (空・空白だけ) でも、未設定として MobileConfigError をスロー (#1434)', (blank) => {
+    process.env.EXPO_PUBLIC_API_BASE_URL = blank;
+    jest.isolateModules(() => {
+      const { getApiBaseUrl } = require('../../src/lib/api');
+      let thrown: unknown;
+      try {
+        getApiBaseUrl();
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({
+        name: 'MobileConfigError',
+        message: '[mobile] Missing env: EXPO_PUBLIC_API_BASE_URL',
+        missing: ['EXPO_PUBLIC_API_BASE_URL'],
+      });
+    });
+  });
 });
 
 describe('getApi()', () => {

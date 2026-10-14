@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 
 import { getApi, getApiBaseUrl } from '../../lib/api';
+import { errorOfFailedResponse, isStoppedByServerError, stoppedByServerAlertTitleOf } from '../../lib/failed-response';
 import { supabase } from '../../lib/supabase';
 import { colors, radius, spacing, typography } from '../../theme';
 import { AddShoppingModal } from './AddShoppingModal';
@@ -102,6 +103,11 @@ export const ShoppingListModal: React.FC<Props> = ({
       load();
     }
   }, [visible, load]);
+
+  // この画面が閉じられたら、上に重ねた追加のモーダルも閉じる (次に開いたときに追加のモーダルだけが出ないように)
+  useEffect(() => {
+    if (!visible) setAddModalVisible(false);
+  }, [visible]);
 
   // チェック切替 (楽観的更新)
   const handleToggleCheck = useCallback(async (id: string, next: boolean) => {
@@ -209,10 +215,15 @@ export const ShoppingListModal: React.FC<Props> = ({
               },
               body: JSON.stringify({ itemIds }),
             });
-            if (!res.ok) throw new Error('全削除に失敗しました');
-          } catch (e: any) {
+            // メンテナンス中などの 503 は固定の文の例外にする (#1486)
+            if (!res.ok) throw errorOfFailedResponse(res.status, await res.text().catch(() => ''));
+          } catch (e: unknown) {
             setItems(snapshot);
-            Alert.alert('削除失敗', e?.message ?? '全削除に失敗しました。');
+            if (isStoppedByServerError(e)) {
+              Alert.alert(stoppedByServerAlertTitleOf(e), e.message);
+            } else {
+              Alert.alert('削除失敗', '全削除に失敗しました。');
+            }
           } finally {
             setClearingAll(false);
           }
@@ -340,9 +351,12 @@ export const ShoppingListModal: React.FC<Props> = ({
         </SafeAreaView>
       </Modal>
 
-      {/* 追加モーダル (ShoppingListModal の上にスタック) */}
+      {/*
+        追加モーダル (ShoppingListModal の上にスタック)。この画面が閉じられたら一緒に閉じる (visible && …)。
+        週の画面が同意画面を開く前にモーダルをすべて閉じるとき (T15 / #1154 の closeAllModals)、上に重ねたモーダルが残ると同意画面を隠す
+      */}
       <AddShoppingModal
-        visible={addModalVisible}
+        visible={visible && addModalVisible}
         onClose={() => setAddModalVisible(false)}
         onAdded={() => {
           setAddModalVisible(false);

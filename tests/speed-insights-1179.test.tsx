@@ -38,15 +38,6 @@ vi.mock('next/font/google', () => ({
   Noto_Serif_JP: () => ({ variable: 'font-serif-test' }),
 }));
 
-// PostHog は初期化しない。子要素をそのまま描画する
-vi.mock('@/components/PostHogProvider', async () => {
-  const React = await import('react');
-  return {
-    PostHogProvider: ({ children }: { children: React.ReactNode }) =>
-      React.createElement(React.Fragment, null, children),
-  };
-});
-
 // Speed Insights 本体は、どこに置かれたかが分かる目印に差し替え、渡された props を控える
 // (レイアウトが SpeedInsightsClient 経由で '@vercel/speed-insights/next' 以外から読み込んでいたら、目印が出ずにテストが落ちる)
 const MARKER = 'data-mock="speed-insights"';

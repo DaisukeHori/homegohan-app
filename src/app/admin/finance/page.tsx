@@ -3,19 +3,28 @@
 import { useEffect, useState } from "react";
 import FinanceQuickLinks from "@/components/operator/finance/FinanceQuickLinks";
 import type { FinanceDashboard } from "@/lib/admin/finance-schemas";
+import { BILLING_NOT_STARTED_MESSAGE } from "@/components/operator/finance/BillingNotStartedNotice";
 
+/**
+ * 課金は未開始 (#1125)。収益の集計 (MRR・ARR・解約率・LTV) と契約数は、元になるデータ (Stripe の Webhook・
+ * 収益の日次スナップショット) を作る処理がまだ無く、API は 0 を返すだけ。0 円・0 人に見えるのを避け、
+ * 「準備中」と出す (pending)。MAU は daily_active_users から集計する実データなので、そのまま出す。
+ */
 function KpiCard({
   label,
   value,
   sub,
   icon,
   highlight,
+  pending,
 }: {
   label: string;
-  value: string;
+  value?: string;
   sub?: string;
   icon: string;
   highlight?: boolean;
+  /** 課金は未開始のため準備中。値を出さず「準備中」と出す */
+  pending?: boolean;
 }) {
   return (
     <div
@@ -25,16 +34,19 @@ function KpiCard({
         <span className="text-slate-500 text-sm font-medium">{label}</span>
         <span className="text-xl">{icon}</span>
       </div>
-      <div className="text-2xl font-bold text-slate-800">{value}</div>
-      {sub && <div className="text-xs text-slate-400 mt-1">{sub}</div>}
+      {pending ? (
+        <>
+          <div className="text-2xl font-bold text-slate-500">準備中</div>
+          <div className="text-xs text-slate-500 mt-1">{BILLING_NOT_STARTED_MESSAGE}</div>
+        </>
+      ) : (
+        <>
+          <div className="text-2xl font-bold text-slate-800">{value}</div>
+          {sub && <div className="text-xs text-slate-400 mt-1">{sub}</div>}
+        </>
+      )}
     </div>
   );
-}
-
-function formatJpy(n: number) {
-  if (n >= 1_000_000) return `¥${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `¥${(n / 1_000).toFixed(1)}K`;
-  return `¥${n.toLocaleString()}`;
 }
 
 export default function FinanceDashboardPage() {
@@ -96,52 +108,16 @@ export default function FinanceDashboardPage() {
 
       {/* KPI Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <KpiCard
-          label="今月の MRR"
-          value={formatJpy(data.current_mrr_jpy)}
-          icon="💴"
-          highlight
-        />
-        <KpiCard
-          label="ARR"
-          value={formatJpy(data.current_arr_jpy)}
-          icon="📅"
-        />
-        <KpiCard
-          label="Churn Rate"
-          value={`${data.churn_rate}%`}
-          sub="月次解約率"
-          icon="📉"
-        />
-        <KpiCard
-          label="LTV"
-          value={formatJpy(data.ltv_jpy)}
-          sub="ライフタイムバリュー"
-          icon="💎"
-        />
+        <KpiCard label="今月の MRR" icon="💴" highlight pending />
+        <KpiCard label="ARR" icon="📅" pending />
+        <KpiCard label="Churn Rate" icon="📉" pending />
+        <KpiCard label="LTV" icon="💎" pending />
       </div>
 
-      {/* MRR 内訳 */}
+      {/* MRR 内訳 (課金は未開始のため準備中) */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6 mb-6">
-        <h2 className="text-base font-semibold text-slate-700 mb-4">MRR 内訳</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div>
-            <div className="text-xs text-slate-400 mb-1">新規 MRR</div>
-            <div className="text-lg font-bold text-green-600">{formatJpy(data.new_mrr_jpy)}</div>
-          </div>
-          <div>
-            <div className="text-xs text-slate-400 mb-1">拡張 MRR</div>
-            <div className="text-lg font-bold text-blue-600">{formatJpy(data.expansion_mrr_jpy)}</div>
-          </div>
-          <div>
-            <div className="text-xs text-slate-400 mb-1">縮小 MRR</div>
-            <div className="text-lg font-bold text-yellow-600">{formatJpy(data.contraction_mrr_jpy)}</div>
-          </div>
-          <div>
-            <div className="text-xs text-slate-400 mb-1">解約 MRR</div>
-            <div className="text-lg font-bold text-red-600">{formatJpy(data.churned_mrr_jpy)}</div>
-          </div>
-        </div>
+        <h2 className="text-base font-semibold text-slate-700 mb-2">MRR 内訳</h2>
+        <p className="text-sm text-slate-500">{BILLING_NOT_STARTED_MESSAGE}</p>
       </div>
 
       {/* ユーザー数 */}
@@ -150,21 +126,15 @@ export default function FinanceDashboardPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div>
             <div className="text-xs text-slate-400 mb-1">個人課金者</div>
-            <div className="text-xl font-bold text-slate-800">
-              {data.personal_active_users.toLocaleString()}
-            </div>
+            <div className="text-xl font-bold text-slate-500">準備中</div>
           </div>
           <div>
             <div className="text-xs text-slate-400 mb-1">家族グループ</div>
-            <div className="text-xl font-bold text-slate-800">
-              {data.family_active_groups.toLocaleString()}
-            </div>
+            <div className="text-xl font-bold text-slate-500">準備中</div>
           </div>
           <div>
             <div className="text-xs text-slate-400 mb-1">法人</div>
-            <div className="text-xl font-bold text-slate-800">
-              {data.org_active_orgs.toLocaleString()}
-            </div>
+            <div className="text-xl font-bold text-slate-500">準備中</div>
           </div>
           <div>
             <div className="text-xs text-slate-400 mb-1">MAU</div>

@@ -1,8 +1,12 @@
 import { createClient } from '@/lib/supabase/server'
+import { CALENDAR_DATE_REQUIREMENT, isCalendarDate, jstDayOffset, jstToday } from '@/lib/jst-day-ranges'
 import { NextRequest, NextResponse } from 'next/server'
 import { toPerformanceCheckin, fromPerformanceCheckin, toCheckinAverages } from '@/lib/converter'
-import { RECORD_DATE_PATTERN } from '@/lib/health-payloads'
 import { sanitizePerformanceCheckinPayload } from '@/lib/performance-payloads'
+import { internalError } from '@/lib/api/errors'
+
+/** 期間の指定が無いときに返す、直近の日数 (JST の今日から何日前までか) */
+const DEFAULT_CHECKIN_LOOKBACK_DAYS = 30
 
 /**
  * GET /api/performance/checkins
@@ -28,17 +32,26 @@ export async function GET(request: NextRequest) {
     const endDate = searchParams.get('endDate')
     const averages = searchParams.get('averages') === 'true'
 
+    // 日付は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲の中) だけを受け付ける (#1482)。
+    // 形を見ずに渡すと、2026-02-30 のような日付が DB の date 型への変換 (RPC の p_date を含む) で失敗して 500 になる。
+    // 空欄 (?date=) は以前どおり「指定なし」として扱う
+    for (const [name, value] of [['date', date], ['startDate', startDate], ['endDate', endDate]] as const) {
+      if (value && !isCalendarDate(value)) {
+        return NextResponse.json({ error: `${name} must be ${CALENDAR_DATE_REQUIREMENT}` }, { status: 400 })
+      }
+    }
+
     // 7日移動平均を取得
     if (averages) {
-      const targetDate = date || new Date().toISOString().split('T')[0]
+      // 日付の指定が無ければ JST の今日 (#1433)
+      const targetDate = date || jstToday()
       const { data, error } = await supabase.rpc('get_7d_checkin_averages', {
         p_user_id: user.id,
         p_date: targetDate,
       })
 
       if (error) {
-        console.error('Checkin averages error:', error)
-        return NextResponse.json({ error: error.message }, { status: 500 })
+        return internalError('GET /api/performance/checkins', error, { userId: user.id })
       }
 
       // RPC returns a single row
@@ -59,8 +72,7 @@ export async function GET(request: NextRequest) {
         .maybeSingle()
 
       if (error) {
-        console.error('Checkin fetch error:', error)
-        return NextResponse.json({ error: error.message }, { status: 500 })
+        return internalError('GET /api/performance/checkins', error, { userId: user.id })
       }
 
       return NextResponse.json({
@@ -84,24 +96,21 @@ export async function GET(request: NextRequest) {
 
     // デフォルトは直近30日
     if (!startDate && !endDate) {
-      const thirtyDaysAgo = new Date()
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
-      query = query.gte('checkin_date', thirtyDaysAgo.toISOString().split('T')[0])
+      // 30 日前は JST の暦日で求める (#1433。checkin_date は JST の暦日)
+      query = query.gte('checkin_date', jstDayOffset(-DEFAULT_CHECKIN_LOOKBACK_DAYS))
     }
 
     const { data, error } = await query.limit(100)
 
     if (error) {
-      console.error('Checkins fetch error:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return internalError('GET /api/performance/checkins', error, { userId: user.id })
     }
 
     return NextResponse.json({
       checkins: data.map(toPerformanceCheckin),
     })
   } catch (error: any) {
-    console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return internalError('GET /api/performance/checkins', error)
   }
 }
 
@@ -122,7 +131,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { checkinDate, ...checkinData } = body
 
-    if (typeof checkinDate !== 'string' || !RECORD_DATE_PATTERN.test(checkinDate.trim())) {
+    // 形だけを見ていると、2026-02-30 のような存在しない日付が通り、DB の date 型への変換で 500 になる (#1482)
+    const trimmedCheckinDate = typeof checkinDate === 'string' ? checkinDate.trim() : ''
+    if (!isCalendarDate(trimmedCheckinDate)) {
       return NextResponse.json({ error: 'checkinDate must be in YYYY-MM-DD format' }, { status: 400 })
     }
 
@@ -136,7 +147,7 @@ export async function POST(request: NextRequest) {
     // DBフォーマットに変換
     const dbData = fromPerformanceCheckin({
       userId: user.id,
-      checkinDate: checkinDate.trim(),
+      checkinDate: trimmedCheckinDate,
       ...safeCheckinData,
     })
 
@@ -150,8 +161,7 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (error) {
-      console.error('Checkin upsert error:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return internalError('POST /api/performance/checkins', error, { userId: user.id })
     }
 
     // 体重が更新された場合、user_profiles.weightも更新
@@ -170,7 +180,6 @@ export async function POST(request: NextRequest) {
       checkin: toPerformanceCheckin(data),
     })
   } catch (error: any) {
-    console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return internalError('POST /api/performance/checkins', error)
   }
 }

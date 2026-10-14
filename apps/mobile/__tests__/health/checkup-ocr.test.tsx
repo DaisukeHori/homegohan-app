@@ -123,12 +123,12 @@ afterEach(async () => {
 /** リストから「記録を追加」を押してフォーム画面へ遷移するヘルパー */
 async function navigateToForm() {
   render(<BloodTestsPage />);
-  await waitFor(() => {
-    expect(screen.queryByText('読み込み中...')).toBeNull();
-  });
+  // 読み込みが終わり、一覧 (空) の「記録を追加」が出るまで待つ。
+  // 読み込み中の文言は「検査結果を読み込み中...」で、'読み込み中...' の完全一致では見つからないため、
+  // 以前はここが待たずに通り、負荷の高いときに読み込み中のまま次へ進んで失敗していた
   // 「+」ボタン (addBtn Ionicons) は直接 testID がないため、
   // EmptyState の「記録を追加」アクションを押す
-  const addAction = screen.getByText('記録を追加');
+  const addAction = await screen.findByText('記録を追加');
   fireEvent.press(addAction);
 }
 

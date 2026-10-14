@@ -7,7 +7,7 @@
  *  - sanitizeLogEntry (3 つの文字列項目 + metadata + user_id)
  *  - Edge Functions と Next.js のロガーがこのサニタイザを通してから insert していること (ソース文字列の契約テスト)
  *
- * Deno 側の db-logger.ts は https://esm.sh から import するためテストでは読み込めない。
+ * Deno 側の db-logger.ts は動かすと app_logs へ書き込むので、テストでは動かさない。
  * そこは実行時のモックではなく、ソースの契約テストで配線を守る (tests/llm-grok-migration.test.ts と同じ方式)。
  */
 
@@ -725,12 +725,10 @@ describe("配線の契約: ロガーはサニタイザを通してから app_log
     expect(offenders).toEqual([]);
   });
 
-  it("generate-menu-v5 / generate-health-insights: userId が無いときはユーザーなしのロガーで記録する", () => {
+  it("generate-menu-v5: userId が無いときはユーザーなしのロガーで記録する", () => {
     // (userId ? logger.withUser(userId) : logger).error(...) の形。変数名が変わっても通る
     const menu = code("supabase/functions/generate-menu-v5/index.ts");
     const menuMatches = menu.match(/\(userId \? (\w+)\.withUser\(userId\) : \1\)\.error\(/g) ?? [];
     expect(menuMatches).toHaveLength(2);
-    const insights = code("supabase/functions/generate-health-insights/index.ts");
-    expect(insights).toMatch(/\(_userId \? (\w+)\.withUser\(_userId\) : \1\)\.error\(/);
   });
 });

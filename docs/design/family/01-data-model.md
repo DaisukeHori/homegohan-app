@@ -154,7 +154,7 @@ CREATE TABLE family_shared_menus (
   family_group_id   UUID        NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
   date              DATE        NOT NULL,
   meal_type         VARCHAR(20) NOT NULL
-                      CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snack')),
+                      CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack')),
   dish_name         VARCHAR(200) NOT NULL,
   recipe_id         UUID,                            -- dataset_recipes への参照 (任意)
   servings_total    NUMERIC(4,2) NOT NULL DEFAULT 1.0
@@ -236,7 +236,7 @@ CREATE TABLE family_meal_requests (
   -- 対象食事
   date                     DATE        NOT NULL,
   meal_type                VARCHAR(20) NOT NULL
-                             CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snack')),
+                             CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack')),
   original_shared_menu_id  UUID        REFERENCES family_shared_menus(id) ON DELETE SET NULL,
   -- リクエスト内容
   reason                   TEXT,
@@ -571,13 +571,15 @@ erDiagram
 // tests/integration/family/data-model-constraints.integration.test.ts
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+// 接続情報は src/lib の getter で取り出す (`process.env.<変数名>!` は使わない。#1182・#1434)
+import { getSupabaseServiceRoleKey, getSupabaseUrl } from '@/lib/env-required';
 import { faker } from '@faker-js/faker/locale/ja';
 import { createTestUser } from '../../helpers/auth';
 import { createFamilyGroupInDB } from '../../factories/family-group.factory';
 
 const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  getSupabaseUrl(),
+  getSupabaseServiceRoleKey(),
 );
 
 describe('family_groups 制約テスト', () => {

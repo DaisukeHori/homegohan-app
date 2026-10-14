@@ -158,10 +158,12 @@ describe('PATCH /api/super-admin/plans/[id]', () => {
       monthly_price_jpy: 500,
     });
 
-    if (res.status === 201) {
-      testPlanId = (res.body as { data: { id: string } }).data.id;
-      createdPlanIds.push(testPlanId);
+    // 作れなかったときに黙ってスキップさせない (このあとのテストが空振りで通るのを防ぐ)
+    if (res.status !== 201) {
+      throw new Error(`Failed to create the draft plan to patch: ${res.status} ${JSON.stringify(res.body)}`);
     }
+    testPlanId = (res.body as { data: { id: string } }).data.id;
+    createdPlanIds.push(testPlanId);
   });
 
   it('200 for super_admin updating draft plan', async () => {

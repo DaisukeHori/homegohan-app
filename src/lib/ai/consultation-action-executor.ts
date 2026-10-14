@@ -7,8 +7,9 @@
 // 直接関数呼び出しする（self-fetch を撤廃）。
 
 import type { TargetSlot } from '@/types/domain';
+import { addDaysToDate } from '@/lib/date-utils';
+import { isCalendarDate } from '@/lib/jst-day-ranges';
 import {
-  RECORD_DATE_PATTERN,
   sanitizeHealthGoalCreate,
   sanitizeHealthGoalUpdate,
   sanitizeHealthRecordPayload,
@@ -17,8 +18,8 @@ import {
 import { updateHealthStreak } from '@/lib/health-streaks';
 import { todayLocal } from '@/lib/date-utils';
 import { invokeGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
-import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
-import type { MealImageJobSeed } from '@/lib/meal-image';
+import { isFeatureEnabled } from '@/lib/feature-flags';
+import { isCatalogProductMeal, markDishImagesSkipped, type MealImageJobSeed } from '@/lib/meal-image';
 import {
   buildDishImagePayload,
   cancelPendingMealImageJobs,
@@ -27,21 +28,39 @@ import {
 } from '@/lib/meal-image-jobs';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit } from '@/lib/rate-limit';
+import {
+  aiUsageRecordedHeaders,
+  consumeAiUsage,
+  refundAiUsage,
+  type AiUsageDenied,
+  type AiUsageResult,
+} from '@/lib/plan/entitlements';
+import { AI_DAILY_LIMIT_CODE, aiDailyLimitMessage } from '../../../supabase/functions/_shared/ai-daily-limit';
+import { checkUserAiConsent } from '@/lib/ai/consent-guard';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { createLogger } from '@/lib/db-logger';
+import { errorCodeOf, toLoggableError } from '@/lib/api/errors';
 import { PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
 import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
 
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
 
-// #1048 F2-23: AI 生成アクションが扱う meal_type は朝・昼・夕・おやつの 4 値に限る
-// (システムプロンプトも夜食 'midnight_snack' は提示しない)。AI の出力は信頼できないため、
-// 実行時にもホワイトリストで防御する。
-// 当初は「planned_meals.meal_type には 4 値の CHECK (#221) があり、'midnight_snack' で 500 になる」
-// という理由だったが、その CHECK は本番に存在しなかった (#1205)。#1205 で足した
-// DB のトリガー (trg_planned_meals_validate_values) は 'midnight_snack' を含む 5 値で、ここの制限は DB の制約ではなく
-// AI 経路の仕様として残している。
-const AI_ALLOWED_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
+/** generate_week_menu で作る日数 (startDate から 1 週間) */
+const WEEK_MENU_DAYS = 7;
+
+// #1048 F2-23 / #1103: AI 生成アクション (generate_single_meal) が扱う meal_type。
+// 朝食・昼食・夕食・おやつ・夜食 (midnight_snack) の 5 値。UI・献立生成の Edge Function
+// (supabase/functions/_shared/meal-generator.ts の ALLOWED_MEAL_TYPES)・DB の検査
+// (planned_meals: trg_planned_meals_validate_values、meals: trg_meals_validate_meal_type) と同じ値。
+// AI の出力は信頼できないため、実行時にもホワイトリストで防御する。
+// 以前は夜食を除く 4 値だった。理由は「planned_meals.meal_type には 4 値の CHECK (#221) があり、
+// 'midnight_snack' を入れると 500 になる」だったが、その CHECK は本番に存在しなかった (#1205)。
+// #1103 (項目 9) で夜食を正式な食事区分とし、DB の検査とこの許可リストを 5 値にそろえた。
+// システムプロンプト (api/ai/consultation/sessions/[sessionId]/messages/route.ts) の mealType もこの配列から作る。
+// 値を足す・減らすときは DB のトリガーと PLANNED_MEAL_TYPES (src/lib/planned-meal-validation.ts) も合わせる
+// (tests/consultation-meal-type-actions.test.ts が PLANNED_MEAL_TYPES と同じであることを確かめる)。
+export const AI_ALLOWED_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'] as const;
 
 // ==================== mass assignment 対策: サニタイザ ====================
 // AIが生成した action_params は信頼できない入力（プロンプトインジェクションの
@@ -210,6 +229,47 @@ function sanitizeShoppingItemUpdate(input: unknown): { data: PlainRecord; errors
   return { data, errors };
 }
 
+/**
+ * 実行すると、利用者のデータを外国の AI 事業者へ送るアクション (献立の生成。Edge Function generate-menu-v4 / v5 を呼ぶ)。
+ * 実行の API は、これらの前に同意を確かめる (T15 / #1154。同意が無ければ 403 AI_CONSENT_REQUIRED で、アクションは pending のまま残す)。
+ * Edge Function の側でも同じ判定で止まる。
+ */
+export const AI_SENDING_ACTION_TYPES: ReadonlySet<string> = new Set([
+  'generate_day_menu',
+  'generate_week_menu',
+  'generate_single_meal',
+]);
+
+/** 構造化ログ (app_logs) の function_name。アクションの DB 操作の失敗はここに残す */
+const ACTION_EXECUTOR_LOG_NAME = 'lib/ai/consultation-action-executor';
+
+/**
+ * アクションの DB 操作の失敗を構造化ログに残す (#1172)。
+ *
+ * runConsultationAction の result は、そのまま応答の本文に入る
+ * (POST /api/ai/consultation/actions/[actionId]/execute の { result } / messages route の SSE と JSON の actionResult)。
+ * ai_action_logs.result にも保存される。そのため result.error には DB の生のエラー文 (テーブル名・列名・制約名・衝突した値) を入れず、
+ * 固定の文を入れる。元のエラーはここでログにだけ残す。
+ * 保存された result を読むのはアカウントのデータ書き出しで、この変更より前に保存された行 (生のエラー文が入っている) があるため、
+ * そちらでも result.error を固定の文にしている (src/lib/account-export-tables.ts の aiActionLogResultForExport)。
+ */
+function logActionDbFailure(
+  user: { id: string },
+  action: Pick<ConsultationActionRow, 'id' | 'action_type'>,
+  operation: string,
+  dbError: unknown,
+): void {
+  const errorCode = errorCodeOf(dbError);
+  createLogger(ACTION_EXECUTOR_LOG_NAME)
+    .withUser(user.id)
+    .error('AI 相談のアクションの DB 操作に失敗しました', toLoggableError(dbError), {
+      action_id: action.id,
+      action_type: action.action_type,
+      operation,
+      ...(errorCode ? { error_code: errorCode } : {}),
+    });
+}
+
 export interface ConsultationActionRow {
   id: string;
   action_type: string;
@@ -222,6 +282,16 @@ export interface ConsultationActionExecutionResult {
   result: any;
   /** action_type がどのケースにも一致しなかった場合 true（呼び出し元で 400/failed 等に変換する） */
   unknownActionType?: boolean;
+  /**
+   * AI を使うアクション (献立の生成) を、今日の AI の利用回数の上限 (#1149) に達したので実行しなかったとき。
+   * execute の route は 429 AI_DAILY_LIMIT を返し、アクションを pending のまま残す (明日もう一度実行できる)
+   */
+  aiDailyLimit?: AiUsageDenied;
+}
+
+/** 上限 (#1149) に達して生成しなかったときの結果 (ai_action_logs.result と、会話の中の自動実行の結果に残る。人向けの文) */
+function dailyLimitResult(denied: AiUsageDenied): { error: string; code: typeof AI_DAILY_LIMIT_CODE } {
+  return { error: aiDailyLimitMessage(denied.limit), code: AI_DAILY_LIMIT_CODE };
 }
 
 export async function runConsultationAction(
@@ -231,10 +301,10 @@ export async function runConsultationAction(
 ): Promise<ConsultationActionExecutionResult> {
   let result: any = null;
   let success = false;
+  let aiDailyLimit: AiUsageDenied | undefined;
 
-  // V5フラグ判定
-  const featureFlags = await loadFeatureFlags(supabase);
-  const useV5 = Boolean(featureFlags.menu_generation_v5_wrapped);
+  // V5フラグ判定 (#1148: feature_flags。運営画面で切り替える)
+  const useV5 = await isFeatureEnabled('menu_generation_v5_wrapped', user.id);
   const engineLabel = useV5 ? 'generate-menu-v5' : 'generate-menu-v4';
 
   // アクションタイプに応じて実行
@@ -249,6 +319,13 @@ export async function runConsultationAction(
         break;
       }
 
+      // 日付は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433。generate_week_menu の startDate と同じ確認)。
+      // AI が 2026/10/10 などを返すと、献立生成 (Edge Function) が日付を前後にずらすところで RangeError になる
+      if (!isCalendarDate(date)) {
+        result = { error: 'date must be in YYYY-MM-DD format' };
+        break;
+      }
+
       // 1日分のスロット（朝・昼・夜）を生成
       const targetSlots = await resolveExistingTargetSlots({
         supabase,
@@ -260,8 +337,22 @@ export async function runConsultationAction(
         ],
       });
 
+      // #1149 AI の利用回数の上限の判定と記録 (#1177。生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・
+      // 生成のリクエストの行を作る前)。AI 相談の会話そのもの (consultation) は呼び出し元の route が数える。
+      // 生成は別の AI の呼び出しなので、ここで別に数える。同意の判定は呼び出し元の route がアクションの実行の前に済ませる。
+      // 上限に達していれば、数えずに生成しない (aiDailyLimit を返す。execute の route は 429、会話の中の自動実行は失敗の結果として残る)。
+      // 判定に失敗したときは止めない
+      // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (数える前に作る)
+      const queueDb = getAiQueueWriter();
+      const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+      if (!aiUsage.allowed) {
+        aiDailyLimit = aiUsage;
+        result = dailyLimitResult(aiUsage);
+        break;
+      }
+
       // リクエストを記録
-      const { data: requestData, error: requestError } = await supabase
+      const { data: requestData, error: requestError } = await queueDb
         .from('weekly_menu_requests')
         .insert({
           user_id: user.id,
@@ -284,6 +375,8 @@ export async function runConsultationAction(
 
       if (requestError) {
         console.error('Failed to create request:', requestError);
+        // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
+        await refundAiUsage(user.id, 'menu_generation', aiUsage);
         result = { error: 'リクエストの作成に失敗しました' };
         break;
       }
@@ -296,7 +389,7 @@ export async function runConsultationAction(
         .single();
 
       const invokeResult = await invokeGenerateMenuV4WithRetry({
-        invoke: () => supabase.functions.invoke(engineLabel, {
+        invoke: async () => supabase.functions.invoke(engineLabel, {
           body: {
             userId: user.id,
             requestId: requestData.id,
@@ -309,13 +402,16 @@ export async function runConsultationAction(
             familySize: profile?.family_size || 1,
             ultimateMode: ultimateMode ?? false,
           },
+          // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに利用回数を記録する。
+          // この生成は上 (consumeAiUsage) で数え済みなので、二重に数えないよう、署名つきの印を付ける
+          headers: await aiUsageRecordedHeaders(user.id),
         }),
       });
 
       if (!invokeResult.ok) {
         console.error(`Failed to invoke ${engineLabel}:`, invokeResult.errorMessage);
         await markWeeklyMenuRequestFailed({
-          supabase,
+          supabase: queueDb,
           requestId: requestData.id,
           errorMessage: invokeResult.errorMessage,
         });
@@ -334,14 +430,17 @@ export async function runConsultationAction(
         result = { error: 'startDate は必須です' };
         break;
       }
+      // 日付は暦の計算 (addDaysToDate) でずらすので、YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433)
+      if (typeof startDate !== 'string' || !isCalendarDate(startDate)) {
+        result = { error: 'startDate must be in YYYY-MM-DD format' };
+        break;
+      }
 
-      // 1週間分のスロットを生成
+      // 1週間分のスロットを生成 (日付は暦の計算で進める。#1433。以前の new Date(startDate) + setDate (ローカル時刻)
+      // + toISOString (UTC) は、実行環境のタイムゾーンで結果が変わった)
       const baseTargetSlots: TargetSlot[] = [];
-      const start = new Date(startDate);
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(start);
-        d.setDate(start.getDate() + i);
-        const dateStr = d.toISOString().split('T')[0];
+      for (let i = 0; i < WEEK_MENU_DAYS; i++) {
+        const dateStr = addDaysToDate(startDate, i);
         baseTargetSlots.push({ date: dateStr, mealType: 'breakfast' });
         baseTargetSlots.push({ date: dateStr, mealType: 'lunch' });
         baseTargetSlots.push({ date: dateStr, mealType: 'dinner' });
@@ -352,8 +451,22 @@ export async function runConsultationAction(
         targetSlots: baseTargetSlots,
       });
 
+      // #1149 AI の利用回数の上限の判定と記録 (#1177。生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・
+      // 生成のリクエストの行を作る前)。AI 相談の会話そのもの (consultation) は呼び出し元の route が数える。
+      // 生成は別の AI の呼び出しなので、ここで別に数える。同意の判定は呼び出し元の route がアクションの実行の前に済ませる。
+      // 上限に達していれば、数えずに生成しない (aiDailyLimit を返す。execute の route は 429、会話の中の自動実行は失敗の結果として残る)。
+      // 判定に失敗したときは止めない
+      // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (数える前に作る)
+      const queueDb = getAiQueueWriter();
+      const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+      if (!aiUsage.allowed) {
+        aiDailyLimit = aiUsage;
+        result = dailyLimitResult(aiUsage);
+        break;
+      }
+
       // リクエストを記録
-      const { data: requestData, error: requestError } = await supabase
+      const { data: requestData, error: requestError } = await queueDb
         .from('weekly_menu_requests')
         .insert({
           user_id: user.id,
@@ -376,6 +489,8 @@ export async function runConsultationAction(
 
       if (requestError) {
         console.error('Failed to create request:', requestError);
+        // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
+        await refundAiUsage(user.id, 'menu_generation', aiUsage);
         result = { error: 'リクエストの作成に失敗しました' };
         break;
       }
@@ -388,7 +503,7 @@ export async function runConsultationAction(
         .single();
 
       const invokeResult = await invokeGenerateMenuV4WithRetry({
-        invoke: () => supabase.functions.invoke(engineLabel, {
+        invoke: async () => supabase.functions.invoke(engineLabel, {
           body: {
             userId: user.id,
             requestId: requestData.id,
@@ -401,13 +516,16 @@ export async function runConsultationAction(
             familySize: profile?.family_size || 1,
             ultimateMode: ultimateMode ?? false,
           },
+          // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに利用回数を記録する。
+          // この生成は上 (consumeAiUsage) で数え済みなので、二重に数えないよう、署名つきの印を付ける
+          headers: await aiUsageRecordedHeaders(user.id),
         }),
       });
 
       if (!invokeResult.ok) {
         console.error(`Failed to invoke ${engineLabel}:`, invokeResult.errorMessage);
         await markWeeklyMenuRequestFailed({
-          supabase,
+          supabase: queueDb,
           requestId: requestData.id,
           errorMessage: invokeResult.errorMessage,
         });
@@ -437,9 +555,15 @@ export async function runConsultationAction(
         break;
       }
 
-      // #1048 F2-23: AI 経路で扱わない mealType(例: 'midnight_snack')を拒否する。
-      // プロンプトからは既に除去済みだが、AI 出力は信頼できないため
-      // 実行時にも二重で防御する。
+      // 日付は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433。generate_week_menu の startDate と同じ確認)
+      if (!isCalendarDate(date)) {
+        result = { error: 'date must be in YYYY-MM-DD format' };
+        break;
+      }
+
+      // #1048 F2-23 / #1103: 許可リスト (AI_ALLOWED_MEAL_TYPES。夜食 midnight_snack を含む 5 値) にない
+      // mealType を拒否する。プロンプトには同じリストから作った値だけを提示しているが、
+      // AI 出力は信頼できないため実行時にも二重で防御する。
       if (!AI_ALLOWED_MEAL_TYPES.includes(mealType)) {
         result = { error: `mealType は ${AI_ALLOWED_MEAL_TYPES.join('/')} のいずれかである必要があります` };
         break;
@@ -451,8 +575,22 @@ export async function runConsultationAction(
         targetSlots: [{ date, mealType }],
       });
 
+      // #1149 AI の利用回数の上限の判定と記録 (#1177。生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・
+      // 生成のリクエストの行を作る前)。AI 相談の会話そのもの (consultation) は呼び出し元の route が数える。
+      // 生成は別の AI の呼び出しなので、ここで別に数える。同意の判定は呼び出し元の route がアクションの実行の前に済ませる。
+      // 上限に達していれば、数えずに生成しない (aiDailyLimit を返す。execute の route は 429、会話の中の自動実行は失敗の結果として残る)。
+      // 判定に失敗したときは止めない
+      // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (数える前に作る)
+      const queueDb = getAiQueueWriter();
+      const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+      if (!aiUsage.allowed) {
+        aiDailyLimit = aiUsage;
+        result = dailyLimitResult(aiUsage);
+        break;
+      }
+
       // 1. weekly_menu_requests に記録
-      const { data: requestData, error: requestError } = await supabase
+      const { data: requestData, error: requestError } = await queueDb
         .from('weekly_menu_requests')
         .insert({
           user_id: user.id,
@@ -477,6 +615,8 @@ export async function runConsultationAction(
 
       if (requestError) {
         console.error('Failed to create request:', requestError);
+        // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
+        await refundAiUsage(user.id, 'menu_generation', aiUsage);
         result = { error: 'リクエストの作成に失敗しました' };
         break;
       }
@@ -491,7 +631,7 @@ export async function runConsultationAction(
 
       // 3. Edge Functionを呼び出し
       const invokeResult = await invokeGenerateMenuV4WithRetry({
-        invoke: () => supabase.functions.invoke(engineLabel, {
+        invoke: async () => supabase.functions.invoke(engineLabel, {
           body: {
             userId: user.id,
             requestId: requestData.id,
@@ -511,13 +651,16 @@ export async function runConsultationAction(
             familySize,
             ultimateMode: ultimateMode ?? false,
           },
+          // #1177 Edge Function (generate-menu) はユーザーの JWT で呼ばれたときに利用回数を記録する。
+          // この生成は上 (consumeAiUsage) で数え済みなので、二重に数えないよう、署名つきの印を付ける
+          headers: await aiUsageRecordedHeaders(user.id),
         }),
       });
 
       if (!invokeResult.ok) {
         console.error('Failed to invoke generate-menu-v4:', invokeResult.errorMessage);
         await markWeeklyMenuRequestFailed({
-          supabase,
+          supabase: queueDb,
           requestId: requestData.id,
           errorMessage: invokeResult.errorMessage,
         });
@@ -546,14 +689,14 @@ export async function runConsultationAction(
       // セキュリティ: 自分の献立のみ更新可能 (user_daily_meals JOIN 経由でユーザー確認)
       const { data: meal, error: mealFetchError } = await supabase
         .from('planned_meals')
-        .select('id, dish_name, dishes, image_url, user_daily_meals!inner(user_id)')
+        .select('id, dish_name, dishes, image_url, catalog_product_id, source_type, user_daily_meals!inner(user_id)')
         .eq('id', mealId)
         .eq('user_daily_meals.user_id', user.id)
         .maybeSingle();
 
       if (mealFetchError) {
-        console.error('Failed to fetch meal for update:', mealFetchError);
-        result = { error: `食事の取得に失敗: ${mealFetchError.message}` };
+        logActionDbFailure(user, action, 'planned_meals.select', mealFetchError);
+        result = { error: '食事の取得に失敗しました' };
         break;
       }
 
@@ -604,6 +747,8 @@ export async function runConsultationAction(
           imageModel: process.env.GEMINI_IMAGE_MODEL ?? undefined,
           existingCover: meal.image_url ?? null,
           fallbackMealImageUrl: meal.image_url ?? null,
+          // 商品の献立 (update_meal は商品とのつながりを外さない) の古い商品の料理を、AI の画像で置き換えない (#1487 の整合ゲート)
+          previousMealIsCatalog: isCatalogProductMeal(meal),
         });
         updateData.dishes = reconciledDishes;
         updateData.image_url = mealCoverImageUrl;
@@ -612,28 +757,34 @@ export async function runConsultationAction(
         updateData.image_url = safeMealUpdates.image_url;
       }
 
-      const { data: updatedMeal, error: updateError } = await supabase
-        .from('planned_meals')
-        .update(updateData)
-        .eq('id', mealId)
-        .select('id, dish_name, calories_kcal, dishes')
-        .single();
-
-      if (updateError) {
-        console.error('Failed to update meal:', updateError);
-        result = { error: `更新に失敗: ${updateError.message}` };
-        break;
-      }
-
+      // 料理画像のジョブを積むかを、料理 (dishes) を保存する前に決める (#1487)。
+      // 見送るなら、対象の料理を見送りの状態 ('failed' + 理由) にしてから保存する
+      // ('pending' のまま保存すると、処理するジョブが無いので「料理画像を生成中です」のまま残る)
       let imageGenerationThrottled = false;
+      // #1149 AI の利用回数の上限の判定の結果 (画像を付けない・同意が無い・レート制限で止めたときは判定しないので null)
+      let imageUsage: AiUsageResult | null = null;
+      let imageAllowed = false;
       if (jobs.length > 0) {
         // #1022 execute の update_meal も他の4 meal route と同じく image カテゴリで制限する
         // （relayチャットの連打で image の1min/20day上限をバイパスされないようにする）。
         // 画像副作用（enqueue + trigger）は update_meal 本体の成否から独立させる（詳細は meals/route.ts 参照）。
-        let imageAllowed = false;
         try {
           const rl = await checkRateLimit(user.id, 'image');
           imageAllowed = rl.success;
+          if (imageAllowed) {
+            // 同意が無ければ (判定に失敗した場合も)、画像の生成ジョブを処理する Edge Function (process-meal-image-jobs) が
+            // AI へ送らずに止める (T15 / #1154。料理は 'failed' + 同意の理由になる)。AI へ送らない操作は数えない
+            // (同意の判定 → 上限の判定と記録 → AI への送信の順)。ジョブを積むかどうかは、同意の有無では変えない (止めるのは処理する側)
+            const imageConsent = await checkUserAiConsent(supabase, user.id);
+            if (imageConsent.allowed) {
+              // #1149 料理画像は更新の自動の副作用なので、明示の 1 日の上限 (10 回) には数えない ('meal_image_auto'。記録だけ。
+              // 食事を記録するだけで AI 相談や写真の解析が止まらないように)。そのかわり料理画像だけの安全弁 (DB の ai_unmetered_daily_caps。
+              // 既定は 1 日 20 回) があり、達していれば画像だけ見送る (ジョブを積まない。献立の更新はそのまま。結果の aiSkipped: AI_DAILY_LIMIT)。
+              // 操作 1 回で 1 回 (積む画像のジョブの数によらない)。判定に失敗したときは止めない
+              imageUsage = await consumeAiUsage(user.id, 'meal_image_auto');
+              if (!imageUsage.allowed) imageAllowed = false;
+            }
+          }
         } catch (rlError) {
           createLogger('api/ai/consultation/actions/execute').warn(
             'Image rate-limit check failed; skipping image generation',
@@ -646,23 +797,50 @@ export async function runConsultationAction(
           imageAllowed = false;
         }
 
-        if (imageAllowed) {
-          await enqueueMealImageJobs({
-            supabase,
-            plannedMealId: mealId,
-            userId: user.id,
-            triggerSource,
-            jobSeeds: jobs,
-            requestId: action.id,
-          });
-          await triggerMealImageJobProcessing({ plannedMealId: mealId, limit: jobs.length });
-        } else {
-          imageGenerationThrottled = true;
-          console.warn('[consultation/actions/execute] Image generation skipped due to rate limit', {
-            userId: user.id,
-            plannedMealId: mealId,
-          });
+        if (!imageAllowed) {
+          const skipReason = imageUsage?.allowed === false ? 'ai_limit' : 'rate_limit';
+          if (skipReason === 'rate_limit') {
+            // レート制限で見送った (上限 #1149 で見送ったときは、結果の aiSkipped で知らせる)
+            imageGenerationThrottled = true;
+            console.warn('[consultation/actions/execute] Image generation skipped due to rate limit', {
+              userId: user.id,
+              plannedMealId: mealId,
+            });
+          }
+          updateData.dishes = markDishImagesSkipped(updateData.dishes, jobs, skipReason);
+          jobs = [];
         }
+      }
+
+      const { data: updatedMeal, error: updateError } = await supabase
+        .from('planned_meals')
+        .update(updateData)
+        .eq('id', mealId)
+        .select('id, dish_name, calories_kcal, dishes')
+        .single();
+
+      if (updateError) {
+        logActionDbFailure(user, action, 'planned_meals.update', updateError);
+        // 料理画像の 1 回を数えたあと、献立を更新できなかった (AI へは何も送っていない) ので数え戻す (#1149 の数え戻し)
+        if (imageUsage?.allowed) await refundAiUsage(user.id, 'meal_image_auto', imageUsage);
+        result = { error: '食事の更新に失敗しました' };
+        break;
+      }
+
+      if (imageAllowed && jobs.length > 0) {
+        // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。service role で積む。
+        // 1 行も積めなかったとき (重複・書き込みの失敗) は、enqueueMealImageJobs が数えた 1 回を戻す (#1487)
+        const queueDb = getAiQueueWriter();
+        await enqueueMealImageJobs({
+          supabase: queueDb,
+          plannedMealId: mealId,
+          userId: user.id,
+          triggerSource,
+          jobSeeds: jobs,
+          requestId: action.id,
+          usage: imageUsage,
+        });
+        await triggerMealImageJobProcessing({ plannedMealId: mealId, limit: jobs.length });
       }
 
       console.log('Meal updated successfully:', updatedMeal);
@@ -673,6 +851,8 @@ export async function runConsultationAction(
         newDishName: updatedMeal?.dish_name,
         // #1022 (Suggestion): 画像生成がスロットルされた場合のみ additive にフラグを付与する
         ...(imageGenerationThrottled ? { imageGenerationThrottled: true } : {}),
+        // #1149 今日の AI の利用回数の上限に達して、料理画像だけを見送ったとき
+        ...(imageUsage && !imageUsage.allowed ? { aiSkipped: AI_DAILY_LIMIT_CODE } : {}),
       };
       break;
     }
@@ -692,8 +872,11 @@ export async function runConsultationAction(
         break;
       }
 
+      // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。本人の献立であることを確かめたので、service role で取り消す
+      const queueDb = getAiQueueWriter();
       await cancelPendingMealImageJobs({
-        supabase,
+        supabase: queueDb,
+        userId: user.id,
         plannedMealId: mealId,
         reason: 'meal deleted',
       });
@@ -908,8 +1091,8 @@ export async function runConsultationAction(
       success = !insertError;
       result = { itemId: newItem?.id, created: success };
       if (insertError) {
-        console.error('add_pantry_item error:', insertError);
-        result = { error: insertError.message };
+        logActionDbFailure(user, action, 'pantry_items.insert', insertError);
+        result = { error: '冷蔵庫の食材の追加に失敗しました' };
       }
       break;
     }
@@ -951,8 +1134,8 @@ export async function runConsultationAction(
       success = !updateError;
       result = { itemId, updated: success };
       if (updateError) {
-        console.error('update_pantry_item error:', updateError);
-        result = { error: updateError.message };
+        logActionDbFailure(user, action, 'pantry_items.update', updateError);
+        result = { error: '冷蔵庫の食材の更新に失敗しました' };
       }
       break;
     }
@@ -983,8 +1166,8 @@ export async function runConsultationAction(
       success = !deleteError;
       result = { itemId, deleted: success };
       if (deleteError) {
-        console.error('delete_pantry_item error:', deleteError);
-        result = { error: deleteError.message };
+        logActionDbFailure(user, action, 'pantry_items.delete', deleteError);
+        result = { error: '冷蔵庫の食材の削除に失敗しました' };
       }
       break;
     }
@@ -1145,8 +1328,8 @@ export async function runConsultationAction(
         .single();
       success = !insertError;
       if (insertError) {
-        console.error('set_health_goal error:', insertError);
-        result = { error: insertError.message };
+        logActionDbFailure(user, action, 'health_goals.insert', insertError);
+        result = { error: '健康目標の保存に失敗しました' };
       } else {
         result = { goalId: newGoal?.id, created: success };
       }
@@ -1222,7 +1405,9 @@ export async function runConsultationAction(
               overallCondition, moodScore, stressLevel, stepCount, dailyNote, notes } = action.action_params;
 
       const recordDate = typeof date === 'string' && date.trim() ? date.trim() : todayLocal();
-      if (!RECORD_DATE_PATTERN.test(recordDate)) {
+      // 形だけを見ていると 2026-02-30 のような存在しない日付が通り、DB の date 型への変換で失敗する (#1482)。
+      // 実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける
+      if (!isCalendarDate(recordDate)) {
         result = { error: 'date must be in YYYY-MM-DD format' };
         break;
       }
@@ -1267,8 +1452,8 @@ export async function runConsultationAction(
         }, { onConflict: 'user_id,record_date' });
       success = !upsertError;
       if (upsertError) {
-        console.error('add_health_record error:', upsertError);
-        result = { error: upsertError.message };
+        logActionDbFailure(user, action, 'health_records.upsert', upsertError);
+        result = { error: '健康記録の保存に失敗しました' };
       } else {
         // #1048 F2-08: update_health_record 同様、streak・user_profiles も同期する
         await updateHealthStreak(supabase, user.id, recordDate);
@@ -1287,7 +1472,14 @@ export async function runConsultationAction(
     }
 
     case 'update_health_record': {
-      const { date, updates } = action.action_params;
+      const { date: rawDate, updates } = action.action_params;
+      // 日付を確かめずに渡すと、AI が返した 2026-02-30 や 2026/10/10 などが DB の date 型への変換で失敗する (#1482)。
+      // add_health_record と同じく、前後の空白を除いた実在する日付 (isCalendarDate の範囲の中) だけを受け付ける
+      const date = typeof rawDate === 'string' ? rawDate.trim() : '';
+      if (!isCalendarDate(date)) {
+        result = { error: 'date must be in YYYY-MM-DD format' };
+        break;
+      }
       const { data: safeUpdates, errors } = sanitizeHealthRecordPayload(updates, {
         acceptLegacyNotes: true,
       });
@@ -1363,5 +1555,5 @@ export async function runConsultationAction(
       return { success: false, result: null, unknownActionType: true };
   }
 
-  return { success, result };
+  return { success, result, ...(aiDailyLimit ? { aiDailyLimit } : {}) };
 }

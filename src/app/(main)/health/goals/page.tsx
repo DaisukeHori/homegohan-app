@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { todayLocal } from "@/lib/date-utils";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -645,7 +646,7 @@ export default function HealthGoalsPage() {
                   type="date"
                   value={newGoal.target_date}
                   onChange={(e) => setNewGoal({ ...newGoal, target_date: e.target.value })}
-                  min={new Date().toISOString().split('T')[0]}
+                  min={todayLocal()}
                   className="w-full p-4 rounded-xl"
                   style={{ backgroundColor: colors.bg, color: colors.text }}
                 />

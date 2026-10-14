@@ -6,6 +6,7 @@
  *
  * middleware (lib/supabase/middleware.ts) が frozen_at のセットされた
  * (かつ一時 BAN が未解除の) ユーザーのページナビゲーションをここへリダイレクトする。
+ * #1445: 凍結中でも、退会とデータの書き出しの画面 (/frozen/account) へ行ける。
  */
 
 import { useState } from "react";
@@ -13,6 +14,9 @@ import { createClient } from "@/lib/supabase/client";
 import { broadcastSignOut, clearUserScopedLocalStorage } from "@/lib/user-storage";
 import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { useRouter } from "next/navigation";
+
+/** 凍結中の利用者が退会とデータの書き出しをする画面 (#1445。src/app/frozen/account/page.tsx) */
+const FROZEN_ACCOUNT_PATH = "/frozen/account";
 
 export default function FrozenPage() {
   const router = useRouter();
@@ -45,6 +49,7 @@ export default function FrozenPage() {
           利用規約違反等の理由により、このアカウントは現在凍結されています。
           一時的な凍結の場合は、解除予定日時の経過後に自動的にアクセスが回復します。
           心当たりがない場合や、詳細を確認したい場合はサポートまでお問い合わせください。
+          凍結中でも、データの書き出しと退会はできます。
         </p>
         <div className="flex flex-col gap-3 pt-4">
           <a
@@ -52,6 +57,13 @@ export default function FrozenPage() {
             className="inline-flex justify-center items-center px-4 py-2 rounded-md bg-orange-500 text-white font-medium hover:bg-orange-600 transition-colors"
           >
             サポートに問い合わせる
+          </a>
+          {/* #1445: 凍結中でも、退会とデータの書き出しはできる (/frozen/account) */}
+          <a
+            href={FROZEN_ACCOUNT_PATH}
+            className="inline-flex justify-center items-center px-4 py-2 rounded-md border border-gray-300 text-gray-700 font-medium hover:bg-gray-100 transition-colors"
+          >
+            退会・データの書き出し
           </a>
           <button
             type="button"

@@ -32,7 +32,7 @@
 | `family-meal-ai-propose` (個別献立 AI 提案) | xAI Grok-4-1-fast-non-reasoning | xAI | latency 最速 | $100 |
 | `family-shared-menu-generate` (共有献立生成) | xAI Grok-4 | xAI | 高品質 (複数制約の最適化) | $150 |
 | `generate-week-menu` (週次献立生成) | xAI Grok-4-1-fast | xAI | バランス型 | $100 |
-| `generate-day-menu` / `generate-single-meal` | xAI Grok-4-1-fast-non-reasoning | xAI | 高速 | $50 |
+| `generate-day-menu` / 1 食の献立生成 (Edge Function `generate-menu-v5`。機能フラグが OFF なら `generate-menu-v4`。旧 `generate-single-meal` は #1452 で削除済み) | xAI Grok-4-1-fast-non-reasoning | xAI | 高速 | $50 |
 | `industrial-doctor-advice` (産業医 AI アドバイス) | claude-3-5-sonnet-20241022 | Anthropic | 健康指導の専門性・安全性 | $80 |
 | `image/generate` (献立画像生成) | Gemini Imagen | Google | コスト・品質バランス | $30 |
 
@@ -181,78 +181,86 @@ export async function logStreamingUsage(
 
 ## 5. プラン別 Quota
 
-### 5.1 日次・月次クォータ一覧 (§5.5.3)
+> #1149 (T40) で実装した形に合わせて書き直した (旧版は Redis の checkLLMQuota と、プランごとの日次・月次の目安の表だった)。
+> 課金は無料のまま計測する段階 (全員 free) なので、月次の上限と試用中の上限は持たない (有料プランの作業 T48 で決める)。
 
-| プラン | 日次上限 | 月次上限 | 試用期間中の上限 |
-|--------|---------|---------|---------------|
-| `free` | 50 req | 1,000 req | - |
-| `pro` | 500 req | 10,000 req | 50 req/日 (= free 相当) |
-| `family_basic` | 800 req | 20,000 req | 100 req/日 |
-| `family_pro` | 1,500 req | 50,000 req | 100 req/日 |
-| `org_starter` | 200/seat | 5,000/seat | - |
-| `org_standard` | 500/seat | 10,000/seat | - |
-| `org_pro` | 1,000/seat | 30,000/seat | - |
-| `org_enterprise` | カスタム | カスタム | - |
+### 5.1 1 日の上限 (DB の ai_daily_limits)
 
-**試用中制限** (`personal_subscriptions.status = 'trialing'`): 本契約の 1/10 程度に制限。7 日 × 50 req/日 = 最大 350 req (コスト流出防止)。
+| 項目 | 内容 |
+|------|------|
+| 数える単位 | 利用者の 1 回の操作を 1 回 (究極モードも 1 回)。全機能の合計。写真の「オート」(判別 `classify-photo` → 解析 `analyze-*`) も 1 回 (§5.2) |
+| 日の区切り | JST の暦日 (0 時に戻る) |
+| 上限の値 | `public.ai_daily_limits(plan_key PK, daily_limit)`。NULL は無制限。既定は `free` = 10 の 1 行だけ |
+| 行の無いプラン | `free` の行の値 (`free` の行も無ければ無制限) |
+| 変更 | 運営画面 `/super-admin/llm/quotas` (GET / PATCH `/api/super-admin/llm/quotas`。super_admin のみ。監査ログ `super_admin.llm_quota.update`) |
+| 上限に数えない機能 | 画面を開く・保存するだけで呼ばれる AI。`nutrition_advice_auto` (ホームの栄養のアドバイス・栄養の詳細を開いたときの栄養士のコメント) と `meal_image_auto` (料理を保存・更新したときに付ける料理画像。AI 相談の update_meal も同じ)。1 日の上限の合計には入れず、機能ごとの安全弁 (下の行) で止める。利用者が押して画像を作る操作 (`POST /api/ai/image/generate`) は `image_generation` で、上限に数える |
+| 安全弁 (上限に数えない機能) | `public.ai_unmetered_daily_caps(feature PK, daily_cap)`。利用者ごと・1 日 (JST) の、機能ごとの回数。既定は `nutrition_advice_auto` = 30・`meal_image_auto` = 20 (ふつうの使い方では当たらない値)。行の無い機能は 20 (無制限にしない)。値は DB の行で変える (運営画面は無い)。上限に数えない機能を選ぶ材料 (forceRefresh・includeAdvice など) はクライアントが送る値なので、API を直接呼んで上限と無関係に AI を使えないように置く |
 
-### 5.2 Quota チェック実装
+### 5.2 判定の実装
 
-```typescript
-// src/lib/plan/quota.ts
-export async function checkLLMQuota(
-  userId: string,
-  planKey: string,
-  subscriptionStatus: SubscriptionStatus
-): Promise<QuotaCheckResult> {
-  const quotaConfig = getQuotaConfig(planKey, subscriptionStatus);
-  if (!quotaConfig) return { allowed: true }; // フリー制限 (50/日)
-
-  // Redis から今日の使用量を取得 (TTL: 24 時間)
-  const todayKey = `llm_quota:${userId}:${new Date().toISOString().slice(0, 10)}`;
-  const todayUsage = await redis.incr(todayKey);
-  if (todayUsage === 1) await redis.expire(todayKey, 86400); // 初回は TTL セット
-
-  if (todayUsage > quotaConfig.daily_limit) {
-    return { allowed: false, reason: 'OP_QUOTA_EXCEEDED_DAILY', limit: quotaConfig.daily_limit };
-  }
-
-  return { allowed: true, remaining: quotaConfig.daily_limit - todayUsage };
-}
-
-function getQuotaConfig(planKey: string, status: SubscriptionStatus): QuotaConfig | null {
-  // 試用中は試用専用 quota
-  if (status === 'trialing') {
-    const trialQuotas: Record<string, number> = {
-      pro: 50, family_basic: 100, family_pro: 100,
-    };
-    return { daily_limit: trialQuotas[planKey] ?? 50 };
-  }
-
-  const quotas: Record<string, number> = {
-    free: 50, pro: 500, family_basic: 800, family_pro: 1500,
-    org_starter: 200, org_standard: 500, org_pro: 1000,
-  };
-  return { daily_limit: quotas[planKey] ?? 50 };
-}
-```
+- 判定と記録は DB の `consume_ai_usage(p_user_id, p_feature) -> jsonb` が 1 回の呼び出しで原子的に行う
+  (`pg_advisory_xact_lock` で同じ利用者・同じ日を 1 本ずつ判定し、上限に達していれば記録せずに `{ allowed: false, limit, used }`、
+  達していなければ `ai_usage_counters` を +1 して `{ allowed: true, ... }`)。service_role のみ。
+  上限に数えない機能は、その機能のその日の回数を安全弁と比べ、達していれば記録せずに `{ allowed: false, metered: false, limit: 安全弁, used }`
+- Next.js: `consumeAiUsage(userId, feature)` (`src/lib/plan/entitlements.ts`) を AI へ送る直前に呼び、`if (!aiUsage.allowed)` で止める。
+  Edge Function: ユーザーの JWT で直接呼ばれたときだけ `consumeEdgeAiUsage` (`supabase/functions/_shared/ai-usage.ts`)
+- 順番は「同意の判定 (#1154) → 上限の判定と記録 → AI への送信」
+- 止め方は入口ごと: 利用者が押す操作は 429 `AI_DAILY_LIMIT` (§11)、保存と AI の分析を一緒にする操作は保存だけして `aiSkipped: AI_DAILY_LIMIT`、
+  料理画像の副作用は画像だけ見送る、キューに積む操作は積む時点で判定する。上限に数えない機能が安全弁で止められたときも同じ止め方
+  (ホームの栄養の集計は AI の部分だけ省く、栄養士のコメントの自動の取得は 429、料理画像は画像だけ見送る)
+- 料理画像 (#1487): 見送るかどうか (レート制限・同意・上限の判定) は、料理 (`planned_meals.dishes`) を保存する前に決める。
+  見送るなら、ジョブを積む料理を `image_status: 'failed'` + `image_error` (`skipped_ai_limit` = 安全弁 / `skipped_rate_limit` = レート制限・判定の例外)
+  にしてから保存する ('pending' のまま保存すると、処理するジョブが無いので「生成中」のまま残る)。同じ料理 (subject_hash が同じ) でも、
+  画像が無く待ち・更新待ち・失敗のまま (AI の画像) なら、保存し直したときにジョブを積み直す。
+  ジョブを積むのは `image_source` が `generated_ai` か未設定の料理だけ。前回の料理の `image_source` が `meal_photo` / `catalog` /
+  `manual_override` / `none` (と、`image_source` が無く `image_url` がある料理) なら、保存し直しても料理の中身を変えても、
+  ジョブを積まずに前回の画像と状態を写し (手で付けた画像だけは、料理を変えたら `stale`)、`image_subject_hash` を付けない
+  (画像の処理は料理とジョブの subject_hash が同じときだけ書くので、待ちのジョブが残っていても上書きしない)。
+  前回の料理が subject_hash を持たない (写真・商品の料理、端末から直に保存した料理) ときは、前回の料理の中身から求めて同じ料理かを決める。
+  subject_hash も `image_source` も無い料理を変えずに保存し直したとき (完了の切り替えなど) は積まない。
+  商品を選んだ保存 (`catalogProductId`) は、料理を商品の料理 (画像は商品の画像、`image_source: 'catalog'`) にし、ジョブを作らない。
+  保存する前の献立が商品の献立 (`catalog_product_id` がある・`source_type: 'catalog_product'`) なら、先頭の料理が自分の画像を持たず
+  `image_source` が未設定か `generated_ai` (画像の項目の無い古い商品の料理と、それを以前の保存し直しが書き換えた形) でも、商品の料理
+  (`image_source: 'catalog'`・状態なし) として扱う (更新の入口 3 つ (PATCH 2 本・AI 相談の update_meal) と save-meal は、保存する前の献立の行でこれを決めて渡す)。
+  献立のカバーがあり、料理ごとの画像を持たない写真・商品・手の画像の料理 (写真の複数の料理など) があるときは、ほかの料理にもジョブを積まない
+  (写真・商品の献立の料理には AI の画像を作らない)。
+  積むのをやめた料理は、前回と同じ料理なら前回の状態を写し、足した・変えた料理は画像なし (状態なし・subject_hash なし) にする
+  新しく作る入口 (`POST /api/meals`・`POST /api/meal-plans/meals`) で送られた料理の `image_source` が `meal_photo` / `catalog` /
+  `manual_override` なら、前回の料理と同じく画像と状態を保持し、ジョブを積まない (`preserveSubmittedDishImages`)。
+  カバーの持ち主: 献立のカバー (`planned_meals.image_url`) を料理の画像から自動で付け替えてよいのは、いまのカバーが空か、
+  献立の AI の料理 (`image_source: 'generated_ai'`) の `image_url` と一致するときだけ (`isMealCoverAutoReplaceable`)。
+  写真・商品・利用者が作った画像・手で付けた画像のカバー (どの AI の料理の画像とも一致しない、空でないカバー) は、画像の処理
+  (`process-meal-image-jobs`)・保存し直し (`reconcileDishImages`)・AI の作り直し (`save-meal`) のどこからも置き換えない。
+  全員が `deriveMealCoverImage` を通して決める。前の料理の AI の画像だったカバーは料理の画像から選び直し、候補が無ければ空にする。
+  料理が 2 品以上の献立に利用者がカバーを付けた (`PATCH` の `imageUrl`) ときは、カバーにだけ付け、ジョブは今の決まりのまま積む
+  (1 品なら今までどおり料理を `manual_override` にし、ジョブを積まない)。画像の処理はカバーが変わるときだけ `image_url` を書き、
+  読んだときのカバーのままの行にだけ書く
+  ジョブは行ごとの insert で積む (冪等キーの一意な索引は待ち・処理中だけの部分索引なので、`ON CONFLICT (idempotency_key)` の upsert は使えない)。
+  同じ料理のジョブが待ち・処理中なら一意制約の違反 (23505) を重複として数え、1 行も積めなかったとき (重複・書き込みの失敗) は数えた 1 回を戻す。
+  献立の保存に失敗したときも戻す
+- 料理画像のジョブの積み方 (#1505): Next.js (`lib/meal-image-jobs.ts`) と Edge Function (`supabase/functions/_shared/meal-image-jobs.ts`。
+  献立の生成 `generate-menu-v5` / `generate-menu-v4` の `saveMealToDb`) は、同じ積み方 (`supabase/functions/_shared/meal-image.ts` の
+  `buildMealImageJobRecords` / `insertMealImageJobRecords`) を使う。料理を保存したあとにジョブの書き込みが失敗した料理 (23505 以外のエラー・例外) は、
+  保存済みの献立の上で `image_status: 'failed'` + `image_error: 'enqueue_failed'` にする (同じ料理で、画像が無く待ち・更新待ちの、
+  `image_source` が `generated_ai` か未設定の料理だけ。写真・商品・手の画像の料理と、商品の献立の画像の項目の無い古い商品の料理は変えない。
+  書くのは料理だけで、献立のカバーには触れない)。
+  重複 (23505) の料理は待ちのまま (待ち・処理中のジョブが画像を作る)。`saveMealToDb` が処理 (`process-meal-image-jobs`) を起こすのは、積めた行か重複の行があるときだけ。
+  待ったままの料理の積み直し (`scripts/requeue-pending-meal-images.ts`) は、保存し直しが積まない料理 (商品の献立の古い商品の料理・
+  カバーが料理ごとの画像を持たない写真・商品・手の画像の料理のものである献立の料理) を、同じ共通の判定 (`asCatalogMealDish`・
+  `isMealCoverHeldByImagelessPreservedDish`) で積まない。経路・本番で確かめること・積み直しの手順は `docs/operations/meal-image-pipeline.md`
+- 写真の「オート」: 判別 (`POST /api/ai/classify-photo`) が 1 回数え、数え済みの印 `aiUsageGrant` を応答で返す
+  (`g1.<UNIX 秒>.<印の ID>.<HMAC-SHA256>`。署名の対象は機能名・利用者 ID・発行時刻・印の ID、鍵は service role key、有効は 10 分)。
+  画面は続く解析 (`analyze-meal-photo` / `analyze-fridge` / `analyze-health-checkup` / `analyze-weight-scale`) の本文の `aiUsageGrant` に入れて送る。
+  解析は署名を確かめ、DB の `claim_ai_usage_grant` で印を使用済みにできたときだけ数えない (印は 1 回だけ使える。使用済みの記録は
+  `ai_usage_grant_claims`)。印が無い・偽物・期限切れ・他人の印・使用済みなら数える。判別だけを無料にする形は採らない
+  (判別は `includeMealAnalysis` で解析の結果まで返すので、抜け道になる)
+- 数えたあと、AI へ送る前に DB の処理が失敗したとき (生成のリクエストの行の insert の失敗など) は `refund_ai_usage` で 1 回を戻す。AI へ送ったあとの失敗では戻さない
+- DB の関数が失敗したとき (エラー・未適用・3 秒を超える) は、ログに残して許可する (判定の失敗で AI を止めない)
 
 ### 5.3 異常検知
 
-```typescript
-// src/lib/plan/anomaly.ts
-export async function detectLLMAnomaly(userId: string, dailyCount: number): Promise<void> {
-  // 1 ユーザーが 1 日 5,000 リクエスト超 → アラート
-  if (dailyCount > 5000) {
-    await notifySlack({
-      channel: '#llm-anomaly',
-      message: `⚠️ LLM 異常使用: user_id=${userId}, today=${dailyCount} req`,
-    });
-    // 自動クォータ削減 (1,000 req/日に制限)
-    await redis.set(`llm_quota_override:${userId}`, 1000, { ex: 86400 * 7 });
-  }
-}
-```
+利用者ごとの使い過ぎは、1 日の上限 (§5.1。押した操作) と、上限に数えない機能の安全弁 (§5.1 の `ai_unmetered_daily_caps`) が DB の判定で止める。
+異常な使い方の通知 (Slack など) と、利用者ごとに上限を自動で下げる仕組みは無い (Redis の上書きの鍵も使っていない)。
 
 ## 6. アレルゲン突合フロー (§5.5.7)
 
@@ -563,7 +571,8 @@ sequenceDiagram
 
 | エラー | コード | 対処 |
 |-------|--------|------|
-| quota 超過 | `OP_QUOTA_EXCEEDED` | 429 + 「本日の利用上限に達しました」メッセージ |
+| 1 日の上限に達した (#1149) | `AI_DAILY_LIMIT` | 429 + `{ error: 「今日の AI の利用回数の上限 (N 回) に達しました。明日 0 時から使えます。」, code, limit, retryAfter }` + `Retry-After` (次の JST 0 時までの秒数) |
+| 上限に数えない機能の安全弁に達した (#1487。栄養士のコメントの自動の取得) | `AI_DAILY_LIMIT` | 429 + `{ error: 「今日はこれ以上、自動のコメントを作れません。明日また表示されます。」, code, safetyCap: true, retryAfter }` + `Retry-After`。回数 (limit) は出さない (安全弁の回数は明示の上限と別のもので、数字が食い違って見えるため)。文は `AI_AUTO_SAFETY_CAP_MESSAGE` (Web・モバイル共用) |
 | アレルゲン 3 回失敗 | `AI_ALLERGY_FALLBACK` | 422 + フロントエンドで手動入力 UI に切替 |
 | context 漏洩試行 | `CONTEXT_GUARD_*` | 403 + 監査ログ記録 |
 | xAI API タイムアウト | `LLM_TIMEOUT` | フォールバックモデルで再試行 |
@@ -576,18 +585,20 @@ sequenceDiagram
   - `detectAllergenHits()`: 各特定原材料のヒット/非ヒット
   - `ProposedRecipeSchema.parse()`: 正常系・異常系
   - `calculateCost()`: モデル別コスト計算
-  - `checkLLMQuota()`: trialing 時の quota 制限
+  - `consumeAiUsage()` / `refundAiUsage()` / 数え済みの印 (`issueAiUsageGrant` / `redeemAiUsageGrant`): `src/__tests__/lib/plan/entitlements.test.ts`
+  - 写真の「オート」が 1 回に数えられること: `tests/ai-usage-photo-auto-grant.test.ts`
 - **Integration** (Supabase Local):
   - `validateAndLoadContext()` の組織 ID 不一致 → 403 確認
   - ストリーミング usage ログの正確な記録
+  - 1 日の上限・安全弁・数え済みの印の DB の関数 (境目・JST の日の境目・同時実行・権限): `tests/integration/rls/ai-daily-limit-rpc.test.ts`
 - **E2E**:
   - アレルゲン突合: 卵アレルギー設定 → 卵を含む提案 → 自動再生成 → 卵なし提案
-  - quota 超過: Redis で daily_count を操作 → 429 確認
+  - 上限: 入口ごとの止め方 (429 / AI の部分だけ省く / 画像だけ見送る) は `tests/ai-consent-enforcement-routes.test.ts` が route を実際に呼んで確かめる
 
 ## 13. 既存実装との関連
 
 - `supabase/functions/_shared/llm-usage.ts`: 既存ファイルに `organization_id` / `family_group_id` 列追加
-- `supabase/functions/knowledge-gpt/`: 既存 — quota チェックを追加するのみ
+- `supabase/functions/knowledge-gpt/`: 既存 — ユーザーの JWT で直接呼ばれたときだけ `consumeEdgeAiUsage` で上限を判定する (service role で呼ぶ AI 相談の経路は、Next.js が数え済み)
 - `supabase/functions/food-recognition/`: 既存 — context guard を追加
 
 ## 14. 未解決事項

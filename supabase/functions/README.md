@@ -26,7 +26,7 @@ curl -X POST "https://flmeolcfutuwwbjmzyoz.supabase.co/functions/v1/<function-na
 - `supabase/functions/deno.json` を Edge Functions 用の共有設定として使います
 - `deno.lock` は Supabase 側が lockfile v5 を読めないため commit しません
 - 依存関係は `supabase/functions/deno.json` の `imports` に exact version で固定します
-- 関数ファイルの中で `jsr:` や `npm:` を直接 import しません
+- 関数ファイルの中で `jsr:`・`npm:`・`https://` を直接 import しません (`// @deno-types="..."`・`/// <reference types="..." />` も同じ。デプロイの段「Verify Edge Function dependency pinning」が赤にします)
 - 関数ごとの `deno.json` は、共有設定で表現できない事情があるときだけ追加します
 
 ### 自動デプロイ（推奨）
@@ -55,7 +55,11 @@ main へ push → GitHub Actions → Supabase Functions デプロイ
 
 ワークフロー: `.github/workflows/deploy-supabase-functions.yml`
 
-この README を含む `supabase/functions/**` 配下の更新は、自動デプロイのトリガー対象です。
+**リポジトリから関数を消すと、次のデプロイで本番からも消えます。** デプロイのあとに `scripts/edge-functions-prune.mjs` が、本番にあってこのディレクトリに無い関数 (`_` で始まらず `index.ts` を持つディレクトリが関数) を削除します (#1452)。リポジトリの関数が 0 本・削除が上限 (`EDGE_FUNCTIONS_PRUNE_MAX_DELETIONS`、既定 5 本。読み違いでまとめて消すのを止めるための値で、6 本以上をまとめて消すときはワークフローの env で一時的に上げる) を超えるなどのときは 1 本も消さずにワークフローが赤になります。削除に失敗したときのログには、supabase CLI の終了コードと、分かる範囲の手がかり (HTTP の状態の数字・時間切れ・トークンが無いなど決まった文) だけが出ます。CLI の出力の文はトークン漏れを防ぐため出しません (#1455)。消すのは main の実行で、関数のディレクトリが main の最新と同じときだけです (別のブランチからの手動実行や古い実行の再実行では消しません)。手元から `supabase functions deploy <name>` で入れた関数や、別のブランチからの手動実行で入れた関数も、main の `supabase/functions/` に無ければ次の main のデプロイで消えます。本番に残したい関数は、必ず main にディレクトリを置きます。手元で何が消えるかだけ見るには `node scripts/edge-functions-prune.mjs --project-ref <ref>` (既定は dry-run)。
+
+**関数の判定は「`index.ts` を持つディレクトリ」です。** `supabase/config.toml` の `[functions.<name>]` に `entrypoint` を書いて `index.ts` 以外の入口 (例: `main.ts`) にした関数は、関数に数えられず、デプロイの直後に本番から消されます。そうした関数を足すときは、先に `scripts/edge-functions-prune.mjs` の判定を `config.toml` の `entrypoint` も読む形に広げてください (いまは `config.toml` に `entrypoint` を書くと `tests/edge-function-verify-jwt.test.ts` が、`config.toml` にある関数が `index.ts` を持たないと `tests/edge-functions-prune.test.ts` が赤になります)。
+
+この README を含む `supabase/functions/**` 配下の更新は、自動デプロイのトリガー対象です。`supabase/config.toml`（関数ごとの `verify_jwt`）を変えただけの push も対象です（#1406）。
 
 ### 手動デプロイ
 
@@ -69,6 +73,35 @@ supabase functions deploy --project-ref flmeolcfutuwwbjmzyoz
 supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
 ```
 
+`--no-verify-jwt` は付けません。付けると、指定したすべての関数でゲートウェイの JWT 検証が外れます。関数ごとの設定は `supabase/config.toml` から読まれます（下の「ゲートウェイの JWT 検証（verify_jwt）」）。
+
+### ゲートウェイの JWT 検証（verify_jwt）
+
+Supabase のゲートウェイは、既定で `Authorization: Bearer` が JWT かどうかを確かめ、JWT でなければ関数に届く前に HTTP 401（`UNAUTHORIZED_INVALID_JWT_FORMAT`）を返します。pg_cron が送る `app_cron_secret`（Edge Function 側の `CRON_SECRET`）はランダムな文字列で JWT ではないので、pg_cron から呼ぶ関数はゲートウェイの検証を外し（`supabase/config.toml` の `[functions.<name>]` に `verify_jwt = false`）、認証を関数の先頭の `requireServiceRole`（`_shared/auth.ts`）に任せます（#1406）。
+
+`supabase functions deploy`（名前を指定しない全体のデプロイ。GitHub Actions もこの形）は、`supabase/config.toml` の `verify_jwt` を関数ごとに読みます（supabase CLI 2.62.10 の `internal/functions/deploy/deploy.go` の `GetFunctionConfig`。指定が無い関数は `true`）。
+
+`config.toml` には、空行・行全体のコメント・`[functions.<name>]` の見出し・その下の `verify_jwt = true` / `verify_jwt = false` の行だけを書きます（ほかの行が 1 行でもあるとテストが赤になります。ほかの表が要るようになったら、その行が `verify_jwt` に触れないことを確かめてから、テストの許す形を広げてください）。`verify_jwt` を環境変数（`SUPABASE_FUNCTIONS_<NAME>_VERIFY_JWT`）で上書きすることもしません（CLI はこれも読むので、デプロイのワークフローに書くとテストが赤にします）。
+
+`verify_jwt = false` にしてよいのは、先頭で自前の認証（`requireServiceRole` / `requireAuth` / `auth.getUser`）をする関数だけです。`tests/edge-function-verify-jwt.test.ts` が、`config.toml` の一覧と関数の先頭の認証、DB からの HTTP の呼び出し先（pg_net の `net.http_post` など）を突き合わせます。DB からの呼び出し先は、SQL を読んで推し量らず、テストの `DB_HTTP_CALL_SITES` に SQL のファイルごとに宣言してあります（いまは `public.invoke_catalog_import` と `public.invoke_calculate_segment_stats` を定義するファイル）。テストは、DB に入る SQL（`supabase/migrations` と、本番のスキーマの写し `supabase/baseline`）の生の文字列で、HTTP の呼び出しらしい箇所（`net.http_post(` などの呼び出しと、URL の `/functions/v1/`。コメントや文字列の中も数えます）をファイルごとに数え、宣言の数と合わなければ赤にします。DB から Edge Function を呼ぶ migration を足すと、どう書いても（Vault の `project_url` に `/functions/v1/<name>` を足す形でも）赤になるので、呼び先と数を `DB_HTTP_CALL_SITES` に宣言し、呼び先の関数を `verify_jwt = false`（先頭で `requireServiceRole`）にしてください。宣言した呼び先がそのファイルに書かれていないときや、宣言したファイルに `'app_cron_secret'` と `'Bearer '` が無いときも赤になります（呼び出しでない箇所が当たったときは、宣言で数を合わせず、書き方を変えてください）。
+
+pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘密）で呼ばれる関数:
+
+| 関数 | 呼び出し元 | 送る Bearer | 関数の中の認証 | `verify_jwt` |
+|---|---|---|---|---|
+| `calculate-segment-stats` | pg_cron のジョブ `calculate-segment-stats`（`public.invoke_calculate_segment_stats()`）/ `POST /api/comparison/trigger` | Vault の `app_cron_secret`（JWT でない）/ service role key | `requireServiceRole` | `false` |
+| `import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog` | pg_cron（`public.invoke_catalog_import()`）/ `POST /api/admin/catalog/import` | Vault の `app_cron_secret`（JWT でない）/ service role key | `requireServiceRole`（`_shared/catalog/import-runner.ts`） | `false` |
+| `import-convenience-catalog` | リポジトリ内に無い（上と同じ取り込み処理） | — | `requireServiceRole`（同上） | `false` |
+| `aggregate-org-stats` | リポジトリ内に無い（停止中 #1325。本番に古い pg_cron のジョブが残っていれば `app_cron_secret`） | （`app_cron_secret`） | `requireServiceRole`（そのあと 410） | `false` |
+| `regenerate-embeddings` | `POST /api/super-admin/embeddings/regenerate` | service role key（`CRON_SECRET` でも可） | service role key の完全一致、または `requireServiceRole` | `false` |
+| `stripe-price-sync` | `POST /api/super-admin/plans/[id]/price-change` | service role key（`CRON_SECRET` でも可） | service role key の完全一致、または `requireServiceRole` | `false` |
+| `knowledge-gpt` | 相談 AI の API（`/api/ai/consultation/sessions/[sessionId]/messages`） | service role key / 利用者の JWT | service role key の完全一致、または `auth.getUser` | `false`（以前から） |
+| `generate-menu-v5` / `generate-menu-v4` | 献立生成の API・`/api/cron/process-menu-queue`・関数自身の続きの呼び出し | service role key / 利用者の JWT | 関数の中で service role key の完全一致、または `auth.getUser` | 既定（`true`）。JWT しか受け付けないので変えない |
+| `process-meal-image-jobs` | `_shared/meal-image-jobs.ts`（献立生成の関数から） | service role key | service role key の完全一致 | 既定（`true`）。同上 |
+| `regenerate-shopping-list-v2` | `POST /api/shopping-list/regenerate` | service role key / 利用者の JWT | service role key の完全一致、または `requireAuth` | 既定（`true`）。同上 |
+
+既定（`true`）のままの関数は、service role key（JWT）か利用者の JWT しか受け付けないため、ゲートウェイの検証を通ります。`CRON_SECRET` のような JWT でない秘密を受け付ける関数（`requireServiceRole` か `checkCronSecret` を呼ぶ関数、`CRON_SECRET` を読む関数。`index.ts` から相対パスで import するモジュールの中で呼ぶものも含みます）を足したら、`config.toml` にも `verify_jwt = false` を足してください（足し忘れはテストが赤にします）。
+
 ## 関数一覧
 
 | 関数名 | 説明 |
@@ -80,10 +113,9 @@ supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
 | `analyze-meal-photo` | 食事写真分析（Gemini） |
 | `analyze-fridge` | 冷蔵庫写真分析（OpenAI Vision） |
 | `analyze-health-photo` | 健康写真分析 |
-| `generate-health-insights` | 健康インサイト生成 |
 | `create-derived-recipe` | 派生レシピ作成 |
 | `aggregate-org-stats` | 組織統計集約。**停止中**（オーナー判断 #1325）。認証（`requireServiceRole`）のあと、何もせず HTTP 410（`DISABLED`）を返すだけで、集計処理は削除済み。デプロイ先から関数を消さないよう、ディレクトリは残している。呼び出し元（画面のボタン・API ルート）も無い。本番に呼び出す `pg_cron` のジョブが残っていれば、migration `20261008130000_stop_aggregate_org_stats_cron.sql` が登録解除する |
-| `calculate-segment-stats` | セグメント統計計算 |
+| `calculate-segment-stats` | セグメント統計計算 (比較ランキング)。pg_cron のジョブ `calculate-segment-stats` が 1 時間ごと (毎時 5 分) に daily / weekly / monthly を呼ぶ。期間が切り替わった直後の回 (JST 0 時台) は、本文 `previousPeriod: true` で直前の期間も集計し直す。比較のバッジを判定するのは、この直前の期間の回だけ (毎時の今の期間の回と手動はランキングの更新だけ。#1491)。指標 `total_meals` の件数は DB の関数 `count_meals_per_user` で数える。ハンズオンのお試しの記録 (`is_sandbox` が true。#1500) と同じく、運営が隠した食事 (`meals.hidden_at` が入った行) も、`meals` から数える指標 (記録率の日数と `total_meals`) に入れない (#1445)。間隔の変え方は `ENV_SETUP.md` の「比較ランキングの集計の間隔」。手動は `POST /api/comparison/trigger` (super_admin だけ)。#1406 |
 | `backfill-ingredient-embeddings` | 材料埋め込みバックフィル |
 | `regenerate-embeddings` | 埋め込み再生成 |
 | `regenerate-shopping-list-v2` | 買い物リスト再生成 v2 |
@@ -99,12 +131,14 @@ supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
 
 チェーン別の `import-*-catalog`（5 関数）はバッチ専用の関数です。呼び出し元は、DB 関数 `invoke_catalog_import()`（呼べる関数名は許可リスト方式）と、管理者用 API の `POST /api/admin/catalog/import`（admin / super_admin が手動で実行する）です。
 
+健康インサイトの生成は Edge Function ではなく、画面が呼ぶ `POST /api/health/insights`（`src/app/api/health/insights/route.ts`）が行います（#1432）。以前あった `generate-health-insights` は、アプリ・cron・`pg_net` のどこからも呼ばれておらず、保存も利用者の JWT のクライアントで行っていたため `health_insights` の RLS（利用者向けの INSERT ポリシーが無い）で黙って失敗していました。#1440 でディレクトリを削除しました（次の main のデプロイで本番からも消えます。#1452）。
+
 ### 献立生成 v4 と v5 の使い分け
 
 2026-10-07 時点の `main` の実コードで確認した内容です。
 
 - **本番主系は `generate-menu-v5`** です。`generate-menu-v4` は `@deprecated` ですが、**まだ削除できません**（理由は後述）。
-- 多くの API は、v4 と v5 のどちらを呼ぶかを feature flag で決めます（フラグに関係なく固定のものは下の表を参照）。フラグは `menu_generation_v5_wrapped` と `menu_generation_v5_direct` の 2 つで、コード上の既定値はどちらも `true`（ON ＝ v5）です（`src/lib/menu-generation-feature-flags.ts` の `DEFAULT_FEATURE_FLAGS`）。
+- 多くの API は、v4 と v5 のどちらを呼ぶかを feature flag で決めます（フラグに関係なく固定のものは下の表を参照）。フラグは `menu_generation_v5_wrapped` と `menu_generation_v5_direct` の 2 つで、フラグの行が無い・読めないときの値（コード上の既定値）はどちらも `true`（ON ＝ v5）です（`src/lib/feature-flags.ts` の `FEATURE_FLAG_DEFAULTS`）。フラグの値は `feature_flags` テーブルにあり、運営画面（`/super-admin/flags`）で切り替えます（#1148）。
 - どちらのエンジンで動いたかは、通常は `weekly_menu_requests.mode`（`v5` / `v4`）で分かります。ただし `/api/ai/menu/` 配下の `weekly/request`・`meal/generate`・`meal/regenerate` は、まず `weekly` / `single` / `regenerate` で行を作り、そのあとで `v5` / `v4` に書き換えます。書き換え（UPDATE）の成否はコード上で確認していないため、失敗した行は元の値のまま残ります。
 
 #### 呼び出し元とエンジンの対応
@@ -136,18 +170,23 @@ supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
    - `tests/embedding-contracts.test.ts` は、`generate-menu-v4/index.ts` を `fs.readFileSync` で読んで、`search_menu_examples` の引数名を確かめています。ファイルを消すと失敗するので、読む対象を `generate-menu-v5/index.ts` に替えます（v5 も同じ RPC を同じ引数名で呼んでいます）。
    - `scripts/smoke-generate-menu-v4.mjs` は、デプロイ済みの `generate-menu-v4` を HTTP で直接呼ぶ、手動のスモークスクリプトです（CI や `package.json` からは呼ばれていません）。v5 向けに直すか、削除します。
    - 共通部品を別の場所へ移した場合は、それを import している `tests/v4-supabase-functions.test.ts`・`tests/reference-menu-utils.test.ts`・`tests/context-utils.test.ts`・`tests/embedding-contracts.test.ts` の import 先も直します。
-4. リポジトリからディレクトリを消しても、本番にデプロイ済みの `generate-menu-v4` は消えません。`deploy-supabase-functions.yml` は、関数をデプロイする（`supabase functions deploy`）だけで、削除はしないためです。本番から外すには、呼び出し元が残っていないことを確認したうえで、別に `supabase functions delete generate-menu-v4 --project-ref flmeolcfutuwwbjmzyoz` を実行します。
+4. リポジトリからディレクトリを消して main にマージすると、そのデプロイ（`deploy-supabase-functions.yml` の削除の手順、`scripts/edge-functions-prune.mjs`）が本番の `generate-menu-v4` も削除します（#1452）。別に `supabase functions delete` を実行する必要はありません。その代わり、ディレクトリを消す PR は、手順 1〜3 で呼び出し元をすべて解消してから出します（マージした時点で本番から消えるため）。
 
-#### フラグの値の決まり方（注意）
+#### フラグの値の決まり方
 
-- `loadFeatureFlags()` は、`system_settings` の `key = 'feature_flags'` の行を読み、コード上の既定値に DB の値を上書きして使います。行が読めないときは既定値のままです。値は `PUT /api/super-admin/settings`（super_admin 限定）で書き換えられます。
-- 上の API ルートは、**ログインしているユーザー自身のセッション**でこの行を読みます。`system_settings` を SELECT できるのは `admin` / `super_admin` だけです（RLS。本番スキーマのスナップショット `supabase/baseline/prod_schema.sql` の `Admins can view system settings`）。そのため**一般ユーザーの操作では DB の値は読めず、常に既定値（ON ＝ v5）になります**。
-- 結果として、DB 上でフラグを OFF にしても、v4 に切り替わるのは admin / super_admin 自身の操作だけです。一般ユーザー全員を v4 に戻す手段としては、現状は使えません。
+- 機能フラグは `feature_flags` テーブルに一本化しました（#1148）。判定は `src/lib/feature-flags.ts` の `isFeatureEnabled(key, userId)` を使います。値は運営画面（`/super-admin/flags`）または `PATCH /api/super-admin/flags/[key]`（super_admin 限定）で切り替えます。
+- 以前は `system_settings` の `key = 'feature_flags'` の行を、ログインしているユーザー自身のセッションで読んでいました。`system_settings` を SELECT できるのは `admin` / `super_admin` だけ（RLS）なので、**一般ユーザーの操作では値が読めず、いつも既定値（ON ＝ v5）でした**。今は `feature_flags` をサーバー側（service_role）で読むので、**切り替えは全ユーザーに効きます**。一般ユーザー全員を v4 に戻したいときは、`menu_generation_v5_wrapped` / `menu_generation_v5_direct` を OFF にします。
+- 旧い `system_settings` の `feature_flags` の行は、読まれなくなりました（消してはいません）。migration `20261010120000_unify_feature_flags_seed.sql` が、その中の `menu_generation_v5_*` の true / false を `feature_flags` に引き継ぎました。
+- フラグの値はサーバーのメモリに最大 30 秒覚えます。切り替えてから全員に反映されるまで最大 30 秒かかります。
+- フラグの行が無い・読めない・読み出しに時間がかかりすぎたときは、止めない側の既定値で動きます（`ai_chat_enabled` = ON、`maintenance_mode` = OFF、`menu_generation_v5_*` = ON）。読み出しの失敗は構造化ログ（`app_logs`）に残ります。
+- ほかに、同じ仕組みで次の 2 つのフラグがあります。
+  - `ai_chat_enabled`: AI 相談の緊急停止スイッチ。OFF のとき `/api/ai/consultation/**` の AI を呼ぶ API（新しい相談・メッセージ送信・要約・相談の終了・提案された操作の実行）が 503 とやさしい文面を返します。通常は ON のままにします。
+  - `maintenance_mode`: ON のとき、ミドルウェアが運営（admin / super_admin）以外にメンテナンス中の画面（API は 503）を出します。
 
 #### 名前が紛らわしいもの
 
 - `POST /api/ai/menu/v4/generate`: URL は v4 ですが、`menu_generation_v5_direct` が ON の間は v5 を呼びます。
-- `src/lib/generate-menu-v4-retry.ts` の `invokeGenerateMenuV4WithRetry`: 名前は v4 ですが、中身は汎用のリトライ関数です（`consultation-action-executor.ts` では v5 の呼び出しにも使います）。そのため v5 の呼び出しが失敗しても、エラーメッセージは `generate-menu-v4 failed after ...` と出ます。
+- `src/lib/generate-menu-v4-retry.ts` の `invokeGenerateMenuV4WithRetry`: 名前は v4 ですが、中身は汎用のリトライ関数です（`consultation-action-executor.ts` では v5 の呼び出しにも使います）。そのため v5 の呼び出しが失敗しても、構造化ログ（`app_logs`。function_name は `markWeeklyMenuRequestFailed`）に残る原因の文は `generate-menu-v4 failed after ...` と出ます（リクエストの行の `error_message` には固定の文が入り、画面にこの文は出ません。#1172）。
 - `_shared/v4-fast-llm.ts` / `_shared/v4-nutrition-adapter.ts`: 名前は v4 ですが、v5 も使う共通部品です。
 
 #### 呼び出し元を再確認するには
@@ -168,6 +207,9 @@ supabase/functions/
 │   ├── auth.ts             # 認証ヘルパー（requireAuth: ユーザーの JWT、requireServiceRole: cron 用の共有シークレットか service role key。await 必須）
 │   ├── cron-secret.ts      # cron 用シークレットの照合（Next.js の src/lib/cron-auth.ts と共用。import なし・Deno/Node 固有 API なし。入れ替え中は CRON_SECRET_PREVIOUS も受け付ける。手順は ENV_SETUP.md）
 │   ├── cors.ts             # CORS設定（許可したオリジンにだけ CORS ヘッダーを返す。下の「CORS」を参照）
+│   ├── ai-usage-core.ts    # AI 利用回数の共通部分（機能名の一覧・上限に数えない機能・Next.js が付ける「記録済みの印」の署名と検証。Next.js の src/lib/plan/entitlements.ts と共用。import なし・Deno/Node 固有 API なし）
+│   ├── ai-daily-limit.ts   # AI の 1 日の上限の共通部分（判定の結果の読み取り・429 AI_DAILY_LIMIT の形と文面。Next.js・Web・モバイルと共用。import なし・crypto なし）
+│   ├── ai-usage.ts         # AI の利用回数の上限の判定と記録（ユーザーの JWT で直接呼ばれたときに数える。下の「AI 利用回数の上限と記録」を参照）
 │   ├── db-logger.ts        # ログ記録
 │   ├── log-sanitizer.ts    # ログ保存前の秘密情報マスキング・切り詰め（Next.js の src/lib/db-logger.ts と共用。import なし・Deno/Node 固有 API なし）
 │   ├── bulk-query.ts       # 集計バッチ向けの PostgREST の読み書き（失敗を例外にする・1 回の応答の上限 1000 行を超えて全件を取る・.in() の ids の分割）
@@ -198,10 +240,10 @@ touch supabase/functions/<function-name>/index.ts
 利用者の JWT で認証する関数（ブラウザからも呼ばれうる関数）のテンプレートです。バッチ専用の関数には CORS を付けません（下の「CORS」を参照）。
 
 ```typescript
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
 
-serve(async (req) => {
+// HTTP サーバーは Deno の組み込みの Deno.serve を使う (URL から import しない。外部の依存は deno.json の imports の名前で import する)
+Deno.serve(async (req) => {
   // Origin はリクエストごとに違うので、ハンドラの先頭で作る
   const corsHeaders = getCorsHeaders(req);
 
@@ -238,6 +280,18 @@ CORS はブラウザだけが強制する仕組みです。Next.js の API ル�
 - ブラウザから Edge Function を直接呼ばないでください。権限の確認が要る処理は、Next.js の API ルートで確認してから、サーバーから Edge Function を呼びます（例: 管理者用のコンビニカタログ取り込みは `POST /api/admin/catalog/import` を経由します）。
 - モバイルアプリの WebView が読み込むのは Web アプリ自身（`EXPO_PUBLIC_WEB_URL`）のページなので、そこから呼ぶときの `Origin` も Web アプリのオリジンです。ネイティブ側の `fetch` は `Origin` を付けません。
 - 新しい関数を足すときは、`tests/edge-function-cors.test.ts` が、`Access-Control-Allow-Origin: *`（ワイルドカード）を書き込んでいないか、CORS ヘッダーを `_shared/cors.ts` 以外に直書きしていないか、バッチ専用の関数に CORS を付けていないかを検査します。`requireServiceRole` を使う関数を足したら同じテストの `BATCH_ONLY_SOURCES` に、`_shared/cors.ts` を使う関数を足したら `USER_FACING_SOURCES` に、一覧として足してください。
+
+### AI 利用回数の上限と記録
+
+AI を使う処理は、利用回数を数え、1 日の上限を超えたら止めます (#1177 / #1149)。上限はプランごとの DB の `ai_daily_limits`（既定は free = 1 日 10 回。全機能の合計・JST の暦日・究極モードも 1 回）。判定と記録は DB の `consume_ai_usage` が 1 回の呼び出しで原子的に行い（上限に達していれば記録せずに `{ allowed: false }`、達していなければ +1）、service role だけが実行できます。画面を開く・保存するだけで呼ばれる AI（`nutrition_advice_auto`・`meal_image_auto`。`_shared/ai-usage-core.ts` の `AI_UNMETERED_FEATURES`）は 1 日の上限の合計に入れず、機能ごとの 1 日の安全弁（DB の `ai_unmetered_daily_caps`。既定は 30 回・20 回）を超えたら止めます。
+
+- **ユーザーの JWT を確かめる関数**（`requireAuth` / `auth.getUser`）は、確かめた経路で `const aiUsage = await consumeEdgeAiUsage(req, userId, feature)`（`_shared/ai-usage.ts`）を呼び、`if (!aiUsage.allowed) return aiDailyLimitEdgeResponse(aiUsage, corsHeaders)` で止めます（429 `AI_DAILY_LIMIT`。本文と文面は `_shared/ai-daily-limit.ts`）。Next.js の API ルートを経由せず、ユーザーの JWT で直接呼ばれた場合に、上限がすり抜けないようにするためです（#1153）。リクエストの行を持つ関数（`generate-menu-v4` / `v5`・`regenerate-shopping-list-v2`）は、止めるときに行を失敗にし、画面がそのまま出す人向けの文を書きます。
+- **service role / cron で呼ばれる経路では呼びません。** Next.js の API ルートが数え済みです（献立生成・AI 相談・買い物リスト・料理画像）。献立生成のキュー（`weekly_menu_requests`）は、積む時点（`POST /api/ai/menu/v5/generate`）で数えます。
+- **順番は「同意の判定 → 上限の判定と記録 → AI への送信」です。** 外国の AI 事業者への提供の同意（#1154。`requireAiConsentForUser` / `checkAiConsent`）が無くて止めた呼び出しは数えません。JWT を確かめたブロックの中で判定する関数（`knowledge-gpt`）は、判定を通ったあとで `directJwtUserId` に代入します。service role の経路と合流してから判定する関数（`generate-menu-v4` / `v5`・`regenerate-shopping-list-v2`）は、判定のあとの `if (directJwtUserId)` の中で数えます。
+- **キューのテーブルは、利用者から書けません（#1465）。** `weekly_menu_requests`（Vercel Cron の `process-menu-queue` が取り出し、`generate-menu-v5` を service role で呼ぶ）と `meal_image_jobs`（`process-meal-image-jobs` が処理する）は、利用者（authenticated）からは自分の行を読む（SELECT）だけで、INSERT / UPDATE / DELETE はできません（migration `20261011010000_ai_queue_service_role_writes.sql` で、書き込みのポリシーと権限を外しました）。そのため、キューに行を積めるのは、記録を通った API ルート（service role で書く）と、service role で動く関数だけです。取り出す側（cron・`process-meal-image-jobs`）では記録しません。Edge Function がキューに書くときも service role のクライアントを使います（ユーザーの JWT のクライアントでは権限で拒まれます。例: `analyze-meal-photo` が写真で上書きする献立の画像のジョブを取り消すとき）。`tests/ai-usage-contract.test.ts` の `AI_QUEUE_TABLES` が、利用者から書けないことを migration から確かめていて、書き込みのポリシーや権限を足すと落ちます。
+- **Next.js がユーザーの JWT で呼ぶ関数**（写真解析の `analyze-meal-photo` / `analyze-health-photo`、AI 相談のアクション実行が呼ぶ `generate-menu-v4` / `v5`）は、Next.js が `x-hg-ai-usage-recorded` ヘッダー（service role key で署名した印。5 分以内・同じユーザーのときだけ有効）を付けて呼びます。印が合えば、Edge 側では数えずに許可します。印を検証できなければ数える側に倒します（二重に数えるだけで、上限を超えて使えることはありません）。
+- **失敗しても止めません。** DB の関数が失敗しても（エラー・応答が 3 秒を超える・migration が未適用）、`app_logs` に残して許可します（上限が効かないだけで、AI の利用は止まりません）。
+- どの関数が記録するかは、同意の判定と同じ一覧（`tests/helpers/ai-consent-enforced-paths.ts` の `ENFORCED_EDGE` / `EXEMPT_EDGE` の `usage` の列）に書きます。`tests/ai-usage-contract.test.ts` が、数える関数と機能名がこの列と一致すること、ユーザーの JWT を確かめて AI へ送る関数がどれも数えることを検査し、`tests/ai-consent-enforcement-edge.test.ts` が、判定の結果で止める if が AI へ送る呼び出しより前にあることを構文木で検査します。
 
 ### ローカルでのテスト
 

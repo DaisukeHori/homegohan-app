@@ -283,7 +283,8 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
 
     const selectChainDetail = {
       eq: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: recipeRow, error: null }),
+      // #1445: 詳細は .maybeSingle() で読む (0 行を 404 にするため)
+      maybeSingle: vi.fn().mockResolvedValue({ data: recipeRow, error: null }),
     };
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue(selectChainDetail),
@@ -303,11 +304,12 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
     mockRpc.mockResolvedValue({ data: null, error: null });
 
     // #257: view_count 更新は SELECT+UPDATE ではなく単一アトミック RPC
-    // (increment_recipe_view_count) で行われるため、詳細取得の select().eq().single()
+    // (increment_recipe_view_count) で行われるため、詳細取得の select().eq().maybeSingle()
     // は1回だけ呼ばれ、そのまま recipeRow を返す。
     const selectChainDetail = {
       eq: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: recipeRow, error: null }),
+      // #1445: 詳細は .maybeSingle() で読む (0 行を 404 にするため)
+      maybeSingle: vi.fn().mockResolvedValue({ data: recipeRow, error: null }),
     };
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue(selectChainDetail),

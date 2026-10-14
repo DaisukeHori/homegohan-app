@@ -13,10 +13,14 @@ import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from 
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
 import { requireAuth } from "../_shared/auth.ts";
+import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
+import { aiDailyLimitMessage } from "../_shared/ai-daily-limit.ts";
 import { getCorsHeaders, withCors } from "../_shared/cors.ts";
 import { aggregateIngredientOccurrences, InputIngredient } from "../_shared/shopping-list-aggregation.ts";
 import { verifyRequestOwnership } from "../_shared/request-ownership.ts";
 import { replaceActiveShoppingList } from "../_shared/shopping-list-replace.ts";
+import { aiConsentDeniedResponse, checkAiConsent } from "../_shared/ai-consent-guard.ts";
+import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
 
 // CORS ヘッダーは許可したオリジン (ALLOWED_ORIGINS) にだけ、リクエストごとに getCorsHeaders(req) で作る (#1167)。
 // 認証ヘルパー（_shared/auth.ts）が返す Response には CORS ヘッダーが付与されていないため、
@@ -322,11 +326,13 @@ interface ServingsConfig {
   };
 }
 
-// 日付から曜日を取得 (monday, tuesday, ...)
+// 日付 (YYYY-MM-DD の暦日) から曜日を取得 (monday, tuesday, ...)
+// new Date("YYYY-MM-DD") は UTC の 0 時になるので、曜日も UTC で読む (#1433)。
+// getDay() (実行環境のローカル時刻) だと、UTC より西のタイムゾーンでは前日の曜日になる。
 function getDayOfWeek(dateStr: string): string {
   const date = new Date(dateStr);
   const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  return days[date.getDay()];
+  return days[date.getUTCDay()];
 }
 
 // servingsConfigから人数を取得
@@ -601,6 +607,9 @@ Deno.serve(async (req: Request) => {
     const isTrustedInternalCall = serviceRoleKey.length > 0 && accessToken === serviceRoleKey;
 
     let userId: string;
+    // #1177 ユーザー自身の JWT で直接呼ばれたときの利用者 ID (この経路だけ、AI へ送る直前に利用回数を記録する)。
+    // service role (Next.js の POST /api/shopping-list/regenerate) の呼び出しは null のまま (Next.js が記録済み)
+    let directJwtUserId: string | null = null;
 
     if (isTrustedInternalCall) {
       if (!bodyUserId || typeof bodyUserId !== "string") {
@@ -627,6 +636,7 @@ Deno.serve(async (req: Request) => {
         );
       }
       userId = authResult.userId;
+      directJwtUserId = authResult.userId;
     }
 
     if (!requestId || !startDate || !endDate) {
@@ -676,6 +686,28 @@ Deno.serve(async (req: Request) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
+    }
+
+    // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+    // 利用者の JWT で直接呼ばれた場合も、Next.js (src/app/api/shopping-list/regenerate) から呼ばれた場合も、ここで止める。
+    // リクエストの行は失敗にしておく (画面の進み具合の確認が止まったままにならないように)。
+    // result.error は画面がそのまま出すので、コードではなく人向けの文を書く (画面はこの文を見分けて同意画面へ案内する)
+    const aiConsent = await checkAiConsent(supabase, userId);
+    if (!aiConsent.allowed) {
+      await markFailed(supabase, requestId, userId, aiConsentDeniedStoredMessage(aiConsent));
+      return aiConsentDeniedResponse(aiConsent, corsHeaders);
+    }
+
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・所有の確認・同意の判定のあと) に数える
+    // (未同意で止めた呼び出しは数えない)。ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js が数え済みの印があれば数えない。
+    // 判定に失敗したときは止めない)。上限に達していれば、作り直しを始めずにリクエストの行を失敗にして
+    // (result.error は画面がそのまま出す人向けの文)、429 AI_DAILY_LIMIT
+    if (directJwtUserId) {
+      const aiUsage = await consumeEdgeAiUsage(req, directJwtUserId, "shopping_list");
+      if (!aiUsage.allowed) {
+        await markFailed(supabase, requestId, userId, aiDailyLimitMessage(aiUsage.limit));
+        return aiDailyLimitEdgeResponse(aiUsage, corsHeaders);
+      }
     }
 
     // 非同期で処理開始（即座にレスポンス返す。レスポンス後も処理が打ち切られないようwaitUntilに委ねる）

@@ -1,13 +1,21 @@
 import { createHttpClient, type HttpClient, type HttpRequestOptions } from "@homegohan/core";
 
+import { aiDailyLimitErrorOf } from "./ai-daily-limit";
 import { NETWORK_ERROR_MESSAGES } from "./api-error";
+import { MobileConfigError, resolveApiBaseUrl } from "./env";
+import { serviceUnavailableErrorOf } from "./service-unavailable";
 import { supabase } from "./supabase";
 
 let _api: HttpClient | null = null;
 
+/**
+ * Next.js の API (BFF) の基点。未設定・空・空白だけなら、変数名を書いた MobileConfigError
+ * (`[mobile] Missing env: EXPO_PUBLIC_API_BASE_URL`) を投げる。
+ * 無いビルドは、app/_layout.tsx のゲートが設定エラーの画面を出すので、ふつうはここまで来ない (#1434)。
+ */
 export function getApiBaseUrl(): string {
-  const value = process.env.EXPO_PUBLIC_API_BASE_URL;
-  if (!value) throw new Error(`[mobile] Missing env: EXPO_PUBLIC_API_BASE_URL`);
+  const value = resolveApiBaseUrl();
+  if (value === undefined) throw new MobileConfigError(["EXPO_PUBLIC_API_BASE_URL"]);
   return value;
 }
 
@@ -51,6 +59,24 @@ function withRequestPolicy(method: string, path: string, init?: HttpRequestOptio
   return { ...init, timeoutMs: init?.timeoutMs ?? SLOW_API_TIMEOUT_MS, retry: init?.retry ?? false };
 }
 
+/**
+ * サーバーに止められた応答を、生の文字列の Error から固定の文の例外に置き換えて投げ直す
+ * (各画面が e.message をそのまま出しても、生の文字列 (`HTTP 429 Too Many Requests: {...}` など) が出ないように)。
+ *   - 「今日の AI の利用回数の上限に達しました」(429 AI_DAILY_LIMIT。#1149): AiDailyLimitError (src/lib/ai-daily-limit.ts)
+ *   - AI 相談の緊急停止・メンテナンス中 (503 AI_CHAT_DISABLED / MAINTENANCE_MODE。#1457)・同意の状況を読めなかった
+ *     (503 AI_CONSENT_CHECK_FAILED。#1486): ServiceUnavailableError (src/lib/service-unavailable.ts)
+ * ほかのエラーはそのまま投げる。
+ * getApi() を通らない生の fetch には効かない。そちらは失敗の応答から errorOfFailedResponse (src/lib/failed-response.ts。
+ * 同じ 2 つの判定) で Error を作る。
+ */
+export async function withFriendlyErrors<T>(request: Promise<T>): Promise<T> {
+  try {
+    return await request;
+  } catch (error) {
+    throw aiDailyLimitErrorOf(error) ?? serviceUnavailableErrorOf(error) ?? error;
+  }
+}
+
 function createApi(): HttpClient {
   const client = createHttpClient({
     baseUrl: getApiBaseUrl(),
@@ -62,14 +88,16 @@ function createApi(): HttpClient {
     },
   });
   return {
-    get: <T>(path: string, init?: HttpRequestOptions) => client.get<T>(path, withRequestPolicy("GET", path, init)),
+    get: <T>(path: string, init?: HttpRequestOptions) =>
+      withFriendlyErrors(client.get<T>(path, withRequestPolicy("GET", path, init))),
     post: <T>(path: string, body?: unknown, init?: HttpRequestOptions) =>
-      client.post<T>(path, body, withRequestPolicy("POST", path, init)),
+      withFriendlyErrors(client.post<T>(path, body, withRequestPolicy("POST", path, init))),
     put: <T>(path: string, body?: unknown, init?: HttpRequestOptions) =>
-      client.put<T>(path, body, withRequestPolicy("PUT", path, init)),
+      withFriendlyErrors(client.put<T>(path, body, withRequestPolicy("PUT", path, init))),
     patch: <T>(path: string, body?: unknown, init?: HttpRequestOptions) =>
-      client.patch<T>(path, body, withRequestPolicy("PATCH", path, init)),
-    del: <T>(path: string, init?: HttpRequestOptions) => client.del<T>(path, withRequestPolicy("DELETE", path, init)),
+      withFriendlyErrors(client.patch<T>(path, body, withRequestPolicy("PATCH", path, init))),
+    del: <T>(path: string, init?: HttpRequestOptions) =>
+      withFriendlyErrors(client.del<T>(path, withRequestPolicy("DELETE", path, init))),
   };
 }
 

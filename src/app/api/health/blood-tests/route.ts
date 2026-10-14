@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { jstToday } from '@/lib/jst-day-ranges';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { sanitizeBloodTestPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
+import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiDailyLimitSkippedField, consumeAiUsage } from '@/lib/plan/entitlements';
 import { clampIntParam } from '@/lib/http-params';
 
 // 血液検査結果一覧の取得（+ 経年レビュー）
@@ -80,25 +83,37 @@ export async function POST(request: NextRequest) {
     return internalError('POST /api/health/blood-tests', error, { userId: user.id, table: 'blood_test_results' });
   }
 
-  // 個別 AI レビューを生成
+  // 個別レビュー・経年レビューは、数値を外国の AI 事業者に送って作る。同意が無ければ (判定に失敗した場合も)、
+  // 記録の保存だけを行い、レビューは作らない (T15 / #1154)。応答の aiSkipped で画面に知らせる
+  const aiConsent = await checkUserAiConsent(supabase, user.id);
+
+  // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・結果の保存・同意の判定のあと) に、操作 1 回につき 1 回数える
+  // (個別レビューと経年レビューの 2 回 AI を呼ぶが、操作としては 1 回)。同意が無く AI へ送らないときは数えない。
+  // 上限に達していれば、記録の保存だけを行い、レビューは作らない (応答の aiSkipped: AI_DAILY_LIMIT で画面に知らせる)。
+  // 判定に失敗したときは止めない
+  const aiUsage = aiConsent.allowed ? await consumeAiUsage(user.id, 'health_review') : null;
+
   let aiReview = null;
-  try {
-    aiReview = await generateBloodTestReview(data);
-
-    await supabase
-      .from('blood_test_results')
-      .update({ ai_review: aiReview })
-      .eq('id', data.id);
-  } catch (err) {
-    console.error('Blood test AI review generation failed:', err);
-  }
-
-  // 経年レビューを自動更新
   let longitudinalReview = null;
-  try {
-    longitudinalReview = await updateBloodTestLongitudinalReview(supabase, user.id);
-  } catch (err) {
-    console.error('Blood test longitudinal review update failed:', err);
+  if (aiConsent.allowed && aiUsage?.allowed) {
+    // 個別 AI レビューを生成
+    try {
+      aiReview = await generateBloodTestReview(data);
+
+      await supabase
+        .from('blood_test_results')
+        .update({ ai_review: aiReview })
+        .eq('id', data.id);
+    } catch (err) {
+      console.error('Blood test AI review generation failed:', err);
+    }
+
+    // 経年レビューを自動更新
+    try {
+      longitudinalReview = await updateBloodTestLongitudinalReview(supabase, user.id);
+    } catch (err) {
+      console.error('Blood test longitudinal review update failed:', err);
+    }
   }
 
   return NextResponse.json({
@@ -107,6 +122,8 @@ export async function POST(request: NextRequest) {
       ai_review: aiReview,
     },
     longitudinalReview,
+    ...aiConsentSkippedField(aiConsent),
+    ...aiDailyLimitSkippedField(aiUsage),
   });
 }
 
@@ -250,7 +267,8 @@ eGFR: ${r.egfr ?? '-'} mL/min/1.73m²
     .from('blood_test_longitudinal_reviews')
     .upsert({
       user_id: userId,
-      review_date: new Date().toISOString().split('T')[0],
+      // レビューの日付は JST の今日 (#1433)
+      review_date: jstToday(),
       blood_test_ids: bloodTestIds,
       trend_analysis: {
         overallAssessment: reviewData.overallAssessment,

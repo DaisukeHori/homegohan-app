@@ -6,6 +6,11 @@
  *    実際に 429 を返すことを確認する contract テスト
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
+
+// 負荷の高い機械で vitest の既定の時間切れ (テスト 5 秒・フック 10 秒) を超えて落ちたことがあるので、このファイルだけ延ばす
+// (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1488)。テストとフックを定義する前に置く
+applyHeavyUnitTestTimeout();
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -191,6 +196,8 @@ const mockGenerateContent = vi.fn();
 const mockUpload = vi.fn();
 const mockGetPublicUrl = vi.fn();
 
+// 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
+vi.mock('@/lib/ai/consent-guard', () => import('./helpers/ai-consent-guard-allowed'));
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(() => ({
     auth: { getUser: mockGetUser },
@@ -203,6 +210,9 @@ vi.mock('@/lib/supabase/server', () => ({
       })),
     },
   })),
+  // AI のキュー (weekly_menu_requests / meal_image_jobs) へ書く service role のクライアント (getAiQueueWriter。#1465)。
+  // このテストはレート制限の検証が目的なので、利用者のクライアントと同じ表の作り物 (mockFrom) を使う
+  getSupabaseAdmin: vi.fn(() => ({ from: mockFrom })),
 }));
 
 vi.mock('@google/genai', () => ({
@@ -239,8 +249,9 @@ vi.mock('@/lib/meal-image-jobs', () => ({
 
 // consultation/actions/execute の case 'generate_day_menu' 等では使うが、
 // このテストでは update_meal 経路のみを検証するため固定値でモックする
-vi.mock('@/lib/menu-generation-feature-flags', () => ({
-  loadFeatureFlags: vi.fn().mockResolvedValue({ menu_generation_v5_wrapped: false }),
+// (#1148: 機能フラグは feature_flags の isFeatureEnabled。AI 相談の緊急停止スイッチ ai_chat_enabled は ON として答える)
+vi.mock('@/lib/feature-flags', () => ({
+  isFeatureEnabled: vi.fn(async (key: string) => key === 'ai_chat_enabled'),
 }));
 
 // select チェーン（.select().eq().gte().lte().order().limit()...）を汎用的にモックするヘルパー。

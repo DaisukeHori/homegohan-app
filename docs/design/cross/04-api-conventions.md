@@ -97,7 +97,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `AUTH_2FA_REQUIRED` | 2FA 認証が必要 | 401 |
 | `AUTH_2FA_INVALID` | 2FA コードが無効 | 401 |
 | `AUTH_SESSION_REVOKED` | セッション無効化済み | 401 |
-| `AUTH_ACCOUNT_LOCKED` | アカウントロック中 | 403 |
+| `AUTH_ACCOUNT_LOCKED` | **使わない (#1165)**: ログインに続けて失敗してもアカウントはロックしない (01-auth-session.md §8)。欠番。別の意味に再利用しない | - |
 | `AUTH_PROFILE_NOT_FOUND` | user_profiles が見つからない | 403 |
 | `AUTH_IMPERSONATION_DENIED` | **廃止 (#1124)**: impersonate は提供しないため使わない (欠番。別の意味に再利用しない) | - |
 
@@ -428,8 +428,40 @@ docs/api/
 
 全 Webhook エンドポイントは署名検証を **必須** とする。
 
+> **未実装の見本**: `src/lib/webhook/verify.ts` (`requireWebhookSecret` / `verifyStripeWebhook` / `verifyResendWebhook`) は、まだ実装に無い。
+> `STRIPE_WEBHOOK_SECRET` / `RESEND_WEBHOOK_SECRET` も、まだ `src/lib/env.ts` の一覧 (`SERVER_ENV_VARS`) に無い。
+> 一覧に無い名前は `getOptionalEnv(name)` の引数の型 (`OptionalEnvName`) に入らないので、この見本はそのままでは型が通らない。
+> 実装するときに、2 つの変数を一覧に任意の変数として足し (`whenMissing` も書く)、`.env.example` にも書く (src/lib/env.ts の冒頭の「新しい環境変数を足すとき」の手順。
+> `.env.example` には `STRIPE_WEBHOOK_SECRET=` の行だけが既にあり、`RESEND_WEBHOOK_SECRET` の行は無い)。
+
 ```typescript
-// src/lib/webhook/verify.ts
+// src/lib/webhook/verify.ts (未実装。上の注を参照)
+import { getOptionalEnv } from '@/lib/env';
+
+/**
+ * 署名の秘密が無いときに投げる。署名の誤り (呼び出し元は 400) と見分けるため、別の型にする。
+ * 呼び出し元の route は、これを 500 (設定の不足はシステム側の誤り。§4.1 の SYS_) にし、署名の誤りの 400 と分ける
+ * (例: operator/05-stripe-integration.md §4.1)。
+ */
+export class WebhookSecretMissingError extends Error {
+  constructor() {
+    super('Webhook の署名の設定がありません');
+    this.name = 'WebhookSecretMissingError';
+  }
+}
+
+/**
+ * Webhook の署名の秘密を取り出す。`process.env.<変数名>!` とは書かない (#1182・#1434)。
+ * 秘密は src/lib/env.ts の一覧に任意の変数として足し、getOptionalEnv で読む
+ * (STRIPE_WEBHOOK_SECRET / RESEND_WEBHOOK_SECRET は、まだ一覧に無い。上の注を参照)。
+ * 無ければ署名を確かめられないので、受け付けずに失敗させる (fail-closed)。
+ * message に変数名を入れない (500 の本文に出うるため。変数名は getOptionalEnv が警告のログに残す)。
+ */
+function requireWebhookSecret(name: 'STRIPE_WEBHOOK_SECRET' | 'RESEND_WEBHOOK_SECRET'): string {
+  const secret = getOptionalEnv(name);
+  if (!secret) throw new WebhookSecretMissingError();
+  return secret;
+}
 
 export async function verifyStripeWebhook(
   body: string,
@@ -438,7 +470,7 @@ export async function verifyStripeWebhook(
   return stripe.webhooks.constructEventAsync(
     body,
     signature,
-    process.env.STRIPE_WEBHOOK_SECRET!,
+    requireWebhookSecret('STRIPE_WEBHOOK_SECRET'),
   );
 }
 
@@ -447,7 +479,7 @@ export function verifyResendWebhook(
   signature: string,
 ): boolean {
   const expected = crypto
-    .createHmac('sha256', process.env.RESEND_WEBHOOK_SECRET!)
+    .createHmac('sha256', requireWebhookSecret('RESEND_WEBHOOK_SECRET'))
     .update(body)
     .digest('hex');
   return crypto.timingSafeEqual(

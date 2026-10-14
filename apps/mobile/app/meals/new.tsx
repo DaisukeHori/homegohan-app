@@ -12,24 +12,9 @@ import { supabase } from "../../src/lib/supabase";
 import { getApi } from "../../src/lib/api";
 import { MOCK_PHOTO_RESPONSE } from "@homegohan/handson-tour-shared";
 import { registerTourTarget, unregisterTourTarget } from "../../src/handson-tour/useTourOverlayLogic";
-
-// Inlined from lib/meal-image to avoid importing server-side code
-interface MealImageDish { name?: string | null; image_url?: string | null; image_source?: string | null; image_status?: string | null; image_generated_at?: string | null; [key: string]: any; }
-function buildPhotoDishList(dishes: MealImageDish[], imageUrl: string | null): MealImageDish[] {
-  const isSingle = dishes.length <= 1;
-  return dishes.map((dish) => ({
-    ...dish,
-    image_url: isSingle && imageUrl ? imageUrl : null,
-    image_source: "meal_photo",
-    image_status: isSingle ? "ready" : "stale",
-    image_generated_at: new Date().toISOString(),
-  }));
-}
-
-// Inlined from lib/meal-image-jobs
-async function cancelPendingMealImageJobs({ supabase: sb, plannedMealId, reason }: { supabase: any; plannedMealId: string; reason: string }) {
-  await sb.from("meal_image_jobs").update({ status: "cancelled", cancelled_reason: reason }).eq("planned_meal_id", plannedMealId).in("status", ["pending", "processing"]);
-}
+import { handleAiConsentRequiredError, useLeaveModalRouteBeforeConsentScreen } from "../../src/lib/ai-consent";
+import { classifyPhotoFailureOf } from "../../src/lib/classify-photo-failure";
+import { buildPhotoDishList, catalogDishImageFields } from "../../src/lib/meal-dish-images";
 
 // ─── Catalog types ───────────────────────────────────
 interface CatalogProductSummary {
@@ -194,12 +179,24 @@ export default function MealNewPage() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ source?: string; sandbox?: string }>();
   const isSandboxMode = params.source === "handson_tour" && params.sandbox === "true";
+  // この画面はルートの Stack で presentation: "modal" として開く (app/_layout.tsx)。iOS では、ここから push した同意画面が
+  // この画面の下に隠れるので、「同意が必要です」の案内の「同意画面を開く」を押したら、この画面を閉じてから移る (T15 / #1154)
+  const leaveBeforeConsentScreen = useLeaveModalRouteBeforeConsentScreen();
 
   // Sandbox Tour Spotlight target refs
   const cameraButtonRef = useRef<View>(null);
   const resultDishNameRef = useRef<View>(null);
   const resultCaloriesRef = useRef<View>(null);
   const saveButtonRef = useRef<View>(null);
+  // #1149 写真の「オート」の判別 (classify-photo) が数えたあとに返す「数え済みの印」。続く解析 (analyze-*) の本文に 1 回だけ付けて送り、
+  // 解析を数えないようにする (1 回の操作を 1 回)。判別できずに種類を手で選んだときも、その判別の続きとして使う。
+  // 新しい操作 (analyzeByMode) の始めに捨てる。印はサーバーで 1 回しか使えず、期限もある (偽の印や古い印はサーバーが数える)
+  const aiUsageGrantRef = useRef<string | null>(null);
+  const takeAiUsageGrant = (): string | undefined => {
+    const grant = aiUsageGrantRef.current;
+    aiUsageGrantRef.current = null;
+    return grant ?? undefined;
+  };
 
   // Tour target 登録 (sandbox モード時のみ)
   useEffect(() => {
@@ -374,7 +371,7 @@ export default function MealNewPage() {
     setStep("analyzing"); setIsAnalyzing(true);
     try {
       const api = getApi();
-      const data = await api.post<any>("/api/ai/analyze-meal-photo", { images: images(), mealType: selectedMealType, prefetchedGeminiResult: mealAnalysis });
+      const data = await api.post<any>("/api/ai/analyze-meal-photo", { images: images(), mealType: selectedMealType, prefetchedGeminiResult: mealAnalysis, aiUsageGrant: takeAiUsageGrant() });
       setAnalyzedDishes(data.dishes || []);
       setTotalCalories(data.totalCalories || 0); setTotalProtein(data.totalProtein || 0);
       setTotalCarbs(data.totalCarbs || 0); setTotalFat(data.totalFat || 0);
@@ -384,6 +381,9 @@ export default function MealNewPage() {
       setNutrition(data.nutrition || {});
       setStep("result");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す。
+      // 案内の「同意画面を開く」では、この画面 (modal) を閉じてから移る (閉じないと同意画面がこの画面の下に隠れる)
+      if (handleAiConsentRequiredError(e, { beforeOpenConsentScreen: leaveBeforeConsentScreen })) { setStep("capture"); return; }
       Alert.alert("解析失敗", e?.message ?? "解析に失敗しました。"); setStep("capture");
     } finally { setIsAnalyzing(false); }
   }
@@ -392,11 +392,14 @@ export default function MealNewPage() {
     setStep("analyzing"); setIsAnalyzing(true);
     try {
       const api = getApi();
-      const data = await api.post<any>("/api/ai/analyze-fridge", { images: images() });
+      const data = await api.post<any>("/api/ai/analyze-fridge", { images: images(), aiUsageGrant: takeAiUsageGrant() });
       setFridgeIngredients(data.detailedIngredients || []);
       setFridgeSummary(data.summary || ""); setFridgeSuggestions(data.suggestions || []);
       setStep("fridge-result");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す。
+      // 案内の「同意画面を開く」では、この画面 (modal) を閉じてから移る (閉じないと同意画面がこの画面の下に隠れる)
+      if (handleAiConsentRequiredError(e, { beforeOpenConsentScreen: leaveBeforeConsentScreen })) { setStep("capture"); return; }
       Alert.alert("解析失敗", e?.message ?? "冷蔵庫の解析に失敗しました。"); setStep("capture");
     } finally { setIsAnalyzing(false); }
   }
@@ -406,11 +409,14 @@ export default function MealNewPage() {
     setStep("analyzing"); setIsAnalyzing(true);
     try {
       const api = getApi();
-      const data = await api.post<any>("/api/ai/analyze-health-checkup", { imageBase64: photos[0].base64, mimeType: photos[0].mimeType });
+      const data = await api.post<any>("/api/ai/analyze-health-checkup", { imageBase64: photos[0].base64, mimeType: photos[0].mimeType, aiUsageGrant: takeAiUsageGrant() });
       setHealthData(data.extractedData || {}); setHealthConfidence(data.confidence || 0);
       setHealthNotes(data.notes || ""); setHealthModelUsed(data.modelUsed || "");
       setStep("health-result");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す。
+      // 案内の「同意画面を開く」では、この画面 (modal) を閉じてから移る (閉じないと同意画面がこの画面の下に隠れる)
+      if (handleAiConsentRequiredError(e, { beforeOpenConsentScreen: leaveBeforeConsentScreen })) { setStep("capture"); return; }
       Alert.alert("解析失敗", e?.message ?? "健康診断結果の解析に失敗しました。"); setStep("capture");
     } finally { setIsAnalyzing(false); }
   }
@@ -420,7 +426,7 @@ export default function MealNewPage() {
     setStep("analyzing"); setIsAnalyzing(true);
     try {
       const api = getApi();
-      const data = await api.post<any>("/api/ai/analyze-weight-scale", { image: photos[0].base64, mimeType: photos[0].mimeType });
+      const data = await api.post<any>("/api/ai/analyze-weight-scale", { image: photos[0].base64, mimeType: photos[0].mimeType, aiUsageGrant: takeAiUsageGrant() });
       setWeightData(data);
       // Fetch history for comparison
       try {
@@ -429,6 +435,9 @@ export default function MealNewPage() {
       } catch { /* ignore */ }
       setStep("weight-result");
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す。
+      // 案内の「同意画面を開く」では、この画面 (modal) を閉じてから移る (閉じないと同意画面がこの画面の下に隠れる)
+      if (handleAiConsentRequiredError(e, { beforeOpenConsentScreen: leaveBeforeConsentScreen })) { setStep("capture"); return; }
       Alert.alert("解析失敗", e?.message ?? "体重計の読み取りに失敗しました。"); setStep("capture");
     } finally { setIsAnalyzing(false); }
   }
@@ -444,6 +453,8 @@ export default function MealNewPage() {
 
   async function analyzeByMode() {
     if (photos.length === 0) return;
+    // 新しい操作: 前の判別の印は使わない (この操作の判別が数えたら、新しい印が入る)
+    aiUsageGrantRef.current = null;
 
     if (photoMode === "auto") {
       setStep("analyzing"); setIsAnalyzing(true);
@@ -453,6 +464,7 @@ export default function MealNewPage() {
           images: images(), includeMealAnalysis: true, mealType: selectedMealType,
         });
         setIsAnalyzing(false);
+        aiUsageGrantRef.current = typeof data.aiUsageGrant === "string" ? data.aiUsageGrant : null;
         setDetectedType(data.type); setDetectedConfidence(data.confidence);
         setClassificationCandidates(Array.isArray(data.candidates) ? data.candidates : []);
 
@@ -462,6 +474,19 @@ export default function MealNewPage() {
         await analyzeResolvedMode(resolvedType, data.mealAnalysis);
       } catch (e: any) {
         setIsAnalyzing(false);
+        // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、エラーは出さずに撮影の画面へ戻す。
+        // 案内の「同意画面を開く」では、この画面 (modal) を閉じてから移る (閉じないと同意画面がこの画面の下に隠れる)
+        if (handleAiConsentRequiredError(e, { beforeOpenConsentScreen: leaveBeforeConsentScreen })) { setStep("capture"); return; }
+        // 判別できなかった (422): 判別は数え済みなので、本文の数え済みの印を拾い、種類を手で選ぶ画面へ進む
+        // (選んだ解析に印を入れて、2 回目として数えない。Web の classifyPhoto と同じ。#1487)
+        const failure = classifyPhotoFailureOf(e);
+        if (failure) {
+          aiUsageGrantRef.current = failure.aiUsageGrant;
+          setDetectedType(failure.type); setDetectedConfidence(failure.confidence);
+          setClassificationCandidates(failure.candidates);
+          setStep("classify-failed");
+          return;
+        }
         Alert.alert("判別失敗", e?.message ?? "写真の判別に失敗しました。"); setStep("capture");
       }
     } else {
@@ -564,12 +589,16 @@ export default function MealNewPage() {
       const fat = parseFloat(manualFat) || null;
       const carbs = parseFloat(manualCarbs) || null;
 
+      // 商品を選んだときは、料理の画像を商品の画像にする (#1487。image_source: "catalog" の料理は、サーバーで保存し直しても
+      // AI の画像で置き換えない)
+      const catalogImageUrl = selectedCatalogProduct?.imageUrl ?? null;
       const dish = {
         name, role: "main",
         calories_kcal: cal, protein_g: protein, fat_g: fat, carbs_g: carbs,
         sodium_g: selectedCatalogProduct?.sodiumG ?? null,
         fiber_g: selectedCatalogProduct?.fiberG ?? null,
         sugar_g: selectedCatalogProduct?.sugarG ?? null,
+        ...(selectedCatalogProduct ? catalogDishImageFields(catalogImageUrl) : {}),
       };
 
       const { data: newMeal, error: mealError } = await supabase
@@ -584,6 +613,7 @@ export default function MealNewPage() {
           sugar_g: selectedCatalogProduct?.sugarG ?? null,
           catalog_product_id: selectedCatalogProduct?.id ?? null,
           source_type: selectedCatalogProduct ? "catalog_product" : "manual",
+          ...(selectedCatalogProduct ? { image_url: catalogImageUrl } : {}),
           is_completed: false, dishes: [dish], is_simple: true,
         }).select("id").single();
 
@@ -610,12 +640,8 @@ export default function MealNewPage() {
         dailyMealId = newDay.id;
       }
 
-      const { data: existingMeals, error: existingMealsError } = await supabase.from("planned_meals").select("id").eq("daily_meal_id", dailyMealId).eq("meal_type", selectedMealType);
-      if (existingMealsError) throw existingMealsError;
-
-      if (Array.isArray(existingMeals) && existingMeals.length > 0) {
-        await Promise.all(existingMeals.map((meal) => cancelPendingMealImageJobs({ supabase, plannedMealId: meal.id, reason: "photo overwrite" }).catch(() => {})));
-      }
+      // 上書きする献立の画像のジョブ (meal_image_jobs) は、端末から書かない (#1465。利用者から書けない表)。
+      // 献立を消すと、外部キー (ON DELETE CASCADE) でジョブの行も消える
       await supabase.from("planned_meals").delete().eq("daily_meal_id", dailyMealId).eq("meal_type", selectedMealType);
 
       const baseDishPayloads = (analyzedDishes ?? []).map((d) => ({

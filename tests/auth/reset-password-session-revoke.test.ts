@@ -10,6 +10,10 @@
  *   - 更新に成功したら、端末のユーザー別データを消し (CLAUDE.md: signOut より前)、
  *     signOut({ scope: 'global' }) で全セッションを失効させ、他タブへ SIGNED_OUT を知らせてから成功画面を出す。
  *
+ * #1165: ログインに続けて失敗しても、アカウントはロックしない (docs/operations/auth-protection.md §1)。
+ *   外すロックが無いので、再設定の画面はロックを外す API (以前の POST /api/auth/login-lock/clear) を呼ばない。
+ *   fetch を見張り、どの API も呼ばないことを確かめる。
+ *
  * カバレッジ:
  *   1. 成功: updateUser → clearUserScopedLocalStorage → signOut({ scope: 'global' }) → broadcastSignOut の順。
  *      成功画面を出し、3 秒後に /login へ。signOut の後でないと /login へ行かない
@@ -36,6 +40,7 @@ const mocks = vi.hoisted(() => ({
   push: vi.fn(),
   clearUserScopedLocalStorage: vi.fn(),
   broadcastSignOut: vi.fn(),
+  fetch: vi.fn(),
 }));
 
 vi.mock('@/lib/supabase/client', () => ({
@@ -153,6 +158,11 @@ beforeEach(() => {
   mocks.broadcastSignOut.mockImplementation(() => {
     mocks.calls.push('broadcastSignOut');
   });
+  mocks.fetch.mockImplementation(async (url: string, init?: RequestInit) => {
+    mocks.calls.push(`fetch:${String(init?.method)} ${url}`);
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  });
+  vi.stubGlobal('fetch', mocks.fetch);
 
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -165,6 +175,7 @@ afterEach(async () => {
   });
   container.remove();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -185,12 +196,21 @@ describe('#1188 パスワード再設定の成功時', () => {
     expect(mocks.signOut).toHaveBeenCalledWith({ scope: 'global' });
 
     // CLAUDE.md: signOut より前にストレージを消す。他タブへの通知は signOut の後
+    // #1165: ロックは無いので、ロックを外す API は呼ばない (fetch の呼び出しが calls に入らない)
     expect(mocks.calls).toEqual([
       'updateUser',
       'clearUserScopedLocalStorage',
       'signOut:global',
       'broadcastSignOut',
     ]);
+  });
+
+  it('#1165 ロックが無いので、再設定を済ませてもロックを外す API (/api/auth/login-lock/clear) を呼ばない', async () => {
+    await renderPage();
+    await fillAndSubmit(NEW_PASSWORD, NEW_PASSWORD);
+    expect(text()).toContain('パスワードを更新しました');
+    expect(mocks.signOut).toHaveBeenCalledWith({ scope: 'global' });
+    expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
   it('成功画面に、全端末からログアウトしたことと新しいパスワードで入り直すことを出す (注意書きは出さない)', async () => {
@@ -247,7 +267,9 @@ describe('#1188 パスワードを更新できなかったとき', () => {
     expect(mocks.signOut).not.toHaveBeenCalled();
     expect(mocks.clearUserScopedLocalStorage).not.toHaveBeenCalled();
     expect(mocks.broadcastSignOut).not.toHaveBeenCalled();
+    // どの API も呼ばない (#1165: ロックを外す API は無い)
     expect(mocks.calls).toEqual(['updateUser']);
+    expect(mocks.fetch).not.toHaveBeenCalled();
 
     expect(text()).toContain('New password should be different from the old password.');
     expect(text()).not.toContain('パスワードを更新しました');

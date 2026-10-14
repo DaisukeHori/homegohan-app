@@ -10,6 +10,7 @@
  * - 「全部作り直す」→ buildAllFutureSlots()
  */
 
+import { addDaysToDate, isCalendarDate, MENU_GENERATION_RANGE_MAX_DAYS, menuGenerationRangeEndMax } from '@homegohan/shared';
 import type { TargetSlot, MealType, PlannedMeal } from '@/types/domain';
 
 // 日付ベースモデル対応: MealPlanDay と DailyMeal の両方と互換性のある最小インターフェース
@@ -21,10 +22,8 @@ export interface MealDay {
 // 基本の食事タイプ（V4.0ではこの3つを主要対象）
 export const BASE_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner'];
 
-// 日付を YYYY-MM-DD 形式で返す
-function formatDate(date: Date): string {
-  return date.toISOString().split('T')[0];
-}
+/** 1 回の生成の slot の上限 (期間の上限 MENU_GENERATION_RANGE_MAX_DAYS 日 × 朝・昼・夕 = 93。サーバーの上限と同じ) */
+const MAX_TARGET_SLOTS = MENU_GENERATION_RANGE_MAX_DAYS * BASE_MEAL_TYPES.length;
 
 // 今日の日付文字列
 function getTodayStr(): string {
@@ -32,25 +31,34 @@ function getTodayStr(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
-// 日付を加算
+// 暦日 (YYYY-MM-DD) を加算する。暦の計算だけで行い、実行環境のタイムゾーンに左右されない (#1433。
+// 以前の new Date(dateStr) + setDate (ローカル時刻) + toISOString (UTC) は、端末のタイムゾーンや夏時間で結果が変わった)
 function addDays(dateStr: string, days: number): string {
-  const date = new Date(dateStr);
-  date.setDate(date.getDate() + days);
-  return formatDate(date);
+  return addDaysToDate(dateStr, days);
 }
 
-// 日付範囲を生成
+// 日付範囲を生成 (開始日から終了日まで。どちらの日も含む。YYYY-MM-DD は文字列の大小が日付の前後と一致する)
 function generateDateRange(startDate: string, endDate: string): string[] {
   const dates: string[] = [];
-  let current = new Date(startDate);
-  const end = new Date(endDate);
-  
-  while (current <= end) {
-    dates.push(formatDate(current));
-    current.setDate(current.getDate() + 1);
+  // 日付の入力が空・不正なときは、以前 (Invalid Date の比較は常に false) と同じく 0 日にする
+  if (!isCalendarDate(startDate) || !isCalendarDate(endDate)) return dates;
+  for (let current = startDate; current <= endDate; current = addDaysToDate(current, 1)) {
+    dates.push(current);
   }
-  
   return dates;
+}
+
+/**
+ * 期間 (開始日〜終了日。両端を含む) が MENU_GENERATION_RANGE_MAX_DAYS 日 (最大31日) を超えたら投げる。
+ * 画面 (Web・モバイル) とサーバー (POST /api/ai/menu/v4/generate・/v5/generate) と同じ上限 (#1482)。
+ * 以前は日数の差 (終了日 - 開始日) が 31 を超えたら投げていたので、32 日 (開始日 + 31 日) まで通り、サーバーの上限と 1 日ずれていた。
+ * 日付が空・不正なとき・終了日が開始日より前のときは投げない (generateDateRange が 0 日にする。以前と同じ)
+ */
+function assertWithinMenuGenerationRange(startDate: string, endDate: string): void {
+  const endMax = menuGenerationRangeEndMax(startDate);
+  if (endMax !== undefined && isCalendarDate(endDate) && endDate > endMax) {
+    throw new Error(`期間は最大${MENU_GENERATION_RANGE_MAX_DAYS}日までです`);
+  }
 }
 
 export interface SlotBuilderParams {
@@ -170,11 +178,7 @@ export function buildRangeSlots(params: SlotBuilderParams & {
     includeExisting = false,
   } = params;
 
-  // 最大31日チェック
-  const daysDiff = Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24));
-  if (daysDiff > 31) {
-    throw new Error('期間は最大31日までです');
-  }
+  assertWithinMenuGenerationRange(startDate, endDate);
 
   const dates = generateDateRange(startDate, endDate);
   const slots: TargetSlot[] = [];
@@ -218,11 +222,7 @@ export function buildAllFutureSlots(params: SlotBuilderParams & {
     endDate,
   } = params;
 
-  // 最大31日チェック
-  const daysDiff = Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24));
-  if (daysDiff > 31) {
-    throw new Error('期間は最大31日までです');
-  }
+  assertWithinMenuGenerationRange(startDate, endDate);
 
   const dates = generateDateRange(startDate, endDate);
   const slots: TargetSlot[] = [];
@@ -301,8 +301,8 @@ export function validateSlotCount(slots: TargetSlot[]): { valid: boolean; messag
     return { valid: false, message: '生成対象のスロットがありません' };
   }
   
-  if (slots.length > 93) {
-    return { valid: false, message: `スロット数が上限を超えています（${slots.length}/93）` };
+  if (slots.length > MAX_TARGET_SLOTS) {
+    return { valid: false, message: `スロット数が上限を超えています（${slots.length}/${MAX_TARGET_SLOTS}）` };
   }
   
   return { valid: true };

@@ -18,6 +18,7 @@ import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
 import { login, E2E_USER } from "../fixtures/auth";
+import { waitForLoginFormReady } from "../helpers/login-form";
 
 // ────────────────────────────────────────────────────────
 // 設定
@@ -538,7 +539,7 @@ test.describe("G3: 入力境界・特殊文字", () => {
   test("3-4: 超長 email / 超長 password をログインフォームに入力 → クラッシュなし", async ({ page }) => {
     const m = attachMonitors(page);
     await page.goto("/login");
-    await page.waitForLoadState("networkidle");
+    await waitForLoginFormReady(page);
 
     const LONG_EMAIL = "a".repeat(250) + "@example.com"; // 263 文字
     const LONG_PASS = "A1!".repeat(334); // 1002 文字

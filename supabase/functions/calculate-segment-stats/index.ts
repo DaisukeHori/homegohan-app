@@ -2,7 +2,14 @@ import { createClient } from "@supabase/supabase-js";
 import { requireServiceRole } from '../_shared/auth.ts';
 import { chunkArray, embeddedOne, fetchAllRows, throwIfError } from '../_shared/bulk-query.ts';
 import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
-import { calculateJstPeriod, formatJstDate, jstDayRangeToTimestamps } from '../_shared/jst-date.ts';
+import {
+  JST_CALENDAR_PERIOD_TYPES,
+  calculateJstPeriod,
+  calculateJstPreviousPeriod,
+  formatJstDate,
+  isJstCalendarPeriodType,
+  jstDayRangeToTimestamps,
+} from '../_shared/jst-date.ts';
 
 const supabaseAdmin = createClient(
   Deno.env.get('SUPABASE_URL') ?? '',
@@ -11,6 +18,18 @@ const supabaseAdmin = createClient(
 
 // 1 回の upsert に載せる行数の上限 (リクエストのサイズを抑える)
 const UPSERT_CHUNK = 200;
+
+// 指標 total_meals (全期間の食事の記録の件数) のコード。有効な指標にこれがあるときだけ、件数を数える (#1491)
+const TOTAL_MEALS_METRIC_CODE = 'total_meals';
+// 利用者ごとの meals の件数を DB の中で数える関数 (supabase/migrations/20261011060000_count_meals_per_user.sql。
+// お試しの記録を数えないのは 20261011120000_segment_stats_finalize_retry.sql #1500、
+// 運営が隠した行も数えないのは 20261011130000_count_meals_per_user_exclude_hidden.sql #1445)。
+// meals の全行を読んで数えると、記録の件数だけ 1000 行ずつ往復する。これは記録のある利用者 1 人につき 1 行を返す
+const COUNT_MEALS_PER_USER_RPC = 'count_meals_per_user';
+// 確定の回 (previousPeriod: true) をやり終えた期間の記録 (supabase/migrations/20261011120000_segment_stats_finalize_retry.sql。#1500)。
+// 確定の回は JST 0:05 のほかに、失敗に備えて 0:20・0:35 にも同じ本文で呼ばれる (pg_cron のジョブ
+// calculate-segment-stats-finalize-retry)。ここに行がある期間は、2 回目以降の呼び出しでは何も読まず何も書かない
+const FINALIZED_PERIODS_TABLE = 'segment_stats_finalized_periods';
 
 /**
  * 指標の向き。metric_definitions.higher_is_better の DB 既定値は true なので、
@@ -47,9 +66,57 @@ Deno.serve(async (req) => {
   const logger = createLogger('calculate-segment-stats', requestId);
 
   try {
-    const { periodType = 'weekly', forceRecalc = false } = await req.json().catch(() => ({}));
+    const { periodType = 'weekly', forceRecalc = false, previousPeriod = false } = await req.json().catch(() => ({}));
 
-    logger.info(`Starting segment stats calculation for period: ${periodType}`);
+    // previousPeriod: true は、今の期間ではなく 1 つ前の期間を集計し直す (#1406)。
+    // 1 時間ごとの定期実行 (public.invoke_calculate_segment_stats) が、期間が切り替わった直後の回にだけ付ける。
+    // 期間の最後の 1 時間の記録を、その期間の最終の値に入れるため。それより前の期間は指定できない (埋め戻しはしない)。
+    // バッジを判定するのも、この回だけ (下の 7。#1491)
+    if (typeof previousPeriod !== 'boolean') {
+      return new Response(JSON.stringify({ error: 'previousPeriod must be a boolean' }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 400,
+      });
+    }
+    if (previousPeriod && !isJstCalendarPeriodType(periodType)) {
+      return new Response(
+        JSON.stringify({ error: `previousPeriod is only supported for ${JST_CALENDAR_PERIOD_TYPES.join(' / ')}` }),
+        { headers: { 'Content-Type': 'application/json' }, status: 400 },
+      );
+    }
+
+    logger.info(`Starting segment stats calculation for period: ${periodType}${previousPeriod ? " (previous period)" : ""}`);
+
+    // 期間を計算 (JST の暦。Deno の実行環境は UTC なので、new Date() のローカル時刻では求めない #1211)
+    // previousPeriod のときは、今の期間の 1 つ前 (#1406)
+    const { periodStart, periodEnd } = previousPeriod
+      ? calculateJstPreviousPeriod(periodType)
+      : calculateJstPeriod(periodType);
+    logger.info(`Period (JST): ${periodStart} to ${periodEnd}`);
+
+    // 確定の回は、同じ期間についてすでにやり終えていたら、何も読まず何も書かずに終える (#1500)。
+    // JST 0:05 の回が失敗したときのために、0:20・0:35 にも同じ本文で呼ばれる (再試行)。0:05 の回が成功していたら、
+    // 再試行は集計し直さない (期間が終わったあとに足された記録で、確定した値・バッジを変えない)。
+    // バッジ (user_badges) は ignoreDuplicates なので、やり直しても同じバッジが 2 つ付くことは無い
+    if (previousPeriod) {
+      const finalizedAt = await findFinalizedAt(periodType, periodStart);
+      if (finalizedAt !== null) {
+        logger.info(`Already finalized at ${finalizedAt}: nothing to do`);
+        return new Response(JSON.stringify({
+          success: true,
+          alreadyFinalized: true,
+          finalizedAt,
+          periodType,
+          previousPeriod,
+          badgesJudged: false,
+          periodStart,
+          periodEnd,
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+    }
 
     // 1. メトリクス定義を取得
     const { data: metrics, error: metricsError } = await supabaseAdmin
@@ -67,9 +134,7 @@ Deno.serve(async (req) => {
     
     throwIfError('segment_definitions の取得', segmentsError);
 
-    // 3. 期間を計算 (JST の暦。Deno の実行環境は UTC なので、new Date() のローカル時刻では求めない #1211)
-    const { periodStart, periodEnd } = calculateJstPeriod(periodType);
-    logger.info(`Period (JST): ${periodStart} to ${periodEnd}`);
+    // 3. 期間は上で計算済み (確定の回をやり終えたかを見るのに要るため、最初に求める)
 
     // 4. 全ユーザーのメトリクスを計算
     const userMetricsMap = await calculateAllUserMetrics(metrics!, periodType, periodStart, periodEnd);
@@ -83,14 +148,31 @@ Deno.serve(async (req) => {
     // 6. ユーザーのランキングを計算
     await calculateUserRankings(segments!, metrics!, userMetricsMap, periodType, periodStart);
 
-    // 7. バッジを付与
-    await awardSegmentBadges(periodType, periodStart, userMetricsMap);
+    // 7. バッジを付与する。確定した期間を集計する回 (previousPeriod: true) だけ (#1491)
+    //    user_badges は一度付いたら消えない (下の awardSegmentBadges の説明)。一方、今の期間を集計する回 (毎時の定期実行と
+    //    手動実行) の値は、期間の途中の暫定の値で、期間の終わりまでに順位も平均との差も変わる
+    //    (例: 月曜 0:05 の weekly は、まだ誰も記録していない中で 1 食だけ記録した人が 1 位になる)。
+    //    そのため今の期間の回は、指標・統計・ランキングの更新だけにして、バッジは判定しない。
+    //    期間が切り替わった直後の回 (JST 0 時台) が previousPeriod: true で直前の期間を集計し直すので、
+    //    バッジは期間ごとに 1 回、最後まで記録が入った値で判定される。順位・百分位・平均比・改善のすべてのバッジに同じ扱いを当てる。
+    //    all_time は「直前の期間」が無い (previousPeriod を受け付けない) ので、バッジは付かない
+    const badgesJudged = previousPeriod;
+    if (badgesJudged) {
+      await awardSegmentBadges(periodType, periodStart, userMetricsMap);
+      // 8. 確定の回をやり終えたことを記録する (#1500)。ここまでのどこかで失敗したら記録しないので、次の再試行がやり直す
+      await recordFinalized(periodType, periodStart, periodEnd);
+    } else {
+      logger.info('Badges are not judged: the current period is still in progress (only a finalized previous period is judged)');
+    }
 
-    return new Response(JSON.stringify({ 
-      success: true, 
+    return new Response(JSON.stringify({
+      success: true,
+      alreadyFinalized: false,
       processedUsers: userMetricsMap.size,
       processedSegments: segments!.length,
       periodType,
+      previousPeriod,
+      badgesJudged,
       periodStart,
       periodEnd
     }), {
@@ -106,6 +188,37 @@ Deno.serve(async (req) => {
     });
   }
 });
+
+// =====================================================
+// 確定の回をやり終えた期間の記録 (#1500)
+// =====================================================
+
+/** 確定の回をやり終えた時刻 (期間の種類と開始日で引く)。まだなら null */
+async function findFinalizedAt(periodType: string, periodStart: string): Promise<string | null> {
+  const { data, error } = await supabaseAdmin
+    .from(FINALIZED_PERIODS_TABLE)
+    .select('finalized_at')
+    .eq('period_type', periodType)
+    .eq('period_start', periodStart)
+    .maybeSingle();
+  throwIfError(`${FINALIZED_PERIODS_TABLE} の取得`, error);
+  const finalizedAt = (data as { finalized_at?: unknown } | null)?.finalized_at;
+  return typeof finalizedAt === 'string' ? finalizedAt : null;
+}
+
+/**
+ * 確定の回をやり終えたことを記録する。同じ期間の行がすでにあれば何もしない (ignoreDuplicates。最初にやり終えた時刻を残す)。
+ * 記録に失敗したら例外にする (500)。記録できなくても、次の再試行が集計し直すだけで、バッジは増えない
+ */
+async function recordFinalized(periodType: string, periodStart: string, periodEnd: string): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from(FINALIZED_PERIODS_TABLE)
+    .upsert(
+      { period_type: periodType, period_start: periodStart, period_end: periodEnd, finalized_at: new Date().toISOString() },
+      { onConflict: 'period_type,period_start', ignoreDuplicates: true },
+    );
+  throwIfError(`${FINALIZED_PERIODS_TABLE} の保存`, error);
+}
 
 // =====================================================
 // ユーザーメトリクス計算
@@ -152,12 +265,43 @@ interface PlannedMealRow {
   user_daily_meals: DailyMealRef | DailyMealRef[] | null;
 }
 
-async function fetchBulkData(periodStart: string, periodEnd: string): Promise<BulkData> {
+// count_meals_per_user の 1 行。meal_count は bigint なので、数値で来ても文字列で来ても読めるようにする (toNumber)
+interface MealCountRow {
+  user_id: string;
+  meal_count: number | string | null;
+}
+
+/**
+ * 利用者ごとの meals の件数 (指標 total_meals)。DB の関数 count_meals_per_user で数える (#1491)。
+ * ハンズオンのお試しの記録 (is_sandbox = true) は、関数の側で数えない (migration 20261011120000。#1500)。
+ * 運営が隠した食事 (hidden_at が入った行) も、関数の側で数えない (migration 20261011130000。#1445)。
+ * 以前は meals の全行 (user_id) を読んで、ここで数えていた。返る行は記録のある利用者 1 人につき 1 行で、
+ * 1000 行を超えるときは fetchAllRows が user_id の順でページ送りする (user_id は 1 人 1 行なので並びが一意に決まる)
+ */
+async function fetchTotalMeals(): Promise<Map<string, number>> {
+  const rows = await fetchAllRows<MealCountRow>(
+    `meals の利用者ごとの件数 (${COUNT_MEALS_PER_USER_RPC}) の取得`,
+    () => supabaseAdmin.rpc(COUNT_MEALS_PER_USER_RPC),
+    { orderColumn: 'user_id' },
+  );
+  const totalMeals = new Map<string, number>();
+  for (const row of rows) {
+    const count = toNumber(row.meal_count);
+    if (!row.user_id || count === null) continue;
+    totalMeals.set(row.user_id, count);
+  }
+  return totalMeals;
+}
+
+/**
+ * metricCodes: 有効な指標のコード。total_meals が無ければ、その件数は数えない (数えても使われないため)
+ */
+async function fetchBulkData(periodStart: string, periodEnd: string, metricCodes: ReadonlySet<string>): Promise<BulkData> {
   const startDate = new Date(periodStart);
   const endDate = new Date(periodEnd);
   const periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
-  // 5 クエリを並列実行（ユーザー数×メトリクス数の N+1 を解消）
+  // 4 クエリ (と、total_meals が有効なら利用者ごとの件数) を並列実行（ユーザー数×メトリクス数の N+1 を解消）
   // どのクエリも、失敗したら例外にする (失敗を「行が無い」と取り違えて、0 の指標を保存しないため)。
   // また API は 1 回の応答を 1000 行で打ち切るので、fetchAllRows で全件を取る。
   //
@@ -169,7 +313,7 @@ async function fetchBulkData(periodStart: string, periodEnd: string): Promise<Bu
   //     日別の数え方 (下の mealDaySetByUser) も JST の暦日。
   //     日付の文字列をそのまま渡すと DB のタイムゾーン (UTC) の 0 時になり、JST と 9 時間ずれる
   const mealsRange = jstDayRangeToTimestamps(periodStart, periodEnd);
-  const [mealStreakRows, breakfastStreakRows, mealRows, plannedRows, totalMealRows] =
+  const [mealStreakRows, breakfastStreakRows, mealRows, plannedRows, totalMeals] =
     await Promise.all([
       fetchAllRows<{ user_id: string; current_streak: number | null }>('health_streaks (meal_record) の取得', () =>
         supabaseAdmin.from('health_streaks').select('user_id, current_streak').eq('streak_type', 'meal_record'),
@@ -177,8 +321,18 @@ async function fetchBulkData(periodStart: string, periodEnd: string): Promise<Bu
       fetchAllRows<{ user_id: string; current_streak: number | null }>('health_streaks (breakfast) の取得', () =>
         supabaseAdmin.from('health_streaks').select('user_id, current_streak').eq('streak_type', 'breakfast'),
       ),
+      // ハンズオン (チュートリアル) のお試しの記録 (meals.is_sandbox = true) は実際の食事ではないので数えない
+      // (planned_meals・count_meals_per_user・GET /api/badges と同じ扱い。#1500)
+      // 運営が隠した食事 (hidden_at が入った行。#1101) も、比較ランキングの集計に数えない (#1445)。
+      // service role は RLS を通らないので、ここで絞る (count_meals_per_user も同じく除く。migration 20261011130000)
       fetchAllRows<{ user_id: string; eaten_at: string }>('meals (期間内) の取得', () =>
-        supabaseAdmin.from('meals').select('user_id, eaten_at').gte('eaten_at', mealsRange.from).lt('eaten_at', mealsRange.before),
+        supabaseAdmin
+          .from('meals')
+          .select('user_id, eaten_at')
+          .eq('is_sandbox', false)
+          .is('hidden_at', null)
+          .gte('eaten_at', mealsRange.from)
+          .lt('eaten_at', mealsRange.before),
       ),
       // planned_meals に user_id / 日付の列は無い。所有者と日付は daily_meal_id でつながる user_daily_meals (user_id, day_date) にある
       // (以前の meal_plan_days / meal_plans は date-based model への移行で削除済み。本番にも無い #1306)。
@@ -191,7 +345,8 @@ async function fetchBulkData(periodStart: string, periodEnd: string): Promise<Bu
           .lte('user_daily_meals.day_date', periodEnd)
           .eq('user_daily_meals.is_sandbox', false),
       ),
-      fetchAllRows<{ user_id: string }>('meals (全期間) の取得', () => supabaseAdmin.from('meals').select('user_id')),
+      // total_meals (全期間の件数) は、DB の中で利用者ごとに数えた結果だけを受け取る (meals の全行は読まない #1491)
+      metricCodes.has(TOTAL_MEALS_METRIC_CODE) ? fetchTotalMeals() : Promise.resolve(new Map<string, number>()),
     ]);
 
   const mealStreaks = new Map<string, number>(
@@ -231,13 +386,6 @@ async function fetchBulkData(periodStart: string, periodEnd: string): Promise<Bu
       vegScoreSum.set(userId, (vegScoreSum.get(userId) ?? 0) + (row.veg_score as number));
       vegScoreCount.set(userId, (vegScoreCount.get(userId) ?? 0) + 1);
     }
-  }
-
-  const totalMeals = new Map<string, number>();
-  for (const row of totalMealRows) {
-    const uid = row.user_id;
-    if (!uid) continue;
-    totalMeals.set(uid, (totalMeals.get(uid) ?? 0) + 1);
   }
 
   return { mealStreaks, breakfastStreaks, mealDays, periodDays, breakfastPlanned, breakfastCompleted, vegScoreSum, vegScoreCount, plannedTotal, plannedCompleted, totalMeals };
@@ -322,8 +470,8 @@ async function calculateAllUserMetrics(
 
   if (profiles.length === 0) return userMetricsMap;
 
-  // バルク事前取得（N+1 回避: ユーザー数×メトリクス数のクエリ → 固定 5 クエリ）
-  const bulk = await fetchBulkData(periodStart, periodEnd);
+  // バルク事前取得（N+1 回避: ユーザー数×メトリクス数のクエリ → 固定の 4〜5 クエリ）
+  const bulk = await fetchBulkData(periodStart, periodEnd, new Set(metricDefs.map((m) => m.code)));
 
   const previousPeriodStart = getPreviousPeriodStart(periodType, periodStart);
   const prevMetricsByUser = new Map<string, Map<string, number>>();
@@ -619,6 +767,8 @@ async function calculateUserRankings(
 // user_badges は (user_id, badge_id) が主キーで、upsert は ignoreDuplicates (すでに持っていれば何もしない)。
 // つまり、一度付いたバッジは後から条件を満たし直しても記録が置き換わらず、誤って付けると消えない。
 // そのため判定は「付けすぎない」側に寄せる (下の isComparableGroup / judgeBadge)。
+// また、判定するのは確定した期間 (previousPeriod: true で直前の期間を集計し直した回) の値だけ。
+// 進行中の期間の暫定の値では呼ばない (メイン処理の 7。#1491)。
 
 /**
  * 順位・百分位・平均比のバッジを付けてよい (利用者どうしを比べる意味がある) セグメント×指標か。

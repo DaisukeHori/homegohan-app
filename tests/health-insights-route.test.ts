@@ -21,24 +21,44 @@
  * 実 DB に対する確認は tests/integration/security/health-insights-meals.test.ts。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AI_USAGE_ALLOWED, AI_USAGE_DENIED } from './helpers/ai-usage-mock';
+import { aiDailyLimitMessage } from '../supabase/functions/_shared/ai-daily-limit';
 import { NextRequest } from 'next/server';
 
 const mockGetUser = vi.fn();
 const mockFrom = vi.fn();
 const mockCheckRateLimit = vi.fn();
 const mockRateLimitExceededResponse = vi.fn();
+const mockConsumeAiUsage = vi.fn();
+const mockRefundAiUsage = vi.fn();
 const mockGenerateGeminiJson = vi.fn();
 
+// 同意の判定 (T15 / #1154) は「同意済み」に差し替える。同意が無いときに AI へ送らないことは tests/ai-consent-enforcement-routes.test.ts が実際の route を呼んで確かめる
+vi.mock('@/lib/ai/consent-guard', () => import('./helpers/ai-consent-guard-allowed'));
+
+const mockGetSupabaseAdmin = vi.fn();
+
+// 利用者のセッションのクライアント (createClient) と、保存に使う service_role のクライアント (getSupabaseAdmin) は
+// 同じ偽の DB (mockFrom) を引く。どちらのクライアントで発行したかは mockGetSupabaseAdmin の呼び出しで確かめる。
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => ({
     auth: { getUser: mockGetUser },
     from: mockFrom,
   })),
+  getSupabaseAdmin: () => mockGetSupabaseAdmin(),
 }));
 
 vi.mock('@/lib/rate-limit', () => ({
   checkRateLimit: (...args: unknown[]) => mockCheckRateLimit(...args),
   rateLimitExceededResponse: (...args: unknown[]) => mockRateLimitExceededResponse(...args),
+}));
+
+// #1177 / #1149: AI 利用回数の上限の判定と記録 (DB を呼ぶ境目)。consumeAiUsage 自体の挙動は src/__tests__/lib/plan/entitlements.test.ts。
+// 止めたときの応答 (aiDailyLimitResponse) は本物を使う
+vi.mock('@/lib/plan/entitlements', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/plan/entitlements')>()),
+  consumeAiUsage: (...args: unknown[]) => mockConsumeAiUsage(...args),
+  refundAiUsage: (...args: unknown[]) => mockRefundAiUsage(...args),
 }));
 
 vi.mock('@/lib/ai/gemini-json', () => ({
@@ -164,7 +184,16 @@ const MEAL_DAYS = [
 
 const GENERATED = {
   data: {
-    insights: [{ title: '睡眠', content: '睡眠を確保しましょう', insight_type: 'sleep', is_alert: false, priority: 1 }],
+    insights: [
+      {
+        title: '睡眠',
+        summary: '睡眠を確保しましょう',
+        insight_type: 'sleep',
+        is_alert: false,
+        priority: 'high',
+        recommendations: ['23 時までに寝る'],
+      },
+    ],
   },
 };
 
@@ -187,8 +216,11 @@ beforeEach(() => {
   queues = {};
   recorded = [];
   installSupabaseMock();
+  mockGetSupabaseAdmin.mockImplementation(() => ({ from: mockFrom }));
   mockGetUser.mockResolvedValue({ data: { user }, error: null });
   mockCheckRateLimit.mockResolvedValue({ success: true });
+  mockConsumeAiUsage.mockResolvedValue(AI_USAGE_ALLOWED);
+  mockRefundAiUsage.mockResolvedValue(undefined);
   // JST の 2026-10-08 05:30。UTC ではまだ 10-07 なので、「今日」が JST 基準であることも確かめられる
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-10-07T20:30:00Z'));
@@ -219,6 +251,45 @@ describe('POST /api/health/insights', () => {
 
     expect(res.status).toBe(429);
     expect(mockFrom).not.toHaveBeenCalled();
+    expect(mockGenerateGeminiJson).not.toHaveBeenCalled();
+    // レート制限で止まった要求は、AI の利用回数に記録しない
+    expect(mockConsumeAiUsage).not.toHaveBeenCalled();
+  });
+
+  it('#1177: レート制限を通ったら、認証で確定したユーザー ID で AI の利用回数を記録する (health_review)', async () => {
+    setupHappyPath();
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(200);
+    expect(mockConsumeAiUsage).toHaveBeenCalledTimes(1);
+    expect(mockConsumeAiUsage).toHaveBeenCalledWith(user.id, 'health_review');
+    // レート制限のあとに記録し、AI を呼ぶ前に記録する
+    expect(mockCheckRateLimit.mock.invocationCallOrder[0]).toBeLessThan(mockConsumeAiUsage.mock.invocationCallOrder[0]);
+    expect(mockConsumeAiUsage.mock.invocationCallOrder[0]).toBeLessThan(mockGenerateGeminiJson.mock.invocationCallOrder[0]);
+  });
+
+  it('#1149: 今日の AI の利用回数の上限に達していたら、AI を呼ばず・保存もせずに 429 AI_DAILY_LIMIT を返す', async () => {
+    setupHappyPath();
+    mockConsumeAiUsage.mockResolvedValue(AI_USAGE_DENIED);
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({ code: 'AI_DAILY_LIMIT', limit: AI_USAGE_DENIED.limit, error: aiDailyLimitMessage(AI_USAGE_DENIED.limit) });
+    expect(mockGenerateGeminiJson).not.toHaveBeenCalled();
+    expect(recorded.filter((w) => w.table === 'health_insights')).toEqual([]);
+  });
+
+  it('#1177: 分析に使うデータが無くて AI を呼ばずに 400 を返すときは、記録しない', async () => {
+    setTable('health_records', [{ data: [], error: null }]);
+    setTable('health_checkups', [{ data: [], error: null }]);
+    setTable('user_daily_meals', [{ data: [], error: null }]);
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(400);
+    expect(mockConsumeAiUsage).not.toHaveBeenCalled();
     expect(mockGenerateGeminiJson).not.toHaveBeenCalled();
   });
 
@@ -343,7 +414,83 @@ describe('POST /api/health/insights', () => {
     const insert = queryOf('health_insights');
     const rows = argsOf(insert, 'insert')[0][0] as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ user_id: user.id, insight_type: 'sleep', is_read: false, is_dismissed: false });
+    // #1432: 現行の health_insights の列で保存する (content 列は無い・priority は text・日付と期間は NOT NULL)。
+    // 日付は JST の暦日 (UTC ではまだ 10-07)。期間は JST の今日から 30 日さかのぼる
+    expect(rows[0]).toEqual({
+      user_id: user.id,
+      analysis_date: '2026-10-08',
+      period_start: '2026-09-08',
+      period_end: '2026-10-08',
+      period_type: 'monthly',
+      insight_type: 'sleep',
+      title: '睡眠',
+      summary: '睡眠を確保しましょう',
+      recommendations: ['23 時までに寝る'],
+      priority: 'high',
+      is_alert: false,
+      is_read: false,
+      is_dismissed: false,
+    });
+    expect(rows[0]).not.toHaveProperty('content');
+  });
+
+  it('#1432: health_insights には利用者向けの INSERT ポリシーが無いので、保存は service_role のクライアントで行う', async () => {
+    setupHappyPath();
+
+    const res = await POST(postRequest());
+    expect(res.status).toBe(200);
+
+    // 本人確認と入力の取得は利用者のセッションで行い、保存だけ service_role で行う
+    expect(mockGetSupabaseAdmin).toHaveBeenCalledTimes(1);
+    const insertQueries = recorded.filter((r) => r.calls.some((c) => c.method === 'insert'));
+    expect(insertQueries.map((r) => r.table)).toEqual(['health_insights']);
+  });
+
+  it('#1432: health_records は保存する期間 (JST の暦日) で絞る', async () => {
+    setupHappyPath();
+
+    const res = await POST(postRequest());
+    expect(res.status).toBe(200);
+
+    const records = queryOf('health_records');
+    expect(argsOf(records, 'gte')).toEqual([['record_date', '2026-09-08']]);
+    expect(argsOf(records, 'lte')).toEqual([['record_date', '2026-10-08']]);
+    // プロンプトにも同じ期間を書く
+    expect(promptSentToLlm()).toContain('2026-09-08〜2026-10-08');
+  });
+
+  it('#1432: 本文 (summary) が空のインサイトしか返らなければ、保存せずに 500', async () => {
+    setupHappyPath();
+    mockGenerateGeminiJson.mockResolvedValue({
+      data: { insights: [{ title: '空', summary: '   ', insight_type: 'sleep', is_alert: false, priority: 'low' }] },
+    });
+
+    const res = await POST(postRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(json.error).toBe('インサイトを生成できませんでした');
+    expect(tablesQueried()).not.toContain('health_insights');
+  });
+
+  it('#1432: service_role のクライアントを作れない (環境変数の欠落など) ときは 500。記録を残し、生のエラー文を返さない', async () => {
+    setupHappyPath();
+    const rawMessage = 'Missing env SUPABASE_SERVICE_ROLE_KEY at /var/task/secret-path';
+    mockGetSupabaseAdmin.mockImplementation(() => {
+      throw new Error(rawMessage);
+    });
+
+    const res = await POST(postRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(json).toEqual({ error: 'インサイトの保存に失敗しました' });
+    expect(JSON.stringify(json)).not.toContain(rawMessage);
+    expect(mockLogError).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ message: rawMessage }),
+      expect.objectContaining({ query: 'health_insights' }),
+    );
   });
 
   it('保存に失敗したら 500。記録を残し、生のエラー文を返さない', async () => {

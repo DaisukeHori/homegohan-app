@@ -25,8 +25,13 @@
  *       docs/design/cross/04-api-conventions.md §5.2 の形。
  *
  * 4xx の検証メッセージ (こちらが書いた文面) はこの関数の対象外。そのまま返してよい。
- * このヘルパーを使わずに JSON 本文へ error.message を入れている route は、
- * tests/api-raw-error-message-scan.test.ts の許可リストに載っている。直したらリストから外す。
+ * ただし catch で受けた例外の文面は、4xx でも本文に入れない (try の中で throw した DB のエラーが届くため)。
+ * 入れてよいのは `err instanceof AuthError` / `ForbiddenError` など、文面をこちらで書いている例外のクラスに絞り込んだ分岐の中だけ。
+ * 応答の本文にエラーの message / details / hint を入れていないかは、tests/api-raw-error-message-scan.test.ts が
+ * src/app/api の全 route を走査して見張る (1 件でもあれば失敗する。よくある書き方の見張りで、網羅はしない)。
+ * route が本文に入れる値を作る src/lib のヘルパー (結果の error / message を返すもの) も、DB の生のエラー文を返さない。
+ * DB の失敗は固定の文にし、元のエラーは構造化ログ (または internalError に渡す cause) にだけ残す。
+ * これは tests/lib-raw-error-message-scan.test.ts が src/lib を走査して確かめる。
  */
 import { NextResponse } from 'next/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
@@ -67,8 +72,9 @@ export interface InternalErrorOptions {
  * ログ用に Error へそろえる。
  * supabase-js のエラーは Error とは限らず、{ message, code, details, hint } の素のオブジェクトで来ることがある
  * (createLogger().error は Error 以外を String() にするため、そのまま渡すと "[object Object]" になって原因が消える)。
+ * 500 を返さない経路 (src/lib のヘルパーが DB の失敗を固定の文に置き換えてログにだけ残すとき) でも同じものを使う。
  */
-function toError(value: unknown): Error {
+export function toLoggableError(value: unknown): Error {
   if (value instanceof Error) return value;
   if (typeof value === 'string' && value) return new Error(value);
   if (value && typeof value === 'object') {
@@ -79,7 +85,7 @@ function toError(value: unknown): Error {
 }
 
 /** PostgreSQL / PostgREST のエラーコード (例: 23505, 42501, PGRST116)。調べるときの手がかりとしてログにだけ残す */
-function errorCodeOf(value: unknown): string | undefined {
+export function errorCodeOf(value: unknown): string | undefined {
   const code = (value as { code?: unknown } | null | undefined)?.code;
   return typeof code === 'string' && code ? code : undefined;
 }
@@ -104,7 +110,7 @@ export function internalError(
     const logger = createLogger(routeName, requestId ?? generateRequestId());
     const target = userId ? logger.withUser(userId) : logger;
     const errorCode = errorCodeOf(error);
-    target.error(INTERNAL_ERROR_LOG_MESSAGE, toError(error), {
+    target.error(INTERNAL_ERROR_LOG_MESSAGE, toLoggableError(error), {
       ...(errorCode ? { error_code: errorCode } : {}),
       ...metadata,
     });

@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { isCalendarDate } from '@/lib/jst-day-ranges';
+import { addDaysToDate } from '@/lib/date-utils';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { RECORD_DATE_PATTERN, sanitizeHealthRecordPayload } from '@/lib/health-payloads';
@@ -19,7 +21,8 @@ export async function GET(
 
   // #1048 F2-16: 不正な date パラメータは DB 側の型キャストエラー(500)や
   // 意図しないクエリになり得るため、事前にフォーマット検証して400を返す。
-  if (!RECORD_DATE_PATTERN.test(date)) {
+  // 前日を暦の計算で求めるので、存在しない日付 (2026-02-30 など) もここで弾く (#1433)
+  if (!RECORD_DATE_PATTERN.test(date) || !isCalendarDate(date)) {
     return NextResponse.json({ error: 'date must be in YYYY-MM-DD format' }, { status: 400 });
   }
 
@@ -35,9 +38,8 @@ export async function GET(
   }
 
   // 前日の記録も取得（比較用）
-  const yesterday = new Date(date);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
+  // 前日は暦の計算で求める (#1433。new Date(date) + setDate (ローカル時刻) + toISOString (UTC) は実行環境のタイムゾーンで結果が変わる)
+  const yesterdayStr = addDaysToDate(date, -1);
 
   const { data: previousRecord } = await supabase
     .from('health_records')
@@ -67,8 +69,9 @@ export async function PUT(
   const { date } = await params;
 
   // #1048 F2-16: 不正な date パラメータは DB 側の型キャストエラー(500)になり得るため
-  // 事前にフォーマット検証して400を返す。
-  if (!RECORD_DATE_PATTERN.test(date)) {
+  // 事前にフォーマット検証して400を返す。存在しない日付 (2026-02-30 など) も、形だけでは通って DB の date 型への変換で
+  // 500 になるので、GET と同じく isCalendarDate で弾く (#1463)
+  if (!RECORD_DATE_PATTERN.test(date) || !isCalendarDate(date)) {
     return NextResponse.json({ error: 'date must be in YYYY-MM-DD format' }, { status: 400 });
   }
 
@@ -122,7 +125,8 @@ export async function DELETE(
 
   const { date } = await params;
 
-  if (!RECORD_DATE_PATTERN.test(date)) {
+  // 存在しない日付は DB の date 型への変換で 500 になるので、GET・PUT と同じく 400 にする (#1463)
+  if (!RECORD_DATE_PATTERN.test(date) || !isCalendarDate(date)) {
     return NextResponse.json({ error: 'date must be in YYYY-MM-DD format' }, { status: 400 });
   }
 

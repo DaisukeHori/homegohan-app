@@ -1,6 +1,12 @@
 import "@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "@supabase/supabase-js";
 import { requireServiceRole } from "../_shared/auth.ts";
+import {
+  logMissingEnv,
+  MISSING_ENV_HTTP_STATUS,
+  missingEnvError,
+  missingEnvResponseBody,
+} from "../_shared/missing-env.ts";
 import { fetchStripePriceInterval } from "./deactivation.ts";
 import { parseSyncRequest, syncPlanPrices, type CreatePriceResult, type SyncDeps } from "./sync.ts";
 
@@ -52,7 +58,7 @@ import { parseSyncRequest, syncPlanPrices, type CreatePriceResult, type SyncDeps
  * 本リポジトリは既に Stripe を REST API 直叩き (fetch) で扱っている
  * (src/app/api/admin/finance/reconciliation/route.ts と同じ方針) ため、
  * SDK を追加せず fetch ベースで実装する
- * (deploy-supabase-functions.yml の「raw jsr:/npm: import 禁止」チェックにも
+ * (deploy-supabase-functions.yml の段「Verify Edge Function dependency pinning」にも
  * 抵触しない)。
  *
  * #1041 round-3 (S) 修正: 作成する Stripe Price に metadata
@@ -150,7 +156,8 @@ async function deactivateStripePrice(priceId: string): Promise<void> {
 /** subscription_plans の現在の Price ID (月額 = stripe_price_id / 年額 = stripe_yearly_price_id) を service-role で読む */
 async function loadCurrentPriceIds(planId: string): Promise<{ month: string | null; year: string | null }> {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("SUPABASE_URL / service role key が未設定のため、旧 Price ID を読めません");
+    // 変数名は message に入れず、ログにだけ残す (#1467)。呼び出し側 (sync.ts) は旧 Price の無効化を全部スキップする
+    throw missingEnvError(["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]);
   }
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
   const { data, error } = await supabase
@@ -184,7 +191,9 @@ Deno.serve(async (req) => {
   if (!STRIPE_SECRET_KEY) {
     // 判定不能 (Stripe 呼び出し不可) な場合は成功を偽装せず、明示的にサービス
     // 利用不可を返す (fail-closed。呼び出し元は 502 として扱い DB を更新しない)。
-    return jsonResponse({ error: "STRIPE_SECRET_KEY is not configured" }, 503);
+    // 本文には変数名を入れず、固定の文と code だけを返す。変数名はログにだけ残す (#1467)
+    logMissingEnv(["STRIPE_SECRET_KEY"]);
+    return jsonResponse(missingEnvResponseBody(), MISSING_ENV_HTTP_STATUS);
   }
 
   let body: unknown;

@@ -140,7 +140,7 @@ test.describe("Tour - Eligibility API", () => {
         return;
       }
 
-      const baseURL = page.url().includes("localhost") ? "http://localhost:3000" : (process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000");
+      const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
       const status = await fetchTourStatus(token, baseURL);
 
       // API が存在しない場合はスキップ

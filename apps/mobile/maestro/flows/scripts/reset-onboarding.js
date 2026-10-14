@@ -9,7 +9,9 @@
 
 var supabaseUrl = 'https://flmeolcfutuwwbjmzyoz.supabase.co';
 var supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsbWVvbGNmdXR1d3diam16eW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzAxODYsImV4cCI6MjA3OTU0NjE4Nn0.VVxUxKexNeN6dUiAMDkCNlnIoXa-F5rfBqHPBDcwdnU';
-var apiBaseUrl = 'http://localhost:3000';
+// API (Next) の URL。呼び出し側の runScript の env で API_BASE_URL を渡せば、その URL を使う
+// (Next を 3000 以外のポートで動かしているとき。渡さなければ今までどおり http://localhost:3000)
+var apiBaseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) || 'http://localhost:3000';
 
 // Maestro runScript の env ブロックで渡された変数はグローバル変数として参照可能
 var email = E2E_USER_EMAIL;

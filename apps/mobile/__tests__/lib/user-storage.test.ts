@@ -7,7 +7,6 @@
  */
 
 jest.mock('../../src/lib/supabase', () => ({ supabase: {} }));
-jest.mock('../../src/lib/posthog', () => ({ captureEvent: jest.fn() }));
 jest.mock('expo-notifications', () => ({}));
 jest.mock('expo-device', () => ({ __esModule: true, isDevice: true }));
 jest.mock('expo-constants', () => ({ default: {} }));

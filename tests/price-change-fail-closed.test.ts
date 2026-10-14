@@ -126,6 +126,56 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('POST /api/super-admin/plans/[id]/price-change: 接続情報と DB のエラー文 (#1434)', () => {
+  it.each([
+    ['NEXT_PUBLIC_SUPABASE_URL', undefined],
+    ['NEXT_PUBLIC_SUPABASE_URL', '   '],
+    ['SUPABASE_SERVICE_ROLE_KEY', ''],
+  ])(
+    'Stripe 同期が要るのに %s が %j なら、`undefined/functions/v1/...` へ通信せず汎用の 500 で止め、DB を更新しない',
+    async (name, value) => {
+      process.env.STRIPE_SECRET_KEY = 'sk_test_x';
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+      fakeSupabase = successSupabase();
+      const fetchMock = stubEdge(edgeOk({}));
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+      const text = await res.text();
+      consoleError.mockRestore();
+
+      expect(res.status).toBe(500);
+      expect(JSON.parse(text)).toEqual({ error: { code: 'OP_INTERNAL_ERROR', message: '内部エラー' } });
+      expect(text).not.toContain(name);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(planUpdatePayload(fakeSupabase)).toBeUndefined();
+      expect(historyInsertPayload(fakeSupabase)).toBeUndefined();
+    },
+  );
+
+  it('プランの更新に失敗したら、DB の生のエラー文を本文に出さず固定の文の 500 (OP_DB_ERROR) を返す (#1172)', async () => {
+    const rawDbError = 'duplicate key value violates unique constraint "subscription_plans_pkey"';
+    fakeSupabase = createFakeSupabase({
+      subscription_plans: [
+        { data: existingPlan(), error: null },
+        { data: null, error: { message: rawDbError, code: '23505' } },
+      ],
+      plan_price_history: [{ data: null, error: null }],
+      admin_audit_logs: [{ data: null, error: null }],
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const text = await res.text();
+    consoleError.mockRestore();
+
+    expect(res.status).toBe(500);
+    expect(JSON.parse(text)).toEqual({ error: { code: 'OP_DB_ERROR', message: 'プランの更新に失敗しました' } });
+    expect(text).not.toContain('subscription_plans_pkey');
+  });
+});
+
 describe('POST /api/super-admin/plans/[id]/price-change (#1041 F4-06)', () => {
   it('STRIPE_SECRET_KEY 設定時、Edge Function 呼び出しが例外を投げたら 502 を返し DB を更新しない', async () => {
     process.env.STRIPE_SECRET_KEY = 'sk_test_x';

@@ -11,7 +11,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // 目標の処理に関係しない重い依存は差し替える (import 時の副作用を避ける)
-vi.mock('@/lib/menu-generation-feature-flags', () => ({ loadFeatureFlags: vi.fn(async () => ({})) }));
+vi.mock('@/lib/feature-flags', () => ({ isFeatureEnabled: vi.fn(async () => false) }));
 vi.mock('@/lib/generate-menu-v4-retry', () => ({
   invokeGenerateMenuV4WithRetry: vi.fn(),
   markWeeklyMenuRequestFailed: vi.fn(),
@@ -24,7 +24,10 @@ vi.mock('@/lib/meal-image-jobs', () => ({
 }));
 vi.mock('@/lib/v4-target-slots', () => ({ resolveExistingTargetSlots: vi.fn() }));
 vi.mock('@/lib/rate-limit', () => ({ checkRateLimit: vi.fn() }));
-vi.mock('@/lib/db-logger', () => ({ createLogger: () => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }) }));
+vi.mock('@/lib/db-logger', () => {
+  const logger = { warn: vi.fn(), error: vi.fn(), info: vi.fn(), withUser: () => logger };
+  return { createLogger: () => logger };
+});
 vi.mock('@/lib/health-streaks', () => ({ updateHealthStreak: vi.fn() }));
 
 import { runConsultationAction } from '@/lib/ai/consultation-action-executor';
@@ -173,11 +176,11 @@ describe('set_health_goal (#1229)', () => {
     expect(state.inserts[0]).not.toHaveProperty('userId');
   });
 
-  it('reports a database failure as an error result', async () => {
+  it('reports a database failure as an error result (fixed text, not the raw DB message — #1172)', async () => {
     state.insertError = { message: 'boom' };
     const out = await run('set_health_goal', { goalType: 'weight', targetValue: 60, targetUnit: 'kg' });
     expect(out.success).toBe(false);
-    expect(out.result).toEqual({ error: 'boom' });
+    expect(out.result).toEqual({ error: '健康目標の保存に失敗しました' });
   });
 });
 

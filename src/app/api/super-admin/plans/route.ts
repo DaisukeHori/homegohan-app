@@ -14,6 +14,7 @@ import {
   PlanCreateSchema,
   PlansQuerySchema,
 } from '@/lib/super-admin/plans-schemas';
+import { internalError } from '@/lib/api/errors';
 
 export async function GET(request: NextRequest) {
   try {
@@ -50,11 +51,7 @@ export async function GET(request: NextRequest) {
     const { data, error, count } = await query;
 
     if (error) {
-      console.error('[super-admin/plans GET]', error);
-      return NextResponse.json(
-        { error: { code: 'OP_DB_ERROR', message: error.message } },
-        { status: 500 }
-      );
+      return internalError('GET /api/super-admin/plans', error, { userId: user.id }, { shape: 'nested' });
     }
 
     return NextResponse.json({
@@ -122,11 +119,7 @@ export async function POST(request: NextRequest) {
           { status: 409 }
         );
       }
-      console.error('[super-admin/plans POST]', error);
-      return NextResponse.json(
-        { error: { code: 'OP_DB_ERROR', message: error.message } },
-        { status: 500 }
-      );
+      return internalError('POST /api/super-admin/plans', error, { userId: user.id }, { shape: 'nested' });
     }
 
     // 監査ログ記録 (operator/07-audit-monitoring §3 準拠)

@@ -16,6 +16,7 @@ import { getApi } from "../../src/lib/api";
 import { uploadFridgePhoto } from "../../src/lib/storage";
 import { supabase } from "../../src/lib/supabase";
 import { colors, radius, spacing } from "../../src/theme";
+import { handleAiConsentRequiredError } from "../../src/lib/ai-consent";
 
 type PantryItem = {
   id: string;
@@ -297,6 +298,8 @@ export default function PantryPage() {
       setDetected((res.detailedIngredients ?? []) as any);
       setSuggestions(res.suggestions ?? []);
     } catch (e: any) {
+      // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、ここのエラー表示は出さない
+      if (handleAiConsentRequiredError(e)) return;
       // 通信できなかったとき (圏外・待ち時間切れ) の文面は、getApi() が e.message に入れてくれる
       const retryUrl = imageUrl;
       Alert.alert("解析失敗", e?.message ?? "解析に失敗しました。", [

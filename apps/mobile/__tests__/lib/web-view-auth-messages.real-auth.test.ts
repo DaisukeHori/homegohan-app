@@ -16,8 +16,12 @@
  *   そこで、処理の最初にセッション (ユーザー ID とアクセストークン) を控え、失効と分かったあとでも
  *   その値で、本人の JWT を付けて DELETE する。
  *
- * 本物を使うもの: supabase-js / auth-js (GoTrueClient)、secureSessionStorage、signOut.ts、pushNotifications.ts、webViewAuthMessages.ts
- * 差し替えるもの: fetch (Supabase のサーバー役)、expo-secure-store / AsyncStorage (メモリ上。実機に近づけるため数 ms 遅らせる)、
+ * #1413: 削除の 0 件・失敗のサーバーログ (POST /api/log) が、どの経路で app_logs に残り、どの経路で残らないかも確かめる
+ * (下の「サーバーログ (POST /api/log) への、削除の 0 件の記録」)。
+ *
+ * 本物を使うもの: supabase-js / auth-js (GoTrueClient)、secureSessionStorage、signOut.ts、pushNotifications.ts、webViewAuthMessages.ts、
+ *                 api.ts (共通の HTTP クライアント)
+ * 差し替えるもの: fetch (Supabase と /api/log のサーバー役)、expo-secure-store / AsyncStorage (メモリ上。実機に近づけるため数 ms 遅らせる)、
  *                 expo-notifications など端末の機能
  */
 
@@ -27,16 +31,15 @@ const ANON_KEY = 'anon-key-for-tests';
 process.env.EXPO_PUBLIC_SUPABASE_URL = SUPABASE_URL;
 process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = ANON_KEY;
 process.env.EXPO_PUBLIC_WEB_URL = 'https://homegohan-app.vercel.app';
-
-// 本物の supabase-js を何度も読み込み直すので、キャッシュが冷えた CI でも 5 秒の既定を超えないよう広げる
-jest.setTimeout(30_000);
+/** Next.js の API (BFF) の基点。「サーバーログ (POST /api/log) への…」の describe の中だけ EXPO_PUBLIC_API_BASE_URL に入れる */
+const API_BASE_URL = 'https://homegohan-api.example.test';
+const API_LOG_URL = `${API_BASE_URL}/api/log`;
 
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({}),
   useNavigation: () => ({}),
   useRouter: () => ({ replace: jest.fn() }),
 }));
-jest.mock('../../src/lib/posthog', () => ({ captureEvent: jest.fn() }));
 jest.mock('expo-notifications', () => ({
   getPermissionsAsync: jest.fn(),
   requestPermissionsAsync: jest.fn(),
@@ -110,6 +113,10 @@ type FetchCall = { method: string; url: string; authorization: string | null; ap
  *   - POST /auth/v1/logout : 生きていれば失効させて 204。失効済みなら 403 session_not_found
  *   - DELETE /rest/v1/user_push_tokens : PostgREST と同じく、JWT の署名と期限だけを見る (セッションの失効は見ない)。
  *       authenticated の JWT なら RLS (自分の行のみ) を通して削除。anon キーなら RLS で 0 行 (エラーにならない)
+ *   - POST <API の基点>/api/log : 本物の /api/log (src/app/api/log/route.ts) は、サーバーで getUser() (GoTrue の GET /user) を呼び、
+ *       JWT の session_id のセッションが残っているかまで確かめる。失効していれば 401 で、app_logs に入れない。
+ *       ここでは GET /auth/v1/user と同じ判定 (sessionRevoked) で真似る。本物のサーバー (ローカルの Supabase と next dev) での確認は
+ *       tests/integration/security/push-issue-log-after-session-revoked.test.ts
  */
 function createFakeSupabaseServer() {
   const server = {
@@ -120,6 +127,8 @@ function createFakeSupabaseServer() {
     /** 解決されるまで GET /auth/v1/user の応答を返さない (応答待ちの最中に別のメッセージを届けるため) */
     userGate: null as Promise<void> | null,
     calls: [] as FetchCall[],
+    /** /api/log が受け付けて app_logs に入れた記録 (Authorization と本文) */
+    appLogs: [] as Array<{ authorization: string | null; body: unknown }>,
     pushTokenRows: [
       { user_id: USER_ID, expo_push_token: THIS_DEVICE_TOKEN },
       { user_id: USER_ID, expo_push_token: OTHER_DEVICE_TOKEN },
@@ -127,6 +136,7 @@ function createFakeSupabaseServer() {
     ],
     fetch: undefined as unknown as typeof fetch,
     deleteCalls: () => server.calls.filter((c) => c.method === 'DELETE' && c.url.includes('/rest/v1/user_push_tokens')),
+    logCalls: () => server.calls.filter((c) => c.method === 'POST' && c.url === API_LOG_URL),
   };
 
   const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
@@ -178,6 +188,12 @@ function createFakeSupabaseServer() {
       }
       return new Response(null, { status: 204, headers: { 'Content-Range': `*/${deleted}` } });
     }
+    if (url === API_LOG_URL && method === 'POST') {
+      const claims = decodeJwtPayload((authorization ?? '').replace(/^Bearer /, ''));
+      if (server.sessionRevoked || claims?.role !== 'authenticated') return json({ error: 'Unauthorized' }, 401);
+      server.appLogs.push({ authorization, body: JSON.parse(String(init?.body)) });
+      return json({ success: true });
+    }
     return json({}, 404);
   }) as typeof fetch;
 
@@ -189,8 +205,8 @@ type Modules = {
   SUPABASE_AUTH_STORAGE_KEY: string;
   secureSessionStorage: { setItem: (key: string, value: string) => Promise<void> };
   handleWebAuthMessage: typeof import('../../src/lib/webViewAuthMessages').handleWebAuthMessage;
+  signOutWithCleanup: typeof import('../../src/lib/signOut').signOutWithCleanup;
   AsyncStorage: { getItem: (k: string) => Promise<string | null>; setItem: (k: string, v: string) => Promise<void> };
-  captureEvent: jest.Mock;
 };
 
 /** 実機に近づけるため、端末のストレージの読み書きを数 ms 遅らせる (処理の割り込みが起きやすくなる) */
@@ -219,9 +235,9 @@ function loadModules(server: ReturnType<typeof createFakeSupabaseServer>): Modul
   const { supabase, SUPABASE_AUTH_STORAGE_KEY } = require('../../src/lib/supabase');
   const { secureSessionStorage } = require('../../src/lib/secureSessionStorage');
   const { handleWebAuthMessage } = require('../../src/lib/webViewAuthMessages');
-  const { captureEvent } = require('../../src/lib/posthog');
+  const { signOutWithCleanup } = require('../../src/lib/signOut');
   /* eslint-enable @typescript-eslint/no-require-imports */
-  return { supabase, SUPABASE_AUTH_STORAGE_KEY, secureSessionStorage, handleWebAuthMessage, AsyncStorage, captureEvent };
+  return { supabase, SUPABASE_AUTH_STORAGE_KEY, secureSessionStorage, handleWebAuthMessage, signOutWithCleanup, AsyncStorage };
 }
 
 function makeDeps() {
@@ -419,19 +435,124 @@ describe('session-expired だけが届いたとき', () => {
 });
 
 describe('DELETE が行を消せなかったとき', () => {
-  it('0 行だった (RLS に弾かれた・行が既に無い。どちらもエラーにならない) ことを、PostHog に送って観測できる。ログアウトは止めない', async () => {
+  it('0 行だった (RLS に弾かれた・行が既に無い。どちらもエラーにならない) ことを、端末のコンソールに出して観測できる。ログアウトは止めない', async () => {
+    // PostHog などの外部には送らない (#1166)。サーバーログ (POST /api/log → app_logs) にも送るが (#1413。キー名は push_value_source /
+    // explicit_auth_header)、この試験は API の基点 (EXPO_PUBLIC_API_BASE_URL) を置かないので送られない。ここでは端末のコンソールを見る
+    // (サーバーログへの送信は、下の「サーバーログ (POST /api/log) への、削除の 0 件の記録」と push-notifications.test.ts が確かめる)
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      server.pushTokenRows = [{ user_id: OTHER_USER_ID, expo_push_token: THIS_DEVICE_TOKEN }];
+      const tab = makeDeps();
+
+      await m.handleWebAuthMessage({ type: 'sign-out' }, PAGE, tab.deps);
+
+      expect(server.deleteCalls()).toHaveLength(1);
+      const pushIssues = warn.mock.calls.filter(([label]) => String(label).startsWith('[pushNotifications] '));
+      expect(pushIssues).toEqual([
+        [
+          '[pushNotifications] push_token_unregister_no_rows',
+          expect.objectContaining({ token_source: 'stored', explicit_access_token: true }),
+        ],
+      ]);
+      // トークンの値・ユーザー ID は載せない
+      expect(JSON.stringify(pushIssues)).not.toContain(THIS_DEVICE_TOKEN);
+      expect(JSON.stringify(pushIssues)).not.toContain(USER_ID);
+      expect(tab.goToWelcome).toHaveBeenCalledTimes(1);
+      expect(await nativeSessionIsGone()).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe('サーバーログ (POST /api/log) への、削除の 0 件の記録 (#1413)', () => {
+  // 削除の失敗・0 件は、サインアウトでセッションが消える前に /api/log へ送る。
+  // 端末からのサインアウトでは送る順番で間に合う。Web から始まったサインアウト・session-expired では、端末が送る前に
+  // サーバー側のセッションが失効しているので、控えたアクセストークンを明示しても /api/log は 401 を返し、記録は残らない
+  // (pushNotifications.ts の unregisterExpoPushToken の説明)。ここではその両方を、本物の auth-js と共通の HTTP クライアントで通す
+  const originalApiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL;
+  let warn: jest.SpyInstance;
+
+  beforeEach(() => {
+    // ここだけ API の基点を置き、/api/log をサーバー役へ送らせる (getApi() は最初に呼ばれたときに環境変数を読む。モジュールは毎回読み直している)
+    process.env.EXPO_PUBLIC_API_BASE_URL = API_BASE_URL;
+    // この端末の、このユーザーの行は無い (他のユーザーの行だけ) ので、DELETE は 0 件になり push_token_unregister_no_rows を送る
     server.pushTokenRows = [{ user_id: OTHER_USER_ID, expo_push_token: THIS_DEVICE_TOKEN }];
+    warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    if (originalApiBaseUrl === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;
+    else process.env.EXPO_PUBLIC_API_BASE_URL = originalApiBaseUrl;
+  });
+
+  /** 0 件の記録の本文 (Authorization を明示したかどうか以外は、どの経路でも同じ) */
+  const noRowsLog = (explicitAuthHeader: boolean) =>
+    expect.objectContaining({
+      level: 'warn',
+      message: 'push token issue: push_token_unregister_no_rows',
+      metadata: {
+        app: 'mobile',
+        event: 'push_token_unregister_no_rows',
+        platform: 'ios',
+        push_value_source: 'stored',
+        explicit_auth_header: explicitAuthHeader,
+        deleted_count: 0,
+      },
+    });
+
+  it('端末からのサインアウト (設定・マイページ。セッションが生きているまま) では、サインアウトの前に送るので記録が残る', async () => {
+    const result = await m.signOutWithCleanup(USER_ID);
+
+    expect(result.error).toBeNull();
+    expect(server.appLogs).toEqual([{ authorization: `Bearer ${accessToken}`, body: noRowsLog(false) }]);
+    // 記録を送り終えてから、サインアウト (サーバーのセッションの失効) をする
+    const urls = server.calls.map((c) => c.url);
+    const logIndex = urls.indexOf(API_LOG_URL);
+    const logoutIndex = urls.findIndex((url) => url.includes('/auth/v1/logout'));
+    expect(logIndex).toBeGreaterThanOrEqual(0);
+    expect(logoutIndex).toBeGreaterThan(logIndex);
+    expect(await nativeSessionIsGone()).toBe(true);
+  });
+
+  it('Web の signOut() が先にサーバーのセッションを失効させていると、控えたアクセストークンを明示して送っても /api/log は 401 で、記録は残らない (ログアウトは止まらない)', async () => {
+    server.sessionRevoked = true;
     const tab = makeDeps();
 
-    await m.handleWebAuthMessage({ type: 'sign-out' }, PAGE, tab.deps);
+    const result = await m.handleWebAuthMessage({ type: 'sign-out' }, PAGE, tab.deps);
 
-    expect(server.deleteCalls()).toHaveLength(1);
-    expect(m.captureEvent).toHaveBeenCalledWith(
-      'push_token_unregister_no_rows',
-      expect.objectContaining({ token_source: 'stored' }),
-    );
-    expect(m.captureEvent).not.toHaveBeenCalledWith('push_token_unregister_failed', expect.anything());
+    expect(result).toBe('signed-out');
+    expect(server.logCalls()).toHaveLength(1);
+    expect(server.logCalls()[0].authorization).toBe(`Bearer ${accessToken}`);
+    expect(server.appLogs).toEqual([]);
+    // 削除そのものは、同じ JWT で通っている (PostgREST は JWT の署名と期限しか見ない。0 件なのはこの端末の行が無いから)
+    expectOneDeleteWithUserJwt();
     expect(tab.goToWelcome).toHaveBeenCalledTimes(1);
     expect(await nativeSessionIsGone()).toBe(true);
+  });
+
+  it('session-expired で失効を確かめてからログアウトするときも、/api/log は 401 で、記録は残らない', async () => {
+    server.sessionRevoked = true;
+    const tab = makeDeps();
+
+    const result = await m.handleWebAuthMessage({ type: 'session-expired' }, PAGE, tab.deps);
+
+    expect(result).toBe('signed-out');
+    expect(server.logCalls()).toHaveLength(1);
+    expect(server.logCalls()[0].authorization).toBe(`Bearer ${accessToken}`);
+    expect(server.appLogs).toEqual([]);
+    expect(tab.rebridge).not.toHaveBeenCalled();
+    expect(await nativeSessionIsGone()).toBe(true);
+  });
+
+  it('Web の sign-out が、Web の signOut() による失効より先に処理されたときだけは残る (explicit_auth_header: true の行)', async () => {
+    // sign-out は Web の signOut() の前に届くので、サーバー側のセッションがまだ生きているうちに送り終えることもある
+    const tab = makeDeps();
+
+    const result = await m.handleWebAuthMessage({ type: 'sign-out' }, PAGE, tab.deps);
+
+    expect(result).toBe('signed-out');
+    expect(server.appLogs).toEqual([{ authorization: `Bearer ${accessToken}`, body: noRowsLog(true) }]);
   });
 });

@@ -70,14 +70,16 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     // #1200: チケット (件名・本文など、ユーザーが書いた内容) を返す前に、誰が誰の
     // チケットを閲覧したかを監査ログへ残す。対象は「情報を見られた本人 (ticket.user_id)」
     // にそろえ、開示請求のときに target_id だけで全ての閲覧を引けるようにする。
+    // 起票した利用者が退会していると user_id は NULL になる (#1175。チケットは残る)。
+    // その場合は、チケット自体を対象にして記録を残す (/messages と同じ扱い)。
     // 記録に失敗しても閲覧は止めない (失敗は db-logger に error で残る)。
     // details には返した項目名だけを入れ、件名や本文は入れない。
     await recordAdminAudit({
       supabase,
       actorId: currentUser.id,
       actionType: 'admin.support.ticket.view',
-      targetId: ticket.user_id,
-      targetType: 'user',
+      targetId: ticket.user_id ?? ticket.id,
+      targetType: ticket.user_id ? 'user' : 'support_ticket',
       details: { ticket_id: ticket.id, viewed_fields: Object.keys(data) },
       request,
       routeName: 'api/admin/support/tickets/[id] GET',

@@ -18,8 +18,6 @@ import type { BeforeSendMiddleware } from '@vercel/speed-insights';
  *   - null など (falsy) を返すと、その 1 件は送られない。
  *   - 返した `url` が送られる。`route` は返した値が使われず、元の `data-route` のまま送られる。
  *     そのため route に生のトークンが残っているとき (動的セグメントの置き換えに失敗したとき) は、直さずに送らない。
- *
- * 同じ種類の処理が PostHog 向けにもある (src/lib/posthog.ts の redactTokenPath。こちらは /family/promotions だけ)。
  */
 
 /**

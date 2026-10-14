@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EmailEnvelopeSchema, type EmailEnvelope } from '@/lib/emails/envelope';
+import { renderAccountDeletedEmail } from '@/lib/emails/account/account-deleted';
 import type { InviteEmailVars } from '@/lib/emails/membership/templates';
 import { renderFamilyInviteEmail } from '@/lib/emails/membership/family-invite';
 import { renderFamilyInviteExistingEmail } from '@/lib/emails/membership/family-invite-existing';
@@ -54,6 +55,12 @@ interface TemplateCase {
 }
 
 const TEMPLATES: TemplateCase[] = [
+  {
+    file: 'account/account-deleted',
+    name: 'account-deleted',
+    render: () => renderAccountDeletedEmail({ to_email: 'taro@example.com', deleted_at: new Date('2026-10-09T15:05:00.000Z') }),
+    mentionsSupport: true,
+  },
   { file: 'membership/family-invite', name: 'family-invite', render: () => renderFamilyInviteEmail(inviteVars), mentionsSupport: true },
   { file: 'membership/family-invite-existing', name: 'family-invite-existing', render: () => renderFamilyInviteExistingEmail(inviteVars), mentionsSupport: true },
   { file: 'membership/family-invite-new', name: 'family-invite-new', render: () => renderFamilyInviteNewEmail(inviteVars), mentionsSupport: true },
@@ -244,6 +251,10 @@ describe('メールの文面: 環境変数を設定すると、全テンプレ�
 describe('メールの文面: ソースにドメイン・送信元・問い合わせ先を直接書かない', () => {
   it('テンプレート一覧が、実際にあるテンプレートのファイルと一致している (足したのに検査から漏れる、を防ぐ)', () => {
     const actual = [
+      ...fs
+        .readdirSync(path.join(EMAILS_DIR, 'account'))
+        .filter((f) => f.endsWith('.ts'))
+        .map((f) => `account/${f.replace(/\.ts$/, '')}`),
       ...fs
         .readdirSync(path.join(EMAILS_DIR, 'membership'))
         .filter((f) => f.endsWith('.ts') && !['templates.ts', 'scope-label.ts'].includes(f))

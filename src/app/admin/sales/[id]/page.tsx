@@ -6,6 +6,7 @@
  * 権限: sales, admin, super_admin
  */
 import { useState, useEffect, useCallback } from 'react';
+import { todayLocal } from '@/lib/date-utils';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -115,7 +116,7 @@ export default function LeadDetailPage({ params }: PageProps) {
           details: {
             summary: activitySummary,
             next_action: activityNextAction || undefined,
-            date: new Date().toISOString().split('T')[0],
+            date: todayLocal(),
           },
         }),
       });

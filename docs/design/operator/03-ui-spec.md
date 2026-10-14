@@ -185,6 +185,9 @@
 
 ## 9. `/admin/finance/dashboard` — 売上ダッシュボード
 
+> **現状 (2026-10, #1125)**: 課金は未開始のため、MRR / ARR / Churn Rate / LTV / MRR 内訳 / 契約数 (個人課金者・家族グループ・法人) は
+> 値を出さず「準備中」と表示する。MAU は実データ (`daily_active_users`) のまま出す。
+
 **KPI カード**:
 - 今月の MRR / 前月比
 - ARR / 前月比
@@ -267,6 +270,9 @@
 ---
 
 ## 13. `/admin/finance/invoices` — 請求書管理
+
+> **現状 (2026-10, #1125)**: 請求書一覧・収益推移 (`/admin/finance/revenue`)・Stripe 整合チェック (`/admin/finance/reconciliation`) は、
+> 課金が未開始で元データが無いため、「課金は未開始のため準備中」の案内だけを表示する。
 
 **操作バー**: 「全組織分一括生成」ボタン (確認モーダル付き)
 
@@ -586,6 +592,9 @@ Step 3: スケジュール
 
 ## 28. `/super-admin/exports` — データエクスポート
 
+> **現状 (2026-10, #1126)**: 準備中 (未対応)。ファイルを作る処理が無いため、画面 (一覧と `/new`) は「準備中（未対応）」だけを表示し、
+> 以下のフォームと一覧は出さない。API も 501 `OP_NOT_SUPPORTED`。
+
 **エクスポートリクエストフォーム**:
 - エクスポート種別 (ユーザーデータ / 監査ログ / 食事記録 / 組織データ)
 - 形式 (CSV / JSON / Parquet)
@@ -654,15 +663,23 @@ Step 3: スケジュール
 
 **クォータ設定ボタン**: ユーザー個別クォータ変更モーダル
 
+> **現状 (2026-10, #1149)**: 「AI の利用上限」へのリンクを出し、`/super-admin/llm/quotas` でプランごとの 1 日の上限
+> (全機能の合計・日本時間の 0 時に戻る。空欄は無制限) を一覧し、行ごとに保存する (`GET` / `PATCH /api/super-admin/llm/quotas`)。
+> 保存した値は次の AI の利用から効く。利用者ごとの上限 (モーダル) は無い。
+
 ---
 
 ## 34. `/super-admin/settings` — システム設定
 
-- メンテナンスモード (ON/OFF)
 - お知らせバナー設定
 - 全ユーザーへの緊急メッセージ送信
-- Feature flag デフォルト値
 - LLM プロバイダー優先度
+
+> **現状 (2026-10, #1457 / #1486)**: メンテナンスモードと機能フラグは、この画面ではなく `/super-admin/flags` (§7 の機能フラグ API) で切り替える
+> (メンテナンスモードは `maintenance_mode`、AI 相談の緊急停止は `ai_chat_enabled`)。`system_settings` の `feature_flags` 行は
+> もう何も読まず、システム設定では読み取り専用 (「使われていない」と出し、保存させない)。
+> Web にこの画面 (`src/app/super-admin/settings`) は無い。`system_settings` の一覧・保存は、モバイルの運営画面の「システム設定」が
+> `GET / PUT /api/super-admin/settings` で行う (各行の `key` / `value` / `description` / `updated_at` を出し、`description` も保存する)。
 
 ---
 

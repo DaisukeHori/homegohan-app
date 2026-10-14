@@ -54,6 +54,7 @@
 | `NEXT_PUBLIC_SUPPORT_EMAIL` | `support@homegohan.com` | 問い合わせ先。メールの文面、お問い合わせ画面、プライバシーポリシー、招待画面に出る | **再デプロイが必要** (ビルド時に埋め込まれる) |
 | `SUPPORT_REPLY_TO` (任意) | `support@homegohan.com` | サポートの返信メールの「返信先」。受信箱ができたら設定する。未設定ならメールは送信専用のままで、本文でお問い合わせフォームへ案内する | 再デプロイ |
 | `ADMIN_NOTIFICATION_EMAIL` (既存) | `support@homegohan.com` など | お問い合わせが届いたときの、管理者への通知の宛先 | 再デプロイ |
+| `OPS_ALERT_EMAIL` | `ops@homegohan.com` など (個人のアドレスでもよい) | アプリのエラーが急増したときの運用メールの宛先 (メールアドレス 1 つ。#1157)。**未設定なら通知しない**。送信ドメインの検証 (手順 1) が済むまでは、設定しても届かない | 再デプロイ |
 | `NEXT_PUBLIC_INVITE_BASE_URL` | (**削除する**) | 以前の招待リンク専用の設定。**設定が残っていると、`NEXT_PUBLIC_APP_URL` より優先される**ので、サイトの URL を変えても招待リンクだけ古いままになる | 再デプロイ |
 
 - 値が不正 (URL やメールアドレスの形になっていない) なときは、無視して既定値に戻り、Vercel の関数ログに `[site-config] … の形が正しくないため無視して既定値を使います` と 1 回だけ警告が出ます。
@@ -177,6 +178,7 @@ Supabase が最初から持っている送信は、本番で使うには送信�
    - Site URL = `https://homegohan.com`
    - Redirect URLs に `https://homegohan.com/**` を**追加**する。`https://homegohan-app.vercel.app/**` と `homegohan://**` (モバイルアプリ) は**残す**。アプリのログイン・パスワード再設定は、そのとき開いているサイト (`window.location.origin`) へ戻る作りで、古いアドレスから来る人もいるため。
 5. Google Cloud Console → OAuth クライアントの「承認済みの JavaScript 生成元」に `https://homegohan.com` を追加する。「承認済みのリダイレクト URI」は Supabase のコールバック (`https://<プロジェクト>.supabase.co/auth/v1/callback`) のままで変更しない。
+6. リポジトリ直下の `SECURITY.md` にある、お問い合わせフォームの URL (`https://homegohan-app.vercel.app/contact`。日本語の手順と英語の要約の 2 か所) を、新しいサイトの URL に書き換える (PR を出す)。`SECURITY.md` は環境変数を読めない文書で、`tests/site-config-guard.test.ts` も `src/` と `apps/mobile/` しか見ないので、手で直さないと古い URL が残る。専用の連絡用メールアドレス (`support@homegohan.com` など) を使えるようになったときも、`SECURITY.md` の「報告のしかた」を書き換える。
 
 ### 手順 6: モバイルアプリ (B。サイトを移した後)
 
@@ -201,6 +203,7 @@ EAS のビルド環境に `EXPO_PUBLIC_WEB_URL=https://homegohan.com` と `EXPO_
 - `node scripts/check-email-dns.mjs --from "<EMAIL_FROM の値>"` で `[FAIL]` が無い。
 - 本番のお問い合わせフォームから送ると、`ADMIN_NOTIFICATION_EMAIL` に通知が届く (送信元が `noreply@mail.homegohan.com`)。
 - 家族の招待を自分のアドレス宛に送ると届き、本文の問い合わせ先・署名の URL が新しい値になっている。
+- (`OPS_ALERT_EMAIL` を設定した場合) エラー急増の運用メール (件名「【ほめゴハン運用】エラーが急増しています」) が届く。しきい値 (15 分で 20 件) を超えないと送られないので、確認だけのために手で cron を叩くときは `ENV_SETUP.md` の「エラー急増の運用メール」の注意を読む。
 - 届いたメールの「メッセージのソース」(Gmail なら「メッセージのソースを表示」) で、`SPF: PASS` `DKIM: PASS` `DMARC: PASS` になっている。
 - 迷惑メールフォルダに入っていない。
 - プライバシーポリシー (`/privacy`)・お問い合わせ (`/contact`)・招待画面の問い合わせ先が `support@homegohan.com` になっている。
@@ -238,4 +241,5 @@ DNS のレコード (Resend・DMARC) は残しておいてかまいません。
 - モバイル: `apps/mobile/src/lib/siteConfig.ts` (問い合わせ先・利用規約・プライバシーポリシー)。WebView のオリジンは従来どおり `apps/mobile/src/lib/webBaseUrl.ts`。
 - `tests/site-config-guard.test.ts` が、`src/` と `apps/mobile/` に `@homegohan.app` `@homegohan.jp` `https://homegohan.app` が直接書かれていないことを検査する。許すのは既定値の定数と、それを固定するテストだけ。
   - 例外が 1 つ残っている: `src/app/(main)/settings/page.tsx` (PR #1079 が設定画面を別ファイルに移す。移した先で `getSupportEmail()` にして、テストの `PENDING_FILES` から外す)。
+- 検査の外にあるもの: リポジトリ直下の `SECURITY.md` は、お問い合わせフォームの URL (`https://homegohan-app.vercel.app/contact`) を直接書いている (環境変数を読めない文書のため)。サイトの URL を切り替える (手順 5) ときは、手で書き換える。
 - 設計書 (`docs/design/membership/04-email-templates.md` など) の `homegohan.app` は設計時の値で、実装の正は上記のコードと環境変数です。

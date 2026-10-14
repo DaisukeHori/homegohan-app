@@ -75,9 +75,9 @@ await supabase.from('admin_audit_logs').insert({
 | `plan` | string | plan_key でフィルタ |
 | `role` | string | ロールでフィルタ |
 | `status` | `active\|banned\|deleted` | ステータス |
-| `registered_from` | date | 登録日 FROM |
-| `registered_to` | date | 登録日 TO |
-| `last_login_before` | date | 最終ログイン日 |
+| `registered_from` | date | 登録日 FROM (JST の暦日。その日の JST 0 時以上。実在しない日付・受け付ける範囲 (0101-01-02〜9998-12-30) の外の日付は 400) |
+| `registered_to` | date | 登録日 TO (JST の暦日。その日を含む = 翌日の JST 0 時未満。実在しない日付・受け付ける範囲 (0101-01-02〜9998-12-30) の外の日付は 400) |
+| `last_login_before` | date | 最終ログイン日がこの日より前 (JST の暦日。その日の JST 0 時より前。未ログインは含まない。実在しない日付・受け付ける範囲 (0101-01-02〜9998-12-30) の外の日付は 400) |
 | `sort` | string | `registered_at\|last_login\|meal_count` |
 | `order` | `asc\|desc` | ソート方向 |
 | `page` | int | ページ番号 (default: 1) |
@@ -144,12 +144,20 @@ await supabase.from('admin_audit_logs').insert({
 ---
 
 ### PATCH /api/admin/users/{id}
-ユーザー基本情報更新 (admin note のみ更新可)
+管理ノート (admin note) の追加 (#1103)
 
 **リクエスト**:
 ```json
 { "admin_note": "要注意ユーザー、規約違反1回目" }
 ```
+
+**保存先**: `admin_user_notes` に 1 行追加する (`user_id` = 対象、`admin_id` = 操作者、`note` = 前後の空白を除いた `admin_note`)。`user_profiles` に列は持たない (本人の行は本人が全列読めるため、運営の内部メモを置かない)。
+
+**バリデーション**: `admin_note` は前後の空白を除いて 1〜5000 文字。
+
+**レスポンス**: `{ "data": { "success": true, "note_id": "uuid" } }`。対象ユーザーがいない (UUID でない id を含む) ときは 404 `NOT_FOUND`。
+
+**監査ログ**: `admin.user.note_add` (details は `{ note_id }` だけ。本文は入れない)
 
 **権限**: `admin`, `super_admin`
 
@@ -243,6 +251,13 @@ BAN 解除
 
 `type`: `food` | `recipe` | `ai_content`
 
+> **現状 (2026-10, #1128)**: `ai_content` (AI コンテンツ) の審査は**準備中 (未対応)**。バックエンドのテーブルが無いため、
+> `ai_content` を指定した一覧 (`/queue?type=ai_content`)・個別取得・解決 (`PUT` / `POST` `/{type}/{id}`) は
+> 空や 404 ではなく **501 `OP_NOT_SUPPORTED`** を返す。画面の「AIコンテンツ（未対応）」は選べない。
+> 集約 API `GET /api/admin/moderation` の `aiFlags` は空配列のままで、`aiFlagsSupported: false` を添える
+> (空は「通報 0 件」ではなく「未対応」の意味。配布済みの古いモバイルアプリの運営画面 (リポジトリからは #1389 で削除済み) が
+> `...(res.aiFlags ?? [])` と配列として展開するため、形は変えない)。
+
 **クエリ**: `?status=pending&page=1&per_page=30`
 
 **レスポンス**:
@@ -276,6 +291,32 @@ BAN 解除
 ```
 
 `action`: `approve` | `delete_only` | `delete_and_warn` | `delete_and_temp_ban` | `delete_and_perm_ban` | `escalate`
+
+**`delete_*` の意味 (#1101)**: `delete_only` / `delete_and_warn` / `delete_and_temp_ban` / `delete_and_perm_ban` は、通報されたコンテンツ
+(食事 `meals` / レシピ `recipes`) の行を**消さずに隠す**。`hidden_at` / `hidden_by` / `hidden_reason` を書き、RLS により本人以外
+(家族・ほかのユーザー・未ログイン) には見えなくなる (本人には見える)。完全な削除は、保管期間のあとに別のジョブで行う (保管期間とジョブは未定)。
+
+- 実行の順番は「コンテンツを隠す → 判定の保存 → BAN」。隠せなかったときは判定を保存せず (通報は `pending` のまま)、BAN もせずに
+  `500 OP_CONTENT_HIDE_FAILED` を返す。通報が審査待ちのまま残るので、画面を開き直しても審査のフォームから同じ操作をやり直せる
+  (判定を先に保存すると、隠せなかった通報が審査済みになって一覧からもフォームからも消え、違反コンテンツが見えたまま残る)
+- 隠したあとで判定の保存に失敗したときも、BAN をせず `500 INTERNAL_ERROR` を返す (通報は `pending` のまま)。隠すのは冪等
+  (すでに隠れている行は上書きしない。保管期間の起点も延びない) なので、同じ操作をやり直せばよい
+- 通報にコンテンツが紐づかない (レスポンスの `content_id` が null。持ち主が先に消した等) ときは、隠す対象が無いので隠さずに続行する
+- `approve` / `escalate` は何も隠さない。隠した行を元に戻す操作は、まだ無い (必要なときは service_role で `hidden_*` を NULL に戻す)
+- 食事は、家族へのペースト (`paste_meal_to_family`) で作られた複製 (同じ `paste_group_id` の行) のうち、中身 (`photo_url` と `memo`) が
+  通報された行と同じもの (NULL どうしも同じとみなす) もまとめて隠す。ペーストのあとで持ち主が中身を書き換えた行は隠さない
+  (違反していない他人の行を、通報の結果として隠さない)。複製の持ち主には自分の行として見えたまま、ほかの人には見えなくなる。
+  隠した食事 (複製を含む) はペーストの元にできない (`403 MEAL_HIDDEN`)
+- `meals.paste_group_id` は、ログインユーザー・anon が書き換えられない (トリガー `guard_meal_paste_group_id`。書けるのは
+  `paste_meal_to_family` と service_role だけ)。他人の行を自分のまとまりに入れる・まとまりから外す、はできない
+- 監査ログ (`admin_audit_logs.details`) に `content_id` (隠す対象) と `hidden` (隠したか)、この操作で新しく隠した行の ID の一覧 `hidden_ids`、
+  隠せなかったときは `hide_error`、判定を保存したか `status_saved` (保存できなかった理由は `status_error`) を記録する。
+  隠す対象の行があったかを `content_found` に記録する (#1445。隠す操作をして行の有無が分かったときだけ true / false、それ以外は null)。
+  行がもう無い (持ち主が先に消した) ときは `hidden: false` / `content_found: false`。すでに隠れていた行は `hidden: true` / `content_found: true`
+  で、`hidden_ids` は空
+  隠せなかったとき・隠したあとで判定を保存できなかったときも、監査ログ (severity `warn`) を残す
+- 画像ファイル (`photo_url` / `image_url`) そのものは隠さない (公開バケットの URL は、隠す前に見た人なら取得できる)。完全削除のジョブと合わせて別に扱う
+- `hidden_reason` は持ち主も読める列なので、解決メモ (`resolution_note`) は入れず、`moderation:<action>` の識別子を書く
 
 ---
 
@@ -324,9 +365,35 @@ BAN 解除
 > この章は以前 `/api/super-admin/feature-flags` (更新は PUT) と書かれていたが、そのパスの route は存在しない。
 > Web の運営画面 (`src/app/super-admin/flags`)・結合テスト・E2E・モバイルの機能フラグ画面は、すべて `/flags` を使う (#1137)。
 > エラー本文は他の運営 API と同じ `{ "error": { "code": "...", "message": "..." } }`。
+>
+> 機能フラグの置き場は `feature_flags` テーブルの 1 つに一本化した (#1148)。以前、献立生成のエンジン切り替えだけは
+> `system_settings` の `feature_flags` 行を読んでいた (一般ユーザーには RLS で読めず、いつも既定値だった)。今は
+> アプリのどこでも `src/lib/feature-flags.ts` の `isFeatureEnabled(key, userId)` で判定する。
+> `system_settings` の `feature_flags` 行はもう何も読まない。運営のシステム設定 (`GET / PUT /api/super-admin/settings`) では
+> 読み取り専用で、GET は `read_only: true` と `note` を付け、PUT は 409 `SETTING_READ_ONLY` で断る (#1457。行は消していない)。
+> GET の各行は `key` / `value` / `description` / `updated_at` (DB の列の名前のまま) と `read_only` / `note`。PUT は `description` を
+> 省略でき、送れば保存する (空の文字列は `null`。#1486)。
+>
+> アプリが読んでいるフラグ (`FEATURE_FLAG_DEFAULTS`)。行が無い・読み出しに失敗したときは「止めない側」の既定値で動く:
+>
+> | key | 用途 | 既定値 (行が無い・読めない) |
+> |-----|------|------------------------------|
+> | `menu_generation_v5_wrapped` | 献立生成 (週間・1 日・1 食・AI 相談のアクション) のエンジン。ON で v5、OFF で v4 | ON |
+> | `menu_generation_v5_direct` | 汎用の献立生成 API (`/api/ai/menu/v4/generate`) のエンジン | ON |
+> | `ai_chat_enabled` | AI 相談の緊急停止スイッチ。OFF のとき AI を呼ぶ API (`/api/ai/consultation/**` の POST) と、利用者の JWT で直接呼ばれた Edge Function `knowledge-gpt` が 503 + やさしい文面。通常は ON のまま | ON |
+> | `maintenance_mode` | ON のとき、ミドルウェアが admin / super_admin 以外にメンテナンス中の画面 (API は 503 `MAINTENANCE_MODE`) を出す。切り替えは運営画面 `/super-admin/flags` | OFF |
+>
+> フラグの値はサーバーのメモリに最大 30 秒覚えるため、PATCH で切り替えてから全員に反映されるまで最大 30 秒かかる
+> (下の PATCH の「即座に」は、この遅れを除いた意味)。ミドルウェア (Edge) と API route (Node) は別々にメモリを持つ。
 
 ### GET /api/super-admin/flags
 フラグ一覧
+
+`active_user_count` は、そのフラグが今 ON になっているユーザーの数。アプリの判定 (`evaluateFlag`) を全ユーザーの
+`user_profiles` に対して実行して数える (OFF は 0、全員が対象で条件の無いフラグはユーザー総数)。
+ユーザーが 20,000 人 (既定。環境変数 `FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT` で変えられる) を超えるときは、1 人ずつ判定が要るフラグ (段階公開・条件つき) だけ `null`。
+全員が対象で条件の無いフラグは、上限を超えても総数を返す (件数だけを数えるため)。
+集計に失敗したときは、すべてのフラグが `null` (一覧そのものは返す)。
 
 **レスポンス**:
 ```json
@@ -363,7 +430,7 @@ BAN 解除
 **レスポンス**: `{ "data": { "key": "...", "description": "...", "enabled": true, "rollout_strategy": {}, "constraints": {}, "updated_at": "..." } }`
 (存在しないキーは 404 `OP_FEATURE_FLAG_NOT_FOUND`)
 
-**副作用**: 即座に全ユーザーへ反映、監査ログ記録
+**副作用**: 全ユーザーへ反映 (サーバーのメモリの更新で最大 30 秒)、監査ログ記録
 
 ---
 
@@ -373,37 +440,94 @@ BAN 解除
 ### DELETE /api/super-admin/flags/{key}
 フラグ削除 (利用中の場合は `OP_FEATURE_FLAG_IN_USE` で 409)
 
+### GET /api/feature-flags
+画面が前もって「AI 相談は使えるか」「メンテナンス中か」を知るための窓口。認証は不要 (未ログインでも答える。メンテナンス中かどうかは、ログイン前の画面でも要る)。
+
+いま、この API を呼んでいる画面 (Web・モバイル) は無い (#1457)。画面は前もって確かめず、止められたときの 503 の応答の code
+(`AI_CHAT_DISABLED` / `MAINTENANCE_MODE`) で緊急停止中・メンテナンス中を知り、本文の文字列ではなく固定の文を出す
+(文と code の置き場は `packages/shared/src/service-unavailable.ts`。Web は `src/lib/ai/ai-chat-unavailable.ts`、モバイルは
+`apps/mobile/src/lib/service-unavailable.ts`)。フラグはサーバーのメモリに最大 30 秒覚えるので、前もって確かめても送る時点の判定とずれることがあり、
+503 の扱いはどのみち要る。この API は、画面で前もって知らせたくなったときの窓口として残してある。
+
+返すのは、画面に見せてよいフラグだけの許可リスト (`CLIENT_FEATURE_FLAG_KEYS`: `ai_chat_enabled` / `maintenance_mode`)。
+運営が作った別のフラグの名前は返さない。値は、ログイン中のユーザーにとっての ON/OFF (段階公開があれば、そのユーザーでの判定)。
+運営 (admin / super_admin) には、メンテナンス中でも `maintenance_mode: false` を返す (運営はメンテナンス中も使えるため)。
+メンテナンス中でも、この API は止まらない。`Cache-Control: private, no-store`。
+
+**レスポンス**: `{ "data": { "flags": { "ai_chat_enabled": true, "maintenance_mode": false } } }`
+
+### メンテナンスモード (`maintenance_mode` が ON のとき)
+ミドルウェア (`lib/supabase/middleware.ts`) が、admin / super_admin 以外に次を返す。
+- ページ: 503 の HTML (「ただいまメンテナンス中です」。`Retry-After: 300`。ログイン画面へは回さない)
+- API: 503 `{ "error": "<固定の文>", "code": "MAINTENANCE_MODE", "retryAfter": 300 }` (`Retry-After: 300`)。
+  AI 相談の緊急停止の 503 と同じ平らな形。`error` は文字列で、本文の `error` をそのまま出す画面でも固定の文になる (#1486。
+  それより前は `{ "error": { "code": "MAINTENANCE_MODE", "message": "..." } }` の入れ子で、Web の画面が描画で落ちた)。
+  文と code の置き場は `packages/shared/src/service-unavailable.ts` (読む側の `serviceUnavailableMessageOfBody` は以前の入れ子の形も受ける)
+
+止めないもの: 運営ロール、`/login`・`/auth/*` (運営がログインし直せるように)、`/terms`・`/privacy`、
+`/legal` (特定商取引法に基づく表記)・`/contact` (お問い合わせ) の画面 (#1486。未ログインでも読める公開の文面。
+その画面の下の API は止める: お問い合わせの送信 `POST /api/contact` は 503 で、画面には固定の文が出る。画面に出ているメールアドレスは使える)、
+`/api/health` (死活監視)、`/api/auth/*`、`/api/cron/*`、`/api/feature-flags`、`/_next/*`。
+`/signup` (新規登録) は止める。
+`/legal`・`/contact` を通すのはメンテナンスの判定だけで、ほかの差し戻し (初期設定の途中の人を `/onboarding/*` へ、凍結中の人を
+`/frozen` へ。凍結中でも `/contact` は通る) はメンテナンス中でないときと同じに掛かり、差し戻した先はメンテナンス中の画面になる。
+画像・manifest・robots・サービスワーカーなどの静的ファイルは、ミドルウェアの `matcher` (`src/middleware.ts`) が外していて、そもそもミドルウェアが走らない。
+拡張子で通す処理は持たないので、動的なページのパスは、末尾が `.json` や `.txt` に見えても (`/meals/abc.json` など) 止める。
+フラグを読めない・行が無いときは止めない (OFF 扱い)。
+
+### AI 相談の緊急停止 (`ai_chat_enabled` が OFF のとき)
+`POST /api/ai/consultation/sessions`・`/sessions/{id}/messages`・`/sessions/{id}/summarize`・`/sessions/{id}/close`・
+`/actions/{id}/execute` が 503 `{ "error": "<やさしい文面>", "code": "AI_CHAT_DISABLED", "retryAfter": 60 }` を返す。
+利用者の JWT で直接呼べる Edge Function `knowledge-gpt` (#1153) も、JWT の経路で認証の直後・同意の判定の前にスイッチを見て、
+OFF なら同じ 503 を返す (#1486。`supabase/functions/_shared/ai-chat-flag.ts`。判定は Next.js と共用で、段階公開・条件も同じに効く。
+読めない・行が無いときは ON)。service role の経路 (AI 相談の API が呼ぶもの) は、呼び出し元がスイッチを見たあとなので見ない。
+過去の相談の閲覧 (GET)・提案の却下 (DELETE)・重要マークは止めない。通常は ON のままにする非常ボタン。
+利用者の同意の有無で AI への送信を止めるのはこのスイッチではなく、同意の判定 (`requireAiConsent` / `checkUserAiConsent`、#1154) が担う
+(スイッチが ON でも、未同意なら AI へ送らない)。
+
 ---
 
 ## 8. LLM 使用量 API
 
-### GET /api/super-admin/llm-usage
-LLM 使用量ダッシュボード
+### GET /api/super-admin/llm/usage
+LLM 使用量ダッシュボード (super_admin のみ)
 
-**クエリ**: `?period=7d&model=xai_grok&function=knowledge-gpt`
+**クエリ**: `?period=7d&model=grok-4-fast&function=knowledge-gpt&provider=xai`
+(`period` は `1d` / `7d` / `30d` / `custom`。既定は `7d`。`from` / `to` は JST の暦日 `YYYY-MM-DD`。`provider` は `gemini` / `xai` / `anthropic` / `openai`)
 
 **レスポンス**:
 ```json
 {
   "data": {
     "total_cost_usd": 1234.56,
-    "total_cost_jpy": 187000,
+    "total_cost_jpy": 187653,
+    "total_requests": 52000,
+    "total_tokens": 14000000,
     "by_model": [
-      { "model": "xai_grok", "requests": 45000, "tokens": 12000000, "cost_usd": 800 }
+      { "model": "grok-4-fast", "provider": "xai", "requests": 45000, "tokens": 12000000, "cost_usd": 800 }
     ],
     "by_function": [
       { "function": "knowledge-gpt", "requests": 30000, "cost_usd": 600 }
     ],
     "top_users": [
-      { "user_id": "uuid", "email": "user@example.com", "requests": 1200, "cost_usd": 50 }
+      { "user_id": "uuid", "email": null, "requests": 1200, "cost_usd": 50, "is_anomaly": false }
     ],
     "timeseries": [
-      { "date": "2026-05-06", "cost_usd": 180 }
+      { "date": "2026-05-06", "cost_usd": 180, "requests": 7400 }
     ],
-    "anomalies": []
+    "anomalies": [],
+    "period": { "from": "2026-04-30", "to": "2026-05-06" }
   }
 }
 ```
+
+> **現状 (2026-10, #1498)**: 実装のパスは `GET /api/super-admin/llm/usage` (super_admin のみ)。集計は DB の関数 `llm_usage_summary`
+> (migration `20261011110000_llm_usage_summary.sql`。service_role だけが実行できる) が `llm_usage_logs` の全行を DB の中で集計し、
+> 1 つの JSONB で返す (行を API で読まないので、PostgREST の `max_rows` で打ち切られない)。集計するのは LLM 呼び出しごとの行
+> (`is_summary = false`) だけ。日次の系列 (`timeseries`) は JST の暦日。`top_users` は呼び出し回数の多い順に 50 人。
+> `anomalies` は、JST の 1 日に 5,000 回を超えて呼んだ日があるユーザー全員 (`top_users` に入らない人も含む。operator/03-ui-spec.md の異常アラート)。
+> `anomalies` の各要素は `top_users` と同じ形 (`user_id` / `email` / `requests` / `cost_usd` / `is_anomaly`)。`email` は常に `null` (結合しない)。
+> `total_cost_jpy` は `total_cost_usd` × 152 (概算) を四捨五入したもの。応答の型は `src/lib/super-admin/llm-usage-summary.ts` の `LlmUsageResponseData` (画面も同じ型を使う。#1524)。
 
 ---
 
@@ -415,20 +539,35 @@ LLM 使用量ダッシュボード
 ### POST /api/super-admin/llm-usage/quota-update
 クォータ更新
 
-**リクエスト**:
+> **現状 (2026-10, #1149)**: プランごとの AI の 1 日の上限 (全機能の合計・JST の暦日) は、`/api/super-admin/llm/quotas` で読み書きする
+> (見出しの `POST /api/super-admin/llm-usage/quota-update` というパスは無い)。保存先は DB の `ai_daily_limits` で、保存した値は次の AI の利用の判定 (`consume_ai_usage`) から効く
+> (詳細は operator/06-ai-llm.md §5)。super_admin のみ。
+>   - `GET`: プランごとの行 (`subscription_plans` と `ai_daily_limits` を合わせたもの)・`default_plan_key` (`free`)・`enforced: true`・`note`
+>   - `PATCH`: 1 つのプランの上限を保存する。保存すると監査ログ `super_admin.llm_quota.update` を残す
+>   - 上限に達した AI の呼び出しは 429 `AI_DAILY_LIMIT` (§23)
+>   - 利用者ごとの上限と月次の上限は無い。上限に数えない機能の安全弁 (`ai_unmetered_daily_caps`) は DB の行で変える (API・画面は無い)
+> AI プロバイダーへ送る前の同意の判定は `requireAiConsent` / `checkUserAiConsent` (`src/lib/ai/consent-guard.ts`、#1154) が担い、同意が無ければ送らない。
+
+**リクエスト** (`PATCH /api/super-admin/llm/quotas`):
 ```json
 {
-  "target_type": "user",
-  "target_id": "uuid",
-  "daily_limit": 100,
-  "monthly_limit": 2000,
-  "reason": "異常使用検知のため制限"
+  "plan_key": "free",
+  "daily_limit": 10,
+  "reason": "1 日の上限の見直し"
 }
 ```
+- `plan_key`: `subscription_plans` にあるプラン (無ければ 404 `PLAN_NOT_FOUND`)
+- `daily_limit`: 0 以上 10,000 以下の整数。`null` は無制限
+- `reason`: 変更の理由 (監査ログに残す)
 
 ---
 
 ## 9. 売上・経理 API
+
+> **現状 (2026-10, #1125)**: 課金 (Stripe の Webhook 受信・収益の日次スナップショットなどの集計バッチ) は**未開始**で、
+> 請求書・収益推移・Stripe 整合チェックの元になるデータが無い。画面 (`/admin/finance/invoices` `/revenue` `/reconciliation`) は
+> 「課金は未開始のため準備中」と表示し、売上ダッシュボードの MRR / ARR / Churn Rate / LTV / 契約数は「準備中」とする
+> (MAU は `daily_active_users` の実データなのでそのまま出す)。API は残してある。
 
 ### GET /api/admin/finance/dashboard
 売上ダッシュボード
@@ -739,6 +878,12 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 
 ## 13. インフラ監視 API
 
+> **現状 (2026-10, #1180)**: `infra_metrics` / `infra_alerts` に書き込む処理 (監視データの収集) が**無い**ため、
+> `/api/super-admin/infra/metrics` と `/alerts` は常に空を返す。画面は、空を「問題なし」と見せず
+> 「未接続: 監視データの収集は設定されていません」と表示し、Vercel / Supabase のダッシュボードへのリンクを出す。
+> `/alerts` の応答にあった `external_sources` (SENTRY_DSN / BETTER_STACK_TOKEN の有無) は、どちらもコードで使われておらず
+> 接続状態を表さないため廃止した。
+
 ### GET /api/super-admin/infra/dashboard
 統合監視ダッシュボード
 
@@ -875,6 +1020,12 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 ---
 
 ## 16. データエクスポート API
+
+> **現状 (2026-10, #1126)**: データエクスポートは**準備中 (未対応)**。ファイルを作る処理 (cron / worker) と専用の
+> `exports` テーブルが無いため、`/api/super-admin/exports` と `/exports/{id}` は全メソッドが 501 `OP_NOT_SUPPORTED` を返し、
+> DB には触れない。画面 (`/super-admin/exports`, `/new`) は「準備中（未対応）」だけを出し、依頼フォームは無い。
+> 以前は、利用者本人の GDPR 削除要求の表 (`gdpr_deletion_requests`) を代用していたが、これは本人の削除要求を
+> 取り消す事故につながるため止めた。実装するときは、専用テーブルを先に用意すること。
 
 ### POST /api/super-admin/exports
 エクスポートリクエスト
@@ -1097,16 +1248,18 @@ deprecated → private にロールバック (緊急用)
 
 ## 19. クーポン管理 API
 
-### GET /api/admin/coupons
+**権限**: すべて `super_admin` だけ (それ以外は 403 `OP_PERMISSION_DENIED`、未ログインは 401 `AUTH_UNAUTHENTICATED`)。運営の画面 `/super-admin/coupons` から使う。
+
+### GET /api/super-admin/coupons
 クーポン一覧
 
-**クエリ**: `?status=active&page=1`
+**クエリ**: `?status=active&applicable_to=all&page=1&per_page=50` (どれも省略可。`per_page` は 1〜200)
 
-**権限**: `sales`, `admin`, `super_admin`
+**レスポンス**: `{ "data": [ coupons の行 ], "meta": { "total": 12, "page": 1, "per_page": 50 } }`
 
 ---
 
-### POST /api/admin/coupons
+### POST /api/super-admin/coupons
 クーポン作成
 
 **リクエスト**:
@@ -1117,8 +1270,8 @@ deprecated → private にロールバック (緊急用)
   "discount_type": "percentage",
   "discount_value": 20,
   "applicable_to": "org",
-  "valid_from": "2026-05-01T00:00:00Z",
-  "valid_until": "2026-12-31T23:59:59Z",
+  "valid_from": "2026-05-01",
+  "valid_until": "2026-12-31",
   "max_uses": 100,
   "per_user_limit": 1,
   "duration_months": 3
@@ -1126,29 +1279,74 @@ deprecated → private にロールバック (緊急用)
 ```
 
 **バリデーション**:
+- `valid_from` / `valid_until` は JST の暦日 (YYYY-MM-DD の実在する日付。存在しない日付は 400 `OP_INVALID_INPUT`)。`valid_from <= valid_until` (同じ日は可)
+- DB には開始日の JST 0:00・期限の日の JST 23:59:59.999999 の時刻にして書く (#1483。`apply_coupon` の `now() > valid_until` は端を含むので、期限の日の終わりまで使える)。PATCH の `valid_until` も同じ
+- `code` が既にあるときは 409 `OP_COUPON_CODE_DUPLICATE`
 - 0 円や 1 円となるクーポン (100% OFF + monthly_price <= 1 円) は警告表示
 - `gross_margin_preview_jpy` を計算して返す
 
+**レスポンス**: 201 `{ "data": 作った coupons の行 }` (`status` は `active`)
+
 ---
 
-### PATCH /api/admin/coupons/{id}
-クーポン編集
+### GET /api/super-admin/coupons/{id}
+クーポン詳細。`{ "data": coupons の行 }`。無ければ 404 `OP_COUPON_NOT_FOUND`
 
-### POST /api/admin/coupons/{id}/pause
-一時停止
+---
 
-### GET /api/admin/coupons/{id}/redemptions
-利用統計
+### PATCH /api/super-admin/coupons/{id}
+クーポン編集 (送った欄だけを変える。どれも省略可)
+
+**リクエスト**:
+```json
+{
+  "display_name": "法人営業キャンペーン2026 (延長)",
+  "status": "paused",
+  "valid_until": "2027-03-31",
+  "max_uses": 200,
+  "applicable_plans": ["uuid"],
+  "applicable_to": "org",
+  "gross_margin_preview_jpy": 1200
+}
+```
+
+- `display_name`: 200 文字まで (`null` で消す)
+- `status`: `active` / `paused` / `expired`。一時停止は `paused` にする (専用の API は無い)
+- `valid_until`: JST の暦日 (YYYY-MM-DD の実在する日付)。DB にはその日の JST 23:59:59.999999 にして書く (#1483。POST と同じ)
+- `max_uses`: 1 以上の整数 (`null` で無制限)
+- `applicable_plans`: プランの id (UUID) の配列 / `applicable_to`: `all` / `personal` / `family` / `org`
+- `code` / `discount_type` / `discount_value` / `valid_from` / `per_user_limit` / `duration_months` は変えられない (送っても無視する)
+
+**バリデーション**:
+- 形の誤り (上の各欄) は 400 `OP_INVALID_INPUT`
+- 変える欄が 1 つも無いときは 400 `OP_NO_UPDATE`
+- クーポンが無いときは 404 `OP_COUPON_NOT_FOUND`
+- `valid_until` を送ったときは、保存済みの `valid_from` を JST の暦日に戻して比べ、`valid_until` の日がそれより前なら 400 `OP_INVALID_INPUT` (`details[].path` は `["valid_until"]`)。同じ日は可 (POST の `valid_from <= valid_until` と同じ決まり。#1510)。`valid_until` を送らないときは比べない
+
+**レスポンス**: 200 `{ "data": 変えたあとの coupons の行 }`。監査ログに `update_coupon` (`details.changes` に書いた値) を残す
+
+---
+
+### DELETE /api/super-admin/coupons/{id}
+クーポン削除。204。利用実績がある (`uses_count > 0`) ときは 409 `OP_COUPON_IN_USE` (`paused` にする)。無ければ 404 `OP_COUPON_NOT_FOUND`
+
+---
+
+### POST /api/super-admin/coupons/{id}/apply
+契約へのクーポンの適用 (super_admin の承認で遡及して適用する)。operator/04-plan-management.md §4.1
+
+---
+
+### GET /api/super-admin/coupons/{id}/redemptions
+適用履歴 (coupon_redemptions の行。新しい順 = `redeemed_at` の降順)
+
+**クエリ**: `?page=1&per_page=50` (`per_page` は 1〜200)
 
 **レスポンス**:
 ```json
 {
-  "data": {
-    "total_redemptions": 45,
-    "active_redemptions": 42,
-    "total_discount_jpy": 894000,
-    "redemptions": [ { "user_id": "uuid", "redeemed_at": "2026-05-01T00:00:00Z" } ]
-  }
+  "data": [ { "coupon_id": "uuid", "user_id": "uuid", "discount_amount_jpy": 500, "redeemed_at": "2026-05-01T00:00:00Z" } ],
+  "meta": { "total": 45, "page": 1, "per_page": 50, "coupon_code": "ENTERPRISE2026" }
 }
 ```
 
@@ -1304,8 +1502,10 @@ NPS サーベイ送信 (日次 14:00 JST)
 | `OP_TARGET_PROTECTED` | 403 | 保護ユーザーへの操作不可 (super_admin BAN 等) |
 | `OP_AUDIT_LOG_IMMUTABLE` | 403 | 監査ログ書き換え不可 |
 | `OP_FEATURE_FLAG_IN_USE` | 409 | 削除しようとしたフラグが利用中 |
+| `PLAN_NOT_FOUND` | 404 | AI の利用上限の保存 (`PATCH /api/super-admin/llm/quotas`) で、`plan_key` のプランが `subscription_plans` に無い (§8) |
+| `SETTING_READ_ONLY` | 409 | システム設定の保存 (`PUT /api/super-admin/settings`) で、使われていない key (旧 `feature_flags` 行) を書き換えようとした (§7。#1457) |
 | `OP_PACKAGE_IN_USE` | 409 | 削除しようとしたパッケージが利用中 |
-| `OP_QUOTA_EXCEEDED` | 429 | LLM クォータ超過 |
+| `AI_DAILY_LIMIT` | 429 | 今日の AI の利用回数の上限に達した (利用者の AI の呼び出し。本文は `{ error, code, limit, retryAfter }`、`Retry-After` は次の JST 0 時までの秒数。operator/06-ai-llm.md §5) |
 | `OP_RE_AUTH_REQUIRED` | 401 | 再認証必須 |
 | `OP_PLAN_KEY_CONFLICT` | 409 | plan_key 重複 |
 | `OP_PLAN_DEPRECATED` | 422 | deprecated プランへの新規加入不可 |
@@ -1314,6 +1514,7 @@ NPS サーベイ送信 (日次 14:00 JST)
 | `OP_STRIPE_SYNC_FAILED` | 502 | Stripe API 呼び出し失敗 |
 | `OP_COUPON_EXPIRED` | 422 | クーポン期限切れ |
 | `OP_TRIAL_ALREADY_USED` | 422 | 同一プランの試用は 1 回のみ |
+| `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応 (準備中) の機能。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査) |
 
 ## 24. テスト方針
 
@@ -1336,14 +1537,19 @@ import { describe, it, expect } from 'vitest';
 import Stripe from 'stripe';
 import { validateStripeSignature } from '@/lib/operator/stripe-webhook';
 
+// 署名の生成と検証は手元で完結するので、環境変数を読まずにテスト用の固定の値を使う
+// (`process.env.<変数名>!` は使わない。#1182・#1434)
+const TEST_STRIPE_SECRET_KEY = 'sk_test_dummy_for_signature_test';
+const TEST_WEBHOOK_SECRET = 'whsec_test_dummy_for_signature_test';
+
 describe('Stripe Webhook 署名検証', () => {
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY_TEST!, {
+  const stripe = new Stripe(TEST_STRIPE_SECRET_KEY, {
     apiVersion: '2024-11-20.acacia',
   });
 
   it('accepts webhook with valid signature', () => {
     const payload = JSON.stringify({ type: 'customer.subscription.created' });
-    const secret = process.env.STRIPE_WEBHOOK_SECRET!;
+    const secret = TEST_WEBHOOK_SECRET;
     const signature = stripe.webhooks.generateTestHeaderString({
       payload,
       secret,
@@ -1353,7 +1559,7 @@ describe('Stripe Webhook 署名検証', () => {
 
   it('rejects webhook with invalid signature', () => {
     const payload = JSON.stringify({ type: 'customer.subscription.created' });
-    const secret = process.env.STRIPE_WEBHOOK_SECRET!;
+    const secret = TEST_WEBHOOK_SECRET;
     expect(() =>
       validateStripeSignature(payload, 'invalid-sig', secret),
     ).toThrow();

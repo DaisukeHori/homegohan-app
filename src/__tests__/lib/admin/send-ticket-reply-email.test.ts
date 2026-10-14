@@ -279,6 +279,22 @@ describe('sendTicketReplyEmail: 送信できない場合 (返信は失敗させ�
     expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('recipient lookup failed'), expect.anything(), logMeta);
   });
 
+  it('起票した利用者が退会している (ticket.user_id が null): 宛先を引かず failed / no_recipient、送信しない (#1175)', async () => {
+    const outcome = await sendTicketReplyEmail({
+      ticket: { ...ticket, user_id: null },
+      messageId: MESSAGE_ID,
+      messageBody: REPLY_BODY,
+      logger,
+    });
+
+    expect(outcome).toEqual({ status: 'failed', reason: 'no_recipient' });
+    expect(mockGetUserById).not.toHaveBeenCalled();
+    expect(mockEmailsSend).not.toHaveBeenCalled();
+    expect(mockAdminInsert).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('has left'), logMeta);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
   it('getUserById が例外を投げる: failed / no_recipient、送信しない', async () => {
     mockGetUserById.mockRejectedValue(new Error('network down'));
 

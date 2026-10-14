@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomBytes } from 'node:crypto';
 import * as dotenv from 'dotenv';
+import { grantE2eAiConsent } from './lib/e2e-ai-consent';
 
 dotenv.config({ path: path.resolve(__dirname, '..', '.env.local') });
 
@@ -72,6 +73,14 @@ const accounts = Array.from({ length: 10 }, (_, i) => ({
       auto_calculate: true,
     }, { onConflict: 'user_id' });
     if (tErr) { console.error('nutrition_targets', a.email, tErr.message); failed++; continue; }
+    // 外国の AI 事業者への提供の同意 (T15 / #1154)。未同意だと AI を使う e2e がサーバーに止められる (403 AI_CONSENT_REQUIRED)
+    try {
+      await grantE2eAiConsent(admin, id!);
+    } catch (e) {
+      console.error('ai_consent', a.email, e instanceof Error ? e.message : String(e));
+      failed++;
+      continue;
+    }
     created.push({ email: a.email, id: id! });
     console.log('OK', a.email);
   }

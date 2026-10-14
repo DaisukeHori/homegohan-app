@@ -617,7 +617,9 @@ describe('#1103 (7) C / D: PostgREST を通した挙動', () => {
     expect(org?.name).not.toBe('anon should not rename');
   });
 
-  it('D5: meals_select_owner_or_family と organizations_update_admin は authenticated 限定。式は変えていない', async () => {
+  // #1101 (20261009000500) が meals_select_owner_or_family の式に「隠した行は本人だけ」の条件を足した。
+  // 対象ロール (authenticated) と can_view_user_meals の判定はそのまま残っているので、ここでは呼び出しが残っていることを確かめる
+  it('D5: meals_select_owner_or_family と organizations_update_admin は authenticated 限定。can_view_user_meals / organizations_owner_id_unchanged の判定が残っている', async () => {
     const rows = await pgQuery<{
       tablename: string;
       policyname: string;

@@ -365,6 +365,8 @@ paste_group 内の食事を 1 回の操作でまとめて書き換える機能 (
 
 - API は、常に 501 (`NOT_IMPLEMENTED`) を返すだけの未実装スタブで、呼び出す画面もなかったため、ルートごと削除した。
 - `meals.paste_group_id` と `idx_meals_paste_group` は、ペースト元と複製をひとまとめに識別するために残す (DB は変更しない)。
+  #1101 (migration 20261009000500) で、ログインユーザー・anon が `paste_group_id` を書き換えられないトリガー (`guard_meal_paste_group_id`) を足した
+  (運営のモデレーションが、このまとまりで複製を隠すため)。書けるのは `paste_meal_to_family` だけ。
 
 将来この機能を作り直す場合の注意: 「他人の meal を編集する」API になるので、server で「caller が paste 元の owner であること」を必ず検証する。
 

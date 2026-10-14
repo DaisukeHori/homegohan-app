@@ -4,14 +4,16 @@
  * SELECT は super_admin のみ
  */
 import { z } from 'zod';
+import { CalendarDateSchema } from '@/lib/calendar-date-schema';
 
 export const AuditLogQuerySchema = z.object({
   actor_id: z.string().uuid().optional(),
   target_id: z.string().uuid().optional(),
   action_type: z.string().optional(),
   severity: z.enum(['info', 'warn', 'critical']).optional(),
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  // 期間の開始日・終了日 (どちらの日も含む。JST の暦日)。存在しない日付は 400 (#1433)
+  from: CalendarDateSchema.optional(),
+  to: CalendarDateSchema.optional(),
   page: z.coerce.number().int().min(1).default(1),
   per_page: z.coerce.number().int().min(1).max(200).default(50),
 });

@@ -11,6 +11,17 @@ import { createTestUserWithRoles, cleanupTestUser, cleanupAuditLogs, testEmail, 
 import { supabaseAdmin } from '../helpers/supabase';
 import { apiCall, apiCallNoAuth } from '../helpers/api';
 import { expectError } from '../helpers/admin-test-utils';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import ws from 'ws';
+
+/** ログインした本人の JWT で RLS を通る client (PostgREST に直接問い合わせる) */
+function userScopedClient(jwt: string): SupabaseClient {
+  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? '', process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '', {
+    auth: { autoRefreshToken: false, persistSession: false },
+    realtime: { transport: ws as unknown as typeof WebSocket },
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
+  });
+}
 
 const TS = Date.now();
 
@@ -31,6 +42,9 @@ beforeAll(async () => {
 }, 60000);
 
 afterAll(async () => {
+  // PATCH が追加した管理ノート (admin_user_notes.admin_id は auth.users を ON DELETE なしで参照するため、ユーザーより先に消す)
+  await supabaseAdmin.from('admin_user_notes').delete().eq('user_id', targetUser.userId);
+
   // Cleanup audit logs first to avoid FK issues
   await Promise.all([
     cleanupAuditLogs(adminUser.userId),
@@ -136,27 +150,66 @@ describe('GET /api/admin/users/[id]', () => {
 });
 
 describe('PATCH /api/admin/users/[id]', () => {
-  // 既知の不具合 (#1103 項目 5): user_profiles に admin_note 列が無く (本番スキーマも同じ)、
-  // UPDATE が「column does not exist」で失敗して常に 500 になる。直ったら `.fails` を外すこと。
-  it.fails('[既知の不具合 #1103] 200 for admin and inserts audit log (現状は admin_note 列が無く 500)', async () => {
+  // #1103 (項目 5): 以前は存在しない user_profiles.admin_note 列へ UPDATE して常に 500 だった。
+  // 管理ノートは admin_user_notes に 1 行追加する (本人には読めない運営の内部メモ)。
+  it('200 for admin: admin_user_notes に 1 行追加され、admin.user.note_add が本文なしで記録される', async () => {
+    const noteText = `Integration test note ${TS}`;
     const res = await apiCall('PATCH', `/api/admin/users/${targetUser.userId}`, adminUser.jwt, {
-      admin_note: 'Integration test note',
+      admin_note: `  ${noteText}  `,
     });
     expect(res.status).toBe(200);
-    expect((res.body as { data: { success: boolean } }).data.success).toBe(true);
+    const body = res.body as { data: { success: boolean; note_id: string } };
+    expect(body.data.success).toBe(true);
 
-    // Verify audit log was inserted
+    const { data: notes } = await supabaseAdmin
+      .from('admin_user_notes')
+      .select('id, user_id, admin_id, note')
+      .eq('user_id', targetUser.userId)
+      .eq('admin_id', adminUser.userId);
+    expect(notes).toEqual([
+      { id: body.data.note_id, user_id: targetUser.userId, admin_id: adminUser.userId, note: noteText },
+    ]);
+
     const { data: logs } = await supabaseAdmin
       .from('admin_audit_logs')
       .select('*')
       .eq('actor_id', adminUser.userId)
-      .eq('action_type', 'admin.user.note_update')
-      .eq('target_id', targetUser.userId)
-      .order('created_at', { ascending: false })
-      .limit(1);
-
+      .eq('action_type', 'admin.user.note_add')
+      .eq('target_id', targetUser.userId);
     expect(logs).toHaveLength(1);
-    expect(logs![0].actor_id).toBe(adminUser.userId);
+    expect(logs![0].details).toEqual({ note_id: body.data.note_id });
+  });
+
+  it('200 for super_admin', async () => {
+    const res = await apiCall('PATCH', `/api/admin/users/${targetUser.userId}`, superAdminUser.jwt, {
+      admin_note: 'super_admin note',
+    });
+    expect(res.status).toBe(200);
+    const { data: notes } = await supabaseAdmin
+      .from('admin_user_notes')
+      .select('note')
+      .eq('user_id', targetUser.userId)
+      .eq('admin_id', superAdminUser.userId);
+    expect(notes).toEqual([{ note: 'super_admin note' }]);
+  });
+
+  it('対象ユーザー本人は自分の管理ノートを読めない (RLS)', async () => {
+    const { data, error } = await userScopedClient(targetUser.jwt).from('admin_user_notes').select('id').eq('user_id', targetUser.userId);
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+  });
+
+  it('404 for unknown user (何も追加しない)', async () => {
+    const unknownId = '00000000-0000-4000-8000-000000000000';
+    const res = await apiCall('PATCH', `/api/admin/users/${unknownId}`, adminUser.jwt, { admin_note: 'x' });
+    expect(res.status).toBe(404);
+    const { data } = await supabaseAdmin.from('admin_user_notes').select('id').eq('user_id', unknownId);
+    expect(data).toEqual([]);
+  });
+
+  it('400 for blank note (空白だけのノートは追加しない)', async () => {
+    const res = await apiCall('PATCH', `/api/admin/users/${targetUser.userId}`, adminUser.jwt, { admin_note: '   ' });
+    expect(res.status).toBe(400);
   });
 
   it('403 for support (support cannot PATCH)', async () => {
