@@ -52,6 +52,22 @@ test("...", async ({ authedPage }) => {
 - `E2E_USER_EMAIL` (例: `e2e-user-01@homegohan.test`)
 - `E2E_USER_PASSWORD`
 
+### テスト用のセッションの作り方 (#1547)
+
+`global-setup.ts`・`fixtures/auth.ts` (`authedPage`)・`fixtures/fresh-user.ts` (`injectSession`) などが Cookie に入れるセッションは、
+パスワードのログイン (`/auth/v1/token?grant_type=password`) ではなく、`helpers/test-session.mjs` の `createTestSession` で作る
+(管理用の鍵で `/auth/v1/admin/generate_link` → `/auth/v1/verify`。Supabase の CAPTCHA を有効にしても止まらない)。
+自分でパスワードのログインを呼ばず、発行・確認の手順も写さずに、この関数を import して使う (`tests/e2e-test-session.test.ts` が検査する)。
+
+- `helpers/test-session.mjs` は依存の無い素の JavaScript (型は JSDoc)。e2e (TypeScript) からも、node でそのまま動かす
+  デプロイ後の動作確認の `--with-auth` (`scripts/lib/smoke.mjs`) からも import する。import するときは拡張子 `.mjs` まで書く。
+
+- 要る環境変数: `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` (ローカルは `.env.local`)。
+- `SUPABASE_SERVICE_ROLE_KEY` が無いとき、`global-setup.ts` と `authedPage` は画面からのログインに回る (`E2E_USER_PASSWORD` を使う)。
+- 画面からのログイン (`/login`) は今までどおりパスワードを使う。
+- 同じテストユーザーのセッションを複数の worker が同時に作ると、後の `generate_link` が先のトークンを消し、先の `/verify` が 403 (`otp_expired`) になる。
+  `createTestSession` は、この 403 のときだけ、乱数で待ってから `generate_link` からやり直す (既定 6 回まで。環境変数 `E2E_TEST_SESSION_MAX_ATTEMPTS` で変えられる)。
+
 ### パスワードの扱い
 
 リポジトリには、`e2e-user-XX@homegohan.test` のパスワードの既定値を置かない。

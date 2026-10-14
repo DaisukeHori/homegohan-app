@@ -5,6 +5,7 @@ import * as path from "path";
 import { requireExistingUserPassword } from "../helpers/credentials";
 import { appOrigin, ensureAiConsentGranted } from "../helpers/ai-consent";
 import { waitForLoginFormReady } from "../helpers/login-form";
+import { createTestSession, describeTestSessionFailure, TEST_SESSION_NO_HTTP_STATUS } from "../helpers/test-session.mjs";
 import {
   refreshSupabaseSession,
   getStorageStatePath,
@@ -24,9 +25,15 @@ const RETRY_BASE_DELAY_MS = 2_000;
 const EXPIRY_BUFFER_SECONDS = 300; // 5 分
 // storageState が期限まで何秒未満なら先回り refresh するしきい値
 const PRE_REFRESH_BUFFER_SECONDS = 600; // 10 分
-// password grant の retry 設定
-const PASSWORD_GRANT_MAX_RETRIES = 3;
-const PASSWORD_GRANT_BASE_DELAY_MS = 2_000;
+// テスト用のセッション (helpers/test-session.mjs) を作るときの retry 設定
+const SESSION_CREATE_MAX_RETRIES = 3;
+const SESSION_CREATE_BASE_DELAY_MS = 2_000;
+// 429 (rate limit) と、これ以上 (5xx) のステータスはやり直す
+const HTTP_TOO_MANY_REQUESTS = 429;
+const HTTP_SERVER_ERROR_MIN = 500;
+// やり直しの待ち時間の揺らぎ (待ち時間の ±25%。複数の worker が同時にやり直してぶつからないように) と、待ち時間の下限
+const RETRY_JITTER_RATIO = 0.25;
+const RETRY_MIN_DELAY_MS = 1_000;
 // waitForURL タイムアウト (Vercel cold-start 対応: 60s)
 const WAIT_FOR_URL_TIMEOUT_MS = 60_000;
 
@@ -191,7 +198,7 @@ function isStorageStateExpired(storageStatePath: string, bufferSeconds = EXPIRY_
 
 /**
  * refresh_token を使ってセッションを更新し、Cookie として Playwright コンテキストに注入する。
- * password grant より rate limit が緩い。
+ * セッションを新しく作る (helpers/test-session.mjs) より rate limit が緩い。
  */
 async function refreshSessionViaCookie(
   page: Page,
@@ -275,49 +282,43 @@ async function refreshSessionViaCookie(
 }
 
 /**
- * Supabase REST API でセッションを取得し、Cookie として Playwright コンテキストに注入する。
- * 429 / 500 は exponential backoff + jitter で最大 PASSWORD_GRANT_MAX_RETRIES 回リトライする。
+ * テスト用のセッションを作り (#1547: パスワードのログインは使わない。helpers/test-session.mjs)、
+ * Cookie として Playwright コンテキストに注入する。
+ * 429 / 5xx は exponential backoff + jitter で最大 SESSION_CREATE_MAX_RETRIES 回リトライする。
+ * (同じユーザーのセッションを他の worker が同時に作ったときの /verify の 403 は、createTestSession の中で
+ * generate_link からやり直す。helpers/test-session.mjs の先頭のコメント)
  * @supabase/ssr は Cookie ベースの認証を使うため、localStorage 注入では機能しない。
  */
 async function injectSessionViaCookie(
   page: Page,
   baseURL: string,
   email: string,
-  password: string,
 ): Promise<boolean> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !anonKey) {
-    console.warn("[auth fixture] NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY not set");
+  if (!supabaseUrl) {
+    console.warn("[auth fixture] NEXT_PUBLIC_SUPABASE_URL not set");
     return false;
   }
 
-  let lastStatus = 0;
+  let lastStatus = TEST_SESSION_NO_HTTP_STATUS;
 
-  for (let attempt = 1; attempt <= PASSWORD_GRANT_MAX_RETRIES; attempt++) {
+  for (let attempt = 1; attempt <= SESSION_CREATE_MAX_RETRIES; attempt++) {
     try {
-      const resp = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: anonKey,
-        },
-        body: JSON.stringify({ email, password }),
-      });
+      const result = await createTestSession(email);
 
-      lastStatus = resp.status;
-
-      if (!resp.ok) {
-        const body = await resp.text().catch(() => "");
-        console.warn(`[auth fixture] Supabase API login failed: ${resp.status} (attempt ${attempt}/${PASSWORD_GRANT_MAX_RETRIES}): ${body.substring(0, 200)}`);
+      if (!result.ok) {
+        lastStatus = result.status;
+        console.warn(`[auth fixture] ${describeTestSessionFailure(result)} (attempt ${attempt}/${SESSION_CREATE_MAX_RETRIES})`);
+        // 環境変数が足りないときは、やり直しても変わらない
+        if (result.step === "config") return false;
 
         // 429 (rate limit) または 5xx はリトライ対象
-        if ((resp.status === 429 || resp.status >= 500) && attempt < PASSWORD_GRANT_MAX_RETRIES) {
-          const baseDelay = PASSWORD_GRANT_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+        const retryable = result.status === HTTP_TOO_MANY_REQUESTS || result.status >= HTTP_SERVER_ERROR_MIN;
+        if (retryable && attempt < SESSION_CREATE_MAX_RETRIES) {
+          const baseDelay = SESSION_CREATE_BASE_DELAY_MS * Math.pow(2, attempt - 1);
           // jitter: baseDelay の ±25% をランダムに加算
-          const jitter = Math.floor(baseDelay * 0.25 * (Math.random() * 2 - 1));
-          const delay = Math.max(1000, baseDelay + jitter);
+          const jitter = Math.floor(baseDelay * RETRY_JITTER_RATIO * (Math.random() * 2 - 1));
+          const delay = Math.max(RETRY_MIN_DELAY_MS, baseDelay + jitter);
           console.log(`[auth fixture] ${delay}ms 後にリトライ...`);
           await sleep(delay);
           continue;
@@ -326,8 +327,7 @@ async function injectSessionViaCookie(
         return false;
       }
 
-      const session = await resp.json() as Record<string, unknown>;
-      if (!session.access_token) return false;
+      const session = result.session;
 
       // @supabase/ssr の Cookie 名は sb-{project-ref}-auth-token
       const supabaseRef = new URL(supabaseUrl).hostname.split(".")[0];
@@ -379,17 +379,17 @@ async function injectSessionViaCookie(
 
       return true;
     } catch (err) {
-      console.warn(`[auth fixture] injectSessionViaCookie error (attempt ${attempt}/${PASSWORD_GRANT_MAX_RETRIES}): ${err}`);
-      if (attempt < PASSWORD_GRANT_MAX_RETRIES) {
-        const baseDelay = PASSWORD_GRANT_BASE_DELAY_MS * Math.pow(2, attempt - 1);
-        const jitter = Math.floor(baseDelay * 0.25 * (Math.random() * 2 - 1));
-        const delay = Math.max(1000, baseDelay + jitter);
+      console.warn(`[auth fixture] injectSessionViaCookie error (attempt ${attempt}/${SESSION_CREATE_MAX_RETRIES}): ${err}`);
+      if (attempt < SESSION_CREATE_MAX_RETRIES) {
+        const baseDelay = SESSION_CREATE_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+        const jitter = Math.floor(baseDelay * RETRY_JITTER_RATIO * (Math.random() * 2 - 1));
+        const delay = Math.max(RETRY_MIN_DELAY_MS, baseDelay + jitter);
         await sleep(delay);
       }
     }
   }
 
-  console.warn(`[auth fixture] injectSessionViaCookie: ${PASSWORD_GRANT_MAX_RETRIES} 回失敗 (last status: ${lastStatus})`);
+  console.warn(`[auth fixture] injectSessionViaCookie: ${SESSION_CREATE_MAX_RETRIES} 回失敗 (last status: ${lastStatus})`);
   return false;
 }
 
@@ -435,7 +435,7 @@ async function doLogin(page: Page, baseURL: string, workerIndex: number): Promis
     }
   }
 
-  // 2. storageState が期限切れ → refresh_token で再取得 (password grant より rate limit が緩い)
+  // 2. storageState が期限切れ → refresh_token で再取得 (セッションを新しく作るより rate limit が緩い)
   if (fs.existsSync(refreshTokenPath)) {
     const refreshOk = await refreshSessionViaCookie(page, baseURL, refreshTokenPath);
     if (refreshOk) {
@@ -443,8 +443,8 @@ async function doLogin(page: Page, baseURL: string, workerIndex: number): Promis
     }
   }
 
-  // 3. refresh_token も使えない場合は password grant で直接 signin (retry+jitter 付き)
-  const cookieLoginOk = await injectSessionViaCookie(page, baseURL, email, password);
+  // 3. refresh_token も使えない場合は、テスト用のセッションを新しく作る (retry+jitter 付き。パスワードのログインは使わない #1547)
+  const cookieLoginOk = await injectSessionViaCookie(page, baseURL, email);
   if (cookieLoginOk) {
     return;
   }
@@ -570,8 +570,10 @@ export const test = base.extend<AuthFixtures>({
    * B: worker 別 fresh login fixture。
    *
    * storageState 共有による refresh_token race (複数 worker が同一 refresh_token を
-   * 並行使用して invalid になる問題) を解消するため、毎回 password grant で
-   * 独立した refresh_token を持つセッションを取得する。
+   * 並行使用して invalid になる問題) を解消するため、毎回テスト用のセッションを新しく作り
+   * (helpers/test-session.mjs。パスワードのログインは使わない #1547)、独立した refresh_token を持つセッションを取得する。
+   * テストユーザーを共有する worker が同時に作ると、後の発行が先のトークンを消すが、createTestSession が
+   * /verify の 403 を generate_link からやり直して吸収する。
    *
    * Speed cost: 1 worker あたり +~3s (Supabase REST 往復) だが、
    * auth 失敗による retry > timeout > リトライ連鎖より大幅に速い。
@@ -579,10 +581,11 @@ export const test = base.extend<AuthFixtures>({
   authedPage: async ({ page, baseURL, aiConsentGranted }, use) => {
     const workerIndex = test.info().workerIndex;
     const resolvedBase = baseURL ?? "";
-    const { email, password } = getUserCredentials(workerIndex);
+    // パスワードが未設定なら、ここで分かりやすいエラーで止める (UI ログインのフォールバックが使う)
+    const { email } = getUserCredentials(workerIndex);
 
-    // password grant で毎回 fresh なセッションを取得 (refresh_token race を回避)
-    const cookieLoginOk = await injectSessionViaCookie(page, resolvedBase, email, password);
+    // 毎回 fresh なセッションを作る (refresh_token race を回避)
+    const cookieLoginOk = await injectSessionViaCookie(page, resolvedBase, email);
     if (!cookieLoginOk) {
       // フォールバック: storageState ベースの login (既存フロー)
       console.warn(`[auth fixture] worker${workerIndex}: fresh login 失敗、storageState フォールバックを使用`);

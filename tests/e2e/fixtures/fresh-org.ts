@@ -104,7 +104,7 @@ export const test = base.extend<FreshOrgFixtures>({
       orgId = await createFreshOrg({ ownerUserId: owner.id, name: orgName });
 
       // 3. session inject
-      await injectSession(page, owner.email, owner.password);
+      await injectSession(page, owner.email);
 
       await use({
         page,
@@ -181,7 +181,7 @@ export async function setupFreshOrgWithMembers(options: {
   const orgId = await createFreshOrg({ ownerUserId: ownerInfo.id, name: orgName });
 
   // session inject for owner page
-  await injectSession(options.ownerPage, ownerInfo.email, ownerInfo.password);
+  await injectSession(options.ownerPage, ownerInfo.email);
 
   // members 作成
   const members: FreshUserInfo[] = [];

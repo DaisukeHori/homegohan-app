@@ -416,10 +416,13 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     }
   });
 
-  it('値を読む場所が決まっている変数 (AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPS_ALERT_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
+  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPS_ALERT_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
     const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
 
     expect(sealed.map((entry) => [entry.name, entry.readOnlyBy]).sort()).toEqual([
+      // #1142 究極モードの 1 日の上限の上書き。読み方 (0 以上の整数でなければ既定の 1 回) は Edge Functions と共用の
+      // resolveAiUltimateModeDailyLimit。Web で値を読むのは consumeAiUsage の 1 か所だけ (名前を書いて読む)
+      ['AI_ULTIMATE_MODE_DAILY_LIMIT', 'src/lib/plan/entitlements.ts'],
       // #1165 ログインの連続失敗の回数を 0 に戻すまでの時間。不正な値の扱い (既定値に戻して warn) をログインの route 1 か所に置く
       ['AUTH_LOGIN_FAILURE_RESET_MINUTES', 'src/app/api/auth/login/route.ts'],
       ['CRON_SECRET', 'src/lib/cron-auth.ts'],
@@ -468,6 +471,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       getOptionalEnv('OPS_ALERT_CLIENT_ERROR_THRESHOLD');
       // @ts-expect-error AUTH_LOGIN_FAILURE_RESET_MINUTES の値を読むのはログインの route (src/app/api/auth/login/route.ts) だけ
       getOptionalEnv('AUTH_LOGIN_FAILURE_RESET_MINUTES');
+      // @ts-expect-error AI_ULTIMATE_MODE_DAILY_LIMIT の値を読むのは src/lib/plan/entitlements.ts (consumeAiUsage) だけ (#1142)
+      getOptionalEnv('AI_ULTIMATE_MODE_DAILY_LIMIT');
       getOptionalEnv('RESEND_API_KEY'); // 値を読む場所が決まっていない任意の変数は渡せる
     };
     expect(typeof typeOnly).toBe('function');

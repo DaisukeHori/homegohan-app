@@ -22,6 +22,7 @@ import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
+import { isUltimateModeRequested } from '@/lib/ai/ultimate-mode';
 import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { isWithinMenuGenerationRange, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
@@ -325,7 +326,13 @@ export async function POST(request: Request) {
 
     // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える。
     // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
-    const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+    // 究極モード (#1142) は 'menu_generation_ultimate' で数える (1 日の上限に 1 回 + 究極モードの 1 日の上限 (既定 1 回) に 1 回)。
+    // 究極モードかどうかは本文の ultimateMode が true のときだけ。生成に渡す値も同じ判定の結果にする (数え方と生成を食い違わせない)
+    const ultimateMode = isUltimateModeRequested(body?.ultimateMode);
+    const usageFeature = ultimateMode ? 'menu_generation_ultimate' : 'menu_generation';
+    const aiUsage = ultimateMode
+      ? await consumeAiUsage(user.id, 'menu_generation_ultimate')
+      : await consumeAiUsage(user.id, 'menu_generation');
     if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
     // 10. Create request record
@@ -352,7 +359,7 @@ export async function POST(request: Request) {
     if (insertError) {
       console.error('Failed to create request record:', insertError);
       // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
-      await refundAiUsage(user.id, 'menu_generation', aiUsage);
+      await refundAiUsage(user.id, usageFeature, aiUsage);
       throw new Error(`Failed to create request: ${insertError.message}`);
     }
 
@@ -376,7 +383,7 @@ export async function POST(request: Request) {
         constraints,
         note: body?.note,
         familySize,
-        ultimateMode: body?.ultimateMode ?? false,
+        ultimateMode,
       },
     }).then(async (result) => {
       if (!result.ok) {

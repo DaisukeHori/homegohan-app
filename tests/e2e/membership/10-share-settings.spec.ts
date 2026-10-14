@@ -80,7 +80,7 @@ test.describe("共有設定 (share settings)", () => {
       familyId = family.familyId;
 
       // member としてログイン
-      await injectSession(page, memberUser.email, memberUser.password);
+      await injectSession(page, memberUser.email);
       const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
       await page.goto(`${baseURL}/home`);
 
@@ -149,7 +149,7 @@ test.describe("共有設定 (share settings)", () => {
       });
       familyId = family.familyId;
 
-      await injectSession(page, memberUser.email, memberUser.password);
+      await injectSession(page, memberUser.email);
       const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
       await page.goto(`${baseURL}/home`);
 
@@ -215,7 +215,7 @@ test.describe("共有設定 (share settings)", () => {
       });
       familyId = family.familyId;
 
-      await injectSession(page, memberUser.email, memberUser.password);
+      await injectSession(page, memberUser.email);
       const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
       await page.goto(`${baseURL}/home`);
 
@@ -282,7 +282,7 @@ test.describe("共有設定 (share settings)", () => {
       });
       familyId = family.familyId;
 
-      await injectSession(page, memberUser.email, memberUser.password);
+      await injectSession(page, memberUser.email);
       const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
       await page.goto(`${baseURL}/home`);
 

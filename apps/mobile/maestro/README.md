@@ -52,6 +52,25 @@ bash apps/mobile/maestro/scripts/reset-test-users.sh
 - `E2E_USER_03` (`e2e-user-03@*.test`): `onboarding_completed_at` を NULL に戻す
 - `E2E_USER_04` (`e2e-user-04@*.test`): `auth.users` から削除 (cascade で profiles も削除)
 
+## オンボーディングのリセット (reset-onboarding.js) に渡す値 (#1547)
+
+`flows/_shared/login-for-onboarding.yaml` は、テストユーザーがオンボーディングを済ませていると、
+`flows/scripts/reset-onboarding.js` で状態を戻す。このスクリプトは、パスワードのログインを使わず、
+管理用の鍵 (service_role) でテストユーザーのセッションを作る (Supabase の CAPTCHA を有効にしても動くように)。
+次の値を、**シェルの環境変数**で渡す (`maestro test -e ...` で渡すと、管理用の鍵がコマンドラインに残る)。
+
+| 環境変数 | 値 |
+|---|---|
+| `MAESTRO_SUPABASE_URL` | アプリがつながっている Supabase の URL |
+| `MAESTRO_SUPABASE_ANON_KEY` | その Supabase の anon key |
+| `MAESTRO_SUPABASE_SERVICE_ROLE_KEY` | その Supabase の service_role (管理用の鍵) |
+| `MAESTRO_E2E_TEST_SESSION_MAX_ATTEMPTS` (任意) | 確認が `otp_expired` (同じテストユーザーで同時にセッションを作った相手にトークンを消された) のとき、発行からやり直す回数の上限 (最初の 1 回を含む)。1 以上の整数。無い・不正な値なら既定の 6 回 (`tests/e2e/helpers/test-session.mjs` の既定と同じ。値の解釈も同じ)。`scripts/maestro-parallel-runner.sh` の `PARALLEL_COUNT` (既定 10 台) を増やして足りなくなったときに上げる |
+
+- テストユーザーのメールアドレスは、今までどおり `-e E2E_USER_EMAIL=...` で渡す。リセットにパスワードは使わない (アプリの画面のログインには、今までどおり `E2E_USER_PASSWORD` を使う)。
+- **本番の Supabase には使わない** (本番の管理用の鍵を、Maestro を動かす端末に出さないため)。スクリプトは本番の URL や鍵を既定値として持たない。値が足りなければ、どこにも接続せずに止まる。
+- 手順と、CAPTCHA の対象外である根拠は `tests/e2e/helpers/test-session.mjs` と `docs/operations/auth-protection.md` §4。
+- このスクリプトは Maestro の JavaScript (GraalJS) で動き import できないので、共通の補助関数 (`tests/e2e/helpers/test-session.mjs`) と同じ手順を写している (写しはここだけ)。食い違わないことは `tests/e2e-test-session.test.ts` が突き合わせる。
+
 ## mock サーバーが必要な flow
 
 一部の異常系テスト (特定 HTTP エラーのシミュレーション) は実際の Supabase では再現できないため、

@@ -625,6 +625,9 @@ export default function WeeklyMenuPage() {
   const [pendingProgress, setPendingProgress] = useState<PendingProgress | null>(null);
   const [pendingIsUltimate, setPendingIsUltimate] = useState(false);
   const [showV4Modal, setShowV4Modal] = useState(false);
+  // AI アシスタントの生成を究極モードで頼んだか (onGenerationStart で進捗カードの種類を決めるのに使う)。
+  // 値を持つのは handleV4Generate が生成を依頼している間だけ。それ以外 (献立を改善など) では常に false
+  const requestedUltimateRef = useRef(false);
 
   // この画面のモーダルをすべて閉じる。同意画面を開く前に使う (下の promptAiConsentAfterClosingModals)。
   // モーダルを足したら、ここにも足す (足さないと、同意画面がそのモーダルの下に隠れる。improve-wiring.test.ts が
@@ -662,7 +665,7 @@ export default function WeeklyMenuPage() {
     onGenerationStart: (reqId) => {
       setPendingRequestId(reqId);
       setPendingStatus("processing");
-      setPendingIsUltimate(false);
+      setPendingIsUltimate(requestedUltimateRef.current);
     },
     onGenerationComplete: async () => {
       await loadData();
@@ -685,13 +688,23 @@ export default function WeeklyMenuPage() {
 
   const handleV4Generate = useCallback(async (params: V4GenerateParams) => {
     setShowV4Modal(false);
-    await v4Generate({
-      targetSlots: params.targetSlots,
-      constraints: params.constraints,
-      note: params.note,
-      ultimateMode: false,
-      resolveExistingMeals: params.resolveExistingMeals,
-    });
+    // 究極モードの記録は、この生成の onGenerationStart が読み終わるまでだけ持つ。
+    // onGenerationStart は v4Generate の中 (結果を返す前) で呼ばれる。
+    // 使い終わったら成功・失敗どちらでも必ず戻す。残すと、同じ画面のもう 1 つの呼び出し元
+    // (handleImprove → submitImprove。常に通常モードで送る) の生成まで、
+    // 古い記録を読んで「究極モードで生成中」の進捗カードになってしまう。
+    requestedUltimateRef.current = params.ultimateMode;
+    try {
+      await v4Generate({
+        targetSlots: params.targetSlots,
+        constraints: params.constraints,
+        note: params.note,
+        ultimateMode: params.ultimateMode,
+        resolveExistingMeals: params.resolveExistingMeals,
+      });
+    } finally {
+      requestedUltimateRef.current = false;
+    }
   }, [v4Generate]);
 
   // Nutrition sheet state
