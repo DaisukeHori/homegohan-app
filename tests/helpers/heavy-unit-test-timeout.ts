@@ -17,13 +17,27 @@
  *   - 時間切れ: どちらも vitest の既定の 6 倍 (テスト 30 秒・フック 60 秒)。テストは上の約 15.5 秒のおよそ 2 倍の余裕。
  *     フックの所要は結果 JSON に残らないので、フックもテストと同じ倍率にした。
  *
+ * #1605 で足したもの (2026-10-15。負荷 40 前後の 1 号機・2 号機で、3 案件の検証が計 5 回、時間切れだけで止まった):
+ *   - tests/consultation-action-raw-error-text.test.ts は、テストの中で route を丸ごと読み込み、テストの 5 秒で落ちた。
+ *   - 同じ型 (1 件のテストの中で子プロセス (bash・git・node など) を起こす・route を丸ごと読み込む。テストの所要の大半が
+ *     その起動と読み込みで、負荷に比例して伸びる) で、既定の 5 秒に頼っていたファイルも、落ちる前に一覧に入れた
+ *     (まだ時間切れで落ちたことは無い。2026-10-14〜15 の local-ci の unit 段の結果 JSON 89 本 (1 号機 16・2 号機 8・256 65) で、
+ *     これらのファイルの 1 件の所要の最大は 2.2 秒。どれも M1 なら 1 秒未満で、上の 36 倍の見積もりの範囲)。どのファイルが同じ型かは
+ *     tests/heavy-unit-test-timeout.test.ts の「同じ型のファイルは時間切れを延ばしている (#1605)」が機械で数え、延ばしていないと赤にする。
+ *     読み込みがフック (beforeAll / beforeEach) にしかないファイルは一覧に入れず、そのフックにだけ resolveHeavyUnitTimeouts の
+ *     hookTimeout を渡す (tests/ai-chat-flag-edge.test.ts と同じ形。テストの 5 秒はそのまま。最初のテストの所要には、フックでの
+ *     読み込みの時間が入る: tests/edge-function-cors.test.ts は 6.4 秒だったが、フックの 10 秒の内なので落ちなかった)。
+ *   - 値はこれまでと同じ (テスト 30 秒・フック 60 秒)。同じ日に 29.8 秒かかった tests/mobile-easignore-bundle-inputs.test.ts
+ *     (1 件ごとに git を 2 回起こす) は 30 秒では足りないので、bash・git を何度も起動する tests/local-ci-slot*.test.ts と同じ
+ *     60 秒 (tests/helpers/local-ci-slot-test-timeout.ts) を使う。
+ *
  * 時間切れが効くのは遅いときだけで、速く終わるテストの所要は変わらない (止まったテストを見切るまでが長くなるだけ)。
  * 期待値・待つ条件は変えないので、検査は緩まない。全体の既定 (vitest.config.ts) は変えず、一覧のファイルだけに効かせる
  * (各ファイルの先頭で applyHeavyUnitTestTimeout() を呼んで vi.setConfig する。時間切れはテスト・フックを登録したときの
  * 設定で決まり、vitest はファイルが終わるたびに vi.resetConfig で戻す)。時間切れを個別に書いたテスト・フックはそちらが優先する。
- * bash・git を何度も起動する tests/local-ci-slot*.test.ts は、別の値 (tests/helpers/local-ci-slot-test-timeout.ts) を使う。
+ * bash・git を何度も起動する tests/local-ci-slot*.test.ts と tests/mobile-easignore-bundle-inputs.test.ts は、別の値 (tests/helpers/local-ci-slot-test-timeout.ts) を使う。
  *
- * 新しく時間切れだけで落ちるファイルが出たら、HEAVY_UNIT_TEST_FILES に足し、そのファイルの import の直後で
+ * 新しく時間切れだけで落ちるファイル・同じ型のファイルが出たら、HEAVY_UNIT_TEST_FILES に足し、そのファイルの import の直後で
  * applyHeavyUnitTestTimeout() を呼ぶ (tests/heavy-unit-test-timeout.test.ts が、一覧と呼び出しの食い違いを止める)。
  * 機械に合わせて変えるときは環境変数 UNIT_HEAVY_TEST_TIMEOUT_MS / UNIT_HEAVY_HOOK_TIMEOUT_MS (ミリ秒) で上書きする
  * (scripts/local-ci.sh も unit の段に持ち込む)。
@@ -38,24 +52,42 @@ export const DEFAULT_UNIT_HEAVY_HOOK_TIMEOUT_MS = 60_000;
 export const UNIT_HEAVY_TEST_TIMEOUT_ENV = "UNIT_HEAVY_TEST_TIMEOUT_MS";
 export const UNIT_HEAVY_HOOK_TIMEOUT_ENV = "UNIT_HEAVY_HOOK_TIMEOUT_MS";
 
-/** 時間切れを延ばすファイル (リポジトリの根からの相対パス)。どれも 274 本の結果のどこかで時間切れだけで落ちた (#1498 で速くした 2 本は外した) */
+/**
+ * 時間切れを延ばすファイル (リポジトリの根からの相対パス)。#1488 の 16 本は 274 本の結果のどこかで時間切れだけで落ちた
+ * (#1498 で速くした 2 本は外した)。#1605 で足した 15 本は、時間切れで落ちた 1 本と、同じ型 (テストの中で子プロセスを起こす・route を丸ごと読み込む) の 14 本
+ */
 export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
+  "src/__tests__/api/ai/consultation/ai-chat-gate.test.ts",
   "src/__tests__/api/ai/menu/engine-feature-flags.test.ts",
+  "src/__tests__/api/ai/menu/service-config-order.test.ts",
   "src/__tests__/api/ai/menu/weekly-request.test.ts",
   "src/__tests__/app/settings/data-export.test.ts",
   "src/__tests__/lib/membership/invite-throttle.in-memory.test.ts",
   "tests/ai-consent-enforcement-edge.test.ts",
   "tests/ai-consent-enforcement-routes.test.ts",
+  "tests/ai-consent-enforcement.test.ts",
   "tests/ai-consent-entry-points.test.ts",
   "tests/ai-consent-mobile-entry-points.test.ts",
   "tests/ai-consent-settings-page.test.tsx",
   "tests/ai-consent-stored-failure.test.ts",
   "tests/ai-rate-limit-contracts.test.ts",
   "tests/ai-usage-direct-jwt-edge.test.ts",
+  "tests/check-env-script.test.ts",
+  "tests/codeql-scripts-1444.test.ts",
+  "tests/consultation-action-raw-error-text.test.ts",
+  "tests/consultation-pantry-expiry-jst.test.ts",
+  "tests/design-system-1058.test.ts",
+  "tests/edge-function-dep-pinning.test.ts",
+  "tests/fast-llm-missing-env.test.ts",
+  "tests/image-route-contracts.test.ts",
+  "tests/local-ci-workflow-sync.test.ts",
   "tests/markdown-lite.test.ts",
+  "tests/nutrition-analysis-sugar-target.test.ts",
   "tests/recipes-route.test.ts",
   "tests/route-error-boundaries.test.tsx",
+  "tests/security-workflow.test.ts",
   "tests/use-ai-consent.test.tsx",
+  "tests/use-revoke-blob-urls.test.ts",
 ];
 
 export type HeavyUnitTimeouts = { testTimeout: number; hookTimeout: number };

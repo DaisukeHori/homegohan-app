@@ -6,6 +6,11 @@
  * 目標も 炭水化物の目標 − 食物繊維の目標 から求める。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
+
+// 1 件のテストの中で route を丸ごと読み込むので、負荷の高い機械で vitest の既定の時間切れ (テスト 5 秒) を超えうる (#1605 の同じ型)。
+// このファイルだけ延ばす (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1488・#1605)。テストとフックを定義する前に置く
+applyHeavyUnitTestTimeout();
 
 const { mockGetUser, mockFrom, mockCreateCompletion } = vi.hoisted(() => ({
   mockGetUser: vi.fn(),

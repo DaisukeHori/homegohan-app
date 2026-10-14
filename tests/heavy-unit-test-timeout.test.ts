@@ -9,11 +9,15 @@
  *   - 一覧のファイルは、テスト・フックを定義する前に applyHeavyUnitTestTimeout() を呼ぶ。一覧に無いファイルは呼ばない
  *   - applyHeavyUnitTestTimeout() は、呼んだファイルのこのあとに登録するテストの時間切れを実際に変える (このファイル自身で確かめる)
  *   - scripts/local-ci.sh は上書きの環境変数を unit の段まで持ち込み、CONTRIBUTING.md の環境変数の表に載っている
+ *   - 同じ型のファイル (1 件のテスト・フックの中で子プロセスを起こす・route / Edge Function を丸ごと読み込む) は、どれも時間切れを
+ *     延ばしている (一覧・ファイルの vi.setConfig・フックやテストへの個別の時間切れのどれか。#1605)。延ばしていないものは、
+ *     理由を書いた例外の一覧に載っている
  */
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { hasExtendedTimeout } from "../scripts/test-speed-ratchet.mjs";
 import vitestConfig from "../vitest.config";
 import { timeoutFromEnv } from "../vitest.integration.config";
 import {
@@ -35,7 +39,11 @@ const SELF = "tests/heavy-unit-test-timeout.test.ts";
 const LOCAL_CI = "scripts/local-ci.sh";
 const CONTRIBUTING = "CONTRIBUTING.md";
 /** 別の値 (tests/helpers/local-ci-slot-test-timeout.ts) を使うファイル。一覧に入れない */
-const SLOT_TEST_FILES = ["tests/local-ci-slot.test.ts", "tests/local-ci-slot-consumers.test.ts"];
+const SLOT_TEST_FILES = [
+  "tests/local-ci-slot.test.ts",
+  "tests/local-ci-slot-consumers.test.ts",
+  "tests/mobile-easignore-bundle-inputs.test.ts",
+];
 /** 呼び出しを探す範囲 (結合テストも含める。結合テストが呼ぶと、結合テストの長い既定を縮めてしまう) */
 const SCAN_ROOTS = ["tests", "src"];
 const TEST_FILE = /\.test\.tsx?$/;
@@ -81,6 +89,70 @@ function placementProblems(rel: string, text: string): string[] {
   }
   return problems;
 }
+
+/** 同じ型のファイルを探す範囲 (単体テストの全部。vitest.config.ts が外す結合テスト・e2e は除く) */
+const SAME_TYPE_SCAN_ROOTS = ["tests", "src", "lib", "packages"];
+const SAME_TYPE_SKIP_PREFIXES = ["tests/e2e/", "tests/integration/"];
+const UNIT_TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+
+/**
+ * 字下げした行 (関数・テスト・フックの中) で、route か Edge Function の本体を丸ごと動的に読み込む。
+ * ファイルの一番外側の `await import(...)` は収集のときに読むので、テスト・フックの時間切れに入らない (対象外)
+ */
+const IN_BODY_ROUTE_IMPORT = /^[ \t]+.*\bimport\(\s*['"`][^'"`]*(?:\/route(?:\.tsx?)?|supabase\/functions\/[^'"`/]+\/index(?:\.ts)?)['"`]\s*\)/m;
+/** node:child_process から名前で import したもの (このリポジトリのテストは名前で import する) */
+const CHILD_PROCESS_IMPORT = /import\s*\{([^}]*)\}\s*from\s*['"](?:node:)?child_process['"]/g;
+/** 延ばした印 (tests/helpers の値を個別に渡す形。ファイルの vi.setConfig と一覧の呼び出しは hasExtendedTimeout が見る) */
+const INDIVIDUAL_TIMEOUT_MARKER = /\bDEFAULT_UNIT_HEAVY_(?:TEST|HOOK)_TIMEOUT_MS\b/;
+
+/**
+ * 同じ型だが、延ばす印が無くてよいファイルと理由。stillValid が偽になったら (書き方が変わったら) 一覧から外すか、延ばす
+ */
+const SAME_TYPE_EXCEPTIONS: ReadonlyArray<{ file: string; reason: string; stillValid: RegExp }> = [
+  {
+    file: "tests/check-cron-secret-drift.test.ts",
+    reason: "子プロセスを起こすテストは 1 件だけで、そのテストに自分の 60 秒 (TEST_TIMEOUT_MS) を渡している",
+    stillValid: /^\s+TEST_TIMEOUT_MS,\n\s+\);/m,
+  },
+  {
+    file: "tests/no-committed-credentials.test.ts",
+    reason: "git を起こすどのテストにも、自分の 60 秒 (GIT_TIMEOUT_MS) を渡している",
+    stillValid: /^const GIT_TIMEOUT_MS = /m,
+  },
+  {
+    file: "src/__tests__/api/cron/app-log-alerts.test.ts",
+    reason: "route はファイルの一番外側で読み込み済みで、テストの中の import は同じモジュールのキャッシュを返すだけ (vi.resetModules をしない)",
+    stillValid: /^const \{ GET \} = await import\('@\/app\/api\/cron\/app-log-alerts\/route'\);$/m,
+  },
+];
+
+function walkUnitTestFiles(dir: string): string[] {
+  const abs = path.join(ROOT, dir);
+  if (!fs.existsSync(abs)) return [];
+  return fs.readdirSync(abs, { withFileTypes: true }).flatMap((e) => {
+    const rel = path.posix.join(dir, e.name);
+    if (e.isDirectory()) return SKIP_DIRS.has(e.name) || SAME_TYPE_SKIP_PREFIXES.includes(`${rel}/`) ? [] : walkUnitTestFiles(rel);
+    return UNIT_TEST_FILE.test(e.name) ? [rel] : [];
+  });
+}
+
+/** 同じ型の理由 (route / 子プロセス)。同じ型でなければ空 */
+function sameTypeReasons(text: string): string[] {
+  const reasons: string[] = [];
+  if (IN_BODY_ROUTE_IMPORT.test(text)) reasons.push("route / Edge Function を丸ごと読み込む");
+  const names = [...text.matchAll(CHILD_PROCESS_IMPORT)].flatMap((m) =>
+    m[1]
+      .split(",")
+      .map((part) => part.trim().split(/\s+as\s+/).pop() ?? "")
+      .filter((name) => /^[\w$]+$/.test(name)),
+  );
+  if (names.length > 0 && new RegExp(`^[ \\t]+.*(?<![.\\w$])(?:${names.join("|")})\\s*\\(`, "m").test(text)) {
+    reasons.push("子プロセスを起こす");
+  }
+  return reasons;
+}
+
+const extendsTimeout = (text: string) => hasExtendedTimeout(text) || INDIVIDUAL_TIMEOUT_MARKER.test(text);
 
 describe("tests/helpers/heavy-unit-test-timeout.ts の既定と上書き", () => {
   it("環境変数が無ければ テスト 30 秒・フック 60 秒", () => {
@@ -183,5 +255,56 @@ describe("延ばすのは一覧のファイルだけ", () => {
     for (const name of [UNIT_HEAVY_TEST_TIMEOUT_ENV, UNIT_HEAVY_HOOK_TIMEOUT_ENV]) {
       expect(rows.some((row) => row.includes(`\`${name}\``)), name).toBe(true);
     }
+  });
+});
+
+describe("同じ型のファイルは時間切れを延ばしている (#1605)", () => {
+  const files = SAME_TYPE_SCAN_ROOTS.flatMap(walkUnitTestFiles);
+  const sameType = files.filter((rel) => sameTypeReasons(read(rel)).length > 0);
+
+  it("走査が空振りしていない (#1605 で落ちた 3 本と、既知の同じ型を拾う)", () => {
+    expect(files.length).toBeGreaterThan(HEAVY_UNIT_TEST_FILES.length);
+    expect(sameType).toEqual(
+      expect.arrayContaining([
+        "tests/consultation-action-raw-error-text.test.ts",
+        "tests/mobile-easignore-bundle-inputs.test.ts",
+        "tests/local-ci-slot-consumers.test.ts",
+        "tests/ai-consent-enforcement-routes.test.ts",
+        "tests/edge-function-cors.test.ts",
+      ]),
+    );
+    expect(files.some((rel) => SAME_TYPE_SKIP_PREFIXES.some((p) => rel.startsWith(p)))).toBe(false);
+  });
+
+  it("同じ型のファイルは、どれも時間切れを延ばしている (延ばしていないのは理由つきの例外だけ)", () => {
+    const exceptions = new Set(SAME_TYPE_EXCEPTIONS.map((e) => e.file));
+    const missing = sameType
+      .filter((rel) => !exceptions.has(rel) && !extendsTimeout(read(rel)))
+      .map((rel) => `${rel}: ${sameTypeReasons(read(rel)).join("・")}のに、既定の時間切れのまま`);
+    expect(missing).toEqual([]);
+  });
+
+  it("例外の一覧は、今も同じ型で、延ばしておらず、理由の前提 (stillValid) が成り立つ", () => {
+    for (const e of SAME_TYPE_EXCEPTIONS) {
+      expect(fs.existsSync(path.join(ROOT, e.file)), e.file).toBe(true);
+      const text = read(e.file);
+      expect(sameTypeReasons(text), e.file).not.toEqual([]);
+      expect(extendsTimeout(text), `${e.file}: 延ばしたなら例外から外す`).toBe(false);
+      expect(e.stillValid.test(text), `${e.file}: ${e.reason} が成り立たない`).toBe(true);
+    }
+  });
+
+  it("見分け方は、テスト・フックの中の読み込みと子プロセスを拾い、一番外側の読み込み・正規表現の .exec を拾わない", () => {
+    expect(sameTypeReasons("it('a', async () => {\n  await import('@/app/api/x/route');\n});\n")).toEqual(["route / Edge Function を丸ごと読み込む"]);
+    expect(sameTypeReasons("beforeAll(async () => {\n  await import('../supabase/functions/foo/index.ts');\n});\n")).toHaveLength(1);
+    expect(sameTypeReasons("const { GET } = await import('@/app/api/x/route');\n")).toEqual([]);
+    const cp = "import { execFileSync, spawnSync as run } from 'node:child_process';\n";
+    expect(sameTypeReasons(`${cp}it('a', () => {\n  run('git', ['init']);\n});\n`)).toEqual(["子プロセスを起こす"]);
+    expect(sameTypeReasons(`${cp}it('a', () => {\n  execFileSync('git', ['init']);\n});\n`)).toEqual(["子プロセスを起こす"]);
+    expect(sameTypeReasons(`${cp}const out = execFileSync('git', ['init']);\nit('a', () => {\n  /x/.exec(out);\n});\n`)).toEqual([]);
+    expect(extendsTimeout("applyHeavyUnitTestTimeout();\n")).toBe(true);
+    expect(extendsTimeout("}, DEFAULT_UNIT_HEAVY_HOOK_TIMEOUT_MS);\n")).toBe(true);
+    expect(extendsTimeout("const T = resolveHeavyUnitTimeouts(process.env).hookTimeout;\n")).toBe(true);
+    expect(extendsTimeout("it('a', () => {});\n")).toBe(false);
   });
 });
