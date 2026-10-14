@@ -113,9 +113,6 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import WeeklyMenuPage from '../../app/menus/weekly/index';
 
-// 画面全体の最初の描画は読み込むモジュールが多く、キャッシュの無い CI や負荷の高い環境では 5 秒の既定を超えることがある
-jest.setTimeout(30000);
-
 // ============================================================
 // ヘルパー
 // ============================================================
