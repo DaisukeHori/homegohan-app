@@ -111,6 +111,7 @@ export default function HandsonTourMenu() {
     title?: string;
     body: string;
     position: 'top' | 'bottom' | 'left' | 'right' | 'auto';
+    testId?: string;
   } => {
     switch (subStep) {
       case '2.1':
@@ -118,6 +119,8 @@ export default function HandsonTourMenu() {
           title: i18n.step2.intro_title,
           body: i18n.step2.intro_hint,
           position: 'auto',
+          // E2E (Maestro) が各 Step の最初の intro 吹き出しを見分ける目印 (設計書 09-onboarding-handson-tour の testID 一覧。#846)
+          testId: 'tour-step-2-intro',
         };
       case '2.2':
         return {
