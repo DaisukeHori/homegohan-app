@@ -45,7 +45,8 @@ const HTTP_TOO_MANY_REQUESTS = 429;
 // Supabase admin クライアント (service_role)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function getAdminClient() {
+/** service_role の Supabase クライアント。fixture の外で別のユーザーを作る spec (tests/e2e/helpers/persona-api.ts) も使う */
+export function getAdminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -195,8 +196,9 @@ export async function injectSession(
 /**
  * user_profiles レコードを service_role REST API 経由で UPSERT する。
  * roles / onboarding_completed_at / organization_id を指定して作成する汎用ヘルパー。
+ * fixture の外で役割を持つユーザーを作る spec (tests/e2e/helpers/persona-api.ts) も使う。
  */
-async function upsertUserProfile(
+export async function upsertUserProfile(
   userId: string,
   fields: {
     nickname?: string;
