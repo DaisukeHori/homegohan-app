@@ -1,11 +1,13 @@
 import { ActivityIndicator, Pressable, Text } from "react-native";
 
+import type { MealType } from "@homegohan/shared";
 import { colors, radius, spacing } from "../../theme";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Props {
-  mealType: "breakfast" | "lunch" | "dinner" | "snack";
+  // 共有の MealType (5 値) を使う。手書きの 4 値だと夜食 (midnight_snack) を渡せなかった (#1446)
+  mealType: MealType;
   dayId: string | null;
   dayDate: string;
   onPress: () => void;

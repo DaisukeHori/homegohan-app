@@ -487,7 +487,7 @@ type ExistingRequest = {
   carbs_g: number;
   photo_url?: string | null;
   eaten_at?: string;
-  meal_type?: 'breakfast' | 'lunch' | 'dinner' | 'snack';
+  meal_type?: 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
 };
 ```
 
