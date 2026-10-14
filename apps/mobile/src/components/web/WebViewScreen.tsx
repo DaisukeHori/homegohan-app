@@ -15,6 +15,9 @@ const WEB_BASE_URL = getWebBaseUrl();
 interface Props {
   path: string;  // 例 '/home', '/menus/weekly'
   testID?: string;
+  // WebView の上 (上端の安全領域の内側) に置くネイティブの部品。
+  // マイページのタブの歯車 (ネイティブの設定画面への入口) に使う (#1037。設計書 01-architecture.md §3.2)
+  header?: React.ReactNode;
 }
 
 // 各タブの「所有する」パス prefix と Expo Router タブルート のマッピング
@@ -102,7 +105,7 @@ true;
 `;
 };
 
-export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
+export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
   const webViewRef = useRef<WebView>(null);
   // Web 側のログアウト・セッション失効の通知 (sign-out / session-expired) をネイティブに反映する (#1038 F7-04 / F7-05)
   const handleAuthMessage = useWebAuthMessages(path);
@@ -202,6 +205,7 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
   if (!uri) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }} edges={['top']}>
+        {header}
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size="large" color={colors.accent} />
         </View>
@@ -211,6 +215,7 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }} edges={['top']}>
+      {header}
       <WebView
         ref={webViewRef}
         testID={testID ?? 'webview-screen'}

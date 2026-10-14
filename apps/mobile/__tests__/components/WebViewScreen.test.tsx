@@ -10,7 +10,7 @@
  */
 
 import React from 'react';
-import { render, waitFor } from '@testing-library/react-native';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
 
 // ── 環境変数 ──────────────────────────────────────────────────────────────────
 const WEB_BASE_URL = 'https://homegohan-app.vercel.app';
@@ -281,5 +281,51 @@ describe('ケース4: セッション無し時の直接 URL 遷移', () => {
     const uri: string = mockWebViewProps.source.uri;
     expect(uri).toContain('mode=app');
     expect(uri).toContain('tab=settings');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ケース 5: header (Issue #1037 — マイページの歯車からネイティブの設定画面へ)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('ケース5: header (Issue #1037)', () => {
+  const { Pressable, Text } = require('react-native');
+
+  it('header が未指定の場合は何も足さない', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: null } });
+
+    const { queryByTestId } = render(<WebViewScreen path="/home" />);
+
+    await waitFor(() => {
+      expect(mockWebViewProps.source?.uri).toBeDefined();
+    });
+
+    expect(queryByTestId('test-header')).toBeNull();
+  });
+
+  it('header は WebView の読み込み前 (ローディング中) から表示され、押せる', async () => {
+    let resolveSession: ((value: unknown) => void) | undefined;
+    mockGetSession.mockImplementation(() => new Promise((resolve) => { resolveSession = resolve; }));
+    const onPress = jest.fn();
+
+    const { getByTestId } = render(
+      <WebViewScreen
+        path="/profile"
+        testID="webview-profile"
+        header={<Pressable testID="test-header" onPress={onPress}><Text>設定</Text></Pressable>}
+      />,
+    );
+
+    // セッションの取得が終わっていない (uri がまだ無い) 間も出ている
+    expect(mockWebViewProps.source?.uri).toBeUndefined();
+    fireEvent.press(getByTestId('test-header'));
+    expect(onPress).toHaveBeenCalledTimes(1);
+
+    resolveSession?.({ data: { session: null } });
+    await waitFor(() => {
+      expect(mockWebViewProps.source?.uri).toBeDefined();
+    });
+
+    // 読み込み後も同じ部品が出続ける
+    expect(getByTestId('test-header')).toBeTruthy();
   });
 });

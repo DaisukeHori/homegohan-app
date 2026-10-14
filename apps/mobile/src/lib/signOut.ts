@@ -20,7 +20,8 @@
  */
 
 import { unregisterExpoPushToken } from "./pushNotifications";
-import { supabase } from "./supabase";
+import { secureSessionStorage } from "./secureSessionStorage";
+import { SUPABASE_AUTH_STORAGE_KEY, supabase } from "./supabase";
 import { clearUserScopedAsyncStorage } from "./user-storage";
 
 export type SignOutOptions = {
@@ -42,4 +43,57 @@ export async function signOutWithCleanup(
 
   const result = await supabase.auth.signOut();
   return { error: result?.error ?? null };
+}
+
+/**
+ * 退会 (アカウントの削除) が済んだあとのログアウト (#1037)。
+ *
+ * signOutWithCleanup と違い、push token は消さない (auth.users の削除で user_push_tokens が ON DELETE CASCADE で消える)。
+ *   1. ユーザーごとのローカルデータ (AsyncStorage) を消す (CLAUDE.md: サインアウトの前に行う)
+ *   2. サインアウト
+ *   3. サインアウトが失敗したら、保管庫のセッションを端末だけで消す (clearStoredSessionLocally)
+ *
+ * supabase.auth.signOut() は、サーバーへのログアウトの呼び出しが通信の失敗などで失敗すると、
+ * 例外を投げずに { error } を返し、保管庫のセッションを消さないまま終わる (@supabase/auth-js の _signOut)。
+ * 退会はサーバーで済んでいるので、消えたアカウントのセッションを端末に残さないよう、3 で必ず消す。
+ *
+ * 戻り値の error はサインアウトの失敗 (3 で端末のセッションは消してある)。
+ * 呼び出し側は、error があれば AuthProvider の clearSession() で画面の状態も消す (SIGNED_OUT が届かないため)。
+ * 例外は投げない。
+ */
+export async function signOutAfterAccountDeletion(
+  userId: string | null | undefined,
+): Promise<{ error: unknown | null }> {
+  try {
+    await clearUserScopedAsyncStorage(userId ?? null);
+  } catch {
+    // ローカルデータの掃除に失敗しても、サインアウトは続ける
+  }
+
+  let error: unknown | null = null;
+  try {
+    const result = await supabase.auth.signOut();
+    error = result?.error ?? null;
+  } catch (thrown) {
+    error = thrown;
+  }
+
+  if (error) await clearStoredSessionLocally();
+  return { error };
+}
+
+/**
+ * 保管庫 (secureSessionStorage) のセッションを、サーバーに問い合わせずに消す。
+ * supabase.auth.signOut() は scope: "local" でもサーバーへのログアウトを呼び、それが失敗すると消さないため、保管庫を直接消す。
+ * PKCE の code-verifier (supabase-js が `<保存キー>-code-verifier` に置く) も一緒に消す。
+ * 保管庫の削除に失敗しても、このプロセスの間は消えたものとして扱われる (secureSessionStorage の removeItem)。例外は投げない。
+ */
+export async function clearStoredSessionLocally(): Promise<void> {
+  for (const key of [SUPABASE_AUTH_STORAGE_KEY, `${SUPABASE_AUTH_STORAGE_KEY}-code-verifier`]) {
+    try {
+      await secureSessionStorage.removeItem(key);
+    } catch {
+      // 消せなくても続ける (呼び出し側が画面の状態を消し、ログイン画面へ移る)
+    }
+  }
 }

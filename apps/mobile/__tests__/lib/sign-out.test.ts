@@ -7,6 +7,10 @@
  *   2. ユーザー別の端末データを消す
  *   3. サインアウト
  * push token の削除や端末データの掃除が失敗しても、ログアウトは止めない。
+ *
+ * 退会のあとのログアウト (signOutAfterAccountDeletion。#1037):
+ *   push token は消さない (auth.users の削除で ON DELETE CASCADE)。端末データの削除 → サインアウトの順。
+ *   サインアウトが失敗したら、保管庫のセッションを端末だけで消す。
  */
 
 const calls: string[] = [];
@@ -22,10 +26,15 @@ jest.mock('../../src/lib/user-storage', () => ({
   clearUserScopedAsyncStorage: (...args: unknown[]) => mockClearStorage(...args),
 }));
 jest.mock('../../src/lib/supabase', () => ({
+  SUPABASE_AUTH_STORAGE_KEY: 'sb-test-auth-token',
   supabase: { auth: { signOut: (...args: unknown[]) => mockSignOut(...args) } },
 }));
+const mockRemoveStoredItem = jest.fn();
+jest.mock('../../src/lib/secureSessionStorage', () => ({
+  secureSessionStorage: { removeItem: (...args: unknown[]) => mockRemoveStoredItem(...args) },
+}));
 
-import { signOutWithCleanup } from '../../src/lib/signOut';
+import { clearStoredSessionLocally, signOutAfterAccountDeletion, signOutWithCleanup } from '../../src/lib/signOut';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -40,6 +49,9 @@ beforeEach(() => {
   mockSignOut.mockImplementation(async () => {
     calls.push('signOut');
     return { error: null };
+  });
+  mockRemoveStoredItem.mockImplementation(async (key: string) => {
+    calls.push(`removeStored:${key}`);
   });
 });
 
@@ -93,5 +105,60 @@ describe('signOutWithCleanup', () => {
     mockSignOut.mockResolvedValue({ error: failure });
 
     await expect(signOutWithCleanup('user-1')).resolves.toEqual({ error: failure });
+  });
+});
+
+describe('signOutAfterAccountDeletion (退会のあと。#1037)', () => {
+  it('端末データの削除 → サインアウトの順。push token は消さない (auth.users の削除で消える)。成功したら保管庫は直接消さない', async () => {
+    const result = await signOutAfterAccountDeletion('user-1');
+
+    expect(calls).toEqual(['clearStorage', 'signOut']);
+    expect(mockClearStorage).toHaveBeenCalledWith('user-1');
+    expect(mockUnregister).not.toHaveBeenCalled();
+    expect(mockRemoveStoredItem).not.toHaveBeenCalled();
+    expect(result).toEqual({ error: null });
+  });
+
+  it('サインアウトがエラーを返したら (サーバーへのログアウトの失敗。supabase-js は保管庫を消さない)、保管庫のセッションと code-verifier を端末だけで消し、エラーを返す', async () => {
+    const failure = new Error('network');
+    mockSignOut.mockImplementation(async () => {
+      calls.push('signOut');
+      return { error: failure };
+    });
+
+    const result = await signOutAfterAccountDeletion('user-1');
+
+    expect(calls).toEqual([
+      'clearStorage',
+      'signOut',
+      'removeStored:sb-test-auth-token',
+      'removeStored:sb-test-auth-token-code-verifier',
+    ]);
+    expect(result).toEqual({ error: failure });
+  });
+
+  it('サインアウトが例外を投げても、保管庫を消してエラーとして返す (例外にはしない)', async () => {
+    const failure = new Error('unexpected');
+    mockSignOut.mockRejectedValue(failure);
+
+    await expect(signOutAfterAccountDeletion('user-1')).resolves.toEqual({ error: failure });
+    expect(mockRemoveStoredItem).toHaveBeenCalledWith('sb-test-auth-token');
+  });
+
+  it('端末データの掃除で例外が出ても、サインアウトする', async () => {
+    mockClearStorage.mockRejectedValue(new Error('storage busy'));
+
+    await expect(signOutAfterAccountDeletion('user-1')).resolves.toEqual({ error: null });
+    expect(mockSignOut).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('clearStoredSessionLocally', () => {
+  it('保管庫の削除が失敗しても例外を投げず、残りのキーも消しに行く', async () => {
+    mockRemoveStoredItem.mockRejectedValueOnce(new Error('keychain'));
+
+    await expect(clearStoredSessionLocally()).resolves.toBeUndefined();
+    expect(mockRemoveStoredItem).toHaveBeenCalledWith('sb-test-auth-token');
+    expect(mockRemoveStoredItem).toHaveBeenCalledWith('sb-test-auth-token-code-verifier');
   });
 });
