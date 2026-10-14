@@ -904,9 +904,10 @@ describe('GET /api/cron/app-log-alerts: そのほか (#1157)', () => {
   it('O-5: fetch のキャッシュ (Next の Data Cache) を使わない設定になっている (外すと、件数も「送る権利」も毎回同じ古い値になる)', async () => {
     const routeModule = await import('@/app/api/cron/app-log-alerts/route');
 
-    // Next 14 の route handler は、dynamic = 'force-dynamic' だけでは fetch をキャッシュし続ける。
-    // supabase-js の RPC (POST) と Resend の呼び出しが、同じ内容なら前回の応答で返ってしまう
+    // Next 14 の route handler は、dynamic = 'force-dynamic' だけでは fetch をキャッシュし続けた。
+    // supabase-js の RPC (POST) と Resend の呼び出しが、同じ内容なら前回の応答で返ってしまった
     // (ローカルの dev サーバーで、DB の状態を変えても応答が変わらないことで確認した)。
+    // Next 15 (#1444) は既定でキャッシュしないが、既定が変わっても古い値を返さないよう、明示の設定を固定しておく。
     expect(routeModule.dynamic).toBe('force-dynamic');
     expect(routeModule.fetchCache).toBe('force-no-store');
   });

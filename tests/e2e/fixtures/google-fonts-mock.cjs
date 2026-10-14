@@ -2,7 +2,7 @@
  * e2e-local の `next build` で、next/font/google に Google Fonts へフォントを取りに行かせないためのモック (#1330)。
  *
  * next/font/google はビルド時に Google Fonts から CSS とフォントファイル (Noto Sans JP / Noto Serif JP で約 600 個) を取得する。
- * GitHub Actions のマシンからだと、拡張子の無いフォント URL が返ることがあり、Next.js 14 の読み込み処理
+ * GitHub Actions のマシンからだと、拡張子の無いフォント URL が返ることがあり、Next.js (14 / 15) の読み込み処理
  * (`/\.(woff|woff2|eot|ttf|otf)$/.exec(url)[1]`) が null を読んで
  * `TypeError: Cannot read properties of null (reading '1')` でビルドが失敗する。テストの中身と関係なく CI が赤になる。
  *
