@@ -22,8 +22,9 @@ Step 3 は **「あなたはもう 2 つバッジを持っている」気づき�
       code: string;
       name: string;
       description: string;
-      icon_url: string | null;
-      obtained_at: string | null;  // null = 未獲得
+      icon: string | null;          // badges の行の列 (icon_url という列は無い。#1306)
+      earned: boolean;              // 獲得済みか (false = 未獲得)
+      obtainedAt: string | null;    // 獲得日時 (未獲得は null)。キャメルケース
     }>;
   };
   ```
@@ -81,8 +82,8 @@ Step 3 は **「あなたはもう 2 つバッジを持っている」気づき�
 ```
 
 レスポンス受信後:
-- `first_bite` と `planner` の `obtained_at` が NOT NULL であることを確認
-- `tutorial_complete` の `obtained_at` が NULL であることを確認
+- `first_bite` と `planner` の `earned` が true であることを確認
+- `tutorial_complete` の `earned` が false であることを確認
 - 確認 OK なら 3.1 へ
 - 確認 NG (= 想定外、Step 1/2 で実 API 失敗があった etc) → エラー画面 (§3.6)
 
@@ -275,6 +276,7 @@ Step 3 は **実 API を呼ぶ** (案 B 採用、Step 1/2 で実獲得済のた�
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
   ```
+- 一覧の最後の行のカードも中央まで上げられるよう、ツアー中は一覧の下に画面の高さの半分の余白を足す (吹き出しはカードの下に出るので、その場所も要る)
 - mobile: `ScrollView.scrollTo` 等
 
 ### 7.3 reduce-motion
@@ -347,7 +349,7 @@ useEffect(() => {
       const firstBite = res.badges.find(b => b.code === 'first_bite');
       const planner = res.badges.find(b => b.code === 'planner');
       const tutorial = res.badges.find(b => b.code === 'tutorial_complete');
-      if (!firstBite?.obtained_at || !planner?.obtained_at) {
+      if (!firstBite?.earned || !planner?.earned) {
         // 想定外、ただしエラー画面は出さず Step 4 へ進む (silent skip)
         fireAnalytics('handson_tour_step_error', { step: 3, error_code: 'badges_not_obtained_silently' });
       }
@@ -416,8 +418,8 @@ appId: com.homegohan.app
 ```
 
 ### 11.3 Integration
-- `GET /api/badges` で first_bite / planner が `obtained_at` NOT NULL で返ってくる
-- `tutorial_complete` が `obtained_at = null` で返ってくる
+- `GET /api/badges` で first_bite / planner が `earned: true` (`obtainedAt` NOT NULL) で返ってくる
+- `tutorial_complete` が `earned: false` (`obtainedAt = null`) で返ってくる
 - tutorial-mode=1 のとき badge 獲得モーダルが起動しない
 
 ---
