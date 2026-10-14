@@ -122,7 +122,8 @@ export default function LoginScreen() {
         const outcome = await completeAuthLink(extractSupabaseLinkParams(result.url));
         if (outcome.status === "signed_in") {
           await routeAfterSignIn();
-        } else if (outcome.status === "empty") {
+        } else if (outcome.status === "empty" || outcome.status === "awaiting_other_confirmation") {
+          // awaiting_other_confirmation はメールアドレス変更の確認リンクでしか届かない (#1187)。ログインの戻りでは情報が無いのと同じ
           throw new Error("ログイン情報を受け取れませんでした。もう一度お試しください。");
         } else {
           throw new Error(outcome.message);
