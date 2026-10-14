@@ -1,34 +1,82 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import { useRef, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Button, Card, PageHeader, SectionHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
-import { clearUserScopedAsyncStorage } from "../../src/lib/user-storage";
+import { signOutAfterAccountDeletion } from "../../src/lib/signOut";
+import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing } from "../../src/theme";
 import { typography } from "../../src/theme/typography";
 
+/** 削除の API が理由を返さなかったときの文 (アカウントは消えていないので、もう一度試せる) */
+const ACCOUNT_DELETE_FAILED_MESSAGE = "アカウントの削除に失敗しました。時間をおいて再度お試しください。";
+/** 削除は済んだが、端末のログアウトに失敗したときの文 */
+const ACCOUNT_DELETED_SIGN_OUT_FAILED_MESSAGE =
+  "アカウントの削除は完了しましたが、端末側のログアウト処理に失敗しました。お手数ですが、アプリを再起動してください。";
+
 export default function AccountSettingsPage() {
+  const { clearSession } = useAuth();
+  // Round-2 レビュー指摘 #3: 多重タップでの二重削除実行を防止するガード。
+  // deleting (state) は Button の disabled/ラベル表示用。
+  // deletingRef (ref) は state 更新の再レンダー反映を待たずに効く同期ガードで、
+  // 連打が同一 tick 内で複数回 onPress を発火させても deleteAccount() の
+  // 本体処理 (API 呼び出し) が二重実行されないようにする。
+  const [deleting, setDeleting] = useState(false);
+  const deletingRef = useRef(false);
+
   async function deleteAccount() {
+    if (deletingRef.current) return; // 多重実行防止 (連打対策・同期ガード)
+    deletingRef.current = true;
+    // Alert.alert は確認結果を待つ間 await するため、ここで即座に deleting を立てて
+    // ボタンを disable しないと、確認ダイアログ表示中の連打で deleteAccount() が
+    // 複数回呼ばれてしまう (2 つ目以降の呼び出しは Alert.alert がキューイングするだけで
+    // ブロックされない)。ユーザーがキャンセルした場合は false に戻す。
+    setDeleting(true);
+
     const ok = await new Promise<boolean>((resolve) => {
       Alert.alert("アカウント削除", "アカウントとデータを削除します。取り消しできません。", [
         { text: "キャンセル", style: "cancel", onPress: () => resolve(false) },
         { text: "削除", style: "destructive", onPress: () => resolve(true) },
       ]);
     });
-    if (!ok) return;
+    if (!ok) {
+      deletingRef.current = false;
+      setDeleting(false);
+      return;
+    }
 
+    // 削除前にユーザー ID を控える。削除のあとは getUser() がセッションの失効で失敗し得るため、
+    // ユーザー別のローカルデータの掃除には、ここで控えた ID を使う。
+    const { data: { user } } = await supabase.auth.getUser();
+
+    // サーバーでの削除が成功したときだけ、端末のセッションとデータを消す。
+    // 削除に失敗したらログインしたままにして、もう一度試せるようにする (以前は削除の前に端末のデータを消していたため、
+    // 削除に失敗するとログインしたままデータだけが消えていた)。
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      await clearUserScopedAsyncStorage(user?.id ?? null);
       const api = getApi();
       await api.post("/api/account/delete", { confirm: true });
-      await supabase.auth.signOut();
-      router.replace("/");
-    } catch (e: any) {
-      Alert.alert("削除失敗", e?.message ?? "削除に失敗しました。");
+    } catch (e: unknown) {
+      const message = e instanceof Error && e.message ? e.message : ACCOUNT_DELETE_FAILED_MESSAGE;
+      Alert.alert("削除失敗", message);
+      deletingRef.current = false;
+      setDeleting(false);
+      return;
     }
+
+    // ここから先は、サーバーでの削除は済んでいる。もう一度試しても削除の API は失敗するだけなので、
+    // 端末の後片付けに失敗しても、削除の失敗とは別の文で知らせて、ログイン画面へ進める。
+    // サインアウトが失敗すると SIGNED_OUT が届かず、AuthProvider がセッションを持ったままになる。
+    // そのまま "/" へ移ると、入口 (app/index.tsx) がホームへ戻してしまうので、signOutAfterAccountDeletion が
+    // 保管庫のセッションを端末だけで消し、clearSession で画面の状態も消す (設定画面のログアウトと同じ共通処理。signOut.ts)。
+    const { error } = await signOutAfterAccountDeletion(user?.id ?? null, { clearSession });
+    if (error) {
+      console.error("[account delete] sign out failed after server delete succeeded", error);
+      Alert.alert("アカウントを削除しました", ACCOUNT_DELETED_SIGN_OUT_FAILED_MESSAGE);
+    }
+    router.replace("/");
   }
 
   return (
@@ -44,9 +92,9 @@ export default function AccountSettingsPage() {
         <Text style={typography.body}>
           アカウント削除は取り消しできません。必要なデータは事前に控えてください。
         </Text>
-        <Button testID="account-delete-button" onPress={deleteAccount} variant="destructive" size="lg">
+        <Button testID="account-delete-button" onPress={deleteAccount} variant="destructive" size="lg" disabled={deleting}>
           <Ionicons name="trash-outline" size={18} color="#FFF" />
-          <Text style={{ color: "#FFF", fontWeight: "700", fontSize: 16 }}>アカウント削除</Text>
+          <Text style={{ color: "#FFF", fontWeight: "700", fontSize: 16 }}>{deleting ? "削除中…" : "アカウント削除"}</Text>
         </Button>
       </Card>
     </ScrollView>

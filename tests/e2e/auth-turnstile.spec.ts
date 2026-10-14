@@ -1,7 +1,7 @@
 /**
  * auth-turnstile.spec.ts (#1165)
  *
- * Web のログイン・新規登録・パスワード再設定に出す Cloudflare Turnstile が、
+ * Web のログイン・新規登録・パスワード再設定 (と、#1474 で足したメール確認の再送) に出す Cloudflare Turnstile が、
  * 本物のブラウザ・本物の CSP (next.config.mjs)・本物の api.js と、Cloudflare のテスト用サイトキーで動くことを確かめる。
  * 単体テスト (tests/auth-turnstile-*.test.tsx) は window.turnstile の偽物を使うので、
  * CSP が api.js と iframe を止めていないか、本物のウィジェットが実際にトークンを出すかは、ここでしか確かめられない。
@@ -86,8 +86,13 @@ async function interceptAuth(page: Page, urlPattern: RegExp, response: { status:
   return bodies;
 }
 
+/** ページを開いたあと、画面が描画されたとみなす要素 (既定はフォームの送信ボタン) */
+const FORM_SUBMIT_SELECTOR = "form button[type=submit]";
+/** #1474: メール確認の再送 (/auth/verify) の再送ボタン。この画面にはフォームが無い */
+const RESEND_BUTTON_SELECTOR = '[data-testid="resend-confirmation-button"]';
+
 /** ページを開く。Turnstile が無効なアプリなら、スキップする (E2E_REQUIRE_TURNSTILE=1 なら失敗) */
-async function openWithWidget(page: Page, path: string) {
+async function openWithWidget(page: Page, path: string, readySelector: string = FORM_SUBMIT_SELECTOR) {
   // CSP に止められた通信を集める (api.js の script と、ウィジェットの iframe は、この文書の CSP で止まる)
   await page.addInitScript(() => {
     const w = window as unknown as { __cspViolations: string[] };
@@ -100,7 +105,7 @@ async function openWithWidget(page: Page, path: string) {
   await page.goto(path);
   // ログイン・新規登録は useSearchParams を Suspense の中で使うので、フォームはハイドレーションのあとに描画される
   // (それまでは「読み込み中...」)。フォームが出てから、ウィジェットの有無を見る
-  await page.locator("form button[type=submit]").waitFor({ state: "attached", timeout: 30_000 });
+  await page.locator(readySelector).waitFor({ state: "attached", timeout: 30_000 });
 
   if ((await page.getByTestId("turnstile").count()) === 0) {
     const reason =
@@ -208,6 +213,24 @@ test.describe("Turnstile (Cloudflare のテスト用サイトキー)", () => {
     await expect.poll(() => requests.length, { timeout: 10_000 }).toBe(1);
     expect(requests[0].gotrue_meta_security?.captcha_token).toMatch(/\S{10,}/);
     await expect(page.getByText("メールを送信しました")).toBeVisible();
+    await expectNoCloudflareCspViolations(page);
+  });
+
+  test("メール確認の再送 (#1474): 実際のウィジェットがトークンを出すまで再送できず、出たら Supabase へ captcha_token を付けて送る", async ({
+    page,
+  }) => {
+    const requests = await interceptAuth(page, /\/auth\/v1\/resend/, { status: 200, body: {} });
+    await openWithWidget(page, "/auth/verify?email=turnstile-e2e%40example.com", RESEND_BUTTON_SELECTOR);
+
+    const resend = page.locator(RESEND_BUTTON_SELECTOR);
+
+    await waitUntilTokenReady(page);
+    await expect(resend).toBeEnabled();
+    await resend.click();
+
+    await expect.poll(() => requests.length, { timeout: 10_000 }).toBe(1);
+    expect(requests[0].gotrue_meta_security?.captcha_token).toMatch(/\S{10,}/);
+    await expect(page.getByText("確認メールを再送信しました")).toBeVisible();
     await expectNoCloudflareCspViolations(page);
   });
 
