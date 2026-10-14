@@ -11,7 +11,7 @@
 //       名前が …Prefix の右辺の "x" → x と、x-<何か> (testIDPrefix を使う側が `${testIDPrefix}-${…}` で組み立てる)
 //   - 右辺の読み方は、始まりの文字で決める (readExpressionLiterals)
 //       文字列で始まる   → その文字列 1 つ (testID="x"・testID: "x")
-//       { で始まる       → 対応の取れた { … } (testID={cond ? "a" : "b"}・オブジェクトの中の testID: "x")
+//       { で始まる       → 対応の取れた { … } (testID={cond ? "a" : "b"}・fieldTestIdMap = { weight: "field-weight" } のような対応表)
 //       それ以外で始まる → 式の終わりまで (const testID = cond ? "a" : "b"; ・ testID: cond ? "a" : "b", ・ [ … ] など)。
 //                          式の終わり = 括弧の外の ; か , ・ 開いていない閉じ括弧の手前・括弧の外の改行で、
 //                          次の行が名前の行より深く字下げされていないとき
