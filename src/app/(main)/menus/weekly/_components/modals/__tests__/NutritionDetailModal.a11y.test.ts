@@ -4,10 +4,9 @@
 // への載せ替えを行った。BottomSheet 経由でも既存の isOpen 制御（showNutritionDetailModal）が
 // 変わらず機能し、role/aria-modal/Escape が実際に効くことを検証する。
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 import { NutritionDetailModal } from '../NutritionDetailModal';
 

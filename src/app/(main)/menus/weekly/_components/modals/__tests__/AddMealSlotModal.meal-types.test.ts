@@ -2,10 +2,9 @@
 // #1446: 食事を追加するモーダルの選択肢は、5 値の手書きをやめて @homegohan/shared の
 // MEAL_ORDER から導く。選択肢の値・並び・表示名が正本と一致することを、実際に描いて確かめる。
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 import { MEAL_LABELS, MEAL_ORDER } from '@homegohan/shared';
 
 import { AddMealSlotModal } from '../AddMealSlotModal';

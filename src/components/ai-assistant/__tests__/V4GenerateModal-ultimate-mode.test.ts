@@ -11,10 +11,9 @@
 // NOTE: このリポジトリの vitest 設定は tsconfig の jsx:"preserve" と非互換のため、
 // 既存の V4GenerateModal-overwrite-confirm.test.ts に倣い拡張子 .ts + React.createElement で JSX 構文を回避する。
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 import { V4GenerateModal } from '../V4GenerateModal';
 

@@ -5,10 +5,9 @@
 // （全栄養素の詳細代替）を追加した。ホバーでしか出ないツールチップに依存せず、
 // キーボード/スクリーンリーダーでも同じ情報に到達できることを検証する。
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 import { NutritionRadarChart } from '../NutritionRadarChart';
 
