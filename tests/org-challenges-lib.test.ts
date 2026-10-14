@@ -6,6 +6,8 @@
  *   - 画面・API の定義と、DB の定義がずれていない (contract):
  *       * 種類: DB の関数 update_org_challenge_progress が計算する種類 / 表の CHECK 制約の種類
  *       * 最小人数: DB の関数 get_org_challenge_aggregates の最小人数 (5)
+ *       * 順位表の人数: DB の関数 get_org_challenge_ranking の既定の人数 (cfg.default_limit) が RANKING_ENTRY_LIMIT と同じ。
+ *         上限 (cfg.max_limit = 100) 以下。人数の数字は cfg にだけ書き、式には直に書かない
  *       * 状態: 表の CHECK 制約の状態
  *   - 順位表に表示名を出すかどうか (環境変数 ORG_CHALLENGE_SHOW_NAMES。未設定なら出さない)
  *   - 日付: 実在する YYYY-MM-DD か、JST の今日 (UTC の日付とずれる時間帯)
@@ -148,6 +150,38 @@ function rowColumnsOf(types: string, table: string): string[] {
   if (!m) throw new Error(`database.types.ts に ${table} の Row が見つからない`);
   return [...m[1].matchAll(/^\s+([a-z_0-9]+)\??:/gm)].map((c) => c[1]);
 }
+
+describe('順位表の人数 (DB の関数 get_org_challenge_ranking の cfg と同じ値)', () => {
+  /** 順位表の上限の人数 (migration の cfg.max_limit)。1 回に返す行数を、上位だけを見せる人数で打ち切る */
+  const EXPECTED_MAX_LIMIT = 100;
+  const body = functionBody(MIGRATION, 'get_org_challenge_ranking');
+  const cfg = body.match(/SELECT (\d+) AS default_limit, (\d+) AS max_limit/);
+
+  it('既定の人数 (cfg.default_limit) は RANKING_ENTRY_LIMIT と同じ。上限 (cfg.max_limit) は 100 で、既定の人数以上', () => {
+    expect(cfg, 'get_org_challenge_ranking に cfg (default_limit / max_limit) が見つからない').not.toBeNull();
+    expect(Number(cfg![1])).toBe(RANKING_ENTRY_LIMIT);
+    expect(Number(cfg![2])).toBe(EXPECTED_MAX_LIMIT);
+    expect(RANKING_ENTRY_LIMIT).toBeLessThanOrEqual(EXPECTED_MAX_LIMIT);
+  });
+
+  it('人数のしぼり込みは cfg を読む。引数の既定値は NULL (数字を引数と式の 2 か所に書かない)', () => {
+    expect(body).toMatch(/LEAST\(GREATEST\(COALESCE\(p_limit, cfg\.default_limit\), 1\), cfg\.max_limit\)/);
+    const signature = stripSqlComments(MIGRATION).match(/CREATE OR REPLACE FUNCTION public\.get_org_challenge_ranking\(([\s\S]*?)\)\s*RETURNS/);
+    expect(signature, 'get_org_challenge_ranking の引数が見つからない').not.toBeNull();
+    expect(signature![1]).toMatch(/p_limit\s+integer DEFAULT NULL\b/);
+    expect(signature![1]).not.toMatch(/DEFAULT \d/);
+  });
+
+  it.each([
+    ['get_org_challenge_ranking', /SELECT \d+ AS default_limit, \d+ AS max_limit/],
+    ['get_org_challenge_aggregates', /SELECT \d+ AS min_participants/],
+  ])('%s の本体には、cfg の外に人数の数字が無い (1 = 「1 人以上」と小数第 1 位の丸めだけ)', (name, cfgPattern) => {
+    const rest = functionBody(MIGRATION, name).replace(cfgPattern, '');
+    expect(functionBody(MIGRATION, name)).toMatch(cfgPattern);
+    const numbers = [...rest.matchAll(/(?<![\w.])\d+(?:\.\d+)?(?![\w.])/g)].map((m) => m[0]);
+    expect(new Set(numbers)).toEqual(new Set(['1']));
+  });
+});
 
 describe('集計に数えない記録 (お試しの記録・運営が隠した食事)。比較ランキングの集計と同じ決まり', () => {
   const body = functionBody(MIGRATION, 'update_org_challenge_progress');

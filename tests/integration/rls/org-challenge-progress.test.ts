@@ -27,7 +27,8 @@
  *      他組織のチャレンジは返さない・個人の値の列が無い
  *   I. RLS: 参加者の行は本人だけが読める (管理者・参加していない人・他組織の人は読めない)。本人の行だけ消せる
  *   J. 参加者向けの順位表: 参加者本人にだけ返る (管理者・参加していない人・脱退した人・他組織の人には 0 行)・他人の ID を返さない・
- *      表示名は指定したときだけ・上位 N 人と本人の行・順位がついていない参加者と脱退した人は入らない
+ *      表示名は指定したときだけ・上位 N 人と本人の行・順位がついていない参加者と脱退した人は入らない・
+ *      p_limit を渡さない / NULL なら既定の人数 (RANKING_ENTRY_LIMIT = 20)・大きな p_limit も上限 (100 人) で打ち切る
  *
  * 日付は 2020 年を使う。update_org_challenge_progress は DB 中の開催中のチャレンジを全部処理するため、
  * 他のテストが作る今の日付 (2026 年) のチャレンジに触れないよう、p_now に過去の日時を渡す。
@@ -41,6 +42,7 @@ import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
+import { RANKING_ENTRY_LIMIT } from '@/lib/org-challenges';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -952,7 +954,7 @@ describe('#1132 J. get_org_challenge_ranking: 参加者本人にだけ順位表�
     ranked_count: number;
   }
 
-  async function ranking(challengeId: string, userId: string, options: { limit?: number; names?: boolean } = {}) {
+  async function ranking(challengeId: string, userId: string, options: { limit?: number | null; names?: boolean } = {}) {
     const args: Record<string, unknown> = { p_challenge_id: challengeId, p_user_id: userId };
     if (options.limit !== undefined) args.p_limit = options.limit;
     if (options.names !== undefined) args.p_with_names = options.names;
@@ -1026,6 +1028,92 @@ describe('#1132 J. get_org_challenge_ranking: 参加者本人にだけ順位表�
 
     // p_limit が 0 以下でも、1 人は返る
     expect(await ranking(challenge, a1.id, { limit: 0 })).toHaveLength(1);
+  });
+
+  it('p_limit を渡さない・NULL のときは既定の人数 (RANKING_ENTRY_LIMIT)。大きな p_limit も上限 (100 人) で打ち切り、圏外の本人の行は付く', async () => {
+    /** 順位表の上限の人数 (migration の get_org_challenge_ranking の cfg.max_limit) */
+    const RANKING_MAX_LIMIT = 100;
+    /** 上限より大きい p_limit (上限で打ち切られることを見る) */
+    const OVER_MAX_LIMIT = RANKING_MAX_LIMIT * 10;
+    /** seedRanking の、順位がついている今のメンバー (a1〜a5) */
+    const SEEDED_RANKED = 5;
+    /** 上限の人数を超え、さらに 1 人が圏外になるように足す参加者の数 (全員で上限 + 2 人) */
+    const EXTRA_MEMBERS = RANKING_MAX_LIMIT + 2 - SEEDED_RANKED;
+    /** 使い捨てユーザーを作るときに、同時に投げる数 (ローカルの認証サーバーに一度に送りすぎない) */
+    const CREATE_CONCURRENCY = 20;
+
+    const challenge = await seedRanking();
+    const extraIds: string[] = [];
+    try {
+      for (let start = 0; start < EXTRA_MEMBERS; start += CREATE_CONCURRENCY) {
+        const size = Math.min(CREATE_CONCURRENCY, EXTRA_MEMBERS - start);
+        const created = await Promise.all(
+          Array.from({ length: size }, async (_, i) => {
+            const email = `it1132-many${start + i}-${RUN}-${TS}@homegohan.test`;
+            const { data, error } = await srAdmin.auth.admin.createUser({ email, email_confirm: true });
+            if (error || !data.user) throw new Error(`createUser many${start + i}: ${error?.message}`);
+            return data.user.id;
+          }),
+        );
+        extraIds.push(...created);
+      }
+      const { error: profileError } = await srAdmin
+        .from('user_profiles')
+        .upsert(
+          extraIds.map((id, i) => ({ id, nickname: `it1132-many${i}`, age_group: '30s', gender: 'other' })),
+          { onConflict: 'id' },
+        );
+      if (profileError) throw new Error(`profiles: ${profileError.message}`);
+      const { error: memberError } = await srAdmin
+        .from('user_profiles')
+        .update({ organization_id: orgA, org_role: 'member', is_active_in_org: true, roles: ['user'] })
+        .in('id', extraIds);
+      if (memberError) throw new Error(`membership: ${memberError.message}`);
+      // 順位は a5 (5 位) の下に、6 位から 1 人ずつ。値は順位が下がるほど小さく、負にならないようにする
+      const { error: joinError } = await srAdmin.from('organization_challenge_participants').insert(
+        extraIds.map((id, i) => ({
+          challenge_id: challenge,
+          user_id: id,
+          rank: SEEDED_RANKED + 1 + i,
+          current_value: -(i + 1),
+        })),
+      );
+      if (joinError) throw new Error(`participants: ${joinError.message}`);
+      const total = SEEDED_RANKED + EXTRA_MEMBERS;
+      const last = extraIds[extraIds.length - 1];
+
+      // 渡さない・NULL: 既定の人数 (画面の RANKING_ENTRY_LIMIT と同じ)。a1 は 1 位なので本人の行は重ねて付かない
+      for (const limit of [undefined, null]) {
+        const rows = await ranking(challenge, a1.id, { limit });
+        expect(rows, `p_limit = ${String(limit)}`).toHaveLength(RANKING_ENTRY_LIMIT);
+        expect(new Set(rows.map((r) => Number(r.ranked_count)))).toEqual(new Set([total]));
+      }
+
+      // 上限より大きい p_limit: 上位 100 人で打ち切る
+      const capped = await ranking(challenge, a1.id, { limit: OVER_MAX_LIMIT });
+      expect(capped).toHaveLength(RANKING_MAX_LIMIT);
+      expect(capped[capped.length - 1].rank).toBe(RANKING_MAX_LIMIT);
+      // ちょうど上限の p_limit も同じ人数
+      expect(await ranking(challenge, a1.id, { limit: RANKING_MAX_LIMIT })).toHaveLength(RANKING_MAX_LIMIT);
+
+      // 上限の外 (最下位) の本人: 上位 100 人に本人の行が付く
+      const outside = await ranking(challenge, last, { limit: OVER_MAX_LIMIT });
+      expect(outside).toHaveLength(RANKING_MAX_LIMIT + 1);
+      expect(outside[RANKING_MAX_LIMIT]).toMatchObject({ is_me: true, rank: total });
+      expect(outside.filter((r) => r.is_me)).toHaveLength(1);
+    } finally {
+      // この it で作った使い捨てユーザーを片付ける (参加行 → 所属 → ユーザーの順)
+      if (extraIds.length > 0) {
+        await srAdmin.from('organization_challenge_participants').delete().in('user_id', extraIds);
+        await srAdmin
+          .from('user_profiles')
+          .update({ organization_id: null, org_role: null, is_active_in_org: false })
+          .in('id', extraIds);
+        for (let start = 0; start < extraIds.length; start += CREATE_CONCURRENCY) {
+          await Promise.all(extraIds.slice(start, start + CREATE_CONCURRENCY).map((id) => srAdmin.auth.admin.deleteUser(id)));
+        }
+      }
+    }
   });
 
   it('参加していない人 (管理者・同じ組織の非参加者・脱退した人・他組織の人) には 0 行。未集計の参加者には、順位表だけ返る', async () => {

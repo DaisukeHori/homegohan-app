@@ -19,6 +19,8 @@
 --          平均      = 集計が済んだ (順位がついた) 参加者が 5 人に満たなければ NULL
 --   3. get_org_challenge_ranking(p_challenge_id, p_user_id, p_limit, p_with_names)  SECURITY INVOKER / service_role だけが実行できる
 --        参加者に見せる順位表。p_user_id がそのチャレンジの参加者 (今も組織のメンバー) のときだけ、上位 p_limit 人と本人の行を返す。
+--        人数は関数の中の cfg に集める: p_limit が NULL なら default_limit (20 人。画面の RANKING_ENTRY_LIMIT と同じ)、
+--        1 人以上・max_limit (100 人) 以下にそろえる。
 --        他人の user_id は返さない (本人かどうかの is_me だけ)。表示名 (nickname) は p_with_names が true のときだけ入れる。
 --   4. pg_cron: update-org-challenge-progress を毎日 18:10 UTC (= 03:10 JST) に登録する。
 --   5. organization_challenge_participants の行レベルセキュリティ (RLS) を、本人の行だけに絞る。
@@ -267,7 +269,7 @@ $$;
 CREATE OR REPLACE FUNCTION public.get_org_challenge_ranking(
   p_challenge_id uuid,
   p_user_id      uuid,
-  p_limit        integer DEFAULT 20,
+  p_limit        integer DEFAULT NULL,  -- NULL は既定の人数 (下の cfg.default_limit)
   p_with_names   boolean DEFAULT false
 )
 RETURNS TABLE (
@@ -282,7 +284,15 @@ STABLE
 SECURITY INVOKER
 SET search_path = ''
 AS $$
-  WITH ranked AS (
+  WITH cfg AS (
+    -- 順位表に出す人数 (上位から。本人の行は、圏外でも別に付ける)
+    --   default_limit: p_limit が NULL のときの人数。画面の順位表の人数 (src/lib/org-challenges.ts の RANKING_ENTRY_LIMIT) と同じ値にする
+    --                  (設計書 docs/design/org/07-challenge.md「上位 20 人と本人の行」。tests/org-challenges-lib.test.ts が同じ値かを確かめる)
+    --   max_limit:     p_limit に大きな値が渡されても、1 回に返す行数をこの人数で打ち切る (順位表は上位だけを見せるもので、
+    --                  大きな組織の全員分を返さない。API が 1 回に受け取れる行数の上限 1000 行よりも十分小さくする)
+    SELECT 20 AS default_limit, 100 AS max_limit
+  ),
+  ranked AS (
     -- 順位がついている (集計が済んだ) 参加者。今も、そのチャレンジの組織のメンバーである人だけ
     SELECT p.rank,
            p.current_value,
@@ -305,7 +315,9 @@ AS $$
          r.nickname,
          r.total
     FROM ranked AS r
-   WHERE (r.pos <= LEAST(GREATEST(COALESCE(p_limit, 20), 1), 100) OR r.user_id = p_user_id)
+   CROSS JOIN cfg
+   -- 人数は 1 人以上・max_limit 人以下にそろえる (0 以下が渡されても、1 人は返す)
+   WHERE (r.pos <= LEAST(GREATEST(COALESCE(p_limit, cfg.default_limit), 1), cfg.max_limit) OR r.user_id = p_user_id)
      -- 順位表を見られるのは、そのチャレンジの参加者本人 (今も組織のメンバー) だけ。参加していない人には 0 行
      AND EXISTS (
        SELECT 1
@@ -345,7 +357,7 @@ COMMENT ON FUNCTION public.update_org_challenge_progress(timestamptz) IS
 COMMENT ON FUNCTION public.get_org_challenge_aggregates(uuid) IS
   '#1132: 管理者向けの集計。組織のチャレンジごとに、参加者数 (今も組織のメンバーである人) と、集計が済んだ参加者の平均だけを返す。個人の値・ID は返さない。参加者が min_participants (5) に満たないときは参加者数を、集計が済んだ人が min_participants に満たないときは平均を NULL にする。SECURITY INVOKER。service_role のみ。';
 COMMENT ON FUNCTION public.get_org_challenge_ranking(uuid, uuid, integer, boolean) IS
-  '#1132: 参加者に見せる順位表。p_user_id がそのチャレンジの参加者 (今も組織のメンバー) のときだけ、順位がついている参加者を上位 p_limit 人 (最大 100) と本人の行について返す (参加していない人には 0 行)。他人の user_id は返さない (is_me だけ)。nickname は p_with_names が true のときだけ入る。SECURITY INVOKER。service_role のみ。';
+  '#1132: 参加者に見せる順位表。p_user_id がそのチャレンジの参加者 (今も組織のメンバー) のときだけ、順位がついている参加者を上位 p_limit 人 (NULL は既定の default_limit = 20 人。1〜max_limit = 100 人にそろえる) と本人の行について返す (参加していない人には 0 行)。他人の user_id は返さない (is_me だけ)。nickname は p_with_names が true のときだけ入る。SECURITY INVOKER。service_role のみ。';
 
 -- ─────────────────────────────────────────────────────────
 -- 4. 毎日の定時実行 (pg_cron が無い DB では何もしない)
