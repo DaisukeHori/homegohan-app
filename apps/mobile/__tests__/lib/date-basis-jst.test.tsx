@@ -109,14 +109,26 @@ describe('端末のタイムゾーン・UTC で日付の文字列を作る書き
     })),
   );
 
+  /**
+   * 意図して UTC の日付を使っているファイル (パターンの見出し → ファイル)。理由は tests/jst-today-source-scan.test.ts の許可リストと同じ:
+   * データの書き出しのファイル名の日付は、API が付けるファイル名 (UTC の日付) とそろえている
+   */
+  const INTENTIONAL_UTC: Record<string, string[]> = {
+    'UTC の toISOString() の先頭 10 文字を日付にする': ['app/(tabs)/settings.tsx'],
+  };
+
   it.each([
     ['getDate() をゼロ埋めして日付の文字列を作る', /getDate\(\)\)\.padStart\(/],
     ['UTC の toISOString() の先頭 10 文字を日付にする', /toISOString\(\)\.(?:slice\(0,\s*10\)|split\(["']T["']\)\[0\]|substring\(0,\s*10\))/],
     ['画面ごとに日付の整形の関数を書く (shared の formatCalendarDate / formatLocalDate を使う)', /(?:function\s+|const\s+)formatLocalDate\b/],
     ['@homegohan/core の formatLocalDate (端末のタイムゾーン) を使う', /import\s*\{[^}]*\bformatLocalDate\b[^}]*\}\s*from\s*["']@homegohan\/core["']/],
     ['端末の今日 (new Date()) から週の始まりを求める', /getWeekStart\(\s*new Date\(\)/],
-  ])('%s', (_label, pattern) => {
-    const offenders = sources.filter(({ code }) => pattern.test(code)).map(({ file }) => file);
+  ])('%s', (label, pattern) => {
+    const allowed = INTENTIONAL_UTC[label] ?? [];
+    const offenders = sources
+      .filter(({ code }) => pattern.test(code))
+      .map(({ file }) => file)
+      .filter((file) => !allowed.includes(file));
     expect(offenders).toEqual([]);
   });
 });

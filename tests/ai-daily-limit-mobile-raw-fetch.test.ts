@@ -103,11 +103,6 @@ const RAW_FETCHES: Record<string, { route: string | null; returnsDailyLimit: boo
     returnsDailyLimit: false,
     reason: '買い物リストの全削除 (DELETE。確認の Alert の「全削除」ボタンの onPress)。AI を使わない',
   },
-  'src/lib/storage.ts::uploadFridgePhoto': {
-    route: null,
-    returnsDailyLimit: false,
-    reason: '端末の写真のファイルを Blob に読むだけ (fetch(localUri))。アプリの API ではない',
-  },
 };
 
 // ─────────────────────────────────────────────
