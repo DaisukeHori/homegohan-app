@@ -20,6 +20,7 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ---- 呼び出し順を記録する共有配列 ----
 let callOrder: string[] = [];
@@ -106,6 +107,10 @@ import {
 } from '../../src/lib/account-deletion-error';
 import { NETWORK_ERROR_MESSAGES } from '../../src/lib/api-error';
 import { ServiceUnavailableError } from '../../src/lib/service-unavailable';
+import {
+  readPendingWebViewUserScopedStorageClear,
+  resetWebViewUserStorageCleanupForTests,
+} from '../../src/lib/webViewUserStorageCleanup';
 
 // Alert.alert をモックし、確認ダイアログでは "削除" ボタンを自動タップしたことにする
 const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((title, _message, buttons) => {
@@ -116,8 +121,10 @@ const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((title, _message,
   // "削除失敗" 等その他のアラートは記録のみで何もしない
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
+  resetWebViewUserStorageCleanupForTests();
+  await AsyncStorage.clear();
   alertSpy.mockClear();
   callOrder = [];
   mockGetUser.mockImplementation(async () => {
@@ -164,6 +171,8 @@ describe('AccountSettingsPage — アカウント削除', () => {
     expect(mockRemoveStoredItem).not.toHaveBeenCalled();
     expect(mockClearSession).not.toHaveBeenCalled();
     expect(mockUnregisterExpoPushToken).not.toHaveBeenCalled();
+    // 次に開く WebView に、利用者別の localStorage を消させる (#1037。中身は web-view-user-storage-cleanup.test.ts)
+    expect(await readPendingWebViewUserScopedStorageClear()).toEqual(expect.any(String));
   });
 
   it('2. 削除 API が失敗した場合、ローカルセッションは破棄されずログイン状態を維持する', async () => {
@@ -180,6 +189,7 @@ describe('AccountSettingsPage — アカウント削除', () => {
 
     // 削除 API が失敗した場合、ローカルクリア・signOut・遷移は一切実行されない
     expect(mockClearUserScopedAsyncStorage).not.toHaveBeenCalled();
+    expect(await readPendingWebViewUserScopedStorageClear()).toBeNull();
     expect(mockSignOut).not.toHaveBeenCalled();
     expect(mockReplace).not.toHaveBeenCalled();
 

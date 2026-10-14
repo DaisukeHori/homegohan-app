@@ -72,13 +72,12 @@ export default function AccountSettingsPage() {
 
     // ここから先は、サーバーでの削除は済んでいる。もう一度試しても削除の API は失敗するだけなので、
     // 端末の後片付けに失敗しても、削除の失敗とは別の文で知らせて、ログイン画面へ進める。
-    const { error } = await signOutAfterAccountDeletion(user?.id ?? null);
+    // サインアウトが失敗すると SIGNED_OUT が届かず、AuthProvider がセッションを持ったままになる。
+    // そのまま "/" へ移ると、入口 (app/index.tsx) がホームへ戻してしまうので、signOutAfterAccountDeletion が
+    // 保管庫のセッションを端末だけで消し、clearSession で画面の状態も消す (設定画面のログアウトと同じ共通処理。signOut.ts)。
+    const { error } = await signOutAfterAccountDeletion(user?.id ?? null, { clearSession });
     if (error) {
       console.error("[account delete] sign out failed after server delete succeeded", error);
-      // サインアウトが失敗すると SIGNED_OUT が届かず、AuthProvider がセッションを持ったままになる。
-      // そのまま "/" へ移ると、入口 (app/index.tsx) がホームへ戻してしまうので、画面の状態も消す
-      // (保管庫のセッションは signOutAfterAccountDeletion が端末だけで消している)。
-      clearSession();
       Alert.alert("アカウントを削除しました", ACCOUNT_DELETED_SIGN_OUT_FAILED_MESSAGE);
     }
     router.replace("/");

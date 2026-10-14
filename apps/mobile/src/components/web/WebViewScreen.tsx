@@ -8,6 +8,10 @@ import { getWebBaseUrl } from '../../lib/webBaseUrl';
 import { colors } from '../../theme/colors';
 import { useWebAuthMessages } from '../../lib/webViewAuthMessages';
 import { SUPABASE_AUTH_STORAGE_KEY, supabase } from '../../lib/supabase';
+import {
+  buildClearUserScopedWebStorageScript,
+  readPendingWebViewUserScopedStorageClear,
+} from '../../lib/webViewUserStorageCleanup';
 
 // download の送信元の確認 (webViewDownload.ts) と同じ値から決める (既定値を 2 か所に持たない)
 const WEB_BASE_URL = getWebBaseUrl();
@@ -143,7 +147,14 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
 
   useEffect(() => {
     const init = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+      // ネイティブのログアウト・退会のあとなら、Web のページが読み込まれる前に、前の利用者の localStorage を消す (#1037)。
+      // ログイン中・未ログインのどちらで開くときも先頭に入れる (webViewUserStorageCleanup.ts)。
+      // 掃除の ID (AsyncStorage) とセッションは並べて読む (読み込みを遅らせない。ID の読み込みは例外を投げない)
+      const [pendingClearId, { data: { session } }] = await Promise.all([
+        readPendingWebViewUserScopedStorageClear(),
+        supabase.auth.getSession(),
+      ]);
+      const clearScript = pendingClearId ? buildClearUserScopedWebStorageScript(pendingClearId) : '';
       if (session?.access_token && session?.refresh_token) {
         // bridge URL に access/refresh token + next path を埋め込む
         // effectivePath に既に mode=app が含まれている場合は重複付与しない
@@ -175,7 +186,7 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
         const escapedPayload = sessionPayload
           .replace(/\\/g, '\\\\')
           .replace(/'/g, "\\'");
-        setInjectedJS(`
+        setInjectedJS(`${clearScript}
           (function() {
             try {
               window.localStorage.setItem('${storageKey}', '${escapedPayload}');
@@ -193,7 +204,7 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
           ? `${WEB_BASE_URL}${effectivePath}`
           : `${WEB_BASE_URL}${effectivePath}${separator}mode=app`;
         setUri(directUrl);
-        setInjectedJS('');
+        setInjectedJS(clearScript);
       }
     };
     init();

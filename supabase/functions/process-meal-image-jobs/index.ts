@@ -2,13 +2,15 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { GoogleGenAI, createUserContent } from "@google/genai";
 import {
   DEFAULT_MEAL_IMAGE_MODEL,
-  applyGeneratedDishImage,
   type MealImageDish,
 } from "../_shared/meal-image.ts";
 import {
   buildImageUploadPath,
   extractInlineImageBase64,
   GeneratedContentPart,
+  type MealDishWriteSkipReason,
+  type PlannedMealSnapshot,
+  writeDishImageFailure,
   writeGeneratedDishImage,
 } from "./utils.ts";
 import { checkAiConsent, type AiConsentDecision } from "../_shared/ai-consent-guard.ts";
@@ -70,6 +72,16 @@ interface MealImageJobRow {
   reference_image_urls: string[] | null;
   attempt_count: number | null;
 }
+
+/**
+ * 料理の画像を書かずにやめたとき (献立が消えた・料理が無い・料理が変わった) の、ジョブの last_error と応答の message。
+ * 画像を作る前の確かめと、書くとき (writeGeneratedDishImage が読み直したとき) とで同じ文にする
+ */
+const SKIPPED_DISH_WRITE: Readonly<Record<MealDishWriteSkipReason, { lastError: string; message: string }>> = {
+  meal_deleted: { lastError: "planned meal deleted", message: "meal was deleted" },
+  dish_missing: { lastError: "dish index missing", message: "dish missing" },
+  dish_changed: { lastError: "dish signature changed", message: "dish schema changed" },
+};
 
 interface ProcessResponse {
   jobId: string;
@@ -222,21 +234,18 @@ async function processJob(
       .maybeSingle();
 
     if (!meal) {
-      await finalizeJob(jobRow.id, lockToken, "cancelled", nextAttempt, "planned meal deleted");
-      return { jobId: jobRow.id, status: "cancelled", message: "meal was deleted" };
+      return await cancelSkippedJob(jobRow.id, lockToken, nextAttempt, "meal_deleted");
     }
 
     const dishes = Array.isArray(meal.dishes) ? (meal.dishes as MealImageDish[]) : [];
     const targetDish = dishes[jobRow.dish_index];
 
     if (!targetDish) {
-      await finalizeJob(jobRow.id, lockToken, "cancelled", nextAttempt, "dish index missing");
-      return { jobId: jobRow.id, status: "cancelled", message: "dish missing" };
+      return await cancelSkippedJob(jobRow.id, lockToken, nextAttempt, "dish_missing");
     }
 
     if (targetDish.image_subject_hash !== jobRow.subject_hash) {
-      await finalizeJob(jobRow.id, lockToken, "cancelled", nextAttempt, "dish signature changed");
-      return { jobId: jobRow.id, status: "cancelled", message: "dish schema changed" };
+      return await cancelSkippedJob(jobRow.id, lockToken, nextAttempt, "dish_changed");
     }
 
     const imageBase64 = await generateImage(jobRow);
@@ -257,45 +266,20 @@ async function processJob(
       throw new Error("failed to obtain public URL");
     }
 
-    const { data: latestMeal } = await supabase
-      .from("planned_meals")
-      .select("id, dishes, image_url")
-      .eq("id", meal.id)
-      .maybeSingle();
-
-    if (!latestMeal) {
-      await finalizeJob(jobRow.id, lockToken, "cancelled", nextAttempt, "planned meal deleted");
-      return { jobId: jobRow.id, status: "cancelled", message: "meal was deleted" };
-    }
-
-    const latestDishes = Array.isArray(latestMeal.dishes) ? (latestMeal.dishes as MealImageDish[]) : [];
-    const latestDish = latestDishes[jobRow.dish_index];
-    if (!latestDish) {
-      await finalizeJob(jobRow.id, lockToken, "cancelled", nextAttempt, "dish index missing");
-      return { jobId: jobRow.id, status: "cancelled", message: "dish missing" };
-    }
-
-    if (latestDish.image_subject_hash !== jobRow.subject_hash) {
-      await finalizeJob(jobRow.id, lockToken, "cancelled", nextAttempt, "dish signature changed");
-      return { jobId: jobRow.id, status: "cancelled", message: "dish schema changed" };
-    }
-
-    // 料理に AI の画像を書き、献立のカバーはカバーの持ち主の決まり (isMealCoverAutoReplaceable) で決める (#1487 の整合ゲート)。
-    // 写真・商品・利用者の画像のカバーは置き換えない。カバーが変わらないときは image_url を書かない
-    const currentCover = latestMeal.image_url ?? null;
-    const applied = applyGeneratedDishImage({
-      dishes: latestDishes,
-      dishIndex: jobRow.dish_index,
-      imageUrl: publicUrl,
-      generatedAt: new Date().toISOString(),
-      currentCoverImageUrl: currentCover,
-    });
-    await writeGeneratedDishImage(supabase, {
+    // 書くたびに献立を読み直し、最新の料理にこのジョブの料理の画像だけを当てて、読んだときの行のままの場合にだけ書く
+    // (楽観的な排他。#1527。読んでから書くまでに別のワーカーや利用者が書いていたら、読み直して当て直す)。
+    // カバーはカバーの持ち主の決まり (isMealCoverAutoReplaceable。#1487 の整合ゲート) で決め、変わらないときは image_url を書かない。
+    // 写真・商品・利用者の画像のカバーは置き換えない
+    const written = await writeGeneratedDishImage(supabase, {
       mealId: meal.id,
-      dishes: applied.dishes,
-      currentCover,
-      nextCover: applied.coverChanged ? applied.coverImageUrl : undefined,
+      dishIndex: jobRow.dish_index,
+      subjectHash: jobRow.subject_hash,
+      imageUrl: publicUrl,
+      read: () => readMealSnapshot(meal.id),
     });
+    if (written.status === "skipped") {
+      return await cancelSkippedJob(jobRow.id, lockToken, nextAttempt, written.reason);
+    }
 
     await finalizeJob(jobRow.id, lockToken, "completed", nextAttempt, null, publicUrl);
     return { jobId: jobRow.id, status: "completed", message: publicUrl };
@@ -307,6 +291,29 @@ async function processJob(
     }
     return { jobId: jobRow.id, status: "failed", message: reason };
   }
+}
+
+/** 料理の画像を書かずにやめたジョブを取り消す (料理は書き換えない) */
+async function cancelSkippedJob(
+  jobId: string,
+  leaseToken: string,
+  attemptCount: number,
+  reason: MealDishWriteSkipReason,
+): Promise<ProcessResponse> {
+  const skipped = SKIPPED_DISH_WRITE[reason];
+  await finalizeJob(jobId, leaseToken, "cancelled", attemptCount, skipped.lastError);
+  return { jobId, status: "cancelled", message: skipped.message };
+}
+
+/** 献立の行を読む (楽観的な排他の条件の updated_at も)。無ければ null。読めなければ例外 (ジョブを失敗にする) */
+async function readMealSnapshot(mealId: string): Promise<PlannedMealSnapshot | null> {
+  const { data, error } = await supabase
+    .from("planned_meals")
+    .select("id, dishes, image_url, updated_at")
+    .eq("id", mealId)
+    .maybeSingle();
+  if (error) throw new Error(`failed to read meal: ${error.message}`);
+  return data ?? null;
 }
 
 async function finalizeJob(
@@ -341,29 +348,22 @@ async function finalizeJob(
   return Array.isArray(data) ? data.length > 0 : Boolean(data);
 }
 
+/**
+ * ジョブの料理を失敗にする (#1527。読んだ最新の料理のうちジョブの料理だけを変え、読んだときの行のままの場合にだけ書く)。
+ * ジョブの後始末なので例外は投げない (書けなければログに残す。ほかのジョブの処理を止めない)
+ */
 async function markDishFailure(job: MealImageJobRow, reason: string) {
-  const { data: meal } = await supabase
-    .from("planned_meals")
-    .select("id, dishes")
-    .eq("id", job.planned_meal_id)
-    .maybeSingle();
-
-  if (!meal || !Array.isArray(meal.dishes)) return;
-  const dishes = meal.dishes as MealImageDish[];
-  const target = dishes[job.dish_index];
-  if (!target || target.image_subject_hash !== job.subject_hash) return;
-
-  const failedDish: MealImageDish = {
-    ...target,
-    image_status: "failed",
-    image_error: reason,
-  };
-  const updatedDishes = [...dishes];
-  updatedDishes[job.dish_index] = failedDish;
-  await supabase
-    .from("planned_meals")
-    .update({ dishes: updatedDishes, updated_at: new Date().toISOString() })
-    .eq("id", meal.id);
+  try {
+    await writeDishImageFailure(supabase, {
+      mealId: job.planned_meal_id,
+      dishIndex: job.dish_index,
+      subjectHash: job.subject_hash,
+      reason,
+      read: () => readMealSnapshot(job.planned_meal_id),
+    });
+  } catch (error) {
+    console.warn("Failed to mark meal image dish as failed:", job.id, error);
+  }
 }
 
 async function generateImage(job: MealImageJobRow): Promise<string> {
