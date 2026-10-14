@@ -37,7 +37,7 @@ type NewMeal = TablesInsert<"planned_meals">;
 | `date-utils.ts` | `formatLocalDate`, `todayLocal`, `parseLocalDate`, `addDays` |
 | `nutrition-planner.ts` | `deriveMacroTargets`, `estimateGoalProjection` |
 | `dish-roles.ts` | `DishRole`, `DishConfig`, `getDishConfig` |
-| `meal-types.ts` | `MealType`, `MEAL_LABELS`, `MEAL_ORDER` |
+| `meal-types.ts` | `MealType`, `MEAL_LABELS`, `MEAL_ORDER`, `isMealType` (食事の区分の正本。Web・モバイルは 5 値を手で書かずここから導く。#1446) |
 | `mode-config.ts` | `ModeKey`, `ModeConfig`, `MODE_CONFIG` |
 | `nutrition-constants.ts` | `NUTRIENT_DEFINITIONS`, `getNutrientDefinition`, `calculateDriPercentage` |
 | `theme-labels.ts` | `THEME_LABELS_REQUEST`, `AI_CONDITIONS` |
@@ -47,5 +47,14 @@ type NewMeal = TablesInsert<"planned_meals">;
 
 ## Supabase 型の再生成
 
-Supabase MCP `generate_typescript_types` (project_id: `flmeolcfutuwwbjmzyoz`) で再生成し、
-`src/database.types.ts` を上書きする。手動編集は禁止。
+`src/database.types.ts` は、リポジトリの `src/types/database.types.ts` と同じ内容の写し。手動編集は禁止。
+本番には接続せずに作る (#1495):
+
+1. ローカルの Supabase をベースライン方式で組み立てる (`bash scripts/supabase-local.sh start` → `reset`)。
+   本番スキーマのスナップショット (`supabase/baseline/`) を当て、そのあとにベースラインより新しい migration だけを当てる
+2. `npx supabase@2.62.10 gen types typescript --local --schema public --workdir .supabase-local` の出力で
+   `src/types/database.types.ts` を置き換える (枠 n (`LOCAL_CI_SLOT=n`) で組み立てたときの作業ディレクトリは `.supabase-local-s<n>`)。
+   `--local` は `__InternalSupabase` の `PostgrestVersion` を出さないので、既存の値を残す
+3. 同じ内容を `packages/shared/src/database.types.ts` に写す
+
+`tests/database-types-migrations-contract.test.ts` が、migration と型ファイルの突き合わせと、写しの一致を確かめる。
