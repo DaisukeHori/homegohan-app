@@ -605,7 +605,7 @@ describe('AuthProvider と一緒に動かしたとき: session-expired の getUs
       const { session } = useAuth();
       return React.createElement(Text, { testID: 'session' }, session ? 'signed-in' : 'none');
     }
-    const api = render(React.createElement(AuthProvider, { children: React.createElement(Probe) }));
+    const api = render(React.createElement(AuthProvider, null, React.createElement(Probe)));
     try {
       // 起動時の復元 (getUser() はまだ生きているので通る) で、AuthProvider が利用者を覚える
       await waitFor(() => expect(api.getByTestId('session').props.children).toBe('signed-in'));
