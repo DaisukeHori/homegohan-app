@@ -95,11 +95,14 @@ function enclosingFunction(node: ts.Node): ts.Node {
   return node.getSourceFile();
 }
 
-/** 判定の呼び出しの結果を受けた変数の名前 (const x = await guard(...) / x = guard(...))。await で受け直した名前も辿る */
+/**
+ * 判定の呼び出しの結果を受けた変数の名前 (const x = await guard(...) / x = guard(...))。await で受け直した名前も辿る。
+ * 三項演算子の枝の中の呼び出し (const x = cond ? await guard(a) : await guard(b)。究極モード #1142 の機能名の出し分け) も、受けた変数を辿る
+ */
 function resultNames(call: ts.CallExpression, fn: ts.Node): Set<string> {
   const names = new Set<string>();
   let node: ts.Node = call.parent;
-  if (ts.isAwaitExpression(node)) node = node.parent;
+  while (ts.isAwaitExpression(node) || ts.isParenthesizedExpression(node) || ts.isConditionalExpression(node)) node = node.parent;
   if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) names.add(node.name.text);
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(node.left)) {
     names.add(node.left.text);
@@ -223,6 +226,15 @@ describe('Edge Functions: 判定の結果で止める if が、送る呼び出�
     const usageOk = check(`Deno.serve(async (req) => { const u = await consumeEdgeAiUsage(req, "u", "consultation"); if (!u.allowed) return x(u); await fetch("x"); });`);
     expect(usageOk.stopLine).not.toBeNull();
     expect(usageOk.sendsBefore).toEqual([]);
+    // #1142: 三項演算子で機能名を出し分けても、受けた変数で止めていれば止めとみなす (両方の枝の呼び出しとも)。止めていなければ落ちる
+    const ternary = (stop: string) =>
+      analyzeGuards(
+        'index.ts',
+        `Deno.serve(async (req) => { const u = ult ? await consumeEdgeAiUsage(req, "u", "menu_generation_ultimate") : await consumeEdgeAiUsage(req, "u", "menu_generation"); ${stop} await fetch("x"); });`,
+      );
+    expect(ternary('if (!u.allowed) return x(u);').map((site) => site.stopLine)).toEqual([1, 1]);
+    expect(ternary('if (u.allowed) return x(u);').map((site) => site.stopLine)).toEqual([null, null]);
+    expect(ternary('').map((site) => site.stopLine)).toEqual([null, null]);
   });
 });
 
