@@ -47,7 +47,19 @@ const STOPPED_RESPONSE_READERS = ['errorOfFailedResponse', 'serviceUnavailableMe
  * アプリの API でないものは null)・その呼び先が 429 AI_DAILY_LIMIT を返すか (returnsDailyLimit。2b が route.ts と突き合わせる)・
  * 分類の理由
  */
-const RAW_FETCHES: Record<string, { route: string | null; returnsDailyLimit: boolean; reason: string }> = {
+const RAW_FETCHES: Record<
+  string,
+  {
+    route: string | null;
+    returnsDailyLimit: boolean;
+    reason: string;
+    /**
+     * 失敗の応答を利用者向けの文にしない理由 (4 の対象から外す)。失敗しても利用者に何も見せず、別の経路へ黙って倒す関数だけに書く。
+     * 外す関数は 4 の中で名指しで固定する (黙って増やさない)
+     */
+    silentFallback?: string;
+  }
+> = {
   'app/ai/[sessionId].tsx::send': {
     route: 'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts',
     returnsDailyLimit: true,
@@ -103,10 +115,12 @@ const RAW_FETCHES: Record<string, { route: string | null; returnsDailyLimit: boo
     returnsDailyLimit: false,
     reason: '買い物リストの全削除 (DELETE。確認の Alert の「全削除」ボタンの onPress)。AI を使わない',
   },
-  'src/lib/storage.ts::uploadFridgePhoto': {
-    route: null,
+  'src/lib/webViewBridge.ts::requestBridgeCode': {
+    route: 'src/app/api/auth/native-bridge/code/route.ts',
     returnsDailyLimit: false,
-    reason: '端末の写真のファイルを Blob に読むだけ (fetch(localUri))。アプリの API ではない',
+    reason: 'WebView の認証ブリッジのワンタイム code の発行 (#1036)。AI を使わない',
+    silentFallback:
+      '失敗 (503 のメンテナンス中を含む) は null を返し、呼び出し側がトークンを含まない直接 URL を WebView に開く。利用者向けの文は出さない (メンテナンス中なら Web のページ自身がそれを出す)',
   },
 };
 
@@ -275,8 +289,13 @@ describe('アプリの生の fetch と 429 AI_DAILY_LIMIT (#1149)', () => {
 
   it('4. (#1486) アプリの API を生の fetch で呼ぶ関数は、すべて失敗の応答を errorOfFailedResponse / serviceUnavailableMessageOf で読む', () => {
     const appApiKeys = Object.entries(RAW_FETCHES)
-      .filter(([, entry]) => entry.route !== null)
+      .filter(([, entry]) => entry.route !== null && entry.silentFallback === undefined)
       .map(([key]) => key);
+    // 失敗を利用者に見せずに別の経路へ倒すので外す関数 (silentFallback) は、名指しで固定する (外すものを黙って増やさない)
+    const silentKeys = Object.entries(RAW_FETCHES)
+      .filter(([, entry]) => entry.silentFallback !== undefined)
+      .map(([key]) => key);
+    expect(silentKeys).toEqual(['src/lib/webViewBridge.ts::requestBridgeCode']);
     // 分類が空回りしていない (アプリの API を呼ぶ生の fetch が実際にある。#1486 で直した 6 か所を含む)
     expect(appApiKeys).toEqual(
       expect.arrayContaining([

@@ -27,6 +27,7 @@ import { createClient } from "@supabase/supabase-js";
 import {
   AI_USAGE_RECORDED_HEADER,
   AI_USAGE_TIMEOUT_MS,
+  aiFeatureDailyCap,
   verifyAiUsageRecorded,
   type AiFeature,
 } from "./ai-usage-core.ts";
@@ -110,6 +111,8 @@ function logFailure(userId: string, message: string, error: unknown, context: Re
  * @param userId JWT から確定したユーザー ID (リクエストの本文のユーザー ID は渡さない)
  *
  * 上限に達していれば、記録せずに { allowed: false } を返す (呼び出し側は送らずに aiDailyLimitEdgeResponse で止める)。
+ * 機能ごとの 1 日の上限がある機能 (究極モード 'menu_generation_ultimate'。#1142) は、DB の consume_ai_usage_capped で
+ * 機能ごとの上限 (既定 1 回。環境変数 AI_ULTIMATE_MODE_DAILY_LIMIT で上書き) と 1 日の上限の両方を判定する (Next.js の consumeAiUsage と同じ)。
  * Next.js が数え済みの印があれば、数えずに許可する。DB の関数が失敗したときは、ログに残して許可する。例外は投げない。
  *
  * @example
@@ -129,14 +132,18 @@ export async function consumeEdgeAiUsage(
     }
 
     const client = options.client ?? defaultClient();
+    const featureDailyCap = aiFeatureDailyCap(feature, (name) => Deno.env.get(name));
+    const rpcName = featureDailyCap === null ? "consume_ai_usage" : "consume_ai_usage_capped";
     const { data, error } = await withTimeout(
-      client.rpc("consume_ai_usage", { p_user_id: userId, p_feature: feature }),
+      featureDailyCap === null
+        ? client.rpc("consume_ai_usage", { p_user_id: userId, p_feature: feature })
+        : client.rpc("consume_ai_usage_capped", { p_user_id: userId, p_feature: feature, p_feature_daily_cap: featureDailyCap }),
       options.timeoutMs ?? AI_USAGE_TIMEOUT_MS,
-      "consume_ai_usage",
+      rpcName,
     );
     if (error) throw toError(error);
     const result = parseConsumeAiUsageResult(data);
-    if (!result) throw new Error(`consume_ai_usage returned an unexpected value: ${JSON.stringify(data)}`);
+    if (!result) throw new Error(`${rpcName} returned an unexpected value: ${JSON.stringify(data)}`);
     return result;
   } catch (error) {
     logFailure(userId, "AI 利用回数の判定と記録に失敗しました (数えずに許可します)", error, { feature });

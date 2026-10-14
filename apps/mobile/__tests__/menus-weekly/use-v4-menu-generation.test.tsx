@@ -12,9 +12,16 @@
  *    (呼び出し側の catch が「失敗しました」を案内に重ねて出さないように。silent でも同じ)
  * 4. 受け付けたあと (Realtime) に、サーバーが同意の判定で止めた文 (AI_CONSENT_REQUIRED_MESSAGE) で失敗したら、
  *    onError を呼ばず onAiConsentRequired を呼ぶ。同意の状況を読めなかった文 (一時的) は onError にそのまま渡す
+ * 5. 受け付けたあとの失敗の文のうち、こちらで書いた文 (定型・同意・上限) 以外は汎用の文にして渡す (#1478)。
+ *    文字列でない error_message も汎用の文にし、progress の中身と status はそのまま onProgress に渡す。
+ *    Realtime の行は型で受ける (フックのソースで any へキャストしない)
  * を固定する。
  */
 
+import fs from 'fs';
+import path from 'path';
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, renderHook } from '@testing-library/react-native';
 
 const mockPost = jest.fn();
@@ -46,6 +53,11 @@ import {
   AI_CONSENT_REQUIRED_MESSAGE,
 } from '../../../../supabase/functions/_shared/ai-consent';
 import { submitImprove } from '../../src/lib/improve-meal';
+import { aiDailyLimitMessage } from '../../../../supabase/functions/_shared/ai-daily-limit';
+import {
+  MENU_REQUEST_EXISTING_PROTECTED_MESSAGE,
+  MENU_REQUEST_FAILED_MESSAGE,
+} from '../../../../supabase/functions/_shared/stored-failure-messages';
 
 const params = {
   targetSlots: [{ date: '2026-10-08', mealType: 'dinner' as const }],
@@ -226,6 +238,61 @@ describe('useV4MenuGeneration.subscribeToProgress — 受け付けたあとの�
     expect(onError).toHaveBeenCalledWith('stale_request_timeout');
     expect(onAiConsentRequired).not.toHaveBeenCalled();
   });
+
+  // #1478: Edge Function が以前、例外の文面をそのまま error_message に書いていた。こちらで書いた文以外は汎用の文に寄せる
+  it('こちらで書いた文でない失敗の文 (例外の文面・DB の生のエラー文) は、汎用の文にして onError と onProgress に渡す', async () => {
+    const raw = 'duplicate key value violates unique constraint "planned_meals_pkey"';
+    const onError = jest.fn();
+    const { onProgress } = await failWith(raw, { onError });
+
+    expect(onError).toHaveBeenCalledWith(MENU_REQUEST_FAILED_MESSAGE);
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({ errorMessage: MENU_REQUEST_FAILED_MESSAGE }));
+    expect(JSON.stringify([onError.mock.calls, onProgress.mock.calls])).not.toContain('duplicate key');
+  });
+
+  it('1 日の上限で止めた文と、既存の献立を守った定型の文は、そのまま onError に渡す (#1478)', async () => {
+    for (const stored of [aiDailyLimitMessage(10), MENU_REQUEST_EXISTING_PROTECTED_MESSAGE]) {
+      const onError = jest.fn();
+      await failWith(stored, { onError });
+      expect(onError).toHaveBeenCalledWith(stored);
+    }
+  });
+
+  // #1478 R1: Realtime の行を any へのキャストでなく型 (error_message は unknown) で受ける。文字列でない値も汎用の文に寄せる
+  it('error_message が文字列でない値 (オブジェクト) なら汎用の文にし、progress の中身と status はそのまま onProgress に渡す', async () => {
+    const onError = jest.fn();
+    const { result } = renderHook(() => useV4MenuGeneration({ onError }));
+    const onProgress = jest.fn();
+    act(() => {
+      result.current.subscribeToProgress('req-10', onProgress);
+    });
+    await act(async () => {
+      await mockRealtime.handler!({
+        new: {
+          status: 'failed',
+          error_message: { message: 'relation "planned_meals" does not exist' },
+          progress: { currentStep: 3, totalSteps: 6 },
+        },
+      });
+    });
+
+    expect(onProgress).toHaveBeenCalledWith({
+      currentStep: 3,
+      totalSteps: 6,
+      status: 'failed',
+      errorMessage: MENU_REQUEST_FAILED_MESSAGE,
+    });
+    expect(onError).toHaveBeenCalledWith(MENU_REQUEST_FAILED_MESSAGE);
+    expect(JSON.stringify([onError.mock.calls, onProgress.mock.calls])).not.toContain('does not exist');
+  });
+
+  it('フックのソースは Realtime の行を any へキャストして受けない (読む列は型で確かめる #1478)', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../../src/hooks/useV4MenuGeneration.ts'), 'utf8');
+    // コメントを除いた実コードで判定する (説明の文に語が出ても誤検知しない)
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(code).not.toMatch(/\bas\s+any\b/);
+    expect(code).toMatch(/payload\.new as WeeklyMenuRequestRealtimeRow\b/);
+  });
 });
 
 describe('献立を改善 → v4 生成 API まで通した結果', () => {
@@ -301,5 +368,47 @@ describe('献立を改善 → v4 生成 API まで通した結果', () => {
 
     expect(onAiConsentRequired).toHaveBeenCalledTimes(1);
     expect(onError).not.toHaveBeenCalled();
+  });
+});
+
+describe('生成中の状態を端末に保存しない (#1049 F7-20)', () => {
+  // 以前は受け付けのたびに AsyncStorage の "v4MenuGenerating" に書いていたが、読む処理がどこにも無かった
+  // (形式も persistence.ts の TTL 付きの形と違っていた)。書かないことと、ソースから読み書きが消えたことを確かめる
+  const LEGACY_KEY = 'v4MenuGenerating';
+
+  beforeEach(async () => {
+    await AsyncStorage.clear();
+  });
+
+  it('受け付け・完了・取り消しのどれでも、端末の保存領域に何も書かない', async () => {
+    mockPost.mockResolvedValue({ requestId: 'req-1', totalSlots: 1 });
+    const onGenerationComplete = jest.fn();
+    const { result } = renderHook(() => useV4MenuGeneration({ onGenerationComplete }));
+
+    await act(async () => {
+      await result.current.generate(params);
+    });
+    // 受け付けた直後 (生成中) も何も書かれていない (以前はここで { requestId, timestamp, totalSlots } が書かれていた)
+    expect(await AsyncStorage.getAllKeys()).toEqual([]);
+    act(() => {
+      result.current.subscribeToProgress('req-1', jest.fn());
+    });
+    await act(async () => {
+      await mockRealtime.handler!({ new: { status: 'completed', error_message: null, progress: null } });
+    });
+    await act(async () => {
+      await result.current.cancelGeneration();
+    });
+
+    expect(onGenerationComplete).toHaveBeenCalledTimes(1);
+    expect(await AsyncStorage.getItem(LEGACY_KEY)).toBeNull();
+    expect(await AsyncStorage.getAllKeys()).toEqual([]);
+  });
+
+  it('フックのソースは AsyncStorage も "v4MenuGenerating" のキーも使わない (読み手の無い保存を戻さない)', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../../src/hooks/useV4MenuGeneration.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(code).not.toMatch(/AsyncStorage/);
+    expect(code).not.toContain(LEGACY_KEY);
   });
 });

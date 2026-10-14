@@ -7,6 +7,7 @@ import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, Te
 import { LoadingState, PageHeader } from "../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../src/theme";
 import { getApi, getApiBaseUrl } from "../../src/lib/api";
+import { AI_CHAT_STREAM_TIMEOUT_MS } from "../../src/lib/ai-chat-timeout";
 import { supabase } from "../../src/lib/supabase";
 import { handleAiConsentRequiredError } from "../../src/lib/ai-consent";
 import { errorOfFailedResponse, isStoppedByServerError } from "../../src/lib/failed-response";
@@ -114,7 +115,7 @@ export default function AiSessionPage() {
       const url = `${baseUrl}${messagesPath}?stream=true`;
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 26000);
+      const timeoutId = setTimeout(() => controller.abort(), AI_CHAT_STREAM_TIMEOUT_MS);
 
       const body: Record<string, any> = { message: trimmed };
       if (imageSnapshot) {

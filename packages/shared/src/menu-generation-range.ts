@@ -2,8 +2,11 @@
  * 献立生成 (V4 / V5) の「期間を指定」「1日だけ」で選べる日付の上限 (#1463・#1482・#1524)。
  *
  * Web (src/components/ai-assistant/V4GenerateModal.tsx)・モバイル (apps/mobile/src/components/menu/V4GenerateModal.tsx)
- * の画面と、サーバー (POST /api/ai/menu/v4/generate・/v5/generate) が同じ値を使う。
- * 画面だけで止めると、API を直接呼んだときに日付の幅の上限が無く、サーバーの行事の検索 (getEventsForRange) が
+ * の画面は、このファイルの値をすべて使う (期間の長さ・開始日の上限・「1日だけ」の上限・終了日の上限)。
+ * サーバー (POST /api/ai/menu/v4/generate・/v5/generate) が使うのは、日付の幅 (最も早い日〜最も遅い日) の上限だけ
+ * (MENU_GENERATION_RANGE_MAX_DAYS と isWithinMenuGenerationRange)。開始日・「1日だけ」の日付が今日から何日先までかは、
+ * サーバーでは検査しない (画面の入力欄の上限だけ)。
+ * 日付の幅を画面だけで止めると、API を直接呼んだときに幅の上限が無く、サーバーの行事の検索 (getEventsForRange) が
  * 1 日ずつ数千年分を回りうる (#1482)。値を変えるときは、画面の説明「最大31日」「今日から1ヶ月先まで」と
  * 献立生成の slot の上限 (31 日 × 3 食 = 93) も合わせて変える (tests/menu-generation-range-1482.test.ts が値を固定する)。
  * 画面とサーバーで同じ値でなければならないので、環境変数での上書きは用意しない。

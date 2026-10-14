@@ -152,12 +152,14 @@ export const ENFORCED_ROUTES: Record<string, AiRouteEntry> = {
   },
   'src/app/api/ai/menu/v4/generate/route.ts': {
     consent: '献立の生成。認証の直後に 403',
-    handlers: { POST: record('reject', 'menu_generation') },
+    // 究極モード (本文の ultimateMode が true) は menu_generation_ultimate で数える (#1142。1 日の上限 + 究極モードの 1 日の上限)
+    handlers: { POST: record('reject', 'menu_generation', 'menu_generation_ultimate') },
   },
   'src/app/api/ai/menu/v5/generate/route.ts': {
     consent: '献立の生成 (キューに積む。cron の側でも止める)。認証の直後に 403',
-    // 利用者の操作を積む時点で記録する。送る側 (cron/process-menu-queue) は記録しない
-    handlers: { POST: record('reject', 'menu_generation') },
+    // 利用者の操作を積む時点で記録する。送る側 (cron/process-menu-queue) は記録しない。
+    // 究極モード (本文の ultimateMode が true) は menu_generation_ultimate で数える (#1142)
+    handlers: { POST: record('reject', 'menu_generation', 'menu_generation_ultimate') },
   },
   'src/app/api/ai/menu/weekly/request/route.ts': {
     consent: '週間献立の生成。認証の直後に 403',
@@ -260,6 +262,12 @@ export const EXEMPT_ROUTES: Record<string, AiRouteEntry> = {
     consent: 'ログイン (メールアドレスとパスワード)。AI へは送らない (env.ts の一覧に届くだけ)',
     handlers: { POST: { noAi: 'ログイン。送る先は Supabase Auth と Turnstile だけ' } },
   },
+  // #1184 Resend の Webhook の受け口。署名の秘密を getOptionalEnv で読むため、import を辿ると環境変数の一覧 (src/lib/env.ts) に届くだけで、
+  // 書く先は DB の宛先停止リスト (email_blacklist) だけ。利用者のデータを AI へ送らない
+  'src/app/api/webhooks/resend/route.ts': {
+    consent: 'Resend からのバウンス・苦情の知らせ。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: '宛先停止リストに入れるだけ。送る先は無い (DB に書くだけ)' } },
+  },
 };
 
 /**
@@ -272,9 +280,9 @@ export const QUEUE_ONLY_ROUTES: ReadonlySet<string> = new Set(['src/app/api/ai/m
 /** route 以外で記録を呼ぶファイル (route から呼ばれるライブラリ) と、記録する機能・理由 */
 export const LIBRARY_RECORDERS: Record<string, { record: readonly AiFeature[]; reason: string }> = {
   'src/lib/ai/consultation-action-executor.ts': {
-    record: ['menu_generation', 'meal_image_auto'],
+    record: ['menu_generation', 'menu_generation_ultimate', 'meal_image_auto'],
     reason:
-      'AI 相談のアクションのうち AI を使うもの (献立の生成 3 種 = menu_generation、update_meal が付ける料理画像 = meal_image_auto。上限に数えず安全弁で止める) だけを、AI へ送る直前に数える。' +
+      'AI 相談のアクションのうち AI を使うもの (献立の生成 3 種 = menu_generation (引数の ultimateMode が true なら menu_generation_ultimate。#1142)、update_meal が付ける料理画像 = meal_image_auto。上限に数えず安全弁で止める) だけを、AI へ送る直前に数える。' +
       'アクションの実行 (execute) と、会話の中での自動実行 (messages) の両方から呼ばれる。' +
       '上限 (#1149) に達したとき: 献立の生成は生成せずに aiDailyLimit を返す (execute の route は 429 でアクションを pending のまま残す)、料理画像は画像だけ見送る',
   },
@@ -292,12 +300,13 @@ export const ENFORCED_EDGE: Record<string, AiEdgeEntry> = {
   'generate-hint': { consent: '利用者の JWT の直後', usage: record('reject', 'nutrition_advice') },
   'generate-menu-v4': {
     consent: '利用者の JWT / service role (Next.js) / 続きの工程のどれでも、userId が決まった直後',
-    // ユーザーの JWT で直接呼ばれたときだけ記録する (service role の経路は呼び出し元が記録済み)
-    usage: record('reject', 'menu_generation'),
+    // ユーザーの JWT で直接呼ばれたときだけ記録する (service role の経路は呼び出し元が記録済み)。
+    // 究極モード (本文の ultimateMode が true) は menu_generation_ultimate で数える (#1142)
+    usage: record('reject', 'menu_generation', 'menu_generation_ultimate'),
   },
   'generate-menu-v5': {
     consent: '利用者の JWT / service role (Next.js・cron) / 続きの工程のどれでも、userId が決まった直後',
-    usage: record('reject', 'menu_generation'),
+    usage: record('reject', 'menu_generation', 'menu_generation_ultimate'),
   },
   'knowledge-gpt': {
     consent: '利用者の JWT のとき。service role の呼び出しは AI 相談の API が判定してから呼ぶ',

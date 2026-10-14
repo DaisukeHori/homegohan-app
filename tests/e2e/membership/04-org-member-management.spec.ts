@@ -87,7 +87,7 @@ test.describe('org メンバ管理', () => {
       // member の page でログイン
       const memberPage = await browser.newPage();
       try {
-        await injectSession(memberPage, member.email, member.password);
+        await injectSession(memberPage, member.email);
 
         // POST /api/org/leave
         const leaveRes = await memberPage.request.post(`${BASE_URL}/api/org/leave`);
@@ -141,7 +141,7 @@ test.describe('org メンバ管理', () => {
       // Step 2: Bob が承諾
       const bobPage = await browser.newPage();
       try {
-        await injectSession(bobPage, bob.email, bob.password);
+        await injectSession(bobPage, bob.email);
 
         const acceptRes = await bobPage.request.post(
           `${BASE_URL}/api/org/owner-transfer/${proposalId}/accept`,
@@ -196,7 +196,7 @@ test.describe('org メンバ管理', () => {
       // Bob が decline
       const bobPage = await browser.newPage();
       try {
-        await injectSession(bobPage, bob.email, bob.password);
+        await injectSession(bobPage, bob.email);
 
         const declineRes = await bobPage.request.post(
           `${BASE_URL}/api/org/owner-transfer/${proposalId}/decline`,

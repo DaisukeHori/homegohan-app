@@ -1,13 +1,25 @@
 import { useState, useCallback } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import type { TargetSlot, MenuGenerationConstraints } from "../../../../types/domain";
 import { getApi } from "../lib/api";
 import { supabase } from "../lib/supabase";
 import { handleStoredAiConsentFailure, isAiConsentRequiredError, promptAiConsentRequired } from "../lib/ai-consent";
+import { menuRequestErrorMessageForDisplay } from "../lib/menu-request-error";
 
-// AsyncStorage key (localStorage 代替)
-const STORAGE_KEY_V4_GENERATING = "v4MenuGenerating";
+// 生成中の状態は端末に保存しない (#1049 F7-20)。以前は AsyncStorage の "v4MenuGenerating" に書いていたが、
+// 読む処理がどこにも無く (Web の localStorage と違い、画面を開き直したときの復元に使われていなかった)、
+// 形式も persistence.ts の TTL 付きの形と違っていた。旧ビルドが書いた値は、ログアウトで消す (src/lib/user-storage.ts)。
+
+/**
+ * Realtime の UPDATE で届く weekly_menu_requests の行のうち、subscribeToProgress が読む列。
+ * error_message は画面に出す前に menuRequestErrorMessageForDisplay で確かめるので unknown で受ける
+ * (文字列でない値や、こちらで書いた文でない値は汎用の文に寄せる #1478)。
+ */
+type WeeklyMenuRequestRealtimeRow = {
+  status?: string | null;
+  progress?: Record<string, unknown> | null;
+  error_message?: unknown;
+};
 
 interface UseV4MenuGenerationOptions {
   onGenerationStart?: (requestId: string) => void;
@@ -82,16 +94,6 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
 
         setRequestId(data.requestId);
 
-        // AsyncStorage に生成状態を保存 (localStorage 代替)
-        await AsyncStorage.setItem(
-          STORAGE_KEY_V4_GENERATING,
-          JSON.stringify({
-            requestId: data.requestId,
-            timestamp: Date.now(),
-            totalSlots: data.totalSlots,
-          })
-        );
-
         options.onGenerationStart?.(data.requestId);
         return data;
       } catch (err: any) {
@@ -128,12 +130,15 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
             filter: `id=eq.${reqId}`,
           },
           async (payload) => {
-            const newData = payload.new as any;
+            const newData = payload.new as WeeklyMenuRequestRealtimeRow;
 
+            // 行の error_message は、こちらで書いた定型の文 (同意・上限・失敗の固定の文など) だけをそのまま出し、
+            // それ以外 (#1478 より前に Edge Function が書いた例外の文面など) は汎用の文に寄せる
+            const displayErrorMessage = menuRequestErrorMessageForDisplay(newData.error_message);
             const progressWithStatus = {
               ...(newData.progress || {}),
               status: newData.status,
-              errorMessage: newData.error_message,
+              errorMessage: displayErrorMessage,
             };
             onProgress(progressWithStatus);
 
@@ -142,14 +147,13 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
               newData.status === "failed"
             ) {
               setIsGenerating(false);
-              await AsyncStorage.removeItem(STORAGE_KEY_V4_GENERATING);
 
               if (newData.status === "completed") {
                 options.onGenerationComplete?.();
               } else if (!handleStoredAiConsentFailure(newData.error_message, notifyAiConsentRequired)) {
                 // 受け付けたあとにサーバーが同意の判定で止めたもの (同意画面へ案内した) は、失敗として知らせない
                 options.onError?.(
-                  newData.error_message || "生成に失敗しました"
+                  displayErrorMessage || "生成に失敗しました"
                 );
               }
 
@@ -169,7 +173,6 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
   const cancelGeneration = useCallback(async () => {
     setIsGenerating(false);
     setRequestId(null);
-    await AsyncStorage.removeItem(STORAGE_KEY_V4_GENERATING);
   }, []);
 
   const getRequestStatus = useCallback(async (reqId: string) => {
@@ -187,7 +190,8 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
     return {
       status: data.status,
       progress: data.progress,
-      errorMessage: data.error_message,
+      // 画面がそのまま出すので、こちらで書いた定型の文以外は汎用の文に寄せる (#1478)
+      errorMessage: menuRequestErrorMessageForDisplay(data.error_message),
     };
   }, []);
 

@@ -10,20 +10,29 @@
  * そのまま返してよい result.error (画面が見分ける、こちらで書いた文) は次のものだけ。それ以外は固定の文にする。
  *   - AI_CONSENT_REQUIRED_MESSAGE / AI_CONSENT_CHECK_FAILED_MESSAGE: 同意の判定で止めた (T15 / #1154)。
  *     Edge Function が aiConsentDeniedStoredMessage で書き、画面は aiConsentReasonOfStoredError でこの文を見分けて同意画面へ案内する
+ *   - aiDailyLimitMessage(n) など (isAiDailyLimitMessage): 1 日の上限で止めた (#1149。Edge Function が書く)。
+ *     isAiDailyLimitMessage は究極モードの上限の文 (#1142) も通すが、買い物リストの作り直しはその文を書かない
  *   - SHOPPING_LIST_REQUEST_FAILED_MESSAGE: それ以外の失敗の固定の文
  *
- * 絞るのは読む側 (GET /api/shopping-list/regenerate/status) だけ。Supabase Realtime で行を直接受ける画面の経路と、
- * 書く側 (Edge Function) はこの変更の範囲の外 (献立生成の行 weekly_menu_requests.error_message の Edge Function の書き手と同じ扱い)。
+ * 書く側 (Edge Function) も、#1478 から例外の文面は書かず SHOPPING_LIST_REQUEST_FAILED_MESSAGE を書く
+ * (定型の文は supabase/functions/_shared/stored-failure-messages.ts。Edge Function と共用)。
+ * 読む側でも絞るのは、それより前に書かれた行に生の文が入っているため。
  * この表はアカウントのデータ書き出しには出さない (src/lib/account-export-tables.ts の ACCOUNT_EXPORT_EXCLUDED)。
  */
 import { aiConsentReasonOfStoredError } from '../../supabase/functions/_shared/ai-consent';
+import { isAiDailyLimitMessage } from '../../supabase/functions/_shared/ai-daily-limit';
+import { SHOPPING_LIST_REQUEST_FAILED_MESSAGE as SHARED_SHOPPING_LIST_REQUEST_FAILED_MESSAGE } from '../../supabase/functions/_shared/stored-failure-messages';
 
-/** それ以外の失敗の固定の文 */
-export const SHOPPING_LIST_REQUEST_FAILED_MESSAGE = '買い物リストの再生成に失敗しました。もう一度お試しください。';
+/** それ以外の失敗の固定の文 (Edge Function と共用の定型の文) */
+export const SHOPPING_LIST_REQUEST_FAILED_MESSAGE = SHARED_SHOPPING_LIST_REQUEST_FAILED_MESSAGE;
 
 /** result.error として画面へそのまま返してよい文か (こちらで書いた文だけ) */
 function isKnownShoppingListRequestErrorMessage(value: unknown): value is string {
-  return value === SHOPPING_LIST_REQUEST_FAILED_MESSAGE || aiConsentReasonOfStoredError(value) !== null;
+  return (
+    value === SHOPPING_LIST_REQUEST_FAILED_MESSAGE ||
+    aiConsentReasonOfStoredError(value) !== null ||
+    isAiDailyLimitMessage(value)
+  );
 }
 
 /**

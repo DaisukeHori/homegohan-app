@@ -12,6 +12,8 @@
  *   - user_profiles.roles: string[] カラムに RBAC ロール名を格納する設計
  */
 
+import { createTestSession, describeTestSessionFailure } from './test-session.mjs';
+
 export interface SeedRoleOptions {
   /** Supabase プロジェクト URL。省略時は NEXT_PUBLIC_SUPABASE_URL env から取得 */
   supabaseUrl?: string;
@@ -173,47 +175,33 @@ export async function deleteUser(
 }
 
 /**
- * Supabase Auth API 経由で特定ユーザーのセッショントークンを取得する。
- * E2E テスト内でそのユーザーとして API を叩く場合に使う。
+ * 特定ユーザーのアクセストークンを取得する。E2E テスト内でそのユーザーとして API を叩く場合に使う。
+ * パスワードのログインは使わず、管理用の鍵 (service_role) でテスト用のセッションを作る
+ * (#1547: Supabase の CAPTCHA を有効にしても止まらないように。helpers/test-session.mjs)。
  *
- * @param email    - メールアドレス
- * @param password - パスワード
- * @param opts     - Supabase 接続情報
+ * @param email - メールアドレス (既にいるユーザー)
+ * @param opts  - Supabase 接続情報 (省略時は env から取得。anon key は NEXT_PUBLIC_SUPABASE_ANON_KEY)
  * @returns アクセストークン
  */
 export async function getSessionToken(
   email: string,
-  password: string,
   opts: SeedRoleOptions = {},
 ): Promise<string> {
   const url = opts.supabaseUrl ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey =
-    opts.serviceRoleKey ??
-    process.env.SUPABASE_SERVICE_ROLE_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const serviceRoleKey = opts.serviceRoleKey ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  if (!url || !anonKey) {
-    throw new Error('[seed-roles] Supabase 接続情報が未設定です。');
+  if (!url || !serviceRoleKey || !anonKey) {
+    throw new Error(
+      '[seed-roles] NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / NEXT_PUBLIC_SUPABASE_ANON_KEY が未設定です。',
+    );
   }
 
-  const resp = await fetch(`${url}/auth/v1/token?grant_type=password`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: anonKey,
-    },
-    body: JSON.stringify({ email, password }),
+  const result = await createTestSession(email, {
+    config: { supabaseUrl: url.replace(/\/+$/, ''), anonKey, serviceRoleKey },
   });
-
-  if (!resp.ok) {
-    const body = await resp.text();
-    throw new Error(`[seed-roles] ログイン失敗 (${resp.status}): ${body}`);
+  if (!result.ok) {
+    throw new Error(`[seed-roles] ${describeTestSessionFailure(result)}`);
   }
-
-  const data = await resp.json() as { access_token: string };
-  if (!data.access_token) {
-    throw new Error('[seed-roles] access_token が取得できませんでした');
-  }
-
-  return data.access_token;
+  return result.session.access_token;
 }

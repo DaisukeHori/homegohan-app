@@ -147,9 +147,12 @@ FROM vault.decrypted_secrets WHERE name = 'app_cron_secret';
 判定（`--help` に全部のオプションがあります）:
 
 - **FAIL**（終了コード 1）: Edge Function secrets の `CRON_SECRET`（無いときだけ `SERVICE_ROLE_SECRET`）と Vault の `app_cron_secret` が食い違う（pg_cron の呼び出しが 401）／どちらかが無い・空（503・例外）／Vercel の `CRON_SECRET` が無い（cron の API が 503）。
+  - Edge Function secrets と Vault が食い違ったら、**Vault の `app_cron_secret` を正として、Edge Function secrets の `CRON_SECRET` をそれに合わせます**（下の「Edge Function secrets の設定手順」。Vault の値は控え（パスワードマネージャ）から取り出します。控えが無いときは、SQL Editor で `SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'app_cron_secret';` を実行して読めます。画面に値が出るので、周りに人がいないところで行ってください）。`CRON_SECRET` が無く `SERVICE_ROLE_SECRET` が使われているときも、`CRON_SECRET` に Vault の値を入れます（`CRON_SECRET` があれば `SERVICE_ROLE_SECRET` は見られません）。Vault を変えるのは、Vault の値が漏えいした・失われたなど、入れ替えそのものが目的のときだけです。そのときは下の「ローテーション手順」に従います。合わせた後に、もう一度実行して Edge ⇔ Vault が PASS になることを確かめます。
 - **WARN**: Vault がまだ Edge Function secrets の `CRON_SECRET_PREVIOUS`（旧い値）と同じ（入れ替えの途中。下の手順の 2 と 3 の間）／Vault が新しい値なのに `CRON_SECRET_PREVIOUS` が残っている（手順 5 の外し忘れ）／`CRON_SECRET_PREVIOUS` が現行と同じ／Vercel の `CRON_SECRET` が Sensitive の変数で値を取り出せない（`vercel env pull` では値の代わりに `[SENSITIVE]`、古い vercel CLI では空で書かれるため、ある・無いしか分かりません。`--vercel-must-match` を付けていても FAIL にはせず WARN にします）。
 - **INFO**: Vercel の `CRON_SECRET` が Supabase 側と同じか違うか。上の表のとおり Vercel は独立しているので、違っていても失敗にしません（同じ値で運用すると決めたときは `--vercel-must-match` で FAIL にできます）。
-- 読めなかった保管場所がある（CLI が無い・ログインしていない・接続できない）と、終了コード 2 です。`--skip-edge` / `--skip-vault` / `--skip-vercel` で、その保管場所を外して実行できます。
+- 読めなかった保管場所がある（CLI が無い・ログインしていない・接続できない）と、終了コード 2 です。ただし、FAIL と「読めなかった」が同時のときは、終了コード 1 を優先します（読めた保管場所だけで、すでにずれが分かっているため）。`--skip-edge` / `--skip-vault` / `--skip-vercel` で、その保管場所を外して実行できます。
+- 読めなかったときは、コマンド（`supabase secrets list`・`vercel env pull`・`psql`）の標準エラー出力の末尾 5 行を理由として出します。その中の値・URL・パスワードやトークンらしきものは `***` に伏せます。
+- 実行中に Ctrl-C などで止めても、`vercel env pull` に書かせた一時ファイル（本番の全部の環境変数が入ります）は消してから終わります（終了コードは 128 + シグナル番号。Ctrl-C なら 130）。消せなかったときは、その場所を表示するので、手で消してください。
 
 ローテーションの後（下の手順の 4 と 5）と、カタログ取り込みや比較ランキングの集計の結果がおかしいときに実行してください。
 
@@ -323,6 +326,29 @@ Vercel Dashboard → Settings → Environment Variables で `CRON_SECRET` の値
 - `https://homegohan-app.vercel.app` は、配布済みのアプリのビルドが WebView で開くため、古いビルドが使われなくなるまで止めない・リダイレクトしないでください。
 - 送信用の DNS（Resend の DKIM・Return-Path・DMARC）が見えているかは、`node scripts/check-email-dns.mjs` で確かめられます（DNS を引くだけで、何も書き換えません）。
 
+### 届かない宛先・苦情の宛先へ送らない（`RESEND_WEBHOOK_SECRET`。#1184）
+
+Resend から「届かなかった（ハードバウンス）」「迷惑メールと報告された（苦情）」の知らせを Webhook で受け、その宛先を宛先停止リスト（DB の `email_blacklist`）に入れます。アプリのメール（招待・譲渡・退会の知らせ・サポート返信・運用メールなど。`src/lib/emails/send.ts` の `sendEmail` を通るもの）は、送る前にこのリストを引き、載っている宛先へは送りません（`app_logs` の `function_name = 'email'` に「宛先停止リストに載っている宛先のため、メールを送信しませんでした」の warn が残ります。宛先はマスクされます）。
+
+| 環境変数 | 値の例 | 用途 | 未設定のとき |
+|---|---|---|---|
+| `RESEND_WEBHOOK_SECRET` | `whsec_...`（Resend の管理画面に出る値） | `POST /api/webhooks/resend` が、届いたイベントの署名（`svix-id` / `svix-timestamp` / `svix-signature`）をこの値で確かめる | Webhook を 503 で断る（受け付けない）。宛先停止リストに入らず、届かない宛先へも送り続ける |
+
+設定の手順（Resend の管理画面と Vercel。コードの変更は要りません）:
+
+1. Resend の管理画面 → Webhooks → Add Webhook。宛先の URL は `https://<サイトのドメイン>/api/webhooks/resend`、イベントは `email.bounced` と `email.complained` を選ぶ（ほかのイベントを選んでも、何もせずに 200 を返すだけです）。
+2. 登録した Webhook の署名の秘密（`whsec_` で始まる値）を、Vercel の環境変数 `RESEND_WEBHOOK_SECRET`（Production）に入れて再デプロイする。値はコマンドの履歴やチャットに残さないこと。
+3. Resend の管理画面のその Webhook の配信の記録で、送られたイベントが 200 になっていることを確かめる。401 なら値が違う、503 なら環境変数が入っていない（または再デプロイ前）です。
+
+振り分け:
+
+- `email.bounced` のうち、`bounce.type` が `Permanent`（宛先が存在しない・受け取りを拒否された）だけを入れます（理由 `bounce`）。`Temporary` などの一時的な不達（受信箱がいっぱいなど）は入れません。
+- `email.complained` は入れます（理由 `complaint`）。
+- 同じ知らせが何度届いても、行は 1 つのままです（最初に入った理由と時刻が残ります）。運営が手で入れた行（理由 `manual`）も上書きしません。
+- リストから外すときは、SQL Editor で `DELETE FROM public.email_blacklist WHERE email = '<小文字のアドレス>';` を実行します（宛先は小文字で入っています）。
+- 宛先停止リストを引けなかったとき（DB の不調・3 秒を超えたとき）は、確かめずに送ります（warn ログが残ります）。メールを全部止めてしまわないためです。
+- サインアップの確認メール・パスワード再設定メールは Supabase が送るので、このリストでは止まりません（Supabase の Custom SMTP に Resend を使っていれば、Resend 自身の停止リストが効きます）。
+
 ---
 
 ## 🚨 エラー急増の運用メール（`OPS_ALERT_EMAIL`）
@@ -456,8 +482,8 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 
 機能フラグ（`feature_flags`）の行を、サーバー（API route とミドルウェア）がメモリに覚える時間（ミリ秒）です。運営画面（`/super-admin/flags`）で切り替えてから全員に反映されるまでの、最大の遅れになります（#1148・#1496）。
 
-- 未設定、または正の整数でない（既定）: 30000（30 秒）。
-- 正の整数: その時間だけ覚えます。短くすると、DB を読む回数が増えます。
+- 未設定、または 10 進の数字だけで書いた正の整数でない（既定）: 30000（30 秒）。空・`0`・負の数・小数（`2000.0`）・指数（`1e3`）・16 進（`0x7D0`）・符号つき（`+2000`）も既定になります（#1535）。
+- 10 進の数字だけで書いた正の整数（前後の空白を除いて、先頭が 1〜9 の数字だけ）: その時間だけ覚えます。短くすると、DB を読む回数が増えます。
 - **本番（Vercel）では設定しません**（既定のまま）。設定するのは、結合テストの段（`.github/workflows/security-regression.yml` と `scripts/local-ci.sh` の integration）が起動する next dev と、そのサーバーに対して反映を待つ `tests/integration/security/feature-flags-runtime.test.ts` だけです（両方に同じ値を渡します。テストは反映を待つ上限をこの値から決めます）。
 - サーバー側（`src/lib/feature-flag-cache-ttl.ts`）だけで読みます。`NEXT_PUBLIC_` は付けません。
 
@@ -468,6 +494,15 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 - 未設定、または正の整数でない（既定）: 366（前後 1 年）。
 - 正の整数: その日数まで受け付けます。
 - サーバー側（`src/lib/menu-plan-date-offset.ts`）だけで読みます。`NEXT_PUBLIC_` は付けません。
+
+### 任意の環境変数: 献立生成の究極モードの 1 日の上限（`AI_ULTIMATE_MODE_DAILY_LIMIT`）
+
+献立生成の究極モードは、1 日の AI の上限（DB の `ai_daily_limits`）とは別に、利用者ごと・1 日（JST の暦日）にこの回数まで使えます（#1142）。1 回の究極モードは、1 日の AI の上限の合計にも 1 回入ります。
+
+- 未設定、または 0 以上の整数でない（既定）: 1（`AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT`）。
+- 0 以上の整数: その回数まで使えます（0 はその日は 1 回も使えません）。超えると 429 `AI_DAILY_LIMIT` になります。
+- Vercel と Edge Functions（Supabase の secrets）の**両方に同じ値**を入れます。片方だけだと、入口によって上限が変わります。
+- Web ではサーバー側（`src/lib/plan/entitlements.ts`）だけで読みます。`NEXT_PUBLIC_` は付けません。
 
 ---
 

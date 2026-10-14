@@ -15,6 +15,7 @@ import { createLogger } from "../_shared/db-logger.ts";
 import { requireAuth } from "../_shared/auth.ts";
 import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
 import { aiDailyLimitMessage } from "../_shared/ai-daily-limit.ts";
+import { SHOPPING_LIST_REQUEST_FAILED_MESSAGE } from "../_shared/stored-failure-messages.ts";
 import { getCorsHeaders, withCors } from "../_shared/cors.ts";
 import { aggregateIngredientOccurrences, InputIngredient } from "../_shared/shopping-list-aggregation.ts";
 import { verifyRequestOwnership } from "../_shared/request-ownership.ts";
@@ -573,12 +574,8 @@ async function processRegeneration(
       error,
       { requestId, startDate, endDate },
     );
-    await markFailed(
-      supabase,
-      requestId,
-      userId,
-      error instanceof Error ? error.message : "Unknown error"
-    );
+    // 例外の文面は console と構造化ログ (app_logs) にだけ残す。result.error は画面がそのまま出すので定型の文 (#1478)
+    await markFailed(supabase, requestId, userId, SHOPPING_LIST_REQUEST_FAILED_MESSAGE);
   }
 }
 
@@ -731,9 +728,8 @@ Deno.serve(async (req: Request) => {
       error,
     );
     return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : "Unknown error",
-      }),
+      // 例外の文面は本文に入れない (上の console と構造化ログにだけ残す。#1478)
+      JSON.stringify({ error: SHOPPING_LIST_REQUEST_FAILED_MESSAGE }),
       {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },

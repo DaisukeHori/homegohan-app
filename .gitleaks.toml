@@ -19,7 +19,7 @@ useDefault = true
 
 # Supabase の anon key (role が anon の JWT)。
 # モバイルアプリや Web のクライアントに埋め込んで配る前提の公開用のキーで、秘密ではない。
-# supabase/functions/README.md と、動作確認用のスクリプト 2 本に載っている。
+# supabase/functions/README.md と、動作確認用のスクリプト (scripts/test-full-pipeline.mjs) に載っている。
 # 照合するのは JWT の先頭部分 (ヘッダ + ペイロードの "iss":"supabase","ref":"flmeolcfutuwwbjmzyoz","role":"anon" まで)。
 # role が service_role のキーはペイロードが途中から変わるので、この除外には当たらず、これまでどおり検知される。
 [[allowlists]]

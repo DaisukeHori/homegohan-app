@@ -11,6 +11,7 @@ import { colors, spacing, radius } from "../../src/theme";
 import { supabase } from "../../src/lib/supabase";
 import { getApi } from "../../src/lib/api";
 import { MOCK_PHOTO_RESPONSE } from "@homegohan/handson-tour-shared";
+import { formatCalendarDate, parseLocalDate, todayCalendarDate, todayLocal } from "@homegohan/shared";
 import { registerTourTarget, unregisterTourTarget } from "../../src/handson-tour/useTourOverlayLogic";
 import { handleAiConsentRequiredError, useLeaveModalRouteBeforeConsentScreen } from "../../src/lib/ai-consent";
 import { classifyPhotoFailureOf } from "../../src/lib/classify-photo-failure";
@@ -126,13 +127,6 @@ const MEAL_CONFIG: Record<MealType, { icon: keyof typeof Ionicons.glyphMap; labe
   midnight_snack: { icon: "cloudy-night", label: "夜食",   color: colors.blue, bg: colors.blueLight },
 };
 
-const formatLocalDate = (date: Date): string => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
-
 const getWeekStart = (date: Date): Date => {
   const d = new Date(date);
   const day = d.getDay();
@@ -147,7 +141,7 @@ const getWeekDates = (startDate: Date) => {
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(startDate);
     d.setDate(d.getDate() + i);
-    return { date: d, dayOfWeek: dayNames[d.getDay()], dateStr: formatLocalDate(d) };
+    return { date: d, dayOfWeek: dayNames[d.getDay()], dateStr: formatCalendarDate(d) };
   });
 };
 
@@ -275,11 +269,12 @@ export default function MealNewPage() {
   const [isSavingManual, setIsSavingManual] = useState(false);
 
   // Date selection
-  const [selectedDate, setSelectedDate] = useState(formatLocalDate(new Date()));
+  // 日付は日本の今日から数える (端末のタイムゾーンに左右されない #1049 F7-21)
+  const [selectedDate, setSelectedDate] = useState(() => todayLocal());
   const [selectedMealType, setSelectedMealType] = useState<MealType>(getAutoMealType());
-  const [weekStart, setWeekStart] = useState(getWeekStart(new Date()));
+  const [weekStart, setWeekStart] = useState(() => getWeekStart(todayCalendarDate()));
   const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart]);
-  const todayStr = formatLocalDate(new Date());
+  const todayStr = todayLocal();
 
   // ─── Photo helpers ─────────────────────────────────
 
@@ -515,7 +510,7 @@ export default function MealNewPage() {
     try {
       const api = getApi();
       await api.post("/api/health/checkups", {
-        checkup_date: healthData.checkupDate || (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })(),
+        checkup_date: healthData.checkupDate || todayLocal(),
         facility_name: healthData.facilityName, height: healthData.height, weight: healthData.weight, bmi: healthData.bmi,
         blood_pressure_systolic: healthData.bloodPressureSystolic, blood_pressure_diastolic: healthData.bloodPressureDiastolic,
         hemoglobin: healthData.hemoglobin, hba1c: healthData.hba1c, fasting_glucose: healthData.fastingGlucose,
@@ -1345,7 +1340,7 @@ export default function MealNewPage() {
           <View style={{ padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.card }}>
             <Text style={{ fontSize: 12, color: colors.textMuted, marginBottom: 4 }}>保存先</Text>
             <Text style={{ fontSize: 16, fontWeight: "600", color: colors.text }}>
-              {new Date(selectedDate).getMonth() + 1}月{new Date(selectedDate).getDate()}日（{weekDates.find((d) => d.dateStr === selectedDate)?.dayOfWeek}）の{MEAL_CONFIG[selectedMealType].label}
+              {parseLocalDate(selectedDate).getMonth() + 1}月{parseLocalDate(selectedDate).getDate()}日（{weekDates.find((d) => d.dateStr === selectedDate)?.dayOfWeek}）の{MEAL_CONFIG[selectedMealType].label}
             </Text>
           </View>
 

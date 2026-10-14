@@ -17,7 +17,10 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
-import { aiDailyLimitMessage } from "../_shared/ai-daily-limit.ts";
+import { aiDailyLimitMessageOfDenied } from "../_shared/ai-daily-limit.ts";
+import { isUltimateModeRequested } from "../_shared/ai-usage-core.ts";
+import { MENU_REQUEST_FAILED_MESSAGE } from "../_shared/stored-failure-messages.ts";
+import { createLogger } from "../_shared/db-logger.ts";
 import {
   buildSearchQueryBase,
   buildUserContextForPrompt,
@@ -2146,6 +2149,10 @@ async function executeStep3_Complete(
     errors,
     successMessage: `全${totalSlots}件の献立が完成しました！`,
   });
+  // 枠ごとの理由 (例外の文面を含む) はログにだけ残す。行の error_message は定型の文 (#1478)
+  if (finalSummary.issueDetails.length > 0) {
+    console.warn(`[save] 保存しなかった枠 (request ${requestId}):`, finalSummary.issueDetails.join("; "));
+  }
 
   await runSupabaseQuery(
     () => supabase
@@ -2698,6 +2705,10 @@ async function executeStep6_FinalSave(
     successMessage: `全${totalSlots}件の献立が完成しました！`,
     successSuffix: praiseComment ? ` ${praiseComment}` : "",
   });
+  // 枠ごとの理由 (例外の文面を含む) はログにだけ残す。行の error_message は定型の文 (#1478)
+  if (finalSummary.issueDetails.length > 0) {
+    console.warn(`[save] 保存しなかった枠 (request ${requestId}):`, finalSummary.issueDetails.join("; "));
+  }
 
   await runSupabaseQuery(
     () => supabase
@@ -2882,14 +2893,21 @@ Deno.serve(async (req: Request) => {
     // 生成 1 回につき 1 回数える (究極モードも 1 回)。ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js の API ルート・cron は
     // service role で呼び、呼び出し元が数え済み)。Next.js が数え済みの印があれば数えない。判定に失敗したときは止めない。
     // 上限に達していれば、生成を始めずにリクエストの行を失敗にして (error_message は画面がそのまま出す人向けの文)、429 AI_DAILY_LIMIT
+    // 究極モード (#1142) は 'menu_generation_ultimate' で数える (1 日の上限に 1 回 + 究極モードの 1 日の上限に 1 回)。
+    // 究極モードかどうかは本文の ultimateMode が true のときだけで、数えた判断と生成 (工程 1 は body.ultimateMode を先に読む) が
+    // 食い違わないよう、この経路では本文の ultimateMode を真偽値に揃えてから生成に渡す (行の generated_data の古い値を使わない)
     if (directJwtUserId) {
-      const aiUsage = await consumeEdgeAiUsage(req, directJwtUserId, "menu_generation");
+      const ultimateMode = isUltimateModeRequested(body?.ultimateMode);
+      body.ultimateMode = ultimateMode;
+      const aiUsage = ultimateMode
+        ? await consumeEdgeAiUsage(req, directJwtUserId, "menu_generation_ultimate")
+        : await consumeEdgeAiUsage(req, directJwtUserId, "menu_generation");
       if (!aiUsage.allowed) {
         const { error: persistError } = await supabase
           .from("weekly_menu_requests")
           .update({
             status: "failed",
-            error_message: aiDailyLimitMessage(aiUsage.limit),
+            error_message: aiDailyLimitMessageOfDenied(aiUsage),
             updated_at: new Date().toISOString(),
           })
           .eq("id", requestId!)
@@ -2912,6 +2930,13 @@ Deno.serve(async (req: Request) => {
         console.log(`✅ Step ${currentStep} completed successfully`);
       } catch (bgErr: any) {
         console.error(`❌ Step ${currentStep} error:`, bgErr?.message ?? String(bgErr), bgErr);
+        // 例外の文面は console と構造化ログ (app_logs) にだけ残す。行の error_message は画面がそのまま出すので定型の文を書く (#1478)
+        const backgroundLogger = createLogger("generate-menu-v4", requestId ?? undefined);
+        (userId ? backgroundLogger.withUser(userId) : backgroundLogger).error(
+          "バックグラウンドの工程でエラーが発生しました",
+          bgErr,
+          { requestId, step: currentStep },
+        );
         if (requestId) {
           try {
             await runSupabaseQuery(
@@ -2919,7 +2944,7 @@ Deno.serve(async (req: Request) => {
                 .from("weekly_menu_requests")
                 .update({
                   status: "failed",
-                  error_message: bgErr?.message ?? String(bgErr) ?? "Step error",
+                  error_message: MENU_REQUEST_FAILED_MESSAGE,
                   updated_at: new Date().toISOString(),
                 })
                 .eq("id", requestId),
@@ -2955,7 +2980,11 @@ Deno.serve(async (req: Request) => {
   } catch (err: any) {
     const errorMessage = err?.message ?? String(err) ?? "Unknown error";
     console.error("Request error:", errorMessage, err);
-    
+    // 例外の文面は console と構造化ログ (app_logs) にだけ残す。行の error_message と応答の本文には定型の文を入れる (#1478)。
+    // userId が確定する前に失敗した場合は、ユーザーなしのロガーで記録する (#1171 と同じ)
+    const handlerLogger = createLogger("generate-menu-v4", requestId ?? undefined);
+    (userId ? handlerLogger.withUser(userId) : handlerLogger).error("ハンドラでエラーが発生しました", err, { requestId });
+
     if (requestId) {
       try {
         await runSupabaseQuery(
@@ -2963,7 +2992,7 @@ Deno.serve(async (req: Request) => {
             .from("weekly_menu_requests")
             .update({
               status: "failed",
-              error_message: errorMessage,
+              error_message: MENU_REQUEST_FAILED_MESSAGE,
               updated_at: new Date().toISOString(),
             })
             .eq("id", requestId),
@@ -2977,7 +3006,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    return new Response(JSON.stringify({ error: errorMessage }), {
+    return new Response(JSON.stringify({ error: MENU_REQUEST_FAILED_MESSAGE }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

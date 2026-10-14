@@ -52,6 +52,22 @@ test("...", async ({ authedPage }) => {
 - `E2E_USER_EMAIL` (例: `e2e-user-01@homegohan.test`)
 - `E2E_USER_PASSWORD`
 
+### テスト用のセッションの作り方 (#1547)
+
+`global-setup.ts`・`fixtures/auth.ts` (`authedPage`)・`fixtures/fresh-user.ts` (`injectSession`) などが Cookie に入れるセッションは、
+パスワードのログイン (`/auth/v1/token?grant_type=password`) ではなく、`helpers/test-session.mjs` の `createTestSession` で作る
+(管理用の鍵で `/auth/v1/admin/generate_link` → `/auth/v1/verify`。Supabase の CAPTCHA を有効にしても止まらない)。
+自分でパスワードのログインを呼ばず、発行・確認の手順も写さずに、この関数を import して使う (`tests/e2e-test-session.test.ts` が検査する)。
+
+- `helpers/test-session.mjs` は依存の無い素の JavaScript (型は JSDoc)。e2e (TypeScript) からも、node でそのまま動かす
+  デプロイ後の動作確認の `--with-auth` (`scripts/lib/smoke.mjs`) からも import する。import するときは拡張子 `.mjs` まで書く。
+
+- 要る環境変数: `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` (ローカルは `.env.local`)。
+- `SUPABASE_SERVICE_ROLE_KEY` が無いとき、`global-setup.ts` と `authedPage` は画面からのログインに回る (`E2E_USER_PASSWORD` を使う)。
+- 画面からのログイン (`/login`) は今までどおりパスワードを使う。
+- 同じテストユーザーのセッションを複数の worker が同時に作ると、後の `generate_link` が先のトークンを消し、先の `/verify` が 403 (`otp_expired`) になる。
+  `createTestSession` は、この 403 のときだけ、乱数で待ってから `generate_link` からやり直す (既定 6 回まで。環境変数 `E2E_TEST_SESSION_MAX_ATTEMPTS` で変えられる)。
+
 ### パスワードの扱い
 
 リポジトリには、`e2e-user-XX@homegohan.test` のパスワードの既定値を置かない。
@@ -93,7 +109,7 @@ HAR にはログイン要求のパスワードやアクセストークンが平�
 
 | ワークフロー | 対象 | テストユーザー |
 |---|---|---|
-| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 と、未ログインで読める公開ページの `public-policy-pages.spec.ts` (利用規約・プライバシーポリシー #1174)、規約の再同意ゲートの `legal-consent-gate.spec.ts` (#1174。既定 (強制なし・お知らせなし) のサーバーと、`LEGAL_CONSENT_ENFORCE=on`・`LEGAL_CONSENT_NOTICE=on` でそれぞれ別ポートに起動したサーバーの 3 回)、未同意なら AI へ送らないことと同意画面を確かめる `ai-consent-first-use.spec.ts` (#1154)、Cloudflare Turnstile の `auth-turnstile.spec.ts` (#1165) を実行。アプリは Cloudflare 公式のテスト用サイトキー付きでビルドする | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
+| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 と、未ログインで読める公開ページの `public-policy-pages.spec.ts` (利用規約・プライバシーポリシー #1174)、規約の再同意ゲートの `legal-consent-gate.spec.ts` (#1174。既定 (強制なし・お知らせなし) のサーバーと、`LEGAL_CONSENT_ENFORCE=on`・`LEGAL_CONSENT_NOTICE=on` でそれぞれ別ポートに起動したサーバーの 3 回)、未同意なら AI へ送らないことと同意画面を確かめる `ai-consent-first-use.spec.ts` (#1154)、Cloudflare Turnstile の `auth-turnstile.spec.ts` (#1165)、主要ペルソナ (家族・admin・super_admin) の happy path の `family/01-invite-accept-share.spec.ts`・`operator/01-admin-flow.spec.ts`・`operator/02-super-admin-flow.spec.ts` (#856。ユーザーは test ごとに service_role で作る) を実行。アプリは Cloudflare 公式のテスト用サイトキー付きでビルドする | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
 | `.github/workflows/e2e.yml` | 本番 URL。ローカル dev server は起動しない | 本番の `e2e-user-01〜04@homegohan.test`。Secrets `E2E_USER_EMAIL` (= `e2e-user-01@homegohan.test`) / `E2E_USER_PASSWORD` が必要 (未設定ならジョブを最初に止める) |
 
 本番のテストユーザーのパスワードはランダムな値で、Secrets `E2E_USER_PASSWORD` にだけ置く (リポジトリにも `.env.local` の共有にも書かない)。

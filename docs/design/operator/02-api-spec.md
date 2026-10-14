@@ -534,6 +534,9 @@ LLM 使用量ダッシュボード (super_admin のみ)
 ### GET /api/super-admin/llm-usage/users/{id}
 ユーザー別 LLM 使用量詳細
 
+> **現状 (2026-10, #1524)**: このパスは実装に無い (`/api/super-admin/llm/usage/users/{id}` も無い)。ユーザー別の数字は、
+> `GET /api/super-admin/llm/usage` の `top_users` (呼び出し回数の多い順に 50 人) と `anomalies` だけで返す。
+
 ---
 
 ### POST /api/super-admin/llm-usage/quota-update

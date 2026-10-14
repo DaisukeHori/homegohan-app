@@ -21,13 +21,21 @@ export const SEVERITY_ORDER = ['critical', 'high', 'moderate', 'low', 'info'];
 export const MAX_TITLES = 3;
 export const MAX_TITLE_LENGTH = 90;
 
-/** Markdown の表のセルに入れても崩れないようにする (改行・縦線・山括弧を無害にして、長いものは切る) */
+/**
+ * Markdown の表のセルに入れても崩れないようにする (改行・バックスラッシュ・縦線・山括弧を無害にして、長いものは切る)。
+ * バックスラッシュは縦線より先にエスケープする。エスケープしない (または縦線の後にする) と、題名の中の「\|」が「\\|」(バックスラッシュ + 生の縦線) になり、
+ * セルが分かれる (#1444 CodeQL js/incomplete-sanitization)。
+ */
 function cell(value, maxLength = Infinity) {
   let text = String(value ?? '')
     .replace(/\s+/g, ' ')
     .trim();
   if (text.length > maxLength) text = `${text.slice(0, maxLength - 1)}…`;
-  return text.replace(/\|/g, '\\|').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 /** npm audit の fixAvailable (true / false / { name, version, isSemVerMajor }) を、直し方の文にする */

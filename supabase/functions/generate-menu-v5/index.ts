@@ -108,7 +108,9 @@ import {
 } from "./request-finalize.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
 import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
-import { aiDailyLimitMessage } from "../_shared/ai-daily-limit.ts";
+import { aiDailyLimitMessageOfDenied } from "../_shared/ai-daily-limit.ts";
+import { isUltimateModeRequested } from "../_shared/ai-usage-core.ts";
+import { MENU_REQUEST_FAILED_MESSAGE } from "../_shared/stored-failure-messages.ts";
 import { addDaysToDate, monthJst, todayJst } from "../_shared/jst-date.ts";
 import { aiConsentDeniedResponse, checkAiConsent, invokeMenuContinuation } from "../_shared/ai-consent-guard.ts";
 import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
@@ -727,6 +729,10 @@ async function executeStep3_Save(
     errors,
     successMessage: `全${totalSlots}件の献立が完成しました！`,
   });
+  // 枠ごとの理由 (例外の文面を含む) はログにだけ残す。行の error_message は定型の文 (#1478)
+  if (finalSummary.issueDetails.length > 0) {
+    console.warn(`[save] 保存しなかった枠 (request ${requestId}):`, finalSummary.issueDetails.join("; "));
+  }
 
   // #1202: 最終書き込みは、まだ終わっていない行 (queued / processing) にだけ当てる
   await finalizeMenuRequest(
@@ -3427,6 +3433,10 @@ async function executeStep6_FinalSave(
     successMessage: `全${totalSlots}件の献立が完成しました！`,
     successSuffix: praiseComment ? ` ${praiseComment}` : "",
   });
+  // 枠ごとの理由 (例外の文面を含む) はログにだけ残す。行の error_message は定型の文 (#1478)
+  if (finalSummary.issueDetails.length > 0) {
+    console.warn(`[save] 保存しなかった枠 (request ${requestId}):`, finalSummary.issueDetails.join("; "));
+  }
 
   // #1202: 最終書き込みは、まだ終わっていない行 (queued / processing) にだけ当てる
   const finalized = await finalizeMenuRequest(
@@ -3604,14 +3614,21 @@ Deno.serve(async (req: Request) => {
     // 生成 1 回につき 1 回数える (究極モードも 1 回)。ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js の API ルート・cron は
     // service role で呼び、呼び出し元が数え済み)。Next.js が数え済みの印があれば数えない。判定に失敗したときは止めない。
     // 上限に達していれば、生成を始めずにリクエストの行を失敗にして (error_message は画面がそのまま出す人向けの文)、429 AI_DAILY_LIMIT
+    // 究極モード (#1142) は 'menu_generation_ultimate' で数える (1 日の上限に 1 回 + 究極モードの 1 日の上限に 1 回)。
+    // 究極モードかどうかは本文の ultimateMode が true のときだけで、数えた判断と生成 (工程 1 は body.ultimateMode を先に読む) が
+    // 食い違わないよう、この経路では本文の ultimateMode を真偽値に揃えてから生成に渡す (行の generated_data の古い値を使わない)
     if (directJwtUserId) {
-      const aiUsage = await consumeEdgeAiUsage(req, directJwtUserId, "menu_generation");
+      const ultimateMode = isUltimateModeRequested(body?.ultimateMode);
+      body.ultimateMode = ultimateMode;
+      const aiUsage = ultimateMode
+        ? await consumeEdgeAiUsage(req, directJwtUserId, "menu_generation_ultimate")
+        : await consumeEdgeAiUsage(req, directJwtUserId, "menu_generation");
       if (!aiUsage.allowed) {
         const { error: persistError } = await supabase
           .from("weekly_menu_requests")
           .update({
             status: "failed",
-            error_message: aiDailyLimitMessage(aiUsage.limit),
+            error_message: aiDailyLimitMessageOfDenied(aiUsage),
             updated_at: new Date().toISOString(),
           })
           .eq("id", requestId!)
@@ -3655,7 +3672,8 @@ Deno.serve(async (req: Request) => {
             .from("weekly_menu_requests")
             .update({
               status: "failed",
-              error_message: error?.message ?? String(error),
+              // 例外の文面は console と構造化ログ (app_logs) にだけ残す。行は画面がそのまま出すので定型の文 (#1478)
+              error_message: MENU_REQUEST_FAILED_MESSAGE,
               updated_at: new Date().toISOString(),
             })
             .eq("id", requestId!)
@@ -3704,7 +3722,8 @@ Deno.serve(async (req: Request) => {
             .from("weekly_menu_requests")
             .update({
               status: "failed",
-              error_message: error?.message ?? String(error),
+              // 例外の文面は console と構造化ログ (app_logs) にだけ残す。行は画面がそのまま出すので定型の文 (#1478)
+              error_message: MENU_REQUEST_FAILED_MESSAGE,
               updated_at: new Date().toISOString(),
             })
             .eq("id", requestId)
@@ -3720,7 +3739,7 @@ Deno.serve(async (req: Request) => {
     }
 
     return new Response(
-      JSON.stringify({ error: error?.message ?? "Unexpected error" }),
+      JSON.stringify({ error: MENU_REQUEST_FAILED_MESSAGE }),
       {
         status: 500,
         headers: {

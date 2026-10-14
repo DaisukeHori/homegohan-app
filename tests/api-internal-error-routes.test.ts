@@ -155,7 +155,9 @@ function req(method: string, path: string, body?: unknown): NextRequest {
     : new NextRequest(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 }
 
-const idParams = { params: Promise.resolve({ id: 'row-1' }) };
+// [id] の route は UUID の形式でない id を DB に投げずに 400 にする (#1478) ので、DB の失敗を起こすには UUID の形式の id を渡す
+const ROW_ID = '33333333-3333-4333-8333-333333333333';
+const idParams = { params: Promise.resolve({ id: ROW_ID }) };
 const dateParams = { params: Promise.resolve({ date: '2026-10-08' }) };
 
 interface Case {
@@ -181,14 +183,14 @@ const cases: Case[] = [
   },
 
   // ── /api/health/goals/[id] ──────────────────────────────────────────────────────
-  { routeName: 'GET /api/health/goals/[id]', queue: [FAIL], run: () => goalById.GET(req('GET', '/api/health/goals/row-1'), idParams) },
+  { routeName: 'GET /api/health/goals/[id]', queue: [FAIL], run: () => goalById.GET(req('GET', `/api/health/goals/${ROW_ID}`), idParams) },
   {
     routeName: 'PUT /api/health/goals/[id]',
     // 既存の目標を読んでから update する
     queue: [{ data: EXISTING_GOAL }, FAIL],
-    run: () => goalById.PUT(req('PUT', '/api/health/goals/row-1', { current_value: 65 }), idParams),
+    run: () => goalById.PUT(req('PUT', `/api/health/goals/${ROW_ID}`, { current_value: 65 }), idParams),
   },
-  { routeName: 'DELETE /api/health/goals/[id]', queue: [FAIL], run: () => goalById.DELETE(req('DELETE', '/api/health/goals/row-1'), idParams) },
+  { routeName: 'DELETE /api/health/goals/[id]', queue: [FAIL], run: () => goalById.DELETE(req('DELETE', `/api/health/goals/${ROW_ID}`), idParams) },
 
   // ── /api/health/records ─────────────────────────────────────────────────────────
   { routeName: 'GET /api/health/records', queue: [FAIL], run: () => records.GET(req('GET', '/api/health/records')) },
@@ -247,18 +249,18 @@ const cases: Case[] = [
     queue: [FAIL],
     run: () => checkups.POST(req('POST', '/api/health/checkups', { checkup_date: '2026-10-08' })),
   },
-  { routeName: 'GET /api/health/checkups/[id]', queue: [FAIL], run: () => checkupById.GET(req('GET', '/api/health/checkups/row-1'), idParams) },
+  { routeName: 'GET /api/health/checkups/[id]', queue: [FAIL], run: () => checkupById.GET(req('GET', `/api/health/checkups/${ROW_ID}`), idParams) },
   {
     routeName: 'PUT /api/health/checkups/[id]',
     // 所有権の確認 (行がある) のあとに update する
     queue: [{ data: { id: 'row-1' } }, FAIL],
-    run: () => checkupById.PUT(req('PUT', '/api/health/checkups/row-1', { weight: 60 }), idParams),
+    run: () => checkupById.PUT(req('PUT', `/api/health/checkups/${ROW_ID}`, { weight: 60 }), idParams),
   },
   {
     routeName: 'DELETE /api/health/checkups/[id]',
     // 所有権の確認 (画像なし) のあとに delete する
     queue: [{ data: { id: 'row-1', image_url: null } }, FAIL],
-    run: () => checkupById.DELETE(req('DELETE', '/api/health/checkups/row-1'), idParams),
+    run: () => checkupById.DELETE(req('DELETE', `/api/health/checkups/${ROW_ID}`), idParams),
   },
 
   // ── /api/health/challenges ──────────────────────────────────────────────────────
@@ -273,7 +275,7 @@ const cases: Case[] = [
   {
     routeName: 'POST /api/health/insights/[id]/read',
     queue: [FAIL],
-    run: () => insightRead.POST(req('POST', '/api/health/insights/row-1/read'), idParams),
+    run: () => insightRead.POST(req('POST', `/api/health/insights/${ROW_ID}/read`), idParams),
   },
 
   // ── /api/profile (DB のエラー) ──────────────────────────────────────────────────

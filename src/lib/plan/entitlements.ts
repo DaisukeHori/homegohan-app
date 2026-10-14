@@ -2,6 +2,8 @@
  * プランの判定と、AI の利用回数の上限 (#1149 / T40) と記録 (#1177 / T26)
  *
  * 【いまの方針】課金は無料のまま計測する (いまは全員が free プラン)。AI の利用は 1 日 10 回まで (究極モードも 1 回)。
+ * 究極モードは、そのうえ 1 人 1 日 1 回まで (#1142。機能名 'menu_generation_ultimate'。既定 AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT = 1、
+ * 環境変数 AI_ULTIMATE_MODE_DAILY_LIMIT で上書き。consumeAiUsage が DB の consume_ai_usage_capped で両方の上限を判定する)。
  * 上限の値は DB の ai_daily_limits (プランごと。行の無いプランは free の値)。運営画面 (/super-admin/llm/quotas) から変えられる。
  *
  * 【使い方】AI を使う API ルートは、AI 事業者へ送る直前 (認証・外国の AI 事業者への提供の同意の判定・checkRateLimit・
@@ -60,8 +62,10 @@ import type { Database } from '@/types/database.types';
 import { getEdgeFunctionServiceRoleKey, getSupabaseServiceRoleKey, isMissingEnvError } from '@/lib/env-required';
 import { NextResponse } from 'next/server';
 import {
+  AI_ULTIMATE_MODE_DAILY_LIMIT_ENV,
   AI_USAGE_RECORDED_HEADER,
   AI_USAGE_TIMEOUT_MS,
+  aiFeatureDailyCap,
   signAiUsageGrant,
   signAiUsageRecorded,
   verifyAiUsageGrant,
@@ -78,6 +82,9 @@ import {
 
 export {
   AI_FEATURES,
+  AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT,
+  AI_ULTIMATE_MODE_DAILY_LIMIT_ENV,
+  AI_ULTIMATE_MODE_FEATURE,
   AI_UNMETERED_DAILY_CAP_DEFAULTS,
   AI_UNMETERED_FEATURES,
   AI_USAGE_GRANT_MAX_AGE_SEC,
@@ -102,7 +109,7 @@ interface RpcError {
 type PublicFunctions = Database['public']['Functions'];
 
 /** このファイルが呼ぶ DB の関数。引数と戻り値は生成された型 (Database['public']['Functions']) に合わせる (#1495) */
-type PlanRpcName = 'consume_ai_usage' | 'refund_ai_usage' | 'claim_ai_usage_grant' | 'get_effective_plan';
+type PlanRpcName = 'consume_ai_usage' | 'consume_ai_usage_capped' | 'refund_ai_usage' | 'claim_ai_usage_grant' | 'get_effective_plan';
 
 /**
  * supabase-js の rpc だけを使う最小の形 (テストで差し替えられる)。
@@ -162,9 +169,28 @@ function logFailure(userId: string, message: string, error: unknown, context: Re
 }
 
 /**
+ * 機能ごとの 1 日の上限を上書きする環境変数を読む (#1142。aiFeatureDailyCap に渡す)。
+ * 変数は名前を書いて読む (`process.env[name]` と名前を変数にしない): src/lib/env.ts の一覧 (readOnlyBy) と
+ * tests/env-source-scan.test.ts が、読む変数と読む場所を確かめられるように。ここに無い名前は読まない (既定の上限になる)。
+ * 機能ごとの上限を持つ機能を足して、上書きの変数が増えたら、ここと一覧・.env.example に足す
+ * (src/__tests__/lib/plan/entitlements.test.ts が、aiFeatureDailyCap が尋ねる名前をすべてここで読めるかを確かめる)
+ */
+function readFeatureDailyCapEnv(name: string): string | undefined {
+  switch (name) {
+    case AI_ULTIMATE_MODE_DAILY_LIMIT_ENV:
+      return process.env.AI_ULTIMATE_MODE_DAILY_LIMIT;
+    default:
+      return undefined;
+  }
+}
+
+/**
  * AI の利用を 1 回数える (上限の判定と記録を 1 回で行う)。AI へ送る直前 (同意の判定のあと) に呼ぶ。
  *   - 上限に達していれば、記録せずに { allowed: false, limit, used } を返す。呼び出し側は送らずに止める (aiDailyLimitResponse など)
  *   - 達していなければ 1 を足して { allowed: true, usageDate, ... } を返す (上限に数えない機能は、安全弁に達していなければ記録して許可)
+ *   - 機能ごとの 1 日の上限がある機能 (究極モード 'menu_generation_ultimate'。#1142) は、DB の consume_ai_usage_capped で、
+ *     機能ごとの上限 (既定 1 回。環境変数 AI_ULTIMATE_MODE_DAILY_LIMIT で上書き) と 1 日の上限の両方を判定する。
+ *     機能ごとの上限で止めたときは { allowed: false, cappedFeature } (応答の文は究極モードの文になる)
  *   - DB の関数が失敗したとき (エラー・時間切れ・戻り値の形が違う) は、ログに残して許可する (AI_USAGE_NOT_COUNTED。止めない)
  * 例外は投げない。
  */
@@ -175,14 +201,18 @@ export async function consumeAiUsage(
 ): Promise<AiUsageResult> {
   try {
     const client = options.client ?? adminPlanRpcClient();
+    const featureDailyCap = aiFeatureDailyCap(feature, readFeatureDailyCapEnv);
+    const rpcName = featureDailyCap === null ? 'consume_ai_usage' : 'consume_ai_usage_capped';
     const { data, error } = await withTimeout(
-      client.rpc('consume_ai_usage', { p_user_id: userId, p_feature: feature }),
+      featureDailyCap === null
+        ? client.rpc('consume_ai_usage', { p_user_id: userId, p_feature: feature })
+        : client.rpc('consume_ai_usage_capped', { p_user_id: userId, p_feature: feature, p_feature_daily_cap: featureDailyCap }),
       options.timeoutMs ?? AI_USAGE_TIMEOUT_MS,
-      'consume_ai_usage',
+      rpcName,
     );
     if (error) throw toError(error);
     const result = parseConsumeAiUsageResult(data);
-    if (!result) throw new Error(`consume_ai_usage returned an unexpected value: ${JSON.stringify(data)}`);
+    if (!result) throw new Error(`${rpcName} returned an unexpected value: ${JSON.stringify(data)}`);
     return result;
   } catch (error) {
     logFailure(userId, 'AI 利用回数の判定と記録に失敗しました (数えずに許可します)', error, { feature });

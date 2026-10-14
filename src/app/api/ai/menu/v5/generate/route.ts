@@ -15,6 +15,7 @@ import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
+import { isUltimateModeRequested } from '@/lib/ai/ultimate-mode';
 import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { isWithinMenuGenerationRange, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
@@ -275,7 +276,13 @@ export async function POST(request: Request) {
     // ここでキューに積み、AI へ送るのは cron (process-menu-queue) なので、送る側では数えない。
     // キューの行 (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465) ので、キューに積めるのは
     // この判定を通った route だけ (service role で書く)
-    const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+    // 究極モード (#1142) は 'menu_generation_ultimate' で数える (1 日の上限に 1 回 + 究極モードの 1 日の上限 (既定 1 回) に 1 回)。
+    // 究極モードかどうかは本文の ultimateMode が true のときだけ。キューに積む値も同じ判定の結果にする (数え方と生成を食い違わせない)
+    const ultimateMode = isUltimateModeRequested(body?.ultimateMode);
+    const usageFeature = ultimateMode ? 'menu_generation_ultimate' : 'menu_generation';
+    const aiUsage = ultimateMode
+      ? await consumeAiUsage(user.id, 'menu_generation_ultimate')
+      : await consumeAiUsage(user.id, 'menu_generation');
     if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
     // バックグラウンドジョブとしてキューに追加し、即座に requestId を返す
@@ -290,7 +297,7 @@ export async function POST(request: Request) {
       constraints,
       note: body?.note || null,
       familySize: toOptionalInt(body?.familySize) ?? userProfile.family_size ?? 1,
-      ultimateMode: Boolean(body?.ultimateMode),
+      ultimateMode,
     };
 
     const { data: requestData, error: insertError } = await queueDb
@@ -316,7 +323,7 @@ export async function POST(request: Request) {
 
     if (insertError || !requestData?.id) {
       // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
-      await refundAiUsage(user.id, 'menu_generation', aiUsage);
+      await refundAiUsage(user.id, usageFeature, aiUsage);
       return internalError('POST /api/ai/menu/v5/generate', insertError, { userId: user.id });
     }
 
