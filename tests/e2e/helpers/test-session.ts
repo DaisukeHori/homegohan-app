@@ -25,9 +25,9 @@
  * いるユーザーに対しては、どちらも同じ recovery_token を発行し、/verify で同じ処理 (recoverVerify) を通る。
  *
  * 同じメールアドレスで並行に呼ばれたとき (worker がテストユーザーを共有するとき。fixtures/auth.ts の authedPage など):
- *   generate_link は、そのユーザーの同じ種類のトークンを発行し直す (internal/api/mail.go の adminGenerateLink →
- *   internal/models/one_time_token.go の CreateOneTimeToken が、最初に同じ種類の既存のトークンを消す)。そのため、
- *   先に発行した側の /verify はトークンが見つからず 403 (otp_expired。internal/api/verify.go) になる。パスワードのログインでは
+ *   generate_link は、そのユーザーのトークンを発行し直す (internal/api/mail.go の adminGenerateLink が users の recovery_token を
+ *   新しいハッシュで上書きし、internal/models/one_time_token.go の CreateOneTimeToken も最初に同じ種類の既存のトークンを消す)。
+ *   そのため、先に発行した側の /verify はトークンが見つからず 403 (otp_expired。internal/api/verify.go) になる。パスワードのログインでは
  *   起きなかった競合なので、/verify の 403 は generate_link からやり直す (回数は testSessionMaxAttempts。待ち時間は乱数で
  *   ずらし、同じ競合を繰り返さないようにする)。
  *
