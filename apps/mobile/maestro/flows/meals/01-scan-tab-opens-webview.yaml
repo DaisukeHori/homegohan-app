@@ -1,0 +1,39 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# meals 01: スキャンのタブ (tab-meals) を開くと、Web の食事の記録 (/meals/new) を載せた WebView (webview-meals) が出る。
+# 別のタブへ移って戻っても、スキャンのタブの WebView に戻れる。
+#
+# スキャンのタブは WebView (apps/mobile/app/(tabs)/meals.tsx の WebViewScreen path="/meals/new")。
+# WebView の中の Web の画面 (モードの選択・撮影・解析・保存・入力の検証) の検査は Web の e2e (Playwright) の役目で、
+# この flow はネイティブの部分 (タブ・WebView の表示) だけを確かめる (#1552。flow ごとの判断は README.md)。
+- runFlow: ../_shared/login.yaml
+
+# スキャンのタブを開く
+- tapOn:
+    id: "tab-meals"
+- extendedWaitUntil:
+    visible:
+      id: "webview-meals"
+    timeout: 15000
+# WebView の読み込み中の表示 (WebViewScreen の renderLoading) が消える
+- extendedWaitUntil:
+    notVisible:
+      id: "webview-loading"
+    timeout: 30000
+
+# ホームのタブへ移り、またスキャンのタブへ戻る
+- tapOn:
+    id: "tab-home"
+- extendedWaitUntil:
+    visible:
+      id: "webview-home"
+    timeout: 15000
+- tapOn:
+    id: "tab-meals"
+- extendedWaitUntil:
+    visible:
+      id: "webview-meals"
+    timeout: 15000

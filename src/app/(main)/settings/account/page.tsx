@@ -34,6 +34,9 @@ import {
   describePasswordChangeError,
   isSessionExpiredAuthError,
 } from "@/lib/auth/account-errors";
+import { describeForgotCurrentPasswordNote, describeOthersNotSignedOutNote } from "@/lib/auth/logout-guidance";
+import { useNativeAppMode } from "@/hooks/useNativeAppMode";
+import { useAccountActionsPlacement, type AccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 import { TurnstileWidget, useTurnstile } from "@/components/auth/TurnstileWidget";
 import { Input } from "@/components/ui/input";
@@ -69,7 +72,16 @@ function ErrorBanner({ message }: { message: string }) {
 // ---------------------------------------------------------------------------
 // パスワードの変更
 // ---------------------------------------------------------------------------
-function PasswordChangeSection({ supabase, email }: { supabase: SupabaseBrowserClient; email: string }) {
+function PasswordChangeSection({
+  supabase,
+  email,
+  accountActionsPlacement,
+}: {
+  supabase: SupabaseBrowserClient;
+  email: string;
+  /** ログアウトをどこで出すか。案内の「ログアウト」の指し先を、アプリの中とブラウザで分ける (#1552。lib/auth/logout-guidance.ts) */
+  accountActionsPlacement: AccountActionsPlacement;
+}) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -185,8 +197,8 @@ function PasswordChangeSection({ supabase, email }: { supabase: SupabaseBrowserC
                 セキュリティのため、この端末以外のログインはすべて解除しました。他の端末では、新しいパスワードでログインし直してください。
               </p>
             ) : (
-              <p>
-                ただし、他の端末のログアウトを確認できませんでした。心配な場合は、設定の「ログアウト」でこの端末もログアウトして、新しいパスワードでログインし直してください。
+              <p data-testid="password-change-others-not-signed-out-note">
+                {describeOthersNotSignedOutNote(accountActionsPlacement)}
               </p>
             )}
           </div>
@@ -249,8 +261,8 @@ function PasswordChangeSection({ supabase, email }: { supabase: SupabaseBrowserC
         </button>
       </form>
 
-      <p className="text-xs text-gray-400">
-        現在のパスワードを思い出せないときは、いったんログアウトして、ログイン画面の「忘れた場合」からパスワードを再設定してください。
+      <p className="text-xs text-gray-400" data-testid="password-change-forgot-current-note">
+        {describeForgotCurrentPasswordNote(accountActionsPlacement)}
       </p>
     </section>
   );
@@ -414,6 +426,9 @@ function ExternalProviderGuidance({ provider, email }: { provider: string | null
 // ---------------------------------------------------------------------------
 export default function AccountSettingsPage() {
   const [supabase] = useState(() => createClient());
+  // アプリの中の Web の設定には「ログアウト」が出ない (#1037)。案内の指し先を合わせるために、どこで出すかを判定する (#1552)
+  const isNativeApp = useNativeAppMode();
+  const accountActionsPlacement = useAccountActionsPlacement(isNativeApp);
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
   // 読み込みに失敗したときの「もう一度読み込む」用
   const [attempt, setAttempt] = useState(0);
@@ -533,7 +548,11 @@ export default function AccountSettingsPage() {
 
             {canEditCredentials ? (
               <>
-                <PasswordChangeSection supabase={supabase} email={load.email} />
+                <PasswordChangeSection
+                  supabase={supabase}
+                  email={load.email}
+                  accountActionsPlacement={accountActionsPlacement}
+                />
                 <EmailChangeSection supabase={supabase} currentEmail={load.email} />
               </>
             ) : (
