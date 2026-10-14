@@ -41,7 +41,7 @@
     "expo-web-browser": "~15.0.0",
     "lucide-react-native": "^1.57.0",
     "react": "19.0.0",
-    "react-native": "0.79.7",
+    "react-native": "0.79.6",
     "react-native-reanimated": "^3.17.5",
     "react-native-safe-area-context": "5.4.1",
     "react-native-screens": "~4.11.1",
