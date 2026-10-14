@@ -154,7 +154,7 @@ CREATE TABLE family_shared_menus (
   family_group_id   UUID        NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
   date              DATE        NOT NULL,
   meal_type         VARCHAR(20) NOT NULL
-                      CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snack')),
+                      CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack')),
   dish_name         VARCHAR(200) NOT NULL,
   recipe_id         UUID,                            -- dataset_recipes への参照 (任意)
   servings_total    NUMERIC(4,2) NOT NULL DEFAULT 1.0
@@ -236,7 +236,7 @@ CREATE TABLE family_meal_requests (
   -- 対象食事
   date                     DATE        NOT NULL,
   meal_type                VARCHAR(20) NOT NULL
-                             CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snack')),
+                             CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack')),
   original_shared_menu_id  UUID        REFERENCES family_shared_menus(id) ON DELETE SET NULL,
   -- リクエスト内容
   reason                   TEXT,

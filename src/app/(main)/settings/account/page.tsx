@@ -11,6 +11,9 @@
 //   再設定 (/auth/reset-password, #1188) は「全端末をログアウトして入り直す」が、ここは操作中の端末を残すので 'others'。
 //   Supabase の secure_password_change (supabase/config.toml の [auth.email]。未指定で、既定値は false = ローカルで確認) が
 //   有効でも、直前の signInWithPassword で作った新しいセッションは「直近にログインした」扱いなので、追加の確認は要らない。
+//   #1474: Supabase の CAPTCHA を有効にすると、トークンの無い signInWithPassword は断られるので、本人確認にも
+//   ログイン画面と同じ Turnstile の部品でトークンを付ける (サイトキーが未設定なら無効で、今までどおり)。
+//   updateUser・signOut は CAPTCHA の対象外。
 // - メールアドレス変更: updateUser({ email }, { emailRedirectTo }) で確認メールを送る。
 //   Supabase の「Secure email change」(supabase/config.toml の [auth.email] double_confirm_changes。
 //   このリポジトリの config.toml は未指定で、CLI の既定値 true が使われる) が有効だと、新しいアドレスと
@@ -31,6 +34,7 @@ import {
   isSessionExpiredAuthError,
 } from "@/lib/auth/account-errors";
 import { PasswordInput } from "@/components/auth/PasswordInput";
+import { TurnstileWidget, useTurnstile } from "@/components/auth/TurnstileWidget";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -76,6 +80,8 @@ function PasswordChangeSection({ supabase, email }: { supabase: SupabaseBrowserC
   const [error, setError] = useState<string | null>(null);
   // 変更できたとき。othersSignedOut: 他の端末のログアウトまで確認できたか
   const [result, setResult] = useState<{ othersSignedOut: boolean } | null>(null);
+  // #1474: 本人確認 (signInWithPassword) に付ける、ボットではないことの確認のトークン
+  const captcha = useTurnstile();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,6 +111,15 @@ function PasswordChangeSection({ supabase, email }: { supabase: SupabaseBrowserC
       return;
     }
 
+    // #1474: トークンは 1 回しか使えないので、入力の検証を通ったあと、送信の直前に 1 回だけ取り出す
+    // (取り出した時点で、ウィジェットが次のトークンを取り直す)。Turnstile が有効なのにトークンが無いとき
+    // (Enter キーなどでボタンを通らずに送られた場合) は送らない
+    const captchaToken = captcha.takeToken();
+    if (captcha.enabled && !captchaToken) {
+      setError("ボットではないことの確認が終わるまで、少しお待ちください。");
+      return;
+    }
+
     setError(null);
     submittingRef.current = true;
     setSubmitting(true);
@@ -112,9 +127,11 @@ function PasswordChangeSection({ supabase, email }: { supabase: SupabaseBrowserC
     try {
       // 1) 現在のパスワードで本人確認 (ログイン済みの端末が使われていても、パスワードを知っている人だけが変えられる)。
       //    この呼び出しで、この端末のセッションは新しいものに入れ替わる。
+      //    Turnstile が無効のときは options を付けない (今までのリクエストと同じ)
       const { error: reauthError } = await supabase.auth.signInWithPassword({
         email,
         password: currentPassword,
+        ...(captchaToken ? { options: { captchaToken } } : {}),
       });
       if (reauthError) {
         console.error("[settings/account] re-authentication failed:", reauthError.code ?? reauthError.status);
@@ -241,9 +258,11 @@ function PasswordChangeSection({ supabase, email }: { supabase: SupabaseBrowserC
           />
         </div>
 
+        <TurnstileWidget {...captcha.widgetProps} action="password-change" />
+
         {error && <ErrorBanner message={error} />}
 
-        <button type="submit" disabled={submitting} className={PRIMARY_BUTTON_CLASS}>
+        <button type="submit" disabled={submitting || !captcha.ready} className={PRIMARY_BUTTON_CLASS}>
           {submitting ? "変更中…" : "パスワードを変更する"}
         </button>
       </form>

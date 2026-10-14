@@ -3,6 +3,7 @@
 > 作成: 2026-10-08 / 関連: Issue #1165 / オーナー判断: 2026-10-08 (決定キー 1165)
 > 更新: 2026-10-10 — Web のログインのサーバー経由化 (`POST /api/auth/login`) と、ログイン失敗の回数によるボットの確認を追加 (§1・§2.1・§4〜§8)
 > 更新: 2026-10-10 — ログイン失敗のロック (5 回で 15 分など) をやめた。失敗が続いたらボットの確認を求めるだけにした (§1・§2・§2.1・§5・§7・§8)
+> 更新: 2026-10-14 — メール確認の再送 (`/auth/verify`) と、設定のパスワード変更の本人確認にも Turnstile のトークンを付けた (#1474。§1・§4〜§6・§8〜§10)
 >
 > この文書は 2 つのことを 1 か所にまとめる。
 > 1. **いまの Supabase Auth の設定値の記録** (レート制限・攻撃対策)。「**オーナー記入**」と書いた欄は、Supabase のダッシュボードで見える現在の値を、オーナーが書き込む。
@@ -14,7 +15,7 @@
 
 | 項目 | 決定 |
 |---|---|
-| bot 対策の方式 | Cloudflare Turnstile (**Managed** モード)。ログイン・新規登録・パスワード再設定の 3 画面 |
+| bot 対策の方式 | Cloudflare Turnstile (**Managed** モード)。ログイン・新規登録・パスワード再設定の 3 画面と、メール確認の再送 (`/auth/verify`)・設定のパスワード変更の本人確認 (`/settings/account`) (#1474) |
 | アカウントのロックアウト | しない (オーナーの選択 2026-10-10。他人のメールアドレスで失敗を繰り返すだけで本人を締め出せるため。失敗が続いたらボットの確認を求める) |
 | ログインに続けて失敗したとき | 同じメールアドレスで **続けて 3 回以上** 失敗したら、次のログインからボットの確認 (Turnstile) を求める (§2.1)。Web のログイン (`POST /api/auth/login`) で働く。何回失敗しても、正しいパスワードならログインできる |
 | いまのクールダウン | **残す**。ログインに失敗すると、同じメールアドレスでは 30 秒待つ (画面側の仕組み。Web は localStorage、アプリは AsyncStorage) |
@@ -126,11 +127,11 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 | 新規登録 | `signUp` | 対応済み | 対応済み (次のビルドから) |
 | パスワード再設定の依頼 | `resetPasswordForEmail` | 対応済み | 対応済み (次のビルドから) |
 | Google ログイン・登録 | `signInWithOAuth` | CAPTCHA の対象外 | CAPTCHA の対象外 |
-| **メール確認の再送** (`/auth/verify`) | `resend` | **未対応** | (モバイルに再送の画面は無い) |
-| **設定 → アカウント → パスワード変更の本人確認** | `signInWithPassword` | **未対応** (`src/app/(main)/settings/account/page.tsx`) | (モバイルに同等の処理は無い) |
+| メール確認の再送 (`/auth/verify`) | `resend` | 対応済み (トークンは `options.captchaToken`。#1474) | (モバイルに再送の画面は無い) |
+| 設定 → アカウント → パスワード変更の本人確認 | `signInWithPassword` | 対応済み (トークンは `options.captchaToken`。`src/app/(main)/settings/account/page.tsx`。#1474) | (モバイルに同等の処理は無い) |
 | 新しいパスワードの保存 (`/auth/reset-password`) | `updateUser` | CAPTCHA の対象外 | CAPTCHA の対象外 |
 
-**「未対応」の 2 つは、Supabase で CAPTCHA を有効にすると動かなくなる** (トークンを付けていないため)。有効にする前に、トークンを付ける対応が要る (§6 の手順 4)。今回の PR の範囲外。
+メール確認の再送と、設定のパスワード変更の本人確認は、#1474 でトークンを付けた (それまでは、Supabase で CAPTCHA を有効にすると動かなくなる「未対応」だった)。ほかの画面と同じく、サイトキーが未設定ならウィジェットを出さず、トークンも付けない。サイトキーがあれば、トークンが取れるまで再送・変更のボタンは押せない。パスワード変更では、新しいパスワードの保存 (`updateUser`) と他の端末のログアウト (`signOut`) は CAPTCHA の対象外なので、トークンは本人確認の `signInWithPassword` にだけ付ける。
 
 そのほか、CAPTCHA を有効にすると動かなくなるもの:
 
@@ -153,7 +154,7 @@ Cloudflare Turnstile のキーは 2 つある。
 - **どちらのサイトキーも未設定なら、Turnstile は出ない**。画面は今までどおりに動き、トークンも送らない。ローカル開発・テストは未設定のままでよい。
 - **`TURNSTILE_SECRET_KEY` (またはサイトキー) が未設定なら、このアプリのサーバーはトークンを確かめずに通す**。サーバーの起動後、最初にログインを処理したときに、その旨のログ (`app_logs` の warn) が 1 回だけ出る。ログインに続けて失敗しても、キーの有無に関係なく、アカウントはロックしない (§2.1)。
 - **秘密キーを (1) と (2) の両方に入れない**。トークンは 1 回しか使えないので、このアプリのサーバーが確かめたトークンは Supabase へ渡さない。Supabase の CAPTCHA が有効だと、そのログインは「トークンが無い」として断られる。Supabase で有効にするときは、先に `TURNSTILE_SECRET_KEY` を消す (§6 手順 5)。
-- 設定すると、3 画面にウィジェットが出て、**確認が終わるまで送信ボタンが押せなくなる**。
+- 設定すると、ログイン・新規登録・パスワード再設定の 3 画面と、メール確認の再送・設定のパスワード変更にウィジェットが出て、**確認が終わるまで送信ボタン (再送・変更のボタン) が押せなくなる**。
 - どちらもビルド時に埋め込まれる。変えたら、Web は再デプロイ、モバイルは新しいビルドが要る。
 
 ### Cloudflare 側の設定
@@ -198,6 +199,7 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
    - ウィジェットが出る。出ない (エラーが表示される) 場合は、ホスト名の許可 (§5) と CSP を疑う。
    - トークンが取れるまで、送信ボタンが押せない。取れたら押せる。
    - ログインできる。
+   - あわせて、メール確認の再送 (`/auth/verify?email=…` の「再送信」) と、ログインした状態の設定 → アカウント → パスワード変更でも、ウィジェットが出て、トークンが取れるまでボタンが押せないことを確かめる (#1474)。
 4. この時点では、Supabase はトークンを検証しない (付いて届くだけ)。**誰もログインできなくなることはない**。
 5. (任意) Vercel のサーバー用の環境変数 `TURNSTILE_SECRET_KEY` に秘密キーを入れて再デプロイすると、Web のログインで続けて 3 回以上失敗したメールアドレスの次のログインから、このアプリのサーバーがトークンを確かめる (§2.1)。`NEXT_PUBLIC_` を付けない。手順 5 で Supabase の CAPTCHA を有効にするときは、先にこれを消す (§5)。
 
@@ -217,10 +219,10 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
 ### 手順 4. 有効にする前の最終確認
 
 - [ ] モバイルの新しいビルドが配られ、**古いビルドが使われなくなった** (使われているビルドの内訳は、App Store Connect / Google Play Console で見る)
-- [ ] §4 の「未対応」の 2 つ (メール確認の再送、設定画面のパスワード変更の本人確認) に、トークンを付ける対応が入った
+- [x] メール確認の再送と、設定画面のパスワード変更の本人確認に、トークンを付ける対応が入った (#1474。§4)
 - [ ] 本番向け e2e のログインを、トークンが要らない方法へ変えた (§4)
 - [ ] デプロイ後の動作確認スクリプトの `--with-auth` (`scripts/lib/smoke.mjs`) と、Maestro の補助スクリプト (`apps/mobile/maestro/flows/scripts/reset-onboarding.js`) を、トークンが要らない方法へ変えた、または使わない運用にした (§4)
-- [ ] Web の本番に `NEXT_PUBLIC_TURNSTILE_SITE_KEY` が入っていて、3 画面で動いている
+- [ ] Web の本番に `NEXT_PUBLIC_TURNSTILE_SITE_KEY` が入っていて、3 画面と、メール確認の再送・設定のパスワード変更で動いている
 - [ ] ロールバック手順 (§7) を読んだ
 
 ### 手順 5. Supabase で CAPTCHA を有効にする
@@ -233,6 +235,7 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
 ### 手順 6. 有効にした直後の確認
 
 - Web の 3 画面で、ログイン・登録・パスワード再設定が通る。
+- Web で、メール確認の再送と、設定のパスワード変更が通る (#1474)。
 - モバイルの新しいビルドで、同じ 3 つが通る。
 - 古いビルドは通らない (想定内。使えなくなったことを確認するだけ)。
 - 失敗するときは、画面に「ボットではないことの確認に失敗しました。もう一度お試しください。」と出る (英語の生のエラー文は出さない)。
@@ -256,10 +259,10 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
 ## 8. ローカル・CI・テスト
 
 - **ローカルの Supabase は CAPTCHA を有効にしない** (`supabase/config.toml` に `[auth.captcha]` を書かない)。結合テスト・e2e・開発は、トークン無しで `signInWithPassword` / `signUp` を呼ぶため。`src/__tests__/config/turnstile-config.test.ts` が、有効にされていないことを検査する。
-- **単体テスト** (`tests/auth-turnstile-widget.test.tsx`、`tests/auth-turnstile-pages.test.tsx`): ウィジェットの動き、3 画面が Supabase の**正しい場所**にトークンを付けること、「トークンが無い間は送信ボタンが押せない」こと。モバイルは `apps/mobile/__tests__/`。
+- **単体テスト** (`tests/auth-turnstile-widget.test.tsx`、`tests/auth-turnstile-pages.test.tsx`、`tests/auth-turnstile-resend-password-change.test.tsx`): ウィジェットの動き、3 画面とメール確認の再送・設定のパスワード変更 (#1474) が Supabase の**正しい場所**にトークンを付けること、「トークンが無い間は送信ボタンが押せない」こと。モバイルは `apps/mobile/__tests__/`。
   - 注意: `resetPasswordForEmail` だけは、`captchaToken` を `options` の中ではなく**第 2 引数の直下** (`redirectTo` と同じ階層) に渡す。`options` の中に入れても、Supabase には届かず、黙って無視される。
 - **ログインに続けて失敗したとき (ロックしない)**: 単体テスト `tests/auth/login-failures.test.ts` (回数 → ボットの確認の決定表・時間で戻る・環境変数)・`tests/auth/guarded-login.test.ts` (状態 × 操作の表。何回失敗しても正しいパスワードならログインできる)・`tests/api/auth-login-route.test.ts` (応答の表。何回失敗しても 423 にならない)・`tests/auth/turnstile-verify.test.ts`。回帰テスト `tests/auth/no-login-lockout.test.ts` (ロックの応答・ロックの DB の関数・ロックを外す API がコードに戻ってきたら失敗する。AI の送る先の一覧のログインの項に外したメール (Resend) が書かれていたり、文書にロックを前提にした文が書かれていたりしても失敗する)。結合テスト `tests/integration/security/auth-login-lock.test.ts` (ローカルの Supabase で、DB の関数の権限・同時の加算・時間で戻る・本物の Auth と組み合わせて 25 回失敗してもロックしないこと)。
-- **e2e** (`tests/e2e/auth-turnstile.spec.ts`): 本物のブラウザ・本物の CSP・本物の Cloudflare の `api.js` と、**Cloudflare のテスト用サイトキー** (`1x00000000000000000000AA`) で、ウィジェットがトークンを出し、新規登録・パスワード再設定では Supabase へのリクエストに `captcha_token` が、ログインでは `POST /api/auth/login` の本文に `captchaToken` が入ることを確かめる。通信はブラウザで差し替えるので、Supabase には繋がない。
+- **e2e** (`tests/e2e/auth-turnstile.spec.ts`): 本物のブラウザ・本物の CSP・本物の Cloudflare の `api.js` と、**Cloudflare のテスト用サイトキー** (`1x00000000000000000000AA`) で、ウィジェットがトークンを出し、新規登録・パスワード再設定・メール確認の再送 (#1474) では Supabase へのリクエストに `captcha_token` が、ログインでは `POST /api/auth/login` の本文に `captchaToken` が入ることを確かめる。通信はブラウザで差し替えるので、Supabase には繋がない。
   - CI: `.github/workflows/e2e-local.yml` が、このテスト用サイトキーを付けてアプリをビルドし、この spec と `01-login.spec.ts` を回す。`01-login.spec.ts` は通信を差し替えず、ウィジェットがトークンを出すのを待ってから本物のサーバーでログインし、`POST /api/auth/login` の本文に `captchaToken` が付くことを確かめる。
   - これらの画面では、e2e は `networkidle` を待たない (ウィジェットが通信し続けるため成り立たない)。`tests/e2e/helpers/login-form.ts` の `waitForLoginFormReady` を使う (`src/__tests__/config/e2e-auth-page-wait.test.ts` が検査する)。
   - ローカル: `NEXT_PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA npx playwright test tests/e2e/auth-turnstile.spec.ts` (起動済みの dev サーバーは再利用されるので、キー無しで起動していたら止めてから)。
@@ -274,7 +277,7 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
 - **Cloudflare への通信が遮断される環境** (広告ブロッカー、企業のプロキシなど) では、ウィジェットが出せず、送信ボタンが押せないままになる。画面には、原因の見当と「もう一度確認する」ボタンが出る。Supabase の CAPTCHA が有効になっても、この環境ではどのみちログインできない。
 - トークンの有効期限は 5 分で、1 回しか使えない。画面は、送信のたびに取り直し、期限が切れたら自動で取り直す。
 - Google でのログイン・登録は CAPTCHA の対象外。
-- Turnstile を有効にすると、3 画面で閲覧者の端末の情報が Cloudflare に送られる。**プライバシーポリシー (`/privacy`) への追記が要るか**は、オーナー (法務) の判断。このリポジトリのコードでは変えていない。
+- Turnstile を有効にすると、ウィジェットを出す画面 (§1。3 画面と、メール確認の再送・設定のパスワード変更) で閲覧者の端末の情報が Cloudflare に送られる。**プライバシーポリシー (`/privacy`) への追記が要るか**は、オーナー (法務) の判断。このリポジトリのコードでは変えていない。
 
 ---
 
@@ -284,6 +287,6 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
 - [ ] Supabase ダッシュボードの**現在の設定値** (§3.1・§3.2) を、この文書の表に記入する
 - [ ] Web の本番に入れる時期を決める (§6 手順 2)
 - [ ] モバイルの新しいビルドを配り、**古いビルドが使われなくなる**のを待つ。実機での確認は §6 手順 3
-- [ ] §4 の「未対応」の 2 つと、本番向け e2e・動作確認スクリプト (`--with-auth`)・Maestro 補助スクリプトのログインの対応を依頼する
+- [ ] 本番向け e2e・動作確認スクリプト (`--with-auth`)・Maestro 補助スクリプトのログインの対応を依頼する (§4 の「未対応」だった 2 つは #1474 で対応済み)
 - [ ] **Supabase で CAPTCHA を有効にする時期**を決める (§6 手順 5)
 - [ ] プライバシーポリシーへの追記が要るか判断する (§9)
