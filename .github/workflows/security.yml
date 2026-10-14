@@ -166,7 +166,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
       # npm audit は package-lock.json だけで動く (npm ci は要らない)。
