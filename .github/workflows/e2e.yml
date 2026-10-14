@@ -82,7 +82,7 @@ jobs:
             npm run test:e2e:mvp -- --trace off
           fi
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           # HTML レポート (tests/e2e/.report/) は手順名に fill の入力値 (パスワード) を平文で含むため上げない。
           # 失敗時のスクリーンショット・動画・エラー内容 (tests/e2e/.output/) だけを上げる
