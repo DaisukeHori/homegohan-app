@@ -18,9 +18,8 @@ env:
     id: "tab-profile"
 - extendedWaitUntil:
     visible:
-      id: "profile-screen"
+      id: "webview-profile"
     timeout: 15000
-- scroll
 - tapOn:
     id: "profile-settings-button"
 - extendedWaitUntil:
@@ -43,9 +42,8 @@ env:
     id: "tab-profile"
 - extendedWaitUntil:
     visible:
-      id: "profile-screen"
+      id: "webview-profile"
     timeout: 15000
-- scroll
 - tapOn:
     id: "profile-settings-button"
 - extendedWaitUntil:

@@ -14,8 +14,11 @@
  *   - メールアドレスの形式が不正  : 400 validation_failed ("Unable to validate email address: invalid format")
  *   - 短時間の連続リクエスト      : 429 over_email_send_rate_limit / over_request_rate_limit
  *   - 通信の失敗                  : AuthRetryableFetchError (status 0)
+ *   - CAPTCHA の確認に失敗 (本人確認): 400 captcha_failed (Supabase で CAPTCHA を有効にしたとき。#1474)
  * コードが無い・未知のエラーは、メッセージと HTTP ステータスで判定し、それでも分からなければ汎用の文言にする。
  */
+
+import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from '@/lib/auth/turnstile';
 
 /** Supabase の AuthError のうち、文言の出し分けに使う部分だけ (テストで素のオブジェクトを渡せるようにしている) */
 export interface AuthErrorLike {
@@ -92,6 +95,9 @@ export function describePasswordChangeError(error: unknown, step: 'reauth' | 'up
   if (isRateLimitAuthError(e)) return RATE_LIMIT_MESSAGE;
 
   if (step === 'reauth') {
+    // #1474: Supabase の CAPTCHA が本人確認 (signInWithPassword) を断った (トークンが無い・期限切れ・使用済み)。
+    // パスワード違いと取り違えないよう、ボットの確認の文言を出す
+    if (isCaptchaFailure(e)) return CAPTCHA_FAILED_MESSAGE;
     if (e.code === 'invalid_credentials' || /invalid login credentials/i.test(e.message ?? '')) {
       return '現在のパスワードが正しくありません。';
     }

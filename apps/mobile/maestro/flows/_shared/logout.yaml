@@ -3,17 +3,17 @@ appId: com.homegohan.app
 # _shared/logout.yaml: タブバーのプロファイルタブ → 設定 → ログアウトの共通フロー
 # 前提: ホーム画面または任意の画面 (タブバーが見える状態)
 # LogBox.ignoreAllLogs() 適用後はバナー閉じ処理は不要
+# Issue #1037: マイページタブは WebView 実装のため "profile-screen" ではなく
+# "webview-profile" が表示される。設定画面へはヘッダーの歯車アイコン
+# (testID: profile-settings-button) から遷移する。
 - waitForAnimationToEnd:
     timeout: 2000
 - tapOn:
     id: "tab-profile"
 - extendedWaitUntil:
     visible:
-      id: "profile-screen"
+      id: "webview-profile"
     timeout: 15000
-- scroll
-- waitForAnimationToEnd:
-    timeout: 2000
 - tapOn:
     id: "profile-settings-button"
 - extendedWaitUntil:

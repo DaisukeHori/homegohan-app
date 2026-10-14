@@ -4,12 +4,10 @@
  * 05-operator-emergency-ui.md §7 準拠
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail } from '@/lib/emails/send';
@@ -25,17 +23,6 @@ const BodySchema = z.object({
   to_user_id: z.string().uuid(),
   reason: z.string().min(1).max(1000),
 });
-
-/**
- * 通知・候補の取得に使う service_role のクライアント。接続情報は env-required の getter で取り出す (#1434)。
- * 欠けていれば MissingEnvError (message は固定の文で、変数名はサーバーのログにだけ残る)。
- */
-function getServiceRoleClient() {
-  const { url, serviceRoleKey } = getSupabaseServiceConfig();
-  return createSupabaseClient(url, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
 
 export async function POST(
   req: NextRequest,
@@ -65,7 +52,7 @@ export async function POST(
     let preOrg: { name: string | null; owner_id: string | null } | null = null;
     let preOrgError: unknown = null;
     try {
-      const { data, error } = await getServiceRoleClient()
+      const { data, error } = await getSupabaseAdmin()
         .from('organizations')
         .select('name, owner_id')
         .eq('id', orgId)
@@ -114,7 +101,7 @@ export async function POST(
     }
 
     try {
-      const admin = getServiceRoleClient();
+      const admin = getSupabaseAdmin();
 
       // 全メンバ取得
       const { data: members, error: membersError } = await admin

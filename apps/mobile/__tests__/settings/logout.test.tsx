@@ -18,10 +18,11 @@ jest.mock('../../src/lib/signOut', () => ({
 }));
 
 const mockRouterReplace = jest.fn();
+const mockRouterPush = jest.fn();
 jest.mock('expo-router', () => ({
   router: {
     replace: (...args: unknown[]) => mockRouterReplace(...args),
-    push: jest.fn(),
+    push: (...args: unknown[]) => mockRouterPush(...args),
   },
 }));
 
@@ -118,5 +119,25 @@ describe('設定タブ — ログアウト (#1038 F7-10)', () => {
 
     expect(mockSignOutWithCleanup).not.toHaveBeenCalled();
     expect(mockRouterReplace).not.toHaveBeenCalled();
+  });
+});
+
+describe('設定タブ — マイページの歯車から開いたときに届く操作 (#1037)', () => {
+  // マイページ (WebView) の歯車 (app/(tabs)/profile.tsx) はこの画面を開く。
+  // アプリの中の Web の設定画面ではログアウトと退会を出さないので、ここから必ず届かなければならない (ストアの審査の要件)
+  it('通知の設定・ログアウト・退会 (アカウント) の入口がある', async () => {
+    const api = await renderSettings();
+
+    expect(api.getByTestId('settings-notifications-toggle')).toBeTruthy();
+    expect(api.getByTestId('settings-logout-button')).toBeTruthy();
+    expect(api.getByTestId('settings-account-row')).toBeTruthy();
+  });
+
+  it('「アカウント」を押すと退会の画面 (/settings/account) を開く', async () => {
+    const api = await renderSettings();
+
+    fireEvent.press(api.getByTestId('settings-account-row'));
+
+    expect(mockRouterPush).toHaveBeenCalledWith('/settings/account');
   });
 });

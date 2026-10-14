@@ -1,4 +1,3 @@
-import { createClient } from '@supabase/supabase-js';
 import { requireCronAuth } from '@/lib/cron-auth';
 import { createLogger } from '@/lib/db-logger';
 import {
@@ -9,6 +8,8 @@ import {
 } from '@/lib/ai/consent-guard';
 // runtime = 'edge' のルートなので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
 import { getSupabaseServiceConfig } from '@/lib/env-required';
+// service_role のクライアントは canonical の getSupabaseAdmin で作る (#1162。lib/supabase/server.ts も env-required だけを読む)
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { weeklyMenuRequestStoredErrorMessage } from '@/lib/weekly-menu-request-error';
 
@@ -31,7 +32,8 @@ export async function GET(req: Request) {
 
   const { url: supabaseUrl, serviceRoleKey } = serviceConfig;
 
-  const supabase = createClient(supabaseUrl, serviceRoleKey);
+  // CRON 認証と接続情報の確認を通した後に作る (接続情報は上で確かめ済み。Edge Function を呼ぶ鍵は serviceRoleKey をそのまま使う)
+  const supabase = getSupabaseAdmin();
   const workerId = crypto.randomUUID();
 
   const { data: claimed, error: claimError } = await supabase.rpc('claim_menu_request', { p_worker_id: workerId });
