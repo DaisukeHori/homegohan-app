@@ -38,7 +38,7 @@
     "@supabase/supabase-js": "^2.78.0",
     "@upstash/ratelimit": "^2.2.0",
     "@upstash/redis": "^1.37.0",
-    "@vercel/functions": "^3.3.4",
+    "@vercel/functions": "^3.10.1",
     "@vercel/speed-insights": "^2.0.0",
     "clsx": "^2.1.1",
     "focus-trap-react": "^12.0.3",
