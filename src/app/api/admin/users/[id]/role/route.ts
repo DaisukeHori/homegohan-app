@@ -15,6 +15,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { RoleChangeBodySchema } from '@/lib/admin/users-schemas';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -120,17 +121,19 @@ async function handleRoleChange(request: Request, params: Params) {
   }
 
   // 監査ログ
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: actor.id,
-    action_type: 'admin.user.role_change',
-    target_id: id,
-    target_type: 'user',
+  await recordAdminAudit({
+    supabase,
+    actorId: actor.id,
+    actionType: 'admin.user.role_change',
+    targetId: id,
+    targetType: 'user',
     details: {
       previous_roles: profile.roles,
       new_roles: roles,
     },
     severity: 'warn',
-    ip_address: request.headers.get('x-forwarded-for'),
+    request,
+    routeName: 'api/admin/users/[id]/role handleRoleChange',
   });
 
   return NextResponse.json({ data: { success: true, roles } });

@@ -1,6 +1,7 @@
 import {
   applyGeneratedDishImage,
   MEAL_DISH_WRITE_MAX_ATTEMPTS,
+  MealDishWriteExhaustedError,
   type MealImageDish,
   type PlannedMealLockedWriteDecision,
   type PlannedMealLockedWriteOutcome,
@@ -10,7 +11,7 @@ import {
 
 // 楽観的な排他の書き込み (#1527) は、積めなかった料理の印付け (markEnqueueFailedDishesInMeal) と共通にした (#1532)。
 // ここからも同じ名前で使えるように出し直す
-export { MEAL_DISH_WRITE_MAX_ATTEMPTS, type PlannedMealWriter };
+export { MEAL_DISH_WRITE_MAX_ATTEMPTS, MealDishWriteExhaustedError, type PlannedMealWriter };
 
 export interface GeneratedContentPart {
   text?: string;
@@ -20,13 +21,54 @@ export interface GeneratedContentPart {
   };
 }
 
+/** buildImageUploadPath が組み立てるパスの頭 (fridge-images バケットの中の、AI の料理の画像の置き場) */
+const GENERATED_IMAGE_PATH_PREFIX = "generated/";
+/** buildImageUploadPath が組み立てるファイル名の終わり (<jobId>-<timestamp> の後ろ) */
+const GENERATED_IMAGE_PATH_SUFFIX = ".png";
+/** buildImageUploadPath の <timestamp> の部分 (Date.now() のミリ秒。数字だけ) */
+const GENERATED_IMAGE_TIMESTAMP_PATTERN = /^[0-9]+$/;
+
+/** パスの 1 つの区切りに使ってよい ID か (空・区切り文字・相対の指定を含むものは使わない) */
+function isSafePathSegment(value: string): boolean {
+  return value.length > 0 && !value.includes("/") && !value.includes("\\") && value !== "." && value !== "..";
+}
+
 export function buildImageUploadPath(params: {
   plannedMealId: string;
   jobId: string;
   timestamp?: number;
 }): string {
   const timestamp = params.timestamp ?? Date.now();
-  return `generated/${params.plannedMealId}/${params.jobId}-${timestamp}.png`;
+  return `${GENERATED_IMAGE_PATH_PREFIX}${params.plannedMealId}/${params.jobId}-${timestamp}${GENERATED_IMAGE_PATH_SUFFIX}`;
+}
+
+/**
+ * パスが、そのジョブ (plannedMealId・jobId) が buildImageUploadPath で組み立てた画像のものか (#1553)。
+ * 書かずにやめたジョブの画像を Storage から消す前に確かめる。ほかのジョブの画像 (<jobId> が違う・
+ * 前の部分が一致するだけの別の ID)・ほかの献立の画像・利用者の画像のパスは偽にする
+ */
+export function isOwnJobUploadPath(
+  path: string,
+  params: { plannedMealId: string; jobId: string },
+): boolean {
+  if (!isSafePathSegment(params.plannedMealId) || !isSafePathSegment(params.jobId)) return false;
+  const head = `${GENERATED_IMAGE_PATH_PREFIX}${params.plannedMealId}/${params.jobId}-`;
+  if (!path.startsWith(head) || !path.endsWith(GENERATED_IMAGE_PATH_SUFFIX)) return false;
+  const timestamp = path.slice(head.length, path.length - GENERATED_IMAGE_PATH_SUFFIX.length);
+  return GENERATED_IMAGE_TIMESTAMP_PATTERN.test(timestamp);
+}
+
+/**
+ * ジョブの料理を失敗の印 (image_status: failed) にできず、料理が生成中 (pending) のまま残ったことを示す、
+ * meal_image_jobs.last_error の目印 (#1553)。運用では last_error にこの文字列を含むジョブを探す
+ * (docs/operations/meal-image-pipeline.md)
+ */
+export const DISH_LEFT_PENDING_LAST_ERROR_MARKER = "dish left pending";
+
+/** 料理が生成中のまま残ったときの last_error (ジョブの元の理由のあとに、目印と、印を付けられなかった理由を足す) */
+export function formatDishLeftPendingLastError(jobReason: string, cause: unknown): string {
+  const causeMessage = cause instanceof Error ? cause.message : String(cause);
+  return `${jobReason} | ${DISH_LEFT_PENDING_LAST_ERROR_MARKER}: ${causeMessage}`;
 }
 
 export function extractInlineImageBase64(parts: GeneratedContentPart[] | null | undefined): string | null {

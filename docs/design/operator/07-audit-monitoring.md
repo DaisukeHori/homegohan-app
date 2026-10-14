@@ -162,7 +162,31 @@ admin.user.view_notes               - サポートコンソールでの管理ノ
 admin.support.ticket.view           - チケット詳細 (件名・メッセージ本文) の閲覧 (GET /api/admin/support/tickets/{id})
 admin.support.ticket.view_messages  - チケットのメッセージ一覧の閲覧 (GET /api/admin/support/tickets/{id}/messages)
 admin.inquiry.view                  - 問い合わせ詳細 (本文・管理者メモ) の閲覧 (GET /api/admin/inquiries/{id})。一覧は概要 (件名・連絡先・状態) だけなので記録しない
+admin.user.list                     - ユーザー一覧・検索 (GET /api/admin/users。サポート画面も使う) (#1326)
+admin.support.ticket.list           - チケット一覧 (GET /api/admin/support/tickets) (#1326)
+admin.moderation.view               - 通報 1 件 (コンテンツの写真など) の閲覧 (GET /api/admin/moderation/{type}/{id}) (#1326)
+admin.finance.invoice.view          - 請求書詳細の閲覧 (GET /api/admin/finance/invoices/{id}) (#1326)
+admin.sales.lead.list               - 営業リード一覧 (担当者の連絡先を含む) (GET /api/admin/sales/leads) (#1326)
+admin.sales.lead.view               - 営業リード詳細 (連絡先・活動履歴) の閲覧 (GET /api/admin/sales/leads/{id}) (#1326)
+super_admin.coupon.view_redemptions - クーポン適用履歴の閲覧 (GET /api/super-admin/coupons/{id}/redemptions) (#1326)
 ```
+
+一覧・検索の記録 (#1326):
+- 1 回の検索 (1 回の GET) = 1 行。`details` は `{ filters, returned_count, total }` (`buildListViewDetails()`)。
+  `filters` は検索条件 (検索語を含む。未指定は落とし、文字列は 200 文字まで)。返した行の ID や値は入れない。
+- `target_id` は null、`target_type` は返した行の種類 (`user` / `support_ticket` / `sales_lead`)。
+  クーポン適用履歴は 1 つのクーポンの履歴なので、`target_id` = クーポンの id、`target_type = 'coupon'`。
+- 0 件のときは記録しない (下の記録のルールと同じ)。
+
+詳細の対象 (#1326):
+- `admin.moderation.view`: 対象はコンテンツの持ち主 (`target_type = 'user'`)。持ち主が分からないときは通報の id
+  (`target_type = 'moderation_item:<type>'`)。`details` は `moderation_type` / `flag_id` / `content_id` / `viewed_fields`。
+- `admin.finance.invoice.view`: 対象は請求先のユーザー (`target_type = 'user'`)。サブスクリプションから引けないときは
+  `target_id = null`・`target_type = 'stripe_event'`。Stripe のイベント ID (`evt_...`。uuid ではない) は `details.stripe_event_id` に入れる。
+- `admin.sales.lead.view`: 対象はリード (`target_type = 'sales_lead'`。リードはユーザーではない)。`details` は `viewed_fields` と `activity_count`。
+
+変更系の記録 (#1326): `src/app/api/admin/**` と `src/app/api/super-admin/**` は `admin_audit_logs` へ直接 INSERT せず、
+すべて `recordAdminAudit()` を通す (`x-forwarded-for` を直接読まない)。`tests/admin-view-audit-1326.test.ts` が検査する。
 
 記録のルール:
 - `target_id` は **情報を見られた本人 (ユーザー)** の id、`target_type` は `'user'`。チケットの閲覧も、チケットではなくチケットを作ったユーザーを対象にする。
