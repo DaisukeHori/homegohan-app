@@ -1,6 +1,10 @@
 require('dotenv').config({ path: '.env.local' });
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs/promises');
+const { randomBytes } = require('crypto');
+
+/** 一時ユーザーのパスワードの乱数部分のバイト数 (base64url で 32 文字 = 192 ビット) */
+const TEMP_USER_PASSWORD_RANDOM_BYTES = 24;
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_ROLE_KEY = String(process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY || '').replace(/^"|"$/g, '');
@@ -349,7 +353,8 @@ function buildContentInspection({ plannedMeals, dailyMealDateById, targetSlots }
 
 async function createTempUser(label, attempt) {
   const email = `codex-${label}-${attempt}-${Date.now()}@example.com`;
-  const password = `Codex!${Math.random().toString(36).slice(2)}A1`;
+  // #1444 (CodeQL js/insecure-randomness): 一時ユーザーのパスワードは暗号論的な乱数で作る (Math.random は推測できる)
+  const password = `Codex!${randomBytes(TEMP_USER_PASSWORD_RANDOM_BYTES).toString('base64url')}A1`;
   const created = await supabase.auth.admin.createUser({
     email,
     password,

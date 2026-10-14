@@ -106,11 +106,25 @@ const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "PUT", "DELETE"]);
 /** 5xx のうち、やり直しても結果が変わらないもの (未実装・未対応のバージョン) */
 const PERMANENT_SERVER_ERRORS = new Set([501, 505]);
 
+/** "/" の文字コード (trimTrailingSlashes で末尾の "/" を見分ける) */
+const SLASH_CHAR_CODE = "/".charCodeAt(0);
+
 /** エラー応答の本文がテキスト (JSON ではない) のときに、エラー文に入れる最大の長さ。ゲートウェイの HTML 全体を画面に出さないため */
 const MAX_TEXT_BODY_CHARS = 200;
 
+/**
+ * 末尾の "/" をすべて落とす。
+ * 正規表現 (/\/+$/) だと、"/" が長く続いたあとに別の文字がある文字列で、照合が文字数の 2 乗の時間になる
+ * (#1444 CodeQL js/polynomial-redos)。後ろから 1 文字ずつ見て、線形の時間で落とす。
+ */
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === SLASH_CHAR_CODE) end -= 1;
+  return value.slice(0, end);
+}
+
 function joinUrl(baseUrl: string, path: string): string {
-  const base = baseUrl.replace(/\/+$/, "");
+  const base = trimTrailingSlashes(baseUrl);
   const p = path.startsWith("/") ? path : `/${path}`;
   return `${base}${p}`;
 }
