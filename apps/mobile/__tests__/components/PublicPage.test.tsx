@@ -103,9 +103,10 @@ describe('PublicPage の「Web版を開く」(#1049 F7-19)', () => {
     expect(view.queryByText('Web版を開く')).toBeNull();
   });
 
-  it('PublicPage のソースは API のオリジン (EXPO_PUBLIC_API_BASE_URL) を読まない', () => {
+  it('PublicPage は環境変数を自分で読まない (Web のオリジンは siteConfig の webPageUrl だけから決める)', () => {
     const source = fs.readFileSync(path.resolve(__dirname, '../../src/components/PublicPage.tsx'), 'utf8');
-    expect(source).not.toMatch(/EXPO_PUBLIC_API_BASE_URL|getApiBaseUrl/);
+    expect(source).not.toMatch(/process\.env|getApiBaseUrl/);
+    expect(source).toMatch(/import \{ webPageUrl \} from "\.\.\/lib\/siteConfig"/);
   });
 });
 

@@ -2,12 +2,23 @@ import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 
 import { LoadingState, PageHeader } from "../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../src/theme";
 import { getApi, getApiBaseUrl } from "../../src/lib/api";
-import { AI_CHAT_STREAM_TIMEOUT_MS } from "../../src/lib/ai-chat-timeout";
+import {
+  AI_CHAT_STREAM_TIMEOUT_MS,
+  TIMEOUT_DELIVERED_NO_REPLY_MESSAGE,
+  TIMEOUT_NOTICE_MESSAGE,
+  TIMEOUT_NOT_DELIVERED_MESSAGE,
+  TIMEOUT_RELOAD_FAILED_MESSAGE,
+  TIMEOUT_RELOAD_LABEL,
+  clearInputIfDelivered,
+  restoreInputAfterTimeout,
+  timeoutReloadOutcomeOf,
+  type TimedOutSend,
+} from "../../src/lib/ai-chat-timeout";
 import { supabase } from "../../src/lib/supabase";
 import { handleAiConsentRequiredError } from "../../src/lib/ai-consent";
 import { errorOfFailedResponse, isStoppedByServerError } from "../../src/lib/failed-response";
@@ -33,6 +44,11 @@ export default function AiSessionPage() {
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [attachedImage, setAttachedImage] = useState<{ uri: string; base64: string } | null>(null);
   const [imagePreviewReady, setImagePreviewReady] = useState(false);
+  // 送信が時間切れになった送信。あるあいだ「最新の会話を読み込む」を出す (#1049 F7-18。扱いは src/lib/ai-chat-timeout.ts)
+  const [timedOutSend, setTimedOutSend] = useState<TimedOutSend | null>(null);
+  const [reloadingAfterTimeout, setReloadingAfterTimeout] = useState(false);
+  // 時間切れのときに添付欄へ戻した画像。届いていたと分かったら、添付欄がこの画像のままなら外す (二重に送らないため)
+  const restoredImageRef = useRef<{ uri: string; base64: string } | null>(null);
   // 自動実行済みのメッセージID集合。GET レスポンスは proposed_actions を返し続けるため、
   // クライアント側でアクションボタンを非表示にするためのトラッキングに使用する。
   const executedMessageIds = useRef<Set<string>>(new Set());
@@ -53,6 +69,43 @@ export default function AiSessionPage() {
       setError(e?.message ?? "取得に失敗しました。");
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  /**
+   * 送信が時間切れになったあと、会話を取り直す (#1049 F7-18。AIAdvisorSheet と同じ扱い。src/lib/ai-chat-timeout.ts)。
+   * 画面全体を読み込み中にはしない (入力欄に戻した文を残すため)。取れなければ、今の表示と案内を残してエラーを出す。
+   * 送った文が届いていたら、入力欄に戻した文 (と添付の画像) を消す。返答がまだ無ければ案内を残す。
+   * 届いていなければ、案内を消して、入力欄の文をもう一度送るように知らせる
+   */
+  async function reloadAfterTimeout() {
+    const sent = timedOutSend;
+    if (!sent || reloadingAfterTimeout) return;
+    setReloadingAfterTimeout(true);
+    try {
+      let loaded: Message[];
+      try {
+        const res = await getApi().get<{ messages: Message[] }>(messagesPath);
+        loaded = res.messages ?? [];
+      } catch {
+        setError(TIMEOUT_RELOAD_FAILED_MESSAGE);
+        return;
+      }
+      setMessages(loaded);
+      const outcome = timeoutReloadOutcomeOf(sent, loaded);
+      if (outcome === "not-delivered") {
+        setTimedOutSend(null);
+        setError(TIMEOUT_NOT_DELIVERED_MESSAGE);
+        return;
+      }
+      setError(null);
+      setText((current) => clearInputIfDelivered(current, sent.text));
+      const restoredImage = restoredImageRef.current;
+      setAttachedImage((current) => (current !== null && current === restoredImage ? null : current));
+      restoredImageRef.current = null;
+      setTimedOutSend(outcome === "replied" ? null : { ...sent, delivered: true });
+    } finally {
+      setReloadingAfterTimeout(false);
     }
   }
 
@@ -91,9 +144,14 @@ export default function AiSessionPage() {
   async function send() {
     const trimmed = text.trim();
     if ((!trimmed && !attachedImage) || isSending) return;
+    // 時間切れのあとの取り直しで、送った文が届いたかを見分けるため、送る前に出ていたサーバーのメッセージの id を持つ
+    const knownMessageIds = messages.filter((m) => !m.id.startsWith("local-")).map((m) => m.id);
+
     setIsSending(true);
     setError(null);
     setStreamingContent(null);
+    setTimedOutSend(null);
+    restoredImageRef.current = null;
 
     const imageSnapshot = attachedImage;
 
@@ -254,7 +312,22 @@ export default function AiSessionPage() {
         return;
       }
       if (e?.name === "AbortError") {
-        setError("応答がタイムアウトしました（25秒）。しばらく待ってから再度お試しください。");
+        // 待ちを打ち切っただけで、サーバーでは返答の保存が続いていることがある (#1049 F7-18)。
+        // 失敗として終わらせず、会話を取り直す導線 (TIMEOUT_RELOAD_LABEL) を出し、送った文 (と添付の画像) を入力欄に戻す
+        // (届いていたかは取り直しで分かる。届いていたら、戻した文と画像はそこで消す)
+        setText((current) => restoreInputAfterTimeout(current, trimmed));
+        if (imageSnapshot) {
+          setAttachedImage((current) => {
+            if (current !== null) return current;
+            restoredImageRef.current = imageSnapshot;
+            return imageSnapshot;
+          });
+        }
+        if (sessionId) {
+          setTimedOutSend({ sessionId, text: trimmed, knownMessageIds, delivered: false });
+        } else {
+          setError(TIMEOUT_NOTICE_MESSAGE);
+        }
       } else {
         setError(e?.message ?? "送信に失敗しました。");
       }
@@ -525,6 +598,39 @@ export default function AiSessionPage() {
                       </View>
                     )}
                   </View>
+                </View>
+              )}
+
+              {/* 送信が時間切れになったときの、取り直しの導線 (#1049 F7-18) */}
+              {timedOutSend != null && timedOutSend.sessionId === sessionId && !isSending && (
+                <View
+                  testID="ai-chat-timeout-notice"
+                  style={{ gap: spacing.sm, padding: spacing.md, backgroundColor: colors.warningLight, borderRadius: radius.md }}
+                >
+                  <Text style={{ color: colors.warningText, fontSize: 13, lineHeight: 19 }}>
+                    {timedOutSend.delivered ? TIMEOUT_DELIVERED_NO_REPLY_MESSAGE : TIMEOUT_NOTICE_MESSAGE}
+                  </Text>
+                  <Pressable
+                    testID="ai-chat-timeout-reload"
+                    accessibilityRole="button"
+                    onPress={reloadAfterTimeout}
+                    disabled={reloadingAfterTimeout}
+                    style={{
+                      alignSelf: "flex-start",
+                      paddingVertical: spacing.sm,
+                      paddingHorizontal: spacing.md,
+                      borderRadius: radius.md,
+                      borderWidth: 1,
+                      borderColor: colors.accent,
+                      backgroundColor: colors.card,
+                    }}
+                  >
+                    {reloadingAfterTimeout ? (
+                      <ActivityIndicator size="small" color={colors.accent} />
+                    ) : (
+                      <Text style={{ color: colors.accent, fontWeight: "700", fontSize: 13 }}>{TIMEOUT_RELOAD_LABEL}</Text>
+                    )}
+                  </Pressable>
                 </View>
               )}
             </ScrollView>
