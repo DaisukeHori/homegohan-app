@@ -87,7 +87,7 @@ export default function CouponDetailPage() {
   const fetchRedemptions = useCallback(async () => {
     if (!coupon) return;
     try {
-      const res = await fetch(`/api/super-admin/coupons/${coupon.code}/redemptions`);
+      const res = await fetch(`/api/super-admin/coupons/${coupon.id}/redemptions`);
       const data = await res.json() as { data?: Redemption[] };
       if (data.data) setRedemptions(data.data);
     } catch {
