@@ -1,4 +1,16 @@
-import { applyGeneratedDishImage, type MealImageDish } from "../_shared/meal-image.ts";
+import {
+  applyGeneratedDishImage,
+  MEAL_DISH_WRITE_MAX_ATTEMPTS,
+  type MealImageDish,
+  type PlannedMealLockedWriteDecision,
+  type PlannedMealLockedWriteOutcome,
+  type PlannedMealWriter,
+  writePlannedMealDishesWithOptimisticLock,
+} from "../_shared/meal-image.ts";
+
+// 楽観的な排他の書き込み (#1527) は、積めなかった料理の印付け (markEnqueueFailedDishesInMeal) と共通にした (#1532)。
+// ここからも同じ名前で使えるように出し直す
+export { MEAL_DISH_WRITE_MAX_ATTEMPTS, type PlannedMealWriter };
 
 export interface GeneratedContentPart {
   text?: string;
@@ -31,18 +43,6 @@ export function extractInlineImageBase64(parts: GeneratedContentPart[] | null | 
   return null;
 }
 
-/** 献立の書き込みが使う、update の最小の形 (supabase-js のクライアントの一部。テストで作り物を渡せるように) */
-interface PlannedMealUpdateFilter {
-  eq(column: string, value: string): PlannedMealUpdateFilter;
-  is(column: string, value: null): PlannedMealUpdateFilter;
-  select(columns: string): PromiseLike<{ data: unknown; error: { message: string } | null }>;
-}
-export interface PlannedMealWriter {
-  from(table: "planned_meals"): {
-    update(values: Record<string, unknown>): PlannedMealUpdateFilter;
-  };
-}
-
 /** 献立の行を読んだときの状態 (planned_meals の id, dishes, image_url, updated_at)。updated_at は楽観的な排他の条件に使う */
 export interface PlannedMealSnapshot {
   id: string;
@@ -54,28 +54,16 @@ export interface PlannedMealSnapshot {
 /** 献立の行を読む関数 (無ければ null。読めなければ例外)。書けなかったとき (0 行) に読み直すのにも使う */
 export type PlannedMealReader = () => Promise<PlannedMealSnapshot | null>;
 
-/**
- * 献立の料理を書けなかったとき (0 行) に、読み直して書き直す回数の上限 (最初の 1 回を含む。#1527)。
- * 0 行 = 読んでから書くまでのあいだに、ほかの書き手 (同じ献立の別の料理のワーカー・利用者の保存) が先に書いたということ。
- * 1 つの献立に同時に書くのは、料理ごとのワーカー (料理は数品) と利用者の保存くらいなので、続けて負けるのは数回まで。
- * これを超えて負け続けるのは異常なので、エラーにしてジョブを失敗にする (料理は failed になり、作り直しで積み直せる)
- */
-export const MEAL_DISH_WRITE_MAX_ATTEMPTS = 5;
-
 /** 書かずにやめた理由: 献立が消えた / 料理が無くなった / 料理が変わった (ジョブの料理の subject_hash と一致しない) */
 export type MealDishWriteSkipReason = "meal_deleted" | "dish_missing" | "dish_changed";
 
-export type MealDishWriteOutcome =
-  | { status: "written" }
-  | { status: "skipped"; reason: MealDishWriteSkipReason };
+export type MealDishWriteOutcome = PlannedMealLockedWriteOutcome<MealDishWriteSkipReason>;
 
 /**
  * 読んだ行から、書く料理とカバーを決めた結果。
  * nextCover が undefined ならカバーを変えない (image_url に触れない)
  */
-export type MealDishWriteDecision =
-  | { kind: "write"; dishes: unknown[]; nextCover: string | null | undefined }
-  | { kind: "skip"; reason: MealDishWriteSkipReason };
+export type MealDishWriteDecision = PlannedMealLockedWriteDecision<MealDishWriteSkipReason>;
 
 /**
  * 献立の料理を、読んだときの行のままの場合にだけ書く (楽観的な排他。#1527)。
@@ -95,31 +83,7 @@ export async function writeMealDishesWithOptimisticLock(
     decide: (snapshot: PlannedMealSnapshot) => MealDishWriteDecision;
   },
 ): Promise<MealDishWriteOutcome> {
-  for (let attempt = 1; attempt <= MEAL_DISH_WRITE_MAX_ATTEMPTS; attempt += 1) {
-    const snapshot = await params.read();
-    if (!snapshot) return { status: "skipped", reason: "meal_deleted" };
-    const decision = params.decide(snapshot);
-    if (decision.kind === "skip") return { status: "skipped", reason: decision.reason };
-
-    const values: Record<string, unknown> = { dishes: decision.dishes, updated_at: new Date().toISOString() };
-    if (decision.nextCover !== undefined) values.image_url = decision.nextCover;
-
-    let query = db.from("planned_meals").update(values).eq("id", params.mealId);
-    query = snapshot.updated_at === null
-      ? query.is("updated_at", null)
-      : query.eq("updated_at", snapshot.updated_at);
-    if (decision.nextCover !== undefined) {
-      query = snapshot.image_url === null
-        ? query.is("image_url", null)
-        : query.eq("image_url", snapshot.image_url);
-    }
-    const { data, error } = await query.select("id");
-    if (error) throw new Error(`failed to update meal: ${error.message}`);
-    if (Array.isArray(data) && data.length > 0) return { status: "written" };
-  }
-  throw new Error(
-    `failed to update meal: the meal kept changing while writing (${MEAL_DISH_WRITE_MAX_ATTEMPTS} attempts)`,
-  );
+  return await writePlannedMealDishesWithOptimisticLock(db, params);
 }
 
 /** 読んだ行の料理の配列と、ジョブの料理 (dishIndex の料理が無い・subject_hash が違うなら、書かずにやめる理由) */

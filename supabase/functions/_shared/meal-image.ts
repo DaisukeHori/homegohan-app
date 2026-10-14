@@ -180,6 +180,16 @@ export interface EnqueueMealImageJobsResult {
 }
 
 /**
+ * 積んだ結果から、処理を起こす件数 (#1532)。積めた行と、同じ料理の待ち・処理中のジョブ (重複) の数。
+ * 0 (1 行も積めず、待ちのジョブも無い = 書き込みの失敗だけ・積む行が無い) なら処理を起こさない (空振りの呼び出しを出さない)。
+ * 重複も数えるのは、前の呼び出しが失敗して待ちのまま残ったジョブを、保存し直したときに処理させるため
+ * (待ちのジョブを定期的に拾う仕組みが無いので。Edge の saveMealToDb・積み直しの道具と同じ決まり)
+ */
+export function countMealImageJobsToProcess(result: EnqueueMealImageJobsResult): number {
+  return result.inserted + result.duplicates;
+}
+
+/**
  * 積む行を作る。trigger_source は triggerSource を渡せばそれを、無ければジョブの triggerSource を使う
  */
 export async function buildMealImageJobRecords(params: {
@@ -288,30 +298,141 @@ export function markDishImagesEnqueueFailed<TDish extends MealImageDish>(
 }
 
 /**
+ * 献立の料理を書けなかったとき (0 行) に、読み直して書き直す回数の上限 (最初の 1 回を含む。#1527)。
+ * 0 行 = 読んでから書くまでのあいだに、ほかの書き手 (同じ献立の別の料理のワーカー・利用者の保存・積めなかった料理の印付け) が先に書いたということ。
+ * 1 つの献立に同時に書くのは、料理ごとのワーカー (料理は数品) と利用者の保存くらいなので、続けて負けるのは数回まで。
+ * これを超えて負け続けるのは異常なので、書き手はエラーとして扱う
+ * (ワーカーはジョブを失敗にし、積めなかった料理の印付け (markEnqueueFailedDishesInMeal) は error を返す。#1532)
+ */
+export const MEAL_DISH_WRITE_MAX_ATTEMPTS = 5;
+
+/** 献立の書き込みが使う、update の最小の形 (supabase-js のクライアントの一部。テストで作り物を渡せるように) */
+export interface PlannedMealUpdateFilter {
+  eq(column: string, value: string): PlannedMealUpdateFilter;
+  is(column: string, value: null): PlannedMealUpdateFilter;
+  select(columns: string): PromiseLike<{ data: unknown; error: { message: string } | null }>;
+}
+export interface PlannedMealWriter {
+  from(table: 'planned_meals'): {
+    update(values: Record<string, unknown>): PlannedMealUpdateFilter;
+  };
+}
+
+/** 楽観的な排他で書くために読んだ献立の行の最小の形 (planned_meals の dishes, image_url, updated_at) */
+export interface PlannedMealLockSnapshot {
+  dishes: unknown;
+  image_url: string | null;
+  updated_at: string | null;
+}
+
+/**
+ * 読んだ行から、書く料理とカバーを決めた結果。
+ * nextCover が undefined ならカバーを変えない (image_url に触れない)。skip なら書かずにやめる
+ */
+export type PlannedMealLockedWriteDecision<TSkip extends string> =
+  | { kind: 'write'; dishes: unknown[]; nextCover: string | null | undefined }
+  | { kind: 'skip'; reason: TSkip };
+
+/** 楽観的な排他で書いた結果。献立が消えていたら meal_deleted */
+export type PlannedMealLockedWriteOutcome<TSkip extends string> =
+  | { status: 'written' }
+  | { status: 'skipped'; reason: TSkip | 'meal_deleted' };
+
+/**
+ * 献立の料理を、読んだときの行のままの場合にだけ書く (楽観的な排他。#1527 で process-meal-image-jobs に入れた形を共通にした。#1532)。
+ * 読む → decide で料理とカバーを決める → 読んだときの updated_at の行にだけ書く。0 行なら (読んでから書くまでに
+ * 別の書き手が書いた)、読み直して、最新の料理に決め直して書き直す。MEAL_DISH_WRITE_MAX_ATTEMPTS 回で書けなければ例外。
+ * updated_at は planned_meals の更新のトリガー (trg_planned_meals_updated_at) が更新のたびに now() にするので、
+ * どの書き手が書いても変わる (書き手が updated_at を送らなくても)。
+ * カバーを変えるときは、読んだときのカバーのままの行にだけ書く条件も重ねる (#1487 の整合ゲートのカバーの持ち主の二重の守り)。
+ * read は、無ければ null を返し、読めなければ例外を投げる。書き込みのエラーも例外にする
+ */
+export async function writePlannedMealDishesWithOptimisticLock<TSnapshot extends PlannedMealLockSnapshot, TSkip extends string>(
+  db: PlannedMealWriter,
+  params: {
+    mealId: string;
+    read: () => Promise<TSnapshot | null>;
+    decide: (snapshot: TSnapshot) => PlannedMealLockedWriteDecision<TSkip>;
+  },
+): Promise<PlannedMealLockedWriteOutcome<TSkip>> {
+  for (let attempt = 1; attempt <= MEAL_DISH_WRITE_MAX_ATTEMPTS; attempt += 1) {
+    const snapshot = await params.read();
+    if (!snapshot) return { status: 'skipped', reason: 'meal_deleted' };
+    const decision = params.decide(snapshot);
+    if (decision.kind === 'skip') return { status: 'skipped', reason: decision.reason };
+
+    const values: Record<string, unknown> = { dishes: decision.dishes, updated_at: new Date().toISOString() };
+    if (decision.nextCover !== undefined) values.image_url = decision.nextCover;
+
+    let query = db.from('planned_meals').update(values).eq('id', params.mealId);
+    query = snapshot.updated_at === null
+      ? query.is('updated_at', null)
+      : query.eq('updated_at', snapshot.updated_at);
+    if (decision.nextCover !== undefined) {
+      query = snapshot.image_url === null
+        ? query.is('image_url', null)
+        : query.eq('image_url', snapshot.image_url);
+    }
+    const { data, error } = await query.select('id');
+    if (error) throw new Error(`failed to update meal: ${error.message}`);
+    if (Array.isArray(data) && data.length > 0) return { status: 'written' };
+  }
+  throw new Error(
+    `failed to update meal: the meal kept changing while writing (${MEAL_DISH_WRITE_MAX_ATTEMPTS} attempts)`,
+  );
+}
+
+/** 積めなかった料理の印付けで読む献立の行 (planned_meals の dishes, image_url, updated_at, catalog_product_id, source_type) */
+export interface EnqueueFailedMealRow {
+  dishes?: unknown;
+  image_url?: unknown;
+  updated_at?: unknown;
+  catalog_product_id?: unknown;
+  source_type?: unknown;
+}
+
+/** markEnqueueFailedDishesInMeal の loadMeal が select する列 (楽観的な排他の updated_at と、商品の献立かを見る列) */
+export const ENQUEUE_FAILED_MEAL_COLUMNS = 'dishes, image_url, updated_at, catalog_product_id, source_type';
+
+/**
  * 積めなかった料理を、保存済みの献立 (planned_meals.dishes) の上で 'failed' にする (#1505)。例外は投げず、結果を返す。
- * loadMeal / saveDishes は呼び出し側のクライアント (service role) で planned_meals を読む・書く関数。
- * loadMeal は dishes に加えて catalog_product_id・source_type を読む (商品の献立か = isCatalogProductMeal を見るため)。
- * 書くのは料理 (dishes) だけで、献立のカバー (image_url) には触れない (カバーの持ち主の決まり isMealCoverAutoReplaceable)
+ * db は呼び出し側のクライアント (service role)。loadMeal はそのクライアントで planned_meals を
+ * ENQUEUE_FAILED_MEAL_COLUMNS で読む関数 (商品の献立か = isCatalogProductMeal を見るため catalog_product_id・source_type も読む)。
+ * 書くのは料理 (dishes) だけで、献立のカバー (image_url) には触れない (カバーの持ち主の決まり isMealCoverAutoReplaceable)。
+ * 書くときは読んだときの updated_at の行にだけ書き (楽観的な排他。#1532)、0 行なら (そのあいだにワーカーが料理の画像を書いた・
+ * 利用者が保存した) 読み直して当て直す (writePlannedMealDishesWithOptimisticLock)。以前は読んだ料理を条件なしで書いており、
+ * そのあいだに書かれたほかの料理の画像を巻き戻しえた
  */
 export async function markEnqueueFailedDishesInMeal(params: {
   failures: ReadonlyArray<{ dishIndex: number; subjectHash: string }>;
-  loadMeal: () => PromiseLike<{
-    data: { dishes?: unknown; catalog_product_id?: unknown; source_type?: unknown } | null;
-    error: MealImageJobWriteError | null;
-  }>;
-  saveDishes: (dishes: MealImageDish[]) => PromiseLike<{ error: MealImageJobWriteError | null }>;
+  mealId: string;
+  db: PlannedMealWriter;
+  loadMeal: () => PromiseLike<{ data: EnqueueFailedMealRow | null; error: MealImageJobWriteError | null }>;
 }): Promise<{ status: 'updated' | 'unchanged' | 'not_found' } | { status: 'error'; message: string }> {
   if (params.failures.length === 0) return { status: 'unchanged' };
   try {
-    const { data, error } = await params.loadMeal();
-    if (error) return { status: 'error', message: error.message ?? 'failed to load planned meal' };
-    if (!data) return { status: 'not_found' };
-    const stored: MealImageDish[] = Array.isArray(data.dishes) ? data.dishes : [];
-    const marked = markDishImagesEnqueueFailed(stored, params.failures, { mealIsCatalog: isCatalogProductMeal(data) });
-    if (!marked.changed) return { status: 'unchanged' };
-    const { error: saveError } = await params.saveDishes(marked.dishes);
-    if (saveError) return { status: 'error', message: saveError.message ?? 'failed to update planned meal' };
-    return { status: 'updated' };
+    const outcome = await writePlannedMealDishesWithOptimisticLock(params.db, {
+      mealId: params.mealId,
+      read: async () => {
+        const { data, error } = await params.loadMeal();
+        if (error) throw new Error(error.message ?? 'failed to load planned meal');
+        if (!data) return null;
+        return {
+          dishes: data.dishes,
+          image_url: typeof data.image_url === 'string' ? data.image_url : null,
+          updated_at: typeof data.updated_at === 'string' ? data.updated_at : null,
+          row: data,
+        };
+      },
+      decide: (snapshot) => {
+        const stored: MealImageDish[] = Array.isArray(snapshot.dishes) ? snapshot.dishes : [];
+        const marked = markDishImagesEnqueueFailed(stored, params.failures, { mealIsCatalog: isCatalogProductMeal(snapshot.row) });
+        if (!marked.changed) return { kind: 'skip', reason: 'unchanged' };
+        return { kind: 'write', dishes: marked.dishes, nextCover: undefined };
+      },
+    });
+    if (outcome.status === 'written') return { status: 'updated' };
+    return { status: outcome.reason === 'meal_deleted' ? 'not_found' : 'unchanged' };
   } catch (error) {
     return { status: 'error', message: error instanceof Error ? error.message : String(error) };
   }

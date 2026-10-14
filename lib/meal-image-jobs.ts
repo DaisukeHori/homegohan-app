@@ -4,6 +4,7 @@ import { refundAiUsage, type AiUsageResult } from '@/lib/plan/entitlements';
 import { createLogger } from '@/lib/db-logger';
 import {
   DEFAULT_MEAL_IMAGE_MODEL,
+  ENQUEUE_FAILED_MEAL_COLUMNS,
   buildMealImageJobRecords,
   insertMealImageJobRecords,
   markEnqueueFailedDishesInMeal,
@@ -200,14 +201,12 @@ export async function enqueueMealImageJobs(params: EnqueueJobsParams): Promise<E
   }
 
   if (failures.length > 0) {
+    // 読んだときの updated_at の行にだけ書く (ワーカーと同時でも、そのあいだに書かれた料理の画像を巻き戻さない。#1532)
     const marked = await markEnqueueFailedDishesInMeal({
       failures,
-      loadMeal: () => params.supabase.from('planned_meals').select('dishes, catalog_product_id, source_type').eq('id', params.plannedMealId).maybeSingle(),
-      saveDishes: (dishes) =>
-        params.supabase
-          .from('planned_meals')
-          .update({ dishes, updated_at: new Date().toISOString() })
-          .eq('id', params.plannedMealId),
+      mealId: params.plannedMealId,
+      db: params.supabase,
+      loadMeal: () => params.supabase.from('planned_meals').select(ENQUEUE_FAILED_MEAL_COLUMNS).eq('id', params.plannedMealId).maybeSingle(),
     });
     if (marked.status === 'error') {
       logger.warn('Failed to mark dishes whose meal image jobs were not enqueued', {

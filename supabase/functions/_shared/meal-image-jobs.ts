@@ -1,5 +1,6 @@
 import {
   buildMealImageJobRecords,
+  ENQUEUE_FAILED_MEAL_COLUMNS,
   insertMealImageJobRecords,
   markEnqueueFailedDishesInMeal,
   summarizeMealImageJobOutcomes,
@@ -57,15 +58,13 @@ export async function enqueueMealImageJobs(params: EnqueueMealImageJobsParams): 
   }
 
   if (failures.length > 0) {
+    // 読んだときの updated_at の行にだけ書く (ワーカーと同時でも、そのあいだに書かれた料理の画像を巻き戻さない。#1532)
     const marked = await markEnqueueFailedDishesInMeal({
       failures,
+      mealId: params.plannedMealId,
+      db: params.supabase,
       loadMeal: () =>
-        params.supabase.from("planned_meals").select("dishes, catalog_product_id, source_type").eq("id", params.plannedMealId).maybeSingle(),
-      saveDishes: (dishes) =>
-        params.supabase
-          .from("planned_meals")
-          .update({ dishes, updated_at: new Date().toISOString() })
-          .eq("id", params.plannedMealId),
+        params.supabase.from("planned_meals").select(ENQUEUE_FAILED_MEAL_COLUMNS).eq("id", params.plannedMealId).maybeSingle(),
     });
     if (marked.status === "error") {
       console.warn("[meal-image-jobs] Failed to mark dishes whose jobs were not enqueued", {
