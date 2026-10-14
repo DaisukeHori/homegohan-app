@@ -22,7 +22,7 @@
     "@react-native-community/slider": "4.5.7",
     "@react-native-masked-view/masked-view": "^0.3.2",
     "@supabase/supabase-js": "^2.78.0",
-    "expo": "~53.0.0",
+    "expo": "~57.0.28",
     "expo-constants": "~17.1.8",
     "expo-device": "~7.1.4",
     "expo-file-system": "~18.1.0",
