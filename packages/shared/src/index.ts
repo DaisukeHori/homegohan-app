@@ -10,6 +10,7 @@ export * from './nutrition-planner';
 export * from './design-tokens';
 export * from './legal-versions';
 export * from './service-unavailable';
+export * from './user-scoped-storage';
 export * from './org-challenges';
 export type {
   Json,
