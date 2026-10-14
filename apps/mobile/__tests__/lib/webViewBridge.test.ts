@@ -853,9 +853,10 @@ describe('buildOriginGuardScript() / buildNavigateScript()', () => {
 
   it('URL 中のクォート・バッククォート・</script> は文字列として扱われコードとして実行されない', () => {
     const nasty = `${ORIGIN}/x?q='+(globalThis.__pwned=1)+'"\`</script> `;
-    const sandbox: Record<string, unknown> = { window: { location: { origin: ORIGIN, assign: jest.fn() } } };
+    const assign = jest.fn();
+    const sandbox: Record<string, unknown> = { window: { location: { origin: ORIGIN, assign } } };
     vm.runInNewContext(buildNavigateScript(nasty), sandbox);
-    expect(((sandbox.window as any).location.assign as jest.Mock).mock.calls[0][0]).toBe(nasty);
+    expect(assign.mock.calls[0][0]).toBe(nasty);
     expect(sandbox.__pwned).toBeUndefined();
   });
 
@@ -880,9 +881,10 @@ describe('buildOriginGuardScript() / buildNavigateScript()', () => {
 
     it('guard: false でも URL は JSON.stringify でリテラル化され、コードとして実行されない', () => {
       const nasty = `${ORIGIN}/x?q='+(globalThis.__pwned2=1)+'"\`</script>`;
-      const sandbox: Record<string, unknown> = { window: { location: { origin: 'null', replace: jest.fn() } } };
+      const replace = jest.fn();
+      const sandbox: Record<string, unknown> = { window: { location: { origin: 'null', replace } } };
       vm.runInNewContext(buildNavigateScript(nasty, 'replace', { guard: false }), sandbox);
-      expect(((sandbox.window as any).location.replace as jest.Mock).mock.calls[0][0]).toBe(nasty);
+      expect(replace.mock.calls[0][0]).toBe(nasty);
       expect(sandbox.__pwned2).toBeUndefined();
     });
 
