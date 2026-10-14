@@ -25,9 +25,14 @@ const supabaseClient = {
   storage: { from: mockStorageFrom },
 };
 
-vi.mock('@/lib/supabase/server', () => ({
-  createClient: () => supabaseClient,
-}));
+// service_role のクライアントは本物の getSupabaseAdmin を通す (#1162。下で差し替えた @supabase/supabase-js の createClient で作る)
+vi.mock('@/lib/supabase/server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/supabase/server')>();
+  return {
+    createClient: () => supabaseClient,
+    getSupabaseAdmin: actual.getSupabaseAdmin,
+  };
+});
 
 // @supabase/supabase-js の直接インスタンス (service_role 用) もモック
 vi.mock('@supabase/supabase-js', () => ({
