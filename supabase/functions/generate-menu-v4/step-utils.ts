@@ -1,4 +1,9 @@
 import { CALENDAR_DATE_REQUIREMENT, isCalendarDate } from "../_shared/jst-date.ts";
+import {
+  MENU_REQUEST_EXISTING_PROTECTED_MESSAGE,
+  MENU_REQUEST_FAILED_MESSAGE,
+  MENU_REQUEST_PARTIAL_SAVE_MESSAGE,
+} from "../_shared/stored-failure-messages.ts";
 
 export type MealType = "breakfast" | "lunch" | "dinner" | "snack" | "midnight_snack";
 
@@ -206,6 +211,20 @@ export function computeNextCursor(params: { cursor: number; batchSize: number; l
   return Math.min(cursor + batchSize, length);
 }
 
+/** summarizeSaveResults の issueDetails に入れる件数の上限 (ログが長くなりすぎないように、先頭からこの件数だけ) */
+const SAVE_ISSUE_DETAIL_LIMIT = 20;
+
+/**
+ * 保存の結果から、リクエストの行に書く状態・進捗の文・失敗の文を作る。
+ *
+ * errorMessage は行の error_message に書き、画面がそのまま出す。そのため、枠ごとの理由 (SaveIssue.error。保存の失敗では
+ * 例外の文面・DB の生のエラー文が入る) は入れず、定型の文 (_shared/stored-failure-messages.ts) だけにする (#1478)。
+ * 枠ごとの理由は issueDetails (「枠のキー: 理由」を先頭から SAVE_ISSUE_DETAIL_LIMIT 件) で返すので、呼び出し側がログにだけ残す。
+ *   - 失敗が無く、保存しなかった枠も無い: null
+ *   - 1 件も保存できず、失敗がある (status failed): MENU_REQUEST_FAILED_MESSAGE
+ *   - 1 件も保存せず、すべて既存の献立を守った (status failed): MENU_REQUEST_EXISTING_PROTECTED_MESSAGE
+ *   - 一部だけ保存した (status completed): MENU_REQUEST_PARTIAL_SAVE_MESSAGE
+ */
 export function summarizeSaveResults(params: {
   totalSlots: number;
   savedCount: number;
@@ -217,6 +236,7 @@ export function summarizeSaveResults(params: {
   status: "completed" | "failed";
   message: string;
   errorMessage: string | null;
+  issueDetails: string[];
 } {
   const totalSlots = Math.max(0, Math.trunc(params.totalSlots ?? 0));
   const savedCount = Math.max(0, Math.trunc(params.savedCount ?? 0));
@@ -236,19 +256,22 @@ export function summarizeSaveResults(params: {
       ? `保存完了（成功${savedCount}/${totalSlots}、スキップ${skippedCount}、エラー${errorCount}）`
       : `${params.successMessage}${params.successSuffix ?? ""}`;
 
-  const issues = [...params.skipped, ...params.errors]
-    .slice(0, 20)
+  const issueDetails = [...params.skipped, ...params.errors]
+    .slice(0, SAVE_ISSUE_DETAIL_LIMIT)
     .map((issue) => `${issue.key}: ${issue.error}`);
 
-  const errorMessage = issues.length > 0
-    ? issues.join("; ")
-    : skippedOnly
-      ? "対象スロットは既存献立を保護したため保存されませんでした。"
-      : null;
+  const errorMessage = skippedOnly
+    ? MENU_REQUEST_EXISTING_PROTECTED_MESSAGE
+    : skippedCount === 0 && errorCount === 0
+      ? null
+      : status === "failed"
+        ? MENU_REQUEST_FAILED_MESSAGE
+        : MENU_REQUEST_PARTIAL_SAVE_MESSAGE;
 
   return {
     status,
     message,
     errorMessage,
+    issueDetails,
   };
 }

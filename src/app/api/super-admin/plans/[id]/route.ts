@@ -21,6 +21,7 @@ import {
   type PlanSubscriberCounts,
 } from '@/lib/super-admin/plan-subscribers';
 import { internalError } from '@/lib/api/errors';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 type RouteContext = { params: { id: string } };
 
@@ -238,19 +239,17 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
 
     // 監査ログ記録
-    try {
-      await supabase.from('admin_audit_logs').insert({
-        actor_id: user.id,
-        target_id: params.id,
-        target_type: 'subscription_plan',
-        action_type: 'update_plan',
-        details: { changes: updateData, plan_key: existing.plan_key },
-        severity: 'info',
-        ip_address: request.headers.get('x-forwarded-for'),
-      });
-    } catch (auditErr) {
-      console.warn('[super-admin/plans/[id] PATCH] audit log failed (graceful):', auditErr);
-    }
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      targetId: params.id,
+      targetType: 'subscription_plan',
+      actionType: 'update_plan',
+      details: { changes: updateData, plan_key: existing.plan_key },
+      severity: 'info',
+      request,
+      routeName: 'api/super-admin/plans/[id] PATCH',
+    });
 
     return NextResponse.json({ data: updated });
   } catch (err) {
@@ -301,19 +300,17 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
     }
 
     // 監査ログ記録
-    try {
-      await supabase.from('admin_audit_logs').insert({
-        actor_id: user.id,
-        target_id: params.id,
-        target_type: 'subscription_plan',
-        action_type: 'delete_plan',
-        details: { plan_key: existing.plan_key },
-        severity: 'warn',
-        ip_address: request.headers.get('x-forwarded-for'),
-      });
-    } catch (auditErr) {
-      console.warn('[super-admin/plans/[id] DELETE] audit log failed (graceful):', auditErr);
-    }
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      targetId: params.id,
+      targetType: 'subscription_plan',
+      actionType: 'delete_plan',
+      details: { plan_key: existing.plan_key },
+      severity: 'warn',
+      request,
+      routeName: 'api/super-admin/plans/[id] DELETE',
+    });
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {

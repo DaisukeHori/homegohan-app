@@ -3,21 +3,25 @@
  * 個別請求書詳細
  * operator/02-api-spec.md §9
  * 権限: admin, super_admin, finance
+ *
+ * #1326: 返すたびに admin.finance.invoice.view を監査ログに残す。対象は請求先のユーザー
+ * (サブスクリプションから引けないときは対象なしで、Stripe のイベント ID を details に入れる)。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { getStripeDashboardBase } from '@/lib/stripe/links';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: { id: string } },
 ) {
   try {
-    await requireRole(['admin', 'super_admin', 'finance']);
+    const actor = await requireRole(['admin', 'super_admin', 'finance']);
     const supabase = await createClient();
 
     const { data: evt, error } = await supabase
@@ -89,6 +93,21 @@ export async function GET(
       processed_at: evt.processed_at ?? null,
       error_message: evt.error_message ?? null,
     };
+
+    // #1326: 請求書 (金額・請求先の Stripe ID) を返す前に、誰が誰の請求書を見たかを監査ログに残す。
+    // 404 は上で返しているので、ここに来るのは情報を返すときだけ。target_id は uuid 列なので、
+    // Stripe のイベント ID (evt_...) は details に入れる。details は ID と返した項目名だけで、金額などの値は入れない。
+    // 記録に失敗しても閲覧は止めない (失敗は db-logger に error で残る)
+    await recordAdminAudit({
+      supabase,
+      actorId: actor.id,
+      actionType: 'admin.finance.invoice.view',
+      targetId: userId,
+      targetType: userId ? 'user' : 'stripe_event',
+      details: { stripe_event_id: evt.id, viewed_fields: Object.keys(invoice) },
+      request,
+      routeName: 'api/admin/finance/invoices/[id] GET',
+    });
 
     return NextResponse.json({ data: invoice });
   } catch (err) {

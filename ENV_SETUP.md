@@ -117,7 +117,41 @@ LIMIT 20;
 - `status_code` が 200 → 認証は通っています。
 - `status_code` が空で `timed_out` が true → 認証は通っています。取り込みに 5 秒以上かかると、pg_net が先に待つのをやめるためです（正常）。
 
-値のずれを自動で見つける仕組みは、まだありません（#1196 の残りの項目として別に対応します）。それまでは、ローテーションの後と、カタログ取り込みの結果がおかしいときに、上のクエリで確かめてください。
+上のクエリは「ずれた結果」を見るものです。値そのもののずれは、次の「値のずれの確かめ方」のスクリプトで、呼び出しを待たずに確かめられます。
+
+### 値のずれの確かめ方（`check-cron-secret-drift`）
+
+`node scripts/check-cron-secret-drift.mjs` は、3 か所の保管場所から **値ではなく SHA-256 のダイジェストだけ** を集めて比べます（#1196）。表示するのは、一致・不一致と、ダイジェストの先頭 8 文字だけです。どの保管場所も読むだけで、書き換えません。本番の資格情報が要るので、オーナーが手元で実行します（CI には組み込んでいません）。
+
+```bash
+# Edge Function secrets・Vault・Vercel の 3 か所を確かめる
+# (Vault の接続先は、値をコマンドラインに書かずに環境変数 SUPABASE_DB_URL で渡す。psql で接続する)
+node scripts/check-cron-secret-drift.mjs --project-ref <project-ref>
+
+# psql を使わないとき: SQL Editor で下の SQL を実行し、出たダイジェスト (16 進 64 文字) を渡す
+node scripts/check-cron-secret-drift.mjs --project-ref <project-ref> --vault-digest <ダイジェスト>
+```
+
+```sql
+-- Vault のダイジェストだけを返す (値は返さない)。行が出なければ --vault-missing を付けて実行する
+SELECT coalesce(encode(extensions.digest(convert_to(decrypted_secret, 'UTF8'), 'sha256'), 'hex'), '') AS digest
+FROM vault.decrypted_secrets WHERE name = 'app_cron_secret';
+```
+
+| 保管場所 | ダイジェストの取り方 | 要るもの |
+|---|---|---|
+| Edge Function secrets（`CRON_SECRET`・`SERVICE_ROLE_SECRET`・`CRON_SECRET_PREVIOUS`） | `supabase secrets list -o json`。Supabase は値を返さず、SHA-256 のダイジェストだけを返します | supabase CLI（ログイン済み、または `SUPABASE_ACCESS_TOKEN`） |
+| Vault（`app_cron_secret`） | 上の SQL を psql で実行（接続先は環境変数 `SUPABASE_DB_URL`。`--db-url-env` で別の名前にできます）、または SQL Editor で実行して `--vault-digest` で渡す | psql、または SQL Editor |
+| Vercel（`CRON_SECRET`・`CRON_SECRET_PREVIOUS`） | `vercel env pull` を、権限 700 の一時ディレクトリに umask 077 で書かせ、ダイジェストを計算したらすぐ消します（既定は `--vercel-environment production`）。Sensitive の変数は値の代わりに `[SENSITIVE]`（古い vercel CLI では空）で書かれるので、ある・無いだけを確かめます | vercel CLI（ログイン済み。このディレクトリにリンクしていないときは `--vercel-project` / `--vercel-scope`） |
+
+判定（`--help` に全部のオプションがあります）:
+
+- **FAIL**（終了コード 1）: Edge Function secrets の `CRON_SECRET`（無いときだけ `SERVICE_ROLE_SECRET`）と Vault の `app_cron_secret` が食い違う（pg_cron の呼び出しが 401）／どちらかが無い・空（503・例外）／Vercel の `CRON_SECRET` が無い（cron の API が 503）。
+- **WARN**: Vault がまだ Edge Function secrets の `CRON_SECRET_PREVIOUS`（旧い値）と同じ（入れ替えの途中。下の手順の 2 と 3 の間）／Vault が新しい値なのに `CRON_SECRET_PREVIOUS` が残っている（手順 5 の外し忘れ）／`CRON_SECRET_PREVIOUS` が現行と同じ／Vercel の `CRON_SECRET` が Sensitive の変数で値を取り出せない（`vercel env pull` では値の代わりに `[SENSITIVE]`、古い vercel CLI では空で書かれるため、ある・無いしか分かりません。`--vercel-must-match` を付けていても FAIL にはせず WARN にします）。
+- **INFO**: Vercel の `CRON_SECRET` が Supabase 側と同じか違うか。上の表のとおり Vercel は独立しているので、違っていても失敗にしません（同じ値で運用すると決めたときは `--vercel-must-match` で FAIL にできます）。
+- 読めなかった保管場所がある（CLI が無い・ログインしていない・接続できない）と、終了コード 2 です。`--skip-edge` / `--skip-vault` / `--skip-vercel` で、その保管場所を外して実行できます。
+
+ローテーションの後（下の手順の 4 と 5）と、カタログ取り込みや比較ランキングの集計の結果がおかしいときに実行してください。
 
 ### Edge Function secrets の設定手順
 
@@ -158,7 +192,8 @@ Edge Function は、現行の `CRON_SECRET` に加えて `CRON_SECRET_PREVIOUS`�
    ```
 
    1 分ほど待って、上の `net._http_response` のクエリで **401 / 503 が出ていない** ことを確かめます。
-5. **旧い値を外す。** 翌日の定期実行（UTC 3:00〜4:00）が終わるまで待ち、Edge Function のログに `CRON_SECRET_PREVIOUS (旧いシークレット) で認証されました` が出ていない（= 旧い値を使っている送り手が残っていない）ことを確かめてから、`CRON_SECRET_PREVIOUS` を削除します。外すまでは旧い値でも通ってしまうので、入れ替えの目的が漏えい対策なら、できるだけ早く外してください。
+   あわせて `node scripts/check-cron-secret-drift.mjs` で、Edge Function secrets と Vault が一致していること（Edge ⇔ Vault が PASS）を確かめます（上の「値のずれの確かめ方」）。
+5. **旧い値を外す。** 翌日の定期実行（UTC 3:00〜4:00）が終わるまで待ち、Edge Function のログに `CRON_SECRET_PREVIOUS (旧いシークレット) で認証されました` が出ていない（= 旧い値を使っている送り手が残っていない）ことを確かめてから、`CRON_SECRET_PREVIOUS` を削除します。削除した後に `node scripts/check-cron-secret-drift.mjs` を実行し、`CRON_SECRET_PREVIOUS` の WARN が消えていることを確かめます。外すまでは旧い値でも通ってしまうので、入れ替えの目的が漏えい対策なら、できるだけ早く外してください。
 
 途中で戻したくなったときは:
 

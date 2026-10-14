@@ -3,7 +3,9 @@ import { router } from "expo-router";
 import { useRef, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { AccountCredentialsSection } from "../../src/components/settings/AccountCredentialsSection";
 import { Button, Card, PageHeader, SectionHeader } from "../../src/components/ui";
+import { accountDeletionErrorOf } from "../../src/lib/account-deletion-error";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
 import { signOutAfterAccountDeletion } from "../../src/lib/signOut";
@@ -11,8 +13,10 @@ import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing } from "../../src/theme";
 import { typography } from "../../src/theme/typography";
 
-/** 削除の API が理由を返さなかったときの文 (アカウントは消えていないので、もう一度試せる) */
-const ACCOUNT_DELETE_FAILED_MESSAGE = "アカウントの削除に失敗しました。時間をおいて再度お試しください。";
+/** 削除の API が失敗したときの Alert の見出し (組織のオーナー・家族の代表者で退会できないとき以外) */
+const ACCOUNT_DELETE_FAILED_TITLE = "削除失敗";
+/** 組織のオーナー・家族の代表者 (409) で退会できないときの Alert の見出し */
+const ACCOUNT_DELETE_BLOCKED_TITLE = "退会できません";
 /** 削除は済んだが、端末のログアウトに失敗したときの文 */
 const ACCOUNT_DELETED_SIGN_OUT_FAILED_MESSAGE =
   "アカウントの削除は完了しましたが、端末側のログアウト処理に失敗しました。お手数ですが、アプリを再起動してください。";
@@ -59,8 +63,9 @@ export default function AccountSettingsPage() {
       const api = getApi();
       await api.post("/api/account/delete", { confirm: true });
     } catch (e: unknown) {
-      const message = e instanceof Error && e.message ? e.message : ACCOUNT_DELETE_FAILED_MESSAGE;
-      Alert.alert("削除失敗", message);
+      // 生の例外の文 (`HTTP 409 Conflict: {...}` など) は出さない。409 は譲渡や解散が先だというサーバーの案内を出す (#1447)
+      const failure = accountDeletionErrorOf(e);
+      Alert.alert(failure.kind === "blocked" ? ACCOUNT_DELETE_BLOCKED_TITLE : ACCOUNT_DELETE_FAILED_TITLE, failure.message);
       deletingRef.current = false;
       setDeleting(false);
       return;
@@ -82,7 +87,9 @@ export default function AccountSettingsPage() {
   return (
     <View testID="account-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader title="アカウント" />
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      {/* #1187: ログイン情報・パスワードの変更・メールアドレスの変更 (Web の設定 → アカウントと同じ構成) */}
+      <AccountCredentialsSection />
 
       <Card variant="error" style={{ gap: spacing.md }}>
         <SectionHeader

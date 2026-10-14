@@ -146,14 +146,16 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
 
     // 監査ログ (状態変更は記録必須)
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: currentUser.id,
-      action_type: 'admin.support.ticket.update',
-      target_id: params.id,
-      target_type: 'support_ticket',
+    await recordAdminAudit({
+      supabase,
+      actorId: currentUser.id,
+      actionType: 'admin.support.ticket.update',
+      targetId: params.id,
+      targetType: 'support_ticket',
       details: updates,
       severity: 'info',
-      ip_address: request.headers.get('x-forwarded-for'),
+      request,
+      routeName: 'api/admin/support/tickets/[id] PATCH',
     });
 
     return NextResponse.json({ data: ticket });

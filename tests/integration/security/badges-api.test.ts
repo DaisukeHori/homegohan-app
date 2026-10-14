@@ -30,6 +30,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { AWARDABLE_BADGE_CODES } from '../../../src/lib/badges/awardable';
 import { apiCall } from '../helpers/api';
+import { jstDaysAgo } from '../helpers/jst-days';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -88,11 +89,15 @@ async function createUser(label: string): Promise<TestUser> {
   return { id: data.user.id, jwt: signIn.data.session.access_token };
 }
 
-/** route.ts の連続日数計算と同じ方法で「n 日前」の日付文字列を作る */
+/**
+ * 「n 日前」の日付文字列。route.ts の連続日数 (consecutiveDayStreak) と同じく、JST の今日から数えた暦日にする (#1545)。
+ * 以前は toISOString (UTC の暦日) で作っていたので、JST の 0〜9 時はサーバーの「昨日」を「今日」として入れていた。
+ * ただし、このファイルの入れ方では日付がまるごと 1 日ずれても返る数とバッジは変わらない (ルートは数を日付で絞らず、
+ * 連続日数が変わらないことは tests/integration-jst-days.test.ts で確かめている。だから K-8 の赤の原因ではない)。
+ * ここはサーバーの暦日に揃えるための整理
+ */
 function dayStr(daysAgo: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - daysAgo);
-  return d.toISOString().split('T')[0];
+  return jstDaysAgo(daysAgo);
 }
 
 interface MealSeed {

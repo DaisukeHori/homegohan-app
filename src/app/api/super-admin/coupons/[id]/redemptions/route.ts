@@ -3,6 +3,9 @@
  *
  * operator/01-data-model.md §3.6 準拠
  * 権限: super_admin のみ
+ *
+ * #1326: 適用履歴は利用者のサブスクリプションと値引き額を返すため、1 件以上返したとき、
+ * 1 回の取得 = 1 行で super_admin.coupon.view_redemptions を監査ログに残す (対象はクーポン。条件と件数だけ)。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -11,12 +14,13 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
 import { CouponRedemptionsQuerySchema } from '@/lib/super-admin/coupons-schemas';
 import { internalError } from '@/lib/api/errors';
+import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
 
 type RouteContext = { params: { id: string } };
 
 export async function GET(request: NextRequest, { params }: RouteContext) {
   try {
-    await requireRole(['super_admin']);
+    const actor = await requireRole(['super_admin']);
     const supabase = await createClient();
 
     // クーポン ID(UUID)で取得
@@ -58,6 +62,21 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
 
     if (error) {
       return internalError('GET /api/super-admin/coupons/[id]/redemptions', error, {}, { shape: 'nested' });
+    }
+
+    const rows = redemptions ?? [];
+    // #1326: 0 件のときは情報を返していないので記録しない。記録に失敗しても一覧は返す (失敗は db-logger に残る)
+    if (rows.length > 0) {
+      await recordAdminAudit({
+        supabase,
+        actorId: actor.id,
+        actionType: 'super_admin.coupon.view_redemptions',
+        targetId: coupon.id,
+        targetType: 'coupon',
+        details: buildListViewDetails({ page, per_page }, rows.length, count ?? null),
+        request,
+        routeName: 'api/super-admin/coupons/[id]/redemptions GET',
+      });
     }
 
     return NextResponse.json({

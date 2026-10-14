@@ -4,18 +4,22 @@
  *
  * operator/02-api-spec.md §14 準拠
  * 権限: sales, admin, super_admin
+ *
+ * #1326: 詳細は担当者の連絡先と活動履歴を返すため、返すたびに admin.sales.lead.view を監査ログに残す
+ * (対象はリード。details は返した項目名と活動履歴の件数だけで、値は入れない)。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { updateLeadSchema } from '@/lib/admin/sales-schemas';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 type RouteContext = { params: { id: string } };
 
-export async function GET(_request: NextRequest, { params }: RouteContext) {
+export async function GET(request: NextRequest, { params }: RouteContext) {
   try {
-    await requireRole(['sales', 'admin', 'super_admin']);
+    const currentUser = await requireRole(['sales', 'admin', 'super_admin']);
     const supabase = await createClient();
 
     const { data: lead, error } = await supabase
@@ -56,7 +60,23 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
       .eq('lead_id', params.id)
       .order('created_at', { ascending: false });
 
-    return NextResponse.json({ data: { ...lead, activities: activities ?? [] } });
+    const body = { ...lead, activities: activities ?? [] };
+
+    // #1326: 詳細を返す前に、誰がどのリードを見たかを監査ログに残す。404 は上で返しているので、
+    // ここに来るのは情報を返すときだけ。details は項目名と活動履歴の件数だけ (連絡先などの値は入れない)。
+    // 記録に失敗しても閲覧は止めない (失敗は db-logger に error で残る)
+    await recordAdminAudit({
+      supabase,
+      actorId: currentUser.id,
+      actionType: 'admin.sales.lead.view',
+      targetId: params.id,
+      targetType: 'sales_lead',
+      details: { viewed_fields: Object.keys(body), activity_count: body.activities.length },
+      request,
+      routeName: 'api/admin/sales/leads/[id] GET',
+    });
+
+    return NextResponse.json({ data: body });
   } catch (err) {
     if (err instanceof AuthError) {
       return NextResponse.json(
@@ -129,14 +149,16 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
 
     // 監査ログ
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: currentUser.id,
-      action_type: 'admin.sales.lead.update',
-      target_id: params.id,
-      target_type: 'sales_lead',
+    await recordAdminAudit({
+      supabase,
+      actorId: currentUser.id,
+      actionType: 'admin.sales.lead.update',
+      targetId: params.id,
+      targetType: 'sales_lead',
       details: updates,
       severity: 'info',
-      ip_address: request.headers.get('x-forwarded-for'),
+      request,
+      routeName: 'api/admin/sales/leads/[id] PATCH',
     });
 
     return NextResponse.json({ data: lead });
