@@ -217,7 +217,10 @@ const userBadgeRows = [
     id: 'ub1',
     user_id: USER_ID,
     badge_id: 'badge-champion',
-    // 集計の Edge Function が付与の記録に残す期間 (period_type / period_start)。ランキングの期間と同じ (#1500)
+    // 集計の Edge Function が付与の記録に残す期間 (period_type / period_start)。
+    // 実装では、バッジを付けるのは確定の回 (previousPeriod: true) だけなので、残る期間は直前の期間 (#1491)。
+    // このルートは今の期間のランキングだけを返し、期間も照合する (#1500) ので、実際には付いたバッジの賞はこのルートに出ない。
+    // ここではバッジから賞を出す経路を確かめるため、わざとランキングと同じ期間にしている (期間が合わない場合は下の #1500 の describe)
     context_json: { segment_id: 'seg-all', metric_id: 'met-cal', period_type: 'weekly', period_start: '2026-01-05' },
     message: '全ユーザーでカロリーバランス1位',
     badges: {
@@ -507,6 +510,8 @@ describe('GET /api/comparison/rankings: レスポンスの形 (並列化で変�
 // user_badges は (利用者, バッジ) ごとに 1 件だけで、一度付くと消えない。付与の記録 (context_json) には、付いた期間
 // (period_type / period_start) が残る。以前はセグメントと指標だけで照合していたので、過去の期間に付いたバッジが、
 // 今の期間のランキングの賞として出続けた。
+// バッジを付けるのは確定の回 (直前の期間を集計し直す回。#1491) だけで、このルートは今の期間だけを返すので、
+// 実際の運用ではバッジの期間はランキングの期間と合わず、バッジの賞は出ない (下の「同じなら出す」はフィクスチャで合わせた場合)。
 // バッジが無いときに順位・百分位・平均比から賞を出す既存の挙動 (表示だけ。永続しない) は変えない。
 
 describe('GET /api/comparison/rankings: 賞のバッジは期間も照合する (#1500)', () => {
