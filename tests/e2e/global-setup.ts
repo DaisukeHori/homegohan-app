@@ -23,6 +23,9 @@ import { chromium, type FullConfig } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
 import { getExistingUserPassword } from "./helpers/credentials";
+import { acceptLegalConsentIfShown } from "./helpers/legal-consent";
+import { ensureAiConsentGranted } from "./helpers/ai-consent";
+import { waitForLoginFormReady } from "./helpers/login-form";
 import { seedClassifyFixtures } from "./setup/seed-classify-fixtures";
 
 /** backward compat: 既存コードが参照するエクスポート (user-01 のパスを返す) */
@@ -251,6 +254,11 @@ async function setupUserSession(
             }
           }
           if (!navigated) throw new Error(`[global-setup] ${email}: /home に遷移できませんでした`);
+          // #1174: 規約の同意画面に回された (サーバーが LEGAL_CONSENT_ENFORCE=on で、このユーザーの同意の記録が無い) ときは同意する。
+          // 同意は DB に残るので、以降の spec はどれも同意画面に回されない。同意画面でなければ何もしない
+          if (await acceptLegalConsentIfShown(page)) {
+            console.log(`[global-setup] 規約の同意画面に回されたため、同意しました (${email})`);
+          }
           console.log(`[global-setup] 認証確認成功 (${email}): ${page.url()}`);
           sessionInjected = true;
         }
@@ -259,7 +267,7 @@ async function setupUserSession(
       if (!sessionInjected) {
         console.log(`[global-setup] UI ログインにフォールバック (${email}, attempt ${attempt})`);
         await page.goto(`${baseURL}/login`);
-        await page.waitForLoadState("networkidle");
+        await waitForLoginFormReady(page);
         // #1057 (UX1-16 round-2): キーがメールアドレス単位 (`auth_last_fail_ts:<email>`) に
         // 変わったため prefix 一致で全て削除する
         await page.evaluate(() => {
@@ -289,6 +297,9 @@ async function setupUserSession(
         await page.locator("button[type=submit]").click();
         await navPromise;
 
+        // #1174: 規約の同意画面に回されたときは同意する (上の Cookie 注入の経路と同じ)
+        await acceptLegalConsentIfShown(page);
+
         if (page.url().includes("/onboarding")) {
           await page.evaluate(async () => {
             try {
@@ -299,6 +310,11 @@ async function setupUserSession(
           await page.waitForURL("**/home", { timeout: 60_000 });
         }
       }
+
+      // 外国の AI 事業者への提供の同意 (T15 / #1154)。未同意の利用者のデータは、サーバーが AI へ送る手前で止める
+      // (403 AI_CONSENT_REQUIRED) ので、AI を使う spec が止められないよう記録しておく。同意は DB に残る。
+      // すでに現行の版に同意していれば何もしない
+      await ensureAiConsentGranted(page, baseURL);
 
       // storageState を atomic write (tmp path -> rename) で保存
       const storageStateTmpPath = `${storageStatePath}.tmp.${process.pid}`;

@@ -9,7 +9,7 @@
  *   5. 既存活動ユーザー (existing_user_auto_skip) — non-sandbox meal あり
  *   6. onboarding 未完 (onboarding_not_completed)
  *
- * Requires: SUPABASE_INTEGRATION_TEST=1, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, API_BASE_URL
+ * Requires: SUPABASE_INTEGRATION_TEST=1, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, INTEGRATION_BASE_URL (or API_BASE_URL)
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -22,6 +22,7 @@ import {
 } from '../helpers/supabase';
 
 const BASE_URL =
+  process.env.INTEGRATION_BASE_URL ??
   process.env.API_BASE_URL ??
   process.env.PLAYWRIGHT_BASE_URL ??
   'http://localhost:3000';

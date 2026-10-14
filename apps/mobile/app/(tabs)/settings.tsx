@@ -8,10 +8,13 @@ import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text,
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getApi, getApiBaseUrl } from "../../src/lib/api";
+import { errorOfFailedResponse, isStoppedByServerError, stoppedByServerAlertTitleOf } from "../../src/lib/failed-response";
+import { getPrivacyUrl, getSupportMailtoUrl, getTermsUrl } from "../../src/lib/siteConfig";
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing, radius, shadows } from "../../src/theme";
-import { clearUserScopedAsyncStorage } from "../../src/lib/user-storage";
+import { signOutWithCleanup } from "../../src/lib/signOut";
+import { AI_CONSENT_SCREEN_PATH, AI_CONSENT_SETTINGS_ENTRY_TITLE } from "../../src/lib/ai-consent";
 
 type WeekStartDay = "sunday" | "monday";
 
@@ -163,9 +166,8 @@ export default function SettingsTab() {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
+      // メンテナンス中などの 503 は固定の文の例外にする (#1486)
+      if (!res.ok) throw errorOfFailedResponse(res.status, await res.text().catch(() => ""));
       const text = await res.text();
       const today = new Date().toISOString().slice(0, 10);
       const filename = `homegohan-export-${today}.json`;
@@ -185,6 +187,10 @@ export default function SettingsTab() {
       }
     } catch (err) {
       console.error("JSON export error:", err);
+      if (isStoppedByServerError(err)) {
+        Alert.alert(stoppedByServerAlertTitleOf(err), err.message);
+        return;
+      }
       Alert.alert("エラー", "JSONエクスポートに失敗しました。時間をおいて再度お試しください。");
     } finally {
       setExportingJson(false);
@@ -205,9 +211,8 @@ export default function SettingsTab() {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
+      // メンテナンス中などの 503 は固定の文の例外にする (#1486)
+      if (!res.ok) throw errorOfFailedResponse(res.status, await res.text().catch(() => ""));
       const text = await res.text();
       const today = new Date().toISOString().slice(0, 10);
       const filename = `homegohan-meals-${today}.csv`;
@@ -227,6 +232,10 @@ export default function SettingsTab() {
       }
     } catch (err) {
       console.error("CSV export error:", err);
+      if (isStoppedByServerError(err)) {
+        Alert.alert(stoppedByServerAlertTitleOf(err), err.message);
+        return;
+      }
       Alert.alert("エラー", "CSVエクスポートに失敗しました。時間をおいて再度お試しください。");
     } finally {
       setExportingCsv(false);
@@ -235,8 +244,8 @@ export default function SettingsTab() {
 
   async function handleLogout() {
     try {
-      await clearUserScopedAsyncStorage(user?.id ?? null);
-      await supabase.auth.signOut();
+      // push token の削除 → ユーザー別データの削除 → サインアウトの順 (#1038 F7-10)
+      await signOutWithCleanup(user?.id ?? null);
     } catch {}
     router.replace("/");
   }
@@ -351,6 +360,15 @@ export default function SettingsTab() {
               testID="settings-export-csv-row"
               onPress={handleExportCsv}
               right={exportingCsv ? <Text style={{ fontSize: 12, color: "#6B7280" }}>処理中…</Text> : undefined}
+            />
+            {/* 外国の AI 事業者への提供の同意の確認・撤回 (T15 / #1154)。AI のコメントの案内の一文が「設定の「…」から」と指す先 */}
+            <SettingRow
+              icon="🤖"
+              iconBg="#EEF2FF"
+              title={AI_CONSENT_SETTINGS_ENTRY_TITLE}
+              subtitle="日本国外の AI 事業者への提供の確認・撤回"
+              testID="settings-ai-consent-row"
+              onPress={() => router.push(AI_CONSENT_SCREEN_PATH)}
               last
             />
             {/* #1144: 「トレーナーと共有」の項目は外した。トレーナーなどに共有する機能が無いのに、項目だけが画面にあったため。
@@ -383,20 +401,20 @@ export default function SettingsTab() {
               iconBg="#F9FAFB"
               title="利用規約"
               testID="settings-tos-row"
-              onPress={() => Linking.openURL("https://homegohan.app/terms")}
+              onPress={() => Linking.openURL(getTermsUrl())}
             />
             <SettingRow
               icon="🔒"
               iconBg="#F9FAFB"
               title="プライバシーポリシー"
               testID="settings-privacy-row"
-              onPress={() => Linking.openURL("https://homegohan.app/privacy")}
+              onPress={() => Linking.openURL(getPrivacyUrl())}
             />
             <SettingRow
               icon="✉️"
               iconBg="#F9FAFB"
               title="お問い合わせ"
-              onPress={() => Linking.openURL("mailto:support@homegohan.jp")}
+              onPress={() => Linking.openURL(getSupportMailtoUrl())}
               last
             />
           </View>

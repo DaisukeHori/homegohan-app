@@ -79,8 +79,9 @@ data/raw/
 /deno.lock
 supabase/functions/deno.lock
 
-# scripts/supabase-local.sh が組み立てるローカル Supabase の作業ディレクトリ
+# scripts/supabase-local.sh が組み立てるローカル Supabase の作業ディレクトリ (枠 0 は .supabase-local/、枠 n は .supabase-local-s<n>/)
 /.supabase-local/
+/.supabase-local-s*/
 
 # Claude Code agent worktrees (transient, never tracked)
 .claude/worktrees/

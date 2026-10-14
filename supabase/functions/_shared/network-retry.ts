@@ -12,6 +12,9 @@ export interface TimeoutOptions {
 
 export interface FetchRetryOptions extends RetryOptions, TimeoutOptions {}
 
+/** fetchWithRetry が、応答が 2xx でなかったときに投げる例外 (状態コードと本文を持つ) */
+export type FetchRetryError = Error & { status?: number; body?: string };
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -159,8 +162,10 @@ export async function fetchWithRetry(
     const response = await fetchWithTimeout(input, init, opts);
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      const error = new Error(`${label} failed: ${response.status}${errorText ? ` - ${errorText}` : ""}`) as Error & { status?: number };
+      const error = new Error(`${label} failed: ${response.status}${errorText ? ` - ${errorText}` : ""}`) as FetchRetryError;
       error.status = response.status;
+      // 呼び出し側が本文を見分けられるように、本文そのものも持たせる (例: 呼んだ先が同意の判定で止めたか。T15 / #1154)
+      error.body = errorText;
       throw error;
     }
     return response;

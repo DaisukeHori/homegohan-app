@@ -3,12 +3,18 @@
  * 権限: admin, super_admin, content_moderator
  *
  * レスポンス形式:
- *   { mealFlags: [], recipeFlags: [], aiFlags: [] }
+ *   { mealFlags: [], recipeFlags: [], aiFlags: [], aiFlagsSupported: false }
  *
  * #1041 (F4-04) 修正: 実在しない `moderation_items` テーブル参照を廃止し、
  * 実テーブル (moderation_flags / recipe_flags) を参照するよう修正。
- * ai_content はバックエンドテーブルが未実装のため常に空配列 (要 migration、捏造しない)。
  * DB エラー発生時は空配列にフォールバックせず 500 を返す (fail-closed)。
+ *
+ * #1128: ai_content (AI コンテンツ) の審査は準備中 (未対応) で、バックエンドのテーブルが無い。
+ * aiFlags は常に空配列だが、これは「通報 0 件」ではなく「未対応」の意味なので、
+ * `aiFlagsSupported: false` を添えて区別できるようにする (オーナー判断 2026-10-08)。
+ * aiFlags を配列のままにしているのは、配布済みの古いモバイルアプリの運営画面が
+ * `...(res.aiFlags ?? [])` と配列として展開しており、形を変えるとその版が壊れるため
+ * (この画面はリポジトリからは #1389 で削除済みだが、端末に入っている古い版は残る)。
  *
  * #1041 round-2 (F) 修正: `moderation_flags_admin_all` RLS ポリシーは
  * admin/super_admin のみで content_moderator を許可しない。requireRole は
@@ -70,11 +76,11 @@ export async function GET(request: Request) {
       fetchModerationList(supabaseAdmin, 'recipe', status, 50),
     ]);
 
-    // ai_content はバックエンドテーブル未実装 (要 migration)。既存レスポンス形式との
-    // 互換のため空配列を返すが、これは「該当なし」ではなく「未サポート」を意味する。
+    // ai_content はバックエンドテーブル未実装 (準備中)。既存レスポンス形式との互換のため
+    // 空配列を返すが、これは「該当なし」ではなく「未対応」を意味する (aiFlagsSupported: false)。
     const aiFlags: never[] = [];
 
-    return NextResponse.json({ mealFlags, recipeFlags, aiFlags });
+    return NextResponse.json({ mealFlags, recipeFlags, aiFlags, aiFlagsSupported: false });
   } catch (err) {
     console.error('[api/admin/moderation] fetch error:', err instanceof Error ? err.message : err);
     return NextResponse.json(

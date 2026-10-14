@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Flame, Award, ChevronRight, Activity, CheckCircle2, Calendar, X,
 } from "lucide-react";
+import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
 
 const colors = {
   bg: "#FAF9F7",
@@ -15,12 +16,8 @@ const colors = {
   textMuted: "#9A9A9A",
   accent: "#E07A5F",
   accentLight: "#FDF0ED",
-  success: "#4CAF50",
-  successLight: "#E8F5E9",
-  warning: "#FF9800",
-  warningLight: "#FFF3E0",
-  error: "#F44336",
-  errorLight: "#FFEBEE",
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
   purple: "#7C4DFF",
   purpleLight: "#EDE7F6",
   blue: "#2196F3",
@@ -147,7 +144,7 @@ export default function StreaksPage() {
       {error && (
         <div className="mx-4 mb-4 p-4 rounded-xl flex items-center gap-3" style={{ backgroundColor: colors.errorLight }}>
           <Activity size={20} style={{ color: colors.error }} />
-          <p className="text-sm" style={{ color: colors.error }}>{error}</p>
+          <p className="text-sm" style={{ color: colors.dangerText }}>{error}</p>
         </div>
       )}
 
@@ -304,7 +301,7 @@ export default function StreaksPage() {
                   {achieved ? (
                     <div className="flex items-center justify-center gap-2 py-2 px-4 rounded-xl" style={{ backgroundColor: colors.successLight }}>
                       <CheckCircle2 size={18} style={{ color: colors.success }} />
-                      <span className="text-sm font-medium" style={{ color: colors.success }}>達成しました！</span>
+                      <span className="text-sm font-medium" style={{ color: colors.successText }}>達成しました！</span>
                     </div>
                   ) : (
                     <div className="py-2 px-4 rounded-xl" style={{ backgroundColor: colors.bg }}>

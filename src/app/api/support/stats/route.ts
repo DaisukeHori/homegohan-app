@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { jstToday } from '@/lib/jst-day-ranges';
+import { jstDayStartTimestamp } from '@/lib/date-utils';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
@@ -13,6 +15,11 @@ function internalError(err: unknown, metadata?: Record<string, unknown>) {
   return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
 }
 
+/** 「自分が対応した件数（今週）」の日数 */
+const RECENT_RESOLVED_DAYS = 7;
+/** 1 日のミリ秒 */
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 // サポート統計取得
 // 権限: support / admin / super_admin (共通の requireRole()、#1161)
 export async function GET(_request: Request) {
@@ -24,9 +31,11 @@ export async function GET(_request: Request) {
     // admin_audit_logs も、SELECT できるのは admin / super_admin だけで、support は自分の行も読めない。
     const supabase = getSupabaseAdmin();
 
-    const today = new Date().toISOString().split('T')[0];
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    // 「今日解決した件数」は JST の今日の 0 時から数える (#1433)。resolved_at は timestamptz なので、
+    // 日付の文字列 (UTC の暦日) をそのまま渡すと UTC の 0 時 (= JST 9 時) からになり、JST 0:00〜8:59 は前日の分を数えていた
+    const todayStart = jstDayStartTimestamp(jstToday());
+    // 「今週」= 今から 7 日 (7 × 24 時間) 前まで。ローカル時刻の setDate を使わず、実行環境のタイムゾーンに左右されないようにする
+    const sevenDaysAgo = new Date(Date.now() - RECENT_RESOLVED_DAYS * MS_PER_DAY);
 
     const [
       pendingRes,
@@ -50,7 +59,7 @@ export async function GET(_request: Request) {
         .from('inquiries')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'resolved')
-        .gte('resolved_at', today),
+        .gte('resolved_at', todayStart),
       supabase
         .from('inquiries')
         .select('*', { count: 'exact', head: true }),

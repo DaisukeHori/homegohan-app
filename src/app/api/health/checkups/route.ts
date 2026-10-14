@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { jstToday } from '@/lib/jst-day-ranges';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 import { sanitizeHealthCheckupPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
+import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiDailyLimitSkippedField, consumeAiUsage } from '@/lib/plan/entitlements';
 import { clampIntParam } from '@/lib/http-params';
 
 // 健康診断一覧を取得
@@ -27,7 +31,7 @@ export async function GET(request: NextRequest) {
     .limit(limit);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/health/checkups', error, { userId: user.id, table: 'health_checkups' });
   }
 
   // 経年レビューも取得
@@ -97,29 +101,41 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (insertError) {
-    return NextResponse.json({ error: insertError.message }, { status: 500 });
+    return internalError('POST /api/health/checkups', insertError, { userId: user.id, table: 'health_checkups' });
   }
 
-  // 個別レビューを生成
+  // 個別レビュー・経年レビューは、数値を外国の AI 事業者に送って作る。同意が無ければ (判定に失敗した場合も)、
+  // 記録の保存だけを行い、レビューは作らない (T15 / #1154)。応答の aiSkipped で画面に知らせる
+  const aiConsent = await checkUserAiConsent(supabase, user.id);
+
+  // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・健康診断の保存・同意の判定のあと) に、操作 1 回につき 1 回数える
+  // (個別レビューと経年レビューの 2 回 AI を呼ぶが、操作としては 1 回)。同意が無く AI へ送らないときは数えない。
+  // 上限に達していれば、記録の保存だけを行い、レビューは作らない (応答の aiSkipped: AI_DAILY_LIMIT で画面に知らせる)。
+  // 判定に失敗したときは止めない
+  const aiUsage = aiConsent.allowed ? await consumeAiUsage(user.id, 'health_review') : null;
+
   let individualReview = null;
-  try {
-    individualReview = await generateIndividualReview(checkup);
-
-    // 個別レビューを保存
-    await supabase
-      .from('health_checkups')
-      .update({ individual_review: individualReview })
-      .eq('id', checkup.id);
-  } catch (err) {
-    console.error('Individual review generation failed:', err);
-  }
-
-  // 経年レビューを自動更新
   let longitudinalReview = null;
-  try {
-    longitudinalReview = await updateLongitudinalReview(supabase, user.id);
-  } catch (err) {
-    console.error('Longitudinal review update failed:', err);
+  if (aiConsent.allowed && aiUsage?.allowed) {
+    // 個別レビューを生成
+    try {
+      individualReview = await generateIndividualReview(checkup);
+
+      // 個別レビューを保存
+      await supabase
+        .from('health_checkups')
+        .update({ individual_review: individualReview })
+        .eq('id', checkup.id);
+    } catch (err) {
+      console.error('Individual review generation failed:', err);
+    }
+
+    // 経年レビューを自動更新
+    try {
+      longitudinalReview = await updateLongitudinalReview(supabase, user.id);
+    } catch (err) {
+      console.error('Longitudinal review update failed:', err);
+    }
   }
 
   return NextResponse.json({
@@ -128,6 +144,8 @@ export async function POST(request: NextRequest) {
       individual_review: individualReview,
     },
     longitudinalReview,
+    ...aiConsentSkippedField(aiConsent),
+    ...aiDailyLimitSkippedField(aiUsage),
   });
 }
 
@@ -280,7 +298,8 @@ LDL: ${c.ldl_cholesterol ?? '-'} mg/dL
     .from('health_checkup_longitudinal_reviews')
     .upsert({
       user_id: userId,
-      review_date: new Date().toISOString().split('T')[0],
+      // レビューの日付は JST の今日 (#1433)
+      review_date: jstToday(),
       checkup_ids: checkupIds,
       trend_analysis: {
         overallAssessment: reviewData.overallAssessment,

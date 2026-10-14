@@ -6,6 +6,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { getCorsHeaders } from '../_shared/cors.ts'
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
+import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
 import OpenAI from "openai";
 import { createFastLLMClient, getFastLLMModel } from "../_shared/fast-llm.ts";
 import {
@@ -13,6 +14,9 @@ import {
   DATASET_EMBEDDING_DIMENSIONS,
   fetchSingleDatasetEmbedding,
 } from "../../../shared/dataset-embedding.mjs";
+import { requireAiConsentForUser } from "../_shared/ai-consent-guard.ts";
+import { aiChatDisabledResponseForUser } from "../_shared/ai-chat-flag.ts";
+import { missingEnvError } from "../_shared/missing-env.ts";
 
 console.log("Knowledge-GPT Function loaded (Fallback Mode)")
 
@@ -24,7 +28,7 @@ function getOpenAI(): OpenAI {
 // ===== テキスト埋め込み生成 =====
 async function embedText(text: string, dimensions: number = DATASET_EMBEDDING_DIMENSIONS): Promise<number[]> {
   const apiKey = Deno.env.get(DATASET_EMBEDDING_API_KEY_ENV);
-  if (!apiKey) throw new Error(`Missing ${DATASET_EMBEDDING_API_KEY_ENV}`);
+  if (!apiKey) throw missingEnvError([DATASET_EMBEDDING_API_KEY_ENV]);
   const embedding = await fetchSingleDatasetEmbedding(text, { apiKey, inputType: "query" });
   if (!Array.isArray(embedding) || embedding.length !== dimensions) {
     throw new Error("Dataset embedding API returned invalid vector");
@@ -400,6 +404,10 @@ Deno.serve(async (req) => {
     // サービスロールキーかどうかを確認（署名検証されないJWTペイロードのroleは信用せず、完全一致のみで判定）
     const isServiceRole = serviceRoleKey.length > 0 && token === serviceRoleKey;
 
+    // #1177 ユーザー自身の JWT で直接呼ばれたときの利用者 ID (この経路だけ、AI へ送る直前に利用回数を記録する)。
+    // service role (Next.js の AI 相談 API) の呼び出しは null のまま (Next.js が記録済み)
+    let directJwtUserId: string | null = null;
+
     if (!isServiceRole) {
       const supabaseAuth = createClient(
         Deno.env.get("SUPABASE_URL") ?? "",
@@ -413,6 +421,22 @@ Deno.serve(async (req) => {
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
+
+      // AI 相談の緊急停止スイッチ (feature_flags の ai_chat_enabled) が OFF なら、AI へ送らずに止める (#1486。503 AI_CHAT_DISABLED)。
+      // Next.js の AI 相談の API (src/lib/ai/ai-chat-gate.ts) と同じ判定。利用者の JWT で直接呼ばれた場合だけ見る
+      // (service role での呼び出しは、AI 相談の API が呼ぶ前に見ている)。止まっている間は同意の判定も利用回数の記録もしない。
+      // 読めないときは止めない (ON。Next.js の isFeatureEnabled と同じ)
+      const aiChatDisabled = await aiChatDisabledResponseForUser(user.id, corsHeaders);
+      if (aiChatDisabled) return aiChatDisabled;
+
+      // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)。
+      // 利用者の JWT で直接呼ばれた場合。service role での呼び出しは、AI 相談の API
+      // (src/app/api/ai/consultation/sessions/[sessionId]/messages) が送る前に同じ判定で止めている
+      const aiConsentDenied = await requireAiConsentForUser(user.id, corsHeaders);
+      if (aiConsentDenied) return aiConsentDenied;
+
+      // 同意の判定を通った利用者だけを記録する対象にする (未同意で止めた呼び出しは記録しない)
+      directJwtUserId = user.id;
     }
 
     const body: ChatCompletionRequest = await req.json().catch(() => ({ messages: [] }));
@@ -430,6 +454,14 @@ Deno.serve(async (req) => {
     console.log("Knowledge-GPT received request");
     console.log("Messages count:", body.messages.length);
     console.log("Mode:", mode, "Streaming:", isStreaming);
+
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に数える。
+    // ユーザー自身の JWT で直接呼ばれた場合だけ (Next.js が数え済みの印があれば数えない。判定に失敗したときは止めない)。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT
+    if (directJwtUserId) {
+      const aiUsage = await consumeEdgeAiUsage(req, directJwtUserId, "consultation");
+      if (!aiUsage.allowed) return aiDailyLimitEdgeResponse(aiUsage, corsHeaders);
+    }
 
     // LLMトークン使用量計測
     const executionId = generateExecutionId();

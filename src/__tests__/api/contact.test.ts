@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { DEFAULT_EMAIL_FROM } from '@/lib/site-config';
 
 const mockGetUser = vi.fn();
 const mockSingle = vi.fn();
@@ -28,10 +29,10 @@ const validBody = {
   message: 'テストメッセージ',
 };
 
-function makeRequest(body: unknown) {
+function makeRequest(body: unknown, ip = '203.0.113.1') {
   return new Request('http://localhost/api/contact', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-forwarded-for': '203.0.113.1' },
+    headers: { 'Content-Type': 'application/json', 'x-forwarded-for': ip },
     body: JSON.stringify(body),
   }) as any;
 }
@@ -99,6 +100,67 @@ describe('POST /api/contact (#1044 F6-19)', () => {
     expect(res.status).toBe(200);
     expect(json.success).toBe(true);
     expect(mockInsert).toHaveBeenCalled();
+  });
+});
+
+// #1194 管理者への通知メールの送信元は、ほかのメールと同じく src/lib/site-config.ts (EMAIL_FROM) で決まる
+describe('POST /api/contact: 管理者への通知メールの送信元 (#1194)', () => {
+  // 上のテストと同じ IP だと 1 分あたりの上限 (10 回) に近づくため、別の IP から送る
+  const NOTIFY_TEST_IP = '203.0.113.99';
+  const fetchSpy = vi.fn();
+
+  beforeEach(() => {
+    vi.stubEnv('RESEND_API_KEY', 're_test_key');
+    vi.stubEnv('ADMIN_NOTIFICATION_EMAIL', 'admin@example.com');
+    fetchSpy.mockReset();
+    fetchSpy.mockResolvedValue({ ok: true, status: 200, text: async () => '' });
+    vi.stubGlobal('fetch', fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Resend へ送られたリクエストの本文 */
+  const sentBody = () => JSON.parse(fetchSpy.mock.calls[0][1].body as string) as { from: string; to: string[] };
+
+  it('EMAIL_FROM があれば、それを送信元にする', async () => {
+    vi.stubEnv('EMAIL_FROM', 'ほめゴハン <noreply@mail.example.test>');
+
+    const res = await POST(makeRequest(validBody, NOTIFY_TEST_IP));
+
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][0]).toBe('https://api.resend.com/emails');
+    expect(sentBody().from).toBe('ほめゴハン <noreply@mail.example.test>');
+    expect(sentBody().to).toEqual(['admin@example.com']);
+  });
+
+  it('EMAIL_FROM が未設定なら、従来と同じ既定の送信元 (DEFAULT_EMAIL_FROM)', async () => {
+    vi.stubEnv('EMAIL_FROM', '');
+
+    await POST(makeRequest(validBody, NOTIFY_TEST_IP));
+
+    expect(sentBody().from).toBe(DEFAULT_EMAIL_FROM);
+  });
+
+  it('Resend が送信を断っても (送信元のドメインが未検証など)、問い合わせの受け付けは成功のまま', async () => {
+    fetchSpy.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => '{"message":"The example.test domain is not verified."}',
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await POST(makeRequest(validBody, NOTIFY_TEST_IP));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    // 失敗は握りつぶさず、ログに残す
+    expect(consoleError).toHaveBeenCalledWith('Admin notification failed:', 403, expect.stringContaining('not verified'));
+    consoleError.mockRestore();
   });
 });
 

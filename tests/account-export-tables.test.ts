@@ -6,6 +6,7 @@
  *      必ず分類されていること (新しい表の分類漏れ = 将来のデータ漏れ / エクスポート漏れを防ぐ)
  *   2. 許可リストの表・列がスキーマに実在し、並び順が主キーの全列を含むこと
  *   3. 出力する列に、秘密っぽい列名・他のユーザーを指す列が残っていないこと
+ *   4. 保存された失敗の文が入りうる名前の列 (error / failure / result) に生のエラー文を入れても、transform を通すと出ないこと (#1172)
  * を確認する。DB には接続しない。
  */
 import { describe, expect, it } from 'vitest';
@@ -67,6 +68,18 @@ const SENSITIVE_NAME = /password|passwd|secret|token|api_?key|credential|private
 /** 他のユーザーを指す列のうち、出力する表に残ってよいもの (本人判定の列、または transform で置き換える列) */
 const OTHER_USER_COLUMN_ALLOWLIST = new Set(['support_ticket_messages.sender_id']);
 
+/**
+ * 保存された失敗の文が入りうる列の名前 (#1172)。Edge Function・route が catch で捕まえた例外の文面 (DB の生のエラー文) を
+ * 書く列は error_message / last_error / failure_reason / result (jsonb の { error }) のような名前を持つ。
+ * 日時・件数の列 (error_at / error_count など) は文を持たないので除く。名前で見る見張りで、網羅はしない
+ * (失敗の文を、失敗らしくない名前の列に書く書き方は捕まえない。レビューで見る)
+ */
+const STORED_FAILURE_COLUMN = /error|failure|^result(_json)?$/i;
+const NOT_TEXT_COLUMN = /(_at|_count)$/i;
+/** 失敗の文の列に入れる、生のエラー文の目印 */
+const RAW_FAILURE_MARK = 'export_raw_failure_mark_1172';
+const RAW_FAILURE_TEXT = `duplicate key value violates unique constraint "${RAW_FAILURE_MARK}"`;
+
 const schema = loadSchemaModel();
 const exportedNames = new Set(ACCOUNT_EXPORT_TABLES.map((t) => t.table));
 const excludedNames = new Set(Object.keys(ACCOUNT_EXPORT_EXCLUDED));
@@ -123,6 +136,27 @@ function otherUserExposedColumns(spec: ExportTableSpec, model: Map<string, Schem
     .filter((fk) => fk.refSchema === 'auth' && fk.refTable === 'users')
     .map((fk) => fk.column)
     .filter((c) => exposed.includes(c) && c !== scopeColumn && !OTHER_USER_COLUMN_ALLOWLIST.has(`${spec.table}.${c}`));
+}
+
+/** 出力される列のうち、保存された失敗の文が入りうる名前のもの */
+function storedFailureColumns(spec: ExportTableSpec, model: Map<string, SchemaTable> = schema): string[] {
+  return selectedColumns(spec, model)
+    .filter((c) => !(spec.omit ?? []).includes(c))
+    .filter((c) => STORED_FAILURE_COLUMN.test(c) && !NOT_TEXT_COLUMN.test(c));
+}
+
+/**
+ * 保存された失敗の文が入りうる列のうち、生のエラー文 (文字列のまま / jsonb の { error }) を入れると、
+ * 表の transform を通しても書き出しにそのまま出るもの
+ */
+function rawFailureLeakingColumns(spec: ExportTableSpec, model: Map<string, SchemaTable> = schema): string[] {
+  return storedFailureColumns(spec, model).filter((column) =>
+    [RAW_FAILURE_TEXT, { error: RAW_FAILURE_TEXT }].some((value) => {
+      const row = { [column]: value };
+      const shaped = spec.transform ? spec.transform(row, { userId: 'export-raw-failure-user' }) : row;
+      return JSON.stringify(shaped).includes(RAW_FAILURE_MARK);
+    }),
+  );
 }
 
 /** 分類が必要な表 (ユーザーの識別列を持つ / 出力する表の子表) と、その理由 */
@@ -373,6 +407,41 @@ describe('出力する列に、秘密・他人を指す列が残っていない'
     for (const name of ['cookie_consents', 'terms_acceptances', 'external_data_consents']) {
       expect(exportedNames.has(name), name).toBe(true);
     }
+  });
+});
+
+// #1172: 保存された失敗の文 (catch で捕まえた例外の文面を書く列) を書き出しに入れるときも、生のエラー文は出さない。
+// ai_action_logs.result.error (#1172 の前の runConsultationAction が DB の生のエラー文を入れていた) が transform 無しで出ていた
+describe('出力する列に、保存された生のエラー文が残っていない (#1172)', () => {
+  it.each(ACCOUNT_EXPORT_TABLES.map((t) => [t.table, t] as const))('%s', (_name, spec) => {
+    expect(
+      rawFailureLeakingColumns(spec),
+      '失敗の文が入りうる列。transform で、こちらで書いた文以外を固定の文にする (src/lib/account-export-tables.ts の redact*)',
+    ).toEqual([]);
+  });
+
+  it('見張りの対象: いまのスキーマで失敗の文が入りうる出力の列は、この 3 つ (どれも transform で絞っている)', () => {
+    const watched = ACCOUNT_EXPORT_TABLES.flatMap((spec) => storedFailureColumns(spec).map((c) => `${spec.table}.${c}`)).sort();
+    expect(watched).toEqual(['ai_action_logs.result', 'recipe_requests.error_message', 'weekly_menu_requests.error_message']);
+  });
+
+  it('検知の自己確認: 出力する表に失敗の文の列を足す migration を重ねると検知される (日時・件数の列は対象外)', () => {
+    const model = new Map([...schema].map(([name, table]) => [name, { ...table, columns: [...table.columns], foreignKeys: [...table.foreignKeys] }]));
+    applyMigration(
+      `
+      alter table public.meals add column last_error text, add column error_count integer, add column failure_reason text;
+      `,
+      model,
+    );
+
+    expect(rawFailureLeakingColumns(ACCOUNT_EXPORT_TABLES.find((t) => t.table === 'meals')!, model)).toEqual([
+      'last_error',
+      'failure_reason',
+    ]);
+    // transform で絞っている表は、同じ値を入れても出ない
+    expect(rawFailureLeakingColumns(ACCOUNT_EXPORT_TABLES.find((t) => t.table === 'ai_action_logs')!, model)).toEqual([]);
+    // 元のスキーマには影響しない
+    expect(schema.get('meals')!.columns).not.toContain('last_error');
   });
 });
 

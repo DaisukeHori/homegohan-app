@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
 // Resend モック (send.ts が resend を import するため)
 vi.mock('resend', () => {
@@ -11,8 +11,9 @@ vi.mock('resend', () => {
 import { renderFamilyPromoteEmail } from '@/lib/emails/membership/family-promote';
 import type { FamilyPromoteEmailVars } from '@/lib/emails/membership/family-promote';
 import { EmailEnvelopeSchema } from '@/lib/emails/send';
+import { DEFAULT_EMAIL_FROM } from '@/lib/site-config';
 
-const acceptUrl = `https://homegohan.app/family/promotions/${'a'.repeat(64)}`;
+const acceptUrl = `https://app.example.test/family/promotions/${'a'.repeat(64)}`;
 
 const baseVars: FamilyPromoteEmailVars = {
   email_address: 'taro@example.com',
@@ -22,6 +23,15 @@ const baseVars: FamilyPromoteEmailVars = {
   accept_url: acceptUrl,
   expires_at: '2026-10-21T02:00:00.000Z',
 };
+
+// 送信元の既定値 (src/lib/site-config.ts) を確かめるテスト。手元の EMAIL_FROM に左右されないよう未設定から始める
+beforeEach(() => {
+  vi.stubEnv('EMAIL_FROM', '');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('renderFamilyPromoteEmail', () => {
   it('EmailEnvelopeSchema で valid な envelope を返す', () => {
@@ -42,7 +52,7 @@ describe('renderFamilyPromoteEmail', () => {
 
   it('from が ほめゴハン noreply である', () => {
     const envelope = renderFamilyPromoteEmail(baseVars);
-    expect(envelope.from).toBe('ほめゴハン <noreply@homegohan.app>');
+    expect(envelope.from).toBe(DEFAULT_EMAIL_FROM);
   });
 
   it('テキスト本文に email_address 様 が含まれる', () => {

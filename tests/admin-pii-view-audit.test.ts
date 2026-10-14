@@ -679,6 +679,23 @@ describe('GET /api/admin/support/tickets/[id] -> admin.support.ticket.view', () 
     });
   });
 
+  it('起票した利用者が退会していて user_id が NULL のときは、チケット自体を対象にして記録を残す (#1175)', async () => {
+    mockRequireRole.mockResolvedValue(supportActor);
+    setup({ ticketResult: { data: { ...ticket, user_id: null }, error: null } });
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    const rows = userScopedClient.auditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      actor_id: SUPPORT_ID,
+      action_type: 'admin.support.ticket.view',
+      target_id: TICKET_ID,
+      target_type: 'support_ticket',
+    });
+  });
+
   it('details はチケット ID と項目名だけ (件名・本文の値は入れない)', async () => {
     setup();
 

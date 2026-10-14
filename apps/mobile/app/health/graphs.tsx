@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { healthGraphDateSlots, healthGraphFetchStartDate } from "../../src/lib/health-graph-dates";
 import { Link } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
@@ -241,9 +242,8 @@ export default function HealthGraphsPage() {
       const days =
         period === "week" ? 7 : period === "month" ? 30 : period === "3months" ? 90 : 365;
 
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - days);
-      const startStr = startDate.toISOString().slice(0, 10);
+      // 取得の開始日は JST の暦日 (#1433)
+      const startStr = healthGraphFetchStartDate(days);
 
       const [recordsRes, checkupsRes, goalsRes] = await Promise.all([
         api.get<{ records: HealthRecord[] }>(
@@ -296,12 +296,8 @@ export default function HealthGraphsPage() {
     const days =
       period === "week" ? 7 : period === "month" ? 30 : period === "3months" ? 90 : 365;
     const result: { date: string; value: number | null; fromCheckup?: boolean }[] = [];
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days + 1);
-
-    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-      const dateStr = d.toISOString().slice(0, 10);
+    // 横軸の日付は JST の今日を最後の日とする days 日分 (#1433)
+    for (const dateStr of healthGraphDateSlots(days)) {
       const rec = records.find((r) => r.record_date === dateStr);
       let value: number | null = null;
       if (rec) {

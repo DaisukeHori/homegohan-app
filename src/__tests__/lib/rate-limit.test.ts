@@ -451,3 +451,42 @@ describe('upload カテゴリ (Upstash 設定時)', () => {
     await expect(checkRateLimit('user-upload-up-4', 'upload')).rejects.toBe(failure);
   });
 });
+
+describe('client-log カテゴリ (#1493。POST /api/log、in-memory フォールバック): ユーザーごとに 30 回/分 + 直近 24 時間で 1000 回', () => {
+  const PER_MINUTE = 30;
+  const PER_DAY = 1000;
+
+  it('分あたり: 同じ key では 30 回まで通り、31 回目は windowSec=60 で止まる', async () => {
+    const results = [];
+    for (let i = 0; i < PER_MINUTE + 1; i++) {
+      results.push(await rateLimit.checkRateLimit('user-client-log-1', 'client-log'));
+    }
+
+    expect(results.slice(0, PER_MINUTE).every((r) => r.success && r.limit === PER_MINUTE && r.windowSec === 60)).toBe(true);
+    expect(results[PER_MINUTE - 1].remaining).toBe(0);
+    expect(results[PER_MINUTE]).toMatchObject({ success: false, limit: PER_MINUTE, remaining: 0, windowSec: 60 });
+  });
+
+  it('日次: 分あたりの枠を戻しながら 1000 回まで通り、1001 回目は windowSec=86400 で止まる', async () => {
+    const startedAt = Date.now();
+    let passed = 0;
+    let blocked: Awaited<ReturnType<typeof rateLimit.checkRateLimit>> | null = null;
+    for (let i = 0; i < PER_DAY + 1; i++) {
+      const result = await rateLimit.checkRateLimit('user-client-log-2', 'client-log');
+      if (result.success) passed += 1;
+      else blocked ??= result;
+      // 分あたりの枠 (30 回) を使い切る前に 1 分進めて、日次の判定だけを確かめる
+      if ((i + 1) % PER_MINUTE === 0) vi.advanceTimersByTime(MINUTE_MS + 1_000);
+    }
+
+    expect(passed).toBe(PER_DAY);
+    expect(blocked).toMatchObject({ success: false, limit: PER_DAY, remaining: 0, windowSec: DAY_SEC, reset: startedAt + DAY_MS });
+  });
+
+  it('ほかのカテゴリ (upload) とは別に数える', async () => {
+    for (let i = 0; i < PER_MINUTE; i++) await rateLimit.checkRateLimit('user-client-log-3', 'client-log');
+    expect((await rateLimit.checkRateLimit('user-client-log-3', 'client-log')).success).toBe(false);
+
+    expect(await rateLimit.checkRateLimit('user-client-log-3', 'upload')).toMatchObject({ success: true, remaining: 9 });
+  });
+});

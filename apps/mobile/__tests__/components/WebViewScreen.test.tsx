@@ -65,6 +65,7 @@ jest.mock('expo-sharing', () => ({
 // jest.mock のファクトリはホイストされるため、外部の変数を参照できない。
 // 代わりに jest.fn() をファクトリ内で定義し、後から spyOn で差し替える。
 jest.mock('../../src/lib/supabase', () => ({
+  SUPABASE_AUTH_STORAGE_KEY: 'sb-abcdef1234-auth-token',
   supabase: {
     auth: {
       getSession: jest.fn(),
@@ -214,11 +215,10 @@ describe('ケース3: injectedJS localStorage 書込みスクリプト', () => {
     });
 
     const js: string = mockWebViewProps.injectedJavaScriptBeforeContentLoaded;
-    // PROJECT_REF は EXPO_PUBLIC_SUPABASE_URL からモジュールロード時に抽出される。
-    // Jest 環境では env がモジュールロード前に設定されないため PROJECT_REF が空になる場合がある。
-    // ここでは localStorage キーのプレフィックス "sb-" とサフィックス "-auth-token" が
-    // スクリプト内に含まれることを確認する (キーのスキームの正当性を検証)。
-    expect(js).toMatch(/sb-[^']*-auth-token/);
+    // キーは lib/supabase.ts のセッションの保存キー (SUPABASE_AUTH_STORAGE_KEY) と同じ値を使う (#1434)。
+    // 以前は EXPO_PUBLIC_SUPABASE_URL を '' にフォールバックして自前で作り、未設定だと sb--auth-token になっていた
+    expect(js).toContain("window.localStorage.setItem('sb-abcdef1234-auth-token', ");
+    expect(js).not.toContain('sb--auth-token');
   });
 
   it('injectedJS に access_token が埋め込まれる', async () => {

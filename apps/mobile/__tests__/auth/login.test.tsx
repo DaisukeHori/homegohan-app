@@ -6,7 +6,9 @@
  *  1. email を lowercase に正規化して signInWithPassword を呼ぶ
  *  2. 空入力時はバリデーションエラーを出して API を呼ばない
  *  3. 30 秒 rate-limit が AsyncStorage から復元され UI に表示される
- *  4. ログイン後の振り分け (#1122): admin / super_admin も一般ユーザーと同じ振り分けになり、
+ *  4. (#1038 F7-08) Google ログイン: openAuthSessionAsync の result.url からその場でセッションにする
+ *     (iOS の ASWebAuthenticationSession は URL を result.url にだけ返し、Linking には流さない)
+ *  5. ログイン後の振り分け (#1122): admin / super_admin も一般ユーザーと同じ振り分けになり、
  *     廃止した管理者画面 (/admin) へは行かない
  */
 
@@ -18,6 +20,10 @@ import { render, fireEvent, waitFor } from '@testing-library/react-native';
 
 // Supabase mock
 const mockSignInWithPassword = jest.fn();
+const mockSignInWithOAuth = jest.fn();
+const mockExchangeCodeForSession = jest.fn();
+const mockSetSession = jest.fn();
+const mockVerifyOtp = jest.fn();
 const mockGetUser = jest.fn();
 const mockFrom = jest.fn();
 
@@ -26,7 +32,10 @@ jest.mock('../../src/lib/supabase', () => ({
     auth: {
       signInWithPassword: (...args: any[]) => mockSignInWithPassword(...args),
       getUser: (...args: any[]) => mockGetUser(...args),
-      signInWithOAuth: jest.fn().mockResolvedValue({ data: { url: null }, error: null }),
+      signInWithOAuth: (...args: any[]) => mockSignInWithOAuth(...args),
+      exchangeCodeForSession: (...args: any[]) => mockExchangeCodeForSession(...args),
+      setSession: (...args: any[]) => mockSetSession(...args),
+      verifyOtp: (...args: any[]) => mockVerifyOtp(...args),
     },
     from: (...args: any[]) => mockFrom(...args),
   },
@@ -50,8 +59,9 @@ jest.mock('expo-linking', () => ({
 }));
 
 // expo-web-browser mock
+const mockOpenAuthSessionAsync = jest.fn();
 jest.mock('expo-web-browser', () => ({
-  openAuthSessionAsync: jest.fn().mockResolvedValue({ type: 'cancel' }),
+  openAuthSessionAsync: (...args: any[]) => mockOpenAuthSessionAsync(...args),
 }));
 
 // react-native-svg mock
@@ -83,6 +93,7 @@ import LoginScreen from '../../app/(auth)/login';
 
 // ---- AsyncStorage reference (mocked globally in jest.setup.js) ----
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { resetAuthLinkResultsForTests } from '../../src/lib/authLink';
 
 // ---- Helpers ----
 
@@ -124,9 +135,16 @@ async function loginAndWaitForRouting() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  resetAuthLinkResultsForTests();
   mockSearchParams = {};
   // Re-apply spy since clearAllMocks resets mock implementations
   jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  (AsyncStorage.getItem as jest.Mock).mockResolvedValue(null);
+  mockOpenAuthSessionAsync.mockResolvedValue({ type: 'cancel' });
+  mockSignInWithOAuth.mockResolvedValue({ data: { url: 'https://accounts.example/oauth' }, error: null });
+  mockExchangeCodeForSession.mockResolvedValue({ error: null });
+  mockSetSession.mockResolvedValue({ error: null });
+  mockVerifyOtp.mockResolvedValue({ error: null });
 });
 
 // ---- Tests ----
@@ -183,7 +201,130 @@ describe('LoginScreen', () => {
   });
 });
 
-// ---- 4. ログイン後の振り分け (#1122) ----
+
+// ---- #1038 F7-08: Google ログイン (OAuth コールバック URL の処理) ----
+
+/** プロフィール取得 (振り分け用) のモック。引数で onboarding 状態を変える */
+function setupProfile(profile: Record<string, unknown> | null) {
+  mockGetUser.mockResolvedValue({ data: { user: { id: 'uid-google' } } });
+  const singleMock = jest.fn().mockResolvedValue({ data: profile });
+  const eqMock = jest.fn().mockReturnValue({ single: singleMock });
+  const selectMock = jest.fn().mockReturnValue({ eq: eqMock });
+  mockFrom.mockReturnValue({ select: selectMock });
+}
+
+async function pressGoogleLogin(api: ReturnType<typeof render>) {
+  fireEvent.press(api.getByText('Googleでログイン'));
+}
+
+describe('LoginScreen — Google ログイン (#1038 F7-08)', () => {
+  it('4-1. iOS: openAuthSessionAsync が result.url で返したコールバックから code を取り出して交換し、/auth/verify へ遷移しない', async () => {
+    setupProfile({ roles: [], onboarding_completed_at: '2026-01-01T00:00:00Z', onboarding_started_at: '2026-01-01T00:00:00Z' });
+    mockOpenAuthSessionAsync.mockResolvedValue({ type: 'success', url: 'homegohan:///auth/verify?code=pkce-code-1' });
+    const api = render(<LoginScreen />);
+
+    await pressGoogleLogin(api);
+
+    await waitFor(() => expect(mockExchangeCodeForSession).toHaveBeenCalledWith('pkce-code-1'));
+    // 交換できたらホームへ。URL を取れない verify 画面には渡さない
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/home'));
+    expect(mockReplace).not.toHaveBeenCalledWith('/auth/verify');
+    expect(Alert.alert).not.toHaveBeenCalled();
+  });
+
+  it('4-2. implicit フローの #access_token=...&refresh_token=... は setSession で設定する', async () => {
+    setupProfile({ roles: [], onboarding_completed_at: '2026-01-01T00:00:00Z', onboarding_started_at: null });
+    mockOpenAuthSessionAsync.mockResolvedValue({
+      type: 'success',
+      url: 'homegohan:///auth/verify#access_token=at-1&refresh_token=rt-1&token_type=bearer',
+    });
+    const api = render(<LoginScreen />);
+
+    await pressGoogleLogin(api);
+
+    await waitFor(() => expect(mockSetSession).toHaveBeenCalledWith({ access_token: 'at-1', refresh_token: 'rt-1' }));
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/home'));
+  });
+
+  it('4-3. 初回ログイン (オンボーディング未開始) はウェルカムへ、管理者もホームへ (/admin へは行かない) — メール・パスワードのログインと同じ振り分け', async () => {
+    setupProfile({ roles: [], onboarding_completed_at: null, onboarding_started_at: null });
+    mockOpenAuthSessionAsync.mockResolvedValue({ type: 'success', url: 'homegohan:///auth/verify?code=c1' });
+    const api = render(<LoginScreen />);
+    await pressGoogleLogin(api);
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/onboarding/welcome'));
+
+    mockReplace.mockClear();
+    resetAuthLinkResultsForTests();
+    setupProfile({ roles: ['admin'], onboarding_completed_at: '2026-01-01T00:00:00Z', onboarding_started_at: null });
+    mockOpenAuthSessionAsync.mockResolvedValue({ type: 'success', url: 'homegohan:///auth/verify?code=c2' });
+    await pressGoogleLogin(api);
+    // #1122: アプリの管理者画面は廃止した。admin も他の人と同じ振り分け (オンボーディング完了済みならホーム)
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/home'));
+    expect(mockReplace).not.toHaveBeenCalledWith('/admin');
+  });
+
+  it('4-4. コールバックに code も token も無ければ、成功扱いにせずエラーを出す (セッションが無いまま画面遷移しない)', async () => {
+    mockOpenAuthSessionAsync.mockResolvedValue({ type: 'success', url: 'homegohan:///auth/verify' });
+    const api = render(<LoginScreen />);
+
+    await pressGoogleLogin(api);
+
+    await waitFor(() =>
+      expect(Alert.alert).toHaveBeenCalledWith('Googleログイン失敗', 'ログイン情報を受け取れませんでした。もう一度お試しください。'),
+    );
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(mockExchangeCodeForSession).not.toHaveBeenCalled();
+  });
+
+  it('4-5. コールバックが error を運んできたら、その説明を出してセッション処理はしない', async () => {
+    mockOpenAuthSessionAsync.mockResolvedValue({
+      type: 'success',
+      url: 'homegohan:///auth/verify?error=access_denied&error_description=User+cancelled',
+    });
+    const api = render(<LoginScreen />);
+
+    await pressGoogleLogin(api);
+
+    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Googleログイン失敗', 'User cancelled'));
+    expect(mockExchangeCodeForSession).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it('4-6. code の交換に失敗したらエラーを出し、遷移しない', async () => {
+    mockExchangeCodeForSession.mockResolvedValue({ error: new Error('invalid flow state') });
+    mockOpenAuthSessionAsync.mockResolvedValue({ type: 'success', url: 'homegohan:///auth/verify?code=bad' });
+    const api = render(<LoginScreen />);
+
+    await pressGoogleLogin(api);
+
+    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Googleログイン失敗', 'invalid flow state'));
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it('4-7. ブラウザを閉じた (cancel / dismiss) ときは何もしない', async () => {
+    mockOpenAuthSessionAsync.mockResolvedValue({ type: 'dismiss' });
+    const api = render(<LoginScreen />);
+
+    await pressGoogleLogin(api);
+
+    await waitFor(() => expect(mockOpenAuthSessionAsync).toHaveBeenCalled());
+    expect(mockExchangeCodeForSession).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(Alert.alert).not.toHaveBeenCalled();
+  });
+
+  it('4-8. 認証用 URL を作れなかったときはエラーを出す', async () => {
+    mockSignInWithOAuth.mockResolvedValue({ data: { url: null }, error: null });
+    const api = render(<LoginScreen />);
+
+    await pressGoogleLogin(api);
+
+    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Googleログイン失敗', 'OAuth URL が取得できませんでした。'));
+    expect(mockOpenAuthSessionAsync).not.toHaveBeenCalled();
+  });
+});
+
+// ---- 5. ログイン後の振り分け (#1122) ----
 //
 // アプリの管理者画面 ((admin)) は廃止した (運営作業は Web に一本化)。
 // 以前は admin / super_admin ロールのユーザーだけ、ログイン後に router.replace('/admin') で管理者画面へ送っていた。

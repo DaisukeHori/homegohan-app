@@ -153,7 +153,6 @@ export function calculateNutritionTargets(
     pregnancyStatus,
     healthConditions,
     medications,
-    calories: energyCalc.final_kcal,
   });
 
   // ================================================
@@ -177,6 +176,25 @@ export function calculateNutritionTargets(
   const finalProtein = guardrailResult.protein;
   const finalFat = guardrailResult.fat;
   const finalCarbs = guardrailResult.carbs;
+
+  // ================================================
+  // 4.6. 糖質（炭水化物の目標 − 食物繊維の目標）
+  // ================================================
+  // ガードレール・持病による調整が済んだ最終の炭水化物・食物繊維から導く。
+  // 糖質だけ別の固定値（以前は WHO の遊離糖の 25g）にすると、炭水化物の目標と食い違う（#1146）。
+  const finalSugar = SUGAR_APP_DEFAULT.calculateFromCarbs(finalCarbs, micronutrients.values.fiber_g);
+  micronutrients.references.sugar_g = {
+    basis_type: 'DG',
+    reference_value: finalSugar,
+    age_range: ageGroup,
+    gender: gender,
+    source: {
+      url: DRI2020_SOURCES.energy_pfc.url,
+      title: 'アプリ独自基準（炭水化物の目標 − 食物繊維の目標。DRI2020には糖質の基準値なし）',
+      section: DRI2020_SOURCES.energy_pfc.section,
+    },
+    final_value: finalSugar,
+  };
 
   // ================================================
   // 5. 計算根拠の構築
@@ -222,7 +240,7 @@ export function calculateNutritionTargets(
     fiber_soluble_g: Math.round(micronutrients.values.fiber_g / 3),
     fiber_insoluble_g: Math.round(micronutrients.values.fiber_g * 2 / 3),
     sodium_g: micronutrients.values.sodium_g,
-    sugar_g: micronutrients.values.sugar_g,
+    sugar_g: finalSugar,
     potassium_mg: micronutrients.values.potassium_mg,
     calcium_mg: micronutrients.values.calcium_mg,
     phosphorus_mg: micronutrients.values.phosphorus_mg,
@@ -547,14 +565,12 @@ interface MicronutrientsInput {
   pregnancyStatus: PregnancyStatus;
   healthConditions: string[];
   medications: string[];
-  calories: number;
 }
 
 interface MicronutrientsResult {
   values: {
     fiber_g: number;
     sodium_g: number;
-    sugar_g: number;
     potassium_mg: number;
     calcium_mg: number;
     phosphorus_mg: number;
@@ -579,7 +595,7 @@ interface MicronutrientsResult {
 }
 
 function calculateMicronutrients(input: MicronutrientsInput): MicronutrientsResult {
-  const { ageGroup, gender, pregnancyStatus, healthConditions, medications, calories } = input;
+  const { ageGroup, gender, pregnancyStatus, healthConditions, medications } = input;
   
   const values: MicronutrientsResult['values'] = {} as MicronutrientsResult['values'];
   const references: Record<string, NutrientReference> = {};
@@ -643,21 +659,6 @@ function calculateMicronutrients(input: MicronutrientsInput): MicronutrientsResu
       section: '',
     },
     final_value: CHOLESTEROL_APP_DEFAULT.default,
-  };
-  
-  // 糖類（DRIにないためWHO推奨ベース）
-  values.sugar_g = SUGAR_APP_DEFAULT.calculateFromCalories(calories);
-  references.sugar_g = {
-    basis_type: 'DG',
-    reference_value: values.sugar_g,
-    age_range: ageGroup,
-    gender: gender,
-    source: {
-      url: 'https://www.who.int/nutrition/publications/guidelines/sugars_intake/en/',
-      title: 'WHO推奨（エネルギーの5%目標、DRI2020には基準値なし）',
-      section: '',
-    },
-    final_value: values.sugar_g,
   };
   
   // ================================================
@@ -735,22 +736,11 @@ function calculateMicronutrients(input: MicronutrientsInput): MicronutrientsResu
   if (healthConditions.includes('糖尿病')) {
     const adjustments: NonNullable<CalculationBasis['health_adjustments']>[0]['adjustments'] = [];
     
-    // 糖類制限
-    const originalSugar = values.sugar_g;
-    values.sugar_g = 25;
-    adjustments.push({
-      nutrient: 'sugar_g',
-      original: originalSugar,
-      adjusted: 25,
-      reason: '糖尿病: 糖類摂取を制限',
-      source_url: DRI2020_SOURCES.diabetes.url,
-    });
-    if (references.sugar_g) {
-      references.sugar_g.adjustments = references.sugar_g.adjustments || [];
-      references.sugar_g.adjustments.push({ delta: 25 - originalSugar, reason: '糖尿病による制限' });
-      references.sugar_g.final_value = 25;
-    }
-    
+    // 糖質の目標は、炭水化物の比率を下げたこと（calculateMacros の糖尿病: 40%）と、
+    // 食物繊維を増やしたことから導かれる（炭水化物の目標 − 食物繊維の目標）。
+    // 糖質だけ別の固定値（以前は 25g）にはしない（#1146）。
+    // 数値は管理栄養士・医師の確認が済んでいない暫定のもの。
+
     // 食物繊維増加
     const originalFiber = values.fiber_g;
     values.fiber_g = Math.max(values.fiber_g, 25);
@@ -769,10 +759,12 @@ function calculateMicronutrients(input: MicronutrientsInput): MicronutrientsResu
       }
     }
     
-    healthAdjustments.push({
-      condition: '糖尿病',
-      adjustments,
-    });
+    if (adjustments.length > 0) {
+      healthAdjustments.push({
+        condition: '糖尿病',
+        adjustments,
+      });
+    }
   }
   
   // 腎臓病

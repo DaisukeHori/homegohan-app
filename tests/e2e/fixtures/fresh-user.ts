@@ -15,6 +15,8 @@ import { createClient } from "@supabase/supabase-js";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
 import { generateTestPassword } from "../helpers/credentials";
+import { grantE2eAiConsent } from "../../../scripts/lib/e2e-ai-consent";
+import { acceptLegalConsentIfShown } from "../helpers/legal-consent";
 
 // Node.js 20 は native WebSocket を持たないため ws パッケージを明示的に指定。
 // Supabase Realtime クライアントが WebSocket を必要とするが admin API のみ使うため
@@ -328,8 +330,18 @@ export type RoleUserFixtureValue = {
 
 type FreshUserFixtures = {
   /**
+   * 作ったユーザーの、外国の AI 事業者への提供の同意を記録してから渡す (既定 true。T15 / #1154)。
+   * fresh user は同意が空の状態から始まり、未同意の利用者のデータはサーバーが AI へ送る手前で止める (403 AI_CONSENT_REQUIRED)。
+   * AI を使う spec (AI 相談・献立の生成・写真の解析など) が止められないよう、service role で記録する
+   * (scripts/lib/e2e-ai-consent.ts)。同意画面そのものを試す spec だけ test.use({ aiConsentGranted: false }) にする。
+   * freshUserPage (サインアップの流れ) は記録しない (サインアップ直後の、未同意の状態を試すため)。
+   */
+  aiConsentGranted: boolean;
+
+  /**
    * signup UI フロー検証用。
    * admin.generateLink で signup トークンを取得し /auth/callback 経由で確認済みにする。
+   * 初回の作成なので /auth/callback が規約の同意画面を通す (#1435)。同意画面では同意してから渡す。
    * use(page) 時点でログイン済み + /auth/verify か /onboarding に遷移した状態。
    */
   freshUserPage: Page;
@@ -394,6 +406,8 @@ type FreshUserFixtures = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const test = base.extend<FreshUserFixtures>({
+  aiConsentGranted: [true, { option: true }],
+
   /**
    * freshUserPage: signup 直後のページ。
    * admin.generateLink (type: "signup") でトークンを取得し /auth/callback に直接 goto。
@@ -436,15 +450,23 @@ export const test = base.extend<FreshUserFixtures>({
       const callbackUrl = `${appBaseURL}/auth/callback?token_hash=${hashedToken}&type=signup`;
       await page.goto(callbackUrl);
 
-      // 3. onboarding または /auth/verify に遷移するまで待機
+      // 3. onboarding または /auth/verify に遷移するまで待機。
+      //    初回の作成は /auth/callback が必ず規約の同意画面 (/legal-consent) を通す (#1435。LEGAL_CONSENT_ENFORCE に依らない)。
+      //    同意画面に着いたら同意して、元の遷移先 (初期設定の入口) へ進める
+      // 遷移の待ち時間の上限 (従来の値。開発サーバーの初回コンパイルを含めて足りる長さ)
+      const callbackLandingTimeoutMs = 20_000;
+      const isSignedInLanding = (url: URL) =>
+        url.pathname.startsWith("/onboarding") ||
+        url.pathname.startsWith("/auth/verify") ||
+        url.pathname.startsWith("/home") ||
+        url.pathname === "/";
       await page.waitForURL(
-        (url) =>
-          url.pathname.startsWith("/onboarding") ||
-          url.pathname.startsWith("/auth/verify") ||
-          url.pathname.startsWith("/home") ||
-          url.pathname === "/",
-        { timeout: 20_000 },
+        (url) => isSignedInLanding(url) || url.pathname.startsWith("/legal-consent"),
+        { timeout: callbackLandingTimeoutMs },
       );
+      if (await acceptLegalConsentIfShown(page)) {
+        await page.waitForURL(isSignedInLanding, { timeout: callbackLandingTimeoutMs });
+      }
 
       await use(page);
     } finally {
@@ -458,13 +480,15 @@ export const test = base.extend<FreshUserFixtures>({
    * admin.createUser (email_confirm: true) で即時作成し session inject。
    * user_profiles レコードは作成しない (onboarding 未着手状態)。
    */
-  onboardingPendingUser: async ({ page }, use) => {
+  onboardingPendingUser: async ({ page, aiConsentGranted }, use) => {
     const supabaseAdmin = getAdminClient();
     const user = await createFreshUser(supabaseAdmin, {
       emailPrefix: "e2e-fresh-onboarding",
     });
 
     try {
+      // 外国の AI 事業者への提供の同意 (T15 / #1154)。test.use({ aiConsentGranted: false }) なら記録しない
+      if (aiConsentGranted) await grantE2eAiConsent(supabaseAdmin, user.id);
       // session inject のみ。user_profiles は作成しない (onboarding 未完了)
       await injectSession(page, user.email, user.password);
       await use(page);
@@ -478,13 +502,15 @@ export const test = base.extend<FreshUserFixtures>({
    * admin.createUser + user_profiles に onboarding_completed_at = NOW() を INSERT。
    * handson_tour_completed_at / handson_tour_skipped_at は NULL (tour 未起動)。
    */
-  tourPendingUser: async ({ page }, use) => {
+  tourPendingUser: async ({ page, aiConsentGranted }, use) => {
     const supabaseAdmin = getAdminClient();
     const user = await createFreshUser(supabaseAdmin, {
       emailPrefix: "e2e-fresh-tour",
     });
 
     try {
+      // 外国の AI 事業者への提供の同意 (T15 / #1154)。test.use({ aiConsentGranted: false }) なら記録しない
+      if (aiConsentGranted) await grantE2eAiConsent(supabaseAdmin, user.id);
       // user_profiles に onboarding 完了済みレコードを service_role で INSERT
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
       const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -538,13 +564,15 @@ export const test = base.extend<FreshUserFixtures>({
    * user_profiles が無いユーザー (onboardingPendingUser) は AuthError (401) になるため、
    * 「認証済みだが権限が無い」状態を作るにはこの fixture を使う。
    */
-  regularUser: async ({ page }, use) => {
+  regularUser: async ({ page, aiConsentGranted }, use) => {
     const supabaseAdmin = getAdminClient();
     const user = await createFreshUser(supabaseAdmin, {
       emailPrefix: "e2e-fresh-regular",
     });
 
     try {
+      // 外国の AI 事業者への提供の同意 (T15 / #1154)。test.use({ aiConsentGranted: false }) なら記録しない
+      if (aiConsentGranted) await grantE2eAiConsent(supabaseAdmin, user.id);
       await upsertUserProfile(user.id, {
         nickname: "E2E Regular User",
         roles: ["user"],
@@ -570,13 +598,15 @@ export const test = base.extend<FreshUserFixtures>({
    * admin ロール判定: src/lib/auth/helpers.ts の requireRole(['admin']) が
    * user_profiles.roles TEXT[] に 'admin' が含まれるかで確認する。
    */
-  adminUser: async ({ page }, use) => {
+  adminUser: async ({ page, aiConsentGranted }, use) => {
     const supabaseAdmin = getAdminClient();
     const user = await createFreshUser(supabaseAdmin, {
       emailPrefix: "e2e-fresh-admin",
     });
 
     try {
+      // 外国の AI 事業者への提供の同意 (T15 / #1154)。test.use({ aiConsentGranted: false }) なら記録しない
+      if (aiConsentGranted) await grantE2eAiConsent(supabaseAdmin, user.id);
       // user_profiles: roles=['admin'] + onboarding 完了で UPSERT
       await upsertUserProfile(user.id, {
         nickname: "E2E Admin User",
@@ -612,13 +642,15 @@ export const test = base.extend<FreshUserFixtures>({
    * user_profiles.roles に 'super_admin' が含まれるかで確認する。
    * /super-admin/* 系 API・UI アクセステストに適切。
    */
-  superAdminUser: async ({ page }, use) => {
+  superAdminUser: async ({ page, aiConsentGranted }, use) => {
     const supabaseAdmin = getAdminClient();
     const user = await createFreshUser(supabaseAdmin, {
       emailPrefix: "e2e-fresh-superadmin",
     });
 
     try {
+      // 外国の AI 事業者への提供の同意 (T15 / #1154)。test.use({ aiConsentGranted: false }) なら記録しない
+      if (aiConsentGranted) await grantE2eAiConsent(supabaseAdmin, user.id);
       // user_profiles: roles=['super_admin'] + onboarding 完了 で UPSERT
       await upsertUserProfile(user.id, {
         nickname: "E2E Super Admin User",
@@ -656,7 +688,7 @@ export const test = base.extend<FreshUserFixtures>({
    *
    * family/01-invite-accept-share.spec.ts の org 招待 API テストに適切。
    */
-  operatorUser: async ({ page }, use) => {
+  operatorUser: async ({ page, aiConsentGranted }, use) => {
     const supabaseAdmin = getAdminClient();
     const user = await createFreshUser(supabaseAdmin, {
       emailPrefix: "e2e-fresh-operator",
@@ -665,6 +697,8 @@ export const test = base.extend<FreshUserFixtures>({
     let orgId: string | null = null;
 
     try {
+      // 外国の AI 事業者への提供の同意 (T15 / #1154)。test.use({ aiConsentGranted: false }) なら記録しない
+      if (aiConsentGranted) await grantE2eAiConsent(supabaseAdmin, user.id);
       // organizations に fresh org を作成
       orgId = await createFreshOrganization(
         `${Date.now()}-${Math.floor(Math.random() * 10000)}`,

@@ -1,7 +1,9 @@
 // src/lib/emails/membership/org-invite-new.ts
 // (設計書 04-email-templates.md §3)
 import type { InviteEmailVars } from './templates';
-import type { EmailEnvelope } from '@/lib/emails/send';
+import type { EmailEnvelope } from '../envelope';
+import { emailSignature } from '../common';
+import { getEmailFrom, getSupportEmail } from '@/lib/site-config';
 
 export function renderOrgInviteNewEmail(vars: InviteEmailVars): EmailEnvelope {
   const customSection = vars.custom_message
@@ -11,7 +13,7 @@ export function renderOrgInviteNewEmail(vars: InviteEmailVars): EmailEnvelope {
   return {
     template: 'org_invite_new',
     to: vars.email_address,
-    from: 'ほめゴハン <noreply@homegohan.app>',
+    from: getEmailFrom(),
     subject: `[ほめゴハン] ${vars.scope_name} があなたを招待しています — アカウントを作成して参加`,
     text: `${vars.email_address} 様
 
@@ -26,11 +28,9 @@ ${vars.invite_url}
 このリンクは ${vars.expires_at} まで有効です。
 
 心当たりのない場合はこのメールを無視してください。
-不正利用のおそれがある場合は support@homegohan.app までご連絡ください。
+不正利用のおそれがある場合は ${getSupportEmail()} までご連絡ください。
 
-─────────────────
-ほめゴハン
-https://homegohan.app
+${emailSignature()}
 `,
   };
 }

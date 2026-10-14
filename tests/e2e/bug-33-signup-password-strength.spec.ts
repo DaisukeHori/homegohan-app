@@ -6,12 +6,15 @@
  *       強いパスワード ("Password1!") を入力するとエラーが解消されること。
  */
 import { test, expect } from "@playwright/test";
+import { acceptSignupLegalConsent } from "./helpers/signup";
 
 test.describe("signup password strength validation", () => {
   test("weak password shows inline Japanese error and blocks submission", async ({
     page,
   }) => {
     await page.goto("/signup");
+    // #1174: 利用規約・プライバシーポリシーへの同意のチェックを入れるまで、登録ボタンは押せない
+    await acceptSignupLegalConsent(page);
 
     await page.locator("#email").fill("test-weak-pwd@example.com");
     await page.locator("#password").fill("123");
@@ -33,6 +36,8 @@ test.describe("signup password strength validation", () => {
 
   test("strong password clears the inline error", async ({ page }) => {
     await page.goto("/signup");
+    // #1174: 利用規約・プライバシーポリシーへの同意のチェックを入れるまで、登録ボタンは押せない
+    await acceptSignupLegalConsent(page);
 
     await page.locator("#email").fill("test-strong-pwd@example.com");
     await page.locator("#password").fill("123");

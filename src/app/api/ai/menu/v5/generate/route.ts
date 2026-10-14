@@ -1,8 +1,8 @@
 import { createClient } from '@/lib/supabase/server';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
 import { getSeasonalIngredientsForRange } from '@/lib/seasonal-ingredients';
 import { getEventsForRange } from '@/lib/seasonal-events';
-import { createLogger } from '@/lib/db-logger';
 import type {
   TargetSlot,
   ExistingMenuContext,
@@ -14,17 +14,27 @@ import type {
 import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
-import { todayLocal } from '@/lib/date-utils';
+import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
+import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
+import { isWithinMenuGenerationRange, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
+import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 
 const VALID_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
+
+/** 1 日の主な食事の数 (朝・昼・夕)。slot の上限の計算に使う */
+const MAIN_MEALS_PER_DAY = 3;
+
+/** targetSlots の数の上限 (期間の上限 MENU_GENERATION_RANGE_MAX_DAYS 日 × 朝・昼・夕 = 93) */
+const MAX_TARGET_SLOTS = MENU_GENERATION_RANGE_MAX_DAYS * MAIN_MEALS_PER_DAY;
 
 function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlot[]; error?: string } {
   if (!Array.isArray(slots) || slots.length === 0) {
     return { valid: false, slots: [], error: 'targetSlots must be a non-empty array' };
   }
 
-  if (slots.length > 93) {
-    return { valid: false, slots: [], error: 'targetSlots exceeds maximum of 93 (31 days × 3 meals)' };
+  if (slots.length > MAX_TARGET_SLOTS) {
+    return { valid: false, slots: [], error: `targetSlots exceeds maximum of ${MAX_TARGET_SLOTS} (${MENU_GENERATION_RANGE_MAX_DAYS} days × ${MAIN_MEALS_PER_DAY} meals)` };
   }
 
   const validated: TargetSlot[] = [];
@@ -42,8 +52,10 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     const mealType = slotObj['mealType'];
     const plannedMealId = slotObj['plannedMealId'];
 
-    if (!date || typeof date !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) {
-      return { valid: false, slots: [], error: `targetSlots[${i}].date must be YYYY-MM-DD format` };
+    // YYYY-MM-DD の形で、実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを通す (#1433)。形だけを見ていると 2026-02-30 のような日付が通り、
+    // 後ろの addDaysToDate (前後 7 日の文脈の期間) が RangeError を投げて 500 になる
+    if (!isCalendarDate(date)) {
+      return { valid: false, slots: [], error: `targetSlots[${i}].date must be ${CALENDAR_DATE_REQUIREMENT}` };
     }
 
     if (!mealType || typeof mealType !== 'string' || !VALID_MEAL_TYPES.includes(mealType as MealType)) {
@@ -65,6 +77,16 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     validated.push({ date, mealType: mealType as MealType, plannedMealId: typeof plannedMealId === 'string' ? plannedMealId : undefined });
   }
 
+  // 日付の幅 (最も早い日〜最も遅い日) は、画面 (Web・モバイルの「期間を指定」) と同じ MENU_GENERATION_RANGE_MAX_DAYS 日まで (#1482)。
+  // slot の数だけを見ていると、API を直接呼んで遠く離れた 2 日を送れば、行事の検索 (getEventsForRange) が 1 日ずつ数千年分を回りうる
+  if (!isWithinMenuGenerationRange(validated.map((s) => s.date))) {
+    return {
+      valid: false,
+      slots: [],
+      error: `targetSlots dates must span at most ${MENU_GENERATION_RANGE_MAX_DAYS} days (from the earliest date to the latest date, inclusive)`,
+    };
+  }
+
   return { valid: true, slots: validated };
 }
 
@@ -81,10 +103,9 @@ function toOptionalInt(value: unknown): number | null {
   return null;
 }
 
+// 暦日 (YYYY-MM-DD) を days 日ずらす (#1433。v4 のルートと同じ関数にそろえる)
 function addDays(dateStr: string, days: number): string {
-  const date = new Date(`${dateStr}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
+  return addDaysToDate(dateStr, days);
 }
 
 export const maxDuration = 30;
@@ -105,6 +126,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     _userId = user.id;
+
+    // 外国の AI 事業者への提供の同意が無ければ、生成をキューに積まずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED。cron の側でも止める)
+    const aiConsentDenied = await requireAiConsent(supabase, user.id);
+    if (aiConsentDenied) return aiConsentDenied;
 
     const rateLimitResult = await checkRateLimit(user.id, 'generation');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
@@ -139,7 +164,7 @@ export async function POST(request: Request) {
         .eq('user_daily_meals.user_id', user.id);
 
       if (plannedMealsError) {
-        return NextResponse.json({ error: plannedMealsError.message }, { status: 500 });
+        return internalError('POST /api/ai/menu/v5/generate', plannedMealsError, { userId: user.id });
       }
 
       const foundIds = new Set((plannedMeals || []).map((meal) => meal.id));
@@ -241,6 +266,18 @@ export async function POST(request: Request) {
       ? (body.constraints as MenuGenerationConstraints)
       : {};
 
+    // キューへ書くクライアント (service role)。必須の環境変数が欠けていれば MissingEnvError で汎用の 500 にする。
+    // 数える前に作る (欠けていて積めないのに、回数だけが減らないように)
+    const queueDb = getAiQueueWriter();
+
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。キューに積む時点 (入力の検証・同意などの判定のあと) で、操作 1 回につき 1 回数える
+    // (究極モードも 1 回)。上限に達していれば、数えずに積まずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)。
+    // ここでキューに積み、AI へ送るのは cron (process-menu-queue) なので、送る側では数えない。
+    // キューの行 (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465) ので、キューに積めるのは
+    // この判定を通った route だけ (service role で書く)
+    const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+    if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
+
     // バックグラウンドジョブとしてキューに追加し、即座に requestId を返す
     const params = {
       userId: user.id,
@@ -256,7 +293,7 @@ export async function POST(request: Request) {
       ultimateMode: Boolean(body?.ultimateMode),
     };
 
-    const { data: requestData, error: insertError } = await supabase
+    const { data: requestData, error: insertError } = await queueDb
       .from('weekly_menu_requests')
       .insert({
         user_id: user.id,
@@ -278,14 +315,17 @@ export async function POST(request: Request) {
       .single();
 
     if (insertError || !requestData?.id) {
-      return NextResponse.json({ error: insertError?.message || 'Failed to create request' }, { status: 500 });
+      // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
+      await refundAiUsage(user.id, 'menu_generation', aiUsage);
+      return internalError('POST /api/ai/menu/v5/generate', insertError, { userId: user.id });
     }
 
     // generated_data に requestId を埋め込む
-    await supabase
+    await queueDb
       .from('weekly_menu_requests')
       .update({ generated_data: { ...params, requestId: requestData.id } })
-      .eq('id', requestData.id);
+      .eq('id', requestData.id)
+      .eq('user_id', user.id);
 
     return NextResponse.json(
       {
@@ -297,11 +337,6 @@ export async function POST(request: Request) {
       { status: 202 },
     );
   } catch (error: any) {
-    console.error('V5 API error', error);
-    const logger = _userId
-      ? createLogger('api/ai/menu/v5/generate').withUser(_userId)
-      : createLogger('api/ai/menu/v5/generate');
-    logger.error('V5 献立生成でエラーが発生しました', error);
-    return NextResponse.json({ error: error.message || 'Unknown error' }, { status: 500 });
+    return internalError('POST /api/ai/menu/v5/generate', error, { userId: _userId });
   }
 }

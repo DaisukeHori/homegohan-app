@@ -2,6 +2,29 @@ export const DATASET_EMBEDDING_PROVIDER = "aimlapi";
 export const DATASET_EMBEDDING_API_URL = "https://api.aimlapi.com/v1/embeddings";
 export const DATASET_EMBEDDING_API_KEY_ENV = "AIMLAPI_API_KEY";
 export const DATASET_EMBEDDING_MODEL = "voyage-multilingual-2";
+
+/**
+ * API キーが無いときの例外の message (#1467)。Edge Function の supabase/functions/_shared/missing-env.ts の
+ * MISSING_ENV_ERROR_MESSAGE と同じ文にする (tests/edge-missing-env-response.test.ts が一致を確かめる)。
+ * Edge Function から呼ばれたとき、message が応答の本文に入っても変数名が出ないよう、変数名は message に入れず
+ * サーバーのログ (console.error) にだけ残す。このファイルは Node.js のスクリプトからも読むので、Edge 側の
+ * missing-env.ts は import せず、同じ形 (name が MissingEnvError・envNames は列挙されない) の例外をここで作る。
+ */
+export const DATASET_EMBEDDING_MISSING_KEY_MESSAGE = "サーバーの設定が不足しています";
+
+function missingApiKeyError() {
+  console.error("[env] missing required env:", DATASET_EMBEDDING_API_KEY_ENV);
+  const error = new Error(DATASET_EMBEDDING_MISSING_KEY_MESSAGE);
+  error.name = "MissingEnvError";
+  error.code = "SERVER_CONFIG_MISSING";
+  Object.defineProperty(error, "envNames", {
+    value: [DATASET_EMBEDDING_API_KEY_ENV],
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  return error;
+}
 export const DATASET_EMBEDDING_DIMENSIONS = 1024;
 export const DATASET_EMBEDDING_MODELS = [
   {
@@ -86,7 +109,7 @@ export function getDatasetEmbeddingApiKey(getEnv) {
   }
   const apiKey = getEnv(DATASET_EMBEDDING_API_KEY_ENV);
   if (!apiKey) {
-    throw new Error(`Missing ${DATASET_EMBEDDING_API_KEY_ENV}`);
+    throw missingApiKeyError();
   }
   return apiKey;
 }
@@ -127,7 +150,7 @@ export async function fetchDatasetEmbeddings(
   } = {},
 ) {
   if (!apiKey) {
-    throw new Error(`Missing ${DATASET_EMBEDDING_API_KEY_ENV}`);
+    throw missingApiKeyError();
   }
 
   const controller = new AbortController();

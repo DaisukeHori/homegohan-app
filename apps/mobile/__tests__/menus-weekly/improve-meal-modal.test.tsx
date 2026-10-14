@@ -24,24 +24,23 @@ jest.mock('../../src/lib/api', () => ({
 import { ImproveMealModal } from '../../src/components/menu/ImproveMealModal';
 import { ImproveMealRejectedError } from '../../src/lib/improve-meal';
 
-// 最初の描画 (RN の Modal の初回描画) は読み込むモジュールが多く、キャッシュの無い環境では 5 秒の既定を超えることがある
-jest.setTimeout(30000);
-
 const alertMock = Alert.alert as jest.Mock;
 
 function renderModal(props: Partial<React.ComponentProps<typeof ImproveMealModal>> = {}) {
   const onClose = jest.fn();
   const onSubmit = jest.fn().mockResolvedValue(undefined);
+  const onAiConsentRequired = jest.fn();
   const utils = render(
     <ImproveMealModal
       visible
       onClose={onClose}
       selectedDate="2026-10-08"
       onSubmit={onSubmit}
+      onAiConsentRequired={onAiConsentRequired}
       {...props}
     />,
   );
-  return { ...utils, onClose, onSubmit };
+  return { ...utils, onClose, onSubmit, onAiConsentRequired };
 }
 
 beforeEach(() => {

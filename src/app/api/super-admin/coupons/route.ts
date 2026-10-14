@@ -14,6 +14,8 @@ import {
   CouponCreateSchema,
   CouponsQuerySchema,
 } from '@/lib/super-admin/coupons-schemas';
+import { internalError } from '@/lib/api/errors';
+import { couponValidFromTimestamp, couponValidUntilTimestamp } from '@/lib/super-admin/coupon-validity';
 
 export async function GET(request: NextRequest) {
   try {
@@ -50,11 +52,7 @@ export async function GET(request: NextRequest) {
     const { data, error, count } = await query;
 
     if (error) {
-      console.error('[super-admin/coupons GET]', error);
-      return NextResponse.json(
-        { error: { code: 'OP_DB_ERROR', message: error.message } },
-        { status: 500 }
-      );
+      return internalError('GET /api/super-admin/coupons', error, {}, { shape: 'nested' });
     }
 
     return NextResponse.json({
@@ -89,6 +87,9 @@ export async function POST(request: NextRequest) {
     }
 
     const input = parseResult.data;
+    // #1483: 画面で選んだ JST の暦日を、開始日の JST 0:00・期限の日の JST 23:59:59.999999 の時刻にして書く
+    const validFrom = couponValidFromTimestamp(input.valid_from);
+    const validUntil = couponValidUntilTimestamp(input.valid_until);
 
     const { data: coupon, error } = await supabase
       .from('coupons')
@@ -99,8 +100,8 @@ export async function POST(request: NextRequest) {
         discount_value: input.discount_value,
         applicable_plans: input.applicable_plans ?? [],
         applicable_to: input.applicable_to ?? 'all',
-        valid_from: input.valid_from,
-        valid_until: input.valid_until,
+        valid_from: validFrom,
+        valid_until: validUntil,
         max_uses: input.max_uses ?? null,
         per_user_limit: input.per_user_limit ?? 1,
         duration_months: input.duration_months ?? null,
@@ -119,11 +120,7 @@ export async function POST(request: NextRequest) {
           { status: 409 }
         );
       }
-      console.error('[super-admin/coupons POST]', error);
-      return NextResponse.json(
-        { error: { code: 'OP_DB_ERROR', message: error.message } },
-        { status: 500 }
-      );
+      return internalError('POST /api/super-admin/coupons', error, { userId: user.id }, { shape: 'nested' });
     }
 
     // 監査ログ記録 (クーポン作成は課金影響 → severity='warn')
@@ -138,8 +135,8 @@ export async function POST(request: NextRequest) {
           discount_type: input.discount_type,
           discount_value: input.discount_value,
           applicable_to: input.applicable_to,
-          valid_from: input.valid_from,
-          valid_until: input.valid_until,
+          valid_from: validFrom,
+          valid_until: validUntil,
           max_uses: input.max_uses,
         },
         severity: 'warn',

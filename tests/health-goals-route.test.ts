@@ -76,6 +76,15 @@ vi.mock('@/lib/supabase/server', () => ({
   }),
 }));
 
+// 構造化ログ (#1172): DB エラーのとき internalError() が app_logs へ記録する。このテストでは DB へ書かない
+vi.mock('@/lib/db-logger', () => {
+  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  return {
+    createLogger: vi.fn(() => ({ ...logger, withUser: vi.fn(() => logger) })),
+    generateRequestId: vi.fn(() => 'req_test'),
+  };
+});
+
 import { POST } from '@/app/api/health/goals/route';
 import { PUT } from '@/app/api/health/goals/[id]/route';
 
@@ -222,6 +231,8 @@ describe('POST /api/health/goals (#1229)', () => {
     state.insertError = { message: 'boom' };
     const res = await POST(jsonRequest('POST', { goal_type: 'weight', target_value: 60, target_unit: 'kg' }));
     expect(res.status).toBe(500);
+    // #1172: DB の生のエラー文 ('boom') は返さず、汎用メッセージだけを返す
+    expect(await res.json()).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
     expect(state.updates).toEqual([]);
   });
 

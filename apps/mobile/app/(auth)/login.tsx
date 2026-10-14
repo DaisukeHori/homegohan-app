@@ -8,7 +8,11 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, Tex
 import Svg, { Path } from "react-native-svg";
 
 import { colors, spacing, radius, shadows } from "../../src/theme";
+import { completeAuthLink } from "../../src/lib/authLink";
+import { extractSupabaseLinkParams } from "../../src/lib/deeplink";
 import { supabase } from "../../src/lib/supabase";
+import { TurnstileWidget, useTurnstile } from "../../src/components/auth/TurnstileWidget";
+import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "../../src/lib/turnstile";
 
 // #532: client-side rate limit 定数
 const RATE_LIMIT_KEY = "auth_last_fail_ts";
@@ -34,6 +38,8 @@ export default function LoginScreen() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // #532: rate limit 残り秒数 (0 = 制限なし)
   const [rateLimitRemaining, setRateLimitRemaining] = useState(0);
+  // #1165: bot 対策 (Cloudflare Turnstile)。サイトキーが未設定なら無効で、今までどおりに動く
+  const captcha = useTurnstile();
 
   // #532: アプリ起動時に AsyncStorage から残り制限時間を復元
   useEffect(() => {
@@ -63,6 +69,36 @@ export default function LoginScreen() {
     return () => clearTimeout(timer);
   }, [rateLimitRemaining]);
 
+  // ログイン成功後の振り分け: user_profiles から onboarding 状態を取得して遷移先を決める
+  // (メール・パスワードのログインと Google ログインで共通)
+  // (#1122: アプリの管理者画面は廃止した。運営作業は Web に一本化したので、admin / super_admin も他の人と同じ振り分けにする)
+  async function routeAfterSignIn() {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('onboarding_started_at, onboarding_completed_at')
+      .eq('id', user.id)
+      .single();
+
+    // ?next= クエリパラメータがある場合はそのパスへ復帰 (/ 始まりのみ許可)
+    const safeNext = typeof next === 'string' && next.startsWith('/') ? next : null;
+
+    if (safeNext) {
+      router.replace(safeNext as any);
+    } else if (profile?.onboarding_completed_at) {
+      // オンボーディング完了済み → ホームへ
+      router.replace('/(tabs)/home');
+    } else if (profile?.onboarding_started_at) {
+      // オンボーディング進行中 → 再開ページへ
+      router.replace('/onboarding/resume');
+    } else {
+      // 未開始 → 初回ウェルカムへ
+      router.replace('/onboarding/welcome');
+    }
+  }
+
   async function onGoogleLogin() {
     setIsSubmitting(true);
     try {
@@ -79,8 +115,18 @@ export default function LoginScreen() {
 
       const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
       if (result.type === "success" && result.url) {
-        // verify ページがディープリンクを処理するためルーティング
-        router.replace("/auth/verify");
+        // コールバック URL は result.url からその場で処理する (#1038 F7-08)。
+        // iOS の ASWebAuthenticationSession は URL を result.url にだけ返し、Linking のイベントには流さない。
+        // 以前は result.url を捨てて /auth/verify へ遷移していたため、verify 画面は URL を取れず、
+        // セッションが作られないまま「確認が完了しました」と表示されていた。
+        const outcome = await completeAuthLink(extractSupabaseLinkParams(result.url));
+        if (outcome.status === "signed_in") {
+          await routeAfterSignIn();
+        } else if (outcome.status === "empty") {
+          throw new Error("ログイン情報を受け取れませんでした。もう一度お試しください。");
+        } else {
+          throw new Error(outcome.message);
+        }
       }
     } catch (e: any) {
       Alert.alert("Googleログイン失敗", e?.message ?? "Googleログインに失敗しました。");
@@ -103,24 +149,41 @@ export default function LoginScreen() {
       return;
     }
 
+    // #1165: トークンは 1 回しか使えない。取り出した時点で、ウィジェットが次のトークンを取り直す。
+    // Turnstile が有効なのにトークンが無いときは送らない
+    const captchaToken = captcha.takeToken();
+    if (captcha.enabled && !captchaToken) {
+      Alert.alert("しばらくお待ちください", "ボットではないことの確認が終わるまで、少しお待ちください。");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const { error } = await supabase.auth.signInWithPassword({
         email: trimmedEmail,
         password,
+        // Turnstile が無効のときは options を付けない (今までのリクエストと同じ)
+        ...(captchaToken ? { options: { captchaToken } } : {}),
       });
 
       if (error) {
-        // #532: ログイン失敗時に AsyncStorage へタイムスタンプを保存
-        try {
-          await AsyncStorage.setItem(RATE_LIMIT_KEY, String(Date.now()));
-        } catch {
-          // 保存失敗は無視
+        // #1165: CAPTCHA の確認が断られたのはパスワードの間違いではないので、クールダウンは付けない (ウィジェットは取り直し済み)
+        const captchaFailed = isCaptchaFailure(error);
+        if (!captchaFailed) {
+          // #532: ログイン失敗時に AsyncStorage へタイムスタンプを保存
+          try {
+            await AsyncStorage.setItem(RATE_LIMIT_KEY, String(Date.now()));
+          } catch {
+            // 保存失敗は無視
+          }
+          setRateLimitRemaining(Math.ceil(RATE_LIMIT_WINDOW_MS / 1000));
         }
-        setRateLimitRemaining(Math.ceil(RATE_LIMIT_WINDOW_MS / 1000));
 
         // エラーメッセージをステータス別に分岐
-        if (
+        if (captchaFailed) {
+          setErrorMessage(CAPTCHA_FAILED_MESSAGE);
+          Alert.alert("ログイン失敗", CAPTCHA_FAILED_MESSAGE);
+        } else if (
           error.status === 429 ||
           error.message.includes("over_email_send_rate_limit") ||
           error.message.includes("For security purposes") ||
@@ -153,31 +216,7 @@ export default function LoginScreen() {
       setRateLimitRemaining(0);
 
       // user_profiles から onboarding 状態を取得して振り分け
-      // (#1122: アプリの管理者画面は廃止した。運営作業は Web に一本化したので、admin / super_admin も他の人と同じ振り分けにする)
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: profile } = await supabase
-          .from('user_profiles')
-          .select('onboarding_started_at, onboarding_completed_at')
-          .eq('id', user.id)
-          .single();
-
-        // ?next= クエリパラメータがある場合はそのパスへ復帰 (/ 始まりのみ許可)
-        const safeNext = typeof next === 'string' && next.startsWith('/') ? next : null;
-
-        if (safeNext) {
-          router.replace(safeNext as any);
-        } else if (profile?.onboarding_completed_at) {
-          // オンボーディング完了済み → ホームへ
-          router.replace('/(tabs)/home');
-        } else if (profile?.onboarding_started_at) {
-          // オンボーディング進行中 → 再開ページへ
-          router.replace('/onboarding/resume');
-        } else {
-          // 未開始 → 初回ウェルカムへ
-          router.replace('/onboarding/welcome');
-        }
-      }
+      await routeAfterSignIn();
     } catch (e: any) {
       const msg = e?.message ?? "ログインに失敗しました。";
       setErrorMessage(msg);
@@ -317,13 +356,17 @@ export default function LoginScreen() {
             </Link>
           </View>
 
+          {/* bot 対策 (Turnstile)。サイトキーが未設定なら何も出ない */}
+          <TurnstileWidget {...captcha.widgetProps} action="login" />
+
           {/* ログインボタン */}
           <Pressable
             testID="login-button"
             onPress={onSubmit}
-            disabled={isSubmitting || rateLimitRemaining > 0}
+            disabled={isSubmitting || rateLimitRemaining > 0 || !captcha.ready}
             style={({ pressed }) => ({
-              backgroundColor: isSubmitting || rateLimitRemaining > 0 ? colors.textMuted : colors.accent,
+              backgroundColor:
+                isSubmitting || rateLimitRemaining > 0 || !captcha.ready ? colors.textMuted : colors.accent,
               borderRadius: radius.lg, paddingVertical: 16,
               alignItems: "center", ...shadows.md,
               opacity: pressed ? 0.9 : 1,

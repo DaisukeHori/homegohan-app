@@ -119,7 +119,7 @@ export default function SupportTicketsPage() {
             <p className="text-sm text-gray-500 mt-1">全 {total} 件</p>
           </div>
           <Link
-            href="/support/new"
+            href="/admin/support/new"
             className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
           >
             + 新規チケット起票
@@ -209,7 +209,7 @@ export default function SupportTicketsPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <Link
-                        href={`/support/${ticket.id}`}
+                        href={`/admin/support/${ticket.id}`}
                         className="text-blue-600 hover:text-blue-800 text-sm"
                       >
                         詳細

@@ -4,8 +4,8 @@
  * ツアーは体験モードなので失敗してもブロックしないが、黙って握りつぶすと
  * 「存在しない列を select していて全員分パーソナライズが効かない」(今回の不具合) に気づけない。
  * #1057 (UX1-09) の方針どおり、失敗は必ず残す。
- *   - 計測: handson_tour_step_error (PostHog。同意が無ければ送られない)
- *   - サーバーログ: app_logs (source = 'client')。同意に関係なく残り、原因 (PostgREST のエラーコード) が分かる
+ *   - 計測: handson_tour_step_error (#1166 で PostHog をやめたため、いまは送り先がなく何も送られない)
+ *   - サーバーログ: app_logs (source = 'client')。失敗が残るのはこちらで、原因 (PostgREST のエラーコード) が分かる
  */
 import { fireAnalytics } from '@homegohan/handson-tour-shared';
 import { logToServer } from '@/lib/db-logger';

@@ -3,6 +3,7 @@
  * src/theme/colors.ts の主要トークン値を検証する
  */
 
+import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
 import { colors } from '../../src/theme/colors';
 
 describe('colors トークン', () => {
@@ -44,5 +45,39 @@ describe('colors トークン', () => {
 
   it('purple は #7C6BA0', () => {
     expect(colors.purple).toBe('#7C6BA0');
+  });
+});
+
+// #590: 状態色は packages/shared の STATUS_COLOR_TOKENS が唯一の定義元 (Web の home・health・pantry と共通)。
+// 塗りの値は以前この colors.ts に直書きしていた A 系のままで、モバイルの見た目は変わらない。
+// Web 側の値の一致は、Web のテスト (src/__tests__/config/status-color-tokens.test.ts) が確かめる。
+describe('状態色 (#590): 共通のトークンと同じ値', () => {
+  const tokenKeys = Object.keys(STATUS_COLOR_TOKENS) as (keyof typeof STATUS_COLOR_TOKENS)[];
+
+  // 文字用 (successText / warningText / dangerText) も含め、トークンの全部が colors に入っている
+  it.each(tokenKeys)('%s は共通のトークンと同じ', (key) => {
+    expect(colors[key]).toBe(STATUS_COLOR_TOKENS[key]);
+  });
+
+  it('塗りの色は、以前この colors.ts に直書きしていた A 系の値のまま', () => {
+    expect({
+      success: colors.success,
+      successLight: colors.successLight,
+      warning: colors.warning,
+      warningLight: colors.warningLight,
+      error: colors.error,
+      errorLight: colors.errorLight,
+      danger: colors.danger,
+      dangerLight: colors.dangerLight,
+    }).toEqual({
+      success: '#6B9B6B',
+      successLight: '#EDF5ED',
+      warning: '#E5A84B',
+      warningLight: '#FEF9EE',
+      error: '#F44336',
+      errorLight: '#FFEBEE',
+      danger: '#D64545',
+      dangerLight: '#FDECEC',
+    });
   });
 });

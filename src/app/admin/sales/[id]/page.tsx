@@ -6,6 +6,7 @@
  * 権限: sales, admin, super_admin
  */
 import { useState, useEffect, useCallback } from 'react';
+import { todayLocal } from '@/lib/date-utils';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -115,7 +116,7 @@ export default function LeadDetailPage({ params }: PageProps) {
           details: {
             summary: activitySummary,
             next_action: activityNextAction || undefined,
-            date: new Date().toISOString().split('T')[0],
+            date: todayLocal(),
           },
         }),
       });
@@ -164,7 +165,7 @@ export default function LeadDetailPage({ params }: PageProps) {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <p className="text-red-600 mb-4">{error}</p>
-          <Link href="/sales" className="text-blue-600 hover:underline">リード一覧に戻る</Link>
+          <Link href="/admin/sales" className="text-blue-600 hover:underline">リード一覧に戻る</Link>
         </div>
       </div>
     );
@@ -178,7 +179,7 @@ export default function LeadDetailPage({ params }: PageProps) {
         {/* ヘッダー */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <Link href="/sales" className="text-gray-500 hover:text-gray-700 text-sm">
+            <Link href="/admin/sales" className="text-gray-500 hover:text-gray-700 text-sm">
               ← リード一覧
             </Link>
             <span className="text-gray-300">/</span>

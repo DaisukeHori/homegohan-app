@@ -169,6 +169,9 @@ describe('GET /api/operator/membership/org/[id]/candidates: メールアドレ�
 
     expect(res.status).toBe(500);
     expect(json.error.code).toBe('INTERNAL_ERROR');
+    // DB の生のエラー文は本文に出さない (#1172 / #1434)
+    expect(json.error.message).toBe('処理中にエラーが発生しました');
+    expect(JSON.stringify(json)).not.toContain('connection reset by peer');
   });
 });
 

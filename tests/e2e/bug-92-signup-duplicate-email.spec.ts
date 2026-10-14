@@ -8,6 +8,7 @@
  */
 import { test, expect } from "@playwright/test";
 import { generateTestPassword } from "./helpers/credentials";
+import { acceptSignupLegalConsent } from "./helpers/signup";
 
 // 重複チェック用の既存ユーザー認証情報 (E2E_USER 廃止対応)
 const EXISTING_EMAIL =
@@ -24,6 +25,8 @@ test.describe("Bug-92: 重複メールアドレスの signup 処理", () => {
     page,
   }) => {
     await page.goto("/signup");
+    // #1174: 利用規約・プライバシーポリシーへの同意のチェックを入れるまで、登録ボタンは押せない
+    await acceptSignupLegalConsent(page);
 
     // 既存 E2E ユーザーのメールで signup を試みる
     await page.locator("#email").fill(EXISTING_EMAIL);

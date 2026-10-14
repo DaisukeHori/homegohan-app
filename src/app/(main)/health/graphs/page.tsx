@@ -18,6 +18,7 @@ import {
   ArrowLeft, Scale, Heart, Moon, TrendingUp, TrendingDown,
   Calendar, ChevronLeft, ChevronRight, Target
 } from 'lucide-react';
+import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
 
 const colors = {
   bg: '#FAF9F7',
@@ -27,10 +28,8 @@ const colors = {
   textMuted: '#9A9A9A',
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
-  success: '#4CAF50',
-  successLight: '#E8F5E9',
-  error: '#F44336',
-  errorLight: '#FFEBEE',
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
   purple: '#7C4DFF',
   purpleLight: '#EDE7F6',
   blue: '#2196F3',
@@ -373,7 +372,7 @@ export default function HealthGraphsPage() {
               x={width - padding.right + 4}
               y={targetY + 4}
               fontSize={CHART_FONT_SIZE}
-              fill={colors.success}
+              fill={colors.successText}
             >
               目標
             </text>
@@ -506,11 +505,12 @@ export default function HealthGraphsPage() {
     return actualDirection === goodDirection ? 'good' : 'bad';
   };
   const changeSentiment = getChangeSentiment();
-  const changeColor = changeSentiment === 'good'
-    ? colors.success
+  // 矢印アイコンは塗りの色、数字は文字用の濃い色 (#590)
+  const changeColors = changeSentiment === 'good'
+    ? { icon: colors.success, text: colors.successText }
     : changeSentiment === 'bad'
-      ? colors.error
-      : colors.textMuted;
+      ? { icon: colors.error, text: colors.dangerText }
+      : { icon: colors.textMuted, text: colors.textMuted };
 
   return (
     <div className="min-h-screen pb-24" style={{ backgroundColor: colors.bg }}>
@@ -603,13 +603,13 @@ export default function HealthGraphsPage() {
                 }}
               >
                 {change < 0 ? (
-                  <TrendingDown size={16} style={{ color: changeColor }} />
+                  <TrendingDown size={16} style={{ color: changeColors.icon }} />
                 ) : change > 0 ? (
-                  <TrendingUp size={16} style={{ color: changeColor }} />
+                  <TrendingUp size={16} style={{ color: changeColors.icon }} />
                 ) : null}
                 <span
                   className="text-sm font-medium"
-                  style={{ color: changeColor }}
+                  style={{ color: changeColors.text }}
                 >
                   {change > 0 ? '+' : ''}{change} {currentMetric.unit}
                 </span>
@@ -723,12 +723,12 @@ export default function HealthGraphsPage() {
             <div className="flex items-center gap-3">
               <Target size={24} style={{ color: colors.success }} />
               <div>
-                <p className="font-medium" style={{ color: colors.success }}>
+                <p className="font-medium" style={{ color: colors.successText }}>
                   目標体重: {targetWeight}kg
                 </p>
                 {/* #1051 UX3-08: 「あと」に符号付きの差分をそのまま出すと増量目標で
                     負の値になり意味が伝わらないため、絶対値+「目標まで」に統一する */}
-                <p className="text-sm" style={{ color: colors.success }}>
+                <p className="text-sm" style={{ color: colors.successText }}>
                   目標まであと {Math.abs((graphData.filter(d => d.value !== null).slice(-1)[0]?.value || 0) - targetWeight).toFixed(1)}kg
                 </p>
               </div>

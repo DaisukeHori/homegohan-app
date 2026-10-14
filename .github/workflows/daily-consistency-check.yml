@@ -25,8 +25,10 @@ name: Daily Consistency Check (read-only)
 
 on:
   schedule:
-    # 毎日 09:17 JST (00:17 UTC)。毎時 0 分は混むので少しずらす
-    - cron: '17 0 * * *'
+    # 毎日 06:43 JST (前日 21:43 UTC)。
+    # GitHub の schedule は混む時間帯 (毎時 0 分、特に 0 時 UTC 前後) に遅れたり、取りこぼされたりする。
+    # 初回の 00:17 UTC (2026-10-09) は実行されなかったため、0 時 UTC から離し、毎時 0 分・30 分も避ける
+    - cron: '43 21 * * *'
   workflow_dispatch:
 
 concurrency:

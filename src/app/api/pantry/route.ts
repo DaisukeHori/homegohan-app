@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { internalError } from '@/lib/api/errors';
 
 export async function GET(request: Request) {
   const supabase = await createClient();
@@ -12,7 +13,7 @@ export async function GET(request: Request) {
     .eq('user_id', user.id)
     .order('expiration_date', { ascending: true });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return internalError('GET /api/pantry', error, { userId: user.id });
 
   // キャメルケース変換
   const items = data.map((item: any) => ({
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
       }
     });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/pantry', error, { userId: user.id });
   }
 }
 

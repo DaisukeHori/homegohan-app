@@ -35,6 +35,21 @@ export const ModerationActions = [
 
 export type ModerationAction = (typeof ModerationActions)[number];
 
+/**
+ * 通報されたコンテンツを「削除」する (= 隠す) アクション (#1101)。
+ * 行は消さず、hidden_at を入れて本人以外に見えなくする。approve / escalate は何も隠さない。
+ */
+export const ModerationDeleteActions = [
+  'delete_only',
+  'delete_and_warn',
+  'delete_and_temp_ban',
+  'delete_and_perm_ban',
+] as const satisfies readonly ModerationAction[];
+
+export function isModerationDeleteAction(action: ModerationAction): boolean {
+  return (ModerationDeleteActions as readonly ModerationAction[]).includes(action);
+}
+
 export const ModerationResolveBodySchema = z.object({
   action: z.enum(ModerationActions),
   ban_duration_days: z.number().int().min(1).max(365).optional(),
@@ -48,6 +63,8 @@ export type ModerationResolveBody = z.infer<typeof ModerationResolveBodySchema>;
 export const ModerationItemSchema = z.object({
   id: z.string().uuid(),
   type: z.enum(MODERATION_TYPES),
+  /** 通報されたコンテンツ本体の ID (meals.id / recipes.id)。紐づかないときは null (#1101) */
+  content_id: z.string().uuid().nullable(),
   content_url: z.string().nullable(),
   reporter_count: z.number().int(),
   user_id: z.string().uuid(),

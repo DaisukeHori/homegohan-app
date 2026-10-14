@@ -6,8 +6,19 @@ import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
+import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { requestNotificationPermission } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
+import { AI_CONSENT_SETTINGS_ENTRY_TITLE, AI_CONSENT_SETTINGS_PATH } from "@/lib/ai/consent-config";
+import {
+  ACCOUNT_DELETE_CONFIRM_KEYWORD,
+  ACCOUNT_EXPORT_FAILED_MESSAGE,
+  accountExportRateLimitedMessage,
+  deleteOwnAccount,
+  exportAccountData,
+  saveResponseAsDownload,
+  signOutAfterAccountDeletion,
+} from "@/lib/account-self-service";
 
 type WeekStartDay = 'sunday' | 'monday';
 
@@ -42,17 +53,6 @@ export default function SettingsPage() {
   const supabase = createClient();
   const isNativeApp = useNativeAppMode();
   const [showLogoutModal, setShowLogoutModal] = useState(false);
-
-  // Fix 3: mode=app 時は postMessage で RN に転送 (iOS WebView では <a download> が動作しないため)
-  const postMessageDownload = (filename: string, content: string, mimeType: string) => {
-    const w = window as unknown as { ReactNativeWebView?: { postMessage: (s: string) => void } };
-    w.ReactNativeWebView?.postMessage(JSON.stringify({
-      type: 'download',
-      filename,
-      content,
-      mimeType,
-    }));
-  };
 
   const [settings, setSettings] = useState({
     notifications: true,
@@ -139,54 +139,22 @@ export default function SettingsPage() {
     }
   };
 
-  // 取得したレスポンスをファイルとして保存する (JSON / CSV エクスポート共通)
-  const saveResponseAsFile = async (res: Response, filename: string, mimeType: string) => {
-    if (isNativeApp) {
-      // Fix 3: iOS WebView では Blob URL が使えないので RN へ転送
-      const text = await res.text();
-      postMessageDownload(filename, text, mimeType);
-      return;
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  // #1131: 個人データ一式を JSON でダウンロードする (モバイルアプリと同じ GET /api/account/export)
+  // #1131: 個人データ一式を JSON でダウンロードする (モバイルアプリと同じ GET /api/account/export)。
+  // 呼び方と保存のしかたは凍結中の画面 (/frozen/account) と共通 (src/lib/account-self-service.ts)
   const [exporting, setExporting] = useState(false);
   const handleExportData = async () => {
     if (exporting) return;
     setExporting(true);
     try {
-      const res = await fetch('/api/account/export', { method: 'GET' });
-      if (!res.ok) {
-        if (res.status === 401) {
-          router.push('/login');
-          return;
-        }
-        if (res.status === 429) {
-          // 連打防止の上限 (10 分あたり 5 回)。いつ再開できるかをサーバーの Retry-After から伝える
-          const retryAfterSec = Number(res.headers.get('Retry-After'));
-          const wait =
-            Number.isFinite(retryAfterSec) && retryAfterSec > 0
-              ? `${Math.ceil(retryAfterSec / 60)}分ほど`
-              : 'しばらく';
-          alert(`短い時間にエクスポートを繰り返したため、一時的に実行できません。${wait}待ってからもう一度お試しください。`);
-          return;
-        }
-        throw new Error(`Data export failed: ${res.status}`);
+      const result = await exportAccountData({ isNativeApp });
+      if (result.kind === 'unauthorized') {
+        router.push('/login');
+      } else if (result.kind === 'rate_limited') {
+        // 連打防止の上限 (10 分あたり 5 回)。いつ再開できるかをサーバーの Retry-After から伝える
+        alert(accountExportRateLimitedMessage(result.retryAfterSec));
+      } else if (result.kind === 'failed') {
+        alert(ACCOUNT_EXPORT_FAILED_MESSAGE);
       }
-      const today = new Date().toISOString().slice(0, 10);
-      await saveResponseAsFile(res, `homegohan-export-${today}.json`, 'application/json');
-    } catch (err) {
-      console.error(err);
-      alert('データのエクスポートに失敗しました。時間をおいて再度お試しください。');
     } finally {
       setExporting(false);
     }
@@ -206,7 +174,7 @@ export default function SettingsPage() {
         throw new Error(`CSV export failed: ${res.status}`);
       }
       const today = new Date().toISOString().slice(0, 10);
-      await saveResponseAsFile(res, `homegohan-meals-${today}.csv`, 'text/csv');
+      await saveResponseAsDownload(res, `homegohan-meals-${today}.csv`, 'text/csv', isNativeApp);
     } catch (err) {
       console.error(err);
       alert('CSVエクスポートに失敗しました。時間をおいて再度お試しください。');
@@ -217,6 +185,8 @@ export default function SettingsPage() {
 
   const handleLogout = async () => {
     clearUserScopedLocalStorage();
+    // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
+    notifyNativeSignOut();
     await supabase.auth.signOut();
     broadcastSignOut();
     router.push('/login');
@@ -226,30 +196,21 @@ export default function SettingsPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
-  const DELETE_KEYWORD = '削除します';
+  const DELETE_KEYWORD = ACCOUNT_DELETE_CONFIRM_KEYWORD;
 
+  // 呼び方と退会のあとのログアウトの順番は、凍結中の画面 (/frozen/account) と共通 (src/lib/account-self-service.ts)
   const handleDeleteAccount = async () => {
     if (deleteConfirmText !== DELETE_KEYWORD || deleting) return;
     setDeleting(true);
-    try {
-      const res = await fetch('/api/account/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirm: true }),
-      });
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        throw new Error(json.error ?? `Delete failed: ${res.status}`);
-      }
-      clearUserScopedLocalStorage();
-      await supabase.auth.signOut();
-      broadcastSignOut();
-      router.push('/login');
-    } catch (err) {
-      console.error('[delete account]', err);
+    const result = await deleteOwnAccount();
+    if (result.kind !== 'deleted') {
       alert('アカウントの削除に失敗しました。時間をおいて再度お試しください。');
       setDeleting(false);
+      return;
     }
+    // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
+    await signOutAfterAccountDeletion(supabase);
+    router.push('/login');
   };
 
   return (
@@ -418,13 +379,30 @@ export default function SettingsPage() {
                type="button"
                onClick={handleExportCsv}
                disabled={exportingCsv}
-               className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+               className="w-full flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
              >
                <div className="flex items-center gap-3">
                  <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600" aria-hidden="true">📋</div>
                  <div className="text-left">
                    <span className="font-bold text-gray-700">{exportingCsv ? 'エクスポート中…' : '献立をCSVエクスポート'}</span>
                    <p className="text-xs text-gray-400">Excel・スプレッドシートで開ける CSV 形式</p>
+                 </div>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
+             {/* 外国の AI 事業者への提供の同意の確認・撤回 (T15 / #1154)。AI のコメントの案内の一文が「設定の「…」から」と指す先 */}
+             <button
+               type="button"
+               onClick={() => router.push(AI_CONSENT_SETTINGS_PATH)}
+               data-testid="settings-ai-consent-link"
+               className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-500" aria-hidden="true">🤖</div>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">{AI_CONSENT_SETTINGS_ENTRY_TITLE}</span>
+                   <p className="text-xs text-gray-400">日本国外の AI 事業者への提供の確認・撤回</p>
                  </div>
                </div>
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>

@@ -76,9 +76,14 @@ npm run test:smoke -- --base-url=https://staging.homegohan.app
 supabase db push --linked --include-all
 # (本番プロジェクトの PROJECT_ID を確認してから実行)
 
-# 5. 型の再生成 (出力先は src/types/database.types.ts)
+# 5. 型の再生成 (出力先は src/types/database.types.ts。packages/shared/src/database.types.ts に同じ内容を写す)
+#    本番に接続しない作り方: ローカルの Supabase (bash scripts/supabase-local.sh start → reset) に全 migration を当て、
+#    npx supabase@2.62.10 gen types typescript --local --schema public --workdir .supabase-local の出力を使う
+#    (--local は __InternalSupabase の PostgrestVersion を出さないので既存の値を残す。#1495)。
+#    tests/database-types-migrations-contract.test.ts が migration と型ファイルの突き合わせ・写しの一致を確かめる
 npm run types:supabase
-git add src/types/database.types.ts
+cp src/types/database.types.ts packages/shared/src/database.types.ts
+git add src/types/database.types.ts packages/shared/src/database.types.ts
 git commit -m "chore: Supabase 型を再生成"
 
 # 6. seed データ投入
@@ -363,12 +368,14 @@ Step 5: org_admin に手順案内
   → 削除をブロックする条件 (409。先に譲渡または解散してもらう):
      - 組織の owner         → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
      - 家族グループの代表者  → ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE
-  → FK で消えない参照を解消 (ai_content_logs の削除、invited_by / created_by 等の NULL 化)
-  → ライセンス席を解放 (RPC release_user_membership)
+  → 生のメールアドレスを残す記録を伏せ、本人の非公開レシピを消す (RPC prepare_account_deletion。メール配信ログ・問い合わせ・招待)
+  → ライセンス席を解放 (RPC release_user_membership。失敗しても続ける)
+  → Storage のファイルを削除 (meal_photos / fridge-images / health-checkups の <user_id>/ 以下など)
   → auth.users を削除 (auth.admin.deleteUser)
      - 旧設計の「email を deleted+...@example.com に書き換える匿名化」はしない。行ごと削除する
-     - public 側は FK の ON DELETE CASCADE / SET NULL で削除・匿名化される
+     - public 側は FK の ON DELETE CASCADE / SET NULL で削除・匿名化される (本人だけの記録は削除、サポート・会計の記録は行を残して紐づけを外す)
   → 200 { success: true }。クライアントはサインアウトする
+  → 途中で失敗したら 500 (#1172 の internalError。本文は汎用メッセージと INTERNAL_ERROR だけ)。アカウントは残り、もう一度実行できる
 
 削除後:
   - 取り消し・復旧はできない (画面にも明記している)
@@ -376,9 +383,7 @@ Step 5: org_admin に手順案内
   - org_health_access_logs など、ほかの法定保管データの扱いは未確認。棚卸しが必要 (作業計画 T11)
 
 まだ無いもの (追加予定):
-  - 削除前の確認メールと削除完了メール (#1152、作業計画 T20)
-  - Storage の写真・Stripe の顧客/サブスクリプション・送信ログの生メールアドレスの後始末と、
-    途中で失敗したときの耐性 (#1175、作業計画 T11)
+  - Stripe の顧客/サブスクリプションの後始末 (影響範囲の調査は cross/08-legal-compliance.md §19)
 ```
 
 ### 9.2 運営が関わる場合 (サポート経由の依頼)
@@ -497,7 +502,8 @@ Step 1: 影響確認 (T+0)
 
 Step 2: 一時的な対応 (T+5 min)
   □ API で DB 接続エラーを返す場合: Maintenance Mode を ON
-    → /super-admin/settings → メンテナンスモード ON
+    → /super-admin/flags → maintenance_mode を ON (admin / super_admin 以外は、画面がメンテナンス中の表示、API が 503 MAINTENANCE_MODE になる。
+      反映まで最大 30 秒。/login・/terms・/privacy・/legal・/contact は見られる。operator/02-api-spec.md §7)
   □ status.homegohan.app を Investigating に更新
 
 Step 3: Supabase サポートに連絡 (T+10 min)
@@ -699,15 +705,18 @@ sequenceDiagram
   alt owner または代表者
     API-->>App: 409 ACCOUNT_DELETE_BLOCKED_ORG_OWNER / _FAMILY_REPRESENTATIVE
   else 削除できる
-    API->>DB: FK で消えない参照を解消 (ai_content_logs の削除、invited_by 等の NULL 化)
+    API->>DB: RPC prepare_account_deletion (生のメールアドレスを残す記録を伏せる・非公開レシピを消す)
     API->>DB: RPC release_user_membership (ライセンス席の解放)
+    API->>DB: Storage のファイルを削除
     API->>DB: auth.admin.deleteUser (public 側は FK の CASCADE / SET NULL)
+    API->>API: 削除完了メールを本人へ 1 通送る (#1152。送信に失敗しても 200)
     API-->>App: 200 { success: true }
     App->>App: サインアウトして、ログイン前の画面へ戻る
   end
+  Note over API,DB: 途中で失敗したら 500 INTERNAL_ERROR (アカウントは残り、再実行できる)
 
   Note over API,DB: 30 日の待機と月次バッチはない (2026-10-08 オーナー判断)
-  Note over API,DB: 削除前の確認メール・削除完了メール (T20) と、Storage / Stripe の後始末 (T11) は今後追加
+  Note over API,DB: 削除前の確認メールは送らない (2026-10-09 オーナー判断)。Stripe の後始末は今後追加 (#1447)
 ```
 
 ## 14. エラーハンドリング
@@ -715,7 +724,7 @@ sequenceDiagram
 | シナリオ | 対処 |
 |---------|------|
 | PITR 復元失敗 | Supabase サポートに即時連絡、Cold Backup 復元に切替 |
-| 退会 API が途中で失敗 (FK 違反など) | 500 を返し、`auth.users` は消えない。手前の後始末 (削除・NULL 化) は何度流しても結果が変わらない。FK 違反が原因なら再実行しても同じ理由で失敗するため、運営が原因のテーブルを特定して対処する (恒久対策は #1175、作業計画 T11) |
+| 退会 API が途中で失敗 | 500 (#1172 の internalError。本文は汎用メッセージと `INTERNAL_ERROR` だけで、`request_id` は返さない) を返し、`auth.users` は消えない。手前の後始末 (メールアドレスを伏せる・Storage の削除) は何度流しても結果が変わらないので、再実行できる。原因は `app_logs` で探す (`function_name = 'lib/account-deletion'` の error 行。metadata の `step` が失敗した段階。同じ `request_id` で `function_name = 'POST /api/account/delete'` の「内部エラーのため 500 を返しました」の行が並ぶ)。`auth.users` を指す NO ACTION の外部キーは無く (#1175)、外部キー違反では失敗しない |
 | bulk-revoke 途中失敗 | `org_license_assignments` の revoked_at で冪等化 → 再実行可能 |
 | reconcile 不一致 > 100 件 | Slack #incident に escalate + 手動調査 |
 
@@ -737,8 +746,8 @@ sequenceDiagram
 
 ## 17. 未解決事項
 
-- 削除完了の通知: 削除完了メールは作業計画 T20 (#1152) で追加する。旧設計の「削除完了証明書 PDF」を別に出すかは未決 (出す場合の生成方法: pdf-lib / Puppeteer / Vercel Edge は Phase 2 で決定)
+- 削除完了の通知: 削除完了メールは追加済み (#1152。cross/08-legal-compliance.md §16.2 の手順 6)。旧設計の「削除完了証明書 PDF」を別に出すかは未決 (出す場合の生成方法: pdf-lib / Puppeteer / Vercel Edge は Phase 2 で決定)
 - `logical_backup` cron (`pg_dump → S3`): S3 接続情報と IAM 権限の設定は本番環境構築時に確定
 - EU GDPR の 1 ヶ月以内回答 SLA: 退会は即時削除 (cooling period なし) のため、アプリからの削除で遅れは出ない。サポート経由の依頼は受付から 1 ヶ月以内に完了させる (§9.2)。EU 規制との整合性の法務確認は引き続き必要
-- 退会の実行記録: 旧設計は `gdpr_deletion_requests` (永久保管) と admin_audit_logs (severity='critical') に残していたが、現行実装はどちらにも記録しない。何で残すかは作業計画 T11 と合わせて決める (cross/08-legal-compliance.md §19)
+- 退会の実行記録: 旧設計は `gdpr_deletion_requests` (永久保管) と admin_audit_logs (severity='critical') に残していたが、現行実装はどちらにも記録しない。何で残すかは未決 (cross/08-legal-compliance.md §19・#1447)
 - ランサムウェア対応での「新しい Supabase プロジェクト」への DNS 切替: Vercel の環境変数変更とドメイン設定変更の手順を別途ドキュメント化が必要

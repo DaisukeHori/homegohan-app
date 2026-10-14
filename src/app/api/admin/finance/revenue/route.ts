@@ -5,12 +5,16 @@
  * 権限: admin, super_admin, finance
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { jstDayOffset } from '@/lib/jst-day-ranges';
 import { requireRole } from '@/lib/auth/helpers';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { RevenueQuerySchema } from '@/lib/admin/finance-schemas';
 
 export const dynamic = 'force-dynamic';
+
+/** 集計サマリーの既定の期間 (from を指定しないとき、JST の今日から何日前までの revenue_snapshots.date を見るか) */
+const REVENUE_SUMMARY_LOOKBACK_DAYS = 30;
 
 export async function GET(request: NextRequest) {
   try {
@@ -52,7 +56,7 @@ export async function GET(request: NextRequest) {
     const { data: summary } = await supabase
       .from('revenue_snapshots')
       .select('total_mrr_jpy, total_arr_jpy, new_signups, cancellations')
-      .gte('date', query.from ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))
+      .gte('date', query.from ?? jstDayOffset(-REVENUE_SUMMARY_LOOKBACK_DAYS))
       .order('date', { ascending: false })
       .limit(30);
 

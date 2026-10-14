@@ -9,6 +9,8 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail } from '@/lib/emails/send';
 import { emailFailureReasons } from '@/lib/emails/send-result';
@@ -17,16 +19,20 @@ import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
 
+const ROUTE_NAME = 'POST /api/operator/membership/org/[id]/transfer';
+
 const BodySchema = z.object({
   to_user_id: z.string().uuid(),
   reason: z.string().min(1).max(1000),
 });
 
+/**
+ * 通知・候補の取得に使う service_role のクライアント。接続情報は env-required の getter で取り出す (#1434)。
+ * 欠けていれば MissingEnvError (message は固定の文で、変数名はサーバーのログにだけ残る)。
+ */
 function getServiceRoleClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error('Supabase service role env missing');
-  return createSupabaseClient(url, key, {
+  const { url, serviceRoleKey } = getSupabaseServiceConfig();
+  return createSupabaseClient(url, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 }
@@ -35,7 +41,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  const logger = createLogger('POST /api/operator/membership/org/[id]/transfer', generateRequestId());
+  const logger = createLogger(ROUTE_NAME, generateRequestId());
   try {
     const { userId: operatorId } = await requireSuperAdmin();
     const { id: orgId } = params;
@@ -80,12 +86,17 @@ export async function POST(
     });
 
     if (rpcError) {
-      const code = rpcError.message.includes('TARGET_NOT_IN_ORG')
-        ? 'TARGET_NOT_IN_ORG'
-        : rpcError.message.includes('NOT_OPERATOR')
-          ? 'FORBIDDEN'
-          : 'INTERNAL_ERROR';
-      return NextResponse.json({ error: { code, message: rpcError.message } }, { status: code === 'FORBIDDEN' ? 403 : 400 });
+      // RPC の生のエラー文は本文に出さない (#1172)。分かるものは固定の文、それ以外は汎用の 500 にして構造化ログに残す
+      if (rpcError.message.includes('TARGET_NOT_IN_ORG')) {
+        return NextResponse.json(
+          { error: { code: 'TARGET_NOT_IN_ORG', message: '譲渡先のユーザーはこの組織に所属していません' } },
+          { status: 400 },
+        );
+      }
+      if (rpcError.message.includes('NOT_OPERATOR')) {
+        return NextResponse.json({ error: { code: 'FORBIDDEN', message: '権限がありません' } }, { status: 403 });
+      }
+      return internalError(ROUTE_NAME, rpcError, { userId: operatorId }, { shape: 'nested' });
     }
 
     // 通知メール (best-effort)。譲渡はすでに完了しているので、失敗しても 200 を返し、ログに残す。
@@ -180,7 +191,7 @@ export async function POST(
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
     }
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message } }, { status: 500 });
+    // 本文は汎用メッセージだけにし、元のエラーは構造化ログに残す (#1172)
+    return internalError(ROUTE_NAME, err, {}, { shape: 'nested' });
   }
 }

@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
 import { motion, AnimatePresence } from "framer-motion";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
+import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { toUserProfile } from "@/lib/converter";
 import type { UserProfile, FitnessGoal, WorkStyle, CookingExperience, DietStyle } from "@/types/domain";
 import { Icons } from "@/components/icons";
@@ -349,6 +350,8 @@ function ProfilePageContent() {
               onClick={async () => {
                 if (!confirm('ログアウトしますか？')) return;
                 clearUserScopedLocalStorage();
+                // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
+                notifyNativeSignOut();
                 const supabase = createClient();
                 await supabase.auth.signOut();
                 broadcastSignOut();
@@ -588,6 +591,8 @@ function ProfilePageContent() {
             <button
               onClick={async () => {
                 clearUserScopedLocalStorage();
+                // WebView ならネイティブへも signOut の前に知らせる (#1038 F7-10。理由は native-auth-bridge.ts の notifyNativeSignOut)
+                notifyNativeSignOut();
                 const supabase = createClient();
                 await supabase.auth.signOut();
                 broadcastSignOut();

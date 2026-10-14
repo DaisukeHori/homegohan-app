@@ -1,12 +1,17 @@
 import { createClient } from '@/lib/supabase/server';
-import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
+import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
+import { isFeatureEnabled } from '@/lib/feature-flags';
 import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
+import { getSupabaseServiceConfig } from '@/lib/env-required';
+import { internalError } from '@/lib/api/errors';
 import { createLogger } from '@/lib/db-logger';
 import type { Tables } from '@homegohan/shared';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
+import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -25,8 +30,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
+    const aiConsentDenied = await requireAiConsent(supabase, user.id);
+    if (aiConsentDenied) return aiConsentDenied;
+
     const rateLimitResult = await checkRateLimit(user.id, 'generation');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+
+    // 必須の環境変数は、認証とレート制限のあと・DB に書き込む前に確かめる。欠けていれば MissingEnvError で汎用の 500 にする (変数名はサーバーのログと構造化ログにだけ残す)。
+    // (未ログインの呼び出しに、設定の不足を教えない。書き込んだあとで気づくと、Edge Function を呼べないまま、
+    //  リクエストの行を作って失敗として記録するだけの無駄な動きになる) (#1182)
+    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
+    // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。本人の確認・同意のあとで、service role で書く
+    const queueDb = getAiQueueWriter();
 
     // 2. mealIdが必須 + UUID形式チェック
     if (!mealId || typeof mealId !== 'string' || !UUID_RE.test(mealId)) {
@@ -61,9 +77,14 @@ export async function POST(request: Request) {
 
     console.log(`📝 Regenerating meal: ${mealId}`);
 
+    // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える。
+    // 上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
+    const aiUsage = await consumeAiUsage(user.id, 'menu_generation');
+    if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
+
     // 3. リクエストをDBに保存（ステータス追跡用）
     // is_generating フラグは使用しない（ポーリングで状態を監視）
-    const { data: requestData, error: insertError } = await supabase
+    const { data: requestData, error: insertError } = await queueDb
       .from('weekly_menu_requests')
       .insert({
         user_id: user.id,
@@ -80,30 +101,30 @@ export async function POST(request: Request) {
       .single();
 
     if (insertError || !requestData?.id) {
-      console.error('Failed to create request record:', insertError);
-      return NextResponse.json({ error: insertError?.message || 'Failed to create request' }, { status: 500 });
+      // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
+      await refundAiUsage(user.id, 'menu_generation', aiUsage);
+      return internalError('POST /api/ai/menu/meal/regenerate', insertError, { userId: user.id });
     }
 
     // 4. target_slotsを生成（再生成用: plannedMealId付き）
     const targetSlots = [{ date: dayDate, mealType, plannedMealId: mealId }];
 
     // target_slotsをリクエストに保存
-    const featureFlags = await loadFeatureFlags(supabase);
-    const useV5Wrapped = Boolean(featureFlags.menu_generation_v5_wrapped);
+    // #1148: エンジンの切り替えは feature_flags (運営画面で切り替える) を見る
+    const useV5Wrapped = await isFeatureEnabled('menu_generation_v5_wrapped', user.id);
     const engine = useV5Wrapped ? 'v5' : 'v4';
 
-    await supabase
+    await queueDb
       .from('weekly_menu_requests')
       .update({
         target_slots: targetSlots,
         mode: engine,
         current_step: 1,
       })
-      .eq('id', requestData.id);
+      .eq('id', requestData.id)
+      .eq('user_id', user.id);
 
     // 5. Edge Function generate-menu-v4 を非同期で呼び出し
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     const generator = useV5Wrapped ? callGenerateMenuV5WithRetry : callGenerateMenuV4WithRetry;
     const targetLabel = useV5Wrapped ? 'generate-menu-v5' : 'generate-menu-v4';
 
@@ -126,7 +147,7 @@ export async function POST(request: Request) {
       if (!result.ok) {
         console.error('❌ Edge Function error:', result.errorMessage);
         await markWeeklyMenuRequestFailed({
-          supabase,
+          supabase: queueDb,
           requestId: requestData.id,
           errorMessage: result.errorMessage,
         });
@@ -143,8 +164,8 @@ export async function POST(request: Request) {
       regeneratingMealId: mealId,
     });
 
-  } catch (error: any) {
-    console.error("Meal Regeneration Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // 500 の本文は汎用メッセージだけ。元のエラー (必須の環境変数が欠けていたときはその変数名も) は構造化ログに残す (#1172 / #1182)
+    return internalError('POST /api/ai/menu/meal/regenerate', error);
   }
 }

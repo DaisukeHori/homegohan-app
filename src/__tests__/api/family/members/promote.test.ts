@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EmailSendError } from '@/lib/emails/send-result';
 import type { RateLimitCategory, RateLimitResult } from '@/lib/rate-limit';
+import { DEFAULT_SITE_URL } from '@/lib/site-config';
 
 // Supabase クライアントのモック
 const mockGetUser = vi.fn();
@@ -160,6 +161,8 @@ beforeEach(() => {
   mockCheckRateLimit.mockReset();
   limiter({});
   vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.example.test');
+  // 招待系リンクの上書き設定 (src/lib/membership/urls.ts)。手元にあっても結果が変わらないよう未設定から始める
+  vi.stubEnv('NEXT_PUBLIC_INVITE_BASE_URL', '');
 });
 
 afterEach(() => {
@@ -357,7 +360,7 @@ describe('POST /api/family/members/[member_id]/promote', () => {
     });
   });
 
-  it('NEXT_PUBLIC_APP_URL が未設定なら accept_url は https://homegohan.app を基点にする', async () => {
+  it('NEXT_PUBLIC_APP_URL が未設定なら accept_url はサイトの URL の既定値 (DEFAULT_SITE_URL) を基点にする', async () => {
     vi.stubEnv('NEXT_PUBLIC_APP_URL', undefined);
     mockRpc.mockResolvedValue({ data: rpcResult, error: null });
 
@@ -365,7 +368,7 @@ describe('POST /api/family/members/[member_id]/promote', () => {
 
     expect(renderFamilyPromoteEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        accept_url: `https://homegohan.app/family/promotions/${promotionToken}`,
+        accept_url: `${DEFAULT_SITE_URL}/family/promotions/${promotionToken}`,
       }),
     );
   });

@@ -1,4 +1,5 @@
 import { DEFAULT_GEMINI_VISION_MODEL } from './image-recognition';
+import { getSupabaseUrl } from '@/lib/env-required';
 
 export interface GeminiImageInput {
   base64: string;
@@ -275,14 +276,13 @@ export function getGoogleAiApiKey(): string {
 function getAllowedImageHosts(): string[] {
   const hosts: string[] = [];
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (supabaseUrl) {
-    try {
-      const { hostname } = new URL(supabaseUrl);
-      if (hostname) hosts.push(hostname);
-    } catch {
-      // 不正な URL は無視
-    }
+  // 接続情報は env-required の getter で取り出す (#1434)。欠けていれば (変数名は getter がサーバーのログに残す)
+  // 下の静的フォールバックだけで判定する
+  try {
+    const { hostname } = new URL(getSupabaseUrl());
+    if (hostname) hosts.push(hostname);
+  } catch {
+    // 未設定 (MissingEnvError)・不正な URL は無視
   }
 
   // 静的フォールバック（上で取得できなかった場合のみ使用）

@@ -1,4 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
+import {
+  addDaysToDate,
+  isCalendarDate,
+  menuGenerationRangeEndMax,
+  menuGenerationRangeStartMax,
+  menuGenerationSingleDayMax,
+} from "@homegohan/shared";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -131,10 +138,58 @@ function getTodayStr(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
+// 暦日 (YYYY-MM-DD) を days 日ずらす。暦の計算だけで行い、端末のタイムゾーンに左右されない (#1433。
+// 以前の new Date(dateStr) + setDate (ローカル時刻) + toISOString (UTC) は、端末のタイムゾーンや夏時間で結果が変わった)
 function addDays(dateStr: string, days: number): string {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().split("T")[0];
+  return addDaysToDate(dateStr, days);
+}
+
+/** 日付 value を下限 min・上限 max (無ければ上限なし) に収める。YYYY-MM-DD どうしは文字列の大小が日付の前後と同じ (Web の V4GenerateModal と同じ) */
+function clampDay(value: string, min: string, max: string | undefined): string {
+  if (value < min) return min;
+  return max !== undefined && value > max ? max : value;
+}
+
+/** 「期間を指定」の確定した期間 (どちらも YYYY-MM-DD の実在する日付) */
+export interface GenerateRange {
+  start: string;
+  end: string;
+}
+
+/**
+ * 「期間を指定」の開始日の欄を確定する (欄を離れたとき・生成を押したとき。#1498)。
+ * 打つたびには直さない (以前は打つたびに直していたので、途中の入力 2026-10-1 などが今日に戻され、手で打ちにくかった)。
+ * text が日付になっていなければ、確定していた期間 current のまま (欄の文字も戻す)。
+ * 日付なら、過去は今日に・上限 (今日から 1 ヶ月先) より先は上限に直し、終了日を新しい開始日から最大31日の中に収める
+ */
+export function commitRangeStartInput(text: string, current: GenerateRange, today: string): GenerateRange {
+  const value = text.trim();
+  if (!isCalendarDate(value)) return current;
+  const start = clampDay(value, today, menuGenerationRangeStartMax(today));
+  return { start, end: clampDay(current.end, start, menuGenerationRangeEndMax(start)) };
+}
+
+/**
+ * 「期間を指定」の終了日の欄を確定する (欄を離れたとき・生成を押したとき。#1498)。
+ * text が日付になっていなければ、確定していた期間 current のまま。
+ * 日付なら、過去は今日に・開始日を含む最大31日より先は上限に直す。開始日より前なら開始日をそこに合わせる
+ */
+export function commitRangeEndInput(text: string, current: GenerateRange, today: string): GenerateRange {
+  const value = text.trim();
+  if (!isCalendarDate(value)) return current;
+  const end = clampDay(value, today, menuGenerationRangeEndMax(current.start));
+  return { start: end < current.start ? end : current.start, end };
+}
+
+/**
+ * 「1日だけ」の日付の欄を確定する (欄を離れたとき・生成を押したとき。#1498)。
+ * text が日付になっていなければ、確定していた日付 current のまま。日付なら、過去は今日に直し (以前と同じ下限)、
+ * 上限 (今日から 1 ヶ月先。画面の説明「今日から1ヶ月先まで」。Web の日付の欄の max と同じ共有の値) より先は上限に直す (#1524)
+ */
+export function commitSingleDayInput(text: string, current: string, today: string): string {
+  const value = text.trim();
+  if (!isCalendarDate(value)) return current;
+  return clampDay(value, today, menuGenerationSingleDayMax(today));
 }
 
 function daysBetween(startStr: string, endStr: string): number {
@@ -367,10 +422,29 @@ function V4GenerateModalNormal({
   const todayStr = useMemo(() => getTodayStr(), []);
 
   const [selectedMode, setSelectedMode] = useState<GenerateMode | null>(null);
+  // 確定した期間 (生成と保存に使う)。入力欄の文字は rangeStartText / rangeEndText に別に持ち、
+  // 欄を離れたとき (onBlur・キーボードの確定) と生成を押したときに、上限・下限をかけてここへ入れる (#1498)
   const [rangeStart, setRangeStart] = useState(weekStartDate);
   const [rangeEnd, setRangeEnd] = useState(weekEndDate);
+  const [rangeStartText, setRangeStartText] = useState(weekStartDate);
+  const [rangeEndText, setRangeEndText] = useState(weekEndDate);
   const [includeExisting, setIncludeExisting] = useState(false);
   const [singleDayDate, setSingleDayDate] = useState(todayStr);
+  const [singleDayText, setSingleDayText] = useState(todayStr);
+
+  /** 確定した期間を入れ、入力欄の文字もそれに合わせる */
+  const applyRange = useCallback((range: GenerateRange) => {
+    setRangeStart(range.start);
+    setRangeEnd(range.end);
+    setRangeStartText(range.start);
+    setRangeEndText(range.end);
+  }, []);
+
+  /** 確定した「1日だけ」の日付を入れ、入力欄の文字もそれに合わせる */
+  const applySingleDay = useCallback((date: string) => {
+    setSingleDayDate(date);
+    setSingleDayText(date);
+  }, []);
 
   const [constraints, setConstraints] = useState<MenuGenerationConstraints>({
     useFridgeFirst: false,
@@ -401,19 +475,22 @@ function V4GenerateModalNormal({
         const saved = await AsyncStorage.getItem(STORAGE_KEY_RANGE_DAYS);
         if (saved) {
           const { startDays, endDays } = JSON.parse(saved);
-          const newStart = addDays(todayStr, startDays);
-          const newEnd = addDays(todayStr, endDays);
-          setRangeStart(newStart);
-          setRangeEnd(newEnd);
+          // 今日を基準に日付を計算し、選べる範囲 (開始日は今日〜1ヶ月先・期間は最大31日) に収める (#1482。Web と同じ)
+          const newStart = clampDay(addDays(todayStr, startDays), todayStr, menuGenerationRangeStartMax(todayStr));
+          const newEnd = clampDay(addDays(todayStr, endDays), newStart, menuGenerationRangeEndMax(newStart));
+          applyRange({ start: newStart, end: newEnd });
           return;
         }
       } catch {
         // パースエラーはデフォルトにフォールバック
       }
-      setRangeStart(todayStr);
-      setRangeEnd(weekEndDate >= todayStr ? weekEndDate : addDays(todayStr, 6));
+      // 表示中の週が先の週でも、期間の上限 (開始日を含む最大31日) に収める (#1482)
+      applyRange({
+        start: todayStr,
+        end: clampDay(weekEndDate >= todayStr ? weekEndDate : addDays(todayStr, 6), todayStr, menuGenerationRangeEndMax(todayStr)),
+      });
     })();
-  }, [visible, todayStr, weekEndDate]);
+  }, [visible, todayStr, weekEndDate, applyRange]);
 
   // range 変更時に AsyncStorage に保存
   useEffect(() => {
@@ -426,23 +503,22 @@ function V4GenerateModalNormal({
     ).catch(() => {});
   }, [rangeStart, rangeEnd, todayStr]);
 
-  const handleSetRangeStart = useCallback(
-    (value: string) => {
-      const adjusted = value < todayStr ? todayStr : value;
-      setRangeStart(adjusted);
-      if (adjusted > rangeEnd) setRangeEnd(adjusted);
-    },
-    [todayStr, rangeEnd]
-  );
+  // 期間の入力欄の上限 (#1482。Web の V4GenerateModal (#1463) と同じ)。開始日は今日から 1 ヶ月先まで、
+  // 終了日は開始日を含む最大31日の最後の日まで。値は @homegohan/shared の menu-generation-range でサーバーと共有する。
+  // 入力欄は自由入力なので、確定したとき (欄を離れたとき・キーボードの確定・生成を押したとき) に、過去の日付は今日に、
+  // 上限より先の日付は上限に直す (#1498。以前は打つたびに直していたので、途中の入力 2026-10-1 などが今日に戻された)。
+  // 開始日が終了日より後になった場合は終了日を開始日に合わせ、終了日が期間の上限を超えたら上限に縮める
+  const handleCommitRangeStart = useCallback(() => {
+    applyRange(commitRangeStartInput(rangeStartText, { start: rangeStart, end: rangeEnd }, todayStr));
+  }, [applyRange, rangeStartText, rangeStart, rangeEnd, todayStr]);
 
-  const handleSetRangeEnd = useCallback(
-    (value: string) => {
-      const adjusted = value < todayStr ? todayStr : value;
-      setRangeEnd(adjusted);
-      if (adjusted < rangeStart) setRangeStart(adjusted);
-    },
-    [todayStr, rangeStart]
-  );
+  const handleCommitRangeEnd = useCallback(() => {
+    applyRange(commitRangeEndInput(rangeEndText, { start: rangeStart, end: rangeEnd }, todayStr));
+  }, [applyRange, rangeEndText, rangeStart, rangeEnd, todayStr]);
+
+  const handleCommitSingleDay = useCallback(() => {
+    applySingleDay(commitSingleDayInput(singleDayText, singleDayDate, todayStr));
+  }, [applySingleDay, singleDayText, singleDayDate, todayStr]);
 
   const mealDays = useMemo(() => toMealDays(mealPlanDays), [mealPlanDays]);
 
@@ -469,7 +545,11 @@ function V4GenerateModalNormal({
     });
   }, [mealDays, effectiveStartDate, weekEndDate]);
 
-  const buildTargetSlots = useCallback((): TargetSlot[] => {
+  // range / singleDay は、確定したばかりの値 (state への反映を待たない) を渡すときに使う
+  const buildTargetSlots = useCallback((
+    range: GenerateRange = { start: rangeStart, end: rangeEnd },
+    singleDay: string = singleDayDate
+  ): TargetSlot[] => {
     switch (selectedMode) {
       case "empty":
         if (effectiveStartDate > weekEndDate) return [];
@@ -488,13 +568,13 @@ function V4GenerateModalNormal({
       case "range":
         return buildRangeSlots({
           mealPlanDays: mealDays,
-          startDate: rangeStart,
-          endDate: rangeEnd,
+          startDate: range.start,
+          endDate: range.end,
           includeExisting,
         });
       case "single_day":
         return buildSingleDaySlots({
-          date: singleDayDate,
+          date: singleDay,
           mealPlanDays: mealDays,
         });
       default:
@@ -514,7 +594,28 @@ function V4GenerateModalNormal({
   const handleGenerate = async () => {
     if (isSubmitting || isGenerating) return;
 
-    const slots = buildTargetSlots();
+    // 欄を離れずに押したとき (keyboardShouldPersistTaps="handled" なので、押しても欄は確定しない) も、打った値を確定してから使う (#1498)
+    let range: GenerateRange = { start: rangeStart, end: rangeEnd };
+    let singleDay = singleDayDate;
+    if (selectedMode === "range") {
+      // 打ち直した欄だけを確定する (打っていない欄まで確定し直すと、開始日を確定して縮めた終了日が、
+      // 終了日の欄に残る前の値で戻され、開始日まで引き戻される)
+      if (rangeStartText !== rangeStart) range = commitRangeStartInput(rangeStartText, range, todayStr);
+      if (rangeEndText !== rangeEnd) range = commitRangeEndInput(rangeEndText, range, todayStr);
+      applyRange(range);
+    } else if (selectedMode === "single_day") {
+      singleDay = commitSingleDayInput(singleDayText, singleDayDate, todayStr);
+      applySingleDay(singleDay);
+    }
+
+    let slots: TargetSlot[];
+    try {
+      slots = buildTargetSlots(range, singleDay);
+    } catch (error) {
+      // 期間が上限 (最大31日) を超えると slot-builder が投げる。以前は捕まえず、押しても何も起きなかった (#1482)
+      Alert.alert("エラー", error instanceof Error ? error.message : "期間が正しくありません");
+      return;
+    }
     const validation = validateSlotCount(slots);
     if (!validation.valid) {
       Alert.alert("エラー", validation.message ?? "スロットが無効です");
@@ -719,11 +820,10 @@ function V4GenerateModalNormal({
                 </Text>
                 <TextInput
                   testID="v4-date-picker-single"
-                  value={singleDayDate}
-                  onChangeText={(v) => {
-                    const adjusted = v < todayStr ? todayStr : v;
-                    setSingleDayDate(adjusted);
-                  }}
+                  value={singleDayText}
+                  onChangeText={setSingleDayText}
+                  onBlur={handleCommitSingleDay}
+                  onSubmitEditing={handleCommitSingleDay}
                   placeholder="YYYY-MM-DD"
                   style={{
                     borderWidth: 1,
@@ -762,8 +862,10 @@ function V4GenerateModalNormal({
                     </Text>
                     <TextInput
                       testID="v4-range-start"
-                      value={rangeStart}
-                      onChangeText={handleSetRangeStart}
+                      value={rangeStartText}
+                      onChangeText={setRangeStartText}
+                      onBlur={handleCommitRangeStart}
+                      onSubmitEditing={handleCommitRangeStart}
                       placeholder="YYYY-MM-DD"
                       style={{
                         borderWidth: 1,
@@ -783,8 +885,10 @@ function V4GenerateModalNormal({
                     </Text>
                     <TextInput
                       testID="v4-range-end"
-                      value={rangeEnd}
-                      onChangeText={handleSetRangeEnd}
+                      value={rangeEndText}
+                      onChangeText={setRangeEndText}
+                      onBlur={handleCommitRangeEnd}
+                      onSubmitEditing={handleCommitRangeEnd}
                       placeholder="YYYY-MM-DD"
                       style={{
                         borderWidth: 1,

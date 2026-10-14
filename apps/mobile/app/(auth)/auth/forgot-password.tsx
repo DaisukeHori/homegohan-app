@@ -6,11 +6,15 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, Tex
 
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { supabase } from "../../../src/lib/supabase";
+import { TurnstileWidget, useTurnstile } from "../../../src/components/auth/TurnstileWidget";
+import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "../../../src/lib/turnstile";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  // #1165: bot 対策 (Cloudflare Turnstile)。サイトキーが未設定なら無効で、今までどおりに動く
+  const captcha = useTurnstile();
 
   async function onSubmit() {
     const trimmed = email.trim();
@@ -19,16 +23,31 @@ export default function ForgotPasswordPage() {
       return;
     }
 
+    // #1165: トークンは 1 回しか使えない。取り出した時点で、ウィジェットが次のトークンを取り直す
+    // (入力の検証で弾いた場合は取り出さないよう、検証の後で呼ぶ)。Turnstile が有効なのにトークンが無いときは送らない
+    const captchaToken = captcha.takeToken();
+    if (captcha.enabled && !captchaToken) {
+      Alert.alert("しばらくお待ちください", "ボットではないことの確認が終わるまで、少しお待ちください。");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const redirectTo = Linking.createURL("/auth/reset-password");
-      const { error } = await supabase.auth.resetPasswordForEmail(trimmed, { redirectTo });
+      // resetPasswordForEmail は他の認証 API と違い、captchaToken を options の中ではなく、
+      // 第 2 引数の直下 (redirectTo と同じ階層) に渡す。options に入れても Supabase には届かない。
+      // Turnstile が無効のときは captchaToken を付けない (今までのリクエストと同じ)
+      const { error } = await supabase.auth.resetPasswordForEmail(trimmed, {
+        redirectTo,
+        ...(captchaToken ? { captchaToken } : {}),
+      });
       if (error) throw error;
       const successMsg = "パスワード再設定用のメールを送信しました。";
       setSuccessMessage(successMsg);
       Alert.alert("送信しました", successMsg);
     } catch (e: any) {
-      Alert.alert("送信失敗", e?.message ?? "送信に失敗しました。");
+      // #1165: 英語の生のエラー文は出さない (ウィジェットは取り直し済み)
+      Alert.alert("送信失敗", isCaptchaFailure(e) ? CAPTCHA_FAILED_MESSAGE : (e?.message ?? "送信に失敗しました。"));
     } finally {
       setIsSubmitting(false);
     }
@@ -107,13 +126,16 @@ export default function ForgotPasswordPage() {
             </Text>
           )}
 
+          {/* bot 対策 (Turnstile)。サイトキーが未設定なら何も出ない */}
+          <TurnstileWidget {...captcha.widgetProps} action="password-reset" />
+
           {/* 送信ボタン */}
           <Pressable
             testID="forgot-submit-button"
             onPress={onSubmit}
-            disabled={isSubmitting}
+            disabled={isSubmitting || !captcha.ready}
             style={({ pressed }) => ({
-              backgroundColor: isSubmitting ? colors.textMuted : colors.accent,
+              backgroundColor: isSubmitting || !captcha.ready ? colors.textMuted : colors.accent,
               borderRadius: radius.lg, paddingVertical: 16,
               alignItems: "center", ...shadows.md,
               opacity: pressed ? 0.9 : 1,

@@ -9,7 +9,7 @@
  *   - WITH CHECK が無く USING が使われるため、ログインユーザーは自分の行の user_id を NULL に書き換えられた (行を匿名化して誰でも触れる状態にできる)
  * テーブルには anon / authenticated に GRANT ALL があるため、防いでいるのは RLS だけ。
  *
- * このテーブルをアプリは読み書きしていない (v1 の Cookie 同意は localStorage。src/lib/posthog.ts)。
+ * このテーブルをアプリは読み書きしていない (v1 の Cookie 同意は localStorage に置いていた。#1166 で PostHog ごとその処理をやめ、テーブルだけを残している)。
  * そのため修正は「本人の行だけ」に絞る (20261007150250_cookie_consents_owner_only.sql)。
  * user_id が NULL の行は service role (RLS の対象外) だけが扱う。将来、未ログインの同意をサーバーに残すときは、
  * サーバー側のルートから service role で書く。

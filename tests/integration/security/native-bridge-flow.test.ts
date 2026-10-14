@@ -20,6 +20,9 @@
  *     next へ 307。Location にもレスポンス本文にもトークンが無い。Cache-Control は no-store
  *   - 同じコードの 2 回目は /login へ。ただし同じ WebView が既に Cookie セッションを持っていれば next へ続く
  *   - Cookie だけで認証が通る (WebView 側に localStorage の注入が要らないことの証明)
+ *   - Web の Cookie に入る refresh_token はネイティブの実際の値ではなく、それでは更新できない。Web が更新に失敗しても
+ *     ネイティブの refresh_token は無傷 (Web とネイティブが同じ refresh_token を別々にローテーションして、
+ *     セッションごと失効する「ランダムな強制ログアウト」を防ぐ。#1038 F7-05)
  *   - 壊れたコード・他人の user_id に紐づく行は拒否し、セッション Cookie を残さない
  *   - `next` に外部 URL / プロトコル相対 URL / バックスラッシュ / エンコードした `//` を入れても外へ出ない
  *
@@ -343,6 +346,31 @@ describe('#1036 GET /auth/native-bridge?code=...', () => {
     // コード自体も Location に出ない
     expect(res.headers.get('location') ?? '').not.toContain(code);
   });
+
+  it('S-5b: Web の Cookie に入る refresh_token は実際の値ではなく、それでは更新できない。ネイティブの refresh_token は無傷 (#1038 F7-05)', async () => {
+    const user = await createUser('refresh');
+    const issued = await issueCode(user);
+    expect(issued.status).toBe(200);
+
+    const res = await bridge({ code: issued.body.code!, next: '/home?mode=app' });
+    expect(res.status).toBe(307);
+    const cookieSession = readSession(res);
+
+    // access_token は発行元のものがそのまま入る (Web はこれで認証される) が、refresh_token は別の値
+    expect(cookieSession?.access_token).toBe(user.accessToken);
+    expect(cookieSession?.refresh_token).toBeTruthy();
+    expect(cookieSession?.refresh_token).not.toBe(user.refreshToken);
+
+    // Web の Cookie の refresh_token では更新できない (= Web は自分でトークンを更新できず、ネイティブとフォークしない)
+    const webRefresh = await anon().auth.refreshSession({ refresh_token: cookieSession!.refresh_token! });
+    expect(webRefresh.error).not.toBeNull();
+    expect(webRefresh.data.session).toBeNull();
+
+    // その失敗はネイティブのセッションを巻き込まない: ネイティブの refresh_token は、まだ更新に使える
+    const nativeRefresh = await anon().auth.refreshSession({ refresh_token: user.refreshToken });
+    expect(nativeRefresh.error).toBeNull();
+    expect(nativeRefresh.data.session?.user.id).toBe(user.id);
+  }, 60_000);
 
   it('S-6: 使用済みのコードは再利用できない (/login へ。セッション Cookie も is_native_app も付かない)', async () => {
     const code = (await issueCode(userA)).body.code!;

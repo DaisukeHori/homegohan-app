@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
 // Resend モック (send.ts が resend を import するため)
 vi.mock('resend', () => {
@@ -11,6 +11,7 @@ vi.mock('resend', () => {
 import { renderMemberLeftEmail } from '@/lib/emails/membership/member-left';
 import type { MemberLeftEmailVars } from '@/lib/emails/membership/member-left';
 import { EmailEnvelopeSchema } from '@/lib/emails/send';
+import { DEFAULT_EMAIL_FROM, DEFAULT_SITE_URL, DEFAULT_SUPPORT_EMAIL } from '@/lib/site-config';
 
 // #1160 メンバーが自分で脱退したときの、家族グループの代表者 / 組織のオーナーへの通知メール
 // (設計書 04-email-templates.md §6.2)
@@ -32,6 +33,17 @@ const orgVars: MemberLeftEmailVars = {
 /** 本文に含まれるメールアドレス */
 const addressesIn = (text: string) => text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) ?? [];
 
+// 既定値 (src/lib/site-config.ts) を確かめるテスト。手元の環境変数に左右されないよう、3 つとも未設定から始める
+beforeEach(() => {
+  vi.stubEnv('NEXT_PUBLIC_APP_URL', '');
+  vi.stubEnv('EMAIL_FROM', '');
+  vi.stubEnv('NEXT_PUBLIC_SUPPORT_EMAIL', '');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe('renderMemberLeftEmail', () => {
   it('EmailEnvelopeSchema で valid な envelope を返す (家族グループ・組織とも)', () => {
     for (const vars of [familyVars, orgVars]) {
@@ -43,7 +55,7 @@ describe('renderMemberLeftEmail', () => {
     const envelope = renderMemberLeftEmail(familyVars);
 
     expect(envelope.to).toBe('hanako@example.com');
-    expect(envelope.from).toBe('ほめゴハン <noreply@homegohan.app>');
+    expect(envelope.from).toBe(DEFAULT_EMAIL_FROM);
   });
 
   it('件名: 家族グループ名つきで「メンバーが脱退しました」と伝える', () => {
@@ -83,15 +95,15 @@ describe('renderMemberLeftEmail', () => {
   it('本文: 問い合わせ先と署名がある (family-transfer-completed と同じ書式)', () => {
     const { text } = renderMemberLeftEmail(familyVars);
 
-    expect(text).toContain('support@homegohan.app');
-    expect(text.trimEnd().endsWith('ほめゴハン\nhttps://homegohan.app')).toBe(true);
+    expect(text).toContain(DEFAULT_SUPPORT_EMAIL);
+    expect(text.trimEnd().endsWith(`ほめゴハン\n${DEFAULT_SITE_URL}`)).toBe(true);
   });
 
   it('本文: 脱退した人を特定する個人情報は載せない。メールアドレスは問い合わせ先だけ', () => {
     for (const vars of [familyVars, orgVars]) {
       const { subject, text } = renderMemberLeftEmail(vars);
 
-      expect(addressesIn(text)).toEqual(['support@homegohan.app']);
+      expect(addressesIn(text)).toEqual([DEFAULT_SUPPORT_EMAIL]);
       expect(subject).not.toContain('@');
       // 宛先本人のアドレスも、本文には書かない
       expect(text).not.toContain(vars.to_email);

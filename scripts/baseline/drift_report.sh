@@ -16,15 +16,28 @@
 #
 # 使い方: bash scripts/supabase-local.sh start (起動済みであること) の後に
 #   bash scripts/baseline/drift_report.sh [出力ディレクトリ]
+# 枠 (LOCAL_CI_SLOT。scripts/lib/local-ci-slot.sh) を指定して起動したスタックに対して回すときは、
+# 起動したときと同じ LOCAL_CI_SLOT を付けて打つ (DB のポートも scripts/supabase-local.sh と同じく枠で決まる)。
 # 終了時にローカル DB を通常状態 (ベースライン + 新規 migration) に戻す。
 # =====================================================================
 
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
-OUT="${1:-$ROOT/.supabase-local/drift}"
+# 繋ぐ DB のポートと結果の既定の置き場は、scripts/supabase-local.sh と同じく LOCAL_CI_SLOT の枠で決める
+# (枠 0 は今までと同じ: DB は CLI の既定 54322、結果は .supabase-local/drift)。DB のポートを決め打ちにすると、枠 1 以上の
+# スタックを reset しておきながら、別の枠 (同時に回っている local-ci.sh など) の DB の認可状態を白紙化してしまう
+# shellcheck source=../lib/local-ci-slot.sh
+. "$ROOT/scripts/lib/local-ci-slot.sh"
+SLOT="${LOCAL_CI_SLOT:-0}"
+if ! local_ci_slot_valid "$SLOT"; then
+  echo "[drift] LOCAL_CI_SLOT は 0〜$LCS_SLOT_MAX の整数にしてください: $SLOT" >&2
+  exit 2
+fi
+local_ci_slot_apply "$SLOT"
+OUT="${1:-$ROOT/$(local_ci_slot_work_dir "$SLOT")/drift}"
 PG_IMAGE="public.ecr.aws/supabase/postgres:$(cat "$ROOT/supabase/.temp/postgres-version")"
-DB_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres?sslmode=disable"
+DB_URL="postgresql://postgres:postgres@127.0.0.1:$SLOT_DB_PORT/postgres?sslmode=disable"
 
 rm -rf "$OUT"
 mkdir -p "$OUT/replay"

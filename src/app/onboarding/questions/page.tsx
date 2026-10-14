@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, Suspense } from "react";
+import { todayLocal } from "@/lib/date-utils";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -592,7 +593,7 @@ function OnboardingQuestionsContent() {
                     type="date"
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
-                    min={new Date().toISOString().split('T')[0]}
+                    min={todayLocal()}
                     className="py-5 sm:py-6 text-base sm:text-lg rounded-xl sm:rounded-2xl border-gray-200 focus:border-orange-400 focus:ring-orange-400/20 text-center"
                   />
                   <div className="flex gap-2 sm:gap-3">

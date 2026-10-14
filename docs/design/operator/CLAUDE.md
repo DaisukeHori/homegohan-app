@@ -12,7 +12,7 @@
 | `04-plan-management.md` | F-OP-015 プラン定義・販売管理ツール (subscription_plans / feature_packages / coupons) | 03 §5.15-5.17 |
 | `05-stripe-integration.md` | Stripe webhook (idempotency) / Price 同期 / reconciliation | 03 §15.12 §22.10 |
 | `06-ai-llm.md` | モデル選定 / quota / プロンプト / アレルゲン突合 | 03 §5.5 |
-| `07-audit-monitoring.md` | admin_audit_logs / 監査ログ操作網羅リスト / Sentry / Better Stack | 03 §5.3 §22.9 |
+| `07-audit-monitoring.md` | admin_audit_logs / 監査ログ操作網羅リスト / エラー監視 (app_logs) と性能計測 (Speed Insights)。Sentry / Better Stack / Status Page は不採用 (#1179) | 03 §5.3 §22.9 |
 | `08-cron-batches.md` | pg_cron + Vercel Cron 全 job (license_expire / freeze_grace / archive_purge / trial_reminder) | 03 §15.17 |
 | `09-runbook.md` | 運用手順書 (Stripe reconcile / HR retry / deprecated rollback / incident response / DR) | 03 §15 §16.5 |
 

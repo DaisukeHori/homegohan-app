@@ -268,14 +268,21 @@ onLCP((metric) => fireAnalytics('web_vitals_lcp', {
 
 ## 4. PostHog 配信実装
 
+> **【不採用】オーナー判断 (2026-10-08, #1166)**: PostHog は採用しない。この節のコード (`src/lib/posthog.ts` / `apps/mobile/src/lib/posthog.ts` など) は削除した。
+> `fireAnalytics` は送り先 (adapter) を誰も注入していないので何も送らない。経緯と後始末は `docs/design/operator/07-audit-monitoring.md` §15 と `docs/operations/posthog-dashboard.md`。
+
 ### 4.1 SDK 初期化
 
 ```ts
 // src/lib/posthog.ts
 import posthog from 'posthog-js';
 
-if (typeof window !== 'undefined') {
-  posthog.init(process.env.NEXT_PUBLIC_POSTHOG_KEY!, {
+// NEXT_PUBLIC_* はブラウザ向けのバンドルでビルド時に値へ置き換わるよう、名前を直接書いて読む。
+// `process.env.<変数名>!` とは書かず、無ければ初期化しない (任意の変数。#1182・#1434)
+const posthogKey = process.env.NEXT_PUBLIC_POSTHOG_KEY;
+
+if (typeof window !== 'undefined' && posthogKey) {
+  posthog.init(posthogKey, {
     api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST,
     person_profiles: 'identified_only',
     autocapture: false,  // 手動 capture のみ

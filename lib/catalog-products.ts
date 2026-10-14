@@ -277,13 +277,14 @@ export function buildCatalogMealFields(
   product: CatalogProductSummary,
   options?: PlannedMealCatalogOptions,
 ) {
+  const imageUrl = options?.imageUrl ?? product.imageUrl ?? null;
   return {
     catalog_product_id: product.id,
     source_type: "catalog_product",
     dish_name: product.name,
     mode: options?.mode ?? "buy",
     description: options?.description ?? product.description ?? null,
-    image_url: options?.imageUrl ?? product.imageUrl ?? null,
+    image_url: imageUrl,
     calories_kcal: product.caloriesKcal,
     protein_g: product.proteinG,
     fat_g: product.fatG,
@@ -303,8 +304,26 @@ export function buildCatalogMealFields(
         sodium_g: product.sodiumG ?? undefined,
         fiber_g: product.fiberG ?? undefined,
         sugar_g: product.sugarG ?? undefined,
+        // 商品の料理の画像は商品の画像 (#1487 の整合ゲート)。image_source: 'catalog' の料理は、保存し直しても
+        // 料理の中身を変えても AI の画像で置き換えない (reconcileDishImages の isPreservedDishImage)。
+        // image_subject_hash は付けない (画像の処理は subject_hash が同じ料理にだけ書くので、付けなければ AI の画像が上書きしない)。
+        // 商品の画像が無いときは状態を付けない (画面は「生成中」「失敗」を出さない。AI の画像も作らない)
+        ...catalogDishImageFields(imageUrl),
       },
     ],
+  };
+}
+
+/** 商品の料理の画像の項目 (#1487 の整合ゲート。buildCatalogMealFields の dishes) */
+export function catalogDishImageFields(imageUrl: string | null): {
+  image_url: string | null;
+  image_source: "catalog";
+  image_status: "ready" | null;
+} {
+  return {
+    image_url: imageUrl,
+    image_source: "catalog",
+    image_status: imageUrl ? "ready" : null,
   };
 }
 

@@ -5,9 +5,11 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Sparkles, AlertTriangle, TrendingUp, TrendingDown,
-  Heart, Moon, Scale, Activity, CheckCircle2, X, ChevronRight,
-  Lightbulb, Bell, BellOff
+  Moon, Scale, Activity, CheckCircle2, X, ChevronRight,
+  Bell, BellOff, Utensils, Stethoscope, Target
 } from 'lucide-react';
+import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
+import { isGeneratedInsightType, type GeneratedInsightType } from '@/lib/health-insight-rows';
 
 const colors = {
   bg: '#FAF9F7',
@@ -17,12 +19,8 @@ const colors = {
   textMuted: '#9A9A9A',
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
-  success: '#4CAF50',
-  successLight: '#E8F5E9',
-  warning: '#FF9800',
-  warningLight: '#FFF3E0',
-  error: '#F44336',
-  errorLight: '#FFEBEE',
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
   purple: '#7C4DFF',
   purpleLight: '#EDE7F6',
   blue: '#2196F3',
@@ -45,20 +43,27 @@ interface Insight {
   created_at: string;
 }
 
-const INSIGHT_ICONS: Record<string, typeof Scale> = {
-  weight_trend: Scale,
-  blood_pressure: Heart,
-  sleep_analysis: Moon,
-  activity_analysis: Activity,
-  correlation_analysis: Sparkles,
-  ai_comprehensive: Lightbulb,
+// insight_type ごとのアイコン。種別は POST /api/health/insights が保存するもの (GENERATED_INSIGHT_TYPES) と揃える (#1440)。
+// 種別を足すとここが型検査で赤になる。一覧に無い種別 (古い行など) は Sparkles にする
+const INSIGHT_ICONS: Record<GeneratedInsightType, typeof Scale> = {
+  nutrition: Utensils,
+  activity: Activity,
+  sleep: Moon,
+  checkup: Stethoscope,
+  trend: TrendingUp,
+  goal: Target,
 };
 
-const PRIORITY_COLORS: Record<string, { bg: string; text: string }> = {
-  low: { bg: colors.blueLight, text: colors.blue },
-  medium: { bg: colors.warningLight, text: colors.warning },
-  high: { bg: colors.errorLight, text: colors.error },
-  critical: { bg: colors.error, text: '#FFFFFF' },
+function insightIconOf(insightType: string): typeof Scale {
+  return isGeneratedInsightType(insightType) ? INSIGHT_ICONS[insightType] : Sparkles;
+}
+
+// icon はアイコンの色 (文字ではなく塗りの色。#590)
+const PRIORITY_COLORS: Record<string, { bg: string; icon: string }> = {
+  low: { bg: colors.blueLight, icon: colors.blue },
+  medium: { bg: colors.warningLight, icon: colors.warning },
+  high: { bg: colors.errorLight, icon: colors.error },
+  critical: { bg: colors.error, icon: '#FFFFFF' },
 };
 
 export default function HealthInsightsPage() {
@@ -165,7 +170,7 @@ export default function HealthInsightsPage() {
                   className="px-1.5 py-0.5 rounded-full text-xs"
                   style={{ 
                     backgroundColor: filter === f.key ? 'rgba(255,255,255,0.3)' : colors.errorLight,
-                    color: filter === f.key ? 'white' : colors.error,
+                    color: filter === f.key ? 'white' : colors.dangerText,
                   }}
                 >
                   {f.count}
@@ -198,7 +203,7 @@ export default function HealthInsightsPage() {
       ) : (
         <div className="px-4 space-y-3">
           {insights.map((insight) => {
-            const Icon = INSIGHT_ICONS[insight.insight_type] || Sparkles;
+            const Icon = insightIconOf(insight.insight_type);
             const priorityStyle = PRIORITY_COLORS[insight.priority] || PRIORITY_COLORS.low;
 
             return (
@@ -218,9 +223,9 @@ export default function HealthInsightsPage() {
                     style={{ backgroundColor: priorityStyle.bg }}
                   >
                     {insight.is_alert ? (
-                      <AlertTriangle size={20} style={{ color: priorityStyle.text }} />
+                      <AlertTriangle size={20} style={{ color: priorityStyle.icon }} />
                     ) : (
-                      <Icon size={20} style={{ color: priorityStyle.text }} />
+                      <Icon size={20} style={{ color: priorityStyle.icon }} />
                     )}
                   </div>
                   <div className="flex-1 min-w-0">

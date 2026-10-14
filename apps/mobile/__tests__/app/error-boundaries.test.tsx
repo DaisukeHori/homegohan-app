@@ -67,9 +67,6 @@ jest.mock('../../src/providers/ProfileProvider', () => ({
   ProfileProvider: ({ children }: { children: React.ReactNode }) => children,
   useProfile: () => ({ isLoading: false, profile: null, roles: [], hasRole: () => false }),
 }));
-jest.mock('../../src/providers/PostHogProvider', () => ({
-  PostHogProvider: ({ children }: { children: React.ReactNode }) => children,
-}));
 jest.mock('../../src/lib/pushNotifications', () => ({ registerAndSaveExpoPushToken: jest.fn() }));
 jest.mock('../../src/lib/api', () => ({ getApi: () => ({ get: jest.fn(), post: jest.fn() }) }));
 jest.mock('../../src/contexts/TourContext', () => ({

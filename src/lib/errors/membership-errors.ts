@@ -25,6 +25,8 @@ export enum MembershipErrorCode {
   USER_NOT_IN_FAMILY = 'USER_NOT_IN_FAMILY',
   NOT_FAMILY_ADULT = 'NOT_FAMILY_ADULT',
   MEMBER_LIMIT_EXCEEDED = 'MEMBER_LIMIT_EXCEEDED',
+  // #1101: 運営が隠した食事は、家族への貼り付け (paste_meal_to_family) の元にできない
+  MEAL_HIDDEN = 'MEAL_HIDDEN',
   // #1062: 未登録だった family 系 RAISE EXCEPTION コード
   MEMBER_NOT_FOUND = 'MEMBER_NOT_FOUND',
   IS_FAMILY_REPRESENTATIVE = 'IS_FAMILY_REPRESENTATIVE',
@@ -86,6 +88,7 @@ export const ErrorStatusMap: Record<MembershipErrorCode, number> = {
   [MembershipErrorCode.USER_NOT_IN_FAMILY]: 404,
   [MembershipErrorCode.NOT_FAMILY_ADULT]: 403,
   [MembershipErrorCode.MEMBER_LIMIT_EXCEEDED]: 409,
+  [MembershipErrorCode.MEAL_HIDDEN]: 403,
   [MembershipErrorCode.MEMBER_NOT_FOUND]: 404,
   [MembershipErrorCode.IS_FAMILY_REPRESENTATIVE]: 409,
   [MembershipErrorCode.NOT_FAMILY_REPRESENTATIVE]: 403,

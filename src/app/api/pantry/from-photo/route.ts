@@ -1,7 +1,8 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import type { Tables } from '@homegohan/shared';
-import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
+import { addDaysToDate, todayLocal } from '@/lib/date-utils';
+import { internalError } from '@/lib/api/errors';
 
 /**
  * 冷蔵庫写真解析結果をpantry_itemsに保存
@@ -48,9 +49,15 @@ function mapCategory(category: string | undefined): string {
 function estimateExpirationDate(daysRemaining: number | undefined): string | null {
   if (daysRemaining === undefined || daysRemaining < 0) return null;
 
-  const date = parseLocalDate(todayLocal());
-  date.setDate(date.getDate() + daysRemaining);
-  return formatLocalDate(date);
+  // JST の今日から暦の計算でずらす (#1463。parseLocalDate + setDate (ローカル時刻) + formatLocalDate (JST) は、
+  // JST より東のタイムゾーンで動くと 1 日前になった)。日数は以前の setDate と同じく 0 の方向へ切り捨てる。
+  // 暦の計算で扱える範囲の外に出るほど大きな日数 (AI の出力) は、推定できないとして null にする
+  try {
+    return addDaysToDate(todayLocal(), Math.trunc(daysRemaining));
+  } catch (error) {
+    if (error instanceof RangeError) return null;
+    throw error;
+  }
 }
 
 export async function POST(request: Request) {
@@ -269,7 +276,6 @@ export async function POST(request: Request) {
     });
 
   } catch (error: any) {
-    console.error("Pantry Save Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/pantry/from-photo', error, { userId: user.id });
   }
 }

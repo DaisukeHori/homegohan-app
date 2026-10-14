@@ -8,6 +8,9 @@ import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
 import { ArrowLeft, Camera, Plus, Trash2, RefreshCw, Package, AlertCircle, X, Pencil } from "lucide-react";
 import { PantryItemForm, emptyPantryItemFormValues, type PantryItemFormValues } from "@/components/pantry/PantryItemForm";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
+import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
+import { useAiConsent } from "@/hooks/useAiConsent";
+import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 
 const colors = {
   bg: "#FAF9F7",
@@ -18,9 +21,8 @@ const colors = {
   accent: "#E07A5F",
   accentLight: "#FDF0ED",
   border: "#EEEEEE",
-  success: "#4CAF50",
-  successLight: "#E8F5E9",
-  error: "#F44336",
+  // 状態色 (#590): 塗り・枠線・アイコンは success など、文字は successText / warningText / dangerText
+  ...STATUS_COLOR_TOKENS,
 };
 
 interface PantryItem {
@@ -47,6 +49,9 @@ interface AnalysisResult {
 export default function PantryPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 外国の AI 事業者へのデータ提供の同意画面 (T15 / #1154)。冷蔵庫の写真を AI に送る前に、未同意なら出す。
+  // 「同意しない」なら解析しない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)
+  const { ensureAiConsent, consentModal } = useAiConsent();
   const [items, setItems] = useState<PantryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
@@ -95,13 +100,19 @@ export default function PantryPage() {
     setAnalyzing(true);
 
     try {
+      // 同意していなければ同意画面を出す。「同意しない」なら写真を AI に送らない
+      if ((await ensureAiConsent()) === "declined") {
+        setPreviewUrl(null);
+        return;
+      }
+
       // Base64に変換してAPIへ送信
       const arrayBuffer = await file.arrayBuffer();
       const base64 = btoa(
         new Uint8Array(arrayBuffer).reduce((acc, byte) => acc + String.fromCharCode(byte), "")
       );
 
-      const res = await fetch("/api/ai/analyze-fridge", {
+      const res = await aiFetch("/api/ai/analyze-fridge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -109,6 +120,12 @@ export default function PantryPage() {
           mimeType: file.type || "image/jpeg",
         }),
       });
+
+      // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、ここではエラーを出さない
+      if (await isAiConsentRequiredResponse(res)) {
+        setPreviewUrl(null);
+        return;
+      }
 
       if (!res.ok) {
         const data = await res.json();
@@ -315,10 +332,10 @@ export default function PantryPage() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             className="mx-4 mb-4 p-3 rounded-xl flex items-center gap-2"
-            style={{ backgroundColor: "#FFEBEE" }}
+            style={{ backgroundColor: colors.errorLight }}
           >
             <AlertCircle size={18} style={{ color: colors.error }} />
-            <p className="text-sm" style={{ color: colors.error }}>{error}</p>
+            <p className="text-sm" style={{ color: colors.dangerText }}>{error}</p>
           </motion.div>
         )}
       </AnimatePresence>
@@ -458,7 +475,7 @@ export default function PantryPage() {
                       <span
                         data-testid="expiry-soon-badge"
                         className="text-xs px-2 py-0.5 rounded-full"
-                        style={{ backgroundColor: "#FFEBEE", color: colors.error }}
+                        style={{ backgroundColor: colors.errorLight, color: colors.dangerText }}
                       >
                         期限間近
                       </span>
@@ -474,7 +491,7 @@ export default function PantryPage() {
                     {item.expirationDate && (
                       <span
                         className="text-xs"
-                        style={{ color: isExpiringSoon(item.expirationDate) ? colors.error : colors.textMuted }}
+                        style={{ color: isExpiringSoon(item.expirationDate) ? colors.dangerText : colors.textMuted }}
                       >
                         ・{item.expirationDate}まで
                       </span>
@@ -558,6 +575,9 @@ export default function PantryPage() {
           }}
         />
       )}
+
+      {/* 外国の AI 事業者へのデータ提供の同意画面 (T15)。未同意なら出る */}
+      {consentModal}
     </div>
   );
 }

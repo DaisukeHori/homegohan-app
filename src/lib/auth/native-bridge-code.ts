@@ -21,6 +21,7 @@
 
 import { createHash, randomBytes } from 'node:crypto'
 import { getSupabaseAdmin } from '@/lib/supabase/server'
+import { NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER } from '@/lib/native-auth-bridge'
 
 /** コードの有効期間 (秒)。DB 側の上限 (発行 RPC は 120 秒、表の CHECK は 5 分) より短く保つ */
 export const NATIVE_BRIDGE_CODE_TTL_SECONDS = 60
@@ -38,8 +39,25 @@ const AUTH_JS_EXPIRY_MARGIN_SECONDS = 90
  * 使用済みになり、次の更新で再利用検知によりセッションごと失効し得る。コードは発行から最長
  * NATIVE_BRIDGE_CODE_TTL_SECONDS 後に使われるので、その時点でも auth-js の余裕 (90 秒) が残るよう、
  * 「コードの有効期間 + 90 秒」を要求する。ネイティブ側は残りがこれ未満なら先に refreshSession() してから発行を頼む。
+ * (既定では Web の Cookie に実際の refresh_token を入れないため (NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER)、
+ *  Web がローテーションすることは無い。この下限は、Web のセッションが短命になりすぎないことと、
+ *  NATIVE_BRIDGE_SHARE_REFRESH_TOKEN=on で従来の動作へ戻したときの安全のために残している)
  */
 export const MIN_ACCESS_TOKEN_REMAINING_SECONDS = NATIVE_BRIDGE_CODE_TTL_SECONDS + AUTH_JS_EXPIRY_MARGIN_SECONDS
+
+// Web の Cookie セッションに入れる使えない refresh_token の定数 (#1038 F7-05)。説明は src/lib/native-auth-bridge.ts。
+// ブラウザ側のコード (NativeSessionWatcher) も参照するため、サーバー専用のこのファイルでなくそちらに定義している。
+export { NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER }
+
+/**
+ * ネイティブの refresh_token を Web の Cookie セッションにも入れる (従来の動作) か。
+ * 既定は入れない (NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER を使う)。
+ * 実機で問題が見つかったときに、コードを変えずに従来の動作へ戻すためのスイッチで、
+ * 環境変数 NATIVE_BRIDGE_SHARE_REFRESH_TOKEN=on にする (大文字小文字・前後の空白は無視。Vercel は再デプロイ後に効く)。
+ */
+export function shouldShareRefreshTokenWithWeb(): boolean {
+  return (process.env.NATIVE_BRIDGE_SHARE_REFRESH_TOKEN ?? '').trim().toLowerCase() === 'on'
+}
 
 /** refresh_token の最大長 (Supabase のリフレッシュトークンは短い不透明な文字列) */
 export const MAX_REFRESH_TOKEN_LENGTH = 1024

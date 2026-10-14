@@ -3,7 +3,9 @@
  * docs/design/membership/05-operator-emergency-ui.md §8 準拠
  */
 
-import type { EmailEnvelope } from './templates';
+import type { EmailEnvelope } from '../envelope';
+import { emailSignature } from '../common';
+import { getEmailFrom, getSupportEmail } from '@/lib/site-config';
 
 export type ForceTransferEmailVars = {
   recipient_email: string;
@@ -40,11 +42,9 @@ ${vars.new_owner_email}
 ▼ 移譲理由
 ${vars.reason}
 
-ご不明な点がございましたら support@homegohan.app までお問い合わせください。
+ご不明な点がございましたら ${getSupportEmail()} までお問い合わせください。
 
-─────────────────
-ほめゴハン
-https://homegohan.app
+${emailSignature()}
 `;
       break;
 
@@ -62,11 +62,9 @@ ${vars.old_owner_email}
 ${vars.reason}
 
 ${scopeLabel}の管理をよろしくお願いいたします。
-ご不明な点がございましたら support@homegohan.app までお問い合わせください。
+ご不明な点がございましたら ${getSupportEmail()} までお問い合わせください。
 
-─────────────────
-ほめゴハン
-https://homegohan.app
+${emailSignature()}
 `;
       break;
 
@@ -83,11 +81,9 @@ ${vars.new_owner_email}
 ▼ 変更理由
 ${vars.reason}
 
-ご不明な点がございましたら support@homegohan.app までお問い合わせください。
+ご不明な点がございましたら ${getSupportEmail()} までお問い合わせください。
 
-─────────────────
-ほめゴハン
-https://homegohan.app
+${emailSignature()}
 `;
   }
 
@@ -95,7 +91,7 @@ https://homegohan.app
   return {
     template: 'operator_force_transfer',
     to: vars.recipient_email,
-    from: 'ほめゴハン <noreply@homegohan.app>',
+    from: getEmailFrom(),
     subject: `【ほめゴハン】運営により${subjectScope}の所有権が移譲されました`,
     text: body,
   };

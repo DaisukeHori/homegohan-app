@@ -1,3 +1,7 @@
+import { aiConsentDeniedStoredMessageOfResponse } from '../../supabase/functions/_shared/ai-consent';
+import { createLogger } from '@/lib/db-logger';
+import { weeklyMenuRequestStoredErrorMessage } from '@/lib/weekly-menu-request-error';
+
 const DEFAULT_TIMEOUT_MS = 90_000;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_BASE_DELAY_MS = 1_500;
@@ -113,26 +117,41 @@ function parseStatusFromMessage(message: string): number | undefined {
   return Number.isFinite(status) ? status : undefined;
 }
 
-async function extractInvokeFailure(error: unknown): Promise<{ status?: number; detail: string }> {
+async function extractInvokeFailure(
+  error: unknown,
+): Promise<{ status?: number; detail: string; aiConsentDeniedMessage: string | null }> {
   const invokeError = (error ?? {}) as InvokeErrorLike;
   const baseMessage = compactAndTruncate(
     invokeError.message || toErrorMessage(error) || 'unknown invoke error'
   );
   const status = invokeError.context?.status || invokeError.status || parseStatusFromMessage(baseMessage);
 
-  let contextText = '';
+  let rawContextText = '';
   if (invokeError.context?.text) {
-    contextText = compactAndTruncate(await invokeError.context.text().catch(() => ''));
+    rawContextText = await invokeError.context.text().catch(() => '');
   }
+  const contextText = compactAndTruncate(rawContextText);
+  // Edge Function が同意の判定で止めたか (本文は詰める前のものを読む。T15 / #1154)
+  const aiConsentDeniedMessage = aiConsentDeniedStoredMessageOfResponse(status, rawContextText);
 
   if (status != null) {
     const detail = contextText
       ? `status ${status}, body=${contextText}`
       : `status ${status}, error=${baseMessage}`;
-    return { status, detail };
+    return { status, detail, aiConsentDeniedMessage };
   }
 
-  return { detail: contextText ? `${baseMessage}, body=${contextText}` : baseMessage };
+  return { detail: contextText ? `${baseMessage}, body=${contextText}` : baseMessage, aiConsentDeniedMessage };
+}
+
+/**
+ * Edge Function が同意の判定で止めたとき (403 AI_CONSENT_REQUIRED / 503 AI_CONSENT_CHECK_FAILED。T15 / #1154) の結果。
+ * Edge Function はリクエストの行をもう失敗にし、error_message に人向けの文を書いている。
+ * 再試行はしない (再試行で判定が通ると、失敗にした行のまま生成が進む)。errorMessage は Edge Function が書いた文と同じにする
+ * (呼び出し元は markWeeklyMenuRequestFailed で errorMessage を書くので、内部の文 (状態コードや応答の本文) で上書きしない)。
+ */
+function aiConsentDeniedResult(attempt: number, status: number | undefined, message: string) {
+  return { ok: false as const, attempts: attempt, status, errorMessage: message };
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -179,6 +198,10 @@ export async function callGenerateMenuV4WithRetry(params: GenerateMenuV4CallPara
       }
 
       const responseText = await response.text().catch(() => '');
+      const aiConsentDeniedMessage = aiConsentDeniedStoredMessageOfResponse(response.status, responseText);
+      if (aiConsentDeniedMessage) {
+        return aiConsentDeniedResult(attempt, response.status, aiConsentDeniedMessage);
+      }
       const compactText = compactAndTruncate(responseText);
       const detail = compactText
         ? `status ${response.status}, body=${compactText}`
@@ -241,7 +264,10 @@ export async function invokeGenerateMenuV4WithRetry<T>(params: {
         return { ok: true, attempts: attempt, data };
       }
 
-      const { status, detail } = await extractInvokeFailure(error);
+      const { status, detail, aiConsentDeniedMessage } = await extractInvokeFailure(error);
+      if (aiConsentDeniedMessage) {
+        return aiConsentDeniedResult(attempt, status, aiConsentDeniedMessage);
+      }
       const retryable = status != null ? shouldRetryStatus(status) : isRetryableErrorMessage(detail);
       lastFailure = { attempt, status, detail, retryable };
 
@@ -269,17 +295,37 @@ export async function invokeGenerateMenuV4WithRetry<T>(params: {
   };
 }
 
+/** markWeeklyMenuRequestFailed が原因を残す構造化ログの function_name */
+const MARK_FAILED_LOG_NAME = 'markWeeklyMenuRequestFailed';
+
+/**
+ * 献立生成のリクエストの行を失敗にする。
+ *
+ * errorMessage には、呼び出し元が受け取った失敗の文 (callGenerateMenuV4WithRetry などの errorMessage = 状態コードや
+ * Edge Function の応答の本文を含む内部の文、または同意の判定で止めたときの人向けの文) を渡す。
+ * 行の error_message は GET /api/ai/menu/weekly/status を通って画面にそのまま出るので、
+ * こちらで書いた文 (同意など。src/lib/weekly-menu-request-error.ts) はそのまま、それ以外は固定の文を書く (#1172)。
+ * 内部の文は構造化ログ (app_logs) にだけ残す。
+ */
 export async function markWeeklyMenuRequestFailed(params: {
   supabase: any;
   requestId: string;
   errorMessage: string;
 }): Promise<void> {
-  const message = compactAndTruncate(params.errorMessage || 'unknown_error');
+  const internalMessage = compactAndTruncate(params.errorMessage || 'unknown_error');
+  const storedMessage = weeklyMenuRequestStoredErrorMessage(params.errorMessage);
+  if (storedMessage !== params.errorMessage) {
+    createLogger(MARK_FAILED_LOG_NAME).error(
+      '献立生成のリクエストを失敗にしました (行には固定の文を書き、原因はここにだけ残す)',
+      new Error(internalMessage),
+      { weekly_menu_request_id: params.requestId },
+    );
+  }
   const { error } = await params.supabase
     .from('weekly_menu_requests')
     .update({
       status: 'failed',
-      error_message: message,
+      error_message: storedMessage,
       updated_at: new Date().toISOString(),
     })
     .eq('id', params.requestId);
@@ -288,7 +334,7 @@ export async function markWeeklyMenuRequestFailed(params: {
     console.error('Failed to update weekly_menu_requests as failed:', {
       requestId: params.requestId,
       updateError: error.message,
-      originalError: message,
+      originalError: internalMessage,
     });
   }
 }

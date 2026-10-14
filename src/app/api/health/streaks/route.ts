@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { todayLocal } from '@/lib/date-utils';
+import { internalError } from '@/lib/api/errors';
+import { addDaysToDate, todayLocal } from '@/lib/date-utils';
+
+/** 「週間の記録状況」の日数 (JST の今日を含む) */
+const WEEKLY_RECORD_DAYS = 7;
 
 // 連続記録の取得
 export async function GET(request: NextRequest) {
@@ -30,7 +34,7 @@ export async function GET(request: NextRequest) {
     .single();
 
   if (error && error.code !== 'PGRST116') {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/health/streaks', error, { userId: user.id, table: 'health_streaks' });
   }
 
   // 連続記録がない場合のデフォルト値
@@ -48,16 +52,11 @@ export async function GET(request: NextRequest) {
   let currentStreak = streak || defaultStreak;
   if (streak?.last_activity_date) {
     // #266: JST の今日を使用して UTC ズレを防ぐ
-    const todayStr = todayLocal();
-    const lastDate = new Date(streak.last_activity_date);
-    const today = new Date(todayStr);
-    today.setHours(0, 0, 0, 0);
-    lastDate.setHours(0, 0, 0, 0);
-
-    const diffDays = Math.floor((today.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
-    
-    // 2日以上経過していたら連続が途切れている
-    if (diffDays > 1) {
+    // 最後に記録した日が昨日より前 (2 日以上経過) なら、連続が途切れている。日付 (YYYY-MM-DD) どうしを比べるので、
+    // 実行環境のタイムゾーン・夏時間に左右されない (#1463。以前は new Date + setHours (ローカル時刻) の差をミリ秒で割って日数にしていたので、
+    // 夏時間の切り替えをまたぐと 1 時間足りず、UTC より西の実行環境では 2 日空いても「1 日」と数えて連続が続いていた)
+    const yesterdayStr = addDaysToDate(todayLocal(), -1);
+    if (streak.last_activity_date < yesterdayStr) {
       currentStreak = {
         ...streak,
         current_streak: 0,
@@ -81,11 +80,10 @@ export async function GET(request: NextRequest) {
   }
 
   // 週間の記録状況を取得
-  // #266: JST の今日を基準に週間開始日を計算
-  const todayDate = new Date(todayLocal());
-  const weekStart = new Date(todayDate);
-  weekStart.setDate(weekStart.getDate() - 6);
-  const weekStartStr = weekStart.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  // #266: JST の今日を基準に週間開始日 (今日を含む 7 日間の最初の日) を計算する。
+  // 暦の計算だけで求める (#1463。以前の new Date(今日) (UTC の 0 時) + setDate (ローカル時刻) + toLocaleDateString (JST) は、
+  // 結果こそ合っていたが、ローカル時刻の setDate と、UTC の 0 時 = JST の 9 時という余裕に頼る書き方だった)
+  const weekStartStr = addDaysToDate(todayLocal(), -(WEEKLY_RECORD_DAYS - 1));
 
   const { data: weeklyRecords } = await supabase
     .from('health_records')
@@ -131,7 +129,7 @@ export async function DELETE(request: NextRequest) {
     .eq('streak_type', streakType);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('DELETE /api/health/streaks', error, { userId: user.id, table: 'health_streaks' });
   }
 
   return NextResponse.json({ success: true });

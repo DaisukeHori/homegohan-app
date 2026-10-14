@@ -1,6 +1,8 @@
 // lib/seasonal-events.ts
 // 年間行事・イベントデータ（V4献立生成エンジン用）
 
+import { addDaysToDate, formatLocalDate, isCalendarDate } from '@homegohan/shared';
+
 export interface SeasonalEvent {
   name: string;
   date: string; // "MM-DD" format or "variable" for movable feasts
@@ -232,13 +234,25 @@ export const SEASONAL_EVENTS: SeasonalEvent[] = [
 ];
 
 /**
+ * 日付を暦日 (YYYY-MM-DD) にする (#1433)。
+ *   - 文字列 (YYYY-MM-DD。後ろに時刻が付いていても先頭の 10 文字) はそのまま暦日として扱う
+ *   - Date は、その時刻が属する JST の暦日にする
+ * 以前は new Date("YYYY-MM-DD") (UTC の 0 時) の月日を getMonth / getDate (実行環境のローカル時刻) で読み、
+ * 範囲を setDate (ローカル時刻) で進めていたので、実行環境のタイムゾーンで結果が変わった。
+ */
+function toCalendarDay(date: Date | string): string {
+  return typeof date === 'string' ? date.slice(0, 10) : formatLocalDate(date);
+}
+
+/**
  * 指定された日付に該当するイベントを取得
  * @param date 日付オブジェクトまたは日付文字列（YYYY-MM-DD）
  * @returns その日に該当するイベント配列
  */
 export function getEventsForDate(date: Date | string): SeasonalEvent[] {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  const monthDay = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const day = toCalendarDay(date);
+  // "MM-DD"
+  const monthDay = day.slice(5, 10);
   
   return SEASONAL_EVENTS.filter(event => {
     // 固定日のイベント
@@ -250,8 +264,8 @@ export function getEventsForDate(date: Date | string): SeasonalEvent[] {
     if (event.dateRange) {
       const [startMonth, startDay] = event.dateRange.start.split('-').map(Number);
       const [endMonth, endDay] = event.dateRange.end.split('-').map(Number);
-      const currentMonth = d.getMonth() + 1;
-      const currentDay = d.getDate();
+      const currentMonth = Number(day.slice(5, 7));
+      const currentDay = Number(day.slice(8, 10));
       
       // 同月内の範囲チェック
       if (startMonth === endMonth && currentMonth === startMonth) {
@@ -280,22 +294,23 @@ export function getEventsForDate(date: Date | string): SeasonalEvent[] {
  * @returns 期間内のイベント配列（重複排除済み）
  */
 export function getEventsForRange(startDate: Date | string, endDate: Date | string): SeasonalEvent[] {
-  const start = typeof startDate === 'string' ? new Date(startDate) : startDate;
-  const end = typeof endDate === 'string' ? new Date(endDate) : endDate;
-  
+  const start = toCalendarDay(startDate);
+  const end = toCalendarDay(endDate);
+
   const eventSet = new Map<string, SeasonalEvent>();
-  const current = new Date(start);
-  
-  while (current <= end) {
+  // 日付が不正なときは、以前 (Invalid Date の比較は常に false) と同じく 0 件にする
+  if (!isCalendarDate(start) || !isCalendarDate(end)) return [];
+
+  // YYYY-MM-DD は文字列の大小が日付の前後と一致する。日は暦の計算 (addDaysToDate) で 1 日ずつ進める
+  for (let current = start; current <= end; current = addDaysToDate(current, 1)) {
     const events = getEventsForDate(current);
     for (const event of events) {
       if (!eventSet.has(event.name)) {
         eventSet.set(event.name, event);
       }
     }
-    current.setDate(current.getDate() + 1);
   }
-  
+
   return Array.from(eventSet.values());
 }
 

@@ -26,6 +26,8 @@ import { BarChart } from './BarChart';
 import { DriBar } from './DriBar';
 import { RadarChart } from './RadarChart';
 import { RadarKeyPicker } from './RadarKeyPicker';
+import { AI_CONSENT_AUTOMATIC_LOCKED_NOTE, isAiConsentRequiredError } from '../../lib/ai-consent';
+import { isAiDailyLimitError } from "../../lib/ai-daily-limit";
 
 // ============================================================
 // 型定義
@@ -707,8 +709,14 @@ export const StatsModal: React.FC<StatsModalProps> = ({
         } else {
           setIsLoadingFeedback(false);
         }
-      } catch {
+      } catch (e) {
         if (!request.isCurrent()) return;
+        // 同意が無いため AI に送らなかった (403 AI_CONSENT_REQUIRED。T15 / #1154)。開くと自動で頼む処理なので、
+        // 同意の案内は出さず、案内の一文だけを出す
+        if (isAiConsentRequiredError(e)) setFeedback({ praise: null, advice: AI_CONSENT_AUTOMATIC_LOCKED_NOTE });
+        // 今日の AI の利用回数の上限に達した (429 AI_DAILY_LIMIT。#1149)。固定の文を出す
+        // (「再分析」は 1 日の上限 (10 回)。開いたときの自動の取得は上限に数えないが、自動の分だけの安全弁 (既定は 1 日 30 回) でも来る)
+        else if (isAiDailyLimitError(e)) setFeedback({ praise: null, advice: e.message });
         setIsLoadingFeedback(false);
       }
     };

@@ -38,6 +38,17 @@ CI では GitHub Secrets に登録する。
 
 `.github/workflows/e2e.yml` が PR で自動実行。Playwright レポートは artifact として 14 日間保持。
 
+### 依存パッケージ・シークレットの検査と Dependabot (#1156)
+
+- `.github/workflows/security.yml`:
+  - **gitleaks**: PR で増えたコミットと main への push だけを検査し、見つかったら失敗する。
+  - **npm audit**: 参考情報で、PR を止めない。critical が 0 件になったら、止める検査に切り替える。**`continue-on-error` は、ジョブではなく npm audit の「ステップ」に付ける。** ジョブに付けると、ワークフローは通っても、そのジョブの check run が失敗 (赤い ×) のまま残る。すると、すべての PR の Checks が赤くなり、毎日の整合性チェック (`scripts/lib/consistency-check.mjs`) も、止まっている PR を「赤のまま」に数える (`tests/security-workflow.test.ts` が、`pull_request` で動くワークフローのジョブ単位の `continue-on-error` を検出する)。
+  - **依存関係レビュー**と **CodeQL**: リポジトリが公開の間だけ動く。非公開にすると自動でスキップされる。依存関係レビューは、リポジトリの Dependency graph が無効の間 (GitHub が依存の差分を 403 Forbidden で断る) だけ、レビューを飛ばして警告と Summary を出す (すべての PR を赤くしないため)。有効にすれば、次の PR から止める検査として働く。CodeQL のジョブそのものは止めないが、コードスキャンの結果を知らせる別の check run が付き、新しい重大なアラートが増えた PR では赤くなる。
+- gitleaks の誤検知は `.gitleaks.toml` に**値そのもの**を足す (ファイル・ディレクトリ単位では除外しない)。1 行だけなら行末に `gitleaks:allow`。本物のキーが見つかったときは除外せず、そのキーを無効にして発行し直す (履歴から消すだけでは取り消せない)。gitleaks の版と SHA-256 は workflow に固定してある。上げるときはリリースの `checksums.txt` の値に合わせる。
+- **テストに書くダミーの認証値** (`apiKey` / `token` / `secret` / `password` など) は、gitleaks の汎用ルール (generic-api-key) に掛かりやすい。掛かると PR の `security / gitleaks` が失敗するので、ダミーの値の行の末尾に `gitleaks:allow` と書く。ダミーでも、`sk-` や `ghp_` や JWT のような、本物のキーの書式にしない。
+- `.github/dependabot.yml`: npm (ルートの package-lock.json が workspaces をまとめて管理) と GitHub Actions を週 1 回。マイナー・パッチは 1 本の PR にまとめる。Next / React / Expo / React Native は、メジャー更新 (Expo / React Native はマイナー更新も) の PR を出さない。計画して上げる (#1199)。自動承認・自動マージはしない。
+- **Dependabot の PR には Actions のシークレットが渡されない。** `pull_request` で動き、`secrets.*` (`GITHUB_TOKEN` 以外) を使うジョブには `if: github.actor != 'dependabot[bot]'` を付ける。付け忘れると、依存更新の PR が毎回赤くなる (`tests/security-workflow.test.ts` が検査する)。
+
 ---
 
 ## 共通ヘルパー規約
@@ -70,31 +81,112 @@ API Route (`src/app/api/**`) のロール認可は、共通ヘルパーを入口
 - 運営ロール (support / admin / super_admin など): `requireRole([...])` (`src/lib/auth/helpers.ts`)
 - 組織の管理者 (所属組織の `org_role` が owner / admin): `requireOrgAdmin()` (同上。判定の実体は `src/lib/auth/org-admin.ts` の `isOrgAdmin`。roles 配列の `org_admin` は見ない)
 - 他ユーザーの行を読む必要があるとき (`user_profiles` などは RLS で本人の行しか見えない) だけ、認可を通した**あとに** `getSupabaseAdmin()` (service_role) を使う。認可の前には使わない。使うときは、対象を絞る条件 (対象ユーザーの id など) を必ず付ける
-- 500 の本文は汎用メッセージだけにし、DB の生のエラー文は返さない。詳細は上記の構造化ログに残す (#1172)
+- 500 の本文は汎用メッセージだけにし、DB の生のエラー文は返さない。詳細は上記の構造化ログに残す (#1172)。route では共通ヘルパー `internalError(routeName, error, ctx?)` (`src/lib/api/errors.ts`) を `return` する。構造化ログへの記録と、汎用の本文 `{ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' }` の返却を一度に行う。`error` は文字列のままにする (画面が `data.error` をそのまま表示するため。オブジェクトにすると描画で落ちる)。運営 API のように `error.message` を読むクライアントには `{ shape: 'nested' }` を渡す
+- 応答の本文 (`NextResponse.json` / SSE の `JSON.stringify` など) に、捕まえたエラーの `message` / `details` / `hint`・`String(err)`・エラーのオブジェクトそのものを入れない。4xx で理由を伝えるときは、こちらで決めた固定の文を返す (DB の結果のエラー文も、catch で受けた例外の文面も、4xx でも返さない。try の中で `if (error) throw error` すると DB の生のエラーが catch に届くため。例外の文面を 4xx で返してよいのは、`err instanceof AuthError` など文面をこちらで書いている例外のクラスに絞り込んだ分岐の中だけ)。`tests/api-raw-error-message-scan.test.ts` が src/app/api の全 route を走査し、1 件でもあれば落ちる (#1172 第 2 段で既存の違反を全部直し、許可リストは無くした)。ただしこの走査はよくある書き方の見張りで、網羅はしない (捕まえない書き方はテストの冒頭に列挙してある。保証の本体は route のコードで、レビューで見る)。外 (Edge Function・外部 API) の応答の JSON の `error` も本文に入れない (Edge Function は DB のエラー文を包んで返すことがある。ログにだけ残す)。外の応答の JSON をまるごと本文に返さない (成功の応答にも失敗の文が入ることがある。返すのは必要な値だけ)
+- route が本文に入れる値を作る src/lib のヘルパー (結果の `error` / `message` を返すもの) も、DB の生のエラー文を結果に入れない。DB の失敗は固定の文にし、元のエラーは構造化ログ (`createLogger(...).error`) か、route が `internalError()` に渡す `cause` にだけ残す (例: `applyUserBan` の `kind: 'internal'` + `cause`、`createOrgInviteWithEmail` の `internalCause`)。`tests/lib-raw-error-message-scan.test.ts` が src/lib を走査し、結果のオブジェクトにエラーの `message` / `details` / `hint` を入れていたら落ちる (本文に届かないことを確かめたものだけ、理由つきの許可リストに件数で固定)
+- DB の列に保存された失敗の文 (Edge Function が catch で捕まえた例外の文面をそのまま書く列) を本文に返すときも、こちらで書いた文 (同意の文など、画面が見分ける文) だけをそのまま返し、それ以外は固定の文にする (#1172)。`weekly_menu_requests.error_message` は `src/lib/weekly-menu-request-error.ts` (状態の確認の API とアカウントのデータ書き出し)、`shopping_list_requests.result.error` は `src/lib/shopping-list-request-error.ts` (状態の確認の API) を通す。`ai_action_logs.result.error` (#1172 の前の AI 相談のアクションが DB の生のエラー文を入れていた) と `recipe_requests.error_message` は、アカウントのデータ書き出し (`src/lib/account-export-tables.ts` の transform) で空でなければ固定の文にする。この書き方は `tests/api-raw-error-message-scan.test.ts` の走査では捕まえない (冒頭の「この検査の限界」)。書き出しの表は `tests/account-export-tables.test.ts` が、失敗の文が入りうる名前の列 (error / failure / result) に生のエラー文を入れて transform を通し、出ないことを確かめる (名前で見る見張り)
 
 ### レート制限
 
 `src/lib/rate-limit.ts` に集約する (#1197)。新しい制限は `RateLimitCategory` にカテゴリを足し、`checkRateLimit(key, category)` で判定する。route ごとに Upstash / in-memory の制限を自前で作らない (`tests/rate-limit-single-implementation.test.ts` が `@upstash/ratelimit` を使うファイルを検査する)。key は認証で確定した ID を使い、ログイン前の公開 API (お問い合わせ) だけクライアント IP を使う。
 
-### PostHog の既定ホスト
+### AI の利用回数の上限と記録
 
-`packages/shared` の `POSTHOG_DEFAULT_HOST` に集約する (#1197)。Web・モバイルのコードはこれを import し、ホストの文字列を直接書かない。素の Node ESM の `next.config.mjs` と `.env.example` だけは同じ値のリテラルが残るので、ホストを変えるときは 3 か所を合わせる (`src/__tests__/config/posthog-default-host.test.ts` が検査する)。
+`src/lib/plan/entitlements.ts` に集約する (#1177 / #1149)。AI の利用は 1 日 (JST の暦日) の全機能の合計の回数で数え、プランごとの上限 (DB の `ai_daily_limits`。既定は free = 1 日 10 回、究極モードも 1 回。自分の行が無いプランは free の値。運営画面 `/super-admin/llm/quotas` から保存) を超えたら止める。AI を使う API ルートは、AI 事業者へ送る直前 (認証・同意の判定・`checkRateLimit`・入力の検証などの判定をすべて通ったあと) に、ユーザーの 1 回の操作につき 1 回 `const aiUsage = await consumeAiUsage(user.id, feature)` を呼び、`if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage)` で止める。判定と記録は DB の `consume_ai_usage` が 1 回の呼び出しで原子的に行う (上限に達していれば記録せずに止め、達していなければ +1。同じ利用者・同じ日は 1 本ずつ判定する)。記録の DB 関数 (`record_ai_usage`) を入口から直接呼ばない。AI を実際に呼ばない経路 (キャッシュを返すだけなど) では呼ばない。DB の関数が失敗したときはログに残して許可する (判定の失敗で AI の機能を止めない)。プランの判定は `get_effective_plan` (個人の契約 -> 家族 -> 組織 -> `free`)。
+
+- 止め方は入口ごとに決める (`tests/helpers/ai-consent-enforced-paths.ts` の一覧の上の表): 利用者が押した操作は 429 `AI_DAILY_LIMIT` (固定の文・`retryAfter` = 次の JST 0 時までの秒数)、保存と AI の分析を一緒にする操作 (健康診断・血液検査・相談を閉じる) は保存だけして `aiSkipped: AI_DAILY_LIMIT`、料理画像の副作用は画像だけ見送る、キューに積む操作は積む時点で判定する。
+- 上限に数えない機能 (`AI_UNMETERED_FEATURES`): 画面を開く・保存するだけで呼ばれる AI。`nutrition_advice_auto` (ホームの栄養のアドバイス・栄養士のコメントの自動の取得) と `meal_image_auto` (料理を保存・更新したときに付ける料理画像。AI 相談の update_meal も同じ。利用者が押して画像を作る `POST /api/ai/image/generate` は `image_generation` で上限に数える)。1 日の上限の合計には入れないが、どれで数えるかの材料はクライアントが送る値なので、機能ごとの 1 日の安全弁 (DB の `ai_unmetered_daily_caps`。既定は `nutrition_advice_auto` = 30・`meal_image_auto` = 20。`AI_UNMETERED_DAILY_CAP_DEFAULTS` と同じ値。行の無い機能は 20) を `consume_ai_usage` が判定し、超えたら `allowed: false` を返す (入口は上の止め方で止める)。値を変えるときは DB の行を更新する。上限に数えない機能を足すときは、`AI_UNMETERED_FEATURES`・DB の `c_unmetered`・安全弁の既定の行の 3 か所をそろえる (`tests/ai-usage-contract.test.ts` が突き合わせる)。
+- 写真の「オート」(判別 `POST /api/ai/classify-photo` → 解析 `analyze-*`) は 1 回の操作を 1 回と数える。判別が `consumeAiUsage` で数えたあと `issueAiUsageGrant` で数え済みの印を作って応答の `aiUsageGrant` で返し、画面 (Web `src/app/(main)/meals/new/page.tsx`・モバイル `apps/mobile/app/meals/new.tsx`) は続く解析の本文の `aiUsageGrant` に入れて送る。解析は `redeemAiUsageGrant` が true (署名・期限 10 分・本人・機能が合い、DB の `claim_ai_usage_grant` で印をはじめて使用済みにできた) のときだけ数えずに `AI_USAGE_COVERED_BY_GRANT` で進み、それ以外は `consumeAiUsage` で数える。判別だけを無料にする形にしない (判別は解析の結果まで返すので抜け道になる)。
+- 数えたあと、AI へ送る前に DB の処理が失敗して何も送らなかったとき (生成のリクエストの行の insert の失敗など) は `refundAiUsage(user.id, feature, aiUsage)` で 1 回を戻す (上限に数えない機能も戻す。安全弁の回数に入るので)。AI へ送ったあとの失敗では戻さない。
+- 順番は「同意の判定 (`requireAiConsent` / `checkUserAiConsent`、Edge は `requireAiConsentForUser` / `checkAiConsent`。#1154) → `consumeAiUsage` → AI への送信」。同意が無くて止めた操作は数えない。
+- Edge Function は、ユーザーの JWT を確かめた経路で `consumeEdgeAiUsage` (`supabase/functions/_shared/ai-usage.ts`) を呼び、上限なら `aiDailyLimitEdgeResponse` で止める。service role / cron の経路では呼ばない (Next.js が数え済み)。
+- 画面: Web は `aiFetch` が 429 `AI_DAILY_LIMIT` を見つけると全画面共通の `AiDailyLimitHost` が固定の文を出す。モバイルは `getApi()` がこの Error を固定の文の `AiDailyLimitError` に置き換える (生の文字列を出さない)。`getApi()` を通らない生の fetch (ストリーミングの AI 相談の送信・1 食の作り直し) は、失敗の応答から `errorOfFailedResponse` (`apps/mobile/src/lib/failed-response.ts`。503 の緊急停止・メンテナンス中も同じ関数で固定の文にする) で Error を作って投げる (生の fetch の呼び出しの分類は `tests/ai-daily-limit-mobile-raw-fetch.test.ts`)。文は `supabase/functions/_shared/ai-daily-limit.ts` (Web・モバイル・Edge 共用)。
+- Next.js が Edge Function を**ユーザーの JWT で**呼ぶとき (`supabase.functions.invoke`) は、`headers: await aiUsageRecordedHeaders(user.id)` を付ける (署名つきの印。付けないと Edge 側でも数えて二重になる)。
+- どの入口が記録するかは、同意の判定と同じ一覧 `tests/helpers/ai-consent-enforced-paths.ts` の `usage` の列に書く (入口の一覧は 1 つ)。新しい AI の入口を足したら、その一覧に行を足し、`tests/ai-consent-enforcement-routes.test.ts` の表に実際に呼ぶ行を足す (同意の判定 → 上限の判定と記録 → 送信の順と、上限に達したときに送らないことは、この表が実際に route を呼んで確かめる)。`tests/ai-usage-contract.test.ts` は、`consumeAiUsage` を呼ぶファイル・機能名・結果を見ていること・公開ハンドラの一覧が `usage` の列と一致することを検査する。
+- キューのテーブル (`weekly_menu_requests` / `meal_image_jobs`) は、service role の処理 (cron の `process-menu-queue`・Edge Function の `process-meal-image-jobs`) が AI へ送る。利用者 (authenticated) からは読むだけで、書けない (#1465。INSERT / UPDATE / DELETE の権限とポリシーを外した)。行を積む・書き換えるのは、本人の確認と記録を通った API ルートだけで、`src/lib/ai/ai-queue-writer.ts` の `getAiQueueWriter()` (service role) を変数名 `queueDb` で受けて書く (RLS が効かないので、UPDATE は `.eq('user_id', user.id)` で本人の行に絞る)。画面・モバイルからこの 2 つの表へ書かない。`tests/ai-usage-contract.test.ts` (migration から、利用者が書けないこと) と `tests/ai-queue-writes-contract.test.ts` (ソースから、書き込みが `queueDb` からだけであること)、`tests/integration/rls/ai-queue-writes.test.ts` (実 DB) が確かめる。
+
+### 機能フラグ
+
+機能の ON/OFF は `feature_flags` テーブル (運営画面 `/super-admin/flags` で切り替える) に置き、判定は `src/lib/feature-flags.ts` の `isFeatureEnabled(key, userId?)` を使う (#1148)。route や画面ごとに `feature_flags` / `system_settings` を自分で読まない (`tests/feature-flags-single-source.test.ts` が検査する)。以前の `system_settings` の `feature_flags` は、ログイン中のユーザー自身の権限で読んでいたため、admin 以外には値が届かなかった。
+
+- 新しいフラグは、`FEATURE_FLAG_DEFAULTS` に「行が無い・読めないときの値」を足し、migration で `feature_flags` に行を作る (`ON CONFLICT (key) DO NOTHING`)。既定値は**止めない側**にする。画面が前もって確かめるフラグだけ `CLIENT_FEATURE_FLAG_KEYS` (`GET /api/feature-flags`) に足す (いま、この API を呼んでいる画面は無い。#1457)。
+- `isFeatureEnabled` は例外を投げない。行が無い・読み出しに失敗・待ちきれないときは既定値で答え、失敗は構造化ログに残す。値はサーバーのメモリに 30 秒覚えるので、切り替えの反映に最大 30 秒かかる (ミドルウェアは Edge、API route は Node で、メモリは別)。
+- `ai_chat_enabled` は AI 相談の緊急停止スイッチ。通常は ON のまま使う。利用者の同意の有無で AI への送信を止めるのはこのスイッチではなく、同意の判定 (`requireAiConsent` / `checkUserAiConsent`、下の「外国の AI 事業者への提供の同意」の節) が担う (スイッチが ON でも、未同意なら送らない)。AI 相談の API を足すときは、認証のあと・レート制限の前に `aiChatDisabledResponse` (`src/lib/ai/ai-chat-gate.ts`) を呼ぶ。利用者の JWT で直接呼べる Edge Function `knowledge-gpt` も、JWT の経路で認証の直後・同意の判定の前に同じスイッチを見る (`supabase/functions/_shared/ai-chat-flag.ts` の `aiChatDisabledResponseForUser`。判定は Next.js と共用の `_shared/feature-flag-eval.ts`、読めないときは ON。#1486。`tests/ai-chat-flag-edge.test.ts`)。`maintenance_mode` はメンテナンスモード (admin / super_admin は通す。ミドルウェアが判定する。止めないパスは `src/lib/maintenance-mode.ts` の `isMaintenanceExemptPath`。画面は `/login`・`/auth/*`・`/terms`・`/privacy`・`/legal`・`/contact` を通し、`/signup` と、その画面が呼ぶ API (お問い合わせの送信など) は止める。#1486)。
+- 緊急停止中 (503 `AI_CHAT_DISABLED`)・メンテナンス中 (503 `MAINTENANCE_MODE`) の応答を受けた画面は、本文の文字列 (JSON) を出さず、code から決めた固定の文を出す (#1457)。どちらの本文も平らな形 `{ error: 固定の文, code, retryAfter }` で、`error` は文字列にする (Web の画面が `data.error` をそのまま出しても落ちない。#1486)。文と code の置き場は `packages/shared/src/service-unavailable.ts` の 1 つ (サーバーの応答も同じ値)。モバイルは `getApi()` がこの 503 を `ServiceUnavailableError` (message が固定の文) に置き換えて投げ直す。`getApi()` を通らない生の fetch でアプリの API を呼ぶ場所は、失敗の応答から `errorOfFailedResponse` (`apps/mobile/src/lib/failed-response.ts`。429 `AI_DAILY_LIMIT` も同じ関数で固定の文にする) で例外を作る (AI 相談は `tests/mobile-service-unavailable-raw-fetch.test.ts`、アプリの API を呼ぶ生の fetch の全部は `tests/ai-daily-limit-mobile-raw-fetch.test.ts` が見張る。#1486)。モバイルは、同意の状況を読めなかった 503 `AI_CONSENT_CHECK_FAILED` も同じく固定の文 (`AI_CONSENT_CHECK_FAILED_MESSAGE`) にする (#1486)。
+- `system_settings` の `feature_flags` 行は、もう何も読まない。運営のシステム設定の API・画面では読み取り専用 (`src/lib/super-admin/retired-settings.ts`。GET は `read_only` / `note` を付け、PUT は 409 `SETTING_READ_ONLY`)。行は消していない。
+- 運営画面や E2E で既存のフラグを切り替えるテストは、本番の緊急スイッチを一瞬でも動かしてしまう。テストは専用のフラグを作って切り替え、終わったら消す。
+- 「ロール認可」の節の「service_role で読むときは対象を絞る条件を付ける」の例外が 1 か所ある。運営画面の一覧が返す `active_user_count` (`src/lib/super-admin/flag-active-users.ts`) は、`requireRole(['super_admin'])` を通したあとに、サービスロールで `user_profiles` の全行を読んで人数を数える。集計なので絞り込みは付けられない。読むのは判定に要る 5 列 (id / roles / organization_id / plan_key_cached / created_at) だけで、返すのは人数だけ (メール・名前は読まない・返さない)。ユーザーが増えて重くなったら、DB 側で数える RPC に置き換える。
+
+### 利用状況の計測 (PostHog は使わない)
+
+PostHog による利用状況の計測は採用しない (オーナー判断 2026-10-08、#1166)。Web・モバイルとも SDK を取り除いてあるので、PostHog の import・依存・環境変数・CSP の許可先を足さない (`tests/posthog-not-adopted-contract.test.ts` が検査する)。画面の例外などの記録は、サーバーログ (`app_logs`) に残す (下の「エラー境界」を参照)。
+
+### 状態色 (success / warning / error / danger)
+
+`packages/shared/src/design-tokens.ts` の `STATUS_COLOR_TOKENS` に集約する (#590)。Web の home・pantry・health 配下の画面とモバイルの `colors.ts` は、これを import して使い、状態色の hex を直書きしない (`src/__tests__/config/status-color-tokens.test.ts` がこの範囲の画面を検査する)。週間献立など、ほかの画面には A 系の値の直書きがまだ残っている。その画面を触るときにトークンへ寄せる。
+
+- 塗り (背景・枠線・アイコン・グラフの線や棒): `success` / `warning` / `error` / `danger` と、淡い下地の `*Light`
+- 文字: `successText` / `warningText` / `dangerText`。WCAG の AA (4.5:1) を、白地・各 Light の下地・ページの背景・塗りの薄い透過の下地の上で満たす (`packages/shared/src/design-tokens.test.ts` が数値で確かめる)。塗りの色は白地で 4.5:1 に届かないので、文字には使わない。`error` の赤い文字にも `dangerText` を使う
+- 値を変えるときは `design-tokens.ts` だけを直す。画面ごと・モバイルの `colors.ts` に同じ値を書き足さない
+- 中立色 (bg / text / border など) と accent / purple / blue はまだ対象外 (画面ごとに値が違う。別の変更で揃える)
+
+### 利用規約・プライバシーポリシーの版と再同意ゲート
+
+「いま有効な版」と施行日は `packages/shared/src/legal-versions.ts` の `LEGAL_DOCUMENTS` に集約する (#1174)。`/terms`・`/privacy` の版・施行日の表示、同意の記録 (DB 関数 `accept_legal_documents` が `user_profiles` の `terms_version_accepted` / `privacy_version_accepted` / `legal_accepted_at` と `terms_acceptances` に書く)、再同意ゲートは、すべてこの定数を見る。内容が変わる改定をするときは、必ず `version` を上げる (上げると全員に再同意を求める)。版・施行日・同意文言は弁護士の確認を経て決める。
+
+- ゲートは `lib/supabase/middleware.ts` (判定は `lib/legal-consent.ts`)。環境変数 `LEGAL_CONSENT_ENFORCE=on` のときだけ、未同意の人を `/legal-consent?next=...` へ回す。強制していない間は、`LEGAL_CONSENT_NOTICE=on` のときだけ `(main)` の画面の上にお知らせを出す。どちらも未設定 (既定) なら何も出さず、既存の利用者は止めない。ただし、初めてサインインした新規の人 (初期設定を始めておらず、いまの版に未同意) は、フラグに関わらず `/auth/callback` が `resolveFirstSignInDestination` で同意画面へ回す (#1435)。2 つのフラグの読み方は `isLegalConsentFlagOn` で共有する (`ENV_SETUP.md` 参照)。本番は 2026-10-10 から `LEGAL_CONSENT_ENFORCE=on` (オーナー判断。版・施行日は仮置きのまま)。ゲートが掛かるのは Web の画面の取得だけで、モバイルのネイティブの画面と `/api/*` は通らない (#1442)。
+- 対象外のパスは `isLegalConsentExemptPath` (`/terms` `/privacy` `/legal` `/legal-consent` `/contact` `/frozen` `/auth/*` `/api/*` `/handson-tour` と静的ファイル)。同意なしで開けないと困る画面 (認証の途中・問い合わせなど) を足すときは、ここと `tests/legal-consent-gate.test.ts` に足す。`/legal-consent` は初期設定の差し戻し (`resolveOnboardingRedirect`) からも除いてある (外すと、初期設定前の新規登録者が同意画面との間で無限にリダイレクトする)。
+- 同意済みの版の 3 列は、特権列ガード (`guard_user_profiles_privileged` と `_on_insert`) の対象。書けるのは `accept_legal_documents` (SECURITY DEFINER。`auth.uid()` 本人の行だけ) だけ。この 2 本のガード関数を `CREATE OR REPLACE` するときは、既存の列を外さず、この 3 列も残す (`tests/integration/security/legal-documents-acceptance.test.ts` が検査する)。
+
+### JST の暦日 (今日・期間・日付のずらし)
+
+DB の日付列は JST の暦日で、Vercel / Edge の実行環境は UTC (#1433・#1463)。サーバーの「今日」・期間・月は `src/lib/jst-day-ranges.ts` (`jstToday` / `jstDayOffset` / `mondayWeekRange` / `sundayWeekRange` / `jstDayRangeTimestamps` など。Edge は `supabase/functions/_shared/jst-date.ts`)、日付のずらしは `addDaysToDate` (`@/lib/date-utils`) で求め、`toISOString().slice(0, 10)`・`parseLocalDate` / `setDate` + `formatLocalDate` のようなローカル時刻・UTC の暦日に頼る書き方をしない。外から受け取った日付は `isCalendarDate` (Zod は `src/lib/calendar-date-schema.ts` の `CalendarDateSchema`) で確かめてから DB や上の関数に渡す (存在しない日付が DB まで届くと 500、範囲の外の日付は `addDaysToDate` が RangeError)。timestamptz の列を日付で絞るときは `jstDayRangeTimestamps` / `jstOptionalDayRangeTimestamps` で JST 0 時の時刻にする。
+`tests/jst-today-source-scan.test.ts` が書き方 (規則 A〜J) を構文木で検査し、直した箇所が JST の関数を呼び続けていることも確かめる (例外は理由つきの許可リストに書く)。
 
 ### 栄養計算入力
 
 `src/lib/build-nutrition-input.ts` に集約。栄養計算に必要な入力オブジェクトを組み立てる際は、このモジュールを経由する。直接構築しない。
+
+### 外国の AI 事業者への提供の同意 (未同意なら AI へ送らない)
+
+利用者のデータを外国の AI 事業者へ送る処理 (API Route・Edge Function・cron・ジョブ) は、送る手前で同意を判定する (#1154)。判定の本体は `supabase/functions/_shared/ai-consent.ts` の 1 か所で、Next.js は `src/lib/ai/consent-guard.ts` (`requireAiConsent` / `checkUserAiConsent`)、Edge Functions は `supabase/functions/_shared/ai-consent-guard.ts` から呼ぶ。全事業者 (`AI_CONSENT_PROVIDERS`) について現行の版 (`AI_CONSENT_VERSION`) の有効な同意が無ければ送らず 403 `AI_CONSENT_REQUIRED`、読めなければ 503 `AI_CONSENT_CHECK_FAILED` (fail-closed)。新しく AI へ送る経路を足したら判定を呼び、`tests/helpers/ai-consent-enforced-paths.ts` の一覧に載せ、未同意なら送らないことを実際に呼んで確かめる表 (API Route は `tests/ai-consent-enforcement-routes.test.ts`、Edge Function は `tests/ai-consent-enforcement-edge.test.ts`) に行を足す (送信先を足したら `tests/ai-consent-provider-inventory.test.ts` と事業者の一覧・DB の CHECK も直し、版を上げる)。画面は、AI の操作の先頭で `useAiConsent()` の `ensureAiConsent()` を呼び、戻り値が `"declined"` なら送らない。`consentModal` を JSX に描画する。利用者の操作で AI に送る fetch は `aiFetch` (`src/lib/ai/consent-required.ts`) を使い、`isAiConsentRequiredResponse(res)` なら自分のエラー表示を出さない (全画面共通の `AiConsentRequiredHost` が同意画面を出す)。画面を開くと自動で AI に頼む処理は `fetch` のまま、403 なら案内の一文だけを出す。保存・集計と AI を兼ねる API (健康診断・血液検査の保存、ホームの栄養の集計、相談を閉じる) は、未同意なら AI の部分だけを省いて応答の `aiSkipped` で知らせる。画面は `aiSkippedReasonOf` で読み、Web は `AiSkippedNotice` (`src/components/consent/`)、アプリは `apps/mobile/src/components/ai/AiSkippedNotice.tsx` で同意の案内を出す (`tests/ai-consent-skipped.test.ts` が、aiSkipped を返す API を呼ぶ画面の読み忘れを検査する)。案内の文面は `supabase/functions/_shared/ai-consent.ts` に 1 つだけ置き、案内が指す設定の項目 (`AI_CONSENT_SETTINGS_ENTRY_TITLE`) は Web の設定とアプリの設定タブの両方に置く (`tests/ai-consent-settings-entry.test.ts`)。アプリ (apps/mobile) は、AI の API を呼ぶ関数の中で `src/lib/ai-consent.ts` の `handleAiConsentRequiredError` (自動で送る処理は `isAiConsentRequiredError`、fetch を直接使うなら `isAiConsentRequiredResponse`) を呼んで同意画面へ案内する (`tests/ai-consent-mobile-entry-points.test.ts` が、`requireAiConsent` を呼ぶ API を呼ぶアプリの関数の判定漏れを構文木で検査する)。アプリでは、同意で止められたと分かった分岐で例外を投げ直さない (投げ直すと、呼び出し側の catch が「失敗しました」を案内に重ねて出す。`useV4MenuGeneration().generate` は案内を出して `null` を返す。同じテストが構文木で検査する)。受け付けたあとに止めた処理 (キューの献立生成・献立生成の続きの工程・買い物リストの作り直し) は、リクエストの行の失敗の欄 (`weekly_menu_requests.error_message` / `shopping_list_requests.result.error`) にコードではなく人向けの文 (`aiConsentDeniedStoredMessage`) を書き、続きの工程は `invokeMenuContinuation` で呼ぶ (呼んだ先が止めたら再試行も上書きもしない)。画面は失敗の欄を `handleStoredAiConsentFailure` (Web: `src/lib/ai/consent-required.ts`、アプリ: `apps/mobile/src/lib/ai-consent.ts`) に通し、true なら自分のエラー表示を出さない (書く側は `tests/ai-consent-stored-failure.test.ts`、読む側の通し忘れは `tests/ai-consent-stored-failure-readers.test.ts` が構文木で検査する)。同意の記録・撤回は `POST /api/ai/consent` / `POST /api/ai/consent/revoke` だけが service role で書く。文面を変えたら必ず `AI_CONSENT_VERSION` も変える。`tests/ai-consent-entry-points.test.ts` が Web の画面の入口を検査する。e2e のテスト用アカウントは同意済みにしてある (`scripts/lib/e2e-ai-consent.ts`、`tests/e2e/helpers/ai-consent.ts`。同意画面そのものを試す spec だけ `test.use({ aiConsentGranted: false })`)。
+
+### 環境変数
+
+読む環境変数の一覧は `src/lib/env.ts` (zod のスキーマ。公開用 `NEXT_PUBLIC_*` とサーバー用に分け、必須/任意を区別する) に集約する (#1182)。
+
+- **必須** (Supabase の接続情報 3 つ: `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY`) は、`src/lib/env-required.ts` の `getSupabaseUrl()` などで取り出す。欠けていれば、サーバーのログに `[env] missing required env: <変数名>` を 1 行出して (ブラウザでは出さない。例外を誰が捕まえても残る)、`MissingEnvError` を投げる (message は固定の文で変数名を含まない。変数名は列挙されない `envName` に持ち、例外が `src/lib/db-logger.ts` の `error()` (`internalError()` 経由を含む) に渡れば構造化ログの metadata `missing_env_name` にも記録される。値は記録しない)。route の 500 は `internalError()` で返す (本文に変数名を出さない。#1172)。service_role のクライアントは `lib/supabase/server.ts` の `getSupabaseAdmin()` を使い、route ごとに自前の取り出しを書かない (自前の取り出しが、変数名入りの文を 500 の本文に返していた。`tests/env-source-scan.test.ts` が、必須の変数名を例外・応答の文字列に書いていないかを検査する)。middleware は欠けていれば `internalError()` の汎用 500 を返す (認証は素通りさせない)。**`process.env.X!` と書かない** (`tests/env-source-scan.test.ts` が検査する)。必須の変数を名前で読むのは `env-required.ts` だけで、ほかの場所で `process.env.X` を読んで `!url` と自前で判定しない・テンプレートリテラルに `${process.env.X}` と直接埋め込まない (空白だけの値を通す・`undefined/functions/v1/...` へ通信するため。#1434。同じテストが検査する)。欠けていてよい場所 (ログの書き込み・`/api/health` の死活監視・通知メールなど縮退してよい処理) では、getter を呼んで `isMissingEnvError()` で受ける。Edge Function を service_role の鍵で呼ぶときの鍵 (古い別名 `SERVICE_ROLE_JWT` を先に読む) は `getEdgeFunctionServiceRoleKey()`。API route では、認証とレート制限のあと・DB に書き込む前に取り出す (未ログインの呼び出しに設定の不足を教えない。書き込んだあとで気づくと、Edge Function を呼べないまま、リクエストの行を作って失敗として記録する (週間献立は、消した献立を戻す) だけの無駄な動きになる)。
+- **任意** (メール・レート制限・AI・課金など) は `src/lib/env.ts` の `getOptionalEnv(name)` で取り出す。無ければ `undefined` を返し、プロセスごとに 1 回だけ警告を出す。**任意の変数が無いことで本番を止めない**。既存の `process.env.X` の読み取りは、ほかの作業と重ならないところから順に置き換える途中 (新しく書くコードは `getOptionalEnv` を使う)。
+- 値を読む場所を 1 か所に決めている変数 (一覧の `readOnlyBy`) は、`check:env` の案内のために名前だけが一覧にあり、`getOptionalEnv` では読めない。`CRON_SECRET` / `CRON_SECRET_PREVIOUS` を読むのは `src/lib/cron-auth.ts` だけ (`tests/cron-secret-contract.test.ts` の CC-4)、同意ゲートのフラグ `LEGAL_CONSENT_ENFORCE` / `LEGAL_CONSENT_NOTICE` を読むのは `lib/legal-consent.ts` だけ (middleware は Edge Runtime なので `getOptionalEnv` を使えない)。`tests/env-source-scan.test.ts` が、本番コードでそのファイルだけが読んでいることを検査する。
+- `env-required.ts` は何も import しない。ブラウザ向け (`lib/supabase/client.ts`) と Edge Runtime (middleware・`runtime = 'edge'` の route) のコードは `env.ts` を import しない (zod は最小のスキーマでも minify 後に約 59 KB、gzip 約 16 KB 加わるため。`tests/env-source-scan.test.ts` が到達性を検査する)。`env.ts` は `scripts/check-env.mjs` が Node.js から直接読むため、静的に import してよいのは zod だけ。
+- 新しい環境変数は、`env.ts` の一覧 (必須にするのは、無いとアプリが動かないものだけ。無いと何が起きるかも書く) と `.env.example` の両方に足す。逆に、採用をやめたサービスの変数を `.env.example` から消すときは、一覧からも消す (`tests/env-source-scan.test.ts` が、Web の本番コードが名前を書いて読む変数が一覧に無いとき (`NODE_ENV`・`NEXT_RUNTIME` を除く) と、一覧の変数が `.env.example` に無いときに失敗する)。`npm run check:env` が `.env.local` などを一覧に照らして検査する (CI には組み込まない。CI にシークレットが無いため)。
+- **モバイル** (`apps/mobile`) は `src/lib/env.ts`。`EXPO_PUBLIC_*` は `process.env.EXPO_PUBLIC_X` と名前を直接書く (`process.env[name]` はビルド時に置き換わらず、リリースビルドで常に undefined になる)。必須の `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY` が無いと、`lib/supabase.ts` は存在しない接続先のクライアントを作らず、開発中は読み込み時に例外、リリースビルドは `app/_layout.tsx` が設定エラーの画面を出す (足りない変数名を画面に出すのは開発ビルドだけ。リリースビルドでは `lib/supabase.ts` が端末のログに残す)。モバイルの jest では `process.env` を差し替えず、同じオブジェクトを書き換える (`expo/virtual/env` が読み込み時の `process.env` を握るため)。
 
 ### localStorage クリーンアップ
 
 `src/lib/user-storage.ts` の `clearUserScopedLocalStorage()` を使う。  
 サインアウト処理では **Supabase signOut を呼ぶ前に** このヘルパーを実行する。
 
+### Web のログアウト画面と、モバイルアプリの WebView への通知
+
+Web の画面で利用者がログアウトするときは、`clearUserScopedLocalStorage()` → `notifyNativeSignOut()` (`src/lib/native-auth-bridge.ts`) → `supabase.auth.signOut()` → `broadcastSignOut()` (`src/lib/user-storage.ts`) の順に呼ぶ (#1038)。
+`signOut()` の前に `notifyNativeSignOut()` を呼ばないと、`signOut()` の途中の `SIGNED_OUT` が `session-expired` としてネイティブへ先に届き、ネイティブが `user_push_tokens` のこの端末の行を消せなくなる。
+`broadcastSignOut()` は `signOut()` のあとに呼ぶ (先に呼ぶと同じタブが `/login` へ移り、`signOut()` が途中で止まる)。`tests/native-sign-out-order-source-scan.test.ts` が検査する。
+
+### 退会 (アカウント削除)
+
+退会の本体は `src/lib/account-deletion.ts` の `deleteAccount()` (#1175)。`POST /api/account/delete` はこれを呼ぶだけにする (退会の入口を増やすときも同じ)。route に手順を書き足さない。`deleteAccount()` は失敗を `ACCOUNT_DELETE_FAILED` (`request_id` と段階 `step` つき) の結果で返し、詳細は `src/lib/db-logger.ts` で `app_logs` に残す。route はそれを `src/lib/api/errors.ts` の `internalError()` (#1172。汎用メッセージだけの 500。`request_id`・段階・DB の生のエラー文は本文に出さない) で返す。
+
+- **`auth.users` を指す外部キーには、必ず `ON DELETE` を書く。** `NO ACTION` のままだと、参照する行が 1 件でも残っている利用者・運営者の `auth.admin.deleteUser` が外部キー違反で失敗する。本人だけの記録は `CASCADE`、サポート・会計・運営者の記録は行を残して `SET NULL` (列は NULL を許す形にする)。`tests/integration/security/auth-users-fk-on-delete.test.ts` が検査する。
+- 退会後も行が残る表に、利用者の生のメールアドレスを入れる列を足したら、`prepare_account_deletion` (migration `20261010000100`) で伏せるか、伏せない理由を同じテストの一覧 (H) に書く。
+- 利用者のファイルを置く Storage は、先頭のフォルダを `<user_id>/` にする (`src/lib/storage-paths.ts`)。退会はこのフォルダを丸ごと消す (`src/lib/account-deletion-storage.ts`)。それ以外の場所に置くと、DB の URL から辿れるものだけが消える。
+
 ### エラー境界 (画面の描画中の例外を受ける)
 
 画面の描画中に起きた例外を受ける境界が無いと、Web ではルート全体を置き換える `global-error.tsx` まで、モバイルではアプリ全体のクラッシュまで届く (#1207)。新しい route group / layout を足すときは、境界も足す。
 
 - **Web**: layout (`layout.tsx`) を持つ区画には、同じ階層に `error.tsx` を置く。中身は共通部品 `src/components/error/RouteError.tsx` を返すだけにする (手書きしない)。`RouteError` は「再試行」(`router.refresh()` + `reset()`)・戻るリンク・記録 (`src/lib/report-boundary-error.ts`) をそろえる。`reset()` だけではサーバーコンポーネントの例外から復帰できないため、`router.refresh()` を一緒に呼ぶ。例外の文面・スタックは画面に出さず、出すのは `digest` だけ。記録に URL / パスを入れない (`/invite/{token}` など URL に秘密が入るページがあるため)。`tests/route-error-boundaries.test.tsx` が配置と表示を検査する。
-- **モバイル**: `apps/mobile/app` の `_layout.tsx` は、すべて `export function ErrorBoundary` を持ち、`src/components/ErrorFallback.tsx` を返す。expo-router は、この export がある layout の中の例外だけを受ける (無いと誰にも受けられない)。Provider の外 (ルートの境界) でも描画されるので、`ErrorFallback` は hooks や Provider に頼らない。`apps/mobile/__tests__/app/error-boundaries.test.tsx` が全 layout を検査する。記録は `apps/mobile/src/lib/error-report.ts`。PostHog (外部の計測サービス。イベントがユーザー ID に紐づく) には、例外の文面・スタックを送らない。`captureEvent` の PII フィルタはキー名しか見ず、値の中身は除かないため。送るのは境界・OS・例外の種類 (識別子の形のときだけ)・指紋 (元に戻せないハッシュ) だけにする (`docs/design/operator/07-audit-monitoring.md` §15.7)。生の文面は、サーバー側でマスクされる `POST /api/log` の metadata にだけ残す。`apps/mobile/__tests__/lib/error-report.test.ts` が、PostHog に送る内容を固定している。
+- **モバイル**: `apps/mobile/app` の `_layout.tsx` は、すべて `export function ErrorBoundary` を持ち、`src/components/ErrorFallback.tsx` を返す。expo-router は、この export がある layout の中の例外だけを受ける (無いと誰にも受けられない)。Provider の外 (ルートの境界) でも描画されるので、`ErrorFallback` は hooks や Provider に頼らない。`apps/mobile/__tests__/app/error-boundaries.test.tsx` が全 layout を検査する。記録は `apps/mobile/src/lib/error-report.ts`。送り先はサーバーログ (`POST /api/log`。サーバー側で秘密情報をマスクしてから `app_logs` に保存する) だけで、外部の計測サービスには送らない (#1166)。例外の文面とスタックは切り詰め、画面のパス (ルート名) は記録しない。`apps/mobile/__tests__/lib/error-report.test.ts` が、送り先と送る内容を固定している。
 
 ---
 
@@ -148,6 +240,19 @@ npx vitest run --config vitest.integration.config.ts tests/integration/rls   # R
 
 ---
 
+## マージ前の検査 (ローカル CI)
+
+PR の検査は `bash scripts/local-ci.sh` でローカルに回せる (CI の ci.yml・mobile-test.yml・security-regression.yml・e2e-local.yml と同じコマンド・同じ件数、security.yml の gitleaks (シークレットの検査) と同じ版・同じ設定・同じ範囲 (PR で増えるコミット)。TZ=UTC・main を取り込んだマージ状態・まっさらな worktree で回す)。
+
+- migration を含まない PR は、local-ci.sh の 5 段 (secrets・unit・mobile・integration・e2e) が緑で、出力の Markdown (sha と件数) を PR 本文に貼れば、CI の完了を待たずにマージしてよい (オーナー判断 2026-10-09)。CI の結果はマージ後に確かめ、赤なら直す。
+- secrets 段 (gitleaks) が赤のときはマージしない。リポジトリは公開なので、main に入った秘密は取り消せない (本物のキーなら無効にして発行し直す。ダミーなら `.gitleaks.toml` か行末の `gitleaks:allow`)。
+- 依存 (`package.json` / `package-lock.json`) を変える PR は、security.yml の dependency review (high 以上の既知の脆弱性がある版を入れていないか) の緑を待ってからマージする。これは GitHub の Dependency graph を使うので、ローカルでは再現できない。
+- PR で動くワークフローのうち local-ci.sh に写していないもの (と理由) は `tests/local-ci-workflow-sync.test.ts` の `EXCLUDED_WORKFLOWS` / `EXCLUDED_JOBS` にある。PR で動くワークフロー・ジョブを足したら、local-ci.sh に写すか、そこに理由を書く (書かないと `npm test` が落ちる)。
+- migration (`supabase/migrations/**`) を含む PR は、Deploy Supabase Migrations の PR ジョブ (本番台帳とのドリフト検知) の緑を待ってからマージする。これはローカルでは再現できない。
+- 本番への反映 (Vercel・`db push`・functions deploy) は従来どおり PR → main → CI の経路だけ。
+
+---
+
 ## 家族 (family_*) を変える関数のロック順 (DB)
 
 家族のメンバー・所属・代表者を変える関数 (`accept_family_invite` / `add_family_child` / `leave_family` / `remove_family_member` / `operator_force_dissolve_family` / `operator_force_representative_transfer` / `accept_family_representative_transfer` / `accept_child_promotion`) は、**最初に `family_groups` の行をロックし**、そのあとで子の行 (`family_invites` / `ownership_transfer_proposals` / `family_members` / `family_promotion_requests` / `user_profiles`) を触る (#1310)。代表者による家族の削除 (`DELETE FROM family_groups` + CASCADE) は、DELETE 文が最初に家族の行を取るので、もともとこの順になっている。
@@ -197,7 +302,6 @@ api.x.ai
 generativelanguage.googleapis.com
 api.openai.com
 api.resend.com
-us.i.posthog.com
 *.upstash.io
 ```
 または `Full` (全許可)。

@@ -1,6 +1,8 @@
 // src/lib/emails/membership/member-left.ts
 // (設計書 04-email-templates.md §6.2 — メンバーが自分で脱退したときの、家族グループの代表者 / 組織のオーナーへの通知メール、#1160)
-import type { EmailEnvelope } from './templates';
+import type { EmailEnvelope } from '../envelope';
+import { emailSignature } from '../common';
+import { getEmailFrom, getSupportEmail } from '@/lib/site-config';
 import {
   describeScope,
   describeScopeForSubject,
@@ -31,7 +33,7 @@ export function renderMemberLeftEmail(vars: MemberLeftEmailVars): EmailEnvelope 
   return {
     template: 'member_left',
     to: vars.to_email,
-    from: 'ほめゴハン <noreply@homegohan.app>',
+    from: getEmailFrom(),
     subject: `【ほめゴハン】${describeScopeForSubject(vars.scope, vars.scope_name)}からメンバーが脱退しました`,
     text: `ほめゴハンをご利用いただきありがとうございます。
 
@@ -41,11 +43,9 @@ ${describeScope(vars.scope, vars.scope_name)}のメンバーが 1 人、ご本�
 現在のメンバーは、メンバー管理画面で確認できます。
 ${vars.members_url}
 
-ご不明な点がございましたら support@homegohan.app までお問い合わせください。
+ご不明な点がございましたら ${getSupportEmail()} までお問い合わせください。
 
-─────────────────
-ほめゴハン
-https://homegohan.app
+${emailSignature()}
 `,
   };
 }

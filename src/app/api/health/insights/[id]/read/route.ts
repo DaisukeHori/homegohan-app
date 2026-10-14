@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { internalError } from '@/lib/api/errors';
 
 // インサイトを既読にする
 export async function POST(
@@ -22,7 +23,7 @@ export async function POST(
     .eq('user_id', user.id);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('POST /api/health/insights/[id]/read', error, { userId: user.id, table: 'health_insights' });
   }
 
   return NextResponse.json({ success: true });

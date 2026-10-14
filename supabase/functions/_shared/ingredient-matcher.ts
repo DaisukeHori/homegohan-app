@@ -18,6 +18,7 @@ import {
   shouldSelectIngredientWithoutLLM,
 } from './ingredient-search-utils.ts'
 import { isRetryableError, withRetry, withTimeout } from './network-retry.ts'
+import { missingEnvError } from './missing-env.ts'
 
 // ============================================
 // 型定義
@@ -163,7 +164,7 @@ async function runSupabaseQuery<T>(
 async function generateEmbedding(text: string): Promise<number[]> {
   const apiKey = Deno.env.get(DATASET_EMBEDDING_API_KEY_ENV)
   if (!apiKey) {
-    throw new Error(`${DATASET_EMBEDDING_API_KEY_ENV} is not set`)
+    throw missingEnvError([DATASET_EMBEDDING_API_KEY_ENV])
   }
   return await withRetry(
     async () => await fetchSingleDatasetEmbedding(text, { apiKey, inputType: 'query' }) as number[],
@@ -179,7 +180,7 @@ async function generateEmbeddingsBatch(texts: string[]): Promise<Map<string, num
 
   const apiKey = Deno.env.get(DATASET_EMBEDDING_API_KEY_ENV)
   if (!apiKey) {
-    throw new Error(`${DATASET_EMBEDDING_API_KEY_ENV} is not set`)
+    throw missingEnvError([DATASET_EMBEDDING_API_KEY_ENV])
   }
 
   const embeddings = await withRetry(

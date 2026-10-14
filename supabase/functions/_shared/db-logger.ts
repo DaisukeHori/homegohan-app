@@ -3,7 +3,8 @@
  * ログをapp_logsテーブルに保存する
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// 版は supabase/functions/deno.json の imports で固定する (#1518。以前は esm.sh からメジャー版だけの指定で読んでいた)
+import { createClient } from "@supabase/supabase-js";
 import { sanitizeLogEntry } from "./log-sanitizer.ts";
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';

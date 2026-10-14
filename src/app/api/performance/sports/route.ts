@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { toSportPreset } from '@/lib/converter'
+import { internalError } from '@/lib/api/errors'
 
 /**
  * GET /api/performance/sports
@@ -36,16 +37,14 @@ export async function GET(request: NextRequest) {
     const { data, error } = await query
 
     if (error) {
-      console.error('Sports fetch error:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return internalError('GET /api/performance/sports', error)
     }
 
     return NextResponse.json({
       sports: data.map(toSportPreset),
     })
   } catch (error: any) {
-    console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return internalError('GET /api/performance/sports', error)
   }
 }
 

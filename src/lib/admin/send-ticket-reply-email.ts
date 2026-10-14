@@ -16,6 +16,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure, type SendEmailResult } from '@/lib/emails/send-result';
 import { renderTicketReplyEmail } from '@/lib/emails/support/ticket-reply';
+import { getSiteUrl } from '@/lib/site-config';
 import type { ReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
 
 /** email_delivery_logs.template に入れる値 */
@@ -28,7 +29,8 @@ export interface ReplyEmailLogger {
 }
 
 export interface SendTicketReplyEmailParams {
-  ticket: { id: string; user_id: string; subject: string };
+  /** user_id は NULL になりうる: 起票した利用者が退会すると、チケットは残って user_id だけが外れる (#1175) */
+  ticket: { id: string; user_id: string | null; subject: string };
   /** 今回投稿した顧客向けメッセージの ID と本文 (過去のメッセージや内部メモは読まない) */
   messageId: string;
   messageBody: string;
@@ -36,10 +38,6 @@ export interface SendTicketReplyEmailParams {
 }
 
 const replyToSchema = z.string().email();
-
-function appBaseUrl(): string {
-  return (process.env.NEXT_PUBLIC_APP_URL || 'https://homegohan.app').replace(/\/+$/, '');
-}
 
 /** SUPPORT_REPLY_TO (任意)。未設定、または不正な値なら undefined (noreply のまま送る) */
 function resolveReplyTo(logger: ReplyEmailLogger): string | undefined {
@@ -56,6 +54,12 @@ function resolveReplyTo(logger: ReplyEmailLogger): string | undefined {
 async function deliverTicketReplyEmail(params: SendTicketReplyEmailParams): Promise<ReplyEmailOutcome> {
   const { ticket, messageId, messageBody, logger } = params;
   const logMeta = { ticket_id: ticket.id, message_id: messageId };
+
+  // 0) 起票した利用者が退会している (user_id が外れている) 場合は、宛先が無い
+  if (!ticket.user_id) {
+    logger.warn('support ticket reply email: the ticket owner has left (no user_id)', logMeta);
+    return { status: 'failed', reason: 'no_recipient' };
+  }
 
   // 1) 宛先 (顧客本人のメールアドレス) を auth.users から取得する
   let admin: ReturnType<typeof getSupabaseAdmin>;
@@ -84,7 +88,7 @@ async function deliverTicketReplyEmail(params: SendTicketReplyEmailParams): Prom
         ticket_id: ticket.id,
         ticket_subject: ticket.subject,
         reply_body: messageBody,
-        contact_url: `${appBaseUrl()}/contact`,
+        contact_url: `${getSiteUrl()}/contact`,
         reply_to: resolveReplyTo(logger),
       }),
     );

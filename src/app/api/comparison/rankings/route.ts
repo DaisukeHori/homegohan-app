@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { calculatePeriodLocal } from '@/lib/date-utils';
 import { NextResponse } from 'next/server';
 import type {
   MetricRankingSummary,
@@ -8,6 +9,7 @@ import type {
   MetricDefinition,
   SegmentDefinition,
 } from '@/types/comparison';
+import { internalError } from '@/lib/api/errors';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -20,8 +22,8 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 期間を計算
-    const { periodStart, periodEnd } = calculatePeriod(periodType);
+    // 期間を計算 (JST の暦。集計の Edge Function calculate-segment-stats が保存する period_start と同じ値 #1211)
+    const { periodStart, periodEnd } = calculatePeriodLocal(periodType);
 
     // 1〜4. 互いに独立した 4 クエリを並列に取得する (#1225)
     //   絞り込み条件は冒頭で確定済みの user.id / periodType / periodStart だけで、クエリ同士に依存は無い。
@@ -125,51 +127,22 @@ export async function GET(request: Request) {
     return NextResponse.json(response);
 
   } catch (error: any) {
-    console.error('Comparison API error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('GET /api/comparison/rankings', error);
   }
-}
-
-function calculatePeriod(periodType: string): { periodStart: string; periodEnd: string } {
-  const now = new Date();
-  let periodStart: Date;
-  let periodEnd: Date;
-
-  switch (periodType) {
-    case 'daily':
-      periodStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      periodEnd = periodStart;
-      break;
-    case 'weekly':
-      const dayOfWeek = now.getDay();
-      const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      periodStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diff);
-      periodEnd = new Date(periodStart);
-      periodEnd.setDate(periodEnd.getDate() + 6);
-      break;
-    case 'monthly':
-      periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      break;
-    default:
-      periodStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
-      periodEnd = now;
-  }
-
-  return {
-    periodStart: periodStart.toISOString().split('T')[0],
-    periodEnd: periodEnd.toISOString().split('T')[0],
-  };
 }
 
 function determinePrize(ranking: any, userBadges: any[]): ComparisonPrize | null {
-  // ランキングに対応するバッジを探す
+  // ランキングに対応するバッジを探す。セグメント・指標に加えて、期間 (種類と開始日) も合うものだけ (#1500)。
+  // user_badges は (利用者, バッジ) ごとに 1 件だけで、一度付くと消えない (付与の記録 context_json に、付いた期間が残る)。
+  // 期間を見ないと、過去の期間に付いたバッジが、今の期間のこのランキングの賞として出続ける
   const relevantBadge = userBadges.find(ub => {
     const context = ub.context_json;
     if (!context) return false;
     return (
       context.segment_id === ranking.segment_id &&
-      context.metric_id === ranking.metric_id
+      context.metric_id === ranking.metric_id &&
+      context.period_type === ranking.period_type &&
+      context.period_start === ranking.period_start
     );
   });
 
