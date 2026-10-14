@@ -43,6 +43,14 @@ export const INVALID_ID_PARAM_MESSAGE = 'id の形式が正しくありません
 export const INVALID_ID_PARAM_CODE = 'VALIDATION_ERROR';
 
 /**
+ * uuid の形式の文字列ならそのまま、それ以外 (null・空・形式違い・文字列でない) は null を返す。
+ * 利用者が送れるヘッダ (x-request-id など) を uuid 型の列に入れる前に通す (#1532。形式違いの値を入れると insert が 22P02 で失敗する)
+ */
+export function uuidOrNull(value: unknown): string | null {
+  return isUuid(value) ? value : null;
+}
+
+/**
  * リクエストボディの JSON を読む。壊れた JSON は例外にせず { ok: false } を返す。
  *
  * `await request.json()` の例外をそのまま route 全体の catch に流すと、クライアントの入力ミスが
