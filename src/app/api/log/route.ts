@@ -10,10 +10,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { sanitizeLogEntry } from '@/lib/db-logger';
-import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 // #1044 (F6-20): level は enum に限定、message は上限文字数を設ける
@@ -57,10 +55,9 @@ export async function POST(request: NextRequest) {
       return rateLimitExceededResponse(rateLimit);
     }
 
-    // service_roleでログを保存。接続情報は env-required の getter で取り出す (#1434)。
-    // 欠けていれば MissingEnvError (変数名はサーバーのログにだけ残る) → 下の catch で固定の文の 500
-    const { url: supabaseUrl, serviceRoleKey: supabaseServiceKey } = getSupabaseServiceConfig();
-    const supabaseAdmin = createSupabaseClient(supabaseUrl, supabaseServiceKey);
+    // service_roleでログを保存。クライアントは canonical の getSupabaseAdmin で作る (#1162。認証と回数制限を通した後)。
+    // 接続情報が欠けていれば MissingEnvError (変数名はサーバーのログにだけ残る。#1434) → 下の catch で固定の文の 500
+    const supabaseAdmin = getSupabaseAdmin();
 
     // 秘密情報マスキング + サイズ切り詰め (F6-20)。message もクライアントが自由に書ける文字列なので、
     // metadata と同じく保存前にマスクする (#1171)

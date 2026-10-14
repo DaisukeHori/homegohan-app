@@ -67,6 +67,7 @@ const { default: SettingsPage } = await import('@/app/(main)/settings/page')
 import {
   NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER,
   NATIVE_REBRIDGE_WAIT_MS,
+  notifyNativeSignOut,
   resetNativeAuthBridgeForTests,
 } from '@/lib/native-auth-bridge'
 import { broadcastSignOut, clearUserScopedLocalStorage } from '@/lib/user-storage'
@@ -274,20 +275,42 @@ describe('MainLayout — モバイルアプリの WebView で auth-js が SIGNED
     expect(remainingKeys()).toEqual(Object.keys(USER_SCOPED_ITEMS))
   })
 
-  it('利用者が設定画面 (実際の画面) でログアウトしたとき: ネイティブに届くのは sign-out だけ。signOut の前に届き、session-expired は届かない', async () => {
+  it('アプリの中の設定画面 (実際の画面) には、ログアウトと退会が出ない (#1037: ネイティブの設定画面に一本化)', async () => {
     enterNativeWebView()
-    seedBorrowedSession(3000) // 更新が必要ない、普通に使えているセッション
+    seedBorrowedSession(3000)
 
     await mountLayout(<SettingsPage />)
     await advance(1_000)
+
+    expect(container.querySelector('[data-testid="logout-button"]')).toBeNull()
+    expect(container.querySelector('[data-testid="settings-delete-account-section"]')).toBeNull()
+    expect(container.querySelector('[data-testid="settings-native-account-actions-note"]')).not.toBeNull()
+    expect(sentTypes()).toEqual([])
+  })
+
+  it('利用者が WebView の中でログアウトしたとき (各画面と同じ順番: localStorage の削除 → notifyNativeSignOut → signOut → broadcastSignOut): ネイティブに届くのは sign-out だけ。signOut の前に届き、session-expired は届かない', async () => {
+    // #1037 で設定画面・マイページはアプリの中ではログアウトを出さなくなった。WebView の中でログアウトできる画面
+    // (凍結中の画面 /frozen/account など) と同じ順番の処理で、MainLayout の SIGNED_OUT の扱いを確かめる
+    enterNativeWebView()
+    seedBorrowedSession(3000) // 更新が必要ない、普通に使えているセッション
+    const logoutLikeScreens = async () => {
+      clearUserScopedLocalStorage()
+      notifyNativeSignOut()
+      await supabaseClient.auth.signOut()
+      broadcastSignOut()
+    }
+
+    await mountLayout()
+    await advance(1_000)
     expect(sentTypes()).toEqual([]) // ここまでは何も送っていない
 
-    await clickByTestId('logout-button')
-    await clickByTestId('logout-confirm-button')
+    await act(async () => {
+      await logoutLikeScreens()
+    })
     await advance(1_000)
 
     // 前提: ログアウトの途中で auth-js が本当に SIGNED_OUT を出した (= MainLayout の購読が呼ばれた) こと。
-    // 画面が signOut() を呼んでいなければ、このテストは空振りで通ってしまう
+    // signOut() が呼ばれていなければ、このテストは空振りで通ってしまう
     const { data } = await supabaseClient.auth.getSession()
     expect(data.session).toBeNull()
 
@@ -298,10 +321,9 @@ describe('MainLayout — モバイルアプリの WebView で auth-js が SIGNED
     expect(logoutCallIndex).toBeGreaterThanOrEqual(0)
     expect(postMessage.mock.invocationCallOrder[0]).toBeLessThan(fakeFetch.mock.invocationCallOrder[logoutCallIndex])
 
-    expect(remainingKeys()).toEqual([]) // 画面の処理が signOut の前に消している
+    expect(remainingKeys()).toEqual([]) // signOut の前に消している
     // broadcastSignOut() は自分のタブの MainLayout にも届き、従来どおりログイン画面へ移す
     await vi.waitFor(() => expect(hrefSetter).toHaveBeenCalledWith('/login'))
-    expect(pushMock).toHaveBeenCalledWith('/login')
 
     // ページが移ったあとはこのレイアウトが無い。再ブリッジの待ち時間が過ぎても、二重に移したりしない
     await act(async () => {

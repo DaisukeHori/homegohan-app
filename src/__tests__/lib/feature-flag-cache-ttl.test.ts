@@ -36,6 +36,25 @@ describe('resolveFeatureFlagCacheTtlMs', () => {
     }
   });
 
+  // #1535: Number() は '1e3'・'0x7D0'・'2000.0' も正の整数として読むが、正の整数のミリ秒の書き方は 10 進の数字だけ
+  it.each([
+    ['1e3', FEATURE_FLAG_CACHE_TTL_DEFAULT_MS],
+    ['0x7D0', FEATURE_FLAG_CACHE_TTL_DEFAULT_MS],
+    ['2000.0', FEATURE_FLAG_CACHE_TTL_DEFAULT_MS],
+    ['+2000', FEATURE_FLAG_CACHE_TTL_DEFAULT_MS],
+    ['02000', FEATURE_FLAG_CACHE_TTL_DEFAULT_MS],
+    ['0b11111010000', FEATURE_FLAG_CACHE_TTL_DEFAULT_MS],
+    ['-5', FEATURE_FLAG_CACHE_TTL_DEFAULT_MS],
+    ['0', FEATURE_FLAG_CACHE_TTL_DEFAULT_MS],
+    ['', FEATURE_FLAG_CACHE_TTL_DEFAULT_MS],
+    ['abc', FEATURE_FLAG_CACHE_TTL_DEFAULT_MS],
+    ['2000', 2000],
+    [' 2000 ', 2000],
+    [String(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER],
+  ])('値の表記 %j → %d (#1535)', (value, expected) => {
+    expect(resolveFeatureFlagCacheTtlMs(value)).toBe(expected);
+  });
+
   it('引数を省略すると環境変数 FEATURE_FLAG_CACHE_TTL_MS を読む', () => {
     expect(FEATURE_FLAG_CACHE_TTL_ENV).toBe('FEATURE_FLAG_CACHE_TTL_MS');
     vi.stubEnv(FEATURE_FLAG_CACHE_TTL_ENV, '2000');
