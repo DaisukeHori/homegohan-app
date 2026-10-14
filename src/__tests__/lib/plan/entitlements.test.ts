@@ -10,6 +10,8 @@
  * - aiUsageRecordedHeaders: Next.js が Edge Function を呼ぶときに付ける、記録済みの印 (署名)
  * - getEffectivePlan: いま効いているプラン
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -47,7 +49,14 @@ import {
   type AiUsageAllowed,
   type PlanRpcClient,
 } from '@/lib/plan/entitlements';
-import { signAiUsageGrant, verifyAiUsageGrant, verifyAiUsageRecorded } from '../../../../supabase/functions/_shared/ai-usage-core';
+import {
+  AI_ULTIMATE_MODE_DAILY_LIMIT_ENV,
+  aiFeatureDailyCap,
+  signAiUsageGrant,
+  verifyAiUsageGrant,
+  verifyAiUsageRecorded,
+} from '../../../../supabase/functions/_shared/ai-usage-core';
+import { ENV_VARS } from '@/lib/env';
 import { isUltimateModeRequested } from '@/lib/ai/ultimate-mode';
 import { AI_USAGE_NOT_COUNTED } from '../../../../supabase/functions/_shared/ai-daily-limit';
 
@@ -237,6 +246,38 @@ describe('consumeAiUsage: 究極モード (#1142) は機能ごとの 1 日の上
     const { rpc, client } = clientReturning({ data: allowedRow(1), error: null });
     await consumeAiUsage(USER_ID, 'menu_generation_ultimate', { client });
     expect(rpc.mock.calls[0][1]).toMatchObject({ p_feature_daily_cap: 1 });
+  });
+
+  it('aiFeatureDailyCap が尋ねる上書きの環境変数は、すべて consumeAiUsage が読んで DB に渡し、一覧 (readOnlyBy) と .env.example にある', async () => {
+    // 機能ごとに、上限を決めるときに尋ねる環境変数の名前を集める
+    const askedByFeature = AI_FEATURES.map((feature) => {
+      const names: string[] = [];
+      aiFeatureDailyCap(feature, (name) => {
+        names.push(name);
+        return undefined;
+      });
+      return { feature, names };
+    }).filter(({ names }) => names.length > 0);
+    // 空振りしていないこと: 究極モードは上書きの変数を尋ねる
+    expect(askedByFeature.flatMap(({ names }) => names)).toContain(AI_ULTIMATE_MODE_DAILY_LIMIT_ENV);
+
+    /** 既定 (1 回) と違う、上書きが効いたと分かる値 */
+    const OVERRIDDEN_CAP = 7;
+    const envExample = fs.readFileSync(path.resolve(__dirname, '../../../../.env.example'), 'utf-8');
+    for (const { feature, names } of askedByFeature) {
+      for (const name of names) {
+        vi.stubEnv(name, String(OVERRIDDEN_CAP));
+        const { rpc, client } = clientReturning({ data: allowedRow(1), error: null });
+        await consumeAiUsage(USER_ID, feature, { client });
+        // 読む側 (entitlements.ts の readFeatureDailyCapEnv) が名前を知らないと、既定の 1 回に黙って倒れる
+        expect(rpc.mock.calls[0][1], `${feature}: ${name}`).toMatchObject({ p_feature_daily_cap: OVERRIDDEN_CAP });
+        vi.unstubAllEnvs();
+
+        // npm run check:env が案内でき、値を読む場所が consumeAiUsage の 1 か所に決まっている (tests/env-source-scan.test.ts が読む場所を確かめる)
+        expect(ENV_VARS.find((entry) => entry.name === name)?.readOnlyBy, name).toBe('src/lib/plan/entitlements.ts');
+        expect(envExample, name).toMatch(new RegExp(`^#?\\s*${name}=`, 'm'));
+      }
+    }
   });
 
   it('通常の献立生成 (menu_generation) は、環境変数があっても consume_ai_usage (機能ごとの上限なし)', async () => {

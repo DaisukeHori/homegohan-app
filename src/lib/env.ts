@@ -283,6 +283,15 @@ export const SERVER_ENV_VARS = {
     // middleware (Edge Runtime) も読むので、zod を持つこのファイルの getOptionalEnv は使えない。読み方 (正の整数でなければ既定値) を 1 か所に置く
     readOnlyBy: 'src/lib/feature-flag-cache-ttl.ts',
   },
+  AI_ULTIMATE_MODE_DAILY_LIMIT: {
+    required: false,
+    description:
+      '献立生成の究極モードの、利用者ごと・1 日 (JST の暦日) の上限の回数 (0 以上の整数。0 はその日は 1 回も使えない) (#1142)。Edge Functions の secrets にも同じ値を入れる (片方だけだと、入口によって上限が変わる)',
+    whenMissing: '究極モードの 1 日の上限は既定の 1 回 (AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT)。0 以上の整数でない値も 1 回',
+    // 読み方 (0 以上の整数でなければ既定値) は supabase/functions/_shared/ai-usage-core.ts の resolveAiUltimateModeDailyLimit。
+    // Web で値を読むのは consumeAiUsage の 1 か所だけ
+    readOnlyBy: 'src/lib/plan/entitlements.ts',
+  },
   MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS: {
     required: false,
     description:

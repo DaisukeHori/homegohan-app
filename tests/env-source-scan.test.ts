@@ -23,12 +23,17 @@
  *      `undefined/functions/v1/...` へ通信していた (1 の非 null アサーションの検査はこれをすり抜けていた)
  *   8. 必須の変数を名前で読むのは src/lib/env-required.ts だけ (#1434)。ほかの場所は getter を使う
  *      (自前で読んで `!url` と判定すると、空白だけの値を通し、独自の文面になる)
+ *   9. 本番コードで、名前を書かずに process.env を使う (`process.env[name]`・`const env = process.env`・`fn(process.env)` など) のは
+ *      src/lib/env.ts (getOptionalEnv と検証) だけ (#1142)。名前を書かない読み取りは 6〜8 をすり抜けるため、書き方そのものを止める。
+ *      以前 src/lib/plan/entitlements.ts が `process.env[name]` で AI_ULTIMATE_MODE_DAILY_LIMIT を読み、一覧と .env.example から漏れていた
  *
  * 走査は TypeScript の構文木で行うので、コメントや文字列の中の `process.env.X!` には反応しない。
  *
  * 限界 (このテストは見張りであって、証明ではない。すり抜ける書き方はレビューで見る):
  *  - 名前を変数にした読み取り (`process.env[name]`)・`const env = process.env; env.X` のような別名経由は、
- *    どの変数を読んでいるか決まらないので、6〜8 のどれにも引っかからない。
+ *    どの変数を読んでいるか決まらないので、6〜8 のどれにも引っかからない。代わりに 9 が、src/lib/env.ts の外で
+ *    その書き方をしたこと自体を捕まえる (`globalThis.process.env`・`const p = process; p.env` のように
+ *    `process.env` と書かない経路は 9 もすり抜ける)。
  *  - 7 はテンプレートの `${...}` の中に process.env の読み取りが直接書かれているものだけを見る。
  *    いったん変数に入れてから埋め込む (`const u = process.env.X; `${u}/...``)・文字列の + 連結・
  *    `String(process.env.X)` を経由する、などは 7 では捕まらない (必須の変数なら 8 が、読む場所の側で捕まえる)。
@@ -114,6 +119,29 @@ function findEnvReads(source: string, fileName = 'file.ts'): EnvRead[] {
   };
   visit(sf);
   return reads;
+}
+
+/**
+ * 名前を書かずに `process.env` を使っている行 (1 始まり)。名前を書いた読み取り (`process.env.X` / `process.env['X']` /
+ * `const { X } = process.env`。findEnvReads が拾う形) 以外の `process.env` をすべて拾う:
+ * `process.env[name]`・`const env = process.env`・`fn(process.env)`・`{ ...process.env }`・`process.env = ...` など
+ */
+function findUnnamedEnvAccesses(source: string, fileName = 'file.ts'): number[] {
+  const sf = parse(source, fileName);
+  const lines: number[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isExpression(node) && isProcessEnv(node)) {
+      const parent = node.parent;
+      const named =
+        (ts.isPropertyAccessExpression(parent) && parent.expression === node) ||
+        (ts.isElementAccessExpression(parent) && parent.expression === node && ts.isStringLiteralLike(parent.argumentExpression)) ||
+        (ts.isVariableDeclaration(parent) && parent.initializer === node && ts.isObjectBindingPattern(parent.name));
+      if (!named) lines.push(sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return lines;
 }
 
 /**
@@ -304,6 +332,26 @@ describe('走査の仕組みの確認 (検出が空振りしないこと)', () =
       { name: 'QUX', line: 3 },
       { name: 'DEFAULT_PARAM', line: 4 },
     ]);
+  });
+
+  it('名前を書かない process.env の使い方 (添字が変数・別名・引数・展開・代入) を見つけ、名前を書いた読み取り・コメント・文字列は見つけない (#1142)', () => {
+    const source = [
+      'const a = process.env[name];', // 1: 添字が変数
+      'const env = process.env;', // 2: 別名
+      'f(process.env);', // 3: 引数
+      'const c = { ...process.env };', // 4: 展開
+      'export function g(source = process.env) { return source; }', // 5: 引数の既定値
+      'const d = process.env[`X`];', // 6: テンプレートの添字 (置換の無いものは名前を書いた読み取り)
+      'const e = process.env.FOO;', // 7: 名前を書いた読み取り
+      "const h = process.env['BAR'];", // 8
+      'const { BAZ } = process.env;', // 9: 分割代入
+      '// process.env[name]', // 10: コメント
+      'const i = "process.env[name]";', // 11: 文字列
+      'const j = other.env[name];', // 12: process ではない
+      'const k = process.env[prefix + "_KEY"];', // 13: 添字が式
+    ].join('\n');
+
+    expect(findUnnamedEnvAccesses(source)).toEqual([1, 2, 3, 4, 5, 13]);
   });
 
   it('テンプレートリテラルに直接埋め込んだ必須の変数の読み取りを見つけ、ほかの書き方・任意の変数は見つけない (#1434)', () => {
@@ -632,6 +680,7 @@ describe('.env.example と check:env の導線 (#1182)', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 6. 本番コードで読む環境変数は、すべて一覧にある / 値を読む場所が決まっている変数は、そのファイルだけが読む
+// 9. 名前を書かずに process.env を使うのは src/lib/env.ts だけ
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('本番コードで読む環境変数は src/lib/env.ts の一覧にある (#1182)', () => {
@@ -684,5 +733,24 @@ describe('本番コードで読む環境変数は src/lib/env.ts の一覧にあ
       // 読み方 (定数時間の比較・on だけを有効とみなす など) を 1 か所に集めておくため、ほかのファイルで直接読まない
       expect(readers, entry.name).toEqual([entry.readOnlyBy]);
     }
+  }, 30_000);
+
+  it('本番コードで名前を書かずに process.env を使うのは src/lib/env.ts だけ (#1142)', () => {
+    /** getOptionalEnv (process.env[name]) と、検証の既定の読み取り元 (source = process.env) */
+    const ALLOWED = new Set(['src/lib/env.ts']);
+    const found: string[] = [];
+    const allowedHits: string[] = [];
+    for (const file of PRODUCTION_ROOTS.flatMap((root) => collectProductionFiles(path.join(ROOT, root)))) {
+      const source = fs.readFileSync(file, 'utf-8');
+      if (!/process\s*\.\s*env/.test(source)) continue;
+      const relative = path.relative(ROOT, file);
+      for (const line of findUnnamedEnvAccesses(source, file)) (ALLOWED.has(relative) ? allowedHits : found).push(`${relative}:${line}`);
+    }
+
+    // 走査が空振りしていないこと: src/lib/env.ts の getOptionalEnv の読み取りは見つかる
+    expect(allowedHits.length).toBeGreaterThan(0);
+    // 失敗したら、名前を書いて読む (`process.env.X`)。名前を書かない読み取りは、6〜8 (一覧にあるか・読む場所が決まっているか・
+    // 必須の変数の扱い) の検査をすり抜ける。モバイル (EXPO_PUBLIC_*) は、名前を書かないとリリースビルドで値が埋め込まれない
+    expect(found).toEqual([]);
   }, 30_000);
 });

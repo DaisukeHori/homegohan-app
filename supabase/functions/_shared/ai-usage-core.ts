@@ -168,7 +168,9 @@ export function resolveAiUltimateModeDailyLimit(raw: string | null | undefined):
 
 /**
  * その機能の、機能ごとの 1 日の上限 (回数)。機能ごとの上限が無い機能は null (1 日の上限の合計だけで判定する)。
- * readEnv は環境変数を読む関数 (Next.js は process.env、Edge Functions は Deno.env.get。このファイルは環境変数を直接読まない)
+ * readEnv は環境変数を読む関数 (Next.js は src/lib/plan/entitlements.ts の readFeatureDailyCapEnv が名前を書いて process.env から、
+ * Edge Functions は Deno.env.get。このファイルは環境変数を直接読まない)。上書きの変数を足したら、Next.js 側の読む関数と
+ * src/lib/env.ts の一覧・.env.example にも足す (src/__tests__/lib/plan/entitlements.test.ts が突き合わせる)
  */
 export function aiFeatureDailyCap(feature: AiFeature, readEnv: (name: string) => string | undefined): number | null {
   if (feature === AI_ULTIMATE_MODE_FEATURE) return resolveAiUltimateModeDailyLimit(readEnv(AI_ULTIMATE_MODE_DAILY_LIMIT_ENV));

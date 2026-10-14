@@ -62,6 +62,7 @@ import type { Database } from '@/types/database.types';
 import { getEdgeFunctionServiceRoleKey, getSupabaseServiceRoleKey, isMissingEnvError } from '@/lib/env-required';
 import { NextResponse } from 'next/server';
 import {
+  AI_ULTIMATE_MODE_DAILY_LIMIT_ENV,
   AI_USAGE_RECORDED_HEADER,
   AI_USAGE_TIMEOUT_MS,
   aiFeatureDailyCap,
@@ -167,8 +168,21 @@ function logFailure(userId: string, message: string, error: unknown, context: Re
   }
 }
 
-/** 環境変数を読む (機能ごとの 1 日の上限の上書き。#1142) */
-const readProcessEnv = (name: string): string | undefined => process.env[name];
+/**
+ * 機能ごとの 1 日の上限を上書きする環境変数を読む (#1142。aiFeatureDailyCap に渡す)。
+ * 変数は名前を書いて読む (`process.env[name]` と名前を変数にしない): src/lib/env.ts の一覧 (readOnlyBy) と
+ * tests/env-source-scan.test.ts が、読む変数と読む場所を確かめられるように。ここに無い名前は読まない (既定の上限になる)。
+ * 機能ごとの上限を持つ機能を足して、上書きの変数が増えたら、ここと一覧・.env.example に足す
+ * (src/__tests__/lib/plan/entitlements.test.ts が、aiFeatureDailyCap が尋ねる名前をすべてここで読めるかを確かめる)
+ */
+function readFeatureDailyCapEnv(name: string): string | undefined {
+  switch (name) {
+    case AI_ULTIMATE_MODE_DAILY_LIMIT_ENV:
+      return process.env.AI_ULTIMATE_MODE_DAILY_LIMIT;
+    default:
+      return undefined;
+  }
+}
 
 /**
  * AI の利用を 1 回数える (上限の判定と記録を 1 回で行う)。AI へ送る直前 (同意の判定のあと) に呼ぶ。
@@ -187,7 +201,7 @@ export async function consumeAiUsage(
 ): Promise<AiUsageResult> {
   try {
     const client = options.client ?? adminPlanRpcClient();
-    const featureDailyCap = aiFeatureDailyCap(feature, readProcessEnv);
+    const featureDailyCap = aiFeatureDailyCap(feature, readFeatureDailyCapEnv);
     const rpcName = featureDailyCap === null ? 'consume_ai_usage' : 'consume_ai_usage_capped';
     const { data, error } = await withTimeout(
       featureDailyCap === null
