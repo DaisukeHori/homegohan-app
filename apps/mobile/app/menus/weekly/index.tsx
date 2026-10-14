@@ -602,6 +602,28 @@ const MODE_CONFIG = Object.fromEntries(
   ])
 ) as Record<string, { icon?: string; label: string; color: string; bg: string }>;
 
+/** 生成中の行の確認 (GET /api/ai/menu/weekly/pending) の応答 */
+type WeeklyPendingResponse = {
+  hasPending: boolean;
+  requestId?: string;
+  status?: string;
+  startDate?: string;
+  /** 生成のエンジン (v4 / v5 など)。究極モードかどうかは表さない (通常の生成も「献立を改善」も v4 / v5) */
+  mode?: string;
+  /** 究極モードの生成か (#1582。サーバーが行の generated_data.ultimateMode から決める) */
+  ultimateMode?: boolean;
+};
+
+/**
+ * 画面に入り直したとき・週を移ったときに見つけた生成中の行が、究極モードの生成か (#1582)。
+ * サーバーの判定 (ultimateMode) が true のときだけ究極モード。mode (v4 / v5) では見分けない
+ * (以前は mode が v4 / v5 なら究極モードとしていたので、通常の生成まで「究極モードで献立を生成中...」のカードになった)。
+ * 生成を始めたときの道 (requestedUltimateRef) とは別。
+ */
+function isUltimatePendingRequest(res: Pick<WeeklyPendingResponse, "ultimateMode">): boolean {
+  return res.ultimateMode === true;
+}
+
 export default function WeeklyMenuPage() {
   const { profile } = useProfile();
   const weekStartDay = profile?.weekStartDay ?? 'monday';
@@ -997,13 +1019,13 @@ export default function WeeklyMenuPage() {
   async function checkPending() {
     try {
       const api = getApi();
-      const res = await api.get<{ hasPending: boolean; requestId?: string; status?: string; startDate?: string; mode?: string }>(
+      const res = await api.get<WeeklyPendingResponse>(
         `/api/ai/menu/weekly/pending?date=${weekStartStr}`
       );
       if (res.hasPending && res.requestId && res.startDate === weekStartStr) {
         setPendingRequestId(res.requestId);
         setPendingStatus(res.status ?? "processing");
-        setPendingIsUltimate(res.mode === "v4" || res.mode === "v5");
+        setPendingIsUltimate(isUltimatePendingRequest(res));
         return;
       }
       setPendingRequestId(null);
