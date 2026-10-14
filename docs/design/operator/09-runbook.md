@@ -608,6 +608,16 @@ Step 1: 即時対応 (T+0)
     - CRON_SECRET
     - RESEND_API_KEY
     - 全 LLM API キー
+  □ cron の共有シークレットを rotate (Vercel の CRON_SECRET とは別の保管場所。Supabase 側の 2 か所を同じ新しい値にそろえる)
+    - Supabase の Edge Function secrets: CRON_SECRET (別名 SERVICE_ROLE_SECRET。入れ替えの間だけ CRON_SECRET_PREVIOUS)
+    - Supabase Vault: app_cron_secret (pg_cron が Edge Function を呼ぶときの Bearer)
+    - 手順: ENV_SETUP.md の「Cron の共有シークレットの保管場所とローテーション」→「ローテーション手順」
+    - 侵害時は旧い値を受け付け続けないよう、CRON_SECRET_PREVIOUS は使わないか、使うならできるだけ早く外す
+      (ENV_SETUP.md の手順 5 の注意と、「旧い値の控えが無いとき」の進め方)
+  □ 入れ替えの後、node scripts/check-cron-secret-drift.mjs --project-ref <ref> で確かめる
+    - Edge Function secrets と Vault の app_cron_secret が一致している (Edge ⇔ Vault が PASS)
+    - CRON_SECRET_PREVIOUS が残っていない (WARN が出ない)
+    - Vault は SUPABASE_DB_URL (psql) か、SQL Editor で得たダイジェストを --vault-digest で渡す (値は表示されない)
 
 Step 2: 被害調査 (T+1h)
   □ 侵害経路の特定 (ログ調査)
