@@ -3,7 +3,7 @@
 // ネイティブの設定画面 (マイページの上の歯車から開く) に一本化する。ブラウザで開いたときは、これまでどおり出す。
 //
 // 「アプリの中か」は既にある 2 つの判定 (useNativeAppMode / window.ReactNativeWebView) のどちらかで決める
-// (src/hooks/useAccountActionsDelegatedToNative.ts)。描画が終わるまでは出さない側に倒す (サーバーの描画と食い違わないように)。
+// (src/hooks/useAccountActionsPlacement.ts)。描画が終わるまではボタンも案内も出さない (サーバーの描画と食い違わないように)。
 //
 // NOTE: tsconfig の jsx: "preserve" の都合で、拡張子 .ts + React.createElement で書く (data-export.test.ts と同じ)。
 
@@ -58,10 +58,7 @@ vi.mock('framer-motion', async () => {
 
 import SettingsPage from '@/app/(main)/settings/page';
 import ProfilePage from '@/app/(main)/profile/page';
-import {
-  shouldDelegateAccountActionsToNative,
-  useAccountActionsDelegatedToNative,
-} from '@/hooks/useAccountActionsDelegatedToNative';
+import { resolveAccountActionsPlacement, useAccountActionsPlacement } from '@/hooks/useAccountActionsPlacement';
 
 type WindowWithBridge = Window & { ReactNativeWebView?: unknown };
 
@@ -102,25 +99,32 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('shouldDelegateAccountActionsToNative', () => {
+describe('resolveAccountActionsPlacement', () => {
   it.each([
-    // [描画が終わったか, useNativeAppMode, window.ReactNativeWebView, ネイティブに任せる (Web に出さない) か]
-    [false, false, false, true], // サーバーの描画・ブラウザの最初の描画: どちらとも決められないので出さない
-    [false, true, false, true],
-    [false, false, true, true],
-    [true, false, false, false], // ブラウザ: 出す
-    [true, true, false, true], // ?mode=app / is_native_app Cookie / sessionStorage の印
-    [true, false, true, true], // WebView の中 (Cookie などが残っていなくても)
-    [true, true, true, true],
-  ])('描画済み=%s・useNativeAppMode=%s・ReactNativeWebView=%s → %s', (hasMounted, isNativeApp, inNativeWebView, expected) => {
-    expect(shouldDelegateAccountActionsToNative({ hasMounted, isNativeApp, inNativeWebView })).toBe(expected);
+    // [描画が終わったか, useNativeAppMode, window.ReactNativeWebView, 置き場所]
+    [false, false, false, 'undecided'], // サーバーの描画・ブラウザの最初の描画: どちらとも決められないので、ボタンも案内も出さない
+    [false, true, false, 'undecided'],
+    [false, false, true, 'undecided'],
+    [true, false, false, 'web'], // ブラウザ: Web の画面に出す
+    [true, true, false, 'native'], // ?mode=app / is_native_app Cookie / sessionStorage の印
+    [true, false, true, 'native'], // WebView の中 (Cookie などが残っていなくても)
+    [true, true, true, 'native'],
+  ] as const)('描画済み=%s・useNativeAppMode=%s・ReactNativeWebView=%s → %s', (hasMounted, isNativeApp, inNativeWebView, expected) => {
+    expect(resolveAccountActionsPlacement({ hasMounted, isNativeApp, inNativeWebView })).toBe(expected);
   });
 
-  it('サーバーの描画 (useEffect が走らない) では、ブラウザ向けでも「任せる」= ボタンを出さない側になる (ハイドレーションの食い違いを作らない)', () => {
+  it('サーバーの描画 (useEffect が走らない) では、ブラウザ向けでも undecided = ボタンも案内も出さない (ハイドレーションの食い違いを作らない)', () => {
     function Probe() {
-      return h('span', null, useAccountActionsDelegatedToNative(false) ? 'delegated' : 'web');
+      return h('span', null, useAccountActionsPlacement(false));
     }
-    expect(renderToString(h(Probe))).toContain('delegated');
+    expect(renderToString(h(Probe))).toContain('undecided');
+  });
+
+  it('サーバーの描画では、設定画面にログアウト・退会・アプリ向けの案内のどれも出ない', () => {
+    const html = renderToString(h(SettingsPage));
+    expect(html).not.toContain('data-testid="logout-button"');
+    expect(html).not.toContain('data-testid="settings-delete-account-section"');
+    expect(html).not.toContain('data-testid="settings-native-account-actions-note"');
   });
 });
 

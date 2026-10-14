@@ -9,7 +9,7 @@ import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storag
 import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { requestNotificationPermission } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
-import { useAccountActionsDelegatedToNative } from "@/hooks/useAccountActionsDelegatedToNative";
+import { useAccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { AI_CONSENT_SETTINGS_ENTRY_TITLE, AI_CONSENT_SETTINGS_PATH } from "@/lib/ai/consent-config";
 import {
   ACCOUNT_DELETE_CONFIRM_KEYWORD,
@@ -53,8 +53,10 @@ export default function SettingsPage() {
   const router = useRouter();
   const supabase = createClient();
   const isNativeApp = useNativeAppMode();
-  // アプリの中では、ログアウトと退会をネイティブの設定画面に一本化する (#1037。判定は hooks/useAccountActionsDelegatedToNative.ts)
-  const accountActionsDelegated = useAccountActionsDelegatedToNative(isNativeApp);
+  // アプリの中では、ログアウトと退会をネイティブの設定画面に一本化する (#1037。判定は hooks/useAccountActionsPlacement.ts)
+  const accountActionsPlacement = useAccountActionsPlacement(isNativeApp);
+  // Web の画面にログアウト・退会を出してよいのはブラウザと分かったときだけ (判定前・アプリの中では出さない)
+  const accountActionsDelegated = accountActionsPlacement !== 'web';
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const [settings, setSettings] = useState({
@@ -487,7 +489,7 @@ export default function SettingsPage() {
 
         {/* セクション 5: アクション */}
         <div>
-          {accountActionsDelegated ? (
+          {accountActionsPlacement === 'native' && (
             // アプリの中: ログアウトと退会はネイティブの設定画面で行う (#1037)
             <p
               data-testid="settings-native-account-actions-note"
@@ -495,7 +497,8 @@ export default function SettingsPage() {
             >
               ログアウトとアカウントの削除は、マイページの右上の歯車 (設定) から行えます。
             </p>
-          ) : (
+          )}
+          {accountActionsPlacement === 'web' && (
             <Button
               variant="outline"
               data-testid="logout-button"

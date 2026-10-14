@@ -10,7 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
 import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
-import { useAccountActionsDelegatedToNative } from "@/hooks/useAccountActionsDelegatedToNative";
+import { useAccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { toUserProfile } from "@/lib/converter";
 import type { UserProfile, FitnessGoal, WorkStyle, CookingExperience, DietStyle } from "@/types/domain";
 import { Icons } from "@/components/icons";
@@ -105,9 +105,11 @@ function getIncompleteTabs(profile: UserProfile | null): TabType[] {
 function ProfilePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  // アプリの中では、ログアウトをネイティブの設定画面 (タブの上の歯車から開く) に一本化する (#1037。判定は hooks/useAccountActionsDelegatedToNative.ts)
+  // アプリの中では、ログアウトをネイティブの設定画面 (タブの上の歯車から開く) に一本化する (#1037。判定は hooks/useAccountActionsPlacement.ts)
   const isNativeApp = useNativeAppMode();
-  const accountActionsDelegated = useAccountActionsDelegatedToNative(isNativeApp);
+  const accountActionsPlacement = useAccountActionsPlacement(isNativeApp);
+  // Web の画面にログアウト・退会を出してよいのはブラウザと分かったときだけ (判定前・アプリの中では出さない)
+  const accountActionsDelegated = accountActionsPlacement !== 'web';
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [badgeCount, setBadgeCount] = useState(0);

@@ -15,36 +15,45 @@ import { isInNativeWebView } from '@/lib/native-auth-bridge';
  *     Cookie や sessionStorage が残っていない読み込みでも、WebView の中なら必ず立つ
  *
  * サーバーの描画とブラウザの最初の描画ではどちらも判定できない (Cookie を読むのはブラウザ、window もブラウザにしか無い) ので、
- * 描画が終わる (useEffect が走る) までは「出さない」側に倒す。
+ * 描画が終わる (useEffect が走る) までは、ボタンも案内も出さない ('undecided')。
  *   - アプリの中で、ログアウトや退会のボタンが一瞬だけ見えることがない
+ *   - ブラウザで、アプリ向けの案内が一瞬だけ見えることもない
  *   - サーバーとブラウザの最初の描画が同じになり、ハイドレーションの食い違いが起きない
  *   - ブラウザでは、描画のすぐあとにボタンが出る
  */
-export function shouldDelegateAccountActionsToNative(input: {
+/**
+ * ログアウトと退会をどこで出すか。
+ *   'undecided' : まだ判定できない (サーバーの描画・ブラウザの最初の描画)。ボタンも案内も出さない
+ *   'native'    : アプリの中。Web の画面には出さず、ネイティブの設定画面への案内を出す
+ *   'web'       : ブラウザ。Web の画面に出す
+ */
+export type AccountActionsPlacement = 'undecided' | 'native' | 'web';
+
+export function resolveAccountActionsPlacement(input: {
   /** 描画が終わった (useEffect が走った) か */
   hasMounted: boolean;
   /** useNativeAppMode() の結果 */
   isNativeApp: boolean;
   /** isInNativeWebView() の結果 */
   inNativeWebView: boolean;
-}): boolean {
-  if (!input.hasMounted) return true;
-  return input.isNativeApp || input.inNativeWebView;
+}): AccountActionsPlacement {
+  if (!input.hasMounted) return 'undecided';
+  return input.isNativeApp || input.inNativeWebView ? 'native' : 'web';
 }
 
 /**
- * Web の画面がログアウトと退会を出さずに、ネイティブの設定画面に任せるべきなら true。
+ * ログアウトと退会をどこで出すか (resolveAccountActionsPlacement)。Web の画面に出してよいのは 'web' のときだけ。
  * @param isNativeApp 呼び出し側の useNativeAppMode() の結果
  */
-export function useAccountActionsDelegatedToNative(isNativeApp: boolean): boolean {
+export function useAccountActionsPlacement(isNativeApp: boolean): AccountActionsPlacement {
   const [hasMounted, setHasMounted] = useState(false);
   const [inNativeWebView, setInNativeWebView] = useState(false);
 
   useEffect(() => {
-    // window.ReactNativeWebView は、ネイティブがページのスクリプトより前に入れるので、最初の useEffect の時点で見える
+    // window.ReactNativeWebView は、ネイティブ (react-native-webview) がページの読み込みの初めに入れるので、最初の useEffect の時点で見える
     setInNativeWebView(isInNativeWebView());
     setHasMounted(true);
   }, []);
 
-  return shouldDelegateAccountActionsToNative({ hasMounted, isNativeApp, inNativeWebView });
+  return resolveAccountActionsPlacement({ hasMounted, isNativeApp, inNativeWebView });
 }
