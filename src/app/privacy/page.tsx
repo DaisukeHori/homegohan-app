@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalDocumentMeta } from "@/components/legal/LegalDocumentMeta";
+import { AI_CONSENT_PROVIDERS, AI_CONSENT_PROVIDER_INFO } from "@/lib/ai/consent-config";
+import { BUSINESS_NAME } from "@/lib/business-info";
 import { getSupportEmail } from "@/lib/site-config";
 
 // #1174 (同意の前提): 未ログインでも読める公開ページ。サインアップ画面・LP フッターの同意リンクと、
@@ -27,7 +29,7 @@ export default function PrivacyPage() {
         {/* 版・施行日は packages/shared の LEGAL_DOCUMENTS (同意の記録に使う版と同じ値) から出す */}
         <LegalDocumentMeta type="privacy_policy" />
 
-        <p>Homegohan Inc.（以下，「当社」といいます。）は，本ウェブサイト上で提供するサービス（以下,「本サービス」といいます。）における，ユーザーの個人情報の取扱いについて，以下のとおりプライバシーポリシー（以下，「本ポリシー」といいます。）を定めます。</p>
+        <p>{BUSINESS_NAME}（以下，「当社」といいます。）は，本ウェブサイト上で提供するサービス（以下,「本サービス」といいます。）における，ユーザーの個人情報の取扱いについて，以下のとおりプライバシーポリシー（以下，「本ポリシー」といいます。）を定めます。</p>
 
         <h3>第1条（個人情報）</h3>
         <p>「個人情報」とは，個人情報保護法にいう「個人情報」を指すものとし，生存する個人に関する情報であって，当該情報に含まれる氏名，生年月日，住所，電話番号，連絡先その他の記述等により特定の個人を識別できる情報及び容貌，指紋，声紋にかかるデータ，及び健康保険証の保険者番号などの当該情報単体から特定の個人を識別できる情報（個人識別情報）を指します。</p>
@@ -50,7 +52,20 @@ export default function PrivacyPage() {
 
         <h3>第5条（個人情報の第三者提供）</h3>
         <p>当社は，次に掲げる場合を除いて，あらかじめユーザーの同意を得ることなく，第三者に個人情報を提供することはありません。ただし，個人情報保護法その他の法令で認められる場合を除きます。</p>
-        <p>なお、本サービスでは OpenAI 社および Google 社の AI API（Gemini を含む）を利用しており、解析や生成に必要な範囲で画像データおよびテキストデータが各事業者に送信される場合があります。</p>
+        <p>なお、本サービスでは次の日本国外の事業者の AI を利用しており、解析や生成に必要な範囲で画像データおよびテキストデータが各事業者に送信される場合があります。</p>
+        {/* #1366: 事業者の一覧は、同意画面と同じ AI_CONSENT_PROVIDERS / AI_CONSENT_PROVIDER_INFO から出す
+            (実際の送信先と同意の一覧は tests/ai-consent-provider-inventory.test.ts が突き合わせている)。
+            文面だけの直しなので、同意の版 (AI_CONSENT_VERSION)・ポリシーの版 (LEGAL_DOCUMENTS) は変えていない */}
+        <ul data-testid="privacy-ai-providers">
+          {AI_CONSENT_PROVIDERS.map((id) => {
+            const info = AI_CONSENT_PROVIDER_INFO[id];
+            return (
+              <li key={id}>
+                {info.name}（{info.country}）：{info.usage}
+              </li>
+            );
+          })}
+        </ul>
 
         <h3>第6条（個人情報の開示・訂正・削除）</h3>
         <p>当社は，本人から個人情報の開示・訂正・削除を求められたときは，本人であることを確認の上で遅滞なくこれに応じます。</p>
@@ -58,7 +73,7 @@ export default function PrivacyPage() {
         <h3>第7条（お問い合わせ窓口）</h3>
         <p>本ポリシーに関するお問い合わせは，以下の窓口までお願いいたします。</p>
         <p>
-          Homegohan Inc. 個人情報担当<br />
+          {BUSINESS_NAME} 個人情報担当<br />
           E-mail: {getSupportEmail()}
         </p>
       </main>
