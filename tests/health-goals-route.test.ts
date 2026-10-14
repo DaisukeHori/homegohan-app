@@ -96,7 +96,9 @@ function jsonRequest(method: string, body: unknown): never {
   }) as never;
 }
 
-const ctx = { params: Promise.resolve({ id: 'goal-1' }) };
+// PUT /api/health/goals/[id] は UUID の形式でない id を 400 にする (#1478) ので、UUID の形式の id を渡す
+const GOAL_ID = '44444444-4444-4444-8444-444444444444';
+const ctx = { params: Promise.resolve({ id: GOAL_ID }) };
 
 beforeEach(() => {
   state = {

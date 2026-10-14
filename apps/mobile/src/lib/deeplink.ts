@@ -6,6 +6,11 @@ export type SupabaseLinkParams = {
   type?: string;
   error?: string;
   error_description?: string;
+  /**
+   * Supabase Auth がトークンの代わりに運んでくる知らせ。メールアドレス変更で現在と新しいアドレスの両方の確認が要る設定
+   * (Secure email change) のとき、1 通目のリンクを開くと、セッションの代わりにこれだけが届く (#1187)
+   */
+  message?: string;
 };
 
 export function extractSupabaseLinkParams(url: string): SupabaseLinkParams {
@@ -31,6 +36,7 @@ export function extractSupabaseLinkParams(url: string): SupabaseLinkParams {
     type: get("type"),
     error: get("error"),
     error_description: get("error_description"),
+    message: get("message"),
   };
 }
 

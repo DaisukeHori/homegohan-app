@@ -9,6 +9,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { CreateExperimentSchema } from '@/lib/super-admin/experiments-schemas';
 import { internalError } from '@/lib/api/errors';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export async function GET(request: NextRequest) {
   try {
@@ -79,13 +80,16 @@ export async function POST(request: NextRequest) {
     }
 
     // 監査ログ
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: user.id,
-      action_type: 'super_admin.plan.create',
-      target_type: 'experiment',
-      target_id: data.id,
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      actionType: 'super_admin.plan.create',
+      targetType: 'experiment',
+      targetId: data.id,
       details: { key: parsed.data.key, name: parsed.data.name },
       severity: 'info',
+      request,
+      routeName: 'api/super-admin/experiments POST',
     });
 
     return NextResponse.json({ data }, { status: 201 });

@@ -10,6 +10,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { invalidateFeatureFlag } from '@/lib/feature-flags';
 import { UpdateFeatureFlagSchema } from '@/lib/super-admin/flags-schemas';
 import { internalError } from '@/lib/api/errors';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 type Params = { params: { key: string } };
 
@@ -50,12 +51,15 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     }
 
     // 監査ログ
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: user.id,
-      action_type: 'super_admin.feature_flag.toggle',
-      target_type: 'feature_flag',
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      actionType: 'super_admin.feature_flag.toggle',
+      targetType: 'feature_flag',
       details: { key: flagKey, changes: parsed.data },
       severity: 'info',
+      request,
+      routeName: 'api/super-admin/flags/[key] PATCH',
     });
 
     // #1148: この API を処理したインスタンスの、API route 側のフラグのメモリを新しくする。
@@ -74,7 +78,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(_request: NextRequest, { params }: Params) {
+export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     const user = await requireRole(['super_admin']);
     const supabase = await createClient();
@@ -111,12 +115,15 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
     }
 
     // 監査ログ
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: user.id,
-      action_type: 'super_admin.feature_flag.toggle',
-      target_type: 'feature_flag',
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      actionType: 'super_admin.feature_flag.toggle',
+      targetType: 'feature_flag',
       details: { key: flagKey, action: 'delete' },
       severity: 'warn',
+      request,
+      routeName: 'api/super-admin/flags/[key] DELETE',
     });
 
     // #1148: この API を処理したインスタンスの、API route 側のフラグのメモリを新しくする。

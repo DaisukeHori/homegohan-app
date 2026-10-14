@@ -53,6 +53,21 @@ export const AI_DAILY_LIMIT_FALLBACK_MESSAGE = "今日の AI の利用回数の�
  */
 export const AI_AUTO_SAFETY_CAP_MESSAGE = "今日はこれ以上、自動のコメントを作れません。明日また表示されます。";
 
+/** aiDailyLimitMessage の文から回数を取り出す形 (取り出した回数で文を作り直し、一字一句同じかを確かめる) */
+const AI_DAILY_LIMIT_MESSAGE_PATTERN = /^今日の AI の利用回数の上限 \((\d+) 回\)/;
+
+/**
+ * 上限で止めたときの文 (aiDailyLimitMessage(n)・AI_DAILY_LIMIT_FALLBACK_MESSAGE・AI_AUTO_SAFETY_CAP_MESSAGE) のどれかか (#1478)。
+ * 生成のリクエストの行の失敗の欄 (Edge Function が aiDailyLimitMessage で書く) を、画面が「こちらで書いた文」として
+ * そのまま出してよいかの判定に使う (それ以外の文は汎用の文に寄せる)
+ */
+export function isAiDailyLimitMessage(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  if (value === AI_DAILY_LIMIT_FALLBACK_MESSAGE || value === AI_AUTO_SAFETY_CAP_MESSAGE) return true;
+  const match = AI_DAILY_LIMIT_MESSAGE_PATTERN.exec(value);
+  return match !== null && aiDailyLimitMessage(Number(match[1])) === value;
+}
+
 /**
  * AI の部分を省いた応答の aiSkipped に入れる値は AI_DAILY_LIMIT_CODE (aiDailyLimitSkippedField)。
  * 画面の出し分け (aiSkippedReasonOf の 'daily_limit') と省いたときの一文は _shared/ai-consent.ts (同意で省いたときと同じ場所)。

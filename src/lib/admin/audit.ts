@@ -25,6 +25,10 @@
  *    失敗は db-logger 経由で app_logs に error として残す。
  *    返金のように「記録できないなら実行しない」操作は、戻り値の ok を見て呼び出し側で止めること。
  *  - action_type の命名は `admin.<対象>.<操作>` (docs/design/operator/07-audit-monitoring.md §4)。
+ *  - 一覧・検索 (#1326) は「1 回の検索 = 1 行」で記録し、details は buildListViewDetails() で作る
+ *    (検索条件と件数だけ。返した行の ID や値は入れない)。0 件のときは記録しない。
+ *  - admin / super-admin の route は admin_audit_logs へ直接 INSERT せず、x-forwarded-for も直接読まない
+ *    (tests/admin-view-audit-1326.test.ts が検査する)。
  */
 
 import { isIP } from 'net';
@@ -79,6 +83,33 @@ export function extractClientIp(headers: Pick<Headers, 'get'> | null | undefined
     if (ip && !ip.includes('%') && isIP(ip) !== 0) return ip;
   }
   return null;
+}
+
+/**
+ * 一覧・検索の閲覧ログ (#1326) で、検索条件の 1 つの値として残す文字列の長さの上限。
+ * 検索語は運営者が入力した値なので残すが、巨大な入力で監査行が膨らまないように切り詰める。
+ */
+const LIST_FILTER_VALUE_MAX_LENGTH = 200;
+
+/**
+ * 一覧・検索を「1 回の検索 = 1 行」で記録するときの details を作る (#1326)。
+ *
+ * - filters: 検索条件 (クエリ文字列を検証したあとの値)。未指定 (undefined / null / 空文字) の条件は落とす。
+ *   文字列は LIST_FILTER_VALUE_MAX_LENGTH 文字に切り詰める。
+ * - returned_count: この応答で返した行数。total: 条件に合う全件数 (取れないときは null)。
+ * 返した個々の行の ID や値は入れない (1 画面で多数の行を返すため。開示請求の照会は詳細の閲覧ログで行う)。
+ */
+export function buildListViewDetails(
+  filters: Record<string, string | number | boolean | null | undefined>,
+  returnedCount: number,
+  total: number | null,
+): Record<string, unknown> {
+  const kept: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(filters)) {
+    if (value === undefined || value === null || value === '') continue;
+    kept[key] = typeof value === 'string' ? value.slice(0, LIST_FILTER_VALUE_MAX_LENGTH) : value;
+  }
+  return { filters: kept, returned_count: returnedCount, total };
 }
 
 function extractUserAgent(headers: Pick<Headers, 'get'> | null | undefined): string | null {

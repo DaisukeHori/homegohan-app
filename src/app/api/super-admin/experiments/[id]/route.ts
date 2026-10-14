@@ -10,6 +10,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { UpdateExperimentSchema } from '@/lib/super-admin/experiments-schemas';
 import { internalError } from '@/lib/api/errors';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 type Params = { params: { id: string } };
 
@@ -66,13 +67,16 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     }
 
     // 監査ログ
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: user.id,
-      action_type: 'super_admin.plan.update',
-      target_type: 'experiment',
-      target_id: params.id,
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      actionType: 'super_admin.plan.update',
+      targetType: 'experiment',
+      targetId: params.id,
       details: { changes: parsed.data },
       severity: parsed.data.status === 'cancelled' ? 'warn' : 'info',
+      request,
+      routeName: 'api/super-admin/experiments/[id] PATCH',
     });
 
     return NextResponse.json({ data });
@@ -87,7 +91,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(_request: NextRequest, { params }: Params) {
+export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     const user = await requireRole(['super_admin']);
     const supabase = await createClient();
@@ -119,13 +123,16 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
     }
 
     // 監査ログ
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: user.id,
-      action_type: 'super_admin.plan.update',
-      target_type: 'experiment',
-      target_id: params.id,
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      actionType: 'super_admin.plan.update',
+      targetType: 'experiment',
+      targetId: params.id,
       details: { key: existing.key, name: existing.name, action: 'delete' },
       severity: 'warn',
+      request,
+      routeName: 'api/super-admin/experiments/[id] DELETE',
     });
 
     return NextResponse.json({ data: { id: params.id, deleted: true } });
