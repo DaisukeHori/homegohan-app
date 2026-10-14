@@ -1256,8 +1256,8 @@ export default function WeeklyMenuPage() {
       const day = plan.days.find(d => d.dayDate === dayDate);
       if (!day || !day.meals) continue;
       
-      // 今日の場合は時間帯優先、それ以外は朝食から
-      const priorities = dayIdx === todayIndex ? mealPriority : ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
+      // 今日の場合は時間帯優先、それ以外は朝食から (並びは @homegohan/shared の MEAL_ORDER が正本 #1446)
+      const priorities = dayIdx === todayIndex ? mealPriority : MEAL_ORDER_SHARED;
       
       for (const mealType of priorities) {
         const meal = day.meals.find((m: any) => m.mealType === mealType && !m.isCompleted);
