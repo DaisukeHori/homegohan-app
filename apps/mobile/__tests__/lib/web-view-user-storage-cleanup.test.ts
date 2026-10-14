@@ -14,7 +14,12 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { USER_SCOPED_LOCAL_STORAGE_KEYS, USER_SCOPED_STORAGE_CLEARED_EVENT } from '@homegohan/shared';
+import {
+  FAMILY_VIEW_STATE_KEY_PREFIX,
+  USER_SCOPED_LOCAL_STORAGE_KEYS,
+  USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES,
+  USER_SCOPED_STORAGE_CLEARED_EVENT,
+} from '@homegohan/shared';
 
 const mockSignOut = jest.fn();
 jest.mock('../../src/lib/supabase', () => ({
@@ -53,6 +58,13 @@ class FakeLocalStorage {
     if (this.failRemove) throw new Error('SecurityError');
     this.items.delete(key);
   }
+  // Web Storage と同じく、キーの数と i 番目のキー (接頭辞のキーを探すのに使う。#1599)
+  get length(): number {
+    return this.items.size;
+  }
+  key(index: number): string | null {
+    return [...this.items.keys()][index] ?? null;
+  }
 }
 
 type FakeWebView = { storage: FakeLocalStorage; events: string[] };
@@ -84,6 +96,19 @@ function fillUserScopedKeys(webView: FakeWebView, value = 'previous-user'): void
 
 function remainingUserScopedKeys(webView: FakeWebView): string[] {
   return USER_SCOPED_LOCAL_STORAGE_KEYS.filter((key) => webView.storage.getItem(key) !== null);
+}
+
+/** 前の利用者が残した、後ろに ID が付くキー (接頭辞ごとに 2 つずつ。#1599) */
+function fillUserScopedPrefixedKeys(webView: FakeWebView, value = 'previous-user'): string[] {
+  const keys = USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES.flatMap((prefix) => [`${prefix}family-a`, `${prefix}family-b`]);
+  for (const key of keys) webView.storage.setItem(key, value);
+  return keys;
+}
+
+function remainingPrefixedKeys(webView: FakeWebView): string[] {
+  return [...webView.storage.items.keys()].filter((key) =>
+    USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES.some((prefix) => key.startsWith(prefix)),
+  );
 }
 
 /** WebViewScreen と同じく、掃除の ID を読んで、注入する JS を作る (ID が無ければ何も注入しない) */
@@ -119,6 +144,24 @@ describe('ネイティブのログアウト・退会のあと、WebView に利�
     expect(webView.storage.getItem('unrelated')).toBe('keep');
     // Web の clearUserScopedLocalStorage() と同じイベントを出す
     expect(webView.events).toEqual([USER_SCOPED_STORAGE_CLEARED_EVENT]);
+  });
+
+  it('後ろに ID が付く利用者別のキー (家族の表示の切り替え familyViewState_<familyId> など) も消す (#1599)', async () => {
+    expect(USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES).toContain(FAMILY_VIEW_STATE_KEY_PREFIX);
+    const webView = createWebView();
+    fillUserScopedKeys(webView);
+    expect(fillUserScopedPrefixedKeys(webView).length).toBeGreaterThan(0);
+    webView.storage.setItem('unrelated', 'keep');
+    // 接頭辞が途中にあるだけのキーは消さない (前方一致だけ)
+    webView.storage.setItem(`x${FAMILY_VIEW_STATE_KEY_PREFIX}family-a`, 'keep');
+
+    await signOutOnDevice('user-1', { clearSession: jest.fn() });
+    runInWebView(webView, await scriptForNextWebView());
+
+    expect(remainingPrefixedKeys(webView)).toEqual([]);
+    expect(remainingUserScopedKeys(webView)).toEqual([]);
+    expect(webView.storage.getItem('unrelated')).toBe('keep');
+    expect(webView.storage.getItem(`x${FAMILY_VIEW_STATE_KEY_PREFIX}family-a`)).toBe('keep');
   });
 
   it('サインアウトが失敗しても (オフラインなど)、WebView の掃除は頼んである (サインアウトの前に頼む)', async () => {
@@ -278,6 +321,7 @@ describe('注入する JS', () => {
   it('一覧のキーをすべて、JSON の文字列で埋め込む (一覧を写さず、packages/shared から作る)', () => {
     const script = buildClearUserScopedWebStorageScript('id-1');
     expect(script).toContain(JSON.stringify(USER_SCOPED_LOCAL_STORAGE_KEYS));
+    expect(script).toContain(JSON.stringify(USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES));
   });
 
   it('ID に引用符などが入っていても、JS の文字列として壊れない', () => {

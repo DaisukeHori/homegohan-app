@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 
 import { classifyAuthError } from "../lib/authErrors";
 import { getStoredSession, supabase } from "../lib/supabase";
+import { clearUserScopedLocalData } from "../lib/userScopedLocalData";
 
 type AuthState = {
   isLoading: boolean;
@@ -79,7 +80,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         // revoked / 期限切れトークンはセッションをクリアする。
-        // サーバーが既に失効と答えているので、全端末のセッションを巻き込まず端末側だけ消す (scope: local)
+        // サーバーが既に失効と答えているので、全端末のセッションを巻き込まず端末側だけ消す (scope: local)。
+        // その前に、通常のログアウトと同じ掃除 (AsyncStorage の利用者別のキー・WebView の利用者別の localStorage) を通す
+        // (#1599。CLAUDE.md: サインアウトの前に消す。消さないと、この端末で次にログインする別の利用者に前の利用者の値が残る)。
+        // 掃除は例外を投げないが、万一投げても、失効したセッションを使い続けない (下の catch で保存済みに戻さない) よう、ここで受ける
+        try {
+          await clearUserScopedLocalData(cachedSession.user?.id ?? null);
+        } catch {
+          // 掃除に失敗しても、サインアウトは続ける
+        }
         try {
           await supabase.auth.signOut({ scope: "local" });
         } catch {

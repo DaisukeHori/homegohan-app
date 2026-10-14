@@ -25,15 +25,16 @@ import { isUuid } from '@/lib/http-params';
 import { CHALLENGE_COLUMNS, challengeError, handleMemberError, type ChallengeRow } from '@/lib/org-challenge-api';
 import { isOrgChallengeType, todayJst } from '@/lib/org-challenges';
 
-export async function POST(_request: Request, { params }: { params: { id: string } }) {
+export async function POST(_request: Request, props: { params: Promise<{ id: string }> }) {
   const route = 'POST /api/org/challenges/[id]/join';
   try {
+    const params = await props.params;
     const { user, profile } = await requireOrgMember();
 
     const notFound = () => challengeError('CHALLENGE_NOT_FOUND', 'チャレンジが見つかりません', 404);
     if (!isUuid(params.id)) return notFound();
 
-    const supabase = createClient();
+    const supabase = await createClient();
     const { data, error } = await supabase
       .from('organization_challenges')
       .select(CHALLENGE_COLUMNS)
@@ -80,15 +81,16 @@ export async function POST(_request: Request, { params }: { params: { id: string
   }
 }
 
-export async function DELETE(_request: Request, { params }: { params: { id: string } }) {
+export async function DELETE(_request: Request, props: { params: Promise<{ id: string }> }) {
   const route = 'DELETE /api/org/challenges/[id]/join';
   try {
+    const params = await props.params;
     const { user } = await requireOrgMember();
 
     // uuid でない文字列は、DB に渡すと 22P02 になる。参加していないのと同じ扱い (冪等)
     if (!isUuid(params.id)) return NextResponse.json({ joined: false });
 
-    const supabase = createClient();
+    const supabase = await createClient();
     // 条件の user_id は、認可で確定した本人の ID。ポリシー (本人の行だけ) も同じ条件を DB 側で確かめる
     const { error } = await supabase
       .from('organization_challenge_participants')

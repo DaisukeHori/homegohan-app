@@ -6,10 +6,9 @@
 //   - 指標・期間の切替ボタンに aria-pressed が付く
 //   - Y 軸ラベルが左に見切れない
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 const backMock = vi.hoisted(() => vi.fn());
 

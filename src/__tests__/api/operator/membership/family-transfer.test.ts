@@ -188,7 +188,7 @@ const postRequest = (body: unknown) =>
 const validBody = { to_user_id: NEW_REP_ID, reason: REASON };
 
 const call = (body: unknown = validBody, familyId: string = FAMILY_ID) =>
-  POST(postRequest(body), { params: { id: familyId } });
+  POST(postRequest(body), { params: Promise.resolve({ id: familyId }) });
 
 /** sendEmail に渡された封筒 (宛先 -> 封筒)。同じ宛先に 2 通送っていたら気づけるよう配列で返す */
 const sentEmails = () => mocks.sendEmail.mock.calls.map(([envelope]) => envelope as SentEmail);

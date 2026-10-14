@@ -36,18 +36,18 @@ updates:
           - "patch"
     ignore:
       # --- 計画して上げるもの (メジャー更新の PR は出さない) ---
-      # Next.js 14 の critical (RCE など) は、npm audit が示す直し方が Next 16 系へのメジャー更新。Next / React / @types/react は
-      # 互いの版をそろえて上げる必要があるため、Dependabot には上げさせない (Next 15 / React 19 前提の API を持ち込まない方針は #1199)。
+      # Next / React / @types/react は互いの版をそろえて上げる必要があり、メジャー更新では書き方の移行 (codemod) も要るため、
+      # Dependabot には上げさせない。#1444 で Next 15 + React 19 に計画して上げた。Next 16 も同じく計画して上げる。
       - dependency-name: "next"
         update-types: ["version-update:semver-major"]
       - dependency-name: "eslint-config-next"
         update-types: ["version-update:semver-major"]
-      # react / react-dom / react-test-renderer: Web は React 18 (18.3.1)。モバイルは react-native に入っているレンダラーと
+      # react / react-dom / react-test-renderer: Web は React 19 (19.2 系)。モバイルは react-native に入っているレンダラーと
       # 「完全に同じ版」(いまは 19.0.0) でないと動かない。どの更新も、react-native と一緒に計画して上げる
       - dependency-name: "react"
       - dependency-name: "react-dom"
       - dependency-name: "react-test-renderer"
-      # 型の版は、動いている React の版にそろえる (CLAUDE.md「Web アプリは Next 14 + React 18」)。パッチ更新だけ許す
+      # 型の版は、動いている React の版にそろえる (CLAUDE.md「Web アプリは Next 15 + React 19」)。パッチ更新だけ許す
       - dependency-name: "@types/react*"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
 

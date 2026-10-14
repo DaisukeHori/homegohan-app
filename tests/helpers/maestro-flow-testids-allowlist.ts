@@ -15,8 +15,11 @@ export const MISSING_TESTID_REASONS = {
   /** お気に入りはタブに出ない (apps/mobile/app/(tabs)/_layout.tsx で href: null。tabBarButtonTestID も無い) */
   FAVORITES_NOT_A_TAB:
     "お気に入りはタブに出ない ((tabs)/_layout.tsx で href: null・tabBarButtonTestID なし)。flow の見直しは #1552 (meals) の範囲外",
-  /** 献立のタブは WebView (webview-menus)。ネイティブの献立の画面の testID は無い */
-  MENUS_WEBVIEW: "献立のタブは WebView (webview-menus)。ネイティブの献立の画面の testID は無い。flow の見直しは #1552 (meals) の範囲外",
+  /**
+   * 献立のタブは WebView (webview-menus)。flow が期待するこの id はソースに無い
+   * (ネイティブの献立の画面 apps/mobile/app/menus/weekly/index.tsx は別の testID を持つ。#1599)
+   */
+  MENUS_WEBVIEW: "献立のタブは WebView (webview-menus)。flow が期待するこの id はソースに無い。flow の見直しは #1552 (meals) の範囲外",
   /** 画面の作り替えで名前が変わった・無くなった testID */
   NOT_IN_SOURCE_OUT_OF_SCOPE:
     "画面の作り替えで名前が変わった・無くなった testID (ソースに無い)。flow の見直しは #1552 (meals) の範囲外",

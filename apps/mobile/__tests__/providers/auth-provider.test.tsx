@@ -32,6 +32,13 @@ jest.mock('../../src/lib/supabase', () => ({
   getStoredSession: (...args: unknown[]) => mockGetStoredSession(...args),
 }));
 
+// 通常のログアウトと同じ掃除 (AsyncStorage の利用者別のキー・WebView の利用者別の localStorage)。
+// 中身は user-storage.test.ts と web-view-user-storage-cleanup.test.ts で確かめる。ここでは呼ばれることと順番を見る (#1599)
+const mockClearUserScopedLocalData = jest.fn();
+jest.mock('../../src/lib/userScopedLocalData', () => ({
+  clearUserScopedLocalData: (...args: unknown[]) => mockClearUserScopedLocalData(...args),
+}));
+
 import { AuthProvider, useAuth } from '../../src/providers/AuthProvider';
 
 // ── ヘルパー ──────────────────────────────────────────────────────────────────
@@ -81,6 +88,7 @@ beforeEach(() => {
   mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
   mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
   mockSignOut.mockResolvedValue({ error: null });
+  mockClearUserScopedLocalData.mockResolvedValue(undefined);
   mockGetStoredSession.mockResolvedValue(null);
   mockOnAuthStateChange.mockImplementation((listener: AuthListener) => {
     authListener = listener;
@@ -180,10 +188,67 @@ describe('AuthProvider — 起動時のセッション復元', () => {
       expect(mockSignOut).toHaveBeenCalledWith({ scope: 'local' });
     });
 
+    it.each(invalidErrors)(
+      '%s: 通常のログアウトと同じ掃除 (利用者別の AsyncStorage・WebView の localStorage) を、サインアウトの前に通す (#1599)',
+      async (_label, makeError) => {
+        const calls: string[] = [];
+        mockClearUserScopedLocalData.mockImplementation(async () => {
+          calls.push('clearUserScopedLocalData');
+        });
+        mockSignOut.mockImplementation(async () => {
+          calls.push('signOut');
+          return { error: null };
+        });
+        const session = makeSession('user-revoked');
+        mockGetSession.mockResolvedValue({ data: { session }, error: null });
+        mockGetUser.mockResolvedValue({ data: { user: null }, error: makeError() });
+
+        const api = renderProvider();
+
+        await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+        expect(text(api, 'session')).toBe('none');
+        // 失効したセッションの利用者のキーを消す (userId が分かれば、その利用者のキーを狙って消す)
+        expect(mockClearUserScopedLocalData).toHaveBeenCalledTimes(1);
+        expect(mockClearUserScopedLocalData).toHaveBeenCalledWith('user-revoked');
+        // CLAUDE.md: サインアウトの前に消す
+        expect(calls).toEqual(['clearUserScopedLocalData', 'signOut']);
+      },
+    );
+
+    it('失効でないとき (検証できた・通信の失敗) は、掃除しない (ログイン中の利用者の値を消さない)', async () => {
+      const session = makeSession();
+      mockGetSession.mockResolvedValue({ data: { session }, error: null });
+      mockGetUser.mockResolvedValueOnce({ data: { user: session.user }, error: null });
+
+      const verified = renderProvider();
+      await waitFor(() => expect(text(verified, 'loading')).toBe('false'));
+      verified.unmount();
+
+      mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: retryableFetchError() });
+      const offline = renderProvider();
+      await waitFor(() => expect(text(offline, 'loading')).toBe('false'));
+      expect(text(offline, 'session')).toBe('access-1');
+
+      expect(mockClearUserScopedLocalData).not.toHaveBeenCalled();
+    });
+
     it('エラーが無いのにユーザーも返らない異常な応答は、検証できなかったものとして捨てる', async () => {
       const session = makeSession();
       mockGetSession.mockResolvedValue({ data: { session }, error: null });
       mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+      const api = renderProvider();
+
+      await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+      expect(text(api, 'session')).toBe('none');
+      expect(mockSignOut).toHaveBeenCalledWith({ scope: 'local' });
+    });
+
+    it('掃除が例外を投げても、サインアウトして失効したセッションは使わない', async () => {
+      const session = makeSession();
+      mockGetSession.mockResolvedValue({ data: { session }, error: null });
+      mockGetUser.mockResolvedValue({ data: { user: null }, error: authError('AuthApiError', 403, 'gone', 'session_not_found') });
+      mockClearUserScopedLocalData.mockRejectedValue(new Error('storage unavailable'));
 
       const api = renderProvider();
 

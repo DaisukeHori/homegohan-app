@@ -23,9 +23,9 @@ const mocks = vi.hoisted(() => ({
   withUser: vi.fn(),
 }));
 
-// 組織の route は createClient() を同期で呼ぶ
+// createClient() は async (Next 15 では cookies() が Promise のため)。モックも Promise を返し、await を忘れた呼び出しはここで落ちるようにする
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: () => ({
+  createClient: async () => ({
     auth: { getUser: mocks.getUser },
     rpc: mocks.rpc,
     from: mocks.from,

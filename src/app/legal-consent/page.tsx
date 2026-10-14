@@ -20,14 +20,15 @@ export const metadata: Metadata = {
 export const dynamic = 'force-dynamic';
 
 interface PageProps {
-  searchParams?: { next?: string | string[] };
+  searchParams?: Promise<{ next?: string | string[] }>;
 }
 
-export default async function LegalConsentPage({ searchParams }: PageProps) {
+export default async function LegalConsentPage(props: PageProps) {
+  const searchParams = await props.searchParams;
   const rawNext = Array.isArray(searchParams?.next) ? searchParams?.next[0] : searchParams?.next;
   const next = resolveLegalConsentNext(rawNext);
 
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

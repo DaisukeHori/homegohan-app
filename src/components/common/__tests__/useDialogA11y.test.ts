@@ -7,10 +7,9 @@
 // 最前面の1枚だけを閉じることを実際に検証する（#1050 round-2 で解決した多重発火防止が
 // レガシーモーダル側にも及んでいることの担保）。
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 import { useDialogA11y } from '../useDialogA11y';
 import { BottomSheet } from '../BottomSheet';

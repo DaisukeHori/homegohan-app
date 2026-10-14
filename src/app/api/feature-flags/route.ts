@@ -34,7 +34,7 @@ export const dynamic = 'force-dynamic';
 /** ログイン中のユーザー本人の属性 (段階公開や条件の判定に使う)。本人の行しか読まない (RLS) */
 async function loadOwnContext(): Promise<{ userId?: string; context?: FeatureFlagContext }> {
   try {
-    const supabase = createClient();
+    const supabase = await createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();

@@ -9,10 +9,8 @@ import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { notifyMemberRemoved, readOrganizationNotice } from '@/lib/membership/exit-notification';
 import { internalError } from '@/lib/api/errors';
 
-export async function POST(
-  request: Request,
-  { params }: { params: { user_id: string } },
-) {
+export async function POST(request: Request, props: { params: Promise<{ user_id: string }> }) {
+  const params = await props.params;
   const logger = createLogger('POST /api/org/members/[user_id]/remove', generateRequestId());
   let admin: OrgAdminContext;
   try {
@@ -47,7 +45,7 @@ export async function POST(
     );
   }
 
-  const supabase = createClient();
+  const supabase = await createClient();
 
   // 除名の通知メールに載せる組織名は、RPC の前に読む (#1160)
   const notice = await readOrganizationNotice(supabase, profile.organization_id, log);

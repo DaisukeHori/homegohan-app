@@ -15,10 +15,8 @@ export const dynamic = 'force-dynamic';
 
 const ROUTE_NAME = 'GET /api/operator/membership/family/[id]/candidates';
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function GET(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const logger = createLogger(ROUTE_NAME, generateRequestId());
   try {
     const { userId: operatorId } = await requireSuperAdmin();

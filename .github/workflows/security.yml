@@ -9,15 +9,14 @@ name: security
 #                                  マージコミットそのものの差分 (競合の解決など) は、PR では見ない。squash マージで main に入るときは
 #                                  PR 全体が 1 つのコミットになるので、main への push の検査で見られる。
 #                                  誤検知は .gitleaks.toml に足す (書き方はそのファイルの先頭)。
-#   npm-audit           [止めない] `npm audit` の結果を Summary に出す。critical が残っている間は、失敗しても止めない
-#                                  (#1444 で shell-quote・tar は直した。残る next はメジャーの更新が要り、別の段で扱う)。止めない設定 (continue-on-error) は、ジョブではなく npm audit の「ステップ」に付ける。
-#                                  ジョブに付けると、ワークフロー全体は通っても、そのジョブの check run が失敗 (赤い ×) のまま残る。
-#                                  すると、すべての PR・main・週次の Checks が失敗と表示され、毎日の整合性チェック
-#                                  (scripts/lib/consistency-check.mjs) も、止まっている PR をすべて「赤のまま」に数えてしまう。
-#                                  ステップに付ければ、ジョブの check run は緑のままで、::warning:: の注釈と Summary は残る。
-#                                  critical が 0 件になったら、ステップの continue-on-error を外して、止める検査に切り替える。
+#   npm-audit           [止める]   本番で動く依存 (`npm audit --omit=dev`) に critical の脆弱性があれば失敗する。結果は Summary に出す。
+#                                  #1444 で critical が 0 件になった (第 1 段で shell-quote・tar を、第 2 段で next を 15 に上げて直した) ので、
+#                                  止めない設定 (npm audit のステップの continue-on-error) を外した。high 以下は止めない (Summary に件数が出る)。
+#                                  ジョブにも continue-on-error は付けない。ジョブに付けると、ワークフロー全体は通っても、そのジョブの
+#                                  check run が失敗 (赤い ×) のまま残り、毎日の整合性チェック (scripts/lib/consistency-check.mjs) も
+#                                  止まっている PR を「赤のまま」に数える。止めない検査に戻すときは、ステップの方に付ける。
 #   dependency-review   [止める]   PR で依存パッケージを増やす・上げるときに、high 以上の既知の脆弱性がある版を入れていないかを調べる。
-#                                  Dependabot のまとめ PR が、脆弱性の残る版 (例: next 14.2.x の別のパッチ) に上げると赤くなる。仕様どおり。
+#                                  Dependabot のまとめ PR が、脆弱性の残る版に上げると赤くなる。仕様どおり。
 #                                  運用で詰まるようなら、Dependabot の PR だけ警告にとどめる (warn-only)・allow-ghsas で個別に許す、などを検討する。
 #                                  リポジトリの Dependency graph が無効の間は、GitHub が依存の差分を返さない (403)。そのまま動かすと、
 #                                  すべての PR が赤くなる。そこで最初に同じ API を呼んで確かめ、無効のとき (403 で、本文が "Forbidden")
@@ -157,9 +156,8 @@ jobs:
           exit 1
 
   npm-audit:
-    name: npm audit (non-blocking)
-    # ここ (ジョブ) には continue-on-error を付けない。付けると、このジョブの check run が失敗 (赤い ×) のまま残る。
-    # 止めない設定は、下の npm audit のステップに付けている (理由は冒頭のコメント)
+    name: npm audit
+    # ここ (ジョブ) には continue-on-error を付けない。付けると、このジョブの check run が失敗 (赤い ×) のまま残る (理由は冒頭のコメント)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -172,16 +170,14 @@ jobs:
       # npm audit は package-lock.json だけで動く (npm ci は要らない)。
       # --omit=dev: 本番で動く依存だけを見る。--audit-level=critical: critical があると終了コードが 1 になる
       - name: npm audit (production dependencies, critical)
-        # critical が残っている間は、失敗してもジョブを止めない (ジョブの check run は緑のまま)。
-        # critical が 0 件になったら、この 1 行を消して、止める検査に切り替える
-        continue-on-error: true
+        # critical が 1 件でもあれば失敗する (#1444 で 0 件になったので、止める検査に切り替えた)
         run: |
           report="${RUNNER_TEMP}/npm-audit.json"
           status=0
           npm audit --omit=dev --audit-level=critical --json > "${report}" || status=$?
           node scripts/npm-audit-summary.mjs "${report}" >> "${GITHUB_STEP_SUMMARY}"
           if [ "${status}" -ne 0 ]; then
-            echo "::warning title=npm audit::critical の脆弱性が残っています (内訳はこの実行の Summary)。今は参考情報で、PR は止めません。"
+            echo "::error title=npm audit::本番で動く依存に critical の脆弱性があるか、npm audit を実行できませんでした (内訳はこの実行の Summary)。"
           fi
           exit "${status}"
 

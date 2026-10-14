@@ -7,7 +7,7 @@
  *
  *   - .github/dependabot.yml: npm と GitHub Actions を週 1 回、PR の数を絞る。メジャー更新を出さないパッケージ。
  *   - .github/workflows/security.yml: gitleaks は PR を止める (範囲は増えたコミットだけ・値をログに出さない・版を固定)。
- *     npm audit は止めない。依存関係レビューと CodeQL は、リポジトリが公開の間だけ動く。
+ *     npm audit は本番の依存の critical で止める (#1444 で 0 件になってから)。依存関係レビューと CodeQL は、リポジトリが公開の間だけ動く。
  *     依存関係レビューは、Dependency graph が無効のとき (GitHub が 403 Forbidden を返す) だけ飛ばす
  *     (確かめるステップの run は、偽の curl で実際に動かして確かめる)。
  *   - Dependabot の PR には Actions のシークレットが渡されない。シークレットを使うジョブが Dependabot の PR で動くと、
@@ -248,24 +248,28 @@ describe('.github/workflows/security.yml', () => {
     });
   });
 
-  describe('npm audit (止めない参考情報)', () => {
+  describe('npm audit (本番の依存の critical で止める)', () => {
     const job = workflow.jobs['npm-audit'];
     const auditStep = step('npm-audit', 'npm audit (production dependencies, critical)');
 
     // ジョブに continue-on-error を付けると、ワークフロー全体は通るが、そのジョブの check run は失敗 (赤い ×) のまま残る。
     // すると、すべての PR の Checks が赤くなり、毎日の整合性チェック (scripts/lib/consistency-check.mjs) も、
-    // 止まっている PR を「赤のまま」に数える。止めない設定は、ステップに付ける (ステップなら、ジョブの check run は緑になる)
+    // 止まっている PR を「赤のまま」に数える。止めない検査に戻すときも、ジョブではなくステップに付ける
     it('ジョブには continue-on-error を付けない (check run が赤い × のまま残るため)', () => {
       expect(job['continue-on-error']).toBeUndefined();
     });
 
-    it('npm audit のステップには continue-on-error を付ける (失敗しても、ジョブと PR を止めない)', () => {
-      expect(auditStep['continue-on-error']).toBe(true);
+    // #1444: critical が 0 件になったので、止める検査に切り替えた。critical が入り込んだ PR は赤くなる
+    it('どのステップにも continue-on-error を付けない (critical が入り込んだら PR を止める)', () => {
+      const names = job.steps!.filter((s) => s['continue-on-error'] !== undefined).map((s) => s.name);
+      expect(names).toEqual([]);
     });
 
-    it('continue-on-error を付けたステップは npm audit だけ (checkout などの失敗まで隠さない)', () => {
-      const names = job.steps!.filter((s) => s['continue-on-error'] !== undefined).map((s) => s.name);
-      expect(names).toEqual([auditStep.name]);
+    it('npm audit が失敗した (critical がある・実行できなかった) ときは、その終了コードでステップを失敗させ、エラーの注釈を出す', () => {
+      const run = auditStep.run!;
+      expect(run).toContain('exit "${status}"');
+      expect(run).toContain('::error title=npm audit::');
+      expect(run).not.toContain('::warning');
     });
 
     it('本番で動く依存だけを、critical の基準で調べる', () => {

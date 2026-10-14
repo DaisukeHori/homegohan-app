@@ -17,12 +17,10 @@ const TRANSFER_ACCEPT_MESSAGES: Record<string, string> = {
   NOT_AUTHENTICATED: '認証が必要です。',
 };
 
-export async function POST(
-  _request: Request,
-  { params }: { params: { id: string } },
-) {
+export async function POST(_request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const logger = createLogger('POST /api/org/owner-transfer/[id]/accept', generateRequestId());
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) {
     return NextResponse.json(

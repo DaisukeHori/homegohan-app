@@ -5,10 +5,9 @@
 //   - 値は packages/shared の STATUS_COLOR_TOKENS (A 系)。旧 B 系の値 (#4CAF50 など) が出ないこと
 // ソース全体の走査 (hex の直書き・文字に塗りの色を使っていないか) は src/__tests__/config/status-color-tokens.test.ts。
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
 
 vi.mock('next/navigation', () => ({

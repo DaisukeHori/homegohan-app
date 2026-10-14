@@ -39,6 +39,11 @@ Expo Push Notifications を使用したプッシュ通知の設計を定義す�
 2. Android: 通知チャンネル `"default"` 作成
 3. `Notifications.getExpoPushTokenAsync({ projectId })` でトークン取得
 4. `user_push_tokens` テーブルに `upsert` (onConflict: `user_id,expo_push_token`)
+5. `POST /api/push-tokens/claim` で、同じトークンのほかの利用者の行をサーバー (service_role) で外す (#1599)。
+   共有の端末で前の利用者のログアウトの削除がオフラインなどで失敗しても、次に登録した利用者だけにトークンが紐づく
+   (同じトークンは、最後に登録した 1 人だけ)。失敗したら登録の失敗として扱い、次回起動時に再試行する。
+   起動時の自動登録 (`ensurePushTokenRegistered`) は、起動・ログインした利用者が変わるたびに 1〜5 を通す (「登録済み」の印で省かない。
+   ほかの利用者の claim で行が消えていても、次のログインで登録し直すため)
 
 #### DB スキーマ変更 (`user_push_tokens`)
 
@@ -478,6 +483,7 @@ sequenceDiagram
 |---------|------|
 | `getExpoPushTokenAsync` が null を返す | エラーを silent に処理、設定画面で手動再試行を促す |
 | `user_push_tokens` への upsert 失敗 | エラーログ、次回起動時に再試行 |
+| `POST /api/push-tokens/claim` の失敗 (#1599) | エラーログ (段 `claim_token`)、次回起動時に再試行 (起動のたびに登録と claim を通す) |
 | Expo Push API がトークン無効を返す (`DeviceNotRegistered`) | `user_push_tokens` から該当トークンを削除 |
 | Push 権限が拒否済み | OS 設定画面へ誘導 (`Linking.openSettings()`) |
 | Quiet Hours 中の緊急通知 | `URGENT_CATEGORIES` はスキップせず即送信 |
