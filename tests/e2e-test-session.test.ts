@@ -6,14 +6,16 @@
  * e2e・デプロイ後の動作確認 (--with-auth)・Maestro の補助スクリプトは、パスワードのログインを使わず、
  * 管理用の鍵 (service_role) でセッションを作るように変えた。ここでは次を確かめる。
  *
- *   1. 共通の補助関数 tests/e2e/helpers/test-session.ts の createTestSession が呼ぶのは、
+ *   1. 共通の補助関数 tests/e2e/helpers/test-session.mjs の createTestSession が呼ぶのは、
  *      POST /auth/v1/admin/generate_link (service_role) → POST /auth/v1/verify (anon key) の 2 つだけで、
  *      パスワードのログインを呼ばないこと (呼び出しの検査)。失敗の段・ステータスの報告と、鍵を出さないこと。
  *      同じメールアドレスで並行に呼ばれて /verify が 403 になったら、generate_link からやり直すこと
  *   2. Issue に挙がった e2e の各所が、この補助関数を使うこと (自分でパスワードのログインを呼ばない)
- *   3. テストの道具 (tests/e2e・scripts・apps/mobile/maestro) のコード (コメントを除く) に、パスワードのログインが戻ってこないこと
+ *   3. テストの道具 (tests/e2e・scripts・apps/mobile/maestro) のコード (コメントを除く) に、パスワードのログインが戻ってこないこと。
+ *      /auth/v1/admin/generate_link・/auth/v1/verify を直接呼ぶのは、共通の補助関数と、import できない Maestro のスクリプトだけであること
+ *      (--with-auth の scripts/lib/smoke.mjs も、補助関数を import して使う。同じ処理を写さない)
  *   4. Maestro の apps/mobile/maestro/flows/scripts/reset-onboarding.js を、Maestro の http を差し替えて動かしたときの呼び出し
- *      (確認が otp_expired のときのやり直しを含む)
+ *      (確認が otp_expired のときのやり直しを含む)。やり直す回数の解釈が補助関数と同じであること (同じ入力で突き合わせる)
  *      (Maestro そのものは手元では動かせない。実機・シミュレーターが要る)
  *
  * ローカルの Supabase (local-ci) は CAPTCHA が無効なので、e2e が緑でも「CAPTCHA が有効でも通る」ことは示せない。
@@ -41,7 +43,7 @@ import {
   readTestSessionConfig,
   testSessionMaxAttempts,
   type TestSessionConfig,
-} from "./e2e/helpers/test-session";
+} from "./e2e/helpers/test-session.mjs";
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -91,7 +93,7 @@ function makeFetch(overrides: Partial<Record<string, Handler>> = {}) {
   return { fetchImpl: fetchImpl as unknown as typeof fetch, calls, mock: fetchImpl };
 }
 
-describe("createTestSession (tests/e2e/helpers/test-session.ts)", () => {
+describe("createTestSession (tests/e2e/helpers/test-session.mjs)", () => {
   it("generate_link (service_role) → verify (anon key) の 2 つだけを呼び、セッションをそのまま返す", async () => {
     const { fetchImpl, calls } = makeFetch();
 
@@ -184,14 +186,37 @@ describe("createTestSession (tests/e2e/helpers/test-session.ts)", () => {
     });
   });
 
-  it("通信できないときは例外にせず、HTTP の応答が無いことを status で返す", async () => {
+  it("通信できないときは例外にせず、HTTP の応答が無いことを status で返し、投げられた例外を cause に添える", async () => {
+    const thrown = new TypeError("fetch failed");
     const fetchImpl = vi.fn(async () => {
-      throw new TypeError("fetch failed");
+      throw thrown;
     }) as unknown as typeof fetch;
 
     const result = await createTestSession(EMAIL, { config: CONFIG, fetchImpl });
 
     expect(result).toMatchObject({ ok: false, step: "generate_link", status: TEST_SESSION_NO_HTTP_STATUS });
+    // 呼び出し側 (smoke) が、時間切れなどを自分の書き方で説明できるように、例外そのものを渡す
+    if (!result.ok) expect(result.cause).toBe(thrown);
+
+    // 確認 (/verify) で通信できなかったときも同じ
+    const verifyThrown = new TypeError("fetch failed");
+    const verifyDown = makeFetch({
+      [VERIFY_URL]: () => {
+        throw verifyThrown;
+      },
+    });
+    const verifyResult = await createTestSession(EMAIL, { config: CONFIG, fetchImpl: verifyDown.fetchImpl });
+    expect(verifyResult).toMatchObject({ ok: false, step: "verify", status: TEST_SESSION_NO_HTTP_STATUS });
+    if (!verifyResult.ok) expect(verifyResult.cause).toBe(verifyThrown);
+  });
+
+  it("HTTP の応答があった失敗には cause を付けない (通信できなかったものと見分けられる)", async () => {
+    const { fetchImpl } = makeFetch({ [GENERATE_LINK_URL]: () => new Response("error", { status: 500 }) });
+
+    const result = await createTestSession(EMAIL, { config: CONFIG, fetchImpl });
+
+    expect(result.ok).toBe(false);
+    expect("cause" in result).toBe(false);
   });
 
   it("環境変数が足りなければ、どこにも接続せずに段 config で返し、足りない名前だけを報告する (値は出さない)", async () => {
@@ -218,6 +243,22 @@ describe("createTestSession (tests/e2e/helpers/test-session.ts)", () => {
     expect(text).toContain("HTTP 500");
     // 長い本文で出力が埋まらない
     expect(text.length).toBeLessThan(400);
+  });
+
+  it("応答の本文の先頭は detail に入れず responseBodyPreview に分ける (本文を出さない呼び出し側は detail だけを出せる)。e2e の説明には付ける", async () => {
+    const marker = "body-marker-from-auth";
+    const { fetchImpl } = makeFetch({
+      [VERIFY_URL]: () => new Response(`${marker} ${"y".repeat(1_000)}`, { status: 401 }),
+    });
+
+    const result = await createTestSession(EMAIL, { config: CONFIG, fetchImpl });
+
+    expect(result).toMatchObject({ ok: false, step: "verify", status: 401, detail: "HTTP 401" });
+    if (result.ok) return;
+    expect(result.detail).not.toContain(marker);
+    expect(result.responseBodyPreview?.startsWith(marker)).toBe(true);
+    expect(result.responseBodyPreview?.length).toBeLessThan(1_000);
+    expect(describeTestSessionFailure(result)).toContain(marker);
   });
 
   // ─── 同じメールアドレスで並行に呼ばれたとき (後の generate_link が先のトークンを消す) ───
@@ -362,6 +403,41 @@ describe("createTestSession (tests/e2e/helpers/test-session.ts)", () => {
     }
   });
 
+  it("options.env を渡せば、設定と回数の上限を process.env ではなくそこから読む (smoke は自分の env を渡す)", async () => {
+    vi.stubEnv(TEST_SESSION_MAX_ATTEMPTS_ENV, "5");
+    try {
+      const { fetchImpl, calls } = makeFetch({
+        [VERIFY_URL]: () => Response.json({ error_code: "otp_expired" }, { status: 403 }),
+      });
+      const env = {
+        NEXT_PUBLIC_SUPABASE_URL: `${SUPABASE_URL}/`,
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ANON_KEY,
+        SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY,
+        [TEST_SESSION_MAX_ATTEMPTS_ENV]: "2",
+      };
+
+      const result = await createTestSession(EMAIL, { env, fetchImpl, sleepImpl: async () => {} });
+
+      expect(result).toMatchObject({ ok: false, step: "verify", status: TEST_SESSION_VERIFY_RETRY_STATUS });
+      // 末尾の / を落とした env の URL へ送り、env の上限 (2) で止める (process.env の 5 は使わない)
+      expect(calls.map((c) => c.url)).toEqual([GENERATE_LINK_URL, VERIFY_URL, GENERATE_LINK_URL, VERIFY_URL]);
+      expect(calls[0].headers.get("apikey")).toBe(SERVICE_ROLE_KEY);
+
+      // env に足りないものがあれば、その env で足りない名前だけを返す
+      const missing = await createTestSession(EMAIL, {
+        env: { NEXT_PUBLIC_SUPABASE_URL: SUPABASE_URL },
+        fetchImpl,
+      });
+      expect(missing).toMatchObject({ ok: false, step: "config", status: TEST_SESSION_NO_HTTP_STATUS });
+      if (!missing.ok) {
+        expect(missing.detail).toContain("NEXT_PUBLIC_SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY");
+        expect(missing.detail).not.toContain("NEXT_PUBLIC_SUPABASE_URL");
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("readTestSessionConfig は今までのテストと同じ環境変数を読み、1 つでも無ければ null。URL の末尾の / は落とす", () => {
     expect(TEST_SESSION_ENV_NAMES).toEqual({
       supabaseUrl: "NEXT_PUBLIC_SUPABASE_URL",
@@ -414,6 +490,15 @@ function stripComments(file: string, text: string): string {
   return ts.createPrinter({ removeComments: true }).printFile(source);
 }
 
+/** 共通の補助関数 (セッションを作る手順のただ 1 つの本体) */
+const SHARED_HELPER = "tests/e2e/helpers/test-session.mjs";
+const SHARED_HELPER_ABS = path.join(ROOT, SHARED_HELPER);
+/** import できない Maestro の JavaScript に写した、ただ 1 つの写し */
+const MAESTRO_COPY = "apps/mobile/maestro/flows/scripts/reset-onboarding.js";
+
+/** セッションを作る手順 (発行・確認) を直接呼んでいることを示すもの */
+const SESSION_ROUTE = /\/auth\/v1\/(?:admin\/generate_link|verify)\b|\.verifyOtp\s*\(/;
+
 /** パスワードのログインの呼び出し (CAPTCHA を有効にすると断られるもの) */
 const PASSWORD_LOGIN_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/grant_type=password/, "/auth/v1/token?grant_type=password"],
@@ -434,6 +519,7 @@ describe("テストの道具が、パスワードのログインを呼ばない 
       "tests/e2e/tour/helpers.ts",
       "tests/e2e/tour/01-eligibility.spec.ts",
       "tests/e2e/membership/02-org-invite-new-user.spec.ts",
+      "tests/e2e/helpers/test-session.mjs",
       "scripts/lib/smoke.mjs",
       "apps/mobile/maestro/flows/scripts/reset-onboarding.js",
     ]) {
@@ -466,7 +552,7 @@ describe("テストの道具が、パスワードのログインを呼ばない 
     expect(PASSWORD_LOGIN_PATTERNS[1][0].test(stripComments("s.ts", "await c.auth.signInWithPassword({ email, password });"))).toBe(true);
   });
 
-  it("e2e の各所は、共通の補助関数 (helpers/test-session.ts の createTestSession) でセッションを作る", () => {
+  it("e2e の各所と --with-auth は、共通の補助関数 (helpers/test-session.mjs の createTestSession) を import してセッションを作る", () => {
     for (const f of [
       "tests/e2e/global-setup.ts",
       "tests/e2e/fixtures/auth.ts",
@@ -475,23 +561,39 @@ describe("テストの道具が、パスワードのログインを呼ばない 
       "tests/e2e/tour/helpers.ts",
       "tests/e2e/tour/01-eligibility.spec.ts",
       "tests/e2e/membership/02-org-invite-new-user.spec.ts",
+      "scripts/lib/smoke.mjs",
     ]) {
       const code = stripComments(f, fs.readFileSync(path.join(ROOT, f), "utf8"));
-      expect(code, f).toMatch(/from ["'](?:\.\.?\/)+(?:helpers\/)?test-session["']/);
+      // import 先が、実在する tests/e2e/helpers/test-session.mjs であること
+      const specifier = code.match(/from ["']((?:\.\.?\/)+(?:[\w-]+\/)*test-session\.mjs)["']/)?.[1];
+      expect(specifier, f).toBeDefined();
+      expect(path.resolve(path.dirname(path.join(ROOT, f)), specifier ?? ""), f).toBe(SHARED_HELPER_ABS);
       expect(code, f).toMatch(/\bcreateTestSession\(/);
     }
   });
 
-  it("e2e の中で、セッションを作るための /auth/v1/admin/generate_link・/auth/v1/verify を直接呼ぶのは共通の補助関数だけ (同じ処理を各所に写さない)", () => {
-    const route = /\/auth\/v1\/(?:admin\/generate_link|verify)\b/;
-    const owners = files
-      .filter((rel) => rel.startsWith(path.join("tests/e2e")))
-      .filter((rel) => {
-        const text = fs.readFileSync(path.join(ROOT, rel), "utf8");
-        // 文字列が無いファイルは、コメントを除く処理 (遅い) を省く
-        return route.test(text) && route.test(stripComments(rel, text));
-      });
-    expect(owners).toEqual([path.join("tests/e2e/helpers/test-session.ts")]);
+  it("テストの道具 (tests/e2e・scripts・apps/mobile/maestro) で、セッションを作るための /auth/v1/admin/generate_link・/auth/v1/verify・verifyOtp を直接呼ぶのは、共通の補助関数と Maestro のスクリプトだけ (同じ処理を写さない)", () => {
+    const owners = files.filter((rel) => {
+      const text = fs.readFileSync(path.join(ROOT, rel), "utf8");
+      // 文字列が無いファイルは、コメントを除く処理 (遅い) を省く
+      return SESSION_ROUTE.test(text) && SESSION_ROUTE.test(stripComments(rel, text));
+    });
+    // Maestro のスクリプトは Maestro の JavaScript (GraalJS) で動き、import できないので、ただ 1 つの写しとして残す
+    // (やり直す回数の解釈が補助関数と同じことは、下の「Maestro の reset-onboarding.js」の突き合わせで確かめる)
+    expect(owners.sort()).toEqual([SHARED_HELPER, MAESTRO_COPY].map((f) => path.join(f)).sort());
+  });
+
+  it("走査の正規表現は、経路の文字列と verifyOtp の呼び出しを拾い、コメントの中の名前は拾わない (検査そのものの確認)", () => {
+    for (const code of [
+      "await fetch(`${url}/auth/v1/admin/generate_link`, init);",
+      "http.post(supabaseUrl + '/auth/v1/verify', options);",
+      "await supabase.auth.verifyOtp({ type: 'recovery', token_hash });",
+    ]) {
+      expect(SESSION_ROUTE.test(stripComments("s.ts", code)), code).toBe(true);
+    }
+    expect(SESSION_ROUTE.test(stripComments("s.ts", "// POST /auth/v1/verify ({ token_hash })"))).toBe(false);
+    // signup の確認の URL を取る admin.generateLink (別の用途。セッションは作らない) は対象外
+    expect(SESSION_ROUTE.test(stripComments("s.ts", "await admin.auth.admin.generateLink({ type: 'signup' });"))).toBe(false);
   });
 });
 
@@ -499,7 +601,7 @@ describe("テストの道具が、パスワードのログインを呼ばない 
 // Maestro の補助スクリプト (Maestro の http を差し替えて、node の vm で動かす)
 // ───────────────────────────────────────────────────────────────────────────
 
-const MAESTRO_SCRIPT = path.join(ROOT, "apps/mobile/maestro/flows/scripts/reset-onboarding.js");
+const MAESTRO_SCRIPT = path.join(ROOT, MAESTRO_COPY);
 const MAESTRO_PARAMS = {
   E2E_USER_EMAIL: EMAIL,
   SUPABASE_URL: SUPABASE_URL,
@@ -534,7 +636,8 @@ function runMaestroScript(params: Record<string, string>, responder?: MaestroRes
   } catch (err) {
     error = err as Error;
   }
-  return { calls, output: sandbox.output as Record<string, unknown>, error };
+  // スクリプトの最上位の function・var は、vm の global (sandbox) に載る
+  return { calls, output: sandbox.output as Record<string, unknown>, error, globals: sandbox };
 }
 
 describe("Maestro の reset-onboarding.js (#1547)", () => {
@@ -548,10 +651,11 @@ describe("Maestro の reset-onboarding.js (#1547)", () => {
     const [link, verify, reset] = calls;
     expect(link.headers.apikey).toBe(SERVICE_ROLE_KEY);
     expect(link.headers.Authorization).toBe(`Bearer ${SERVICE_ROLE_KEY}`);
-    expect(link.body).toEqual({ type: "recovery", email: EMAIL });
+    // type は補助関数と同じ (TEST_SESSION_LINK_TYPE)
+    expect(link.body).toEqual({ type: TEST_SESSION_LINK_TYPE, email: EMAIL });
     expect(verify.headers.apikey).toBe(ANON_KEY);
     expect(verify.headers.Authorization).toBeUndefined();
-    expect(verify.body).toEqual({ type: "recovery", token_hash: TOKEN_HASH });
+    expect(verify.body).toEqual({ type: TEST_SESSION_LINK_TYPE, token_hash: TOKEN_HASH });
     expect(reset.headers.Authorization).toBe(`Bearer ${ACCESS_TOKEN}`);
     expect(calls.some((c) => c.url.includes("/auth/v1/token"))).toBe(false);
   });
@@ -651,7 +755,7 @@ describe("Maestro の reset-onboarding.js (#1547)", () => {
     expect(calls[3].body).toEqual({ type: "recovery", token_hash: `${TOKEN_HASH}-2` });
   });
 
-  it("発行からやり直す回数の上限は、runScript の env の E2E_TEST_SESSION_MAX_ATTEMPTS (1 以上の整数) で上書きでき、それ以外の値は既定に戻る", () => {
+  it("発行からやり直す回数の上限は、runScript の env の補助関数と同じ名前 (TEST_SESSION_MAX_ATTEMPTS_ENV) で上書きでき、それ以外の値は既定に戻る", () => {
     const alwaysExpired: MaestroResponder = (url) =>
       url === GENERATE_LINK_URL
         ? { body: JSON.stringify({ hashed_token: TOKEN_HASH }) }
@@ -665,7 +769,7 @@ describe("Maestro の reset-onboarding.js (#1547)", () => {
       [" 3 ", 3],
       [String(TEST_SESSION_DEFAULT_MAX_ATTEMPTS + 4), TEST_SESSION_DEFAULT_MAX_ATTEMPTS + 4],
     ] as const) {
-      const { calls, error } = runMaestroScript({ ...MAESTRO_PARAMS, E2E_TEST_SESSION_MAX_ATTEMPTS: raw }, alwaysExpired);
+      const { calls, error } = runMaestroScript({ ...MAESTRO_PARAMS, [TEST_SESSION_MAX_ATTEMPTS_ENV]: raw }, alwaysExpired);
       expect(issuedCount(calls), raw).toBe(expected);
       expect(error?.message, raw).toContain(`${expected} 回`);
       expect(calls.some((c) => c.url === RESET_URL), raw).toBe(false);
@@ -682,13 +786,13 @@ describe("Maestro の reset-onboarding.js (#1547)", () => {
       "undefined",
       "${MAESTRO_E2E_TEST_SESSION_MAX_ATTEMPTS}",
     ]) {
-      const { calls } = runMaestroScript({ ...MAESTRO_PARAMS, E2E_TEST_SESSION_MAX_ATTEMPTS: invalid }, alwaysExpired);
+      const { calls } = runMaestroScript({ ...MAESTRO_PARAMS, [TEST_SESSION_MAX_ATTEMPTS_ENV]: invalid }, alwaysExpired);
       expect(issuedCount(calls), invalid).toBe(TEST_SESSION_DEFAULT_MAX_ATTEMPTS);
     }
 
     // 上限より前に確認が通れば、上書きした上限まで回らずにリセットへ進む
     let verified = 0;
-    const recovered = runMaestroScript({ ...MAESTRO_PARAMS, E2E_TEST_SESSION_MAX_ATTEMPTS: "3" }, (url) => {
+    const recovered = runMaestroScript({ ...MAESTRO_PARAMS, [TEST_SESSION_MAX_ATTEMPTS_ENV]: "3" }, (url) => {
       if (url === GENERATE_LINK_URL) return { body: JSON.stringify({ hashed_token: TOKEN_HASH }) };
       if (url === VERIFY_URL) {
         return ++verified < 3 ? { body: JSON.stringify({ error_code: "otp_expired" }) } : { body: JSON.stringify(SESSION) };
@@ -710,26 +814,41 @@ describe("Maestro の reset-onboarding.js (#1547)", () => {
     }
   });
 
-  it("/auth/v1/verify でセッションを作る道具はどれも、やり直す回数の上限を同じ環境変数の名前で上書きできる", () => {
-    // 1 か所だけ固定の値のまま残る (上書きできない) のを防ぐ。Maestro のスクリプトは npm のモジュールを読めないので、
-    // 名前の定数を共有できない。そのため、/verify を呼ぶファイルを走査で列挙し、コメントを除いたコードがその名前を読んでいることを確かめる
-    const route = /\/auth\/v1\/verify\b/;
-    const owners = ["tests/e2e", "scripts", "apps/mobile/maestro"]
-      .flatMap(listCodeFiles)
-      .map((rel) => ({ rel, text: fs.readFileSync(path.join(ROOT, rel), "utf8") }))
-      // 文字列が無いファイルは、コメントを除く処理 (遅い) を省く
-      .filter(({ text }) => route.test(text))
-      .map(({ rel, text }) => ({ rel, code: stripComments(rel, text) }))
-      .filter(({ code }) => route.test(code));
-    expect(owners.map((o) => o.rel).sort()).toEqual(
-      [
-        "apps/mobile/maestro/flows/scripts/reset-onboarding.js",
-        "scripts/lib/smoke.mjs",
-        "tests/e2e/helpers/test-session.ts",
-      ].map((f) => path.join(f)),
-    );
-    for (const { rel, code } of owners) {
-      expect(code, rel).toContain(TEST_SESSION_MAX_ATTEMPTS_ENV);
+  it("やり直す回数の解釈 (readMaxAttempts) は、補助関数の testSessionMaxAttempts と同じ入力に同じ値を返す (import できない写しの突き合わせ)", () => {
+    const { error, globals } = runMaestroScript(MAESTRO_PARAMS);
+    expect(error).toBeNull();
+    const readMaxAttempts = globals.readMaxAttempts as (value: unknown) => number;
+    expect(typeof readMaxAttempts).toBe("function");
+
+    // 渡されない (undefined) ・空・空白・境界の整数・不正な値・Maestro で置き換えられなかった値
+    const inputs: Array<string | undefined> = [
+      undefined,
+      "",
+      " ",
+      "0",
+      "1",
+      "2",
+      " 3 ",
+      "007",
+      String(TEST_SESSION_DEFAULT_MAX_ATTEMPTS),
+      String(TEST_SESSION_DEFAULT_MAX_ATTEMPTS + 4),
+      "-1",
+      "+5",
+      "1.5",
+      "1e3",
+      "abc",
+      String(Number.MAX_SAFE_INTEGER),
+      "9007199254740992",
+      "99999999999999999999",
+      "undefined",
+      "null",
+      "${MAESTRO_E2E_TEST_SESSION_MAX_ATTEMPTS}",
+    ];
+    for (const raw of inputs) {
+      const env = raw === undefined ? {} : { [TEST_SESSION_MAX_ATTEMPTS_ENV]: raw };
+      expect(readMaxAttempts(raw), JSON.stringify(raw)).toBe(testSessionMaxAttempts(env));
     }
+    // 既定の回数も同じ
+    expect(readMaxAttempts(undefined)).toBe(TEST_SESSION_DEFAULT_MAX_ATTEMPTS);
   });
 });

@@ -13,45 +13,33 @@
  *
  * --with-auth のログイン (#1547):
  *   Supabase の CAPTCHA を有効にすると、トークンの無いパスワードのログイン (/auth/v1/token?grant_type=password) は断られる。
- *   そこで、パスワードのログインは使わず、tests/e2e/helpers/test-session.ts と同じ手順でセッションを作る:
- *     1. service_role で POST /auth/v1/admin/generate_link ({ type: "recovery", email }) → hashed_token (メールは送られない)
- *     2. anon key で POST /auth/v1/verify ({ type: "recovery", token_hash }) → access_token
- *   どちらも CAPTCHA の対象外 (根拠は tests/e2e/helpers/test-session.ts の先頭のコメント)。
- *   同じテストユーザーで同時にセッションを作られると、後の発行が先のトークンを消し、確認が 403 になる。そのときは発行からやり直す
- *   (AUTH_DEFAULT_MAX_ATTEMPTS)。
+ *   そこで、パスワードのログインは使わず、e2e と共通の補助関数 tests/e2e/helpers/test-session.mjs の createTestSession を
+ *   import してセッションを作る (手順をここに写さない)。手順は、管理用の鍵で POST /auth/v1/admin/generate_link → anon key で
+ *   POST /auth/v1/verify。どちらも CAPTCHA の対象外 (根拠は test-session.mjs の先頭のコメント)。
+ *   同じテストユーザーで同時にセッションを作られて確認が 403 になったときのやり直し (回数の上限・待ち方・上書きの環境変数) も、
+ *   e2e と同じ規則に従う (test-session.mjs)。設定と回数の上限は、runSmoke に渡された env から読む (.env.local は読まない)。
  *   この手順は、確認したい環境の service_role (管理用の鍵) を要る。**本番では --with-auth を使わない**
  *   (本番の管理用の鍵を、確認用の端末やシェルに出さないため)。本番は --with-auth なしの 4 項目で確認する。
- *   このファイルは node でそのまま動かす .mjs で、TypeScript の helpers/test-session.ts を読み込めないので、同じ手順をここにも書いている。
  */
+
+import { TEST_SESSION_ENV_NAMES, createTestSession } from '../../tests/e2e/helpers/test-session.mjs';
 
 export const DEFAULT_BASE_URL = 'http://localhost:3000';
 export const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_TIMEOUT_MS = 600_000;
 
-/** --with-auth のときだけ必要な環境変数 (値は出力しない。足りないものの名前だけ出す) */
-export const AUTH_ENV_NAMES = [
-  'E2E_USER_EMAIL',
-  'NEXT_PUBLIC_SUPABASE_URL',
-  'NEXT_PUBLIC_SUPABASE_ANON_KEY',
-  'SUPABASE_SERVICE_ROLE_KEY',
-];
-
-/** --with-auth のセッションの作り方 (generate_link と verify に渡す type)。理由は tests/e2e/helpers/test-session.ts */
-export const AUTH_LINK_TYPE = 'recovery';
-
 /**
- * 確認 (/verify) が 403 (トークンが見つからない = otp_expired) のとき、発行からやり直す回数の上限 (最初の 1 回を含む)。
- * 同じテストユーザーで e2e などが同時にセッションを作ると、後の発行が先のトークンを消すため (理由と根拠は
- * tests/e2e/helpers/test-session.ts の先頭のコメント)。smoke は 1 回しか作らないので、相手 (e2e は乱数で待ってからやり直す) より
- * 先に確認を済ませられれば足りる。間を空けずにやり直す。環境変数 AUTH_MAX_ATTEMPTS_ENV (1 以上の整数) で上書きできる。
+ * --with-auth のときだけ必要な環境変数 (値は出力しない。足りないものの名前だけ出す)。
+ * テストユーザーのメールアドレスと、共通の補助関数がセッションを作るのに読む 3 つ (TEST_SESSION_ENV_NAMES)
  */
-export const AUTH_DEFAULT_MAX_ATTEMPTS = 3;
+export const AUTH_ENV_NAMES = ['E2E_USER_EMAIL', ...Object.values(TEST_SESSION_ENV_NAMES)];
 
-/** AUTH_DEFAULT_MAX_ATTEMPTS を上書きする環境変数の名前 (tests/e2e/helpers/test-session.ts と同じ名前) */
-export const AUTH_MAX_ATTEMPTS_ENV = 'E2E_TEST_SESSION_MAX_ATTEMPTS';
-
-/** 確認 (/verify) がトークンを見つけられなかったときの status。このときだけ発行からやり直す */
-const AUTH_VERIFY_RETRY_STATUS = 403;
+/** --with-auth のログインの失敗を報告するときの、段の呼び名 (共通の補助関数の step ごと) */
+const AUTH_STEP_LABELS = {
+  config: '設定',
+  generate_link: '管理用のトークンの発行',
+  verify: 'トークンの確認',
+};
 
 export const USAGE = `デプロイ後 / DR 復元後の smoke test (#1181)
 
@@ -150,16 +138,6 @@ function missingAuthEnv(env) {
   return AUTH_ENV_NAMES.filter((name) => !env[name]);
 }
 
-/** --with-auth の、発行からやり直す回数の上限 (環境変数が 1 以上の整数ならその値。それ以外は既定) */
-export function authMaxAttempts(env) {
-  const raw = env[AUTH_MAX_ATTEMPTS_ENV];
-  if (typeof raw === 'string' && /^\d+$/.test(raw.trim())) {
-    const parsed = Number(raw.trim());
-    if (Number.isSafeInteger(parsed) && parsed >= 1) return parsed;
-  }
-  return AUTH_DEFAULT_MAX_ATTEMPTS;
-}
-
 const pass = (detail) => ({ ok: true, detail });
 const fail = (detail) => ({ ok: false, detail });
 
@@ -187,7 +165,7 @@ function safeVersion(value) {
   return typeof value === 'string' && /^[\w.+-]{1,40}$/.test(value) ? value : null;
 }
 
-function buildChecks({ baseUrl, fetchImpl, timeoutMs, env, withAuth }) {
+function buildChecks({ baseUrl, fetchImpl, timeoutMs, env, withAuth, sleepImpl }) {
   // リダイレクトは追わない。エイリアス URL へ飛ばされているときに、気づかず別の場所を確認するのを避ける
   const send = (url, init = {}) =>
     fetchImpl(url, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs), ...init });
@@ -239,71 +217,28 @@ function buildChecks({ baseUrl, fetchImpl, timeoutMs, env, withAuth }) {
       const missing = missingAuthEnv(env);
       if (missing.length > 0) return fail(`環境変数が足りません: ${missing.join(', ')}`);
 
-      const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL.replace(/\/+$/, '');
       // どの環境にログインしたか分かるよう、ホスト名だけ出す (鍵は出さない)
       let host = 'Supabase';
       try {
-        host = new URL(supabaseUrl).host;
+        host = new URL(env[TEST_SESSION_ENV_NAMES.supabaseUrl]).host;
       } catch {
         // URL として読めなければ、そのままリクエストが失敗して報告される
       }
 
-      // 1. 管理用の鍵で、ワンタイムのトークン (のハッシュ) を発行する (メールは送られない)
-      // 2. そのトークンをセッションに換える (/verify には CAPTCHA が掛からない)
-      // 確認が 403 (同時に作った相手に消された) なら、発行からやり直す (AUTH_DEFAULT_MAX_ATTEMPTS のコメント)
-      const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY;
-      const maxAttempts = authMaxAttempts(env);
-      let accessToken = null;
-      for (let attempt = 1; accessToken === null; attempt++) {
-        const linkRes = await send(`${supabaseUrl}/auth/v1/admin/generate_link`, {
-          method: 'POST',
-          headers: {
-            apikey: serviceRoleKey,
-            Authorization: `Bearer ${serviceRoleKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ type: AUTH_LINK_TYPE, email: env.E2E_USER_EMAIL }),
-        });
-        if (linkRes.status !== 200) {
-          await drain(linkRes);
-          return fail(`ログインに失敗しました (${host}): 管理用のトークンの発行が HTTP ${linkRes.status}`);
-        }
-        let link = null;
-        try {
-          link = await linkRes.json();
-        } catch {
-          // 下で hashed_token が無いものとして扱う
-        }
-        const tokenHash = link?.hashed_token;
-        if (typeof tokenHash !== 'string' || !tokenHash) {
-          return fail(`管理用のトークンの発行の応答に hashed_token がありません (${host})`);
-        }
-
-        const loginRes = await send(`${supabaseUrl}/auth/v1/verify`, {
-          method: 'POST',
-          headers: { apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: AUTH_LINK_TYPE, token_hash: tokenHash }),
-        });
-        if (loginRes.status === AUTH_VERIFY_RETRY_STATUS && attempt < maxAttempts) {
-          await drain(loginRes);
-          continue;
-        }
-        if (loginRes.status !== 200) {
-          await drain(loginRes);
-          const tried = loginRes.status === AUTH_VERIFY_RETRY_STATUS ? ` (発行から ${attempt} 回試しました)` : '';
-          return fail(`ログインに失敗しました (${host}): トークンの確認が HTTP ${loginRes.status}${tried}`);
-        }
-        let session = null;
-        try {
-          session = await loginRes.json();
-        } catch {
-          // 下で access_token が無いものとして扱う
-        }
-        if (typeof session?.access_token !== 'string' || !session.access_token) {
-          return fail(`ログイン応答に access_token がありません (${host})`);
-        }
-        accessToken = session.access_token;
+      // e2e と共通の補助関数でセッションを作る (管理用の鍵で発行 → 確認。確認の 403 のやり直しも含む。test-session.mjs)。
+      // 送るのは、ほかの項目と同じ send (リダイレクトを追わない・時間切れ付き)
+      const result = await createTestSession(env.E2E_USER_EMAIL, {
+        env,
+        fetchImpl: send,
+        ...(sleepImpl ? { sleepImpl } : {}),
+      });
+      if (!result.ok) {
+        // 通信できなかった (時間切れ・接続できない) ときは、ほかの項目と同じ書き方で報告する (runSmoke の catch)
+        if ('cause' in result) throw result.cause;
+        // 応答の本文 (responseBodyPreview) は出さない。段とステータスと説明だけ
+        return fail(`ログインに失敗しました (${host}): ${AUTH_STEP_LABELS[result.step] ?? result.step}: ${result.detail}`);
       }
+      const accessToken = result.session.access_token;
 
       const res = await send(`${baseUrl}/api/profile`, {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -329,16 +264,20 @@ function buildChecks({ baseUrl, fetchImpl, timeoutMs, env, withAuth }) {
   ];
 }
 
-/** 全項目を順に実行し、結果の配列 [{ name, ok, detail, ms }] を返す。例外は投げない */
+/**
+ * 全項目を順に実行し、結果の配列 [{ name, ok, detail, ms }] を返す。例外は投げない。
+ * sleepImpl は --with-auth の確認の 403 でやり直す前に待つ関数 (単体テストで差し替える。省略時は共通の補助関数の既定)
+ */
 export async function runSmoke({
   baseUrl,
   withAuth = false,
   env = process.env,
   fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  sleepImpl,
 }) {
   const results = [];
-  for (const check of buildChecks({ baseUrl, fetchImpl, timeoutMs, env, withAuth })) {
+  for (const check of buildChecks({ baseUrl, fetchImpl, timeoutMs, env, withAuth, sleepImpl })) {
     const startedAt = Date.now();
     let outcome;
     try {

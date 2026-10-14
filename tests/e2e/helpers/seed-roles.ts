@@ -12,7 +12,7 @@
  *   - user_profiles.roles: string[] カラムに RBAC ロール名を格納する設計
  */
 
-import { createTestSession, describeTestSessionFailure } from './test-session';
+import { createTestSession, describeTestSessionFailure } from './test-session.mjs';
 
 export interface SeedRoleOptions {
   /** Supabase プロジェクト URL。省略時は NEXT_PUBLIC_SUPABASE_URL env から取得 */
@@ -177,7 +177,7 @@ export async function deleteUser(
 /**
  * 特定ユーザーのアクセストークンを取得する。E2E テスト内でそのユーザーとして API を叩く場合に使う。
  * パスワードのログインは使わず、管理用の鍵 (service_role) でテスト用のセッションを作る
- * (#1547: Supabase の CAPTCHA を有効にしても止まらないように。helpers/test-session.ts)。
+ * (#1547: Supabase の CAPTCHA を有効にしても止まらないように。helpers/test-session.mjs)。
  *
  * @param email - メールアドレス (既にいるユーザー)
  * @param opts  - Supabase 接続情報 (省略時は env から取得。anon key は NEXT_PUBLIC_SUPABASE_ANON_KEY)

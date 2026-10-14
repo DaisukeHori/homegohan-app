@@ -8,7 +8,7 @@ import type { Page, Locator } from "@playwright/test";
 import { expect } from "@playwright/test";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
-import { createTestSession, describeTestSessionFailure } from "../helpers/test-session";
+import { createTestSession, describeTestSessionFailure } from "../helpers/test-session.mjs";
 
 dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
 
@@ -112,7 +112,7 @@ export async function signupViaApi(email: string, password: string): Promise<str
 }
 
 /**
- * テスト用のセッションを作り (#1547: パスワードのログインは使わない。helpers/test-session.ts)、
+ * テスト用のセッションを作り (#1547: パスワードのログインは使わない。helpers/test-session.mjs)、
  * Supabase Cookie を page context に注入してログイン状態を作る。
  * @supabase/ssr は Cookie ベース認証を使用する。
  */

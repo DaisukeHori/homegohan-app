@@ -9,13 +9,15 @@
 //
 // アクセストークンの取得 (#1547):
 //   Supabase の CAPTCHA を有効にすると、トークンの無いパスワードのログイン (/auth/v1/token?grant_type=password) は断られる。
-//   そこで、パスワードのログインは使わず、tests/e2e/helpers/test-session.ts と同じ手順でセッションを作る:
+//   そこで、パスワードのログインは使わず、tests/e2e/helpers/test-session.mjs (e2e と --with-auth の共通の補助関数) と同じ手順でセッションを作る:
 //     1. service_role で POST /auth/v1/admin/generate_link ({ type: "recovery", email }) → hashed_token (メールは送られない)
 //     2. anon key で POST /auth/v1/verify ({ type: "recovery", token_hash }) → access_token
-//   どちらも CAPTCHA の対象外 (根拠は tests/e2e/helpers/test-session.ts の先頭のコメント)。
+//   どちらも CAPTCHA の対象外 (根拠は tests/e2e/helpers/test-session.mjs の先頭のコメント)。
 //   同じテストユーザーで同時にセッションを作られると (web の e2e など)、後の発行が先のトークンを消し、確認が otp_expired になる。
 //   そのときは発行からやり直す (上限は maxAttempts。既定は MAX_ATTEMPTS_DEFAULT)。
-//   このファイルは Maestro の JavaScript (GraalJS) で動き、npm のモジュールを読み込めないので、同じ手順をここにも書いている。
+//   このファイルは Maestro の JavaScript (GraalJS) で動き、モジュールを import できないので、同じ手順をここにも書いている
+//   (この手順の写しはここだけ。ほかの道具は補助関数を import する)。補助関数と食い違わないよう、tests/e2e-test-session.test.ts が
+//   type・上書きの環境変数の名前・やり直す回数の解釈 (readMaxAttempts と補助関数の testSessionMaxAttempts に同じ入力を渡す) を突き合わせる。
 //
 // 要る値 (runScript の env で渡す。_shared/login-for-onboarding.yaml が、シェルの MAESTRO_ 付きの環境変数から渡す):
 //   E2E_USER_EMAIL             テストユーザーのメールアドレス
@@ -78,7 +80,7 @@ function describeAuthError(data) {
 // 確認 (/verify) が otp_expired (トークンが見つからない) のとき、発行からやり直す回数の上限の既定 (最初の 1 回を含む)。
 // scripts/maestro-parallel-runner.sh は、並列のシミュレーター (PARALLEL_COUNT。既定 10 台) すべてに同じテストユーザー (E2E_USER_01_EMAIL) を渡すので、
 // 同時にぶつかりうる。ぶつかった中で最後に発行した側は確認を済ませて抜けるので、やり直すたびに競う数は減っていく。
-// tests/e2e/helpers/test-session.ts の既定 (TEST_SESSION_DEFAULT_MAX_ATTEMPTS) と同じ回数にしてある。
+// tests/e2e/helpers/test-session.mjs の既定 (TEST_SESSION_DEFAULT_MAX_ATTEMPTS) と同じ回数にしてある (tests/e2e-test-session.test.ts が突き合わせる)。
 // Maestro の http には status が無いことがあるので、応答の error_code で見分ける。Maestro の JavaScript には待つ手段が無いので、
 // 間を空けずにやり直す (1 回の発行 → 確認の往復の時間が、シミュレーターごとにばらつく)。
 // 待たずにやり直すので、最悪の場合は 1 周に 1 台しか抜けられない。シミュレーターを増やして足りなくなったときは、

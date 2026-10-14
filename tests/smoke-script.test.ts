@@ -7,8 +7,9 @@
  *   - 引数・環境変数の解釈 (--base-url / PLAYWRIGHT_BASE_URL / --with-auth / --timeout-ms)
  *   - 4 項目 (health?deep=1 / login / faq / 未認証 API=401) の合否判定
  *   - 失敗の出し方 (例外にせず FAIL として報告。終了コード 0 / 1 / 2)
- *   - --with-auth のログイン手順 (#1547: パスワードのログインを使わず、管理用の鍵で発行したトークンをセッションに換える) と、
- *     パスワード・トークン・鍵を出力に出さないこと
+ *   - --with-auth のログイン手順 (#1547: パスワードのログインを使わず、e2e と共通の補助関数 tests/e2e/helpers/test-session.mjs を
+ *     import して、管理用の鍵で発行したトークンをセッションに換える。手順・やり直しの規則は補助関数のもの) と、
+ *     パスワード・トークン・鍵・応答の本文を出力に出さないこと
  *   - 実際の CLI (node scripts/smoke.mjs) をローカルの HTTP サーバに向けて動かした結果
  *
  * fetch は差し替える。実際のネットワーク・本番には接続しない (CLI のテストは 127.0.0.1 のみ)。
@@ -21,11 +22,7 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 
 import {
-  AUTH_DEFAULT_MAX_ATTEMPTS,
   AUTH_ENV_NAMES,
-  AUTH_LINK_TYPE,
-  AUTH_MAX_ATTEMPTS_ENV,
-  authMaxAttempts,
   DEFAULT_BASE_URL,
   DEFAULT_TIMEOUT_MS,
   UsageError,
@@ -33,6 +30,13 @@ import {
   parseArgs,
   runSmoke,
 } from '../scripts/lib/smoke.mjs';
+import {
+  TEST_SESSION_DEFAULT_MAX_ATTEMPTS,
+  TEST_SESSION_ENV_NAMES,
+  TEST_SESSION_LINK_TYPE,
+  TEST_SESSION_MAX_ATTEMPTS_ENV,
+  TEST_SESSION_RETRY_BASE_DELAY_MS,
+} from './e2e/helpers/test-session.mjs';
 
 // ───────────────────────────────────────────────────────────────────────────
 // fetch の差し替え
@@ -90,7 +94,7 @@ function makeFetch(overrides: Overrides = {}) {
           : Response.json({ error: 'Unauthorized' }, { status: 401 });
       }
       case GENERATE_LINK:
-        return Response.json({ id: 'user-1', hashed_token: TOKEN_HASH, verification_type: AUTH_LINK_TYPE });
+        return Response.json({ id: 'user-1', hashed_token: TOKEN_HASH, verification_type: TEST_SESSION_LINK_TYPE });
       case VERIFY:
         return Response.json({ access_token: ACCESS_TOKEN, token_type: 'bearer' });
       default:
@@ -379,6 +383,16 @@ describe('runSmoke --with-auth', () => {
     expect(AUTH_ENV_NAMES).not.toContain('E2E_USER_PASSWORD');
   });
 
+  it('要る環境変数は、メールアドレスと、共通の補助関数がセッションを作るのに読む 3 つ (名前を写さない)', () => {
+    expect(AUTH_ENV_NAMES).toEqual(['E2E_USER_EMAIL', ...Object.values(TEST_SESSION_ENV_NAMES)]);
+    expect(AUTH_ENV_NAMES).toEqual([
+      'E2E_USER_EMAIL',
+      'NEXT_PUBLIC_SUPABASE_URL',
+      'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+      'SUPABASE_SERVICE_ROLE_KEY',
+    ]);
+  });
+
   it('どの環境にログインしたか分かるよう Supabase のホスト名だけを出す', async () => {
     const { fetchImpl } = makeFetch();
 
@@ -411,20 +425,69 @@ describe('runSmoke --with-auth', () => {
     expect(result.detail).toContain('hashed_token');
   });
 
-  it('トークンの確認に失敗したら FAIL (ステータスだけ報告し、応答本文は出さない)', async () => {
+  it('トークンの確認に失敗したら FAIL (ステータスだけ報告し、応答本文は出さない)。403 は共通の補助関数の規則で、待ってから発行からやり直す', async () => {
     const { fetchImpl, calls } = makeFetch({
       [VERIFY]: () => Response.json({ error_code: 'otp_expired', msg: `expired ${TOKEN_HASH}` }, { status: 403 }),
     });
+    const sleeps: number[] = [];
+    const sleepImpl = async (ms: number) => {
+      sleeps.push(ms);
+    };
+
+    const result = byName(
+      await runSmoke({ baseUrl: BASE, withAuth: true, env: AUTH_ENV, fetchImpl, sleepImpl }),
+      AUTH_CHECK,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('トークンの確認');
+    expect(result.detail).toContain('HTTP 403');
+    expect(result.detail).toContain(`${TEST_SESSION_DEFAULT_MAX_ATTEMPTS} 回`);
+    expect(result.detail).not.toContain(TOKEN_HASH);
+    expect(result.detail).not.toContain('otp_expired');
+    // 403 は発行からやり直し、補助関数の既定の上限 (環境変数が無いとき) で止める。やり直しの前には待つ (補助関数の待ち方)
+    expect(calls.filter((c) => `${c.method} ${c.url}` === GENERATE_LINK)).toHaveLength(TEST_SESSION_DEFAULT_MAX_ATTEMPTS);
+    expect(calls.filter((c) => `${c.method} ${c.url}` === VERIFY)).toHaveLength(TEST_SESSION_DEFAULT_MAX_ATTEMPTS);
+    expect(sleeps).toHaveLength(TEST_SESSION_DEFAULT_MAX_ATTEMPTS - 1);
+    sleeps.forEach((ms, index) => {
+      expect(ms).toBeGreaterThanOrEqual(0);
+      expect(ms).toBeLessThan(TEST_SESSION_RETRY_BASE_DELAY_MS * (index + 1));
+    });
+  });
+
+  it('確認の 401 などの応答の本文は出さない (段とステータスだけ)', async () => {
+    const marker = 'auth-body-should-not-be-printed';
+    const { fetchImpl } = makeFetch({ [VERIFY]: () => new Response(`${marker} ${TOKEN_HASH}`, { status: 401 }) });
 
     const result = byName(await runSmoke({ baseUrl: BASE, withAuth: true, env: AUTH_ENV, fetchImpl }), AUTH_CHECK);
 
     expect(result.ok).toBe(false);
-    expect(result.detail).toContain('HTTP 403');
-    expect(result.detail).toContain(`${AUTH_DEFAULT_MAX_ATTEMPTS} 回`);
+    expect(result.detail).toBe('ログインに失敗しました (smoke-test-project.supabase.co): トークンの確認: HTTP 401');
+    expect(result.detail).not.toContain(marker);
     expect(result.detail).not.toContain(TOKEN_HASH);
-    // 403 は発行からやり直し、上限の回数で止める
-    expect(calls.filter((c) => `${c.method} ${c.url}` === GENERATE_LINK)).toHaveLength(AUTH_DEFAULT_MAX_ATTEMPTS);
-    expect(calls.filter((c) => `${c.method} ${c.url}` === VERIFY)).toHaveLength(AUTH_DEFAULT_MAX_ATTEMPTS);
+  });
+
+  it('発行・確認で通信できなければ、ほかの項目と同じく「リクエストに失敗しました」と時間切れなどの理由を出す。やり直さない', async () => {
+    for (const route of [GENERATE_LINK, VERIFY]) {
+      const { fetchImpl, calls } = makeFetch({
+        [route]: () => {
+          throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+        },
+      });
+      const sleepImpl = vi.fn(async () => {});
+
+      const result = byName(
+        await runSmoke({ baseUrl: BASE, withAuth: true, env: AUTH_ENV, fetchImpl, sleepImpl }),
+        AUTH_CHECK,
+      );
+
+      expect(result.ok, route).toBe(false);
+      expect(result.detail, route).toBe(`リクエストに失敗しました: ${DEFAULT_TIMEOUT_MS}ms 以内に応答がありませんでした`);
+      expect(calls.filter((c) => `${c.method} ${c.url}` === GENERATE_LINK), route).toHaveLength(1);
+      expect(sleepImpl, route).not.toHaveBeenCalled();
+      // /api/profile (認証つき) には進まない
+      expect(calls.filter((c) => c.url === `${BASE}/api/profile`), route).toHaveLength(1);
+    }
   });
 
   it('確認が 403 (同時に作った相手にトークンを消された) なら、発行からやり直して新しいトークンでログインする', async () => {
@@ -438,9 +501,15 @@ describe('runSmoke --with-auth', () => {
           : Response.json({ access_token: ACCESS_TOKEN, token_type: 'bearer' }),
     });
 
-    const result = byName(await runSmoke({ baseUrl: BASE, withAuth: true, env: AUTH_ENV, fetchImpl }), AUTH_CHECK);
+    const sleepImpl = vi.fn(async () => {});
+
+    const result = byName(
+      await runSmoke({ baseUrl: BASE, withAuth: true, env: AUTH_ENV, fetchImpl, sleepImpl }),
+      AUTH_CHECK,
+    );
 
     expect(result).toMatchObject({ ok: true });
+    expect(sleepImpl).toHaveBeenCalledTimes(1);
     expect(calls.slice(4).map((c) => `${c.method} ${c.url}`)).toEqual([
       GENERATE_LINK,
       VERIFY,
@@ -463,25 +532,38 @@ describe('runSmoke --with-auth', () => {
     }
   });
 
-  it('やり直す回数の上限は、環境変数 (1 以上の整数) で上書きでき、それ以外の値は既定に戻る', async () => {
-    expect(AUTH_MAX_ATTEMPTS_ENV).toBe('E2E_TEST_SESSION_MAX_ATTEMPTS');
-    expect(authMaxAttempts({})).toBe(AUTH_DEFAULT_MAX_ATTEMPTS);
-    expect(authMaxAttempts({ E2E_TEST_SESSION_MAX_ATTEMPTS: '5' })).toBe(5);
-    expect(authMaxAttempts({ E2E_TEST_SESSION_MAX_ATTEMPTS: '1' })).toBe(1);
-    for (const invalid of ['', '0', '-2', '2.5', 'x']) {
-      expect(authMaxAttempts({ E2E_TEST_SESSION_MAX_ATTEMPTS: invalid }), invalid).toBe(AUTH_DEFAULT_MAX_ATTEMPTS);
+  it('やり直す回数の上限は、runSmoke に渡した env の共通の環境変数 (TEST_SESSION_MAX_ATTEMPTS_ENV) で上書きでき、不正な値は補助関数の既定に戻る', async () => {
+    // process.env 側の値は使わない (確認したい環境の値は env で渡す。.env.local や手元のシェルの値を混ぜない)
+    vi.stubEnv(TEST_SESSION_MAX_ATTEMPTS_ENV, '4');
+    try {
+      for (const [raw, expected] of [
+        ['1', 1],
+        ['2', 2],
+        [' 3 ', 3],
+        ['', TEST_SESSION_DEFAULT_MAX_ATTEMPTS],
+        ['0', TEST_SESSION_DEFAULT_MAX_ATTEMPTS],
+        ['2.5', TEST_SESSION_DEFAULT_MAX_ATTEMPTS],
+        ['x', TEST_SESSION_DEFAULT_MAX_ATTEMPTS],
+      ] as const) {
+        const { fetchImpl, calls } = makeFetch({
+          [VERIFY]: () => Response.json({ error_code: 'otp_expired' }, { status: 403 }),
+        });
+        const result = byName(
+          await runSmoke({
+            baseUrl: BASE,
+            withAuth: true,
+            env: { ...AUTH_ENV, [TEST_SESSION_MAX_ATTEMPTS_ENV]: raw },
+            fetchImpl,
+            sleepImpl: async () => {},
+          }),
+          AUTH_CHECK,
+        );
+        expect(calls.filter((c) => `${c.method} ${c.url}` === GENERATE_LINK), raw).toHaveLength(expected);
+        expect(result.detail, raw).toContain(`${expected} 回`);
+      }
+    } finally {
+      vi.unstubAllEnvs();
     }
-
-    const { fetchImpl, calls } = makeFetch({
-      [VERIFY]: () => Response.json({ error_code: 'otp_expired' }, { status: 403 }),
-    });
-    await runSmoke({
-      baseUrl: BASE,
-      withAuth: true,
-      env: { ...AUTH_ENV, E2E_TEST_SESSION_MAX_ATTEMPTS: '1' },
-      fetchImpl,
-    });
-    expect(calls.filter((c) => `${c.method} ${c.url}` === GENERATE_LINK)).toHaveLength(1);
   });
 
   it('確認の応答に access_token が無ければ FAIL', async () => {
@@ -637,7 +719,11 @@ interface FakeApp {
   close: () => Promise<void>;
 }
 
-/** healthStatus が 200 なら正常、503 なら DB 不通を装うアプリ */
+/**
+ * healthStatus が 200 なら正常、503 なら DB 不通を装うアプリ。
+ * --with-auth 用に、同じ origin で Supabase Auth の発行 (/auth/v1/admin/generate_link) と確認 (/auth/v1/verify) も装う
+ * (管理用の鍵と anon key が届いたときだけ応じる)。/api/profile は、確認で渡したトークンの Bearer なら 200
+ */
 async function startFakeApp(healthStatus: number): Promise<FakeApp> {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -645,6 +731,19 @@ async function startFakeApp(healthStatus: number): Promise<FakeApp> {
       res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(body));
     };
+    if (req.method === 'POST' && url.pathname === '/auth/v1/admin/generate_link') {
+      return req.headers.apikey === SERVICE_ROLE_KEY
+        ? json(200, { hashed_token: TOKEN_HASH, verification_type: TEST_SESSION_LINK_TYPE })
+        : json(401, { error_code: 'no_authorization' });
+    }
+    if (req.method === 'POST' && url.pathname === '/auth/v1/verify') {
+      return req.headers.apikey === ANON_KEY
+        ? json(200, { access_token: ACCESS_TOKEN, token_type: 'bearer' })
+        : json(401, { error_code: 'no_authorization' });
+    }
+    if (url.pathname === '/api/profile' && req.headers.authorization === `Bearer ${ACCESS_TOKEN}`) {
+      return json(200, { id: 'user-1' });
+    }
     if (url.pathname === '/api/health' && url.searchParams.get('deep') === '1') {
       return healthStatus === 200
         ? json(200, healthyBody)
@@ -731,6 +830,26 @@ describe('CLI (node scripts/smoke.mjs)', () => {
 
     expect(code).toBe(1);
     expect(stdout).toContain('[FAIL] GET /api/health?deep=1');
+  });
+
+  it('--with-auth は、node でそのまま動かしても共通の補助関数 (tests/e2e/helpers/test-session.mjs) を読み込み、発行 → 確認 → /api/profile まで通る', async () => {
+    const app = await startFakeApp(200);
+    try {
+      const { code, stdout, stderr } = await runCli([`--base-url=${app.origin}`, '--with-auth'], {
+        E2E_USER_EMAIL: EMAIL,
+        NEXT_PUBLIC_SUPABASE_URL: app.origin,
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ANON_KEY,
+        SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY,
+      });
+
+      expect(stderr).toBe('');
+      expect(code).toBe(0);
+      expect(stdout).toContain('[PASS] ログイン → GET /api/profile (--with-auth)');
+      expect(stdout).toContain('smoke test OK (5/5)');
+      for (const secret of [EMAIL, ANON_KEY, SERVICE_ROLE_KEY, TOKEN_HASH, ACCESS_TOKEN]) expect(stdout).not.toContain(secret);
+    } finally {
+      await app.close();
+    }
   });
 
   it('引数が誤っていれば終了コード 2', async () => {

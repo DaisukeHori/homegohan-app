@@ -17,7 +17,7 @@ import { config as dotenvConfig } from "dotenv";
 import { generateTestPassword } from "../helpers/credentials";
 import { grantE2eAiConsent } from "../../../scripts/lib/e2e-ai-consent";
 import { acceptLegalConsentIfShown } from "../helpers/legal-consent";
-import { createTestSession, describeTestSessionFailure, type TestSessionResult } from "../helpers/test-session";
+import { createTestSession, describeTestSessionFailure, type TestSessionResult } from "../helpers/test-session.mjs";
 
 // Node.js 20 は native WebSocket を持たないため ws パッケージを明示的に指定。
 // Supabase Realtime クライアントが WebSocket を必要とするが admin API のみ使うため
@@ -124,7 +124,7 @@ export async function cleanupFreshUser(
 }
 
 /**
- * テスト用のセッションを作り (#1547: パスワードのログインは使わない。helpers/test-session.ts)、
+ * テスト用のセッションを作り (#1547: パスワードのログインは使わない。helpers/test-session.mjs)、
  * Cookie を Playwright コンテキストに注入する。
  * @supabase/ssr は Cookie ベース認証を使用するため localStorage 注入では機能しない。
  * 429 (rate limit) の場合は最大 SESSION_CREATE_MAX_RETRIES 回、間隔を伸ばしながらリトライする。

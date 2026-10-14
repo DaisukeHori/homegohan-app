@@ -6,7 +6,7 @@
  * 戦略:
  * 1. 管理用の鍵 (service_role) でテスト用のセッションを作る (ブラウザログインをスキップ)。
  *    パスワードのログイン (/auth/v1/token?grant_type=password) は呼ばない。Supabase の CAPTCHA を有効にしても
- *    止まらないように (#1547。helpers/test-session.ts)
+ *    止まらないように (#1547。helpers/test-session.mjs)
  * 2. 取得したセッションを Cookie として Playwright コンテキストに直接設定
  *    (@supabase/ssr は localStorage でなく Cookie を使うため)
  * 3. /home に遷移して認証済み状態を確認
@@ -29,7 +29,7 @@ import { acceptLegalConsentIfShown } from "./helpers/legal-consent";
 import { ensureAiConsentGranted } from "./helpers/ai-consent";
 import { waitForLoginFormReady } from "./helpers/login-form";
 import { seedClassifyFixtures } from "./setup/seed-classify-fixtures";
-import { createTestSession, describeTestSessionFailure, readTestSessionConfig } from "./helpers/test-session";
+import { createTestSession, describeTestSessionFailure, readTestSessionConfig } from "./helpers/test-session.mjs";
 
 /** backward compat: 既存コードが参照するエクスポート (user-01 のパスを返す) */
 export const REFRESH_TOKEN_PATH = "tests/e2e/.auth/refresh-01.json";
@@ -107,7 +107,7 @@ function atomicWriteJson(filePath: string, data: unknown): void {
 }
 
 /**
- * テスト用のセッションを作る (#1547: パスワードのログインを使わない。helpers/test-session.ts)。
+ * テスト用のセッションを作る (#1547: パスワードのログインを使わない。helpers/test-session.mjs)。
  * 作れなければ警告を出して null を返す (呼び出し側は UI ログインにフォールバックする)。
  */
 async function fetchTestSession(email: string): Promise<Record<string, unknown> | null> {

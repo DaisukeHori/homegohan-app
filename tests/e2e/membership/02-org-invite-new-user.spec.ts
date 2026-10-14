@@ -10,7 +10,7 @@ import { createClient } from '@supabase/supabase-js';
 import { getUserProfile } from '../helpers/membership';
 import { createFreshUser, cleanupFreshUser } from '../fixtures/fresh-user';
 import { generateTestPassword } from '../helpers/credentials';
-import { createTestSession, describeTestSessionFailure } from '../helpers/test-session';
+import { createTestSession, describeTestSessionFailure } from '../helpers/test-session.mjs';
 import * as path from 'path';
 import { config as dotenvConfig } from 'dotenv';
 

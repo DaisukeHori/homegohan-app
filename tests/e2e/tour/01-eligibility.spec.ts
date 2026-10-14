@@ -9,7 +9,7 @@
 
 import { test, expect } from "@playwright/test";
 import { cleanupTestUser, generateTestEmail, signupViaApi } from "./helpers";
-import { createTestSession } from "../helpers/test-session";
+import { createTestSession } from "../helpers/test-session.mjs";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
 
@@ -20,7 +20,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
 /**
  * ユーザーのアクセストークン (JWT) を取得する。テスト用のセッションを管理用の鍵 (service_role) で作る
- * (#1547: パスワードのログインは使わない。helpers/test-session.ts)。作れなければ null
+ * (#1547: パスワードのログインは使わない。helpers/test-session.mjs)。作れなければ null
  */
 async function getUserToken(email: string): Promise<string | null> {
   const result = await createTestSession(email);

@@ -5,7 +5,7 @@ import * as path from "path";
 import { requireExistingUserPassword } from "../helpers/credentials";
 import { appOrigin, ensureAiConsentGranted } from "../helpers/ai-consent";
 import { waitForLoginFormReady } from "../helpers/login-form";
-import { createTestSession, describeTestSessionFailure, TEST_SESSION_NO_HTTP_STATUS } from "../helpers/test-session";
+import { createTestSession, describeTestSessionFailure, TEST_SESSION_NO_HTTP_STATUS } from "../helpers/test-session.mjs";
 import {
   refreshSupabaseSession,
   getStorageStatePath,
@@ -25,7 +25,7 @@ const RETRY_BASE_DELAY_MS = 2_000;
 const EXPIRY_BUFFER_SECONDS = 300; // 5 分
 // storageState が期限まで何秒未満なら先回り refresh するしきい値
 const PRE_REFRESH_BUFFER_SECONDS = 600; // 10 分
-// テスト用のセッション (helpers/test-session.ts) を作るときの retry 設定
+// テスト用のセッション (helpers/test-session.mjs) を作るときの retry 設定
 const SESSION_CREATE_MAX_RETRIES = 3;
 const SESSION_CREATE_BASE_DELAY_MS = 2_000;
 // 429 (rate limit) と、これ以上 (5xx) のステータスはやり直す
@@ -198,7 +198,7 @@ function isStorageStateExpired(storageStatePath: string, bufferSeconds = EXPIRY_
 
 /**
  * refresh_token を使ってセッションを更新し、Cookie として Playwright コンテキストに注入する。
- * セッションを新しく作る (helpers/test-session.ts) より rate limit が緩い。
+ * セッションを新しく作る (helpers/test-session.mjs) より rate limit が緩い。
  */
 async function refreshSessionViaCookie(
   page: Page,
@@ -282,11 +282,11 @@ async function refreshSessionViaCookie(
 }
 
 /**
- * テスト用のセッションを作り (#1547: パスワードのログインは使わない。helpers/test-session.ts)、
+ * テスト用のセッションを作り (#1547: パスワードのログインは使わない。helpers/test-session.mjs)、
  * Cookie として Playwright コンテキストに注入する。
  * 429 / 5xx は exponential backoff + jitter で最大 SESSION_CREATE_MAX_RETRIES 回リトライする。
  * (同じユーザーのセッションを他の worker が同時に作ったときの /verify の 403 は、createTestSession の中で
- * generate_link からやり直す。helpers/test-session.ts の先頭のコメント)
+ * generate_link からやり直す。helpers/test-session.mjs の先頭のコメント)
  * @supabase/ssr は Cookie ベースの認証を使うため、localStorage 注入では機能しない。
  */
 async function injectSessionViaCookie(
@@ -571,7 +571,7 @@ export const test = base.extend<AuthFixtures>({
    *
    * storageState 共有による refresh_token race (複数 worker が同一 refresh_token を
    * 並行使用して invalid になる問題) を解消するため、毎回テスト用のセッションを新しく作り
-   * (helpers/test-session.ts。パスワードのログインは使わない #1547)、独立した refresh_token を持つセッションを取得する。
+   * (helpers/test-session.mjs。パスワードのログインは使わない #1547)、独立した refresh_token を持つセッションを取得する。
    * テストユーザーを共有する worker が同時に作ると、後の発行が先のトークンを消すが、createTestSession が
    * /verify の 403 を generate_link からやり直して吸収する。
    *
