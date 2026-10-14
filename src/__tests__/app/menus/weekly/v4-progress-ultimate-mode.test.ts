@@ -80,8 +80,11 @@ describe('convertV4ProgressToUIFormat: 究極モードの段かは生成の印�
   });
 
   it('変換は totalSteps の値で究極モードかを見分けない', () => {
-    expect(converterSource).not.toMatch(/totalSteps\s*(===|==|!==|!=|>=|<=|>|<)/);
-    expect(converterSource).not.toMatch(/(===|==|!==|!=)\s*progress\.totalSteps/);
+    // V4 形式かの確かめ (totalSteps !== undefined) は残る。値 (数) との比べ・isUltimateMode への代入が無いこと
+    expect(converterSource).not.toMatch(/totalSteps\s*(===|==|!==|!=|>=|<=|>|<)\s*\d/);
+    expect(converterSource).not.toMatch(/\d\s*(===|==|!==|!=|>=|<=|>|<)\s*progress\.totalSteps/);
+    expect(converterSource).not.toMatch(/isUltimateMode\s*=\s*[^;\n]*totalSteps/);
+    expect(converterSource).toContain('const isUltimateMode = ultimateMode;');
   });
 });
 
