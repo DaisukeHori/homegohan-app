@@ -27,6 +27,19 @@ const WEEKLY_DIR = path.resolve(__dirname, '../../../../app/(main)/menus/weekly'
 const pageSource = fs.readFileSync(path.join(WEEKLY_DIR, 'page.tsx'), 'utf-8');
 const converterSource = fs.readFileSync(path.join(WEEKLY_DIR, '_state/v4ProgressUi.ts'), 'utf-8');
 
+/**
+ * コメントの行を除いたソース (経緯を書いたコメントの「totalSteps === 6」に当たらないように、コードの行だけを検査する)。
+ * 行の頭が // ・ * ・ /* ・ {/* の行を除く ('image/*' のような文字列を含む行を消さないよう、行単位で判定する)
+ */
+function stripCommentLines(source: string): string {
+  return source
+    .split('\n')
+    .filter((line) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line))
+    .join('\n');
+}
+const converterCode = stripCommentLines(converterSource);
+const pageCode = stripCommentLines(pageSource);
+
 /** 行を作ったとき (v4 / v5 の生成の route) の進捗。totalSteps は枠の数 */
 function rowCreatedProgress(slotCount: number) {
   return { currentStep: 0, totalSteps: slotCount, message: '献立生成を開始しています...' };
@@ -81,10 +94,10 @@ describe('convertV4ProgressToUIFormat: 究極モードの段かは生成の印�
 
   it('変換は totalSteps の値で究極モードかを見分けない', () => {
     // V4 形式かの確かめ (totalSteps !== undefined) は残る。値 (数) との比べ・isUltimateMode への代入が無いこと
-    expect(converterSource).not.toMatch(/totalSteps\s*(===|==|!==|!=|>=|<=|>|<)\s*\d/);
-    expect(converterSource).not.toMatch(/\d\s*(===|==|!==|!=|>=|<=|>|<)\s*progress\.totalSteps/);
-    expect(converterSource).not.toMatch(/isUltimateMode\s*=\s*[^;\n]*totalSteps/);
-    expect(converterSource).toContain('const isUltimateMode = ultimateMode;');
+    expect(converterCode).not.toMatch(/totalSteps\s*(===|==|!==|!=|>=|<=|>|<)\s*\d/);
+    expect(converterCode).not.toMatch(/\d\s*(===|==|!==|!=|>=|<=|>|<)\s*progress\.totalSteps/);
+    expect(converterCode).not.toMatch(/isUltimateMode\s*=\s*[^;\n]*totalSteps/);
+    expect(converterCode).toContain('const isUltimateMode = ultimateMode;');
   });
 });
 
@@ -110,8 +123,8 @@ describe('入り直し (pending の応答) からの印 (#1597)', () => {
 
 describe('page.tsx: どの道でも生成の印を渡す (#1597 配線)', () => {
   it('page.tsx に totalSteps による究極モードの判定が残っていない', () => {
-    expect(pageSource).not.toMatch(/totalSteps\s*===\s*6/);
-    expect(pageSource).not.toMatch(/isUltimateMode\s*=\s*[^;\n]*totalSteps/);
+    expect(pageCode).not.toMatch(/totalSteps\s*(===|==|!==|!=|>=|<=|>|<)\s*\d/);
+    expect(pageCode).not.toMatch(/isUltimateMode\s*=\s*[^;\n]*totalSteps/);
   });
 
   it('変換の呼び出しはすべて印 (2 つ目の引数) を渡す', () => {
