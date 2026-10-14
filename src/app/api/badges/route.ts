@@ -25,9 +25,11 @@ export async function GET(request: Request) {
     // `.eq('user_id', ...)` は PostgREST が 42703 で拒否し、error を見ていなかったため count が
     // 常に null（= 0 扱い）になっていた。他の API と同じく user_daily_meals!inner で本人の行に絞る。
     //
-    // #1314: ハンズオンツアーが入れるお試しの記録 (user_daily_meals.is_sandbox = true) は、実際の食事の記録では
+    // #1314: ハンズオンツアーのお試しの記録 (user_daily_meals.is_sandbox = true) は、実際の食事の記録では
     // ないので、食事の数にも自炊の数にも連続日数にも数えない (src/lib/health-insight-meals.ts と同じ規則)。
     // 数えると、ダミーの献立を「完了」にしただけで first_bite などが付いてしまう。
+    // (#1604 から Web のツアーの Step 1 は meals のお試しの行に保存し、user_daily_meals には作らない。
+    //  is_sandbox = true の日が別の経路で作られても数えないよう、絞り込みは残す)
     const [badgesRes, userBadgesRes, mealCountRes, cookCountRes, completedDaysRes] = await Promise.all([
       supabase.from('badges').select('*'),
       supabase
