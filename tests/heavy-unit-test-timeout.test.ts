@@ -126,23 +126,40 @@ const CHILD_PROCESS_IMPORT = /import\s*\{([^}]*)\}\s*from\s*['"](?:node:)?child_
 const INDIVIDUAL_TIMEOUT_MARKER = /\bDEFAULT_UNIT_HEAVY_(?:TEST|HOOK)_TIMEOUT_MS\b/;
 
 /**
- * 同じ型だが、延ばす印が無くてよいファイルと理由。stillValid が偽になったら (書き方が変わったら) 一覧から外すか、延ばす
+ * 同じ型だが、延ばす印が無くてよいファイルと理由。stillValid が偽になったら (書き方が変わったら) 一覧から外すか、延ばす。
+ * ownTimeout: 自分の時間切れの定数を、読み込み・子プロセスを含むフック・テストに個別に渡しているもの。どのフック・テストにも
+ * 渡していることを「例外の一覧は…」が hooksAndTestsWithoutTimeout で確かめる (あとから足したテストが既定の 5 秒のまま残らない)。
+ *
+ * 自分の定数を渡す形を、例外に載せずに走査で一般に「延ばした」と見なすことはしない: 渡す値は式 (CHILD_TIMEOUT_MS + 30_000 など) で、
+ * 既定の 5 秒より長いかを字面からは決められない (tests/check-cron-secret-drift.test.ts には 100 ミリ秒の SHORT_TIMEOUT_MS もある)。
+ * 値の根拠はファイルごとに人が読んで reason に書き、stillValid で字面を固定する
  */
-const SAME_TYPE_EXCEPTIONS: ReadonlyArray<{ file: string; reason: string; stillValid: RegExp }> = [
+const SAME_TYPE_EXCEPTIONS: ReadonlyArray<{ file: string; reason: string; stillValid: RegExp; ownTimeout: boolean }> = [
   {
     file: "tests/check-cron-secret-drift.test.ts",
     reason: "子プロセスを起こすテストは 1 件だけで、そのテストに自分の 60 秒 (TEST_TIMEOUT_MS) を渡している",
     stillValid: /^\s+TEST_TIMEOUT_MS,\n\s+\);/m,
+    ownTimeout: true,
   },
   {
     file: "tests/no-committed-credentials.test.ts",
     reason: "git を起こすどのテストにも、自分の 60 秒 (GIT_TIMEOUT_MS) を渡している",
     stillValid: /^const GIT_TIMEOUT_MS = /m,
+    ownTimeout: true,
+  },
+  {
+    file: "tests/next-swc-styled-jsx-transform.test.ts",
+    reason:
+      "子プロセス (Next の SWC の変換) を起こすテストは 1 件だけで、そのテストに自分の 90 秒 (TEST_TIMEOUT_MS = 子の時間切れ 60 秒 + 30 秒) を渡している。" +
+      "子の時間切れより長くするのがこのファイルの約束で、applyHeavyUnitTestTimeout の 30 秒では子より短くなる",
+    stillValid: /^const CHILD_TIMEOUT_MS = 60_000;$[\s\S]*^const TEST_TIMEOUT_MS = CHILD_TIMEOUT_MS \+ 30_000;$[\s\S]*^\s+TEST_TIMEOUT_MS,\n\s+\);/m,
+    ownTimeout: true,
   },
   {
     file: "src/__tests__/api/cron/app-log-alerts.test.ts",
     reason: "route はファイルの一番外側で読み込み済みで、テストの中の import は同じモジュールのキャッシュを返すだけ (vi.resetModules をしない)",
     stillValid: /^const \{ GET \} = await import\('@\/app\/api\/cron\/app-log-alerts\/route'\);$/m,
+    ownTimeout: false,
   },
 ];
 
@@ -358,6 +375,8 @@ describe("同じ型のファイルは時間切れを延ばしている (#1605)",
         "tests/edge-function-cors.test.ts",
         // 読み込みを関数に任せる書き方 (importHandler("../supabase/functions/x/index.ts")。#1605 の R1 で取りこぼした)
         "tests/edge-missing-env-response.test.ts",
+        // 子プロセスを起こし、自分の時間切れの定数をテストに渡す (例外の一覧に載せる。#1605 で main の取り込みのときに見つけた)
+        "tests/next-swc-styled-jsx-transform.test.ts",
       ]),
     );
     expect(files.some((rel) => SAME_TYPE_SKIP_PREFIXES.some((p) => rel.startsWith(p)))).toBe(false);
@@ -385,6 +404,8 @@ describe("同じ型のファイルは時間切れを延ばしている (#1605)",
       expect(sameTypeReasons(text), e.file).not.toEqual([]);
       expect(extendsTimeout(text), `${e.file}: 延ばしたなら例外から外す`).toBe(false);
       expect(e.stillValid.test(text), `${e.file}: ${e.reason} が成り立たない`).toBe(true);
+      // 自分の時間切れを渡す例外は、読み込み・子プロセスを含むどのフック・テストにも渡している
+      if (e.ownTimeout) expect(hooksAndTestsWithoutTimeout(e.file, text), e.file).toEqual([]);
     }
   });
 
@@ -428,5 +449,20 @@ describe("同じ型のファイルは時間切れを延ばしている (#1605)",
     expect(hooksAndTestsWithoutTimeout("a.test.ts", `${cp}it('a', { timeout: T }, () => {\n  execFileSync('git', ['init']);\n});\n`)).toEqual([]);
     // 重くないフック・テストは見ない
     expect(hooksAndTestsWithoutTimeout("a.test.ts", `${cp}beforeEach(() => {\n  h.env = {};\n});\n`)).toEqual([]);
+  });
+
+  it("自分の時間切れの定数をテストに渡す形は、同じ型として拾い、延ばした印とは見なさない (例外の一覧に理由つきで載せる)", () => {
+    // tests/next-swc-styled-jsx-transform.test.ts の形: 値は式で、字面から既定の 5 秒より長いかを決められない
+    const own =
+      "import { spawnSync } from 'node:child_process';\nconst CHILD_TIMEOUT_MS = 60_000;\nconst TEST_TIMEOUT_MS = CHILD_TIMEOUT_MS + 30_000;\n" +
+      "it(\n  'a',\n  () => {\n    spawnSync(process.execPath, ['-e', '']);\n  },\n  TEST_TIMEOUT_MS,\n);\n";
+    expect(sameTypeReasons(own)).toEqual(["子プロセスを起こす"]);
+    expect(extendsTimeout(own)).toBe(false);
+    // どのテストにも渡していれば、フック・テストごとの見分け方は何も拾わない (例外の一覧の ownTimeout が見る形)
+    expect(hooksAndTestsWithoutTimeout("a.test.ts", own)).toEqual([]);
+    // 同じファイルに、子プロセスを起こすのに時間切れを渡さないテストを足すと拾う
+    expect(hooksAndTestsWithoutTimeout("a.test.ts", `${own}it('b', () => {\n  spawnSync('git', ['init']);\n});\n`)).toEqual([
+      "a.test.ts: it (11 行)",
+    ]);
   });
 });
