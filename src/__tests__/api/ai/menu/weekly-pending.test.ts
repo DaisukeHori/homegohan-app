@@ -334,3 +334,32 @@ describe('GET /api/ai/menu/weekly/pending: 究極モードの生成か (ultimate
     expect(json.ultimateMode).toBe(false);
   });
 });
+
+describe('GET /api/ai/menu/weekly/pending: 他の週の生成中の行は返さない (#1609)', () => {
+  // Web の週間献立の画面 (page.tsx) は、この振る舞いを前提に週を切り替えない (以前の週を切り替える分岐は通らなかったので消した)
+  it('start_date が date (表示中の週の初日) と違う行は hasPending: false を返す (他の週の生成中は復元しない)', async () => {
+    pendingResultQueue.push({ data: pendingRow({ start_date: '2026-07-13' }), error: null });
+
+    const json = await (await GET(makeRequest())).json();
+
+    expect(json).toEqual({ hasPending: false });
+  });
+
+  it('start_date が date と同じ行は、その start_date をそのまま返す', async () => {
+    pendingResultQueue.push({ data: pendingRow({ start_date: date }), error: null });
+
+    const json = await (await GET(makeRequest())).json();
+
+    expect(json.hasPending).toBe(true);
+    expect(json.startDate).toBe(date);
+  });
+
+  it('start_date の無い行は、生成中の行として返す (startDate は null)', async () => {
+    pendingResultQueue.push({ data: pendingRow({ start_date: null }), error: null });
+
+    const json = await (await GET(makeRequest())).json();
+
+    expect(json.hasPending).toBe(true);
+    expect(json.startDate).toBeNull();
+  });
+});

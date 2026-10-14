@@ -9,6 +9,9 @@
  *     や AI 相談の固定値 (1 / 3 / 21) で、通常の生成でも 6 になることがあるため
  * 生成中の行の確認 (GET /api/ai/menu/weekly/pending) は、この判定の結果を ultimateMode として返す
  * (モバイルの週間献立画面は、画面に入り直したときの進捗カードの種類をこれで決める)。
+ *
+ * 判定そのもの (isUltimateModeWeeklyMenuRequest。真偽値の true のときだけ究極モード) は、Web とモバイルで同じ基準にするため
+ * @homegohan/shared (packages/shared/src/weekly-menu-ultimate-mode.ts) に置く (#1609)。ここには書く側の値と読む列の指定だけを置く。
  */
 
 /**
@@ -24,12 +27,4 @@ export const WEEKLY_MENU_REQUEST_ULTIMATE_MODE_SELECT = 'ultimate_mode:generated
  */
 export function weeklyMenuRequestUltimateModeData(ultimateMode: boolean): { ultimateMode: boolean } {
   return { ultimateMode };
-}
-
-/**
- * 行の generated_data.ultimateMode の値から、究極モードの生成かを返す。真偽値の true のときだけ究極モード
- * (値が無い・読めない行は通常の生成として扱う)。
- */
-export function isUltimateModeWeeklyMenuRequest(generatedDataUltimateMode: unknown): boolean {
-  return generatedDataUltimateMode === true;
 }
