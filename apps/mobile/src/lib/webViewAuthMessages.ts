@@ -37,7 +37,7 @@
  */
 
 import { useCallback, useRef } from "react";
-import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { useNavigation, useRouter } from "expo-router";
 
 import { classifyAuthError } from "./authErrors";
 import { signOutWithCleanup } from "./signOut";
@@ -280,25 +280,21 @@ export async function handleWebAuthMessage(
 /**
  * WebViewScreen から使う。onMessage に届いたメッセージを渡すと、sign-out / session-expired を処理する。
  *
- * @param path この WebView のタブの既定のパス ('/home' など)。再ブリッジで開き直すパスの基準になる
+ * @param currentPath この WebView がいま開いているパス (WebViewScreen が initialPath を検証したあとの effectivePath)。
+ *   再ブリッジではこのパスに _rb を付けて開き直す。deep link や tab-navigate の initialPath を検証せずに基準にすると、
+ *   WebViewScreen の検証で弾かれる値のとき _rb を付けても既定のパスに戻されて effectivePath が変わらず、読み込み直しが起きない
  * @returns (data, senderUrl) => void。sign-out / session-expired 以外のメッセージは何もしない
  */
-export function useWebAuthMessages(path: string): (data: unknown, senderUrl: unknown) => void {
+export function useWebAuthMessages(currentPath: string): (data: unknown, senderUrl: unknown) => void {
   const navigation = useNavigation();
   const router = useRouter();
-  const params = useLocalSearchParams<{ initialPath?: string }>();
 
   const limiterRef = useRef<RebridgeLimiter | null>(null);
   if (limiterRef.current === null) limiterRef.current = createRebridgeLimiter();
 
-  // 再ブリッジで開き直すパス。deep link や tab-navigate で指定された initialPath があればそれ、無ければタブの既定のパス。
-  // initialPath が単一の "/" で始まる絶対パスでない (壊れた値) ときは使わない
-  const initialPath = typeof params.initialPath === "string" ? params.initialPath : undefined;
-  const basePath = initialPath && /^\/(?![/\\])/.test(initialPath) ? initialPath : path;
-
   // 最新の値を ref で持ち、返す関数の identity を変えない
-  const basePathRef = useRef(basePath);
-  basePathRef.current = basePath;
+  const basePathRef = useRef(currentPath);
+  basePathRef.current = currentPath;
   const navigationRef = useRef(navigation);
   navigationRef.current = navigation;
   const routerRef = useRef(router);
