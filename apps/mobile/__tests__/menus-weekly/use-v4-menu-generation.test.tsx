@@ -12,6 +12,7 @@
  *    (呼び出し側の catch が「失敗しました」を案内に重ねて出さないように。silent でも同じ)
  * 4. 受け付けたあと (Realtime) に、サーバーが同意の判定で止めた文 (AI_CONSENT_REQUIRED_MESSAGE) で失敗したら、
  *    onError を呼ばず onAiConsentRequired を呼ぶ。同意の状況を読めなかった文 (一時的) は onError にそのまま渡す
+ * 5. 受け付けたあとの失敗の文のうち、こちらで書いた文 (定型・同意・上限) 以外は汎用の文にして渡す (#1478)
  * を固定する。
  */
 
@@ -46,6 +47,11 @@ import {
   AI_CONSENT_REQUIRED_MESSAGE,
 } from '../../../../supabase/functions/_shared/ai-consent';
 import { submitImprove } from '../../src/lib/improve-meal';
+import { aiDailyLimitMessage } from '../../../../supabase/functions/_shared/ai-daily-limit';
+import {
+  MENU_REQUEST_EXISTING_PROTECTED_MESSAGE,
+  MENU_REQUEST_FAILED_MESSAGE,
+} from '../../../../supabase/functions/_shared/stored-failure-messages';
 
 const params = {
   targetSlots: [{ date: '2026-10-08', mealType: 'dinner' as const }],
@@ -225,6 +231,25 @@ describe('useV4MenuGeneration.subscribeToProgress — 受け付けたあとの�
 
     expect(onError).toHaveBeenCalledWith('stale_request_timeout');
     expect(onAiConsentRequired).not.toHaveBeenCalled();
+  });
+
+  // #1478: Edge Function が以前、例外の文面をそのまま error_message に書いていた。こちらで書いた文以外は汎用の文に寄せる
+  it('こちらで書いた文でない失敗の文 (例外の文面・DB の生のエラー文) は、汎用の文にして onError と onProgress に渡す', async () => {
+    const raw = 'duplicate key value violates unique constraint "planned_meals_pkey"';
+    const onError = jest.fn();
+    const { onProgress } = await failWith(raw, { onError });
+
+    expect(onError).toHaveBeenCalledWith(MENU_REQUEST_FAILED_MESSAGE);
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({ errorMessage: MENU_REQUEST_FAILED_MESSAGE }));
+    expect(JSON.stringify([onError.mock.calls, onProgress.mock.calls])).not.toContain('duplicate key');
+  });
+
+  it('1 日の上限で止めた文と、既存の献立を守った定型の文は、そのまま onError に渡す (#1478)', async () => {
+    for (const stored of [aiDailyLimitMessage(10), MENU_REQUEST_EXISTING_PROTECTED_MESSAGE]) {
+      const onError = jest.fn();
+      await failWith(stored, { onError });
+      expect(onError).toHaveBeenCalledWith(stored);
+    }
   });
 });
 
