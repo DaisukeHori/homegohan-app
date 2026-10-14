@@ -136,25 +136,36 @@ function scriptKindOf(fileName: string): ts.ScriptKind {
 /**
  * コメントだけを空白に置き換えた本文を返す (改行は残すので、行番号は元のまま)。
  * 文字列の中の '//' (URL) や JSX の文字はコメントと見なさないよう、TypeScript の構文木でトークンごとに、
- * その前にあるコメントの位置を求める。
+ * その前後にあるコメントの位置を求める。
+ * - 前 (leading): 改行のあとに置いたコメント (行の頭のコメント・JSDoc)
+ * - 後ろ (trailing): トークンと同じ行の後ろに置いたコメント (`foo(); // 説明`・JSX の `{` の直後のコメント)。
+ *   TypeScript の leading は、直前のトークンと同じ行にあるコメントを返さないので、こちらも拾う。
+ * JSX の文字の範囲に入るもの (`<p>// …</p>` の '// …') は、直前のトークンの後ろを読むとコメントの形に見えるが、
+ * 画面に出る文字なので除く。
  */
 function stripComments(fileName: string, source: string): string {
   const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, scriptKindOf(fileName));
   const ranges: ts.CommentRange[] = [];
+  /** JSX の文字の範囲 [pos, end) */
+  const jsxTextSpans: Array<readonly [number, number]> = [];
   const visit = (node: ts.Node): void => {
     const children = node.getChildren(sf);
     if (children.length === 0) {
       // JSX の文字はトリビア (コメント) を持たない。'// …' と書かれた文字をコメントと見なさない
-      if (node.kind !== ts.SyntaxKind.JsxText) {
+      if (node.kind === ts.SyntaxKind.JsxText) {
+        jsxTextSpans.push([node.pos, node.end]);
+      } else {
         ranges.push(...(ts.getLeadingCommentRanges(source, node.getFullStart()) ?? []));
+        ranges.push(...(ts.getTrailingCommentRanges(source, node.getEnd()) ?? []));
       }
       return;
     }
     children.forEach(visit);
   };
   visit(sf);
+  const inJsxText = (pos: number): boolean => jsxTextSpans.some(([start, end]) => pos >= start && pos < end);
   const chars = source.split('');
-  for (const { pos, end } of ranges) {
+  for (const { pos, end } of ranges.filter((range) => !inJsxText(range.pos))) {
     for (let i = pos; i < end; i += 1) {
       if (chars[i] !== '\n' && chars[i] !== '\r') chars[i] = ' ';
     }
@@ -331,6 +342,8 @@ describe('製品のソースの判定ロジック (コメントを除いてか�
       ['a.ts', 'const url = `https://homegohan.com/${path}`;'],
       ['a.tsx', 'const A = () => <a href="mailto:support@homegohan.jp">問い合わせ</a>;'],
       ['a.tsx', 'const A = () => <p>// support@homegohan.com まで</p>;'],
+      ['a.tsx', 'const A = () => <p>/* support@homegohan.com */</p>;'],
+      ['a.tsx', 'const A = () => <a href="/contact">// support@homegohan.jp</a>;'],
       ['a.js', "const u = 'https://mail.homegohan.com'; // 説明"],
       ['a.ts', "const u = 'SUPPORT@HOMEGOHAN.COM';"],
     ] as const) {
@@ -343,7 +356,10 @@ describe('製品のソースの判定ロジック (コメントを除いてか�
       ['a.ts', '// 例: support@homegohan.com\nconst a = 1;'],
       ['a.ts', '/**\n * NEXT_PUBLIC_APP_URL=https://homegohan.com\n */\nexport const a = 1;'],
       ['a.ts', "const a = getSupportEmail(); /* 以前は support@homegohan.jp */"],
+      ['a.ts', 'const a = getSupportEmail(); // 以前は support@homegohan.jp\nconst b = 2;'],
+      ['a.ts', 'call(/* 以前は support@homegohan.jp */ getSupportEmail());'],
       ['a.tsx', 'const A = () => (\n  <div>\n    {/* 以前は mailto:support@homegohan.jp */}\n  </div>\n);'],
+      ['a.tsx', 'const A = () => <div>{/* 以前は support@homegohan.jp */}</div>;'],
     ] as const) {
       expect(findProductForbidden(fileName, source), source).toEqual([]);
     }
