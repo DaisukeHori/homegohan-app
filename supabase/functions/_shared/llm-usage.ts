@@ -138,10 +138,22 @@ function detectCallType(endpoint: string): string {
   return "unknown";
 }
 
-function detectProvider(url: string): string | null {
-  const hostname = new URL(url).hostname;
-  if (hostname.includes("api.openai.com")) return "openai";
-  if (hostname.includes("api.x.ai")) return "xai";
+/** 計測するプロバイダの API のホスト名 → プロバイダ名 */
+const LLM_PROVIDER_HOSTS: ReadonlyArray<readonly [host: string, provider: string]> = [
+  ["api.openai.com", "openai"],
+  ["api.x.ai", "xai"],
+];
+
+/**
+ * URL のホストが計測対象のプロバイダの API か。ホスト名そのものか、そのサブドメインのときだけ一致とする
+ * (#1444 CodeQL js/incomplete-url-substring-sanitization: 部分文字列の一致だと api.openai.com.example.net なども
+ * OpenAI として数えてしまう)。
+ */
+export function detectProvider(url: string): string | null {
+  const hostname = new URL(url).hostname.toLowerCase();
+  for (const [host, provider] of LLM_PROVIDER_HOSTS) {
+    if (hostname === host || hostname.endsWith(`.${host}`)) return provider;
+  }
   return null;
 }
 

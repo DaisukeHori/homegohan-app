@@ -18,6 +18,12 @@ import { requireAiConsentForUser } from "../_shared/ai-consent-guard.ts";
 import { aiChatDisabledResponseForUser } from "../_shared/ai-chat-flag.ts";
 import { missingEnvError } from "../_shared/missing-env.ts";
 
+/**
+ * 内部のエラー (500・ストリームの途中の失敗) のときに返す固定の文。例外の message は返さない
+ * (上流の AI の API のエラー文・内部の文が、利用者の JWT で直接呼んだ人に見えないように。詳細はログに残す)。
+ */
+const KNOWLEDGE_GPT_INTERNAL_ERROR_MESSAGE = "Internal server error";
+
 console.log("Knowledge-GPT Function loaded (Fallback Mode)")
 
 // ===== OpenAI client =====
@@ -514,7 +520,8 @@ Deno.serve(async (req) => {
           } catch (e: any) {
             console.error("Streaming error:", e);
             createLogger("knowledge-gpt").error("ストリーミング処理でエラーが発生しました", e);
-            const errorData = { error: { message: e?.message ?? String(e) } };
+            // #1444 (CodeQL js/stack-trace-exposure): 例外の中身 (上流の API の応答・内部の文) は利用者に返さず、ログにだけ残す
+            const errorData = { error: { message: KNOWLEDGE_GPT_INTERNAL_ERROR_MESSAGE, type: "internal_error" } };
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorData)}\n\n`));
           } finally {
             controller.close();
@@ -577,7 +584,8 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         error: {
-          message: e?.message ?? String(e),
+          // #1444 (CodeQL js/stack-trace-exposure): 例外の中身は利用者に返さず、ログにだけ残す (利用者の JWT で直接呼べるため)
+          message: KNOWLEDGE_GPT_INTERNAL_ERROR_MESSAGE,
           type: "internal_error",
         },
       }),

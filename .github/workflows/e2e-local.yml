@@ -42,14 +42,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -95,6 +95,8 @@ jobs:
       # public-policy-pages は未ログインで動く (AI も使わない)。利用規約・プライバシーポリシーが
       # ログイン画面へ飛ばされず読めること (#1174) を、PR のコードの本番ビルドで確かめる。
       # auth-turnstile は、Turnstile のウィジェットが本物のブラウザ・本物の CSP で動くことを確かめる (#1165)。
+      # family/01・operator/01・operator/02 は、主要ペルソナ (家族・admin・super_admin) の happy path (#856)。
+      # ユーザーは test ごとに、.env.local (上の手順が書く) の SUPABASE_SERVICE_ROLE_KEY でローカルの DB に作る (鍵が無ければ skip せず失敗する)。
       - name: Run Playwright tests (MVP, AI を使わないもの + 未ログインで読める公開ページ + Turnstile)
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:3000
@@ -112,6 +114,9 @@ jobs:
           tests/e2e/auth-turnstile.spec.ts
           tests/e2e/ai-consent-first-use.spec.ts
           tests/e2e/legal-consent-gate.spec.ts
+          tests/e2e/family/01-invite-accept-share.spec.ts
+          tests/e2e/operator/01-admin-flow.spec.ts
+          tests/e2e/operator/02-super-admin-flow.spec.ts
 
       # 規約・プライバシーポリシーの再同意ゲート (#1174) の「強制あり」(LEGAL_CONSENT_ENFORCE=on) の挙動は、
       # 同じビルドを on でもう 1 つ別のポート (3001) に起動して確かめる (環境変数はサーバーの起動時に読まれる)。
@@ -168,7 +173,7 @@ jobs:
           echo "::group::containers"; docker ps -a || true; echo "::endgroup::"
 
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           # HTML レポート (tests/e2e/.report/) は手順名に fill の入力値 (パスワード) を平文で含むため上げない。
           # 失敗時のスクリーンショット・動画・エラー内容 (tests/e2e/.output/) だけを上げる

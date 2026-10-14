@@ -24,7 +24,19 @@ import path from "node:path";
 const ROOT = process.cwd();
 const API_ROOT = path.join(ROOT, "src/app/api");
 
-const SPEC_FILES = ["tests/e2e/w5-12-admin-adversarial.spec.ts"];
+/**
+ * 検査する spec と、そのファイルから取り出せるはずの "/api/..." の参照の最低の件数
+ * (抽出に失敗して 0 件のまま通ることを防ぐ。足したときの件数を書く)。
+ * family/01・operator/01・operator/02 と、その道具の helpers/persona-api.ts は、主要ペルソナの happy path (#856)。
+ * local-ci.sh / e2e-local.yml で実際に流れるが、存在しないパスを叩くと 404 の偽の結果になるので、ここでも見る。
+ */
+const SPEC_FILES: ReadonlyArray<{ file: string; minRefs: number }> = [
+  { file: "tests/e2e/w5-12-admin-adversarial.spec.ts", minRefs: 21 },
+  { file: "tests/e2e/family/01-invite-accept-share.spec.ts", minRefs: 3 },
+  { file: "tests/e2e/operator/01-admin-flow.spec.ts", minRefs: 7 },
+  { file: "tests/e2e/operator/02-super-admin-flow.spec.ts", minRefs: 12 },
+  { file: "tests/e2e/helpers/persona-api.ts", minRefs: 1 },
+];
 
 /**
  * route.ts を持つディレクトリを URL セグメントの配列で返す。
@@ -98,12 +110,12 @@ describe("#847: 管理系 e2e spec が叩く API パスの実在確認", () => {
     expect(routes).toContainEqual(["admin", "users", "[id]", "freeze"]);
   });
 
-  for (const specFile of SPEC_FILES) {
+  for (const { file: specFile, minRefs } of SPEC_FILES) {
     it(`${specFile}: 参照する /api/... パスはすべて実在する route.ts に対応する`, () => {
       const source = fs.readFileSync(path.join(ROOT, specFile), "utf8");
       const refs = extractApiPaths(source);
       // 抽出に失敗して 0 件のまま通ることを防ぐ
-      expect(refs.length).toBeGreaterThan(20);
+      expect(refs.length).toBeGreaterThanOrEqual(minRefs);
       expect(findMissing(refs, routes)).toEqual([]);
     });
   }
