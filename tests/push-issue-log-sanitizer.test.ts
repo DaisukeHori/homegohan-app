@@ -54,7 +54,7 @@ function allBodies(): Array<{ name: string; body: PushIssueLogBody }> {
     out.push({ name, body: buildPushIssueLogBody(event, fields) });
 
   for (const platform of PLATFORMS) {
-    for (const stage of ["get_token", "save_token"] as const) {
+    for (const stage of ["get_token", "save_token", "claim_token"] as const) {
       for (const httpStatus of [undefined, 403]) {
         add(`registration_failed ${platform} ${stage} status=${httpStatus}`, "push_token_registration_failed",
           registrationFailureServerFields({
