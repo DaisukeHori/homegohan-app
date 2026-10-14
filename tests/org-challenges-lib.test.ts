@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import * as shared from '@homegohan/shared';
 import {
   DISABLED_ORG_CHALLENGE_TYPES,
   ORG_CHALLENGE_MEMBER_STATUSES,
@@ -120,6 +121,11 @@ describe('最小人数 (DB の関数と同じ値)', () => {
     expect(m, 'migration に最小人数が見つからない').not.toBeNull();
     expect(ORG_CHALLENGE_MIN_PARTICIPANTS).toBe(Number(m![1]));
     expect(ORG_CHALLENGE_MIN_PARTICIPANTS).toBe(5);
+  });
+
+  it('Web の定数・整形は @homegohan/shared の同じもの (モバイルの管理画面と値が分かれない)', () => {
+    expect(ORG_CHALLENGE_MIN_PARTICIPANTS).toBe(shared.ORG_CHALLENGE_MIN_PARTICIPANTS);
+    expect(formatParticipantCount).toBe(shared.formatParticipantCount);
   });
 });
 

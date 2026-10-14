@@ -93,12 +93,10 @@ export function isOrgChallengeStatus(value: unknown): value is (typeof ORG_CHALL
 }
 
 /**
- * 参加者数・平均を画面に出すのに必要な最小人数の、説明文用の値。
- * 実際の判定は DB の関数 get_org_challenge_aggregates (supabase/migrations/*_org_challenge_progress.sql の
- * `SELECT 5 AS min_participants`) が行い、API は判定に使った値 (minParticipants) を返す。この定数は、その値が来ないときの説明文の既定値で、
- * DB の関数と同じ値にそろえる (tests/org-challenges-lib.test.ts が検査する)。
+ * 参加者数・平均を画面に出すのに必要な最小人数 (ORG_CHALLENGE_MIN_PARTICIPANTS) と、参加者数の表示 (formatParticipantCount)。
+ * モバイルの管理画面も同じ値を使うため、置き場は packages/shared/src/org-challenges.ts の 1 つにし、ここからは読み直して出す。
  */
-export const ORG_CHALLENGE_MIN_PARTICIPANTS = 5;
+export { ORG_CHALLENGE_MIN_PARTICIPANTS, formatParticipantCount } from '@homegohan/shared';
 
 /** 順位表で、本人以外の参加者に出す名前 (表示名を出さない設定のとき) */
 export const RANKING_OTHER_LABEL = '参加者';
@@ -136,15 +134,6 @@ export function isIsoDate(value: unknown): value is string {
  */
 export function todayJst(now: Date = new Date()): string {
   return formatLocalDate(now, 'Asia/Tokyo');
-}
-
-/** 参加者数を画面に出す形にする。最小人数に満たない (API が null で返す) ときは「5人未満」 */
-export function formatParticipantCount(
-  count: number | null | undefined,
-  minParticipants: number = ORG_CHALLENGE_MIN_PARTICIPANTS,
-): string {
-  if (count === null || count === undefined || !Number.isFinite(count)) return `${minParticipants}人未満`;
-  return `${count}人`;
 }
 
 /** 値を画面に出す形にする。例: 66.7 -> '66.7%'、100 -> '100%'、3.7 -> '3.7点' (DB が小数第 1 位に丸めた値) */

@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { formatParticipantCount } from "@homegohan/shared";
 
 import { Card, Button, SectionHeader, StatusBadge, LoadingState, EmptyState } from "../../../src/components/ui";
 import { Input } from "../../../src/components/ui";
@@ -16,7 +17,7 @@ type Challenge = {
   startDate: string;
   endDate: string;
   status: string;
-  // 参加者が最小人数 (5 人) に満たないときは null (API が人数を返さない。少人数だと誰が参加しているかが分かってしまうため)
+  // 参加者が最小人数 (ORG_CHALLENGE_MIN_PARTICIPANTS。@homegohan/shared) に満たないときは null (API が人数を返さない。少人数だと誰が参加しているかが分かってしまうため)
   participantCount: number | null;
   // 人数と平均を出すのに必要な、参加者の最小人数 (平均は Web の管理画面に表示する)
   aggregate?: { minParticipants: number };
@@ -151,7 +152,7 @@ export default function OrgChallengesPage() {
                     <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                       <Ionicons name="people" size={14} color={colors.textMuted} />
                       <Text style={{ fontSize: 13, color: colors.textMuted }}>
-                        参加 {c.participantCount === null ? `${c.aggregate?.minParticipants ?? 5}人未満` : `${c.participantCount}人`}
+                        参加 {formatParticipantCount(c.participantCount, c.aggregate?.minParticipants)}
                       </Text>
                     </View>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
