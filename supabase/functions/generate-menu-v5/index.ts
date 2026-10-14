@@ -109,6 +109,7 @@ import {
 import { getCorsHeaders } from "../_shared/cors.ts";
 import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
 import { aiDailyLimitMessage } from "../_shared/ai-daily-limit.ts";
+import { MENU_REQUEST_FAILED_MESSAGE } from "../_shared/stored-failure-messages.ts";
 import { addDaysToDate, monthJst, todayJst } from "../_shared/jst-date.ts";
 import { aiConsentDeniedResponse, checkAiConsent, invokeMenuContinuation } from "../_shared/ai-consent-guard.ts";
 import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
@@ -727,6 +728,10 @@ async function executeStep3_Save(
     errors,
     successMessage: `全${totalSlots}件の献立が完成しました！`,
   });
+  // 枠ごとの理由 (例外の文面を含む) はログにだけ残す。行の error_message は定型の文 (#1478)
+  if (finalSummary.issueDetails.length > 0) {
+    console.warn(`[save] 保存しなかった枠 (request ${requestId}):`, finalSummary.issueDetails.join("; "));
+  }
 
   // #1202: 最終書き込みは、まだ終わっていない行 (queued / processing) にだけ当てる
   await finalizeMenuRequest(
@@ -3427,6 +3432,10 @@ async function executeStep6_FinalSave(
     successMessage: `全${totalSlots}件の献立が完成しました！`,
     successSuffix: praiseComment ? ` ${praiseComment}` : "",
   });
+  // 枠ごとの理由 (例外の文面を含む) はログにだけ残す。行の error_message は定型の文 (#1478)
+  if (finalSummary.issueDetails.length > 0) {
+    console.warn(`[save] 保存しなかった枠 (request ${requestId}):`, finalSummary.issueDetails.join("; "));
+  }
 
   // #1202: 最終書き込みは、まだ終わっていない行 (queued / processing) にだけ当てる
   const finalized = await finalizeMenuRequest(
@@ -3655,7 +3664,8 @@ Deno.serve(async (req: Request) => {
             .from("weekly_menu_requests")
             .update({
               status: "failed",
-              error_message: error?.message ?? String(error),
+              // 例外の文面は console と構造化ログ (app_logs) にだけ残す。行は画面がそのまま出すので定型の文 (#1478)
+              error_message: MENU_REQUEST_FAILED_MESSAGE,
               updated_at: new Date().toISOString(),
             })
             .eq("id", requestId!)
@@ -3704,7 +3714,8 @@ Deno.serve(async (req: Request) => {
             .from("weekly_menu_requests")
             .update({
               status: "failed",
-              error_message: error?.message ?? String(error),
+              // 例外の文面は console と構造化ログ (app_logs) にだけ残す。行は画面がそのまま出すので定型の文 (#1478)
+              error_message: MENU_REQUEST_FAILED_MESSAGE,
               updated_at: new Date().toISOString(),
             })
             .eq("id", requestId)
@@ -3720,7 +3731,7 @@ Deno.serve(async (req: Request) => {
     }
 
     return new Response(
-      JSON.stringify({ error: error?.message ?? "Unexpected error" }),
+      JSON.stringify({ error: MENU_REQUEST_FAILED_MESSAGE }),
       {
         status: 500,
         headers: {
