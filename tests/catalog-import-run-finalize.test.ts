@@ -9,6 +9,11 @@
  * { categoryCode, url, error })。
  *
  * DB は実際には使わず、supabase-js の createClient を差し替えて、どの表にどんな書き込みをしたかを記録する。
+ *
+ * #1540 で足した見張り:
+ * - 完了の更新 ('completed' / 'partial') が例外を投げても、済んだ取り込みを 'failed' に書き換えず 200 を返す
+ *   (以前は完了の更新が try の中にあり、例外が外の catch に届くと markImportRunFailed が呼ばれていた)。
+ * - カテゴリの last_crawled_at の更新の失敗を黙って捨てず、ログに残す (取り込みは続ける)。
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,7 +42,13 @@ const h = vi.hoisted(() => ({
   writes: [] as Array<{ table: string; kind: "insert" | "update"; payload: Record<string, unknown>; eq?: [string, unknown] }>,
   /** catalog_import_runs の update が返すエラー (null なら成功) */
   runUpdateError: null as { message: string } | null,
+  /** catalog_import_runs の update が投げる例外 (null なら投げない。#1540) */
+  runUpdateThrows: null as Error | null,
+  /** catalog_source_categories の update が返すエラー (null なら成功。#1540) */
+  categoryUpdateError: null as { message: string } | null,
   loggedErrors: [] as string[],
+  /** logger.error に渡された文と付帯情報 (#1540) */
+  loggedErrorEntries: [] as Array<{ message: string; metadata: Record<string, unknown> | undefined }>,
 }));
 
 type QueryResult = { data: unknown; error: unknown };
@@ -71,6 +82,8 @@ vi.mock("@supabase/supabase-js", () => ({
       update: (payload: Record<string, unknown>) => ({
         eq: async (column: string, value: unknown): Promise<QueryResult> => {
           h.writes.push({ table, kind: "update", payload, eq: [column, value] });
+          if (table === "catalog_import_runs" && h.runUpdateThrows) throw h.runUpdateThrows;
+          if (table === "catalog_source_categories") return { data: null, error: h.categoryUpdateError };
           return { data: null, error: table === "catalog_import_runs" ? h.runUpdateError : null };
         },
       }),
@@ -86,8 +99,9 @@ vi.mock("../supabase/functions/_shared/db-logger.ts", () => ({
     debug: () => {},
     info: () => {},
     warn: () => {},
-    error: (message: string) => {
+    error: (message: string, _error?: unknown, metadata?: Record<string, unknown>) => {
       h.loggedErrors.push(message);
+      h.loggedErrorEntries.push({ message, metadata });
     },
     withUser: () => ({}),
   }),
@@ -152,7 +166,10 @@ beforeEach(() => {
   h.tables = { catalog_sources: [SOURCE_ROW], catalog_source_categories: [ONIGIRI] };
   h.writes.length = 0;
   h.runUpdateError = null;
+  h.runUpdateThrows = null;
+  h.categoryUpdateError = null;
   h.loggedErrors.length = 0;
+  h.loggedErrorEntries.length = 0;
   fetchCalls.length = 0;
   firecrawlResponses = [];
   fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
@@ -319,5 +336,66 @@ describe("失敗しなかったときの run の行は以前のまま (#1522 の
 
     expect(res.status).toBe(MISSING_ENV_HTTP_STATUS);
     expect(runWrites()).toEqual([]);
+  });
+});
+
+describe("完了の記録の失敗は、取り込みの失敗として扱わない (#1540)", () => {
+  /** 完了の更新が投げる例外の文 (手で書いた値) */
+  const COMPLETE_UPDATE_THROW_MESSAGE = "network down while marking finished";
+
+  it("完了の更新が例外を投げても 200 のまま。行を 'failed' に書き換えず、記録しようとした status をログに残す", async () => {
+    h.runUpdateThrows = new Error(COMPLETE_UPDATE_THROW_MESSAGE);
+
+    const res = await runImport();
+    const body = (await res.json()) as { success: boolean; importRunId: string | null };
+
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ success: true, importRunId: RUN_ID });
+    // 'running' の挿入と完了の更新の 1 回だけ。'failed' への更新 (markImportRunFailed) は無い
+    expect(expectInsertedThenUpdatedOnce().status).toBe("completed");
+    expect(runWrites().some((write) => write.payload.status === "failed")).toBe(false);
+    expect(h.loggedErrors).toContain("Failed to mark catalog import run as finished");
+    expect(h.loggedErrors).not.toContain("Failed to mark catalog import run as failed");
+    expect(h.loggedErrors).not.toContain("Convenience catalog import failed");
+    const entry = h.loggedErrorEntries.find((e) => e.message === "Failed to mark catalog import run as finished");
+    expect(entry?.metadata).toEqual({ importRunId: RUN_ID, status: "completed" });
+  });
+
+  it("商品ごとの失敗があり完了の更新が例外を投げても 200 のまま。記録しようとした status は 'partial'", async () => {
+    firecrawlResponses = [firecrawlOk({ itemUrls: [ITEM_URL], categoryUrls: [] }), firecrawlFailure()];
+    h.runUpdateThrows = new Error(COMPLETE_UPDATE_THROW_MESSAGE);
+
+    const res = await runImport();
+
+    expect(res.status).toBe(200);
+    expect(expectInsertedThenUpdatedOnce().status).toBe("partial");
+    expect(runWrites().some((write) => write.payload.status === "failed")).toBe(false);
+    const entry = h.loggedErrorEntries.find((e) => e.message === "Failed to mark catalog import run as finished");
+    expect(entry?.metadata).toEqual({ importRunId: RUN_ID, status: "partial" });
+  });
+});
+
+describe("カテゴリの last_crawled_at の更新の失敗をログに残す (#1540)", () => {
+  it("更新がエラーを返したら、カテゴリを添えてログに残し、取り込みは続けて 'completed' にする", async () => {
+    h.categoryUpdateError = { message: "category update failed" };
+
+    const res = await runImport();
+
+    expect(res.status).toBe(200);
+    const categoryWrites = h.writes.filter((write) => write.table === "catalog_source_categories");
+    expect(categoryWrites).toHaveLength(1);
+    expect(categoryWrites[0].eq).toEqual(["id", ONIGIRI.id]);
+    expect(typeof categoryWrites[0].payload.last_crawled_at).toBe("string");
+    expect(expectInsertedThenUpdatedOnce().status).toBe("completed");
+    const entry = h.loggedErrorEntries.find((e) => e.message === "Failed to record catalog category last_crawled_at");
+    expect(entry?.metadata).toEqual({ importRunId: RUN_ID, categoryId: ONIGIRI.id, categoryCode: ONIGIRI.category_code });
+  });
+
+  it("更新が成功したらログに何も残さない", async () => {
+    const res = await runImport();
+
+    expect(res.status).toBe(200);
+    expect(h.writes.filter((write) => write.table === "catalog_source_categories")).toHaveLength(1);
+    expect(h.loggedErrors).toEqual([]);
   });
 });
