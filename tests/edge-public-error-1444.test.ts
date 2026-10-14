@@ -22,11 +22,7 @@ import {
   PublicRequestError,
   publicErrorMessage,
 } from '../supabase/functions/_shared/public-error';
-import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
-
-// 負荷の高い機械で vitest の既定の時間切れを超えて落ちたことがあるので、このファイルだけ延ばす
-// (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1488)。テストとフックを定義する前に置く
-applyHeavyUnitTestTimeout();
+import { DEFAULT_UNIT_HEAVY_HOOK_TIMEOUT_MS } from './helpers/heavy-unit-test-timeout';
 
 // Edge Runtime の型宣言だけの import (node_modules に無い)。中身は無いので空のモジュールにする
 vi.mock('@supabase/functions-js/edge-runtime.d.ts', () => ({}));
@@ -132,7 +128,9 @@ beforeAll(async () => {
     'fetch',
     vi.fn(async () => new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } })),
   );
-});
+  // 大きい Edge Function を 2 本 import するので、フックの時間切れだけを、同じ 2 本を読む tests/ai-usage-direct-jwt-edge.test.ts
+  // (一覧 HEAVY_UNIT_TEST_FILES にある) のフックと同じにする。テストの時間切れは既定のまま (どれも import のあとの処理だけ)
+}, DEFAULT_UNIT_HEAVY_HOOK_TIMEOUT_MS);
 
 afterAll(() => {
   vi.unstubAllGlobals();

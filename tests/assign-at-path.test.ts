@@ -59,7 +59,10 @@ describe('プロフィールの画面は assignAtPath を使う (自前でパス
   it('updatePerformanceProfile は assignAtPath で書く', () => {
     const start = page.indexOf('const updatePerformanceProfile');
     expect(start).toBeGreaterThanOrEqual(0);
-    const body = page.slice(start, page.indexOf('};', start));
+    // 関数の本体 (performanceProfile の既定の値の「};」より後ろまで)。終わりは、書いた結果を渡す updateField の呼び出し
+    const end = page.indexOf("updateField('performanceProfile'", start);
+    expect(end).toBeGreaterThan(start);
+    const body = page.slice(start, end);
     expect(body).toContain('assignAtPath(newProfile, path, value)');
     expect(body).not.toMatch(/path\.split\(/);
   });
