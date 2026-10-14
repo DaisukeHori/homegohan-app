@@ -308,6 +308,16 @@ export const SERVER_ENV_VARS = {
     // 読み方 (正の整数でなければ既定値) を 1 か所に置く
     readOnlyBy: 'src/lib/menu-plan-date-offset.ts',
   },
+  ORG_CHALLENGE_SHOW_NAMES: {
+    required: false,
+    description:
+      '組織チャレンジの順位表 (GET /api/org/challenges/[id]) に、参加者の表示名 (ニックネーム) を出すか (#1132)。' +
+      '1 / true / on / yes (大文字小文字・前後の空白は無視) のときだけ出す。サーバー側だけで読む (NEXT_PUBLIC_ にしない)',
+    whenMissing:
+      '順位表に参加者の表示名を出さない (本人は「あなた」、ほかの人は「参加者」と表示する)。1 / true / on / yes 以外の値も出さない',
+    // 読み方 (1 / true / on / yes だけを有効とみなす) を 1 か所に置く
+    readOnlyBy: 'src/lib/org-challenges.ts',
+  },
   SERVICE_ROLE_JWT: {
     required: false,
     description: 'SUPABASE_SERVICE_ROLE_KEY の古い別名。画像生成ジョブがこちらを先に読む',
