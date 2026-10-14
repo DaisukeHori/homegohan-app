@@ -1,0 +1,35 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# meals 02: スキャンのタブを開いたままバックグラウンド → フォアグラウンドに戻しても、
+# スキャンのタブの WebView (webview-meals) のまま (ホームやウェルカム画面に戻されない)。
+#
+# 撮影中・解析中の Web の画面の状態が残るかは、WebView の中の Web の画面の検査なので Web の e2e の役目 (#1552。README.md)。
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- extendedWaitUntil:
+    visible:
+      id: "webview-meals"
+    timeout: 15000
+
+# アプリをバックグラウンドに移す
+- pressKey: Home
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# フォアグラウンドに戻す (アプリを止めずに前に出す。settings/12 と同じ打ち方)
+- launchApp:
+    stopApp: false
+
+- extendedWaitUntil:
+    visible:
+      id: "webview-meals"
+    timeout: 15000
+- assertVisible:
+    id: "tab-meals"
+- assertNotVisible:
+    id: "welcome-screen"
