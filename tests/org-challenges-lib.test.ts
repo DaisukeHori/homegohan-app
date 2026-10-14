@@ -36,6 +36,7 @@ import {
   showParticipantNames,
   todayJst,
 } from '@/lib/org-challenges';
+import { PUBLIC_ENV_VARS, SERVER_ENV_VARS } from '@/lib/env';
 
 const ROOT = path.resolve(__dirname, '..');
 /** この機能の migration。version (先頭の 14 桁) は付け替えられることがあるので、名前の後ろ半分で探す */
@@ -233,31 +234,55 @@ describe('チャレンジの状態', () => {
 
 describe('順位表に表示名を出すか (ORG_CHALLENGE_SHOW_NAMES)', () => {
   it('未設定なら出さない (オーナーの確認が済むまでの既定)', () => {
-    expect(showParticipantNames({})).toBe(false);
-    expect(showParticipantNames({ ORG_CHALLENGE_SHOW_NAMES: undefined })).toBe(false);
-    expect(showParticipantNames({ ORG_CHALLENGE_SHOW_NAMES: '' })).toBe(false);
-    expect(showParticipantNames({ ORG_CHALLENGE_SHOW_NAMES: '   ' })).toBe(false);
+    expect(showParticipantNames(undefined)).toBe(false);
+    expect(showParticipantNames('')).toBe(false);
+    expect(showParticipantNames('   ')).toBe(false);
   });
 
   it.each(['1', 'true', 'on', 'yes', 'TRUE', 'On', ' yes ', 'YES\n'])('%j なら出す', (value) => {
-    expect(showParticipantNames({ ORG_CHALLENGE_SHOW_NAMES: value })).toBe(true);
+    expect(showParticipantNames(value)).toBe(true);
   });
 
   it.each(['0', 'false', 'off', 'no', 'y', 'enabled', '2', 'null', 'undefined'])('%j なら出さない', (value) => {
-    expect(showParticipantNames({ ORG_CHALLENGE_SHOW_NAMES: value })).toBe(false);
+    expect(showParticipantNames(value)).toBe(false);
   });
 
-  it('引数を省略すると process.env を読む', () => {
+  it('引数を省略すると、呼んだ時点の process.env.ORG_CHALLENGE_SHOW_NAMES を読む (未設定なら出さない・1 / true / on / yes だけ出す)', () => {
     const original = process.env.ORG_CHALLENGE_SHOW_NAMES;
     try {
       delete process.env.ORG_CHALLENGE_SHOW_NAMES;
       expect(showParticipantNames()).toBe(false);
       process.env.ORG_CHALLENGE_SHOW_NAMES = 'on';
       expect(showParticipantNames()).toBe(true);
+      process.env.ORG_CHALLENGE_SHOW_NAMES = ' YES ';
+      expect(showParticipantNames()).toBe(true);
+      process.env.ORG_CHALLENGE_SHOW_NAMES = 'off';
+      expect(showParticipantNames()).toBe(false);
+      process.env.ORG_CHALLENGE_SHOW_NAMES = '';
+      expect(showParticipantNames()).toBe(false);
     } finally {
       if (original === undefined) delete process.env.ORG_CHALLENGE_SHOW_NAMES;
       else process.env.ORG_CHALLENGE_SHOW_NAMES = original;
     }
+  });
+
+  it('環境変数の一覧 (src/lib/env.ts) に、任意・サーバー用・値を読むのは src/lib/org-challenges.ts だけとして載っている (#1142 の検査 6〜9 の対象)', () => {
+    const spec = SERVER_ENV_VARS.ORG_CHALLENGE_SHOW_NAMES;
+    expect(spec.required).toBe(false);
+    expect(spec.readOnlyBy).toBe('src/lib/org-challenges.ts');
+    expect(spec.whenMissing).toContain('出さない');
+    expect(Object.keys(PUBLIC_ENV_VARS)).not.toContain('ORG_CHALLENGE_SHOW_NAMES');
+  });
+
+  it('名前を書いて読む (process.env をまるごと受け取らない — #1142 の検査 9)', () => {
+    // コメントを除いたコードで見る (説明のコメントにも変数名が出てくるため)
+    const code = fs
+      .readFileSync(path.join(ROOT, 'src/lib/org-challenges.ts'), 'utf-8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    expect(code).toMatch(/export function showParticipantNames\(value: string \| undefined = process\.env\.ORG_CHALLENGE_SHOW_NAMES\)/);
+    // process.env を名前なしで使う箇所 (`process.env` の直後が `.名前` でない) が無い
+    expect(code).not.toMatch(/process\.env(?!\.[A-Z_])/);
   });
 
   it('順位表の表示用の定数', () => {

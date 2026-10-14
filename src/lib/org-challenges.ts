@@ -118,9 +118,14 @@ export const RANKING_ENTRY_LIMIT = 20;
  * 決まるまでは出さない (順位と「参加者」「あなた」だけを見せる)。
  * サーバー側だけで読む (API が表示名を載せるかどうかを決める)。NEXT_PUBLIC_ にはしない。
  * Vercel で変えた場合は、再デプロイ後に効く。
+ * 値を読むのはこの関数だけ (src/lib/env.ts の一覧の readOnlyBy。tests/env-source-scan.test.ts が確かめる)。
+ * 名前を書いて読む (`process.env.ORG_CHALLENGE_SHOW_NAMES`)。process.env をまるごと受け取ると、名前を書かない読み取りになり
+ * #1142 の検査 (名前を書かずに process.env を使うのは src/lib/env.ts だけ) に反する。
+ *
+ * @param value 環境変数の値。省略すると、呼んだ時点の process.env.ORG_CHALLENGE_SHOW_NAMES を読む (テストでは値を直接渡す)
  */
-export function showParticipantNames(env: Record<string, string | undefined> = process.env): boolean {
-  const raw = env.ORG_CHALLENGE_SHOW_NAMES?.trim().toLowerCase();
+export function showParticipantNames(value: string | undefined = process.env.ORG_CHALLENGE_SHOW_NAMES): boolean {
+  const raw = value?.trim().toLowerCase();
   return raw === '1' || raw === 'true' || raw === 'on' || raw === 'yes';
 }
 
