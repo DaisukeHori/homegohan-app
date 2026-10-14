@@ -99,6 +99,12 @@ jest.mock('../../src/components/ui', () => {
   };
 });
 
+// パスワード・メールアドレスの変更の部品 (#1187) は別のテスト (account-credentials.test.tsx) で確かめる。
+// ここでは退会だけを見るので、何も描かない部品に差し替える (部品が読み込み時に呼ぶ getUser を、退会の呼び出しと混ぜないため)
+jest.mock('../../src/components/settings/AccountCredentialsSection', () => ({
+  AccountCredentialsSection: () => null,
+}));
+
 import AccountSettingsPage from '../../app/settings/account';
 import { HttpNetworkError } from '@homegohan/core';
 import {

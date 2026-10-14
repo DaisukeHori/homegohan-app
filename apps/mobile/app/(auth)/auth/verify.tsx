@@ -31,6 +31,8 @@ export default function VerifyPage() {
   const [isProcessing, setIsProcessing] = useState(true);
   const [isDone, setIsDone] = useState(false);
   const [hasError, setHasError] = useState(false);
+  // メールアドレス変更の確認の 1 通目を受け付けた (もう一方のアドレスのリンクを待っている。#1187)
+  const [awaitingOther, setAwaitingOther] = useState(false);
 
   useEffect(() => {
     if (!linkResolved) return;
@@ -40,6 +42,7 @@ export default function VerifyPage() {
       setIsProcessing(true);
       setIsDone(false);
       setHasError(false);
+      setAwaitingOther(false);
 
       // 3 種類の Supabase auth リンク形式 (code / token_hash+type / access_token+refresh_token) を処理する
       const outcome = await completeAuthLink(params);
@@ -52,6 +55,9 @@ export default function VerifyPage() {
       } else if (outcome.status === "failed") {
         setHasError(true);
         Alert.alert("確認失敗", outcome.message);
+      } else if (outcome.status === "awaiting_other_confirmation") {
+        // エラーではないが、まだ変更は終わっていない。完了の表示やホームへの自動の移動はしない
+        setAwaitingOther(true);
       } else if (outcome.status === "empty") {
         // 処理できる情報が無い (リンクを経由せずに開いた・壊れたリンク)。
         // 以前はここでも完了扱いにして「確認が完了しました」と誤表示していた (#1038 F7-08)
@@ -65,17 +71,17 @@ export default function VerifyPage() {
     return () => {
       cancelled = true;
     };
-  }, [linkResolved, params?.code, params?.token_hash, params?.type, params?.access_token, params?.refresh_token, params?.error, params?.error_description]);
+  }, [linkResolved, params?.code, params?.token_hash, params?.type, params?.access_token, params?.refresh_token, params?.error, params?.error_description, params?.message]);
 
   // 認証成功後のみホームへリダイレクト
   const [hasSession, setHasSession] = useState(false);
   useEffect(() => {
-    if (isDone && !hasError) {
+    if (isDone && !hasError && !awaitingOther) {
       supabase.auth.getSession().then(({ data }) => setHasSession(!!data.session));
     }
-  }, [isDone, hasError]);
+  }, [isDone, hasError, awaitingOther]);
 
-  if (hasSession && isDone && !hasError) return <Redirect href="/(tabs)/home" />;
+  if (hasSession && isDone && !hasError && !awaitingOther) return <Redirect href="/(tabs)/home" />;
 
   return (
     <View testID="verify-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -96,13 +102,13 @@ export default function VerifyPage() {
             testID="verify-header-icon"
             style={{
               width: 64, height: 64, borderRadius: 20,
-              backgroundColor: isProcessing ? colors.blue : isDone && !hasError ? colors.success : colors.accent,
+              backgroundColor: isProcessing || awaitingOther ? colors.blue : isDone && !hasError ? colors.success : colors.accent,
               alignItems: "center", justifyContent: "center",
               marginBottom: spacing.md, ...shadows.md,
             }}
           >
             <Ionicons
-              name={isProcessing ? "mail-outline" : isDone && !hasError ? "checkmark-circle-outline" : "close-circle-outline"}
+              name={isProcessing || awaitingOther ? "mail-outline" : isDone && !hasError ? "checkmark-circle-outline" : "close-circle-outline"}
               size={32}
               color="#fff"
             />
@@ -127,7 +133,21 @@ export default function VerifyPage() {
             borderWidth: 1, borderColor: colors.border, ...shadows.sm,
             width: "100%",
           }}>
-            {isDone && !hasError ? (
+            {awaitingOther ? (
+              <View
+                testID="verify-awaiting-other-text"
+                style={{
+                  backgroundColor: colors.blueLight, borderRadius: radius.lg,
+                  padding: spacing.md, flexDirection: "row", alignItems: "center",
+                  gap: spacing.sm, width: "100%",
+                }}
+              >
+                <Ionicons name="mail-outline" size={20} color={colors.blue} />
+                <Text style={{ fontSize: 14, color: colors.text, flex: 1 }}>
+                  確認を受け付けました。メールアドレスの変更を終えるには、もう一方のメールアドレスに届いた確認メールのリンクも開いてください。
+                </Text>
+              </View>
+            ) : isDone && !hasError ? (
               <View style={{
                 backgroundColor: colors.successLight, borderRadius: radius.lg,
                 padding: spacing.md, flexDirection: "row", alignItems: "center",
@@ -154,9 +174,11 @@ export default function VerifyPage() {
               </View>
             )}
 
-            {/* ログインボタン */}
+            {/* ログインボタン。メールアドレス変更の確認待ちのときはログインしたままのことが多いので、入口 ("/") へ戻す
+                (入口がログイン状態を見て、ホームかウェルカム画面へ振り分ける。#1187) */}
             <Pressable
-              onPress={() => router.replace("/login")}
+              testID="verify-next-button"
+              onPress={() => router.replace(awaitingOther ? "/" : "/login")}
               style={({ pressed }) => ({
                 backgroundColor: colors.accent,
                 borderRadius: radius.lg, paddingVertical: 16,
@@ -165,7 +187,7 @@ export default function VerifyPage() {
                 width: "100%",
               })}
             >
-              <Text style={{ color: "#fff", fontSize: 16, fontWeight: "800" }}>ログインへ</Text>
+              <Text style={{ color: "#fff", fontSize: 16, fontWeight: "800" }}>{awaitingOther ? "アプリへ戻る" : "ログインへ"}</Text>
             </Pressable>
           </View>
         )}
