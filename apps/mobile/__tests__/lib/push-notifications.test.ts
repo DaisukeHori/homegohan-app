@@ -55,6 +55,7 @@ import * as Notifications from 'expo-notifications';
 import { supabase } from '../../src/lib/supabase';
 import {
   PUSH_ISSUE_LOG_TIMEOUT_MS,
+  PUSH_TOKEN_CLAIM_API_PATH,
   PUSH_TOKEN_REGISTERED_KEY_PREFIX,
   PUSH_TOKEN_VALUE_KEY_PREFIX,
   ensurePushTokenRegistered,
@@ -396,6 +397,109 @@ describe('registerAndSaveExpoPushToken — 失敗の観測 (#1038 F7-09)', () =>
 
     expect(loggedPushIssues()).toEqual([]);
     expect(await AsyncStorage.getItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`)).toBe('ExponentPushToken[test-token]');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #1599: 登録の直後に、同じトークンのほかの利用者の行をサーバーで外す (claim)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** mockPost への呼び出しのうち、claim の API へのもの */
+function claimCalls(): unknown[][] {
+  return mockPost.mock.calls.filter(([path]) => path === PUSH_TOKEN_CLAIM_API_PATH);
+}
+
+describe('registerAndSaveExpoPushToken — 同じトークンのほかの利用者の行を外す (#1599)', () => {
+  it('API のパスは、サーバーの route (src/app/api/push-tokens/claim/route.ts) と同じ', () => {
+    expect(PUSH_TOKEN_CLAIM_API_PATH).toBe('/api/push-tokens/claim');
+  });
+
+  it('本人の行の登録 (upsert) が済んでから、同じトークンで claim を呼ぶ (値の控えは claim より先)', async () => {
+    const order: string[] = [];
+    const mockUpsert = jest.fn(async () => {
+      order.push('upsert');
+      return { error: null };
+    });
+    mockFrom.mockReturnValue({ upsert: mockUpsert });
+    mockPost.mockImplementation(async (path: string) => {
+      order.push(`post:${path}`);
+      // claim の時点で、ログアウトで消すための値はもう控えてある
+      order.push(`stored:${await AsyncStorage.getItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`)}`);
+      return { released: 1 };
+    });
+
+    const result = await registerAndSaveExpoPushToken();
+
+    expect(result).toBe('ExponentPushToken[test-token]');
+    expect(order).toEqual(['upsert', `post:${PUSH_TOKEN_CLAIM_API_PATH}`, 'stored:ExponentPushToken[test-token]']);
+    expect(claimCalls()).toEqual([[PUSH_TOKEN_CLAIM_API_PATH, { expo_push_token: 'ExponentPushToken[test-token]' }]]);
+  });
+
+  it('権限が無くトークンを取らなかったとき・登録 (upsert) が失敗したときは、claim を呼ばない', async () => {
+    mockGetPermissionsAsync.mockResolvedValue({ status: 'denied' });
+    mockRequestPermissionsAsync.mockResolvedValue({ status: 'denied' });
+    await registerAndSaveExpoPushToken();
+    expect(claimCalls()).toEqual([]);
+
+    mockGetPermissionsAsync.mockResolvedValue({ status: 'granted' });
+    setupUpsert({ error: new Error('DB upsert failed') });
+    await expect(registerAndSaveExpoPushToken()).rejects.toThrow('DB upsert failed');
+    expect(claimCalls()).toEqual([]);
+  });
+
+  it('claim が失敗したら登録の失敗として投げ、起動時の自動登録は「登録済み」の印を付けない (次の起動でやり直す)', async () => {
+    const claimError = new Error('HTTP 500 Internal Server Error: {"error":"処理中にエラーが発生しました"}');
+    mockPost.mockImplementation(async (path: string) => {
+      if (path === PUSH_TOKEN_CLAIM_API_PATH) throw claimError;
+      return { success: true };
+    });
+
+    await expect(ensurePushTokenRegistered('user-123')).rejects.toBe(claimError);
+
+    expect(await AsyncStorage.getItem(`${PUSH_TOKEN_REGISTERED_KEY_PREFIX}:user-123`)).toBeNull();
+    // 本人の行は登録済みなので、ログアウトで消せるよう値は控えてある
+    expect(await AsyncStorage.getItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`)).toBe('ExponentPushToken[test-token]');
+
+    // 次の起動で claim が通れば、印が付く
+    mockPost.mockResolvedValue({ released: 1 });
+    await ensurePushTokenRegistered('user-123');
+    expect(await AsyncStorage.getItem(`${PUSH_TOKEN_REGISTERED_KEY_PREFIX}:user-123`)).toBe('1');
+  });
+
+  it('claim の失敗は、段 claim_token と HTTP の状態だけを端末のコンソールとサーバーログに残す (トークンの値・本文は送らない)', async () => {
+    mockPost.mockImplementation(async (path: string) => {
+      if (path === PUSH_TOKEN_CLAIM_API_PATH) {
+        throw new Error(`HTTP 503 Service Unavailable: ${SECRET_ERROR_TEXT}`);
+      }
+      return { success: true };
+    });
+
+    await expect(registerAndSaveExpoPushToken()).rejects.toThrow('HTTP 503');
+
+    expect(loggedPushIssues().map((issue) => issue.event)).toEqual(['push_token_registration_failed']);
+    expect(loggedPushIssues()[0].details).toEqual(expect.objectContaining({ stage: 'claim_token' }));
+    const logs = serverLogCalls().filter((call) => call.path === '/api/log');
+    expect(logs).toHaveLength(1);
+    expect(logs[0].body.metadata).toEqual(
+      expect.objectContaining({ event: 'push_token_registration_failed', stage: 'claim_token', http_status: 503 }),
+    );
+    const sentLogs = JSON.stringify(logs);
+    expect(sentLogs).not.toContain('ExponentPushToken');
+    expect(sentLogs).not.toContain('hunter2');
+    expect(sentLogs).not.toContain('user-123');
+  });
+
+  it('通信の失敗 (HTTP の状態が無いエラー) では、http_status を送らない', async () => {
+    mockPost.mockImplementation(async (path: string) => {
+      if (path === PUSH_TOKEN_CLAIM_API_PATH) throw new TypeError('Network request failed');
+      return { success: true };
+    });
+
+    await expect(registerAndSaveExpoPushToken()).rejects.toThrow('Network request failed');
+
+    const logs = serverLogCalls().filter((call) => call.path === '/api/log');
+    expect(logs[0].body.metadata).toEqual(expect.objectContaining({ stage: 'claim_token', error_name: 'TypeError' }));
+    expect(logs[0].body.metadata).not.toHaveProperty('http_status');
   });
 });
 
@@ -815,7 +919,7 @@ describe('サーバーログ (POST /api/log) への記録 — 登録の失敗 (#
   it('登録できたときは、/api/log に何も送らない', async () => {
     await registerAndSaveExpoPushToken();
 
-    expect(mockPost).not.toHaveBeenCalled();
+    expect(serverLogCalls().filter((call) => call.path === '/api/log')).toEqual([]);
   });
 });
 

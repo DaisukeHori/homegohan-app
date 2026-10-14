@@ -25,7 +25,7 @@ export const PUSH_ISSUE_SERVER_METADATA_KEYS = [
   "event",
   /** 端末の OS (Platform.OS) */
   "platform",
-  /** 登録の失敗の段 (get_token / save_token) */
+  /** 登録の失敗の段 (get_token / save_token / claim_token) */
   "stage",
   /** EAS の project ID をどこから取ったか */
   "project_id_source",
@@ -105,9 +105,17 @@ export function buildPushIssueLogBody(event: PushIssueEvent, fields: PushIssueSe
 /** 削除に使った push の値の出どころ */
 export type PushValueSource = "stored" | "refetched";
 
+/**
+ * 登録のどの段で失敗したか。
+ *   - get_token: Expo の push token を取れなかった
+ *   - save_token: user_push_tokens への登録 (本人の行の upsert) が失敗した
+ *   - claim_token: 同じトークンのほかの利用者の行を外す API (POST /api/push-tokens/claim。#1599) が失敗した
+ */
+export type PushRegistrationStage = "get_token" | "save_token" | "claim_token";
+
 /** push_token_registration_failed で送る値 */
 export function registrationFailureServerFields(input: {
-  stage: "get_token" | "save_token";
+  stage: PushRegistrationStage;
   platform: string;
   errorName: unknown;
   errorCode: unknown;

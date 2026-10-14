@@ -8,6 +8,7 @@ import { getApi } from "./api";
 import {
   type PushIssueEvent,
   type PushIssueServerFields,
+  type PushRegistrationStage,
   type PushValueSource,
   buildPushIssueLogBody,
   errorIdentifierOf,
@@ -171,9 +172,26 @@ function sendPushIssueToServer(
   }
 }
 
+/**
+ * 登録の直後に呼ぶ、同じトークンのほかの利用者の行を外す API (#1599。src/app/api/push-tokens/claim/route.ts)。
+ * 同じトークンは、最後に登録した 1 人にだけ紐づく。
+ */
+export const PUSH_TOKEN_CLAIM_API_PATH = "/api/push-tokens/claim";
+
+/** API のエラー応答 (`HTTP <status> <statusText>: <本文>`。@homegohan/core の createHttpClient) の状態の数字 */
+const API_ERROR_STATUS_PATTERN = /^HTTP (\d{3})\b/;
+
+/** API のエラーから HTTP の状態の数字を取り出す (取り出せなければ undefined。通信の失敗など) */
+function httpStatusOfApiError(error: unknown): number | undefined {
+  const message = (error as { message?: unknown } | null | undefined)?.message;
+  if (typeof message !== "string") return undefined;
+  const match = API_ERROR_STATUS_PATTERN.exec(message);
+  return match ? Number(match[1]) : undefined;
+}
+
 /** 登録失敗を端末のコンソールとサーバーログに出す (トークンやユーザー ID は載せない。サーバーログにはエラーの本文も載せない) */
 function reportPushRegistrationFailure(
-  stage: "get_token" | "save_token",
+  stage: PushRegistrationStage,
   error: unknown,
   resolved: ResolvedEasProjectId,
   httpStatus?: number,
@@ -273,11 +291,23 @@ export async function registerAndSaveExpoPushToken(options: RegisterPushTokenOpt
     throw error;
   }
 
-  // ログアウト時に「この端末の行だけ」を消せるよう、登録した値を控えておく (#1038 F7-10)。控えられなくても登録は成功扱い
+  // ログアウト時に「この端末の行だけ」を消せるよう、登録した値を控えておく (#1038 F7-10)。控えられなくても登録は成功扱い。
+  // 下の claim より前に控える (claim が失敗しても、本人の行は登録済みなので、ログアウトで消せるようにする)
   try {
     await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:${auth.user.id}`, token);
   } catch {
     // ignore
+  }
+
+  // 同じトークンが別の利用者の行にも残っていれば、サーバーで外す (#1599)。
+  // 共有の端末で、前の利用者のログアウトの削除がオフラインなどで失敗すると、前の利用者の行が残り、
+  // この利用者がログインしたあとも前の利用者宛ての通知がこの端末に届き得る。RLS で本人の行しか触れないので、サーバーの API で外す。
+  // 失敗したら登録の失敗として投げる (起動時の自動登録は「登録済み」の印を付けないので、次の起動でやり直す)
+  try {
+    await getApi().post(PUSH_TOKEN_CLAIM_API_PATH, { expo_push_token: token });
+  } catch (error) {
+    reportPushRegistrationFailure("claim_token", error, resolved, httpStatusOfApiError(error));
+    throw error;
   }
 
   return token;
