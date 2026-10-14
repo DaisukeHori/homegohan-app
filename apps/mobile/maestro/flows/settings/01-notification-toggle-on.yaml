@@ -11,12 +11,7 @@ env:
     id: "tab-profile"
 - extendedWaitUntil:
     visible:
-      id: "profile-screen"
-    timeout: 10000
-- scrollUntilVisible:
-    element:
-      id: "profile-settings-button"
-    direction: DOWN
+      id: "webview-profile"
     timeout: 10000
 - tapOn:
     id: "profile-settings-button"

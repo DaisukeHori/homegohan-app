@@ -22,11 +22,11 @@ jest.mock('expo-router', () => ({
 }));
 
 jest.mock('../../src/lib/signOut', () => ({
-  signOutWithCleanup: jest.fn(),
+  signOutOnDevice: jest.fn(),
 }));
 
 jest.mock('../../src/providers/AuthProvider', () => ({
-  useAuth: () => ({ user: { id: 'uid-settings' } }),
+  useAuth: () => ({ user: { id: 'uid-settings' }, clearSession: jest.fn() }),
 }));
 
 jest.mock('../../src/lib/api', () => ({
