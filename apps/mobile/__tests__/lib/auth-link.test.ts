@@ -168,3 +168,46 @@ describe('completeAuthLink — 同じリンクは 1 回だけ処理する', () =
     expect(mockExchangeCodeForSession).toHaveBeenCalledTimes(2);
   });
 });
+
+// ---- #1187: メールアドレス変更の確認リンク ----
+
+describe('completeAuthLink — メールアドレス変更の確認リンク (#1187)', () => {
+  it('両方の確認が要る設定の 1 通目: トークンの代わりに届く知らせを「もう一方の確認待ち」にする (エラーにも成功にもしない)', async () => {
+    // Supabase Auth (GoTrue) が 1 通目のリンクで戻り先に付けてくる、実際のフラグメント
+    const params = extractSupabaseLinkParams(
+      'homegohan://auth/verify#message=Confirmation+link+accepted.+Please+proceed+to+confirm+link+sent+to+the+other+email',
+    );
+
+    const outcome = await completeAuthLink(params);
+
+    expect(outcome).toEqual({ status: 'awaiting_other_confirmation' });
+    expect(mockExchangeCodeForSession).not.toHaveBeenCalled();
+    expect(mockVerifyOtp).not.toHaveBeenCalled();
+    expect(mockSetSession).not.toHaveBeenCalled();
+  });
+
+  it('知らせの文が「もう一方の確認待ち」でなければ、処理できる情報が無い扱いのまま (何が起きたか分からないものを受け付けたと言わない)', async () => {
+    const outcome = await completeAuthLink({ message: 'Something else happened' });
+
+    expect(outcome).toEqual({ status: 'empty' });
+  });
+
+  it('最後の確認 (トークン付き) は、知らせより先にトークンでセッションにする', async () => {
+    const outcome = await completeAuthLink({
+      access_token: 'at',
+      refresh_token: 'rt',
+      type: 'email_change',
+      message: 'Confirmation link accepted. Please proceed to confirm link sent to the other email',
+    });
+
+    expect(outcome).toEqual({ status: 'signed_in' });
+    expect(mockSetSession).toHaveBeenCalledWith({ access_token: 'at', refresh_token: 'rt' });
+  });
+
+  it('token_hash の形の確認リンク (type=email_change): verifyOtp にそのまま渡す', async () => {
+    const outcome = await completeAuthLink({ token_hash: 'hash-ec', type: 'email_change' });
+
+    expect(outcome).toEqual({ status: 'signed_in' });
+    expect(mockVerifyOtp).toHaveBeenCalledWith({ token_hash: 'hash-ec', type: 'email_change' });
+  });
+});

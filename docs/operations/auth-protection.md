@@ -128,7 +128,7 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 | パスワード再設定の依頼 | `resetPasswordForEmail` | 対応済み | 対応済み (次のビルドから) |
 | Google ログイン・登録 | `signInWithOAuth` | CAPTCHA の対象外 | CAPTCHA の対象外 |
 | メール確認の再送 (`/auth/verify`) | `resend` | 対応済み (トークンは `options.captchaToken`。#1474) | (モバイルに再送の画面は無い) |
-| 設定 → アカウント → パスワード変更の本人確認 | `signInWithPassword` | 対応済み (トークンは `options.captchaToken`。`src/app/(main)/settings/account/page.tsx`。#1474) | (モバイルに同等の処理は無い) |
+| 設定 → アカウント → パスワード変更の本人確認 | `signInWithPassword` | 対応済み (トークンは `options.captchaToken`。`src/app/(main)/settings/account/page.tsx`。#1474) | **未対応** (設定 → アカウント管理 → パスワード変更。`apps/mobile/src/lib/account-credentials.ts`。#1187 で次のビルドから入る画面で、トークンはまだ付けていない) |
 | 新しいパスワードの保存 (`/auth/reset-password`) | `updateUser` | CAPTCHA の対象外 | CAPTCHA の対象外 |
 
 メール確認の再送と、設定のパスワード変更の本人確認は、#1474 でトークンを付けた (それまでは、Supabase で CAPTCHA を有効にすると動かなくなる「未対応」だった)。ほかの画面と同じく、サイトキーが未設定ならウィジェットを出さず、トークンも付けない。サイトキーがあれば、トークンが取れるまで再送・変更のボタンは押せない。パスワード変更では、新しいパスワードの保存 (`updateUser`) と他の端末のログアウト (`signOut`) は CAPTCHA の対象外なので、トークンは本人確認の `signInWithPassword` にだけ付ける。
@@ -138,6 +138,7 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 - 本番 (Supabase の本番プロジェクト) を対象にした e2e のログイン (`tests/e2e/global-setup.ts`、`tests/e2e/fixtures/auth.ts` など。Supabase の REST を直接呼ぶ)。有効にするのと同時に、トークンが要らない方法 (管理 API でセッションを作るなど) へ変える。
 - **デプロイ後の動作確認スクリプトの `--with-auth`** (`npm run test:smoke -- --with-auth`、本体は `scripts/lib/smoke.mjs`)。テストユーザーで Supabase の `/auth/v1/token?grant_type=password` を直接呼ぶので、トークンが無く断られ、「ログインに失敗しました」と報告されて確認全体が失敗 (終了コード 1) になる。有効にするのと同時に、`--with-auth` を使わない運用 (未ログインで叩ける範囲だけの確認) にするか、トークンが要らない方法へ変える。`--with-auth` を付けない通常の確認は影響しない。
 - **Maestro (モバイルの e2e) の補助スクリプト** `apps/mobile/maestro/flows/scripts/reset-onboarding.js`。同じく Supabase のパスワードログインを直接呼ぶので、有効にすると失敗する。e2e と同じ扱いで直す。
+- **モバイルの設定 → アカウント管理 → パスワード変更** (#1187)。本人確認の `signInWithPassword` にトークンを付けていないので、有効にすると「ボットではないことの確認に失敗しました」と断られ、パスワードを変えられなくなる (メールアドレス変更の `updateUser` は CAPTCHA の対象外で影響しない)。有効にする前に、Web (#1474) と同じくトークンを付ける。
 - 結合テスト (`tests/integration/`) は、ローカルの Supabase (CAPTCHA は常に無効) に向けて動くので影響しない。
 
 ---

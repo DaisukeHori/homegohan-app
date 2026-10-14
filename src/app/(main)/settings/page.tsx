@@ -11,6 +11,7 @@ import { requestNotificationPermission } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { useAccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { AI_CONSENT_SETTINGS_ENTRY_TITLE, AI_CONSENT_SETTINGS_PATH } from "@/lib/ai/consent-config";
+import { getSupportEmail } from "@/lib/site-config";
 import {
   ACCOUNT_DELETE_CONFIRM_KEYWORD,
   ACCOUNT_DELETE_FAILED_MESSAGE,
@@ -486,8 +487,9 @@ export default function SettingsPage() {
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
              </button>
 
+             {/* 問い合わせ先は NEXT_PUBLIC_SUPPORT_EMAIL (未設定なら既定値)。src/lib/site-config.ts (#1194) */}
              <a 
-               href="mailto:support@homegohan.jp"
+               href={`mailto:${getSupportEmail()}`}
                className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
              >
                <div className="flex items-center gap-3">

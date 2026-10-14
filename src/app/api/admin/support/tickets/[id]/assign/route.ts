@@ -9,6 +9,7 @@ import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { assignTicketSchema } from '@/lib/admin/support-schemas';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 type RouteContext = { params: { id: string } };
 
@@ -43,14 +44,16 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     }
 
     // 監査ログ
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: currentUser.id,
-      action_type: 'admin.support.ticket.assign',
-      target_id: params.id,
-      target_type: 'support_ticket',
+    await recordAdminAudit({
+      supabase,
+      actorId: currentUser.id,
+      actionType: 'admin.support.ticket.assign',
+      targetId: params.id,
+      targetType: 'support_ticket',
       details: { assignee_id },
       severity: 'info',
-      ip_address: request.headers.get('x-forwarded-for'),
+      request,
+      routeName: 'api/admin/support/tickets/[id]/assign POST',
     });
 
     return NextResponse.json({ data: ticket });
