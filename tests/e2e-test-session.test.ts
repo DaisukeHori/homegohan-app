@@ -700,7 +700,7 @@ describe("Maestro の reset-onboarding.js (#1547)", () => {
     expect(issuedCount(recovered.calls)).toBe(3);
   });
 
-  it("Maestro の共通のフローは、パスワードを渡さず、Supabase の値をシェルの MAESTRO_ 付きの環境変数から渡す", () => {
+  it("Maestro の共通のフローは、パスワードを渡さず、Supabase の値とやり直す回数の上限をシェルの MAESTRO_ 付きの環境変数から渡す", () => {
     const yaml = fs.readFileSync(path.join(ROOT, "apps/mobile/maestro/flows/_shared/login-for-onboarding.yaml"), "utf8");
     const runScript = yaml.slice(yaml.indexOf('file: "../scripts/reset-onboarding.js"'));
     const envBlock = runScript.slice(0, runScript.indexOf("- launchApp"));
