@@ -11,7 +11,7 @@
  */
 
 import { test as base, type Page } from "@playwright/test";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
 import { generateTestPassword } from "../helpers/credentials";
@@ -85,7 +85,7 @@ export type FreshUserInfo = {
  * email_confirm: true を指定して即時有効化 (確認メール不要)。
  */
 export async function createFreshUser(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseClient,
   options?: { emailPrefix?: string },
 ): Promise<FreshUserInfo> {
   const prefix = options?.emailPrefix ?? "e2e-fresh";
@@ -113,7 +113,7 @@ export async function createFreshUser(
  * 失敗した場合は test fail としてエラーを throw する (DB ゴミ残り防止)。
  */
 export async function cleanupFreshUser(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseClient,
   userId: string,
 ): Promise<void> {
   const { error } = await supabaseAdmin.auth.admin.deleteUser(userId);
