@@ -38,6 +38,8 @@ function buildBubble(subStep: SubStepOfStep1, profile: PhotoTourProfile) {
       return {
         body: i18n.intro_title,
         position: 'auto' as const,
+        // E2E が各 Step の最初の intro 吹き出しを見分ける目印 (設計書 09-onboarding-handson-tour の testID 一覧。#846)
+        testId: 'tour-step-1-intro',
       };
     case '1.2':
       return {

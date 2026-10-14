@@ -225,7 +225,7 @@ export default function CheckupsPage() {
                   key={checkup.id}
                   testID={`health-checkups-item-${checkup.id}`}
                   style={styles.checkupCard}
-                  onPress={() => router.push(`/health/checkups/${checkup.id}` as any)}
+                  onPress={() => router.push(`/health/checkups/${encodeURIComponent(checkup.id)}`)}
                 >
                   {/* 上段: 日付・種別・リスクバッジ */}
                   <View style={styles.checkupTop}>

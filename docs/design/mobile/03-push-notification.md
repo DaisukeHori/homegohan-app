@@ -451,7 +451,7 @@ sequenceDiagram
   Expo->>APNs: APN 送信
   APNs->>Husband: Push 通知表示 (バッジ 3)
   Husband->>Husband: setNotificationHandler → setBadgeCountAsync(3)
-  Husband->>Husband: 通知タップ → /family/meal-requests 画面へ
+  Husband->>Husband: 通知タップ → /family 画面へ (/family/meal-requests の画面は無いので、notificationRoute が一番近い上位の画面を開く)
 ```
 
 ### 5.2 通知種別 on/off 設定フロー
@@ -491,7 +491,8 @@ sequenceDiagram
 |--------|---------|------|
 | `setNotificationBadge` | `__tests__/lib/pushNotifications.test.ts` | モックで `setBadgeCountAsync` が呼ばれることを確認 |
 | `decrementBadge` | 同上 | 現在値取得 → デクリメント → 0 以下にならないことを確認 |
-| `setupNotificationHandler` | 同上 | badge フィールドがある通知で `setBadgeCountAsync` が呼ばれる |
+| フォアグラウンドの表示と通知のタップ (#1049 F7-11) | `__tests__/components/NotificationRouter.test.tsx` | `setNotificationHandler` の表示の設定と、外したときの解除。タップ (起動中・終了からの起動) で `resolveNotificationHref` の行き先へ遷移する |
+| 通知の行き先 (#1049 F7-11) | `__tests__/lib/notification-route.test.ts` | `data.path` / `data.deep_link` の許す形・上位の画面への置き換え・`NOTIFICATION_ROUTES` の画面が `app/` に実在すること |
 | Quiet Hours ロジック | `__tests__/lib/quietHours.test.ts` | 22:00-07:00 でスキップされることを確認 |
 
 ### Manual テスト (必須)
@@ -529,8 +530,8 @@ appId: com.homegohan.app
   - `setNotificationBadge()` 関数を追加
   - `decrementBadge()` 関数を追加
   - `setupNotificationHandler()` 関数を追加
-- `app/_layout.tsx`: `setupNotificationHandler()` の呼び出しを追加
-- `app/(tabs)/settings.tsx`: 「通知」の単一 Switch を「通知設定 →」リンクに変更
+- `app/_layout.tsx`: 通知の受け取り口 `src/components/NotificationRouter.tsx` を Provider の内側に置く (実装済み。#1049 F7-11。`setupNotificationHandler()` は作っていない)
+- `app/(tabs)/settings.tsx`: 「通知」の単一 Switch を「通知設定 →」リンクに変更 (未実装。`app/settings/notifications.tsx` がまだ無く、単一 Switch のまま)
 
 ### 新規
 
