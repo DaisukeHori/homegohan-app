@@ -235,6 +235,8 @@ export async function logStreamingUsage(
   料理が 2 品以上の献立に利用者がカバーを付けた (`PATCH` の `imageUrl`) ときは、カバーにだけ付け、ジョブは今の決まりのまま積む
   (1 品なら今までどおり料理を `manual_override` にし、ジョブを積まない)。画像の処理はカバーが変わるときだけ `image_url` を書き、
   読んだときのカバーのままの行にだけ書く
+  料理 (`dishes`) も、読んだときの `updated_at` を条件にして書き、0 行なら読み直して自分の料理の画像だけを当て直す (#1527。上限
+  `MEAL_DISH_WRITE_MAX_ATTEMPTS` 回で諦めて失敗にする)。積めなかった料理の印・失敗の印も同じ書き方 (`writePlannedMealDishesWithOptimisticLock`) で書く (#1532・#1553)
   ジョブは行ごとの insert で積む (冪等キーの一意な索引は待ち・処理中だけの部分索引なので、`ON CONFLICT (idempotency_key)` の upsert は使えない)。
   同じ料理のジョブが待ち・処理中なら一意制約の違反 (23505) を重複として数え、1 行も積めなかったとき (重複・書き込みの失敗) は数えた 1 回を戻す。
   献立の保存に失敗したときも戻す

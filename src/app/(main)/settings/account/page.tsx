@@ -27,7 +27,8 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertCircle, CheckCircle2, ChevronLeft, Info } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { PASSWORD_HINT_TEXT, validatePassword } from "@/lib/auth/validate-password";
+import { normalizeEmailChangeInput, validatePasswordChangeInput } from "@homegohan/shared";
+import { PASSWORD_HINT_TEXT } from "@/lib/auth/validate-password";
 import {
   describeEmailChangeError,
   describePasswordChangeError,
@@ -45,9 +46,6 @@ type LoadState =
   | { kind: "error" }
   | { kind: "signed-out" }
   | { kind: "ready"; email: string; provider: string | null };
-
-/** 形式の大まかな確認だけ行う (厳密な検証は Supabase 側がする) */
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const FIELD_CLASS = "h-12 rounded-xl border-gray-200 focus-visible:ring-[#E07A5F]/30";
 const PRIMARY_BUTTON_CLASS =
@@ -88,26 +86,10 @@ function PasswordChangeSection({ supabase, email }: { supabase: SupabaseBrowserC
     if (submittingRef.current) return;
     setResult(null);
 
-    // 入力の検証。ここで弾けるものは、どの API も呼ばずに止める
-    if (!currentPassword) {
-      setError("現在のパスワードを入力してください");
-      return;
-    }
-    if (!newPassword) {
-      setError("新しいパスワードを入力してください");
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setError("新しいパスワードと確認用のパスワードが一致しません");
-      return;
-    }
-    const weakReason = validatePassword(newPassword);
-    if (weakReason) {
-      setError(weakReason);
-      return;
-    }
-    if (newPassword === currentPassword) {
-      setError("新しいパスワードは、現在のパスワードと違うものにしてください");
+    // 入力の検証。ここで弾けるものは、どの API も呼ばずに止める (規則と文言はモバイルと共通。packages/shared)
+    const inputError = validatePasswordChangeInput({ currentPassword, newPassword, confirmPassword });
+    if (inputError) {
+      setError(inputError);
       return;
     }
 
@@ -290,22 +272,13 @@ function EmailChangeSection({ supabase, currentEmail }: { supabase: SupabaseBrow
     if (submittingRef.current) return;
     setSentTo(null);
 
-    // login / forgot-password と同じく、大文字小文字の違いで別のアドレスと取り違えないよう小文字にそろえる (#288)
-    const normalized = newEmail.trim().toLowerCase();
-    if (!normalized) {
-      setError("新しいメールアドレスを入力してください");
+    // 前後の空白を除き小文字にそろえ (#288)、空・形式違い・今と同じアドレスを止める (規則と文言はモバイルと共通。packages/shared)
+    const input = normalizeEmailChangeInput(newEmail, currentEmail);
+    if (!input.ok) {
+      setError(input.message);
       return;
     }
-    if (!EMAIL_PATTERN.test(normalized)) {
-      setError("メールアドレスの形式が正しくありません");
-      return;
-    }
-    // Supabase は今と同じアドレスを指定してもエラーにせず何もしない。確認メールが届かないまま
-    // 「送りました」と表示してしまわないよう、ここで止める
-    if (normalized === currentEmail.trim().toLowerCase()) {
-      setError("現在のメールアドレスと同じです。別のメールアドレスを入力してください");
-      return;
-    }
+    const normalized = input.email;
 
     setError(null);
     submittingRef.current = true;

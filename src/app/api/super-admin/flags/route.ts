@@ -12,6 +12,7 @@ import { invalidateFeatureFlag } from '@/lib/feature-flags';
 import { CreateFeatureFlagSchema } from '@/lib/super-admin/flags-schemas';
 import { countActiveUsersForFlags } from '@/lib/super-admin/flag-active-users';
 import { internalError } from '@/lib/api/errors';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export async function GET() {
   try {
@@ -132,12 +133,15 @@ export async function POST(request: NextRequest) {
     }
 
     // 監査ログ
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: user.id,
-      action_type: 'super_admin.feature_flag.toggle',
-      target_type: 'feature_flag',
+    await recordAdminAudit({
+      supabase,
+      actorId: user.id,
+      actionType: 'super_admin.feature_flag.toggle',
+      targetType: 'feature_flag',
       details: { key, description, enabled, rollout_strategy, constraints, action: 'create' },
       severity: 'info',
+      request,
+      routeName: 'api/super-admin/flags POST',
     });
 
     // #1148: この API を処理したインスタンスの、API route 側が覚えている「行が無い」状態を忘れる。

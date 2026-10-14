@@ -26,10 +26,24 @@ export type AuthLinkOutcome =
   | { status: "link_error"; message: string }
   /** code の交換・OTP の確認・setSession のどれかが失敗した */
   | { status: "failed"; message: string }
+  /**
+   * メールアドレス変更の確認の 1 通目を受け付けた。もう一方のアドレスに届いたリンクも開くと変更が終わる (#1187)。
+   * Supabase の Secure email change が有効だと、現在と新しいアドレスの両方に確認メールが届き、1 通目のリンクは
+   * セッションではなく知らせ (message) だけを運んでくる
+   */
+  | { status: "awaiting_other_confirmation" }
   /** 処理できる情報が無い (リンクが無い・壊れている・別の画面向けのリンク) */
   | { status: "empty" };
 
-type OtpType = "signup" | "email" | "recovery" | "invite";
+/** email_change: メールアドレス変更の確認リンク (#1187)。メールの雛形が token_hash の形のときに届く */
+type OtpType = "signup" | "email" | "recovery" | "invite" | "email_change";
+
+/**
+ * 1 通目の確認を受け付けたときに Supabase Auth (GoTrue) が運んでくる知らせの文
+ * ("Confirmation link accepted. Please proceed to confirm link sent to the other email")。
+ * これ以外の知らせは、何が起きたか分からないので「処理できる情報が無い」扱いのままにする
+ */
+const AWAITING_OTHER_CONFIRMATION_PATTERN = /confirm link sent to the other email/i;
 
 /** 同じリンクの結果を共有しておく時間 (ミリ秒)。Android で届く 2 回分の通知が、これより離れることはない */
 const RESULT_SHARE_MS = 60_000;
@@ -80,7 +94,12 @@ export function completeAuthLink(params: SupabaseLinkParams | null | undefined):
   }
 
   const key = linkKey(params);
-  if (!key) return Promise.resolve({ status: "empty" });
+  if (!key) {
+    if (params.message && AWAITING_OTHER_CONFIRMATION_PATTERN.test(params.message)) {
+      return Promise.resolve({ status: "awaiting_other_confirmation" });
+    }
+    return Promise.resolve({ status: "empty" });
+  }
 
   const now = Date.now();
   for (const [k, entry] of inFlight) {

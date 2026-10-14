@@ -3,6 +3,7 @@ import { router } from "expo-router";
 import { useRef, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { AccountCredentialsSection } from "../../src/components/settings/AccountCredentialsSection";
 import { Button, Card, PageHeader, SectionHeader } from "../../src/components/ui";
 import { accountDeletionErrorOf } from "../../src/lib/account-deletion-error";
 import { getApi } from "../../src/lib/api";
@@ -86,7 +87,9 @@ export default function AccountSettingsPage() {
   return (
     <View testID="account-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader title="アカウント" />
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      {/* #1187: ログイン情報・パスワードの変更・メールアドレスの変更 (Web の設定 → アカウントと同じ構成) */}
+      <AccountCredentialsSection />
 
       <Card variant="error" style={{ gap: spacing.md }}>
         <SectionHeader

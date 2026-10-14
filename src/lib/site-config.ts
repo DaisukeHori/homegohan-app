@@ -8,13 +8,15 @@
  *
  * 環境変数 (どれも未設定・空・不正な値なら、下の既定値を使う):
  *
- * | 関数               | 環境変数                    | 例                                      |
- * |--------------------|-----------------------------|-----------------------------------------|
- * | getSiteUrl()       | NEXT_PUBLIC_APP_URL         | https://homegohan.com                   |
- * | getEmailFrom()     | EMAIL_FROM                  | ほめゴハン <noreply@mail.homegohan.com> |
- * | getSupportEmail()  | NEXT_PUBLIC_SUPPORT_EMAIL   | support@homegohan.com                   |
+ * | 関数               | 環境変数                    | 既定値 (未設定のとき・下の定数)                              | 切り替えるときの設定例                  |
+ * |--------------------|-----------------------------|--------------------------------------------------------------|-----------------------------------------|
+ * | getSiteUrl()       | NEXT_PUBLIC_APP_URL         | DEFAULT_SITE_URL = https://homegohan-app.vercel.app          | https://homegohan.com                   |
+ * | getEmailFrom()     | EMAIL_FROM                  | DEFAULT_EMAIL_FROM = ほめゴハン <noreply@homegohan.app>      | ほめゴハン <noreply@mail.homegohan.com> |
+ * | getSupportEmail()  | NEXT_PUBLIC_SUPPORT_EMAIL   | DEFAULT_SUPPORT_EMAIL = support@homegohan.app                | support@homegohan.com                   |
  *
+ * 右端の列は設定の書き方の例で、本番のドメインはまだ決まっていない (決まったら環境変数に入れる)。
  * 既定値は、環境変数を設定していない今の本番がそのまま使っている値にしてある (値は変えていない)。
+ * 既定値の表の値と下の定数がずれないことは tests/site-config-guard.test.ts が検査する。
  * homegohan.com への切り替え (Resend の送信ドメインの検証・DNS の登録・support@ の受信箱の用意のあと) は、
  * 上の 3 つの環境変数を設定するだけでよく、コードの変更は要らない。手順は docs/operations/email-domain.md。
  *

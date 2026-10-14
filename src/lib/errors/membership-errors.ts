@@ -144,3 +144,90 @@ export function mapPgErrorToHttp(
   }
   return { code: 'UNKNOWN', status: 500 };
 }
+
+/**
+ * 応答の本文の code (MembershipErrorCode) から、画面に出す日本語の文を引く表 (#1478)。
+ *
+ * 組織・家族の API は 4xx の本文を { error: { code, message } } で返し、message は操作ごとの固定の文
+ * (例: 「組織からの脱退に失敗しました」) なので、理由が画面で読めない。画面は code からこの表で理由の文を引く。
+ * Record<MembershipErrorCode, string> なので、enum に値を足したら、ここにも文を足さないと型検査で落ちる
+ * (tests/membership-errors.test.ts も全値に空でない文があることを確かめる)。
+ */
+export const MEMBERSHIP_ERROR_MESSAGES: Record<MembershipErrorCode, string> = {
+  [MembershipErrorCode.ORG_NOT_FOUND]: '組織が見つかりません。',
+  [MembershipErrorCode.NOT_IN_ORG]: '組織に所属していません。',
+  [MembershipErrorCode.ALREADY_IN_ORG]: 'すでに組織に所属しています。',
+  [MembershipErrorCode.SEAT_LIMIT_EXCEEDED]: '組織の席数の上限に達しています。',
+  [MembershipErrorCode.OWNER_CANNOT_LEAVE]: 'オーナーは組織から脱退できません。先にオーナーを譲ってください。',
+  [MembershipErrorCode.INSUFFICIENT_PERMISSION]: 'この操作をする権限がありません。',
+  [MembershipErrorCode.USER_NOT_IN_ORG]: '対象のユーザーはこの組織に所属していません。',
+  [MembershipErrorCode.NOT_ORG_ADMIN]: '組織の管理者だけが操作できます。',
+  [MembershipErrorCode.NOT_ORG_OWNER]: '組織のオーナーだけが操作できます。',
+  [MembershipErrorCode.IS_ORG_OWNER]: 'オーナーはこの操作をできません。先にオーナーを譲ってください。',
+  [MembershipErrorCode.CANNOT_REMOVE_OWNER]: 'オーナーは除名できません。',
+  [MembershipErrorCode.TARGET_NOT_IN_ORG]: '対象のメンバーはこの組織に所属していません。',
+  [MembershipErrorCode.FAMILY_NOT_FOUND]: '家族が見つかりません。',
+  [MembershipErrorCode.NOT_IN_FAMILY]: '家族に参加していません。',
+  [MembershipErrorCode.ALREADY_IN_FAMILY]: 'すでに家族に参加しています。',
+  [MembershipErrorCode.ALREADY_PROMOTED]: 'このメンバーはすでに自分のアカウントを持っています。',
+  [MembershipErrorCode.USER_NOT_FOUND]: 'ユーザーが見つかりません。',
+  [MembershipErrorCode.USER_NOT_IN_FAMILY]: '対象のユーザーはこの家族に参加していません。',
+  [MembershipErrorCode.NOT_FAMILY_ADULT]: '家族の大人のメンバーだけが操作できます。',
+  [MembershipErrorCode.MEMBER_LIMIT_EXCEEDED]: '家族の人数の上限に達しています。',
+  [MembershipErrorCode.MEAL_HIDDEN]: 'この食事は表示が止められているため、使えません。',
+  [MembershipErrorCode.MEMBER_NOT_FOUND]: 'メンバーが見つかりません。',
+  [MembershipErrorCode.IS_FAMILY_REPRESENTATIVE]: '代表者はこの操作をできません。先に代表者を譲ってください。',
+  [MembershipErrorCode.NOT_FAMILY_REPRESENTATIVE]: '家族の代表者だけが操作できます。',
+  [MembershipErrorCode.CANNOT_TRANSFER_TO_CHILD]: '子どものメンバーには代表者を譲れません。',
+  [MembershipErrorCode.PROMOTION_REQUEST_NOT_FOUND]: '昇格の依頼が見つかりません。',
+  [MembershipErrorCode.PROMOTION_REQUEST_EXPIRED]: '昇格の依頼の期限が切れています。',
+  [MembershipErrorCode.PROMOTION_REQUEST_ALREADY_USED]: 'この昇格の依頼はすでに使われています。',
+  [MembershipErrorCode.PROMOTION_EMAIL_MISMATCH]: '昇格の依頼の宛先とログイン中のメールアドレスが一致しません。',
+  [MembershipErrorCode.PROMOTION_MEMBER_UNAVAILABLE]: '昇格の対象のメンバーは、いまは昇格できません。',
+  [MembershipErrorCode.PROMOTION_DIRECT_DISABLED]: 'この方法では昇格できません。本人の同意の手続きを使ってください。',
+  [MembershipErrorCode.INVITE_NOT_FOUND]: '招待が見つかりません。',
+  [MembershipErrorCode.INVITE_EXPIRED]: '招待の期限が切れています。',
+  [MembershipErrorCode.INVITE_ALREADY_USED]: 'この招待はすでに使われています。',
+  [MembershipErrorCode.INVITE_REVOKED]: 'この招待は取り消されています。',
+  [MembershipErrorCode.EMAIL_MISMATCH]: '宛先とログイン中のメールアドレスが一致しません。',
+  [MembershipErrorCode.INVITE_EMAIL_MISMATCH]: '招待の宛先とログイン中のメールアドレスが一致しません。',
+  [MembershipErrorCode.TRANSFER_NOT_FOUND]: '譲渡の依頼が見つかりません。',
+  [MembershipErrorCode.TRANSFER_NOT_PENDING]: 'この譲渡の依頼はすでに処理されています。',
+  [MembershipErrorCode.TRANSFER_PROPOSAL_NOT_FOUND]: '譲渡の依頼が見つかりません。',
+  [MembershipErrorCode.TRANSFER_PROPOSAL_EXPIRED]: '譲渡の依頼の期限が切れています。',
+  [MembershipErrorCode.TRANSFER_ACCEPTOR_NOT_IN_ORG]: '譲渡を受ける人がこの組織に所属していません。',
+  [MembershipErrorCode.TRANSFER_ACCEPTOR_NOT_IN_FAMILY]: '譲渡を受ける人がこの家族に参加していません。',
+  [MembershipErrorCode.NOT_AUTHENTICATED]: 'ログインが必要です。',
+  [MembershipErrorCode.RATE_LIMITED]: '操作が多すぎます。しばらく待ってからもう一度お試しください。',
+  [MembershipErrorCode.RPC_FAILED]: '処理に失敗しました。時間をおいてもう一度お試しください。',
+  [MembershipErrorCode.EMAIL_SEND_FAILED]: 'メールを送れませんでした。時間をおいてもう一度お試しください。',
+  [MembershipErrorCode.CONFLICT_RETRY]: 'ほかの操作と重なりました。もう一度お試しください。',
+};
+
+/** 表に無い code (INVALID_BODY・INTERNAL_ERROR・UNKNOWN など) や、code が無いときの汎用の文 */
+export const MEMBERSHIP_ERROR_FALLBACK_MESSAGE = '処理に失敗しました。時間をおいてもう一度お試しください。';
+
+const MEMBERSHIP_ERROR_CODE_VALUES: ReadonlySet<string> = new Set(Object.values(MembershipErrorCode));
+
+function isMembershipErrorCode(value: unknown): value is MembershipErrorCode {
+  return typeof value === 'string' && MEMBERSHIP_ERROR_CODE_VALUES.has(value);
+}
+
+/**
+ * 応答の本文の code から、画面に出す文を引く (#1478)。表に無い code・文字列でない値は MEMBERSHIP_ERROR_FALLBACK_MESSAGE。
+ * 本文の message (サーバーの文) はそのまま出さない
+ */
+export function membershipErrorMessage(code: unknown): string {
+  return isMembershipErrorCode(code) ? MEMBERSHIP_ERROR_MESSAGES[code] : MEMBERSHIP_ERROR_FALLBACK_MESSAGE;
+}
+
+/**
+ * 組織・家族の API の失敗の本文 ({ error: { code, message } }。flat の { error, code } も受け付ける) から、画面に出す文を引く。
+ * 本文が JSON でない・形が違うときは汎用の文
+ */
+export function membershipErrorMessageOfBody(body: unknown): string {
+  if (!body || typeof body !== 'object') return MEMBERSHIP_ERROR_FALLBACK_MESSAGE;
+  const { error, code } = body as { error?: unknown; code?: unknown };
+  const nestedCode = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+  return membershipErrorMessage(nestedCode ?? code);
+}
