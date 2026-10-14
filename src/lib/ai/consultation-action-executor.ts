@@ -38,6 +38,7 @@ import {
 import { AI_DAILY_LIMIT_CODE, aiDailyLimitMessageOfDenied } from '../../../supabase/functions/_shared/ai-daily-limit';
 import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { isUltimateModeRequested } from '@/lib/ai/ultimate-mode';
+import { weeklyMenuRequestUltimateModeData } from '@/lib/ai/weekly-menu-request-ultimate';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { createLogger } from '@/lib/db-logger';
 import { errorCodeOf, toLoggableError } from '@/lib/api/errors';
@@ -377,6 +378,8 @@ export async function runConsultationAction(
             totalSteps: 3,
             message: '1日分の献立を生成中...',
           },
+          // 究極モードの生成かを、行を作った時点から行に残す (#1582。生成中の行の確認 (weekly/pending) が読む)
+          generated_data: weeklyMenuRequestUltimateModeData(ultimate),
         })
         .select('id')
         .single();
@@ -497,6 +500,8 @@ export async function runConsultationAction(
             totalSteps: 21,
             message: '1週間分の献立を生成中...',
           },
+          // 究極モードの生成かを、行を作った時点から行に残す (#1582。生成中の行の確認 (weekly/pending) が読む)
+          generated_data: weeklyMenuRequestUltimateModeData(ultimate),
         })
         .select('id')
         .single();
@@ -629,6 +634,8 @@ export async function runConsultationAction(
             totalSteps: 1,
             message: '献立を生成中...',
           },
+          // 究極モードの生成かを、行を作った時点から行に残す (#1582。生成中の行の確認 (weekly/pending) が読む)
+          generated_data: weeklyMenuRequestUltimateModeData(ultimate),
         })
         .select('id')
         .single();
