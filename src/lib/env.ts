@@ -316,13 +316,20 @@ export const SERVER_ENV_VARS = {
   NEXTAUTH_URL: {
     required: false,
     description: '運営画面のサーバー側 fetch が呼ぶ、このアプリ自身の URL (最優先)',
-    whenMissing: 'VERCEL_URL、なければ http://localhost:3000 を使う',
+    whenMissing: 'VERCEL_URL、なければ http://localhost:<PORT> (PORT も無ければ 3000) を使う',
     format: 'url',
   },
   VERCEL_URL: {
     required: false,
     description: 'このデプロイの URL (https:// なしのホスト名)。Vercel が自動で入れる',
-    whenMissing: 'http://localhost:3000 を使う (Vercel 上では自動で入る)',
+    whenMissing: 'http://localhost:<PORT> (PORT も無ければ 3000) を使う (Vercel 上では自動で入る)',
+  },
+  PORT: {
+    required: false,
+    description:
+      'このサーバー (next dev / next start) が待ち受けるポート。運営画面のサーバー側 fetch は、NEXTAUTH_URL も VERCEL_URL も無いとき ' +
+      'http://localhost:<PORT> の自分自身に問い合わせる (#1584。src/lib/admin/fetch.ts)。next start -p で 3000 以外にするときは、同じ値を PORT にも入れる',
+    whenMissing: 'Next.js の既定の 3000 で待ち受け、運営画面のサーバー側 fetch は http://localhost:3000 に問い合わせる',
   },
   VERCEL_ENV: {
     required: false,
