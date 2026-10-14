@@ -48,16 +48,6 @@ const BUBBLE_CHANGE_TIMEOUT_MS = 10_000;
  */
 export const BADGES_API_DELAY_MS = 1_500;
 
-/**
- * Step 3 (バッジ確認) を [次へ] で進めるテストの画面の大きさ。
- * Step 3 の吹き出しは、案内するバッジのカードの下 (position: 'bottom') に出て、全面のオーバーレイ (position: fixed) の中にあるので
- * 画面の外に出るとスクロールしても届かない。既定の 1280x720 (Desktop Chrome) では planner / tutorial_complete のカードが画面の下にあり、
- * [次へ] が画面の外に出て押せない (製品の不具合。#846 で発見。05-step3-badges の fixme が確かめる)。
- * Step 3 の先 (Step 4) を確かめるテストは、バッジの一覧 (付与処理のあるバッジ約 20 枚 = 3 列で 7〜8 行、1 行約 100px) と
- * 吹き出しが画面に収まる高さで動かす
- */
-export const STEP3_ALL_BADGES_VIEWPORT = { width: 1280, height: 1800 } as const;
-
 /** 失敗のメッセージに載せる、応答の本文の先頭の長さ */
 const ERROR_BODY_PREVIEW_CHARS = 300;
 
@@ -307,7 +297,9 @@ export async function skipTourAtStep0(page: Page): Promise<void> {
 /**
  * Step 1 (/handson-tour/photo) を最後まで進める。
  * intro → カメラ → 解析中 (ここまで自動) → 結果 → [次へ] → [保存] → Step 2 (/handson-tour/menu) へ。
- * 保存の通信 (POST /api/meal-plans/add-from-photo) の応答を返す。画面は、保存が失敗しても先へ進む (体験モードのため)。
+ * 保存の通信 (POST /api/meal-plans/add-from-photo) の応答を返す。
+ * 保存が失敗すると、画面はエラー (tour-step-1-error) を出して先へ進まない (設計書 03-step1 §3.10。#1604)。
+ * Step 2 への遷移の時間切れで落ちると原因が分からないので、失敗の応答ならその本文を付けて投げる。
  */
 export async function completeStep1(page: Page): Promise<ApiResponseResult> {
   await expect(page.getByTestId("meal-result-dish-name")).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
@@ -322,6 +314,9 @@ export async function completeStep1(page: Page): Promise<ApiResponseResult> {
     nextButton(page, "保存").click({ timeout: AUTO_ADVANCE_TIMEOUT_MS }),
   ]);
   const result = await readResponse(saved);
+  if (!saved.ok()) {
+    throw new Error(`[tour/helpers] Step 1 の保存が ${result.status} で失敗しました: ${describeBody(result.body)}`);
+  }
   await page.waitForURL("**/handson-tour/menu", { timeout: NAVIGATION_TIMEOUT_MS });
   return result;
 }

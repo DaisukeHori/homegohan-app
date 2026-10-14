@@ -29,6 +29,11 @@ test.use({ storageState: EMPTY_STORAGE_STATE });
 
 const HTTP_OK = 200;
 
+/** JST の暦日 (YYYY-MM-DD)。user_daily_meals.day_date は JST の暦日で入る */
+function jstToday(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date());
+}
+
 /** intro (1.1) が自動でカメラの段階 (1.2) へ進むのを待つ上限 (intro は 2.5 秒) */
 const INTRO_TO_CAMERA_TIMEOUT_MS = 10_000;
 
@@ -61,31 +66,33 @@ test.describe("Tour - Step 1: 写真追加", () => {
     await expect(page.getByTestId("tour-step-2-intro")).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
   });
 
-  // 製品の既知の不具合で通らない (#846 の E2E で見つけた。直したら .fixme を外す)
-  test.fixme(
-    "Step 1: 保存の API (POST /api/meal-plans/add-from-photo) が成功し、お試しの記録 (is_sandbox = true) が DB に入る",
-    {
-      annotation: {
-        type: "fixme",
-        description:
-          "ツアーが送る本文 (MOCK_PHOTO_RESPONSE + sandbox / source) に dayDate と mealType が無く、API が 400 (mealType の検証) を返す。" +
-          "画面は失敗を無視して Step 2 へ進むので、利用者には見えない。" +
-          "お試しの記録を何として残すか (日付・食事の区分・カレンダーに出すか) は製品判断が要る。",
-      },
-    },
-    async ({ page, tourUser }) => {
-      await page.goto("/handson-tour/photo");
+  // #1604: 以前はツアーが送る本文に dayDate / mealType が無く、API が 400 (mealType の検証) を返していた (#846 の E2E で発見)。
+  // 設計書 03-step1 §3.7 の決めどおり、保存した今日 (JST の暦日) の夕食として、お試しの記録 (is_sandbox = true) が入る
+  test("Step 1: 保存の API (POST /api/meal-plans/add-from-photo) が成功し、今日の夕食としてお試しの記録 (is_sandbox = true) が DB に入る", async ({
+    page,
+    tourUser,
+  }) => {
+    await page.goto("/handson-tour/photo");
 
-      const saved = await completeStep1(page);
+    const before = jstToday();
+    const saved = await completeStep1(page);
+    const after = jstToday();
 
-      expect(saved.status, describeBody(saved.body)).toBe(HTTP_OK);
-      const sandboxDays = await selectRows(
-        "user_daily_meals",
-        `user_id=eq.${tourUser.id}&is_sandbox=eq.true&select=id`,
-      );
-      expect(sandboxDays).toHaveLength(1);
-    },
-  );
+    expect(saved.status, describeBody(saved.body)).toBe(HTTP_OK);
+    const sandboxDays = await selectRows<{ id: string; day_date: string }>(
+      "user_daily_meals",
+      `user_id=eq.${tourUser.id}&is_sandbox=eq.true&select=id,day_date`,
+    );
+    expect(sandboxDays).toHaveLength(1);
+    // 保存した日 (JST)。日付をまたいだときのため、保存の前後どちらかの日と一致すればよい
+    expect([before, after]).toContain(sandboxDays[0].day_date);
+
+    const meals = await selectRows<{ meal_type: string; dish_name: string; source_type: string }>(
+      "planned_meals",
+      `daily_meal_id=eq.${sandboxDays[0].id}&select=meal_type,dish_name,source_type`,
+    );
+    expect(meals).toEqual([{ meal_type: "dinner", dish_name: "鶏の唐揚げ定食", source_type: "handson_tour" }]);
+  });
 
   test("Step 1: meal-result-dish-name が表示される (サンドボックス固定値)", async ({ page, tourUser }) => {
     await page.goto("/handson-tour/photo");
