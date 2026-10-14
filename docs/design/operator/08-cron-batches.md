@@ -16,7 +16,7 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 
 §3.1 以降の表と各節は、設計時の計画であり、**ほとんどは実装されていない**。§4 の pg_cron 用の関数 (`process_license_expire()` など 7 本) は本番に無く (`supabase/baseline/catalog/catalog_functions.csv`)、`vercel.json` に登録されている Vercel Cron は `process-menu-queue` と `app-log-alerts` (§3.2 の `app_log_alerts`。#1157) の 2 本である。
 Stripe Webhook・収益スナップショット・ライセンス系のバッチは、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
-いま、このリポジトリの migration が pg_cron に登録しているジョブは 5 つある。この節で扱うのは、#1125 の第 1 段で足した次の 2 つ (migration `20261010150000_schedule_log_cleanup_and_dau_snapshot.sql`)。残りの 3 つ `calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims` は、下の箇条書きの「そのほか」に書く。
+いま、このリポジトリの migration が pg_cron に登録しているジョブは 6 つある。この節で扱うのは、#1125 の第 1 段で足した次の 2 つ (migration `20261010150000_schedule_log_cleanup_and_dau_snapshot.sql`)。残りの 4 つ `calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims`・`update-org-challenge-progress` は、下の箇条書きの「そのほか」に書く。
 
 | ジョブ名 | 実行時刻 | 実行する SQL | 内容 |
 |---------|---------|-------------|------|
@@ -30,6 +30,7 @@ Stripe Webhook・収益スナップショット・ライセンス系のバッチ
 - そのほか、migration `20261009100000_schedule_calculate_segment_stats.sql` (#1406) が、ジョブ `calculate-segment-stats` を毎時 5 分 (`5 * * * *` UTC。JST も毎時 5 分) に登録している。比較ランキングの集計 (Edge Function `calculate-segment-stats`) を、`public.invoke_calculate_segment_stats()` から HTTP (`net.http_post`) で呼ぶ。詳しくはその migration の冒頭のコメント。
 - そのほか、migration `20261011120000_segment_stats_finalize_retry.sql` (#1500) が、ジョブ `calculate-segment-stats-finalize-retry` を毎日 00:20 と 00:35 JST (`20,35 15 * * *` UTC) に登録している。期間が切り替わった直後の確定の回 (JST 00:05。本文 `previousPeriod: true`) の再試行で、`public.invoke_calculate_segment_stats_finalize_retry()` が、確定の回の本文だけを `calculate-segment-stats` と同じ呼び先・同じ秘密 (Vault の `app_cron_secret`) で送る。確定の回をやり終えた期間は表 `segment_stats_finalized_periods` に記録され、Edge Function は記録のある期間への確定の回では何も読まず何も書かない (二重に判定しない)。3 回とも失敗したことを知らせる仕組みは無い (運用メールのエラー急増の通知は、この 3 件だけでは届かない)。ロールバックは `supabase/rollbacks/20261011120000_segment_stats_finalize_retry.down.sql`。詳しくはその migration の冒頭のコメント。
 - そのほか、migration `20261011070000_schedule_login_failure_and_grant_claim_cleanup.sql` (#1492) が、ジョブ `cleanup-stale-login-failures-and-grant-claims` を毎日 03:45 JST (`45 18 * * *` UTC) に登録している。`SELECT public.cleanup_stale_auth_login_failures(), public.cleanup_expired_ai_usage_grant_claims();` を呼び、ログイン失敗の記録 (`auth_login_failures`) のうち最後の失敗 (`last_failed_at`。無ければ `updated_at`) が 8 日より古い行と、数え済みの印の使用済みの記録 (`ai_usage_grant_claims`) のうち `claimed_at` が 1 日より古い行を消す。8 日はアプリの上限 `LOGIN_FAILURE_RESET_MINUTES_MAX` (7 日) + 余裕 1 日、1 日は `claim_ai_usage_grant` の `c_claim_retention` と同じ値。2 つの関数の `EXECUTE` は `service_role` と所有者 (`postgres`) だけ (`PUBLIC`・`anon`・`authenticated` から外す)。ロールバックは `supabase/rollbacks/20261011070000_schedule_login_failure_and_grant_claim_cleanup.down.sql`。詳しくはその migration の冒頭のコメント。
+- そのほか、migration `20261014100100_org_challenge_progress.sql` (#1132) が、ジョブ `update-org-challenge-progress` を毎日 03:10 JST (`10 18 * * *` UTC) に登録している。`SELECT public.update_org_challenge_progress()` を呼び、開催中の組織チャレンジ (朝食・野菜スコア・自炊の 3 種類) の参加者ごとの進み具合 (`current_value`) と順位 (`rank`) を食事の記録から計算し、終了日 (JST) を過ぎたチャレンジを `completed` にする。関数の `EXECUTE` は `service_role` だけ。ロールバックは `supabase/rollbacks/20261014100100_org_challenge_progress.down.sql`。詳しくは `org/07-challenge.md` §15 とその migration の冒頭のコメント。
 - 過去の migration で登録されたジョブ (`catalog-import-*` の 5 本、`handson-tour-sandbox-cleanup`) もある。これらは #1116 でベースラインに統合され、いまの migration には登録の SQL が無い。本番で動いているかは `cron.job` で確認する。
 
 #### 3.0.1 `snapshot-daily-active-users` — アクティブ利用者 (DAU / WAU / MAU) の数え方
@@ -143,10 +144,10 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 | `failed_invite_lookups_cleanup` | daily 05:30 UTC | 7 日超の failed_invite_lookups 削除 |
 | `update-org-challenge-progress` | daily 18:10 UTC (03:10 JST) | 組織チャレンジの進み具合 (current_value) と順位 (rank) を食事の記録から計算し、終了日 (JST) を過ぎたチャレンジを completed にする (`update_org_challenge_progress()`。#1132。詳細は `org/07-challenge.md` §15) |
 
-> **2026-10-10 時点の状態**: 上の 9 本は、どれも migration で登録していない (§4 の関数 7 本は本番に無い)。
+> **2026-10-14 時点の状態**: 上の 10 本のうち `update-org-challenge-progress` (#1132。migration `20261014100100_org_challenge_progress.sql`) のほかの 9 本は、どれも migration で登録していない (§4 の関数 7 本は本番に無い)。
 > `infra_metrics_cleanup` と `failed_invite_lookups_cleanup` は、それぞれの表に書き込む処理がまだ無く (表が常に空)、消す対象が無いため、この段では足さない。
 > `stripe_event_stuck_check` (Stripe Webhook) と、ライセンス系の `license_expire_batch`・`license_used_count_reconcile` は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
-> migration が pg_cron に登録しているのは、この表に無い `cleanup-old-app-logs`・`snapshot-daily-active-users`・`calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims` の 5 つ (§3.0)。
+> migration が pg_cron に登録しているのは、この表の `update-org-challenge-progress` と、この表に無い `cleanup-old-app-logs`・`snapshot-daily-active-users`・`calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims` の 6 つ (§3.0)。
 
 ### 3.2 Vercel Cron ジョブ (HTTP)
 
