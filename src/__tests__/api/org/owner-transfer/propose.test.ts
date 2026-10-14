@@ -10,9 +10,15 @@ const mockRpc = vi.fn();
 const mockFrom = vi.fn();
 const client = { auth: { getUser: mockGetUser }, rpc: mockRpc, from: mockFrom };
 
-vi.mock('@/lib/supabase/server', () => ({
-  createClient: vi.fn(() => client),
-}));
+// 宛先のメールアドレスを引く管理者クライアントは本物の getSupabaseAdmin を通す
+// (#1162。接続情報は env-required の getter で取り出し、下で差し替えた @supabase/supabase-js の createClient で作る)
+vi.mock('@/lib/supabase/server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/supabase/server')>();
+  return {
+    createClient: vi.fn(() => client),
+    getSupabaseAdmin: vi.fn(actual.getSupabaseAdmin),
+  };
+});
 
 // 宛先ユーザーのメールアドレスを引く管理者クライアント (SUPABASE_SERVICE_ROLE_KEY がある場合だけ使われる)
 const mockGetUserById = vi.fn();
@@ -56,6 +62,8 @@ vi.mock('@/lib/emails/send', () => ({
 }));
 
 const { POST } = await import('@/app/api/org/owner-transfer/propose/route');
+const { getSupabaseAdmin } = await import('@/lib/supabase/server');
+const { createClient: createSupabaseJsClient } = await import('@supabase/supabase-js');
 
 const owner = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', email: 'owner@example.com' };
 const orgId = 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22';
@@ -356,6 +364,66 @@ describe('POST /api/org/owner-transfer/propose: メール送信の失敗 (#1193)
 
     expect(res.status).toBe(200);
     expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+describe('POST /api/org/owner-transfer/propose: 管理者クライアントは canonical の getSupabaseAdmin で作る (#1162)', () => {
+  it('同じ鍵・同じ設定 (セッションを保存しない・自動で更新しない) のクライアントを 1 回だけ作り、宛先のメールアドレスを引く', async () => {
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(getSupabaseAdmin)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createSupabaseJsClient)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createSupabaseJsClient)).toHaveBeenCalledWith('http://127.0.0.1:54321', 'service-role-test-key', {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    expect(mockGetUserById).toHaveBeenCalledWith(toUserId);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('owner でない (403) なら、管理者クライアントを作らない (認可を先に通す)', async () => {
+    profile = { organization_id: orgId, org_role: 'admin', nickname: null };
+
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(403);
+    expect(vi.mocked(getSupabaseAdmin)).not.toHaveBeenCalled();
+    expect(vi.mocked(createSupabaseJsClient)).not.toHaveBeenCalled();
+  });
+
+  it('service_role の接続情報が欠けていたら、提案は 200 のまま、メールだけを送らずに info に残す (警告にはしない)', async () => {
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', '');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = await POST(postRequest(validBody));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.proposal_id).toBe(proposalId);
+    expect(vi.mocked(createSupabaseJsClient)).not.toHaveBeenCalled();
+    expect(mockGetUserById).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('メール送信スキップ'), expect.objectContaining({ proposalId }));
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('メール送信失敗'), expect.anything());
+    info.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('管理者クライアントでの取得が失敗したら、提案は 200 のまま、警告に残し、スキップの info は出さない', async () => {
+    const readError = new Error('getUserById failed');
+    mockGetUserById.mockRejectedValue(readError);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(200);
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('メール送信失敗'), readError);
+    expect(info).not.toHaveBeenCalledWith(expect.stringContaining('メール送信スキップ'), expect.anything());
+    info.mockRestore();
     warn.mockRestore();
   });
 });

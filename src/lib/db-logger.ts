@@ -62,6 +62,9 @@ interface LogEntry {
  * 接続情報は env-required の getter で取り出す (#1434。空白だけの値も欠けているとみなす)。
  * 欠けている変数名は getter がサーバーのログに 1 行残す (MISSING_ENV_SERVER_LOG_PREFIX)。
  * ログを書く処理なので、ここでは例外を投げない (MissingEnvError 以外の失敗は saveLog の catch が受ける)。
+ * canonical の getSupabaseAdmin (lib/supabase/server.ts) を使わないのは、このファイルがブラウザ向けのページからも
+ * import され、next/headers を読むあちらを取り込めないため (#1162。tests/supabase-service-role-client-scan.test.ts の例外の一覧)。
+ * app_logs への insert にだけ使い、ほかの用途で service_role のクライアントをここから出さない。
  */
 function getSupabaseClient() {
   let config: { url: string; serviceRoleKey: string };
