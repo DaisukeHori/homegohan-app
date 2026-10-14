@@ -23,6 +23,7 @@ import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { isUltimateModeRequested } from '@/lib/ai/ultimate-mode';
+import { weeklyMenuRequestUltimateModeData } from '@/lib/ai/weekly-menu-request-ultimate';
 import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { isWithinMenuGenerationRange, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
@@ -352,6 +353,9 @@ export async function POST(request: Request) {
           totalSteps: targetSlots.length,
           message: '献立生成を開始しています...',
         },
+        // 究極モードの生成かを、行を作った時点から行に残す (#1582。生成中の行の確認 (weekly/pending) が読む。
+        // Edge Function の工程 1 が generated_data を書くまでの間も見分けられるように)
+        generated_data: weeklyMenuRequestUltimateModeData(ultimateMode),
       })
       .select('id')
       .single();

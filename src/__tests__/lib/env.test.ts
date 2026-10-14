@@ -416,7 +416,7 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     }
   });
 
-  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPS_ALERT_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
+  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPS_ALERT_*・ORG_CHALLENGE_SHOW_NAMES) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
     const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
 
     expect(sealed.map((entry) => [entry.name, entry.readOnlyBy]).sort()).toEqual([
@@ -442,6 +442,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       ['OPS_ALERT_COOLDOWN_MINUTES', 'src/app/api/cron/app-log-alerts/route.ts'],
       ['OPS_ALERT_EMAIL', 'src/app/api/cron/app-log-alerts/route.ts'],
       ['OPS_ALERT_ERROR_THRESHOLD', 'src/app/api/cron/app-log-alerts/route.ts'],
+      // #1132 組織チャレンジの順位表に参加者の表示名を出すか。1 / true / on / yes だけを有効とみなす読み方を 1 か所に置く
+      ['ORG_CHALLENGE_SHOW_NAMES', 'src/lib/org-challenges.ts'],
     ]);
     for (const entry of sealed) {
       // 任意の変数にだけ付ける。読むファイルは実在する (ファイルを移したのに一覧が古いままにならない)
@@ -473,6 +475,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       getOptionalEnv('AUTH_LOGIN_FAILURE_RESET_MINUTES');
       // @ts-expect-error AI_ULTIMATE_MODE_DAILY_LIMIT の値を読むのは src/lib/plan/entitlements.ts (consumeAiUsage) だけ (#1142)
       getOptionalEnv('AI_ULTIMATE_MODE_DAILY_LIMIT');
+      // @ts-expect-error ORG_CHALLENGE_SHOW_NAMES の値を読むのは src/lib/org-challenges.ts (showParticipantNames) だけ (#1132)
+      getOptionalEnv('ORG_CHALLENGE_SHOW_NAMES');
       getOptionalEnv('RESEND_API_KEY'); // 値を読む場所が決まっていない任意の変数は渡せる
     };
     expect(typeof typeOnly).toBe('function');

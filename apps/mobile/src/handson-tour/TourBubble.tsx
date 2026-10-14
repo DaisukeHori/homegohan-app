@@ -182,23 +182,8 @@ export function TourBubble(props: TourBubbleProps) {
 
   const pos = calculateBubblePosition(target, position, maxWidth, estimatedHeight, offset);
 
-  return (
-    <View
-      testID="tour-bubble"
-      accessibilityRole="alert"
-      accessibilityLiveRegion="polite"
-      style={[
-        styles.bubble,
-        {
-          position: 'absolute',
-          left: pos.x,
-          top: pos.y,
-          maxWidth,
-        },
-      ]}
-    >
-      <Arrow actualPosition={pos.actualPosition} />
-
+  const content = (
+    <>
       {/* 進捗ドット (bubble 内) */}
       {progress && (
         <View style={styles.progressContainer}>
@@ -244,6 +229,29 @@ export function TourBubble(props: TourBubbleProps) {
           )}
         </Pressable>
       )}
+    </>
+  );
+
+  return (
+    <View
+      testID="tour-bubble"
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+      style={[
+        styles.bubble,
+        {
+          position: 'absolute',
+          left: pos.x,
+          top: pos.y,
+          maxWidth,
+        },
+      ]}
+    >
+      <Arrow actualPosition={pos.actualPosition} />
+
+      {/* 各 Step の最初の intro 吹き出し (tour-step-1-intro など) を E2E (Maestro) が見分けるための目印 (#846)。
+          testId が無い吹き出しは、これまでと同じ要素の並びのまま (余計な View を足さない)。 */}
+      {bubble.testId ? <View testID={bubble.testId}>{content}</View> : content}
     </View>
   );
 }

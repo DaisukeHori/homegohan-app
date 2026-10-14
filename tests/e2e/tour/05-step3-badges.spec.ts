@@ -1,302 +1,135 @@
 /**
  * tests/e2e/tour/05-step3-badges.spec.ts
  *
- * Step 3: バッジ確認 → tour-step-3-loading から badge 一覧表示 → 「次へ」タップ → Step 4 遷移
+ * Step 3: バッジ確認。読み込み → intro → first_bite → planner → tutorial_complete (それぞれ [次へ]) → Step 4 遷移
  *
- * 実装済み testID:
- *   tour-step-3-loading, badge-card-* (動的, e.g. badge-card-first_bite)
+ * testID (実装済み):
+ *   tour-step-3-loading, tour-step-3-intro, badge-card-* (動的, e.g. badge-card-first_bite),
  *   tour-next-button
  *
- * 未実装 testID (skip):
- *   tour-step-3-intro — intro 吹き出し
+ * Step 3 は /api/badges (本物の API) が返すバッジの一覧を出す。前の Step で付いているはずのバッジは、
+ * service_role で user_badges に直接入れて「Step 1/2 を終えたあと」の状態を作る (beforeEach)。
+ * Spotlight 対象の上にはオーバーレイがかぶさっていて直接は押せないため、吹き出しの tour-next-button で進める (helpers の completeStep3)。
  *
- * 注意: API モック禁止。実 Supabase に接続する。
- * Step 3 は Step 1/2 完了後に到達するため、前段のヘルパーを使って
- * /api/handson-tour のサンドボックスバッジ付与済み状態を前提とする。
+ * 注意: API モック禁止 (読み込み中の画面を確かめるテストだけ、応答を遅らせる。中身は本物のまま)。実 Supabase に接続する。
+ * Step 3 だけを見るテストは、前の Step を通らず /handson-tour/badges を直接開く
+ * (Step 2 → Step 3 の遷移は 04-step2-menu が確かめる)。
  */
 
-import { test, expect } from "@playwright/test";
-import { signupAsNewUser, cleanupTestUser, generateTestEmail } from "./helpers";
-import { config as dotenvConfig } from "dotenv";
-import * as path from "path";
+import {
+  AUTO_ADVANCE_TIMEOUT_MS,
+  EMPTY_STORAGE_STATE,
+  NAVIGATION_TIMEOUT_MS,
+  STEP3_ALL_BADGES_VIEWPORT,
+  awardBadge,
+  completeStep3,
+  delayBadgesApi,
+  expect,
+  nextButton,
+  test,
+} from "./helpers";
 
-dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
+test.use({ storageState: EMPTY_STORAGE_STATE });
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
-/**
- * service_role 経由でサンドボックスバッジを直接付与する。
- * Step 1/2 を実際に通過させる代わりに DB を直接操作してStep 3 の前提条件を作る。
- */
-async function awardBadgeDirectly(userId: string, badgeCode: string): Promise<void> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
-  try {
-    // badge_definitions から badge_id を取得
-    const badgeResp = await fetch(
-      `${SUPABASE_URL}/rest/v1/badge_definitions?code=eq.${badgeCode}&select=id`,
-      {
-        headers: {
-          apikey: SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        },
-      },
-    );
-    if (!badgeResp.ok) return;
-    const badges = await badgeResp.json() as Array<{ id: string }>;
-    if (!badges.length) return;
-
-    const badgeId = badges[0].id;
-
-    // user_badges に挿入 (重複は無視)
-    await fetch(`${SUPABASE_URL}/rest/v1/user_badges`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: SUPABASE_SERVICE_ROLE_KEY,
-        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        Prefer: "resolution=ignore-duplicates",
-      },
-      body: JSON.stringify({
-        user_id: userId,
-        badge_id: badgeId,
-        obtained_at: new Date().toISOString(),
-      }),
-    });
-  } catch (err) {
-    console.warn(`[05-step3] awardBadgeDirectly error: ${err}`);
-  }
-}
+/** 獲得済みのバッジのカードに出る文言 (src/app/handson-tour/badges/page.tsx) */
+const EARNED_LABEL = "獲得済";
 
 test.describe("Tour - Step 3: バッジ確認", () => {
-  test.setTimeout(60_000);
-
-  let userId: string | null = null;
-
-  test.afterEach(async () => {
-    if (userId) {
-      await cleanupTestUser(userId);
-      userId = null;
-    }
+  test.beforeEach(async ({ tourUser }) => {
+    // Step 1 / Step 2 を終えたあとの状態: first_bite と planner は獲得済み、tutorial_complete は Step 4 でもらう
+    await awardBadge(tourUser.id, "first_bite");
+    await awardBadge(tourUser.id, "planner");
   });
 
-  // TODO: testID tour-step-3-intro 未実装、別 PR で対応
-  test.skip("Step 3 intro 吹き出しが表示される (tour-step-3-intro)", () => {
-    // tour-step-3-intro が実装されたら有効化する
+  test("Step 3 intro 吹き出しが表示される (tour-step-3-intro)", async ({ page }) => {
+    await page.goto("/handson-tour/badges");
+
+    await expect(page.getByTestId("tour-step-3-intro")).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
+    await expect(page.getByTestId("tour-step-3-intro").getByTestId("tour-bubble-body")).not.toBeEmpty();
   });
 
   test("Step 3: tour-step-3-loading が表示される", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s3-load");
-    userId = await signupAsNewUser(page, email);
+    // 読み込み中の画面は、速いと一瞬で消えて見えないので、/api/badges の応答だけ遅らせる
+    await delayBadgesApi(page);
+    await page.goto("/handson-tour/badges");
 
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
-
-    // サンドボックスバッジを直接付与して Step 3 の前提条件を作る
-    await awardBadgeDirectly(userId, "first_bite");
-    await awardBadgeDirectly(userId, "planner");
-
-    // Step 0 → Step 1 → Step 2 を通過して Step 3 に到達する
-    // (ハンズオンツアーの実際のフローを通じて確認)
-    await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
-    await page.getByTestId("tour-step-0-start").click();
-
-    // meal-camera-button 表示
-    await expect(page.getByTestId("meal-camera-button")).toBeVisible({ timeout: 20_000 });
-
-    const nextBtn = page.getByTestId("tour-next-button");
-    if (await nextBtn.isVisible()) {
-      await nextBtn.click();
-    }
-
-    const saveBtn = page.getByTestId("meal-save-button");
-    const isSaveVisible = await saveBtn.isVisible({ timeout: 10_000 }).catch(() => false);
-
-    if (!isSaveVisible) {
-      test.skip(true, "Step 1 完了 UI が見つからない");
-      return;
-    }
-    await saveBtn.click();
-
-    // Step 2: generate-button を探して生成
-    const generateBtn = page.getByTestId("v4-generate-button");
-    let isGenerateVisible = await generateBtn.isVisible({ timeout: 20_000 }).catch(() => false);
-
-    if (!isGenerateVisible) {
-      for (let i = 0; i < 3; i++) {
-        const nb = page.getByTestId("tour-next-button");
-        if (await nb.isVisible()) {
-          await nb.click();
-          await page.waitForTimeout(500);
-        }
-      }
-      isGenerateVisible = await generateBtn.isVisible({ timeout: 10_000 }).catch(() => false);
-    }
-
-    if (!isGenerateVisible) {
-      test.skip(true, "Step 2 (v4-generate-button) が表示されない");
-      return;
-    }
-
-    await generateBtn.click();
-
-    const isResultVisible = await page.getByTestId("v4-result-card").isVisible({ timeout: 30_000 }).catch(() => false);
-    if (!isResultVisible) {
-      test.skip(true, "v4-result-card が表示されない");
-      return;
-    }
-
-    const nb = page.getByTestId("tour-next-button");
-    if (await nb.isVisible()) {
-      await nb.click();
-    }
-
-    const addBtn = page.getByTestId("v4-add-to-menu-button");
-    const isAddVisible = await addBtn.isVisible({ timeout: 10_000 }).catch(() => false);
-    if (!isAddVisible) {
-      test.skip(true, "v4-add-to-menu-button が表示されない");
-      return;
-    }
-    await addBtn.click();
-
-    // Step 3 ローディング画面が表示される
-    await expect(page.getByTestId("tour-step-3-loading")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("tour-step-3-loading")).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
+    // 読み込みが終わると、バッジの一覧に切り替わる
+    await expect(page.getByTestId("badge-card-first_bite")).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
+    await expect(page.getByTestId("tour-step-3-loading")).toHaveCount(0);
   });
 
   test("Step 3: badge-card-first_bite が表示される", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s3-badge");
-    userId = await signupAsNewUser(page, email);
+    await page.goto("/handson-tour/badges");
 
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
-
-    await awardBadgeDirectly(userId, "first_bite");
-    await awardBadgeDirectly(userId, "planner");
-
-    await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
-    await page.getByTestId("tour-step-0-start").click();
-
-    await expect(page.getByTestId("meal-camera-button")).toBeVisible({ timeout: 20_000 });
-
-    const nextBtn = page.getByTestId("tour-next-button");
-    if (await nextBtn.isVisible()) {
-      await nextBtn.click();
-    }
-
-    const saveBtn = page.getByTestId("meal-save-button");
-    if (!(await saveBtn.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.skip(true, "Step 1 完了 UI が見つからない");
-      return;
-    }
-    await saveBtn.click();
-
-    // Step 2 を通過
-    const generateBtn = page.getByTestId("v4-generate-button");
-    let isGenVisible = await generateBtn.isVisible({ timeout: 20_000 }).catch(() => false);
-    if (!isGenVisible) {
-      for (let i = 0; i < 3; i++) {
-        const nb = page.getByTestId("tour-next-button");
-        if (await nb.isVisible()) { await nb.click(); await page.waitForTimeout(500); }
-      }
-      isGenVisible = await generateBtn.isVisible({ timeout: 10_000 }).catch(() => false);
-    }
-    if (!isGenVisible) {
-      test.skip(true, "v4-generate-button が表示されない");
-      return;
-    }
-    await generateBtn.click();
-    if (!(await page.getByTestId("v4-result-card").isVisible({ timeout: 30_000 }).catch(() => false))) {
-      test.skip(true, "v4-result-card が表示されない");
-      return;
-    }
-    const nb2 = page.getByTestId("tour-next-button");
-    if (await nb2.isVisible()) { await nb2.click(); }
-    const addBtn = page.getByTestId("v4-add-to-menu-button");
-    if (!(await addBtn.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.skip(true, "v4-add-to-menu-button が表示されない");
-      return;
-    }
-    await addBtn.click();
-
-    // Step 3 ローディング → badge 表示
-    await expect(page.getByTestId("tour-step-3-loading")).toBeVisible({ timeout: 20_000 });
-
-    // ローディング完了後に badge-card-first_bite が表示される
-    await expect(page.getByTestId("badge-card-first_bite")).toBeVisible({ timeout: 20_000 });
+    // Spotlight の対象になる 3 枚 (first_bite → planner → tutorial_complete) が一覧にある
+    await expect(page.getByTestId("badge-card-first_bite")).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
+    await expect(page.getByTestId("badge-card-planner")).toBeVisible();
+    await expect(page.getByTestId("badge-card-tutorial_complete")).toBeVisible();
   });
 
-  test("Step 3: 「次へ」タップ → Step 4 (tour-step-4-saving) へ遷移", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s3-next");
-    userId = await signupAsNewUser(page, email);
+  // 製品の既知の不具合で通らない (#846 の E2E で見つけた。直したら .fixme を外し、tests/e2e-tour-contract.test.ts の KNOWN_FIXMES を減らす)
+  test.fixme(
+    "Step 3: 前の Step で獲得したバッジ (first_bite / planner) に「獲得済」が付き、tutorial_complete には付かない",
+    {
+      annotation: {
+        type: "fixme",
+        description:
+          "Step 3 の画面 (src/app/handson-tour/badges/page.tsx) は各バッジの obtained_at を見て「獲得済」を出すが、" +
+          "/api/badges は earned と obtainedAt (キャメルケース) を返すので、獲得済みのバッジにも「獲得済」が付かない。",
+      },
+    },
+    async ({ page }) => {
+      await page.goto("/handson-tour/badges");
 
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+      await expect(page.getByTestId("badge-card-first_bite")).toContainText(EARNED_LABEL, {
+        timeout: AUTO_ADVANCE_TIMEOUT_MS,
+      });
+      await expect(page.getByTestId("badge-card-planner")).toContainText(EARNED_LABEL);
+      await expect(page.getByTestId("badge-card-tutorial_complete")).not.toContainText(EARNED_LABEL);
+    },
+  );
 
-    await awardBadgeDirectly(userId, "first_bite");
-    await awardBadgeDirectly(userId, "planner");
+  // 既定の画面の高さ (720) では [次へ] が画面の外に出て押せない (下の fixme)。一覧と吹き出しが収まる高さで、Step 4 への遷移を確かめる
+  test.describe("一覧と吹き出しが画面に収まる高さ", () => {
+    test.use({ viewport: STEP3_ALL_BADGES_VIEWPORT });
 
-    await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
-    await page.getByTestId("tour-step-0-start").click();
+    test("Step 3: 「次へ」タップ → Step 4 (tour-step-4-saving) へ遷移", async ({ page }) => {
+      await page.goto("/handson-tour/badges");
 
-    await expect(page.getByTestId("meal-camera-button")).toBeVisible({ timeout: 20_000 });
-    const nb = page.getByTestId("tour-next-button");
-    if (await nb.isVisible()) { await nb.click(); }
+      // first_bite → planner → tutorial_complete の順に [次へ] を押すと、卒業画面 (Step 4) へ
+      await completeStep3(page);
 
-    const saveBtn = page.getByTestId("meal-save-button");
-    if (!(await saveBtn.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.skip(true, "Step 1 完了 UI が見つからない");
-      return;
-    }
-    await saveBtn.click();
-
-    const generateBtn = page.getByTestId("v4-generate-button");
-    let isGenVisible = await generateBtn.isVisible({ timeout: 20_000 }).catch(() => false);
-    if (!isGenVisible) {
-      for (let i = 0; i < 3; i++) {
-        const nb2 = page.getByTestId("tour-next-button");
-        if (await nb2.isVisible()) { await nb2.click(); await page.waitForTimeout(500); }
-      }
-      isGenVisible = await generateBtn.isVisible({ timeout: 10_000 }).catch(() => false);
-    }
-    if (!isGenVisible) { test.skip(true, "v4-generate-button が表示されない"); return; }
-    await generateBtn.click();
-    if (!(await page.getByTestId("v4-result-card").isVisible({ timeout: 30_000 }).catch(() => false))) {
-      test.skip(true, "v4-result-card が表示されない"); return;
-    }
-    const nb3 = page.getByTestId("tour-next-button");
-    if (await nb3.isVisible()) { await nb3.click(); }
-    const addBtn = page.getByTestId("v4-add-to-menu-button");
-    if (!(await addBtn.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.skip(true, "v4-add-to-menu-button が表示されない"); return;
-    }
-    await addBtn.click();
-
-    // Step 3 ローディング
-    await expect(page.getByTestId("tour-step-3-loading")).toBeVisible({ timeout: 20_000 });
-
-    // badge が表示されたら「次へ」で Step 4 へ
-    const badgeVisible = await page.getByTestId("badge-card-first_bite").isVisible({ timeout: 20_000 }).catch(() => false);
-    if (!badgeVisible) {
-      test.skip(true, "badge-card-first_bite が表示されない");
-      return;
-    }
-
-    // 複数の「次へ」をクリックしてStep 4 へ進む
-    for (let i = 0; i < 3; i++) {
-      const nextBtnS3 = page.getByTestId("tour-next-button");
-      if (await nextBtnS3.isVisible({ timeout: 5_000 }).catch(() => false)) {
-        await nextBtnS3.click();
-        await page.waitForTimeout(500);
-      }
-    }
-
-    // Step 4: tour-step-4-saving が表示される
-    await expect(page.getByTestId("tour-step-4-saving").or(page.getByTestId("tour-step-4-graduate"))).toBeVisible({ timeout: 20_000 });
+      // Step 4: 完了処理中 (tour-step-4-saving) か、完了後の卒業画面 (tour-step-4-graduate)。処理は速いので saving は一瞬のことがある
+      await expect(page.getByTestId("tour-step-4-saving").or(page.getByTestId("tour-step-4-graduate"))).toBeVisible({
+        timeout: AUTO_ADVANCE_TIMEOUT_MS,
+      });
+    });
   });
+
+  // 製品の既知の不具合で通らない (#846 の E2E で見つけた。直したら .fixme を外し、tests/e2e-tour-contract.test.ts の KNOWN_FIXMES を減らす)
+  test.fixme(
+    "Step 3: 既定の画面の大きさ (1280x720) でも、案内中のバッジの吹き出しの [次へ] が画面の中にあって押せる",
+    {
+      annotation: {
+        type: "fixme",
+        description:
+          "Step 3 の吹き出しはバッジのカードの下 (position: 'bottom') に出て、全面のオーバーレイ (position: fixed) の中にある。" +
+          "planner / tutorial_complete のカードが画面の下にあると、吹き出しの [次へ] が画面の外に出て、スクロールもできず先へ進めない。" +
+          "設計書 (05-step3-badges) の、案内するバッジのカードを画面の中へスクロールする動きが実装に無い。",
+      },
+    },
+    async ({ page }) => {
+      await page.goto("/handson-tour/badges");
+
+      // first_bite → planner → tutorial_complete の各段階で、[次へ] が画面の中にあって押せる
+      for (const card of ["badge-card-first_bite", "badge-card-planner", "badge-card-tutorial_complete"]) {
+        await expect(page.getByTestId(card)).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
+        const next = nextButton(page, "次へ");
+        await expect(next).toBeInViewport({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
+        await next.click();
+      }
+      await page.waitForURL("**/handson-tour/graduate", { timeout: NAVIGATION_TIMEOUT_MS });
+    },
+  );
 });

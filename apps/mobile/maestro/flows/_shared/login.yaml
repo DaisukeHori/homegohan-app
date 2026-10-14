@@ -18,9 +18,10 @@ appId: com.homegohan.app
 - inputText: ${E2E_USER_PASSWORD}
 - tapOn:
     id: "login-button"
+# ホームのタブは WebView (webview-home)。ネイティブのホームの画面 (home-screen) はもう無い (#1552。smoke.yaml と同じ)
 - extendedWaitUntil:
     visible:
-      id: "home-screen"
+      id: "webview-home"
     timeout: 15000
 # Expo dev build の Console Error/Warning オーバーレイを閉じる
 - tapOn:

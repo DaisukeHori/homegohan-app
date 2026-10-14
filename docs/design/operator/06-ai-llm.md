@@ -194,6 +194,7 @@ export async function logStreamingUsage(
 | 行の無いプラン | `free` の行の値 (`free` の行も無ければ無制限) |
 | 変更 | 運営画面 `/super-admin/llm/quotas` (GET / PATCH `/api/super-admin/llm/quotas`。super_admin のみ。監査ログ `super_admin.llm_quota.update`) |
 | 上限に数えない機能 | 画面を開く・保存するだけで呼ばれる AI。`nutrition_advice_auto` (ホームの栄養のアドバイス・栄養の詳細を開いたときの栄養士のコメント) と `meal_image_auto` (料理を保存・更新したときに付ける料理画像。AI 相談の update_meal も同じ)。1 日の上限の合計には入れず、機能ごとの安全弁 (下の行) で止める。利用者が押して画像を作る操作 (`POST /api/ai/image/generate`) は `image_generation` で、上限に数える |
+| 機能ごとの 1 日の上限 (上限に数える機能・#1142) | 究極モード (献立の生成で `ultimateMode: true`) は機能名 `menu_generation_ultimate` で数え、1 回で 1 日の上限の合計に 1 回・究極モードの上限に 1 回入る (両方に数える。`ai_usage_counters` の同じ 1 行なので、数え戻しも 1 回で両方から戻る)。究極モードの上限は利用者ごと・1 日 (JST) の回数で、既定は 1 回 (`AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT`。`supabase/functions/_shared/ai-usage-core.ts`)。環境変数 `AI_ULTIMATE_MODE_DAILY_LIMIT` (0 以上の整数。0 はその日は使えない。無い・形が違うときは既定の 1) で変える。Next.js (Vercel) と Edge Functions (Supabase の secrets) の両方に同じ値で入れる (片方だけだと、入口によって上限が変わる)。値は DB に持たず、呼び出し側が判定の関数に渡す。全員 (free を含む) が使える |
 | 安全弁 (上限に数えない機能) | `public.ai_unmetered_daily_caps(feature PK, daily_cap)`。利用者ごと・1 日 (JST) の、機能ごとの回数。既定は `nutrition_advice_auto` = 30・`meal_image_auto` = 20 (ふつうの使い方では当たらない値)。行の無い機能は 20 (無制限にしない)。値は DB の行で変える (運営画面は無い)。上限に数えない機能を選ぶ材料 (forceRefresh・includeAdvice など) はクライアントが送る値なので、API を直接呼んで上限と無関係に AI を使えないように置く |
 
 ### 5.2 判定の実装
@@ -202,6 +203,12 @@ export async function logStreamingUsage(
   (`pg_advisory_xact_lock` で同じ利用者・同じ日を 1 本ずつ判定し、上限に達していれば記録せずに `{ allowed: false, limit, used }`、
   達していなければ `ai_usage_counters` を +1 して `{ allowed: true, ... }`)。service_role のみ。
   上限に数えない機能は、その機能のその日の回数を安全弁と比べ、達していれば記録せずに `{ allowed: false, metered: false, limit: 安全弁, used }`
+- 機能ごとの 1 日の上限がある機能 (究極モード `menu_generation_ultimate`。#1142) は、DB の `consume_ai_usage_capped(p_user_id, p_feature, p_feature_daily_cap) -> jsonb`
+  (`20261014100000_ai_usage_feature_daily_cap.sql`。service_role のみ) で数える。`consume_ai_usage` と同じ鍵のロックの中で、その日のその機能の回数が
+  `p_feature_daily_cap` に達していれば記録せずに `{ allowed: false, metered: true, limit: p_feature_daily_cap, used, usage_date, capped_feature }` を返し、
+  達していなければ `consume_ai_usage` と同じ 1 日の上限の判定と記録をする (1 日の上限で止めたときは `capped_feature` を付けない)。
+  呼び出し側 (`consumeAiUsage` / `consumeEdgeAiUsage`) は、機能ごとの上限 (`AI_ULTIMATE_MODE_DAILY_LIMIT`) がある機能だけこの関数を呼び、
+  `capped_feature` を `cappedFeature` として返す。関数が失敗したときは、1 日の上限と同じくログに残して許可する
 - Next.js: `consumeAiUsage(userId, feature)` (`src/lib/plan/entitlements.ts`) を AI へ送る直前に呼び、`if (!aiUsage.allowed)` で止める。
   Edge Function: ユーザーの JWT で直接呼ばれたときだけ `consumeEdgeAiUsage` (`supabase/functions/_shared/ai-usage.ts`)
 - 順番は「同意の判定 (#1154) → 上限の判定と記録 → AI への送信」
@@ -574,6 +581,7 @@ sequenceDiagram
 | エラー | コード | 対処 |
 |-------|--------|------|
 | 1 日の上限に達した (#1149) | `AI_DAILY_LIMIT` | 429 + `{ error: 「今日の AI の利用回数の上限 (N 回) に達しました。明日 0 時から使えます。」, code, limit, retryAfter }` + `Retry-After` (次の JST 0 時までの秒数) |
+| 究極モードの 1 日の上限に達した (#1142。機能ごとの上限) | `AI_DAILY_LIMIT` | 429 + `{ error: 「今日の究極モードの利用回数の上限 (N 回) に達しました。明日 0 時から使えます。」, code, limit, cappedFeature: 'menu_generation_ultimate', retryAfter }` + `Retry-After`。状態・コードは 1 日の上限と同じで、文と `cappedFeature` だけが違う (究極モードを使わない生成は、1 日の上限まで使える)。文は `aiUltimateModeDailyLimitMessage` (`supabase/functions/_shared/ai-daily-limit.ts`。Web・モバイル・Edge Function 共用) |
 | 上限に数えない機能の安全弁に達した (#1487。栄養士のコメントの自動の取得) | `AI_DAILY_LIMIT` | 429 + `{ error: 「今日はこれ以上、自動のコメントを作れません。明日また表示されます。」, code, safetyCap: true, retryAfter }` + `Retry-After`。回数 (limit) は出さない (安全弁の回数は明示の上限と別のもので、数字が食い違って見えるため)。文は `AI_AUTO_SAFETY_CAP_MESSAGE` (Web・モバイル共用) |
 | アレルゲン 3 回失敗 | `AI_ALLERGY_FALLBACK` | 422 + フロントエンドで手動入力 UI に切替 |
 | context 漏洩試行 | `CONTEXT_GUARD_*` | 403 + 監査ログ記録 |
