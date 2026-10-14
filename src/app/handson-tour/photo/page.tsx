@@ -20,6 +20,18 @@ import {
   type PhotoTourProfile,
 } from '@/lib/handson-tour/tour-profile';
 import { reportTourProfileFailures } from '@/lib/handson-tour/tour-profile-report';
+import {
+  TOUR_PHOTO_SAVE_URL,
+  buildTourPhotoSaveBody,
+  isSandboxNotEligibleBody,
+} from '@/lib/handson-tour/photo-save';
+
+/** 保存の失敗の記録 (handson_tour_step_error の error_code / error_message / http_status) */
+type SaveFailure = {
+  error_code: 'sandbox_save_failed' | 'sandbox_save_network_error';
+  error_message: string;
+  http_status?: number;
+};
 
 function safeNickname(raw: string | null | undefined): string {
   if (!raw) return 'あなた';
@@ -96,6 +108,10 @@ export default function HandsonTourPhotoPage() {
   const [profile, setProfile] = useState<PhotoTourProfile>(EMPTY_PHOTO_TOUR_PROFILE);
   const [isSaving, setIsSaving] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
+  // 保存の失敗 (設計書 03-step1 §3.10 のエラー画面)。連続の失敗回数で【あとで】を強調する
+  const [saveError, setSaveError] = useState(false);
+  const [saveErrorCount, setSaveErrorCount] = useState(0);
+  const savingRef = useRef(false);
   const mountTimeRef = useRef(Date.now());
 
   useEffect(() => {
@@ -164,53 +180,49 @@ export default function HandsonTourPhotoPage() {
     router.push('/home');
   };
 
+  // 保存 (サブステップ 1.6 → 1.7 → 1.8)。設計書 03-step1 §3.7〜§3.10:
+  // 成功したら Step 2 へ。失敗したら黙って進まずにエラー画面 (tour-step-1-error) を出し、【もう一度】で 1.7 から再実行、【あとで】でホームへ。
+  // 以前は失敗しても Step 2 へ進んでいて (#1057 の時点で計測だけ足した)、保存が 400 で落ち続けても利用者にも見えなかった (#1604)。
+  // ただし「この利用者はお試しの保存の対象ではない」(sandbox_not_eligible) は、通信や保存の失敗ではなく、何度送っても変わらない答えなので、
+  // エラー画面を出さずに Step 2 へ進める。設定からのやり直し (完了・スキップ済み → 409 already_finished。設計書 17-security §2.1) は
+  // 保存できないまま Step 4 まで通して見せる決め (設計書 01-trigger-flow §1.2 / §4.2) で、ここで止めると行き止まりになる。
   const handleSandboxComplete = async () => {
+    // 二重送信を防ぐ (吹き出しの【保存】と、下の画面の保存ボタンの両方から呼ばれうる)
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaveError(false);
     setSubStep('1.7');
     setIsSaving(true);
-    if (userId) {
-      const now = new Date().toISOString();
-      const dwell_ms = Date.now() - mountTimeRef.current;
-      try {
-        fireAnalytics('handson_tour_step_completed', {
-          user_id: userId,
-          timestamp: now,
-          platform: 'web' as const,
-          app_version: '1.0.0',
-          step: 1,
-          dwell_ms,
-        });
-      } catch {
-        // analytics エラーは無視
-      }
-    }
+
+    let failure: SaveFailure | null = null;
     try {
-      const res = await fetch('/api/meal-plans/add-from-photo?source=handson_tour', {
+      const res = await fetch(TOUR_PHOTO_SAVE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...MOCK_PHOTO_RESPONSE,
-          sandbox: true,
-          source: 'handson_tour',
-        }),
+        body: JSON.stringify(buildTourPhotoSaveBody()),
       });
-      // #1057 (UX1-09): レスポンス失敗を確認せず「成功したふり」で次へ進んでいたため、
-      // API 障害時に何が起きたか観測できなかった。体験モードはブロックせず次へ進めるが、
-      // 失敗は必ず記録する。
-      if (!res.ok && userId) {
-        fireAnalytics('handson_tour_step_error', {
-          user_id: userId,
-          timestamp: new Date().toISOString(),
-          platform: 'web' as const,
-          app_version: '1.0.0',
-          step: 1,
-          sub_step: '1.6',
-          error_code: 'sandbox_save_failed',
-          error_message: 'POST /api/meal-plans/add-from-photo failed',
-          http_status: res.status,
-        });
+      if (!res.ok) {
+        const body: unknown = await res.json().catch(() => null);
+        if (!isSandboxNotEligibleBody(body)) {
+          failure = {
+            error_code: 'sandbox_save_failed',
+            error_message: 'POST /api/meal-plans/add-from-photo failed',
+            http_status: res.status,
+          };
+        }
       }
     } catch {
-      // ネットワークエラーはスキップして次へ(体験モードのため保存必須ではない)
+      failure = {
+        error_code: 'sandbox_save_network_error',
+        error_message: 'POST /api/meal-plans/add-from-photo threw',
+      };
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
+    }
+
+    if (failure) {
+      // 失敗は必ず記録する (#1057 UX1-09)。そのうえでエラー画面を出す (設計書 03-step1 §3.10)
       if (userId) {
         fireAnalytics('handson_tour_step_error', {
           user_id: userId,
@@ -219,14 +231,31 @@ export default function HandsonTourPhotoPage() {
           app_version: '1.0.0',
           step: 1,
           sub_step: '1.6',
-          error_code: 'sandbox_save_network_error',
-          error_message: 'POST /api/meal-plans/add-from-photo threw',
+          ...failure,
         });
       }
-    } finally {
-      setIsSaving(false);
-      router.push(HANDSON_TOUR_ROUTES.step2);
+      setSaveErrorCount((count) => count + 1);
+      setSaveError(true);
+      return;
     }
+
+    // 完了の計測は保存が成功してから (設計書 03-step1 §9: handson_tour_step_completed は 1.6 保存成功)。
+    // 保存の対象でない利用者 (sandbox_not_eligible) も Step 1 を終えて先へ進むので記録する (設計書 22-analytics: 各ステップ進む)
+    if (userId) {
+      try {
+        fireAnalytics('handson_tour_step_completed', {
+          user_id: userId,
+          timestamp: new Date().toISOString(),
+          platform: 'web' as const,
+          app_version: '1.0.0',
+          step: 1,
+          dwell_ms: Date.now() - mountTimeRef.current,
+        });
+      } catch {
+        // analytics エラーは無視
+      }
+    }
+    router.push(HANDSON_TOUR_ROUTES.step2);
   };
 
   const bubble = buildBubble(subStep, profile);
@@ -458,6 +487,47 @@ export default function HandsonTourPhotoPage() {
       </div>
     </div>
   );
+
+  if (saveError) {
+    // 設計書 03-step1 §3.10: フルスクリーンのエラー画面。吹き出しのオーバーレイ (フォーカスを閉じ込める) は出さない
+    const emphasizeSkip = saveErrorCount >= HANDSON_TOUR_CONSTANTS.ERROR_CONSECUTIVE_THRESHOLD;
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="absolute inset-0 bg-black/60" aria-hidden="true" />
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="tour-step-1-error-title"
+          aria-describedby="tour-step-1-error-subtitle"
+          data-testid="tour-step-1-error"
+          className="relative bg-white rounded-2xl mx-4 w-full max-w-[400px] p-8 flex flex-col items-center gap-4 text-center shadow-2xl"
+        >
+          <p id="tour-step-1-error-title" className="text-xl font-bold text-gray-900">
+            <span aria-hidden="true">⚠ </span>
+            {i18n.error_title}
+          </p>
+          <p id="tour-step-1-error-subtitle" className="text-gray-600 text-sm">
+            {i18n.error_subtitle}
+          </p>
+          <button
+            data-testid="tour-step-1-error-retry"
+            onClick={handleSandboxComplete}
+            className="bg-blue-600 text-white px-8 py-3 rounded-xl font-semibold w-full"
+          >
+            {i18n.error_retry_button}
+          </button>
+          <button
+            data-testid="tour-step-1-error-skip"
+            onClick={handleSkip}
+            className={`text-sm ${emphasizeSkip ? 'font-bold text-gray-900' : 'text-gray-500'}`}
+            style={{ minHeight: 44, padding: '8px 16px' }}
+          >
+            {i18n.error_skip_button}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-40">
