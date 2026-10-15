@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
+import { normalizeProfileName } from "@homegohan/shared";
 
 import { Button, Card, EmptyState, Input, LoadingState, StatusBadge } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
@@ -91,7 +92,7 @@ export default function SupportUsersPage() {
                 </View>
                 <View style={{ flex: 1, gap: 2 }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                    <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{u.nickname ?? "(no name)"}</Text>
+                    <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{normalizeProfileName(u.nickname) ?? "(no name)"}</Text>
                     {u.isBanned && <StatusBadge variant="alert" label="BAN" />}
                   </View>
                   <Text style={{ fontSize: 13, color: colors.textMuted }}>roles: {(u.roles ?? []).join(", ") || "(none)"}</Text>

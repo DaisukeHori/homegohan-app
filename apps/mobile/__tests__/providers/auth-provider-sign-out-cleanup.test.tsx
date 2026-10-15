@@ -278,6 +278,43 @@ describe('AuthProvider — 未ログインになるどの経路でも、端末�
     expect(await AsyncStorage.getItem(RANGE_DAYS_KEY)).toBe(JSON.stringify({ data: 3 }));
     expect(await readPendingWebViewUserScopedStorageClear()).toBe(settledRequest);
   });
+
+  it('clearSession のあと (サインアウトの失敗で端末だけ忘れた) に別の利用者がログインしてから SIGNED_OUT が届くと、掃除するのは次の利用者のキー (#1636)', async () => {
+    const session = makeSession();
+    mockGetSession.mockResolvedValue({ data: { session }, error: null });
+    mockGetUser.mockResolvedValue({ data: { user: session.user }, error: null });
+    let clearSession: (() => void) | null = null;
+    function ClearSessionProbe() {
+      clearSession = useAuth().clearSession;
+      return null;
+    }
+    const api = render(
+      <AuthProvider>
+        <Probe />
+        <ClearSessionProbe />
+      </AuthProvider>,
+    );
+    await waitFor(() => expect(text(api, 'session')).toBe('access-1'));
+
+    // signOut.ts の signOutOrForgetLocally と同じ: SIGNED_OUT は届かず、画面の状態だけを消す
+    act(() => clearSession?.());
+    expect(text(api, 'session')).toBe('none');
+
+    // 次の利用者がログインし、利用者の ID 付きのキーを書く
+    const NEXT_USER_ID = 'user-2';
+    const nextUserKey = `push_token_registered_v2:${NEXT_USER_ID}`;
+    act(() => authListener('SIGNED_IN', makeSession(NEXT_USER_ID, 'access-2')));
+    await AsyncStorage.setItem(nextUserKey, 'true');
+    expect(text(api, 'session')).toBe('access-2');
+
+    const requestBefore = await readPendingWebViewUserScopedStorageClear();
+    act(() => authListener('SIGNED_OUT', null));
+
+    await waitFor(async () => expect(await readPendingWebViewUserScopedStorageClear()).not.toBe(requestBefore));
+    // 前の利用者の ID で掃除すると、次の利用者のキーが残る
+    expect(await AsyncStorage.getItem(nextUserKey)).toBeNull();
+    expect(await AsyncStorage.getItem('unrelated')).toBe('keep');
+  });
 });
 
 describe('AuthProvider — 端末の Cookie の置き場の掃除 (Networking.clearCookies。#1612 / #1647)', () => {

@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { normalizeProfileName } from "@homegohan/shared";
 
 import { Button, Card, EmptyState, Input, LoadingState, SectionHeader, StatCard, StatusBadge } from "../../../../src/components/ui";
 import { getApi } from "../../../../src/lib/api";
@@ -109,7 +110,7 @@ export default function SupportUserDetailPage() {
                 </View>
                 <View style={{ flex: 1, gap: 2 }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                    <Text style={{ fontSize: 18, fontWeight: "800", color: colors.text }}>{data.user.nickname ?? "(no name)"}</Text>
+                    <Text style={{ fontSize: 18, fontWeight: "800", color: colors.text }}>{normalizeProfileName(data.user.nickname) ?? "(no name)"}</Text>
                     {data.user.isBanned && <StatusBadge variant="alert" label="BAN" />}
                   </View>
                   <Text style={{ fontSize: 13, color: colors.textMuted }}>{data.user.id}</Text>
