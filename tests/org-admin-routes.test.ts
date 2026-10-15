@@ -461,7 +461,7 @@ describe('組織の絞り込み: 呼び出した人の organization_id だけを
 
   it('challenges GET: 自組織のチャレンジだけ。部署名つき。集計は認可で確定した自組織の分だけ service_role の DB 関数で取る', async () => {
     mockAdminRpc.mockResolvedValue({
-      data: [{ challenge_id: CHALLENGE_A, participant_count: 12, min_participants: 5, average_value: '63.2' }],
+      data: [{ challenge_id: CHALLENGE_A, participant_count: 12, min_participants: 10, average_value: '63.2' }],
       error: null,
     });
 
@@ -472,7 +472,7 @@ describe('組織の絞り込み: 呼び出した人の organization_id だけを
       title: 'A の朝食チャレンジ',
       departmentName: 'A の営業部',
       participantCount: 12,
-      aggregate: { minParticipants: 5, visible: true, averageValue: 63.2 },
+      aggregate: { minParticipants: 10, visible: true, averageValue: 63.2 },
     });
     // 集計は、呼び出した管理者の組織 (リクエストに組織 ID を渡す口は無い) だけ。参加者の行を直接読まない
     expect(mockAdminRpc).toHaveBeenCalledTimes(1);
@@ -483,7 +483,7 @@ describe('組織の絞り込み: 呼び出した人の organization_id だけを
 
   it('challenges GET: 管理者に返すのは集計だけ。参加者の ID・個人の値・順位は返さない', async () => {
     mockAdminRpc.mockResolvedValue({
-      data: [{ challenge_id: CHALLENGE_A, participant_count: 12, min_participants: 5, average_value: 63.2 }],
+      data: [{ challenge_id: CHALLENGE_A, participant_count: 12, min_participants: 10, average_value: 63.2 }],
       error: null,
     });
 
@@ -504,9 +504,9 @@ describe('組織の絞り込み: 呼び出した人の organization_id だけを
   it('challenges GET: 最小人数に満たない間は、参加者数も平均も返さない (DB の関数が返した null をそのまま通す)', async () => {
     mockAdminRpc.mockResolvedValue({
       data: [
-        { challenge_id: CHALLENGE_A, participant_count: null, min_participants: 5, average_value: null },
-        // 参加者は 5 人以上いるが、集計が済んだ人が 5 人に満たない: 人数は出て、平均は出ない
-        { challenge_id: CHALLENGE_A_STEPS, participant_count: 6, min_participants: 5, average_value: null },
+        { challenge_id: CHALLENGE_A, participant_count: null, min_participants: 10, average_value: null },
+        // 参加者は 10 人以上いるが、集計が済んだ人が 10 人に満たない: 人数は出て、平均は出ない
+        { challenge_id: CHALLENGE_A_STEPS, participant_count: 11, min_participants: 10, average_value: null },
       ],
       error: null,
     });
@@ -515,38 +515,38 @@ describe('組織の絞り込み: 呼び出した人の organization_id だけを
 
     const a = body.challenges.find((c: Row) => c.id === CHALLENGE_A);
     expect(a.participantCount).toBeNull();
-    expect(a.aggregate).toEqual({ minParticipants: 5, visible: false, averageValue: null });
+    expect(a.aggregate).toEqual({ minParticipants: 10, visible: false, averageValue: null });
     const steps = body.challenges.find((c: Row) => c.id === CHALLENGE_A_STEPS);
-    expect(steps.participantCount).toBe(6);
-    expect(steps.aggregate).toEqual({ minParticipants: 5, visible: false, averageValue: null });
+    expect(steps.participantCount).toBe(11);
+    expect(steps.aggregate).toEqual({ minParticipants: 10, visible: false, averageValue: null });
   });
 
-  it('challenges GET: 集計の行が無いチャレンジも、0 人とは偽らず null (「5 人未満」) にする。平均 0 は 0 のまま出る', async () => {
+  it('challenges GET: 集計の行が無いチャレンジも、0 人とは偽らず null (「10 人未満」) にする。平均 0 は 0 のまま出る', async () => {
     mockAdminRpc.mockResolvedValue({
-      data: [{ challenge_id: CHALLENGE_A, participant_count: 5, min_participants: 5, average_value: 0 }],
+      data: [{ challenge_id: CHALLENGE_A, participant_count: 10, min_participants: 10, average_value: 0 }],
       error: null,
     });
 
     const body = await json(await challenges.GET(new Request(url('/api/org/challenges'))));
 
     const a = body.challenges.find((c: Row) => c.id === CHALLENGE_A);
-    expect(a.participantCount).toBe(5);
-    expect(a.aggregate).toEqual({ minParticipants: 5, visible: true, averageValue: 0 });
+    expect(a.participantCount).toBe(10);
+    expect(a.aggregate).toEqual({ minParticipants: 10, visible: true, averageValue: 0 });
     const noRow = body.challenges.find((c: Row) => c.id === CHALLENGE_A_STEPS);
     expect(noRow.participantCount).toBeNull();
-    expect(noRow.aggregate).toEqual({ minParticipants: 5, visible: false, averageValue: null });
+    expect(noRow.aggregate).toEqual({ minParticipants: 10, visible: false, averageValue: null });
   });
 
   it('challenges GET: 計算できない種類 (歩数) には、DB の関数が平均を返しても出さない', async () => {
     mockAdminRpc.mockResolvedValue({
-      data: [{ challenge_id: CHALLENGE_A_STEPS, participant_count: 9, min_participants: 5, average_value: 1234 }],
+      data: [{ challenge_id: CHALLENGE_A_STEPS, participant_count: 11, min_participants: 10, average_value: 1234 }],
       error: null,
     });
 
     const body = await json(await challenges.GET(new Request(url('/api/org/challenges'))));
 
     const steps = body.challenges.find((c: Row) => c.id === CHALLENGE_A_STEPS);
-    expect(steps.aggregate).toEqual({ minParticipants: 5, visible: false, averageValue: null });
+    expect(steps.aggregate).toEqual({ minParticipants: 10, visible: false, averageValue: null });
   });
 
   it('challenges POST / PUT: 作成は自組織・操作した人で、他組織のチャレンジは更新できない', async () => {

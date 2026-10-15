@@ -177,7 +177,7 @@ function aggregateRows(rows: Array<[string, number | null]>) {
   return rows.map(([challenge_id, participant_count]) => ({
     challenge_id,
     participant_count,
-    min_participants: 5,
+    min_participants: 10,
     average_value: null,
   }));
 }
@@ -365,7 +365,7 @@ describe('GET /api/org/my-challenges', () => {
 
     const body = await json(await myChallenges.GET());
 
-    expect(body.minParticipants).toBe(5);
+    expect(body.minParticipants).toBe(10);
     expect(body.challenges.find((c: Row) => c.id === C_BREAKFAST).participantCount).toBeNull();
     expect(body.challenges.find((c: Row) => c.id === C_VEG).participantCount).toBe(12);
     // 集計の行が無いチャレンジも、0 人とは偽らない
@@ -590,7 +590,7 @@ describe('GET /api/org/challenges/[id]', () => {
     const body = await json(await get(C_BREAKFAST));
 
     expect(body.participantCount).toBeNull();
-    expect(body.minParticipants).toBe(5);
+    expect(body.minParticipants).toBe(10);
   });
 
   it('500: 順位表の DB 関数の失敗は汎用メッセージだけ。生のエラー文は返さない', async () => {

@@ -22,10 +22,21 @@
  * このファイルは Next.js の実行環境に依存しない (単体テストと結合テストから直接呼べる)。
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import {
+  STORAGE_OBJECT_BUCKETS,
+  UUID_PATTERN,
+  isOwnedObjectPath,
+  parseStorageObjectUrl,
+  type StorageObjectBucket,
+} from '../../supabase/functions/_shared/storage-object-url';
+
+// URL の解釈と持ち主の判定は、運営が隠したコンテンツの完全削除 (#1538。Edge Function) と共用するため
+// supabase/functions/_shared/storage-object-url.ts に置いている。これまでどおりこのファイルからも import できる
+export { isOwnedObjectPath, parseStorageObjectUrl };
 
 /** 退会時に掃除するバケット */
-export const ACCOUNT_STORAGE_BUCKETS = ['meal_photos', 'fridge-images', 'health-checkups'] as const;
-export type AccountStorageBucket = (typeof ACCOUNT_STORAGE_BUCKETS)[number];
+export const ACCOUNT_STORAGE_BUCKETS = STORAGE_OBJECT_BUCKETS;
+export type AccountStorageBucket = StorageObjectBucket;
 
 /** #1260 より前に使われていた `<folder>/<user_id>/…` の <folder>。これらのバケットにだけ旧パスがありうる */
 export const LEGACY_FOLDER_PARENTS = ['meals', 'generated', 'uploads'] as const;
@@ -45,7 +56,6 @@ export const DEFAULT_MAX_DURATION_MS = 45_000;
 /** 一覧に出ているのに 1 件も消せなかった回数がこれに達したら失敗にする (別の退会処理が同時に消している場合を許すため 1 回では止めない) */
 const MAX_STALLED_ROUNDS = 3;
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Storage 掃除に使う client。service_role の SupabaseClient を渡す */
 export type AccountStorageAdmin = Pick<SupabaseClient, 'from' | 'storage'>;
@@ -175,67 +185,6 @@ async function removeFolder(
 // ─────────────────────────────────────────────────────────────────────────────
 // DB に保存された URL が指すオブジェクト
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Storage の URL からバケット名とパスを取り出す。
- *   https://<host>/storage/v1/object/public/<bucket>/<path>
- *   https://<host>/storage/v1/object/sign/<bucket>/<path>?token=…
- *   https://<host>/storage/v1/object/authenticated/<bucket>/<path>
- *   https://<host>/storage/v1/render/image/public/<bucket>/<path>?width=…
- * 3 つのバケット以外、Storage の URL でないもの、パスが空のもの、パスの組み立てが怪しいものは null。
- *
- * 「パスの組み立てが怪しい」= 区切りの `/` を `%2F` で隠したもの、`.` / `..` の区間、空の区間、制御文字を含むもの。
- * URL は利用者が書き換えられる列にも入るので、`old/<本人の id>/..%2F<他人の id>/x.png` のような形で
- * 「本人のパス」に見せかけた別のオブジェクトを指させないようにする (URL の解釈でも `..` は解決されるが、`%2F` は解決されない)。
- */
-export function parseStorageObjectUrl(raw: unknown): { bucket: AccountStorageBucket; path: string } | null {
-  if (typeof raw !== 'string' || raw.length === 0) return null;
-  let pathname: string;
-  try {
-    pathname = new URL(raw).pathname;
-  } catch {
-    return null;
-  }
-  const match = /^\/storage\/v1\/(?:object|render\/image)\/(?:public|sign|authenticated)\/([^/]+)\/(.+)$/.exec(pathname);
-  if (!match) return null;
-
-  let bucket: string;
-  let segments: string[];
-  try {
-    bucket = decodeURIComponent(match[1]);
-    segments = match[2].split('/').map(decodeURIComponent);
-  } catch {
-    return null; // 壊れたパーセントエンコード
-  }
-  if (!(ACCOUNT_STORAGE_BUCKETS as readonly string[]).includes(bucket)) return null;
-  if (segments.some(isSuspiciousPathSegment)) return null;
-  return { bucket: bucket as AccountStorageBucket, path: segments.join('/') };
-}
-
-/** デコードしたあとの 1 区間が、パスの組み立てに使われていそうな形か (空 / `.` / `..` / `/` `\` / 制御文字) */
-function isSuspiciousPathSegment(segment: string): boolean {
-  if (segment.length === 0 || segment === '.' || segment === '..') return true;
-  for (const ch of segment) {
-    const code = ch.charCodeAt(0);
-    if (ch === '/' || ch === '\\' || code < 0x20 || code === 0x7f) return true;
-  }
-  return false;
-}
-
-/**
- * URL が指すオブジェクトを消してよいか (本人のものか)。
- *   - 先頭が他の利用者の uuid (= 他人のフォルダ) なら、いかなる場合も false
- *   - パスの中に本人の user_id がある (旧パス `<folder>/<user_id>/…` など) なら true
- *   - `generated/<本人の献立の id>/…` なら true (ownedPlannedMealIds は本人の献立の id だけを渡すこと)
- *   - それ以外 (持ち主がパスから分からない) は false
- */
-export function isOwnedObjectPath(path: string, userId: string, ownedPlannedMealIds: ReadonlySet<string>): boolean {
-  const segments = path.split('/').filter((segment) => segment.length > 0);
-  if (segments.length === 0) return false;
-  if (UUID_PATTERN.test(segments[0]) && segments[0].toLowerCase() !== userId.toLowerCase()) return false;
-  if (segments.some((segment) => segment.toLowerCase() === userId.toLowerCase())) return true;
-  return segments[0] === 'generated' && segments.length >= 3 && ownedPlannedMealIds.has(segments[1].toLowerCase());
-}
 
 interface PageResult {
   data: Record<string, unknown>[] | null;

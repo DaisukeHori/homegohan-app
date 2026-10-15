@@ -294,7 +294,21 @@ BAN 解除
 
 **`delete_*` の意味 (#1101)**: `delete_only` / `delete_and_warn` / `delete_and_temp_ban` / `delete_and_perm_ban` は、通報されたコンテンツ
 (食事 `meals` / レシピ `recipes`) の行を**消さずに隠す**。`hidden_at` / `hidden_by` / `hidden_reason` を書き、RLS により本人以外
-(家族・ほかのユーザー・未ログイン) には見えなくなる (本人には見える)。完全な削除は、保管期間のあとに別のジョブで行う (保管期間とジョブは未定)。
+(家族・ほかのユーザー・未ログイン) には見えなくなる (本人には見える)。完全な削除は、保管期間のあとに別のジョブで行う。
+保管期間は 90 日 (オーナーの選択 2026-10-15、#1538)。隠してから 90 日を過ぎた行と画像は、pg_cron のジョブ `purge-hidden-content`
+(毎日 03:25 JST) が Edge Function `purge-hidden-content` を呼んで完全に消す (08-cron-batches.md §3.0)。
+
+**完全削除で消えるもの・残るもの (#1538)**:
+- 行は `DELETE` で消す。関連の行は外部キーの `ON DELETE` のとおりに動く (退会 #1175 で食事・レシピが消えるときと同じ):
+  通報 (`moderation_flags.meal_id` / `recipe_flags.recipe_id`) は CASCADE でコンテンツと一緒に消える (誰が通報したかも消える)。
+  食事の AI の評価・栄養の推定・レシピのコレクションの項目・コメント・いいねも CASCADE で消える。
+  献立の実績 (`planned_meals.actual_meal_id`)・レシピの依頼 (`recipe_requests.base_meal_id`) は SET NULL で行が残る
+- 通報は残さない: 外部キーを変えると、持ち主の削除・退会でコンテンツが消えたときの動きまで変わる。運営の判断の記録は
+  監査ログ (`admin_audit_logs`。通報の ID・コンテンツの持ち主・コンテンツの ID・隠した行の ID。07-audit-monitoring.md の 7 年保管) に残る
+- 画像は、行の持ち主のフォルダにあるもので、ほかの行 (隠していない行・まだ 90 日たっていない隠した行・献立・健診など) が使っていないものだけを
+  Storage API で消す (DB の関数 `hidden_content_purge_referenced_needles` で確かめる)。他人のフォルダの画像・持ち主の無い行の画像は消さない
+- 退会と矛盾しない: 持ち主が退会すると、隠した食事は退会の CASCADE で先に消える (画像は退会の Storage の掃除が消す)。
+  公開のまま隠したレシピは退会で `user_id` が外れて残り (隠したままなので誰にも見えない)、90 日後に完全削除のジョブが行を消す
 
 - 実行の順番は「コンテンツを隠す → 判定の保存 → BAN」。隠せなかったときは判定を保存せず (通報は `pending` のまま)、BAN もせずに
   `500 OP_CONTENT_HIDE_FAILED` を返す。通報が審査待ちのまま残るので、画面を開き直しても審査のフォームから同じ操作をやり直せる
@@ -315,7 +329,7 @@ BAN 解除
   行がもう無い (持ち主が先に消した) ときは `hidden: false` / `content_found: false`。すでに隠れていた行は `hidden: true` / `content_found: true`
   で、`hidden_ids` は空
   隠せなかったとき・隠したあとで判定を保存できなかったときも、監査ログ (severity `warn`) を残す
-- 画像ファイル (`photo_url` / `image_url`) そのものは隠さない (公開バケットの URL は、隠す前に見た人なら取得できる)。完全削除のジョブと合わせて別に扱う
+- 画像ファイル (`photo_url` / `image_url`) そのものは隠さない (公開バケットの URL は、隠す前に見た人なら取得できる)。画像を非公開にすることは #1365 で扱う。保管期間 (90 日) を過ぎたら、完全削除のジョブが画像も消す (上記)
 - `hidden_reason` は持ち主も読める列なので、解決メモ (`resolution_note`) は入れず、`moderation:<action>` の識別子を書く
 
 ---
@@ -467,7 +481,10 @@ BAN 解除
 止めないもの: 運営ロール、`/login`・`/auth/*` (運営がログインし直せるように)、`/terms`・`/privacy`、
 `/legal` (特定商取引法に基づく表記)・`/contact` (お問い合わせ) の画面 (#1486。未ログインでも読める公開の文面。
 その画面の下の API は止める: お問い合わせの送信 `POST /api/contact` は 503 で、画面には固定の文が出る。画面に出ているメールアドレスは使える)、
-`/api/health` (死活監視)、`/api/auth/*`、`/api/cron/*`、`/api/feature-flags`、`/_next/*`。
+`/api/health` (死活監視)、`/api/auth/*`、`/api/cron/*`、`/api/feature-flags`、`/_next/*`、
+通知のトークンの claim `POST /api/push-tokens/claim` (#1636。端末の後片付けで、利用者の操作ではないため。完全一致の 1 本だけで、
+セッション無しの後片付け `POST /api/push-tokens/release` は止める。`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`。
+`mobile/03-push-notification.md` §3.2)。
 `/signup` (新規登録) は止める。
 `/legal`・`/contact` を通すのはメンテナンスの判定だけで、ほかの差し戻し (初期設定の途中の人を `/onboarding/*` へ、凍結中の人を
 `/frozen` へ。凍結中でも `/contact` は通る) はメンテナンス中でないときと同じに掛かり、差し戻した先はメンテナンス中の画面になる。

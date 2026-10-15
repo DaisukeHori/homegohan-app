@@ -26,6 +26,7 @@ export * from './profile-name';
 export * from './signed-photo-url';
 export * from './badge-period-awards';
 export * from './handson-tour-nickname';
+export * from './push-token-claim';
 export type {
   Json,
   Database,

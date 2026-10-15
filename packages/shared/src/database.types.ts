@@ -7196,6 +7196,7 @@ export type Database = {
           device_name: string | null
           expo_push_token: string
           id: string
+          install_secret_hash: string | null
           platform: string | null
           updated_at: string | null
           user_id: string
@@ -7205,6 +7206,7 @@ export type Database = {
           device_name?: string | null
           expo_push_token: string
           id?: string
+          install_secret_hash?: string | null
           platform?: string | null
           updated_at?: string | null
           user_id: string
@@ -7214,6 +7216,7 @@ export type Database = {
           device_name?: string | null
           expo_push_token?: string
           id?: string
+          install_secret_hash?: string | null
           platform?: string | null
           updated_at?: string | null
           user_id?: string
@@ -8154,6 +8157,10 @@ export type Database = {
         }[]
       }
       get_promotion_details: { Args: { p_token: string }; Returns: Json }
+      hidden_content_purge_referenced_needles: {
+        Args: { p_cutoff: string; p_needles: string[] }
+        Returns: string[]
+      }
       increment_recipe_like_count: {
         Args: { p_recipe_id?: string; p_recipe_uuid?: string }
         Returns: number
@@ -8172,6 +8179,7 @@ export type Database = {
         Returns: number
       }
       invoke_process_meal_image_jobs: { Args: never; Returns: number }
+      invoke_purge_hidden_content: { Args: never; Returns: number }
       is_active_family_adult: {
         Args: { p_family_id: string }
         Returns: boolean
