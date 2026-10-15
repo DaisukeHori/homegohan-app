@@ -12,12 +12,11 @@
 // 2. 画面と同じ組み方 (useReducer + 前の描画で握った callback) で、場面 (a) (b) の順に action が届いても進捗が残ること
 // 3. page.tsx の resumePendingGeneration がこの action を送ること (配線)
 
-import React, { useCallback, useReducer } from 'react';
+import React, { act, useCallback, useReducer } from 'react';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 import {
   convertV4ProgressToUIFormat,

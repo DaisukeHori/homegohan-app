@@ -40,7 +40,7 @@ vi.mock('@/lib/supabase/server', () => ({
 }));
 
 vi.mock('next/headers', () => ({
-  cookies: vi.fn(() => undefined),
+  cookies: vi.fn(async () => undefined),
 }));
 
 // #1177 / #1149: AI 利用回数の上限の判定と記録 (DB を呼ぶ境目)。consumeAiUsage 自体の挙動は src/__tests__/lib/plan/entitlements.test.ts。
