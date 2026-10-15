@@ -481,7 +481,10 @@ BAN 解除
 止めないもの: 運営ロール、`/login`・`/auth/*` (運営がログインし直せるように)、`/terms`・`/privacy`、
 `/legal` (特定商取引法に基づく表記)・`/contact` (お問い合わせ) の画面 (#1486。未ログインでも読める公開の文面。
 その画面の下の API は止める: お問い合わせの送信 `POST /api/contact` は 503 で、画面には固定の文が出る。画面に出ているメールアドレスは使える)、
-`/api/health` (死活監視)、`/api/auth/*`、`/api/cron/*`、`/api/feature-flags`、`/_next/*`。
+`/api/health` (死活監視)、`/api/auth/*`、`/api/cron/*`、`/api/feature-flags`、`/_next/*`、
+通知のトークンの claim `POST /api/push-tokens/claim` (#1636。端末の後片付けで、利用者の操作ではないため。完全一致の 1 本だけで、
+セッション無しの後片付け `POST /api/push-tokens/release` は止める。`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`。
+`mobile/03-push-notification.md` §3.2)。
 `/signup` (新規登録) は止める。
 `/legal`・`/contact` を通すのはメンテナンスの判定だけで、ほかの差し戻し (初期設定の途中の人を `/onboarding/*` へ、凍結中の人を
 `/frozen` へ。凍結中でも `/contact` は通る) はメンテナンス中でないときと同じに掛かり、差し戻した先はメンテナンス中の画面になる。

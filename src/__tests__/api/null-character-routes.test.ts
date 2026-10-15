@@ -154,6 +154,7 @@ const ENTRIES: Entry[] = [
   { file: 'profile/route.ts', method: 'POST', load: async () => (await import('@/app/api/profile/route')).POST },
   { file: 'profile/route.ts', method: 'PUT', load: async () => (await import('@/app/api/profile/route')).PUT },
   { file: 'push-tokens/claim/route.ts', method: 'POST', load: async () => (await import('@/app/api/push-tokens/claim/route')).POST },
+  { file: 'push-tokens/release/route.ts', method: 'POST', load: async () => (await import('@/app/api/push-tokens/release/route')).POST },
   { file: 'recipes/[id]/comments/route.ts', method: 'POST', load: async () => (await import('@/app/api/recipes/[id]/comments/route')).POST },
   { file: 'recipes/[id]/route.ts', method: 'PUT', load: async () => (await import('@/app/api/recipes/[id]/route')).PUT },
   { file: 'recipes/route.ts', method: 'POST', load: async () => (await import('@/app/api/recipes/route')).POST },

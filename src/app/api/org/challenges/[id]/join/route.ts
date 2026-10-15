@@ -12,8 +12,9 @@
  *     健康データの同意の仕組みができるまで 409 CHALLENGE_TYPE_DISABLED
  *   - 部署を限定したチャレンジは、その部署のメンバーだけ。別の部署は 403 PERM_DEPARTMENT_MISMATCH
  *   - 他組織のチャレンジ・存在しないチャレンジは 404 CHALLENGE_NOT_FOUND (存在を知らせない)
- *   参加行は、本人の権限 (利用者の JWT) で作る。#1238 の INSERT ポリシー (本人・自分の組織のチャレンジ・進捗 0・順位なし) が
- *   DB 側でも同じことを確かめる。すでに参加していれば、何もせず 200 (alreadyJoined: true)。
+ *   参加行は、本人の権限 (利用者の JWT) で作る。INSERT ポリシー「Users can join challenges」(#1238。#1600 で上の条件を足した:
+ *   本人・自分の組織のチャレンジ・進捗 0・順位なし・開催中・使える種類・終了日 (JST) を過ぎていない・部署の限定) が
+ *   DB 側でも同じことを確かめる (PostgREST を直接叩いても外せない)。すでに参加していれば、何もせず 200 (alreadyJoined: true)。
  *
  * DELETE: 本人の参加行だけを消す (ポリシー "Users can leave challenges")。参加していなくても 200 (冪等)。
  *   やめた人の記録は、集計にも順位にも残らない。チャレンジが終了していても、やめられる。
@@ -68,7 +69,7 @@ export async function POST(_request: Request, props: { params: Promise<{ id: str
       if (insertError.code === '23505') {
         return NextResponse.json({ joined: true, alreadyJoined: true });
       }
-      // 42501: 行レベルセキュリティの拒否 (#1238 のポリシー)。上の確認を通ったのに拒否されるのは、所属が途中で変わったとき
+      // 42501: 行レベルセキュリティの拒否 (#1238 / #1600 のポリシー)。上の確認を通ったのに拒否されるのは、所属・部署・状態が途中で変わったとき
       if (insertError.code === '42501') {
         return challengeError('FORBIDDEN', 'このチャレンジに参加する権限がありません', 403);
       }

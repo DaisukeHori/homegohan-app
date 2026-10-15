@@ -3,6 +3,7 @@
  *
  * #1673 (#1598) でネイティブのマイページ (apps/mobile/app/profile/index.tsx) を消し、端末からのログアウト (signOutOnDevice) を呼ぶ画面は
  * 設定画面 (apps/mobile/app/(tabs)/settings.tsx) だけになった (apps/mobile/src/providers/AuthProvider.tsx の先頭の表も「設定のログアウト」)。
+ * #1562 で、アカウントの画面 (apps/mobile/app/settings/account.tsx) も、退会の API が 401 を返したときに呼ぶようになった (CALLER_SCREENS)。
  * 設計書 (mobile/05-auth-session.md・mobile/01-architecture.md) が「設定タブ・マイページのログアウト (signOutOnDevice)」と書き続けると、
  * いまのマイページ (WebView のタブ。Web の /profile は WebView の中ではログアウトを出さない) にもログアウトがあると読めてしまう。ここで落とす。
  *   1. apps/mobile/app の中で signOutOnDevice を呼ぶ画面のファイル (構文木で呼び出しを探す。コメントは見ない) は、CALLER_SCREENS のファイルだけ
@@ -24,8 +25,16 @@ const MOBILE_DESIGN_DIR = 'docs/design/mobile';
 /** 端末からのログアウト (apps/mobile/src/lib/signOut.ts) */
 const SIGN_OUT_ON_DEVICE = 'signOutOnDevice';
 
-/** signOutOnDevice を呼ぶ画面: 設計書での名前と、画面のファイル (リポジトリの根からの相対) */
-const CALLER_SCREENS = [{ name: '設定画面', file: `${MOBILE_APP_DIR}/(tabs)/settings.tsx` }] as const;
+/**
+ * signOutOnDevice を呼ぶ画面: 設計書での名前と、画面のファイル (リポジトリの根からの相対)
+ * - 設定画面: 利用者が押す通常のログアウト
+ * - アカウントの画面 (設定画面から開く退会の画面): 退会の API が 401 (ログインが切れている) を返したとき、
+ *   アカウントは消えていないので退会の後片付けではなく通常のログアウトで端末のセッションを消し、ログインの画面へ戻す (#1562)
+ */
+const CALLER_SCREENS = [
+  { name: '設定画面', file: `${MOBILE_APP_DIR}/(tabs)/settings.tsx` },
+  { name: 'アカウントの画面', file: `${MOBILE_APP_DIR}/settings/account.tsx` },
+] as const;
 
 /**
  * signOutOnDevice を呼ばない画面の名前。マイページは WebView のタブ ((tabs)/profile.tsx) で、ログアウトを出さない。

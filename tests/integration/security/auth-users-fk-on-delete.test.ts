@@ -11,8 +11,9 @@
  *   A. auth.users を指す外部キーに NO ACTION が 1 本も無い (許可リストは空。足すときは理由を書く)
  *   B. RESTRICT は「組織のオーナー」と「家族の代表者」の 2 本だけ (退会 API が先に 409 で止める仕様)
  *   C. SET NULL の外部キーの列はすべて NULL を許す (NOT NULL のままだと、退会が 23502 で失敗する)
- *   D. 張り直した 32 本 (と billing/01 で足した billing_customers.user_id の 1 本の計 33 本) が、決めたとおりの動作 (CASCADE / SET NULL) になっている。
- *      admin_audit_logs の actor_id を指す外部キーは 1 本だけ
+ *   D. 張り直した 32 本のうち #1562 で外した gdpr_deletion_requests.user_id を除く 31 本 (と billing/01 で足した billing_customers.user_id の
+ *      1 本の計 32 本) が、決めたとおりの動作 (CASCADE / SET NULL) になっている。admin_audit_logs の actor_id を指す外部キーは 1 本だけ
+ *   D2. gdpr_deletion_requests.user_id には auth.users を指す外部キーが無い (#1562 で外した)
  *   E. 退会で消える表 (auth.users と、prepare_account_deletion が直接 DELETE する表から、CASCADE でたどれる表) を指す
  *      NO ACTION / RESTRICT の外部キーは、同じ削除で一緒に消える行からだけ参照されている (許可リスト)。
  *      同じ表を指す SET NULL の外部キーの列は NULL を許す (NOT NULL のままだと、退会が 23502 で失敗する)
@@ -112,7 +113,11 @@ const RESTRICT_ALLOWLIST: Readonly<Record<string, string>> = {
     '家族グループの代表者は、譲渡か解散をしないと退会できない (ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE)',
 };
 
-/** #1175 で張り直した 32 本と、billing/01 で足した 1 本 (計 33 本) の、決めた動作 */
+/**
+ * #1175 で張り直した 32 本と、billing/01 で足した 1 本の、決めた動作。
+ * ただし gdpr_deletion_requests.user_id の外部キーは #1562 (20261016190000) で外した (削除の実行記録は利用者の行を指さない)。
+ * そのためここには #1175 の 31 本と billing_customers.user_id の 1 本 (計 32 本) を挙げ、外したことは下の D2 で確かめる
+ */
 const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   // 本人だけの記録は本人と一緒に消す
   'nps_surveys.user_id': 'CASCADE',
@@ -125,7 +130,6 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   'coupon_redemptions.user_id': 'SET NULL',
   'referral_rewards.referrer_id': 'SET NULL',
   'referral_rewards.referred_id': 'SET NULL',
-  'gdpr_deletion_requests.user_id': 'SET NULL',
   'email_delivery_logs.user_id': 'SET NULL',
   // 運営者・作成者・承認者などの参照は、記録を残して紐づけだけ外す
   'admin_user_notes.admin_id': 'SET NULL',
@@ -152,6 +156,13 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   // billing/01 §6.3: 利用者と Stripe Customer の対応表は、退会で行を残して紐づけだけ外す (anonymized_at が入った行が残る)
   'billing_customers.user_id': 'SET NULL',
 };
+
+/** #1175 で張り直した本数 (migration 20261010000100) */
+const REBUILT_BY_1175 = 32;
+/** そのうち #1562 (20261016190000) で外した本数 (gdpr_deletion_requests.user_id。D2 で確かめる) */
+const DROPPED_BY_1562 = 1;
+/** billing/01 (20261016210000) で足した本数 (billing_customers.user_id) */
+const ADDED_BY_BILLING_CORE = 1;
 
 let fks: AuthUsersFk[];
 
@@ -193,7 +204,19 @@ describe('#1175 C. SET NULL の外部キーの列は NULL を許す', () => {
   });
 });
 
+describe('#1562 D2. 削除の実行記録 (gdpr_deletion_requests) は削除した利用者を指さない', () => {
+  it('gdpr_deletion_requests.user_id に auth.users を指す外部キーが無い (退会の SET NULL / CASCADE が記録に届かない)', () => {
+    expect(fks.filter((fk) => fk.table === 'gdpr_deletion_requests' && fk.column === 'user_id').map((fk) => fk.constraint)).toEqual([]);
+  });
+});
+
 describe('#1175 D. 張り直した外部キーの動作', () => {
+  it('決めた動作の一覧は #1175 の 32 本 − #1562 で外した 1 本 + billing/01 の 1 本 (計 32 本) で、外した列を含まない', () => {
+    expect(Object.keys(EXPECTED_ACTIONS)).toHaveLength(REBUILT_BY_1175 - DROPPED_BY_1562 + ADDED_BY_BILLING_CORE);
+    expect(Object.keys(EXPECTED_ACTIONS)).not.toContain('gdpr_deletion_requests.user_id');
+    expect(EXPECTED_ACTIONS['billing_customers.user_id']).toBe('SET NULL');
+  });
+
   for (const [key, expected] of Object.entries(EXPECTED_ACTIONS)) {
     it(`${key} は ON DELETE ${expected}`, () => {
       const [table, column] = key.split('.');

@@ -87,6 +87,8 @@ export async function signOutWithCleanup(
 
 /**
  * 利用者が設定画面で押す、通常のログアウト (#1037)。
+ * アカウントの画面 (settings/account.tsx) も、退会の API が 401 (ログインが切れている) を返したときに使う
+ * (アカウントは消えていないので、退会のあとの signOutAfterAccountDeletion ではない。#1562)。
  *
  * signOutWithCleanup と同じ順 (push token の削除 → 端末データの削除 → サインアウト) で後片付けし、
  * サインアウトが失敗したら (オフラインなど)、退会のあとと同じく端末だけでセッションを忘れる (signOutOrForgetLocally)。
