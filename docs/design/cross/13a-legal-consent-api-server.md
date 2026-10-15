@@ -102,7 +102,7 @@
 | R-3 | 断らない API は理由つきの許可リストで固定し、テストが一覧を固定する | 仕様 1 | T-SH3, T-M2, T-M3, T-M14 |
 | R-4 | 判定の置き場所は漏れが出ない形 (route ごとに呼び忘れない) | 仕様 1 | T-M1 (全 route の表) |
 | R-5 | 漏れを見張るテスト (全 route の表と実コードの照合) を含め、見張りの限界を明記する | 仕様 1 | §6.13 |
-| R-8 | 改定 (版が上がった) の再同意は、既存の版の判定 (`hasAcceptedCurrentLegalDocuments`) に合わせる。API も モバイルも同じ | 仕様 3 | T-M4, T-P3 |
+| R-8 | 改定 (版が上がった) の再同意は、既存の版の判定 (`hasAcceptedCurrentLegalDocuments`) に合わせる。API も モバイルも同じ | 仕様 3 | T-M4, T-M17, E2E-A6, T-P3 |
 | R-9 | `ENFORCE` が off のとき・同意の状態を読めないとき (DB 障害) の挙動を理由つきで決める | 仕様 4 | §6.11, T-M5〜T-M8 |
 | R-10 | 既存のテスト・e2e への影響を洗い、結合テストで 403 の専用コードを確かめる | 仕様 5 | §6.14, §6.18 |
 | R-11 | Zod のスキーマ (403 の本文)・ヘルパーの関数のシグネチャ・エラー表・状態遷移表を書く | 仕様 成果物 | §6.1〜§6.8 |
@@ -115,19 +115,19 @@ R-6・R-7・R-12 (モバイルだけ) は 13b §3.1。R-8〜R-11・R-13 はサ�
 
 モバイルだけで結果が決まる S1〜S4・S12・S13・S18 は 13b §3.2。サーバーとモバイルの両方に関わる S5・S8・S9・S15 は本冊に置く。
 
-| ID | シナリオ |
-|---|---|
-| S5 | 規約の改定 (版を上げてデプロイ)。アプリを開いたままの利用者が次に API を呼ぶ → 403 → 同意画面 → 再同意 → さっきの画面に戻る |
-| S6 | 未同意の利用者が curl + Bearer で `GET /api/meals` を叩く → 403 `LEGAL_CONSENT_REQUIRED` |
-| S7 | 未同意の利用者が退会 (`POST /api/account/delete`) / 書き出し (`GET /api/account/export`) → 通る (同意を取り下げる権利) |
-| S8 | `LEGAL_CONSENT_ENFORCE` が off (または未設定) → API は未同意でも通る。アプリも止めない (status の `required` が false) |
-| S9 | DB 障害で `user_profiles` を読めない → API は素通り (route 側の認可へ)。アプリは status を取れず `unknown` → 止めない。DB が戻れば次の API 呼び出しの 403 で同意画面へ |
-| S10 | 凍結中かつ未同意 → 403 `AUTH_ACCOUNT_FROZEN` (凍結が先。同意の 403 は出ない) |
-| S11 | メンテナンス中かつ未同意 (運営ではない) → 503 `MAINTENANCE_MODE` (メンテナンスが先) |
-| S14 | Web の画面 (SPA) を開いたまま改定 → 画面の中の API 呼び出しが 403 → 画面は本文の固定の文を出す → 次の画面の取得 (GET) で middleware が同意画面へ回す (既存のゲート) |
-| S15 | 同意の列がまだ無い DB (migration の反映前) → 42703 でやり直し、同意ゲートだけ素通り (API も画面も同じ) |
-| S16 | cron (`CRON_SECRET`) / Resend の webhook → 利用者のセッションが無い → 同意の判定に掛からない (許可リストにも載せ、理由を固定する) |
-| S17 | 運営 (admin) が未同意で `/api/admin/users` を呼ぶ → 403 (規約はスタッフにも適用される。Web の画面のゲートと同じ) → 同意後に通る |
+| ID | シナリオ | 検証 (§6.14 の it。13b の it は 13b §6.14) |
+|---|---|---|
+| S5 | 規約の改定 (版を上げてデプロイ)。アプリを開いたままの利用者が次に API を呼ぶ → 403 → 同意画面 → 再同意 → さっきの画面に戻る | サーバー: T-M4・T-M17・E2E-A6 (旧版で 403 → 再同意 → 200)。モバイル (13b): T-API1 (403 を例外に置き換えて知らせる)・T-P3 (`required` にして取り直す)・T-G2 (画面の代わりに同意画面)・T-SC2 (同意して `refresh`) |
+| S6 | 未同意の利用者が curl + Bearer で `GET /api/meals` を叩く → 403 `LEGAL_CONSENT_REQUIRED` | T-M1・T-M9・T-M12 |
+| S7 | 未同意の利用者が退会 (`POST /api/account/delete`) / 書き出し (`GET /api/account/export`) → 通る (同意を取り下げる権利) | T-M1・T-M3・E2E-A4 |
+| S8 | `LEGAL_CONSENT_ENFORCE` が off (または未設定) → API は未同意でも通る。アプリも止めない (status の `required` が false) | T-M5・T-R5・E2E-A5。モバイル (13b): T-P1 |
+| S9 | DB 障害で `user_profiles` を読めない → API は素通り (route 側の認可へ)。アプリは status を取れず `unknown` → 止めない。DB が戻れば次の API 呼び出しの 403 で同意画面へ | T-M6・T-R7。モバイル (13b): T-P2・T-G5 |
+| S10 | 凍結中かつ未同意 → 403 `AUTH_ACCOUNT_FROZEN` (凍結が先。同意の 403 は出ない) | T-M10 |
+| S11 | メンテナンス中かつ未同意 (運営ではない) → 503 `MAINTENANCE_MODE` (メンテナンスが先) | T-M11 |
+| S14 | Web の画面 (SPA) を開いたまま改定 → 画面の中の API 呼び出しが 403 → 画面は本文の固定の文を出す → 次の画面の取得 (GET) で middleware が同意画面へ回す (既存のゲート) | T-M9 (本文の `error` は固定の文)・T-M17 (同じ人の `/api` は 403、画面の GET は同意画面へ 307)・E2E-A6 |
+| S15 | 同意の列がまだ無い DB (migration の反映前) → 42703 でやり直し、同意ゲートだけ素通り (API も画面も同じ) | T-M7 |
+| S16 | cron (`CRON_SECRET`) / Resend の webhook → 利用者のセッションが無い → 同意の判定に掛からない (許可リストにも載せ、理由を固定する) | T-M2・T-M3・T-M12 |
+| S17 | 運営 (admin) が未同意で `/api/admin/users` を呼ぶ → 403 (規約はスタッフにも適用される。Web の画面のゲートと同じ) → 同意後に通る | T-M1・T-M11 |
 
 ネイティブの画面の一覧 (§3.3。R-7) は 13b §3.3。
 
@@ -250,10 +250,16 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | none / old | `/api` 対象を呼ぶ | 同じ | `enforce` かつ 許可リスト外 | 403 を返す。モバイルは state を `required` にし status を取り直す |
 | none / old | `/api` 許可リストを呼ぶ | 同じ | — | route へ |
 | none / old | `GET /api/legal/status` | 同じ | — | `required: enforced` |
-| none / old | `POST /api/legal/accept` (いまの版) | **ok** | 版が一致 | `accept_legal_documents` (行が無ければ作る)。モバイル: `refresh()` → `clear` → 画面に戻る |
+| none / old | Web 画面 GET / HEAD (画面の判定の対象。`isLegalConsentExemptPath` が false) | 同じ | `enforce` (off なら通す。`LEGAL_CONSENT_NOTICE=on` ならお知らせのヘッダーだけ) | `/legal-consent?next=<パス+クエリ>` へ 307 (既存。`middleware.ts:372-393`)。本書で変えない |
+| none / old | Web 画面 GET / HEAD (画面の判定の対象外: `/legal-consent`・`/terms`・`/privacy`・`/legal`・`/contact`・`/frozen`・`/auth/*`・`/handson-tour`) | 同じ | — | 通す (既存。`lib/legal-consent.ts:78-105`) |
+| none / old | Web 画面 POST など (GET / HEAD 以外) | 同じ | — | 回さない (既存。307 で同意画面へ回しても受け取れないため)。その画面が中で呼ぶ `/api` は上の「`/api` 対象を呼ぶ」の行で 403 (S14) |
+| none / old | Web の初期設定 (`/onboarding/*` の GET) | 同じ | `enforce` | 同意画面が先 (既存。同意の判定は初期設定の差し戻しより先)。off なら初期設定の差し戻しだけ。初期設定の API (`/api/onboarding/*`) は「`/api` 対象を呼ぶ」の行で 403 (§6.4) |
+| none / old | `POST /api/legal/accept` (いまの版) | **ok** | 版が一致 | `accept_legal_documents` (行が無ければ作る)。Web: `window.location.assign(next)` で元の画面へ (既存。`LegalConsentForm.tsx:53-92`)。モバイル: `refresh()` → `clear` → 画面に戻る |
 | none / old | `POST /api/legal/accept` (古い版の値) | 同じ | 版が不一致 | 409。モバイル: `refresh()` → 新しい版で描き直し |
 | ok | 版が上がる (デプロイ) | **old** | — | 何も起きない。次の API 呼び出しで 403 (モバイル) / 次の画面の取得で同意画面 (Web) |
 | ok | `/api` を呼ぶ | 同じ | — | 通す |
+| ok | Web 画面 GET / HEAD / POST | 同じ | — | 同意の判定は `'none'` で通す (既存)。初期設定が済んでいなければ既存の初期設定の差し戻し |
+| ok | Web の初期設定 (`/onboarding/*` の画面と `/api/onboarding/*`) | 同じ | — | 通す (既存の初期設定の流れ。同意の判定は掛からない) |
 | none / old / ok | 凍結される | 同じ (同意の状態は変わらない) | — | `/api` は 403 AUTH_ACCOUNT_FROZEN が先 |
 | none / old | `ENFORCE` を off にする (再デプロイ) | 同じ | — | `/api` 通す。status `required: false` → モバイル `clear` |
 | unreadable | `/api` 対象を呼ぶ | 同じ | — | 素通り (route の判断へ) |
@@ -281,7 +287,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | `/api/webhooks` | prefix | `no_user_session` | 外部 (Resend) からの通知。署名で認証。利用者のセッションが無い |
 | `/api/e2e` | prefix | `test_only` | テスト基盤 (`e2e/reset-onboarding`。本番は `NODE_ENV` で 403)。e2e の共通ユーザーの初期化を同意に左右させない |
 
-載せない (= 止める) ことを決めたもの:
+載せない (= 止める) ことを決めたもの (既定 deny なので、この表に無い route もすべて止まる。この表は、止めるか通すかの判断が分かれうる候補と、その判断の理由を書いたもの):
 
 | 候補 | 止める理由 |
 |---|---|
@@ -291,6 +297,8 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | `/api/push-tokens/claim` | 端末の通知トークンの登録。同意前の起動で 403 になるので、`PushTokenRegistrar` の effect に同意の状態を足し、同意が済んだら登録し直す (13b §6.6.10) |
 | `/api/performance/sports` `/api/catalog/products` (公開・準公開のデータ) | 未ログインなら判定に来ない。ログイン済みの未同意の人は同意が先。個別の例外を作らない |
 | `/api/family/invites/[id]/reject` `/api/org/invites/[id]/reject` (認証任意) | 未ログインなら判定に来ない。ログイン済みなら Web の `/invite/*` の画面のゲートが先に同意を取る |
+| `/api/family/invites/[id]/accept` `/api/org/invites/[id]/accept` (招待を受ける) | ログイン済みの本人の操作 (route が `getUser` で確かめ、未ログインは 401。`family/invites/[id]/accept/route.ts:20`・`org/invites/[id]/accept/route.ts:17`)。受けると家族・組織とのデータの共有が始まるので、利用者のデータの利用そのもの。呼ぶ画面は Web の `/invite/[token]` (`src/app/invite/[token]/page.tsx:69` と、そこが描く `FamilyInviteAcceptModal.tsx:42`) で、`/invite` は画面の判定の対象外に無い (`lib/legal-consent.ts:78-91`) ので、ログイン済みの未同意の人は画面のゲートで先に同意画面へ回る |
+| `/api/family/invites` `/api/org/invites` (招待の一覧・作成) と `/api/family/invites/[id]/revoke` `/api/org/invites/[id]/revoke` (取り消し) | 招待する側 (家族の代表・組織の管理者。`org` は `requireOrgAdmin`) の操作で、相手のメールアドレスなど利用者のデータを扱う。運営と同じく役割の例外を作らない。呼ぶ画面 (Web `src/app/(main)/family/members/invite/page.tsx:51, 78`・`src/app/(org)/org/invites/page.tsx:33, 67, 99`、モバイル `apps/mobile/app/(org)/org/invites.tsx:40, 59, 82`) は、どれも同意の後にしか開けない (Web は画面のゲート、モバイルは 13b のゲート) |
 | `/api/export/meals` (献立の CSV。Web の設定画面 `src/app/(main)/settings/page.tsx:176` とモバイルの設定タブ `apps/mobile/app/(tabs)/settings.tsx:210` が呼ぶ) | 書き出しの権利 (S7) は `/api/account/export` が受け持つ。そちらは本人の全データを出し、献立 (`user_daily_meals`・`planned_meals`) も含む (`src/lib/account-export-tables.ts:154-155`)。CSV は設定画面の便利機能で、呼ぶ画面はどちらも同意の後にしか開けない (Web は画面のゲート、モバイルは 13b のゲート)。凍結中に通す 2 本 (`frozen.ts:49-52`) にも入っていない。許可リストを権利の 2 本に絞って揃える |
 
 ### 6.5 判定の置き場所と順序
@@ -981,6 +989,7 @@ sequenceDiagram
 | T-M14 | `許可リストは FROZEN_ALLOWED_API_PATHS の 2 本を含む` |
 | T-M15 | `src/middleware.ts の matcher が /api で外すのは api/health$ だけ` |
 | T-M16 | `/api の分岐の select は PROFILE_COLUMNS_WITH_LEGAL の 1 回だけ (クエリを増やさない)` |
+| T-M17 | `改定の後 (旧版に同意) × ENFORCE=on: 同じ人の /api/meals は 403 LEGAL_CONSENT_REQUIRED (本文の error は LEGAL_CONSENT_REQUIRED_MESSAGE)、画面の GET /home は /legal-consent?next=%2Fhome へ 307、画面の POST /home は回さない (S5・S14 の Web の流れ)` |
 
 **D. status route `tests/api/legal-status-route.test.ts`** (モックは `tests/api/onboarding-status-route.test.ts` と同型)
 
@@ -1018,6 +1027,7 @@ T-C1 と T-C3 の検査の仕方 (コメントを拾わない): `LegalConsentFor
 | E2E-A3 | `[強制あり] API: 同意 (POST /api/legal/accept) のあとは GET /api/profile が 200、status の required が false` |
 | E2E-A4 | `[強制あり] API: 未同意でも GET /api/account/export は 403 LEGAL_CONSENT_REQUIRED にならない` |
 | E2E-A5 | `[既定 / お知らせあり] API: 未同意でも GET /api/profile は 200、status の required は false` |
+| E2E-A6 | `[強制あり] API: 古い版に同意済みの人 (改定のあと) は GET /api/profile が 403 LEGAL_CONSENT_REQUIRED。/home を開くと同意画面 (「改定あり」) へ回り、再同意すると GET /api/profile が 200 (S5・S14)` (古い版の人は既存の `★規約が改定されたとき` の test (`legal-consent-gate.spec.ts:378-379`) と同じく `signInAsNewUser(page, { profile: true, legal: { terms: "v0-old", privacy: CURRENT_PRIVACY } })` で作る) |
 
 `local-ci.sh` と `e2e-local.yml` は既に 3 つのサーバー (既定 / ENFORCE=on / NOTICE=on) でこの spec を流すので、設定の変更は無い。
 
@@ -1036,7 +1046,7 @@ T-C1 と T-C3 の検査の仕方 (コメントを拾わない): `LegalConsentFor
 | 段 | 種別 | ファイル |
 |---|---|---|
 | A | 新設 | `packages/shared/src/legal-consent-api.ts`, `packages/shared/src/legal-consent-copy.ts`, `packages/shared/src/legal-consent-api.test.ts`, `src/lib/legal-consent-api.ts`, `src/app/api/legal/status/route.ts`, `tests/legal-consent-api-schema.test.ts`, `tests/api/legal-status-route.test.ts`, `tests/legal-consent-copy.test.ts`, `lib/supabase/__tests__/middleware-legal-consent-api.test.ts` |
-| A | 変更 | `packages/shared/src/index.ts` (export 2 行), `lib/supabase/middleware.ts` (`/api` の分岐), `src/app/legal-consent/LegalConsentForm.tsx` (文面を shared から), `lib/legal-consent.ts` (コメント), `src/app/api/legal/accept/route.ts` (コメント), `lib/supabase/__tests__/middleware-legal-consent.test.ts` (§6.18), `tests/e2e/legal-consent-gate.spec.ts` (E2E-A1〜A5), `.env.example` (§6.19), `ENV_SETUP.md` (§6.19) |
+| A | 変更 | `packages/shared/src/index.ts` (export 2 行), `lib/supabase/middleware.ts` (`/api` の分岐), `src/app/legal-consent/LegalConsentForm.tsx` (文面を shared から), `lib/legal-consent.ts` (コメント), `src/app/api/legal/accept/route.ts` (コメント), `lib/supabase/__tests__/middleware-legal-consent.test.ts` (§6.18), `tests/e2e/legal-consent-gate.spec.ts` (E2E-A1〜A6), `.env.example` (§6.19), `ENV_SETUP.md` (§6.19) |
 | 専権 (オーケストレーター) | 変更 | `docs/design/cross/08-legal-compliance.md`, `docs/design/cross/04-api-conventions.md`, `docs/design/cross/CLAUDE.md`, `CLAUDE.md` (§6.19) |
 
 段 B の触るファイルは 13b §6.16。
@@ -1075,6 +1085,10 @@ grep の語 = 本設計が足す・変える・移すものの名前。反応す
 | `src/app/api/legal/status/route.ts` (新 route の走査) | `tests/api-raw-error-message-scan.test.ts` (本文に生のエラー文を入れない)、`tests/ai-consent-enforcement.test.ts` (AI に届く route の棚卸し)、`tests/supabase-service-role-client-scan.test.ts`、`tests/env-source-scan.test.ts` | 確認のみ: route は `internalError` と固定の文だけを返す / import は accept route と同じ構成 (`@/lib/supabase/server`・`@/lib/api/errors`・`@/lib/legal-consent`・`@homegohan/shared`・zod の schema) で AI の印に届かない / service role を使わない / `process.env` を直接読まない | A |
 | `LEGAL_CONSENT_ENFORCE` (読む場所) | `tests/env-source-scan.test.ts` (読むのは `lib/legal-consent.ts` だけ)、`tests/legal-consent-env-stub-style.test.ts` (テストは `vi.stubEnv`) | 確認のみ: status route と middleware は `isLegalConsentEnforced()` を呼ぶだけ。新しいテストは `vi.stubEnv` | A |
 | `LegalConsentForm.tsx` の文面 (`利用規約・プライバシーポリシーへの同意` `改定されました` `改定あり` `同意して続ける` `同意しない（ログアウトする）`) | `tests/legal-consent-page.test.tsx:153-181, 228-254`、`tests/e2e/legal-consent-gate.spec.ts:162-165, 412`、`tests/e2e/helpers/legal-consent.ts:19-21`、`tests/native-sign-out-order-source-scan.test.ts` (signOut の順) | 確認のみ (画面に出る文は同じ。Web の「同意しない」のボタンは `declineAndSignOutButton` = 現行の文。sign-out の順も触らない)。T-C2 が同じ文であることを、T-C3 が Web で `declineButton` を使わないことを固定 | A |
+| `listRouteFiles` (`src/app/api` の全 route の走査) | `src/__tests__/api/null-character-routes.test.ts` (本文を読む handler は表か `EXCLUDED` にちょうど 1 回載る。`bodyReadingHandlers` が `BODY_READ_PATTERN` (`request.json()` などの `.json()` / `.text()` / `.formData()` と `readJsonBody(`) を含む handler を集める。`:269-319`) | 確認のみ: 新設の `GET /api/legal/status` は `export async function GET()` で引数を取らず本文を読まない (§6.6.5・§6.9 の入力「無し」) ので、表にも `EXCLUDED` にも載せない。⛔ 実装で `GET(request)` にして本文を読むと赤になる (そのときは入力を足した設計の誤り) | A |
+| 同上 (`src/app/api` を読む走査) | `tests/role-check-source-scan.test.ts` (roles の手書きの判定・組織 / サポート / お知らせの route の共通ヘルパー)、`tests/ai-consent-mobile-entry-points.test.ts` (`requireAiConsent` を呼ぶ route)、`tests/mobile-super-admin-api-contract.test.ts` (`(super-admin)` の画面が呼ぶ route の実在) | 確認のみ: status route は roles を読まず、`legal/` は組織・サポート・お知らせの route ではない / `requireAiConsent` を呼ばない / `(super-admin)` の画面からは呼ばれない | A |
+| `tests/e2e-api-paths.test.ts` の `SPEC_FILES` | `legal-consent-gate.spec.ts` は `SPEC_FILES` に入っていない | 確認のみ (E2E-A1〜A6 が叩くパスはこの検査の対象外。叩くパスは `/api/profile`・`/api/legal/status`・`/api/legal/accept`・`/api/account/export` で、どれも実在する route (status は本冊で新設)) | A |
+| `page.request.get("/api/legal/accept"` (未同意の人の `/api` が 307 にならない) | `tests/e2e/legal-consent-gate.spec.ts:427-441` の test `ゲートの対象外 (…) は、未同意でも回されない。API も回されない` (期待 405) | 確認のみ: `/api/legal/accept` は許可リスト (`consent_itself`) なので middleware を通り、route が GET に 405 を返すまま。説明のコメント (439 行目「/api/* はゲートの対象外」) は「画面の判定の対象外。`/api/legal/accept` は API の同意ゲートの許可リスト」に直す (同じ PR で触るファイル) | A |
 | `export * from` (shared の index) | `packages/shared/src/*.test.ts` に index の export を固定するものは無い | — | A |
 | `supabase.from(` (アプリの直読み) | 無し (番兵は無い) | §6.13 の限界として明記 | — |
 
