@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { HANDSON_TOUR_I18N_JA, HANDSON_TOUR_I18N_EN } from '../src/i18n';
 import { personalize } from '../src/personalize';
+import { STEP3_BADGES_EARNED_IN_TOUR } from '../src/constants';
 
 describe('i18n keys completeness', () => {
   const t = HANDSON_TOUR_I18N_JA.tour;
@@ -331,5 +332,50 @@ describe('HANDSON_TOUR_I18N_EN は JA と同じキー名・placeholder を持つ
       }
     }
     expect(empty).toEqual([]);
+  });
+});
+
+// #1626: Step 3 の intro は「もう n つ獲得しています」と言う。以前は「2 つ」だったが、Step 1 のお試しの記録は
+// first_bite に数えない (#1314) ので、ツアーを通した利用者が Step 3 の時点で持っているのは planner の 1 つだけだった。
+// 文言の数を、ツアーが実際に付けるバッジの数 (STEP3_BADGES_EARNED_IN_TOUR) と突き合わせる
+describe('Step 3 の文言の「n つ」は、ツアーが Step 3 までに付けるバッジの数と合う (#1626)', () => {
+  const earnedCount = STEP3_BADGES_EARNED_IN_TOUR.length;
+  /** 文言に書かれたバッジの数。JA は「n つ」、EN は「n badge(s)」。見つからなければ null */
+  const jaCountOf = (text: string): number | null => {
+    const m = /(\d+)\s*つ/.exec(text);
+    return m ? Number(m[1]) : null;
+  };
+  const enCountOf = (text: string): number | null => {
+    const m = /(\d+)\s*badges?\b/.exec(text);
+    return m ? Number(m[1]) : null;
+  };
+
+  it('ツアーが Step 3 までに付けるのは planner だけ (お試しの記録では first_bite を付けない)', () => {
+    expect([...STEP3_BADGES_EARNED_IN_TOUR]).toEqual(['planner']);
+  });
+
+  it('JA の intro_title / a11y_title の数が、付けるバッジの数と同じ', () => {
+    const ja = HANDSON_TOUR_I18N_JA.tour.step3;
+    expect(jaCountOf(ja.intro_title)).toBe(earnedCount);
+    expect(jaCountOf(ja.a11y_title)).toBe(earnedCount);
+    expect(personalize(ja.intro_title, { nickname: '花子' })).toBe('花子 さん、もう 1 つ獲得しています!');
+  });
+
+  it('EN の intro_title / a11y_title の数が、付けるバッジの数と同じ', () => {
+    const en = HANDSON_TOUR_I18N_EN.tour.step3;
+    expect(enCountOf(en.intro_title)).toBe(earnedCount);
+    expect(enCountOf(en.a11y_title)).toBe(earnedCount);
+  });
+
+  // first_bite のカードは、ツアーを通しただけの人では未獲得、本物の食事の記録がある人のやり直しのツアーでは「獲得済」。
+  // 同じ吹き出しがどちらのカードも指すので、獲得済みの言い方 (「記録しました」) も、未獲得の言い方 (「もらえます」) もしない
+  it('first_bite の吹き出しは獲得の有無を言わず、もらい方を説明する (獲得済みでも未獲得でも食い違わない)', () => {
+    const ja = HANDSON_TOUR_I18N_JA.tour.step3.first_bite_bubble;
+    const en = HANDSON_TOUR_I18N_EN.tour.step3.first_bite_bubble;
+    expect(ja).toBe('食事を記録するともらえるバッジです');
+    expect(en).toBe('Earned by logging a meal');
+    // 獲得済みの言い方 (以前の「写真から記録を 1 度しました」) でも、未獲得の言い方 (「…するともらえます」) でもない
+    expect(ja).not.toMatch(/しました|もらえます|もらいました/);
+    expect(en).not.toMatch(/\byou (logged|earned)\b|\bto earn it\b/i);
   });
 });

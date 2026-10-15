@@ -10,6 +10,7 @@ import {
   orgInviteFailureResponse,
 } from '@/lib/membership/org-invite';
 import { AddOrgMemberRequestBodySchema } from '@/schemas/membership/organization-invite';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // メンバー一覧取得 (所属組織の owner / admin のみ。判定は共通の requireOrgAdmin()、#1161)
 export async function GET(_request: Request) {
@@ -48,6 +49,9 @@ export async function GET(_request: Request) {
 // Web の「メンバーを招待」(POST /api/org/invites) と同じ組織招待 (役割は member) を送る。
 // アカウントは作らない。リクエストの password は受け取っても使わない (古いモバイルアプリが送ってくるため無視する)。
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   let admin: OrgAdminContext;
   try {
     admin = await requireOrgAdmin();

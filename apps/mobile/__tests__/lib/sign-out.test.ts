@@ -89,7 +89,7 @@ describe('signOutWithCleanup', () => {
     const result = await signOutWithCleanup('user-1');
 
     expect(calls).toEqual(['unregister', 'clearStorage', 'requestWebViewClear', 'clearWebViewCookies', 'signOut']);
-    // アクセストークンを渡さなければ、削除は現在のセッションで認可される (設定画面・マイページ)
+    // アクセストークンを渡さなければ、削除は現在のセッションで認可される (設定画面)
     expect(mockUnregister).toHaveBeenCalledWith('user-1', { accessToken: undefined });
     expect(mockClearStorage).toHaveBeenCalledWith('user-1');
     expect(result).toEqual({ error: null });
