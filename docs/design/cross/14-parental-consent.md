@@ -2,7 +2,7 @@
 
 | 項目 | 値 |
 |---|---|
-| Status | 設計ゲート審査中 (v1.8) |
+| Status | 設計ゲート審査中 (v1.9) |
 | Issue | #1173 (要件 03 §17.10。先例: #1174 の規約の同意 (`accept_legal_documents`)・#1232 の子供の昇格 (本人同意)・#1154 の AI 同意 (`external_data_consents.revoked_at`)) |
 | 分冊 | 1 冊・2 段 (段 A = DB + `packages/shared` + 書き出しの分類 / 段 B = Web + API + メール + モバイルの注記)。§0.2 |
 | 正典の関係 | `cross/01-auth-session.md` §12〜§13.2 (子供アカウント保護の方針・草案) と `family/01-data-model.md` §4.13 (`parental_consents` の草案 DDL) を**本冊が置き換える** (マージ後に両節は本冊への参照に現在形化する。§6.18)。`cross/08-legal-compliance.md` §7.2 の同意ゲート (#1174) に「生年月日の確認」を畳む。13a (#1442) は実装まで main に着地済み (#1697)・13b は未マージ。両冊との契約は §0.5 |
@@ -1435,6 +1435,34 @@ sequenceDiagram
     end
 ```
 
+18 歳未満の本人で保護者の同意とのつながりが無い (`gaps` の `'guardian_consent'`。依頼を断った・取り消された・期限切れ・家族を抜けた / 外された。§6.3 (a)・§6.9・S17・S18・P32) ときは、上の accept に進まず同意画面が退会だけを出す:
+
+```mermaid
+sequenceDiagram
+    actor User as 18 歳未満の本人 (版一致・birth あり)
+    participant MW as middleware
+    participant Page as /legal-consent
+    participant DB as legal_minor_has_guardian_path() (DEFINER)
+    participant Del as POST /api/account/delete
+    User->>MW: GET /home
+    MW->>DB: withMinorGuardianStatus → rpc (18 歳未満のときだけ)
+    DB-->>MW: false
+    MW-->>User: 307 /legal-consent?next=/home (gaps = ['guardian_consent'])
+    User->>Page: GET
+    Page->>DB: withMinorGuardianStatus → rpc (数え直し)
+    alt true (つながりが戻った)
+        Page-->>User: next へ送る
+    else false
+        Page-->>User: guardian_missing (見出し・本文・「登録をやめる」だけ)
+        User->>Del: 「登録をやめる」(deleteOwnAccount)
+        alt kind = 'deleted'
+            Del-->>User: signOutAfterAccountDeletion → withdrawn
+        else kind = 'blocked' (409) / 'unauthorized' / 'failed'
+            Del-->>User: 文を出して guardian_missing に戻る
+        end
+    end
+```
+
 ### 6.13 テスト一覧 (it 名)。既存のテストの直しは §6.17
 
 **A. shared `packages/shared/src/parental-consent.test.ts` (新設。同意ゲートの述語も同じファイルにあるので T-SH5〜T-SH7・T-SH10 もここ。`legal-versions.test.ts` は変えない)**
@@ -1613,11 +1641,11 @@ sequenceDiagram
 | 種別 | 名前 | 場所 |
 |---|---|---|
 | migration | `<番号>_parental_consent_and_birth_date.sql` (+ `.down.sql`) | `supabase/migrations` / `supabase/rollbacks` |
-| テーブル | `parental_consents` (列 14、CHECK 6、索引 3 (うち部分ユニーク 1)、ポリシー `parental_consents_select_signer_family_adult_or_operator`) | DB |
+| テーブル | `parental_consents` (列 14、CHECK 6 = `parental_consents_signed_name_length`・`parental_consents_guardian_attested`・`parental_consents_version_format`・`parental_consents_child_age`・`parental_consents_revoked_pair`・`parental_consents_revoked_reason`、索引 3 = `uniq_parental_consents_active_member` (部分ユニーク)・`idx_parental_consents_family`・`idx_parental_consents_parent` (部分)、ポリシー `parental_consents_select_signer_family_adult_or_operator`。§6.4 の 4) | DB |
 | 列 | `user_profiles.birth_date`, `family_members.birth_date` | DB |
-| 制約・索引 | `family_members_child_birth_date_required`, `idx_family_members_child_birth_date` | DB |
+| 制約・索引 | `family_members_child_birth_date_required`, `idx_family_members_child_birth_date` (以上 `family_members`)。`parental_consents` の CHECK 6 本・索引 3 本は上のテーブルの行 (§6.4 の 4) | DB |
 | 関数 | `age_years_jst(date)`, `parental_consent_active(uuid)`, `legal_minor_has_guardian_path()` (引数なし・本人について答える・authenticated が実行できる), `caller_is_minor_jst()` (引数なし・本人の生年月日で 18 歳未満か・クライアントは実行できない。§6.4 の 12), `revoke_parental_consent_on_member_inactive()` (trigger) | DB |
-| 本文の変更 (signature・ACL は同じ。CREATE OR REPLACE) | `request_child_promotion`, `accept_child_promotion` (§6.4 の 11)、`create_family_group`, `accept_family_invite`, `accept_family_representative_transfer`, `accept_org_owner_transfer` (§6.4 の 12)、ガード 3 本 (§6.4 の 8) | DB |
+| 本文の変更 (signature・ACL は同じ。CREATE OR REPLACE) | `request_child_promotion`, `accept_child_promotion` (§6.4 の 11)、`create_family_group`, `accept_family_invite`, `accept_family_representative_transfer`, `accept_org_owner_transfer` (§6.4 の 12)、ガード 3 本 = `guard_user_profiles_privileged()`・`guard_user_profiles_privileged_on_insert()`・`guard_family_members_privileged()` (§6.4 の 8) | DB |
 | signature の変更 | `add_family_child(uuid,text,jsonb,date,text,text,boolean,inet,text)`, `accept_legal_documents(text,text,inet,text,date)` (旧は DROP) | DB |
 | トリガー | `trg_family_members_revoke_parental_consent` | DB |
 | 監査 action | `parental_consent_recorded`, `parental_consent_revoked` | DB |
@@ -1770,3 +1798,4 @@ E2E (3 サーバー) は `scripts/local-ci.sh` が流す。`account-export-scope
 | v1.6 | 2026-10-16 | 周 4 (R3 の指摘 3 件の反映): (1) S3 (版は同意済み・生年月日なし) の同意画面のチェックを、§6.5.6 の 6 に合わせて「初期値は現行のまま両方オフ・両方必須」に確定し、§3.2 の S3・§4.2 の S3 のトレース・§6.2・§6.9・§0.4 を揃えた。T-F1 に「チェックは最初オフで、欄だけでは押せない (S1・S3)」を足し、R-1 に結んだ。(2) `family-member-status-guard.test.ts` の A1 (`family_members` のトリガーの一覧の完全一致) が新しいトリガーで赤になる件を §6.17 に要更新の行として書き (期待の 2 本・tgtype 17・it 名・コメント)、§6.15 の同ファイルの説明に足した。同じ型の取り残しとして、カタログを引いて一覧を固定する番兵を `pg_trigger` / `tgrelid` / `pg_constraint` / `conrelid` / `pg_indexes` / `pg_policies` で取り直し (§6.17 の前文)、`accept-copies-profile-name-migration-contract.test.ts` の直し方の「どちらかを選ぶ」を 1 つに確定した。(3) 13 歳未満の本人のアカウントを作らない形に確定した (同意書の第 3 段落・要件 03 §17.10 に揃える): `request_child_promotion` / `accept_child_promotion` に `< 13` → `PROMOTION_UNDER_COPPA_AGE` (403) を、`accept_legal_documents` に昇格の経路の前で `< 13` を断る IF を足した。`SIGNUP_MINOR_NOTICE`・`minorRefusedBody`・`withdrawnBody` を「13歳以上の方は」に直し、`PARENTAL_CONSENT_COPY.promotionUnderCoppaAge` と昇格の 2 画面の扱いを足した。S20・P4b・P17b・§6.3 の行・T-DB33・T-DB34・T-MIG4・T-PR1・T-SH9・§6.7・§6.16・§6.17 (β-6 の確認のみ)・§6.18・§8 の 9 と 14。origin/main `bffe1b6f` と突き合わせた |
 | v1.7 | 2026-10-16 | 周 4 の網羅性の反映 (9 件): 基準を origin/main `36c926ad` に取り直した。`bffe1b6f` の後に 13a の実装 (#1697) が着地していたので、(1) §0.5 の「13a は実装が未着手」を現在形にし、13a の差し替えを条件つきでなく段 B の必須の作業にした (§6.5.6 に 17 = `packages/shared/src/legal-consent-api.ts` (判定の本体 `:136`・`resolveLegalConsentStatus` に `gaps`・`accepted` = gaps が空・`isLegalConsentStatus`)、18 = `src/lib/legal-consent-api.ts` (`LegalConsentStatusSchema` に `gaps` と refine)、19 = `src/app/api/legal/status/route.ts` (列に `birth_date`・`withMinorGuardianStatus`) を足し、4 の middleware に `/api` の分岐を足した。§6.14 の段 B・§6.8・§6.2・§3.3・§8 の 10 を揃えた)。(2) `LEGAL_CONSENT_GAP_VALUES` を shared に足し、`LegalConsentGap` をそこから作る形にした (§6.5.1・§6.5.2・§6.6・§6.16)。(3) 13a のテスト 4 本 (`legal-consent-api.test.ts`・`legal-consent-api-schema.test.ts`・`legal-status-route.test.ts`・`middleware-legal-consent-api.test.ts`) の列の文字列・fixture の直し方を §6.17 に、T-API1〜T-API5 を §6.13 に、§6.15 に製品 3 本とテスト 4 本を足した。(4) 文言の置き場所: 13a の `LEGAL_CONSENT_COPY` (`legal-consent-copy.ts`) と本冊の `LEGAL_CONSENT_BIRTH_DATE_COPY` の関係を §6.11・R-11 に書き、S3 の導入文を `introBirthDateOnly` として shared に移した (§6.5.6 の 6。`tests/legal-consent-copy.test.ts` は確認のみ)。(5) §0.3・§6.17 の行番号 (`middleware.ts`・`LegalConsentForm.tsx`・`middleware-legal-consent.test.ts`・`legal-consent-gate.spec.ts`) を `36c926ad` で取り直し、§0.3 に 13a の事実 3 行を足した。§6.18 の 13a・04 (LEGAL 系の節は 13a が足した)・08・cross/CLAUDE.md の行を現在形にした |
 | v1.8 | 2026-10-16 | 周 5 (R4 の指摘 4 件 = 3 系統の反映): (1) 18 歳未満の本人が昇格の依頼の期間中 (②) に家族を作る・別の家族の招待を承諾すると、昇格の承諾が `ALREADY_IN_FAMILY` で壊れ、依頼の期限が切れると `guardian_missing` から退会が代表者の 409 で止まる件。18 歳未満の本人 (生年月日の分かる人) は昇格以外で家族に入らず、家族の代表者・組織のオーナーを引き受けない形に確定し、述語 `caller_is_minor_jst()` と 4 関数 (`create_family_group`・`accept_family_invite`・同型として `accept_family_representative_transfer`・`accept_org_owner_transfer`) の先頭の IF (`MINOR_ACCOUNT_NOT_ALLOWED`・403) を §6.4 の 12 に足した (旧 12 の戻しは 13)。`/api` の許可リストを絞る案は、PostgREST の rpc が middleware を通らないので採らない (§5.2)。運営の操作は止めない (§8 の 15)。§6.3 (a) の「登録をやめる」のガードの記述と、§6.5.6 の 6 の退会の結果の扱い (`deleteOwnAccount` の `kind`・409 は `accountDeletionBlockedMessage`) を実コードに合わせて直した。R-15・S21・P36〜P38・§6.2・§6.3 (a) / (b) の行・§6.5.4 (7 値)・§6.5.6 の 20〜23・§6.7・§6.8・§6.9・T-DB27・T-DB35〜T-DB37・T-MIG1・T-MIG5・T-MN1〜T-MN4・T-F5・T-F7・§6.15〜§6.18・§8 の 15。(2) E2E の `legal-consent-gate.spec.ts` の spec の中の `acceptOnConsentPage` (9 か所) と API の同意の it の追随漏れ (指摘 2・4 を 1 つの方針に統合): `signInAsNewUser` が `profile: true` の全員に 1990-01-01 を入れ (`birthDate` で上書き可)、`acceptOnConsentPage` が欄があれば埋め、API の同意の it は変えない形に確定した。`fresh-user.ts`・`global-setup.ts` は確認のみに移した。E2E-1・E2E-3 を具体化した。(3) 公開する同意書の第 5 段落「家族にいる間だけ保存」が、取り消し後も行を残す動作と食い違う件: 文面を動作に合わせ (記録する項目・取り消し後も保存・退会後も残る・家族の削除で消える)、`parental_consents` の COMMENT・R-7・§6.11・§8 の 1 / 2・T-SH9・T-DB19・T-DB20 を揃えた。あわせて origin/main `6baa2f33` と突き合わせ、#1636 で動いた `middleware.ts`・`legal-consent-api.ts` とそのテストの行番号を取り直し、新しい番兵 `tests/migration-file-version-integrity.test.ts` を §6.4 の書き方と §6.17 に入れ、#1690 (退会の実行記録) で動いた `findBlocker`・`AccountDeletionResult`・結合テストの行と `auth-users-fk-on-delete` の 31 本を取り直し、#1705 に合わせて「範囲の正本」を Issue に向けた |
+| v1.9 | 2026-10-16 | 周 5 の網羅性の反映 (4 件): (1) §6.16 のテーブルの行に `parental_consents` の CHECK 6 本と索引 3 本の名前を書いた (§6.4 の 4 と同じ。件数だけだった)。制約・索引の行は `family_members` の 2 つであることを明記し、`parental_consents` の分はテーブルの行を指した。(2) §6.16 の「本文の変更」の行のガード 3 本に関数名を書いた (§6.4 の 8 の表と同じ)。(3) §6.12 に、18 歳未満で保護者の同意とのつながりが無い本人 (`'guardian_consent'`) が同意画面の `guardian_missing` から退会する流れの図を足した (状態は §6.3 (a)・§6.9 で既に書いてあり、図の補足) |
