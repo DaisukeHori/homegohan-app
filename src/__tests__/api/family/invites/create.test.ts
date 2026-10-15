@@ -383,7 +383,7 @@ describe('POST /api/family/invites: 招待者名に仮置きの Guest を使わ�
     expect(res.status).toBe(201);
     expect(mockSendEmail).toHaveBeenCalledTimes(1);
     const envelope = mockSendEmail.mock.calls[0][0] as { subject: string; text: string };
-    expect(envelope.subject).toContain(`${user.email} 様から`);
+    expect(envelope.text).toContain(`${user.email} 様からほめゴハンの家族グループ「山田家」`);
     expect(`${envelope.subject}\n${envelope.text}`).not.toContain('Guest');
   });
 
@@ -396,8 +396,8 @@ describe('POST /api/family/invites: 招待者名に仮置きの Guest を使わ�
     const res = await POST(postRequest(validBody));
 
     expect(res.status).toBe(201);
-    const envelope = mockSendEmail.mock.calls[0][0] as { subject: string };
-    expect(envelope.subject).toContain(`${expected} 様から`);
+    const envelope = mockSendEmail.mock.calls[0][0] as { text: string };
+    expect(envelope.text).toContain(`${expected} 様からほめゴハンの家族グループ「山田家」`);
   });
 });
 

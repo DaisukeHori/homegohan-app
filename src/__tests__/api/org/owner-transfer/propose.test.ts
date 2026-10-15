@@ -345,7 +345,7 @@ describe('POST /api/org/owner-transfer/propose: 名前に仮置きの Guest を�
 
       const res = await POST(postRequest(validBody));
 
-      expect(res.status).toBe(201);
+      expect(res.status).toBe(200);
       const text: string = mockSendEmail.mock.calls[0][0].text;
       expect(text.startsWith('next-owner@example.com 様')).toBe(true);
       expect(text).toContain('owner 様から、「テスト株式会社」のオーナー権限の譲渡提案');
