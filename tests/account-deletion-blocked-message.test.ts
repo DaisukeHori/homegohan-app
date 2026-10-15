@@ -6,6 +6,8 @@
 //   2. 409 で本文に文が無ければ、定型の文 (ACCOUNT_DELETE_BLOCKED_FALLBACK_MESSAGE) を出す
 //   3. それ以外の失敗 (500・通信の失敗) は汎用の文 (ACCOUNT_DELETE_FAILED_MESSAGE)。生のエラー文は出さない
 //   4. 401 は失敗の文を出さず、ログインの画面へ
+//   6. (#1562) 409 の本文の error から立場 (組織のオーナー / 家族の代表者) が分かれば、理由の文に続けて譲渡の画面を開くかを尋ね
+//      (confirm)、開くならその画面へ移る。立場が分からなければ、これまでどおり理由の文だけ (alert)
 //   5. アプリ (apps/mobile/src/lib/account-deletion-error.ts) の文面は Web と同じ値
 //
 // NOTE: tsconfig の jsx: "preserve" の都合で、拡張子 .ts + React.createElement で書く (ai-consent-settings-entry.test.ts と同じ)。
@@ -17,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import {
   ACCOUNT_DELETE_BLOCKED_FALLBACK_MESSAGE,
+  ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE,
   ACCOUNT_DELETE_CONFIRM_KEYWORD,
   ACCOUNT_DELETE_FAILED_MESSAGE,
   accountDeletionBlockedMessage,
@@ -88,12 +91,15 @@ describe('Web の設定 (/settings): 退会に失敗したときの文 (#1447)',
   let container: HTMLDivElement;
   let root: Root;
   let alertSpy: ReturnType<typeof vi.fn>;
+  let confirmSpy: ReturnType<typeof vi.fn>;
   let fetchSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     alertSpy = vi.fn();
     vi.stubGlobal('alert', alertSpy);
+    confirmSpy = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirmSpy);
     fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url === ACCOUNT_DELETE_API_PATH) return deleteResponse();
@@ -142,27 +148,55 @@ describe('Web の設定 (/settings): 退会に失敗したときの文 (#1447)',
   }
 
   it.each([
-    ['組織のオーナー', 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER', ORG_OWNER_MESSAGE],
-    ['家族グループの代表者', 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE', FAMILY_REPRESENTATIVE_MESSAGE],
-  ])('409 (%s): 失敗の定型文ではなく、譲渡や解散が先だというサーバーの文を出す', async (_label, code, message) => {
-    deleteResponse = async () => jsonResponse(409, { error: code, message, organization: { id: 'org-1', name: '組織 A' } });
-    const submit = await submitDeletion();
+    ['組織のオーナー', 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER', ORG_OWNER_MESSAGE, 'organization'],
+    ['家族グループの代表者', 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE', FAMILY_REPRESENTATIVE_MESSAGE, 'family_group'],
+  ] as const)(
+    '409 (%s): 失敗の定型文ではなく、譲渡や解散が先だというサーバーの文を出し、譲渡の画面を開くかを尋ねる (開かなければ留まる)',
+    async (_label, code, message, blocker) => {
+      deleteResponse = async () => jsonResponse(409, { error: code, message, organization: { id: 'org-1', name: '組織 A' } });
+      const submit = await submitDeletion();
 
-    expect(alertSpy).toHaveBeenCalledTimes(1);
-    expect(alertSpy).toHaveBeenCalledWith(message);
-    expect(alertSpy).not.toHaveBeenCalledWith(ACCOUNT_DELETE_FAILED_MESSAGE);
-    // 退会はしていない: ログアウトもログインの画面への移動もしない。もう一度押せる状態に戻る
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+      expect(confirmSpy).toHaveBeenCalledWith(`${message}\n\n${ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE[blocker].prompt}`);
+      expect(alertSpy).not.toHaveBeenCalled();
+      // 退会はしていない: ログアウトもログインの画面への移動もしない。開かないと答えたので、もう一度押せる状態に戻る
+      expect(mocks.signOut).not.toHaveBeenCalled();
+      expect(mocks.push).not.toHaveBeenCalled();
+      expect(submit.disabled).toBe(false);
+    },
+  );
+
+  it.each([
+    ['ACCOUNT_DELETE_BLOCKED_ORG_OWNER', '/org/settings/owner-transfer'],
+    ['ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE', '/family/representative-transfer'],
+  ])('409 (%s) で開くと答えたら、譲渡の画面 (%s) へ移る。ログアウトはしない', async (code, path) => {
+    confirmSpy.mockReturnValue(true);
+    deleteResponse = async () => jsonResponse(409, { error: code, message: ORG_OWNER_MESSAGE });
+    await submitDeletion();
+
+    expect(mocks.push).toHaveBeenCalledWith(path);
     expect(mocks.signOut).not.toHaveBeenCalled();
-    expect(mocks.push).not.toHaveBeenCalled();
-    expect(submit.disabled).toBe(false);
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 
-  it('409 で本文に文が無いときは、定型の案内の文を出す', async () => {
+  it('409 で本文に文が無いときは、定型の案内の文を出す (立場が分かれば譲渡の画面を開くかも尋ねる)', async () => {
     deleteResponse = async () => jsonResponse(409, { error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER' });
     await submitDeletion();
 
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(confirmSpy.mock.calls[0][0]).toContain(ACCOUNT_DELETE_BLOCKED_FALLBACK_MESSAGE);
+  });
+
+  it.each([
+    ['本文の error が無い', { message: ORG_OWNER_MESSAGE }, ORG_OWNER_MESSAGE],
+    ['本文の error が知らない値', { error: 'SOMETHING_ELSE' }, ACCOUNT_DELETE_BLOCKED_FALLBACK_MESSAGE],
+  ])('409 で立場が分からない (%s) ときは、理由の文だけを出す (譲渡の画面へは案内しない)', async (_label, body, expected) => {
+    deleteResponse = async () => jsonResponse(409, body);
+    await submitDeletion();
     expect(alertSpy).toHaveBeenCalledTimes(1);
-    expect(alertSpy).toHaveBeenCalledWith(ACCOUNT_DELETE_BLOCKED_FALLBACK_MESSAGE);
+    expect(alertSpy).toHaveBeenCalledWith(expected);
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(mocks.push).not.toHaveBeenCalled();
   });
 
   it('500 は汎用の文を出す (サーバーの本文の文字列は出さない)', async () => {
