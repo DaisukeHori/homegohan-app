@@ -29,6 +29,12 @@ const STATIC_USER_SCOPED_KEYS: readonly string[] = [
 ];
 
 /**
+ * この端末の Expo Push Token の値を控えるキーの接頭辞 (ログアウト時に user_push_tokens の該当行だけを消すために控える)。
+ * 値は pushNotifications.ts の PUSH_TOKEN_VALUE_KEY_PREFIX と同じ (循環 import を避けて文字列で持つ。テストで一致を確認)
+ */
+const PUSH_TOKEN_VALUE_KEY_PREFIX = "push_token_value_v1";
+
+/**
  * ユーザー ID をサフィックスに持つキーのプレフィックス一覧。
  * 実際のキーは `${prefix}:${userId}` の形式で保存される。
  */
@@ -38,10 +44,20 @@ const USER_ID_KEY_PREFIXES: readonly string[] = [
   //  v1 は #1038 より前のビルドが権限の拒否でも付けた印)。旧ビルドから更新した端末に残っているので、ログアウトでは消す
   "push_token_registered_v2",
   "push_token_registered_v1",
-  // この端末の Expo Push Token の値 (ログアウト時に user_push_tokens の該当行だけを消すために控える)。
-  // 値は pushNotifications.ts の PUSH_TOKEN_VALUE_KEY_PREFIX と同じ (循環 import を避けて文字列で持つ。テストで一致を確認)
-  "push_token_value_v1",
+  PUSH_TOKEN_VALUE_KEY_PREFIX,
 ];
+
+export type ClearUserScopedAsyncStorageOptions = {
+  /**
+   * この端末の push token の値 (push_token_value_v1:<利用者>) を消さずに残す (#1615)。
+   * AuthProvider の SIGNED_OUT の掃除だけが使う。SIGNED_OUT は、ログアウト (signOut.ts) が値を読んで
+   * user_push_tokens の行を消すより前に届くことがある (Web の session-expired で getUser() が端末のセッションを消したときなど)。
+   * 先に消すと、ログアウトが値を読めず、行が消えずに残る (共有端末で前の利用者宛ての通知が届く。#1038 F7-10)。
+   * 値はこの端末のトークンで、どの利用者でも同じ値になり、利用者の ID 付きのキーなので次の利用者は読まない。
+   * ログアウトが行を消したあとの掃除 (signOut.ts) で消える。
+   */
+  keepPushTokenValue?: boolean;
+};
 
 /**
  * ログアウト・アカウント削除時にユーザースコープの AsyncStorage キーを削除する。
@@ -49,12 +65,19 @@ const USER_ID_KEY_PREFIXES: readonly string[] = [
  * @param userId - 現在サインインしているユーザーの UUID。
  *                 `null` を渡した場合は静的キーのみ削除し、プレフィックス付きキーは
  *                 getAllKeys() でスキャンして一致するものを削除する (フォールバック)。
+ * @param options - keepPushTokenValue: push token の値を残す (上の型の説明)
  */
-export async function clearUserScopedAsyncStorage(userId: string | null): Promise<void> {
+export async function clearUserScopedAsyncStorage(
+  userId: string | null,
+  options: ClearUserScopedAsyncStorageOptions = {},
+): Promise<void> {
   const keysToRemove: string[] = [...STATIC_USER_SCOPED_KEYS];
+  const prefixes = options.keepPushTokenValue
+    ? USER_ID_KEY_PREFIXES.filter((prefix) => prefix !== PUSH_TOKEN_VALUE_KEY_PREFIX)
+    : USER_ID_KEY_PREFIXES;
 
   if (userId) {
-    for (const prefix of USER_ID_KEY_PREFIXES) {
+    for (const prefix of prefixes) {
       keysToRemove.push(`${prefix}:${userId}`);
     }
   } else {
@@ -62,7 +85,7 @@ export async function clearUserScopedAsyncStorage(userId: string | null): Promis
     try {
       const allKeys = await AsyncStorage.getAllKeys();
       for (const key of allKeys) {
-        if (USER_ID_KEY_PREFIXES.some((prefix) => key.startsWith(`${prefix}:`))) {
+        if (prefixes.some((prefix) => key.startsWith(`${prefix}:`))) {
           keysToRemove.push(key);
         }
       }

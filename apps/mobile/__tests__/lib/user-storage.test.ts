@@ -135,3 +135,34 @@ describe('clearUserScopedAsyncStorage — アプリの永続化キー (#1599)', 
     expect((await AsyncStorage.multiGet(keys)).filter(([, value]) => value !== null)).toEqual([]);
   });
 });
+
+describe('clearUserScopedAsyncStorage — keepPushTokenValue (AuthProvider の SIGNED_OUT の掃除。#1615)', () => {
+  // SIGNED_OUT は、ログアウト (signOut.ts) がこの端末の push token の値を読んで user_push_tokens の行を消すより前に届くことがある
+  // (Web の session-expired で getUser() が端末のセッションを消したとき)。その掃除では値を残し、ほかは通常どおり消す
+  it.each([['user-1'], [null]])('userId=%p: push token の値だけ残し、旧ビルドの印・永続化キーは消す', async (userId) => {
+    const rangeKey = PERSISTENCE_KEYS.v4_range_days.key;
+    await AsyncStorage.multiSet([
+      [`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-1`, 'ExponentPushToken[abc]'],
+      ['push_token_registered_v1:user-1', '1'],
+      ['push_token_registered_v2:user-1', '1'],
+      [rangeKey, 'previous-user'],
+      ['v4MenuGenerating', '{}'],
+    ]);
+
+    await clearUserScopedAsyncStorage(userId, { keepPushTokenValue: true });
+
+    expect(await AsyncStorage.getItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-1`)).toBe('ExponentPushToken[abc]');
+    expect(await AsyncStorage.getItem('push_token_registered_v1:user-1')).toBeNull();
+    expect(await AsyncStorage.getItem('push_token_registered_v2:user-1')).toBeNull();
+    expect(await AsyncStorage.getItem(rangeKey)).toBeNull();
+    expect(await AsyncStorage.getItem('v4MenuGenerating')).toBeNull();
+  });
+
+  it.each([['user-1'], [null]])('userId=%p: 指定しない (通常のログアウト) と、push token の値も消す', async (userId) => {
+    await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-1`, 'ExponentPushToken[abc]');
+
+    await clearUserScopedAsyncStorage(userId, { keepPushTokenValue: false });
+
+    expect(await AsyncStorage.getItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-1`)).toBeNull();
+  });
+});

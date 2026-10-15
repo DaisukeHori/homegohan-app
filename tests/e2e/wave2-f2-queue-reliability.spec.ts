@@ -13,16 +13,10 @@
  * 注: 実際の LLM 生成・DB 書き込みは行わない。API をモックして UI 挙動のみ検証する。
  */
 import { test, expect } from "./fixtures/auth";
+// 今週の月曜日は、ページ (ブラウザは Asia/Tokyo) と同じ JST の週で作る (#1564)
+import { jstThisMonday } from "./helpers/jst-week";
 
 const FAKE_REQUEST_ID = "00000000-0000-4444-8888-000000000f2a";
-
-function getThisMonday(): string {
-  const d = new Date();
-  const day = d.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diff);
-  return d.toISOString().slice(0, 10);
-}
 
 // =========================================================
 // #116: cleanup API が status=queued も含めてクリアする
@@ -58,7 +52,7 @@ test("#116 cleanup route includes queued status in stuck detection", async ({ au
         requestId: FAKE_REQUEST_ID,
         status: "queued",
         mode: "v5",
-        startDate: getThisMonday(),
+        startDate: jstThisMonday(),
       }),
     });
   });
@@ -237,7 +231,7 @@ test("#142 polling stops and redirects to /login on 401 status response", async 
         requestId: FAKE_REQUEST_ID,
         status: "processing",
         mode: "v5",
-        startDate: getThisMonday(),
+        startDate: jstThisMonday(),
       }),
     });
   });
@@ -258,7 +252,7 @@ test("#142 polling stops and redirects to /login on 401 status response", async 
         JSON.stringify({ weekStartDate: weekKey, timestamp: Date.now(), requestId: reqId }),
       );
     },
-    [FAKE_REQUEST_ID, getThisMonday()],
+    [FAKE_REQUEST_ID, jstThisMonday()],
   );
 
   await authedPage.goto("/menus/weekly");
@@ -280,7 +274,7 @@ test("#142 polling stops and redirects to /login on 401 status response", async 
 // (migration は実 DB でのみ確認可能なため、UI 側での failed 表示を確認)
 // =========================================================
 test("#115/#122 request with failed status shows error UI (not infinite loop)", async ({ authedPage }) => {
-  const weekStr = getThisMonday();
+  const weekStr = jstThisMonday();
 
   await authedPage.route("**/api/ai/menu/weekly/cleanup", async (route: any) => {
     await route.fulfill({

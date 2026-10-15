@@ -34,6 +34,9 @@
  * 失効と分かったあとのログアウトでも、その値で push token を DELETE する。Authorization ヘッダーを明示した DELETE は、
  * セッションが失効済みでも、アクセストークンが期限内なら RLS を通る (PostgREST は JWT の署名と期限しか見ない)。
  * session-expired と sign-out が同時に動いても控えを失わないよう、処理中のメッセージ同士で同じ控えを使い回す。
+ * 削除する push token の値は、端末に控えた値 (push_token_value_v1:<userId>) を読む。getUser() が端末のセッションを消すと
+ * SIGNED_OUT が届き、AuthProvider が利用者別の端末データを掃除するが、その掃除はこの値を残す (#1615。AuthProvider.tsx の先頭の表)。
+ * 値はログアウト (signOutWithCleanup) が行を消したあとの掃除で消える。
  */
 
 import { useCallback, useRef } from "react";
