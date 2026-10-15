@@ -124,7 +124,7 @@ describe('releasePushTokenAfterSignedOut (#1636)', () => {
 
   it('保管庫を読めないときは通信せず、控えを残す (次の起動でやり直す)', async () => {
     await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-a`, TOKEN);
-    (jest.requireMock('expo-secure-store') as { __failWith: (method: string, error: Error) => void }).__failWith(
+    (SecureStore as unknown as { __failWith: (method: string, error: Error) => void }).__failWith(
       'getItemAsync',
       new Error('User interaction is not allowed'),
     );

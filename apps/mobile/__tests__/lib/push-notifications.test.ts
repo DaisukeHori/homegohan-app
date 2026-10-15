@@ -516,12 +516,14 @@ describe('registerAndSaveExpoPushToken — 同じトークンのほかの利用�
 
 /** expo-secure-store のテスト用の差し替え (__mocks__/expo-secure-store.js) の、失敗の注入とメモリ上の表 */
 function secureStoreMock(): { __failWith: (method: string, error: Error) => void; __store: Map<string, string> } {
-  return jest.requireMock('expo-secure-store');
+  return SecureStore as unknown as { __failWith: (method: string, error: Error) => void; __store: Map<string, string> };
 }
 
 /** サーバーが発行する端末の秘密の値 (ダミー。43 文字の base64url) */
 const ISSUED_SECRET = 'issued-device-secret-aaaaaaaaaaaaaaaaaaaaaa'; // gitleaks:allow
 const TEST_TOKEN = 'ExponentPushToken[test-token]';
+/** 別の値 (ダミー。保管庫を読めないときは、応答にこれが入っていても置き換えないことを見る) */
+const ANOTHER_SECRET = 'another-secret-bbbbbbbbbbbbbbbbbbbbbbbbbbbb'; // gitleaks:allow
 
 describe('registerAndSaveExpoPushToken — 端末の秘密の値で claim する (#1636)', () => {
   it('端末に秘密の値が無ければサーバーに作ってもらい (issue_install_secret)、返った値を保管庫に置く。次の登録からはその値を送る', async () => {
@@ -558,7 +560,7 @@ describe('registerAndSaveExpoPushToken — 端末の秘密の値で claim する
   it('保管庫を読めないときは、秘密の値を送らず作り直しも頼まない (この端末の前の利用者の行を外せなくならないように)', async () => {
     await SecureStore.setItemAsync(PUSH_INSTALL_SECRET_STORE_KEY, ISSUED_SECRET);
     secureStoreMock().__failWith('getItemAsync', new Error('User interaction is not allowed'));
-    mockPost.mockResolvedValue({ released: 0, install_secret: 'another-secret-bbbbbbbbbbbbbbbbbbbbbbbbbbbb' // gitleaks:allow });
+    mockPost.mockResolvedValue({ released: 0, install_secret: ANOTHER_SECRET });
 
     await registerAndSaveExpoPushToken();
 
