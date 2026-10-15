@@ -193,6 +193,10 @@ const EXCLUDED: Readonly<Record<string, string>> = {
     '理由 (reason) の NULL 文字は RefundRequestSchema (src/lib/admin/finance-schemas.ts) の refine で 400 VALIDATION_ERROR にしている (tests/admin-finance-refunds-route.test.ts がこの code を確かめる)。ほかの文字列は uuid・決済 ID の形式・英字 3 文字の検査を通ったものだけが DB に届く',
   'POST auth/login/route.ts':
     '別のサイトからの要求の拒否と IP ごとの回数制限 (docs/design/cross/01-auth-session.md §3.2) を、本文を読むより前に行う作り。email は z.email() の形式の検査を通ったものだけが DB (rpc) に届き、password と captchaToken は Auth API と Turnstile にだけ渡す',
+  'POST auth/mfa/verify/route.ts':
+    'factor_id は z.uuid()、code は 6 桁の数字 (TOTP_CODE_PATTERN) の検査を通ったものだけが Supabase に届く。NULL 文字を含む値は 400 VALIDATION_ERROR で、DB に書かない',
+  'POST auth/mfa/recover/route.ts':
+    'code は normalizeBackupCode で英数字以外 (NULL 文字を含む) を取り除き、DB には user_id と SHA-256 の hex だけが届く。監査の details も数だけ',
   'POST auth/native-bridge/code/route.ts':
     'Bearer の確認と本文の長さの上限 (MAX_BODY_CHARS) を、本文を JSON として読むより前に行う作り。refresh_token を渡す rpc (issue_native_bridge_code) の失敗は 503 で返す (500 にならない)',
   'POST legal/accept/route.ts':

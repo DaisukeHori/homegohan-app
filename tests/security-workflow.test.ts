@@ -624,6 +624,8 @@ describe('.gitleaks.toml (誤検知の除外は、値を狭く指定する)', ()
     // 個人情報の請求の本人確認トークンの形のダミー (core.test.ts の '0123456789abcdef'.repeat(4)。#1702)
     '0123456789abcdef',
     '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    // RFC 6238 Appendix B の公開のテスト用の秘密 (tests/totp-helper.test.ts。#1707)
+    'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ',
   ])('確かめたダミーの値は除外する: %s', (value) => {
     expect(allowed(value)).toBe(true);
   });
@@ -644,6 +646,9 @@ describe('.gitleaks.toml (誤検知の除外は、値を狭く指定する)', ()
     '0123456789abcdef0123456789abcdeX',
     '0123456789abcdefabcdef0123456789',
     '0123456789abcdef01234567',
+    // RFC 6238 のテスト用の秘密に 1 文字足した値・最後の 1 文字を変えた値 (ほかの base32 の TOTP の秘密は通さない)
+    'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQA',
+    'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJR',
   ])('少しでも違う値や、ランダムに見える値は除外しない: %s', (value) => {
     expect(allowed(value)).toBe(false);
   });
