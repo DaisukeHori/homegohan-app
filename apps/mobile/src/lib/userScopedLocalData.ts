@@ -20,7 +20,8 @@
  *     ここだけは clearUserScopedLocalDataAfterSignedOut を使い、この端末の push token の値 (push_token_value_v1) を残す
  *     (Cookie の掃除は待たない。#1647)。
  *     SIGNED_OUT は、signOut.ts が値を読んで user_push_tokens の行を消すより前に届くことがある (Web の session-expired で
- *     getUser() が端末のセッションを消したときなど)。値は signOut.ts の掃除が、行を消したあとに消す
+ *     getUser() が端末のセッションを消したときなど)。値は signOut.ts の掃除が、行の削除のあとに消す
+ *     (削除が失敗・0 件なら、消す前に release の宛先を控える。#1706)
  * 同じサインアウトで二度呼ばれることがある (signOut.ts の掃除の前後に届く SIGNED_OUT など)。何度呼んでも害は無い
  * (同じキーを消し直し、WebView の掃除の ID を作り直すだけ。次に開く WebView が一度だけ消す)
  *

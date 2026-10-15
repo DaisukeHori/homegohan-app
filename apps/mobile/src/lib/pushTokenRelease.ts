@@ -3,7 +3,9 @@
  * user_push_tokens から消す (#1636)。
  *
  * signOut.ts は、サインアウトの前に本人のセッション (RLS) で行を消す。ところが、自動更新で refresh_token が失効と答えた
- * SIGNED_OUT などでは signOut.ts を通らず、セッションももう無いので RLS では消せない。行が残ると、未ログインのままの
+ * SIGNED_OUT などでは signOut.ts を通らず、セッションももう無いので RLS では消せない。signOut.ts を通っても、セッションが既に失効していて
+ * (退会の API が 401 を返したときのログアウトなど) RLS の削除が 0 件・失敗になることがある。そのとき signOut.ts は、掃除が値を消す前に
+ * 宛先を控える (recordPushTokenRelease。#1706)。行が残ると、未ログインのままの
  * 共有の端末に、前の利用者宛ての通知が届き続ける (次に誰かがログインして claim するまで)。
  * そこで、セッション無しの release の API (POST /api/push-tokens/release) を、端末の秘密の値 (pushInstallSecret.ts) で認可して呼ぶ。
  * サーバーは、利用者 ID・トークン・秘密の値のハッシュの 3 つが合う行だけを消す。
@@ -172,7 +174,8 @@ async function flushLocked(): Promise<void> {
 /**
  * SIGNED_OUT (supabase-js がセッションを消したあと) に呼ぶ。サインアウトした利用者の、この端末の push token の行を消す。
  * 値は、SIGNED_OUT の掃除 (clearUserScopedLocalDataAfterSignedOut) が残した push_token_value_v1:<利用者> から読む
- * (ログアウト (signOut.ts) を通ったときは、そこで行を消して値も消してあるので、ここでは何もしない)。
+ * (ログアウト (signOut.ts) を通ったときは、そこで値を消してある。行を消せていれば何もせず、消せなかった (失敗・0 件) ときは
+ * signOut.ts が値を消す前に控えた宛先を、下のやり直しで消す。#1706)。
  * サインアウトした利用者が分からない (userId が null。起動の直後に supabase-js の初期化が失効したセッションを消したときなど) は、
  * 端末に残っている値を全部、宛先にする (SIGNED_OUT のあとなので端末は未ログインで、残っている値はどれもサインアウトした利用者のもの)。
  * 値は呼んだ時点で読み始める (前の release の通信を待たない。待つあいだに次の利用者がログインして値を書いても、その値を拾わない)。
@@ -206,10 +209,12 @@ async function recordLocked(userId: string | null | undefined): Promise<void> {
 }
 
 /**
- * release の宛先を控えるだけ (通信はしない)。例外は投げない。
- * 起動時にサーバーがセッションの失効を明言したとき (AuthProvider の restoreSession) に、掃除で値が消える前に呼ぶ。
- * その経路は signOut.ts を通らず、掃除が値を消してからサインアウトするので、あとに届く SIGNED_OUT の release は値を読めない。
- * 控えた宛先は、その SIGNED_OUT の release (やり直し) が消す
+ * release の宛先を控えるだけ (通信はしない)。例外は投げない。掃除で値が消える前に呼ぶ。呼ぶ所は 2 つ:
+ *   - 起動時にサーバーがセッションの失効を明言したとき (AuthProvider の restoreSession)。その経路は signOut.ts を通らず、
+ *     掃除が値を消してからサインアウトするので、あとに届く SIGNED_OUT の release は値を読めない
+ *   - ログアウト (signOut.ts) で、本人のセッションでの行の削除が失敗した・0 件だったとき (#1706)。signOut.ts の掃除が値を消すので、
+ *     あとに届く SIGNED_OUT の release は値を読めない
+ * 控えた宛先は、その SIGNED_OUT の release (やり直し) が消す (SIGNED_OUT が届かなければ、起動時に未ログインと決まったときのやり直し)
  */
 export function recordPushTokenRelease(userId: string | null | undefined): Promise<void> {
   return serialized(() => recordLocked(userId));
