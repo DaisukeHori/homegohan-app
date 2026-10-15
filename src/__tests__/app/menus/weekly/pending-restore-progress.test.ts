@@ -145,24 +145,25 @@ describe('page.tsx: 入り直しの 2 か所は、監視を始める前に空の
     );
   });
 
-  it('pending の判定を受けた 2 か所とも、生成中にする → 空の進捗を置く → 同じ印で監視を始める、の順', () => {
+  it('pending の判定を受けた 2 か所とも、判定 → 生成中にして空の進捗を置く (すでに進捗があれば残す) → 同じ印で監視を始める、の順', () => {
     const marker = 'const pendingIsUltimateMode = isUltimateModeWeeklyMenuRequest(pendingUltimateMode);';
     const starts: number[] = [];
     for (let i = pageCode.indexOf(marker); i !== -1; i = pageCode.indexOf(marker, i + 1)) starts.push(i);
     expect(starts).toHaveLength(2);
 
     for (const start of starts) {
-      const before = pageCode.slice(0, start);
-      const generatingAt = before.lastIndexOf('setIsGenerating(true);');
-      expect(generatingAt).toBeGreaterThan(-1);
-      // 生成中にしてから判定までの間に、他の文 (週の切り替えなど) を挟まない
-      expect(before.slice(generatingAt + 'setIsGenerating(true);'.length).trim()).toBe('');
+      // #1629: 判定の直前で setIsGenerating(true) (GEN_START = 進捗を null に戻す) を呼ばない
+      const before = pageCode.slice(0, start).trimEnd();
+      expect(before.endsWith('setIsGenerating(true);')).toBe(false);
 
       const after = pageCode.slice(start + marker.length);
       const lines = after.split('\n').map((l) => l.trim()).filter((l) => l !== '');
-      expect(lines[0]).toBe('setGenerationProgress(pendingRestoreProgress(pendingIsUltimateMode));');
+      // 生成中にすることと空の進捗を置くことは、reducer が今の状態で見分ける 1 つの action で行う (#1629)
+      expect(lines[0]).toBe('resumePendingGeneration(pendingIsUltimateMode);');
       expect(lines[1]).toMatch(/^subscribeToRequestStatus\((targetDate|targetDateStr), requestId, pendingIsUltimateMode\);$/);
     }
+    // 空の進捗を setGenerationProgress で直に置き直す経路は残っていない
+    expect(pageCode).not.toMatch(/setGenerationProgress\(\s*pendingRestoreProgress\(/);
   });
 
   it('入り直しで週を切り替えない (pending は他の週の行を返さないので、切り替える分岐は通らなかった)', () => {
