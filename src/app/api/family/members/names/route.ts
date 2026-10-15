@@ -1,10 +1,11 @@
 // src/app/api/family/members/names/route.ts
 // GET /api/family/members/names — 家族の画面に出す、自分の家族のメンバーの名前 (#1584)
 //
-// 招待を承諾したメンバーは family_members.display_name が NULL のままなので、家族の画面に「名前未設定」と出ていた。
-// 名前は承諾のときに写さず (プロフィールの名前を後で変えても追随させるため)、ここで
-// display_name → 本人のプロフィールの今の名前 (user_profiles.nickname。仮置きの 'Guest' は名前とみなさない) → null の順に
-// 決めて返す (決め方は src/lib/membership/family-member-names.ts)。
+// 以前は、招待を承諾したメンバーの family_members.display_name が NULL のままで、家族の画面に「名前未設定」と出ていた。
+// 承諾のときは、本人のプロフィールの名前を display_name に写す (supabase/migrations/20261015170000_accept_copies_profile_name.sql。
+// 仮置きの 'Guest'・空白だけは写さない)。それより前に承諾した人や、承諾のときに名前が無かった人は NULL のままなので、
+// ここで display_name → 本人のプロフィールの今の名前 (user_profiles.nickname。仮置きの 'Guest' は名前とみなさない) → null の順に
+// 決めて返す (決め方は src/lib/membership/family-member-names.ts。写した名前は 1 に入るので、後でプロフィールの名前を変えても写した名前のまま)。
 //
 // 認可: 家族のメンバーの行は、ログイン中の利用者のクライアント (RLS: family_members_select_self_or_family) で読む。
 // 他の家族の user_profiles は RLS で読めないので、名前だけは service_role で引く。引くのは、RLS で読めた行のうち
