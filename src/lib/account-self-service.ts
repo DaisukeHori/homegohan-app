@@ -95,15 +95,34 @@ export async function exportAccountData(options: { isNativeApp: boolean }): Prom
   }
 }
 
+/** 退会を止めている立場 (#1562)。組織のオーナー / 家族グループの代表者 */
+export type AccountDeletionBlocker = 'organization' | 'family_group';
+
+/** 409 の本文の error (src/lib/account-deletion.ts の AccountDeletionErrorCode) → 退会を止めている立場 */
+const BLOCKER_OF_ERROR_CODE: ReadonlyMap<string, AccountDeletionBlocker> = new Map<string, AccountDeletionBlocker>([
+  ['ACCOUNT_DELETE_BLOCKED_ORG_OWNER', 'organization'],
+  ['ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE', 'family_group'],
+]);
+
+/**
+ * 退会できなかった (409) ときに案内する、譲渡の画面 (#1562)。
+ * 解散は利用者の画面が無い (運営が行う) ので、譲渡の画面へ案内する。凍結中の画面 (/frozen/account) は譲渡もできないので使わない
+ */
+export const ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE: Readonly<Record<AccountDeletionBlocker, { path: string; prompt: string }>> = {
+  organization: { path: '/org/settings/owner-transfer', prompt: 'オーナーの譲渡の画面を開きますか？' },
+  family_group: { path: '/family/representative-transfer', prompt: '代表者の譲渡の画面を開きますか？' },
+};
+
 export type AccountDeletionResult =
   | { kind: 'deleted' }
   | { kind: 'unauthorized' }
   /**
    * 組織のオーナー・家族の代表者なので、先に譲渡や解散が要る (409)。
    * message はサーバーが書いた固定の文 (src/lib/account-deletion.ts の findBlocker の 2 つの文。利用者向けの日本語で、
-   * DB などの生のエラー文は入らない)。画面はこの文をそのまま出してよい (#1447)。本文に無ければ null
+   * DB などの生のエラー文は入らない)。画面はこの文をそのまま出してよい (#1447)。本文に無ければ null。
+   * blocker は本文の error から分かる立場 (#1562。譲渡の画面への案内に使う)。分からなければ null
    */
-  | { kind: 'blocked'; message: string | null }
+  | { kind: 'blocked'; message: string | null; blocker: AccountDeletionBlocker | null }
   | { kind: 'failed' };
 
 /** 退会に失敗したとき (409 以外の失敗・通信の失敗) に出す文 */
@@ -140,7 +159,12 @@ export async function deleteOwnAccount(): Promise<AccountDeletionResult> {
         typeof body === 'object' && body !== null && typeof (body as { message?: unknown }).message === 'string'
           ? (body as { message: string }).message
           : null;
-      return { kind: 'blocked', message };
+      const errorCode =
+        typeof body === 'object' && body !== null && typeof (body as { error?: unknown }).error === 'string'
+          ? (body as { error: string }).error
+          : null;
+      const blocker = errorCode !== null ? (BLOCKER_OF_ERROR_CODE.get(errorCode) ?? null) : null;
+      return { kind: 'blocked', message, blocker };
     }
     console.error(`[delete account] failed: ${res.status}`);
     return { kind: 'failed' };
