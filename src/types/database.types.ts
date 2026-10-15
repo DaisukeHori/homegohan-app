@@ -1383,6 +1383,66 @@ export type Database = {
         }
         Relationships: []
       }
+      data_subject_requests: {
+        Row: {
+          admin_notes: string | null
+          created_at: string
+          details: string
+          due_at: string | null
+          id: string
+          request_type: string
+          resolved_at: string | null
+          response_note: string | null
+          status: string
+          updated_at: string
+          user_id: string | null
+          verification_expires_at: string | null
+          verification_method: string
+          verification_send_count: number
+          verification_sent_at: string | null
+          verification_token_hash: string | null
+          verified_at: string | null
+        }
+        Insert: {
+          admin_notes?: string | null
+          created_at?: string
+          details: string
+          due_at?: string | null
+          id?: string
+          request_type: string
+          resolved_at?: string | null
+          response_note?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+          verification_expires_at?: string | null
+          verification_method?: string
+          verification_send_count?: number
+          verification_sent_at?: string | null
+          verification_token_hash?: string | null
+          verified_at?: string | null
+        }
+        Update: {
+          admin_notes?: string | null
+          created_at?: string
+          details?: string
+          due_at?: string | null
+          id?: string
+          request_type?: string
+          resolved_at?: string | null
+          response_note?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+          verification_expires_at?: string | null
+          verification_method?: string
+          verification_send_count?: number
+          verification_sent_at?: string | null
+          verification_token_hash?: string | null
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
       dataset_import_runs: {
         Row: {
           completed_at: string | null
