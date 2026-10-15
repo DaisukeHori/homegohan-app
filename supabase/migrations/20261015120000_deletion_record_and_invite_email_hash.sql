@@ -30,6 +30,7 @@
 --      - 列を足す: subject_hash (利用者の id の HMAC)・executor_type ('self' 本人 / 'operator' 運営)・
 --        reason (理由のコード。自由な文は入れない)・request_id (app_logs の request_id。調査用)
 --      - user_id の外部キーを外す (列は残す。新しい記録は user_id を書かない)。退会で記録が消えない・書き換わらない形にする。
+--        旧設計の行の user_id (本人) は、外部キーの SET NULL の代わりに begin_account_deletion_record が NULL にする。
 --        executed_by (運営が実行したときの運営者) の外部キーは ON DELETE SET NULL のまま残す (行は消えない)。
 --      - RLS は有効のまま、利用者向けのポリシー (gdpr_insert_self / gdpr_select / gdpr_update) を外し、
 --        anon / authenticated の表の権限も外す。読み書きは service_role だけ。
@@ -53,6 +54,10 @@
 --   tests/integration/security/deletion-record-and-invite-email-hash.test.ts (実 DB)
 --   tests/integration/security/account-deletion.test.ts / membership-daily-cap.test.ts (実 DB)
 --   tests/deletion-record-invite-hash-migration-contract.test.ts (静的)
+
+-- ロックの待ちに上限を付ける (membership_audit へのトリガー作成と行の置き換え、gdpr_deletion_requests の ALTER TABLE)。
+-- 待ちきれなければ migration 全体が巻き戻るだけで、再実行すれば直る (20261010000100 と同じ)
+SET LOCAL lock_timeout = '10s';
 
 -- ─────────────────────────────────────────────────────────
 -- A. HMAC の鍵 (Vault)
@@ -410,7 +415,8 @@ ALTER TABLE public.gdpr_deletion_requests ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.gdpr_deletion_requests FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.gdpr_deletion_requests TO service_role;
 
--- 削除の直前に呼ぶ: 記録の行を作り (同じ利用者のまだ済んでいない記録があれば使い直す)、id を返す。
+-- 削除の直前に呼ぶ: 記録の行を作り (同じ利用者の記録があれば使い直す。1 人の削除に記録は 1 行)、id を返す。
+-- 旧設計の削除要求の行 (user_id が本人) は、本人との紐づけを外す (外部キーの SET NULL の代わり)。
 -- p_executor_type = 'operator' のときは p_operator_id (実行した運営者) が要る。'self' のときは p_operator_id を受け付けない
 -- (本人の id を executed_by に入れると、記録から本人が分かってしまう)。
 CREATE OR REPLACE FUNCTION public.begin_account_deletion_record(
@@ -427,6 +433,7 @@ AS $function$
 DECLARE
   v_hash pg_catalog.text;
   v_id   pg_catalog.uuid;
+  v_executed_at pg_catalog.timestamptz;
   v_now  pg_catalog.timestamptz := pg_catalog.now();
 BEGIN
   IF p_user_id IS NULL THEN
@@ -448,22 +455,31 @@ BEGIN
   PERFORM pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended('account_deletion_record:' || v_hash, 0));
 
-  SELECT r.id INTO v_id
+  -- 旧設計の削除要求の行 (user_id で本人を指す) は、外部キーを外したので退会の SET NULL が届かない。
+  -- 外部キーがあったときと同じく、ここで本人との紐づけを外す (行は残す)
+  UPDATE public.gdpr_deletion_requests AS r
+     SET user_id = NULL
+   WHERE r.user_id = p_user_id;
+
+  -- 同じ利用者の記録があれば使い直す (1 人の削除に記録は 1 行)。
+  --   - 済んでいる (executed_at あり): 前回の退会で削除は済んでいる (やり直し)。そのまま返す (complete は何もしない)
+  --   - 済んでいない: 前回は途中で止まった。始めた日時は前回のまま、実行者・理由・request_id を今回のものにする
+  SELECT r.id, r.executed_at INTO v_id, v_executed_at
     FROM public.gdpr_deletion_requests AS r
    WHERE r.subject_hash = v_hash
-     AND r.executed_at IS NULL
      AND r.cancelled_at IS NULL
    ORDER BY r.requested_at DESC
    LIMIT 1;
 
   IF v_id IS NOT NULL THEN
-    -- やり直し: 前回の途中で止まった記録を使い直す (始めた日時は前回のまま。実行者・理由・request_id は今回のもの)
-    UPDATE public.gdpr_deletion_requests AS r
-       SET executor_type = p_executor_type,
-           executed_by   = p_operator_id,
-           reason        = p_reason,
-           request_id    = p_request_id
-     WHERE r.id = v_id;
+    IF v_executed_at IS NULL THEN
+      UPDATE public.gdpr_deletion_requests AS r
+         SET executor_type = p_executor_type,
+             executed_by   = p_operator_id,
+             reason        = p_reason,
+             request_id    = p_request_id
+       WHERE r.id = v_id;
+    END IF;
     RETURN v_id;
   END IF;
 
@@ -481,7 +497,7 @@ REVOKE ALL ON FUNCTION public.begin_account_deletion_record(uuid, text, text, te
 GRANT EXECUTE ON FUNCTION public.begin_account_deletion_record(uuid, text, text, text, uuid) TO service_role;
 
 COMMENT ON FUNCTION public.begin_account_deletion_record(uuid, text, text, text, uuid) IS
-  '#1562: 退会の直前に呼ぶ。削除の実行記録 (gdpr_deletion_requests) の行を作り id を返す。利用者の id は HMAC (subject_hash) だけを残す。同じ利用者のまだ済んでいない記録があれば使い直す。service_role のみ';
+  '#1562: 退会の直前に呼ぶ。削除の実行記録 (gdpr_deletion_requests) の行を作り id を返す。利用者の id は HMAC (subject_hash) だけを残す。同じ利用者の記録があれば使い直す (1 人に 1 行)。旧設計の行の user_id (本人) は NULL にする。service_role のみ';
 
 -- 削除が済んだら呼ぶ: executed_at を入れる。すでに入っていれば何もしない (やり直しても同じ)。行が無ければ例外
 CREATE OR REPLACE FUNCTION public.complete_account_deletion_record(p_record_id uuid)

@@ -224,6 +224,10 @@ interface AuditSeed {
   ageMs?: number;
 }
 
+/**
+ * 監査行の種まき。metadata に生の宛先 (email) を書くが、membership_audit のトリガー (#1562) が email_hash に置き換えて保存する
+ * (作成 RPC が書く行と同じ形になる。置き換えずに残ると、上限の判定が種まきの行を数えず A の検査が落ちる)
+ */
 async function seedAudit(spec: AuditSeed): Promise<void> {
   const createdAt = new Date(Date.now() - (spec.ageMs ?? HOUR_MS)).toISOString();
   const serial = ++seedSerial;
@@ -248,11 +252,21 @@ interface AuditFilter {
   email?: string;
 }
 
+/**
+ * 宛先のハッシュ (#1562)。membership_audit は招待先の生のアドレスを持たず、metadata.email_hash (HMAC) だけを持つ。
+ * 期待値は DB の関数 membership_invite_email_hash (service_role だけが呼べる) で計算する
+ */
+async function inviteEmailHash(email: string): Promise<string> {
+  const { data, error } = await srAdmin.rpc('membership_invite_email_hash', { p_email: email });
+  if (error || typeof data !== 'string') throw new Error(`inviteEmailHash: ${error?.message ?? 'no hash'}`);
+  return data;
+}
+
 async function auditCount(filter: AuditFilter): Promise<number> {
   let query = srAdmin.from('membership_audit').select('id', { count: 'exact', head: true }).eq('action', filter.action);
   if (filter.scopeId) query = query.eq('scope_id', filter.scopeId);
   if (filter.actorId) query = query.eq('actor_id', filter.actorId);
-  if (filter.email) query = query.contains('metadata', { email: filter.email.toLowerCase() });
+  if (filter.email) query = query.contains('metadata', { email_hash: await inviteEmailHash(filter.email) });
   const { count, error } = await query;
   if (error) throw new Error(`auditCount: ${error.message}`);
   return count ?? 0;
@@ -693,7 +707,7 @@ describe('#1163 組織の招待 (create_org_invite): 招待者ごと 200 / 組�
     expect((await inviteToOrg(orgOther.owner, orgOther.orgId, email)).error).toBeNull();
   });
 
-  it('OI-4: create_org_invite 1 回で監査行がちょうど 1 件 (トリガー)。操作者・招待 ID・小文字の宛先が入る', async () => {
+  it('OI-4: create_org_invite 1 回で監査行がちょうど 1 件 (トリガー)。操作者・招待 ID・宛先のハッシュが入り、生のアドレスは入らない (#1562)', async () => {
     const { orgId, owner } = orgOther;
     const mixed = `DbCap-Mixed-${TS}@HomeGohan.TEST`;
     const created = await inviteToOrg(owner, orgId, mixed);
@@ -714,8 +728,10 @@ describe('#1163 組織の招待 (create_org_invite): 招待者ごと 200 / 組�
       action: 'invite_created',
       actor_id: owner.id,
       target_user_id: null,
-      metadata: { invite_id: invite.id, email: mixed.toLowerCase() },
+      metadata: { invite_id: invite.id, email_hash: await inviteEmailHash(mixed) },
     });
+    expect(data![0].metadata).not.toHaveProperty('email');
+    expect(JSON.stringify(data![0].metadata).toLowerCase()).not.toContain(mixed.toLowerCase());
   });
 
   it('OI-5: 管理者が organization_invites へ直接 INSERT しても監査行ができ、上限に数えられる (RPC を通さない回避を許さない)', async () => {

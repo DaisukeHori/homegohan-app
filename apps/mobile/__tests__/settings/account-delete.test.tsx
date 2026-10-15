@@ -110,6 +110,7 @@ import { HttpNetworkError } from '@homegohan/core';
 import {
   ACCOUNT_DELETE_BLOCKED_FALLBACK_MESSAGE,
   ACCOUNT_DELETE_FAILED_MESSAGE,
+  ACCOUNT_DELETE_SESSION_EXPIRED_MESSAGE,
 } from '../../src/lib/account-deletion-error';
 import { NETWORK_ERROR_MESSAGES } from '../../src/lib/api-error';
 import { ServiceUnavailableError } from '../../src/lib/service-unavailable';
@@ -373,5 +374,38 @@ describe('AccountSettingsPage — 退会できない・失敗したときの文 
     mockPost.mockRejectedValueOnce({ status: 409 });
     const alert = await pressDeleteAndGetFailureAlert();
     expect(alert).toEqual({ title: '削除失敗', message: ACCOUNT_DELETE_FAILED_MESSAGE });
+  });
+});
+
+describe('AccountSettingsPage — ログインが切れていて退会できなかったとき (#1562)', () => {
+  it('401: 汎用の「削除に失敗しました」ではなく、もう一度ログインするよう伝え、端末のセッションを消して入口へ戻す', async () => {
+    mockPost.mockRejectedValueOnce(new Error('HTTP 401 Unauthorized: {"error":"Unauthorized"}'));
+    render(<AccountSettingsPage />);
+    fireEvent.press(screen.getByTestId('account-delete-button'));
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith('/');
+    });
+    const failures = alertSpy.mock.calls.filter(([title]) => title !== 'アカウント削除');
+    expect(failures).toHaveLength(1);
+    expect(failures[0][0]).toBe('ログインが必要です');
+    expect(failures[0][1]).toBe(ACCOUNT_DELETE_SESSION_EXPIRED_MESSAGE);
+    expect(failures[0][1]).not.toBe(ACCOUNT_DELETE_FAILED_MESSAGE);
+    // アカウントは消えていないので、通常のログアウト (push token の削除 → 端末のデータの削除 → サインアウト)
+    expect(mockUnregisterExpoPushToken).toHaveBeenCalledWith('uid-1', expect.anything());
+    expect(mockClearUserScopedAsyncStorage).toHaveBeenCalledWith('uid-1');
+    expect(mockSignOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('401 でも statusText が空 (HTTP/2) なら同じ扱い', async () => {
+    mockPost.mockRejectedValueOnce(new Error('HTTP 401 : {"error":"Unauthorized"}'));
+    render(<AccountSettingsPage />);
+    fireEvent.press(screen.getByTestId('account-delete-button'));
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith('/');
+    });
+    const failures = alertSpy.mock.calls.filter(([title]) => title !== 'アカウント削除');
+    expect(failures.map(([title, message]) => [title, message])).toEqual([['ログインが必要です', ACCOUNT_DELETE_SESSION_EXPIRED_MESSAGE]]);
   });
 });

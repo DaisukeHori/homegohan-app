@@ -111,7 +111,11 @@ const RESTRICT_ALLOWLIST: Readonly<Record<string, string>> = {
     '家族グループの代表者は、譲渡か解散をしないと退会できない (ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE)',
 };
 
-/** #1175 で張り直した 32 本の、決めた動作 */
+/**
+ * #1175 で張り直した 32 本の、決めた動作。
+ * ただし gdpr_deletion_requests.user_id の外部キーは #1562 (20261015120000) で外した (削除の実行記録は利用者の行を指さない)。
+ * そのためここには 31 本を挙げ、外したことは下の D2 で確かめる
+ */
 const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   // 本人だけの記録は本人と一緒に消す
   'nps_surveys.user_id': 'CASCADE',
@@ -124,7 +128,6 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   'coupon_redemptions.user_id': 'SET NULL',
   'referral_rewards.referrer_id': 'SET NULL',
   'referral_rewards.referred_id': 'SET NULL',
-  'gdpr_deletion_requests.user_id': 'SET NULL',
   'email_delivery_logs.user_id': 'SET NULL',
   // 運営者・作成者・承認者などの参照は、記録を残して紐づけだけ外す
   'admin_user_notes.admin_id': 'SET NULL',
@@ -187,6 +190,12 @@ describe('#1175 C. SET NULL の外部キーの列は NULL を許す', () => {
   it('SET NULL の列に NOT NULL が残っていない (残っていると退会が 23502 で失敗する)', () => {
     const notNull = fks.filter((fk) => fk.action === 'n' && fk.not_null).map(keyOf);
     expect(notNull).toEqual([]);
+  });
+});
+
+describe('#1562 D2. 削除の実行記録 (gdpr_deletion_requests) は削除した利用者を指さない', () => {
+  it('gdpr_deletion_requests.user_id に auth.users を指す外部キーが無い (退会の SET NULL / CASCADE が記録に届かない)', () => {
+    expect(fks.filter((fk) => fk.table === 'gdpr_deletion_requests' && fk.column === 'user_id').map((fk) => fk.constraint)).toEqual([]);
   });
 });
 
