@@ -1558,8 +1558,8 @@ describe("scripts/local-ci.sh: ローカル Supabase を止めたあとの残り
     expect(r.lists).toEqual([]);
     expect(r.calls).toEqual([]);
     expect(sorted(r.left)).toEqual(sorted(state));
-    expect(red(r.rows)).toEqual([]);
-    expect(r.status).toBe(0);
+    // 赤の行を書いていない (この場面は段を回していないので、表に行が無いこと自体で finish は赤の終了コードになる。終了コードは見ない)
+    expect(r.rows).toEqual([]);
   });
 
   it("「この実行のもの」の見分け (in_list) は、空白で区切った語がそのまま一致するときだけ真 (語の一部・前後が重なるだけの名前は別のもの)", () => {
