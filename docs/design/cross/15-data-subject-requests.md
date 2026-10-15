@@ -39,7 +39,7 @@
 
 Issue 本文との食い違い (本書を正とする): Issue の「該当箇所」の `src/app/(main)/privacy/page.tsx:41-42` は origin/main に無い。プライバシーポリシーは #1174 (PR #1382「利用規約とプライバシーポリシーを未ログインでも読めるようにする」) で `src/app/privacy/page.tsx` へ移っており、第6条は 70-71 行。本書 (§1・R-2) は移った先のパスを指す。Issue の要件の中身 (第6条の約束・inquiries に法定請求のカテゴリと本人確認・期限が無い) は移動の前後で変わらない。
 
-### 0.3 ユーザーシナリオ (15 本。トレースは §3.3)
+### 0.3 ユーザーシナリオ (16 本。トレースは §3.3)
 
 | # | シナリオ |
 |---|---|
@@ -58,6 +58,7 @@ Issue 本文との食い違い (本書を正とする): Issue の「該当箇所
 | S-13 | 凍結 (BAN) 中の利用者は設定画面に入れず、この導線を使えない (請求を出した後に別の理由で凍結された場合は、応答も設定画面では読めない)。凍結の画面から行ける /contact のサポート窓口で連絡する (本設計の範囲外。§21) |
 | S-14 | Google / Apple などパスワードを持たないログインの利用者も、同じ流れ (本人確認はメールのリンクなので、ログイン方法で差が無い) |
 | S-15 | 請求の内容に NULL 文字 (U+0000) がある → 400 INVALID_CHARACTER。2,000 字を超える → 400 VALIDATION_ERROR |
+| S-16 | 運営ロール (admin / super_admin) を持つ利用者が、自分の設定画面 (/settings/data-requests) で自分の請求を見る → 一覧に出るのは自分の請求だけ。URL の id を他人の請求に書き換えても 404 (他人の請求は運営の画面 /admin/data-requests で、監査つきで見る) |
 
 ### 0.4 分冊判定
 
@@ -154,6 +155,7 @@ Issue 本文との食い違い (本書を正とする): Issue の「該当箇所
 | S-13 | middleware が /settings を凍結中の利用者に開かせず (/frozen へ回す)、/api/account/data-requests も 403 AUTH_ACCOUNT_FROZEN (FROZEN_ALLOWED_API_PATHS は退会と書き出しの 2 本だけ)。/frozen の案内と /contact (凍結中も開ける) のサポート窓口のまま。本設計は FROZEN_ALLOWED_API_PATHS に足さない。請求の後に凍結された本人には、dsr_resolved の本文の「設定画面を開けない場合はお問い合わせ」の案内 (§10) と、運営がサポート窓口のメールで応答を送る運用 (§19 の runbook・§21) で届ける |
 | S-14 | ログイン方法に依存する分岐が無い (verify は token と user_id の一致だけ)。OAuth の利用者もメールのリンクを開いて確認できる |
 | S-15 | POST create の最初で rejectNullCharacterBody → 400 INVALID_CHARACTER。details が 2,001 字 → zod max → 400 VALIDATION_ERROR。DB の CHECK (char_length ≤ 2000) は二重の守り |
+| S-16 | GET own list: 本人のセッションの client で `.select(DSR_OWN_COLUMNS).eq('user_id', userId)` → RLS は select_operator で全行を許すが、`.eq('user_id', userId)` が自分の行だけに絞る → 200 (自分の行だけ)。GET own detail に他人の id: `.eq('id', id).eq('user_id', userId).maybeSingle()` が null → 404 NOT_FOUND。どちらも運営の API を通らないので監査は残さないが、他人の行を返さないので監査の要る閲覧が起きない (§7.2) |
 
 ---
 
@@ -921,7 +923,7 @@ export function sendDsrResolvedEmail(admin: DsrAdminClient, row: DsrNotification
 
 - 本人向け (`/api/account/data-requests/**`): 認証は `requireUser()` (src/lib/auth/helpers.ts)。AuthError → 401 `{ error: 'Unauthorized', code: 'AUTH_UNAUTHENTICATED' }`、ForbiddenError (凍結) → 403 `{ error: 'アカウントが凍結されています', code: 'AUTH_ACCOUNT_FROZEN' }`。本文の形は flat (cross/04 §5.2 (a))。成功は `{ request }` / `{ requests }`。
 - 運営向け (`/api/admin/data-requests/**`): `requireRole(DSR_OPERATOR_ROLES)`。応答は operator/02 §3.2 の `{ data, meta }`、エラーは nested (`errorResponse` / `authFailureResponse` を `@/lib/admin/inquiries` から再利用)。
-- すべての route: `export const dynamic = 'force-dynamic'`、`Cache-Control: private, no-store`、500 は `internalError()` (運営は `{ shape: 'nested' }`)。本文を読む handler は最初に `rejectNullCharacterBody`。
+- すべての route: `export const dynamic = 'force-dynamic'`、`Cache-Control: private, no-store`、500 は `internalError()` (運営は `{ shape: 'nested' }`)。本文を読む handler は最初に `rejectNullCharacterBody` (`@/lib/api/reject-null-character`。`const nullCharacterRejection = await rejectNullCharacterBody(request); if (nullCharacterRejection) return nullCharacterRejection;` を handler の最初の 2 文に置く。§18 の番兵の形)。
 - 書き込みは `getSupabaseAdmin()` を認証・認可のあとに作って service.ts へ渡す。読み取りは、本人の一覧・詳細と運営の一覧が `createClient()` (RLS・列の GRANT。本人の一覧・詳細は `.eq('user_id', userId)` も付ける。§7.2)、`admin_notes` を含む運営の詳細・更新と、本人の verify / resend / withdraw の対象の読み取り (書き込みの前の判定) が `getSupabaseAdmin()` (§3.1)。
 
 ### 7.2 本人向け
@@ -1013,6 +1015,7 @@ export function sendDsrResolvedEmail(admin: DsrAdminClient, row: DsrNotification
 | 監査 | admin.inquiry.view / update | admin.dsr.list / view / update (対象は本人) |
 | 楽観的ロック | inquiries の更新には無い | PATCH は If-Unmodified-Since 必須 (428 / 412 / 409) |
 | 本人の画面 | 無い | /settings/data-requests (一覧・新規・詳細・取り下げ・再送)、/settings/data-requests/verify |
+| 本人の読み取りの行の絞り込み | — (表が無い) | 本人の 6 route はどれも `.eq('user_id', userId)` で絞る。RLS (select_operator) が全行を見せる admin / super_admin の本人でも、本人の画面には自分の行だけ・他人の id は 404 (S-16) |
 | 運営の画面 | 無い | /admin/data-requests (一覧)、/admin/data-requests/[id] (詳細・対応) |
 | 退会との関係 | — | FK ON DELETE SET NULL。消去の完了は本人の退会 |
 | inquiries の CHECK・ポリシー | general / support / bug / feature | 変えない |
