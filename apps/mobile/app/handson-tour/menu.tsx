@@ -5,7 +5,7 @@
 // ラップして V4GenerateModal の上に重ねる必要がある (TourSandboxWrapper は非使用)。
 
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Modal, View } from 'react-native';
 
 import {
@@ -27,6 +27,8 @@ import {
 } from '../../src/handson-tour/menu-tour-profile';
 import { buildMenuTourBubble } from '../../src/handson-tour/tour-bubbles';
 import { getAnalyticsAppVersion } from '../../src/lib/app-version';
+import { useLeaveTour } from '../../src/handson-tour/useLeaveTour';
+import { tourAnalyticsPlatform } from '../../src/handson-tour/tour-platform';
 import { useProfile } from '../../src/providers/ProfileProvider';
 import { safeNickname } from '../../src/handson-tour/safe-nickname';
 
@@ -45,7 +47,7 @@ function reportMenuTourProfileFailure(userId: string, failure: MenuTourProfileFa
     fireAnalytics('handson_tour_step_error', {
       user_id: userId,
       timestamp: new Date().toISOString(),
-      platform: 'ios' as const,
+      platform: tourAnalyticsPlatform(),
       app_version: getAnalyticsAppVersion(),
       step: 2,
       // 取得は画面を開いた直後 (Step 2 の最初の sub_step) に行う
@@ -67,6 +69,9 @@ export default function HandsonTourMenu() {
   // 2.6 の吹き出し (除外する食材・料理の経験) に使う。取れるまで / 取れなければ既定値 (除外なし・beginner 扱い)
   const [tourProfile, setTourProfile] = useState<Step2ResultBubbleProfile>(EMPTY_MENU_TOUR_PROFILE);
   const mountTimeRef = React.useRef(Date.now());
+  // ツアーを抜ける (skip API + handson_tour_skipped + /home。Step 1 と共通。#1642)。
+  // leftTourRef = 抜けた。抜けたあとに残っているタイマー (2.5 の読み込み・2.8 → 2.9) や応答で、先のサブステップや Step 3 へ進めない
+  const { leftTourRef, leaveTour } = useLeaveTour(2, profile?.id);
 
   useEffect(() => {
     const userId = profile?.id;
@@ -83,6 +88,7 @@ export default function HandsonTourMenu() {
   }, [profile?.id]);
 
   const advanceSubStep = (next: SubStepOfStep2) => {
+    if (leftTourRef.current) return;
     setSubStep(next);
   };
 
@@ -92,7 +98,7 @@ export default function HandsonTourMenu() {
     fireAnalytics('handson_tour_step_viewed', {
       user_id: profile.id,
       timestamp: new Date().toISOString(),
-      platform: 'ios' as const,
+      platform: tourAnalyticsPlatform(),
       app_version: getAnalyticsAppVersion(),
       step: 2,
       sub_step: '2.1',
@@ -116,8 +122,8 @@ export default function HandsonTourMenu() {
         );
         break;
       case '2.9':
-        // Step 3 へ遷移
-        router.push(HANDSON_TOUR_ROUTES.step3 as never);
+        // Step 3 へ遷移 (ツアーを抜けたあとは進めない)
+        if (!leftTourRef.current) router.push(HANDSON_TOUR_ROUTES.step3 as never);
         break;
       default:
         break;
@@ -128,17 +134,20 @@ export default function HandsonTourMenu() {
     };
   }, [subStep]);
 
-  const handleSkip = () => {
-    router.replace('/home' as never);
-  };
+  // 端末バック (Android) でツアーを抜ける (設計書 01-trigger-flow §2.2: Step 1〜3 の端末バックは
+  // skipped{reason:'hard_back'} + skipped_at + /home)。以前は /home へ遷移するだけで、skip API も handson_tour_skipped も送っていなかった。
+  // 呼び元は 2 つ: 吹き出しを包む <Modal> の onRequestClose (Android でモーダルを出している間の端末バックはこちらに来る) と、
+  // TourOverlay の hardwareBackPress (overlay.onSkip)。showSkip={false} なので画面のスキップボタンからは呼ばれない
+  const handleHardBack = useCallback(() => leaveTour('hard_back'), [leaveTour]);
 
   const handleSandboxComplete = () => {
+    if (leftTourRef.current) return;
     if (profile?.id) {
       const dwell_ms = Date.now() - mountTimeRef.current;
       fireAnalytics('handson_tour_step_completed', {
         user_id: profile.id,
         timestamp: new Date().toISOString(),
-        platform: 'ios' as const,
+        platform: tourAnalyticsPlatform(),
         app_version: getAnalyticsAppVersion(),
         step: 2,
         dwell_ms,
@@ -208,7 +217,7 @@ export default function HandsonTourMenu() {
         transparent
         animationType="none"
         statusBarTranslucent
-        onRequestClose={handleSkip}
+        onRequestClose={handleHardBack}
       >
         <TourOverlay
           targetTestId={targetTestId}
@@ -217,7 +226,7 @@ export default function HandsonTourMenu() {
           progress={{ current: 3, total: 5 }}
           primaryAction={getPrimaryAction()}
           showSkip={false}
-          onSkip={handleSkip}
+          onSkip={handleHardBack}
           accessibilityLabel={i18n.step2.a11y_title}
         />
       </Modal>
