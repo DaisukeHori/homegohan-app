@@ -545,6 +545,30 @@ export type Database = {
         }
         Relationships: []
       }
+      billing_customers: {
+        Row: {
+          anonymized_at: string | null
+          created_at: string
+          stripe_customer_id: string
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          anonymized_at?: string | null
+          created_at?: string
+          stripe_customer_id: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          anonymized_at?: string | null
+          created_at?: string
+          stripe_customer_id?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       blood_test_longitudinal_reviews: {
         Row: {
           blood_test_ids: string[]
@@ -2690,9 +2714,13 @@ export type Database = {
           cooling_until: string
           executed_at: string | null
           executed_by: string | null
+          executor_type: string | null
           id: string
           notes: string | null
+          reason: string | null
+          request_id: string | null
           requested_at: string
+          subject_hash: string | null
           user_id: string | null
         }
         Insert: {
@@ -2701,9 +2729,13 @@ export type Database = {
           cooling_until?: string
           executed_at?: string | null
           executed_by?: string | null
+          executor_type?: string | null
           id?: string
           notes?: string | null
+          reason?: string | null
+          request_id?: string | null
           requested_at?: string
+          subject_hash?: string | null
           user_id?: string | null
         }
         Update: {
@@ -2712,9 +2744,13 @@ export type Database = {
           cooling_until?: string
           executed_at?: string | null
           executed_by?: string | null
+          executor_type?: string | null
           id?: string
           notes?: string | null
+          reason?: string | null
+          request_id?: string | null
           requested_at?: string
+          subject_hash?: string | null
           user_id?: string | null
         }
         Relationships: []
@@ -5059,7 +5095,9 @@ export type Database = {
       personal_subscriptions: {
         Row: {
           active_coupon_redemption_id: string | null
+          billing_interval: string | null
           cancel_at: string | null
+          cancel_at_period_end: boolean
           cancelled_at: string | null
           created_at: string
           current_period_end: string | null
@@ -5076,7 +5114,9 @@ export type Database = {
           status: string
           stripe_customer_id: string | null
           stripe_price_id: string | null
+          stripe_status: string | null
           stripe_subscription_id: string | null
+          stripe_synced_at: string | null
           trial_ends_at: string | null
           trial_source: string | null
           trial_started_at: string | null
@@ -5085,7 +5125,9 @@ export type Database = {
         }
         Insert: {
           active_coupon_redemption_id?: string | null
+          billing_interval?: string | null
           cancel_at?: string | null
+          cancel_at_period_end?: boolean
           cancelled_at?: string | null
           created_at?: string
           current_period_end?: string | null
@@ -5102,7 +5144,9 @@ export type Database = {
           status?: string
           stripe_customer_id?: string | null
           stripe_price_id?: string | null
+          stripe_status?: string | null
           stripe_subscription_id?: string | null
+          stripe_synced_at?: string | null
           trial_ends_at?: string | null
           trial_source?: string | null
           trial_started_at?: string | null
@@ -5111,7 +5155,9 @@ export type Database = {
         }
         Update: {
           active_coupon_redemption_id?: string | null
+          billing_interval?: string | null
           cancel_at?: string | null
+          cancel_at_period_end?: boolean
           cancelled_at?: string | null
           created_at?: string
           current_period_end?: string | null
@@ -5128,7 +5174,9 @@ export type Database = {
           status?: string
           stripe_customer_id?: string | null
           stripe_price_id?: string | null
+          stripe_status?: string | null
           stripe_subscription_id?: string | null
+          stripe_synced_at?: string | null
           trial_ends_at?: string | null
           trial_source?: string | null
           trial_started_at?: string | null
@@ -6225,29 +6273,35 @@ export type Database = {
       }
       stripe_webhook_events: {
         Row: {
+          attempt_count: number
           error_message: string | null
           event_type: string
           id: string
           payload: Json
           processed_at: string | null
+          processing_started_at: string | null
           processing_status: string
           received_at: string
         }
         Insert: {
+          attempt_count?: number
           error_message?: string | null
           event_type: string
           id: string
           payload: Json
           processed_at?: string | null
+          processing_started_at?: string | null
           processing_status?: string
           received_at?: string
         }
         Update: {
+          attempt_count?: number
           error_message?: string | null
           event_type?: string
           id?: string
           payload?: Json
           processed_at?: string | null
+          processing_started_at?: string | null
           processing_status?: string
           received_at?: string
         }
@@ -7840,6 +7894,33 @@ export type Database = {
           locked_until: string
         }[]
       }
+      begin_account_deletion_record: {
+        Args: {
+          p_executor_type: string
+          p_operator_id?: string
+          p_reason: string
+          p_request_id: string
+          p_user_id: string
+        }
+        Returns: string
+      }
+      billing_apply_stripe_subscription: {
+        Args: { p_fetched_at: string; p_snapshot: Json; p_source: string }
+        Returns: Json
+      }
+      billing_claim_stripe_event: {
+        Args: {
+          p_event_id: string
+          p_event_type: string
+          p_payload: Json
+          p_stuck_after?: unknown
+        }
+        Returns: string
+      }
+      billing_finish_stripe_event: {
+        Args: { p_error?: string; p_event_id: string; p_ok: boolean }
+        Returns: undefined
+      }
       calculate_segment_stats_finalize_retry_bodies: {
         Args: { p_at: string }
         Returns: Json[]
@@ -7899,6 +7980,10 @@ export type Database = {
       cleanup_handson_tour_sandbox_rows: { Args: never; Returns: Json }
       cleanup_old_logs: { Args: never; Returns: undefined }
       cleanup_stale_auth_login_failures: { Args: never; Returns: number }
+      complete_account_deletion_record: {
+        Args: { p_record_id: string }
+        Returns: undefined
+      }
       complete_handson_tour: { Args: never; Returns: Json }
       consume_ai_usage: {
         Args: { p_feature: string; p_user_id: string }
@@ -8407,7 +8492,16 @@ export type Database = {
         }
         Returns: Json
       }
+      membership_audit_hash_email_in_metadata: {
+        Args: { p_metadata: Json }
+        Returns: Json
+      }
+      membership_invite_email_hash: {
+        Args: { p_email: string }
+        Returns: string
+      }
       normalize_dish_name: { Args: { name: string }; Returns: string }
+      normalize_profile_name: { Args: { p_value: string }; Returns: string }
       operator_force_dissolve_family: {
         Args: { p_family_id: string; p_reason: string }
         Returns: {
@@ -8512,6 +8606,10 @@ export type Database = {
       }
       paste_meal_to_family: {
         Args: { p_source_meal_id: string; p_target_user_ids: string[] }
+        Returns: string
+      }
+      pii_hmac_hex: {
+        Args: { p_domain: string; p_value: string }
         Returns: string
       }
       prepare_account_deletion: { Args: { p_user_id: string }; Returns: Json }

@@ -8,7 +8,7 @@ import { Button, Card, PageHeader, SectionHeader } from "../../src/components/ui
 import { accountDeletionErrorOf } from "../../src/lib/account-deletion-error";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
-import { signOutAfterAccountDeletion } from "../../src/lib/signOut";
+import { signOutAfterAccountDeletion, signOutOnDevice } from "../../src/lib/signOut";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing } from "../../src/theme";
 import { typography } from "../../src/theme/typography";
@@ -17,6 +17,8 @@ import { typography } from "../../src/theme/typography";
 const ACCOUNT_DELETE_FAILED_TITLE = "削除失敗";
 /** 組織のオーナー・家族の代表者 (409) で退会できないときの Alert の見出し */
 const ACCOUNT_DELETE_BLOCKED_TITLE = "退会できません";
+/** ログインが切れていて (401) 退会できなかったときの Alert の見出し (#1562) */
+const ACCOUNT_DELETE_UNAUTHORIZED_TITLE = "ログインが必要です";
 /** 削除は済んだが、端末のログアウトに失敗したときの文 */
 const ACCOUNT_DELETED_SIGN_OUT_FAILED_MESSAGE =
   "アカウントの削除は完了しましたが、端末側のログアウト処理に失敗しました。お手数ですが、アプリを再起動してください。";
@@ -65,6 +67,17 @@ export default function AccountSettingsPage() {
     } catch (e: unknown) {
       // 生の例外の文 (`HTTP 409 Conflict: {...}` など) は出さない。409 は譲渡や解散が先だというサーバーの案内を出す (#1447)
       const failure = accountDeletionErrorOf(e);
+      if (failure.kind === "unauthorized") {
+        // ログインが切れている (401。#1562)。汎用の「削除に失敗しました」ではなく、もう一度ログインするよう伝え、
+        // 端末のセッションを消して入口 (ログインの画面) へ戻す (Web の設定画面がログインの画面へ移すのと揃える)。
+        // アカウントは消えていないので、退会の後片付け (signOutAfterAccountDeletion) ではなく通常のログアウトを使う
+        Alert.alert(ACCOUNT_DELETE_UNAUTHORIZED_TITLE, failure.message);
+        await signOutOnDevice(user?.id ?? null, { clearSession });
+        deletingRef.current = false;
+        setDeleting(false);
+        router.replace("/");
+        return;
+      }
       Alert.alert(failure.kind === "blocked" ? ACCOUNT_DELETE_BLOCKED_TITLE : ACCOUNT_DELETE_FAILED_TITLE, failure.message);
       deletingRef.current = false;
       setDeleting(false);

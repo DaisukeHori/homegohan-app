@@ -82,15 +82,23 @@ async function addPersonalSubscription(planKey: string, status: string) {
   if (error) throw new Error(`personal_subscriptions insert (${status}): ${error.message}`);
 }
 
+// billing/01 §6.4 (10): active なグループの INSERT はトリガーが代表者の契約から plan_key を決めるので、
+// プランの付いたグループは INSERT のあと service_role の UPDATE で作る (UPDATE OF plan_key はトリガーに当たらない)
 async function addFamily(planKey: string, status: 'active' | 'dissolved') {
-  const { error } = await srAdmin.from('family_groups').insert({
-    name: `it-1127 ${status} ${TS}`,
-    representative_id: subscriber.userId,
-    plan_key: planKey,
-    status,
-    ...(status === 'dissolved' ? { dissolved_at: new Date().toISOString() } : {}),
-  });
-  if (error) throw new Error(`family_groups insert (${status}): ${error.message}`);
+  const { data, error } = await srAdmin
+    .from('family_groups')
+    .insert({
+      name: `it-1127 ${status} ${TS}`,
+      representative_id: subscriber.userId,
+      plan_key: planKey,
+      status,
+      ...(status === 'dissolved' ? { dissolved_at: new Date().toISOString() } : {}),
+    })
+    .select('id')
+    .single();
+  if (error || !data) throw new Error(`family_groups insert (${status}): ${error?.message}`);
+  const { error: planError } = await srAdmin.from('family_groups').update({ plan_key: planKey }).eq('id', data.id);
+  if (planError) throw new Error(`family_groups.plan_key (${status}): ${planError.message}`);
 }
 
 async function addOrganization(planKey: string, status: 'active' | 'dissolved') {

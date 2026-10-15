@@ -515,7 +515,8 @@ describe('#1131 エクスポート: 本物の RLS の上で本人の行だけが
       expect(data.user_profiles[0]).not.toHaveProperty(column);
     }
     expect(data.personal_subscriptions[0]).toMatchObject({ user_id: A.id, plan_key: 'pro' });
-    for (const column of ['stripe_customer_id', 'stripe_subscription_id', 'stripe_price_id', 'notes']) {
+    // stripe_status・stripe_synced_at は Stripe との同期の内部の記録 (billing/01 §7.1)
+    for (const column of ['stripe_customer_id', 'stripe_subscription_id', 'stripe_price_id', 'notes', 'stripe_status', 'stripe_synced_at']) {
       expect(data.personal_subscriptions[0]).not.toHaveProperty(column);
     }
     expect(data.support_tickets[0]).not.toHaveProperty('assignee_id');
@@ -528,7 +529,8 @@ describe('#1131 エクスポート: 本物の RLS の上で本人の行だけが
       expect(rows[0]).toHaveProperty('hidden_reason');
       expect(rows[0]).not.toHaveProperty('hidden_by');
     }
-    expect(data.gdpr_deletion_requests[0]).not.toHaveProperty('executed_by');
+    // #1562: gdpr_deletion_requests は削除の実行記録 (service_role だけが読む内部の記録) なので、出力しない
+    expect(data).not.toHaveProperty('gdpr_deletion_requests');
     expect(data.weekly_menu_requests[0]).not.toHaveProperty('result_json');
     expect(data.weekly_menu_requests[0]).not.toHaveProperty('worker_id');
 

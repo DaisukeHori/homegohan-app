@@ -11,8 +11,13 @@
  *   2. prepare_account_deletion (DB 関数): 本人の生のメールアドレスを残す記録 (メール配信ログ・問い合わせ・招待) を伏せる。
  *   3. release_user_membership (DB 関数): 組織のライセンス席を解放する。失敗しても削除は続ける (要手動リコンサイル)。
  *   4. Storage のファイルを消す (src/lib/account-deletion-storage.ts)。
+ *   4'. 削除の実行記録を始める (#1562。DB 関数 begin_account_deletion_record)。gdpr_deletion_requests に、利用者の id の
+ *      HMAC (subject_hash)・実行者 (本人 / 運営)・理由のコード・request_id を書く。利用者の id そのものは残さない。
+ *      記録を書けなければ削除しない (記録の無い削除を作らない)。
  *   5. auth.admin.deleteUser。public 側の個人データは外部キーの CASCADE / SET NULL で消える・匿名化される
  *      (20261010000100_auth_users_fk_on_delete.sql。外部キーで失敗する経路は無い)。
+ *      削除が済んだら (すでに消えていたときも)、記録に削除の日時を入れる (complete_account_deletion_record)。
+ *      これに失敗しても退会の結果は変えない (アカウントはもう消えている)。失敗はログに残す (記録は executed_at が空のまま残る)。
  *   6. 本人に退会の完了メールを 1 通送る (#1152。src/lib/account-deletion-notification.ts)。
  *      宛先 (auth.users の登録アドレス) は 1 の後・2 の前に控えておき、メモリ上だけで使う (ログには残さない)。
  *      送るのは 5 が実際に削除した 1 回だけ (409・途中の失敗・すでに消えていたユーザーのやり直しでは送らない)。
@@ -37,7 +42,22 @@ export type AccountDeletionStep =
   | 'prepare'
   | 'release_membership'
   | 'storage'
+  | 'record'
   | 'delete_user';
+
+/**
+ * 削除の実行者 (#1562。削除の実行記録 gdpr_deletion_requests の executor_type)。
+ * 本人の退会は self。運営が消すときは operator で、実行した運営者の id を記録に残す (本人の id は残さない)。
+ */
+export type AccountDeletionExecutor = { type: 'self' } | { type: 'operator'; operatorId: string };
+
+/** 削除の理由のコード (#1562。記録の reason。自由な文は入れない。DB の CHECK は ^[a-z][a-z0-9_]{0,63}$) */
+export const ACCOUNT_DELETION_REASON = {
+  /** 本人が退会した */
+  self: 'user_request',
+  /** 運営が消した */
+  operator: 'operator_action',
+} as const satisfies Record<AccountDeletionExecutor['type'], string>;
 
 export type AccountDeletionErrorCode =
   | 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER'
@@ -98,6 +118,8 @@ export interface DeleteAccountParams {
   storageMaxDurationMs?: number;
   /** テスト用に差し替える。完了メールに書く退会日時の時計。省略すると new Date() */
   now?: () => Date;
+  /** 削除の実行者 (#1562。削除の実行記録に残す)。省略すると本人 ({ type: 'self' }) */
+  executor?: AccountDeletionExecutor;
 }
 
 const LOG_NAME = 'lib/account-deletion';
@@ -164,6 +186,51 @@ function isUserAlreadyGone(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   const { status, code } = error as { status?: unknown; code?: unknown };
   return status === 404 || code === 'user_not_found';
+}
+
+/**
+ * 削除の実行記録を始める (#1562)。記録の id を返す。失敗は例外 (呼び出し側が step 'record' の失敗にして、削除しない)。
+ * 利用者の id は DB 関数の中で HMAC にしてから書く (記録に id そのものは残らない)。
+ */
+async function beginDeletionRecord(
+  admin: AccountDeletionAdmin,
+  userId: string,
+  executor: AccountDeletionExecutor,
+  requestId: string,
+): Promise<string> {
+  const { data, error } = await admin.rpc('begin_account_deletion_record', {
+    p_user_id: userId,
+    p_executor_type: executor.type,
+    p_reason: ACCOUNT_DELETION_REASON[executor.type],
+    p_request_id: requestId,
+    p_operator_id: executor.type === 'operator' ? executor.operatorId : null,
+  });
+  if (error) throw error;
+  if (typeof data !== 'string' || data === '') throw new Error('begin_account_deletion_record returned no id');
+  return data;
+}
+
+/**
+ * 削除が済んだことを記録に入れる (#1562)。例外は投げない: アカウントはもう消えているので、退会の結果は変えない。
+ * 失敗はログに残す (削除後なので user_id は付けない。記録の id と request_id で探せる)。
+ */
+async function completeDeletionRecord(
+  admin: AccountDeletionAdmin,
+  recordId: string,
+  log: AccountDeletionLogger,
+  requestId: string,
+): Promise<void> {
+  try {
+    const { error } = await admin.rpc('complete_account_deletion_record', { p_record_id: recordId });
+    if (error) throw error;
+  } catch (error) {
+    log.error('account deletion: complete_account_deletion_record failed (account is deleted; record left without executed_at)', toError(error), {
+      step: 'record',
+      request_id: requestId,
+      deletion_record_id: recordId,
+      ...errorHints(error),
+    });
+  }
 }
 
 /** 組織のオーナー / 家族の代表者なら、削除をブロックする結果を返す (問い合わせ自体の失敗は例外) */
@@ -256,6 +323,9 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
       maxDurationMs: params.storageMaxDurationMs,
     });
 
+    step = 'record';
+    const recordId = await beginDeletionRecord(admin, userId, params.executor ?? { type: 'self' }, requestId);
+
     step = 'delete_user';
     const { error: deleteError } = await admin.auth.admin.deleteUser(userId);
     if (deleteError) {
@@ -267,8 +337,11 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
       deletedAt = params.now?.() ?? new Date();
     }
 
+    // 削除が済んだ (すでに消えていたときも)。記録に日時を入れる。失敗しても退会の結果は変えない (中で例外を止める)
+    await completeDeletionRecord(admin, recordId, log, requestId);
+
     // 削除後なので withUser は使わない。メールアドレスも user_id も載せない
-    log.info('account deleted', { request_id: requestId, prepare: prepareReport ?? null, storage });
+    log.info('account deleted', { request_id: requestId, deletion_record_id: recordId, prepare: prepareReport ?? null, storage });
   } catch (error) {
     userLog.error(`account deletion failed at step: ${step}`, toError(error), {
       step,
