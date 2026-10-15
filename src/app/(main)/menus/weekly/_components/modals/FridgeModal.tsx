@@ -4,7 +4,7 @@ import React, { useId, useRef } from "react";
 import { motion } from "framer-motion";
 import FocusTrap from "focus-trap-react";
 import { Refrigerator, X, Trash2, Plus, Camera, Pencil, RefreshCw } from "lucide-react";
-import { daysUntilLocal, formatExpiry } from "@homegohan/shared";
+import { daysUntilLocal, formatExpiry, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
 import type { PantryItem } from "@/types/domain";
 import { usePantryStore } from "../../_state";
 import { useDialogA11y } from "@/components/common/useDialogA11y";
@@ -120,7 +120,7 @@ export function FridgeModal({
                 }}
                 className="flex items-center justify-between px-3 py-2.5 rounded-[10px] mb-1.5"
                 style={{
-                  background: daysLeft !== null && daysLeft <= 1 ? colors.dangerLight : daysLeft !== null && daysLeft <= 3 ? colors.warningLight : colors.bg,
+                  background: daysLeft !== null && daysLeft <= 1 ? colors.dangerLight : daysLeft !== null && daysLeft <= PANTRY_EXPIRING_SOON_DAYS ? colors.warningLight : colors.bg,
                   cursor: onEditItem ? 'pointer' : 'default',
                 }}>
                 <div className="flex items-center gap-2.5 min-w-0">
@@ -133,7 +133,7 @@ export function FridgeModal({
                     fontSize: 12,
                     whiteSpace: 'nowrap',
                     fontWeight: 600,
-                    color: daysLeft !== null && daysLeft <= 1 ? colors.danger : daysLeft !== null && daysLeft <= 3 ? colors.warning : colors.textMuted,
+                    color: daysLeft !== null && daysLeft <= 1 ? colors.danger : daysLeft !== null && daysLeft <= PANTRY_EXPIRING_SOON_DAYS ? colors.warning : colors.textMuted,
                   }}>
                     {formatExpiry(daysLeft)}
                   </span>

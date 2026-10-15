@@ -10,7 +10,7 @@
  * - 「全部作り直す」→ buildAllFutureSlots()
  */
 
-import { addDaysToDate, isCalendarDate, MENU_GENERATION_RANGE_MAX_DAYS, menuGenerationRangeEndMax } from '@homegohan/shared';
+import { addDaysToDate, isCalendarDate, MEAL_ORDER, MENU_GENERATION_RANGE_MAX_DAYS, menuGenerationRangeEndMax } from '@homegohan/shared';
 import type { TargetSlot, MealType, PlannedMeal } from '@/types/domain';
 
 // 日付ベースモデル対応: MealPlanDay と DailyMeal の両方と互換性のある最小インターフェース
@@ -21,6 +21,12 @@ export interface MealDay {
 
 // 基本の食事タイプ（V4.0ではこの3つを主要対象）
 export const BASE_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner'];
+
+/**
+ * 基本の 3 食のほかに追加できる食事の区分 (おやつ・夜食)。食事の区分の正本 (@homegohan/shared の MEAL_ORDER) から
+ * 基本の 3 食を除いて作り、手書きしない (#1631)。並びは MEAL_ORDER のまま。
+ */
+export const EXTRA_MEAL_TYPES: MealType[] = MEAL_ORDER.filter((mealType) => !BASE_MEAL_TYPES.includes(mealType));
 
 /** 1 回の生成の slot の上限 (期間の上限 MENU_GENERATION_RANGE_MAX_DAYS 日 × 朝・昼・夕 = 93。サーバーの上限と同じ) */
 const MAX_TARGET_SLOTS = MENU_GENERATION_RANGE_MAX_DAYS * BASE_MEAL_TYPES.length;

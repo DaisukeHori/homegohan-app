@@ -226,41 +226,45 @@ interface ActionResponse {
 
 ### 5.2 エラーレスポンス
 
+実装 (`src/lib/api/errors.ts` の `internalError`・`src/lib/rate-limit.ts` の `rateLimitExceededResponse`) に合わせ、本文は 2 つの形に分かれる。`request_id` は本文に入れない (要求の ID は構造化ログ (`app_logs`) にだけ残す)。
+
+**(a) flat (既定)**: 一般の API。画面が `data.error` を文字列として表示するので、`error` は文字列のままにし、`code` を横に添える。
+
 ```typescript
 interface ErrorResponse {
+  error: string;   // 日本語メッセージ (ユーザー向け。こちらで決めた固定の文)
+  code: string;    // エラーコード (500 の既定は 'INTERNAL_ERROR')
+}
+```
+
+```json
+// 500 (internalError の既定)
+{ "error": "処理中にエラーが発生しました", "code": "INTERNAL_ERROR" }
+
+// 429 (rateLimitExceededResponse。retryAfter は再試行までの秒数)
+{ "error": "リクエストが多すぎます。しばらく時間をおいてからお試しください。", "code": "RATE_LIMITED", "retryAfter": 60 }
+```
+
+**(b) nested**: `error.message` を読むクライアント向け。運営 API (`/api/super-admin/**` など) は `internalError(..., { shape: 'nested' })` でこの形の 500 を返す。組織・家族の所属の操作の API (招待の承諾・辞退・取り消し・脱退・除名・代表者やオーナーの譲渡など。`/api/org/**`・`/api/family/**` のうち `MembershipErrorCode` を返すもの) の 4xx もこの形で、`code` は `MembershipErrorCode` (`src/lib/errors/membership-errors.ts`) の値 (同じ配下でも、一覧の取得などは (a) flat の `{ error: 'Forbidden' }` などを返す route がある)。`message` は操作ごとの固定の文なので、画面は `membershipErrorMessageOfBody` で `code` から理由の文を引く。
+
+```typescript
+interface NestedErrorResponse {
   error: {
-    code: string;           // エラーコード (上記一覧より)
-    message: string;        // 日本語メッセージ (ユーザー向け)
-    request_id: string;     // ログ追跡用 ID
-    details?: unknown;      // 開発環境のみ (本番では omit)
-    field?: string;         // バリデーションエラー時: 対象フィールド名
+    code: string;     // エラーコード (500 の既定は 'INTERNAL_ERROR')
+    message: string;  // 日本語メッセージ (ユーザー向け。こちらで決めた固定の文)
   };
 }
 ```
 
 ```json
-// 単一エラー例
-{
-  "error": {
-    "code": "PERM_DENIED",
-    "message": "この操作には org_admin 権限が必要です",
-    "request_id": "req_abc123"
-  }
-}
+// 500 (internalError(..., { shape: 'nested' }))
+{ "error": { "code": "INTERNAL_ERROR", "message": "処理中にエラーが発生しました" } }
 
-// バリデーションエラー例 (複数フィールド)
-{
-  "error": {
-    "code": "VALID_REQUIRED_FIELD",
-    "message": "入力内容に誤りがあります",
-    "request_id": "req_def456",
-    "fields": [
-      { "field": "email", "code": "VALID_EMAIL_FORMAT", "message": "有効なメールアドレスを入力してください" },
-      { "field": "role",  "code": "VALID_REQUIRED_FIELD", "message": "役割を選択してください" }
-    ]
-  }
-}
+// 409 (家族の除名で、代表者を外そうとした。remove_family_member が IS_FAMILY_REPRESENTATIVE を RAISE する)
+{ "error": { "code": "IS_FAMILY_REPRESENTATIVE", "message": "メンバーの除名に失敗しました" } }
 ```
+
+どちらの形でも、本文に DB の生のエラー文・捕まえた例外の文面・`details`・`hint`・スタックを入れない (500 は汎用の文だけにし、元のエラーは構造化ログに残す)。
 
 ### 5.3 TypeScript 型定義
 
@@ -281,23 +285,15 @@ export interface Pagination {
   has_more: boolean;
 }
 
-export interface ApiError {
-  code: string;
-  message: string;
-  request_id: string;
-  field?: string;
-  fields?: { field: string; code: string; message: string }[];
-}
-
+// §5.2 (a) flat (既定)
 export interface ApiErrorResponse {
-  error: ApiError;
+  error: string;
+  code: string;
 }
 
-export function isApiError(response: unknown): response is ApiErrorResponse {
-  return typeof response === 'object'
-    && response !== null
-    && 'error' in response
-    && typeof (response as ApiErrorResponse).error.code === 'string';
+// §5.2 (b) nested (運営 API の 500・組織・家族の API の 4xx)
+export interface ApiNestedErrorResponse {
+  error: { code: string; message: string };
 }
 ```
 
@@ -512,16 +508,11 @@ SELECT id FROM processed_stripe_events WHERE stripe_event_id = $1;
 HTTP/1.1 429 Too Many Requests
 Content-Type: application/json
 Retry-After: 60
-X-RateLimit-Limit: 30
-X-RateLimit-Remaining: 0
-X-RateLimit-Reset: 1746619200
 
 {
-  "error": {
-    "code": "RATE_LIMIT_EXCEEDED",
-    "message": "リクエスト数が上限に達しました。しばらく経ってから再試行してください。",
-    "request_id": "req_xyz789"
-  }
+  "error": "リクエストが多すぎます。しばらく時間をおいてからお試しください。",
+  "code": "RATE_LIMITED",
+  "retryAfter": 60
 }
 ```
 
@@ -540,50 +531,30 @@ X-RateLimit-Reset: 1746619200
 
 ## 13. 構造化エラーハンドリング (Next.js)
 
-```typescript
-// src/lib/api/error-handler.ts
+500 は route ごとに本文を組み立てず、共通ヘルパー `internalError(routeName, error, ctx?, options?)` (`src/lib/api/errors.ts`) を `return` する。構造化ログ (`app_logs`) への記録と、汎用の本文 (§5.2) の返却を一度に行う。
 
-export function handleApiError(error: unknown): NextResponse<ApiErrorResponse> {
-  // 認証エラー
-  if (error instanceof AuthError) {
-    return NextResponse.json(
-      { error: { code: error.code, message: error.message, request_id: getRequestId() } },
-      { status: 401 }
-    );
+```typescript
+// src/app/api/health/goals/route.ts (見本)
+import { NextResponse } from 'next/server';
+import { internalError } from '@/lib/api/errors';
+
+export async function GET() {
+  // ... 認証 (401 は { error: 'Unauthorized' } などこちらで決めた文)
+  const { data, error } = await supabase.from('health_goals').select('*').eq('user_id', user.id); // (抜粋)
+  if (error) {
+    // 本文は { error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' }。DB の生のエラー文はログにだけ残る
+    return internalError('GET /api/health/goals', error, { userId: user.id, table: 'health_goals' });
   }
-  // 権限エラー
-  if (error instanceof PermError) {
-    return NextResponse.json(
-      { error: { code: error.code, message: error.message, request_id: getRequestId() } },
-      { status: 403 }
-    );
-  }
-  // Zod バリデーションエラー
-  if (error instanceof z.ZodError) {
-    return NextResponse.json(
-      {
-        error: {
-          code: 'VALID_REQUIRED_FIELD',
-          message: '入力内容に誤りがあります',
-          request_id: getRequestId(),
-          fields: error.errors.map(e => ({
-            field: e.path.join('.'),
-            code: 'VALID_' + e.code.toUpperCase(),
-            message: e.message,
-          })),
-        }
-      },
-      { status: 422 }
-    );
-  }
-  // 予期しないエラー
-  Sentry.captureException(error);
-  return NextResponse.json(
-    { error: { code: 'SYS_INTERNAL_ERROR', message: '内部エラーが発生しました', request_id: getRequestId() } },
-    { status: 500 }
-  );
+  return NextResponse.json({ goals: data });
 }
+
+// 運営 API (クライアントが error.message を読む) は nested の形にする
+//   return internalError('GET /api/super-admin/admins', error, {}, { shape: 'nested' });
 ```
+
+- 4xx で理由を伝えるときは、こちらで決めた固定の文を返す (catch で受けた例外の文面は 4xx でも返さない。返してよいのは `err instanceof AuthError` など文面をこちらで書いている例外のクラスに絞り込んだ分岐の中だけ)。
+- 429 は `rateLimitExceededResponse(result)` (`src/lib/rate-limit.ts`) を返す (§11)。
+- 本文にエラーの `message` / `details` / `hint` を入れていないかは、`tests/api-raw-error-message-scan.test.ts` が src/app/api の全 route を走査して見張る。
 
 ---
 
@@ -591,7 +562,7 @@ export function handleApiError(error: unknown): NextResponse<ApiErrorResponse> {
 
 | テスト種別 | 対象 | ツール |
 |---------|------|------|
-| Unit | `encodeCursor` / `decodeCursor`, `handleApiError`, `verifyStripeWebhook` | Vitest |
+| Unit | `encodeCursor` / `decodeCursor`, `internalError`, `verifyStripeWebhook` | Vitest |
 | Integration | cursor-based ページネーション、楽観的ロック 412 応答 | Vitest + Supabase Local |
 | E2E | 認証済みエンドポイントへの 401/403 応答確認 | Playwright |
 | Contract | OpenAPI スキーマと実 API の差分チェック | CI (`openapi-diff`) |
