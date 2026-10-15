@@ -9,6 +9,8 @@
  *   - 区分の表示名は 5 値それぞれの名前 (朝食・昼食・夕食・おやつ・夜食)。5 値以外は元の値のまま
  *   - 今日の献立・最近の食事履歴の行も、同じ表示名
  * 期待する表示名と並びは、正本の定数から求めずに手で書く (正本の値が変わったら、このテストで気づく)。
+ *
+ * 同じ作り物で、プロフィールの「ニックネーム」の行に仮置きの 'Guest' を名前として出さないこと (#1649) も確かめる (ファイルの末尾)。
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -263,5 +265,22 @@ describe('AI 相談のシステムプロンプト — 献立の区分の表示�
     const prompt = await systemPrompt();
     expect(lineOf(prompt, '履歴のラーメン').startsWith(`- ${RECENT_DAY} 夜食: 履歴のラーメン (`)).toBe(true);
     expect(lineOf(prompt, '履歴のワッフル').startsWith(`- ${RECENT_DAY} brunch: 履歴のワッフル (`)).toBe(true);
+  });
+});
+
+describe('AI 相談のシステムプロンプト — ニックネームに仮置きの Guest を名前として渡さない (#1649)', () => {
+  it.each([
+    ['Guest', '未設定'],
+    [' Guest ', '未設定'],
+    ['   ', '未設定'],
+    ['', '未設定'],
+    ['guest', 'guest'],
+    [' 花子 ', '花子'],
+  ])('user_profiles.nickname が %j なら「- ニックネーム: %s」', async (nickname, expected) => {
+    h.single.user_profiles = { id: USER, nickname };
+
+    const prompt = await systemPrompt();
+
+    expect(prompt.split('\n')).toContain(`- ニックネーム: ${expected}`);
   });
 });

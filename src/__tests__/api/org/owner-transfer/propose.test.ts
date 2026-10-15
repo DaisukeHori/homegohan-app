@@ -313,6 +313,60 @@ describe('POST /api/org/owner-transfer/propose: 既存の挙動 (退行確認)',
   });
 });
 
+describe('POST /api/org/owner-transfer/propose: 名前に仮置きの Guest を使わない (#1649)', () => {
+  /** 提案者の行 (organization_id, org_role, nickname) と、提案先の行 (nickname だけ) を別の値にする */
+  function nicknames(fromNickname: string, toNickname: string) {
+    profile = { organization_id: orgId, org_role: 'owner', nickname: fromNickname };
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'user_profiles') {
+        const c: Record<string, unknown> = {};
+        let columns = '';
+        c.select = vi.fn((cols: string) => {
+          columns = cols;
+          return c;
+        });
+        c.eq = vi.fn(() => c);
+        c.single = vi.fn(async () =>
+          columns.trim() === 'nickname'
+            ? { data: { nickname: toNickname }, error: null }
+            : { data: profile, error: null },
+        );
+        return c;
+      }
+      if (table === 'organizations') return chain({ data: { name: 'テスト株式会社' }, error: null });
+      throw new Error(`unexpected table: ${table}`);
+    });
+  }
+
+  it.each(['Guest', ' Guest ', '   '])(
+    '両者の nickname が %j なら、差出人はメールアドレスの @ の前・宛名は提案先のメールアドレス',
+    async (nickname) => {
+      nicknames(nickname, nickname);
+
+      const res = await POST(postRequest(validBody));
+
+      expect(res.status).toBe(201);
+      const text: string = mockSendEmail.mock.calls[0][0].text;
+      expect(text.startsWith('next-owner@example.com 様')).toBe(true);
+      expect(text).toContain('owner 様から、「テスト株式会社」のオーナー権限の譲渡提案');
+      expect(text).not.toContain('Guest');
+    },
+  );
+
+  it.each([
+    ['guest', 'guest'],
+    [' 山田 ', '山田'],
+  ])('両者の nickname が %j (本人が付けた名前) なら、差出人と宛名にその名前を使う', async (nickname, expected) => {
+    nicknames(nickname, nickname);
+
+    await POST(postRequest(validBody));
+
+    const text: string = mockSendEmail.mock.calls[0][0].text;
+    expect(text.startsWith(`${expected} 様`)).toBe(true);
+    expect(text).toContain(`${expected} 様から、「テスト株式会社」`);
+  });
+});
+
 describe('POST /api/org/owner-transfer/propose: 承諾リンクの基点 (#1194)', () => {
   // リンクの基点は src/lib/membership/urls.ts (= サイトの URL。NEXT_PUBLIC_APP_URL) に 1 つだけある。
   // 以前は未設定のとき http://localhost:3000 になり、本番のメールに localhost のリンクが載りえた。
