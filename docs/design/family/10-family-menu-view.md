@@ -141,7 +141,7 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 ```
 [page.tsx]
   familyMembers (RLS で読む。既存) ──→ applyFamilyMemberNames(fetchFamilyMemberNames) ──→ FamilyViewSwitcher (名前は API の値)
-  viewState (useFamilyView。既存) ──→ visibleMemberIdsOf(viewState, members) ──→ 自分以外の id 集合 (others)
+  viewState (useFamilyView。既存) ──→ visibleOtherMemberIdsOf(viewState, members, 自分) ──→ 自分以外の id 集合 (others)
   others が空 → 何も取らない / 空でない → useFamilyMenu({ startDate, endDate }) ──→ GET /api/family/menu
                                                                                      │
   [route]  getUser → user_profiles.family_id (RLS) → rpc family_menu_visible_members() → rpc family_menu_planned_meals(start, end)
@@ -165,7 +165,7 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 | S-3 | 夫の `share_menu = false` → visible_members が夫を返さない → 応答の members に夫が無い → 夫は others に居るので `partitionFamilyMenuMembers` が `notSharing` に入れ、注記を描く。シートの印は `member.share_menu === false` (RLS で読んだ行) |
 | S-4 | 自分の献立は `/api/meal-plans` (既存) なので変わらない。夫の画面では S-3 の対称 |
 | S-5 | 子供は `user_id IS NULL` → visible_members に出ない → `partitionFamilyMenuMembers` が `user_id === null` を `noAccount` に入れ、注記を描く |
-| S-6 / S-7 | 夫の行が `left` / `removed` → RLS で読む一覧 (status = active) に居ない → others に入らない (localStorage の id は `visibleMemberIdsOf` で既知の id に絞る)。visible_members も返さない |
+| S-6 / S-7 | 夫の行が `left` / `removed` → RLS で読む一覧 (status = active) に居ない → others に入らない (localStorage の id は `visibleOtherMemberIdsOf` で既知の id に絞る)。visible_members も返さない |
 | S-8 | `family_id` NULL → 画面は `familyMembers.length > 0` の条件で切り替えを出さない (既存)。API は `{ family_id: null, members: [] }` |
 | S-9 | route は本人の family_id しか見ない → null → 200 空。RPC は anon に EXECUTE が無い → 42501 |
 | S-10 | hook の key は `${startDate}_${endDate}`。cache (Map) に `fetchedAt` を持ち `FAMILY_MENU_CACHE_TTL_MS` 以内なら再利用 |
@@ -248,7 +248,7 @@ V の側:
 | `user_daily_meals` / `planned_meals` の RLS | own の ALL 1 本ずつ | 変えない |
 | `share_menu` の消費先 | 無い (設定できるだけ) | `family_menu_visible_members()` が読む |
 | 砂場の献立 | 本人の画面には出る | 家族には出ない |
-| 空のとき | (該当なし) | 注記 3 種 + エラー 1 種 (§16.2) |
+| 空のとき | (該当なし) | 注記 3 種 + エラー 1 種 + 読み込み中 1 行 (§16.2) |
 | モバイル (WebView) | 同じ画面 (切り替えは効かない) | 同じ画面 (効く) |
 | e2e | 切り替えに 2 人出るまで | + 相手の献立の行が出る・共有オフで消える (§19.5) |
 | 設計書 | membership/03 §5 の mix 表示は「まだ作っていない」 | 本書が正典。membership/03・06 は本書へのポインタ (§22) |
@@ -418,7 +418,7 @@ DROP FUNCTION IF EXISTS public.family_menu_visible_members();
 | `FAMILY_MENU_RANGE_MAX_DAYS` | `31` (含む日数) | 同上 + migration の `31` (リテラル・コメントで名指し) | 画面が取るのは 7 日。月の表示を足しても足りる上限で、関数の仕事を抑える。契約テスト `C-3` が SQL と一致を見る |
 | `FAMILY_MENU_CACHE_TTL_MS` | `5 * 60 * 1000` | `src/hooks/useFamilyMenu.ts` | page.tsx の `weekDataCache` の `CACHE_TTL` (5 分) と同じ。端末の cache で運用で変える値ではないので環境変数にしない |
 | `FAMILY_MEMBER_NAME_FALLBACK` | `'名前未設定'` | `src/lib/membership/family-member-names.ts` | 家族の 4 画面のリテラルと同じ語 (4 画面のリテラルは本書では変えない。Q-6) |
-| `FAMILY_MENU_NOTE_TEXT` | §16.2 の 4 文 | `src/lib/membership/family-menu.ts` | 注記の文言を 1 か所に |
+| `FAMILY_MENU_NOTE_TEXT` | §16.2 の 5 文 (注記 4 種 + 読み込み中 1 つ) | `src/lib/membership/family-menu.ts` | 注記と読み込み中の文言を 1 か所に |
 
 ## 13. Zod / 型 (canonical) と 14. 純関数 — `src/schemas/membership/family-menu.ts` と `src/lib/membership/family-menu.ts`
 
@@ -495,12 +495,13 @@ export const FAMILY_MENU_API_PATH = '/api/family/menu';
  */
 export const FAMILY_MENU_RANGE_MAX_DAYS = 31;
 
-/** 注記の文言 (§16.2)。{name} をメンバーの名前に置き換える */
+/** 注記と読み込み中の文言 (§16.2 の 5 文)。{name} をメンバーの名前に置き換える */
 export const FAMILY_MENU_NOTE_TEXT = {
   notSharing: '{name} は献立を共有していません',
   noAccount: '{name} (子供) の献立は、アカウントを持つまで出ません',
   noMealsToday: '{name} の献立はこの日はありません',
   loadFailed: '家族の献立を読み込めませんでした',
+  loading: '家族の献立を読み込んでいます',
 } as const;
 
 /** family_menu_planned_meals の 1 行 (RETURNS TABLE の列。nullable の列は Postgres の定義どおり null になりうる) */
@@ -925,15 +926,15 @@ export function FamilyMenuDayNotes(props: FamilyMenuDayNotesProps): JSX.Element 
 | a11y | 行は `button` (`aria-expanded`)。名前と料理名をテキストで持つ |
 | 既存の部品との関係 | `CollapsedMealCard` / `ExpandedMealCard` は page.tsx の中の関数で、編集の handler を閉じ込めているので使わない。見た目は同じ色 (`_components/colors.ts`) を使う |
 
-注記 (`FamilyMenuDayNotes`) の文言 = `FAMILY_MENU_NOTE_TEXT` (`{name}` をメンバーの名前に置き換える)。出す条件:
+注記 (`FamilyMenuDayNotes`) の文言 = `FAMILY_MENU_NOTE_TEXT` の 5 文 (`{name}` をメンバーの名前に置き換える)。部品の中に文言のリテラルを書かない。出す条件:
 
-| 種類 | 条件 | 文 |
+| 種類 | 条件 | 文 (`FAMILY_MENU_NOTE_TEXT` の鍵) |
 |---|---|---|
-| 共有していない | `partition.notSharing` の各 id | `{name} は献立を共有していません` |
-| アカウントが無い | `partition.noAccount` の各 id | `{name} (子供) の献立は、アカウントを持つまで出ません` |
-| この日は献立が無い | `partition.shown` のうち `!familyMenuHasMealsOn(member, dayDate)` の各 id | `{name} の献立はこの日はありません` |
-| 読み込めなかった | `status === 'error'` (notSharing / shown の注記は出さない。`partition` は `data === null` なら notSharing を作らない) | `家族の献立を読み込めませんでした` + [もう一度] (`onReload`) |
-| 読み込み中 | `status === 'loading'` で `menu === null` | 薄い 1 行「家族の献立を読み込んでいます」 |
+| 共有していない | `partition.notSharing` の各 id | `{name} は献立を共有していません` (`notSharing`) |
+| アカウントが無い | `partition.noAccount` の各 id | `{name} (子供) の献立は、アカウントを持つまで出ません` (`noAccount`) |
+| この日は献立が無い | `partition.shown` のうち `!familyMenuHasMealsOn(member, dayDate)` の各 id | `{name} の献立はこの日はありません` (`noMealsToday`) |
+| 読み込めなかった | `status === 'error'` (notSharing / shown の注記は出さない。`partition` は `data === null` なら notSharing を作らない) | `家族の献立を読み込めませんでした` (`loadFailed`) + [もう一度] (`onReload`) |
+| 読み込み中 | `status === 'loading'` で `menu === null` | 薄い 1 行 `家族の献立を読み込んでいます` (`loading`) |
 
 `status === 'idle'` (家族に居ない・others が空) では部品自体を描かない。
 
@@ -1001,12 +1002,14 @@ sequenceDiagram
 | `visibleOtherMemberIdsOf: all は active の全員から自分を除く` | S-1 |
 | `visibleOtherMemberIdsOf: self は空` | S-2 |
 | `visibleOtherMemberIdsOf: custom は visible_member_ids のうち active な既知の id だけ (退出した id と自分は捨てる)` | S-6・S-17 |
-| `partitionFamilyMenuMembers: 応答に居る → shown、アカウントがあって居ない → notSharing、user_id が null → noAccount、応答が null なら notSharing を作らない` | P-2・P-3・P-6・T-12 |
+| `partitionFamilyMenuMembers: 応答に居る → shown、アカウントがあって居ない → notSharing、user_id が null → noAccount、応答が null なら notSharing を作らない。otherIds に居ない人 (選ばなかった人) はどれにも入らない` | P-2・P-3・P-6・T-12・S-17 |
 | `groupFamilyMenuRows: メンバーの順を保ち、日は昇順、食事は display_order → id の順。献立の無いメンバーは days: []` | §13 |
 | `groupFamilyMenuRows: NULL の mode / is_simple / display_order / is_completed を既定値にする。未知の meal_type の行と visible_members に居ない行は捨てる` | 守り |
 | `familyMenuDishNames: 配列・オブジェクト・name の無い要素・配列でない値` | 守り |
 | `familyMenuMealLabel: 2 品以上なら「(全 n 品)」、is_simple なら dish_name だけ` | §16.2 |
 | `fetchFamilyMenu: 200 の正しい本文は ok、401 は unauthorized、400 は invalid、500 と形の違う本文と例外は failed (例外を投げない)` | S-14 |
+| `fetchFamilyMenu: 同じオリジンの相対パス (FAMILY_MENU_API_PATH で始まり、startDate / endDate のクエリを持つ URL) を cache: 'no-store' で呼ぶ` | S-16 (WebView は同じオリジンの Cookie のセッションで通る)・S-18 |
+| `FAMILY_MENU_NOTE_TEXT: 5 つの鍵 (notSharing / noAccount / noMealsToday / loadFailed / loading) を持ち、{name} を持つのは notSharing / noAccount / noMealsToday だけ` | §12・§16.2 |
 
 ### 19.2 route — `src/__tests__/api/family/menu.test.ts` (段 A。`tests/helpers/route-world.ts` の `makeClient` に rpc の偽物を渡す)
 
@@ -1040,11 +1043,11 @@ sequenceDiagram
 
 | ファイル | it |
 |---|---|
-| `src/__tests__/components/membership/family-menu-rows.test.tsx` | `見てよいメンバーの、その区分の食事を切り替えの順に描く` / `行に編集・削除・並べ替え・完了のボタンが無い` / `押すと料理の名前が開き、もう一度押すと閉じる` / `名前が無いメンバーは「名前未設定」` / `1 行も無ければ何も描かない` |
-| 同上 (`FamilyMenuDayNotes`) | `共有していない・子供・この日は献立が無い の注記を名前つきで出す` / `error のときは読み込めなかった注記と [もう一度] だけを出し、押すと onReload が呼ばれる` / `idle では何も描かない` |
-| `src/__tests__/components/membership/family-view-switcher.test.tsx` | `display_name が無ければ「名前未設定」` / `share_menu が false のメンバーに「(献立は非公開)」` / `プリセットの計算は変わらない (self_partner は自分 + 子供でない 1 人)` |
-| `src/__tests__/hooks/useFamilyMenu.test.ts` | `enabled が false なら取らない (idle)` / `同じ範囲は 5 分以内なら取り直さない` / `reload は cache を捨てて取り直す` / `失敗は error と reason を持ち、直前の data を残す` / `範囲が変わると取り直す` |
-| `src/__tests__/app/menus/weekly/family-menu-wiring.test.ts` (page.tsx の source の静的検査。`static-guard` と同型) | `loadFamilyData が fetchFamilyMemberNames と applyFamilyMemberNames を呼ぶ` / `FamilyViewSwitcher の onChange が setView と familyMenu.reload を呼ぶ` / `BASE_MEAL_TYPES と EXTRA_MEAL_TYPES の map の中に FamilyMenuMealRows がある` / `FamilyMenuDayNotes を描く` / `page.tsx に家族の献立の useState を足していない (状態は hook)` |
+| `src/__tests__/components/membership/family-menu-rows.test.tsx` | `見てよいメンバーの、その区分の食事を切り替えの順に描く` / `行に編集・削除・並べ替え・完了のボタンが無い` / `押すと料理の名前が開き、もう一度押すと閉じる` / `名前が無いメンバーは「名前未設定」` / `display_name が NULL のメンバーに applyFamilyMemberNames でプロフィールの名前「太郎」を当てた一覧を渡すと、行に「太郎」` / `1 行も無ければ何も描かない` |
+| 同上 (`FamilyMenuDayNotes`) | `共有していない・子供・この日は献立が無い の注記を名前つきで出す` / `applyFamilyMemberNames で「太郎」を当てたメンバーの注記は「太郎 は献立を共有していません」` / `error のときは読み込めなかった注記と [もう一度] だけを出し、押すと onReload が呼ばれる` / `loading で menu が null なら「家族の献立を読み込んでいます」の 1 行だけ` / `idle では何も描かない` |
+| `src/__tests__/components/membership/family-view-switcher.test.tsx` | `display_name が無ければ「名前未設定」` / `display_name が NULL のメンバーに applyFamilyMemberNames でプロフィールの名前「太郎」を当てた一覧を渡すと、チップとシートに「太郎」` / `share_menu が false のメンバーに「(献立は非公開)」` / `プリセットの計算は変わらない (self_partner は自分 + 子供でない 1 人)` |
+| `src/__tests__/hooks/useFamilyMenu.test.ts` | `enabled が false なら取らない (idle)` / `同じ範囲は 5 分以内なら取り直さない` / `reload は cache を捨てて取り直す` / `失敗は error と reason を持ち、直前の data を残す` / `範囲が変わると取り直す` / `localStorage と sessionStorage に書かない (cache はメモリだけ。ログアウトの掃除の対象を増やさない)` |
+| `src/__tests__/app/menus/weekly/family-menu-wiring.test.ts` (page.tsx の source の静的検査。`static-guard` と同型) | `loadFamilyData が fetchFamilyMemberNames と applyFamilyMemberNames を呼び、setFamilyMembers に渡すのは applyFamilyMemberNames の結果` / `FamilyViewSwitcher の onChange が setView と familyMenu.reload を呼ぶ` / `BASE_MEAL_TYPES と EXTRA_MEAL_TYPES の map の中に FamilyMenuMealRows がある` / `FamilyMenuDayNotes を描く` / `page.tsx に家族の献立の useState を足していない (状態は hook)` |
 
 ### 19.5 e2e — `tests/e2e/family/02-family-menu-view.spec.ts` (段 B。`local-ci.sh` の `PW_ARGS` と `tests/e2e-api-paths.test.ts` の `SPEC_FILES` に足す)
 
@@ -1072,6 +1075,40 @@ sequenceDiagram
 | `tests/integration/security/anon-definer-execute.test.ts` | `EXPECTED_ACL` に `family_menu_visible_members()` と `family_menu_planned_meals(date,date)` (anon: false, authenticated: true, serviceRole: true, why: 'GET /api/family/menu が利用者のクライアントで呼ぶ。anon は呼べない') の 2 行 |
 | `tests/e2e/family/01-invite-accept-share.spec.ts` | 変えない (切り替えに 2 人出る確認はそのまま。名前は API 由来になるが `OWNER_DISPLAY_NAME` は display_name なので同じ) |
 
+本書が変えずに頼る既存のテスト (§19.8 の対応で名指しする):
+
+| ファイル | 頼る it | シナリオ |
+|---|---|---|
+| `src/__tests__/api/family/members/names.test.ts` | display_name が NULL ならプロフィールの名前 (`'太郎'`) で返る (:128-135) | S-15 (名前の API の側) |
+| `src/__tests__/lib/membership/family-member-names.test.ts` | `applyFamilyMemberNames` が名前の決まった人だけ display_name を置き換える (:136)・`'Guest'` を名前とみなさない (:61) | S-15 |
+| `packages/shared/src/native-app-tabs.test.ts` | `/menus/weekly` は menus のタブ (:37) | S-16 (献立タブが Web の同じ画面を開く) |
+| `src/__tests__/lib/user-scoped-storage-keys.test.ts` | `familyViewState_<familyId>` をログアウトで消す (:45) | S-16 (Web) |
+| `apps/mobile/__tests__/lib/web-view-user-storage-cleanup.test.ts` | WebView の掃除が `familyViewState_<familyId>` を消す (:149) | S-16 (WebView) |
+
+### 19.8 シナリオとテストの対応
+
+モバイル (WebView) は Web の同じ画面なので、e2e は Web のブラウザで回し、WebView に固有の部分 (同じ画面を開くこと・ログアウトの掃除・localStorage に書かないこと) は単体と既存のテストで押さえる。
+
+| シナリオ | テスト |
+|---|---|
+| S-1 | §19.2 `見てよいメンバーと献立を…` / §19.3 `同じ家族で share_menu = TRUE の…` / §19.4 rows `見てよいメンバーの…` / §19.5 spec02-01 |
+| S-2 | §19.1 `visibleOtherMemberIdsOf: self は空` / §19.4 hook `enabled が false なら…` / §19.5 spec02-03 |
+| S-3 | §19.3 `share_menu = FALSE の大人は…` / §19.4 notes `共有していない・…` / §19.4 switcher `(献立は非公開)` / §19.5 spec02-02 |
+| S-4 | §19.3 `share_menu = FALSE の大人は…` (対称)・`…自分の行は返らない` / §19.4 wiring `page.tsx に家族の献立の useState を足していない` |
+| S-5 | §19.1 `partitionFamilyMenuMembers…` / §19.3 `子供 (user_id NULL) は…` / §19.4 notes `共有していない・子供・…` |
+| S-6・S-7 | §19.1 `visibleOtherMemberIdsOf: custom は…` / §19.3 `退出 (left)・除名 (removed)…` |
+| S-8 | §19.2 `家族に居なければ…` / §19.3 `家族が dissolved なら 0 行` |
+| S-9 | §19.2 `家族に居なければ…` / §19.3 `別の家族の人・…anon は 42501` / §19.7 `anon-definer-execute.test.ts` |
+| S-10 | §19.4 hook `同じ範囲は 5 分以内なら…`・`範囲が変わると取り直す` |
+| S-11 | §19.3 `砂場 (is_sandbox = TRUE) の…` |
+| S-12 | §19.2 `…メモ・生成のメタデータの列は無い` / §19.3 `返る列は RETURNS TABLE の 14 列だけ` / §19.6 C-6 |
+| S-13 | §19.1 `isFamilyMenuRangeAllowed…` / §19.2 `startDate / endDate が無い・…` / §19.3 `…32 日の範囲と逆順は FAMILY_MENU_RANGE_INVALID` |
+| S-14 | §19.1 `fetchFamilyMenu: 200 の…` / §19.4 hook `失敗は error と reason…` / §19.4 notes `error のときは…` |
+| S-15 | §19.4 rows・notes・switcher の「太郎」の it / §19.4 wiring `…setFamilyMembers に渡すのは applyFamilyMemberNames の結果` / 既存の `names.test.ts`・`family-member-names.test.ts` |
+| S-16 | §19.1 `fetchFamilyMenu: 同じオリジンの相対パス…` / §19.4 hook `localStorage と sessionStorage に書かない` / 既存の `native-app-tabs.test.ts`・`user-scoped-storage-keys.test.ts`・`web-view-user-storage-cleanup.test.ts` |
+| S-17 | §19.1 `visibleOtherMemberIdsOf: custom は…`・`partitionFamilyMenuMembers: …選ばなかった人はどれにも入らない` |
+| S-18 | §19.4 hook `同じ範囲は 5 分以内なら取り直さない`・`reload は cache を捨てて取り直す` |
+
 ## 20. 新設一覧
 
 | 種別 | 名前 | 場所 | 段 |
@@ -1079,14 +1116,14 @@ sequenceDiagram
 | migration | `<番号はマージ時に確定>_family_menu_view_functions.sql` / `.down.sql` | `supabase/migrations` / `supabase/rollbacks` | A |
 | 関数 (SQL) | `public.family_menu_visible_members()`・`public.family_menu_planned_meals(date, date)` | migration | A |
 | エラー (SQL) | `FAMILY_MENU_RANGE_INVALID` (P0001) | 関数 | A |
-| ファイル | `src/schemas/membership/family-menu.ts` | Zod 6 つ・型 4 つ (§13) | A |
+| ファイル | `src/schemas/membership/family-menu.ts` | Zod 7 つ (`FamilyMenuCalendarDateSchema`・`FamilyMenuMealTypeSchema`・`FamilyMenuMealSchema`・`FamilyMenuDaySchema`・`FamilyMenuMemberSchema`・`FamilyMenuDataSchema`・`FamilyMenuResponseSchema`)・型 4 つ (§13) | A |
 | ファイル | `src/lib/membership/family-menu.ts` | 定数 3 つ・interface 4 つ・関数 10 本 (§14) | A |
 | ファイル | `src/app/api/family/menu/route.ts` | `GET` | A |
 | 定数 | `FAMILY_MEMBER_NAME_FALLBACK` | `src/lib/membership/family-member-names.ts` に追加 | B |
 | ファイル | `src/hooks/useFamilyMenu.ts` | `useFamilyMenu`・`FAMILY_MENU_CACHE_TTL_MS`・型 3 つ | B |
 | ファイル | `src/components/membership/FamilyMenuRows.tsx` | `FamilyMenuMealRows`・`FamilyMenuDayNotes` | B |
 | route (URL) | `GET /api/family/menu` | — | A |
-| テスト | §19.1〜19.6 の 8 ファイル | — | A / B |
+| テスト | §19.1〜19.6 の 9 ファイル (§19.1・§19.2・§19.3・§19.6 は 1 つずつ、§19.4 は 4 つ、§19.5 は 1 つ) | — | A / B |
 | 変更 | `page.tsx`・`FamilyViewSwitcher.tsx`・`anon-definer-execute.test.ts`・`scripts/local-ci.sh` (PW_ARGS)・`tests/e2e-api-paths.test.ts` (SPEC_FILES)・型ファイル 2 本 | — | A / B |
 
 ## 21. 既存の番兵 (契約テスト・走査テスト) の追随表
