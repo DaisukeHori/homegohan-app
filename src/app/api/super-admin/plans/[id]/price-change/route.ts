@@ -59,6 +59,7 @@ import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { PriceChangeSchema } from '@/lib/super-admin/plans-schemas';
 import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -88,7 +89,12 @@ export async function POST(request: NextRequest, props: RouteContext) {
     // 存在しないため service-role が必須 (#1041 round-3 C1)。
     const supabaseAdmin = getSupabaseAdmin();
 
-    const body = await request.json();
+    const bodyResult = await readJsonBody(request);
+    if (!bodyResult.ok) {
+      // #1654: 本文が JSON として読めないときは 400 OP_INVALID_INPUT (外側の catch の 500 に落とさない)
+      return invalidJsonBodyResponse();
+    }
+    const body = bodyResult.body;
     const parseResult = PriceChangeSchema.safeParse(body);
 
     if (!parseResult.success) {

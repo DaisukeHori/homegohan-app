@@ -10,6 +10,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import ForceActionConfirmModal from '@/components/operator/membership/ForceActionConfirmModal';
+import { normalizeProfileName } from '@/lib/profile-name';
 
 type Candidate = {
   id: string;
@@ -133,7 +134,7 @@ export default function OrgTransferPage() {
                     />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-gray-900">
-                        {c.email ?? c.nickname ?? c.id}
+                        {c.email ?? normalizeProfileName(c.nickname) ?? c.id}
                       </p>
                       <p className="text-xs text-gray-500">
                         {c.org_role ?? 'member'} &mdash; 最終ログイン: {formatLastLogin(c.last_login_at)}
@@ -186,7 +187,7 @@ export default function OrgTransferPage() {
           action="transfer"
           newAssignee={{
             id: selected.id,
-            label: selected.email ?? selected.nickname ?? selected.id,
+            label: selected.email ?? normalizeProfileName(selected.nickname) ?? selected.id,
           }}
           reason={reason}
           onConfirm={handleTransferConfirm}

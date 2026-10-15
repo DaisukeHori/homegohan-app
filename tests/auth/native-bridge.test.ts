@@ -11,7 +11,7 @@
  *   5. 旧方式 (トークンを URL で渡す) の正常フロー
  *   6. オープンリダイレクト対策 (next)
  *   7. コード方式: 成功 (保存されたトークンで setSession・URL のトークンは使わない)
- *   8. コード方式: 形式不正 / 無効 / 使用済み / DB 障害 (既に Cookie セッションがあれば続ける)
+ *   8. コード方式: 形式不正 / 無効 / 使用済み / DB 障害 (既に Cookie セッションがあっても続けず、sb-* を消して /login。#1647)
  *   9. コード方式: setSession の失敗・ユーザーの不一致 (Cookie を消して拒否)
  *  10. コードが旧方式のトークンより優先される
  *  11. 旧方式の期限 (LEGACY_SUNSET_AT) と NATIVE_BRIDGE_LEGACY_GET=off → 426
@@ -359,10 +359,15 @@ describe('ケース6: オープンリダイレクト (next) の対策', () => {
     expectStaysOnOrigin(res);
   });
 
-  it.each(evilNexts)('コードが無効でも (Cookie セッションあり) next=%s は外へ出ない', async (_label, evil) => {
+  it.each(evilNexts)('コードが無効なら (Cookie セッションがあっても) next=%s に関わらず /login へ。外へ出ない (#1647)', async (_label, evil) => {
     mocks.getUser.mockResolvedValue({ data: { user: { id: USER_ID } }, error: null });
     const res = await GET(makeRequest({ code: VALID_CODE, next: evil }));
-    expectStaysOnOrigin(res);
+    expect(res.status).toBe(307);
+    const location = res.headers.get('location')!;
+    const resolved = new URL(location, BASE);
+    expect(resolved.origin).toBe(BASE);
+    expect(location).not.toContain('evil.com');
+    expect(resolved.pathname).toBe('/login');
   });
 
   it('正当な相対パス・同一オリジンの絶対 URL はそのまま通る (クエリ・ハッシュも保持)', async () => {
@@ -527,38 +532,74 @@ describe('ケース8: 無効なコード (形式不正 / 存在しない / 期�
     expect(mocks.setSession).not.toHaveBeenCalled();
   });
 
-  it('無効なコードでも、この WebView が既に Cookie セッションを持っていれば next へ続く (リロード・二重読み込み)', async () => {
+  // #1647: 以前は、無効なコードでもこの WebView が既に Cookie セッションを持っていれば、それで next へ続けていた。
+  // iOS では前の利用者がオフラインでログアウトすると WKWebView に前の利用者の sb-* が残り、次の利用者のブリッジの引き換えが
+  // 失敗すると、前の利用者のまま next へ進んでいた。code 付きのブリッジでは、残った Cookie セッションを信用しない
+  it('無効なコードでは、この WebView に残った Cookie セッション (前の利用者のものかもしれない) で next へ続けない: sb-* を消して /login へ', async () => {
     mocks.rpc.mockResolvedValue({ data: [], error: null });
-    mocks.getUser.mockResolvedValue({ data: { user: { id: USER_ID } }, error: null });
+    // 前の利用者の Cookie セッションが残っている (getUser() は通る)
+    mocks.getUser.mockResolvedValue({ data: { user: { id: OTHER_USER_ID } }, error: null });
+    mocks.cookieGetAll.mockReturnValue([
+      { name: 'sb-abcdefgh-auth-token.0', value: 'previous-user-chunk0' },
+      { name: 'sb-abcdefgh-auth-token.1', value: 'previous-user-chunk1' },
+      { name: 'is_native_app', value: '1' },
+      { name: 'sb-abcdefgh-auth-token-code-verifier', value: 'verifier' },
+    ]);
 
     const res = await GET(makeRequest({ code: VALID_CODE, next: '/menus?mode=app' }));
 
     expect(res.status).toBe(307);
-    const location = new URL(res.headers.get('location')!, BASE);
-    expect(location.pathname).toBe('/menus');
-    expect(location.search).toBe('?mode=app');
+    expect(new URL(res.headers.get('location')!, BASE).pathname).toBe('/login');
+    // 残った Cookie セッションを確かめもしない (誰のものか分からないので使わない)
+    expect(mocks.getUser).not.toHaveBeenCalled();
+    // セッションの Cookie だけを、設定時と同じ path (/) で消す。ほかの Cookie には触れない
+    expect(mocks.cookieDelete).toHaveBeenCalledTimes(2);
+    expect(mocks.cookieDelete).toHaveBeenCalledWith({ name: 'sb-abcdefgh-auth-token.0', path: '/' });
+    expect(mocks.cookieDelete).toHaveBeenCalledWith({ name: 'sb-abcdefgh-auth-token.1', path: '/' });
     // セッションは作っていないので setSession も is_native_app も無し
     expect(mocks.setSession).not.toHaveBeenCalled();
     expect(res.headers.get('set-cookie') ?? '').not.toContain('is_native_app');
   });
 
-  it('形式が不正でも、Cookie セッションがあれば next へ続く (DB には問い合わせない)', async () => {
+  it('同じコードの再読み込み (使用済み) でも、Cookie セッションで next へ続けず /login へ', async () => {
+    consumeReturnsRow();
+    setSessionSucceeds();
+    const first = await GET(makeRequest({ code: VALID_CODE, next: '/menus?mode=app' }));
+    expect(new URL(first.headers.get('location')!, BASE).pathname).toBe('/menus');
+
+    // 2 回目: DB の行は消えている。1 回目が張った Cookie セッションはある
+    mocks.rpc.mockResolvedValue({ data: [], error: null });
     mocks.getUser.mockResolvedValue({ data: { user: { id: USER_ID } }, error: null });
+    mocks.cookieGetAll.mockReturnValue([{ name: 'sb-abcdefgh-auth-token', value: 'whole' }]);
+    mocks.setSession.mockClear();
+    const second = await GET(makeRequest({ code: VALID_CODE, next: '/menus?mode=app' }));
+
+    expect(new URL(second.headers.get('location')!, BASE).pathname).toBe('/login');
+    expect(mocks.cookieDelete).toHaveBeenCalledWith({ name: 'sb-abcdefgh-auth-token', path: '/' });
+    expect(mocks.setSession).not.toHaveBeenCalled();
+  });
+
+  it('形式が不正でも、Cookie セッションで next へ続けず、sb-* を消して /login へ (DB には問い合わせない)', async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: { id: USER_ID } }, error: null });
+    mocks.cookieGetAll.mockReturnValue([{ name: 'sb-abcdefgh-auth-token', value: 'whole' }]);
 
     const res = await GET(makeRequest({ code: 'abc', next: '/menus?mode=app' }));
 
-    expect(new URL(res.headers.get('location')!, BASE).pathname).toBe('/menus');
+    expect(new URL(res.headers.get('location')!, BASE).pathname).toBe('/login');
     expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.getUser).not.toHaveBeenCalled();
+    expect(mocks.cookieDelete).toHaveBeenCalledWith({ name: 'sb-abcdefgh-auth-token', path: '/' });
   });
 
-  it('Cookie セッションの確認が例外になっても /login へ (500 にしない)', async () => {
+  it('Cookie セッションが無ければ、消すものは無く /login へ', async () => {
     mocks.rpc.mockResolvedValue({ data: [], error: null });
-    mocks.getUser.mockRejectedValue(new Error('network down'));
+    mocks.cookieGetAll.mockReturnValue([{ name: 'is_native_app', value: '1' }]);
 
     const res = await GET(makeRequest({ code: VALID_CODE }));
 
     expect(res.status).toBe(307);
     expect(new URL(res.headers.get('location')!, BASE).pathname).toBe('/login');
+    expect(mocks.cookieDelete).not.toHaveBeenCalled();
   });
 
   it('DB 障害 (RPC エラー): 無効扱いで /login へ。エラーはログに残すが、コードは含めない', async () => {
@@ -893,6 +934,7 @@ describe('ケース13: どの応答も no-store / no-referrer で、トークン
       '無効なコード + Cookie セッションあり',
       async () => {
         mocks.getUser.mockResolvedValue({ data: { user: { id: USER_ID } }, error: null });
+        mocks.cookieGetAll.mockReturnValue([{ name: 'sb-abcdefgh-auth-token', value: 'whole' }]);
         return GET(makeRequest({ code: VALID_CODE, next: '/menus?mode=app' }));
       },
     ],

@@ -4,7 +4,7 @@ import React, { useId, useRef } from "react";
 import { motion } from "framer-motion";
 import FocusTrap from "focus-trap-react";
 import { Sparkles, X, Check } from "lucide-react";
-import { AI_CONDITIONS, MEAL_LABELS } from "@homegohan/shared";
+import { AI_CONDITIONS, MEAL_LABELS, type MealType } from "@homegohan/shared";
 import { useFormDraftStore } from "../../_state";
 import { useDialogA11y } from "@/components/common/useDialogA11y";
 
@@ -19,7 +19,7 @@ const colors = {
   border: '#E8E8E8',
 };
 
-type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
+// MealType (食事の区分 5 値) は @homegohan/shared が正本 (#1631。手書きしない)
 
 interface RegeneratingMeal {
   mealType: string;

@@ -38,7 +38,7 @@ let root: Root;
 let client: ReturnType<typeof createPageClient>;
 
 /** ほめゴハン株式会社のオーナー (社長) から、ログイン中の自分 (部長) への譲渡提案。期限内で pending */
-function buildClient(overrides: { proposal?: Record<string, unknown> } = {}) {
+function buildClient(overrides: { proposal?: Record<string, unknown>; proposerNickname?: string } = {}) {
   return createPageClient({
     userId: ids.ME_ID,
     tables: {
@@ -56,8 +56,9 @@ function buildClient(overrides: { proposal?: Record<string, unknown> } = {}) {
         },
       ],
       organizations: [{ id: ids.ORG_ID, name: 'ほめゴハン株式会社' }],
-      // 他人の user_profiles は RLS で読めない
-      user_profiles: [],
+      // 他人の user_profiles は RLS で読めない (proposerNickname を渡したときだけ、読める場合を確かめる)
+      user_profiles:
+        overrides.proposerNickname === undefined ? [] : [{ id: ids.OLD_OWNER_ID, nickname: overrides.proposerNickname }],
     },
   });
 }
@@ -139,5 +140,30 @@ describe('組織のオーナー譲渡の承諾ページ: 提案の読み取り (
 
     expect(container.textContent).toContain('この提案は期限切れです');
     expect(buttonLabels()).not.toContain('承諾');
+  });
+});
+
+describe('組織のオーナー譲渡の承諾ページ: 名前が無い提案者 (#1649)', () => {
+  it.each(['Guest', ' Guest ', '   '])(
+    "提案者の名前が仮置き・空白だけ ('%s') なら、名前として出さず「(不明)」と表示する",
+    async (nickname) => {
+      client = buildClient({ proposerNickname: nickname });
+      state.client = client;
+
+      await renderPage();
+
+      expect(container.textContent).toContain('(不明)');
+      expect(container.textContent).not.toContain('Guest');
+    },
+  );
+
+  it('本人が付けた名前はそのまま提案者として出す', async () => {
+    client = buildClient({ proposerNickname: '社長' });
+    state.client = client;
+
+    await renderPage();
+
+    expect(container.textContent).toContain('社長');
+    expect(container.textContent).not.toContain('(不明)');
   });
 });

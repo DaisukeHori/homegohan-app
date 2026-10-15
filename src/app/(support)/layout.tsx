@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { motion } from "framer-motion";
+import { normalizeProfileName } from "@/lib/profile-name";
 
 const supportNavItems = [
   { href: "/support", label: "ダッシュボード", icon: "📊" },
@@ -45,7 +46,7 @@ export default function SupportLayout({
         return;
       }
 
-      setUserName(profile.nickname || "Support");
+      setUserName(normalizeProfileName(profile.nickname) ?? "Support");
       setIsLoading(false);
     };
     checkAccess();
