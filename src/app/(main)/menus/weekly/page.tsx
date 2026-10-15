@@ -402,6 +402,10 @@ const getCalendarDays = (month: Date, weekStartDay: WeekStartDay = 'monday'): Da
 };
 
 // Japanese holidays cache (year -> { dateStr: holidayName })
+// 月カレンダーの前月・次月のボタンが表示月を動かす量 (月の数。shiftDisplayMonth に渡す)
+const PREVIOUS_MONTH = -1;
+const NEXT_MONTH = 1;
+
 const holidaysCache = new Map<number, Record<string, string>>();
 
 // Fetch Japanese holidays from holidays-jp API
@@ -465,15 +469,12 @@ export default function WeeklyMenuPage() {
   // weekViewReducer から分解（後方互換エイリアス）
   // -------------------------------------------------------
   const currentPlan = weekView.currentPlan;
-  const setCurrentPlan = useCallback((plan: WeekPlan | null | ((prev: WeekPlan | null) => WeekPlan | null)) => {
-    if (typeof plan === 'function') {
-      // functional update: 現在の state を取得して適用 (この箇所では直接呼べないため dispatch 経由)
-      // NOTE: functional update は使用箇所ごとに展開済み
-      dispatchWeekView({ type: 'PLAN_SET', payload: plan(weekView.currentPlan) });
-    } else {
-      dispatchWeekView({ type: 'PLAN_SET', payload: plan });
-    }
-  }, [weekView.currentPlan]);
+  // #1663: 値だけ受ける (関数形 (prev) => … は受けない)。関数形は、この setter を握った描画の時点の weekView.currentPlan で
+  // 解決されるため、非同期の処理の closure (古い setter を握る) から呼ぶと今の献立を古い値で上書きしうる (#1644 と同じ型)。
+  // 関数形で呼んでいる箇所は無い (使用箇所ごとに展開済み)
+  const setCurrentPlan = useCallback((plan: WeekPlan | null) => {
+    dispatchWeekView({ type: 'PLAN_SET', payload: plan });
+  }, []);
 
   const weekStart = weekView.weekStart;
   const setWeekStart = useCallback((d: Date) => dispatchWeekView({ type: 'WEEK_SET_START', payload: d }), []);
@@ -488,10 +489,14 @@ export default function WeeklyMenuPage() {
   const setIsCalendarExpanded = useCallback((_v: boolean | ((prev: boolean) => boolean)) => dispatchWeekView({ type: 'CALENDAR_TOGGLE' }), []);
 
   const displayMonth = weekView.displayMonth;
-  const setDisplayMonth = useCallback((d: Date | ((prev: Date) => Date)) => {
-    const next = typeof d === 'function' ? d(weekView.displayMonth) : d;
-    dispatchWeekView({ type: 'DISPLAY_MONTH_SET', payload: next });
-  }, [weekView.displayMonth]);
+  // #1663: 値だけ受ける (関数形を握った描画の時点の値で解決しない。#1644 と同じ型の芽を消す)。
+  // 前月・次月への移動は、今の表示月からの相対の移動なので shiftDisplayMonth (DISPLAY_MONTH_SHIFT・reducer が今の状態で解決) を使う
+  const setDisplayMonth = useCallback((d: Date) => {
+    dispatchWeekView({ type: 'DISPLAY_MONTH_SET', payload: d });
+  }, []);
+  const shiftDisplayMonth = useCallback((months: number) => {
+    dispatchWeekView({ type: 'DISPLAY_MONTH_SHIFT', payload: months });
+  }, []);
 
   const weekStartDay = weekView.weekStartDay;
   const setWeekStartDay = useCallback((day: WeekStartDay) => {
@@ -505,19 +510,18 @@ export default function WeeklyMenuPage() {
     void _v;
   }, []);
   const holidays = weekView.holidays;
-  const setHolidays = useCallback((v: Record<string, string> | ((prev: Record<string, string>) => Record<string, string>)) => {
-    const next = typeof v === 'function' ? v(weekView.holidays) : v;
-    dispatchWeekView({ type: 'HOLIDAYS_SET', payload: next });
-  }, [weekView.holidays]);
+  // #1663: 値だけ受ける (関数形を握った描画の時点の値で解決しない。#1644 と同じ型の芽を消す)。
+  // HOLIDAYS_SET は reducer の中で今の祝日に足し合わせる (上書きしない) ので、呼び出し側は取ってきた分だけを渡す
+  const setHolidays = useCallback((v: Record<string, string>) => {
+    dispatchWeekView({ type: 'HOLIDAYS_SET', payload: v });
+  }, []);
 
   const calendarMealDates = weekView.calendarMealDates;
-  const setCalendarMealDates = useCallback((v: Set<string> | ((prev: Set<string>) => Set<string>)) => {
-    if (typeof v === 'function') {
-      dispatchWeekView({ type: 'CALENDAR_MEAL_DATES_SET', payload: v(weekView.calendarMealDates) });
-    } else {
-      dispatchWeekView({ type: 'CALENDAR_MEAL_DATES_SET', payload: v });
-    }
-  }, [weekView.calendarMealDates]);
+  // #1663: 値だけ受ける (関数形を握った描画の時点の値で解決しない。#1644 と同じ型の芽を消す)。
+  // 今の集合に足すときは CALENDAR_MEAL_DATES_MERGE (reducer が今の状態で足す) を使う
+  const setCalendarMealDates = useCallback((v: Set<string>) => {
+    dispatchWeekView({ type: 'CALENDAR_MEAL_DATES_SET', payload: v });
+  }, []);
 
   const expandedMealId = weekView.expandedMealId;
   const setExpandedMealId = useCallback((id: string | null) => dispatchWeekView({ type: 'MEAL_EXPAND', payload: id }), []);
@@ -530,11 +534,12 @@ export default function WeeklyMenuPage() {
   }, []);
 
   const isDayNutritionExpanded = weekView.isDayNutritionExpanded;
-  // F1b-04: 無条件 TOGGLE ではなく渡された真偽値（関数の場合は現在値から解決）を反映する
-  const setIsDayNutritionExpanded = useCallback((v: boolean | ((prev: boolean) => boolean)) => {
-    const next = typeof v === 'function' ? v(weekView.isDayNutritionExpanded) : v;
-    dispatchWeekView({ type: 'DAY_NUTRITION_SET', payload: next });
-  }, [weekView.isDayNutritionExpanded]);
+  // F1b-04: 無条件 TOGGLE ではなく渡された真偽値を反映する。
+  // #1663: 値だけ受ける (関数形を握った描画の時点の値で解決しない。#1644 と同じ型の芽を消す)。
+  // 今の値を反転するときは DAY_NUTRITION_TOGGLE (reducer が今の状態で反転) を送る
+  const setIsDayNutritionExpanded = useCallback((v: boolean) => {
+    dispatchWeekView({ type: 'DAY_NUTRITION_SET', payload: v });
+  }, []);
 
   const isTodayExpanded = weekView.isTodayExpanded;
   const setIsTodayExpanded = useCallback((_v: boolean | ((prev: boolean) => boolean)) => dispatchWeekView({ type: 'TODAY_TOGGLE' }), []);
@@ -656,7 +661,6 @@ export default function WeeklyMenuPage() {
   // F1b-03: null は GEN_SUCCESS ではなく GEN_PROGRESS_CLEAR（isGenerating/generatingMeal を巻き込まない）。
   // #1644: 関数形 (prev) => … は受け取らない。関数形は、この setter を握った描画の時点の aiGen.generationProgress で
   // 解決されるため、ポーリングの closure (古い setter を握る) からは今の進捗を古い値 (null) で上書きしていた。
-  // 「今が null のときだけ置く」は setGenerationProgressIfEmpty (GEN_PROGRESS_IF_EMPTY・reducer が今の状態で判定) を使う。
   const setGenerationProgress = useCallback((v: GenerationProgress | null) => {
     if (v === null) {
       dispatchAiGen({ type: 'GEN_PROGRESS_CLEAR' });
@@ -664,8 +668,15 @@ export default function WeeklyMenuPage() {
       dispatchAiGen({ type: 'GEN_PROGRESS', payload: v });
     }
   }, []);
-  const setGenerationProgressIfEmpty = useCallback((v: GenerationProgress) => {
-    dispatchAiGen({ type: 'GEN_PROGRESS_IF_EMPTY', payload: v });
+  // #1663: ポーリング (V4 の生成・献立の改善) が DB から読んだ進捗を置く。生成中のときだけ GEN_PROGRESS と同じに置く
+  // (割合は Math.max で戻らない。Realtime も同じ GEN_PROGRESS なので、届くときは Realtime が先に進む)。
+  // 生成中かは reducer の中で今の状態で判定する (GEN_PROGRESS_WHILE_GENERATING)。完了・失敗・中止のあとに着いた応答では何も置かない。
+  // 前の生成の応答 (別の生成の開始のあと) は、呼び出し側の監視の印 (#1657) で止める。
+  // (#1644 の setGenerationProgressIfEmpty (今が null のときだけ置く) は、生成の開始で初期の進捗 (3% / 5%) を置いたあとは
+  // 一度も DB の進捗を置かず、Realtime が不通だと完了まで初期の進捗のまま止まって見えたので、ポーリングでは使わない。
+  // 「今が null のときだけ置く」が要る経路はもう無いので、setter ごと外した)
+  const setGenerationProgressWhileGenerating = useCallback((v: GenerationProgress) => {
+    dispatchAiGen({ type: 'GEN_PROGRESS_WHILE_GENERATING', payload: v });
   }, []);
 
   // T15 (#1154): 生成の失敗の文が「同意が無くてサーバーが止めた」ものなら、同意画面を出して失敗をクリアし、失敗パネルには出さない
@@ -909,15 +920,15 @@ export default function WeeklyMenuPage() {
     const fetchHolidays = async () => {
       const year = displayMonth.getFullYear();
       const data = await fetchJapaneseHolidays(year);
-      setHolidays(prev => ({ ...prev, ...data }));
+      setHolidays(data);
       // Also fetch adjacent year if near year boundary
       const month = displayMonth.getMonth();
       if (month === 0) {
         const prevYearData = await fetchJapaneseHolidays(year - 1);
-        setHolidays(prev => ({ ...prev, ...prevYearData }));
+        setHolidays(prevYearData);
       } else if (month === 11) {
         const nextYearData = await fetchJapaneseHolidays(year + 1);
-        setHolidays(prev => ({ ...prev, ...nextYearData }));
+        setHolidays(nextYearData);
       }
     };
     fetchHolidays();
@@ -1375,8 +1386,9 @@ export default function WeeklyMenuPage() {
                 payload: { error: '献立の生成に失敗しました。もう一度お試しください。', requestId: v4RequestId },
               });
             } else if (dbProgress) {
-              // Realtimeが届いていない間も進捗表示を維持（nullの場合のみ上書き）
-              setGenerationProgressIfEmpty(convertV4ProgressToUIFormat(dbProgress, requestedUltimateMode));
+              // Realtime が届いていない間も、DB の進捗で表示を進める (#1663)。割合は Math.max で戻らないので、
+              // Realtime が先に進めていても遅れて着いたこの応答で割合は戻らない。生成中でなければ (完了・失敗・中止のあと) 何も置かない
+              setGenerationProgressWhileGenerating(convertV4ProgressToUIFormat(dbProgress, requestedUltimateMode));
             }
           } catch {
             // ポーリングエラーは無視して継続
@@ -2671,12 +2683,12 @@ export default function WeeklyMenuPage() {
   // Calendar Navigation
   const goToPreviousMonth = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setDisplayMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
+    shiftDisplayMonth(PREVIOUS_MONTH);
   };
 
   const goToNextMonth = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setDisplayMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+    shiftDisplayMonth(NEXT_MONTH);
   };
 
   const handleCalendarDateClick = (date: Date) => {
@@ -4706,8 +4718,9 @@ export default function WeeklyMenuPage() {
             } else if (status === 'failed') {
               await finishImprove('failed', weeklyMenuRequestErrorMessageForDisplay(errorMessage || errorMessageSnake) ?? undefined);
             } else if (dbProgress) {
-              // Realtimeが届いていない間も進捗表示を維持（nullの場合のみ上書き）
-              setGenerationProgressIfEmpty(convertV4ProgressToUIFormat(dbProgress, false));
+              // Realtime が届いていない間も、DB の進捗で表示を進める (#1663)。割合は Math.max で戻らないので、
+              // Realtime が先に進めていても遅れて着いたこの応答で割合は戻らない。生成中でなければ (完了・失敗・中止のあと) 何も置かない
+              setGenerationProgressWhileGenerating(convertV4ProgressToUIFormat(dbProgress, false));
             }
           } catch (e) {
             console.error('Improve polling error:', e);
