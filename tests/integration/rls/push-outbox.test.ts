@@ -250,12 +250,22 @@ function expectPermissionDenied(result: { error: { code?: string; message?: stri
  */
 const seededIds: string[] = [];
 
-/** 利用者に端末を 1 つ足し、送信待ちを 1 行積んで、claim の先頭に来るようにする。行を返す */
+/**
+ * 利用者に端末を 1 つ足し、その端末宛ての送信待ちを 1 行積んで、claim の先頭に来るようにする。行を返す。
+ * enqueue は利用者の全部の端末に積むので、同じ利用者の前の端末に積まれた行 (この seed の出来事のもの) は消す
+ */
 async function seedQueued(userId: string, label: string): Promise<OutboxRow> {
+  const devicesBefore = (await srAdmin.from('user_push_tokens').select('id').eq('user_id', userId)).data?.length ?? 0;
   await addDevice(userId, tokenFor(label));
-  expect(await enqueueCount(userId, `seed:${label}`)).toBe(1);
-  const row = (await rowsOf(userId)).find((r) => r.dedupe_key === `seed:${label}:${tokenFor(label)}`);
+  expect(await enqueueCount(userId, `seed:${label}`)).toBe(devicesBefore + 1);
+  const seeded = (await rowsOf(userId)).filter((r) => r.dedupe_key?.startsWith(`seed:${label}:`));
+  const row = seeded.find((r) => r.expo_push_token === tokenFor(label));
   if (!row) throw new Error(`seed row ${label} not found`);
+  const extra = seeded.filter((r) => r.id !== row.id).map((r) => r.id);
+  if (extra.length > 0) {
+    const { error } = await srAdmin.from('push_outbox').delete().in('id', extra);
+    if (error) throw new Error(`delete extra seed rows: ${error.message}`);
+  }
   await updateRows([row.id], { next_attempt_at: oldTimestamp() });
   seededIds.push(row.id);
   return row;
