@@ -369,6 +369,9 @@ describe('ログアウトの掃除の経路 (clearUserScopedLocalData) から Co
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const pending = clearUserScopedLocalData('user-1');
+      // 最後の段 (Cookie の掃除) まで進んでから知らせる
+      expect(await isSettled(pending)).toBe(false);
+      expect(clearCookies).toHaveBeenCalledTimes(1);
       release(true);
       await pending;
       expect(warn).not.toHaveBeenCalled();
