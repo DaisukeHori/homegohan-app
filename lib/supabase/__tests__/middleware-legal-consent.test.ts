@@ -12,13 +12,15 @@
  * 判定の組み合わせ (版 × パス × フラグ) そのものは tests/legal-consent-gate.test.ts。
  * ここでは middleware を通した挙動を確かめる:
  *   リダイレクト先・ヘッダー・セッション Cookie の引き継ぎ・既存の差し戻し (凍結・オンボーディング) との順序・
- *   /api/* と /auth/native-bridge の素通り・画面の POST の素通り・列が無い DB (migration の反映前) での素通り
+ *   /auth/native-bridge の素通り・画面の POST の素通り・列が無い DB (migration の反映前) での素通り
+ *   /api/* は画面の同意画面へは回さず、API の同意ゲート (#1442。403 LEGAL_CONSENT_REQUIRED) で止める
+ *   (全 route の表・許可リスト・順序は middleware-legal-consent-api.test.ts)
  *
  * 既存の差し戻しのテストは lib/supabase/__tests__/middleware.test.ts。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { LEGAL_DOCUMENTS } from '@homegohan/shared';
+import { LEGAL_CONSENT_REQUIRED_MESSAGE, LEGAL_DOCUMENTS } from '@homegohan/shared';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // @supabase/ssr の createServerClient モック
@@ -393,17 +395,33 @@ describe('updateSession — 規約の再同意ゲート (#1174): 強制 (LEGAL_C
     expect(res.headers.get('location')).toBeNull();
   });
 
-  it.each(['/api/pantry', '/api/legal/accept', '/api/account/export'])(
-    '★API (%s) は、未同意でも回さない。API の分岐は user_profiles の凍結の列とロール (メンテナンスモードの判定 #1148) だけを読み、同意済みの版の列は読まない',
+  it('★API (/api/pantry) は、未同意なら同意画面へは回さず 403 LEGAL_CONSENT_REQUIRED で止める (#1442)。API の分岐は画面と同じ列 (PROFILE_COLUMNS_WITH_LEGAL) を 1 回だけ読む', async () => {
+    mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED));
+
+    const res = await updateSession(apiRequest('/api/pantry'));
+
+    expect(res.status).toBe(403);
+    expect(res.headers.get('location')).toBeNull();
+    expect(await res.json()).toEqual({ error: LEGAL_CONSENT_REQUIRED_MESSAGE, code: 'LEGAL_CONSENT_REQUIRED' });
+    expect(mockSelect).toHaveBeenCalledTimes(1);
+    expect(mockSelect).toHaveBeenCalledWith(
+      'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at, terms_version_accepted, privacy_version_accepted',
+    );
+  });
+
+  it.each(['/api/legal/accept', '/api/account/export'])(
+    '★API の同意ゲートの許可リストにある %s は、未同意でも止めず、同意画面へも回さない (#1442)',
     async (path) => {
-      mockMaybeSingle.mockResolvedValue({ data: { frozen_at: null, unban_at: null }, error: null });
+      mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED));
 
       const res = await updateSession(apiRequest(path));
 
       expect(res.status).toBe(200);
       expect(res.headers.get('location')).toBeNull();
       expect(mockSelect).toHaveBeenCalledTimes(1);
-      expect(mockSelect).toHaveBeenCalledWith('roles, frozen_at, unban_at');
+      expect(mockSelect).toHaveBeenCalledWith(
+        'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at, terms_version_accepted, privacy_version_accepted',
+      );
     },
   );
 

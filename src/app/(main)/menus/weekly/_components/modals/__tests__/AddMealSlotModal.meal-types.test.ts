@@ -78,3 +78,36 @@ describe('AddMealSlotModal: 選択肢は MEAL_ORDER から導く (#1446)', () =>
     );
   });
 });
+
+describe('AddMealSlotModal: 区分ごとの下地の色と絵文字は、区分の見た目の表から引いて移す前と同じ (#1665)', () => {
+  // 移す前は区分との比較の連鎖で書いていた値。期待する値は手で書く (表から求めない)
+  const EXPECTED: Record<string, { emoji: string; background: string }> = {
+    breakfast: { emoji: '🌅', background: '#FEF9EE' },
+    lunch: { emoji: '☀️', background: '#FDF0ED' },
+    dinner: { emoji: '🌙', background: '#F5F3F8' },
+    snack: { emoji: '🍪', background: '#EDF5ED' },
+    midnight_snack: { emoji: '🌃', background: '#EEF4FB' },
+  };
+
+  /** jsdom が style.background に入れた色を書き直す形 (hex → rgb など) にそろえて比べる */
+  const normalizedBackground = (color: string): string => {
+    const probe = document.createElement('div');
+    probe.style.background = color;
+    return probe.style.background;
+  };
+
+  it('5 つの選択肢それぞれに、移す前と同じ絵文字と丸の下地の色が出る', () => {
+    render();
+    const buttons = mealOptionButtons();
+    expect(buttons).toHaveLength(MEAL_ORDER.length);
+    MEAL_ORDER.forEach((mealType, index) => {
+      const circle = buttons[index].querySelector<HTMLDivElement>('div.rounded-full');
+      expect(circle, mealType).not.toBeNull();
+      const expectedBackground = normalizedBackground(EXPECTED[mealType].background);
+      // 色を読めずに両方が空になって素通りしない
+      expect(expectedBackground, mealType).not.toBe('');
+      expect(circle!.style.background, mealType).toBe(expectedBackground);
+      expect(circle!.textContent, mealType).toBe(EXPECTED[mealType].emoji);
+    });
+  });
+});
