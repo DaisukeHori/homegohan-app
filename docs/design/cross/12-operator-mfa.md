@@ -1522,7 +1522,7 @@ React に依存しない。fetch を 1 回呼び、結果を判別共用体 `Mfa
 
 ⚠️ client component (`"use client"`) が import するので、client.ts と import 先の `src/lib/auth/mfa/schemas.ts` はサーバー専用のもの (`next/headers`・`@/lib/supabase/server`・`node:crypto` を持つ `backup-codes.ts`・`@/lib/auth/helpers` を持つ `page-guard.ts`) を import しない。画面が回す先のパス (`/settings/security/mfa/...`) は §13.4 の `MFA_PAGE_PATHS` と同じ文字列を画面に書く (`MFA_PAGE_PATHS` を持つ `page-guard.ts` は client component から import できない)。行き先の文字列は §15.2 の表のとおりで、`tests/mfa-pages-browser.test.tsx` (§21.1) が見張る。
 
-1 つ目のブロック (段 A の分。`MFA_API_PATHS` の `backupCodes`・`factors` と `mfaFactorPath` は段 B、`superAdminAdmins` と `mfaResetPath` は段 C で足す):
+1 つ目のブロック (段 C までの最終形。段 A ではこのうち `MFA_API_PATHS` の `backupCodes`・`factors` と `mfaFactorPath` (段 B で足す)、`superAdminAdmins` と `mfaResetPath` (段 C で足す) を除いた全部を置く。`MFA_ERROR_MESSAGES` は reset の code の行も段 A から持つ):
 
 ```ts
 import { z } from 'zod';
@@ -1603,7 +1603,7 @@ const NO_RESPONSE_FAILURE: MfaClientFailure = {
 };
 
 /**
- * API を 1 回呼び、2xx の本文を schema で読む。例外は投げない。
+ * API を 1 回呼び、2xx の本文を schema で読む。例外は投げない (fetch の例外も、応答の読み取りの例外も NO_RESPONSE_FAILURE にする)。
  * Cookie のセッションで呼ぶので credentials は same-origin、応答は本人だけのものなので cache は no-store。
  */
 export async function requestMfaApi<T>(
@@ -1611,28 +1611,23 @@ export async function requestMfaApi<T>(
   init: Pick<RequestInit, 'method' | 'headers' | 'body'>,
   schema: z.ZodType<T>,
 ): Promise<MfaClientResult<T>> {
-  let response: Response;
   try {
-    response = await fetch(path, { ...init, credentials: 'same-origin', cache: 'no-store' });
+    const response = await fetch(path, { ...init, credentials: 'same-origin', cache: 'no-store' });
+    /** JSON でない本文 (空・HTML のエラー画面) は null として読む */
+    const body: unknown = await response.json().catch(() => null);
+    if (response.ok) {
+      const parsed = schema.safeParse(body);
+      return parsed.success ? { ok: true, data: parsed.data } : NO_RESPONSE_FAILURE;
+    }
+    return {
+      ok: false,
+      status: response.status,
+      code: failureCodeOf(body),
+      retryAfterSec: retryAfterSecOf(response.headers),
+    };
   } catch {
     return NO_RESPONSE_FAILURE;
   }
-  let body: unknown = null;
-  try {
-    body = await response.json();
-  } catch {
-    body = null;
-  }
-  if (response.ok) {
-    const parsed = schema.safeParse(body);
-    return parsed.success ? { ok: true, data: parsed.data } : NO_RESPONSE_FAILURE;
-  }
-  return {
-    ok: false,
-    status: response.status,
-    code: failureCodeOf(body),
-    retryAfterSec: retryAfterSecOf(response.headers),
-  };
 }
 
 /** 画面の文言 (§15 の表と同じ文)。Map にして、constructor などの Object の名前の code を拾わない */
@@ -2382,7 +2377,7 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `requestMfaApi: 2xx でも本文が JSON でない・schema に合わなければ { ok: false, status: MFA_CLIENT_NO_STATUS, code: MFA_CLIENT_UNKNOWN_CODE, retryAfterSec: null }`
 - `requestMfaApi: 4xx / 5xx は status と本文の code を返す (flat の { error, code } と nested の { error: { code, message } } の両方)。code が読めなければ MFA_CLIENT_UNKNOWN_CODE`
 - `requestMfaApi: Retry-After ヘッダの秒を retryAfterSec に入れる (無い・0・負・数でないなら null)`
-- `requestMfaApi: fetch が例外を投げても例外にせず、MFA_CLIENT_NO_STATUS の失敗を返す`
+- `requestMfaApi: fetch が例外を投げても、fetch の戻りが Response でなくても (テストの差し替えの漏れ)、例外にせず MFA_CLIENT_NO_STATUS の失敗を返す`
 - `requestMfaApi: fetch に credentials: same-origin と cache: no-store を渡す`
 - `getMfaStatus / startMfaEnrollment / verifyMfaCode / recoverWithBackupCode は MFA_API_PATHS の status / enroll / verify / recover を GET / POST / POST / POST で呼び、verify と recover だけが JSON の本文 (Content-Type: application/json) を送る`
 - (B) `regenerateBackupCodes は POST /api/auth/mfa/backup-codes、unenrollMfaFactor は DELETE /api/auth/mfa/factors/<encodeURIComponent(id)> を本文なしで呼ぶ`
