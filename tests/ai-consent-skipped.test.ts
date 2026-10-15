@@ -137,7 +137,7 @@ const READS_SKIPPED = /\baiSkippedReasonOf\(|\baiSummarySkippedNote\(/;
 const SKIPPED_NOT_SHOWN: Record<string, string> = {
   'src/app/(main)/meals/new/page.tsx':
     '健康診断の写真の読み取り (同意の確認を通ったあと) の結果を保存して、すぐ一覧へ移る。AI のレビューを表示しない',
-  'apps/mobile/app/ai/[sessionId].tsx': '相談を閉じたら、すぐ前の画面へ戻る (要約を表示しない)',
+  // (全画面の AI 相談 apps/mobile/app/ai/[sessionId].tsx の行は、画面ごと消したので除いた。#1598)
   'apps/mobile/src/hooks/useHomeData.ts': 'アプリのホームは、この集計 (nutritionAnalysis) をどの画面にも出していない',
 };
 
@@ -211,7 +211,7 @@ describe('aiSkipped を返す API を呼ぶ画面は、aiSkipped を読む', () 
       'src/app/(main)/health/checkups/new/page.tsx',
       'src/hooks/useHomeData.ts',
       'src/components/AIChatBubble.tsx',
-      'apps/mobile/app/health/checkups/new.tsx',
+      // (apps/mobile/app/health/checkups/new.tsx は、通常の操作で届かない画面として消した。#1598)
       'apps/mobile/app/health/blood-tests.tsx',
       'apps/mobile/src/components/ai/AIAdvisorSheet.tsx',
     ]) {

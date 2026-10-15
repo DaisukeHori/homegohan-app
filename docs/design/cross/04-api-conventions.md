@@ -189,6 +189,9 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `LEGAL_VERSION_MISMATCH` | 同意を送った版が、いま有効な版と違う (`POST /api/legal/accept`。本文に `current` を添える) | 409 |
 | `LEGAL_BAD_REQUEST` | 同意の記録の入力が不正 (`POST /api/legal/accept`) | 400 |
 | `LEGAL_UNSUPPORTED_MEDIA_TYPE` | 同意の記録の Content-Type が JSON でない (`POST /api/legal/accept`) | 415 |
+| `CSP_REPORT_INVALID` | **[NEW]** CSP の違反の報告の本文の形が不正 (`POST /api/csp-report`。cross/18 §9.10) | 400 |
+| `CSP_REPORT_TOO_LARGE` | **[NEW]** CSP の違反の報告の本文が大きすぎる (`POST /api/csp-report`。cross/18 §9.10) | 413 |
+| `CSP_REPORT_UNSUPPORTED_MEDIA_TYPE` | **[NEW]** CSP の違反の報告の Content-Type が `application/csp-report` / `application/json` でない (`POST /api/csp-report`。cross/18 §9.10) | 415 |
 
 #### ORG 系
 

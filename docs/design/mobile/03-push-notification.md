@@ -198,7 +198,7 @@ type PushPayload = {
 > (置かれている間だけ有効で、外されたら `setNotificationHandler(null)` とリスナーの `remove()` で解除する)。
 > 表示は `shouldShowBanner` / `shouldShowList` / `shouldPlaySound` / `shouldSetBadge` (expo-notifications 0.31 では `shouldShowAlert` は非推奨)。
 > タップの行き先は `data.path` (アプリ内のパス) か `data.deep_link` (`homegohan://…`) から `src/lib/notificationRoute.ts` が決め、
-> 許した画面 (`NOTIFICATION_ROUTES`) にだけ遷移する。画面が無い下位のパス (例: `health/streaks/abc`) は、一番近い上位の画面 (`/health/streaks`) を開く。
+> 許した画面 (`NOTIFICATION_ROUTES`) にだけ遷移する。画面が無い下位のパス (例: `health/blood-tests/abc`) は、一番近い上位の画面 (`/health/blood-tests`) を開く (以前の例の `/health/streaks` の画面は、通常の操作で届かないネイティブの画面として 2026-10-16 に削除した。#1598)。
 > アプリには家族の画面が無い (ネイティブの家族の画面 `app/family/index.tsx` は、通常の操作で届かない画面として消した。#1598 / #1610)。
 > §3.3 の例の `homegohan://family/meal-requests` のような家族の通知は、行き先が決まらず、アプリが開くだけになる。
 > 家族の通知の行き先 (WebView で Web の家族の画面を開くなど) は、家族の通知を送る実装 (`notify-push`) を作るときに決める。
