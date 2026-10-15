@@ -3,9 +3,10 @@ import { createFakeServiceRole, type FakeServiceRole } from '../../operator/memb
 
 // GET /api/family/members/names — 家族の画面に出すメンバーの名前 (#1584)。
 //
-// 招待を承諾したメンバーは family_members.display_name が NULL のままで、家族の画面に「名前未設定」と出ていた。
-// 名前は承諾のときに写さず、display_name → 本人のプロフィールの今の名前 (user_profiles.nickname。仮置きの 'Guest' は
-// 名前とみなさない) → null の順に決める。
+// 以前は、招待を承諾したメンバーの family_members.display_name が NULL のままで、家族の画面に「名前未設定」と出ていた。
+// 承諾のときは本人のプロフィールの名前を display_name に写す (supabase/migrations/20261015170000_accept_copies_profile_name.sql。
+// 仮置きの 'Guest'・空白だけは写さない)。それより前に承諾した人や、承諾のときに名前が無かった人は NULL のままなので、
+// display_name → 本人のプロフィールの今の名前 (user_profiles.nickname。仮置きの 'Guest' は名前とみなさない) → null の順に決める。
 // 他の家族の user_profiles は RLS で読めないので、名前だけを service_role で引く。
 //
 // 利用者のクライアント (RLS つき) と service_role のクライアントを別の偽物にする。利用者の偽物には、RLS で読める行
@@ -45,7 +46,7 @@ import { GET } from '@/app/api/family/members/names/route';
 
 const FAMILY_ID = 'f0eebc99-9c0b-4ef8-bb6d-6bb9bd380a66';
 const REP_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'; // 代表者 (自分)
-const INVITED_ID = 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22'; // 招待を承諾した大人 (display_name が NULL)
+const INVITED_ID = 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22'; // 名前を写す migration より前に招待を承諾した大人 (display_name が NULL)
 const NAMED_ID = 'c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33'; // display_name のある大人
 const NO_NAME_ID = 'd0eebc99-9c0b-4ef8-bb6d-6bb9bd380a44'; // display_name もプロフィールの名前も無い大人
 const LEFT_ID = 'e0eebc99-9c0b-4ef8-bb6d-6bb9bd380a55'; // 脱退した大人
@@ -124,7 +125,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/family/members/names (#1584)', () => {
-  it('display_name が NULL で、プロフィールに名前がある承諾済みのメンバーは、プロフィールの名前で返る', async () => {
+  it('display_name が NULL で、プロフィールに名前がある承諾済みのメンバー (名前を写す migration より前に承諾した人) は、プロフィールの名前で返る', async () => {
     const { status, body } = await callGet();
 
     expect(status).toBe(200);
