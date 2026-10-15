@@ -64,13 +64,13 @@ Issue #1169: `next.config.mjs` の CSP は `script-src 'self' 'unsafe-inline' �
 | S-13 | 利用者のブラウザ拡張がスクリプトを差し込み、CSP が止める。報告の `blocked_uri` は他オリジン (`chrome-extension` など) で、運営は自分のコード由来 (`inline` / 自オリジン) と区別して読む |
 | S-14 | 攻撃者が `/api/csp-report` に偽の報告を大量に POST する。IP ごとの回数制限 (429)・8 KiB 超 (413)・Content-Type 違い (415)・JSON でない / 形が違う (400)・NULL 文字 (400) で断り、`app_logs` は膨らまない |
 | S-15 | クライアントが `x-csp-nonce: evil` と `content-security-policy: script-src 'nonce-evil'` をリクエストヘッダーに付けて送る。middleware が捨てて付け直すので、Next とページが読むのは middleware の値だけ |
-| S-16 | 将来、開発者が `<script dangerouslySetInnerHTML>` や `next/script` を足す。`tests/csp-no-inline-script.test.ts` が赤になり、外部ファイル化か `getCspNonce()` + 許可リスト (理由つき) を案内する |
+| S-16 | 将来、開発者が `<script dangerouslySetInnerHTML>` や `next/script` を足す。`tests/csp-no-inline-script.test.ts` が赤になり、JS のモジュール (import) への移し替えか、`getCspNonce()` の値を `nonce` に渡して許可リスト `ALLOWED_INLINE_SCRIPTS` に理由と件数を書くことを案内する (§9.11) |
 
 ### 0.4 分冊判定
 
 | 目安 | 本設計 | 判定 |
 |---|---|---|
-| 設計書 800 行超 | 超える見込み (約 1,100 行) | 当たる |
+| 設計書 800 行超 | 超える (約 1,470 行) | 当たる |
 | 消費先レーン 3 以上 | middleware / ルートの layout / `next.config.mjs` / 報告の route / テスト・番兵の 5 面 | 当たる |
 | 共有面 2 つ以上 | `src/lib/rate-limit.ts` のカテゴリ・`packages/shared` の同意の許可リスト・`src/lib/env.ts` の一覧 (どれも行を足すだけ) | 当たる (改定が要るものは無い) |
 
@@ -164,7 +164,7 @@ POST /api/csp-report ──────▶ updateSession (同意の許可リス�
 | S-13 | 拡張のスクリプトは nonce が無い → 止まる → 報告の `blocked_uri` が `chrome-extension` / 他オリジン → `scrubCspReportUri` は http(s) 以外はスキームだけ残す (`chrome-extension:`) → 運営は `inline` / 自オリジンの行だけを自分のコード由来として見る | 一致 |
 | S-14 | `rejectNullCharacterBody` (NULL 文字 → 400) → `checkRateLimit(ip, 'csp-report')` (30 回/分・300 回/日 → 429) → `isCspReportContentType` (違えば 415) → 本文の `TextEncoder` のバイト数 > 8 KiB → 413 → `JSON.parse` 失敗 → 400 → `CspReportBodySchema.safeParse` 失敗 → 400 | 一致 (どの 4xx も `app_logs` に書かない) |
 | S-15 | middleware が `x-csp-nonce`・`Content-Security-Policy`・`Content-Security-Policy-Report-Only` の 3 つを `delete` してから `set` → Next が読むのは middleware の値 → 応答の nonce と一致 | 一致 |
-| S-16 | `tests/csp-no-inline-script.test.ts` が構文木で `<script>` / `<Script>` 要素・`next/script` の import・`<script` を含む文字列を見つける → 許可リスト (空) に無い → 赤 → 文言が外部ファイル化か `getCspNonce()` + 許可リスト (理由 + `nonce` 属性) を案内 | 一致 |
+| S-16 | `scanInlineScripts` が構文木で `jsx` (`<script>` / `<Script>` の要素)・`next-script` (`next/script` の参照)・`string` (`<script` を含む文字列・テンプレート) を見つける → `inlineScriptProblems` が「`ALLOWED_INLINE_SCRIPTS` (空) に無い」を返す → 赤 → 失敗の文の `INLINE_SCRIPT_GUIDANCE` が、JS のモジュールへの移し替えか、`getCspNonce()` の値を `nonce` に渡し (`NONCE_RULES` の規則) 許可リストに理由と件数を書くことを案内 (§9.11) | 一致 |
 
 ---
 
@@ -202,7 +202,7 @@ Next は nonce をリクエスト時の描画で付ける。ビルド時に静�
 
 ### 5.2 やり方
 
-`src/app/layout.tsx` (ルートの layout) に `export const dynamic = 'force-dynamic'` を書く。ルートは全ルートの祖先なので、配下の全 page が動的になる (`(main)/layout.tsx`・`admin/layout.tsx` の同じ指定と、個々の page の指定は残す。重なっても害は無く、diff を小さくする)。公式ガイドの `await connection()` と効果は同じで、宣言なので `tests/csp-no-inline-script.test.ts` が `import('@/app/layout')` の `dynamic` を機械検査できる。
+`src/app/layout.tsx` (ルートの layout) に `export const dynamic = 'force-dynamic'` を書く。ルートは全ルートの祖先なので、配下の全 page が動的になる (`(main)/layout.tsx`・`admin/layout.tsx` の同じ指定と、個々の page の指定は残す。重なっても害は無く、diff を小さくする)。公式ガイドの `await connection()` と効果は同じで、宣言なので `tests/csp-no-inline-script.test.ts` が構文木で機械検査できる (`exportsForceDynamic`。§9.11)。layout は import しない (import すると `next/font/google` の偽物が要る: `tests/speed-insights-1179.test.tsx` の `vi.mock`)。
 
 ### 5.3 動的になるページ (現状、祖先の layout にも自身にも動的のマーカーが無いもの。ファイル内のマーカーの機械分類で、ビルドの実測ではない)
 
@@ -228,7 +228,7 @@ Next は nonce をリクエスト時の描画で付ける。ビルド時に静�
 | I-2 | Next が生成するインライン (`self.__next_f.push`・bootstrap・dev の overlay) | フレームワーク | Next が nonce を付ける | request header の CSP から読む (§2 の一次情報) |
 | I-3 | `src/components/SpeedInsightsClient.tsx` → `@vercel/speed-insights` 2.0.0 | 外部スクリプト (`createElement('script')` + `src`。本番 `/_vercel/speed-insights/script.js`、dev `https://va.vercel-scripts.com/v1/speed-insights/script.debug.js`) | 変更なし | `'self'` と `*.vercel-scripts.com` で許可済み。インラインの script 要素は作らない (`window.si` は代入) |
 | I-4 | `src/lib/auth/turnstile.ts` `loadTurnstileApi` (`createElement('script')` + `src=https://challenges.cloudflare.com/turnstile/v0/api.js`) | 外部スクリプト | 変更なし (nonce 属性は付けない) | ホストの許可を残す (Cloudflare の明示の代替)。`'strict-dynamic'` を使わないので nonce は要らない |
-| I-5 | `next/script`・解析タグ (GA / PostHog)・Stripe.js | 無い (`src` に `next/script` の import 0 件・PostHog は #1166 で撤去・Stripe はサーバー側) | 足すときは `getCspNonce()` を `nonce` に渡し、走査の許可リストに理由を書く | §21 |
+| I-5 | `next/script`・解析タグ (GA / PostHog)・Stripe.js | 無い (`src` に `next/script` の import 0 件・PostHog は #1166 で撤去・Stripe はサーバー側) | 足すときは `getCspNonce()` の値を `nonce` に渡し、走査の許可リスト `ALLOWED_INLINE_SCRIPTS` に理由と件数を書く | §9.11, §21 |
 | I-6 | `src/components/AIChatBubble.tsx` の `dangerouslySetInnerHTML` (`parseMarkdown` の戻り値) | HTML (script を含まない) | 変更なし | `markdown-lite.ts` がエスケープする。万一 script が混じっても nonce が無く止まる (多層防御) |
 | I-7 | `public/sw.js` | 無い (matcher の除外は先回り) | 変更なし | – |
 | I-8 | `apps/mobile/src/lib/turnstile.ts` `buildTurnstileHtml` の HTML 文字列 (インラインの `<script>` (`:95`・`CONFIG` と `onTurnstileLoad`)・`<script src=… onerror="onTurnstileScriptError()">` (`:122`。`onerror` はインラインのイベント属性)) | モバイル App の WebView に渡す文書 (`apps/mobile/src/components/auth/TurnstileWidget.tsx:156` の `source={{ html, baseUrl: getWebBaseUrl() }}`) | 変更なし | HTTP の応答ではなく、App が文字列で WebView に読み込ませる文書なので、Web の middleware も応答ヘッダーの CSP も掛からない (この HTML に `<meta http-equiv="Content-Security-Policy">` も無い)。`baseUrl` が Web のオリジンでも、CSP は文書を運んだ応答にだけ付く。§21 の走査 (`src` / `lib` / `components`) は `apps/` を見ないので、この行は走査の許可リストに載せない (§21 の限界) |
@@ -439,7 +439,8 @@ import { CSP_NONCE_HEADER } from '@/lib/security/csp';
 /**
  * このリクエストの CSP の nonce (middleware が x-csp-nonce に載せた値)。middleware の外 (matcher の除外パス・ビルド時) は null。
  * アプリのインラインスクリプトは 0 本なので今は呼ぶ画面が無い。どうしてもインラインの script や next/script が要るときは、
- * これを `nonce` 属性に渡し、tests/csp-no-inline-script.test.ts の許可リストに理由を書く。
+ * これを `nonce` 属性に渡し、tests/csp-no-inline-script.test.ts の ALLOWED_INLINE_SCRIPTS に理由と件数を書く
+ * (規則は docs/design/cross/16-csp-nonce.md §9.11)。
  * headers() は await の直下で呼ぶ (tests/next15-async-request-api-scan.test.ts の規則 1)
  */
 export async function getCspNonce(): Promise<string | null> {
@@ -692,6 +693,7 @@ export type RateLimitCategory =
   | 'generation'
   // … 既存のカテゴリはそのまま …
   | 'client-log'
+  | 'dsr'
   | 'csp-report';
 
 // 【公開フォーム系】に足す説明:
@@ -843,6 +845,332 @@ export const dynamic = 'force-dynamic';
 
 凍結の `FROZEN_ALLOWED_API_PATHS` と `isMaintenanceExemptPath` には足さない (足すのは「本人がサービスから離れる操作」だけ、の原則。凍結中・メンテナンス中の報告は捨ててよい: 凍結の画面にスクリプトは無く、メンテナンスの HTML にもスクリプトは無い)。
 
+### 9.11 `tests/csp-no-inline-script.test.ts` の検出と照合 (走査テストの正典)
+
+下のコードをテストファイルの先頭にこのとおり置き (`export` は付けたままでよい)、その下に §15 の it を書く。走査の作りは `tests/inner-html-contract.test.ts` と同じ (構文木・`QUICK_FILTER`・`listSourceFiles`)。
+
+検出の種類と、許可リストに載せたときに満たすべき nonce の規則:
+
+| kind | 何を見つけるか | 1 件の単位 | nonce の規則 (`NONCE_RULES[kind]`。満たさなければ赤) |
+|---|---|---|---|
+| `jsx` | JSX の要素で、タグ名が `script` / `Script` / `next/script` の静的 import の手元の名前 (`import NextScript from 'next/script'` の `NextScript`) | 要素 1 つ (開きタグか自己終了タグ) | 属性 `nonce={式}` がある。無い・`nonce="固定"`・値なし・`{...props}` だけは満たさない |
+| `next-script` | `import … from 'next/script'`・`export … from 'next/script'`・`import('next/script')`・`require('next/script')`・`import … = require('next/script')` | 参照 1 つ | 静的 import で手元の名前を持ち、同じファイルにその名前の JSX の要素が 1 つ以上ある (要素の nonce は同じファイルの `jsx` の項目で確かめる)。export・`import()`・`require` は nonce を確かめられないので満たさない |
+| `string` | 文字列リテラル・テンプレートで、文字の部分に `<script` (大小を区別しない) を含むもの | リテラル 1 つ | テンプレートで、`<script` の開きタグ (次の `>` まで) ごとに `nonce=` の値が `${…}` の差し込み。差し込みの無い文字列 (固定の nonce を含む) は満たさない |
+
+照合 (`inlineScriptProblems`) の鍵は `file` と `kind` の組。次のどれかがあれば赤: ① 検出の組が `ALLOWED_INLINE_SCRIPTS` に無い ② 組はあるが検出が nonce の規則を満たさない ③ 項目の `count` とその組の検出の件数が違う (検出 0 件 = 古い項目を含む。同じファイルに 1 本足しても赤になり、理由を見直させる) ④ 項目の `reason` が空・`count` が 1 以上の整数でない・同じ組の項目が 2 つ以上。`next/script` を使うファイルは `next-script` と `jsx` の 2 項目を載せる。いまの許可リストは空で、§6.1 I-1 を消したあとの検出は 0 件 (origin/main の `src` / `lib` / `components` で `<script` / `next/script` を含むテスト以外のファイルは `src/app/layout.tsx` だけ)。
+
+```ts
+// tests/csp-no-inline-script.test.ts の検出と照合 (正典)
+// #1169: 本番の CSP は script-src に 'unsafe-inline' を持たないので、nonce の無いインラインのスクリプトは止まる。
+// インラインのスクリプトを足したら赤にし、どうしても要るものだけを、理由と件数つきの許可リストと nonce の規則で通す。
+// 構文木で見るので、コメントと正規表現リテラルには反応しない (tests/inner-html-contract.test.ts と同じ流儀)。
+import fs from 'node:fs';
+import path from 'node:path';
+import ts from 'typescript';
+
+/** 走査するディレクトリ (tsconfig の paths @/* → ./src/* と ./* で import される範囲。tests/inner-html-contract.test.ts と同じ) */
+export const INLINE_SCRIPT_SCAN_ROOTS = ['src', 'lib', 'components'] as const;
+/** 構文木にするのは、この語を含むファイルだけ (全ファイルを構文木にすると遅い) */
+export const INLINE_SCRIPT_QUICK_FILTER = /<script|next\/script/i;
+/** next/script のモジュール名 */
+export const NEXT_SCRIPT_MODULE = 'next/script';
+/** JSX で script の要素とみなすタグ名。next/script の静的 import の手元の名前は analyzeInlineScripts が足す */
+export const SCRIPT_JSX_TAG_NAMES: readonly string[] = ['script', 'Script'];
+/**
+ * テンプレートの ${…} の位置に置く目印。文字の部分は raw (エスケープ前) を使い、raw には ${ がそのまま現れない (\${ になる) ので、
+ * この目印は本物の差し込みの位置にだけ立つ。NONCE_FROM_SUBSTITUTION_PATTERN はこの目印を探す
+ */
+export const TEMPLATE_SUBSTITUTION_MARK = '${}';
+/** 全ページ動的の宣言を見るファイルと値 (docs/design/cross/16-csp-nonce.md §5.2) */
+export const ROOT_LAYOUT_FILE = 'src/app/layout.tsx';
+export const FORCE_DYNAMIC = 'force-dynamic';
+/** 文字に script を埋めているとみなす語 (小文字にして比べる) */
+const SCRIPT_OPEN_TAG_WORD = '<script';
+/** 文字の中の <script の開きタグ (次の > まで。> が無ければ終わりまで) */
+const SCRIPT_OPEN_TAG_PATTERN = /<script\b[^>]*/gi;
+/** 開きタグの nonce 属性の値がテンプレートの差し込み (nonce="${…}" / nonce='${…}' / nonce=${…})。属性名の前は空白 (data-nonce を数えない) */
+const NONCE_FROM_SUBSTITUTION_PATTERN = /\snonce\s*=\s*["']?\$\{\}/i;
+
+/** 検出の種類。jsx = JSX の script の要素・next-script = next/script の参照・string = <script を含む文字列とテンプレート */
+export type InlineScriptKind = 'jsx' | 'next-script' | 'string';
+
+/** 検出 1 件 */
+export interface InlineScriptFinding {
+  kind: InlineScriptKind;
+  /** 1 始まりの行 (失敗の文に出す) */
+  line: number;
+  /** その種類の nonce の規則 (NONCE_RULES) を満たすか */
+  nonceOk: boolean;
+  /** 見つけたもの (失敗の文に出す) */
+  label: string;
+}
+
+/**
+ * インラインのスクリプトを許す項目。鍵は file と kind の組 (同じ組は 1 項目だけ)。
+ * その file のその kind の検出がちょうど count 件で、どれも NONCE_RULES[kind] を満たすときだけ緑。
+ * next/script を使うファイルは next-script (import の件数) と jsx (<Script> の要素の件数) の 2 項目を載せる。
+ */
+export interface AllowedInlineScript {
+  /** リポジトリのルートからの相対パス ('/' 区切り。例: 'src/app/foo/page.tsx') */
+  file: string;
+  kind: InlineScriptKind;
+  /** その file のその kind の検出の件数 (1 以上の整数・ちょうど一致)。足しても消しても赤になり、理由を見直させる */
+  count: number;
+  /** なぜ JS のモジュール (import) にできず、インラインが要るか。空は不可 */
+  reason: string;
+}
+
+/** いまは空 (アプリのインラインスクリプトは 0 本: docs/design/cross/16-csp-nonce.md §6.1) */
+export const ALLOWED_INLINE_SCRIPTS: readonly AllowedInlineScript[] = [];
+
+/** 種類ごとの nonce の規則 (失敗の文に出す) */
+export const NONCE_RULES: Record<InlineScriptKind, string> = {
+  jsx: '要素に nonce={…} (getCspNonce() の値) を渡す。nonce が無い・nonce="固定"・値なし・{...props} だけは不可',
+  'next-script':
+    "import Script from 'next/script' の静的 import にし、同じファイルの <Script> の要素を jsx の項目でも載せる。export … from・import()・require は nonce を確かめられないので不可",
+  string: '<script の開きタグごとに、nonce= の値をテンプレートの差し込みにする。差し込みの無い文字列 (固定の nonce を含む) は不可',
+};
+
+/** 失敗の文に添える案内 */
+export const INLINE_SCRIPT_GUIDANCE =
+  '本番の CSP は script-src に unsafe-inline を持たないので、nonce の無いインラインのスクリプトは止まります。' +
+  'まず JS のモジュール (import) に移せないか考え、どうしても要るなら getCspNonce() (src/lib/security/csp-nonce.ts) の値を nonce に渡し、' +
+  '理由と件数を ALLOWED_INLINE_SCRIPTS に足してください (docs/design/cross/16-csp-nonce.md §9.11)。';
+
+/** 照合で返す問題 1 件 */
+export interface InlineScriptProblem {
+  file: string;
+  kind: InlineScriptKind;
+  message: string;
+}
+
+/** file の末尾が x (.tsx) なら JSX として読む */
+const parseSource = (file: string, text: string): ts.SourceFile =>
+  ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+const lineOf = (source: ts.SourceFile, node: ts.Node): number =>
+  source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+
+/** 文字に <script (大小を区別しない) を含むか */
+function containsScriptOpenTag(text: string): boolean {
+  return text.toLowerCase().includes(SCRIPT_OPEN_TAG_WORD);
+}
+
+/** JSX の要素の属性に nonce={式} があるか (nonce="固定"・値なし・{...props} だけは満たさない) */
+function hasNonceExpression(attributes: ts.JsxAttributes, source: ts.SourceFile): boolean {
+  return attributes.properties.some(
+    (property) =>
+      ts.isJsxAttribute(property) &&
+      property.name.getText(source) === 'nonce' &&
+      property.initializer !== undefined &&
+      ts.isJsxExpression(property.initializer) &&
+      property.initializer.expression !== undefined,
+  );
+}
+
+/** テンプレートの文字の部分 (raw) をつなぎ、${…} の位置に TEMPLATE_SUBSTITUTION_MARK を置いた文字列 */
+function templateRawTextOf(node: ts.TemplateExpression): string {
+  return node.templateSpans.reduce(
+    (text, span) => `${text}${TEMPLATE_SUBSTITUTION_MARK}${span.literal.rawText ?? span.literal.text}`,
+    node.head.rawText ?? node.head.text,
+  );
+}
+
+/** templateRawTextOf の文字の <script の開きタグが 1 つ以上あり、どれも nonce= の値を差し込みから受けているか */
+export function stringScriptNonceOk(rawTemplateText: string): boolean {
+  const openTags: string[] = rawTemplateText.match(SCRIPT_OPEN_TAG_PATTERN) ?? [];
+  return openTags.length > 0 && openTags.every((tag) => NONCE_FROM_SUBSTITUTION_PATTERN.test(tag));
+}
+
+/** 1 ファイルの検出 (種類と nonce の規則は NONCE_RULES) */
+export function analyzeInlineScripts(file: string, text: string): InlineScriptFinding[] {
+  const source = parseSource(file, text);
+  // 1 周目: next/script の静的 import と、その手元の名前 (import Script from … / import { default as S } from …)
+  const staticImports: ts.ImportDeclaration[] = [];
+  const nextScriptBindings = new Set<string>();
+  for (const statement of source.statements) {
+    if (
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === NEXT_SCRIPT_MODULE
+    ) {
+      staticImports.push(statement);
+      const clause = statement.importClause;
+      if (clause?.name) nextScriptBindings.add(clause.name.text);
+      const namedBindings = clause?.namedBindings;
+      if (namedBindings && ts.isNamedImports(namedBindings)) {
+        for (const element of namedBindings.elements) {
+          if (element.propertyName?.text === 'default') nextScriptBindings.add(element.name.text);
+        }
+      }
+    }
+  }
+  const scriptTagNames = new Set<string>([...SCRIPT_JSX_TAG_NAMES, ...nextScriptBindings]);
+  const findings: InlineScriptFinding[] = [];
+  let elementsOfNextScript = 0;
+  const pushNextScriptReference = (node: ts.Node, label: string): void => {
+    findings.push({ kind: 'next-script', line: lineOf(source, node), nonceOk: false, label });
+  };
+
+  // 2 周目: 構文木を全部たどる
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node)) return; // 静的 import は 1 周目で拾った
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      const tag = node.tagName.getText(source);
+      if (scriptTagNames.has(tag)) {
+        if (nextScriptBindings.has(tag)) elementsOfNextScript += 1;
+        const nonceOk = hasNonceExpression(node.attributes, source);
+        findings.push({ kind: 'jsx', line: lineOf(source, node), nonceOk, label: `<${tag}>` });
+      }
+    } else if (
+      ts.isExportDeclaration(node) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteral(node.moduleSpecifier) &&
+      node.moduleSpecifier.text === NEXT_SCRIPT_MODULE
+    ) {
+      pushNextScriptReference(node, "export … from 'next/script'");
+      return;
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference) &&
+      ts.isStringLiteral(node.moduleReference.expression) &&
+      node.moduleReference.expression.text === NEXT_SCRIPT_MODULE
+    ) {
+      pushNextScriptReference(node, "import … = require('next/script')");
+      return;
+    } else if (ts.isCallExpression(node)) {
+      const [firstArgument] = node.arguments;
+      const isNextScriptArgument =
+        firstArgument !== undefined && ts.isStringLiteral(firstArgument) && firstArgument.text === NEXT_SCRIPT_MODULE;
+      if (isNextScriptArgument && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        pushNextScriptReference(node, "import('next/script')");
+      } else if (isNextScriptArgument && ts.isIdentifier(node.expression) && node.expression.text === 'require') {
+        pushNextScriptReference(node, "require('next/script')");
+      }
+    } else if (ts.isTemplateExpression(node)) {
+      // 検出は cooked の文字をつないで見る (差し込みで <scr と ipt に割っても見つける)。規則は raw で見る
+      const cooked = node.templateSpans.reduce((text, span) => `${text}${span.literal.text}`, node.head.text);
+      if (containsScriptOpenTag(cooked)) {
+        const nonceOk = stringScriptNonceOk(templateRawTextOf(node));
+        findings.push({ kind: 'string', line: lineOf(source, node), nonceOk, label: '<script を含むテンプレート' });
+      }
+      for (const span of node.templateSpans) visit(span.expression);
+      return;
+    } else if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      // 差し込みの無い文字は毎リクエストの nonce を持てないので、規則を満たさない
+      if (containsScriptOpenTag(node.text)) {
+        findings.push({ kind: 'string', line: lineOf(source, node), nonceOk: false, label: '<script を含む文字列' });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+
+  // next/script の静的 import は、手元の名前があり、同じファイルにその名前の要素が 1 つ以上あるときだけ規則を満たす
+  const staticImportOk = nextScriptBindings.size > 0 && elementsOfNextScript > 0;
+  for (const declaration of staticImports) {
+    findings.push({ kind: 'next-script', line: lineOf(source, declaration), nonceOk: staticImportOk, label: "import … from 'next/script'" });
+  }
+  return findings;
+}
+
+/** 照合の鍵 (kind は空白を含まないので、最初の空白で 2 つに分かれる) */
+const allowKeyOf = (file: string, kind: InlineScriptKind): string => `${kind} ${file}`;
+
+/**
+ * 走査の結果 (file → 検出) を許可リストと照合し、問題を返す (空なら緑)。
+ *   ① 検出の (file, kind) が許可リストに無い ② あるが検出が NONCE_RULES[kind] を満たさない
+ *   ③ 項目の count とその (file, kind) の検出の件数が違う (検出 0 件 = 古い項目を含む)
+ *   ④ 項目の reason が空・count が 1 以上の整数でない・同じ (file, kind) の項目が 2 つ以上
+ */
+export function inlineScriptProblems(
+  scanned: ReadonlyMap<string, readonly InlineScriptFinding[]>,
+  allowlist: readonly AllowedInlineScript[],
+): InlineScriptProblem[] {
+  const problems: InlineScriptProblem[] = [];
+  const entries = new Map<string, AllowedInlineScript>();
+  for (const entry of allowlist) {
+    const key = allowKeyOf(entry.file, entry.kind);
+    const report = (message: string): void => {
+      problems.push({ file: entry.file, kind: entry.kind, message: `${entry.file} (${entry.kind}): ${message}` });
+    };
+    if (entries.has(key)) report('同じ file と kind の項目が 2 つ以上ある (1 つにまとめる)');
+    entries.set(key, entry);
+    if (entry.reason.trim() === '') report('reason が空');
+    if (!Number.isInteger(entry.count) || entry.count < 1) report(`count は 1 以上の整数 (いま ${entry.count})`);
+  }
+  const counts = new Map<string, number>();
+  for (const [file, findings] of scanned) {
+    for (const finding of findings) {
+      const key = allowKeyOf(file, finding.kind);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+      const where = `${file}:${finding.line} ${finding.label}`;
+      if (!entries.has(key)) {
+        problems.push({ file, kind: finding.kind, message: `${where}: ALLOWED_INLINE_SCRIPTS に無い` });
+      } else if (!finding.nonceOk) {
+        problems.push({ file, kind: finding.kind, message: `${where}: nonce の規則を満たさない (${NONCE_RULES[finding.kind]})` });
+      }
+    }
+  }
+  for (const [key, entry] of entries) {
+    const found = counts.get(key) ?? 0;
+    if (found === entry.count) continue;
+    const message = `${entry.file} (${entry.kind}): 検出 ${found} 件 ≠ count ${entry.count} (足したなら理由を見直して count を直す。0 件なら項目を消す)`;
+    problems.push({ file: entry.file, kind: entry.kind, message });
+  }
+  return problems;
+}
+
+/** 走査するファイル (tests/inner-html-contract.test.ts の listSourceFiles と同じ: node_modules・__tests__・.next を飛ばし、.d.ts・.test・.spec を除く) */
+export function listInlineScriptSourceFiles(root: string, dir: string): string[] {
+  const files: string[] = [];
+  if (!fs.existsSync(path.join(root, dir))) return files;
+  for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
+    const relative = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) {
+      if (entry.name === 'node_modules' || entry.name === '__tests__' || entry.name === '.next') continue;
+      files.push(...listInlineScriptSourceFiles(root, relative));
+    } else if (/\.tsx?$/.test(entry.name) && !/\.(?:d|test|spec)\.tsx?$/.test(entry.name)) {
+      files.push(relative);
+    }
+  }
+  return files;
+}
+
+/** INLINE_SCRIPT_SCAN_ROOTS を走査する (INLINE_SCRIPT_QUICK_FILTER に当たるファイルだけ構文木にする)。鍵はルートからの相対パス。検出 0 件のファイルは入れない */
+export function scanInlineScripts(root: string): Map<string, InlineScriptFinding[]> {
+  const scanned = new Map<string, InlineScriptFinding[]>();
+  for (const scanRoot of INLINE_SCRIPT_SCAN_ROOTS) {
+    for (const file of listInlineScriptSourceFiles(root, scanRoot)) {
+      const text = fs.readFileSync(path.join(root, file), 'utf8');
+      if (!INLINE_SCRIPT_QUICK_FILTER.test(text)) continue;
+      const findings = analyzeInlineScripts(file, text);
+      if (findings.length > 0) scanned.set(file, findings);
+    }
+  }
+  return scanned;
+}
+
+/** export const dynamic = 'force-dynamic' を宣言しているか (構文木で見る。layout を import すると next/font/google の偽物が要る) */
+export function exportsForceDynamic(file: string, text: string): boolean {
+  return parseSource(file, text).statements.some(
+    (statement) =>
+      ts.isVariableStatement(statement) &&
+      statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true &&
+      (statement.declarationList.flags & ts.NodeFlags.Const) !== 0 &&
+      statement.declarationList.declarations.some(
+        (declaration) =>
+          ts.isIdentifier(declaration.name) &&
+          declaration.name.text === 'dynamic' &&
+          declaration.initializer !== undefined &&
+          ts.isStringLiteral(declaration.initializer) &&
+          declaration.initializer.text === FORCE_DYNAMIC,
+      ),
+  );
+}
+```
+
+テストファイルの側で足すもの: `const ROOT = path.resolve(__dirname, '..');`、`import { describe, expect, it } from 'vitest';`、§15 の it。it 1 は `inlineScriptProblems(scanInlineScripts(ROOT), ALLOWED_INLINE_SCRIPTS).map((problem) => problem.message)` が `[]` であることを、失敗の文に `INLINE_SCRIPT_GUIDANCE` を添えて確かめる。
+
 ## 10. facade 契約 (関数シグネチャと呼び出し側)
 
 | 関数 / 定数 | 置き場 | 呼ぶ側 | 契約 |
@@ -914,10 +1242,11 @@ export const dynamic = 'force-dynamic';
 | 報告だけ (report-only) | 無し | `CSP_REPORT_ONLY=on` でヘッダー名が変わる |
 | CSP が付く応答 | `headers()` が当たる全応答 (matcher の外も) | middleware の全応答 (matcher の外には付かない: §22 Q-4) |
 | アプリのインラインスクリプト | 1 本 (ルート layout の旧ダークモードの掃除) | 0 本 |
+| インラインスクリプトの機械検査 | 無し (`tests/inner-html-contract.test.ts` は HTML の差し込みだけを見て、ルート layout を許可リストに持つ) | `tests/csp-no-inline-script.test.ts` (`jsx` / `next-script` / `string` の検出 × `ALLOWED_INLINE_SCRIPTS` (`file`・`kind`・`count`・`reason`。空) × `NONCE_RULES`。§9.11)。`inner-html-contract` の許可リストからルート layout は消える |
 | nonce を画面へ渡す経路 | 無し | `x-csp-nonce` + `getCspNonce()` (呼ぶ画面は無し) |
 | ページの描画 | 公開ページ・一部の運営ページは静的化しうる | 全ページ動的 (ルート layout の `force-dynamic`) |
 | ブラウザのルーターのキャッシュ | 静的 300 秒 / 動的 30 秒 | 全ページ 30 秒 |
-| 回数制限のカテゴリ | 15 | 16 (`csp-report`) |
+| 回数制限のカテゴリ | 16 (末尾は `dsr`) | 17 (末尾に `csp-report`) |
 | 同意の許可リスト (`/api`) | 13 行 | 14 行 (`/api/csp-report` telemetry) |
 | 環境変数の一覧 | – | `CSP_REPORT_ONLY` (任意・`readOnlyBy: src/lib/security/csp.ts`) |
 | `src/app/api` の route | N 本 | N + 1 本 |
@@ -945,11 +1274,13 @@ export const dynamic = 'force-dynamic';
 | 受け口 | 報告 POST・有効 | 待機 | – | `app_logs` に warn 1 行 (URL はスクラブ) → 204 |
 | 受け口 | Upstash の判定が例外 | 待機 | fail-closed | 500 `INTERNAL_ERROR` (構造化ログに原因) |
 | 受け口 | 凍結中の利用者の報告 / メンテナンス中 | 待機 | 既存の分岐 | 403 / 503 (報告は捨てる。許容) |
-| コード (CI) | `<script>` / `<Script>` / `next/script` / `<script` を含む文字列を足す | 赤 | `tests/csp-no-inline-script.test.ts` の許可リストに無い | 実装者に外部ファイル化か `getCspNonce()` + 許可リストを案内 |
+| コード (CI) | `<script>` / `<Script>` / `next/script` / `<script` を含む文字列を足す (許可リストに無い) | 赤 | `inlineScriptProblems` ①: `ALLOWED_INLINE_SCRIPTS` に無い | `INLINE_SCRIPT_GUIDANCE` が JS のモジュールへの移し替えか `getCspNonce()` + 許可リスト (理由と件数) を案内 |
+| コード (CI) | 許可リストに載せた file・kind で、nonce の規則 (`NONCE_RULES`) を満たさない要素・参照・文字列を書く | 赤 | `inlineScriptProblems` ② | 失敗の文にその kind の規則 |
+| コード (CI) | 許可リストに載せた file で、その kind のインラインを足す / 消す | 赤 | `inlineScriptProblems` ③: 検出の件数 ≠ `count` | 理由を見直して `count` を直すか、0 件なら項目を消す |
 | コード (CI) | `next.config.mjs` に CSP を書き戻す | 赤 | `next-config-headers.test.ts` | 二重化を防ぐ |
 | コード (CI) | `frame-src` に他オリジンを足す | 赤 (モバイルの Jest) | `WEB_VIEW_EMBED_ORIGINS` に無い | モバイルにも足させる (既存の規律) |
 | コード (CI) | `csp.ts` に二重引用符で始まる `frame-src` の文字列をもう 1 つ書く (コメントの例示を含む) | 赤 | `csp.test.ts` の「1 か所だけ」の it | モバイルの Jest の正規表現が方針の行より先にそれを拾い、`frame-src` を変えていないのに突き合わせが赤になるのを先に止める |
-| コード (CI) | ルート layout の `dynamic` を外す | 赤 | `tests/csp-no-inline-script.test.ts` | 静的化の再発を防ぐ |
+| コード (CI) | ルート layout の `dynamic` を外す | 赤 | `tests/csp-no-inline-script.test.ts` の `exportsForceDynamic` (構文木) | 静的化の再発を防ぐ |
 
 ## 13. エラー表
 
@@ -1004,7 +1335,7 @@ sequenceDiagram
 | `tests/middleware-csp.test.ts` (新。`@/lib/supabase/middleware` の updateSession をモック) | `応答に Content-Security-Policy が付き、script-src の nonce が request header の x-csp-nonce と同じ` / `request header の content-security-policy にも同じ方針が載る (Next が読む経路)` / `updateSession が redirect / 403 JSON / 503 HTML / 500 を返しても CSP が付く` / `updateSession が NextResponse.next({ request }) を作り直しても (x-legal-consent-pending を足す経路) request header の nonce は変わらない` / `2 回の要求で nonce が違う` / `クライアントが送った x-csp-nonce・content-security-policy・content-security-policy-report-only は捨てられ、middleware の値だけが残る` / `CSP_REPORT_ONLY=on なら応答と request header の名前が Content-Security-Policy-Report-Only になり、Content-Security-Policy は付かない` / `NODE_ENV=development なら 'unsafe-eval' が付く` / `?mode=app の is_native_app Cookie は今までどおり付く` |
 | `src/__tests__/api/csp-report-route.test.ts` (新。`@/lib/db-logger` の createLogger をモック) | `application/csp-report の有効な報告は 204 で、createLogger('csp-report').warn が message と metadata (スクラブ済み) で 1 回呼ばれる` / `application/json でも 204` / `Content-Type が text/plain なら 415 CSP_REPORT_UNSUPPORTED_MEDIA_TYPE で warn は呼ばれない` / `8 KiB を超える本文は 413 CSP_REPORT_TOO_LARGE` / `JSON でない本文・csp-report の無い本文は 400 CSP_REPORT_INVALID` / `NULL 文字を含む本文は 400 INVALID_CHARACTER (回数制限より前)` / `同じ IP から 31 回目は 429 RATE_LIMITED (in-memory)。x-forwarded-for の先頭を key にする` / `checkRateLimit が例外を投げたら 500 INTERNAL_ERROR (fail-closed)` / `セッションを読まない (createClient を呼ばない)` |
 | `src/__tests__/lib/rate-limit-csp-report.test.ts` (新) | `csp-report は 30 回/分と 300 回/日の 2 つの規則` |
-| `tests/csp-no-inline-script.test.ts` (新。走査) | `src / lib / components (テストを除く) に <script> / <Script> の JSX 要素が無い (許可リストは空)` / `next/script を import していない` / `文字列・テンプレートに "<script" を含むものが無い (HTML の文字列に script を埋めない)` / `許可リストの各項目は理由と nonce 属性を持つ (いまは空)` / `走査が機能している: 偽の <script> を含む文字列を解析すると見つける` / `src/app/layout.tsx は dynamic = 'force-dynamic' を export する (全ページ動的)` |
+| `tests/csp-no-inline-script.test.ts` (新。走査。検出と照合のコードは §9.11 の正典) | `src / lib / components (テストを除く) の走査結果を ALLOWED_INLINE_SCRIPTS と照合し、問題が 0 件 (いまは検出 0 件・許可リストは空。失敗の文に INLINE_SCRIPT_GUIDANCE を添える)` / `検出 jsx: <script> / <Script> / next/script の別名の要素を見つけ、nonce={式} のものだけが規則を満たす (nonce なし・nonce="固定"・{...props} だけは満たさない)` / `検出 next-script: import / export … from / import() / require / import = require を見つけ、静的 import で同じファイルに要素があるものだけが規則を満たす` / `検出 string: <script (大小を区別しない) を含む文字列・テンプレートを見つけ、開きタグごとに nonce= の値が差し込みのテンプレートだけが規則を満たす (固定の文字列・\${} と書いたものは満たさない)` / `検出: コメントと正規表現リテラルには反応しない` / `照合: 見本の許可リストで、載っていない検出・nonce の規則を満たさない検出・件数の食い違い (検出 0 件の古い項目を含む)・空の reason・1 未満の count・同じ file と kind の重複を、それぞれ問題として返す` / `照合: 規則どおりの見本 (next/script の import 1 件 + <Script nonce={nonce}> 1 件 + nonce が差し込みのテンプレート 1 件を、件数どおりの 3 項目で載せる) は問題 0 件` / `src/app/layout.tsx は export const dynamic = 'force-dynamic' を宣言している (exportsForceDynamic。見本: 宣言の無いソース・export の無い const・let は false)` |
 | `src/__tests__/config/next-config-headers.test.ts` (改) | いまの it は 6 つ (`:25`・`:33` の #1166 PostHog 2 つ・`:42` F6-09・`:57` 本番の Supabase・`:70` ローカルの Supabase・`:82` F6-08)。CSP の文字列を読む 5 つ (`:25`・`:33`・`:42`・`:57`・`:70`) はこのファイルから消し、`csp.test.ts` の同じ意味の it へ移す (`:42` F6-09 は `script-src 'self' 'unsafe-inline'` の期待を捨て、許可済みドメインと `style-src 'self' 'unsafe-inline'` の期待だけを `buildContentSecurityPolicy` の方針に対して持つ。`:57`・`:70` は csp.test.ts の Supabase の 2 つ。`:25`・`:33` は csp.test.ts の #1166 の 2 つ)。ヘルパー `getSecurityHeaders` は CSP の項を探さず `headers()` の群だけを返す形に替える (CSP の項が無いと `.value` で落ちるため)。残す: F6-08。足す: `headers() に Content-Security-Policy が無い (CSP は middleware が付ける。二重に付けない)` / `X-Frame-Options・X-Content-Type-Options・X-XSS-Protection・HSTS は残る` |
 | `src/__tests__/config/turnstile-config.test.ts` (改) | describe 名 `Turnstile: CSP (next.config.mjs)` を `Turnstile: CSP (src/lib/security/csp.ts)` に。`loadCspDirectives` を `cspDirectivesOf(buildContentSecurityPolicy({ nonce: 'dGVzdA==', isDev: false, supabaseUrl }))` に替える。it 名の「self / unsafe-inline / vercel-scripts」を「self / nonce / vercel-scripts」に。`'unsafe-inline'` の `toContain` を `not.toContain` に |
 | `tests/speed-insights-1179.test.tsx` (改) | CSP の節: `next.config.mjs` を読む代わりに `buildContentSecurityPolicy` を使う (ファイル頭の説明 `:14`・`:16` と `:125` のコメントの `next.config.mjs` も `src/lib/security/csp.ts` に)。it `script-src と connect-src に 'self' がある` は同じ |
@@ -1032,9 +1363,9 @@ sequenceDiagram
 | 種類 | 名前 |
 |---|---|
 | ファイル | `src/lib/security/csp.ts`、`src/lib/security/csp-nonce.ts`、`src/lib/security/csp-report.ts`、`src/app/api/csp-report/route.ts`、`src/__tests__/lib/security/csp.test.ts`、`src/__tests__/lib/security/csp-report.test.ts`、`src/__tests__/lib/security/csp-nonce.test.ts`、`src/__tests__/api/csp-report-route.test.ts`、`src/__tests__/lib/rate-limit-csp-report.test.ts`、`tests/middleware-csp.test.ts`、`tests/csp-no-inline-script.test.ts`、`tests/e2e/csp-nonce.spec.ts`、`tests/e2e-csp-nonce-suite.test.ts` |
-| 関数 | `buildContentSecurityPolicy`、`generateCspNonce`、`cspDirectivesOf`、`isCspReportOnly`、`cspHeaderName`、`supabaseLocalOrigins`、`getCspNonce`、`isCspReportContentType`、`cspReportByteLength`、`scrubCspReportUri`、`maskTokenLikeSegments`、`toCspViolationLogEntry`、(middleware 内) `attachCspToRequest`、`supabaseUrlOrUndefined`、(route 内) `clientIpOf`、`badRequest` |
-| 定数 | `CSP_HEADER`、`CSP_REPORT_ONLY_HEADER`、`CSP_NONCE_HEADER`、`CSP_REPORT_PATH`、`CSP_NONCE_BYTES`、`CSP_NONCE_PATTERN`、`CSP_TURNSTILE_ORIGIN`、`CSP_REPORT_CONTENT_TYPES`、`CSP_REPORT_MAX_BYTES`、`CSP_REPORT_URI_MAX_CHARS`、`CSP_REPORT_DIRECTIVE_MAX_CHARS`、`CSP_REPORT_SCRIPT_SAMPLE_MAX_CHARS`、`CSP_REPORT_USER_AGENT_MAX_CHARS`、`CSP_REPORT_TOKEN_SEGMENT_MIN_CHARS`、`CSP_REPORT_REDACTED_SEGMENT`、`CSP_REPORT_LOG_FUNCTION_NAME`、`CSP_REPORT_ERROR_CODES` |
-| 型 / Zod | `CspBuildInput`、`SupabaseLocalOrigins`、`CspReportSchema`、`CspReportBodySchema`、`CspReport`、`CspReportBody`、`CspViolationLogMetadata`、`CspViolationLogEntry`、`CspViolationLogContext` |
+| 関数 | `buildContentSecurityPolicy`、`generateCspNonce`、`cspDirectivesOf`、`isCspReportOnly`、`cspHeaderName`、`supabaseLocalOrigins`、`getCspNonce`、`isCspReportContentType`、`cspReportByteLength`、`scrubCspReportUri`、`maskTokenLikeSegments`、`toCspViolationLogEntry`、(middleware 内) `attachCspToRequest`、`supabaseUrlOrUndefined`、(route 内) `clientIpOf`、`badRequest`、(走査テスト `tests/csp-no-inline-script.test.ts` 内。§9.11) `analyzeInlineScripts`、`inlineScriptProblems`、`scanInlineScripts`、`listInlineScriptSourceFiles`、`stringScriptNonceOk`、`exportsForceDynamic`、`containsScriptOpenTag`、`hasNonceExpression`、`templateRawTextOf`、`lineOf`、`allowKeyOf` |
+| 定数 | `CSP_HEADER`、`CSP_REPORT_ONLY_HEADER`、`CSP_NONCE_HEADER`、`CSP_REPORT_PATH`、`CSP_NONCE_BYTES`、`CSP_NONCE_PATTERN`、`CSP_TURNSTILE_ORIGIN`、`CSP_REPORT_CONTENT_TYPES`、`CSP_REPORT_MAX_BYTES`、`CSP_REPORT_URI_MAX_CHARS`、`CSP_REPORT_DIRECTIVE_MAX_CHARS`、`CSP_REPORT_SCRIPT_SAMPLE_MAX_CHARS`、`CSP_REPORT_USER_AGENT_MAX_CHARS`、`CSP_REPORT_TOKEN_SEGMENT_MIN_CHARS`、`CSP_REPORT_REDACTED_SEGMENT`、`CSP_REPORT_LOG_FUNCTION_NAME`、`CSP_REPORT_ERROR_CODES`、(走査テスト内。§9.11) `ALLOWED_INLINE_SCRIPTS`、`NONCE_RULES`、`INLINE_SCRIPT_GUIDANCE`、`INLINE_SCRIPT_SCAN_ROOTS`、`INLINE_SCRIPT_QUICK_FILTER`、`NEXT_SCRIPT_MODULE`、`SCRIPT_JSX_TAG_NAMES`、`TEMPLATE_SUBSTITUTION_MARK`、`ROOT_LAYOUT_FILE`、`FORCE_DYNAMIC`、`SCRIPT_OPEN_TAG_WORD`、`SCRIPT_OPEN_TAG_PATTERN`、`NONCE_FROM_SUBSTITUTION_PATTERN` |
+| 型 / Zod | `CspBuildInput`、`SupabaseLocalOrigins`、`CspReportSchema`、`CspReportBodySchema`、`CspReport`、`CspReportBody`、`CspViolationLogMetadata`、`CspViolationLogEntry`、`CspViolationLogContext`、(走査テスト内。§9.11) `InlineScriptKind`、`InlineScriptFinding`、`AllowedInlineScript`、`InlineScriptProblem` |
 | route | `POST /api/csp-report` |
 | ヘッダー | 応答 `Content-Security-Policy` (middleware 発) / `Content-Security-Policy-Report-Only`、request `x-csp-nonce` |
 | 回数制限のカテゴリ | `csp-report` (`csp-report` 30/分・`csp-report-daily` 300/日) |
@@ -1055,7 +1386,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `src/__tests__/config/turnstile-config.test.ts` | `loadCspDirectives`・`'unsafe-inline'`・`next.config.mjs` | `headers()` から CSP を読む | `buildContentSecurityPolicy` + `cspDirectivesOf` に替える。`'unsafe-inline'` は `not.toContain` | 2 |
 | `tests/speed-insights-1179.test.tsx` | `next.config.mjs`・`sourcesOf`・`Content-Security-Policy` | `headers()` から CSP を読む | `buildContentSecurityPolicy` に替える | 2 |
 | `tests/inner-html-contract.test.ts` | `'src/app/layout.tsx'`・`ダークモード` | 許可リストにルート layout | 行を消す (消さないと「許可リストが古い」の it が赤) | 2 |
-| `tests/csp-no-inline-script.test.ts` (新) | `<script`・`next/script`・`force-dynamic` | – | 新設 (§21) | 2 |
+| `tests/csp-no-inline-script.test.ts` (新) | `<script`・`next/script`・`force-dynamic` | – | 新設 (検出と照合のコードは §9.11、検査の一覧は §21) | 2 |
 | `apps/mobile/__tests__/lib/webViewBridge.test.ts` | `NEXT_CONFIG_PATH`・`"frame-src`・`next.config.mjs に frame-src の指定が見つからない` | `next.config.mjs` を読む | 参照先を `src/lib/security/csp.ts` に。正規表現は同じ (csp.ts の frame-src の行を文字どおりの 1 行に保つ。正規表現は最初の一致を使うので、csp.ts で二重引用符に続く `frame-src` は方針の行の 1 か所だけにし、コメントにも書かない。`csp.test.ts` の it が見張る) | 2 |
 | `lib/supabase/__tests__/middleware-legal-consent-api.test.ts` | `'/api/log', match: 'exact', reason: 'telemetry'`・`src/app/api の全 route` | 許可リストのスナップショット・全 route の表 | スナップショットに `/api/csp-report` の行。全 route の表は自動 (route を足すと未同意 × ENFORCE=on で通ることを許可リストが説明する) | 1 |
 | `packages/shared/src/legal-consent-api.test.ts` | `EXEMPT_SAMPLES`・`/api/logx` | 似た名前は deny | 任意: `EXEMPT_SAMPLES` に `/api/csp-report`、`NOT_EXEMPT_SAMPLES` に `/api/csp-reportx` | 1 |
@@ -1085,7 +1416,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `tests/e2e-api-paths.test.ts` | `"/api/` の文字列リテラル・`SPEC_FILES` | 一覧の spec が叩く `/api/...` が実在の route | 変更なし。新 spec は `CSP_REPORT_PATH` を import し `/api/` のリテラルを持たないので `SPEC_FILES` に足さない (足すと抽出 0 件で `minRefs` を満たさない) | – |
 | `src/__tests__/config/turnstile-config.test.ts` (yml の部分)・`tests/local-ci-next-port.test.ts`・`tests/local-ci-slot.test.ts`・`tests/supabase-image-pull.test.ts` | `e2e-local.yml` | yml のサイトキー・`next start` のポート・`on.pull_request.paths` | 変更なし (サーバーの起動・ポート・env・`paths` は変えない。`paths` に `src/**`・`tests/e2e/**`・`next.config.mjs` が既にあり、本設計の PR で e2e-local が動く) | 2 |
 | `tests/e2e/README.md` (文書。テストではない) | `e2e-local.yml`・`next.config.mjs` | `:112` が e2e-local.yml で流す spec を列挙・`:129` が「本物の CSP (`next.config.mjs`)」 | `:112` の列挙に「CSP の nonce 方式と違反の報告の受け口の `csp-nonce.spec.ts` (#1169)」を足す。`:129` の `next.config.mjs` を `src/lib/security/csp.ts` (middleware が毎リクエスト付ける) に | 2 |
-| `tests/test-speed-ratchet.test.ts` (記録のみ) | – | 1 ファイル 5 秒の予算 | 新しいテストは route の import を最小にし、走査は `QUICK_FILTER` (語を含むファイルだけ構文木にする) で速くする | 1, 2 |
+| `tests/test-speed-ratchet.test.ts` (記録のみ) | – | 1 ファイル 5 秒の予算 | 新しいテストは route の import を最小にし、走査は `INLINE_SCRIPT_QUICK_FILTER` (語を含むファイルだけ構文木にする。§9.11) で速くし、ルートの layout は import せず構文木で見る | 1, 2 |
 
 ## 19. 他の文書への追随表 (本設計では編集しない。マージと同日の docs PR で足す)
 
@@ -1116,8 +1447,8 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 本番の方針の `script-src` に `'unsafe-inline'` と `'unsafe-eval'` が無い | `src/__tests__/lib/security/csp.test.ts` | `buildContentSecurityPolicy({ isDev: false })` の `script-src` にどちらかがある |
 | `next.config.mjs` の `headers()` に CSP が無い (二重化の防止) | `src/__tests__/config/next-config-headers.test.ts` | `'/(.*)'` の `headers` に `Content-Security-Policy` がある |
 | 本番の応答に CSP ヘッダーが 1 つだけで nonce を持つ | `tests/e2e/csp-nonce.spec.ts` (`headersArray`) | 2 つ以上・nonce 無し・`'unsafe-inline'` あり |
-| インラインスクリプトを足したら赤 | `tests/csp-no-inline-script.test.ts` | `src` / `lib` / `components` (テストを除く) の構文木に (a) JSX の `<script>` / `<Script>` 要素、(b) `next/script` の import / export / 動的 import / require、(c) `<script` (大小を区別しない) を含む文字列・テンプレートのどれかがあり、`ALLOWED_INLINE_SCRIPTS` (理由 + `nonce` 属性の必須) に無い。構文木で見るのでコメントには反応しない。限界: `createElement('script')` + `textContent` でインラインを作る書き方は捕まらない (HTML の差し込みは `tests/inner-html-contract.test.ts` が見る)。走査は `QUICK_FILTER = /<script\|next\/script/i` を含むファイルだけ構文木にする。対象外: `apps/` と `packages/` (モバイル App の `apps/mobile/src/lib/turnstile.ts` の HTML 文字列は WebView に渡す文書で、HTTP の応答ではないので Web の CSP が掛からない: §6.1 I-8) |
-| 全ページ動的 | 同上 | `import('@/app/layout')` の `dynamic` が `'force-dynamic'` でない |
+| インラインスクリプトを足したら赤 | `tests/csp-no-inline-script.test.ts` (検出と照合のコードは §9.11 の正典) | `src` / `lib` / `components` (テストを除く) の構文木の検出 — (a) `jsx`: JSX の `<script>` / `<Script>` / `next/script` の別名の要素、(b) `next-script`: `next/script` の import / export / 動的 import / require、(c) `string`: `<script` (大小を区別しない) を含む文字列・テンプレート — を `inlineScriptProblems` が `ALLOWED_INLINE_SCRIPTS` (鍵 = `file` と `kind` の組・`count` はちょうど一致・`reason` 必須) と照合し、① 載っていない ② `NONCE_RULES[kind]` を満たさない ③ 件数が `count` と違う (古い項目を含む) ④ 項目が不正、のどれかがある。構文木で見るのでコメントと正規表現リテラルには反応しない。限界: `createElement('script')` + `textContent`・`React.createElement('script', …)`・エスケープで書いた `\x3cscript` は捕まらない (HTML の差し込みは `tests/inner-html-contract.test.ts` が見る)。走査は `INLINE_SCRIPT_QUICK_FILTER = /<script\|next\/script/i` を含むファイルだけ構文木にする。対象外: `apps/` と `packages/` (モバイル App の `apps/mobile/src/lib/turnstile.ts` の HTML 文字列は WebView に渡す文書で、HTTP の応答ではないので Web の CSP が掛からない: §6.1 I-8) |
+| 全ページ動的 | 同上 | `exportsForceDynamic(ROOT_LAYOUT_FILE, …)` が false (構文木で `export const dynamic = 'force-dynamic'` を見る。layout は import しない: `next/font/google` の偽物が要るため) |
 | 応答を見る e2e が PR の門で流れる | `tests/e2e-csp-nonce-suite.test.ts` (新)・`tests/local-ci-workflow-sync.test.ts` (既存) | `tests/e2e/csp-nonce.spec.ts` が無い・yml の 1 本目の引数か `PW_ARGS` から抜ける・2 か所の並びが違う |
 | middleware の全経路に CSP | `tests/middleware-csp.test.ts` | updateSession のどの戻り値でも応答に CSP が無い・request header の nonce と不一致 |
 | `frame-src` と `WEB_VIEW_EMBED_ORIGINS` の一致 | `apps/mobile/__tests__/lib/webViewBridge.test.ts` (既存) | `csp.ts` の `frame-src` の行に他オリジンを足してモバイルに足さない |
