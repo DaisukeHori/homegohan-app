@@ -241,7 +241,13 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
     omit: ['stripe_customer_id', 'stripe_subscription_id', 'stripe_price_id', 'notes'],
   },
   { table: 'coupon_redemptions', scope: self('user_id'), omit: ['approved_by'] },
-  { table: 'gdpr_deletion_requests', scope: self('user_id'), omit: ['executed_by', 'notes'] },
+  {
+    table: 'gdpr_deletion_requests',
+    scope: self('user_id'),
+    // #1562 から削除の実行記録。新しい記録は user_id を持たない (本人の行として出るのは旧設計の削除要求だけ)。
+    // subject_hash (利用者の id の HMAC) は内部の照合用の値なので出さない
+    omit: ['executed_by', 'notes', 'subject_hash'],
+  },
   {
     table: 'announcement_reads',
     scope: self('user_id'),
