@@ -11,9 +11,7 @@ import { colors, spacing, radius } from "../../src/theme";
 import { supabase } from "../../src/lib/supabase";
 import { getApi } from "../../src/lib/api";
 import { MOCK_PHOTO_RESPONSE } from "@homegohan/handson-tour-shared";
-import { formatCalendarDate, parseLocalDate, todayCalendarDate, todayLocal, type MealType } from "@homegohan/shared";
-// 食事の区分のボタンの並び: 基本の 3 食 (BASE_MEAL_TYPES) と、正本 MEAL_ORDER から作ったおやつ・夜食 (EXTRA_MEAL_TYPES) (#1631)
-import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "../../../../lib/slot-builder";
+import { formatCalendarDate, MEAL_ORDER, parseLocalDate, todayCalendarDate, todayLocal, type MealType } from "@homegohan/shared";
 import { registerTourTarget, unregisterTourTarget } from "../../src/handson-tour/useTourOverlayLogic";
 import { handleAiConsentRequiredError, useLeaveModalRouteBeforeConsentScreen } from "../../src/lib/ai-consent";
 import { classifyPhotoFailureOf } from "../../src/lib/classify-photo-failure";
@@ -47,6 +45,10 @@ type Step = "mode-select" | "capture" | "analyzing" | "result" | "select-date"
           | "manual";
 type PhotoMode = "auto" | "meal" | "fridge" | "health_checkup" | "weight_scale";
 // MealType (食事の区分 5 値) は @homegohan/shared が正本 (#1631。手書きしない)
+// 食事の区分のボタンの並び (#1631): 1 段目は基本の 3 食 (朝・昼・夕。Web の lib/slot-builder の BASE_MEAL_TYPES と同じ)、
+// 2 段目はそれ以外 (おやつ・夜食) で、食事の区分の正本 MEAL_ORDER から基本の 3 食を除いて作る (手書きしない)
+const BASE_MEAL_TYPES: MealType[] = ["breakfast", "lunch", "dinner"];
+const EXTRA_MEAL_TYPES: MealType[] = MEAL_ORDER.filter((mealType) => !BASE_MEAL_TYPES.includes(mealType));
 type DishDetail = { name: string; role: string; cal?: number; calories_kcal?: number; protein?: number; carbs?: number; fat?: number; ingredient?: string };
 
 interface FridgeIngredient {
