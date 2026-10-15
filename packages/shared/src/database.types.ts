@@ -7414,9 +7414,21 @@ export type Database = {
       }
       user_sessions_metadata: {
         Row: {
+          alert_attempts: number
+          alert_claimed_at: string | null
+          alert_sent_at: string | null
+          alert_status: string
+          context_source: string
+          country_code: string | null
           created_at: string
+          device_family: string | null
           device_name: string | null
+          ended_reason: string | null
           ip_address: unknown
+          ip_network: unknown
+          is_new_country: boolean | null
+          is_new_device: boolean | null
+          is_new_ip: boolean | null
           last_active_at: string
           revoked_at: string | null
           session_id: string
@@ -7424,9 +7436,21 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          alert_attempts?: number
+          alert_claimed_at?: string | null
+          alert_sent_at?: string | null
+          alert_status?: string
+          context_source?: string
+          country_code?: string | null
           created_at?: string
+          device_family?: string | null
           device_name?: string | null
+          ended_reason?: string | null
           ip_address?: unknown
+          ip_network?: unknown
+          is_new_country?: boolean | null
+          is_new_device?: boolean | null
+          is_new_ip?: boolean | null
           last_active_at?: string
           revoked_at?: string | null
           session_id: string
@@ -7434,9 +7458,21 @@ export type Database = {
           user_id: string
         }
         Update: {
+          alert_attempts?: number
+          alert_claimed_at?: string | null
+          alert_sent_at?: string | null
+          alert_status?: string
+          context_source?: string
+          country_code?: string | null
           created_at?: string
+          device_family?: string | null
           device_name?: string | null
+          ended_reason?: string | null
           ip_address?: unknown
+          ip_network?: unknown
+          is_new_country?: boolean | null
+          is_new_device?: boolean | null
+          is_new_ip?: boolean | null
           last_active_at?: string
           revoked_at?: string | null
           session_id?: string
@@ -7954,6 +7990,16 @@ export type Database = {
           locked_until: string
         }[]
       }
+      auth_password_check: {
+        Args: {
+          p_current_password: string
+          p_generations: number
+          p_new_password: string
+          p_user_id: string
+        }
+        Returns: string
+      }
+      auth_session_revoke: { Args: { p_session_id: string }; Returns: string }
       begin_account_deletion_record: {
         Args: {
           p_executor_type: string
@@ -7997,6 +8043,42 @@ export type Database = {
         Args: { p_grant_id: string; p_user_id: string }
         Returns: boolean
       }
+      claim_login_alerts: {
+        Args: {
+          p_batch_size: number
+          p_max_age_hours: number
+          p_min_age_seconds: number
+          p_reclaim_minutes: number
+        }
+        Returns: {
+          alert_attempts: number
+          alert_claimed_at: string | null
+          alert_sent_at: string | null
+          alert_status: string
+          context_source: string
+          country_code: string | null
+          created_at: string
+          device_family: string | null
+          device_name: string | null
+          ended_reason: string | null
+          ip_address: unknown
+          ip_network: unknown
+          is_new_country: boolean | null
+          is_new_device: boolean | null
+          is_new_ip: boolean | null
+          last_active_at: string
+          revoked_at: string | null
+          session_id: string
+          user_agent: string | null
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "user_sessions_metadata"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       claim_menu_request: {
         Args: { p_worker_id: string }
         Returns: {
@@ -8036,6 +8118,7 @@ export type Database = {
         Args: { p_alert_key: string; p_cooldown_minutes?: number }
         Returns: string
       }
+      cleanup_ended_user_sessions_metadata: { Args: never; Returns: number }
       cleanup_expired_ai_usage_grant_claims: { Args: never; Returns: number }
       cleanup_handson_tour_sandbox_rows: { Args: never; Returns: Json }
       cleanup_old_logs: { Args: never; Returns: undefined }
@@ -8217,6 +8300,7 @@ export type Database = {
         Args: { p_email?: string; p_kind: string; p_scope_id: string }
         Returns: undefined
       }
+      expire_idle_auth_sessions: { Args: never; Returns: number }
       get_7d_checkin_averages: {
         Args: { p_date?: string; p_user_id: string }
         Returns: {
@@ -8727,6 +8811,7 @@ export type Database = {
         Args: { p_organization_id: string; p_to_user_id: string }
         Returns: string
       }
+      reconcile_user_sessions_metadata: { Args: never; Returns: number }
       record_ai_usage: {
         Args: { p_feature: string; p_user_id: string }
         Returns: undefined
@@ -8815,6 +8900,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      release_login_alert: {
+        Args: { p_max_attempts: number; p_session_id: string }
+        Returns: undefined
       }
       release_ops_alert: {
         Args: { p_alert_key: string; p_claimed_at: string }
