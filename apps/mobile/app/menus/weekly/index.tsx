@@ -581,7 +581,8 @@ const DOW = ["月", "火", "水", "木", "金", "土", "日"];
 // 表示順: breakfast / lunch / dinner / snack / midnight_snack
 const MEAL_ORDER = MEAL_ORDER_SHARED;
 
-const MEAL_CONFIG: Record<string, { Icon: React.ComponentType<any>; label: string; color: string }> = {
+// キーは MealType (#1631)。MealType に値が増えると、ここで型が漏れを止める。DB の行の meal_type (string) は isMealType で絞ってから引く
+const MEAL_CONFIG: Record<MealType, { Icon: React.ComponentType<any>; label: string; color: string }> = {
   breakfast: { Icon: Sun, label: "朝食", color: "#FF9800" },
   lunch: { Icon: SunMedium, label: "昼食", color: "#4CAF50" },
   snack: { Icon: Coffee, label: "おやつ", color: "#E91E63" },
@@ -1272,8 +1273,7 @@ export default function WeeklyMenuPage() {
 
   // 番号付きラベル: 1件目は「朝」「昼」「夕」、2件目以降は「朝食2」「朝3」...
   const getMealLabel = (mealType: string, indexInGroup: number): string => {
-    const cfg = MEAL_CONFIG[mealType];
-    const base = cfg?.label ?? mealType;
+    const base = isMealType(mealType) ? MEAL_CONFIG[mealType].label : mealType;
     const short =
       mealType === "breakfast" ? "朝" :
       mealType === "lunch" ? "昼" :
@@ -1827,7 +1827,7 @@ export default function WeeklyMenuPage() {
                       mealType={mealType}
                       dayId={selectedDay.id}
                       dayDate={selectedDay.day_date}
-                      mealLabel={MEAL_CONFIG[mealType]?.label ?? mealType}
+                      mealLabel={MEAL_CONFIG[mealType].label}
                       onPress={() => {
                         // plan 未作成 (id が null) でも AddMealModal を開く — API 側で user_daily_meals を自動作成
                         setAddMealModalDayId(selectedDay.id ?? null);
@@ -1841,7 +1841,9 @@ export default function WeeklyMenuPage() {
                 return null;
               })}
               {sortedMeals.map((m) => {
-                const mealCfg = MEAL_CONFIG[m.meal_type] ?? { Icon: CircleEllipsis, label: m.meal_type, color: colors.textMuted };
+                const mealCfg = isMealType(m.meal_type)
+                  ? MEAL_CONFIG[m.meal_type]
+                  : { Icon: CircleEllipsis, label: m.meal_type, color: colors.textMuted };
                 const modeCfg = MODE_CONFIG[m.mode ?? "cook"] ?? MODE_CONFIG.cook;
                 const isGenerating = m.is_generating;
                 const isExpanded = expandedMealId === m.id;

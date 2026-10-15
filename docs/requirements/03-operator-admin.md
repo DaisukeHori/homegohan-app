@@ -2029,8 +2029,7 @@ CREATE TABLE infra_alerts (
 - 機能フラグ評価ロジック
 
 ### 12.2 E2E (Playwright)
-下の `op/` の 8 本はどれもリポジトリに無い (未作成)。運営画面の E2E として実在するのは
-`tests/e2e/operator/01-admin-flow.spec.ts` と `tests/e2e/operator/02-super-admin-flow.spec.ts`。
+下の `op/` の 8 本はどれもリポジトリに無い (未作成)。
 - `op/01-user-search.spec.ts` (未作成)
 - `op/02-user-ban.spec.ts` (未作成)
 - `op/03-moderation-resolve.spec.ts` (未作成)
