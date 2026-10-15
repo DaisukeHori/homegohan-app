@@ -1,18 +1,23 @@
 -- rollback: 20261015120000_org_challenge_aggregate_snapshot.sql
 -- ⚠️ 守りが弱くなる: 戻すと、管理者向けの集計 (get_org_challenge_aggregates) が、参加者の行をその場で数える形と最小人数 5 人に戻り、
 --    参加をやめる前後・メンバーを組織から外す前後の平均の差から、1 人の値を逆算できる状態に戻る。
+--    参加者に見せる順位表 (get_org_challenge_ranking) も参加者の行をその場で読む形に戻り、メンバーとして参加した管理者が、
+--    メンバーを外す前後の順位表の差から、その人の値を読める状態に戻る。
 --    参加の INSERT ポリシーも #1238 の形 (本人・自分の組織のチャレンジ・進捗 0・順位なし) に戻り、利用者の JWT で PostgREST に
 --    直接 INSERT すると、別の部署向け・下書き・終わったチャレンジにも参加行を作れる状態に戻る (#1600 の前の状態)。
 --    明示的な承認を得た場合に限って使う。
 --
 -- 内容:
---   1. update_org_challenge_progress(timestamptz) と get_org_challenge_aggregates(uuid) を、
+--   1. update_org_challenge_progress(timestamptz)・get_org_challenge_aggregates(uuid)・
+--      get_org_challenge_ranking(uuid, uuid, integer, boolean) を、
 --      20261014100100_org_challenge_progress.sql の定義にそのまま戻す (権限も同じ: service_role だけ)
---   2. refresh_org_challenge_aggregates(timestamptz) と表 organization_challenge_aggregates (集計の控え) を消す
+--   2. refresh_org_challenge_aggregates(timestamptz) と、表 organization_challenge_ranking_entries (順位表の控え)・
+--      organization_challenge_aggregates (集計の控え) を消す
 --   3. 参加の INSERT ポリシー「Users can join challenges」を、#1238 の定義 (supabase/baseline/prod_schema.sql と同じ) に戻す
 --   参加者の行・チャレンジの行には触れない。
 --
--- 先に関数を戻してから表を消す (update_org_challenge_progress が refresh_org_challenge_aggregates を呼ばない形になってから消す)。
+-- 先に関数を戻してから表を消す (update_org_challenge_progress が refresh_org_challenge_aggregates を呼ばず、
+-- get_org_challenge_ranking が順位表の控えを読まない形になってから消す)。
 -- API・画面のコードは戻さなくてよい (関数の名前・引数・返す列は変わらない)。画面の説明文の「10人」は、
 -- packages/shared の ORG_CHALLENGE_MIN_PARTICIPANTS を戻さない限り API が返す min_participants (5) で上書きされる。
 -- 本番に戻す必要があるときは、この内容を新しい migration として PR 経由で適用する (本番への直接 SQL は禁止。CLAUDE.md)。
@@ -185,6 +190,73 @@ AS $$
    CROSS JOIN cfg
 $$;
 
+CREATE OR REPLACE FUNCTION public.get_org_challenge_ranking(
+  p_challenge_id uuid,
+  p_user_id      uuid,
+  p_limit        integer DEFAULT NULL,  -- NULL は既定の人数 (下の cfg.default_limit)
+  p_with_names   boolean DEFAULT false
+)
+RETURNS TABLE (
+  rank         integer,
+  current_value numeric,
+  is_me        boolean,
+  nickname     text,
+  ranked_count bigint
+)
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+  WITH cfg AS (
+    -- 順位表に出す人数 (上位から。本人の行は、圏外でも別に付ける)
+    --   default_limit: p_limit が NULL のときの人数。画面の順位表の人数 (src/lib/org-challenges.ts の RANKING_ENTRY_LIMIT) と同じ値にする
+    --                  (設計書 docs/design/org/07-challenge.md「上位 20 人と本人の行」。tests/org-challenges-lib.test.ts が同じ値かを確かめる)
+    --   max_limit:     p_limit に大きな値が渡されても、1 回に返す行数をこの人数で打ち切る (順位表は上位だけを見せるもので、
+    --                  大きな組織の全員分を返さない。API が 1 回に受け取れる行数の上限 1000 行よりも十分小さくする)
+    SELECT 20 AS default_limit, 100 AS max_limit
+  ),
+  ranked AS (
+    -- 順位がついている (集計が済んだ) 参加者。今も、そのチャレンジの組織のメンバーである人だけ
+    SELECT p.rank,
+           p.current_value,
+           p.user_id,
+           CASE WHEN p_with_names THEN up.nickname END AS nickname,
+           row_number() OVER (ORDER BY p.rank, p.joined_at, p.user_id) AS pos,
+           count(*) OVER () AS total
+      FROM public.organization_challenges AS c
+      JOIN public.organization_challenge_participants AS p
+        ON p.challenge_id = c.id
+      JOIN public.user_profiles AS up
+        ON up.id = p.user_id
+       AND up.organization_id = c.organization_id
+     WHERE c.id = p_challenge_id
+       AND p.rank IS NOT NULL
+  )
+  SELECT r.rank,
+         r.current_value,
+         (r.user_id = p_user_id),
+         r.nickname,
+         r.total
+    FROM ranked AS r
+   CROSS JOIN cfg
+   -- 人数は 1 人以上・max_limit 人以下にそろえる (0 以下が渡されても、1 人は返す)
+   WHERE (r.pos <= LEAST(GREATEST(COALESCE(p_limit, cfg.default_limit), 1), cfg.max_limit) OR r.user_id = p_user_id)
+     -- 順位表を見られるのは、そのチャレンジの参加者本人 (今も組織のメンバー) だけ。参加していない人には 0 行
+     AND EXISTS (
+       SELECT 1
+         FROM public.organization_challenges AS c2
+         JOIN public.organization_challenge_participants AS me
+           ON me.challenge_id = c2.id
+          AND me.user_id = p_user_id
+         JOIN public.user_profiles AS meup
+           ON meup.id = me.user_id
+          AND meup.organization_id = c2.organization_id
+        WHERE c2.id = p_challenge_id
+     )
+   ORDER BY r.pos
+$$;
+
 REVOKE ALL ON FUNCTION public.update_org_challenge_progress(timestamptz)
   FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.update_org_challenge_progress(timestamptz)
@@ -195,12 +267,20 @@ REVOKE ALL ON FUNCTION public.get_org_challenge_aggregates(uuid)
 GRANT EXECUTE ON FUNCTION public.get_org_challenge_aggregates(uuid)
   TO service_role;
 
+REVOKE ALL ON FUNCTION public.get_org_challenge_ranking(uuid, uuid, integer, boolean)
+  FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.get_org_challenge_ranking(uuid, uuid, integer, boolean)
+  TO service_role;
+
 COMMENT ON FUNCTION public.update_org_challenge_progress(timestamptz) IS
   '#1132: 開催中の組織チャレンジ (breakfast_rate / veg_score / cooking_rate) の参加者ごとの current_value を食事の記録 (user_daily_meals / planned_meals。JST の暦日。前日まで) から計算し、チャレンジの中で rank() をつける。終了日 (JST) を過ぎた開催中のチャレンジは completed にする。p_now は試験用。pg_cron が毎日 18:10 UTC (03:10 JST) に呼ぶ。service_role のみ。';
 COMMENT ON FUNCTION public.get_org_challenge_aggregates(uuid) IS
   '#1132: 管理者向けの集計。組織のチャレンジごとに、参加者数 (今も組織のメンバーである人) と、集計が済んだ参加者の平均だけを返す。個人の値・ID は返さない。参加者が min_participants (5) に満たないときは参加者数を、集計が済んだ人が min_participants に満たないときは平均を NULL にする。SECURITY INVOKER。service_role のみ。';
+COMMENT ON FUNCTION public.get_org_challenge_ranking(uuid, uuid, integer, boolean) IS
+  '#1132: 参加者に見せる順位表。p_user_id がそのチャレンジの参加者 (今も組織のメンバー) のときだけ、順位がついている参加者を上位 p_limit 人 (NULL は既定の default_limit = 20 人。1〜max_limit = 100 人にそろえる) と本人の行について返す (参加していない人には 0 行)。他人の user_id は返さない (is_me だけ)。nickname は p_with_names が true のときだけ入る。SECURITY INVOKER。service_role のみ。';
 
 DROP FUNCTION IF EXISTS public.refresh_org_challenge_aggregates(timestamptz);
+DROP TABLE IF EXISTS public.organization_challenge_ranking_entries;
 DROP TABLE IF EXISTS public.organization_challenge_aggregates;
 
 -- 参加の INSERT ポリシーを #1238 の定義 (supabase/baseline/prod_schema.sql) に戻す

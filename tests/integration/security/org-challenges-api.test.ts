@@ -6,7 +6,7 @@
  *
  * #1132 の方針: 参加は任意。順位は参加者どうしにだけ見せ、管理者には集計だけ (人数と平均) を見せる。
  * 少人数だと誰が参加しているか・誰の値かが分かってしまうため、最小人数 (10。#1600) に満たない間は人数も平均も出さない。
- * 集計は毎晩の更新の時点の控えから返す (#1600。参加をやめた直後に集計が動くと、前後の差から 1 人の値を逆算できるため)。
+ * 集計と順位表は毎晩の更新の時点の控えから返す (#1600。参加をやめた直後に動くと、前後の差から 1 人の値を逆算できるため)。
  * 歩数・体重のチャレンジは、健康データの同意の仕組みができるまで作成も参加もできない。
  *
  * 確認すること (実際の DB と Next の API ルートを通す。RLS・#1238 の INSERT ポリシー・DB 関数を含む):
@@ -14,17 +14,19 @@
  *      管理者 (owner / admin) もメンバー向けの API を使える
  *   B. 参加 / やめる: 開催中のチャレンジにだけ参加できる (下書き・終了・中止・終了日を過ぎたもの・歩数は 409。他組織は 404。
  *      別の部署向けは 403)。二重の参加は 200。参加行は進捗 0・順位なしで作られる。やめると本人の行だけ消える
- *   C. 順位表: 参加者本人にだけ返る (参加していない人・管理者には返らない)。他人の ID・ニックネームは応答に現れない
+ *   C. 順位表: 参加者本人にだけ返る (参加していない人・管理者には返らない)。他人の ID・ニックネームは応答に現れない。
+ *      参加をやめた人の行は、次の夜の更新まで残る (メンバーとして参加した管理者が見比べても、消えた行から値を読めない)
  *   D. 管理者向けの集計: 参加者が 10 人に満たない間は人数も平均も null。10 人になると出る。個人の値・ID は出ない。
  *      管理者がメンバー向けの API を呼んでも、参加者数は同じ規則で隠される。RLS で管理者も他人の参加行を読めない。
- *      参加をやめる API を呼んだ直後は、管理者の集計が動かない (次の夜の更新で反映される)
+ *      参加をやめる API を呼んだ直後は、管理者の集計が動かない (次の夜の更新で反映される)。
+ *      終了したチャレンジを管理者が API で開催中に戻しても、次の夜の更新で集計は動かない
  *   E. 作成の制限: 歩数・体重・カスタムは作成も開始もできない (400)
  *
  * 実行 (ローカル Supabase + dev サーバー。tests/integration/security/org-departments-api.test.ts と同じ):
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
  *   npm run dev &
  *   npx vitest run --config vitest.integration.config.ts tests/integration/security/org-challenges-api.test.ts
- * 先に DB の関数を使う migration (supabase/migrations/*_org_challenge_progress.sql) が当たっていること。
+ * 先に DB の関数を使う migration (supabase/migrations/*_org_challenge_progress.sql・*_org_challenge_aggregate_snapshot.sql) が当たっていること。
  */
 
 import { randomBytes } from 'node:crypto';
@@ -128,12 +130,22 @@ async function createChallenge(seed: ChallengeSeed = {}): Promise<string> {
 }
 
 /**
- * 管理者に見せる集計の控えを数え直す (毎晩 03:10 JST の update_org_challenge_progress の中で呼ばれるもの。#1600)。
- * 集計は控えから返るので、参加行を用意したあとに呼ぶ
+ * 管理者に見せる集計と、参加者に見せる順位表の控えを数え直す (毎晩 03:10 JST の update_org_challenge_progress の中で呼ばれるもの。#1600)。
+ * 集計も順位表も控えから返るので、参加行を用意したあとに呼ぶ。
+ * 控えは、集計に含める最後の日 (JST の前日) が進んだときだけ書き直されるので、同じテストの中で「次の夜」を表すときは
+ * pNow に nextNight() を渡す (省略は DB の now())
  */
-async function refreshAggregates(): Promise<void> {
-  const { error } = await srAdmin.rpc('refresh_org_challenge_aggregates', {});
+async function refreshAggregates(pNow?: string): Promise<void> {
+  const { error } = await srAdmin.rpc('refresh_org_challenge_aggregates', pNow ? { p_now: pNow } : {});
   if (error) throw new Error(`refresh_org_challenge_aggregates: ${error.code} ${error.message}`);
+}
+
+/** 1 日のミリ秒 (次の夜の時刻を作る) */
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/** 次の夜の数え直しの時刻 (いまの 1 日後。集計に含める最後の日が 1 日進む) */
+function nextNight(): string {
+  return new Date(Date.now() + ONE_DAY_MS).toISOString();
 }
 
 /** 参加行を service_role で作る (集計済みの値を入れられる) */
@@ -440,6 +452,8 @@ describe('#1132 C. 順位表は参加者本人にだけ', () => {
     await seedParticipant(challenge, m2, 80, 1);
     await seedParticipant(challenge, m1, 50, 2);
     await seedParticipant(challenge, m3, 20, 3);
+    // 順位表は控えから並べる (#1600)
+    await refreshAggregates();
     return challenge;
   }
 
@@ -512,6 +526,26 @@ describe('#1132 C. 順位表は参加者本人にだけ', () => {
     expect((await apiCall('DELETE', `/api/org/challenges/${challenge}/join`, admin.jwt)).status).toBe(200);
     const left = await apiCall<DetailBody>('GET', `/api/org/challenges/${challenge}`, admin.jwt);
     expect(left.body.ranking).toEqual({ available: false, showNames: false });
+  });
+
+  it('C-5: 参加した管理者が見る順位表は、ほかの参加者がやめた直後には動かない (消えた行から値を読めない)。次の夜の更新で外れる (#1600)', async () => {
+    const challenge = await seedRanking();
+    expect((await apiCall('POST', `/api/org/challenges/${challenge}/join`, admin.jwt)).status).toBe(200);
+    const before = await apiCall<DetailBody>('GET', `/api/org/challenges/${challenge}`, admin.jwt);
+    expect(before.body.ranking.rankedCount).toBe(3);
+    expect(before.body.ranking.entries!.map((e) => e.value)).toEqual([80, 50, 20]);
+
+    // m2 (80) が参加をやめる
+    expect((await apiCall('DELETE', `/api/org/challenges/${challenge}/join`, m2.jwt)).status).toBe(200);
+    expect(await participantRow(challenge, m2.id)).toBeNull();
+
+    const after = await apiCall<DetailBody>('GET', `/api/org/challenges/${challenge}`, admin.jwt);
+    expect(after.body.ranking).toEqual(before.body.ranking);
+
+    await refreshAggregates(nextNight());
+    const next = await apiCall<DetailBody>('GET', `/api/org/challenges/${challenge}`, admin.jwt);
+    expect(next.body.ranking.rankedCount).toBe(2);
+    expect(next.body.ranking.entries!.map((e) => e.value)).toEqual([50, 20]);
   });
 
   it('C-4: 一覧 (my-challenges) は、自分の参加状況だけ。他の参加者の値・順位・ID は含まない', async () => {
@@ -676,7 +710,7 @@ describe('#1132 / #1600 D. 管理者向けの集計は、10 人に満たない�
 
     const left = await apiCall<{ joined: boolean }>('DELETE', `/api/org/challenges/${challenge}/join`, m1.jwt);
     expect(left.status).toBe(200);
-    expect(await participantRow(challenge, m1.id)).toBeNull(); // 参加行はすぐ消える (順位表からはすぐ外れる)
+    expect(await participantRow(challenge, m1.id)).toBeNull(); // 参加行はすぐ消える (順位表と集計からは、次の夜の更新で外れる)
 
     // 直後: 管理者の一覧・メンバー向けの詳細とも、人数も平均も前のまま (前後の差から m1 の値 = 11 × 60 − 10 × 55 を逆算できない)
     const after = (await adminView(owner.jwt, challenge)).challenge;
@@ -685,11 +719,37 @@ describe('#1132 / #1600 D. 管理者向けの集計は、10 人に満たない�
     const memberAfter = await apiCall<{ participantCount: number | null }>('GET', `/api/org/challenges/${challenge}`, m2.jwt);
     expect(memberAfter.body.participantCount).toBe(11);
 
-    // 次の夜の更新で外れる
+    // 同じ日にもう一度数え直しても動かない (集計に含める最後の日が進まない)
     await refreshAggregates();
+    expect((await adminView(owner.jwt, challenge)).challenge.aggregate).toEqual(before.aggregate);
+
+    // 次の夜の更新で外れる
+    await refreshAggregates(nextNight());
     const next = (await adminView(owner.jwt, challenge)).challenge;
     expect(next.participantCount).toBe(10);
     expect(next.aggregate).toEqual({ minParticipants: 10, visible: true, averageValue: 55 });
+  });
+
+  it('D-9: 終了したチャレンジを管理者が API (PUT) で開催中に戻しても、次の夜の更新で集計は動かない (外したメンバーの値を前後の差から出せない。#1600)', async () => {
+    // 終了日が一昨日のチャレンジ。11 人。合計 660 → 平均 60。m1 (110) がやめると 10 人で 550 → 平均 55 になるはずのところ
+    const challenge = await newChallenge({ start: jstDaysAgo(10), end: jstDaysAgo(2) });
+    const values = [110, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10];
+    for (const [i, value] of values.entries()) await seedParticipant(challenge, members()[i], value, i + 1);
+    await refreshAggregates();
+    expect((await apiCall('PUT', '/api/org/challenges', owner.jwt, { id: challenge, status: 'completed' })).status).toBe(200);
+    const final = (await adminView(owner.jwt, challenge)).challenge;
+    expect(final.participantCount).toBe(11);
+    expect(final.aggregate).toEqual({ minParticipants: 10, visible: true, averageValue: 60 });
+
+    // m1 がやめ (終了したチャレンジでもやめられる)、管理者が開催中に戻す
+    expect((await apiCall('DELETE', `/api/org/challenges/${challenge}/join`, m1.jwt)).status).toBe(200);
+    expect((await apiCall('PUT', '/api/org/challenges', owner.jwt, { id: challenge, status: 'active' })).status).toBe(200);
+
+    // 次の夜: 集計に含める最後の日は終了日のままで進まないので、控えは書き直さない
+    await refreshAggregates(nextNight());
+    const next = (await adminView(owner.jwt, challenge)).challenge;
+    expect(next.participantCount).toBe(final.participantCount);
+    expect(next.aggregate).toEqual(final.aggregate);
   });
 });
 

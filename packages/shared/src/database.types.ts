@@ -4618,6 +4618,7 @@ export type Database = {
         Row: {
           average_value: number | null
           challenge_id: string
+          counted_through: string
           participant_count: number
           ranked_count: number
           updated_at: string
@@ -4625,6 +4626,7 @@ export type Database = {
         Insert: {
           average_value?: number | null
           challenge_id: string
+          counted_through: string
           participant_count: number
           ranked_count: number
           updated_at?: string
@@ -4632,6 +4634,7 @@ export type Database = {
         Update: {
           average_value?: number | null
           challenge_id?: string
+          counted_through?: string
           participant_count?: number
           ranked_count?: number
           updated_at?: string
@@ -4674,6 +4677,38 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "organization_challenge_participants_challenge_id_fkey"
+            columns: ["challenge_id"]
+            isOneToOne: false
+            referencedRelation: "organization_challenges"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organization_challenge_ranking_entries: {
+        Row: {
+          challenge_id: string
+          current_value: number | null
+          joined_at: string | null
+          rank: number
+          user_id: string
+        }
+        Insert: {
+          challenge_id: string
+          current_value?: number | null
+          joined_at?: string | null
+          rank: number
+          user_id: string
+        }
+        Update: {
+          challenge_id?: string
+          current_value?: number | null
+          joined_at?: string | null
+          rank?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_challenge_ranking_entries_challenge_id_fkey"
             columns: ["challenge_id"]
             isOneToOne: false
             referencedRelation: "organization_challenges"

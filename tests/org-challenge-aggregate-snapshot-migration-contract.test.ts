@@ -1,18 +1,21 @@
 /**
  * #1600 migration *_org_challenge_aggregate_snapshot.sql (と、そのロールバック) のソース走査 contract テスト (DB は使わない)
  *
- * 本物の DB での振る舞い (9 人では集計を返さない・10 人で返す・やめた直後に集計が動かない・直接の INSERT が拒まれる) は
+ * 本物の DB での振る舞い (9 人では集計を返さない・10 人で返す・やめた直後に集計も順位表も動かない・終了したチャレンジを開催中に戻しても
+ * 控えが動かない・直接の INSERT が拒まれる) は
  * tests/integration/rls/org-challenge-progress.test.ts / tests/integration/security/org-challenges-api.test.ts /
  * tests/integration/rls/challenge-participants-org-scope.test.ts が確かめる。
  * ここでは、後の migration の上書きや番号の付け直しで崩れやすい所を、ファイルの文面だけで確かめる。
- *   1. 関数 update_org_challenge_progress / get_org_challenge_aggregates / refresh_org_challenge_aggregates を最後に定義した migration が
- *      本 migration で、get_org_challenge_aggregates は控え (organization_challenge_aggregates) から読み、参加者の行を直接数えない
+ *   1. 関数 update_org_challenge_progress / get_org_challenge_aggregates / get_org_challenge_ranking / refresh_org_challenge_aggregates を
+ *      最後に定義した migration が本 migration で、get_org_challenge_aggregates は控え (organization_challenge_aggregates) から、
+ *      get_org_challenge_ranking は順位表の控え (organization_challenge_ranking_entries) から読み、参加者の行を直接数えない・並べない
  *   2. update_org_challenge_progress の定義は、20261014100100 の定義に「控えの数え直し」と返す jsonb の aggregates を足しただけ。
  *      数え直しは、進み具合・順位の書き込みのあと・終了にする前
- *   3. 控えを書き換えるのは、開催中で開始日を迎えたチャレンジだけ (終了・中止は最後の集計の値のまま)
- *   4. 権限: 3 本とも service_role だけ。控えの表は RLS を有効にし、ポリシーを作らず、anon / authenticated の権限を外す
+ *   3. 控えを書き直すのは、開催中で集計に含める最後の日が進んだチャレンジ (控えが無いものを含む。開始前も) と、控えの無い終了・中止の
+ *      チャレンジだけ。下書きは作らない
+ *   4. 権限: 4 本とも service_role だけ。控えの 2 つの表は RLS を有効にし、ポリシーを作らず、anon / authenticated の権限を外す
  *   5. 参加の INSERT ポリシーの最後の定義が、API (POST /api/org/challenges/[id]/join) と同じ条件を見る
- *   6. ロールバックは、20261014100100 の 2 本の定義と #1238 の INSERT ポリシー (本番 baseline) にそのまま戻し、控えと関数を消す
+ *   6. ロールバックは、20261014100100 の 3 本の定義と #1238 の INSERT ポリシー (本番 baseline) にそのまま戻し、控えと関数を消す
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,12 +30,17 @@ const STEM_SUFFIX = '_org_challenge_aggregate_snapshot';
 const PREVIOUS_STEM_SUFFIX = '_org_challenge_progress';
 /** 要件書 (docs/requirements/02-organization-management.md §6.4) の匿名化集計の最低人数 */
 const REQUIRED_MIN_PARTICIPANTS = 10;
-/** 本 migration が service_role だけに EXECUTE を渡す関数 (引数の型まで含めた完全形) */
+/** 本 migration が service_role だけに EXECUTE を渡す関数 (引数の型まで含めた完全形)。先頭は本 migration で新しく作るもの */
 const SERVICE_ROLE_FUNCTIONS = [
   'public.refresh_org_challenge_aggregates(timestamptz)',
   'public.update_org_challenge_progress(timestamptz)',
   'public.get_org_challenge_aggregates(uuid)',
+  'public.get_org_challenge_ranking(uuid, uuid, integer, boolean)',
 ];
+/** 本 migration が作り直し、ロールバックが 20261014100100 の定義に戻す関数 */
+const REPLACED_FUNCTIONS = ['update_org_challenge_progress', 'get_org_challenge_aggregates', 'get_org_challenge_ranking'];
+/** 本 migration が作る控えの表 (service_role だけが読み書きする) */
+const SNAPSHOT_TABLES = ['organization_challenge_aggregates', 'organization_challenge_ranking_entries'];
 
 const MIGRATION_FILE = /^(\d{14})_.+\.sql$/;
 
@@ -105,7 +113,7 @@ function quotedList(sql: string): string[] {
 }
 
 describe('1. 最後の定義が本 migration で、集計は控えから読む', () => {
-  it.each(['update_org_challenge_progress', 'get_org_challenge_aggregates', 'refresh_org_challenge_aggregates'])(
+  it.each([...REPLACED_FUNCTIONS, 'refresh_org_challenge_aggregates'])(
     '%s を最後に定義した migration は本 migration',
     (name) => {
       expect(lastDefiner(name)).toBe(MIGRATION_NAME);
@@ -129,12 +137,28 @@ describe('1. 最後の定義が本 migration で、集計は控えから読む',
     expect(body).toMatch(/CASE WHEN s\.ranked_count >= cfg\.min_participants THEN round\(s\.average_value, 1\) END/);
   });
 
-  it('get_org_challenge_aggregates の引数・返す列・SECURITY INVOKER・STABLE・search_path は 20261014100100 と同じ', () => {
-    const header = (sql: string) => squash(definition(sql, 'get_org_challenge_aggregates').split('$$')[0]);
-    expect(header(MIGRATION)).toBe(header(PREVIOUS));
-    expect(header(MIGRATION)).toContain('SECURITY INVOKER');
-    expect(header(MIGRATION)).toContain('STABLE');
-    expect(header(MIGRATION)).toContain("SET search_path = ''");
+  it.each(['get_org_challenge_aggregates', 'get_org_challenge_ranking'])(
+    '%s の引数・返す列・SECURITY INVOKER・STABLE・search_path は 20261014100100 と同じ',
+    (name) => {
+      const header = (sql: string) => squash(definition(sql, name).split('$$')[0]);
+      expect(header(MIGRATION)).toBe(header(PREVIOUS));
+      expect(header(MIGRATION)).toContain('SECURITY INVOKER');
+      expect(header(MIGRATION)).toContain('STABLE');
+      expect(header(MIGRATION)).toContain("SET search_path = ''");
+    },
+  );
+
+  it('get_org_challenge_ranking は順位表の控えから並べ、参加者の行は「見る人がいま参加者か」の確認にだけ使う。人数の決め方 (cfg) は 20261014100100 と同じ', () => {
+    const body = bodyOf(MIGRATION, 'get_org_challenge_ranking');
+    const ranked = body.match(/ranked AS \(([\s\S]*?)\)\s*SELECT r\.rank/);
+    expect(ranked, '順位表の CTE (ranked) が見つからない').not.toBeNull();
+    expect(ranked![1]).toMatch(/FROM public\.organization_challenge_ranking_entries AS e/);
+    expect(ranked![1]).not.toMatch(/organization_challenge_participants/);
+    // 見られる人の確認 (EXISTS) は、20261014100100 と同じ (いまの参加者で、今も組織のメンバーである本人だけ)
+    const gate = (sql: string) => squash(bodyOf(sql, 'get_org_challenge_ranking').match(/AND EXISTS \(([\s\S]*?)\)\s*ORDER BY r\.pos/)![1]);
+    expect(gate(MIGRATION)).toBe(gate(PREVIOUS));
+    const cfg = (sql: string) => bodyOf(sql, 'get_org_challenge_ranking').match(/SELECT \d+ AS default_limit, \d+ AS max_limit/)![0];
+    expect(cfg(MIGRATION)).toBe(cfg(PREVIOUS));
   });
 });
 
@@ -161,21 +185,43 @@ describe('2. update_org_challenge_progress は、1 つ前の定義に控えの�
   });
 });
 
-describe('3. 控えを書き換えるのは、開催中で開始日を迎えたチャレンジだけ', () => {
+describe('3. 控えを書き直すのは、集計に含める最後の日が進んだときだけ', () => {
   const body = bodyOf(MIGRATION, 'refresh_org_challenge_aggregates');
+  /** 数え直すチャレンジを選ぶ文 (SELECT ... INTO v_targets ... ;) */
+  const targets = body.match(/SELECT COALESCE\(array_agg\(c\.id\), '\{\}'::uuid\[\]\)\s+INTO v_targets([\s\S]*?);/);
 
-  it("対象は status = 'active' かつ開始日 (JST) <= 今日。終了・中止・下書きは書き換えない", () => {
-    expect(body).toMatch(/WHERE c\.status = 'active'\s+AND c\.start_date <= v_today/);
-    expect(body).toMatch(/v_today := \(COALESCE\(p_now, now\(\)\) AT TIME ZONE 'Asia\/Tokyo'\)::date;/);
-    expect(quotedList(body.match(/WITH target AS \(([\s\S]*?)\),\s*agg AS/)![1])).toEqual(['active']);
+  it('集計に含める最後の日は、update_org_challenge_progress と同じ決め方 (JST の今日の前日。終了日で打ち切る)', () => {
+    expect(body).toMatch(/v_today\s+:= \(COALESCE\(p_now, now\(\)\) AT TIME ZONE 'Asia\/Tokyo'\)::date;/);
+    expect(body).toMatch(/v_last_day := v_today - 1;/);
+    expect(bodyOf(MIGRATION, 'update_org_challenge_progress')).toMatch(/v_last_day := v_today - 1;/);
+    expect(body).toMatch(/LEAST\(c\.end_date, v_last_day\)\s+AS counted_through/);
   });
 
-  it('数えるのは今も組織のメンバーである参加者だけ (update_org_challenge_progress と同じ絞り込み)', () => {
-    expect(body).toMatch(/JOIN public\.user_profiles AS up\s+ON up\.id = p\.user_id\s+AND up\.organization_id = t\.organization_id/);
+  it("対象は、開催中で控えが無いか最後の日が進んだもの (開始日は見ない) と、控えの無い終了・中止。下書きは入らない", () => {
+    expect(targets, '数え直すチャレンジを選ぶ文が見つからない').not.toBeNull();
+    const where = squash(targets![1]);
+    expect(where).toContain(
+      "WHERE (c.status = 'active' AND (s.challenge_id IS NULL OR LEAST(c.end_date, v_last_day) > s.counted_through)) " +
+        "OR (c.status IN ('completed', 'cancelled') AND s.challenge_id IS NULL)",
+    );
+    expect(where).not.toMatch(/start_date/);
+    expect(quotedList(where).sort()).toEqual(['active', 'cancelled', 'completed']);
   });
 
-  it('値が変わらない行は書き換えない。update_org_challenge_progress と同じ鍵で直列にする', () => {
-    expect(body).toMatch(/IS DISTINCT FROM \(EXCLUDED\.participant_count, EXCLUDED\.ranked_count, EXCLUDED\.average_value\)/);
+  it('集計と順位表の控えは、選んだチャレンジだけを書く。最後の日 (counted_through) も一緒に書く', () => {
+    expect([...body.matchAll(/c\.id = ANY \(v_targets\)/g)]).toHaveLength(2);
+    expect(body).toMatch(/DELETE FROM public\.organization_challenge_ranking_entries AS e\s+WHERE e\.challenge_id = ANY \(v_targets\);/);
+    expect(body).toMatch(/counted_through\s+= EXCLUDED\.counted_through/);
+    // 値が同じでも最後の日は進めて書く (書かずにおくと、次の機会に「進んだ」と見なされ、人の出入りだけが控えに入る)
+    expect(body).not.toMatch(/IS DISTINCT FROM/);
+  });
+
+  it('数えるのは今も組織のメンバーである参加者だけ (update_org_challenge_progress と同じ絞り込み)。順位表は順位がついた人だけ', () => {
+    expect([...body.matchAll(/JOIN public\.user_profiles AS up\s+ON up\.id = p\.user_id\s+AND up\.organization_id = c\.organization_id/g)]).toHaveLength(2);
+    expect(body).toMatch(/WHERE c\.id = ANY \(v_targets\)\s+AND p\.rank IS NOT NULL;/);
+  });
+
+  it('update_org_challenge_progress と同じ鍵で直列にする', () => {
     const lock = "pg_advisory_xact_lock(hashtextextended('public.update_org_challenge_progress', 0))";
     expect(body).toContain(lock);
     expect(bodyOf(MIGRATION, 'update_org_challenge_progress')).toContain(lock);
@@ -197,11 +243,18 @@ describe('4. 権限', () => {
     expect(grants.map((g) => g[1].trim())).toEqual(['service_role']);
   });
 
-  it('控えの表は RLS を有効にし、ポリシーを作らず、anon / authenticated の権限を外す', () => {
-    expect(MIGRATION).toMatch(/ALTER TABLE public\.organization_challenge_aggregates ENABLE ROW LEVEL SECURITY;/);
-    expect(MIGRATION).toMatch(/REVOKE ALL ON TABLE public\.organization_challenge_aggregates FROM PUBLIC, anon, authenticated;/);
-    expect(MIGRATION).not.toMatch(/CREATE POLICY[^;]*ON public\.organization_challenge_aggregates/);
-    expect(MIGRATION).not.toMatch(/GRANT [^;]*ON TABLE public\.organization_challenge_aggregates TO [^;]*(anon|authenticated)/);
+  it.each(SNAPSHOT_TABLES)('控えの表 %s は RLS を有効にし、ポリシーを作らず、anon / authenticated の権限を外す', (table) => {
+    expect(MIGRATION).toMatch(new RegExp(String.raw`ALTER TABLE public\.${table} ENABLE ROW LEVEL SECURITY;`));
+    expect(MIGRATION).toMatch(new RegExp(String.raw`REVOKE ALL ON TABLE public\.${table} FROM PUBLIC, anon, authenticated;`));
+    expect(MIGRATION).not.toMatch(new RegExp(String.raw`CREATE POLICY[^;]*ON public\.${table}\b`));
+    expect(MIGRATION).not.toMatch(new RegExp(String.raw`GRANT [^;]*ON TABLE public\.${table} TO [^;]*(anon|authenticated)`));
+  });
+
+  it('順位表の控えは、アカウントを消した人の行をその場で消す (auth.users を ON DELETE CASCADE で参照する)', () => {
+    const table = MIGRATION.match(/CREATE TABLE IF NOT EXISTS public\.organization_challenge_ranking_entries \(([\s\S]*?)\);/);
+    expect(table).not.toBeNull();
+    expect(squash(table![1])).toContain('user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE');
+    expect(squash(table![1])).toContain('PRIMARY KEY (challenge_id, user_id)');
   });
 });
 
@@ -249,11 +302,11 @@ describe('5. 参加の INSERT ポリシーは、API と同じ条件を見る', (
 });
 
 describe('6. ロールバック', () => {
-  it.each(['update_org_challenge_progress', 'get_org_challenge_aggregates'])('%s を 20261014100100 の定義にそのまま戻す', (name) => {
+  it.each(REPLACED_FUNCTIONS)('%s を 20261014100100 の定義にそのまま戻す', (name) => {
     expect(squash(definition(ROLLBACK, name))).toBe(squash(definition(PREVIOUS, name)));
   });
 
-  it('戻した 2 本の EXECUTE も service_role だけ', () => {
+  it('戻した 3 本の EXECUTE も service_role だけ', () => {
     for (const fn of SERVICE_ROLE_FUNCTIONS.slice(1)) {
       const escaped = fn.replace(/[.()]/g, (c) => `\\${c}`);
       expect(ROLLBACK).toMatch(new RegExp(String.raw`REVOKE ALL ON FUNCTION ${escaped}\s+FROM PUBLIC, anon, authenticated, service_role;`));
@@ -262,12 +315,15 @@ describe('6. ロールバック', () => {
   });
 
   it('関数を戻したあとに、数え直しの関数と控えの表を消す', () => {
-    const restored = ROLLBACK.indexOf('CREATE OR REPLACE FUNCTION public.update_org_challenge_progress(');
+    const restored = Math.max(
+      ...REPLACED_FUNCTIONS.map((name) => ROLLBACK.indexOf(`CREATE OR REPLACE FUNCTION public.${name}(`)),
+    );
+    expect(Math.min(...REPLACED_FUNCTIONS.map((name) => ROLLBACK.indexOf(`CREATE OR REPLACE FUNCTION public.${name}(`)))).toBeGreaterThan(-1);
     const dropFn = ROLLBACK.indexOf('DROP FUNCTION IF EXISTS public.refresh_org_challenge_aggregates(timestamptz);');
-    const dropTable = ROLLBACK.indexOf('DROP TABLE IF EXISTS public.organization_challenge_aggregates;');
-    expect(restored).toBeGreaterThan(-1);
     expect(dropFn).toBeGreaterThan(restored);
-    expect(dropTable).toBeGreaterThan(dropFn);
+    for (const table of SNAPSHOT_TABLES) {
+      expect(ROLLBACK.indexOf(`DROP TABLE IF EXISTS public.${table};`), table).toBeGreaterThan(dropFn);
+    }
   });
 
   it('INSERT ポリシーを #1238 の定義 (本番 baseline) にそのまま戻す', () => {

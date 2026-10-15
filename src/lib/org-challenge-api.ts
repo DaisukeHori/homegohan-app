@@ -158,6 +158,7 @@ interface RankingRpcRow {
 /**
  * 参加者に見せる順位表を取る (DB の関数 get_org_challenge_ranking)。上位と本人の行だけで、他人の ID は返らない。
  * 呼び出した本人がそのチャレンジの参加者でなければ、DB の関数が 0 行を返す。
+ * 順位表は毎晩の更新の時点の控えから並ぶ (#1600。参加をやめた人・組織から外れた人の行は、次の夜の更新まで残る)。
  *
  * @param admin     service_role のクライアント。認可を通したあとに渡すこと
  * @param showNames 参加者の表示名を出すか (showParticipantNames())。false のときは、DB からも表示名を取らない
