@@ -1101,7 +1101,7 @@ ALTER TABLE public.personal_subscriptions
 
 印 (`place=` / `append=` / `insert=`) の付いたブロックを、実装と同じ置き場所に置き・足し・差し込み、段 A の再生成で出る DB の型の形 (下の `DB_TYPES`。§6 の表・列・関数から、`supabase gen types` の規則 = 既定値のある引数は省略可で `null` を受けない・`void` は `undefined`・`interval` は `unknown`・`jsonb` は `Json` で書いたもの) を `src/types/database.types.ts` に足して、リポジトリ全体を `tsc --noEmit` で検査する。§11 の差分の抜粋 (印の無い `tsc:skip`) は、同じ差分を下の `editAccountDeletion` が差し込む。書き換えたファイルは終わったら元に戻す (同じ作業場所で流し直しても結果が同じになる)。
 
-流し方: offload の行き先 (リポジトリの根) で、下の js ブロックの中身を `node -e` で流す (例: 手元で `awk '/^\/\/ design-module-check/{f=1} f&&/^```$/{exit} f' docs/design/billing/01-billing-core.md` で取り出し、`offload --host auto -e TZ=UTC -- node -e "<取り出した中身>"`)。合格は `DESIGN_MODULE_TSC errors_total=0`。M2 では流さない。
+流し方: offload の行き先 (リポジトリの根) で、下の js ブロックの中身を `node -e` で流す (例: 手元で `awk '/^\/\/ design-module-check/{f=1} f&&/^```$/{exit} f' docs/design/billing/01-billing-core.md` で取り出し、`offload --host auto -e TZ=UTC -- node -e "<取り出した中身>"`)。合格は `DESIGN_MODULE_TSC rc=0 errors_total=0`。ブランチの根が `origin/main` より古いと、根に無い既存のモジュール (例: `src/lib/api/reject-null-character.ts` (#1657)) で落ちるので、そのときは行き先で `origin/main` の木 (公開のリポジトリから `git fetch` → `git archive` で一時の場所に展開し、`node_modules` をつなぎ、本書を写す) の上で同じ js を流す (`main にマージ済みのものが正`)。M2 では流さない。
 
 ```js
 // design-module-check — billing/01 §8.0。印の付いた ts ブロックを置き場所に置いて、リポジトリ全体を tsc で検査する
@@ -1220,16 +1220,19 @@ try {
   addDbTypes();
   console.log('DESIGN_MODULE_BLOCKS placed=' + placed + ' files=' + [...originals.keys()].sort().join(','));
   let out = '';
+  let tscStatus = 0;
   try {
     out = cp.execSync('npx tsc --noEmit --incremental false -p tsconfig.json --pretty false', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
   } catch (error) {
+    tscStatus = typeof error.status === 'number' ? error.status : 1;
     out = String(error.stdout || '') + String(error.stderr || '');
   }
   const errors = out.split('\n').filter((line) => /error TS\d+/.test(line));
   const inDesign = errors.filter((line) => [...originals.keys()].some((file) => line.startsWith(file + '(')));
   if (errors.length > 0) console.log(errors.join('\n'));
-  console.log('DESIGN_MODULE_TSC errors_total=' + errors.length + ' errors_in_design_files=' + inDesign.length);
-  exitCode = errors.length === 0 ? 0 : 1;
+  else if (tscStatus !== 0) console.log(out.slice(-2000)); // tsc が型の誤り以外で落ちた (起動できない等)。合格にしない
+  console.log('DESIGN_MODULE_TSC rc=' + tscStatus + ' errors_total=' + errors.length + ' errors_in_design_files=' + inDesign.length);
+  exitCode = tscStatus === 0 && errors.length === 0 ? 0 : 1;
 } catch (error) {
   console.log(String(error && error.message ? error.message : error));
   exitCode = 2;
