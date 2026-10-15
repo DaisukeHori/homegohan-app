@@ -10,7 +10,7 @@ export type MobileUserProfile = {
   nickname?: string | null;
   roles: string[];
   organizationId?: string | null;
-  /** 所属組織でのロール (owner / admin / member)。組織の管理者判定は src/lib/org-admin.ts の isOrgAdmin を使う */
+  /** 所属組織でのロール (owner / admin / member)。組織の管理の画面はアプリに無い (Web だけ。ネイティブの画面は #1598 で消した) */
   orgRole?: string | null;
   onboardingStartedAt?: string | null;
   onboardingCompletedAt?: string | null;

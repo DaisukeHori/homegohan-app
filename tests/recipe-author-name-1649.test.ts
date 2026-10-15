@@ -3,7 +3,7 @@
  * #1649: レシピ・レシピのコメントの API が返す作者名 (authorName) に、仮置きの 'Guest' を人の名前として出さない。
  *
  * 作者の名前は user_profiles.nickname。名前が無いまま user_profiles を作る・更新するとき、アプリと RPC は仮置きの 'Guest' を入れる。
- * 以前の route は `nickname || '匿名'` で、'Guest' をそのまま作者名として返していた (Web・モバイルのレシピの画面がそのまま出す)。
+ * 以前の route は `nickname || '匿名'` で、'Guest' をそのまま作者名として返していた (Web のレシピの画面がそのまま出す)。
  * 修正後は normalizeProfileName (packages/shared) を通し、名前が無い (空・空白だけ・仮置きの 'Guest') ときは既定の '匿名' にする。
  * 'guest' (小文字) や実名は本人が付けた名前としてそのまま (前後の空白だけ除く) 返す。
  *

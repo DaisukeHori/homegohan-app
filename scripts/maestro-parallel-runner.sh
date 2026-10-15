@@ -124,7 +124,8 @@ echo "TIMEOUT: $(grep -h 'TIMEOUT' "$RESULT_DIR"/sim-*.log 2>/dev/null | wc -l)"
 
 echo ""
 echo "=== BY DOMAIN ==="
-for d in auth onboarding home menus-weekly meals favorites shopping pantry recipes badges health ai settings profile comparison; do
+# flows/ の下のディレクトリ (消したネイティブの画面の flow のディレクトリは #1598 で外した)
+for d in auth onboarding home menus-weekly meals handson-tour settings screenshots; do
   total=$(grep -h "$d/" "$RESULT_DIR"/sim-*.log 2>/dev/null | wc -l)
   pass=$(grep -h "^PASS.*$d/" "$RESULT_DIR"/sim-*.log 2>/dev/null | wc -l)
   printf "%-15s %3d / %3d\n" "$d" "$pass" "$total"

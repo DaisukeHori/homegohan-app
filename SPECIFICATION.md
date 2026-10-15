@@ -2506,8 +2506,8 @@ Webにある **全機能**（メイン機能/組織/サポート/スーパー管
 #### モバイルのルーティング方針（Expo Router）
 - `apps/mobile/app/(public)`：公開ページ（必要に応じて簡略UI）
 - `apps/mobile/app/(auth)`：ログイン/登録/パスワード再設定/メール確認
-- `apps/mobile/app/(tabs)`：日常導線（ホーム/献立/食事/健康/設定）
-- `apps/mobile/app/(org)` / `(super-admin)` / `(support)`：ロールに応じた管理画面（設定画面から遷移）。管理者 (admin) の画面は作らない（#1122）
+- `apps/mobile/app/(tabs)`：日常導線（ホーム/献立/スキャン/比較/マイページは WebView。設定はネイティブ）
+- 運営 (組織の管理・サポート・スーパー管理者) の画面はアプリに置かない。Web の画面だけ（`apps/mobile/app/(org)` / `(super-admin)` / `(support)` は、通常の操作で届かないネイティブの画面として消した。#1598）。管理者 (admin) の画面は作らない（#1122）
 
 #### バックエンドAPIの対応（モバイル）
 - **基本CRUD**: Supabase（RLS）をモバイルから直接利用（anon key + user JWT）

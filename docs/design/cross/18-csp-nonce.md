@@ -1249,8 +1249,8 @@ export function exportsForceDynamic(file: string, text: string): boolean {
 | nonce を画面へ渡す経路 | 無し | `x-csp-nonce` + `getCspNonce()` (呼ぶ画面は無し) |
 | ページの描画 | 公開ページ・一部の運営ページは静的化しうる | 全ページ動的 (ルート layout の `force-dynamic`) |
 | ブラウザのルーターのキャッシュ | 静的 300 秒 / 動的 30 秒 | 全ページ 30 秒 |
-| 回数制限のカテゴリ | 16 (末尾は `dsr`) | 17 (末尾に `csp-report`) |
-| 同意の許可リスト (`/api`) | 13 行 | 14 行 (`/api/csp-report` telemetry) |
+| 回数制限のカテゴリ | 19 (`RateLimitCategory` の末尾は `billing`。2026-10-16 の origin/main) | 20 (末尾に `csp-report`) |
+| 同意の許可リスト (`/api`) | 16 行 (2026-10-16 の origin/main。課金の 3 行を含む) | 17 行 (`/api/csp-report` telemetry) |
 | 環境変数の一覧 | – | `CSP_REPORT_ONLY` (任意・`readOnlyBy: src/lib/security/csp.ts`) |
 | `src/app/api` の route | N 本 | N + 1 本 |
 | PR の e2e の門 (`e2e-local.yml` の 1 本目の `npx playwright test`・`local-ci.sh` の `PW_ARGS`) | 19 本 (末尾は `tests/e2e/wave2-f2-queue-reliability.spec.ts`) | 20 本 (2 か所とも末尾に `tests/e2e/csp-nonce.spec.ts`) |

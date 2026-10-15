@@ -822,9 +822,18 @@ describe('#1175 退会: 組織のオーナー・家族の代表者は 409 で止
 // prepare_account_deletion を直接呼ぶ (戻り値の形・冪等・入力の確認)
 // ─────────────────────────────────────────────────────────────────────────────
 describe('#1175 prepare_account_deletion: 戻り値と冪等', () => {
-  const REPORT_KEYS = ['email_delivery_logs', 'family_invites', 'family_promotion_requests', 'inquiries', 'organization_invites', 'private_recipes'];
+  const REPORT_KEYS = [
+    'email_delivery_logs',
+    'email_outbox',
+    'family_invites',
+    'family_promotion_requests',
+    'inquiries',
+    'organization_invites',
+    'private_recipes',
+  ];
   const ALL_ZERO = {
     email_delivery_logs: 0,
+    email_outbox: 0,
     inquiries: 0,
     organization_invites: 0,
     family_invites: 0,
@@ -871,5 +880,101 @@ describe('#1175 prepare_account_deletion: 戻り値と冪等', () => {
     const { error } = await srAdmin.rpc('prepare_account_deletion', { p_user_id: null });
     expect(error).not.toBeNull();
     expect(error?.code).toBe('22023');
+  });
+  // #1193 送信待ち (email_outbox) の段 1b・1c (supabase/migrations/20261016234000_email_outbox.sql)。
+  // 行は queued でも next_attempt_at を遠い未来にし、送信の worker (claim_email_outbox) に取られないようにする
+  const FAR_FUTURE = '2999-01-01T00:00:00+00:00';
+  const OUTBOX_OTHER_EMAIL = `t11-outbox-other-${RUN}@homegohan.test`;
+  async function insertOutbox(row: Record<string, unknown>): Promise<string> {
+    const outboxId = id();
+    const { error } = await srAdmin.from('email_outbox').insert({
+      id: outboxId,
+      template: `t11-outbox-${RUN}`,
+      to_email: OUTBOX_OTHER_EMAIL,
+      from_email: 'noreply@homegohan.test',
+      subject: 'subject',
+      text_body: 'body',
+      idempotency_key: randomUUID(),
+      next_attempt_at: FAR_FUTURE,
+      ...row,
+    });
+    if (error) throw new Error(`insert email_outbox: ${error.message}`);
+    return outboxId;
+  }
+  async function outboxRow(outboxId: string) {
+    return one<Record<string, unknown>>(`select * from public.email_outbox where id = ${q(outboxId)}`);
+  }
+  async function dropOutbox(ids: string[]) {
+    await pgQuery(`delete from public.email_outbox where id in (${ids.map(q).join(',')})`).catch(() => undefined);
+  }
+
+  it('本人宛の email_outbox の行を伏せ、queued は dead (recipient_deleted) にし、件数を email_outbox に返す', async () => {
+    const user = await createUser('outbox-self');
+    const ids: string[] = [];
+    try {
+      ids.push(await insertOutbox({ user_id: user.id }));
+      ids.push(await insertOutbox({ to_email: user.email.toUpperCase(), status: 'sent', sent_at: new Date().toISOString() }));
+      const others = await insertOutbox({});
+      ids.push(others);
+
+      const first = await srAdmin.rpc('prepare_account_deletion', { p_user_id: user.id });
+      expect(first.error).toBeNull();
+      expect(first.data).toEqual({ ...ALL_ZERO, email_outbox: 2 });
+      expect(await outboxRow(ids[0])).toMatchObject({
+        status: 'dead',
+        last_error_code: 'recipient_deleted',
+        to_email: MASKED_EMAIL,
+        subject: '[redacted]',
+        text_body: '[redacted]',
+        html_body: null,
+      });
+      expect(await outboxRow(ids[1])).toMatchObject({ status: 'sent', to_email: MASKED_EMAIL, subject: '[redacted]', text_body: '[redacted]' });
+      expect(await outboxRow(others)).toMatchObject({ status: 'queued', to_email: OUTBOX_OTHER_EMAIL, text_body: 'body' });
+
+      const second = await srAdmin.rpc('prepare_account_deletion', { p_user_id: user.id });
+      expect(second.data).toEqual(ALL_ZERO);
+    } finally {
+      await dropOutbox(ids);
+      await srAdmin.auth.admin.deleteUser(user.id).catch(() => undefined);
+      forget(user.id);
+    }
+  });
+
+  it('他人宛の email_outbox の行の本文に本人のアドレスがあれば、その部分だけを伏せて状態は変えず (運営の強制譲渡の新オーナー宛の通知: S-17)、件数を email_outbox に足す', async () => {
+    const oldOwner = await createUser('outbox-old-owner');
+    const ids: string[] = [];
+    try {
+      // 新オーナー宛: Resend の一時障害で再試行待ち (queued・attempts 1)。本文に旧オーナーのアドレス
+      const toNewOwner = await insertOutbox({
+        text_body: `組織のオーナーが ${oldOwner.email.toUpperCase()} からあなたに変わりました`,
+        attempts: 1,
+      });
+      ids.push(toNewOwner);
+      // 旧オーナー宛 (送信済み): 1b で伏せる
+      const toOldOwner = await insertOutbox({ to_email: oldOwner.email, status: 'sent', sent_at: new Date().toISOString() });
+      ids.push(toOldOwner);
+      // 一般メンバー宛 (送信済み): 本文は新オーナーのアドレスだけ
+      const toMember = await insertOutbox({ text_body: `新オーナー: ${OUTBOX_OTHER_EMAIL}`, status: 'sent', sent_at: new Date().toISOString() });
+      ids.push(toMember);
+      const before = await outboxRow(toNewOwner);
+
+      const { data, error } = await srAdmin.rpc('prepare_account_deletion', { p_user_id: oldOwner.id });
+      expect(error).toBeNull();
+      expect(data).toEqual({ ...ALL_ZERO, email_outbox: 2 });
+      expect(await outboxRow(toNewOwner)).toMatchObject({
+        status: 'queued',
+        attempts: 1,
+        to_email: OUTBOX_OTHER_EMAIL,
+        idempotency_key: before?.idempotency_key,
+        next_attempt_at: before?.next_attempt_at,
+        text_body: `組織のオーナーが ${MASKED_EMAIL} からあなたに変わりました`,
+      });
+      expect(await outboxRow(toOldOwner)).toMatchObject({ status: 'sent', to_email: MASKED_EMAIL });
+      expect(await outboxRow(toMember)).toMatchObject({ status: 'sent', text_body: `新オーナー: ${OUTBOX_OTHER_EMAIL}` });
+    } finally {
+      await dropOutbox(ids);
+      await srAdmin.auth.admin.deleteUser(oldOwner.id).catch(() => undefined);
+      forget(oldOwner.id);
+    }
   });
 });

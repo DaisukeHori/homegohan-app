@@ -11,7 +11,7 @@
  *   2. 呼ぶ側 (アプリ): apps/mobile の app と src を構文木で読み (コメントは見ない)、1 の API を呼ぶ場所を全部集める
  *      (getApi() の get/post/patch/del、fetch の URL と method)
  *   3. 2 の場所を含む関数 (名前のある、いちばん内側の関数) が、同じ関数の中で判定の関数
- *      (handleAiConsentRequiredError / isAiConsentRequiredError / isAiConsentRequiredResponse) を呼んでいる。
+ *      (handleAiConsentRequiredError / isAiConsentRequiredError) を呼んでいる。
  *      呼ばない場所は、下の分類 (URL_BUILDERS) に理由つきで載っているものだけ
  *   4. 分類が古くならない (載せた関数が無くなった・判定を呼ぶようになった・使う関数が判定しなくなったら失敗する)
  *   5. 1 の API を呼ぶアプリのファイルの一覧が、下の AI_ENTRY_FILES と一致する (足した・消したら、ここで気づく)
@@ -22,10 +22,10 @@
  *      呼び出し側に「止められた」ことを伝えるときは、例外ではなく戻り値 (useV4MenuGeneration の generate は null) で伝える
  *
  * 挙動 (案内を出す・エラーの表示を出さない) は、代表の画面ごとの jest のテストが確かめる:
- *   apps/mobile/__tests__/ai/advisor-sheet-consent.test.tsx・ai/day-menu-consent.test.tsx・pantry/analyze-consent.test.tsx・
- *   menus-weekly/use-v4-menu-generation.test.tsx・menus-weekly/improve-consent.test.tsx (改善モーダルの 2 つの置き場)・
- *   menus-weekly/manual-edit-photo-consent.test.tsx (手動編集の上の写真の解析)
+ *   apps/mobile/__tests__/ai/advisor-sheet-consent.test.tsx・ai/day-menu-consent.test.tsx・
+ *   menus-weekly/use-v4-menu-generation.test.tsx・health/blood-test-ai-skipped.test.tsx
  *   (と、判定の関数そのものは lib/ai-consent.test.ts)。
+ *   (食材・週の献立の改善モーダル・手動編集の写真のテストは、それを持つネイティブの画面と一緒に消した。#1598)
  * モーダルの上に開く部品が自分で案内を出さない (開いた側が閉じてから出す) こと、modal で開く画面 (Stack.Screen の presentation) を
  * 置かないことは tests/ai-consent-mobile-modal-nesting.test.ts。
  * 受け付けたあとにサーバーが止めた失敗 (リクエストの行に保存された文) の扱いは tests/ai-consent-stored-failure-readers.test.ts
@@ -45,26 +45,18 @@ const MOBILE_SOURCE_DIRS = ['apps/mobile/app', 'apps/mobile/src'];
 const API_DIR = 'src/app/api';
 
 /** 判定の関数 (apps/mobile/src/lib/ai-consent.ts)。どれかを、AI の API を呼ぶ関数の中で呼ぶ */
-const CONSENT_HANDLERS = ['handleAiConsentRequiredError', 'isAiConsentRequiredError', 'isAiConsentRequiredResponse'];
+// (fetch を直接使う画面のための isAiConsentRequiredResponse は、使っていた画面を #1598 で消したので、関数ごと消した)
+const CONSENT_HANDLERS = ['handleAiConsentRequiredError', 'isAiConsentRequiredError'];
 
 /** 7 の検査で「同意が必要」と分かった分岐を見つける関数 (受け付けたあとの失敗の文を見分ける関数を含む) */
 const CONSENT_BRANCH_CHECKS = [...CONSENT_HANDLERS, 'handleStoredAiConsentFailure'];
 
 /** 1 の API を呼ぶアプリのファイル (apps/mobile からの相対パス) */
 const AI_ENTRY_FILES = [
-  'app/ai/[sessionId].tsx',
+  // (AI 相談・健康診断・週の献立・食材・買い物リストのネイティブの画面と、週の献立の画面のモーダル (src/components/menu/) は、
+  // 通常の操作で届かない画面として消した。#1598。それらの機能は WebView の Web の画面が受け持つ)
   'app/health/blood-tests.tsx',
-  'app/health/checkups/new.tsx',
-  'app/health/insights.tsx',
-  'app/menus/weekly/index.tsx',
-  'app/menus/weekly/request/index.tsx',
-  'app/pantry/index.tsx',
-  'app/shopping-list/index.tsx',
   'src/components/ai/AIAdvisorSheet.tsx',
-  'src/components/menu/NutritionDetailModal.tsx',
-  'src/components/menu/PhotoEditModal.tsx',
-  'src/components/menu/RegenerateMealModal.tsx',
-  'src/components/menu/StatsModal.tsx',
   'src/hooks/useHomeData.ts',
   'src/hooks/useV4MenuGeneration.ts',
 ];
@@ -74,10 +66,7 @@ const AI_ENTRY_FILES = [
  * 送る関数 (sentBy) は、この名前を参照し、判定の関数を呼んでいなければならない (検査する)
  */
 const URL_BUILDERS: Record<string, { sentBy: string[]; reason: string }> = {
-  'app/ai/[sessionId].tsx::messagesPath': {
-    sentBy: ['send'],
-    reason: 'メッセージの URL を useMemo で組み立てるだけ。POST (AI に送る) は send が `${baseUrl}${messagesPath}` で行い、send が判定する。load は GET (止められない)',
-  },
+  // いまは無い (以前は全画面の AI 相談 app/ai/[sessionId].tsx の messagesPath があった。#1598 で画面ごと消した)
 };
 
 /**
@@ -409,7 +398,7 @@ describe('呼ぶ側: アプリが AI の API に止められたら、同意画�
     const unhandled = sites.filter((s) => !s.handled && !(s.ownerName && URL_BUILDERS[`${s.file}::${s.ownerName}`]));
     expect(
       unhandled.map(describeSite),
-      `判定していない。catch で handleAiConsentRequiredError(e) を呼ぶ (自動で送る処理は isAiConsentRequiredError で一文を出す・fetch を直接使うなら isAiConsentRequiredResponse) こと。判定の関数: ${CONSENT_HANDLERS.join(' / ')}`,
+      `判定していない。catch で handleAiConsentRequiredError(e) を呼ぶ (自動で送る処理は isAiConsentRequiredError で一文を出す) こと。判定の関数: ${CONSENT_HANDLERS.join(' / ')}`,
     ).toEqual([]);
   });
 
@@ -521,13 +510,17 @@ function consentBranches(file: string, sf: ts.SourceFile): ConsentBranch[] {
   return out;
 }
 
+/** 7 の走査が見つける分岐の数の下限 (空振りの見張り)。#1598 のあとの実数は 6 */
+const MIN_CONSENT_BRANCHES = 6;
+
 describe('同意が必要と分かった分岐で、例外を投げ直さない (呼び出し側が「失敗しました」を重ねて出さないように)', () => {
   const branches = mobileSources().flatMap((file) => consentBranches(file.slice('apps/mobile/'.length), parse(file)));
 
   it('走査が空振りしていない (判定の関数で分岐している場所を見つけている)', () => {
-    expect(branches.length).toBeGreaterThanOrEqual(10);
+    // #1598 で届かない画面を消したあとは 6 か所 (血液検査・AI 相談のシート・ホームのデータ・生成のフック 2・同意の判定そのもの)
+    expect(branches.length).toBeGreaterThanOrEqual(MIN_CONSENT_BRANCHES);
     expect(branches.some((b) => b.file === 'src/hooks/useV4MenuGeneration.ts')).toBe(true);
-    expect(branches.some((b) => b.file === 'src/components/menu/ImproveMealModal.tsx')).toBe(true);
+    expect(branches.some((b) => b.file === 'src/components/ai/AIAdvisorSheet.tsx')).toBe(true);
   });
 
   it('判定の関数で「同意が必要」と分かった分岐の中に throw が無い', () => {
