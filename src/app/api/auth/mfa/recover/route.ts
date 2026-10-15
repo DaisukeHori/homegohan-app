@@ -9,16 +9,23 @@
  *   正規化 (normalizeBackupCode) して形が違えば 400 AUTH_2FA_INVALID (DB に触れない) / verified な factor が無い → 409 AUTH_2FA_NOT_ENROLLED /
  *   消費の前に factor の一覧 (admin.mfa.listFactors。読めなければ 500 でコードを消費しない) /
  *   consumeBackupCode (投げれば 500・false なら 400 AUTH_2FA_INVALID。どちらも何も変わっていないので監査を書かない) /
- *   true ならここが監査の起点 (§17.2): 全 factor を admin.mfa.deleteFactor (失敗したら残りの factor もコードの削除もしない) →
+ *   true ならここが監査の起点 (§17.2): 本人の全セッションを終える (admin.signOut(token, 'global')。失敗したら factor もコードも消さない) →
+ *   全 factor を admin.mfa.deleteFactor (失敗したら残りの factor もコードの削除もしない) →
  *   残りのコードを全部消す → 監査 admin.mfa.recover (warn。途中で止まっても必ず 1 行) → 200 { ok, next } か 500
- * verified な factor を消した時点で Supabase が本人の全セッションを終える (§3.1)。画面は応答の next (ログイン → 登録) へページごと移る。
+ * 全セッションの終了は route が自分で行う: admin の deleteFactor だけでは本人のセッションが終わらない (2026-10-16 のローカルの
+ * GoTrue v2.183.0 の実測で、回復の前の aal1 のセッションが refresh も getUser も通った)。段 B のゲートは aal2 のセッションを factor の
+ * 有無を見ずに通す (P-3) ので、ここで終えないと、盗まれた端末などに残る aal2 のセッションが回復の後も運営の入口を通る。
+ * factor より先に終えるので、verified な factor が消えた時点で本人のセッションは必ず全部終わっている (§3.1・§26.3)。
+ * 画面は応答の next (ログイン → 登録) へページごと移る。
  * 本文の NULL 文字: rejectNullCharacterBody を呼ばない (normalizeBackupCode が英数字以外を取り除き、DB に届くのは user_id と SHA-256 の hex だけ。
  * src/__tests__/api/null-character-routes.test.ts の EXCLUDED §23 N-28)。
  * アプリの WebView の借り物のセッションでも断らない (factor の削除は service_role で、Web の側で token を発行し直さない §10)。
+ * 借り物の token で全セッションを終えると、同じ session_id のネイティブのセッションも終わる (§10 の借り物の recover の行のとおり)。
  */
 import { type NextRequest } from 'next/server';
 import { AuthError } from '@/lib/auth/errors';
 import { requireRole } from '@/lib/auth/helpers';
+import { readRequestAccessToken } from '@/lib/auth/mfa/assurance';
 import { MFA_AUDIT_ACTIONS, MFA_AUDIT_FAILED_STEPS, recordMfaAudit, type MfaAuditDetailsMap } from '@/lib/auth/mfa/audit';
 import {
   consumeBackupCode,
@@ -47,6 +54,8 @@ const ROUTE_NAME = 'POST /api/auth/mfa/recover';
 const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_CONFLICT = 409;
+/** admin.signOut の scope: 本人のすべてのセッション (この要求のセッションを含む) を終える */
+const SIGN_OUT_ALL_SESSIONS = 'global';
 
 const VALIDATION_ERROR_MESSAGE = '入力内容が正しくありません。';
 const INVALID_CODE_MESSAGE = 'バックアップコードが正しくありません。';
@@ -96,6 +105,9 @@ export async function POST(request: NextRequest) {
     if (findVerifiedTotpFactor(user) === null) {
       return mfaJson({ error: NOT_ENROLLED_MESSAGE, code: 'AUTH_2FA_NOT_ENROLLED' }, HTTP_CONFLICT);
     }
+    // 全セッションを終えるのに使う本人の token (Cookie → Bearer)。消費の前に読む (無ければ何も変えずに 401)
+    const accessToken = await readRequestAccessToken(supabase);
+    if (!accessToken) throw new AuthError('AUTH_UNAUTHENTICATED');
 
     const admin = getSupabaseAdmin();
     // 消費の前に読む: 読み取りの失敗でコードを 1 個失わせない (読み取りは何も変えない)
@@ -113,14 +125,23 @@ export async function POST(request: NextRequest) {
     let backupCodesDeleted: number | null = null;
     let failedStep: RecoverFailedStep = null;
     let stepError: unknown = null;
-    for (const factor of factors) {
-      const { error: deleteError } = await admin.auth.admin.mfa.deleteFactor({ id: factor.id, userId: user.id });
-      if (deleteError) {
-        failedStep = MFA_AUDIT_FAILED_STEPS.deleteFactor;
-        stepError = deleteError;
-        break;
+    // 本人の全セッション (この要求のセッション・他の端末の aal1 / aal2) を終える。失敗したら factor もコードも消さない
+    // (本人は U2 のままで、残りのコードで回復をやり直せる)
+    const { error: signOutError } = await admin.auth.admin.signOut(accessToken, SIGN_OUT_ALL_SESSIONS);
+    if (signOutError) {
+      failedStep = MFA_AUDIT_FAILED_STEPS.signOutSessions;
+      stepError = signOutError;
+    }
+    if (failedStep === null) {
+      for (const factor of factors) {
+        const { error: deleteError } = await admin.auth.admin.mfa.deleteFactor({ id: factor.id, userId: user.id });
+        if (deleteError) {
+          failedStep = MFA_AUDIT_FAILED_STEPS.deleteFactor;
+          stepError = deleteError;
+          break;
+        }
+        factorsDeleted += 1;
       }
-      factorsDeleted += 1;
     }
     if (failedStep === null) {
       try {

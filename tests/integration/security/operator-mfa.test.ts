@@ -182,6 +182,8 @@ describe('運営の MFA の入口 (#1176 cross/12 §21.4)', () => {
   // M-1〜M-4 は同じ admin で順に進める (登録 → 新しいログイン → 回復)
   let admin: TestUser;
   let enrolled: { aal2: Session; backupCodes: string[]; secret: string; factorId: string };
+  /** M-3 で 6 桁を入れた aal2 のセッション (M-4 の回復の後に終わっていることを確かめる) */
+  let m3Aal2: Session;
 
   it('M-1: admin (aal1) は GET /api/admin/users が 403、GET /api/auth/mfa/status は 200 enrolled:false', async () => {
     admin = await createUser('m1-admin', ['admin']);
@@ -208,22 +210,30 @@ describe('運営の MFA の入口 (#1176 cross/12 §21.4)', () => {
     // 登録済みの factor の verify はバックアップコードを返さない
     expect(body.backup_codes).toBeUndefined();
     expect((await apiCall('GET', '/api/admin/users', aal2.access_token)).status).toBe(200);
+    m3Aal2 = aal2;
   });
 
-  it('M-4: recover: コードを 1 個使うと factor が消え (admin.mfa.listFactors が 0)、同じコードは 2 回目 400、回復の前の aal1 のセッションでは運営の API が 403 (未登録)', async () => {
+  it('M-4: recover: コードを 1 個使うと factor が消え (admin.mfa.listFactors が 0)、同じコードは 2 回目 400、旧セッションの token は 401 (回復に使った aal1 のセッションも、M-3 の aal2 のセッションも、refresh もできない)', async () => {
     const before = await signIn(admin);
+    // 回復の前: M-3 の aal2 のセッションは運営の API を通る (回復の後に 401 になることの対照)
+    expect((await apiCall('GET', '/api/admin/users', m3Aal2.access_token)).status).toBe(200);
     const recovered = await cookieCall('POST', '/api/auth/mfa/recover', before.session, { code: enrolled.backupCodes[0] });
     expect(recovered.status, JSON.stringify(recovered.body)).toBe(200);
     expect(recovered.body.next).toBe('/login?next=%2Fsettings%2Fsecurity%2Fmfa%2Fsetup');
     const { data: listed } = await srAdmin.auth.admin.mfa.listFactors({ userId: admin.id });
     expect(listed?.factors ?? []).toHaveLength(0);
 
-    // 回復の前の aal1 のセッション: 2026-10-16 の段 B の実測では、ローカルの GoTrue (v2.183.0) の admin の deleteFactor は
-    // aal1 のセッションを終えず (refresh も getUser も通る)、設計書 §3.1・§21.4 の「全セッションを終える・401」とは違った。
-    // aal1 のままで、利用者は未登録になったので、運営の API は 403 (enrollment_required) で守られることを確かめる
-    expect((await apiCall('GET', '/api/admin/users', before.session.access_token)).status).toBe(403);
-    const statusAfter = await apiCall<Record<string, unknown>>('GET', '/api/auth/mfa/status', before.session.access_token);
-    expect(statusAfter.body).toMatchObject({ enrolled: false, aal: 'aal1' });
+    // 旧セッションは回復の route が全部終えている (§3.1・§14.5・§26.3)。admin の deleteFactor だけではローカルの GoTrue (v2.183.0) は
+    // セッションを終えないので、route の admin.signOut (global) が無いとここが赤になる
+    for (const [label, old] of [
+      ['回復に使った aal1', before.session],
+      ['M-3 の aal2', m3Aal2],
+    ] as const) {
+      expect((await apiCall('GET', '/api/auth/mfa/status', old.access_token)).status, label).toBe(401);
+      expect((await apiCall('GET', '/api/admin/users', old.access_token)).status, label).toBe(401);
+      const { error: refreshError } = await client(anonKey).auth.refreshSession({ refresh_token: old.refresh_token });
+      expect(refreshError, label).not.toBeNull();
+    }
 
     // 登録し直すと、使ったコードはもう使えない (新しい 10 個に入れ替わる)
     const again = await signIn(admin);

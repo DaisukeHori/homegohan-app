@@ -1,7 +1,7 @@
 /**
  * セッションの AAL (Authenticator Assurance Level) の読み取り (#1176。docs/design/cross/12-operator-mfa.md §13.2)
  *
- * 読み取り (SessionClaimsSchema・bearerJwtOf・readSessionAssurance。段 A。status の route が使う) と、
+ * 読み取り (SessionClaimsSchema・bearerJwtOf・readSessionAssurance。段 A。status の route が使う。readRequestAccessToken は段 B の回復の route も使う) と、
  * 運営の入口の判定 (assertOperatorAssurance。段 B。requireRole が呼ぶ) を置く。
  * このファイルを import してよいのは src/lib/auth/helpers.ts・src/app/api/auth/mfa/**・テストだけ (段 B の走査 ⑥。手製のゲートを作らせない)。
  */
@@ -42,17 +42,27 @@ export function bearerJwtOf(authorizationHeader: string | null): string | null {
 }
 
 /**
- * いまの要求のセッションの AAL を、署名を確かめた claim から読む。token の探し方は getUser() と同じ優先順:
+ * いまの要求のセッションの access_token (JWT) を返す。探し方は getUser() と同じ優先順:
  *   1. Cookie のセッション (getSession の access_token)
  *   2. 無ければ Authorization: Bearer <JWT> (モバイル。getSession は Cookie を見るので null になる)。
  *      ヘッダは next/headers から、この経路でだけ読む (要求の外で動く単体テストが Cookie の経路で落ちないように)
+ * どちらも無ければ null。署名は確かめない (確かめるのは呼び出し側の getClaims か、token を受け取る Auth サーバー)。
+ * readSessionAssurance と、回復の route の「本人の全セッションを終える」(admin.signOut に渡す token) が使う
+ */
+export async function readRequestAccessToken(supabase: SupabaseClient): Promise<string | null> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const cookieToken = sessionData.session?.access_token ?? null;
+  if (cookieToken) return cookieToken;
+  return bearerJwtOf((await headers()).get('authorization'));
+}
+
+/**
+ * いまの要求のセッションの AAL を、署名を確かめた claim から読む。token は readRequestAccessToken (Cookie → Bearer の順)。
  * 読めない (token が無い・署名が無効・sub が getUser の利用者と違う) ときは AuthError('AUTH_UNAUTHENTICATED') (fail-closed)。
  * getClaims は、対称鍵 (HS256) のプロジェクトでは Auth サーバーへ 1 回問い合わせる (getUser と同程度)。非対称鍵なら手元で検証する。
  */
 export async function readSessionAssurance(supabase: SupabaseClient, user: Pick<User, 'id'>): Promise<SessionAssurance> {
-  const { data: sessionData } = await supabase.auth.getSession();
-  let token: string | null = sessionData.session?.access_token ?? null;
-  if (!token) token = bearerJwtOf((await headers()).get('authorization'));
+  const token = await readRequestAccessToken(supabase);
   if (!token) throw new AuthError('AUTH_UNAUTHENTICATED');
 
   const { data, error } = await supabase.auth.getClaims(token);

@@ -40,7 +40,7 @@ const mocks = vi.hoisted(() => {
     })),
   };
   const adminClient = {
-    auth: { admin: { mfa: { listFactors: vi.fn(), deleteFactor: vi.fn() } } },
+    auth: { admin: { signOut: vi.fn(), mfa: { listFactors: vi.fn(), deleteFactor: vi.fn() } } },
   };
   return {
     order,
@@ -161,6 +161,7 @@ beforeEach(() => {
     mocks.userClient.auth.mfa.unenroll,
     mocks.userClient.auth.mfa.enroll,
     mocks.userClient.auth.refreshSession,
+    mocks.adminClient.auth.admin.signOut,
     mocks.adminClient.auth.admin.mfa.listFactors,
     mocks.adminClient.auth.admin.mfa.deleteFactor,
     mocks.issueBackupCodes,
@@ -197,6 +198,8 @@ beforeEach(() => {
   });
   mocks.adminClient.auth.admin.mfa.listFactors.mockResolvedValue({ data: { factors: [VERIFIED()] }, error: null });
   mocks.adminClient.auth.admin.mfa.deleteFactor.mockResolvedValue({ data: {}, error: null });
+  // 回復の route が本人の全セッションを終える (cross/12 §14.5)
+  mocks.adminClient.auth.admin.signOut.mockResolvedValue({ data: null, error: null });
   mocks.issueBackupCodes.mockImplementation(async () => {
     mocks.order.push('issueBackupCodes');
     return [...TEN_CODES];

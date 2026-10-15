@@ -66,7 +66,7 @@ export const MfaRecoverBodySchema = z.object({
 });
 export type MfaRecoverBody = z.infer<typeof MfaRecoverBodySchema>;
 
-/** 回復の後に画面が移る先 (Supabase が全セッションを終えているので、ログインからやり直して登録へ) */
+/** 回復の後に画面が移る先 (回復の route が本人の全セッションを終えているので、ログインからやり直して登録へ) */
 export const MFA_RECOVER_NEXT_PATH = '/login?next=%2Fsettings%2Fsecurity%2Fmfa%2Fsetup';
 
 /** POST /api/auth/mfa/recover の 200 (段 A)。route は next に MFA_RECOVER_NEXT_PATH を入れる */

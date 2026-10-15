@@ -18,6 +18,7 @@ import {
   SessionClaimsSchema,
   assertOperatorAssurance,
   bearerJwtOf,
+  readRequestAccessToken,
   readSessionAssurance,
 } from '@/lib/auth/mfa/assurance';
 
@@ -59,6 +60,23 @@ describe('bearerJwtOf', () => {
     expect(bearerJwtOf('Bearer ')).toBeNull();
     expect(bearerJwtOf(null)).toBeNull();
     expect(bearerJwtOf('')).toBeNull();
+  });
+});
+
+describe('readRequestAccessToken', () => {
+  it('readRequestAccessToken: Cookie のセッションの access_token を先に返し (next/headers を読まない)、無ければ Bearer JWT、どちらも無ければ null (回復の route が全セッションを終えるのに使う)', async () => {
+    const cookie = supabaseWith({ sessionToken: COOKIE_TOKEN });
+    mocks.headerGet.mockImplementation((name: string) => (name === 'authorization' ? `Bearer ${BEARER_TOKEN}` : null));
+    await expect(readRequestAccessToken(cookie.client)).resolves.toBe(COOKIE_TOKEN);
+    expect(mocks.headerGet).not.toHaveBeenCalled();
+
+    const bearer = supabaseWith({ sessionToken: null });
+    await expect(readRequestAccessToken(bearer.client)).resolves.toBe(BEARER_TOKEN);
+
+    mocks.headerGet.mockReturnValue('Bearer cron-secret');
+    await expect(readRequestAccessToken(supabaseWith({ sessionToken: null }).client)).resolves.toBeNull();
+    mocks.headerGet.mockReturnValue(null);
+    await expect(readRequestAccessToken(supabaseWith({ sessionToken: null }).client)).resolves.toBeNull();
   });
 });
 
