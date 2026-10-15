@@ -16,7 +16,11 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DsrAdminDetailDto, DsrAdminSummaryDto, DsrStatus } from '@/lib/data-subject-requests/core';
 
-const nav = vi.hoisted(() => ({ id: '', push: vi.fn() }));
+// useRouter は本物と同じく、描画のたびに同じ物を返す (毎回新しい物を返すと、router を依存に持つ読み込みが描画のたびに走る)
+const nav = vi.hoisted(() => {
+  const push = vi.fn();
+  return { id: '', push, router: { push } };
+});
 
 vi.mock('next/link', async () => {
   const react = await import('react');
@@ -26,7 +30,7 @@ vi.mock('next/link', async () => {
   };
 });
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: nav.push }),
+  useRouter: () => nav.router,
   useParams: () => ({ id: nav.id }),
 }));
 
