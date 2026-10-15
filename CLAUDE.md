@@ -168,7 +168,7 @@ DB の日付列は JST の暦日で、Vercel / Edge の実行環境は UTC (#143
 
 `src/lib/user-storage.ts` の `clearUserScopedLocalStorage()` を使う。  
 サインアウト処理では **Supabase signOut を呼ぶ前に** このヘルパーを実行する。  
-消すキーの一覧は `packages/shared/src/user-scoped-storage.ts` (`USER_SCOPED_LOCAL_STORAGE_KEYS`) の 1 か所だけに持つ。モバイルアプリのネイティブのログアウト・退会 (`apps/mobile/src/lib/signOut.ts`) は、次に開く WebView で、Web のページが読み込まれる前に同じ一覧のキーを消させる (`apps/mobile/src/lib/webViewUserStorageCleanup.ts`。#1037)。キーを足すときは共有の一覧に足すだけでよい。
+消すキーの一覧は `packages/shared/src/user-scoped-storage.ts` の 1 か所だけに持つ (キーそのものは `USER_SCOPED_LOCAL_STORAGE_KEYS`、後ろに ID が付くキー (`familyViewState_<familyId>` など) の接頭辞は `USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES`。#1599)。モバイルアプリのネイティブのログアウト・退会 (`apps/mobile/src/lib/signOut.ts`) は、次に開く WebView で、Web のページが読み込まれる前に同じ一覧のキーと接頭辞のキーを消させる (`apps/mobile/src/lib/webViewUserStorageCleanup.ts`。#1037)。ネイティブの掃除は `apps/mobile/src/lib/userScopedLocalData.ts` の `clearUserScopedLocalData` にまとめてあり、ログアウト・退会のほか、`AuthProvider` が起動時に失効を見つけたとき・起動時に未ログインと決まったとき・`SIGNED_OUT` のときも同じものを通す (#1599 / #1615。経路ごとの順は `AuthProvider.tsx` の先頭の表。`SIGNED_OUT` のときだけは、このあとのログアウトが読む push token の値を残す)。キーを足すときは共有の一覧に足すだけでよい。
 
 ### Web のログアウト画面と、モバイルアプリの WebView への通知
 

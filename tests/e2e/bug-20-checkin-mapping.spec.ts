@@ -15,14 +15,11 @@
  *   4. sleep_quality が送信値 (3) で記録されていることを検証
  */
 import { test, expect } from "./fixtures/fresh-user";
+import { todayLocal } from "../../packages/shared/src/date-utils";
 
-const TODAY = (() => {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
-})();
+// 今日は JST の暦日 (#1564)。プロセスのローカル時刻 (CI は UTC) で作ると、JST の 0:00〜8:59 は昨日の記録を読みにいき、
+// 下の assert が中身の無い緑になる
+const TODAY = todayLocal();
 
 // チェックイン送信のデフォルト値 (ホーム画面の初期値と同じ)
 const DEFAULT_CHECKIN = {

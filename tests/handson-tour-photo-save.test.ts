@@ -1,5 +1,5 @@
 /**
- * #1604: ハンズオンツアー Step 1 の保存 (src/lib/handson-tour/photo-save.ts の本文と、
+ * #1604: ハンズオンツアー Step 1 の保存 (packages/handson-tour-shared/src/photo-save.ts の本文 (#1625 で Web とモバイルの共有へ移した) と、
  * POST /api/meal-plans/add-from-photo の sandbox 経路 = src/lib/handson-tour/sandbox-photo-meal.ts) のテスト。
  *
  * 以前のツアーは MOCK_PHOTO_RESPONSE に sandbox / source を足しただけの本文を送っていて、
@@ -13,14 +13,15 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MOCK_PHOTO_RESPONSE } from '@homegohan/handson-tour-shared';
-import { createFakeSandboxDb, eligibleProfile, type FakeCall, type FakeResult } from './helpers/fake-sandbox-supabase';
 import {
+  MOCK_PHOTO_RESPONSE,
+  SANDBOX_NOT_ELIGIBLE_CODE,
   TOUR_PHOTO_MEAL_TYPE,
   TOUR_PHOTO_SAVE_URL,
   buildTourPhotoSaveBody,
   isSandboxNotEligibleBody,
-} from '@/lib/handson-tour/photo-save';
+} from '@homegohan/handson-tour-shared';
+import { createFakeSandboxDb, eligibleProfile, type FakeCall, type FakeResult } from './helpers/fake-sandbox-supabase';
 import { saveSandboxPhotoMeal } from '@/lib/handson-tour/sandbox-photo-meal';
 import { validatePlannedMealInput } from '@/lib/planned-meal-validation';
 
@@ -295,5 +296,26 @@ describe('#1604: isSandboxNotEligibleBody (保存の対象でない利用者へ�
     expect(isSandboxNotEligibleBody({ error: null })).toBe(false);
     expect(isSandboxNotEligibleBody(null)).toBe(false);
     expect(isSandboxNotEligibleBody('sandbox_not_eligible')).toBe(false);
+  });
+});
+
+describe('#1625: 共有の読み方 (packages/handson-tour-shared) が本物のルートの応答と合っている', () => {
+  // このパッケージは Web の型 (SandboxEligibilityError) を読めないので、code の一致は本物のルートに通して確かめる
+  const HTTP_CONFLICT = 409;
+
+  it('ツアーを完了済みの利用者の保存は 409 sandbox_not_eligible になり、共有の isSandboxNotEligibleBody がそれを読む', async () => {
+    const db = createFakeSandboxDb({
+      userId: USER_ID,
+      profile: eligibleProfile(USER_ID, { handson_tour_completed_at: '2026-10-01T00:00:00.000Z' }),
+      tables: {},
+    });
+    currentClient = db.client;
+
+    const { status, json } = await postAsTour(buildTourPhotoSaveBody());
+
+    expect(status).toBe(HTTP_CONFLICT);
+    expect(json.error.code).toBe(SANDBOX_NOT_ELIGIBLE_CODE);
+    expect(isSandboxNotEligibleBody(json)).toBe(true);
+    expect(db.state.writes).toEqual([]);
   });
 });

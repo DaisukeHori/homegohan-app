@@ -118,6 +118,7 @@ export const MembershipErrorCode = {
 
   // モデレーション (#1101)
   MEAL_HIDDEN:                'MEAL_HIDDEN',   // 運営が隠した食事は paste_meal_to_family の元にできない (403)
+  MEAL_SANDBOX:               'MEAL_SANDBOX',  // ハンズオンのお試しの記録 (is_sandbox = true) は paste_meal_to_family の元にできない (403。#1627)
 
   // 内部
   RPC_FAILED:                 'RPC_FAILED',
@@ -1056,6 +1057,12 @@ BEGIN
   -- #1101: 運営が隠した食事 (hidden_at IS NOT NULL) は貼り付けの元にできない (migration 20261009000500)
   IF v_source.hidden_at IS NOT NULL THEN
     RAISE EXCEPTION 'MEAL_HIDDEN' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- #1627: ハンズオンのお試しの記録 (is_sandbox = true) は貼り付けの元にできない (migration 20261015100000)。
+  -- 写した行は is_sandbox を写さない (= false) ので、家族の側で本物の記録になってしまうため
+  IF v_source.is_sandbox THEN
+    RAISE EXCEPTION 'MEAL_SANDBOX' USING ERRCODE = 'P0001';
   END IF;
 
   SELECT family_id INTO v_caller_family_id FROM user_profiles WHERE id = auth.uid();
