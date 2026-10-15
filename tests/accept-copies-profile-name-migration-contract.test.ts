@@ -10,6 +10,8 @@
  *      仮置きの文字列が PROFILE_NAME_PLACEHOLDER と同じ
  *   4. ロールバックは、1 つ前の定義にそのまま戻す
  *   5. 冒頭のコメント・「戻し方」の参照が実際のファイル名と一致する。本 migration の番号を書いたファイルが、実在する version だけを指す
+ *   6. 承諾のときの名前の扱いを説明するコード・テストのコメントが、本 migration を指し、「承諾のときに写さない」と書かない
+ *      (本 migration より前の「写さない」方針の説明が残ると、後の作業がその前提で進むため)
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -28,12 +30,22 @@ const MIGRATION_FILE = /^(\d{14})_.+\.sql$/;
 /** 文面に書かれた migration の version らしい 14 桁の数 (2000 年代の日時) */
 const VERSION_TOKEN = /\b20\d{12}\b/g;
 
+/** 承諾のときの名前の扱い (承諾で写す・写す前に承諾した人は API が補う) を説明するコード・テスト */
+const ACCEPT_NAME_EXPLAINING_FILES = [
+  'src/lib/membership/family-member-names.ts',
+  'src/app/api/family/members/names/route.ts',
+  'src/__tests__/api/family/members/names.test.ts',
+];
+
 /** 本 migration の番号を書いているコード・テスト・文書 */
 const REFERENCING_FILES = [
-  'src/lib/membership/family-member-names.ts',
+  ...ACCEPT_NAME_EXPLAINING_FILES,
   'tests/integration/security/family-accept-display-name.test.ts',
   'docs/operations/family-member-display-name-backfill.md',
 ];
+
+/** 本 migration より前の方針「承諾のときにプロフィールの名前を写さない」を述べる行 (1 行の中で「承諾のとき」の後に「写さ(ず|ない)」が来る) */
+const STALE_NO_COPY_ON_ACCEPT = /承諾のとき[^\n]*写さ(?:ず|ない)/;
 
 /** BMP (U+0000〜U+FFFF) の最後の符号位置。trim が除く文字はすべて BMP にある */
 const LAST_BMP_CODE_POINT = 0xffff;
@@ -206,5 +218,24 @@ describe('#1584 承諾のときにプロフィールの名前を写す migration
       }
     }
     expect(dangling).toEqual([]);
+  });
+
+  it('承諾のときの名前の扱いを説明するファイルは、本 migration を指し、「承諾のときに写さない」と書かない', () => {
+    const stale: string[] = [];
+    for (const file of ACCEPT_NAME_EXPLAINING_FILES) {
+      const text = read(file);
+      expect(text, file).toContain(ours[0]);
+      text.split('\n').forEach((line, index) => {
+        if (STALE_NO_COPY_ON_ACCEPT.test(line)) stale.push(`${file}:${index + 1}: ${line.trim()}`);
+      });
+    }
+    expect(stale).toEqual([]);
+  });
+
+  it('「承諾のときに写さない」を述べる行の判定は、本 migration より前の説明の文面を拾う', () => {
+    // 検査が空振りしていないことを、#1584 の R1 で残っていた文面で確かめる
+    expect(STALE_NO_COPY_ON_ACCEPT.test('// 名前は承諾のときに写さず (プロフィールの名前を後で変えても追随させるため)、ここで')).toBe(true);
+    expect(STALE_NO_COPY_ON_ACCEPT.test('// 承諾のときにプロフィールの名前を写すと、後でプロフィールの名前を変えても家族の画面が追随しないので、写さない。')).toBe(true);
+    expect(STALE_NO_COPY_ON_ACCEPT.test('// 承諾のときは、本人のプロフィールの名前を display_name に写す (supabase/migrations/x.sql。')).toBe(false);
   });
 });
