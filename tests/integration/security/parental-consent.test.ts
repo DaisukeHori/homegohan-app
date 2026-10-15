@@ -113,6 +113,8 @@ const SIGNED_NAME = 'テスト 保護者';
 const SIGNED_NAME_LIMIT = 100;
 /** user_agent の切り詰め (accept_legal_documents と同じ 512 文字) */
 const USER_AGENT_LIMIT = 512;
+/** テストの家族の人数の上限 (1 つの家族に子供・大人を何人も足すため。人数の上限そのものは family-member-limit-race が確かめる) */
+const FAMILY_MEMBER_LIMIT = 20;
 
 /** JST の今日から years 年前の同じ月日 (その日が誕生日 = ちょうど years 歳)。2/29 は 2/28 に寄せる */
 function yearsAgo(years: number): string {
@@ -161,6 +163,9 @@ async function createFamily(label: string): Promise<TestFamily> {
   if (error || !data) throw new Error(`create_family_group ${label}: ${error?.message}`);
   const familyId = (data as { id: string }).id;
   createdFamilyIds.push(familyId);
+  // 1 つの家族に子供・大人を何人も足すので、人数の上限 (無料プランは 4) を service_role で広げる
+  const { error: limitError } = await srAdmin.from('family_groups').update({ member_limit: FAMILY_MEMBER_LIMIT }).eq('id', familyId);
+  if (limitError) throw new Error(`member_limit ${label}: ${limitError.message}`);
   return { rep, familyId };
 }
 
@@ -1021,7 +1026,12 @@ describe('#1173 18 歳未満の本人の家族・組織の役割 (MINOR_ACCOUNT_
     expect((await profileOf(minor.id))?.org_role).toBe('member');
     expect(await proposalStatus(orgProposal)).toBe('pending');
 
-    // 1990-01-01 の人はどちらも承諾できる
+    // 1990-01-01 の人はどちらも承諾できる (pending の提案は scope ごとに 1 件なので、断られた提案を先に期限切れにする)
+    const { error: expireError } = await srAdmin
+      .from('ownership_transfer_proposals')
+      .update({ status: 'expired' })
+      .in('id', [familyProposal, orgProposal]);
+    expect(expireError).toBeNull();
     const adultFamilyProposal = await insertProposal('family', family.familyId, family.rep.id, adult.id);
     expect((await asUser(adult.jwt).rpc('accept_family_representative_transfer', { p_proposal_id: adultFamilyProposal })).error).toBeNull();
     expect(await representativeOf()).toBe(adult.id);
