@@ -37,7 +37,7 @@ updates:
     ignore:
       # --- 計画して上げるもの (メジャー更新の PR は出さない) ---
       # Next / React / @types/react は互いの版をそろえて上げる必要があり、メジャー更新では書き方の移行 (codemod) も要るため、
-      # Dependabot には上げさせない。#1444 で Next 15 + React 19 に計画して上げた。Next 16 も同じく計画して上げる。
+      # Dependabot には上げさせない。#1444 で Next 15 + React 19 に、#1621 で Next 16 に計画して上げた。Next 17 も同じく計画して上げる。
       - dependency-name: "next"
         update-types: ["version-update:semver-major"]
       - dependency-name: "eslint-config-next"
@@ -47,7 +47,7 @@ updates:
       - dependency-name: "react"
       - dependency-name: "react-dom"
       - dependency-name: "react-test-renderer"
-      # 型の版は、動いている React の版にそろえる (CLAUDE.md「Web アプリは Next 15 + React 19」)。パッチ更新だけ許す
+      # 型の版は、動いている React の版にそろえる (CLAUDE.md「Web アプリは Next 16 + React 19」)。パッチ更新だけ許す
       - dependency-name: "@types/react*"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
