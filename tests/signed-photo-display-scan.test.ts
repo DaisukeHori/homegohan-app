@@ -29,9 +29,9 @@ const STORED_PHOTO_URL_NAME = /(image_?url|photo_?url|content_?url)/i;
 /** 例外 (ファイル → 理由)。ここに足すときは、署名付き URL を通さなくてよい理由を書く */
 const ALLOWED: Record<string, string> = {
   'src/app/admin/moderation/page.tsx':
-    'content_url は運営の API (/api/admin/moderation*) がサーバーで署名してから返す (withSignedModerationContentUrls)',
+    'content_url は運営の API (/api/admin/moderation*) がサーバーで署名してから返す (withSignedModerationContentUrls。tests/moderation-photo-signing.test.ts が確かめる)',
   'src/app/admin/moderation/[type]/[id]/page.tsx':
-    'content_url は運営の API (/api/admin/moderation/[type]/[id]) がサーバーで署名してから返す (withSignedModerationContentUrls)',
+    'content_url は運営の API (/api/admin/moderation/[type]/[id]) がサーバーで署名してから返す (withSignedModerationContentUrls。tests/moderation-photo-signing.test.ts が確かめる)',
   'src/app/(main)/health/checkups/[id]/CheckupDetailClient.tsx':
     '健康診断の画像は別のバケット (health-checkups。もとから非公開) で、#1365 の 2 つのバケットの対象外',
   'apps/mobile/app/health/checkups/[id].tsx':

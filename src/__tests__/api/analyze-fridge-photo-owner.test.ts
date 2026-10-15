@@ -97,4 +97,21 @@ describe('POST /api/ai/analyze-fridge (写真の URL)', () => {
     expect(mocks.consumeAiUsage).not.toHaveBeenCalled();
     expect(mocks.signCalls).toEqual([]);
   });
+
+  it('写真のバケット以外の URL は、署名せずそのまま読む', async () => {
+    const external = 'https://example.com/fridge.jpg';
+    const res = await POST(request({ imageUrl: external }));
+    expect(res.status).toBe(200);
+    expect(mocks.fetchImageAsBase64).toHaveBeenCalledWith(external);
+    expect(mocks.signCalls).toEqual([]);
+  });
+
+  it('imageUrl が文字列でなければ読まずに 400 (AI に渡さない・回数も数えない)', async () => {
+    const res = await POST(request({ imageUrl: 12345 }));
+    expect(res.status).toBe(400);
+    expect(mocks.fetchImageAsBase64).not.toHaveBeenCalled();
+    expect(mocks.generateGeminiJson).not.toHaveBeenCalled();
+    expect(mocks.consumeAiUsage).not.toHaveBeenCalled();
+    expect(mocks.signCalls).toEqual([]);
+  });
 });
