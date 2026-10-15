@@ -1376,6 +1376,11 @@ export default function WeeklyMenuPage() {
 
   // Supabase Realtime チャンネルを保持（クリーンアップ用）
   const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
+  // subscribeToRequestStatus の監視 1 回分の印 (#1622)。完了・失敗・中止で cleanupRealtime が active を false にする。
+  // Realtime の接続の失敗 (TIMED_OUT / CLOSED / CHANNEL_ERROR) と 5 秒後の確認からのポーリングの開始は、印が active のときだけ行う。
+  // 以前は、終わった生成でも (removeChannel が出す CLOSED や、残っていた 5 秒のタイマーから) ポーリングをやり直し、
+  // 終わった要求の状態をもう一度読んで、失敗の表示を出し直したり、別の週に切り替えたあとに古い週の献立を読み直したりしていた
+  const requestWatchRef = useRef<{ active: boolean } | null>(null);
   const supabaseRef = useRef(createClient());
   
   // 生成中状態のチェックが進行中かどうかを追跡（重複API呼び出し防止）
@@ -1386,6 +1391,11 @@ export default function WeeklyMenuPage() {
   
   // Realtime サブスクリプションをクリーンアップする関数
   const cleanupRealtime = useCallback(() => {
+    // removeChannel が同期で CLOSED を通知しても、ポーリングをやり直さないよう、チャンネルを外す前に印を下ろす (#1622)
+    if (requestWatchRef.current) {
+      requestWatchRef.current.active = false;
+      requestWatchRef.current = null;
+    }
     if (realtimeChannelRef.current) {
       supabaseRef.current.removeChannel(realtimeChannelRef.current);
       realtimeChannelRef.current = null;
@@ -2199,12 +2209,16 @@ export default function WeeklyMenuPage() {
     // 既存のサブスクリプションをクリーンアップ
     cleanupRealtime();
     cleanupPolling();
-    
+
+    // この監視の印 (#1622)。完了・失敗・中止 (どれも cleanupRealtime を呼ぶ) か、次の監視の開始で active が false になる
+    const watch = { active: true };
+    requestWatchRef.current = watch;
+
     console.log('📡 Subscribing to Realtime for requestId:', requestId);
-    
+
     // 常にポーリングも開始（Realtimeの信頼性が低いため）
     startPolling(targetDate, requestId, ultimateMode);
-    
+
     let realtimeConnected = false;
     
     const channel = supabaseRef.current
@@ -2271,6 +2285,8 @@ export default function WeeklyMenuPage() {
               localStorage.removeItem('weeklyMenuGenerating');
               localStorage.removeItem('singleMealGenerating');
               cleanupRealtime();
+              // Realtime で終わりを受け取ったら、並行しているポーリングも止める (#1622。ポーリングが同じ完了をもう一度処理しないように)
+              cleanupPolling();
             } else if (newStatus === 'failed') {
               console.log('❌ Generation failed');
               setIsGenerating(false);
@@ -2279,6 +2295,8 @@ export default function WeeklyMenuPage() {
               localStorage.removeItem('weeklyMenuGenerating');
               localStorage.removeItem('singleMealGenerating');
               cleanupRealtime();
+              // Realtime で失敗を受け取ったら、並行しているポーリングも止める (#1622。失敗の表示を二重に出さないように)
+              cleanupPolling();
               dispatchAiGen({
                 type: 'GEN_FAIL',
                 payload: { error: newData.error_message || '献立の生成に失敗しました。もう一度お試しください。', requestId },
@@ -2296,7 +2314,8 @@ export default function WeeklyMenuPage() {
           realtimeConnected = true;
         } else if (status === 'TIMED_OUT' || status === 'CLOSED' || status === 'CHANNEL_ERROR') {
           // Realtimeが失敗したらポーリングにフォールバック
-          if (!realtimeConnected) {
+          // (この監視が終わったあと (完了・失敗・中止で removeChannel したときの CLOSED) はやり直さない。#1622)
+          if (!realtimeConnected && watch.active) {
             console.warn('📡 Realtime failed, falling back to polling');
             startPolling(targetDate, requestId, ultimateMode);
           }
@@ -2306,8 +2325,9 @@ export default function WeeklyMenuPage() {
     realtimeChannelRef.current = channel;
     
     // 5秒後にRealtimeが接続できていなければポーリング開始
+    // (この監視が 5 秒のうちに終わっていたらやり直さない。#1622)
     setTimeout(() => {
-      if (!realtimeConnected && !pollingIntervalRef.current) {
+      if (!realtimeConnected && !pollingIntervalRef.current && watch.active) {
         console.warn('📡 Realtime not connected after 5s, starting polling');
         startPolling(targetDate, requestId, ultimateMode);
       }
