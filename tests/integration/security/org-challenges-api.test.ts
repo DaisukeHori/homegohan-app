@@ -5,7 +5,8 @@
  * 利用者の権限で数えており、同じ組織の全員が全参加者の user_id・current_value・rank を読める状態だった。
  *
  * #1132 の方針: 参加は任意。順位は参加者どうしにだけ見せ、管理者には集計だけ (人数と平均) を見せる。
- * 少人数だと誰が参加しているか・誰の値かが分かってしまうため、最小人数 (5) に満たない間は人数も平均も出さない。
+ * 少人数だと誰が参加しているか・誰の値かが分かってしまうため、最小人数 (10。#1600) に満たない間は人数も平均も出さない。
+ * 集計は毎晩の更新の時点の控えから返す (#1600。参加をやめた直後に集計が動くと、前後の差から 1 人の値を逆算できるため)。
  * 歩数・体重のチャレンジは、健康データの同意の仕組みができるまで作成も参加もできない。
  *
  * 確認すること (実際の DB と Next の API ルートを通す。RLS・#1238 の INSERT ポリシー・DB 関数を含む):
@@ -14,8 +15,9 @@
  *   B. 参加 / やめる: 開催中のチャレンジにだけ参加できる (下書き・終了・中止・終了日を過ぎたもの・歩数は 409。他組織は 404。
  *      別の部署向けは 403)。二重の参加は 200。参加行は進捗 0・順位なしで作られる。やめると本人の行だけ消える
  *   C. 順位表: 参加者本人にだけ返る (参加していない人・管理者には返らない)。他人の ID・ニックネームは応答に現れない
- *   D. 管理者向けの集計: 参加者が 5 人に満たない間は人数も平均も null。5 人になると出る。個人の値・ID は出ない。
- *      管理者がメンバー向けの API を呼んでも、参加者数は同じ規則で隠される。RLS で管理者も他人の参加行を読めない
+ *   D. 管理者向けの集計: 参加者が 10 人に満たない間は人数も平均も null。10 人になると出る。個人の値・ID は出ない。
+ *      管理者がメンバー向けの API を呼んでも、参加者数は同じ規則で隠される。RLS で管理者も他人の参加行を読めない。
+ *      参加をやめる API を呼んだ直後は、管理者の集計が動かない (次の夜の更新で反映される)
  *   E. 作成の制限: 歩数・体重・カスタムは作成も開始もできない (400)
  *
  * 実行 (ローカル Supabase + dev サーバー。tests/integration/security/org-departments-api.test.ts と同じ):
@@ -125,6 +127,15 @@ async function createChallenge(seed: ChallengeSeed = {}): Promise<string> {
   return data.id as string;
 }
 
+/**
+ * 管理者に見せる集計の控えを数え直す (毎晩 03:10 JST の update_org_challenge_progress の中で呼ばれるもの。#1600)。
+ * 集計は控えから返るので、参加行を用意したあとに呼ぶ
+ */
+async function refreshAggregates(): Promise<void> {
+  const { error } = await srAdmin.rpc('refresh_org_challenge_aggregates', {});
+  if (error) throw new Error(`refresh_org_challenge_aggregates: ${error.code} ${error.message}`);
+}
+
 /** 参加行を service_role で作る (集計済みの値を入れられる) */
 async function seedParticipant(challengeId: string, user: TestUser, value?: number, rank?: number) {
   const row: Record<string, unknown> = { challenge_id: challengeId, user_id: user.id };
@@ -165,6 +176,12 @@ let m3: TestUser;
 let m4: TestUser;
 let m5: TestUser;
 let m6: TestUser; // 組織 A の一般メンバー。部署なし
+// m7〜m11: 集計の最小人数 (10 人。#1600) を超える人数をそろえるための、組織 A の一般メンバー (部署なし)
+let m7: TestUser;
+let m8: TestUser;
+let m9: TestUser;
+let m10: TestUser;
+let m11: TestUser;
 let loner: TestUser; // どの組織にも所属しない
 let b1: TestUser; // 組織 B の一般メンバー
 const createdChallengeIds: string[] = [];
@@ -192,7 +209,7 @@ beforeAll(async () => {
   if (deptError || !dept) throw new Error(`departments: ${deptError?.message}`);
   deptX = dept.id as string;
 
-  [owner, admin, m1, m2, m3, m4, m5, m6, loner, b1] = await Promise.all([
+  [owner, admin, m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, loner, b1] = await Promise.all([
     createUser('owner'),
     createUser('admin'),
     createUser('m1'),
@@ -201,13 +218,18 @@ beforeAll(async () => {
     createUser('m4'),
     createUser('m5'),
     createUser('m6'),
+    createUser('m7'),
+    createUser('m8'),
+    createUser('m9'),
+    createUser('m10'),
+    createUser('m11'),
     createUser('loner'),
     createUser('b1'),
   ]);
   await setMembership(owner.id, orgA, 'owner');
   await setMembership(admin.id, orgA, 'admin');
   await setMembership(m1.id, orgA, 'member', deptX);
-  for (const u of [m2, m3, m4, m5, m6]) await setMembership(u.id, orgA, 'member');
+  for (const u of [m2, m3, m4, m5, m6, m7, m8, m9, m10, m11]) await setMembership(u.id, orgA, 'member');
   await setMembership(b1.id, orgB, 'member');
 }, 120_000);
 
@@ -514,7 +536,7 @@ describe('#1132 C. 順位表は参加者本人にだけ', () => {
 // ================================================================
 // D. 管理者向けの集計 (最小人数)
 // ================================================================
-describe('#1132 D. 管理者向けの集計は、5 人に満たない間は人数も平均も出さない', () => {
+describe('#1132 / #1600 D. 管理者向けの集計は、10 人に満たない間は人数も平均も出さない。やめた直後には動かない', () => {
   interface AdminChallenge {
     id: string;
     challengeType: string;
@@ -528,59 +550,56 @@ describe('#1132 D. 管理者向けの集計は、5 人に満たない間は人�
     return { raw: JSON.stringify(res.body), challenge: res.body.challenges.find((c) => c.id === challengeId)! };
   }
 
-  it('D-1: 参加者が 4 人のとき、人数も平均も null。個人の ID・値・順位は応答に現れない', async () => {
+  /** 組織 A の一般メンバー 11 人 (最小人数 10 人の境界をまたぐ人数) */
+  const members = () => [m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11];
+
+  it('D-1: 参加者が 9 人のとき、人数も平均も null。個人の ID・値・順位は応答に現れない', async () => {
     const challenge = await newChallenge();
-    await seedParticipant(challenge, m1, 90, 1);
-    await seedParticipant(challenge, m2, 70, 2);
-    await seedParticipant(challenge, m3, 50, 3);
-    await seedParticipant(challenge, m4, 10, 4);
+    const values = [90, 70, 50, 10, 30, 20, 40, 60, 80];
+    for (const [i, value] of values.entries()) await seedParticipant(challenge, members()[i], value, i + 1);
+    await refreshAggregates();
 
     const { raw, challenge: view } = await adminView(owner.jwt, challenge);
 
     expect(view.participantCount).toBeNull();
-    expect(view.aggregate).toEqual({ minParticipants: 5, visible: false, averageValue: null });
-    for (const user of [m1, m2, m3, m4]) {
+    expect(view.aggregate).toEqual({ minParticipants: 10, visible: false, averageValue: null });
+    for (const user of members().slice(0, 9)) {
       expect(raw).not.toContain(user.id);
       expect(raw).not.toContain(user.nickname);
     }
   });
 
-  it('D-2: 参加者が 5 人になると、人数と平均 (集計済みの人の平均) が出る。個人の値は出ない', async () => {
+  it('D-2: 参加者が 10 人になると、人数と平均 (集計済みの人の平均) が出る。個人の値は出ない', async () => {
     const challenge = await newChallenge();
-    const values: Array<[TestUser, number]> = [
-      [m1, 90],
-      [m2, 70],
-      [m3, 50],
-      [m4, 10],
-      [m5, 30],
-    ];
-    let rank = 1;
-    for (const [user, value] of values) await seedParticipant(challenge, user, value, rank++);
+    const values = [90, 70, 50, 10, 30, 20, 40, 60, 80, 50];
+    for (const [i, value] of values.entries()) await seedParticipant(challenge, members()[i], value, i + 1);
+    await refreshAggregates();
 
     const { raw, challenge: view } = await adminView(admin.jwt, challenge);
 
-    expect(view.participantCount).toBe(5);
+    expect(view.participantCount).toBe(10);
     expect(view.aggregate.visible).toBe(true);
-    expect(view.aggregate.averageValue).toBe(50); // (90 + 70 + 50 + 10 + 30) / 5
-    for (const user of [m1, m2, m3, m4, m5]) expect(raw).not.toContain(user.id);
+    expect(view.aggregate.averageValue).toBe(50); // (90 + 70 + 50 + 10 + 30 + 20 + 40 + 60 + 80 + 50) / 10
+    for (const user of members().slice(0, 10)) expect(raw).not.toContain(user.id);
     expect(raw).not.toContain('"rank"');
   });
 
-  it('D-3: 参加者は 5 人いるが、集計が済んだ人が 4 人のとき、人数は出て、平均は null', async () => {
+  it('D-3: 参加者は 10 人いるが、集計が済んだ人が 9 人のとき、人数は出て、平均は null', async () => {
     const challenge = await newChallenge();
-    for (const [i, user] of [m1, m2, m3, m4].entries()) await seedParticipant(challenge, user, 50, i + 1);
-    await seedParticipant(challenge, m5); // 参加したばかり (rank なし)
+    for (const [i, user] of members().slice(0, 9).entries()) await seedParticipant(challenge, user, 50, i + 1);
+    await seedParticipant(challenge, m10); // 参加したばかり (rank なし)
+    await refreshAggregates();
 
     const { challenge: view } = await adminView(owner.jwt, challenge);
 
-    expect(view.participantCount).toBe(5);
-    expect(view.aggregate).toEqual({ minParticipants: 5, visible: false, averageValue: null });
+    expect(view.participantCount).toBe(10);
+    expect(view.aggregate).toEqual({ minParticipants: 10, visible: false, averageValue: null });
   });
 
   it('D-4: 管理者がメンバー向けの API を呼んでも、参加者数は同じ規則で隠される (制限を迂回できない)', async () => {
     const challenge = await newChallenge();
-    await seedParticipant(challenge, m1, 90, 1);
-    await seedParticipant(challenge, m2, 70, 2);
+    for (const [i, user] of members().slice(0, 9).entries()) await seedParticipant(challenge, user, 50, i + 1);
+    await refreshAggregates();
 
     const list = await apiCall<{ challenges: Array<{ id: string; participantCount: number | null }>; minParticipants: number }>(
       'GET',
@@ -594,9 +613,9 @@ describe('#1132 D. 管理者向けの集計は、5 人に満たない間は人�
     );
 
     expect(list.body.challenges.find((c) => c.id === challenge)!.participantCount).toBeNull();
-    expect(list.body.minParticipants).toBe(5);
+    expect(list.body.minParticipants).toBe(10);
     expect(detail.body.participantCount).toBeNull();
-    expect(detail.body.minParticipants).toBe(5);
+    expect(detail.body.minParticipants).toBe(10);
   });
 
   it('D-5: 他組織の管理者には、この組織のチャレンジの集計は見えない', async () => {
@@ -640,6 +659,37 @@ describe('#1132 D. 管理者向けの集計は、5 人に満たない間は人�
       const ranking = await asUser(user.jwt).rpc('get_org_challenge_ranking', { p_challenge_id: challenge, p_user_id: user.id });
       expect(ranking.error?.code, 'get_org_challenge_ranking').toBe('42501');
     }
+  });
+
+  it('D-8: 参加をやめる API を呼んだ直後は、管理者の集計 (人数と平均) が動かない。次の夜の更新で反映される (#1600)', async () => {
+    const challenge = await newChallenge();
+    // 11 人。合計 660 → 平均 60。m1 (110) がやめると 10 人で 550 → 平均 55
+    const values = [110, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10];
+    for (const [i, value] of values.entries()) await seedParticipant(challenge, members()[i], value, i + 1);
+    await refreshAggregates();
+
+    const before = (await adminView(owner.jwt, challenge)).challenge;
+    expect(before.participantCount).toBe(11);
+    expect(before.aggregate).toEqual({ minParticipants: 10, visible: true, averageValue: 60 });
+    const memberBefore = await apiCall<{ participantCount: number | null }>('GET', `/api/org/challenges/${challenge}`, m2.jwt);
+    expect(memberBefore.body.participantCount).toBe(11);
+
+    const left = await apiCall<{ joined: boolean }>('DELETE', `/api/org/challenges/${challenge}/join`, m1.jwt);
+    expect(left.status).toBe(200);
+    expect(await participantRow(challenge, m1.id)).toBeNull(); // 参加行はすぐ消える (順位表からはすぐ外れる)
+
+    // 直後: 管理者の一覧・メンバー向けの詳細とも、人数も平均も前のまま (前後の差から m1 の値 = 11 × 60 − 10 × 55 を逆算できない)
+    const after = (await adminView(owner.jwt, challenge)).challenge;
+    expect(after.participantCount).toBe(before.participantCount);
+    expect(after.aggregate).toEqual(before.aggregate);
+    const memberAfter = await apiCall<{ participantCount: number | null }>('GET', `/api/org/challenges/${challenge}`, m2.jwt);
+    expect(memberAfter.body.participantCount).toBe(11);
+
+    // 次の夜の更新で外れる
+    await refreshAggregates();
+    const next = (await adminView(owner.jwt, challenge)).challenge;
+    expect(next.participantCount).toBe(10);
+    expect(next.aggregate).toEqual({ minParticipants: 10, visible: true, averageValue: 55 });
   });
 });
 

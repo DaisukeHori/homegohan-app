@@ -3,7 +3,7 @@
  *
  * 確かめること:
  *   - 管理者向けの集計 (fetchChallengeAggregates): DB の関数 get_org_challenge_aggregates の応答を、人数・平均だけの形にする。
- *     最小人数に満たないとき DB の関数が返す null を、0 や空にせずそのまま通す (「0 人」と「5 人未満」を取り違えない)
+ *     最小人数に満たないとき DB の関数が返す null を、0 や空にせずそのまま通す (「0 人」と「10 人未満」を取り違えない)
  *   - 参加者向けの順位表 (fetchChallengeRanking): 本人は「あなた」。ほかの参加者は、表示名を出す設定のときだけニックネーム、
  *     そうでなければ「参加者」。表示名を出さない設定のときは、DB の関数にも表示名を求めない
  *   - メンバーに見せるチャレンジの判定 (isVisibleToMember) と、メンバー向けに返す形 (toMemberChallengeDto)
@@ -67,32 +67,32 @@ describe('toNumber', () => {
 describe('fetchChallengeAggregates', () => {
   it('組織 ID だけを渡して DB の関数を呼び、チャレンジごとの人数・最小人数・平均にする', async () => {
     const rpc = rpcReturning([
-      { challenge_id: 'c-1', participant_count: 12, min_participants: 5, average_value: '63.2' },
-      { challenge_id: 'c-2', participant_count: '7', min_participants: 5, average_value: null },
+      { challenge_id: 'c-1', participant_count: 12, min_participants: 10, average_value: '63.2' },
+      { challenge_id: 'c-2', participant_count: '11', min_participants: 10, average_value: null },
     ]);
 
     const result = await fetchChallengeAggregates({ rpc } as never, ORG_ID);
 
     expect(rpc).toHaveBeenCalledTimes(1);
     expect(rpc).toHaveBeenCalledWith('get_org_challenge_aggregates', { p_organization_id: ORG_ID });
-    expect(result.get('c-1')).toEqual({ participantCount: 12, minParticipants: 5, averageValue: 63.2 });
-    expect(result.get('c-2')).toEqual({ participantCount: 7, minParticipants: 5, averageValue: null });
+    expect(result.get('c-1')).toEqual({ participantCount: 12, minParticipants: 10, averageValue: 63.2 });
+    expect(result.get('c-2')).toEqual({ participantCount: 11, minParticipants: 10, averageValue: null });
   });
 
   it('最小人数に満たないとき DB の関数が返す null は、0 にせず null のまま通す', async () => {
-    const rpc = rpcReturning([{ challenge_id: 'c-1', participant_count: null, min_participants: 5, average_value: null }]);
+    const rpc = rpcReturning([{ challenge_id: 'c-1', participant_count: null, min_participants: 10, average_value: null }]);
 
     const result = await fetchChallengeAggregates({ rpc } as never, ORG_ID);
 
-    expect(result.get('c-1')).toEqual({ participantCount: null, minParticipants: 5, averageValue: null });
+    expect(result.get('c-1')).toEqual({ participantCount: null, minParticipants: 10, averageValue: null });
   });
 
   it('0 人・平均 0 は null と区別する', async () => {
-    const rpc = rpcReturning([{ challenge_id: 'c-1', participant_count: 0, min_participants: 5, average_value: 0 }]);
+    const rpc = rpcReturning([{ challenge_id: 'c-1', participant_count: 0, min_participants: 10, average_value: 0 }]);
 
     const result = await fetchChallengeAggregates({ rpc } as never, ORG_ID);
 
-    expect(result.get('c-1')).toEqual({ participantCount: 0, minParticipants: 5, averageValue: 0 });
+    expect(result.get('c-1')).toEqual({ participantCount: 0, minParticipants: 10, averageValue: 0 });
   });
 
   it('行が無い (チャレンジが無い組織) ときは空の Map', async () => {
