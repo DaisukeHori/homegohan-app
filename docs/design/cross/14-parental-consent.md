@@ -499,7 +499,7 @@ CREATE TABLE IF NOT EXISTS public.parental_consents (
   signed_at            timestamptz NOT NULL DEFAULT now(),
   ip_address           inet,
   user_agent           text,                   -- 512 文字で切る (accept_legal_documents と同じ)
-  revoked_at           timestamptz,            -- 取り消し (子供を家族から外した) 日時。NULL = 有効
+  revoked_at           timestamptz,            -- 取り消し (子供を家族から外した・子供の行が消えた) 日時。NULL = 有効
   revoked_reason       text,
   CONSTRAINT parental_consents_signed_name_length CHECK (length(signed_name) BETWEEN 1 AND 100),  -- SIGNED_NAME_MAX_LENGTH
   CONSTRAINT parental_consents_guardian_attested  CHECK (guardian_attested),
