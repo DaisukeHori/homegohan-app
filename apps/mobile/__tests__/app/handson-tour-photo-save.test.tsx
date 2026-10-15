@@ -101,12 +101,14 @@ const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_CONFLICT = 409;
 const HTTP_INTERNAL_ERROR = 500;
-/** 1.1 → 1.5 の自動進行の合計 (photo.tsx のタイマー表と同じ定数) */
-const AUTO_STEPS_TOTAL_MS =
-  HANDSON_TOUR_CONSTANTS.STEP1_INTRO_AUTO_MS +
-  HANDSON_TOUR_CONSTANTS.STEP1_CAMERA_AUTO_MS +
-  HANDSON_TOUR_CONSTANTS.STEP1_ANALYZING_DURATION_MS +
-  HANDSON_TOUR_CONSTANTS.STEP1_RESULT_TO_SPOTLIGHT_MS;
+/** 1.1 → 1.5 の自動進行の各段の待ち (photo.tsx のタイマー表と同じ定数)。次の段のタイマーは描き直しのあとに張られるので 1 段ずつ進める */
+const AUTO_STEP_DURATIONS_MS = [
+  HANDSON_TOUR_CONSTANTS.STEP1_INTRO_AUTO_MS,
+  HANDSON_TOUR_CONSTANTS.STEP1_CAMERA_AUTO_MS,
+  HANDSON_TOUR_CONSTANTS.STEP1_ANALYZING_DURATION_MS,
+  HANDSON_TOUR_CONSTANTS.STEP1_RESULT_TO_SPOTLIGHT_MS,
+];
+const AUTO_STEPS_TOTAL_MS = AUTO_STEP_DURATIONS_MS.reduce((sum, ms) => sum + ms, 0);
 
 type FakeResponse = { ok: boolean; status: number; statusText: string; text: () => Promise<string> };
 
@@ -196,9 +198,11 @@ describe('#1625: 吹き出しの【保存】は保存してから進む (以前�
     );
     const screen = render(<HandsonTourPhoto />);
 
-    act(() => {
-      jest.advanceTimersByTime(AUTO_STEPS_TOTAL_MS);
-    });
+    for (const ms of AUTO_STEP_DURATIONS_MS) {
+      act(() => {
+        jest.advanceTimersByTime(ms);
+      });
+    }
     expect(screen.getByTestId('overlay-sub-step-1.5')).toBeTruthy();
     expect(screen.getByText(i18n.next_button)).toBeTruthy();
     fireEvent.press(screen.getByTestId('overlay-primary'));
