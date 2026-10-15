@@ -3,8 +3,9 @@
  *
  * 修正前の部署 API は、存在しないテーブル organization_departments を参照しており、
  * 組織の owner / admin でも全メソッドが 500 だった (設計 v2 の F-5)。
- * 画面 (src/app/(org)/org/departments、apps/mobile の部署画面) は
- * { id, name, parentId, managerId, displayOrder, memberCount, createdAt } を期待している。
+ * 画面 (src/app/(org)/org/departments) は
+ * { id, name, parentId, managerId, displayOrder, memberCount, createdAt } を期待している
+ * (モバイルの部署画面も同じ形を期待していたが、通常の操作で届かない画面として消した。#1598)。
  *
  * 期待する挙動 (設計 v2 §3 / §3.3.1、2026-10-07 のオーナー判断「設計 v2 どおり」):
  *   - departments テーブルを読み書きし、画面の形で返す

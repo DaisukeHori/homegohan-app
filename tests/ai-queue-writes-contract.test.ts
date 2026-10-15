@@ -133,7 +133,9 @@ const isMobile = (file: string) => file.startsWith('apps/mobile/');
 describe('AI のキューへの書き込みは service role だけ (#1465)', () => {
   it('走査が対象のファイルを見ている (route・モバイルの画面を含む)', () => {
     expect(appFiles).toContain('src/app/api/ai/menu/v5/generate/route.ts');
-    expect(appFiles).toContain('apps/mobile/app/menus/weekly/index.tsx');
+    // モバイルでキューの表を読むファイル (週の献立のネイティブの画面は #1598 で消した。いまは生成のフック)
+    expect(appFiles).toContain('apps/mobile/src/hooks/useV4MenuGeneration.ts');
+    expect(mentionsQueue('apps/mobile/src/hooks/useV4MenuGeneration.ts')).toBe(true);
     expect(appFiles).toContain('lib/meal-image-jobs.ts');
     expect(appFiles.some((file) => file.includes('node_modules'))).toBe(false);
     // 書き込みは 1 つ以上見つかる (検出の正規表現が壊れていない)

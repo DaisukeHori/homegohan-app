@@ -110,7 +110,7 @@ describe('GET /api/super-admin/settings', () => {
   });
 });
 
-describe('#1486 GET / PUT の列の名前 (モバイルの画面が読む名前とそろえる)', () => {
+describe('#1486 GET / PUT の列の名前 (DB の列の名前のまま返す)', () => {
   it('GET は description と updated_at を、DB の列の名前のまま返す', async () => {
     h.selectResult = {
       data: [{ key: 'support_email', value: 'support@example.com', description: '問い合わせ先', updated_at: '2026-09-02T00:00:00Z' }],

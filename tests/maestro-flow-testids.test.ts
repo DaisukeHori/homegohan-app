@@ -138,8 +138,9 @@ describe("#1552 maestro の flow の testID の抜き出し (検査の道具そ�
       expect(extractFlowIds(yaml).length, flow).toBe(crudeCount(yaml));
     }
     // フローの書き方だけで書かれた実物の flow (以前はここの id を 1 つも拾えていなかった)
-    const servings = fs.readFileSync(path.join(REPO_ROOT, fromMaestro("flows/menus-weekly/17-servings-modal.yaml")), "utf8");
-    expect(extractFlowIds(servings)).toContain("weekly-servings-btn");
+    // (以前ここで見ていた flows/menus-weekly/17-servings-modal.yaml は、週の献立のネイティブの画面と一緒に消した。#1598)
+    const tabDirect = fs.readFileSync(path.join(REPO_ROOT, fromMaestro("flows/menus-weekly/03-tab-direct-navigation.yaml")), "utf8");
+    expect(extractFlowIds(tabDirect)).toContain("tab-menus");
   });
 
   it("ソースの testID を、属性・オブジェクトの値・三項演算子・テンプレート・型注釈つきの対応表・接頭辞から集める", () => {
@@ -376,11 +377,13 @@ describe("#1552 maestro の flow の testID の抜き出し (検査の道具そ�
     // (以前ここで見ていた apps/mobile/app/meals/new.tsx の `meal-mode-${…}` は、届かない画面として消した。#1598)
     expect(isFlowIdInSource("onboarding-choice-option-male", ids)).toBe(true);
     expect(isFlowIdInSource("meal-mode-meal", ids)).toBe(false);
-    // apps/mobile/app/(tabs)/health.tsx のクイックアクション (const testID = a.href === … ? "health-graphs-button" : …;
-    // 右辺が三項の式。#1552 の最初の集め方では読めず、ソースにあるのに許可リストに載っていた)
-    expect(isFlowIdInSource("health-graphs-button", ids)).toBe(true);
-    expect(isFlowIdInSource("health-goals-button", ids)).toBe(true);
-    // 比べる演算子の片側 ((tabs)/favorites.tsx の opt.value === "newest"・handson-tour の typeof target === 'string') は testID ではない
+    // apps/mobile/app/onboarding/questions.tsx の testID={isLastStep ? "onboarding-submit-button" : "onboarding-next-button"}
+    // (JSX の値が三項の式。以前ここで見ていた (tabs)/health.tsx の `const testID = … ? "health-graphs-button" : …` は、
+    // 届かない画面として消した。#1598。消した画面の testID はもう見つからない)
+    expect(isFlowIdInSource("onboarding-submit-button", ids)).toBe(true);
+    expect(isFlowIdInSource("onboarding-next-button", ids)).toBe(true);
+    expect(isFlowIdInSource("health-graphs-button", ids)).toBe(false);
+    // 比べる演算子の片側 (handson-tour の typeof target === 'string' など) は testID ではない
     for (const id of ["newest", "oldest", "string"]) {
       expect(isFlowIdInSource(id, ids), id).toBe(false);
     }
@@ -425,8 +428,10 @@ describe("#1552 maestro の flow が期待する testID は、ソースに実在
       for (const m of text.matchAll(/(["'`])([\w:-]+)\1/g)) quotedStrings.exact.add(m[2]);
     }
     const quotedInSource = (id: string) => isFlowIdInSource(id, quotedStrings);
-    // 素朴な方法の検出力: 集め方が以前読めなかった書き方 ((tabs)/health.tsx の const testID = … ? "health-graphs-button" : …) を見つける
-    expect(quotedInSource("health-graphs-button")).toBe(true);
+    // 素朴な方法の検出力: 三項の式の中の testID (onboarding/questions.tsx の testID={isLastStep ? "onboarding-submit-button" : …}) を見つける
+    // (以前ここで見ていた (tabs)/health.tsx の "health-graphs-button" は、届かない画面として消した。#1598)
+    expect(quotedInSource("onboarding-submit-button")).toBe(true);
+    expect(quotedInSource("health-graphs-button")).toBe(false);
     const found = MAESTRO_MISSING_TESTID_ALLOWLIST.filter((a) => quotedInSource(a.id)).map((a) => `${a.flow} ${a.id}`);
     expect(
       found,

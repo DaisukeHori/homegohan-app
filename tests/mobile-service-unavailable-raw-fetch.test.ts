@@ -28,7 +28,8 @@ const MOBILE_SOURCE_DIRS = ['apps/mobile/app', 'apps/mobile/src'];
 const AI_CONSULTATION_PATH = '/api/ai/consultation';
 
 /** 生の fetch で AI 相談を呼ぶファイル (リポジトリのルートからの相対パス)。足した・消したら、ここで気づく */
-const RAW_FETCH_FILES = ['apps/mobile/app/ai/[sessionId].tsx', 'apps/mobile/src/components/ai/AIAdvisorSheet.tsx'];
+// (全画面の AI 相談 apps/mobile/app/ai/[sessionId].tsx も生の fetch で呼んでいたが、通常の操作で届かない画面として消した。#1598)
+const RAW_FETCH_FILES = ['apps/mobile/src/components/ai/AIAdvisorSheet.tsx'];
 
 /** 失敗の応答を 503 の固定の文にする関数 (apps/mobile/src/lib/failed-response.ts・apps/mobile/src/lib/service-unavailable.ts) */
 const READERS = ['errorOfFailedResponse', 'serviceUnavailableMessageOf'];

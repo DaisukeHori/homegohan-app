@@ -706,7 +706,8 @@ describe('走査そのもの', () => {
     expect(sources.length).toBeGreaterThan(500);
     expect(sources).toContain('supabase/functions/generate-menu-v4/index.ts');
     expect(sources).toContain('src/app/api/ai/nutrition-analysis/route.ts');
-    expect(sources).toContain('apps/mobile/app/health/graphs.tsx');
+    // (以前はモバイルの健康グラフ apps/mobile/app/health/graphs.tsx を見ていた。#1598 で消したので、残した設定の画面を見る)
+    expect(sources).toContain('apps/mobile/app/(tabs)/settings.tsx');
     expect(sources.some((f) => /\.test\.[jt]sx?$/.test(f))).toBe(false);
   });
 
@@ -1001,7 +1002,7 @@ const REQUIRED_CALLS: Record<string, string[]> = {
   'src/app/onboarding/questions/page.tsx': ['todayLocal'],
   'src/components/ai-assistant/V4GenerateModal.tsx': ['addDaysToDate'],
   // 画面 (モバイル)
-  'apps/mobile/app/health/graphs.tsx': ['healthGraphFetchStartDate', 'healthGraphDateSlots'],
+  // (apps/mobile/app/health/graphs.tsx の行は、画面ごと消したので除いた。#1598)
   'apps/mobile/src/components/menu/V4GenerateModal.tsx': ['addDaysToDate'],
   'apps/mobile/src/components/ai/AIDayMenuModal.tsx': ['todayLocal'],
 };

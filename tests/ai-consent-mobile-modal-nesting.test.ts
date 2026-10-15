@@ -6,6 +6,7 @@
  * 案内の「同意画面を開く」で移った同意画面が見えない。R4 で、AI 相談のシート (AIAdvisorSheet) の上に開く
  * 1日献立の作成 (AIDayMenuModal) がこの形だった。同じ形が、手動編集 (ManualEditModal) の上の写真の解析 (PhotoEditModal) と、
  * 栄養分析の詳細 (NutritionDetailModal) の中の献立の改善 (ImproveMealModal) にもあった。
+ * (この 2 つは、それを開く週の献立のネイティブの画面と一緒に消した。#1598)
  *
  * 規則 (apps/mobile/src/lib/ai-consent.ts の先頭の説明): モーダルを描く部品の中に置かれた部品は、自分で案内を出さず、
  * 自分を閉じてから、開いた側から受け取った onAiConsentRequired を呼ぶ。開いた側が、自分も閉じて (または
@@ -288,17 +289,19 @@ function mobileComponents(): ComponentInfo[] {
 describe('モーダルの上に開く部品は、「同意が必要です」の案内を自分で出さない (開いた側が閉じてから出す)', () => {
   const components = mobileComponents();
 
-  it('走査が空振りしていない: いまの入れ子 (モーダルの中に置いたモーダル) の 3 組と、自分で案内を出す部品を見つけている', () => {
+  it('走査が空振りしていない: いまの入れ子 (モーダルの中に置いたモーダル) と、自分で案内を出す部品を見つけている', () => {
+    // (週の献立の画面のモーダル (手動編集・栄養分析の詳細・作り直し・買い物リスト・冷蔵庫) は、それを開く週の献立のネイティブの画面と
+    // 一緒に消した。#1598。いまの入れ子は AI 相談のシートの上の 1日献立変更だけ)
     const byName = new Map(components.map((c) => [c.name, c]));
     const modalNesting = components
       .filter((parent) => parent.rendersModal)
       .flatMap((parent) => [...parent.children].filter((child) => byName.get(child)?.rendersModal).map((child) => `${parent.name} → ${child}`));
     expect(modalNesting).toEqual(
-      expect.arrayContaining(['AIAdvisorSheet → AIDayMenuModal', 'ManualEditModal → PhotoEditModal', 'NutritionDetailModal → ImproveMealModal']),
+      expect.arrayContaining(['AIAdvisorSheet → AIDayMenuModal']),
     );
     const prompting = promptingNames(components);
     // AiSkippedNotice は案内を通さずに同意画面へ直接移る (router.push(AI_CONSENT_SCREEN_PATH))
-    for (const name of ['AIAdvisorSheet', 'ManualEditModal', 'NutritionDetailModal', 'RegenerateMealModal', 'useHomeData', 'AiSkippedNotice']) {
+    for (const name of ['AIAdvisorSheet', 'useHomeData', 'AiSkippedNotice']) {
       expect(prompting.has(name), name).toBe(true);
     }
   });
@@ -310,17 +313,13 @@ describe('モーダルの上に開く部品は、「同意が必要です」の�
   });
 
   it('props の visible で開くモーダルの上に重ねたモーダルは、親の <Modal> の中に置くか、visible={visible && …} で親と一緒に閉じる', () => {
-    // 空振りしていない: 親の <Modal> の外に重ねたモーダル (AI 相談の 1日献立・手動編集の写真・買い物リストと冷蔵庫の追加) を見つけている
+    // 空振りしていない: 親の <Modal> の外に重ねたモーダル (AI 相談の 1日献立) を見つけている
+    // (手動編集の写真・買い物リストと冷蔵庫の追加は、それを持つ週の献立のネイティブの画面のモーダルと一緒に消した。#1598)
     const siblings = components
       .filter((c) => c.modalVisibleFromProp)
       .flatMap((c) => c.childElements.filter((e) => !e.insideModal && e.visibleFollowsParent).map((e) => `${c.name} → ${e.tag}`));
     expect(siblings).toEqual(
-      expect.arrayContaining([
-        'AIAdvisorSheet → AIDayMenuModal',
-        'ManualEditModal → PhotoEditModal',
-        'ShoppingListModal → AddShoppingModal',
-        'PantryModal → AddFridgeModal',
-      ]),
+      expect.arrayContaining(['AIAdvisorSheet → AIDayMenuModal']),
     );
     expect(stackedModalsLeftOpen(components)).toEqual([]);
   });

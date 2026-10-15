@@ -14,7 +14,6 @@ import {
   getSupportEmail,
   getSupportMailtoUrl,
   getTermsUrl,
-  orgInvitePageUrl,
 } from '../../src/lib/siteConfig';
 import { DEFAULT_WEB_URL } from '../../src/lib/webBaseUrl';
 
@@ -104,29 +103,6 @@ describe('siteConfig', () => {
     it('存在しないドメインを指さない: 既定の Web は実在する URL (https)', () => {
       expect(getTermsUrl()).toMatch(/^https:\/\/[^/]+\/terms$/);
       expect(getPrivacyUrl()).toMatch(/^https:\/\/[^/]+\/privacy$/);
-    });
-  });
-
-  describe('orgInvitePageUrl (組織の招待のページ。#1647)', () => {
-    const ORIGINAL_API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
-
-    afterEach(() => {
-      if (ORIGINAL_API_BASE_URL === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;
-      else process.env.EXPO_PUBLIC_API_BASE_URL = ORIGINAL_API_BASE_URL;
-    });
-
-    it('EXPO_PUBLIC_WEB_URL が未設定なら、既定の Web (DEFAULT_WEB_URL) の /invite/<token>', () => {
-      expect(orgInvitePageUrl('abc123')).toBe(`${DEFAULT_WEB_URL}/invite/abc123`);
-    });
-
-    it('API の基点 (EXPO_PUBLIC_API_BASE_URL) ではなく、Web のページと同じオリジン (EXPO_PUBLIC_WEB_URL) で組む', () => {
-      process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test';
-      process.env.EXPO_PUBLIC_WEB_URL = 'https://web.example.test/';
-      expect(orgInvitePageUrl('abc123')).toBe('https://web.example.test/invite/abc123');
-    });
-
-    it('トークンはパスの 1 区切りとして符号化する (/ や ? でパス・クエリを変えない)', () => {
-      expect(orgInvitePageUrl('a/b?c#d')).toBe(`${DEFAULT_WEB_URL}/invite/a%2Fb%3Fc%23d`);
     });
   });
 });
