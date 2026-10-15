@@ -29,6 +29,7 @@ import {
 import { useProfile } from '../../src/providers/ProfileProvider';
 import { Confetti } from '../../src/handson-tour/Confetti';
 import { getApi } from '../../src/lib/api';
+import { tourAnalyticsPlatform } from '../../src/handson-tour/tour-platform';
 
 const i18n = HANDSON_TOUR_I18N_JA.tour;
 
@@ -79,7 +80,7 @@ export default function HandsonTourGraduate() {
     fireAnalytics('handson_tour_step_viewed', {
       user_id: profile.id,
       timestamp: new Date().toISOString(),
-      platform: 'ios' as const,
+      platform: tourAnalyticsPlatform(),
       app_version: '1.0.0',
       step: 4,
     });
@@ -103,7 +104,7 @@ export default function HandsonTourGraduate() {
           fireAnalytics('handson_tour_completed', {
             user_id: profile.id,
             timestamp: now,
-            platform: 'ios' as const,
+            platform: tourAnalyticsPlatform(),
             app_version: '1.0.0',
             total_duration_ms,
             step_skipped_count: 0,
@@ -113,7 +114,7 @@ export default function HandsonTourGraduate() {
           fireAnalytics('handson_tour_step_completed', {
             user_id: profile.id,
             timestamp: now,
-            platform: 'ios' as const,
+            platform: tourAnalyticsPlatform(),
             app_version: '1.0.0',
             step: 4,
             dwell_ms: total_duration_ms,
@@ -128,7 +129,7 @@ export default function HandsonTourGraduate() {
           fireAnalytics('handson_tour_step_error', {
             user_id: profile.id,
             timestamp: new Date().toISOString(),
-            platform: 'ios' as const,
+            platform: tourAnalyticsPlatform(),
             app_version: '1.0.0',
             step: 4,
             error_code: 'complete_api_failed',
@@ -194,7 +195,7 @@ export default function HandsonTourGraduate() {
               fireAnalytics('handson_tour_force_replayed', {
                 user_id: profile.id,
                 timestamp: new Date().toISOString(),
-                platform: 'ios' as const,
+                platform: tourAnalyticsPlatform(),
                 app_version: '1.0.0',
                 previous_completed_at: null,
               });
