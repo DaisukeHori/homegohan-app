@@ -92,11 +92,11 @@ describe('#1538 3. 画像の確認の関数', () => {
     expect(sql).toContain(`GRANT EXECUTE ON FUNCTION public.${REFERENCED_NEEDLES_RPC}(text[], timestamptz) TO service_role;`);
   });
 
-  it('隠した表 (食事・レシピ) は、期限を過ぎた隠した行 (今回消える行) を数えない', () => {
+  it('隠した表 (食事・レシピ) は、期限を過ぎた隠した行 (今回消える行) を数えない。期限が NULL なら隠した行もすべて数える', () => {
     for (const spec of HIDDEN_CONTENT_TABLES) {
       const alias = spec.table === 'meals' ? 'm' : 'r';
       expect(sql).toContain(`FROM public.${spec.table} ${alias}`);
-      expect(sql).toContain(`(${alias}.hidden_at IS NULL OR ${alias}.hidden_at >= p_cutoff)`);
+      expect(sql).toContain(`(${alias}.hidden_at IS NULL OR p_cutoff IS NULL OR ${alias}.hidden_at >= p_cutoff)`);
       expect(sql).toContain(`strpos(${alias}.${spec.imageColumn}, n.needle) > 0`);
     }
   });

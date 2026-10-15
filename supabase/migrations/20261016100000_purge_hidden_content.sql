@@ -25,6 +25,7 @@
 --          meal_image_jobs.result_image_url と meal_image_jobs.reference_image_urls (jsonb を文字列にしたもの)
 --          (退会の Storage の掃除 src/lib/account-deletion-storage.ts が URL を集める列と同じもの + 料理の画像・参考画像)
 --      部分文字列の一致なので、取りこぼすより多めに「使われている」と答える (多めに答えたときは、画像を消さずに残すだけ)。
+--      p_cutoff が NULL のときは、隠した行もすべて数える (期限が分からないときに、まだ残す行の画像を消さない)。
 --      表を順に全部読む (列に索引は無い)。呼ぶのは 1 日 1 回の完全削除の、対象の画像がある回だけなので、負荷は小さい。
 --      SECURITY INVOKER。呼べるのは service_role (Edge Function) だけ (RLS を通らずに全員の行を見るため)。
 --   2. public.invoke_purge_hidden_content() を作る。public.invoke_calculate_segment_stats() と同じ形:
@@ -80,12 +81,12 @@ AS $$
   FROM (SELECT DISTINCT needle FROM unnest(p_needles) AS u(needle) WHERE needle IS NOT NULL AND needle <> '') AS n
   WHERE EXISTS (
           SELECT 1 FROM public.meals m
-          WHERE (m.hidden_at IS NULL OR m.hidden_at >= p_cutoff)
+          WHERE (m.hidden_at IS NULL OR p_cutoff IS NULL OR m.hidden_at >= p_cutoff)
             AND strpos(m.photo_url, n.needle) > 0
         )
      OR EXISTS (
           SELECT 1 FROM public.recipes r
-          WHERE (r.hidden_at IS NULL OR r.hidden_at >= p_cutoff)
+          WHERE (r.hidden_at IS NULL OR p_cutoff IS NULL OR r.hidden_at >= p_cutoff)
             AND strpos(r.image_url, n.needle) > 0
         )
      OR EXISTS (

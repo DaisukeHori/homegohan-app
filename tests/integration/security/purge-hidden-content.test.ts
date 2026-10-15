@@ -336,6 +336,14 @@ describe('#1538 C. 画像を消さないもの (行は消える)', () => {
     });
     expect(later.error).toBeNull();
     expect(later.data).toEqual([]);
+
+    // 期限が NULL (分からない) なら、隠した行もすべて数える (まだ残す行の画像を消さない)
+    const unknownCutoff = await srAdmin.rpc('hidden_content_purge_referenced_needles', {
+      p_needles: [needles[1]],
+      p_cutoff: null,
+    });
+    expect(unknownCutoff.error).toBeNull();
+    expect(unknownCutoff.data).toEqual([needles[1]]);
   });
 });
 
