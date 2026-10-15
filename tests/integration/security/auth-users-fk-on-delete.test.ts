@@ -12,7 +12,8 @@
  *   B. RESTRICT は「組織のオーナー」と「家族の代表者」の 2 本だけ (退会 API が先に 409 で止める仕様)
  *   C. SET NULL の外部キーの列はすべて NULL を許す (NOT NULL のままだと、退会が 23502 で失敗する)
  *   D. 張り直した 32 本のうち #1562 で外した gdpr_deletion_requests.user_id を除く 31 本 (と billing/01 で足した billing_customers.user_id・
- *      cross/15 で足した data_subject_requests.user_id・cross/12 で足した operator_mfa_backup_codes.user_id の 3 本の計 34 本) が、決めたとおりの動作 (CASCADE / SET NULL) になっている。admin_audit_logs の actor_id を指す外部キーは 1 本だけ
+ *      cross/15 で足した data_subject_requests.user_id・cross/12 で足した operator_mfa_backup_codes.user_id・mobile/06 で足した push_outbox.user_id の
+ *      4 本の計 35 本) が、決めたとおりの動作 (CASCADE / SET NULL) になっている。admin_audit_logs の actor_id を指す外部キーは 1 本だけ
  *   D2. gdpr_deletion_requests.user_id には auth.users を指す外部キーが無い (#1562 で外した)
  *   E. 退会で消える表 (auth.users と、prepare_account_deletion が直接 DELETE する表から、CASCADE でたどれる表) を指す
  *      NO ACTION / RESTRICT の外部キーは、同じ削除で一緒に消える行からだけ参照されている (許可リスト)。
@@ -114,9 +115,10 @@ const RESTRICT_ALLOWLIST: Readonly<Record<string, string>> = {
 };
 
 /**
- * #1175 で張り直した 32 本と、billing/01・cross/15・cross/12 で足した 1 本ずつの、決めた動作。
+ * #1175 で張り直した 32 本と、billing/01・cross/15・cross/12・mobile/06 で足した 1 本ずつの、決めた動作。
  * ただし gdpr_deletion_requests.user_id の外部キーは #1562 (20261016190000) で外した (削除の実行記録は利用者の行を指さない)。
- * そのためここには #1175 の 31 本と billing_customers.user_id・data_subject_requests.user_id・operator_mfa_backup_codes.user_id の 3 本 (計 34 本) を挙げ、外したことは下の D2 で確かめる
+ * そのためここには #1175 の 31 本と billing_customers.user_id・data_subject_requests.user_id・operator_mfa_backup_codes.user_id・
+ * push_outbox.user_id の 4 本 (計 35 本) を挙げ、外したことは下の D2 で確かめる
  */
 const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   // 本人だけの記録は本人と一緒に消す
@@ -159,6 +161,8 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   'data_subject_requests.user_id': 'SET NULL',
   // cross/12 §11.1: 運営の二段階認証のバックアップコードは本人の認証の材料なので、本人と一緒に消す
   'operator_mfa_backup_codes.user_id': 'CASCADE',
+  // mobile/06 §5.1: Push 通知の送信待ちは本人の端末宛ての運用の記録なので、本人と一緒に消す (S-12)
+  'push_outbox.user_id': 'CASCADE',
 };
 
 /** #1175 で張り直した本数 (migration 20261010000100) */
@@ -171,6 +175,8 @@ const ADDED_BY_BILLING_CORE = 1;
 const ADDED_BY_DATA_SUBJECT_REQUESTS = 1;
 /** cross/12 (20261016230000) で足した本数 (operator_mfa_backup_codes.user_id) */
 const ADDED_BY_OPERATOR_MFA = 1;
+/** mobile/06 (20261016237000) で足した本数 (push_outbox.user_id) */
+const ADDED_BY_PUSH_OUTBOX = 1;
 
 let fks: AuthUsersFk[];
 
@@ -219,14 +225,20 @@ describe('#1562 D2. 削除の実行記録 (gdpr_deletion_requests) は削除し�
 });
 
 describe('#1175 D. 張り直した外部キーの動作', () => {
-  it('決めた動作の一覧は #1175 の 32 本 − #1562 で外した 1 本 + billing/01 の 1 本 + cross/15 の 1 本 + cross/12 の 1 本 (計 34 本) で、外した列を含まない', () => {
+  it('決めた動作の一覧は #1175 の 32 本 − #1562 で外した 1 本 + billing/01 の 1 本 + cross/15 の 1 本 + cross/12 の 1 本 + mobile/06 の 1 本 (計 35 本) で、外した列を含まない', () => {
     expect(Object.keys(EXPECTED_ACTIONS)).toHaveLength(
-      REBUILT_BY_1175 - DROPPED_BY_1562 + ADDED_BY_BILLING_CORE + ADDED_BY_DATA_SUBJECT_REQUESTS + ADDED_BY_OPERATOR_MFA,
+      REBUILT_BY_1175 -
+        DROPPED_BY_1562 +
+        ADDED_BY_BILLING_CORE +
+        ADDED_BY_DATA_SUBJECT_REQUESTS +
+        ADDED_BY_OPERATOR_MFA +
+        ADDED_BY_PUSH_OUTBOX,
     );
     expect(Object.keys(EXPECTED_ACTIONS)).not.toContain('gdpr_deletion_requests.user_id');
     expect(EXPECTED_ACTIONS['billing_customers.user_id']).toBe('SET NULL');
     expect(EXPECTED_ACTIONS['data_subject_requests.user_id']).toBe('SET NULL');
     expect(EXPECTED_ACTIONS['operator_mfa_backup_codes.user_id']).toBe('CASCADE');
+    expect(EXPECTED_ACTIONS['push_outbox.user_id']).toBe('CASCADE');
   });
 
   for (const [key, expected] of Object.entries(EXPECTED_ACTIONS)) {
