@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
+import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
 
 interface FamilyMember {
   id: string;
@@ -101,9 +102,10 @@ export default function FamilyMembersPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ family_id: familyGroup.id }),
       });
-      const json = await res.json();
       if (!res.ok) {
-        alert(json.error?.message ?? '除名に失敗しました');
+        // 理由は本文の code から引く (本文の message は操作ごとの固定の文で理由が読めない。#1576)
+        const json: unknown = await res.json().catch(() => null);
+        alert(`除名に失敗しました: ${membershipErrorMessageOfBody(json)}`);
         return;
       }
       setMembers((prev) => prev.filter((m) => m.id !== member.id));
@@ -120,9 +122,10 @@ export default function FamilyMembersPage() {
     setActionLoading('leave');
     try {
       const res = await fetch('/api/family/leave', { method: 'POST' });
-      const json = await res.json();
       if (!res.ok) {
-        alert(json.error?.message ?? '脱退に失敗しました');
+        // 理由は本文の code から引く (#1576)
+        const json: unknown = await res.json().catch(() => null);
+        alert(`脱退に失敗しました: ${membershipErrorMessageOfBody(json)}`);
         return;
       }
       router.replace('/family/setup');
