@@ -1,4 +1,5 @@
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
+import { resolvePhotoUrlForOwnerRead } from '@/lib/photo-storage-signing';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
@@ -102,6 +103,19 @@ export async function POST(request: Request) {
       const aiConsentDenied = await requireAiConsent(supabase, user.id);
       if (aiConsentDenied) return aiConsentDenied;
 
+      // 食事写真・冷蔵庫写真のバケットの URL は、公開 URL のまま AI 事業者に渡さず、本人の写真であることを確かめて
+      // 署名した URL を渡す (#1365)。他人の写真の URL は AI に渡さない (回数も数えない)。保存するのは送られた URL のまま
+      if (typeof imageUrl !== 'string') {
+        return NextResponse.json({ error: 'imageUrl must be a string' }, { status: 400 });
+      }
+      const readable = await resolvePhotoUrlForOwnerRead(getSupabaseAdmin(), user.id, imageUrl);
+      if (!readable.ok) {
+        return NextResponse.json(
+          { error: '写真を読み込めませんでした。写真を選び直してください。', code: 'PHOTO_NOT_READABLE' },
+          { status: 403 },
+        );
+      }
+
       // nutritionData を直接渡す経路 (上) と、同意が無く止めた経路は AI を呼ばないので、数えるのは AI で解析するここだけ
       // #1149 AI の利用回数の上限の判定と記録 (#1177)。上限に達していれば数えずに 429 AI_DAILY_LIMIT (判定に失敗したときは止めない)
       const aiUsage = await consumeAiUsage(user.id, 'photo_analysis');
@@ -130,7 +144,7 @@ export async function POST(request: Request) {
               role: "user",
               content: [
                 { type: "text", text: prompt },
-                { type: "image_url", image_url: { url: imageUrl } }
+                { type: "image_url", image_url: { url: readable.url } }
               ]
             }
           ],

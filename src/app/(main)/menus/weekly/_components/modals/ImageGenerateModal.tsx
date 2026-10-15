@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import FocusTrap from "focus-trap-react";
 import { X, Plus, Sparkles, Image as ImageIcon } from "lucide-react";
 import Image from "next/image";
+import { SignedPhotoImage } from "@/components/photo/SignedPhotoImage";
 import { useFormDraftStore } from "../../_state";
 import { useDialogA11y } from "@/components/common/useDialogA11y";
 
@@ -117,7 +118,7 @@ export function ImageGenerateModal({
           <div className="mb-4">
             <label style={{ fontSize: 12, color: colors.textMuted, display: 'block', marginBottom: 8 }}>現在の画像</label>
             <div className="relative h-40 rounded-2xl overflow-hidden" style={{ border: `1px solid ${colors.border}` }}>
-              <Image
+              <SignedPhotoImage
                 src={imageGenerateMeal.imageUrl}
                 alt={imageGenerateMeal.dishName || 'Meal image'}
                 fill

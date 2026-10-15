@@ -163,6 +163,7 @@ const ENTRIES: Entry[] = [
   { file: 'shopping-list/regenerate/route.ts', method: 'POST', load: async () => (await import('@/app/api/shopping-list/regenerate/route')).POST },
   { file: 'shopping-list/route.ts', method: 'DELETE', load: async () => (await import('@/app/api/shopping-list/route')).DELETE },
   { file: 'shopping-list/route.ts', method: 'POST', load: async () => (await import('@/app/api/shopping-list/route')).POST },
+  { file: 'storage/signed-urls/route.ts', method: 'POST', load: async () => (await import('@/app/api/storage/signed-urls/route')).POST },
   { file: 'super-admin/coupons/[id]/apply/route.ts', method: 'POST', load: async () => (await import('@/app/api/super-admin/coupons/[id]/apply/route')).POST },
   { file: 'super-admin/coupons/[id]/route.ts', method: 'PATCH', load: async () => (await import('@/app/api/super-admin/coupons/[id]/route')).PATCH },
   { file: 'super-admin/coupons/route.ts', method: 'POST', load: async () => (await import('@/app/api/super-admin/coupons/route')).POST },
