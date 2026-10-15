@@ -188,7 +188,7 @@ describe('#1642: Step 2 (献立) の端末バックは hard_back でツアーを
     expect(screen.getByTestId('overlay-body')).toHaveTextContent(i18n.step2.flags_bubble);
     fireEvent.press(screen.getByTestId('overlay-primary')); // 2.2 → 2.3
     fireEvent.press(screen.getByTestId('overlay-primary')); // 2.3 → 2.4
-    expect(screen.getByText(i18n.step2.generate_button)).toBeTruthy();
+    expect(screen.getByTestId('overlay-primary')).toHaveTextContent(i18n.step2.generate_button);
     fireEvent.press(screen.getByTestId('overlay-primary')); // 2.4 → 2.5
   }
 
@@ -259,7 +259,7 @@ describe('#1642: Step 2 (献立) の端末バックは hard_back でツアーを
     });
     expect(screen.getByTestId('overlay-body')).toHaveTextContent(i18n.step2.result_bubble_no_exclude);
     fireEvent.press(screen.getByTestId('overlay-primary')); // 2.6 → 2.7
-    expect(screen.getByText(i18n.step2.add_button)).toBeTruthy();
+    expect(screen.getByTestId('overlay-primary')).toHaveTextContent(i18n.step2.add_button);
     fireEvent.press(screen.getByTestId('overlay-primary')); // 2.7 → 2.8 (Step 2 の完了)
     expect(analyticsCalls('handson_tour_step_completed')).toEqual([expect.objectContaining({ step: 2 })]);
 
