@@ -297,6 +297,8 @@ export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
   derived_recipes: 'AI が作った派生レシピの内部データ (embedding ベクトルを含む。献立は planned_meals に出力済み)',
   user_metrics: 'システムが計算した集計指標 (派生データ)',
   user_segment_rankings: '他ユーザーとの比較から算出したランキング (派生データ)',
+  organization_challenge_ranking_entries:
+    '組織チャレンジの順位表の控え (毎晩の更新の時点の organization_challenge_participants の順位・値の写し。本人の進み具合・順位は organization_challenge_participants に出力済み。本人が読める RLS ポリシーが無く、service_role だけが読み書きする。#1600)',
 
   // 他人の情報を含む・共有されているレコード
   organizations: '組織そのもの (共有エンティティ。所属情報は user_profiles に含まれる)',
