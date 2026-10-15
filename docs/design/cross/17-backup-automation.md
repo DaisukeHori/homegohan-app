@@ -47,11 +47,11 @@ Issue 本文との食い違い (本書を正とする): #1129 の「vercel.json 
 | S-3 | 1 月 1 日。S-1 (と月曜なら S-2) に加えて `annual/` へコピーし、`backup.annual.completed` を残す |
 | S-4 | R2 の鍵や暗号化の受け手 (GitHub の secrets / variables) が未設定。DB に繋いだあと設定の検査で止まり、ダンプを作らず、`backup.daily.failed` (reason `not_configured`) を残し、Issue を立て、終了コード 3 |
 | S-5 | DB パスワードが間違っている (link が失敗)。監査行は書けないので Issue だけ (段・理由は結果ファイルで report の step へ渡す)。翌日 14:37 JST の鮮度の cron が「30 時間より古い」を検知して運用メールを 1 通送る |
-| S-6 | ダンプは終わったが `data.sql` が途中で切れている (末尾の `-- PostgreSQL database dump complete` が無い・`COPY public.` の表が `schema.sql` の表と合わない)。送らず、`failed` (stage `verify`, reason `dump_incomplete`) を残し、Issue |
+| S-6 | ダンプは終わったが `data.sql` が途中で切れている (pg_dump の完了行 `-- PostgreSQL database dump complete` と、CLI が最後に足す `RESET ALL;` が無い・`COPY "public".` の表が `schema.sql` の表と合わない)。送らず、`failed` (stage `verify`, reason `dump_incomplete`) を残し、Issue |
 | S-7 | R2 への送信が途中で切れる。aws cli の再試行でも駄目なら `failed` (stage `upload`)。翌日の成功で Issue は自動で閉じる |
 | S-8 | 同じ日に手動 (workflow_dispatch) でもう 1 回流す。ファイル名に実行時刻 (UTC) が入るので別の対象物になり、bucket lock に当たらず、監査行も 2 つ |
 | S-9 | push の無い 60 日が過ぎて GitHub が schedule を止めた。Actions は何も失敗しない。鮮度の cron が 30 時間を超えた時点で運用メールを送り (日 1 回の cron の回ごとに 1 通。クールダウンは 23 時間)、画面も「古い」を出す。オーナーが Actions の画面で有効に戻す |
-| S-10 | 月曜の復元の検査が失敗 (ローカルの GoTrue の版が本番より古く `COPY auth.users` の列が足りない)。`daily` は completed のまま、`backup.weekly.failed` (stage `restore_check`) と Issue。対象物は消さない |
+| S-10 | 月曜の復元の検査が失敗 (ローカルの GoTrue の版が本番より古く `COPY "auth"."users"` の列が足りない)。`daily` は completed のまま、`backup.weekly.failed` (stage `restore_check`) と Issue。対象物は消さない |
 | S-11 | 四半期の訓練。オーナーが手元で `node scripts/backup-db.mjs restore --key daily/2026-10-13/... --identity-file ~/.config/homegohan/backup.key` を流し、ローカルに復元して `npm run test:smoke`。画面の「DR 訓練を記録」で quarterly_restore / success / rto 45 分を送ると `dr.test.quarterly.restore` が 1 行残る |
 | S-12 | Free プランのまま月が替わる。月次の PITR 復元テストはできないので、画面で monthly_pitr / skipped / notes「plan_not_pro」を記録する (warn)。Pro に上がるまで毎月これを残す |
 | S-13 | R2 の API トークンが漏れた。攻撃者は対象物を消そうとするが bucket lock で拒まれ、上書きも拒まれ、読めても age の秘密鍵が無いので復号できない。オーナーはトークンを作り直す |
@@ -60,13 +60,13 @@ Issue 本文との食い違い (本書を正とする): #1129 の「vercel.json 
 | S-16 | age の秘密鍵を失くした。四半期の訓練で復号できず failed で記録される。以後のバックアップは新しい鍵で取り直し、古い対象物は読めないまま保持期間で消える (§4.4 の鍵の保管の規則がこれを防ぐ) |
 | S-17 | 取得の step が job の途中で時間切れになる (DB が育って dump が長引いた)。run の step は結果ファイルを書けずに切られる。report の step (`if: always()`) は結果ファイルが無いことと `steps.run.outcome` (`failure` / `cancelled`) から「結果を残さずに終わった」の Issue を立てる |
 | S-18 | 1 年後。daily の行は 365 行を超え、1 月 1 日の `backup.annual.completed` は新しい順の 100 行の窓の外にある。画面の annual のカードは、窓によらず action_type ごとに最新 1 行を読むので 1 月 1 日の取得を出し続ける。年次の訓練の最新も同じ |
-| S-19 | 02:23 JST の取得の stats (live) のあと、data.sql のダンプ (数分〜) の間に利用者が 1 人登録した。live の数と dump の中身は 1 行ずれるが、復元の検査は dump の中身 (data.sql の `COPY auth.users` の行数) と比べるので通る |
+| S-19 | 02:23 JST の取得の stats (live) のあと、data.sql のダンプ (数分〜) の間に利用者が 1 人登録した。live の数と dump の中身は 1 行ずれるが、復元の検査は dump の中身 (data.sql の `COPY "auth"."users"` の行数) と比べるので通る |
 
 ### 0.4 分冊判定
 
 | 目安 | 本設計 | 判定 |
 |---|---|---|
-| 設計書 800 行超 | 超える (約 1,400 行) | 当たる |
+| 設計書 800 行超 | 超える (約 1,500 行) | 当たる |
 | 消費先レーン 3 以上 | GitHub Actions (scripts) / migration / 運営の API と画面 / Vercel Cron / 手順書 の 5 面 | 当たる |
 | 共有面 2 つ以上 | `admin_audit_logs` の action の一覧・`vercel.json` の crons と operator/08 の状態の注記・`OPS_ALERT_EMAIL` の読み口・env の一覧・cron 認証の番兵 | 当たる (どれも行を足す・1 行を付け替える) |
 
@@ -111,7 +111,7 @@ GitHub Actions (schedule 23 17 * * * UTC = 02:23 JST / workflow_dispatch)   .git
     config    R2 の鍵・バケット・age の受け手がそろっているか (無ければ止めて記録)
     stats     psql (読み取り): public の表の数・auth.users の数・DB の大きさ → manifest の source (記録だけ。突き合わせに使わない)
     dump      supabase db dump --linked × 3 (roles / schema / data。Supabase の手順どおり)
-    verify    data.sql の末尾の完了行・COPY の終端・`COPY public.` の表 = schema.sql の表・auth.users の COPY → manifest の dumped (ダンプの中身の数)
+    verify    data.sql の完了行と最後の RESET ALL;・COPY の終端・`COPY "public".` の表 = schema.sql の表・auth.users の COPY → manifest の dumped (ダンプの中身の数)
     archive   tar | zstd                                       →  <base>.tar.zst
     encrypt   age -r <受け手>                                   →  <base>.tar.zst.age  (平文の書庫はここで消す)
     upload    aws s3 cp × 3 → R2 daily/<日付>/                 (head-object で大きさを突き合わせる)
@@ -169,8 +169,9 @@ Vercel Cron (37 5 * * * UTC = 14:37 JST)  GET /api/cron/backup-freshness
 | Vercel の関数のバンドル | 非圧縮 250 MB (Large functions beta で 5 GB)。`pg_dump` のバイナリは同梱できない前提で設計する (同梱できても本体の上限で成り立たない) | 同上 |
 | GitHub Actions の job | GitHub-hosted runner は 1 job 6 時間、workflow run 35 日 | docs.github.com/en/actions/reference/limits |
 | Cloudflare R2 の保管クラス | Standard $0.015 / GB-月、Infrequent Access $0.01 / GB-月 (最短 30 日・取り出し $0.01 / GB)。Class A $4.50 / 100 万、Class B $0.36 / 100 万 (IA は $9.00 / $0.90)。Egress 無料。無料枠は Standard 10 GB-月 | developers.cloudflare.com/r2/pricing |
-| R2 の Lifecycle | 接頭辞ごとに `Expiration: { Days }`・`Transitions: [{ Days, StorageClass: 'STANDARD_IA' }]`。削除と遷移が重なれば削除が勝つ。1 バケット 1,000 ルール | developers.cloudflare.com/r2/buckets/object-lifecycles |
+| R2 の Lifecycle | 接頭辞ごとに削除・Infrequent Access への遷移・途中で切れたマルチパートの破棄。削除と遷移が重なれば削除が勝つ。1 バケット 1,000 ルール。設定の形は 2 つあり、`wrangler r2 bucket lifecycle set --file` が受けるのは Cloudflare の API (put object lifecycle configuration) の本文の形 = `{ rules: [{ id, enabled, conditions: { prefix }, deleteObjectsTransition / storageClassTransitions / abortMultipartUploadsTransition: { condition: { type: 'Age', maxAge: <秒> } } }] }`・クラス名 `InfrequentAccess`。S3 の形 (`Rules`・`Filter.Prefix`・`Expiration.Days`・`StorageClass: 'STANDARD_IA'`) は S3 互換 API (`PutBucketLifecycleConfiguration`) 用で、wrangler には渡せない | developers.cloudflare.com/r2/buckets/object-lifecycles (「The JSON file should be in the format of the request body of the put object lifecycle configuration API」)・wrangler の `packages/wrangler/src/r2/lifecycle.ts` (`set` は `rules` の配列を要求し、`add` は日数 × 86,400 の `maxAge` と `InfrequentAccess` を書く) |
 | R2 の bucket lock | 接頭辞ごとに、日数 (`Age` の `maxAgeSeconds`)・日付・無期限 (`Indefinite`) で削除と上書きを防ぐ。Lifecycle の削除より優先。重なれば長い方 | developers.cloudflare.com/r2/buckets/bucket-locks (2025-03-06 の changelog で追加) |
+| `supabase db dump` の出力の形 (CLI 2.62.10) | 名前はすべて引用符つき (`--quote-all-identifier`)。schema.sql: `CREATE TABLE "` を `CREATE TABLE IF NOT EXISTS "` に書き換え、`--` で始まる行を消す (`--keep-comments` が無いとき)。data.sql: 先頭に `SET session_replication_role = replica;`、pg_dump の注釈は残し (`--keep-comments` と `--data-only` は同時に使えない)、最後に `RESET ALL;` を足す。`\restrict` / `\unrestrict` の行は `-- ` を付けて注釈にする。詳しくは §4.3 の表 | supabase/cli の v2.62.10 の `pkg/migration/scripts/dump_schema.sh`・`dump_data.sh`・`pkg/migration/dump.go`。origin/main の `supabase/baseline/prod_schema.sql` (同じ CLI の `db dump --linked` の実物) で `CREATE TABLE IF NOT EXISTS "public".` の行 127・`CREATE TABLE public.` の行 0・`--` で始まる行 0 |
 | Supabase の日次バックアップ | Pro 7 日・Team 14 日。Free は無し。PITR はアドオンで、有効にすると日次は取られなくなる | supabase.com/docs/guides/platform/backups |
 | 本番 DB の実測 (2026-10-16・読み取り) | PostgreSQL 17.6。DB 2,417 MB (public 2,393 MB・136 表。同じ日の後の読み取りでは 137 表で、どれも通常の表 (relkind `r`。分割表・拡張の表は 0)。`dataset_menu_sets` 1,895 MB が大半)。auth.users 195 行。admin_audit_logs 261 行。`postgres` ロールは `rolbypassrls = true`・`admin_audit_logs` の所有者で、`relforcerowsecurity = false`。`service_role` も `rolbypassrls = true`、`anon` / `authenticated` は false | Supabase MCP の SELECT |
 
@@ -178,16 +179,16 @@ Vercel Cron (37 5 * * * UTC = 14:37 JST)  GET /api/cron/backup-freshness
 
 | # | 走らせた結果 |
 |---|---|
-| S-1 | 17:23 UTC に schedule。`planRun` が JST の暦日 2026-10-20 (火) を出し、tiers = [`daily`]。link → config OK → stats (136 / 195 / 2.5e9。記録だけ) → dump 3 ファイル → verify (末尾の完了行あり・COPY の終端あり・`COPY public.` の 136 表 = schema.sql の `CREATE TABLE public.` の 136 表、auth.users あり → dumped = {public_tables 136, auth_users 195, audit_rows 261}) → archive → encrypt → upload 3 つ → head-object の大きさ一致 → copy 無し → inventory (daily 20) → restore_check 無し → audit `backup.daily.completed` → cleanup → 結果ファイル {status ok, completed [daily]} → 終了 0 → stop → report: failures 0 で marker の Issue が無いので none。鮮度の cron は 14:37 JST に「12 時間」で fresh。画面の daily カードは 02:3x・鮮度 OK |
+| S-1 | 17:23 UTC に schedule。`planRun` が JST の暦日 2026-10-20 (火) を出し、tiers = [`daily`]。link → config OK → stats (136 / 195 / 2.5e9。記録だけ) → dump 3 ファイル → verify (完了行と最後の `RESET ALL;` あり・COPY の終端あり・`COPY "public"."<t>"` の 136 表 = schema.sql の `CREATE TABLE IF NOT EXISTS "public"."<t>" (` の 136 表、`COPY "auth"."users"` あり → dumped = {public_tables 136, auth_users 195, audit_rows 261}) → archive → encrypt → upload 3 つ → head-object の大きさ一致 → copy 無し → inventory (daily 20) → restore_check 無し → audit `backup.daily.completed` → cleanup → 結果ファイル {status ok, completed [daily]} → 終了 0 → stop → report: failures 0 で marker の Issue が無いので none。鮮度の cron は 14:37 JST に「12 時間」で fresh。画面の daily カードは 02:3x・鮮度 OK |
 | S-2 | 月曜 (JST) → tiers = [`daily`, `weekly`]。upload まで S-1 と同じ。copy: `aws s3 cp s3://…/daily/2026-10-19/<base>.* s3://…/weekly/2026-10-19/` × 3。restore_check: `supabase-local.sh start` → public を空に → roles → schema → data (replica) → 表 136・users 195・admin_audit_logs 261 を manifest の dumped と突き合わせ・cron.job の数を記録 → stop。audit `backup.daily.completed` と `backup.weekly.completed` (後者の details に `copied_from` と `restore_check`)。終了 0 |
 | S-3 | 1/1 → tiers に `annual` が入る (`tiersForDate` は daily を常に、月曜なら weekly、1/1 なら annual を足す)。copy を 2 回、audit を 3 行。restore_check は weekly または annual があれば 1 回だけ |
 | S-4 | link OK → config で `BACKUP_R2_ACCESS_KEY_ID` が無い → `ConfigError(missing: ['BACKUP_R2_ACCESS_KEY_ID'])` → dump に進まない (平文が作られない) → audit `backup.daily.failed` {stage: 'config', reason: 'not_configured', missing: [名前]} (値は無い) → 結果ファイル {status not_configured, failures [{tier daily, stage config, reason not_configured, missing [名前]}]} → 終了 3 → report の step (`if: always()`): `planBackupIssue` が failures から本文 (marker・層・段・reason・missing の名前・run の URL) を作り、Issue「【自動】DB バックアップの失敗」を作る。鮮度の cron は翌日 fresh でなくなるまで鳴らない (失敗の通知は Issue と Actions の失敗通知が担う) |
 | S-5 | link 失敗 → reason `link_failed` → audit は書けない (DB に繋げない。結果ファイルの `audit_written` は false) → 結果ファイル {status failed, failures [{tier daily, stage link, reason link_failed}]} → 終了 1 → report が Issue。翌日 14:37 JST の鮮度の cron: 最新 completed は前日 02:3x → 36 時間 > 30 → `claim_ops_alert('backup_stale', 1380)` → メール 1 通 (`stale_sent`)。その 15 分後の回は無い (日 1 回)。翌日の回 (24 時間後 ± 秒単位のぶれ) もまだ古ければ、前回から 23 時間 (クールダウン) を超えているので再度 1 通 |
-| S-6 | dump 完了 → verify: data.sql の末尾に完了行が無い (または `COPY public.` が 97 表 ≠ schema.sql の 136 表) → reason `dump_incomplete` (details に expected / actual) → upload しない → audit failed → Issue → cleanup → 終了 1 |
+| S-6 | dump 完了 → verify: data.sql に完了行が無い・最後の行が `RESET ALL;` でない (または `COPY "public".` が 97 表 ≠ schema.sql の 136 表) → reason `dump_incomplete` (details に expected / actual) → upload しない → audit failed → Issue → cleanup → 終了 1 |
 | S-7 | upload で aws cli が再試行の末に失敗 → reason `upload_failed` (stage `upload`、どのファイルかは suffix だけ) → audit failed → 結果ファイル → report が Issue (marker が同じなので既存の Issue を更新) → 終了 1。翌日成功 → 結果ファイル {status ok} → report が marker の Issue を閉じる |
 | S-8 | dispatch (tier = auto)。base = `homegohan-db-20261020T051500Z` (17:23 の回は `…T172312Z`) → キーが別 → lock に当たらない → audit 2 行目。鮮度・画面は新しい方を見る |
 | S-9 | schedule 停止。監査行は増えない。14:37 JST の鮮度の cron: 最新 completed から 36 時間 → メール。画面: `isBackupStale` が true で赤いバッジと「GitHub Actions の db-backup が止まっていないか確かめる」の文 |
-| S-10 | restore_check で `COPY auth.users` が列不足で失敗 → `restore_check_failed` → upload・copy は済んでいるので対象物は残る → audit は `backup.daily.completed` (先に書いてある) と `backup.weekly.failed` {stage: 'restore_check', reason, copied_from} → Issue → 終了 1。手順書: `supabase link` で `.temp` の版を更新してベースラインを取り直す (オーナー) |
+| S-10 | restore_check で `COPY "auth"."users"` が列不足で失敗 → `restore_check_failed` → upload・copy は済んでいるので対象物は残る → audit は `backup.daily.completed` (先に書いてある) と `backup.weekly.failed` {stage: 'restore_check', reason, copied_from} → Issue → 終了 1。手順書: `supabase link` で `.temp` の版を更新してベースラインを取り直す (オーナー) |
 | S-11 | `restore` サブコマンド: aws で 3 ファイルを取得 → sha256 を突き合わせ → age -d -i → zstd -d → tar → `supabase-local.sh start` → public を空に → 復元 → 数を表示。オーナーが `npm run test:smoke -- --base-url=http://localhost:3000` → 画面の form (kind quarterly_restore, result success, environment local, backup_key, rto_minutes 45, smoke passed, notes) → POST → `recordAdminAudit` 成功 → 201 → 一覧の先頭に出る |
 | S-12 | form (monthly_pitr, skipped, environment staging, notes 'plan_not_pro') → `drTestRecordBodySchema` は result ≠ success のとき notes 必須 → 通る → severity warn → 一覧に黄色で出る |
 | S-13 | DeleteObject → R2 が lock で拒否 (403)。PutObject (同じキー) → 拒否。GetObject → `.age` を得るが復号できない。`.sha256` も lock の下で書き換えられないので、復元の checksum の段が改ざんを見つける (監査行の sha256 は控え)。手順書: トークンを作り直し、`BACKUP_R2_*` を更新 |
@@ -196,7 +197,7 @@ Vercel Cron (37 5 * * * UTC = 14:37 JST)  GET /api/cron/backup-freshness
 | S-16 | download → checksum (`.sha256` と一致) → 復号で age が失敗 → `restore` は終了 1 (stage `decrypt`, reason `decrypt_failed`。一時ディレクトリは消す)。訓練は failed で記録。新しい鍵対を作って variable を更新すれば翌日から新しい鍵で取れる。古い対象物は読めないまま Lifecycle で消える |
 | S-17 | dump が長引き、run の step が `timeout-minutes: 290` (`RUN_STEP_TIMEOUT_MINUTES`) で切られる → 結果ファイルは無い (finally も走らない) → `steps.run.outcome = failure` → stop (always) → report (always): `parseRunReport` が null → `planBackupIssue` が「run の step が結果を残さずに終わった (outcome failure)。時間切れか取り消し」の本文 → Issue。監査行は書かれていない (最後の段まで行っていない) ので、翌日の鮮度の cron が拾う。job 全体 (300 分) にはまだ 10 分残っているので report の step は動ける |
 | S-18 | GET: `latestByAction` を 6 本 (層 3 + 訓練の種類 3。`.eq('action_type', …).order(created_at desc).limit(1)`) と一覧 2 本 (取得 6 種・訓練 3 種、それぞれ limit 100) を並べて読む → annual の最新は 1 月 1 日の行 (一覧の窓の外でも) → カードに出る |
-| S-19 | stats (live: auth.users 195) → dump (その間に 1 人登録) → verify: data.sql の `COPY auth.users` の行数 196 → dumped.auth_users = 196 → restore_check: 復元後 196 = dumped 196 → passed。source.auth_users (195) は記録だけで比べない |
+| S-19 | stats (live: auth.users 195) → dump (その間に 1 人登録) → verify: data.sql の `COPY "auth"."users"` の行数 196 → dumped.auth_users = 196 → restore_check: 復元後 196 = dumped 196 → passed。source.auth_users (195) は記録だけで比べない |
 
 ---
 
@@ -223,7 +224,7 @@ Vercel Cron (37 5 * * * UTC = 14:37 JST)  GET /api/cron/backup-freshness
 | job の上限 | 6 時間 | `timeout-minutes: 300` (`JOB_TIMEOUT_MINUTES`)。run の step は `timeout-minutes: 290` (`RUN_STEP_TIMEOUT_MINUTES`。report の step の分 10 分を残す)。段ごとの上限は §5.1 の `STAGE_TIMEOUT_MINUTES` (dump 120 分・upload 60 分・restore_check 60 分)。段の上限の合計は 290 分を超えるが、全段が上限まで掛かることは無い前提で、超えたら step の時間切れになり S-17 の経路で Issue が立つ |
 | ディスク | ubuntu-latest で約 14 GB の空き | 平文 (data.sql ≈ DB の大きさ) + 書庫 + 暗号化後 ≈ DB × 1.5。DB が 5 GB を超えたら `tar | zstd | age` のパイプで平文の書庫を作らない形へ (§21) |
 | 入っている道具 | Docker・aws cli v2・zstd・gpg。`age` は無い | `sudo apt-get update && sudo apt-get install -y age` (Ubuntu 24.04 の age 1.1.1)。版は `age --version` でログに出す (§4.11) |
-| 同時実行 | `concurrency: { group: db-backup, cancel-in-progress: false }` | 手動と schedule が重なっても直列 |
+| 同時実行 | `backup` job に `concurrency: { group: db-backup, cancel-in-progress: false }`。**ワークフロー直下には置かない**。`roundtrip-check` job は別の group `db-backup-roundtrip-${{ github.ref }}` (`cancel-in-progress: true`) | 手動と schedule の取得どうしは直列。ワークフロー直下に置くと PR の run (roundtrip-check) と schedule の run が同じ group に入り、GitHub の concurrency は同じ group の待機中の run を 1 つしか持たない (新しい run が入ると、待機中だった run は `cancel-in-progress: false` でも取り消される) ので、PR の push 2 回でその日の取得が job ごと取り消され、report の step も動かない (Issue が立たない)。前例: `deploy-supabase-migrations.yml` が同じ理由で group を `${{ github.ref }}` 入りに直した (同ファイルの round-3 是正の注記)。job に置いても、取得の run の待機中に取得の run (手動) がもう 1 つ入ると待機中の方は取り消される。新しい方も同じ 1 本道の取得なので daily は取れるが、手動の `tier` が `auto` 以外だと待機中だった schedule の層 (月曜の weekly など) が抜ける。手順書 §4 は「取得の実行中に手動で流すときは `tier` を `auto` にする」と書く |
 | 権限 | `permissions: { contents: read, issues: write }` | Issue の作成・更新・クローズだけ。PR・ブランチ・設定には触らない |
 | 公開リポジトリ | ログは誰でも読める | 出すのは段の名前・件数・大きさ・ダイジェストの先頭 8 文字・所要秒だけ (§4.10) |
 
@@ -239,13 +240,45 @@ npx --yes supabase@2.62.10 db dump --linked -f "$WORK/data.sql"   --data-only --
 ```
 
 - `stats` (dump の前に psql。既存の `prod-schema-snapshot.yml` と同じ Docker イメージ `public.ecr.aws/supabase/postgres:$(cat supabase/.temp/postgres-version)`、接続先は `$(cat supabase/.temp/pooler-url)?sslmode=require`、パスワードは `PGPASSWORD`): `SELECT count(*) FROM pg_tables WHERE schemaname = 'public'`・`SELECT count(*) FROM auth.users`・`SELECT pg_database_size(current_database())`。読むだけ。結果は manifest の `source` に**記録するだけ**で、verify・restore_check の突き合わせには使わない (3 回の `db dump` はそれぞれ別のスナップショットで、stats とも別の取引なので、その間の利用者の登録・退会や migration で数がずれる。S-19)。
+- ダンプの出力の形 (CLI 2.62.10 の実物。verify・往復の検査・単体テストの偽物はすべてこの形に合わせる。出どころは §3.3):
+
+| ファイル | 行の形 | verify での扱い |
+|---|---|---|
+| schema.sql | `CREATE TABLE IF NOT EXISTS "public"."<t>" (` (通常の表。CLI が `CREATE TABLE "` を書き換える) / `CREATE UNLOGGED TABLE "public"."<t>" (` (書き換えの対象外なので `IF NOT EXISTS` が付かない) | `SCHEMA_TABLE_LINE_PATTERN` で拾い、schema が `public` の表を数える |
+| schema.sql | 本体を閉じる `);` (通常) / `)` の次の行が `PARTITION BY …;` (分割の親。pg_dump は `)` と `PARTITION BY` を別の行に書く) | 分割の親は除く (pg_dump は親に COPY を出さない)。分割の子は通常の表と同じ形 (後で `ATTACH PARTITION`) なので数える |
+| schema.sql | `--` で始まる行は無い (CLI が消す) | 見ない |
+| data.sql | 1 行目 `SET session_replication_role = replica;` (CLI が足す)・pg_dump の注釈 (`--` で始まる行) は残る | 注釈は数えない |
+| data.sql | `COPY "<schema>"."<t>" ("<列>", …) FROM stdin;` → 本体の行 (text 形式。1 行 = 1 行) → `\.` | `DATA_COPY_LINE_PATTERN` で拾い、`COPY_END_LINE` までを数える。空の表も `COPY … FROM stdin;` と `\.` が出る |
+| data.sql | 末尾: `-- PostgreSQL database dump complete` (`DUMP_COMPLETE_TRAILER`) → `--` → (`\restrict` に対応した版の pg_dump なら `-- \unrestrict <鍵>`。CLI が注釈にする。出ない版もあるので、有っても無くても通す) → CLI が足す `RESET ALL;` (`DATA_DUMP_FINAL_LINE`) | 完了の判定 (verify の 2)。`RESET ALL;` は pg_dump が 0 で終わったときだけ書かれる (dump_data.sh は `set -euo pipefail`) |
+
+単体テストの data.sql の偽物の骨組み (この形で書く。§15):
+
+```text
+SET session_replication_role = replica;
+-- Dumped by pg_dump version 17.6
+SET statement_timeout = 0;
+COPY "auth"."users" ("instance_id", "id", "email") FROM stdin;
+00000000-0000-0000-0000-000000000000	11111111-1111-1111-1111-111111111111	a@example.com
+\.
+COPY "public"."admin_audit_logs" ("id", "action_type") FROM stdin;
+22222222-2222-2222-2222-222222222222	backup.daily.completed
+\.
+COPY "public"."family_members" ("id") FROM stdin;
+\.
+--
+-- PostgreSQL database dump complete
+--
+-- \unrestrict abc123
+RESET ALL;
+```
+
 - `verify` (DB に繋がない。基準は live の数ではなくダンプの中身): `schema.sql` を 1 行ずつ読む `scanSchemaSql` と、`data.sql` を 1 行ずつ読む `scanDataSql` (GB 級なので全体を読み込まない) の結果で判定する。
   1. 3 ファイルが空でない。
-  2. `data.sql` の最後の空でない行が `-- PostgreSQL database dump complete` (pg_dump が最後に書く行。`DUMP_COMPLETE_TRAILER`)。途中で切れたダンプはこれが無い。
+  2. `data.sql` の COPY の本体の外に `DUMP_COMPLETE_TRAILER` と同じ行があり (`complete_trailer_seen`)、その最後の出現より後の行のうち、空でも `--` で始まる注釈でもない行が `DATA_DUMP_FINAL_LINE` (`RESET ALL;`) の 1 行だけ (`statements_after_trailer` が `['RESET ALL;']`)。途中で切れたダンプは完了行が無く、pg_dump が失敗したダンプは `RESET ALL;` が無い。
   3. すべての `COPY … FROM stdin;` の後に `\.` の行がある (`unterminated_copy` が null)。
-  4. `data.sql` の `^COPY public\.(\S+) ` の表の集合が、`schema.sql` の `^CREATE (UNLOGGED )?TABLE public\.(\S+) ` の表の集合 (直後に `) PARTITION BY` で閉じる分割の親を除く。pg_dump は親に COPY を出さない) と**ちょうど**同じ (pg_dump は空の表にも `COPY … FROM stdin;` と `\.` を出す)。
-  5. `^COPY auth\.users ` と `^COPY public\.admin_audit_logs ` の行がある。
-  満たさなければ reason `dump_incomplete` で止める (送らない。details の expected / actual は 4 の表の数、2・3 で落ちたときは expected = actual = 表の数)。満たせば `dumped` (`DumpCounts`: `COPY public.` の表の数・`COPY auth.users` の行数・`COPY public.admin_audit_logs` の行数。COPY の text 形式は 1 行 = 1 行) を manifest に入れ、restore_check の基準にする。
+  4. `schema.sql` の public の表の集合 (`SchemaSqlScan.public_tables`) が空でなく、`data.sql` の `COPY "public".` の表の集合 (`DataSqlScan.public_copy_tables`) と**ちょうど**同じ (名前は引用符を外し、`""` を `"` に戻して比べる)。どちらかの形が CLI の版の変更で変わって 0 になったら、ここ (schema が空) か 5 で落ちる (0 = 0 で素通りしない)。
+  5. `COPY "auth"."users"` と `COPY "public"."admin_audit_logs"` の行がある (`copy_row_counts` に `auth.users` と `public.admin_audit_logs` のキーがある)。
+  満たさなければ reason `dump_incomplete` で止める (送らない。details の expected / actual は 4 の表の数 (schema / data)、2・3・5 で落ちたときは expected = actual = schema の表の数)。満たせば `dumped` (`DumpCounts`: `COPY "public".` の表の数・`COPY "auth"."users"` の行数・`COPY "public"."admin_audit_logs"` の行数) を manifest に入れ、restore_check の基準にする。
   - 残る窓: schema.sql と data.sql も別のスナップショットなので、その数分の間に本番へ表を足す migration が入ると 4 で落ちる (誤検知)。migration の本番適用は main へのマージのとき (`deploy-supabase-migrations.yml` の push。ほかは手動の workflow_dispatch) だけで、02:23 JST に重なることは稀。落ちても対象物は送らず Issue が立つだけで、`workflow_dispatch` で取り直せば通る (手順書 §10)。
 - 書庫: `tar -C "$WORK" -cf - roles.sql schema.sql data.sql | zstd -T0 -6 -o "$WORK/<base>.tar.zst"` (`ZSTD_LEVEL = 6`: 19 は数倍遅く、縮みは 1 割しか変わらない)。
 - 暗号化: `age -r "$BACKUP_AGE_RECIPIENT" -o "$WORK/<base>.tar.zst.age" "$WORK/<base>.tar.zst"` → 成功したら `.tar.zst` を消す。平文の 3 ファイルは restore_check が要るので cleanup まで残す (umask 077 の一時ディレクトリ)。
@@ -270,14 +303,20 @@ npx --yes supabase@2.62.10 db dump --linked -f "$WORK/data.sql"   --data-only --
 
 ### 4.5 R2 の設定 (オーナーが 1 回行う。手順書 §12)
 
-Lifecycle と bucket lock の設定は手で書き写さず、`node scripts/backup-db.mjs r2-config --bucket <名前> --out-dir <dir>` が §5.1 の定数 (`RETENTION_DAYS`・`INFREQUENT_ACCESS_AFTER_DAYS`・`R2_ABORT_MULTIPART_AFTER_DAYS`) から作る (`buildR2LifecycleConfig`・`buildR2LockCommands`)。出すもの = `<dir>/r2-lifecycle.json` (次の JSON と同じ中身) と、`wrangler r2 bucket lifecycle set` 1 行 + `wrangler r2 bucket lock add` 3 行 (標準出力)。手順書はこの subcommand を流す手順だけを書き、JSON を写さない (写しがずれる発生源を消す)。
+Lifecycle と bucket lock の設定は手で書き写さず、`node scripts/backup-db.mjs r2-config --bucket <名前> --out-dir <dir>` が §5.1 の定数 (`RETENTION_DAYS`・`INFREQUENT_ACCESS_AFTER_DAYS`・`R2_ABORT_MULTIPART_AFTER_DAYS`) から作る (`buildR2LifecycleConfig`・`buildR2LockCommands`)。出すもの = `<dir>/r2-lifecycle.json` (次の JSON と同じ中身。`wrangler r2 bucket lifecycle set --file` が受ける Cloudflare の API の本文の形で、日数は秒 (`日数 × SECONDS_PER_DAY`) にする。S3 の形 (`Rules`・`Expiration.Days`・`STANDARD_IA`) は wrangler が `rules` の配列が無いとして拒むので使わない。§3.3) と、`wrangler r2 bucket lifecycle set` 1 行 + `wrangler r2 bucket lock add` 3 行 (標準出力)。手順書はこの subcommand を流す手順だけを書き、JSON を写さない (写しがずれる発生源を消す)。
 
 ```json
-{ "Rules": [
-  { "ID": "daily-expire",     "Filter": { "Prefix": "daily/" },  "Status": "Enabled", "Expiration": { "Days": 30 } },
-  { "ID": "weekly-ia",        "Filter": { "Prefix": "weekly/" }, "Status": "Enabled", "Transitions": [ { "Days": 30, "StorageClass": "STANDARD_IA" } ], "Expiration": { "Days": 366 } },
-  { "ID": "annual-ia",        "Filter": { "Prefix": "annual/" }, "Status": "Enabled", "Transitions": [ { "Days": 30, "StorageClass": "STANDARD_IA" } ], "Expiration": { "Days": 2557 } },
-  { "ID": "abort-multipart",  "Filter": { "Prefix": "" },        "Status": "Enabled", "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 7 } }
+{ "rules": [
+  { "id": "daily-expire", "enabled": true, "conditions": { "prefix": "daily/" },
+    "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 2592000 } } },
+  { "id": "weekly-ia", "enabled": true, "conditions": { "prefix": "weekly/" },
+    "storageClassTransitions": [ { "condition": { "type": "Age", "maxAge": 2592000 }, "storageClass": "InfrequentAccess" } ],
+    "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 31622400 } } },
+  { "id": "annual-ia", "enabled": true, "conditions": { "prefix": "annual/" },
+    "storageClassTransitions": [ { "condition": { "type": "Age", "maxAge": 2592000 }, "storageClass": "InfrequentAccess" } ],
+    "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 220924800 } } },
+  { "id": "abort-multipart", "enabled": true, "conditions": {},
+    "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 604800 } } }
 ] }
 ```
 
@@ -292,6 +331,8 @@ npx wrangler r2 bucket lock add homegohan-db-backups --name annual-2557d --prefi
 - lock の日数と Lifecycle の日数を同じにする (lock が Lifecycle の削除より優先されるので、lock が長いと消えず、短いと攻撃者が消せる窓ができる)。どちらも `RETENTION_DAYS` の 1 か所から作るので、ずれは `tests/backup-db.test.ts` の `buildR2LifecycleConfig` / `buildR2LockCommands` / `LOCK_MAX_AGE_SECONDS` の it で機械的に見張る (§15)。
 - lock の名前は `<層>-<日数>d` (`buildR2LockCommands` が作る)。
 - Infrequent Access は最短 30 日の課金なので、遷移は 30 日より前にしない。
+- 各層の `deleteObjectsTransition.condition.maxAge` は `LOCK_MAX_AGE_SECONDS[層]` と同じ値 (どちらも `RETENTION_DAYS[層] × SECONDS_PER_DAY`)。`abort-multipart` は `conditions` に `prefix` を持たない (バケット全体。wrangler の `lifecycle add` が接頭辞なしで作る形と同じ)。
+- `lifecycle set` はバケットの既存のルールを全部置き換える (Cloudflare が既定で付けるマルチパートの 7 日の破棄も置き換わるので、`abort-multipart` を自分で持つ)。
 
 ### 4.6 費用の見積もり (2026-10-16 の実測 DB 2.4 GB から)
 
@@ -343,7 +384,7 @@ npx wrangler r2 bucket lock add homegohan-db-backups --name annual-2557d --prefi
 ### 4.8 復元できることの検査 (weekly / annual の日)
 
 1. `bash scripts/supabase-local.sh start` (枠 0。`supabase link` の直後なので `supabase/.temp/*` の版は本番と同じ)。
-2. `supabase-local.sh env` で得た接続先に `psql`: `DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT USAGE, CREATE ON SCHEMA public TO postgres; GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;` と、`data.sql` の `^COPY (auth|storage)\.(\w+)` から集めた表を `TRUNCATE … CASCADE` (ローカルの auth の初期行を空にする)。
+2. `supabase-local.sh env` で得た接続先に `psql`: `DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT USAGE, CREATE ON SCHEMA public TO postgres; GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;` と、`managedTablesInDump(scan)` (data.sql の `COPY "auth"."<t>"`・`COPY "storage"."<t>"` の表) を `TRUNCATE "auth"."users", … CASCADE` (名前は引用符で囲み、`"` は `""` にして書く) で空にする (ローカルの auth の初期行を空にする)。
 3. `roles.sql` を単独の psql で流す (`ON_ERROR_STOP` 無し。`42710` (すでにある) は数えて許し、ほかの失敗は止める)。
 4. `psql --single-transaction --variable ON_ERROR_STOP=1 --file schema.sql --command 'SET session_replication_role = replica' --file data.sql` (Supabase の backup-restore の手順と同じ。トリガーを止めて流す)。
 5. 突き合わせ (`restoreChecks(manifest.dumped, observed)`。基準はダンプの中身で、live の `source` ではない): `public` の表の数 = `dumped.public_tables` / `auth.users` の数 = `dumped.auth_users` / `admin_audit_logs` の数 = `dumped.audit_rows` (どれも完全一致。復元したのは data.sql そのものなので、本番に書き込みがあっても一致する) / `cron.job` の数 (記録だけ。0 なら手順書の「pg_cron の再登録」が要る)。
@@ -370,14 +411,18 @@ npx wrangler r2 bucket lock add homegohan-db-backups --name annual-2557d --prefi
 - 一時ディレクトリは `fs.mkdtemp` + `umask 077`。`cleanup` は成功・失敗・シグナル (SIGINT / SIGTERM / SIGHUP) のどれでも消す。
 - 結果ファイル (`BackupRunReport`) と Issue の本文に入るのは、層・段・reason・`missing` の名前 (secrets / variables の名前で値ではない)・run の URL だけ。
 
-### 4.11 workflow の step と、run → report の受け渡し (`.github/workflows/db-backup.yml` の `backup` job)
+### 4.11 workflow の job と step、run → report の受け渡し (`.github/workflows/db-backup.yml` の `backup` job と `roundtrip-check` job)
 
 ```yaml
-# 正典の形 (step の並び・id・if・timeout・env の参照。ほかの書き方をしない)。roundtrip-check job は §15
+# 正典の形 (job の並び・concurrency・step の並び・id・if・timeout・env の参照。ほかの書き方をしない)。
+# ワークフロー直下 (on / permissions と同じ階層) には concurrency を置かない (§4.2)
   backup:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 300                     # JOB_TIMEOUT_MINUTES
+    concurrency:
+      group: db-backup                       # BACKUP_CONCURRENCY_GROUP (取得どうしだけが入る)
+      cancel-in-progress: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -414,13 +459,35 @@ npx wrangler r2 bucket lock add homegohan-db-backups --name annual-2557d --prefi
           RUN_OUTCOME: ${{ steps.run.outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GH_TOKEN: ${{ github.token }}
+
+  roundtrip-check:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45                      # ROUNDTRIP_JOB_TIMEOUT_MINUTES
+    concurrency:
+      group: db-backup-roundtrip-${{ github.ref }}   # ROUNDTRIP_CONCURRENCY_GROUP (取得の group に入れない)
+      cancel-in-progress: true               # 同じ PR の新しい push が来たら古い往復の検査は要らない
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Roundtrip (local)
+        run: node scripts/backup-db.mjs roundtrip-local --slot 0
+      - name: Stop local Supabase
+        if: always()
+        run: bash scripts/supabase-local.sh stop || true
 ```
 
 | step | if | 入力 | 出力 | 失敗のとき |
 |---|---|---|---|---|
 | Run backup (`id: run`) | (job の if) | `--tier` (env `TIER_INPUT`)・secrets / variables | 結果ファイル `$RUNNER_TEMP/db-backup-result.json` (`BackupRunReport`。entry の `finally` で一時ファイルに書いて rename)・終了コード 0 / 1 / 3 | 終了 1 / 3 は step の失敗。時間切れ・取り消しは結果ファイルが無いまま終わる |
-| Stop local Supabase | `always()` | — | — | `|| true` (止める物が無くても失敗にしない) |
+| Stop local Supabase | `always()` | — | — | `\|\| true` (止める物が無くても失敗にしない) |
 | Report (Issue) | `always()` | 結果ファイル (無い・読めない・形が違うなら null)・`RUN_OUTCOME` (`success` / `failure` / `cancelled` / `skipped`)・`RUN_URL` | Issue の作成・更新・クローズ (`planBackupIssue` → `planIssueAction` → `createGitHub`)。終了 0 (GitHub の API の失敗だけ 1) | — |
+| (roundtrip-check) Roundtrip (local) | (job の if: schedule 以外) | — (secrets を使わない。枠 0 のローカルのスタック) | 終了 0 / 1 (§15 の往復) | job の赤 (PR の Checks) |
+| (roundtrip-check) Stop local Supabase | `always()` | — | — | `\|\| true` |
 
 - `planBackupIssue` の判定: 結果ファイルがあり `status = ok` かつ `RUN_OUTCOME = success` → 問題なし (marker の Issue があれば閉じる)。結果ファイルの `failures` が 1 件以上 → 問題あり (本文に failures の各行と `missing`)。結果ファイルが無い (null) → 問題あり (本文「run の step が結果を残さずに終わった (outcome <RUN_OUTCOME>)。時間切れか取り消し」)。結果ファイルが `ok` なのに `RUN_OUTCOME` が `success` でない → 問題あり (本文「結果ファイルと step の結果が食い違う」)。
 - inventory の失敗は `failures` に入れず `warnings` に入れる (Issue を立てない。§4.7)。
@@ -498,14 +565,31 @@ export const JOB_TIMEOUT_MINUTES = 300;
 export const REPORT_STEP_RESERVE_MINUTES = 10;
 /** run の step の timeout-minutes。job の上限から report の分を引く (run が時間切れでも report が動けるように) */
 export const RUN_STEP_TIMEOUT_MINUTES = JOB_TIMEOUT_MINUTES - REPORT_STEP_RESERVE_MINUTES;
+/** roundtrip-check job の timeout-minutes。ローカルのスタックの起動 (イメージの取得のやり直しを含む) が大半で、
+ *  同じスタックを起こす security-regression.yml の job と同じ 45 分 (種まきした小さい DB の dump → 復元は数分) */
+export const ROUNDTRIP_JOB_TIMEOUT_MINUTES = 45;
+/** concurrency の group。backup job は固定 (取得どうしを直列)、roundtrip-check job は ref ごと (取得の group に入れない。§4.2) */
+export const BACKUP_CONCURRENCY_GROUP = 'db-backup';
+export const ROUNDTRIP_CONCURRENCY_GROUP = 'db-backup-roundtrip-${{ github.ref }}';
 /** run → report の結果ファイルの名前 ($RUNNER_TEMP の下。workflow の 2 つの step が同じパスを書く) */
 export const RUN_REPORT_FILE_NAME = 'db-backup-result.json';
 export const RUN_REPORT_SCHEMA_VERSION = 1;
 /** GitHub Actions の steps.<id>.outcome の値 */
 export const STEP_OUTCOMES = ['success', 'failure', 'cancelled', 'skipped'] as const;
 export type StepOutcome = (typeof STEP_OUTCOMES)[number];
-/** pg_dump がダンプの最後に書く行。data.sql の最後の空でない行がこれでなければ途中で切れている */
+/** pg_dump がダンプの最後に書く注釈の行 (data.sql。CLI は data の注釈を消さない)。これが無ければ途中で切れている */
 export const DUMP_COMPLETE_TRAILER = '-- PostgreSQL database dump complete';
+/** CLI の dump_data.sh が pg_dump の後に足す最後の行。pg_dump が失敗すると (set -euo pipefail で) 書かれない */
+export const DATA_DUMP_FINAL_LINE = 'RESET ALL;';
+/** COPY の本体の終わりの行 (text 形式) */
+export const COPY_END_LINE = '\\.';
+/** schema.sql の表の行。CLI は --quote-all-identifier で名前を引用符で囲み、`CREATE TABLE "` を `CREATE TABLE IF NOT EXISTS "` に書き換える
+ *  (UNLOGGED は書き換えの対象外)。1 = schema、2 = 表 (どちらも `""` は引用符 1 つに戻して使う) */
+export const SCHEMA_TABLE_LINE_PATTERN = /^CREATE (?:UNLOGGED )?TABLE (?:IF NOT EXISTS )?"((?:[^"]|"")+)"\."((?:[^"]|"")+)" \($/;
+/** 分割の親: 表の本体を閉じる `)` の行の次の行がこれで始まる (pg_dump は `)` と `PARTITION BY …;` を別の行に書く) */
+export const PARTITION_BY_LINE_PREFIX = 'PARTITION BY ';
+/** data.sql の COPY の行 (`COPY "<schema>"."<t>" ("a", "b") FROM stdin;`)。1 = schema、2 = 表 */
+export const DATA_COPY_LINE_PATTERN = /^COPY "((?:[^"]|"")+)"\."((?:[^"]|"")+)" (?:\(.*\) )?FROM stdin;$/;
 /** 監査行の details の上限 (bytes)。SQL の record_backup_audit と同じ値 */
 export const AUDIT_DETAILS_MAX_BYTES = 8192;
 /** 伏せ字の規則 (scripts/lib/cron-secret-drift.mjs と同じ) */
@@ -534,14 +618,15 @@ export interface SourceStats { public_tables: number; auth_users: number; db_siz
 export interface DumpCounts { public_tables: number; auth_users: number; audit_rows: number }
 /** data.sql を 1 行ずつ読んだ結果 */
 export interface DataSqlScan {
-  public_copy_tables: string[];        // `COPY public.<t> ` の <t> (出てきた順)
-  managed_copy_tables: string[];       // `COPY auth.<t> ` / `COPY storage.<t> ` の `<schema>.<t>`
-  copy_row_counts: Record<string, number>; // `<schema>.<t>` → COPY の本体の行数 (`\.` の手前まで)
-  unterminated_copy: string | null;    // `\.` が来る前にファイルが終わった COPY の `<schema>.<t>`
-  last_non_empty_line: string;         // 末尾の完了行の判定用
+  public_copy_tables: string[];        // `COPY "public"."<t>" …` の <t> (引用符を外した名前。出てきた順)
+  managed_copy_tables: string[];       // `COPY "auth"."<t>"` / `COPY "storage"."<t>"` の `<schema>.<t>` (引用符を外した名前)
+  copy_row_counts: Record<string, number>; // `<schema>.<t>` (引用符を外した名前。例 `auth.users`) → COPY の本体の行数 (COPY_END_LINE の手前まで)
+  unterminated_copy: string | null;    // COPY_END_LINE が来る前にファイルが終わった COPY の `<schema>.<t>`
+  complete_trailer_seen: boolean;      // COPY の本体の外に DUMP_COMPLETE_TRAILER と同じ行があった
+  statements_after_trailer: string[];  // 最後の DUMP_COMPLETE_TRAILER より後の行のうち、空でも `--` で始まる注釈でもない行 (正常なら [DATA_DUMP_FINAL_LINE] だけ。完了行が無ければ [])
 }
 /** schema.sql を 1 行ずつ読んだ結果 */
-export interface SchemaSqlScan { public_tables: string[] }   // `CREATE (UNLOGGED )?TABLE public.<t> ` の <t>。`) PARTITION BY` で閉じた親は除く
+export interface SchemaSqlScan { public_tables: string[] }   // SCHEMA_TABLE_LINE_PATTERN で schema が public の <t> (引用符を外した名前)。`)` の次の行が PARTITION_BY_LINE_PREFIX で始まる親は除く
 export interface BackupManifest {
   schema_version: typeof MANIFEST_SCHEMA_VERSION;
   captured_at: string;            // ISO 8601 UTC (取得の開始)
@@ -600,13 +685,17 @@ export interface RunTuning { dumpTimeoutMinutes: number; uploadTimeoutMinutes: n
 /** RUN_TUNING_ENV を読む。無い・空は既定 (STAGE_TIMEOUT_MINUTES の dump / upload / restore_check、ZSTD_LEVEL)。
  *  時間は 1 以上 JOB_TIMEOUT_MINUTES 以下の整数、zstd は ZSTD_LEVEL_MIN〜ZSTD_LEVEL_MAX の整数。外れたら invalid に名前 (既定に黙って戻さない) */
 export declare function resolveRunTuning(env: Record<string, string | undefined>): { ok: true; tuning: RunTuning } | { ok: false; invalid: string[] };
+/** COPY の行 (DATA_COPY_LINE_PATTERN) を schema と表に分ける (引用符を外し `""` を `"` に戻す)。当たらなければ null */
+export declare function parseCopyLine(line: string): { schema: string; table: string } | null;
+/** schema.sql の表の行 (SCHEMA_TABLE_LINE_PATTERN) を schema と表に分ける (引用符を外し `""` を `"` に戻す)。当たらなければ null */
+export declare function parseSchemaTableLine(line: string): { schema: string; table: string } | null;
 /** data.sql を 1 行ずつ読む (GB 級なので行の非同期の列で受ける。全体を文字列にしない) */
 export declare function scanDataSql(lines: AsyncIterable<string>): Promise<DataSqlScan>;
 /** schema.sql を 1 行ずつ読む */
 export declare function scanSchemaSql(lines: AsyncIterable<string>): Promise<SchemaSqlScan>;
 /** §4.3 の verify の 1〜5。基準はダンプの中身 (schema.sql の表) で、live の stats を受け取らない。合えば dumped を返す */
 export declare function verifyDumpFiles(input: { fileSizes: Record<(typeof DUMP_FILES)[number], number>; data: DataSqlScan; schema: SchemaSqlScan }): { ok: true; dumped: DumpCounts } | { ok: false; reason: 'dump_incomplete'; expected: number; actual: number };
-/** DataSqlScan の managed_copy_tables (`COPY auth.x` / `COPY storage.x`) から、復元の前に空にする表を集める (重複を除き、出てきた順) */
+/** DataSqlScan の managed_copy_tables (`COPY "auth"."x"` / `COPY "storage"."x"`) から、復元の前に空にする表を `<schema>.<t>` で集める (重複を除き、出てきた順) */
 export declare function managedTablesInDump(scan: DataSqlScan): string[];
 /** 基準は manifest の dumped (ダンプの中身)。3 つとも完全一致で ok。cron_jobs は記録だけ */
 export declare function restoreChecks(expected: DumpCounts, observed: { public_tables: number; auth_users: number; audit_rows: number; cron_jobs: number }): { ok: true } | { ok: false; reason: 'restore_check_failed'; expected: DumpCounts; actual: DumpCounts };
@@ -620,9 +709,18 @@ export declare function redactForLog(text: string, env: Record<string, string | 
 export declare function siblingKeys(archiveKey: string): Record<keyof typeof FILE_SUFFIXES, string> | null;
 /** `.sha256` の本文 (sha256sum の出力 `<hex>  <name>`) と、取ったファイルのダイジェストを比べる */
 export declare function verifyChecksum(input: { sha256FileText: string; actualSha256: string }): { ok: true } | { ok: false; reason: 'checksum_mismatch'; expectedPrefix: string; actualPrefix: string };
-export interface R2LifecycleRule { ID: string; Filter: { Prefix: string }; Status: 'Enabled'; Expiration?: { Days: number }; Transitions?: Array<{ Days: number; StorageClass: 'STANDARD_IA' }>; AbortIncompleteMultipartUpload?: { DaysAfterInitiation: number } }
-/** §4.5 の Lifecycle の JSON を RETENTION_DAYS / INFREQUENT_ACCESS_AFTER_DAYS / R2_ABORT_MULTIPART_AFTER_DAYS から作る */
-export declare function buildR2LifecycleConfig(): { Rules: R2LifecycleRule[] };
+/** wrangler r2 bucket lifecycle set --file が受ける形 (Cloudflare の API の put object lifecycle configuration の本文)。S3 の形 (Rules / Expiration / STANDARD_IA) ではない (§3.3) */
+export interface R2LifecycleAgeCondition { type: 'Age'; maxAge: number }   // maxAge は秒 (日数 × SECONDS_PER_DAY)
+export interface R2LifecycleRule {
+  id: string;
+  enabled: true;
+  conditions: { prefix?: string };     // prefix を持たない ({}) ルールはバケット全体
+  deleteObjectsTransition?: { condition: R2LifecycleAgeCondition };
+  storageClassTransitions?: Array<{ condition: R2LifecycleAgeCondition; storageClass: 'InfrequentAccess' }>;
+  abortMultipartUploadsTransition?: { condition: R2LifecycleAgeCondition };
+}
+/** §4.5 の Lifecycle の JSON を RETENTION_DAYS / INFREQUENT_ACCESS_AFTER_DAYS / R2_ABORT_MULTIPART_AFTER_DAYS から作る (日数 × SECONDS_PER_DAY の秒) */
+export declare function buildR2LifecycleConfig(): { rules: R2LifecycleRule[] };
 /** §4.5 の wrangler の 4 行 (lifecycle set 1 + lock add 3) を argv の配列で作る。lock の日数は RETENTION_DAYS、名前は `<層>-<日数>d` */
 export declare function buildR2LockCommands(input: { bucket: string; lifecycleFile: string }): string[][];
 /** run の --result-file は任意 (手元で流すときは省ける。workflow では必ず渡す)。report-issue の 3 つは必須で、--run-outcome は STEP_OUTCOMES の中 */
@@ -650,7 +748,8 @@ export declare function roundtripLocal(options: { slot: number }, deps: RunDeps)
 | `STAGE_TIMEOUT_MINUTES` のほかの段 | 固定 | 1〜30 分で終わる短い段で、DB の大きさにほぼよらない |
 | `RETENTION_DAYS`・`INFREQUENT_ACCESS_AFTER_DAYS`・`R2_ABORT_MULTIPART_AFTER_DAYS`・`LOCK_MAX_AGE_SECONDS` | 固定 (変えるときはコードを変え、`r2-config` を流し直す) | R2 の Lifecycle / lock と同じ値でなければならない。env で片方だけ変わると lock と削除がずれる |
 | `BACKUP_SCHEDULE_CRON_UTC`・`JOB_TIMEOUT_MINUTES`・`RUN_STEP_TIMEOUT_MINUTES`・`RUN_REPORT_FILE_NAME` | 固定 (workflow の YAML と同じ PR で変える) | YAML の `schedule` / job と run の step の `timeout-minutes` / 2 つの step の `--result-file` と一致を `tests/db-backup-workflow.test.ts` が見る |
-| `DUMP_COMPLETE_TRAILER`・`RUN_REPORT_SCHEMA_VERSION`・`STEP_OUTCOMES` | 固定 | pg_dump・GitHub Actions の仕様と、run / report の 2 つの step の間の契約 |
+| `DUMP_COMPLETE_TRAILER`・`DATA_DUMP_FINAL_LINE`・`COPY_END_LINE`・`SCHEMA_TABLE_LINE_PATTERN`・`PARTITION_BY_LINE_PREFIX`・`DATA_COPY_LINE_PATTERN`・`RUN_REPORT_SCHEMA_VERSION`・`STEP_OUTCOMES` | 固定 | pg_dump・supabase CLI (`SUPABASE_CLI_VERSION`) の出力の形・GitHub Actions の仕様と、run / report の 2 つの step の間の契約。CLI の版を上げる PR は、往復の検査 (`roundtrip-check`) と §15 の実物の検査 (`supabase/baseline/prod_schema.sql`) で形が変わっていないことを確かめる |
+| `ROUNDTRIP_JOB_TIMEOUT_MINUTES`・`BACKUP_CONCURRENCY_GROUP`・`ROUNDTRIP_CONCURRENCY_GROUP` | 固定 (workflow の YAML と同じ PR で変える) | YAML の roundtrip-check job の `timeout-minutes` と 2 つの job の `concurrency.group` との一致を `tests/db-backup-workflow.test.ts` が見る |
 | `AUDIT_DETAILS_MAX_BYTES` | 固定 | SQL の `record_backup_audit` と同じ値 (migration の契約テストが見る) |
 | `AWS_CHECKSUM_ENV`・`R2_REGION`・`SUPABASE_CLI_VERSION`・`DUMP_EXCLUDED_TABLES`・`MIN_OPAQUE_TOKEN_LENGTH`・`STDERR_TAIL_LINES` | 固定 | 外部の道具の仕様・Supabase の手順・伏せ字の規則に合わせた値で、運用で調整するものではない |
 | `BACKUP_STALE_AFTER_HOURS` (core.ts) | 固定 (取得の予定と同じ PR で変える) | 取得の間隔 (24 時間) + schedule の遅れの余裕から決まる。予定を変えずにしきい値だけを変える理由が無い |
@@ -1015,6 +1114,8 @@ export function resolveOpsAlertRecipient(): OpsAlertRecipient {
 | `roundtrip-local` (CI の `roundtrip-check`) | PR (§15) | ローカルのスタックで dump → 空に → 復元 → 数が合う | dump / verify / restore_env / restore_check | 書かない | 立てない | 関係しない |
 | `r2-config` (オーナーが 1 回) | 初回の設定・保持の変更のとき | `r2-lifecycle.json` と wrangler の 4 行 | 引数の誤りだけ (終了 2) | 書かない | 立てない | 関係しない |
 | run の step の時間切れ・取り消し (S-17) | 任意 | — | 結果ファイルが無い | 書かれない (audit まで行っていない) | report の step が立てる (「結果を残さずに終わった」) | 翌日 stale になれば鳴る |
+| 取得の run の待機中に取得の run (手動) がもう 1 つ入る | 任意 | 新しい方の run が取る | 待機中だった方は canceled (job が始まらない) | 新しい方の分だけ | 新しい方の report の step が判断する | 新しい方の completed で fresh |
+| PR の run (roundtrip-check) が取得の run と重なる | PR のある日 | 両方とも動く (group が別) | — | 取得の分だけ | 取得の分だけ | 関係しない |
 | 結果ファイルが `ok` なのに step が `success` でない | 任意 | — | 食い違い | 書いたとおり | report の step が立てる (「食い違う」) | 同上 |
 | 消費経路 | — | R2 (保管)・admin_audit_logs (記録)・結果ファイル (run → report の step)・`/super-admin/backups` (表示。層・訓練の種類ごとの最新 1 行 + 一覧 2 本)・`backup-freshness` (監視)・`restore` サブコマンド (復元) | — | — | — | — |
 
@@ -1026,7 +1127,8 @@ export function resolveOpsAlertRecipient(): OpsAlertRecipient {
 | 取得の場所 | 07 は Vercel Cron + Edge Function (未実装・成立しない) | GitHub Actions (`.github/workflows/db-backup.yml`) |
 | 保存先 | 07 は R2 + GLACIER (R2 に無い) | R2 の Standard → 30 日で Infrequent Access。bucket lock |
 | 暗号化・整合性 | 07 は GPG 署名 + sha256 | age (公開鍵。秘密鍵は CI に無い) + sha256 + bucket lock + 監査行のハッシュ |
-| 世代の削除 | — | R2 の Lifecycle。コードは消さない |
+| 世代の削除 | — | R2 の Lifecycle (`r2-config` が wrangler の受ける Cloudflare の API の形で作る)。コードは消さない |
+| 同時実行の group | (db-backup.yml は無い。前例の daily-consistency-check.yml はワークフロー直下) | `backup` job だけに `db-backup`、`roundtrip-check` job は `db-backup-roundtrip-<ref>`。ワークフロー直下には置かない |
 | 記録 | 無い (`backup.*` 0 件) | `record_backup_audit` が `admin_audit_logs` に層ごと 1 行 |
 | 失敗の通知 | — | Actions の失敗通知 + Issue (report の step が結果ファイルと `steps.run.outcome` から作る) + 監査行 |
 | 走っていないことの検知 | — | Vercel Cron `backup-freshness` → `OPS_ALERT_EMAIL` (日 1 回の cron の回ごとに 1 通。クールダウン 23 時間) + 画面のバッジ |
@@ -1043,11 +1145,13 @@ export function resolveOpsAlertRecipient(): OpsAlertRecipient {
 
 | 状態 | 操作 | 遷移先 | ガード | 副作用 |
 |---|---|---|---|---|
+| queued (`backup` job の concurrency の待機) | 同じ group (`db-backup`) に取得の run がもう 1 つ入る | canceled (job が始まらない。report の step も動かない) | 待機中の run は group に 1 つだけ (GitHub の仕様)。PR の run (roundtrip-check) は別の group なのでここに入らない | 監査行・Issue は無い。新しい方の run が同じ 1 本道で取るので daily は欠けない。手動の `tier` が `auto` 以外なら月曜の weekly などが抜けうる (§4.2) |
+| queued | 先に走っている取得の run が終わる | started | — | — |
 | started | link | linked / failed(link) | secrets がある・`supabase link` が 0 | `.temp` の版が更新される |
 | linked | config | configured / failed(config) | 5 つの名前がそろい、受け手が `age1…`、`RUN_TUNING_ENV` は無いか形が合う (`resolveRunTuning`) | failed なら監査行 + Issue、終了 3 |
 | configured | stats | counted / failed(stats) | psql が 0 | manifest の source |
 | counted | dump | dumped / failed(dump) | 3 回の `db dump` が 0、上限 120 分 | 平文 3 ファイル |
-| dumped | verify | verified / failed(verify) | 末尾の完了行・COPY の終端・`COPY public.` の表 = schema.sql の表・auth.users・admin_audit_logs の COPY (§4.3。live の stats は見ない) | manifest の `dumped` |
+| dumped | verify | verified / failed(verify) | 完了行 (`DUMP_COMPLETE_TRAILER`) の後が `RESET ALL;` だけ・COPY の終端・schema.sql の public の表 (空でない) = `COPY "public".` の表・`COPY "auth"."users"`・`COPY "public"."admin_audit_logs"` (§4.3 の実物の形。live の stats は見ない) | manifest の `dumped` |
 | verified | archive → encrypt | encrypted / failed(archive, encrypt) | zstd・age が 0 | `.tar.zst` を消す |
 | encrypted | upload | uploaded / failed(upload) | 3 つの PUT と head-object の大きさ一致 | daily/ に 3 ファイル |
 | uploaded | copy | copied / failed(copy) | weekly / annual があるときだけ | weekly/ annual/ に 3 ファイルずつ |
@@ -1142,7 +1246,7 @@ export function resolveOpsAlertRecipient(): OpsAlertRecipient {
 
 ## 12. 手順書 (`docs/operations/backup-restore.md`。実装の段 D で作る。章立てを固定する)
 
-1. 全体像 (本書 §3.1 の図)。2. 初回の設定 (オーナー): R2 のバケット・Lifecycle と bucket lock (`node scripts/backup-db.mjs r2-config --bucket <名前> --out-dir <dir>` が出す 4 行を流す。JSON・日数は手順書に写さない。§4.5)・API トークン (Object Read & Write、バケット限定)・`age-keygen` と鍵の保管 (§4.4)・GitHub の secrets 2 つと variables 3 つ・最初の `workflow_dispatch` と監査行の確認。3. 日々の確認: `/super-admin/backups`・Issue・運用メール。4. 手動で取る (`workflow_dispatch`)。5. 復元 (ローカル): `node scripts/backup-db.mjs restore --key <R2 のキー> --identity-file <path>` → `npm run test:smoke -- --base-url=http://localhost:3000`。6. 復元 (新しい Supabase プロジェクト): 取得・復号・`supabase link` → Supabase の手順 (roles → schema → replica で data) → Vault の `app_cron_secret` と `pii_hmac_key` を作り直す (HMAC の照合は新しい鍵では合わない) → `cron.job` が 0 なら migration の `cron.schedule` を手で流す (一覧は `tests/helpers/migration-cron-jobs.ts` の数え方) → Edge Function secrets と Vercel の環境変数の差し替え → `/api/health?deep=1` → smoke。7. 復元点より後の退会 (§9.1)。8. 訓練の予定と記録: 月次 (Pro まで skipped)・四半期・年次。チェックリストと、画面での記録の項目。9. 鍵の入れ替え・R2 トークンの入れ替え・secrets の失効。10. 困ったとき: `not_configured`・`dump_incomplete` (migration の本番適用と重なったときは `workflow_dispatch` で取り直す。§4.3)・Issue の「結果を残さずに終わった」(時間切れ。`BACKUP_DUMP_TIMEOUT_MINUTES` などの調整)・`restore_env_failed` (ベースラインの取り直し)・schedule の停止 (60 日)・Lifecycle が効いていない (inventory の数)。
+1. 全体像 (本書 §3.1 の図)。2. 初回の設定 (オーナー): R2 のバケット・Lifecycle と bucket lock (`node scripts/backup-db.mjs r2-config --bucket <名前> --out-dir <dir>` が出す 4 行を流す。JSON・日数は手順書に写さない。§4.5)・API トークン (Object Read & Write、バケット限定)・`age-keygen` と鍵の保管 (§4.4)・GitHub の secrets 2 つと variables 3 つ・最初の `workflow_dispatch` と監査行の確認。3. 日々の確認: `/super-admin/backups`・Issue・運用メール。4. 手動で取る (`workflow_dispatch`。取得の run の実行中に流すときは `tier` を `auto` にする。待機中の schedule の run が取り消され、その日の層が抜けないように。§4.2)。5. 復元 (ローカル): `node scripts/backup-db.mjs restore --key <R2 のキー> --identity-file <path>` → `npm run test:smoke -- --base-url=http://localhost:3000`。6. 復元 (新しい Supabase プロジェクト): 取得・復号・`supabase link` → Supabase の手順 (roles → schema → replica で data) → Vault の `app_cron_secret` と `pii_hmac_key` を作り直す (HMAC の照合は新しい鍵では合わない) → `cron.job` が 0 なら migration の `cron.schedule` を手で流す (一覧は `tests/helpers/migration-cron-jobs.ts` の数え方) → Edge Function secrets と Vercel の環境変数の差し替え → `/api/health?deep=1` → smoke。7. 復元点より後の退会 (§9.1)。8. 訓練の予定と記録: 月次 (Pro まで skipped)・四半期・年次。チェックリストと、画面での記録の項目。9. 鍵の入れ替え・R2 トークンの入れ替え・secrets の失効。10. 困ったとき: `not_configured`・`dump_incomplete` (migration の本番適用と重なったときは `workflow_dispatch` で取り直す。毎日続くときは supabase CLI の出力の形が §4.3 の表と変わっていないかを `roundtrip-check` で確かめる。§4.3)・Issue の「結果を残さずに終わった」(時間切れ。`BACKUP_DUMP_TIMEOUT_MINUTES` などの調整)・`restore_env_failed` (ベースラインの取り直し)・schedule の停止 (60 日)・Lifecycle が効いていない (inventory の数)。
 
 ---
 
@@ -1200,8 +1304,8 @@ sequenceDiagram
 
 | ファイル | it 名 (要点) |
 |---|---|
-| `tests/backup-db.test.ts` (scripts/lib/backup-db.mjs。`run` は偽物) | tiersForDate: 火曜 → [daily] / 月曜 → [daily, weekly] / 2027-01-01 (金) → [daily, annual] / 2029-01-01 (月) → 3 つ / JST の境界 (16:00 UTC の日曜 = 月曜 01:00 JST) で weekly になる / planRun: tierOverride weekly → [daily, weekly]、auto は日付どおり、basename が `homegohan-db-<YYYYMMDDTHHMMSSZ>` / objectKey: `daily/2026-10-20/<base>.tar.zst.age`・annual は `annual/2026/` / checkConfig: 5 つそろえば ok、無い・空・`age1` 以外は missing に名前だけ (値を含まない) / scanDataSql: `COPY auth.users (…) FROM stdin;` から `\.` までの行数を copy_row_counts に数える・`\.` の前でファイルが終わると unterminated_copy にその表・`COPY public.x` を public_copy_tables、`COPY storage.objects` を managed_copy_tables に分ける・last_non_empty_line が末尾の空行を飛ばす / scanSchemaSql: `CREATE TABLE public.a (`・`CREATE UNLOGGED TABLE public.b (` を拾い、`) PARTITION BY RANGE (…);` で閉じた親は除く・`CREATE TABLE auth.x` は拾わない / verifyDumpFiles: schema の表の集合と COPY public. の集合が同じで ok と dumped {public_tables, auth_users (COPY auth.users の行数), audit_rows} / 1 表少ないと dump_incomplete {expected, actual} / 数は同じで名前が違う (片方に無い表) と落ちる / 末尾の行が DUMP_COMPLETE_TRAILER でないと落ちる / unterminated_copy があると落ちる / auth.users・admin_audit_logs の COPY が無いと落ちる / 空のファイルで落ちる / 引数に live の stats を取らない (stats が dumped と違っても結果に影響しない) / managedTablesInDump: auth.users・storage.objects を拾い public は拾わない・重複を除く / restoreChecks: dumped と 3 つ (表・利用者・監査行) が一致で ok、どれか 1 つずれれば failed で expected / actual が DumpCounts の形、cron_jobs が 0 でも ok / buildCompletedDetails: 8192 bytes を超えたら inventory → restore_check の順に落とす・超えないなら全部残す / buildFailedDetails: reason が FAILURE_REASONS の中 / classifyFailure: timeout の Error → timeout、段ごとの既定 / redactForLog: 24 文字以上の英数字と TOKEN/SECRET/KEY/PASSWORD の値を *** に、短い語は残す / parseArgs: run の既定 tier auto・`--result-file` は任意 (無ければ null)、restore は key と identity-file 必須、report-issue は `--result-file`・`--run-outcome`・`--run-url` 必須で `--run-outcome` が STEP_OUTCOMES の外なら UsageError、知らないオプションは UsageError / toRunReport: exitCode 0 → ok・3 → not_configured・1 → failed、failures に RunFailure (missing の名前) を写し値を写さない、warnings・audit_written を写す / parseRunReport: toRunReport の JSON を往復で同じに読む・null・JSON でない・schema_version 2・status が未知・failures の reason が FAILURE_REASONS の外 → null / planBackupIssue: ok + success → hasProblems false / failures 1 件 → 本文が BACKUP_ISSUE_MARKER で始まり層・段・reason・missing の名前・run の URL を含む / report null + outcome failure → 「結果を残さずに終わった」と outcome を含む / report null + cancelled も問題あり / ok なのに outcome failure → 「食い違う」/ warnings だけ (inventory_failed) は問題なし / 本文に env の値 (偽の鍵の文字列) が出ない / report-issue の入口 (偽の github): 問題ありで既存の marker の Issue が無ければ createIssue、あれば updateIssue、問題なしで既存があれば closeIssue (planIssueAction どおり) / run の入口: runBackup が例外を投げても finally で結果ファイル (status failed) を書く・一時ファイルから rename で書く / runBackup (偽の run): 成功の段の順 (STAGES の順) と呼ぶコマンドの名前 (supabase / docker / zstd / age / aws) と、パスワード・鍵をコマンドラインに載せない (env で渡す) / config で止まると dump を呼ばない・audit は failed で呼ぶ・終了 3 / verify で落ちると aws を呼ばない / copy の失敗で daily は completed・weekly は failed の 2 行 / inventory の失敗は completed のまま終了 0 / link の失敗は audit を呼ばず終了 1 / cleanup は失敗でも呼ばれる / 監査行の details に stderr の文・接続先を含まない / aws を呼ぶすべての回の env に AWS_CHECKSUM_ENV の 2 つがあり、引数に `--region` R2_REGION と `--endpoint-url https://<account>.r2.cloudflarestorage.com` がある / zstd の引数が `-<ZSTD_LEVEL>` (上書きがあればその値) / supabase の引数に `supabase@<SUPABASE_CLI_VERSION>` と DUMP_EXCLUDED_TABLES の `-x` がある / 各段の timeoutMs が STAGE_TIMEOUT_MINUTES (dump / upload / restore_check は上書きの値) から作られる。**buildManifest**: schema_version が MANIFEST_SCHEMA_VERSION・`files` の sha256 は `.tar.zst.age` の行だけが文字列でほかは null・age_recipient と excluded_tables・source・dumped を写す・引数に無いキーを足さない。**runBackup の dumped**: completed の details の public_tables / auth_users が verify の dumped の値 (stats の値ではない)・restore_check が manifest の dumped と比べる (偽の stats を 1 ずらしても passed)。**結果ファイルの定数**: RUN_STEP_TIMEOUT_MINUTES が JOB_TIMEOUT_MINUTES − REPORT_STEP_RESERVE_MINUTES で正。**resolveRunTuning / checkConfig**: 上書き無し → 既定 (dump 120・upload 60・restore_check 60・zstd 6) / `BACKUP_DUMP_TIMEOUT_MINUTES=240` → 240 / 0・301 (JOB_TIMEOUT_MINUTES 超)・`1.5`・`abc` → invalid に名前 / `BACKUP_ZSTD_LEVEL=20` → invalid / checkConfig は invalid の名前を missing に入れる (値は入れない)。**R2 の設定の機械検査**: `LOCK_MAX_AGE_SECONDS[t] === RETENTION_DAYS[t] * SECONDS_PER_DAY` (3 層) / buildR2LifecycleConfig が §4.5 の JSON と同じ (4 ルール。daily は Expiration だけ、weekly / annual は Transitions の Days が INFREQUENT_ACCESS_AFTER_DAYS で Expiration が RETENTION_DAYS、abort-multipart が R2_ABORT_MULTIPART_AFTER_DAYS) / 各層の Expiration.Days と buildR2LockCommands の `--retention-days` が同じ値 / Transitions の Days が Expiration.Days より小さい / lock の名前が `<層>-<日数>d` で一意。**restoreFromArchive** (偽の run): 成功の段の順が RESTORE_STAGES の順で、終了 0・checks を返し、スタックの stop を呼ばない / `.sha256` が合わない → stage checksum・reason checksum_mismatch・終了 1 で age を呼ばない / age が非 0 → stage decrypt・reason decrypt_failed・終了 1 で supabase-local.sh を呼ばない / aws が非 0 → download_failed / zstd・tar が非 0 → extract_failed / restoreChecks が合わない → restore_check_failed / 失敗でも一時ディレクトリを消す / identity のパスを標準出力・ログに出さない。**siblingKeys / verifyChecksum**: `daily/2026-10-13/<base>.tar.zst.age` → 3 つのキー / `.sha256` で終わる・接頭辞が違う → null / sha256sum の出力 (2 つの空白・`*` 付き) を読み、大文字小文字を区別せず比べる / 合わないと先頭 8 文字の両方を返す。**parseArgs**: `r2-config` は `--bucket` と `--out-dir` 必須 / restore の `--key` が siblingKeys で null なら UsageError |
-| `tests/db-backup-workflow.test.ts` (YAML の契約。`import yaml from 'js-yaml'`) | schedule が `23 17 * * *` (BACKUP_SCHEDULE_CRON_UTC と同じ) と workflow_dispatch の tier の choices が auto + BACKUP_TIERS / permissions が contents: read・issues: write だけ / concurrency の group が db-backup で cancel-in-progress false / backup job の timeout-minutes が JOB_TIMEOUT_MINUTES / 本番へ書くコマンド (`db push`・`migration repair`・`db reset`・`apply_migration`) を含まない / `supabase@` の版がすべて SUPABASE_CLI_VERSION / secrets の名前が REQUIRED_SECRET_NAMES + SUPABASE_ACCESS_TOKEN・SUPABASE_DB_PASSWORD・GITHUB_TOKEN だけ、variables が REQUIRED_VARIABLE_NAMES + OPTIONAL_VARIABLE_NAMES だけ / ワークフロー直下 (jobs の外) で secrets を参照しない / `age` を apt で入れる行がある / Stop local Supabase が `if: always()` / ジョブ単位の `continue-on-error` が無い / backup job の step の名前の並びが §4.11 のとおり (Checkout → Setup Node.js → Install age → Run backup → Stop local Supabase → Report (Issue)) / Run backup の `id` が `run`、`timeout-minutes` が RUN_STEP_TIMEOUT_MINUTES、run の文に `--result-file "$RUNNER_TEMP/<RUN_REPORT_FILE_NAME>"` があり `${{ inputs.` を含まない (入力は env の TIER_INPUT) / Report (Issue) の `if` が `always()`、run の文が `report-issue` で同じ `--result-file` のパス・`--run-outcome "$RUN_OUTCOME"`・`--run-url "$RUN_URL"`、env の RUN_OUTCOME が `${{ steps.run.outcome }}`、GH_TOKEN が `${{ github.token }}` / Report の step が Run backup より後 / `on` は schedule・workflow_dispatch・pull_request (paths: scripts/backup-db.mjs・scripts/lib/backup-db.mjs・scripts/supabase-local.sh・この workflow) の 3 つ / `backup` job の `if` が `github.event_name != 'pull_request'`・`github.ref == 'refs/heads/main'`・`github.actor != 'dependabot[bot]'` の 3 つを含む (PR では動かない。3 つ目は tests/security-workflow.test.ts の BOT_GUARD と同じ文字列) / `roundtrip-check` job は secrets を参照しない (ローカルのスタックだけ) で、`if` が schedule を外す (`github.event_name != 'schedule'`) |
+| `tests/backup-db.test.ts` (scripts/lib/backup-db.mjs。`run` は偽物) | tiersForDate: 火曜 → [daily] / 月曜 → [daily, weekly] / 2027-01-01 (金) → [daily, annual] / 2029-01-01 (月) → 3 つ / JST の境界 (16:00 UTC の日曜 = 月曜 01:00 JST) で weekly になる / planRun: tierOverride weekly → [daily, weekly]、auto は日付どおり、basename が `homegohan-db-<YYYYMMDDTHHMMSSZ>` / objectKey: `daily/2026-10-20/<base>.tar.zst.age`・annual は `annual/2026/` / checkConfig: 5 つそろえば ok、無い・空・`age1` 以外は missing に名前だけ (値を含まない) / (偽物の data.sql / schema.sql はすべて §4.3 の「ダンプの出力の形」の表と骨組みのとおりに書く。引用符の無い `COPY public.x` や `CREATE TABLE public.a (` を正の例に使わない) parseCopyLine: `COPY "auth"."users" ("id", "email") FROM stdin;` → {auth, users} / 列の無い `COPY "public"."t" FROM stdin;` も拾う / `COPY "public"."a""b" ("x") FROM stdin;` → 表 `a"b` / 引用符の無い `COPY public.x (a) FROM stdin;` → null / parseSchemaTableLine: `CREATE TABLE IF NOT EXISTS "public"."family_members" (` → {public, family_members} / `CREATE UNLOGGED TABLE "public"."b" (` → {public, b} / 引用符の無い `CREATE TABLE public.a (` → null / scanDataSql: `COPY "auth"."users" (…) FROM stdin;` から `\.` までの行数を copy_row_counts[`auth.users`] に数える・`\.` の前でファイルが終わると unterminated_copy にその表・`COPY "public"."x"` を public_copy_tables (`x`)、`COPY "storage"."objects"` を managed_copy_tables (`storage.objects`) に分ける・§4.3 の骨組みで complete_trailer_seen true と statements_after_trailer `['RESET ALL;']` (`-- \unrestrict …` と `--` は数えない)・骨組みから `-- \unrestrict` の行を除いても同じ結果・完了行の無いファイルで complete_trailer_seen false と statements_after_trailer []・COPY の本体の中の行が DUMP_COMPLETE_TRAILER と同じ文字列でも complete_trailer_seen にしない・先頭の `SET session_replication_role = replica;` と注釈を表に数えない / scanSchemaSql: `CREATE TABLE IF NOT EXISTS "public"."a" (`・`CREATE UNLOGGED TABLE "public"."b" (` を拾い、`)` の次の行が `PARTITION BY RANGE ("d");` の親は除く (`);` で閉じた表と、`ATTACH PARTITION` される子は数える)・`CREATE TABLE IF NOT EXISTS "auth"."x" (` は拾わない / **実物の形の検査**: `supabase/baseline/prod_schema.sql` (同じ CLI 2.62.10 の `db dump --linked` の実物。prod-schema-snapshot.yml が更新する) を scanSchemaSql に掛けると public_tables が空でなく、その数がファイルの `CREATE TABLE IF NOT EXISTS "public".` と `CREATE UNLOGGED TABLE "public".` で始まる行の数 (startsWith で別に数えた値) と同じ・同じファイルに `CREATE TABLE public.` で始まる行と `--` で始まる行が無い (CLI の出力の形が §4.3 の表のままであること) / verifyDumpFiles: schema の表の集合と `COPY "public".` の集合が同じで ok と dumped {public_tables, auth_users (`COPY "auth"."users"` の行数), audit_rows} / 1 表少ないと dump_incomplete {expected, actual} / 数は同じで名前が違う (片方に無い表) と落ちる / complete_trailer_seen が false で落ちる / statements_after_trailer が [] (RESET ALL; が無い) で落ちる / 完了行の後に `RESET ALL;` 以外の文 (例 `SET x = 1;`) があると落ちる / unterminated_copy があると落ちる / auth.users・admin_audit_logs の COPY が無いと落ちる / schema の表も COPY の表も 0 (形が変わって何も拾えない) で落ちる / 空のファイルで落ちる / 引数に live の stats を取らない (stats が dumped と違っても結果に影響しない) / managedTablesInDump: `auth.users`・`storage.objects` を拾い public は拾わない・重複を除く / restoreChecks: dumped と 3 つ (表・利用者・監査行) が一致で ok、どれか 1 つずれれば failed で expected / actual が DumpCounts の形、cron_jobs が 0 でも ok / buildCompletedDetails: 8192 bytes を超えたら inventory → restore_check の順に落とす・超えないなら全部残す / buildFailedDetails: reason が FAILURE_REASONS の中 / classifyFailure: timeout の Error → timeout、段ごとの既定 / redactForLog: 24 文字以上の英数字と TOKEN/SECRET/KEY/PASSWORD の値を *** に、短い語は残す / parseArgs: run の既定 tier auto・`--result-file` は任意 (無ければ null)、restore は key と identity-file 必須、report-issue は `--result-file`・`--run-outcome`・`--run-url` 必須で `--run-outcome` が STEP_OUTCOMES の外なら UsageError、知らないオプションは UsageError / toRunReport: exitCode 0 → ok・3 → not_configured・1 → failed、failures に RunFailure (missing の名前) を写し値を写さない、warnings・audit_written を写す / parseRunReport: toRunReport の JSON を往復で同じに読む・null・JSON でない・schema_version 2・status が未知・failures の reason が FAILURE_REASONS の外 → null / planBackupIssue: ok + success → hasProblems false / failures 1 件 → 本文が BACKUP_ISSUE_MARKER で始まり層・段・reason・missing の名前・run の URL を含む / report null + outcome failure → 「結果を残さずに終わった」と outcome を含む / report null + cancelled も問題あり / ok なのに outcome failure → 「食い違う」/ warnings だけ (inventory_failed) は問題なし / 本文に env の値 (偽の鍵の文字列) が出ない / report-issue の入口 (偽の github): 問題ありで既存の marker の Issue が無ければ createIssue、あれば updateIssue、問題なしで既存があれば closeIssue (planIssueAction どおり) / run の入口: runBackup が例外を投げても finally で結果ファイル (status failed) を書く・一時ファイルから rename で書く / runBackup (偽の run): 成功の段の順 (STAGES の順) と呼ぶコマンドの名前 (supabase / docker / zstd / age / aws) と、パスワード・鍵をコマンドラインに載せない (env で渡す) / config で止まると dump を呼ばない・audit は failed で呼ぶ・終了 3 / verify で落ちると aws を呼ばない / copy の失敗で daily は completed・weekly は failed の 2 行 / inventory の失敗は completed のまま終了 0 / link の失敗は audit を呼ばず終了 1 / cleanup は失敗でも呼ばれる / 監査行の details に stderr の文・接続先を含まない / aws を呼ぶすべての回の env に AWS_CHECKSUM_ENV の 2 つがあり、引数に `--region` R2_REGION と `--endpoint-url https://<account>.r2.cloudflarestorage.com` がある / zstd の引数が `-<ZSTD_LEVEL>` (上書きがあればその値) / supabase の引数に `supabase@<SUPABASE_CLI_VERSION>` と DUMP_EXCLUDED_TABLES の `-x` がある / 各段の timeoutMs が STAGE_TIMEOUT_MINUTES (dump / upload / restore_check は上書きの値) から作られる。**buildManifest**: schema_version が MANIFEST_SCHEMA_VERSION・`files` の sha256 は `.tar.zst.age` の行だけが文字列でほかは null・age_recipient と excluded_tables・source・dumped を写す・引数に無いキーを足さない。**runBackup の dumped**: completed の details の public_tables / auth_users が verify の dumped の値 (stats の値ではない)・restore_check が manifest の dumped と比べる (偽の stats を 1 ずらしても passed)。**結果ファイルの定数**: RUN_STEP_TIMEOUT_MINUTES が JOB_TIMEOUT_MINUTES − REPORT_STEP_RESERVE_MINUTES で正。**resolveRunTuning / checkConfig**: 上書き無し → 既定 (dump 120・upload 60・restore_check 60・zstd 6) / `BACKUP_DUMP_TIMEOUT_MINUTES=240` → 240 / 0・301 (JOB_TIMEOUT_MINUTES 超)・`1.5`・`abc` → invalid に名前 / `BACKUP_ZSTD_LEVEL=20` → invalid / checkConfig は invalid の名前を missing に入れる (値は入れない)。**R2 の設定の機械検査**: `LOCK_MAX_AGE_SECONDS[t] === RETENTION_DAYS[t] * SECONDS_PER_DAY` (3 層) / buildR2LifecycleConfig が §4.5 の JSON と同じ (`rules` の 4 ルール。どれも `enabled: true`・condition の type は `Age`。daily は deleteObjectsTransition だけ、weekly / annual は storageClassTransitions の maxAge が INFREQUENT_ACCESS_AFTER_DAYS × SECONDS_PER_DAY で storageClass が `InfrequentAccess`、deleteObjectsTransition の maxAge が LOCK_MAX_AGE_SECONDS[t]、abort-multipart は conditions が {} で abortMultipartUploadsTransition の maxAge が R2_ABORT_MULTIPART_AFTER_DAYS × SECONDS_PER_DAY) / 各層の deleteObjectsTransition.condition.maxAge と、buildR2LockCommands の `--retention-days` × SECONDS_PER_DAY が同じ値 / storageClassTransitions の maxAge が deleteObjectsTransition の maxAge より小さい / JSON.stringify(buildR2LifecycleConfig()) に S3 の形のキー (`Rules`・`Expiration`・`Transitions`・`STANDARD_IA`・`Days`) が無い / lock の名前が `<層>-<日数>d` で一意。**restoreFromArchive** (偽の run): 成功の段の順が RESTORE_STAGES の順で、終了 0・checks を返し、スタックの stop を呼ばない / `.sha256` が合わない → stage checksum・reason checksum_mismatch・終了 1 で age を呼ばない / age が非 0 → stage decrypt・reason decrypt_failed・終了 1 で supabase-local.sh を呼ばない / aws が非 0 → download_failed / zstd・tar が非 0 → extract_failed / restoreChecks が合わない → restore_check_failed / 失敗でも一時ディレクトリを消す / identity のパスを標準出力・ログに出さない。**siblingKeys / verifyChecksum**: `daily/2026-10-13/<base>.tar.zst.age` → 3 つのキー / `.sha256` で終わる・接頭辞が違う → null / sha256sum の出力 (2 つの空白・`*` 付き) を読み、大文字小文字を区別せず比べる / 合わないと先頭 8 文字の両方を返す。**parseArgs**: `r2-config` は `--bucket` と `--out-dir` 必須 / restore の `--key` が siblingKeys で null なら UsageError |
+| `tests/db-backup-workflow.test.ts` (YAML の契約。`import yaml from 'js-yaml'`) | schedule が `23 17 * * *` (BACKUP_SCHEDULE_CRON_UTC と同じ) と workflow_dispatch の tier の choices が auto + BACKUP_TIERS / permissions が contents: read・issues: write だけ / ワークフロー直下 (トップレベル) に `concurrency` が無い / `jobs.backup.concurrency` が {group: BACKUP_CONCURRENCY_GROUP, cancel-in-progress: false} / `jobs.roundtrip-check.concurrency` が {group: ROUNDTRIP_CONCURRENCY_GROUP (`${{ github.ref }}` を含み BACKUP_CONCURRENCY_GROUP と違う), cancel-in-progress: true} / roundtrip-check job の timeout-minutes が ROUNDTRIP_JOB_TIMEOUT_MINUTES で、step の名前の並びが §4.11 のとおり (Checkout repository → Setup Node.js → Roundtrip (local) → Stop local Supabase)、Roundtrip の run の文に `roundtrip-local` があり、Stop が `if: always()` / backup job の timeout-minutes が JOB_TIMEOUT_MINUTES / 本番へ書くコマンド (`db push`・`migration repair`・`db reset`・`apply_migration`) を含まない / `supabase@` の版がすべて SUPABASE_CLI_VERSION / secrets の名前が REQUIRED_SECRET_NAMES + SUPABASE_ACCESS_TOKEN・SUPABASE_DB_PASSWORD・GITHUB_TOKEN だけ、variables が REQUIRED_VARIABLE_NAMES + OPTIONAL_VARIABLE_NAMES だけ / ワークフロー直下 (jobs の外) で secrets を参照しない / `age` を apt で入れる行がある / Stop local Supabase が `if: always()` / ジョブ単位の `continue-on-error` が無い / backup job の step の名前の並びが §4.11 のとおり (Checkout → Setup Node.js → Install age → Run backup → Stop local Supabase → Report (Issue)) / Run backup の `id` が `run`、`timeout-minutes` が RUN_STEP_TIMEOUT_MINUTES、run の文に `--result-file "$RUNNER_TEMP/<RUN_REPORT_FILE_NAME>"` があり `${{ inputs.` を含まない (入力は env の TIER_INPUT) / Report (Issue) の `if` が `always()`、run の文が `report-issue` で同じ `--result-file` のパス・`--run-outcome "$RUN_OUTCOME"`・`--run-url "$RUN_URL"`、env の RUN_OUTCOME が `${{ steps.run.outcome }}`、GH_TOKEN が `${{ github.token }}` / Report の step が Run backup より後 / `on` は schedule・workflow_dispatch・pull_request (paths: scripts/backup-db.mjs・scripts/lib/backup-db.mjs・scripts/supabase-local.sh・この workflow) の 3 つ / `backup` job の `if` が `github.event_name != 'pull_request'`・`github.ref == 'refs/heads/main'`・`github.actor != 'dependabot[bot]'` の 3 つを含む (PR では動かない。3 つ目は tests/security-workflow.test.ts の BOT_GUARD と同じ文字列) / `roundtrip-check` job は secrets を参照しない (ローカルのスタックだけ) で、`if` が schedule を外す (`github.event_name != 'schedule'`) |
 | `tests/backup-audit-record-migration-contract.test.ts` (SQL の文面) | rollback が同じ version / 名前で対 / 関数は SECURITY INVOKER・`SET search_path = ''`・参照が完全修飾 / action_type の 6 値が core.ts の BACKUP_AUDIT_ACTION_TYPES と同じ集合 / 上限 8192 が AUDIT_DETAILS_MAX_BYTES と同じ / REVOKE が完全形 (PUBLIC, anon, authenticated, service_role) で GRANT が無い / INSERT の列が actor_id, action_type, target_type, details, severity で actor_id が NULL / 既存の表・関数に触れる文が無い (CREATE OR REPLACE が 1 つ、ALTER / UPDATE / DELETE が無い) / down は DROP FUNCTION IF EXISTS だけ |
 | `src/__tests__/lib/backups/core.test.ts` | isBackupStale: null → true / 29 時間 → false / 31 時間 → true / 形が崩れた文字列 → true / drTestRecordBodySchema: success は notes 空でよい・failed と skipped は notes 必須・quarterly_restore の success は backup_key 必須・backup_key は `daily/…` の形だけ・rto 100001 は落ちる・performed_on の 2026-02-30 は落ちる・未知の key (strict) は落ちる / toBackupStatusResponse: latest が latestByTier をそのまま写す (一覧 backups が空でも annual の最新が出る = 窓によらない)・latest_dr_tests も同じ・latest に action_type の違う行 (failed など) が渡されたら null・backups / dr_tests は action_type の族の外の行を落とす・stale が latest.daily から決まる / backupAuditAction と BACKUP_AUDIT_ACTION_TYPES が 6 値 / DR_TEST_AUDIT_ACTIONS が `dr.test.` で始まり 3 値 / BACKUP_AUDIT_SELECT が 5 列 / drTestSeverity / BACKUP_TIER_LABELS・DR_TEST_KIND_LABELS・DR_TEST_RESULT_LABELS・DR_TEST_ENVIRONMENT_LABELS・DR_TEST_SMOKE_LABELS のキーの集合がそれぞれ BACKUP_TIERS・DR_TEST_KINDS・DR_TEST_RESULTS・DR_TEST_ENVIRONMENTS・DR_TEST_SMOKE_RESULTS と同じで、値が空でない一意の文字列 / BACKUP_STALE_ALERT_COOLDOWN_MINUTES が BACKUP_FRESHNESS_CRON_INTERVAL_HOURS × 60 より小さく、1380 (= (24 − 1) × 60) / BACKUP_FRESHNESS_SCHEDULE_UTC が日 1 回の式 (分・時が数字で、日・月・曜日が `*`) で BACKUP_FRESHNESS_CRON_INTERVAL_HOURS が 24 / BACKUP_TIERS が scripts/lib/backup-db.mjs の BACKUP_TIERS と同じ並び (2 か所の正典のずれを見る) / BACKUP_STALE_AFTER_HOURS が BACKUP_SCHEDULE_HOURS + BACKUP_STALE_SLACK_HOURS / BACKUP_FRESHNESS_SCHEDULE_UTC と BACKUP_FRESHNESS_CRON_PATH が vercel.json の crons の 1 行と同じ |
 | `src/__tests__/lib/ops-alerts/recipient.test.ts` | 未設定・空白 → disabled / 名前つき・カンマ区切り → invalid_config / アドレス 1 つ → ok で値を返す (各 it の後に vi.unstubAllEnvs) |
@@ -1210,9 +1314,9 @@ sequenceDiagram
 | `tests/super-admin-backups-route.test.ts` (本物の requireRole・recordAdminAudit。Supabase はモック) | GET: 未ログイン 401・admin 403・super_admin 200 / select の列が BACKUP_AUDIT_SELECT と同じ文字列 / 読み取りが 8 本: `.eq('action_type', …)` + `.limit(1)` が 6 本 (BACKUP_AUDIT_ACTION_TYPES の completed 3 値 + DR_TEST_AUDIT_ACTION_TYPES 3 値)、`.in` が 2 本 (取得 6 値 + `.limit(BACKUP_STATUS_LIST_LIMIT)`、訓練 3 値 + `.limit(DR_TEST_LIST_LIMIT)`) / 一覧の窓に annual の行が無くても、`.eq('backup.annual.completed')` の 1 行が `data.latest.annual` に出る / dr の一覧に annual_drill が無くても `data.latest_dr_tests.annual_drill` に出る / 8 本のどれかが error → 500 / 本人の client で読む (getSupabaseAdmin を呼ばない) / 行の検証に落ちる (severity が未知) → 500 / Cache-Control no-store。POST: NUL → 400 で createClient を呼ばない / 未ログイン 401 / admin 403 / JSON でない 400 / kind が未知 400 / failed で notes 空 400 / 201 で recordAdminAudit が `dr.test.quarterly.restore`・target_type dr_test・severity info・details が本文と同じ・request を渡している / skipped は warn / insert の失敗で 500 と本文は汎用・201 を返さない / ip_address が x-forwarded-for の先頭 |
 | `tests/super-admin-backups-page.test.tsx` | 鮮度 true で赤いバッジと文 / 層のカードに最新の日時 (日本時間)・latest が null で「記録なし」/ `dr-tests-latest` に種類ごとの最後の訓練 / form の kind・result・environment・smoke の option が core.ts の配列と同じ並びで、表示が `*_LABELS` の値 / form の送信で POST の本文が drTestRecordBodySchema を通る形 / 400 で項目の文 / 201 で読み直す / 一覧に details の JSON / page.tsx の文面に `'monthly_pitr'`・`'月次 PITR 復元テスト'` などの値・ラベルの直書きが無い (core.ts から import している) |
 | `src/__tests__/api/cron/app-log-alerts.test.ts` (既存。読み口の置き換えの回帰) | 変えない。OPS_ALERT_EMAIL を stubEnv する既存の it (未設定 → disabled・形の誤り → invalid_config・設定あり → 送る) が、`resolveOpsAlertRecipient` に替えたあとも同じ結果になることが回帰の確認 |
-| 往復 (CI の job `roundtrip-check`。`node scripts/backup-db.mjs roundtrip-local`) | ローカルのスタックを起動 → SQL で利用者 1 人と表の行を種まき → `dumpDatabase({ dbUrl })` → scanSchemaSql / scanDataSql → verifyDumpFiles が ok (本物の `supabase db dump` の出力に DUMP_COMPLETE_TRAILER があり、COPY の表の集合が schema と合うことを、ここで実物で確かめる) → resetForRestore → restoreDatabase → `restoreChecks(dumped, …)` が passed (表の数・auth.users 1・admin_audit_logs の行) → 終了 0。`tests/integration/` には置かない: public を落として戻す破壊的な検査で、共有のスタックで走る結合テストと同居できないため (CI の job として独立させる) |
+| 往復 (CI の job `roundtrip-check`。`node scripts/backup-db.mjs roundtrip-local`) | ローカルのスタックを起動 → SQL で利用者 1 人と表の行を種まき → `dumpDatabase({ dbUrl })` → scanSchemaSql / scanDataSql → verifyDumpFiles が ok (本物の `supabase db dump` の data.sql に DUMP_COMPLETE_TRAILER と最後の `RESET ALL;` があり、引用符つきの `COPY "public".` の表の集合が schema.sql の `CREATE TABLE IF NOT EXISTS "public".` の表と合うことを、ここで実物で確かめる。§4.3 の表と食い違えばここが赤くなる) → resetForRestore → restoreDatabase → `restoreChecks(dumped, …)` が passed (表の数・auth.users 1・admin_audit_logs の行) → 終了 0。`tests/integration/` には置かない: public を落として戻す破壊的な検査で、共有のスタックで走る結合テストと同居できないため (CI の job として独立させる) |
 | `tests/integration/security/backup-audit-record.test.ts` (ローカルの Supabase。関数の呼び出しは postgres-meta の `/pg/query` = postgres で実行) | `record_backup_audit('backup.daily.completed', {...})` が行を作り actor_id NULL・severity info・target_type database_backup / `.failed` は warn / 未知の action_type・配列の details・8193 bytes は 22023 / service_role の client の `rpc('record_backup_audit')` は 42501 / anon も 42501 / authenticated の super_admin (`tests/integration/helpers/users.ts` の `createTestUserWithRoles({ roles: ['super_admin'] })` の jwt で作った client) で、関数が作った行を `.update({ severity: 'critical' }).eq('id', …)`・`.delete().eq('id', …)` → エラー無しで 0 行 (RLS の `USING (false)`)、service_role の client で読み直して行が変わっていない / postgres (`/pg/query`) では消せる (この表の不変は RLS でアプリのロールにだけ効く。§5.2。後片付けを兼ねる) |
-| `tests/backup-restore-runbook.test.ts` (段 D。`docs/operations/backup-restore.md` の文面) | §12 の 10 章の見出しがある / `node scripts/backup-db.mjs r2-config` と `node scripts/backup-db.mjs restore` の行がある / Lifecycle の JSON (`"Expiration"`・`"Transitions"`) と `--retention-days <数字>` を写していない (r2-config の出力を正とする。§4.5) / secrets と variables の名前が REQUIRED_SECRET_NAMES・REQUIRED_VARIABLE_NAMES・OPTIONAL_VARIABLE_NAMES と同じ集合 |
+| `tests/backup-restore-runbook.test.ts` (段 D。`docs/operations/backup-restore.md` の文面) | §12 の 10 章の見出しがある / `node scripts/backup-db.mjs r2-config` と `node scripts/backup-db.mjs restore` の行がある / Lifecycle の JSON (`"deleteObjectsTransition"`・`"storageClassTransitions"`・`"maxAge"`) と `--retention-days <数字>` を写していない (r2-config の出力を正とする。§4.5) / secrets と variables の名前が REQUIRED_SECRET_NAMES・REQUIRED_VARIABLE_NAMES・OPTIONAL_VARIABLE_NAMES と同じ集合 |
 | 既存の番兵の更新 | §18 の各行 |
 
 - `js-yaml` は package.json の直接の依存ではないが、`node_modules/js-yaml` (package-lock の最上位) に入っていて、既存の 7 ファイル (`tests/security-workflow.test.ts`・`tests/consistency-check.test.ts`・`tests/edge-function-dep-pinning.test.ts`・`tests/edge-function-deploy-use-api.test.ts`・`tests/edge-functions-prune.test.ts`・`tests/supabase-image-pull.test.ts`・`tests/helpers/maestro-flow-testids.ts`) が同じ `import yaml from 'js-yaml'` をしている。本設計は依存を足さず、この前例に従う (package.json は触らない)。
@@ -1238,7 +1342,7 @@ sequenceDiagram
 | 種別 | 名前 |
 |---|---|
 | workflow | `.github/workflows/db-backup.yml` (jobs: `backup`, `roundtrip-check`) |
-| scripts | `scripts/backup-db.mjs` (入口。`run` / `restore` / `roundtrip-local` / `report-issue` / `r2-config` / `--help`)、`scripts/lib/backup-db.mjs` (§5.1 の export 全部。`RESTORE_STAGES`・`RUN_TUNING_ENV`・`OPTIONAL_VARIABLE_NAMES`・`resolveRunTuning`・`siblingKeys`・`verifyChecksum`・`buildR2LifecycleConfig`・`buildR2LockCommands`・`REPORT_STEP_RESERVE_MINUTES`・`RUN_STEP_TIMEOUT_MINUTES`・`RUN_REPORT_FILE_NAME`・`RUN_REPORT_SCHEMA_VERSION`・`STEP_OUTCOMES`・`DUMP_COMPLETE_TRAILER`・`DumpCounts`・`DataSqlScan`・`SchemaSqlScan`・`RunFailure`・`BackupRunReport`・`scanDataSql`・`scanSchemaSql`・`toRunReport`・`parseRunReport`・`planBackupIssue` を含む) |
+| scripts | `scripts/backup-db.mjs` (入口。`run` / `restore` / `roundtrip-local` / `report-issue` / `r2-config` / `--help`)、`scripts/lib/backup-db.mjs` (§5.1 の export 全部。`RESTORE_STAGES`・`RUN_TUNING_ENV`・`OPTIONAL_VARIABLE_NAMES`・`resolveRunTuning`・`siblingKeys`・`verifyChecksum`・`buildR2LifecycleConfig`・`buildR2LockCommands`・`REPORT_STEP_RESERVE_MINUTES`・`RUN_STEP_TIMEOUT_MINUTES`・`RUN_REPORT_FILE_NAME`・`RUN_REPORT_SCHEMA_VERSION`・`STEP_OUTCOMES`・`DUMP_COMPLETE_TRAILER`・`DATA_DUMP_FINAL_LINE`・`COPY_END_LINE`・`SCHEMA_TABLE_LINE_PATTERN`・`PARTITION_BY_LINE_PREFIX`・`DATA_COPY_LINE_PATTERN`・`parseCopyLine`・`parseSchemaTableLine`・`ROUNDTRIP_JOB_TIMEOUT_MINUTES`・`BACKUP_CONCURRENCY_GROUP`・`ROUNDTRIP_CONCURRENCY_GROUP`・`R2LifecycleAgeCondition`・`R2LifecycleRule`・`DumpCounts`・`DataSqlScan`・`SchemaSqlScan`・`RunFailure`・`BackupRunReport`・`scanDataSql`・`scanSchemaSql`・`toRunReport`・`parseRunReport`・`planBackupIssue` を含む) |
 | テスト (新設) | §15 の新しいファイル 10 本 (`tests/backup-db.test.ts`・`tests/db-backup-workflow.test.ts`・`tests/backup-audit-record-migration-contract.test.ts`・`tests/integration/security/backup-audit-record.test.ts`・`src/__tests__/lib/backups/core.test.ts`・`tests/super-admin-backups-route.test.ts`・`tests/super-admin-backups-page.test.tsx`・`src/__tests__/lib/ops-alerts/recipient.test.ts`・`src/__tests__/api/cron/backup-freshness.test.ts`・`src/__tests__/lib/emails/ops/backup-stale.test.ts`) + `tests/backup-restore-runbook.test.ts` (段 D) |
 | migration | `supabase/migrations/<番号はマージ時に確定>_backup_audit_record.sql`、`supabase/rollbacks/<番号はマージ時に確定>_backup_audit_record.down.sql` |
 | DB の関数 | `public.record_backup_audit(text, jsonb)` |
