@@ -4,7 +4,8 @@
  *
  * 食事写真・冷蔵庫写真 (meal_photos / fridge-images) は、段 2 でバケットを非公開にする。DB に保存された公開 URL を
  * そのまま <Image src> / <img src> / <Image source={{ uri }}> に渡すと、非公開にした時点で表示できなくなる (今は誰でも見られる)。
- * 画面は SignedPhotoImage (Web: src/components/photo/SignedPhotoImage.tsx、モバイル: apps/mobile/src/components/photo/SignedPhotoImage.tsx)
+ * 画面は SignedPhotoImage (Web: src/components/photo/SignedPhotoImage.tsx。モバイルの apps/mobile/src/components/photo/SignedPhotoImage.tsx は、
+ * 使っていた食事の詳細・週の献立のネイティブの画面と一緒に消した。#1598。アプリの写真は WebView の Web の画面が出す)
  * を使い、サーバーが本人の写真だと確かめて署名した URL を表示する。
  *
  * 見るもの: 本番の .tsx (src・apps/mobile/app・apps/mobile/src) の JSX の Image / img 要素の src / source 属性に、
@@ -34,8 +35,7 @@ const ALLOWED: Record<string, string> = {
     'content_url は運営の API (/api/admin/moderation/[type]/[id]) がサーバーで署名してから返す (withSignedModerationContentUrls。tests/moderation-photo-signing.test.ts が確かめる)',
   'src/app/(main)/health/checkups/[id]/CheckupDetailClient.tsx':
     '健康診断の画像は別のバケット (health-checkups。もとから非公開) で、#1365 の 2 つのバケットの対象外',
-  'apps/mobile/app/health/checkups/[id].tsx':
-    '健康診断の画像は別のバケット (health-checkups。もとから非公開) で、#1365 の 2 つのバケットの対象外',
+  // (apps/mobile/app/health/checkups/[id].tsx の行は、画面ごと消したので除いた。#1598)
 };
 
 function listTsxFiles(dir: string): string[] {
@@ -85,7 +85,8 @@ describe('#1365 保存された写真の URL は SignedPhotoImage を通して�
 
   it('走査の対象が見つかる (走査そのものが空回りしていない)', () => {
     expect(files).toContain('src/app/(main)/meals/[id]/page.tsx');
-    expect(files).toContain('apps/mobile/app/meals/[id].tsx');
+    // (以前はモバイルの食事の詳細 apps/mobile/app/meals/[id].tsx を見ていた。#1598 で消したので、残した画面を見る)
+    expect(files).toContain('apps/mobile/app/health/blood-tests.tsx');
   });
 
   it('Image / img の src / source に保存された写真の URL を直接渡していない', () => {

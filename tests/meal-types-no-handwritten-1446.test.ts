@@ -46,8 +46,8 @@
  * ■ #1665 の見張りの契約 (食事の区分ごとの見た目の対応表)
  * 区分ごとの色・下地の色・絵文字・アイコン・表示名は、表 (Record<MealType, …>) 1 か所から引く:
  *   - Web とモバイルで同じ値: packages/shared/src/meal-types.ts (MEAL_LABELS・MEAL_EMOJIS)
- *   - Web: src/lib/meal-type-visuals.ts / モバイル: apps/mobile/src/lib/meal-type-visuals.ts
- * 表の値そのもの (今の画面の色・絵文字) は tests/meal-type-visuals-1665.test.ts と apps/mobile/__tests__/lib/meal-type-visuals.test.ts が固定する。
+ *   - Web: src/lib/meal-type-visuals.ts (モバイルの表 apps/mobile/src/lib/meal-type-visuals.ts は、使っていたネイティブの画面と一緒に消した。#1598)
+ * 表の値そのもの (今の画面の色・絵文字) は tests/meal-type-visuals-1665.test.ts が固定する。
  * この番兵は、表の外に区分ごとの見た目の対応が新しく増えないことを、次の「捕まえる書き方」で見張る
  * (PRODUCT_SOURCE_DIRS から VISUAL_SCAN_EXCLUDED_DIRS を除いた製品のソース。除外表 (理由つき) のファイルは見ない):
  *   V1. 区分の値と == / === で比べた結果で値を選ぶ形が、ファイルの中で 2 つ以上の区分ぶんある
@@ -75,7 +75,7 @@ const ROOT = path.resolve(__dirname, '..');
 /** 食事の区分を正本から導くことにしたファイル (#1446・#1631 の対象) */
 const TARGET_FILES = [
   // #1446
-  'apps/mobile/app/menus/weekly/index.tsx',
+  // (モバイルの週の献立の画面 apps/mobile/app/menus/weekly/index.tsx も対象だったが、通常の操作で届かない画面として消した。#1598)
   'src/app/(main)/menus/weekly/page.tsx',
   'src/app/(main)/menus/weekly/_components/modals/AddMealSlotModal.tsx',
   // #1631
@@ -91,7 +91,7 @@ const TARGET_FILES = [
   'src/app/api/ai/menu/v5/generate/route.ts',
   'src/app/api/meal-plans/meals/reorder/route.ts',
   'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts',
-  'apps/mobile/app/meals/[id].tsx',
+  // (モバイルの食事の詳細の画面 apps/mobile/app/meals/[id].tsx も対象だったが、通常の操作で届かない画面として消した。#1598)
   'src/lib/ai/consultation-action-executor.ts',
   'src/lib/planned-meal-validation.ts',
   'types/domain.ts',
@@ -103,11 +103,9 @@ const TARGET_FILES = [
  * 食事の区分の手書きの検査 (5 値・MealType の型・おやつと夜食の並び) は外さない。
  */
 const CAST_CHECK_EXCLUDED: Record<string, string> = {
-  // (apps/mobile/app/meals/new.tsx の行は、画面ごと消したので除いた。#1598)
+  // (apps/mobile/app/meals/new.tsx・apps/mobile/app/meals/[id].tsx の行は、画面ごと消したので除いた。#1598)
   'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts':
     '#1631 より前からある LLM の呼び出しの引数 (chat.completions.create に渡す本文) の any キャスト。食事の区分とは関係しない',
-  'apps/mobile/app/meals/[id].tsx':
-    '#1631 より前からある API の応答 (data) の any キャスト。食事の区分とは関係しない',
 };
 
 /**
@@ -497,7 +495,7 @@ describe('#1446 / #1631 食事の区分は正本から導き、any へのキャ�
 const MEAL_TYPE_VISUAL_TABLE_FILES: Record<string, string> = {
   'packages/shared/src/meal-types.ts': 'Web とモバイルで同じ値の見た目 (MEAL_LABELS・MEAL_EMOJIS) の表',
   'src/lib/meal-type-visuals.ts': 'Web の区分の見た目 (色・下地の色・アイコンの部品) の表',
-  'apps/mobile/src/lib/meal-type-visuals.ts': 'モバイルの区分の見た目 (色・アイコンの部品・短い名前) の表',
+  // (モバイルの見た目の表 apps/mobile/src/lib/meal-type-visuals.ts は、使っていた週の献立・食事の詳細の画面と一緒に消した。#1598)
 };
 
 /** 見た目の表ではないが 5 値をキーに持つ表を置いてよいファイルと理由 (V2 の除外表) */
@@ -517,7 +515,6 @@ const VISUAL_OPTION_OBJECT_ALLOWED: Record<string, string> = {
     '人数の設定 (曜日 × 朝・昼・夜) のフォームの列 ({ key, label })。人数の設定は 3 食だけで、区分ごとの見た目の表ではない (#1665 の範囲外)',
   'apps/mobile/app/onboarding/questions.tsx':
     '人数の設定 (曜日 × 朝・昼・夜) のフォームの列 ({ key, label })。人数の設定は 3 食だけで、区分ごとの見た目の表ではない (#1665 の範囲外)',
-  'apps/mobile/app/recipes/index.tsx': 'レシピの分類 (主菜・おやつ など) の選択肢。値 snack はレシピの分類で、食事の区分ではない',
 };
 
 /** 見た目の対応を見張らない製品のソースのディレクトリ (Edge Functions と scripts は見た目を持たない = 限界 v-f) */
@@ -571,9 +568,8 @@ describe('#1665 食事の区分ごとの見た目は表 1 か所から引き、�
       expect.arrayContaining([
         'src/app/(main)/menus/weekly/_components/modals/AddMealSlotModal.tsx',
         'src/app/(main)/meals/[id]/page.tsx',
-        'apps/mobile/app/meals/[id].tsx',
-        'apps/mobile/app/menus/weekly/index.tsx',
-        'apps/mobile/src/components/menu/AddMealSlotModal.tsx',
+        'apps/mobile/app/onboarding/questions.tsx',
+        'apps/mobile/src/components/menu/V4GenerateModal.tsx',
         ...Object.keys(MEAL_TYPE_VISUAL_TABLE_FILES),
       ]),
     );

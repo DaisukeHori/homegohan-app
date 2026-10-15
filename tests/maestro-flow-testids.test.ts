@@ -428,8 +428,10 @@ describe("#1552 maestro の flow が期待する testID は、ソースに実在
       for (const m of text.matchAll(/(["'`])([\w:-]+)\1/g)) quotedStrings.exact.add(m[2]);
     }
     const quotedInSource = (id: string) => isFlowIdInSource(id, quotedStrings);
-    // 素朴な方法の検出力: 集め方が以前読めなかった書き方 ((tabs)/health.tsx の const testID = … ? "health-graphs-button" : …) を見つける
-    expect(quotedInSource("health-graphs-button")).toBe(true);
+    // 素朴な方法の検出力: 三項の式の中の testID (onboarding/questions.tsx の testID={isLastStep ? "onboarding-submit-button" : …}) を見つける
+    // (以前ここで見ていた (tabs)/health.tsx の "health-graphs-button" は、届かない画面として消した。#1598)
+    expect(quotedInSource("onboarding-submit-button")).toBe(true);
+    expect(quotedInSource("health-graphs-button")).toBe(false);
     const found = MAESTRO_MISSING_TESTID_ALLOWLIST.filter((a) => quotedInSource(a.id)).map((a) => `${a.flow} ${a.id}`);
     expect(
       found,
