@@ -6,10 +6,11 @@
  * 判定は Web と同じ @homegohan/shared の normalizeProfileName (前後の空白を除いて 'Guest' と厳密一致・空・空白だけは名前なし)。
  * 名前が無いときの出し方は従来どおり: プロフィール (API) → ProfileProvider → メールアドレスの @ の前 → 'ゲスト'。
  * 基本タブのニックネームは従来どおり名前が無ければ「未設定」。
+ * 編集中の入力欄は保存される値そのもの (仮置きも含む) を出す (入力欄を空にすると、そのまま保存できなくなるため変えない)。
  */
 
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react-native';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 // ---- Mocks ----
 
@@ -208,5 +209,14 @@ describe('ProfilePage — プロフィールカードの名前 (#1635)', () => {
     expect(screen.getByText('ニックネーム')).toBeTruthy();
     expect(screen.getAllByText('未設定').length).toBeGreaterThan(0);
     expect(screen.queryByText(/Guest/)).toBeNull();
+  });
+
+  it("編集中の入力欄は保存される値をそのまま出す (仮置きの 'Guest' を空に変えない)", async () => {
+    mockProfileResponse('Guest');
+    await renderLoaded();
+
+    fireEvent.press(screen.getByText('編集'));
+
+    await waitFor(() => expect(screen.getByTestId('profile-nickname-input').props.value).toBe('Guest'));
   });
 });
