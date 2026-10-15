@@ -133,6 +133,27 @@ describe('MealDetailPage', () => {
     });
   });
 
+  describe('写真は署名付き URL で表示する (#1365)', () => {
+    const PUBLIC_URL = 'https://proj.supabase.co/storage/v1/object/public/fridge-images/user-1/meals/a.jpg';
+    const SIGNED_URL = 'https://proj.supabase.co/storage/v1/object/sign/fridge-images/user-1/meals/a.jpg?token=t';
+
+    it('保存された公開 URL ではなく、サーバーが署名した URL を表示する', async () => {
+      mockGet.mockImplementation((path: string) => {
+        if (path === '/api/meals/meal-001') return Promise.resolve({ ...MOCK_MEAL, image_url: PUBLIC_URL });
+        return Promise.resolve(null);
+      });
+      mockPost.mockImplementation((path: string) =>
+        path === '/api/storage/signed-urls'
+          ? Promise.resolve({ signedUrls: { [PUBLIC_URL]: SIGNED_URL }, expiresInSeconds: 3600 })
+          : Promise.resolve(null),
+      );
+      const { findByTestId } = render(<MealDetailPage />);
+      const image = await findByTestId('meal-detail-hero-image');
+      expect(image.props.source).toEqual({ uri: SIGNED_URL });
+      expect(mockPost).toHaveBeenCalledWith('/api/storage/signed-urls', { urls: [PUBLIC_URL] });
+    });
+  });
+
   describe('27栄養素の折りたたみ表示', () => {
     it('初期状態では詳細栄養素が非表示', async () => {
       const { queryByText, getByText } = render(<MealDetailPage />);

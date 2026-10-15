@@ -10,6 +10,7 @@ import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure } from '@/lib/emails/send-result';
 import { renderFamilyPromoteEmail } from '@/lib/emails/membership/family-promote';
 import { buildFamilyPromotionUrl } from '@/lib/membership/urls';
+import { normalizeProfileName } from '@/lib/profile-name';
 import {
   checkInviteEmailLimits,
   inviteThrottleFailureFromRpcError,
@@ -128,7 +129,9 @@ export async function POST(
       email_address: req.email,
       family_name: req.family_name ?? '家族グループ',
       member_display_name: req.member_display_name ?? '子供メンバー',
-      requester_name: req.requester_name ?? user.email ?? '家族の代表者',
+      // RPC は COALESCE(nickname, email) で依頼者の名前を返すので、名前が無い人 (仮置きの 'Guest'・空白だけ) は 'Guest' が届く。
+      // 名前とみなさず、依頼者 (呼び出した本人) のメールアドレス → 既定の呼称にする (#1649)
+      requester_name: normalizeProfileName(req.requester_name) ?? user.email ?? '家族の代表者',
       // リンクの基点は src/lib/membership/urls.ts に 1 つだけある (#1194)
       accept_url: buildFamilyPromotionUrl(req.token),
       expires_at: req.expires_at,

@@ -476,6 +476,27 @@ describe('GET /api/support/users/[id]/notes', () => {
     expect(body.notes[0]).toMatchObject({ id: 'note-4', adminName: 'Unknown' });
   });
 
+  // #1649: 書き手の名前が仮置きの 'Guest'・空白だけなら、名前の無い人として既定の文言 'Unknown'
+  it.each([
+    ['Guest', 'Unknown'],
+    [' Guest ', 'Unknown'],
+    ['   ', 'Unknown'],
+    ['guest', 'guest'],
+    [' 担当者C ', '担当者C'],
+  ])('書き手の nickname が %j なら adminName は %j', async (nickname, expected) => {
+    const writerId = uuid(51);
+    setup({
+      extraAdminRows: {
+        user_profiles: [profileRow(writerId, { nickname, roles: ['support'] })],
+        admin_user_notes: [{ id: 'note-5', user_id: TARGET_ID, admin_id: writerId, note: 'y', created_at: daysAgo(0) }],
+      },
+    });
+
+    const body = await json(await call.notesGet());
+
+    expect(body.notes.find((n: Row) => n.id === 'note-5')).toMatchObject({ adminName: expected });
+  });
+
   it('ノートを返したとき、閲覧を 1 行記録する (details は項目名だけでノート本文を含まない)', async () => {
     await call.notesGet(TARGET_ID, { 'x-forwarded-for': '198.51.100.30' });
 
@@ -731,6 +752,38 @@ describe('GET /api/support/stats', () => {
     expect(routeName).toBe('GET /api/support/stats');
     expect((error as Error).message).toBe(raw);
     expect(metadata.failed_queries).toContain('inquiries (pending count)');
+  });
+
+  // #1649: 仮置きの 'Guest' を「名前」として持たない。名前が無い人は表示の既定の文言 'Guest' (ログイン外と同じ) のまま
+  const PLACEHOLDER_AUTHOR_ID = uuid(60);
+  function withAuthorNickname(nickname: string) {
+    setup({
+      extraAdminRows: {
+        user_profiles: [profileRow(PLACEHOLDER_AUTHOR_ID, { nickname })],
+        inquiries: [
+          { id: 'inq-5', user_id: PLACEHOLDER_AUTHOR_ID, inquiry_type: 'support', subject: '新しい問い合わせ', status: 'pending', created_at: daysAgo(0), resolved_at: null },
+        ],
+      },
+    });
+  }
+
+  it.each(['Guest', ' Guest ', '   '])('recentInquiries: 投稿者の nickname が %j なら、名前の無い人として既定の文言 Guest', async (nickname) => {
+    withAuthorNickname(nickname);
+
+    const body = await json(await call.stats());
+
+    expect(body.recentInquiries.find((i: Row) => i.id === 'inq-5')?.userName).toBe('Guest');
+  });
+
+  it.each([
+    ['guest', 'guest'],
+    [' 花子 ', '花子'],
+  ])('recentInquiries: 投稿者の nickname が %j (本人が付けた名前) なら、その名前', async (nickname, expected) => {
+    withAuthorNickname(nickname);
+
+    const body = await json(await call.stats());
+
+    expect(body.recentInquiries.find((i: Row) => i.id === 'inq-5')?.userName).toBe(expected);
   });
 
   it('500: 投稿者のニックネームの取得に失敗したときも汎用メッセージ', async () => {

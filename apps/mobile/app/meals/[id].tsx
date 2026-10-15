@@ -1,13 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { MEAL_LABELS, isMealType } from "@homegohan/shared";
 
 import { Button, Card, LoadingState, PageHeader, SectionHeader, StatusBadge } from "../../src/components/ui";
 import { colors, spacing, radius } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 import { MEAL_TYPE_COLORS, MEAL_TYPE_IONICONS } from "../../src/lib/meal-type-visuals";
+import { SignedPhotoImage } from "../../src/components/photo/SignedPhotoImage";
 
 type Dish = {
   name?: string | null;
@@ -381,7 +382,7 @@ export default function MealDetailPage() {
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 32 }}>
       {/* 画像ヒーロー */}
       {meal.image_url ? (
-        <Image source={{ uri: meal.image_url }} style={{ width: "100%", height: 240 }} resizeMode="cover" />
+        <SignedPhotoImage testID="meal-detail-hero-image" uri={meal.image_url} style={{ width: "100%", height: 240 }} resizeMode="cover" />
       ) : (
         <View style={{ width: "100%", height: 120, backgroundColor: mealCfg.color, alignItems: "center", justifyContent: "center" }}>
           <Ionicons name={mealCfg.icon} size={48} color="rgba(255,255,255,0.5)" />

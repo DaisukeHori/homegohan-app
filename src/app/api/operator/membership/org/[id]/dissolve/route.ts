@@ -13,6 +13,7 @@ import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail } from '@/lib/emails/send';
 import { emailFailureReasons } from '@/lib/emails/send-result';
 import { renderForceDissolveEmail } from '@/lib/emails/membership/operator-force-dissolve';
+import { normalizeProfileName } from '@/lib/profile-name';
 import { z } from 'zod';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
@@ -84,7 +85,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       const userIds = (preMembers ?? []).map((m) => m.id);
       const nicknameMap: Record<string, string> = {};
       for (const m of preMembers ?? []) {
-        nicknameMap[m.id] = m.nickname ?? '';
+        // 名前が無い (空・空白だけ・仮置きの 'Guest') 人は入れない。メールはアドレスを宛名にする (#1649)
+        const name = normalizeProfileName(m.nickname);
+        if (name) nicknameMap[m.id] = name;
       }
 
       // auth.users のメールアドレス。listUsers() は先頭 50 件しか返さないため、通知先の分だけを引く (#1204)

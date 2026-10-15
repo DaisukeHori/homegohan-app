@@ -11,6 +11,9 @@
 //     'ゲスト'・'guest' などを入れる経路は無いので、それらは本人が自分で付けた名前である
 //
 // Web のブラウザ・モバイル・サーバーのどれからも読むので、何も import しない。
+//
+// Edge Functions (Deno) はこのパッケージを import しないので、supabase/functions/_shared/profile-name.ts に同じ規則の写しがある (#1649)。
+// ここを変えたら写しも変える (一致は tests/edge-profile-name-sync.test.ts が確かめる)。
 
 /**
  * プロフィールの名前が無いことを表す仮置き。名前が無いまま user_profiles を作る・更新するとき、アプリと RPC はこの値を入れる。

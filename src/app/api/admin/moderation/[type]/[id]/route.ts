@@ -76,6 +76,7 @@ import {
 import {
   AI_CONTENT_NOT_SUPPORTED_MESSAGE,
   fetchModerationSingle,
+  withSignedModerationContentUrls,
   hideModeratedContent,
   isModerationBacked,
   resolveModerationItem,
@@ -178,7 +179,9 @@ export async function GET(request: Request, props: Params) {
       routeName: 'api/admin/moderation/[type]/[id] GET',
     });
 
-    return NextResponse.json({ data: item });
+    // 写真は保存された公開 URL のまま返さず、署名付き URL にする (#1365)
+    const [signedItem] = await withSignedModerationContentUrls(supabaseAdmin, [item]);
+    return NextResponse.json({ data: signedItem });
   } catch (err) {
     console.error('[api/admin/moderation/[type]/[id]] GET error:', err instanceof Error ? err.message : err);
     return internalErrorResponse();
