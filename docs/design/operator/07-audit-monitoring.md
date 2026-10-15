@@ -164,7 +164,24 @@ admin.sales.lead.activity_add       - 営業リードへの活動の記録 (POST
                                       (対象はリード (target_type = 'sales_lead')。details: activity_id / activity_type。活動の本文 details は入れない)
 admin.inquiry.update                - 問い合わせのステータス・管理者メモ更新 (PATCH / PUT /api/admin/inquiries/{id})。更新後の本文を返すので、変更が無い更新も記録する
                                       (details: inquiry_id / status_from / status_to / admin_notes_changed / changed。メモの中身は入れない。対象は 4.1.1 と同じ)
+admin.mfa.enroll                    - 運営ロールの二段階認証 (TOTP) の登録 (POST /api/auth/mfa/verify で unverified の factor の verify が成功したとき。#1176)
+                                      (severity: info。details: factor_id / backup_codes_issued / failed_step)
+admin.mfa.backup_codes_regenerate   - バックアップコードの再発行 (POST /api/auth/mfa/backup-codes。段 B。#1176)
+                                      (severity: info。details: backup_codes_issued / failed_step)
+admin.mfa.unenroll                  - 認証アプリの解除 (DELETE /api/auth/mfa/factors/{id}。段 B。#1176)
+                                      (severity: warn。details: factor_id / backup_codes_deleted / failed_step)
+admin.mfa.recover                   - バックアップコードによる回復 (POST /api/auth/mfa/recover。TOTP とコードを全部消す。#1176)
+                                      (severity: warn。details: factors_deleted / backup_codes_deleted / failed_step)
 ```
+
+運営ロールの二段階認証の 4 種 (`admin.mfa.*`。`docs/design/cross/12-operator-mfa.md` §17・§17.2) の記録のルール:
+- 本人の操作なので `actor_id` = `target_id` = 本人、`target_type` は `'user'`。書くのは `recordMfaAudit()` (`src/lib/auth/mfa/audit.ts`) だけで、
+  client は service_role (`org_industrial_doctor` は `audit_logs_insert_admins` の一覧に無く、本人の client では INSERT できないため)。
+- 秘密 (secret・QR・コードの値・ハッシュ) は details に入れない。数の欄の `null` は「その手順に届かなかった・失敗した」。
+- **fail-open**。ただし監査の起点 (取り消せない操作: verify の成功・コードの消費・unenroll の成功・再発行の呼び出し) の後は、
+  続く手順が途中で失敗しても、止まった手順の名前を `failed_step` に入れて **必ず 1 行書いてから** 応答する (起点より前の失敗は書かない)。
+- ログインごとの 6 桁の確認 (verified な factor の verify) は記録しない (ログインの一部。Supabase の auth 監査に残る)。
+- 自己サービスの `/api/auth/mfa/*` は `tests/admin-mutation-audit-coverage-1571.test.ts` の走査の 4 つのディレクトリの外にあるが、上の 4 種を記録する。
 
 #### 4.1.1 ユーザー PII 閲覧系操作 (#1200)
 
