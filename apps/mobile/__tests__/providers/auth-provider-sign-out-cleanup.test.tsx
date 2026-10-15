@@ -5,12 +5,16 @@
  *
  * auth-provider.test.tsx は掃除を差し替えて「呼ばれること・順番」を見る。ここでは差し替えずに、
  * AsyncStorage の利用者別のキーが消え、次に開く WebView に localStorage の掃除が頼まれていることまで見る。
+ * 端末の Cookie の置き場の掃除 (React Native の Networking.clearCookies。#1612 / #1049 F7-16) も、どの経路でも呼ばれることを見る。
+ * 起動時に未ログインと決まったときと SIGNED_OUT は、その完了を待たずに未ログインの画面を出し、起動時の失効の明言は
+ * 完了を待ってからサインアウトする (#1647。userScopedLocalData.ts の WebViewNativeCookieClearWait)
  */
 
 import React from 'react';
 import { Text } from 'react-native';
 import { act, render, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Networking } from 'react-native';
 
 const mockGetSession = jest.fn();
 const mockGetUser = jest.fn();
@@ -106,8 +110,43 @@ async function expectPreviousUserDataCleared({ pushTokenValue }: { pushTokenValu
   expect(await readPendingWebViewUserScopedStorageClear()).toEqual(expect.any(String));
 }
 
+/**
+ * Networking.clearCookies の差し替え。テストの環境のネイティブには clearCookies が無いので、ここで置く。
+ * respond: 'immediately' はすぐに消し終わったと知らせる。'manually' は知らせを止めておき、release() で知らせる
+ * (知らせが来ない端末を真似る。上限の時計を片付けるため、テストの最後に release() する)
+ */
+type ClearCookiesCallback = (result: boolean) => void;
+let pendingCookieCallbacks: ClearCookiesCallback[] = [];
+const mockClearCookies = jest.fn();
+const networking = Networking as { clearCookies?: (callback: ClearCookiesCallback) => void } | undefined;
+const originalClearCookies = networking?.clearCookies;
+
+function respondToClearCookies(respond: 'immediately' | 'manually') {
+  mockClearCookies.mockImplementation((callback: ClearCookiesCallback) => {
+    if (respond === 'immediately') callback(true);
+    else pendingCookieCallbacks.push(callback);
+  });
+}
+
+function releaseClearCookies() {
+  const callbacks = pendingCookieCallbacks;
+  pendingCookieCallbacks = [];
+  for (const callback of callbacks) callback(true);
+}
+
+afterEach(() => {
+  releaseClearCookies();
+});
+
+afterAll(() => {
+  if (networking) networking.clearCookies = originalClearCookies;
+});
+
 beforeEach(async () => {
   jest.clearAllMocks();
+  pendingCookieCallbacks = [];
+  if (networking) networking.clearCookies = (callback: ClearCookiesCallback) => mockClearCookies(callback);
+  respondToClearCookies('immediately');
   resetWebViewUserStorageCleanupForTests();
   await AsyncStorage.clear();
   await seedPreviousUserData();
@@ -238,5 +277,84 @@ describe('AuthProvider — 未ログインになるどの経路でも、端末�
     expect(text(api, 'session')).toBe('access-2');
     expect(await AsyncStorage.getItem(RANGE_DAYS_KEY)).toBe(JSON.stringify({ data: 3 }));
     expect(await readPendingWebViewUserScopedStorageClear()).toBe(settledRequest);
+  });
+});
+
+describe('AuthProvider — 端末の Cookie の置き場の掃除 (Networking.clearCookies。#1612 / #1647)', () => {
+  it('前提: テストの環境で Networking を差し替えられる (差し替えられないと、下のテストは何も確かめない)', () => {
+    expect(networking).toBeDefined();
+  });
+
+  it('ログイン済みで起動したときは呼ばない', async () => {
+    const session = makeSession();
+    mockGetSession.mockResolvedValue({ data: { session }, error: null });
+    mockGetUser.mockResolvedValue({ data: { user: session.user }, error: null });
+
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+
+    expect(text(api, 'session')).toBe('access-1');
+    expect(mockClearCookies).not.toHaveBeenCalled();
+  });
+
+  it('起動時に未ログインと決まったとき (getSession() が null) に呼ぶ', async () => {
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+
+    expect(text(api, 'session')).toBe('none');
+    expect(mockClearCookies).toHaveBeenCalledTimes(1);
+  });
+
+  it('起動時に未ログインと決まったときは、知らせが来なくても、その完了を待たずに未ログインの画面を出す', async () => {
+    respondToClearCookies('manually');
+
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+
+    // まだ知らせが来ていない (掃除は終わっていない) のに、読み込み中が終わっている
+    expect(mockClearCookies).toHaveBeenCalledTimes(1);
+    expect(pendingCookieCallbacks).toHaveLength(1);
+    expect(text(api, 'session')).toBe('none');
+    // AsyncStorage と localStorage の掃除の依頼は待っている (未ログインの画面を出す前に済んでいる)
+    await expectPreviousUserDataCleared();
+  });
+
+  it('SIGNED_OUT のときに呼ぶ', async () => {
+    const session = makeSession();
+    mockGetSession.mockResolvedValue({ data: { session }, error: null });
+    mockGetUser.mockResolvedValue({ data: { user: session.user }, error: null });
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'session')).toBe('access-1'));
+    expect(mockClearCookies).not.toHaveBeenCalled();
+
+    act(() => authListener('SIGNED_OUT', null));
+
+    expect(text(api, 'session')).toBe('none');
+    await waitFor(() => expect(mockClearCookies).toHaveBeenCalledTimes(1));
+  });
+
+  it('起動時にサーバーが失効と明言したときは、掃除の完了を待ってからサインアウトする (サインアウトの前に消す順を保つ)', async () => {
+    respondToClearCookies('manually');
+    const session = makeSession();
+    mockGetSession.mockResolvedValue({ data: { session }, error: null });
+    mockGetUser.mockResolvedValue({
+      data: { user: null },
+      error: authError('AuthApiError', 403, 'Session not found', 'session_not_found'),
+    });
+
+    const api = renderProvider();
+    await waitFor(() => expect(mockClearCookies).toHaveBeenCalledTimes(1));
+    // 知らせが来るまで、サインアウトせず読み込み中のまま
+    await act(async () => {
+      await new Promise((resolve) => setImmediate(resolve));
+    });
+    expect(mockSignOut).not.toHaveBeenCalled();
+    expect(text(api, 'loading')).toBe('true');
+
+    act(() => releaseClearCookies());
+
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+    expect(mockSignOut).toHaveBeenCalledWith({ scope: 'local' });
+    expect(text(api, 'session')).toBe('none');
   });
 });
