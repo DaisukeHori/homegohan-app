@@ -143,13 +143,18 @@ function readRepoFile(file: string): string | null {
   return fs.existsSync(full) ? fs.readFileSync(full, 'utf8') : null;
 }
 
+/**
+ * git で管理するファイルの一覧。ファイルの一番外側 (収集のとき) で 1 回だけ git を起こし、テスト・フックの中では起こさない
+ * (テストの時間切れに git の起動の時間が入らない。tests/heavy-unit-test-timeout.test.ts の「同じ型」の対象外)
+ */
+const gitLsFiles = spawnSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8', maxBuffer: GIT_OUTPUT_MAX_BYTES });
+
 /** 見るファイル (git で管理するテキストのファイル。見ないディレクトリ・ファイルを除く) */
 function listScannedFiles(): string[] {
-  const result = spawnSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8', maxBuffer: GIT_OUTPUT_MAX_BYTES });
-  if (result.error || result.status !== 0) {
-    throw new Error(`git ls-files に失敗しました: ${result.error?.message ?? result.stderr}`);
+  if (gitLsFiles.error || gitLsFiles.status !== 0) {
+    throw new Error(`git ls-files に失敗しました: ${gitLsFiles.error?.message ?? gitLsFiles.stderr}`);
   }
-  return result.stdout
+  return gitLsFiles.stdout
     .split('\0')
     .filter(Boolean)
     .filter((file) => TEXT_EXTENSIONS.some((ext) => file.endsWith(ext)))
