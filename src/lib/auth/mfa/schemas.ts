@@ -75,3 +75,24 @@ export const MfaRecoverResponseSchema = z.object({
   next: z.string().min(1),
 });
 export type MfaRecoverResponse = z.infer<typeof MfaRecoverResponseSchema>;
+
+// ── DELETE /api/auth/mfa/factors/{id} (§14.4。段 B) ──────────────────────────
+
+/**
+ * DELETE /api/auth/mfa/factors/{id} の 200 (段 B)。aal はこの応答の後の Cookie の access_token の claim:
+ * refresh できれば aal1・refresh に失敗したら aal2 のまま (解除は済んでいる。§14.4・§17.2)。画面はどちらでも setup へ進む
+ */
+export const MfaUnenrollResponseSchema = z.object({
+  ok: z.literal(true),
+  aal: z.enum(['aal1', 'aal2']),
+});
+export type MfaUnenrollResponse = z.infer<typeof MfaUnenrollResponseSchema>;
+
+// ── POST /api/auth/mfa/backup-codes (§14.6。段 B) ────────────────────────────
+
+/** POST /api/auth/mfa/backup-codes の 200 (段 B)。backup_codes は formatBackupCode 済み (XXXXX-XXXXX) */
+export const MfaBackupCodesResponseSchema = z.object({
+  ok: z.literal(true),
+  backup_codes: z.array(z.string().min(1)),
+});
+export type MfaBackupCodesResponse = z.infer<typeof MfaBackupCodesResponseSchema>;

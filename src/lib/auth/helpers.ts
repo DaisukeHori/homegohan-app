@@ -12,6 +12,7 @@ import { AuthError, ForbiddenError } from './errors';
 import { type RoleName, type OrgRoleName, type UserProfile } from './types';
 import { isAccountFrozen } from './frozen';
 import { isOrgAdmin, type OrgAdminRole } from './org-admin';
+import { assertOperatorAssurance } from './mfa/assurance';
 
 export { type RoleName, type OrgRoleName, type UserProfile };
 
@@ -75,6 +76,20 @@ function assertNotFrozen(frozenAt: string | null, unbanAt: string | null): void 
 // 公開 API
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** requireRole の第 2 引数 (#1176。docs/design/cross/12-operator-mfa.md §13.1) */
+export interface RequireRoleOptions {
+  /**
+   * 'aal2' (既定): 必須ロール (MFA_REQUIRED_ROLES) を持つ利用者には AAL2 を求める (cross/12 §12.1 の判定)。
+   * 'session': ロールだけ見て AAL は見ない。使ってよいのは自己サービスの /api/auth/mfa/* だけ
+   *            (tests/operator-mfa-entry-points-scan.test.ts の MFA_SELF_SERVICE_ROUTES 以外は赤)。
+   */
+  assurance?: 'aal2' | 'session';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 公開 API (関数)
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * Supabase auth で取得した user を返す。未認証なら 401 相当の AuthError を throw する。
  * #1030: frozen_at がセットされている(かつ一時 BAN 未解除)場合は 403 相当の
@@ -91,13 +106,19 @@ export async function requireUser(): Promise<User> {
  * 指定ロールのいずれかを保有していれば UserProfile を返す。なければ 403 相当の ForbiddenError を throw する。
  * 認証済み user 取得 + user_profiles.roles 取得 + intersect を行う。
  *
+ * #1176: ロールの交差の後に、必須ロール (super_admin / admin / finance / org_industrial_doctor) の利用者には
+ * セッションの AAL2 を求める (cross/12 §13.1)。2FA が未完了なら MfaRequiredError (ForbiddenError の派生) を throw する。
+ *
  * @param allowedRoles - 許可するロールの配列
- * @returns 認証済みユーザーの UserProfile
- * @throws AuthError (401) - 未認証の場合
+ * @param options - { assurance: 'session' } で AAL の判定を外す (自己サービスの /api/auth/mfa/* だけ)
+ * @returns 認証済みユーザーの UserProfile (既定のときは assurance に判定の要約)
+ * @throws AuthError (401) - 未認証の場合・セッションの claims を読めない場合
  * @throws ForbiddenError (403) - ロール不足の場合、または #1030: アカウント凍結中の場合
+ * @throws MfaRequiredError (403) - 二段階認証の確認 (AUTH_2FA_REQUIRED) か登録 (AUTH_2FA_ENROLLMENT_REQUIRED) が要る場合
  */
 export async function requireRole(
   allowedRoles: ReadonlyArray<RoleName>,
+  options: RequireRoleOptions = {},
 ): Promise<UserProfile> {
   const user = await getAuthUser();
   const { roles, organization_id, frozen_at, unban_at } = await getUserProfile(user.id);
@@ -110,11 +131,17 @@ export async function requireRole(
     );
   }
 
+  // [#1176] ロールの交差の後・戻り値の前に 1 か所。
+  // Authorization ヘッダは assurance.ts が「Cookie のセッションが無いときだけ」next/headers から読む
+  // (ここで無条件に headers() を呼ぶと、要求の外で動く既存の単体テストが落ちる)
+  const assurance = options.assurance === 'session' ? undefined : await assertOperatorAssurance({ user, roles });
+
   return {
     id: user.id,
     email: user.email,
     roles,
     organization_id,
+    assurance,
   };
 }
 

@@ -2,7 +2,7 @@
  * POST /api/auth/mfa/recover — バックアップコードで回復する (#1176。docs/design/cross/12-operator-mfa.md §14.5)
  *
  * バックアップコードは「AAL2 を与える」のではなく「TOTP を消して登録し直させる」(§7.1)。
- * 認可: requireRole(MFA_REQUIRED_ROLES)。AAL1 で呼ぶ (段 A は引数 1 つ。段 B で第 2 引数 { assurance: 'session' } を足す §0.2)。
+ * 認可: requireRole(MFA_REQUIRED_ROLES, { assurance: 'session' })。AAL1 で呼ぶ (AAL は見ない §0.2・走査 ②)。
  * 手順:
  *   別オリジン → 403 / 認可 → 401・403 / 本文 (MfaRecoverBodySchema) → 400 VALIDATION_ERROR /
  *   回数制限 auth-mfa-recover (3 回/分・10 回/時) → 429 + Retry-After /
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
 
   let actorId: string;
   try {
-    actorId = (await requireRole(MFA_REQUIRED_ROLES)).id;
+    actorId = (await requireRole(MFA_REQUIRED_ROLES, { assurance: 'session' })).id;
   } catch (err) {
     return mfaAuthFailure(err) ?? mfaInternalError(ROUTE_NAME, err);
   }
