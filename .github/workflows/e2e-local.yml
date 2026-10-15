@@ -29,6 +29,7 @@ on:
       - "supabase/migrations/**"
       - "supabase/baseline/**"
       - "scripts/supabase-local.sh"
+      - "scripts/lib/supabase-image-pull.sh"
       - "scripts/create-e2e-accounts.ts"
       - ".github/workflows/e2e-local.yml"
   workflow_dispatch:
