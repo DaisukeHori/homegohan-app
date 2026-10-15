@@ -17,7 +17,7 @@ import {
 import { internalError } from '@/lib/api/errors';
 import { couponValidFromTimestamp, couponValidUntilTimestamp } from '@/lib/super-admin/coupon-validity';
 import { recordAdminAudit } from '@/lib/admin/audit';
-import { couponInvalidInputResponse } from '@/lib/super-admin/coupon-errors';
+import { couponInvalidInputResponse, couponInvalidQueryResponse } from '@/lib/super-admin/coupon-errors';
 
 export async function GET(request: NextRequest) {
   try {
@@ -33,10 +33,8 @@ export async function GET(request: NextRequest) {
     });
 
     if (!queryResult.success) {
-      return NextResponse.json(
-        { error: { code: 'OP_INVALID_QUERY', message: queryResult.error.message } },
-        { status: 400 }
-      );
+      // #1641: 入力の 400 と同じ形 (message は最初の issue の文・details は issues)
+      return couponInvalidQueryResponse(queryResult.error.issues);
     }
 
     const { status, applicable_to, page, per_page } = queryResult.data;
