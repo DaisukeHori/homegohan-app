@@ -314,6 +314,8 @@ const CRON_ENTRYPOINTS: Record<string, string> = {
   // #1157 本番のエラーの急増 (app_logs の件数) を運用メールで知らせる。import は cron の認証・ログ・Supabase・メールだけ
   'vercel:/api/cron/app-log-alerts': 'アプリのエラーの急増を運用メールで知らせる (AI を使わない)',
   'pg_cron:calculate-segment-stats': 'セグメント統計の集計 (AI を使わない)',
+  // #1561 待ちのまま残った料理画像のジョブを拾う (積む時点で記録済み。キューは利用者から書けない: AI_QUEUE_TABLES / #1465)
+  'pg_cron:process-meal-image-jobs': '料理画像のジョブの処理を起こす (ジョブを積んだ入口で記録済み。キューは利用者から書けない)',
   // DB の関数が、名前を引数で受け取って Edge Function を呼ぶもの。呼び得る関数は PG_NET_CALLEES
   'pg_net:invoke_catalog_import': 'コンビニ商品カタログの取り込み (運営の処理で、利用者の AI 利用ではない)',
 };

@@ -318,7 +318,8 @@ export const ENFORCED_EDGE: Record<string, AiEdgeEntry> = {
     usage: {
       recordedBy:
         '料理画像の生成ジョブの実行。献立の保存・更新の route (meal_image_auto) と、献立生成 (menu_generation の一部) が積んだジョブを、service role で処理する。' +
-        'meal_image_jobs は利用者 (authenticated) から書けない (#1465。AI_QUEUE_TABLES) ので、ジョブは記録を通った route と献立生成だけが積む',
+        'meal_image_jobs は利用者 (authenticated) から書けない (#1465。AI_QUEUE_TABLES) ので、ジョブは記録を通った route と献立生成 (と、オーナーの承認のあとに流す積み直しの道具) だけが積む。' +
+        '待ちのまま残ったジョブは pg_cron (process-pending-meal-image-jobs。#1561) も拾うが、拾うだけで積まない',
     },
   },
   'regenerate-shopping-list-v2': {

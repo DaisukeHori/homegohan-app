@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
-import Image from "next/image";
+import { SignedPhotoImage } from "@/components/photo/SignedPhotoImage";
 import { useRouter } from "next/navigation";
 import type { CatalogProductSummary } from "@/types/catalog";
 import { extractCatalogProductFromMetadata } from "@/lib/catalog-products";
@@ -271,10 +271,10 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
       {/* ヒーロー画像エリア */}
       <div className="relative h-[35vh] w-full">
         {meal.imageUrl ? (
-          <Image 
-            src={meal.imageUrl} 
-            fill 
-            alt={meal.dishName} 
+          <SignedPhotoImage
+            src={meal.imageUrl}
+            fill
+            alt={meal.dishName}
             className="object-cover"
           />
         ) : (

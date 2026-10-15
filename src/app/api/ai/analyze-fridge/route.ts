@@ -1,16 +1,20 @@
-import { fetchImageAsBase64, generateGeminiJson } from '../../../../lib/ai/gemini-json';
+import { fetchImageAsBase64, generateGeminiJson, type GeminiImageInput } from '../../../../lib/ai/gemini-json';
 import {
   fridgeAnalysisSchema,
   normalizeFridgeAnalysisResult,
   type FridgeAnalysisResult,
 } from '../../../../lib/ai/image-recognition';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
+import { resolvePhotoUrlForOwnerRead } from '@/lib/photo-storage-signing';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, AI_USAGE_COVERED_BY_GRANT, redeemAiUsageGrant } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+
+/** 送られた写真の URL が、本人の写真として読めないとき (他人の写真・消えた写真) の文面 (#1365) */
+const PHOTO_NOT_READABLE_MESSAGE = '写真を読み込めませんでした。もう一度撮影するか、写真を選び直してください。';
 
 function buildPrompt(imageCount: number): string {
   const imageCountText = imageCount > 1 ? `${imageCount}枚の` : '';
@@ -46,14 +50,22 @@ export async function POST(request: Request) {
     const { imageBase64, mimeType } = body;
     const imageUrl: string | undefined = body.imageUrl ?? body.inventoryImageUrl;
 
-    const images: { base64: string; mimeType: string }[] =
-      Array.isArray(body.images) && body.images.length > 0
-        ? body.images
-        : imageBase64
-          ? [{ base64: imageBase64, mimeType: mimeType || 'image/jpeg' }]
-          : imageUrl
-            ? [await fetchImageAsBase64(imageUrl)]
-            : [];
+    let images: GeminiImageInput[];
+    if (Array.isArray(body.images) && body.images.length > 0) {
+      images = body.images;
+    } else if (imageBase64) {
+      images = [{ base64: imageBase64, mimeType: mimeType || 'image/jpeg' }];
+    } else if (typeof imageUrl === 'string' && imageUrl.length > 0) {
+      // 冷蔵庫写真のバケットの URL は、公開 URL のまま取りに行かず、本人の写真であることを確かめて署名した URL で読む (#1365)。
+      // 他人の写真の URL は AI に渡さない
+      const readable = await resolvePhotoUrlForOwnerRead(getSupabaseAdmin(), user.id, imageUrl);
+      if (!readable.ok) {
+        return NextResponse.json({ error: PHOTO_NOT_READABLE_MESSAGE, code: 'PHOTO_NOT_READABLE' }, { status: 403 });
+      }
+      images = [await fetchImageAsBase64(readable.url)];
+    } else {
+      images = [];
+    }
 
     if (images.length === 0) {
       return NextResponse.json({ error: 'Image URL or Base64 is required' }, { status: 400 });
