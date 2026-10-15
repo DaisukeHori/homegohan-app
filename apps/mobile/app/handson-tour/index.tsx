@@ -25,20 +25,13 @@ import {
   fireAnalytics,
 } from '@homegohan/handson-tour-shared';
 import { useProfile } from '../../src/providers/ProfileProvider';
+import { safeNickname } from '../../src/handson-tour/safe-nickname';
 import { TourProgress } from '../../src/handson-tour/TourProgress';
 import { useReducedMotion } from '../../src/handson-tour/useReducedMotion';
 import { getApi } from '../../src/lib/api';
 import { tourAnalyticsPlatform } from '../../src/handson-tour/tour-platform';
 
 const i18n = HANDSON_TOUR_I18N_JA.tour;
-
-function safeNickname(raw: string | null | undefined): string {
-  if (!raw) return 'あなた';
-  const trimmed = raw.trim();
-  if (!trimmed) return 'あなた';
-  if (trimmed.length > 30) return `${trimmed.slice(0, 30)}…`;
-  return trimmed;
-}
 
 export default function HandsonTourWelcome() {
   const router = useRouter();

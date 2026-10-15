@@ -22,20 +22,13 @@ import {
 import type { SubStepOfStep3 } from '@homegohan/handson-tour-shared';
 
 import { useProfile } from '../../src/providers/ProfileProvider';
+import { safeNickname } from '../../src/handson-tour/safe-nickname';
 import { TourOverlay } from '../../src/handson-tour/TourOverlay';
 import { getApi } from '../../src/lib/api';
 import { useLeaveTour, useTourHardBack } from '../../src/handson-tour/useLeaveTour';
 import { tourAnalyticsPlatform } from '../../src/handson-tour/tour-platform';
 
 const i18n = HANDSON_TOUR_I18N_JA.tour;
-
-function safeNickname(raw: string | null | undefined): string {
-  if (!raw) return 'あなた';
-  const trimmed = raw.trim();
-  if (!trimmed) return 'あなた';
-  if (trimmed.length > 30) return `${trimmed.slice(0, 30)}…`;
-  return trimmed;
-}
 
 export default function HandsonTourBadges() {
   const router = useRouter();

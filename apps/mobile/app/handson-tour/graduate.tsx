@@ -27,6 +27,7 @@ import {
 } from '@homegohan/handson-tour-shared';
 
 import { useProfile } from '../../src/providers/ProfileProvider';
+import { safeNickname } from '../../src/handson-tour/safe-nickname';
 import { Confetti } from '../../src/handson-tour/Confetti';
 import { getApi } from '../../src/lib/api';
 import { tourAnalyticsPlatform } from '../../src/handson-tour/tour-platform';
@@ -43,14 +44,6 @@ type CompleteResponse = {
   };
   already_completed: boolean;
 };
-
-function safeNickname(raw: string | null | undefined): string {
-  if (!raw) return 'あなた';
-  const trimmed = raw.trim();
-  if (!trimmed) return 'あなた';
-  if (trimmed.length > 30) return `${trimmed.slice(0, 30)}…`;
-  return trimmed;
-}
 
 export default function HandsonTourGraduate() {
   const router = useRouter();
