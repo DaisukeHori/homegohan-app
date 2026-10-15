@@ -4,12 +4,14 @@
 import type { Factor } from '@supabase/supabase-js';
 import { describe, expect, it } from 'vitest';
 import {
+  MFA_QR_SVG_DATA_URL_PREFIX,
   MFA_TOTP_FRIENDLY_NAME,
   MFA_TOTP_ISSUER,
   findVerifiedTotpFactor,
   isVerifiedTotpFactorId,
   listUnverifiedTotpFactorIds,
   ownsFactor,
+  toBareQrCodeSvg,
 } from '@/lib/auth/mfa/factors';
 
 function factor(id: string, factorType: 'totp' | 'phone', status: 'verified' | 'unverified', createdAt: string): Factor {
@@ -65,5 +67,18 @@ describe('factors', () => {
     expect(isVerifiedTotpFactorId(user, 'totp-new')).toBe(false);
     expect(isVerifiedTotpFactorId(user, 'missing')).toBe(false);
     expect(isVerifiedTotpFactorId({ factors: undefined }, 'totp-old')).toBe(false);
+  });
+
+  it('toBareQrCodeSvg は auth-js が付けた data URL の前置きを先頭から 1 回だけ外す (前置きの無い値はそのまま #1707)', () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>';
+    expect(MFA_QR_SVG_DATA_URL_PREFIX).toBe('data:image/svg+xml;utf-8,');
+    // auth-js 2.105.3 の mfa.enroll が返す形
+    expect(toBareQrCodeSvg(`data:image/svg+xml;utf-8,${svg}`)).toBe(svg);
+    expect(toBareQrCodeSvg(svg)).toBe(svg);
+    // 先頭でない位置の同じ文字列は外さない
+    expect(toBareQrCodeSvg(`${svg}data:image/svg+xml;utf-8,`)).toBe(`${svg}data:image/svg+xml;utf-8,`);
+    // 画面が前置きを 1 回足すと、前置きはちょうど 1 回になる
+    const src = `${MFA_QR_SVG_DATA_URL_PREFIX}${toBareQrCodeSvg(`data:image/svg+xml;utf-8,${svg}`)}`;
+    expect(src.split('data:image/svg+xml;utf-8,').length - 1).toBe(1);
   });
 });

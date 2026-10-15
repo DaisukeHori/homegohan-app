@@ -207,7 +207,8 @@ beforeEach(() => {
         id: UNVERIFIED_FACTOR_ID,
         type: 'totp',
         friendly_name: 'authenticator',
-        totp: { qr_code: '<svg></svg>', secret: 'JBSWY3DPEHPK3PXP', uri: 'otpauth://totp/x' },
+        // auth-js (2.105.3) は Supabase の応答の SVG に data URL の前置きを付けて返す (GoTrueClient._enroll)
+        totp: { qr_code: 'data:image/svg+xml;utf-8,<svg></svg>', secret: 'JBSWY3DPEHPK3PXP', uri: 'otpauth://totp/x' },
       },
       error: null,
     };
@@ -357,6 +358,29 @@ describe('POST /api/auth/mfa/enroll', () => {
     const enrollFailed = await enroll();
     expect(enrollFailed.status).toBe(500);
     expect(JSON.stringify(enrollFailed.body)).not.toContain('violates');
+  });
+
+  it('POST /enroll: qr_code_svg は素の SVG (auth-js が付けた data URL の前置きを外す。画面の前置きと 2 重にしない #1707)', async () => {
+    signIn();
+    const prefixed = await enroll();
+    expect(prefixed.status).toBe(200);
+    expect(prefixed.body.qr_code_svg).toBe('<svg></svg>');
+    expect(String(prefixed.body.qr_code_svg)).not.toContain('data:');
+
+    // auth-js が前置きを付けない版でも素の SVG のまま返す (外し過ぎない)
+    signIn();
+    mocks.userClient.auth.mfa.enroll.mockResolvedValueOnce({
+      data: {
+        id: UNVERIFIED_FACTOR_ID,
+        type: 'totp',
+        friendly_name: 'authenticator',
+        totp: { qr_code: '<svg></svg>', secret: 'JBSWY3DPEHPK3PXP', uri: 'otpauth://totp/x' },
+      },
+      error: null,
+    });
+    const bare = await enroll();
+    expect(bare.status).toBe(200);
+    expect(bare.body.qr_code_svg).toBe('<svg></svg>');
   });
 });
 

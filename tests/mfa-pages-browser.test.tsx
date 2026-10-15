@@ -108,6 +108,7 @@ const UNENROLLED = statusOf({ enrolled: false, factor: null, backup_codes_remain
 const ENROLLMENT: MfaEnrollResponse = {
   ok: true,
   factor_id: ENROLL_FACTOR_ID,
+  // enroll の route の応答の形 (素の SVG。auth-js が付けた data URL の前置きは route が外す)
   qr_code_svg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
   secret: 'JBSWY3DPEHPK3PXP',
   uri: 'otpauth://totp/x?secret=JBSWY3DPEHPK3PXP',
@@ -270,9 +271,11 @@ describe('MFA の 4 画面 (ブラウザ)', () => {
     mocks.startMfaEnrollment.mockResolvedValue(ok(ENROLLMENT));
     await render(MfaSetupPage, true);
     expect(mocks.startMfaEnrollment).toHaveBeenCalledTimes(1);
-    expect(byTestId<HTMLImageElement>('mfa-setup-qr')?.getAttribute('src')).toBe(
-      `data:image/svg+xml;utf-8,${ENROLLMENT.qr_code_svg}`,
-    );
+    // qr_code_svg は素の SVG (enroll の route が auth-js の前置きを外す)。画面は前置きを 1 回だけ足す (#1707)
+    const qrSrc = byTestId<HTMLImageElement>('mfa-setup-qr')?.getAttribute('src') ?? '';
+    expect(qrSrc).toBe(`data:image/svg+xml;utf-8,${ENROLLMENT.qr_code_svg}`);
+    expect(qrSrc.split('data:image/svg+xml;utf-8,').length - 1).toBe(1);
+    expect(qrSrc.startsWith('data:image/svg+xml;utf-8,<svg')).toBe(true);
     const secret = byTestId<HTMLInputElement>('mfa-setup-secret');
     expect(secret?.value).toBe(ENROLLMENT.secret);
     expect(secret?.type).toBe('password');

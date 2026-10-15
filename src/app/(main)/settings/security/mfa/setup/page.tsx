@@ -13,6 +13,7 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getSafeRedirectPath } from '@/lib/auth/safe-redirect';
+import { MFA_QR_SVG_DATA_URL_PREFIX } from '@/lib/auth/mfa/factors';
 import {
   MFA_BACKUP_CODES_NOT_SHOWN_MESSAGE,
   getMfaStatus,
@@ -29,8 +30,6 @@ import { useInNativeWebView } from '@/components/auth/mfa/useInNativeWebView';
 const MFA_STATUS_PATH = '/settings/security/mfa';
 /** next が無い・安全でないときの行き先 (§15 冒頭) */
 const DEFAULT_NEXT_PATH = '/admin';
-/** 画面に出す QR (SVG) の data URL の前置き (§14.2) */
-const QR_DATA_URL_PREFIX = 'data:image/svg+xml;utf-8,';
 /** セッション切れ (HTTP 401) */
 const HTTP_UNAUTHORIZED = 401;
 /** 登録済みで enroll (HTTP 409 AUTH_2FA_ALREADY_ENROLLED) */
@@ -149,10 +148,10 @@ function MfaSetupContent() {
             <li>読み取れないときは、下のキーを認証アプリに手で入力してください。</li>
             <li>認証アプリに出た 6 桁のコードを入力してください。</li>
           </ol>
-          {/* eslint-disable-next-line @next/next/no-img-element -- Supabase が返す SVG の data URL をそのまま出す (最適化の対象外) */}
+          {/* eslint-disable-next-line @next/next/no-img-element -- Supabase が返す SVG を data URL にして出す (最適化の対象外)。前置きは 1 回だけ (qr_code_svg は素の SVG) */}
           <img
             data-testid="mfa-setup-qr"
-            src={`${QR_DATA_URL_PREFIX}${enrollment.qr_code_svg}`}
+            src={`${MFA_QR_SVG_DATA_URL_PREFIX}${enrollment.qr_code_svg}`}
             alt="認証アプリで読み取る QR コード"
             className="mx-auto h-48 w-48"
           />

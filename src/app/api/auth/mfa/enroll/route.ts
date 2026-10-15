@@ -5,6 +5,7 @@
  * 手順: 別オリジン → 403 FORBIDDEN_ORIGIN / verified な TOTP factor があれば 409 AUTH_2FA_ALREADY_ENROLLED (先に解除) /
  *       unverified な TOTP factor を全部 mfa.unenroll (登録を途中でやめた factor を溜めない S-20) / mfa.enroll(totp)。
  * 応答 200 = MfaEnrollResponseSchema ({ ok, factor_id, qr_code_svg, secret, uri })。これらの値はログに出さない。
+ *   qr_code_svg は素の SVG (auth-js が data.totp.qr_code に付けた data URL の前置きを toBareQrCodeSvg で外す。画面が 1 回だけ前置する)。
  * 本文は読まない。監査は書かない (登録の完了 = verify の成功で admin.mfa.enroll を書く §17)。
  * アプリの WebView の借り物のセッションでも断らない (Web の側で token を発行し直さない。§10 の借り物の enroll の行)。
  */
@@ -16,6 +17,7 @@ import {
   MFA_TOTP_ISSUER,
   findVerifiedTotpFactor,
   listUnverifiedTotpFactorIds,
+  toBareQrCodeSvg,
 } from '@/lib/auth/mfa/factors';
 import { MFA_REQUIRED_ROLES } from '@/lib/auth/mfa/policy';
 import {
@@ -74,7 +76,7 @@ export async function POST(request: NextRequest) {
     const body: MfaEnrollResponse = {
       ok: true,
       factor_id: data.id,
-      qr_code_svg: data.totp.qr_code,
+      qr_code_svg: toBareQrCodeSvg(data.totp.qr_code),
       secret: data.totp.secret,
       uri: data.totp.uri,
     };
