@@ -1,8 +1,8 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
-
-type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
+// MealType (食事の区分 5 値) は @homegohan/shared が正本 (#1631。手書きしない)
+import type { MealType } from '@homegohan/shared';
 
 // 食事タイプのカテゴリ（順序変更の制約用）
 const MEAL_CATEGORIES: Record<MealType, number> = {
@@ -12,9 +12,6 @@ const MEAL_CATEGORIES: Record<MealType, number> = {
   snack: 0,  // おやつは特別（どこにでも移動可能）
   midnight_snack: 4,
 };
-
-// 基本の食事タイプの順序（おやつ以外）
-const BASE_MEAL_ORDER: MealType[] = ['breakfast', 'lunch', 'dinner', 'midnight_snack'];
 
 export async function POST(request: Request) {
   const supabase = await createClient();

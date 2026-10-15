@@ -173,6 +173,24 @@ describe('アプリ内の画面遷移の行き先が実在する (#1049 F7-14)',
     }
   });
 
+  it('#1598 / #1610 で消した届かない画面のファイルは無い (main の取り込みで、main 側の変更と一緒に戻っていない)', () => {
+    // main の取り込みでは、こちらが消して main が書き換えた画面 (meals/new.tsx。#1631) が modify/delete で衝突した。
+    // 衝突を main の側で解くと、届かない画面がそのまま戻るので、消した画面のファイルが 1 つも無いことを確かめる。
+    const removedScreens = [
+      path.join('meals', 'new.tsx'),
+      path.join('family', 'index.tsx'),
+      path.join('profile', 'index.tsx'),
+      path.join('comparison', 'index.tsx'),
+      ...['company', 'contact', 'faq', 'guide', 'legal', 'news'].map((name) => path.join('(public)', `${name}.tsx`)),
+    ];
+    const restored = removedScreens.filter((file) => fs.existsSync(path.join(APP_DIR, file)));
+    expect(restored).toEqual([]);
+    // 確認が空振りしていない (同じディレクトリの残した画面は見えている)
+    expect(fs.existsSync(path.join(APP_DIR, 'meals', '[id].tsx'))).toBe(true);
+    expect(fs.existsSync(path.join(APP_DIR, 'profile', 'nutrition-targets.tsx'))).toBe(true);
+    expect(fs.existsSync(path.join(APP_DIR, '(public)', 'about.tsx'))).toBe(true);
+  });
+
   it('このテストは例外の一覧を持たない (画面の無い行き先を、一覧に載せて通さない)', () => {
     const source = fs.readFileSync(__filename, 'utf8');
     // 以前の例外の一覧の宣言 (const <名前>: Record<string, string> = { 行き先: 理由 })。説明のコメントにある名前には当たらない

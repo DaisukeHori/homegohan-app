@@ -181,14 +181,26 @@ describe("#846: spec が指す testID は Web の実装に実在する", () => {
  */
 const MOBILE_INTRO_TEST_IDS: ReadonlyArray<{ file: string; testId: string }> = [
   { file: "apps/mobile/app/handson-tour/photo.tsx", testId: "tour-step-1-intro" },
-  { file: "apps/mobile/app/handson-tour/menu.tsx", testId: "tour-step-2-intro" },
-  { file: "apps/mobile/app/handson-tour/badges.tsx", testId: "tour-step-3-intro" },
+  // Step 2 / Step 3 の吹き出しの組み立ては src/handson-tour/tour-bubbles.ts にある (#1660。画面はそれを呼ぶ。下の it で確かめる)
+  { file: "apps/mobile/src/handson-tour/tour-bubbles.ts", testId: "tour-step-2-intro" },
+  { file: "apps/mobile/src/handson-tour/tour-bubbles.ts", testId: "tour-step-3-intro" },
+];
+
+/** 吹き出しの組み立てを tour-bubbles.ts に任せている画面と、その関数 (#1660) */
+const MOBILE_BUBBLE_BUILDERS: ReadonlyArray<{ file: string; builder: string }> = [
+  { file: "apps/mobile/app/handson-tour/menu.tsx", builder: "buildMenuTourBubble" },
+  { file: "apps/mobile/app/handson-tour/badges.tsx", builder: "buildBadgesTourBubble" },
 ];
 
 describe("#846: モバイルの各 Step の画面は、最初の intro 吹き出しに testID を渡す", () => {
   it.each(MOBILE_INTRO_TEST_IDS)("$file が testId: '$testId' を吹き出しに渡す", ({ file, testId }) => {
     const code = stripComments(read(path.join(ROOT, file)));
     expect(code).toMatch(new RegExp(`testId:\\s*["']${testId}["']`));
+  });
+
+  it.each(MOBILE_BUBBLE_BUILDERS)("$file は吹き出しを $builder で組み立てて TourOverlay に渡す", ({ file, builder }) => {
+    const code = stripComments(read(path.join(ROOT, file)));
+    expect(code).toMatch(new RegExp(`bubble=\\{${builder}\\(`));
   });
 });
 

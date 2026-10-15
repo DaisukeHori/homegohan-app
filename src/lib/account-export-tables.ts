@@ -70,8 +70,8 @@ function redactSupportMessageSender(row: ExportRow, ctx: { userId: string }): Ex
 /**
  * 献立生成のリクエストの失敗の文 (error_message) には、Edge Function が捕まえた例外の文面
  * (DB の生のエラー文・Edge Function の応答の本文) がそのまま入っていることがある。
- * 状態の確認の API (GET /api/ai/menu/weekly/status) と同じく、こちらで書いた文 (同意・stale・中止・固定の文) だけを
- * そのまま出し、それ以外は固定の文にする (#1172)
+ * 状態の確認の API (GET /api/ai/menu/weekly/status) と同じく、こちらで書いた文 (同意・中止・固定の文) だけを
+ * そのまま出し (stale の英語の印は日本語の文にする。#1576)、それ以外は固定の文にする (#1172)
  */
 function redactWeeklyMenuRequestErrorMessage(row: ExportRow): ExportRow {
   if (!('error_message' in row)) return row;
