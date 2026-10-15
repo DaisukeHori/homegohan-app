@@ -9,6 +9,9 @@
 //   3. DB 関数 accept_legal_documents を、本人のセッションで呼ぶ。関数は auth.uid() 本人の行だけを書く
 //      (user_profiles の同意済みの版 3 列 + terms_acceptances の証跡)。他人の ID を渡す手段は無い。
 //      証跡に残す IP・user_agent は、クライアントの入力ではなく、このサーバーが受け取ったリクエストから取る。
+//   #1173: body の birth_date (プロフィールに無いときだけ送られる) を、版の検査の後・RPC の前に validateBirthDate で確かめ
+//      (暦に無い日・未来・120 年超は 400 LEGAL_BIRTH_DATE_INVALID)、関数に p_birth_date で渡す。関数は 18 歳未満の自己登録を
+//      LEGAL_MINOR_SELF_SIGNUP_REFUSED で断り (何も書かない)、この route は 403 で返す (DB の生の文は出さない)。
 //
 // 凍結中のアカウントは middleware が /api/* で 403 にする。同意ゲート (#1442) は、この API を許可リスト (LEGAL_CONSENT_EXEMPT_API_PATHS) で通す。
 // 同意の記録は、同じ版なら何回呼んでも増えない (DB 関数が冪等) ので、二重送信してもよい。
@@ -18,7 +21,14 @@
 // (DB の生のエラー文は応答に出さない。#1172)。
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { LEGAL_DOCUMENTS, LEGAL_VERSION_MAX_LENGTH } from '@homegohan/shared';
+import {
+  BIRTH_DATE_PATTERN,
+  LEGAL_CONSENT_BIRTH_DATE_COPY,
+  LEGAL_DOCUMENTS,
+  LEGAL_VERSION_MAX_LENGTH,
+  todayLocal,
+  validateBirthDate,
+} from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { extractClientIp } from '@/lib/admin/audit';
@@ -30,10 +40,20 @@ const MAX_BODY_CHARS = 1024;
 /** user_agent の最大文字数。DB 関数 accept_legal_documents も 512 文字で切る (ここでも先に切って、巨大なヘッダーを持ち回らない) */
 const MAX_USER_AGENT_LENGTH = 512;
 
-const BodySchema = z.object({
+/**
+ * POST /api/legal/accept の body (#1174 の版 2 つ + #1173 の生年月日)。
+ * .strict() にしない: 現行の BodySchema と同じく余計なキーは捨てる (accept.test.ts の「余計なキーは無視され、DB 関数には渡らない」を保つ)
+ */
+const LegalAcceptBodySchema = z.object({
   terms_version: z.string().min(1).max(LEGAL_VERSION_MAX_LENGTH),
   privacy_version: z.string().min(1).max(LEGAL_VERSION_MAX_LENGTH),
+  birth_date: z.string().regex(BIRTH_DATE_PATTERN).optional(), // プロフィールに無いときだけ送る。形に合わなければ 400 LEGAL_BAD_REQUEST
 });
+
+/** DB 関数 accept_legal_documents が RAISE する #1173 のコード (本文の文字列に含まれる) */
+const LEGAL_MINOR_SELF_SIGNUP_REFUSED = 'LEGAL_MINOR_SELF_SIGNUP_REFUSED';
+const LEGAL_BIRTH_DATE_REQUIRED = 'LEGAL_BIRTH_DATE_REQUIRED';
+const LEGAL_BIRTH_DATE_INVALID = 'LEGAL_BIRTH_DATE_INVALID';
 
 function errorResponse(status: number, code: string, message: string, extra: Record<string, unknown> = {}) {
   return NextResponse.json({ error: { code, message }, ...extra }, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -69,11 +89,11 @@ export async function POST(request: Request) {
     } catch {
       return errorResponse(400, 'LEGAL_BAD_REQUEST', '入力値が不正です');
     }
-    const parsed = BodySchema.safeParse(body);
+    const parsed = LegalAcceptBodySchema.safeParse(body);
     if (!parsed.success) {
       return errorResponse(400, 'LEGAL_BAD_REQUEST', '入力値が不正です');
     }
-    const { terms_version, privacy_version } = parsed.data;
+    const { terms_version, privacy_version, birth_date } = parsed.data;
 
     const current = {
       terms_version: LEGAL_DOCUMENTS.terms_of_service.version,
@@ -88,6 +108,11 @@ export async function POST(request: Request) {
       );
     }
 
+    // #1173: 生年月日 (形は Zod で確かめ済み) が暦に無い日・未来・120 年超なら、RPC を呼ばずに 400
+    if (birth_date !== undefined && validateBirthDate(birth_date, todayLocal()) !== null) {
+      return errorResponse(400, LEGAL_BIRTH_DATE_INVALID, LEGAL_CONSENT_BIRTH_DATE_COPY.invalid);
+    }
+
     // 証跡の IP・user_agent は、body ではなく、このサーバーが受け取ったリクエストのヘッダーから取る。
     // IP は DB の inet 型に渡すので、IPv4 / IPv6 として読めない値 (ポート付き・ゾーン ID 付き・ゴミ) は null にする
     // (共通の extractClientIp。監査ログ admin_audit_logs と同じ取り方)。読めなくても同意の記録は止めない。
@@ -97,8 +122,20 @@ export async function POST(request: Request) {
       p_privacy_version: privacy_version,
       p_ip: extractClientIp(request.headers),
       p_user_agent: userAgent,
+      p_birth_date: birth_date ?? null,
     });
     if (error) {
+      const message = error.message ?? '';
+      // #1173: 関数が断った理由のうち、利用者が直せるもの。本文は固定の文 (DB の生の文は出さない)
+      if (message.includes(LEGAL_MINOR_SELF_SIGNUP_REFUSED)) {
+        return errorResponse(403, LEGAL_MINOR_SELF_SIGNUP_REFUSED, LEGAL_CONSENT_BIRTH_DATE_COPY.minorRefusedHeading);
+      }
+      if (message.includes(LEGAL_BIRTH_DATE_REQUIRED)) {
+        return errorResponse(400, LEGAL_BIRTH_DATE_REQUIRED, LEGAL_CONSENT_BIRTH_DATE_COPY.invalid);
+      }
+      if (message.includes(LEGAL_BIRTH_DATE_INVALID)) {
+        return errorResponse(400, LEGAL_BIRTH_DATE_INVALID, LEGAL_CONSENT_BIRTH_DATE_COPY.invalid);
+      }
       // 元のエラーは構造化ログにだけ残し、利用者には汎用メッセージの 500 を返す (本文の形は、この route の 4xx と同じ nested)
       return internalError(
         'POST /api/legal/accept',
@@ -114,6 +151,7 @@ export async function POST(request: Request) {
       terms_version_accepted?: string | null;
       privacy_version_accepted?: string | null;
       legal_accepted_at?: string | null;
+      birth_date?: string | null;
     };
     return NextResponse.json(
       {
@@ -121,6 +159,7 @@ export async function POST(request: Request) {
         terms_version_accepted: accepted.terms_version_accepted ?? terms_version,
         privacy_version_accepted: accepted.privacy_version_accepted ?? privacy_version,
         legal_accepted_at: accepted.legal_accepted_at ?? null,
+        birth_date: accepted.birth_date ?? null,
       },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },
     );

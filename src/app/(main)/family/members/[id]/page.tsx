@@ -3,7 +3,15 @@
 // src/app/(main)/family/members/[id]/page.tsx
 // (設計書 03-ui-spec.md §3.2, 02-flow-spec.md §13)
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
+import {
+  PARENTAL_CONSENT_COPY,
+  PARENTAL_CONSENT_DOCUMENT_PATH,
+  calculateAgeYears,
+  requiresParentalConsent,
+  todayLocal,
+} from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/client';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
 import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
@@ -14,10 +22,33 @@ interface FamilyMember {
   display_name: string | null;
   user_id: string | null;
   child_profile: Record<string, unknown> | null;
+  /** 子供の生年月日 (#1173。アカウント無しの子供の行は必須) */
+  birth_date: string | null;
   share_meals: boolean;
   share_health: boolean;
   share_menu: boolean;
   joined_at: string;
+}
+
+/** 子供の保護者の同意の記録 (#1173。RLS で読めるのはその家族の大人・署名した本人・運営) */
+interface ParentalConsentRecord {
+  id: string;
+  signed_name: string;
+  consent_version: string;
+  signed_at: string;
+  revoked_at: string | null;
+  revoked_reason: string | null;
+}
+
+/** 'YYYY-MM-DD' → 'YYYY年M月D日' (暦日の文字列をそのまま読む。時差でずらさない) */
+function formatBirthDate(birthDate: string): string {
+  const [year, month, day] = birthDate.split('-').map(Number);
+  return `${year}年${month}月${day}日`;
+}
+
+/** 日時 (ISO) を日本時間で出す */
+function formatJstDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 }
 
 export default function FamilyMemberDetailPage() {
@@ -38,6 +69,7 @@ export default function FamilyMemberDetailPage() {
   const [savingShare, setSavingShare] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [consent, setConsent] = useState<ParentalConsentRecord | null>(null);
 
   useEffect(() => {
     const init = async () => {
@@ -62,7 +94,7 @@ export default function FamilyMemberDetailPage() {
 
       const { data: memberData, error: memberError } = await supabase
         .from('family_members')
-        .select('id, role, display_name, user_id, child_profile, share_meals, share_health, share_menu, joined_at')
+        .select('id, role, display_name, user_id, child_profile, birth_date, share_meals, share_health, share_menu, joined_at')
         .eq('id', memberId)
         .eq('family_id', profile.family_id)
         .single();
@@ -80,6 +112,18 @@ export default function FamilyMemberDetailPage() {
       setShareMeals(memberData.share_meals);
       setShareHealth(memberData.share_health);
       setShareMenu(memberData.share_menu);
+
+      // #1173: 子供なら保護者の同意の記録 (最新の 1 行) を読む。読めなければカードを出さない
+      if (memberData.role === 'child') {
+        const { data: consentData } = await supabase
+          .from('parental_consents')
+          .select('id, signed_name, consent_version, signed_at, revoked_at, revoked_reason')
+          .eq('family_member_id', memberId)
+          .order('signed_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        setConsent((consentData as ParentalConsentRecord | null) ?? null);
+      }
 
       // 現在ユーザーのロールを取得
       const { data: myMember } = await supabase
@@ -227,8 +271,49 @@ export default function FamilyMemberDetailPage() {
                 <span className="text-gray-800">{member.user_id ? 'あり' : 'なし'}</span>
               </div>
             )}
+            {member.role === 'child' && member.birth_date && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">生年月日</span>
+                <span className="text-gray-800">
+                  {formatBirthDate(member.birth_date)} ({calculateAgeYears(member.birth_date, todayLocal())}歳)
+                </span>
+              </div>
+            )}
           </div>
         </div>
+
+        {/* #1173: 保護者の同意 (子供のとき) */}
+        {member.role === 'child' && consent && consent.revoked_at === null && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-2" data-testid="parental-consent-card">
+            <h2 className="text-sm font-bold text-gray-900">{PARENTAL_CONSENT_COPY.recordedHeading}</h2>
+            <div className="space-y-1 text-sm text-gray-700">
+              <div>署名: {consent.signed_name}</div>
+              <div>同意日時: {formatJstDateTime(consent.signed_at)}</div>
+              <div>同意書の版: {consent.consent_version}</div>
+            </div>
+            <Link
+              href={PARENTAL_CONSENT_DOCUMENT_PATH}
+              className="inline-block text-sm font-bold text-orange-700 underline underline-offset-4 hover:text-orange-800"
+            >
+              {PARENTAL_CONSENT_COPY.readFullTextLabel}
+            </Link>
+            <p className="text-xs text-gray-500">{PARENTAL_CONSENT_COPY.withdrawNote}</p>
+          </div>
+        )}
+        {member.role === 'child' && consent && consent.revoked_at !== null && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-2" data-testid="parental-consent-card">
+            <h2 className="text-sm font-bold text-gray-900">{PARENTAL_CONSENT_COPY.revokedHeading}</h2>
+            <div className="text-sm text-gray-700">取り消し日時: {formatJstDateTime(consent.revoked_at)}</div>
+          </div>
+        )}
+        {member.role === 'child' &&
+          !consent &&
+          member.birth_date &&
+          !requiresParentalConsent(member.birth_date, todayLocal()) && (
+            <p className="text-xs text-gray-500" data-testid="parental-consent-not-required">
+              {PARENTAL_CONSENT_COPY.notRequiredNote}
+            </p>
+          )}
 
         {/* 自分の場合: 共有設定 */}
         {isSelf && (
