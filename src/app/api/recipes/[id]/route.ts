@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
+import { recipeAuthorName } from '@/lib/recipes/author-name';
 
 // レシピ詳細取得
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
@@ -48,7 +49,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   const recipe = {
     id: data.id,
     userId: data.user_id,
-    authorName: data.user_profiles?.nickname || '匿名',
+    authorName: recipeAuthorName(data.user_profiles?.nickname),
     name: data.name,
     description: data.description,
     caloriesKcal: data.calories_kcal,
@@ -74,7 +75,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
       id: c.id,
       content: c.content,
       rating: c.rating,
-      authorName: c.user_profiles?.nickname || '匿名',
+      authorName: recipeAuthorName(c.user_profiles?.nickname),
       createdAt: c.created_at,
     })),
     createdAt: data.created_at,

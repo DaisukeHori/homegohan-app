@@ -13,6 +13,7 @@ import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail } from '@/lib/emails/send';
 import { emailFailureReasons } from '@/lib/emails/send-result';
 import { renderForceTransferEmail } from '@/lib/emails/membership/operator-force-transfer';
+import { normalizeProfileName } from '@/lib/profile-name';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -128,7 +129,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         .in('id', userIds);
       const nicknameMap: Record<string, string> = {};
       for (const p of profiles ?? []) {
-        nicknameMap[p.id] = p.nickname ?? '';
+        // 名前が無い (空・空白だけ・仮置きの 'Guest') 人は入れない。メールはアドレスを宛名にする (#1649)
+        const name = normalizeProfileName(p.nickname);
+        if (name) nicknameMap[p.id] = name;
       }
 
       const newOwnerEmail = emailMap.get(to_user_id) ?? '';

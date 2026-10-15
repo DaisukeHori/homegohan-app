@@ -15,6 +15,7 @@ import { AI_ALLOWED_MEAL_TYPES, runConsultationAction } from '@/lib/ai/consultat
 import { isMealType, MEAL_LABELS, MEAL_ORDER } from '@homegohan/shared';
 import { CANONICAL_GOAL_TYPES, describeGoalRangesForPrompt } from '@/lib/health-goal-types';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { normalizeProfileName } from '@/lib/profile-name';
 
 /**
  * AI に渡す日付 (過去の相談の日・重要なメッセージの日・今日) を書くタイムゾーン (#1433)。
@@ -281,7 +282,7 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
   // プロフィール情報を整形
   const profileInfo = profile ? `
 【ユーザープロフィール】
-- ニックネーム: ${profile.nickname || '未設定'}
+- ニックネーム: ${normalizeProfileName(profile.nickname) ?? '未設定'}
 - 年齢: ${profile.age || '未設定'}歳
 - 性別: ${profile.gender === 'male' ? '男性' : profile.gender === 'female' ? '女性' : '未設定'}
 - 身長: ${profile.height || '未設定'}cm

@@ -15,6 +15,7 @@ import {
 } from '@/lib/membership/invite-throttle';
 import { z } from 'zod';
 import { internalError } from '@/lib/api/errors';
+import { normalizeProfileName } from '@/lib/profile-name';
 
 /** メールに書く有効期限 (提案から何日後か)。以前と同じ 7 日 */
 const OWNER_TRANSFER_EMAIL_EXPIRY_DAYS = 7;
@@ -109,7 +110,8 @@ export async function POST(request: Request) {
 
   // リンクの基点は src/lib/membership/urls.ts に 1 つだけある (#1194)
   const acceptUrl = buildOrgTransferAcceptUrl(String(proposalId));
-  const fromName = profile.nickname ?? user.email?.split('@')[0] ?? 'オーナー';
+  // 名前が無い (空・空白だけ・仮置きの 'Guest') ときは、今の既定どおりメールアドレスの @ の前 → 'オーナー' (#1649)
+  const fromName = normalizeProfileName(profile.nickname) ?? user.email?.split('@')[0] ?? 'オーナー';
 
   const { data: orgData } = await supabase
     .from('organizations')
@@ -138,7 +140,8 @@ export async function POST(request: Request) {
       if (toEmail) {
         const envelope = renderOrgTransferProposedEmail({
           to_email: toEmail,
-          to_name: toProfile?.nickname ?? null,
+          // 名前が無いときは null (メールはアドレスを宛名にする。#1649)
+          to_name: normalizeProfileName(toProfile?.nickname),
           from_name: fromName,
           org_name: orgData?.name ?? '組織',
           accept_url: acceptUrl,

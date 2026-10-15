@@ -4,6 +4,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { isUuid, readJsonBody } from '@/lib/http-params';
+import { normalizeProfileName } from '@/lib/profile-name';
 import { NextResponse } from 'next/server';
 
 // 権限: support / admin / super_admin (共通の requireRole()、#1161)
@@ -166,7 +167,10 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
           error_code: adminsError.code,
         });
       }
-      (admins || []).forEach((a: any) => nicknameById.set(a.id, a.nickname));
+      // 名前が無い (空・空白だけ・仮置きの 'Guest') 管理者は null で持ち、下で既定の文言 'Unknown' にする (#1649)
+      (admins || []).forEach((a: { id: string; nickname: string | null }) =>
+        nicknameById.set(a.id, normalizeProfileName(a.nickname)),
+      );
     }
 
     const responseNotes = noteRows.map((n: any) => ({

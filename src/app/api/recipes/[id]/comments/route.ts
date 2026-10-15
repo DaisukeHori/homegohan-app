@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
+import { recipeAuthorName } from '@/lib/recipes/author-name';
 
 // コメント一覧取得 (user_id は公開しない)
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
@@ -31,7 +32,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     id: c.id,
     content: c.content,
     rating: c.rating,
-    authorName: c.user_profiles?.nickname || '匿名',
+    authorName: recipeAuthorName(c.user_profiles?.nickname),
     createdAt: c.created_at,
   }));
 
@@ -94,7 +95,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         id: data.id,
         content: data.content,
         rating: data.rating,
-        authorName: userProfile?.nickname || '匿名',
+        authorName: recipeAuthorName(userProfile?.nickname),
         createdAt: data.created_at,
       }
     });
