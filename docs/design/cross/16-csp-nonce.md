@@ -321,7 +321,9 @@ export const CSP_NONCE_PATTERN = /^[A-Za-z0-9+\/]+={0,2}$/;
 /**
  * Cloudflare Turnstile の api.js とウィジェットの iframe のオリジン。src/lib/auth/turnstile.ts の TURNSTILE_SCRIPT_SRC と同じ
  * (src/__tests__/config/turnstile-config.test.ts が突き合わせる)。下の frame-src の行にも同じ値を文字どおりに書いてある
- * (apps/mobile の Jest が "frame-src 'self' https://…" の 1 行を文字列として読み、WEB_VIEW_EMBED_ORIGINS と突き合わせるため)
+ * (apps/mobile の Jest が、二重引用符で始まる frame-src の方針の文字列のうち最初に現れるものを読み、WEB_VIEW_EMBED_ORIGINS と突き合わせるため。
+ * Jest は最初の一致しか使わないので、このファイルで二重引用符に続けて frame-src と書くのは下の方針の行の 1 か所だけにする。
+ * コメントでも二重引用符で囲んだ frame-src の例を書かない。src/__tests__/lib/security/csp.test.ts が 1 か所だけであることを見張る)
  */
 export const CSP_TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 /** CSP_REPORT_ONLY を有効とみなす唯一の値 (lib/legal-consent.ts の LEGAL_CONSENT_FLAG_ON と同じ読み方) */
@@ -387,6 +389,7 @@ export function buildContentSecurityPolicy(input: CspBuildInput): string {
     // #1165: Cloudflare Turnstile の api.js。#1179: Speed Insights (本番は 'self'、dev は *.vercel-scripts.com)
     `script-src 'self' 'nonce-${input.nonce}'${input.isDev ? " 'unsafe-eval'" : ''} 'report-sample' *.vercel-scripts.com ${CSP_TURNSTILE_ORIGIN}`,
     // frame-src を書くと default-src へのフォールバックが無くなるので 'self' も書く。この 1 行は apps/mobile の Jest が文字どおりに読む
+    // (このファイルで二重引用符に続く frame-src はこの行だけ。csp.test.ts が見張る)
     "frame-src 'self' https://challenges.cloudflare.com",
     "style-src 'self' 'unsafe-inline'",
     `img-src 'self' data: blob: *.supabase.co images.unsplash.com${supabaseImgSrc}`,
@@ -917,7 +920,7 @@ export const dynamic = 'force-dynamic';
 | 同意の許可リスト (`/api`) | 13 行 | 14 行 (`/api/csp-report` telemetry) |
 | 環境変数の一覧 | – | `CSP_REPORT_ONLY` (任意・`readOnlyBy: src/lib/security/csp.ts`) |
 | `src/app/api` の route | N 本 | N + 1 本 |
-| モバイルの Jest の突き合わせ先 | `next.config.mjs` の `"frame-src …"` | `src/lib/security/csp.ts` の同じ形の 1 行 |
+| モバイルの Jest の突き合わせ先 | `next.config.mjs` の `"frame-src …"` | `src/lib/security/csp.ts` の同じ形の 1 行 (二重引用符に続く `frame-src` はファイルの中でこの 1 か所だけ。コメントにも書かない) |
 | 既存テストの固定点 (`'unsafe-inline'` を期待) | `next-config-headers.test.ts:49`・`turnstile-config.test.ts:48` | 期待を反転 (無いこと) |
 | Lighthouse (LP) | 静的 | 動的 (整合ゲートで実測) |
 
@@ -943,6 +946,7 @@ export const dynamic = 'force-dynamic';
 | コード (CI) | `<script>` / `<Script>` / `next/script` / `<script` を含む文字列を足す | 赤 | `tests/csp-no-inline-script.test.ts` の許可リストに無い | 実装者に外部ファイル化か `getCspNonce()` + 許可リストを案内 |
 | コード (CI) | `next.config.mjs` に CSP を書き戻す | 赤 | `next-config-headers.test.ts` | 二重化を防ぐ |
 | コード (CI) | `frame-src` に他オリジンを足す | 赤 (モバイルの Jest) | `WEB_VIEW_EMBED_ORIGINS` に無い | モバイルにも足させる (既存の規律) |
+| コード (CI) | `csp.ts` に二重引用符で始まる `frame-src` の文字列をもう 1 つ書く (コメントの例示を含む) | 赤 | `csp.test.ts` の「1 か所だけ」の it | モバイルの Jest の正規表現が方針の行より先にそれを拾い、`frame-src` を変えていないのに突き合わせが赤になるのを先に止める |
 | コード (CI) | ルート layout の `dynamic` を外す | 赤 | `tests/csp-no-inline-script.test.ts` | 静的化の再発を防ぐ |
 
 ## 13. エラー表
@@ -992,7 +996,7 @@ sequenceDiagram
 
 | ファイル | it |
 |---|---|
-| `src/__tests__/lib/security/csp.test.ts` (新) | `本番の方針: script-src は 'self'・'nonce-<nonce>'・'report-sample'・*.vercel-scripts.com・https://challenges.cloudflare.com を持ち、'unsafe-inline' と 'unsafe-eval' を持たない` / `dev の方針: script-src に 'unsafe-eval' が足され、'unsafe-inline' は無い` / `style-src は 'self' 'unsafe-inline' のまま (据え置き)` / `default-src・frame-src・frame-ancestors・font-src・object-src は next.config.mjs にあった値と同じ` / `frame-src の 1 行は "frame-src 'self' https://challenges.cloudflare.com" と文字どおりに書いてある (apps/mobile の Jest が読む)` / `report-uri は /api/csp-report` / `本番の Supabase (*.supabase.co) では connect-src / img-src に個別の origin を足さない` / `ローカルの Supabase (http://127.0.0.1:54321) は connect-src (http / ws) と img-src に足す` / `nonce が base64 でなければ throw` / `generateCspNonce: 24 文字の base64 で、100 回で重複しない` / `cspDirectivesOf: 方針を名前 → 許可先にする (空の区切りは飛ばす)` / `isCspReportOnly: 'on' (大小・前後の空白は無視) だけ true。off / 空 / true / 1 / undefined は false` / `cspHeaderName: 強制と報告だけでヘッダー名が変わる` / `CSP_TURNSTILE_ORIGIN は src/lib/auth/turnstile.ts の TURNSTILE_SCRIPT_SRC のオリジンと同じで、script-src と frame-src の両方にある` / `F6-09: 既存の許可済みドメイン (*.supabase.co・*.vercel.app・wss://*.supabase.co・*.vercel-scripts.com・images.unsplash.com・font-src 'self') は壊れていない` / `#1166: connect-src に PostHog のホストを含まない` / `#1166: NEXT_PUBLIC_POSTHOG_HOST が環境に残っていても、方針に PostHog のホストを出さない` |
+| `src/__tests__/lib/security/csp.test.ts` (新) | `本番の方針: script-src は 'self'・'nonce-<nonce>'・'report-sample'・*.vercel-scripts.com・https://challenges.cloudflare.com を持ち、'unsafe-inline' と 'unsafe-eval' を持たない` / `dev の方針: script-src に 'unsafe-eval' が足され、'unsafe-inline' は無い` / `style-src は 'self' 'unsafe-inline' のまま (据え置き)` / `default-src・frame-src・frame-ancestors・font-src・object-src は next.config.mjs にあった値と同じ` / `frame-src の 1 行は "frame-src 'self' https://challenges.cloudflare.com" と文字どおりに書いてある (apps/mobile の Jest が読む)` / `csp.ts のソース (fs で読む) で /"frame-src\s+/g に当たるのは 1 か所だけで、その捕捉は 'self' https://challenges.cloudflare.com (コメントに二重引用符つきの frame-src があると apps/mobile の Jest が先に拾う)` / `report-uri は /api/csp-report` / `本番の Supabase (*.supabase.co) では connect-src / img-src に個別の origin を足さない` / `ローカルの Supabase (http://127.0.0.1:54321) は connect-src (http / ws) と img-src に足す` / `nonce が base64 でなければ throw` / `generateCspNonce: 24 文字の base64 で、100 回で重複しない` / `cspDirectivesOf: 方針を名前 → 許可先にする (空の区切りは飛ばす)` / `isCspReportOnly: 'on' (大小・前後の空白は無視) だけ true。off / 空 / true / 1 / undefined は false` / `cspHeaderName: 強制と報告だけでヘッダー名が変わる` / `CSP_TURNSTILE_ORIGIN は src/lib/auth/turnstile.ts の TURNSTILE_SCRIPT_SRC のオリジンと同じで、script-src と frame-src の両方にある` / `F6-09: 既存の許可済みドメイン (*.supabase.co・*.vercel.app・wss://*.supabase.co・*.vercel-scripts.com・images.unsplash.com・font-src 'self') は壊れていない` / `#1166: connect-src に PostHog のホストを含まない` / `#1166: NEXT_PUBLIC_POSTHOG_HOST が環境に残っていても、方針に PostHog のホストを出さない` |
 | `src/__tests__/lib/security/csp-report.test.ts` (新) | `CspReportBodySchema: ブラウザが送る形 (Chrome / Firefox / Safari の例) を通し、知らないキーは捨てる` / `csp-report が無い・オブジェクトでない本文は失敗` / `line-number が負・文字列なら落として通す (報告を 400 にしない)` / `isCspReportContentType: application/csp-report と application/json (charset つき・大文字) は true、text/plain と null は false` / `scrubCspReportUri: http(s) はクエリ・#・ユーザー名・パスワードを落として origin + パス` / `scrubCspReportUri: /invite/<token>・/family/promotions/<token>・UUID の区間は [redacted]、representative-transfer のような名前は残る` / `scrubCspReportUri: data: / blob: / chrome-extension: はスキームだけ、inline / eval / self はそのまま、空は null` / `toCspViolationLogEntry: message は "CSP violation: <effective> blocked <blocked>"、metadata は snake_case の 11 キーで original-policy と referrer を含まない` / `toCspViolationLogEntry: script_sample は 40 文字、user_agent は 256 文字に切る` / `cspReportByteLength: UTF-8 のバイト数 (日本語は 3 バイト)` |
 | `src/__tests__/lib/security/csp-nonce.test.ts` (新) | `getCspNonce: headers() の x-csp-nonce を返す (next/headers のモックは Promise を返す形)` / `無ければ null` |
 | `tests/middleware-csp.test.ts` (新。`@/lib/supabase/middleware` の updateSession をモック) | `応答に Content-Security-Policy が付き、script-src の nonce が request header の x-csp-nonce と同じ` / `request header の content-security-policy にも同じ方針が載る (Next が読む経路)` / `updateSession が redirect / 403 JSON / 503 HTML / 500 を返しても CSP が付く` / `updateSession が NextResponse.next({ request }) を作り直しても (x-legal-consent-pending を足す経路) request header の nonce は変わらない` / `2 回の要求で nonce が違う` / `クライアントが送った x-csp-nonce・content-security-policy・content-security-policy-report-only は捨てられ、middleware の値だけが残る` / `CSP_REPORT_ONLY=on なら応答と request header の名前が Content-Security-Policy-Report-Only になり、Content-Security-Policy は付かない` / `NODE_ENV=development なら 'unsafe-eval' が付く` / `?mode=app の is_native_app Cookie は今までどおり付く` |
@@ -1006,7 +1010,7 @@ sequenceDiagram
 | `lib/supabase/__tests__/middleware-legal-consent-api.test.ts` (改) | スナップショットに `{ path: '/api/csp-report', match: 'exact', reason: 'telemetry' }` を `/api/log` の次に足す |
 | `src/__tests__/api/null-character-routes.test.ts` (改) | 表に `{ file: 'csp-report/route.ts', method: 'POST', load: async () => (await import('@/app/api/csp-report/route')).POST }` を足す |
 | `src/__tests__/lib/env.test.ts` (改) | `readOnlyBy` の一覧に `['CSP_REPORT_ONLY', 'src/lib/security/csp.ts']` (`CRON_SECRET_PREVIOUS` の次) と it 名の列挙に `CSP_REPORT_ONLY` |
-| `apps/mobile/__tests__/lib/webViewBridge.test.ts` (改。Jest) | `NEXT_CONFIG_PATH` を `WEB_CSP_SOURCE_PATH = path.resolve(__dirname, '../../../../src/lib/security/csp.ts')` に。describe 名・エラー文・コメント (`:10`・`:772`・`:834`・`:843`) の `next.config.mjs` を `src/lib/security/csp.ts` に。正規表現 `/"frame-src\s+([^"]+)"/` は同じ |
+| `apps/mobile/__tests__/lib/webViewBridge.test.ts` (改。Jest) | `NEXT_CONFIG_PATH` を `WEB_CSP_SOURCE_PATH = path.resolve(__dirname, '../../../../src/lib/security/csp.ts')` に。describe 名・エラー文・コメント (`:10`・`:772`・`:834`・`:843`) の `next.config.mjs` を `src/lib/security/csp.ts` に。正規表現 `/"frame-src\s+([^"]+)"/` は同じ (最初の一致を使う。`csp.ts` で当たるのは方針の行の 1 か所だけで、`csp.test.ts` が見張る) |
 | `tests/e2e/csp-nonce.spec.ts` (新。Playwright) | `/ の応答の Content-Security-Policy は 1 つだけ (headersArray) で、script-src は 'nonce-…' を持ち 'unsafe-inline' を持たない` / `2 回の要求で nonce が違う` / `/ と /login を開くと securitypolicyviolation が 0 件で、src の無い <script> はすべて nonce を持つ (script.nonce)` / `/login でメールアドレスを入力すると値が残る (ハイドレーションが動く)` / `script-src と frame-src に https://challenges.cloudflare.com がある` / `POST /api/csp-report: application/csp-report は 204、text/plain は 415、JSON でない本文は 400、9 KiB の本文は 413` |
 
 整合ゲート (デプロイ後) で人が確かめる項目: `next build` の表に `○` が無い (`/_not-found` も `ƒ`)・本番の全画面 (利用者・運営) を開いて開発者ツールの CSP 違反 0 件・`/super-admin/logs` に `csp-report` の行が 0 件 (自分のコード由来)・LP の Lighthouse・iOS / Android の WebView で `/login` と `/home`・存在しないパスと `error.tsx` の表示に CSP が付くか (§22 Q-4 / Q-8 の実測)。
@@ -1049,7 +1053,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `tests/speed-insights-1179.test.tsx` | `next.config.mjs`・`sourcesOf`・`Content-Security-Policy` | `headers()` から CSP を読む | `buildContentSecurityPolicy` に替える | 2 |
 | `tests/inner-html-contract.test.ts` | `'src/app/layout.tsx'`・`ダークモード` | 許可リストにルート layout | 行を消す (消さないと「許可リストが古い」の it が赤) | 2 |
 | `tests/csp-no-inline-script.test.ts` (新) | `<script`・`next/script`・`force-dynamic` | – | 新設 (§21) | 2 |
-| `apps/mobile/__tests__/lib/webViewBridge.test.ts` | `NEXT_CONFIG_PATH`・`"frame-src`・`next.config.mjs に frame-src の指定が見つからない` | `next.config.mjs` を読む | 参照先を `src/lib/security/csp.ts` に。正規表現は同じ (csp.ts の frame-src の行を文字どおりの 1 行に保つ) | 2 |
+| `apps/mobile/__tests__/lib/webViewBridge.test.ts` | `NEXT_CONFIG_PATH`・`"frame-src`・`next.config.mjs に frame-src の指定が見つからない` | `next.config.mjs` を読む | 参照先を `src/lib/security/csp.ts` に。正規表現は同じ (csp.ts の frame-src の行を文字どおりの 1 行に保つ。正規表現は最初の一致を使うので、csp.ts で二重引用符に続く `frame-src` は方針の行の 1 か所だけにし、コメントにも書かない。`csp.test.ts` の it が見張る) | 2 |
 | `lib/supabase/__tests__/middleware-legal-consent-api.test.ts` | `'/api/log', match: 'exact', reason: 'telemetry'`・`src/app/api の全 route` | 許可リストのスナップショット・全 route の表 | スナップショットに `/api/csp-report` の行。全 route の表は自動 (route を足すと未同意 × ENFORCE=on で通ることを許可リストが説明する) | 1 |
 | `packages/shared/src/legal-consent-api.test.ts` | `EXEMPT_SAMPLES`・`/api/logx` | 似た名前は deny | 任意: `EXEMPT_SAMPLES` に `/api/csp-report`、`NOT_EXEMPT_SAMPLES` に `/api/csp-reportx` | 1 |
 | `src/__tests__/api/null-character-routes.test.ts` | `'log/route.ts'`・`rejectNullCharacterBody` | 本文を読む handler の表 | 表に `csp-report/route.ts` の行 (無いと「洗い漏れ」の it が赤) | 1 |
@@ -1105,6 +1109,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 全ページ動的 | 同上 | `import('@/app/layout')` の `dynamic` が `'force-dynamic'` でない |
 | middleware の全経路に CSP | `tests/middleware-csp.test.ts` | updateSession のどの戻り値でも応答に CSP が無い・request header の nonce と不一致 |
 | `frame-src` と `WEB_VIEW_EMBED_ORIGINS` の一致 | `apps/mobile/__tests__/lib/webViewBridge.test.ts` (既存) | `csp.ts` の `frame-src` の行に他オリジンを足してモバイルに足さない |
+| モバイルの Jest が読む `frame-src` の文字列は `csp.ts` に 1 か所だけ | `src/__tests__/lib/security/csp.test.ts` | `csp.ts` のソースで `/"frame-src\s+/g` の一致が 1 でない (コメントの例示を含む) か、その 1 か所の捕捉が `'self' https://challenges.cloudflare.com` でない |
 | 環境変数の規律 | `tests/env-source-scan.test.ts`・`src/__tests__/lib/env.test.ts` (既存) | `.env.example` に無い・csp.ts 以外で読む |
 | 本文を読む route の入口 | `src/__tests__/api/null-character-routes.test.ts` (既存) | 表に無い・`rejectNullCharacterBody` を呼ばない |
 
