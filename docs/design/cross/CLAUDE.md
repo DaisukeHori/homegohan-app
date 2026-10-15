@@ -15,6 +15,9 @@
 | `07-dr-backup.md` | 災害復旧 / バックアップ / リージョン | 03 §16.5 §22.8 |
 | `08-legal-compliance.md` | 特商法 / インボイス / GDPR / 利用規約 / 医療免責 | 03 §18 |
 | `09-testing.md` | テスト戦略統合 (Unit/Integration/E2E、CI/CD、モック、E2E シナリオ網羅) | 03 §16.4 §22.3 + 100-scenarios.md |
+| `13a-legal-consent-api-server.md` | 規約の同意ゲートを `/api` に掛ける (middleware の `/api` の分岐・許可リスト・`GET /api/legal/status`・`packages/shared` の判定と文面) | 08 §7.2 |
+
+10〜12 は欠番 (13a は分冊前の 13 の番号を引き継いでいる)。
 
 ## このドメインの役割
 
