@@ -396,6 +396,31 @@ describe('POST /api/family/members/[member_id]/promote', () => {
     );
   });
 
+  // #1678: RPC は COALESCE(nickname, email) を返すので、仮置きの 'Guest' の人は 'Guest' が来る。メールに「Guest 様」と出さない
+  it.each([
+    ['仮置きの Guest', 'Guest'],
+    ['前後に空白のある Guest', ' Guest\u3000'],
+    ['空白だけ', ' \t '],
+  ])('requester_name が %s: 名前として出さず user.email をフォールバックする', async (_label, requesterName) => {
+    mockRpc.mockResolvedValue({ data: { ...rpcResult, requester_name: requesterName }, error: null });
+
+    const res = await POST(postRequest({ email: childEmail }), makeParams(memberId));
+
+    expect(res.status).toBe(200);
+    expect(renderFamilyPromoteEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ requester_name: validUser.email }),
+    );
+  });
+
+  it("requester_name が本人の付けた名前 ('guest' を含む): 前後の空白を除いてそのまま出す", async () => {
+    mockRpc.mockResolvedValue({ data: { ...rpcResult, requester_name: ' guest ' }, error: null });
+
+    const res = await POST(postRequest({ email: childEmail }), makeParams(memberId));
+
+    expect(res.status).toBe(200);
+    expect(renderFamilyPromoteEmail).toHaveBeenCalledWith(expect.objectContaining({ requester_name: 'guest' }));
+  });
+
   it('requester_name が null で user.email も無い: 依頼者名は「家族の代表者」になる', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: validUser.id } }, error: null });
     mockRpc.mockResolvedValue({ data: { ...rpcResult, requester_name: null }, error: null });
