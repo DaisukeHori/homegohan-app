@@ -172,6 +172,17 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `FAM_PARENTAL_CONSENT_REQUIRED` | 保護者同意が必要 | 403 |
 | `FAM_CHILD_PROMOTE_AUTH_REQUIRED` | 子供アカウント独立化には親の再認証が必要 | 401 |
 
+#### LEGAL 系
+
+利用規約・プライバシーポリシーの同意 (`docs/design/cross/08-legal-compliance.md` §7.2・`docs/design/cross/13a-legal-consent-api-server.md`)。
+
+| コード | 説明 | HTTP |
+|--------|------|------|
+| `LEGAL_CONSENT_REQUIRED` | 規約への同意が必要 (middleware の `/api` の分岐が、未同意の人の API を止める。本文は平たい形 `{ error, code }`) | 403 |
+| `LEGAL_VERSION_MISMATCH` | 同意を送った版が、いま有効な版と違う (`POST /api/legal/accept`。本文に `current` を添える) | 409 |
+| `LEGAL_BAD_REQUEST` | 同意の記録の入力が不正 (`POST /api/legal/accept`) | 400 |
+| `LEGAL_UNSUPPORTED_MEDIA_TYPE` | 同意の記録の Content-Type が JSON でない (`POST /api/legal/accept`) | 415 |
+
 #### ORG 系
 
 | コード | 説明 | HTTP |
@@ -243,6 +254,9 @@ interface ErrorResponse {
 
 // 429 (rateLimitExceededResponse。retryAfter は再試行までの秒数)
 { "error": "リクエストが多すぎます。しばらく時間をおいてからお試しください。", "code": "RATE_LIMITED", "retryAfter": 60 }
+
+// 403 (規約への同意が必要。middleware の /api の分岐。packages/shared の legalConsentRequiredBody)
+{ "error": "利用規約・プライバシーポリシーへの同意が必要です。同意の画面から内容をご確認ください。", "code": "LEGAL_CONSENT_REQUIRED" }
 ```
 
 **(b) nested**: `error.message` を読むクライアント向け。運営 API (`/api/super-admin/**` など) は `internalError(..., { shape: 'nested' })` でこの形の 500 を返す。組織・家族の所属の操作の API (招待の承諾・辞退・取り消し・脱退・除名・代表者やオーナーの譲渡など。`/api/org/**`・`/api/family/**` のうち `MembershipErrorCode` を返すもの) の 4xx もこの形で、`code` は `MembershipErrorCode` (`src/lib/errors/membership-errors.ts`) の値 (同じ配下でも、一覧の取得などは (a) flat の `{ error: 'Forbidden' }` などを返す route がある)。`message` は操作ごとの固定の文なので、画面は `membershipErrorMessageOfBody` で `code` から理由の文を引く。
