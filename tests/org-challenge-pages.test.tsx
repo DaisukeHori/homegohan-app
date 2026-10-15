@@ -12,7 +12,7 @@
  *     記録の扱いの説明 (参加は自由・順位は参加者だけ・管理者には人数と平均だけ)
  *   - 詳細: 数え方の説明。参加する前に、順位表に表示名が出るかを説明する。参加する / 参加をやめる (確認つき)。
  *     順位表は API が返したときだけ出す (参加していない人には出さない)。終了したチャレンジには参加ボタンを出さない
- *   - 参加者数は、最小人数に満たない (API が null で返す) とき「5人未満」と出す
+ *   - 参加者数は、最小人数に満たない (API が null で返す) とき「10人未満」と出す
  *   - 管理者向け: 平均は API が出してよいと判断したときだけ出す。歩数・体重・カスタムは選べない (準備中)
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
@@ -196,7 +196,7 @@ describe('メンバー向けの一覧 (/challenges)', () => {
     expect(text()).toContain('読み込み中');
 
     await act(async () => {
-      resolve(jsonResponse({ challenges: [listChallenge()], minParticipants: 5 }));
+      resolve(jsonResponse({ challenges: [listChallenge()], minParticipants: 10 }));
     });
     await act(async () => {});
 
@@ -222,18 +222,18 @@ describe('メンバー向けの一覧 (/challenges)', () => {
     expect(text()).toContain('参加は、いつでもやめられます');
   });
 
-  it('参加者が最小人数に満たない (API が null) ときは「5人未満」。API が返した最小人数があればそれを使う', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ challenges: [listChallenge({ participantCount: null })], minParticipants: 5 }));
+  it('参加者が最小人数に満たない (API が null) ときは「10人未満」。API が返した最小人数があればそれを使う', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ challenges: [listChallenge({ participantCount: null })], minParticipants: 10 }));
     await render(<ChallengesListPage />);
-    expect(text()).toContain('参加者 5人未満');
+    expect(text()).toContain('参加者 10人未満');
 
     await act(async () => {
       root.unmount();
     });
     root = createRoot(container);
-    fetchMock.mockResolvedValue(jsonResponse({ challenges: [listChallenge({ participantCount: null })], minParticipants: 10 }));
+    fetchMock.mockResolvedValue(jsonResponse({ challenges: [listChallenge({ participantCount: null })], minParticipants: 15 }));
     await render(<ChallengesListPage />);
-    expect(text()).toContain('参加者 10人未満');
+    expect(text()).toContain('参加者 15人未満');
   });
 
   it('自分の参加状況: 順位つき / 集計待ち / 未参加 (開催中) / 未参加 (終了)', async () => {
@@ -330,7 +330,7 @@ function detailBody(overrides: Record<string, unknown> = {}) {
       status: 'active',
     },
     participantCount: 12,
-    minParticipants: 5,
+    minParticipants: 10,
     joined: false,
     me: null,
     ranking: { available: false, showNames: false },
@@ -375,12 +375,12 @@ describe('メンバー向けの詳細 (/challenges/[id])', () => {
     expect(text()).toContain('お試し (ハンズオン) の記録は数えません');
   });
 
-  it('参加者が最小人数に満たない (null) ときは「5人未満」', async () => {
+  it('参加者が最小人数に満たない (null) ときは「10人未満」', async () => {
     fetchMock.mockResolvedValue(jsonResponse(detailBody({ participantCount: null })));
 
     await render(<ChallengeDetailPage />);
 
-    expect(text()).toContain('参加者 5人未満');
+    expect(text()).toContain('参加者 10人未満');
   });
 
   it('参加する前に、見え方を説明する (表示名は出ない / 管理者には人数と平均だけ / いつでもやめられる)', async () => {
@@ -629,7 +629,7 @@ function adminChallenge(overrides: Record<string, unknown> = {}) {
     departmentId: null,
     departmentName: null,
     participantCount: 12,
-    aggregate: { minParticipants: 5, visible: true, averageValue: 63.2 },
+    aggregate: { minParticipants: 10, visible: true, averageValue: 63.2 },
     createdAt: '2026-09-01T00:00:00Z',
     ...overrides,
   };
@@ -672,41 +672,41 @@ describe('管理者向けの画面 (/org/challenges): 集計だけ', () => {
     expect(text()).toContain('参加は社員の自由です');
     expect(text()).toContain('管理者に見えるのは、チャレンジごとの集計 (参加者数と平均) だけです');
     expect(text()).toContain('順位は、参加した社員どうしにだけ表示されます');
-    expect(text()).toContain('参加者が5人以上になるまでは参加者数を');
-    expect(text()).toContain('集計が済んだ参加者が5人以上になるまでは平均を表示しません');
+    expect(text()).toContain('参加者が10人以上になるまでは参加者数を');
+    expect(text()).toContain('集計が済んだ参加者が10人以上になるまでは平均を表示しません');
   });
 
-  it('参加者が最小人数に満たない (null) ときは「5人未満」。平均は「集計中」で、必要な人数を説明する', async () => {
+  it('参加者が最小人数に満たない (null) ときは「10人未満」。平均は「集計中」で、必要な人数を説明する', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({
-        challenges: [adminChallenge({ participantCount: null, aggregate: { minParticipants: 5, visible: false, averageValue: null } })],
+        challenges: [adminChallenge({ participantCount: null, aggregate: { minParticipants: 10, visible: false, averageValue: null } })],
       }),
     );
 
     await render(<OrgChallengesAdminPage />);
 
-    expect(text()).toContain('5人未満');
+    expect(text()).toContain('10人未満');
     expect(text()).toContain('集計中');
-    expect(text()).toContain('集計が済んだ参加者が5人以上になると、平均を表示します');
+    expect(text()).toContain('集計が済んだ参加者が10人以上になると、平均を表示します');
     expect(text()).not.toContain('参加者の平均');
   });
 
-  it('参加者は 5 人以上いるが集計が済んだ人が足りないときは、人数は出して平均は「集計中」', async () => {
+  it('参加者は 10 人以上いるが集計が済んだ人が足りないときは、人数は出して平均は「集計中」', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({
-        challenges: [adminChallenge({ participantCount: 6, aggregate: { minParticipants: 5, visible: false, averageValue: null } })],
+        challenges: [adminChallenge({ participantCount: 11, aggregate: { minParticipants: 10, visible: false, averageValue: null } })],
       }),
     );
 
     await render(<OrgChallengesAdminPage />);
 
-    expect(text()).not.toContain('5人未満');
+    expect(text()).not.toContain('10人未満');
     expect(text()).toContain('集計中');
   });
 
   it('平均が 0 のときも「集計中」ではなく 0 を出す', async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse({ challenges: [adminChallenge({ aggregate: { minParticipants: 5, visible: true, averageValue: 0 } })] }),
+      jsonResponse({ challenges: [adminChallenge({ aggregate: { minParticipants: 10, visible: true, averageValue: 0 } })] }),
     );
 
     await render(<OrgChallengesAdminPage />);
@@ -718,7 +718,7 @@ describe('管理者向けの画面 (/org/challenges): 集計だけ', () => {
   it('計算できない種類 (歩数) のチャレンジには、平均の欄を出さない', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({
-        challenges: [adminChallenge({ challengeType: 'steps', aggregate: { minParticipants: 5, visible: false, averageValue: null } })],
+        challenges: [adminChallenge({ challengeType: 'steps', aggregate: { minParticipants: 10, visible: false, averageValue: null } })],
       }),
     );
 
