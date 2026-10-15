@@ -19,6 +19,7 @@ import {
   HANDSON_TOUR_CONSTANTS,
   HANDSON_TOUR_I18N_JA,
   HANDSON_TOUR_ROUTES,
+  buildStep2ResultBubbleBody,
 } from '@homegohan/handson-tour-shared';
 
 import { tourAnalyticsPlatformOf } from '../../src/handson-tour/tour-platform';
@@ -34,6 +35,22 @@ jest.mock('expo-router', () => ({
 
 jest.mock('../../src/providers/ProfileProvider', () => ({
   useProfile: () => ({ profile: { id: 'user-1', nickname: 'テスト' } }),
+}));
+
+// analytics の app_version は Expo の設定 (app.json の expo.version) から取る (#1660)。直書きの '1.0.0' と見分けられる版にする
+const EXPO_APP_VERSION = '3.2.1';
+jest.mock('expo-constants', () => ({ __esModule: true, default: { expoConfig: { version: '3.2.1' } } }));
+
+// Step 2 の 2.6 の吹き出しに使うプロフィール (menu-tour-profile.ts の fetchMenuTourProfile。#1660)。
+// このテストは端末バックだけを見るので、行が無い (除外なし・料理の経験なし = beginner 扱い) で返し、外へ問い合わせない
+jest.mock('../../src/lib/supabase', () => ({
+  supabase: {
+    from: () => ({
+      select: () => ({
+        eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
+      }),
+    }),
+  },
 }));
 
 let mockClient: HttpClient;
@@ -209,7 +226,13 @@ describe('#1642: Step 2 (献立) の端末バックは hard_back でツアーを
     expect(init.method).toBe('POST');
     expect(JSON.parse(String(init.body))).toEqual({ step: 2, reason: 'hard_back' });
     expect(analyticsCalls('handson_tour_skipped')).toEqual([
-      expect.objectContaining({ step: 2, reason: 'hard_back', user_id: 'user-1', platform: 'ios' }),
+      expect.objectContaining({
+        step: 2,
+        reason: 'hard_back',
+        user_id: 'user-1',
+        platform: 'ios',
+        app_version: EXPO_APP_VERSION,
+      }),
     ]);
     expect(mockPush).not.toHaveBeenCalled();
   });
@@ -257,7 +280,10 @@ describe('#1642: Step 2 (献立) の端末バックは hard_back でツアーを
     act(() => {
       jest.advanceTimersByTime(HANDSON_TOUR_CONSTANTS.STEP2_LOADING_DURATION_MS);
     });
-    expect(screen.getByTestId('overlay-body')).toHaveTextContent(i18n.step2.result_bubble_no_exclude);
+    // 2.6 の吹き出しは {cooking_experience_text} を埋めた文 (除外なし・beginner 扱い。#1660)
+    const resultBubble = buildStep2ResultBubbleBody({ allergies: [], dislikes: [], cooking_experience: null });
+    expect(resultBubble).not.toContain('{');
+    expect(screen.getByTestId('overlay-body')).toHaveTextContent(resultBubble);
     fireEvent.press(screen.getByTestId('overlay-primary')); // 2.6 → 2.7
     expect(screen.getByTestId('overlay-primary')).toHaveTextContent(i18n.step2.add_button);
     fireEvent.press(screen.getByTestId('overlay-primary')); // 2.7 → 2.8 (Step 2 の完了)
@@ -386,7 +412,13 @@ describe('#1642: Step 3 (バッジ) の端末バックは hard_back でツアー
     expect(skipCalls()).toHaveLength(1);
     expect(JSON.parse(String(skipCalls()[0][1].body))).toEqual({ step: 3, reason: 'hard_back' });
     expect(analyticsCalls('handson_tour_skipped')).toEqual([
-      expect.objectContaining({ step: 3, reason: 'hard_back', user_id: 'user-1', platform: 'ios' }),
+      expect.objectContaining({
+        step: 3,
+        reason: 'hard_back',
+        user_id: 'user-1',
+        platform: 'ios',
+        app_version: EXPO_APP_VERSION,
+      }),
     ]);
     expect(mockPush).not.toHaveBeenCalled();
   });
