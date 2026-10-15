@@ -11,6 +11,8 @@
  * 版の値そのものは検査しない (オーナーが書き換える)。LEGAL_DOCUMENTS から取った「現行の版」と、
  * それとは別の値の「古い版」の組み合わせで確かめる。
  * middleware 全体を通した確認は lib/supabase/__tests__/middleware.test.ts。
+ * #1173 (設計書 cross/14): 「現行の版に同意済み」は生年月日 (birth_date) もある成人の行。生年月日の無い行も未同意と同じく回す。
+ * 保護者の同意書の公開ページ /legal/parental-consent はゲートの対象外 (T-LP2)。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LEGAL_DOCUMENTS } from '@homegohan/shared';
@@ -31,7 +33,10 @@ const CURRENT_PRIVACY = LEGAL_DOCUMENTS.privacy_policy.version;
 const OLD = 'v0-old';
 
 const ACCEPTED = {
-  current: { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY },
+  // 成人の placeholder の生年月日つき (#1173 で生年月日が無いと同意画面へ回すため)
+  current: { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY, birth_date: '1990-01-01' },
+  // #1173: 版は同意済みで、生年月日だけが無い
+  noBirthDate: { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY, birth_date: null },
   none: { terms_version_accepted: null, privacy_version_accepted: null },
   noRow: null,
   columnsMissing: {},
@@ -49,6 +54,8 @@ const EXEMPT_PATHS = [
   '/privacy/',
   '/legal',
   '/legal/',
+  // #1173: 保護者の同意書の公開ページ (T-LP2)
+  '/legal/parental-consent',
   '/legal-consent',
   '/legal-consent/',
   '/auth/callback',
@@ -210,6 +217,7 @@ describe('resolveLegalConsent: 同意済みの版 × パス × フラグ', () =>
       ['プライバシーポリシーだけ古い版', ACCEPTED.privacyOld],
       ['両方古い版', ACCEPTED.bothOld],
       ['利用規約だけ同意 (プライバシーポリシーが未同意)', ACCEPTED.onlyTerms],
+      ['版は同意済みで生年月日が無い (#1173)', ACCEPTED.noBirthDate],
     ])('%s', (_name, accepted) => {
       it.each(EXEMPT_PATHS)('対象外の %s では何もしない', (pathname) => {
         expect(resolveLegalConsent({ pathname, accepted, enforce, notice })).toBe('none');
@@ -282,5 +290,14 @@ describe('resolveLegalConsentNext: 同意後の戻り先', () => {
   it('同意画面に似ているだけのパスは、そのまま使う', () => {
     expect(resolveLegalConsentNext('/legal-consentx')).toBe('/legal-consentx');
     expect(resolveLegalConsentNext('/apix')).toBe('/apix');
+  });
+});
+
+describe('#1173 T-LP2: 保護者の同意書の公開ページ', () => {
+  it('/legal/parental-consent は同意ゲートの対象外 (isLegalConsentExemptPath)', () => {
+    expect(isLegalConsentExemptPath('/legal/parental-consent')).toBe(true);
+    expect(
+      resolveLegalConsent({ pathname: '/legal/parental-consent', accepted: ACCEPTED.noBirthDate, enforce: true, notice: false }),
+    ).toBe('none');
   });
 });

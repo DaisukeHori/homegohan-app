@@ -12,6 +12,8 @@
  *   - LEGAL_CONSENT_ENFORCE が off / 未設定でも回す (フラグに依らない)
  *   - 回さない: 同意済み / 初期設定を始めた・終えた人 / 管理者 / プロフィールを読めなかったとき / 遷移先がゲートの対象外 (/auth/*)
  *   - 判定の関数 resolveFirstSignInDestination の表
+ *   - #1173 (設計書 cross/14 T-CB1〜T-CB3): 生年月日 (birth_date) の無い新しいアカウントと、18 歳未満の生年月日の新しいアカウントも
+ *     同意画面へ回す (callback は rpc を呼ばない。同意画面が数え直す)
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LEGAL_DOCUMENTS } from '@homegohan/shared';
@@ -20,7 +22,12 @@ import { resolveFirstSignInDestination } from '@/lib/legal-consent';
 const CURRENT = {
   terms_version_accepted: LEGAL_DOCUMENTS.terms_of_service.version,
   privacy_version_accepted: LEGAL_DOCUMENTS.privacy_policy.version,
+  // 成人の placeholder。#1173 で生年月日が無いと同意画面へ回されるため
+  birth_date: '1990-01-01',
 };
+/** #1173 の 17 歳の it で固定する時刻 (JST 2026-10-16 12:00) と、その日に 17 歳の生年月日 */
+const FIXED_NOW = new Date('2026-10-16T03:00:00.000Z');
+const BIRTH_DATE_17 = '2008-10-17';
 const OLD_VERSION = 'v0-old';
 const STARTED_AT = '2026-10-01T00:00:00.000Z';
 
@@ -32,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   getUser: vi.fn(),
   maybeSingle: vi.fn(),
   select: vi.fn(),
+  rpc: vi.fn(),
 }));
 
 vi.mock('next/headers', () => ({
@@ -51,6 +59,7 @@ vi.mock('@/lib/supabase/server', () => ({
         return { eq: () => ({ maybeSingle: mocks.maybeSingle }) };
       },
     }),
+    rpc: mocks.rpc,
   }),
 }));
 
@@ -83,6 +92,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  vi.useRealTimers();
 });
 
 describe('/auth/callback: 初回の作成は必ず同意画面を通す (#1435)', () => {
@@ -181,5 +191,27 @@ describe('resolveFirstSignInDestination (#1435)', () => {
     ['遷移先が /terms', NEW_UNACCEPTED, '/terms', '/terms'],
   ] as const)('%s', (_label, profile, next, expected) => {
     expect(resolveFirstSignInDestination({ next, profile })).toBe(expected);
+  });
+});
+
+describe('/auth/callback: 生年月日 (#1173 T-CB1〜T-CB3)', () => {
+  it('T-CB1: 初期設定前で版が一致し birth_date が無い人も同意画面へ回す', async () => {
+    setProfile({ roles: [], onboarding_started_at: null, onboarding_completed_at: null, ...CURRENT, birth_date: null });
+    expect(await callback('?code=abc')).toBe('/legal-consent?next=%2Fonboarding%2Fwelcome');
+  });
+
+  it('T-CB2: プロフィールの select に birth_date を含み、初期設定前で版が一致し birth_date がある人は同意画面へ回さない', async () => {
+    setProfile({ roles: [], onboarding_started_at: null, onboarding_completed_at: null, ...CURRENT });
+    expect(await callback('?code=abc')).toBe('/onboarding/welcome');
+    const columns = String(mocks.select.mock.calls[0][0]);
+    expect(columns.split(',').map((column) => column.trim())).toContain('birth_date');
+  });
+
+  it('T-CB3: 初期設定前で版が一致し birth_date が 17 歳の人は同意画面へ回す (callback は rpc を呼ばない。P35)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(FIXED_NOW);
+    setProfile({ roles: [], onboarding_started_at: null, onboarding_completed_at: null, ...CURRENT, birth_date: BIRTH_DATE_17 });
+    expect(await callback('?code=abc')).toBe('/legal-consent?next=%2Fonboarding%2Fwelcome');
+    expect(mocks.rpc).not.toHaveBeenCalled();
   });
 });
