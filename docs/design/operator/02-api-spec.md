@@ -1253,10 +1253,18 @@ deprecated → private にロールバック (緊急用)
 
 **権限**: すべて `super_admin` だけ (それ以外は 403 `OP_PERMISSION_DENIED`、未ログインは 401 `AUTH_UNAUTHENTICATED`)。運営の画面 `/super-admin/coupons` から使う。
 
+**400 の本文の形** (入力の誤り `OP_INVALID_INPUT` = POST・PATCH・apply / クエリの誤り `OP_INVALID_QUERY` = 一覧 GET・適用履歴 GET。#1534 / #1641):
+```json
+{ "error": { "code": "OP_INVALID_INPUT", "message": "最初の issue の文", "details": [ { "path": ["valid_until"], "message": "最初の issue の文", "code": "custom" } ] } }
+```
+- `message` は `details` の先頭 (最初の issue) の `message` そのもの (issues を JSON にした文字列ではない)。画面は `message` をそのまま出す
+- `details` は Zod の issues の全件 (`path` は誤りのある欄)
+- 本文は `src/lib/super-admin/coupon-errors.ts` の `couponInvalidInputResponse` / `couponInvalidQueryResponse` が作る。`OP_INVALID_QUERY` も `code` 以外は同じ形
+
 ### GET /api/super-admin/coupons
 クーポン一覧
 
-**クエリ**: `?status=active&applicable_to=all&page=1&per_page=50` (どれも省略可。`per_page` は 1〜200)
+**クエリ**: `?status=active&applicable_to=all&page=1&per_page=50` (どれも省略可。`per_page` は 1〜200)。形の誤りは 400 `OP_INVALID_QUERY` (本文の形は §19 冒頭)
 
 **レスポンス**: `{ "data": [ coupons の行 ], "meta": { "total": 12, "page": 1, "per_page": 50 } }`
 
@@ -1338,12 +1346,14 @@ deprecated → private にロールバック (緊急用)
 ### POST /api/super-admin/coupons/{id}/apply
 契約へのクーポンの適用 (super_admin の承認で遡及して適用する)。operator/04-plan-management.md §4.1
 
+- リクエストの形の誤り (`subscription_target` / `subscription_id` / `reason`) は 400 `OP_INVALID_INPUT` (本文の形は §19 冒頭。POST・PATCH と同じ)
+
 ---
 
 ### GET /api/super-admin/coupons/{id}/redemptions
 適用履歴 (coupon_redemptions の行。新しい順 = `redeemed_at` の降順)
 
-**クエリ**: `?page=1&per_page=50` (`per_page` は 1〜200)
+**クエリ**: `?page=1&per_page=50` (`per_page` は 1〜200)。形の誤りは 400 `OP_INVALID_QUERY` (本文の形は §19 冒頭)
 
 **レスポンス**:
 ```json
