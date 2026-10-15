@@ -25,18 +25,18 @@
 ### 1.1 解決すること
 
 - サーバーから Push 通知を送る経路が無い (#1136): アプリ (`apps/mobile/src/lib/pushNotifications.ts` の `registerAndSaveExpoPushToken`) は token を `user_push_tokens` に保存し、claim (#1599 / #1636) と release で行の所有を守っているが、**その token に送るコードが 0 件** (`exp.host` / `sendPushNotifications` / `notify-push` のどれも実コードに無い。`supabase/functions` に `notify-push` も `notify-email` も無い)。
-- 設計書の食い違い: `03-push-notification.md` §3.9・`00-architecture.md`・`family/04-meal-request-flow.md` §6.2・`operator/06-ai-llm.md` §8 の表・`mobile/05-auth-session.md` は Edge Function `notify-push` を前提に書いている。本書で経路を確定し、追随表 (§14.2) で直す。
+- 設計書の食い違い: `03-push-notification.md` §3.9・`00-architecture.md`・`family/04-meal-request-flow.md` §6.2・`operator/06-ai-llm.md` §8 の表・`mobile/05-auth-session.md` は Edge Function `notify-push` を前提に書いている。本書で経路を確定し、追随表 (§13.2) で直す。
 
 ### 1.2 対象外 (本書では決めない・変えない)
 
 - **運営からの一斉送信** (お知らせ `announcements` の Push を含む) は作らない。作るときは、運営の操作として `admin_audit_logs` と、送る相手の数え方 (全利用者 × 端末) を別の設計で決める。
-- **種類ごとの受け取り設定** (`03` §3.6 の `notification_preferences.preferences` JSONB・`PATCH /api/notification-preferences` の拡張・アプリの設定画面 `app/settings/notifications.tsx`) は作らない。本書は既存の全体の on/off (`notification_preferences.notifications_enabled`) だけを見る。種類ごとの設定を足すときは §6.3 の `decideEligibility` に 1 つの判定を足す。
+- **種類ごとの受け取り設定** (`03` §3.6 の `notification_preferences.preferences` JSONB・`PATCH /api/notification-preferences` の拡張・アプリの設定画面 `app/settings/notifications.tsx`) は作らない。本書は既存の全体の on/off (`notification_preferences.notifications_enabled`) だけを見る (健康記録の設定画面の「通知」= `enabled` は見ない。§14)。種類ごとの設定を足すときは §6.3 の `decideEligibility` に 1 つの判定を足す。
 - **バッジ** (`03` §3.5 のサーバー側の計算) は付けない (ペイロードに `badge` を入れない)。未読の数え方の元 (`family_meal_requests` / `user_notifications`) が実装に無い。
 - `user_push_tokens` の列の追加 (`03` §3.2 の `organization_id` / `device_model` / `os_version` / `app_version`) はしない (本書の送信に要らない)。
 - `03` §4 の表 `pending_push_notifications` は**作らない** (Quiet Hours の延期は `push_outbox.next_attempt_at` で表す。§6.3)。Edge Function `supabase/functions/notify-push` も作らない。
-- Android の FCM の資格情報 (EAS の FCM V1 サービスアカウント) の登録はオーナー作業で、本書の外 (§15)。未登録の間は Android の端末への送信が Expo の `InvalidCredentials` で dead になり、iOS には届く。
+- Android の FCM の資格情報 (EAS の FCM V1 サービスアカウント) の登録はオーナー作業で、本書の外 (§14)。未登録の間は Android の端末への送信が Expo の `InvalidCredentials` で dead になり、iOS には届く。
 - モバイルアプリのコードは変えない (通知の受け取りと行き先の解決は `src/components/NotificationRouter.tsx` と `src/lib/notificationRoute.ts` (#1049 F7-11) がすでにある)。
-- 届けられなかった Push を運用メールで知らせる仕組み (`app-log-alerts` の 4 つ目の種類) は作らない (§15)。
+- 届けられなかった Push を運用メールで知らせる仕組み (`app-log-alerts` の 4 つ目の種類) は作らない (§14)。
 - メールの送信待ち (`email_outbox`) の表・RPC・worker には触れない (別の設計。実装の前後は問わない)。
 
 ### 1.3 用語
@@ -57,8 +57,8 @@
 - 要件: `docs/requirements/01-family-management.md` §15.3 / §15.4 / §15.7。Issue #1136 (本件)・#1038 (token の保存と削除)・#1599 / #1636 (claim の所有の証明・release)・#1442 (同意ゲート)・#1193 (メールの送信待ち。形の手本)。
 - 現行 (origin/main 2026-10-16):
   - `user_push_tokens`: `id` / `user_id` (FK auth.users ON DELETE CASCADE) / `expo_push_token` / `platform` / `device_name` / `install_secret_hash` / `created_at` / `updated_at` (`packages/shared/src/database.types.ts`。初版 `20251126124224_create_meal_planner_tables.sql`、`20261016163600_user_push_tokens_install_secret.sql` が列と索引 `idx_user_push_tokens_expo_push_token` を追加)。UNIQUE (user_id, expo_push_token) はアプリの upsert (`onConflict: 'user_id,expo_push_token'`) が前提にする。RLS は本人の行だけ (`select_own_push_tokens` など) と `service_role can read`。本番の行数は 0 (2026-10-16 読み取り)。
-  - 行を消す経路 (既存): アプリのログアウト (`apps/mobile/src/lib/signOut.ts`)、`POST /api/push-tokens/claim` (同じ端末の前の利用者の行)、`POST /api/push-tokens/release` (セッション無し)、退会 (FK の CASCADE)。本書は 5 つ目 (`DeviceNotRegistered`) を足す。
-  - `notification_preferences`: `notifications_enabled` (NOT NULL・既定 true。`GET/PATCH /api/notification-preferences` が読み書き)・`quiet_hours_start` / `quiet_hours_end` (time・既定 22:00 / 07:00。読むコードは無い)。`preferences` JSONB は無い (本番も同じ)。`user_profiles` に `timezone` 列は無い。
+  - 行を消す経路 (既存): アプリのログアウト (`apps/mobile/src/lib/signOut.ts`)、`POST /api/push-tokens/claim` (同じ端末の前の利用者の行)、`POST /api/push-tokens/release` (セッション無し)、退会 (FK の CASCADE)。本書は 5 つ目 (`DeviceNotRegistered`) を足す。既知の残り (#1706・未解決): 退会の API が 401 を返したときのログアウトでは行が残りうる。残った行には、次の利用者の claim が外すまで、前の利用者の献立の結果が届く (文面は日付だけ)。本書はこの経路を変えず #1706 の直しに任せる (§14)。
+  - `notification_preferences`: `notifications_enabled` (NOT NULL・既定 true。`GET/PATCH /api/notification-preferences` が読み書きし、アプリの設定タブと Web の設定画面が見せる)・`quiet_hours_start` / `quiet_hours_end` (time・既定 22:00 / 07:00) と `enabled`・`morning_reminder_*`・`evening_reminder_*`・`vacation_mode` (健康記録の通知設定。`GET/PUT /api/health/notifications/preferences` が読み書きし、健康記録の設定画面 (`apps/mobile/app/health/settings.tsx`・`src/app/(main)/health/settings/page.tsx`) が「通知」・夜間の時刻・朝夕のリマインダーとして見せる。どれも送るコードは無い)。`preferences` JSONB は無い (本番も同じ)。`user_profiles` に `timezone` 列は無い。
   - 献立の生成: `weekly_menu_requests` (`status` 既定 `pending`。本番の実績の値は `completed` / `failed`)。最終の書き込みは `supabase/functions/generate-menu-v5/index.ts` の最終 status の書き込み (372 行付近。`request-finalize.ts` の `buildActiveRequestUpdate` で `queued` / `processing` の行にだけ当てる CAS #1202) と、`src/app/api/cron/process-menu-queue/route.ts` (同意が無いときの `failed`)。書き手は service_role。
   - 同意: `user_profiles.terms_version_accepted` / `privacy_version_accepted` と `hasAcceptedCurrentLegalDocuments` (`packages/shared/src/legal-versions.ts`)。強制の判定は `lib/legal-consent.ts` の `isLegalConsentEnforced()` (環境変数 `LEGAL_CONSENT_ENFORCE` を読むのはこのファイルだけ)。凍結: `user_profiles.frozen_at` / `unban_at` と `isAccountFrozen` (`src/lib/auth/frozen.ts`)。
   - cron の骨格: `src/app/api/cron/app-log-alerts/route.ts` (`requireCronAuth`・`runtime = 'nodejs'`・`fetchCache = 'force-no-store'`・`maxDuration = 60`・`waitUntil` の延命)。`vercel.json` の `crons` は `process-menu-queue` (毎分) と `app-log-alerts` (15 分おき) の 2 本。メンテナンス中も `/api/cron` は通る (`src/lib/maintenance-mode.ts` の `isMaintenanceExemptPath`)。同意ゲートの許可リストにも `/api/cron` (prefix) がある (`packages/shared/src/legal-consent-api.ts`)。
@@ -93,7 +93,7 @@
 | R-19 | Expo を呼ぶのは `src/lib/push/expo-transport.ts` だけ。SDK (`expo-server-sdk`) は足さず `fetch` で呼ぶ | 依存を増やさない・`ai-consent-provider-inventory` の送信先の棚卸し | §4.3 §6.4 |
 | R-20 | 新しい表・RPC は `database.types.ts` (2 か所) に反映し、migration と対の down.sql を書く | `tests/database-types-migrations-contract.test.ts` | §5 §11 |
 | R-21 | 新しい環境変数は `src/lib/env.ts` の一覧・`.env.example`・`ENV_SETUP.md` にそろえ、値を読むのは route 1 ファイル | `tests/env-source-scan.test.ts` | §6.1 |
-| R-22 | 新しい Vercel Cron は `08-cron-batches.md` §3.0 と数・名前が一致する | `tests/log-cleanup-dau-snapshot-contract.test.ts` | §14.2 |
+| R-22 | 新しい Vercel Cron は `08-cron-batches.md` §3.0 と数・名前が一致する | `tests/log-cleanup-dau-snapshot-contract.test.ts` | §13.2 |
 
 ### 3.2 通知の種類 (全列挙。最初に出す種類と後回しの種類)
 
@@ -106,7 +106,7 @@
 
 payload (トリガーが入れる・`render.ts` の Zod `WeeklyMenuResultPayloadSchema` が検証): `{ request_id: uuid, start_date: 'YYYY-MM-DD', mode: string | null }`。`data` (アプリに届く): `{ kind, path: '/menus/weekly', request_id }`。
 
-**後回し (本書では送らない。worker は一覧に無い種類を `unknown_kind` で dead にする)**
+**後回し (本書では送らない。worker は一覧に無い種類を `unknown_kind` で dead にする)**。母集合 (2026-10-16 の origin/main): `03` §3.4 の 7 種・`announcements`・`src/lib/emails/` の全テンプレ・`notification_preferences` の列・`src/lib/local-notification.ts`。利用者宛ての通知を溜める表 (`user_notifications` / `family_meal_requests`) は無い。
 
 | 種類 | 後回しの理由 | 足すときに要るもの |
 |---|---|---|
@@ -114,7 +114,9 @@ payload (トリガーが入れる・`render.ts` の Zod `WeeklyMenuResultPayload
 | `family_freeze_warning` / `family_frozen` (`03` §3.4) | 発火元の pg_cron (`family_freeze_grace_batch`) が未実装 (`08` §3.0) | バッチの実装 (`family_frozen` は `defer` にしない) |
 | `plan_deprecated` / `trial_ending` / `license_renewal` (`03` §3.4) | 課金のバッチはオーナーの選択「課金は無料のまま計測」で足していない (`08` §3.2) | バッチの実装 |
 | お知らせ (`announcements`) | 運営からの一斉送信 (§1.2 の対象外) | 運営の操作の設計 (監査ログ・送る相手の数え方) |
-| 家族の代表者の譲渡の提案・組織のオーナーの譲渡の提案 (いまはメールだけ) | アプリにその画面が無く、行き先が決まらない | WebView の行き先の決め方 (家族の種類と同じ) |
+| メールだけで知らせている利用者宛ての出来事 (`src/lib/emails/membership/`: 家族・組織の招待 / 家族の代表者・組織のオーナーの譲渡の提案と完了 / 家族の昇格 / 脱退・除名 / 運営による強制解散・強制譲渡。`support/ticket-reply`: サポートの返信) | 行き先が `NOTIFICATION_ROUTES` に無い (家族の画面はアプリに無い。組織・サポートの画面はあるが通知の行き先に載せていない)。本書はモバイルのコードを変えない | 行き先の決め方 (WebView か `NOTIFICATION_ROUTES` への追加) |
+| 健康記録のリマインダー (朝・夕。`morning_reminder_*` / `evening_reminder_*` / `vacation_mode`) | 設定画面はあるが、時刻に送るバッチ (pg_cron / Vercel Cron) が無い | 時刻ごとに積むバッチ。行き先は `/health/record` |
+| Push にしないもの: 退会の完了 (`account/account-deleted`。退会後は端末の行が無い)・運用の警報 (`ops/app-log-error-spike`。運営宛て)・Web のフォアグラウンド通知 (`local-notification.ts`。ブラウザの中だけ) | Push の宛先が無い / 利用者宛てでない | – |
 
 ### 3.3 ユーザーシナリオ (18 本)
 
@@ -216,7 +218,7 @@ flowchart LR
 
 ## 5. データモデル (migration。正典)
 
-ファイル: `supabase/migrations/<番号はマージ時に確定>_push_outbox.sql` と対の `supabase/rollbacks/<同じ番号>_push_outbox.down.sql`。番号はマージ直前に origin/main の `supabase/migrations` の最大 (2026-10-16 時点 `20261016190000_deletion_record_and_invite_email_hash.sql`) より大きい値にする。適用後に `database.types.ts` を 2 か所 (`src/types/` と `packages/shared/src/`) で作り直す (`tests/database-types-migrations-contract.test.ts` の手順)。
+ファイル: `supabase/migrations/<番号はマージ時に確定>_push_outbox.sql` と対の `supabase/rollbacks/<同じ番号>_push_outbox.down.sql`。番号はマージ直前に origin/main の `supabase/migrations` の最大 (2026-10-16 時点 `20261016200000_rpc_profile_name_placeholder.sql`。並行して足されるので、この値は目安) より大きい値にする。適用後に `database.types.ts` を 2 か所 (`src/types/` と `packages/shared/src/`) で作り直す (`tests/database-types-migrations-contract.test.ts` の手順)。
 
 ### 5.1 表 `push_outbox`
 
@@ -667,7 +669,7 @@ DROP TABLE IF EXISTS public.push_outbox;
 | sent / dead の保持 | 7 日 / 30 日 (`cleanup_push_outbox` の定数) | §5.2 (8) | 定数 (SQL) |
 | `EXPO_ACCESS_TOKEN` | Expo のアクセストークン (`expo.dev/settings/access-tokens`) | Enhanced push security を ON にした Expo プロジェクトは、無い要求を `UNAUTHORIZED` で拒む。無ければ送らない (R-12) | Vercel の環境変数 (production / preview)。ローカルは `.env.local` |
 
-環境変数 3 つは `src/lib/env.ts` の `SERVER_ENV_VARS` に `required: false`・`readOnlyBy: 'src/app/api/cron/push-outbox/route.ts'` で足し、`.env.example` と `ENV_SETUP.md` に書く (§14)。値を読むのは route だけで、解釈 (`resolvePushOutboxSettings`) は純粋な関数。不正な値は既定に戻し、変数名だけを warn に残す (`resolveAppLogAlertSettings` と同じ)。
+環境変数 3 つは `src/lib/env.ts` の `SERVER_ENV_VARS` に `required: false`・`readOnlyBy: 'src/app/api/cron/push-outbox/route.ts'` で足し、`.env.example` と `ENV_SETUP.md` に書く (§11 段 B・§13.2 の `ENV_SETUP.md`・`.env.example` の行)。値を読むのは route だけで、解釈 (`resolvePushOutboxSettings`) は純粋な関数。不正な値は既定に戻し、変数名だけを warn に残す (`resolveAppLogAlertSettings` と同じ)。
 
 `SERVER_ENV_VARS` に足す 3 項目 (逐語。置き場所は `OPS_ALERT_COOLDOWN_MINUTES` の項目の直後。`readOnlyBy` を持つ任意の変数には `whenMissing` が必須: `src/__tests__/lib/env.test.ts`):
 
@@ -759,24 +761,19 @@ export function isPushNotificationKind(value: unknown): value is PushNotificatio
 }
 ```
 
-#### `src/lib/push/render.ts` (新設・型検査の対象)
+#### `src/lib/push/render.ts` (新設。型 `RenderedPushMessage` は §6.3 の `outbox.ts` から import する)
 
 種類ごとの文面。payload は Zod で検証し、形が違えば null (worker が `invalid_payload` で dead にする)。文面に利用者の名前・メールアドレスは入れない (入れるのは日付と依頼 ID だけ)。
 
 ```ts
+// tsc:skip — 型 RenderedPushMessage を ./outbox (新設。この型の正) から import するので、木に入ってから型が付く
 /**
  * Push 通知の文面 (#1136)。種類 (kind) と payload (push_outbox.payload) から title / body / data を作る。
  * 行き先 path は呼び出し側 (worker) が種類の方針 (packages/shared の PUSH_NOTIFICATION_KIND_SPECS) から渡す。
  * 文面は固定の日本語で、個人を特定する文字列 (名前・メールアドレス) は入れない。
  */
 import { z } from 'zod';
-
-export interface RenderedPushMessage {
-  title: string;
-  body: string;
-  /** アプリに届く data。path は NotificationRouter が行き先に使う (apps/mobile/src/lib/notificationRoute.ts) */
-  data: Record<string, unknown>;
-}
+import type { RenderedPushMessage } from './outbox';
 
 /** 献立の結果 (weekly_menu_completed / weekly_menu_failed) の payload。トリガー enqueue_weekly_menu_result_push が入れる */
 export const WeeklyMenuResultPayloadSchema = z.object({
@@ -972,6 +969,7 @@ export interface PushUserEligibility {
 }
 /** 種類の方針のうち worker が使う部分 (packages/shared の PushNotificationKindSpec がこれを満たす) */
 export interface PushKindPolicy { path: string; quietHours: 'send' | 'defer'; ttlSeconds: number; priority: 'default' | 'high' }
+/** 文面 (この型の正はここ。render.ts は import する)。data はアプリに届き、path を NotificationRouter が行き先に使う */
 export interface RenderedPushMessage { title: string; body: string; data: Record<string, unknown> }
 export type PushOutboxFailOutcome = 'requeued' | 'dead' | 'ignored';
 export interface PushOutboxFailInput {
@@ -1231,14 +1229,13 @@ export async function processPushOutbox(deps: PushOutboxWorkerDeps, options: Pus
 // tsc:skip — ./outbox (新設) の型を import するので、木に入ってから型が付く。送信先の URL は NON_AI_HOSTS に理由つきで載せる (§13.1)
 import { z } from 'zod';
 import {
-  ExpoPushReceiptSchema, ExpoPushTicketSchema, PUSH_OUTBOX_ERROR_CODES,
+  ExpoPushReceiptSchema, ExpoPushTicketSchema, HTTP_TOO_MANY_REQUESTS, PUSH_OUTBOX_ERROR_CODES,
   type PushMessage, type PushReceiptsOutcome, type PushSendOutcome, type PushTransport, type PushTransportFailure,
 } from './outbox';
 
 export const EXPO_PUSH_SEND_URL = 'https://exp.host/--/api/v2/push/send';
 export const EXPO_PUSH_RECEIPTS_URL = 'https://exp.host/--/api/v2/push/getReceipts';
-/** 429 と 5xx は待てば直る (Expo 公式)。それ以外の 4xx は直らない */
-const HTTP_TOO_MANY_REQUESTS = 429;
+/** 429 (HTTP_TOO_MANY_REQUESTS。正は ./outbox) と 5xx は待てば直る (Expo 公式)。それ以外の 4xx は直らない */
 const HTTP_SERVER_ERROR_MIN = 500;
 const SendResponseSchema = z.object({ data: z.array(ExpoPushTicketSchema) });
 const ReceiptsResponseSchema = z.object({ data: z.record(z.string(), ExpoPushReceiptSchema) });
@@ -1340,7 +1337,7 @@ import: `randomUUID` (`crypto`)・`NextResponse`・`waitUntil` (`@vercel/functio
 
 ## 7. 表 3 点
 
-### 7.1 全パターン表 (claim した 1 行の入力の組み合わせ → 結果)
+### 7.1 全パターン表 (claim した 1 行の入力の組み合わせ → 結果。判定は左の列から順 = §6.3 `sendQueued` の順: `decideEligibility` → 種類 → 夜間 → 文面 (payload) → Expo)
 
 | プロフィール | created_at | 凍結 | 同意 (ENFORCE on) | notifications_enabled | 種類 | 夜間 × 方針 | payload | Expo の結果 | 行の結果 (`last_error_code`) |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1350,8 +1347,8 @@ import: `randomUUID` (`crypto`)・`NextResponse`・`waitUntil` (`@vercel/functio
 | ある | 以内 | なし | 未同意 (on) | – | – | – | – | 呼ばない | dead (`consent_outdated`)。off なら次の行へ |
 | ある | 以内 | なし | 同意済み | false | – | – | – | 呼ばない | dead (`notifications_disabled`) |
 | ある | 以内 | なし | 同意済み | true | 一覧に無い | – | – | 呼ばない | dead (`unknown_kind`) |
-| ある | 以内 | なし | 同意済み | true | ある | 夜間 × `defer` | – | 呼ばない | queued (`next_attempt_at` = 夜の終わり。attempts 不変) |
-| ある | 以内 | なし | 同意済み | true | ある | 昼 / `send` | 形が違う | 呼ばない | dead (`invalid_payload`) |
+| ある | 以内 | なし | 同意済み | true | ある | 夜間 × `defer` | – (まだ見ない) | 呼ばない | queued (`next_attempt_at` = 夜の終わり。attempts 不変)。payload は夜明けの回で見る (形が違えばその回で `invalid_payload`) |
+| ある | 以内 | なし | 同意済み | true | ある | 昼 × `send` / `defer`、夜間 × `send` | 形が違う | 呼ばない | dead (`invalid_payload`) |
 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 正しい | ticket ok | sent (`receipt_id`)。15 分後に receipt → `receipt_status` ok / error / missing |
 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 正しい | ticket `DeviceNotRegistered` | dead → 端末の行を消す → CASCADE で行も消える |
 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 正しい | ticket のほかの error | dead (error の名前。例 `MessageTooBig`) |
@@ -1365,10 +1362,10 @@ import: `randomUUID` (`crypto`)・`NextResponse`・`waitUntil` (`@vercel/functio
 | サーバーからの送信 | 無い (token を集めるだけ) | `push_outbox` + `GET /api/cron/push-outbox` (毎分) が Expo に送る |
 | 送る種類 | 無い | `weekly_menu_completed` / `weekly_menu_failed` (DB トリガー)。後回しは §3.2 |
 | `notifications_enabled` | API が読み書きするが、読んで判断するコードは無い | worker が送る直前に見る (false は dead) |
-| `quiet_hours_start/end` | 列だけ (読むコード無し) | 方針が `defer` の種類で使う (第 1 段は `send` のみ) |
+| `quiet_hours_start/end` | 健康記録の設定画面が読み書きする (それで判断するコードは無い) | 方針が `defer` の種類で使う (第 1 段は `send` のみ) |
 | 端末の行を消す経路 | ログアウト・claim・release・退会 | + `DeviceNotRegistered` (ticket / receipt)。送信待ちは CASCADE で一緒に消える |
 | Expo のアクセストークン | 無い | `EXPO_ACCESS_TOKEN` (無ければ送らず warn) |
-| 設計書の `notify-push` Edge Function・`pending_push_notifications` | 設計のみ | 作らない (§14.2 で現在形に) |
+| 設計書の `notify-push` Edge Function・`pending_push_notifications` | 設計のみ | 作らない (§13.2 で現在形に) |
 | 記録 | 無い | `push_outbox` の行 (7 日 / 30 日) と `app_logs` |
 
 ### 7.3 状態遷移表 (`push_outbox.status` × 操作 → 遷移先・ガード・副作用)
@@ -1385,14 +1382,15 @@ import: `randomUUID` (`crypto`)・`NextResponse`・`waitUntil` (`@vercel/functio
 | sent | `claim_push_receipts` | sent (リース) | `receipt_checked_at` NULL・`sent_at <= now − 15 分` | リース |
 | sent (リース) | `record_push_receipt` (ok / error / missing) | sent | 同じ worker | `receipt_checked_at`・`receipt_status`・`receipt_error`。error が `DeviceNotRegistered` なら端末の行を消す → CASCADE |
 | sent (リース) | `record_push_receipt` (NULL = まだ無い) | sent | 同じ worker | リースを外すだけ |
+| sent (リース) | リース切れ (worker の停止) | sent | – | 次の回の `claim_push_receipts` が取り直す |
+| queued / sent (別の worker のリース・状態が違う・確認済み) | `complete` / `fail` / `defer` / `record_push_receipt` | 変わらない | `worker_id` 不一致・行が消えた (CASCADE)・queued (receipt は sent かつ `receipt_checked_at` NULL) でない | 戻り値 false / `'ignored'`。worker は要約に数えない (S-16・端末の行の削除との競合) |
 | sent / dead | `cleanup_push_outbox` | (消える) | sent 7 日・dead 30 日 | – |
 | 任意 | 端末の行の削除・退会 | (消える) | FK CASCADE | – |
 
 ## 8. 監査とログ (app_logs)
 
 - `createLogger('cron/push-outbox', requestId)`。回の要約 (`claimed` など全件数) は claim か receipt があったときだけ info。dead は 1 行ごとに warn (`kind` / `user_id` / `token` の末尾 4 文字 / `error_code` / `status_code` / `attempts`)。receipt のエラーと端末の行の削除も warn。`EXPO_ACCESS_TOKEN` 未設定は warn (変数名はログにだけ)。
-- 出さないもの: 文面 (title / body)・token の全体・メールアドレス・payload。応答にも出さない (`summary` の件数だけ)。
-- `admin_audit_logs` には書かない (運営の操作が無い: 一斉送信は範囲外)。
+- 出さないもの: 文面 (title / body)・token の全体・メールアドレス・payload。応答にも出さない (`summary` の件数だけ)。`admin_audit_logs` には書かない (運営の操作が無い: 一斉送信は範囲外)。
 
 ## 9. エラー表
 
@@ -1411,24 +1409,24 @@ import: `randomUUID` (`crypto`)・`NextResponse`・`waitUntil` (`@vercel/functio
 
 | ファイル | it |
 |---|---|
-| `src/__tests__/lib/push/outbox.test.ts` | `送る条件: プロフィール無し / 24 時間超 / 凍結 / 未同意 (on だけ) / 設定 off の順で dead のコードが決まる`・`夜間: 22:00〜07:00 をまたぐ判定と、次の 07:00 JST の時刻`・`defer の種類だけ延期し、send の種類は夜でも送る`・`100 件ずつ Expo に渡し、ticket を同じ順の行に対応させる`・`ticket error の DeviceNotRegistered で端末の行を消す`・`HTTP 429 で塊を requeue してその回を打ち切る`・`時間切れで残りを次の回に回す (attempts は増えない)`・`receipt: ok / error / まだ無い / 24 時間超の missing`・`resolvePushOutboxSettings: 範囲外は既定に戻し ignored に名前`・`maskPushToken は末尾 4 文字だけ` |
+| `src/__tests__/lib/push/outbox.test.ts` | `送る条件: プロフィール無し / 24 時間超 / 凍結 / 未同意 (on だけ) / 設定 off の順で dead のコードが決まる`・`夜間: 22:00〜07:00 をまたぐ判定と、次の 07:00 JST の時刻`・`defer の種類だけ延期し、send の種類は夜でも送る`・`100 件ずつ Expo に渡し、ticket を同じ順の行に対応させる`・`ticket error の DeviceNotRegistered で端末の行を消す`・`HTTP 429 で塊を requeue してその回を打ち切る`・`時間切れで残りを次の回に回す (attempts は増えない)`・`receipt: ok / error / まだ無い / 24 時間超の missing`・`receipt の DeviceNotRegistered で端末の行を消す (S-10)`・`24 時間を超えた queued は Expo を呼ばずに expired で dead (S-07)`・`retryDelaySeconds は 1 回目 60・2 回目 300・3 回目以上 900 秒で、5xx の fail にその間隔を渡す (S-08)`・`ログの meta に文面 (title / body)・token の全体・payload を出さない (R-15)`・`resolvePushOutboxSettings: 範囲外は既定に戻し ignored に名前`・`maskPushToken は末尾 4 文字だけ` |
 | `src/__tests__/lib/push/expo-transport.test.ts` | `Authorization: Bearer と content-type を付けて send の URL に POST する`・`429 / 5xx / 通信エラーは retryable、4xx は非 retryable で errors[0].code を使う`・`ticket の数がメッセージと違えば invalid_response`・`getReceipts は ids を送り、data の表を返す` |
 | `src/__tests__/lib/push/render.test.ts` | `weekly_menu_completed は日付入りの本文と data.path を返す`・`weekly_menu_failed は固定の本文`・`payload の形が違えば null`・`知らない kind は null` |
-| `src/__tests__/api/cron/push-outbox.test.ts` (route は一番外側で 1 回だけ import) | `CRON_SECRET が合わなければ 401`・`EXPO_ACCESS_TOKEN が無ければ not_configured で DB に触れない`・`メンテナンス中は maintenance`・`要約を返し、変数名を応答に出さない`・`RPC の失敗は 500 の汎用の本文` |
+| `src/__tests__/api/cron/push-outbox.test.ts` (route は一番外側で 1 回だけ import) | `CRON_SECRET が合わなければ 401`・`EXPO_ACCESS_TOKEN が無ければ not_configured で DB に触れない`・`メンテナンス中は maintenance`・`要約を返し、変数名・文面・token の全体を応答に出さない (R-15)`・`RPC の失敗は 500 の汎用の本文` |
 | `tests/push-kinds-routes-contract.test.ts` | `PUSH_NOTIFICATION_KINDS の全部に文面がある`・`全部の path が NOTIFICATION_ROUTES の画面に解決される` |
 | `tests/push-expo-boundary-scan.test.ts` | `exp.host を書くのは src/lib/push/expo-transport.ts だけ (src・supabase/functions・apps/mobile/src を走査)` |
 | `tests/push-outbox-migration-contract.test.ts` | `表・索引・ポリシー・RPC 8 本・トリガーが migration にある`・`RPC は SECURITY INVOKER・search_path ''・EXECUTE は service_role だけ`・`トリガー関数は SECURITY DEFINER で EXECUTE を誰にも付けない`・`down.sql が全部を消す` |
-| `tests/integration/rls/push-outbox.test.ts` (実 DB) | `anon / authenticated は表も RPC も 42501`・`enqueue は端末の行ごとに 1 行、dedupe_key で 2 回目は 0`・`claim は SKIP LOCKED で 2 本が同じ行を取らない`・`fail は retryable と回数で requeued / dead`・`defer は attempts を増やさない`・`receipt の claim と record`・`user_push_tokens の削除で行が消える`・`weekly_menu_requests を completed にするとトリガーが 1 行積む (failed も。pending → processing では積まない)`・`cleanup は期限の行だけ消す` |
+| `tests/integration/rls/push-outbox.test.ts` (実 DB) | `anon / authenticated は表も RPC も 42501`・`enqueue は端末の行ごとに 1 行、dedupe_key で 2 回目は 0`・`端末の行が無い利用者の enqueue は 0 行 (S-03)`・`claim は SKIP LOCKED で 2 本が同じ行を取らない`・`fail は retryable と回数で requeued / dead`・`defer は attempts を増やさない`・`complete / fail / defer / record は別の worker_id では false / ignored`・`receipt の claim と record`・`端末の行の削除 (ログアウト・claim・release と同じ操作) で queued の行が消える (S-11)`・`auth.users の削除 (退会) で push_outbox の行が消える (S-12)`・`weekly_menu_requests を completed にするとトリガーが 1 行積む (failed も。pending → processing では積まない)`・`completed のあと failed に書き換えても 2 行目は作られない (R-10)`・`enqueue が失敗しても weekly_menu_requests の更新は成功し行は 0 (mode に 2,048 バイトを超える文字列を入れて payload の上限で失敗させる。R-02)`・`cleanup は期限の行だけ消す` |
 
 ## 11. 段分け (同じ WF・同じ worktree。段ごとに 2 枚のレビュー)
 
 | 段 | 内容 | 触るファイル |
 |---|---|---|
-| A: DB | migration + down (§5)、`database.types.ts` の作り直し (2 か所)、`ACCOUNT_EXPORT_EXCLUDED` に `push_outbox`、FK テスト D の行、契約テスト・RLS テスト | `supabase/migrations/*`、`supabase/rollbacks/*`、`src/types/database.types.ts`、`packages/shared/src/database.types.ts`、`src/lib/account-export-tables.ts`、`tests/integration/security/auth-users-fk-on-delete.test.ts`、`tests/push-outbox-migration-contract.test.ts`、`tests/integration/rls/push-outbox.test.ts` |
+| A: DB | migration + down (§5)、`database.types.ts` の作り直し (2 か所)、`ACCOUNT_EXPORT_EXCLUDED` に `push_outbox`、FK テスト D の行、契約テスト・RLS テスト。変えずに緑を確かめる番兵: `tests/integration/security/anon-definer-execute.test.ts` (A1 は SECURITY DEFINER の全関数を走査し、anon が呼べる許可リスト 2 本と比べる。§5.3 の REVOKE で緑のまま)・`account-deletion.test.ts` (§13.1) | `supabase/migrations/*`、`supabase/rollbacks/*`、`src/types/database.types.ts`、`packages/shared/src/database.types.ts`、`src/lib/account-export-tables.ts`、`tests/integration/security/auth-users-fk-on-delete.test.ts`、`tests/push-outbox-migration-contract.test.ts`、`tests/integration/rls/push-outbox.test.ts` |
 | B: worker | §6 (shared の kinds + barrel・`src/lib/push/{outbox,outbox-store,expo-transport,render}.ts`・route・`vercel.json`・`env.ts`・`.env.example`・`ENV_SETUP.md`)、§13.1 の番兵の追随、§10 のテスト | `packages/shared/src/{push-notification-kinds,index}.ts`、`src/lib/push/*`、`src/app/api/cron/push-outbox/route.ts`、`vercel.json`、`src/lib/env.ts`、`.env.example`、`ENV_SETUP.md`、`src/__tests__/lib/env.test.ts`、`tests/ai-usage-contract.test.ts`、`tests/ai-consent-provider-inventory.test.ts`、`tests/lib-raw-error-message-scan.test.ts`、`docs/design/operator/08-cron-batches.md`、§10 のテスト |
-| C: 設計書の追随 | §14.2 の他の文書 (docs のみ) | §14.2 の列挙 |
+| C: 設計書の追随 | §13.2 の段 C の行 (docs のみ) | §13.2 の段 C の行の文書 |
 
-段 A だけが本番に入った状態では、トリガーが行を積むだけで何も送らない (安全。端末の行は本番に 0)。段 B は段 A の本番適用の**後**にデプロイする。`EXPO_ACCESS_TOKEN` の投入と Expo の Enhanced push security の ON はオーナー作業 (§15)。
+段 A だけが本番に入った状態では、トリガーが行を積むだけで何も送らない (安全。端末の行は本番に 0)。段 B は段 A の本番適用の**後**にデプロイする。`EXPO_ACCESS_TOKEN` の投入と Expo の Enhanced push security の ON はオーナー作業 (§14)。
 
 ## 12. 新設一覧
 
@@ -1439,8 +1437,9 @@ import: `randomUUID` (`crypto`)・`NextResponse`・`waitUntil` (`@vercel/functio
 | Vercel Cron / route | `GET /api/cron/push-outbox` (`*/1 * * * *`) |
 | ファイル (新) | `packages/shared/src/push-notification-kinds.ts`、`src/lib/push/{outbox,outbox-store,expo-transport,render}.ts`、`src/app/api/cron/push-outbox/route.ts`、migration と down、§10 のテスト 8 本 |
 | 関数 (TS) | `isPushNotificationKind`、`renderPushMessage`、`formatMonthDay`、`resolvePushOutboxSettings`、`retryDelaySeconds`、`maskPushToken`、`chunk`、`parseClockMinutes`、`localMinutesOfDay`、`isWithinQuietHours`、`quietHoursEndMs`、`decideEligibility`、`parseClaimedRows`、`parseReceiptRows`、`processPushOutbox`、`createExpoTransport`、`createOutboxStore` |
-| 定数 | §6.1 と §6.3 の `PUSH_*` / `EXPO_*`、`PUSH_NOTIFICATION_KINDS`、`PUSH_NOTIFICATION_KIND_SPECS`、`PUSH_OUTBOX_ERROR_CODES`、`HTTP_TOO_MANY_REQUESTS` |
-| 型 / Zod | `PushNotificationKind`、`PushQuietHoursPolicy`、`PushNotificationKindSpec`、`RenderedPushMessage`、`WeeklyMenuResultPayloadSchema`、`PushMessage`、`ExpoPushTicketSchema` / `ExpoPushReceiptSchema`、`PushTransportFailure`、`PushSendOutcome`、`PushReceiptsOutcome`、`PushTransport`、`PushOutboxClaimedRowSchema` / `PushOutboxReceiptRowSchema`、`PushUserEligibility`、`PushKindPolicy`、`PushOutboxStore`、`PushOutboxLogger`、`PushOutboxWorkerDeps`、`PushOutboxRunOptions`、`PushOutboxRunSummary`、`PushOutboxSettings` |
+| 定数 | `outbox.ts` (§6.3): `PUSH_OUTBOX_MAX_ATTEMPTS` (+ `_MIN` / `_MAX`)・`PUSH_OUTBOX_RETRY_DELAYS_SECONDS`・`PUSH_OUTBOX_BATCH_SIZE` (+ `_MIN` / `_MAX`)・`EXPO_PUSH_SEND_CHUNK_SIZE`・`EXPO_PUSH_RECEIPT_CHUNK_SIZE`・`PUSH_OUTBOX_LEASE_SECONDS`・`PUSH_OUTBOX_RUN_BUDGET_MS`・`PUSH_OUTBOX_QUEUED_MAX_AGE_MS`・`PUSH_RECEIPT_CHECK_DELAY_SECONDS`・`PUSH_RECEIPT_MAX_AGE_SECONDS`・`PUSH_QUIET_HOURS_UTC_OFFSET_MINUTES`・`PUSH_QUIET_HOURS_DEFAULT_START_MINUTES` / `_END_MINUTES`・`EXPO_DEFAULT_ANDROID_CHANNEL_ID`・`EXPO_DEVICE_NOT_REGISTERED`、`PUSH_NOTIFICATION_KINDS`、`PUSH_NOTIFICATION_KIND_SPECS`、`PUSH_OUTBOX_ERROR_CODES`、`HTTP_TOO_MANY_REQUESTS` (正は `outbox.ts`。`expo-transport.ts` は import する)、`EXPO_PUSH_SEND_URL` / `EXPO_PUSH_RECEIPTS_URL` (`expo-transport.ts`) |
+| 型 / Zod | `PushNotificationKind`、`PushQuietHoursPolicy`、`PushNotificationKindSpec`、`RenderedPushMessage` (正は `outbox.ts`。`render.ts` は import する)、`WeeklyMenuResultPayloadSchema` / `WeeklyMenuResultPayload`、`PushPriority`、`PushMessage`、`ExpoPushTicketSchema` / `ExpoPushTicket`、`ExpoPushReceiptSchema` / `ExpoPushReceipt`、`PushTransportFailure`、`PushSendOutcome`、`PushReceiptsOutcome`、`PushTransport`、`PushOutboxClaimedRowSchema` / `PushOutboxClaimedRow`、`PushOutboxReceiptRowSchema` / `PushOutboxReceiptRow`、`PushUserEligibility`、`PushKindPolicy`、`PushEligibility`、`PushOutboxFailInput`、`PushOutboxFailOutcome`、`PushOutboxStore`、`PushOutboxLogger`、`PushOutboxWorkerDeps`、`PushOutboxRunOptions`、`PushOutboxRunSummary`、`PushOutboxSettingEnvName`、`PushOutboxSettingSources`、`PushOutboxSettings` |
+| export しない (ファイルの中だけ) | `render.ts`: `WEEKLY_MENU_*` の文面 3 つ。`push-notification-kinds.ts`: `MENU_RESULT_TTL_SECONDS`・`MENU_WEEKLY_PATH`。`outbox.ts`: `MINUTES_PER_DAY`・`MS_PER_MINUTE`・`MS_PER_SECOND`・`PUSH_TOKEN_SUFFIX_CHARS`・`CLOCK_PATTERN`・`ExpoErrorDetailsSchema`・`boundedInt`・`recordFailure`・`notSent`・`removeToken`・`sendQueued`・`checkReceipts`・型 `Pending` / `RowRef`。`expo-transport.ts`: `HTTP_SERVER_ERROR_MIN`・`SendResponseSchema`・`ReceiptsResponseSchema`・`ErrorResponseSchema`・`httpFailure`・`post`。route: `ROUTE_NAME`・`LOG_FLUSH_GRACE_MS` |
 | 環境変数 | `EXPO_ACCESS_TOKEN`、`PUSH_OUTBOX_MAX_ATTEMPTS`、`PUSH_OUTBOX_BATCH_SIZE` |
 | エラーコード (行の `last_error_code`) | `account_frozen` / `consent_outdated` / `notifications_disabled` / `profile_missing` / `expired` / `unknown_kind` / `invalid_payload` / `network_error` / `invalid_response` / `expo_http_error` / `expo_ticket_error`、Expo の名前そのまま (`DeviceNotRegistered` など) |
 
@@ -1455,7 +1454,7 @@ import: `randomUUID` (`crypto`)・`NextResponse`・`waitUntil` (`@vercel/functio
 | `tests/integration/security/auth-users-fk-on-delete.test.ts` A〜E・H | `push_outbox.user_id` (CASCADE) / 列名に `mail` を含む列 | A〜C は CASCADE なので反応しない。H は `mail` を含む列が無いので反応しない | D の `EXPECTED_ACTIONS` に `'push_outbox.user_id': 'CASCADE'` を足す (任意。決めた動作の記録) | A |
 | `tests/integration/security/anon-definer-execute.test.ts` | `SECURITY DEFINER` (`enqueue_weekly_menu_result_push`) | anon に EXECUTE が付いていれば赤 | §5.3 の REVOKE (完全形) で緑 | A |
 | `tests/integration/security/account-deletion.test.ts` (`REPORT_KEYS`) | `prepare_account_deletion` の戻り値 | 変えないので反応しない | – | A |
-| `tests/log-cleanup-dau-snapshot-contract.test.ts` (Vercel Cron の 3 つの it) | `vercel.json` の `crons` の path の最後 | §3.0・§3.2 の注記・§5 の注記が全部の名前を挙げ、「…の N 本」が実数と同じでないと赤 | §14.2 の `08-cron-batches.md` の行。マージ時の origin/main の実数 + 1 (`email-outbox` が先に着地していれば 3 → 4 本、していなければ 2 → 3 本) | B |
+| `tests/log-cleanup-dau-snapshot-contract.test.ts` (Vercel Cron の 3 つの it) | `vercel.json` の `crons` の path の最後 | §3.0・§3.2 の注記・§5 の注記が全部の名前を挙げ、「…の N 本」が実数と同じでないと赤 | §13.2 の `08-cron-batches.md` の行。マージ時の origin/main の実数 + 1 (`email-outbox` が先に着地していれば 3 → 4 本、していなければ 2 → 3 本) | B |
 | `tests/ai-usage-contract.test.ts` (`CRON_ENTRYPOINTS`) | `vercel.json` の `path` | 完全一致の比較が赤 | `'vercel:/api/cron/push-outbox': 'Push 通知の送信待ちを Expo に送る (AI を使わない)'` を 1 行 (`app-log-alerts` の行の直後) | B |
 | `tests/ai-consent-enforcement.test.ts` (Vercel の cron の it) | route から import で届く AI の印 | route と import 先 (§6.6) は AI の印を含まない | 反応しない | B |
 | `tests/cron-secret-contract.test.ts` | `requireCronAuth` の await | §6.6 のとおり | 反応しない | B |
@@ -1477,8 +1476,9 @@ import: `randomUUID` (`crypto`)・`NextResponse`・`waitUntil` (`@vercel/functio
 
 | 文書 | 直すこと | 段 |
 |---|---|---|
-| `docs/design/mobile/CLAUDE.md` | ファイル一覧に `06-push-send.md` の行 (担当: push_outbox / worker / receipt / 種類の一覧。要件 01 §15.3-4)。「このドメインから他ドメインへの提供」の `notify-push Edge Function` を `06-push-send.md` の `enqueue_push_notification` に | C |
-| `docs/design/mobile/03-push-notification.md` | §1 対象外に「サーバーからの送信 → `06-push-send.md`」。§3.3 のペイロード型を §6.3 の `PushMessage` への参照に。§3.5 の「サーバー側バッジ計算」を「付けない (06 §1.2)」に。§3.7 の Edge Function のコードと `pending_push_notifications` を「06 §6.3 (`next_attempt_at` で延期。表は作らない)」に。§3.9 を「06 §4 (Edge Function は作らない。登録は RPC `enqueue_push_notification`)」に。§4 の `pending_push_notifications` の DDL と §8 新規の `supabase/functions/notify-push/index.ts`・`create_pending_push_notifications.sql` を「作らない (06)」に。§6 の `DeviceNotRegistered` の行を「06 §6.3 (ticket と receipt の両方)」に。§9 の pg_cron の行を解消済みに | C |
+| `docs/design/mobile/CLAUDE.md` | ファイル一覧に `06-push-send.md` の行 (担当: push_outbox / worker / receipt / 種類の一覧。要件 01 §15.3-4)。「このドメインから他ドメインへの提供」の行 (94 行。提供内容 `Expo Push Token`・利用先 `cross/03-design-system.md (notify-push Edge Function)`) の利用先を `mobile/06-push-send.md` (`push_outbox` の worker) に (`cross/03-design-system.md` には Push の記述が無いので、cross/03 は直さない) | C |
+| `docs/design/mobile/03-push-notification.md` | §1 対象外に「サーバーからの送信 → `06-push-send.md`」。§3.3 のペイロード型を §6.3 の `PushMessage` への参照に。§3.5 の「サーバー側バッジ計算」を「付けない (06 §1.2)」に。§3.7 の Edge Function のコードと `pending_push_notifications` を「06 §6.3 (`next_attempt_at` で延期。表は作らない)」に。§3.9 を「06 §4 (Edge Function は作らない。登録は RPC `enqueue_push_notification`)」に。§4 の `pending_push_notifications` の DDL と §8 新規の `supabase/functions/notify-push/index.ts`・`create_pending_push_notifications.sql` を「作らない (06)」に。§6 の `DeviceNotRegistered` の行を「06 §6.3 (ticket と receipt の両方)」に、`Android FCM 未設定` の行 (510 行) を「06 の worker で `InvalidCredentials` の dead になり、iOS には届く」に。§3.4 の注 (204 行「家族の通知を送る実装 (`notify-push`) を作るときに決める」) を「06 §3.2 の後回しの行」に。§5.1 のシーケンス図 (461・468 行の参加者 `notify-push (Edge Fn)` と `functions.invoke`) を「`enqueue_push_notification` → `push_outbox` → worker」に。§9 の pg_cron の行を解消済みに、FCM の行 (569 行「`notify-push` 実装前に必要」) を「06 の worker の本番投入の前に必要」に | C |
+| `docs/requirements/01-family-management.md` §15.7 (2021 行) | 「Android: 未確認 → `notify-push` Edge Function 実装前に確認必要」の `notify-push` を `mobile/06-push-send.md` の worker に。要件文書なので、直すかどうかはオーケストレーターが決める (設計書の追随 PR に含めるか別にするか) | C |
 | `docs/design/00-architecture.md` (252 行付近) | `notify-push/ # 新規 (Expo Push 一斉送信)` を「作らない。送信は Next の worker `GET /api/cron/push-outbox` (`mobile/06-push-send.md`)」に | C |
 | `docs/design/operator/06-ai-llm.md` §8 の表 | `notify-push` の行を「作らない (mobile/06)」に | C |
 | `docs/design/family/04-meal-request-flow.md` §6.2・`family/02-api-spec.md` §12・`family/07-lifecycle.md` | `expo.sendPushNotificationsAsync` の例と図の `notify-push` を「`enqueue_push_notification` を呼ぶ (種類は後回し。mobile/06 §3.2)」に | C |
@@ -1496,3 +1496,5 @@ import: `randomUUID` (`crypto`)・`NextResponse`・`waitUntil` (`@vercel/functio
 - 後回しの種類 (§3.2) の着手順と、家族・組織の通知の行き先 (WebView で Web の画面を開く形) の決め方。
 - 種類ごとの受け取り設定 (`03` §3.6) を足すときの `decideEligibility` の判定と、アプリの設定画面。
 - `MessageRateExceeded` (receipt) を再試行するか (本書は記録だけ。1 回の献立で同じ端末に 1 通なので起きにくい)。
+- #1706 (退会の 401 からのログアウトで `user_push_tokens` の行が残りうる) が直るまで、その端末に前の利用者の献立の結果が届きうる (§2)。本書では塞がない。
+- 健康記録の設定画面の「通知」(`notification_preferences.enabled`) を切った利用者にも、献立の結果は届く (本書は `notifications_enabled` だけを見る)。`enabled` を健康記録のリマインダーだけの切り替えとするか、Push 全体の切り替えとするか。
