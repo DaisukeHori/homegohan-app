@@ -85,7 +85,7 @@ Issue 本文との食い違い (本書を正とする): Issue の「該当箇所
 
 - 目的: privacy 第6条 (src/app/privacy/page.tsx:70-71) が約束する開示・訂正・削除への対応を、受付 → 本人確認 → 期限つきの対応 → 記録、として実装できる形にする。
 - 範囲 (本書で作るもの): 表 1 つ・本人向け API 6 本・運営向け API 3 本・Web の設定画面 2 つ・運営の画面 2 つ・メール 4 通・監査ログの action 3 つ・レート制限のカテゴリ 1 つ・環境変数 1 つ。
-- 範囲外: モバイル App の画面 (Web の画面へのリンクは §19)・凍結中の利用者の受付 (§21)・運営による代理の退会 (cross/08 §16.5。§21)・会員でない人 (ゲストの問い合わせの送信者など) からの請求 (サポート窓口のメールで受ける)・応答期限の催促メール・添付ファイルでの開示・削除の実行記録の方式 (#1562 で扱う)。
+- 範囲外: モバイル App の画面 (Web の画面へのリンクは §19)・凍結中の利用者の受付 (§21)・運営による代理の退会 (cross/08 §16.5。§21)・会員でない人 (ゲストの問い合わせの送信者など) からの請求 (サポート窓口のメールで受ける)・応答期限の催促メール・添付ファイルでの開示・削除の実行記録の方式 (#1562 で `gdpr_deletion_requests` を個人を特定できない実行記録に当てた。本設計は触れない)。
 
 ## 2. 関連要件
 
@@ -326,7 +326,7 @@ authenticated の admin / super_admin は 2 本の SELECT ポリシーの OR で
 |---|---|
 | GET /api/account/export (#1131) | 開示の請求とは独立。本人はいつでも自分で書き出せる (設定画面の案内文にも書く)。開示の請求は、書き出しに含まれない情報や書面での応答が要るときの経路。`data_subject_requests` は本人のデータなので書き出しに含める: `src/lib/account-export-tables.ts` の `ACCOUNT_EXPORT_TABLES` の「契約・同意・問い合わせ」の群の `support_ticket_messages` の行の後に `{ table: 'data_subject_requests', scope: self('user_id'), columns: DSR_OWN_COLUMNS, orderBy: ['created_at', 'id'] }` を足し、ファイルの先頭に `import { DSR_OWN_COLUMNS } from './data-subject-requests/core';` を足す (tests/account-export-tables.test.ts が分類を要求する)。書き出しは本人の JWT の client (RLS) で読むので、`omit` (いったん `*` で読む) では列の GRANT に当たって 42501 になる。`columns` で最初から 15 列だけを読む (hash と内部メモは取得しない。`user_id` は scope の列として含まれる) |
 | POST /api/account/delete (#1175) | 消去の請求の完了は、本人の退会 (即時削除) で行う (S-11)。本モジュールは `deleteAccount` を呼ばない。退会すると FK `ON DELETE SET NULL` で `user_id` が外れ、行と応答の記録は残る (`details` は本人が書いた文で、伏せ字にはしない。support_ticket_messages と同じ扱い)。`prepare_account_deletion` には触れない (メールアドレスの列が無い) |
-| #1562 (削除の実行記録・gdpr_deletion_requests の用途) | 本設計は `gdpr_deletion_requests` を使わず、触れない。削除の実行記録の方式は #1562 で決める。運営による代理の退会 (cross/08 §16.5) が実装されたら、消去の請求の運営側の完了操作として接続する (§21) |
+| #1562 (削除の実行記録・gdpr_deletion_requests の用途) | 本設計は `gdpr_deletion_requests` を使わず、触れない。削除の実行記録は #1562 (migration `20261016190000`) で `gdpr_deletion_requests` を個人を特定できない記録 (subject_hash・auth.users への外部キーなし) に当てた。運営による代理の退会 (cross/08 §16.5) が実装されたら、消去の請求の運営側の完了操作として接続する (§21) |
 
 ---
 
@@ -1314,7 +1314,7 @@ grep の語は、本設計が足す・変える名前 (tests/ と src/__tests__/
 | 応答期限の日数 | `DSR_RESPONSE_DUE_DAYS` 既定 30 日 (§12) | 法務として何日を掲げるか (環境変数で変えられる) |
 | 凍結 (BAN) 中の利用者の請求 | 受け付けない。凍結の画面から行ける /contact のサポート窓口で受ける (S-13) | 凍結中でも設定画面なしで請求を出せる経路 (FROZEN_ALLOWED_API_PATHS への追加 + /frozen の画面) を作るか。FROZEN_ALLOWED_API_PATHS は「本人がサービスから離れるための操作だけ」の方針 (src/lib/auth/frozen.ts) なので、足すならその方針の変更になる |
 | 請求の後に (規約違反などで) 凍結された本人への応答 | 設定画面では読めない。dsr_resolved の本文のお問い合わせの案内と、運営がサポート窓口のメールで応答を送る運用 (runbook。§19) で届ける。利用停止の手段として凍結は使わない (§9.2) | 凍結中でも自分の請求の一覧・詳細 (GET の 2 本) を読めるようにするか (上と同じく frozen.ts の方針の変更) |
-| 消去の請求の運営側の完了操作 | 本人の退会で完了 (S-11)。運営による代理の退会 (cross/08 §16.5) は未実装のまま | 代理の退会を実装するか。するなら #1562 の削除の実行記録と合わせて別の設計 |
+| 消去の請求の運営側の完了操作 | 本人の退会で完了 (S-11)。運営による代理の退会 (cross/08 §16.5) は未実装のまま | 代理の退会を実装するか。するなら #1562 の削除の実行記録 (`gdpr_deletion_requests`) に合わせて別の設計 |
 | 運営のロール | admin / super_admin (§3.2) | support も対応できるようにするか (そのときは登録メールアドレスの閲覧 (EMAIL_VIEWER_ROLES) も合わせて判断) |
 | 運営への知らせの宛先 | 既存の `ADMIN_NOTIFICATION_EMAIL` (問い合わせと同じ) | 個人情報担当の専用アドレスに分けるか |
 | 催促 | 置かない (一覧の「期限超過」で見る) | 期限の数日前・超過時に運営へメールを送るか (cron が要る) |
