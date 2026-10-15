@@ -15,6 +15,11 @@ import path from 'node:path';
 import { NextRequest } from 'next/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NULL_CHARACTER_ERROR_CODE, NULL_CHARACTER_ERROR_MESSAGE } from '@/lib/api/null-character';
+import { applyHeavyUnitTestTimeout } from '../../../tests/helpers/heavy-unit-test-timeout';
+
+// テストの中で route を丸ごと読み込むので、負荷の高い機械で vitest の既定の時間切れを超えうる。このファイルだけ延ばす
+// (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1605)。テストとフックを定義する前に置く
+applyHeavyUnitTestTimeout();
 
 const mockCreateClient = vi.fn(async () => {
   throw new Error('Supabase のクライアントは、NULL 文字の確かめのあとでしか作られないはず');
