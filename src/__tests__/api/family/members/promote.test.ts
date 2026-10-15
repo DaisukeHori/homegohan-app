@@ -413,7 +413,8 @@ describe('POST /api/family/members/[member_id]/promote', () => {
   });
 
   // #1678: #1649 の it.each に無い観点だけを足す。タブ・全角空白 (U+3000) に挟まれた仮置きも名前として出さない
-  // (SQL の normalize_profile_name も同じ文字を除く。tests/integration/security/rpc-profile-name-placeholder.test.ts)
+  // (request_child_promotion の requester_name は SQL の側で整えないので、ルートの normalizeProfileName が除く。
+  //  除く文字の集合は SQL の normalize_profile_name と同じ — tests/rpc-profile-name-placeholder-migration-contract.test.ts)
   it('RPC の requester_name がタブと全角空白に挟まれた Guest なら、メールの依頼者名は user.email (#1678)', async () => {
     mockRpc.mockResolvedValue({ data: { ...rpcResult, requester_name: '\tGuest\u3000' }, error: null });
 
