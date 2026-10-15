@@ -97,9 +97,9 @@
 
 | ID | 要件 | 出どころ | 検証 (§6.14 の it) |
 |---|---|---|---|
-| R-1 | ログイン済みの利用者のデータを読み書きする `/api` は、未同意 (未同意・旧版に同意) なら 403 の専用コードで断る | 仕様 1 | T-M1〜T-M4 |
+| R-1 | ログイン済みの利用者のデータを読み書きする `/api` は、未同意 (未同意・旧版に同意) なら 403 の専用コードで断る | 仕様 1 | T-SH4, T-M1〜T-M4 |
 | R-2 | 403 の形は #1154 の AI 同意に合わせる: 平たい `{ error: <固定の文>, code }`、キーはその 2 つだけ、内部の語を出さない | 仕様 1 | T-M9, T-S1 |
-| R-3 | 断らない API は理由つきの許可リストで固定し、テストが一覧を固定する | 仕様 1 | T-M2, T-M3, T-SH4 |
+| R-3 | 断らない API は理由つきの許可リストで固定し、テストが一覧を固定する | 仕様 1 | T-SH3, T-M2, T-M3, T-M14 |
 | R-4 | 判定の置き場所は漏れが出ない形 (route ごとに呼び忘れない) | 仕様 1 | T-M1 (全 route の表) |
 | R-5 | 漏れを見張るテスト (全 route の表と実コードの照合) を含め、見張りの限界を明記する | 仕様 1 | §6.13 |
 | R-8 | 改定 (版が上がった) の再同意は、既存の版の判定 (`hasAcceptedCurrentLegalDocuments`) に合わせる。API も モバイルも同じ | 仕様 3 | T-M4, T-P3 |
@@ -242,6 +242,11 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 
 | 状態 | 操作 | 遷移先 | ガード | 副作用 (サーバー / モバイル) |
 |---|---|---|---|---|
+| anon | `/api` 対象を呼ぶ | 同じ | user 無し (`getUser` が null。非 JWT の Bearer も同じ) | 同意の判定に来ない → route の認可 (401 など)。既存のまま |
+| anon | `/api` 許可リストを呼ぶ | 同じ | user 無し | 同意の判定に来ない → route へ (`/api/contact` `/api/feature-flags` は未ログインでも答える) |
+| anon | `GET /api/legal/status` | 同じ | user 無し | 401 `{ error, code: AUTH_UNAUTHENTICATED }` (T-R1) |
+| anon | Web 画面 GET | 同じ | — | `/login` へ (既存) |
+| anon | ログイン (Web `/login` → `/api/auth/*`) | none / old / ok / unreadable のどれか (行の中身で決まる) | `/api/auth` は許可リスト | 次の画面の取得で既存の画面のゲート / 次の `/api` 呼び出しで本書のゲート |
 | none / old | `/api` 対象を呼ぶ | 同じ | `enforce` かつ 許可リスト外 | 403 を返す。モバイルは state を `required` にし status を取り直す |
 | none / old | `/api` 許可リストを呼ぶ | 同じ | — | route へ |
 | none / old | `GET /api/legal/status` | 同じ | — | `required: enforced` |
@@ -255,7 +260,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | unreadable | status | 同じ | — | 500 → モバイル `unknown` (止めない) |
 | unreadable | DB が戻る | none / old / ok | — | 次の判定から効く |
 
-モバイルだけの行 (アプリのログイン・同意しない・モバイルの画面を開く) は 13b §6.3。
+モバイルだけの行 (anon のアプリのログイン・同意しない・モバイルの画面を開く) は 13b §6.3。
 
 ### 6.4 `/api` の許可リスト (止めない API。理由つき。R-3)
 
@@ -286,6 +291,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | `/api/push-tokens/claim` | 端末の通知トークンの登録。同意前の起動で 403 になるので、`PushTokenRegistrar` の effect に同意の状態を足し、同意が済んだら登録し直す (13b §6.6.10) |
 | `/api/performance/sports` `/api/catalog/products` (公開・準公開のデータ) | 未ログインなら判定に来ない。ログイン済みの未同意の人は同意が先。個別の例外を作らない |
 | `/api/family/invites/[id]/reject` `/api/org/invites/[id]/reject` (認証任意) | 未ログインなら判定に来ない。ログイン済みなら Web の `/invite/*` の画面のゲートが先に同意を取る |
+| `/api/export/meals` (献立の CSV。Web の設定画面 `src/app/(main)/settings/page.tsx:176` とモバイルの設定タブ `apps/mobile/app/(tabs)/settings.tsx:210` が呼ぶ) | 書き出しの権利 (S7) は `/api/account/export` が受け持つ。そちらは本人の全データを出し、献立 (`user_daily_meals`・`planned_meals`) も含む (`src/lib/account-export-tables.ts:154-155`)。CSV は設定画面の便利機能で、呼ぶ画面はどちらも同意の後にしか開けない (Web は画面のゲート、モバイルは 13b のゲート)。凍結中に通す 2 本 (`frozen.ts:49-52`) にも入っていない。許可リストを権利の 2 本に絞って揃える |
 
 ### 6.5 判定の置き場所と順序
 
@@ -900,7 +906,7 @@ sequenceDiagram
 
 **見張り** (`lib/supabase/__tests__/middleware-legal-consent-api.test.ts`):
 
-1. `src/app/api/**/route.ts` を全部列挙し (`tests/helpers/ai-reach.ts` の `listRouteFiles` を `src/app/api` に絞って使う)、動的な区間 (`[id]` など) を固定の値に置き換えた path を作り、**未同意 × ENFORCE=on で `updateSession` を 1 本ずつ通す**。期待 = 許可リストに当たる route だけ 403 でない、それ以外は全部 403 `LEGAL_CONSENT_REQUIRED`。route を足せば自動で表に入る (載せ忘れは無い)。
+1. `src/app/api/**/route.ts` を全部列挙し (`tests/helpers/ai-reach.ts` の `listRouteFiles` を `src/app/api` に絞って使う)、動的な区間 (`[id]` など) を固定の値に置き換えた path を作り、**未同意 × ENFORCE=on で `updateSession` を 1 本ずつ通す**。期待 = 許可リストに当たる route だけ 403 でない、それ以外は全部 403 `LEGAL_CONSENT_REQUIRED`。route を足せば自動で表に入る (載せ忘れは無い)。本数は書き込まない (2026-10-15 の origin/main で 202 本 = §0.3)。列挙が 0 本なら (走査の道が変わった) 失敗にする (空の it.each で緑にしない)。
 2. 許可リストの各行は、実在する route (route.ts のディレクトリ) に当たる (prefix の行は 1 本以上)。消えた route が一覧に残らない。
 3. 許可リストの中身 (path・match・reason) をそのまま固定する (スナップショット)。足すときは、このテストと §6.4 の表を一緒に直す。
 4. 許可リストは `FROZEN_ALLOWED_API_PATHS` の 2 本を含む。
@@ -945,7 +951,7 @@ sequenceDiagram
 
 | ID | it |
 |---|---|
-| T-M1 | `src/app/api の全 route (N 本) を 未同意 × ENFORCE=on で通すと、許可リストの route だけが 403 にならず、それ以外は 403 LEGAL_CONSENT_REQUIRED` (it.each) |
+| T-M1 | `src/app/api の全 route (${routes.length} 本) を 未同意 × ENFORCE=on で通すと、許可リストの route だけが 403 にならず、それ以外は 403 LEGAL_CONSENT_REQUIRED` (it.each。本数は実行時に列挙した数を it 名に出す。2026-10-15 の origin/main では 202 本 = §0.3・§6.4 の母集合と同じ。テストは 202 を書き込まない (§6.13 の 1)) |
 | T-M2 | `許可リストの各行は実在する route に当たる (prefix の行は 1 本以上)` |
 | T-M3 | `許可リストの中身 (path / match / reason) は設計書 13a §6.4 のとおり (スナップショット)` |
 | T-M4 | `旧版に同意 / 片方だけ同意 / 行なし も 403。現行の版に両方同意していれば 200` |
