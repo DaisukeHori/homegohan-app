@@ -17,9 +17,9 @@
  */
 import 'react-native-url-polyfill/auto';
 
-import Constants from 'expo-constants';
 import { Linking, Platform } from 'react-native';
 
+import { readExpoAppVersion } from './app-version';
 import { DEFAULT_WEB_URL } from './webBaseUrl';
 
 // ── 定数 ──────────────────────────────────────────────────────────────────────
@@ -585,12 +585,9 @@ export async function getSessionForBridge(
 /** サーバー側のバージョン分布把握用 (これまでアプリのバージョンを判別する手段が無かった) */
 function appInfoHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'X-App-Platform': Platform.OS };
-  try {
-    const version = Constants.expoConfig?.version;
-    if (version) headers['X-App-Version'] = version;
-  } catch {
-    // バージョンが取れなくても code 発行は続行する
-  }
+  // バージョンが取れなくても code 発行は続行する (readExpoAppVersion は例外を投げず null を返す)
+  const version = readExpoAppVersion();
+  if (version) headers['X-App-Version'] = version;
   return headers;
 }
 

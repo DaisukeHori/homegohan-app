@@ -52,7 +52,10 @@ jobs:
 
       - run: npm ci
 
+      # イメージの取得がレート制限などで失敗したら、取得元を public.ecr.aws → ghcr.io の順に替えてやり直す (#1523)。
+      # それでも取れなければ「[image-pull-unavailable] ...」の注記を出して赤で終わる (検査の赤ではない。docs/operations/ci-supabase-image-pull.md)
       - name: Start local Supabase (baseline + new migrations)
+        id: supabase
         run: bash scripts/supabase-local.sh start
 
       - name: Write .env.local for the local stack
@@ -89,12 +92,13 @@ jobs:
 
       # 運営コンソール API の統合テスト: admin (#849) と super_admin 専用 (#850)。
       # 上のセキュリティ回帰テストが落ちた場合も結果が分かるよう、キャンセル時以外は必ず実行する
-      # (どちらかが落ちればジョブは失敗)。--passWithNoTests は付けない (対象が 0 件なら設定ミスとして落とす)。
+      # (どちらかが落ちればジョブは失敗)。ただしローカル Supabase が起動できなかったときは実行しない (Supabase の無いまま流れて、
+      # 検査の赤に見える失敗を重ねないため。#1523。scripts/local-ci.sh も起動の失敗で段を止める)。--passWithNoTests は付けない (対象が 0 件なら設定ミスとして落とす)。
       # 絞り込みは vitest のパス部分一致。`operator/admin-` は super-admin-*.test.ts に当たらないため、
       # `operator/super-admin-` を別に渡す (tests/integration/operator/ の下は、この 3 つの指定ですべて実行される)。
       # 実行時間は数分で、ジョブの timeout-minutes に対して十分小さいため、ステップは分けない。
       - name: Run operator (admin / super-admin) integration tests
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.supabase.outcome == 'success' }}
         run: >
           npx vitest run --config vitest.integration.config.ts
           tests/integration/operator/admin-
