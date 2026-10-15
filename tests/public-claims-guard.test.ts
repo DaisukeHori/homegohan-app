@@ -11,6 +11,9 @@
  *
  * 実在の事業者情報が確定したとき、または有料プランの販売を始めるとき (課金導線 #1151 の実装後) は、
  * このテストの該当項目 (「準備中」の確認と、載せてよくなった文字列) を意図して更新する。
+ * billing/01 §10.1 (#1701 段 C): /pricing は async の Server Component (page.tsx) になり、見える文は PricingPageView.tsx に移った。
+ * 公開ページの走査・描画は PricingPageView を「買えるプランが 0 件」で描いたもの (いまと同じ「準備中」) で見る。
+ * page.tsx そのものは @/lib/billing/public-plans と next/headers をモックして、0 件 (準備中) と買えるプランがある場合を見る。
  * 2026-10-14 (#1155): 事業者名・代表者が確定し、所在地・電話番号は「請求があった場合に遅滞なく開示します」とする扱いになったので、
  * 特定商取引法ページと運営会社ページの該当項目を更新した (値は src/lib/business-info.ts)。
  */
@@ -18,9 +21,27 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createElement, type ComponentType, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BUSINESS_NAME, BUSINESS_REPRESENTATIVE, DISCLOSED_ON_REQUEST } from '@/lib/business-info';
 import { getSupportEmail } from '@/lib/site-config';
+import type { PurchasablePlan } from '@/lib/billing/core';
+
+// /pricing の page.tsx (Server Component) が読む「買えるプラン」と Cookie (is_native_app)。it ごとに値を変える
+const pricingMocks = vi.hoisted(() => ({
+  plans: [] as PurchasablePlan[],
+  nativeAppCookie: undefined as string | undefined,
+}));
+
+vi.mock('@/lib/billing/public-plans', () => ({
+  listPurchasablePlans: async () => pricingMocks.plans,
+}));
+
+vi.mock('next/headers', () => ({
+  cookies: async () => ({
+    get: (name: string) =>
+      name === 'is_native_app' && pricingMocks.nativeAppCookie !== undefined ? { name, value: pricingMocks.nativeAppCookie } : undefined,
+  }),
+}));
 
 // next/link と next/image は描画に Next.js の実行環境を要らないよう、素の a / img に置き換える
 vi.mock('next/link', async () => {
@@ -45,6 +66,7 @@ const { default: NewsPage } = await import('@/app/news/page');
 const { default: CompanyPage } = await import('@/app/company/page');
 const { default: LegalPage } = await import('@/app/legal/page');
 const { default: PricingPage } = await import('@/app/pricing/page');
+const { default: PricingPageView } = await import('@/app/pricing/PricingPageView');
 const { default: FaqPage } = await import('@/app/faq/page');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -56,7 +78,7 @@ const PUBLIC_PAGES: { file: string; Page: ComponentType }[] = [
   { file: 'src/app/news/page.tsx', Page: NewsPage },
   { file: 'src/app/company/page.tsx', Page: CompanyPage },
   { file: 'src/app/legal/page.tsx', Page: LegalPage },
-  { file: 'src/app/pricing/page.tsx', Page: PricingPage },
+  { file: 'src/app/pricing/PricingPageView.tsx', Page: () => createElement(PricingPageView, { plans: [], isNativeApp: false }) },
   { file: 'src/app/faq/page.tsx', Page: FaqPage },
 ];
 
@@ -228,9 +250,12 @@ describe('#1155 運営会社ページ (/company)', () => {
   });
 });
 
+/** 買えるプランが 0 件のときの料金ページ (いまと同じ「準備中」) */
+const PricingPageWithoutPlans = () => createElement(PricingPageView, { plans: [], isNativeApp: false });
+
 describe('#1151 料金ページ (/pricing)', () => {
-  const text = renderText(PricingPage);
-  const source = readSource('src/app/pricing/page.tsx');
+  const text = renderText(PricingPageWithoutPlans);
+  const source = readSource('src/app/pricing/PricingPageView.tsx');
 
   it('有料プランは「準備中」とだけ表示し、価格・機能・年払いの切り替えは出さない', () => {
     expect(text).toContain(PAID_PLAN_PENDING_NOTICE);
@@ -250,6 +275,118 @@ describe('#1151 料金ページ (/pricing)', () => {
   it('有料プランのカードには「始める」ボタン (登録への導線) を置かない', () => {
     expect(text).not.toContain('プレミアムを始める');
     expect(text).not.toContain('ファミリーを始める');
+  });
+});
+
+/** テスト 51 のモックのプラン。金額は FORBIDDEN に無い値 */
+function plan(overrides: Partial<PurchasablePlan> & Pick<PurchasablePlan, 'plan_key' | 'display_name' | 'plan_type'>): PurchasablePlan {
+  return {
+    status: 'public',
+    monthly_price_jpy: null,
+    yearly_price_jpy: null,
+    trial_days: 0,
+    stripe_price_id: null,
+    stripe_yearly_price_id: null,
+    ...overrides,
+  };
+}
+
+/** page.tsx (async の Server Component) を描いて HTML を返す */
+async function renderPricingPageHtml(): Promise<string> {
+  return renderToStaticMarkup(await PricingPage());
+}
+
+const stripTags = (html: string) => html.replace(/<[^>]*>/g, '');
+
+describe('billing/01 §10.1 料金ページ (/pricing) のデータ駆動', () => {
+  const planA = plan({
+    plan_key: 'test_personal_a',
+    display_name: 'テストA',
+    plan_type: 'personal',
+    monthly_price_jpy: 1234,
+    yearly_price_jpy: 12340,
+    trial_days: 7,
+    stripe_price_id: 'price_a_month',
+    stripe_yearly_price_id: 'price_a_year',
+  });
+  const planB = plan({
+    plan_key: 'test_family_b',
+    display_name: 'テストB',
+    plan_type: 'family',
+    monthly_price_jpy: 2345,
+    yearly_price_jpy: 23450,
+    stripe_price_id: 'price_b_month',
+    stripe_yearly_price_id: null,
+  });
+
+  afterEach(() => {
+    pricingMocks.plans = [];
+    pricingMocks.nativeAppCookie = undefined;
+  });
+
+  it('pricing page shows 準備中 when there is no purchasable plan: no rows, or the only row has no interval for which isPurchasable is true', async () => {
+    for (const plans of [
+      [],
+      [plan({ plan_key: 'test_zero', display_name: 'テストZ', plan_type: 'personal', monthly_price_jpy: 0, stripe_price_id: 'price_zero', stripe_yearly_price_id: null })],
+    ]) {
+      pricingMocks.plans = plans;
+      const html = await renderPricingPageHtml();
+      const text = stripTags(html);
+      expect(text).toContain(PAID_PLAN_PENDING_NOTICE);
+      expect(text).toContain('現在、料金はかかりますか？');
+      expect(text).toContain('有料プランはありますか？');
+      expect(text).not.toContain('月額で始める');
+      expect(text).not.toContain('年額で始める');
+      expect(text).not.toContain('テストZ');
+      expect(html).not.toContain('/account/billing/checkout');
+      // フリーのカードと「無料で始める」はどちらの場合も描く
+      expect(text).toContain('フリー');
+      expect(text).toContain('無料で始める');
+    }
+  });
+
+  it('pricing page shows one card per purchasable plan with an amount and a CTA only for the intervals where isPurchasable is true (both Prices: 月額で始める → interval=month and 年額で始める → interval=year; no stripe_yearly_price_id: only the monthly amount and 月額で始める, no yearly amount and no interval=year link), without the 準備中 notice and the pre-sale FAQ, and hides the cards and CTA in native app mode', async () => {
+    pricingMocks.plans = [planA, planB];
+    const html = await renderPricingPageHtml();
+    const text = stripTags(html);
+
+    // A: 月額と年額の両方
+    expect(text).toContain('テストA');
+    expect(text).toContain('7日間無料');
+    expect(text).toContain('¥1,234');
+    expect(text).toContain('¥12,340');
+    expect(html).toContain('/account/billing/checkout?plan_key=test_personal_a&amp;interval=month');
+    expect(html).toContain('/account/billing/checkout?plan_key=test_personal_a&amp;interval=year');
+    // B: 年額の Price が無いので月額だけ
+    expect(text).toContain('テストB');
+    expect(text).toContain('¥2,345');
+    expect(html).toContain('/account/billing/checkout?plan_key=test_family_b&amp;interval=month');
+    expect(text).not.toContain('¥23,450');
+    expect(html).not.toContain('plan_key=test_family_b&amp;interval=year');
+    // 単位と CTA の文
+    expect(text).toContain('/ 月（税込）');
+    expect(text).toContain('/ 年（税込）');
+    expect(text.split('月額で始める')).toHaveLength(3);
+    expect(text.split('年額で始める')).toHaveLength(2);
+    // 販売開始前の案内 (段落・準備中のカード・FAQ) は描かない
+    expect(text).not.toContain(PAID_PLAN_PENDING_NOTICE);
+    expect(text).not.toContain('販売開始前');
+    expect(text).not.toContain('現在は無料でご利用いただけます。');
+    expect(text).not.toContain('現在、料金はかかりますか？');
+    expect(text).not.toContain('有料プランはありますか？');
+    // フリーのカードと末尾の「無料で始める」は描く
+    expect(text).toContain('フリー');
+    expect(text).toContain('無料で始める');
+
+    // アプリの WebView では有料プランのカードと CTA を描かない (フリーの説明だけ)
+    pricingMocks.nativeAppCookie = '1';
+    const nativeHtml = await renderPricingPageHtml();
+    const nativeText = stripTags(nativeHtml);
+    for (const word of ['テストA', 'テストB', '¥1,234', '¥2,345', '月額で始める', '年額で始める']) {
+      expect(nativeText, `アプリの中に「${word}」が出ている`).not.toContain(word);
+    }
+    expect(nativeHtml).not.toContain('/account/billing/checkout');
+    expect(nativeText).toContain('フリー');
   });
 });
 
