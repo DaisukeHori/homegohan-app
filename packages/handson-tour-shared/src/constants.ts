@@ -50,4 +50,3 @@ export type HandsonTourConstantsKey = keyof typeof HANDSON_TOUR_CONSTANTS;
  * packages/handson-tour-shared/__tests__/i18n.test.ts が文言の数と、tests/handson-tour-step3-earned-count.test.ts が実際の付与の経路と突き合わせる
  */
 export const STEP3_BADGES_EARNED_IN_TOUR = ['planner'] as const;
-
