@@ -3065,7 +3065,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 |---|---|---|---|
 | `docs/design/cross/04-api-conventions.md` | §4.1 プレフィックス表 | `BILL_` (課金の自己サービス) 400/403/404/409/422 の行を足す | 段 B と同じ PR |
 | 同 | §4.2 エラーコード一覧 | §13.1 の [NEW] 8 つ (`BILL_INVALID_INPUT` / `BILL_PLAN_NOT_PURCHASABLE` / `BILL_CUSTOMER_NOT_FOUND` / `BILL_NO_LIVE_SUBSCRIPTION` / `BILL_CANCEL_NOT_SCHEDULED` / `BILL_CHECKOUT_SESSION_MISMATCH` / `EXT_STRIPE_NOT_CONFIGURED` / `EXT_STRIPE_API_FAILED`) | 同上 |
-| 同 | §10.1 の注と見本 | 「未実装なのは Stripe の側だけ」を消し、Stripe の形 (`t=`/`v1=`。秘密は文字列のまま鍵。503 = 秘密なし・401 = 不一致) を本冊 §8.3 へのリンクに置き換える。§10.2 の `processed_stripe_events` を `stripe_webhook_events` + `billing_claim_stripe_event` に直す。§16 の TODO 行を閉じる | 同上 |
+| 同 | §10.1 の注と見本 | 「未実装なのは Stripe の側だけ」を消し、Stripe の形 (`t=`/`v1=`。秘密は文字列のまま鍵。503 = 秘密なし・401 = 不一致) を本冊 §8.3 へのリンクに置き換える。§10.2 の `processed_stripe_events` を `stripe_webhook_events` + `billing_claim_stripe_event` に直し、「2xx は処理済み (`completed`) のときだけ。ほかが処理中なら 409 で再送させる」を足す (本冊 §9.6)。§16 の TODO 行を閉じる | 同上 |
 | `docs/design/cross/02-rls-patterns.md` | §6.2 ロックキーの表 | `billing-user:{uuid}`・`stripe-subscription:{sub_id}` の 2 行を足す (「Stripe webhook 二重処理防止 `stripe:event_id`」は claim に置き換えたと注記) | 段 A と同じ PR |
 | `docs/design/cross/08-legal-compliance.md` | §3.2 の見本・§9 の `handlePaymentFailed`・§10 | 見本の `/api/v1/webhooks/stripe` → `/api/webhooks/stripe`、`handlePaymentFailed` のメール送信は Stripe の顧客向けメール、`check_grace_period` の pg_cron は配線の冊、§10 は配線 | 段 B と同じ PR |
 | 同 | §16.2 手順・§16.3 表「Stripe の顧客・サブスクリプション」・§18・§19 | 段階 `billing` を足す。表の現行実装を「実装済み (billing/01 §11)」に。§19 の TODO 行「退会時の Stripe …」を閉じる | 段 B と同じ PR |
