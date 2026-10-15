@@ -379,6 +379,17 @@ export const SERVER_ENV_VARS = {
     // 解釈 (範囲・不正な値の扱い) は src/lib/auth/login-failures.ts の resolveLoginFailureResetMinutes。値を読むのは route だけ
     readOnlyBy: 'src/app/api/auth/login/route.ts',
   },
+  OPERATOR_MFA_ENFORCE_FROM: {
+    required: false,
+    description:
+      '運営ロール (super_admin / admin / finance / org_industrial_doctor) の二段階認証 (TOTP) の登録の猶予の終わり (#1176。' +
+      'docs/design/cross/12-operator-mfa.md §12.2)。必須ロールで未登録の運営を、この日時まで通す (画面にバナー)。' +
+      '登録済みの運営には効かない (常に 6 桁の確認)。ISO 8601 + タイムゾーン必須 (例: 2026-11-01T00:00:00+09:00)',
+    whenMissing:
+      '必須ロールの運営は、未登録なら次のアクセスから登録を求められる (猶予なし)。不正な値 (形の違い・存在しない日時・範囲外の時差) も無視して即時にし、warn ログを残す',
+    // 解釈 (形・実在する日時の確認) は同じファイルの resolveMfaEnforceFrom。値を読むのは readMfaEnforceFromEnv だけ
+    readOnlyBy: 'src/lib/auth/mfa/policy.ts',
+  },
 } as const satisfies Record<string, EnvVarSpec>;
 
 export type PublicEnvName = keyof typeof PUBLIC_ENV_VARS;

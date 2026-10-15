@@ -94,8 +94,12 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `AUTH_UNAUTHENTICATED` | 未認証 (Cookie / Token なし) | 401 |
 | `AUTH_INVALID_CREDENTIALS` | メール / パスワード不一致 | 401 |
 | `AUTH_TOKEN_EXPIRED` | アクセストークン期限切れ | 401 |
-| `AUTH_2FA_REQUIRED` | 2FA 認証が必要 | 401 |
-| `AUTH_2FA_INVALID` | 2FA コードが無効 | 401 |
+| `AUTH_2FA_REQUIRED` | 2FA 認証が必要 (必須ロールで TOTP を登録済み・セッションが aal1)。401 だと画面が未ログインと解釈してログイン画面と往復するので 403 (`cross/12-operator-mfa.md` §7.1・§19) | 403 |
+| `AUTH_2FA_INVALID` | 2FA コード (6 桁・バックアップコード) が無効 (`cross/12-operator-mfa.md` §19) | 400 |
+| `AUTH_2FA_ENROLLMENT_REQUIRED` | **[NEW]** 2FA の登録が必要 (必須ロールで未登録・猶予なし・セッションが aal1。`cross/12-operator-mfa.md` §19) | 403 |
+| `AUTH_2FA_NOT_ENROLLED` | **[NEW]** 2FA の factor が無い・本人のものでない (id 指定は 404・状態の問題は 409。`cross/12-operator-mfa.md` §19) | 404 / 409 |
+| `AUTH_2FA_ALREADY_ENROLLED` | **[NEW]** 2FA を登録済みで登録を始めた (先に解除。`cross/12-operator-mfa.md` §19) | 409 |
+| `AUTH_2FA_NATIVE_SESSION` | **[NEW]** アプリの WebView の借り物のセッションで、2FA の確認・解除 (セッションの token を発行し直す操作) をしようとした (`cross/12-operator-mfa.md` §16.4・§19) | 409 |
 | `AUTH_SESSION_REVOKED` | セッション無効化済み | 401 |
 | `AUTH_ACCOUNT_LOCKED` | **使わない (#1165)**: ログインに続けて失敗してもアカウントはロックしない (01-auth-session.md §8)。欠番。別の意味に再利用しない | - |
 | `AUTH_PROFILE_NOT_FOUND` | user_profiles が見つからない | 403 |
