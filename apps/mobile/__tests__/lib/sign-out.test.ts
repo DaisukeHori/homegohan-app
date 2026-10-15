@@ -242,6 +242,16 @@ describe('signOutAfterAccountDeletion (退会のあと。#1037)', () => {
     expect(result).toEqual({ error: failure });
   });
 
+  it('サインアウトが失敗しても、push token の行は消しに行かない (行は auth.users の削除で ON DELETE CASCADE で消えている。AuthProvider.tsx の先頭の表の通信の失敗の行 #1636)', async () => {
+    mockSignOut.mockResolvedValueOnce({ error: new Error('network') });
+    await signOutAfterAccountDeletion('user-1', { clearSession: mockClearSession });
+    mockSignOut.mockRejectedValueOnce(new Error('unexpected'));
+    await signOutAfterAccountDeletion('user-1', { clearSession: mockClearSession });
+
+    expect(mockClearSession).toHaveBeenCalledTimes(2);
+    expect(mockUnregister).not.toHaveBeenCalled();
+  });
+
   it('サインアウトが例外を投げても、保管庫を消してエラーとして返す (例外にはしない)', async () => {
     const failure = new Error('unexpected');
     mockSignOut.mockRejectedValue(failure);

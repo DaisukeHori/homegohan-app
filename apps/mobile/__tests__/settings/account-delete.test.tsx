@@ -272,6 +272,12 @@ describe('AccountSettingsPage — アカウント削除', () => {
     expect(mockRemoveStoredItem).toHaveBeenCalledWith('sb-test-auth-token-code-verifier');
     expect(mockClearSession).toHaveBeenCalledTimes(1);
 
+    // 端末だけでセッションを忘れるのは、サーバーでの削除 (auth.users と一緒にサーバーのセッションも消える) が済んだあとだけ。
+    // push token の行も消しに行かない (ON DELETE CASCADE で消えている)。AuthProvider.tsx の先頭の表の通信の失敗の行 (#1636)
+    expect(callOrder.indexOf('apiDelete')).toBeGreaterThanOrEqual(0);
+    expect(callOrder.indexOf('signOut')).toBeGreaterThan(callOrder.indexOf('apiDelete'));
+    expect(mockUnregisterExpoPushToken).not.toHaveBeenCalled();
+
     // 「削除失敗」ではなく「削除は完了した」旨の文言でアラートを出す
     // (再試行してもサーバー側にアカウントが無いため削除 API は失敗するだけになる)
     expect(alertSpy).toHaveBeenCalledWith(
