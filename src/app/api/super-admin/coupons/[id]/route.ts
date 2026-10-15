@@ -15,6 +15,7 @@ import { COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE, CouponUpdateSchema } from '@/li
 import { internalError } from '@/lib/api/errors';
 import { couponValidityDay, couponValidUntilTimestamp } from '@/lib/super-admin/coupon-validity';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { couponInvalidInputResponse } from '@/lib/super-admin/coupon-errors';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -60,10 +61,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
     const parseResult = CouponUpdateSchema.safeParse(body);
 
     if (!parseResult.success) {
-      return NextResponse.json(
-        { error: { code: 'OP_INVALID_INPUT', message: parseResult.error.message, details: parseResult.error.issues } },
-        { status: 400 }
-      );
+      // #1534: error.message は最初の issue の文 (POST と同じ形)。issues を JSON にした文字列は返さない
+      return couponInvalidInputResponse(parseResult.error.issues);
     }
 
     const input = parseResult.data;
@@ -103,17 +102,11 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
     // valid_from は PATCH で変えられないので、DB にある時刻を JST の暦日に戻して比べる。どちらも YYYY-MM-DD (年は 4 桁) なので、
     // 文字列の大小が日付の前後と同じ。valid_until を送らないときは比べない
     if (input.valid_until !== undefined && input.valid_until < couponValidityDay(existing.valid_from)) {
-      return NextResponse.json(
-        {
-          error: {
-            code: 'OP_INVALID_INPUT',
-            message: COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE,
-            // 形の誤り (Zod) の 400 と同じく、どの欄の誤りかを details に入れる
-            details: [{ code: 'custom', path: ['valid_until'], message: COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE }],
-          },
-        },
-        { status: 400 }
-      );
+      // 形の誤り (Zod) の 400 と同じ本文 (#1534)。どの欄の誤りかを details に入れる。
+      // POST で同じ誤り (CouponCreateSchema の refine) になったときと、message・details[].path・details[].message が同じになる
+      return couponInvalidInputResponse([
+        { code: 'custom', path: ['valid_until'], message: COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE },
+      ]);
     }
 
     const { data: updated, error } = await supabase
