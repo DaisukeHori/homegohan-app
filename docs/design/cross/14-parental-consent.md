@@ -6,7 +6,7 @@
 | Issue | #1173 (要件 03 §17.10。先例: #1174 の規約の同意 (`accept_legal_documents`)・#1232 の子供の昇格 (本人同意)・#1154 の AI 同意 (`external_data_consents.revoked_at`)) |
 | 分冊 | 1 冊・2 段 (段 A = DB + `packages/shared` + 書き出しの分類 / 段 B = Web + API + メール + モバイルの注記)。§0.2 |
 | 正典の関係 | `cross/01-auth-session.md` §12〜§13.2 (子供アカウント保護の方針・草案) と `family/01-data-model.md` §4.13 (`parental_consents` の草案 DDL) を**本冊が置き換える** (マージ後に両節は本冊への参照に現在形化する。§6.18)。`cross/08-legal-compliance.md` §7.2 の同意ゲート (#1174) に「生年月日の確認」を畳む。13a (#1442) は実装まで main に着地済み (#1697)・13b は未マージ。両冊との契約は §0.5 |
-| 範囲の正本 | Issue #1173 の本文 (要件)。範囲と方針はオーケストレーターの仕様ファイル (リポジトリの外) で決まり、その要点を §1.2 に逐語で写した (Issue のコメントへの記録は §6.18) |
+| 範囲の正本 | Issue #1173 の本文とコメント (範囲と方針の記録のコメントを含む。要点は §1.2 にも写した) |
 | 読み手 | 実装 (Sonnet 5.5) と敵対レビュー。実装は §6 だけを読んで手を止めずに書けることを完成条件にする |
 
 ---
@@ -1787,11 +1787,11 @@ grep の語 = 本設計が足す・変える・移すものの名前。反応す
 | `CLAUDE.md` (リポジトリ) の同意ゲートの記述 | 「ゲートが掛かるのは…」の文 | 「同意ゲートは生年月日の未入力と、保護者の同意とのつながりが無い 18 歳未満も同意画面へ回す (#1173・cross/14)」を足す |
 | Issue #1173 のコメント | 範囲と方針の記録 (設計書の「範囲の正本」を Issue に向ける #1705 の形) | オーケストレーターの仕様ファイルの要点 (§1.2 の前提と「決めること」の一覧) を Issue のコメントに記録し、冒頭の表の「範囲の正本」の括弧書きを「Issue #1173 の本文とコメント」に直す (期日: 本冊の設計 PR のマージと同時) |
 
-### 6.19 検証コマンド (実装レーン。M2 では打たない)
+### 6.19 検証コマンド (実装レーン。手元の開発機では打たず、テスト用の機械へ送る)
 
 ```bash
-cd /Volumes/DevSSD/wt/<worktree>
-OFFLOAD=/Users/horidaisuke/claude-work/dev-infra/bin/offload
+cd <worktree>
+OFFLOAD=<テストを別の機械で流す道具 (開発環境の offload)>
 $OFFLOAD --host auto -e TZ=UTC -- npx tsc --noEmit
 $OFFLOAD --host auto -e TZ=UTC -- npm run lint
 $OFFLOAD --host auto -e TZ=UTC -- npx vitest run --reporter=json      # 全件 (passed / failed の実数で判定)
@@ -1799,7 +1799,7 @@ $OFFLOAD --host auto -e TZ=UTC -- npx vitest run --config vitest.integration.con
 git diff origin/main...HEAD | grep -n 'as any'                        # 0 件
 ```
 
-E2E (3 サーバー) は `scripts/local-ci.sh` が流す。`account-export-scope.test.ts` の `GET /api/account/export (要 dev サーバー)` の describe も dev サーバーの上で流す (T-EX2 は dev サーバーの要らない `#1131 エクスポート` の describe に足す)。結合テストのローカルスタック (`scripts/supabase-local.sh`) は offload 先で組み立てる (M2 の Docker は使わない)。
+E2E (3 サーバー) は `scripts/local-ci.sh` が流す。`account-export-scope.test.ts` の `GET /api/account/export (要 dev サーバー)` の describe も dev サーバーの上で流す (T-EX2 は dev サーバーの要らない `#1131 エクスポート` の describe に足す)。結合テストのローカルスタック (`scripts/supabase-local.sh`) は offload 先で組み立てる (手元の開発機の Docker は使わない)。
 
 ---
 
