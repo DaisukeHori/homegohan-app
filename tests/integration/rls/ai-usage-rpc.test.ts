@@ -148,15 +148,23 @@ async function joinOrg(userId: string, orgId: string | null) {
   if (error) throw new Error(`user_profiles.organization_id: ${error.message}`);
 }
 
-/** 代表者として家族を作る (create_family_group は、代表者の active なメンバー行も作る) */
+/**
+ * 代表者として家族を作る (create_family_group は、代表者の active なメンバー行も作る)。
+ * billing/01 §6.4 (10): active なグループの作成はトリガーが代表者の契約から plan_key を決める (p_plan_key は使わない) ので、
+ * プランの付いたグループは、作ったあとに service_role で family_groups.plan_key を UPDATE する
+ * (UPDATE OF plan_key はトリガーに当たらない。service_role は特権列ガードにも当たらない)
+ */
 async function createFamily(rep: TestUser, planKey: string): Promise<string> {
   const { data, error } = await asUser(rep.jwt!).rpc('create_family_group', {
     p_name: `#1177 ${TS}-${++seq}`,
-    p_plan_key: planKey,
   });
   if (error || !data) throw new Error(`create_family_group: ${error?.message}`);
   const familyId = (data as { id: string }).id;
   createdFamilyIds.push(familyId);
+  if (planKey !== 'free') {
+    const { error: planError } = await srAdmin.from('family_groups').update({ plan_key: planKey }).eq('id', familyId);
+    if (planError) throw new Error(`family_groups.plan_key: ${planError.message}`);
+  }
   return familyId;
 }
 
