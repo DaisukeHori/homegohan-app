@@ -1,17 +1,25 @@
 /**
  * #1176 セッションの AAL の読み取りのテスト (段 A)。docs/design/cross/12-operator-mfa.md §13.2・§21.1 (mfa-assurance.test.ts)
- * supabase の client と next/headers を差し替える。assertOperatorAssurance の it は段 B で足す。
+ * supabase の client と next/headers を差し替える。assertOperatorAssurance の it (段 B) は @/lib/supabase/server の createClient も差し替える。
  */
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ headerGet: vi.fn() }));
+const mocks = vi.hoisted(() => ({ headerGet: vi.fn(), serverClient: { current: null as unknown } }));
+
+// assertOperatorAssurance (段 B) が createClient() で読む client。it ごとに mocks.serverClient.current を差し替える
+vi.mock('@/lib/supabase/server', () => ({ createClient: async () => mocks.serverClient.current }));
 
 // next/headers の headers() は Promise を返す (Next 15。tests/next15-async-request-api-scan.test.ts の #1621)
 vi.mock('next/headers', () => ({ headers: async () => ({ get: mocks.headerGet }) }));
 
-import { AuthError } from '@/lib/auth/errors';
-import { SessionClaimsSchema, bearerJwtOf, readSessionAssurance } from '@/lib/auth/mfa/assurance';
+import { AuthError, ForbiddenError, MfaRequiredError } from '@/lib/auth/errors';
+import {
+  SessionClaimsSchema,
+  assertOperatorAssurance,
+  bearerJwtOf,
+  readSessionAssurance,
+} from '@/lib/auth/mfa/assurance';
 
 const USER_ID = 'user-1';
 const COOKIE_TOKEN = 'cookie.header.payload';
@@ -37,6 +45,8 @@ function supabaseWith(options: {
 
 beforeEach(() => {
   mocks.headerGet.mockReset();
+  mocks.serverClient.current = null;
+  vi.unstubAllEnvs();
 });
 
 describe('bearerJwtOf', () => {
@@ -118,5 +128,75 @@ describe('readSessionAssurance', () => {
       expect(result).toEqual({ aal: 'aal1', sessionId: 's-1' });
       expect(Object.keys(result).sort()).toEqual(['aal', 'sessionId']);
     }
+  });
+});
+
+describe('assertOperatorAssurance (段 B)', () => {
+  /** 固定の時刻 (猶予の判定に使う) */
+  const NOW = new Date('2026-10-20T00:00:00Z');
+  const FUTURE = '2026-11-01T00:00:00+09:00';
+  const VERIFIED_TOTP = {
+    id: 'factor-1',
+    factor_type: 'totp',
+    status: 'verified',
+    created_at: '2026-10-01T00:00:00Z',
+    updated_at: '2026-10-01T00:00:00Z',
+    friendly_name: 'authenticator',
+  };
+
+  function userWith(factors: ReadonlyArray<typeof VERIFIED_TOTP>): User {
+    return { id: USER_ID, factors } as unknown as User;
+  }
+
+  it('assertOperatorAssurance: 必須ロールでなければ getClaims を呼ばない', async () => {
+    vi.stubEnv('OPERATOR_MFA_ENFORCE_FROM', '');
+    const { client, getSession, getClaims } = supabaseWith({ sessionToken: COOKIE_TOKEN, claims: { sub: USER_ID, aal: 'aal1' } });
+    mocks.serverClient.current = client;
+    await expect(assertOperatorAssurance({ user: userWith([]), roles: ['support'], now: NOW })).resolves.toEqual({
+      required: false,
+      aal: null,
+      enrolled: false,
+      decision: 'not_required',
+      enforce_from: null,
+    });
+    expect(getSession).not.toHaveBeenCalled();
+    expect(getClaims).not.toHaveBeenCalled();
+  });
+
+  it('assertOperatorAssurance: challenge_required は MfaRequiredError(AUTH_2FA_REQUIRED)、enrollment_required は AUTH_2FA_ENROLLMENT_REQUIRED (どちらも instanceof ForbiddenError)', async () => {
+    vi.stubEnv('OPERATOR_MFA_ENFORCE_FROM', '');
+    mocks.serverClient.current = supabaseWith({ sessionToken: COOKIE_TOKEN, claims: { sub: USER_ID, aal: 'aal1' } }).client;
+
+    const challenge = assertOperatorAssurance({ user: userWith([VERIFIED_TOTP]), roles: ['admin'], now: NOW });
+    await expect(challenge).rejects.toBeInstanceOf(MfaRequiredError);
+    await expect(challenge).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(challenge).rejects.toMatchObject({ code: 'AUTH_2FA_REQUIRED' });
+
+    const enrollment = assertOperatorAssurance({ user: userWith([]), roles: ['super_admin'], now: NOW });
+    await expect(enrollment).rejects.toBeInstanceOf(MfaRequiredError);
+    await expect(enrollment).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(enrollment).rejects.toMatchObject({ code: 'AUTH_2FA_ENROLLMENT_REQUIRED' });
+  });
+
+  it('assertOperatorAssurance: pass / pass_grace は要約 (required / aal / enrolled / decision / enforce_from) を返す', async () => {
+    vi.stubEnv('OPERATOR_MFA_ENFORCE_FROM', '');
+    mocks.serverClient.current = supabaseWith({ sessionToken: COOKIE_TOKEN, claims: { sub: USER_ID, aal: 'aal2' } }).client;
+    await expect(assertOperatorAssurance({ user: userWith([VERIFIED_TOTP]), roles: ['admin'], now: NOW })).resolves.toEqual({
+      required: true,
+      aal: 'aal2',
+      enrolled: true,
+      decision: 'pass',
+      enforce_from: null,
+    });
+
+    vi.stubEnv('OPERATOR_MFA_ENFORCE_FROM', FUTURE);
+    mocks.serverClient.current = supabaseWith({ sessionToken: COOKIE_TOKEN, claims: { sub: USER_ID, aal: 'aal1' } }).client;
+    await expect(assertOperatorAssurance({ user: userWith([]), roles: ['finance'], now: NOW })).resolves.toEqual({
+      required: true,
+      aal: 'aal1',
+      enrolled: false,
+      decision: 'pass_grace',
+      enforce_from: new Date(FUTURE).toISOString(),
+    });
   });
 });

@@ -2,7 +2,8 @@
  * #1176 運営ロールの MFA の自己サービス API (段 A の 4 route) の route テスト。
  * docs/design/cross/12-operator-mfa.md §14.1・§14.2・§14.3・§14.5・§17.2・§21.2 (auth-mfa-routes.test.ts)
  *
- * 段 A の requireRole はゲートを持たない (AAL を見ない) ので、AAL の 403 の検査は入れない (§0.2・§21.2)。
+ * この 4 route は段 B から requireRole(MFA_REQUIRED_ROLES, { assurance: 'session' }) で AAL を見ないので、AAL の 403 の検査は入れない
+ * (§0.2・§21.2。段 B の後も aal1 で使えることは tests/api/auth-mfa-aal2-routes.test.ts が見る)。
  * requireRole は本物 (@/lib/auth/helpers) を通し、Supabase の client (本人・service_role) を偽物にする。
  * バックアップコードの表の 4 関数と監査 (recordMfaAudit) は差し替え、呼ぶ順と引数を見る。回数制限は本物 (Upstash 未設定 = in-memory)。
  */
@@ -241,7 +242,7 @@ beforeEach(() => {
 });
 
 describe('段 A の route の認可', () => {
-  it('4 route とも requireRole を MFA_REQUIRED_ROLES の引数 1 つで呼ぶ (段 A の requireRole は今のまま。{ assurance } は段 B)', async () => {
+  it("4 route とも requireRole を MFA_REQUIRED_ROLES と { assurance: 'session' } で呼ぶ (段 B で第 2 引数を足した §0.2・走査 ②)", async () => {
     signIn({ factors: [factor(VERIFIED_FACTOR_ID, 'verified')] });
     await status();
     await enroll();
@@ -249,7 +250,7 @@ describe('段 A の route の認可', () => {
     await recover();
     expect(vi.mocked(requireRole)).toHaveBeenCalledTimes(4);
     for (const call of vi.mocked(requireRole).mock.calls) {
-      expect(call).toEqual([MFA_REQUIRED_ROLES]);
+      expect(call).toEqual([MFA_REQUIRED_ROLES, { assurance: 'session' }]);
     }
   });
 });
