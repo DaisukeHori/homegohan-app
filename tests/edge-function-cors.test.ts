@@ -241,6 +241,7 @@ const CORS_HELPER = "supabase/functions/_shared/cors.ts";
 const BATCH_ONLY_SOURCES = [
   "supabase/functions/aggregate-org-stats/index.ts",
   "supabase/functions/calculate-segment-stats/index.ts",
+  "supabase/functions/purge-hidden-content/index.ts",
   "supabase/functions/regenerate-embeddings/index.ts",
   "supabase/functions/stripe-price-sync/index.ts",
   "supabase/functions/backfill-ingredient-embeddings/index.ts",
